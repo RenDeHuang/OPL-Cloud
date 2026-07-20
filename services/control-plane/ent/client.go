@@ -13,6 +13,8 @@ import (
 
 	"opl-cloud/services/control-plane/ent/account"
 	"opl-cloud/services/control-plane/ent/adminauditevent"
+	"opl-cloud/services/control-plane/ent/announcement"
+	"opl-cloud/services/control-plane/ent/announcementread"
 	"opl-cloud/services/control-plane/ent/archivedadminauditevent"
 	"opl-cloud/services/control-plane/ent/archivedcomputeallocation"
 	"opl-cloud/services/control-plane/ent/archivedstorageattachment"
@@ -51,6 +53,10 @@ type Client struct {
 	Account *AccountClient
 	// AdminAuditEvent is the client for interacting with the AdminAuditEvent builders.
 	AdminAuditEvent *AdminAuditEventClient
+	// Announcement is the client for interacting with the Announcement builders.
+	Announcement *AnnouncementClient
+	// AnnouncementRead is the client for interacting with the AnnouncementRead builders.
+	AnnouncementRead *AnnouncementReadClient
 	// ArchiveJob is the client for interacting with the ArchiveJob builders.
 	ArchiveJob *ArchiveJobClient
 	// ArchivedAdminAuditEvent is the client for interacting with the ArchivedAdminAuditEvent builders.
@@ -110,6 +116,8 @@ func (c *Client) init() {
 	c.Schema = migrate.NewSchema(c.driver)
 	c.Account = NewAccountClient(c.config)
 	c.AdminAuditEvent = NewAdminAuditEventClient(c.config)
+	c.Announcement = NewAnnouncementClient(c.config)
+	c.AnnouncementRead = NewAnnouncementReadClient(c.config)
 	c.ArchiveJob = NewArchiveJobClient(c.config)
 	c.ArchivedAdminAuditEvent = NewArchivedAdminAuditEventClient(c.config)
 	c.ArchivedComputeAllocation = NewArchivedComputeAllocationClient(c.config)
@@ -227,6 +235,8 @@ func (c *Client) Tx(ctx context.Context) (*Tx, error) {
 		config:                    cfg,
 		Account:                   NewAccountClient(cfg),
 		AdminAuditEvent:           NewAdminAuditEventClient(cfg),
+		Announcement:              NewAnnouncementClient(cfg),
+		AnnouncementRead:          NewAnnouncementReadClient(cfg),
 		ArchiveJob:                NewArchiveJobClient(cfg),
 		ArchivedAdminAuditEvent:   NewArchivedAdminAuditEventClient(cfg),
 		ArchivedComputeAllocation: NewArchivedComputeAllocationClient(cfg),
@@ -271,6 +281,8 @@ func (c *Client) BeginTx(ctx context.Context, opts *sql.TxOptions) (*Tx, error) 
 		config:                    cfg,
 		Account:                   NewAccountClient(cfg),
 		AdminAuditEvent:           NewAdminAuditEventClient(cfg),
+		Announcement:              NewAnnouncementClient(cfg),
+		AnnouncementRead:          NewAnnouncementReadClient(cfg),
 		ArchiveJob:                NewArchiveJobClient(cfg),
 		ArchivedAdminAuditEvent:   NewArchivedAdminAuditEventClient(cfg),
 		ArchivedComputeAllocation: NewArchivedComputeAllocationClient(cfg),
@@ -323,14 +335,14 @@ func (c *Client) Close() error {
 // In order to add hooks to a specific client, call: `client.Node.Use(...)`.
 func (c *Client) Use(hooks ...Hook) {
 	for _, n := range []interface{ Use(...Hook) }{
-		c.Account, c.AdminAuditEvent, c.ArchiveJob, c.ArchivedAdminAuditEvent,
-		c.ArchivedComputeAllocation, c.ArchivedStorageAttachment,
-		c.ArchivedStorageVolume, c.ArchivedWorkspace, c.AuthAttempt,
-		c.BillingReconciliation, c.ComputeAllocation, c.ExecutionRequest, c.Membership,
-		c.Organization, c.ProductionE2ERecord, c.ProjectTaskSyncHead,
-		c.RuntimeOperation, c.Session, c.StorageAttachment, c.StorageVolume,
-		c.SupportTicketMapping, c.User, c.Workspace, c.WorkspaceBackup,
-		c.WorkspaceSyncEvent,
+		c.Account, c.AdminAuditEvent, c.Announcement, c.AnnouncementRead, c.ArchiveJob,
+		c.ArchivedAdminAuditEvent, c.ArchivedComputeAllocation,
+		c.ArchivedStorageAttachment, c.ArchivedStorageVolume, c.ArchivedWorkspace,
+		c.AuthAttempt, c.BillingReconciliation, c.ComputeAllocation,
+		c.ExecutionRequest, c.Membership, c.Organization, c.ProductionE2ERecord,
+		c.ProjectTaskSyncHead, c.RuntimeOperation, c.Session, c.StorageAttachment,
+		c.StorageVolume, c.SupportTicketMapping, c.User, c.Workspace,
+		c.WorkspaceBackup, c.WorkspaceSyncEvent,
 	} {
 		n.Use(hooks...)
 	}
@@ -340,14 +352,14 @@ func (c *Client) Use(hooks ...Hook) {
 // In order to add interceptors to a specific client, call: `client.Node.Intercept(...)`.
 func (c *Client) Intercept(interceptors ...Interceptor) {
 	for _, n := range []interface{ Intercept(...Interceptor) }{
-		c.Account, c.AdminAuditEvent, c.ArchiveJob, c.ArchivedAdminAuditEvent,
-		c.ArchivedComputeAllocation, c.ArchivedStorageAttachment,
-		c.ArchivedStorageVolume, c.ArchivedWorkspace, c.AuthAttempt,
-		c.BillingReconciliation, c.ComputeAllocation, c.ExecutionRequest, c.Membership,
-		c.Organization, c.ProductionE2ERecord, c.ProjectTaskSyncHead,
-		c.RuntimeOperation, c.Session, c.StorageAttachment, c.StorageVolume,
-		c.SupportTicketMapping, c.User, c.Workspace, c.WorkspaceBackup,
-		c.WorkspaceSyncEvent,
+		c.Account, c.AdminAuditEvent, c.Announcement, c.AnnouncementRead, c.ArchiveJob,
+		c.ArchivedAdminAuditEvent, c.ArchivedComputeAllocation,
+		c.ArchivedStorageAttachment, c.ArchivedStorageVolume, c.ArchivedWorkspace,
+		c.AuthAttempt, c.BillingReconciliation, c.ComputeAllocation,
+		c.ExecutionRequest, c.Membership, c.Organization, c.ProductionE2ERecord,
+		c.ProjectTaskSyncHead, c.RuntimeOperation, c.Session, c.StorageAttachment,
+		c.StorageVolume, c.SupportTicketMapping, c.User, c.Workspace,
+		c.WorkspaceBackup, c.WorkspaceSyncEvent,
 	} {
 		n.Intercept(interceptors...)
 	}
@@ -360,6 +372,10 @@ func (c *Client) Mutate(ctx context.Context, m Mutation) (Value, error) {
 		return c.Account.mutate(ctx, m)
 	case *AdminAuditEventMutation:
 		return c.AdminAuditEvent.mutate(ctx, m)
+	case *AnnouncementMutation:
+		return c.Announcement.mutate(ctx, m)
+	case *AnnouncementReadMutation:
+		return c.AnnouncementRead.mutate(ctx, m)
 	case *ArchiveJobMutation:
 		return c.ArchiveJob.mutate(ctx, m)
 	case *ArchivedAdminAuditEventMutation:
@@ -674,6 +690,272 @@ func (c *AdminAuditEventClient) mutate(ctx context.Context, m *AdminAuditEventMu
 		return (&AdminAuditEventDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
 	default:
 		return nil, fmt.Errorf("ent: unknown AdminAuditEvent mutation op: %q", m.Op())
+	}
+}
+
+// AnnouncementClient is a client for the Announcement schema.
+type AnnouncementClient struct {
+	config
+}
+
+// NewAnnouncementClient returns a client for the Announcement from the given config.
+func NewAnnouncementClient(c config) *AnnouncementClient {
+	return &AnnouncementClient{config: c}
+}
+
+// Use adds a list of mutation hooks to the hooks stack.
+// A call to `Use(f, g, h)` equals to `announcement.Hooks(f(g(h())))`.
+func (c *AnnouncementClient) Use(hooks ...Hook) {
+	c.hooks.Announcement = append(c.hooks.Announcement, hooks...)
+}
+
+// Intercept adds a list of query interceptors to the interceptors stack.
+// A call to `Intercept(f, g, h)` equals to `announcement.Intercept(f(g(h())))`.
+func (c *AnnouncementClient) Intercept(interceptors ...Interceptor) {
+	c.inters.Announcement = append(c.inters.Announcement, interceptors...)
+}
+
+// Create returns a builder for creating a Announcement entity.
+func (c *AnnouncementClient) Create() *AnnouncementCreate {
+	mutation := newAnnouncementMutation(c.config, OpCreate)
+	return &AnnouncementCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// CreateBulk returns a builder for creating a bulk of Announcement entities.
+func (c *AnnouncementClient) CreateBulk(builders ...*AnnouncementCreate) *AnnouncementCreateBulk {
+	return &AnnouncementCreateBulk{config: c.config, builders: builders}
+}
+
+// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
+// a builder and applies setFunc on it.
+func (c *AnnouncementClient) MapCreateBulk(slice any, setFunc func(*AnnouncementCreate, int)) *AnnouncementCreateBulk {
+	rv := reflect.ValueOf(slice)
+	if rv.Kind() != reflect.Slice {
+		return &AnnouncementCreateBulk{err: fmt.Errorf("calling to AnnouncementClient.MapCreateBulk with wrong type %T, need slice", slice)}
+	}
+	builders := make([]*AnnouncementCreate, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		builders[i] = c.Create()
+		setFunc(builders[i], i)
+	}
+	return &AnnouncementCreateBulk{config: c.config, builders: builders}
+}
+
+// Update returns an update builder for Announcement.
+func (c *AnnouncementClient) Update() *AnnouncementUpdate {
+	mutation := newAnnouncementMutation(c.config, OpUpdate)
+	return &AnnouncementUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOne returns an update builder for the given entity.
+func (c *AnnouncementClient) UpdateOne(a *Announcement) *AnnouncementUpdateOne {
+	mutation := newAnnouncementMutation(c.config, OpUpdateOne, withAnnouncement(a))
+	return &AnnouncementUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOneID returns an update builder for the given id.
+func (c *AnnouncementClient) UpdateOneID(id string) *AnnouncementUpdateOne {
+	mutation := newAnnouncementMutation(c.config, OpUpdateOne, withAnnouncementID(id))
+	return &AnnouncementUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// Delete returns a delete builder for Announcement.
+func (c *AnnouncementClient) Delete() *AnnouncementDelete {
+	mutation := newAnnouncementMutation(c.config, OpDelete)
+	return &AnnouncementDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// DeleteOne returns a builder for deleting the given entity.
+func (c *AnnouncementClient) DeleteOne(a *Announcement) *AnnouncementDeleteOne {
+	return c.DeleteOneID(a.ID)
+}
+
+// DeleteOneID returns a builder for deleting the given entity by its id.
+func (c *AnnouncementClient) DeleteOneID(id string) *AnnouncementDeleteOne {
+	builder := c.Delete().Where(announcement.ID(id))
+	builder.mutation.id = &id
+	builder.mutation.op = OpDeleteOne
+	return &AnnouncementDeleteOne{builder}
+}
+
+// Query returns a query builder for Announcement.
+func (c *AnnouncementClient) Query() *AnnouncementQuery {
+	return &AnnouncementQuery{
+		config: c.config,
+		ctx:    &QueryContext{Type: TypeAnnouncement},
+		inters: c.Interceptors(),
+	}
+}
+
+// Get returns a Announcement entity by its id.
+func (c *AnnouncementClient) Get(ctx context.Context, id string) (*Announcement, error) {
+	return c.Query().Where(announcement.ID(id)).Only(ctx)
+}
+
+// GetX is like Get, but panics if an error occurs.
+func (c *AnnouncementClient) GetX(ctx context.Context, id string) *Announcement {
+	obj, err := c.Get(ctx, id)
+	if err != nil {
+		panic(err)
+	}
+	return obj
+}
+
+// Hooks returns the client hooks.
+func (c *AnnouncementClient) Hooks() []Hook {
+	return c.hooks.Announcement
+}
+
+// Interceptors returns the client interceptors.
+func (c *AnnouncementClient) Interceptors() []Interceptor {
+	return c.inters.Announcement
+}
+
+func (c *AnnouncementClient) mutate(ctx context.Context, m *AnnouncementMutation) (Value, error) {
+	switch m.Op() {
+	case OpCreate:
+		return (&AnnouncementCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdate:
+		return (&AnnouncementUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdateOne:
+		return (&AnnouncementUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpDelete, OpDeleteOne:
+		return (&AnnouncementDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
+	default:
+		return nil, fmt.Errorf("ent: unknown Announcement mutation op: %q", m.Op())
+	}
+}
+
+// AnnouncementReadClient is a client for the AnnouncementRead schema.
+type AnnouncementReadClient struct {
+	config
+}
+
+// NewAnnouncementReadClient returns a client for the AnnouncementRead from the given config.
+func NewAnnouncementReadClient(c config) *AnnouncementReadClient {
+	return &AnnouncementReadClient{config: c}
+}
+
+// Use adds a list of mutation hooks to the hooks stack.
+// A call to `Use(f, g, h)` equals to `announcementread.Hooks(f(g(h())))`.
+func (c *AnnouncementReadClient) Use(hooks ...Hook) {
+	c.hooks.AnnouncementRead = append(c.hooks.AnnouncementRead, hooks...)
+}
+
+// Intercept adds a list of query interceptors to the interceptors stack.
+// A call to `Intercept(f, g, h)` equals to `announcementread.Intercept(f(g(h())))`.
+func (c *AnnouncementReadClient) Intercept(interceptors ...Interceptor) {
+	c.inters.AnnouncementRead = append(c.inters.AnnouncementRead, interceptors...)
+}
+
+// Create returns a builder for creating a AnnouncementRead entity.
+func (c *AnnouncementReadClient) Create() *AnnouncementReadCreate {
+	mutation := newAnnouncementReadMutation(c.config, OpCreate)
+	return &AnnouncementReadCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// CreateBulk returns a builder for creating a bulk of AnnouncementRead entities.
+func (c *AnnouncementReadClient) CreateBulk(builders ...*AnnouncementReadCreate) *AnnouncementReadCreateBulk {
+	return &AnnouncementReadCreateBulk{config: c.config, builders: builders}
+}
+
+// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
+// a builder and applies setFunc on it.
+func (c *AnnouncementReadClient) MapCreateBulk(slice any, setFunc func(*AnnouncementReadCreate, int)) *AnnouncementReadCreateBulk {
+	rv := reflect.ValueOf(slice)
+	if rv.Kind() != reflect.Slice {
+		return &AnnouncementReadCreateBulk{err: fmt.Errorf("calling to AnnouncementReadClient.MapCreateBulk with wrong type %T, need slice", slice)}
+	}
+	builders := make([]*AnnouncementReadCreate, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		builders[i] = c.Create()
+		setFunc(builders[i], i)
+	}
+	return &AnnouncementReadCreateBulk{config: c.config, builders: builders}
+}
+
+// Update returns an update builder for AnnouncementRead.
+func (c *AnnouncementReadClient) Update() *AnnouncementReadUpdate {
+	mutation := newAnnouncementReadMutation(c.config, OpUpdate)
+	return &AnnouncementReadUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOne returns an update builder for the given entity.
+func (c *AnnouncementReadClient) UpdateOne(ar *AnnouncementRead) *AnnouncementReadUpdateOne {
+	mutation := newAnnouncementReadMutation(c.config, OpUpdateOne, withAnnouncementRead(ar))
+	return &AnnouncementReadUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOneID returns an update builder for the given id.
+func (c *AnnouncementReadClient) UpdateOneID(id string) *AnnouncementReadUpdateOne {
+	mutation := newAnnouncementReadMutation(c.config, OpUpdateOne, withAnnouncementReadID(id))
+	return &AnnouncementReadUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// Delete returns a delete builder for AnnouncementRead.
+func (c *AnnouncementReadClient) Delete() *AnnouncementReadDelete {
+	mutation := newAnnouncementReadMutation(c.config, OpDelete)
+	return &AnnouncementReadDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// DeleteOne returns a builder for deleting the given entity.
+func (c *AnnouncementReadClient) DeleteOne(ar *AnnouncementRead) *AnnouncementReadDeleteOne {
+	return c.DeleteOneID(ar.ID)
+}
+
+// DeleteOneID returns a builder for deleting the given entity by its id.
+func (c *AnnouncementReadClient) DeleteOneID(id string) *AnnouncementReadDeleteOne {
+	builder := c.Delete().Where(announcementread.ID(id))
+	builder.mutation.id = &id
+	builder.mutation.op = OpDeleteOne
+	return &AnnouncementReadDeleteOne{builder}
+}
+
+// Query returns a query builder for AnnouncementRead.
+func (c *AnnouncementReadClient) Query() *AnnouncementReadQuery {
+	return &AnnouncementReadQuery{
+		config: c.config,
+		ctx:    &QueryContext{Type: TypeAnnouncementRead},
+		inters: c.Interceptors(),
+	}
+}
+
+// Get returns a AnnouncementRead entity by its id.
+func (c *AnnouncementReadClient) Get(ctx context.Context, id string) (*AnnouncementRead, error) {
+	return c.Query().Where(announcementread.ID(id)).Only(ctx)
+}
+
+// GetX is like Get, but panics if an error occurs.
+func (c *AnnouncementReadClient) GetX(ctx context.Context, id string) *AnnouncementRead {
+	obj, err := c.Get(ctx, id)
+	if err != nil {
+		panic(err)
+	}
+	return obj
+}
+
+// Hooks returns the client hooks.
+func (c *AnnouncementReadClient) Hooks() []Hook {
+	return c.hooks.AnnouncementRead
+}
+
+// Interceptors returns the client interceptors.
+func (c *AnnouncementReadClient) Interceptors() []Interceptor {
+	return c.inters.AnnouncementRead
+}
+
+func (c *AnnouncementReadClient) mutate(ctx context.Context, m *AnnouncementReadMutation) (Value, error) {
+	switch m.Op() {
+	case OpCreate:
+		return (&AnnouncementReadCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdate:
+		return (&AnnouncementReadUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdateOne:
+		return (&AnnouncementReadUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpDelete, OpDeleteOne:
+		return (&AnnouncementReadDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
+	default:
+		return nil, fmt.Errorf("ent: unknown AnnouncementRead mutation op: %q", m.Op())
 	}
 }
 
@@ -3739,21 +4021,21 @@ func (c *WorkspaceSyncEventClient) mutate(ctx context.Context, m *WorkspaceSyncE
 // hooks and interceptors per client, for fast access.
 type (
 	hooks struct {
-		Account, AdminAuditEvent, ArchiveJob, ArchivedAdminAuditEvent,
-		ArchivedComputeAllocation, ArchivedStorageAttachment, ArchivedStorageVolume,
-		ArchivedWorkspace, AuthAttempt, BillingReconciliation, ComputeAllocation,
-		ExecutionRequest, Membership, Organization, ProductionE2ERecord,
-		ProjectTaskSyncHead, RuntimeOperation, Session, StorageAttachment,
-		StorageVolume, SupportTicketMapping, User, Workspace, WorkspaceBackup,
-		WorkspaceSyncEvent []ent.Hook
+		Account, AdminAuditEvent, Announcement, AnnouncementRead, ArchiveJob,
+		ArchivedAdminAuditEvent, ArchivedComputeAllocation, ArchivedStorageAttachment,
+		ArchivedStorageVolume, ArchivedWorkspace, AuthAttempt, BillingReconciliation,
+		ComputeAllocation, ExecutionRequest, Membership, Organization,
+		ProductionE2ERecord, ProjectTaskSyncHead, RuntimeOperation, Session,
+		StorageAttachment, StorageVolume, SupportTicketMapping, User, Workspace,
+		WorkspaceBackup, WorkspaceSyncEvent []ent.Hook
 	}
 	inters struct {
-		Account, AdminAuditEvent, ArchiveJob, ArchivedAdminAuditEvent,
-		ArchivedComputeAllocation, ArchivedStorageAttachment, ArchivedStorageVolume,
-		ArchivedWorkspace, AuthAttempt, BillingReconciliation, ComputeAllocation,
-		ExecutionRequest, Membership, Organization, ProductionE2ERecord,
-		ProjectTaskSyncHead, RuntimeOperation, Session, StorageAttachment,
-		StorageVolume, SupportTicketMapping, User, Workspace, WorkspaceBackup,
-		WorkspaceSyncEvent []ent.Interceptor
+		Account, AdminAuditEvent, Announcement, AnnouncementRead, ArchiveJob,
+		ArchivedAdminAuditEvent, ArchivedComputeAllocation, ArchivedStorageAttachment,
+		ArchivedStorageVolume, ArchivedWorkspace, AuthAttempt, BillingReconciliation,
+		ComputeAllocation, ExecutionRequest, Membership, Organization,
+		ProductionE2ERecord, ProjectTaskSyncHead, RuntimeOperation, Session,
+		StorageAttachment, StorageVolume, SupportTicketMapping, User, Workspace,
+		WorkspaceBackup, WorkspaceSyncEvent []ent.Interceptor
 	}
 )

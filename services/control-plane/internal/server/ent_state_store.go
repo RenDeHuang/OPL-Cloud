@@ -21,6 +21,8 @@ import (
 	controlplaneent "opl-cloud/services/control-plane/ent"
 	"opl-cloud/services/control-plane/ent/account"
 	"opl-cloud/services/control-plane/ent/adminauditevent"
+	"opl-cloud/services/control-plane/ent/announcement"
+	"opl-cloud/services/control-plane/ent/announcementread"
 	"opl-cloud/services/control-plane/ent/billingreconciliation"
 	"opl-cloud/services/control-plane/ent/computeallocation"
 	"opl-cloud/services/control-plane/ent/productione2erecord"
@@ -117,6 +119,12 @@ func newPostgresEntStateStore(databaseURL string) (StateStore, error) {
 		}},
 		{Version: "202607180001_customer_identity_hard_cut", Run: func(ctx context.Context) error {
 			return controlplanemigrations.ApplyCustomerIdentityHardCut(ctx, driver)
+		}},
+		{Version: "202607190001_workspace_api_key_id", Run: func(ctx context.Context) error {
+			return controlplanemigrations.ApplyWorkspaceAPIKeyID(ctx, driver)
+		}},
+		{Version: "202607190002_pilot_announcements", Run: func(ctx context.Context) error {
+			return controlplanemigrations.ApplyPilotAnnouncements(ctx, driver)
 		}},
 	}); err != nil {
 		_ = client.Close()
@@ -818,6 +826,7 @@ var (
 		textField("RuntimeServiceName", "SetRuntimeServiceName", "runtime", "serviceName"),
 		textField("RuntimeServiceNameRoot", "SetRuntimeServiceNameRoot", "runtimeServiceName"),
 		textField("ServiceName", "SetServiceName", "serviceName"),
+		intField("WorkspaceAPIKeyID", "SetWorkspaceAPIKeyID", "workspaceApiKeyId"),
 		textField("AccessAccount", "SetAccessAccount", "access", "account"),
 		textField("AccessUsername", "SetAccessUsername", "access", "username"),
 		textField("CredentialStatus", "SetCredentialStatus", "access", "credentialStatus"),
@@ -898,6 +907,21 @@ var (
 		jsonTextField("BeforeJSON", "SetBeforeJSON", "before"),
 		jsonTextField("AfterJSON", "SetAfterJSON", "after"),
 		textField("Result", "SetResult", "result"),
+	}
+	announcementEntFields = []entRecordField{
+		textField("Title", "SetTitle", "title"),
+		textField("Body", "SetBody", "body"),
+		textField("Status", "SetStatus", "status"),
+		textField("StartsAt", "SetStartsAt", "startsAt"),
+		textField("EndsAt", "SetEndsAt", "endsAt"),
+		textField("PublishedAt", "SetPublishedAt", "publishedAt"),
+		textField("CreatedByUserID", "SetCreatedByUserID", "createdByUserId"),
+		textField("UpdatedByUserID", "SetUpdatedByUserID", "updatedByUserId"),
+	}
+	announcementReadEntFields = []entRecordField{
+		textField("AnnouncementID", "SetAnnouncementID", "announcementId"),
+		textField("UserID", "SetUserID", "userId"),
+		textField("ReadAt", "SetReadAt", "readAt"),
 	}
 	supportEntFields = []entRecordField{
 		textField("AccountID", "SetAccountID", "accountId"),
@@ -1817,6 +1841,34 @@ func (s *postgresEntStateStore) SaveWorkspace(ctx context.Context, row map[strin
 	return tx.Commit()
 }
 
+func (s *postgresEntStateStore) CompareAndSwapWorkspaceAPIKey(ctx context.Context, workspaceID string, expectedID, newID int64) error {
+	if workspaceID == "" || expectedID <= 0 || newID <= 0 {
+		return errWorkspaceAPIKeyCASConflict
+	}
+	tx, err := s.client.Tx(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	entity, err := tx.Workspace.Query().Where(workspace.IDEQ(workspaceID), lockRowForUpdate).Only(ctx)
+	if err != nil {
+		if controlplaneent.IsNotFound(err) {
+			return errWorkspaceAPIKeyCASConflict
+		}
+		return err
+	}
+	if entity.WorkspaceAPIKeyID == newID {
+		return tx.Commit()
+	}
+	if entity.WorkspaceAPIKeyID != expectedID {
+		return errWorkspaceAPIKeyCASConflict
+	}
+	if err := tx.Workspace.UpdateOneID(workspaceID).SetWorkspaceAPIKeyID(newID).Exec(ctx); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func (s *postgresEntStateStore) ApplyWorkspaceRenewalIntent(ctx context.Context, update workspaceRenewalIntentCAS) error {
 	tx, err := s.client.Tx(ctx)
 	if err != nil {
@@ -1891,6 +1943,92 @@ func (s *postgresEntStateStore) ApplyWorkspaceRenewalIntent(ctx context.Context,
 			}
 			return err
 		}
+	}
+	return tx.Commit()
+}
+
+func (s *postgresEntStateStore) ClaimWorkspaceLaunch(ctx context.Context, claim workspaceLaunchClaimCAS) error {
+	desired, err := decodeWorkspaceLaunchOperation(claim.DesiredOperation)
+	if err != nil || desired.AccountID != claim.AccountID {
+		return errWorkspaceLaunchCASConflict
+	}
+	tx, err := s.client.Tx(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	client := tx.Client()
+	if _, err := client.Account.Query().Where(account.IDEQ(claim.AccountID), lockRowForUpdate).Only(ctx); err != nil {
+		if controlplaneent.IsNotFound(err) {
+			return errWorkspaceLaunchCASConflict
+		}
+		return err
+	}
+	entities, err := client.RuntimeOperation.Query().Where(runtimeoperation.AccountIDEQ(claim.AccountID), lockRowForUpdate).All(ctx)
+	if err != nil {
+		return err
+	}
+	var existing map[string]any
+	for _, entity := range entities {
+		row := recordFromEnt(entity, runtimeOpEntFields)
+		if stringValue(row["id"]) == desired.ID {
+			existing = row
+		}
+		if claim.ExpectedOperationResult == "" && isWorkspaceLaunchAction(stringValue(row["action"])) && !terminalWorkspaceLaunchStatus(stringValue(row["status"])) {
+			return errWorkspaceLaunchInProgress
+		}
+	}
+	if claim.ExpectedOperationResult == "" {
+		if existing != nil {
+			return errWorkspaceLaunchCASConflict
+		}
+		if err := saveRecord(ctx, desired.ID, controlPlaneRecord(claim.DesiredOperation), client.RuntimeOperation.Create(), runtimeOpEntFields); err != nil {
+			if controlplaneent.IsConstraintError(err) {
+				return errWorkspaceLaunchCASConflict
+			}
+			return err
+		}
+	} else {
+		if existing == nil || stringValue(existing["result"]) != claim.ExpectedOperationResult {
+			return errWorkspaceLaunchCASConflict
+		}
+		if !workspaceLaunchClaimIdentityMatches(existing, claim.DesiredOperation) {
+			return errIdempotencyConflict
+		}
+		builder := client.RuntimeOperation.UpdateOneID(desired.ID)
+		setRecordFieldsWithEmptyText(builder, claim.DesiredOperation, runtimeOpEntFields, true)
+		if err := execCreate(ctx, builder); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *postgresEntStateStore) PersistWorkspaceLaunch(ctx context.Context, update workspaceLaunchPersistCAS) error {
+	if _, err := decodeWorkspaceLaunchOperation(update.DesiredOperation); err != nil {
+		return errWorkspaceLaunchCASConflict
+	}
+	tx, err := s.client.Tx(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	client := tx.Client()
+	entity, err := client.RuntimeOperation.Query().Where(runtimeoperation.IDEQ(update.OperationID), lockRowForUpdate).Only(ctx)
+	if err != nil {
+		if controlplaneent.IsNotFound(err) {
+			return errWorkspaceLaunchCASConflict
+		}
+		return err
+	}
+	current := recordFromEnt(entity, runtimeOpEntFields)
+	if stringValue(current["result"]) != update.ExpectedOperationResult || !workspaceLaunchClaimIdentityMatches(current, update.DesiredOperation) {
+		return errWorkspaceLaunchCASConflict
+	}
+	builder := client.RuntimeOperation.UpdateOneID(update.OperationID)
+	setRecordFieldsWithEmptyText(builder, update.DesiredOperation, runtimeOpEntFields, true)
+	if err := execCreate(ctx, builder); err != nil {
+		return err
 	}
 	return tx.Commit()
 }
@@ -2364,6 +2502,178 @@ func (s *postgresEntStateStore) ListAuditEvents(ctx context.Context, accountID s
 
 func (s *postgresEntStateStore) SaveAuditEvent(ctx context.Context, row map[string]any) error {
 	return s.replaceRecord(ctx, row, func(id string) error { return s.client.AdminAuditEvent.DeleteOneID(id).Exec(ctx) }, func() any { return s.client.AdminAuditEvent.Create() }, auditEntFields)
+}
+
+func (s *postgresEntStateStore) ListAnnouncements(ctx context.Context) ([]map[string]any, error) {
+	entities, err := s.client.Announcement.Query().Order(controlplaneent.Desc(announcement.FieldCreatedAt, announcement.FieldID)).All(ctx)
+	if err != nil {
+		return nil, err
+	}
+	rows := make([]map[string]any, 0, len(entities))
+	for _, entity := range entities {
+		rows = append(rows, announcementRecordFromEnt(entity))
+	}
+	return rows, nil
+}
+
+func (s *postgresEntStateStore) ApplyAnnouncementMutation(ctx context.Context, mutation announcementMutation) (map[string]any, error) {
+	tx, err := s.client.Tx(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	client := tx.Client()
+	auditID := stringValue(mutation.AuditEvent["id"])
+	if existing, auditErr := client.AdminAuditEvent.Query().Where(adminauditevent.IDEQ(auditID), lockRowForUpdate).Only(ctx); auditErr == nil {
+		return announcementReplay(recordFromEnt(existing, auditEntFields), mutation)
+	} else if !controlplaneent.IsNotFound(auditErr) {
+		return nil, auditErr
+	}
+
+	var current map[string]any
+	entity, queryErr := client.Announcement.Query().Where(announcement.IDEQ(mutation.AnnouncementID), lockRowForUpdate).Only(ctx)
+	if queryErr == nil {
+		current = announcementRecordFromEnt(entity)
+	} else if !controlplaneent.IsNotFound(queryErr) {
+		return nil, queryErr
+	}
+	if existing, auditErr := client.AdminAuditEvent.Query().Where(adminauditevent.IDEQ(auditID), lockRowForUpdate).Only(ctx); auditErr == nil {
+		return announcementReplay(recordFromEnt(existing, auditEntFields), mutation)
+	} else if !controlplaneent.IsNotFound(auditErr) {
+		return nil, auditErr
+	}
+	desired, err := prepareAnnouncementMutation(current, mutation, time.Now().UTC())
+	if err != nil {
+		return nil, err
+	}
+	if entity == nil {
+		err = saveRecord(ctx, mutation.AnnouncementID, desired, client.Announcement.Create(), announcementEntFields)
+	} else {
+		builder := client.Announcement.UpdateOneID(mutation.AnnouncementID)
+		setRecordFieldsWithEmptyText(builder, desired, announcementEntFields, true)
+		err = execCreate(ctx, builder)
+	}
+	if err != nil {
+		if controlplaneent.IsConstraintError(err) {
+			_ = tx.Rollback()
+			return s.replayAnnouncementMutation(ctx, mutation)
+		}
+		return nil, err
+	}
+	saved, err := client.Announcement.Get(ctx, mutation.AnnouncementID)
+	if err != nil {
+		return nil, err
+	}
+	authoritative := announcementRecordFromEnt(saved)
+	audit := announcementAudit(mutation, current, authoritative)
+	if err := saveRecord(ctx, auditID, audit, client.AdminAuditEvent.Create(), auditEntFields); err != nil {
+		if controlplaneent.IsConstraintError(err) {
+			_ = tx.Rollback()
+			return s.replayAnnouncementMutation(ctx, mutation)
+		}
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return authoritative, nil
+}
+
+func (s *postgresEntStateStore) replayAnnouncementMutation(ctx context.Context, mutation announcementMutation) (map[string]any, error) {
+	existing, err := s.client.AdminAuditEvent.Get(ctx, stringValue(mutation.AuditEvent["id"]))
+	if err != nil {
+		if controlplaneent.IsNotFound(err) {
+			return nil, errIdempotencyConflict
+		}
+		return nil, err
+	}
+	return announcementReplay(recordFromEnt(existing, auditEntFields), mutation)
+}
+
+func (s *postgresEntStateStore) ListAnnouncementReads(ctx context.Context, userID string) ([]map[string]any, error) {
+	query := s.client.AnnouncementRead.Query().Order(controlplaneent.Asc(announcementread.FieldCreatedAt, announcementread.FieldID))
+	if userID != "" {
+		query.Where(announcementread.UserID(userID))
+	}
+	entities, err := query.All(ctx)
+	if err != nil {
+		return nil, err
+	}
+	rows := make([]map[string]any, 0, len(entities))
+	for _, entity := range entities {
+		rows = append(rows, announcementReadRecordFromEnt(entity))
+	}
+	return rows, nil
+}
+
+func (s *postgresEntStateStore) MarkAnnouncementRead(ctx context.Context, announcementID, userID, readAt string) (map[string]any, error) {
+	if announcementID == "" || userID == "" {
+		return nil, errAnnouncementNotActive
+	}
+	id := announcementReadID(announcementID, userID)
+	if existing, err := s.client.AnnouncementRead.Get(ctx, id); err == nil {
+		return announcementReadRecordFromEnt(existing), nil
+	} else if !controlplaneent.IsNotFound(err) {
+		return nil, err
+	}
+	readTime, ok := optionalAnnouncementTime(readAt)
+	if !ok {
+		return nil, errAnnouncementNotActive
+	}
+	tx, err := s.client.Tx(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	client := tx.Client()
+	announcementEntity, err := client.Announcement.Query().Where(announcement.IDEQ(announcementID), lockRowForUpdate).Only(ctx)
+	if err != nil {
+		if !controlplaneent.IsNotFound(err) {
+			return nil, err
+		}
+		return nil, errAnnouncementNotActive
+	}
+	if existing, queryErr := client.AnnouncementRead.Get(ctx, id); queryErr == nil {
+		return announcementReadRecordFromEnt(existing), nil
+	} else if !controlplaneent.IsNotFound(queryErr) {
+		return nil, queryErr
+	}
+	if !announcementIsActive(announcementRecordFromEnt(announcementEntity), readTime) {
+		return nil, errAnnouncementNotActive
+	}
+	row := map[string]any{
+		"id": id, "announcementId": announcementID, "userId": userID, "readAt": readAt,
+		"createdAt": readAt, "updatedAt": readAt,
+	}
+	if err := saveRecord(ctx, id, row, client.AnnouncementRead.Create(), announcementReadEntFields); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return row, nil
+}
+
+func announcementRecordFromEnt(entity *controlplaneent.Announcement) map[string]any {
+	if entity == nil {
+		return nil
+	}
+	row := recordFromEnt(entity, announcementEntFields)
+	if !entity.UpdatedAt.IsZero() {
+		row["updatedAt"] = entity.UpdatedAt.UTC().Format(time.RFC3339Nano)
+	}
+	return row
+}
+
+func announcementReadRecordFromEnt(entity *controlplaneent.AnnouncementRead) map[string]any {
+	if entity == nil {
+		return nil
+	}
+	row := recordFromEnt(entity, announcementReadEntFields)
+	if !entity.UpdatedAt.IsZero() {
+		row["updatedAt"] = entity.UpdatedAt.UTC().Format(time.RFC3339Nano)
+	}
+	return row
 }
 
 func (s *postgresEntStateStore) ListSupportMappings(ctx context.Context, accountID string) ([]map[string]any, error) {

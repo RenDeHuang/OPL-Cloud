@@ -8,8 +8,7 @@ import type {
   WorkspaceListData,
   WorkspaceRenewalRequest,
   WorkspaceRenewalResponse,
-  WorkspaceRuntimeRequest,
-  WorkspaceRuntimeStatus
+  WorkspaceRuntimeDTO
 } from "./dtos.ts";
 import { postJson, getJson, type ApiError } from "./console-api.ts";
 
@@ -70,11 +69,10 @@ export function getWorkspaces(): Promise<SourceEnvelope<WorkspaceListData>> {
   return sourceRequest<WorkspaceListData>(() => getJson<unknown>("/api/workspaces"));
 }
 
-export function getWorkspaceRuntimeStatus(
-  input: WorkspaceRuntimeRequest,
-  csrfToken: string
-): Promise<SourceEnvelope<WorkspaceRuntimeStatus>> {
-  return sourceRequest<WorkspaceRuntimeStatus>(() => postJson<unknown>("/api/workspaces/runtime-status", input, csrfToken));
+export function getWorkspaceRuntimeStatus(workspaceId: string): Promise<SourceEnvelope<WorkspaceRuntimeDTO>> {
+  return sourceRequest<WorkspaceRuntimeDTO>(() => getJson<unknown>(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/runtime-status`
+  ));
 }
 
 export function revealWorkspaceCredentials(workspaceId: string, csrfToken: string): Promise<RuntimeCredentialResponse> {

@@ -77,6 +77,30 @@ func TestFabricHTTPClientPreflightsMonthlyResourceWithoutIdempotencyKey(t *testi
 	}
 }
 
+func TestFabricHTTPClientReadsMonthlyProviderTruthWithoutMutation(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/fabric/monthly-provider-truth" || r.Header.Get("Authorization") != "Bearer internal-secret" ||
+			r.URL.Query().Get("computeAllocationId") != "compute alpha" || r.URL.Query().Get("storageVolumeId") != "storage/alpha" {
+			t.Fatalf("unexpected request: %s %s?%s auth=%q", r.Method, r.URL.Path, r.URL.RawQuery, r.Header.Get("Authorization"))
+		}
+		if _, ok := r.Header["Idempotency-Key"]; ok {
+			t.Fatalf("read-only provider truth sent Idempotency-Key: %#v", r.Header.Values("Idempotency-Key"))
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"computeState": "ready", "storageState": "absent", "providerRequestId": "req-truth",
+			"compute": map[string]any{"id": "compute alpha", "accountId": "acct-alpha", "workspaceId": "ws-alpha"},
+			"storage": map[string]any{"id": "storage/alpha", "accountId": "acct-alpha", "workspaceId": "ws-alpha"},
+		})
+	}))
+	defer upstream.Close()
+
+	client := NewFabricHTTPClient(upstream.URL, "internal-secret", upstream.Client()).(FabricMonthlyProviderTruthClient)
+	truth, err := client.MonthlyProviderTruth(context.Background(), "compute alpha", "storage/alpha")
+	if err != nil || truth.ComputeState != "ready" || truth.StorageState != "absent" || truth.Compute.ID != "compute alpha" || truth.Storage.ID != "storage/alpha" || truth.ProviderRequestID != "req-truth" {
+		t.Fatalf("monthly provider truth = %#v err=%v", truth, err)
+	}
+}
+
 func TestFabricHTTPClientCreatesZonedPrepaidStorage(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/fabric/storage-volumes" || r.Header.Get("Idempotency-Key") != "storage-once" {

@@ -1,7 +1,6 @@
 package server
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -209,13 +208,17 @@ type monthlyFabric struct {
 	preflightResults      []clients.MonthlyPreflight
 	preflightErr          error
 	preflightInputs       []clients.MonthlyPreflightInput
+	providerTruth         *clients.MonthlyProviderTruth
+	providerTruthErr      error
 	mutateCompute         func(*clients.ComputeAllocation)
 	mutateStorage         func(*clients.StorageVolume)
 	computeIDs            []string
 	storageIDs            []string
+	storageCreateKeys     []string
 	storageInputs         []clients.StorageVolumeInput
 	computeSync           clients.ComputeAllocation
 	storageSync           clients.StorageVolume
+	storageSyncErr        error
 	computeRenew          clients.ComputeAllocation
 	storageRenew          clients.StorageVolume
 	computeRenewErr       error
@@ -264,6 +267,14 @@ func (f *monthlyFabric) MonthlyPreflight(_ context.Context, input clients.Monthl
 	}, f.preflightErr
 }
 
+func (f *monthlyFabric) MonthlyProviderTruth(_ context.Context, _, _ string) (clients.MonthlyProviderTruth, error) {
+	*f.events = append(*f.events, "fabric.monthly-provider-truth")
+	if f.providerTruth == nil {
+		return clients.MonthlyProviderTruth{}, f.providerTruthErr
+	}
+	return *f.providerTruth, f.providerTruthErr
+}
+
 func (f *provisioningMonthlyFabric) CreateComputeAllocation(_ context.Context, input clients.ComputeAllocationInput, _ string) (clients.ComputeAllocation, error) {
 	*f.events = append(*f.events, "fabric.compute.prepare")
 	f.computeIDs = append(f.computeIDs, input.ID)
@@ -307,9 +318,10 @@ func (f *monthlyFabric) CreateComputeAllocation(_ context.Context, input clients
 	return result, nil
 }
 
-func (f *monthlyFabric) CreateStorageVolume(_ context.Context, input clients.StorageVolumeInput, _ string) (clients.StorageVolume, error) {
+func (f *monthlyFabric) CreateStorageVolume(_ context.Context, input clients.StorageVolumeInput, key string) (clients.StorageVolume, error) {
 	*f.events = append(*f.events, "fabric.storage.prepare")
 	f.storageIDs = append(f.storageIDs, input.ID)
+	f.storageCreateKeys = append(f.storageCreateKeys, key)
 	f.storageInputs = append(f.storageInputs, input)
 	if f.createErr != nil {
 		return clients.StorageVolume{ID: input.ID}, f.createErr
@@ -352,6 +364,9 @@ func (f *monthlyFabric) SyncStorageVolume(_ context.Context, id string) (clients
 	result := f.storageSync
 	if result.ID == "" {
 		result.ID = id
+	}
+	if f.storageSyncErr != nil {
+		return result, f.storageSyncErr
 	}
 	return result, f.syncErr
 }
@@ -1195,174 +1210,6 @@ func TestMonthlyEntitlementRejectsInactiveOrExpiredResources(t *testing.T) {
 	}
 }
 
-func historicalCustomerWriteHandler(t *testing.T, server http.Handler) http.Handler {
-	t.Helper()
-	return server.(*controlPlaneHTTPHandler).next
-}
-
-func TestMonthlyPurchaseRouteUsesSub2APIAndPersistsReceipt(t *testing.T) {
-	t.Setenv("OPL_TENCENT_ZONE", "ap-shanghai-2")
-	events := &[]string{}
-	sub2API := &monthlySub2API{events: events, balances: []int64{100_000_000, 50_000_000}}
-	fabric := &monthlyFabric{events: events}
-	ledger := &monthlyLedger{events: events}
-	store := newMemoryTableStore()
-	seedTenantMember(t, store, "acct-alpha", "org-alpha", "usr-alpha", "alpha@example.com")
-	server, err := NewPersistentServer(controlplane.NewService(ledger, fabric, sub2API), store)
-	if err != nil {
-		t.Fatalf("new monthly server: %v", err)
-	}
-	session := tenantAdminSessionForTest(t, server)
-	rec := requestWithSession(t, historicalCustomerWriteHandler(t, server), session, http.MethodPost, "/api/compute-allocations", `{"packageId":"basic","name":"Monthly Compute","zone":"ap-guangzhou-3"}`)
-	if rec.Code != http.StatusAccepted {
-		t.Fatalf("purchase status = %d: %s", rec.Code, rec.Body.String())
-	}
-	var result map[string]any
-	if err := json.NewDecoder(rec.Body).Decode(&result); err != nil {
-		t.Fatalf("decode purchase: %v", err)
-	}
-	if result["billingStatus"] != "active" || result["zone"] != "ap-shanghai-2" || len(sub2API.charges) != 1 || len(ledger.receipts) != 1 {
-		t.Fatalf("purchase result=%#v charges=%#v receipts=%#v", result, sub2API.charges, ledger.receipts)
-	}
-	if len(fabric.preflightInputs) != 1 || fabric.preflightInputs[0].Zone != "ap-shanghai-2" {
-		t.Fatalf("compute preflight input = %#v", fabric.preflightInputs)
-	}
-	computes, err := store.ListComputes(context.Background(), "acct-alpha")
-	if err != nil || len(computes) != 1 || computes[0]["zone"] != "ap-shanghai-2" {
-		t.Fatalf("stored computes=%#v err=%v", computes, err)
-	}
-}
-
-func TestStoragePurchaseUsesOwnedComputeZone(t *testing.T) {
-	events := &[]string{}
-	sub2API := &monthlySub2API{events: events, balances: []int64{100_000_000, 97_420_000}}
-	fabric := &monthlyFabric{events: events}
-	store := newMemoryTableStore()
-	seedTenantMember(t, store, "acct-alpha", "org-alpha", "usr-alpha", "alpha@example.com")
-	mustStore(t, store.SaveCompute(context.Background(), map[string]any{
-		"id": "compute-alpha", "accountId": "acct-alpha", "workspaceId": "workspace-alpha", "status": "running",
-		"packageId":     "basic",
-		"billingStatus": "active", "paidThrough": time.Now().UTC().Add(time.Hour).Format(time.RFC3339),
-		"providerData": map[string]any{"zone": "ap-shanghai-2"},
-	}))
-	server, err := NewPersistentServer(controlplane.NewService(&monthlyLedger{events: events}, fabric, sub2API), store)
-	if err != nil {
-		t.Fatal(err)
-	}
-	session := loginForTest(t, server, "alpha@example.com", "CorrectHorseBatteryStaple!")
-
-	missing := requestWithSession(t, historicalCustomerWriteHandler(t, server), session, http.MethodPost, "/api/storage-volumes", `{"sizeGb":10}`)
-	if missing.Code != http.StatusBadRequest || !strings.Contains(missing.Body.String(), "compute_allocation_required") || len(*events) != 0 {
-		t.Fatalf("missing compute response=%d %s events=%#v", missing.Code, missing.Body.String(), *events)
-	}
-	created := requestWithSession(t, historicalCustomerWriteHandler(t, server), session, http.MethodPost, "/api/storage-volumes", `{"sizeGb":10,"computeAllocationId":"compute-alpha","workspaceId":"workspace-alpha"}`)
-	if created.Code != http.StatusAccepted {
-		t.Fatalf("storage purchase status=%d body=%s", created.Code, created.Body.String())
-	}
-	if len(fabric.storageInputs) != 1 || fabric.storageInputs[0].ComputeID != "compute-alpha" || fabric.storageInputs[0].Zone != "ap-shanghai-2" || fabric.storageInputs[0].WorkspaceID != "workspace-alpha" {
-		t.Fatalf("storage placement = %#v", fabric.storageInputs)
-	}
-}
-
-func TestStoragePurchaseRejectsPackageMismatchBeforeExternalCalls(t *testing.T) {
-	for _, tc := range []struct {
-		name           string
-		computePackage string
-		requestPackage string
-	}{
-		{name: "requested package", computePackage: "basic", requestPackage: `,"packageId":"pro"`},
-		{name: "default package", computePackage: "pro"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			events := &[]string{}
-			store := newMemoryTableStore()
-			seedTenantMember(t, store, "acct-alpha", "org-alpha", "usr-alpha", "alpha@example.com")
-			mustStore(t, store.SaveCompute(context.Background(), map[string]any{
-				"id": "compute-alpha", "accountId": "acct-alpha", "workspaceId": "workspace-alpha", "status": "running",
-				"packageId": tc.computePackage, "billingStatus": "active", "paidThrough": time.Now().UTC().Add(time.Hour).Format(time.RFC3339),
-				"providerData": map[string]any{"zone": "ap-shanghai-2"},
-			}))
-			server, err := NewPersistentServer(controlplane.NewService(&monthlyLedger{events: events}, &monthlyFabric{events: events}, &monthlySub2API{events: events}), store)
-			if err != nil {
-				t.Fatal(err)
-			}
-			session := loginForTest(t, server, "alpha@example.com", "CorrectHorseBatteryStaple!")
-			response := requestWithSession(t, historicalCustomerWriteHandler(t, server), session, http.MethodPost, "/api/storage-volumes", `{"sizeGb":10,"computeAllocationId":"compute-alpha"`+tc.requestPackage+`}`)
-			if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), "compute_storage_package_mismatch") {
-				t.Fatalf("mismatch response=%d %s", response.Code, response.Body.String())
-			}
-			if len(*events) != 0 {
-				t.Fatalf("package mismatch reached external services: %#v", *events)
-			}
-		})
-	}
-}
-
-func TestPaidResourceRoutesRejectCallerSelectedNewResourceIDsBeforeExternalCalls(t *testing.T) {
-	events := &[]string{}
-	sub2API := &monthlySub2API{events: events, balances: []int64{100_000_000, 100_000_000, 50_000_000, 100_000_000, 100_000_000, 97_420_000}}
-	store := newMemoryTableStore()
-	seedTenantMember(t, store, "acct-alpha", "org-alpha", "usr-alpha", "alpha@example.com")
-	server, err := NewPersistentServer(controlplane.NewService(&monthlyLedger{events: events}, &monthlyFabric{events: events}, sub2API), store)
-	if err != nil {
-		t.Fatal(err)
-	}
-	session := loginForTest(t, server, "alpha@example.com", "CorrectHorseBatteryStaple!")
-
-	for _, tc := range []struct {
-		path string
-		body string
-	}{
-		{path: "/api/compute-allocations", body: `{"id":"caller-compute","packageId":"basic"}`},
-		{path: "/api/storage-volumes", body: `{"id":"caller-storage","sizeGb":10}`},
-		{path: "/api/storage-volumes", body: `{"sizeGb":10.5}`},
-		{path: "/api/compute-allocations", body: `{`},
-		{path: "/api/storage-volumes", body: `{`},
-	} {
-		rec := requestWithSession(t, historicalCustomerWriteHandler(t, server), session, http.MethodPost, tc.path, tc.body)
-		if rec.Code != http.StatusBadRequest {
-			t.Errorf("caller-selected id on %s status=%d body=%s", tc.path, rec.Code, rec.Body.String())
-		}
-	}
-	if len(*events) != 0 {
-		t.Fatalf("caller-selected ids reached external services: %#v", *events)
-	}
-}
-
-func TestStorageRouteAllowsOnlyOwnedRetainedVolumeReactivation(t *testing.T) {
-	events := &[]string{}
-	sub2API := &monthlySub2API{events: events, balances: []int64{100_000_000, 92_260_000}}
-	fabric := &provisioningMonthlyFabric{monthlyFabric: monthlyFabric{events: events}}
-	fabric.storageInput = clients.StorageVolumeInput{ID: "storage-retained", AccountID: "acct-alpha", WorkspaceID: "workspace-monthly", ComputeID: "compute-retained", Zone: "ap-shanghai-2", SizeGB: 30}
-	store := newMemoryTableStore()
-	seedTenantMember(t, store, "acct-alpha", "org-alpha", "usr-alpha", "alpha@example.com")
-	mustStore(t, store.SaveCompute(context.Background(), map[string]any{
-		"id": "compute-retained", "accountId": "acct-alpha", "workspaceId": "workspace-monthly", "packageId": "basic", "status": "running", "billingStatus": "active",
-		"paidThrough": time.Now().UTC().Add(time.Hour).Format(time.RFC3339), "providerData": map[string]any{"zone": "ap-shanghai-2"},
-	}))
-	retained := monthlyActiveResource("storage", "storage-retained", time.Now().UTC().Add(-time.Hour))
-	retained["accountId"], retained["ownerUserId"], retained["billingStatus"] = "acct-alpha", "usr-alpha", "retained"
-	retained["sizeGb"], retained["monthlyPriceCnyCents"], retained["chargeUsdMicros"] = 30, int64(5400), int64(7_740_000)
-	retained["computeAllocationId"], retained["zone"] = "compute-retained", "ap-shanghai-2"
-	mustStore(t, store.SaveStorage(context.Background(), retained))
-	server, err := NewPersistentServer(controlplane.NewService(&monthlyLedger{events: events}, fabric, sub2API), store)
-	if err != nil {
-		t.Fatal(err)
-	}
-	session := loginForTest(t, server, "alpha@example.com", "CorrectHorseBatteryStaple!")
-	rec := requestWithSession(t, historicalCustomerWriteHandler(t, server), session, http.MethodPost, "/api/storage-volumes", `{"id":"storage-retained","sizeGb":10,"computeAllocationId":"compute-retained"}`)
-	if rec.Code != http.StatusAccepted {
-		t.Fatalf("retained reactivation status=%d body=%s", rec.Code, rec.Body.String())
-	}
-	var result map[string]any
-	if err := json.NewDecoder(rec.Body).Decode(&result); err != nil {
-		t.Fatal(err)
-	}
-	if result["id"] != "storage-retained" || result["billingStatus"] != "active" || int64(numberField(result, "sizeGb", 0)) != 30 || int64(numberField(result, "chargeUsdMicros", 0)) != 7_740_000 || len(fabric.storageIDs) != 0 || fabric.syncCalls != 1 {
-		t.Fatalf("retained reactivation result=%#v creates=%#v syncs=%d", result, fabric.storageIDs, fabric.syncCalls)
-	}
-}
-
 func TestSub2APIUserIDRejectsDuplicateStoredMapping(t *testing.T) {
 	store := newMemoryTableStore()
 	store.mu.Lock()
@@ -1391,198 +1238,6 @@ func TestSub2APIUserMappingRejectsNumbersJSONCannotRepresentExactly(t *testing.T
 	}
 	if value, ok := positiveIntegerField(map[string]any{"sub2apiUserId": float64(9_007_199_254_740_991)}, "sub2apiUserId"); !ok || value != 9_007_199_254_740_991 {
 		t.Fatalf("largest safe Sub2API user id = %d, ok=%v", value, ok)
-	}
-}
-
-func TestPaidResourceIdempotencyKeysAreScopedToTheSessionAccount(t *testing.T) {
-	events := &[]string{}
-	sub2API := &monthlySub2API{events: events, balances: []int64{100_000_000, 50_000_000, 100_000_000, 50_000_000}}
-	fabric := &monthlyFabric{events: events}
-	store := newMemoryTableStore()
-	seedTenantMember(t, store, "acct-alpha", "org-alpha", "usr-alpha", "alpha@example.com")
-	seedTenantMember(t, store, "acct-beta", "org-beta", "usr-beta", "beta@example.com")
-	server, err := NewPersistentServer(controlplane.NewService(&monthlyLedger{events: events}, fabric, sub2API), store)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	alpha := requestWithSession(t, historicalCustomerWriteHandler(t, server), loginForTest(t, server, "alpha@example.com", "CorrectHorseBatteryStaple!"), http.MethodPost, "/api/compute-allocations", `{"packageId":"basic"}`)
-	beta := requestWithSession(t, historicalCustomerWriteHandler(t, server), loginForTest(t, server, "beta@example.com", "CorrectHorseBatteryStaple!"), http.MethodPost, "/api/compute-allocations", `{"packageId":"basic"}`)
-	if alpha.Code != http.StatusAccepted || beta.Code != http.StatusAccepted {
-		t.Fatalf("same-key purchases: alpha=%d %s beta=%d %s", alpha.Code, alpha.Body.String(), beta.Code, beta.Body.String())
-	}
-	var alphaResource, betaResource map[string]any
-	if err := json.NewDecoder(alpha.Body).Decode(&alphaResource); err != nil {
-		t.Fatal(err)
-	}
-	if err := json.NewDecoder(beta.Body).Decode(&betaResource); err != nil {
-		t.Fatal(err)
-	}
-	if alphaResource["id"] == betaResource["id"] || len(sub2API.charges) != 2 || sub2API.charges[0].UserID != 41 || sub2API.charges[1].UserID != 42 {
-		t.Fatalf("alpha=%#v beta=%#v charges=%#v", alphaResource, betaResource, sub2API.charges)
-	}
-}
-
-func TestVerificationSlotUsesNormalIdempotentCommercialPurchase(t *testing.T) {
-	events := &[]string{}
-	sub2API := &monthlySub2API{events: events, balances: []int64{100_000_000, 50_000_000, 50_000_000, 47_420_000}}
-	fabric := &monthlyFabric{events: events}
-	ledger := &monthlyLedger{events: events}
-	store := newMemoryTableStore()
-	seedTenantMember(t, store, "acct-alpha", "org-alpha", "usr-alpha", "alpha@example.com")
-	server, err := NewPersistentServer(controlplane.NewService(ledger, fabric, sub2API), store)
-	if err != nil {
-		t.Fatal(err)
-	}
-	session := loginForTest(t, server, "alpha@example.com", "CorrectHorseBatteryStaple!")
-
-	computeBody := `{"packageId":"basic","name":"verification-slot-01"}`
-	compute := requestWithSession(t, historicalCustomerWriteHandler(t, server), session, http.MethodPost, "/api/compute-allocations", computeBody)
-	computeReplay := requestWithSession(t, historicalCustomerWriteHandler(t, server), session, http.MethodPost, "/api/compute-allocations", computeBody)
-	if compute.Code != http.StatusAccepted || computeReplay.Code != http.StatusAccepted {
-		t.Fatalf("compute=%d %s replay=%d %s", compute.Code, compute.Body.String(), computeReplay.Code, computeReplay.Body.String())
-	}
-	var computeResult, computeReplayResult map[string]any
-	if err := json.NewDecoder(compute.Body).Decode(&computeResult); err != nil {
-		t.Fatal(err)
-	}
-	if err := json.NewDecoder(computeReplay.Body).Decode(&computeReplayResult); err != nil {
-		t.Fatal(err)
-	}
-	storageBody := `{"packageId":"basic","sizeGb":10,"name":"verification-slot-01","computeAllocationId":"` + stringValue(computeResult["id"]) + `"}`
-	storage := requestWithSession(t, historicalCustomerWriteHandler(t, server), session, http.MethodPost, "/api/storage-volumes", storageBody)
-	storageReplay := requestWithSession(t, historicalCustomerWriteHandler(t, server), session, http.MethodPost, "/api/storage-volumes", storageBody)
-	if storage.Code != http.StatusAccepted || storageReplay.Code != http.StatusAccepted {
-		t.Fatalf("storage=%d %s replay=%d %s", storage.Code, storage.Body.String(), storageReplay.Code, storageReplay.Body.String())
-	}
-	var storageResult, storageReplayResult map[string]any
-	if err := json.NewDecoder(storage.Body).Decode(&storageResult); err != nil {
-		t.Fatal(err)
-	}
-	if err := json.NewDecoder(storageReplay.Body).Decode(&storageReplayResult); err != nil {
-		t.Fatal(err)
-	}
-
-	if computeResult["id"] != computeReplayResult["id"] || storageResult["id"] != storageReplayResult["id"] || computeResult["name"] != "verification-slot-01" || storageResult["name"] != "verification-slot-01" {
-		t.Fatalf("compute=%#v replay=%#v storage=%#v replay=%#v", computeResult, computeReplayResult, storageResult, storageReplayResult)
-	}
-	if len(sub2API.charges) != 2 || len(fabric.preflightInputs) != 2 || len(fabric.computeIDs) != 1 || len(fabric.storageIDs) != 1 || len(ledger.receipts) != 2 {
-		t.Fatalf("charges=%#v preflights=%#v computes=%#v storages=%#v receipts=%#v", sub2API.charges, fabric.preflightInputs, fabric.computeIDs, fabric.storageIDs, ledger.receipts)
-	}
-	for _, receipt := range ledger.receipts {
-		if receipt.AccountID != "acct-alpha" || receipt.Type != "billing.resource_purchased.v1" {
-			t.Fatalf("verification slot escaped normal tenant receipt: %#v", receipt)
-		}
-	}
-}
-
-func TestMonthlyReadinessRoutesResumePersistedPurchase(t *testing.T) {
-	for _, tc := range []struct {
-		name         string
-		createPath   string
-		createBody   string
-		resourceType string
-		charge       int64
-	}{
-		{name: "compute get", createPath: "/api/compute-allocations", createBody: `{"packageId":"basic"}`, resourceType: "compute", charge: 50_000_000},
-		{name: "storage sync", createPath: "/api/storage-volumes", createBody: `{"sizeGb":10}`, resourceType: "storage", charge: 2_580_000},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			events := &[]string{}
-			initial := int64(100_000_000)
-			sub2API := &monthlySub2API{events: events, balances: []int64{initial, initial - tc.charge}}
-			fabric := &provisioningMonthlyFabric{monthlyFabric: monthlyFabric{events: events}}
-			ledger := &monthlyLedger{events: events}
-			store := newMemoryTableStore()
-			seedTenantMember(t, store, "acct-alpha", "org-alpha", "usr-alpha", "alpha@example.com")
-			if tc.resourceType == "storage" {
-				mustStore(t, store.SaveCompute(context.Background(), map[string]any{
-					"id": "compute-placement", "accountId": "acct-alpha", "workspaceId": "workspace-placement", "packageId": "basic", "status": "running", "billingStatus": "active",
-					"paidThrough": time.Now().UTC().Add(time.Hour).Format(time.RFC3339), "providerData": map[string]any{"zone": "ap-shanghai-2"},
-				}))
-				tc.createBody = `{"sizeGb":10,"computeAllocationId":"compute-placement"}`
-			}
-			server, err := NewPersistentServer(controlplane.NewService(ledger, fabric, sub2API), store)
-			if err != nil {
-				t.Fatal(err)
-			}
-			session := tenantAdminSessionForTest(t, server)
-			created := requestWithSession(t, historicalCustomerWriteHandler(t, server), session, http.MethodPost, tc.createPath, tc.createBody)
-			if created.Code != http.StatusAccepted {
-				t.Fatalf("create status=%d body=%s events=%#v", created.Code, created.Body.String(), *events)
-			}
-			var pending map[string]any
-			if err := json.NewDecoder(created.Body).Decode(&pending); err != nil {
-				t.Fatal(err)
-			}
-			id := stringValue(pending["id"])
-			method, path := http.MethodGet, "/api/compute-allocations/"+id
-			if tc.resourceType == "storage" {
-				method, path = http.MethodPost, "/api/storage-volumes/"+id+"/sync"
-			}
-			ready := requestWithSession(t, server, session, method, path, `{}`)
-			if ready.Code != http.StatusOK {
-				t.Fatalf("readiness status=%d body=%s", ready.Code, ready.Body.String())
-			}
-			var active map[string]any
-			if err := json.NewDecoder(ready.Body).Decode(&active); err != nil {
-				t.Fatal(err)
-			}
-			creates := fabric.computeIDs
-			if tc.resourceType == "storage" {
-				creates = fabric.storageIDs
-			}
-			if active["billingStatus"] != "active" || len(creates) != 1 || fabric.syncCalls != 1 || len(sub2API.charges) != 1 {
-				t.Fatalf("active=%#v creates=%#v syncs=%d charges=%#v", active, creates, fabric.syncCalls, sub2API.charges)
-			}
-		})
-	}
-}
-
-func TestMonthlyRoutesRejectInactiveEntitlementsBeforeFabric(t *testing.T) {
-	events := &[]string{}
-	sub2API := &monthlySub2API{events: events, balances: []int64{0}}
-	fabricCalls := []string{}
-	fabric := &monthlyFabric{events: events, fakeFabricClient: fakeFabricClient{calls: &fabricCalls}}
-	ledger := &monthlyLedger{events: events}
-	store := newMemoryTableStore()
-	now := time.Now().UTC()
-	if err := store.SaveCompute(context.Background(), map[string]any{"id": "compute-inactive", "accountId": "acct-alpha", "workspaceId": "workspace-monthly", "packageId": "basic", "status": "running", "billingStatus": "preparing", "paidThrough": now.Add(time.Hour).Format(time.RFC3339)}); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.SaveStorage(context.Background(), map[string]any{"id": "storage-active", "accountId": "acct-alpha", "workspaceId": "workspace-monthly", "packageId": "basic", "status": "available", "billingStatus": "active", "paidThrough": now.Add(time.Hour).Format(time.RFC3339)}); err != nil {
-		t.Fatal(err)
-	}
-	server, err := NewPersistentServer(controlplane.NewService(ledger, fabric, sub2API), store)
-	if err != nil {
-		t.Fatalf("new monthly server: %v", err)
-	}
-	session := tenantOwnerSessionForTest(t, server)
-	attachment := requestWithSession(t, historicalCustomerWriteHandler(t, server), session, http.MethodPost, "/api/storage-attachments", `{"workspaceId":"workspace-monthly","computeAllocationId":"compute-inactive","storageId":"storage-active"}`)
-	if attachment.Code != http.StatusConflict || !strings.Contains(attachment.Body.String(), "monthly_entitlement_inactive") {
-		t.Fatalf("attachment status = %d: %s", attachment.Code, attachment.Body.String())
-	}
-	if len(fabricCalls) != 0 {
-		t.Fatalf("inactive attachment reached Fabric: %#v", fabricCalls)
-	}
-
-	if err := store.SaveCompute(context.Background(), map[string]any{"id": "compute-inactive", "accountId": "acct-alpha", "workspaceId": "workspace-monthly", "status": "running", "billingStatus": "active", "paidThrough": now.Add(-time.Minute).Format(time.RFC3339)}); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.SaveAttachment(context.Background(), map[string]any{"id": "attachment-expired", "accountId": "acct-alpha", "workspaceId": "workspace-monthly", "computeAllocationId": "compute-inactive", "storageId": "storage-active", "status": "attached"}); err != nil {
-		t.Fatal(err)
-	}
-	workspaceReq := httptest.NewRequest(http.MethodPost, "/api/workspaces", bytes.NewBufferString(`{"attachmentId":"attachment-expired"}`))
-	workspaceReq.Header.Set("Content-Type", "application/json")
-	workspaceReq.Header.Set("Idempotency-Key", "workspace-expired")
-	addAuth(workspaceReq, session)
-	workspaceRec := httptest.NewRecorder()
-	historicalCustomerWriteHandler(t, server).ServeHTTP(workspaceRec, workspaceReq)
-	if workspaceRec.Code != http.StatusConflict || !strings.Contains(workspaceRec.Body.String(), "monthly_entitlement_inactive") {
-		t.Fatalf("workspace status = %d: %s", workspaceRec.Code, workspaceRec.Body.String())
-	}
-	if len(fabricCalls) != 0 {
-		t.Fatalf("expired workspace reached Fabric: %#v", fabricCalls)
 	}
 }
 

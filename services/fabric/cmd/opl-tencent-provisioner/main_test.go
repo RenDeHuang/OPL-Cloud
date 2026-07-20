@@ -2884,6 +2884,25 @@ func TestTencentSDKProviderTruthReturnsAbsentOnlyWhenEveryExactIdentityIsAbsent(
 	assertProviderTruthReadOnly(t, tkeAPI, cvmAPI)
 }
 
+func TestTencentSDKProviderTruthReturnsKnownComputeWhenOnlyCBSIsAbsent(t *testing.T) {
+	tkeAPI := &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 1, clusterInstanceID: "node-basic-1"}
+	cvmAPI := &fakeNativeCvmAPI{instanceName: "compute-alpha", expiredTime: "2026-08-16T08:00:00+08:00"}
+	cbsAPI := &fakeNativeCbsAPI{empty: true}
+	client := newProviderTruthClient(tkeAPI, cvmAPI)
+	client.nativeCbsClient = cbsAPI
+
+	response := client.ProviderTruth(providerTruthRequest(), nil)
+
+	if response.Ok || response.ErrorCode != "provider_truth_partial_identity" || response.MachinePresent == nil || !*response.MachinePresent || response.StoragePresent == nil || *response.StoragePresent || response.CBSStatus != "NOT_FOUND" {
+		t.Fatalf("mixed provider truth = %#v", response)
+	}
+	if response.ProviderData["instanceType"] != "SA5.LARGE4" || response.ProviderData["zone"] != "ap-guangzhou-3" || response.ProviderData["chargeType"] != "PREPAID" || response.ProviderData["renewFlag"] != "NOTIFY_AND_MANUAL_RENEW" || response.ProviderData["deadline"] != "2026-08-16T00:00:00Z" {
+		t.Fatalf("mixed provider truth lost exact compute facts: %#v", response.ProviderData)
+	}
+	assertProviderTruthDescribeOnly(t, tkeAPI.calls)
+	assertProviderTruthReadOnly(t, tkeAPI, cvmAPI)
+}
+
 func TestTencentSDKProviderTruthDoesNotReturnAbsentWhileCBSExists(t *testing.T) {
 	tkeAPI := &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 0}
 	cvmAPI := &fakeNativeCvmAPI{empty: true}
@@ -2891,9 +2910,22 @@ func TestTencentSDKProviderTruthDoesNotReturnAbsentWhileCBSExists(t *testing.T) 
 
 	response := client.ProviderTruth(providerTruthRequest(), nil)
 
-	if response.Ok || response.Status == "absent" || response.ProviderData["storagePresent"] != "true" || response.ErrorCode != "provider_truth_partial_identity" {
+	if response.Ok || response.Status == "absent" || response.ProviderData["storagePresent"] != "true" || response.ErrorCode != "provider_truth_partial_identity" || response.MachinePresent == nil || *response.MachinePresent || response.StoragePresent == nil || !*response.StoragePresent {
 		t.Fatalf("attached CBS must prevent confirmed absence: %#v", response)
 	}
+}
+
+func TestTencentSDKProviderTruthLeavesOnlyMismatchedComputeUnknown(t *testing.T) {
+	tkeAPI := &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 1, clusterInstanceID: "node-basic-1", machineInstanceType: "SA5.2XLARGE16"}
+	cvmAPI := &fakeNativeCvmAPI{instanceName: "compute-alpha"}
+	client := newProviderTruthClient(tkeAPI, cvmAPI)
+
+	response := client.ProviderTruth(providerTruthRequest(), nil)
+
+	if response.Ok || response.ErrorCode != "provider_truth_compute_sku_mismatch" || response.MachinePresent != nil || response.StoragePresent == nil || !*response.StoragePresent || response.ProviderData["storagePresent"] != "true" {
+		t.Fatalf("mismatched component truth = %#v", response)
+	}
+	assertProviderTruthReadOnly(t, tkeAPI, cvmAPI)
 }
 
 func TestTencentSDKProviderTruthRejectsAccountOwnershipMismatch(t *testing.T) {

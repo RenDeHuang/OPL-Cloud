@@ -15,9 +15,12 @@ import (
 
 type sourceTruthIdentityClient struct {
 	*testSub2APIClient
-	users    map[int64]clients.Sub2APIIdentity
-	userErrs map[int64]error
-	userIDs  []int64
+	users           map[int64]clients.Sub2APIIdentity
+	userErrs        map[int64]error
+	userIDs         []int64
+	adminUsersCalls int
+	batchUsageCalls int
+	adminUsersErr   error
 }
 
 func (c *sourceTruthIdentityClient) User(_ context.Context, userID int64) (clients.Sub2APIIdentity, error) {
@@ -30,6 +33,27 @@ func (c *sourceTruthIdentityClient) User(_ context.Context, userID int64) (clien
 		return clients.Sub2APIIdentity{}, errors.New("identity unavailable")
 	}
 	return identity, nil
+}
+
+func (c *sourceTruthIdentityClient) AdminUsers(_ context.Context, query clients.Sub2APIUserPageQuery) (clients.Sub2APIUserPage, error) {
+	c.adminUsersCalls++
+	if c.adminUsersErr != nil {
+		return clients.Sub2APIUserPage{}, c.adminUsersErr
+	}
+	items := make([]clients.Sub2APIUser, 0, len(c.users))
+	for _, identity := range c.users {
+		items = append(items, clients.Sub2APIUser{ID: identity.ID, Email: identity.Email, Status: identity.Status, CreatedAt: time.Date(2026, 7, 18, 0, 0, 0, 0, time.UTC), UpdatedAt: time.Date(2026, 7, 19, 0, 0, 0, 0, time.UTC)})
+	}
+	return clients.Sub2APIUserPage{Items: items, Total: int64(len(items)), Page: query.Page, PageSize: query.PageSize, Pages: 1}, nil
+}
+
+func (c *sourceTruthIdentityClient) BatchUsersUsage(_ context.Context, userIDs []int64) (map[int64]clients.Sub2APIBatchUserUsage, error) {
+	c.batchUsageCalls++
+	result := make(map[int64]clients.Sub2APIBatchUserUsage, len(userIDs))
+	for _, id := range userIDs {
+		result[id] = clients.Sub2APIBatchUserUsage{UserID: id}
+	}
+	return result, nil
 }
 
 func TestAuthMeUsesOnlySessionIdentityAndLiveSub2APIUser(t *testing.T) {
@@ -81,7 +105,7 @@ func TestAuthMeUsesOnlySessionIdentityAndLiveSub2APIUser(t *testing.T) {
 	assertUnavailableIdentityEnvelope(t, unavailable, http.StatusBadGateway, "sub2api")
 }
 
-func TestOperatorAccountsJoinsControlPlaneMappingWithSequentialSub2APIReadback(t *testing.T) {
+func TestOperatorAccountsJoinsControlPlaneMappingWithPaginatedBatchSub2APIReadback(t *testing.T) {
 	store := newMemoryTableStore()
 	seedTenantMember(t, store, "acct-beta", "org-beta", "usr-beta", "beta@example.com")
 	seedTenantMember(t, store, "acct-alpha", "org-alpha", "usr-alpha", "alpha@example.com")
@@ -108,34 +132,54 @@ func TestOperatorAccountsJoinsControlPlaneMappingWithSequentialSub2APIReadback(t
 	}
 	data := mapField(envelope, "data")
 	items, _ := data["items"].([]any)
-	if envelope["source"] != "control-plane+sub2api" || envelope["status"] != "available" || len(items) != 2 || data["total"] != float64(2) {
+	if envelope["source"] != "control-plane+sub2api" || envelope["status"] != "available" || len(items) != 2 || data["total"] != float64(2) || data["page"] != float64(1) || data["pageSize"] != float64(20) {
 		t.Fatalf("operator accounts envelope = %#v", envelope)
 	}
 	alpha, beta := items[0].(map[string]any), items[1].(map[string]any)
-	if len(alpha) != 6 || alpha["accountId"] != "acct-alpha" || alpha["consoleUserId"] != "usr-alpha" || alpha["role"] != "owner" || alpha["sub2apiUserId"] != "41" || alpha["email"] != "alpha@example.com" || alpha["status"] != "active" {
+	if alpha["accountId"] != "acct-alpha" || alpha["consoleUserId"] != "usr-alpha" || alpha["role"] != "owner" || alpha["sub2apiUserId"] != "41" || alpha["email"] != "alpha@example.com" || alpha["status"] != "active" || mapField(alpha, "wallet")["available"] != true {
 		t.Fatalf("alpha mapping = %#v", alpha)
 	}
-	if beta["accountId"] != "acct-beta" || beta["sub2apiUserId"] != "42" || beta["email"] != "beta@example.com" || beta["status"] != "disabled" {
+	if beta["accountId"] != "acct-beta" || beta["sub2apiUserId"] != "42" || beta["email"] != "beta@example.com" || beta["status"] != "active" || mapField(mapField(beta, "gatewayIdentity"), "data")["status"] != "disabled" {
 		t.Fatalf("beta mapping = %#v", beta)
 	}
-	if len(client.userIDs) != 2 || client.userIDs[0] != 41 || client.userIDs[1] != 42 {
-		t.Fatalf("operator sequential readback = %#v", client.userIDs)
+	if client.adminUsersCalls != 1 || client.batchUsageCalls != 1 || len(client.userIDs) != 0 {
+		t.Fatalf("operator batch readback users=%d usage=%d singles=%#v", client.adminUsersCalls, client.batchUsageCalls, client.userIDs)
 	}
 
-	client.userIDs = nil
+	client.userIDs, client.adminUsersCalls, client.batchUsageCalls = nil, 0, 0
 	customer := loginForTest(t, server, "alpha@example.com", "CorrectHorseBatteryStaple!")
 	forbidden := requestWithSession(t, server, customer, http.MethodGet, "/api/operator/accounts", "")
-	if forbidden.Code != http.StatusForbidden || len(client.userIDs) != 0 {
-		t.Fatalf("customer operator accounts = %d calls=%#v: %s", forbidden.Code, client.userIDs, forbidden.Body.String())
+	if forbidden.Code != http.StatusForbidden || client.adminUsersCalls != 0 || client.batchUsageCalls != 0 {
+		t.Fatalf("customer operator accounts = %d users=%d usage=%d: %s", forbidden.Code, client.adminUsersCalls, client.batchUsageCalls, forbidden.Body.String())
 	}
 
 	client.users[41] = clients.Sub2APIIdentity{ID: 41, Email: "mismatch@example.com", Status: "active"}
 	mismatch := requestWithSession(t, server, operator, http.MethodGet, "/api/operator/accounts", "")
-	assertUnavailableIdentityEnvelope(t, mismatch, http.StatusBadGateway, "control-plane+sub2api")
+	if mismatch.Code != http.StatusOK {
+		t.Fatalf("one-account mismatch = %d: %s", mismatch.Code, mismatch.Body.String())
+	}
+	var mismatchEnvelope map[string]any
+	if err := json.NewDecoder(mismatch.Body).Decode(&mismatchEnvelope); err != nil {
+		t.Fatal(err)
+	}
+	mismatchAlpha := mapField(mismatchEnvelope, "data")["items"].([]any)[0].(map[string]any)
+	if mapField(mismatchAlpha, "gatewayIdentity")["available"] != false || mapField(mismatchAlpha, "wallet")["available"] != false || mapField(mismatchAlpha, "usage")["available"] != false {
+		t.Fatalf("mismatched account sources = %#v", mismatchAlpha)
+	}
 	client.users[41] = clients.Sub2APIIdentity{ID: 41, Email: "alpha@example.com", Status: "active"}
-	client.userErrs[42] = errors.New("Sub2API unavailable")
+	delete(client.users, 42)
 	unavailable := requestWithSession(t, server, operator, http.MethodGet, "/api/operator/accounts", "")
-	assertUnavailableIdentityEnvelope(t, unavailable, http.StatusBadGateway, "control-plane+sub2api")
+	if unavailable.Code != http.StatusOK {
+		t.Fatalf("one-account unavailable = %d: %s", unavailable.Code, unavailable.Body.String())
+	}
+	var unavailableEnvelope map[string]any
+	if err := json.NewDecoder(unavailable.Body).Decode(&unavailableEnvelope); err != nil {
+		t.Fatal(err)
+	}
+	unavailableBeta := mapField(unavailableEnvelope, "data")["items"].([]any)[1].(map[string]any)
+	if mapField(unavailableBeta, "gatewayIdentity")["available"] != false || mapField(unavailableBeta, "wallet")["available"] != false {
+		t.Fatalf("unavailable account sources = %#v", unavailableBeta)
+	}
 }
 
 func assertUnavailableIdentityEnvelope(t *testing.T, response *httptest.ResponseRecorder, wantStatus int, source string) {

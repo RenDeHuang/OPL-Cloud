@@ -41,9 +41,7 @@ test("OPL Cloud image release workflow matches the deployment contract", async (
   assert.equal(currentJob.environment, contract.environment);
 
   const inputs = Object.keys(currentWorkflow.on.workflow_dispatch.inputs || {});
-  for (const input of spec.inputs) {
-    assert.ok(inputs.includes(input), `${spec.file} missing input ${input}`);
-  }
+  assert.deepEqual(inputs, spec.inputs);
   for (const [key, value] of Object.entries(spec.env)) {
     assert.equal(currentJob.env[key], value);
   }
@@ -56,5 +54,9 @@ test("OPL Cloud image release workflow matches the deployment contract", async (
     for (const token of tokens) {
       assert.ok(text.includes(token), `${stepName} missing ${token}`);
     }
+  }
+  const source = JSON.stringify(currentWorkflow);
+  for (const token of spec.forbiddenRunTokens || []) {
+    assert.equal(source.includes(token), false, `${spec.file} contains forbidden ${token}`);
   }
 });

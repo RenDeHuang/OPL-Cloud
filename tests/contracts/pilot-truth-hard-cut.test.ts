@@ -33,7 +33,7 @@ test("current docs describe only the fast invite-only paid Pilot", async () => {
   assert.match(runbook, /one Basic reserved\s+account.*one dedicated Key.*one model request/is);
   assert.match(tke, /separate Control Plane, Fabric, and Ledger Kubernetes Deployments/is);
   assert.match(status, /code-complete/i);
-  assert.match(status, /not production-proven/i);
+  assert.match(status, /production-proven=false/i);
   assert.doesNotMatch(architecture, /starts from a fresh database/i);
   assert.match(architecture, /legacy identity collisions.*fail closed/is);
   assert.doesNotMatch(runbook, /safe-update\.sh|\/home\/ubuntu\/sub2api/);
@@ -101,16 +101,23 @@ test("current contracts expose only authoritative Pilot sources and controls", a
   });
   assert.equal(freeze.gateway.summaryApi, undefined);
   assert.equal(freeze.gateway.customerReadContract, "opl-cloud-console-source-truth-contract.json");
-  assert.deepEqual(freeze.gateway.customerMutationApis, []);
-  assert.equal(sourceTruth.sources.gateway.keys.revealRoute, "POST /api/gateway/keys/opl-workspace/reveal");
-  assert.deepEqual(Object.keys(sourceTruth.sources.gateway), ["wallet", "keys", "usage", "usageStats", "balanceHistory"]);
+  assert.deepEqual(freeze.gateway.customerMutationApis, [
+    "create_general_key",
+    "update_general_key",
+    "delete_general_key",
+    "reveal_owned_key"
+  ]);
+  assert.equal(sourceTruth.sources.gateway.keys.revealRoute, "POST /api/gateway/keys/{keyId}/reveal");
+  assert.deepEqual(Object.keys(sourceTruth.sources.gateway), [
+    "endpoint", "wallet", "keys", "usage", "usageStats", "accountUsageStats", "balanceHistory"
+  ]);
   assert.equal(product.pilotBoundary.primaryWorkspacePerAccount, 1);
   assert.equal(product.pilotBoundary.workspaceDataAuthority, "cbs");
   assert.deepEqual(product.pilotBoundary.unsupportedCustomerCapabilities, ["backup", "recovery", "sync", "transfer"]);
   assert.equal(product.pilotBoundary.autoRenewCustomerControl, "hidden_until_real_renewal_evidence");
   assert.equal(boundary.browserBoundary.onlyCalls, "control_plane_product_apis");
   assert.deepEqual(boundary.browserBoundary.forbidden, ["sub2api_direct", "gflabtoken_link", "iframe", "html_scraping", "raw_admin_dto"]);
-  assert.deepEqual(boundary.customerMutationBoundary, { payment: false, topUp: false, keyCreate: false, keyRevoke: false });
+  assert.deepEqual(boundary.customerMutationBoundary, { payment: false, topUp: false, keyCreate: true, keyRevoke: true });
 });
 
 test("Workspace owns renewal while resource and general execution contracts are non-Pilot compatibility", async () => {
@@ -156,7 +163,9 @@ test("release contracts separate dual Acceptance from one-request Basic live QA"
     providerMutationCount: 0
   });
   assert.deepEqual(freeze.deliveryEvidence, {
-    codeCompleteThroughTask: 13,
+    required: true,
+    codeComplete: false,
+    pilotReady: false,
     productionProven: false,
     saleable: false
   });

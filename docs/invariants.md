@@ -17,8 +17,9 @@ The four implementation owner lanes are Console/Control Plane, Fabric, Gateway i
   and Sub2API email must match after `lower(trim(email))`.
 - Organization and Membership rows are internal one-to-one compatibility
   records only. They do not authorize sharing or appear in customer DTOs.
-- Operators manually pre-fund the Sub2API wallet. There is no customer payment,
-  top-up, payment-order, or Key create/revoke surface.
+- Operators manually pre-fund or adjust the Sub2API wallet through audited
+  recharge, debit, and business-refund commands. There is no customer payment,
+  top-up, or payment-order surface. Owners may manage general API Keys.
 - Each account has one Workspace. Basic and Pro are the only Pilot packages.
 - `autoRenew` defaults off. Enabling it is rejected and hidden until a real
   renewal has been approved and proven.
@@ -31,9 +32,12 @@ The four implementation owner lanes are Console/Control Plane, Fabric, Gateway i
 - Sub2API authenticates customer credentials. Control Plane owns local Sessions,
   account mapping, quotes, monthly orchestration, entitlements, expiry, and
   operator review; it stores no second customer password truth.
-- Operators invite customers through `POST /api/users`. The backend resolves or
-  creates the Sub2API identity by normalized email and atomically stores the
-  one-to-one local graph. Self-registration and SSO are not Pilot claims.
+- Operators open invited customers through canonical `POST /api/operator/accounts`
+  with `ProvisionAccountRequest`. The command uses `provision` semantics,
+  `account.provision` audit action, and an `account-provision` operation identity.
+  The backend resolves or creates the Sub2API identity by normalized email and
+  atomically stores the one-to-one local graph. Self-registration and SSO are not
+  Pilot claims.
 - Console displays live Sub2API balance, Key metadata, request usage, usage stats, and Ledger billing receipts without creating a wallet, Key database, usage database, or billing fact table.
 - Basic is `2c4g` plus 10GB for `52_580_000` USD micros/month:
   `50_000_000` compute plus `2_580_000` storage.
@@ -72,17 +76,21 @@ The four implementation owner lanes are Console/Control Plane, Fabric, Gateway i
 
 - OPL Gateway uses the externally deployed Sub2API backend. Compatibility is gated by required API capabilities; the reported version is diagnostic metadata and never blocks an otherwise compatible deployment. Sub2API code, image, container, database, configuration, and deployment remain immutable from this repository.
 - Sub2API is the only owner of spendable USD balance, API keys, model routing, and request usage.
-- Control Plane maps the signed-in account through `sub2apiUserId` and selects exactly one active Key named `opl-workspace`; zero or multiple matches fail closed.
+- Control Plane maps the signed-in account through `sub2apiUserId`. Owners may manage general Keys; Workspace
+  convergence separately requires exactly one active reserved Key named `opl-workspace` and fails closed otherwise.
 - Required read capabilities are mapped-user balance, the mapped user's paginated Key list, paginated request usage, and aggregate usage stats. Request usage and stats are scoped by both `user_id` and the selected `api_key_id`; every returned identity is validated again by Control Plane.
 - Request charges use Sub2API `actual_cost`, converted once to integer USD micros. Control Plane returns an explicit unavailable state for a missing capability or upstream failure and never substitutes zero.
 - Control Plane decodes a strict customer-safe DTO allowlist. Raw Sub2API admin responses, nested raw Keys, upstream account internals, prompts, and response content never reach Console, OPL PostgreSQL, Ledger, logs, or caches.
 - Key DTO fields `quota_used`, `usage_5h`, `usage_1d`, `usage_7d`, and `last_used_at` remain quota and recent-window signals; they do not replace request-level usage and aggregate stats.
-- The owner may request the Key only through audited
-  `POST /api/gateway/keys/opl-workspace/reveal`. It is masked by default and
+- The owner may request an owned Key only through audited
+  `POST /api/gateway/keys/{keyId}/reveal`. It is masked by default and
   never enters `/api/state`, browser storage, OPL PostgreSQL, Ledger, logs,
   caches, or operation payloads. The retired Gateway summary route is a 404.
 - Kubernetes Secret is the only authorized Key persistence point. Fabric writes or rotates an account-scoped Secret, and Workspace runtime receives only its reference.
 - The global `OPL_CODEX_API_KEY` is forbidden for customer Workspaces.
+- The public API address comes only from `OPL_GATEWAY_PUBLIC_BASE_URL` through
+  `GET /api/gateway/endpoint`. Production requires HTTPS; missing/invalid configuration is unavailable.
+  Browser responses never expose or fall back to `OPL_SUB2API_BASE_URL` or `gflabtoken.cn`.
 
 Every Console source projection carries `source`, `status`, `available`, and
 `fetchedAt`. `empty` means a successful authoritative read with zero rows;
@@ -107,17 +115,55 @@ validate account and quote
 ```
 
 - Debit, provider mutation, claim, activation, refund, Secret write, renewal, and receipt each use stable operation-scoped identities.
-- One authenticated `POST /api/workspace-launches` stores a durable `workspace.launch` RuntimeOperation. The existing provider reconciliation worker resumes its compute, storage, attachment, Gateway Secret, Runtime, and receipt phases after browser close or process restart.
-- The submission-time Sub2API total-balance read is a read-only preflight, not a hold or reservation. Each child purchase still performs its existing safety preflight and deterministic debit protocol.
+- Operator wallet adjustment, `workspace.launch.v2` debit/refund, and Workspace
+  renewal debit/refund share the single-replica process-local
+  `lockResource("sub2api-wallet", accountId)` critical section. No second lock
+  service is introduced; multi-replica execution remains forbidden until an
+  approved distributed serialization boundary exists.
+- One authenticated `POST /api/workspace-launches` stores a durable
+  `workspace.launch.v2` RuntimeOperation. Current V2 recovery resumes the stable
+  total-debit, pure Fabric fulfillment, activation, and receipt sub-operations
+  after browser close or process restart through `succeeded` or `refunded`.
+- Provider capacity and price preflight runs before the first charge attempt only.
+  Recovery with either `ChargeAttempted` or `ChargeConfirmation` skips a new
+  preflight and reconciles the stable charge identity first.
+- The submission-time Sub2API total-balance read is a read-only preflight, not a hold or reservation. One
+  Workspace operation performs one deterministic total debit; compute and storage are fulfillment-only phases.
+- Financial proof requires `preBalanceUsdMicros > totalChargeUsdMicros` and
+  `postBalanceUsdMicros == preBalanceUsdMicros - totalChargeUsdMicros`. Any
+  mismatch enters `manual_review` with zero Fabric writes.
 - Debit failure forbids every Tencent resource write.
 - A confirmed provider result showing no billable resource exists permits exactly one idempotent refund.
 - A partial or unknown provider result enters `manual_review` without refund or a second purchase.
+- Immediately before activation, `SyncMonthlyCompute` and `SyncMonthlyStorage`
+  must revalidate resource/account/Workspace identity, Zone, compute SKU, storage
+  capacity, `PREPAID`, `NOTIFY_AND_MANUAL_RENEW`, and deadline. A mismatch remains
+  in `manual_review` without activation.
+- Dedicated `workspace.launch.v2` review recovery uses
+  `POST /api/operator/workspace-launches/{operationId}/recover`. Reconciliation
+  items require `accountId`, `billingOperationId`, `phase`, `errorCode`, and
+  `allowedActions`; only `manual_review` exposes `recover_workspace_launch`.
+  This dedicated recovery and DTO have integrated local fake evidence.
+  Provider reconciliation uses internal
+  `GET /fabric/monthly-provider-truth?computeAllocationId=<id>&storageVolumeId=<id>`
+  only for `workspace.launch.v2` manual-review recovery and reuses the existing
+  Tencent provisioner `provider_truth` Describe-only truth. If either Fabric local
+  identity is missing, or provider identity, SKU, Zone, ownership, `PREPAID`,
+  manual-renew, or deadline cannot be verified exactly, the result is `unknown`;
+  it is never `absent` and never permits refund. The GET does not run Sync, Tag,
+  kubectl apply, delete, label, purchase, renew, or destroy. It does not replace
+  activation readback; activation still uses `SyncMonthlyCompute` and
+  `SyncMonthlyStorage`.
+  The recovery matrix resumes missing storage or attachment with the original
+  identities, refunds exactly once only when both resources are confirmed absent,
+  retries receipt-only phases, and leaves unsafe or unknown provider states in
+  review.
 - A Ledger failure after activation leaves the entitlement active and retries only its receipt.
 - Replays never create a second debit, refund, purchase, renewal, Secret, or receipt.
-- The merged implementation follows debit before provider mutation.
-  Server-computed read-only reconciliation and its blocking purchase guard are
-  code-complete and locally tested; production rollout and live reconciliation
-  evidence remain pending.
+- The non-review V2 path has local focused evidence from debit through pure Fabric
+  fulfillment, activation, confirmed-absence refund, and receipt-only retry.
+  Dedicated manual-review recovery has integrated local fake evidence.
+  No real Sub2API, Tencent, Runtime, browser, or production evidence is claimed.
 
 ## Products And Lifecycle
 
@@ -145,9 +191,23 @@ validate account and quote
 - Runtime credential rotation reuses stable Fabric and Ledger idempotency identities. A credential revision changes the Runtime Secret and Pod template so Kubernetes rolls the Deployment without exposing the password or seed in metadata.
 - Pilot Runtime isolation means only the owner receives the Runtime password. SSO and binding each Runtime HTTP request to the Console identity are not Pilot claims.
 - Workspace access requires active compute and storage entitlements plus real runtime readiness.
-- The pinned source image is `ghcr.io/gaofeng21cn/one-person-lab-webui:26.7.13@sha256:9d867fe0fc9db48b6efa27371d77770e46fc8cd97d26ef85a81fbdac7e96ca76`.
-- Production mirrors that source to TCR and deploys the target `repository@sha256`; `latest` and tag-only production references are forbidden.
+- A Workspace release candidate is exactly one `one-person-lab-app` commit and one
+  `opl-aion-shell` commit. Each input must be a full 40-character Git SHA already
+  merged into its repository's `main`; branch names, short SHAs, and unmerged commits fail closed.
+- The active-shell candidate is `13ae5d1410e1a4349c14dc76e7c3446ff200cfdb`.
+  The App candidate remains unavailable pending its integration commit.
+- The Cloud release `ref` is a full 40-character commit SHA. Its checked-out HEAD
+  must match exactly and be an ancestor of the official Cloud `origin/main` readback.
+  Branch names, short SHAs, and unmerged Cloud commits fail before publication.
+- The release workflow checks out both candidates detached, runs the App's existing
+  `ensure:shell`, and builds the active shell Docker context directly into TCR.
+- Production deploys only the TCR `repository@sha256` read back after publication;
+  `latest` and tag-only production references are forbidden. The immutable TCR digest
+  and Ready Pod `imageID` remain unavailable until their respective publication and
+  deployment readbacks succeed; placeholders and local timestamps are not evidence.
 - CBS is mounted at `/data` and `/projects`.
+- Runtime is the only authority for `/projects` file metadata and mounted filesystem usage. These read-only facts
+  are streamed through Fabric and Control Plane and are never persisted in OPL PostgreSQL or Ledger.
 
 ## Console User Experience
 
@@ -163,7 +223,23 @@ validate account and quote
   Runtime, and URL. Compute/storage are Workspace details, not separate buys.
 - Workspace status polls every 10 seconds for at most 30 attempts, stops on ready or terminal state, and offers manual retry after a real error or timeout.
 - Gateway fetches only when its page is opened, masks the Key by default, supports explicit reveal/copy, and clears sensitive response state on route leave or logout.
+- Workspace answers URL, username, password reveal/copy, and the corresponding Workspace Key reveal/copy;
+  Workspace Key reveal reuses the owned per-Key Gateway route.
+- Control Plane owns the two-table minimal Pilot announcement and read state; it does not copy Sub2API notices.
 - Desktop and mobile QA must prove responsive layout, keyboard access, error recovery, and no sensitive-information overlap or leakage.
+
+The existing public Home, Login, and Logo/brand entry remain unchanged in Pilot V2.
+
+## Evidence Levels
+
+- `code-complete` requires current contracts, code, local PostgreSQL, browser, structure, and machine-checked
+  zero-SKIP gates on one integration HEAD.
+- `pilot-ready` additionally requires separately approved real Gateway, Runtime, Tencent, billing, and browser evidence.
+- `production-proven` additionally requires the same immutable revision deployed and read back in production.
+
+`sourceUpdatedAt` is returned only when the authoritative owner supplies it. Final Go gates parse `go test -json`
+and fail on `Action=skip`; PostgreSQL suites set `OPL_POSTGRES_TESTS=1`, and a Control Plane zero-SKIP claim also
+sets `OPL_CAPACITY_TESTS=1`.
 
 ## Verification Slot
 
@@ -192,12 +268,12 @@ Provider Acceptance owns two retained non-customer slots:
 
 | Stage | Business | Owners | Current state | Required output and evidence |
 | --- | --- | --- | --- | --- |
-| 1. Offer and identity | Show invited mapped owners Basic and Pro without the Acceptance SKUs. | Console, Gateway | One-to-one identity convergence, Sub2API password authority, and the deployment code cutover are complete with local Memory and isolated PostgreSQL tests; deployed authenticated identity readback is pending. | Product contract, tenant tests, deployed account readback. |
+| 1. Offer and identity | Show invited mapped owners Basic and Pro without the Acceptance SKUs. | Console, Gateway | Canonical `POST /api/operator/accounts` provisioning and the strict one-to-one mapped-owner graph have integrated local evidence; deployment and authenticated production identity readback remain pending. | Product contract, tenant tests, deployed account readback. |
 | 2. Wallet and quote | Show live wallet and exact Workspace quote before side effects. | Console, Gateway | Granular Wallet/Key/Usage/Stats/history DTOs, fixed USD Basic/Pro quotes, and local Console integration are code-complete; live authenticated Sub2API evidence is pending. | Source-contract tests, quote tests, unavailable-state UI tests. |
 | 3. Balance debit | Debit the exact monthly amount once before provider mutation. | Console, Gateway, Ledger | Durable one-submit launch, debit-first recovery, and replay are code-complete; deployed browser and live Sub2API evidence are pending. | Deterministic debit, balance check, replay/concurrency evidence. |
-| 4. Prepaid fulfillment | Open one-month PREPAID CVM/CBS after debit. | Fabric, Console | PREPAID CVM/CBS request and readback are code-complete and locally tested; live Tencent evidence is pending. | Request shapes, provider readback, duplicate-purchase guard. |
-| 5. Claim and activate | Activate only after every resource is owned and read back. | All four lanes | Claim, confirmed-absence refund, manual-review resolution, and server-computed read-only reconciliation are code-complete and locally tested; live reconciliation evidence is pending. | Claim identity, confirmed-absence refund, ambiguous-result review. |
-| 6. Workspace access | Authenticate to a ready, persistent, account-keyed Workspace. | Fabric, Console, Ledger | Attachment, Secret, readiness, non-secret status, owner-only password reveal/rotation, credential rollout, and redacted receipts are code-complete and locally tested; browser, WebSocket, live model, and deployed rotation evidence remain pending. | Owner isolation, login, WebSocket 101, Secret rotation, credential revision and digest readback. |
+| 4. Prepaid fulfillment | Open one-month PREPAID CVM/CBS after debit. | Fabric, Console | PREPAID CVM/CBS request/readback and pure-fulfillment recovery behind one Workspace debit are code-complete in local tests; live Tencent evidence is pending. | Request shapes, provider readback, duplicate-purchase guard. |
+| 5. Claim and activate | Activate only after every resource is owned and read back. | All four lanes | Non-review V2 claim, confirmed-absence one-refund convergence, activation, purchased/refunded Receipt paths, dedicated launch review recovery, and its reconciliation DTO have integrated local fake evidence; live evidence remains pending. | Claim identity, confirmed-absence refund, ambiguous-result review. |
+| 6. Workspace access | Authenticate to a ready, persistent, account-keyed Workspace. | Fabric, Console, Ledger | V2 attachment, Secret, Runtime readiness gate, activation, receipt-only recovery, status, and credential flows have local focused evidence on the non-review path; external Runtime metadata/statfs API, new immutable image, browser, WebSocket, model, and deployed evidence remain pending. | Owner isolation, login, WebSocket 101, Secret rotation, credential revision and digest readback. |
 | 7. Gateway usage | Reveal the owner Key, make a metered Workspace model request, and show its customer-safe cost and Token facts. | Gateway, Console, Ledger | Wallet, Key list, request Usage, Usage Stats, balance history, and integer-cost projections are code-complete and locally tested; a real model request and production readback remain pending. | Tenant isolation, model response, request usage and stats projection, integer `actual_cost`, no leakage. |
 | 8. Renewal and recovery | Renew one Workspace period with deterministic recovery. | All four lanes | Workspace-level claim, combined debit, same-ID provider renewal/readback, expiry, refund/review, and receipt recovery are code-complete; enabling auto-renew and real renewal evidence are pending. | Isolated PostgreSQL concurrency, renewal replay, deadline readback, real approved renewal. |
 | 9. Reusable verification | Prove releases without per-run Tencent purchase or deletion. | All four lanes | Dual Acceptance and one-request Basic live-QA workflows are code-complete and fake-tested; neither Acceptance nor live QA has run for the candidate. | Two retained slots, stable resource facts, exact-one Usage and wallet delta. |

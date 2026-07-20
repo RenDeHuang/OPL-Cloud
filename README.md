@@ -34,7 +34,9 @@ or Sub2API proxy routes.
 The first cohort is 2-5 manually invited customer accounts. One Console User
 maps to one OPL Account and one Sub2API User/Wallet. Console and Sub2API emails
 must match after `lower(trim(email))`. Operators pre-fund the Sub2API wallet;
-there is no public registration, payment/order UI, or customer Key mutation.
+there is no public registration or payment/order UI. Owners may manage general
+Keys through Control Plane using a Session-bound delegated credential; Workspace
+launch converges one reserved `opl-workspace` Key.
 
 Customer prices are fixed monthly USD facts. The browser displays server DTOs
 and never converts provider costs or derives totals.
@@ -52,8 +54,8 @@ Redeem Code and Idempotency-Key path:
 
 ```text
 validate -> read-only prepaid capacity/price preflight -> confirm balance
-         -> Sub2API debit -> Fabric provision and claim
-         -> activate monthly entitlements -> Ledger receipt
+         -> one Sub2API Workspace-total debit -> Fabric compute/storage fulfillment
+         -> activate one Workspace entitlement -> one Ledger purchase receipt
 ```
 
 Stable operation identities make debit, provider mutation, claim, activation,
@@ -89,6 +91,14 @@ and rollback never delete CBS.
 
 `autoRenew` defaults off. The current API rejects enabling it, and Console must
 not expose an enable control until a real renewal is proven.
+
+The OPL-branded public API address is separate from the internal Gateway adapter.
+Control Plane reads `OPL_GATEWAY_PUBLIC_BASE_URL`; production requires HTTPS and
+never falls back to `OPL_SUB2API_BASE_URL` or `gflabtoken.cn`.
+
+Pilot V2 remains `code-complete` until separately approved real evidence meets
+the `pilot-ready` gate. Only the same immutable deployed revision with production
+readback can be `production-proven`.
 
 ## Repository Layout
 
@@ -153,7 +163,7 @@ run for the current candidate, so the Pilot is not production-proven.
 
 The retired local Console user seed is no longer accepted by deployment. The
 workflow bootstraps the fixed operator from Sub2API and invited owners are added
-through `POST /api/users`; production runtime evidence is still pending.
+through `POST /api/operator/accounts/invitations`; production runtime evidence is still pending.
 
 See [docs/runtime/production-runbook.md](./docs/runtime/production-runbook.md)
 for rollout and recovery commands.

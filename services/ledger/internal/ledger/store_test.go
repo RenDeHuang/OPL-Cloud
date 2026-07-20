@@ -22,6 +22,86 @@ func TestReceiptRejectsMissingIdentityAndSecretContent(t *testing.T) {
 	}
 }
 
+func validWorkspaceGatewayKeyRotationReceiptInput() ReceiptInput {
+	return ReceiptInput{
+		Type: "workspace.gateway_key_rotated.v1", Status: "completed", Surface: "control_plane",
+		AccountID: "acct-alpha", WorkspaceID: "workspace-alpha",
+		Execution:      map[string]any{"operationId": "workspace-key-rotate-alpha", "oldKeyId": int64(9), "newKeyId": int64(19)},
+		OutputRefs:     map[string]any{"secretFingerprint": "sha256:replacement"},
+		Owner:          map[string]any{"userId": "usr-alpha"},
+		IdempotencyKey: "workspace-key-rotate-alpha:receipt",
+	}
+}
+
+func TestWorkspaceGatewayKeyRotationReceiptSchemaMemory(t *testing.T) {
+	store := NewMemoryStore()
+	if _, err := store.RecordReceipt(context.Background(), validWorkspaceGatewayKeyRotationReceiptInput()); err != nil {
+		t.Fatalf("valid Workspace Key rotation receipt: %v", err)
+	}
+	for _, tc := range []struct {
+		name   string
+		mutate func(*ReceiptInput)
+	}{
+		{name: "missing operation", mutate: func(input *ReceiptInput) { delete(input.Execution, "operationId") }},
+		{name: "missing old Key", mutate: func(input *ReceiptInput) { delete(input.Execution, "oldKeyId") }},
+		{name: "same Key", mutate: func(input *ReceiptInput) { input.Execution["newKeyId"] = int64(9) }},
+		{name: "missing fingerprint", mutate: func(input *ReceiptInput) { delete(input.OutputRefs, "secretFingerprint") }},
+		{name: "missing owner", mutate: func(input *ReceiptInput) { input.Owner = nil }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			input := validWorkspaceGatewayKeyRotationReceiptInput()
+			input.IdempotencyKey += "-" + strings.ReplaceAll(tc.name, " ", "-")
+			tc.mutate(&input)
+			if _, err := store.RecordReceipt(context.Background(), input); !errors.Is(err, ErrInvalidReceiptInput) {
+				t.Fatalf("error=%v, want ErrInvalidReceiptInput", err)
+			}
+		})
+	}
+}
+
+func validWalletAdjustmentReceiptInput() ReceiptInput {
+	return ReceiptInput{
+		Type: "gateway.wallet_adjustment.v1", Status: "completed", Surface: "control_plane", AccountID: "acct-alpha",
+		RequestID:      "wallet-adjustment-alpha",
+		Actor:          map[string]any{"userId": "usr-admin"},
+		Execution:      map[string]any{"operationId": "wallet-adjustment-alpha", "kind": "business_refund", "amountUsdMicros": int64(2_500_000)},
+		InputRefs:      map[string]any{"balanceHistoryRef": "sub2api:balance-history:41:history-alpha", "relatedOperationId": "workspace-launch-alpha"},
+		Owner:          map[string]any{"accountId": "acct-alpha"},
+		IdempotencyKey: "wallet-adjustment-alpha:receipt",
+	}
+}
+
+func TestWalletAdjustmentReceipt(t *testing.T) {
+	store := NewMemoryStore()
+	if _, err := store.RecordReceipt(context.Background(), validWalletAdjustmentReceiptInput()); err != nil {
+		t.Fatalf("valid wallet adjustment receipt: %v", err)
+	}
+	for _, tc := range []struct {
+		name   string
+		mutate func(*ReceiptInput)
+	}{
+		{name: "missing operation", mutate: func(input *ReceiptInput) { delete(input.Execution, "operationId") }},
+		{name: "invalid kind", mutate: func(input *ReceiptInput) { input.Execution["kind"] = "payment_refund" }},
+		{name: "non positive amount", mutate: func(input *ReceiptInput) { input.Execution["amountUsdMicros"] = int64(0) }},
+		{name: "missing history", mutate: func(input *ReceiptInput) { delete(input.InputRefs, "balanceHistoryRef") }},
+		{name: "refund missing related operation", mutate: func(input *ReceiptInput) { delete(input.InputRefs, "relatedOperationId") }},
+		{name: "missing actor", mutate: func(input *ReceiptInput) { input.Actor = nil }},
+		{name: "missing owner", mutate: func(input *ReceiptInput) { input.Owner = nil }},
+		{name: "forbidden redeem code", mutate: func(input *ReceiptInput) { input.OutputRefs = map[string]any{"redeemCode": "must-not-persist"} }},
+		{name: "forbidden redeem code in plan", mutate: func(input *ReceiptInput) { input.Plan = map[string]any{"redeemCode": "must-not-persist"} }},
+		{name: "unexpected identity", mutate: func(input *ReceiptInput) { input.ProjectID = "project-alpha" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			input := validWalletAdjustmentReceiptInput()
+			input.IdempotencyKey += "-" + strings.ReplaceAll(tc.name, " ", "-")
+			tc.mutate(&input)
+			if _, err := store.RecordReceipt(context.Background(), input); !errors.Is(err, ErrInvalidReceiptInput) {
+				t.Fatalf("error=%v, want ErrInvalidReceiptInput", err)
+			}
+		})
+	}
+}
+
 func validBillingReceiptInput() ReceiptInput {
 	return ReceiptInput{
 		Type: "billing.resource_purchased.v1", Status: "completed", Surface: "control_plane", AccountID: "acct-alpha", WorkspaceID: "workspace-alpha",

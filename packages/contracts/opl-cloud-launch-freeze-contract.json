@@ -1,7 +1,7 @@
 {
-  "schemaVersion": 3,
+  "schemaVersion": 9,
   "owner": "OPL Platform Architecture",
-  "purpose": "Freeze the approved paid Pilot products, exact fixed USD prices, debit-first settlement, prepaid Tencent procurement, durable launch recovery, account-owned Gateway access, read-only customer financial projection, and reusable verification boundary without claiming unfinished runtime evidence.",
+  "purpose": "Freeze the approved Pilot V2 products, delegated Gateway key lifecycle, one Workspace charge, prepaid Tencent fulfillment, Runtime facts, operator workflows, announcements, and evidence levels without claiming unfinished implementation or runtime evidence.",
   "state": "current",
   "machineBoundary": "Six product surfaces including OPL Serve planned_not_in_launch, four implementation owner lanes, two customer products, ten launch stages, six delivery phases, and two guarded production verification slots.",
   "lifecycle": {
@@ -21,7 +21,9 @@
     "paymentOrderApi": false
   },
   "deliveryEvidence": {
-    "codeCompleteThroughTask": 13,
+    "required": true,
+    "codeComplete": false,
+    "pilotReady": false,
     "productionProven": false,
     "saleable": false
   },
@@ -110,14 +112,21 @@
       "missingOrUnavailable": "charge_unknown_retryable",
       "duplicateOrMismatch": "charge_conflict_manual_review"
     },
-    "protocol": ["debit", "provision", "claim", "activate"],
+    "protocol": ["debit", "fabric_fulfillment", "claim", "activate", "record_workspace_receipt"],
     "preconditions": ["validate account and quote", "read-only provider capacity and price preflight", "confirm live Sub2API balance"],
     "confirmedNoResourceAfterDebit": "idempotent_refund",
     "partialOrUnknownProviderResult": "manual_review_without_refund",
     "ledgerFailureAfterActivation": "retry_receipt_only",
+    "walletMutationSerializationContract": "opl-cloud-service-boundary-contract.json#services.controlPlane.walletMutationSerialization",
+    "exactBalanceEvidence": {
+      "precondition": "preBalanceUsdMicros > totalChargeUsdMicros",
+      "postcondition": "postBalanceUsdMicros == preBalanceUsdMicros - totalChargeUsdMicros",
+      "mismatchStatus": "manual_review",
+      "fabricWriteCountOnMismatch": 0
+    },
     "retryRule": "Debit, refund, provider mutation, claim, activation, renewal, Secret write, and receipt use stable operation-scoped idempotency identities.",
     "doubleDebitForbidden": true,
-    "currentImplementation": "Debit-first orchestration, confirmed-absence refund, operator review resolution, parent launch recovery after child resolution, server-computed exception-only reconciliation, and the purchase guard are code-complete and locally tested; production rollout and live reconciliation evidence remain pending."
+    "currentImplementation": "The workspace.launch.v2 non-review path, dedicated manual-review recovery, and reconciliation DTO have integrated local fake evidence through debit, pure Fabric fulfillment, activation, confirmed-absence refund, and receipt-only retry. No real Sub2API, Tencent, Runtime, browser, or production evidence is claimed."
   },
   "workspaceLaunch": {
     "quoteApi": "POST /api/pricing/preview with resourceType=workspace",
@@ -141,17 +150,37 @@
     },
     "customerResponsePricingFields": ["priceVersion", "currency", "totalChargeUsdMicros"],
     "manualReviewRecovery": {
-      "stillInReview": "visible_no_side_effects",
-      "resolvedActive": "resume_same_child_phase_receipt_only_safe",
-      "resolvedRefunded": "parent_refunded_terminal",
-      "resolvedFailed": "parent_failed_terminal",
-      "nonChildReview": "quiescent_operator_only"
+      "route": "POST /api/operator/workspace-launches/{operationId}/recover",
+      "requestFields": ["accountId", "billingOperationId", "evidenceRef"],
+      "eligibleStatus": "manual_review",
+      "allowedAction": "recover_workspace_launch",
+      "nonEligibleStatuses": "no_allowed_actions",
+      "providerTruthContract": "opl-cloud-service-boundary-contract.json#services.fabric.workspaceLaunchManualReviewProviderTruth",
+      "matrix": {
+        "computeReadyStorageAbsent": "resume_storage_fulfilling_with_original_operation_identity",
+        "computeReadyStorageReady": "resume_attaching_with_original_operation_identity",
+        "computeAbsentStorageAbsent": "one_idempotent_workspace_refund",
+        "computeAbsentStorageReady": "remain_manual_review",
+        "providerUnknown": "remain_manual_review",
+        "receiptPending": "retry_purchase_receipt_only",
+        "refundConfirmedReceiptPending": "retry_refund_receipt_only"
+      },
+      "implementation": "integrated_local_fake_verified"
     },
-    "persistence": "control_plane_runtime_operations with action=workspace.launch",
+    "persistence": "control_plane_runtime_operations with action=workspace.launch.v2 and result.schemaVersion=2",
+    "legacyNonTerminalPolicy": "clear_or_manual_handle_before_cutover_never_resume_in_v2_worker",
     "submissionOrder": ["workspace_quote", "compute_read_only_preflight", "storage_read_only_preflight", "workspace_key_preflight", "sub2api_total_balance_preflight", "persist_launch"],
+    "providerPreflightRecovery": {
+      "timing": "before_first_charge_attempt",
+      "runWhen": "ChargeAttempted=false_and_ChargeConfirmation_absent",
+      "skipOnRecoveryWhenAnyPresent": ["ChargeAttempted", "ChargeConfirmation"],
+      "writes": "none"
+    },
     "totalBalanceSemantics": "read_only_preflight_not_hold_or_reservation",
-    "backgroundProgression": "The existing provider reconciliation worker resumes stable compute, storage, attachment, Gateway Secret, Runtime, and receipt sub-operations after browser close or process restart.",
-    "currentImplementation": "Exact fixed-USD quote composition, required-false Workspace auto-renew intent in the stable request fingerprint, one-submit persistence, total balance preflight, tenant polling, child manual-review recovery, phase recovery, and replay tests, including fenced stale Attachment, Gateway Secret, and Runtime apply convergence, are code-complete and locally tested; deployed browser, live Sub2API, and live Tencent evidence remain pending."
+    "customerDebitCardinality": 1,
+    "fulfillmentResources": ["compute", "storage", "attachment", "gateway_secret", "runtime"],
+    "backgroundProgression": "non_review_and_manual_review_recovery_integrated_local_fake_verified",
+    "currentImplementation": "Exact fixed-USD quote composition, one-submit V2 persistence, CAS/lease recovery, strict one-debit balance proof, pure Fabric fulfillment, attachment, Gateway Secret, Runtime readiness, activation, confirmed-absence refund, dedicated workspace.launch.v2 manual-review recovery, reconciliation fields, and receipt-only retry have integrated local fake evidence; no real environment evidence is claimed."
   },
   "providerProcurement": {
     "provider": "Tencent Cloud",
@@ -162,25 +191,47 @@
     "forbiddenChargeTypes": ["POSTPAID_BY_HOUR"],
     "capacityCheck": "Read-only PREPAID inventory, compatibility, quota, and price check before debit; it must not create or reserve a resource.",
     "claimReadback": ["provider resource ID", "charge type", "period or deadline", "renew flag", "zone", "size or SKU", "ownership tags"],
+    "activationReadback": {
+      "apis": ["SyncMonthlyCompute", "SyncMonthlyStorage"],
+      "timing": "immediately_before_workspace_activation",
+      "sharedRequiredFacts": ["resource_identity", "account_identity", "workspace_identity", "zone", "chargeType=PREPAID", "renewFlag=NOTIFY_AND_MANUAL_RENEW", "deadline"],
+      "computeRequiredFacts": ["sku"],
+      "storageRequiredFacts": ["capacity"],
+      "mismatch": "manual_review_without_activation"
+    },
     "renewalOrder": ["capacity_preflight", "debit", "provider_renew", "claim", "extend_entitlement", "record_receipt"],
     "automaticRenewal": false,
-    "currentImplementation": "One-month PREPAID CVM/CBS requests, stable operations, and provider readback are code-complete and locally tested; live Tencent evidence remains pending."
+    "currentImplementation": "One-month PREPAID CVM/CBS requests, stable operations, provider readback, and pure-fulfillment wiring behind the single Workspace debit are code-complete in local tests; live Tencent evidence remains pending."
   },
   "workspaceRuntime": {
     "primaryWorkspacePerAccount": 1,
     "sourceImage": {
-      "repository": "ghcr.io/gaofeng21cn/one-person-lab-webui",
-      "tag": "26.7.13",
-      "digest": "sha256:9d867fe0fc9db48b6efa27371d77770e46fc8cd97d26ef85a81fbdac7e96ca76"
+      "appRepository": "https://github.com/gaofeng21cn/one-person-lab-app.git",
+      "activeShellRepository": "https://github.com/gaofeng21cn/opl-aion-shell.git",
+      "candidateAppMainSha": null,
+      "candidateActiveShellMainSha": "13ae5d1410e1a4349c14dc76e7c3446ff200cfdb",
+      "candidateRequirements": ["40_character_git_sha", "merged_into_repository_main"]
     },
     "targetRepository": "uswccr.ccs.tencentyun.com/oplcloud/one-person-lab-app",
+    "releaseEvidence": {
+      "immutableTcrDigest": null,
+      "immutableTcrDigestStatus": "pending_publication_readback",
+      "readyPodImageId": null,
+      "readyPodImageIdStatus": "pending_deployment_readback"
+    },
     "productionReference": "repository@sha256",
     "mounts": ["/data", "/projects"],
+    "projectFacts": {
+      "entriesApi": "GET /api/workspaces/{workspaceId}/files",
+      "filesystemUsageApi": "GET /api/workspaces/{workspaceId}/filesystem-usage",
+      "authority": "workspace_runtime_projects_mount_and_statfs",
+      "persistence": "none"
+    },
     "gatewaySecret": "account-scoped Kubernetes Secret",
     "gatewaySecretPersistence": "Kubernetes Secret only",
     "globalGatewayKeyForbidden": true,
     "authenticationMode": "runtime_password",
-    "statusApi": "POST /api/workspaces/runtime-status",
+    "statusApi": "GET /api/workspaces/{workspaceId}/runtime-status",
     "statusContainsPassword": false,
     "runtimeRequestIdentityBinding": "not_in_pilot_requires_sso",
     "credentialCommands": {
@@ -200,15 +251,27 @@
     "versionRole": "diagnostic_only",
     "accountMapping": "sub2apiUserId",
     "keyName": "opl-workspace",
-    "activeKeyCardinality": 1,
+    "workspaceKeyActiveCardinality": 1,
     "adminKeyListEndpoint": "GET /api/v1/admin/users/:id/api-keys",
     "keyListPaginationRule": "freeze first-page total pages and requested page_size; require coherent metadata, exact page numbers and ceiling, bounded items, positive unique Key IDs, mapped user_id on every item, and collected item count equal total before cardinality selection",
     "customerReadContract": "opl-cloud-console-source-truth-contract.json",
-    "customerMutationApis": [],
-    "revealApi": "POST /api/gateway/keys/opl-workspace/reveal",
+    "customerMutationApis": ["create_general_key", "update_general_key", "delete_general_key", "reveal_owned_key"],
+    "publicEndpoint": {
+      "configEnv": "OPL_GATEWAY_PUBLIC_BASE_URL",
+      "productApi": "GET /api/gateway/endpoint",
+      "productionScheme": "https",
+      "missingBehavior": "unavailable_without_data",
+      "forbiddenFallbacks": ["OPL_SUB2API_BASE_URL", "gflabtoken.cn"]
+    },
+    "createKeyRequest": {
+      "expiryField": "expiresInDays",
+      "responseExpiryField": "expiresAt",
+      "createThenUpdate": false
+    },
+    "revealApi": "POST /api/gateway/keys/{keyId}/reveal",
     "revealAuthorization": "owner_and_current_session_account_with_csrf",
     "revealCacheControl": "private, no-store",
-    "requiredCapabilities": ["mapped_user_identity", "mapped_user_balance", "mapped_user_key_list", "request_usage_list", "aggregate_usage_stats", "mapped_user_balance_history", "deterministic_idempotent_balance_adjustment"],
+    "requiredCapabilities": ["mapped_user_identity", "mapped_user_balance", "mapped_user_key_list", "delegated_user_key_lifecycle", "request_usage_list", "aggregate_usage_stats", "batch_user_and_key_usage", "mapped_user_balance_history", "deterministic_idempotent_balance_adjustment"],
     "compatibilityEvidence": ["contract_tests", "read_only_production_probe"],
     "usageScope": ["user_id", "api_key_id"],
     "usageListFields": ["user_id", "api_key_id", "request_id", "created_at", "model", "inbound_endpoint", "request_type", "input_tokens", "output_tokens", "cache_creation_tokens", "cache_read_tokens", "actual_cost"],
@@ -220,7 +283,17 @@
     "keyDTOUsageSource": ["quota_used", "usage_5h", "usage_1d", "usage_7d", "last_used_at"],
     "keyPersistence": "Kubernetes Secret only",
     "ownerOnlyReveal": true,
-    "currentImplementation": "Control Plane capability calls no longer gate on the reported Sub2API version. Granular Wallet and Key sources, coherent Key/balance-history pagination, audited POST-only owner reveal, Key-before-balance paid-launch preflight, exact-history adjustment replay, scoped Usage/Stats, and integer actual_cost projection are code-complete and locally tested; a real model request and production readback remain pending."
+    "workspaceKeyLifecycle": {
+      "launchConvergence": "zero_create_one_active_reuse_other_fail_closed",
+      "rotationApi": "POST /api/workspaces/{workspaceId}/workspace-key/rotate",
+      "mutationCredential": "session_delegated_user_bearer",
+      "workspacePersistence": "workspace_api_key_id_only",
+      "operationPersistence": "control_plane_runtime_operations_non_secret_phases",
+      "phases": ["replacement_check", "replacement_create", "secret_write", "retire_old", "promote_replacement", "workspace_commit", "runtime_apply", "delete_old", "receipt", "complete"],
+      "receiptType": "workspace.gateway_key_rotated.v1",
+      "currentImplementation": "code_complete_local_focused_tests_only"
+    },
+    "currentImplementation": "The independent public endpoint, Session-delegated general Key create/update/delete/read/reveal, exact expiresInDays create input, authoritative expiresAt readback, per-Key Usage, and upstream account aggregate are code-complete and locally focused-tested without Key/Usage persistence; browser integration, a real model request, and production readback remain pending."
   },
   "consoleFinancialProjection": {
     "mode": "read_only_projection",
@@ -231,7 +304,7 @@
     },
     "requiredViews": ["balance_and_usability", "active_resource_terms", "resource_billing_history", "gateway_usage_totals", "gateway_request_usage"],
     "displayFacts": ["current_balance", "workspace_name_and_usability", "server_projected_workspace_price_period_and_renewal_status", "gateway_request_time_model_endpoint_tokens_actual_cost"],
-    "prohibitions": ["second_wallet", "usage_database", "billing_fact_table", "raw_admin_dto", "browser_to_sub2api", "frontend_financial_derivation", "payment_or_topup_ui", "key_mutation", "prompt_or_response_content"],
+    "prohibitions": ["second_wallet", "usage_database", "billing_fact_table", "raw_admin_dto", "browser_to_sub2api", "frontend_financial_derivation", "payment_or_topup_ui", "prompt_or_response_content"],
     "partialFailure": "render_independent_sources_with_explicit_retry",
     "currentImplementation": "Tenant-safe Ledger billing history and Sub2API request Usage/Stats projections plus the strict local Console presentation are code-complete and locally tested without copied fact tables; deployed live evidence remains pending."
   },
@@ -304,7 +377,7 @@
       "id": "offer_identity",
       "business": "A mapped customer signs in and sees Basic and Pro with separate compute and storage prices; the internal verification slot never appears.",
       "owners": ["console", "gateway"],
-      "currentState": "Control Plane atomic mapped-owner provisioning, strict one-to-one customer identity, Sub2API password authority, and retirement of the deployment-time local user seed are code-complete and locally tested; authenticated production runtime evidence remains pending, while self-registration and SSO are outside the Pilot.",
+      "currentState": "Canonical POST /api/operator/accounts provisioning and the strict one-to-one mapped-owner graph have integrated local evidence; deployment and authenticated production runtime evidence remain pending, while self-registration and SSO are outside the Pilot.",
       "requiredDeliverables": ["account mapping", "Basic and Pro definitions", "tenant isolation"],
       "completionEvidence": ["contract tests", "tenant tests", "deployed mapped-account readback"]
     },
@@ -328,7 +401,7 @@
       "id": "prepaid_fulfillment",
       "business": "Fabric opens one-month PREPAID CVM and CBS only after debit.",
       "owners": ["fabric", "console"],
-      "currentState": "PREPAID CVM/CBS requests and readback are code-complete and locally tested; live Tencent evidence is pending.",
+      "currentState": "PREPAID CVM/CBS requests, readback, and pure-fulfillment recovery behind one Workspace debit are code-complete in local tests; live Tencent evidence is pending.",
       "requiredDeliverables": ["PREPAID CVM", "PREPAID CBS", "manual renew flag", "stable provider operation IDs"],
       "completionEvidence": ["request-shape tests", "provider readback", "duplicate-purchase protection"]
     },
@@ -336,7 +409,7 @@
       "id": "claim_and_activate",
       "business": "Entitlements activate only after all billable provider resources are identified and assigned.",
       "owners": ["fabric", "console", "gateway", "ledger"],
-      "currentState": "Claim, confirmed-absence refund, child manual-review resolution with parent resume or explicit terminal convergence, and server-computed read-only reconciliation with a blocking guard are code-complete and locally tested; live reconciliation evidence is pending.",
+      "currentState": "The non-review V2 claim, confirmed-absence one-refund convergence, Workspace activation, purchased-or-refunded Receipt paths, dedicated workspace.launch.v2 manual-review recovery, and reconciliation DTO have integrated local fake evidence; live evidence remains pending.",
       "requiredDeliverables": ["resource claim", "confirmed-absence refund", "manual-review state", "purchase receipt"],
       "completionEvidence": ["claim identity test", "refund replay test", "partial-result manual-review test"]
     },
@@ -344,7 +417,7 @@
       "id": "workspace_access",
       "business": "The customer authenticates to a ready Workspace backed by owned compute, CBS, and an account-scoped Gateway Secret.",
       "owners": ["console", "fabric", "ledger"],
-      "currentState": "Attachment, account Secret, readiness, non-secret status, owner-user-only password reveal/rotation, credential rollout, and redacted reset receipts are code-complete and locally tested; Runtime SSO is outside the Pilot, while browser, WebSocket, live model, and deployed rotation evidence remain pending.",
+      "currentState": "V2 attachment, account Secret, Runtime readiness gating, activation, receipt-only recovery, non-secret status, and credential flows have local focused evidence on the non-review path; external Runtime metadata/statfs API, new immutable image, browser, WebSocket, live model, and deployed evidence remain pending.",
       "requiredDeliverables": ["runtime readiness", "password login", "owner-only Runtime credential reveal and rotation", "static CBS mounts", "secret rotation", "immutable image"],
       "completionEvidence": ["owner isolation tests", "post-login assertion", "WebSocket 101", "Secret fingerprint", "credential revision readback", "image digest readback"]
     },

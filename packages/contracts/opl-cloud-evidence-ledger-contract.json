@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 7,
+  "schemaVersion": 11,
   "owner": "OPL Ledger",
   "purpose": "General execution, monthly billing, and current control-plane lifecycle evidence receipts.",
   "state": "current",
@@ -24,9 +24,12 @@
     "billing.resource_refunded.v1",
     "billing.charge_review_required.v1",
     "billing.reconciliation.v1",
+    "billing.workspace_purchased.v1",
     "billing.workspace_renewed.v1",
     "billing.workspace_expired.v1",
     "billing.workspace_refunded.v1",
+    "gateway.wallet_adjustment.v1",
+    "workspace.gateway_key_rotated.v1",
     "artifact.manifest.v1",
     "review.result.v1",
     "execution.receipt.v1"
@@ -234,6 +237,20 @@
       "rawProviderResponse"
     ]
   },
+  "workspaceGatewayKeyRotationReceipt": {
+    "type": "workspace.gateway_key_rotated.v1",
+    "requiredRefs": ["operationId", "workspaceId", "oldKeyId", "newKeyId", "secretFingerprint"],
+    "forbiddenContent": ["apiKey", "rawCredential", "sessionCredential", "rawSub2apiResponse"],
+    "implementation": "validator_and_control_plane_exact_readback_code_complete_local_only"
+  },
+  "gatewayWalletAdjustmentReceipt": {
+    "type": "gateway.wallet_adjustment.v1",
+    "balanceAuthority": "sub2api",
+    "commonRequiredRefs": ["operationId", "kind", "amountUsdMicros", "balanceHistoryRef", "actor"],
+    "businessRefundAdditionalRequiredRefs": ["relatedOperationId"],
+    "forbiddenContent": ["redeemCode", "adminToken", "rawSub2apiResponse"],
+    "implementation": "validator_and_control_plane_exact_readback_code_complete_local_only"
+  },
   "monthlyBillingReceiptV1": {
     "status": "superseded_internal_compatibility",
     "types": [
@@ -280,6 +297,7 @@
   },
   "workspaceMonthlyBillingReceiptV1": {
     "types": [
+      "billing.workspace_purchased.v1",
       "billing.workspace_renewed.v1",
       "billing.workspace_expired.v1",
       "billing.workspace_refunded.v1"
@@ -294,6 +312,11 @@
       "resourceType",
       "resourceId",
       "components"
+    ],
+    "purchasedAdditionalCostFields": [
+      "sub2apiUserId",
+      "sub2apiRedeemCode",
+      "postChargeBalanceUsdMicros"
     ],
     "renewedAdditionalCostFields": [
       "sub2apiUserId",
@@ -310,6 +333,22 @@
       "compute": ["resourceType", "resourceId", "chargeUsdMicros"],
       "storage": ["resourceType", "resourceId", "sizeGb", "chargeUsdMicros"]
     },
+    "purchasedRequiredExecutionFields": [
+      "computeAllocationId",
+      "storageId"
+    ],
+    "purchasedOptionalExecutionFields": [
+      "attachmentId",
+      "workspaceApiKeyId",
+      "runtimeId"
+    ],
+    "customerProjectionForbiddenFields": [
+      "computeReadback",
+      "storageReadback",
+      "workspaceKeyFingerprint",
+      "runtimeServiceName",
+      "secretRef"
+    ],
     "rules": [
       "currency is USD and billingUnit is calendar_month",
       "resourceType is workspace",
@@ -321,7 +360,10 @@
       "refunded receipts require the original debit identity, a stable refund identity, and refundUsdMicros equal to totalUsdMicros"
     ],
     "writeProtocol": "append_first_with_idempotency",
-    "forbiddenContentRule": "same recursive case-insensitive exact-key rejection as general receipts"
+    "launchTerminalCardinality": "exactly_one_purchased_or_refunded_workspace_receipt",
+    "forbiddenContentRule": "same recursive case-insensitive exact-key rejection as general receipts",
+    "implementation": "validator_writer_and_customer_projection_code_complete_local_tests_only",
+    "realEnvironmentEvidence": "pending_owner_approved_acceptance"
   },
   "reconciliationReportV1": {
     "recordApi": "POST /ledger/reconciliation",

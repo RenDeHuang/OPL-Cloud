@@ -72,6 +72,35 @@ export function assertPublicHttpsUrl(value, errorName, { hostname = "" } = {}) {
   return parsed;
 }
 
+export function mutationApprovalFromJson(raw, target, errorPrefix = "mutation") {
+  if (!String(raw || "").trim()) throw new Error(`${errorPrefix}_approval_manifest_required`);
+  let manifest;
+  try {
+    manifest = JSON.parse(raw);
+  } catch {
+    throw new Error(`${errorPrefix}_approval_manifest_invalid`);
+  }
+  const keys = ["approvalId", "expiresAt", "accountIds", "workspaceIds", "resourceIds"];
+  const stringList = (value) => Array.isArray(value) && value.every((item) => typeof item === "string" && item.trim());
+  const expiresAt = typeof manifest?.expiresAt === "string" ? Date.parse(manifest.expiresAt) : NaN;
+  const canonicalExpiresAt = Number.isFinite(expiresAt) && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(manifest.expiresAt) &&
+    new Date(expiresAt).toISOString().replace(".000Z", "Z") === manifest.expiresAt;
+  if (!manifest || typeof manifest !== "object" || Array.isArray(manifest) ||
+      Object.keys(manifest).length !== keys.length || keys.some((key) => !Object.hasOwn(manifest, key)) ||
+      typeof manifest.approvalId !== "string" || !manifest.approvalId.trim() ||
+      !canonicalExpiresAt ||
+      !stringList(manifest.accountIds) || !stringList(manifest.workspaceIds) || !stringList(manifest.resourceIds)) {
+    throw new Error(`${errorPrefix}_approval_manifest_invalid`);
+  }
+  if (manifest.approvalId !== target.approvalId) throw new Error(`${errorPrefix}_approval_id_mismatch`);
+  if (expiresAt <= Date.now()) throw new Error(`${errorPrefix}_approval_expired`);
+  const forbidden = target.accountId && !manifest.accountIds.includes(target.accountId) ||
+    target.workspaceId && !manifest.workspaceIds.includes(target.workspaceId) ||
+    (target.resourceIds || []).some((id) => !manifest.resourceIds.includes(id));
+  if (forbidden) throw new Error(`${errorPrefix}_target_forbidden`);
+  return manifest;
+}
+
 export function verificationOwnerFromSeed(raw, accountId = "") {
   let users;
   try {
@@ -541,7 +570,7 @@ export async function runProductionVerifierCli({
   fetchImpl = globalThis.fetch
 } = {}) {
   if (argv.includes("--help") || argv.includes("-h")) {
-    stdout.write(`Usage: npm run verify:production -- --origin <https-url> --account <id> [--run-id <id>] [--request-timeout-ms <ms>] [--browser-e2e]\nRequires OPL_VERIFY_SLOT_DESCRIPTOR_JSON; read-only smoke reuses ${FIXED_VERIFICATION_SLOT_ID}.\n`);
+    stdout.write(`Usage: npm run verify:production -- --read-only --origin <https-url> --account <id> [--run-id <id>] [--request-timeout-ms <ms>] [--browser-e2e]\nEvidence level: read-only. Requires OPL_VERIFY_SLOT_DESCRIPTOR_JSON and reuses ${FIXED_VERIFICATION_SLOT_ID}; mutation flags are rejected.\n`);
     return 0;
   }
   try {

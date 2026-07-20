@@ -89,7 +89,11 @@ unit/contract tests pass
 - `TENCENT_DEPLOY_KUBECONFIG_REF`: kubeconfig path.
 - `OPL_TENCENT_PROVISIONER_BIN`: local Go SDK provisioner binary used for Tencent Cloud mutations.
 - `DATABASE_URL`: required for durable shared staging state.
-- `OPL_SUB2API_BASE_URL`: Sub2API management origin.
+- `OPL_SUB2API_BASE_URL`: server-only Sub2API management origin. It must never be
+  returned to the browser or used as a public endpoint fallback.
+- `OPL_GATEWAY_PUBLIC_BASE_URL`: public API origin returned by
+  `GET /api/gateway/endpoint`. Production requires a valid HTTPS URL; a missing
+  or invalid value makes that product source unavailable.
 - `OPL_SUB2API_ADMIN_EMAIL` and `OPL_SUB2API_ADMIN_PASSWORD`: secret-backed management credentials.
 - `OPL_MONTHLY_BILLING_WORKER_ENABLED`: enables renewal and expiration processing.
 
@@ -100,15 +104,20 @@ unit/contract tests pass
 - Every enabled UI route must have a stable route id and routeTo path.
 - Lab Owner routes do not expose operator/Fabric/Ledger raw evidence.
 
-## Compute Storage Billing Semantics
+## Workspace Billing Semantics
 
-- Creating a ComputeAllocation prepares Fabric capacity, charges one calendar month through Sub2API, then activates the entitlement.
-- Creating storage follows the same prepare-charge-activate order and accepts only positive 10 GB blocks.
-- Attaching storage does not create a priced resource; it records the mount relationship.
-- Workspace entry creates a URL token for an existing active attachment.
-- Renewal extends from `paidThrough` with the original integer price snapshot and stable redeem code.
-- Expired compute is destroyed. Expired storage is retained and inaccessible until explicitly reactivated.
-- Fabric owns provider state, Control Plane owns entitlement, Sub2API owns balance, and Ledger owns receipts.
+- One Workspace purchase or renewal creates exactly one customer debit for the
+  package total in integer USD micros.
+- Compute, storage, attachment, Gateway Secret, and Runtime are fulfillment of
+  that Workspace operation; they do not create independent customer charges.
+- Control Plane persists the stable operation identity and converges state after
+  authoritative Sub2API and Fabric readback.
+- Renewal extends from `paidThrough` with the original Workspace price snapshot
+  and stable redeem code.
+- Expired compute is stopped. Expired storage is retained and inaccessible until
+  explicitly reactivated.
+- Fabric owns provider state, Control Plane owns Workspace orchestration,
+  Sub2API owns balance/Key/Usage, and Ledger stores append-only evidence.
 
 ## Pre-Commit Checklist
 

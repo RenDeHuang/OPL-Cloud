@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -17,6 +18,59 @@ import (
 type recordingDriver struct {
 	dialect.Driver
 	query string
+}
+
+func TestPilotAnnouncementsMigration(t *testing.T) {
+	raw, err := os.ReadFile("202607190002_pilot_announcements.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sql := string(raw)
+	for _, required := range []string{
+		"CREATE TABLE IF NOT EXISTS control_plane_announcements",
+		"CREATE TABLE IF NOT EXISTS control_plane_announcement_reads",
+		"CHECK (status IN ('draft', 'scheduled', 'published', 'withdrawn'))",
+		"CHECK (ends_at = '' OR starts_at = '' OR ends_at::timestamptz > starts_at::timestamptz)",
+		"UNIQUE (announcement_id, user_id)",
+		"ADD CONSTRAINT control_plane_announcements_status_check",
+		"ADD CONSTRAINT control_plane_announcements_schedule_check",
+		"ADD CONSTRAINT control_plane_announcement_reads_announcement_fk",
+		"ADD CONSTRAINT control_plane_announcement_reads_user_unique",
+	} {
+		if !strings.Contains(sql, required) {
+			t.Fatalf("Pilot announcement migration missing %q", required)
+		}
+	}
+	driver := &recordingDriver{}
+	if err := ApplyPilotAnnouncements(context.Background(), driver); err != nil {
+		t.Fatal(err)
+	}
+	if driver.query != sql {
+		t.Fatal("ApplyPilotAnnouncements did not execute the embedded migration")
+	}
+}
+
+func TestWorkspaceAPIKeyIDMigration(t *testing.T) {
+	raw, err := os.ReadFile("202607190001_workspace_api_key_id.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sql := string(raw)
+	for _, required := range []string{
+		"ADD COLUMN IF NOT EXISTS workspace_api_key_id BIGINT",
+		"workspace_api_key_id IS NULL OR workspace_api_key_id > 0",
+	} {
+		if !strings.Contains(sql, required) {
+			t.Fatalf("Workspace Key migration missing %q", required)
+		}
+	}
+	driver := &recordingDriver{}
+	if err := ApplyWorkspaceAPIKeyID(context.Background(), driver); err != nil {
+		t.Fatal(err)
+	}
+	if driver.query != sql {
+		t.Fatal("ApplyWorkspaceAPIKeyID did not execute the embedded migration")
+	}
 }
 
 func (d *recordingDriver) Tx(context.Context) (dialect.Tx, error) {

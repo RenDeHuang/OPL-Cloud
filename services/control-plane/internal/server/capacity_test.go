@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -76,6 +77,29 @@ func (f *capacityFabric) count() int {
 	return len(f.creates)
 }
 
+type capacitySub2API struct {
+	*testSub2APIClient
+}
+
+func (c *capacitySub2API) UserKeys(ctx context.Context, credential clients.SessionDelegatedCredential, userID int64) ([]clients.Sub2APIWorkspaceKey, error) {
+	if credential.Bearer != "test-user-delegated-token" {
+		return nil, errors.New("wrong delegated credential")
+	}
+	key, err := c.WorkspaceKey(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	return []clients.Sub2APIWorkspaceKey{key}, nil
+}
+
+func (c *capacitySub2API) UserKey(ctx context.Context, credential clients.SessionDelegatedCredential, userID, keyID int64) (clients.Sub2APIWorkspaceKey, error) {
+	keys, err := c.UserKeys(ctx, credential, userID)
+	if err != nil || keys[0].ID != keyID {
+		return clients.Sub2APIWorkspaceKey{}, clients.ErrSub2APIKeyNotFound
+	}
+	return keys[0], nil
+}
+
 type capacityCall struct {
 	duration time.Duration
 	status   int
@@ -145,7 +169,7 @@ func TestSinglePodCapacity(t *testing.T) {
 	}
 	seedDuration := time.Since(seedStarted)
 
-	sub2API := &testSub2APIClient{balance: 100_000_000_000_000, charges: map[string]int64{}}
+	sub2API := &capacitySub2API{testSub2APIClient: &testSub2APIClient{balance: 100_000_000_000_000, charges: map[string]int64{}}}
 	fabric := &capacityFabric{creates: map[string]string{}}
 	ledger := &capacityLedger{receipts: map[string]string{}}
 	service := controlplane.NewService(ledger, fabric, sub2API)
@@ -192,7 +216,7 @@ func TestSinglePodCapacity(t *testing.T) {
 	}
 	launches := make([]map[string]any, 0, 1)
 	for _, operation := range operations {
-		if operation["action"] == "workspace.launch" {
+		if operation["action"] == workspaceLaunchAction {
 			launches = append(launches, operation)
 		}
 	}
@@ -329,7 +353,7 @@ func capacityCallMetrics(calls []capacityCall) (time.Duration, time.Duration, in
 	return percentile(50), percentile(95), errors
 }
 
-func capacitySub2APIChargeCount(client *testSub2APIClient) int {
+func capacitySub2APIChargeCount(client *capacitySub2API) int {
 	client.mu.Lock()
 	defer client.mu.Unlock()
 	return len(client.charges)

@@ -139,6 +139,7 @@ func TestBillingReviewResolutionActivatesConfirmedChargedResourceIdempotently(t 
 		t.Fatal(err)
 	}
 	h.server = restarted
+	h.operator = operatorSessionForTest(t, restarted)
 	replayed := billingReviewRequest(t, h, h.operator, "review-resolution-001", "activate_charged_resource", "case-20260716-001")
 	if replayed.Code != http.StatusOK || replayed.Body.String() != firstBody || len(h.ledger.inputs) != 1 || strings.Count(strings.Join(*h.events, ","), "fabric.compute.sync") != 1 {
 		t.Fatalf("replay = %d %s events=%#v receipts=%d", replayed.Code, replayed.Body.String(), *h.events, len(h.ledger.inputs))

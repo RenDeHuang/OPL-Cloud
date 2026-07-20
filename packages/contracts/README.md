@@ -27,3 +27,10 @@ Each contract should declare:
 4. Deployment workflow and image checks belong in `opl-cloud-deployment-contract.json`.
 5. Package import and service boundary checks belong in `opl-cloud-package-boundary-contract.json`.
 6. Shared execution identities, states, write semantics, ownership, and errors belong in `opl-cloud-shared-execution-contract.json`.
+7. Product reads reuse `SourceEnvelope<T>` and the server-side
+   `writeSourceEnvelope`; do not create per-product envelope types.
+8. `source`, `status`, `available`, and `fetchedAt` report the actual read. Return
+   `sourceUpdatedAt` only when the authority provides it; local time is not a
+   substitute.
+9. A target contract field does not prove delivery. `codeComplete`, `pilotReady`,
+   and `productionProven` advance only with their matching code and evidence.

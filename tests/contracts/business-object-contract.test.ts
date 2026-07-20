@@ -11,7 +11,7 @@ async function readJson(path) {
 test("business object contract defines the current commercial object boundary", async () => {
   const contract = await readJson(businessObjectContractPath);
 
-  assert.equal(contract.schemaVersion, 1);
+	assert.equal(contract.schemaVersion, 5);
   assert.equal(contract.owner, "OPL Console");
   assert.equal(contract.purpose, "Machine-readable requirements for current commercial Console objects.");
   assert.deepEqual(contract.repositoryBoundaries, ["opl-console", "opl-fabric", "opl-ledger"]);
@@ -38,7 +38,8 @@ test("business object contract contains only current OPL Cloud business facts", 
     ["EvidenceReceipt", ["list", "read", "evidence", "audit"]],
     ["FabricOperation", ["list", "detail", "read", "evidence", "audit"]],
     ["AdminAuditEvent", ["list", "read", "audit"]],
-    ["SupportTicketMapping", ["list", "detail", "read", "write", "audit"]]
+    ["SupportTicketMapping", ["list", "detail", "read", "write", "audit"]],
+    ["Announcement", ["list", "detail", "read", "write", "audit"]]
   ]) {
     const object = kinds.get(kind);
     assert.ok(object, `missing object kind ${kind}`);
@@ -50,6 +51,7 @@ test("business object contract contains only current OPL Cloud business facts", 
   assert.deepEqual([...kinds.keys()].sort(), [
     "Account",
     "AdminAuditEvent",
+    "Announcement",
     "ComputeAllocation",
     "Balance",
     "EvidenceReceipt",
@@ -78,6 +80,7 @@ test("Workspace contract is the stable URL, storage, and current runtime pointer
     "storageId",
     "currentComputeAllocationId",
     "currentAttachmentId",
+    "workspaceApiKeyId",
     "url",
     "access.account",
     "access.credentialStatus",
@@ -105,7 +108,7 @@ test("ComputeAllocation contract requires dedicated CVM or Kubernetes node ident
     "publicIp",
     "ownerAccountId",
     "workspaceIds",
-    "billingStatus",
+    "providerStatus",
     "destroyedAt",
     "lastProviderSyncAt"
   ]);

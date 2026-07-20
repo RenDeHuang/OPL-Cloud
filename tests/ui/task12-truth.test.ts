@@ -10,9 +10,15 @@ const source = (path: string) => readFile(new URL(path, root), "utf8");
 
 test("Task 12 exposes typed source adapters for the customer truth surfaces", async () => {
   assert.equal(typeof readApi.getGatewayWallet, "function");
+  assert.equal(typeof readApi.getGatewayEndpoint, "function");
   assert.equal(typeof readApi.getGatewayKeys, "function");
-  assert.equal(typeof readApi.getGatewayUsage, "function");
-  assert.equal(typeof readApi.getGatewayUsageStats, "function");
+  assert.equal(typeof readApi.getGatewayKey, "function");
+  assert.equal(typeof readApi.createGatewayKey, "function");
+  assert.equal(typeof readApi.updateGatewayKey, "function");
+  assert.equal(typeof readApi.deleteGatewayKey, "function");
+  assert.equal(typeof readApi.getGatewayKeyUsage, "function");
+  assert.equal(typeof readApi.getGatewayKeyUsageSummary, "function");
+  assert.equal(typeof readApi.getGatewayAccountUsageSummary, "function");
   assert.equal(typeof readApi.getGatewayBalanceHistory, "function");
   assert.equal(typeof readApi.revealGatewayKey, "function");
   assert.equal(typeof workspaceApi.launchWorkspace, "function");
@@ -45,9 +51,11 @@ test("critical frontend contracts use named DTOs instead of AnyRecord", async ()
   ]);
   for (const name of [
     "WorkspaceLaunchRequest", "WorkspaceLaunchResponse", "WorkspaceRenewalResponse",
-    "RuntimeCredentialResponse", "GatewayWallet", "GatewayKey", "GatewayUsageItem"
+    "RuntimeCredentialResponse", "WorkspaceRuntimeDTO", "GatewayWallet", "GatewayKey",
+    "GatewayKeySecretDTO", "GatewayUsageItem"
   ]) assert.match(dto, new RegExp(`interface ${name}\\b`));
   assert.match(dto, /type SourceEnvelope\b/);
+  assert.doesNotMatch(dto, /interface (GatewayKeyReveal|WorkspaceRuntimeStatus)\b/);
   assert.doesNotMatch(readApiSource, /AnyRecord|Record<string, any>|map\[string\]any/);
   assert.doesNotMatch(workspaceSource, /AnyRecord|Record<string, any>|map\[string\]any/);
 });

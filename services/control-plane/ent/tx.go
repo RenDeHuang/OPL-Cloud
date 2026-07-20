@@ -16,6 +16,10 @@ type Tx struct {
 	Account *AccountClient
 	// AdminAuditEvent is the client for interacting with the AdminAuditEvent builders.
 	AdminAuditEvent *AdminAuditEventClient
+	// Announcement is the client for interacting with the Announcement builders.
+	Announcement *AnnouncementClient
+	// AnnouncementRead is the client for interacting with the AnnouncementRead builders.
+	AnnouncementRead *AnnouncementReadClient
 	// ArchiveJob is the client for interacting with the ArchiveJob builders.
 	ArchiveJob *ArchiveJobClient
 	// ArchivedAdminAuditEvent is the client for interacting with the ArchivedAdminAuditEvent builders.
@@ -195,6 +199,8 @@ func (tx *Tx) Client() *Client {
 func (tx *Tx) init() {
 	tx.Account = NewAccountClient(tx.config)
 	tx.AdminAuditEvent = NewAdminAuditEventClient(tx.config)
+	tx.Announcement = NewAnnouncementClient(tx.config)
+	tx.AnnouncementRead = NewAnnouncementReadClient(tx.config)
 	tx.ArchiveJob = NewArchiveJobClient(tx.config)
 	tx.ArchivedAdminAuditEvent = NewArchivedAdminAuditEventClient(tx.config)
 	tx.ArchivedComputeAllocation = NewArchivedComputeAllocationClient(tx.config)

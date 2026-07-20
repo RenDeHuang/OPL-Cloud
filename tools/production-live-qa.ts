@@ -5,6 +5,7 @@ import {
   assertPublicHttpsUrl,
   dedicatedWorkspaceKey,
   login,
+  mutationApprovalFromJson,
   requestJson,
   sourceEnvelope,
   verificationOwnerFromSeed,
@@ -57,12 +58,12 @@ function resourceIds(result) {
   return ids;
 }
 
-async function gatewayUsageSnapshot(requestOptions, auth) {
+async function gatewayUsageSnapshot(requestOptions, auth, keyId) {
   const items = [];
   const ids = new Set();
   let expected;
   for (let page = 1; !expected || page <= expected.pages; page += 1) {
-    const envelope = sourceEnvelope(await requestJson({ ...requestOptions, auth, path: `/api/gateway/usage?page=${page}&pageSize=100` }), "sub2api", true);
+    const envelope = sourceEnvelope(await requestJson({ ...requestOptions, auth, path: `/api/gateway/keys/${encodeURIComponent(keyId)}/usage?page=${page}&pageSize=100` }), "sub2api", true);
     const payload = envelope.data;
     // ponytail: the dedicated QA key is capped at 10k rows; add a server-side snapshot endpoint if that ceiling is ever reached.
     if ((Number.isSafeInteger(payload?.total) && payload.total > MAX_USAGE_ITEMS) || (Number.isSafeInteger(payload?.pages) && payload.pages > MAX_USAGE_PAGES)) {
@@ -90,8 +91,8 @@ async function gatewayUsageSnapshot(requestOptions, auth) {
   return { total: expected.total, ids, items };
 }
 
-async function gatewayUsageStats(requestOptions, auth) {
-  const stats = sourceEnvelope(await requestJson({ ...requestOptions, auth, path: "/api/gateway/usage/stats?period=month" }), "sub2api").data;
+async function gatewayUsageStats(requestOptions, auth, keyId) {
+  const stats = sourceEnvelope(await requestJson({ ...requestOptions, auth, path: `/api/gateway/keys/${encodeURIComponent(keyId)}/usage-summary?period=month` }), "sub2api").data;
   for (const key of ["totalRequests", "totalInputTokens", "totalOutputTokens", "totalTokens", "totalActualCostUsdMicros"]) {
     if (!Number.isSafeInteger(stats?.[key]) || stats[key] < 0) throw new Error("gateway_usage_stats_invalid");
   }
@@ -244,6 +245,8 @@ export async function verifyProductionLiveQa(options = {}) {
     expectedModel = "",
     requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
     manifestPath = "",
+    mutationApprovalJson = "",
+    mutationApprovalId = "",
     browserFactory,
     fetchImpl = globalThis.fetch,
     signal,
@@ -283,9 +286,7 @@ export async function verifyProductionLiveQa(options = {}) {
   const runtime = sourceEnvelope(await requestJson({
     ...requestOptions,
     auth,
-    path: "/api/workspaces/runtime-status",
-    method: "POST",
-    body: { workspaceId: before.workspaceId }
+    path: `/api/workspaces/${encodeURIComponent(before.workspaceId)}/runtime-status`
   }), "fabric").data;
   if (Object.hasOwn(runtime?.access || {}, "password") || Object.hasOwn(runtime?.access || {}, "secretRef")) throw new Error("runtime_status_secret_forbidden");
   if (runtime?.ready !== true || runtime?.access?.credentialStatus !== "configured" || !runtime?.access?.username) {
@@ -307,8 +308,14 @@ export async function verifyProductionLiveQa(options = {}) {
 
   const walletBefore = walletFact(sourceEnvelope(await requestJson({ ...requestOptions, auth, path: "/api/gateway/wallet" }), "sub2api"), owner.sub2apiUserId);
   const keyBefore = dedicatedWorkspaceKey(sourceEnvelope(await requestJson({ ...requestOptions, auth, path: "/api/gateway/keys" }), "sub2api", true));
-  const usageBefore = await gatewayUsageSnapshot(requestOptions, auth);
-  const statsBefore = await gatewayUsageStats(requestOptions, auth);
+  const usageBefore = await gatewayUsageSnapshot(requestOptions, auth, keyBefore.id);
+  const statsBefore = await gatewayUsageStats(requestOptions, auth, keyBefore.id);
+  mutationApprovalFromJson(mutationApprovalJson, {
+    approvalId: mutationApprovalId,
+    accountId: owner.accountId,
+    workspaceId: before.workspaceId,
+    resourceIds: [slotId, keyBefore.id]
+  }, "production_live_qa");
   const workspace = await verifyWorkspaceBrowserQa({
     url: runtime.url || before.url,
     username: credentials.access.username,
@@ -329,10 +336,10 @@ export async function verifyProductionLiveQa(options = {}) {
   for (let attempt = 1; attempt <= usageAttempts; attempt += 1) {
     usageReadAttempts = attempt;
     dedicatedWorkspaceKey(sourceEnvelope(await requestJson({ ...requestOptions, auth, path: "/api/gateway/keys" }), "sub2api", true), keyBefore.id);
-    usageAfter = await gatewayUsageSnapshot(requestOptions, auth);
+    usageAfter = await gatewayUsageSnapshot(requestOptions, auth, keyBefore.id);
     requestUsage = exactUsageRecord(usageBefore, usageAfter, expectedModel, keyBefore.id);
     if (requestUsage) {
-      statsAfter = await gatewayUsageStats(requestOptions, auth);
+      statsAfter = await gatewayUsageStats(requestOptions, auth, keyBefore.id);
       walletAfter = walletFact(sourceEnvelope(await requestJson({ ...requestOptions, auth, path: "/api/gateway/wallet" }), "sub2api"), owner.sub2apiUserId);
       const statsMatch = statsMatchRequest(statsBefore, statsAfter, requestUsage);
       const balanceMatch = walletBefore.usdMicros - walletAfter.usdMicros === requestUsage.actualCostUsdMicros;
@@ -395,19 +402,32 @@ export async function runProductionLiveQaCli({
   browserFactory
 } = {}) {
   if (argv.includes("--help") || argv.includes("-h")) {
-    stdout.write("Usage: node tools/production-live-qa.ts [--origin <https-url>] [--account <id>]\nRuns one explicitly confirmed Workspace model request after rollout; never buys, renews, or deletes provider resources.\n");
+    stdout.write("Usage: node tools/production-live-qa.ts --read-only\nA model request additionally requires --allow-gateway-write --allow-model-write --approval-id <id> and OPL_VERIFY_MUTATION_APPROVAL_JSON.\n");
     return 0;
   }
   try {
     if (env.OPL_VERIFY_MODEL_ACCESS_KEY) throw new Error("production_live_qa_raw_key_forbidden");
     const args = cliArgs(argv);
+    if (args["read-only"] === "true") {
+      if (args["allow-gateway-write"] || args["allow-model-write"] || args["approval-id"]) throw new Error("production_live_qa_read_only_conflict");
+      stdout.write(`${JSON.stringify({ ok: true, mode: "read-only", evidenceLevel: "read-only", writesPerformed: 0 }, null, 2)}\n`);
+      return 0;
+    }
+    if (args["allow-gateway-write"] !== "true" || args["allow-model-write"] !== "true") throw new Error("production_live_qa_write_allow_flags_required");
+    const accountId = args.account || env.OPL_VERIFY_ACCOUNT_ID || "";
+    const slotId = env.OPL_VERIFY_SLOT_ID || FIXED_VERIFICATION_SLOT_ID;
+    mutationApprovalFromJson(env.OPL_VERIFY_MUTATION_APPROVAL_JSON, {
+      approvalId: args["approval-id"] || "",
+      accountId,
+      resourceIds: [slotId]
+    }, "production_live_qa");
     const result = await verifyProductionLiveQa({
       origin: args.origin || env.OPL_CONSOLE_ORIGIN,
       authUsersJson: env.OPL_VERIFY_AUTH_USERS_JSON,
-      accountId: args.account || env.OPL_VERIFY_ACCOUNT_ID || "",
+      accountId,
       runId: args["run-id"] || env.OPL_VERIFY_RUN_ID,
       confirmation: env.OPL_VERIFY_LIVE_QA_CONFIRMATION,
-      slotId: env.OPL_VERIFY_SLOT_ID || FIXED_VERIFICATION_SLOT_ID,
+      slotId,
       slotDescriptor: env.OPL_VERIFY_SLOT_DESCRIPTOR_JSON,
       workspaceUrlAttempts: Number(env.OPL_VERIFY_URL_ATTEMPTS || 3),
       retryDelayMs: Number(env.OPL_VERIFY_RETRY_DELAY_MS || 10_000),
@@ -418,6 +438,8 @@ export async function runProductionLiveQaCli({
       expectedModel: env.OPL_VERIFY_EXPECTED_MODEL || "",
       requestTimeoutMs: Number(env.OPL_VERIFY_REQUEST_TIMEOUT_MS || DEFAULT_REQUEST_TIMEOUT_MS),
       manifestPath: env.OPL_VERIFY_MANIFEST_PATH || "",
+      mutationApprovalJson: env.OPL_VERIFY_MUTATION_APPROVAL_JSON,
+      mutationApprovalId: args["approval-id"] || "",
       browserFactory,
       fetchImpl
     });

@@ -42,6 +42,10 @@ type FabricMonthlyPreflightClient interface {
 	MonthlyPreflight(context.Context, MonthlyPreflightInput) (MonthlyPreflight, error)
 }
 
+type FabricMonthlyProviderTruthClient interface {
+	MonthlyProviderTruth(context.Context, string, string) (MonthlyProviderTruth, error)
+}
+
 type FabricTransferClient interface {
 	CreateTransfer(context.Context, ContentTransferInput, string) (ContentTransfer, error)
 	Transfer(context.Context, string) (ContentTransfer, error)
@@ -155,6 +159,15 @@ type MonthlyPreflight struct {
 	RenewFlag          string            `json:"renewFlag"`
 	ProviderPriceCNY   float64           `json:"providerPriceCny"`
 	ProviderRequestIDs map[string]string `json:"providerRequestIds"`
+}
+
+type MonthlyProviderTruth struct {
+	ComputeState      string            `json:"computeState"`
+	StorageState      string            `json:"storageState"`
+	Compute           ComputeAllocation `json:"compute"`
+	Storage           StorageVolume     `json:"storage"`
+	ProviderRequestID string            `json:"providerRequestId,omitempty"`
+	ErrorCode         string            `json:"errorCode,omitempty"`
 }
 
 type ComputeAllocation struct {
@@ -364,6 +377,13 @@ func (c *fabricHTTPClient) Catalog(ctx context.Context) (FabricCatalog, error) {
 func (c *fabricHTTPClient) MonthlyPreflight(ctx context.Context, input MonthlyPreflightInput) (MonthlyPreflight, error) {
 	var result MonthlyPreflight
 	err := c.post(ctx, "/fabric/monthly-preflight", input, "", &result)
+	return result, err
+}
+
+func (c *fabricHTTPClient) MonthlyProviderTruth(ctx context.Context, computeID, storageID string) (MonthlyProviderTruth, error) {
+	params := url.Values{"computeAllocationId": {computeID}, "storageVolumeId": {storageID}}
+	var result MonthlyProviderTruth
+	err := c.get(ctx, "/fabric/monthly-provider-truth?"+params.Encode(), &result)
 	return result, err
 }
 

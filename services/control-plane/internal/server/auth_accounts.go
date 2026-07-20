@@ -140,6 +140,10 @@ func (app *controlPlaneServer) disableUser(input map[string]any) (map[string]any
 	if isOperatorUser(user) && stringValue(user["status"]) == "active" {
 		return nil, errLastActiveAdmin
 	}
+	sessionKeys, err := app.sessionKeysForUser(context.Background(), id)
+	if err != nil {
+		return nil, err
+	}
 	user["status"] = "disabled"
 	user["disabledAt"] = time.Now().UTC().Format(time.RFC3339)
 	user["disabledBy"] = firstNonEmpty(stringField(input, "operatorUserId", ""), stringField(input, "disabledBy", ""), "usr-admin")
@@ -147,47 +151,7 @@ func (app *controlPlaneServer) disableUser(input map[string]any) (map[string]any
 	if err := app.tables.ApplyUserLifecycle(context.Background(), user); err != nil {
 		return nil, err
 	}
-	return sanitizeUser(user), nil
-}
-
-func (app *controlPlaneServer) softDeleteUser(input map[string]any) (map[string]any, error) {
-	id := stringField(input, "userId", "")
-	user, err := app.findUserByID(context.Background(), id)
-	if err != nil {
-		return nil, err
-	}
-	if user == nil {
-		return nil, errUserNotFound
-	}
-	accountID := stringValue(user["accountId"])
-	unlock := app.lockResource("account", accountID)
-	defer unlock()
-	user, err = app.findUserByID(context.Background(), id)
-	if err != nil {
-		return nil, err
-	}
-	if user == nil {
-		return nil, errUserNotFound
-	}
-	if stringValue(user["accountId"]) != accountID {
-		return nil, errAccountIdentityConflict
-	}
-	if stringValue(user["status"]) == "deleted" {
-		if err := app.tables.ApplyUserLifecycle(context.Background(), user); err != nil {
-			return nil, err
-		}
-		return sanitizeUser(user), nil
-	}
-	if isOperatorUser(user) && stringValue(user["status"]) == "active" {
-		return nil, errLastActiveAdmin
-	}
-	user["status"] = "deleted"
-	user["deletedAt"] = time.Now().UTC().Format(time.RFC3339)
-	user["deletedBy"] = firstNonEmpty(stringField(input, "operatorUserId", ""), stringField(input, "deletedBy", ""), "usr-admin")
-	user["deleteReason"] = stringField(input, "reason", "admin_deleted")
-	if err := app.tables.ApplyUserLifecycle(context.Background(), user); err != nil {
-		return nil, err
-	}
+	app.sessionCredentials.Delete(sessionKeys...)
 	return sanitizeUser(user), nil
 }
 
@@ -220,6 +184,18 @@ func (app *controlPlaneServer) login(ctx context.Context, service *controlplane.
 	}
 	user := matches[0]
 	accountID := stringValue(user["accountId"])
+	unlock, err := app.lockResourceContext(ctx, "account", accountID)
+	if err != nil {
+		return nil, "", err
+	}
+	defer unlock()
+	user, err = app.findUserByID(ctx, stringValue(user["id"]))
+	if err != nil {
+		return nil, "", err
+	}
+	if user == nil || normalizeEmail(stringValue(user["email"])) != email || stringValue(user["status"]) != "active" {
+		return nil, "", errInvalidLocalCredentials
+	}
 	accounts, err := app.tables.ListAccounts(ctx, accountID)
 	if err != nil {
 		return nil, "", err
@@ -231,14 +207,15 @@ func (app *controlPlaneServer) login(ctx context.Context, service *controlplane.
 		(!operator && stringValue(user["role"]) != "owner") || (operator && (stringValue(user["id"]) != "usr-admin" || accountID != "acct-admin")) {
 		return nil, "", clients.ErrSub2APIAuthUnavailable
 	}
-	identity, err := service.AuthenticateSub2APIUser(ctx, email, password)
+	authentication, err := service.AuthenticateSub2APIUser(ctx, email, password)
 	if err != nil {
 		return nil, "", err
 	}
+	identity := authentication.Identity
 	if identity.ID != remoteID || normalizeEmail(identity.Email) != email || identity.Status != "active" {
 		return nil, "", clients.ErrSub2APIAuthUnavailable
 	}
-	return app.createSession(user)
+	return app.createSession(user, authentication.AccessToken)
 }
 
 func (app *controlPlaneServer) loginRateLimited(r *http.Request, input map[string]any) bool {
@@ -281,7 +258,7 @@ func loginFailureKey(r *http.Request, input map[string]any) string {
 	return email + "|" + host
 }
 
-func (app *controlPlaneServer) createSession(user map[string]any) (map[string]any, string, error) {
+func (app *controlPlaneServer) createSession(user map[string]any, bearer string) (map[string]any, string, error) {
 	sessionID, err := randomToken(32)
 	if err != nil {
 		return nil, "", err
@@ -292,42 +269,68 @@ func (app *controlPlaneServer) createSession(user map[string]any) (map[string]an
 	}
 	sessionKey := sessionLookupKey(sessionID)
 	expiresAt := time.Now().UTC().Add(12 * time.Hour)
+	if err := app.sessionCredentials.Put(sessionKey, SessionDelegatedCredential{Bearer: bearer, ExpiresAt: expiresAt}); err != nil {
+		return nil, "", err
+	}
 	if err := app.tables.SaveSession(context.Background(), map[string]any{"id": sessionKey, "userId": stringValue(user["id"]), "csrf": csrf, "expiresAt": expiresAt.Format(time.RFC3339)}); err != nil {
+		app.sessionCredentials.Delete(sessionKey)
 		return nil, "", err
 	}
 	return map[string]any{"user": sanitizeUser(user), "isOperator": isOperatorUser(user), "csrfToken": csrf, "expiresAt": expiresAt.Format(time.RFC3339)}, sessionID, nil
 }
 
-func (app *controlPlaneServer) session(r *http.Request) (map[string]any, bool) {
+type sessionAuthenticationState uint8
+
+const (
+	sessionNotAuthenticated sessionAuthenticationState = iota
+	sessionAuthenticated
+	sessionReauthenticationRequired
+)
+
+func (app *controlPlaneServer) session(r *http.Request) (map[string]any, sessionAuthenticationState) {
 	cookie, err := r.Cookie(sessionCookieName)
 	if err != nil || cookie.Value == "" {
-		return nil, false
+		return nil, sessionNotAuthenticated
 	}
 	sessionKey := sessionLookupKey(cookie.Value)
 	sessions, err := app.tables.ListSessions(r.Context())
 	if err != nil {
-		return nil, false
+		return nil, sessionNotAuthenticated
 	}
 	session, ok := sessions[sessionKey]
-	expiresAt, _ := time.Parse(time.RFC3339, stringValue(session["expiresAt"]))
-	if !ok || time.Now().UTC().After(expiresAt) {
-		_ = app.tables.DeleteSession(r.Context(), sessionKey)
-		return nil, false
+	expiresAt, parseErr := time.Parse(time.RFC3339, stringValue(session["expiresAt"]))
+	if !ok || parseErr != nil || !expiresAt.After(time.Now().UTC()) {
+		app.invalidateSession(r.Context(), sessionKey)
+		return nil, sessionReauthenticationRequired
+	}
+	if _, ok := app.sessionCredentials.Get(sessionKey); !ok {
+		app.invalidateSession(r.Context(), sessionKey)
+		return nil, sessionReauthenticationRequired
 	}
 	user, err := app.findUserByID(r.Context(), stringValue(session["userId"]))
 	if err != nil {
-		return nil, false
+		return nil, sessionNotAuthenticated
 	}
 	if user == nil || stringValue(user["status"]) != "active" || !validRole(stringValue(user["role"])) {
-		return nil, false
+		app.invalidateSession(r.Context(), sessionKey)
+		return nil, sessionReauthenticationRequired
 	}
 	if !isOperatorUser(user) {
 		active, err := app.hasActiveCustomerMembership(r.Context(), user)
-		if err != nil || !active {
-			return nil, false
+		if err != nil {
+			return nil, sessionNotAuthenticated
+		}
+		if !active {
+			app.invalidateSession(r.Context(), sessionKey)
+			return nil, sessionReauthenticationRequired
 		}
 	}
-	return map[string]any{"user": sanitizeUser(user), "isOperator": isOperatorUser(user), "csrfToken": stringValue(session["csrf"]), "expiresAt": expiresAt.Format(time.RFC3339)}, true
+	return map[string]any{"user": sanitizeUser(user), "isOperator": isOperatorUser(user), "csrfToken": stringValue(session["csrf"]), "expiresAt": expiresAt.Format(time.RFC3339)}, sessionAuthenticated
+}
+
+func (app *controlPlaneServer) invalidateSession(ctx context.Context, sessionKey string) {
+	app.sessionCredentials.Delete(sessionKey)
+	_ = app.tables.DeleteSession(ctx, sessionKey)
 }
 
 func isOperatorUser(user map[string]any) bool {
@@ -382,8 +385,8 @@ func (app *controlPlaneServer) sessionUserID(r *http.Request) string {
 }
 
 func (app *controlPlaneServer) sessionUserContext(r *http.Request) (map[string]any, bool) {
-	payload, ok := app.session(r)
-	if !ok {
+	payload, state := app.session(r)
+	if state != sessionAuthenticated {
 		return nil, false
 	}
 	user, _ := payload["user"].(map[string]any)
@@ -395,7 +398,23 @@ func (app *controlPlaneServer) logout(r *http.Request) error {
 	if err != nil {
 		return nil
 	}
-	return app.tables.DeleteSession(r.Context(), sessionLookupKey(cookie.Value))
+	sessionKey := sessionLookupKey(cookie.Value)
+	app.sessionCredentials.Delete(sessionKey)
+	return app.tables.DeleteSession(r.Context(), sessionKey)
+}
+
+func (app *controlPlaneServer) sessionKeysForUser(ctx context.Context, userID string) ([]string, error) {
+	sessions, err := app.tables.ListSessions(ctx)
+	if err != nil {
+		return nil, err
+	}
+	keys := make([]string, 0)
+	for key, session := range sessions {
+		if stringValue(session["userId"]) == userID {
+			keys = append(keys, key)
+		}
+	}
+	return keys, nil
 }
 
 func (app *controlPlaneServer) sessionFactsLocked() controlPlaneRecordSet {

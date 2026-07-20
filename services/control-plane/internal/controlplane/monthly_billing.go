@@ -37,6 +37,14 @@ func (s *Service) PreflightMonthlyResource(ctx context.Context, input clients.Mo
 	return client.MonthlyPreflight(ctx, input)
 }
 
+func (s *Service) MonthlyProviderTruth(ctx context.Context, computeID, storageID string) (clients.MonthlyProviderTruth, error) {
+	client, ok := s.fabric.(clients.FabricMonthlyProviderTruthClient)
+	if !ok {
+		return clients.MonthlyProviderTruth{}, errors.New("fabric_monthly_provider_truth_unavailable")
+	}
+	return client.MonthlyProviderTruth(ctx, computeID, storageID)
+}
+
 func (s *Service) PrepareMonthlyCompute(ctx context.Context, input clients.ComputeAllocationInput, key string) (clients.ComputeAllocation, error) {
 	return s.fabric.CreateComputeAllocation(ctx, input, key)
 }

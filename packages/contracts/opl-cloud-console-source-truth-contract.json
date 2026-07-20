@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 6,
   "owner": "OPL Console Control Plane",
   "purpose": "Strict source envelopes and customer-safe live projections for Console source-of-truth APIs.",
   "state": "current",
@@ -9,6 +9,8 @@
     "removalCondition": "Replace only with a newer approved source-truth contract and matching focused tests."
   },
   "envelope": {
+    "typeName": "SourceEnvelope<T>",
+    "serverWriter": "writeSourceEnvelope",
     "requiredFields": ["source", "status", "available", "fetchedAt"],
     "statuses": ["available", "empty", "unavailable"],
     "states": {
@@ -24,8 +26,25 @@
       "unavailableBody": "strict_unavailable_envelope"
     }
   },
+  "implementationEvidence": {
+    "gatewayEndpointAndGeneralKeys": "code_complete_local_focused_tests",
+    "operatorProjection": "base_projection_local_tests_workspace_launch_recovery_fields_pending_integration",
+    "workspaceBillingReceipts": "purchased_components_and_fulfillment_projection_code_complete_local_tests",
+    "browserAndProduction": "pending"
+  },
   "sources": {
     "gateway": {
+      "endpoint": {
+        "route": "GET /api/gateway/endpoint",
+        "source": "control-plane",
+        "authority": "OPL_GATEWAY_PUBLIC_BASE_URL",
+        "dataFields": ["baseUrl"],
+        "productionScheme": "https",
+        "missingBehavior": "unavailable_without_data",
+        "forbiddenFallbacks": ["OPL_SUB2API_BASE_URL", "gflabtoken.cn"],
+        "fetchedAt": "control_plane_response_fetch_completion_time",
+        "sourceUpdatedAt": "omit_no_authoritative_source_timestamp"
+      },
       "wallet": {
         "route": "GET /api/gateway/wallet",
         "source": "sub2api",
@@ -42,12 +61,19 @@
         "authority": "live_sub2api_readback",
         "identity": "session_account_to_control_plane_sub2api_user_mapping",
         "ignoredIdentityInputs": ["accountId", "user_id", "api_key_id", "sub2apiUserId"],
-        "itemFields": ["id", "name", "status", "quotaUsdMicros", "quotaUsedUsdMicros", "usage5hUsdMicros", "usage1dUsdMicros", "usage7dUsdMicros", "lastUsedAt"],
+        "itemFields": ["id", "name", "kind", "status", "quotaUsdMicros", "quotaUsedUsdMicros", "usage5hUsdMicros", "usage1dUsdMicros", "usage7dUsdMicros", "lastUsedAt", "expiresAt", "manageable", "deletable"],
         "idFormat": "positive_decimal_string",
         "statusValues": ["active", "disabled"],
         "pagination": "collect_all_coherent_upstream_pages_before_projection",
         "empty": "real_zero_rows",
-        "revealRoute": "POST /api/gateway/keys/opl-workspace/reveal",
+        "lifecycleRoutes": ["POST /api/gateway/keys", "PATCH /api/gateway/keys/{keyId}", "DELETE /api/gateway/keys/{keyId}"],
+        "createRequest": {
+          "fields": ["name", "quotaUsdMicros", "expiresInDays"],
+          "expiryField": "expiresInDays",
+          "upstreamWrites": 1,
+          "responseExpiryField": "expiresAt"
+        },
+        "revealRoute": "POST /api/gateway/keys/{keyId}/reveal",
         "revealAuthorization": "session_owner_with_csrf",
         "revealDataFields": ["id", "name", "status", "value"],
         "revealIdFormat": "positive_decimal_string",
@@ -57,7 +83,7 @@
         "sourceUpdatedAt": "omit_unless_sub2api_returns_source_timestamp"
       },
       "usage": {
-        "route": "GET /api/gateway/usage",
+        "route": "GET /api/gateway/keys/{keyId}/usage",
         "source": "sub2api",
         "authority": "live_sub2api_readback",
         "identity": "session_account_to_control_plane_sub2api_user_mapping",
@@ -68,11 +94,23 @@
         "sourceUpdatedAt": "omit_unless_sub2api_returns_source_timestamp"
       },
       "usageStats": {
-        "route": "GET /api/gateway/usage/stats",
+        "route": "GET /api/gateway/keys/{keyId}/usage-summary",
         "source": "sub2api",
         "authority": "live_sub2api_readback",
         "identity": "session_account_to_control_plane_sub2api_user_mapping",
         "ignoredIdentityInputs": ["accountId", "user_id", "api_key_id", "sub2apiUserId"],
+        "dataFields": ["totalRequests", "totalInputTokens", "totalOutputTokens", "totalTokens", "totalActualCostUsdMicros"],
+        "zeroAggregate": "available",
+        "fetchedAt": "control_plane_response_fetch_completion_time",
+        "sourceUpdatedAt": "omit_unless_sub2api_returns_source_timestamp"
+      },
+      "accountUsageStats": {
+        "route": "GET /api/gateway/usage-summary",
+        "source": "sub2api",
+        "authority": "live_sub2api_aggregate",
+        "identity": "session_account_to_control_plane_sub2api_user_mapping",
+        "ignoredIdentityInputs": ["accountId", "user_id", "api_key_id", "sub2apiUserId"],
+        "aggregation": "upstream_only_never_current_page_sum",
         "dataFields": ["totalRequests", "totalInputTokens", "totalOutputTokens", "totalTokens", "totalActualCostUsdMicros"],
         "zeroAggregate": "available",
         "fetchedAt": "control_plane_response_fetch_completion_time",
@@ -116,23 +154,32 @@
         "route": "GET /api/operator/accounts",
         "authorization": "operator_only",
         "source": "control-plane+sub2api",
-        "authority": "control_plane_mapping_plus_sequential_live_sub2api_readback",
+        "authority": "control_plane_mapping_plus_paginated_and_batch_sub2api_readback",
         "scope": "customer_accounts_only",
         "itemFields": ["accountId", "consoleUserId", "role", "sub2apiUserId", "email", "status"],
+        "nestedSourceFields": ["gatewayIdentity", "wallet", "keyCount", "usage", "workspaceCount"],
         "fieldAuthority": {
           "accountId": "control_plane",
           "consoleUserId": "control_plane",
           "role": "control_plane",
-          "sub2apiUserId": "sub2api",
-          "email": "sub2api",
-          "status": "sub2api"
+          "sub2apiUserId": "control_plane_verified_mapping",
+          "email": "control_plane_verified_mapping",
+          "status": "control_plane_user_lifecycle",
+          "gatewayIdentity": "sub2api_paginated_user_readback",
+          "wallet": "sub2api_paginated_user_readback",
+          "usage": "sub2api_batch_user_usage",
+          "workspaceCount": "control_plane",
+          "keyCount": "unavailable_until_authoritative_batch_count_exists"
         },
         "sub2apiUserIdFormat": "positive_decimal_string",
         "statusValues": ["active", "disabled"],
         "mappingConsistency": "remote_id_and_normalized_email_must_equal_control_plane_mapping",
-        "failure": "whole_source_unavailable_without_partial_data",
+        "pagination": "one_bounded_sub2api_user_page_then_control_plane_page",
+        "batchSizeMax": 50,
+        "perAccountUserOrUsageNPlusOne": false,
+        "failure": "affected_nested_source_unavailable_without_zero_data",
         "fetchedAt": "control_plane_response_fetch_completion_time",
-        "sourceUpdatedAt": "omit_unless_sub2api_returns_source_timestamp"
+        "sourceUpdatedAt": "sub2api_user_updated_at_only_for_corresponding_nested_facts"
       }
     },
     "workspace": {
@@ -142,14 +189,14 @@
         "authority": "control_plane_workspace_table",
         "identity": "session_account",
         "requiredItemFields": ["id", "ownerAccountId", "ownerUserId", "state", "createdAt", "updatedAt"],
-        "optionalItemFields": ["name", "url", "storageId", "currentComputeAllocationId", "currentAttachmentId", "runtimeId", "packageId", "storageGb", "autoRenew", "priceVersion", "currency", "totalUsdMicros", "periodStart", "paidThrough", "renewalStatus"],
+        "optionalItemFields": ["name", "url", "storageId", "currentComputeAllocationId", "currentAttachmentId", "runtimeId", "workspaceApiKeyId", "packageId", "storageGb", "autoRenew", "priceVersion", "currency", "totalUsdMicros", "periodStart", "paidThrough", "renewalStatus"],
         "forbiddenFields": ["accountId", "status", "compute", "storage", "attachment", "runtime", "access", "provider", "checks"],
         "empty": "real_zero_rows",
         "fetchedAt": "control_plane_response_fetch_completion_time",
         "sourceUpdatedAt": "omit_without_authoritative_table_source_timestamp"
       },
       "runtimeStatus": {
-        "route": "POST /api/workspaces/runtime-status",
+        "route": "GET /api/workspaces/{workspaceId}/runtime-status",
         "source": "fabric",
         "authority": "live_fabric_runtime_status",
         "identity": "session_owned_workspace",
@@ -168,6 +215,78 @@
         "writeBack": false,
         "fetchedAt": "control_plane_response_fetch_completion_time",
         "sourceUpdatedAt": "omit_unless_fabric_returns_source_timestamp"
+      },
+      "files": {
+        "route": "GET /api/workspaces/{workspaceId}/files",
+        "source": "runtime",
+        "authority": "workspace_runtime_projects_mount",
+        "identity": "session_owned_workspace",
+        "persistence": "none",
+        "fetchedAt": "control_plane_response_fetch_completion_time",
+        "sourceUpdatedAt": "only_when_runtime_returns_source_timestamp"
+      },
+      "filesystemUsage": {
+        "route": "GET /api/workspaces/{workspaceId}/filesystem-usage",
+        "source": "runtime",
+        "authority": "workspace_runtime_statfs",
+        "identity": "session_owned_workspace",
+        "persistence": "none",
+        "fetchedAt": "control_plane_response_fetch_completion_time",
+        "sourceUpdatedAt": "only_when_runtime_returns_measurement_timestamp"
+      }
+    },
+    "operator": {
+      "routes": {
+        "overview": "GET /api/operator/overview",
+        "workspaces": "GET /api/operator/workspaces",
+        "workspaceDetail": "GET /api/operator/workspaces/{workspaceId}",
+        "reconciliation": "GET /api/operator/reconciliation",
+        "health": "GET /api/operator/health"
+      },
+      "projection": {
+        "persistence": "none_request_join_only",
+        "sub2apiCalls": "one_paginated_user_read_plus_fixed_batch_usage_calls",
+        "fabricCalls": "one_operation_listing_plus_bounded_independent_runtime_probes",
+        "ledgerCalls": "detail_only_authoritative_receipt_readback",
+        "readReplica": false,
+        "sourceUpdatedAt": "authoritative_owner_timestamp_only_never_local_fetch_time"
+      },
+      "workspaceLaunchReconciliation": {
+        "route": "GET /api/operator/reconciliation",
+        "action": "workspace.launch.v2",
+        "requiredItemFields": ["accountId", "billingOperationId", "phase", "errorCode", "allowedActions"],
+        "billingOperationIdentity": "billingOperationId_equals_workspace_launch_operation_id",
+        "allowedActions": {
+          "manual_review": ["recover_workspace_launch"],
+          "allOtherStatuses": []
+        },
+        "recoveryRoute": "POST /api/operator/workspace-launches/{operationId}/recover",
+        "recoveryRequestFields": ["accountId", "billingOperationId", "evidenceRef"],
+        "implementation": "integrated_local_fake_verified"
+      },
+      "resources": {
+        "route": "GET /api/operator/workspaces/{workspaceId}",
+        "requiredFields": ["ownerAccount", "ownerUser", "workspace", "resourceType", "packageOrSpec", "providerId", "zone", "status", "createdAt", "expiresAt", "lastReadAt", "operationRef", "receiptRef"],
+        "fieldAuthorities": {
+          "ownerAccountOwnerUserWorkspacePackage": "control-plane",
+          "resourceTypeSpecProviderIdZoneStatusCreatedExpiryLastRead": "fabric",
+          "operationRef": "control-plane_or_fabric",
+          "receiptRef": "ledger"
+        },
+        "missingFieldBehavior": "owner_source_unavailable",
+        "fabricAndLedgerPersistenceInControlPlane": false,
+        "projectionPersistence": "none_new_request_join_only",
+        "missingSourceUpdatedAt": "omit"
+      }
+    },
+    "announcements": {
+      "active": {
+        "route": "GET /api/announcements",
+        "source": "control-plane",
+        "authority": "control_plane_announcements",
+        "empty": "real_zero_rows",
+        "fetchedAt": "control_plane_response_fetch_completion_time",
+        "sourceUpdatedAt": "control_plane_announcement_updated_at"
       }
     },
     "ledger": {
@@ -177,13 +296,18 @@
         "authority": "live_ledger_readback",
         "identity": "session_account",
         "ignoredIdentityInputs": ["accountId"],
-        "itemFields": ["receiptId", "type", "status", "workspaceId", "createdAt", "resourceType", "resourceId", "priceVersion", "currency", "periodStart", "paidThrough"],
+        "itemFields": ["receiptId", "type", "status", "workspaceId", "createdAt", "resourceType", "resourceId", "priceVersion", "currency", "periodStart", "paidThrough", "totalUsdMicros", "chargeReference", "components", "fulfillment", "refundUsdMicros"],
         "moneyFieldsByType": {
           "resource": ["chargeUsdMicros"],
+          "workspacePurchased": ["totalUsdMicros"],
           "workspaceRenewed": ["totalUsdMicros"],
           "workspaceExpired": ["totalUsdMicros"],
           "workspaceRefunded": ["totalUsdMicros", "refundUsdMicros"]
-        },
+      },
+      "workspaceChargeReferenceTypes": ["billing.workspace_purchased.v1", "billing.workspace_renewed.v1", "billing.workspace_refunded.v1"],
+      "workspaceFulfillmentReceiptTypes": ["billing.workspace_purchased.v1", "billing.workspace_renewed.v1"],
+      "workspaceFulfillmentFields": ["computeAllocationId", "storageId", "attachmentId", "workspaceApiKeyId", "runtimeId"],
+        "rawProviderReadback": false,
         "nonBillingRows": "ignore_without_projection",
         "tenantMismatch": "whole_source_unavailable",
         "malformedBillingReceipt": "whole_source_unavailable",

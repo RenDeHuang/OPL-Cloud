@@ -53,6 +53,8 @@ type Workspace struct {
 	RuntimeServiceNameRoot string `json:"runtime_service_name_root,omitempty"`
 	// ServiceName holds the value of the "service_name" field.
 	ServiceName string `json:"service_name,omitempty"`
+	// WorkspaceAPIKeyID holds the value of the "workspace_api_key_id" field.
+	WorkspaceAPIKeyID int64 `json:"workspace_api_key_id,omitempty"`
 	// AccessTokenStatus holds the value of the "access_token_status" field.
 	AccessTokenStatus string `json:"access_token_status,omitempty"`
 	// AccessAccount holds the value of the "access_account" field.
@@ -81,6 +83,8 @@ func (*Workspace) scanValues(columns []string) ([]any, error) {
 		switch columns[i] {
 		case workspace.FieldAccessRequiresLogin, workspace.FieldCustomerProduct:
 			values[i] = new(sql.NullBool)
+		case workspace.FieldWorkspaceAPIKeyID:
+			values[i] = new(sql.NullInt64)
 		case workspace.FieldID, workspace.FieldAccountID, workspace.FieldOwnerAccountID, workspace.FieldOwnerUserID, workspace.FieldUserID, workspace.FieldName, workspace.FieldURL, workspace.FieldState, workspace.FieldStatus, workspace.FieldBillingStateJSON, workspace.FieldStorageID, workspace.FieldCurrentComputeAllocationID, workspace.FieldCurrentAttachmentID, workspace.FieldRuntimeID, workspace.FieldRuntimeServiceName, workspace.FieldRuntimeServiceNameRoot, workspace.FieldServiceName, workspace.FieldAccessTokenStatus, workspace.FieldAccessAccount, workspace.FieldAccessUsername, workspace.FieldCredentialStatus, workspace.FieldCredentialVersion, workspace.FieldCredentialSecretRef, workspace.FieldVerificationSlotID:
 			values[i] = new(sql.NullString)
 		case workspace.FieldCreatedAt, workspace.FieldUpdatedAt:
@@ -213,6 +217,12 @@ func (w *Workspace) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field service_name", values[i])
 			} else if value.Valid {
 				w.ServiceName = value.String
+			}
+		case workspace.FieldWorkspaceAPIKeyID:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field workspace_api_key_id", values[i])
+			} else if value.Valid {
+				w.WorkspaceAPIKeyID = value.Int64
 			}
 		case workspace.FieldAccessTokenStatus:
 			if value, ok := values[i].(*sql.NullString); !ok {
@@ -357,6 +367,9 @@ func (w *Workspace) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("service_name=")
 	builder.WriteString(w.ServiceName)
+	builder.WriteString(", ")
+	builder.WriteString("workspace_api_key_id=")
+	builder.WriteString(fmt.Sprintf("%v", w.WorkspaceAPIKeyID))
 	builder.WriteString(", ")
 	builder.WriteString("access_token_status=")
 	builder.WriteString(w.AccessTokenStatus)

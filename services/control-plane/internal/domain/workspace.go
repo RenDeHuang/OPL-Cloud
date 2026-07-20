@@ -14,6 +14,7 @@ type WorkspaceProjection struct {
 	AttachmentID        string `json:"attachmentId"`
 	RuntimeID           string `json:"runtimeId"`
 	RuntimeServiceName  string `json:"runtimeServiceName,omitempty"`
+	WorkspaceAPIKeyID   int64  `json:"workspaceApiKeyId,omitempty"`
 	RuntimeReady        bool   `json:"runtimeReady"`
 	RuntimeUsername     string `json:"runtimeUsername,omitempty"`
 	CredentialStatus    string `json:"credentialStatus,omitempty"`

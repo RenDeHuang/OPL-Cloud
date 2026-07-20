@@ -5,19 +5,21 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"net/http"
 	"reflect"
-	"strings"
 	"testing"
 	"time"
 )
 
 func TestInvitedAccountCreatesAccountUserOrganizationAndOwnerMembership(t *testing.T) {
 	server := NewServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}))
-	admin := operatorSessionForTest(t, server)
-	user := createResourceWithSession(t, server, admin, http.MethodPost, "/api/users", `{"email":"owner@invite.example","accountId":"acct-invite","password":"CorrectHorseBatteryStaple!"}`)
-
-	app := server.(*controlPlaneHTTPHandler).app
+	handler := server.(*controlPlaneHTTPHandler)
+	user, err := handler.app.createUser(context.Background(), handler.service, map[string]any{
+		"email": "owner@invite.example", "accountId": "acct-invite", "password": "CorrectHorseBatteryStaple!",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	app := handler.app
 	accounts, _ := app.tables.ListAccounts(context.Background(), "acct-invite")
 	organizations, _ := app.tables.ListOrganizations(context.Background())
 	memberships, _ := app.tables.ListMemberships(context.Background())
@@ -42,25 +44,25 @@ func TestInvitedAccountCreatesAccountUserOrganizationAndOwnerMembership(t *testi
 func TestInvitedAccountDefaultsRoleOnlyWhenOmitted(t *testing.T) {
 	for index, test := range []struct {
 		name string
-		role string
+		role any
 	}{
-		{name: "null", role: "null"},
-		{name: "number", role: "7"},
-		{name: "blank", role: `"   "`},
+		{name: "null", role: nil},
+		{name: "number", role: 7},
+		{name: "blank", role: "   "},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			server := NewServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}))
-			admin := operatorSessionForTest(t, server)
+			handler := server.(*controlPlaneHTTPHandler)
 			accountID := fmt.Sprintf("acct-role-%d", index)
-			body := fmt.Sprintf(`{"email":"role-%d@invite.example","accountId":%q,"password":"CorrectHorseBatteryStaple!","role":%s}`,
-				index, accountID, test.role)
+			_, err := handler.app.createUser(context.Background(), handler.service, map[string]any{
+				"email": fmt.Sprintf("role-%d@invite.example", index), "accountId": accountID,
+				"password": "CorrectHorseBatteryStaple!", "role": test.role,
+			})
 
-			response := requestWithSession(t, server, admin, http.MethodPost, "/api/users", body)
-
-			if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), errInvalidRole.Error()) {
-				t.Fatalf("status=%d body=%s, want invalid role", response.Code, response.Body.String())
+			if !errors.Is(err, errInvalidRole) {
+				t.Fatalf("error=%v, want invalid role", err)
 			}
-			accounts, _ := server.(*controlPlaneHTTPHandler).app.tables.ListAccounts(context.Background(), accountID)
+			accounts, _ := handler.app.tables.ListAccounts(context.Background(), accountID)
 			if len(accounts) != 0 {
 				t.Fatalf("invalid role created account: %#v", accounts)
 			}
@@ -70,11 +72,17 @@ func TestInvitedAccountDefaultsRoleOnlyWhenOmitted(t *testing.T) {
 
 func TestInvitedAccountsUseDistinctDefaultOrganizations(t *testing.T) {
 	server := NewServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}))
-	admin := operatorSessionForTest(t, server)
-	createResourceWithSession(t, server, admin, http.MethodPost, "/api/users", `{"email":"prefixed@invite.example","accountId":"acct-team","password":"CorrectHorseBatteryStaple!"}`)
-	createResourceWithSession(t, server, admin, http.MethodPost, "/api/users", `{"email":"plain@invite.example","accountId":"team","password":"CorrectHorseBatteryStaple!"}`)
+	handler := server.(*controlPlaneHTTPHandler)
+	for _, input := range []map[string]any{
+		{"email": "prefixed@invite.example", "accountId": "acct-team", "password": "CorrectHorseBatteryStaple!"},
+		{"email": "plain@invite.example", "accountId": "team", "password": "CorrectHorseBatteryStaple!"},
+	} {
+		if _, err := handler.app.createUser(context.Background(), handler.service, input); err != nil {
+			t.Fatal(err)
+		}
+	}
 
-	organizations, err := server.(*controlPlaneHTTPHandler).app.tables.ListOrganizations(context.Background())
+	organizations, err := handler.app.tables.ListOrganizations(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -200,8 +208,8 @@ func TestEntInvitedAccountRollsBackOnMembershipInsertError(t *testing.T) {
 
 func TestPostgresInvitedAccountConcurrentReplayOrConflict(t *testing.T) {
 	for _, tc := range []struct {
-		name                            string
-		conflicting                    bool
+		name                          string
+		conflicting                   bool
 		wantSucceeded, wantConflicted int
 	}{
 		{name: "matching replay", wantSucceeded: 2},

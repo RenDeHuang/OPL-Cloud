@@ -12,6 +12,12 @@ type Account func(*sql.Selector)
 // AdminAuditEvent is the predicate function for adminauditevent builders.
 type AdminAuditEvent func(*sql.Selector)
 
+// Announcement is the predicate function for announcement builders.
+type Announcement func(*sql.Selector)
+
+// AnnouncementRead is the predicate function for announcementread builders.
+type AnnouncementRead func(*sql.Selector)
+
 // ArchiveJob is the predicate function for archivejob builders.
 type ArchiveJob func(*sql.Selector)
 

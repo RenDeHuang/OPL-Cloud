@@ -2,25 +2,6 @@ import { decodeDto, decodeSource } from "./dtos.ts";
 import type { AuthIdentity, AuthMeData, AuthSession, LoginRequest, SourceEnvelope } from "./dtos.ts";
 import { postJson } from "./console-api.ts";
 
-const csrfStorageKey = "opl-console-csrf";
-
-function readCsrfToken(): string {
-  try {
-    return sessionStorage.getItem(csrfStorageKey) || "";
-  } catch {
-    return "";
-  }
-}
-
-function storeCsrfToken(token: string): void {
-  try {
-    if (token) sessionStorage.setItem(csrfStorageKey, token);
-    else sessionStorage.removeItem(csrfStorageKey);
-  } catch {
-    // Browser storage may be unavailable; the current login still has its token in memory.
-  }
-}
-
 function identityFromLogin(value: unknown): AuthIdentity {
   const user = decodeDto<Record<string, unknown>>(value);
   const id = String(user.id || "");
@@ -37,7 +18,6 @@ function sessionFromLogin(value: unknown): AuthSession {
   const user = identityFromLogin(payload.user);
   const csrfToken = String(payload.csrfToken || "");
   if (!csrfToken) throw new Error("session_check_failed");
-  storeCsrfToken(csrfToken);
   return {
     user,
     isOperator: payload.isOperator === true,
@@ -60,9 +40,8 @@ function sessionFromAuthMe(value: unknown, csrfToken: string): AuthSession {
     sub2apiUserId: data.sub2apiUserId
   };
   if (!user.id || !user.accountId || !user.email || !user.sub2apiUserId) throw new Error("session_check_failed");
-  const recoveredCsrf = csrfToken || readCsrfToken();
-  storeCsrfToken(recoveredCsrf);
-  return { user, isOperator: data.role === "admin", csrfToken: recoveredCsrf };
+  if (!csrfToken) throw new Error("session_check_failed");
+  return { user, isOperator: data.role === "admin", csrfToken };
 }
 
 export async function currentSession(): Promise<AuthSession | null> {
@@ -83,7 +62,6 @@ export function login(credentials: LoginRequest): Promise<AuthSession> {
 }
 
 export function logout(csrfToken: string): Promise<unknown> {
-  storeCsrfToken("");
   return postJson("/api/auth/logout", {}, csrfToken);
 }
 

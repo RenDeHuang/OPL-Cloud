@@ -167,12 +167,59 @@ func projectCustomerBillingReceipt(receipt clients.Receipt) (map[string]any, boo
 		"periodStart": periodStart, "paidThrough": paidThrough,
 	}
 	switch receipt.Type {
-	case "billing.workspace_renewed.v1", "billing.workspace_expired.v1", "billing.workspace_refunded.v1":
-		total, ok := requiredNonNegativeInteger(receipt.Cost, "totalUsdMicros")
-		if !ok || total == 0 || body["resourceType"] != "workspace" || body["resourceId"] != receipt.WorkspaceID {
+	case "billing.workspace_purchased.v1", "billing.workspace_renewed.v1", "billing.workspace_expired.v1", "billing.workspace_refunded.v1":
+		total, ok := requiredPositiveInteger(receipt.Cost, "totalUsdMicros")
+		components, validComponents := receipt.Cost["components"].(map[string]any)
+		compute, validCompute := components["compute"].(map[string]any)
+		storage, validStorage := components["storage"].(map[string]any)
+		computeID, validComputeID := compute["resourceId"].(string)
+		storageID, validStorageID := storage["resourceId"].(string)
+		computeCharge, validComputeCharge := requiredPositiveInteger(compute, "chargeUsdMicros")
+		storageCharge, validStorageCharge := requiredPositiveInteger(storage, "chargeUsdMicros")
+		storageGB, validStorageGB := requiredPositiveInteger(storage, "sizeGb")
+		if !ok || body["resourceType"] != "workspace" || body["resourceId"] != receipt.WorkspaceID || receipt.Cost["billingUnit"] != pricingBillingUnit ||
+			!validComponents || !validCompute || !validStorage || !validComputeID || strings.TrimSpace(computeID) == "" || !validStorageID || strings.TrimSpace(storageID) == "" ||
+			compute["resourceType"] != "compute" || storage["resourceType"] != "storage" || !validComputeCharge || !validStorageCharge || !validStorageGB ||
+			computeCharge > total || storageCharge != total-computeCharge {
 			return nil, false
 		}
 		body["totalUsdMicros"] = total
+		body["components"] = map[string]any{
+			"compute": map[string]any{"resourceType": "compute", "resourceId": computeID, "chargeUsdMicros": computeCharge},
+			"storage": map[string]any{"resourceType": "storage", "resourceId": storageID, "sizeGb": storageGB, "chargeUsdMicros": storageCharge},
+		}
+		if receipt.Type == "billing.workspace_purchased.v1" || receipt.Type == "billing.workspace_renewed.v1" {
+			computeRef, validComputeRef := receipt.Execution["computeAllocationId"].(string)
+			storageRef, validStorageRef := receipt.Execution["storageId"].(string)
+			if !validComputeRef || !validStorageRef || computeRef != computeID || storageRef != storageID {
+				return nil, false
+			}
+			fulfillment := map[string]any{"computeAllocationId": computeID, "storageId": storageID}
+			for _, key := range []string{"attachmentId", "runtimeId"} {
+				if value, present := receipt.Execution[key]; present {
+					text, valid := value.(string)
+					if !valid || strings.TrimSpace(text) == "" {
+						return nil, false
+					}
+					fulfillment[key] = text
+				}
+			}
+			if _, present := receipt.Execution["workspaceApiKeyId"]; present {
+				keyID, valid := requiredPositiveInteger(receipt.Execution, "workspaceApiKeyId")
+				if !valid {
+					return nil, false
+				}
+				fulfillment["workspaceApiKeyId"] = strconv.FormatInt(keyID, 10)
+			}
+			body["fulfillment"] = fulfillment
+		}
+		if receipt.Type == "billing.workspace_purchased.v1" || receipt.Type == "billing.workspace_renewed.v1" || receipt.Type == "billing.workspace_refunded.v1" {
+			chargeReference, valid := receipt.Cost["sub2apiRedeemCode"].(string)
+			if !valid || strings.TrimSpace(chargeReference) == "" {
+				return nil, false
+			}
+			body["chargeReference"] = chargeReference
+		}
 		if receipt.Type == "billing.workspace_refunded.v1" {
 			refund, ok := requiredNonNegativeInteger(receipt.Cost, "refundUsdMicros")
 			if !ok || refund != total {

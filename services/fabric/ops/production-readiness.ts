@@ -35,6 +35,14 @@ const REQUIRED_TKE_ENV = [
   "TENCENT_TCR_REGION"
 ];
 
+const FORBIDDEN_VERIFICATION_MUTATION_ENV = [
+  "OPL_VERIFY_MUTATION_APPROVAL_JSON",
+  "OPL_VERIFY_MUTATION_APPROVAL_ID",
+  "OPL_VERIFY_ALLOW_GATEWAY_WRITE",
+  "OPL_VERIFY_ALLOW_MODEL_WRITE",
+  "OPL_VERIFY_ALLOW_PROVIDER_WRITE"
+];
+
 const PROVIDER_CONFIG = {
   [PROVIDERS.TENCENT_TKE]: {
     requiredEnv: REQUIRED_TKE_ENV,
@@ -136,7 +144,11 @@ export async function productionReadiness({ env = process.env, commandExists = (
     check("workspace_domain", looksLikeProductionDomain(env.OPL_WORKSPACE_DOMAIN), "OPL_WORKSPACE_DOMAIN must be a production wildcard domain"),
     check("database_url", Boolean(env.DATABASE_URL), "DATABASE_URL is required for production persistence"),
     check("provider_env", providerEnvReady, "Runtime provider environment is incomplete or its Tencent zone and region do not match"),
-    check("live_mutation_guard", env.RUN_TENCENT_CREATE_RELEASE_EXECUTION === "1", "RUN_TENCENT_CREATE_RELEASE_EXECUTION must be 1 for production compute allocation"),
+    check(
+      "live_mutation_guard",
+      env.RUN_TENCENT_CREATE_RELEASE_EXECUTION === "1" && FORBIDDEN_VERIFICATION_MUTATION_ENV.every((key) => !hasEnv(key)),
+      "Production compute allocation must be enabled without deploying real-verification approval or write authority"
+    ),
     check("tools", missingTools.length === 0, "Required production tools are missing")
   ];
   const failedChecks = checks.filter((item) => !item.ok).map((item) => item.id);

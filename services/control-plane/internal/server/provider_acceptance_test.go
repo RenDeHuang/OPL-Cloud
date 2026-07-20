@@ -165,11 +165,23 @@ func (f *providerAcceptanceFabric) CreateWorkspaceRuntime(_ context.Context, inp
 	defer f.mu.Unlock()
 	f.runtimeCreates++
 	f.mutationKeys = append(f.mutationKeys, key)
-	return clients.WorkspaceRuntime{
+	runtime := clients.WorkspaceRuntime{
 		ID: "rt-verification-slot-01", WorkspaceID: input.WorkspaceID, URL: "https://workspace.medopl.cn/w/" + input.WorkspaceID + "/",
 		Status: "running", ServiceName: "opl-verification-slot-01", Ready: true,
 		Access: clients.WorkspaceRuntimeAccess{Username: "opl", Password: "must-not-leak", CredentialStatus: "configured", CredentialVersion: "v1", SecretRef: "runtime-secret-ref"},
-	}, nil
+	}
+	f.fakeFabricClient.runtime = runtime
+	return runtime, nil
+}
+
+func (f *providerAcceptanceFabric) WorkspaceRuntimeStatus(_ context.Context, workspaceID string) (clients.WorkspaceRuntime, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	runtime := f.fakeFabricClient.runtime
+	if runtime.WorkspaceID != workspaceID || runtime.ID == "" {
+		return clients.WorkspaceRuntime{}, errors.New("runtime not found")
+	}
+	return runtime, nil
 }
 
 func providerAcceptanceTestTags(accountID, workspaceID, resourceID, operationID string) map[string]string {

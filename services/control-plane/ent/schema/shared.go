@@ -184,6 +184,7 @@ func workspaceFields() []ent.Field {
 		field.String("runtime_service_name").Default(""),
 		field.String("runtime_service_name_root").Default(""),
 		field.String("service_name").Default(""),
+		field.Int64("workspace_api_key_id").Optional().Positive(),
 		field.String("access_token_status").Default(""),
 		field.String("access_account").Default(""),
 		field.String("access_username").Default(""),
@@ -319,6 +320,27 @@ func adminAuditEventFields() []ent.Field {
 	)
 }
 
+func announcementFields() []ent.Field {
+	return append(baseFields(),
+		field.String("title").NotEmpty(),
+		field.String("body").NotEmpty(),
+		field.String("status").Default("draft"),
+		field.String("starts_at").Default(""),
+		field.String("ends_at").Default(""),
+		field.String("published_at").Default(""),
+		field.String("created_by_user_id").NotEmpty(),
+		field.String("updated_by_user_id").NotEmpty(),
+	)
+}
+
+func announcementReadFields() []ent.Field {
+	return append(baseFields(),
+		field.String("announcement_id").NotEmpty(),
+		field.String("user_id").NotEmpty(),
+		field.String("read_at").NotEmpty(),
+	)
+}
+
 func supportTicketMappingFields() []ent.Field {
 	return append(baseFields(),
 		field.String("account_id").Default(""),
@@ -404,6 +426,12 @@ func (ExecutionRequest) Annotations() []schema.Annotation {
 }
 func (AdminAuditEvent) Annotations() []schema.Annotation {
 	return table("control_plane_admin_audit_events")
+}
+func (Announcement) Annotations() []schema.Annotation {
+	return table("control_plane_announcements")
+}
+func (AnnouncementRead) Annotations() []schema.Annotation {
+	return table("control_plane_announcement_reads")
 }
 func (SupportTicketMapping) Annotations() []schema.Annotation {
 	return table("control_plane_support_ticket_mappings")

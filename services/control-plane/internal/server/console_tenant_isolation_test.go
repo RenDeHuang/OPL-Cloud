@@ -38,20 +38,13 @@ func newGatewayOwnerTestServer(t *testing.T, sub2API clients.Sub2APIClient, stor
 }
 
 func TestGatewayOwnerRevealIsAudited(t *testing.T) {
-	sub2API := &testSub2APIClient{
-		balance: 123,
-		charges: map[string]int64{},
-		workspaceKey: clients.Sub2APIWorkspaceKey{
-			ID: 9, UserID: 41, Name: "opl-workspace", Key: "workspace-key-secret", Status: "active",
-		},
-	}
-	server, session := newGatewayOwnerTestServer(t, sub2API, nil)
+	server, client, store, session := newGatewayKeyCommandFixture(t, "")
 	var logs bytes.Buffer
 	previousLogOutput := log.Writer()
 	log.SetOutput(&logs)
 	t.Cleanup(func() { log.SetOutput(previousLogOutput) })
 
-	revealed := requestWithSession(t, server, session, http.MethodPost, "/api/gateway/keys/opl-workspace/reveal", "{}")
+	revealed := requestWithSession(t, server, session, http.MethodPost, "/api/gateway/keys/17/reveal", "{}")
 	if revealed.Code != http.StatusOK || revealed.Header().Get("Cache-Control") != "private, no-store" {
 		t.Fatalf("revealed Gateway response = %d Cache-Control %q: %s", revealed.Code, revealed.Header().Get("Cache-Control"), revealed.Body.String())
 	}
@@ -60,7 +53,7 @@ func TestGatewayOwnerRevealIsAudited(t *testing.T) {
 		t.Fatal(err)
 	}
 	revealedKey := mapField(revealBody, "data")
-	if stringValue(revealedKey["id"]) != "9" || stringValue(revealedKey["name"]) != "opl-workspace" || stringValue(revealedKey["status"]) != "active" || stringValue(revealedKey["value"]) != "workspace-key-secret" {
+	if stringValue(revealedKey["id"]) != "17" || stringValue(revealedKey["name"]) != "general-key" || stringValue(revealedKey["status"]) != "active" || stringValue(revealedKey["value"]) != "general-key-secret" {
 		t.Fatalf("revealed Gateway key = %#v", revealedKey)
 	}
 
@@ -71,42 +64,38 @@ func TestGatewayOwnerRevealIsAudited(t *testing.T) {
 	if strings.Contains(state.Body.String(), "workspace-key-secret") || strings.Contains(state.Body.String(), "maskedValue") || strings.Contains(state.Body.String(), "usage5hUsdMicros") {
 		t.Fatalf("state leaked Gateway Key projection: %s", state.Body.String())
 	}
-	handler := server.(*controlPlaneHTTPHandler)
-	auditEvents, err := handler.app.tables.ListAuditEvents(context.Background(), "acct-gateway")
+	auditEvents, err := store.ListAuditEvents(context.Background(), "acct-gateway")
 	if err != nil || !slices.ContainsFunc(auditEvents, func(event map[string]any) bool {
 		return stringValue(event["action"]) == "gateway.key_reveal" && stringValue(event["actorUserId"]) == "usr-gateway-owner" && stringValue(event["targetAccountId"]) == "acct-gateway" && stringValue(event["result"]) == "succeeded"
 	}) {
 		t.Fatalf("Gateway reveal audit events = %#v err=%v", auditEvents, err)
 	}
 	auditJSON, _ := json.Marshal(auditEvents)
-	if strings.Contains(string(auditJSON), "workspace-key-secret") || strings.Contains(string(auditJSON), "work...cret") || strings.Contains(logs.String(), "workspace-key-secret") {
+	if strings.Contains(string(auditJSON), "general-key-secret") || strings.Contains(string(auditJSON), "gene...cret") || strings.Contains(logs.String(), "general-key-secret") {
 		t.Fatalf("Gateway reveal leaked Key outside response: audit=%s logs=%s", auditJSON, logs.String())
 	}
-	if len(sub2API.workspaceKeyUserIDs) != 1 || slices.ContainsFunc(sub2API.workspaceKeyUserIDs, func(id int64) bool { return id != 41 }) {
-		t.Fatalf("Gateway used caller-supplied Sub2API identity: %#v", sub2API.workspaceKeyUserIDs)
+	if len(client.userKeyReadIDs) != 1 || client.userKeyReadIDs[0] != 17 {
+		t.Fatalf("Gateway used caller-supplied Key identity: %#v", client.userKeyReadIDs)
 	}
 }
 
 func TestGatewayRevealRejectsUnauthorizedWithoutFetchingKey(t *testing.T) {
 	t.Run("operator", func(t *testing.T) {
-		sub2API := &testSub2APIClient{balance: 123, charges: map[string]int64{}}
-		server := NewServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}, sub2API))
-		rec := requestWithSession(t, server, reservedOperatorSessionForTest(t, server), http.MethodPost, "/api/gateway/keys/opl-workspace/reveal", "{}")
-		if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "gateway_key_reveal_forbidden") || len(sub2API.workspaceKeyUserIDs) != 0 {
-			t.Fatalf("operator reveal = %d calls=%#v: %s", rec.Code, sub2API.workspaceKeyUserIDs, rec.Body.String())
+		server, client, _, _ := newGatewayKeyCommandFixture(t, "")
+		rec := requestWithSession(t, server, reservedOperatorSessionForTest(t, server), http.MethodPost, "/api/gateway/keys/17/reveal", "{}")
+		if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "gateway_key_reveal_forbidden") || len(client.userKeyReadIDs) != 0 {
+			t.Fatalf("operator reveal = %d calls=%#v: %s", rec.Code, client.userKeyReadIDs, rec.Body.String())
 		}
 	})
 
 	t.Run("owner mismatch", func(t *testing.T) {
-		store := newMemoryTableStore()
-		sub2API := &testSub2APIClient{balance: 123, charges: map[string]int64{}}
-		server, session := newGatewayOwnerTestServer(t, sub2API, store)
+		server, client, store, session := newGatewayKeyCommandFixture(t, "")
 		store.mu.Lock()
 		store.accounts["acct-gateway"]["ownerUserId"] = "usr-other"
 		store.mu.Unlock()
-		rec := requestWithSession(t, server, session, http.MethodPost, "/api/gateway/keys/opl-workspace/reveal", "{}")
-		if rec.Code != http.StatusUnauthorized || len(sub2API.workspaceKeyUserIDs) != 0 {
-			t.Fatalf("owner mismatch reveal = %d calls=%#v: %s", rec.Code, sub2API.workspaceKeyUserIDs, rec.Body.String())
+		rec := requestWithSession(t, server, session, http.MethodPost, "/api/gateway/keys/17/reveal", "{}")
+		if rec.Code != http.StatusUnauthorized || len(client.userKeyReadIDs) != 0 {
+			t.Fatalf("owner mismatch reveal = %d calls=%#v: %s", rec.Code, client.userKeyReadIDs, rec.Body.String())
 		}
 	})
 
@@ -116,11 +105,10 @@ func TestGatewayRevealRejectsUnauthorizedWithoutFetchingKey(t *testing.T) {
 		csrf bool
 		code string
 	}{
-		{name: "missing csrf", path: "/api/gateway/keys/opl-workspace/reveal", code: "csrf_token_invalid"},
+		{name: "missing csrf", path: "/api/gateway/keys/17/reveal", code: "csrf_token_invalid"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			sub2API := &testSub2APIClient{balance: 123, charges: map[string]int64{}}
-			server, session := newGatewayOwnerTestServer(t, sub2API, nil)
+			server, client, _, session := newGatewayKeyCommandFixture(t, "")
 			req := httptest.NewRequest(http.MethodPost, tc.path, bytes.NewBufferString("{}"))
 			req.Header.Set("Content-Type", "application/json")
 			addSessionCookies(req, session)
@@ -129,8 +117,8 @@ func TestGatewayRevealRejectsUnauthorizedWithoutFetchingKey(t *testing.T) {
 			}
 			rec := httptest.NewRecorder()
 			server.ServeHTTP(rec, req)
-			if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), tc.code) || len(sub2API.workspaceKeyUserIDs) != 0 {
-				t.Fatalf("%s reveal = %d calls=%#v: %s", tc.name, rec.Code, sub2API.workspaceKeyUserIDs, rec.Body.String())
+			if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), tc.code) || len(client.userKeyReadIDs) != 0 {
+				t.Fatalf("%s reveal = %d calls=%#v: %s", tc.name, rec.Code, client.userKeyReadIDs, rec.Body.String())
 			}
 		})
 	}
@@ -138,43 +126,38 @@ func TestGatewayRevealRejectsUnauthorizedWithoutFetchingKey(t *testing.T) {
 
 func TestGatewayRevealAuditFailureDoesNotReturnKey(t *testing.T) {
 	store := &failingResumeCommitStore{memoryTableStore: newMemoryTableStore()}
-	sub2API := &testSub2APIClient{balance: 123, charges: map[string]int64{}}
-	server, session := newGatewayOwnerTestServer(t, sub2API, store)
+	client := &sourceTruthGatewayClient{
+		customerFactsSub2API: &customerFactsSub2API{testSub2APIClient: &testSub2APIClient{balance: 123, charges: map[string]int64{}}},
+		keys:                 []clients.Sub2APIWorkspaceKey{{ID: 17, UserID: 41, Name: "general-key", Key: "general-key-secret", Status: "active"}},
+	}
+	server, session := newGatewayOwnerTestServer(t, client, store)
 	var logs bytes.Buffer
 	previousLogOutput := log.Writer()
 	log.SetOutput(&logs)
 	t.Cleanup(func() { log.SetOutput(previousLogOutput) })
-	rec := requestWithSession(t, server, session, http.MethodPost, "/api/gateway/keys/opl-workspace/reveal", "{}")
+	rec := requestWithSession(t, server, session, http.MethodPost, "/api/gateway/keys/17/reveal", "{}")
 	if rec.Code != http.StatusInternalServerError || !strings.Contains(rec.Body.String(), "state_persist_failed") {
 		t.Fatalf("audit failure reveal = %d: %s", rec.Code, rec.Body.String())
 	}
 	state := requestWithSession(t, server, session, http.MethodGet, "/api/state", "")
 	auditEvents, auditErr := store.ListAuditEvents(context.Background(), "acct-gateway")
 	joined := rec.Body.String() + state.Body.String() + logs.String()
-	if strings.Contains(joined, "workspace-key-secret") || strings.Contains(joined, "work...cret") || auditErr != nil || len(auditEvents) != 0 || len(sub2API.workspaceKeyUserIDs) != 1 {
-		t.Fatalf("audit failure leaked or persisted Key: calls=%#v audit=%#v err=%v output=%s", sub2API.workspaceKeyUserIDs, auditEvents, auditErr, joined)
+	if strings.Contains(joined, "general-key-secret") || strings.Contains(joined, "gene...cret") || auditErr != nil || len(auditEvents) != 0 || len(client.keyUserIDs) != 1 {
+		t.Fatalf("audit failure leaked or persisted Key: calls=%#v audit=%#v err=%v output=%s", client.keyUserIDs, auditEvents, auditErr, joined)
 	}
 }
 
 func TestGatewayRevealFailsClosed(t *testing.T) {
-	for _, tc := range []struct {
-		name       string
-		err        error
-		wantStatus int
-	}{
-		{name: "missing Key", err: clients.ErrSub2APIWorkspaceKeyMissing, wantStatus: http.StatusConflict},
-		{name: "ambiguous Key", err: clients.ErrSub2APIWorkspaceKeyAmbiguous, wantStatus: http.StatusConflict},
-		{name: "upstream unavailable", err: errors.New("Sub2API unavailable"), wantStatus: http.StatusBadGateway},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			sub2API := &testSub2APIClient{balance: 123, charges: map[string]int64{}, workspaceKeyErr: tc.err}
-			server, session := newGatewayOwnerTestServer(t, sub2API, nil)
-			rec := requestWithSession(t, server, session, http.MethodPost, "/api/gateway/keys/opl-workspace/reveal", "{}")
-			assertUnavailableSourceEnvelope(t, rec, tc.wantStatus)
-			if strings.Contains(rec.Body.String(), "workspace-key-secret") || len(sub2API.workspaceKeyUserIDs) != 1 {
-				t.Fatalf("Gateway reveal error = %d calls=%#v, want %d: %s", rec.Code, sub2API.workspaceKeyUserIDs, tc.wantStatus, rec.Body.String())
-			}
-		})
+	client := &sourceTruthGatewayClient{
+		customerFactsSub2API: &customerFactsSub2API{testSub2APIClient: &testSub2APIClient{balance: 123, charges: map[string]int64{}}},
+		keys:                 []clients.Sub2APIWorkspaceKey{{ID: 17, UserID: 41, Name: "general-key", Key: "general-key-secret", Status: "active"}},
+		userKeyErr:           errors.New("Sub2API unavailable"),
+	}
+	server, session := newGatewayOwnerTestServer(t, client, nil)
+	rec := requestWithSession(t, server, session, http.MethodPost, "/api/gateway/keys/17/reveal", "{}")
+	assertUnavailableSourceEnvelope(t, rec, http.StatusBadGateway)
+	if strings.Contains(rec.Body.String(), "general-key-secret") || len(client.keyUserIDs) != 1 {
+		t.Fatalf("Gateway reveal error = %d calls=%#v: %s", rec.Code, client.keyUserIDs, rec.Body.String())
 	}
 }
 
@@ -186,7 +169,7 @@ func TestCustomerOwnerCannotUseEndpointsAcrossAccountsOrOrganizations(t *testing
 		t.Fatal(err)
 	}
 	owner := findRecord(users, "usr-alpha")
-	_, sessionID, err := app.createSession(owner)
+	_, sessionID, err := app.createSession(owner, "test-owner-delegated-token")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -219,7 +202,7 @@ func TestNonOwnerMembershipCannotAuthorizeOrganization(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, sessionID, err := app.createSession(findRecord(users, "usr-admin"))
+			_, sessionID, err := app.createSession(findRecord(users, "usr-admin"), "test-operator-delegated-token")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -233,41 +216,6 @@ func TestNonOwnerMembershipCannotAuthorizeOrganization(t *testing.T) {
 				t.Fatalf("%s membership authorization status=%d, want 403", role, rec.Code)
 			}
 		})
-	}
-}
-
-func TestMissingComputeReadReturnsNotFoundWithoutFabric(t *testing.T) {
-	store := newMemoryTableStore()
-	seedTenantMember(t, store, "acct-alpha", "org-alpha", "usr-alpha", "alpha@example.com")
-	calls := []string{}
-	server, err := NewPersistentServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{calls: &calls}), store)
-	if err != nil {
-		t.Fatal(err)
-	}
-	req := httptest.NewRequest(http.MethodGet, "/api/compute-allocations/compute-missing", nil)
-	addSessionCookies(req, loginForTest(t, server, "alpha@example.com", "CorrectHorseBatteryStaple!"))
-	rec := httptest.NewRecorder()
-	server.ServeHTTP(rec, req)
-	if rec.Code != http.StatusNotFound || len(calls) != 0 {
-		t.Fatalf("missing compute status=%d calls=%#v body=%s", rec.Code, calls, rec.Body.String())
-	}
-}
-
-func TestOwnedProvisioningComputeMayRefreshFromFabric(t *testing.T) {
-	store := newMemoryTableStore()
-	seedTenantMember(t, store, "acct-alpha", "org-alpha", "usr-alpha", "alpha@example.com")
-	mustStore(t, store.SaveCompute(context.Background(), map[string]any{"id": "compute-alpha", "accountId": "acct-alpha", "status": "provisioning"}))
-	calls := []string{}
-	server, err := NewPersistentServer(newTestService(fakeLedgerClient{}, &provisioningComputeFabricClient{fakeFabricClient{calls: &calls}}), store)
-	if err != nil {
-		t.Fatal(err)
-	}
-	req := httptest.NewRequest(http.MethodGet, "/api/compute-allocations/compute-alpha", nil)
-	addSessionCookies(req, loginForTest(t, server, "alpha@example.com", "CorrectHorseBatteryStaple!"))
-	rec := httptest.NewRecorder()
-	server.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK || !slices.Contains(calls, "fabric.compute-sync") || !strings.Contains(rec.Body.String(), `"accountId":"acct-alpha"`) {
-		t.Fatalf("provisioning compute status=%d calls=%#v body=%s", rec.Code, calls, rec.Body.String())
 	}
 }
 
@@ -299,32 +247,6 @@ func TestCustomerStateContainsOnlySessionTenant(t *testing.T) {
 	}
 	if strings.Contains(rec.Body.String(), "billingReconciliation") || strings.Contains(rec.Body.String(), "global-secret") {
 		t.Fatalf("state leaked global reconciliation: %s", rec.Body.String())
-	}
-}
-
-func TestUnknownCustomerResourceMutationsNeverReachFabric(t *testing.T) {
-	store := newMemoryTableStore()
-	seedTenantMember(t, store, "acct-alpha", "org-alpha", "usr-alpha", "alpha@example.com")
-	calls := []string{}
-	server, err := NewPersistentServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{calls: &calls}), store)
-	if err != nil {
-		t.Fatal(err)
-	}
-	member := loginForTest(t, server, "alpha@example.com", "CorrectHorseBatteryStaple!")
-	for _, tc := range []struct{ path, body string }{
-		{"/api/compute-allocations/compute-missing/destroy", `{"confirm":true}`},
-		{"/api/storage-volumes/destroy", `{"storageId":"storage-missing","confirmDataLoss":true}`},
-		{"/api/storage-attachments/detach", `{"attachmentId":"attachment-missing"}`},
-		{"/api/storage-attachments", `{"computeAllocationId":"compute-missing","storageId":"storage-missing","workspaceId":"workspace-alpha"}`},
-	} {
-		before := len(calls)
-		rec := requestWithSession(t, server, member, http.MethodPost, tc.path, tc.body)
-		if rec.Code != http.StatusNotFound && rec.Code != http.StatusBadRequest {
-			t.Fatalf("unknown mutation %s status = %d: %s", tc.path, rec.Code, rec.Body.String())
-		}
-		if len(calls) != before {
-			t.Fatalf("unknown mutation %s reached Fabric: %#v", tc.path, calls[before:])
-		}
 	}
 }
 
@@ -485,8 +407,8 @@ func TestPostgresStoreStartsFromFreshDatabase(t *testing.T) {
 	if err := check.QueryRow(`SELECT count(*) FROM opl_schema_migrations WHERE service = 'control-plane'`).Scan(&migrationCount); err != nil {
 		t.Fatalf("read control-plane migration journal: %v", err)
 	}
-	if migrationCount != 11 {
-		t.Fatalf("control-plane migration count = %d, want 11", migrationCount)
+	if migrationCount != 13 {
+		t.Fatalf("control-plane migration count = %d, want 13", migrationCount)
 	}
 	var autoRenewAuditMigration bool
 	if err := check.QueryRow(`SELECT EXISTS (SELECT 1 FROM opl_schema_migrations WHERE service = 'control-plane' AND version = '202607170003_workspace_auto_renew_audit')`).Scan(&autoRenewAuditMigration); err != nil || !autoRenewAuditMigration {
@@ -495,6 +417,14 @@ func TestPostgresStoreStartsFromFreshDatabase(t *testing.T) {
 	var identityHardCutMigration bool
 	if err := check.QueryRow(`SELECT EXISTS (SELECT 1 FROM opl_schema_migrations WHERE service = 'control-plane' AND version = '202607180001_customer_identity_hard_cut')`).Scan(&identityHardCutMigration); err != nil || !identityHardCutMigration {
 		t.Fatalf("customer identity hard cut migration missing: applied=%v err=%v", identityHardCutMigration, err)
+	}
+	var announcementMigration bool
+	if err := check.QueryRow(`SELECT EXISTS (SELECT 1 FROM opl_schema_migrations WHERE service = 'control-plane' AND version = '202607190002_pilot_announcements')`).Scan(&announcementMigration); err != nil || !announcementMigration {
+		t.Fatalf("Pilot announcement migration missing: applied=%v err=%v", announcementMigration, err)
+	}
+	var announcementConstraints int
+	if err := check.QueryRow(`SELECT count(*) FROM pg_constraint WHERE conrelid IN ('control_plane_announcements'::regclass, 'control_plane_announcement_reads'::regclass) AND conname IN ('control_plane_announcements_status_check', 'control_plane_announcements_schedule_check', 'control_plane_announcement_reads_announcement_fk', 'control_plane_announcement_reads_user_unique')`).Scan(&announcementConstraints); err != nil || announcementConstraints != 4 {
+		t.Fatalf("Pilot announcement constraints = %d, want 4: %v", announcementConstraints, err)
 	}
 	if _, err := check.Exec(`CREATE TABLE control_plane_startup_probe (id text PRIMARY KEY, probe text); INSERT INTO control_plane_startup_probe VALUES ('probe', NULL)`); err != nil {
 		t.Fatal(err)

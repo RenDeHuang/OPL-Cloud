@@ -61,12 +61,6 @@ func registerStateRoutes(mux *http.ServeMux, app *controlPlaneServer, service *c
 		}
 		writeJSON(w, http.StatusOK, app.managementState(r.URL.Query().Get("includeDeleted") == "true", computePools))
 	}))
-	mux.HandleFunc("GET /api/operator/summary", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
-		if !app.syncRuntimeOperations(w, r, service) {
-			return
-		}
-		writeJSON(w, http.StatusOK, app.operatorSummary())
-	}))
 }
 
 func writePricingError(w http.ResponseWriter, err error) {

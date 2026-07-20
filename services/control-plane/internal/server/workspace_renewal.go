@@ -691,14 +691,18 @@ func (app *controlPlaneServer) workspaceRenewalResources(operation workspaceRene
 	if !computeOK || !storageOK || stringValue(compute["accountId"]) != operation.AccountID || stringValue(storage["accountId"]) != operation.AccountID ||
 		stringValue(compute["workspaceId"]) != operation.WorkspaceID || stringValue(storage["workspaceId"]) != operation.WorkspaceID ||
 		stringValue(compute["providerResourceId"]) == "" || stringValue(storage["providerResourceId"]) == "" ||
-		!monthlyPriceSnapshotAvailable(compute) || !monthlyPriceSnapshotAvailable(storage) ||
-		int64(numberField(compute, "chargeUsdMicros", 0)) != operation.ComputeUSDMicros || int64(numberField(storage, "chargeUsdMicros", 0)) != operation.StorageUSDMicros {
+		stringValue(compute["packageId"]) != operation.PackageID || int64(numberField(storage, "sizeGb", 0)) != operation.StorageGB ||
+		stringValue(storage["computeAllocationId"]) != operation.ComputeID {
 		return nil, nil, errors.New("workspace_renewal_resource_identity_mismatch")
 	}
-	if _, ok := monthlyRenewalProviderTruth("compute", compute); !ok {
+	computeTruth := cloneMap(compute)
+	computeTruth["periodStart"], computeTruth["paidThrough"] = operation.PeriodStart, operation.PaidThrough
+	if _, ok := monthlyRenewalProviderTruth("compute", computeTruth); !ok {
 		return nil, nil, errors.New("workspace_renewal_compute_provider_truth_invalid")
 	}
-	if _, ok := monthlyRenewalProviderTruth("storage", storage); !ok {
+	storageTruth := cloneMap(storage)
+	storageTruth["periodStart"], storageTruth["paidThrough"] = operation.PeriodStart, operation.PaidThrough
+	if _, ok := monthlyRenewalProviderTruth("storage", storageTruth); !ok {
 		return nil, nil, errors.New("workspace_renewal_storage_provider_truth_invalid")
 	}
 	return compute, storage, nil
@@ -718,6 +722,13 @@ func (app *controlPlaneServer) runWorkspaceRenewal(ctx context.Context, service 
 			compute, storage, err := app.workspaceRenewalResources(operation)
 			if err != nil {
 				return app.manualReviewWorkspaceRenewal(ctx, &operation, err.Error())
+			}
+			if operation.ChargeAttempted || operation.ChargeConfirmation != nil {
+				operation.Status, operation.Phase = "debit_pending", "debit"
+				if err := app.persistWorkspaceRenewal(ctx, &operation, nil); err != nil {
+					return err
+				}
+				continue
 			}
 			switch operation.Phase {
 			case "preflight_compute":
@@ -762,6 +773,9 @@ func (app *controlPlaneServer) runWorkspaceRenewal(ctx context.Context, service 
 			if operation.Phase == "receipt" {
 				return app.recordWorkspaceRenewalReceipt(ctx, service, &operation)
 			}
+			if err := app.verifyWorkspaceRenewalProviderReadback(ctx, service, &operation); err != nil {
+				return app.manualReviewWorkspaceRenewal(ctx, &operation, err.Error())
+			}
 			if err := app.commitWorkspaceRenewalEntitlement(ctx, &operation); err != nil {
 				return err
 			}
@@ -780,6 +794,8 @@ func (app *controlPlaneServer) runWorkspaceRenewal(ctx context.Context, service 
 }
 
 func (app *controlPlaneServer) debitWorkspaceRenewal(ctx context.Context, service *controlplane.Service, operation *workspaceRenewalOperation) error {
+	unlockWallet := app.lockResource("sub2api-wallet", operation.AccountID)
+	defer unlockWallet()
 	userID, err := app.sub2APIUserID(ctx, operation.AccountID)
 	if err != nil {
 		return app.retryWorkspaceRenewal(ctx, operation, errMonthlyAccountUnmapped.Error(), err)
@@ -807,7 +823,7 @@ func (app *controlPlaneServer) debitWorkspaceRenewal(ctx context.Context, servic
 			if balanceErr != nil {
 				return app.retryWorkspaceRenewal(ctx, operation, "sub2api_balance_unavailable", balanceErr)
 			}
-			if balance.USDMicros < operation.TotalUSDMicros {
+			if balance.USDMicros <= operation.TotalUSDMicros {
 				operation.Status, operation.ErrorCode = "insufficient", errMonthlyInsufficientBalance.Error()
 				releaseWorkspaceRenewalLease(operation)
 				if err := app.persistWorkspaceRenewal(ctx, operation, nil); err != nil {
@@ -844,7 +860,7 @@ func (app *controlPlaneServer) debitWorkspaceRenewal(ctx context.Context, servic
 		return app.retryWorkspaceRenewal(ctx, operation, "post_charge_balance_unavailable", err)
 	}
 	operation.PostChargeBalanceKnown, operation.PostChargeBalanceUSDMicros = true, postCharge.USDMicros
-	if postCharge.USDMicros < 0 || operation.PreChargeBalanceUSDMicros > 0 && postCharge.USDMicros > operation.PreChargeBalanceUSDMicros-operation.TotalUSDMicros {
+	if operation.PreChargeBalanceUSDMicros <= operation.TotalUSDMicros || postCharge.USDMicros < 0 || postCharge.USDMicros != operation.PreChargeBalanceUSDMicros-operation.TotalUSDMicros {
 		return app.manualReviewWorkspaceRenewal(ctx, operation, "post_charge_balance_invalid")
 	}
 	operation.Status, operation.Phase, operation.ErrorCode = "debited", "provider_compute", ""
@@ -924,14 +940,35 @@ func (app *controlPlaneServer) workspaceRenewalProviderReadback(resourceType str
 	if readErr != nil || oldErr != nil || renewedErr != nil || !monthlyRenewalReadbackConfirmed(resourceType, existing, candidate, facts, oldDeadline, renewedThrough) {
 		return candidate, false, false
 	}
-	candidate["periodStart"], candidate["paidThrough"], candidate["billingStatus"] = operation.PaidThrough, operation.RenewedThrough, "active"
-	candidate["billingOperationId"] = operation.ID + ":" + resourceType
-	candidate["autoRenew"] = false
-	delete(candidate, "lastBillingError")
 	return candidate, false, true
 }
 
+func (app *controlPlaneServer) verifyWorkspaceRenewalProviderReadback(ctx context.Context, service *controlplane.Service, operation *workspaceRenewalOperation) error {
+	compute, computeErr := service.SyncMonthlyCompute(ctx, operation.ComputeID)
+	operation.ComputeReadback = structToMap(compute)
+	computeRow, computeAbsent, computeValid := app.workspaceRenewalProviderReadback("compute", operation, operation.ComputeReadback, computeErr)
+	if computeAbsent || !computeValid {
+		return errors.New("workspace_renewal_provider_truth_invalid")
+	}
+	if err := app.tables.SaveCompute(ctx, computeRow); err != nil {
+		return errors.New("workspace_renewal_provider_truth_invalid")
+	}
+
+	storage, storageErr := service.SyncMonthlyStorage(ctx, operation.StorageID)
+	operation.StorageReadback = structToMap(storage)
+	storageRow, storageAbsent, storageValid := app.workspaceRenewalProviderReadback("storage", operation, operation.StorageReadback, storageErr)
+	if storageAbsent || !storageValid {
+		return errors.New("workspace_renewal_provider_truth_invalid")
+	}
+	if err := app.tables.SaveStorage(ctx, storageRow); err != nil {
+		return errors.New("workspace_renewal_provider_truth_invalid")
+	}
+	return nil
+}
+
 func (app *controlPlaneServer) refundWorkspaceRenewal(ctx context.Context, service *controlplane.Service, operation *workspaceRenewalOperation, reason string) error {
+	unlockWallet := app.lockResource("sub2api-wallet", operation.AccountID)
+	defer unlockWallet()
 	userID, err := app.sub2APIUserID(ctx, operation.AccountID)
 	if err != nil {
 		return app.manualReviewWorkspaceRenewal(ctx, operation, "workspace_renewal_refund_account_unmapped")

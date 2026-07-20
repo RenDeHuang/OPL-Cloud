@@ -1636,78 +1636,96 @@ func (client *tencentSDKClient) ProviderTruth(request Request, _ map[string]stri
 		response.ProviderRequestId = firstNonEmpty(response.ProviderRequestId, cbsRequestID)
 		return response
 	}
+	providerData := map[string]string{
+		"resourceId": request.Allocation.Id, "clusterId": request.Pool.ClusterId,
+		"nodePoolId": request.Pool.NodePoolId, "machineName": request.Allocation.MachineName,
+		"storageVolumeId": request.StorageVolumeId, "storagePresent": strconv.FormatBool(storagePresent), "cbsStatus": cbsStatus,
+		"describeCbsRequestId": cbsRequestID,
+	}
+	for key, value := range cbsFacts {
+		providerData[key] = value
+	}
+	withKnownStorage := func(response Response) Response {
+		response.StoragePresent = &storagePresent
+		response.CBSStatus = cbsStatus
+		response.ProviderRequestId = firstNonEmpty(response.ProviderRequestId, cbsRequestID)
+		for key, value := range response.ProviderData {
+			providerData[key] = value
+		}
+		response.ProviderData = providerData
+		return response
+	}
 
 	pool, poolRequestID, err := client.describeNativeNodePool(request.Pool.NodePoolId)
 	if err != nil {
 		response := sdkErrorResponse("tencent_provider_truth_node_pool_failed", err)
 		response.ProviderRequestId = firstNonEmpty(response.ProviderRequestId, poolRequestID)
-		return response
+		return withKnownStorage(response)
 	}
 	if !isCVMNativeNodePool(pool) {
-		return Response{Ok: false, ErrorCode: "tencent_cvm_node_pool_required", Message: "Provider truth requires a one-month PREPAID NativeCVM node pool with manual renewal.", ProviderRequestId: poolRequestID, Retryable: false}
+		return withKnownStorage(Response{Ok: false, ErrorCode: "tencent_cvm_node_pool_required", Message: "Provider truth requires a one-month PREPAID NativeCVM node pool with manual renewal.", ProviderRequestId: poolRequestID, Retryable: false})
 	}
 
 	machines, machineRequestID, err := client.describeClusterMachines(request.Pool.NodePoolId)
 	if err != nil {
 		response := sdkErrorResponse("tencent_provider_truth_machine_probe_failed", err)
 		response.ProviderRequestId = firstNonEmpty(response.ProviderRequestId, machineRequestID)
-		return response
+		return withKnownStorage(response)
 	}
 	var machine *tke2022.Machine
 	for _, candidate := range machines {
 		if candidate != nil && stringValue(candidate.MachineName) == request.Allocation.MachineName {
 			if machine != nil {
-				return Response{Ok: false, ErrorCode: "provider_truth_machine_ambiguous", Message: "The supplied machine name is not unique in the exact node pool.", ProviderRequestId: machineRequestID, Retryable: false}
+				return withKnownStorage(Response{Ok: false, ErrorCode: "provider_truth_machine_ambiguous", Message: "The supplied machine name is not unique in the exact node pool.", ProviderRequestId: machineRequestID, Retryable: false})
 			}
 			machine = candidate
 		}
 	}
 	if machine != nil && stringValue(machine.LanIP) != request.Allocation.PrivateIp {
-		return Response{Ok: false, ErrorCode: "provider_truth_machine_ip_mismatch", Message: "The supplied machine and private IP do not identify the same TKE machine.", ProviderRequestId: machineRequestID, Retryable: false}
+		return withKnownStorage(Response{Ok: false, ErrorCode: "provider_truth_machine_ip_mismatch", Message: "The supplied machine and private IP do not identify the same TKE machine.", ProviderRequestId: machineRequestID, Retryable: false})
 	}
 
 	tkeInstance, tkeRequestID, tkeErr := client.describeTkeClusterInstanceByPrivateIp(request.Allocation.PrivateIp, request.Pool.NodePoolId)
 	if tkeErr != nil && !errors.Is(tkeErr, errTKEInstanceNotFound) {
 		response := sdkErrorResponse("tencent_provider_truth_tke_instance_probe_failed", tkeErr)
 		response.ProviderRequestId = firstNonEmpty(response.ProviderRequestId, tkeRequestID)
-		return response
+		return withKnownStorage(response)
 	}
 	cvmInstance, cvmRequestID, err := client.describeCvmInstanceByID(request.Allocation.InstanceId)
 	if err != nil {
 		response := sdkErrorResponse("tencent_provider_truth_cvm_probe_failed", err)
 		response.ProviderRequestId = firstNonEmpty(response.ProviderRequestId, cvmRequestID)
-		return response
+		return withKnownStorage(response)
 	}
 
 	machinePresent, tkePresent, cvmPresent := machine != nil, tkeInstance != nil, cvmInstance != nil
-	providerData := map[string]string{
-		"resourceId": request.Allocation.Id, "clusterId": request.Pool.ClusterId,
-		"nodePoolId": request.Pool.NodePoolId, "machineName": request.Allocation.MachineName,
-		"storageVolumeId": request.StorageVolumeId, "storagePresent": strconv.FormatBool(storagePresent), "cbsStatus": cbsStatus,
-		"machinePresent": strconv.FormatBool(machinePresent), "describeNodePoolRequestId": poolRequestID,
-		"describeMachineRequestId": machineRequestID, "describeTkeRequestId": tkeRequestID, "describeCvmRequestId": cvmRequestID,
-		"describeCbsRequestId": cbsRequestID,
-	}
-	for key, value := range cbsFacts {
-		providerData[key] = value
-	}
+	providerData["machinePresent"] = strconv.FormatBool(machinePresent)
+	providerData["describeNodePoolRequestId"] = poolRequestID
+	providerData["describeMachineRequestId"] = machineRequestID
+	providerData["describeTkeRequestId"] = tkeRequestID
+	providerData["describeCvmRequestId"] = cvmRequestID
 	if !storagePresent && !machinePresent && !tkePresent && !cvmPresent {
 		providerData["tkeStatus"] = "NOT_FOUND"
 		providerData["cvmStatus"] = "NOT_FOUND"
 		return Response{Ok: true, PoolId: request.Pool.Id, NodePoolId: request.Pool.NodePoolId, InstanceId: request.Allocation.InstanceId, PrivateIp: request.Allocation.PrivateIp, MachinePresent: &machinePresent, StoragePresent: &storagePresent, CVMStatus: "NOT_FOUND", TKEStatus: "NOT_FOUND", CBSStatus: cbsStatus, Status: "absent", MachineType: "NativeCVM", ProviderRequestId: firstNonEmpty(cbsRequestID, cvmRequestID, tkeRequestID, machineRequestID), ProviderData: providerData}
 	}
-	if !storagePresent || !machinePresent || !tkePresent || !cvmPresent {
-		return Response{Ok: false, ErrorCode: "provider_truth_partial_identity", Message: "Tencent provider identity is only partially present.", ProviderRequestId: firstNonEmpty(cvmRequestID, tkeRequestID, machineRequestID), ProviderData: providerData, Retryable: true}
+	if !machinePresent && !tkePresent && !cvmPresent {
+		providerData["tkeStatus"] = "NOT_FOUND"
+		providerData["cvmStatus"] = "NOT_FOUND"
+		return withKnownStorage(Response{Ok: false, ErrorCode: "provider_truth_partial_identity", Message: "Tencent provider identity is only partially present.", MachinePresent: &machinePresent, CVMStatus: "NOT_FOUND", TKEStatus: "NOT_FOUND", ProviderRequestId: firstNonEmpty(cvmRequestID, tkeRequestID, machineRequestID), Retryable: true})
+	}
+	if !machinePresent || !tkePresent || !cvmPresent {
+		return withKnownStorage(Response{Ok: false, ErrorCode: "provider_truth_partial_identity", Message: "Tencent provider identity is only partially present.", ProviderRequestId: firstNonEmpty(cvmRequestID, tkeRequestID, machineRequestID), Retryable: true})
 	}
 	if stringValue(tkeInstance.InstanceId) != request.Allocation.MachineName {
-		return Response{Ok: false, ErrorCode: "provider_truth_node_mismatch", Message: "The supplied machine does not identify the TKE cluster instance at the private IP.", ProviderRequestId: tkeRequestID, ProviderData: providerData, Retryable: false}
+		return withKnownStorage(Response{Ok: false, ErrorCode: "provider_truth_node_mismatch", Message: "The supplied machine does not identify the TKE cluster instance at the private IP.", ProviderRequestId: tkeRequestID, Retryable: false})
 	}
 	if stringValue(machine.InstanceType) != request.Pool.InstanceType || stringValue(cvmInstance.InstanceType) != request.Pool.InstanceType {
-		return Response{Ok: false, ErrorCode: "provider_truth_compute_sku_mismatch", Message: "The TKE machine and CVM instance type must exactly match the requested package.", ProviderRequestId: firstNonEmpty(cvmRequestID, machineRequestID), ProviderData: providerData, Retryable: false}
+		return withKnownStorage(Response{Ok: false, ErrorCode: "provider_truth_compute_sku_mismatch", Message: "The TKE machine and CVM instance type must exactly match the requested package.", ProviderRequestId: firstNonEmpty(cvmRequestID, machineRequestID), Retryable: false})
 	}
 	if stringValue(cvmInstance.InstanceId) != request.Allocation.InstanceId || stringValue(cvmInstance.InstanceName) != request.Allocation.Id ||
 		!containsString(cvmInstance.PrivateIpAddresses, request.Allocation.PrivateIp) {
-		return Response{Ok: false, ErrorCode: "provider_truth_cvm_identity_mismatch", Message: "The supplied resource, instance, machine, and node do not identify the same CVM.", ProviderRequestId: cvmRequestID, ProviderData: providerData, Retryable: false}
+		return withKnownStorage(Response{Ok: false, ErrorCode: "provider_truth_cvm_identity_mismatch", Message: "The supplied resource, instance, machine, and node do not identify the same CVM.", ProviderRequestId: cvmRequestID, Retryable: false})
 	}
 	zone := ""
 	if cvmInstance.Placement != nil {
@@ -1716,20 +1734,20 @@ func (client *tencentSDKClient) ProviderTruth(request Request, _ map[string]stri
 	deadline := normalizeTencentDeadline(stringValue(cvmInstance.ExpiredTime))
 	cvmTags, tagErr := cvmOwnershipTags(cvmInstance)
 	if tagErr != nil {
-		return Response{Ok: false, ErrorCode: "provider_truth_cvm_ownership_mismatch", Message: tagErr.Error(), ProviderRequestId: cvmRequestID, ProviderData: providerData, Retryable: false}
+		return withKnownStorage(Response{Ok: false, ErrorCode: "provider_truth_cvm_ownership_mismatch", Message: tagErr.Error(), ProviderRequestId: cvmRequestID, Retryable: false})
 	}
 	for _, key := range cbsOwnershipTagKeys {
 		if cvmTags[key] != request.ComputeTags[key] {
-			return Response{Ok: false, ErrorCode: "provider_truth_cvm_ownership_mismatch", Message: "The exact CVM ownership tags do not match the compute allocation.", ProviderRequestId: cvmRequestID, ProviderData: providerData, Retryable: false}
+			return withKnownStorage(Response{Ok: false, ErrorCode: "provider_truth_cvm_ownership_mismatch", Message: "The exact CVM ownership tags do not match the compute allocation.", ProviderRequestId: cvmRequestID, Retryable: false})
 		}
 	}
-	if stringValue(cvmInstance.InstanceChargeType) != "PREPAID" || stringValue(cvmInstance.RenewFlag) != "NOTIFY_AND_MANUAL_RENEW" || deadline == "" || strings.TrimSpace(zone) == "" || zone != cbsFacts["storageZone"] {
-		return Response{Ok: false, ErrorCode: "provider_truth_cvm_billing_mismatch", Message: "The exact CVM does not have required PREPAID manual-renew billing facts.", ProviderRequestId: cvmRequestID, ProviderData: providerData, Retryable: false}
+	if stringValue(cvmInstance.InstanceChargeType) != "PREPAID" || stringValue(cvmInstance.RenewFlag) != "NOTIFY_AND_MANUAL_RENEW" || deadline == "" || strings.TrimSpace(zone) == "" || zone != request.Storage.Zone {
+		return withKnownStorage(Response{Ok: false, ErrorCode: "provider_truth_cvm_billing_mismatch", Message: "The exact CVM does not have required PREPAID manual-renew billing facts.", ProviderRequestId: cvmRequestID, Retryable: false})
 	}
 	tkeStatus := strings.ToUpper(strings.TrimSpace(stringValue(tkeInstance.InstanceState)))
 	cvmStatus := strings.ToUpper(strings.TrimSpace(stringValue(cvmInstance.InstanceState)))
 	if tkeStatus == "" || cvmStatus == "" {
-		return Response{Ok: false, ErrorCode: "provider_truth_status_unknown", Message: "Tencent returned a present resource without an exact state.", ProviderRequestId: firstNonEmpty(cvmRequestID, tkeRequestID), ProviderData: providerData, Retryable: true}
+		return withKnownStorage(Response{Ok: false, ErrorCode: "provider_truth_status_unknown", Message: "Tencent returned a present resource without an exact state.", ProviderRequestId: firstNonEmpty(cvmRequestID, tkeRequestID), Retryable: true})
 	}
 	providerData["tkeStatus"] = tkeStatus
 	providerData["cvmStatus"] = cvmStatus
@@ -1740,6 +1758,14 @@ func (client *tencentSDKClient) ProviderTruth(request Request, _ map[string]stri
 	providerData["instanceType"] = request.Pool.InstanceType
 	for _, key := range cbsOwnershipTagKeys {
 		providerData["computeTag:"+key] = cvmTags[key]
+	}
+	if !storagePresent {
+		return withKnownStorage(Response{
+			Ok: false, ErrorCode: "provider_truth_partial_identity", Message: "Tencent provider identity is only partially present.", Retryable: true,
+			PoolId: request.Pool.Id, NodePoolId: request.Pool.NodePoolId, InstanceId: request.Allocation.InstanceId, PrivateIp: request.Allocation.PrivateIp,
+			MachinePresent: &machinePresent, CVMStatus: cvmStatus, TKEStatus: tkeStatus, Status: "present", MachineType: "NativeCVM", InstanceType: request.Pool.InstanceType,
+			ProviderRequestId: firstNonEmpty(cvmRequestID, tkeRequestID, machineRequestID),
+		})
 	}
 	return Response{Ok: true, PoolId: request.Pool.Id, NodePoolId: request.Pool.NodePoolId, InstanceId: request.Allocation.InstanceId, PrivateIp: request.Allocation.PrivateIp, MachinePresent: &machinePresent, StoragePresent: &storagePresent, CVMStatus: cvmStatus, TKEStatus: tkeStatus, CBSStatus: cbsStatus, Status: "present", MachineType: "NativeCVM", InstanceType: request.Pool.InstanceType, ProviderRequestId: firstNonEmpty(cbsRequestID, cvmRequestID), ProviderData: providerData}
 }

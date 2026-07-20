@@ -85,6 +85,149 @@ func TestMonthlyPreflightIsReadOnlyAndDoesNotRecordOperation(t *testing.T) {
 	}
 }
 
+type recordingMonthlyTruthProvider struct {
+	testProvider
+	called  int
+	compute ComputeAllocation
+	storage StorageVolume
+	result  MonthlyProviderTruth
+	err     error
+}
+
+func (p *recordingMonthlyTruthProvider) MonthlyProviderTruth(_ context.Context, compute ComputeAllocation, storage StorageVolume) (MonthlyProviderTruth, error) {
+	p.called++
+	p.compute, p.storage = compute, storage
+	return p.result, p.err
+}
+
+func monthlyTruthResources() (ComputeAllocation, StorageVolume) {
+	compute := ComputeAllocation{
+		ID: "compute-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", PackageID: "basic", Status: "running",
+		Provider: "tencent-tke", ProviderResourceID: "machine/node-basic-1", ProviderRequestID: "req-compute",
+		NodePoolID: "np-basic", InstanceID: "ins-basic-1", CVMInstanceID: "ins-basic-1", MachineName: "node-basic-1",
+		PrivateIP: "10.0.0.11", InstanceType: "SA5.MEDIUM4", Zone: "ap-guangzhou-3", ChargeType: "PREPAID",
+		RenewFlag: "NOTIFY_AND_MANUAL_RENEW", Deadline: "2026-08-16T00:00:00Z",
+		ProviderData: map[string]string{"instanceType": "SA5.MEDIUM4", "zone": "ap-guangzhou-3", "chargeType": "PREPAID", "renewFlag": "NOTIFY_AND_MANUAL_RENEW", "deadline": "2026-08-16T00:00:00Z"},
+		CostTags:     oplCostTags("acct-alpha", "ws-alpha", "compute-alpha", "owner-compute-alpha"),
+	}
+	storage := StorageVolume{
+		ID: "storage-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", Status: "ready", Provider: "tencent-tke",
+		ProviderResourceID: "disk-storage-alpha", ProviderRequestID: "req-storage", SizeGB: 10, CBSStatus: "ATTACHED",
+		DiskType: "CLOUD_BSSD", RenewFlag: "NOTIFY_AND_MANUAL_RENEW", Deadline: "2026-08-16T00:00:00Z", Zone: "ap-guangzhou-3",
+		ProviderData: map[string]string{"chargeType": "PREPAID", "diskChargeType": "PREPAID", "renewFlag": "NOTIFY_AND_MANUAL_RENEW", "deadline": "2026-08-16T00:00:00Z", "zone": "ap-guangzhou-3"},
+		CostTags:     oplCostTags("acct-alpha", "ws-alpha", "storage-alpha", "owner-storage-alpha"),
+	}
+	return compute, storage
+}
+
+func monthlyTruthResult(computeState, storageState string) MonthlyProviderTruth {
+	compute, storage := monthlyTruthResources()
+	compute.ProviderRequestID, storage.ProviderRequestID = "req-provider-truth", "req-provider-truth"
+	if computeState == "absent" {
+		compute.Status, compute.CVMStatus = "external_deleted", "NOT_FOUND"
+	}
+	if storageState == "absent" {
+		storage.Status, storage.CBSStatus = "external_deleted", "NOT_FOUND"
+	}
+	return MonthlyProviderTruth{
+		ComputeState: computeState, StorageState: storageState, Compute: compute, Storage: storage,
+		ProviderRequestID: "req-provider-truth",
+	}
+}
+
+func TestMonthlyProviderTruthReturnsIndependentReadOnlyStates(t *testing.T) {
+	for _, tc := range []struct {
+		name, computeState, storageState string
+	}{
+		{name: "compute ready storage absent", computeState: "ready", storageState: "absent"},
+		{name: "both absent", computeState: "absent", storageState: "absent"},
+		{name: "compute absent storage ready", computeState: "absent", storageState: "ready"},
+		{name: "both ready", computeState: "ready", storageState: "ready"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			compute, storage := monthlyTruthResources()
+			provider := &recordingMonthlyTruthProvider{result: monthlyTruthResult(tc.computeState, tc.storageState)}
+			store := NewMemoryOperationStore()
+			service := NewServiceWithOperationStore(provider, store)
+			service.computes[compute.ID], service.volumes[storage.ID] = compute, storage
+
+			result, err := service.MonthlyProviderTruth(context.Background(), compute.ID, storage.ID)
+			operations, listErr := service.ListOperations(context.Background())
+
+			if err != nil || listErr != nil || result.ComputeState != tc.computeState || result.StorageState != tc.storageState || provider.called != 1 {
+				t.Fatalf("truth=%#v err=%v calls=%d listErr=%v", result, err, provider.called, listErr)
+			}
+			if result.Compute.ID != compute.ID || result.Storage.ID != storage.ID || provider.compute.ID != compute.ID || provider.storage.ID != storage.ID || len(operations) != 0 {
+				t.Fatalf("truth changed identity or recorded a mutation: result=%#v provider=%#v/%#v operations=%#v", result, provider.compute, provider.storage, operations)
+			}
+		})
+	}
+}
+
+func TestMonthlyProviderTruthRejectsMissingOrMismatchedLocalIdentityBeforeProvider(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate func(*Service, ComputeAllocation, StorageVolume)
+	}{
+		{name: "compute missing", mutate: func(service *Service, _ ComputeAllocation, storage StorageVolume) {
+			service.volumes[storage.ID] = storage
+		}},
+		{name: "storage missing", mutate: func(service *Service, compute ComputeAllocation, _ StorageVolume) {
+			service.computes[compute.ID] = compute
+		}},
+		{name: "account mismatch", mutate: func(service *Service, compute ComputeAllocation, storage StorageVolume) {
+			storage.AccountID = "acct-other"
+			service.computes[compute.ID], service.volumes[storage.ID] = compute, storage
+		}},
+		{name: "workspace mismatch", mutate: func(service *Service, compute ComputeAllocation, storage StorageVolume) {
+			storage.WorkspaceID = "ws-other"
+			service.computes[compute.ID], service.volumes[storage.ID] = compute, storage
+		}},
+		{name: "zone mismatch", mutate: func(service *Service, compute ComputeAllocation, storage StorageVolume) {
+			storage.Zone = "ap-guangzhou-4"
+			service.computes[compute.ID], service.volumes[storage.ID] = compute, storage
+		}},
+		{name: "compute ownership mismatch", mutate: func(service *Service, compute ComputeAllocation, storage StorageVolume) {
+			compute.CostTags["opl_resource_id"] = "compute-other"
+			service.computes[compute.ID], service.volumes[storage.ID] = compute, storage
+		}},
+		{name: "storage provider identity missing", mutate: func(service *Service, compute ComputeAllocation, storage StorageVolume) {
+			storage.ProviderResourceID = ""
+			service.computes[compute.ID], service.volumes[storage.ID] = compute, storage
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			compute, storage := monthlyTruthResources()
+			provider := &recordingMonthlyTruthProvider{result: monthlyTruthResult("ready", "ready")}
+			store := NewMemoryOperationStore()
+			service := NewServiceWithOperationStore(provider, store)
+			tc.mutate(service, compute, storage)
+
+			result, err := service.MonthlyProviderTruth(context.Background(), compute.ID, storage.ID)
+			operations, listErr := service.ListOperations(context.Background())
+
+			if err == nil || result.ComputeState != "unknown" || result.StorageState != "unknown" || provider.called != 0 || listErr != nil || len(operations) != 0 {
+				t.Fatalf("unsafe local identity truth=%#v err=%v calls=%d operations=%#v listErr=%v", result, err, provider.called, operations, listErr)
+			}
+		})
+	}
+}
+
+func TestMonthlyProviderTruthRejectsMismatchedProviderIdentity(t *testing.T) {
+	compute, storage := monthlyTruthResources()
+	invalid := monthlyTruthResult("ready", "ready")
+	invalid.Compute.ID = "compute-other"
+	provider := &recordingMonthlyTruthProvider{result: invalid}
+	service := NewService(provider)
+	service.computes[compute.ID], service.volumes[storage.ID] = compute, storage
+
+	result, err := service.MonthlyProviderTruth(context.Background(), compute.ID, storage.ID)
+
+	if err == nil || result.ComputeState != "unknown" || result.StorageState != "unknown" || provider.called != 1 {
+		t.Fatalf("mismatched provider identity truth=%#v err=%v calls=%d", result, err, provider.called)
+	}
+}
+
 type pendingStorageProvider struct {
 	testProvider
 	deleteErr   error

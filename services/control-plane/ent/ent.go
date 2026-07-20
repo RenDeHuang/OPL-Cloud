@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"opl-cloud/services/control-plane/ent/account"
 	"opl-cloud/services/control-plane/ent/adminauditevent"
+	"opl-cloud/services/control-plane/ent/announcement"
+	"opl-cloud/services/control-plane/ent/announcementread"
 	"opl-cloud/services/control-plane/ent/archivedadminauditevent"
 	"opl-cloud/services/control-plane/ent/archivedcomputeallocation"
 	"opl-cloud/services/control-plane/ent/archivedstorageattachment"
@@ -99,6 +101,8 @@ func checkColumn(table, column string) error {
 		columnCheck = sql.NewColumnCheck(map[string]func(string) bool{
 			account.Table:                   account.ValidColumn,
 			adminauditevent.Table:           adminauditevent.ValidColumn,
+			announcement.Table:              announcement.ValidColumn,
+			announcementread.Table:          announcementread.ValidColumn,
 			archivejob.Table:                archivejob.ValidColumn,
 			archivedadminauditevent.Table:   archivedadminauditevent.ValidColumn,
 			archivedcomputeallocation.Table: archivedcomputeallocation.ValidColumn,

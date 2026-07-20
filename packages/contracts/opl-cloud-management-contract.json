@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 8,
+  "schemaVersion": 14,
   "owner": "OPL Console",
   "purpose": "Console customer identity, strict owner graph, Sub2API authentication authority, lifecycle, and management API contract.",
   "state": "current",
@@ -105,8 +105,15 @@
     "personalWorkspace": "ownerAccountId identifies the Console owner and its Sub2API mapping."
   },
   "identityProvisioning": {
-    "onlyMutation": "POST /api/users",
-    "atomicInvite": "After Sub2API resolves or creates and re-reads the remote identity, one transaction commits the mapped Account and normalized owner User plus internal one-to-one Organization/Membership compatibility rows.",
+    "onlyMutation": "POST /api/operator/accounts",
+    "requestType": "ProvisionAccountRequest",
+    "semantics": {
+      "command": "provision",
+      "operatorLanguage": "open",
+      "auditAction": "account.provision",
+      "operationIdPrefix": "account-provision"
+    },
+    "atomicProvision": "After Sub2API resolves or creates and re-reads the remote identity, one transaction commits the mapped Account and normalized owner User plus internal one-to-one Organization/Membership compatibility rows.",
     "atomicFacts": ["account", "user", "organization", "membership"],
     "callerSuppliedSub2apiUserId": "forbidden",
     "partialFailure": "rollback_all_four_facts",
@@ -114,16 +121,24 @@
     "mismatch": "fail_closed_without_mutation"
   },
   "identitySecurity": {
-    "email": "Create and bootstrap normalize email with lower(trim(email)); normalized email is unique in PostgreSQL and legacy blank or colliding values fail migration closed.",
+    "email": "Provision and bootstrap normalize email with lower(trim(email)); normalized email is unique in PostgreSQL and legacy blank or colliding values fail migration closed.",
     "plaintextPasswordMinimumCharacters": 12,
     "passwordAuthority": "sub2api",
-    "invitePasswordHandling": "forward_to_sub2api_only_never_persist",
+    "provisionPasswordHandling": "forward_to_sub2api_only_never_persist",
     "localPasswordHash": {
       "column": "control_plane_users.password_hash",
       "requiredValue": "",
       "enforcement": "database_check_constraint"
     },
     "sessionLookupKeyPrefix": "sub2api-sha256:",
+    "delegatedGatewayCredential": {
+      "authority": "sub2api_login_access_token",
+      "storage": "control_plane_process_memory_only",
+      "index": "hashed_session_lookup_key",
+      "lifetime": "bounded_by_console_session",
+      "missingOrExpired": "401_reauthentication_required_and_cookie_clear",
+      "forbidden": ["browser", "postgresql", "ledger", "logs"]
+    },
     "secretProjection": "Passwords and password hashes are excluded from browser responses and audit facts."
   },
   "bootstrapLifecycle": {
@@ -131,16 +146,30 @@
     "legacyLocalUsersEnv": "retired_nonempty_value_fails_startup"
   },
   "identityDelivery": {
-    "controlPlane": "code_complete_local_verification",
-    "deploymentCutover": "code_complete_local_verification",
+    "controlPlane": "canonical_provisioning_integrated_local_verified",
+    "deploymentCutover": "canonical_route_deployment_pending",
     "authenticatedRuntimeEvidence": "pending"
   },
   "userLifecycle": {
-    "sessionPolicy": "Disabling or deleting a User revokes that User's sessions.",
+    "sessionPolicy": "Disabling or deleting a User revokes that User's sessions and process-local delegated Gateway credentials.",
     "ownerRenewalPolicy": "Disabling or deleting an owner turns off the Workspace autoRenew intent without deleting provider resources."
   },
   "api": {
-    "createAccount": "POST /api/users (atomic owner invite only)",
+    "createAccount": "POST /api/operator/accounts (canonical owner provision only)",
+    "operatorAccounts": {
+      "list": "GET /api/operator/accounts",
+      "provision": "POST /api/operator/accounts",
+      "disable": "POST /api/operator/accounts/{accountId}/disable",
+      "delete": false
+    },
+    "operatorReads": {
+      "overview": "GET /api/operator/overview",
+      "accounts": "GET /api/operator/accounts",
+      "workspaces": "GET /api/operator/workspaces",
+      "workspaceDetail": "GET /api/operator/workspaces/{workspaceId}",
+      "reconciliation": "GET /api/operator/reconciliation",
+      "health": "GET /api/operator/health"
+    },
     "managementState": "GET /api/management/state",
     "managementStateExcludedFields": ["organization", "organizations", "memberships"],
     "unsupportedMutations": [
@@ -152,8 +181,49 @@
     "supportTicketMappings": "GET /api/support/tickets",
     "createSupportTicketMapping": "POST /api/support/tickets"
   },
+  "operatorProjection": {
+    "sub2apiReads": {
+      "users": "GET /api/v1/admin/users",
+      "usersUsage": "POST /api/v1/admin/dashboard/users-usage",
+      "apiKeysUsage": "POST /api/v1/admin/dashboard/api-keys-usage",
+      "batchSizeMax": 50
+    },
+    "pageSizeMax": 50,
+    "perAccountUserOrUsageNPlusOne": false,
+    "persistence": "none_request_join_only",
+    "readReplica": false,
+    "partialFailure": "affected_nested_source_unavailable_without_zero_data",
+    "sourceUpdatedAt": "only_authoritative_sub2api_or_ledger_timestamp_never_fetched_at",
+    "implementation": "code_complete_local_focused_tests"
+  },
+  "walletAdjustments": {
+    "routes": {
+      "create": "POST /api/operator/accounts/{accountId}/wallet-adjustments",
+      "read": "GET /api/operator/wallet-adjustments/{operationId}"
+    },
+    "kinds": ["recharge", "debit", "business_refund"],
+    "balanceAuthority": "sub2api",
+    "serializationContract": "opl-cloud-service-boundary-contract.json#services.controlPlane.walletMutationSerialization",
+    "operationIdentity": "stable_from_account_id_and_idempotency_key",
+    "authoritativeReadback": [
+      "sub2api_balance_history_exact_code_user_type_signed_amount_used",
+      "sub2api_user_balance_exact_expected_after"
+    ],
+    "unknownResult": "manual_review_without_automatic_replay",
+    "statePersistence": "control_plane_runtime_operations_non_authoritative",
+    "evidence": ["control_plane_admin_audit", "ledger_reference"],
+    "implementation": "code_complete_local_focused_tests"
+  },
+  "announcements": {
+    "owner": "control_plane_postgresql",
+    "tables": ["control_plane_announcements", "control_plane_announcement_reads"],
+    "states": ["draft", "scheduled", "published", "withdrawn"],
+    "audience": "all_pilot_users",
+    "scheduler": false,
+    "implementation": "code_complete_local_focused_tests"
+  },
   "operatorAuthPolicy": {
-    "operatorSummary": "GET /api/operator/summary",
+    "operatorOverview": "GET /api/operator/overview",
     "genericOperatorTokenAccepted": false,
     "providerAcceptanceCredential": "x-opl-provider-acceptance-token header only",
     "queryTokenAllowed": false,

@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"math"
 	"os"
 	"os/exec"
@@ -83,6 +84,125 @@ func (p *TencentProvider) MonthlyPreflight(ctx context.Context, input MonthlyPre
 	}, nil
 }
 
+func (p *TencentProvider) MonthlyProviderTruth(ctx context.Context, compute ComputeAllocation, storage StorageVolume) (MonthlyProviderTruth, error) {
+	truth := unknownMonthlyProviderTruth(compute, storage)
+	clusterID := strings.TrimSpace(os.Getenv("TENCENT_DEPLOY_CLUSTER_ID"))
+	if !validMonthlyProviderTruthIdentity(compute, storage) || clusterID == "" {
+		return truth, ErrInvalidMonthlyProviderTruth
+	}
+	instanceID := firstNonEmpty(compute.InstanceID, compute.CVMInstanceID)
+	instanceType := firstNonEmpty(compute.InstanceType, compute.ProviderData["instanceType"])
+	response, err := p.provision(ctx, provisionerRequest{
+		Action: "provider_truth", AccountID: compute.AccountID, PackageID: compute.PackageID, Zone: storage.Zone,
+		StorageVolumeID: storage.ProviderResourceID, Tags: maps.Clone(storage.CostTags), ComputeTags: maps.Clone(compute.CostTags),
+		Pool: provisionerPool{
+			ID: compute.PoolID, ClusterID: clusterID, PackageID: compute.PackageID, InstanceType: instanceType, NodePoolID: compute.NodePoolID,
+		},
+		Allocation: provisionerAllocation{
+			ID: compute.ID, InstanceID: instanceID, MachineName: firstNonEmpty(compute.MachineName, compute.ProviderData["machineName"]),
+			NodeName: compute.NodeName, PrivateIP: compute.PrivateIP, PublicIP: compute.PublicIP, Deadline: compute.Deadline,
+		},
+		Storage: provisionerStorage{
+			ID: storage.ProviderResourceID, SizeGB: uint64(storage.SizeGB), Zone: storage.Zone, DiskType: storage.DiskType, Deadline: storage.Deadline,
+		},
+	})
+	if err != nil {
+		return truth, err
+	}
+	truth.ProviderRequestID, truth.ErrorCode = response.ProviderRequestID, response.ErrorCode
+	truth.Compute.ProviderRequestID, truth.Storage.ProviderRequestID = firstNonEmpty(response.ProviderRequestID, truth.Compute.ProviderRequestID), firstNonEmpty(response.ProviderRequestID, truth.Storage.ProviderRequestID)
+	truth.Compute.CVMStatus = firstNonEmpty(response.CVMStatus, truth.Compute.CVMStatus)
+	truth.Compute.ProviderData = maps.Clone(truth.Compute.ProviderData)
+	if truth.Compute.ProviderData == nil {
+		truth.Compute.ProviderData = map[string]string{}
+	}
+	for key, value := range response.ProviderData {
+		truth.Compute.ProviderData[key] = value
+	}
+	truth.Compute.InstanceType = firstNonEmpty(response.InstanceType, response.ProviderData["instanceType"], truth.Compute.InstanceType, truth.Compute.ProviderData["instanceType"])
+	truth.Compute.Zone = firstNonEmpty(response.ProviderData["zone"], truth.Compute.Zone, truth.Compute.ProviderData["zone"])
+	truth.Compute.ChargeType = firstNonEmpty(response.ProviderData["chargeType"], truth.Compute.ChargeType)
+	truth.Compute.RenewFlag = firstNonEmpty(response.ProviderData["renewFlag"], truth.Compute.RenewFlag)
+	truth.Compute.Deadline = firstNonEmpty(response.ProviderData["deadline"], truth.Compute.Deadline)
+	applyMonthlyStorageTruth(&truth.Storage, response)
+
+	if response.MachinePresent != nil {
+		if *response.MachinePresent && validMonthlyComputeProviderTruth(response, compute) {
+			truth.ComputeState, truth.Compute.Status = "ready", "ready"
+		} else if !*response.MachinePresent && response.ProviderRequestID != "" && response.CVMStatus == "NOT_FOUND" && response.TKEStatus == "NOT_FOUND" {
+			truth.ComputeState, truth.Compute.Status = "absent", "external_deleted"
+		}
+	}
+	if response.StoragePresent != nil {
+		if *response.StoragePresent && validMonthlyStorageProviderTruth(response, storage) {
+			truth.StorageState, truth.Storage.Status = "ready", "ready"
+		} else if !*response.StoragePresent && response.ProviderRequestID != "" && response.CBSStatus == "NOT_FOUND" {
+			truth.StorageState, truth.Storage.Status = "absent", "external_deleted"
+		}
+	}
+	if response.OK && truth.ComputeState == "unknown" && truth.StorageState == "unknown" && response.ErrorCode == "" {
+		return unknownMonthlyProviderTruth(compute, storage), fmt.Errorf("provider_truth_response_invalid")
+	}
+	return truth, nil
+}
+
+func validMonthlyComputeProviderTruth(response provisionerResponse, expected ComputeAllocation) bool {
+	instanceID := firstNonEmpty(expected.InstanceID, expected.CVMInstanceID)
+	instanceType := firstNonEmpty(expected.InstanceType, expected.ProviderData["instanceType"])
+	zone := firstNonEmpty(expected.Zone, expected.ProviderData["zone"])
+	if response.ProviderRequestID == "" || response.InstanceID != instanceID || response.InstanceType != instanceType || response.PrivateIP != expected.PrivateIP ||
+		response.CVMStatus == "" || response.CVMStatus == "NOT_FOUND" || response.TKEStatus == "" || response.TKEStatus == "NOT_FOUND" ||
+		response.ProviderData["machineName"] != firstNonEmpty(expected.MachineName, expected.ProviderData["machineName"]) || response.ProviderData["instanceType"] != instanceType ||
+		response.ProviderData["zone"] != zone || response.ProviderData["chargeType"] != "PREPAID" || response.ProviderData["renewFlag"] != "NOTIFY_AND_MANUAL_RENEW" || !validProviderTruthDeadline(response.ProviderData["deadline"]) {
+		return false
+	}
+	for key, value := range expected.CostTags {
+		if response.ProviderData["computeTag:"+key] != value {
+			return false
+		}
+	}
+	return true
+}
+
+func validMonthlyStorageProviderTruth(response provisionerResponse, expected StorageVolume) bool {
+	if response.ProviderRequestID == "" || !isCBSProviderReady(response.CBSStatus) || response.ProviderData["storageChargeType"] != "PREPAID" ||
+		response.ProviderData["storageRenewFlag"] != "NOTIFY_AND_MANUAL_RENEW" || !validProviderTruthDeadline(response.ProviderData["storageDeadline"]) ||
+		response.ProviderData["storageDiskType"] != expected.DiskType || response.ProviderData["storageSizeGb"] != strconv.Itoa(expected.SizeGB) || response.ProviderData["storageZone"] != expected.Zone {
+		return false
+	}
+	for key, value := range expected.CostTags {
+		if response.ProviderData[key] != value {
+			return false
+		}
+	}
+	return true
+}
+
+func validProviderTruthDeadline(value string) bool {
+	_, err := time.Parse(time.RFC3339, value)
+	return err == nil
+}
+
+func applyMonthlyStorageTruth(storage *StorageVolume, response provisionerResponse) {
+	storage.CBSStatus = firstNonEmpty(response.CBSStatus, storage.CBSStatus)
+	storage.ProviderData = maps.Clone(storage.ProviderData)
+	if storage.ProviderData == nil {
+		storage.ProviderData = map[string]string{}
+	}
+	for target, source := range map[string]string{
+		"chargeType": "storageChargeType", "diskChargeType": "storageChargeType", "renewFlag": "storageRenewFlag", "deadline": "storageDeadline",
+		"diskType": "storageDiskType", "sizeGb": "storageSizeGb", "zone": "storageZone",
+	} {
+		if value := response.ProviderData[source]; value != "" {
+			storage.ProviderData[target] = value
+		}
+	}
+	storage.DiskType = firstNonEmpty(response.ProviderData["storageDiskType"], storage.DiskType)
+	storage.RenewFlag = firstNonEmpty(response.ProviderData["storageRenewFlag"], storage.RenewFlag)
+	storage.Deadline = firstNonEmpty(response.ProviderData["storageDeadline"], storage.Deadline)
+	storage.Zone = firstNonEmpty(response.ProviderData["storageZone"], storage.Zone)
+}
+
 func (p *TencentProvider) UpsertGatewaySecret(ctx context.Context, input GatewaySecretInput) (GatewaySecret, error) {
 	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(input.GatewayAPIKey)))
 	secret := GatewaySecret{SecretRef: gatewaySecretName(input.AccountID), Version: digest[:16], Fingerprint: "sha256:" + digest}
@@ -98,6 +218,34 @@ func (p *TencentProvider) UpsertGatewaySecret(ctx context.Context, input Gateway
 	if _, err := p.kubectl(ctx, []string{"apply", "-f", "-"}, manifest); err != nil {
 		return GatewaySecret{}, err
 	}
+	readback, err := p.kubectl(ctx, []string{"get", "secret/" + secret.SecretRef, "-o", "json"}, nil)
+	if err != nil {
+		return GatewaySecret{}, err
+	}
+	var actual struct {
+		Kind     string `json:"kind"`
+		Type     string `json:"type"`
+		Metadata struct {
+			Name        string            `json:"name"`
+			Labels      map[string]string `json:"labels"`
+			Annotations map[string]string `json:"annotations"`
+		} `json:"metadata"`
+		Data map[string]string `json:"data"`
+	}
+	if json.Unmarshal(readback, &actual) != nil {
+		return GatewaySecret{}, fmt.Errorf("gateway_secret_readback_mismatch")
+	}
+	rawKey, err := base64.StdEncoding.DecodeString(actual.Data["opl_gateway_api_key"])
+	if err != nil {
+		return GatewaySecret{}, fmt.Errorf("gateway_secret_readback_mismatch")
+	}
+	actualDigest := fmt.Sprintf("%x", sha256.Sum256(rawKey))
+	if actual.Kind != "Secret" || actual.Type != "Opaque" || actual.Metadata.Name != secret.SecretRef ||
+		actual.Metadata.Labels["app.kubernetes.io/name"] != "opl-gateway-secret" || actual.Metadata.Annotations["oplcloud.cn/account-id"] != input.AccountID ||
+		actual.Metadata.Annotations["oplcloud.cn/secret-version"] != secret.Version || actual.Metadata.Annotations["oplcloud.cn/secret-fingerprint"] != secret.Fingerprint ||
+		"sha256:"+actualDigest != secret.Fingerprint {
+		return GatewaySecret{}, fmt.Errorf("gateway_secret_readback_mismatch")
+	}
 	return secret, nil
 }
 
@@ -106,20 +254,23 @@ func gatewaySecretName(accountID string) string {
 }
 
 type provisionerRequest struct {
-	Action     string                `json:"action"`
-	DryRun     bool                  `json:"dryRun,omitempty"`
-	AccountID  string                `json:"accountId,omitempty"`
-	UserID     string                `json:"userId,omitempty"`
-	PackageID  string                `json:"packageId,omitempty"`
-	Zone       string                `json:"zone,omitempty"`
-	Tags       map[string]string     `json:"tags,omitempty"`
-	Pool       provisionerPool       `json:"pool,omitempty"`
-	Allocation provisionerAllocation `json:"allocation,omitempty"`
-	Storage    provisionerStorage    `json:"storage,omitempty"`
+	Action          string                `json:"action"`
+	DryRun          bool                  `json:"dryRun,omitempty"`
+	AccountID       string                `json:"accountId,omitempty"`
+	UserID          string                `json:"userId,omitempty"`
+	PackageID       string                `json:"packageId,omitempty"`
+	Zone            string                `json:"zone,omitempty"`
+	StorageVolumeID string                `json:"storageVolumeId,omitempty"`
+	Tags            map[string]string     `json:"tags,omitempty"`
+	ComputeTags     map[string]string     `json:"computeTags,omitempty"`
+	Pool            provisionerPool       `json:"pool,omitempty"`
+	Allocation      provisionerAllocation `json:"allocation,omitempty"`
+	Storage         provisionerStorage    `json:"storage,omitempty"`
 }
 
 type provisionerPool struct {
 	ID              string            `json:"id,omitempty"`
+	ClusterID       string            `json:"clusterId,omitempty"`
 	PackageID       string            `json:"packageId,omitempty"`
 	InstanceType    string            `json:"instanceType,omitempty"`
 	NodePoolID      string            `json:"nodePoolId,omitempty"`
@@ -154,9 +305,12 @@ type provisionerResponse struct {
 	NodeName           string               `json:"nodeName,omitempty"`
 	PrivateIP          string               `json:"privateIp,omitempty"`
 	PublicIP           string               `json:"publicIp,omitempty"`
+	MachinePresent     *bool                `json:"machinePresent,omitempty"`
+	StoragePresent     *bool                `json:"storagePresent,omitempty"`
 	StorageVolumeID    string               `json:"storageVolumeId,omitempty"`
 	CBSStatus          string               `json:"cbsStatus,omitempty"`
 	CVMStatus          string               `json:"cvmStatus,omitempty"`
+	TKEStatus          string               `json:"tkeStatus,omitempty"`
 	Status             string               `json:"status,omitempty"`
 	ProviderRequestID  string               `json:"providerRequestId,omitempty"`
 	ProviderRequestIDs map[string]string    `json:"providerRequestIds,omitempty"`

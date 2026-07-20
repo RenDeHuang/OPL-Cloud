@@ -19,6 +19,8 @@ test("OPL Cloud TKE manifest declares three decoupled services and monthly Sub2A
   assert.equal(config.data.OPL_MONTHLY_BILLING_WORKER_ENABLED, "1");
   assert.equal(config.data.OPL_MONTHLY_BILLING_INTERVAL_MS, "3600000");
   assert.equal(config.data.OPL_SUB2API_BASE_URL, "https://gflabtoken.cn");
+  assert.equal(config.data.OPL_GATEWAY_PUBLIC_BASE_URL, "https://api.medopl.cn/v1");
+  assert.notEqual(config.data.OPL_GATEWAY_PUBLIC_BASE_URL, config.data.OPL_SUB2API_BASE_URL);
   assert.equal(config.data.OPL_COMPUTE_LAUNCH_ZONE, undefined);
   assert.equal(config.data.OPL_SUB2API_REQUEST_TIMEOUT_MS, "5000");
   assert.equal(config.data.TENCENTCLOUD_REGION, "na-siliconvalley");
@@ -29,6 +31,7 @@ test("OPL Cloud TKE manifest declares three decoupled services and monthly Sub2A
   assert.equal(config.data.OPL_RESOURCE_BILLING_WORKER_ENABLED, undefined);
 
   const controlPlane = deployments.find((item) => item.metadata.name === "opl-cloud-control-plane");
+  assert.equal(controlPlane.spec.replicas, 1);
   assert.equal(controlPlane.spec.strategy.type, "Recreate");
   const controlContainer = controlPlane.spec.template.spec.containers[0];
   assert.deepEqual(controlContainer.envFrom, [{ configMapRef: { name: "opl-cloud-config" } }]);
@@ -108,6 +111,9 @@ test("operator CIDRs are required deploy values and rendered into the Control Pl
   assert.equal(management.operatorAuthPolicy.productionNetworkGate.allowlistEnv, "OPL_OPERATOR_CIDRS");
   assert.equal(management.operatorAuthPolicy.productionNetworkGate.trustedProxyEnv, "OPL_TRUSTED_PROXY_CIDRS");
   assert.equal(management.operatorAuthPolicy.productionNetworkGate.invalidConfiguration, "fail_closed");
+  assert.match(renderer, /"OPL_GATEWAY_PUBLIC_BASE_URL"/);
+  assert.match(workflow, /OPL_GATEWAY_PUBLIC_BASE_URL:\s*\$\{\{ vars\.OPL_GATEWAY_PUBLIC_BASE_URL \}\}/);
+  assert.match(workflow, /required=\([\s\S]*OPL_GATEWAY_PUBLIC_BASE_URL/);
 });
 
 test("production env examples use the launch zone and pinned images", async () => {
@@ -119,21 +125,20 @@ test("production env examples use the launch zone and pinned images", async () =
   for (const path of paths) {
     const source = await readFile(path, "utf8");
     assert.match(source, /^OPL_TENCENT_ZONE=na-siliconvalley-1$/m, path);
-    assert.match(source, /^OPL_WORKSPACE_IMAGE=.*@sha256:/m, path);
     assert.doesNotMatch(source, /^OPL_WORKSPACE_IMAGE=.*(?::latest|:<tag>)$/m, path);
   }
   for (const path of paths.slice(1)) {
     const source = await readFile(path, "utf8");
+    assert.match(source, /^OPL_WORKSPACE_IMAGE=.*@sha256:/m, path);
+    assert.match(source, /^OPL_GATEWAY_PUBLIC_BASE_URL=https:\/\/[^\s]+$/m, path);
+    assert.doesNotMatch(source, /^OPL_GATEWAY_PUBLIC_BASE_URL=.*gflabtoken\.cn/m, path);
     assert.match(source, /^TENCENTCLOUD_REGION=na-siliconvalley$/m, path);
     assert.match(source, /^DATABASE_URL=.*sslmode=verify-full$/m, path);
     assert.match(source, /^OPL_OPERATOR_CIDRS=.+$/m, path);
     assert.match(source, /^OPL_TRUSTED_PROXY_CIDRS=.+$/m, path);
     assert.doesNotMatch(source, /^OPL_OPERATOR_SUMMARY_TOKEN=/m, path);
   }
-  assert.match(
-    await readFile(".env.example", "utf8"),
-    /^OPL_WORKSPACE_IMAGE=ghcr\.io\/gaofeng21cn\/one-person-lab-webui@sha256:9d867fe0fc9db48b6efa27371d77770e46fc8cd97d26ef85a81fbdac7e96ca76$/m
-  );
+  assert.match(await readFile(".env.example", "utf8"), /^OPL_WORKSPACE_IMAGE=$/m);
 });
 
 test("production automation does not retain the legacy operator cleanup path", async () => {

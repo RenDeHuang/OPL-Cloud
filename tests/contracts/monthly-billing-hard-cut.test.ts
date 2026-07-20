@@ -43,7 +43,7 @@ test("current contracts name Sub2API as the only spendable balance", async () =>
 test("management contract hard-cuts customer identity to Sub2API and one atomic owner graph", async () => {
   const management = await readJson("opl-cloud-management-contract.json");
 
-  assert.equal(management.schemaVersion, 8);
+  assert.equal(management.schemaVersion, 14);
   assert.deepEqual(management.entities.account.requiredFields, ["id", "ownerUserId", "status", "sub2apiUserId", "createdAt", "updatedAt"]);
   assert.deepEqual(management.entities.user, {
     requiredFields: ["id", "email", "accountId", "role", "status", "createdAt", "updatedAt"],
@@ -69,14 +69,22 @@ test("management contract hard-cuts customer identity to Sub2API and one atomic 
   assert.equal(management.internalCompatibilityRecords.customerAuthorizationAuthority, false);
   assert.deepEqual(management.identityProvisioning.atomicFacts, ["account", "user", "organization", "membership"]);
   assert.deepEqual(management.entities.membership.roles, ["owner"]);
-  assert.equal(management.identityProvisioning.onlyMutation, "POST /api/users");
+  assert.equal(management.identityProvisioning.onlyMutation, "POST /api/operator/accounts");
+  assert.equal(management.identityProvisioning.requestType, "ProvisionAccountRequest");
+  assert.deepEqual(management.identityProvisioning.semantics, {
+    command: "provision",
+    operatorLanguage: "open",
+    auditAction: "account.provision",
+    operationIdPrefix: "account-provision"
+  });
   assert.equal(management.identityProvisioning.callerSuppliedSub2apiUserId, "forbidden");
   assert.equal(management.identityProvisioning.partialFailure, "rollback_all_four_facts");
   assert.equal(management.identityProvisioning.matchingReplay, "return_existing_graph_without_duplicate_facts");
   assert.equal(management.identityProvisioning.mismatch, "fail_closed_without_mutation");
 
   assert.equal(management.identitySecurity.passwordAuthority, "sub2api");
-  assert.equal(management.identitySecurity.invitePasswordHandling, "forward_to_sub2api_only_never_persist");
+  assert.equal(management.identitySecurity.provisionPasswordHandling, "forward_to_sub2api_only_never_persist");
+  assert.equal(management.identitySecurity.invitePasswordHandling, undefined);
   assert.deepEqual(management.identitySecurity.localPasswordHash, {
     column: "control_plane_users.password_hash",
     requiredValue: "",
@@ -98,19 +106,19 @@ test("management contract hard-cuts customer identity to Sub2API and one atomic 
   assert.deepEqual(management.api.managementStateExcludedFields, ["organization", "organizations", "memberships"]);
   assert.equal(management.bootstrapLifecycle.legacyLocalUsersEnv, "retired_nonempty_value_fails_startup");
   assert.deepEqual(management.identityDelivery, {
-    controlPlane: "code_complete_local_verification",
-    deploymentCutover: "code_complete_local_verification",
+    controlPlane: "canonical_provisioning_integrated_local_verified",
+    deploymentCutover: "canonical_route_deployment_pending",
     authenticatedRuntimeEvidence: "pending"
   });
 });
 
-test("offer identity reports the local deployment cutover without claiming runtime evidence", async () => {
+test("offer identity reports local integrated verification without claiming runtime evidence", async () => {
   const launch = await readJson("opl-cloud-launch-freeze-contract.json");
   const stage = launch.launchStages.find(({ id }) => id === "offer_identity");
 
   assert.equal(
     stage.currentState,
-    "Control Plane atomic mapped-owner provisioning, strict one-to-one customer identity, Sub2API password authority, and retirement of the deployment-time local user seed are code-complete and locally tested; authenticated production runtime evidence remains pending, while self-registration and SSO are outside the Pilot."
+    "Canonical POST /api/operator/accounts provisioning and the strict one-to-one mapped-owner graph have integrated local evidence; deployment and authenticated production runtime evidence remain pending, while self-registration and SSO are outside the Pilot."
   );
   assert.doesNotMatch(stage.currentState, /CI-verified/);
   assert.doesNotMatch(stage.currentState, /operator password reset/);
@@ -158,6 +166,7 @@ test("receipt contract exposes monthly product behavior only", async () => {
 	]);
 
   for (const type of [
+    "billing.workspace_purchased.v1",
     "billing.resource_purchased.v1",
     "billing.resource_renewed.v1",
     "billing.resource_expired.v1",
@@ -186,7 +195,7 @@ test("receipt contract exposes monthly product behavior only", async () => {
 	assert.deepEqual(evidence.reconciliationReportV1.exceptions.resourceTypes, ["compute", "storage", "workspace"]);
 	assert.deepEqual(evidence.reconciliationReportV1.workspaceRenewalAuthority, billing.reconciliationPolicy.workspaceRenewalAuthority);
 	const management = await readJson("opl-cloud-management-contract.json");
-	assert.equal(management.schemaVersion, 8);
+	assert.equal(management.schemaVersion, 14);
 	assert.equal(
 		management.operatorNotifications.source,
 		"Derived from current Workspace renewal operations plus current compute and storage compatibility state; no alert table or second source of truth."

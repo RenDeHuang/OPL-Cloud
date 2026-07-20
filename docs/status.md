@@ -2,27 +2,23 @@
 
 ## Current Boundary
 
-Current status is a Fast Invite-Only Paid Pilot candidate for 2-5 customer
-accounts. It is locally code-complete through Task 13A, but not production-proven and not
-yet saleable.
+Current status is the contract-frozen Pilot V2 implementation candidate for 2-5
+invited customer accounts. Delivery evidence is currently `code-complete=false`,
+`pilot-ready=false`, and `production-proven=false`; contract targets are not
+runtime evidence and the product is not yet saleable.
 
-Code-complete and locally tested:
+The current V2 boundary requires:
 
-- one Console User to one Account to one Sub2API User/Wallet identity hard cut,
-  normalized-email verification, Sub2API password authority, and tenant Sessions;
-- granular source DTOs for Auth, Wallet, Key list/status, Usage, Usage Stats,
-  balance history, Workspace, Runtime readiness, and Ledger receipts;
-- fixed Basic `52_580_000` and Pro `240_080_000` USD-micros monthly Workspace prices;
-- one-submit durable Workspace launch with debit-before-provider recovery;
-- one Workspace-level renewal operation, while enabling `autoRenew` remains blocked;
-- PREPAID Tencent CVM/CBS request/readback, retained CBS expiry behavior, Runtime,
-  owner-only credential commands, and account-scoped Gateway Secret handling;
-- Ledger validation, receipts, reconciliation, and replay safety;
-- dual Basic/Pro Provider Acceptance code and one-request Basic release live-QA;
-- immutable Ready-Pod imageID checks, security boundaries, and grouped rollback;
-- the four-surface customer Console, five-surface operations Console, retired
-  local-user deployment seed, Sentrux structural gate, and desktop/mobile
-  source-truth browser QA with independent unavailable states.
+- one Console User to one Account to one Sub2API User/Wallet, with Session-scoped
+  delegated Gateway credentials;
+- the public API origin from `OPL_GATEWAY_PUBLIC_BASE_URL` through
+  `GET /api/gateway/endpoint`; missing or invalid production HTTPS configuration
+  is unavailable and never falls back to an internal Sub2API address;
+- general Key create/update/delete/reveal and authoritative per-Key Usage;
+- one primary Workspace purchase or renewal with exactly one USD-micros debit;
+- compute, storage, attachment, Gateway Secret, and Runtime as fulfillment only;
+- source envelopes whose availability and timestamps report real owner readback;
+- operator wallet adjustment, resource facts, audit evidence, and announcements.
 
 Remaining blockers:
 
@@ -30,14 +26,16 @@ Remaining blockers:
   evidence exists for this candidate;
 - no approved real renewal, production rollout, browser login/WebSocket, model
   request, exact-one Usage/wallet delta, or rollback evidence exists;
-- public registration, payment/order UI, Key mutation, backup/recovery/sync/
-  transfer, HA, GPU, and multiple Workspaces are outside the Pilot.
+- the external Runtime revision has no proven projects-entry or filesystem-usage
+  API, so those facts remain unavailable rather than fabricated;
+- public registration, payment/order UI, backup/recovery/sync/transfer, HA, GPU,
+  and multiple Workspaces are outside the Pilot.
 
 Workspace file bodies remain only on CBS. Platform PostgreSQL contains identity,
 operation, reference, and audit facts only; PostgreSQL recovery does not back up
 or restore Workspace files.
 
-## Completion Gate
+## Preliminary Local Checks
 
 ```bash
 npm test
@@ -52,10 +50,12 @@ sentrux check .
 git diff --check
 ```
 
-The four PostgreSQL suites must use local or CI isolated databases and complete
-with zero SKIP; production PostgreSQL is forbidden for this gate.
+These checks do not establish code-complete. The final gate additionally parses
+Node TAP and Go JSON output, rejects every skip, runs all PostgreSQL suites with
+`OPL_POSTGRES_TESTS=1`, and runs the Control Plane capacity suite with
+`OPL_CAPACITY_TESTS=1`. Production PostgreSQL is forbidden for that gate.
 
-Production delivery additionally requires immutable image publication, both
-retained Acceptance slots, one approved Basic live-QA request, bounded rollout
-for all three services, source-truth readback, and the evidence defined by
-`docs/invariants.md`.
+`pilot-ready` additionally requires separately approved real environment
+readback. `production-proven` requires the same immutable revision deployed and
+an end-to-end production evidence bundle. The exact levels and commands are in
+`docs/invariants.md` and the current Pilot V2 implementation plan.

@@ -2,19 +2,21 @@ package server
 
 import (
 	"context"
-	"net/http"
+	"errors"
 	"strings"
 	"testing"
 )
 
 func TestPasswordStrengthRejectsShortCreatePassword(t *testing.T) {
 	server := NewServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}))
-	admin := operatorSessionForTest(t, server)
-	created := requestWithSession(t, server, admin, http.MethodPost, "/api/users", `{"email":"weak@invite.example","accountId":"acct-weak","password":"too-short"}`)
-	if created.Code != http.StatusBadRequest || !strings.Contains(created.Body.String(), "weak_password") {
-		t.Fatalf("short create status=%d body=%s", created.Code, created.Body.String())
+	handler := server.(*controlPlaneHTTPHandler)
+	_, err := handler.app.createUser(context.Background(), handler.service, map[string]any{
+		"email": "weak@invite.example", "accountId": "acct-weak", "password": "too-short",
+	})
+	if !errors.Is(err, errWeakPassword) {
+		t.Fatalf("short create error=%v", err)
 	}
-	accounts, _ := server.(*controlPlaneHTTPHandler).app.tables.ListAccounts(context.Background(), "acct-weak")
+	accounts, _ := handler.app.tables.ListAccounts(context.Background(), "acct-weak")
 	if len(accounts) != 0 {
 		t.Fatalf("short create persisted account: %#v", accounts)
 	}
@@ -32,19 +34,26 @@ func TestPasswordStrengthCountsUnicodeRunes(t *testing.T) {
 func TestNormalizedEmailCreateRejectsKnownCrossAccountConflictBeforeRemote(t *testing.T) {
 	remote := newIdentityTestSub2API()
 	server := newIdentityTestServer(t, remote, nil)
-	admin := operatorSessionForTest(t, server)
-	created := createResourceWithSession(t, server, admin, http.MethodPost, "/api/users", `{"email":" Owner@Invite.Example ","accountId":"acct-normalized","password":"CorrectHorseBatteryStaple!"}`)
+	handler := server.(*controlPlaneHTTPHandler)
+	created, err := handler.app.createUser(context.Background(), handler.service, map[string]any{
+		"email": " Owner@Invite.Example ", "accountId": "acct-normalized", "password": "CorrectHorseBatteryStaple!",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if created["email"] != "owner@invite.example" {
 		t.Fatalf("created email = %q", created["email"])
 	}
-	duplicate := requestWithSession(t, server, admin, http.MethodPost, "/api/users", `{"email":"OWNER@INVITE.EXAMPLE","accountId":"acct-normalized-copy","password":"CorrectHorseBatteryStaple!"}`)
-	if duplicate.Code != http.StatusConflict || !strings.Contains(duplicate.Body.String(), "user_already_exists") {
-		t.Fatalf("normalized duplicate status=%d body=%s", duplicate.Code, duplicate.Body.String())
+	_, err = handler.app.createUser(context.Background(), handler.service, map[string]any{
+		"email": "OWNER@INVITE.EXAMPLE", "accountId": "acct-normalized-copy", "password": "CorrectHorseBatteryStaple!",
+	})
+	if !errors.Is(err, errUserExists) {
+		t.Fatalf("normalized duplicate error=%v", err)
 	}
 	if remote.resolveCalls != 1 || remote.remoteCreates != 1 {
 		t.Fatalf("resolveCalls=%d remoteCreates=%d", remote.resolveCalls, remote.remoteCreates)
 	}
-	accounts, _ := server.(*controlPlaneHTTPHandler).app.tables.ListAccounts(context.Background(), "acct-normalized-copy")
+	accounts, _ := handler.app.tables.ListAccounts(context.Background(), "acct-normalized-copy")
 	if len(accounts) != 0 {
 		t.Fatalf("normalized duplicate persisted account: %#v", accounts)
 	}

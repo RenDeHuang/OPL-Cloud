@@ -15,12 +15,13 @@ import {
   workspaceStatusLabel
 } from "../../apps/console-ui/src/console-model.ts";
 
-test("customer navigation exposes only the four pilot surfaces", () => {
+test("customer navigation exposes the five pilot surfaces", () => {
   assert.deepEqual(customerMenu.map(({ label, path }) => ({ label, path })), [
     { label: "概览", path: "/console/overview" },
     { label: "Workspace", path: "/console/workspace" },
     { label: "API 服务", path: "/console/api" },
-    { label: "账单", path: "/console/billing" }
+    { label: "账单", path: "/console/billing" },
+    { label: "公告", path: "/console/announcements" }
   ]);
   assert.deepEqual(apiMenu.map(({ label, path }) => ({ label, path })), [
     { label: "概览", path: "/console/api" },

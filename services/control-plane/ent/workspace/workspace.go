@@ -49,6 +49,8 @@ const (
 	FieldRuntimeServiceNameRoot = "runtime_service_name_root"
 	// FieldServiceName holds the string denoting the service_name field in the database.
 	FieldServiceName = "service_name"
+	// FieldWorkspaceAPIKeyID holds the string denoting the workspace_api_key_id field in the database.
+	FieldWorkspaceAPIKeyID = "workspace_api_key_id"
 	// FieldAccessTokenStatus holds the string denoting the access_token_status field in the database.
 	FieldAccessTokenStatus = "access_token_status"
 	// FieldAccessAccount holds the string denoting the access_account field in the database.
@@ -92,6 +94,7 @@ var Columns = []string{
 	FieldRuntimeServiceName,
 	FieldRuntimeServiceNameRoot,
 	FieldServiceName,
+	FieldWorkspaceAPIKeyID,
 	FieldAccessTokenStatus,
 	FieldAccessAccount,
 	FieldAccessUsername,
@@ -152,6 +155,8 @@ var (
 	DefaultRuntimeServiceNameRoot string
 	// DefaultServiceName holds the default value on creation for the "service_name" field.
 	DefaultServiceName string
+	// WorkspaceAPIKeyIDValidator is a validator for the "workspace_api_key_id" field. It is called by the builders before save.
+	WorkspaceAPIKeyIDValidator func(int64) error
 	// DefaultAccessTokenStatus holds the default value on creation for the "access_token_status" field.
 	DefaultAccessTokenStatus string
 	// DefaultAccessAccount holds the default value on creation for the "access_account" field.
@@ -270,6 +275,11 @@ func ByRuntimeServiceNameRoot(opts ...sql.OrderTermOption) OrderOption {
 // ByServiceName orders the results by the service_name field.
 func ByServiceName(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldServiceName, opts...).ToFunc()
+}
+
+// ByWorkspaceAPIKeyID orders the results by the workspace_api_key_id field.
+func ByWorkspaceAPIKeyID(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldWorkspaceAPIKeyID, opts...).ToFunc()
 }
 
 // ByAccessTokenStatus orders the results by the access_token_status field.

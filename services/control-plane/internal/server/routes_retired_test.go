@@ -132,11 +132,53 @@ func TestRetiredCustomerWriteRoutesAreMethodAwareTombstones(t *testing.T) {
 
 	server := NewServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}))
 	session := tenantAdminSessionForTest(t, server)
-	for _, path := range []string{"/api/compute-allocations", "/api/workspaces"} {
-		response := requestWithSession(t, server, session, http.MethodGet, path, "")
-		if response.Code == http.StatusNotFound {
-			t.Fatalf("allowed read route %s was tombstoned", path)
-		}
+	response := requestWithSession(t, server, session, http.MethodGet, "/api/workspaces", "")
+	if response.Code == http.StatusNotFound {
+		t.Fatal("current workspace list route was tombstoned")
+	}
+}
+
+func TestPilotV2RetiredRoutesReturn404(t *testing.T) {
+	routes := []struct {
+		method string
+		path   string
+	}{
+		{http.MethodGet, "/api/gateway/usage"},
+		{http.MethodGet, "/api/gateway/usage/stats"},
+		{http.MethodPost, "/api/gateway/keys/opl-workspace/reveal"},
+		{http.MethodPost, "/api/workspaces/runtime-status"},
+		{http.MethodPost, "/api/workspaces/ws-alpha/gateway-secret/rotate"},
+		{http.MethodGet, "/api/operator/summary"},
+		{http.MethodPost, "/api/users"},
+		{http.MethodPost, "/api/users/disable"},
+		{http.MethodPost, "/api/users/delete"},
+		{http.MethodGet, "/api/compute-pools"},
+		{http.MethodGet, "/api/compute-allocations"},
+		{http.MethodPost, "/api/compute-allocations"},
+		{http.MethodGet, "/api/compute-allocations/compute-alpha"},
+		{http.MethodPost, "/api/compute-allocations/compute-alpha/sync"},
+		{http.MethodPost, "/api/compute-allocations/compute-alpha/destroy"},
+		{http.MethodPost, "/api/storage-volumes"},
+		{http.MethodPost, "/api/storage-volumes/storage-alpha/sync"},
+		{http.MethodPost, "/api/storage-volumes/destroy"},
+		{http.MethodPost, "/api/storage-attachments"},
+		{http.MethodPost, "/api/storage-attachments/detach"},
+		{http.MethodPost, "/api/workspaces"},
+	}
+	for _, route := range routes {
+		t.Run(route.method+" "+route.path, func(t *testing.T) {
+			probe := &retiredRouteDownstreamProbe{}
+			handler := &controlPlaneHTTPHandler{next: probe}
+			req := httptest.NewRequest(route.method, route.path, nil)
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+			if rec.Code != http.StatusNotFound {
+				t.Fatalf("status = %d, want 404", rec.Code)
+			}
+			if probe.runtimeProxyCalls != 0 || probe.providerCalls != 0 || probe.storeWrites != 0 {
+				t.Fatalf("retired route reached downstream: %#v", probe)
+			}
+		})
 	}
 }
 

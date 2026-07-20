@@ -31,8 +31,9 @@ func NewServer(service *controlplane.Service) http.Handler {
 }
 
 type controlPlaneHTTPHandler struct {
-	app  *controlPlaneServer
-	next http.Handler
+	app     *controlPlaneServer
+	next    http.Handler
+	service *controlplane.Service
 }
 
 func (h *controlPlaneHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -49,6 +50,10 @@ func (h *controlPlaneHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Reque
 }
 
 func NewPersistentServer(service *controlplane.Service, store StateStore) (http.Handler, error) {
+	return NewPersistentServerWithGatewayPublicBaseURL(service, store, "")
+}
+
+func NewPersistentServerWithGatewayPublicBaseURL(service *controlplane.Service, store StateStore, gatewayPublicBaseURL string) (http.Handler, error) {
 	app, err := newControlPlaneAppWithStore(store)
 	if err != nil {
 		return nil, err
@@ -56,6 +61,7 @@ func NewPersistentServer(service *controlplane.Service, store StateStore) (http.
 	if err := app.ensureBootstrapAdmin(context.Background(), service); err != nil {
 		return nil, err
 	}
+	app.gatewayPublicBaseURL = gatewayPublicBaseURL
 	if monthlyBillingWorkerEnabled() {
 		app.startMonthlyBillingWorker(context.Background(), service, monthlyBillingWorkerInterval())
 	}
@@ -73,30 +79,35 @@ func NewPersistentServer(service *controlplane.Service, store StateStore) (http.
 	registerWorkspaceRoutes(mux, app, service)
 	registerWorkspaceLaunchRoutes(mux, app, service)
 	registerBillingRoutes(mux, app, service)
-	registerResourceRoutes(mux, app, service)
+	registerAnnouncementRoutes(mux, app)
 	registerSupportRoutes(mux, app)
 	registerAdminRoutes(mux, app, service)
 	registerProviderAcceptanceRoutes(mux, app, service)
 	registerExecutionRoutes(mux, app, service)
-	return &controlPlaneHTTPHandler{app: app, next: mux}, nil
+	return &controlPlaneHTTPHandler{app: app, next: mux, service: service}, nil
 }
 
 func retiredConsoleAPI(method, path string) bool {
-	if method == http.MethodPost {
-		switch path {
-		case "/api/compute-allocations", "/api/storage-volumes", "/api/storage-attachments", "/api/workspaces":
-			return true
-		}
+	if method == http.MethodPost && path == "/api/workspaces" {
+		return true
 	}
 	switch path {
-	case "/api/me", "/api/overview", "/api/gateway/summary", "/api/billing/summary":
+	case "/api/me", "/api/overview", "/api/gateway/summary", "/api/billing/summary",
+		"/api/gateway/usage", "/api/gateway/usage/stats", "/api/gateway/keys/opl-workspace/reveal",
+		"/api/workspaces/runtime-status", "/api/operator/summary", "/api/operator/accounts/invitations":
 		return true
 	}
 	if path == "/api/workspace-backups" || strings.HasPrefix(path, "/api/workspace-backups/") || strings.HasPrefix(path, "/api/payment") || strings.HasPrefix(path, "/api/orders") ||
-		strings.HasPrefix(path, "/api/api-keys") || strings.HasPrefix(path, "/api/keys") {
+		strings.HasPrefix(path, "/api/api-keys") || strings.HasPrefix(path, "/api/keys") ||
+		strings.HasPrefix(path, "/api/users") || strings.HasPrefix(path, "/api/compute-allocations") ||
+		strings.HasPrefix(path, "/api/storage-volumes") || strings.HasPrefix(path, "/api/storage-attachments") ||
+		strings.HasPrefix(path, "/api/compute-pools") {
 		return true
 	}
-	if strings.HasPrefix(path, "/api/gateway/keys/") && path != "/api/gateway/keys/opl-workspace/reveal" {
+	if strings.HasPrefix(path, "/api/workspaces/") && strings.HasSuffix(path, "/gateway-secret/rotate") {
+		return true
+	}
+	if strings.HasPrefix(path, "/api/gateway/keys/") && path != "/api/gateway/keys/opl-workspace/reveal" && !currentGatewayKeyAPI(method, path) {
 		return true
 	}
 	if !strings.HasPrefix(path, "/api/workspaces/") {
@@ -109,6 +120,24 @@ func retiredConsoleAPI(method, path string) bool {
 		}
 	}
 	return false
+}
+
+func currentGatewayKeyAPI(method, path string) bool {
+	segments := strings.Split(strings.TrimPrefix(path, "/api/gateway/keys/"), "/")
+	if len(segments) < 1 {
+		return false
+	}
+	keyID, err := strconv.ParseInt(segments[0], 10, 64)
+	if err != nil || keyID <= 0 || strconv.FormatInt(keyID, 10) != segments[0] {
+		return false
+	}
+	if len(segments) == 1 {
+		return method == http.MethodGet || method == http.MethodPatch || method == http.MethodDelete
+	}
+	if len(segments) != 2 {
+		return false
+	}
+	return method == http.MethodPost && segments[1] == "reveal" || method == http.MethodGet && (segments[1] == "usage" || segments[1] == "usage-summary")
 }
 
 func (app *controlPlaneServer) consoleStatic(w http.ResponseWriter, r *http.Request) {
@@ -224,8 +253,13 @@ func consoleDistDir() string {
 
 func (app *controlPlaneServer) protected(requiresAdmin bool, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		payload, ok := app.session(r)
-		if !ok {
+		payload, state := app.session(r)
+		if state != sessionAuthenticated {
+			if state == sessionReauthenticationRequired {
+				http.SetCookie(w, sessionCookie("", -1))
+				writeError(w, http.StatusUnauthorized, "reauthentication_required")
+				return
+			}
 			writeError(w, http.StatusUnauthorized, "not_authenticated")
 			return
 		}

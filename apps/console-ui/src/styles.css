@@ -848,6 +848,7 @@ tbody tr:last-child td {
 .api-page,
 .api-overview,
 .workspace-page,
+.announcements-page,
 .admin-dashboard {
   display: grid;
   gap: 18px;
@@ -978,7 +979,26 @@ tbody tr:last-child td {
 
 .gateway-usage-toolbar {
   display: flex;
-  justify-content: flex-start;
+  align-items: end;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.gateway-usage-toolbar label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.gateway-usage-toolbar select {
+  min-width: 220px;
+  min-height: 38px;
+  border: 1px solid #ccd5e2;
+  border-radius: 6px;
+  background: #fff;
+  color: #172741;
+  padding: 0 34px 0 10px;
 }
 
 .segmented-control {
@@ -1187,6 +1207,94 @@ tbody tr:last-child td {
   flex-wrap: wrap;
   gap: 10px;
   margin-top: 18px;
+}
+
+.workspace-facts {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(280px, 0.8fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.secret-value {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.secret-value code {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.renewal-control {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 4px 8px;
+}
+
+.renewal-control small {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.table-actions {
+  display: flex;
+  min-width: 260px;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.danger-text {
+  color: var(--red);
+}
+
+.announcement-list {
+  display: grid;
+  border-top: 1px solid var(--line);
+}
+
+.announcement-item {
+  display: grid;
+  gap: 12px;
+  border-bottom: 1px solid var(--line);
+  padding: 20px;
+}
+
+.announcement-item:last-child {
+  border-bottom: 0;
+}
+
+.announcement-item header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.announcement-item h3,
+.announcement-item p {
+  margin: 0;
+}
+
+.announcement-item h3 {
+  color: #172741;
+  font-size: 16px;
+}
+
+.announcement-item header span,
+.announcement-item p {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.announcement-item .button {
+  justify-self: start;
 }
 
 .secret-panel {
@@ -1573,6 +1681,19 @@ tbody tr:last-child td {
 
   .data-list > div {
     grid-template-columns: minmax(120px, 0.8fr) minmax(0, 1.2fr);
+  }
+
+  .workspace-facts {
+    grid-template-columns: 1fr;
+  }
+
+  .gateway-usage-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .gateway-usage-toolbar select {
+    width: 100%;
   }
 
   .key-row {

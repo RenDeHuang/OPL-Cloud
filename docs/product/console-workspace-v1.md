@@ -1,50 +1,68 @@
-# OPL Console Workspace Product V1
+# OPL Console Workspace Product V2
 
 ## User Job
 
 ```text
-sign in -> buy compute -> buy/select storage -> attach -> create Workspace URL
-        -> open/copy URL -> sign in with the Runtime password
+sign in -> select Basic or Pro -> confirm one Workspace total -> provision
+        -> reveal/copy access -> open Workspace
 ```
 
-The owner can repeat this flow for multiple Workspaces. A shared URL still
-requires the separately delivered Runtime password; it does not grant access by
-itself or require an organization resource-pool model.
+The invite-only Pilot has one primary Workspace per account. Home, Login, and
+Logo/brand entry points remain unchanged; V2 does not redesign public Home or
+Login surfaces.
 
 ## Owner Surface
 
 Console shows:
 
 - live Sub2API USD balance;
-- fixed CNY monthly reference prices;
-- Basic compute;
-- storage in 10 GB steps;
+- fixed Basic or Pro Workspace package price in USD;
+- general Gateway Key create, enable/disable, delete, reveal/copy, and per-Key
+  Usage readback;
 - resource status, `paidThrough`, auto-renew, and manual-review state;
-- attachment and Workspace URL actions;
-- billing receipts, support, and account settings.
+- Workspace access, billing receipts, announcements, support, and account
+  settings.
+
+The Workspace access area answers, in one place and from owner readback: URL,
+用户名, 密码 reveal/copy, and the corresponding Workspace Key reveal/copy. The
+Workspace Key reuses `POST /api/gateway/keys/{keyId}/reveal`; it does not create a
+second secret store or Key API. The public API origin comes only from
+`OPL_GATEWAY_PUBLIC_BASE_URL`; invalid or missing production HTTPS configuration
+is shown as unavailable.
 
 Console does not show raw request fingerprints, provider credentials, generic
 Fabric/Ledger APIs, or Sub2API admin operations.
 
 ## Admin Surface
 
-Admin sees account mappings, roles, resource/provider facts, receipt and review
-evidence, reconciliation reports, readiness, and explicit cleanup operations.
-Admin does not mutate balance through Console.
+Operations sees account mappings, roles, wallet recharge/debit/business refund,
+receipt and review evidence, reconciliation reports, readiness, announcements,
+and explicit cleanup operations. Resource rows show owner account/user,
+Workspace, resource type, package/spec, provider ID, Zone, status, created and
+expiry times, last readback, and operation/Receipt references. A missing owner
+source displays unavailable; Fabric or Ledger facts are not copied into a new
+Control Plane truth table.
 
 ## Purchase Confirmation
 
-Compute confirmation shows the selected package, fixed monthly price, exact USD
-charge, current balance, and entitlement period. Storage confirmation also shows
-the 10 GB block count.
+Workspace confirmation shows the selected package/spec, exact total USD charge,
+current balance, entitlement period, and the compute/storage fulfillment included
+in that total.
 
 The operation is resumable. Provider preparation failure makes no charge.
 Insufficient balance cleans the prepared resource. Ambiguous external results
-enter manual review. Confirmed charge activates the entitlement and emits a
-Ledger receipt.
+enter manual review. Confirmed single charge activates the Workspace after
+fulfillment and emits one purchase Receipt. Compute and storage never debit the
+customer independently.
 
 ## Workspace And Storage
 
 A Workspace is a stable URL backed by one StorageVolume and the current runtime
 pointer. Compute can be replaced without changing the Workspace URL or deleting
 storage. Storage deletion is explicit and irreversible.
+
+## Evidence Levels
+
+Contract/UI presence is not availability. `code-complete` requires the complete
+local gate, `pilot-ready` requires approved real Pilot evidence, and
+`production-proven` requires evidence from the deployed immutable revision.

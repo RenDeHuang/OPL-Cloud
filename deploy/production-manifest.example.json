@@ -12,6 +12,9 @@
     "OPL_PROVIDER_ACCEPTANCE_TOKEN": {
       "secretRef": "opl-cloud/provider-acceptance-token"
     },
+    "OPL_GATEWAY_PUBLIC_BASE_URL": {
+      "value": "https://api.medopl.cn/v1"
+    },
     "OPL_SUB2API_BASE_URL": {
       "value": "https://gflabtoken.cn"
     },

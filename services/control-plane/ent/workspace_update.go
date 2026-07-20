@@ -272,6 +272,33 @@ func (wu *WorkspaceUpdate) SetNillableServiceName(s *string) *WorkspaceUpdate {
 	return wu
 }
 
+// SetWorkspaceAPIKeyID sets the "workspace_api_key_id" field.
+func (wu *WorkspaceUpdate) SetWorkspaceAPIKeyID(i int64) *WorkspaceUpdate {
+	wu.mutation.ResetWorkspaceAPIKeyID()
+	wu.mutation.SetWorkspaceAPIKeyID(i)
+	return wu
+}
+
+// SetNillableWorkspaceAPIKeyID sets the "workspace_api_key_id" field if the given value is not nil.
+func (wu *WorkspaceUpdate) SetNillableWorkspaceAPIKeyID(i *int64) *WorkspaceUpdate {
+	if i != nil {
+		wu.SetWorkspaceAPIKeyID(*i)
+	}
+	return wu
+}
+
+// AddWorkspaceAPIKeyID adds i to the "workspace_api_key_id" field.
+func (wu *WorkspaceUpdate) AddWorkspaceAPIKeyID(i int64) *WorkspaceUpdate {
+	wu.mutation.AddWorkspaceAPIKeyID(i)
+	return wu
+}
+
+// ClearWorkspaceAPIKeyID clears the value of the "workspace_api_key_id" field.
+func (wu *WorkspaceUpdate) ClearWorkspaceAPIKeyID() *WorkspaceUpdate {
+	wu.mutation.ClearWorkspaceAPIKeyID()
+	return wu
+}
+
 // SetAccessTokenStatus sets the "access_token_status" field.
 func (wu *WorkspaceUpdate) SetAccessTokenStatus(s string) *WorkspaceUpdate {
 	wu.mutation.SetAccessTokenStatus(s)
@@ -439,7 +466,20 @@ func (wu *WorkspaceUpdate) defaults() {
 	}
 }
 
+// check runs all checks and user-defined validators on the builder.
+func (wu *WorkspaceUpdate) check() error {
+	if v, ok := wu.mutation.WorkspaceAPIKeyID(); ok {
+		if err := workspace.WorkspaceAPIKeyIDValidator(v); err != nil {
+			return &ValidationError{Name: "workspace_api_key_id", err: fmt.Errorf(`ent: validator failed for field "Workspace.workspace_api_key_id": %w`, err)}
+		}
+	}
+	return nil
+}
+
 func (wu *WorkspaceUpdate) sqlSave(ctx context.Context) (n int, err error) {
+	if err := wu.check(); err != nil {
+		return n, err
+	}
 	_spec := sqlgraph.NewUpdateSpec(workspace.Table, workspace.Columns, sqlgraph.NewFieldSpec(workspace.FieldID, field.TypeString))
 	if ps := wu.mutation.predicates; len(ps) > 0 {
 		_spec.Predicate = func(selector *sql.Selector) {
@@ -501,6 +541,15 @@ func (wu *WorkspaceUpdate) sqlSave(ctx context.Context) (n int, err error) {
 	}
 	if value, ok := wu.mutation.ServiceName(); ok {
 		_spec.SetField(workspace.FieldServiceName, field.TypeString, value)
+	}
+	if value, ok := wu.mutation.WorkspaceAPIKeyID(); ok {
+		_spec.SetField(workspace.FieldWorkspaceAPIKeyID, field.TypeInt64, value)
+	}
+	if value, ok := wu.mutation.AddedWorkspaceAPIKeyID(); ok {
+		_spec.AddField(workspace.FieldWorkspaceAPIKeyID, field.TypeInt64, value)
+	}
+	if wu.mutation.WorkspaceAPIKeyIDCleared() {
+		_spec.ClearField(workspace.FieldWorkspaceAPIKeyID, field.TypeInt64)
 	}
 	if value, ok := wu.mutation.AccessTokenStatus(); ok {
 		_spec.SetField(workspace.FieldAccessTokenStatus, field.TypeString, value)
@@ -793,6 +842,33 @@ func (wuo *WorkspaceUpdateOne) SetNillableServiceName(s *string) *WorkspaceUpdat
 	return wuo
 }
 
+// SetWorkspaceAPIKeyID sets the "workspace_api_key_id" field.
+func (wuo *WorkspaceUpdateOne) SetWorkspaceAPIKeyID(i int64) *WorkspaceUpdateOne {
+	wuo.mutation.ResetWorkspaceAPIKeyID()
+	wuo.mutation.SetWorkspaceAPIKeyID(i)
+	return wuo
+}
+
+// SetNillableWorkspaceAPIKeyID sets the "workspace_api_key_id" field if the given value is not nil.
+func (wuo *WorkspaceUpdateOne) SetNillableWorkspaceAPIKeyID(i *int64) *WorkspaceUpdateOne {
+	if i != nil {
+		wuo.SetWorkspaceAPIKeyID(*i)
+	}
+	return wuo
+}
+
+// AddWorkspaceAPIKeyID adds i to the "workspace_api_key_id" field.
+func (wuo *WorkspaceUpdateOne) AddWorkspaceAPIKeyID(i int64) *WorkspaceUpdateOne {
+	wuo.mutation.AddWorkspaceAPIKeyID(i)
+	return wuo
+}
+
+// ClearWorkspaceAPIKeyID clears the value of the "workspace_api_key_id" field.
+func (wuo *WorkspaceUpdateOne) ClearWorkspaceAPIKeyID() *WorkspaceUpdateOne {
+	wuo.mutation.ClearWorkspaceAPIKeyID()
+	return wuo
+}
+
 // SetAccessTokenStatus sets the "access_token_status" field.
 func (wuo *WorkspaceUpdateOne) SetAccessTokenStatus(s string) *WorkspaceUpdateOne {
 	wuo.mutation.SetAccessTokenStatus(s)
@@ -973,7 +1049,20 @@ func (wuo *WorkspaceUpdateOne) defaults() {
 	}
 }
 
+// check runs all checks and user-defined validators on the builder.
+func (wuo *WorkspaceUpdateOne) check() error {
+	if v, ok := wuo.mutation.WorkspaceAPIKeyID(); ok {
+		if err := workspace.WorkspaceAPIKeyIDValidator(v); err != nil {
+			return &ValidationError{Name: "workspace_api_key_id", err: fmt.Errorf(`ent: validator failed for field "Workspace.workspace_api_key_id": %w`, err)}
+		}
+	}
+	return nil
+}
+
 func (wuo *WorkspaceUpdateOne) sqlSave(ctx context.Context) (_node *Workspace, err error) {
+	if err := wuo.check(); err != nil {
+		return _node, err
+	}
 	_spec := sqlgraph.NewUpdateSpec(workspace.Table, workspace.Columns, sqlgraph.NewFieldSpec(workspace.FieldID, field.TypeString))
 	id, ok := wuo.mutation.ID()
 	if !ok {
@@ -1052,6 +1141,15 @@ func (wuo *WorkspaceUpdateOne) sqlSave(ctx context.Context) (_node *Workspace, e
 	}
 	if value, ok := wuo.mutation.ServiceName(); ok {
 		_spec.SetField(workspace.FieldServiceName, field.TypeString, value)
+	}
+	if value, ok := wuo.mutation.WorkspaceAPIKeyID(); ok {
+		_spec.SetField(workspace.FieldWorkspaceAPIKeyID, field.TypeInt64, value)
+	}
+	if value, ok := wuo.mutation.AddedWorkspaceAPIKeyID(); ok {
+		_spec.AddField(workspace.FieldWorkspaceAPIKeyID, field.TypeInt64, value)
+	}
+	if wuo.mutation.WorkspaceAPIKeyIDCleared() {
+		_spec.ClearField(workspace.FieldWorkspaceAPIKeyID, field.TypeInt64)
 	}
 	if value, ok := wuo.mutation.AccessTokenStatus(); ok {
 		_spec.SetField(workspace.FieldAccessTokenStatus, field.TypeString, value)

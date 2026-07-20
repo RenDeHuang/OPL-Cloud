@@ -213,6 +213,104 @@ func TestServerMonthlyPreflightFailsClosedWithStableErrors(t *testing.T) {
 	}
 }
 
+type monthlyTruthHTTPProvider struct {
+	testProvider
+	calls  int
+	result fabric.MonthlyProviderTruth
+}
+
+func (p *monthlyTruthHTTPProvider) MonthlyProviderTruth(_ context.Context, compute fabric.ComputeAllocation, storage fabric.StorageVolume) (fabric.MonthlyProviderTruth, error) {
+	p.calls++
+	result := p.result
+	result.Compute.ID, result.Compute.AccountID, result.Compute.WorkspaceID = compute.ID, compute.AccountID, compute.WorkspaceID
+	result.Storage.ID, result.Storage.AccountID, result.Storage.WorkspaceID = storage.ID, storage.AccountID, storage.WorkspaceID
+	return result, nil
+}
+
+func monthlyTruthHTTPFixture(t *testing.T, provider *monthlyTruthHTTPProvider) (*fabric.Service, *fabric.MemoryOperationStore) {
+	t.Helper()
+	tags := func(accountID, workspaceID, resourceID, operationID string) map[string]string {
+		return map[string]string{"opl_account_id": accountID, "opl_workspace_id": workspaceID, "opl_resource_id": resourceID, "opl_operation_id": operationID}
+	}
+	compute := fabric.ComputeAllocation{
+		ID: "compute-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", PackageID: "basic", Status: "running",
+		Provider: "tencent-tke", ProviderResourceID: "machine/node-basic-1", ProviderRequestID: "req-compute",
+		NodePoolID: "np-basic", InstanceID: "ins-basic-1", CVMInstanceID: "ins-basic-1", MachineName: "node-basic-1", PrivateIP: "10.0.0.11",
+		InstanceType: "SA5.MEDIUM4", Zone: "ap-guangzhou-3", ChargeType: "PREPAID", RenewFlag: "NOTIFY_AND_MANUAL_RENEW", Deadline: "2026-08-16T00:00:00Z",
+		ProviderData: map[string]string{"instanceType": "SA5.MEDIUM4", "zone": "ap-guangzhou-3"}, CostTags: tags("acct-alpha", "ws-alpha", "compute-alpha", "owner-compute-alpha"),
+	}
+	storage := fabric.StorageVolume{
+		ID: "storage-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", Status: "ready", Provider: "tencent-tke",
+		ProviderResourceID: "disk-storage-alpha", ProviderRequestID: "req-storage", SizeGB: 10, CBSStatus: "ATTACHED", DiskType: "CLOUD_BSSD",
+		RenewFlag: "NOTIFY_AND_MANUAL_RENEW", Deadline: "2026-08-16T00:00:00Z", Zone: "ap-guangzhou-3", CostTags: tags("acct-alpha", "ws-alpha", "storage-alpha", "owner-storage-alpha"),
+	}
+	provider.result = fabric.MonthlyProviderTruth{
+		ComputeState: "ready", StorageState: "absent", ProviderRequestID: "req-provider-truth",
+		Compute: compute,
+		Storage: fabric.StorageVolume{
+			ID: storage.ID, AccountID: storage.AccountID, WorkspaceID: storage.WorkspaceID, Status: "external_deleted", Provider: storage.Provider,
+			ProviderResourceID: storage.ProviderResourceID, ProviderRequestID: "req-provider-truth", SizeGB: storage.SizeGB, CBSStatus: "NOT_FOUND",
+			DiskType: storage.DiskType, RenewFlag: storage.RenewFlag, Deadline: storage.Deadline, Zone: storage.Zone, CostTags: storage.CostTags,
+		},
+	}
+	store := fabric.NewMemoryOperationStore()
+	now := time.Now().UTC()
+	for _, operation := range []fabric.FabricOperation{
+		{ID: "fop-compute", Action: "create_compute_allocation", ResourceKind: "compute_allocation", ResourceID: compute.ID, Status: "succeeded", RedactedProviderPayload: map[string]any{"resource": compute}, CreatedAt: now},
+		{ID: "fop-storage", Action: "create_storage_volume", ResourceKind: "storage_volume", ResourceID: storage.ID, Status: "succeeded", RedactedProviderPayload: map[string]any{"resource": storage}, CreatedAt: now},
+	} {
+		if err := store.Append(context.Background(), operation); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return fabric.NewServiceWithOperationStore(provider, store), store
+}
+
+func TestMonthlyProviderTruthHTTPIsAuthenticatedReadOnlyAndValidatesQuery(t *testing.T) {
+	provider := &monthlyTruthHTTPProvider{}
+	service, store := monthlyTruthHTTPFixture(t, provider)
+	server := NewServer(service, "internal-secret")
+	path := "/fabric/monthly-provider-truth?computeAllocationId=compute-alpha&storageVolumeId=storage-alpha"
+
+	unauthorized := httptest.NewRecorder()
+	server.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodGet, path, nil))
+	if unauthorized.Code != http.StatusUnauthorized || provider.calls != 0 {
+		t.Fatalf("unauthorized status=%d calls=%d", unauthorized.Code, provider.calls)
+	}
+
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, testRequest(http.MethodGet, path, nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("truth status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var truth fabric.MonthlyProviderTruth
+	if err := json.NewDecoder(recorder.Body).Decode(&truth); err != nil || truth.ComputeState != "ready" || truth.StorageState != "absent" || truth.Compute.ID != "compute-alpha" || truth.Storage.ID != "storage-alpha" || provider.calls != 1 {
+		t.Fatalf("truth=%#v err=%v calls=%d", truth, err, provider.calls)
+	}
+	operations, err := store.List(context.Background())
+	if err != nil || len(operations) != 2 {
+		t.Fatalf("read-only truth operations=%#v err=%v", operations, err)
+	}
+
+	for _, invalidPath := range []string{
+		"/fabric/monthly-provider-truth?storageVolumeId=storage-alpha",
+		"/fabric/monthly-provider-truth?computeAllocationId=compute-alpha",
+		"/fabric/monthly-provider-truth?computeAllocationId=compute-alpha&computeAllocationId=compute-other&storageVolumeId=storage-alpha",
+		"/fabric/monthly-provider-truth?computeAllocationId=compute-alpha&storageVolumeId=storage-missing",
+	} {
+		t.Run(invalidPath, func(t *testing.T) {
+			invalid := httptest.NewRecorder()
+			server.ServeHTTP(invalid, testRequest(http.MethodGet, invalidPath, nil))
+			if (strings.Contains(invalidPath, "storage-missing") && invalid.Code != http.StatusServiceUnavailable) || (!strings.Contains(invalidPath, "storage-missing") && invalid.Code != http.StatusBadRequest) {
+				t.Fatalf("invalid query status=%d body=%s", invalid.Code, invalid.Body.String())
+			}
+		})
+	}
+	if provider.calls != 1 {
+		t.Fatalf("invalid query or local identity reached provider: calls=%d", provider.calls)
+	}
+}
+
 func TestServerRenewsComputeAllocation(t *testing.T) {
 	service := fabric.NewService(testProvider{})
 	allocation, err := service.CreateComputeAllocation(context.Background(), fabric.ComputeAllocationInput{ID: "compute-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", PackageID: "basic", IdempotencyKey: "compute-create"})

@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 5,
   "owner": "OPL Console",
   "purpose": "Machine-readable requirements for current commercial Console objects.",
   "state": "current",
@@ -34,11 +34,12 @@
     "Sub2API owns the only spendable balance, API keys, AI usage, and real-time API debits.",
     "Sub2API owns customer credential authentication; Control Plane stores only the verified mapping and local Session.",
     "Control Plane owns the account-to-Sub2API mapping, monthly charge operations, price snapshots, entitlement, renewal, and expiry policy.",
+    "Workspace is the only customer monthly charge owner; new ComputeAllocation and StorageVolume rows are provider fulfillment facts without customer billing fields.",
     "Ledger owns append-only evidence receipts, review evidence, and reconciliation reports; it does not own a spendable balance.",
     "Fabric owns provider execution evidence and FabricOperation facts.",
     "Console presents Account, Session, Workspace lifecycle, AdminAuditEvent, SupportTicketMapping, and product DTOs; it calls only Control Plane product APIs.",
     "Frontend displays backend DTOs and must not derive pricing, billing, lifecycle, or provider state locally.",
-    "Backup, recovery, sync, transfer, payment orders, Key mutation, and raw provider diagnostics are forbidden Pilot customer surfaces."
+    "Backup, recovery, sync, transfer, payment orders, and raw provider diagnostics are forbidden Pilot customer surfaces; owned general Key mutation is projected through Control Plane with delegated user credentials."
   ],
   "repoBoundaryRules": [
     "Console owns UI and product presentation through Control Plane APIs only; Sub2API authenticates customer credentials.",
@@ -104,7 +105,7 @@
       "routeKind": "business_object",
       "lifecycle": "current",
       "evidenceRequired": true,
-      "boundary": "Account-owned dedicated CVM or Kubernetes node allocation selected from the package compute catalog; package pool identity is placement metadata, not the billable resource identity.",
+      "boundary": "Account-owned dedicated CVM or Kubernetes node allocation selected from the package compute catalog; it is a provider fulfillment identity, not a customer charge owner.",
       "requiredProviderFields": [
         "nodePoolId",
         "cvmInstanceId",
@@ -114,17 +115,20 @@
         "publicIp",
         "ownerAccountId",
         "workspaceIds",
-        "billingStatus",
+        "providerStatus",
         "destroyedAt",
         "lastProviderSyncAt"
       ],
-      "requiredBillingFields": [
+      "requiredBillingFields": [],
+      "historicalBillingCompatibilityFields": [
         "billingStatus",
         "priceVersion",
         "chargeUsdMicros",
         "periodStart",
         "paidThrough"
       ],
+      "customerChargeOwner": false,
+      "newWorkspaceFulfillmentRole": "provider_fact_only",
       "customerSurface": "workspace_detail_read_only",
       "requiredCapabilitiesForImplemented": [
         "list",
@@ -145,14 +149,17 @@
         "evidence"
       ],
       "evidenceRequired": true,
-      "boundary": "Account-owned storage with a monthly entitlement that can exist without compute and can attach to one active ComputeAllocation at a time.",
-      "requiredBillingFields": [
+      "boundary": "Account-owned persistent storage fulfillment for the Workspace entitlement; it can exist without compute and attach to one active ComputeAllocation at a time.",
+      "requiredBillingFields": [],
+      "historicalBillingCompatibilityFields": [
         "billingStatus",
         "priceVersion",
         "chargeUsdMicros",
         "periodStart",
         "paidThrough"
       ],
+      "customerChargeOwner": false,
+      "newWorkspaceFulfillmentRole": "provider_fact_only",
       "customerSurface": "workspace_detail_read_only"
     },
     {
@@ -188,18 +195,28 @@
         "action"
       ],
       "evidenceRequired": true,
+      "customerChargeOwner": true,
+      "customerBillingFields": ["priceVersion", "currency", "totalUsdMicros", "periodStart", "paidThrough", "autoRenew", "renewalStatus"],
+      "purchaseReceiptType": "billing.workspace_purchased.v1",
+      "activationRequirements": ["compute_provider_readback", "storage_provider_readback", "attachment", "gateway_secret", "runtime_ready"],
       "boundary": "Stable URL subject backed by one persistent StorageVolume, managed runtime login credentials, access state, lifecycle state, and a current replaceable ComputeAllocation/StorageAttachment runtime pointer.",
       "requiredFields": [
         "storageId",
         "currentComputeAllocationId",
         "currentAttachmentId",
+        "workspaceApiKeyId",
         "url",
         "access.account",
         "access.credentialStatus",
         "access.credentialVersion",
         "runtime.status",
         "state"
-      ]
+      ],
+      "accessQuestions": ["url", "username", "passwordRevealCopy", "workspaceKeyRevealCopy"],
+      "workspaceKeyRevealRoute": "POST /api/gateway/keys/{keyId}/reveal",
+      "workspaceKeyRotationRoute": "POST /api/workspaces/{workspaceId}/workspace-key/rotate",
+      "workspaceKeyPersistence": "workspace_api_key_id_only",
+      "workspaceKeyRotationDTOFields": ["operationId", "workspaceId", "status", "workspaceApiKeyId", "fingerprint", "updatedAt", "receiptId"]
     },
     {
       "kind": "Balance",
@@ -271,6 +288,16 @@
       ],
       "evidenceRequired": true,
       "boundary": "Mapping from OPL account/user/workspace/resource context to external support ticket identity."
+    },
+    {
+      "kind": "Announcement",
+      "ownerRepo": "opl-console",
+      "routeKind": "business_object",
+      "lifecycle": "current",
+      "requiredCapabilitiesForImplemented": ["list", "detail", "read", "write", "action", "audit"],
+      "evidenceRequired": true,
+      "implementation": "code_complete_local_focused_tests",
+      "boundary": "Control Plane-owned Pilot-wide plain-text announcement with draft, scheduled, published, withdrawn, and per-user read state."
     }
   ]
 }

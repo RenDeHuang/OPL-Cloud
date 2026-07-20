@@ -2,6 +2,7 @@ import { pathToFileURL } from "node:url";
 
 import {
   assertPublicHttpsUrl,
+  mutationApprovalFromJson,
   writeVerificationManifest
 } from "./production-verifier.ts";
 
@@ -94,6 +95,10 @@ export async function runProviderAcceptance({
   environmentApproved,
   purchaseBudget,
   maxApprovedProviderCost,
+  gatewayWriteAllowed = false,
+  providerWriteAllowed = false,
+  mutationApprovalJson = "",
+  mutationApprovalId = "",
   attempts = 90,
   retryDelayMs = 10_000,
   requestTimeoutMs = 30_000,
@@ -102,10 +107,17 @@ export async function runProviderAcceptance({
   fetchImpl = globalThis.fetch
 } = {}) {
   if (confirmation !== PROVIDER_ACCEPTANCE_CONFIRMATION) throw new Error("provider_acceptance_confirmation_required");
+  if (!gatewayWriteAllowed || !providerWriteAllowed) throw new Error("provider_acceptance_write_allow_flags_required");
   if (!String(acceptanceToken || "").trim()) throw new Error("provider_acceptance_token_required");
   const slot = PROVIDER_ACCEPTANCE_SLOTS[slotId];
   if (!slot) throw new Error("provider_acceptance_slot_fixed");
   if (accountId !== slot.accountId) throw new Error("provider_acceptance_account_fixed");
+  mutationApprovalFromJson(mutationApprovalJson, {
+    approvalId: mutationApprovalId,
+    accountId,
+    workspaceId: `primary:${accountId}`,
+    resourceIds: [slotId]
+  }, "provider_acceptance");
   if (environmentApproved !== true) throw new Error("provider_acceptance_environment_approval_required");
   if (purchaseBudget !== 1) throw new Error("provider_acceptance_purchase_budget_invalid");
   if (!Number.isFinite(maxApprovedProviderCost) || maxApprovedProviderCost <= 0) throw new Error("provider_acceptance_provider_cost_approval_required");
@@ -133,12 +145,32 @@ export async function runProviderAcceptance({
 }
 
 export async function runProviderAcceptanceCli({
+  argv = process.argv.slice(2),
   env = process.env,
   stdout = process.stdout,
   stderr = process.stderr,
   fetchImpl = globalThis.fetch
 } = {}) {
   try {
+    const args = Object.fromEntries(argv.flatMap((item, index) => item.startsWith("--")
+      ? [[item.slice(2), argv[index + 1] && !argv[index + 1].startsWith("--") ? argv[index + 1] : "true"]]
+      : []));
+    if (args["read-only"] === "true") {
+      if (args["allow-gateway-write"] || args["allow-provider-write"] || args["approval-id"]) throw new Error("provider_acceptance_read_only_conflict");
+      stdout.write(`${JSON.stringify({ ok: true, mode: "read-only", evidenceLevel: "read-only", writesPerformed: 0 }, null, 2)}\n`);
+      return 0;
+    }
+    if (args["allow-gateway-write"] || args["allow-provider-write"] || args["approval-id"]) {
+      if (args["allow-gateway-write"] !== "true" || args["allow-provider-write"] !== "true") throw new Error("provider_acceptance_write_allow_flags_required");
+      const accountId = env.OPL_PROVIDER_ACCEPTANCE_ACCOUNT_ID || "";
+      const slotId = env.OPL_PROVIDER_ACCEPTANCE_SLOT_ID || "";
+      mutationApprovalFromJson(env.OPL_VERIFY_MUTATION_APPROVAL_JSON, {
+        approvalId: args["approval-id"] || "",
+        accountId,
+        workspaceId: accountId ? `primary:${accountId}` : "",
+        resourceIds: slotId ? [slotId] : []
+      }, "provider_acceptance");
+    }
     const result = await runProviderAcceptance({
       origin: env.OPL_CONSOLE_ORIGIN,
       acceptanceToken: env.OPL_PROVIDER_ACCEPTANCE_TOKEN,
@@ -148,6 +180,10 @@ export async function runProviderAcceptanceCli({
       environmentApproved: env.OPL_PROVIDER_ACCEPTANCE_ENVIRONMENT_APPROVED === "true",
       purchaseBudget: Number(env.OPL_PROVIDER_ACCEPTANCE_PURCHASE_BUDGET),
       maxApprovedProviderCost: Number(env.OPL_PROVIDER_ACCEPTANCE_MAX_APPROVED_PROVIDER_COST),
+      gatewayWriteAllowed: args["allow-gateway-write"] === "true",
+      providerWriteAllowed: args["allow-provider-write"] === "true",
+      mutationApprovalJson: env.OPL_VERIFY_MUTATION_APPROVAL_JSON,
+      mutationApprovalId: args["approval-id"] || "",
       attempts: Number(env.OPL_PROVIDER_ACCEPTANCE_ATTEMPTS || 90),
       retryDelayMs: Number(env.OPL_PROVIDER_ACCEPTANCE_RETRY_DELAY_MS || 10_000),
       requestTimeoutMs: Number(env.OPL_PROVIDER_ACCEPTANCE_REQUEST_TIMEOUT_MS || 30_000),

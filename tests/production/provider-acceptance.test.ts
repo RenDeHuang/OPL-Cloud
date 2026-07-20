@@ -13,6 +13,22 @@ import {
 } from "../../tools/provider-acceptance.ts";
 
 const acceptanceToken = "provider-acceptance-token";
+const approvalId = "approval-pilot-v2";
+
+function acceptanceAuthority(slotId, accountId) {
+  return {
+    gatewayWriteAllowed: true,
+    providerWriteAllowed: true,
+    mutationApprovalId: approvalId,
+    mutationApprovalJson: JSON.stringify({
+      approvalId,
+      expiresAt: "2099-07-19T00:00:00Z",
+      accountIds: [accountId],
+      workspaceIds: [`primary:${accountId}`],
+      resourceIds: [slotId]
+    })
+  };
+}
 
 function json(payload, status = 200, headers = {}) {
   return new Response(JSON.stringify(payload), {
@@ -63,7 +79,8 @@ test("Provider Acceptance replays each fixed Basic and Pro operation with separa
     const result = await runProviderAcceptance({
       origin: "https://cloud.medopl.cn", acceptanceToken, slotId, accountId: slot.accountId,
       confirmation: PROVIDER_ACCEPTANCE_CONFIRMATION, environmentApproved: true, purchaseBudget: 1,
-      maxApprovedProviderCost: 100, attempts: 2, retryDelayMs: 0, fetchImpl
+      maxApprovedProviderCost: 100, attempts: 2, retryDelayMs: 0, fetchImpl,
+      ...acceptanceAuthority(slotId, slot.accountId)
     });
 
     assert.equal(result.status, "reused");
@@ -118,7 +135,8 @@ test("Provider Acceptance rejects missing authority before network access and st
     attempts: 5,
     retryDelayMs: 0,
     manifestPath,
-    fetchImpl
+    fetchImpl,
+    ...acceptanceAuthority("verification-slot-basic-01", "acct-verification-slot-basic-01")
   }), /provider_acceptance_manual_review/);
   assert.equal(calls, 1);
   const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
@@ -148,7 +166,8 @@ test("Provider Acceptance validates every successful response fact before writin
       origin: "https://cloud.medopl.cn", acceptanceToken, slotId, accountId,
       confirmation: PROVIDER_ACCEPTANCE_CONFIRMATION, environmentApproved: true, purchaseBudget: 1,
       maxApprovedProviderCost: 100, attempts: 1, retryDelayMs: 0, manifestPath,
-      fetchImpl: async () => json(payload)
+      fetchImpl: async () => json(payload),
+      ...acceptanceAuthority(slotId, accountId)
     }), /provider_acceptance_invalid_response/);
     await assert.rejects(access(manifestPath), { code: "ENOENT" });
   }
@@ -171,6 +190,7 @@ test("Provider Acceptance CLI rejects unknown response fields without writing ev
       let stdout = "";
       let stderr = "";
       const code = await runProviderAcceptanceCli({
+        argv: ["--allow-gateway-write", "--allow-provider-write", "--approval-id", approvalId],
         env: {
           OPL_CONSOLE_ORIGIN: "https://cloud.medopl.cn",
           OPL_PROVIDER_ACCEPTANCE_TOKEN: acceptanceToken,
@@ -182,7 +202,8 @@ test("Provider Acceptance CLI rejects unknown response fields without writing ev
           OPL_PROVIDER_ACCEPTANCE_MAX_APPROVED_PROVIDER_COST: "100",
           OPL_PROVIDER_ACCEPTANCE_ATTEMPTS: "1",
           OPL_PROVIDER_ACCEPTANCE_RETRY_DELAY_MS: "0",
-          OPL_PROVIDER_ACCEPTANCE_MANIFEST_PATH: manifestPath
+          OPL_PROVIDER_ACCEPTANCE_MANIFEST_PATH: manifestPath,
+          OPL_VERIFY_MUTATION_APPROVAL_JSON: acceptanceAuthority(slotId, accountId).mutationApprovalJson
         },
         stdout: { write: (chunk) => { stdout += chunk; } },
         stderr: { write: (chunk) => { stderr += chunk; } },
@@ -206,6 +227,7 @@ test("Provider Acceptance CLI rejects unsupported manual-review reasons without 
   let stdout = "";
   let stderr = "";
   const code = await runProviderAcceptanceCli({
+    argv: ["--allow-gateway-write", "--allow-provider-write", "--approval-id", approvalId],
     env: {
       OPL_CONSOLE_ORIGIN: "https://cloud.medopl.cn",
       OPL_PROVIDER_ACCEPTANCE_TOKEN: acceptanceToken,
@@ -217,7 +239,8 @@ test("Provider Acceptance CLI rejects unsupported manual-review reasons without 
       OPL_PROVIDER_ACCEPTANCE_MAX_APPROVED_PROVIDER_COST: "100",
       OPL_PROVIDER_ACCEPTANCE_ATTEMPTS: "1",
       OPL_PROVIDER_ACCEPTANCE_RETRY_DELAY_MS: "0",
-      OPL_PROVIDER_ACCEPTANCE_MANIFEST_PATH: manifestPath
+      OPL_PROVIDER_ACCEPTANCE_MANIFEST_PATH: manifestPath,
+      OPL_VERIFY_MUTATION_APPROVAL_JSON: acceptanceAuthority(slotId, accountId).mutationApprovalJson
     },
     stdout: { write: (chunk) => { stdout += chunk; } },
     stderr: { write: (chunk) => { stderr += chunk; } },
@@ -249,6 +272,7 @@ test("Provider Acceptance workflow is independently approved, dual-slot fixed, a
   assert.equal(spec.file, ".github/workflows/provider-acceptance.yml");
   assert.equal(spec.job, "accept");
   assert.equal(spec.mode, "operator_only_one_time_dual_fixed_slot");
+  assert.equal(spec.mutationAuthorityWiring, "dispatch_approval_id_protected_manifest_explicit_cli_allow_flags");
   assert.equal(spec.endpoint, "/api/operator/provider-acceptance");
   assert.equal(spec.lifetimePurchaseBudget, 2);
   assert.deepEqual(spec.fixedSlots.map(({ id, accountId, idempotencyKey, packageId, instanceType, cbsGb }) => ({ id, accountId, idempotencyKey, packageId, instanceType, cbsGb })), [
@@ -263,6 +287,7 @@ test("Provider Acceptance workflow is independently approved, dual-slot fixed, a
   assert.equal(workflow.on.workflow_dispatch.inputs.confirmation.required, true);
   assert.equal(workflow.on.workflow_dispatch.inputs.purchase_budget.required, true);
   assert.equal(workflow.on.workflow_dispatch.inputs.max_approved_provider_cost.required, true);
+  assert.equal(workflow.on.workflow_dispatch.inputs.approval_id.required, true);
   assert.equal(job.environment, "production-provider-acceptance");
   assert.equal(job.env.OPL_PROVIDER_ACCEPTANCE_SLOT_ID, "${{ inputs.slot_id }}");
   assert.equal(job.env.OPL_PROVIDER_ACCEPTANCE_ACCOUNT_ID, "${{ inputs.account_id }}");
@@ -272,11 +297,13 @@ test("Provider Acceptance workflow is independently approved, dual-slot fixed, a
   assert.equal(job.env.OPL_PROVIDER_ACCEPTANCE_MAX_APPROVED_PROVIDER_COST, "${{ inputs.max_approved_provider_cost }}");
   assert.equal(job.env.OPL_PROVIDER_ACCEPTANCE_TOKEN, undefined);
   assert.equal(runStep.env.OPL_PROVIDER_ACCEPTANCE_TOKEN, "${{ secrets.OPL_PROVIDER_ACCEPTANCE_TOKEN }}");
+  assert.equal(runStep.env.OPL_VERIFY_MUTATION_APPROVAL_JSON, "${{ secrets.OPL_VERIFY_MUTATION_APPROVAL_JSON }}");
+  assert.equal(runStep.env.OPL_VERIFY_MUTATION_APPROVAL_ID, "${{ inputs.approval_id }}");
   assert.equal(runStep.env.OPL_PROVIDER_ACCEPTANCE_OPERATOR_TOKEN, undefined);
   assert.equal(job.env.OPL_PROVIDER_ACCEPTANCE_AUTH_USERS_JSON, undefined);
   assert.equal(spec.environment, "production-provider-acceptance");
   assert.ok(spec.requiredEnv.includes("OPL_PROVIDER_ACCEPTANCE_TOKEN"));
-  assert.deepEqual(spec.secretEnv, ["OPL_PROVIDER_ACCEPTANCE_TOKEN"]);
+  assert.deepEqual(spec.secretEnv, ["OPL_PROVIDER_ACCEPTANCE_TOKEN", "OPL_VERIFY_MUTATION_APPROVAL_JSON"]);
   assert.ok(deploySpec.requiredEnv.includes("OPL_PROVIDER_ACCEPTANCE_TOKEN"));
   assert.ok(deploySpec.secretEnv.includes("OPL_PROVIDER_ACCEPTANCE_TOKEN"));
   assert.ok(deploySpec.requiredCommandsByStep["Install Kubernetes secrets"].includes('--from-file=OPL_PROVIDER_ACCEPTANCE_TOKEN="$secret_dir/provider-acceptance-token"'));
@@ -285,7 +312,7 @@ test("Provider Acceptance workflow is independently approved, dual-slot fixed, a
   assert.equal(launch.verification.providerAcceptance.credentialHeader, "x-opl-provider-acceptance-token");
   assert.equal(launch.verification.providerAcceptance.operatorSessionAccepted, false);
   assert.equal(launch.verification.providerAcceptance.genericOperatorTokenAccepted, false);
-  assert.match(source, /node tools\/provider-acceptance\.ts/);
+  assert.match(runStep.run, /node tools\/provider-acceptance\.ts --allow-gateway-write --allow-provider-write --approval-id "\$OPL_VERIFY_MUTATION_APPROVAL_ID"/);
   assert.doesNotMatch(source, /TENCENTCLOUD_SECRET|compute-allocations|storage-volumes|destroy|delete|renew/i);
   assert.match(backend, /POST \/api\/operator\/provider-acceptance/);
   assert.match(backend, /providerAcceptanceSlots/);
@@ -315,5 +342,38 @@ test("Provider Acceptance CLI requires the fixed confirmation before network acc
   });
   assert.equal(code, 1);
   assert.match(stderr, /provider_acceptance_confirmation_required/);
+  assert.equal(calls, 0);
+});
+
+test("Provider Acceptance read-only evidence level requires no mutation authority", async () => {
+  let stdout = "";
+  let stderr = "";
+  let calls = 0;
+  const code = await runProviderAcceptanceCli({
+    argv: ["--read-only"],
+    env: {},
+    stdout: { write: (chunk) => { stdout += chunk; } },
+    stderr: { write: (chunk) => { stderr += chunk; } },
+    fetchImpl: async () => { calls += 1; return json({}); }
+  });
+  assert.equal(code, 0, stderr);
+  assert.equal(calls, 0);
+  assert.deepEqual(JSON.parse(stdout), {
+    ok: true,
+    mode: "read-only",
+    evidenceLevel: "read-only",
+    writesPerformed: 0
+  });
+
+  stderr = "";
+  const denied = await runProviderAcceptanceCli({
+    argv: ["--allow-gateway-write", "--allow-provider-write", "--approval-id", "approval-pilot-v2"],
+    env: {},
+    stdout: { write: () => {} },
+    stderr: { write: (chunk) => { stderr += chunk; } },
+    fetchImpl: async () => { calls += 1; return json({}); }
+  });
+  assert.equal(denied, 1);
+  assert.match(stderr, /provider_acceptance_approval_manifest_required/);
   assert.equal(calls, 0);
 });

@@ -17,10 +17,13 @@ var errBillingOperationInProgress = errors.New("billing_operation_in_progress")
 var errSub2APIAccountMappingConflict = errors.New("sub2api_account_mapping_conflict")
 var errPrimaryWorkspaceExists = errors.New("primary_workspace_already_exists")
 var errWorkspaceActivationConflict = errors.New("workspace_activation_conflict")
+var errWorkspaceAPIKeyCASConflict = errors.New("workspace_api_key_cas_conflict")
 var errInvalidAccountID = errors.New("invalid_account_id")
 var errInvalidEmail = errors.New("invalid_email")
 var errMembershipExists = errors.New("membership_already_exists")
 var errAccountIdentityConflict = errors.New("account_identity_conflict")
+var errAnnouncementStateConflict = errors.New("announcement_state_conflict")
+var errAnnouncementNotActive = errors.New("announcement_not_active")
 
 type workspaceResumeOperationResult struct {
 	RequestHash    string                      `json:"requestHash"`
@@ -37,10 +40,104 @@ type workspaceCreateOperationResult struct {
 	AcceptedBillingState map[string]any             `json:"acceptedBillingState,omitempty"`
 }
 
-type workspaceGatewaySecretOperationResult struct {
-	RequestHash string `json:"requestHash"`
-	SecretRef   string `json:"secretRef"`
-	Fingerprint string `json:"fingerprint"`
+type announcementMutation struct {
+	AnnouncementID  string
+	Create          bool
+	AllowedStatuses []string
+	RequestHash     string
+	Patch           map[string]any
+	AuditEvent      map[string]any
+}
+
+func prepareAnnouncementMutation(current map[string]any, mutation announcementMutation, now time.Time) (map[string]any, error) {
+	if mutation.AnnouncementID == "" || mutation.RequestHash == "" || stringValue(mutation.AuditEvent["id"]) == "" {
+		return nil, errAnnouncementStateConflict
+	}
+	if mutation.Create {
+		if current != nil {
+			return nil, errIdempotencyConflict
+		}
+		current = map[string]any{"id": mutation.AnnouncementID, "createdAt": now.UTC().Format(time.RFC3339Nano)}
+	} else {
+		if current == nil || !announcementStatusAllowed(stringValue(current["status"]), mutation.AllowedStatuses) {
+			return nil, errAnnouncementStateConflict
+		}
+		current = cloneMap(current)
+	}
+	for key, value := range mutation.Patch {
+		current[key] = value
+	}
+	current["id"] = mutation.AnnouncementID
+	current["updatedAt"] = now.UTC().Format(time.RFC3339Nano)
+	if !validAnnouncementRecord(current) {
+		return nil, errAnnouncementStateConflict
+	}
+	return current, nil
+}
+
+func announcementStatusAllowed(status string, allowed []string) bool {
+	for _, candidate := range allowed {
+		if status == candidate {
+			return true
+		}
+	}
+	return false
+}
+
+func validAnnouncementRecord(row map[string]any) bool {
+	if strings.TrimSpace(stringValue(row["title"])) == "" || strings.TrimSpace(stringValue(row["body"])) == "" ||
+		strings.TrimSpace(stringValue(row["createdByUserId"])) == "" || strings.TrimSpace(stringValue(row["updatedByUserId"])) == "" ||
+		!announcementStatusAllowed(stringValue(row["status"]), []string{"draft", "scheduled", "published", "withdrawn"}) {
+		return false
+	}
+	startsAt, startsOK := optionalAnnouncementTime(stringValue(row["startsAt"]))
+	endsAt, endsOK := optionalAnnouncementTime(stringValue(row["endsAt"]))
+	if !startsOK || !endsOK || (!startsAt.IsZero() && !endsAt.IsZero() && !endsAt.After(startsAt)) {
+		return false
+	}
+	_, publishedOK := optionalAnnouncementTime(stringValue(row["publishedAt"]))
+	return publishedOK
+}
+
+func optionalAnnouncementTime(value string) (time.Time, bool) {
+	if value == "" {
+		return time.Time{}, true
+	}
+	parsed, err := time.Parse(time.RFC3339, value)
+	return parsed, err == nil
+}
+
+func announcementIsActive(row map[string]any, now time.Time) bool {
+	if !announcementStatusAllowed(stringValue(row["status"]), []string{"scheduled", "published"}) {
+		return false
+	}
+	startsAt, startsOK := optionalAnnouncementTime(stringValue(row["startsAt"]))
+	endsAt, endsOK := optionalAnnouncementTime(stringValue(row["endsAt"]))
+	return startsOK && endsOK && (startsAt.IsZero() || !startsAt.After(now)) && (endsAt.IsZero() || endsAt.After(now))
+}
+
+func announcementReplay(audit map[string]any, mutation announcementMutation) (map[string]any, error) {
+	if audit == nil {
+		return nil, nil
+	}
+	after := mapField(audit, "after")
+	announcement := mapField(after, "announcement")
+	if stringValue(after["requestHash"]) != mutation.RequestHash || stringValue(audit["action"]) != stringValue(mutation.AuditEvent["action"]) ||
+		stringValue(audit["resourceId"]) != mutation.AnnouncementID || stringValue(announcement["id"]) != mutation.AnnouncementID {
+		return nil, errIdempotencyConflict
+	}
+	return announcement, nil
+}
+
+func announcementAudit(mutation announcementMutation, before, after map[string]any) map[string]any {
+	audit := cloneMap(mutation.AuditEvent)
+	audit["before"] = cloneMap(before)
+	audit["after"] = map[string]any{"requestHash": mutation.RequestHash, "announcement": cloneMap(after)}
+	return audit
+}
+
+func announcementReadID(announcementID, userID string) string {
+	return "announcement-read-" + stableID(announcementID, userID)[:18]
 }
 
 func decodeWorkspaceCreateOperation(operation map[string]any) (workspaceCreateOperationResult, error) {
@@ -78,19 +175,6 @@ func workspaceCreateClaimCompatible(current, claim workspaceCreateOperationResul
 		persistedBillingState != nil && claimBillingState != nil &&
 		workspaceCreateProjectionCompatible(persisted, current.Workspace, claimBillingState, true) &&
 		workspaceCreateProjectionCompatible(persisted, claim.Workspace, claimBillingState, true)
-}
-
-func decodeWorkspaceGatewaySecretOperation(operation map[string]any) (workspaceGatewaySecretOperationResult, error) {
-	var result workspaceGatewaySecretOperationResult
-	if err := json.Unmarshal([]byte(stringValue(operation["result"])), &result); err != nil || result.RequestHash == "" || result.SecretRef == "" || result.Fingerprint == "" {
-		return workspaceGatewaySecretOperationResult{}, errors.New("invalid_workspace_gateway_secret_operation")
-	}
-	return result, nil
-}
-
-func encodeWorkspaceGatewaySecretOperation(result workspaceGatewaySecretOperationResult) string {
-	payload, _ := json.Marshal(result)
-	return string(payload)
 }
 
 func decodeWorkspaceResumeOperation(operation map[string]any) (workspaceResumeOperationResult, error) {
@@ -135,7 +219,10 @@ type controlPlaneTableStore interface {
 	DeleteAttachment(ctx context.Context, id string) error
 	ListWorkspaces(ctx context.Context, accountID string) ([]map[string]any, error)
 	SaveWorkspace(ctx context.Context, row map[string]any) error
+	CompareAndSwapWorkspaceAPIKey(ctx context.Context, workspaceID string, expectedID, newID int64) error
 	ApplyWorkspaceRenewalIntent(ctx context.Context, update workspaceRenewalIntentCAS) error
+	ClaimWorkspaceLaunch(ctx context.Context, claim workspaceLaunchClaimCAS) error
+	PersistWorkspaceLaunch(ctx context.Context, update workspaceLaunchPersistCAS) error
 	ClaimWorkspaceRenewal(ctx context.Context, claim workspaceRenewalClaimCAS) error
 	PersistWorkspaceRenewal(ctx context.Context, update workspaceRenewalPersistCAS) error
 	ActivateWorkspace(ctx context.Context, row map[string]any) (map[string]any, error)
@@ -149,6 +236,10 @@ type controlPlaneTableStore interface {
 
 	ListAuditEvents(ctx context.Context, accountID string) ([]map[string]any, error)
 	SaveAuditEvent(ctx context.Context, row map[string]any) error
+	ListAnnouncements(ctx context.Context) ([]map[string]any, error)
+	ApplyAnnouncementMutation(ctx context.Context, mutation announcementMutation) (map[string]any, error)
+	ListAnnouncementReads(ctx context.Context, userID string) ([]map[string]any, error)
+	MarkAnnouncementRead(ctx context.Context, announcementID, userID, readAt string) (map[string]any, error)
 	ListSupportMappings(ctx context.Context, accountID string) ([]map[string]any, error)
 	SaveSupportMapping(ctx context.Context, row map[string]any) error
 	ListRuntimeOperations(ctx context.Context) ([]map[string]any, error)
@@ -168,19 +259,15 @@ func prepareWorkspaceActivation(row, owner, compute, storage, attachment, existi
 	state := workspaceAcceptedBillingState(row)
 	accountID, ownerID, workspaceID := firstNonEmpty(stringValue(row["accountId"]), stringValue(row["ownerAccountId"])), stringValue(row["ownerUserId"]), stringValue(row["id"])
 	computeID, storageID, attachmentID := stringValue(row["currentComputeAllocationId"]), stringValue(row["storageId"]), stringValue(row["currentAttachmentId"])
-	paidThrough, paidErr := time.Parse(time.RFC3339, stringValue(state["paidThrough"]))
-	computePaidThrough, computePaidErr := time.Parse(time.RFC3339, stringValue(compute["paidThrough"]))
-	storagePaidThrough, storagePaidErr := time.Parse(time.RFC3339, stringValue(storage["paidThrough"]))
 	if state == nil || accountID == "" || ownerID == "" || workspaceID == "" || computeID == "" || storageID == "" || attachmentID == "" ||
 		stringValue(compute["id"]) != computeID || stringValue(storage["id"]) != storageID || stringValue(attachment["id"]) != attachmentID ||
 		stringValue(compute["accountId"]) != accountID || stringValue(storage["accountId"]) != accountID || stringValue(attachment["accountId"]) != accountID ||
 		stringValue(compute["ownerUserId"]) != ownerID || stringValue(storage["ownerUserId"]) != ownerID ||
 		stringValue(compute["workspaceId"]) != workspaceID || stringValue(storage["workspaceId"]) != workspaceID || stringValue(attachment["workspaceId"]) != workspaceID ||
-		stringValue(compute["billingStatus"]) != "active" || stringValue(storage["billingStatus"]) != "active" ||
 		!workspaceActivationStatus(stringValue(compute["status"]), "compute") || !workspaceActivationStatus(stringValue(storage["status"]), "storage") || !workspaceActivationStatus(stringValue(attachment["status"]), "attachment") ||
 		firstNonEmpty(stringValue(attachment["computeAllocationId"]), stringValue(attachment["computeId"])) != computeID ||
 		firstNonEmpty(stringValue(attachment["storageId"]), stringValue(attachment["volumeId"])) != storageID ||
-		paidErr != nil || computePaidErr != nil || storagePaidErr != nil || computePaidThrough.Before(paidThrough) || storagePaidThrough.Before(paidThrough) {
+		!workspaceResourceCoversEntitlement("compute", compute, state) || !workspaceResourceCoversEntitlement("storage", storage, state) {
 		return nil, errWorkspaceActivationConflict
 	}
 	if stringValue(owner["id"]) != ownerID || stringValue(owner["accountId"]) != accountID || stringValue(owner["status"]) != "active" || stringValue(owner["role"]) != "owner" {
@@ -191,6 +278,30 @@ func prepareWorkspaceActivation(row, owner, compute, storage, attachment, existi
 		return nil, errWorkspaceActivationConflict
 	}
 	return row, nil
+}
+
+func workspaceResourceCoversEntitlement(resourceType string, resource, state map[string]any) bool {
+	paidThrough, paidErr := time.Parse(time.RFC3339, stringValue(state["paidThrough"]))
+	if paidErr != nil {
+		return false
+	}
+	if stringValue(resource["billingStatus"]) == "active" {
+		resourcePaidThrough, err := time.Parse(time.RFC3339, stringValue(resource["paidThrough"]))
+		return err == nil && !resourcePaidThrough.Before(paidThrough)
+	}
+	for _, key := range []string{"billingOperationId", "sub2apiRedeemCode", "chargeUsdMicros", "priceVersion", "periodStart", "paidThrough"} {
+		if _, exists := resource[key]; exists {
+			return false
+		}
+	}
+	expected := map[string]any{
+		"packageId": state["packageId"], "periodStart": state["periodStart"], "paidThrough": state["paidThrough"],
+		"zone": firstNonEmpty(stringValue(resource["zone"]), providerDataValue(resource, "zone")),
+	}
+	if resourceType == "storage" {
+		expected["sizeGb"] = state["storageGb"]
+	}
+	return monthlyPurchaseReadbackConfirmed(resourceType, expected, resource)
 }
 
 func workspaceActivationStatus(status, kind string) bool {

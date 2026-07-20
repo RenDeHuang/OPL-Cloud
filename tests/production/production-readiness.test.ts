@@ -150,6 +150,16 @@ test("productionReadiness requires Tencent Go SDK mutation inputs for live compu
   assert.ok(report.failedChecks.includes("provider_env"));
 });
 
+test("productionReadiness rejects release verification mutation authority", async () => {
+  const report = await productionReadiness({
+    env: { ...tkeProductionEnv, OPL_VERIFY_MUTATION_APPROVAL_JSON: "{}" },
+    commandExists: (command) => command === "kubectl" || command === "/usr/local/bin/opl-tencent-provisioner"
+  });
+
+  assert.equal(report.ready, false);
+  assert.ok(report.failedChecks.includes("live_mutation_guard"));
+});
+
 test("productionReadiness rejects a blank service-side launch zone", async () => {
   const report = await productionReadiness({
     env: { ...tkeProductionEnv, OPL_TENCENT_ZONE: "   " },

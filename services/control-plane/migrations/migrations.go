@@ -28,6 +28,12 @@ var autoRenewAudit string
 //go:embed 202607180001_customer_identity_hard_cut.sql
 var customerIdentityHardCut string
 
+//go:embed 202607190001_workspace_api_key_id.sql
+var workspaceAPIKeyID string
+
+//go:embed 202607190002_pilot_announcements.sql
+var pilotAnnouncements string
+
 func Apply(ctx context.Context, driver dialect.Driver) error {
 	return driver.Exec(ctx, monthlyHardCut, []any{}, nil)
 }
@@ -78,4 +84,12 @@ func ApplyCustomerIdentityHardCut(ctx context.Context, driver dialect.Driver) er
 		return err
 	}
 	return tx.Commit()
+}
+
+func ApplyWorkspaceAPIKeyID(ctx context.Context, driver dialect.Driver) error {
+	return driver.Exec(ctx, workspaceAPIKeyID, []any{}, nil)
+}
+
+func ApplyPilotAnnouncements(ctx context.Context, driver dialect.Driver) error {
+	return driver.Exec(ctx, pilotAnnouncements, []any{}, nil)
 }

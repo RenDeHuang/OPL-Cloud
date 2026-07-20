@@ -540,7 +540,7 @@ func continuationFromReceipt(receipt Receipt) (map[string]any, error) {
 }
 
 func validateReceiptInput(input ReceiptInput) error {
-	if input.Type == "" || input.Status == "" || input.Surface == "" || input.WorkspaceID == "" || input.IdempotencyKey == "" {
+	if input.Type == "" || input.Status == "" || input.Surface == "" || input.IdempotencyKey == "" || input.WorkspaceID == "" && input.Type != "gateway.wallet_adjustment.v1" {
 		return ErrInvalidReceiptInput
 	}
 	if (input.ContinuationID != "" || len(input.Continuation) > 0) && !validExecutionIdentity(executionIdentityFromReceipt(Receipt{ReceiptInput: input})) {
@@ -552,16 +552,60 @@ func validateReceiptInput(input ReceiptInput) error {
 		switch input.Type {
 		case "billing.resource_purchased.v1", "billing.resource_renewed.v1", "billing.resource_expired.v1", "billing.resource_refunded.v1", "billing.charge_review_required.v1", "billing.reconciliation.v1":
 			billingCostValid = validBillingCost(input.Cost)
-		case "billing.workspace_renewed.v1", "billing.workspace_expired.v1", "billing.workspace_refunded.v1":
+		case "billing.workspace_purchased.v1", "billing.workspace_renewed.v1", "billing.workspace_expired.v1", "billing.workspace_refunded.v1":
 			billingCostValid = validWorkspaceBillingCost(input.Cost, input.Type) && input.Cost["resourceId"] == input.WorkspaceID
 		default:
 			billingCostValid = false
 		}
 	}
-	if !allowedStatus[input.Status] || containsForbiddenReceiptKey(input) || !billingCostValid {
+	rotationEvidenceValid := input.Type != "workspace.gateway_key_rotated.v1" || validWorkspaceGatewayKeyRotationReceipt(input)
+	walletAdjustmentValid := input.Type != "gateway.wallet_adjustment.v1" || validWalletAdjustmentReceipt(input)
+	if !allowedStatus[input.Status] || containsForbiddenReceiptKey(input) || !billingCostValid || !rotationEvidenceValid || !walletAdjustmentValid {
 		return ErrInvalidReceiptInput
 	}
 	return nil
+}
+
+func validWalletAdjustmentReceipt(input ReceiptInput) bool {
+	if input.Status != "completed" || input.Surface != "control_plane" || input.AccountID == "" || input.WorkspaceID != "" ||
+		input.OrganizationID != "" || input.ProjectID != "" || input.TaskID != "" || input.ApprovalID != "" || input.JobID != "" ||
+		input.ArtifactID != "" || input.ReviewID != "" || input.ContinuationID != "" || input.SupersedesReceiptID != "" || input.RequestID == "" ||
+		len(input.Actor) != 1 || len(input.Execution) != 3 || len(input.Owner) != 1 || len(input.Plan) != 0 || len(input.Environment) != 0 ||
+		len(input.OutputRefs) != 0 || len(input.ReviewerChecks) != 0 || len(input.Cost) != 0 || len(input.Continuation) != 0 {
+		return false
+	}
+	operationID, operationOK := input.Execution["operationId"].(string)
+	kind, kindOK := input.Execution["kind"].(string)
+	amount, amountOK := integerValue(input.Execution["amountUsdMicros"])
+	actor, actorOK := input.Actor["userId"].(string)
+	owner, ownerOK := input.Owner["accountId"].(string)
+	historyRef, historyOK := input.InputRefs["balanceHistoryRef"].(string)
+	if !operationOK || !isOpaqueReference(operationID) || input.RequestID != operationID || !kindOK || amount <= 0 || !amountOK ||
+		!actorOK || !isOpaqueReference(actor) || !ownerOK || owner != input.AccountID || !historyOK || !isOpaqueReference(historyRef) {
+		return false
+	}
+	related, hasRelated := input.InputRefs["relatedOperationId"].(string)
+	switch kind {
+	case "recharge", "debit":
+		return len(input.InputRefs) == 1 && !hasRelated
+	case "business_refund":
+		return len(input.InputRefs) == 2 && hasRelated && isOpaqueReference(related)
+	default:
+		return false
+	}
+}
+
+func validWorkspaceGatewayKeyRotationReceipt(input ReceiptInput) bool {
+	if input.Status != "completed" || input.Surface != "control_plane" || input.AccountID == "" || len(input.Execution) != 3 || len(input.OutputRefs) != 1 || len(input.Owner) != 1 {
+		return false
+	}
+	operationID, operationOK := input.Execution["operationId"].(string)
+	oldKeyID, oldOK := integerValue(input.Execution["oldKeyId"])
+	newKeyID, newOK := integerValue(input.Execution["newKeyId"])
+	fingerprint, fingerprintOK := input.OutputRefs["secretFingerprint"].(string)
+	ownerID, ownerOK := input.Owner["userId"].(string)
+	return operationOK && strings.TrimSpace(operationID) != "" && oldOK && newOK && oldKeyID > 0 && newKeyID > 0 && oldKeyID != newKeyID &&
+		fingerprintOK && strings.TrimSpace(fingerprint) != "" && ownerOK && strings.TrimSpace(ownerID) != ""
 }
 
 func containsForbiddenReceiptKey(value any) bool {
@@ -632,9 +676,10 @@ func validBillingCost(cost map[string]any) bool {
 
 func validWorkspaceBillingCost(cost map[string]any, receiptType string) bool {
 	wantFields := map[string]int{
-		"billing.workspace_renewed.v1":  12,
-		"billing.workspace_expired.v1":  9,
-		"billing.workspace_refunded.v1": 13,
+		"billing.workspace_purchased.v1": 12,
+		"billing.workspace_renewed.v1":   12,
+		"billing.workspace_expired.v1":   9,
+		"billing.workspace_refunded.v1":  13,
 	}[receiptType]
 	if len(cost) != wantFields || cost["currency"] != "USD" || cost["billingUnit"] != "calendar_month" || cost["resourceType"] != "workspace" {
 		return false
@@ -682,7 +727,7 @@ func validWorkspaceBillingCost(cost map[string]any, receiptType string) bool {
 	if !userOK || userID <= 0 || !redeemOK || !isOpaqueReference(redeemCode) {
 		return false
 	}
-	if receiptType == "billing.workspace_renewed.v1" {
+	if receiptType == "billing.workspace_purchased.v1" || receiptType == "billing.workspace_renewed.v1" {
 		postCharge, ok := integerValue(cost["postChargeBalanceUsdMicros"])
 		return ok && postCharge >= 0
 	}

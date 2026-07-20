@@ -26,6 +26,10 @@ on:
         description: Maximum approved combined provider quote in CNY.
         required: true
         type: number
+      approval_id:
+        description: Owner approval ID matching the protected mutation manifest.
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -65,7 +69,9 @@ jobs:
       - name: Run one-time Provider Acceptance
         env:
           OPL_PROVIDER_ACCEPTANCE_TOKEN: ${{ secrets.OPL_PROVIDER_ACCEPTANCE_TOKEN }}
-        run: node tools/provider-acceptance.ts
+          OPL_VERIFY_MUTATION_APPROVAL_JSON: ${{ secrets.OPL_VERIFY_MUTATION_APPROVAL_JSON }}
+          OPL_VERIFY_MUTATION_APPROVAL_ID: ${{ inputs.approval_id }}
+        run: node tools/provider-acceptance.ts --allow-gateway-write --allow-provider-write --approval-id "$OPL_VERIFY_MUTATION_APPROVAL_ID"
 
       - name: Upload Provider Acceptance manifest
         if: always()

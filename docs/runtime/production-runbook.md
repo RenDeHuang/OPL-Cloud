@@ -18,7 +18,8 @@ npm run validate:production-manifest -- \
 
 - PostgreSQL `DATABASE_URL`;
 - Sub2API admin credentials whose live identity is `admin@medopl.cn`;
-- `OPL_SUB2API_BASE_URL`, request timeout, and the required read-only capability inventory;
+- server-only `OPL_SUB2API_BASE_URL`, request timeout, and the required capability inventory;
+- `OPL_GATEWAY_PUBLIC_BASE_URL`, which must be valid HTTPS in production;
 - TKE kubeconfig, namespace, domains, TLS, storage class, and image-pull secret;
 - OPL Cloud and Workspace image references;
 - Tencent mutation credentials, region, cluster, subnet, and security groups;
@@ -28,6 +29,10 @@ Secrets must be GitHub/Kubernetes secrets. Customer Workspace Gateway Keys are
 account-scoped Kubernetes Secrets written by Fabric, not a global deployment
 environment variable. Never place credentials in the manifest, command
 arguments, logs, or verifier artifacts.
+
+`GET /api/gateway/endpoint` returns only `OPL_GATEWAY_PUBLIC_BASE_URL`. A missing
+or invalid production value is unavailable. Never expose or fall back to
+`OPL_SUB2API_BASE_URL` or a hard-coded public host.
 
 `OPL_CONSOLE_USERS_JSON` is retired and any non-empty value makes Control Plane
 startup fail closed. The deploy workflow and manifest no longer install that
@@ -192,6 +197,15 @@ actions. Repository tests cannot establish that they happened; retain console
 screenshots or exported metric evidence in the operations system, not in Git.
 
 ## Single-Pod Capacity Gate
+
+The final local code-complete gate is machine checked. Node TAP output must
+contain exactly one zero-skipped summary. Go suites run with `-json`, and any
+event with `Action=skip` fails the command. Every PostgreSQL suite sets
+`OPL_POSTGRES_TESTS=1`; a claimed zero-SKIP Control Plane full run also sets
+`OPL_CAPACITY_TESTS=1`. If the capacity suite cannot run, cancel the global
+zero-SKIP/code-complete claim rather than downgrading it manually. The exact
+stdlib-only parsers and commands live in section 8.1 of the current Pilot V2
+implementation plan.
 
 Run the opt-in load test against a local or isolated PostgreSQL instance. It uses
 fake Sub2API, Fabric, and Ledger clients and never creates cloud resources or a
@@ -372,6 +386,22 @@ digest or timeout is a failed rollout.
 Do not run the legacy paid verifier. The replacement is code-complete and
 fake-tested, but no real Provider Acceptance or live-QA run is authorized by
 this document.
+
+The only commands authorized without a new owner approval are read-only:
+
+```bash
+node tools/production-verifier.ts --read-only
+node tools/production-live-qa.ts --read-only
+node tools/provider-acceptance.ts --read-only
+```
+
+Ordinary CI, release, E2E, deployment manifests, and deployed runtime
+environments must not carry `OPL_VERIFY_MUTATION_APPROVAL_JSON`, an approval ID,
+or Gateway/model/provider write allow flags. The current Provider Acceptance and
+post-rollout model-QA workflow wiring intentionally omits that authority and
+therefore fails before network access. Enabling either write path requires a
+separately approved change binding one unexpired approval ID to exact account,
+Workspace, and resource allowlists; this runbook does not provide such a command.
 
 Provider Acceptance separately creates or adopts these retained non-customer
 slots after read-only inventory and explicit approval:

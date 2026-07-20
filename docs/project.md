@@ -7,8 +7,8 @@ This repository implements the OPL Cloud product defined by
 ## Owned Here
 
 - Console UI and its runtime route registry.
-- Control Plane auth, account mapping, organizations, Workspaces, monthly
-  entitlement, purchase recovery, support, and product projections.
+- Control Plane Sessions, account mapping, permissions, named product DTOs,
+  Workspace state machines, purchase recovery, support, and product projections.
 - Fabric resource catalog, Tencent CVM/CBS, attachments, runtime operations,
   provider evidence, content transfer, and snapshot boundary.
 - Ledger receipts, reviews, artifacts, audit, retention, continuation, and
@@ -17,15 +17,18 @@ This repository implements the OPL Cloud product defined by
 
 ## External
 
-- Sub2API at `gflabtoken.cn`: balance, API keys, model routing, and request usage.
+- Sub2API, reached only through the server-only configured management origin:
+  spendable balance, API keys, models, routing, and request usage.
 - `one-person-lab-app`: Workspace WebUI image and behavior.
 - `one-person-lab`: framework and CLI behavior.
 - Tencent Cloud: provider resources and internal cost.
 
 ## Explicit Non-Goals
 
-- a second Gateway service or database in this repository;
-- Sub2API key CRUD, request-usage sync, or identity mirroring;
+- a second Gateway, wallet, Key store, Usage store, or billing-fact database;
+- direct browser access to `OPL_SUB2API_BASE_URL` or fallback from
+  `OPL_GATEWAY_PUBLIC_BASE_URL` to an internal/default host;
+- identity mirroring beyond the one authoritative external-account mapping;
 - generic downstream proxy routes in Control Plane;
 - organization resource pools beyond account ownership and shared Workspace URLs;
 - compatibility code for the deleted commercial model;

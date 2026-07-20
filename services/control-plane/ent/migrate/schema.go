@@ -49,6 +49,41 @@ var (
 		Columns:    ControlPlaneAdminAuditEventsColumns,
 		PrimaryKey: []*schema.Column{ControlPlaneAdminAuditEventsColumns[0]},
 	}
+	// ControlPlaneAnnouncementsColumns holds the columns for the "control_plane_announcements" table.
+	ControlPlaneAnnouncementsColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeString, Unique: true},
+		{Name: "created_at", Type: field.TypeTime},
+		{Name: "updated_at", Type: field.TypeTime},
+		{Name: "title", Type: field.TypeString},
+		{Name: "body", Type: field.TypeString},
+		{Name: "status", Type: field.TypeString, Default: "draft"},
+		{Name: "starts_at", Type: field.TypeString, Default: ""},
+		{Name: "ends_at", Type: field.TypeString, Default: ""},
+		{Name: "published_at", Type: field.TypeString, Default: ""},
+		{Name: "created_by_user_id", Type: field.TypeString},
+		{Name: "updated_by_user_id", Type: field.TypeString},
+	}
+	// ControlPlaneAnnouncementsTable holds the schema information for the "control_plane_announcements" table.
+	ControlPlaneAnnouncementsTable = &schema.Table{
+		Name:       "control_plane_announcements",
+		Columns:    ControlPlaneAnnouncementsColumns,
+		PrimaryKey: []*schema.Column{ControlPlaneAnnouncementsColumns[0]},
+	}
+	// ControlPlaneAnnouncementReadsColumns holds the columns for the "control_plane_announcement_reads" table.
+	ControlPlaneAnnouncementReadsColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeString, Unique: true},
+		{Name: "created_at", Type: field.TypeTime},
+		{Name: "updated_at", Type: field.TypeTime},
+		{Name: "announcement_id", Type: field.TypeString},
+		{Name: "user_id", Type: field.TypeString},
+		{Name: "read_at", Type: field.TypeString},
+	}
+	// ControlPlaneAnnouncementReadsTable holds the schema information for the "control_plane_announcement_reads" table.
+	ControlPlaneAnnouncementReadsTable = &schema.Table{
+		Name:       "control_plane_announcement_reads",
+		Columns:    ControlPlaneAnnouncementReadsColumns,
+		PrimaryKey: []*schema.Column{ControlPlaneAnnouncementReadsColumns[0]},
+	}
 	// ControlPlaneArchiveJobsColumns holds the columns for the "control_plane_archive_jobs" table.
 	ControlPlaneArchiveJobsColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeString, Unique: true},
@@ -514,6 +549,7 @@ var (
 		{Name: "runtime_service_name", Type: field.TypeString, Default: ""},
 		{Name: "runtime_service_name_root", Type: field.TypeString, Default: ""},
 		{Name: "service_name", Type: field.TypeString, Default: ""},
+		{Name: "workspace_api_key_id", Type: field.TypeInt64, Nullable: true},
 		{Name: "access_token_status", Type: field.TypeString, Default: ""},
 		{Name: "access_account", Type: field.TypeString, Default: ""},
 		{Name: "access_username", Type: field.TypeString, Default: ""},
@@ -619,6 +655,8 @@ var (
 	Tables = []*schema.Table{
 		ControlPlaneAccountsTable,
 		ControlPlaneAdminAuditEventsTable,
+		ControlPlaneAnnouncementsTable,
+		ControlPlaneAnnouncementReadsTable,
 		ControlPlaneArchiveJobsTable,
 		ControlPlaneArchivedAdminAuditEventsTable,
 		ControlPlaneArchivedComputeAllocationsTable,
@@ -651,6 +689,12 @@ func init() {
 	}
 	ControlPlaneAdminAuditEventsTable.Annotation = &entsql.Annotation{
 		Table: "control_plane_admin_audit_events",
+	}
+	ControlPlaneAnnouncementsTable.Annotation = &entsql.Annotation{
+		Table: "control_plane_announcements",
+	}
+	ControlPlaneAnnouncementReadsTable.Annotation = &entsql.Annotation{
+		Table: "control_plane_announcement_reads",
 	}
 	ControlPlaneArchiveJobsTable.Annotation = &entsql.Annotation{
 		Table: "control_plane_archive_jobs",

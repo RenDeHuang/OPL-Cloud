@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "owner": "OPL Cloud",
   "purpose": "Product layer, Workspace mapping, access, package, Fabric catalog, and production handoff contract.",
   "state": "current",
@@ -41,10 +41,20 @@
     "autoRenewDefault": false,
     "autoRenewCustomerControl": "hidden_until_real_renewal_evidence"
   },
+  "publicEntryPoints": {
+    "homeLoginLogo": "unchanged",
+    "regressionRequired": ["desktop", "mobile"]
+  },
   "access": {
     "urlPattern": "https://workspace.medopl.cn/w/<workspaceId>/",
     "mode": "runtime_password",
-    "requiresLogin": true
+    "requiresLogin": true,
+    "workspaceQuestions": ["url", "username", "passwordRevealCopy", "workspaceKeyRevealCopy"]
+  },
+  "workspaceRuntimeFacts": {
+    "fileMetadataAuthority": "workspace_runtime_projects_mount",
+    "filesystemUsageAuthority": "workspace_runtime_statfs",
+    "persistence": "none"
   },
   "defaultPackages": [
     {

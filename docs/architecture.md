@@ -20,9 +20,10 @@ outside this repository's mutation boundary.
 | Console area | Authority | Control Plane projection |
 | --- | --- | --- |
 | Signed-in identity | Sub2API identity plus local Session mapping | `/api/auth/me` |
-| Wallet, Keys, Usage, Usage Stats, balance history | live Sub2API JSON APIs | granular `/api/gateway/*` source DTOs |
+| Wallet, owned Keys, per-Key Usage, account aggregate, balance history | live Sub2API JSON APIs | granular `/api/gateway/*` source DTOs |
 | Workspace and renewal state | Control Plane Workspace row | `/api/workspaces` and launch/renewal DTOs |
-| Runtime readiness | live Fabric/Kubernetes readback | `/api/workspaces/runtime-status` |
+| Runtime readiness | live Fabric/Kubernetes readback | `/api/workspaces/{workspaceId}/runtime-status` |
+| `/projects` metadata and mounted usage | live Workspace Runtime readback | Workspace-scoped file/usage DTOs; never persisted |
 | Billing receipts | live Ledger readback | `/api/billing/receipts` |
 
 Each source returns `source`, `status`, `available`, and `fetchedAt`. A successful
@@ -31,6 +32,16 @@ invented zero, empty collection, success state, or stale data. `sourceUpdatedAt`
 is omitted unless the authority supplies it. Browser identity parameters never
 override the current Session mapping, and raw downstream DTOs never cross the
 Control Plane boundary.
+
+The browser-visible Gateway address is an independent product configuration:
+`OPL_GATEWAY_PUBLIC_BASE_URL` -> `GET /api/gateway/endpoint`. Production accepts
+only an absolute HTTPS URL. Missing or invalid configuration is unavailable and
+never falls back to the internal `OPL_SUB2API_BASE_URL` or `gflabtoken.cn`.
+
+`code-complete` means the local contracts, code, PostgreSQL, browser, and
+structure gates pass on one revision. `pilot-ready` additionally requires
+approved real service/resource evidence. `production-proven` requires the same
+immutable revision deployed and authoritatively read back in production.
 
 ## Service Ownership
 
@@ -115,18 +126,23 @@ Key and hands it transiently to Fabric; Fabric writes or rotates an account-scop
 Kubernetes Secret and records only its ref, version, and fingerprint.
 Ordinary runtime status is non-secret. Dedicated owner-only POST commands reveal
 or rotate the password transiently; Control Plane never persists it, and Console
-retains it only in Workspace detail component memory. The source image is pinned
-`ghcr.io/gaofeng21cn/one-person-lab-webui:26.7.13` at digest
-`sha256:9d867fe0fc9db48b6efa27371d77770e46fc8cd97d26ef85a81fbdac7e96ca76`,
-mirrors it to TCR, and production manifests accept only a target
-`repository@sha256`. Ready-Pod `imageID` verification is code-complete; deployment
-of the current exact digests remains pending.
+retains it only in Workspace detail component memory. A Workspace image candidate
+combines an exact `one-person-lab-app` commit with an exact `opl-aion-shell` commit;
+both must be full 40-character SHAs already merged into their respective `main`.
+The active-shell candidate is
+`13ae5d1410e1a4349c14dc76e7c3446ff200cfdb`; the App candidate remains pending its
+integration commit. The release workflow checks out both detached, runs the existing
+`ensure:shell`, builds the active shell context into TCR, and reads back the immutable
+digest. Production manifests accept only the resulting target `repository@sha256`.
+The immutable TCR digest and Ready-Pod `imageID` are both pending real readback; no
+placeholder or local timestamp counts as publication or deployment evidence.
 
 This is a real exception to the Control Plane product-command boundary: it
 carries Workspace HTML, API, and WebSocket data-plane traffic. The available
 evidence does not prove an unauthenticated data disclosure; the inspected
-runtime source retains password authentication. The mutable production image
-tag prevents extending the source finding to an exact deployed revision.
+runtime source retains password authentication. Until the App candidate, published
+digest, and Ready-Pod `imageID` exist, that source finding cannot be extended to an
+exact deployed revision.
 Control Plane availability is coupled to every Workspace connection, and a
 2xx/non-empty-page check can pass on the login page without proving an
 authenticated Workspace session.
@@ -153,6 +169,10 @@ ConfigMap, and the deploy workflow waits for all three rollouts. Basic and Pro
 have separate retained Provider Acceptance slots. An ordinary release requires
 both slots, then runs live QA once with the Basic reserved account, one dedicated
 Key, one model request, and zero Tencent mutation.
+
+Image publication accepts a full 40-character Cloud commit only. The release
+workflow reads back the exact checked-out HEAD and official Cloud `origin/main`,
+then requires the candidate to be contained in that main history before building.
 
 Control Plane remains one Pod. Existing load evidence covers request concurrency
 and replay, but its historical per-resource renewal scan is not proof of the

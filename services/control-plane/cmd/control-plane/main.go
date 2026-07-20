@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -44,7 +45,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	handler, err := controlserver.NewPersistentServer(service, store)
+	handler, err := controlserver.NewPersistentServerWithGatewayPublicBaseURL(service, store, gatewayPublicBaseURLFromEnv(os.Getenv))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -52,6 +53,23 @@ func main() {
 	if err := newHTTPServer(addr, handler).ListenAndServe(); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func gatewayPublicBaseURLFromEnv(getenv func(string) string) string {
+	raw := strings.TrimRight(strings.TrimSpace(getenv("OPL_GATEWAY_PUBLIC_BASE_URL")), "/")
+	parsed, err := url.Parse(raw)
+	if raw == "" || err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.Opaque != "" {
+		return ""
+	}
+	if getenv("NODE_ENV") == "production" && parsed.Scheme != "https" {
+		return ""
+	}
+	hostname := strings.ToLower(parsed.Hostname())
+	internal, _ := url.Parse(strings.TrimSpace(getenv("OPL_SUB2API_BASE_URL")))
+	if hostname == "gflabtoken.cn" || strings.HasSuffix(hostname, ".gflabtoken.cn") || internal != nil && strings.EqualFold(hostname, internal.Hostname()) {
+		return ""
+	}
+	return raw
 }
 
 func newHTTPServer(addr string, handler http.Handler) *http.Server {

@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 3,
+  "schemaVersion": 4,
   "owner": "OPL Fabric",
   "purpose": "Expose productized resource choices to OPL Console without making Console own cloud resource inventory.",
   "state": "current",
@@ -23,6 +23,10 @@
     "pro"
   ],
   "availabilityAuthority": "GET /fabric/catalog workspacePackages[].available",
+  "pilotV2": {
+    "computeAndStorageRole": "workspace_fulfillment_only",
+    "customerChargeAuthority": false
+  },
   "readinessSurface": {
     "endpoint": "GET /api/runtime/readiness",
     "field": "resourceCatalog"

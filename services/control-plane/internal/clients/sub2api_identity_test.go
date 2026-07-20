@@ -445,7 +445,7 @@ func TestSub2APIIdentityReadbackAcceptsAccessOnlyAdminToken(t *testing.T) {
 	}
 }
 
-func TestSub2APIIdentityAuthenticateStrictlyProjectsIdentityAndDropsTokens(t *testing.T) {
+func TestAuthenticateUserReturnsDelegatedCredential(t *testing.T) {
 	client := newSub2APITestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/v1/auth/login" || r.Method != http.MethodPost {
 			t.Fatalf("unexpected request %s %s", r.Method, r.URL.String())
@@ -463,14 +463,17 @@ func TestSub2APIIdentityAuthenticateStrictlyProjectsIdentityAndDropsTokens(t *te
 		})
 	}, time.Second)
 
-	identity, err := client.AuthenticateUser(context.Background(), " Owner@Example.com ", "new remote password")
-	if err != nil || identity != (Sub2APIIdentity{ID: 41, Email: "owner@example.com", Status: "active"}) {
-		t.Fatalf("identity=%#v err=%v", identity, err)
+	authentication, err := client.AuthenticateUser(context.Background(), " Owner@Example.com ", "new remote password")
+	if err != nil {
+		t.Fatal(err)
 	}
-	encoded, _ := json.Marshal(identity)
+	if authentication.Identity != (Sub2APIIdentity{ID: 41, Email: "owner@example.com", Status: "active"}) || authentication.AccessToken != "customer-access-secret" {
+		t.Fatalf("authentication=%#v", authentication)
+	}
+	encoded, _ := json.Marshal(authentication)
 	for _, secret := range []string{"customer-access-secret", "customer-refresh-secret", "balance"} {
 		if strings.Contains(string(encoded), secret) {
-			t.Fatalf("identity leaked %q: %s", secret, encoded)
+			t.Fatalf("authentication leaked %q: %s", secret, encoded)
 		}
 	}
 }
@@ -486,9 +489,9 @@ func TestSub2APIIdentityAuthenticateAcceptsAccessOnlyResponse(t *testing.T) {
 		})
 	}, time.Second)
 
-	identity, err := client.AuthenticateUser(context.Background(), "owner@example.com", "remote password")
-	if err != nil || identity != (Sub2APIIdentity{ID: 41, Email: "owner@example.com", Status: "active"}) {
-		t.Fatalf("identity=%#v err=%v", identity, err)
+	authentication, err := client.AuthenticateUser(context.Background(), "owner@example.com", "remote password")
+	if err != nil || authentication.Identity != (Sub2APIIdentity{ID: 41, Email: "owner@example.com", Status: "active"}) || authentication.AccessToken != "customer-access-secret" {
+		t.Fatalf("authentication=%#v err=%v", authentication, err)
 	}
 }
 

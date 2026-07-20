@@ -1,10 +1,11 @@
-import type { GatewayKeyReveal, GatewayWallet, ReadinessFact, WorkspaceRuntimeStatus } from "./api/dtos.ts";
+import type { GatewayKeySecretDTO, GatewayWallet, ReadinessFact, WorkspaceRuntimeDTO } from "./api/dtos.ts";
 
 export const customerMenu = Object.freeze([
   { id: "overview", label: "概览", path: "/console/overview", icon: "LayoutDashboard" },
   { id: "workspace", label: "Workspace", path: "/console/workspace", icon: "Database" },
   { id: "api", label: "API 服务", path: "/console/api", icon: "Server" },
-  { id: "billing", label: "账单", path: "/console/billing", icon: "ReceiptText" }
+  { id: "billing", label: "账单", path: "/console/billing", icon: "ReceiptText" },
+  { id: "announcements", label: "公告", path: "/console/announcements", icon: "Megaphone" }
 ]);
 
 export const apiMenu = Object.freeze([
@@ -59,7 +60,7 @@ export function formatDate(value: unknown, includeTime = false): string {
     : { year: "numeric", month: "2-digit", day: "2-digit" }).format(date);
 }
 
-export function workspaceStatusLabel(runtime: Partial<WorkspaceRuntimeStatus> = {}): string {
+export function workspaceStatusLabel(runtime: Partial<WorkspaceRuntimeDTO> = {}): string {
   if (runtime.status === "running" && runtime.ready === true) return "运行中";
   if (runtime.status === "unready" || runtime.status === "not_found" || runtime.status === "destroyed") return "暂不可用";
   return "暂不可用";
@@ -74,7 +75,7 @@ export function readinessRows(runtime: ReadinessFact | null, production: Readine
   return [row("运行依赖", runtime), row("生产依赖", production)];
 }
 
-export function maskGatewayKey(key: GatewayKeyReveal | null): GatewayKeyReveal | null {
+export function maskGatewayKey(key: GatewayKeySecretDTO | null): GatewayKeySecretDTO | null {
   if (!key) return null;
   return { ...key, value: "" };
 }

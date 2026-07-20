@@ -272,6 +272,20 @@ func (wc *WorkspaceCreate) SetNillableServiceName(s *string) *WorkspaceCreate {
 	return wc
 }
 
+// SetWorkspaceAPIKeyID sets the "workspace_api_key_id" field.
+func (wc *WorkspaceCreate) SetWorkspaceAPIKeyID(i int64) *WorkspaceCreate {
+	wc.mutation.SetWorkspaceAPIKeyID(i)
+	return wc
+}
+
+// SetNillableWorkspaceAPIKeyID sets the "workspace_api_key_id" field if the given value is not nil.
+func (wc *WorkspaceCreate) SetNillableWorkspaceAPIKeyID(i *int64) *WorkspaceCreate {
+	if i != nil {
+		wc.SetWorkspaceAPIKeyID(*i)
+	}
+	return wc
+}
+
 // SetAccessTokenStatus sets the "access_token_status" field.
 func (wc *WorkspaceCreate) SetAccessTokenStatus(s string) *WorkspaceCreate {
 	wc.mutation.SetAccessTokenStatus(s)
@@ -605,6 +619,11 @@ func (wc *WorkspaceCreate) check() error {
 	if _, ok := wc.mutation.ServiceName(); !ok {
 		return &ValidationError{Name: "service_name", err: errors.New(`ent: missing required field "Workspace.service_name"`)}
 	}
+	if v, ok := wc.mutation.WorkspaceAPIKeyID(); ok {
+		if err := workspace.WorkspaceAPIKeyIDValidator(v); err != nil {
+			return &ValidationError{Name: "workspace_api_key_id", err: fmt.Errorf(`ent: validator failed for field "Workspace.workspace_api_key_id": %w`, err)}
+		}
+	}
 	if _, ok := wc.mutation.AccessTokenStatus(); !ok {
 		return &ValidationError{Name: "access_token_status", err: errors.New(`ent: missing required field "Workspace.access_token_status"`)}
 	}
@@ -743,6 +762,10 @@ func (wc *WorkspaceCreate) createSpec() (*Workspace, *sqlgraph.CreateSpec) {
 	if value, ok := wc.mutation.ServiceName(); ok {
 		_spec.SetField(workspace.FieldServiceName, field.TypeString, value)
 		_node.ServiceName = value
+	}
+	if value, ok := wc.mutation.WorkspaceAPIKeyID(); ok {
+		_spec.SetField(workspace.FieldWorkspaceAPIKeyID, field.TypeInt64, value)
+		_node.WorkspaceAPIKeyID = value
 	}
 	if value, ok := wc.mutation.AccessTokenStatus(); ok {
 		_spec.SetField(workspace.FieldAccessTokenStatus, field.TypeString, value)

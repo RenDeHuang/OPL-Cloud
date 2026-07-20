@@ -83,6 +83,168 @@ func TestProductionPostgresStateStoreRejectsUnsafeTLSBeforeConnecting(t *testing
 	}
 }
 
+func TestAnnouncementStorePersistsAtomicMutationsAndIdempotentReads(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		new  func(*testing.T) controlPlaneTableStore
+	}{
+		{name: "memory", new: func(*testing.T) controlPlaneTableStore { return newMemoryTableStore() }},
+		{name: "sqlite", new: func(t *testing.T) controlPlaneTableStore {
+			return NewTestEntStateStore(t, t.TempDir()+"/announcements.sqlite")
+		}},
+		{name: "postgres", new: newPostgresWorkspaceRenewalStore},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := tc.new(t)
+			ctx := context.Background()
+			mutation := announcementMutation{
+				AnnouncementID: "announcement-store",
+				Create:         true,
+				RequestHash:    "request-hash",
+				Patch: map[string]any{
+					"title": "Store notice", "body": "Persisted once", "status": "published",
+					"startsAt": "2026-07-19T00:00:00Z", "publishedAt": "2026-07-19T00:00:00Z",
+					"createdByUserId": "usr-admin", "updatedByUserId": "usr-admin",
+				},
+				AuditEvent: map[string]any{
+					"id": "audit-announcement-store", "action": "announcement.create", "resourceKind": "announcement",
+					"resourceId": "announcement-store", "actorUserId": "usr-admin", "result": "succeeded",
+				},
+			}
+			first, err := store.ApplyAnnouncementMutation(ctx, mutation)
+			if err != nil || first["title"] != "Store notice" {
+				t.Fatalf("first mutation row=%#v err=%v", first, err)
+			}
+			replayed, err := store.ApplyAnnouncementMutation(ctx, mutation)
+			if err != nil || replayed["id"] != first["id"] || replayed["createdAt"] != first["createdAt"] {
+				t.Fatalf("replay row=%#v err=%v", replayed, err)
+			}
+			conflicting := mutation
+			conflicting.RequestHash = "different-request-hash"
+			if _, err := store.ApplyAnnouncementMutation(ctx, conflicting); !errors.Is(err, errIdempotencyConflict) {
+				t.Fatalf("conflicting mutation error=%v", err)
+			}
+
+			firstRead, err := store.MarkAnnouncementRead(ctx, "announcement-store", "usr-alpha", "2026-07-19T01:00:00Z")
+			if err != nil {
+				t.Fatal(err)
+			}
+			replayedRead, err := store.MarkAnnouncementRead(ctx, "announcement-store", "usr-alpha", "2026-07-19T02:00:00Z")
+			if err != nil || replayedRead["readAt"] != firstRead["readAt"] {
+				t.Fatalf("read replay first=%#v replay=%#v err=%v", firstRead, replayedRead, err)
+			}
+			announcements, announcementErr := store.ListAnnouncements(ctx)
+			reads, readErr := store.ListAnnouncementReads(ctx, "usr-alpha")
+			audits, auditErr := store.ListAuditEvents(ctx, "")
+			if announcementErr != nil || readErr != nil || auditErr != nil || len(announcements) != 1 || len(reads) != 1 || countRecords(audits, "action", "announcement.create") != 1 {
+				t.Fatalf("announcement facts rows=%#v reads=%#v audits=%#v errors=%v/%v/%v", announcements, reads, audits, announcementErr, readErr, auditErr)
+			}
+		})
+	}
+}
+
+func TestPostgresAnnouncementConcurrentReplayReturnsFirstResult(t *testing.T) {
+	store, db := newPostgresWorkspaceRenewalStoreWithDB(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	created, err := store.ApplyAnnouncementMutation(ctx, announcementMutation{
+		AnnouncementID: "announcement-concurrent-replay", Create: true, RequestHash: "announcement-create",
+		Patch: map[string]any{
+			"title": "Concurrent notice", "body": "One publish result", "status": "draft",
+			"startsAt": "", "endsAt": "", "publishedAt": "", "createdByUserId": "usr-admin", "updatedByUserId": "usr-admin",
+		},
+		AuditEvent: map[string]any{
+			"id": "audit-announcement-concurrent-create", "action": "announcement.create", "resourceKind": "announcement",
+			"resourceId": "announcement-concurrent-replay", "actorUserId": "usr-admin", "result": "succeeded",
+		},
+	})
+	if err != nil || created["status"] != "draft" {
+		t.Fatalf("create row=%#v err=%v", created, err)
+	}
+	if _, err := db.Exec(`
+		CREATE FUNCTION delay_announcement_publish_audit() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN
+			IF NEW.id = 'audit-announcement-concurrent-publish' THEN
+				PERFORM pg_sleep(0.2);
+			END IF;
+			RETURN NEW;
+		END
+		$$;
+		CREATE TRIGGER delay_announcement_publish_audit
+		BEFORE INSERT ON control_plane_admin_audit_events
+		FOR EACH ROW EXECUTE FUNCTION delay_announcement_publish_audit();
+	`); err != nil {
+		t.Fatal(err)
+	}
+	mutation := announcementMutation{
+		AnnouncementID: "announcement-concurrent-replay", AllowedStatuses: []string{"draft"}, RequestHash: "announcement-publish",
+		Patch: map[string]any{
+			"status": "published", "startsAt": "2026-07-19T00:00:00Z", "publishedAt": "2026-07-19T00:00:00Z", "updatedByUserId": "usr-admin",
+		},
+		AuditEvent: map[string]any{
+			"id": "audit-announcement-concurrent-publish", "action": "announcement.publish", "resourceKind": "announcement",
+			"resourceId": "announcement-concurrent-replay", "actorUserId": "usr-admin", "result": "succeeded",
+		},
+	}
+	type result struct {
+		row map[string]any
+		err error
+	}
+	start := make(chan struct{})
+	results := make(chan result, 2)
+	for range 2 {
+		go func() {
+			<-start
+			row, err := store.ApplyAnnouncementMutation(ctx, mutation)
+			results <- result{row: row, err: err}
+		}()
+	}
+	close(start)
+	first, second := <-results, <-results
+	if first.err != nil || second.err != nil || first.row["updatedAt"] != second.row["updatedAt"] || first.row["publishedAt"] != second.row["publishedAt"] {
+		t.Fatalf("concurrent replay first=%#v/%v second=%#v/%v", first.row, first.err, second.row, second.err)
+	}
+}
+
+func TestWalletAdjustmentRuntimeOperationRoundTrips(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		new  func(*testing.T) controlPlaneTableStore
+	}{
+		{name: "memory", new: func(*testing.T) controlPlaneTableStore { return newMemoryTableStore() }},
+		{name: "sqlite", new: func(t *testing.T) controlPlaneTableStore {
+			return NewTestEntStateStore(t, t.TempDir()+"/wallet-adjustment.sqlite")
+		}},
+		{name: "postgres", new: newPostgresWorkspaceRenewalStore},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			app := &controlPlaneServer{tables: tc.new(t)}
+			operation := walletAdjustmentOperation{
+				RequestHash: "wallet-request-hash", Phase: "authoritative_readback", AccountID: "acct-wallet", Sub2APIUserID: 41,
+				Kind: "debit", AmountUSDMicros: 2_500_000, AmountUSD: "2.50", Reason: "manual correction", ActorUserID: "usr-admin",
+				AdjustmentAttempted: true, BeforeBalanceKnown: true, BeforeBalanceMicros: 100_000_000,
+				BeforeBalanceReadAt: "2026-07-19T00:00:00Z", CreatedAt: "2026-07-19T00:00:00Z", UpdatedAt: "2026-07-19T00:00:00Z", Status: "pending",
+			}
+			if err := app.persistWalletAdjustment(context.Background(), "wallet-adjustment-roundtrip", &operation); err != nil {
+				t.Fatal(err)
+			}
+			readback, found, err := app.walletAdjustment(context.Background(), "wallet-adjustment-roundtrip", operation.RequestHash)
+			if err != nil || !found || readback.Phase != "authoritative_readback" || !readback.AdjustmentAttempted || readback.BeforeBalanceMicros != 100_000_000 {
+				t.Fatalf("readback=%#v found=%v err=%v", readback, found, err)
+			}
+			readback.Status, readback.Phase, readback.AfterBalanceKnown, readback.AfterBalanceMicros = "succeeded", "complete", true, 97_500_000
+			readback.AfterBalanceReadAt, readback.BalanceHistoryRef, readback.ReceiptID = "2026-07-19T00:00:01Z", "sub2api:balance-history:41:history-alpha", "receipt-wallet"
+			if err := app.persistWalletAdjustment(context.Background(), "wallet-adjustment-roundtrip", &readback); err != nil {
+				t.Fatal(err)
+			}
+			final, found, err := app.walletAdjustment(context.Background(), "wallet-adjustment-roundtrip", operation.RequestHash)
+			if err != nil || !found || final.Status != "succeeded" || final.AfterBalanceMicros != 97_500_000 || final.ReceiptID != "receipt-wallet" {
+				t.Fatalf("final=%#v found=%v err=%v", final, found, err)
+			}
+		})
+	}
+}
+
 func TestWorkspaceRenewalStateRoundTrips(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -113,6 +275,42 @@ func TestWorkspaceRenewalStateRoundTrips(t *testing.T) {
 				if !reflect.DeepEqual(rows[0][key], row[key]) {
 					t.Fatalf("Workspace renewal %s = %#v (%T), want %#v (%T): %#v", key, rows[0][key], rows[0][key], row[key], row[key], rows[0])
 				}
+			}
+		})
+	}
+}
+
+func TestWorkspaceAPIKeyIDRoundTripsAndCAS(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		new  func(*testing.T) controlPlaneTableStore
+	}{
+		{name: "memory", new: func(*testing.T) controlPlaneTableStore { return newMemoryTableStore() }},
+		{name: "sqlite", new: func(t *testing.T) controlPlaneTableStore {
+			return NewTestEntStateStore(t, t.TempDir()+"/workspace-api-key.sqlite")
+		}},
+		{name: "postgres", new: newPostgresWorkspaceRenewalStore},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			store := tc.new(t)
+			row := canonicalWorkspaceRenewalRow(false)
+			row["workspaceApiKeyId"] = int64(9)
+			if err := store.SaveWorkspace(ctx, row); err != nil {
+				t.Fatalf("save Workspace Key ID: %v", err)
+			}
+			if err := store.CompareAndSwapWorkspaceAPIKey(ctx, stringValue(row["id"]), 9, 19); err != nil {
+				t.Fatalf("replace Workspace Key ID: %v", err)
+			}
+			if err := store.CompareAndSwapWorkspaceAPIKey(ctx, stringValue(row["id"]), 9, 19); err != nil {
+				t.Fatalf("replay Workspace Key ID replacement: %v", err)
+			}
+			if err := store.CompareAndSwapWorkspaceAPIKey(ctx, stringValue(row["id"]), 9, 29); !errors.Is(err, errWorkspaceAPIKeyCASConflict) {
+				t.Fatalf("stale Workspace Key ID replacement error=%v", err)
+			}
+			rows, err := store.ListWorkspaces(ctx, stringValue(row["accountId"]))
+			if err != nil || len(rows) != 1 || int64(numberField(rows[0], "workspaceApiKeyId", 0)) != 19 {
+				t.Fatalf("Workspace Key ID readback rows=%#v err=%v", rows, err)
 			}
 		})
 	}
@@ -696,6 +894,102 @@ func TestWorkspaceRenewalInactiveLifecycleRejectsEnabledIntent(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestWorkspaceLaunchCASStoresFenceConcurrentClaimsAndStalePersists(t *testing.T) {
+	for _, storeCase := range []struct {
+		name string
+		new  func(*testing.T) controlPlaneTableStore
+	}{
+		{name: "memory", new: func(*testing.T) controlPlaneTableStore { return newMemoryTableStore() }},
+		{name: "postgres", new: newPostgresWorkspaceRenewalStore},
+	} {
+		t.Run(storeCase.name, func(t *testing.T) {
+			ctx := context.Background()
+			store := storeCase.new(t)
+			seedTenantMember(t, store, "acct-launch", "org-launch", "usr-launch", "launch@example.com")
+			first := newWorkspaceLaunchOperation("acct-launch", "usr-launch", "First", "basic", 10, false, pricingCatalogVersion, 52_580_000, "first")
+			second := newWorkspaceLaunchOperation("acct-launch", "usr-launch", "Second", "basic", 10, false, pricingCatalogVersion, 52_580_000, "second")
+			first.WorkspaceAPIKeyID, second.WorkspaceAPIKeyID = 9, 9
+			claims := []workspaceLaunchClaimCAS{
+				{AccountID: first.AccountID, DesiredOperation: workspaceLaunchOperationRow(first)},
+				{AccountID: second.AccountID, DesiredOperation: workspaceLaunchOperationRow(second)},
+			}
+			start := make(chan struct{})
+			results := make(chan error, len(claims))
+			for _, claim := range claims {
+				go func(claim workspaceLaunchClaimCAS) {
+					<-start
+					results <- store.ClaimWorkspaceLaunch(ctx, claim)
+				}(claim)
+			}
+			close(start)
+			won, fenced := 0, 0
+			for range claims {
+				switch err := <-results; {
+				case err == nil:
+					won++
+				case errors.Is(err, errWorkspaceLaunchCASConflict), errors.Is(err, errWorkspaceLaunchInProgress):
+					fenced++
+				default:
+					t.Fatalf("initial claim error=%v", err)
+				}
+			}
+			rows, err := store.ListRuntimeOperations(ctx)
+			if err != nil || won != 1 || fenced != 1 || len(rows) != 1 {
+				t.Fatalf("initial claims won=%d fenced=%d rows=%#v err=%v", won, fenced, rows, err)
+			}
+			operation, err := decodeWorkspaceLaunchOperation(rows[0])
+			if err != nil {
+				t.Fatal(err)
+			}
+			operation.LeaseToken, operation.LeaseExpiresAt = "lease-winner", "2026-07-19T12:05:00Z"
+			claim := workspaceLaunchClaimCAS{
+				AccountID: operation.AccountID, ExpectedOperationResult: operation.PersistedResult,
+				DesiredOperation: workspaceLaunchOperationRow(operation),
+			}
+			start, results = make(chan struct{}), make(chan error, 2)
+			for range 2 {
+				go func() {
+					<-start
+					results <- store.ClaimWorkspaceLaunch(ctx, claim)
+				}()
+			}
+			close(start)
+			won, fenced = 0, 0
+			for range 2 {
+				switch err := <-results; {
+				case err == nil:
+					won++
+				case errors.Is(err, errWorkspaceLaunchCASConflict):
+					fenced++
+				default:
+					t.Fatalf("worker claim error=%v", err)
+				}
+			}
+			if won != 1 || fenced != 1 {
+				t.Fatalf("worker claims won=%d fenced=%d", won, fenced)
+			}
+
+			rows, err = store.ListRuntimeOperations(ctx)
+			if err != nil || len(rows) != 1 {
+				t.Fatalf("claimed rows=%#v err=%v", rows, err)
+			}
+			operation, err = decodeWorkspaceLaunchOperation(rows[0])
+			if err != nil {
+				t.Fatal(err)
+			}
+			operation.Status, operation.ErrorCode = "unknown", "sub2api_charge_unconfirmed"
+			desired := workspaceLaunchOperationRow(operation)
+			update := workspaceLaunchPersistCAS{OperationID: operation.ID, ExpectedOperationResult: operation.PersistedResult, DesiredOperation: desired}
+			stale := update
+			stale.ExpectedOperationResult = "stale-result"
+			if err := store.PersistWorkspaceLaunch(ctx, stale); !errors.Is(err, errWorkspaceLaunchCASConflict) {
+				t.Fatalf("stale persist error=%v", err)
+			}
+			mustStore(t, store.PersistWorkspaceLaunch(ctx, update))
+		})
 	}
 }
 

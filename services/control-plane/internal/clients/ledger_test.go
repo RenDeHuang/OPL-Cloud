@@ -280,6 +280,71 @@ func TestLedgerHTTPClientValidatesWorkspaceBillingReceiptResponse(t *testing.T) 
 	}
 }
 
+func TestWalletAdjustmentReceipt(t *testing.T) {
+	input := ReceiptInput{
+		Type: "gateway.wallet_adjustment.v1", Status: "completed", Surface: "control_plane", AccountID: "acct-alpha",
+		RequestID: "wallet-adjustment-alpha",
+		Actor:     map[string]any{"userId": "usr-admin"},
+		Execution: map[string]any{"operationId": "wallet-adjustment-alpha", "kind": "debit", "amountUsdMicros": int64(2_500_000)},
+		InputRefs: map[string]any{"balanceHistoryRef": "sub2api:balance-history:41:history-alpha"},
+		Owner:     map[string]any{"accountId": "acct-alpha"},
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = fmt.Fprint(w, `{"receiptId":"receipt-wallet","type":"gateway.wallet_adjustment.v1","status":"completed","surface":"control_plane","accountId":"acct-alpha","requestId":"wallet-adjustment-alpha"}`)
+	}))
+	defer server.Close()
+
+	client := NewLedgerHTTPClient(server.URL, "internal-secret", server.Client())
+	if _, err := client.RecordReceipt(context.Background(), input, "wallet-adjustment-alpha:receipt"); err == nil {
+		t.Fatal("incomplete wallet adjustment receipt response was accepted")
+	}
+}
+
+func TestLedgerHTTPClientValidatesWorkspaceGatewayKeyRotationReceiptResponse(t *testing.T) {
+	input := ReceiptInput{
+		Type: "workspace.gateway_key_rotated.v1", Status: "completed", Surface: "control_plane",
+		AccountID: "acct-alpha", WorkspaceID: "workspace-alpha",
+		Execution:  map[string]any{"operationId": "workspace-key-rotate-alpha", "oldKeyId": int64(9), "newKeyId": int64(19)},
+		OutputRefs: map[string]any{"secretFingerprint": "sha256:replacement"},
+		Owner:      map[string]any{"userId": "usr-alpha"},
+	}
+	for _, tc := range []struct {
+		name    string
+		mutate  func(*Receipt)
+		wantErr bool
+	}{
+		{name: "valid"},
+		{name: "missing receipt ID", mutate: func(receipt *Receipt) { receipt.ReceiptID = "" }, wantErr: true},
+		{name: "changed Key", mutate: func(receipt *Receipt) { receipt.Execution["newKeyId"] = int64(20) }, wantErr: true},
+		{name: "changed fingerprint", mutate: func(receipt *Receipt) { receipt.OutputRefs["secretFingerprint"] = "sha256:other" }, wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			payload, err := json.Marshal(input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			response := Receipt{ReceiptID: "receipt-workspace-key-rotation", CreatedAt: "2026-07-19T00:00:00Z"}
+			decoder := json.NewDecoder(bytes.NewReader(payload))
+			decoder.UseNumber()
+			if err := decoder.Decode(&response.ReceiptInput); err != nil {
+				t.Fatal(err)
+			}
+			if tc.mutate != nil {
+				tc.mutate(&response)
+			}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_ = json.NewEncoder(w).Encode(response)
+			}))
+			defer server.Close()
+			client := NewLedgerHTTPClient(server.URL, "internal-secret", server.Client())
+			result, err := client.RecordReceipt(context.Background(), input, "workspace-key-rotate-alpha:receipt")
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("result=%#v err=%v", result, err)
+			}
+		})
+	}
+}
+
 func assertExactLedgerNumber(t *testing.T, value any, want int64) {
 	t.Helper()
 	number, ok := value.(json.Number)

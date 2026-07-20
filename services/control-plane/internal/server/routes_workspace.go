@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -38,9 +39,8 @@ func registerWorkspaceRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 		}
 		writeSourceEnvelope(w, http.StatusOK, "control-plane", status, map[string]any{"items": items, "total": len(items)})
 	}))
-	mux.HandleFunc("POST /api/workspaces/runtime-status", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
-		input := decodeJSON(r)
-		workspaceID := stringField(input, "workspaceId", "")
+	mux.HandleFunc("GET /api/workspaces/{workspaceId}/runtime-status", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
+		workspaceID := strings.TrimSpace(r.PathValue("workspaceId"))
 		user, ok := app.sessionUserContext(r)
 		if !ok {
 			writeError(w, http.StatusUnauthorized, "not_authenticated")
@@ -179,77 +179,8 @@ func registerWorkspaceRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 		w.Header().Set("Cache-Control", "private, no-store")
 		writeJSON(w, http.StatusOK, body)
 	}))
-	mux.HandleFunc("POST /api/workspaces/{workspaceId}/gateway-secret/rotate", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
-		input := decodeJSON(r)
-		key, ok := requiredMutationKey(w, r)
-		if !ok {
-			return
-		}
-		workspaceID := r.PathValue("workspaceId")
-		workspace, ok := app.ownedWorkspaceForCredentialCommand(w, r, workspaceID)
-		if !ok {
-			return
-		}
-		accountID := firstNonEmpty(stringValue(workspace["accountId"]), stringValue(workspace["ownerAccountId"]))
-		unlock := app.lockResource("gateway-secret", accountID)
-		defer unlock()
-		workspace, ok = app.ownedWorkspaceForCredentialCommand(w, r, workspaceID)
-		if !ok {
-			return
-		}
-		if app.workspaceResponse(cloneMap(workspace))["openable"] != true {
-			writeError(w, http.StatusConflict, "workspace_not_running")
-			return
-		}
-		requestHash := stableID(accountID, workspaceID, string(mustJSON(input)))
-		operationID := "gateway-secret-" + stableID(workspaceID, key)[:18]
-		operations, err := app.tables.ListRuntimeOperations(r.Context())
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "state_read_failed")
-			return
-		}
-		for _, operation := range operations {
-			if stringValue(operation["id"]) != operationID {
-				continue
-			}
-			if stringValue(operation["accountId"]) != accountID || stringValue(operation["workspaceId"]) != workspaceID || stringValue(operation["action"]) != "workspace.gateway_secret.rotate" {
-				writeError(w, http.StatusConflict, errIdempotencyConflict.Error())
-				return
-			}
-			result, err := decodeWorkspaceGatewaySecretOperation(operation)
-			if err != nil || stringValue(operation["status"]) != "succeeded" {
-				writeError(w, http.StatusInternalServerError, "state_read_failed")
-				return
-			}
-			if result.RequestHash != requestHash {
-				writeError(w, http.StatusConflict, errIdempotencyConflict.Error())
-				return
-			}
-			w.Header().Set("Cache-Control", "private, no-store")
-			writeJSON(w, http.StatusOK, map[string]any{"operationId": operationID, "workspaceId": workspaceID, "status": "succeeded", "secretRef": result.SecretRef, "fingerprint": result.Fingerprint})
-			return
-		}
-		sub2APIUserID, ok := app.mappedSub2APIUserID(w, r, accountID)
-		if !ok {
-			return
-		}
-		secret, err := service.SyncWorkspaceGatewaySecret(r.Context(), accountID, sub2APIUserID, operationID)
-		if err != nil {
-			writeUpstreamError(w, err)
-			return
-		}
-		result := workspaceGatewaySecretOperationResult{RequestHash: requestHash, SecretRef: secret.SecretRef, Fingerprint: secret.Fingerprint}
-		operation := map[string]any{
-			"id": operationID, "operationId": operationID, "accountId": accountID, "workspaceId": workspaceID,
-			"resourceId": workspaceID, "resourceKind": "gateway_secret", "action": "workspace.gateway_secret.rotate",
-			"provider": "tencent-tke", "status": "succeeded", "result": encodeWorkspaceGatewaySecretOperation(result),
-		}
-		if err := app.tables.SaveRuntimeOperation(r.Context(), operation); err != nil {
-			writeError(w, http.StatusInternalServerError, "state_persist_failed")
-			return
-		}
-		w.Header().Set("Cache-Control", "private, no-store")
-		writeJSON(w, http.StatusOK, map[string]any{"operationId": operationID, "workspaceId": workspaceID, "status": "succeeded", "secretRef": result.SecretRef, "fingerprint": result.Fingerprint})
+	mux.HandleFunc("POST /api/workspaces/{workspaceId}/workspace-key/rotate", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
+		app.rotateWorkspaceGatewayKey(w, r, service)
 	}))
 	mux.HandleFunc("POST /api/workspaces/{workspaceId}/auto-renew", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
 		input := decodeJSON(r)
@@ -507,234 +438,6 @@ func registerWorkspaceRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 		}
 		writeJSON(w, http.StatusOK, body)
 	}))
-	mux.HandleFunc("POST /api/workspaces", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
-		input := decodeJSON(r)
-		accountID, ok := app.scopedAccountID(w, r, input)
-		if !ok {
-			return
-		}
-		user, ok := app.sessionUserContext(r)
-		if !ok || stringValue(user["role"]) != "owner" {
-			writeError(w, http.StatusForbidden, "workspace_owner_required")
-			return
-		}
-		ownerID := stringValue(user["id"])
-		attachmentID := stringField(input, "attachmentId", "")
-		attachment, ok := app.getAttachment(attachmentID)
-		if !ok {
-			writeError(w, http.StatusBadRequest, "attached_compute_storage_required")
-			return
-		}
-		if !app.canAccessResource(r, attachment) {
-			writeError(w, http.StatusForbidden, "account_scope_forbidden")
-			return
-		}
-		computeID := stringValue(attachment["computeAllocationId"])
-		storageID := stringValue(attachment["storageId"])
-		unlock := app.lockEntitlementResources(computeID, storageID, attachmentID)
-		defer unlock()
-		attachment, ok = app.getAttachment(attachmentID)
-		if !ok || stringValue(attachment["computeAllocationId"]) != computeID || stringValue(attachment["storageId"]) != storageID {
-			writeError(w, http.StatusConflict, "attached_compute_storage_required")
-			return
-		}
-		compute, computeOK := app.getCompute(computeID)
-		storage, storageOK := app.getStorage(storageID)
-		if !computeOK || !storageOK || !ensureMonthlyEntitlements(w, time.Now(), compute, storage) {
-			if !computeOK || !storageOK {
-				writeError(w, http.StatusConflict, "monthly_entitlement_inactive")
-			}
-			return
-		}
-		workspaceID := stringValue(attachment["workspaceId"])
-		packageID := stringValue(compute["packageId"])
-		if workspaceID == "" || stringValue(compute["workspaceId"]) != workspaceID || stringValue(storage["workspaceId"]) != workspaceID ||
-			packageID == "" || stringValue(storage["packageId"]) != packageID || (stringValue(attachment["packageId"]) != "" && stringValue(attachment["packageId"]) != packageID) {
-			writeError(w, http.StatusConflict, "compute_storage_workspace_mismatch")
-			return
-		}
-		name := firstNonEmpty(stringField(input, "name", ""), stringField(input, "workspaceName", "Workspace"))
-		requestHash := stableID(accountID, ownerID, name, packageID, attachmentID, computeID, storageID)
-		operationID := "create-" + stableID(workspaceID)[:18]
-		idempotencyKey := "workspace-create:" + workspaceID
-		operations, err := app.tables.ListRuntimeOperations(r.Context())
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "state_read_failed")
-			return
-		}
-		var workspace domain.WorkspaceProjection
-		var acceptedBillingState map[string]any
-		retryReceipt, retryPrepare := false, false
-		for _, operation := range operations {
-			if stringValue(operation["id"]) != operationID {
-				continue
-			}
-			result, err := decodeWorkspaceCreateOperation(operation)
-			if err != nil {
-				writeError(w, http.StatusInternalServerError, "state_read_failed")
-				return
-			}
-			if result.RequestHash != requestHash {
-				writeError(w, http.StatusConflict, errPrimaryWorkspaceExists.Error())
-				return
-			}
-			if result.AcceptedBillingState != nil {
-				acceptedBillingState = workspaceAcceptedBillingState(workspaceProjectionBillingRow(result.Workspace, result.AcceptedBillingState))
-			} else if existing, exists := app.getWorkspace(result.Workspace.ID); exists {
-				acceptedBillingState = workspaceAcceptedBillingState(existing)
-			}
-			if acceptedBillingState == nil {
-				writeError(w, http.StatusConflict, "workspace_billing_state_invalid")
-				return
-			}
-			switch stringValue(operation["status"]) {
-			case "succeeded":
-				existing, exists := app.getWorkspace(result.Workspace.ID)
-				if !exists || !workspaceCreateProjectionCompatible(existing, result.Workspace, acceptedBillingState, false) {
-					writeError(w, http.StatusConflict, errPrimaryWorkspaceExists.Error())
-					return
-				}
-				writeJSON(w, http.StatusCreated, app.workspaceResponse(existing))
-				return
-			case "receipt_pending":
-				workspace, retryReceipt = result.Workspace, true
-			case "started":
-				if result.LeaseExpiresAt != nil && result.LeaseExpiresAt.After(time.Now().UTC()) {
-					writeError(w, http.StatusConflict, errPrimaryWorkspaceExists.Error())
-					return
-				}
-				workspace, retryPrepare = result.Workspace, true
-			case "retryable":
-				workspace, retryPrepare = result.Workspace, true
-			default:
-				writeError(w, http.StatusInternalServerError, "state_read_failed")
-				return
-			}
-			break
-		}
-		if retryReceipt {
-			if existing, exists := app.getWorkspace(workspace.ID); exists && !workspaceCreateProjectionCompatible(existing, workspace, acceptedBillingState, true) {
-				writeError(w, http.StatusConflict, errPrimaryWorkspaceExists.Error())
-				return
-			}
-			if err := app.saveWorkspaceProjection(workspace, acceptedBillingState); err != nil {
-				writeError(w, http.StatusInternalServerError, "state_persist_failed")
-				return
-			}
-			workspace, err = service.RecordWorkspaceCreatedReceipt(r.Context(), workspace, idempotencyKey)
-			if err != nil {
-				writeUpstreamError(w, err)
-				return
-			}
-		} else {
-			if !retryPrepare {
-				if existing, exists := app.getWorkspace(workspaceID); exists {
-					if firstNonEmpty(stringValue(existing["accountId"]), stringValue(existing["ownerAccountId"])) != accountID ||
-						stringValue(existing["attachmentId"]) != attachmentID || firstNonEmpty(stringValue(existing["computeAllocationId"]), stringValue(existing["currentComputeAllocationId"])) != computeID ||
-						stringValue(existing["storageId"]) != storageID || stringValue(existing["name"]) != name || stringValue(existing["packageId"]) != packageID ||
-						firstNonEmpty(stringValue(existing["ownerId"]), stringValue(existing["ownerUserId"])) != ownerID {
-						writeError(w, http.StatusConflict, errPrimaryWorkspaceExists.Error())
-						return
-					}
-					if workspaceAcceptedBillingState(existing) == nil {
-						writeError(w, http.StatusConflict, "workspace_billing_state_invalid")
-						return
-					}
-					writeJSON(w, http.StatusCreated, app.workspaceResponse(existing))
-					return
-				}
-				storageGB, validStorageGB := requiredPositiveInteger(storage, "sizeGb")
-				billingState, billingCode := workspaceBillingStateFromChildren(compute, storage, workspaceBillingChildIdentity{
-					AccountID: accountID, OwnerUserID: ownerID, WorkspaceID: workspaceID, PackageID: packageID,
-					ComputeID: computeID, StorageID: storageID, StorageGB: storageGB,
-				})
-				if !validStorageGB || billingCode != "" {
-					writeError(w, http.StatusConflict, "workspace_billing_state_invalid")
-					return
-				}
-				acceptedBillingState = workspaceAcceptedBillingState(billingState)
-				if acceptedBillingState == nil {
-					writeError(w, http.StatusConflict, "workspace_billing_state_invalid")
-					return
-				}
-				workspace = domain.WorkspaceProjection{
-					ID: workspaceID, AccountID: accountID, OwnerID: ownerID, Name: name, PackageID: packageID, Status: "provisioning",
-					ComputeID: computeID, VolumeID: storageID, AttachmentID: attachmentID,
-				}
-			}
-			leaseExpiresAt := time.Now().UTC().Add(2 * time.Minute)
-			claimResult := workspaceCreateOperationResult{RequestHash: requestHash, LeaseExpiresAt: &leaseExpiresAt, Workspace: workspace, AcceptedBillingState: acceptedBillingState}
-			claimOperation := workspaceCreateOperationRow(operationID, "started", claimResult)
-			if err := app.tables.ClaimWorkspaceCreate(r.Context(), workspaceProjectionBillingRow(workspace, acceptedBillingState), claimOperation); err != nil {
-				if errors.Is(err, errPrimaryWorkspaceExists) {
-					writeError(w, http.StatusConflict, errPrimaryWorkspaceExists.Error())
-					return
-				}
-				writeError(w, http.StatusInternalServerError, "state_persist_failed")
-				return
-			}
-			sub2APIUserID, ok := app.mappedSub2APIUserID(w, r, accountID)
-			if !ok {
-				claimResult.LeaseExpiresAt = nil
-				_ = app.tables.SaveRuntimeOperation(r.Context(), workspaceCreateOperationRow(operationID, "retryable", claimResult))
-				return
-			}
-			prepared, err := service.PrepareWorkspace(r.Context(), controlplane.CreateWorkspaceInput{
-				WorkspaceID:   workspaceID,
-				AccountID:     accountID,
-				Sub2APIUserID: sub2APIUserID,
-				OwnerID:       ownerID,
-				Name:          name,
-				PackageID:     packageID,
-				AttachmentID:  attachmentID,
-				ComputeID:     computeID,
-				VolumeID:      storageID,
-			}, idempotencyKey)
-			if err != nil {
-				claimResult.LeaseExpiresAt = nil
-				if saveErr := app.tables.SaveRuntimeOperation(r.Context(), workspaceCreateOperationRow(operationID, "retryable", claimResult)); saveErr != nil {
-					writeError(w, http.StatusInternalServerError, "state_persist_failed")
-					return
-				}
-				writeUpstreamError(w, err)
-				return
-			}
-			workspace = prepared
-			result := workspaceCreateOperationResult{RequestHash: requestHash, Workspace: workspace, AcceptedBillingState: acceptedBillingState}
-			if err := app.tables.SaveRuntimeOperation(r.Context(), workspaceCreateOperationRow(operationID, "receipt_pending", result)); err != nil {
-				writeError(w, http.StatusInternalServerError, "state_persist_failed")
-				return
-			}
-			if err := app.saveWorkspaceProjection(workspace, acceptedBillingState); err != nil {
-				writeError(w, http.StatusInternalServerError, "state_persist_failed")
-				return
-			}
-			workspace, err = service.RecordWorkspaceCreatedReceipt(r.Context(), workspace, idempotencyKey)
-			if err != nil {
-				writeUpstreamError(w, err)
-				return
-			}
-		}
-		result := workspaceCreateOperationResult{RequestHash: requestHash, Workspace: workspace, AcceptedBillingState: acceptedBillingState}
-		if existing, exists := app.getWorkspace(workspace.ID); exists && !workspaceCreateProjectionCompatible(existing, workspace, acceptedBillingState, false) {
-			writeError(w, http.StatusConflict, errPrimaryWorkspaceExists.Error())
-			return
-		}
-		if err := app.tables.SaveRuntimeOperation(r.Context(), workspaceCreateOperationRow(operationID, "succeeded", result)); err != nil {
-			writeError(w, http.StatusInternalServerError, "state_persist_failed")
-			return
-		}
-		if err := app.saveWorkspaceProjection(workspace, acceptedBillingState); err != nil {
-			writeError(w, http.StatusInternalServerError, "state_persist_failed")
-			return
-		}
-		body := app.workspaceResponse(workspaceProjectionBillingResponseRow(workspace, acceptedBillingState))
-		if err := app.appendAuditEvent(r, "workspace.create", "workspace", workspace.ID, workspace.AccountID, nil, body, "succeeded"); err != nil {
-			writeError(w, http.StatusInternalServerError, "state_persist_failed")
-			return
-		}
-		writeJSON(w, http.StatusCreated, body)
-	}))
 }
 
 func (app *controlPlaneServer) workspaceForSource(ctx context.Context, accountID, workspaceID string) (map[string]any, bool, error) {
@@ -765,6 +468,9 @@ func workspaceSourceProjection(row map[string]any) (map[string]any, bool) {
 		if value := stringValue(row[key]); value != "" {
 			item[key] = value
 		}
+	}
+	if keyID, ok := requiredPositiveInteger(row, "workspaceApiKeyId"); ok {
+		item["workspaceApiKeyId"] = strconv.FormatInt(keyID, 10)
 	}
 	for _, key := range []string{"packageId", "priceVersion", "currency", "renewalStatus"} {
 		if raw, exists := row[key]; exists {

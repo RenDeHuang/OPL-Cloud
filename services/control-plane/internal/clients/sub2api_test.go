@@ -39,6 +39,233 @@ func writeSub2APISuccess(t *testing.T, w http.ResponseWriter, data any) {
 	}
 }
 
+func TestSub2APIAdminUsersPagination(t *testing.T) {
+	client := newSub2APITestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/auth/login":
+			writeSub2APISuccess(t, w, map[string]any{"access_token": "admin-access", "refresh_token": "admin-refresh"})
+		case "/api/v1/admin/users":
+			if r.Method != http.MethodGet || r.Header.Get("Authorization") != "Bearer admin-access" {
+				t.Fatalf("admin users request = %s auth=%q", r.Method, r.Header.Get("Authorization"))
+			}
+			query := r.URL.Query()
+			if query.Get("page") != "2" || query.Get("page_size") != "2" || query.Get("search") != "pilot@example.com" || query.Get("sort_by") != "id" || query.Get("sort_order") != "asc" {
+				t.Fatalf("admin users query = %q", r.URL.RawQuery)
+			}
+			writeSub2APISuccess(t, w, map[string]any{
+				"items": []any{map[string]any{
+					"id": 42, "email": "Pilot@Example.com", "balance": 12.345678, "status": "active",
+					"created_at": "2026-07-18T01:02:03Z", "updated_at": "2026-07-19T04:05:06Z",
+				}},
+				"total": 3, "page": 2, "page_size": 2, "pages": 2,
+			})
+		default:
+			t.Fatalf("unexpected route %s %s", r.Method, r.URL.String())
+		}
+	}, time.Second)
+
+	page, err := client.AdminUsers(context.Background(), Sub2APIUserPageQuery{
+		Page: 2, PageSize: 2, Search: "pilot@example.com", SortBy: "id", SortOrder: "asc",
+	})
+	if err != nil {
+		t.Fatalf("admin users: %v", err)
+	}
+	if page.Total != 3 || page.Page != 2 || page.PageSize != 2 || page.Pages != 2 || len(page.Items) != 1 {
+		t.Fatalf("admin users page = %#v", page)
+	}
+	user := page.Items[0]
+	if user.ID != 42 || user.Email != "pilot@example.com" || user.Status != "active" || user.BalanceUSDMicros != 12_345_678 || user.CreatedAt.Format(time.RFC3339) != "2026-07-18T01:02:03Z" || user.UpdatedAt.Format(time.RFC3339) != "2026-07-19T04:05:06Z" {
+		t.Fatalf("admin user = %#v", user)
+	}
+}
+
+func TestSub2APIBatchUsersUsage(t *testing.T) {
+	client := newSub2APITestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/auth/login":
+			writeSub2APISuccess(t, w, map[string]any{"access_token": "admin-access", "refresh_token": "admin-refresh"})
+		case "/api/v1/admin/dashboard/users-usage":
+			var input struct {
+				UserIDs []int64 `json:"user_ids"`
+			}
+			if r.Method != http.MethodPost || json.NewDecoder(r.Body).Decode(&input) != nil || !slices.Equal(input.UserIDs, []int64{41, 42}) {
+				t.Fatalf("batch users request = %s %#v", r.Method, input)
+			}
+			writeSub2APISuccess(t, w, map[string]any{"stats": map[string]any{
+				"41": map[string]any{"user_id": 41, "today_actual_cost": 0.000001, "total_actual_cost": 1.25},
+				"42": map[string]any{"user_id": 42, "today_actual_cost": 0, "total_actual_cost": 2.5},
+			}})
+		default:
+			t.Fatalf("unexpected route %s %s", r.Method, r.URL.String())
+		}
+	}, time.Second)
+
+	stats, err := client.BatchUsersUsage(context.Background(), []int64{42, 41, 42})
+	if err != nil || len(stats) != 2 || stats[41].TodayActualCostUSDMicros != 1 || stats[41].TotalActualCostUSDMicros != 1_250_000 || stats[42].TotalActualCostUSDMicros != 2_500_000 {
+		t.Fatalf("batch users usage = %#v err=%v", stats, err)
+	}
+}
+
+func TestSub2APIBatchKeysUsage(t *testing.T) {
+	client := newSub2APITestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/auth/login":
+			writeSub2APISuccess(t, w, map[string]any{"access_token": "admin-access", "refresh_token": "admin-refresh"})
+		case "/api/v1/admin/dashboard/api-keys-usage":
+			var input struct {
+				APIKeyIDs []int64 `json:"api_key_ids"`
+			}
+			if r.Method != http.MethodPost || json.NewDecoder(r.Body).Decode(&input) != nil || !slices.Equal(input.APIKeyIDs, []int64{7, 9}) {
+				t.Fatalf("batch keys request = %s %#v", r.Method, input)
+			}
+			writeSub2APISuccess(t, w, map[string]any{"stats": map[string]any{
+				"7": map[string]any{"api_key_id": 7, "today_actual_cost": 0.125, "total_actual_cost": 4.5},
+				"9": map[string]any{"api_key_id": 9, "today_actual_cost": 0, "total_actual_cost": 0},
+			}})
+		default:
+			t.Fatalf("unexpected route %s %s", r.Method, r.URL.String())
+		}
+	}, time.Second)
+
+	stats, err := client.BatchKeysUsage(context.Background(), []int64{9, 7, 9})
+	if err != nil || len(stats) != 2 || stats[7].TodayActualCostUSDMicros != 125_000 || stats[7].TotalActualCostUSDMicros != 4_500_000 || stats[9].TotalActualCostUSDMicros != 0 {
+		t.Fatalf("batch keys usage = %#v err=%v", stats, err)
+	}
+}
+
+func userKeyFixture(id int64, status string) map[string]any {
+	return map[string]any{
+		"id": id, "user_id": 41, "key": "sk-user-secret", "name": "general-key", "status": status,
+		"quota": 12.345678, "quota_used": 1.25, "usage_5h": 0.1, "usage_1d": 0.2, "usage_7d": 0.3,
+		"last_used_at": "2026-07-18T01:02:03Z", "expires_at": "2026-08-18T01:02:03Z",
+	}
+}
+
+func TestUserKeyCreateIdempotent(t *testing.T) {
+	calls := 0
+	client := newSub2APITestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/keys" || r.Header.Get("Authorization") != "Bearer delegated-user-token" || r.Header.Get("Idempotency-Key") != "key-create-once" {
+			t.Fatalf("unexpected delegated create: %s %s auth=%q idempotency=%q", r.Method, r.URL.Path, r.Header.Get("Authorization"), r.Header.Get("Idempotency-Key"))
+		}
+		var input map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			t.Fatal(err)
+		}
+		if len(input) != 2 || input["name"] != "general-key" || input["quota"] != 12.345678 {
+			t.Fatalf("create input = %#v", input)
+		}
+		writeSub2APISuccess(t, w, userKeyFixture(17, "active"))
+	}, time.Second)
+
+	key, err := client.CreateUserKey(context.Background(), SessionDelegatedCredential{Bearer: "delegated-user-token"}, 41, Sub2APICreateKeyInput{
+		Name: "general-key", QuotaUSDMicros: 12_345_678,
+	}, "key-create-once")
+	if err != nil || key.ID != 17 || key.UserID != 41 || key.Key != "sk-user-secret" || key.Status != "active" {
+		t.Fatalf("created key = %#v err=%v", key, err)
+	}
+	if calls != 1 {
+		t.Fatalf("create calls = %d, want 1", calls)
+	}
+}
+
+func TestUserKeyCreateExpiresInDays(t *testing.T) {
+	client := newSub2APITestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		var input map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			t.Fatal(err)
+		}
+		if len(input) != 3 || input["expires_in_days"] != float64(30) {
+			t.Fatalf("create expiry input = %#v", input)
+		}
+		if _, exists := input["expires_at"]; exists {
+			t.Fatalf("create must not simulate exact expiry: %#v", input)
+		}
+		writeSub2APISuccess(t, w, userKeyFixture(17, "active"))
+	}, time.Second)
+
+	days := 30
+	key, err := client.CreateUserKey(context.Background(), SessionDelegatedCredential{Bearer: "delegated-user-token"}, 41, Sub2APICreateKeyInput{
+		Name: "general-key", QuotaUSDMicros: 12_345_678, ExpiresInDays: &days,
+	}, "key-create-expiry")
+	if err != nil || key.ExpiresAt == nil || key.ExpiresAt.Format(time.RFC3339) != "2026-08-18T01:02:03Z" {
+		t.Fatalf("created expiry = %#v err=%v", key.ExpiresAt, err)
+	}
+}
+
+func TestUserKeyUpdate(t *testing.T) {
+	client := newSub2APITestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut || r.URL.Path != "/api/v1/keys/17" || r.Header.Get("Authorization") != "Bearer delegated-user-token" {
+			t.Fatalf("unexpected delegated update: %s %s auth=%q", r.Method, r.URL.Path, r.Header.Get("Authorization"))
+		}
+		var input map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			t.Fatal(err)
+		}
+		if len(input) != 3 || input["name"] != "renamed" || input["quota"] != 2.5 || input["status"] != "inactive" {
+			t.Fatalf("update input = %#v", input)
+		}
+		fixture := userKeyFixture(17, "inactive")
+		fixture["name"], fixture["quota"] = "renamed", 2.5
+		writeSub2APISuccess(t, w, fixture)
+	}, time.Second)
+
+	name, quota, enabled := "renamed", int64(2_500_000), false
+	key, err := client.UpdateUserKey(context.Background(), SessionDelegatedCredential{Bearer: "delegated-user-token"}, 41, 17, Sub2APIUpdateKeyInput{
+		Name: &name, QuotaUSDMicros: &quota, Enabled: &enabled,
+	})
+	if err != nil || key.Name != name || key.QuotaUSDMicros != quota || key.Status != "disabled" {
+		t.Fatalf("updated key = %#v err=%v", key, err)
+	}
+}
+
+func TestUserKeyDelete(t *testing.T) {
+	client := newSub2APITestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete || r.URL.Path != "/api/v1/keys/17" || r.Header.Get("Authorization") != "Bearer delegated-user-token" {
+			t.Fatalf("unexpected delegated delete: %s %s auth=%q", r.Method, r.URL.Path, r.Header.Get("Authorization"))
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}, time.Second)
+	if err := client.DeleteUserKey(context.Background(), SessionDelegatedCredential{Bearer: "delegated-user-token"}, 41, 17); err != nil {
+		t.Fatalf("delete key: %v", err)
+	}
+}
+
+func TestUserKeyUsage(t *testing.T) {
+	requests := 0
+	client := newSub2APITestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		switch r.URL.Path {
+		case "/api/v1/auth/login":
+			writeSub2APISuccess(t, w, map[string]any{"access_token": "admin-access", "refresh_token": "admin-refresh"})
+		case "/api/v1/keys/17":
+			if r.Header.Get("Authorization") != "Bearer delegated-user-token" {
+				t.Fatalf("key read used wrong authorization: %q", r.Header.Get("Authorization"))
+			}
+			writeSub2APISuccess(t, w, userKeyFixture(17, "active"))
+		case "/api/v1/admin/usage/stats":
+			if r.URL.Query().Get("user_id") != "41" || r.URL.Query().Has("api_key_id") || r.URL.Query().Get("period") != "month" {
+				t.Fatalf("account usage query = %q", r.URL.RawQuery)
+			}
+			writeSub2APISuccess(t, w, map[string]any{"total_requests": 2, "total_input_tokens": 3, "total_output_tokens": 4, "total_tokens": 7, "total_actual_cost": 0.000005})
+		default:
+			t.Fatalf("unexpected route %s %s", r.Method, r.URL.String())
+		}
+	}, time.Second)
+
+	key, err := client.UserKey(context.Background(), SessionDelegatedCredential{Bearer: "delegated-user-token"}, 41, 17)
+	if err != nil || key.ID != 17 || key.UserID != 41 {
+		t.Fatalf("owned key = %#v err=%v", key, err)
+	}
+	stats, err := client.UsageStats(context.Background(), Sub2APIUsageStatsQuery{UserID: 41, Period: "month"})
+	if err != nil || stats.TotalRequests != 2 || stats.TotalActualCostUSDMicros != 5 {
+		t.Fatalf("account stats = %#v err=%v", stats, err)
+	}
+	if requests != 3 { // Account stats authenticates once with the admin credential.
+		t.Fatalf("requests = %d, want key read + admin login + stats", requests)
+	}
+}
+
 func rejectForbiddenSub2APIRoute(t *testing.T, w http.ResponseWriter, r *http.Request) bool {
 	t.Helper()
 	for _, forbidden := range []string{"/balance", "/usage"} {
@@ -485,7 +712,7 @@ func TestSub2APIClientWorkspaceKeyBoundsAndRedactsUpstreamResponses(t *testing.T
 	}
 }
 
-func TestSub2APIClientChargesWithExactNegativeMicrosAndReplays(t *testing.T) {
+func TestSub2APIAdjustmentExactAmount(t *testing.T) {
 	chargeCalls := 0
 	client := newSub2APITestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if rejectForbiddenSub2APIRoute(t, w, r) {
@@ -728,7 +955,7 @@ func TestSub2APIClientDetectsSameCodeDifferentValue(t *testing.T) {
 	}
 }
 
-func TestSub2APIClientConfirmsConflictReplayFromBalanceHistory(t *testing.T) {
+func TestSub2APIAdjustmentReplay(t *testing.T) {
 	historyEntry := func(code string, valueUSDMicros int64) map[string]any {
 		return map[string]any{
 			"code": code, "type": "balance", "value": usdMicrosJSON(valueUSDMicros), "status": "used", "used_by": 41,
@@ -806,7 +1033,7 @@ func TestSub2APIClientConfirmsConflictReplayFromBalanceHistory(t *testing.T) {
 	}
 }
 
-func TestSub2APIClientBoundsBodiesAndTreatsChargeTimeoutAsUnknown(t *testing.T) {
+func TestSub2APIAdjustmentUnknown(t *testing.T) {
 	t.Run("response body limit", func(t *testing.T) {
 		client := newSub2APITestClient(t, func(w http.ResponseWriter, r *http.Request) {
 			switch r.URL.Path {

@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 5,
+  "schemaVersion": 10,
   "owner": "OPL Platform Architecture",
   "purpose": "Current ownership contract for Console UI, Control Plane, Ledger, Fabric, and external Sub2API.",
   "state": "current",
@@ -24,6 +24,8 @@
       "persistence": "postgresql",
       "owns": [
         "sessions",
+        "announcements",
+        "announcementReads",
         "accountMappings",
         "internalOneToOneIdentityCompatibilityRecords",
         "workspaces",
@@ -40,7 +42,32 @@
         "ledger": "http",
         "fabric": "http",
         "sub2api": "http"
-      }
+      },
+      "ephemeralOnly": ["sessionDelegatedGatewayCredential"],
+      "sessionDelegatedGatewayCredential": {
+        "source": "sub2api_user_login",
+        "persistence": "process_memory_only",
+        "lookupKey": "hashed_console_session_key",
+        "lifetime": "console_session_or_shorter",
+        "horizontalScaling": "forbidden_until_secure_shared_vault_is_approved"
+      },
+      "operatorProjection": {
+        "authorities": ["control_plane", "sub2api", "fabric", "ledger", "runtime"],
+        "persistence": "none_request_join_only",
+        "sub2apiStrategy": "paginated_users_and_batch_user_key_usage_no_per_account_n_plus_one",
+        "runtimeStrategy": "bounded_concurrency_independent_timeout",
+        "missingOwnerFact": "source_unavailable_without_zero_or_fallback",
+        "readReplica": false
+      },
+      "walletMutationSerialization": {
+        "deployment": "single_control_plane_replica",
+        "scope": "process_local",
+        "primitive": "lockResource(\"sub2api-wallet\", accountId)",
+        "operations": ["operator_wallet_adjustment", "workspace.launch.v2_debit", "workspace.launch.v2_refund", "workspace_renewal_debit", "workspace_renewal_refund"],
+        "additionalLockService": false,
+        "multiReplicaPolicy": "forbidden_until_approved_distributed_serialization"
+      },
+      "forbiddenPersistence": ["gatewayCredentials", "apiKeys", "apiUsage", "walletBalances", "runtimeFileMetadata"]
     },
     "ledger": {
       "path": "services/ledger",
@@ -81,7 +108,20 @@
       "cloudSdks": [
         "tencentcloud-sdk-go",
         "kubernetes-client-go"
-      ]
+      ],
+      "workspaceLaunchManualReviewProviderTruth": {
+        "endpoint": "GET /fabric/monthly-provider-truth?computeAllocationId=<id>&storageVolumeId=<id>",
+        "scope": "workspace.launch.v2_manual_review_recovery_only",
+        "providerAction": "provider_truth",
+        "providerAuthority": "existing_tencent_provisioner_describe_only",
+        "localIdentityInputs": ["computeAllocationId", "storageVolumeId"],
+        "outcomes": ["present", "absent", "unknown"],
+        "exactVerificationFacts": ["provider_identity", "sku", "zone", "ownership", "chargeType=PREPAID", "renewFlag=NOTIFY_AND_MANUAL_RENEW", "deadline"],
+        "unknownWhen": "either_local_identity_missing_or_any_exact_fact_unverifiable",
+        "unknownPolicy": "remain_manual_review_never_absent_never_refund",
+        "absentRequires": "both_local_identities_and_exact_provider_describe_absence",
+        "forbiddenSideEffects": ["sync", "tag", "kubectl_apply", "delete", "label", "purchase", "renew", "destroy"]
+      }
     }
   },
   "externalServices": {
@@ -102,21 +142,29 @@
         "read mapped user API keys",
         "read scoped request usage",
         "read scoped aggregate usage stats",
+        "read paginated users and batch user/key usage",
         "read mapped user balance history",
-        "create and redeem adjustment"
+        "create and redeem adjustment",
+        "mutate owned general keys with delegated user credentials"
       ],
-      "customerProjection": "strict_allowlist_with_integer_usd_micros_and_no_local_usage_copy"
+      "customerProjection": "strict_allowlist_with_integer_usd_micros_and_no_local_usage_copy",
+      "currentImplementation": "paginated_users_batch_user_and_key_usage_code_complete_local_only"
     }
   },
   "browserBoundary": {
     "onlyCalls": "control_plane_product_apis",
+    "gatewayPublicEndpoint": {
+      "configEnv": "OPL_GATEWAY_PUBLIC_BASE_URL",
+      "productionScheme": "https",
+      "forbiddenFallbacks": ["OPL_SUB2API_BASE_URL", "gflabtoken.cn"]
+    },
     "forbidden": ["sub2api_direct", "gflabtoken_link", "iframe", "html_scraping", "raw_admin_dto"]
   },
   "customerMutationBoundary": {
     "payment": false,
     "topUp": false,
-    "keyCreate": false,
-    "keyRevoke": false
+    "keyCreate": true,
+    "keyRevoke": true
   },
   "migration": {
     "compatibilityLayer": "forbidden",

@@ -56,7 +56,7 @@ func TestRuntimeStatusNeverReturnsCredential(t *testing.T) {
 	owner := tenantOwnerSessionForTest(t, server)
 	seedRuntimeAccessWorkspaceForTest(t, store, sessionUserIDForTest(t, server, owner), nil)
 
-	response := requestWithSession(t, server, owner, http.MethodPost, "/api/workspaces/runtime-status", `{"workspaceId":"ws-alpha"}`)
+	response := requestWithSession(t, server, owner, http.MethodGet, "/api/workspaces/ws-alpha/runtime-status", "")
 	if response.Code != http.StatusOK {
 		t.Fatalf("runtime status = %d: %s", response.Code, response.Body.String())
 	}
@@ -183,13 +183,12 @@ func TestWorkspaceRuntimeAndSecretCommandsRequireCanonicalAccess(t *testing.T) {
 		}},
 	}
 	commands := []struct {
-		name, path string
-		mutation   bool
+		name, method, path string
+		mutation           bool
 	}{
-		{name: "runtime status", path: "/api/workspaces/runtime-status"},
-		{name: "credential reveal", path: "/api/workspaces/ws-alpha/runtime-credentials/reveal"},
-		{name: "credential rotate", path: "/api/workspaces/ws-alpha/runtime-credentials/rotate", mutation: true},
-		{name: "gateway secret rotate", path: "/api/workspaces/ws-alpha/gateway-secret/rotate", mutation: true},
+		{name: "runtime status", method: http.MethodGet, path: "/api/workspaces/ws-alpha/runtime-status"},
+		{name: "credential reveal", method: http.MethodPost, path: "/api/workspaces/ws-alpha/runtime-credentials/reveal"},
+		{name: "credential rotate", method: http.MethodPost, path: "/api/workspaces/ws-alpha/runtime-credentials/rotate", mutation: true},
 	}
 
 	for _, state := range states {
@@ -235,14 +234,11 @@ func TestWorkspaceRuntimeAndSecretCommandsRequireCanonicalAccess(t *testing.T) {
 				beforeOperations, _ := store.ListRuntimeOperations(context.Background())
 
 				body := `{}`
-				if command.name == "runtime status" {
-					body = `{"workspaceId":"ws-alpha"}`
-				}
 				var response *httptest.ResponseRecorder
 				if command.mutation {
-					response = requestWithMutationKeyForTest(t, server, owner, http.MethodPost, command.path, body, "blocked-command")
+					response = requestWithMutationKeyForTest(t, server, owner, command.method, command.path, body, "blocked-command")
 				} else {
-					response = requestWithSession(t, server, owner, http.MethodPost, command.path, body)
+					response = requestWithSession(t, server, owner, command.method, command.path, body)
 				}
 				if response.Code >= 200 && response.Code < 300 {
 					t.Fatalf("blocked command status=%d body=%s", response.Code, response.Body.String())

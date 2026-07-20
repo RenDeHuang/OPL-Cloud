@@ -10,6 +10,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -25,6 +26,7 @@ const (
 	maxSub2APIIdentityPages  = 10
 	maxSub2APIIdentities     = sub2APIKeyPageSize * maxSub2APIIdentityPages
 	maxSub2APIUsagePage      = 1_000_000
+	maxSub2APIBatchIDs       = 50
 )
 
 var (
@@ -38,6 +40,7 @@ var (
 	ErrSub2APIInvalidCredentials    = errors.New("sub2api invalid credentials")
 	ErrSub2APIAuthRateLimited       = errors.New("sub2api authentication rate limited")
 	ErrSub2APIAuthUnavailable       = errors.New("sub2api authentication unavailable")
+	ErrSub2APIKeyNotFound           = errors.New("sub2api key not found")
 )
 
 type Sub2APIClient interface {
@@ -54,6 +57,17 @@ type Sub2APIKeyListClient interface {
 	Keys(context.Context, int64) ([]Sub2APIWorkspaceKey, error)
 }
 
+type Sub2APIUserKeyReadClient interface {
+	UserKeys(context.Context, SessionDelegatedCredential, int64) ([]Sub2APIWorkspaceKey, error)
+	UserKey(context.Context, SessionDelegatedCredential, int64, int64) (Sub2APIWorkspaceKey, error)
+}
+
+type Sub2APIUserKeyMutationClient interface {
+	CreateUserKey(context.Context, SessionDelegatedCredential, int64, Sub2APICreateKeyInput, string) (Sub2APIWorkspaceKey, error)
+	UpdateUserKey(context.Context, SessionDelegatedCredential, int64, int64, Sub2APIUpdateKeyInput) (Sub2APIWorkspaceKey, error)
+	DeleteUserKey(context.Context, SessionDelegatedCredential, int64, int64) error
+}
+
 type Sub2APIRefundClient interface {
 	Refund(context.Context, Sub2APIRefundInput) (Sub2APIRefund, error)
 }
@@ -66,12 +80,24 @@ type Sub2APIUsageClient interface {
 
 type Sub2APIIdentityClient interface {
 	ResolveOrCreateUser(context.Context, string, string) (Sub2APIIdentity, error)
-	AuthenticateUser(context.Context, string, string) (Sub2APIIdentity, error)
+	AuthenticateUser(context.Context, string, string) (Sub2APIUserAuthentication, error)
 	UserIdentity(context.Context, int64, string) (Sub2APIIdentity, error)
 }
 
 type Sub2APIUserReadClient interface {
 	User(context.Context, int64) (Sub2APIIdentity, error)
+}
+
+type Sub2APIAdminUsersClient interface {
+	AdminUsers(context.Context, Sub2APIUserPageQuery) (Sub2APIUserPage, error)
+}
+
+type Sub2APIBatchUsersUsageClient interface {
+	BatchUsersUsage(context.Context, []int64) (map[int64]Sub2APIBatchUserUsage, error)
+}
+
+type Sub2APIBatchKeysUsageClient interface {
+	BatchKeysUsage(context.Context, []int64) (map[int64]Sub2APIBatchKeyUsage, error)
 }
 
 type Sub2APIAdminIdentityClient interface {
@@ -97,6 +123,72 @@ type Sub2APIIdentity struct {
 	Status string `json:"status"`
 }
 
+type Sub2APIUserPageQuery struct {
+	Page      int
+	PageSize  int
+	Search    string
+	SortBy    string
+	SortOrder string
+}
+
+type Sub2APIUser struct {
+	ID               int64
+	Email            string
+	BalanceUSDMicros int64
+	Status           string
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+}
+
+type Sub2APIUserPage struct {
+	Items    []Sub2APIUser
+	Total    int64
+	Page     int
+	PageSize int
+	Pages    int
+}
+
+type Sub2APIPlatformUsage struct {
+	Platform                 string
+	TodayActualCostUSDMicros int64
+	TotalActualCostUSDMicros int64
+}
+
+type Sub2APIBatchUserUsage struct {
+	UserID                   int64
+	TodayActualCostUSDMicros int64
+	TotalActualCostUSDMicros int64
+	ByPlatform               []Sub2APIPlatformUsage
+}
+
+type Sub2APIBatchKeyUsage struct {
+	APIKeyID                 int64
+	TodayActualCostUSDMicros int64
+	TotalActualCostUSDMicros int64
+}
+
+type Sub2APIUserAuthentication struct {
+	Identity    Sub2APIIdentity `json:"-"`
+	AccessToken string          `json:"-"`
+}
+
+type SessionDelegatedCredential struct {
+	Bearer    string
+	ExpiresAt time.Time
+}
+
+type Sub2APICreateKeyInput struct {
+	Name           string
+	QuotaUSDMicros int64
+	ExpiresInDays  *int
+}
+
+type Sub2APIUpdateKeyInput struct {
+	Name           *string
+	QuotaUSDMicros *int64
+	Enabled        *bool
+}
+
 type Sub2APIWorkspaceKey struct {
 	ID                 int64
 	UserID             int64
@@ -109,6 +201,22 @@ type Sub2APIWorkspaceKey struct {
 	Usage1dUSDMicros   int64
 	Usage7dUSDMicros   int64
 	LastUsedAt         *time.Time
+	ExpiresAt          *time.Time
+}
+
+type sub2APIKeyPayload struct {
+	ID         int64        `json:"id"`
+	UserID     int64        `json:"user_id"`
+	Name       string       `json:"name"`
+	Key        string       `json:"key"`
+	Status     string       `json:"status"`
+	Quota      *json.Number `json:"quota"`
+	QuotaUsed  *json.Number `json:"quota_used"`
+	Usage5h    *json.Number `json:"usage_5h"`
+	Usage1d    *json.Number `json:"usage_1d"`
+	Usage7d    *json.Number `json:"usage_7d"`
+	LastUsedAt *time.Time   `json:"last_used_at"`
+	ExpiresAt  *time.Time   `json:"expires_at"`
 }
 
 type Sub2APIUsageQuery struct {
@@ -328,20 +436,21 @@ func (c *Sub2APIHTTPClient) ResolveOrCreateUser(ctx context.Context, email, pass
 }
 
 func (c *Sub2APIHTTPClient) authenticatedUserIdentity(ctx context.Context, userID int64, email, password string) (Sub2APIIdentity, error) {
-	identity, err := c.AuthenticateUser(ctx, email, password)
+	authentication, err := c.AuthenticateUser(ctx, email, password)
 	if err != nil {
 		return Sub2APIIdentity{}, err
 	}
+	identity := authentication.Identity
 	if identity.ID != userID {
 		return Sub2APIIdentity{}, ErrSub2APIIdentityConflict
 	}
 	return c.UserIdentity(ctx, userID, email)
 }
 
-func (c *Sub2APIHTTPClient) AuthenticateUser(ctx context.Context, email, password string) (Sub2APIIdentity, error) {
+func (c *Sub2APIHTTPClient) AuthenticateUser(ctx context.Context, email, password string) (Sub2APIUserAuthentication, error) {
 	email = normalizeSub2APIEmail(email)
 	if email == "" || password == "" {
-		return Sub2APIIdentity{}, ErrSub2APIInvalidCredentials
+		return Sub2APIUserAuthentication{}, ErrSub2APIInvalidCredentials
 	}
 	body, err := c.request(ctx, http.MethodPost, "/api/v1/auth/login", map[string]string{
 		"email": email, "password": password, "turnstile_token": "",
@@ -350,11 +459,11 @@ func (c *Sub2APIHTTPClient) AuthenticateUser(ctx context.Context, email, passwor
 		var httpErr *Sub2APIHTTPError
 		switch {
 		case errors.As(err, &httpErr) && httpErr.StatusCode == http.StatusUnauthorized:
-			return Sub2APIIdentity{}, ErrSub2APIInvalidCredentials
+			return Sub2APIUserAuthentication{}, ErrSub2APIInvalidCredentials
 		case errors.As(err, &httpErr) && httpErr.StatusCode == http.StatusTooManyRequests:
-			return Sub2APIIdentity{}, ErrSub2APIAuthRateLimited
+			return Sub2APIUserAuthentication{}, ErrSub2APIAuthRateLimited
 		default:
-			return Sub2APIIdentity{}, ErrSub2APIAuthUnavailable
+			return Sub2APIUserAuthentication{}, ErrSub2APIAuthUnavailable
 		}
 	}
 	var data struct {
@@ -362,14 +471,14 @@ func (c *Sub2APIHTTPClient) AuthenticateUser(ctx context.Context, email, passwor
 		User        *Sub2APIIdentity `json:"user"`
 	}
 	if err := decodeSub2APIEnvelope(body, &data); err != nil || data.AccessToken == "" || data.User == nil {
-		return Sub2APIIdentity{}, ErrSub2APIAuthUnavailable
+		return Sub2APIUserAuthentication{}, ErrSub2APIAuthUnavailable
 	}
 	identity := *data.User
 	identity.Email = normalizeSub2APIEmail(identity.Email)
 	if identity.ID <= 0 || identity.Email != email || identity.Status != "active" {
-		return Sub2APIIdentity{}, ErrSub2APIAuthUnavailable
+		return Sub2APIUserAuthentication{}, ErrSub2APIAuthUnavailable
 	}
-	return identity, nil
+	return Sub2APIUserAuthentication{Identity: identity, AccessToken: data.AccessToken}, nil
 }
 
 func (c *Sub2APIHTTPClient) UserIdentity(ctx context.Context, userID int64, email string) (Sub2APIIdentity, error) {
@@ -406,11 +515,196 @@ func (c *Sub2APIHTTPClient) User(ctx context.Context, userID int64) (Sub2APIIden
 	return identity, nil
 }
 
+func (c *Sub2APIHTTPClient) AdminUsers(ctx context.Context, query Sub2APIUserPageQuery) (Sub2APIUserPage, error) {
+	query.Search = strings.TrimSpace(query.Search)
+	if query.Page <= 0 || query.PageSize <= 0 || query.PageSize > sub2APIKeyPageSize || len([]rune(query.Search)) > 100 ||
+		!validSub2APIUserSort(query.SortBy) || (query.SortOrder != "asc" && query.SortOrder != "desc") {
+		return Sub2APIUserPage{}, errors.New("invalid sub2api user page query")
+	}
+	values := url.Values{
+		"page": {strconv.Itoa(query.Page)}, "page_size": {strconv.Itoa(query.PageSize)},
+		"sort_by": {query.SortBy}, "sort_order": {query.SortOrder},
+	}
+	if query.Search != "" {
+		values.Set("search", query.Search)
+	}
+	body, err := c.doAuthenticated(ctx, http.MethodGet, "/api/v1/admin/users?"+values.Encode(), nil, "")
+	if err != nil {
+		return Sub2APIUserPage{}, err
+	}
+	var data struct {
+		Items []struct {
+			ID        int64       `json:"id"`
+			Email     string      `json:"email"`
+			Balance   json.Number `json:"balance"`
+			Status    string      `json:"status"`
+			CreatedAt time.Time   `json:"created_at"`
+			UpdatedAt time.Time   `json:"updated_at"`
+		} `json:"items"`
+		Total    int64 `json:"total"`
+		Page     int   `json:"page"`
+		PageSize int   `json:"page_size"`
+		Pages    int   `json:"pages"`
+	}
+	if err := decodeSub2APIEnvelope(body, &data); err != nil {
+		return Sub2APIUserPage{}, err
+	}
+	expectedPages := int((data.Total + int64(query.PageSize) - 1) / int64(query.PageSize))
+	if expectedPages < 1 {
+		expectedPages = 1
+	}
+	expectedItems := query.PageSize
+	if query.Page == expectedPages {
+		expectedItems = int(data.Total) - (query.Page-1)*query.PageSize
+	}
+	if data.Total < 0 || data.Total > int64(maxSub2APIIdentities) || data.Page != query.Page || data.PageSize != query.PageSize ||
+		data.Pages != expectedPages || query.Page > data.Pages || len(data.Items) != expectedItems {
+		return Sub2APIUserPage{}, errors.New("invalid sub2api user pagination")
+	}
+	page := Sub2APIUserPage{Items: make([]Sub2APIUser, 0, len(data.Items)), Total: data.Total, Page: data.Page, PageSize: data.PageSize, Pages: data.Pages}
+	seen := make(map[int64]struct{}, len(data.Items))
+	for _, item := range data.Items {
+		email := normalizeSub2APIEmail(item.Email)
+		balance, balanceErr := decimalUSDMicros(item.Balance)
+		_, duplicate := seen[item.ID]
+		if balanceErr != nil || item.ID <= 0 || email == "" || (item.Status != "active" && item.Status != "disabled") ||
+			item.CreatedAt.IsZero() || item.UpdatedAt.IsZero() || item.UpdatedAt.Before(item.CreatedAt) || duplicate {
+			return Sub2APIUserPage{}, errors.New("invalid sub2api user facts")
+		}
+		seen[item.ID] = struct{}{}
+		page.Items = append(page.Items, Sub2APIUser{
+			ID: item.ID, Email: email, BalanceUSDMicros: balance, Status: item.Status, CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt,
+		})
+	}
+	return page, nil
+}
+
+func validSub2APIUserSort(value string) bool {
+	switch value {
+	case "id", "email", "balance", "status", "created_at", "updated_at":
+		return true
+	default:
+		return false
+	}
+}
+
+func (c *Sub2APIHTTPClient) BatchUsersUsage(ctx context.Context, userIDs []int64) (map[int64]Sub2APIBatchUserUsage, error) {
+	ids, err := normalizeSub2APIBatchIDs(userIDs)
+	if err != nil || len(ids) == 0 {
+		return map[int64]Sub2APIBatchUserUsage{}, err
+	}
+	body, err := c.doAuthenticated(ctx, http.MethodPost, "/api/v1/admin/dashboard/users-usage", map[string]any{"user_ids": ids}, "")
+	if err != nil {
+		return nil, err
+	}
+	var data struct {
+		Stats map[string]struct {
+			UserID          int64       `json:"user_id"`
+			TodayActualCost json.Number `json:"today_actual_cost"`
+			TotalActualCost json.Number `json:"total_actual_cost"`
+			ByPlatform      []struct {
+				Platform        string      `json:"platform"`
+				TodayActualCost json.Number `json:"today_actual_cost"`
+				TotalActualCost json.Number `json:"total_actual_cost"`
+			} `json:"by_platform"`
+		} `json:"stats"`
+	}
+	if err := decodeSub2APIEnvelope(body, &data); err != nil || len(data.Stats) != len(ids) {
+		return nil, errors.New("invalid sub2api batch user usage")
+	}
+	result := make(map[int64]Sub2APIBatchUserUsage, len(ids))
+	for _, id := range ids {
+		item, ok := data.Stats[strconv.FormatInt(id, 10)]
+		today, total, costsErr := sub2APIUsageCosts(item.TodayActualCost, item.TotalActualCost)
+		if !ok || item.UserID != id || costsErr != nil {
+			return nil, errors.New("invalid sub2api batch user usage")
+		}
+		usage := Sub2APIBatchUserUsage{UserID: id, TodayActualCostUSDMicros: today, TotalActualCostUSDMicros: total, ByPlatform: make([]Sub2APIPlatformUsage, 0, len(item.ByPlatform))}
+		platforms := make(map[string]struct{}, len(item.ByPlatform))
+		for _, raw := range item.ByPlatform {
+			platform := strings.TrimSpace(raw.Platform)
+			platformToday, platformTotal, platformErr := sub2APIUsageCosts(raw.TodayActualCost, raw.TotalActualCost)
+			_, duplicate := platforms[platform]
+			if platform == "" || platformErr != nil || duplicate {
+				return nil, errors.New("invalid sub2api batch user usage")
+			}
+			platforms[platform] = struct{}{}
+			usage.ByPlatform = append(usage.ByPlatform, Sub2APIPlatformUsage{Platform: platform, TodayActualCostUSDMicros: platformToday, TotalActualCostUSDMicros: platformTotal})
+		}
+		result[id] = usage
+	}
+	return result, nil
+}
+
+func (c *Sub2APIHTTPClient) BatchKeysUsage(ctx context.Context, apiKeyIDs []int64) (map[int64]Sub2APIBatchKeyUsage, error) {
+	ids, err := normalizeSub2APIBatchIDs(apiKeyIDs)
+	if err != nil || len(ids) == 0 {
+		return map[int64]Sub2APIBatchKeyUsage{}, err
+	}
+	body, err := c.doAuthenticated(ctx, http.MethodPost, "/api/v1/admin/dashboard/api-keys-usage", map[string]any{"api_key_ids": ids}, "")
+	if err != nil {
+		return nil, err
+	}
+	var data struct {
+		Stats map[string]struct {
+			APIKeyID        int64       `json:"api_key_id"`
+			TodayActualCost json.Number `json:"today_actual_cost"`
+			TotalActualCost json.Number `json:"total_actual_cost"`
+		} `json:"stats"`
+	}
+	if err := decodeSub2APIEnvelope(body, &data); err != nil || len(data.Stats) != len(ids) {
+		return nil, errors.New("invalid sub2api batch key usage")
+	}
+	result := make(map[int64]Sub2APIBatchKeyUsage, len(ids))
+	for _, id := range ids {
+		item, ok := data.Stats[strconv.FormatInt(id, 10)]
+		today, total, costsErr := sub2APIUsageCosts(item.TodayActualCost, item.TotalActualCost)
+		if !ok || item.APIKeyID != id || costsErr != nil {
+			return nil, errors.New("invalid sub2api batch key usage")
+		}
+		result[id] = Sub2APIBatchKeyUsage{APIKeyID: id, TodayActualCostUSDMicros: today, TotalActualCostUSDMicros: total}
+	}
+	return result, nil
+}
+
+func normalizeSub2APIBatchIDs(input []int64) ([]int64, error) {
+	if len(input) > maxSub2APIBatchIDs {
+		return nil, errors.New("sub2api batch exceeds limit")
+	}
+	seen := make(map[int64]struct{}, len(input))
+	ids := make([]int64, 0, len(input))
+	for _, id := range input {
+		if id <= 0 {
+			return nil, errors.New("sub2api batch ID must be positive")
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	return ids, nil
+}
+
+func sub2APIUsageCosts(todayRaw, totalRaw json.Number) (int64, int64, error) {
+	today, err := decimalUSDMicros(todayRaw)
+	if err != nil || today < 0 {
+		return 0, 0, errors.New("invalid sub2api usage cost")
+	}
+	total, err := decimalUSDMicros(totalRaw)
+	if err != nil || total < 0 {
+		return 0, 0, errors.New("invalid sub2api usage cost")
+	}
+	return today, total, nil
+}
+
 func (c *Sub2APIHTTPClient) AdminIdentity(ctx context.Context) (Sub2APIIdentity, error) {
-	identity, err := c.AuthenticateUser(ctx, c.adminEmail, c.adminPassword)
+	authentication, err := c.AuthenticateUser(ctx, c.adminEmail, c.adminPassword)
 	if err != nil {
 		return Sub2APIIdentity{}, err
 	}
+	identity := authentication.Identity
 	return c.UserIdentity(ctx, identity.ID, c.adminEmail)
 }
 
@@ -498,23 +792,11 @@ func (c *Sub2APIHTTPClient) Keys(ctx context.Context, userID int64) ([]Sub2APIWo
 			return nil, err
 		}
 		var data struct {
-			Items []struct {
-				ID         int64        `json:"id"`
-				UserID     int64        `json:"user_id"`
-				Name       string       `json:"name"`
-				Key        string       `json:"key"`
-				Status     string       `json:"status"`
-				Quota      *json.Number `json:"quota"`
-				QuotaUsed  *json.Number `json:"quota_used"`
-				Usage5h    *json.Number `json:"usage_5h"`
-				Usage1d    *json.Number `json:"usage_1d"`
-				Usage7d    *json.Number `json:"usage_7d"`
-				LastUsedAt *time.Time   `json:"last_used_at"`
-			} `json:"items"`
-			Page     int `json:"page"`
-			PageSize int `json:"page_size"`
-			Pages    int `json:"pages"`
-			Total    int `json:"total"`
+			Items    []sub2APIKeyPayload `json:"items"`
+			Page     int                 `json:"page"`
+			PageSize int                 `json:"page_size"`
+			Pages    int                 `json:"pages"`
+			Total    int                 `json:"total"`
 		}
 		if err := decodeSub2APIEnvelope(body, &data); err != nil {
 			return nil, err
@@ -532,35 +814,18 @@ func (c *Sub2APIHTTPClient) Keys(ctx context.Context, userID int64) ([]Sub2APIWo
 			return nil, errors.New("invalid sub2api api key pagination")
 		}
 		for _, item := range data.Items {
-			if item.UserID != userID {
-				return nil, errors.New("sub2api user identity mismatch")
-			}
 			if item.ID <= 0 {
 				return nil, errors.New("invalid sub2api api key pagination")
 			}
-			if strings.TrimSpace(item.Name) == "" || (item.Status != "active" && item.Status != "disabled") {
-				return nil, errors.New("invalid sub2api api key")
+			key, err := sub2APIKey(item, userID)
+			if err != nil {
+				return nil, err
 			}
 			if _, exists := seenIDs[item.ID]; exists {
 				return nil, errors.New("invalid sub2api api key pagination")
 			}
 			seenIDs[item.ID] = struct{}{}
-			values := []*json.Number{item.Quota, item.QuotaUsed, item.Usage5h, item.Usage1d, item.Usage7d}
-			micros := make([]int64, len(values))
-			for i, value := range values {
-				if value == nil {
-					return nil, errors.New("invalid sub2api workspace key usage")
-				}
-				micros[i], err = decimalUSDMicros(*value)
-				if err != nil || micros[i] < 0 {
-					return nil, errors.New("invalid sub2api workspace key usage")
-				}
-			}
-			keys = append(keys, Sub2APIWorkspaceKey{
-				ID: item.ID, UserID: item.UserID, Name: item.Name, Key: item.Key, Status: item.Status,
-				QuotaUSDMicros: micros[0], QuotaUsedUSDMicros: micros[1], Usage5hUSDMicros: micros[2],
-				Usage1dUSDMicros: micros[3], Usage7dUSDMicros: micros[4], LastUsedAt: item.LastUsedAt,
-			})
+			keys = append(keys, key)
 		}
 		collected += len(data.Items)
 		if collected > total || (len(data.Items) == 0 && collected < total) {
@@ -577,6 +842,210 @@ func (c *Sub2APIHTTPClient) Keys(ctx context.Context, userID int64) ([]Sub2APIWo
 		}
 	}
 	return keys, nil
+}
+
+func sub2APIKey(item sub2APIKeyPayload, userID int64) (Sub2APIWorkspaceKey, error) {
+	if item.UserID != userID {
+		return Sub2APIWorkspaceKey{}, errors.New("sub2api user identity mismatch")
+	}
+	status := item.Status
+	if status == "inactive" {
+		status = "disabled"
+	}
+	if item.ID <= 0 || strings.TrimSpace(item.Name) == "" || (status != "active" && status != "disabled") {
+		return Sub2APIWorkspaceKey{}, errors.New("invalid sub2api api key")
+	}
+	values := []*json.Number{item.Quota, item.QuotaUsed, item.Usage5h, item.Usage1d, item.Usage7d}
+	micros := make([]int64, len(values))
+	for i, value := range values {
+		if value == nil {
+			return Sub2APIWorkspaceKey{}, errors.New("invalid sub2api workspace key usage")
+		}
+		var err error
+		micros[i], err = decimalUSDMicros(*value)
+		if err != nil || micros[i] < 0 {
+			return Sub2APIWorkspaceKey{}, errors.New("invalid sub2api workspace key usage")
+		}
+	}
+	return Sub2APIWorkspaceKey{
+		ID: item.ID, UserID: item.UserID, Name: strings.TrimSpace(item.Name), Key: item.Key, Status: status,
+		QuotaUSDMicros: micros[0], QuotaUsedUSDMicros: micros[1], Usage5hUSDMicros: micros[2],
+		Usage1dUSDMicros: micros[3], Usage7dUSDMicros: micros[4], LastUsedAt: item.LastUsedAt, ExpiresAt: item.ExpiresAt,
+	}, nil
+}
+
+func (c *Sub2APIHTTPClient) UserKeys(ctx context.Context, credential SessionDelegatedCredential, userID int64) ([]Sub2APIWorkspaceKey, error) {
+	if err := validateDelegatedKeyRequest(credential, userID); err != nil {
+		return nil, err
+	}
+	keys := make([]Sub2APIWorkspaceKey, 0)
+	seenIDs := make(map[int64]struct{})
+	total, pages, collected := -1, -1, 0
+	for page := 1; page <= maxSub2APIKeyPages; page++ {
+		query := url.Values{"page": {strconv.Itoa(page)}, "page_size": {strconv.Itoa(sub2APIKeyPageSize)}}
+		body, err := c.request(ctx, http.MethodGet, "/api/v1/keys?"+query.Encode(), nil, credential.Bearer, "")
+		if err != nil {
+			return nil, normalizeSub2APIKeyError(err)
+		}
+		var data struct {
+			Items    []sub2APIKeyPayload `json:"items"`
+			Page     int                 `json:"page"`
+			PageSize int                 `json:"page_size"`
+			Pages    int                 `json:"pages"`
+			Total    int                 `json:"total"`
+		}
+		if err := decodeSub2APIEnvelope(body, &data); err != nil {
+			return nil, err
+		}
+		if data.Total < 0 || data.Total > maxSub2APIKeys {
+			return nil, errors.New("invalid sub2api api key pagination")
+		}
+		expectedPages := (data.Total + sub2APIKeyPageSize - 1) / sub2APIKeyPageSize
+		if data.Page != page || data.PageSize != sub2APIKeyPageSize || data.Pages != expectedPages || data.Pages > maxSub2APIKeyPages || len(data.Items) > sub2APIKeyPageSize {
+			return nil, errors.New("invalid sub2api api key pagination")
+		}
+		if page == 1 {
+			total, pages = data.Total, data.Pages
+		} else if data.Total != total || data.Pages != pages {
+			return nil, errors.New("invalid sub2api api key pagination")
+		}
+		for _, item := range data.Items {
+			key, err := sub2APIKey(item, userID)
+			if err != nil {
+				return nil, err
+			}
+			if _, exists := seenIDs[key.ID]; exists {
+				return nil, errors.New("invalid sub2api api key pagination")
+			}
+			seenIDs[key.ID] = struct{}{}
+			keys = append(keys, key)
+		}
+		collected += len(data.Items)
+		if collected > total || (len(data.Items) == 0 && collected < total) {
+			return nil, errors.New("invalid sub2api api key pagination")
+		}
+		if pages == 0 || page == pages {
+			if collected != total {
+				return nil, errors.New("invalid sub2api api key pagination")
+			}
+			return keys, nil
+		}
+	}
+	return nil, errors.New("invalid sub2api api key pagination")
+}
+
+func (c *Sub2APIHTTPClient) UserKey(ctx context.Context, credential SessionDelegatedCredential, userID, keyID int64) (Sub2APIWorkspaceKey, error) {
+	if err := validateDelegatedKeyRequest(credential, userID); err != nil || keyID <= 0 {
+		if err != nil {
+			return Sub2APIWorkspaceKey{}, err
+		}
+		return Sub2APIWorkspaceKey{}, errors.New("sub2api key ID must be positive")
+	}
+	body, err := c.request(ctx, http.MethodGet, "/api/v1/keys/"+strconv.FormatInt(keyID, 10), nil, credential.Bearer, "")
+	if err != nil {
+		return Sub2APIWorkspaceKey{}, normalizeSub2APIKeyError(err)
+	}
+	return decodeSub2APIUserKey(body, userID, keyID)
+}
+
+func (c *Sub2APIHTTPClient) CreateUserKey(ctx context.Context, credential SessionDelegatedCredential, userID int64, input Sub2APICreateKeyInput, idempotencyKey string) (Sub2APIWorkspaceKey, error) {
+	if err := validateDelegatedKeyRequest(credential, userID); err != nil {
+		return Sub2APIWorkspaceKey{}, err
+	}
+	input.Name = strings.TrimSpace(input.Name)
+	if input.Name == "" || input.QuotaUSDMicros < 0 || strings.TrimSpace(idempotencyKey) == "" || input.ExpiresInDays != nil && *input.ExpiresInDays <= 0 {
+		return Sub2APIWorkspaceKey{}, errors.New("invalid sub2api key create input")
+	}
+	request := map[string]any{"name": input.Name, "quota": usdMicrosJSON(input.QuotaUSDMicros)}
+	if input.ExpiresInDays != nil {
+		request["expires_in_days"] = *input.ExpiresInDays
+	}
+	body, err := c.request(ctx, http.MethodPost, "/api/v1/keys", request, credential.Bearer, strings.TrimSpace(idempotencyKey))
+	if err != nil {
+		return Sub2APIWorkspaceKey{}, normalizeSub2APIKeyError(err)
+	}
+	return decodeSub2APIUserKey(body, userID, 0)
+}
+
+func (c *Sub2APIHTTPClient) UpdateUserKey(ctx context.Context, credential SessionDelegatedCredential, userID, keyID int64, input Sub2APIUpdateKeyInput) (Sub2APIWorkspaceKey, error) {
+	if err := validateDelegatedKeyRequest(credential, userID); err != nil || keyID <= 0 {
+		if err != nil {
+			return Sub2APIWorkspaceKey{}, err
+		}
+		return Sub2APIWorkspaceKey{}, errors.New("sub2api key ID must be positive")
+	}
+	request := map[string]any{}
+	if input.Name != nil {
+		name := strings.TrimSpace(*input.Name)
+		if name == "" {
+			return Sub2APIWorkspaceKey{}, errors.New("invalid sub2api key update input")
+		}
+		request["name"] = name
+	}
+	if input.QuotaUSDMicros != nil {
+		if *input.QuotaUSDMicros < 0 {
+			return Sub2APIWorkspaceKey{}, errors.New("invalid sub2api key update input")
+		}
+		request["quota"] = usdMicrosJSON(*input.QuotaUSDMicros)
+	}
+	if input.Enabled != nil {
+		request["status"] = "inactive"
+		if *input.Enabled {
+			request["status"] = "active"
+		}
+	}
+	if len(request) == 0 {
+		return Sub2APIWorkspaceKey{}, errors.New("invalid sub2api key update input")
+	}
+	body, err := c.request(ctx, http.MethodPut, "/api/v1/keys/"+strconv.FormatInt(keyID, 10), request, credential.Bearer, "")
+	if err != nil {
+		return Sub2APIWorkspaceKey{}, normalizeSub2APIKeyError(err)
+	}
+	return decodeSub2APIUserKey(body, userID, keyID)
+}
+
+func (c *Sub2APIHTTPClient) DeleteUserKey(ctx context.Context, credential SessionDelegatedCredential, userID, keyID int64) error {
+	if err := validateDelegatedKeyRequest(credential, userID); err != nil || keyID <= 0 {
+		if err != nil {
+			return err
+		}
+		return errors.New("sub2api key ID must be positive")
+	}
+	_, err := c.request(ctx, http.MethodDelete, "/api/v1/keys/"+strconv.FormatInt(keyID, 10), nil, credential.Bearer, "")
+	return normalizeSub2APIKeyError(err)
+}
+
+func validateDelegatedKeyRequest(credential SessionDelegatedCredential, userID int64) error {
+	if strings.TrimSpace(credential.Bearer) == "" || userID <= 0 || !credential.ExpiresAt.IsZero() && !credential.ExpiresAt.After(time.Now().UTC()) {
+		return ErrSub2APIAuthUnavailable
+	}
+	return nil
+}
+
+func decodeSub2APIUserKey(body []byte, userID, keyID int64) (Sub2APIWorkspaceKey, error) {
+	var data sub2APIKeyPayload
+	if err := decodeSub2APIEnvelope(body, &data); err != nil {
+		return Sub2APIWorkspaceKey{}, err
+	}
+	key, err := sub2APIKey(data, userID)
+	if err != nil {
+		return Sub2APIWorkspaceKey{}, err
+	}
+	if keyID > 0 && key.ID != keyID {
+		return Sub2APIWorkspaceKey{}, errors.New("sub2api key identity mismatch")
+	}
+	return key, nil
+}
+
+func normalizeSub2APIKeyError(err error) error {
+	if err == nil {
+		return nil
+	}
+	var httpErr *Sub2APIHTTPError
+	if errors.As(err, &httpErr) && httpErr.StatusCode == http.StatusNotFound {
+		return ErrSub2APIKeyNotFound
+	}
+	return err
 }
 
 func (c *Sub2APIHTTPClient) WorkspaceKey(ctx context.Context, userID int64) (Sub2APIWorkspaceKey, error) {
@@ -688,13 +1157,15 @@ func (c *Sub2APIHTTPClient) UsageStats(ctx context.Context, query Sub2APIUsageSt
 	if period == "" {
 		period = "month"
 	}
-	if query.UserID <= 0 || query.APIKeyID <= 0 || (period != "today" && period != "week" && period != "month") {
+	if query.UserID <= 0 || query.APIKeyID < 0 || (period != "today" && period != "week" && period != "month") {
 		return Sub2APIUsageStats{}, errors.New("invalid sub2api usage stats query")
 	}
 	values := url.Values{
-		"api_key_id": {strconv.FormatInt(query.APIKeyID, 10)},
-		"period":     {period},
-		"user_id":    {strconv.FormatInt(query.UserID, 10)},
+		"period":  {period},
+		"user_id": {strconv.FormatInt(query.UserID, 10)},
+	}
+	if query.APIKeyID > 0 {
+		values.Set("api_key_id", strconv.FormatInt(query.APIKeyID, 10))
 	}
 	body, err := c.doAuthenticated(ctx, http.MethodGet, "/api/v1/admin/usage/stats?"+values.Encode(), nil, "")
 	if err != nil {
@@ -1032,6 +1503,10 @@ func decimalUSDMicros(value json.Number) (int64, error) {
 		return 0, errors.New("decimal is not representable as USD micros")
 	}
 	return rational.Num().Int64(), nil
+}
+
+func ParseUSDDecimalMicros(value string) (int64, error) {
+	return decimalUSDMicros(json.Number(value))
 }
 
 func usdMicrosJSON(micros int64) json.RawMessage {

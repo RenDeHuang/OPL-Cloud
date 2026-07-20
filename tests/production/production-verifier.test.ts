@@ -4,6 +4,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
+  mutationApprovalFromJson,
   requestJson,
   runProductionVerifierCli,
   verificationOwnerFromSeed,
@@ -47,6 +48,28 @@ const ownerSeed = JSON.stringify([
     role: "owner", accountId: PRO_ACCOUNT_ID, sub2apiUserId: 42
   }
 ]);
+
+test("production mutation approval binds one approval to exact target allowlists", () => {
+  const raw = JSON.stringify({
+    approvalId: "approval-pilot-v2",
+    expiresAt: "2099-07-19T00:00:00Z",
+    accountIds: [BASIC_ACCOUNT_ID],
+    workspaceIds: ["workspace-basic"],
+    resourceIds: [FIXED_VERIFICATION_SLOT_ID]
+  });
+  const target = {
+    approvalId: "approval-pilot-v2",
+    accountId: BASIC_ACCOUNT_ID,
+    workspaceId: "workspace-basic",
+    resourceIds: [FIXED_VERIFICATION_SLOT_ID]
+  };
+  assert.equal(mutationApprovalFromJson(raw, target, "verification").approvalId, "approval-pilot-v2");
+  assert.throws(() => mutationApprovalFromJson(raw.replace('"2099-07-19T00:00:00Z"', "0"), target, "verification"), /verification_approval_manifest_invalid/);
+  assert.throws(() => mutationApprovalFromJson(raw.replace("2099-07-19T00:00:00Z", "July 19, 2099 UTC"), target, "verification"), /verification_approval_manifest_invalid/);
+  assert.throws(() => mutationApprovalFromJson(raw, { ...target, approvalId: "approval-other" }, "verification"), /verification_approval_id_mismatch/);
+  assert.throws(() => mutationApprovalFromJson(raw, { ...target, workspaceId: "workspace-other" }, "verification"), /verification_target_forbidden/);
+  assert.throws(() => mutationApprovalFromJson(raw.replace("2099-07-19", "2020-07-19"), target, "verification"), /verification_approval_expired/);
+});
 
 const pricingCatalogResponse = {
   priceVersion: "pilot-usd-2026-07-v1",
@@ -600,7 +623,7 @@ test("production verifier CLI rejects legacy paid flags before network access", 
   assert.equal(calls, 0);
 });
 
-test("production verifier CLI help describes read-only fixed-slot verification", async () => {
+test("production verifier CLI help describes the read-only evidence level and fixed-slot verification", async () => {
   let stdout = "";
   let calls = 0;
   const code = await runProductionVerifierCli({
@@ -611,7 +634,9 @@ test("production verifier CLI help describes read-only fixed-slot verification",
   });
 
   assert.equal(code, 0);
+  assert.match(stdout, /--read-only/);
   assert.match(stdout, /read-only/i);
+  assert.match(stdout, /evidence level: read-only/i);
   assert.match(stdout, /verification-slot-basic-01/);
   assert.doesNotMatch(stdout, /paid.confirmation|spends real balance/i);
   assert.equal(calls, 0);

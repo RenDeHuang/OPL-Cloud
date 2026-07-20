@@ -28,6 +28,13 @@ const ownerSeed = JSON.stringify([{
   accountId: BASIC_ACCOUNT_ID,
   sub2apiUserId: 41
 }]);
+const mutationApprovalJson = JSON.stringify({
+  approvalId: "approval-pilot-v2",
+  expiresAt: "2099-07-19T00:00:00Z",
+  accountIds: [BASIC_ACCOUNT_ID],
+  workspaceIds: ["workspace-slot-1"],
+  resourceIds: [fixedSlotDescriptor.id, "9"]
+});
 
 function json(payload, status = 200, headers = {}) {
   return new Response(JSON.stringify(payload), {
@@ -261,14 +268,14 @@ function liveFixture({
       if (duplicateKey) keys.push({ ...keys[0], id: "10" });
       return source({ items: keys, total: keys.length });
     }
-    if (url.pathname === "/api/gateway/usage") {
+    if (url.pathname === "/api/gateway/keys/9/usage") {
       if (usageSnapshotTooLarge) return source({ items: [], total: 10_001, page: 1, pageSize: 100, pages: 101 });
       const items = usageItems();
       const page = Number(url.searchParams.get("page") || 1);
       const pageSize = Number(url.searchParams.get("pageSize") || 50);
       return source({ items: items.slice((page - 1) * pageSize, page * pageSize), total: items.length, page, pageSize, pages: items.length === 0 ? 0 : Math.ceil(items.length / pageSize) }, "sub2api", items.length === 0 ? "empty" : "available");
     }
-    if (url.pathname === "/api/gateway/usage/stats") {
+    if (url.pathname === "/api/gateway/keys/9/usage-summary") {
       const includeLive = state.modelRequests > 0 && !usageStuck && !statsStuck;
       const count = includeLive ? (ambiguousUsage ? 2 : 1) : 0;
       const baselineRequests = emptyUsageBaseline ? 0 : 1;
@@ -289,10 +296,9 @@ function liveFixture({
         type: "workspace.created", status: "completed", workspaceId: "workspace-slot-1", createdAt: periodStart
       }, "ledger");
     }
-    if (url.pathname === "/api/workspaces/runtime-status") {
-      assert.equal(method, "POST");
-      assert.equal(headers.get("x-opl-csrf"), "csrf-alpha");
-      assert.deepEqual(JSON.parse(init.body), { workspaceId: "workspace-slot-1" });
+    if (url.pathname === "/api/workspaces/workspace-slot-1/runtime-status") {
+      assert.equal(method, "GET");
+      assert.equal(init.body, undefined);
       return source({
         ready: true,
         url: "https://workspace.medopl.cn/w/workspace-slot-1/",
@@ -329,6 +335,8 @@ function options(fixture) {
     browserTimeoutMs: 20,
     modelTimeoutMs: 20,
     expectedModel: "gpt-5.5",
+    mutationApprovalJson,
+    mutationApprovalId: "approval-pilot-v2",
     browserFactory: fixture.browserFactory,
     fetchImpl: fixture.fetchImpl
   };
@@ -364,6 +372,10 @@ test("rollout QA proves Workspace login, WebSocket frames, one model response, u
   assert.equal(fixture.calls.some((call) => call.path === "/api/billing/receipts/receipt-current-1"), true);
   assert.equal(fixture.calls.some((call) => call.path === "/api/billing/receipts"), false);
   assert.equal(fixture.calls.some((call) => call.path === "/api/gateway/summary" || /^\/api\/workspaces\/[^/]+\/receipt$/.test(call.path)), false);
+  assert.equal(fixture.calls.some((call) => call.path === "/api/gateway/usage" || call.path === "/api/gateway/usage/stats" || call.path === "/api/workspaces/runtime-status"), false);
+  assert.equal(fixture.calls.some((call) => call.path === "/api/gateway/keys/9/usage"), true);
+  assert.equal(fixture.calls.some((call) => call.path === "/api/gateway/keys/9/usage-summary"), true);
+  assert.equal(fixture.calls.some((call) => call.path === "/api/workspaces/workspace-slot-1/runtime-status"), true);
   assert.equal(fixture.calls.some((call) => /create|destroy|detach|renew/i.test(call.path)), false);
   assert.equal(fixture.calls.every((call) => call.signal instanceof AbortSignal), true);
 });
@@ -492,7 +504,11 @@ test("rollout QA CLI requires explicit one-request confirmation before network a
   let stderr = "";
   let calls = 0;
   const code = await runProductionLiveQaCli({
-    env: {},
+    argv: ["--allow-gateway-write", "--allow-model-write", "--approval-id", "approval-pilot-v2"],
+    env: {
+      OPL_VERIFY_ACCOUNT_ID: BASIC_ACCOUNT_ID,
+      OPL_VERIFY_MUTATION_APPROVAL_JSON: mutationApprovalJson
+    },
     stdout: { write: () => {} },
     stderr: { write: (chunk) => { stderr += chunk; } },
     fetchImpl: async () => { calls += 1; return json({}); }
@@ -506,12 +522,14 @@ test("rollout QA CLI rejects an invalid slot descriptor before network access", 
   let stderr = "";
   let calls = 0;
   const code = await runProductionLiveQaCli({
+    argv: ["--allow-gateway-write", "--allow-model-write", "--approval-id", "approval-pilot-v2"],
     env: {
       OPL_CONSOLE_ORIGIN: "https://cloud.medopl.cn",
       OPL_VERIFY_AUTH_USERS_JSON: ownerSeed,
       OPL_VERIFY_ACCOUNT_ID: BASIC_ACCOUNT_ID,
       OPL_VERIFY_LIVE_QA_CONFIRMATION: LIVE_QA_CONFIRMATION,
       OPL_VERIFY_EXPECTED_MODEL: "gpt-5.5",
+      OPL_VERIFY_MUTATION_APPROVAL_JSON: mutationApprovalJson,
       OPL_VERIFY_SLOT_DESCRIPTOR_JSON: "{"
     },
     stdout: { write: () => {} },
@@ -520,5 +538,38 @@ test("rollout QA CLI rejects an invalid slot descriptor before network access", 
   });
   assert.equal(code, 1);
   assert.match(stderr, /verification_slot_descriptor_invalid/);
+  assert.equal(calls, 0);
+});
+
+test("rollout QA read-only evidence level performs no model or Gateway write", async () => {
+  let stdout = "";
+  let stderr = "";
+  let calls = 0;
+  const code = await runProductionLiveQaCli({
+    argv: ["--read-only"],
+    env: {},
+    stdout: { write: (chunk) => { stdout += chunk; } },
+    stderr: { write: (chunk) => { stderr += chunk; } },
+    fetchImpl: async () => { calls += 1; return json({}); }
+  });
+  assert.equal(code, 0, stderr);
+  assert.equal(calls, 0);
+  assert.deepEqual(JSON.parse(stdout), {
+    ok: true,
+    mode: "read-only",
+    evidenceLevel: "read-only",
+    writesPerformed: 0
+  });
+
+  stderr = "";
+  const denied = await runProductionLiveQaCli({
+    argv: ["--allow-gateway-write", "--allow-model-write", "--approval-id", "approval-pilot-v2"],
+    env: {},
+    stdout: { write: () => {} },
+    stderr: { write: (chunk) => { stderr += chunk; } },
+    fetchImpl: async () => { calls += 1; return json({}); }
+  });
+  assert.equal(denied, 1);
+  assert.match(stderr, /production_live_qa_approval_manifest_required/);
   assert.equal(calls, 0);
 });

@@ -154,6 +154,11 @@ func ServiceName(v string) predicate.Workspace {
 	return predicate.Workspace(sql.FieldEQ(FieldServiceName, v))
 }
 
+// WorkspaceAPIKeyID applies equality check predicate on the "workspace_api_key_id" field. It's identical to WorkspaceAPIKeyIDEQ.
+func WorkspaceAPIKeyID(v int64) predicate.Workspace {
+	return predicate.Workspace(sql.FieldEQ(FieldWorkspaceAPIKeyID, v))
+}
+
 // AccessTokenStatus applies equality check predicate on the "access_token_status" field. It's identical to AccessTokenStatusEQ.
 func AccessTokenStatus(v string) predicate.Workspace {
 	return predicate.Workspace(sql.FieldEQ(FieldAccessTokenStatus, v))
@@ -1317,6 +1322,56 @@ func ServiceNameEqualFold(v string) predicate.Workspace {
 // ServiceNameContainsFold applies the ContainsFold predicate on the "service_name" field.
 func ServiceNameContainsFold(v string) predicate.Workspace {
 	return predicate.Workspace(sql.FieldContainsFold(FieldServiceName, v))
+}
+
+// WorkspaceAPIKeyIDEQ applies the EQ predicate on the "workspace_api_key_id" field.
+func WorkspaceAPIKeyIDEQ(v int64) predicate.Workspace {
+	return predicate.Workspace(sql.FieldEQ(FieldWorkspaceAPIKeyID, v))
+}
+
+// WorkspaceAPIKeyIDNEQ applies the NEQ predicate on the "workspace_api_key_id" field.
+func WorkspaceAPIKeyIDNEQ(v int64) predicate.Workspace {
+	return predicate.Workspace(sql.FieldNEQ(FieldWorkspaceAPIKeyID, v))
+}
+
+// WorkspaceAPIKeyIDIn applies the In predicate on the "workspace_api_key_id" field.
+func WorkspaceAPIKeyIDIn(vs ...int64) predicate.Workspace {
+	return predicate.Workspace(sql.FieldIn(FieldWorkspaceAPIKeyID, vs...))
+}
+
+// WorkspaceAPIKeyIDNotIn applies the NotIn predicate on the "workspace_api_key_id" field.
+func WorkspaceAPIKeyIDNotIn(vs ...int64) predicate.Workspace {
+	return predicate.Workspace(sql.FieldNotIn(FieldWorkspaceAPIKeyID, vs...))
+}
+
+// WorkspaceAPIKeyIDGT applies the GT predicate on the "workspace_api_key_id" field.
+func WorkspaceAPIKeyIDGT(v int64) predicate.Workspace {
+	return predicate.Workspace(sql.FieldGT(FieldWorkspaceAPIKeyID, v))
+}
+
+// WorkspaceAPIKeyIDGTE applies the GTE predicate on the "workspace_api_key_id" field.
+func WorkspaceAPIKeyIDGTE(v int64) predicate.Workspace {
+	return predicate.Workspace(sql.FieldGTE(FieldWorkspaceAPIKeyID, v))
+}
+
+// WorkspaceAPIKeyIDLT applies the LT predicate on the "workspace_api_key_id" field.
+func WorkspaceAPIKeyIDLT(v int64) predicate.Workspace {
+	return predicate.Workspace(sql.FieldLT(FieldWorkspaceAPIKeyID, v))
+}
+
+// WorkspaceAPIKeyIDLTE applies the LTE predicate on the "workspace_api_key_id" field.
+func WorkspaceAPIKeyIDLTE(v int64) predicate.Workspace {
+	return predicate.Workspace(sql.FieldLTE(FieldWorkspaceAPIKeyID, v))
+}
+
+// WorkspaceAPIKeyIDIsNil applies the IsNil predicate on the "workspace_api_key_id" field.
+func WorkspaceAPIKeyIDIsNil() predicate.Workspace {
+	return predicate.Workspace(sql.FieldIsNull(FieldWorkspaceAPIKeyID))
+}
+
+// WorkspaceAPIKeyIDNotNil applies the NotNil predicate on the "workspace_api_key_id" field.
+func WorkspaceAPIKeyIDNotNil() predicate.Workspace {
+	return predicate.Workspace(sql.FieldNotNull(FieldWorkspaceAPIKeyID))
 }
 
 // AccessTokenStatusEQ applies the EQ predicate on the "access_token_status" field.

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -57,22 +56,22 @@ func (c *identityTestSub2API) ResolveOrCreateUser(_ context.Context, email, pass
 	return identity, nil
 }
 
-func (c *identityTestSub2API) AuthenticateUser(_ context.Context, email, password string) (clients.Sub2APIIdentity, error) {
+func (c *identityTestSub2API) AuthenticateUser(_ context.Context, email, password string) (clients.Sub2APIUserAuthentication, error) {
 	c.identityMu.Lock()
 	defer c.identityMu.Unlock()
 	c.authCalls++
 	if c.authErr != nil {
-		return clients.Sub2APIIdentity{}, c.authErr
+		return clients.Sub2APIUserAuthentication{}, c.authErr
 	}
 	if c.authOverride != nil {
-		return *c.authOverride, nil
+		return clients.Sub2APIUserAuthentication{Identity: *c.authOverride, AccessToken: "test-user-delegated-token"}, nil
 	}
 	email = normalizeEmail(email)
 	identity, ok := c.identities[email]
 	if !ok || c.passwords[email] != password {
-		return clients.Sub2APIIdentity{}, clients.ErrSub2APIInvalidCredentials
+		return clients.Sub2APIUserAuthentication{}, clients.ErrSub2APIInvalidCredentials
 	}
-	return identity, nil
+	return clients.Sub2APIUserAuthentication{Identity: identity, AccessToken: "test-user-delegated-token"}, nil
 }
 
 func (c *identityTestSub2API) UserIdentity(_ context.Context, id int64, email string) (clients.Sub2APIIdentity, error) {
@@ -98,24 +97,39 @@ func newIdentityTestServer(t *testing.T, remote *identityTestSub2API, store Stat
 	return server
 }
 
+func createIdentityUser(server http.Handler, input map[string]any) (map[string]any, error) {
+	handler := server.(*controlPlaneHTTPHandler)
+	return handler.app.createUser(context.Background(), handler.service, input)
+}
+
 func TestCreateUserRejectsCallerSuppliedSub2APIIdentityAndNonOwnerRole(t *testing.T) {
-	for _, field := range []string{`"sub2apiUserId":null`, `"sub2apiUserId":0`, `"sub2apiUserId":73`} {
-		t.Run(field, func(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		value any
+	}{{"null", nil}, {"zero", 0}, {"positive", 73}} {
+		t.Run(tc.name, func(t *testing.T) {
 			remote := newIdentityTestSub2API()
 			server := newIdentityTestServer(t, remote, nil)
-			response := requestWithSession(t, server, operatorSessionForTest(t, server), http.MethodPost, "/api/users", `{"email":"owner@example.com","accountId":"acct-owner","password":"CorrectHorseBatteryStaple!",`+field+`}`)
-			if response.Code != http.StatusBadRequest || remote.resolveCalls != 0 {
-				t.Fatalf("status=%d body=%s resolveCalls=%d", response.Code, response.Body.String(), remote.resolveCalls)
+			_, err := createIdentityUser(server, map[string]any{
+				"email": "owner@example.com", "accountId": "acct-owner", "password": "CorrectHorseBatteryStaple!", "sub2apiUserId": tc.value,
+			})
+			if !errors.Is(err, errCallerSuppliedSub2APIUserID) || remote.resolveCalls != 0 {
+				t.Fatalf("error=%v resolveCalls=%d", err, remote.resolveCalls)
 			}
 		})
 	}
-	for _, role := range []string{`null`, `73`, `""`, `" "`, `"admin"`, `"member"`} {
-		t.Run("role_"+role, func(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		value any
+	}{{"null", nil}, {"number", 73}, {"empty", ""}, {"blank", " "}, {"admin", "admin"}, {"member", "member"}} {
+		t.Run("role_"+tc.name, func(t *testing.T) {
 			remote := newIdentityTestSub2API()
 			server := newIdentityTestServer(t, remote, nil)
-			response := requestWithSession(t, server, operatorSessionForTest(t, server), http.MethodPost, "/api/users", `{"email":"owner@example.com","accountId":"acct-owner","password":"CorrectHorseBatteryStaple!","role":`+role+`}`)
-			if response.Code != http.StatusBadRequest || remote.resolveCalls != 0 {
-				t.Fatalf("status=%d body=%s resolveCalls=%d", response.Code, response.Body.String(), remote.resolveCalls)
+			_, err := createIdentityUser(server, map[string]any{
+				"email": "owner@example.com", "accountId": "acct-owner", "password": "CorrectHorseBatteryStaple!", "role": tc.value,
+			})
+			if !errors.Is(err, errInvalidRole) || remote.resolveCalls != 0 {
+				t.Fatalf("error=%v resolveCalls=%d", err, remote.resolveCalls)
 			}
 		})
 	}
@@ -124,16 +138,12 @@ func TestCreateUserRejectsCallerSuppliedSub2APIIdentityAndNonOwnerRole(t *testin
 func TestCreateUserUsesRemoteIdentityAndDeterministicOneToOneFacts(t *testing.T) {
 	remote := newIdentityTestSub2API()
 	server := newIdentityTestServer(t, remote, nil)
-	operator := operatorSessionForTest(t, server)
-	body := `{"email":" Owner@Example.com ","accountId":"acct-owner","password":"CorrectHorseBatteryStaple!"}`
-	first := requestWithSession(t, server, operator, http.MethodPost, "/api/users", body)
-	second := requestWithSession(t, server, operator, http.MethodPost, "/api/users", body)
-	if first.Code != http.StatusCreated || second.Code != http.StatusCreated {
-		t.Fatalf("first=%d %s second=%d %s", first.Code, first.Body.String(), second.Code, second.Body.String())
+	input := map[string]any{"email": " Owner@Example.com ", "accountId": "acct-owner", "password": "CorrectHorseBatteryStaple!"}
+	firstUser, firstErr := createIdentityUser(server, input)
+	secondUser, secondErr := createIdentityUser(server, input)
+	if firstErr != nil || secondErr != nil {
+		t.Fatalf("first=%v second=%v", firstErr, secondErr)
 	}
-	var firstUser, secondUser map[string]any
-	_ = json.NewDecoder(first.Body).Decode(&firstUser)
-	_ = json.NewDecoder(second.Body).Decode(&secondUser)
 	if firstUser["id"] == "" || firstUser["id"] != secondUser["id"] || firstUser["email"] != "owner@example.com" || firstUser["role"] != "owner" {
 		t.Fatalf("first=%#v second=%#v", firstUser, secondUser)
 	}
@@ -178,9 +188,11 @@ func TestCreateUserRejectsKnownLocalIdentityConflictBeforeRemoteCreate(t *testin
 	}
 	remote := newIdentityTestSub2API()
 	server := newIdentityTestServer(t, remote, store)
-	response := requestWithSession(t, server, operatorSessionForTest(t, server), http.MethodPost, "/api/users", `{"email":"new@example.com","accountId":"acct-existing","password":"CorrectHorseBatteryStaple!"}`)
-	if response.Code != http.StatusConflict || remote.remoteCreates != 0 {
-		t.Fatalf("status=%d body=%s remoteCreates=%d", response.Code, response.Body.String(), remote.remoteCreates)
+	_, err := createIdentityUser(server, map[string]any{
+		"email": "new@example.com", "accountId": "acct-existing", "password": "CorrectHorseBatteryStaple!",
+	})
+	if !errors.Is(err, errAccountIdentityConflict) || remote.remoteCreates != 0 {
+		t.Fatalf("error=%v remoteCreates=%d", err, remote.remoteCreates)
 	}
 }
 
@@ -205,12 +217,11 @@ func TestCreateUserLocalFailureRetryDoesNotDuplicateRemoteOrLocalIdentity(t *tes
 	remote := newIdentityTestSub2API()
 	store := &failOnceInviteStore{memoryTableStore: newMemoryTableStore()}
 	server := newIdentityTestServer(t, remote, store)
-	operator := operatorSessionForTest(t, server)
-	body := `{"email":"retry@example.com","accountId":"acct-retry","password":"CorrectHorseBatteryStaple!"}`
-	failed := requestWithSession(t, server, operator, http.MethodPost, "/api/users", body)
-	succeeded := requestWithSession(t, server, operator, http.MethodPost, "/api/users", body)
-	if failed.Code != http.StatusInternalServerError || succeeded.Code != http.StatusCreated {
-		t.Fatalf("failed=%d %s succeeded=%d %s", failed.Code, failed.Body.String(), succeeded.Code, succeeded.Body.String())
+	input := map[string]any{"email": "retry@example.com", "accountId": "acct-retry", "password": "CorrectHorseBatteryStaple!"}
+	_, failed := createIdentityUser(server, input)
+	_, succeeded := createIdentityUser(server, input)
+	if failed == nil || succeeded != nil {
+		t.Fatalf("failed=%v succeeded=%v", failed, succeeded)
 	}
 	users, _ := store.ListUsers(context.Background(), true)
 	count := 0
@@ -227,21 +238,21 @@ func TestCreateUserLocalFailureRetryDoesNotDuplicateRemoteOrLocalIdentity(t *tes
 func TestCreateUserConcurrentRetryConvergesToOneRemoteAndLocalIdentity(t *testing.T) {
 	remote := newIdentityTestSub2API()
 	server := newIdentityTestServer(t, remote, nil)
-	operator := operatorSessionForTest(t, server)
-	operator.Result()
 	start := make(chan struct{})
-	responses := make(chan *httptest.ResponseRecorder, 2)
+	results := make(chan error, 2)
 	for range 2 {
 		go func() {
 			<-start
-			responses <- requestWithSession(t, server, operator, http.MethodPost, "/api/users", `{"email":"race@example.com","accountId":"acct-race","password":"CorrectHorseBatteryStaple!"}`)
+			_, err := createIdentityUser(server, map[string]any{
+				"email": "race@example.com", "accountId": "acct-race", "password": "CorrectHorseBatteryStaple!",
+			})
+			results <- err
 		}()
 	}
 	close(start)
 	for range 2 {
-		response := <-responses
-		if response.Code != http.StatusCreated && response.Code != http.StatusOK {
-			t.Fatalf("concurrent create status=%d body=%s", response.Code, response.Body.String())
+		if err := <-results; err != nil {
+			t.Fatalf("concurrent create error=%v", err)
 		}
 	}
 	users, _ := server.(*controlPlaneHTTPHandler).app.tables.ListUsers(context.Background(), true)
@@ -262,17 +273,21 @@ func TestCreateUserConcurrentDifferentEmailsForOneAccountCreatesOneRemoteIdentit
 	release := make(chan struct{})
 	remote.resolveRelease = release
 	server := newIdentityTestServer(t, remote, nil)
-	operator := operatorSessionForTest(t, server)
-	operator.Result()
 	app := server.(*controlPlaneHTTPHandler).app
 	const accountID = "acct-concurrent-owner"
-	responses := make(chan *httptest.ResponseRecorder, 2)
+	results := make(chan error, 2)
 	go func() {
-		responses <- requestWithSession(t, server, operator, http.MethodPost, "/api/users", `{"email":"first@example.com","accountId":"`+accountID+`","password":"CorrectHorseBatteryStaple!"}`)
+		_, err := createIdentityUser(server, map[string]any{
+			"email": "first@example.com", "accountId": accountID, "password": "CorrectHorseBatteryStaple!",
+		})
+		results <- err
 	}()
 	<-remote.resolveEntered
 	go func() {
-		responses <- requestWithSession(t, server, operator, http.MethodPost, "/api/users", `{"email":"second@example.com","accountId":"`+accountID+`","password":"CorrectHorseBatteryStaple!"}`)
+		_, err := createIdentityUser(server, map[string]any{
+			"email": "second@example.com", "accountId": accountID, "password": "CorrectHorseBatteryStaple!",
+		})
+		results <- err
 	}()
 	if _, accountLockExists := app.resourceLocks.Load("account:" + accountID); !accountLockExists {
 		<-remote.resolveEntered
@@ -281,14 +296,13 @@ func TestCreateUserConcurrentDifferentEmailsForOneAccountCreatesOneRemoteIdentit
 
 	created, conflicts := 0, 0
 	for range 2 {
-		response := <-responses
-		switch response.Code {
-		case http.StatusCreated:
+		switch err := <-results; {
+		case err == nil:
 			created++
-		case http.StatusConflict:
+		case errors.Is(err, errAccountIdentityConflict), errors.Is(err, errUserExists):
 			conflicts++
 		default:
-			t.Fatalf("concurrent create status=%d body=%s", response.Code, response.Body.String())
+			t.Fatalf("concurrent create error=%v", err)
 		}
 	}
 	accounts, _ := app.tables.ListAccounts(context.Background(), accountID)
@@ -374,10 +388,10 @@ func TestCreateUserAccountLockWaiterHonorsContextCancellation(t *testing.T) {
 func TestLoginUsesRemotePasswordAndStrictMappedIdentity(t *testing.T) {
 	remote := newIdentityTestSub2API()
 	server := newIdentityTestServer(t, remote, nil)
-	operator := operatorSessionForTest(t, server)
-	created := requestWithSession(t, server, operator, http.MethodPost, "/api/users", `{"email":"login@example.com","accountId":"acct-login","password":"InitialRemotePassword!"}`)
-	if created.Code != http.StatusCreated {
-		t.Fatalf("create status=%d body=%s", created.Code, created.Body.String())
+	if _, err := createIdentityUser(server, map[string]any{
+		"email": "login@example.com", "accountId": "acct-login", "password": "InitialRemotePassword!",
+	}); err != nil {
+		t.Fatalf("create user: %v", err)
 	}
 	remote.identityMu.Lock()
 	remote.passwords["login@example.com"] = "ChangedRemotePassword!"
@@ -404,8 +418,11 @@ func TestLoginUsesRemotePasswordAndStrictMappedIdentity(t *testing.T) {
 func TestLoginUpstreamUnavailableIsNotCredentialFailureAndStoresNoSecrets(t *testing.T) {
 	remote := newIdentityTestSub2API()
 	server := newIdentityTestServer(t, remote, nil)
-	operator := operatorSessionForTest(t, server)
-	requestWithSession(t, server, operator, http.MethodPost, "/api/users", `{"email":"secretless@example.com","accountId":"acct-secretless","password":"RemotePasswordOnly!"}`)
+	if _, err := createIdentityUser(server, map[string]any{
+		"email": "secretless@example.com", "accountId": "acct-secretless", "password": "RemotePasswordOnly!",
+	}); err != nil {
+		t.Fatal(err)
+	}
 	remote.identityMu.Lock()
 	remote.authErr = clients.ErrSub2APIAuthUnavailable
 	remote.identityMu.Unlock()

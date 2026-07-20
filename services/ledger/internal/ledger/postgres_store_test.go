@@ -110,6 +110,21 @@ func TestPostgresStoreImplementsLedgerStore(t *testing.T) {
 	var _ Store = NewPostgresStore(db)
 }
 
+func TestWalletAdjustmentReceiptPostgres(t *testing.T) {
+	store := NewPostgresStore(openLedgerTestPostgres(t))
+	if err := store.Install(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	receipt, err := store.RecordReceipt(context.Background(), validWalletAdjustmentReceiptInput())
+	if err != nil {
+		t.Fatal(err)
+	}
+	readback, err := store.Receipt(context.Background(), receipt.ReceiptID)
+	if err != nil || readback.Type != "gateway.wallet_adjustment.v1" || readback.AccountID != "acct-alpha" || readback.WorkspaceID != "" || readback.Execution["amountUsdMicros"] == nil {
+		t.Fatalf("readback=%#v err=%v", readback, err)
+	}
+}
+
 func TestPostgresReceiptRowPreservesLargeInteger(t *testing.T) {
 	receipt, err := receiptFromEnt(&ledgerent.EvidenceReceipt{
 		ID: "receipt-large", ReceiptType: "billing.resource_purchased.v1", Status: "completed",

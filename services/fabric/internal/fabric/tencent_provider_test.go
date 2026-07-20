@@ -204,6 +204,130 @@ func TestTencentProviderMonthlyPreflightUsesExplicitReadOnlyProviderPaths(t *tes
 	}
 }
 
+func boolPointer(value bool) *bool { return &value }
+
+func TestTencentProviderMonthlyProviderTruthReusesDescribeOnlyProvisionerAction(t *testing.T) {
+	t.Setenv("TENCENT_DEPLOY_CLUSTER_ID", "cls-123")
+	compute, storage := monthlyTruthResources()
+	compute.ProviderData, storage.ProviderData = nil, nil
+	provider := NewTencentProvider()
+	provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
+		if request.Action != "provider_truth" || request.AccountID != compute.AccountID || request.StorageVolumeID != storage.ProviderResourceID || request.PackageID != compute.PackageID ||
+			request.Pool.ClusterID != "cls-123" || request.Pool.NodePoolID != compute.NodePoolID || request.Pool.InstanceType != compute.InstanceType ||
+			request.Allocation.ID != compute.ID || request.Allocation.InstanceID != compute.InstanceID || request.Allocation.MachineName != compute.MachineName || request.Allocation.PrivateIP != compute.PrivateIP ||
+			request.Storage.ID != storage.ProviderResourceID || request.Storage.SizeGB != uint64(storage.SizeGB) || request.Storage.Zone != storage.Zone || request.Storage.DiskType != storage.DiskType ||
+			!reflect.DeepEqual(request.ComputeTags, compute.CostTags) || !reflect.DeepEqual(request.Tags, storage.CostTags) {
+			t.Fatalf("provider truth request = %#v", request)
+		}
+		providerData := map[string]string{
+			"instanceType": compute.InstanceType, "zone": compute.Zone, "chargeType": "PREPAID", "renewFlag": "NOTIFY_AND_MANUAL_RENEW", "deadline": compute.Deadline,
+			"machineName": compute.MachineName, "privateIp": compute.PrivateIP, "storagePresent": "false", "cbsStatus": "NOT_FOUND",
+		}
+		for key, value := range compute.CostTags {
+			providerData["computeTag:"+key] = value
+		}
+		return provisionerResponse{
+			OK: false, ErrorCode: "provider_truth_partial_identity", ProviderRequestID: "req-truth", MachinePresent: boolPointer(true), StoragePresent: boolPointer(false),
+			InstanceID: compute.InstanceID, PrivateIP: compute.PrivateIP, CVMStatus: "RUNNING", TKEStatus: "RUNNING", CBSStatus: "NOT_FOUND", Status: "", InstanceType: compute.InstanceType,
+			ProviderData: providerData,
+		}, nil
+	}
+	provider.kubectl = func(context.Context, []string, []byte) ([]byte, error) {
+		t.Fatal("monthly provider truth must not call kubectl")
+		return nil, nil
+	}
+
+	truth, err := provider.MonthlyProviderTruth(context.Background(), compute, storage)
+
+	if err != nil || truth.ComputeState != "ready" || truth.StorageState != "absent" || truth.ProviderRequestID != "req-truth" || truth.ErrorCode != "provider_truth_partial_identity" {
+		t.Fatalf("provider truth=%#v err=%v", truth, err)
+	}
+	if truth.Compute.Status != "ready" || truth.Compute.InstanceType != compute.InstanceType || truth.Compute.Zone != compute.Zone || truth.Compute.ChargeType != "PREPAID" ||
+		truth.Compute.ProviderRequestID != "req-truth" || truth.Storage.Status != "external_deleted" || truth.Storage.CBSStatus != "NOT_FOUND" || truth.Storage.ProviderRequestID != "req-truth" {
+		t.Fatalf("provider truth lost authoritative facts: %#v", truth)
+	}
+}
+
+func TestTencentProviderMonthlyProviderTruthMapsKnownAndUnknownComponentsIndependently(t *testing.T) {
+	t.Setenv("TENCENT_DEPLOY_CLUSTER_ID", "cls-123")
+	compute, storage := monthlyTruthResources()
+	for _, tc := range []struct {
+		name                       string
+		response                   provisionerResponse
+		wantCompute, wantStorage   string
+		wantComputeStatus, wantCBS string
+	}{
+		{
+			name: "both absent", wantCompute: "absent", wantStorage: "absent", wantComputeStatus: "external_deleted", wantCBS: "NOT_FOUND",
+			response: provisionerResponse{OK: true, Status: "absent", MachinePresent: boolPointer(false), StoragePresent: boolPointer(false), CVMStatus: "NOT_FOUND", TKEStatus: "NOT_FOUND", CBSStatus: "NOT_FOUND", ProviderRequestID: "req-absent"},
+		},
+		{
+			name: "compute absent storage ready", wantCompute: "absent", wantStorage: "ready", wantComputeStatus: "external_deleted", wantCBS: "ATTACHED",
+			response: provisionerResponse{
+				OK: false, ErrorCode: "provider_truth_partial_identity", MachinePresent: boolPointer(false), StoragePresent: boolPointer(true), CVMStatus: "NOT_FOUND", CBSStatus: "ATTACHED", ProviderRequestID: "req-storage",
+				TKEStatus: "NOT_FOUND", ProviderData: map[string]string{
+					"storageChargeType": "PREPAID", "storageRenewFlag": "NOTIFY_AND_MANUAL_RENEW", "storageDeadline": storage.Deadline, "storageDiskType": storage.DiskType, "storageSizeGb": "10", "storageZone": storage.Zone,
+					"opl_account_id": storage.CostTags["opl_account_id"], "opl_workspace_id": storage.CostTags["opl_workspace_id"], "opl_resource_id": storage.CostTags["opl_resource_id"], "opl_operation_id": storage.CostTags["opl_operation_id"],
+				},
+			},
+		},
+		{
+			name: "compute unknown storage ready", wantCompute: "unknown", wantStorage: "ready", wantComputeStatus: compute.Status, wantCBS: "ATTACHED",
+			response: provisionerResponse{
+				OK: false, ErrorCode: "provider_truth_compute_sku_mismatch", MachinePresent: nil, StoragePresent: boolPointer(true), CBSStatus: "ATTACHED", ProviderRequestID: "req-mismatch",
+				ProviderData: map[string]string{
+					"storageChargeType": "PREPAID", "storageRenewFlag": "NOTIFY_AND_MANUAL_RENEW", "storageDeadline": storage.Deadline, "storageDiskType": storage.DiskType, "storageSizeGb": "10", "storageZone": storage.Zone,
+					"opl_account_id": storage.CostTags["opl_account_id"], "opl_workspace_id": storage.CostTags["opl_workspace_id"], "opl_resource_id": storage.CostTags["opl_resource_id"], "opl_operation_id": storage.CostTags["opl_operation_id"],
+				},
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			provider := NewTencentProvider()
+			provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
+				if request.Action != "provider_truth" {
+					t.Fatalf("action=%q", request.Action)
+				}
+				return tc.response, nil
+			}
+			provider.kubectl = func(context.Context, []string, []byte) ([]byte, error) {
+				t.Fatal("monthly provider truth must not call kubectl")
+				return nil, nil
+			}
+
+			truth, err := provider.MonthlyProviderTruth(context.Background(), compute, storage)
+
+			if err != nil || truth.ComputeState != tc.wantCompute || truth.StorageState != tc.wantStorage || truth.Compute.Status != tc.wantComputeStatus || truth.Storage.CBSStatus != tc.wantCBS {
+				t.Fatalf("truth=%#v err=%v", truth, err)
+			}
+			if tc.wantStorage == "ready" && (truth.Storage.Status != "ready" || truth.Storage.ProviderData["chargeType"] != "PREPAID" || truth.Storage.Zone != storage.Zone || truth.Storage.DiskType != storage.DiskType) {
+				t.Fatalf("storage authoritative facts=%#v", truth.Storage)
+			}
+		})
+	}
+}
+
+func TestTencentProviderMonthlyProviderTruthRejectsIncompleteLocalIdentityWithoutProvisionerOrKubectl(t *testing.T) {
+	t.Setenv("TENCENT_DEPLOY_CLUSTER_ID", "cls-123")
+	compute, storage := monthlyTruthResources()
+	compute.InstanceID, compute.CVMInstanceID = "", ""
+	provider := NewTencentProvider()
+	provider.provision = func(context.Context, provisionerRequest) (provisionerResponse, error) {
+		t.Fatal("incomplete local identity must not reach provisioner")
+		return provisionerResponse{}, nil
+	}
+	provider.kubectl = func(context.Context, []string, []byte) ([]byte, error) {
+		t.Fatal("incomplete local identity must not reach kubectl")
+		return nil, nil
+	}
+
+	truth, err := provider.MonthlyProviderTruth(context.Background(), compute, storage)
+
+	if err == nil || truth.ComputeState != "unknown" || truth.StorageState != "unknown" || truth.ProviderRequestID != "" || truth.ErrorCode != "" {
+		t.Fatalf("incomplete local identity truth=%#v err=%v", truth, err)
+	}
+}
+
 func TestSyncComputeAllocationRestoresClaimedMachineSelector(t *testing.T) {
 	provider := NewTencentProvider()
 	provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
@@ -740,12 +864,26 @@ func TestWorkspaceRuntimeIsolationRequiresCompleteCurrentReplicaSet(t *testing.T
 func TestTencentProviderWritesAccountGatewaySecretWithoutReturningRawKey(t *testing.T) {
 	provider := NewTencentProvider()
 	var applied []byte
+	var calls [][]string
 	provider.kubectl = func(_ context.Context, args []string, stdin []byte) ([]byte, error) {
-		if !slices.Equal(args, []string{"apply", "-f", "-"}) {
+		calls = append(calls, append([]string(nil), args...))
+		switch {
+		case slices.Equal(args, []string{"apply", "-f", "-"}):
+			applied = append([]byte(nil), stdin...)
+			return nil, nil
+		case len(args) == 4 && args[0] == "get" && strings.HasPrefix(args[1], "secret/") && args[2] == "-o" && args[3] == "json":
+			var manifest map[string]any
+			if err := json.Unmarshal(applied, &manifest); err != nil {
+				t.Fatal(err)
+			}
+			return json.Marshal(map[string]any{
+				"apiVersion": "v1", "kind": "Secret", "type": manifest["type"], "metadata": manifest["metadata"],
+				"data": map[string]any{"opl_gateway_api_key": base64.StdEncoding.EncodeToString([]byte(nested(manifest, "stringData", "opl_gateway_api_key").(string)))},
+			})
+		default:
 			t.Fatalf("kubectl args = %#v", args)
+			return nil, nil
 		}
-		applied = append([]byte(nil), stdin...)
-		return nil, nil
 	}
 
 	secret, err := provider.UpsertGatewaySecret(context.Background(), GatewaySecretInput{AccountID: "acct-alpha", GatewayAPIKey: "raw-gateway-key", IdempotencyKey: "gateway-once"})
@@ -770,6 +908,61 @@ func TestTencentProviderWritesAccountGatewaySecretWithoutReturningRawKey(t *test
 	rotated, err := provider.UpsertGatewaySecret(context.Background(), GatewaySecretInput{AccountID: "acct-alpha", GatewayAPIKey: "rotated-gateway-key", IdempotencyKey: "gateway-rotate"})
 	if err != nil || rotated.SecretRef != secret.SecretRef || rotated.Version == secret.Version || rotated.Fingerprint == secret.Fingerprint {
 		t.Fatalf("rotated Gateway Secret=%#v original=%#v err=%v", rotated, secret, err)
+	}
+	if len(calls) != 6 {
+		t.Fatalf("Gateway Secret writes must each perform apply then authoritative get: %#v", calls)
+	}
+}
+
+func TestTencentProviderGatewaySecretReadbackFailsClosed(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate func(map[string]any)
+	}{
+		{name: "missing key data", mutate: func(secret map[string]any) { secret["data"] = map[string]any{} }},
+		{name: "malformed key data", mutate: func(secret map[string]any) { secret["data"].(map[string]any)["opl_gateway_api_key"] = "%%%" }},
+		{name: "different key", mutate: func(secret map[string]any) {
+			secret["data"].(map[string]any)["opl_gateway_api_key"] = base64.StdEncoding.EncodeToString([]byte("different-secret"))
+		}},
+		{name: "wrong kind", mutate: func(secret map[string]any) { secret["kind"] = "ConfigMap" }},
+		{name: "wrong type", mutate: func(secret map[string]any) { secret["type"] = "kubernetes.io/tls" }},
+		{name: "wrong name", mutate: func(secret map[string]any) { secret["metadata"].(map[string]any)["name"] = "wrong-secret" }},
+		{name: "wrong label", mutate: func(secret map[string]any) {
+			secret["metadata"].(map[string]any)["labels"].(map[string]any)["app.kubernetes.io/name"] = "wrong-label"
+		}},
+		{name: "wrong account annotation", mutate: func(secret map[string]any) {
+			secret["metadata"].(map[string]any)["annotations"].(map[string]any)["oplcloud.cn/account-id"] = "acct-other"
+		}},
+		{name: "wrong version annotation", mutate: func(secret map[string]any) {
+			secret["metadata"].(map[string]any)["annotations"].(map[string]any)["oplcloud.cn/secret-version"] = "wrong-version"
+		}},
+		{name: "wrong fingerprint annotation", mutate: func(secret map[string]any) {
+			secret["metadata"].(map[string]any)["annotations"].(map[string]any)["oplcloud.cn/secret-fingerprint"] = "sha256:wrong"
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			provider := NewTencentProvider()
+			var applied map[string]any
+			provider.kubectl = func(_ context.Context, args []string, stdin []byte) ([]byte, error) {
+				if slices.Equal(args, []string{"apply", "-f", "-"}) {
+					if err := json.Unmarshal(stdin, &applied); err != nil {
+						t.Fatal(err)
+					}
+					return nil, nil
+				}
+				secret := map[string]any{
+					"apiVersion": "v1", "kind": "Secret", "type": applied["type"], "metadata": applied["metadata"],
+					"data": map[string]any{"opl_gateway_api_key": base64.StdEncoding.EncodeToString([]byte("raw-gateway-key"))},
+				}
+				tc.mutate(secret)
+				return json.Marshal(secret)
+			}
+
+			_, err := provider.UpsertGatewaySecret(context.Background(), GatewaySecretInput{AccountID: "acct-alpha", GatewayAPIKey: "raw-gateway-key", IdempotencyKey: "gateway-once"})
+			if err == nil || strings.Contains(err.Error(), "raw-gateway-key") || strings.Contains(err.Error(), "different-secret") {
+				t.Fatalf("Gateway Secret readback must fail closed without leaking secrets: %v", err)
+			}
+		})
 	}
 }
 

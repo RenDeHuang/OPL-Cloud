@@ -131,6 +131,37 @@ func TestBillingReceiptSchemaHTTP(t *testing.T) {
 	}
 }
 
+func TestWalletAdjustmentReceipt(t *testing.T) {
+	server := NewServer(ledger.NewMemoryStore(), "internal-secret")
+	body := `{"type":"gateway.wallet_adjustment.v1","status":"completed","surface":"control_plane","accountId":"acct-alpha","requestId":"wallet-adjustment-alpha","actor":{"userId":"usr-admin"},"execution":{"operationId":"wallet-adjustment-alpha","kind":"debit","amountUsdMicros":2500000},"inputRefs":{"balanceHistoryRef":"sub2api:balance-history:41:history-alpha"},"owner":{"accountId":"acct-alpha"}}`
+	req := testRequest(http.MethodPost, "/ledger/receipts", bytes.NewBufferString(body))
+	req.Header.Set("Idempotency-Key", "wallet-adjustment-alpha:receipt")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated || !strings.Contains(rec.Body.String(), `"type":"gateway.wallet_adjustment.v1"`) {
+		t.Fatalf("wallet adjustment receipt status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestWorkspaceGatewayKeyRotationReceiptSchemaHTTP(t *testing.T) {
+	server := NewServer(ledger.NewMemoryStore(), "internal-secret")
+	body := `{"type":"workspace.gateway_key_rotated.v1","status":"completed","surface":"control_plane","accountId":"acct-alpha","workspaceId":"workspace-alpha","execution":{"operationId":"workspace-key-rotate-alpha","oldKeyId":9,"newKeyId":19},"outputRefs":{"secretFingerprint":"sha256:replacement"},"owner":{"userId":"usr-alpha"}}`
+	valid := testRequest(http.MethodPost, "/ledger/receipts", bytes.NewBufferString(body))
+	valid.Header.Set("Idempotency-Key", "http-workspace-key-rotation")
+	validRec := httptest.NewRecorder()
+	server.ServeHTTP(validRec, valid)
+	if validRec.Code != http.StatusCreated {
+		t.Fatalf("valid Workspace Key rotation receipt status=%d body=%s", validRec.Code, validRec.Body.String())
+	}
+	invalid := testRequest(http.MethodPost, "/ledger/receipts", bytes.NewBufferString(strings.Replace(body, `"secretFingerprint":"sha256:replacement"`, `"fingerprint":"sha256:replacement"`, 1)))
+	invalid.Header.Set("Idempotency-Key", "http-workspace-key-rotation-invalid")
+	invalidRec := httptest.NewRecorder()
+	server.ServeHTTP(invalidRec, invalid)
+	if invalidRec.Code != http.StatusBadRequest {
+		t.Fatalf("invalid Workspace Key rotation receipt status=%d body=%s", invalidRec.Code, invalidRec.Body.String())
+	}
+}
+
 func TestWorkspaceBillingReceiptSchemaHTTP(t *testing.T) {
 	server := NewServer(ledger.NewMemoryStore(), "internal-secret")
 	body := `{"type":"billing.workspace_renewed.v1","status":"completed","surface":"control_plane","accountId":"acct-alpha","workspaceId":"workspace-alpha","cost":{"priceVersion":"pilot-usd-2026-07-v1","currency":"USD","billingUnit":"calendar_month","totalUsdMicros":52580000,"sub2apiUserId":41,"sub2apiRedeemCode":"opl:workspace-renewal:charge:v1","postChargeBalanceUsdMicros":47420000,"periodStart":"2026-08-31T09:30:00Z","paidThrough":"2026-09-30T09:30:00Z","resourceType":"workspace","resourceId":"workspace-alpha","components":{"compute":{"resourceType":"compute","resourceId":"compute-alpha","chargeUsdMicros":50000000},"storage":{"resourceType":"storage","resourceId":"storage-alpha","sizeGb":10,"chargeUsdMicros":2580000}}}}`
@@ -162,6 +193,29 @@ func TestWorkspaceBillingReceiptSchemaHTTP(t *testing.T) {
 	server.ServeHTTP(refundedRec, refunded)
 	if refundedRec.Code != http.StatusCreated {
 		t.Fatalf("valid Workspace refund receipt status=%d body=%s", refundedRec.Code, refundedRec.Body.String())
+	}
+}
+
+func TestWorkspacePurchasedReceipt(t *testing.T) {
+	server := NewServer(ledger.NewMemoryStore(), "internal-secret")
+	body := `{"type":"billing.workspace_purchased.v1","status":"completed","surface":"control_plane","accountId":"acct-alpha","workspaceId":"workspace-alpha","cost":{"priceVersion":"pilot-usd-2026-07-v1","currency":"USD","billingUnit":"calendar_month","totalUsdMicros":52580000,"sub2apiUserId":41,"sub2apiRedeemCode":"opl:workspace-launch:charge:v1","postChargeBalanceUsdMicros":947420000,"periodStart":"2026-07-20T00:00:00Z","paidThrough":"2026-08-20T00:00:00Z","resourceType":"workspace","resourceId":"workspace-alpha","components":{"compute":{"resourceType":"compute","resourceId":"compute-alpha","chargeUsdMicros":50000000},"storage":{"resourceType":"storage","resourceId":"storage-alpha","sizeGb":10,"chargeUsdMicros":2580000}}}}`
+	post := func(key, payload string) *httptest.ResponseRecorder {
+		t.Helper()
+		req := testRequest(http.MethodPost, "/ledger/receipts", bytes.NewBufferString(payload))
+		req.Header.Set("Idempotency-Key", key)
+		rec := httptest.NewRecorder()
+		server.ServeHTTP(rec, req)
+		return rec
+	}
+
+	if rec := post("workspace-purchased", body); rec.Code != http.StatusCreated {
+		t.Fatalf("valid Workspace purchase receipt status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if rec := post("workspace-purchased-total-mismatch", strings.Replace(body, `"totalUsdMicros":52580000`, `"totalUsdMicros":52579999`, 1)); rec.Code != http.StatusBadRequest {
+		t.Fatalf("mismatched Workspace purchase receipt status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if rec := post("workspace-purchased-cross-workspace", strings.Replace(body, `"resourceId":"workspace-alpha"`, `"resourceId":"workspace-other"`, 1)); rec.Code != http.StatusBadRequest {
+		t.Fatalf("cross-Workspace purchase receipt status=%d body=%s", rec.Code, rec.Body.String())
 	}
 }
 

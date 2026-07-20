@@ -20,10 +20,18 @@ func workspaceBillingReceipt(receiptType string) clients.Receipt {
 	return clients.Receipt{
 		ReceiptInput: clients.ReceiptInput{
 			Type: receiptType, Status: "completed", AccountID: "acct-alpha", WorkspaceID: "ws-alpha",
+			Execution: map[string]any{
+				"computeAllocationId": "compute-alpha", "storageId": "storage-alpha", "attachmentId": "attachment-alpha",
+				"workspaceApiKeyId": int64(19), "runtimeId": "runtime-alpha",
+			},
 			Cost: map[string]any{
 				"resourceType": "workspace", "resourceId": "ws-alpha", "priceVersion": "pricing-v1", "currency": "USD",
 				"billingUnit": "calendar_month", "totalUsdMicros": int64(52_580_000),
 				"periodStart": "2026-07-16T00:00:00Z", "paidThrough": "2026-08-16T00:00:00Z",
+				"sub2apiRedeemCode": "opl:workspace-charge", "components": map[string]any{
+					"compute": map[string]any{"resourceType": "compute", "resourceId": "compute-alpha", "chargeUsdMicros": int64(50_000_000)},
+					"storage": map[string]any{"resourceType": "storage", "resourceId": "storage-alpha", "sizeGb": int64(10), "chargeUsdMicros": int64(2_580_000)},
+				},
 			},
 		},
 		ReceiptID: "receipt-workspace", CreatedAt: "2026-07-16T00:00:00Z",
@@ -111,12 +119,15 @@ func TestBillingReceiptListInvalidSourceIsUnavailable(t *testing.T) {
 
 func TestWorkspaceBillingReceiptProjectionUsesAuthoritativeMoney(t *testing.T) {
 	for _, tc := range []struct {
-		typeName string
-		refund   bool
+		typeName        string
+		refund          bool
+		chargeReference bool
+		fulfillment     bool
 	}{
-		{typeName: "billing.workspace_renewed.v1"},
+		{typeName: "billing.workspace_purchased.v1", chargeReference: true, fulfillment: true},
+		{typeName: "billing.workspace_renewed.v1", chargeReference: true, fulfillment: true},
 		{typeName: "billing.workspace_expired.v1"},
-		{typeName: "billing.workspace_refunded.v1", refund: true},
+		{typeName: "billing.workspace_refunded.v1", refund: true, chargeReference: true},
 	} {
 		t.Run(tc.typeName, func(t *testing.T) {
 			receipt := workspaceBillingReceipt(tc.typeName)
@@ -127,10 +138,43 @@ func TestWorkspaceBillingReceiptProjectionUsesAuthoritativeMoney(t *testing.T) {
 			if !ok || projected["totalUsdMicros"] != int64(52_580_000) || projected["chargeUsdMicros"] != nil {
 				t.Fatalf("Workspace projection = %#v ok=%v", projected, ok)
 			}
+			fulfillment, hasFulfillment := projected["fulfillment"].(map[string]any)
+			chargeReference, hasChargeReference := projected["chargeReference"]
+			if hasFulfillment != tc.fulfillment || tc.fulfillment && (fulfillment["computeAllocationId"] != "compute-alpha" || fulfillment["storageId"] != "storage-alpha") ||
+				hasChargeReference != tc.chargeReference || tc.chargeReference && chargeReference != "opl:workspace-charge" {
+				t.Fatalf("Workspace fulfillment=%#v chargeReference=%#v", fulfillment, chargeReference)
+			}
 			if tc.refund && projected["refundUsdMicros"] != int64(52_580_000) {
 				t.Fatalf("refund projection = %#v", projected)
 			}
 		})
+	}
+}
+
+func TestWorkspacePurchasedReceiptProjectionIncludesFulfillment(t *testing.T) {
+	receipt := workspaceBillingReceipt("billing.workspace_purchased.v1")
+	projected, ok := projectCustomerBillingReceipt(receipt)
+	if !ok || projected["chargeReference"] != "opl:workspace-charge" || projected["totalUsdMicros"] != int64(52_580_000) {
+		t.Fatalf("Workspace purchase projection=%#v ok=%v", projected, ok)
+	}
+	components := mapField(projected, "components")
+	fulfillment := mapField(projected, "fulfillment")
+	if mapField(components, "compute")["chargeUsdMicros"] != int64(50_000_000) || mapField(components, "storage")["chargeUsdMicros"] != int64(2_580_000) ||
+		fulfillment["computeAllocationId"] != "compute-alpha" || fulfillment["storageId"] != "storage-alpha" || fulfillment["attachmentId"] != "attachment-alpha" ||
+		fulfillment["workspaceApiKeyId"] != "19" || fulfillment["runtimeId"] != "runtime-alpha" {
+		t.Fatalf("Workspace purchase components=%#v fulfillment=%#v", components, fulfillment)
+	}
+}
+
+func TestWorkspaceRefundedReceiptProjectionDoesNotClaimFulfillment(t *testing.T) {
+	receipt := workspaceBillingReceipt("billing.workspace_refunded.v1")
+	receipt.Cost["refundUsdMicros"] = int64(52_580_000)
+	projected, ok := projectCustomerBillingReceipt(receipt)
+	if !ok || mapField(projected, "components")["compute"] == nil {
+		t.Fatalf("Workspace refund projection=%#v ok=%v", projected, ok)
+	}
+	if fulfillment, present := projected["fulfillment"]; present {
+		t.Fatalf("Workspace refund claimed fulfillment=%#v", fulfillment)
 	}
 }
 
