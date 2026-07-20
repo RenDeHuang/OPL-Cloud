@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const root = new URL("../../", import.meta.url);
+const candidateShellSha = "13ae5d1410e1a4349c14dc76e7c3446ff200cfdb";
 
 async function text(path) {
   return readFile(new URL(path, root), "utf8");
@@ -117,7 +118,19 @@ test("launch freeze fixes the V2 products, owner lanes, settlement, and verifica
   assert.match(freeze.workspaceLaunch.currentImplementation, /manual-review recovery.*integrated local fake evidence/i);
   assert.doesNotMatch(freeze.workspaceLaunch.currentImplementation, /pending integrated verification/i);
   assert.doesNotMatch(freeze.workspaceLaunch.currentImplementation, /S9|manual review.*code-complete/i);
-  assert.equal(freeze.workspaceRuntime.sourceImage.digest, "sha256:9d867fe0fc9db48b6efa27371d77770e46fc8cd97d26ef85a81fbdac7e96ca76");
+  assert.deepEqual(freeze.workspaceRuntime.sourceImage, {
+    appRepository: "https://github.com/gaofeng21cn/one-person-lab-app.git",
+    activeShellRepository: "https://github.com/gaofeng21cn/opl-aion-shell.git",
+    candidateAppMainSha: null,
+    candidateActiveShellMainSha: candidateShellSha,
+    candidateRequirements: ["40_character_git_sha", "merged_into_repository_main"]
+  });
+  assert.deepEqual(freeze.workspaceRuntime.releaseEvidence, {
+    immutableTcrDigest: null,
+    immutableTcrDigestStatus: "pending_publication_readback",
+    readyPodImageId: null,
+    readyPodImageIdStatus: "pending_deployment_readback"
+  });
   assert.equal(freeze.workspaceRuntime.primaryWorkspacePerAccount, 1);
   assert.equal(freeze.workspaceRuntime.statusContainsPassword, false);
   assert.equal(freeze.workspaceRuntime.runtimeRequestIdentityBinding, "not_in_pilot_requires_sso");
@@ -293,12 +306,36 @@ test("read-only fixed-slot verification replaces the legacy paid release gate", 
   assert.equal(deployment.productionLiveQaJob.modelRequestCount, 1);
   assert.equal(deployment.productionLiveQaJob.providerMutationCount, 0);
   assert.doesNotMatch(JSON.stringify(deployment), /paid_confirmation|OPL_VERIFY_PAID_CONFIRMATION|OPL_VERIFY_MODEL_ACCESS_KEY/);
-  assert.equal(deployment.workspaceImage.sourceDigest, "sha256:9d867fe0fc9db48b6efa27371d77770e46fc8cd97d26ef85a81fbdac7e96ca76");
+  assert.equal(deployment.workspaceImage.candidateAppMainSha, null);
+  assert.equal(deployment.workspaceImage.candidateActiveShellMainSha, candidateShellSha);
+  assert.deepEqual(deployment.workspaceImage.candidateRequirements, ["40_character_git_sha", "merged_into_repository_main"]);
+  assert.equal(deployment.workspaceImage.immutableTcrDigest, null);
+  assert.equal(deployment.workspaceImage.immutableTcrDigestStatus, "pending_publication_readback");
+  assert.equal(deployment.workspaceImage.readyPodImageId, null);
+  assert.equal(deployment.workspaceImage.readyPodImageIdStatus, "pending_deployment_readback");
   assert.equal(deployment.workspaceImage.productionReference, "repository@sha256");
   assert.match(runbook, /Do not run the legacy paid verifier/);
   assert.match(architecture, /debit.*before\s+Fabric.*activate/is);
   assert.doesNotMatch(architecture, /Fabric preparation happens before the external charge/);
   for (const document of [architecture, decisions, project, readme, status]) {
     assert.doesNotMatch(document, /single paid verifier|one paid production verifier|explicitly confirmed paid E2E/i);
+  }
+});
+
+test("current rollout truth contains no legacy Workspace image evidence", async () => {
+  const paths = [
+    ".github/workflows/release-opl-cloud-image.yml",
+    ".env.example",
+    "docs/invariants.md",
+    "docs/architecture.md",
+    "packages/contracts/opl-cloud-launch-freeze-contract.json",
+    "packages/contracts/opl-cloud-deployment-contract.json"
+  ];
+
+  for (const path of paths) {
+    const source = await text(path);
+    assert.doesNotMatch(source, /v?26\.7\.1[23]/, path);
+    assert.doesNotMatch(source, /9d867fe0fc9db48b6efa27371d77770e46fc8cd97d26ef85a81fbdac7e96ca76/, path);
+    assert.doesNotMatch(source, /6e1491a3693a820a37b81ab9a26f8efc4262fb9581f981641c6de084b0fa654f/, path);
   }
 });

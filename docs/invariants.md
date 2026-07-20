@@ -191,8 +191,20 @@ validate account and quote
 - Runtime credential rotation reuses stable Fabric and Ledger idempotency identities. A credential revision changes the Runtime Secret and Pod template so Kubernetes rolls the Deployment without exposing the password or seed in metadata.
 - Pilot Runtime isolation means only the owner receives the Runtime password. SSO and binding each Runtime HTTP request to the Console identity are not Pilot claims.
 - Workspace access requires active compute and storage entitlements plus real runtime readiness.
-- The pinned source image is `ghcr.io/gaofeng21cn/one-person-lab-webui:26.7.13@sha256:9d867fe0fc9db48b6efa27371d77770e46fc8cd97d26ef85a81fbdac7e96ca76`.
-- Production mirrors that source to TCR and deploys the target `repository@sha256`; `latest` and tag-only production references are forbidden.
+- A Workspace release candidate is exactly one `one-person-lab-app` commit and one
+  `opl-aion-shell` commit. Each input must be a full 40-character Git SHA already
+  merged into its repository's `main`; branch names, short SHAs, and unmerged commits fail closed.
+- The active-shell candidate is `13ae5d1410e1a4349c14dc76e7c3446ff200cfdb`.
+  The App candidate remains unavailable pending its integration commit.
+- The Cloud release `ref` is a full 40-character commit SHA. Its checked-out HEAD
+  must match exactly and be an ancestor of the official Cloud `origin/main` readback.
+  Branch names, short SHAs, and unmerged Cloud commits fail before publication.
+- The release workflow checks out both candidates detached, runs the App's existing
+  `ensure:shell`, and builds the active shell Docker context directly into TCR.
+- Production deploys only the TCR `repository@sha256` read back after publication;
+  `latest` and tag-only production references are forbidden. The immutable TCR digest
+  and Ready Pod `imageID` remain unavailable until their respective publication and
+  deployment readbacks succeed; placeholders and local timestamps are not evidence.
 - CBS is mounted at `/data` and `/projects`.
 - Runtime is the only authority for `/projects` file metadata and mounted filesystem usage. These read-only facts
   are streamed through Fabric and Control Plane and are never persisted in OPL PostgreSQL or Ledger.

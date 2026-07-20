@@ -668,45 +668,80 @@
       "ref",
       "image_tag",
       "publish_cloud_image",
-      "mirror_workspace_image",
-      "workspace_source_image",
-      "workspace_image_tag"
+      "publish_workspace_image",
+      "workspace_app_main_sha",
+      "workspace_shell_main_sha"
     ],
     "outputs": ["cloud_image", "workspace_image"],
     "skippedOutput": "empty",
+    "cloudCandidate": {
+      "input": "ref",
+      "officialRepository": "https://github.com/gaofeng21cn/one-person-lab-cloud.git",
+      "requirements": ["40_character_git_sha", "checked_out_head_exact_match", "merged_into_official_origin_main"],
+      "mainReadback": "origin/main"
+    },
     "env": {
       "OPL_CLOUD_IMAGE_REPOSITORY": "uswccr.ccs.tencentyun.com/oplcloud/opl-cloud",
       "OPL_WORKSPACE_IMAGE_REPOSITORY": "uswccr.ccs.tencentyun.com/oplcloud/one-person-lab-app"
     },
     "requiredCommandsByStep": {
+      "Verify Cloud source": [
+        "^[0-9a-fA-F]{40}$",
+        "git rev-parse HEAD",
+        "git remote set-url origin https://github.com/gaofeng21cn/one-person-lab-cloud.git",
+        "git fetch --no-tags origin main:refs/remotes/origin/main",
+        "git rev-parse origin/main",
+        "git merge-base --is-ancestor \"$cloud_head_sha\" \"$cloud_main_sha\""
+      ],
+      "Image metadata": [
+        "^[0-9a-fA-F]{40}$",
+        "REQUESTED_WORKSPACE_APP_SHA",
+        "REQUESTED_WORKSPACE_SHELL_SHA",
+        "workspace_image_tag=\"${workspace_app_sha:0:12}-${workspace_shell_sha:0:12}\""
+      ],
+      "Set up Node": [
+        "actions/setup-node@v4",
+        "node-version"
+      ],
+      "Prepare Workspace App source": [
+        "git clone --filter=blob:none --single-branch --branch main",
+        "https://github.com/gaofeng21cn/one-person-lab-app.git",
+        "https://github.com/gaofeng21cn/opl-aion-shell.git",
+        "merge-base --is-ancestor",
+        "checkout --detach",
+        "npm run ensure:shell",
+        "rev-parse HEAD",
+        "grep -Fxq '.git'"
+      ],
       "Build and push images": [
         "docker login uswccr.ccs.tencentyun.com --username \"$TCR_ID\" --password-stdin",
-        "docker login ghcr.io --username \"$GHCR_USERNAME\" --password-stdin",
-        "git ls-remote https://github.com/gaofeng21cn/one-person-lab-app.git",
-        "org.opencontainers.image.revision",
-        "EXPECTED_WORKSPACE_CONFIG_DIGEST",
-        "EXPECTED_WORKSPACE_OCI_REVISION",
         "docker buildx build --push -f Dockerfile -t \"$OPL_CLOUD_IMAGE_REF\" \"$OPL_CLOUD_IMAGE_CONTEXT\"",
-        "docker buildx imagetools create --prefer-index=false -t \"$OPL_WORKSPACE_IMAGE_REF\" \"$WORKSPACE_SOURCE_IMAGE\""
+        "-f \"$OPL_WORKSPACE_SOURCE_ROOT/shells/aionui/Dockerfile\"",
+        "\"$OPL_WORKSPACE_SOURCE_ROOT/shells/aionui\"",
+        "docker buildx imagetools inspect \"$OPL_WORKSPACE_IMAGE_REF\""
       ]
-    }
+    },
+    "forbiddenRunTokens": [
+      "docker login ghcr.io",
+      "imagetools create",
+      "git ls-remote",
+      "org.opencontainers.image.revision",
+      ":latest",
+      "@latest"
+    ]
   },
   "workspaceImage": {
-    "sourceRepository": "ghcr.io/gaofeng21cn/one-person-lab-webui",
-    "sourceTag": "26.7.13",
-    "sourceDigest": "sha256:9d867fe0fc9db48b6efa27371d77770e46fc8cd97d26ef85a81fbdac7e96ca76",
-    "sourceTagCommit": "faeb0d6f9d1fe18ac6ea1433168c5696fd7d7918",
-    "sourceConfigDigest": "sha256:5a5335ffa7e03303b8d57019dcbe8dfdea329d11481bfa4dd152f629666c14b9",
-    "sourceOciRevision": "0d45e6c9f954ec63b029b678db5d7929a049a958",
-    "fallback": {
-      "sourceTag": "26.7.12",
-      "sourceDigest": "sha256:6e1491a3693a820a37b81ab9a26f8efc4262fb9581f981641c6de084b0fa654f",
-      "sourceTagCommit": "6339a48dee84cf290173b2efbb34f62647abdfe6",
-      "sourceConfigDigest": "sha256:4d89f20226b140c99102ba5fdc757755f954bed990b2f842ebb3e4d2410e8f05",
-      "sourceOciRevision": "35a9584f92d3fa2acad0d459a10a7caffaa04c0e"
-    },
+    "appRepository": "https://github.com/gaofeng21cn/one-person-lab-app.git",
+    "activeShellRepository": "https://github.com/gaofeng21cn/opl-aion-shell.git",
+    "candidateAppMainSha": null,
+    "candidateActiveShellMainSha": "13ae5d1410e1a4349c14dc76e7c3446ff200cfdb",
+    "candidateRequirements": ["40_character_git_sha", "merged_into_repository_main"],
     "targetRepository": "uswccr.ccs.tencentyun.com/oplcloud/one-person-lab-app",
-    "targetTag": "26.7.13",
+    "candidateTagFormat": "<app-sha-12>-<active-shell-sha-12>",
+    "immutableTcrDigest": null,
+    "immutableTcrDigestStatus": "pending_publication_readback",
+    "readyPodImageId": null,
+    "readyPodImageIdStatus": "pending_deployment_readback",
     "productionReference": "repository@sha256",
     "mutableTagsForbidden": ["latest", "stable"]
   },

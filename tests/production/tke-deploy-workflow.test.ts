@@ -13,14 +13,12 @@ const repoFile = (path) => new URL(`../../${path}`, import.meta.url);
 const deploymentContractPath = repoFile("packages/contracts/opl-cloud-deployment-contract.json");
 const digestA = `sha256:${"a".repeat(64)}`;
 const digestB = `sha256:${"b".repeat(64)}`;
-const primaryWorkspaceSource = "ghcr.io/gaofeng21cn/one-person-lab-webui@sha256:9d867fe0fc9db48b6efa27371d77770e46fc8cd97d26ef85a81fbdac7e96ca76";
-const fallbackWorkspaceSource = "ghcr.io/gaofeng21cn/one-person-lab-webui@sha256:6e1491a3693a820a37b81ab9a26f8efc4262fb9581f981641c6de084b0fa654f";
-const primaryWorkspaceTagCommit = "faeb0d6f9d1fe18ac6ea1433168c5696fd7d7918";
-const primaryWorkspaceConfigDigest = "sha256:5a5335ffa7e03303b8d57019dcbe8dfdea329d11481bfa4dd152f629666c14b9";
-const primaryWorkspaceRevision = "0d45e6c9f954ec63b029b678db5d7929a049a958";
-const fallbackWorkspaceTagCommit = "6339a48dee84cf290173b2efbb34f62647abdfe6";
-const fallbackWorkspaceConfigDigest = "sha256:4d89f20226b140c99102ba5fdc757755f954bed990b2f842ebb3e4d2410e8f05";
-const fallbackWorkspaceRevision = "35a9584f92d3fa2acad0d459a10a7caffaa04c0e";
+const cloudCandidateSha = "c".repeat(40);
+const cloudMainSha = "d".repeat(40);
+const workspaceAppSha = "a".repeat(40);
+const workspaceShellSha = "b".repeat(40);
+const workspaceImageTag = `${workspaceAppSha.slice(0, 12)}-${workspaceShellSha.slice(0, 12)}`;
+const workspaceDigest = `sha256:${"d".repeat(64)}`;
 const basicSlotDescriptor = {
   id: "verification-slot-basic-01",
   customerProduct: false,
@@ -72,7 +70,7 @@ function serializedRuns(currentJob) {
   return (currentJob.steps || []).map((step) => step.run || "").join("\n");
 }
 
-function runImageMetadata(step, workspaceImageTag, workspaceSourceImage) {
+function runImageMetadata(step, appSha, shellSha) {
   return spawnSync("bash", ["-c", step.run], {
     cwd: fileURLToPath(repoFile(".")),
     encoding: "utf8",
@@ -83,15 +81,48 @@ function runImageMetadata(step, workspaceImageTag, workspaceSourceImage) {
       OPL_CLOUD_IMAGE_REPOSITORY: "registry.example.test/opl/cloud",
       OPL_WORKSPACE_IMAGE_REPOSITORY: "registry.example.test/opl/workspace",
       REQUESTED_IMAGE_TAG: "cloud-test",
-      REQUESTED_WORKSPACE_IMAGE_TAG: workspaceImageTag,
-      REQUESTED_WORKSPACE_SOURCE_IMAGE: workspaceSourceImage,
-      PUBLISH_CLOUD_IMAGE: "true",
-      MIRROR_WORKSPACE_IMAGE: "true"
+      REQUESTED_WORKSPACE_APP_SHA: appSha,
+      REQUESTED_WORKSPACE_SHELL_SHA: shellSha,
+      PUBLISH_CLOUD_IMAGE: "false",
+      PUBLISH_WORKSPACE_IMAGE: "true"
     }
   });
 }
 
-async function runImageReleaseStep(step, publishCloudImage, mirrorWorkspaceImage) {
+function runCloudSourceGate(step, requestedSha, {
+  headSha = requestedSha,
+  mainSha = cloudMainSha,
+  merged = true
+} = {}) {
+  const harness = `
+git() {
+  printf 'git %s\\n' "$*" >&2
+  case "$*" in
+    "rev-parse HEAD") printf '%s\\n' "$CLOUD_HEAD_SHA" ;;
+    "remote set-url origin https://github.com/gaofeng21cn/one-person-lab-cloud.git") ;;
+    "fetch --no-tags origin main:refs/remotes/origin/main") ;;
+    "rev-parse origin/main") printf '%s\\n' "$CLOUD_MAIN_SHA" ;;
+    "merge-base --is-ancestor $CLOUD_HEAD_SHA $CLOUD_MAIN_SHA") [ "$CLOUD_CANDIDATE_MERGED" = "true" ] ;;
+    *) return 2 ;;
+  esac
+}
+${step.run}
+`;
+  return spawnSync("bash", ["-c", harness], {
+    cwd: fileURLToPath(repoFile(".")),
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      GITHUB_ENV: "/dev/null",
+      REQUESTED_CLOUD_SHA: requestedSha,
+      CLOUD_HEAD_SHA: headSha,
+      CLOUD_MAIN_SHA: mainSha,
+      CLOUD_CANDIDATE_MERGED: merged ? "true" : "false"
+    }
+  });
+}
+
+async function runImageReleaseStep(step, publishCloudImage, publishWorkspaceImage) {
   const root = await mkdtemp(join(tmpdir(), "opl-image-release-"));
   const commandLog = join(root, "commands.log");
   const githubOutput = join(root, "output");
@@ -110,26 +141,6 @@ docker() {
     *"imagetools inspect "*) printf '%s\\n' "$WORKSPACE_DIGEST" ;;
   esac
 }
-git() {
-  printf 'git %s\\n' "$*" >> "$COMMAND_LOG"
-  printf '%s\\trefs/tags/v%s\\n' "$EXPECTED_WORKSPACE_TAG_COMMIT" "$REQUESTED_WORKSPACE_IMAGE_TAG"
-}
-curl() {
-  printf 'curl %s\\n' "$*" >> "$COMMAND_LOG"
-  case "$*" in
-    *"ghcr.io/token"*) printf '{"token":"registry-token"}' ;;
-    *"/manifests/"*) printf '{"config":{"digest":"%s"}}' "$EXPECTED_WORKSPACE_CONFIG_DIGEST" ;;
-    *"/blobs/"*) printf '{"config":{"Labels":{"org.opencontainers.image.revision":"%s"}}}' "$EXPECTED_WORKSPACE_OCI_REVISION" ;;
-  esac
-}
-jq() {
-  command cat >/dev/null
-  case "$*" in
-    *".token"*) printf 'registry-token\\n' ;;
-    *".config.digest"*) printf '%s\\n' "$EXPECTED_WORKSPACE_CONFIG_DIGEST" ;;
-    *"org.opencontainers.image.revision"*) printf '%s\\n' "$EXPECTED_WORKSPACE_OCI_REVISION" ;;
-  esac
-}
 ${step.run}
 `;
   const result = spawnSync("bash", ["-c", harness], {
@@ -142,23 +153,17 @@ ${step.run}
       GITHUB_ENV: githubEnv,
       GITHUB_STEP_SUMMARY: githubSummary,
       PUBLISH_CLOUD_IMAGE: publishCloudImage ? "true" : "false",
-      MIRROR_WORKSPACE_IMAGE: mirrorWorkspaceImage ? "true" : "false",
+      PUBLISH_WORKSPACE_IMAGE: publishWorkspaceImage ? "true" : "false",
       TCR_ID: "test-user",
       TCR_SECRET: "test-password",
-      GHCR_USERNAME: "test-user",
-      GHCR_TOKEN: "test-token",
       OPL_CLOUD_IMAGE_CONTEXT: ".",
       OPL_CLOUD_IMAGE_REPOSITORY: "registry.example.test/opl/cloud",
       OPL_CLOUD_IMAGE_REF: "registry.example.test/opl/cloud:cloud-test",
       OPL_WORKSPACE_IMAGE_REPOSITORY: "registry.example.test/opl/workspace",
-      OPL_WORKSPACE_IMAGE_REF: "registry.example.test/opl/workspace:26.7.13",
-      WORKSPACE_SOURCE_IMAGE: primaryWorkspaceSource,
-      REQUESTED_WORKSPACE_IMAGE_TAG: "26.7.13",
-      EXPECTED_WORKSPACE_TAG_COMMIT: primaryWorkspaceTagCommit,
-      EXPECTED_WORKSPACE_CONFIG_DIGEST: primaryWorkspaceConfigDigest,
-      EXPECTED_WORKSPACE_OCI_REVISION: primaryWorkspaceRevision,
+      OPL_WORKSPACE_IMAGE_REF: `registry.example.test/opl/workspace:${workspaceImageTag}`,
+      OPL_WORKSPACE_SOURCE_ROOT: "/tmp/one-person-lab-app",
       CLOUD_DIGEST: cloudDigest,
-      WORKSPACE_DIGEST: primaryWorkspaceSource.split("@")[1]
+      WORKSPACE_DIGEST: workspaceDigest
     }
   });
   const outputs = Object.fromEntries((await readFile(githubOutput, "utf8"))
@@ -402,46 +407,91 @@ test("TKE bootstrap deploy is approved, read only, and cannot complete a release
   assert.match(rollbackRun, /inputs\.bootstrap_mode[\s\S]*restore_previous_bootstrap_images/);
 });
 
-test("image release pins and verifies both source and target digests", async () => {
+test("image release accepts only a full Cloud commit contained in official origin main", async () => {
+  const [workflow, contract] = await Promise.all([
+    readWorkflow(".github/workflows/release-opl-cloud-image.yml"),
+    readJson(deploymentContractPath)
+  ]);
+  const steps = stepsByName(workflowJob(workflow, "build-push"));
+  const checkout = steps.get("Checkout");
+  const verify = steps.get("Verify Cloud source");
+
+  assert.equal(checkout?.with?.ref, "${{ inputs.ref }}");
+  assert.equal(checkout?.with?.["fetch-depth"], 0);
+  assert.ok(verify, "release workflow missing Verify Cloud source");
+  assert.deepEqual(contract.imageReleaseWorkflow.cloudCandidate, {
+    input: "ref",
+    officialRepository: "https://github.com/gaofeng21cn/one-person-lab-cloud.git",
+    requirements: ["40_character_git_sha", "checked_out_head_exact_match", "merged_into_official_origin_main"],
+    mainReadback: "origin/main"
+  });
+  assert.match(verify.run, /\^\[0-9a-fA-F\]\{40\}\$/);
+  assert.match(verify.run, /remote set-url origin https:\/\/github\.com\/gaofeng21cn\/one-person-lab-cloud\.git/);
+  assert.match(verify.run, /fetch --no-tags origin main:refs\/remotes\/origin\/main/);
+  assert.match(verify.run, /rev-parse HEAD/);
+  assert.match(verify.run, /rev-parse origin\/main/);
+  assert.match(verify.run, /merge-base --is-ancestor "\$cloud_head_sha" "\$cloud_main_sha"/);
+
+  const accepted = runCloudSourceGate(verify, cloudCandidateSha);
+  assert.equal(accepted.status, 0, accepted.stderr);
+  assert.match(accepted.stderr, /git fetch --no-tags origin main:refs\/remotes\/origin\/main/);
+  assert.match(accepted.stderr, /git merge-base --is-ancestor/);
+
+  for (const invalidSha of ["main", "abcdef0", "g".repeat(40), "c".repeat(39), "c".repeat(41)]) {
+    assert.notEqual(runCloudSourceGate(verify, invalidSha).status, 0, `Cloud ref must reject ${invalidSha}`);
+  }
+  assert.notEqual(runCloudSourceGate(verify, cloudCandidateSha, { headSha: "e".repeat(40) }).status, 0);
+  assert.notEqual(runCloudSourceGate(verify, cloudCandidateSha, { mainSha: "main" }).status, 0);
+  assert.notEqual(runCloudSourceGate(verify, cloudCandidateSha, { merged: false }).status, 0);
+});
+
+test("image release builds Workspace from exact merged-main App and active-shell commits", async () => {
   const workflow = await readWorkflow(".github/workflows/release-opl-cloud-image.yml");
   const currentJob = workflowJob(workflow, "build-push");
+  const inputs = workflow.on.workflow_dispatch.inputs;
+  const steps = stepsByName(currentJob);
   const metadata = serializedStep(stepsByName(currentJob).get("Image metadata"));
+  const setupNode = steps.get("Set up Node");
+  const prepare = serializedStep(steps.get("Prepare Workspace App source"));
   const source = JSON.stringify(workflow);
   const runs = serializedRuns(currentJob);
 
+  assert.deepEqual(Object.keys(inputs), [
+    "ref",
+    "image_tag",
+    "publish_cloud_image",
+    "publish_workspace_image",
+    "workspace_app_main_sha",
+    "workspace_shell_main_sha"
+  ]);
+  assert.equal(inputs.workspace_app_main_sha.required, true);
+  assert.equal(inputs.workspace_shell_main_sha.required, true);
   assert.doesNotMatch(metadata, /\$\{\{\s*inputs\./);
-  for (const value of [
-    primaryWorkspaceSource,
-    fallbackWorkspaceSource,
-    primaryWorkspaceTagCommit,
-    primaryWorkspaceConfigDigest,
-    primaryWorkspaceRevision,
-    fallbackWorkspaceTagCommit,
-    fallbackWorkspaceConfigDigest,
-    fallbackWorkspaceRevision,
-    "26.7.13",
-    "26.7.12"
-  ]) {
-    assert.match(source, new RegExp(value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
-  }
-  assert.notEqual(primaryWorkspaceTagCommit, primaryWorkspaceRevision);
-  assert.notEqual(fallbackWorkspaceTagCommit, fallbackWorkspaceRevision);
+  assert.match(metadata, /\^\[0-9a-fA-F\]\{40\}\$/);
+  assert.match(metadata, /tr '\[:upper:\]' '\[:lower:\]'/);
+  assert.match(metadata, /workspace_image_tag="\$\{workspace_app_sha:0:12\}-\$\{workspace_shell_sha:0:12\}"/);
+  assert.equal(setupNode?.uses, "actions/setup-node@v4");
+  assert.equal(setupNode?.with?.["node-version"], "22");
+  assert.match(String(setupNode?.if), /publish_workspace_image/);
+  assert.match(prepare, /git clone --filter=blob:none --single-branch --branch main/);
+  assert.match(prepare, /github\.com\/gaofeng21cn\/one-person-lab-app\.git/);
+  assert.match(prepare, /github\.com\/gaofeng21cn\/opl-aion-shell\.git/);
+  assert.match(prepare, /merge-base --is-ancestor "\$OPL_WORKSPACE_APP_SHA" origin\/main/);
+  assert.match(prepare, /merge-base --is-ancestor "\$OPL_WORKSPACE_SHELL_SHA" origin\/main/);
+  assert.match(prepare, /checkout --detach "\$OPL_WORKSPACE_APP_SHA"/);
+  assert.match(prepare, /checkout --detach "\$OPL_WORKSPACE_SHELL_SHA"/);
+  assert.match(prepare, /npm run ensure:shell/);
+  assert.match(prepare, /git -C "\$workspace_root" rev-parse HEAD/);
+  assert.match(prepare, /git -C "\$shell_root" rev-parse HEAD/);
+  assert.match(prepare, /grep -Fxq '\.git' "\$shell_root\/\.dockerignore"/);
   assert.match(runs, /docker buildx imagetools inspect/);
-  assert.match(runs, /docker buildx imagetools create --prefer-index=false/);
-  assert.match(runs, /git ls-remote .*one-person-lab-app\.git.*refs\/tags\/v/);
-  assert.match(runs, /ghcr\.io\/token.*one-person-lab-webui:pull/);
-  assert.match(runs, /manifests\/\$\{WORKSPACE_SOURCE_IMAGE##\*@\}/);
-  assert.match(runs, /blobs\/\$source_config_digest/);
-  assert.match(runs, /org\.opencontainers\.image\.revision/);
-  assert.match(runs, /tag_commit.*EXPECTED_WORKSPACE_TAG_COMMIT/s);
-  assert.match(runs, /source_config_digest.*EXPECTED_WORKSPACE_CONFIG_DIGEST/s);
-  assert.match(runs, /source_revision.*EXPECTED_WORKSPACE_OCI_REVISION/s);
-  assert.match(runs, /GITHUB_STEP_SUMMARY/);
+  assert.match(runs, /docker buildx build --push[\s\S]*shells\/aionui\/Dockerfile[\s\S]*shells\/aionui/);
   assert.match(runs, /sha256:\[0-9a-f\]\{64\}/);
   assert.match(runs, /OPL_CLOUD_IMAGE=.*@\$\{cloud_digest\}/);
   assert.match(runs, /OPL_WORKSPACE_IMAGE=.*@\$\{workspace_digest\}/);
-  assert.match(runs, /workspace_digest.*\$\{WORKSPACE_SOURCE_IMAGE##\*@\}/s);
-  assert.doesNotMatch(runs, /:latest\b|:stable\b/);
+  assert.doesNotMatch(source, /mirror_workspace_image|workspace_source_image|MIRROR_WORKSPACE_IMAGE|REQUESTED_WORKSPACE_IMAGE_TAG|WORKSPACE_SOURCE_IMAGE/i);
+  assert.doesNotMatch(runs, /docker login ghcr\.io|imagetools create|git ls-remote|org\.opencontainers\.image\.revision/);
+  assert.doesNotMatch(source, /v?26\.7\.1[23]|:latest\b|@latest\b/);
 });
 
 test("image release switches isolate publication commands and leave skipped outputs empty", async () => {
@@ -466,37 +516,36 @@ test("image release switches isolate publication commands and leave skipped outp
 
   const workspaceOnly = await runImageReleaseStep(release, false, true);
   assert.equal(workspaceOnly.status, 0, workspaceOnly.stderr);
-  assert.doesNotMatch(workspaceOnly.commands, /docker buildx build --push|imagetools inspect registry\.example\.test\/opl\/cloud/);
-  assert.match(workspaceOnly.commands, /git ls-remote/);
-  assert.match(workspaceOnly.commands, /curl .*ghcr\.io/);
-  assert.match(workspaceOnly.commands, /imagetools create --prefer-index=false/);
-  assert.match(workspaceOnly.commands, /imagetools inspect registry\.example\.test\/opl\/workspace:26\.7\.13/);
+  assert.doesNotMatch(workspaceOnly.commands, /imagetools inspect registry\.example\.test\/opl\/cloud/);
+  assert.match(workspaceOnly.commands, /docker buildx build --push -f \/tmp\/one-person-lab-app\/shells\/aionui\/Dockerfile/);
+  assert.match(workspaceOnly.commands, /-t registry\.example\.test\/opl\/workspace:aaaaaaaaaaaa-bbbbbbbbbbbb \/tmp\/one-person-lab-app\/shells\/aionui/);
+  assert.match(workspaceOnly.commands, /imagetools inspect registry\.example\.test\/opl\/workspace:aaaaaaaaaaaa-bbbbbbbbbbbb/);
+  assert.doesNotMatch(workspaceOnly.commands, /ghcr\.io|imagetools create|git ls-remote|curl /);
   assert.deepEqual(workspaceOnly.outputs, {
     cloud_image: "",
-    workspace_image: `registry.example.test/opl/workspace@${primaryWorkspaceSource.split("@")[1]}`
+    workspace_image: `registry.example.test/opl/workspace@${workspaceDigest}`
   });
 
   assert.equal(currentJob.outputs.cloud_image, "${{ steps.images.outputs.cloud_image }}");
   assert.equal(currentJob.outputs.workspace_image, "${{ steps.images.outputs.workspace_image }}");
 });
 
-test("image release accepts only the exact primary and fallback tag-digest pairs", async () => {
+test("image release accepts only full App and active-shell commit SHAs", async () => {
   const workflow = await readWorkflow(".github/workflows/release-opl-cloud-image.yml");
   const metadata = stepsByName(workflowJob(workflow, "build-push")).get("Image metadata");
 
-  for (const [tag, source] of [["26.7.13", primaryWorkspaceSource], ["26.7.12", fallbackWorkspaceSource]]) {
-    const result = runImageMetadata(metadata, tag, source);
+  for (const [appSha, shellSha] of [
+    [workspaceAppSha, workspaceShellSha],
+    [workspaceAppSha.toUpperCase(), workspaceShellSha.toUpperCase()]
+  ]) {
+    const result = runImageMetadata(metadata, appSha, shellSha);
     assert.equal(result.status, 0, result.stderr);
   }
-  for (const [tag, source] of [
-    ["26.7.13", fallbackWorkspaceSource],
-    ["26.7.12", primaryWorkspaceSource],
-    ["latest", primaryWorkspaceSource],
-    ["stable", primaryWorkspaceSource],
-    ["26.7.11", primaryWorkspaceSource]
-  ]) {
-    const result = runImageMetadata(metadata, tag, source);
-    assert.notEqual(result.status, 0, `${tag} must not accept ${source}`);
+  for (const invalidSha of ["main", "abcdef0", "g".repeat(40), "a".repeat(39), "a".repeat(41)]) {
+    const invalidApp = runImageMetadata(metadata, invalidSha, workspaceShellSha);
+    assert.notEqual(invalidApp.status, 0, `App SHA must reject ${invalidSha}`);
+    const invalidShell = runImageMetadata(metadata, workspaceAppSha, invalidSha);
+    assert.notEqual(invalidShell.status, 0, `active-shell SHA must reject ${invalidSha}`);
   }
 });
 

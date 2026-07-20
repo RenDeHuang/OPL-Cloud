@@ -206,11 +206,19 @@
   "workspaceRuntime": {
     "primaryWorkspacePerAccount": 1,
     "sourceImage": {
-      "repository": "ghcr.io/gaofeng21cn/one-person-lab-webui",
-      "tag": "26.7.13",
-      "digest": "sha256:9d867fe0fc9db48b6efa27371d77770e46fc8cd97d26ef85a81fbdac7e96ca76"
+      "appRepository": "https://github.com/gaofeng21cn/one-person-lab-app.git",
+      "activeShellRepository": "https://github.com/gaofeng21cn/opl-aion-shell.git",
+      "candidateAppMainSha": null,
+      "candidateActiveShellMainSha": "13ae5d1410e1a4349c14dc76e7c3446ff200cfdb",
+      "candidateRequirements": ["40_character_git_sha", "merged_into_repository_main"]
     },
     "targetRepository": "uswccr.ccs.tencentyun.com/oplcloud/one-person-lab-app",
+    "releaseEvidence": {
+      "immutableTcrDigest": null,
+      "immutableTcrDigestStatus": "pending_publication_readback",
+      "readyPodImageId": null,
+      "readyPodImageIdStatus": "pending_deployment_readback"
+    },
     "productionReference": "repository@sha256",
     "mounts": ["/data", "/projects"],
     "projectFacts": {

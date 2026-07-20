@@ -125,11 +125,11 @@ test("production env examples use the launch zone and pinned images", async () =
   for (const path of paths) {
     const source = await readFile(path, "utf8");
     assert.match(source, /^OPL_TENCENT_ZONE=na-siliconvalley-1$/m, path);
-    assert.match(source, /^OPL_WORKSPACE_IMAGE=.*@sha256:/m, path);
     assert.doesNotMatch(source, /^OPL_WORKSPACE_IMAGE=.*(?::latest|:<tag>)$/m, path);
   }
   for (const path of paths.slice(1)) {
     const source = await readFile(path, "utf8");
+    assert.match(source, /^OPL_WORKSPACE_IMAGE=.*@sha256:/m, path);
     assert.match(source, /^OPL_GATEWAY_PUBLIC_BASE_URL=https:\/\/[^\s]+$/m, path);
     assert.doesNotMatch(source, /^OPL_GATEWAY_PUBLIC_BASE_URL=.*gflabtoken\.cn/m, path);
     assert.match(source, /^TENCENTCLOUD_REGION=na-siliconvalley$/m, path);
@@ -138,10 +138,7 @@ test("production env examples use the launch zone and pinned images", async () =
     assert.match(source, /^OPL_TRUSTED_PROXY_CIDRS=.+$/m, path);
     assert.doesNotMatch(source, /^OPL_OPERATOR_SUMMARY_TOKEN=/m, path);
   }
-  assert.match(
-    await readFile(".env.example", "utf8"),
-    /^OPL_WORKSPACE_IMAGE=ghcr\.io\/gaofeng21cn\/one-person-lab-webui@sha256:9d867fe0fc9db48b6efa27371d77770e46fc8cd97d26ef85a81fbdac7e96ca76$/m
-  );
+  assert.match(await readFile(".env.example", "utf8"), /^OPL_WORKSPACE_IMAGE=$/m);
 });
 
 test("production automation does not retain the legacy operator cleanup path", async () => {
