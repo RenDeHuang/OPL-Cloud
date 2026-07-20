@@ -87,7 +87,7 @@ test("session generation prevents late customer and admin reads from repopulatin
   assert.match(app, /function currentSessionRequest\(\)[\s\S]+const generation = sessionGeneration;[\s\S]+const userId = session\.value\?\.user\.id[\s\S]+generation === sessionGeneration && userId === session\.value\?\.user\.id/);
   assert.match(app, /function replaceSession\([^)]+\) \{\s*sessionGeneration \+= 1;\s*clearSessionState\(\);\s*session\.value = next;/);
   for (const name of [
-    "loadWorkspaces", "loadWorkspaceStatus", "loadEndpoint", "loadWallet", "loadKeys", "loadUsage", "loadStats",
+    "loadWorkspaces", "loadWorkspaceStatus", "loadWallet", "loadKeys", "loadUsage", "loadStats",
     "loadAccountUsage", "loadHistory", "loadReceipts", "loadAnnouncements", "loadCatalog", "loadCustomer", "loadAdmin",
     "recoverWorkspaceLaunch"
   ]) assert.match(appFunction(app, name), /currentSessionRequest\(\)/, `${name} must bind reads to the current session`);
@@ -194,7 +194,7 @@ test("customer routes load only their page-owned sources and dispatch on every n
   const app = await appSource();
   const loadCustomerSource = appFunction(app, "loadCustomer");
   const loaderNames = [
-    "loadWorkspaces", "loadWorkspaceStatus", "loadEndpoint", "loadWallet", "loadKeys", "loadUsage", "loadStats",
+    "loadWorkspaces", "loadWorkspaceStatus", "loadWallet", "loadKeys", "loadUsage", "loadStats",
     "loadAccountUsage", "loadHistory", "loadReceipts", "loadAnnouncements", "loadCatalog", "recoverWorkspaceLaunch"
   ];
   const calls: string[] = [];
@@ -240,7 +240,7 @@ test("customer routes load only their page-owned sources and dispatch on every n
   ].sort());
   assert.deepEqual(await callsFor("/console/announcements"), ["loadAnnouncements"]);
   assert.deepEqual(await callsFor("/console/api", "overview"), [
-    "loadEndpoint", "loadWallet", "loadAccountUsage", "loadHistory"
+    "loadWallet", "loadAccountUsage", "loadHistory"
   ].sort());
   assert.deepEqual(await callsFor("/console/api/usage", "usage"), ["loadKeys"]);
   assert.deepEqual(await callsFor("/console/api/keys", "keys"), ["loadKeys"]);

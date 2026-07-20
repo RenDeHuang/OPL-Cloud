@@ -43,11 +43,10 @@ reuses one prepaid `SA5.MEDIUM4` plus 10GB CBS Verification Slot for its paid
 period and deletes only temporary workloads and test data. A real provider
 purchase or renewal requires a separate explicit Provider Acceptance run.
 
-## 2026-07-19: Public Gateway Endpoint Is Independent
+## 2026-07-21: Browser Gateway Endpoint Is Removed
 
-`GET /api/gateway/endpoint` returns only `OPL_GATEWAY_PUBLIC_BASE_URL`. Production
-requires valid HTTPS. Missing or invalid configuration is unavailable; it never
-falls back to `OPL_SUB2API_BASE_URL` or a hard-coded host.
+Console exposes no Gateway base-address API or card. `OPL_SUB2API_BASE_URL` stays
+server-only, and Cloud does not inject a second Runtime Gateway base URL.
 
 ## 2026-07-19: Evidence Levels Cannot Be Inferred
 

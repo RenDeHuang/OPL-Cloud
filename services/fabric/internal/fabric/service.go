@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"maps"
 	"math"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -98,8 +99,8 @@ func (s *Service) Catalog(_ context.Context) Catalog {
 		SchemaVersion: 1,
 		Owner:         "OPL Fabric",
 		WorkspacePackages: []WorkspacePackage{
-			{ID: "basic", Name: "Basic Workspace", ComputeProfileID: "cpu-basic", CPU: 2, MemoryGB: 4, DiskGB: 10, Provider: "tencent-tke", Available: strings.TrimSpace(packagePlan("basic").NodePoolID) != ""},
-			{ID: "pro", Name: "Pro Workspace", ComputeProfileID: "cpu-pro", CPU: 8, MemoryGB: 16, DiskGB: 100, Provider: "tencent-tke", Available: strings.TrimSpace(packagePlan("pro").NodePoolID) != ""},
+			{ID: "basic", Name: "Basic Workspace", ComputeProfileID: "cpu-basic", CPU: 2, MemoryGB: 4, DiskGB: 10, Provider: "tencent-tke", Available: true},
+			{ID: "pro", Name: "Pro Workspace", ComputeProfileID: "cpu-pro", CPU: 8, MemoryGB: 16, DiskGB: 100, Provider: "tencent-tke", Available: os.Getenv("NODE_ENV") != "production"},
 		},
 		StorageClasses: []StorageClass{{ID: "workspace-cbs", StorageClassName: "cbs", Provider: "tencent-tke", Available: true}},
 		IngressDomains: []IngressDomain{{ID: "workspace", Host: "workspace.medopl.cn", PathPattern: "/w/<workspaceId>/", Available: true}},
@@ -125,7 +126,8 @@ func (s *Service) MonthlyPreflight(ctx context.Context, input MonthlyPreflightIn
 	}
 	if result.ResourceType != input.ResourceType || result.PackageID != input.PackageID || result.SizeGB != input.SizeGB || result.Zone != input.Zone || !result.Available ||
 		result.ChargeType != "PREPAID" || result.PeriodMonths != 1 || result.RenewFlag != "NOTIFY_AND_MANUAL_RENEW" || result.ProviderPriceCNY <= 0 ||
-		math.IsNaN(result.ProviderPriceCNY) || math.IsInf(result.ProviderPriceCNY, 0) || !validRequestIDs {
+		math.IsNaN(result.ProviderPriceCNY) || math.IsInf(result.ProviderPriceCNY, 0) || !validRequestIDs ||
+		(input.ResourceType == "compute" && strings.TrimSpace(result.NodePoolID) == "") {
 		return MonthlyPreflight{}, ErrMonthlyPreflightUnavailable
 	}
 	return result, nil
@@ -219,6 +221,7 @@ func (s *Service) CreateComputeAllocation(ctx context.Context, input ComputeAllo
 		AccountID:         input.AccountID,
 		WorkspaceID:       input.WorkspaceID,
 		PackageID:         firstNonEmpty(input.PackageID, "basic"),
+		NodePoolID:        strings.TrimSpace(input.NodePoolID),
 		Status:            "provisioning",
 		Provider:          "tencent-tke",
 		ProviderRequestID: providerRequestID("compute", input.IdempotencyKey),

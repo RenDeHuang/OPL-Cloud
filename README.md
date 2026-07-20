@@ -92,9 +92,9 @@ and rollback never delete CBS.
 `autoRenew` defaults off. The current API rejects enabling it, and Console must
 not expose an enable control until a real renewal is proven.
 
-The OPL-branded public API address is separate from the internal Gateway adapter.
-Control Plane reads `OPL_GATEWAY_PUBLIC_BASE_URL`; production requires HTTPS and
-never falls back to `OPL_SUB2API_BASE_URL` or `gflabtoken.cn`.
+Console exposes no Gateway base-address API or card. `OPL_SUB2API_BASE_URL` is
+server-only, and ordinary users are never linked to the Sub2API backend. Cloud
+does not inject a second Gateway base URL into Runtime.
 
 Pilot V2 remains `code-complete` until separately approved real evidence meets
 the `pilot-ready` gate. Only the same immutable deployed revision with production
@@ -154,16 +154,13 @@ The `Deploy TKE Production` workflow installs database, internal-service,
 Sub2API, Tencent, image-pull, and Workspace secrets; renders the
 manifest; restarts Control Plane, Fabric, and Ledger; and waits for each rollout.
 
-Basic and Pro each have a separate retained Provider Acceptance slot. Ordinary
-release verification requires both slots but runs live QA once with one Basic
-reserved account, one dedicated Key, and one model request. The code verifies
-exact-one Usage, balance delta, image IDs, receipts, stable CVM/CBS facts, and
-zero provider mutation. Provider Acceptance and this real request have not been
-run for the current candidate, so the Pilot is not production-proven.
+Basic and Pro definitions and prices remain in code. Production catalog exposes
+Basic and marks Pro unavailable. Provider Acceptance, Pro verification, S9, and
+fixed-slot verification are paused and do not gate ordinary Basic rollout.
 
 The retired local Console user seed is no longer accepted by deployment. The
-workflow bootstraps the fixed operator from Sub2API and invited owners are added
-through `POST /api/operator/accounts/invitations`; production runtime evidence is still pending.
+workflow bootstraps the fixed operator from Sub2API and invited owners are opened
+through `POST /api/operator/accounts`; production runtime evidence is still pending.
 
 See [docs/runtime/production-runbook.md](./docs/runtime/production-runbook.md)
 for rollout and recovery commands.

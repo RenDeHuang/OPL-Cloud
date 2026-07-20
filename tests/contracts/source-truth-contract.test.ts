@@ -25,10 +25,9 @@ test("Console source truth contract fixes strict envelopes and live Gateway proj
 
   const gateway = contract.sources.gateway;
   assert.deepEqual(Object.keys(gateway), [
-    "endpoint", "wallet", "keys", "usage", "usageStats", "accountUsageStats", "balanceHistory"
+    "wallet", "keys", "usage", "usageStats", "accountUsageStats", "balanceHistory"
   ]);
   assert.deepEqual(Object.values(gateway).map((source: any) => source.route), [
-    "GET /api/gateway/endpoint",
     "GET /api/gateway/wallet",
     "GET /api/gateway/keys",
     "GET /api/gateway/keys/{keyId}/usage",
@@ -36,17 +35,6 @@ test("Console source truth contract fixes strict envelopes and live Gateway proj
     "GET /api/gateway/usage-summary",
     "GET /api/gateway/balance-history"
   ]);
-  assert.deepEqual(gateway.endpoint, {
-    route: "GET /api/gateway/endpoint",
-    source: "control-plane",
-    authority: "OPL_GATEWAY_PUBLIC_BASE_URL",
-    dataFields: ["baseUrl"],
-    productionScheme: "https",
-    missingBehavior: "unavailable_without_data",
-    forbiddenFallbacks: ["OPL_SUB2API_BASE_URL", "gflabtoken.cn"],
-    fetchedAt: "control_plane_response_fetch_completion_time",
-    sourceUpdatedAt: "omit_no_authoritative_source_timestamp"
-  });
   for (const source of [
     gateway.wallet, gateway.keys, gateway.usage, gateway.usageStats,
     gateway.accountUsageStats, gateway.balanceHistory

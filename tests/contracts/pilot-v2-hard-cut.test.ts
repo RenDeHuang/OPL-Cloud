@@ -27,10 +27,7 @@ test("Pilot V2 contracts hard cut Gateway keys and source envelopes", async () =
     productionProven: false,
     saleable: false
   });
-  assert.equal(freeze.gateway.publicEndpoint.configEnv, "OPL_GATEWAY_PUBLIC_BASE_URL");
-  assert.equal(freeze.gateway.publicEndpoint.productApi, "GET /api/gateway/endpoint");
-  assert.equal(freeze.gateway.publicEndpoint.productionScheme, "https");
-  assert.deepEqual(freeze.gateway.publicEndpoint.forbiddenFallbacks, ["OPL_SUB2API_BASE_URL", "gflabtoken.cn"]);
+  assert.equal(freeze.gateway.publicEndpoint, undefined);
   assert.deepEqual(freeze.gateway.customerMutationApis, ["create_general_key", "update_general_key", "delete_general_key", "reveal_owned_key"]);
   assert.equal(freeze.gateway.createKeyRequest.expiryField, "expiresInDays");
   assert.equal(freeze.gateway.createKeyRequest.responseExpiryField, "expiresAt");
@@ -39,7 +36,7 @@ test("Pilot V2 contracts hard cut Gateway keys and source envelopes", async () =
   assert.equal(sourceTruth.envelope.typeName, "SourceEnvelope<T>");
   assert.equal(sourceTruth.envelope.serverWriter, "writeSourceEnvelope");
   assert.equal(sourceTruth.envelope.fetchedAtMaySubstituteSourceUpdatedAt, false);
-  assert.equal(sourceTruth.sources.gateway.endpoint.route, "GET /api/gateway/endpoint");
+  assert.equal(sourceTruth.sources.gateway.endpoint, undefined);
   assert.equal(sourceTruth.sources.gateway.keys.createRequest.expiryField, "expiresInDays");
   assert.equal(sourceTruth.sources.gateway.keys.revealRoute, "POST /api/gateway/keys/{keyId}/reveal");
   assert.equal(sourceTruth.sources.gateway.usage.route, "GET /api/gateway/keys/{keyId}/usage");
@@ -52,7 +49,7 @@ test("Pilot V2 contracts hard cut Gateway keys and source envelopes", async () =
   assert.match(dtos, /type SourceEnvelope<T>/);
   for (const name of [
     "MoneyDTO", "OperationStatusDTO", "SessionDTO", "CurrentAccountDTO", "GatewayWalletDTO", "GatewayBalanceHistoryPageDTO",
-    "GatewayEndpointDTO", "GatewayKeyPageDTO", "GatewayKeySummaryDTO", "CreateGatewayKeyRequest",
+    "GatewayKeyPageDTO", "GatewayKeySummaryDTO", "CreateGatewayKeyRequest",
     "UpdateGatewayKeyRequest", "GatewayKeySecretDTO", "GatewayKeyUsagePageDTO",
     "GatewayUsageSummaryDTO", "GatewayAccountUsageSummaryDTO", "WorkspaceDTO",
     "WorkspaceLaunchRequest", "WorkspaceLaunchOperationDTO", "WorkspaceKeyRotationDTO",
@@ -68,6 +65,7 @@ test("Pilot V2 contracts hard cut Gateway keys and source envelopes", async () =
   ]) {
     assert.match(dtos, new RegExp(`export (?:interface|type) ${name}\\b`), `missing ${name}`);
   }
+  assert.doesNotMatch(dtos, /GatewayEndpointDTO/);
   assert.match(dtos, /interface CreateGatewayKeyRequest[\s\S]*expiresInDays/);
   const rotationDTO = dtos.match(/export interface WorkspaceKeyRotationDTO[\s\S]*?\n}/)?.[0] ?? "";
   assert.match(rotationDTO, /workspaceApiKeyId:\s*string;/);
@@ -327,16 +325,22 @@ test("Pilot V2 binds delegated Gateway credentials to process-local Console sess
 });
 
 test("Pilot V2 current human truth preserves public entry points and evidence levels", async () => {
-  const [invariants, architecture, status, consoleProduct, runbook] = await Promise.all([
+  const [invariants, architecture, status, consoleProduct, runbook, readme, devGuide, decisions, project] = await Promise.all([
     text("docs/invariants.md"),
     text("docs/architecture.md"),
     text("docs/status.md"),
     text("docs/product/console-workspace-v1.md"),
-    text("docs/runtime/production-runbook.md")
+    text("docs/runtime/production-runbook.md"),
+    text("README.md"),
+    text("DEV_GUIDE.md"),
+    text("docs/decisions.md"),
+    text("docs/project.md")
   ]);
 
+  for (const document of [invariants, architecture, status, consoleProduct, runbook, readme, devGuide, decisions, project]) {
+    assert.doesNotMatch(document, /OPL_GATEWAY_PUBLIC_BASE_URL|GET \/api\/gateway\/endpoint/);
+  }
   for (const document of [invariants, architecture, status, consoleProduct]) {
-    assert.match(document, /OPL_GATEWAY_PUBLIC_BASE_URL/);
     assert.match(document, /code-complete/i);
     assert.match(document, /pilot-ready/i);
     assert.match(document, /production-proven/i);

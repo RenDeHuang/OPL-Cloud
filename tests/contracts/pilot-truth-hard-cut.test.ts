@@ -30,7 +30,7 @@ test("current docs describe only the fast invite-only paid Pilot", async () => {
   assert.match(invariants, /one Console User.*one OPL Account.*one Sub2API User\/Wallet/is);
   assert.match(invariants, /verification-slot-basic-01/);
   assert.match(invariants, /verification-slot-pro-01/);
-  assert.match(runbook, /one Basic reserved\s+account.*one dedicated Key.*one model request/is);
+  assert.match(runbook, /normal Console\s+Basic canary.*separately once.*read-only.*never buy a second Workspace package/is);
   assert.match(tke, /separate Control Plane, Fabric, and Ledger Kubernetes Deployments/is);
   assert.match(status, /code-complete/i);
   assert.match(status, /production-proven=false/i);
@@ -109,7 +109,7 @@ test("current contracts expose only authoritative Pilot sources and controls", a
   ]);
   assert.equal(sourceTruth.sources.gateway.keys.revealRoute, "POST /api/gateway/keys/{keyId}/reveal");
   assert.deepEqual(Object.keys(sourceTruth.sources.gateway), [
-    "endpoint", "wallet", "keys", "usage", "usageStats", "accountUsageStats", "balanceHistory"
+    "wallet", "keys", "usage", "usageStats", "accountUsageStats", "balanceHistory"
   ]);
   assert.equal(product.pilotBoundary.primaryWorkspacePerAccount, 1);
   assert.equal(product.pilotBoundary.workspaceDataAuthority, "cbs");
@@ -148,7 +148,7 @@ test("Workspace owns renewal while resource and general execution contracts are 
   assert.equal(packageBoundary.state, "superseded");
 });
 
-test("release contracts separate dual Acceptance from one-request Basic live QA", async () => {
+test("release contracts keep Acceptance and fixed-slot verification paused outside ordinary deploy", async () => {
   const [freeze, deployment] = await Promise.all([
     json("packages/contracts/opl-cloud-launch-freeze-contract.json"),
     json("packages/contracts/opl-cloud-deployment-contract.json")
@@ -156,6 +156,8 @@ test("release contracts separate dual Acceptance from one-request Basic live QA"
 
   assert.deepEqual(freeze.verification.slots.map((slot) => slot.id), ["verification-slot-basic-01", "verification-slot-pro-01"]);
   assert.deepEqual(freeze.verification.releaseLiveQa, {
+    launchStatus: "paused",
+    ordinaryDeployGate: false,
     slotId: "verification-slot-basic-01",
     reservedAccountCount: 1,
     dedicatedKeyCount: 1,
@@ -169,10 +171,9 @@ test("release contracts separate dual Acceptance from one-request Basic live QA"
     productionProven: false,
     saleable: false
   });
-  assert.equal(deployment.productionLiveQaJob.mode, "one_basic_reserved_account_one_dedicated_key_one_model_request_no_provider_mutation");
-  assert.equal(deployment.productionLiveQaJob.reservedAccountCount, 1);
-  assert.equal(deployment.productionLiveQaJob.dedicatedKeyCount, 1);
-  assert.equal(deployment.productionLiveQaJob.modelRequestCount, 1);
+  assert.equal(deployment.productionLiveQaJob, undefined);
+  assert.equal(deployment.providerAcceptanceWorkflow.launchStatus, "paused");
+  assert.equal(deployment.providerAcceptanceWorkflow.releaseGate, false);
   assert.deepEqual(deployment.deliveryEvidence, {
     releaseVerificationCodeComplete: true,
     identityDeploymentCutover: "code_complete_local_verification",

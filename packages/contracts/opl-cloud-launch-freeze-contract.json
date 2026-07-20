@@ -1,9 +1,9 @@
 {
-  "schemaVersion": 10,
+  "schemaVersion": 11,
   "owner": "OPL Platform Architecture",
   "purpose": "Freeze the approved Pilot V2 products, delegated Gateway key lifecycle, one Workspace charge, prepaid Tencent fulfillment, Runtime facts, operator workflows, announcements, and evidence levels without claiming unfinished implementation or runtime evidence.",
   "state": "current",
-  "machineBoundary": "Six product surfaces including OPL Serve planned_not_in_launch, four implementation owner lanes, two customer products, ten launch stages, six delivery phases, and two guarded production verification slots.",
+  "machineBoundary": "Six product surfaces including OPL Serve planned_not_in_launch, four implementation owner lanes, two customer products, ten launch stages, six delivery phases, and two paused production verification slots.",
   "lifecycle": {
     "type": "long_term_contract",
     "removalCondition": "Replace only with a newer approved launch freeze and matching contract tests."
@@ -86,7 +86,8 @@
       "compute": { "cpu": 2, "memoryGb": 4, "usdMicros": 50000000 },
       "storage": { "sizeGb": 10, "usdMicros": 2580000 },
       "totalUsdMicros": 52580000,
-      "targetSaleable": true
+      "targetSaleable": true,
+      "productionCatalogAvailable": true
     },
     "pro": {
       "priceVersion": "pilot-usd-2026-07-v1",
@@ -94,7 +95,8 @@
       "compute": { "cpu": 8, "memoryGb": 16, "usdMicros": 214280000 },
       "storage": { "sizeGb": 100, "usdMicros": 25800000 },
       "totalUsdMicros": 240080000,
-      "targetSaleable": true
+      "targetSaleable": true,
+      "productionCatalogAvailable": false
     }
   },
   "internalProviderCostEvidence": {
@@ -190,6 +192,14 @@
     "renewFlag": "NOTIFY_AND_MANUAL_RENEW",
     "forbiddenChargeTypes": ["POSTPAID_BY_HOUR"],
     "capacityCheck": "Read-only PREPAID inventory, compatibility, quota, and price check before debit; it must not create or reserve a resource.",
+    "nodePoolDiscovery": {
+      "api": "DescribeNodePools",
+      "matchLabels": ["oplcloud.cn/pool-id", "oplcloud.cn/package-id", "oplcloud.cn/instance-type"],
+      "requiredMatchCount": 1,
+      "zeroOrMultipleMatches": "preflight_failure_before_debit",
+      "actualNodePoolIdPersistence": "workspace.launch.v2 operation before debit",
+      "repeatPreflightMismatch": "preflight_failure_before_debit"
+    },
     "claimReadback": ["provider resource ID", "charge type", "period or deadline", "renew flag", "zone", "size or SKU", "ownership tags"],
     "activationReadback": {
       "apis": ["SyncMonthlyCompute", "SyncMonthlyStorage"],
@@ -261,13 +271,6 @@
     "keyListPaginationRule": "freeze first-page total pages and requested page_size; require coherent metadata, exact page numbers and ceiling, bounded items, positive unique Key IDs, mapped user_id on every item, and collected item count equal total before cardinality selection",
     "customerReadContract": "opl-cloud-console-source-truth-contract.json",
     "customerMutationApis": ["create_general_key", "update_general_key", "delete_general_key", "reveal_owned_key"],
-    "publicEndpoint": {
-      "configEnv": "OPL_GATEWAY_PUBLIC_BASE_URL",
-      "productApi": "GET /api/gateway/endpoint",
-      "productionScheme": "https",
-      "missingBehavior": "unavailable_without_data",
-      "forbiddenFallbacks": ["OPL_SUB2API_BASE_URL", "gflabtoken.cn"]
-    },
     "createKeyRequest": {
       "expiryField": "expiresInDays",
       "responseExpiryField": "expiresAt",
@@ -298,7 +301,7 @@
       "receiptType": "workspace.gateway_key_rotated.v1",
       "currentImplementation": "code_complete_local_focused_tests_only"
     },
-    "currentImplementation": "The independent public endpoint, Session-delegated general Key create/update/delete/read/reveal, exact expiresInDays create input, authoritative expiresAt readback, per-Key Usage, and upstream account aggregate are code-complete and locally focused-tested without Key/Usage persistence; browser integration, a real model request, and production readback remain pending."
+    "currentImplementation": "Session-delegated general Key create/update/delete/read/reveal, exact expiresInDays create input, authoritative expiresAt readback, per-Key Usage, and upstream account aggregate are code-complete and locally focused-tested without Key/Usage persistence; browser integration, a real model request, and production readback remain pending."
   },
   "consoleFinancialProjection": {
     "mode": "read_only_projection",
@@ -316,6 +319,8 @@
   "verification": {
     "purchaseBudget": 2,
     "providerAcceptance": {
+      "launchStatus": "paused",
+      "releaseGate": false,
       "operatorOnly": true,
       "approvalEnvironment": "production-provider-acceptance",
       "credentialEnv": "OPL_PROVIDER_ACCEPTANCE_TOKEN",
@@ -354,6 +359,8 @@
       }
     ],
     "releaseLiveQa": {
+      "launchStatus": "paused",
+      "ordinaryDeployGate": false,
       "slotId": "verification-slot-basic-01",
       "reservedAccountCount": 1,
       "dedicatedKeyCount": 1,
@@ -367,7 +374,7 @@
     "perRunCleanup": ["test Workspace Deployment, Service, and Secret", "test-only data", "isolated application rows"],
     "purchaseRule": "Purchase once only when read-only inventory proves that no reusable compliant slot exists; ambiguous or multiple candidates stop without purchase.",
     "productionSmoke": "Read-only service and existing-resource checks; no monthly charge and no provider mutation.",
-    "currentImplementation": "Dual Provider Acceptance and one-request Basic release live-QA are code-complete and fake-tested. Neither real Acceptance nor live QA has run for the current candidate."
+    "currentImplementation": "Dual Provider Acceptance and fixed-slot verification code remain available but are paused and do not gate the Basic rollout. The normal Console Basic canary is separate and has not run for the current candidate."
   },
   "deliveryPhases": [
     { "id": "contract_cleanup", "ownerSession": "main" },

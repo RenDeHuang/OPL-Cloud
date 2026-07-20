@@ -304,9 +304,9 @@ test("Provider Acceptance workflow is independently approved, dual-slot fixed, a
   assert.equal(spec.environment, "production-provider-acceptance");
   assert.ok(spec.requiredEnv.includes("OPL_PROVIDER_ACCEPTANCE_TOKEN"));
   assert.deepEqual(spec.secretEnv, ["OPL_PROVIDER_ACCEPTANCE_TOKEN", "OPL_VERIFY_MUTATION_APPROVAL_JSON"]);
-  assert.ok(deploySpec.requiredEnv.includes("OPL_PROVIDER_ACCEPTANCE_TOKEN"));
-  assert.ok(deploySpec.secretEnv.includes("OPL_PROVIDER_ACCEPTANCE_TOKEN"));
-  assert.ok(deploySpec.requiredCommandsByStep["Install Kubernetes secrets"].includes('--from-file=OPL_PROVIDER_ACCEPTANCE_TOKEN="$secret_dir/provider-acceptance-token"'));
+  assert.equal(deploySpec.requiredEnv.includes("OPL_PROVIDER_ACCEPTANCE_TOKEN"), false);
+  assert.equal(deploySpec.secretEnv.includes("OPL_PROVIDER_ACCEPTANCE_TOKEN"), false);
+  assert.doesNotMatch(JSON.stringify(deploySpec.requiredCommandsByStep["Install Kubernetes secrets"]), /OPL_PROVIDER_ACCEPTANCE_TOKEN/);
   assert.equal(launch.verification.providerAcceptance.approvalEnvironment, "production-provider-acceptance");
   assert.equal(launch.verification.providerAcceptance.credentialEnv, "OPL_PROVIDER_ACCEPTANCE_TOKEN");
   assert.equal(launch.verification.providerAcceptance.credentialHeader, "x-opl-provider-acceptance-token");

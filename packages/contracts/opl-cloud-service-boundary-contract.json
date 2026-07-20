@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 10,
+  "schemaVersion": 11,
   "owner": "OPL Platform Architecture",
   "purpose": "Current ownership contract for Console UI, Control Plane, Ledger, Fabric, and external Sub2API.",
   "state": "current",
@@ -153,11 +153,6 @@
   },
   "browserBoundary": {
     "onlyCalls": "control_plane_product_apis",
-    "gatewayPublicEndpoint": {
-      "configEnv": "OPL_GATEWAY_PUBLIC_BASE_URL",
-      "productionScheme": "https",
-      "forbiddenFallbacks": ["OPL_SUB2API_BASE_URL", "gflabtoken.cn"]
-    },
     "forbidden": ["sub2api_direct", "gflabtoken_link", "iframe", "html_scraping", "raw_admin_dto"]
   },
   "customerMutationBoundary": {

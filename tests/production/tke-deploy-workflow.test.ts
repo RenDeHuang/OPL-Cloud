@@ -223,9 +223,7 @@ async function manifestFixture() {
       OPL_SUB2API_BASE_URL: "https://wallet.example.test",
       OPL_SUB2API_REQUEST_TIMEOUT_MS: "7000",
       OPL_MONTHLY_BILLING_WORKER_ENABLED: "1",
-      OPL_MONTHLY_BILLING_INTERVAL_MS: "60000",
-      OPL_OPERATOR_CIDRS: "203.0.113.0/24",
-      OPL_TRUSTED_PROXY_CIDRS: "10.0.0.0/8"
+      OPL_MONTHLY_BILLING_INTERVAL_MS: "60000"
     }
   };
 }
@@ -235,26 +233,29 @@ test("TKE deploy workflow matches the current deployment contract", async () => 
   const deployWorkflow = await readWorkflow(contract.deployWorkflow.file);
   assertWorkflowContract(deployWorkflow, contract.deployWorkflow, contract);
   assert.ok(contract.deployWorkflow.requiredEnv.includes("OPL_TENCENT_ZONE"));
-  assert.ok(contract.deployWorkflow.requiredEnv.includes("OPL_OPERATOR_CIDRS"));
-  assert.ok(contract.deployWorkflow.requiredEnv.includes("OPL_TRUSTED_PROXY_CIDRS"));
-  assert.ok(contract.deployWorkflow.requiredEnv.includes("OPL_BASIC_COMPUTE_NODE_POOL_ID"));
-  assert.ok(contract.deployWorkflow.requiredEnv.includes("OPL_PRO_COMPUTE_NODE_POOL_ID"));
-  assert.equal(contract.productionVerificationWorkflow.launchStatus, "active");
+  for (const key of [
+    "OPL_OPERATOR_CIDRS",
+    "OPL_TRUSTED_PROXY_CIDRS",
+    "OPL_BASIC_COMPUTE_NODE_POOL_ID",
+    "OPL_PRO_COMPUTE_NODE_POOL_ID",
+    "OPL_CODEX_BASE_URL",
+    "OPL_GATEWAY_PUBLIC_BASE_URL",
+    "OPL_PROVIDER_ACCEPTANCE_TOKEN",
+    "OPL_VERIFY_BASIC_ACCOUNT_ID",
+    "OPL_VERIFY_PRO_ACCOUNT_ID",
+    "OPL_VERIFY_MUTATION_APPROVAL_ID"
+  ]) {
+    assert.equal(contract.deployWorkflow.requiredEnv.includes(key), false, key);
+  }
+  assert.equal(contract.productionVerificationWorkflow.launchStatus, "paused");
   assert.equal(contract.productionVerificationWorkflow.mode, "read_only_dual_fixed_slots");
   assert.deepEqual(contract.productionVerificationWorkflow.requiredInputs, []);
   assert.equal(contract.productionVerificationWorkflow.requestTimeoutMsDefault, 30_000);
   assert.equal(contract.productionVerificationWorkflow.timeoutMinutes, 15);
   assert.deepEqual(contract.productionVerificationWorkflow.slotDescriptors, [basicSlotDescriptor, proSlotDescriptor]);
   assertWorkflowContract(await readWorkflow(contract.productionVerificationWorkflow.file), contract.productionVerificationWorkflow, contract);
-  assert.equal(contract.productionLiveQaJob.releaseGate, true);
-  assert.equal(contract.productionLiveQaJob.mutationAuthorityWiring, "dispatch_approval_id_protected_manifest_explicit_cli_allow_flags");
-  assert.equal(contract.productionLiveQaJob.mode, "one_basic_reserved_account_one_dedicated_key_one_model_request_no_provider_mutation");
-  assert.equal(contract.productionLiveQaJob.reservedAccountCount, 1);
-  assert.equal(contract.productionLiveQaJob.dedicatedKeyCount, 1);
-  assert.equal(contract.productionLiveQaJob.modelRequestCount, 1);
-  assert.equal(contract.productionLiveQaJob.requestTimeoutMsDefault, 30_000);
-  assert.deepEqual(contract.productionLiveQaJob.slotDescriptors, [basicSlotDescriptor]);
-  assertWorkflowContract(deployWorkflow, contract.productionLiveQaJob, contract);
+  assert.equal(contract.productionLiveQaJob, undefined);
+  assert.equal(contract.providerAcceptanceWorkflow.launchStatus, "paused");
   assert.equal(contract.productionBootstrapJob.mode, "endpoints_and_cloud_image_readiness_only");
   assert.equal(contract.productionBootstrapJob.releaseComplete, false);
   assert.equal(contract.productionBootstrapJob.approvalEnvironment, "production");
@@ -262,12 +263,12 @@ test("TKE deploy workflow matches the current deployment contract", async () => 
   assert.equal(contract.productionReleaseGateJob.bootstrapConclusion, "release_incomplete_failure");
   assertWorkflowContract(deployWorkflow, contract.productionReleaseGateJob, contract);
   assert.ok(contract.productionLegacySecretCleanupJob);
-  assert.equal(contract.productionLegacySecretCleanupJob.trigger, "candidate_rollout_and_live_qa_successful");
+  assert.equal(contract.productionLegacySecretCleanupJob.trigger, "candidate_rollout_successful");
   assert.equal(contract.productionLegacySecretCleanupJob.legacySecretName, "opl-cloud-workspace-codex");
   assert.equal(contract.productionLegacySecretCleanupJob.accountScopedSecretDeletionForbidden, true);
   assert.equal(contract.productionLegacySecretCleanupJob.failureBehavior, "fail_workflow_without_image_rollback");
   assertWorkflowContract(deployWorkflow, contract.productionLegacySecretCleanupJob, contract);
-  assert.equal(contract.productionRollbackJob.trigger, "post_snapshot_deploy_live_qa_or_bootstrap_readiness_not_successful");
+  assert.equal(contract.productionRollbackJob.trigger, "post_snapshot_deploy_or_bootstrap_readiness_not_successful");
   assertWorkflowContract(deployWorkflow, contract.productionRollbackJob, contract);
   assert.deepEqual(contract.imageReleaseWorkflow.outputs, ["cloud_image", "workspace_image"]);
   assert.equal(contract.imageReleaseWorkflow.skippedOutput, "empty");
@@ -308,61 +309,24 @@ test("production verification is read only and requires both reusable prepaid sl
   assert.doesNotMatch(verifier, /cleanupVerificationResources|productionVerificationMutationKey|paid_confirmation_required|I_UNDERSTAND_THIS_SPENDS_REAL_BALANCE/);
 });
 
-test("TKE deploy requires both fixed slots but runs release live QA once on the Basic reserved account", async () => {
+test("ordinary TKE deploy has no Acceptance or live QA mutation gate", async () => {
   const deployWorkflow = await readWorkflow(".github/workflows/deploy-tke-production.yml");
   const deploy = workflowJob(deployWorkflow, "deploy");
-  const liveQa = workflowJob(deployWorkflow, "live-qa");
-  const runs = serializedRuns(liveQa);
-  const readOnlyWorkflow = JSON.stringify(await readWorkflow(".github/workflows/verify-production-chain.yml"));
-  const deploySteps = deploy.steps.map((step) => step.name);
-  const accountGate = stepsByName(deploy).get("Require Basic and Pro Acceptance accounts");
   const inputGate = stepsByName(deploy).get("Check deployment inputs");
-  const liveQaStep = stepsByName(liveQa).get("Verify rollout with one Workspace model request");
-
-  assert.equal(deploySteps[0], "Require Basic and Pro Acceptance accounts");
-  assert.ok(accountGate);
-  assert.match(accountGate.run, /OPL_VERIFY_BASIC_ACCOUNT_ID/);
-  assert.match(accountGate.run, /OPL_VERIFY_PRO_ACCOUNT_ID/);
-  assert.match(accountGate.run, /OPL_BOOTSTRAP_MODE[\s\S]*exit 0[\s\S]*OPL_VERIFY_MUTATION_APPROVAL_ID/);
-  assert.match(inputGate.run, /OPL_BASIC_COMPUTE_NODE_POOL_ID/);
-  assert.match(inputGate.run, /OPL_PRO_COMPUTE_NODE_POOL_ID/);
-  assert.ok(deploySteps.indexOf("Require Basic and Pro Acceptance accounts") < deploySteps.indexOf("Checkout"));
-  assert.ok(deploySteps.indexOf("Require Basic and Pro Acceptance accounts") < deploySteps.indexOf("Prepare kubeconfig"));
-  assert.equal(deploy.env.OPL_VERIFY_BASIC_ACCOUNT_ID, "${{ vars.OPL_VERIFY_BASIC_ACCOUNT_ID || '' }}");
-  assert.equal(deploy.env.OPL_VERIFY_PRO_ACCOUNT_ID, "${{ vars.OPL_VERIFY_PRO_ACCOUNT_ID || '' }}");
-  assert.equal(deploy.env.OPL_VERIFY_MUTATION_APPROVAL_ID, "${{ inputs.live_qa_approval_id || '' }}");
-  assert.equal(deployWorkflow.on.workflow_dispatch.inputs.live_qa_approval_id.required, false);
-  assert.equal(Object.hasOwn(deploy.env, "OPL_CONSOLE_USERS_JSON"), false);
-  assert.doesNotMatch(serializedRuns(deploy), /OPL_CONSOLE_USERS_JSON|opl-cloud-auth|auth-users-json/);
-
-  assert.equal(liveQa.needs, "deploy");
-  assert.equal(liveQa.environment, "production");
-  assert.deepEqual([liveQa["runs-on"]].flat(), ["ubuntu-latest"]);
-  assert.equal(liveQa.env.OPL_VERIFY_AUTH_USERS_JSON, "${{ secrets.OPL_VERIFY_AUTH_USERS_JSON }}");
-  assert.equal(liveQa.env.OPL_VERIFY_ACCOUNT_ID, "${{ vars.OPL_VERIFY_BASIC_ACCOUNT_ID || '' }}");
-  assert.equal(liveQa.env.OPL_VERIFY_SLOT_ID, basicSlotDescriptor.id);
-  assert.deepEqual(JSON.parse(liveQa.env.OPL_VERIFY_SLOT_DESCRIPTOR_JSON), basicSlotDescriptor);
-  assert.equal(liveQa.env.OPL_VERIFY_EXPECTED_MODEL, "${{ vars.OPL_CODEX_MODEL || 'gpt-5.5' }}");
-  assert.equal(liveQa.strategy, undefined);
-  assert.doesNotMatch(JSON.stringify(liveQa), /matrix\./);
-  assert.equal(Object.hasOwn(liveQa.env, "OPL_VERIFY_PURCHASE_BUDGET_REMAINING"), false);
-  assert.equal(liveQa.env.OPL_VERIFY_LIVE_QA_CONFIRMATION, "I_UNDERSTAND_THIS_SENDS_ONE_REAL_MODEL_REQUEST");
-  assert.equal(liveQa.env.OPL_VERIFY_MUTATION_APPROVAL_ID, "${{ inputs.live_qa_approval_id || '' }}");
-  assert.equal(liveQaStep.env.OPL_VERIFY_MUTATION_APPROVAL_JSON, "${{ secrets.OPL_VERIFY_MUTATION_APPROVAL_JSON }}");
-  assert.equal(Object.hasOwn(liveQa.env, "OPL_VERIFY_MODEL_ACCESS_KEY"), false);
-  assert.match(runs, /npm ci/);
-  assert.match(runs, /playwright install --with-deps chromium/);
-  assert.match(liveQaStep.run, /node tools\/production-live-qa\.ts --allow-gateway-write --allow-model-write --approval-id "\$OPL_VERIFY_MUTATION_APPROVAL_ID"/);
-  assert.doesNotMatch(runs, /compute-allocations|storage-volumes|destroy|detach|renew/i);
-  assert.doesNotMatch(readOnlyWorkflow, /production-live-qa|LIVE_QA_CONFIRMATION/);
+  const source = JSON.stringify(deployWorkflow);
+  assert.equal(deployWorkflow.jobs["live-qa"], undefined);
+  assert.equal(deployWorkflow.on.workflow_dispatch.inputs.live_qa_approval_id, undefined);
+  assert.doesNotMatch(source, /OPL_VERIFY_|OPL_PROVIDER_ACCEPTANCE_TOKEN|production-provider-acceptance/);
+  assert.doesNotMatch(source, /OPL_OPERATOR_CIDRS|OPL_TRUSTED_PROXY_CIDRS/);
+  assert.doesNotMatch(source, /OPL_BASIC_COMPUTE_NODE_POOL_ID|OPL_PRO_COMPUTE_NODE_POOL_ID/);
+  assert.doesNotMatch(source, /OPL_CODEX_BASE_URL|OPL_GATEWAY_PUBLIC_BASE_URL/);
+  assert.doesNotMatch(inputGate.run, /NODE_POOL_ID|GATEWAY_PUBLIC_BASE_URL|PROVIDER_ACCEPTANCE|OPL_VERIFY_/);
 });
 
 test("TKE bootstrap deploy is approved, read only, and cannot complete a release", async () => {
   const workflow = await readWorkflow(".github/workflows/deploy-tke-production.yml");
   const input = workflow.on.workflow_dispatch.inputs.bootstrap_mode;
   const deploy = workflowJob(workflow, "deploy");
-  const accountGate = stepsByName(deploy).get("Require Basic and Pro Acceptance accounts");
-  const liveQa = workflowJob(workflow, "live-qa");
   const bootstrap = workflowJob(workflow, "bootstrap-readiness");
   const releaseGate = workflowJob(workflow, "release-gate");
   const cleanup = workflowJob(workflow, "retire-legacy-workspace-secret");
@@ -377,11 +341,6 @@ test("TKE bootstrap deploy is approved, read only, and cannot complete a release
   assert.equal(deploy.environment, "production");
   assert.equal(deploy.env.OPL_BOOTSTRAP_MODE, "${{ inputs.bootstrap_mode }}");
   assert.match(String(deploy.env.OPL_MONTHLY_BILLING_WORKER_ENABLED), /inputs\.bootstrap_mode.*'0'/);
-  assert.match(accountGate.run, /OPL_BOOTSTRAP_MODE.*true[\s\S]*release incomplete/i);
-  assert.match(accountGate.run, /OPL_VERIFY_BASIC_ACCOUNT_ID/);
-  assert.match(accountGate.run, /OPL_VERIFY_PRO_ACCOUNT_ID/);
-
-  assert.equal(liveQa.if, "${{ !inputs.bootstrap_mode }}");
   assert.equal(bootstrap.needs, "deploy");
   assert.equal(bootstrap.if, "${{ inputs.bootstrap_mode && needs.deploy.result == 'success' }}");
   assert.equal(bootstrap.environment, "production");
@@ -395,15 +354,15 @@ test("TKE bootstrap deploy is approved, read only, and cannot complete a release
   assert.match(bootstrapRun, /release incomplete/i);
   assert.doesNotMatch(bootstrapRun, /production-live-qa|provider-acceptance|purchase|delete|renew|POST/i);
 
-  assert.deepEqual(releaseGate.needs, ["deploy", "live-qa", "bootstrap-readiness"]);
+  assert.deepEqual(releaseGate.needs, ["deploy", "bootstrap-readiness"]);
   assert.equal(releaseGate.if, "${{ always() }}");
   assert.match(releaseRun, /release incomplete/i);
   assert.match(releaseRun, /releaseComplete.*false/s);
   assert.match(releaseRun, /exit 1/);
   assert.match(String(cleanup.if), /!inputs\.bootstrap_mode/);
-  assert.deepEqual(rollback.needs, ["deploy", "live-qa", "bootstrap-readiness"]);
+  assert.deepEqual(rollback.needs, ["deploy", "bootstrap-readiness"]);
   assert.match(String(rollback.if), /inputs\.bootstrap_mode.*needs\.bootstrap-readiness\.result != 'success'/);
-  assert.match(String(rollback.if), /!inputs\.bootstrap_mode.*needs\.live-qa\.result != 'success'/);
+  assert.match(String(rollback.if), /!inputs\.bootstrap_mode.*needs\.deploy\.result != 'success'/);
   assert.doesNotMatch(String(rollback.if), /release-gate/);
   assert.match(rolloutRun, /OPL_BOOTSTRAP_MODE[\s\S]*apply_bootstrap_images/);
   assert.match(rolloutRun, /OPL_BOOTSTRAP_MODE[\s\S]*restore_previous_bootstrap_images/);
@@ -562,7 +521,7 @@ test("image release accepts only full App, active-shell, and Framework commit SH
   }
 });
 
-test("TKE deploy installs Sub2API and Provider Acceptance credentials", async () => {
+test("TKE deploy installs Sub2API credentials without Acceptance credentials", async () => {
   const workflow = await readWorkflow(".github/workflows/deploy-tke-production.yml");
   const currentJob = workflowJob(workflow, "deploy");
   const steps = stepsByName(currentJob);
@@ -573,9 +532,8 @@ test("TKE deploy installs Sub2API and Provider Acceptance credentials", async ()
   assert.match(install, /create secret generic opl-cloud-sub2api/);
   assert.match(install, /--from-file=OPL_SUB2API_ADMIN_EMAIL/);
   assert.match(install, /--from-file=OPL_SUB2API_ADMIN_PASSWORD/);
-  assert.equal(currentJob.env.OPL_PROVIDER_ACCEPTANCE_TOKEN, "${{ secrets.OPL_PROVIDER_ACCEPTANCE_TOKEN }}");
-  assert.match(install, /create secret generic opl-cloud-provider-acceptance/);
-  assert.match(install, /--from-file=OPL_PROVIDER_ACCEPTANCE_TOKEN/);
+  assert.equal(Object.hasOwn(currentJob.env, "OPL_PROVIDER_ACCEPTANCE_TOKEN"), false);
+  assert.doesNotMatch(install, /provider-acceptance|OPL_PROVIDER_ACCEPTANCE_TOKEN/);
   assert.equal(currentJob.env.OPL_TENCENT_ZONE, "${{ vars.OPL_TENCENT_ZONE || 'na-siliconvalley-1' }}");
   assert.equal(currentJob.env.TENCENTCLOUD_REGION, "${{ vars.TENCENTCLOUD_REGION || 'na-siliconvalley' }}");
   assert.equal(Object.hasOwn(currentJob.env, "OPL_CODEX_API_KEY"), false);
@@ -637,8 +595,8 @@ test("TKE manifest renderer replaces current values and never renders secrets", 
   assert.equal(config.data.OPL_SUB2API_REQUEST_TIMEOUT_MS, "7000");
   assert.equal(config.data.OPL_TENCENT_ZONE, "ap-guangzhou-3");
   assert.equal(config.data.OPL_MONTHLY_BILLING_INTERVAL_MS, "60000");
-  assert.equal(config.data.OPL_OPERATOR_CIDRS, values.OPL_OPERATOR_CIDRS);
-  assert.equal(config.data.OPL_TRUSTED_PROXY_CIDRS, values.OPL_TRUSTED_PROXY_CIDRS);
+  assert.equal(config.data.OPL_OPERATOR_CIDRS, undefined);
+  assert.equal(config.data.OPL_TRUSTED_PROXY_CIDRS, undefined);
   assert.doesNotMatch(source, /postgresql:\/\//i);
   const controlPlane = rendered.items.find((item) => item.kind === "Deployment" && item.metadata.name === "opl-cloud-control-plane");
   assert.deepEqual(controlPlane.spec.template.spec.containers[0].envFrom, [{ configMapRef: { name: "opl-cloud-config" } }]);
@@ -768,7 +726,7 @@ test("TKE deploy requires image digests and rolls back the complete Cloud and Ap
   assert.doesNotMatch(apply, /set \+e/);
 });
 
-test("TKE live QA or bootstrap readiness failure schedules rollback from the captured image set", async () => {
+test("TKE deploy or bootstrap readiness failure schedules rollback from the captured image set", async () => {
   const workflow = await readWorkflow(".github/workflows/deploy-tke-production.yml");
   const deploy = workflowJob(workflow, "deploy");
   const rollback = workflowJob(workflow, "rollback-live-qa");
@@ -777,8 +735,8 @@ test("TKE live QA or bootstrap readiness failure schedules rollback from the cap
 
   assert.match(String(deploy.outputs?.rollback_image_set), /rollback_snapshot\.outputs\.artifact-id/);
   assert.equal(stepsByName(deploy).get("Upload rollback image set")?.id, "rollback_snapshot");
-  assert.deepEqual(rollback.needs, ["deploy", "live-qa", "bootstrap-readiness"]);
-  assert.match(String(rollback.if), /always\(\).*needs\.deploy\.outputs\.rollback_image_set != ''.*inputs\.bootstrap_mode.*needs\.bootstrap-readiness\.result != 'success'.*!inputs\.bootstrap_mode.*needs\.live-qa\.result != 'success'/);
+  assert.deepEqual(rollback.needs, ["deploy", "bootstrap-readiness"]);
+  assert.match(String(rollback.if), /always\(\).*needs\.deploy\.outputs\.rollback_image_set != ''.*inputs\.bootstrap_mode.*needs\.bootstrap-readiness\.result != 'success'.*!inputs\.bootstrap_mode.*needs\.deploy\.result != 'success'/);
   assert.deepEqual(rollback["runs-on"], ["self-hosted", "tencent-cloud", "opl-cloud", "tke-vpc"]);
   assert.equal(rollback.env.TENCENT_DEPLOY_KUBECONFIG_PATH, deploy.env.TENCENT_DEPLOY_KUBECONFIG_PATH);
   assert.equal(steps.get("Set up Node")?.uses, "actions/setup-node@v4");
@@ -790,15 +748,15 @@ test("TKE live QA or bootstrap readiness failure schedules rollback from the cap
   assert.doesNotMatch(restore, /set \+e/);
 });
 
-test("TKE retires the legacy global Workspace secret only after successful candidate live QA", async () => {
+test("TKE retires the legacy global Workspace secret only after successful ordinary deploy", async () => {
   const workflow = await readWorkflow(".github/workflows/deploy-tke-production.yml");
   const deploy = workflowJob(workflow, "deploy");
   const cleanup = workflowJob(workflow, "retire-legacy-workspace-secret");
   const rollback = workflowJob(workflow, "rollback-live-qa");
   const retire = serializedStep(stepsByName(cleanup).get("Retire legacy global Workspace secret"));
 
-  assert.deepEqual(cleanup.needs, ["deploy", "live-qa"]);
-  assert.equal(cleanup.if, "${{ !inputs.bootstrap_mode && needs.deploy.result == 'success' && needs.live-qa.result == 'success' }}");
+  assert.equal(cleanup.needs, "deploy");
+  assert.equal(cleanup.if, "${{ !inputs.bootstrap_mode && needs.deploy.result == 'success' }}");
   assert.deepEqual(cleanup["runs-on"], ["self-hosted", "tencent-cloud", "opl-cloud", "tke-vpc"]);
   assert.equal(cleanup.environment, "production");
   assert.notEqual(cleanup["continue-on-error"], true);
@@ -806,7 +764,7 @@ test("TKE retires the legacy global Workspace secret only after successful candi
   assert.match(retire, /delete secret opl-cloud-workspace-codex --ignore-not-found/);
   assert.match(retire, /get secret opl-cloud-workspace-codex --ignore-not-found -o name/);
   assert.doesNotMatch(retire, /--selector|delete secrets|delete secret .*\*-env/);
-  assert.deepEqual(rollback.needs, ["deploy", "live-qa", "bootstrap-readiness"]);
+  assert.deepEqual(rollback.needs, ["deploy", "bootstrap-readiness"]);
   assert.doesNotMatch(String(rollback.if), /retire-legacy-workspace-secret|cleanup/);
 });
 

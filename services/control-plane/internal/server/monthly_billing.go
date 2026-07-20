@@ -261,7 +261,8 @@ func monthlyPreflightConfirmed(input clients.MonthlyPreflightInput, result clien
 	if result.ResourceType != input.ResourceType || result.PackageID != input.PackageID || result.SizeGB != input.SizeGB ||
 		!result.Available || result.ChargeType != "PREPAID" || result.PeriodMonths != 1 ||
 		result.RenewFlag != "NOTIFY_AND_MANUAL_RENEW" || result.ProviderPriceCNY <= 0 ||
-		strings.TrimSpace(input.Zone) == "" || result.Zone != input.Zone {
+		strings.TrimSpace(input.Zone) == "" || result.Zone != input.Zone ||
+		(input.ResourceType == "compute" && strings.TrimSpace(result.NodePoolID) == "") {
 		return false
 	}
 	requestIDs := []string{"nodePool", "subnets", "availability"}

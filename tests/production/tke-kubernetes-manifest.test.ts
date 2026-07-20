@@ -19,8 +19,12 @@ test("OPL Cloud TKE manifest declares three decoupled services and monthly Sub2A
   assert.equal(config.data.OPL_MONTHLY_BILLING_WORKER_ENABLED, "1");
   assert.equal(config.data.OPL_MONTHLY_BILLING_INTERVAL_MS, "3600000");
   assert.equal(config.data.OPL_SUB2API_BASE_URL, "https://gflabtoken.cn");
-  assert.equal(config.data.OPL_GATEWAY_PUBLIC_BASE_URL, "https://api.medopl.cn/v1");
-  assert.notEqual(config.data.OPL_GATEWAY_PUBLIC_BASE_URL, config.data.OPL_SUB2API_BASE_URL);
+  assert.equal(config.data.OPL_GATEWAY_PUBLIC_BASE_URL, undefined);
+  assert.equal(config.data.OPL_CODEX_BASE_URL, undefined);
+  assert.equal(config.data.OPL_OPERATOR_CIDRS, undefined);
+  assert.equal(config.data.OPL_TRUSTED_PROXY_CIDRS, undefined);
+  assert.equal(config.data.OPL_BASIC_COMPUTE_NODE_POOL_ID, undefined);
+  assert.equal(config.data.OPL_PRO_COMPUTE_NODE_POOL_ID, undefined);
   assert.equal(config.data.OPL_COMPUTE_LAUNCH_ZONE, undefined);
   assert.equal(config.data.OPL_SUB2API_REQUEST_TIMEOUT_MS, "5000");
   assert.equal(config.data.TENCENTCLOUD_REGION, "na-siliconvalley");
@@ -40,7 +44,6 @@ test("OPL Cloud TKE manifest declares three decoupled services and monthly Sub2A
   assert.deepEqual(controlContainer.env.filter((item) => item.valueFrom).map((item) => item.name), [
     "DATABASE_URL",
     "OPL_INTERNAL_SERVICE_TOKEN",
-    "OPL_PROVIDER_ACCEPTANCE_TOKEN",
     "OPL_AIONUI_ADMIN_PASSWORD_SEED",
     "OPL_SUB2API_ADMIN_EMAIL",
     "OPL_SUB2API_ADMIN_PASSWORD"
@@ -93,7 +96,7 @@ test("TKE workloads and internal services enforce native isolation", async () =>
   }
 });
 
-test("operator CIDRs are required deploy values and rendered into the Control Plane ConfigMap", async () => {
+test("ordinary deploy omits retired network, static pool, and Gateway URL variables", async () => {
   const [manifest, deployment, management, renderer, workflow] = await Promise.all([
     readFile("deploy/tke/opl-cloud.k8s.json", "utf8").then(JSON.parse),
     readFile("packages/contracts/opl-cloud-deployment-contract.json", "utf8").then(JSON.parse),
@@ -102,18 +105,20 @@ test("operator CIDRs are required deploy values and rendered into the Control Pl
     readFile(".github/workflows/deploy-tke-production.yml", "utf8")
   ]);
   const config = manifest.items.find((item) => item.kind === "ConfigMap");
-  for (const key of ["OPL_OPERATOR_CIDRS", "OPL_TRUSTED_PROXY_CIDRS"]) {
-    assert.equal(typeof config.data[key], "string");
-    assert.ok(deployment.deployWorkflow.requiredEnv.includes(key));
-    assert.match(renderer, new RegExp(`"${key}"`));
-    assert.match(workflow, new RegExp(`${key}:.*vars\\.${key}`));
+  for (const key of [
+    "OPL_OPERATOR_CIDRS",
+    "OPL_TRUSTED_PROXY_CIDRS",
+    "OPL_BASIC_COMPUTE_NODE_POOL_ID",
+    "OPL_PRO_COMPUTE_NODE_POOL_ID",
+    "OPL_GATEWAY_PUBLIC_BASE_URL",
+    "OPL_CODEX_BASE_URL"
+  ]) {
+    assert.equal(config.data[key], undefined, key);
+    assert.equal(deployment.deployWorkflow.requiredEnv.includes(key), false, key);
+    assert.doesNotMatch(renderer, new RegExp(`"${key}"`));
+    assert.doesNotMatch(workflow, new RegExp(`${key}:`));
   }
-  assert.equal(management.operatorAuthPolicy.productionNetworkGate.allowlistEnv, "OPL_OPERATOR_CIDRS");
-  assert.equal(management.operatorAuthPolicy.productionNetworkGate.trustedProxyEnv, "OPL_TRUSTED_PROXY_CIDRS");
-  assert.equal(management.operatorAuthPolicy.productionNetworkGate.invalidConfiguration, "fail_closed");
-  assert.match(renderer, /"OPL_GATEWAY_PUBLIC_BASE_URL"/);
-  assert.match(workflow, /OPL_GATEWAY_PUBLIC_BASE_URL:\s*\$\{\{ vars\.OPL_GATEWAY_PUBLIC_BASE_URL \}\}/);
-  assert.match(workflow, /required=\([\s\S]*OPL_GATEWAY_PUBLIC_BASE_URL/);
+  assert.equal(management.operatorAuthPolicy.productionNetworkGate, undefined);
 });
 
 test("production env examples use the launch zone and pinned images", async () => {
@@ -130,12 +135,13 @@ test("production env examples use the launch zone and pinned images", async () =
   for (const path of paths.slice(1)) {
     const source = await readFile(path, "utf8");
     assert.match(source, /^OPL_WORKSPACE_IMAGE=.*@sha256:/m, path);
-    assert.match(source, /^OPL_GATEWAY_PUBLIC_BASE_URL=https:\/\/[^\s]+$/m, path);
-    assert.doesNotMatch(source, /^OPL_GATEWAY_PUBLIC_BASE_URL=.*gflabtoken\.cn/m, path);
+    assert.doesNotMatch(source, /^OPL_GATEWAY_PUBLIC_BASE_URL=/m, path);
+    assert.doesNotMatch(source, /^OPL_CODEX_BASE_URL=/m, path);
     assert.match(source, /^TENCENTCLOUD_REGION=na-siliconvalley$/m, path);
     assert.match(source, /^DATABASE_URL=.*sslmode=verify-full$/m, path);
-    assert.match(source, /^OPL_OPERATOR_CIDRS=.+$/m, path);
-    assert.match(source, /^OPL_TRUSTED_PROXY_CIDRS=.+$/m, path);
+    assert.doesNotMatch(source, /^OPL_OPERATOR_CIDRS=/m, path);
+    assert.doesNotMatch(source, /^OPL_TRUSTED_PROXY_CIDRS=/m, path);
+    assert.doesNotMatch(source, /^OPL_(?:BASIC|PRO)_COMPUTE_NODE_POOL_ID=/m, path);
     assert.doesNotMatch(source, /^OPL_OPERATOR_SUMMARY_TOKEN=/m, path);
   }
   assert.match(await readFile(".env.example", "utf8"), /^OPL_WORKSPACE_IMAGE=$/m);

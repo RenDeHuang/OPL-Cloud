@@ -8,7 +8,6 @@ import type {
   BillingReceiptPage,
   CreateGatewayKeyRequest,
   GatewayAccountUsageSummaryDTO,
-  GatewayEndpointDTO,
   GatewayKeyPageDTO,
   GatewayKeySecretDTO,
   GatewayKeySummaryDTO,
@@ -92,10 +91,6 @@ export function getConsoleState(): Promise<unknown> {
 
 export function getGatewayWallet(signal?: AbortSignal): Promise<SourceEnvelope<GatewayWallet>> {
   return sourceGet<GatewayWallet>("/api/gateway/wallet", signal);
-}
-
-export function getGatewayEndpoint(signal?: AbortSignal): Promise<SourceEnvelope<GatewayEndpointDTO>> {
-  return sourceGet<GatewayEndpointDTO>("/api/gateway/endpoint", signal);
 }
 
 export function getGatewayKeys(signal?: AbortSignal): Promise<SourceEnvelope<GatewayKeyPageDTO>> {

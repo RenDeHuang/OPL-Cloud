@@ -128,7 +128,7 @@ func (c *gatewayKeyCommandClient) DeleteUserKey(_ context.Context, credential cl
 	return c.deleteErr
 }
 
-func newGatewayKeyCommandFixture(t *testing.T, publicBaseURL string) (http.Handler, *gatewayKeyCommandClient, *memoryTableStore, *httptest.ResponseRecorder) {
+func newGatewayKeyCommandFixture(t *testing.T) (http.Handler, *gatewayKeyCommandClient, *memoryTableStore, *httptest.ResponseRecorder) {
 	t.Helper()
 	store := newMemoryTableStore()
 	seedTenantMember(t, store, "acct-gateway", "org-gateway", "usr-gateway-owner", "gateway-owner@example.com")
@@ -147,7 +147,7 @@ func newGatewayKeyCommandFixture(t *testing.T, publicBaseURL string) (http.Handl
 		17: {ID: 17, UserID: 41, Name: "general-key", Key: "general-key-secret", Status: "active", QuotaUSDMicros: 10_000_000, ExpiresAt: &expiresAt},
 		18: {ID: 18, UserID: 42, Name: "other-user-key", Key: "other-user-secret", Status: "active"},
 	}}
-	server, err := NewPersistentServerWithGatewayPublicBaseURL(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}, client), store, publicBaseURL)
+	server, err := NewPersistentServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}, client), store)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -155,23 +155,16 @@ func newGatewayKeyCommandFixture(t *testing.T, publicBaseURL string) (http.Handl
 	return server, client, store, session
 }
 
-func TestGatewayPublicEndpoint(t *testing.T) {
-	server, _, _, session := newGatewayKeyCommandFixture(t, "https://api.medopl.example/v1")
+func TestGatewayPublicEndpointIsHardCut(t *testing.T) {
+	server, _, _, session := newGatewayKeyCommandFixture(t)
 	response := requestWithSession(t, server, session, http.MethodGet, "/api/gateway/endpoint", "")
-	if response.Code != http.StatusOK {
-		t.Fatalf("endpoint status = %d: %s", response.Code, response.Body.String())
-	}
-	var envelope map[string]any
-	if err := json.NewDecoder(response.Body).Decode(&envelope); err != nil {
-		t.Fatal(err)
-	}
-	if envelope["source"] != "control-plane" || envelope["status"] != "available" || envelope["available"] != true || mapField(envelope, "data")["baseUrl"] != "https://api.medopl.example/v1" || strings.Contains(response.Body.String(), "gflabtoken.cn") {
-		t.Fatalf("endpoint envelope = %#v", envelope)
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("endpoint status = %d, want 404: %s", response.Code, response.Body.String())
 	}
 }
 
 func TestGatewayGeneralKey(t *testing.T) {
-	server, client, store, session := newGatewayKeyCommandFixture(t, "")
+	server, client, store, session := newGatewayKeyCommandFixture(t)
 	listed := requestWithSession(t, server, session, http.MethodGet, "/api/gateway/keys", "")
 	if listed.Code != http.StatusOK || strings.Contains(listed.Body.String(), "key-secret") {
 		t.Fatalf("list status = %d: %s", listed.Code, listed.Body.String())
@@ -225,7 +218,7 @@ func TestGatewayGeneralKey(t *testing.T) {
 }
 
 func TestGatewayGeneralKeyReplayConvergence(t *testing.T) {
-	server, client, store, session := newGatewayKeyCommandFixture(t, "")
+	server, client, store, session := newGatewayKeyCommandFixture(t)
 	create := func(body string) *httptest.ResponseRecorder {
 		return requestWithMutationKeyForTest(t, server, session, http.MethodPost, "/api/gateway/keys", body, "create-replay")
 	}
@@ -259,7 +252,7 @@ func TestGatewayGeneralKeyReplayConvergence(t *testing.T) {
 	if deleted.Code != http.StatusOK || client.deleteCalls != 1 {
 		t.Fatalf("lost delete response = %d calls=%d: %s", deleted.Code, client.deleteCalls, deleted.Body.String())
 	}
-	restarted, err := NewPersistentServerWithGatewayPublicBaseURL(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}, client), store, "")
+	restarted, err := NewPersistentServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}, client), store)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -271,7 +264,7 @@ func TestGatewayGeneralKeyReplayConvergence(t *testing.T) {
 }
 
 func TestGatewayKeyOwnership(t *testing.T) {
-	server, client, _, session := newGatewayKeyCommandFixture(t, "")
+	server, client, _, session := newGatewayKeyCommandFixture(t)
 	for _, request := range []struct{ method, path, body string }{
 		{http.MethodGet, "/api/gateway/keys/18", ""},
 		{http.MethodPost, "/api/gateway/keys/18/reveal", `{}`},
@@ -290,7 +283,7 @@ func TestGatewayKeyOwnership(t *testing.T) {
 }
 
 func TestGatewayKeySecret(t *testing.T) {
-	server, _, store, session := newGatewayKeyCommandFixture(t, "")
+	server, _, store, session := newGatewayKeyCommandFixture(t)
 	revealed := requestWithSession(t, server, session, http.MethodPost, "/api/gateway/keys/17/reveal", `{}`)
 	if revealed.Code != http.StatusOK || revealed.Header().Get("Cache-Control") != "private, no-store" {
 		t.Fatalf("reveal status = %d cache=%q: %s", revealed.Code, revealed.Header().Get("Cache-Control"), revealed.Body.String())
@@ -308,7 +301,7 @@ func TestGatewayKeySecret(t *testing.T) {
 }
 
 func TestGatewayPerKeyUsage(t *testing.T) {
-	server, client, _, session := newGatewayKeyCommandFixture(t, "")
+	server, client, _, session := newGatewayKeyCommandFixture(t)
 	response := requestWithSession(t, server, session, http.MethodGet, "/api/gateway/keys/17/usage?page=1&pageSize=20&user_id=42&api_key_id=18", "")
 	if response.Code != http.StatusOK {
 		t.Fatalf("usage status = %d: %s", response.Code, response.Body.String())
@@ -325,7 +318,7 @@ func TestGatewayPerKeyUsage(t *testing.T) {
 }
 
 func TestGatewayAccountUsageSummary(t *testing.T) {
-	server, client, _, session := newGatewayKeyCommandFixture(t, "")
+	server, client, _, session := newGatewayKeyCommandFixture(t)
 	response := requestWithSession(t, server, session, http.MethodGet, "/api/gateway/usage-summary?period=month&user_id=42&api_key_id=18", "")
 	if response.Code != http.StatusOK {
 		t.Fatalf("account usage status = %d: %s", response.Code, response.Body.String())

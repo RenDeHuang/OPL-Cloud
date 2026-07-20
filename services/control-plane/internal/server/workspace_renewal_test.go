@@ -890,7 +890,7 @@ func TestWorkspaceRenewalInsufficientBalanceRetriesSamePeriodWithoutProviderCall
 
 func TestWorkspaceRenewalInvalidPreflightWithoutUpstreamErrorRemainsVisibleAndRetryable(t *testing.T) {
 	validCompute := clients.MonthlyPreflight{
-		ResourceType: "compute", PackageID: "basic", Zone: "ap-shanghai-2", Available: true,
+		ResourceType: "compute", PackageID: "basic", NodePoolID: "np-basic", Zone: "ap-shanghai-2", Available: true,
 		ChargeType: "PREPAID", PeriodMonths: 1, RenewFlag: "NOTIFY_AND_MANUAL_RENEW", ProviderPriceCNY: 12.34,
 		ProviderRequestIDs: map[string]string{"nodePool": "node-pool-request", "subnets": "subnets-request", "availability": "availability-request"},
 	}

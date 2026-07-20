@@ -138,9 +138,7 @@ func TestTencentProviderReadinessRequiresExpectedImagesOnEveryReadyPod(t *testin
 	}
 }
 
-func TestTencentProviderMonthlyPreflightUsesExplicitReadOnlyProviderPaths(t *testing.T) {
-	t.Setenv("OPL_BASIC_COMPUTE_NODE_POOL_ID", "np-basic")
-	t.Setenv("OPL_PRO_COMPUTE_NODE_POOL_ID", "np-pro")
+func TestTencentProviderMonthlyPreflightDiscoversExactlyOneLabeledPool(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
 		input MonthlyPreflightInput
@@ -150,7 +148,7 @@ func TestTencentProviderMonthlyPreflightUsesExplicitReadOnlyProviderPaths(t *tes
 		{
 			name: "compute", input: MonthlyPreflightInput{ResourceType: "compute", PackageID: "basic", Zone: "na-siliconvalley-1"},
 			check: func(t *testing.T, request provisionerRequest) {
-				if request.Action != "capacity_preflight" || request.PackageID != "basic" || request.Zone != "na-siliconvalley-1" || request.Pool.NodePoolID != "np-basic" || request.Pool.InstanceType != "SA5.MEDIUM4" || request.Pool.DesiredReplicas != 1 {
+				if request.Action != "capacity_preflight" || request.PackageID != "basic" || request.Zone != "na-siliconvalley-1" || request.Pool.ID != "pool-basic-2c4g" || request.Pool.NodePoolID != "" || request.Pool.InstanceType != "SA5.MEDIUM4" || request.Pool.DesiredReplicas != 1 {
 					t.Fatalf("compute preflight request = %#v", request)
 				}
 			},
@@ -163,7 +161,7 @@ func TestTencentProviderMonthlyPreflightUsesExplicitReadOnlyProviderPaths(t *tes
 		{
 			name: "pro compute", input: MonthlyPreflightInput{ResourceType: "compute", PackageID: "pro", Zone: "na-siliconvalley-1"},
 			check: func(t *testing.T, request provisionerRequest) {
-				if request.Action != "capacity_preflight" || request.PackageID != "pro" || request.Zone != "na-siliconvalley-1" || request.Pool.ID != "pro" || request.Pool.NodePoolID != "np-pro" || request.Pool.InstanceType != "SA5.2XLARGE16" || request.Pool.DesiredReplicas != 1 {
+				if request.Action != "capacity_preflight" || request.PackageID != "pro" || request.Zone != "na-siliconvalley-1" || request.Pool.ID != "pool-pro-8c16g" || request.Pool.NodePoolID != "" || request.Pool.InstanceType != "SA5.2XLARGE16" || request.Pool.DesiredReplicas != 1 {
 					t.Fatalf("Pro compute preflight request = %#v", request)
 				}
 			},
@@ -197,7 +195,12 @@ func TestTencentProviderMonthlyPreflightUsesExplicitReadOnlyProviderPaths(t *tes
 				return nil, nil
 			}
 			result, err := provider.MonthlyPreflight(context.Background(), tc.input)
-			if err != nil || result.ResourceType != tc.input.ResourceType || result.PackageID != tc.input.PackageID || result.SizeGB != tc.input.SizeGB || result.Zone != tc.input.Zone || !result.Available || result.ChargeType != "PREPAID" || result.PeriodMonths != 1 || result.RenewFlag != "NOTIFY_AND_MANUAL_RENEW" || result.ProviderPriceCNY != tc.reply.ProviderPriceCNY || len(result.ProviderRequestIDs) == 0 {
+			resultJSON, marshalErr := json.Marshal(result)
+			var resultFields map[string]any
+			if marshalErr != nil || json.Unmarshal(resultJSON, &resultFields) != nil {
+				t.Fatal(marshalErr)
+			}
+			if err != nil || result.ResourceType != tc.input.ResourceType || result.PackageID != tc.input.PackageID || result.SizeGB != tc.input.SizeGB || result.Zone != tc.input.Zone || !result.Available || result.ChargeType != "PREPAID" || result.PeriodMonths != 1 || result.RenewFlag != "NOTIFY_AND_MANUAL_RENEW" || result.ProviderPriceCNY != tc.reply.ProviderPriceCNY || len(result.ProviderRequestIDs) == 0 || (tc.input.ResourceType == "compute" && resultFields["nodePoolId"] != tc.reply.NodePoolID) {
 				t.Fatalf("monthly preflight = %#v, err=%v", result, err)
 			}
 		})
@@ -476,6 +479,7 @@ func TestWorkspaceManifestIsolatesTenantRuntime(t *testing.T) {
 	t.Setenv("OPL_IMAGE_PULL_SECRET_NAME", "pull-secret")
 	t.Setenv("OPL_AIONUI_ADMIN_PASSWORD_SEED", "workspace-secret-2026-very-long")
 	t.Setenv("OPL_CODEX_API_KEY", "forbidden-global-key")
+	t.Setenv("OPL_CODEX_BASE_URL", "https://gflabtoken.cn/v1")
 	compute := ComputeAllocation{ID: "compute-alpha", AccountID: "acct-alpha", PackageID: "basic", NodeSelector: map[string]any{"cloud.tencent.com/node-instance-id": "np-basic-2"}}
 	storage := StorageVolume{ProviderResourceID: "disk-storage-alpha", ProviderData: map[string]string{"pvcName": "opl-storage-alpha-data"}}
 	tags := map[string]string{"opl_account_id": "acct-alpha", "opl_workspace_id": "ws-alpha", "opl_resource_id": "compute-alpha", "opl_operation_id": "op-alpha"}
@@ -599,6 +603,9 @@ func TestWorkspaceManifestIsolatesTenantRuntime(t *testing.T) {
 	env := envMap(container["env"].([]any))
 	if _, ok := env["OPL_SHARE_TOKEN"]; ok {
 		t.Fatalf("workspace must not receive a fake URL authentication token: %#v", env)
+	}
+	if _, ok := env["OPL_CODEX_BASE_URL"]; ok {
+		t.Fatalf("Cloud must not inject a second Gateway base URL into Runtime: %#v", env)
 	}
 	if env["AIONUI_ALLOW_REMOTE"] != "true" {
 		t.Fatalf("workspace must allow remote AionUI access: %#v", env)

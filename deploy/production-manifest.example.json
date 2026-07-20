@@ -9,12 +9,6 @@
     "OPL_INTERNAL_SERVICE_TOKEN": {
       "secretRef": "opl-cloud/internal-service-token"
     },
-    "OPL_PROVIDER_ACCEPTANCE_TOKEN": {
-      "secretRef": "opl-cloud/provider-acceptance-token"
-    },
-    "OPL_GATEWAY_PUBLIC_BASE_URL": {
-      "value": "https://api.medopl.cn/v1"
-    },
     "OPL_SUB2API_BASE_URL": {
       "value": "https://gflabtoken.cn"
     },
@@ -72,23 +66,14 @@
     "OPL_BASIC_COMPUTE_INSTANCE_TYPE": {
       "value": "SA5.MEDIUM4"
     },
-    "OPL_BASIC_COMPUTE_NODE_POOL_ID": {
-      "value": "np-basic-package"
-    },
     "OPL_PRO_COMPUTE_INSTANCE_TYPE": {
       "value": "SA5.2XLARGE16"
-    },
-    "OPL_PRO_COMPUTE_NODE_POOL_ID": {
-      "value": "np-pro-package"
     },
     "OPL_CODEX_MODEL": {
       "value": "gpt-5.5"
     },
     "OPL_CODEX_REASONING_EFFORT": {
       "value": "xhigh"
-    },
-    "OPL_CODEX_BASE_URL": {
-      "value": "https://gflabtoken.cn/v1"
     },
     "TENCENT_DEPLOY_KUBECONFIG_REF": {
       "secretRef": "opl-cloud/tencent-deploy-kubeconfig-ref"

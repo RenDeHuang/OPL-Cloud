@@ -11,9 +11,8 @@ The current V2 boundary requires:
 
 - one Console User to one Account to one Sub2API User/Wallet, with Session-scoped
   delegated Gateway credentials;
-- the public API origin from `OPL_GATEWAY_PUBLIC_BASE_URL` through
-  `GET /api/gateway/endpoint`; missing or invalid production HTTPS configuration
-  is unavailable and never falls back to an internal Sub2API address;
+- no browser Gateway base-address API, link, or Runtime override from Cloud;
+  `OPL_SUB2API_BASE_URL` remains server-only;
 - general Key create/update/delete/reveal and authoritative per-Key Usage;
 - one primary Workspace purchase or renewal with exactly one USD-micros debit;
 - compute, storage, attachment, Gateway Secret, and Runtime as fulfillment only;
@@ -22,8 +21,8 @@ The current V2 boundary requires:
 
 Remaining blockers:
 
-- Basic and Pro Provider Acceptance has not run and no real Tencent resource
-  evidence exists for this candidate;
+- Provider Acceptance, Pro verification, S9, and fixed-slot verification are
+  paused; Pro remains defined but is unavailable in the production catalog;
 - no approved real renewal, production rollout, browser login/WebSocket, model
   request, exact-one Usage/wallet delta, or rollback evidence exists;
 - Runtime projects-entry and filesystem-usage product APIs are paused outside this

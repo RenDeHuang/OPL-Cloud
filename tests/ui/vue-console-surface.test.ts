@@ -27,12 +27,13 @@ test("customer views use granular V2 source projections and the one Workspace la
   ]);
   const template = app.slice(app.indexOf("<template>"));
   for (const route of [
-    "/api/gateway/endpoint", "/api/gateway/wallet", "/api/gateway/keys",
+    "/api/gateway/wallet", "/api/gateway/keys",
     "/api/gateway/keys/${encodeURIComponent(keyId)}/usage?",
     "/api/gateway/keys/${encodeURIComponent(keyId)}/usage-summary?",
     "/api/gateway/usage-summary?", "/api/gateway/balance-history",
     "/api/billing/receipts?", "/api/announcements"
   ]) assert.ok(readApi.includes(route), `${route} adapter is required`);
+  assert.doesNotMatch(readApi, /\/api\/gateway\/endpoint|GatewayEndpointDTO/);
   assert.match(workspaceApi, /\/api\/workspace-launches/);
   assert.match(workspaceApi, /\/api\/workspaces\/\$\{encodeURIComponent\(workspaceId\)\}\/runtime-status/);
   assert.doesNotMatch(readApi, /\/api\/gateway\/summary|reveal=true/);

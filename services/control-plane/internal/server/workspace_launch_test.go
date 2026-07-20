@@ -849,6 +849,18 @@ func TestWorkspaceLaunchSingleTotalDebit(t *testing.T) {
 	}
 }
 
+func TestWorkspaceLaunchPersistsDiscoveredNodePoolBeforeCharge(t *testing.T) {
+	fixture := newWorkspaceLaunchWorkerFixture(t, []int64{1_000_000_000}, nil, nil)
+	operation := fixture.operation(t)
+	var persisted map[string]any
+	if err := json.Unmarshal([]byte(operation.PersistedResult), &persisted); err != nil {
+		t.Fatal(err)
+	}
+	if persisted["computeNodePoolId"] != "np-basic" {
+		t.Fatalf("discovered NodePoolID was not persisted before charge: %#v", persisted)
+	}
+}
+
 func TestWorkspaceLaunchRejectsEqualBalanceBeforeCharge(t *testing.T) {
 	fixture := newWorkspaceLaunchWorkerFixture(t, []int64{100_000_000, 52_580_000, 0}, nil, nil)
 	err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service)
@@ -877,6 +889,21 @@ func TestWorkspaceLaunchWorkerRechecksProviderPreflightBeforeFirstCharge(t *test
 	if err == nil || operation.Status != "unknown" || operation.Phase != "debit_pending" || operation.ErrorCode != "fabric_compute_preflight_failed" ||
 		len(fixture.sub2API.charges) != 0 || len(fixture.fabric.computeIDs) != 0 || len(fixture.fabric.storageIDs) != 0 {
 		t.Fatalf("worker skipped preflight gate: err=%v operation=%#v charges=%#v compute=%#v storage=%#v", err, operation, fixture.sub2API.charges, fixture.fabric.computeIDs, fixture.fabric.storageIDs)
+	}
+}
+
+func TestWorkspaceLaunchWorkerRejectsChangedDiscoveredNodePoolBeforeFirstCharge(t *testing.T) {
+	fixture := newWorkspaceLaunchWorkerFixture(t, []int64{100_000_000, 100_000_000, 47_420_000}, nil, nil)
+	zone := monthlyComputeLaunchZone()
+	fixture.fabric.preflightResults = []clients.MonthlyPreflight{
+		monthlyPreflightResult(clients.MonthlyPreflightInput{ResourceType: "compute", PackageID: "basic", Zone: zone}, "np-other"),
+		monthlyPreflightResult(clients.MonthlyPreflightInput{ResourceType: "storage", PackageID: "basic", SizeGB: 10, Zone: zone}, ""),
+	}
+	err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service)
+	operation := fixture.operation(t)
+	if err == nil || operation.Status != "unknown" || operation.Phase != "debit_pending" || operation.ErrorCode != "fabric_compute_preflight_failed" ||
+		len(fixture.sub2API.charges) != 0 || len(fixture.fabric.computeIDs) != 0 || len(fixture.fabric.storageIDs) != 0 {
+		t.Fatalf("changed NodePoolID crossed charge gate: err=%v operation=%#v charges=%#v compute=%#v storage=%#v", err, operation, fixture.sub2API.charges, fixture.fabric.computeIDs, fixture.fabric.storageIDs)
 	}
 }
 
@@ -944,6 +971,20 @@ func TestWorkspaceLaunchFulfillmentOnly(t *testing.T) {
 				t.Fatalf("resource retained customer billing field %s: %#v", forbidden, row)
 			}
 		}
+	}
+}
+
+func TestWorkspaceLaunchFulfillmentUsesPersistedNodePool(t *testing.T) {
+	fixture := newWorkspaceLaunchWorkerFixture(t, []int64{1_000_000_000, 1_000_000_000, 947_420_000}, nil, nil)
+	configureWorkspaceLaunchFulfillment(t, fixture)
+	if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err != nil {
+		t.Fatal(err)
+	}
+	if len(fixture.fabric.computeInputs) != 1 || structToMap(fixture.fabric.computeInputs[0])["nodePoolId"] != "np-basic" {
+		t.Fatalf("compute fulfillment did not use persisted NodePoolID: %#v", fixture.fabric.computeInputs)
 	}
 }
 

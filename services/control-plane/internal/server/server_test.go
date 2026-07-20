@@ -68,66 +68,27 @@ func TestPublicResponsesSetSecurityHeaders(t *testing.T) {
 	}
 }
 
-func TestProductionOperatorRoutesRequireAllowedClientNetwork(t *testing.T) {
-	server := NewServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}))
-	operator := reservedOperatorSessionForTest(t, server)
-
-	for _, test := range []struct {
-		name, operatorCIDRs, trustedProxyCIDRs, remoteAddr, xForwardedFor, forwarded string
-		wantStatus                                                                   int
-	}{
-		{name: "missing allowlist", remoteAddr: "203.0.113.7:1234", wantStatus: http.StatusForbidden},
-		{name: "invalid allowlist", operatorCIDRs: "203.0.113.0/24,invalid", remoteAddr: "203.0.113.7:1234", wantStatus: http.StatusForbidden},
-		{name: "allowed direct", operatorCIDRs: "203.0.113.0/24", remoteAddr: "203.0.113.7:1234", wantStatus: http.StatusOK},
-		{name: "allowed direct ipv6", operatorCIDRs: "2001:db8::/32", remoteAddr: "[2001:db8::7]:1234", wantStatus: http.StatusOK},
-		{name: "untrusted peer spoof", operatorCIDRs: "203.0.113.0/24", trustedProxyCIDRs: "10.0.0.0/8", remoteAddr: "198.51.100.9:1234", xForwardedFor: "203.0.113.7", wantStatus: http.StatusForbidden},
-		{name: "trusted proxy chain", operatorCIDRs: "203.0.113.0/24", trustedProxyCIDRs: "10.0.0.0/8", remoteAddr: "10.2.2.2:1234", xForwardedFor: "203.0.113.7, 10.1.1.1", wantStatus: http.StatusOK},
-		{name: "rightmost untrusted hop wins", operatorCIDRs: "203.0.113.0/24", trustedProxyCIDRs: "10.0.0.0/8", remoteAddr: "10.2.2.2:1234", xForwardedFor: "203.0.113.7, 198.51.100.9", wantStatus: http.StatusForbidden},
-		{name: "strict malformed forwarded chain", operatorCIDRs: "203.0.113.0/24", trustedProxyCIDRs: "10.0.0.0/8", remoteAddr: "10.2.2.2:1234", xForwardedFor: "203.0.113.7, unknown", wantStatus: http.StatusForbidden},
-		{name: "standard Forwarded chain", operatorCIDRs: "203.0.113.0/24", trustedProxyCIDRs: "10.0.0.0/8", remoteAddr: "10.2.2.2:1234", forwarded: "for=203.0.113.7;proto=https, for=10.1.1.1", wantStatus: http.StatusOK},
-		{name: "ambiguous forwarding headers", operatorCIDRs: "203.0.113.0/24", trustedProxyCIDRs: "10.0.0.0/8", remoteAddr: "10.2.2.2:1234", xForwardedFor: "203.0.113.7", forwarded: "for=203.0.113.7", wantStatus: http.StatusForbidden},
-		{name: "all hops are proxies", operatorCIDRs: "10.0.0.0/8", trustedProxyCIDRs: "10.0.0.0/8", remoteAddr: "10.2.2.2:1234", xForwardedFor: "10.1.1.1", wantStatus: http.StatusForbidden},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			t.Setenv("NODE_ENV", "production")
-			t.Setenv("OPL_OPERATOR_CIDRS", test.operatorCIDRs)
-			t.Setenv("OPL_TRUSTED_PROXY_CIDRS", test.trustedProxyCIDRs)
-			req := httptest.NewRequest(http.MethodGet, "/api/operator/announcements", nil)
-			req.RemoteAddr = test.remoteAddr
-			if test.xForwardedFor != "" {
-				req.Header.Set("X-Forwarded-For", test.xForwardedFor)
-			}
-			if test.forwarded != "" {
-				req.Header.Set("Forwarded", test.forwarded)
-			}
-			addSessionCookies(req, operator)
-			rec := httptest.NewRecorder()
-			server.ServeHTTP(rec, req)
-			if rec.Code != test.wantStatus {
-				t.Fatalf("status = %d, want %d: %s", rec.Code, test.wantStatus, rec.Body.String())
-			}
-		})
-	}
-}
-
-func TestProductionOperatorNetworkGateCoversReviewAndProviderAcceptance(t *testing.T) {
+func TestProductionOperatorRoutesDoNotRequireClientNetworkConfiguration(t *testing.T) {
 	server := NewServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}))
 	operator := reservedOperatorSessionForTest(t, server)
 	t.Setenv("NODE_ENV", "production")
-	t.Setenv("OPL_OPERATOR_CIDRS", "203.0.113.0/24")
-	t.Setenv("OPL_TRUSTED_PROXY_CIDRS", "")
-
-	review := httptest.NewRequest(http.MethodPost, "/api/operator/billing-reviews/compute/compute-review/resolve", bytes.NewBufferString(`{"accountId":"acct-alpha","billingOperationId":"billing-alpha","decision":"retry","evidenceRef":"case-20260718-abc"}`))
-	review.RemoteAddr = "198.51.100.9:1234"
-	review.Header.Set("Content-Type", "application/json")
-	review.Header.Set("Idempotency-Key", "review-alpha")
-	addAuth(review, operator)
-	reviewRec := httptest.NewRecorder()
-	server.ServeHTTP(reviewRec, review)
-	if reviewRec.Code != http.StatusForbidden || !strings.Contains(reviewRec.Body.String(), "operator_network_forbidden") {
-		t.Fatalf("review outside operator network = %d %s", reviewRec.Code, reviewRec.Body.String())
+	t.Setenv("OPL_OPERATOR_CIDRS", "invalid")
+	t.Setenv("OPL_TRUSTED_PROXY_CIDRS", "invalid")
+	req := httptest.NewRequest(http.MethodGet, "/api/operator/announcements", nil)
+	req.RemoteAddr = "198.51.100.9:1234"
+	req.Header.Set("X-Forwarded-For", "203.0.113.7, unknown")
+	addSessionCookies(req, operator)
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("production operator status = %d, want 200 without a network gate: %s", rec.Code, rec.Body.String())
 	}
+}
 
+func TestProviderAcceptanceTokenDoesNotDependOnOperatorNetworkConfiguration(t *testing.T) {
+	t.Setenv("NODE_ENV", "production")
+	t.Setenv("OPL_OPERATOR_CIDRS", "invalid")
+	t.Setenv("OPL_TRUSTED_PROXY_CIDRS", "invalid")
 	t.Setenv("OPL_PROVIDER_ACCEPTANCE_TOKEN", testProviderAcceptanceToken)
 	called := false
 	protected := newControlPlaneApp().providerAcceptanceProtected(func(w http.ResponseWriter, _ *http.Request) {
@@ -139,21 +100,8 @@ func TestProductionOperatorNetworkGateCoversReviewAndProviderAcceptance(t *testi
 	acceptance.Header.Set("x-opl-provider-acceptance-token", testProviderAcceptanceToken)
 	acceptanceRec := httptest.NewRecorder()
 	protected(acceptanceRec, acceptance)
-	if acceptanceRec.Code != http.StatusForbidden || called {
-		t.Fatalf("Provider Acceptance outside operator network = %d called=%v", acceptanceRec.Code, called)
-	}
-}
-
-func TestOperatorNetworkGateIsProductionOnly(t *testing.T) {
-	t.Setenv("NODE_ENV", "test")
-	t.Setenv("OPL_OPERATOR_CIDRS", "")
-	server := NewServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}))
-	req := httptest.NewRequest(http.MethodGet, "/api/operator/announcements", nil)
-	addSessionCookies(req, reservedOperatorSessionForTest(t, server))
-	rec := httptest.NewRecorder()
-	server.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("non-production operator status = %d, want 200: %s", rec.Code, rec.Body.String())
+	if acceptanceRec.Code != http.StatusNoContent || !called {
+		t.Fatalf("Provider Acceptance token route = %d called=%v", acceptanceRec.Code, called)
 	}
 }
 
@@ -1317,11 +1265,13 @@ func (f *fakeFabricClient) Catalog(_ context.Context) (clients.FabricCatalog, er
 func (f *fakeFabricClient) MonthlyPreflight(_ context.Context, input clients.MonthlyPreflightInput) (clients.MonthlyPreflight, error) {
 	f.record("fabric.monthly.preflight")
 	requestIDs := map[string]string{"quota": "quota-request", "price": "price-request"}
+	nodePoolID := ""
 	if input.ResourceType == "compute" {
 		requestIDs = map[string]string{"nodePool": "node-pool-request", "subnets": "subnets-request", "availability": "availability-request"}
+		nodePoolID = "np-" + input.PackageID
 	}
 	return clients.MonthlyPreflight{
-		ResourceType: input.ResourceType, PackageID: input.PackageID, SizeGB: input.SizeGB, Zone: input.Zone,
+		ResourceType: input.ResourceType, PackageID: input.PackageID, NodePoolID: nodePoolID, SizeGB: input.SizeGB, Zone: input.Zone,
 		Available: true, ChargeType: "PREPAID", PeriodMonths: 1, RenewFlag: "NOTIFY_AND_MANUAL_RENEW",
 		ProviderPriceCNY: 12.34, ProviderRequestIDs: requestIDs,
 	}, nil
@@ -2985,7 +2935,6 @@ func TestActiveConsoleAPIRoutesReachControlPlane(t *testing.T) {
 		{http.MethodGet, "/api/operator/overview", ""},
 		{http.MethodGet, "/api/runtime/readiness", ""},
 		{http.MethodGet, "/api/production/readiness", ""},
-		{http.MethodGet, "/api/gateway/endpoint", ""},
 		{http.MethodGet, "/api/workspaces", ""},
 		{http.MethodGet, "/api/workspaces/ws-alpha/runtime-status", ""},
 		{http.MethodGet, "/api/support/tickets", ""},

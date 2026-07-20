@@ -2,43 +2,9 @@ package main
 
 import (
 	"net/http"
-	"strings"
 	"testing"
 	"time"
 )
-
-func TestGatewayPublicEndpoint(t *testing.T) {
-	values := map[string]string{"NODE_ENV": "production", "OPL_GATEWAY_PUBLIC_BASE_URL": " https://api.medopl.example/v1/ "}
-	if got := gatewayPublicBaseURLFromEnv(func(key string) string { return values[key] }); got != "https://api.medopl.example/v1" {
-		t.Fatalf("public Gateway base URL = %q", got)
-	}
-}
-
-func TestGatewayPublicEndpointRequiresHTTPS(t *testing.T) {
-	for _, raw := range []string{
-		"http://api.medopl.example/v1", "api.medopl.example/v1", "https://user@example.com/v1",
-		"https://api.medopl.example/v1?token=secret", "https://api.medopl.example/v1#secret",
-	} {
-		t.Run(strings.ReplaceAll(raw, "/", "_"), func(t *testing.T) {
-			values := map[string]string{"NODE_ENV": "production", "OPL_GATEWAY_PUBLIC_BASE_URL": raw}
-			if got := gatewayPublicBaseURLFromEnv(func(key string) string { return values[key] }); got != "" {
-				t.Fatalf("invalid production public URL %q accepted as %q", raw, got)
-			}
-		})
-	}
-}
-
-func TestGatewayPublicEndpointHasNoInternalFallback(t *testing.T) {
-	for _, values := range []map[string]string{
-		{"NODE_ENV": "production", "OPL_SUB2API_BASE_URL": "https://internal.example"},
-		{"NODE_ENV": "production", "OPL_SUB2API_BASE_URL": "https://internal.example", "OPL_GATEWAY_PUBLIC_BASE_URL": "https://internal.example/v1"},
-		{"NODE_ENV": "production", "OPL_SUB2API_BASE_URL": "https://internal.example", "OPL_GATEWAY_PUBLIC_BASE_URL": "https://gflabtoken.cn/v1"},
-	} {
-		if got := gatewayPublicBaseURLFromEnv(func(key string) string { return values[key] }); got != "" {
-			t.Fatalf("public endpoint leaked internal/fallback URL %q", got)
-		}
-	}
-}
 
 func TestHTTPServerHasFiniteTimeoutsAndPreservesWorkspaceConnections(t *testing.T) {
 	server := newHTTPServer(":8787", http.NotFoundHandler())

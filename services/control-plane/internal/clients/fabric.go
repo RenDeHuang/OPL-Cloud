@@ -139,6 +139,7 @@ type ComputeAllocationInput struct {
 	AccountID   string `json:"accountId"`
 	WorkspaceID string `json:"workspaceId"`
 	PackageID   string `json:"packageId"`
+	NodePoolID  string `json:"nodePoolId,omitempty"`
 }
 
 type MonthlyPreflightInput struct {
@@ -151,6 +152,7 @@ type MonthlyPreflightInput struct {
 type MonthlyPreflight struct {
 	ResourceType       string            `json:"resourceType"`
 	PackageID          string            `json:"packageId"`
+	NodePoolID         string            `json:"nodePoolId,omitempty"`
 	SizeGB             int               `json:"sizeGb"`
 	Zone               string            `json:"zone"`
 	Available          bool              `json:"available"`

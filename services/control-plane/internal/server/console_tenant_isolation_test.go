@@ -38,7 +38,7 @@ func newGatewayOwnerTestServer(t *testing.T, sub2API clients.Sub2APIClient, stor
 }
 
 func TestGatewayOwnerRevealIsAudited(t *testing.T) {
-	server, client, store, session := newGatewayKeyCommandFixture(t, "")
+	server, client, store, session := newGatewayKeyCommandFixture(t)
 	var logs bytes.Buffer
 	previousLogOutput := log.Writer()
 	log.SetOutput(&logs)
@@ -81,7 +81,7 @@ func TestGatewayOwnerRevealIsAudited(t *testing.T) {
 
 func TestGatewayRevealRejectsUnauthorizedWithoutFetchingKey(t *testing.T) {
 	t.Run("operator", func(t *testing.T) {
-		server, client, _, _ := newGatewayKeyCommandFixture(t, "")
+		server, client, _, _ := newGatewayKeyCommandFixture(t)
 		rec := requestWithSession(t, server, reservedOperatorSessionForTest(t, server), http.MethodPost, "/api/gateway/keys/17/reveal", "{}")
 		if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "gateway_key_reveal_forbidden") || len(client.userKeyReadIDs) != 0 {
 			t.Fatalf("operator reveal = %d calls=%#v: %s", rec.Code, client.userKeyReadIDs, rec.Body.String())
@@ -89,7 +89,7 @@ func TestGatewayRevealRejectsUnauthorizedWithoutFetchingKey(t *testing.T) {
 	})
 
 	t.Run("owner mismatch", func(t *testing.T) {
-		server, client, store, session := newGatewayKeyCommandFixture(t, "")
+		server, client, store, session := newGatewayKeyCommandFixture(t)
 		store.mu.Lock()
 		store.accounts["acct-gateway"]["ownerUserId"] = "usr-other"
 		store.mu.Unlock()
@@ -108,7 +108,7 @@ func TestGatewayRevealRejectsUnauthorizedWithoutFetchingKey(t *testing.T) {
 		{name: "missing csrf", path: "/api/gateway/keys/17/reveal", code: "csrf_token_invalid"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			server, client, _, session := newGatewayKeyCommandFixture(t, "")
+			server, client, _, session := newGatewayKeyCommandFixture(t)
 			req := httptest.NewRequest(http.MethodPost, tc.path, bytes.NewBufferString("{}"))
 			req.Header.Set("Content-Type", "application/json")
 			addSessionCookies(req, session)

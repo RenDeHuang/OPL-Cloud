@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -183,7 +184,11 @@ func (s *Service) reconcileComputePoolOnce(ctx context.Context, packageID string
 		}
 	}
 	plan := packagePlan(packageID)
-	state, err := s.provider.ReconcileComputePool(ctx, ComputePoolDemand{PoolID: plan.ID, PackageID: packageID, NodePoolID: plan.NodePoolID, InstanceType: plan.InstanceType, DesiredReplicas: int64(len(active) + len(pending)), DryRun: dryRun})
+	nodePoolID, err := computePoolNodePoolID(active, pending)
+	if err != nil {
+		return false, false, err
+	}
+	state, err := s.provider.ReconcileComputePool(ctx, ComputePoolDemand{PoolID: plan.ID, PackageID: packageID, NodePoolID: nodePoolID, InstanceType: plan.InstanceType, DesiredReplicas: int64(len(active) + len(pending)), DryRun: dryRun})
 	if evidenceErr := s.recordPoolReconcileEvidence(ctx, pending, state, err); evidenceErr != nil {
 		return false, false, evidenceErr
 	}
@@ -308,6 +313,30 @@ func (s *Service) reconcileComputePoolOnce(ctx context.Context, packageID string
 	}
 	remaining, err := s.pendingComputeOperations(ctx, packageID)
 	return len(remaining) == 0 && state.CurrentReplicas == state.DesiredReplicas, limit > 0, err
+}
+
+func computePoolNodePoolID(active []MachineOwnership, pending []FabricOperation) (string, error) {
+	ids := map[string]struct{}{}
+	for _, ownership := range active {
+		if id := strings.TrimSpace(ownership.NodePoolID); id != "" {
+			ids[id] = struct{}{}
+		}
+	}
+	for _, operation := range pending {
+		var resource ComputeAllocation
+		if decodeOperationResource(operation, &resource) {
+			if id := strings.TrimSpace(resource.NodePoolID); id != "" {
+				ids[id] = struct{}{}
+			}
+		}
+	}
+	if len(ids) > 1 {
+		return "", fmt.Errorf("compute_node_pool_identity_conflict")
+	}
+	for id := range ids {
+		return id, nil
+	}
+	return "", nil
 }
 
 func (s *Service) recordPoolReconcileEvidence(ctx context.Context, pending []FabricOperation, state ComputePoolState, reconcileErr error) error {

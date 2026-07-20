@@ -5,8 +5,6 @@ const DEPLOY_VALUE_KEYS = [
   "OPL_PUBLIC_URL",
   "OPL_CONSOLE_DOMAIN",
   "OPL_WORKSPACE_DOMAIN",
-  "OPL_OPERATOR_CIDRS",
-  "OPL_TRUSTED_PROXY_CIDRS",
   "OPL_CLOUD_IMAGE",
   "OPL_WORKSPACE_IMAGE",
   "OPL_IMAGE_PULL_SECRET_NAME",
@@ -18,7 +16,6 @@ const DEPLOY_VALUE_KEYS = [
   "OPL_WORKSPACE_PROJECTS_DIR",
   "OPL_MONTHLY_BILLING_WORKER_ENABLED",
   "OPL_MONTHLY_BILLING_INTERVAL_MS",
-  "OPL_GATEWAY_PUBLIC_BASE_URL",
   "OPL_SUB2API_BASE_URL",
   "OPL_SUB2API_REQUEST_TIMEOUT_MS",
   "OPL_TENCENT_ZONE",
@@ -26,7 +23,6 @@ const DEPLOY_VALUE_KEYS = [
   "OPL_PRO_COMPUTE_INSTANCE_TYPE",
   "OPL_CODEX_MODEL",
   "OPL_CODEX_REASONING_EFFORT",
-  "OPL_CODEX_BASE_URL",
   "OPL_CONSOLE_TLS_SECRET_NAME",
   "OPL_WORKSPACE_TLS_SECRET_NAME",
   "OPL_INGRESS_CLASS",
@@ -42,11 +38,6 @@ const DEPLOY_VALUE_KEYS = [
   "TENCENT_TCR_REGION",
   "TENCENT_DEPLOY_KUBECONFIG_REF"
 ];
-const OPTIONAL_DEPLOY_VALUE_KEYS = [
-  "OPL_BASIC_COMPUTE_NODE_POOL_ID",
-  "OPL_PRO_COMPUTE_NODE_POOL_ID"
-];
-
 function requiredValues(values) {
   const missing = DEPLOY_VALUE_KEYS.filter((key) => !String(values?.[key] ?? "").trim());
   if (missing.length) throw new Error(`missing_tke_manifest_values:${missing.join(",")}`);
@@ -70,7 +61,7 @@ function setNamespace(item, namespace) {
 
 function setConfigMap(item, values) {
   if (item.kind !== "ConfigMap" || !item.data) return;
-  for (const key of [...DEPLOY_VALUE_KEYS, ...OPTIONAL_DEPLOY_VALUE_KEYS]) {
+  for (const key of DEPLOY_VALUE_KEYS) {
     if (Object.prototype.hasOwnProperty.call(item.data, key)) {
       item.data[key] = values[key] ? String(values[key]) : "";
     }
@@ -146,7 +137,7 @@ export async function runRenderTkeManifestCli({
   if (!args.manifest) throw new Error("manifest_path_required");
   const outputPath = args.out;
   const manifest = JSON.parse(await readFile(args.manifest, "utf8"));
-  const values = Object.fromEntries([...DEPLOY_VALUE_KEYS, ...OPTIONAL_DEPLOY_VALUE_KEYS].map((key) => [key, env[key]]));
+  const values = Object.fromEntries(DEPLOY_VALUE_KEYS.map((key) => [key, env[key]]));
   const rendered = renderTkeManifest({
     manifest,
     values,

@@ -363,7 +363,7 @@ func TestPoolAllocatorQuarantinesTagFailureWithoutDeletingPrepaidMachine(t *test
 	if err != nil || ownership.Status != "quarantined" || provider.deleteCalls != 0 {
 		t.Fatalf("partial claim quarantine ownership=%#v err=%v deletes=%d", ownership, err, provider.deleteCalls)
 	}
-	if ownership.NodePoolID != "np-basic" || ownership.ResourceID != resource.ID || ownership.AccountID != resource.AccountID ||
+	if ownership.NodePoolID != "np-pool-basic-2c4g" || ownership.ResourceID != resource.ID || ownership.AccountID != resource.AccountID ||
 		ownership.MachineID == "" || ownership.InstanceID == "" || ownership.NodeName == "" {
 		t.Fatalf("partial claim quarantine lost ownership: %#v", ownership)
 	}

@@ -26,9 +26,8 @@ Console shows:
 The Workspace access area answers, in one place and from owner readback: URL,
 用户名, 密码 reveal/copy, and the corresponding Workspace Key reveal/copy. The
 Workspace Key reuses `POST /api/gateway/keys/{keyId}/reveal`; it does not create a
-second secret store or Key API. The public API origin comes only from
-`OPL_GATEWAY_PUBLIC_BASE_URL`; invalid or missing production HTTPS configuration
-is shown as unavailable.
+second secret store or Key API. Console does not expose a Gateway base-address
+card or link to the server-only Sub2API backend.
 
 Console does not show raw request fingerprints, provider credentials, generic
 Fabric/Ledger APIs, or Sub2API admin operations.

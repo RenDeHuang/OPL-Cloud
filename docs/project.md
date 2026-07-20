@@ -26,8 +26,7 @@ This repository implements the OPL Cloud product defined by
 ## Explicit Non-Goals
 
 - a second Gateway, wallet, Key store, Usage store, or billing-fact database;
-- direct browser access to `OPL_SUB2API_BASE_URL` or fallback from
-  `OPL_GATEWAY_PUBLIC_BASE_URL` to an internal/default host;
+- direct browser access or links to `OPL_SUB2API_BASE_URL`;
 - identity mirroring beyond the one authoritative external-account mapping;
 - generic downstream proxy routes in Control Plane;
 - organization resource pools beyond account ownership and shared Workspace URLs;

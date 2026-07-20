@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 7,
+  "schemaVersion": 8,
   "owner": "OPL Console Control Plane",
   "purpose": "Strict source envelopes and customer-safe live projections for Console source-of-truth APIs.",
   "state": "current",
@@ -27,24 +27,13 @@
     }
   },
   "implementationEvidence": {
-    "gatewayEndpointAndGeneralKeys": "code_complete_local_focused_tests",
+    "generalKeys": "code_complete_local_focused_tests",
     "operatorProjection": "base_projection_local_tests_workspace_launch_recovery_fields_pending_integration",
     "workspaceBillingReceipts": "purchased_components_and_fulfillment_projection_code_complete_local_tests",
     "browserAndProduction": "pending"
   },
   "sources": {
     "gateway": {
-      "endpoint": {
-        "route": "GET /api/gateway/endpoint",
-        "source": "control-plane",
-        "authority": "OPL_GATEWAY_PUBLIC_BASE_URL",
-        "dataFields": ["baseUrl"],
-        "productionScheme": "https",
-        "missingBehavior": "unavailable_without_data",
-        "forbiddenFallbacks": ["OPL_SUB2API_BASE_URL", "gflabtoken.cn"],
-        "fetchedAt": "control_plane_response_fetch_completion_time",
-        "sourceUpdatedAt": "omit_no_authoritative_source_timestamp"
-      },
       "wallet": {
         "route": "GET /api/gateway/wallet",
         "source": "sub2api",

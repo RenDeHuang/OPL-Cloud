@@ -133,7 +133,6 @@ async function apiFixture(route, state) {
   });
   if (path === "/api/billing/receipts") return fulfillJson(route, source({ receipts: [], nextCursor: "", hasMore: false }, "ledger", "empty"));
   if (path === "/api/announcements") return fulfillJson(route, source(emptyPage, "control-plane", "empty"));
-  if (path === "/api/gateway/endpoint") return fulfillJson(route, source({ baseUrl: "https://api.example.invalid" }));
   if (path === "/api/gateway/wallet") return fulfillJson(route, source({ userId: "9", currency: "USD", usdMicros: 50_000_000, status: "active" }, "sub2api"));
   if (path === "/api/gateway/usage-summary") return fulfillJson(route, source({ totalRequests: 1, totalInputTokens: 10, totalOutputTokens: 2, totalTokens: 12, totalActualCostUsdMicros: 25_000 }, "sub2api"));
   if (path === "/api/gateway/balance-history") return fulfillJson(route, source({ items: [], total: 0 }, "sub2api", "empty"));

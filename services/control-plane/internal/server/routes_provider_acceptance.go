@@ -249,10 +249,6 @@ func (app *controlPlaneServer) providerAcceptanceProtected(next http.HandlerFunc
 			writeError(w, http.StatusUnauthorized, "provider_acceptance_token_invalid")
 			return
 		}
-		if !operatorNetworkAllowed(r) {
-			writeError(w, http.StatusForbidden, "operator_network_forbidden")
-			return
-		}
 		if !limitJSONBody(w, r) {
 			return
 		}

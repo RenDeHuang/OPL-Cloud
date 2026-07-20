@@ -48,11 +48,8 @@ func (p *TencentProvider) MonthlyPreflight(ctx context.Context, input MonthlyPre
 	request := provisionerRequest{PackageID: input.PackageID, Zone: input.Zone}
 	plan := packagePlan(input.PackageID)
 	if input.ResourceType == "compute" {
-		if strings.TrimSpace(plan.NodePoolID) == "" {
-			return MonthlyPreflight{}, fmt.Errorf("monthly_preflight_explicit_node_pool_required")
-		}
 		request.Action = "capacity_preflight"
-		request.Pool = provisionerPool{ID: plan.ID, PackageID: input.PackageID, InstanceType: plan.InstanceType, NodePoolID: plan.NodePoolID, DesiredReplicas: 1}
+		request.Pool = provisionerPool{ID: plan.ID, PackageID: input.PackageID, InstanceType: plan.InstanceType, DesiredReplicas: 1}
 	} else {
 		request.Action = "storage_preflight"
 		request.Storage = provisionerStorage{SizeGB: uint64(input.SizeGB), Zone: input.Zone, DiskType: firstNonEmpty(os.Getenv("TENCENT_CBS_DISK_TYPE"), "CLOUD_BSSD")}
@@ -68,7 +65,7 @@ func (p *TencentProvider) MonthlyPreflight(ctx context.Context, input MonthlyPre
 	validFacts := response.Status == "ready" && response.ProviderData["chargeType"] == "PREPAID" && response.ProviderData["periodMonths"] == "1" &&
 		response.ProviderData["renewFlag"] == "NOTIFY_AND_MANUAL_RENEW" && response.ProviderData["zone"] == input.Zone
 	if input.ResourceType == "compute" {
-		validFacts = validFacts && response.NodePoolID == plan.NodePoolID && response.InstanceType == plan.InstanceType && response.InstanceAvailable && len(response.Zones) == 1 && response.Zones[0] == input.Zone &&
+		validFacts = validFacts && strings.TrimSpace(response.NodePoolID) != "" && response.InstanceType == plan.InstanceType && response.InstanceAvailable && len(response.Zones) == 1 && response.Zones[0] == input.Zone &&
 			response.RemainingQuota >= uint64(request.Pool.DesiredReplicas) && strings.TrimSpace(response.ProviderRequestIDs["nodePool"]) != "" && strings.TrimSpace(response.ProviderRequestIDs["subnets"]) != "" && strings.TrimSpace(response.ProviderRequestIDs["availability"]) != "" && strings.TrimSpace(response.ProviderRequestIDs["quota"]) != ""
 	} else {
 		validFacts = validFacts && response.ProviderData["diskType"] == request.Storage.DiskType && response.ProviderData["sizeGb"] == strconv.Itoa(input.SizeGB) &&
@@ -78,7 +75,7 @@ func (p *TencentProvider) MonthlyPreflight(ctx context.Context, input MonthlyPre
 		return MonthlyPreflight{}, fmt.Errorf("monthly_preflight_provider_mismatch")
 	}
 	return MonthlyPreflight{
-		ResourceType: input.ResourceType, PackageID: input.PackageID, SizeGB: input.SizeGB, Zone: input.Zone,
+		ResourceType: input.ResourceType, PackageID: input.PackageID, NodePoolID: response.NodePoolID, SizeGB: input.SizeGB, Zone: input.Zone,
 		Available: true, ChargeType: "PREPAID", PeriodMonths: 1, RenewFlag: "NOTIFY_AND_MANUAL_RENEW",
 		ProviderPriceCNY: response.ProviderPriceCNY, ProviderRequestIDs: response.ProviderRequestIDs,
 	}, nil
@@ -348,7 +345,6 @@ type plan struct {
 	MemoryGB     int
 	DiskGB       int
 	InstanceType string
-	NodePoolID   string
 }
 
 func (p *TencentProvider) ReconcileComputePool(ctx context.Context, input ComputePoolDemand) (ComputePoolState, error) {
@@ -1167,9 +1163,9 @@ func (p *TencentProvider) PublishWorkspaceContent(ctx context.Context, workspace
 
 func packagePlan(packageID string) plan {
 	if packageID == "pro" {
-		return plan{ID: "pro", Server: "8c16g", CPU: 8, MemoryGB: 16, DiskGB: 100, InstanceType: firstNonEmpty(os.Getenv("OPL_PRO_COMPUTE_INSTANCE_TYPE"), "SA5.2XLARGE16"), NodePoolID: os.Getenv("OPL_PRO_COMPUTE_NODE_POOL_ID")}
+		return plan{ID: "pool-pro-8c16g", Server: "8c16g", CPU: 8, MemoryGB: 16, DiskGB: 100, InstanceType: firstNonEmpty(os.Getenv("OPL_PRO_COMPUTE_INSTANCE_TYPE"), "SA5.2XLARGE16")}
 	}
-	return plan{ID: "basic", Server: "2c4g", CPU: 2, MemoryGB: 4, DiskGB: 10, InstanceType: firstNonEmpty(os.Getenv("OPL_BASIC_COMPUTE_INSTANCE_TYPE"), "SA5.MEDIUM4"), NodePoolID: os.Getenv("OPL_BASIC_COMPUTE_NODE_POOL_ID")}
+	return plan{ID: "pool-basic-2c4g", Server: "2c4g", CPU: 2, MemoryGB: 4, DiskGB: 10, InstanceType: firstNonEmpty(os.Getenv("OPL_BASIC_COMPUTE_INSTANCE_TYPE"), "SA5.MEDIUM4")}
 }
 
 func staticCBSManifest(volume StorageVolume) []byte {
@@ -1247,7 +1243,6 @@ func workspaceManifest(workspaceID string, workspaceName string, credentialSeed 
 		map[string]any{"name": "OPL_WEBUI_SESSION_SECRET_FILE", "value": "/run/secrets/webui_session_secret"},
 		map[string]any{"name": "OPL_CODEX_MODEL", "value": os.Getenv("OPL_CODEX_MODEL")},
 		map[string]any{"name": "OPL_CODEX_REASONING_EFFORT", "value": os.Getenv("OPL_CODEX_REASONING_EFFORT")},
-		map[string]any{"name": "OPL_CODEX_BASE_URL", "value": os.Getenv("OPL_CODEX_BASE_URL")},
 		map[string]any{"name": "OPL_CODEX_PROVIDER_NAME", "value": os.Getenv("OPL_CODEX_PROVIDER_NAME")},
 		map[string]any{"name": "OPL_WORKSPACE_ID", "value": workspaceID},
 		map[string]any{"name": "OPL_WORKSPACE_NAME", "value": workspaceName},

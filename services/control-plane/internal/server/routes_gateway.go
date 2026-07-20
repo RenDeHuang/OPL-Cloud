@@ -15,13 +15,6 @@ import (
 )
 
 func registerGatewayRoutes(mux *http.ServeMux, app *controlPlaneServer, service *controlplane.Service) {
-	mux.HandleFunc("GET /api/gateway/endpoint", app.protected(false, func(w http.ResponseWriter, _ *http.Request) {
-		if app.gatewayPublicBaseURL == "" {
-			writeSourceEnvelope(w, http.StatusServiceUnavailable, "control-plane", "unavailable", nil)
-			return
-		}
-		writeSourceEnvelope(w, http.StatusOK, "control-plane", "available", map[string]any{"baseUrl": app.gatewayPublicBaseURL})
-	}))
 	mux.HandleFunc("GET /api/gateway/wallet", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "private, no-store")
 		userID, ok := app.gatewaySub2APIUserID(w, r)

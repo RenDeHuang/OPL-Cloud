@@ -84,17 +84,15 @@ test("API Key kind and Workspace receipt types use customer-facing labels", asyn
   assert.match(keysView, /revealedApiKey[\s\S]+colspan="8"/);
 });
 
-test("Pilot V2 customer API uses the public endpoint and V2 usage owners", async () => {
+test("Pilot V2 customer API omits a browser Gateway endpoint and uses V2 usage owners", async () => {
   const app = await source("apps/console-ui/src/App.vue");
 
   for (const call of [
-    "getGatewayEndpoint", "getGatewayKeyUsage", "getGatewayKeyUsageSummary", "getGatewayAccountUsageSummary"
+    "getGatewayKeyUsage", "getGatewayKeyUsageSummary", "getGatewayAccountUsageSummary"
   ]) assert.match(app, new RegExp(`${call}\\(`));
   assert.doesNotMatch(app, /\bgetGatewayUsage\(/);
   assert.doesNotMatch(app, /\bgetGatewayUsageStats\(/);
-  assert.match(app, /API Base URL/);
-  assert.match(app, /endpointSource\.value\?\.available/);
-  assert.doesNotMatch(app, /OPL_SUB2API_BASE_URL|gflabtoken\.cn|<iframe|window\.__ENV|import\.meta\.env/);
+  assert.doesNotMatch(app, /getGatewayEndpoint|GatewayEndpointDTO|API Base URL|endpointSource|loadEndpoint|OPL_SUB2API_BASE_URL|gflabtoken\.cn|<iframe|window\.__ENV|import\.meta\.env/);
 });
 
 test("every wallet summary has independent loading error unavailable and retry states", async () => {
@@ -241,7 +239,6 @@ test("Pilot V2 customer source blocks fail independently and remain retryable", 
   const app = await source("apps/console-ui/src/App.vue");
   for (const [key, sourceName, retry] of [
     ["runtime", "workspaceStatusSource", "loadWorkspaceStatus"],
-    ["endpoint", "endpointSource", "loadEndpoint"],
     ["keys", "keySource", "loadKeys"],
     ["usage", "usageSource", "loadUsage"],
     ["accountStats", "accountUsageSource", "loadAccountUsage"],

@@ -31,7 +31,7 @@ test("launch freeze fixes the V2 products, owner lanes, settlement, and verifica
   assert.deepEqual(Object.keys(freeze.productSurfaces), ["gateway", "workspace", "serve", "console", "fabric", "ledger"]);
   assert.deepEqual(freeze.productSurfaces.serve, { product: "OPL Serve", launchStatus: "planned_not_in_launch" });
   assert.match(freeze.machineBoundary, /Six product surfaces.*OPL Serve.*planned_not_in_launch/);
-  assert.match(freeze.machineBoundary, /two guarded production verification slots/i);
+  assert.match(freeze.machineBoundary, /two paused production verification slots/i);
   assert.deepEqual(Object.keys(freeze.ownerLanes), ["console", "fabric", "gateway", "ledger"]);
   assert.deepEqual(freeze.customerProducts.basic, {
     priceVersion: "pilot-usd-2026-07-v1",
@@ -39,7 +39,8 @@ test("launch freeze fixes the V2 products, owner lanes, settlement, and verifica
     compute: { cpu: 2, memoryGb: 4, usdMicros: 50000000 },
     storage: { sizeGb: 10, usdMicros: 2580000 },
     totalUsdMicros: 52580000,
-    targetSaleable: true
+    targetSaleable: true,
+    productionCatalogAvailable: true
   });
   assert.deepEqual(freeze.customerProducts.pro, {
     priceVersion: "pilot-usd-2026-07-v1",
@@ -47,7 +48,8 @@ test("launch freeze fixes the V2 products, owner lanes, settlement, and verifica
     compute: { cpu: 8, memoryGb: 16, usdMicros: 214280000 },
     storage: { sizeGb: 100, usdMicros: 25800000 },
     totalUsdMicros: 240080000,
-    targetSaleable: true
+    targetSaleable: true,
+    productionCatalogAvailable: false
   });
   assert.deepEqual(freeze.internalProviderCostEvidence, {
     currency: "CNY",
@@ -107,6 +109,14 @@ test("launch freeze fixes the V2 products, owner lanes, settlement, and verifica
   assert.equal(freeze.providerProcurement.periodMonths, 1);
   assert.equal(freeze.providerProcurement.renewFlag, "NOTIFY_AND_MANUAL_RENEW");
   assert.deepEqual(freeze.providerProcurement.forbiddenChargeTypes, ["POSTPAID_BY_HOUR"]);
+  assert.deepEqual(freeze.providerProcurement.nodePoolDiscovery, {
+    api: "DescribeNodePools",
+    matchLabels: ["oplcloud.cn/pool-id", "oplcloud.cn/package-id", "oplcloud.cn/instance-type"],
+    requiredMatchCount: 1,
+    zeroOrMultipleMatches: "preflight_failure_before_debit",
+    actualNodePoolIdPersistence: "workspace.launch.v2 operation before debit",
+    repeatPreflightMismatch: "preflight_failure_before_debit"
+  });
   assert.deepEqual(freeze.providerProcurement.activationReadback, {
     apis: ["SyncMonthlyCompute", "SyncMonthlyStorage"],
     timing: "immediately_before_workspace_activation",
@@ -208,6 +218,8 @@ test("launch freeze fixes the V2 products, owner lanes, settlement, and verifica
   assert.equal(freeze.verification.purchaseBudget, 2);
   assert.equal("purchaseBudgetRemaining" in freeze.verification, false);
   assert.deepEqual(freeze.verification.providerAcceptance, {
+    launchStatus: "paused",
+    releaseGate: false,
     operatorOnly: true,
     approvalEnvironment: "production-provider-acceptance",
     credentialEnv: "OPL_PROVIDER_ACCEPTANCE_TOKEN",
@@ -303,7 +315,7 @@ test("human invariants reject paid per-run resource verification", async () => {
   assert.doesNotMatch(invariants, /manual[- ]review[^.\n]{0,160}code-complete|S9/i);
 });
 
-test("read-only fixed-slot verification replaces the legacy paid release gate", async () => {
+test("paused fixed-slot verification does not gate the Basic rollout", async () => {
   const deployment = await json("packages/contracts/opl-cloud-deployment-contract.json");
   const [architecture, decisions, project, readme, runbook, status] = await Promise.all([
     text("docs/architecture.md"),
@@ -314,13 +326,12 @@ test("read-only fixed-slot verification replaces the legacy paid release gate", 
     text("docs/status.md")
   ]);
 
-  assert.equal(deployment.productionVerificationWorkflow.launchStatus, "active");
+  assert.equal(deployment.productionVerificationWorkflow.launchStatus, "paused");
   assert.equal(deployment.productionVerificationWorkflow.releaseGate, false);
   assert.equal(deployment.productionVerificationWorkflow.mode, "read_only_dual_fixed_slots");
-  assert.equal(deployment.productionLiveQaJob.releaseGate, true);
-  assert.equal(deployment.productionLiveQaJob.mode, "one_basic_reserved_account_one_dedicated_key_one_model_request_no_provider_mutation");
-  assert.equal(deployment.productionLiveQaJob.modelRequestCount, 1);
-  assert.equal(deployment.productionLiveQaJob.providerMutationCount, 0);
+  assert.equal(deployment.productionLiveQaJob, undefined);
+  assert.equal(deployment.providerAcceptanceWorkflow.launchStatus, "paused");
+  assert.equal(deployment.providerAcceptanceWorkflow.releaseGate, false);
   assert.doesNotMatch(JSON.stringify(deployment), /paid_confirmation|OPL_VERIFY_PAID_CONFIRMATION|OPL_VERIFY_MODEL_ACCESS_KEY/);
   assert.equal(deployment.workspaceImage.candidateAppMainSha, candidateAppSha);
   assert.equal(deployment.workspaceImage.candidateActiveShellMainSha, candidateShellSha);
@@ -331,7 +342,7 @@ test("read-only fixed-slot verification replaces the legacy paid release gate", 
   assert.equal(deployment.workspaceImage.readyPodImageId, null);
   assert.equal(deployment.workspaceImage.readyPodImageIdStatus, "pending_deployment_readback");
   assert.equal(deployment.workspaceImage.productionReference, "repository@sha256");
-  assert.match(runbook, /Do not run the legacy paid verifier/);
+  assert.match(runbook, /Do not run the legacy paid\s+verifier/);
   assert.match(architecture, /debit.*before\s+Fabric.*activate/is);
   assert.doesNotMatch(architecture, /Fabric preparation happens before the external charge/);
   for (const document of [architecture, decisions, project, readme, status]) {

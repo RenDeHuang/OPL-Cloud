@@ -48,6 +48,7 @@ type workspaceLaunchOperation struct {
 	PaidThrough                string         `json:"paidThrough,omitempty"`
 	BillingAnchorDay           int            `json:"billingAnchorDay,omitempty"`
 	ComputeID                  string         `json:"computeAllocationId"`
+	ComputeNodePoolID          string         `json:"computeNodePoolId"`
 	StorageID                  string         `json:"storageId"`
 	AttachmentID               string         `json:"attachmentId,omitempty"`
 	AttachmentOperationID      string         `json:"attachmentOperationId"`
@@ -459,7 +460,7 @@ func (app *controlPlaneServer) fulfillWorkspaceLaunchResource(ctx context.Contex
 		}, operation.ID+":storage")
 	} else {
 		prepared, prepareErr = service.PrepareMonthlyCompute(ctx, clients.ComputeAllocationInput{
-			ID: operation.ComputeID, AccountID: operation.AccountID, WorkspaceID: operation.WorkspaceID, PackageID: operation.PackageID,
+			ID: operation.ComputeID, AccountID: operation.AccountID, WorkspaceID: operation.WorkspaceID, PackageID: operation.PackageID, NodePoolID: operation.ComputeNodePoolID,
 		}, operation.ID+":compute")
 	}
 	preparedFacts := structToMap(prepared)
@@ -521,6 +522,7 @@ func workspaceLaunchResourceRow(operation workspaceLaunchOperation, resourceType
 		row["zone"] = monthlyComputeLaunchZone()
 	} else {
 		row["zone"] = monthlyComputeLaunchZone()
+		row["nodePoolId"] = operation.ComputeNodePoolID
 	}
 	return row
 }
@@ -551,7 +553,7 @@ func verifyWorkspaceLaunchPreflight(ctx context.Context, service *controlplane.S
 		if err != nil {
 			return code, err
 		}
-		if !monthlyPreflightConfirmed(input, result) {
+		if !monthlyPreflightConfirmed(input, result) || input.ResourceType == "compute" && result.NodePoolID != operation.ComputeNodePoolID {
 			return code, errors.New(code)
 		}
 	}

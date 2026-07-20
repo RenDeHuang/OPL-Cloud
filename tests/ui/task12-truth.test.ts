@@ -10,7 +10,7 @@ const source = (path: string) => readFile(new URL(path, root), "utf8");
 
 test("Task 12 exposes typed source adapters for the customer truth surfaces", async () => {
   assert.equal(typeof readApi.getGatewayWallet, "function");
-  assert.equal(typeof readApi.getGatewayEndpoint, "function");
+  assert.equal("getGatewayEndpoint" in readApi, false);
   assert.equal(typeof readApi.getGatewayKeys, "function");
   assert.equal(typeof readApi.getGatewayKey, "function");
   assert.equal(typeof readApi.createGatewayKey, "function");

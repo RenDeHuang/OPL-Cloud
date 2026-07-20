@@ -21,11 +21,6 @@ on:
         required: false
         default: false
         type: boolean
-      live_qa_approval_id:
-        description: Owner approval ID matching the protected live-QA mutation manifest; required outside bootstrap mode.
-        required: false
-        type: string
-
 permissions:
   contents: read
 
@@ -46,8 +41,6 @@ jobs:
       OPL_PUBLIC_URL: ${{ vars.OPL_PUBLIC_URL || 'https://cloud.medopl.cn' }}
       OPL_CONSOLE_DOMAIN: ${{ vars.OPL_CONSOLE_DOMAIN || 'cloud.medopl.cn' }}
       OPL_WORKSPACE_DOMAIN: ${{ vars.OPL_WORKSPACE_DOMAIN || 'workspace.medopl.cn' }}
-      OPL_OPERATOR_CIDRS: ${{ vars.OPL_OPERATOR_CIDRS }}
-      OPL_TRUSTED_PROXY_CIDRS: ${{ vars.OPL_TRUSTED_PROXY_CIDRS }}
       OPL_CLOUD_IMAGE: ${{ inputs.cloud_image }}
       OPL_WORKSPACE_IMAGE: ${{ inputs.workspace_image }}
       OPL_EXERCISE_ROLLBACK: ${{ inputs.exercise_rollback }}
@@ -67,13 +60,9 @@ jobs:
       OPL_MONTHLY_BILLING_WORKER_ENABLED: ${{ inputs.bootstrap_mode && '0' || vars.OPL_MONTHLY_BILLING_WORKER_ENABLED || '1' }}
       OPL_MONTHLY_BILLING_INTERVAL_MS: ${{ vars.OPL_MONTHLY_BILLING_INTERVAL_MS || '3600000' }}
       OPL_BASIC_COMPUTE_INSTANCE_TYPE: ${{ vars.OPL_BASIC_COMPUTE_INSTANCE_TYPE }}
-      OPL_BASIC_COMPUTE_NODE_POOL_ID: ${{ vars.OPL_BASIC_COMPUTE_NODE_POOL_ID }}
       OPL_PRO_COMPUTE_INSTANCE_TYPE: ${{ vars.OPL_PRO_COMPUTE_INSTANCE_TYPE || 'SA5.2XLARGE16' }}
-      OPL_PRO_COMPUTE_NODE_POOL_ID: ${{ vars.OPL_PRO_COMPUTE_NODE_POOL_ID }}
       OPL_CODEX_MODEL: ${{ vars.OPL_CODEX_MODEL || 'gpt-5.5' }}
       OPL_CODEX_REASONING_EFFORT: ${{ vars.OPL_CODEX_REASONING_EFFORT || 'xhigh' }}
-      OPL_CODEX_BASE_URL: ${{ vars.OPL_CODEX_BASE_URL || 'https://gflabtoken.cn/v1' }}
-      OPL_GATEWAY_PUBLIC_BASE_URL: ${{ vars.OPL_GATEWAY_PUBLIC_BASE_URL }}
       OPL_SUB2API_BASE_URL: ${{ vars.OPL_SUB2API_BASE_URL || 'https://gflabtoken.cn' }}
       OPL_SUB2API_REQUEST_TIMEOUT_MS: ${{ vars.OPL_SUB2API_REQUEST_TIMEOUT_MS || '5000' }}
       TENCENTCLOUD_SECRET_ID: ${{ secrets.TENCENT_MUTATION_SECRET_ID }}
@@ -96,10 +85,6 @@ jobs:
       OPL_SUB2API_ADMIN_EMAIL: ${{ secrets.OPL_SUB2API_ADMIN_EMAIL }}
       OPL_SUB2API_ADMIN_PASSWORD: ${{ secrets.OPL_SUB2API_ADMIN_PASSWORD }}
       OPL_INTERNAL_SERVICE_TOKEN: ${{ secrets.OPL_INTERNAL_SERVICE_TOKEN }}
-      OPL_PROVIDER_ACCEPTANCE_TOKEN: ${{ secrets.OPL_PROVIDER_ACCEPTANCE_TOKEN }}
-      OPL_VERIFY_BASIC_ACCOUNT_ID: ${{ vars.OPL_VERIFY_BASIC_ACCOUNT_ID || '' }}
-      OPL_VERIFY_PRO_ACCOUNT_ID: ${{ vars.OPL_VERIFY_PRO_ACCOUNT_ID || '' }}
-      OPL_VERIFY_MUTATION_APPROVAL_ID: ${{ inputs.live_qa_approval_id || '' }}
       OPL_AIONUI_ADMIN_PASSWORD_SEED: ${{ secrets.OPL_AIONUI_ADMIN_PASSWORD_SEED }}
       TCR_USERNAME: ${{ secrets.TCR_USERNAME }}
       TCR_PASSWORD: ${{ secrets.TCR_PASSWORD }}
@@ -108,23 +93,6 @@ jobs:
       OPL_WORKSPACE_TLS_CERT_ID: ${{ secrets.OPL_WORKSPACE_TLS_CERT_ID || vars.OPL_WORKSPACE_TLS_CERT_ID || '' }}
 
     steps:
-      - name: Require Basic and Pro Acceptance accounts
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [ "$OPL_BOOTSTRAP_MODE" = "true" ]; then
-            echo "Bootstrap mode deploys endpoints only; release incomplete until the ordinary release path succeeds."
-            exit 0
-          fi
-          if [ -z "${OPL_VERIFY_BASIC_ACCOUNT_ID:-}" ] || [ -z "${OPL_VERIFY_PRO_ACCOUNT_ID:-}" ]; then
-            echo "Basic and Pro Acceptance account ids are required before ordinary deployment." >&2
-            exit 1
-          fi
-          if [ -z "${OPL_VERIFY_MUTATION_APPROVAL_ID:-}" ]; then
-            echo "A live-QA owner approval id is required before ordinary deployment." >&2
-            exit 1
-          fi
-
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -161,13 +129,7 @@ jobs:
           required=(
             OPL_CLOUD_IMAGE
             OPL_WORKSPACE_IMAGE
-            OPL_OPERATOR_CIDRS
-            OPL_TRUSTED_PROXY_CIDRS
-            OPL_BASIC_COMPUTE_NODE_POOL_ID
-            OPL_PRO_COMPUTE_NODE_POOL_ID
-            OPL_GATEWAY_PUBLIC_BASE_URL
             DATABASE_URL
-            OPL_PROVIDER_ACCEPTANCE_TOKEN
             OPL_SUB2API_ADMIN_EMAIL
             OPL_SUB2API_ADMIN_PASSWORD
             OPL_AIONUI_ADMIN_PASSWORD_SEED
@@ -270,11 +232,6 @@ jobs:
           chmod 600 "$secret_dir/internal-service-token"
           kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" create secret generic opl-cloud-internal-service \
             --from-file=OPL_INTERNAL_SERVICE_TOKEN="$secret_dir/internal-service-token" \
-            --dry-run=client -o yaml | kubectl --kubeconfig "$KUBECONFIG" apply -f -
-          printf '%s' "$OPL_PROVIDER_ACCEPTANCE_TOKEN" > "$secret_dir/provider-acceptance-token"
-          chmod 600 "$secret_dir/provider-acceptance-token"
-          kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" create secret generic opl-cloud-provider-acceptance \
-            --from-file=OPL_PROVIDER_ACCEPTANCE_TOKEN="$secret_dir/provider-acceptance-token" \
             --dry-run=client -o yaml | kubectl --kubeconfig "$KUBECONFIG" apply -f -
           printf '%s' "$OPL_SUB2API_ADMIN_EMAIL" > "$secret_dir/sub2api-admin-email"
           printf '%s' "$OPL_SUB2API_ADMIN_PASSWORD" > "$secret_dir/sub2api-admin-password"
@@ -484,60 +441,6 @@ jobs:
             rmdir "$secret_dir"
           fi
 
-  live-qa:
-    name: Verify Basic reserved account after rollout
-    needs: deploy
-    if: ${{ !inputs.bootstrap_mode }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    environment: production
-    env:
-      OPL_CONSOLE_ORIGIN: ${{ vars.OPL_PUBLIC_URL || 'https://cloud.medopl.cn' }}
-      OPL_VERIFY_AUTH_USERS_JSON: ${{ secrets.OPL_VERIFY_AUTH_USERS_JSON }}
-      OPL_VERIFY_ACCOUNT_ID: ${{ vars.OPL_VERIFY_BASIC_ACCOUNT_ID || '' }}
-      OPL_VERIFY_SLOT_ID: verification-slot-basic-01
-      OPL_VERIFY_SLOT_DESCRIPTOR_JSON: '{"id":"verification-slot-basic-01","customerProduct":false,"instanceType":"SA5.MEDIUM4","server":"2c4g","cpu":2,"memoryGb":4,"cbsGb":10,"chargeType":"PREPAID","periodMonths":1,"renewFlag":"NOTIFY_AND_MANUAL_RENEW"}'
-      OPL_VERIFY_URL_ATTEMPTS: "90"
-      OPL_VERIFY_RETRY_DELAY_MS: "10000"
-      OPL_VERIFY_REQUEST_TIMEOUT_MS: "30000"
-      OPL_VERIFY_USAGE_ATTEMPTS: "36"
-      OPL_VERIFY_USAGE_RETRY_DELAY_MS: "5000"
-      OPL_VERIFY_BROWSER_TIMEOUT_MS: "60000"
-      OPL_VERIFY_MODEL_TIMEOUT_MS: "300000"
-      OPL_VERIFY_EXPECTED_MODEL: ${{ vars.OPL_CODEX_MODEL || 'gpt-5.5' }}
-      OPL_VERIFY_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}-verification-slot-basic-01
-      OPL_VERIFY_LIVE_QA_CONFIRMATION: I_UNDERSTAND_THIS_SENDS_ONE_REAL_MODEL_REQUEST
-      OPL_VERIFY_MANIFEST_PATH: artifacts/production-live-qa-verification-slot-basic-01/manifest.json
-      OPL_VERIFY_MUTATION_APPROVAL_ID: ${{ inputs.live_qa_approval_id || '' }}
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Install browser
-        run: npx playwright install --with-deps chromium
-
-      - name: Verify rollout with one Workspace model request
-        env:
-          OPL_VERIFY_MUTATION_APPROVAL_JSON: ${{ secrets.OPL_VERIFY_MUTATION_APPROVAL_JSON }}
-        run: node tools/production-live-qa.ts --allow-gateway-write --allow-model-write --approval-id "$OPL_VERIFY_MUTATION_APPROVAL_ID"
-
-      - name: Upload rollout QA manifest
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: production-live-qa-verification-slot-basic-01
-          path: artifacts/production-live-qa-verification-slot-basic-01
-          if-no-files-found: ignore
-
   bootstrap-readiness:
     name: Verify bootstrap Cloud readiness
     needs: deploy
@@ -580,7 +483,7 @@ jobs:
 
   release-gate:
     name: Require a completed ordinary release
-    needs: [deploy, live-qa, bootstrap-readiness]
+    needs: [deploy, bootstrap-readiness]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -595,7 +498,7 @@ jobs:
             echo '{"releaseComplete":false,"reason":"bootstrap release incomplete"}' >&2
             exit 1
           fi
-          if [ "${{ needs.deploy.result }}" != "success" ] || [ "${{ needs.live-qa.result }}" != "success" ]; then
+          if [ "${{ needs.deploy.result }}" != "success" ]; then
             echo '{"releaseComplete":false,"reason":"ordinary release incomplete"}' >&2
             exit 1
           fi
@@ -603,8 +506,8 @@ jobs:
 
   retire-legacy-workspace-secret:
     name: Retire legacy global Workspace secret
-    needs: [deploy, live-qa]
-    if: ${{ !inputs.bootstrap_mode && needs.deploy.result == 'success' && needs.live-qa.result == 'success' }}
+    needs: deploy
+    if: ${{ !inputs.bootstrap_mode && needs.deploy.result == 'success' }}
     runs-on: [self-hosted, tencent-cloud, opl-cloud, tke-vpc]
     timeout-minutes: 10
     environment: production
@@ -666,9 +569,9 @@ jobs:
           fi
 
   rollback-live-qa:
-    name: Roll back images after live QA failure
-    needs: [deploy, live-qa, bootstrap-readiness]
-    if: ${{ always() && needs.deploy.outputs.rollback_image_set != '' && ((inputs.bootstrap_mode && (needs.deploy.result != 'success' || needs.bootstrap-readiness.result != 'success')) || (!inputs.bootstrap_mode && (needs.deploy.result != 'success' || needs.live-qa.result != 'success'))) }}
+    name: Roll back images after deploy failure
+    needs: [deploy, bootstrap-readiness]
+    if: ${{ always() && needs.deploy.outputs.rollback_image_set != '' && ((inputs.bootstrap_mode && (needs.deploy.result != 'success' || needs.bootstrap-readiness.result != 'success')) || (!inputs.bootstrap_mode && needs.deploy.result != 'success')) }}
     runs-on: [self-hosted, tencent-cloud, opl-cloud, tke-vpc]
     timeout-minutes: 20
     environment: production

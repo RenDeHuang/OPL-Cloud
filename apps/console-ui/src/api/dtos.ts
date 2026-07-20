@@ -285,10 +285,6 @@ export interface GatewayWallet {
   status: string;
 }
 
-export interface GatewayEndpointDTO {
-  baseUrl: string;
-}
-
 export type GatewayWalletDTO = GatewayWallet;
 
 export interface CreateGatewayKeyRequest {

@@ -33,10 +33,9 @@ is omitted unless the authority supplies it. Browser identity parameters never
 override the current Session mapping, and raw downstream DTOs never cross the
 Control Plane boundary.
 
-The browser-visible Gateway address is an independent product configuration:
-`OPL_GATEWAY_PUBLIC_BASE_URL` -> `GET /api/gateway/endpoint`. Production accepts
-only an absolute HTTPS URL. Missing or invalid configuration is unavailable and
-never falls back to the internal `OPL_SUB2API_BASE_URL` or `gflabtoken.cn`.
+Console has no browser-visible Gateway base-address API or card.
+`OPL_SUB2API_BASE_URL` remains server-only and `gflabtoken.cn` is never exposed as
+a customer link. Cloud does not inject a second Runtime Gateway base URL.
 
 `code-complete` means the local contracts, code, PostgreSQL, browser, and
 structure gates pass on one revision. `pilot-ready` additionally requires
@@ -166,9 +165,9 @@ security-model change is authorized by this document.
 Production runs Control Plane, Fabric, and Ledger as separate Kubernetes
 Deployments. Secrets are Kubernetes Secret references, configuration is a shared
 ConfigMap, and the deploy workflow waits for all three rollouts. Basic and Pro
-have separate retained Provider Acceptance slots. An ordinary release requires
-both slots, then runs live QA once with the Basic reserved account, one dedicated
-Key, one model request, and zero Tencent mutation.
+remain defined, but the production Fabric catalog exposes Basic only and marks
+Pro unavailable. Provider Acceptance, Pro verification, and fixed-slot live QA
+remain paused and do not gate ordinary deploy.
 
 Image publication accepts a full 40-character Cloud commit only. The release
 workflow reads back the exact checked-out HEAD and official Cloud `origin/main`,

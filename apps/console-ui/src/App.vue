@@ -39,7 +39,6 @@ import {
   getBillingReceipts,
   getGatewayAccountUsageSummary,
   getGatewayBalanceHistory,
-  getGatewayEndpoint,
   getGatewayKey,
   getGatewayKeyUsage,
   getGatewayKeyUsageSummary,
@@ -86,7 +85,6 @@ import type {
   BillingReviewResolutionRequest,
   CreateGatewayKeyRequest,
   GatewayAccountUsageSummaryDTO,
-  GatewayEndpointDTO,
   GatewayKeySecretDTO,
   GatewayKeyPageDTO,
   GatewayKeySummaryDTO,
@@ -143,7 +141,6 @@ const authStatus = ref(needsSession(path.value) ? "checking" : "public");
 const authError = ref("");
 const workspaceSource = ref<SourceEnvelope<WorkspaceListData> | null>(null);
 const workspaceStatusSource = ref<SourceEnvelope<WorkspaceRuntimeDTO> | null>(null);
-const endpointSource = ref<SourceEnvelope<GatewayEndpointDTO> | null>(null);
 const walletSource = ref<SourceEnvelope<GatewayWallet> | null>(null);
 const keySource = ref<SourceEnvelope<GatewayKeyPageDTO> | null>(null);
 const usageSource = ref<SourceEnvelope<GatewayKeyUsagePageDTO> | null>(null);
@@ -195,8 +192,8 @@ const walletAdjustmentForm = reactive<WalletAdjustmentRequest>({ kind: "recharge
 const announcementForm = reactive<AnnouncementDraftRequest>({ title: "", body: "", startsAt: "", endsAt: "" });
 const selectedOperatorAccountId = ref("");
 const selectedReview = ref<OperatorReconciliationItemDTO | null>(null);
-const loading = reactive({ workspace: false, runtime: false, endpoint: false, wallet: false, keys: false, usage: false, stats: false, accountStats: false, history: false, receipts: false, receiptDetail: false, announcements: false, catalog: false, accounts: false, admin: false, readiness: false, operatorOverview: false, operatorAccounts: false, operatorWorkspaces: false, operatorWorkspaceDetail: false, operatorReconciliation: false, operatorHealth: false, operatorAnnouncements: false, walletAdjustment: false, review: false });
-const errors = reactive({ workspace: "", runtime: "", endpoint: "", wallet: "", keys: "", usage: "", stats: "", accountStats: "", history: "", receipts: "", receiptDetail: "", announcements: "", catalog: "", accounts: "", admin: "", readiness: "", operatorOverview: "", operatorAccounts: "", operatorWorkspaces: "", operatorWorkspaceDetail: "", operatorReconciliation: "", operatorHealth: "", operatorAnnouncements: "", walletAdjustment: "", review: "" });
+const loading = reactive({ workspace: false, runtime: false, wallet: false, keys: false, usage: false, stats: false, accountStats: false, history: false, receipts: false, receiptDetail: false, announcements: false, catalog: false, accounts: false, admin: false, readiness: false, operatorOverview: false, operatorAccounts: false, operatorWorkspaces: false, operatorWorkspaceDetail: false, operatorReconciliation: false, operatorHealth: false, operatorAnnouncements: false, walletAdjustment: false, review: false });
+const errors = reactive({ workspace: "", runtime: "", wallet: "", keys: "", usage: "", stats: "", accountStats: "", history: "", receipts: "", receiptDetail: "", announcements: "", catalog: "", accounts: "", admin: "", readiness: "", operatorOverview: "", operatorAccounts: "", operatorWorkspaces: "", operatorWorkspaceDetail: "", operatorReconciliation: "", operatorHealth: "", operatorAnnouncements: "", walletAdjustment: "", review: "" });
 let toastTimer: number | undefined;
 let secretTimer: number | undefined;
 let secretRequestGeneration = 0;
@@ -240,7 +237,6 @@ const workspace = computed<WorkspaceDTO | null>(() => {
 const workspacePlan = computed(() => catalog.value?.packages.find((plan) => plan.id === workspace.value?.packageId) || null);
 const runtime = computed(() => workspaceStatusSource.value?.available ? workspaceStatusSource.value.data : null);
 const mountCheck = computed(() => runtime.value?.checks.find((check) => check.name === "ready_pod_uses_retained_pvc") || null);
-const endpoint = computed(() => endpointSource.value?.available ? endpointSource.value.data : null);
 const wallet = computed(() => walletSource.value?.available ? walletSource.value.data : null);
 const keys = computed(() => keySource.value?.available ? keySource.value.data.items : []);
 const workspaceKeyId = computed(() => workspace.value?.workspaceApiKeyId || "");
@@ -419,7 +415,6 @@ function clearSessionState() {
   receiptRequestGeneration += 1;
   workspaceSource.value = null;
   workspaceStatusSource.value = null;
-  endpointSource.value = null;
   walletSource.value = null;
   keySource.value = null;
   usageSource.value = null;
@@ -523,20 +518,6 @@ async function loadWorkspaceStatus() {
     workspaceStatusSource.value = unavailableSource<WorkspaceRuntimeDTO>("fabric");
     errors.runtime = friendlyError(error);
   } finally { if (requestStillCurrent()) loading.runtime = false; }
-}
-
-async function loadEndpoint() {
-  const requestStillCurrent = currentSessionRequest();
-  loading.endpoint = true;
-  resetSource("endpoint");
-  endpointSource.value = unavailableSource<GatewayEndpointDTO>("control-plane");
-  try {
-    const result = await getGatewayEndpoint();
-    if (!requestStillCurrent()) return;
-    endpointSource.value = result;
-  }
-  catch (error) { if (!requestStillCurrent()) return; endpointSource.value = unavailableSource<GatewayEndpointDTO>("control-plane"); errors.endpoint = friendlyError(error); }
-  finally { if (requestStillCurrent()) loading.endpoint = false; }
 }
 
 async function loadWallet() {
@@ -748,7 +729,7 @@ async function loadCatalog() {
 async function loadCustomer() {
   const requestStillCurrent = currentSessionRequest();
   if (apiRoute.value) {
-    if (activeApiPage.value === "overview") await Promise.all([loadEndpoint(), loadWallet(), loadAccountUsage(), loadHistory()]);
+    if (activeApiPage.value === "overview") await Promise.all([loadWallet(), loadAccountUsage(), loadHistory()]);
     else await loadKeys();
     return;
   }
@@ -1635,7 +1616,6 @@ onBeforeUnmount(() => {
               <div v-if="loading.accountStats" class="loading-panel"><span class="spinner" />正在读取用量汇总...</div><div v-else-if="errors.accountStats" class="inline-error"><AlertCircle :size="17" />{{ errors.accountStats }}<button type="button" @click="loadAccountUsage">重试</button></div><div v-else-if="accountUsageSource?.status === 'unavailable'" class="empty-panel">用量汇总暂不可用 <button class="text-button" type="button" @click="loadAccountUsage">重试</button></div>
               <div v-if="loading.wallet" class="loading-panel"><span class="spinner" />正在读取余额...</div><div v-else-if="errors.wallet" class="inline-error"><AlertCircle :size="17" />{{ errors.wallet }}<button type="button" @click="loadWallet">重试</button></div><div v-else-if="walletSource?.status === 'unavailable'" class="empty-panel">余额暂不可用 <button class="text-button" type="button" @click="loadWallet">重试</button></div>
               <section class="metric-row"><article><WalletCards /><span>可用余额<strong>{{ wallet ? formatAvailableBalance({ ...wallet, available: true }) : "暂不可用" }}</strong></span></article><article><CircleDollarSign /><span>本月费用<strong>{{ stats ? formatUsdMicros(stats.totalActualCostUsdMicros) : "暂不可用" }}</strong></span></article><article><Activity /><span>请求次数<strong>{{ stats ? formatCount(stats.totalRequests) : "暂不可用" }}</strong></span></article></section>
-              <section class="panel"><div class="panel-title"><h2>连接信息</h2></div><div v-if="loading.endpoint" class="loading-panel"><span class="spinner" />正在读取...</div><div v-else-if="errors.endpoint" class="inline-error"><AlertCircle :size="17" />{{ errors.endpoint }}<button type="button" @click="loadEndpoint">重试</button></div><div v-else-if="endpointSource?.status === 'unavailable'" class="empty-panel">暂不可用 <button class="text-button" type="button" @click="loadEndpoint">重试</button></div><dl v-else class="data-list"><div><dt>API Base URL</dt><dd><code>{{ endpoint?.baseUrl || "暂不可用" }}</code></dd></div></dl></section>
               <section class="panel"><div class="panel-title"><h2>余额记录</h2></div><div v-if="loading.history" class="loading-panel"><span class="spinner" />正在读取余额记录...</div><div v-else-if="errors.history" class="inline-error"><AlertCircle :size="17" />{{ errors.history }}<button type="button" @click="loadHistory">重试</button></div><div v-else-if="balanceHistorySource?.status === 'unavailable'" class="empty-panel">暂不可用 <button class="text-button" type="button" @click="loadHistory">重试</button></div><div v-else-if="balanceHistorySource?.status === 'empty'" class="empty-panel">暂无余额记录</div><div v-else class="table-wrap"><table><thead><tr><th>时间</th><th>类型</th><th>金额</th><th>状态</th></tr></thead><tbody><tr v-for="item in history" :key="`${item.createdAt}-${item.type}`"><td>{{ formatDate(item.createdAt, true) }}</td><td>{{ item.type }}</td><td>{{ formatUsdMicros(item.valueUsdMicros) }}</td><td>{{ item.status }}</td></tr></tbody></table></div></section>
             </div>
             <section v-else-if="activeApiPage === 'usage'" class="panel">

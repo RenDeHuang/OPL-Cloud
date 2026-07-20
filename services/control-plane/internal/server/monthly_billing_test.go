@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -213,6 +214,7 @@ type monthlyFabric struct {
 	mutateCompute         func(*clients.ComputeAllocation)
 	mutateStorage         func(*clients.StorageVolume)
 	computeIDs            []string
+	computeInputs         []clients.ComputeAllocationInput
 	storageIDs            []string
 	storageCreateKeys     []string
 	storageInputs         []clients.StorageVolumeInput
@@ -260,11 +262,36 @@ func (f *monthlyFabric) MonthlyPreflight(_ context.Context, input clients.Monthl
 	if input.ResourceType == "compute" {
 		requestIDs = map[string]string{"nodePool": "node-pool-request", "subnets": "subnets-request", "availability": "availability-request"}
 	}
-	return clients.MonthlyPreflight{
+	result := clients.MonthlyPreflight{
 		ResourceType: input.ResourceType, PackageID: input.PackageID, SizeGB: input.SizeGB, Zone: input.Zone,
 		Available: true, ChargeType: "PREPAID", PeriodMonths: 1, RenewFlag: "NOTIFY_AND_MANUAL_RENEW",
 		ProviderPriceCNY: 12.34, ProviderRequestIDs: requestIDs,
-	}, f.preflightErr
+	}
+	if input.ResourceType == "compute" {
+		setMonthlyPreflightNodePoolID(&result, "np-"+input.PackageID)
+	}
+	return result, f.preflightErr
+}
+
+func setMonthlyPreflightNodePoolID(result *clients.MonthlyPreflight, nodePoolID string) {
+	field := reflect.ValueOf(result).Elem().FieldByName("NodePoolID")
+	if field.IsValid() && field.CanSet() {
+		field.SetString(nodePoolID)
+	}
+}
+
+func monthlyPreflightResult(input clients.MonthlyPreflightInput, nodePoolID string) clients.MonthlyPreflight {
+	requestIDs := map[string]string{"quota": "quota-request", "price": "price-request"}
+	if input.ResourceType == "compute" {
+		requestIDs = map[string]string{"nodePool": "node-pool-request", "subnets": "subnets-request", "availability": "availability-request"}
+	}
+	result := clients.MonthlyPreflight{
+		ResourceType: input.ResourceType, PackageID: input.PackageID, SizeGB: input.SizeGB, Zone: input.Zone,
+		Available: true, ChargeType: "PREPAID", PeriodMonths: 1, RenewFlag: "NOTIFY_AND_MANUAL_RENEW",
+		ProviderPriceCNY: 12.34, ProviderRequestIDs: requestIDs,
+	}
+	setMonthlyPreflightNodePoolID(&result, nodePoolID)
+	return result
 }
 
 func (f *monthlyFabric) MonthlyProviderTruth(_ context.Context, _, _ string) (clients.MonthlyProviderTruth, error) {
@@ -304,6 +331,7 @@ func (f *provisioningMonthlyFabric) SyncStorageVolume(_ context.Context, id stri
 func (f *monthlyFabric) CreateComputeAllocation(_ context.Context, input clients.ComputeAllocationInput, _ string) (clients.ComputeAllocation, error) {
 	*f.events = append(*f.events, "fabric.compute.prepare")
 	f.computeIDs = append(f.computeIDs, input.ID)
+	f.computeInputs = append(f.computeInputs, input)
 	if f.createErr != nil {
 		return clients.ComputeAllocation{ID: input.ID}, f.createErr
 	}

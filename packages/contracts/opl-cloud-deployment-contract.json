@@ -1,9 +1,9 @@
 {
-  "schemaVersion": 9,
+  "schemaVersion": 10,
   "owner": "OPL Fabric",
   "purpose": "Deployment workflow, immutable Cloud and Workspace images, TKE handoff, and production-verification safety.",
   "state": "current",
-  "machineBoundary": "GitHub workflow structure, runner isolation, deploy-time env sources, secret handling, immutable image release, grouped rollback, read-only fixed-slot verification, post-rollout live QA, and legacy global Secret retirement.",
+  "machineBoundary": "GitHub workflow structure, runner isolation, deploy-time env sources, secret handling, immutable image release, grouped rollback, Basic rollout readiness, paused standalone verification, and legacy global Secret retirement.",
   "lifecycle": {
     "type": "long_term_contract",
     "removalCondition": "Replace only with a newer current contract for the same boundary."
@@ -26,14 +26,6 @@
     "restartBehavior": "reauthentication_required",
     "horizontalScaling": "blocked_pending_secure_shared_vault"
   },
-  "gatewayPublicEndpoint": {
-    "configEnv": "OPL_GATEWAY_PUBLIC_BASE_URL",
-    "workflowRequired": true,
-    "productionValidation": "absolute_https_not_internal_gateway",
-    "missingBehavior": "product_source_unavailable",
-    "localEvidence": "focused_config_and_manifest_tests_passed",
-    "productionEvidence": "pending"
-  },
   "runner": [
     "self-hosted",
     "tencent-cloud",
@@ -47,8 +39,8 @@
     "inputs": [
       "cloud_image",
       "workspace_image",
-      "bootstrap_mode",
-      "live_qa_approval_id"
+      "exercise_rollback",
+      "bootstrap_mode"
     ],
     "requiredEnv": [
       "OPL_RUNTIME_PROVIDER",
@@ -56,8 +48,6 @@
       "OPL_PUBLIC_URL",
       "OPL_CONSOLE_DOMAIN",
       "OPL_WORKSPACE_DOMAIN",
-      "OPL_OPERATOR_CIDRS",
-      "OPL_TRUSTED_PROXY_CIDRS",
       "OPL_CLOUD_IMAGE",
       "OPL_WORKSPACE_IMAGE",
       "OPL_BOOTSTRAP_MODE",
@@ -75,20 +65,13 @@
       "OPL_MONTHLY_BILLING_INTERVAL_MS",
       "OPL_TENCENT_ZONE",
       "OPL_BASIC_COMPUTE_INSTANCE_TYPE",
-      "OPL_BASIC_COMPUTE_NODE_POOL_ID",
       "OPL_PRO_COMPUTE_INSTANCE_TYPE",
-      "OPL_PRO_COMPUTE_NODE_POOL_ID",
       "OPL_CODEX_MODEL",
       "OPL_CODEX_REASONING_EFFORT",
-      "OPL_CODEX_BASE_URL",
-      "OPL_GATEWAY_PUBLIC_BASE_URL",
       "OPL_SUB2API_BASE_URL",
       "OPL_SUB2API_REQUEST_TIMEOUT_MS",
       "OPL_SUB2API_ADMIN_EMAIL",
       "OPL_SUB2API_ADMIN_PASSWORD",
-      "OPL_VERIFY_BASIC_ACCOUNT_ID",
-      "OPL_VERIFY_PRO_ACCOUNT_ID",
-      "OPL_VERIFY_MUTATION_APPROVAL_ID",
       "TENCENTCLOUD_SECRET_ID",
       "TENCENTCLOUD_SECRET_KEY",
       "TENCENTCLOUD_REGION",
@@ -104,14 +87,12 @@
       "TENCENT_DEPLOY_KUBECONFIG_REF",
       "DATABASE_URL",
       "OPL_INTERNAL_SERVICE_TOKEN",
-      "OPL_PROVIDER_ACCEPTANCE_TOKEN",
       "TCR_USERNAME",
       "TCR_PASSWORD"
     ],
     "secretEnv": [
       "DATABASE_URL",
       "OPL_INTERNAL_SERVICE_TOKEN",
-      "OPL_PROVIDER_ACCEPTANCE_TOKEN",
       "OPL_SUB2API_ADMIN_EMAIL",
       "OPL_SUB2API_ADMIN_PASSWORD",
       "TENCENTCLOUD_SECRET_ID",
@@ -122,7 +103,6 @@
       "TENCENT_DEPLOY_KUBECONFIG"
     ],
     "steps": [
-      "Require Basic and Pro Acceptance accounts",
       "Checkout",
       "Set up Node",
       "Prepare kubeconfig",
@@ -138,10 +118,6 @@
       "Remove deployment secrets"
     ],
     "orderedSteps": [
-      [
-        "Require Basic and Pro Acceptance accounts",
-        "Checkout"
-      ],
       [
         "Check TLS certificate inputs",
         "Install Kubernetes secrets"
@@ -164,10 +140,6 @@
       ]
     ],
     "requiredCommandsByStep": {
-      "Require Basic and Pro Acceptance accounts": [
-        "OPL_BOOTSTRAP_MODE",
-        "OPL_VERIFY_MUTATION_APPROVAL_ID"
-      ],
       "Set up Node": [
         "node-version",
         "22"
@@ -178,13 +150,13 @@
         "TENCENT_DEPLOY_KUBECONFIG"
       ],
       "Check deployment inputs": [
-        "OPL_BASIC_COMPUTE_NODE_POOL_ID",
-        "OPL_PRO_COMPUTE_NODE_POOL_ID"
+        "OPL_CLOUD_IMAGE",
+        "OPL_WORKSPACE_IMAGE",
+        "sha256"
       ],
       "Install Kubernetes secrets": [
         "--from-file=DATABASE_URL=\"$secret_dir/database-url\"",
         "--from-file=OPL_INTERNAL_SERVICE_TOKEN=\"$secret_dir/internal-service-token\"",
-        "--from-file=OPL_PROVIDER_ACCEPTANCE_TOKEN=\"$secret_dir/provider-acceptance-token\"",
         "--from-file=OPL_SUB2API_ADMIN_EMAIL=\"$secret_dir/sub2api-admin-email\"",
         "--from-file=OPL_SUB2API_ADMIN_PASSWORD=\"$secret_dir/sub2api-admin-password\"",
         "--from-file=TENCENTCLOUD_SECRET_ID=\"$secret_dir/tencentcloud-secret-id\"",
@@ -237,7 +209,7 @@
   "productionVerificationWorkflow": {
     "file": ".github/workflows/verify-production-chain.yml",
     "job": "verify",
-    "launchStatus": "active",
+    "launchStatus": "paused",
     "releaseGate": false,
     "mode": "read_only_dual_fixed_slots",
     "slotDescriptors": [
@@ -311,7 +283,7 @@
   "providerAcceptanceWorkflow": {
     "file": ".github/workflows/provider-acceptance.yml",
     "job": "accept",
-    "launchStatus": "active",
+    "launchStatus": "paused",
     "releaseGate": false,
     "mode": "operator_only_one_time_dual_fixed_slot",
     "mutationAuthorityWiring": "dispatch_approval_id_protected_manifest_explicit_cli_allow_flags",
@@ -417,81 +389,6 @@
       "renew"
     ]
   },
-  "productionLiveQaJob": {
-    "file": ".github/workflows/deploy-tke-production.yml",
-    "job": "live-qa",
-    "releaseGate": true,
-    "mode": "one_basic_reserved_account_one_dedicated_key_one_model_request_no_provider_mutation",
-    "mutationAuthorityWiring": "dispatch_approval_id_protected_manifest_explicit_cli_allow_flags",
-    "reservedAccountCount": 1,
-    "dedicatedKeyCount": 1,
-    "modelRequestCount": 1,
-    "providerMutationCount": 0,
-    "requestTimeoutMsDefault": 30000,
-    "slotDescriptors": [
-      {
-        "id": "verification-slot-basic-01", "customerProduct": false, "instanceType": "SA5.MEDIUM4", "server": "2c4g",
-        "cpu": 2, "memoryGb": 4, "cbsGb": 10, "chargeType": "PREPAID", "periodMonths": 1, "renewFlag": "NOTIFY_AND_MANUAL_RENEW"
-      }
-    ],
-    "runner": [
-      "ubuntu-latest"
-    ],
-    "inputs": [
-      "live_qa_approval_id"
-    ],
-    "requiredInputs": [],
-    "requiredEnv": [
-      "OPL_CONSOLE_ORIGIN",
-      "OPL_VERIFY_AUTH_USERS_JSON",
-      "OPL_VERIFY_ACCOUNT_ID",
-      "OPL_VERIFY_SLOT_ID",
-      "OPL_VERIFY_SLOT_DESCRIPTOR_JSON",
-      "OPL_VERIFY_URL_ATTEMPTS",
-      "OPL_VERIFY_RETRY_DELAY_MS",
-      "OPL_VERIFY_REQUEST_TIMEOUT_MS",
-      "OPL_VERIFY_USAGE_ATTEMPTS",
-      "OPL_VERIFY_USAGE_RETRY_DELAY_MS",
-      "OPL_VERIFY_BROWSER_TIMEOUT_MS",
-      "OPL_VERIFY_MODEL_TIMEOUT_MS",
-      "OPL_VERIFY_EXPECTED_MODEL",
-      "OPL_VERIFY_RUN_ID",
-      "OPL_VERIFY_LIVE_QA_CONFIRMATION",
-      "OPL_VERIFY_MANIFEST_PATH",
-      "OPL_VERIFY_MUTATION_APPROVAL_ID"
-    ],
-    "secretEnv": [
-      "OPL_VERIFY_AUTH_USERS_JSON"
-    ],
-    "steps": [
-      "Checkout",
-      "Set up Node",
-      "Install dependencies",
-      "Install browser",
-      "Verify rollout with one Workspace model request",
-      "Upload rollout QA manifest"
-    ],
-    "requiredCommandsByStep": {
-      "Set up Node": [
-        "node-version",
-        "22"
-      ],
-      "Install dependencies": [
-        "npm ci"
-      ],
-      "Install browser": [
-        "playwright install --with-deps chromium"
-      ],
-      "Verify rollout with one Workspace model request": [
-        "node tools/production-live-qa.ts",
-        "--allow-gateway-write",
-        "--allow-model-write",
-        "--approval-id",
-        "OPL_VERIFY_MUTATION_APPROVAL_JSON"
-      ]
-    },
-    "forbiddenRunTokens": []
-  },
   "productionBootstrapJob": {
     "file": ".github/workflows/deploy-tke-production.yml",
     "job": "bootstrap-readiness",
@@ -554,7 +451,7 @@
   "productionLegacySecretCleanupJob": {
     "file": ".github/workflows/deploy-tke-production.yml",
     "job": "retire-legacy-workspace-secret",
-    "trigger": "candidate_rollout_and_live_qa_successful",
+    "trigger": "candidate_rollout_successful",
     "failureBehavior": "fail_workflow_without_image_rollback",
     "legacySecretName": "opl-cloud-workspace-codex",
     "accountScopedSecretDeletionForbidden": true,
@@ -603,7 +500,7 @@
   "productionRollbackJob": {
     "file": ".github/workflows/deploy-tke-production.yml",
     "job": "rollback-live-qa",
-    "trigger": "post_snapshot_deploy_live_qa_or_bootstrap_readiness_not_successful",
+    "trigger": "post_snapshot_deploy_or_bootstrap_readiness_not_successful",
     "runner": [
       "self-hosted",
       "tencent-cloud",

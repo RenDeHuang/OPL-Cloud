@@ -131,6 +131,9 @@ func registerWorkspaceLaunchRoutes(mux *http.ServeMux, app *controlPlaneServer, 
 				writeError(w, http.StatusBadGateway, "fabric_monthly_preflight_invalid")
 				return
 			}
+			if preflightInput.ResourceType == "compute" {
+				operation.ComputeNodePoolID = preflight.NodePoolID
+			}
 		}
 		unlockAccount := app.lockResource("account", accountID)
 		defer unlockAccount()

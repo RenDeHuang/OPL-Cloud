@@ -527,42 +527,40 @@ func TestExpiredJobCanRetryAndFail(t *testing.T) {
 	}
 }
 
-func TestCatalogExposesConfiguredWorkspacePackagesIndependently(t *testing.T) {
-	for _, tc := range []struct {
-		name           string
-		basicPool      string
-		proPool        string
-		basicAvailable bool
-		proAvailable   bool
-	}{
-		{name: "neither configured"},
-		{name: "basic only", basicPool: "np-basic", basicAvailable: true},
-		{name: "pro only", proPool: "np-pro", proAvailable: true},
-		{name: "both configured", basicPool: "np-basic", proPool: "np-pro", basicAvailable: true, proAvailable: true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv("OPL_BASIC_COMPUTE_NODE_POOL_ID", tc.basicPool)
-			t.Setenv("OPL_PRO_COMPUTE_NODE_POOL_ID", tc.proPool)
-			provider := NewTencentProvider()
-			provider.provision = func(context.Context, provisionerRequest) (provisionerResponse, error) {
-				t.Fatal("catalog availability must not call Tencent provisioner")
-				return provisionerResponse{}, nil
-			}
-			provider.kubectl = func(context.Context, []string, []byte) ([]byte, error) {
-				t.Fatal("catalog availability must not call Kubernetes")
-				return nil, nil
-			}
+func TestProductionCatalogKeepsBasicAvailableAndProUnavailable(t *testing.T) {
+	t.Setenv("NODE_ENV", "production")
+	t.Setenv("OPL_BASIC_COMPUTE_NODE_POOL_ID", "")
+	t.Setenv("OPL_PRO_COMPUTE_NODE_POOL_ID", "np-pro-must-not-enable-production")
+	provider := NewTencentProvider()
+	provider.provision = func(context.Context, provisionerRequest) (provisionerResponse, error) {
+		t.Fatal("catalog availability must not call Tencent provisioner")
+		return provisionerResponse{}, nil
+	}
+	provider.kubectl = func(context.Context, []string, []byte) ([]byte, error) {
+		t.Fatal("catalog availability must not call Kubernetes")
+		return nil, nil
+	}
 
-			catalog := NewService(provider).Catalog(context.Background())
-			if len(catalog.WorkspacePackages) != 2 {
-				t.Fatalf("workspace packages = %#v, want Basic and Pro", catalog.WorkspacePackages)
-			}
-			basic, pro := catalog.WorkspacePackages[0], catalog.WorkspacePackages[1]
-			if basic.ID != "basic" || basic.CPU != 2 || basic.MemoryGB != 4 || basic.DiskGB != 10 || basic.Available != tc.basicAvailable ||
-				pro.ID != "pro" || pro.CPU != 8 || pro.MemoryGB != 16 || pro.DiskGB != 100 || pro.Available != tc.proAvailable {
-				t.Fatalf("unexpected commercial catalog: %#v", catalog.WorkspacePackages)
-			}
-		})
+	catalog := NewService(provider).Catalog(context.Background())
+	if len(catalog.WorkspacePackages) != 2 {
+		t.Fatalf("workspace packages = %#v, want Basic and Pro", catalog.WorkspacePackages)
+	}
+	basic, pro := catalog.WorkspacePackages[0], catalog.WorkspacePackages[1]
+	if basic.ID != "basic" || basic.CPU != 2 || basic.MemoryGB != 4 || basic.DiskGB != 10 || !basic.Available ||
+		pro.ID != "pro" || pro.CPU != 8 || pro.MemoryGB != 16 || pro.DiskGB != 100 || pro.Available {
+		t.Fatalf("unexpected production catalog: %#v", catalog.WorkspacePackages)
+	}
+}
+
+func TestCreateComputeAllocationPersistsDiscoveredNodePoolID(t *testing.T) {
+	var input ComputeAllocationInput
+	if err := json.Unmarshal([]byte(`{"id":"compute-alpha","accountId":"acct-alpha","workspaceId":"ws-alpha","packageId":"basic","nodePoolId":"np-basic"}`), &input); err != nil {
+		t.Fatal(err)
+	}
+	input.IdempotencyKey = "compute-with-discovered-pool"
+	allocation, err := NewServiceWithOperationStore(testProvider{}, NewMemoryOperationStore()).CreateComputeAllocation(context.Background(), input)
+	if err != nil || allocation.NodePoolID != "np-basic" {
+		t.Fatalf("compute allocation = %#v, err=%v", allocation, err)
 	}
 }
 

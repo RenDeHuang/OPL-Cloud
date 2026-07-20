@@ -43,9 +43,9 @@ The four implementation owner lanes are Console/Control Plane, Fabric, Gateway i
   `50_000_000` compute plus `2_580_000` storage.
 - Pro is `8c16g` plus 100GB for `240_080_000` USD micros/month:
   `214_280_000` compute plus `25_800_000` storage.
-- Basic and Pro are the target Pilot packages. A customer catalog entry becomes
-  available only from matching live Fabric availability and after the production
-  evidence gate passes.
+- Basic and Pro remain the target package definitions and prices. The Basic
+  production catalog entry is available; Pro remains defined but reports
+  `available=false` for this rollout.
 - Internal Acceptance slots are not customer products and never appear in
   catalog or quote paths. Static package definitions are targets; actual
   availability comes from live Fabric catalog readback.
@@ -56,6 +56,11 @@ The four implementation owner lanes are Console/Control Plane, Fabric, Gateway i
 - Customer and verification CVM/CBS procurement uses `PREPAID`, period 1 month, and `NOTIFY_AND_MANUAL_RENEW`.
 - `POSTPAID_BY_HOUR` is forbidden for customer and verification CVM/CBS resources.
 - Capacity and price preflight is read-only and happens before debit. It cannot buy, reserve, renew, or delete a Tencent resource.
+- Compute preflight discovers the existing TKE NodePool with `DescribeNodePools`
+  by exact `oplcloud.cn/pool-id`, `oplcloud.cn/package-id`, and
+  `oplcloud.cn/instance-type` labels. Exactly one match is required. Zero,
+  multiple, incomplete, or changed matches fail before debit; the Tencent
+  NodePool ID is stored on `workspace.launch.v2` before debit.
 - Fabric creates CBS with a stable `ClientToken`, reads back CVM/CBS identity and billing facts, then binds CBS through a static PV/PVC in the compute Zone.
 - Static CBS uses `com.tencent.cloud.csi.cbs`, `volumeHandle=disk-*`, RWO, empty `storageClassName`, Zone affinity, and `persistentVolumeReclaimPolicy=Retain`.
 - `UNATTACHED` or `ATTACHED` is provider-ready; PVC `Bound` is required before Workspace deployment.
@@ -88,9 +93,10 @@ The four implementation owner lanes are Console/Control Plane, Fabric, Gateway i
   caches, or operation payloads. The retired Gateway summary route is a 404.
 - Kubernetes Secret is the only authorized Key persistence point. Fabric writes or rotates an account-scoped Secret, and Workspace runtime receives only its reference.
 - The global `OPL_CODEX_API_KEY` is forbidden for customer Workspaces.
-- The public API address comes only from `OPL_GATEWAY_PUBLIC_BASE_URL` through
-  `GET /api/gateway/endpoint`. Production requires HTTPS; missing/invalid configuration is unavailable.
-  Browser responses never expose or fall back to `OPL_SUB2API_BASE_URL` or `gflabtoken.cn`.
+- Console exposes no Gateway base-address product API or card. Browser responses
+  and links never expose `OPL_SUB2API_BASE_URL` or `gflabtoken.cn`; Runtime uses
+  the official App/Shell default model endpoint and Cloud does not inject a
+  second Gateway base URL.
 
 Every Console source projection carries `source`, `status`, `available`, and
 `fetchedAt`. `empty` means a successful authoritative read with zero rows;
@@ -254,17 +260,13 @@ Provider Acceptance owns two retained non-customer slots:
 
 - Lifetime purchase budget is one per slot. Read-only inventory runs first;
   multiple or ambiguous candidates stop without purchase.
-- Provider Acceptance is a separate manually approved workflow and has not been
-  run for the current candidate.
-- Ordinary deployment requires both slots but performs no purchase, renewal, or
-  deletion. Release live QA uses one Basic reserved account, one dedicated Key,
-  and one model request for the entire release.
-- Live QA must prove exact-one Usage (`keyId`, `requestId`, model, endpoint,
-  Tokens, `actualCostUsdMicros`), an equal wallet balance delta, the same Ledger
-  Receipt/CVM/CBS/RuntimeOperation facts, Ready Pod `imageID`, login/WebSocket,
-  and zero Tencent mutation.
-- This verification chain is code-complete and fake-tested, not
-  production-proven. Real execution requires explicit approval.
+- Provider Acceptance, Pro verification, and the fixed-slot production verifier
+  are paused and do not gate ordinary Basic rollout. Their workflows remain
+  separate from deploy and retain their explicit approval boundaries.
+- The normal Console Basic canary is the only planned write-path validation for
+  this rollout. It runs once after health/readiness and uses normal account,
+  wallet, Key, launch, Fabric, Runtime, Usage, and Ledger paths.
+- Paused verification code and fake tests are not production evidence.
 
 ## Launch Stages
 
@@ -278,7 +280,7 @@ Provider Acceptance owns two retained non-customer slots:
 | 6. Workspace access | Authenticate to a ready, persistent, account-keyed Workspace. | Fabric, Console, Ledger | V2 attachment, Secret, Runtime readiness gate, activation, receipt-only recovery, status, and credential flows have local focused evidence on the non-review path. Runtime metadata/statfs API and Console presentation are paused; immutable image, browser, WebSocket, model, direct mount-marker persistence, and deployed evidence remain pending. | Owner isolation, login, WebSocket 101, Secret rotation, credential revision, digest readback, and direct `/data`/`/projects` marker retention. |
 | 7. Gateway usage | Reveal the owner Key, make a metered Workspace model request, and show its customer-safe cost and Token facts. | Gateway, Console, Ledger | Wallet, Key list, request Usage, Usage Stats, balance history, and integer-cost projections are code-complete and locally tested; a real model request and production readback remain pending. | Tenant isolation, model response, request usage and stats projection, integer `actual_cost`, no leakage. |
 | 8. Renewal and recovery | Renew one Workspace period with deterministic recovery. | All four lanes | Workspace-level claim, combined debit, same-ID provider renewal/readback, expiry, refund/review, and receipt recovery are code-complete; enabling auto-renew and real renewal evidence are pending. | Isolated PostgreSQL concurrency, renewal replay, deadline readback, real approved renewal. |
-| 9. Reusable verification | Prove releases without per-run Tencent purchase or deletion. | All four lanes | Dual Acceptance and one-request Basic live-QA workflows are code-complete and fake-tested; neither Acceptance nor live QA has run for the candidate. | Two retained slots, stable resource facts, exact-one Usage and wallet delta. |
+| 9. Reusable verification | Prove releases without per-run Tencent purchase or deletion. | All four lanes | Provider Acceptance, Pro verification, and fixed-slot verification are paused and do not gate the Basic rollout. | Future separately approved retained-slot evidence. |
 | 10. Production release | Declare ready from immutable artifacts, rollout, rollback, and real evidence. | All four lanes | Security, immutable imageID checks, grouped rollback, release tooling, Task 12 UI, Task 13A local gates, and the deployment identity cutover are code-complete locally; immutable publication, rollout, rollback, and runtime evidence remain pending. | Full local gates, immutable digests, rollout, rollback, source-truth QA, approved real evidence. |
 
 ## Delivery Phases

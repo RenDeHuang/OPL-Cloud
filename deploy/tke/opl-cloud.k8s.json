@@ -41,8 +41,6 @@
         "OPL_PUBLIC_URL": "https://cloud.medopl.cn",
         "OPL_CONSOLE_DOMAIN": "cloud.medopl.cn",
         "OPL_WORKSPACE_DOMAIN": "workspace.medopl.cn",
-        "OPL_OPERATOR_CIDRS": "192.0.2.0/24",
-        "OPL_TRUSTED_PROXY_CIDRS": "192.0.2.0/24",
         "OPL_CLOUD_IMAGE": "registry.example.com/opl/opl-cloud@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "OPL_WORKSPACE_IMAGE": "registry.example.com/opl/one-person-lab-app@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
         "OPL_K8S_NAMESPACE": "opl-cloud",
@@ -64,13 +62,9 @@
         "OPL_PROVIDER_RECONCILE_WORKER_ENABLED": "1",
         "OPL_TENCENT_ZONE": "ap-guangzhou-3",
         "OPL_BASIC_COMPUTE_INSTANCE_TYPE": "SA5.MEDIUM4",
-        "OPL_BASIC_COMPUTE_NODE_POOL_ID": "",
         "OPL_PRO_COMPUTE_INSTANCE_TYPE": "SA5.2XLARGE16",
-        "OPL_PRO_COMPUTE_NODE_POOL_ID": "",
         "OPL_CODEX_MODEL": "gpt-5.5",
         "OPL_CODEX_REASONING_EFFORT": "xhigh",
-        "OPL_CODEX_BASE_URL": "https://gflabtoken.cn/v1",
-        "OPL_GATEWAY_PUBLIC_BASE_URL": "https://api.medopl.cn/v1",
         "OPL_SUB2API_BASE_URL": "https://gflabtoken.cn",
         "OPL_SUB2API_REQUEST_TIMEOUT_MS": "5000",
         "OPL_TENCENT_PROVISIONER_BIN": "/usr/local/bin/opl-tencent-provisioner",
@@ -164,15 +158,6 @@
                       "secretKeyRef": {
                         "name": "opl-cloud-internal-service",
                         "key": "OPL_INTERNAL_SERVICE_TOKEN"
-                      }
-                    }
-                  },
-                  {
-                    "name": "OPL_PROVIDER_ACCEPTANCE_TOKEN",
-                    "valueFrom": {
-                      "secretKeyRef": {
-                        "name": "opl-cloud-provider-acceptance",
-                        "key": "OPL_PROVIDER_ACCEPTANCE_TOKEN"
                       }
                     }
                   },

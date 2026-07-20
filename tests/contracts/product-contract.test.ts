@@ -48,6 +48,11 @@ test("Fabric catalog is the live availability authority for both target packages
   const catalog = await readJson(fabricCatalogContractPath);
 
   assert.deepEqual(catalog.supportedPackages, ["basic", "pro"]);
+  assert.deepEqual(catalog.productionAvailability, {
+    basic: true,
+    pro: false,
+    authority: "GET /fabric/catalog workspacePackages[].available"
+  });
   assert.equal(catalog.availabilityAuthority, "GET /fabric/catalog workspacePackages[].available");
   assert.equal("currentAvailablePackages" in catalog, false);
 });

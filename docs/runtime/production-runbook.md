@@ -19,7 +19,6 @@ npm run validate:production-manifest -- \
 - PostgreSQL `DATABASE_URL`;
 - Sub2API admin credentials whose live identity is `admin@medopl.cn`;
 - server-only `OPL_SUB2API_BASE_URL`, request timeout, and the required capability inventory;
-- `OPL_GATEWAY_PUBLIC_BASE_URL`, which must be valid HTTPS in production;
 - TKE kubeconfig, namespace, domains, TLS, storage class, and image-pull secret;
 - OPL Cloud and Workspace image references;
 - Tencent mutation credentials, region, cluster, subnet, and security groups;
@@ -30,14 +29,15 @@ account-scoped Kubernetes Secrets written by Fabric, not a global deployment
 environment variable. Never place credentials in the manifest, command
 arguments, logs, or verifier artifacts.
 
-`GET /api/gateway/endpoint` returns only `OPL_GATEWAY_PUBLIC_BASE_URL`. A missing
-or invalid production value is unavailable. Never expose or fall back to
-`OPL_SUB2API_BASE_URL` or a hard-coded public host.
+Console exposes no Gateway base-address API or card. Never expose
+`OPL_SUB2API_BASE_URL` or link ordinary users to the Sub2API backend. Cloud does
+not inject `OPL_CODEX_BASE_URL` into Runtime.
 
 `OPL_CONSOLE_USERS_JSON` is retired and any non-empty value makes Control Plane
 startup fail closed. The deploy workflow and manifest no longer install that
-seed. Invite customers through `POST /api/users`; the backend resolves or creates one
-Sub2API identity by normalized email and atomically stores the local mapping.
+seed. Provision customers through `POST /api/operator/accounts` with
+`ProvisionAccountRequest`; the backend resolves or creates one Sub2API identity
+by normalized email and atomically stores the local mapping.
 
 Workspace file bodies remain only on CBS. The PostgreSQL procedures below
 protect platform identity, operation, resource-reference, and receipt state;
@@ -381,11 +381,11 @@ kubectl -n opl-cloud rollout status deployment/opl-cloud-ledger --timeout=5m
 Then check health and readiness through the production endpoints. An old image
 digest or timeout is a failed rollout.
 
-## Provider Acceptance And Release Live QA
+## Paused Provider Verification
 
-Do not run the legacy paid verifier. The replacement is code-complete and
-fake-tested, but no real Provider Acceptance or live-QA run is authorized by
-this document.
+Provider Acceptance, Pro verification, S9, and fixed-slot verification are
+paused and do not gate ordinary Basic rollout. Do not run the legacy paid
+verifier.
 
 The only commands authorized without a new owner approval are read-only:
 
@@ -396,12 +396,8 @@ node tools/provider-acceptance.ts --read-only
 ```
 
 Ordinary CI, release, E2E, deployment manifests, and deployed runtime
-environments must not carry `OPL_VERIFY_MUTATION_APPROVAL_JSON`, an approval ID,
-or Gateway/model/provider write allow flags. The current Provider Acceptance and
-post-rollout model-QA workflow wiring intentionally omits that authority and
-therefore fails before network access. Enabling either write path requires a
-separately approved change binding one unexpired approval ID to exact account,
-Workspace, and resource allowlists; this runbook does not provide such a command.
+environments do not carry Acceptance accounts, `OPL_VERIFY_*`, Provider
+Acceptance credentials, or a protected Acceptance Environment dependency.
 
 Provider Acceptance separately creates or adopts these retained non-customer
 slots after read-only inventory and explicit approval:
@@ -409,16 +405,9 @@ slots after read-only inventory and explicit approval:
 - `verification-slot-basic-01`: `SA5.MEDIUM4`, 2c4g, 10GB CBS;
 - `verification-slot-pro-01`: `SA5.2XLARGE16`, 8c16g, 100GB CBS.
 
-An ordinary release requires both slots. It then uses one Basic reserved
-account, one dedicated Key, and one model request for the entire release. The
-run must prove Ready Pod `imageID`, Workspace login and WebSocket frames,
-exact-one Usage with Key/request/model/endpoint/Token/cost fields, an equal
-wallet balance delta, stable Ledger Receipt/CVM/CBS/PV/RuntimeOperation facts,
-and zero Tencent purchase, renewal, deletion, or other provider mutation.
-
-Provider Acceptance, the real model request, and any slot renewal each require
-fresh explicit approval. Release verification never deletes retained provider
-resources.
+Ordinary deploy performs only rollout and readiness checks. The normal Console
+Basic canary runs separately once after rollout; repeated release smoke checks
+must stay read-only and never buy a second Workspace package.
 
 ## Billing Recovery
 

@@ -91,11 +91,11 @@ unit/contract tests pass
 - `DATABASE_URL`: required for durable shared staging state.
 - `OPL_SUB2API_BASE_URL`: server-only Sub2API management origin. It must never be
   returned to the browser or used as a public endpoint fallback.
-- `OPL_GATEWAY_PUBLIC_BASE_URL`: public API origin returned by
-  `GET /api/gateway/endpoint`. Production requires a valid HTTPS URL; a missing
-  or invalid value makes that product source unavailable.
 - `OPL_SUB2API_ADMIN_EMAIL` and `OPL_SUB2API_ADMIN_PASSWORD`: secret-backed management credentials.
 - `OPL_MONTHLY_BILLING_WORKER_ENABLED`: enables renewal and expiration processing.
+- `OPL_BASIC_COMPUTE_INSTANCE_TYPE` and `OPL_PRO_COMPUTE_INSTANCE_TYPE`: package
+  SKUs. Monthly preflight discovers exactly one matching OPL-labeled NodePool;
+  static NodePool ID environment variables are not used.
 
 ## Route Registry Rules
 
