@@ -25,7 +25,7 @@ function throwApiError(payload: unknown): never {
   throw error;
 }
 
-async function writeJson<T>(method: "POST" | "PATCH" | "DELETE", path: string, body: unknown, csrfToken: string, idempotencyKey: string): Promise<T> {
+async function writeJson<T>(method: "POST" | "PUT" | "PATCH" | "DELETE", path: string, body: unknown, csrfToken: string, idempotencyKey: string): Promise<T> {
   const headers: Record<string, string> = { "content-type": "application/json" };
   if (csrfToken) headers["x-opl-csrf"] = csrfToken;
   if (idempotencyKey) headers["Idempotency-Key"] = idempotencyKey;
@@ -46,6 +46,10 @@ export function postJson<T>(path: string, body: unknown = {}, csrfToken = "", id
 
 export function patchJson<T>(path: string, body: unknown, csrfToken = "", idempotencyKey = ""): Promise<T> {
   return writeJson<T>("PATCH", path, body, csrfToken, idempotencyKey);
+}
+
+export function putJson<T>(path: string, body: unknown, csrfToken = "", idempotencyKey = ""): Promise<T> {
+  return writeJson<T>("PUT", path, body, csrfToken, idempotencyKey);
 }
 
 export function deleteJson<T>(path: string, csrfToken = "", idempotencyKey = ""): Promise<T> {

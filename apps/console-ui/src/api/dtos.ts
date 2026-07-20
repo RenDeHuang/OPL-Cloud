@@ -646,6 +646,8 @@ export interface OperatorReconciliationPageDTO {
     status: string;
     operationRef?: string;
     receiptRef?: string;
+    accountId?: string;
+    billingOperationId?: string;
   }>;
   total: number;
   page: number;
@@ -653,6 +655,8 @@ export interface OperatorReconciliationPageDTO {
 }
 
 export interface BillingReviewResolutionRequest {
+  accountId: string;
+  billingOperationId: string;
   decision: "activate_charged_resource" | "terminate_uncharged_absent" | "refund_charged_absent";
   evidenceRef: string;
 }

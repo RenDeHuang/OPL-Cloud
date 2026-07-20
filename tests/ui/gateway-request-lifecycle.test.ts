@@ -61,7 +61,7 @@ test("API, Gateway, and Workspace route changes clear secrets for direct and pop
     assert.match(app, new RegExp(prefix.replaceAll("/", "\\/")));
   }
   const watcher = app.slice(app.indexOf("\nwatch(path"), app.indexOf("\nonMounted(()"));
-  assert.match(watcher, /if \(previous !== next && isSensitiveRoute\(previous \|\| ""\)\) clearSecrets\(\);/);
+  assert.match(watcher, /if \(previous !== next\)[\s\S]*isSensitiveRoute\(previous \|\| ""\)\) clearSecrets\(\);/);
   assert.match(app, /const path = ref\(window\.location\.pathname\)/);
   assert.match(app, /const onPopState = \(\) => \{ path\.value = window\.location\.pathname; \}/);
 });

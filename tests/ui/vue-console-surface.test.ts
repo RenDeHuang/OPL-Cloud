@@ -55,15 +55,16 @@ test("customer financial facts are direct server fields", async () => {
   assert.doesNotMatch(app, /receipt\.status\s*\|\|\s*["']/);
 });
 
-test("administrator invite omits remote identity input and shows billing account mapping", async () => {
+test("administrator invitation derives the billing account and omits remote identity input", async () => {
   const [app, readApi] = await Promise.all([
     source("apps/console-ui/src/App.vue"), source("apps/console-ui/src/api/console-read-api.ts")
   ]);
   const template = app.slice(app.indexOf("<template>"));
-  assert.match(readApi, /\/api\/operator\/accounts/);
-  assert.match(app, /createUser\(\{ \.\.\.adminUserForm, role: "owner" \}/);
+  assert.match(readApi, /\/api\/operator\/accounts\/invitations/);
+  assert.match(app, /inviteOperatorUser\(\)/);
+  assert.match(app, /InviteAccountRequest/);
   assert.doesNotMatch(app, /adminUserForm\.sub2apiUserId|sub2apiUserId:\s*Number/);
-  assert.match(template, /计费账户编号/);
+  assert.doesNotMatch(template, /adminUserForm\.accountId/);
 });
 
 test("revealed secrets are cleared on navigation, refresh, and logout", async () => {

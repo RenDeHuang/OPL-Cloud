@@ -1,6 +1,7 @@
 import { decodeDto, decodeSource } from "./dtos.ts";
 import type {
   AnnouncementPageDTO,
+  AnnouncementDTO,
   AnnouncementReadDTO,
   BalanceHistoryData,
   BillingReceipt,
@@ -18,6 +19,20 @@ import type {
   GatewayUsageSummaryDTO,
   GatewayWallet,
   ManagementState,
+  AnnouncementDraftRequest,
+  AnnouncementScheduleRequest,
+  BillingReviewResolutionRequest,
+  InviteAccountRequest,
+  OperatorAccountCommandDTO,
+  OperatorAccountPageDTO,
+  OperatorAnnouncementPageDTO,
+  OperatorHealthDTO,
+  OperatorOverviewDTO,
+  OperatorReconciliationPageDTO,
+  OperatorWorkspaceDTO,
+  OperatorWorkspacePageDTO,
+  WalletAdjustmentOperationDTO,
+  WalletAdjustmentRequest,
   OperatorAccountsData,
   OperationStatusDTO,
   OperatorSummary,
@@ -28,7 +43,7 @@ import type {
   SourceEnvelope,
   UpdateGatewayKeyRequest
 } from "./dtos.ts";
-import { deleteJson, getJson, patchJson, postJson, type ApiError } from "./console-api.ts";
+import { deleteJson, getJson, patchJson, postJson, putJson, type ApiError } from "./console-api.ts";
 
 async function sourceGet<T>(path: string, signal?: AbortSignal): Promise<SourceEnvelope<T>> {
   try {
@@ -165,6 +180,74 @@ export function previewPricing(input: PricingPreviewRequest, csrfToken: string):
 
 export function getOperatorAccounts(): Promise<SourceEnvelope<OperatorAccountsData>> {
   return sourceGet<OperatorAccountsData>("/api/operator/accounts");
+}
+
+export function getOperatorOverview(signal?: AbortSignal): Promise<SourceEnvelope<OperatorOverviewDTO>> {
+  return sourceGet<OperatorOverviewDTO>("/api/operator/overview", signal);
+}
+
+export function getOperatorAccountsPage(page = 1, pageSize = 20, signal?: AbortSignal): Promise<SourceEnvelope<OperatorAccountPageDTO>> {
+  const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
+  return sourceGet<OperatorAccountPageDTO>(`/api/operator/accounts?${params}`, signal);
+}
+
+export function getOperatorWorkspaces(page = 1, pageSize = 20, signal?: AbortSignal): Promise<SourceEnvelope<OperatorWorkspacePageDTO>> {
+  const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
+  return sourceGet<OperatorWorkspacePageDTO>(`/api/operator/workspaces?${params}`, signal);
+}
+
+export function getOperatorWorkspace(workspaceId: string, signal?: AbortSignal): Promise<SourceEnvelope<OperatorWorkspaceDTO>> {
+  return sourceGet<OperatorWorkspaceDTO>(`/api/operator/workspaces/${encodeURIComponent(workspaceId)}`, signal);
+}
+
+export function getOperatorReconciliation(page = 1, pageSize = 20, signal?: AbortSignal): Promise<SourceEnvelope<OperatorReconciliationPageDTO>> {
+  const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
+  return sourceGet<OperatorReconciliationPageDTO>(`/api/operator/reconciliation?${params}`, signal);
+}
+
+export function getOperatorHealth(signal?: AbortSignal): Promise<SourceEnvelope<OperatorHealthDTO>> {
+  return sourceGet<OperatorHealthDTO>("/api/operator/health", signal);
+}
+
+export function getOperatorAnnouncements(page = 1, pageSize = 20, signal?: AbortSignal): Promise<SourceEnvelope<OperatorAnnouncementPageDTO>> {
+  const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
+  return sourceGet<OperatorAnnouncementPageDTO>(`/api/operator/announcements?${params}`, signal);
+}
+
+export function createWalletAdjustment(accountId: string, input: WalletAdjustmentRequest, csrfToken: string, idempotencyKey: string): Promise<WalletAdjustmentOperationDTO> {
+  return postJson<unknown>(`/api/operator/accounts/${encodeURIComponent(accountId)}/wallet-adjustments`, input, csrfToken, idempotencyKey).then(decodeDto<WalletAdjustmentOperationDTO>);
+}
+
+export function getWalletAdjustment(operationId: string, signal?: AbortSignal): Promise<WalletAdjustmentOperationDTO> {
+  return getJson<unknown>(`/api/operator/wallet-adjustments/${encodeURIComponent(operationId)}`, { signal }).then(decodeDto<WalletAdjustmentOperationDTO>);
+}
+
+export function inviteOperatorAccount(input: InviteAccountRequest, csrfToken: string, idempotencyKey: string): Promise<OperatorAccountCommandDTO> {
+  return postJson<unknown>("/api/operator/accounts/invitations", input, csrfToken, idempotencyKey).then(decodeDto<OperatorAccountCommandDTO>);
+}
+
+export function disableOperatorAccount(accountId: string, reason: string, csrfToken: string, idempotencyKey: string): Promise<OperatorAccountCommandDTO> {
+  return postJson<unknown>(`/api/operator/accounts/${encodeURIComponent(accountId)}/disable`, { confirmationAccountId: accountId, reason }, csrfToken, idempotencyKey).then(decodeDto<OperatorAccountCommandDTO>);
+}
+
+export function resolveBillingReview(resourceType: string, resourceId: string, input: BillingReviewResolutionRequest, csrfToken: string, idempotencyKey: string): Promise<OperationStatusDTO> {
+  return postJson<unknown>(`/api/operator/billing-reviews/${encodeURIComponent(resourceType)}/${encodeURIComponent(resourceId)}/resolve`, input, csrfToken, idempotencyKey).then(decodeDto<OperationStatusDTO>);
+}
+
+export function createOperatorAnnouncement(input: AnnouncementDraftRequest, csrfToken: string, idempotencyKey: string): Promise<AnnouncementDTO> {
+  return postJson<unknown>("/api/operator/announcements", input, csrfToken, idempotencyKey).then(decodeDto<AnnouncementDTO>);
+}
+
+export function updateOperatorAnnouncement(announcementId: string, input: AnnouncementDraftRequest, csrfToken: string, idempotencyKey: string): Promise<AnnouncementDTO> {
+  return putJson<unknown>(`/api/operator/announcements/${encodeURIComponent(announcementId)}`, input, csrfToken, idempotencyKey).then(decodeDto<AnnouncementDTO>);
+}
+
+export function publishOperatorAnnouncement(announcementId: string, input: AnnouncementScheduleRequest, csrfToken: string, idempotencyKey: string): Promise<AnnouncementDTO> {
+  return postJson<unknown>(`/api/operator/announcements/${encodeURIComponent(announcementId)}/publish`, input, csrfToken, idempotencyKey).then(decodeDto<AnnouncementDTO>);
+}
+
+export function withdrawOperatorAnnouncement(announcementId: string, csrfToken: string, idempotencyKey: string): Promise<AnnouncementDTO> {
+  return postJson<unknown>(`/api/operator/announcements/${encodeURIComponent(announcementId)}/withdraw`, {}, csrfToken, idempotencyKey).then(decodeDto<AnnouncementDTO>);
 }
 
 export function getManagementState(): Promise<ManagementState> {
