@@ -262,6 +262,11 @@ func (app *controlPlaneServer) runWorkspaceLaunch(ctx context.Context, service *
 		if !ownerActive {
 			return app.manualReviewWorkspaceLaunchDebit(ctx, &operation, "workspace_launch_owner_identity_mismatch")
 		}
+		if !operation.ChargeAttempted && operation.ChargeConfirmation == nil {
+			if code, preflightErr := verifyWorkspaceLaunchPreflight(ctx, service, operation); preflightErr != nil {
+				return app.retryWorkspaceLaunchDebit(ctx, &operation, code, preflightErr)
+			}
+		}
 		return app.debitWorkspaceLaunch(ctx, service, &operation)
 	}
 	return app.fulfillWorkspaceLaunch(ctx, service, &operation)
@@ -404,6 +409,9 @@ func (app *controlPlaneServer) fulfillWorkspaceLaunch(ctx context.Context, servi
 				return err
 			}
 		case "activating":
+			if err := app.verifyWorkspaceLaunchProviderReadback(ctx, service, operation); err != nil {
+				return app.manualReviewWorkspaceLaunchFulfillment(ctx, operation, err.Error())
+			}
 			billingState, reviewCode := app.workspaceLaunchBillingState(ctx, *operation)
 			if reviewCode != "" {
 				return app.manualReviewWorkspaceLaunchFulfillment(ctx, operation, reviewCode)
@@ -491,7 +499,7 @@ func (app *controlPlaneServer) fulfillWorkspaceLaunchResource(ctx context.Contex
 		}
 		return "waiting", nil
 	}
-	expected := workspaceLaunchProviderExpectation(*operation, candidate, resourceType)
+	expected := workspaceLaunchProviderExpectation(*operation, resourceType)
 	if !monthlyPurchaseReadbackConfirmed(resourceType, expected, facts) {
 		return "unknown", nil
 	}
@@ -525,11 +533,71 @@ func workspaceLaunchResourceIdentityMatches(resourceType string, facts map[strin
 	return stringValue(facts["id"]) == id && stringValue(facts["accountId"]) == operation.AccountID && stringValue(facts["workspaceId"]) == operation.WorkspaceID
 }
 
-func workspaceLaunchProviderExpectation(operation workspaceLaunchOperation, facts map[string]any, resourceType string) map[string]any {
+func workspaceLaunchProviderExpectation(operation workspaceLaunchOperation, resourceType string) map[string]any {
 	expected := workspaceLaunchResourceRow(operation, resourceType)
 	expected["periodStart"], expected["paidThrough"] = operation.PeriodStart, operation.PaidThrough
-	expected["zone"] = firstNonEmpty(stringValue(facts["zone"]), providerDataValue(facts, "zone"), monthlyComputeLaunchZone())
 	return expected
+}
+
+func verifyWorkspaceLaunchPreflight(ctx context.Context, service *controlplane.Service, operation workspaceLaunchOperation) (string, error) {
+	zone := monthlyComputeLaunchZone()
+	inputs := []clients.MonthlyPreflightInput{
+		{ResourceType: "compute", PackageID: operation.PackageID, Zone: zone},
+		{ResourceType: "storage", PackageID: operation.PackageID, SizeGB: operation.StorageGB, Zone: zone},
+	}
+	for _, input := range inputs {
+		result, err := service.PreflightMonthlyResource(ctx, input)
+		code := "fabric_" + input.ResourceType + "_preflight_failed"
+		if err != nil {
+			return code, err
+		}
+		if !monthlyPreflightConfirmed(input, result) {
+			return code, errors.New(code)
+		}
+	}
+	return "", nil
+}
+
+func (app *controlPlaneServer) verifyWorkspaceLaunchProviderReadback(ctx context.Context, service *controlplane.Service, operation *workspaceLaunchOperation) error {
+	for _, resourceType := range []string{"compute", "storage"} {
+		var facts map[string]any
+		var readErr error
+		if resourceType == "compute" {
+			result, err := service.SyncMonthlyCompute(ctx, operation.ComputeID)
+			facts, readErr = structToMap(result), err
+		} else {
+			result, err := service.SyncMonthlyStorage(ctx, operation.StorageID)
+			facts, readErr = structToMap(result), err
+		}
+		if readErr != nil || !workspaceLaunchResourceIdentityMatches(resourceType, facts, *operation) {
+			return errors.New("workspace_launch_provider_readback_invalid")
+		}
+		var current map[string]any
+		if resourceType == "compute" {
+			current, _ = app.getCompute(operation.ComputeID)
+		} else {
+			current, _ = app.getStorage(operation.StorageID)
+		}
+		if current == nil {
+			return errors.New("workspace_launch_provider_readback_invalid")
+		}
+		expected := workspaceLaunchProviderExpectation(*operation, resourceType)
+		if !monthlyPurchaseReadbackConfirmed(resourceType, expected, facts) {
+			return errors.New("workspace_launch_provider_readback_invalid")
+		}
+		updated := mergeMaps(current, facts)
+		stripWorkspaceLaunchResourceBilling(updated)
+		var saveErr error
+		if resourceType == "compute" {
+			saveErr = app.tables.SaveCompute(ctx, updated)
+		} else {
+			saveErr = app.tables.SaveStorage(ctx, updated)
+		}
+		if saveErr != nil {
+			return errors.New("workspace_launch_provider_readback_invalid")
+		}
+	}
+	return nil
 }
 
 func stripWorkspaceLaunchResourceBilling(row map[string]any) {
@@ -656,8 +724,8 @@ func (app *controlPlaneServer) workspaceLaunchBillingState(ctx context.Context, 
 	if !computeOK || !storageOK || !workspaceLaunchResourceIdentityMatches("compute", compute, operation) || !workspaceLaunchResourceIdentityMatches("storage", storage, operation) {
 		return nil, "workspace_launch_billing_identity_mismatch"
 	}
-	if !monthlyPurchaseReadbackConfirmed("compute", workspaceLaunchProviderExpectation(operation, compute, "compute"), compute) ||
-		!monthlyPurchaseReadbackConfirmed("storage", workspaceLaunchProviderExpectation(operation, storage, "storage"), storage) {
+	if !monthlyPurchaseReadbackConfirmed("compute", workspaceLaunchProviderExpectation(operation, "compute"), compute) ||
+		!monthlyPurchaseReadbackConfirmed("storage", workspaceLaunchProviderExpectation(operation, "storage"), storage) {
 		return nil, "workspace_launch_provider_readback_invalid"
 	}
 	components, computePrice, storagePrice, err := workspaceLaunchComponents(operation)
@@ -763,6 +831,8 @@ func (app *controlPlaneServer) manualReviewWorkspaceLaunchDebit(ctx context.Cont
 }
 
 func (app *controlPlaneServer) debitWorkspaceLaunch(ctx context.Context, service *controlplane.Service, operation *workspaceLaunchOperation) error {
+	unlockWallet := app.lockResource("sub2api-wallet", operation.AccountID)
+	defer unlockWallet()
 	userID, err := app.sub2APIUserID(ctx, operation.AccountID)
 	if err != nil {
 		return app.retryWorkspaceLaunchDebit(ctx, operation, errMonthlyAccountUnmapped.Error(), err)
@@ -791,7 +861,7 @@ func (app *controlPlaneServer) debitWorkspaceLaunch(ctx context.Context, service
 			if balanceErr != nil {
 				return app.retryWorkspaceLaunchDebit(ctx, operation, "sub2api_balance_unavailable", balanceErr)
 			}
-			if balance.USDMicros < operation.TotalChargeUSDMicros {
+			if balance.USDMicros <= operation.TotalChargeUSDMicros {
 				operation.Status, operation.Phase, operation.ErrorCode = "insufficient", "debit_pending", errMonthlyInsufficientBalance.Error()
 				releaseWorkspaceLaunchLease(operation)
 				if err := app.persistWorkspaceLaunch(ctx, operation); err != nil {
@@ -840,7 +910,7 @@ func (app *controlPlaneServer) debitWorkspaceLaunch(ctx context.Context, service
 		return app.retryWorkspaceLaunchDebit(ctx, operation, "post_charge_balance_unavailable", err)
 	}
 	operation.PostChargeBalanceKnown, operation.PostChargeBalanceUSDMicros = true, postCharge.USDMicros
-	if postCharge.USDMicros < 0 || operation.PreChargeBalanceUSDMicros > 0 && postCharge.USDMicros > operation.PreChargeBalanceUSDMicros-operation.TotalChargeUSDMicros {
+	if operation.PreChargeBalanceUSDMicros <= operation.TotalChargeUSDMicros || postCharge.USDMicros < 0 || postCharge.USDMicros != operation.PreChargeBalanceUSDMicros-operation.TotalChargeUSDMicros {
 		return app.manualReviewWorkspaceLaunchDebit(ctx, operation, "post_charge_balance_invalid")
 	}
 	operation.Status, operation.Phase, operation.ErrorCode = "debited", "debited", ""
@@ -870,6 +940,8 @@ func (app *controlPlaneServer) manualReviewWorkspaceLaunchFulfillment(ctx contex
 }
 
 func (app *controlPlaneServer) refundWorkspaceLaunch(ctx context.Context, service *controlplane.Service, operation *workspaceLaunchOperation, reason string) error {
+	unlockWallet := app.lockResource("sub2api-wallet", operation.AccountID)
+	defer unlockWallet()
 	userID, err := app.sub2APIUserID(ctx, operation.AccountID)
 	if err != nil {
 		return app.manualReviewWorkspaceLaunchFulfillment(ctx, operation, "workspace_launch_refund_account_unmapped")

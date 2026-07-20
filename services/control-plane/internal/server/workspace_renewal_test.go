@@ -443,7 +443,7 @@ func TestWorkspaceRenewalReviewResolutionRequiresBothProviderFactsAndResumes(t *
 		t.Fatal(err)
 	}
 	if resolved.Status != "active" || !strings.Contains(resolved.PersistedResult, `"reviewResolutionPhase":"completed"`) || workspace["paidThrough"] != fixture.renewedThrough.Format(time.RFC3339Nano) ||
-		strings.Count(strings.Join(*fixture.events, ","), "fabric.compute.sync") != computeSyncs || len(fixture.sub2API.refunds) != 0 || len(fixture.ledger.receipts) != 1 {
+		strings.Count(strings.Join(*fixture.events, ","), "fabric.compute.sync") != computeSyncs+1 || len(fixture.sub2API.refunds) != 0 || len(fixture.ledger.receipts) != 1 {
 		t.Fatalf("resolved operation=%#v workspace=%#v events=%#v refunds=%#v receipts=%#v", resolved, workspace, *fixture.events, fixture.sub2API.refunds, fixture.ledger.receipts)
 	}
 	receipt := fixture.ledger.receipts[0]
@@ -522,7 +522,7 @@ func TestWorkspaceRenewalUsesOneDebitStableProviderIDsAndOneReceipt(t *testing.T
 	storage, _ := fixture.app.getStorage(stringValue(fixture.storage["id"]))
 	if compute["providerResourceId"] != fixture.compute["providerResourceId"] || storage["providerResourceId"] != fixture.storage["providerResourceId"] ||
 		compute["deadline"] != fixture.renewedThrough.Format(time.RFC3339) || storage["deadline"] != fixture.renewedThrough.Format(time.RFC3339) ||
-		strings.Count(strings.Join(*fixture.events, ","), "fabric.compute.sync") != 1 || strings.Count(strings.Join(*fixture.events, ","), "fabric.storage.sync") != 1 {
+		strings.Count(strings.Join(*fixture.events, ","), "fabric.compute.sync") != 2 || strings.Count(strings.Join(*fixture.events, ","), "fabric.storage.sync") != 2 {
 		t.Fatalf("provider readback compute=%#v storage=%#v events=%#v", compute, storage, *fixture.events)
 	}
 	if len(fixture.ledger.receipts) != 1 || fixture.ledger.receipts[0].Type != "billing.workspace_renewed.v1" || fixture.ledger.receipts[0].Cost["totalUsdMicros"] != int64(52_580_000) {
@@ -1477,6 +1477,7 @@ func TestWorkspaceRenewalRecoversLostDebitResponseFromBalanceHistoryBeforeBalanc
 	if err := fixture.app.runMonthlyBillingOnce(context.Background(), fixture.service, now); !errors.Is(err, clients.ErrSub2APIChargeUnknown) {
 		t.Fatalf("lost debit response error=%v", err)
 	}
+	fixture.fabric.preflightResults = []clients.MonthlyPreflight{{}, {}}
 	pending := fixture.operation(t)
 	if pending["status"] != "debit_pending" || !strings.Contains(stringValue(pending["result"]), `"errorCode":"sub2api_charge_unconfirmed"`) {
 		t.Fatalf("lost debit state=%#v", pending)
@@ -1571,6 +1572,32 @@ func TestWorkspaceRenewalInvalidPostChargeBalanceStillNeedsManualReview(t *testi
 	if operation.Status != "manual_review" || operation.ErrorCode != "post_charge_balance_invalid" || !operation.PostChargeBalanceKnown ||
 		len(fixture.sub2API.charges) != 1 || len(fixture.fabric.computeRenewKeys) != 0 || len(fixture.fabric.storageRenewKeys) != 0 {
 		t.Fatalf("operation=%#v charges=%#v compute=%#v storage=%#v", operation, fixture.sub2API.charges, fixture.fabric.computeRenewKeys, fixture.fabric.storageRenewKeys)
+	}
+}
+
+func TestWorkspaceRenewalRejectsEqualBalanceBeforeCharge(t *testing.T) {
+	fixture := newWorkspaceRenewalWorkerFixture(t, []int64{52_580_000})
+	err := fixture.app.runMonthlyBillingOnce(context.Background(), fixture.service, fixture.paidThrough.Add(-monthlyRenewalLead))
+	operation, decodeErr := decodeWorkspaceRenewalOperation(fixture.operation(t))
+	if decodeErr != nil {
+		t.Fatal(decodeErr)
+	}
+	if err != nil || operation.Status != "insufficient" || operation.Phase != "debit" ||
+		len(fixture.sub2API.charges) != 0 || len(fixture.fabric.computeRenewKeys) != 0 || len(fixture.fabric.storageRenewKeys) != 0 {
+		t.Fatalf("equal renewal balance crossed debit gate: err=%v operation=%#v charges=%#v compute=%#v storage=%#v", err, operation, fixture.sub2API.charges, fixture.fabric.computeRenewKeys, fixture.fabric.storageRenewKeys)
+	}
+}
+
+func TestWorkspaceRenewalPostChargeBalanceMustMatchExactDelta(t *testing.T) {
+	fixture := newWorkspaceRenewalWorkerFixture(t, []int64{100_000_000, 40_000_000})
+	err := fixture.app.runMonthlyBillingOnce(context.Background(), fixture.service, fixture.paidThrough.Add(-monthlyRenewalLead))
+	operation, decodeErr := decodeWorkspaceRenewalOperation(fixture.operation(t))
+	if decodeErr != nil {
+		t.Fatal(decodeErr)
+	}
+	if err != nil || operation.Status != "manual_review" || operation.ErrorCode != "post_charge_balance_invalid" ||
+		len(fixture.sub2API.charges) != 1 || len(fixture.fabric.computeRenewKeys) != 0 || len(fixture.fabric.storageRenewKeys) != 0 {
+		t.Fatalf("inexact renewal post balance was accepted: err=%v operation=%#v charges=%#v compute=%#v storage=%#v", err, operation, fixture.sub2API.charges, fixture.fabric.computeRenewKeys, fixture.fabric.storageRenewKeys)
 	}
 }
 

@@ -21,6 +21,17 @@ type walletAdjustmentSub2API struct {
 	adjustmentErr error
 	chargeCalls   int
 	refundCalls   int
+	balanceCalled chan struct{}
+}
+
+func (s *walletAdjustmentSub2API) Balance(ctx context.Context, userID int64) (clients.Sub2APIBalance, error) {
+	if s.balanceCalled != nil {
+		select {
+		case s.balanceCalled <- struct{}{}:
+		default:
+		}
+	}
+	return s.testSub2APIClient.Balance(ctx, userID)
 }
 
 func (s *walletAdjustmentSub2API) Charge(_ context.Context, input clients.Sub2APIChargeInput) (clients.Sub2APICharge, error) {
@@ -198,6 +209,33 @@ func TestWalletAdjustmentIdempotency(t *testing.T) {
 	read := requestWithSession(t, fixture.server, reservedOperatorSessionForTest(t, fixture.server), http.MethodGet, "/api/operator/wallet-adjustments/"+operationID, "")
 	if read.Code != http.StatusOK || string(mustJSON(decodeWalletAdjustmentResponse(t, read))) != string(mustJSON(firstBody)) {
 		t.Fatalf("readback status=%d body=%s", read.Code, read.Body.String())
+	}
+}
+
+func TestWalletAdjustmentUsesAccountWalletLock(t *testing.T) {
+	fixture := newWalletAdjustmentFixture(t)
+	fixture.remote.balanceCalled = make(chan struct{}, 1)
+	app := fixture.server.(*controlPlaneHTTPHandler).app
+	unlock := app.lockResource("sub2api-wallet", "acct-alpha")
+	response := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		response <- sendWalletAdjustmentRequest(t, fixture, `{"kind":"recharge","amountUsd":"1.00","reason":"pilot credit","confirmationAccountId":"acct-alpha"}`, "wallet-shared-lock")
+	}()
+
+	select {
+	case <-fixture.remote.balanceCalled:
+		unlock()
+		t.Fatal("wallet adjustment reached Sub2API while the account wallet lock was held")
+	case <-time.After(50 * time.Millisecond):
+	}
+	unlock()
+	select {
+	case result := <-response:
+		if result.Code != http.StatusCreated {
+			t.Fatalf("wallet adjustment status=%d body=%s", result.Code, result.Body.String())
+		}
+	case <-time.After(time.Second):
+		t.Fatal("wallet adjustment did not resume after the account wallet lock was released")
 	}
 }
 

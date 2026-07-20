@@ -849,6 +849,51 @@ func TestWorkspaceLaunchSingleTotalDebit(t *testing.T) {
 	}
 }
 
+func TestWorkspaceLaunchRejectsEqualBalanceBeforeCharge(t *testing.T) {
+	fixture := newWorkspaceLaunchWorkerFixture(t, []int64{100_000_000, 52_580_000, 0}, nil, nil)
+	err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service)
+	operation := fixture.operation(t)
+	if !errors.Is(err, errMonthlyInsufficientBalance) || operation.Status != "insufficient" || operation.Phase != "debit_pending" ||
+		len(fixture.sub2API.charges) != 0 || len(fixture.fabric.computeIDs) != 0 || len(fixture.fabric.storageIDs) != 0 {
+		t.Fatalf("equal balance crossed debit gate: err=%v operation=%#v charges=%#v compute=%#v storage=%#v", err, operation, fixture.sub2API.charges, fixture.fabric.computeIDs, fixture.fabric.storageIDs)
+	}
+}
+
+func TestWorkspaceLaunchPostChargeBalanceMustMatchExactDelta(t *testing.T) {
+	fixture := newWorkspaceLaunchWorkerFixture(t, []int64{100_000_000, 100_000_000, 40_000_000}, nil, nil)
+	err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service)
+	operation := fixture.operation(t)
+	if err == nil || operation.Status != "manual_review" || operation.ErrorCode != "post_charge_balance_invalid" ||
+		len(fixture.sub2API.charges) != 1 || len(fixture.fabric.computeIDs) != 0 || len(fixture.fabric.storageIDs) != 0 {
+		t.Fatalf("inexact post balance was accepted: err=%v operation=%#v charges=%#v compute=%#v storage=%#v", err, operation, fixture.sub2API.charges, fixture.fabric.computeIDs, fixture.fabric.storageIDs)
+	}
+}
+
+func TestWorkspaceLaunchWorkerRechecksProviderPreflightBeforeFirstCharge(t *testing.T) {
+	fixture := newWorkspaceLaunchWorkerFixture(t, []int64{100_000_000, 100_000_000, 47_420_000}, nil, nil)
+	fixture.fabric.preflightResults = []clients.MonthlyPreflight{{}, {}}
+	err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service)
+	operation := fixture.operation(t)
+	if err == nil || operation.Status != "unknown" || operation.Phase != "debit_pending" || operation.ErrorCode != "fabric_compute_preflight_failed" ||
+		len(fixture.sub2API.charges) != 0 || len(fixture.fabric.computeIDs) != 0 || len(fixture.fabric.storageIDs) != 0 {
+		t.Fatalf("worker skipped preflight gate: err=%v operation=%#v charges=%#v compute=%#v storage=%#v", err, operation, fixture.sub2API.charges, fixture.fabric.computeIDs, fixture.fabric.storageIDs)
+	}
+}
+
+func TestWorkspaceLaunchActivationReadsProviderTruthAgain(t *testing.T) {
+	fixture := newWorkspaceLaunchWorkerFixture(t, []int64{1_000_000_000, 1_000_000_000, 947_420_000}, nil, nil)
+	configureWorkspaceLaunchFulfillment(t, fixture)
+	if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err != nil {
+		t.Fatal(err)
+	}
+	if countStrings(*fixture.events, "fabric.compute.sync") < 2 || countStrings(*fixture.events, "fabric.storage.sync") < 2 {
+		t.Fatalf("activation did not perform authoritative provider readback: events=%#v", *fixture.events)
+	}
+}
+
 func configureWorkspaceLaunchFulfillment(t *testing.T, fixture workspaceLaunchWorkerFixture) workspaceLaunchOperation {
 	t.Helper()
 	operation := fixture.operation(t)
@@ -884,7 +929,7 @@ func TestWorkspaceLaunchFulfillmentOnly(t *testing.T) {
 	if len(fixture.sub2API.charges) != 1 || fixture.sub2API.charges[0].ChargeUSDMicros != 52_580_000 || len(fixture.sub2API.refunds) != 0 {
 		t.Fatalf("Workspace billing calls: charges=%#v refunds=%#v", fixture.sub2API.charges, fixture.sub2API.refunds)
 	}
-	if len(fixture.fabric.computeIDs) != 1 || len(fixture.fabric.storageIDs) != 1 || countStrings(*fixture.events, "fabric.compute.sync") != 1 || countStrings(*fixture.events, "fabric.storage.sync") != 1 ||
+	if len(fixture.fabric.computeIDs) != 1 || len(fixture.fabric.storageIDs) != 1 || countStrings(*fixture.events, "fabric.compute.sync") != 2 || countStrings(*fixture.events, "fabric.storage.sync") != 2 ||
 		countStrings(*fixture.events, "fabric.attachment") != 1 || countStrings(*fixture.events, "fabric.gateway-secret") != 1 || countStrings(*fixture.events, "fabric.runtime") != 1 {
 		t.Fatalf("fulfillment events=%#v", *fixture.events)
 	}
@@ -978,10 +1023,44 @@ func TestWorkspaceLaunchRuntimeReadinessWaits(t *testing.T) {
 	if completed.Status != "succeeded" || completed.Phase != "succeeded" || len(fixture.fabric.runtimeInputs) != 2 || countStrings(*fixture.events, "fabric.runtime-status") != 2 || len(fixture.ledger.receiptInputs) != 1 {
 		t.Fatalf("ready runtime launch=%#v runtime calls=%#v receipts=%#v", completed, fixture.fabric.runtimeInputs, fixture.ledger.receiptInputs)
 	}
-	for _, event := range []string{"fabric.compute.prepare", "fabric.compute.sync", "fabric.storage.prepare", "fabric.storage.sync", "fabric.attachment", "fabric.gateway-secret"} {
+	for _, event := range []string{"fabric.compute.prepare", "fabric.storage.prepare", "fabric.attachment", "fabric.gateway-secret"} {
 		if countStrings(*fixture.events, event) != countStrings(beforeEvents, event) {
 			t.Fatalf("runtime readiness retry repeated %s: before=%#v after=%#v", event, beforeEvents, *fixture.events)
 		}
+	}
+	for _, event := range []string{"fabric.compute.sync", "fabric.storage.sync"} {
+		if countStrings(*fixture.events, event) != countStrings(beforeEvents, event)+1 {
+			t.Fatalf("activation did not read %s once: before=%#v after=%#v", event, beforeEvents, *fixture.events)
+		}
+	}
+}
+
+func TestWorkspaceLaunchActivationRejectsProviderZoneDrift(t *testing.T) {
+	fixture := newWorkspaceLaunchWorkerFixture(t, []int64{1_000_000_000, 1_000_000_000, 947_420_000}, nil, nil)
+	operation := configureWorkspaceLaunchFulfillment(t, fixture)
+	runtime := clients.WorkspaceRuntime{
+		ID: "runtime-from-fabric", WorkspaceID: operation.WorkspaceID, URL: "https://workspace.medopl.cn/w/" + operation.WorkspaceID + "/",
+		Status: "starting", ServiceName: "opl-compute-from-fabric",
+		Access: clients.WorkspaceRuntimeAccess{Username: "admin", CredentialStatus: "configured", CredentialVersion: "v1", SecretRef: "opl-compute-from-fabric-env"},
+	}
+	ready := runtime
+	ready.Status, ready.Ready = "running", true
+	fixture.fabric.runtime = runtime
+	fixture.fabric.runtimeStatusResults = []clients.WorkspaceRuntime{runtime, ready}
+	for range 2 {
+		if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fixture.fabric.computeSync.Zone = "ap-shanghai-3"
+	fixture.fabric.computeSync.ProviderData["zone"] = "ap-shanghai-3"
+	if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err == nil {
+		t.Fatal("provider Zone drift was accepted before activation")
+	}
+	current := fixture.operation(t)
+	workspaces, _ := fixture.store.ListWorkspaces(context.Background(), operation.AccountID)
+	if current.Status != "manual_review" || current.ErrorCode != "workspace_launch_provider_readback_invalid" || len(workspaces) != 0 || len(fixture.ledger.receiptInputs) != 0 {
+		t.Fatalf("Zone drift activation=%#v workspaces=%#v receipts=%#v", current, workspaces, fixture.ledger.receiptInputs)
 	}
 }
 
@@ -1163,6 +1242,7 @@ func TestWorkspaceLaunchRestartRecoversLostDebitResponse(t *testing.T) {
 	if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), service); !errors.Is(err, clients.ErrSub2APIChargeUnknown) {
 		t.Fatalf("lost response error=%v", err)
 	}
+	fixture.fabric.preflightResults = []clients.MonthlyPreflight{{}, {}}
 	restarted, err := newControlPlaneAppWithStore(fixture.store)
 	if err != nil {
 		t.Fatal(err)

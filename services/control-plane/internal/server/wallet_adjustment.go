@@ -86,7 +86,7 @@ func (app *controlPlaneServer) createWalletAdjustment(w http.ResponseWriter, r *
 	requestHash := stableID("wallet-adjustment-v1", accountID, actorID, input.Kind, strconv.FormatInt(amountMicros, 10), strings.TrimSpace(input.Reason), strings.TrimSpace(input.RelatedOperationID))
 
 	// ponytail: Pilot is a single Control Plane pod; serialize the few operator wallet writes per account.
-	unlock := app.lockResource("wallet-adjustment", accountID)
+	unlock := app.lockResource("sub2api-wallet", accountID)
 	defer unlock()
 
 	operation, found, err := app.walletAdjustment(r.Context(), operationID, requestHash)

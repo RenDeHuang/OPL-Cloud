@@ -153,7 +153,7 @@ func registerWorkspaceLaunchRoutes(mux *http.ServeMux, app *controlPlaneServer, 
 			writeUpstreamError(w, err)
 			return
 		}
-		if balance.USDMicros < operation.TotalChargeUSDMicros {
+		if balance.USDMicros <= operation.TotalChargeUSDMicros {
 			writeError(w, http.StatusConflict, errMonthlyInsufficientBalance.Error())
 			return
 		}
