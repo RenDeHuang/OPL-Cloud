@@ -16,6 +16,8 @@ var ErrUnsupportedComputePackage = errors.New("unsupported_compute_package")
 var ErrInvalidStorageSize = errors.New("invalid_storage_size")
 var ErrInvalidMonthlyPreflight = errors.New("invalid_monthly_preflight")
 var ErrMonthlyPreflightUnavailable = errors.New("monthly_preflight_unavailable")
+var ErrInvalidMonthlyProviderTruth = errors.New("invalid_monthly_provider_truth")
+var ErrMonthlyProviderTruthUnavailable = errors.New("monthly_provider_truth_unavailable")
 var ErrComputeIdempotencyConflict = errors.New("compute_idempotency_conflict")
 var ErrComputeOperationFailed = errors.New("compute_operation_failed")
 var ErrRuntimeIdempotencyConflict = errors.New("runtime_idempotency_conflict")
@@ -53,6 +55,15 @@ type MonthlyPreflight struct {
 	RenewFlag          string            `json:"renewFlag"`
 	ProviderPriceCNY   float64           `json:"providerPriceCny"`
 	ProviderRequestIDs map[string]string `json:"providerRequestIds"`
+}
+
+type MonthlyProviderTruth struct {
+	ComputeState      string            `json:"computeState"`
+	StorageState      string            `json:"storageState"`
+	Compute           ComputeAllocation `json:"compute"`
+	Storage           StorageVolume     `json:"storage"`
+	ProviderRequestID string            `json:"providerRequestId,omitempty"`
+	ErrorCode         string            `json:"errorCode,omitempty"`
 }
 
 type WorkspacePackage struct {
@@ -107,6 +118,8 @@ type ComputeAllocation struct {
 	MachineName        string            `json:"machineName,omitempty"`
 	PrivateIP          string            `json:"privateIp,omitempty"`
 	PublicIP           string            `json:"publicIp,omitempty"`
+	InstanceType       string            `json:"instanceType,omitempty"`
+	Zone               string            `json:"zone,omitempty"`
 	CVMStatus          string            `json:"cvmStatus,omitempty"`
 	ChargeType         string            `json:"chargeType,omitempty"`
 	RenewFlag          string            `json:"renewFlag,omitempty"`

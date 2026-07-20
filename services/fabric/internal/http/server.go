@@ -47,6 +47,25 @@ func NewServer(service *fabric.Service, token string) http.Handler {
 		}
 		writeJSON(w, http.StatusOK, result)
 	})
+	mux.HandleFunc("GET /fabric/monthly-provider-truth", func(w http.ResponseWriter, r *http.Request) {
+		computeIDs, computeOK := r.URL.Query()["computeAllocationId"]
+		storageIDs, storageOK := r.URL.Query()["storageVolumeId"]
+		if !computeOK || !storageOK || len(computeIDs) != 1 || len(storageIDs) != 1 || strings.TrimSpace(computeIDs[0]) == "" || strings.TrimSpace(storageIDs[0]) == "" ||
+			computeIDs[0] != strings.TrimSpace(computeIDs[0]) || storageIDs[0] != strings.TrimSpace(storageIDs[0]) {
+			writeError(w, http.StatusBadRequest, fabric.ErrInvalidMonthlyProviderTruth.Error())
+			return
+		}
+		result, err := service.MonthlyProviderTruth(r.Context(), computeIDs[0], storageIDs[0])
+		if errors.Is(err, fabric.ErrInvalidMonthlyProviderTruth) {
+			writeError(w, http.StatusBadRequest, fabric.ErrInvalidMonthlyProviderTruth.Error())
+			return
+		}
+		if err != nil {
+			writeError(w, http.StatusServiceUnavailable, fabric.ErrMonthlyProviderTruthUnavailable.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, result)
+	})
 	mux.HandleFunc("GET /fabric/operations", func(w http.ResponseWriter, r *http.Request) {
 		operations, err := service.ListOperations(r.Context())
 		if err != nil {
