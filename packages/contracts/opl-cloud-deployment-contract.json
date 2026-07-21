@@ -1,9 +1,9 @@
 {
-  "schemaVersion": 12,
+  "schemaVersion": 13,
   "owner": "OPL Fabric",
-  "purpose": "Deployment workflow, immutable Cloud and Workspace images, TKE handoff, read-only diagnostics, and production-verification safety.",
+  "purpose": "Deployment workflow, immutable Cloud and Workspace images, TKE handoff, read-only diagnostics, explicit roll-forward recovery, and production-verification safety.",
   "state": "current",
-  "machineBoundary": "GitHub workflow structure, runner isolation, deploy-time env sources, secret handling, immutable image release, ConfigMap-aware Cloud rollback, read-only diagnostics, existing Workspace preservation, Basic rollout readiness, paused standalone verification, and legacy global Secret retirement.",
+  "machineBoundary": "GitHub workflow structure, runner isolation, deploy-time env sources, secret handling, immutable image release, ConfigMap-aware ordinary rollback, no-rollback candidate recovery, read-only diagnostics, existing Workspace preservation, Basic rollout readiness, paused standalone verification, and legacy global Secret retirement.",
   "lifecycle": {
     "type": "long_term_contract",
     "removalCondition": "Replace only with a newer current contract for the same boundary."
@@ -55,7 +55,8 @@
       "workspace_image",
       "exercise_rollback",
       "bootstrap_mode",
-      "diagnostics_only"
+      "diagnostics_only",
+      "roll_forward_mode"
     ],
     "preDebitTencentMutationGate": {
       "env": "RUN_TENCENT_CREATE_RELEASE_EXECUTION",
@@ -264,6 +265,55 @@
       ]
     },
     "mutationCommands": []
+  },
+  "productionRollForwardRecoveryJob": {
+    "file": ".github/workflows/deploy-tke-production.yml",
+    "job": "roll-forward",
+    "runner": ["self-hosted", "tencent-cloud", "opl-cloud", "tke-vpc"],
+    "inputs": ["roll_forward_mode"],
+    "modeOptions": ["none", "control-plane", "all-cloud"],
+    "candidateImage": "uswccr.ccs.tencentyun.com/oplcloud/opl-cloud@sha256:1c68bd613223ce06ffd1042ec226144830f1533c937569e886cd07ade97b5ca5",
+    "requiredEnv": [
+      "OPL_K8S_NAMESPACE",
+      "OPL_PUBLIC_URL",
+      "OPL_CANDIDATE_IMAGE",
+      "TENCENT_DEPLOY_KUBECONFIG_PATH",
+      "TENCENT_DEPLOY_KUBECONFIG_B64",
+      "TENCENT_DEPLOY_KUBECONFIG"
+    ],
+    "secretEnv": ["TENCENT_DEPLOY_KUBECONFIG_B64", "TENCENT_DEPLOY_KUBECONFIG"],
+    "steps": [
+      "Prepare recovery kubeconfig",
+      "Apply roll-forward image and capture diagnostics",
+      "Remove recovery kubeconfig"
+    ],
+    "requiredCommandsByStep": {
+      "Prepare recovery kubeconfig": [
+        "TENCENT_DEPLOY_KUBECONFIG_PATH",
+        "TENCENT_DEPLOY_KUBECONFIG_B64",
+        "TENCENT_DEPLOY_KUBECONFIG"
+      ],
+      "Apply roll-forward image and capture diagnostics": [
+        "deployment/opl-cloud-control-plane",
+        "deployment/opl-cloud-ledger",
+        "deployment/opl-cloud-fabric",
+        "imageID",
+        "describe \"pod/$pod\"",
+        "--previous",
+        "rollout status",
+        "Refusing to promote Ledger/Fabric before candidate Control Plane is Ready"
+      ],
+      "Remove recovery kubeconfig": [
+        "always()",
+        "find \"$secret_dir\" -mindepth 1 -delete",
+        "rmdir \"$secret_dir\""
+      ]
+    },
+    "automaticRollback": false,
+    "candidatePodDeletion": false,
+    "providerMutation": false,
+    "walletMutation": false,
+    "promotionGate": "candidate_control_plane_ready"
   },
   "productionVerificationWorkflow": {
     "file": ".github/workflows/verify-production-chain.yml",

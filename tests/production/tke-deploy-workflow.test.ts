@@ -233,6 +233,11 @@ test("TKE deploy workflow matches the current deployment contract", async () => 
   const deployWorkflow = await readWorkflow(contract.deployWorkflow.file);
   assertWorkflowContract(deployWorkflow, contract.deployWorkflow, contract);
   assertWorkflowContract(deployWorkflow, contract.productionDiagnosticsJob, contract);
+  assertWorkflowContract(deployWorkflow, contract.productionRollForwardRecoveryJob, contract);
+  assert.equal(contract.productionRollForwardRecoveryJob.automaticRollback, false);
+  assert.equal(contract.productionRollForwardRecoveryJob.candidatePodDeletion, false);
+  assert.equal(contract.productionRollForwardRecoveryJob.providerMutation, false);
+  assert.equal(contract.productionRollForwardRecoveryJob.walletMutation, false);
   assert.ok(contract.deployWorkflow.requiredEnv.includes("OPL_TENCENT_ZONE"));
   assert.deepEqual(contract.deployWorkflow.preDebitTencentMutationGate, {
     env: "RUN_TENCENT_CREATE_RELEASE_EXECUTION",
@@ -339,8 +344,8 @@ test("TKE diagnostics are read only and mutually exclusive with deploy", async (
 
   assert.equal(input.type, "boolean");
   assert.equal(input.default, false);
-  assert.equal(deploy.if, "${{ !inputs.diagnostics_only }}");
-  assert.equal(diagnose.if, "${{ inputs.diagnostics_only }}");
+  assert.equal(deploy.if, "${{ !inputs.diagnostics_only && inputs.roll_forward_mode == 'none' }}");
+  assert.equal(diagnose.if, "${{ inputs.diagnostics_only && inputs.roll_forward_mode == 'none' }}");
   assert.match(String(releaseGate.if), /!inputs\.diagnostics_only/);
   assert.deepEqual(diagnose["runs-on"], ["self-hosted", "tencent-cloud", "opl-cloud", "tke-vpc"]);
   assert.equal(diagnose.environment, "production");
@@ -350,6 +355,35 @@ test("TKE diagnostics are read only and mutually exclusive with deploy", async (
   assert.match(runs, /describe "\$pod"/);
   assert.match(runs, /logs/);
   assert.doesNotMatch(runs, /\b(?:apply|delete|patch|scale)\b|set image|rollout restart/);
+});
+
+test("TKE roll-forward recovery preserves the candidate pod and never rolls back", async () => {
+  const workflow = await readWorkflow(".github/workflows/deploy-tke-production.yml");
+  const input = workflow.on.workflow_dispatch.inputs.roll_forward_mode;
+  const deploy = workflowJob(workflow, "deploy");
+  const recover = workflowJob(workflow, "roll-forward");
+  const releaseGate = workflowJob(workflow, "release-gate");
+  const apply = serializedStep(stepsByName(recover).get("Apply roll-forward image and capture diagnostics"));
+
+  assert.equal(input.type, "choice");
+  assert.equal(input.default, "none");
+  assert.deepEqual(input.options, ["none", "control-plane", "all-cloud"]);
+  assert.equal(recover.environment, "production");
+  assert.deepEqual(recover["runs-on"], ["self-hosted", "tencent-cloud", "opl-cloud", "tke-vpc"]);
+  assert.match(String(deploy.if), /roll_forward_mode == 'none'/);
+  assert.match(String(releaseGate.if), /roll_forward_mode == 'none'/);
+  assert.equal(
+    recover.env.OPL_CANDIDATE_IMAGE,
+    "uswccr.ccs.tencentyun.com/oplcloud/opl-cloud@sha256:1c68bd613223ce06ffd1042ec226144830f1533c937569e886cd07ade97b5ca5"
+  );
+  assert.match(apply, /set image[\s\\]+deployment\/opl-cloud-control-plane/);
+  assert.match(apply, /set image[\s\\]+deployment\/opl-cloud-ledger/);
+  assert.match(apply, /set image[\s\\]+deployment\/opl-cloud-fabric/);
+  assert.match(apply, /imageID/);
+  assert.match(apply, /describe "pod\/\$pod"/);
+  assert.match(apply, /logs "pod\/\$pod".*--previous/s);
+  assert.match(apply, /rollout status/);
+  assert.doesNotMatch(apply, /restore_previous|rollback|rollout undo|delete (?:pod|deployment)/i);
 });
 
 test("TKE bootstrap deploy is approved, read only, and cannot complete a release", async () => {
@@ -371,7 +405,7 @@ test("TKE bootstrap deploy is approved, read only, and cannot complete a release
   assert.equal(deploy.env.OPL_BOOTSTRAP_MODE, "${{ inputs.bootstrap_mode }}");
   assert.match(String(deploy.env.OPL_MONTHLY_BILLING_WORKER_ENABLED), /inputs\.bootstrap_mode.*'0'/);
   assert.equal(bootstrap.needs, "deploy");
-  assert.equal(bootstrap.if, "${{ inputs.bootstrap_mode && needs.deploy.result == 'success' }}");
+  assert.equal(bootstrap.if, "${{ inputs.roll_forward_mode == 'none' && inputs.bootstrap_mode && needs.deploy.result == 'success' }}");
   assert.equal(bootstrap.environment, "production");
   assert.equal(stepsByName(bootstrap).get("Set up Node")?.uses, "actions/setup-node@v4");
   assert.equal(stepsByName(bootstrap).get("Set up Node")?.with?.["node-version"], "22");
@@ -384,7 +418,7 @@ test("TKE bootstrap deploy is approved, read only, and cannot complete a release
   assert.doesNotMatch(bootstrapRun, /production-live-qa|provider-acceptance|purchase|delete|renew|POST/i);
 
   assert.deepEqual(releaseGate.needs, ["deploy", "bootstrap-readiness"]);
-  assert.equal(releaseGate.if, "${{ always() && !inputs.diagnostics_only }}");
+  assert.equal(releaseGate.if, "${{ always() && !inputs.diagnostics_only && inputs.roll_forward_mode == 'none' }}");
   assert.match(releaseRun, /release incomplete/i);
   assert.match(releaseRun, /releaseComplete.*false/s);
   assert.match(releaseRun, /exit 1/);
@@ -783,7 +817,7 @@ test("TKE retires the legacy global Workspace secret only after successful ordin
   const retire = serializedStep(stepsByName(cleanup).get("Retire legacy global Workspace secret"));
 
   assert.equal(cleanup.needs, "deploy");
-  assert.equal(cleanup.if, "${{ !inputs.bootstrap_mode && needs.deploy.result == 'success' }}");
+  assert.equal(cleanup.if, "${{ inputs.roll_forward_mode == 'none' && !inputs.bootstrap_mode && needs.deploy.result == 'success' }}");
   assert.deepEqual(cleanup["runs-on"], ["self-hosted", "tencent-cloud", "opl-cloud", "tke-vpc"]);
   assert.equal(cleanup.environment, "production");
   assert.notEqual(cleanup["continue-on-error"], true);
