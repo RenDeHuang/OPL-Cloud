@@ -212,6 +212,13 @@ validate account and quote
   `latest` and tag-only production references are forbidden. The immutable TCR digest
   and Ready Pod `imageID` remain unavailable until their respective publication and
   deployment readbacks succeed; placeholders and local timestamps are not evidence.
+- Ordinary Cloud deploy updates the immutable Workspace image default for new
+  Fabric operations but does not restart or wait for existing Workspace
+  Deployments while Runtime rollout is paused. Cloud rollback restores all
+  prior ConfigMap data before restoring the three Cloud images.
+- The current production PostgreSQL endpoint is internal and does not offer TLS,
+  so the TKE ConfigMap sets `PGSSLMODE=disable`. A TLS-capable database migration
+  must change this contract and its deployment evidence together.
 - CBS is mounted at `/data` and `/projects`.
 - Runtime remains the only possible authority for `/projects` file metadata and mounted filesystem usage, but those
   product APIs and their Console presentation are paused outside this release. Release persistence checks write and
@@ -281,7 +288,7 @@ Provider Acceptance owns two retained non-customer slots:
 | 7. Gateway usage | Reveal the owner Key, make a metered Workspace model request, and show its customer-safe cost and Token facts. | Gateway, Console, Ledger | Wallet, Key list, request Usage, Usage Stats, balance history, and integer-cost projections are code-complete and locally tested; a real model request and production readback remain pending. | Tenant isolation, model response, request usage and stats projection, integer `actual_cost`, no leakage. |
 | 8. Renewal and recovery | Renew one Workspace period with deterministic recovery. | All four lanes | Workspace-level claim, combined debit, same-ID provider renewal/readback, expiry, refund/review, and receipt recovery are code-complete; enabling auto-renew and real renewal evidence are pending. | Isolated PostgreSQL concurrency, renewal replay, deadline readback, real approved renewal. |
 | 9. Reusable verification | Prove releases without per-run Tencent purchase or deletion. | All four lanes | Provider Acceptance, Pro verification, and fixed-slot verification are paused and do not gate the Basic rollout. | Future separately approved retained-slot evidence. |
-| 10. Production release | Declare ready from immutable artifacts, rollout, rollback, and real evidence. | All four lanes | Security, immutable imageID checks, grouped rollback, release tooling, Task 12 UI, Task 13A local gates, and the deployment identity cutover are code-complete locally; immutable publication, rollout, rollback, and runtime evidence remain pending. | Full local gates, immutable digests, rollout, rollback, source-truth QA, approved real evidence. |
+| 10. Production release | Declare ready from immutable artifacts, rollout, rollback, and real evidence. | All four lanes | Security, immutable imageID checks, ConfigMap-aware Cloud rollback, read-only TKE diagnostics, release tooling, Task 12 UI, Task 13A local gates, and the deployment identity cutover are code-complete locally; immutable publication, rollout, rollback, and runtime evidence remain pending. | Full local gates, immutable digests, rollout, rollback, source-truth QA, approved real evidence. |
 
 ## Delivery Phases
 

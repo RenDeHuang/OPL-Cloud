@@ -232,6 +232,7 @@ test("TKE deploy workflow matches the current deployment contract", async () => 
   const contract = await readJson(deploymentContractPath);
   const deployWorkflow = await readWorkflow(contract.deployWorkflow.file);
   assertWorkflowContract(deployWorkflow, contract.deployWorkflow, contract);
+  assertWorkflowContract(deployWorkflow, contract.productionDiagnosticsJob, contract);
   assert.ok(contract.deployWorkflow.requiredEnv.includes("OPL_TENCENT_ZONE"));
   for (const key of [
     "OPL_OPERATOR_CIDRS",
@@ -323,6 +324,29 @@ test("ordinary TKE deploy has no Acceptance or live QA mutation gate", async () 
   assert.doesNotMatch(inputGate.run, /NODE_POOL_ID|GATEWAY_PUBLIC_BASE_URL|PROVIDER_ACCEPTANCE|OPL_VERIFY_/);
 });
 
+test("TKE diagnostics are read only and mutually exclusive with deploy", async () => {
+  const workflow = await readWorkflow(".github/workflows/deploy-tke-production.yml");
+  const input = workflow.on.workflow_dispatch.inputs.diagnostics_only;
+  const deploy = workflowJob(workflow, "deploy");
+  const diagnose = workflowJob(workflow, "diagnose");
+  const releaseGate = workflowJob(workflow, "release-gate");
+  const runs = serializedStep(stepsByName(diagnose).get("Read cluster diagnostics"));
+
+  assert.equal(input.type, "boolean");
+  assert.equal(input.default, false);
+  assert.equal(deploy.if, "${{ !inputs.diagnostics_only }}");
+  assert.equal(diagnose.if, "${{ inputs.diagnostics_only }}");
+  assert.match(String(releaseGate.if), /!inputs\.diagnostics_only/);
+  assert.deepEqual(diagnose["runs-on"], ["self-hosted", "tencent-cloud", "opl-cloud", "tke-vpc"]);
+  assert.equal(diagnose.environment, "production");
+  assert.match(runs, /get nodes -o wide/);
+  assert.match(runs, /get deploy,rs,pod -o wide/);
+  assert.match(runs, /get events/);
+  assert.match(runs, /describe "\$pod"/);
+  assert.match(runs, /logs/);
+  assert.doesNotMatch(runs, /\b(?:apply|delete|patch|scale)\b|set image|rollout restart/);
+});
+
 test("TKE bootstrap deploy is approved, read only, and cannot complete a release", async () => {
   const workflow = await readWorkflow(".github/workflows/deploy-tke-production.yml");
   const input = workflow.on.workflow_dispatch.inputs.bootstrap_mode;
@@ -355,7 +379,7 @@ test("TKE bootstrap deploy is approved, read only, and cannot complete a release
   assert.doesNotMatch(bootstrapRun, /production-live-qa|provider-acceptance|purchase|delete|renew|POST/i);
 
   assert.deepEqual(releaseGate.needs, ["deploy", "bootstrap-readiness"]);
-  assert.equal(releaseGate.if, "${{ always() }}");
+  assert.equal(releaseGate.if, "${{ always() && !inputs.diagnostics_only }}");
   assert.match(releaseRun, /release incomplete/i);
   assert.match(releaseRun, /releaseComplete.*false/s);
   assert.match(releaseRun, /exit 1/);
@@ -640,6 +664,7 @@ test("TKE deploy never applies a ConfigMap with a mismatched Tencent region and 
     await mkdir(rollbackDir);
     await Promise.all([
       ...["opl-cloud-control-plane", "opl-cloud-ledger", "opl-cloud-fabric"].map((name) => writeFile(join(rollbackDir, name), values.OPL_CLOUD_IMAGE)),
+      writeFile(join(rollbackDir, "opl-cloud-config.json"), JSON.stringify({ data: values })),
       writeFile(join(rollbackDir, "OPL_WORKSPACE_IMAGE"), values.OPL_WORKSPACE_IMAGE),
       writeFile(join(rollbackDir, "workspace-images.tsv"), "")
     ]);
@@ -686,7 +711,7 @@ test("TKE manifest renderer can leave shared Ingress ownership untouched", async
   assert.equal(rendered.items.some((item) => item.kind === "Ingress" && item.metadata?.name === "opl-cloud"), false);
 });
 
-test("TKE deploy requires image digests and rolls back the complete Cloud and App image set", async () => {
+test("TKE deploy requires image digests and rolls back Cloud images with the complete ConfigMap", async () => {
   const workflow = await readWorkflow(".github/workflows/deploy-tke-production.yml");
   const currentJob = workflowJob(workflow, "deploy");
   const inputs = Object.keys(workflow.on.workflow_dispatch.inputs || {});
@@ -711,12 +736,9 @@ test("TKE deploy requires image digests and rolls back the complete Cloud and Ap
   for (const deployment of ["opl-cloud-control-plane", "opl-cloud-ledger", "opl-cloud-fabric"]) {
     assert.match(capture, new RegExp(deployment));
   }
-  assert.match(capture, /previous.*OPL_WORKSPACE_IMAGE/is);
-  assert.match(capture, /workspace-images\.tsv/);
-  assert.match(capture, /source tools\/tke-image-rollout\.sh/);
-  assert.match(capture, /list_workspace_images/);
-  assert.match(rolloutHelper, /get deployment -l ['"]oplcloud\.cn\/workspace-id['"] -o json/);
-  assert.match(rolloutHelper, /container\.name === "workspace"/);
+  assert.match(capture, /get configmap opl-cloud-config[\s\S]*-o json[\s\S]*opl-cloud-config\.json/);
+  assert.doesNotMatch(capture, /workspace-images\.tsv|list_workspace_images/);
+  assert.doesNotMatch(rolloutHelper, /oplcloud\.cn\/workspace-id|set_workspace_images|wait_workspace_rollouts/);
   assert.match(apply, /source tools\/tke-image-rollout\.sh/);
   assert.match(apply, /apply_candidate_images/);
   assert.match(apply, /restore_previous_images/);
@@ -817,9 +839,10 @@ ${retire}
   }
 });
 
-test("TKE rollback functions restore, read back, and reapply every Cloud and App image", async () => {
+test("TKE rollback restores the complete ConfigMap and never rolls existing Workspaces", async () => {
   const functions = await readFile(repoFile("tools/tke-image-rollout.sh"), "utf8");
   assert.doesNotMatch(functions, /set \+e/);
+  assert.doesNotMatch(functions, /oplcloud\.cn\/workspace-id|set_workspace_images|wait_workspace_rollouts/);
   const root = await mkdtemp(join(tmpdir(), "opl-rollback-test-"));
   const rollbackDir = join(root, "previous-images");
   const oldCloud = `registry.example.test/opl/cloud@sha256:${"a".repeat(64)}`;
@@ -831,6 +854,12 @@ test("TKE rollback functions restore, read back, and reapply every Cloud and App
     await mkdir(rollbackDir);
     await Promise.all([
       ...["opl-cloud-control-plane", "opl-cloud-ledger", "opl-cloud-fabric"].map((name) => writeFile(join(rollbackDir, name), oldCloud)),
+      writeFile(join(rollbackDir, "opl-cloud-config.json"), JSON.stringify({
+        apiVersion: "v1",
+        kind: "ConfigMap",
+        metadata: { name: "opl-cloud-config", namespace: "opl-test" },
+        data: { OPL_WORKSPACE_IMAGE: oldWorkspace, PGSSLMODE: "disable", OPL_SUB2API_SUPPORTED_VERSIONS: "0.1.153" }
+      })),
       writeFile(join(rollbackDir, "OPL_WORKSPACE_IMAGE"), oldWorkspace),
       writeFile(join(rollbackDir, "workspace-images.tsv"), `workspace-slot-1\tworkspace\t${oldWorkspace}\n`)
     ]);
@@ -853,7 +882,7 @@ test("TKE rollback functions restore, read back, and reapply every Cloud and App
         printf '\n' >> "$TEST_ROOT/kubectl.log"
         for arg in "$@"; do
           case "$arg" in
-            get|patch|set|rollout) command="$arg" ;;
+            get|patch|set|rollout|apply) command="$arg" ;;
             deployment/*) target="\${arg#deployment/}" ;;
             *=*) assignment="$arg" ;;
           esac
@@ -875,7 +904,13 @@ test("TKE rollback functions restore, read back, and reapply every Cloud and App
           patch)
             last="\${!#}"
             if [ "\${IGNORE_CONFIG_PATCH:-0}" != "1" ]; then
-              config_image="$(node -e 'process.stdout.write(JSON.parse(process.argv[1]).data.OPL_WORKSPACE_IMAGE)' "$last")"
+              config_image="$(node -e 'const value = JSON.parse(process.argv[1]); process.stdout.write((Array.isArray(value) ? value[0].value : value.data).OPL_WORKSPACE_IMAGE)' "$last")"
+            fi
+            ;;
+          apply)
+            last="\${!#}"
+            if [ "\${IGNORE_CONFIG_PATCH:-0}" != "1" ]; then
+              config_image="$(node -e 'const value = JSON.parse(process.argv[1]); process.stdout.write((Array.isArray(value) ? value[0].value : value.data).OPL_WORKSPACE_IMAGE)' "$last")"
             fi
             ;;
           set)
@@ -925,13 +960,15 @@ ${functions}
       }
     });
     assert.equal(result.status, 0, result.stderr);
-    assert.deepEqual((await readFile(join(root, "restored.txt"), "utf8")).trim().split("\n"), [oldWorkspace, oldCloud, oldCloud, oldCloud, oldWorkspace, oldWorkspace]);
+    assert.deepEqual((await readFile(join(root, "restored.txt"), "utf8")).trim().split("\n"), [oldWorkspace, oldCloud, oldCloud, oldCloud, candidateWorkspace, candidateWorkspace]);
     assert.deepEqual((await readFile(join(root, "candidate.txt"), "utf8")).trim().split("\n"), [candidateWorkspace, candidateCloud, candidateCloud, candidateCloud, candidateWorkspace, candidateWorkspace]);
 
     const log = await readFile(join(root, "kubectl.log"), "utf8");
-    for (const deployment of ["opl-cloud-control-plane", "opl-cloud-ledger", "opl-cloud-fabric", "workspace-slot-1", "workspace-late"]) {
+    for (const deployment of ["opl-cloud-control-plane", "opl-cloud-ledger", "opl-cloud-fabric"]) {
       assert.equal(log.match(new RegExp(`get deployment/${deployment}`, "g"))?.length, 2, `${deployment} must be read back after restore and reapply`);
     }
+    assert.match(log, /patch configmap opl-cloud-config --type json -p/);
+    assert.doesNotMatch(log, /(?:set image|rollout (?:restart|status)) deployment\/workspace-/);
     assert.equal(log.match(/get configmap opl-cloud-config/g)?.length, 2, "candidate and previous ConfigMap values must both be read back");
 
     const bootstrap = spawnSync("bash", ["-c", harness], {
@@ -992,9 +1029,10 @@ ${functions}
     assert.equal(failedRestore.status, 0, failedRestore.stderr);
     assert.equal((await readFile(join(root, "failure-status.txt"), "utf8")).trim(), "1");
     const failedLog = await readFile(join(root, "kubectl.log"), "utf8");
-    for (const deployment of ["opl-cloud-control-plane", "opl-cloud-ledger", "opl-cloud-fabric", "workspace-slot-1", "workspace-late"]) {
+    for (const deployment of ["opl-cloud-control-plane", "opl-cloud-ledger", "opl-cloud-fabric"]) {
       assert.match(failedLog, new RegExp(`set image deployment/${deployment}`), `${deployment} restore must be attempted after a sibling failure`);
     }
+    assert.doesNotMatch(failedLog, /set image deployment\/workspace-/);
 
     const ignoredConfigPatch = spawnSync("bash", ["-c", harness], {
       cwd: fileURLToPath(repoFile(".")),

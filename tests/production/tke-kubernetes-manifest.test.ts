@@ -27,6 +27,7 @@ test("OPL Cloud TKE manifest declares three decoupled services and monthly Sub2A
   assert.equal(config.data.OPL_PRO_COMPUTE_NODE_POOL_ID, undefined);
   assert.equal(config.data.OPL_COMPUTE_LAUNCH_ZONE, undefined);
   assert.equal(config.data.OPL_SUB2API_REQUEST_TIMEOUT_MS, "5000");
+  assert.equal(config.data.PGSSLMODE, "disable");
   assert.equal(config.data.TENCENTCLOUD_REGION, "na-siliconvalley");
   assert.equal(config.data.OPL_TENCENT_ZONE, "na-siliconvalley-1");
   assert.match(config.data.OPL_CLOUD_IMAGE, /^[^:@]+(?:\/[^:@]+)+@sha256:[0-9a-f]{64}$/);

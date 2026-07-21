@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 11,
+  "schemaVersion": 12,
   "owner": "OPL Platform Architecture",
   "purpose": "Freeze the approved Pilot V2 products, delegated Gateway key lifecycle, one Workspace charge, prepaid Tencent fulfillment, Runtime facts, operator workflows, announcements, and evidence levels without claiming unfinished implementation or runtime evidence.",
   "state": "current",
@@ -232,6 +232,11 @@
       "readyPodImageIdStatus": "pending_deployment_readback"
     },
     "productionReference": "repository@sha256",
+    "ordinaryCloudDeploy": {
+      "workspaceImageDefault": "update_for_new_fabric_operations",
+      "existingWorkspaceDeployments": "preserved_not_restarted_or_waited",
+      "reason": "runtime_and_s9_rollout_paused"
+    },
     "mounts": ["/data", "/projects"],
     "projectFacts": {
       "launchStatus": "paused_not_in_release",
@@ -461,8 +466,8 @@
       "id": "production_release",
       "business": "A release is ready only from merged code, immutable Cloud and App images, runtime checks, rollback proof, and reusable verification.",
       "owners": ["console", "fabric", "ledger", "gateway"],
-      "currentState": "Security, immutable Ready-Pod imageID checks, grouped rollback, release tooling, local Console integration, Task 13A gates, and the deployment identity cutover are code-complete locally; immutable publication, rollout, deployed browser, Gateway, and safe real verification evidence remain incomplete.",
-      "requiredDeliverables": ["immutable digests", "production readiness", "grouped rollback", "read-only smoke", "verification receipt"],
+      "currentState": "Security, immutable Ready-Pod imageID checks, ConfigMap-aware Cloud rollback, read-only TKE diagnostics, release tooling, local Console integration, Task 13A gates, and the deployment identity cutover are code-complete locally; immutable publication, successful rollout, deployed browser, Gateway, and safe real verification evidence remain incomplete.",
+      "requiredDeliverables": ["immutable digests", "production readiness", "ConfigMap-aware Cloud rollback", "read-only smoke", "verification receipt"],
       "completionEvidence": ["CI run", "rollout readback", "rollback and restore", "real QA evidence"]
     }
   ]

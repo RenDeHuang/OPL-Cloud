@@ -1,9 +1,9 @@
 {
-  "schemaVersion": 10,
+  "schemaVersion": 11,
   "owner": "OPL Fabric",
-  "purpose": "Deployment workflow, immutable Cloud and Workspace images, TKE handoff, and production-verification safety.",
+  "purpose": "Deployment workflow, immutable Cloud and Workspace images, TKE handoff, read-only diagnostics, and production-verification safety.",
   "state": "current",
-  "machineBoundary": "GitHub workflow structure, runner isolation, deploy-time env sources, secret handling, immutable image release, grouped rollback, Basic rollout readiness, paused standalone verification, and legacy global Secret retirement.",
+  "machineBoundary": "GitHub workflow structure, runner isolation, deploy-time env sources, secret handling, immutable image release, ConfigMap-aware Cloud rollback, read-only diagnostics, existing Workspace preservation, Basic rollout readiness, paused standalone verification, and legacy global Secret retirement.",
   "lifecycle": {
     "type": "long_term_contract",
     "removalCondition": "Replace only with a newer current contract for the same boundary."
@@ -26,6 +26,11 @@
     "restartBehavior": "reauthentication_required",
     "horizontalScaling": "blocked_pending_secure_shared_vault"
   },
+  "productionPostgresTransport": {
+    "currentEndpoint": "internal_non_tls",
+    "podEnv": "PGSSLMODE=disable",
+    "changeGate": "database_and_deployment_contract_evidence_must_change_together"
+  },
   "runner": [
     "self-hosted",
     "tencent-cloud",
@@ -40,7 +45,8 @@
       "cloud_image",
       "workspace_image",
       "exercise_rollback",
-      "bootstrap_mode"
+      "bootstrap_mode",
+      "diagnostics_only"
     ],
     "requiredEnv": [
       "OPL_RUNTIME_PROVIDER",
@@ -173,9 +179,9 @@
         "opl-cloud-control-plane:control-plane",
         "opl-cloud-ledger:ledger",
         "opl-cloud-fabric:fabric",
-        "workspace-images.tsv",
-        "source tools/tke-image-rollout.sh",
-        "list_workspace_images"
+        "get configmap opl-cloud-config",
+        "-o json",
+        "opl-cloud-config.json"
       ],
       "Upload rollback image set": [
         "actions/upload-artifact@v4",
@@ -198,6 +204,7 @@
         "rmdir \"$secret_dir\""
       ]
     },
+    "existingWorkspaceRolloutPolicy": "preserve_existing_deployments_update_default_image_only",
     "forbiddenRunTokens": [
       "--from-literal=DATABASE_URL",
       "--from-literal=OPL_INTERNAL_SERVICE_TOKEN",
@@ -205,6 +212,44 @@
       "--from-literal=OPL_OPERATOR_SUMMARY_TOKEN",
       "--docker-password"
     ]
+  },
+  "productionDiagnosticsJob": {
+    "file": ".github/workflows/deploy-tke-production.yml",
+    "job": "diagnose",
+    "runner": ["self-hosted", "tencent-cloud", "opl-cloud", "tke-vpc"],
+    "inputs": ["diagnostics_only"],
+    "requiredEnv": [
+      "OPL_K8S_NAMESPACE",
+      "TENCENT_DEPLOY_KUBECONFIG_PATH",
+      "TENCENT_DEPLOY_KUBECONFIG_B64",
+      "TENCENT_DEPLOY_KUBECONFIG"
+    ],
+    "secretEnv": ["TENCENT_DEPLOY_KUBECONFIG_B64", "TENCENT_DEPLOY_KUBECONFIG"],
+    "steps": [
+      "Prepare diagnostics kubeconfig",
+      "Read cluster diagnostics",
+      "Remove diagnostics kubeconfig"
+    ],
+    "requiredCommandsByStep": {
+      "Prepare diagnostics kubeconfig": [
+        "TENCENT_DEPLOY_KUBECONFIG_PATH",
+        "TENCENT_DEPLOY_KUBECONFIG_B64",
+        "TENCENT_DEPLOY_KUBECONFIG"
+      ],
+      "Read cluster diagnostics": [
+        "get nodes -o wide",
+        "get deploy,rs,pod -o wide",
+        "get events",
+        "describe \"$pod\"",
+        "logs \"$pod\""
+      ],
+      "Remove diagnostics kubeconfig": [
+        "always()",
+        "find \"$secret_dir\" -mindepth 1 -delete",
+        "rmdir \"$secret_dir\""
+      ]
+    },
+    "mutationCommands": []
   },
   "productionVerificationWorkflow": {
     "file": ".github/workflows/verify-production-chain.yml",
@@ -543,7 +588,8 @@
         "source tools/tke-image-rollout.sh",
         "restore_previous_images",
         "restore_previous_bootstrap_images",
-        "complete previous Cloud/App image set"
+        "opl-cloud-config.json",
+        "previous Cloud images and ConfigMap"
       ],
       "Remove rollback kubeconfig": [
         "always()",

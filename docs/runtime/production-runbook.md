@@ -367,8 +367,17 @@ require separate approval.
 ## Deploy
 
 Use the `Deploy TKE Production` workflow with immutable image references. It
-installs secrets, renders the manifest, applies it, restarts all ConfigMap
-consumers, and waits for each rollout.
+installs secrets, snapshots the current ConfigMap and Cloud images, renders the
+manifest, applies it, and waits for the three Cloud rollouts. It updates the
+immutable Workspace image default used by new Fabric operations, but does not
+restart or wait for existing Workspace Deployments while Runtime/S9 rollout is
+paused. The current internal PostgreSQL endpoint has no TLS, so the manifest
+sets `PGSSLMODE=disable`.
+
+Set `diagnostics_only=true` to read Nodes, Cloud/Workspace Pod state, Events,
+and Cloud container logs without applying a manifest or changing a workload.
+On a failed deploy, rollback restores the complete previous ConfigMap data
+before restoring the three previous Cloud images.
 
 Manual bounded rollout checks:
 
