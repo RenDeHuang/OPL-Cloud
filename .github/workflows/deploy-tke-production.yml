@@ -132,6 +132,7 @@ jobs:
       OPL_K8S_NAMESPACE: ${{ vars.OPL_K8S_NAMESPACE || 'opl-cloud' }}
       OPL_PUBLIC_URL: ${{ vars.OPL_PUBLIC_URL || 'https://cloud.medopl.cn' }}
       OPL_CANDIDATE_IMAGE: uswccr.ccs.tencentyun.com/oplcloud/opl-cloud@sha256:1c68bd613223ce06ffd1042ec226144830f1533c937569e886cd07ade97b5ca5
+      OPL_POSTGRES_CLIENT_IMAGE: quay.io/sclorg/postgresql-16-c9s@sha256:cf7fb6396ee839019b6fef1838474e5b752828a512bb27030f13a28f42ec5617
       TENCENT_DEPLOY_KUBECONFIG_PATH: ${{ vars.TENCENT_DEPLOY_KUBECONFIG_PATH || '/home/actions/.secrets/medopl/v22/kubeconfig-package-d-deploy' }}
       TENCENT_DEPLOY_KUBECONFIG_B64: ${{ secrets.TENCENT_DEPLOY_KUBECONFIG_B64 }}
       TENCENT_DEPLOY_KUBECONFIG: ${{ secrets.TENCENT_DEPLOY_KUBECONFIG }}
@@ -267,15 +268,29 @@ jobs:
           backup_root="/home/actions/.secrets/medopl/v22/postgres-backups"
           install -d -m 700 "$backup_root"
           backup_file="$backup_root/opl-cloud-before-primary-workspace-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.dump"
-          pg_dump --format=custom --no-owner --no-acl --file="$backup_file" "$DATABASE_URL"
+          install -m 600 /dev/null "$backup_file"
+          docker run --rm --network host \
+            --user "$(id -u):$(id -g)" \
+            --env DATABASE_URL --env PGSSLMODE \
+            --volume "$backup_file:/backup.dump" \
+            --entrypoint /bin/bash "$OPL_POSTGRES_CLIENT_IMAGE" \
+            -ceu 'pg_dump --format=custom --no-owner --no-acl --file=/backup.dump "$DATABASE_URL"'
           test -s "$backup_file"
           chmod 600 "$backup_file"
-          pg_restore --list "$backup_file" >/dev/null
+          docker run --rm --network none \
+            --user "$(id -u):$(id -g)" \
+            --volume "$backup_file:/backup.dump:ro" \
+            --entrypoint /bin/bash "$OPL_POSTGRES_CLIENT_IMAGE" \
+            -ceu 'pg_restore --list /backup.dump >/dev/null'
           backup_bytes="$(wc -c < "$backup_file" | tr -d ' ')"
           backup_sha256="$(sha256sum "$backup_file" | cut -d ' ' -f 1)"
           printf 'backupFile=%s\nbackupBytes=%s\nbackupSha256=%s\n' "$backup_file" "$backup_bytes" "$backup_sha256"
 
-          psql "$DATABASE_URL" -X --set ON_ERROR_STOP=1 --csv <<'SQL'
+          docker run --rm --interactive --network host \
+            --user "$(id -u):$(id -g)" \
+            --env DATABASE_URL --env PGSSLMODE \
+            --entrypoint /bin/bash "$OPL_POSTGRES_CLIENT_IMAGE" \
+            -ceu 'psql "$DATABASE_URL" -X --set ON_ERROR_STOP=1 --csv' <<'SQL'
           WITH duplicate_accounts AS (
             SELECT
               COALESCE(NULLIF(account_id, ''), owner_account_id) AS account_key,

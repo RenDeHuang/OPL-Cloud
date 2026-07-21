@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 16,
+  "schemaVersion": 17,
   "owner": "OPL Fabric",
   "purpose": "Deployment workflow, immutable Cloud and Workspace images, TKE handoff, read-only diagnostics, explicit roll-forward recovery, and production-verification safety.",
   "state": "current",
@@ -275,10 +275,12 @@
     "inputs": ["roll_forward_mode", "repair_postgres_transport", "inspect_primary_workspace_conflict"],
     "modeOptions": ["none", "control-plane", "all-cloud"],
     "candidateImage": "uswccr.ccs.tencentyun.com/oplcloud/opl-cloud@sha256:1c68bd613223ce06ffd1042ec226144830f1533c937569e886cd07ade97b5ca5",
+    "postgresClientImage": "quay.io/sclorg/postgresql-16-c9s@sha256:cf7fb6396ee839019b6fef1838474e5b752828a512bb27030f13a28f42ec5617",
     "requiredEnv": [
       "OPL_K8S_NAMESPACE",
       "OPL_PUBLIC_URL",
       "OPL_CANDIDATE_IMAGE",
+      "OPL_POSTGRES_CLIENT_IMAGE",
       "TENCENT_DEPLOY_KUBECONFIG_PATH",
       "TENCENT_DEPLOY_KUBECONFIG_B64",
       "TENCENT_DEPLOY_KUBECONFIG"
@@ -319,6 +321,8 @@
       "Back up and inspect primary Workspace conflict": [
         "inputs.inspect_primary_workspace_conflict && !inputs.diagnostics_only && inputs.roll_forward_mode == 'control-plane'",
         "secrets.DATABASE_URL",
+        "docker run --rm",
+        "OPL_POSTGRES_CLIENT_IMAGE",
         "pg_dump --format=custom",
         "pg_restore --list",
         "sha256sum",

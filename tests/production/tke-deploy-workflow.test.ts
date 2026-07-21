@@ -497,7 +497,8 @@ ${repair.run}
 test("TKE roll-forward recovery backs up before read-only primary Workspace conflict inspection", async () => {
   const workflow = await readWorkflow(".github/workflows/deploy-tke-production.yml");
   const input = workflow.on.workflow_dispatch.inputs.inspect_primary_workspace_conflict;
-  const inspect = stepsByName(workflowJob(workflow, "roll-forward")).get("Back up and inspect primary Workspace conflict");
+  const recover = workflowJob(workflow, "roll-forward");
+  const inspect = stepsByName(recover).get("Back up and inspect primary Workspace conflict");
   assert.equal(input.type, "boolean");
   assert.equal(input.default, false);
   assert.equal(
@@ -506,7 +507,14 @@ test("TKE roll-forward recovery backs up before read-only primary Workspace conf
   );
   assert.equal(inspect?.env?.DATABASE_URL, "${{ secrets.DATABASE_URL }}");
   assert.equal(inspect?.env?.PGSSLMODE, "disable");
+  assert.equal(
+    recover.env.OPL_POSTGRES_CLIENT_IMAGE,
+    "quay.io/sclorg/postgresql-16-c9s@sha256:cf7fb6396ee839019b6fef1838474e5b752828a512bb27030f13a28f42ec5617"
+  );
   assert.ok(inspect?.run, "roll-forward recovery is missing the migration conflict inspection");
+  assert.match(inspect.run, /install -m 600 \/dev\/null "\$backup_file"/);
+  assert.match(inspect.run, /docker run --rm/);
+  assert.match(inspect.run, /--entrypoint \/bin\/bash "\$OPL_POSTGRES_CLIENT_IMAGE"/);
   assert.match(inspect.run, /pg_dump .*--format=custom/);
   assert.match(inspect.run, /pg_restore --list/);
   assert.match(inspect.run, /sha256sum/);
@@ -516,6 +524,7 @@ test("TKE roll-forward recovery backs up before read-only primary Workspace conf
   assert.match(inspect.run, /control_plane_storage_attachments/);
   assert.match(inspect.run, /control_plane_runtime_operations/);
   assert.ok(inspect.run.indexOf("pg_dump") < inspect.run.indexOf("psql"), "backup must complete before conflict inspection");
+  assert.doesNotMatch(inspect.run, /^\s*(?:pg_dump|pg_restore|psql)\b/m);
   assert.doesNotMatch(inspect.run, /\b(?:DELETE|UPDATE|INSERT|ALTER|DROP|TRUNCATE)\b/i);
   assert.doesNotMatch(inspect.run, /echo .*DATABASE_URL|printf .*DATABASE_URL/);
 });
