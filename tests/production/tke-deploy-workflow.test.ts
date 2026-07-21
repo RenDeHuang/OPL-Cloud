@@ -386,6 +386,53 @@ test("TKE roll-forward recovery preserves the candidate pod and never rolls back
   assert.doesNotMatch(apply, /restore_previous|rollback|rollout undo|delete (?:pod|deployment)/i);
 });
 
+test("TKE roll-forward recovery reports PostgreSQL transport without leaking the DSN", async () => {
+  const workflow = await readWorkflow(".github/workflows/deploy-tke-production.yml");
+  const recover = workflowJob(workflow, "roll-forward");
+  const diagnostic = stepsByName(recover).get("Read sanitized PostgreSQL transport");
+  assert.ok(diagnostic?.run, "roll-forward recovery is missing the PostgreSQL transport diagnostic");
+
+  const databaseURL = "postgresql://pilot-user:pilot-password@10.66.0.21:5432/opl?sslmode=disable";
+  const resources = {
+    apiVersion: "v1",
+    kind: "List",
+    items: [
+      { apiVersion: "v1", kind: "ConfigMap", metadata: { name: "opl-cloud-config" }, data: {} },
+      {
+        apiVersion: "v1",
+        kind: "Secret",
+        metadata: { name: "opl-cloud-database" },
+        data: { DATABASE_URL: Buffer.from(databaseURL).toString("base64") }
+      }
+    ]
+  };
+  const harness = `
+kubectl() {
+  case " $* " in
+    *" get configmap/opl-cloud-config secret/opl-cloud-database -o json "*) printf '%s' "$TEST_RESOURCE_JSON" ;;
+    *) return 64 ;;
+  esac
+}
+${diagnostic.run}
+`;
+  const result = spawnSync("bash", ["-c", harness], {
+    cwd: fileURLToPath(repoFile(".")),
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      KUBECONFIG: "/dev/null",
+      OPL_K8S_NAMESPACE: "opl-test",
+      TEST_RESOURCE_JSON: JSON.stringify(resources)
+    }
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /^configMapPGSSLMODE=absent$/m);
+  assert.match(result.stdout, /^databaseURLHostKind=rfc1918_ipv4$/m);
+  assert.match(result.stdout, /^databaseURLSslmode=disable$/m);
+  assert.doesNotMatch(`${result.stdout}\n${result.stderr}`, /pilot-user|pilot-password|10\.66\.0\.21|postgres(?:ql)?:\/\//);
+});
+
 test("TKE bootstrap deploy is approved, read only, and cannot complete a release", async () => {
   const workflow = await readWorkflow(".github/workflows/deploy-tke-production.yml");
   const input = workflow.on.workflow_dispatch.inputs.bootstrap_mode;

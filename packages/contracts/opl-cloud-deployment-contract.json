@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 13,
+  "schemaVersion": 14,
   "owner": "OPL Fabric",
   "purpose": "Deployment workflow, immutable Cloud and Workspace images, TKE handoff, read-only diagnostics, explicit roll-forward recovery, and production-verification safety.",
   "state": "current",
@@ -283,15 +283,27 @@
     ],
     "secretEnv": ["TENCENT_DEPLOY_KUBECONFIG_B64", "TENCENT_DEPLOY_KUBECONFIG"],
     "steps": [
+      "Set up Node",
       "Prepare recovery kubeconfig",
+      "Read sanitized PostgreSQL transport",
       "Apply roll-forward image and capture diagnostics",
       "Remove recovery kubeconfig"
     ],
     "requiredCommandsByStep": {
+      "Set up Node": [
+        "node-version",
+        "22"
+      ],
       "Prepare recovery kubeconfig": [
         "TENCENT_DEPLOY_KUBECONFIG_PATH",
         "TENCENT_DEPLOY_KUBECONFIG_B64",
         "TENCENT_DEPLOY_KUBECONFIG"
+      ],
+      "Read sanitized PostgreSQL transport": [
+        "get configmap/opl-cloud-config secret/opl-cloud-database -o json",
+        "configMapPGSSLMODE",
+        "databaseURLHostKind",
+        "databaseURLSslmode"
       ],
       "Apply roll-forward image and capture diagnostics": [
         "deployment/opl-cloud-control-plane",
