@@ -40,6 +40,11 @@ on:
         required: false
         default: false
         type: boolean
+      inspect_primary_workspace_conflict:
+        description: Create and verify a private PostgreSQL backup, then read only the rows blocking the primary Workspace migration.
+        required: false
+        default: false
+        type: boolean
 permissions:
   contents: read
 
@@ -249,6 +254,60 @@ jobs:
             exit 1
           fi
           echo "PostgreSQL transport ConfigMap repaired and read back."
+
+      - name: Back up and inspect primary Workspace conflict
+        if: ${{ inputs.inspect_primary_workspace_conflict && !inputs.diagnostics_only && inputs.roll_forward_mode == 'control-plane' }}
+        shell: bash
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          PGSSLMODE: disable
+        run: |
+          set -euo pipefail
+          umask 077
+          backup_root="/home/actions/.secrets/medopl/v22/postgres-backups"
+          install -d -m 700 "$backup_root"
+          backup_file="$backup_root/opl-cloud-before-primary-workspace-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.dump"
+          pg_dump --format=custom --no-owner --no-acl --file="$backup_file" "$DATABASE_URL"
+          test -s "$backup_file"
+          chmod 600 "$backup_file"
+          pg_restore --list "$backup_file" >/dev/null
+          backup_bytes="$(wc -c < "$backup_file" | tr -d ' ')"
+          backup_sha256="$(sha256sum "$backup_file" | cut -d ' ' -f 1)"
+          printf 'backupFile=%s\nbackupBytes=%s\nbackupSha256=%s\n' "$backup_file" "$backup_bytes" "$backup_sha256"
+
+          psql "$DATABASE_URL" -X --set ON_ERROR_STOP=1 --csv <<'SQL'
+          WITH duplicate_accounts AS (
+            SELECT
+              COALESCE(NULLIF(account_id, ''), owner_account_id) AS account_key,
+              count(*) AS workspace_count
+            FROM control_plane_workspaces
+            WHERE COALESCE(NULLIF(account_id, ''), owner_account_id) <> ''
+            GROUP BY COALESCE(NULLIF(account_id, ''), owner_account_id)
+            HAVING count(*) > 1
+          )
+          SELECT
+            duplicate_accounts.account_key,
+            duplicate_accounts.workspace_count,
+            workspaces.id AS workspace_id,
+            workspaces.created_at,
+            workspaces.updated_at,
+            workspaces.state,
+            workspaces.status,
+            workspaces.verification_slot_id,
+            workspaces.customer_product,
+            workspaces.current_compute_allocation_id,
+            workspaces.storage_id,
+            workspaces.current_attachment_id,
+            workspaces.runtime_id,
+            (SELECT count(*) FROM control_plane_compute_allocations computes WHERE computes.workspace_id = workspaces.id) AS compute_rows,
+            (SELECT count(*) FROM control_plane_storage_volumes storage WHERE storage.workspace_id = workspaces.id) AS storage_rows,
+            (SELECT count(*) FROM control_plane_storage_attachments attachments WHERE attachments.workspace_id = workspaces.id) AS attachment_rows,
+            (SELECT count(*) FROM control_plane_runtime_operations operations WHERE operations.workspace_id = workspaces.id) AS operation_rows
+          FROM duplicate_accounts
+          JOIN control_plane_workspaces workspaces
+            ON COALESCE(NULLIF(workspaces.account_id, ''), workspaces.owner_account_id) = duplicate_accounts.account_key
+          ORDER BY duplicate_accounts.account_key, workspaces.created_at, workspaces.id;
+          SQL
 
       - name: Apply roll-forward image and capture diagnostics
         shell: bash

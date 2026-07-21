@@ -494,6 +494,32 @@ ${repair.run}
   }
 });
 
+test("TKE roll-forward recovery backs up before read-only primary Workspace conflict inspection", async () => {
+  const workflow = await readWorkflow(".github/workflows/deploy-tke-production.yml");
+  const input = workflow.on.workflow_dispatch.inputs.inspect_primary_workspace_conflict;
+  const inspect = stepsByName(workflowJob(workflow, "roll-forward")).get("Back up and inspect primary Workspace conflict");
+  assert.equal(input.type, "boolean");
+  assert.equal(input.default, false);
+  assert.equal(
+    inspect?.if,
+    "${{ inputs.inspect_primary_workspace_conflict && !inputs.diagnostics_only && inputs.roll_forward_mode == 'control-plane' }}"
+  );
+  assert.equal(inspect?.env?.DATABASE_URL, "${{ secrets.DATABASE_URL }}");
+  assert.equal(inspect?.env?.PGSSLMODE, "disable");
+  assert.ok(inspect?.run, "roll-forward recovery is missing the migration conflict inspection");
+  assert.match(inspect.run, /pg_dump .*--format=custom/);
+  assert.match(inspect.run, /pg_restore --list/);
+  assert.match(inspect.run, /sha256sum/);
+  assert.match(inspect.run, /duplicate_accounts/);
+  assert.match(inspect.run, /control_plane_compute_allocations/);
+  assert.match(inspect.run, /control_plane_storage_volumes/);
+  assert.match(inspect.run, /control_plane_storage_attachments/);
+  assert.match(inspect.run, /control_plane_runtime_operations/);
+  assert.ok(inspect.run.indexOf("pg_dump") < inspect.run.indexOf("psql"), "backup must complete before conflict inspection");
+  assert.doesNotMatch(inspect.run, /\b(?:DELETE|UPDATE|INSERT|ALTER|DROP|TRUNCATE)\b/i);
+  assert.doesNotMatch(inspect.run, /echo .*DATABASE_URL|printf .*DATABASE_URL/);
+});
+
 test("TKE bootstrap deploy is approved, read only, and cannot complete a release", async () => {
   const workflow = await readWorkflow(".github/workflows/deploy-tke-production.yml");
   const input = workflow.on.workflow_dispatch.inputs.bootstrap_mode;
