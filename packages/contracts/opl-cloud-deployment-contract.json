@@ -376,6 +376,7 @@
       ],
       "Apply roll-forward image and capture diagnostics": [
         "deployment/opl-cloud-control-plane",
+        "rollout restart",
         "deployment/opl-cloud-ledger",
         "deployment/opl-cloud-fabric",
         "imageID",

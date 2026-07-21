@@ -357,7 +357,7 @@ test("TKE diagnostics are read only and mutually exclusive with deploy", async (
   assert.doesNotMatch(runs, /\b(?:apply|delete|patch|scale)\b|set image|rollout restart/);
 });
 
-test("TKE roll-forward recovery preserves the candidate pod and never rolls back", async () => {
+test("TKE roll-forward recovery restarts the candidate Control Plane and never rolls back", async () => {
   const workflow = await readWorkflow(".github/workflows/deploy-tke-production.yml");
   const input = workflow.on.workflow_dispatch.inputs.roll_forward_mode;
   const deploy = workflowJob(workflow, "deploy");
@@ -377,6 +377,9 @@ test("TKE roll-forward recovery preserves the candidate pod and never rolls back
     "uswccr.ccs.tencentyun.com/oplcloud/opl-cloud@sha256:1c68bd613223ce06ffd1042ec226144830f1533c937569e886cd07ade97b5ca5"
   );
   assert.match(apply, /set image[\s\\]+deployment\/opl-cloud-control-plane/);
+  assert.match(apply, /rollout restart[\s\\]+deployment\/opl-cloud-control-plane/);
+  assert.match(apply, /previous_pod=.*candidate_pod control-plane control-plane/);
+  assert.match(apply, /wait_for_candidate_pod control-plane control-plane "\$previous_pod"/);
   assert.match(apply, /set image[\s\\]+deployment\/opl-cloud-ledger/);
   assert.match(apply, /set image[\s\\]+deployment\/opl-cloud-fabric/);
   assert.match(apply, /imageID/);
