@@ -55,6 +55,11 @@ on:
         required: false
         default: false
         type: boolean
+      reset_prelaunch_control_plane_data:
+        description: After a verified same-run backup, clear every public control_plane_% table before rolling the approved candidate forward.
+        required: false
+        default: false
+        type: boolean
 permissions:
   contents: read
 
@@ -274,6 +279,15 @@ jobs:
         run: |
           set -euo pipefail
           umask 077
+          if [ "${{ inputs.reset_prelaunch_control_plane_data }}" = "true" ] && { \
+            [ "${{ inputs.roll_forward_mode }}" != "control-plane" ] || \
+            [ "${{ inputs.inspect_primary_workspace_conflict }}" != "true" ] || \
+            [ "${{ inputs.repair_postgres_transport }}" = "true" ] || \
+            [ "${{ inputs.repair_primary_workspace_conflict }}" = "true" ] || \
+            [ "${{ inputs.inspect_customer_identity_hard_cut }}" = "true" ]; }; then
+            echo "Refusing prelaunch reset without control-plane roll-forward, same-run backup, and every other repair disabled." >&2
+            exit 1
+          fi
           backup_root="/home/actions/.secrets/medopl/v22/postgres-backups"
           install -d -m 700 "$backup_root"
           backup_file="$backup_root/opl-cloud-before-primary-workspace-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.dump"
@@ -460,7 +474,133 @@ jobs:
           ORDER BY operations.workspace_id, operations.action, operations.status;
           SQL
           fi
-          if [ "${{ inputs.repair_primary_workspace_conflict }}" = "true" ] || [ "${{ inputs.inspect_customer_identity_hard_cut }}" = "true" ]; then
+
+          if [ "${{ inputs.reset_prelaunch_control_plane_data }}" = "true" ]; then
+            desired_replicas="$(kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" \
+              get deployment/opl-cloud-control-plane -o jsonpath='{.spec.replicas}')"
+            if [ "$desired_replicas" != "1" ]; then
+              echo "Refusing prelaunch reset: Control Plane replicas must be exactly 1 before suspension." >&2
+              exit 1
+            fi
+            kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" scale \
+              deployment/opl-cloud-control-plane --replicas=0
+            kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" rollout status \
+              deployment/opl-cloud-control-plane --timeout=120s
+            kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" wait --for=delete pod \
+              -l 'app.kubernetes.io/name=opl-cloud,app.kubernetes.io/component=control-plane' --timeout=120s || true
+            remaining_control_plane_pods="$(kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" get pods \
+              -l 'app.kubernetes.io/name=opl-cloud,app.kubernetes.io/component=control-plane' \
+              -o jsonpath='{.items[*].metadata.name}')"
+            if [ -n "$remaining_control_plane_pods" ]; then
+              echo "Refusing prelaunch reset: Control Plane pods still exist after suspension." >&2
+              exit 1
+            fi
+
+            kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" exec --stdin "$postgres_client_pod" \
+              -c postgres-client -- /bin/bash -seu <<'RESET'
+          DATABASE_URL="$(cat /work/database-url)"
+          table_count="$(psql "$DATABASE_URL" -X --set ON_ERROR_STOP=1 --tuples-only --no-align <<'SQL'
+          SELECT count(*)
+          FROM pg_catalog.pg_class tables
+          JOIN pg_catalog.pg_namespace schemas ON schemas.oid = tables.relnamespace
+          WHERE schemas.nspname = 'public'
+            AND tables.relkind IN ('r', 'p')
+            AND tables.relname LIKE 'control\_plane\_%' ESCAPE '\';
+          SQL
+          )"
+          table_count="$(printf '%s' "$table_count" | tr -d '[:space:]')"
+          if ! [[ "$table_count" =~ ^[1-9][0-9]*$ ]]; then
+            echo "Refusing prelaunch reset: no public control_plane_% tables were found." >&2
+            exit 1
+          fi
+          target_tables="$(psql "$DATABASE_URL" -X --set ON_ERROR_STOP=1 --tuples-only --no-align <<'SQL'
+          SELECT string_agg(format('%I.%I', schemas.nspname, tables.relname), ', ' ORDER BY tables.relname)
+          FROM pg_catalog.pg_class tables
+          JOIN pg_catalog.pg_namespace schemas ON schemas.oid = tables.relnamespace
+          WHERE schemas.nspname = 'public'
+            AND tables.relkind IN ('r', 'p')
+            AND tables.relname LIKE 'control\_plane\_%' ESCAPE '\';
+          SQL
+          )"
+          target_tables="$(printf '%s' "$target_tables" | tr -d '\r\n')"
+          if [ -z "$target_tables" ] || [[ "$target_tables" == *opl_schema_migrations* ]]; then
+            echo "Refusing prelaunch reset: target table list is empty or contains the migration journal." >&2
+            exit 1
+          fi
+          printf 'resetTableCount=%s\nresetTables=%s\n' "$table_count" "$target_tables"
+          echo "resetRowsBefore"
+          command psql "$DATABASE_URL" -X --set ON_ERROR_STOP=1 --csv <<'SQL'
+          SELECT format('SELECT %L AS table_name, count(*) AS row_count FROM %I.%I;', schemas.nspname || '.' || tables.relname, schemas.nspname, tables.relname)
+          FROM pg_catalog.pg_class tables
+          JOIN pg_catalog.pg_namespace schemas ON schemas.oid = tables.relnamespace
+          WHERE schemas.nspname = 'public'
+            AND tables.relkind IN ('r', 'p')
+            AND tables.relname LIKE 'control\_plane\_%' ESCAPE '\'
+          ORDER BY tables.relname
+          \gexec
+          SQL
+          external_references="$(psql "$DATABASE_URL" -X --set ON_ERROR_STOP=1 --tuples-only --no-align <<'SQL'
+          SELECT format('%I.%I.%I -> %I.%I', source_schema.nspname, source.relname, constraints.conname, target_schema.nspname, target.relname)
+          FROM pg_catalog.pg_constraint constraints
+          JOIN pg_catalog.pg_class source ON source.oid = constraints.conrelid
+          JOIN pg_catalog.pg_namespace source_schema ON source_schema.oid = source.relnamespace
+          JOIN pg_catalog.pg_class target ON target.oid = constraints.confrelid
+          JOIN pg_catalog.pg_namespace target_schema ON target_schema.oid = target.relnamespace
+          WHERE constraints.contype = 'f'
+            AND target_schema.nspname = 'public'
+            AND target.relname LIKE 'control\_plane\_%' ESCAPE '\'
+            AND NOT (source_schema.nspname = 'public' AND source.relname LIKE 'control\_plane\_%' ESCAPE '\')
+          ORDER BY source_schema.nspname, source.relname, constraints.conname;
+          SQL
+          )"
+          if [ -n "$(printf '%s' "$external_references" | tr -d '[:space:]')" ]; then
+            echo "Refusing prelaunch reset: a non-control_plane_% table has a foreign key to a reset target." >&2
+            printf '%s\n' "$external_references" >&2
+            exit 1
+          fi
+          echo "resetExternalForeignKeys=0"
+          command psql "$DATABASE_URL" -X --set ON_ERROR_STOP=1 <<SQL
+          BEGIN;
+          TRUNCATE TABLE $target_tables;
+          DO \$reset\$
+          DECLARE
+            target record;
+            remaining bigint;
+          BEGIN
+            FOR target IN
+              SELECT schemas.nspname AS schema_name, tables.relname AS table_name
+              FROM pg_catalog.pg_class tables
+              JOIN pg_catalog.pg_namespace schemas ON schemas.oid = tables.relnamespace
+              WHERE schemas.nspname = 'public'
+                AND tables.relkind IN ('r', 'p')
+                AND tables.relname LIKE 'control\_plane\_%' ESCAPE '\'
+            LOOP
+              EXECUTE format('SELECT count(*) FROM %I.%I', target.schema_name, target.table_name) INTO remaining;
+              IF remaining <> 0 THEN
+                RAISE EXCEPTION 'prelaunch reset readback failed for %.%: % rows remain', target.schema_name, target.table_name, remaining;
+              END IF;
+            END LOOP;
+          END
+          \$reset\$;
+          COMMIT;
+          SQL
+          echo "resetRowsAfter"
+          command psql "$DATABASE_URL" -X --set ON_ERROR_STOP=1 --csv <<'SQL'
+          SELECT format('SELECT %L AS table_name, count(*) AS row_count FROM %I.%I;', schemas.nspname || '.' || tables.relname, schemas.nspname, tables.relname)
+          FROM pg_catalog.pg_class tables
+          JOIN pg_catalog.pg_namespace schemas ON schemas.oid = tables.relnamespace
+          WHERE schemas.nspname = 'public'
+            AND tables.relkind IN ('r', 'p')
+            AND tables.relname LIKE 'control\_plane\_%' ESCAPE '\'
+          ORDER BY tables.relname
+          \gexec
+          SQL
+          echo "resetCommit=committed"
+          RESET
+          fi
+          if [ "${{ inputs.repair_primary_workspace_conflict }}" = "true" ] || \
+            [ "${{ inputs.inspect_customer_identity_hard_cut }}" = "true" ] || \
+            [ "${{ inputs.reset_prelaunch_control_plane_data }}" = "true" ]; then
             retain_postgres_client=true
             printf 'OPL_PRIMARY_WORKSPACE_BACKUP_FILE=%s\nOPL_POSTGRES_RECOVERY_POD=%s\n' \
               "$backup_file" "$postgres_client_pod" >> "$GITHUB_ENV"
@@ -998,8 +1138,19 @@ jobs:
           set -uo pipefail
           mode="${{ inputs.roll_forward_mode }}"
           repair_requested="${{ inputs.repair_postgres_transport }}"
+          reset_requested="${{ inputs.reset_prelaunch_control_plane_data }}"
           if [ "${{ inputs.diagnostics_only }}" = "true" ]; then
             echo "diagnostics_only and roll_forward_mode are mutually exclusive." >&2
+            exit 1
+          fi
+          if [ "$reset_requested" = "true" ] && { \
+            [ "$mode" != "control-plane" ] || \
+            [ "${{ inputs.inspect_primary_workspace_conflict }}" != "true" ] || \
+            [ "${{ inputs.repair_postgres_transport }}" = "true" ] || \
+            [ "${{ inputs.repair_primary_workspace_conflict }}" = "true" ] || \
+            [ "${{ inputs.inspect_customer_identity_hard_cut }}" = "true" ] || \
+            [ -z "${OPL_POSTGRES_RECOVERY_POD:-}" ]; }; then
+            echo "Refusing prelaunch reset rollout without the verified same-run backup client and exclusive reset inputs." >&2
             exit 1
           fi
 
@@ -1044,7 +1195,7 @@ jobs:
                 status="$(pod_status "$pod" "$container")"
                 IFS=$'\t' read -r ready restarts image_id <<< "$status"
                 restarts="${restarts:-0}"
-                if [ "$ready" = "true" ] || { [ "$repair_requested" != "true" ] && [ "$restarts" -gt 0 ]; }; then
+                if [ "$ready" = "true" ] || { [ "$reset_requested" != "true" ] && [ "$repair_requested" != "true" ] && [ "$restarts" -gt 0 ]; }; then
                   printf '%s' "$pod"
                   return 0
                 fi
@@ -1082,16 +1233,28 @@ jobs:
             local container="$3"
             local pod="$4"
             local image=""
+            local deployment_status=""
+            local generation=""
+            local observed=""
+            local desired=""
+            local updated=""
+            local ready_replicas=""
             local available=""
             local status=""
             local ready=""
             local restarts=""
             local image_id=""
             image="$(deployment_image "$deployment" "$container")"
-            available="$(kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" get "deployment/$deployment" -o jsonpath='{.status.availableReplicas}')"
+            deployment_status="$(kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" get "deployment/$deployment" \
+              -o jsonpath="{.metadata.generation}{'\t'}{.status.observedGeneration}{'\t'}{.spec.replicas}{'\t'}{.status.updatedReplicas}{'\t'}{.status.readyReplicas}{'\t'}{.status.availableReplicas}")"
+            IFS=$'\t' read -r generation observed desired updated ready_replicas available <<< "$deployment_status"
             [ -n "$pod" ] && status="$(pod_status "$pod" "$container")"
             IFS=$'\t' read -r ready restarts image_id <<< "$status"
             [ "$image" = "$OPL_CANDIDATE_IMAGE" ] \
+              && [ "$generation" = "$observed" ] \
+              && [ "$desired" = "1" ] \
+              && [ "$updated" = "$desired" ] \
+              && [ "$ready_replicas" = "$desired" ] \
               && [ "$available" = "1" ] \
               && [ "$ready" = "true" ] \
               && [[ "$image_id" == *"@${OPL_CANDIDATE_IMAGE##*@}" ]]
@@ -1103,6 +1266,10 @@ jobs:
               deployment/opl-cloud-control-plane "control-plane=$OPL_CANDIDATE_IMAGE"
             kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" rollout restart \
               deployment/opl-cloud-control-plane
+            if [ "$reset_requested" = "true" ]; then
+              kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" scale \
+                deployment/opl-cloud-control-plane --replicas=1
+            fi
             pod=""
             wait_for_candidate_pod control-plane control-plane "$previous_pod" > "$RUNNER_TEMP/opl-control-plane-pod" || true
             pod="$(tr -d '\r\n' < "$RUNNER_TEMP/opl-control-plane-pod")"
@@ -1112,10 +1279,82 @@ jobs:
               exit 1
             fi
             echo "Candidate Control Plane is Ready."
-            exit 0
+            if [ "$reset_requested" != "true" ]; then
+              exit 0
+            fi
+
+            postgres_client_pod="${OPL_POSTGRES_RECOVERY_POD:-}"
+            if [ -z "$postgres_client_pod" ]; then
+              echo "Candidate verification is missing the same-run PostgreSQL client." >&2
+              exit 1
+            fi
+            if ! kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" exec --stdin "$postgres_client_pod" \
+              -c postgres-client -- /bin/bash -seu <<'VERIFY_DATABASE'; then
+          DATABASE_URL="$(cat /work/database-url)"
+          migration_journal="$(psql "$DATABASE_URL" -X --set ON_ERROR_STOP=1 --tuples-only --no-align <<'SQL'
+          SELECT coalesce(string_agg(version || '=' || occurrences, ',' ORDER BY version), '')
+          FROM (
+            SELECT version, count(*) AS occurrences
+            FROM opl_schema_migrations
+            WHERE service = 'control-plane'
+              AND version >= '202607180001_customer_identity_hard_cut'
+            GROUP BY version
+          ) journal;
+          SQL
+          )"
+          migration_journal="$(printf '%s' "$migration_journal" | tr -d '[:space:]')"
+          expected_journal="202607180001_customer_identity_hard_cut=1,202607190001_workspace_api_key_id=1,202607190002_pilot_announcements=1"
+          if [ "$migration_journal" != "$expected_journal" ]; then
+            echo "Candidate Control Plane migration journal mismatch: $migration_journal" >&2
+            exit 1
+          fi
+          identity_graph="$(psql "$DATABASE_URL" -X --set ON_ERROR_STOP=1 --tuples-only --no-align --field-separator='|' <<'SQL'
+          SELECT
+            (SELECT count(*) FROM control_plane_accounts),
+            (SELECT count(*) FROM control_plane_users),
+            (SELECT count(*) FROM control_plane_organizations),
+            (SELECT count(*) FROM control_plane_memberships),
+            count(*)
+          FROM control_plane_accounts accounts
+          JOIN control_plane_users users ON users.id = accounts.owner_user_id AND users.account_id = accounts.id
+          JOIN control_plane_organizations organizations ON organizations.billing_account_id = accounts.id
+          JOIN control_plane_memberships memberships ON memberships.account_id = accounts.id
+            AND memberships.user_id = users.id
+            AND memberships.organization_id = organizations.id
+          WHERE accounts.id = 'acct-admin'
+            AND accounts.status = 'active'
+            AND accounts.sub2api_user_id > 0
+            AND users.id = 'usr-admin'
+            AND users.email = 'admin@medopl.cn'
+            AND users.role = 'admin'
+            AND users.status = 'active'
+            AND organizations.id = 'org-admin'
+            AND organizations.status = 'active'
+            AND memberships.id = 'mem-admin'
+            AND memberships.role = 'owner'
+            AND memberships.status = 'active';
+          SQL
+          )"
+          identity_graph="$(printf '%s' "$identity_graph" | tr -d '[:space:]')"
+          if [ "$identity_graph" != "1|1|1|1|1" ]; then
+            echo "Candidate administrator identity graph mismatch: $identity_graph" >&2
+            exit 1
+          fi
+          sub2api_user_id="$(psql "$DATABASE_URL" -X --set ON_ERROR_STOP=1 --tuples-only --no-align \
+            -c "SELECT sub2api_user_id FROM control_plane_accounts WHERE id = 'acct-admin'")"
+          sub2api_user_id="$(printf '%s' "$sub2api_user_id" | tr -d '[:space:]')"
+          if ! [[ "$sub2api_user_id" =~ ^[1-9][0-9]*$ ]]; then
+            echo "Candidate administrator Sub2API mapping is invalid." >&2
+            exit 1
+          fi
+          printf 'migrationJournal=%s\nadminIdentityGraph=1:1:1:1 sub2apiUserId=%s\n' "$migration_journal" "$sub2api_user_id"
+          VERIFY_DATABASE
+              echo "Candidate database verification failed." >&2
+              exit 1
+            fi
           fi
 
-          if [ "$mode" != "all-cloud" ]; then
+          if [ "$mode" != "all-cloud" ] && [ "$reset_requested" != "true" ]; then
             echo "Unsupported roll-forward mode: $mode" >&2
             exit 1
           fi
@@ -1148,15 +1387,175 @@ jobs:
             candidate_ready "$deployment" "$component" "$container" "$pod" || failed=1
           done
 
-          for path in healthz readyz login; do
-            body="$(curl --fail --silent --show-error --max-time 30 "${OPL_PUBLIC_URL%/}/$path")" || failed=1
-            if [ -z "${body:-}" ]; then
-              echo "$path returned an empty body." >&2
-              failed=1
-            else
-              printf '%s bytes=%s\n' "$path" "${#body}"
-            fi
-          done
+          restart_snapshot() {
+            local component=""
+            local container=""
+            local pod=""
+            local status=""
+            local ready=""
+            local restarts=""
+            local image_id=""
+            for component in control-plane ledger fabric; do
+              container="$component"
+              pod="$(candidate_pod "$component" "$container")"
+              status="$(pod_status "$pod" "$container")"
+              IFS=$'\t' read -r ready restarts image_id <<< "$status"
+              printf '%s=%s:%s\n' "$component" "$pod" "$restarts"
+            done
+          }
+          restart_before="$(restart_snapshot)"
+          sleep 15
+          restart_after="$(restart_snapshot)"
+          if [ "$restart_before" != "$restart_after" ]; then
+            echo "Candidate pod restart counts are not stable." >&2
+            failed=1
+          else
+            echo "restartSnapshot=stable"
+          fi
+
+          if ! OPL_PUBLIC_URL="$OPL_PUBLIC_URL" node <<'NODE'; then
+          const origin = new URL(process.env.OPL_PUBLIC_URL).origin;
+          async function response(path) {
+            const value = await fetch(`${origin}${path}`, { redirect: "manual", signal: AbortSignal.timeout(30_000) });
+            const text = await value.text();
+            if (value.status !== 200 || !text.trim()) throw new Error(`${path} status=${value.status} bytes=${text.length}`);
+            if (value.headers.get("location") || /gflabtoken\.cn/i.test(text)) throw new Error(`${path} exposes a forbidden redirect or backend link`);
+            return { value, text };
+          }
+          for (const path of ["/api/healthz", "/api/readyz"]) {
+            const { value, text } = await response(path);
+            if (!/^application\/json\b/i.test(value.headers.get("content-type") || "")) throw new Error(`${path} is not JSON`);
+            const body = JSON.parse(text);
+            if (body?.status !== "ok" && body?.ready !== true) throw new Error(`${path} has no ready status`);
+            console.log(`${path} bytes=${text.length} status=ok`);
+          }
+          const login = await response("/login");
+          if (!/^text\/html\b/i.test(login.value.headers.get("content-type") || "") || login.text.length < 100 || !/<(?:!doctype|html)\b/i.test(login.text)) {
+            throw new Error("/login is not non-empty Console HTML");
+          }
+          console.log(`/login bytes=${login.text.length} render=valid`);
+          NODE
+            failed=1
+          fi
+
+          console_auth_file="$OPL_RECOVERY_SECRET_DIR/console-admin-auth.json"
+          install -m 600 /dev/null "$console_auth_file"
+          if ! kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" get secret/opl-cloud-sub2api -o json \
+            | OPL_CONSOLE_AUTH_FILE="$console_auth_file" node -e '
+              const fs = require("node:fs");
+              const secret = JSON.parse(fs.readFileSync(0, "utf8"));
+              const read = (name) => Buffer.from(secret?.data?.[name] || "", "base64").toString("utf8");
+              const email = read("OPL_SUB2API_ADMIN_EMAIL").trim();
+              const password = read("OPL_SUB2API_ADMIN_PASSWORD");
+              if (email !== "admin@medopl.cn" || !password) throw new Error("Console administrator credentials are unavailable.");
+              fs.writeFileSync(process.env.OPL_CONSOLE_AUTH_FILE, JSON.stringify({ email, password }), { mode: 0o600 });
+            '; then
+            failed=1
+          elif ! OPL_CONSOLE_AUTH_FILE="$console_auth_file" OPL_PUBLIC_URL="$OPL_PUBLIC_URL" node <<'NODE'; then
+          const fs = require("node:fs");
+          const origin = new URL(process.env.OPL_PUBLIC_URL).origin;
+          const credentials = JSON.parse(fs.readFileSync(process.env.OPL_CONSOLE_AUTH_FILE, "utf8"));
+          let getCount = 0;
+          async function request(path, { method = "GET", cookie = "", csrf = "", body } = {}) {
+            if (method === "GET") getCount += 1;
+            const response = await fetch(`${origin}${path}`, {
+              method,
+              headers: {
+                ...(cookie ? { cookie } : {}),
+                ...(csrf ? { "x-opl-csrf": csrf } : {}),
+                ...(body === undefined ? {} : { "content-type": "application/json" })
+              },
+              body: body === undefined ? undefined : JSON.stringify(body),
+              redirect: "error",
+              signal: AbortSignal.timeout(30_000)
+            });
+            const text = await response.text();
+            if (!response.ok || !text.trim()) throw new Error(`${method} ${path} status=${response.status} bytes=${text.length}`);
+            if (/gflabtoken\.cn/i.test(text)) throw new Error(`${path} exposes the hidden backend`);
+            return { response, body: JSON.parse(text) };
+          }
+          const login = await request("/api/auth/login", { method: "POST", body: credentials });
+          const cookies = typeof login.response.headers.getSetCookie === "function"
+            ? login.response.headers.getSetCookie()
+            : [login.response.headers.get("set-cookie")].filter(Boolean);
+          const cookie = cookies.map((value) => value.split(";", 1)[0]).join("; ");
+          const csrf = login.response.headers.get("x-opl-csrf-token") || "";
+          if (!cookie || !csrf || login.body?.user?.accountId !== "acct-admin") throw new Error("Console administrator login failed.");
+          const [session, wallet, keys, usage, workspaces, receipts, catalog] = await Promise.all([
+            request("/api/auth/me", { cookie }),
+            request("/api/gateway/wallet", { cookie }),
+            request("/api/gateway/keys", { cookie }),
+            request("/api/gateway/usage-summary", { cookie }),
+            request("/api/workspaces", { cookie }),
+            request("/api/billing/receipts", { cookie }),
+            request("/api/pricing/catalog", { cookie })
+          ]);
+          const sourceAvailable = (value, source, statuses = ["available"]) =>
+            value?.source === source && value?.available === true && statuses.includes(value?.status);
+          if (!sourceAvailable(session.body, "sub2api") || session.body?.data?.accountId !== "acct-admin" || !/^\d+$/.test(session.body?.data?.sub2apiUserId || "")) {
+            throw new Error("Console session projection is invalid.");
+          }
+          if (!sourceAvailable(wallet.body, "sub2api") || wallet.body?.data?.currency !== "USD") throw new Error("Wallet source is unavailable.");
+          if (!sourceAvailable(keys.body, "sub2api", ["available", "empty"]) || !Array.isArray(keys.body?.data?.items)) throw new Error("Key source is unavailable.");
+          if (!sourceAvailable(usage.body, "sub2api", ["available", "empty"])) throw new Error("Usage source is unavailable.");
+          if (!sourceAvailable(workspaces.body, "control-plane", ["empty"]) || workspaces.body?.data?.total !== 0) throw new Error("Workspace state is not empty.");
+          if (!sourceAvailable(receipts.body, "ledger", ["empty"]) || !Array.isArray(receipts.body?.data?.receipts) || receipts.body.data.receipts.length !== 0) {
+            throw new Error("Billing state is not empty.");
+          }
+          const basic = catalog.body?.packages?.find((item) => item?.id === "basic");
+          const pro = catalog.body?.packages?.find((item) => item?.id === "pro");
+          if (basic?.available !== true || basic?.price?.chargeUsdMicros !== 50_000_000 || pro?.available !== false || catalog.body?.storagePer10GbMonthly?.usdMicros !== 2_580_000) {
+            throw new Error("Production catalog does not expose the approved Basic-only offer.");
+          }
+          const preview = await request("/api/pricing/preview", {
+            method: "POST", cookie, csrf, body: { resourceType: "workspace", packageId: "basic", sizeGb: 10 }
+          });
+          if (preview.body?.totalChargeUsdMicros !== 52_580_000 || preview.body?.currency !== "USD") throw new Error("Basic quote mismatch.");
+          console.log(`consoleReadOnly=session,wallet,keys,usage,empty-workspaces,empty-billing,basic-quote sub2apiGetCount=${getCount} sub2apiBusinessWriteCount=0`);
+          NODE
+            failed=1
+          fi
+
+          control_plane_pod="$(candidate_pod control-plane control-plane)"
+          if ! kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" exec --stdin "$control_plane_pod" \
+            -c control-plane -- node <<'NODE'; then
+          const baseURL = process.env.FABRIC_URL;
+          const token = process.env.OPL_INTERNAL_SERVICE_TOKEN;
+          if (!baseURL || !token) throw new Error("Fabric read-only verification configuration is unavailable.");
+          async function request(path, method = "GET", body) {
+            const response = await fetch(`${baseURL}${path}`, {
+              method,
+              headers: { Authorization: `Bearer ${token}`, ...(body === undefined ? {} : { "content-type": "application/json" }) },
+              body: body === undefined ? undefined : JSON.stringify(body),
+              signal: AbortSignal.timeout(60_000)
+            });
+            const text = await response.text();
+            if (!response.ok || !text.trim()) throw new Error(`${method} ${path} status=${response.status} body=${text.slice(0, 200)}`);
+            return JSON.parse(text);
+          }
+          const operationsBefore = await request("/fabric/operations");
+          const catalog = await request("/fabric/catalog");
+          const basic = catalog?.workspacePackages?.filter((item) => item?.id === "basic");
+          const pro = catalog?.workspacePackages?.filter((item) => item?.id === "pro");
+          if (basic?.length !== 1 || basic[0]?.available !== true || basic[0]?.cpu !== 2 || basic[0]?.memoryGb !== 4 || basic[0]?.diskGb !== 10 ||
+            pro?.length !== 1 || pro[0]?.available !== false) throw new Error("Fabric Basic-only catalog mismatch.");
+          const compute = await request("/fabric/monthly-preflight", "POST", { resourceType: "compute", packageId: "basic", zone: "na-siliconvalley-1" });
+          const storage = await request("/fabric/monthly-preflight", "POST", { resourceType: "storage", packageId: "basic", sizeGb: 10, zone: "na-siliconvalley-1" });
+          for (const value of [compute, storage]) {
+            if (value?.available !== true || value?.packageId !== "basic" || value?.zone !== "na-siliconvalley-1" || value?.chargeType !== "PREPAID" ||
+              value?.periodMonths !== 1 || value?.renewFlag !== "NOTIFY_AND_MANUAL_RENEW" || !(value?.providerPriceCny > 0)) {
+              throw new Error(`Fabric ${value?.resourceType || "unknown"} preflight mismatch.`);
+            }
+          }
+          if (!compute.nodePoolId || compute.resourceType !== "compute" || storage.resourceType !== "storage" || storage.sizeGb !== 10) {
+            throw new Error("Fabric Basic preflight identity mismatch.");
+          }
+          const operationsAfter = await request("/fabric/operations");
+          if (JSON.stringify(operationsAfter) !== JSON.stringify(operationsBefore)) throw new Error("Fabric operations changed during read-only preflight.");
+          console.log(`fabricBasicPreflight=available nodePoolId=${compute.nodePoolId} computePriceCny=${compute.providerPriceCny} storagePriceCny=${storage.providerPriceCny} tencentMutationCount=0`);
+          NODE
+            failed=1
+          fi
           exit "$failed"
 
       - name: Remove recovery kubeconfig
