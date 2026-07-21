@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 19,
+  "schemaVersion": 20,
   "owner": "OPL Fabric",
   "purpose": "Deployment workflow, immutable Cloud and Workspace images, TKE handoff, read-only diagnostics, explicit roll-forward recovery, and production-verification safety.",
   "state": "current",
@@ -340,7 +340,14 @@
         "pg_restore --list",
         "sha256sum",
         "duplicate_accounts",
-        "control_plane_runtime_operations"
+        "control_plane_runtime_operations",
+        "information_schema.columns",
+        "column_name = 'workspace_id'",
+        "\\gexec",
+        "operations.action",
+        "operations.status",
+        "result_present",
+        "result_bytes"
       ],
       "Apply roll-forward image and capture diagnostics": [
         "deployment/opl-cloud-control-plane",

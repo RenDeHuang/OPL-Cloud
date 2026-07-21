@@ -406,6 +406,43 @@ jobs:
           JOIN control_plane_workspaces workspaces
             ON COALESCE(NULLIF(workspaces.account_id, ''), workspaces.owner_account_id) = duplicate_accounts.account_key
           ORDER BY duplicate_accounts.account_key, workspaces.created_at, workspaces.id;
+
+          SELECT format(
+            'SELECT %L AS reference_table, count(*) AS reference_rows, count(DISTINCT workspace_id) AS referenced_workspaces FROM %I.%I WHERE workspace_id IN (SELECT workspaces.id FROM control_plane_workspaces workspaces JOIN (SELECT COALESCE(NULLIF(account_id, ''''), owner_account_id) AS account_key FROM control_plane_workspaces WHERE COALESCE(NULLIF(account_id, ''''), owner_account_id) <> '''' GROUP BY COALESCE(NULLIF(account_id, ''''), owner_account_id) HAVING count(*) > 1) duplicate_accounts ON COALESCE(NULLIF(workspaces.account_id, ''''), workspaces.owner_account_id) = duplicate_accounts.account_key);',
+            table_schema || '.' || table_name,
+            table_schema,
+            table_name
+          )
+          FROM information_schema.columns
+          WHERE table_schema = 'public'
+            AND table_name LIKE 'control_plane_%'
+            AND column_name = 'workspace_id'
+          ORDER BY table_name
+          \gexec
+
+          WITH duplicate_accounts AS (
+            SELECT COALESCE(NULLIF(account_id, ''), owner_account_id) AS account_key
+            FROM control_plane_workspaces
+            WHERE COALESCE(NULLIF(account_id, ''), owner_account_id) <> ''
+            GROUP BY COALESCE(NULLIF(account_id, ''), owner_account_id)
+            HAVING count(*) > 1
+          ), duplicate_workspaces AS (
+            SELECT workspaces.id
+            FROM control_plane_workspaces workspaces
+            JOIN duplicate_accounts
+              ON COALESCE(NULLIF(workspaces.account_id, ''), workspaces.owner_account_id) = duplicate_accounts.account_key
+          )
+          SELECT
+            operations.workspace_id,
+            operations.action,
+            operations.status,
+            count(*) AS operation_count,
+            bool_and(COALESCE(operations.result, '') <> '') AS result_present,
+            sum(octet_length(COALESCE(operations.result, ''))) AS result_bytes
+          FROM control_plane_runtime_operations operations
+          JOIN duplicate_workspaces ON duplicate_workspaces.id = operations.workspace_id
+          GROUP BY operations.workspace_id, operations.action, operations.status
+          ORDER BY operations.workspace_id, operations.action, operations.status;
           SQL
 
       - name: Apply roll-forward image and capture diagnostics

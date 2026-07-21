@@ -536,6 +536,14 @@ test("TKE roll-forward recovery backs up before read-only primary Workspace conf
   assert.match(inspect.run, /control_plane_storage_volumes/);
   assert.match(inspect.run, /control_plane_storage_attachments/);
   assert.match(inspect.run, /control_plane_runtime_operations/);
+  assert.match(inspect.run, /information_schema\.columns/);
+  assert.match(inspect.run, /column_name = 'workspace_id'/);
+  assert.match(inspect.run, /\\gexec/);
+  assert.match(inspect.run, /operations\.workspace_id/);
+  assert.match(inspect.run, /operations\.action/);
+  assert.match(inspect.run, /operations\.status/);
+  assert.match(inspect.run, /result_present/);
+  assert.match(inspect.run, /result_bytes/);
   assert.ok(inspect.run.indexOf("pg_dump") < inspect.run.indexOf("psql"), "backup must complete before conflict inspection");
   assert.doesNotMatch(inspect.run, /^\s*(?:pg_dump|pg_restore|psql)\b/m);
   assert.doesNotMatch(inspect.run, /sudo\b/);
