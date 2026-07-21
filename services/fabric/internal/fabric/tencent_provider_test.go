@@ -138,6 +138,27 @@ func TestTencentProviderReadinessRequiresExpectedImagesOnEveryReadyPod(t *testin
 	}
 }
 
+func TestTencentProviderMonthlyPreflightRequiresLiveMutationFlag(t *testing.T) {
+	for _, value := range []string{"", "0", "true"} {
+		t.Run(fmt.Sprintf("value_%q", value), func(t *testing.T) {
+			t.Setenv("RUN_TENCENT_CREATE_RELEASE_EXECUTION", value)
+			calls := 0
+			provider := NewTencentProvider()
+			provider.provision = func(context.Context, provisionerRequest) (provisionerResponse, error) {
+				calls++
+				return provisionerResponse{}, errors.New("unexpected provisioner call")
+			}
+
+			_, err := provider.MonthlyPreflight(context.Background(), MonthlyPreflightInput{
+				ResourceType: "compute", PackageID: "basic", Zone: "na-siliconvalley-1",
+			})
+			if err == nil || !strings.Contains(err.Error(), "live_mutation_flag_required") || calls != 0 {
+				t.Fatalf("preflight error=%v provisioner calls=%d", err, calls)
+			}
+		})
+	}
+}
+
 func TestTencentProviderMonthlyPreflightDiscoversExactlyOneLabeledPool(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -185,6 +206,7 @@ func TestTencentProviderMonthlyPreflightDiscoversExactlyOneLabeledPool(t *testin
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("RUN_TENCENT_CREATE_RELEASE_EXECUTION", "1")
 			provider := NewTencentProvider()
 			provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
 				tc.check(t, request)

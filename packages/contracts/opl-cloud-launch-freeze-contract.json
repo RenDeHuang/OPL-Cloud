@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 12,
+  "schemaVersion": 13,
   "owner": "OPL Platform Architecture",
   "purpose": "Freeze the approved Pilot V2 products, delegated Gateway key lifecycle, one Workspace charge, prepaid Tencent fulfillment, Runtime facts, operator workflows, announcements, and evidence levels without claiming unfinished implementation or runtime evidence.",
   "state": "current",
@@ -191,6 +191,12 @@
     "periodMonths": 1,
     "renewFlag": "NOTIFY_AND_MANUAL_RENEW",
     "forbiddenChargeTypes": ["POSTPAID_BY_HOUR"],
+    "mutationPermissionGate": {
+      "env": "RUN_TENCENT_CREATE_RELEASE_EXECUTION",
+      "requiredValue": "1",
+      "check": "shared_tencent_monthly_preflight_before_sub2api_debit",
+      "failure": "zero_charge_zero_fabric_mutation"
+    },
     "capacityCheck": "Read-only PREPAID inventory, compatibility, quota, and price check before debit; it must not create or reserve a resource.",
     "nodePoolDiscovery": {
       "api": "DescribeNodePools",

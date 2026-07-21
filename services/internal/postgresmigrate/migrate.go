@@ -5,7 +5,9 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"net/netip"
 	"net/url"
+	"os"
 	"strings"
 )
 
@@ -27,10 +29,15 @@ type Migration struct {
 
 func ValidateTLS(databaseURL string) error {
 	mode, host, err := postgresTLSSettings(strings.TrimSpace(databaseURL))
-	if err != nil || mode != "verify-full" || !postgresTCPHost(host) {
-		return errors.New("PostgreSQL DATABASE_URL must set sslmode=verify-full and an explicit TCP host")
+	if err == nil && postgresTCPHost(host) {
+		if mode == "verify-full" {
+			return nil
+		}
+		if os.Getenv("PGSSLMODE") == "disable" && (mode == "" || mode == "disable") && postgresPrivateIPv4(host) {
+			return nil
+		}
 	}
-	return nil
+	return errors.New("PostgreSQL DATABASE_URL must set sslmode=verify-full and an explicit TCP host, or use PGSSLMODE=disable with one RFC1918 IPv4 host")
 }
 
 func postgresTLSSettings(databaseURL string) (string, string, error) {
@@ -46,8 +53,8 @@ func postgresTLSSettings(databaseURL string) (string, string, error) {
 			return "", "", errors.New("invalid PostgreSQL URL scheme")
 		}
 		query, err := url.ParseQuery(parsed.RawQuery)
-		if err != nil || len(query["sslmode"]) != 1 {
-			return "", "", errors.New("PostgreSQL URL requires one sslmode")
+		if err != nil || len(query["sslmode"]) > 1 {
+			return "", "", errors.New("PostgreSQL URL allows one sslmode")
 		}
 		host := parsed.Hostname()
 		if queryHosts, ok := query["host"]; ok {
@@ -56,16 +63,23 @@ func postgresTLSSettings(databaseURL string) (string, string, error) {
 			}
 			host = queryHosts[0]
 		}
-		return query["sslmode"][0], host, nil
+		return first(query["sslmode"]), host, nil
 	}
 	values, err := parseKeywordDSN(databaseURL)
-	if err != nil || len(values["sslmode"]) != 1 {
-		return "", "", errors.New("PostgreSQL DSN requires one sslmode")
+	if err != nil || len(values["sslmode"]) > 1 {
+		return "", "", errors.New("PostgreSQL DSN allows one sslmode")
 	}
 	if len(values["host"]) != 1 {
 		return "", "", errors.New("PostgreSQL DSN requires one host setting")
 	}
-	return values["sslmode"][0], values["host"][0], nil
+	return first(values["sslmode"]), values["host"][0], nil
+}
+
+func first(values []string) string {
+	if len(values) == 0 {
+		return ""
+	}
+	return values[0]
 }
 
 func postgresTCPHost(value string) bool {
@@ -76,6 +90,11 @@ func postgresTCPHost(value string) bool {
 		}
 	}
 	return true
+}
+
+func postgresPrivateIPv4(host string) bool {
+	address, err := netip.ParseAddr(host)
+	return err == nil && address.Is4() && address.IsPrivate()
 }
 
 func parseKeywordDSN(databaseURL string) (map[string][]string, error) {

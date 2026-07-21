@@ -109,6 +109,12 @@ test("launch freeze fixes the V2 products, owner lanes, settlement, and verifica
   assert.equal(freeze.providerProcurement.periodMonths, 1);
   assert.equal(freeze.providerProcurement.renewFlag, "NOTIFY_AND_MANUAL_RENEW");
   assert.deepEqual(freeze.providerProcurement.forbiddenChargeTypes, ["POSTPAID_BY_HOUR"]);
+  assert.deepEqual(freeze.providerProcurement.mutationPermissionGate, {
+    env: "RUN_TENCENT_CREATE_RELEASE_EXECUTION",
+    requiredValue: "1",
+    check: "shared_tencent_monthly_preflight_before_sub2api_debit",
+    failure: "zero_charge_zero_fabric_mutation"
+  });
   assert.deepEqual(freeze.providerProcurement.nodePoolDiscovery, {
     api: "DescribeNodePools",
     matchLabels: ["oplcloud.cn/pool-id", "oplcloud.cn/package-id", "oplcloud.cn/instance-type"],

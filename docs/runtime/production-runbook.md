@@ -372,7 +372,9 @@ manifest, applies it, and waits for the three Cloud rollouts. It updates the
 immutable Workspace image default used by new Fabric operations, but does not
 restart or wait for existing Workspace Deployments while Runtime/S9 rollout is
 paused. The current internal PostgreSQL endpoint has no TLS, so the manifest
-sets `PGSSLMODE=disable`.
+sets `PGSSLMODE=disable`. The application accepts that exception only for one
+RFC1918 IPv4 literal in `DATABASE_URL`; `verify-full` remains required for every
+other endpoint.
 
 Set `diagnostics_only=true` to read Nodes, Cloud/Workspace Pod state, Events,
 and Cloud container logs without applying a manifest or changing a workload.

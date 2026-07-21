@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 11,
+  "schemaVersion": 12,
   "owner": "OPL Fabric",
   "purpose": "Deployment workflow, immutable Cloud and Workspace images, TKE handoff, read-only diagnostics, and production-verification safety.",
   "state": "current",
@@ -29,7 +29,16 @@
   "productionPostgresTransport": {
     "currentEndpoint": "internal_non_tls",
     "podEnv": "PGSSLMODE=disable",
-    "changeGate": "database_and_deployment_contract_evidence_must_change_together"
+    "changeGate": "database_and_deployment_contract_evidence_must_change_together",
+    "applicationStartupPolicy": {
+      "preferredMode": "sslmode=verify-full",
+      "privatePilotException": {
+        "env": "PGSSLMODE=disable",
+        "databaseURLSslmode": ["absent", "disable"],
+        "host": "single_rfc1918_ipv4_literal",
+        "rejects": ["public_host", "unix_socket", "empty_host", "multiple_hosts", "non_literal_host"]
+      }
+    }
   },
   "runner": [
     "self-hosted",
@@ -48,6 +57,11 @@
       "bootstrap_mode",
       "diagnostics_only"
     ],
+    "preDebitTencentMutationGate": {
+      "env": "RUN_TENCENT_CREATE_RELEASE_EXECUTION",
+      "requiredValue": "1",
+      "enforcement": "shared_tencent_monthly_preflight"
+    },
     "requiredEnv": [
       "OPL_RUNTIME_PROVIDER",
       "OPL_K8S_NAMESPACE",

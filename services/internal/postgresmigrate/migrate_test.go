@@ -80,6 +80,43 @@ func TestValidateTLSRequiresExplicitTCPHost(t *testing.T) {
 	}
 }
 
+func TestValidateTLSAllowsExplicitPrivatePilotDisableOnly(t *testing.T) {
+	t.Setenv("PGSSLMODE", "disable")
+	for _, databaseURL := range []string{
+		"postgresql://user:pass@10.66.0.21/opl",
+		"postgresql://user:pass@10.66.0.21/opl?sslmode=disable",
+		"host=172.16.0.1 dbname=opl sslmode=disable",
+		"host=192.168.1.1 dbname=opl",
+	} {
+		t.Run("accept_"+databaseURL, func(t *testing.T) {
+			if err := ValidateTLS(databaseURL); err != nil {
+				t.Fatalf("ValidateTLS(%q): %v", databaseURL, err)
+			}
+		})
+	}
+
+	for _, databaseURL := range []string{
+		"postgresql://user:pass@db.example/opl?sslmode=disable",
+		"postgresql://user:pass@8.8.8.8/opl?sslmode=disable",
+		"postgresql:///opl?sslmode=disable",
+		"postgresql:///opl?host=%2Ftmp%2Fopl-postgres&sslmode=disable",
+		"postgresql:///opl?host=10.66.0.21%2C10.66.0.22&sslmode=disable",
+		"host=10.66.0.21,10.66.0.22 dbname=opl sslmode=disable",
+		"host=10.66.0.21 dbname=opl sslmode=require",
+	} {
+		t.Run("reject_"+databaseURL, func(t *testing.T) {
+			if err := ValidateTLS(databaseURL); err == nil {
+				t.Fatalf("ValidateTLS(%q) succeeded", databaseURL)
+			}
+		})
+	}
+
+	t.Setenv("PGSSLMODE", "")
+	if err := ValidateTLS("postgresql://user:pass@10.66.0.21/opl?sslmode=disable"); err == nil {
+		t.Fatal("private sslmode=disable succeeded without explicit PGSSLMODE=disable")
+	}
+}
+
 func TestApplyRunsMigrationOnlyOnce(t *testing.T) {
 	db := openIsolatedPostgres(t)
 	var calls atomic.Int32

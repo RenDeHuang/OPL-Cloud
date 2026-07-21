@@ -67,6 +67,19 @@ test("OPL Cloud TKE manifest declares three decoupled services and monthly Sub2A
   assert.deepEqual(ingress.spec.rules.map((rule) => rule.host), ["cloud.medopl.cn", "workspace.medopl.cn"]);
 });
 
+test("production PostgreSQL disable is limited to the explicit private Pilot exception", async () => {
+  const contract = JSON.parse(await readFile("packages/contracts/opl-cloud-deployment-contract.json", "utf8"));
+  assert.deepEqual(contract.productionPostgresTransport.applicationStartupPolicy, {
+    preferredMode: "sslmode=verify-full",
+    privatePilotException: {
+      env: "PGSSLMODE=disable",
+      databaseURLSslmode: ["absent", "disable"],
+      host: "single_rfc1918_ipv4_literal",
+      rejects: ["public_host", "unix_socket", "empty_host", "multiple_hosts", "non_literal_host"]
+    }
+  });
+});
+
 test("TKE workloads and internal services enforce native isolation", async () => {
   const manifest = JSON.parse(await readFile("deploy/tke/opl-cloud.k8s.json", "utf8"));
   const deployments = manifest.items.filter((item) => item.kind === "Deployment");

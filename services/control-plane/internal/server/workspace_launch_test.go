@@ -892,6 +892,18 @@ func TestWorkspaceLaunchWorkerRechecksProviderPreflightBeforeFirstCharge(t *test
 	}
 }
 
+func TestWorkspaceLaunchWriteDisabledPreflightStopsBeforeChargeAndFabricMutation(t *testing.T) {
+	fixture := newWorkspaceLaunchWorkerFixture(t, []int64{100_000_000, 100_000_000, 47_420_000}, nil, nil)
+	fixture.fabric.preflightErr = errors.New("live_mutation_flag_required")
+	err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service)
+	operation := fixture.operation(t)
+	if err == nil || operation.Status != "unknown" || operation.Phase != "debit_pending" || operation.ErrorCode != "fabric_compute_preflight_failed" ||
+		len(fixture.sub2API.charges) != 0 || len(fixture.fabric.computeIDs) != 0 || len(fixture.fabric.storageIDs) != 0 ||
+		countStrings(*fixture.events, "fabric.attachment") != 0 || countStrings(*fixture.events, "fabric.runtime") != 0 {
+		t.Fatalf("disabled Tencent writes crossed preflight gate: err=%v operation=%#v charges=%#v events=%#v", err, operation, fixture.sub2API.charges, *fixture.events)
+	}
+}
+
 func TestWorkspaceLaunchWorkerRejectsChangedDiscoveredNodePoolBeforeFirstCharge(t *testing.T) {
 	fixture := newWorkspaceLaunchWorkerFixture(t, []int64{100_000_000, 100_000_000, 47_420_000}, nil, nil)
 	zone := monthlyComputeLaunchZone()

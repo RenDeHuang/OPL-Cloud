@@ -130,4 +130,8 @@ test("operator launch review uses the dedicated recovery command", async () => {
   assert.match(app, /recoverWorkspaceLaunch\(/);
   assert.match(app, /idempotencyKey: `recover-\$\{crypto\.randomUUID\(\)\}`/);
   assert.match(app, /item\.status === ['"]manual_review['"]/);
+  assert.doesNotMatch(app, /case-20260720-review/);
+  assert.match(app, /window\.prompt\("请输入 case-YYYYMMDD-xxx 证据引用"\) \|\| ""/);
+  assert.match(app, /evidenceRef = .*\.trim\(\)/);
+  assert.match(app, /if \(!evidenceRef\) return/);
 });

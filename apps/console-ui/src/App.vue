@@ -1356,7 +1356,7 @@ async function withdrawOperatorAnnouncementAction(announcementId: string) {
 async function resolveOperatorReview() {
   const review = selectedReview.value;
   if (!review) return;
-  const evidenceRef = window.prompt("请输入 case-YYYYMMDD-xxx 证据引用", "case-20260720-review") || "";
+  const evidenceRef = (window.prompt("请输入 case-YYYYMMDD-xxx 证据引用") || "").trim();
   if (!evidenceRef) return;
   const accountId = review.accountId;
   const billingOperationId = review.billingOperationId;

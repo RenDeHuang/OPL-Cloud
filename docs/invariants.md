@@ -56,6 +56,9 @@ The four implementation owner lanes are Console/Control Plane, Fabric, Gateway i
 - Customer and verification CVM/CBS procurement uses `PREPAID`, period 1 month, and `NOTIFY_AND_MANUAL_RENEW`.
 - `POSTPAID_BY_HOUR` is forbidden for customer and verification CVM/CBS resources.
 - Capacity and price preflight is read-only and happens before debit. It cannot buy, reserve, renew, or delete a Tencent resource.
+- The shared real-Tencent monthly preflight fails closed unless
+  `RUN_TENCENT_CREATE_RELEASE_EXECUTION=1`; this check runs before every first
+  Sub2API debit and leaves both the charge count and Fabric mutation count at zero on failure.
 - Compute preflight discovers the existing TKE NodePool with `DescribeNodePools`
   by exact `oplcloud.cn/pool-id`, `oplcloud.cn/package-id`, and
   `oplcloud.cn/instance-type` labels. Exactly one match is required. Zero,
@@ -218,7 +221,11 @@ validate account and quote
   prior ConfigMap data before restoring the three Cloud images.
 - The current production PostgreSQL endpoint is internal and does not offer TLS,
   so the TKE ConfigMap sets `PGSSLMODE=disable`. A TLS-capable database migration
-  must change this contract and its deployment evidence together.
+  must change this contract and its deployment evidence together. Application
+  startup accepts this Pilot exception only when `PGSSLMODE=disable` is explicit
+  and `DATABASE_URL` names one RFC1918 IPv4 literal; public, socket, empty,
+  multiple, and non-literal hosts remain rejected. `sslmode=verify-full` remains
+  the normal path.
 - CBS is mounted at `/data` and `/projects`.
 - Runtime remains the only possible authority for `/projects` file metadata and mounted filesystem usage, but those
   product APIs and their Console presentation are paused outside this release. Release persistence checks write and

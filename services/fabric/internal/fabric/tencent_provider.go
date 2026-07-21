@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"math"
@@ -41,6 +42,9 @@ func NewTencentProvider() *TencentProvider {
 }
 
 func (p *TencentProvider) MonthlyPreflight(ctx context.Context, input MonthlyPreflightInput) (MonthlyPreflight, error) {
+	if os.Getenv("RUN_TENCENT_CREATE_RELEASE_EXECUTION") != "1" {
+		return MonthlyPreflight{}, errors.New("live_mutation_flag_required")
+	}
 	if (input.ResourceType != "compute" && input.ResourceType != "storage") || (input.PackageID != "basic" && input.PackageID != "pro") || strings.TrimSpace(input.Zone) == "" ||
 		(input.ResourceType == "compute" && input.SizeGB != 0) || (input.ResourceType == "storage" && input.SizeGB <= 0) {
 		return MonthlyPreflight{}, ErrInvalidMonthlyPreflight

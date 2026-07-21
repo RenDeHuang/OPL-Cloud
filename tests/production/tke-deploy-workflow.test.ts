@@ -234,6 +234,11 @@ test("TKE deploy workflow matches the current deployment contract", async () => 
   assertWorkflowContract(deployWorkflow, contract.deployWorkflow, contract);
   assertWorkflowContract(deployWorkflow, contract.productionDiagnosticsJob, contract);
   assert.ok(contract.deployWorkflow.requiredEnv.includes("OPL_TENCENT_ZONE"));
+  assert.deepEqual(contract.deployWorkflow.preDebitTencentMutationGate, {
+    env: "RUN_TENCENT_CREATE_RELEASE_EXECUTION",
+    requiredValue: "1",
+    enforcement: "shared_tencent_monthly_preflight"
+  });
   for (const key of [
     "OPL_OPERATOR_CIDRS",
     "OPL_TRUSTED_PROXY_CIDRS",
