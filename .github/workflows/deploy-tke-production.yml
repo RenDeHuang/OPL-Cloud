@@ -268,16 +268,24 @@ jobs:
           backup_root="/home/actions/.secrets/medopl/v22/postgres-backups"
           install -d -m 700 "$backup_root"
           backup_file="$backup_root/opl-cloud-before-primary-workspace-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.dump"
+          postgres_env_file="$backup_root/opl-cloud-postgres-env-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          install -m 600 /dev/null "$postgres_env_file"
+          cat > "$postgres_env_file" <<EOF
+          DATABASE_URL=$DATABASE_URL
+          PGSSLMODE=$PGSSLMODE
+          EOF
+          chmod 600 "$postgres_env_file"
+          trap 'rm -f "$postgres_env_file"' EXIT
           install -m 600 /dev/null "$backup_file"
-          docker run --rm --network host \
+          sudo -n /usr/bin/docker run --rm --network host \
             --user "$(id -u):$(id -g)" \
-            --env DATABASE_URL --env PGSSLMODE \
+            --env-file "$postgres_env_file" \
             --volume "$backup_file:/backup.dump" \
             --entrypoint /bin/bash "$OPL_POSTGRES_CLIENT_IMAGE" \
             -ceu 'pg_dump --format=custom --no-owner --no-acl --file=/backup.dump "$DATABASE_URL"'
           test -s "$backup_file"
           chmod 600 "$backup_file"
-          docker run --rm --network none \
+          sudo -n /usr/bin/docker run --rm --network none \
             --user "$(id -u):$(id -g)" \
             --volume "$backup_file:/backup.dump:ro" \
             --entrypoint /bin/bash "$OPL_POSTGRES_CLIENT_IMAGE" \
@@ -286,9 +294,9 @@ jobs:
           backup_sha256="$(sha256sum "$backup_file" | cut -d ' ' -f 1)"
           printf 'backupFile=%s\nbackupBytes=%s\nbackupSha256=%s\n' "$backup_file" "$backup_bytes" "$backup_sha256"
 
-          docker run --rm --interactive --network host \
+          sudo -n /usr/bin/docker run --rm --interactive --network host \
             --user "$(id -u):$(id -g)" \
-            --env DATABASE_URL --env PGSSLMODE \
+            --env-file "$postgres_env_file" \
             --entrypoint /bin/bash "$OPL_POSTGRES_CLIENT_IMAGE" \
             -ceu 'psql "$DATABASE_URL" -X --set ON_ERROR_STOP=1 --csv' <<'SQL'
           WITH duplicate_accounts AS (

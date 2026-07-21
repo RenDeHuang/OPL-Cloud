@@ -513,7 +513,9 @@ test("TKE roll-forward recovery backs up before read-only primary Workspace conf
   );
   assert.ok(inspect?.run, "roll-forward recovery is missing the migration conflict inspection");
   assert.match(inspect.run, /install -m 600 \/dev\/null "\$backup_file"/);
-  assert.match(inspect.run, /docker run --rm/);
+  assert.match(inspect.run, /install -m 600 \/dev\/null "\$postgres_env_file"/);
+  assert.match(inspect.run, /sudo -n \/usr\/bin\/docker run --rm/);
+  assert.match(inspect.run, /--env-file "\$postgres_env_file"/);
   assert.match(inspect.run, /--entrypoint \/bin\/bash "\$OPL_POSTGRES_CLIENT_IMAGE"/);
   assert.match(inspect.run, /pg_dump .*--format=custom/);
   assert.match(inspect.run, /pg_restore --list/);
@@ -525,6 +527,7 @@ test("TKE roll-forward recovery backs up before read-only primary Workspace conf
   assert.match(inspect.run, /control_plane_runtime_operations/);
   assert.ok(inspect.run.indexOf("pg_dump") < inspect.run.indexOf("psql"), "backup must complete before conflict inspection");
   assert.doesNotMatch(inspect.run, /^\s*(?:pg_dump|pg_restore|psql)\b/m);
+  assert.doesNotMatch(inspect.run, /sudo (?:-E|--preserve-env)/);
   assert.doesNotMatch(inspect.run, /\b(?:DELETE|UPDATE|INSERT|ALTER|DROP|TRUNCATE)\b/i);
   assert.doesNotMatch(inspect.run, /echo .*DATABASE_URL|printf .*DATABASE_URL/);
 });

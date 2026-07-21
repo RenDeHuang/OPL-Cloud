@@ -322,6 +322,8 @@
         "inputs.inspect_primary_workspace_conflict && !inputs.diagnostics_only && inputs.roll_forward_mode == 'control-plane'",
         "secrets.DATABASE_URL",
         "docker run --rm",
+        "sudo -n /usr/bin/docker run --rm",
+        "postgres_env_file",
         "OPL_POSTGRES_CLIENT_IMAGE",
         "pg_dump --format=custom",
         "pg_restore --list",
