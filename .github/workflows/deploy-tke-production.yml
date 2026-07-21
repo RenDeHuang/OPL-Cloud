@@ -394,8 +394,6 @@ jobs:
             workspaces.updated_at,
             workspaces.state,
             workspaces.status,
-            workspaces.verification_slot_id,
-            workspaces.customer_product,
             workspaces.current_compute_allocation_id,
             workspaces.storage_id,
             workspaces.current_attachment_id,

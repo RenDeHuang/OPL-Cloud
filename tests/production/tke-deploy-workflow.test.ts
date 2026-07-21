@@ -543,6 +543,7 @@ test("TKE roll-forward recovery backs up before read-only primary Workspace conf
   assert.doesNotMatch(inspect.run, /delete [^\n]*(?:opl-cloud-|\$pod)/);
   const inspectionSql = inspect.run.match(/<<'SQL'\n([\s\S]*?)\nSQL/)?.[1] || "";
   assert.ok(inspectionSql, "primary Workspace inspection SQL is missing");
+  assert.doesNotMatch(inspectionSql, /verification_slot_id|customer_product/);
   assert.doesNotMatch(inspectionSql, /^\s*(?:DELETE|UPDATE|INSERT|ALTER|DROP|TRUNCATE)\b/im);
   assert.doesNotMatch(inspect.run, /echo .*DATABASE_URL|printf .*DATABASE_URL/);
 });
