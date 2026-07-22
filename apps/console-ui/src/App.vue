@@ -58,6 +58,7 @@ import {
   publishOperatorAnnouncement,
   previewPricing,
   recoverWorkspaceLaunch as recoverOperatorWorkspaceLaunch,
+  recoverWalletAdjustment as recoverOperatorWalletAdjustment,
   resolveBillingReview,
   revealGatewayKey,
   updateGatewayKey,
@@ -104,6 +105,7 @@ import type {
   PricingCatalogResponse,
   SourceEnvelope,
   WalletAdjustmentOperationDTO,
+  WalletAdjustmentRecoveryRequest,
   WalletAdjustmentRequest,
   WorkspaceCredentialAccess,
   WorkspaceDTO,
@@ -207,6 +209,7 @@ let workspaceLaunchIntent: { input: WorkspaceLaunchRequest; idempotencyKey: stri
 let runtimeRotationIntent: { workspaceId: string; idempotencyKey: string } | null = null;
 let gatewayKeyCreateIntent: { input: CreateGatewayKeyRequest; idempotencyKey: string } | null = null;
 let walletAdjustmentIntent: { accountId: string; input: WalletAdjustmentRequest; idempotencyKey: string } | null = null;
+let walletAdjustmentRecoveryIntent: { operationId: string; input: WalletAdjustmentRecoveryRequest; idempotencyKey: string } | null = null;
 let operatorProvisionIntent: { input: ProvisionAccountRequest; idempotencyKey: string } | null = null;
 let billingReviewIntent: { resourceType: string; resourceId: string; input: BillingReviewResolutionRequest; idempotencyKey: string } | null = null;
 let workspaceLaunchRecoveryIntent: { operationId: string; input: WorkspaceLaunchRecoveryRequest; idempotencyKey: string } | null = null;
@@ -448,6 +451,7 @@ function clearSessionState() {
   runtimeRotationIntent = null;
   gatewayKeyCreateIntent = null;
   walletAdjustmentIntent = null;
+  walletAdjustmentRecoveryIntent = null;
   operatorProvisionIntent = null;
   billingReviewIntent = null;
   workspaceLaunchRecoveryIntent = null;
@@ -1299,6 +1303,42 @@ async function refreshWalletAdjustment() {
   } catch (error) { flash(friendlyError(error), "danger"); }
 }
 
+async function recoverWalletAdjustment() {
+  const requestStillCurrent = currentSessionRequest();
+  const operation = walletAdjustmentOperation.value;
+  if (!operation || operation.status !== "manual_review" || !operation.allowedActions?.includes("recover_wallet_adjustment")) return;
+  const operationId = operation.operationId;
+  if (!walletAdjustmentRecoveryIntent || walletAdjustmentRecoveryIntent.operationId !== operationId) {
+    const evidenceRef = (window.prompt("请输入 case-YYYYMMDD-xxx 证据引用") || "").trim();
+    if (!evidenceRef) return;
+    walletAdjustmentRecoveryIntent = {
+      operationId,
+      input: { accountId: operation.accountId, evidenceRef },
+      idempotencyKey: `wallet-adjustment-recovery:${operationId}`
+    };
+  }
+  loading.walletAdjustment = true;
+  errors.walletAdjustment = "";
+  try {
+    const result = await recoverOperatorWalletAdjustment(operationId, walletAdjustmentRecoveryIntent.input, session.value?.csrfToken || "", walletAdjustmentRecoveryIntent.idempotencyKey);
+    if (!requestStillCurrent()) return;
+    walletAdjustmentOperation.value = result;
+    if (result.status === "succeeded") {
+      walletAdjustmentRecoveryIntent = null;
+      walletAdjustmentIntent = null;
+      flash("钱包调整已确认");
+    } else {
+      flash("恢复结果仍待人工确认", "danger");
+    }
+    await loadAdmin();
+  } catch (error) {
+    if (requestStillCurrent()) {
+      errors.walletAdjustment = friendlyError(error);
+      flash(mutationError(error), "danger");
+    }
+  } finally { if (requestStillCurrent()) loading.walletAdjustment = false; }
+}
+
 async function disableOperatorAccount(accountId: string) {
   if (!window.confirm("确认禁用该账号？账号与历史账单仍会保留。")) return;
   const idempotencyKey = operatorDisableIntents.get(accountId) || `account-disable:${accountId}:${crypto.randomUUID()}`;
@@ -1664,7 +1704,7 @@ onBeforeUnmount(() => {
       </div>
     </section>
 
-        <div v-if="modal" class="modal-backdrop" role="presentation" @click.self="closeModal"><section class="modal" role="dialog" aria-modal="true" :aria-label="modal"><header><h2>{{ modal === "workspace" ? "开通 Workspace" : modal === "api-key" ? "创建 API Key" : modal === "wallet-adjustment" ? "钱包调整" : modal === "announcement" ? "新建公告草稿" : "开通用户" }}</h2><button class="icon-button" type="button" aria-label="关闭" @click="closeModal"><X :size="18" /></button></header><form v-if="modal === 'workspace'" @submit.prevent="submitWorkspaceLaunch"><label>Workspace 名称<input v-model.trim="launchForm.name" required maxlength="80" /></label><fieldset><legend>计划</legend><label v-for="plan in plans" :key="plan.id" class="plan-option" :class="{ selected: launchForm.packageId === plan.id }"><input v-model="launchForm.packageId" type="radio" :value="plan.id" :disabled="!plan.available" /><span><strong>{{ plan.name }}</strong><small>{{ plan.cpu }}C / {{ plan.memoryGb }}GB · {{ plan.diskGb }}GB</small></span><b>{{ typeof previews[plan.id]?.totalChargeUsdMicros === "number" ? `${formatUsdMicros(previews[plan.id]?.totalChargeUsdMicros)}/月` : "暂不可用" }}</b></label></fieldset><p class="source-note">自动续费默认关闭。</p><footer><button class="button secondary" type="button" @click="closeModal">取消</button><button class="button primary" type="submit" :disabled="launchBusy || !selectedPlan || selectedPlanPrice === null">{{ launchBusy ? "处理中..." : "确认开通" }}</button></footer></form><form v-else-if="modal === 'api-key'" @submit.prevent="submitKey"><label>名称<input v-model.trim="keyForm.name" required maxlength="80" /></label><label>限额（USD）<input v-model.number="keyForm.quotaUsd" type="number" min="1" step="1" required /></label><label>有效天数<input v-model.number="keyForm.expiresInDays" type="number" min="1" max="365" step="1" required /></label><footer><button class="button secondary" type="button" @click="closeModal">取消</button><button class="button primary" type="submit" :disabled="gatewayBusy">{{ gatewayBusy ? "创建中..." : "创建" }}</button></footer></form><form v-else-if="modal === 'wallet-adjustment'" @submit.prevent="submitWalletAdjustment"><p class="source-note">二次确认会锁定目标账号、金额和原因；同一 Idempotency-Key 不会重复调整。</p><label>目标账号<input v-model.trim="walletAdjustmentForm.confirmationAccountId" required /></label><label>类型<select v-model="walletAdjustmentForm.kind"><option value="recharge">充值</option><option value="debit">扣款</option><option value="business_refund">业务退款</option></select></label><label>金额（USD）<input v-model.trim="walletAdjustmentForm.amountUsd" inputmode="decimal" required /></label><label>原因<textarea v-model.trim="walletAdjustmentForm.reason" required maxlength="200" /></label><label v-if="walletAdjustmentForm.kind === 'business_refund'">关联操作<input v-model.trim="walletAdjustmentForm.relatedOperationId" required /></label><p v-if="errors.walletAdjustment" class="form-error" role="alert">{{ errors.walletAdjustment }}</p><section v-if="walletAdjustmentOperation" class="wallet-adjustment-readback"><div class="inline-notice">操作 {{ walletAdjustmentOperation.operationId }}：{{ walletAdjustmentOperation.status }} <button class="text-button" type="button" @click="refreshWalletAdjustment">读取最新状态</button></div><dl class="data-list"><div><dt>调整前余额</dt><dd>{{ operatorSourceText(walletAdjustmentOperation.beforeBalance, (data) => formatUsdMicros(data.usdMicros)) }}</dd></div><div><dt>调整后余额</dt><dd>{{ operatorSourceText(walletAdjustmentOperation.afterBalance, (data) => formatUsdMicros(data.usdMicros)) }}</dd></div><div><dt>原因</dt><dd>{{ walletAdjustmentOperation.reason || "暂不可用" }}</dd></div><div><dt>关联操作</dt><dd>{{ walletAdjustmentOperation.relatedOperationId || "暂不可用" }}</dd></div><div><dt>余额记录引用</dt><dd>{{ walletAdjustmentOperation.balanceHistoryRef || "暂不可用" }}</dd></div><div><dt>执行人</dt><dd>{{ walletAdjustmentOperation.actor || "暂不可用" }}</dd></div></dl></section><footer><button class="button secondary" type="button" @click="closeModal">取消</button><button class="button primary" type="submit" :disabled="loading.walletAdjustment">{{ loading.walletAdjustment ? "处理中..." : "确认调整" }}</button></footer></form><form v-else-if="modal === 'announcement'" @submit.prevent="submitOperatorAnnouncement"><label>标题<input v-model.trim="announcementForm.title" required maxlength="120" /></label><label>正文<textarea v-model.trim="announcementForm.body" required maxlength="4000" /></label><label>开始时间（可选）<input v-model.trim="announcementForm.startsAt" placeholder="2026-07-20T00:00:00Z" /></label><label>结束时间（可选）<input v-model.trim="announcementForm.endsAt" placeholder="2026-07-21T00:00:00Z" /></label><footer><button class="button secondary" type="button" @click="closeModal">取消</button><button class="button primary" type="submit">保存草稿</button></footer></form><form v-else @submit.prevent="provisionOperatorUser"><label>登录邮箱<input v-model.trim="adminUserForm.email" type="email" required /></label><label>初始密码<input v-model="adminUserForm.password" type="password" required minlength="12" /></label><label>姓名<input v-model.trim="adminUserForm.name" /></label><footer><button class="button secondary" type="button" @click="closeModal">取消</button><button class="button primary" type="submit" :disabled="mutationBusy">{{ mutationBusy ? "处理中..." : "开通用户" }}</button></footer></form></section></div>
+        <div v-if="modal" class="modal-backdrop" role="presentation" @click.self="closeModal"><section class="modal" role="dialog" aria-modal="true" :aria-label="modal"><header><h2>{{ modal === "workspace" ? "开通 Workspace" : modal === "api-key" ? "创建 API Key" : modal === "wallet-adjustment" ? "钱包调整" : modal === "announcement" ? "新建公告草稿" : "开通用户" }}</h2><button class="icon-button" type="button" aria-label="关闭" @click="closeModal"><X :size="18" /></button></header><form v-if="modal === 'workspace'" @submit.prevent="submitWorkspaceLaunch"><label>Workspace 名称<input v-model.trim="launchForm.name" required maxlength="80" /></label><fieldset><legend>计划</legend><label v-for="plan in plans" :key="plan.id" class="plan-option" :class="{ selected: launchForm.packageId === plan.id }"><input v-model="launchForm.packageId" type="radio" :value="plan.id" :disabled="!plan.available" /><span><strong>{{ plan.name }}</strong><small>{{ plan.cpu }}C / {{ plan.memoryGb }}GB · {{ plan.diskGb }}GB</small></span><b>{{ typeof previews[plan.id]?.totalChargeUsdMicros === "number" ? `${formatUsdMicros(previews[plan.id]?.totalChargeUsdMicros)}/月` : "暂不可用" }}</b></label></fieldset><p class="source-note">自动续费默认关闭。</p><footer><button class="button secondary" type="button" @click="closeModal">取消</button><button class="button primary" type="submit" :disabled="launchBusy || !selectedPlan || selectedPlanPrice === null">{{ launchBusy ? "处理中..." : "确认开通" }}</button></footer></form><form v-else-if="modal === 'api-key'" @submit.prevent="submitKey"><label>名称<input v-model.trim="keyForm.name" required maxlength="80" /></label><label>限额（USD）<input v-model.number="keyForm.quotaUsd" type="number" min="1" step="1" required /></label><label>有效天数<input v-model.number="keyForm.expiresInDays" type="number" min="1" max="365" step="1" required /></label><footer><button class="button secondary" type="button" @click="closeModal">取消</button><button class="button primary" type="submit" :disabled="gatewayBusy">{{ gatewayBusy ? "创建中..." : "创建" }}</button></footer></form><form v-else-if="modal === 'wallet-adjustment'" @submit.prevent="submitWalletAdjustment"><p class="source-note">二次确认会锁定目标账号、金额和原因；同一 Idempotency-Key 不会重复调整。</p><label>目标账号<input v-model.trim="walletAdjustmentForm.confirmationAccountId" required /></label><label>类型<select v-model="walletAdjustmentForm.kind"><option value="recharge">充值</option><option value="debit">扣款</option><option value="business_refund">业务退款</option></select></label><label>金额（USD）<input v-model.trim="walletAdjustmentForm.amountUsd" inputmode="decimal" required /></label><label>原因<textarea v-model.trim="walletAdjustmentForm.reason" required maxlength="200" /></label><label v-if="walletAdjustmentForm.kind === 'business_refund'">关联操作<input v-model.trim="walletAdjustmentForm.relatedOperationId" required /></label><p v-if="errors.walletAdjustment" class="form-error" role="alert">{{ errors.walletAdjustment }}</p><section v-if="walletAdjustmentOperation" class="wallet-adjustment-readback"><div class="inline-notice">操作 {{ walletAdjustmentOperation.operationId }}：{{ walletAdjustmentOperation.status }} <button class="text-button" type="button" @click="refreshWalletAdjustment">读取最新状态</button></div><dl class="data-list"><div><dt>调整前余额</dt><dd>{{ operatorSourceText(walletAdjustmentOperation.beforeBalance, (data) => formatUsdMicros(data.usdMicros)) }}</dd></div><div><dt>调整后余额</dt><dd>{{ operatorSourceText(walletAdjustmentOperation.afterBalance, (data) => formatUsdMicros(data.usdMicros)) }}</dd></div><div><dt>原因</dt><dd>{{ walletAdjustmentOperation.reason || "暂不可用" }}</dd></div><div><dt>关联操作</dt><dd>{{ walletAdjustmentOperation.relatedOperationId || "暂不可用" }}</dd></div><div><dt>余额记录引用</dt><dd>{{ walletAdjustmentOperation.balanceHistoryRef || "暂不可用" }}</dd></div><div><dt>Receipt</dt><dd>{{ walletAdjustmentOperation.receiptId || "暂不可用" }}</dd></div><div><dt>错误码</dt><dd>{{ walletAdjustmentOperation.errorCode || "暂不可用" }}</dd></div><div><dt>上游 HTTP</dt><dd>{{ walletAdjustmentOperation.upstreamFailure?.httpStatus ?? "暂不可用" }}</dd></div><div><dt>上游错误码</dt><dd>{{ walletAdjustmentOperation.upstreamFailure?.errorCode || "暂不可用" }}</dd></div><div><dt>上游 request ID</dt><dd>{{ walletAdjustmentOperation.upstreamFailure?.requestId || "暂不可用" }}</dd></div><div><dt>执行人</dt><dd>{{ walletAdjustmentOperation.actor || "暂不可用" }}</dd></div></dl></section><footer><button class="button secondary" type="button" @click="closeModal">取消</button><button v-if="walletAdjustmentOperation?.status === 'manual_review' && walletAdjustmentOperation.allowedActions?.includes('recover_wallet_adjustment')" class="button primary" type="button" :disabled="loading.walletAdjustment" @click="recoverWalletAdjustment">{{ loading.walletAdjustment ? "处理中..." : "恢复确认" }}</button><button v-else class="button primary" type="submit" :disabled="loading.walletAdjustment">{{ loading.walletAdjustment ? "处理中..." : "确认调整" }}</button></footer></form><form v-else-if="modal === 'announcement'" @submit.prevent="submitOperatorAnnouncement"><label>标题<input v-model.trim="announcementForm.title" required maxlength="120" /></label><label>正文<textarea v-model.trim="announcementForm.body" required maxlength="4000" /></label><label>开始时间（可选）<input v-model.trim="announcementForm.startsAt" placeholder="2026-07-20T00:00:00Z" /></label><label>结束时间（可选）<input v-model.trim="announcementForm.endsAt" placeholder="2026-07-21T00:00:00Z" /></label><footer><button class="button secondary" type="button" @click="closeModal">取消</button><button class="button primary" type="submit">保存草稿</button></footer></form><form v-else @submit.prevent="provisionOperatorUser"><label>登录邮箱<input v-model.trim="adminUserForm.email" type="email" required /></label><label>初始密码<input v-model="adminUserForm.password" type="password" required minlength="12" /></label><label>姓名<input v-model.trim="adminUserForm.name" /></label><footer><button class="button secondary" type="button" @click="closeModal">取消</button><button class="button primary" type="submit" :disabled="mutationBusy">{{ mutationBusy ? "处理中..." : "开通用户" }}</button></footer></form></section></div>
     <div v-if="toast.text" class="toast" :class="toast.tone" role="status">{{ toast.text }}</div>
   </div>
 </template>

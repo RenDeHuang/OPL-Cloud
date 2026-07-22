@@ -26,6 +26,9 @@ func registerAdminRoutes(mux *http.ServeMux, app *controlPlaneServer, service *c
 	mux.HandleFunc("GET /api/operator/wallet-adjustments/{operationId}", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
 		app.getWalletAdjustment(w, r)
 	}))
+	mux.HandleFunc("POST /api/operator/wallet-adjustments/{operationId}/recover", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
+		app.recoverWalletAdjustment(w, r, service)
+	}))
 	mux.HandleFunc("GET /api/operator/accounts", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
 		page, pageSize, ok := operatorPagination(w, r)
 		if !ok {

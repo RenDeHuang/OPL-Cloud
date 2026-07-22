@@ -28,6 +28,7 @@ import type {
   OperatorWorkspaceDTO,
   OperatorWorkspacePageDTO,
   WalletAdjustmentOperationDTO,
+  WalletAdjustmentRecoveryRequest,
   WalletAdjustmentRequest,
   OperatorAccountsData,
   OperationStatusDTO,
@@ -202,6 +203,10 @@ export function createWalletAdjustment(accountId: string, input: WalletAdjustmen
 
 export function getWalletAdjustment(operationId: string, signal?: AbortSignal): Promise<WalletAdjustmentOperationDTO> {
   return getJson<unknown>(`/api/operator/wallet-adjustments/${encodeURIComponent(operationId)}`, { signal }).then(decodeDto<WalletAdjustmentOperationDTO>);
+}
+
+export function recoverWalletAdjustment(operationId: string, input: WalletAdjustmentRecoveryRequest, csrfToken: string, idempotencyKey: string): Promise<WalletAdjustmentOperationDTO> {
+  return postJson<unknown>(`/api/operator/wallet-adjustments/${encodeURIComponent(operationId)}/recover`, input, csrfToken, idempotencyKey).then(decodeDto<WalletAdjustmentOperationDTO>);
 }
 
 export function provisionOperatorAccount(input: ProvisionAccountRequest, csrfToken: string, idempotencyKey: string): Promise<OperatorAccountCommandDTO> {

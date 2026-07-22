@@ -57,7 +57,7 @@ test("Pilot V2 contracts hard cut Gateway keys and source envelopes", async () =
     "WorkspaceFilesystemUsageDTO", "BillingReceiptPageDTO", "WorkspaceBillingReceiptDTO",
     "AnnouncementPageDTO", "AnnouncementDTO", "AnnouncementReadDTO", "OperatorOverviewDTO", "OperatorUsageCostDTO",
     "OperatorAccountPageDTO", "OperatorAccountDTO",
-    "OperatorAccountCommandDTO", "WalletAdjustmentRequest", "WalletAdjustmentOperationDTO",
+    "OperatorAccountCommandDTO", "WalletAdjustmentRequest", "WalletAdjustmentRecoveryRequest", "WalletAdjustmentOperationDTO",
     "OperatorWorkspacePageDTO", "OperatorWorkspaceDTO", "WorkspaceRuntimeCredentialDTO",
     "WorkspaceAutoRenewRequest", "WorkspaceAutoRenewCommandDTO", "OperatorReconciliationPageDTO",
     "BillingReviewResolutionRequest", "OperatorHealthDTO", "OperatorAnnouncementPageDTO",
@@ -236,10 +236,29 @@ test("Pilot V2 contracts hard cut operator resources, wallet adjustments, and an
   assert.equal(management.walletAdjustments.balanceAuthority, "sub2api");
   assert.deepEqual(management.walletAdjustments.routes, {
     create: "POST /api/operator/accounts/{accountId}/wallet-adjustments",
-    read: "GET /api/operator/wallet-adjustments/{operationId}"
+    read: "GET /api/operator/wallet-adjustments/{operationId}",
+    recover: "POST /api/operator/wallet-adjustments/{operationId}/recover"
   });
   assert.equal(management.walletAdjustments.unknownResult, "manual_review_without_automatic_replay");
   assert.equal(management.walletAdjustments.serializationContract, "opl-cloud-service-boundary-contract.json#services.controlPlane.walletMutationSerialization");
+  assert.deepEqual(management.walletAdjustments.manualReviewRecovery, {
+    eligibleStatus: "manual_review",
+    allowedAction: "recover_wallet_adjustment",
+    requestFields: ["accountId", "evidenceRef"],
+    identityReuse: ["original_operation_id", "stable_recovery_intent"],
+    legacyV1Identity: "read_only_history_identity_never_payload_or_idempotency_key",
+    canonicalV2Identity: `"opl:" + stableID("sub2api-wallet-adjustment-v2", operationID)[:28]`,
+    canonicalV2Length: 32,
+    preWriteAuthority: "legacy_and_v2_history_absent_unchanged_before_balance_empty_receipt_and_balance_history_ref_no_prior_recovery_write",
+    persistBeforeWrite: ["canonical_v2_identity", "identity_version", "legacy_supersession_status", "operator", "authorized_at", "evidence_ref", "stable_recovery_intent"],
+    maximumRecoveryMoneyWrites: 1,
+    unknownRecoveryResult: "manual_review_without_second_v2_write"
+  });
+  assert.deepEqual(management.walletAdjustments.upstreamFailureProjection, {
+    fields: ["phase", "httpStatus", "errorCode", "requestId"],
+    rawBody: false,
+    message: false
+  });
   assert.equal(management.walletAdjustments.implementation, "code_complete_local_focused_tests");
   assert.deepEqual(evidence.gatewayWalletAdjustmentReceipt.commonRequiredRefs, ["operationId", "kind", "amountUsdMicros", "balanceHistoryRef", "actor"]);
   assert.deepEqual(evidence.gatewayWalletAdjustmentReceipt.businessRefundAdditionalRequiredRefs, ["relatedOperationId"]);
@@ -248,6 +267,26 @@ test("Pilot V2 contracts hard cut operator resources, wallet adjustments, and an
   assert.equal(billing.walletAdjustmentEvidence.controlPlaneState, "runtime_operation_non_authoritative");
   assert.equal(billing.walletAdjustmentEvidence.ledgerState, "append_only_reference_non_authoritative");
   assert.equal(billing.walletAdjustmentEvidence.localBalancePersistence, false);
+  assert.deepEqual(billing.walletAdjustmentEvidence.redeemCode, {
+    version: "v2",
+    format: `"opl:" + stableID("sub2api-wallet-adjustment-v2", operationID)[:28]`,
+    length: 32,
+    pattern: "^opl:[0-9a-f]{28}$",
+    legacyV1Length: 49,
+    legacyV1Policy: "read_only_history_identity_never_payload_or_idempotency_key"
+  });
+  assert.equal(billing.walletAdjustmentEvidence.manualReviewRecovery, "explicit_operator_original_operation_v2_supersession_maximum_one_money_write");
+  assert.deepEqual(billing.walletAdjustmentEvidence.upstreamFailureFields, ["phase", "httpStatus", "errorCode", "requestId"]);
+  assert.equal(billing.walletAdjustmentEvidence.rawUpstreamResponsePersistence, false);
+  assert.deepEqual(sourceTruth.sources.operator.walletAdjustmentReview, {
+    readRoute: "GET /api/operator/wallet-adjustments/{operationId}",
+    recoveryRoute: "POST /api/operator/wallet-adjustments/{operationId}/recover",
+    recoveryRequestFields: ["accountId", "evidenceRef"],
+    upstreamFailureFields: ["phase", "httpStatus", "errorCode", "requestId"],
+    manualReviewAllowedActions: ["recover_wallet_adjustment"],
+    rawUpstreamResponse: false,
+    upstreamMessage: false
+  });
   assert.equal(management.announcements.owner, "control_plane_postgresql");
   assert.deepEqual(management.announcements.tables, ["control_plane_announcements", "control_plane_announcement_reads"]);
   assert.equal(management.announcements.implementation, "code_complete_local_focused_tests");

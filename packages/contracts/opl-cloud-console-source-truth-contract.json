@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 8,
+  "schemaVersion": 9,
   "owner": "OPL Console Control Plane",
   "purpose": "Strict source envelopes and customer-safe live projections for Console source-of-truth APIs.",
   "state": "current",
@@ -238,6 +238,15 @@
         "recoveryRoute": "POST /api/operator/workspace-launches/{operationId}/recover",
         "recoveryRequestFields": ["accountId", "billingOperationId", "evidenceRef"],
         "implementation": "integrated_local_fake_verified"
+      },
+      "walletAdjustmentReview": {
+        "readRoute": "GET /api/operator/wallet-adjustments/{operationId}",
+        "recoveryRoute": "POST /api/operator/wallet-adjustments/{operationId}/recover",
+        "recoveryRequestFields": ["accountId", "evidenceRef"],
+        "upstreamFailureFields": ["phase", "httpStatus", "errorCode", "requestId"],
+        "manualReviewAllowedActions": ["recover_wallet_adjustment"],
+        "rawUpstreamResponse": false,
+        "upstreamMessage": false
       },
       "billingReviewProjection": {
         "included": ["workspace.launch.v2_manual_review", "workspace.renewal_manual_review", "compute_billingStatus_manual_review", "storage_billingStatus_manual_review", "BillingReconciliation_mismatch"],

@@ -541,6 +541,18 @@ export interface WalletAdjustmentRequest {
   confirmationAccountId: string;
 }
 
+export interface WalletAdjustmentRecoveryRequest {
+  accountId: string;
+  evidenceRef: string;
+}
+
+export interface WalletAdjustmentUpstreamFailureDTO {
+  phase: string;
+  httpStatus?: number;
+  errorCode: string;
+  requestId?: string;
+}
+
 export interface WalletAdjustmentOperationDTO extends OperationStatusDTO {
   accountId: string;
   kind: WalletAdjustmentRequest["kind"];
@@ -549,8 +561,11 @@ export interface WalletAdjustmentOperationDTO extends OperationStatusDTO {
   beforeBalance: SourceEnvelope<MoneyDTO>;
   afterBalance: SourceEnvelope<MoneyDTO>;
   balanceHistoryRef?: string;
+  receiptId?: string;
   actor: string;
   relatedOperationId?: string;
+  upstreamFailure?: WalletAdjustmentUpstreamFailureDTO;
+  allowedActions?: Array<"recover_wallet_adjustment">;
 }
 
 export interface AnnouncementDTO {

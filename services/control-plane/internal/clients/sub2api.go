@@ -10,6 +10,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/url"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -304,10 +305,41 @@ type Sub2APIRefund struct {
 
 type Sub2APIHTTPError struct {
 	StatusCode int
+	ErrorCode  string
+	RequestID  string
 }
 
 func (e *Sub2APIHTTPError) Error() string {
 	return fmt.Sprintf("sub2api request failed with status %d", e.StatusCode)
+}
+
+type Sub2APIFailureDetails struct {
+	HTTPStatus int
+	ErrorCode  string
+	RequestID  string
+}
+
+type sub2APIRequestError struct {
+	ErrorCode string
+}
+
+func (e *sub2APIRequestError) Error() string {
+	return "sub2api request failed: " + e.ErrorCode
+}
+
+func Sub2APIFailure(err error) (Sub2APIFailureDetails, bool) {
+	var httpErr *Sub2APIHTTPError
+	if errors.As(err, &httpErr) {
+		return Sub2APIFailureDetails{HTTPStatus: httpErr.StatusCode, ErrorCode: httpErr.ErrorCode, RequestID: httpErr.RequestID}, true
+	}
+	var requestErr *sub2APIRequestError
+	if errors.As(err, &requestErr) {
+		return Sub2APIFailureDetails{ErrorCode: requestErr.ErrorCode}, true
+	}
+	if errors.Is(err, ErrSub2APIResponseTooLarge) {
+		return Sub2APIFailureDetails{ErrorCode: "response_too_large"}, true
+	}
+	return Sub2APIFailureDetails{}, false
 }
 
 type Sub2APIHTTPClient struct {
@@ -1308,6 +1340,9 @@ func (c *Sub2APIHTTPClient) Refund(ctx context.Context, input Sub2APIRefundInput
 }
 
 func (c *Sub2APIHTTPClient) redeemBalance(ctx context.Context, userID int64, code string, valueUSDMicros int64, notes string) (string, error) {
+	if len(code) > 32 {
+		return "", errors.New("sub2api redeem code exceeds 32 characters")
+	}
 	payload := struct {
 		Code   string          `json:"code"`
 		Type   string          `json:"type"`
@@ -1321,10 +1356,14 @@ func (c *Sub2APIHTTPClient) redeemBalance(ctx context.Context, userID int64, cod
 	if err != nil {
 		var httpErr *Sub2APIHTTPError
 		if errors.As(err, &httpErr) && httpErr.StatusCode == http.StatusConflict {
-			return c.confirmAdjustmentReplay(ctx, userID, code, valueUSDMicros)
+			status, replayErr := c.confirmAdjustmentReplay(ctx, userID, code, valueUSDMicros)
+			if replayErr != nil {
+				return "", fmt.Errorf("%w: replay confirmation failed: %w", replayErr, httpErr)
+			}
+			return status, nil
 		}
 		if !errors.As(err, &httpErr) || httpErr.StatusCode >= http.StatusInternalServerError || errors.Is(err, ErrSub2APIResponseTooLarge) {
-			return "", fmt.Errorf("%w: request did not produce a confirmed response", ErrSub2APIChargeUnknown)
+			return "", fmt.Errorf("%w: request did not produce a confirmed response: %w", ErrSub2APIChargeUnknown, err)
 		}
 		return "", err
 	}
@@ -1353,7 +1392,7 @@ func (c *Sub2APIHTTPClient) redeemBalance(ctx context.Context, userID int64, cod
 func (c *Sub2APIHTTPClient) confirmAdjustmentReplay(ctx context.Context, userID int64, code string, valueUSDMicros int64) (string, error) {
 	history, err := c.BalanceHistory(ctx, userID)
 	if err != nil {
-		return "", fmt.Errorf("%w: balance history unavailable", ErrSub2APIChargeUnknown)
+		return "", fmt.Errorf("%w: balance history unavailable: %w", ErrSub2APIChargeUnknown, err)
 	}
 	var match *Sub2APIBalanceHistoryEntry
 	for i := range history {
@@ -1466,20 +1505,80 @@ func (c *Sub2APIHTTPClient) request(ctx context.Context, method, path string, in
 	}
 	res, err := c.client.Do(req)
 	if err != nil {
-		return nil, errors.New("sub2api transport failure")
+		code := "transport_failure"
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(requestCtx.Err(), context.DeadlineExceeded) {
+			code = "request_timeout"
+		} else if errors.Is(err, context.Canceled) || errors.Is(requestCtx.Err(), context.Canceled) {
+			code = "request_canceled"
+		}
+		return nil, &sub2APIRequestError{ErrorCode: code}
 	}
 	defer res.Body.Close()
 	responseBody, err := io.ReadAll(io.LimitReader(res.Body, maxSub2APIResponseBytes+1))
 	if err != nil {
-		return nil, errors.New("read sub2api response")
+		return nil, &sub2APIRequestError{ErrorCode: "response_read_failure"}
 	}
 	if len(responseBody) > maxSub2APIResponseBytes {
 		return nil, ErrSub2APIResponseTooLarge
 	}
 	if res.StatusCode < http.StatusOK || res.StatusCode >= http.StatusMultipleChoices {
-		return nil, &Sub2APIHTTPError{StatusCode: res.StatusCode}
+		return nil, sub2APIHTTPFailure(res, responseBody)
 	}
 	return responseBody, nil
+}
+
+var sub2APIDiagnosticPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`)
+
+func sub2APIHTTPFailure(response *http.Response, body []byte) *Sub2APIHTTPError {
+	errorCode := fmt.Sprintf("http_%d", response.StatusCode)
+	requestID := firstSafeSub2APIDiagnostic(response.Header.Get("X-Request-ID"), response.Header.Get("Request-ID"))
+	var envelope struct {
+		Code      json.RawMessage `json:"code"`
+		RequestID string          `json:"request_id"`
+	}
+	if json.Unmarshal(body, &envelope) == nil {
+		if value := safeSub2APIJSONScalar(envelope.Code); value != "" {
+			errorCode = value
+		}
+		if requestID == "" {
+			requestID = safeSub2APIDiagnostic(envelope.RequestID)
+		}
+	}
+	return &Sub2APIHTTPError{StatusCode: response.StatusCode, ErrorCode: errorCode, RequestID: requestID}
+}
+
+func safeSub2APIJSONScalar(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var text string
+	if json.Unmarshal(raw, &text) == nil {
+		return safeSub2APIDiagnostic(text)
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	var number json.Number
+	if decoder.Decode(&number) == nil {
+		return safeSub2APIDiagnostic(number.String())
+	}
+	return ""
+}
+
+func firstSafeSub2APIDiagnostic(values ...string) string {
+	for _, value := range values {
+		if safe := safeSub2APIDiagnostic(value); safe != "" {
+			return safe
+		}
+	}
+	return ""
+}
+
+func safeSub2APIDiagnostic(value string) string {
+	value = strings.TrimSpace(value)
+	if !sub2APIDiagnosticPattern.MatchString(value) {
+		return ""
+	}
+	return value
 }
 
 func decodeSub2APIEnvelope(body []byte, output any) error {

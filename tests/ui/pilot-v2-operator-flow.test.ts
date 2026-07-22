@@ -63,13 +63,31 @@ test("operator wallet adjustment is confirmed, idempotent, and reviewable", asyn
 });
 
 test("wallet adjustment readback shows non-secret audit facts", async () => {
-  const app = await source("apps/console-ui/src/App.vue");
+  const [app, dtos, readApiSource] = await Promise.all([
+    source("apps/console-ui/src/App.vue"),
+    source("apps/console-ui/src/api/dtos.ts"),
+    source("apps/console-ui/src/api/console-read-api.ts")
+  ]);
   const modal = app.slice(app.indexOf('<div v-if="modal"'), app.indexOf('<div v-if="toast.text"'));
-  for (const label of ["调整前余额", "调整后余额", "原因", "关联操作", "余额记录引用", "执行人"]) {
+  for (const label of ["调整前余额", "调整后余额", "原因", "关联操作", "余额记录引用", "Receipt", "上游 HTTP", "上游错误码", "上游 request ID", "执行人"]) {
     assert.match(modal, new RegExp(label));
   }
   assert.match(modal, /walletAdjustmentOperation\.beforeBalance/);
   assert.match(modal, /walletAdjustmentOperation\.afterBalance/);
+  assert.equal(typeof readApi.recoverWalletAdjustment, "function");
+  assert.match(readApiSource, /\/api\/operator\/wallet-adjustments\/.*\/recover/);
+  assert.match(dtos, /interface WalletAdjustmentRecoveryRequest\b/);
+  assert.match(dtos, /interface WalletAdjustmentUpstreamFailureDTO\b/);
+  for (const field of ["receiptId", "errorCode", "upstreamFailure", "allowedActions"]) {
+    assert.match(dtos, new RegExp(`${field}[?]?:`));
+  }
+  assert.match(app, /walletAdjustmentRecoveryIntent/);
+  assert.match(app, /allowedActions\?\.includes\("recover_wallet_adjustment"\)/);
+  assert.match(app, /recoverWalletAdjustment\(/);
+  assert.match(app, /idempotencyKey: `wallet-adjustment-recovery:\$\{operationId\}`/);
+  assert.match(app, /window\.prompt\("请输入 case-YYYYMMDD-xxx 证据引用"\)/);
+  const upstreamFailureDTO = dtos.match(/export interface WalletAdjustmentUpstreamFailureDTO[\s\S]*?\n}/)?.[0] ?? "";
+  assert.doesNotMatch(upstreamFailureDTO, /(?:message|rawBody):/);
 });
 
 test("operator mutations retain stable intents across unknown retries", async () => {

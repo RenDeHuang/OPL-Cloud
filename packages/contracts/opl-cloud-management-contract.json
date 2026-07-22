@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 15,
+  "schemaVersion": 16,
   "owner": "OPL Console",
   "purpose": "Console customer identity, strict owner graph, Sub2API authentication authority, lifecycle, and management API contract.",
   "state": "current",
@@ -200,7 +200,8 @@
   "walletAdjustments": {
     "routes": {
       "create": "POST /api/operator/accounts/{accountId}/wallet-adjustments",
-      "read": "GET /api/operator/wallet-adjustments/{operationId}"
+      "read": "GET /api/operator/wallet-adjustments/{operationId}",
+      "recover": "POST /api/operator/wallet-adjustments/{operationId}/recover"
     },
     "kinds": ["recharge", "debit", "business_refund"],
     "balanceAuthority": "sub2api",
@@ -211,6 +212,24 @@
       "sub2api_user_balance_exact_expected_after"
     ],
     "unknownResult": "manual_review_without_automatic_replay",
+    "manualReviewRecovery": {
+      "eligibleStatus": "manual_review",
+      "allowedAction": "recover_wallet_adjustment",
+      "requestFields": ["accountId", "evidenceRef"],
+      "identityReuse": ["original_operation_id", "stable_recovery_intent"],
+      "legacyV1Identity": "read_only_history_identity_never_payload_or_idempotency_key",
+      "canonicalV2Identity": "\"opl:\" + stableID(\"sub2api-wallet-adjustment-v2\", operationID)[:28]",
+      "canonicalV2Length": 32,
+      "preWriteAuthority": "legacy_and_v2_history_absent_unchanged_before_balance_empty_receipt_and_balance_history_ref_no_prior_recovery_write",
+      "persistBeforeWrite": ["canonical_v2_identity", "identity_version", "legacy_supersession_status", "operator", "authorized_at", "evidence_ref", "stable_recovery_intent"],
+      "maximumRecoveryMoneyWrites": 1,
+      "unknownRecoveryResult": "manual_review_without_second_v2_write"
+    },
+    "upstreamFailureProjection": {
+      "fields": ["phase", "httpStatus", "errorCode", "requestId"],
+      "rawBody": false,
+      "message": false
+    },
     "statePersistence": "control_plane_runtime_operations_non_authoritative",
     "evidence": ["control_plane_admin_audit", "ledger_reference"],
     "implementation": "code_complete_local_focused_tests"

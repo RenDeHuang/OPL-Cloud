@@ -827,6 +827,40 @@ func TestSub2APIAdjustmentExactAmount(t *testing.T) {
 	}
 }
 
+func TestSub2APIAdjustmentRejectsOverlengthCodeBeforeHTTP(t *testing.T) {
+	legacyCode := "opl:wallet-adjustment:" + strings.Repeat("a", 24) + ":v1"
+	if len(legacyCode) != 49 {
+		t.Fatalf("legacy code length = %d, want 49", len(legacyCode))
+	}
+	for _, tc := range []struct {
+		name string
+		call func(*Sub2APIHTTPClient) error
+	}{
+		{name: "charge", call: func(client *Sub2APIHTTPClient) error {
+			_, err := client.Charge(context.Background(), Sub2APIChargeInput{UserID: 41, Code: legacyCode, ChargeUSDMicros: 1})
+			return err
+		}},
+		{name: "refund", call: func(client *Sub2APIHTTPClient) error {
+			_, err := client.Refund(context.Background(), Sub2APIRefundInput{UserID: 41, Code: legacyCode, RefundUSDMicros: 1})
+			return err
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			httpCalls := 0
+			client := newSub2APITestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+				httpCalls++
+				http.Error(w, "must not be called", http.StatusInternalServerError)
+			}, time.Second)
+			if err := tc.call(client); err == nil {
+				t.Fatal("overlength redeem code should be rejected")
+			}
+			if httpCalls != 0 {
+				t.Fatalf("overlength redeem code made %d HTTP requests", httpCalls)
+			}
+		})
+	}
+}
+
 func TestSub2APIClientRefundsWithExactPositiveMicrosAndReplays(t *testing.T) {
 	refundCalls := 0
 	client := newSub2APITestClient(t, func(w http.ResponseWriter, r *http.Request) {
@@ -1102,6 +1136,64 @@ func TestSub2APIAdjustmentReplay(t *testing.T) {
 }
 
 func TestSub2APIAdjustmentUnknown(t *testing.T) {
+	t.Run("conflict diagnostics survive missing replay evidence", func(t *testing.T) {
+		client := newSub2APITestClient(t, func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/api/v1/auth/login":
+				writeSub2APISuccess(t, w, map[string]any{"access_token": "access", "refresh_token": "refresh"})
+			case "/api/v1/admin/redeem-codes/create-and-redeem":
+				w.Header().Set("X-Request-ID", "req-upstream-409")
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusConflict)
+				_, _ = w.Write([]byte(`{"code":"redeem_conflict","message":"response-secret"}`))
+			case "/api/v1/admin/users/41/balance-history":
+				writeSub2APISuccess(t, w, map[string]any{"items": []any{}, "total": 0, "page": 1, "pages": 1})
+			default:
+				http.NotFound(w, r)
+			}
+		}, time.Second)
+
+		_, err := client.Charge(context.Background(), Sub2APIChargeInput{UserID: 41, Code: "opl:conflict-diagnostic", ChargeUSDMicros: 1_000_000})
+		if !errors.Is(err, ErrSub2APIChargeUnknown) {
+			t.Fatalf("conflict diagnostic error = %v", err)
+		}
+		details, ok := Sub2APIFailure(err)
+		if !ok || details.HTTPStatus != http.StatusConflict || details.ErrorCode != "redeem_conflict" || details.RequestID != "req-upstream-409" {
+			t.Fatalf("conflict diagnostic details = %#v, ok=%t", details, ok)
+		}
+		if strings.Contains(err.Error(), "response-secret") {
+			t.Fatalf("conflict diagnostic leaked response body: %v", err)
+		}
+	})
+
+	t.Run("http diagnostics", func(t *testing.T) {
+		client := newSub2APITestClient(t, func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/api/v1/auth/login":
+				writeSub2APISuccess(t, w, map[string]any{"access_token": "access", "refresh_token": "refresh"})
+			case "/api/v1/admin/redeem-codes/create-and-redeem":
+				w.Header().Set("X-Request-ID", "req-upstream-503")
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusServiceUnavailable)
+				_, _ = w.Write([]byte(`{"code":"gateway_busy","message":"response-secret","request_id":"body-request-id"}`))
+			default:
+				http.NotFound(w, r)
+			}
+		}, time.Second)
+
+		_, err := client.Charge(context.Background(), Sub2APIChargeInput{UserID: 41, Code: "opl:http-diagnostic", ChargeUSDMicros: 1_000_000})
+		if !errors.Is(err, ErrSub2APIChargeUnknown) {
+			t.Fatalf("HTTP diagnostic error = %v", err)
+		}
+		details, ok := Sub2APIFailure(err)
+		if !ok || details.HTTPStatus != http.StatusServiceUnavailable || details.ErrorCode != "gateway_busy" || details.RequestID != "req-upstream-503" {
+			t.Fatalf("HTTP diagnostic details = %#v, ok=%t", details, ok)
+		}
+		if strings.Contains(err.Error(), "response-secret") || strings.Contains(err.Error(), "body-request-id") {
+			t.Fatalf("HTTP diagnostic leaked response body: %v", err)
+		}
+	})
+
 	t.Run("response body limit", func(t *testing.T) {
 		client := newSub2APITestClient(t, func(w http.ResponseWriter, r *http.Request) {
 			switch r.URL.Path {
@@ -1138,6 +1230,10 @@ func TestSub2APIAdjustmentUnknown(t *testing.T) {
 		_, err := client.Charge(context.Background(), Sub2APIChargeInput{UserID: 41, Code: "opl:timeout", ChargeUSDMicros: 1_000_000})
 		if !errors.Is(err, ErrSub2APIChargeUnknown) {
 			t.Fatalf("timeout error = %v", err)
+		}
+		details, ok := Sub2APIFailure(err)
+		if !ok || details.HTTPStatus != 0 || details.ErrorCode != "request_timeout" || details.RequestID != "" {
+			t.Fatalf("timeout diagnostic details = %#v, ok=%t", details, ok)
 		}
 	})
 }

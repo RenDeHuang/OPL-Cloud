@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 9,
+  "schemaVersion": 10,
   "owner": "OPL Control Plane",
   "purpose": "One-charge Workspace purchase and renewal, fulfillment, entitlement, receipt, wallet-adjustment reference, and reconciliation ownership contract.",
   "state": "current",
@@ -72,7 +72,18 @@
     "authoritativeReadback": ["sub2api_balance_history", "sub2api_user_balance"],
     "controlPlaneState": "runtime_operation_non_authoritative",
     "ledgerState": "append_only_reference_non_authoritative",
-    "localBalancePersistence": false
+    "localBalancePersistence": false,
+    "redeemCode": {
+      "version": "v2",
+      "format": "\"opl:\" + stableID(\"sub2api-wallet-adjustment-v2\", operationID)[:28]",
+      "length": 32,
+      "pattern": "^opl:[0-9a-f]{28}$",
+      "legacyV1Length": 49,
+      "legacyV1Policy": "read_only_history_identity_never_payload_or_idempotency_key"
+    },
+    "manualReviewRecovery": "explicit_operator_original_operation_v2_supersession_maximum_one_money_write",
+    "upstreamFailureFields": ["phase", "httpStatus", "errorCode", "requestId"],
+    "rawUpstreamResponsePersistence": false
   },
   "entitlementPolicy": {
     "owner": "opl-control-plane",

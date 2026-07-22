@@ -2953,6 +2953,9 @@ func recordFromEnt(entity any, fields []entRecordField) controlPlaneRecord {
 	if createdAt, ok := fieldValue(value, "CreatedAt").(time.Time); ok && !createdAt.IsZero() {
 		row["createdAt"] = createdAt.UTC().Format(time.RFC3339Nano)
 	}
+	if updatedAt, ok := fieldValue(value, "UpdatedAt").(time.Time); ok && !updatedAt.IsZero() {
+		row["updatedAt"] = updatedAt.UTC().Format(time.RFC3339Nano)
+	}
 	var workspaceBillingJSON string
 	for _, field := range fields {
 		raw := fieldValue(value, field.EntityField)
