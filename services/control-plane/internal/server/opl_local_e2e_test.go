@@ -122,6 +122,36 @@ func (t *localE2EFaultTransport) redeemIdentities() []string {
 	return append([]string(nil), t.redeemIdempotencyIDs...)
 }
 
+func (t *localE2EFaultTransport) configureFault(fault string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.fault = fault
+	t.redeemFaulted = false
+	t.failNextHistoryRead = false
+	t.redeemIdempotencyIDs = nil
+}
+
+func TestLocalE2EFaultTransportCanSwitchScenariosWithoutNewClient(t *testing.T) {
+	traffic := &localE2ETraffic{}
+	transport := &localE2EFaultTransport{base: http.DefaultTransport, traffic: traffic}
+	for _, scenario := range []struct {
+		fault  string
+		status int
+	}{{"409", http.StatusConflict}, {"503", http.StatusServiceUnavailable}} {
+		transport.configureFault(scenario.fault)
+		request := httptest.NewRequest(http.MethodPost, localE2ESub2APIBaseURL+"/api/v1/admin/redeem-codes/create-and-redeem", nil)
+		request.Header.Set("Idempotency-Key", "wallet-recovery-test")
+		response, err := transport.RoundTrip(request)
+		if err != nil || response.StatusCode != scenario.status {
+			t.Fatalf("fault=%s status=%v err=%v", scenario.fault, response, err)
+		}
+		_ = response.Body.Close()
+		if identities := transport.redeemIdentities(); len(identities) != 1 || identities[0] != "wallet-recovery-test" {
+			t.Fatalf("fault=%s identities=%#v", scenario.fault, identities)
+		}
+	}
+}
+
 func localE2EHTTPFailure(request *http.Request, status int, code, requestID string) *http.Response {
 	header := make(http.Header)
 	header.Set("Content-Type", "application/json")
@@ -447,18 +477,18 @@ func localE2EWalletMicros(t *testing.T, api *localE2EAPI) int64 {
 }
 
 type localE2EFullEvidence struct {
-	user             localE2EUser
-	walletOperation  string
-	generalKeyID     string
-	workspaceID      string
-	launchOperation  string
-	receiptID        string
-	computeID        string
-	computeProvider  string
-	storageID        string
-	storageProvider  string
-	attachmentID     string
-	runtimeID        string
+	user            localE2EUser
+	walletOperation string
+	generalKeyID    string
+	workspaceID     string
+	launchOperation string
+	receiptID       string
+	computeID       string
+	computeProvider string
+	storageID       string
+	storageProvider string
+	attachmentID    string
+	runtimeID       string
 }
 
 func runLocalE2EFullFlow(t *testing.T, process *localE2EProcess, adminEmail, adminPassword string, sub2API *clients.Sub2APIHTTPClient, fabric *monthlyFabric, ledger *localE2ELedger) localE2EFullEvidence {
@@ -741,7 +771,7 @@ func localE2EAssertLedger(t *testing.T, receipts []clients.Receipt, workspaceRec
 	}
 }
 
-func verifyLocalE2ERestartPersistence(t *testing.T, process *localE2EProcess, evidence localE2EFullEvidence, adminEmail, adminPassword string) {
+func verifyLocalE2ERestartPersistence(t *testing.T, process *localE2EProcess, evidence localE2EFullEvidence, adminEmail, adminPassword string) *localE2EAPI {
 	t.Helper()
 	owner := loginLocalE2EUser(t, process, &evidence.user)
 	if balance := localE2EWalletMicros(t, owner); balance != 7_420_000 {
@@ -759,7 +789,14 @@ func verifyLocalE2ERestartPersistence(t *testing.T, process *localE2EProcess, ev
 	localE2EItemBy(t, items, "receiptId", evidence.receiptID, "restarted receipt")
 	admin := process.newAPI(t)
 	admin.login(t, adminEmail, adminPassword)
+	operatorWorkspace := localE2EData(t, localE2EMustRequest(t, admin, http.MethodGet, "/api/operator/workspaces/"+evidence.workspaceID, nil, "", http.StatusOK), "restarted operator workspace")
+	operatorReceipt := localE2EMap(t, operatorWorkspace["receipt"], "restarted operator workspace receipt")
+	operatorReceiptData := localE2EMap(t, operatorReceipt["data"], "restarted operator receipt data")
+	if operatorReceipt["available"] != true || stringValue(operatorReceiptData["receiptId"]) != evidence.receiptID || stringValue(operatorReceiptData["type"]) != "billing.workspace_purchased.v1" {
+		t.Fatal("restarted Operator Workspace detail changed the canonical purchase Receipt")
+	}
 	localE2EMustRequest(t, admin, http.MethodGet, "/api/operator/wallet-adjustments/"+evidence.walletOperation, nil, "", http.StatusOK)
+	return admin
 }
 
 type localE2EFaultEvidence struct {
@@ -768,14 +805,19 @@ type localE2EFaultEvidence struct {
 	code        string
 }
 
-func startLocalE2EWalletFault(t *testing.T, process *localE2EProcess, adminEmail, adminPassword, fault, expectedCode string, expectedStatus int) localE2EFaultEvidence {
+func startLocalE2EWalletFault(t *testing.T, process *localE2EProcess, admin *localE2EAPI, fault, expectedCode string, expectedStatus int) localE2EFaultEvidence {
 	t.Helper()
-	admin := process.newAPI(t)
-	admin.login(t, adminEmail, adminPassword)
 	user := provisionLocalE2EUser(t, admin, "opl-"+strings.ReplaceAll(fault, "_", "-"))
-	owner := loginLocalE2EUser(t, process, &user)
-	if balance := localE2EWalletMicros(t, owner); balance != 0 {
-		t.Fatalf("local E2E %s starting balance=%d", fault, balance)
+	accounts := localE2EData(t, localE2EMustRequest(t, admin, http.MethodGet, "/api/operator/accounts?page=1&pageSize=50", nil, "", http.StatusOK), "fault operator accounts")
+	account := localE2EItemBy(t, localE2EItems(t, accounts, "fault operator accounts"), "accountId", user.accountID, "fault operator account")
+	remoteUserID, err := strconv.ParseInt(stringValue(account["sub2apiUserId"]), 10, 64)
+	if err != nil || remoteUserID <= 0 {
+		t.Fatalf("local E2E %s mapped Sub2API user is invalid", fault)
+	}
+	user.sub2APIUser = remoteUserID
+	balance, err := process.handler.service.Sub2APIBalance(context.Background(), remoteUserID)
+	if err != nil || balance.USDMicros != 0 {
+		t.Fatalf("local E2E %s starting balance=%d err=%v", fault, balance.USDMicros, err)
 	}
 	key := "wallet-fault-" + fault + "-" + strconv.FormatInt(time.Now().UnixNano(), 10)
 	path := "/api/operator/accounts/" + user.accountID + "/wallet-adjustments"
@@ -797,17 +839,23 @@ func startLocalE2EWalletFault(t *testing.T, process *localE2EProcess, adminEmail
 	if operationID == "" {
 		t.Fatalf("local E2E %s operation ID is missing", fault)
 	}
+	operationSuffix := strings.TrimPrefix(operationID, "wallet-adjustment-")
+	if len(operationSuffix) != 18 || strings.Trim(operationSuffix, "0123456789abcdef") != "" {
+		t.Fatalf("local E2E %s operation ID is not canonical", fault)
+	}
 	user.operationID = operationID
-	user.recoveryKey = "wallet-adjustment-recovery:" + operationID
+	user.recoveryKey = "wallet-recovery-" + operationSuffix[:16]
 	return localE2EFaultEvidence{user: user, operationID: operationID, code: walletAdjustmentRedeemCode(operationID)}
 }
 
-func recoverLocalE2EWalletFault(t *testing.T, process *localE2EProcess, adminEmail, adminPassword string, evidence localE2EFaultEvidence, sub2API *clients.Sub2APIHTTPClient) {
+func recoverLocalE2EWalletFault(t *testing.T, admin *localE2EAPI, evidence localE2EFaultEvidence, sub2API *clients.Sub2APIHTTPClient) {
 	t.Helper()
-	admin := process.newAPI(t)
-	admin.login(t, adminEmail, adminPassword)
 	path := "/api/operator/wallet-adjustments/" + evidence.operationID + "/recover"
-	body := map[string]any{"accountId": evidence.user.accountID, "evidenceRef": "local-stage-b-" + strings.TrimPrefix(evidence.code, "opl:")}
+	operationSuffix := strings.TrimPrefix(evidence.operationID, "wallet-adjustment-")
+	if len(operationSuffix) != 18 || strings.Trim(operationSuffix, "0123456789abcdef") != "" {
+		t.Fatal("local E2E recovery operation ID is not canonical")
+	}
+	body := map[string]any{"accountId": evidence.user.accountID, "evidenceRef": "case-20260723-" + operationSuffix[:12]}
 	recovered := localE2EMustRequest(t, admin, http.MethodPost, path, body, evidence.user.recoveryKey, http.StatusOK)
 	if stringValue(localE2EMap(t, recovered.body, "wallet recovery")["status"]) != "succeeded" {
 		t.Fatal("local E2E wallet recovery did not succeed")
@@ -849,7 +897,7 @@ func TestOPLLocalToProdStageB(t *testing.T) {
 	t.Setenv("OPL_ARCHIVE_RETENTION_WORKER_ENABLED", "false")
 
 	traffic := &localE2ETraffic{}
-	sub2API, _ := newLocalE2ESub2API(t, traffic, "")
+	sub2API, faultTransport := newLocalE2ESub2API(t, traffic, "")
 	version, err := sub2API.Version(context.Background())
 	if err != nil || strings.TrimPrefix(strings.TrimSpace(version), "v") != "0.1.162" {
 		t.Fatalf("local Sub2API version=%q err=%v", version, err)
@@ -865,7 +913,7 @@ func TestOPLLocalToProdStageB(t *testing.T) {
 	process.Close()
 
 	process = startLocalE2EProcess(t, databaseURL, controlplane.NewService(ledger, fabric, sub2API))
-	verifyLocalE2ERestartPersistence(t, process, full, adminEmail, adminPassword)
+	admin := verifyLocalE2ERestartPersistence(t, process, full, adminEmail, adminPassword)
 
 	for _, scenario := range []struct {
 		fault          string
@@ -873,22 +921,20 @@ func TestOPLLocalToProdStageB(t *testing.T) {
 		httpStatus     int
 		redeemAttempts int
 	}{{"409", "redeem_conflict", http.StatusConflict, 2}, {"503", "gateway_busy", http.StatusServiceUnavailable, 2}, {"timeout", "request_timeout", 0, 2}} {
-		process.Close()
-		faultClient, transport := newLocalE2ESub2API(t, traffic, scenario.fault)
-		process = startLocalE2EProcess(t, databaseURL, controlplane.NewService(ledger, fabric, faultClient))
-		evidence := startLocalE2EWalletFault(t, process, adminEmail, adminPassword, scenario.fault, scenario.errorCode, scenario.httpStatus)
-		recoverLocalE2EWalletFault(t, process, adminEmail, adminPassword, evidence, faultClient)
-		assertLocalE2ERedeemIdentities(t, transport, evidence.code, scenario.redeemAttempts)
+		faultTransport.configureFault(scenario.fault)
+		evidence := startLocalE2EWalletFault(t, process, admin, scenario.fault, scenario.errorCode, scenario.httpStatus)
+		recoverLocalE2EWalletFault(t, admin, evidence, sub2API)
+		assertLocalE2ERedeemIdentities(t, faultTransport, evidence.code, scenario.redeemAttempts)
 	}
 
-	process.Close()
-	lostClient, lostTransport := newLocalE2ESub2API(t, traffic, "response_loss")
-	process = startLocalE2EProcess(t, databaseURL, controlplane.NewService(ledger, fabric, lostClient))
-	lost := startLocalE2EWalletFault(t, process, adminEmail, adminPassword, "response_loss", "transport_failure", 0)
+	faultTransport.configureFault("response_loss")
+	lost := startLocalE2EWalletFault(t, process, admin, "response_loss", "transport_failure", 0)
 	process.Close()
 	process = startLocalE2EProcess(t, databaseURL, controlplane.NewService(ledger, fabric, sub2API))
-	recoverLocalE2EWalletFault(t, process, adminEmail, adminPassword, lost, sub2API)
-	assertLocalE2ERedeemIdentities(t, lostTransport, lost.code, 1)
+	admin = process.newAPI(t)
+	admin.login(t, adminEmail, adminPassword)
+	recoverLocalE2EWalletFault(t, admin, lost, sub2API)
+	assertLocalE2ERedeemIdentities(t, faultTransport, lost.code, 1)
 
 	localRequests, localWrites, productionRequests, productionWrites := traffic.snapshot()
 	if productionRequests != 0 || productionWrites != 0 {

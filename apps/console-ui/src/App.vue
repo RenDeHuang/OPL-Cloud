@@ -1303,6 +1303,11 @@ async function refreshWalletAdjustment() {
   } catch (error) { flash(friendlyError(error), "danger"); }
 }
 
+function walletRecoveryIdempotencyKey(operationId: string) {
+  const suffix = /^wallet-adjustment-([0-9a-f]{18})$/.exec(operationId)?.[1] || "";
+  return suffix ? `wallet-recovery-${suffix.slice(0, 16)}` : "";
+}
+
 async function recoverWalletAdjustment() {
   const requestStillCurrent = currentSessionRequest();
   const operation = walletAdjustmentOperation.value;
@@ -1314,7 +1319,7 @@ async function recoverWalletAdjustment() {
     walletAdjustmentRecoveryIntent = {
       operationId,
       input: { accountId: operation.accountId, evidenceRef },
-      idempotencyKey: `wallet-adjustment-recovery:${operationId}`
+      idempotencyKey: walletRecoveryIdempotencyKey(operationId)
     };
   }
   loading.walletAdjustment = true;

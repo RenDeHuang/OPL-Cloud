@@ -253,6 +253,9 @@ func (app *controlPlaneServer) prepareWalletAdjustmentRecovery(ctx context.Conte
 			return operation, errWalletAdjustmentState
 		}
 	}
+	if operation.ErrorCode == "wallet_adjustment_recovery_history_conflict" || operation.ErrorCode == "wallet_adjustment_recovery_balance_changed" {
+		return operation, errWalletAdjustmentConflict
+	}
 	history, err := service.Sub2APIBalanceHistory(ctx, operation.Sub2APIUserID)
 	if err != nil {
 		recordWalletAdjustmentUpstreamFailure(&operation, "recovery_readback", err, "balance_history_unavailable")
@@ -299,10 +302,12 @@ func (app *controlPlaneServer) prepareWalletAdjustmentRecovery(ctx context.Conte
 		}
 		return operation, nil
 	}
-	legacyEligible := operation.CanonicalRedeemCode == "" && operation.RedeemCodeVersion == "" && operation.LegacySupersession == "" &&
-		len(legacyCode) > 32 && operation.AdjustmentAttempted && operation.BeforeBalanceKnown && !operation.RecoveryAttempted &&
+	legacyIdentity := operation.CanonicalRedeemCode == "" && operation.RedeemCodeVersion == "" && operation.LegacySupersession == ""
+	v2Identity := operation.CanonicalRedeemCode == v2Code && operation.RedeemCodeVersion == "v2" && operation.LegacySupersession == ""
+	recoveryEligible := (legacyIdentity || v2Identity) && len(legacyCode) > 32 &&
+		operation.AdjustmentAttempted && operation.BeforeBalanceKnown && !operation.RecoveryAttempted &&
 		operation.ReceiptID == "" && operation.BalanceHistoryRef == "" && operation.BalanceHistoryUsedAt == ""
-	if !legacyEligible {
+	if !recoveryEligible {
 		operation.ErrorCode = "wallet_adjustment_recovery_exhausted"
 		if err := app.persistWalletAdjustment(ctx, operationID, &operation); err != nil {
 			return operation, errWalletAdjustmentState
@@ -325,7 +330,9 @@ func (app *controlPlaneServer) prepareWalletAdjustmentRecovery(ctx context.Conte
 		}
 		return operation, errWalletAdjustmentConflict
 	}
-	operation.CanonicalRedeemCode, operation.RedeemCodeVersion, operation.LegacySupersession = v2Code, "v2", "v2_adopted"
+	if legacyIdentity {
+		operation.CanonicalRedeemCode, operation.RedeemCodeVersion, operation.LegacySupersession = v2Code, "v2", "v2_adopted"
+	}
 	operation.RecoveryAttempted, operation.AdjustmentAttempted = true, false
 	operation.Status, operation.Phase = "pending", "adjustment"
 	if err := app.persistWalletAdjustment(ctx, operationID, &operation); err != nil {

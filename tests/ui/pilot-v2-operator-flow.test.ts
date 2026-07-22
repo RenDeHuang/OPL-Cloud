@@ -84,7 +84,12 @@ test("wallet adjustment readback shows non-secret audit facts", async () => {
   assert.match(app, /walletAdjustmentRecoveryIntent/);
   assert.match(app, /allowedActions\?\.includes\("recover_wallet_adjustment"\)/);
   assert.match(app, /recoverWalletAdjustment\(/);
-  assert.match(app, /idempotencyKey: `wallet-adjustment-recovery:\$\{operationId\}`/);
+  const recoveryKey = app.match(/function walletRecoveryIdempotencyKey[\s\S]*?\n}/)?.[0] ?? "";
+  assert.match(recoveryKey, /\^wallet-adjustment-\(\[0-9a-f\]\{18\}\)\$/);
+  assert.match(recoveryKey, /`wallet-recovery-\$\{suffix\.slice\(0, 16\)\}`/);
+  assert.doesNotMatch(recoveryKey, /randomUUID/);
+  assert.match(app, /idempotencyKey: walletRecoveryIdempotencyKey\(operationId\)/);
+  assert.doesNotMatch(app, /wallet-adjustment-recovery:\$\{operationId\}/);
   assert.match(app, /window\.prompt\("请输入 case-YYYYMMDD-xxx 证据引用"\)/);
   const upstreamFailureDTO = dtos.match(/export interface WalletAdjustmentUpstreamFailureDTO[\s\S]*?\n}/)?.[0] ?? "";
   assert.doesNotMatch(upstreamFailureDTO, /(?:message|rawBody):/);
