@@ -40,7 +40,9 @@ test("launch freeze fixes the V2 products, owner lanes, settlement, and verifica
     storage: { sizeGb: 10, usdMicros: 2580000 },
     totalUsdMicros: 52580000,
     targetSaleable: true,
-    productionCatalogAvailable: true
+    productionCatalogAvailable: true,
+    realSubscriptionEvidence: "pending",
+    productionProven: false
   });
   assert.deepEqual(freeze.customerProducts.pro, {
     priceVersion: "pilot-usd-2026-07-v1",
@@ -49,8 +51,11 @@ test("launch freeze fixes the V2 products, owner lanes, settlement, and verifica
     storage: { sizeGb: 100, usdMicros: 25800000 },
     totalUsdMicros: 240080000,
     targetSaleable: true,
-    productionCatalogAvailable: false
+    productionCatalogAvailable: true,
+    realSubscriptionEvidence: "not_executed_by_scope",
+    productionProven: false
   });
+  assert.equal(freeze.deliveryEvidence.productionProven, false);
   assert.deepEqual(freeze.internalProviderCostEvidence, {
     currency: "CNY",
     computeMonthlyCnyCents: { basic: 35000, pro: 150000 },

@@ -1947,7 +1947,7 @@ func reservedOperatorSessionForTest(t *testing.T, server http.Handler) *httptest
 	if admin == nil {
 		t.Fatal("admin@medopl.cn test user missing")
 	}
-	payload, sessionID, err := handler.app.createSession(admin, "test-operator-delegated-token")
+	payload, sessionID, err := handler.app.createSession(admin, "test-user-delegated-token")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -527,7 +527,7 @@ func TestExpiredJobCanRetryAndFail(t *testing.T) {
 	}
 }
 
-func TestProductionCatalogKeepsBasicAvailableAndProUnavailable(t *testing.T) {
+func TestProductionCatalogKeepsBasicAndProAvailable(t *testing.T) {
 	t.Setenv("NODE_ENV", "production")
 	t.Setenv("OPL_BASIC_COMPUTE_NODE_POOL_ID", "")
 	t.Setenv("OPL_PRO_COMPUTE_NODE_POOL_ID", "np-pro-must-not-enable-production")
@@ -547,7 +547,7 @@ func TestProductionCatalogKeepsBasicAvailableAndProUnavailable(t *testing.T) {
 	}
 	basic, pro := catalog.WorkspacePackages[0], catalog.WorkspacePackages[1]
 	if basic.ID != "basic" || basic.CPU != 2 || basic.MemoryGB != 4 || basic.DiskGB != 10 || !basic.Available ||
-		pro.ID != "pro" || pro.CPU != 8 || pro.MemoryGB != 16 || pro.DiskGB != 100 || pro.Available {
+		pro.ID != "pro" || pro.CPU != 8 || pro.MemoryGB != 16 || pro.DiskGB != 100 || !pro.Available {
 		t.Fatalf("unexpected production catalog: %#v", catalog.WorkspacePackages)
 	}
 }

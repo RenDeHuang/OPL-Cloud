@@ -186,7 +186,7 @@ func (app *controlPlaneServer) walletAdjustmentAccount(ctx context.Context, serv
 		return nil, 0, errWalletAdjustmentState
 	}
 	owner := findRecord(users, stringValue(account["ownerUserId"]))
-	if owner == nil || stringValue(owner["accountId"]) != accountID || stringValue(owner["role"]) != "owner" || stringValue(owner["status"]) != "active" {
+	if !ownsActiveAccount(account, owner) {
 		return nil, 0, errWalletAdjustmentAccount
 	}
 	remote, err := service.Sub2APIUser(ctx, remoteUserID)

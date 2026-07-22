@@ -71,7 +71,7 @@ test("Console source truth contract fixes strict envelopes and live Gateway proj
     responseExpiryField: "expiresAt"
   });
   assert.equal(gateway.keys.revealRoute, "POST /api/gateway/keys/{keyId}/reveal");
-  assert.equal(gateway.keys.revealAuthorization, "session_owner_with_csrf");
+  assert.equal(gateway.keys.revealAuthorization, "session_account_owner_with_csrf_including_reserved_admin_owner");
   assert.deepEqual(gateway.keys.revealDataFields, ["id", "name", "status", "value"]);
   assert.equal(gateway.keys.revealIdFormat, "positive_decimal_string");
   assert.equal(gateway.keys.revealCacheControl, "private, no-store");
@@ -118,7 +118,8 @@ test("Console source truth contract fixes strict envelopes and live Gateway proj
     authorization: "operator_only",
     source: "control-plane+sub2api",
     authority: "control_plane_mapping_plus_paginated_and_batch_sub2api_readback",
-    scope: "customer_accounts_only",
+    scope: "billing_accounts_including_reserved_admin_owner",
+    reservedAdminRole: "admin",
     itemFields: ["accountId", "consoleUserId", "role", "sub2apiUserId", "email", "status"],
     nestedSourceFields: ["gatewayIdentity", "wallet", "keyCount", "usage", "workspaceCount"],
     fieldAuthority: {

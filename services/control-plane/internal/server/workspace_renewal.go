@@ -68,7 +68,7 @@ func validateWorkspaceRenewalIntentAudit(update workspaceRenewalIntentCAS, curre
 	after := workspaceRenewalIntentState(update.WorkspacePatch.AutoRenew, update.WorkspacePatch.AuthorizedBy, update.WorkspacePatch.AuthorizedAt)
 	if stringValue(event["id"]) != workspaceAutoRenewAuditID(stringValue(command["id"])) ||
 		stringValue(event["createdAt"]) == "" || stringValue(event["createdAt"]) != stringValue(command["createdAt"]) ||
-		stringValue(event["actorUserId"]) != update.OwnerUserID || stringValue(event["actorRole"]) != "owner" ||
+		stringValue(event["actorUserId"]) != update.OwnerUserID || !validRole(stringValue(event["actorRole"])) ||
 		stringValue(event["actorAccountId"]) != update.AccountID || stringValue(event["targetAccountId"]) != update.AccountID ||
 		stringValue(event["action"]) != "workspace.auto_renew" || stringValue(event["resourceKind"]) != "workspace" ||
 		stringValue(event["resourceId"]) != update.WorkspaceID || stringValue(event["result"]) != "succeeded" ||

@@ -300,6 +300,20 @@ func TestGatewayKeySecret(t *testing.T) {
 	}
 }
 
+func TestCloudAdminCanRevealOnlyOwnGatewayKey(t *testing.T) {
+	server, client, _, _ := newGatewayKeyCommandFixture(t)
+	client.keys[20] = clients.Sub2APIWorkspaceKey{ID: 20, UserID: 1, Name: "admin-general", Key: "admin-key-secret", Status: "active"}
+	session := reservedOperatorSessionForTest(t, server)
+	revealed := requestWithSession(t, server, session, http.MethodPost, "/api/gateway/keys/20/reveal", `{}`)
+	if revealed.Code != http.StatusOK || mapField(decodeSourceEnvelope(t, revealed), "data")["value"] != "admin-key-secret" {
+		t.Fatalf("admin own reveal status=%d body=%s", revealed.Code, revealed.Body.String())
+	}
+	other := requestWithSession(t, server, session, http.MethodPost, "/api/gateway/keys/17/reveal", `{}`)
+	if other.Code != http.StatusNotFound || strings.Contains(other.Body.String(), "general-key-secret") {
+		t.Fatalf("admin cross-account reveal status=%d body=%s", other.Code, other.Body.String())
+	}
+}
+
 func TestGatewayPerKeyUsage(t *testing.T) {
 	server, client, _, session := newGatewayKeyCommandFixture(t)
 	response := requestWithSession(t, server, session, http.MethodGet, "/api/gateway/keys/17/usage?page=1&pageSize=20&user_id=42&api_key_id=18", "")

@@ -320,13 +320,9 @@ func (app *controlPlaneServer) operatorAccountPage(ctx context.Context, service 
 	local := make([]map[string]any, 0, len(accounts))
 	remoteIDs := make([]int64, 0, len(accounts))
 	for _, account := range accounts {
-		accountID := stringValue(account["id"])
-		if accountID == "acct-admin" {
-			continue
-		}
 		remoteID, ok := positiveIntegerField(account, "sub2apiUserId")
 		owner := findRecord(users, stringValue(account["ownerUserId"]))
-		if !ok || owner == nil || stringValue(owner["accountId"]) != accountID || stringValue(owner["role"]) != "owner" {
+		if !ok || !ownsAccount(account, owner) {
 			return nil, "", errAccountIdentityConflict
 		}
 		local = append(local, map[string]any{"account": account, "owner": owner, "remoteId": remoteID})
@@ -371,7 +367,7 @@ func (app *controlPlaneServer) operatorAccountPage(ctx context.Context, service 
 			ownerStatus = "disabled"
 		}
 		item := map[string]any{
-			"accountId": stringValue(account["id"]), "consoleUserId": stringValue(owner["id"]), "role": "owner",
+			"accountId": stringValue(account["id"]), "consoleUserId": stringValue(owner["id"]), "role": stringValue(owner["role"]),
 			"sub2apiUserId": strconv.FormatInt(remoteID, 10), "email": normalizeEmail(stringValue(owner["email"])), "status": ownerStatus,
 			"keyCount": sourceEnvelope("sub2api", "unavailable", nil, ""),
 		}
@@ -993,12 +989,9 @@ func (app *controlPlaneServer) operatorAccountMappings(ctx context.Context, serv
 	items := make([]any, 0, len(accounts))
 	for _, account := range accounts {
 		accountID := stringValue(account["id"])
-		if accountID == "acct-admin" {
-			continue
-		}
 		remoteID, ok := positiveIntegerField(account, "sub2apiUserId")
 		owner := findRecord(users, stringValue(account["ownerUserId"]))
-		if !ok || owner == nil || stringValue(owner["accountId"]) != accountID || stringValue(owner["role"]) != "owner" {
+		if !ok || !ownsAccount(account, owner) {
 			return nil, errAccountIdentityConflict
 		}
 		identity, err := service.Sub2APIUser(ctx, remoteID)

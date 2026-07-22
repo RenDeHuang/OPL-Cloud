@@ -337,6 +337,17 @@ func isOperatorUser(user map[string]any) bool {
 	return stringValue(user["id"]) == "usr-admin" && stringValue(user["accountId"]) == "acct-admin" && stringValue(user["email"]) == "admin@medopl.cn" && stringValue(user["role"]) == "admin" && stringValue(user["status"]) == "active"
 }
 
+func ownsAccount(account, user map[string]any) bool {
+	accountID := stringValue(account["id"])
+	return account != nil && accountID != "" && stringValue(user["accountId"]) == accountID &&
+		stringValue(account["ownerUserId"]) == stringValue(user["id"]) &&
+		(stringValue(user["role"]) == "owner" || isOperatorUser(user))
+}
+
+func ownsActiveAccount(account, user map[string]any) bool {
+	return ownsAccount(account, user) && stringValue(account["status"]) == "active" && stringValue(user["status"]) == "active"
+}
+
 func (app *controlPlaneServer) hasActiveCustomerMembership(ctx context.Context, user map[string]any) (bool, error) {
 	accountID := stringValue(user["accountId"])
 	accounts, err := app.tables.ListAccounts(ctx, accountID)
@@ -344,7 +355,7 @@ func (app *controlPlaneServer) hasActiveCustomerMembership(ctx context.Context, 
 		return false, err
 	}
 	account := findRecord(accounts, accountID)
-	if account == nil || stringValue(account["status"]) != "active" || stringValue(account["ownerUserId"]) != stringValue(user["id"]) || stringValue(user["status"]) != "active" || stringValue(user["role"]) != "owner" {
+	if !ownsActiveAccount(account, user) {
 		return false, nil
 	}
 	organizations, err := app.tables.ListOrganizations(ctx)

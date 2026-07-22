@@ -59,6 +59,11 @@
         "missingOwnerFact": "source_unavailable_without_zero_or_fallback",
         "readReplica": false
       },
+      "accountOwnerAuthorization": {
+        "authority": "active_account_owner_graph",
+        "reservedAdminOwnerAccount": "acct-admin",
+        "operatorCapabilityDoesNotGrantCrossAccountOwnership": true
+      },
       "walletMutationSerialization": {
         "deployment": "single_control_plane_replica",
         "scope": "process_local",

@@ -132,10 +132,10 @@ func TestOperatorAccountsJoinsControlPlaneMappingWithPaginatedBatchSub2APIReadba
 	}
 	data := mapField(envelope, "data")
 	items, _ := data["items"].([]any)
-	if envelope["source"] != "control-plane+sub2api" || envelope["status"] != "available" || len(items) != 2 || data["total"] != float64(2) || data["page"] != float64(1) || data["pageSize"] != float64(20) {
+	if envelope["source"] != "control-plane+sub2api" || envelope["status"] != "available" || len(items) != 3 || data["total"] != float64(3) || data["page"] != float64(1) || data["pageSize"] != float64(20) {
 		t.Fatalf("operator accounts envelope = %#v", envelope)
 	}
-	alpha, beta := items[0].(map[string]any), items[1].(map[string]any)
+	alpha, beta := operatorAccountItem(items, "acct-alpha"), operatorAccountItem(items, "acct-beta")
 	if alpha["accountId"] != "acct-alpha" || alpha["consoleUserId"] != "usr-alpha" || alpha["role"] != "owner" || alpha["sub2apiUserId"] != "41" || alpha["email"] != "alpha@example.com" || alpha["status"] != "active" || mapField(alpha, "wallet")["available"] != true {
 		t.Fatalf("alpha mapping = %#v", alpha)
 	}
@@ -162,7 +162,7 @@ func TestOperatorAccountsJoinsControlPlaneMappingWithPaginatedBatchSub2APIReadba
 	if err := json.NewDecoder(mismatch.Body).Decode(&mismatchEnvelope); err != nil {
 		t.Fatal(err)
 	}
-	mismatchAlpha := mapField(mismatchEnvelope, "data")["items"].([]any)[0].(map[string]any)
+	mismatchAlpha := operatorAccountItem(mapField(mismatchEnvelope, "data")["items"].([]any), "acct-alpha")
 	if mapField(mismatchAlpha, "gatewayIdentity")["available"] != false || mapField(mismatchAlpha, "wallet")["available"] != false || mapField(mismatchAlpha, "usage")["available"] != false {
 		t.Fatalf("mismatched account sources = %#v", mismatchAlpha)
 	}
@@ -176,7 +176,7 @@ func TestOperatorAccountsJoinsControlPlaneMappingWithPaginatedBatchSub2APIReadba
 	if err := json.NewDecoder(unavailable.Body).Decode(&unavailableEnvelope); err != nil {
 		t.Fatal(err)
 	}
-	unavailableBeta := mapField(unavailableEnvelope, "data")["items"].([]any)[1].(map[string]any)
+	unavailableBeta := operatorAccountItem(mapField(unavailableEnvelope, "data")["items"].([]any), "acct-beta")
 	if mapField(unavailableBeta, "gatewayIdentity")["available"] != false || mapField(unavailableBeta, "wallet")["available"] != false {
 		t.Fatalf("unavailable account sources = %#v", unavailableBeta)
 	}

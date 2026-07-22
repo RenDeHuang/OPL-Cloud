@@ -36,7 +36,7 @@ test("customer UI has one launch entry and no internal service or resource vocab
   assert.match(app, /launchWorkspace/);
   assert.doesNotMatch(app, /createComputeAllocation|createStorageVolume|attachStorage|buyCompute|buyStorage|mountStorage/);
   assert.doesNotMatch(app, /getGatewaySummary|summary\?reveal=true|gflabtoken\.cn|iframe/);
-  assert.doesNotMatch(template, /Sub2API|Gateway|Fabric|Ledger|Runtime|CVM|CBS|ComputeAllocation|StorageVolume|StorageAttachment|Mount/);
+  assert.doesNotMatch(template, /Sub2API|Gateway|Fabric|Ledger|CVM|CBS|ComputeAllocation|StorageVolume|StorageAttachment|Mount/);
   assert.doesNotMatch(app, /fixedMonthlySpend|workspaceMonthlyPrice|renewalSummary|state\.value\?\.balance/);
   assert.doesNotMatch(app, /receipt\.status\s*\|\||未知.*处理中|\.find\([^\n]+\)\s*\|\|[^\n]*\[0\]/);
   assert.match(app, /API 服务/);

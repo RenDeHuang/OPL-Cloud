@@ -47,6 +47,8 @@
     "customerDebitCardinalityPerPeriod": 1,
     "totalAuthority": "server_price_snapshot",
     "components": "explanatory_fulfillment_only",
+    "catalogAvailabilityMeaning": "product_open_not_tencent_capacity",
+    "capacityAuthority": "Tencent MonthlyPreflight immediately before first debit",
     "implementation": "non_review_price_and_charge_contract_local_tests_manual_review_recovery_pending_integration"
   },
   "internalProviderCostEvidence": {

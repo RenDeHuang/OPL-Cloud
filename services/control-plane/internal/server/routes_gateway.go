@@ -403,10 +403,6 @@ func (app *controlPlaneServer) revealGatewayKey(w http.ResponseWriter, r *http.R
 	if !ok {
 		return
 	}
-	if stringValue(user["role"]) != "owner" {
-		writeError(w, http.StatusForbidden, "gateway_key_reveal_forbidden")
-		return
-	}
 	keyID, ok := gatewayKeyID(w, r)
 	if !ok {
 		return

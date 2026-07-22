@@ -22,8 +22,8 @@ export const adminMenu = Object.freeze([
   { id: "system", label: "系统状态", path: "/admin/system", icon: "Activity" }
 ]);
 
-export function defaultAuthenticatedRoute(isOperator = false): string {
-  return isOperator ? "/admin/overview" : "/console/overview";
+export function defaultAuthenticatedRoute(_isOperator = false): string {
+  return "/console/overview";
 }
 
 export function apiPage(pathname = ""): "overview" | "usage" | "keys" {

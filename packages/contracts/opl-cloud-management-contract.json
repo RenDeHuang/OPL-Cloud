@@ -229,11 +229,13 @@
     "providerAcceptanceCredential": "x-opl-provider-acceptance-token header only",
     "queryTokenAllowed": false,
     "adminSessionAllowed": true,
-    "defaultRoute": "/admin/overview",
-    "consoleRouteBehavior": "redirect_to_admin_overview",
-    "navigation": "admin_routes_only",
+    "defaultRoute": "/console/overview",
+    "consoleRouteBehavior": "owner_console_access",
+    "navigation": "customer_routes_then_admin_routes",
     "accountPageLabel": "客户与计费账户",
-    "reservedAdminAccountInCustomerRows": false
+    "reservedAdminAccountInCustomerRows": true,
+    "reservedAdminSelfDisable": "forbidden_frontend_and_backend",
+    "otherAccountSecretAccess": "forbidden"
   },
   "operatorBillingReviewProjection": {
     "included": ["workspace.launch.v2_manual_review", "workspace.renewal_manual_review", "compute_billingStatus_manual_review", "storage_billingStatus_manual_review", "BillingReconciliation_mismatch"],

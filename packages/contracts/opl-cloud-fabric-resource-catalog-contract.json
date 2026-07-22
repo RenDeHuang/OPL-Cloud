@@ -24,10 +24,12 @@
   ],
   "productionAvailability": {
     "basic": true,
-    "pro": false,
+    "pro": true,
     "authority": "GET /fabric/catalog workspacePackages[].available"
   },
   "availabilityAuthority": "GET /fabric/catalog workspacePackages[].available",
+  "availabilityMeaning": "product_open_not_tencent_capacity",
+  "capacityAuthority": "Tencent MonthlyPreflight immediately before first debit",
   "pilotV2": {
     "computeAndStorageRole": "workspace_fulfillment_only",
     "customerChargeAuthority": false

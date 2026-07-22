@@ -21,8 +21,9 @@ The current V2 boundary requires:
 
 Remaining blockers:
 
-- Provider Acceptance, Pro verification, S9, and fixed-slot verification are
-  paused; Pro remains defined but is unavailable in the production catalog;
+- Provider Acceptance, Pro real subscription evidence, S9, and fixed-slot
+  verification are paused; Pro is open in the production catalog but its
+  real evidence remains `not_executed_by_scope` and `productionProven=false`;
 - no approved real renewal, production rollout, browser login/WebSocket, model
   request, exact-one Usage/wallet delta, or rollback evidence exists;
 - Runtime projects-entry and filesystem-usage product APIs are paused outside this

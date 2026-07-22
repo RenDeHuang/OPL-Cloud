@@ -38,16 +38,22 @@ The four implementation owner lanes are Console/Control Plane, Fabric, Gateway i
   The backend resolves or creates the Sub2API identity by normalized email and
   atomically stores the one-to-one local graph. Self-registration and SSO are not
   Pilot claims.
-- Operators enter only `/admin/*`; `/console/*` redirects to `/admin/overview`.
-  The customer table is labelled "客户与计费账户" and excludes `acct-admin`.
+- `admin@medopl.cn` owns `acct-admin` and also has operator capability. It enters
+  `/console/overview` by default, may use its own `/console/*` resources, and has
+  the additional `/admin/*` menu. Operator metadata access never grants owner
+  access to another account's Key, password, or Workspace credential.
+- The customer table is labelled "客户与计费账户", includes `acct-admin` with
+  an administrator marker, and forbids disabling that reserved account in both
+  Console and Control Plane.
 - Console displays live Sub2API balance, Key metadata, request usage, usage stats, and Ledger billing receipts without creating a wallet, Key database, usage database, or billing fact table.
 - Basic is `2c4g` plus 10GB for `52_580_000` USD micros/month:
   `50_000_000` compute plus `2_580_000` storage.
 - Pro is `8c16g` plus 100GB for `240_080_000` USD micros/month:
   `214_280_000` compute plus `25_800_000` storage.
-- Basic and Pro remain the target package definitions and prices. The Basic
-  production catalog entry is available; Pro remains defined but reports
-  `available=false` for this rollout.
+- Basic and Pro are both open in the production catalog at their fixed prices.
+  Catalog availability means the product can be selected; it is not a Tencent
+  capacity claim. The shared Tencent MonthlyPreflight immediately before the
+  first debit remains the capacity authority and fails before any side effect.
 - Internal Acceptance slots are not customer products and never appear in
   catalog or quote paths. Static package definitions are targets; actual
   availability comes from live Fabric catalog readback.
@@ -88,7 +94,8 @@ The four implementation owner lanes are Console/Control Plane, Fabric, Gateway i
 
 - OPL Gateway uses the externally deployed Sub2API backend. Compatibility is gated by required API capabilities; the reported version is diagnostic metadata and never blocks an otherwise compatible deployment. Sub2API code, image, container, database, configuration, and deployment remain immutable from this repository.
 - Sub2API is the only owner of spendable USD balance, API keys, model routing, and request usage.
-- Control Plane maps the signed-in account through `sub2apiUserId`. Owners may manage general Keys; Workspace
+- Control Plane maps the signed-in account through `sub2apiUserId`. Owners,
+  including the reserved administrator for its own account, may manage general Keys; Workspace
   convergence separately requires exactly one active reserved Key named `opl-workspace` and fails closed otherwise.
 - Required read capabilities are mapped-user balance, the mapped user's paginated Key list, paginated request usage, and aggregate usage stats. Request usage and stats are scoped by both `user_id` and the selected `api_key_id`; every returned identity is validated again by Control Plane.
 - For Keys, UserKeys, Usage, and BalanceHistory, a zero-row Sub2API v0.1.162
@@ -251,7 +258,14 @@ validate account and quote
   server-projected total price, debit, PREPAID resources, Gateway Secret,
   Runtime, and URL. Compute/storage are Workspace details, not separate buys.
 - Workspace status polls every 10 seconds for at most 30 attempts, stops on ready or terminal state, and offers manual retry after a real error or timeout.
-- Gateway fetches only when its page is opened, masks the Key by default, supports explicit reveal/copy, and clears sensitive response state on route leave or logout.
+- Gateway fetches only when its page is opened, masks the Key by default, and
+  follows a successful create with the existing owner-only reveal command so the
+  browser can display/copy the real Key. Plaintext remains only in browser memory
+  and is cleared on route leave, refresh, logout, or the existing timeout.
+- A successful authoritative read with zero rows is `empty` and renders "暂无数据";
+  an upstream failure is `unavailable` and renders "暂不可用" with retry. Empty
+  Workspace, Runtime objects, Keys, Usage, receipts, and billing reviews are not
+  service failures.
 - Workspace answers URL, username, password reveal/copy, and the corresponding Workspace Key reveal/copy;
   Workspace Key reveal reuses the owned per-Key Gateway route.
 - Control Plane owns the two-table minimal Pilot announcement and read state; it does not copy Sub2API notices.

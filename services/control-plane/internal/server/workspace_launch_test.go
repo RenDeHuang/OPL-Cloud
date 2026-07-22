@@ -178,6 +178,28 @@ func TestWorkspaceLaunchRequiresCompleteBodyBeforeExternalCalls(t *testing.T) {
 	}
 }
 
+func TestCloudAdminCanLaunchOwnWorkspace(t *testing.T) {
+	fixture := newWorkspaceLaunchHTTPFixture(t, 1_000_000_000)
+	fixture.sub2API.keys[10] = clients.Sub2APIWorkspaceKey{ID: 10, UserID: 1, Name: "opl-workspace", Key: "admin-workspace-secret", Status: "active"}
+	fixture.session = reservedOperatorSessionForTest(t, fixture.server)
+	response := fixture.launch(t, `{"name":"Admin","packageId":"basic","sizeGb":10,"autoRenew":false}`, "launch-admin")
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("admin launch status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestRefundedWorkspaceLaunchAllowsNewIdempotencyKey(t *testing.T) {
+	fixture := newWorkspaceLaunchHTTPFixture(t, 1_000_000_000)
+	refunded := newWorkspaceLaunchOperation("acct-alpha", "usr-alpha", "Alpha", "basic", 10, false, pilotPriceVersion, 52_580_000, "refunded-launch")
+	refunded.WorkspaceAPIKeyID, refunded.Status, refunded.Phase = 9, "refunded", "refunded"
+	mustStore(t, fixture.store.SaveRuntimeOperation(context.Background(), workspaceLaunchOperationRow(refunded)))
+	response := fixture.launch(t, `{"name":"Alpha","packageId":"basic","sizeGb":10,"autoRenew":false}`, "new-launch-after-refund")
+	operations, err := fixture.store.ListRuntimeOperations(context.Background())
+	if response.Code != http.StatusAccepted || err != nil || len(operations) != 2 || len(fixture.sub2API.charges) != 0 || len(fixture.sub2API.refunds) != 0 {
+		t.Fatalf("new launch status=%d operations=%#v charges=%#v refunds=%#v err=%v body=%s", response.Code, operations, fixture.sub2API.charges, fixture.sub2API.refunds, err, response.Body.String())
+	}
+}
+
 func TestWorkspaceLaunchRejectsAutoRenewBeforeExternalCalls(t *testing.T) {
 	fixture := newWorkspaceLaunchHTTPFixture(t, 1_000_000_000)
 	response := fixture.launch(t, `{"name":"Alpha","packageId":"basic","sizeGb":10,"autoRenew":true}`, "launch-auto-renew")

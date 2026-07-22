@@ -130,6 +130,22 @@ func TestWorkspaceAutoRenewAllowsDisable(t *testing.T) {
 	}
 }
 
+func TestCloudAdminCanManageOwnWorkspaceRenewal(t *testing.T) {
+	server, err := NewPersistentServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := server.(*controlPlaneHTTPHandler)
+	workspace := canonicalWorkspaceRenewalRow(false)
+	workspace["id"], workspace["accountId"], workspace["ownerAccountId"], workspace["ownerUserId"] = "workspace-admin", "acct-admin", "acct-admin", "usr-admin"
+	workspace["state"], workspace["status"] = "running", "running"
+	mustStore(t, handler.app.tables.SaveWorkspace(context.Background(), workspace))
+	response := requestWithMutationKeyForTest(t, server, reservedOperatorSessionForTest(t, server), http.MethodPost, "/api/workspaces/workspace-admin/auto-renew", `{"autoRenew":false}`, "workspace-admin-renewal")
+	if response.Code != http.StatusOK {
+		t.Fatalf("admin auto-renew status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
 func TestWorkspaceAutoRenewAuditIsBoundToOriginalCommandAndRequest(t *testing.T) {
 	for _, storeCase := range []struct {
 		name string

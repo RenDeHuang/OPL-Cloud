@@ -135,6 +135,8 @@ test("Pilot V2 contracts hard cut Workspace purchase, access, and Runtime facts"
   assert.equal(pricing.workspaceCharge.codeCompleteThroughPhase, undefined);
   assert.equal(pricing.workspaceCharge.implementation, "non_review_price_and_charge_contract_local_tests_manual_review_recovery_pending_integration");
   assert.equal(pricing.workspaceCharge.nextBlockedStage, undefined);
+  assert.equal(pricing.workspaceCharge.catalogAvailabilityMeaning, "product_open_not_tencent_capacity");
+  assert.equal(pricing.workspaceCharge.capacityAuthority, "Tencent MonthlyPreflight immediately before first debit");
   assert.ok(pricing.rules.includes("Pricing preview and Workspace launch require available=true from the live Fabric catalog; unavailable packages return package_unavailable before Gateway, balance, debit, Ledger, or Tencent calls."));
   assert.equal(billing.ledgerEvidencePolicy.workspaceReceiptTypes.purchased, "billing.workspace_purchased.v1");
   assert.deepEqual(billing.ledgerEvidencePolicy.workspaceFulfillmentReceiptTypes, ["billing.workspace_purchased.v1", "billing.workspace_renewed.v1"]);
@@ -221,11 +223,13 @@ test("Pilot V2 contracts hard cut operator resources, wallet adjustments, and an
   assert.equal(management.operatorProjection.persistence, "none_request_join_only");
   assert.equal(management.operatorProjection.readReplica, false);
   assert.equal(management.operatorProjection.partialFailure, "affected_nested_source_unavailable_without_zero_data");
-  assert.equal(management.operatorAuthPolicy.defaultRoute, "/admin/overview");
-  assert.equal(management.operatorAuthPolicy.consoleRouteBehavior, "redirect_to_admin_overview");
-  assert.equal(management.operatorAuthPolicy.navigation, "admin_routes_only");
+  assert.equal(management.operatorAuthPolicy.defaultRoute, "/console/overview");
+  assert.equal(management.operatorAuthPolicy.consoleRouteBehavior, "owner_console_access");
+  assert.equal(management.operatorAuthPolicy.navigation, "customer_routes_then_admin_routes");
   assert.equal(management.operatorAuthPolicy.accountPageLabel, "客户与计费账户");
-  assert.equal(management.operatorAuthPolicy.reservedAdminAccountInCustomerRows, false);
+  assert.equal(management.operatorAuthPolicy.reservedAdminAccountInCustomerRows, true);
+  assert.equal(management.operatorAuthPolicy.reservedAdminSelfDisable, "forbidden_frontend_and_backend");
+  assert.equal(management.operatorAuthPolicy.otherAccountSecretAccess, "forbidden");
   assert.equal(management.operatorBillingReviewProjection.nonBillingRuntimeOperations, "excluded");
   assert.equal(management.operatorBillingReviewProjection.mismatchRecoveryAction, false);
   assert.deepEqual(management.walletAdjustments.kinds, ["recharge", "debit", "business_refund"]);
@@ -266,6 +270,11 @@ test("Pilot V2 contracts hard cut operator resources, wallet adjustments, and an
   });
   assert.equal(boundary.services.controlPlane.operatorProjection.persistence, "none_request_join_only");
   assert.deepEqual(boundary.services.controlPlane.operatorProjection.authorities, ["control_plane", "sub2api", "fabric", "ledger", "runtime"]);
+  assert.deepEqual(boundary.services.controlPlane.accountOwnerAuthorization, {
+    authority: "active_account_owner_graph",
+    reservedAdminOwnerAccount: "acct-admin",
+    operatorCapabilityDoesNotGrantCrossAccountOwnership: true
+  });
   assert.deepEqual(boundary.services.controlPlane.walletMutationSerialization, {
     deployment: "single_control_plane_replica",
     scope: "process_local",

@@ -147,6 +147,15 @@ func operatorProjectionUser(id int64, email, status string, balance int64) clien
 	return clients.Sub2APIUser{ID: id, Email: email, Status: status, BalanceUSDMicros: balance, CreatedAt: operatorProjectionTime.Add(-time.Hour), UpdatedAt: operatorProjectionTime}
 }
 
+func operatorAccountItem(items []any, accountID string) map[string]any {
+	for _, raw := range items {
+		if item := raw.(map[string]any); item["accountId"] == accountID {
+			return item
+		}
+	}
+	return nil
+}
+
 func TestOperatorProjectionUsesBatchAPIs(t *testing.T) {
 	store := newMemoryTableStore()
 	seedOperatorProjectionAccount(t, store, "acct-alpha", "usr-alpha", "alpha@example.com", 41)
@@ -177,10 +186,10 @@ func TestOperatorProjectionUsesBatchAPIs(t *testing.T) {
 	}
 	accountData := mapField(decodeOperatorEnvelope(t, accounts), "data")
 	items := accountData["items"].([]any)
-	if accountData["total"] != float64(2) || accountData["page"] != float64(1) || accountData["pageSize"] != float64(20) || len(items) != 2 {
+	if accountData["total"] != float64(3) || accountData["page"] != float64(1) || accountData["pageSize"] != float64(20) || len(items) != 3 {
 		t.Fatalf("account page = %#v", accountData)
 	}
-	alpha := items[0].(map[string]any)
+	alpha := operatorAccountItem(items, "acct-alpha")
 	if mapField(mapField(alpha, "wallet"), "data")["usdMicros"] != float64(10_000_000) || mapField(mapField(alpha, "usage"), "data")["totalActualCostUsdMicros"] != float64(100) {
 		t.Fatalf("account projection = %#v", alpha)
 	}
@@ -225,7 +234,8 @@ func TestOperatorAccountsCollectsAllRemotePagesWithoutUsageNPlusOne(t *testing.T
 		t.Fatalf("operator accounts status=%d body=%s", response.Code, response.Body.String())
 	}
 	items := mapField(decodeOperatorEnvelope(t, response), "data")["items"].([]any)
-	if len(items) != 1 || mapField(items[0].(map[string]any), "wallet")["available"] != true || mapField(items[0].(map[string]any), "usage")["available"] != true {
+	alpha := operatorAccountItem(items, "acct-alpha")
+	if len(items) != 2 || mapField(alpha, "wallet")["available"] != true || mapField(alpha, "usage")["available"] != true {
 		t.Fatalf("mapped later-page customer=%#v", items)
 	}
 	if client.adminUsersCalls != 2 || client.batchUsersCalls != 1 || client.singleUserCalls != 0 {
@@ -233,7 +243,7 @@ func TestOperatorAccountsCollectsAllRemotePagesWithoutUsageNPlusOne(t *testing.T
 	}
 }
 
-func TestOperatorAccountsFreshInstallIsAvailableEmptyWithoutRemoteReads(t *testing.T) {
+func TestOperatorAccountsFreshInstallIncludesReservedAdmin(t *testing.T) {
 	client := newOperatorProjectionClient(operatorProjectionUser(99, "unrelated@example.com", "active", 0))
 	server, err := NewPersistentServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}, client), newMemoryTableStore())
 	if err != nil {
@@ -245,8 +255,28 @@ func TestOperatorAccountsFreshInstallIsAvailableEmptyWithoutRemoteReads(t *testi
 	}
 	envelope := decodeOperatorEnvelope(t, response)
 	data := mapField(envelope, "data")
-	if envelope["status"] != "empty" || data["total"] != float64(0) || len(data["items"].([]any)) != 0 || client.adminUsersCalls != 0 || client.batchUsersCalls != 0 {
+	items := data["items"].([]any)
+	admin := operatorAccountItem(items, "acct-admin")
+	if envelope["status"] != "available" || data["total"] != float64(1) || len(items) != 1 || admin["role"] != "admin" || mapField(admin, "wallet")["status"] != "unavailable" || client.adminUsersCalls != 1 || client.batchUsersCalls != 1 {
 		t.Fatalf("fresh projection envelope=%#v calls=%d/%d", envelope, client.adminUsersCalls, client.batchUsersCalls)
+	}
+}
+
+func TestOperatorAccountsIncludesReservedAdminOwner(t *testing.T) {
+	client := newOperatorProjectionClient(operatorProjectionUser(1, "admin@medopl.cn", "active", 60_000_000))
+	client.userUsage[1] = clients.Sub2APIBatchUserUsage{UserID: 1, TotalActualCostUSDMicros: 123}
+	server, err := NewPersistentServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}, client), newMemoryTableStore())
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := requestWithSession(t, server, reservedOperatorSessionForTest(t, server), http.MethodGet, "/api/operator/accounts", "")
+	if response.Code != http.StatusOK {
+		t.Fatalf("operator accounts status=%d body=%s", response.Code, response.Body.String())
+	}
+	data := mapField(decodeOperatorEnvelope(t, response), "data")
+	items := data["items"].([]any)
+	if data["total"] != float64(1) || len(items) != 1 || items[0].(map[string]any)["accountId"] != "acct-admin" || items[0].(map[string]any)["role"] != "admin" {
+		t.Fatalf("reserved admin projection=%#v", data)
 	}
 }
 
@@ -293,7 +323,7 @@ func TestOperatorProjectionPartialFailure(t *testing.T) {
 	if response.Code != http.StatusOK {
 		t.Fatalf("partial projection = %d: %s", response.Code, response.Body.String())
 	}
-	item := mapField(decodeOperatorEnvelope(t, response), "data")["items"].([]any)[0].(map[string]any)
+	item := operatorAccountItem(mapField(decodeOperatorEnvelope(t, response), "data")["items"].([]any), "acct-alpha")
 	if mapField(item, "wallet")["available"] != true {
 		t.Fatalf("wallet should remain available: %#v", item)
 	}
@@ -325,7 +355,7 @@ func TestOperatorProjectionHasNoNPlusOne(t *testing.T) {
 	if response.Code != http.StatusOK {
 		t.Fatalf("five-account projection = %d: %s", response.Code, response.Body.String())
 	}
-	if client.adminUsersCalls != 1 || client.batchUsersCalls != 1 || client.singleUserCalls != 0 || len(client.requestedUserIDs) != 1 || len(client.requestedUserIDs[0]) != 5 {
+	if client.adminUsersCalls != 1 || client.batchUsersCalls != 1 || client.singleUserCalls != 0 || len(client.requestedUserIDs) != 1 || len(client.requestedUserIDs[0]) != 6 {
 		t.Fatalf("N+1 calls users=%d batch=%d single=%d ids=%#v", client.adminUsersCalls, client.batchUsersCalls, client.singleUserCalls, client.requestedUserIDs)
 	}
 }
@@ -591,5 +621,9 @@ func TestOperatorAccountDisable(t *testing.T) {
 	users, err := store.ListUsers(context.Background(), true)
 	if err != nil || stringValue(findRecord(users, "usr-alpha")["status"]) != "disabled" {
 		t.Fatalf("disabled user = %#v err=%v", users, err)
+	}
+	admin := requestWithMutationKeyForTest(t, server, reservedOperatorSessionForTest(t, server), http.MethodPost, "/api/operator/accounts/acct-admin/disable", `{"confirmationAccountId":"acct-admin","reason":"pilot_offboarding"}`, "disable-admin-forbidden")
+	if admin.Code != http.StatusBadRequest || !strings.Contains(admin.Body.String(), "last_active_admin") {
+		t.Fatalf("admin disable status=%d body=%s", admin.Code, admin.Body.String())
 	}
 }

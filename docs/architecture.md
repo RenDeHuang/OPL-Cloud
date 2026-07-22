@@ -164,9 +164,10 @@ security-model change is authorized by this document.
 
 Production runs Control Plane, Fabric, and Ledger as separate Kubernetes
 Deployments. Secrets are Kubernetes Secret references, configuration is a shared
-ConfigMap, and the deploy workflow waits for all three rollouts. Basic and Pro
-remain defined, but the production Fabric catalog exposes Basic only and marks
-Pro unavailable. Provider Acceptance, Pro verification, and fixed-slot live QA
+ConfigMap, and the deploy workflow waits for all three rollouts. The production
+Fabric catalog exposes both Basic and Pro; availability means product access,
+while Tencent MonthlyPreflight remains the capacity authority before debit.
+Provider Acceptance, Pro real subscription verification, and fixed-slot live QA
 remain paused and do not gate ordinary deploy.
 
 Image publication accepts a full 40-character Cloud commit only. The release

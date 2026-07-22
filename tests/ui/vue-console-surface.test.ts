@@ -39,7 +39,7 @@ test("customer views use granular V2 source projections and the one Workspace la
   assert.doesNotMatch(readApi, /\/api\/gateway\/summary|reveal=true/);
   assert.doesNotMatch(app, /\bgetGatewayUsage\(|\bgetGatewayUsageStats\(/);
   assert.doesNotMatch(app, /createComputeAllocation|createStorageVolume|attachStorage|buyCompute|buyStorage|mountStorage/);
-  assert.doesNotMatch(template, /Sub2API|Gateway|Fabric|Ledger|Runtime|CVM|CBS|ComputeAllocation|StorageVolume|StorageAttachment|Mount/);
+  assert.doesNotMatch(template, /Sub2API|Gateway|Fabric|Ledger|CVM|CBS|ComputeAllocation|StorageVolume|StorageAttachment|Mount/);
   for (const label of ["概览", "Workspace", "API 服务", "账单", "公告", "模型", "Token", "请求编号", "暂不可用"]) {
     assert.match(template, new RegExp(label));
   }
@@ -69,15 +69,37 @@ test("administrator provisioning derives the billing account and omits remote id
   assert.doesNotMatch(template, /adminUserForm\.accountId/);
 });
 
-test("administrator stays on admin routes and unavailable Pro remains visible but disabled", async () => {
+test("administrator keeps customer routes and adds operator navigation", async () => {
   const app = await source("apps/console-ui/src/App.vue");
-  assert.match(app, /isOperator\.value && !isAdminRoute\.value/);
+  assert.doesNotMatch(app, /isOperator\.value && !isAdminRoute\.value/);
   assert.match(app, /defaultAuthenticatedRoute\(next\.isOperator\)/);
-  assert.match(app, /v-if="!isOperator"[\s\S]+v-for="item in customerMenu"/);
+  assert.doesNotMatch(app, /v-if="!isOperator"[\s\S]+v-for="item in customerMenu"/);
+  assert.match(app, /v-for="item in customerMenu"[\s\S]+v-if="isOperator"[\s\S]+v-for="item in adminMenu"/);
   assert.match(app, /filter\(\(plan\) => plan\.id === "basic" \|\| plan\.id === "pro"\)/);
   assert.match(app, /type="radio"[^>]+:disabled="!plan\.available"/);
   assert.match(app, /plans\.value\.filter\(\(plan\) => plan\.available\)/);
   assert.match(app, /客户与计费账户/);
+  assert.match(app, /account\.role === ['"]admin['"][\s\S]*管理员/);
+  assert.match(app, /account\.status === ['"]active['"] && account\.accountId !== ['"]acct-admin['"]/);
+});
+
+test("created Key is revealed only through the dedicated owner command", async () => {
+  const app = await source("apps/console-ui/src/App.vue");
+  const created = app.indexOf("const created = await createGatewayKey");
+  const revealed = app.indexOf("await revealGatewayKey(created.data.id");
+  assert.ok(created >= 0 && revealed > created, "create must be followed by dedicated reveal");
+  assert.match(app, /revealedApiKey\.value = revealed\.data/);
+  assert.match(app, /armSecretTimeout\(\)/);
+});
+
+test("Workspace empty, unavailable, and launch recovery states stay distinct", async () => {
+  const app = await source("apps/console-ui/src/App.vue");
+  assert.match(app, /暂无 Workspace/);
+  assert.match(app, /暂无 Runtime 数据/);
+  assert.match(app, /status === "waiting" \|\| status === "retryable"/);
+  assert.match(app, /Workspace 继续处理中/);
+  assert.match(app, /launchOperation\.value\?\.status === "refunded"/);
+  assert.match(app, /Workspace 正在人工复核/);
 });
 
 test("revealed secrets are cleared on navigation, refresh, and logout", async () => {

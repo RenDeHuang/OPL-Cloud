@@ -42,7 +42,7 @@ test("operator navigation has the five frozen operations surfaces", () => {
     { label: "系统状态", path: "/admin/system" }
   ]);
   assert.equal(defaultAuthenticatedRoute(false), "/console/overview");
-  assert.equal(defaultAuthenticatedRoute(true), "/admin/overview");
+  assert.equal(defaultAuthenticatedRoute(true), "/console/overview");
 });
 
 test("public and login routes render without session recovery", () => {

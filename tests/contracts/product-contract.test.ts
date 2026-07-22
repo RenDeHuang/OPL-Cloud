@@ -50,9 +50,11 @@ test("Fabric catalog is the live availability authority for both target packages
   assert.deepEqual(catalog.supportedPackages, ["basic", "pro"]);
   assert.deepEqual(catalog.productionAvailability, {
     basic: true,
-    pro: false,
+    pro: true,
     authority: "GET /fabric/catalog workspacePackages[].available"
   });
   assert.equal(catalog.availabilityAuthority, "GET /fabric/catalog workspacePackages[].available");
+  assert.equal(catalog.availabilityMeaning, "product_open_not_tencent_capacity");
+  assert.equal(catalog.capacityAuthority, "Tencent MonthlyPreflight immediately before first debit");
   assert.equal("currentAvailablePackages" in catalog, false);
 });

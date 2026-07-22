@@ -79,11 +79,11 @@ func TestGatewayOwnerRevealIsAudited(t *testing.T) {
 	}
 }
 
-func TestGatewayRevealRejectsUnauthorizedWithoutFetchingKey(t *testing.T) {
-	t.Run("operator", func(t *testing.T) {
+func TestGatewayRevealDoesNotLeakAcrossAccounts(t *testing.T) {
+	t.Run("operator other account", func(t *testing.T) {
 		server, client, _, _ := newGatewayKeyCommandFixture(t)
 		rec := requestWithSession(t, server, reservedOperatorSessionForTest(t, server), http.MethodPost, "/api/gateway/keys/17/reveal", "{}")
-		if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "gateway_key_reveal_forbidden") || len(client.userKeyReadIDs) != 0 {
+		if rec.Code != http.StatusNotFound || !strings.Contains(rec.Body.String(), "gateway_key_not_found") || strings.Contains(rec.Body.String(), "general-key-secret") || len(client.userKeyReadIDs) != 1 {
 			t.Fatalf("operator reveal = %d calls=%#v: %s", rec.Code, client.userKeyReadIDs, rec.Body.String())
 		}
 	})
@@ -316,6 +316,19 @@ func TestCloudAdminSessionReportsAuthority(t *testing.T) {
 	data := mapField(payload, "data")
 	if payload["source"] != "sub2api" || data["consoleUserId"] != "usr-admin" || data["accountId"] != "acct-admin" || data["role"] != "admin" || data["sub2apiUserId"] != "1" {
 		t.Fatalf("operator auth source = %#v", payload)
+	}
+}
+
+func TestCloudAdminOwnsReservedCustomerAccount(t *testing.T) {
+	server := NewServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}))
+	handler := server.(*controlPlaneHTTPHandler)
+	users, err := handler.app.tables.ListUsers(context.Background(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	active, err := handler.app.hasActiveCustomerMembership(context.Background(), findRecord(users, "usr-admin"))
+	if err != nil || !active {
+		t.Fatalf("reserved admin owner active=%v err=%v", active, err)
 	}
 }
 
