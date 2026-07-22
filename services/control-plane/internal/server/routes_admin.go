@@ -389,7 +389,11 @@ func (app *controlPlaneServer) operatorAccountPage(ctx context.Context, service 
 		}
 		updatedAt := remote.UpdatedAt.UTC().Format(time.RFC3339Nano)
 		item["gatewayIdentity"] = sourceEnvelope("sub2api", "available", map[string]any{"userId": strconv.FormatInt(remote.ID, 10), "email": remote.Email, "status": remote.Status}, updatedAt)
-		item["wallet"] = sourceEnvelope("sub2api", "available", map[string]any{"userId": strconv.FormatInt(remote.ID, 10), "currency": "USD", "usdMicros": remote.BalanceUSDMicros, "status": remote.Status}, updatedAt)
+		if remote.BalanceUnavailable {
+			item["wallet"] = sourceEnvelope("sub2api", "unavailable", nil, "")
+		} else {
+			item["wallet"] = sourceEnvelope("sub2api", "available", map[string]any{"userId": strconv.FormatInt(remote.ID, 10), "currency": "USD", "usdMicros": remote.BalanceUSDMicros, "status": remote.Status}, updatedAt)
+		}
 		usage, usageOK := usageByID[remoteID]
 		if usageErr != nil || !usageOK || usage.UserID != remoteID {
 			item["usage"] = sourceEnvelope("sub2api", "unavailable", nil, "")

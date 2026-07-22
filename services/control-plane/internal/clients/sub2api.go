@@ -132,12 +132,13 @@ type Sub2APIUserPageQuery struct {
 }
 
 type Sub2APIUser struct {
-	ID               int64
-	Email            string
-	BalanceUSDMicros int64
-	Status           string
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
+	ID                 int64
+	Email              string
+	BalanceUSDMicros   int64
+	BalanceUnavailable bool
+	Status             string
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
 }
 
 type Sub2APIUserPage struct {
@@ -567,13 +568,14 @@ func (c *Sub2APIHTTPClient) AdminUsers(ctx context.Context, query Sub2APIUserPag
 		email := normalizeSub2APIEmail(item.Email)
 		balance, balanceErr := decimalUSDMicros(item.Balance)
 		_, duplicate := seen[item.ID]
-		if balanceErr != nil || item.ID <= 0 || email == "" || (item.Status != "active" && item.Status != "disabled") ||
+		if item.ID <= 0 || email == "" || (item.Status != "active" && item.Status != "disabled") ||
 			item.CreatedAt.IsZero() || item.UpdatedAt.IsZero() || item.UpdatedAt.Before(item.CreatedAt) || duplicate {
 			return Sub2APIUserPage{}, errors.New("invalid sub2api user facts")
 		}
 		seen[item.ID] = struct{}{}
 		page.Items = append(page.Items, Sub2APIUser{
-			ID: item.ID, Email: email, BalanceUSDMicros: balance, Status: item.Status, CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt,
+			ID: item.ID, Email: email, BalanceUSDMicros: balance, BalanceUnavailable: balanceErr != nil,
+			Status: item.Status, CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt,
 		})
 	}
 	return page, nil

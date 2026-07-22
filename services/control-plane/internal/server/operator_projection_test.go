@@ -243,6 +243,67 @@ func TestOperatorAccountsCollectsAllRemotePagesWithoutUsageNPlusOne(t *testing.T
 	}
 }
 
+func TestOperatorAccountsKeepsIdentityWhenMappedWalletHasSubMicroBalance(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		write := func(data any) {
+			w.Header().Set("Content-Type", "application/json")
+			if err := json.NewEncoder(w).Encode(map[string]any{"code": 0, "message": "success", "data": data}); err != nil {
+				t.Errorf("encode Sub2API response: %v", err)
+			}
+		}
+		switch r.URL.Path {
+		case "/api/v1/auth/login":
+			write(map[string]any{"access_token": "admin-access", "refresh_token": "admin-refresh"})
+		case "/api/v1/admin/users":
+			write(map[string]any{
+				"items": []any{
+					map[string]any{"id": 1, "email": "admin@medopl.cn", "balance": 0, "status": "active", "created_at": "2026-07-18T01:02:03Z", "updated_at": "2026-07-19T04:05:06Z"},
+					map[string]any{"id": 41, "email": "alpha@example.com", "balance": 10, "status": "active", "created_at": "2026-07-18T01:02:03Z", "updated_at": "2026-07-19T04:05:06Z"},
+					map[string]any{"id": 42, "email": "beta@example.com", "balance": json.RawMessage("0.00000001"), "status": "active", "created_at": "2026-07-18T01:02:03Z", "updated_at": "2026-07-19T04:05:06Z"},
+					map[string]any{"id": 99, "email": "unrelated@example.com", "balance": json.RawMessage("0.00000002"), "status": "active", "created_at": "2026-07-18T01:02:03Z", "updated_at": "2026-07-19T04:05:06Z"},
+				},
+				"total": 4, "page": 1, "page_size": 50, "pages": 1,
+			})
+		case "/api/v1/admin/dashboard/users-usage":
+			write(map[string]any{"stats": map[string]any{
+				"1":  map[string]any{"user_id": 1, "today_actual_cost": 0, "total_actual_cost": 0, "by_platform": []any{}},
+				"41": map[string]any{"user_id": 41, "today_actual_cost": 0, "total_actual_cost": 0, "by_platform": []any{}},
+				"42": map[string]any{"user_id": 42, "today_actual_cost": 0, "total_actual_cost": 0, "by_platform": []any{}},
+			}})
+		default:
+			t.Errorf("unexpected Sub2API route %s %s", r.Method, r.URL.String())
+		}
+	}))
+	t.Cleanup(upstream.Close)
+	client, err := clients.NewSub2APIHTTPClient(clients.Sub2APIConfig{
+		BaseURL: upstream.URL, AdminEmail: "admin@medopl.cn", AdminPassword: "admin-secret", Timeout: time.Second,
+	}, upstream.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := newMemoryTableStore()
+	seedOperatorProjectionAccount(t, store, "acct-alpha", "usr-alpha", "alpha@example.com", 41)
+	seedOperatorProjectionAccount(t, store, "acct-beta", "usr-beta", "beta@example.com", 42)
+	app := &controlPlaneServer{tables: store}
+	data, status, err := app.operatorAccountPage(context.Background(), controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}, client), 1, 20)
+	if err != nil {
+		t.Fatalf("operator account projection: %v", err)
+	}
+	items := data["items"].([]any)
+	admin, alpha, beta := operatorAccountItem(items, "acct-admin"), operatorAccountItem(items, "acct-alpha"), operatorAccountItem(items, "acct-beta")
+	if status != "available" || len(items) != 3 || mapField(admin, "wallet")["available"] != true || mapField(alpha, "wallet")["available"] != true ||
+		mapField(beta, "gatewayIdentity")["available"] != true || mapField(beta, "usage")["available"] != true {
+		t.Fatalf("operator account sources status=%s items=%#v", status, items)
+	}
+	wallet := mapField(beta, "wallet")
+	if wallet["status"] != "unavailable" || wallet["available"] != false {
+		t.Fatalf("sub-micro wallet source = %#v", wallet)
+	}
+	if _, exists := wallet["data"]; exists {
+		t.Fatalf("sub-micro wallet exposed fallback data = %#v", wallet)
+	}
+}
+
 func TestOperatorAccountsFreshInstallIncludesReservedAdmin(t *testing.T) {
 	client := newOperatorProjectionClient(operatorProjectionUser(99, "unrelated@example.com", "active", 0))
 	server, err := NewPersistentServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}, client), newMemoryTableStore())
