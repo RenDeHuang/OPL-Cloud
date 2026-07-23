@@ -56,7 +56,7 @@ test("Pilot V2 customer general Key path supports create read reveal toggle and 
     assert.equal(typeof readApi[name], "function", `${name} adapter is required`);
   }
 
-  const app = await source("apps/console-ui/src/App.vue");
+  const app = await source("apps/console-ui/src/components/keys/KeysPanel.vue");
   for (const call of ["getGatewayKey", "createGatewayKey", "updateGatewayKey", "deleteGatewayKey"]) {
     assert.match(app, new RegExp(`${call}\\(`));
   }
@@ -69,9 +69,7 @@ test("Pilot V2 customer general Key path supports create read reveal toggle and 
 
 test("API Key kind and Workspace receipt types use customer-facing labels", async () => {
   const app = await source("apps/console-ui/src/App.vue");
-  const keysStart = app.indexOf("<section v-else class=\"panel\"><div class=\"panel-title\"><h2>API Key</h2>");
-  const keysEnd = app.indexOf("<section v-else-if=\"path.startsWith('/console/announcements')\"", keysStart);
-  const keysView = app.slice(keysStart, keysEnd);
+  const keysView = await source("apps/console-ui/src/components/keys/KeysPanel.vue");
   const labelStart = app.indexOf("function receiptLabel(type: string)");
   const labelEnd = app.indexOf("\n}", labelStart) + 2;
   const receiptLabel = new Function(`${app.slice(labelStart, labelEnd).replace("type: string", "type")}\nreturn receiptLabel;`) as () => (type: string) => string;
@@ -79,20 +77,28 @@ test("API Key kind and Workspace receipt types use customer-facing labels", asyn
   assert.equal(receiptLabel()("billing.workspace_purchased.v1"), "Workspace 开通");
   assert.equal(receiptLabel()("billing.workspace_expired.v1"), "Workspace 到期");
   assert.equal(receiptLabel()("billing.internal_future.v9"), "账单记录");
-  assert.match(keysView, /<th>名称<\/th><th>类型<\/th>/);
-  assert.match(keysView, /key\.kind === "workspace" \? "Workspace Key" : "普通 Key"/);
-  assert.match(keysView, /revealedApiKey[\s\S]+colspan="8"/);
+  assert.match(keysView, /<th>名称<\/th>/);
+  assert.match(keysView, /key\.kind === "workspace" \? "系统 Key" : "普通 Key"/);
+  assert.match(keysView, /revealed\?\.id === key\.id[\s\S]+:colspan="columnCount"/);
 });
 
-test("Pilot V2 customer API omits a browser Gateway endpoint and uses V2 usage owners", async () => {
-  const app = await source("apps/console-ui/src/App.vue");
+test("Pilot V2 customer API projects the configured endpoint and uses V2 usage owners", async () => {
+  const [app, keysPanel] = await Promise.all([
+    source("apps/console-ui/src/App.vue"),
+    source("apps/console-ui/src/components/keys/KeysPanel.vue")
+  ]);
 
   for (const call of [
     "getGatewayKeyUsage", "getGatewayKeyUsageSummary", "getGatewayAccountUsageSummary"
   ]) assert.match(app, new RegExp(`${call}\\(`));
   assert.doesNotMatch(app, /\bgetGatewayUsage\(/);
   assert.doesNotMatch(app, /\bgetGatewayUsageStats\(/);
-  assert.doesNotMatch(app, /getGatewayEndpoint|GatewayEndpointDTO|API Base URL|endpointSource|loadEndpoint|OPL_SUB2API_BASE_URL|gflabtoken\.cn|<iframe|window\.__ENV|import\.meta\.env/);
+  assert.equal(typeof readApi.getGatewayEndpoint, "function");
+  assert.equal(typeof readApi.getGatewayGroups, "function");
+  assert.match(keysPanel, /getGatewayEndpoint\(/);
+  assert.match(keysPanel, /getGatewayGroups\(/);
+  assert.match(keysPanel, /API Endpoint/);
+  assert.doesNotMatch(keysPanel, /OPL_SUB2API_BASE_URL|gflabtoken\.cn|<iframe|window\.__ENV|import\.meta\.env|window\.open\(/);
 });
 
 test("every wallet summary has independent loading error unavailable and retry states", async () => {

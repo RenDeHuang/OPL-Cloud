@@ -12,6 +12,7 @@ import (
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -476,10 +477,28 @@ func localE2EWalletMicros(t *testing.T, api *localE2EAPI) int64 {
 	return int64(value)
 }
 
+func localE2EStringItems(t *testing.T, value any, label string) []string {
+	t.Helper()
+	raw, ok := value.([]any)
+	if !ok {
+		t.Fatalf("local E2E %s is not a list", label)
+	}
+	items := make([]string, 0, len(raw))
+	for _, item := range raw {
+		text, ok := item.(string)
+		if !ok {
+			t.Fatalf("local E2E %s contains a non-string", label)
+		}
+		items = append(items, text)
+	}
+	return items
+}
+
 type localE2EFullEvidence struct {
 	user            localE2EUser
 	walletOperation string
 	generalKeyID    string
+	generalKeyGroup string
 	workspaceID     string
 	launchOperation string
 	receiptID       string
@@ -499,6 +518,19 @@ func runLocalE2EFullFlow(t *testing.T, process *localE2EProcess, adminEmail, adm
 	owner := loginLocalE2EUser(t, process, &user)
 	if balance := localE2EWalletMicros(t, owner); balance != 0 {
 		t.Fatalf("local E2E starting balance=%d, want 0", balance)
+	}
+	endpoint := localE2EData(t, localE2EMustRequest(t, owner, http.MethodGet, "/api/gateway/endpoint", nil, "", http.StatusOK), "gateway endpoint")
+	if stringValue(endpoint["baseUrl"]) != localE2ESub2APIBaseURL+"/v1" {
+		t.Fatal("local E2E Gateway endpoint did not use the local Sub2API origin")
+	}
+	groups := localE2EData(t, localE2EMustRequest(t, owner, http.MethodGet, "/api/gateway/groups", nil, "", http.StatusOK), "gateway groups")
+	groupItems := localE2EItems(t, groups, "gateway groups")
+	if len(groupItems) == 0 {
+		t.Fatal("local E2E Sub2API returned no available Key groups")
+	}
+	groupID := stringValue(localE2EMap(t, groupItems[0], "gateway group")["id"])
+	if parsed, err := strconv.ParseInt(groupID, 10, 64); err != nil || parsed <= 0 {
+		t.Fatal("local E2E Gateway group ID is invalid")
 	}
 
 	adjustmentKey := "wallet-local-full-" + strconv.FormatInt(time.Now().UnixNano(), 10)
@@ -560,30 +592,67 @@ func runLocalE2EFullFlow(t *testing.T, process *localE2EProcess, adminEmail, adm
 		t.Fatal("local E2E concurrent recharge did not produce exactly one authoritative funds effect")
 	}
 
-	created := localE2EMustRequest(t, owner, http.MethodPost, "/api/gateway/keys", map[string]any{
-		"name": "local-stage-b", "quotaUsdMicros": int64(0), "expiresInDays": 30,
-	}, "gateway-key-local-full-"+user.accountID, http.StatusCreated)
+	createKeyIntent := "gateway-key-local-full-" + user.accountID
+	createKeyBody := map[string]any{
+		"name": "local-stage-b", "groupId": groupID,
+		"ipWhitelist": []string{"127.0.0.1"}, "ipBlacklist": []string{"198.51.100.0/24"},
+		"quotaUsdMicros": int64(1_250_000), "expiresInDays": 30,
+		"rateLimit5hUsdMicros": int64(5_000_000), "rateLimit1dUsdMicros": int64(10_000_000), "rateLimit7dUsdMicros": int64(20_000_000),
+	}
+	created := localE2EMustRequest(t, owner, http.MethodPost, "/api/gateway/keys", createKeyBody, createKeyIntent, http.StatusCreated)
 	createdJSON, _ := json.Marshal(created.body)
 	if bytes.Contains(createdJSON, []byte(`"value"`)) || bytes.Contains(createdJSON, []byte(`"key"`)) {
 		t.Fatal("gateway Key create response exposed plaintext")
 	}
 	keyData := localE2EData(t, created, "gateway key create")
 	keyID := stringValue(keyData["id"])
-	if keyID == "" {
-		t.Fatal("gateway Key create did not return an ID")
+	if keyID == "" || stringValue(keyData["groupId"]) != groupID || stringValue(keyData["status"]) != "active" ||
+		int64(numberField(keyData, "quotaUsdMicros", -1)) != 1_250_000 || int64(numberField(keyData, "rateLimit7dUsdMicros", -1)) != 20_000_000 ||
+		!slices.Equal(localE2EStringItems(t, keyData["ipWhitelist"], "created Key allowlist"), []string{"127.0.0.1"}) ||
+		!slices.Equal(localE2EStringItems(t, keyData["ipBlacklist"], "created Key denylist"), []string{"198.51.100.0/24"}) {
+		t.Fatal("gateway Key create did not return the authoritative parity fields")
+	}
+	replayedCreate := localE2EMustRequest(t, owner, http.MethodPost, "/api/gateway/keys", createKeyBody, createKeyIntent, http.StatusOK)
+	if stringValue(localE2EData(t, replayedCreate, "gateway key create replay")["id"]) != keyID {
+		t.Fatal("gateway Key create replay produced a different identity")
+	}
+	updated := localE2EMustRequest(t, owner, http.MethodPatch, "/api/gateway/keys/"+keyID, map[string]any{
+		"name": "local-stage-b-edited", "groupId": groupID, "enabled": false,
+		"ipWhitelist": []string{"127.0.0.1", "192.0.2.10"}, "ipBlacklist": []string{"203.0.113.0/24"},
+		"quotaUsdMicros": int64(2_500_000), "expiresAt": "2099-01-01T00:00:00Z",
+		"rateLimit5hUsdMicros": int64(6_000_000), "rateLimit1dUsdMicros": int64(12_000_000), "rateLimit7dUsdMicros": int64(24_000_000),
+		"resetQuota": true, "resetRateLimitUsage": true,
+	}, "gateway-key-update-local-full-"+user.accountID, http.StatusOK)
+	updatedData := localE2EData(t, updated, "gateway key update")
+	if stringValue(updatedData["id"]) != keyID || stringValue(updatedData["name"]) != "local-stage-b-edited" || stringValue(updatedData["status"]) != "disabled" ||
+		int64(numberField(updatedData, "quotaUsdMicros", -1)) != 2_500_000 || int64(numberField(updatedData, "rateLimit1dUsdMicros", -1)) != 12_000_000 ||
+		int64(numberField(updatedData, "quotaUsedUsdMicros", -1)) != 0 || int64(numberField(updatedData, "usage7dUsdMicros", -1)) != 0 {
+		t.Fatal("gateway Key update did not return the authoritative parity fields")
+	}
+	enabled := localE2EMustRequest(t, owner, http.MethodPatch, "/api/gateway/keys/"+keyID, map[string]any{"enabled": true}, "gateway-key-enable-local-full-"+user.accountID, http.StatusOK)
+	if stringValue(localE2EData(t, enabled, "gateway key enable")["status"]) != "active" {
+		t.Fatal("gateway Key enable did not converge")
 	}
 	revealed := localE2EMustRequest(t, owner, http.MethodPost, "/api/gateway/keys/"+keyID+"/reveal", map[string]any{}, "", http.StatusOK)
+	cacheControl := strings.ToLower(revealed.header.Get("Cache-Control"))
+	if !strings.Contains(cacheControl, "private") || !strings.Contains(cacheControl, "no-store") {
+		t.Fatal("gateway Key reveal response is cacheable")
+	}
 	revealData := localE2EData(t, revealed, "gateway key reveal")
 	plaintext := stringValue(revealData["value"])
 	if plaintext == "" {
 		t.Fatal("gateway Key reveal did not return a copyable value")
 	}
-	listed := localE2EMustRequest(t, owner, http.MethodGet, "/api/gateway/keys", nil, "", http.StatusOK)
+	listed := localE2EMustRequest(t, owner, http.MethodGet, "/api/gateway/keys?page=1&pageSize=10&search=local-stage-b-edited&status=active&groupId="+groupID+"&sortBy=name&sortOrder=asc", nil, "", http.StatusOK)
 	listedJSON, _ := json.Marshal(listed.body)
 	if bytes.Contains(listedJSON, []byte(plaintext)) || bytes.Contains(listedJSON, []byte(`"value"`)) {
 		t.Fatal("gateway Key list leaked plaintext")
 	}
-	localE2EItemBy(t, localE2EItems(t, localE2EData(t, listed, "gateway keys"), "gateway keys"), "id", keyID, "gateway key")
+	listedData := localE2EData(t, listed, "gateway keys")
+	if int64(numberField(listedData, "total", -1)) != 1 || int64(numberField(listedData, "pages", -1)) != 1 {
+		t.Fatal("gateway Key filtered pagination is not authoritative")
+	}
+	localE2EItemBy(t, localE2EItems(t, listedData, "gateway keys"), "id", keyID, "gateway key")
 	delete(revealData, "value")
 	plaintext = ""
 
@@ -668,6 +737,12 @@ func runLocalE2EFullFlow(t *testing.T, process *localE2EProcess, adminEmail, adm
 	if stringValue(account["email"]) != normalizeEmail(user.email) {
 		t.Fatal("operator account projection does not show the provisioned user")
 	}
+	ownerKeys := localE2EData(t, localE2EMustRequest(t, owner, http.MethodGet, "/api/gateway/keys?page=1&pageSize=100", nil, "", http.StatusOK), "operator Key count readback")
+	keyCount := localE2EMap(t, account["keyCount"], "operator Key count")
+	if keyCount["available"] != true || stringValue(keyCount["source"]) != "sub2api" ||
+		int64(numberField(keyCount, "data", -1)) != int64(numberField(ownerKeys, "total", -2)) {
+		t.Fatal("operator account Key count is not the authoritative Sub2API readback")
+	}
 	adjustment := localE2EMap(t, localE2EMustRequest(t, admin, http.MethodGet, "/api/operator/wallet-adjustments/"+operationID, nil, "", http.StatusOK).body, "operator wallet adjustment")
 	if stringValue(adjustment["status"]) != "succeeded" || stringValue(adjustment["receiptId"]) == "" {
 		t.Fatal("operator wallet adjustment projection is incomplete")
@@ -705,7 +780,7 @@ func runLocalE2EFullFlow(t *testing.T, process *localE2EProcess, adminEmail, adm
 	localE2EAssertLedger(t, ledger.receiptsFor(user.accountID), operation.ReceiptID)
 
 	return localE2EFullEvidence{
-		user: user, walletOperation: operationID, generalKeyID: keyID, workspaceID: operation.WorkspaceID,
+		user: user, walletOperation: operationID, generalKeyID: keyID, generalKeyGroup: groupID, workspaceID: operation.WorkspaceID,
 		launchOperation: launchID, receiptID: operation.ReceiptID, computeID: operation.ComputeID,
 		computeProvider: fabric.computeSync.ProviderResourceID, storageID: operation.StorageID,
 		storageProvider: fabric.storageSync.ProviderResourceID, attachmentID: operation.AttachmentID, runtimeID: operation.RuntimeID,
@@ -779,8 +854,14 @@ func verifyLocalE2ERestartPersistence(t *testing.T, process *localE2EProcess, ev
 	}
 	workspaces := localE2EData(t, localE2EMustRequest(t, owner, http.MethodGet, "/api/workspaces", nil, "", http.StatusOK), "restarted workspaces")
 	localE2EItemBy(t, localE2EItems(t, workspaces, "restarted workspaces"), "id", evidence.workspaceID, "restarted workspace")
-	keys := localE2EData(t, localE2EMustRequest(t, owner, http.MethodGet, "/api/gateway/keys", nil, "", http.StatusOK), "restarted keys")
-	localE2EItemBy(t, localE2EItems(t, keys, "restarted keys"), "id", evidence.generalKeyID, "restarted key")
+	key := localE2EData(t, localE2EMustRequest(t, owner, http.MethodGet, "/api/gateway/keys/"+evidence.generalKeyID, nil, "", http.StatusOK), "restarted key")
+	if stringValue(key["name"]) != "local-stage-b-edited" || stringValue(key["groupId"]) != evidence.generalKeyGroup || stringValue(key["status"]) != "active" ||
+		int64(numberField(key, "quotaUsdMicros", -1)) != 2_500_000 || int64(numberField(key, "rateLimit5hUsdMicros", -1)) != 6_000_000 ||
+		int64(numberField(key, "rateLimit1dUsdMicros", -1)) != 12_000_000 || int64(numberField(key, "rateLimit7dUsdMicros", -1)) != 24_000_000 ||
+		!slices.Equal(localE2EStringItems(t, key["ipWhitelist"], "restarted Key allowlist"), []string{"127.0.0.1", "192.0.2.10"}) ||
+		!slices.Equal(localE2EStringItems(t, key["ipBlacklist"], "restarted Key denylist"), []string{"203.0.113.0/24"}) {
+		t.Fatal("restarted Gateway Key lost authoritative parity fields")
+	}
 	receipts := localE2EData(t, localE2EMustRequest(t, owner, http.MethodGet, "/api/billing/receipts", nil, "", http.StatusOK), "restarted receipts")
 	items, ok := receipts["receipts"].([]any)
 	if !ok {
@@ -796,6 +877,15 @@ func verifyLocalE2ERestartPersistence(t *testing.T, process *localE2EProcess, ev
 		t.Fatal("restarted Operator Workspace detail changed the canonical purchase Receipt")
 	}
 	localE2EMustRequest(t, admin, http.MethodGet, "/api/operator/wallet-adjustments/"+evidence.walletOperation, nil, "", http.StatusOK)
+	deletePath := "/api/gateway/keys/" + evidence.generalKeyID
+	deleteIntent := "gateway-key-delete-local-full-" + evidence.user.accountID
+	localE2EMustRequest(t, owner, http.MethodDelete, deletePath, nil, deleteIntent, http.StatusOK)
+	localE2EMustRequest(t, owner, http.MethodDelete, deletePath, nil, deleteIntent, http.StatusOK)
+	localE2EMustRequest(t, owner, http.MethodGet, deletePath, nil, "", http.StatusNotFound)
+	empty := localE2EData(t, localE2EMustRequest(t, owner, http.MethodGet, "/api/gateway/keys?page=1&pageSize=10&search=local-stage-b-edited", nil, "", http.StatusOK), "deleted Key search")
+	if int64(numberField(empty, "total", -1)) != 0 || len(localE2EItems(t, empty, "deleted Key search")) != 0 {
+		t.Fatal("deleted Gateway Key remains in authoritative Sub2API results")
+	}
 	return admin
 }
 

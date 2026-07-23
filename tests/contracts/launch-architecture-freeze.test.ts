@@ -200,7 +200,10 @@ test("launch freeze fixes the V2 products, owner lanes, settlement, and verifica
     "create_general_key",
     "update_general_key",
     "delete_general_key",
-    "reveal_owned_key"
+    "reveal_owned_key",
+    "change_group",
+    "reset_quota",
+    "reset_rate_limit_usage"
   ]);
   assert.equal(freeze.consoleFinancialProjection.mode, "read_only_projection");
   assert.deepEqual(freeze.consoleFinancialProjection.authorities, {

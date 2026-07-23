@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -32,6 +33,16 @@ type operatorProjectionSub2API struct {
 	singleUserCalls    int
 	requestedUserIDs   [][]int64
 	requestedAPIKeyIDs [][]int64
+	keysByUser         map[int64][]clients.Sub2APIWorkspaceKey
+	keyListCalls       []int64
+	keyListMu          sync.Mutex
+}
+
+func (c *operatorProjectionSub2API) Keys(_ context.Context, userID int64) ([]clients.Sub2APIWorkspaceKey, error) {
+	c.keyListMu.Lock()
+	defer c.keyListMu.Unlock()
+	c.keyListCalls = append(c.keyListCalls, userID)
+	return append([]clients.Sub2APIWorkspaceKey(nil), c.keysByUser[userID]...), nil
 }
 
 func (c *operatorProjectionSub2API) AdminUsers(_ context.Context, query clients.Sub2APIUserPageQuery) (clients.Sub2APIUserPage, error) {
@@ -129,6 +140,7 @@ func newOperatorProjectionClient(users ...clients.Sub2APIUser) *operatorProjecti
 		users:             users,
 		userUsage:         map[int64]clients.Sub2APIBatchUserUsage{},
 		keyUsage:          map[int64]clients.Sub2APIBatchKeyUsage{},
+		keysByUser:        map[int64][]clients.Sub2APIWorkspaceKey{},
 	}
 }
 
@@ -172,6 +184,8 @@ func TestOperatorProjectionUsesBatchAPIs(t *testing.T) {
 	)
 	client.userUsage[41] = clients.Sub2APIBatchUserUsage{UserID: 41, TodayActualCostUSDMicros: 1, TotalActualCostUSDMicros: 100}
 	client.userUsage[42] = clients.Sub2APIBatchUserUsage{UserID: 42, TodayActualCostUSDMicros: 2, TotalActualCostUSDMicros: 200}
+	client.keysByUser[41] = []clients.Sub2APIWorkspaceKey{{ID: 7, UserID: 41}, {ID: 8, UserID: 41}}
+	client.keysByUser[42] = []clients.Sub2APIWorkspaceKey{{ID: 9, UserID: 42}}
 	client.keyUsage[7] = clients.Sub2APIBatchKeyUsage{APIKeyID: 7, TotalActualCostUSDMicros: 70}
 	client.keyUsage[9] = clients.Sub2APIBatchKeyUsage{APIKeyID: 9, TotalActualCostUSDMicros: 90}
 	server, err := NewPersistentServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}, client), store)
@@ -193,6 +207,9 @@ func TestOperatorProjectionUsesBatchAPIs(t *testing.T) {
 	if mapField(mapField(alpha, "wallet"), "data")["usdMicros"] != float64(10_000_000) || mapField(mapField(alpha, "usage"), "data")["totalActualCostUsdMicros"] != float64(100) {
 		t.Fatalf("account projection = %#v", alpha)
 	}
+	if keyCount := mapField(alpha, "keyCount"); keyCount["available"] != true || keyCount["data"] != float64(2) {
+		t.Fatalf("authoritative key count = %#v", keyCount)
+	}
 	if mapField(alpha, "wallet")["sourceUpdatedAt"] != operatorProjectionTime.Format(time.RFC3339Nano) {
 		t.Fatalf("wallet source timestamp = %#v", mapField(alpha, "wallet"))
 	}
@@ -210,8 +227,8 @@ func TestOperatorProjectionUsesBatchAPIs(t *testing.T) {
 	if mapField(keyUsage, "data")["totalActualCostUsdMicros"] != float64(70) {
 		t.Fatalf("workspace key usage = %#v", workspaceItems[0])
 	}
-	if client.adminUsersCalls != 1 || client.batchUsersCalls != 1 || client.batchKeysCalls != 1 || client.singleUserCalls != 0 {
-		t.Fatalf("projection calls users=%d batchUsers=%d batchKeys=%d singleUsers=%d", client.adminUsersCalls, client.batchUsersCalls, client.batchKeysCalls, client.singleUserCalls)
+	if client.adminUsersCalls != 1 || client.batchUsersCalls != 1 || client.batchKeysCalls != 1 || client.singleUserCalls != 0 || len(client.keyListCalls) != 3 {
+		t.Fatalf("projection calls users=%d batchUsers=%d batchKeys=%d singleUsers=%d keyLists=%#v", client.adminUsersCalls, client.batchUsersCalls, client.batchKeysCalls, client.singleUserCalls, client.keyListCalls)
 	}
 }
 
@@ -264,13 +281,15 @@ func TestOperatorAccountsKeepsIdentityWhenMappedWalletHasSubMicroBalance(t *test
 				},
 				"total": 4, "page": 1, "page_size": 50, "pages": 1,
 			})
-		case "/api/v1/admin/dashboard/users-usage":
-			write(map[string]any{"stats": map[string]any{
+			case "/api/v1/admin/dashboard/users-usage":
+				write(map[string]any{"stats": map[string]any{
 				"1":  map[string]any{"user_id": 1, "today_actual_cost": 0, "total_actual_cost": 0, "by_platform": []any{}},
 				"41": map[string]any{"user_id": 41, "today_actual_cost": 0, "total_actual_cost": 0, "by_platform": []any{}},
-				"42": map[string]any{"user_id": 42, "today_actual_cost": 0, "total_actual_cost": 0, "by_platform": []any{}},
-			}})
-		default:
+					"42": map[string]any{"user_id": 42, "today_actual_cost": 0, "total_actual_cost": 0, "by_platform": []any{}},
+				}})
+			case "/api/v1/admin/users/1/api-keys", "/api/v1/admin/users/41/api-keys", "/api/v1/admin/users/42/api-keys":
+				write(map[string]any{"items": []any{}, "total": 0, "page": 1, "page_size": 1000, "pages": 1})
+			default:
 			t.Errorf("unexpected Sub2API route %s %s", r.Method, r.URL.String())
 		}
 	}))

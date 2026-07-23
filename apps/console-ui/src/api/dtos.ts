@@ -289,31 +289,85 @@ export type GatewayWalletDTO = GatewayWallet;
 
 export interface CreateGatewayKeyRequest {
   name: string;
+  groupId: string;
+  ipWhitelist?: string[];
+  ipBlacklist?: string[];
   quotaUsdMicros: number;
   expiresInDays?: number;
+  rateLimit5hUsdMicros?: number;
+  rateLimit1dUsdMicros?: number;
+  rateLimit7dUsdMicros?: number;
 }
 
 export interface UpdateGatewayKeyRequest {
   name?: string;
+  groupId?: string;
+  ipWhitelist?: string[];
+  ipBlacklist?: string[];
   quotaUsdMicros?: number;
+  expiresAt?: string;
+  rateLimit5hUsdMicros?: number;
+  rateLimit1dUsdMicros?: number;
+  rateLimit7dUsdMicros?: number;
+  resetQuota?: boolean;
+  resetRateLimitUsage?: boolean;
   enabled?: boolean;
+}
+
+export interface GatewayEndpointDTO {
+  baseUrl: string;
+}
+
+export interface GatewayGroupDTO {
+  id: string;
+  name: string;
+  description: string;
+  platform: string;
+  rateMultiplier: number;
+  subscriptionType: string;
+  status: string;
+}
+
+export interface GatewayGroupPageDTO {
+  items: GatewayGroupDTO[];
+  total: number;
+}
+
+export interface GatewayKeyListQuery {
+  page?: number;
+  pageSize?: number;
+  search?: string;
+  status?: "active" | "disabled" | "quota_exhausted" | "expired" | "";
+  groupId?: string;
+  sortBy?: "name" | "id" | "currentConcurrency" | "expiresAt" | "status" | "lastUsedAt" | "createdAt";
+  sortOrder?: "asc" | "desc";
 }
 
 export interface GatewayKey {
   id: string;
   name: string;
-  status: "active" | "disabled";
+  groupId: string | null;
+  status: "active" | "disabled" | "quota_exhausted" | "expired";
+  ipWhitelist: string[];
+  ipBlacklist: string[];
   quotaUsdMicros: number;
   quotaUsedUsdMicros: number;
+  rateLimit5hUsdMicros: number;
+  rateLimit1dUsdMicros: number;
+  rateLimit7dUsdMicros: number;
   usage5hUsdMicros: number;
   usage1dUsdMicros: number;
   usage7dUsdMicros: number;
+  currentConcurrency: number;
   lastUsedAt: string | null;
+  lastUsedIp: string | null;
+  expiresAt: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
 }
 
 export interface GatewayKeySummaryDTO extends GatewayKey {
   kind: "general" | "workspace";
-  expiresAt: string | null;
   manageable: boolean;
   deletable: boolean;
 }
@@ -323,6 +377,7 @@ export interface GatewayKeyPageDTO {
   total: number;
   page: number;
   pageSize: number;
+  pages: number;
 }
 
 export interface GatewayKeysData {

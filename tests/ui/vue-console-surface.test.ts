@@ -27,13 +27,14 @@ test("customer views use granular V2 source projections and the one Workspace la
   ]);
   const template = app.slice(app.indexOf("<template>"));
   for (const route of [
-    "/api/gateway/wallet", "/api/gateway/keys",
+    "/api/gateway/wallet", "/api/gateway/keys", "/api/gateway/groups", "/api/gateway/endpoint",
     "/api/gateway/keys/${encodeURIComponent(keyId)}/usage?",
     "/api/gateway/keys/${encodeURIComponent(keyId)}/usage-summary?",
     "/api/gateway/usage-summary?", "/api/gateway/balance-history",
     "/api/billing/receipts?", "/api/announcements"
   ]) assert.ok(readApi.includes(route), `${route} adapter is required`);
-  assert.doesNotMatch(readApi, /\/api\/gateway\/endpoint|GatewayEndpointDTO/);
+  assert.match(readApi, /GatewayEndpointDTO/);
+  assert.match(readApi, /GatewayGroupPageDTO/);
   assert.match(workspaceApi, /\/api\/workspace-launches/);
   assert.match(workspaceApi, /\/api\/workspaces\/\$\{encodeURIComponent\(workspaceId\)\}\/runtime-status/);
   assert.doesNotMatch(readApi, /\/api\/gateway\/summary|reveal=true/);
@@ -83,13 +84,37 @@ test("administrator keeps customer routes and adds operator navigation", async (
   assert.match(app, /account\.status === ['"]active['"] && account\.accountId !== ['"]acct-admin['"]/);
 });
 
-test("created Key is revealed only through the dedicated owner command", async () => {
+test("created Key readback is revealed, copied, and timed out in memory", async () => {
+  const panel = await source("apps/console-ui/src/components/keys/KeysPanel.vue");
+  const created = panel.slice(panel.indexOf("async function submitKey"), panel.indexOf("async function mutateKey"));
+  assert.match(created, /createGatewayKey/);
+  assert.match(created, /getGatewayKey\(created\.data\.id\)/);
+  assert.match(created, /await revealGatewayKey\(created\.data\.id, props\.csrfToken\)/);
+  assert.match(created, /revealed\.value = secret\.data/);
+  assert.match(created, /armSecretTimer\(\)/);
+  assert.match(panel, /secretTimer = window\.setTimeout\(clearSecret, 60_000\)/);
+  assert.match(panel, /revealed\.value[\s\S]+copyText\(revealed\.value, ['"]Key 已复制['"]\)/);
+});
+
+test("Key usage instructions use the revealed value, endpoint, and authoritative group platform", async () => {
+  const panel = await source("apps/console-ui/src/components/keys/KeysPanel.vue");
+  assert.match(panel, /useConfiguration/);
+  assert.match(panel, /groupPlatform/);
+  assert.match(panel, /endpoint\.value/);
+  assert.match(panel, /revealed\.value\.value/);
+  assert.match(panel, /复制配置/);
+  assert.doesNotMatch(panel, /Bearer &lt;API_KEY&gt;/);
+});
+
+test("App delegates ordinary Key creation to KeysPanel and keeps only the Workspace reveal path", async () => {
   const app = await source("apps/console-ui/src/App.vue");
-  const created = app.indexOf("const created = await createGatewayKey");
-  const revealed = app.indexOf("await revealGatewayKey(created.data.id");
-  assert.ok(created >= 0 && revealed > created, "create must be followed by dedicated reveal");
-  assert.match(app, /revealedApiKey\.value = revealed\.data/);
-  assert.match(app, /armSecretTimeout\(\)/);
+  for (const deadPath of [
+    "createGatewayKey", "CreateGatewayKeyRequest", "keyForm", "gatewayKeyCreateIntent",
+    "gatewayKeyToggleIntents", "gatewayKeyDeleteIntents", "sameGatewayKeyCreateRequest", "submitKey"
+  ]) assert.doesNotMatch(app, new RegExp(`\\b${deadPath}\\b`), deadPath);
+  assert.doesNotMatch(app, /["']api-key["']/);
+  assert.match(app, /await revealGatewayKey\(workspaceKeyId\.value, session\.value\?\.csrfToken \|\| ["']["']\)/);
+  assert.match(app, /function copyWorkspaceKey\(\)/);
 });
 
 test("Workspace empty, unavailable, and launch recovery states stay distinct", async () => {

@@ -24,6 +24,15 @@ type sourceTruthGatewayClient struct {
 	keyUserIDs []int64
 }
 
+func (*sourceTruthGatewayClient) PublicEndpoint() string { return "https://gateway.example.test/v1" }
+
+func (c *sourceTruthGatewayClient) UserGroups(_ context.Context, credential clients.SessionDelegatedCredential, userID int64) ([]clients.Sub2APIGroup, error) {
+	if credential.Bearer != "test-user-delegated-token" || userID != 41 {
+		return nil, errors.New("wrong delegated credential")
+	}
+	return []clients.Sub2APIGroup{{ID: 7, Name: "Basic", Platform: "openai", RateMultiplier: 1, Status: "active"}}, nil
+}
+
 func (c *sourceTruthGatewayClient) Balance(ctx context.Context, userID int64) (clients.Sub2APIBalance, error) {
 	if c.balanceErr != nil {
 		return clients.Sub2APIBalance{}, c.balanceErr
@@ -41,6 +50,14 @@ func (c *sourceTruthGatewayClient) UserKeys(ctx context.Context, credential clie
 		return nil, errors.New("wrong delegated credential")
 	}
 	return c.Keys(ctx, userID)
+}
+
+func (c *sourceTruthGatewayClient) UserKeyPage(ctx context.Context, credential clients.SessionDelegatedCredential, userID int64, query clients.Sub2APIKeyPageQuery) (clients.Sub2APIKeyPage, error) {
+	keys, err := c.UserKeys(ctx, credential, userID)
+	if err != nil {
+		return clients.Sub2APIKeyPage{}, err
+	}
+	return clients.Sub2APIKeyPage{Items: keys, Total: len(keys), Page: query.Page, PageSize: query.PageSize, Pages: 1}, nil
 }
 
 func (c *sourceTruthGatewayClient) UserKey(_ context.Context, credential clients.SessionDelegatedCredential, userID, keyID int64) (clients.Sub2APIWorkspaceKey, error) {
@@ -146,7 +163,7 @@ func TestGatewaySourceTruthRoutesUseSessionIdentityAndStrictEnvelopes(t *testing
 		t.Fatalf("keys envelope = %#v", keysEnvelope)
 	}
 	activeKey := keyItems[1].(map[string]any)
-	if len(activeKey) != 13 || activeKey["id"] != "9" || activeKey["status"] != "active" || activeKey["quotaUsdMicros"] != float64(10) ||
+	if len(activeKey) != 23 || activeKey["id"] != "9" || activeKey["status"] != "active" || activeKey["quotaUsdMicros"] != float64(10) ||
 		activeKey["kind"] != "workspace" || activeKey["manageable"] != false || activeKey["deletable"] != false || activeKey["expiresAt"] != nil {
 		t.Fatalf("active key = %#v", activeKey)
 	}

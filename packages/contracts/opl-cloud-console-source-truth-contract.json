@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 9,
+  "schemaVersion": 10,
   "owner": "OPL Console Control Plane",
   "purpose": "Strict source envelopes and customer-safe live projections for Console source-of-truth APIs.",
   "state": "current",
@@ -34,6 +34,16 @@
   },
   "sources": {
     "gateway": {
+      "endpoint": {
+        "route": "GET /api/gateway/endpoint",
+        "source": "sub2api",
+        "authority": "existing_sub2api_base_url_plus_v1",
+        "identity": "authenticated_console_session",
+        "dataFields": ["baseUrl"],
+        "browserDirectSub2API": false,
+        "fetchedAt": "control_plane_response_fetch_completion_time",
+        "sourceUpdatedAt": "omit_configuration_has_no_authoritative_timestamp"
+      },
       "wallet": {
         "route": "GET /api/gateway/wallet",
         "source": "sub2api",
@@ -44,21 +54,37 @@
         "fetchedAt": "control_plane_response_fetch_completion_time",
         "sourceUpdatedAt": "omit_unless_sub2api_returns_source_timestamp"
       },
+      "groups": {
+        "route": "GET /api/gateway/groups",
+        "source": "sub2api",
+        "authority": "live_sub2api_readback",
+        "identity": "session_account_to_control_plane_sub2api_user_mapping",
+        "ignoredIdentityInputs": ["accountId", "user_id", "api_key_id", "sub2apiUserId"],
+        "itemFields": ["id", "name", "description", "platform", "rateMultiplier", "subscriptionType", "status"],
+        "idFormat": "positive_decimal_string",
+        "empty": "real_zero_rows",
+        "fetchedAt": "control_plane_response_fetch_completion_time",
+        "sourceUpdatedAt": "omit_unless_sub2api_returns_source_timestamp"
+      },
       "keys": {
         "route": "GET /api/gateway/keys",
         "source": "sub2api",
         "authority": "live_sub2api_readback",
         "identity": "session_account_to_control_plane_sub2api_user_mapping",
         "ignoredIdentityInputs": ["accountId", "user_id", "api_key_id", "sub2apiUserId"],
-        "itemFields": ["id", "name", "kind", "status", "quotaUsdMicros", "quotaUsedUsdMicros", "usage5hUsdMicros", "usage1dUsdMicros", "usage7dUsdMicros", "lastUsedAt", "expiresAt", "manageable", "deletable"],
+        "itemFields": ["id", "name", "groupId", "kind", "status", "ipWhitelist", "ipBlacklist", "quotaUsdMicros", "quotaUsedUsdMicros", "rateLimit5hUsdMicros", "rateLimit1dUsdMicros", "rateLimit7dUsdMicros", "usage5hUsdMicros", "usage1dUsdMicros", "usage7dUsdMicros", "currentConcurrency", "lastUsedAt", "lastUsedIp", "expiresAt", "createdAt", "updatedAt", "manageable", "deletable"],
         "idFormat": "positive_decimal_string",
-        "statusValues": ["active", "disabled"],
-        "pagination": "collect_all_coherent_upstream_pages_before_projection",
+        "statusValues": ["active", "disabled", "quota_exhausted", "expired"],
+        "pagination": "bounded_live_upstream_page_passthrough",
+        "filters": ["search", "status", "groupId"],
+        "sort": ["name", "id", "currentConcurrency", "expiresAt", "status", "lastUsedAt", "createdAt"],
+        "groupRequiredOnCreate": true,
+        "operations": ["create", "reveal", "update", "enable", "disable", "delete", "change_group", "reset_quota", "reset_rate_limit_usage"],
         "emptyUpstreamPagination": { "total": 0, "page": 1, "pages": 1, "items": [], "otherShapes": "reject" },
         "empty": "real_zero_rows",
         "lifecycleRoutes": ["POST /api/gateway/keys", "PATCH /api/gateway/keys/{keyId}", "DELETE /api/gateway/keys/{keyId}"],
         "createRequest": {
-          "fields": ["name", "quotaUsdMicros", "expiresInDays"],
+          "fields": ["name", "groupId", "ipWhitelist", "ipBlacklist", "quotaUsdMicros", "expiresInDays", "rateLimit5hUsdMicros", "rateLimit1dUsdMicros", "rateLimit7dUsdMicros"],
           "expiryField": "expiresInDays",
           "upstreamWrites": 1,
           "responseExpiryField": "expiresAt"
@@ -162,14 +188,16 @@
           "wallet": "sub2api_paginated_user_readback",
           "usage": "sub2api_batch_user_usage",
           "workspaceCount": "control_plane",
-          "keyCount": "unavailable_until_authoritative_batch_count_exists"
+          "keyCount": "sub2api_current_page_bounded_concurrent_readback"
         },
         "sub2apiUserIdFormat": "positive_decimal_string",
         "statusValues": ["active", "disabled"],
         "mappingConsistency": "remote_id_and_normalized_email_must_equal_control_plane_mapping",
-        "pagination": "collect_all_coherent_sub2api_user_pages_then_control_plane_page",
+        "pagination": "collect_all_coherent_sub2api_user_pages_then_control_plane_page_with_key_counts_only_for_selected_page",
         "batchSizeMax": 50,
         "perAccountUserOrUsageNPlusOne": false,
+        "keyCountConcurrencyMax": 4,
+        "keyCountPersistence": "none_request_join_only",
         "failure": "affected_nested_source_unavailable_without_zero_data",
         "fetchedAt": "control_plane_response_fetch_completion_time",
         "sourceUpdatedAt": "sub2api_user_updated_at_only_for_corresponding_nested_facts"

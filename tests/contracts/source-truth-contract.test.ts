@@ -4,6 +4,23 @@ import test from "node:test";
 
 const contractUrl = new URL("../../packages/contracts/opl-cloud-console-source-truth-contract.json", import.meta.url);
 
+test("Console source truth exposes Sub2API Keys parity without a second authority", async () => {
+  const contract = JSON.parse(await readFile(contractUrl, "utf8"));
+  const gateway = contract.sources.gateway;
+
+  assert.equal(gateway.endpoint.route, "GET /api/gateway/endpoint");
+  assert.equal(gateway.endpoint.authority, "existing_sub2api_base_url_plus_v1");
+  assert.equal(gateway.groups.route, "GET /api/gateway/groups");
+  assert.equal(gateway.groups.authority, "live_sub2api_readback");
+  assert.equal(gateway.keys.groupRequiredOnCreate, true);
+  assert.deepEqual(gateway.keys.filters, ["search", "status", "groupId"]);
+  assert.deepEqual(gateway.keys.sort, ["name", "id", "currentConcurrency", "expiresAt", "status", "lastUsedAt", "createdAt"]);
+  assert.deepEqual(gateway.keys.operations, [
+    "create", "reveal", "update", "enable", "disable", "delete", "change_group", "reset_quota", "reset_rate_limit_usage"
+  ]);
+  assert.equal(contract.sources.identity.operatorAccounts.fieldAuthority.keyCount, "sub2api_current_page_bounded_concurrent_readback");
+});
+
 test("Console source truth contract fixes strict envelopes and live Gateway projections", async () => {
   const contract = JSON.parse(await readFile(contractUrl, "utf8"));
 
@@ -25,10 +42,12 @@ test("Console source truth contract fixes strict envelopes and live Gateway proj
 
   const gateway = contract.sources.gateway;
   assert.deepEqual(Object.keys(gateway), [
-    "wallet", "keys", "usage", "usageStats", "accountUsageStats", "balanceHistory"
+    "endpoint", "wallet", "groups", "keys", "usage", "usageStats", "accountUsageStats", "balanceHistory"
   ]);
   assert.deepEqual(Object.values(gateway).map((source: any) => source.route), [
+    "GET /api/gateway/endpoint",
     "GET /api/gateway/wallet",
+    "GET /api/gateway/groups",
     "GET /api/gateway/keys",
     "GET /api/gateway/keys/{keyId}/usage",
     "GET /api/gateway/keys/{keyId}/usage-summary",
@@ -36,7 +55,7 @@ test("Console source truth contract fixes strict envelopes and live Gateway proj
     "GET /api/gateway/balance-history"
   ]);
   for (const source of [
-    gateway.wallet, gateway.keys, gateway.usage, gateway.usageStats,
+    gateway.wallet, gateway.groups, gateway.keys, gateway.usage, gateway.usageStats,
     gateway.accountUsageStats, gateway.balanceHistory
   ]) {
     assert.equal(source.source, "sub2api");
@@ -45,18 +64,29 @@ test("Console source truth contract fixes strict envelopes and live Gateway proj
     assert.equal(source.fetchedAt, "control_plane_response_fetch_completion_time");
     assert.equal(source.sourceUpdatedAt, "omit_unless_sub2api_returns_source_timestamp");
   }
+  assert.deepEqual(gateway.endpoint, {
+    route: "GET /api/gateway/endpoint",
+    source: "sub2api",
+    authority: "existing_sub2api_base_url_plus_v1",
+    identity: "authenticated_console_session",
+    dataFields: ["baseUrl"],
+    browserDirectSub2API: false,
+    fetchedAt: "control_plane_response_fetch_completion_time",
+    sourceUpdatedAt: "omit_configuration_has_no_authoritative_timestamp"
+  });
   assert.equal(gateway.accountUsageStats.authority, "live_sub2api_aggregate");
-  for (const source of [gateway.wallet, gateway.keys, gateway.usage, gateway.usageStats, gateway.balanceHistory]) {
+  for (const source of [gateway.wallet, gateway.groups, gateway.keys, gateway.usage, gateway.usageStats, gateway.balanceHistory]) {
     assert.equal(source.authority, "live_sub2api_readback");
   }
   assert.deepEqual(gateway.wallet.dataFields, ["userId", "currency", "usdMicros", "status"]);
+  assert.deepEqual(gateway.groups.itemFields, ["id", "name", "description", "platform", "rateMultiplier", "subscriptionType", "status"]);
   assert.deepEqual(gateway.keys.itemFields, [
-    "id", "name", "kind", "status", "quotaUsdMicros", "quotaUsedUsdMicros",
-    "usage5hUsdMicros", "usage1dUsdMicros", "usage7dUsdMicros", "lastUsedAt",
-    "expiresAt", "manageable", "deletable"
+    "id", "name", "groupId", "kind", "status", "ipWhitelist", "ipBlacklist", "quotaUsdMicros", "quotaUsedUsdMicros",
+    "rateLimit5hUsdMicros", "rateLimit1dUsdMicros", "rateLimit7dUsdMicros", "usage5hUsdMicros", "usage1dUsdMicros",
+    "usage7dUsdMicros", "currentConcurrency", "lastUsedAt", "lastUsedIp", "expiresAt", "createdAt", "updatedAt", "manageable", "deletable"
   ]);
   assert.equal(gateway.keys.idFormat, "positive_decimal_string");
-  assert.deepEqual(gateway.keys.statusValues, ["active", "disabled"]);
+  assert.deepEqual(gateway.keys.statusValues, ["active", "disabled", "quota_exhausted", "expired"]);
   assert.deepEqual(gateway.keys.emptyUpstreamPagination, { total: 0, page: 1, pages: 1, items: [], otherShapes: "reject" });
   assert.equal(gateway.keys.empty, "real_zero_rows");
   assert.deepEqual(gateway.keys.lifecycleRoutes, [
@@ -65,7 +95,7 @@ test("Console source truth contract fixes strict envelopes and live Gateway proj
     "DELETE /api/gateway/keys/{keyId}"
   ]);
   assert.deepEqual(gateway.keys.createRequest, {
-    fields: ["name", "quotaUsdMicros", "expiresInDays"],
+    fields: ["name", "groupId", "ipWhitelist", "ipBlacklist", "quotaUsdMicros", "expiresInDays", "rateLimit5hUsdMicros", "rateLimit1dUsdMicros", "rateLimit7dUsdMicros"],
     expiryField: "expiresInDays",
     upstreamWrites: 1,
     responseExpiryField: "expiresAt"
@@ -133,14 +163,16 @@ test("Console source truth contract fixes strict envelopes and live Gateway proj
       wallet: "sub2api_paginated_user_readback",
       usage: "sub2api_batch_user_usage",
       workspaceCount: "control_plane",
-      keyCount: "unavailable_until_authoritative_batch_count_exists"
+      keyCount: "sub2api_current_page_bounded_concurrent_readback"
     },
     sub2apiUserIdFormat: "positive_decimal_string",
     statusValues: ["active", "disabled"],
     mappingConsistency: "remote_id_and_normalized_email_must_equal_control_plane_mapping",
-    pagination: "collect_all_coherent_sub2api_user_pages_then_control_plane_page",
+    pagination: "collect_all_coherent_sub2api_user_pages_then_control_plane_page_with_key_counts_only_for_selected_page",
     batchSizeMax: 50,
     perAccountUserOrUsageNPlusOne: false,
+    keyCountConcurrencyMax: 4,
+    keyCountPersistence: "none_request_join_only",
     failure: "affected_nested_source_unavailable_without_zero_data",
     fetchedAt: "control_plane_response_fetch_completion_time",
     sourceUpdatedAt: "sub2api_user_updated_at_only_for_corresponding_nested_facts"

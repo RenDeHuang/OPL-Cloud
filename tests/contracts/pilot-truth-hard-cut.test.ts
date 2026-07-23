@@ -105,11 +105,14 @@ test("current contracts expose only authoritative Pilot sources and controls", a
     "create_general_key",
     "update_general_key",
     "delete_general_key",
-    "reveal_owned_key"
+    "reveal_owned_key",
+    "change_group",
+    "reset_quota",
+    "reset_rate_limit_usage"
   ]);
   assert.equal(sourceTruth.sources.gateway.keys.revealRoute, "POST /api/gateway/keys/{keyId}/reveal");
   assert.deepEqual(Object.keys(sourceTruth.sources.gateway), [
-    "wallet", "keys", "usage", "usageStats", "accountUsageStats", "balanceHistory"
+    "endpoint", "wallet", "groups", "keys", "usage", "usageStats", "accountUsageStats", "balanceHistory"
   ]);
   assert.equal(product.pilotBoundary.primaryWorkspacePerAccount, 1);
   assert.equal(product.pilotBoundary.workspaceDataAuthority, "cbs");
