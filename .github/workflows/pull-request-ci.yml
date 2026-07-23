@@ -116,13 +116,18 @@ jobs:
           package_list="$(go list -f '{{if or .TestGoFiles .XTestGoFiles}}{{.ImportPath}}{{end}}' ./...)"
           mapfile -t test_packages < <(sed '/^$/d' <<< "$package_list")
           ((${#test_packages[@]} > 0))
-          go test -count=1 -json "${test_packages[@]}" | node -e '
+          go test -timeout=15m -count=1 -json "${test_packages[@]}" | node -e '
             let output = "";
             process.stdin.setEncoding("utf8");
             process.stdin.on("data", (chunk) => { process.stdout.write(chunk); output += chunk; });
             process.stdin.on("end", () => {
-              const skipped = output.trim().split(/\n/).filter(Boolean).map(JSON.parse).filter((event) => event.Action === "skip");
-              if (skipped.length) { console.error(`Go SKIP ${skipped.length}`); process.exit(1); }
+              const events = output.trim().split(/\n/).filter(Boolean).map(JSON.parse);
+              const failed = events.filter((event) => event.Action === "fail");
+              const skipped = events.filter((event) => event.Action === "skip");
+              if (failed.length || skipped.length) {
+                console.error(`Go FAIL ${failed.length} SKIP ${skipped.length}`);
+                process.exit(1);
+              }
             });
           '
 

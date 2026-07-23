@@ -1590,140 +1590,26 @@ func (f *fakeFabricClient) CancelJob(_ context.Context, jobID string, _ string) 
 	return clients.Job{JobID: jobID, Status: "cancelled"}, nil
 }
 
-func TestExecutionRoutesPersistCanonicalFlow(t *testing.T) {
+func TestRetiredExecutionRoutesReturnNotFound(t *testing.T) {
 	server := newExecutionTestServer(t, newTestService(fakeLedgerClient{}, &fakeFabricClient{}))
-	admin := tenantAdminSessionForTest(t, server)
-
-	project := createResourceWithSession(t, server, admin, http.MethodPost, "/api/projects", `{"organizationId":"org-alpha","workspaceId":"workspace-alpha","localAliasId":"local-project-alpha"}`)
-	projectID := stringValue(project["projectId"])
-	if !strings.HasPrefix(projectID, "project-") {
-		t.Fatalf("unexpected project identity: %#v", project)
-	}
-	task := createResourceWithSession(t, server, admin, http.MethodPost, "/api/projects/"+projectID+"/tasks", `{"organizationId":"org-alpha","workspaceId":"workspace-alpha","localAliasId":"local-task-alpha"}`)
-	taskID := stringValue(task["taskId"])
-	if !strings.HasPrefix(taskID, "task-") {
-		t.Fatalf("unexpected task identity: %#v", task)
-	}
-
-	request := createResourceWithSession(t, server, admin, http.MethodPost, "/api/execution-requests", `{"organizationId":"org-alpha","workspaceId":"workspace-alpha","projectId":"`+projectID+`","taskId":"`+taskID+`","environmentRef":"environment-alpha"}`)
-	requestID := stringValue(request["requestId"])
-	approved := createResourceWithSession(t, server, admin, http.MethodPost, "/api/execution-requests/"+requestID+"/approve", `{}`)
-	if approved["approvalStatus"] != "approved" || stringValue(approved["approvalId"]) == "" {
-		t.Fatalf("unexpected approval: %#v", approved)
-	}
-	executed := createResourceWithSession(t, server, admin, http.MethodPost, "/api/execution-requests/"+requestID+"/execute", `{}`)
-	if executed["jobId"] != "job-from-fabric" || executed["receiptId"] != "receipt-from-ledger" || executed["continuationId"] != "continuation-from-ledger" {
-		t.Fatalf("unexpected execution: %#v", executed)
-	}
-
-	loaded := createResourceWithSession(t, server, admin, http.MethodGet, "/api/execution-requests/"+requestID, ``)
-	if loaded["status"] != "queued" || loaded["jobId"] != "job-from-fabric" || loaded["receiptId"] != "receipt-from-ledger" {
-		t.Fatalf("unexpected persisted request: %#v", loaded)
-	}
-}
-
-func TestProjectCreationRequiresWorkspaceOrganizationOwnership(t *testing.T) {
-	store := newMemoryTableStore()
-	seedTenantMember(t, store, "acct-alpha", "org-alpha", "usr-alpha", "alpha-project@example.com")
-	seedTenantMember(t, store, "acct-beta", "org-beta", "usr-beta", "beta-project@example.com")
-	mustStore(t, store.SaveWorkspace(context.Background(), map[string]any{"id": "workspace-beta", "accountId": "acct-beta", "status": "running"}))
-	server, err := NewPersistentServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}), store)
-	if err != nil {
-		t.Fatalf("create server: %v", err)
-	}
-	owner := loginForTest(t, server, "alpha-project@example.com", "CorrectHorseBatteryStaple!")
-
-	forbidden := requestWithSession(t, server, owner, http.MethodPost, "/api/projects", `{"organizationId":"org-alpha","workspaceId":"workspace-beta"}`)
-	if forbidden.Code != http.StatusForbidden {
-		t.Fatalf("cross-organization status = %d, want %d: %s", forbidden.Code, http.StatusForbidden, forbidden.Body.String())
-	}
-	heads, err := store.ListProjectTaskSyncHeads(context.Background())
-	if err != nil {
-		t.Fatalf("list projects: %v", err)
-	}
-	if len(heads) != 0 {
-		t.Fatalf("cross-organization request persisted projects: %#v", heads)
-	}
-
-	betaOwner := loginForTest(t, server, "beta-project@example.com", "CorrectHorseBatteryStaple!")
-	created := requestWithSession(t, server, betaOwner, http.MethodPost, "/api/projects", `{"organizationId":"org-beta","workspaceId":"workspace-beta"}`)
-	if created.Code != http.StatusCreated {
-		t.Fatalf("same-organization status = %d, want %d: %s", created.Code, http.StatusCreated, created.Body.String())
-	}
-}
-
-func TestProjectCreationReportsIdentityStoreFailures(t *testing.T) {
 	for _, tc := range []struct {
-		name            string
-		workspaceErr    error
-		organizationErr error
+		method string
+		path   string
 	}{
-		{name: "workspace read", workspaceErr: errors.New("workspace store unavailable")},
-		{name: "organization read", organizationErr: errors.New("organization store unavailable")},
+		{method: http.MethodGet, path: "/api/projects"},
+		{method: http.MethodPost, path: "/api/projects"},
+		{method: http.MethodPost, path: "/api/projects/project-legacy/tasks"},
+		{method: http.MethodGet, path: "/api/execution-requests"},
+		{method: http.MethodPost, path: "/api/execution-requests"},
+		{method: http.MethodGet, path: "/api/execution-requests/request-legacy"},
+		{method: http.MethodPost, path: "/api/execution-requests/request-legacy/approve"},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			store := &failingProjectIdentityStore{memoryTableStore: newMemoryTableStore()}
-			seedTenantMember(t, store, "acct-alpha", "org-alpha", "usr-project-owner", "project-owner@example.com")
-			mustStore(t, store.SaveWorkspace(context.Background(), map[string]any{"id": "workspace-alpha", "accountId": "acct-alpha", "status": "running"}))
-			server, err := NewPersistentServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}), store)
-			if err != nil {
-				t.Fatalf("create server: %v", err)
-			}
-
-			session := loginForTest(t, server, "project-owner@example.com", "CorrectHorseBatteryStaple!")
-			store.workspaceErr, store.organizationErr = tc.workspaceErr, tc.organizationErr
-			rec := requestWithSession(t, server, session, http.MethodPost, "/api/projects", `{"organizationId":"org-alpha","workspaceId":"workspace-alpha"}`)
-			wantStatus, wantError := http.StatusInternalServerError, "state_read_failed"
-			if tc.organizationErr != nil {
-				wantStatus, wantError = http.StatusUnauthorized, "not_authenticated"
-			}
-			if rec.Code != wantStatus || !strings.Contains(rec.Body.String(), wantError) {
-				t.Fatalf("status = %d body=%s, want state_read_failed", rec.Code, rec.Body.String())
-			}
-			heads, err := store.ListProjectTaskSyncHeads(context.Background())
-			if err != nil {
-				t.Fatalf("list projects: %v", err)
-			}
-			if len(heads) != 0 {
-				t.Fatalf("failed identity read persisted projects: %#v", heads)
-			}
-		})
-	}
-}
-
-func TestProjectCreationReportsMissingIdentity(t *testing.T) {
-	for _, tc := range []struct {
-		name           string
-		ownerOrgID     string
-		workspace      map[string]any
-		organizationID string
-		status         int
-		errorCode      string
-	}{
-		{name: "workspace", ownerOrgID: "org-alpha", organizationID: "org-alpha", status: http.StatusNotFound, errorCode: "workspace_not_found"},
-		{name: "organization", ownerOrgID: "org-session", workspace: map[string]any{"id": "workspace-alpha", "accountId": "acct-alpha", "status": "running"}, organizationID: "org-alpha", status: http.StatusForbidden, errorCode: "organization_membership_required"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			store := newMemoryTableStore()
-			seedTenantMember(t, store, "acct-alpha", tc.ownerOrgID, "usr-project-owner", "project-owner@example.com")
-			if tc.workspace != nil {
-				mustStore(t, store.SaveWorkspace(context.Background(), tc.workspace))
-			}
-			server, err := NewPersistentServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}), store)
-			if err != nil {
-				t.Fatalf("create server: %v", err)
-			}
-			session := loginForTest(t, server, "project-owner@example.com", "CorrectHorseBatteryStaple!")
-			rec := requestWithSession(t, server, session, http.MethodPost, "/api/projects", `{"organizationId":"`+tc.organizationID+`","workspaceId":"workspace-alpha"}`)
-			if rec.Code != tc.status || !strings.Contains(rec.Body.String(), tc.errorCode) {
-				t.Fatalf("status = %d body=%s, want %s", rec.Code, rec.Body.String(), tc.errorCode)
-			}
-			heads, err := store.ListProjectTaskSyncHeads(context.Background())
-			if err != nil {
-				t.Fatalf("list projects: %v", err)
-			}
-			if len(heads) != 0 {
-				t.Fatalf("missing identity persisted projects: %#v", heads)
+		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
+			req := httptest.NewRequest(tc.method, tc.path, nil)
+			rec := httptest.NewRecorder()
+			server.ServeHTTP(rec, req)
+			if rec.Code != http.StatusNotFound {
+				t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusNotFound, rec.Body.String())
 			}
 		})
 	}
@@ -1756,83 +1642,6 @@ type completedExecutionFabricClient struct {
 func (f *completedExecutionFabricClient) GetJob(_ context.Context, jobID string) (clients.Job, error) {
 	f.record("fabric.job-get")
 	return clients.Job{JobID: jobID, Status: "succeeded", Attempt: 1, ArtifactIDs: []string{"artifact-alpha"}, ReviewIDs: []string{"review-alpha"}}, nil
-}
-
-func TestOwnerSyncsExecutionAndReadsContinuation(t *testing.T) {
-	server := newExecutionTestServer(t, newTestService(&executionCompletionLedgerClient{}, &completedExecutionFabricClient{}))
-	owner := loginForTest(t, server, "alpha@execution.example", "CorrectHorseBatteryStaple!")
-
-	project := createResourceWithSession(t, server, owner, http.MethodPost, "/api/projects", `{"organizationId":"org-alpha","workspaceId":"workspace-alpha"}`)
-	projectID := stringValue(project["projectId"])
-	task := createResourceWithSession(t, server, owner, http.MethodPost, "/api/projects/"+projectID+"/tasks", `{"organizationId":"org-alpha","workspaceId":"workspace-alpha"}`)
-	request := createResourceWithSession(t, server, owner, http.MethodPost, "/api/execution-requests", `{"organizationId":"org-alpha","workspaceId":"workspace-alpha","projectId":"`+projectID+`","taskId":"`+stringValue(task["taskId"])+`"}`)
-	requestID := stringValue(request["requestId"])
-	createResourceWithSession(t, server, owner, http.MethodPost, "/api/execution-requests/"+requestID+"/approve", `{}`)
-	createResourceWithSession(t, server, owner, http.MethodPost, "/api/execution-requests/"+requestID+"/execute", `{}`)
-	synced := createResourceWithSession(t, server, owner, http.MethodPost, "/api/execution-requests/"+requestID+"/sync", `{}`)
-	if synced["status"] != "completed" || synced["receiptId"] != "receipt-final" || synced["continuationId"] != "continuation-final" {
-		t.Fatalf("unexpected synced execution: %#v", synced)
-	}
-
-	continuationRec := requestWithSession(t, server, owner, http.MethodGet, "/api/execution-requests/"+requestID+"/continuation", "")
-	if continuationRec.Code != http.StatusOK || !strings.Contains(continuationRec.Body.String(), "continuation-final") {
-		t.Fatalf("continuation status = %d: %s", continuationRec.Code, continuationRec.Body.String())
-	}
-
-	seedTenantMember(t, server.(*controlPlaneHTTPHandler).app.tables, "acct-beta", "org-beta", "usr-beta", "beta-continuation@example.com")
-	outsider := loginForTest(t, server, "beta-continuation@example.com", "CorrectHorseBatteryStaple!")
-	forbidden := requestWithSession(t, server, outsider, http.MethodGet, "/api/execution-requests/"+requestID+"/continuation", "")
-	if forbidden.Code != http.StatusForbidden || !strings.Contains(forbidden.Body.String(), "organization_membership_required") {
-		t.Fatalf("outsider continuation status = %d, want organization_membership_required: %s", forbidden.Code, forbidden.Body.String())
-	}
-}
-
-func TestProjectIdentityRequiresIdempotencyKey(t *testing.T) {
-	server := newExecutionTestServer(t, newTestService(fakeLedgerClient{}, &fakeFabricClient{}))
-	admin := tenantAdminSessionForTest(t, server)
-	req := httptest.NewRequest(http.MethodPost, "/api/projects", bytes.NewBufferString(`{"organizationId":"org-alpha","workspaceId":"workspace-alpha"}`))
-	req.Header.Set("Content-Type", "application/json")
-	addAuth(req, admin)
-	rec := httptest.NewRecorder()
-	server.ServeHTTP(rec, req)
-	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "missing Idempotency-Key") {
-		t.Fatalf("status = %d body=%s, want missing Idempotency-Key", rec.Code, rec.Body.String())
-	}
-}
-
-func TestExecutionRequestSameKeyDifferentPayloadConflicts(t *testing.T) {
-	server := newExecutionTestServer(t, newTestService(fakeLedgerClient{}, &fakeFabricClient{}))
-	admin := tenantAdminSessionForTest(t, server)
-	project := createResourceWithSession(t, server, admin, http.MethodPost, "/api/projects", `{"organizationId":"org-alpha","workspaceId":"workspace-alpha"}`)
-	projectID := stringValue(project["projectId"])
-	task := createResourceWithSession(t, server, admin, http.MethodPost, "/api/projects/"+projectID+"/tasks", `{"organizationId":"org-alpha","workspaceId":"workspace-alpha"}`)
-	taskID := stringValue(task["taskId"])
-	path := "/api/execution-requests"
-	body := `{"organizationId":"org-alpha","workspaceId":"workspace-alpha","projectId":"` + projectID + `","taskId":"` + taskID + `","environmentRef":"environment-alpha"}`
-	first := requestWithSession(t, server, admin, http.MethodPost, path, body)
-	if first.Code != http.StatusCreated {
-		t.Fatalf("first status = %d: %s", first.Code, first.Body.String())
-	}
-	second := requestWithSession(t, server, admin, http.MethodPost, path, strings.Replace(body, "environment-alpha", "environment-beta", 1))
-	if second.Code != http.StatusConflict || !strings.Contains(second.Body.String(), "idempotency_conflict") {
-		t.Fatalf("second status = %d body=%s, want idempotency conflict", second.Code, second.Body.String())
-	}
-}
-
-func TestExecutionRoutesAuthorizeStrictOwners(t *testing.T) {
-	server := newExecutionTestServer(t, newTestService(fakeLedgerClient{}, &fakeFabricClient{}))
-	owner := loginForTest(t, server, "alpha@execution.example", "CorrectHorseBatteryStaple!")
-	rec := requestWithSession(t, server, owner, http.MethodPost, "/api/projects", `{"organizationId":"org-alpha","workspaceId":"workspace-alpha"}`)
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("owner status = %d body=%s, want created", rec.Code, rec.Body.String())
-	}
-
-	seedTenantMember(t, server.(*controlPlaneHTTPHandler).app.tables, "acct-beta", "org-beta", "usr-beta", "beta-execution@example.com")
-	outsider := loginForTest(t, server, "beta-execution@example.com", "CorrectHorseBatteryStaple!")
-	forbidden := requestWithSession(t, server, outsider, http.MethodPost, "/api/projects", `{"organizationId":"org-alpha","workspaceId":"workspace-alpha"}`)
-	if forbidden.Code != http.StatusForbidden || !strings.Contains(forbidden.Body.String(), "organization_membership_required") {
-		t.Fatalf("outsider status = %d body=%s, want organization_membership_required", forbidden.Code, forbidden.Body.String())
-	}
 }
 
 type fabricClientWithResourceOperations struct {

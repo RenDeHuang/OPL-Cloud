@@ -6,6 +6,8 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/netip"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -15,6 +17,40 @@ import (
 )
 
 func registerGatewayRoutes(mux *http.ServeMux, app *controlPlaneServer, service *controlplane.Service) {
+	mux.HandleFunc("GET /api/gateway/endpoint", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "private, no-store")
+		endpoint, err := service.GatewayPublicEndpoint()
+		if err != nil {
+			writeSourceEnvelope(w, http.StatusInternalServerError, "sub2api", "unavailable", nil)
+			return
+		}
+		writeSourceEnvelope(w, http.StatusOK, "sub2api", "available", map[string]any{"baseUrl": endpoint})
+	}))
+	mux.HandleFunc("GET /api/gateway/groups", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "private, no-store")
+		_, userID, credential, ok := app.gatewayUserContext(w, r)
+		if !ok {
+			return
+		}
+		groups, err := service.GatewayUserGroups(r.Context(), credential, userID)
+		if err != nil {
+			writeGatewaySourceError(w, err)
+			return
+		}
+		items := make([]any, 0, len(groups))
+		for _, group := range groups {
+			items = append(items, map[string]any{
+				"id": strconv.FormatInt(group.ID, 10), "name": group.Name, "description": group.Description,
+				"platform": group.Platform, "rateMultiplier": group.RateMultiplier,
+				"subscriptionType": group.SubscriptionType, "status": group.Status,
+			})
+		}
+		status := "available"
+		if len(items) == 0 {
+			status = "empty"
+		}
+		writeSourceEnvelope(w, http.StatusOK, "sub2api", status, map[string]any{"items": items, "total": len(items)})
+	}))
 	mux.HandleFunc("GET /api/gateway/wallet", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "private, no-store")
 		userID, ok := app.gatewaySub2APIUserID(w, r)
@@ -36,20 +72,24 @@ func registerGatewayRoutes(mux *http.ServeMux, app *controlPlaneServer, service 
 		if !ok {
 			return
 		}
-		keys, err := service.GatewayUserKeys(r.Context(), credential, userID)
+		query, ok := gatewayKeyPageQuery(w, r)
+		if !ok {
+			return
+		}
+		page, err := service.GatewayUserKeyPage(r.Context(), credential, userID, query)
 		if err != nil {
 			writeGatewaySourceError(w, err)
 			return
 		}
-		items := make([]any, 0, len(keys))
-		for _, key := range keys {
+		items := make([]any, 0, len(page.Items))
+		for _, key := range page.Items {
 			items = append(items, gatewayKeySummary(key))
 		}
 		status := "available"
 		if len(items) == 0 {
 			status = "empty"
 		}
-		writeSourceEnvelope(w, http.StatusOK, "sub2api", status, map[string]any{"items": items, "total": len(items), "page": 1, "pageSize": len(items)})
+		writeSourceEnvelope(w, http.StatusOK, "sub2api", status, map[string]any{"items": items, "total": page.Total, "page": page.Page, "pageSize": page.PageSize, "pages": page.Pages})
 	}))
 	mux.HandleFunc("GET /api/gateway/keys/{keyId}", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
 		app.gatewayKey(w, r, service)
@@ -106,23 +146,44 @@ func registerGatewayRoutes(mux *http.ServeMux, app *controlPlaneServer, service 
 }
 
 type createGatewayKeyRequest struct {
-	Name           string `json:"name"`
-	QuotaUSDMicros int64  `json:"quotaUsdMicros"`
-	ExpiresInDays  *int   `json:"expiresInDays,omitempty"`
+	Name                 string   `json:"name"`
+	GroupID              string   `json:"groupId"`
+	IPWhitelist          []string `json:"ipWhitelist,omitempty"`
+	IPBlacklist          []string `json:"ipBlacklist,omitempty"`
+	QuotaUSDMicros       int64    `json:"quotaUsdMicros"`
+	ExpiresInDays        *int     `json:"expiresInDays,omitempty"`
+	RateLimit5hUSDMicros int64    `json:"rateLimit5hUsdMicros,omitempty"`
+	RateLimit1dUSDMicros int64    `json:"rateLimit1dUsdMicros,omitempty"`
+	RateLimit7dUSDMicros int64    `json:"rateLimit7dUsdMicros,omitempty"`
 }
 
 type updateGatewayKeyRequest struct {
-	Name           *string `json:"name,omitempty"`
-	QuotaUSDMicros *int64  `json:"quotaUsdMicros,omitempty"`
-	Enabled        *bool   `json:"enabled,omitempty"`
+	Name                 *string   `json:"name,omitempty"`
+	GroupID              *string   `json:"groupId,omitempty"`
+	IPWhitelist          *[]string `json:"ipWhitelist,omitempty"`
+	IPBlacklist          *[]string `json:"ipBlacklist,omitempty"`
+	QuotaUSDMicros       *int64    `json:"quotaUsdMicros,omitempty"`
+	ExpiresAt            *string   `json:"expiresAt,omitempty"`
+	RateLimit5hUSDMicros *int64    `json:"rateLimit5hUsdMicros,omitempty"`
+	RateLimit1dUSDMicros *int64    `json:"rateLimit1dUsdMicros,omitempty"`
+	RateLimit7dUSDMicros *int64    `json:"rateLimit7dUsdMicros,omitempty"`
+	ResetQuota           *bool     `json:"resetQuota,omitempty"`
+	ResetRateLimitUsage  *bool     `json:"resetRateLimitUsage,omitempty"`
+	Enabled              *bool     `json:"enabled,omitempty"`
 }
 
 type gatewayKeyCommandEvidence struct {
-	ID             int64  `json:"id"`
-	Name           string `json:"name,omitempty"`
-	Status         string `json:"status"`
-	QuotaUSDMicros int64  `json:"quotaUsdMicros,omitempty"`
-	ExpiresAt      string `json:"expiresAt,omitempty"`
+	ID                   int64    `json:"id"`
+	Name                 string   `json:"name,omitempty"`
+	GroupID              int64    `json:"groupId,omitempty"`
+	Status               string   `json:"status"`
+	IPWhitelist          []string `json:"ipWhitelist,omitempty"`
+	IPBlacklist          []string `json:"ipBlacklist,omitempty"`
+	QuotaUSDMicros       int64    `json:"quotaUsdMicros,omitempty"`
+	RateLimit5hUSDMicros int64    `json:"rateLimit5hUsdMicros,omitempty"`
+	RateLimit1dUSDMicros int64    `json:"rateLimit1dUsdMicros,omitempty"`
+	RateLimit7dUSDMicros int64    `json:"rateLimit7dUsdMicros,omitempty"`
+	ExpiresAt            string   `json:"expiresAt,omitempty"`
 }
 
 type gatewayKeyCommandResult struct {
@@ -164,13 +225,21 @@ func (app *controlPlaneServer) createGatewayKey(w http.ResponseWriter, r *http.R
 		return
 	}
 	input.Name = strings.TrimSpace(input.Name)
-	if input.Name == "" || reservedWorkspaceKeyName(input.Name) || input.QuotaUSDMicros < 0 || input.ExpiresInDays != nil && *input.ExpiresInDays <= 0 {
+	groupID, groupOK := positiveGatewayGroupID(input.GroupID)
+	input.GroupID = strconv.FormatInt(groupID, 10)
+	input.IPWhitelist, ok = normalizeGatewayIPList(input.IPWhitelist)
+	if !ok {
+		writeError(w, http.StatusBadRequest, "invalid_gateway_key_request")
+		return
+	}
+	input.IPBlacklist, ok = normalizeGatewayIPList(input.IPBlacklist)
+	if !ok || !groupOK || input.Name == "" || len([]rune(input.Name)) > 100 || reservedWorkspaceKeyName(input.Name) || input.QuotaUSDMicros < 0 || input.RateLimit5hUSDMicros < 0 || input.RateLimit1dUSDMicros < 0 || input.RateLimit7dUSDMicros < 0 || input.ExpiresInDays != nil && *input.ExpiresInDays <= 0 {
 		writeError(w, http.StatusBadRequest, "invalid_gateway_key_request")
 		return
 	}
 	accountID := stringValue(user["accountId"])
 	operationID := "gateway-key-create-" + stableID(accountID, idempotencyKey)[:18]
-	requestHash := stableID("gateway-key-create-v1", accountID, input.Name, strconv.FormatInt(input.QuotaUSDMicros, 10), optionalInt(input.ExpiresInDays))
+	requestHash := gatewayKeyRequestHash("gateway-key-create-v2", accountID, "", input)
 	result := gatewayKeyCommandResult{RequestHash: requestHash, TargetStatus: "active"}
 	unlock := app.lockResource("gateway_key_command", operationID)
 	defer unlock()
@@ -187,7 +256,7 @@ func (app *controlPlaneServer) createGatewayKey(w http.ResponseWriter, r *http.R
 		}
 		result = existing
 		if result.KeyID > 0 {
-			if key, readErr := service.GatewayUserKey(r.Context(), credential, userID, result.KeyID); readErr == nil && key.Name == input.Name && key.QuotaUSDMicros == input.QuotaUSDMicros && key.Status == "active" {
+			if key, readErr := service.GatewayUserKey(r.Context(), credential, userID, result.KeyID); readErr == nil && gatewayKeyCreateMatches(key, input, groupID) {
 				result.Readback = gatewayKeyEvidence(key)
 				if !app.completeGatewayKeyCommand(r, operationID, accountID, operationID, "gateway.key_create", result) {
 					writeError(w, http.StatusInternalServerError, "state_persist_failed")
@@ -203,7 +272,10 @@ func (app *controlPlaneServer) createGatewayKey(w http.ResponseWriter, r *http.R
 		return
 	}
 	key, err := service.CreateGatewayUserKey(r.Context(), credential, userID, clients.Sub2APICreateKeyInput{
-		Name: input.Name, QuotaUSDMicros: input.QuotaUSDMicros, ExpiresInDays: input.ExpiresInDays,
+		Name: input.Name, GroupID: groupID, IPWhitelist: input.IPWhitelist, IPBlacklist: input.IPBlacklist,
+		QuotaUSDMicros: input.QuotaUSDMicros, ExpiresInDays: input.ExpiresInDays,
+		RateLimit5hUSDMicros: input.RateLimit5hUSDMicros, RateLimit1dUSDMicros: input.RateLimit1dUSDMicros,
+		RateLimit7dUSDMicros: input.RateLimit7dUSDMicros,
 	}, idempotencyKey)
 	if err != nil {
 		_ = app.saveGatewayKeyCommand(r.Context(), operationID, accountID, operationID, "gateway.key_create", "manual_review", result)
@@ -212,7 +284,7 @@ func (app *controlPlaneServer) createGatewayKey(w http.ResponseWriter, r *http.R
 	}
 	result.KeyID = key.ID
 	key, err = service.GatewayUserKey(r.Context(), credential, userID, key.ID)
-	if err != nil || key.Name != input.Name || key.QuotaUSDMicros != input.QuotaUSDMicros || key.Status != "active" {
+	if err != nil || !gatewayKeyCreateMatches(key, input, groupID) {
 		_ = app.saveGatewayKeyCommand(r.Context(), operationID, accountID, operationID, "gateway.key_create", "manual_review", result)
 		writeSourceEnvelope(w, http.StatusBadGateway, "sub2api", "unavailable", nil)
 		return
@@ -248,13 +320,13 @@ func (app *controlPlaneServer) updateGatewayKey(w http.ResponseWriter, r *http.R
 		return
 	}
 	var input updateGatewayKeyRequest
-	if decodeStrictGatewayRequest(r, &input) != nil || input.Name == nil && input.QuotaUSDMicros == nil && input.Enabled == nil {
+	if decodeStrictGatewayRequest(r, &input) != nil || gatewayKeyUpdateEmpty(input) {
 		writeError(w, http.StatusBadRequest, "invalid_gateway_key_request")
 		return
 	}
 	if input.Name != nil {
 		name := strings.TrimSpace(*input.Name)
-		if name == "" || reservedWorkspaceKeyName(name) {
+		if name == "" || len([]rune(name)) > 100 || reservedWorkspaceKeyName(name) {
 			writeError(w, http.StatusBadRequest, "invalid_gateway_key_request")
 			return
 		}
@@ -264,12 +336,82 @@ func (app *controlPlaneServer) updateGatewayKey(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusBadRequest, "invalid_gateway_key_request")
 		return
 	}
+	var groupID *int64
+	if input.GroupID != nil {
+		parsed, valid := positiveGatewayGroupID(*input.GroupID)
+		if !valid {
+			writeError(w, http.StatusBadRequest, "invalid_gateway_key_request")
+			return
+		}
+		canonical := strconv.FormatInt(parsed, 10)
+		input.GroupID, groupID = &canonical, &parsed
+	}
+	for _, list := range []*[]string{input.IPWhitelist, input.IPBlacklist} {
+		if list == nil {
+			continue
+		}
+		normalized, valid := normalizeGatewayIPList(*list)
+		if !valid {
+			writeError(w, http.StatusBadRequest, "invalid_gateway_key_request")
+			return
+		}
+		*list = normalized
+	}
+	if input.ExpiresAt != nil {
+		value := strings.TrimSpace(*input.ExpiresAt)
+		if value != "" {
+			parsed, err := time.Parse(time.RFC3339, value)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, "invalid_gateway_key_request")
+				return
+			}
+			value = parsed.UTC().Format(time.RFC3339Nano)
+		}
+		input.ExpiresAt = &value
+	}
+	for _, value := range []*int64{input.RateLimit5hUSDMicros, input.RateLimit1dUSDMicros, input.RateLimit7dUSDMicros} {
+		if value != nil && *value < 0 {
+			writeError(w, http.StatusBadRequest, "invalid_gateway_key_request")
+			return
+		}
+	}
 	target := current
 	if input.Name != nil {
 		target.Name = *input.Name
 	}
 	if input.QuotaUSDMicros != nil {
 		target.QuotaUSDMicros = *input.QuotaUSDMicros
+	}
+	if groupID != nil {
+		target.GroupID = groupID
+	}
+	if input.IPWhitelist != nil {
+		target.IPWhitelist = append([]string(nil), (*input.IPWhitelist)...)
+	}
+	if input.IPBlacklist != nil {
+		target.IPBlacklist = append([]string(nil), (*input.IPBlacklist)...)
+	}
+	if input.ExpiresAt != nil {
+		target.ExpiresAt = nil
+		if *input.ExpiresAt != "" {
+			parsed, _ := time.Parse(time.RFC3339Nano, *input.ExpiresAt)
+			target.ExpiresAt = &parsed
+		}
+	}
+	if input.RateLimit5hUSDMicros != nil {
+		target.RateLimit5hUSDMicros = *input.RateLimit5hUSDMicros
+	}
+	if input.RateLimit1dUSDMicros != nil {
+		target.RateLimit1dUSDMicros = *input.RateLimit1dUSDMicros
+	}
+	if input.RateLimit7dUSDMicros != nil {
+		target.RateLimit7dUSDMicros = *input.RateLimit7dUSDMicros
+	}
+	if input.ResetQuota != nil && *input.ResetQuota {
+		target.QuotaUsedUSDMicros = 0
+	}
+	if input.ResetRateLimitUsage != nil && *input.ResetRateLimitUsage {
+		target.Usage5hUSDMicros, target.Usage1dUSDMicros, target.Usage7dUSDMicros = 0, 0, 0
 	}
 	if input.Enabled != nil {
 		target.Status = "disabled"
@@ -280,7 +422,7 @@ func (app *controlPlaneServer) updateGatewayKey(w http.ResponseWriter, r *http.R
 	accountID := stringValue(user["accountId"])
 	resourceID := strconv.FormatInt(keyID, 10)
 	operationID := "gateway-key-update-" + stableID(accountID, idempotencyKey)[:18]
-	requestHash := stableID("gateway-key-update-v1", accountID, resourceID, optionalString(input.Name), optionalInt64(input.QuotaUSDMicros), optionalBool(input.Enabled))
+	requestHash := gatewayKeyRequestHash("gateway-key-update-v2", accountID, resourceID, input)
 	result := gatewayKeyCommandResult{RequestHash: requestHash, KeyID: keyID, TargetStatus: target.Status}
 	unlock := app.lockResource("gateway_key_command", operationID)
 	defer unlock()
@@ -310,7 +452,12 @@ func (app *controlPlaneServer) updateGatewayKey(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusInternalServerError, "state_persist_failed")
 		return
 	}
-	_, writeErr := service.UpdateGatewayUserKey(r.Context(), credential, userID, keyID, clients.Sub2APIUpdateKeyInput(input))
+	_, writeErr := service.UpdateGatewayUserKey(r.Context(), credential, userID, keyID, clients.Sub2APIUpdateKeyInput{
+		Name: input.Name, GroupID: groupID, IPWhitelist: input.IPWhitelist, IPBlacklist: input.IPBlacklist,
+		QuotaUSDMicros: input.QuotaUSDMicros, ExpiresAt: input.ExpiresAt, RateLimit5hUSDMicros: input.RateLimit5hUSDMicros,
+		RateLimit1dUSDMicros: input.RateLimit1dUSDMicros, RateLimit7dUSDMicros: input.RateLimit7dUSDMicros,
+		ResetQuota: input.ResetQuota, ResetRateLimitUsage: input.ResetRateLimitUsage, Enabled: input.Enabled,
+	})
 	readback, readErr := service.GatewayUserKey(r.Context(), credential, userID, keyID)
 	if readErr != nil || !gatewayKeyTargetMatches(readback, target) {
 		_ = app.saveGatewayKeyCommand(r.Context(), operationID, accountID, resourceID, "gateway.key_update", "manual_review", result)
@@ -485,12 +632,21 @@ func (app *controlPlaneServer) gatewayAccountUsageSummary(w http.ResponseWriter,
 }
 
 func gatewayKeySummary(key clients.Sub2APIWorkspaceKey) map[string]any {
-	var lastUsedAt, expiresAt any
+	var groupID, lastUsedAt, expiresAt, createdAt, updatedAt any
+	if key.GroupID != nil {
+		groupID = strconv.FormatInt(*key.GroupID, 10)
+	}
 	if key.LastUsedAt != nil {
 		lastUsedAt = key.LastUsedAt.UTC().Format(time.RFC3339Nano)
 	}
 	if key.ExpiresAt != nil {
 		expiresAt = key.ExpiresAt.UTC().Format(time.RFC3339Nano)
+	}
+	if !key.CreatedAt.IsZero() {
+		createdAt = key.CreatedAt.UTC().Format(time.RFC3339Nano)
+	}
+	if !key.UpdatedAt.IsZero() {
+		updatedAt = key.UpdatedAt.UTC().Format(time.RFC3339Nano)
 	}
 	workspace := reservedWorkspaceKeyName(key.Name)
 	kind := "general"
@@ -498,16 +654,28 @@ func gatewayKeySummary(key clients.Sub2APIWorkspaceKey) map[string]any {
 		kind = "workspace"
 	}
 	return map[string]any{
-		"id": strconv.FormatInt(key.ID, 10), "name": key.Name, "kind": kind, "status": key.Status,
+		"id": strconv.FormatInt(key.ID, 10), "name": key.Name, "groupId": groupID, "kind": kind, "status": key.Status,
+		"ipWhitelist": append([]string(nil), key.IPWhitelist...), "ipBlacklist": append([]string(nil), key.IPBlacklist...),
 		"quotaUsdMicros": key.QuotaUSDMicros, "quotaUsedUsdMicros": key.QuotaUsedUSDMicros,
-		"usage5hUsdMicros": key.Usage5hUSDMicros, "usage1dUsdMicros": key.Usage1dUSDMicros,
-		"usage7dUsdMicros": key.Usage7dUSDMicros, "lastUsedAt": lastUsedAt, "expiresAt": expiresAt,
+		"rateLimit5hUsdMicros": key.RateLimit5hUSDMicros, "rateLimit1dUsdMicros": key.RateLimit1dUSDMicros,
+		"rateLimit7dUsdMicros": key.RateLimit7dUSDMicros,
+		"usage5hUsdMicros":     key.Usage5hUSDMicros, "usage1dUsdMicros": key.Usage1dUSDMicros,
+		"usage7dUsdMicros": key.Usage7dUSDMicros, "currentConcurrency": key.CurrentConcurrency,
+		"lastUsedAt": lastUsedAt, "lastUsedIp": key.LastUsedIP, "expiresAt": expiresAt, "createdAt": createdAt, "updatedAt": updatedAt,
 		"manageable": !workspace, "deletable": !workspace,
 	}
 }
 
 func gatewayKeyEvidence(key clients.Sub2APIWorkspaceKey) *gatewayKeyCommandEvidence {
-	evidence := &gatewayKeyCommandEvidence{ID: key.ID, Name: key.Name, Status: key.Status, QuotaUSDMicros: key.QuotaUSDMicros}
+	evidence := &gatewayKeyCommandEvidence{
+		ID: key.ID, Name: key.Name, Status: key.Status, IPWhitelist: append([]string(nil), key.IPWhitelist...),
+		IPBlacklist: append([]string(nil), key.IPBlacklist...), QuotaUSDMicros: key.QuotaUSDMicros,
+		RateLimit5hUSDMicros: key.RateLimit5hUSDMicros, RateLimit1dUSDMicros: key.RateLimit1dUSDMicros,
+		RateLimit7dUSDMicros: key.RateLimit7dUSDMicros,
+	}
+	if key.GroupID != nil {
+		evidence.GroupID = *key.GroupID
+	}
 	if key.ExpiresAt != nil {
 		evidence.ExpiresAt = key.ExpiresAt.UTC().Format(time.RFC3339Nano)
 	}
@@ -515,7 +683,71 @@ func gatewayKeyEvidence(key clients.Sub2APIWorkspaceKey) *gatewayKeyCommandEvide
 }
 
 func gatewayKeyTargetMatches(got, want clients.Sub2APIWorkspaceKey) bool {
-	return got.ID == want.ID && got.UserID == want.UserID && got.Name == want.Name && got.Status == want.Status && got.QuotaUSDMicros == want.QuotaUSDMicros
+	return got.ID == want.ID && got.UserID == want.UserID && got.Name == want.Name && got.Status == want.Status && sameGatewayGroup(got.GroupID, want.GroupID) &&
+		slices.Equal(got.IPWhitelist, want.IPWhitelist) && slices.Equal(got.IPBlacklist, want.IPBlacklist) &&
+		got.QuotaUSDMicros == want.QuotaUSDMicros && got.QuotaUsedUSDMicros == want.QuotaUsedUSDMicros &&
+		got.RateLimit5hUSDMicros == want.RateLimit5hUSDMicros && got.RateLimit1dUSDMicros == want.RateLimit1dUSDMicros &&
+		got.RateLimit7dUSDMicros == want.RateLimit7dUSDMicros && got.Usage5hUSDMicros == want.Usage5hUSDMicros &&
+		got.Usage1dUSDMicros == want.Usage1dUSDMicros && got.Usage7dUSDMicros == want.Usage7dUSDMicros && sameGatewayTime(got.ExpiresAt, want.ExpiresAt)
+}
+
+func gatewayKeyCreateMatches(key clients.Sub2APIWorkspaceKey, input createGatewayKeyRequest, groupID int64) bool {
+	return key.Name == input.Name && key.Status == "active" && key.GroupID != nil && *key.GroupID == groupID &&
+		slices.Equal(key.IPWhitelist, input.IPWhitelist) && slices.Equal(key.IPBlacklist, input.IPBlacklist) &&
+		key.QuotaUSDMicros == input.QuotaUSDMicros && key.RateLimit5hUSDMicros == input.RateLimit5hUSDMicros &&
+		key.RateLimit1dUSDMicros == input.RateLimit1dUSDMicros && key.RateLimit7dUSDMicros == input.RateLimit7dUSDMicros &&
+		(input.ExpiresInDays == nil || key.ExpiresAt != nil)
+}
+
+func sameGatewayGroup(left, right *int64) bool {
+	return left == nil && right == nil || left != nil && right != nil && *left == *right
+}
+
+func sameGatewayTime(left, right *time.Time) bool {
+	return left == nil && right == nil || left != nil && right != nil && left.Equal(*right)
+}
+
+func gatewayKeyRequestHash(domain, accountID, resourceID string, input any) string {
+	payload, _ := json.Marshal(input)
+	return stableID(domain, accountID, resourceID, string(payload))
+}
+
+func gatewayKeyUpdateEmpty(input updateGatewayKeyRequest) bool {
+	return input.Name == nil && input.GroupID == nil && input.IPWhitelist == nil && input.IPBlacklist == nil && input.QuotaUSDMicros == nil &&
+		input.ExpiresAt == nil && input.RateLimit5hUSDMicros == nil && input.RateLimit1dUSDMicros == nil && input.RateLimit7dUSDMicros == nil &&
+		input.ResetQuota == nil && input.ResetRateLimitUsage == nil && input.Enabled == nil
+}
+
+func positiveGatewayGroupID(raw string) (int64, bool) {
+	value, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
+	return value, err == nil && value > 0 && strconv.FormatInt(value, 10) == strings.TrimSpace(raw)
+}
+
+func normalizeGatewayIPList(values []string) ([]string, bool) {
+	if len(values) > 100 {
+		return nil, false
+	}
+	normalized := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, raw := range values {
+		value := strings.TrimSpace(raw)
+		if value == "" {
+			return nil, false
+		}
+		if address, err := netip.ParseAddr(value); err == nil {
+			value = address.String()
+		} else if prefix, err := netip.ParsePrefix(value); err == nil {
+			value = prefix.Masked().String()
+		} else {
+			return nil, false
+		}
+		if _, duplicate := seen[value]; duplicate {
+			continue
+		}
+		seen[value] = struct{}{}
+		normalized = append(normalized, value)
+	}
+	return normalized, true
 }
 
 func gatewayKeyDeletedResponse(operationID string, keyID int64) map[string]any {
@@ -572,6 +804,42 @@ func decodeStrictGatewayRequest(r *http.Request, output any) error {
 		return errors.New("invalid gateway key request")
 	}
 	return nil
+}
+
+func gatewayKeyPageQuery(w http.ResponseWriter, r *http.Request) (clients.Sub2APIKeyPageQuery, bool) {
+	query := clients.Sub2APIKeyPageQuery{Page: 1, PageSize: 20, SortBy: "createdAt", SortOrder: "desc"}
+	var err error
+	if raw := strings.TrimSpace(r.URL.Query().Get("page")); raw != "" {
+		query.Page, err = strconv.Atoi(raw)
+	}
+	if err == nil {
+		if raw := strings.TrimSpace(r.URL.Query().Get("pageSize")); raw != "" {
+			query.PageSize, err = strconv.Atoi(raw)
+		}
+	}
+	query.Search = strings.TrimSpace(r.URL.Query().Get("search"))
+	query.Status = strings.TrimSpace(r.URL.Query().Get("status"))
+	if raw := strings.TrimSpace(r.URL.Query().Get("groupId")); raw != "" {
+		value, parseErr := strconv.ParseInt(raw, 10, 64)
+		if parseErr != nil || value < 0 || strconv.FormatInt(value, 10) != raw {
+			err = errors.New("invalid group")
+		} else {
+			query.GroupID = &value
+		}
+	}
+	if raw := strings.TrimSpace(r.URL.Query().Get("sortBy")); raw != "" {
+		query.SortBy = raw
+	}
+	if raw := strings.TrimSpace(r.URL.Query().Get("sortOrder")); raw != "" {
+		query.SortOrder = raw
+	}
+	validStatus := query.Status == "" || query.Status == "active" || query.Status == "disabled" || query.Status == "quota_exhausted" || query.Status == "expired"
+	validSort := query.SortBy == "name" || query.SortBy == "id" || query.SortBy == "currentConcurrency" || query.SortBy == "expiresAt" || query.SortBy == "status" || query.SortBy == "lastUsedAt" || query.SortBy == "createdAt"
+	if err != nil || query.Page <= 0 || query.Page > 1_000_000 || query.PageSize <= 0 || query.PageSize > 100 || len([]rune(query.Search)) > 100 || !validStatus || !validSort || query.SortOrder != "asc" && query.SortOrder != "desc" {
+		writeError(w, http.StatusBadRequest, "invalid_gateway_key_pagination")
+		return clients.Sub2APIKeyPageQuery{}, false
+	}
+	return query, true
 }
 
 func gatewayUsagePagination(w http.ResponseWriter, r *http.Request) (int, int, bool) {

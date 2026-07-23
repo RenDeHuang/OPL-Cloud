@@ -63,6 +63,18 @@ type Sub2APIUserKeyReadClient interface {
 	UserKey(context.Context, SessionDelegatedCredential, int64, int64) (Sub2APIWorkspaceKey, error)
 }
 
+type Sub2APIUserKeyPageClient interface {
+	UserKeyPage(context.Context, SessionDelegatedCredential, int64, Sub2APIKeyPageQuery) (Sub2APIKeyPage, error)
+}
+
+type Sub2APIUserGroupClient interface {
+	UserGroups(context.Context, SessionDelegatedCredential, int64) ([]Sub2APIGroup, error)
+}
+
+type Sub2APIPublicEndpointClient interface {
+	PublicEndpoint() string
+}
+
 type Sub2APIUserKeyMutationClient interface {
 	CreateUserKey(context.Context, SessionDelegatedCredential, int64, Sub2APICreateKeyInput, string) (Sub2APIWorkspaceKey, error)
 	UpdateUserKey(context.Context, SessionDelegatedCredential, int64, int64, Sub2APIUpdateKeyInput) (Sub2APIWorkspaceKey, error)
@@ -180,45 +192,108 @@ type SessionDelegatedCredential struct {
 }
 
 type Sub2APICreateKeyInput struct {
-	Name           string
-	QuotaUSDMicros int64
-	ExpiresInDays  *int
+	Name                 string
+	GroupID              int64
+	IPWhitelist          []string
+	IPBlacklist          []string
+	QuotaUSDMicros       int64
+	ExpiresInDays        *int
+	RateLimit5hUSDMicros int64
+	RateLimit1dUSDMicros int64
+	RateLimit7dUSDMicros int64
 }
 
 type Sub2APIUpdateKeyInput struct {
-	Name           *string
-	QuotaUSDMicros *int64
-	Enabled        *bool
+	Name                 *string
+	GroupID              *int64
+	IPWhitelist          *[]string
+	IPBlacklist          *[]string
+	QuotaUSDMicros       *int64
+	ExpiresAt            *string
+	RateLimit5hUSDMicros *int64
+	RateLimit1dUSDMicros *int64
+	RateLimit7dUSDMicros *int64
+	ResetQuota           *bool
+	ResetRateLimitUsage  *bool
+	Enabled              *bool
 }
 
 type Sub2APIWorkspaceKey struct {
-	ID                 int64
-	UserID             int64
-	Name               string
-	Key                string
-	Status             string
-	QuotaUSDMicros     int64
-	QuotaUsedUSDMicros int64
-	Usage5hUSDMicros   int64
-	Usage1dUSDMicros   int64
-	Usage7dUSDMicros   int64
-	LastUsedAt         *time.Time
-	ExpiresAt          *time.Time
+	ID                   int64
+	UserID               int64
+	Name                 string
+	Key                  string
+	GroupID              *int64
+	Status               string
+	IPWhitelist          []string
+	IPBlacklist          []string
+	QuotaUSDMicros       int64
+	QuotaUsedUSDMicros   int64
+	RateLimit5hUSDMicros int64
+	RateLimit1dUSDMicros int64
+	RateLimit7dUSDMicros int64
+	Usage5hUSDMicros     int64
+	Usage1dUSDMicros     int64
+	Usage7dUSDMicros     int64
+	LastUsedAt           *time.Time
+	LastUsedIP           *string
+	ExpiresAt            *time.Time
+	CreatedAt            time.Time
+	UpdatedAt            time.Time
+	CurrentConcurrency   int
+}
+
+type Sub2APIKeyPageQuery struct {
+	Page      int
+	PageSize  int
+	Search    string
+	Status    string
+	GroupID   *int64
+	SortBy    string
+	SortOrder string
+}
+
+type Sub2APIKeyPage struct {
+	Items    []Sub2APIWorkspaceKey
+	Total    int
+	Page     int
+	PageSize int
+	Pages    int
+}
+
+type Sub2APIGroup struct {
+	ID               int64
+	Name             string
+	Description      string
+	Platform         string
+	RateMultiplier   float64
+	SubscriptionType string
+	Status           string
 }
 
 type sub2APIKeyPayload struct {
-	ID         int64        `json:"id"`
-	UserID     int64        `json:"user_id"`
-	Name       string       `json:"name"`
-	Key        string       `json:"key"`
-	Status     string       `json:"status"`
-	Quota      *json.Number `json:"quota"`
-	QuotaUsed  *json.Number `json:"quota_used"`
-	Usage5h    *json.Number `json:"usage_5h"`
-	Usage1d    *json.Number `json:"usage_1d"`
-	Usage7d    *json.Number `json:"usage_7d"`
-	LastUsedAt *time.Time   `json:"last_used_at"`
-	ExpiresAt  *time.Time   `json:"expires_at"`
+	ID                 int64        `json:"id"`
+	UserID             int64        `json:"user_id"`
+	Name               string       `json:"name"`
+	Key                string       `json:"key"`
+	GroupID            *int64       `json:"group_id"`
+	Status             string       `json:"status"`
+	IPWhitelist        []string     `json:"ip_whitelist"`
+	IPBlacklist        []string     `json:"ip_blacklist"`
+	Quota              *json.Number `json:"quota"`
+	QuotaUsed          *json.Number `json:"quota_used"`
+	RateLimit5h        *json.Number `json:"rate_limit_5h"`
+	RateLimit1d        *json.Number `json:"rate_limit_1d"`
+	RateLimit7d        *json.Number `json:"rate_limit_7d"`
+	Usage5h            *json.Number `json:"usage_5h"`
+	Usage1d            *json.Number `json:"usage_1d"`
+	Usage7d            *json.Number `json:"usage_7d"`
+	LastUsedAt         *time.Time   `json:"last_used_at"`
+	LastUsedIP         *string      `json:"last_used_ip"`
+	ExpiresAt          *time.Time   `json:"expires_at"`
+	CreatedAt          time.Time    `json:"created_at"`
+	UpdatedAt          time.Time    `json:"updated_at"`
+	CurrentConcurrency int          `json:"current_concurrency"`
 }
 
 type Sub2APIUsageQuery struct {
@@ -380,6 +455,10 @@ func NewSub2APIHTTPClient(config Sub2APIConfig, client *http.Client) (*Sub2APIHT
 		client:        client,
 		identityGate:  make(chan struct{}, 1),
 	}, nil
+}
+
+func (c *Sub2APIHTTPClient) PublicEndpoint() string {
+	return c.baseURL + "/v1"
 }
 
 func (c *Sub2APIHTTPClient) Version(ctx context.Context) (string, error) {
@@ -886,7 +965,7 @@ func sub2APIKey(item sub2APIKeyPayload, userID int64) (Sub2APIWorkspaceKey, erro
 	if status == "inactive" {
 		status = "disabled"
 	}
-	if item.ID <= 0 || strings.TrimSpace(item.Name) == "" || (status != "active" && status != "disabled") {
+	if item.ID <= 0 || strings.TrimSpace(item.Name) == "" || (status != "active" && status != "disabled" && status != "quota_exhausted" && status != "expired") {
 		return Sub2APIWorkspaceKey{}, errors.New("invalid sub2api api key")
 	}
 	values := []*json.Number{item.Quota, item.QuotaUsed, item.Usage5h, item.Usage1d, item.Usage7d}
@@ -901,11 +980,131 @@ func sub2APIKey(item sub2APIKeyPayload, userID int64) (Sub2APIWorkspaceKey, erro
 			return Sub2APIWorkspaceKey{}, errors.New("invalid sub2api workspace key usage")
 		}
 	}
+	rateLimits := make([]int64, 3)
+	for i, value := range []*json.Number{item.RateLimit5h, item.RateLimit1d, item.RateLimit7d} {
+		if value == nil {
+			continue
+		}
+		var err error
+		rateLimits[i], err = decimalUSDMicros(*value)
+		if err != nil || rateLimits[i] < 0 {
+			return Sub2APIWorkspaceKey{}, errors.New("invalid sub2api api key rate limit")
+		}
+	}
+	if item.GroupID != nil && *item.GroupID <= 0 || item.CurrentConcurrency < 0 {
+		return Sub2APIWorkspaceKey{}, errors.New("invalid sub2api api key")
+	}
 	return Sub2APIWorkspaceKey{
-		ID: item.ID, UserID: item.UserID, Name: strings.TrimSpace(item.Name), Key: item.Key, Status: status,
-		QuotaUSDMicros: micros[0], QuotaUsedUSDMicros: micros[1], Usage5hUSDMicros: micros[2],
-		Usage1dUSDMicros: micros[3], Usage7dUSDMicros: micros[4], LastUsedAt: item.LastUsedAt, ExpiresAt: item.ExpiresAt,
+		ID: item.ID, UserID: item.UserID, Name: strings.TrimSpace(item.Name), Key: item.Key, GroupID: item.GroupID, Status: status,
+		IPWhitelist: append([]string(nil), item.IPWhitelist...), IPBlacklist: append([]string(nil), item.IPBlacklist...),
+		QuotaUSDMicros: micros[0], QuotaUsedUSDMicros: micros[1], RateLimit5hUSDMicros: rateLimits[0],
+		RateLimit1dUSDMicros: rateLimits[1], RateLimit7dUSDMicros: rateLimits[2], Usage5hUSDMicros: micros[2],
+		Usage1dUSDMicros: micros[3], Usage7dUSDMicros: micros[4], LastUsedAt: item.LastUsedAt, LastUsedIP: item.LastUsedIP,
+		ExpiresAt: item.ExpiresAt, CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt, CurrentConcurrency: item.CurrentConcurrency,
 	}, nil
+}
+
+func (c *Sub2APIHTTPClient) UserKeyPage(ctx context.Context, credential SessionDelegatedCredential, userID int64, query Sub2APIKeyPageQuery) (Sub2APIKeyPage, error) {
+	if err := validateDelegatedKeyRequest(credential, userID); err != nil {
+		return Sub2APIKeyPage{}, err
+	}
+	query.Search = strings.TrimSpace(query.Search)
+	sortBy := map[string]string{
+		"name": "name", "id": "id", "currentConcurrency": "current_concurrency", "expiresAt": "expires_at",
+		"status": "status", "lastUsedAt": "last_used_at", "createdAt": "created_at",
+	}[query.SortBy]
+	if sortBy == "" && query.SortBy == "" {
+		sortBy = "created_at"
+	}
+	status := map[string]string{"": "", "active": "active", "disabled": "inactive", "quota_exhausted": "quota_exhausted", "expired": "expired"}[query.Status]
+	if query.Page <= 0 || query.Page > maxSub2APIUsagePage || query.PageSize <= 0 || query.PageSize > 100 || len([]rune(query.Search)) > 100 || sortBy == "" || (query.SortOrder != "asc" && query.SortOrder != "desc") || status == "" && query.Status != "" || query.GroupID != nil && *query.GroupID < 0 {
+		return Sub2APIKeyPage{}, errors.New("invalid sub2api key page query")
+	}
+	values := url.Values{
+		"page": {strconv.Itoa(query.Page)}, "page_size": {strconv.Itoa(query.PageSize)}, "sort_by": {sortBy}, "sort_order": {query.SortOrder},
+	}
+	if query.Search != "" {
+		values.Set("search", query.Search)
+	}
+	if status != "" {
+		values.Set("status", status)
+	}
+	if query.GroupID != nil {
+		values.Set("group_id", strconv.FormatInt(*query.GroupID, 10))
+	}
+	body, err := c.request(ctx, http.MethodGet, "/api/v1/keys?"+values.Encode(), nil, credential.Bearer, "")
+	if err != nil {
+		return Sub2APIKeyPage{}, normalizeSub2APIKeyError(err)
+	}
+	var data struct {
+		Items    []sub2APIKeyPayload `json:"items"`
+		Total    int                 `json:"total"`
+		Page     int                 `json:"page"`
+		PageSize int                 `json:"page_size"`
+		Pages    int                 `json:"pages"`
+	}
+	if err := decodeSub2APIEnvelope(body, &data); err != nil {
+		return Sub2APIKeyPage{}, err
+	}
+	expectedPages := 1
+	if data.Total > 0 {
+		expectedPages = (data.Total + query.PageSize - 1) / query.PageSize
+	}
+	if data.Total < 0 || data.Total > maxSub2APIKeys || data.Page != query.Page || data.PageSize != query.PageSize || data.Pages != expectedPages || len(data.Items) > query.PageSize || query.Page > data.Pages {
+		return Sub2APIKeyPage{}, errors.New("invalid sub2api api key pagination")
+	}
+	items := make([]Sub2APIWorkspaceKey, 0, len(data.Items))
+	seen := make(map[int64]struct{}, len(data.Items))
+	for _, item := range data.Items {
+		key, err := sub2APIKey(item, userID)
+		if err != nil {
+			return Sub2APIKeyPage{}, err
+		}
+		if _, duplicate := seen[key.ID]; duplicate {
+			return Sub2APIKeyPage{}, errors.New("invalid sub2api api key pagination")
+		}
+		seen[key.ID] = struct{}{}
+		items = append(items, key)
+	}
+	return Sub2APIKeyPage{Items: items, Total: data.Total, Page: data.Page, PageSize: data.PageSize, Pages: data.Pages}, nil
+}
+
+func (c *Sub2APIHTTPClient) UserGroups(ctx context.Context, credential SessionDelegatedCredential, userID int64) ([]Sub2APIGroup, error) {
+	if err := validateDelegatedKeyRequest(credential, userID); err != nil {
+		return nil, err
+	}
+	body, err := c.request(ctx, http.MethodGet, "/api/v1/groups/available", nil, credential.Bearer, "")
+	if err != nil {
+		return nil, normalizeSub2APIKeyError(err)
+	}
+	var data []struct {
+		ID               int64   `json:"id"`
+		Name             string  `json:"name"`
+		Description      string  `json:"description"`
+		Platform         string  `json:"platform"`
+		RateMultiplier   float64 `json:"rate_multiplier"`
+		SubscriptionType string  `json:"subscription_type"`
+		Status           string  `json:"status"`
+	}
+	if err := decodeSub2APIEnvelope(body, &data); err != nil {
+		return nil, err
+	}
+	if len(data) > 1000 {
+		return nil, errors.New("invalid sub2api groups")
+	}
+	groups := make([]Sub2APIGroup, 0, len(data))
+	seen := make(map[int64]struct{}, len(data))
+	for _, item := range data {
+		if item.ID <= 0 || strings.TrimSpace(item.Name) == "" || item.RateMultiplier < 0 {
+			return nil, errors.New("invalid sub2api group")
+		}
+		if _, duplicate := seen[item.ID]; duplicate {
+			return nil, errors.New("invalid sub2api groups")
+		}
+		seen[item.ID] = struct{}{}
+		groups = append(groups, Sub2APIGroup{ID: item.ID, Name: strings.TrimSpace(item.Name), Description: item.Description, Platform: item.Platform, RateMultiplier: item.RateMultiplier, SubscriptionType: item.SubscriptionType, Status: item.Status})
+	}
+	return groups, nil
 }
 
 func (c *Sub2APIHTTPClient) UserKeys(ctx context.Context, credential SessionDelegatedCredential, userID int64) ([]Sub2APIWorkspaceKey, error) {
@@ -990,12 +1189,30 @@ func (c *Sub2APIHTTPClient) CreateUserKey(ctx context.Context, credential Sessio
 		return Sub2APIWorkspaceKey{}, err
 	}
 	input.Name = strings.TrimSpace(input.Name)
-	if input.Name == "" || input.QuotaUSDMicros < 0 || strings.TrimSpace(idempotencyKey) == "" || input.ExpiresInDays != nil && *input.ExpiresInDays <= 0 {
+	if input.Name == "" || input.GroupID < 0 || input.QuotaUSDMicros < 0 || input.RateLimit5hUSDMicros < 0 || input.RateLimit1dUSDMicros < 0 || input.RateLimit7dUSDMicros < 0 || strings.TrimSpace(idempotencyKey) == "" || input.ExpiresInDays != nil && *input.ExpiresInDays <= 0 {
 		return Sub2APIWorkspaceKey{}, errors.New("invalid sub2api key create input")
 	}
 	request := map[string]any{"name": input.Name, "quota": usdMicrosJSON(input.QuotaUSDMicros)}
+	if input.GroupID > 0 {
+		request["group_id"] = input.GroupID
+	}
+	if len(input.IPWhitelist) > 0 {
+		request["ip_whitelist"] = input.IPWhitelist
+	}
+	if len(input.IPBlacklist) > 0 {
+		request["ip_blacklist"] = input.IPBlacklist
+	}
 	if input.ExpiresInDays != nil {
 		request["expires_in_days"] = *input.ExpiresInDays
+	}
+	if input.RateLimit5hUSDMicros > 0 {
+		request["rate_limit_5h"] = usdMicrosJSON(input.RateLimit5hUSDMicros)
+	}
+	if input.RateLimit1dUSDMicros > 0 {
+		request["rate_limit_1d"] = usdMicrosJSON(input.RateLimit1dUSDMicros)
+	}
+	if input.RateLimit7dUSDMicros > 0 {
+		request["rate_limit_7d"] = usdMicrosJSON(input.RateLimit7dUSDMicros)
 	}
 	body, err := c.request(ctx, http.MethodPost, "/api/v1/keys", request, credential.Bearer, strings.TrimSpace(idempotencyKey))
 	if err != nil {
@@ -1024,6 +1241,44 @@ func (c *Sub2APIHTTPClient) UpdateUserKey(ctx context.Context, credential Sessio
 			return Sub2APIWorkspaceKey{}, errors.New("invalid sub2api key update input")
 		}
 		request["quota"] = usdMicrosJSON(*input.QuotaUSDMicros)
+	}
+	if input.GroupID != nil {
+		if *input.GroupID <= 0 {
+			return Sub2APIWorkspaceKey{}, errors.New("invalid sub2api key update input")
+		}
+		request["group_id"] = *input.GroupID
+	}
+	if input.IPWhitelist != nil {
+		request["ip_whitelist"] = *input.IPWhitelist
+	}
+	if input.IPBlacklist != nil {
+		request["ip_blacklist"] = *input.IPBlacklist
+	}
+	if input.ExpiresAt != nil {
+		expiresAt := strings.TrimSpace(*input.ExpiresAt)
+		if expiresAt != "" {
+			if _, err := time.Parse(time.RFC3339, expiresAt); err != nil {
+				return Sub2APIWorkspaceKey{}, errors.New("invalid sub2api key update input")
+			}
+		}
+		request["expires_at"] = expiresAt
+	}
+	for field, value := range map[string]*int64{
+		"rate_limit_5h": input.RateLimit5hUSDMicros, "rate_limit_1d": input.RateLimit1dUSDMicros, "rate_limit_7d": input.RateLimit7dUSDMicros,
+	} {
+		if value == nil {
+			continue
+		}
+		if *value < 0 {
+			return Sub2APIWorkspaceKey{}, errors.New("invalid sub2api key update input")
+		}
+		request[field] = usdMicrosJSON(*value)
+	}
+	if input.ResetQuota != nil {
+		request["reset_quota"] = *input.ResetQuota
+	}
+	if input.ResetRateLimitUsage != nil {
+		request["reset_rate_limit_usage"] = *input.ResetRateLimitUsage
 	}
 	if input.Enabled != nil {
 		request["status"] = "inactive"

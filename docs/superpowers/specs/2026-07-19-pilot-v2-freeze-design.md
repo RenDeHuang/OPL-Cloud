@@ -1,6 +1,8 @@
 # OPL Cloud Pilot V2 产品与工程冻结稿
 
-> 状态：`approved_for_local_code_complete_execution`
+> 状态：`Historical / Superseded`
+> 本文仅保留历史设计上下文；当前行为以 `docs/invariants.md` 和 current machine contracts
+> 为准，不得据此重新执行 S0-S14 或旧发布步骤。
 > 实现仓库基线：`833599755a05d222683ee81fc74791eb549cda26`
 > OPL Cloud 架构基线：`8e1b552bea94ea368ac2f20293b5a601fa3e204e`
 > 冻结分支：`codex/pilot-v2-freeze`

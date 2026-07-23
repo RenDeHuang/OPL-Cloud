@@ -9,8 +9,6 @@ import {
   CircleDollarSign,
   Copy,
   Database,
-  Eye,
-  EyeOff,
   LayoutDashboard,
   LogOut,
   Megaphone,
@@ -28,18 +26,16 @@ import {
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch, type Component } from "vue";
 
 import { currentSession, login, logoutLocalFirst } from "./api/auth-api.ts";
+import KeysPanel from "./components/keys/KeysPanel.vue";
 import {
-  createGatewayKey,
   createOperatorAnnouncement,
   createWalletAdjustment,
   disableOperatorAccount as disableOperatorAccountCommand,
-  deleteGatewayKey,
   getAnnouncements,
   getBillingReceipt,
   getBillingReceipts,
   getGatewayAccountUsageSummary,
   getGatewayBalanceHistory,
-  getGatewayKey,
   getGatewayKeyUsage,
   getGatewayKeyUsageSummary,
   getGatewayKeys,
@@ -61,7 +57,6 @@ import {
   recoverWalletAdjustment as recoverOperatorWalletAdjustment,
   resolveBillingReview,
   revealGatewayKey,
-  updateGatewayKey,
   withdrawOperatorAnnouncement
 } from "./api/console-read-api.ts";
 import {
@@ -84,11 +79,9 @@ import type {
   BillingReceipt,
   BillingReceiptPage,
   BillingReviewResolutionRequest,
-  CreateGatewayKeyRequest,
   GatewayAccountUsageSummaryDTO,
   GatewayKeySecretDTO,
   GatewayKeyPageDTO,
-  GatewayKeySummaryDTO,
   GatewayKeyUsagePageDTO,
   GatewayUsageSummaryDTO,
   GatewayWallet,
@@ -176,7 +169,7 @@ const receiptCursor = ref("");
 const receiptCursorStack = ref<string[]>([]);
 const selectedReceiptId = ref("");
 const sidebarOpen = ref(false);
-const modal = ref<"workspace" | "api-key" | "admin-user" | "wallet-adjustment" | "announcement" | "">("");
+const modal = ref<"workspace" | "admin-user" | "wallet-adjustment" | "announcement" | "">("");
 const mutationBusy = ref(false);
 const gatewayBusy = ref(false);
 const announcementBusy = ref("");
@@ -188,7 +181,6 @@ const loginForm = reactive({ email: "", password: "" });
 const loginBusy = ref(false);
 const loginError = ref("");
 const launchForm = reactive<{ name: string; packageId: PlanId }>({ name: "", packageId: "basic" });
-const keyForm = reactive({ name: "", quotaUsd: 10, expiresInDays: 30 });
 const adminUserForm = reactive({ email: "", password: "", name: "" });
 const walletAdjustmentForm = reactive<WalletAdjustmentRequest>({ kind: "recharge", amountUsd: "", reason: "", confirmationAccountId: "", relatedOperationId: "" });
 const announcementForm = reactive<AnnouncementDraftRequest>({ title: "", body: "", startsAt: "", endsAt: "" });
@@ -207,15 +199,12 @@ let receiptDetailRequestGeneration = 0;
 let launchPollGeneration = 0;
 let workspaceLaunchIntent: { input: WorkspaceLaunchRequest; idempotencyKey: string } | null = null;
 let runtimeRotationIntent: { workspaceId: string; idempotencyKey: string } | null = null;
-let gatewayKeyCreateIntent: { input: CreateGatewayKeyRequest; idempotencyKey: string } | null = null;
 let walletAdjustmentIntent: { accountId: string; input: WalletAdjustmentRequest; idempotencyKey: string } | null = null;
 let walletAdjustmentRecoveryIntent: { operationId: string; input: WalletAdjustmentRecoveryRequest; idempotencyKey: string } | null = null;
 let operatorProvisionIntent: { input: ProvisionAccountRequest; idempotencyKey: string } | null = null;
 let billingReviewIntent: { resourceType: string; resourceId: string; input: BillingReviewResolutionRequest; idempotencyKey: string } | null = null;
 let workspaceLaunchRecoveryIntent: { operationId: string; input: WorkspaceLaunchRecoveryRequest; idempotencyKey: string } | null = null;
 let announcementCreateIntent: { input: AnnouncementDraftRequest; idempotencyKey: string } | null = null;
-const gatewayKeyToggleIntents = new Map<string, { targetStatus: GatewayKeySummaryDTO["status"]; idempotencyKey: string }>();
-const gatewayKeyDeleteIntents = new Map<string, string>();
 const operatorDisableIntents = new Map<string, string>();
 const announcementPublishIntents = new Map<string, { input: AnnouncementScheduleRequest; idempotencyKey: string }>();
 const announcementWithdrawIntents = new Map<string, string>();
@@ -393,7 +382,6 @@ function closeModal() {
   if (modal.value === "admin-user") operatorProvisionIntent = null;
   if (modal.value === "announcement") announcementCreateIntent = null;
   Object.assign(launchForm, { name: "", packageId: "basic" });
-  Object.assign(keyForm, { name: "", quotaUsd: 10, expiresInDays: 30 });
   Object.assign(adminUserForm, { email: "", password: "", name: "" });
   Object.assign(walletAdjustmentForm, { kind: "recharge", amountUsd: "", reason: "", confirmationAccountId: "", relatedOperationId: "" });
   Object.assign(announcementForm, { title: "", body: "", startsAt: "", endsAt: "" });
@@ -449,15 +437,12 @@ function clearSessionState() {
   receiptCursorStack.value = [];
   workspaceLaunchIntent = null;
   runtimeRotationIntent = null;
-  gatewayKeyCreateIntent = null;
   walletAdjustmentIntent = null;
   walletAdjustmentRecoveryIntent = null;
   operatorProvisionIntent = null;
   billingReviewIntent = null;
   workspaceLaunchRecoveryIntent = null;
   announcementCreateIntent = null;
-  gatewayKeyToggleIntents.clear();
-  gatewayKeyDeleteIntents.clear();
   operatorDisableIntents.clear();
   announcementPublishIntents.clear();
   announcementWithdrawIntents.clear();
@@ -736,7 +721,7 @@ async function loadCustomer() {
   const requestStillCurrent = currentSessionRequest();
   if (apiRoute.value) {
     if (activeApiPage.value === "overview") await Promise.all([loadWallet(), loadAccountUsage(), loadHistory()]);
-    else await loadKeys();
+    else if (activeApiPage.value === "usage") await loadKeys();
     return;
   }
   if (path.value.startsWith("/console/announcements")) {
@@ -897,7 +882,7 @@ async function signOut() {
   }
 }
 
-function openModal(next: "workspace" | "api-key" | "admin-user" | "wallet-adjustment" | "announcement") {
+function openModal(next: "workspace" | "admin-user" | "wallet-adjustment" | "announcement") {
   modal.value = next;
   if (next === "workspace") launchForm.name = workspace.value?.name || "";
   if (next === "wallet-adjustment") walletAdjustmentForm.confirmationAccountId = selectedOperatorAccountId.value;
@@ -1067,18 +1052,16 @@ async function rotateWorkspace() {
   finally { if (requestStillCurrent()) runtimeBusy.value = false; }
 }
 
-async function revealKey(key?: GatewayKeySummaryDTO) {
+async function revealKey() {
   const requestStillCurrent = currentSessionRequest();
-  if ((!key && !workspaceKeyId.value) || gatewayBusy.value) return;
+  if (!workspaceKeyId.value || gatewayBusy.value) return;
   const requestPath = path.value;
   const userId = session.value?.user.id || "";
   clearSecrets();
   const requestGeneration = secretRequestGeneration;
   gatewayBusy.value = true;
   try {
-    const response = key
-      ? await revealGatewayKey(key.id, session.value?.csrfToken || "")
-      : await revealGatewayKey(workspaceKeyId.value, session.value?.csrfToken || "");
+    const response = await revealGatewayKey(workspaceKeyId.value, session.value?.csrfToken || "");
     if (!requestStillCurrent()) return;
     if (!secretResponseStillCurrent(requestGeneration, requestPath, userId)) return;
     revealedApiKey.value = response.available ? response.data : null;
@@ -1096,131 +1079,12 @@ async function copySecret(value: string | undefined, success: string) {
   catch { flash("复制失败，请重试", "danger"); }
 }
 
-function copyKey(key: GatewayKeySummaryDTO) {
-  return copySecret(revealedApiKey.value?.id === key.id ? revealedApiKey.value.value : undefined, "API Key 已复制");
-}
-
 function copyWorkspaceKey() {
   return copySecret(revealedApiKey.value?.id === workspaceKeyId.value ? revealedApiKey.value.value : undefined, "Workspace Key 已复制");
 }
 
 function copyWorkspacePassword() {
   return copySecret(revealedWorkspaceCredentials.value?.password, "Workspace 密码已复制");
-}
-
-async function toggleKey(key: GatewayKeySummaryDTO) {
-  const requestStillCurrent = currentSessionRequest();
-  if (!key.manageable || gatewayBusy.value) return;
-  const expectedStatus = key.status === "active" ? "disabled" : "active";
-  let intent = gatewayKeyToggleIntents.get(key.id);
-  if (!intent || intent.targetStatus !== expectedStatus) {
-    intent = { targetStatus: expectedStatus, idempotencyKey: `key-toggle:${crypto.randomUUID()}` };
-    gatewayKeyToggleIntents.set(key.id, intent);
-  }
-  gatewayBusy.value = true;
-  clearSecrets();
-  try {
-    let updateError: unknown = null;
-    try {
-      const updated = await updateGatewayKey(key.id, { enabled: key.status !== "active" }, session.value?.csrfToken || "", intent.idempotencyKey);
-      if (!requestStillCurrent()) return;
-      if (!updated.available || updated.data.status !== expectedStatus) updateError = new Error("gateway_key_unavailable");
-    } catch (error) {
-      if (!requestStillCurrent()) return;
-      updateError = error;
-    }
-    let readback: SourceEnvelope<GatewayKeySummaryDTO>;
-    try {
-      readback = await getGatewayKey(key.id);
-      if (!requestStillCurrent()) return;
-    } catch (error) {
-      if (!requestStillCurrent()) return;
-      throw updateError || error;
-    }
-    if (!readback.available || readback.data.status !== expectedStatus || readback.data.id !== key.id) throw updateError || new Error("gateway_key_unavailable");
-    gatewayKeyToggleIntents.delete(key.id);
-    await loadKeys();
-    if (!requestStillCurrent()) return;
-    flash(key.status === "active" ? "API Key 已停用" : "API Key 已启用");
-  } catch (error) { if (requestStillCurrent()) flash(friendlyError(error), "danger"); }
-  finally { if (requestStillCurrent()) gatewayBusy.value = false; }
-}
-
-async function removeKey(key: GatewayKeySummaryDTO) {
-  const requestStillCurrent = currentSessionRequest();
-  if (!key.deletable || gatewayBusy.value || !window.confirm(`删除 API Key「${key.name}」？`)) return;
-  let idempotencyKey = gatewayKeyDeleteIntents.get(key.id);
-  if (!idempotencyKey) {
-    idempotencyKey = `key-delete:${crypto.randomUUID()}`;
-    gatewayKeyDeleteIntents.set(key.id, idempotencyKey);
-  }
-  gatewayBusy.value = true;
-  clearSecrets();
-  try {
-    let deleteError: unknown = null;
-    try {
-      const deleted = await deleteGatewayKey(key.id, session.value?.csrfToken || "", idempotencyKey);
-      if (!requestStillCurrent()) return;
-      if (!deleted.available || deleted.data.status !== "deleted") deleteError = new Error("gateway_key_unavailable");
-    } catch (error) {
-      if (!requestStillCurrent()) return;
-      deleteError = error;
-    }
-    if (deleteError) {
-      let missing = false;
-      try {
-        await getGatewayKey(key.id);
-        if (!requestStillCurrent()) return;
-      } catch (readError) {
-        if (!requestStillCurrent()) return;
-        missing = apiErrorCode(readError) === "gateway_key_not_found";
-      }
-      if (!missing) throw deleteError;
-    }
-    gatewayKeyDeleteIntents.delete(key.id);
-    await loadKeys();
-    if (!requestStillCurrent()) return;
-    flash("API Key 已删除");
-  } catch (error) { if (requestStillCurrent()) flash(friendlyError(error), "danger"); }
-  finally { if (requestStillCurrent()) gatewayBusy.value = false; }
-}
-
-function sameGatewayKeyCreateRequest(left: CreateGatewayKeyRequest, right: CreateGatewayKeyRequest) {
-  return left.name === right.name && left.quotaUsdMicros === right.quotaUsdMicros && left.expiresInDays === right.expiresInDays;
-}
-
-async function submitKey() {
-  const requestStillCurrent = currentSessionRequest();
-  const quotaUsdMicros = keyForm.quotaUsd * 1_000_000;
-  if (!keyForm.name.trim() || !Number.isSafeInteger(quotaUsdMicros) || quotaUsdMicros <= 0 || gatewayBusy.value) return;
-  const input: CreateGatewayKeyRequest = {
-    name: keyForm.name.trim(),
-    quotaUsdMicros,
-    expiresInDays: keyForm.expiresInDays
-  };
-  if (!gatewayKeyCreateIntent || !sameGatewayKeyCreateRequest(gatewayKeyCreateIntent.input, input)) {
-    gatewayKeyCreateIntent = { input, idempotencyKey: `key-create:${crypto.randomUUID()}` };
-  }
-  gatewayBusy.value = true;
-  try {
-    const created = await createGatewayKey(input, session.value?.csrfToken || "", gatewayKeyCreateIntent.idempotencyKey);
-    if (!requestStillCurrent()) return;
-    if (!created.available) throw new Error("gateway_key_unavailable");
-    const readback = await getGatewayKey(created.data.id);
-    if (!requestStillCurrent()) return;
-    if (!readback.available || readback.data.id !== created.data.id || readback.data.status !== created.data.status) throw new Error("gateway_key_unavailable");
-    gatewayKeyCreateIntent = null;
-    await loadKeys();
-    if (!requestStillCurrent()) return;
-    const revealed = await revealGatewayKey(created.data.id, session.value?.csrfToken || "");
-    if (!requestStillCurrent()) return;
-    if (!revealed.available || revealed.data.id !== created.data.id || !revealed.data.value) throw new Error("gateway_key_unavailable");
-    revealedApiKey.value = revealed.data;
-    armSecretTimeout();
-    closeModal();
-    flash("API Key 已创建");
-  } catch (error) { if (requestStillCurrent()) flash(friendlyError(error), "danger"); }
-  finally { if (requestStillCurrent()) gatewayBusy.value = false; }
 }
 
 async function readAnnouncement(announcementId: string) {
@@ -1682,7 +1546,7 @@ onBeforeUnmount(() => {
                 <div v-if="loading.usage" class="loading-panel"><span class="spinner" />正在读取使用记录...</div><div v-else-if="errors.usage" class="inline-error"><AlertCircle :size="17" />{{ errors.usage }}<button type="button" @click="loadUsage">重试</button></div><div v-else-if="usageSource?.status === 'unavailable'" class="empty-panel">暂不可用 <button class="text-button" type="button" @click="loadUsage">重试</button></div><div v-else-if="!selectedUsageKeyId || usageSource?.status === 'empty'" class="empty-panel">暂无使用记录</div><div v-else class="table-wrap"><table class="gateway-usage-table"><thead><tr><th>时间</th><th>模型</th><th>端点</th><th>输入 Token</th><th>输出 Token</th><th>实际金额</th><th>请求编号</th></tr></thead><tbody><tr v-for="item in usage?.items || []" :key="item.requestId"><td>{{ formatDate(item.createdAt, true) }}</td><td>{{ item.model }}</td><td>{{ item.inboundEndpoint }}</td><td>{{ formatCount(item.inputTokens) }}</td><td>{{ formatCount(item.outputTokens) }}</td><td>{{ formatUsdMicros(item.actualCostUsdMicros) }}</td><td><code>{{ item.requestId }}</code></td></tr></tbody></table></div><div class="pagination"><button class="icon-button" type="button" aria-label="上一页" :disabled="gatewayPageNumber.page <= 1 || loading.usage" @click="changeUsagePage(gatewayPageNumber.page - 1)"><ChevronLeft :size="16" /></button><span>{{ gatewayPageNumber.page }}</span><button class="icon-button" type="button" aria-label="下一页" :disabled="gatewayPageNumber.pages === 0 || gatewayPageNumber.page >= gatewayPageNumber.pages || loading.usage" @click="changeUsagePage(gatewayPageNumber.page + 1)"><ChevronRight :size="16" /></button></div>
               </template>
             </section>
-            <section v-else class="panel"><div class="panel-title"><h2>API Key</h2><button class="button primary" type="button" @click="openModal('api-key')"><Plus :size="16" />创建 Key</button></div><div v-if="loading.keys" class="loading-panel"><span class="spinner" />正在读取 API Key...</div><div v-else-if="errors.keys" class="inline-error"><AlertCircle :size="17" />{{ errors.keys }}<button type="button" @click="loadKeys">重试</button></div><div v-else-if="keySource?.status === 'unavailable'" class="empty-panel">暂不可用 <button class="text-button" type="button" @click="loadKeys">重试</button></div><div v-else-if="keySource?.status === 'empty'" class="empty-panel">暂无 API Key</div><div v-else class="table-wrap"><table><thead><tr><th>名称</th><th>类型</th><th>状态</th><th>限额</th><th>已用</th><th>到期时间</th><th>最近使用</th><th>操作</th></tr></thead><tbody><tr v-for="key in keys" :key="key.id"><td>{{ key.name }}</td><td>{{ key.kind === "workspace" ? "Workspace Key" : "普通 Key" }}</td><td>{{ key.status }}</td><td>{{ formatUsdMicros(key.quotaUsdMicros) }}</td><td>{{ formatUsdMicros(key.quotaUsedUsdMicros) }}</td><td>{{ key.expiresAt ? formatDate(key.expiresAt) : "-" }}</td><td>{{ key.lastUsedAt ? formatDate(key.lastUsedAt, true) : "-" }}</td><td class="table-actions"><button class="text-button" type="button" :disabled="gatewayBusy" @click="revealedApiKey?.id === key.id ? hideKey() : revealKey(key)"><EyeOff v-if="revealedApiKey?.id === key.id" :size="15" /><Eye v-else :size="15" />{{ revealedApiKey?.id === key.id ? "隐藏" : "显示" }}</button><button class="text-button" type="button" :disabled="revealedApiKey?.id !== key.id || !revealedApiKey?.value" @click="copyKey(key)"><Copy :size="15" />复制</button><button v-if="key.manageable" class="text-button" type="button" :disabled="gatewayBusy" @click="toggleKey(key)">{{ key.status === 'active' ? '停用' : '启用' }}</button><button v-if="key.deletable" class="text-button danger-text" type="button" :disabled="gatewayBusy" @click="removeKey(key)">删除</button></td></tr><tr v-if="revealedApiKey"><td colspan="8"><div class="secret-panel"><span>{{ revealedApiKey.name }}</span><code>{{ revealedApiKey.value }}</code></div></td></tr></tbody></table></div></section>
+            <KeysPanel v-else :csrf-token="session?.csrfToken || ''" />
           </section>
 
           <section v-else-if="path.startsWith('/console/announcements')" class="announcements-page">
@@ -1709,7 +1573,7 @@ onBeforeUnmount(() => {
       </div>
     </section>
 
-        <div v-if="modal" class="modal-backdrop" role="presentation" @click.self="closeModal"><section class="modal" role="dialog" aria-modal="true" :aria-label="modal"><header><h2>{{ modal === "workspace" ? "开通 Workspace" : modal === "api-key" ? "创建 API Key" : modal === "wallet-adjustment" ? "钱包调整" : modal === "announcement" ? "新建公告草稿" : "开通用户" }}</h2><button class="icon-button" type="button" aria-label="关闭" @click="closeModal"><X :size="18" /></button></header><form v-if="modal === 'workspace'" @submit.prevent="submitWorkspaceLaunch"><label>Workspace 名称<input v-model.trim="launchForm.name" required maxlength="80" /></label><fieldset><legend>计划</legend><label v-for="plan in plans" :key="plan.id" class="plan-option" :class="{ selected: launchForm.packageId === plan.id }"><input v-model="launchForm.packageId" type="radio" :value="plan.id" :disabled="!plan.available" /><span><strong>{{ plan.name }}</strong><small>{{ plan.cpu }}C / {{ plan.memoryGb }}GB · {{ plan.diskGb }}GB</small></span><b>{{ typeof previews[plan.id]?.totalChargeUsdMicros === "number" ? `${formatUsdMicros(previews[plan.id]?.totalChargeUsdMicros)}/月` : "暂不可用" }}</b></label></fieldset><p class="source-note">自动续费默认关闭。</p><footer><button class="button secondary" type="button" @click="closeModal">取消</button><button class="button primary" type="submit" :disabled="launchBusy || !selectedPlan || selectedPlanPrice === null">{{ launchBusy ? "处理中..." : "确认开通" }}</button></footer></form><form v-else-if="modal === 'api-key'" @submit.prevent="submitKey"><label>名称<input v-model.trim="keyForm.name" required maxlength="80" /></label><label>限额（USD）<input v-model.number="keyForm.quotaUsd" type="number" min="1" step="1" required /></label><label>有效天数<input v-model.number="keyForm.expiresInDays" type="number" min="1" max="365" step="1" required /></label><footer><button class="button secondary" type="button" @click="closeModal">取消</button><button class="button primary" type="submit" :disabled="gatewayBusy">{{ gatewayBusy ? "创建中..." : "创建" }}</button></footer></form><form v-else-if="modal === 'wallet-adjustment'" @submit.prevent="submitWalletAdjustment"><p class="source-note">二次确认会锁定目标账号、金额和原因；同一 Idempotency-Key 不会重复调整。</p><label>目标账号<input v-model.trim="walletAdjustmentForm.confirmationAccountId" required /></label><label>类型<select v-model="walletAdjustmentForm.kind"><option value="recharge">充值</option><option value="debit">扣款</option><option value="business_refund">业务退款</option></select></label><label>金额（USD）<input v-model.trim="walletAdjustmentForm.amountUsd" inputmode="decimal" required /></label><label>原因<textarea v-model.trim="walletAdjustmentForm.reason" required maxlength="200" /></label><label v-if="walletAdjustmentForm.kind === 'business_refund'">关联操作<input v-model.trim="walletAdjustmentForm.relatedOperationId" required /></label><p v-if="errors.walletAdjustment" class="form-error" role="alert">{{ errors.walletAdjustment }}</p><section v-if="walletAdjustmentOperation" class="wallet-adjustment-readback"><div class="inline-notice">操作 {{ walletAdjustmentOperation.operationId }}：{{ walletAdjustmentOperation.status }} <button class="text-button" type="button" @click="refreshWalletAdjustment">读取最新状态</button></div><dl class="data-list"><div><dt>调整前余额</dt><dd>{{ operatorSourceText(walletAdjustmentOperation.beforeBalance, (data) => formatUsdMicros(data.usdMicros)) }}</dd></div><div><dt>调整后余额</dt><dd>{{ operatorSourceText(walletAdjustmentOperation.afterBalance, (data) => formatUsdMicros(data.usdMicros)) }}</dd></div><div><dt>原因</dt><dd>{{ walletAdjustmentOperation.reason || "暂不可用" }}</dd></div><div><dt>关联操作</dt><dd>{{ walletAdjustmentOperation.relatedOperationId || "暂不可用" }}</dd></div><div><dt>余额记录引用</dt><dd>{{ walletAdjustmentOperation.balanceHistoryRef || "暂不可用" }}</dd></div><div><dt>Receipt</dt><dd>{{ walletAdjustmentOperation.receiptId || "暂不可用" }}</dd></div><div><dt>错误码</dt><dd>{{ walletAdjustmentOperation.errorCode || "暂不可用" }}</dd></div><div><dt>上游 HTTP</dt><dd>{{ walletAdjustmentOperation.upstreamFailure?.httpStatus ?? "暂不可用" }}</dd></div><div><dt>上游错误码</dt><dd>{{ walletAdjustmentOperation.upstreamFailure?.errorCode || "暂不可用" }}</dd></div><div><dt>上游 request ID</dt><dd>{{ walletAdjustmentOperation.upstreamFailure?.requestId || "暂不可用" }}</dd></div><div><dt>执行人</dt><dd>{{ walletAdjustmentOperation.actor || "暂不可用" }}</dd></div></dl></section><footer><button class="button secondary" type="button" @click="closeModal">取消</button><button v-if="walletAdjustmentOperation?.status === 'manual_review' && walletAdjustmentOperation.allowedActions?.includes('recover_wallet_adjustment')" class="button primary" type="button" :disabled="loading.walletAdjustment" @click="recoverWalletAdjustment">{{ loading.walletAdjustment ? "处理中..." : "恢复确认" }}</button><button v-else class="button primary" type="submit" :disabled="loading.walletAdjustment">{{ loading.walletAdjustment ? "处理中..." : "确认调整" }}</button></footer></form><form v-else-if="modal === 'announcement'" @submit.prevent="submitOperatorAnnouncement"><label>标题<input v-model.trim="announcementForm.title" required maxlength="120" /></label><label>正文<textarea v-model.trim="announcementForm.body" required maxlength="4000" /></label><label>开始时间（可选）<input v-model.trim="announcementForm.startsAt" placeholder="2026-07-20T00:00:00Z" /></label><label>结束时间（可选）<input v-model.trim="announcementForm.endsAt" placeholder="2026-07-21T00:00:00Z" /></label><footer><button class="button secondary" type="button" @click="closeModal">取消</button><button class="button primary" type="submit">保存草稿</button></footer></form><form v-else @submit.prevent="provisionOperatorUser"><label>登录邮箱<input v-model.trim="adminUserForm.email" type="email" required /></label><label>初始密码<input v-model="adminUserForm.password" type="password" required minlength="12" /></label><label>姓名<input v-model.trim="adminUserForm.name" /></label><footer><button class="button secondary" type="button" @click="closeModal">取消</button><button class="button primary" type="submit" :disabled="mutationBusy">{{ mutationBusy ? "处理中..." : "开通用户" }}</button></footer></form></section></div>
+        <div v-if="modal" class="modal-backdrop" role="presentation" @click.self="closeModal"><section class="modal" role="dialog" aria-modal="true" :aria-label="modal"><header><h2>{{ modal === "workspace" ? "开通 Workspace" : modal === "wallet-adjustment" ? "钱包调整" : modal === "announcement" ? "新建公告草稿" : "开通用户" }}</h2><button class="icon-button" type="button" aria-label="关闭" @click="closeModal"><X :size="18" /></button></header><form v-if="modal === 'workspace'" @submit.prevent="submitWorkspaceLaunch"><label>Workspace 名称<input v-model.trim="launchForm.name" required maxlength="80" /></label><fieldset><legend>计划</legend><label v-for="plan in plans" :key="plan.id" class="plan-option" :class="{ selected: launchForm.packageId === plan.id }"><input v-model="launchForm.packageId" type="radio" :value="plan.id" :disabled="!plan.available" /><span><strong>{{ plan.name }}</strong><small>{{ plan.cpu }}C / {{ plan.memoryGb }}GB · {{ plan.diskGb }}GB</small></span><b>{{ typeof previews[plan.id]?.totalChargeUsdMicros === "number" ? `${formatUsdMicros(previews[plan.id]?.totalChargeUsdMicros)}/月` : "暂不可用" }}</b></label></fieldset><p class="source-note">自动续费默认关闭。</p><footer><button class="button secondary" type="button" @click="closeModal">取消</button><button class="button primary" type="submit" :disabled="launchBusy || !selectedPlan || selectedPlanPrice === null">{{ launchBusy ? "处理中..." : "确认开通" }}</button></footer></form><form v-else-if="modal === 'wallet-adjustment'" @submit.prevent="submitWalletAdjustment"><p class="source-note">二次确认会锁定目标账号、金额和原因；同一 Idempotency-Key 不会重复调整。</p><label>目标账号<input v-model.trim="walletAdjustmentForm.confirmationAccountId" required /></label><label>类型<select v-model="walletAdjustmentForm.kind"><option value="recharge">充值</option><option value="debit">扣款</option><option value="business_refund">业务退款</option></select></label><label>金额（USD）<input v-model.trim="walletAdjustmentForm.amountUsd" inputmode="decimal" required /></label><label>原因<textarea v-model.trim="walletAdjustmentForm.reason" required maxlength="200" /></label><label v-if="walletAdjustmentForm.kind === 'business_refund'">关联操作<input v-model.trim="walletAdjustmentForm.relatedOperationId" required /></label><p v-if="errors.walletAdjustment" class="form-error" role="alert">{{ errors.walletAdjustment }}</p><section v-if="walletAdjustmentOperation" class="wallet-adjustment-readback"><div class="inline-notice">操作 {{ walletAdjustmentOperation.operationId }}：{{ walletAdjustmentOperation.status }} <button class="text-button" type="button" @click="refreshWalletAdjustment">读取最新状态</button></div><dl class="data-list"><div><dt>调整前余额</dt><dd>{{ operatorSourceText(walletAdjustmentOperation.beforeBalance, (data) => formatUsdMicros(data.usdMicros)) }}</dd></div><div><dt>调整后余额</dt><dd>{{ operatorSourceText(walletAdjustmentOperation.afterBalance, (data) => formatUsdMicros(data.usdMicros)) }}</dd></div><div><dt>原因</dt><dd>{{ walletAdjustmentOperation.reason || "暂不可用" }}</dd></div><div><dt>关联操作</dt><dd>{{ walletAdjustmentOperation.relatedOperationId || "暂不可用" }}</dd></div><div><dt>余额记录引用</dt><dd>{{ walletAdjustmentOperation.balanceHistoryRef || "暂不可用" }}</dd></div><div><dt>Receipt</dt><dd>{{ walletAdjustmentOperation.receiptId || "暂不可用" }}</dd></div><div><dt>错误码</dt><dd>{{ walletAdjustmentOperation.errorCode || "暂不可用" }}</dd></div><div><dt>上游 HTTP</dt><dd>{{ walletAdjustmentOperation.upstreamFailure?.httpStatus ?? "暂不可用" }}</dd></div><div><dt>上游错误码</dt><dd>{{ walletAdjustmentOperation.upstreamFailure?.errorCode || "暂不可用" }}</dd></div><div><dt>上游 request ID</dt><dd>{{ walletAdjustmentOperation.upstreamFailure?.requestId || "暂不可用" }}</dd></div><div><dt>执行人</dt><dd>{{ walletAdjustmentOperation.actor || "暂不可用" }}</dd></div></dl></section><footer><button class="button secondary" type="button" @click="closeModal">取消</button><button v-if="walletAdjustmentOperation?.status === 'manual_review' && walletAdjustmentOperation.allowedActions?.includes('recover_wallet_adjustment')" class="button primary" type="button" :disabled="loading.walletAdjustment" @click="recoverWalletAdjustment">{{ loading.walletAdjustment ? "处理中..." : "恢复确认" }}</button><button v-else class="button primary" type="submit" :disabled="loading.walletAdjustment">{{ loading.walletAdjustment ? "处理中..." : "确认调整" }}</button></footer></form><form v-else-if="modal === 'announcement'" @submit.prevent="submitOperatorAnnouncement"><label>标题<input v-model.trim="announcementForm.title" required maxlength="120" /></label><label>正文<textarea v-model.trim="announcementForm.body" required maxlength="4000" /></label><label>开始时间（可选）<input v-model.trim="announcementForm.startsAt" placeholder="2026-07-20T00:00:00Z" /></label><label>结束时间（可选）<input v-model.trim="announcementForm.endsAt" placeholder="2026-07-21T00:00:00Z" /></label><footer><button class="button secondary" type="button" @click="closeModal">取消</button><button class="button primary" type="submit">保存草稿</button></footer></form><form v-else @submit.prevent="provisionOperatorUser"><label>登录邮箱<input v-model.trim="adminUserForm.email" type="email" required /></label><label>初始密码<input v-model="adminUserForm.password" type="password" required minlength="12" /></label><label>姓名<input v-model.trim="adminUserForm.name" /></label><footer><button class="button secondary" type="button" @click="closeModal">取消</button><button class="button primary" type="submit" :disabled="mutationBusy">{{ mutationBusy ? "处理中..." : "开通用户" }}</button></footer></form></section></div>
     <div v-if="toast.text" class="toast" :class="toast.tone" role="status">{{ toast.text }}</div>
   </div>
 </template>

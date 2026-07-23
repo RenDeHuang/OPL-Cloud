@@ -97,23 +97,25 @@ The four implementation owner lanes are Console/Control Plane, Fabric, Gateway i
 - Control Plane maps the signed-in account through `sub2apiUserId`. Owners,
   including the reserved administrator for its own account, may manage general Keys; Workspace
   convergence separately requires exactly one active reserved Key named `opl-workspace` and fails closed otherwise.
-- Required read capabilities are mapped-user balance, the mapped user's paginated Key list, paginated request usage, and aggregate usage stats. Request usage and stats are scoped by both `user_id` and the selected `api_key_id`; every returned identity is validated again by Control Plane.
+- Required read capabilities are mapped-user balance, available groups, the mapped user's paginated/filterable/sortable Key list, paginated request usage, and aggregate usage stats. Key creation requires a live Sub2API group. Request usage and stats are scoped by both `user_id` and the selected `api_key_id`; every returned identity is validated again by Control Plane.
 - For Keys, UserKeys, Usage, and BalanceHistory, a zero-row Sub2API v0.1.162
   response is valid only as `total=0,page=1,pages=1,items=[]`; every other empty
   pagination shape fails closed.
 - Request charges use Sub2API `actual_cost`, converted once to integer USD micros. Control Plane returns an explicit unavailable state for a missing capability or upstream failure and never substitutes zero.
 - Control Plane decodes a strict customer-safe DTO allowlist. Raw Sub2API admin responses, nested raw Keys, upstream account internals, prompts, and response content never reach Console, OPL PostgreSQL, Ledger, logs, or caches.
 - Key DTO fields `quota_used`, `usage_5h`, `usage_1d`, `usage_7d`, and `last_used_at` remain quota and recent-window signals; they do not replace request-level usage and aggregate stats.
+- General Key management may project and mutate Sub2API's group, quota, IP allow/deny lists, expiration, 5h/1d/7d limits, and supported reset commands. Control Plane persists none of those facts. Operator Key counts are live, bounded-concurrency reads for only the current account page and are never stored.
 - The owner may request an owned Key only through audited
   `POST /api/gateway/keys/{keyId}/reveal`. It is masked by default and
   never enters `/api/state`, browser storage, OPL PostgreSQL, Ledger, logs,
   caches, or operation payloads. The retired Gateway summary route is a 404.
 - Kubernetes Secret is the only authorized Key persistence point. Fabric writes or rotates an account-scoped Secret, and Workspace runtime receives only its reference.
 - The global `OPL_CODEX_API_KEY` is forbidden for customer Workspaces.
-- Console exposes no Gateway base-address product API or card. Browser responses
-  and links never expose `OPL_SUB2API_BASE_URL` or `gflabtoken.cn`; Runtime uses
-  the official App/Shell default model endpoint and Cloud does not inject a
-  second Gateway base URL.
+- Console may display and copy the public model endpoint derived from the existing
+  configured Sub2API origin plus `/v1` (`https://gflabtoken.cn/v1` in production).
+  It never exposes admin routes or credentials, links or redirects to the Sub2API
+  UI, embeds it, scrapes HTML, or calls Sub2API directly from the browser. Runtime
+  keeps the official App/Shell endpoint behavior and Cloud adds no second Gateway.
 
 Every Console source projection carries `source`, `status`, `available`, and
 `fetchedAt`. `empty` means a successful authoritative read with zero rows;

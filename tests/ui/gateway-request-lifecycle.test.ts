@@ -9,6 +9,7 @@ import { maskGatewayKey } from "../../apps/console-ui/src/console-model.ts";
 
 const originalFetch = globalThis.fetch;
 const appSource = () => readFile(new URL("../../apps/console-ui/src/App.vue", import.meta.url), "utf8");
+const keysPanelSource = () => readFile(new URL("../../apps/console-ui/src/components/keys/KeysPanel.vue", import.meta.url), "utf8");
 
 function appFunction(source: string, name: string): string {
   const match = new RegExp(`(?:async )?function ${name}\\(`).exec(source);
@@ -67,17 +68,15 @@ test("API, Gateway, and Workspace route changes clear secrets for direct and pop
 });
 
 test("general API Key create retries reuse a full-input intent until authoritative readback", async () => {
-  const app = await appSource();
-  const submit = appFunction(app, "submitKey");
-  const compare = app.slice(app.indexOf("function sameGatewayKeyCreateRequest"), app.indexOf("async function submitKey"));
+  const panel = await keysPanelSource();
+  const submit = appFunction(panel, "submitKey");
 
-  assert.match(app, /let gatewayKeyCreateIntent: \{ input: CreateGatewayKeyRequest; idempotencyKey: string \} \| null = null/);
-  for (const field of ["name", "quotaUsdMicros", "expiresInDays"]) assert.match(compare, new RegExp(`left\\.${field} === right\\.${field}`));
-  assert.match(submit, /const input: CreateGatewayKeyRequest = \{/);
-  assert.match(submit, /!gatewayKeyCreateIntent \|\| !sameGatewayKeyCreateRequest\(gatewayKeyCreateIntent\.input, input\)/);
-  assert.match(submit, /createGatewayKey\(input,[\s\S]+gatewayKeyCreateIntent\.idempotencyKey\)/);
-  assert.match(submit, /const readback = await getGatewayKey\(created\.data\.id\);[\s\S]+gatewayKeyCreateIntent = null;/);
-  assert.doesNotMatch(submit.slice(submit.indexOf("catch")), /gatewayKeyCreateIntent = null/);
+  assert.match(panel, /let createIntent: \{ input: CreateGatewayKeyRequest; key: string \} \| null = null/);
+  assert.match(submit, /const input = createRequest\(\)/);
+  assert.match(submit, /!createIntent \|\| JSON\.stringify\(createIntent\.input\) !== JSON\.stringify\(input\)/);
+  assert.match(submit, /createGatewayKey\(input, props\.csrfToken, createIntent\.key\)/);
+  assert.match(submit, /const readback = await getGatewayKey\(created\.data\.id\);[\s\S]+keyMatchesCreate\(readback\.data, input\)[\s\S]+createIntent = null;/);
+  assert.doesNotMatch(submit.slice(submit.indexOf("catch")), /createIntent = null/);
   assert.doesNotMatch(submit, /updateGatewayKey\(/);
 });
 
@@ -243,7 +242,7 @@ test("customer routes load only their page-owned sources and dispatch on every n
     "loadWallet", "loadAccountUsage", "loadHistory"
   ].sort());
   assert.deepEqual(await callsFor("/console/api/usage", "usage"), ["loadKeys"]);
-  assert.deepEqual(await callsFor("/console/api/keys", "keys"), ["loadKeys"]);
+  assert.deepEqual(await callsFor("/console/api/keys", "keys"), []);
 
   const handleRoute = appFunction(app, "handleRoute");
   assert.doesNotMatch(handleRoute, /!workspaceSource/);
@@ -257,7 +256,6 @@ test("closing a modal or replacing the session clears every modal draft", async 
   const clearSession = appFunction(app, "clearSessionState");
 
   assert.match(closeModalSource, /Object\.assign\(launchForm, \{ name: "", packageId: "basic" \}\)/);
-  assert.match(closeModalSource, /Object\.assign\(keyForm, \{ name: "", quotaUsd: 10, expiresInDays: 30 \}\)/);
   assert.match(closeModalSource, /Object\.assign\(adminUserForm, \{ email: "", password: "", name: "" \}\)/);
   assert.match(closeModalSource, /modal\.value = ""/);
   assert.match(clearSession, /closeModal\(\)/);
@@ -265,10 +263,9 @@ test("closing a modal or replacing the session clears every modal draft", async 
 
   const modalTemplate = app.slice(app.indexOf("<div v-if=\"modal\" class=\"modal-backdrop\""));
   assert.doesNotMatch(modalTemplate, /@click(?:\.self)?="modal = ''"/);
-  assert.ok((modalTemplate.match(/@click(?:\.self)?="closeModal"/g) || []).length >= 7);
+  assert.equal((modalTemplate.match(/@click(?:\.self)?="closeModal"/g) || []).length, 6);
 
   const launchForm = { name: "secret workspace", packageId: "pro" };
-  const keyForm = { name: "secret key", quotaUsd: 99, expiresInDays: 365 };
   const adminUserForm = { email: "owner@example.com", password: "secret password", name: "Owner" };
   const walletAdjustmentForm = { kind: "debit", amountUsd: "9", reason: "secret reason", confirmationAccountId: "acct-secret", relatedOperationId: "op-secret" };
   const announcementForm = { title: "secret title", body: "secret body", startsAt: "start", endsAt: "end" };
@@ -277,7 +274,6 @@ test("closing a modal or replacing the session clears every modal draft", async 
   const modal = { value: "admin-user" };
   const closeModal = new Function(
     "launchForm",
-    "keyForm",
     "adminUserForm",
     "walletAdjustmentForm",
     "announcementForm",
@@ -285,12 +281,11 @@ test("closing a modal or replacing the session clears every modal draft", async 
     "selectedReview",
     "modal",
     `${closeModalSource}\nreturn closeModal;`
-  )(launchForm, keyForm, adminUserForm, walletAdjustmentForm, announcementForm, selectedOperatorAccountId, selectedReview, modal) as () => void;
+  )(launchForm, adminUserForm, walletAdjustmentForm, announcementForm, selectedOperatorAccountId, selectedReview, modal) as () => void;
 
   closeModal();
   modal.value = "admin-user";
   assert.deepEqual(launchForm, { name: "", packageId: "basic" });
-  assert.deepEqual(keyForm, { name: "", quotaUsd: 10, expiresInDays: 30 });
   assert.deepEqual(adminUserForm, { email: "", password: "", name: "" });
   assert.deepEqual(walletAdjustmentForm, { kind: "recharge", amountUsd: "", reason: "", confirmationAccountId: "", relatedOperationId: "" });
   assert.deepEqual(announcementForm, { title: "", body: "", startsAt: "", endsAt: "" });
@@ -414,7 +409,7 @@ test("Key source failures preserve confirmed Usage while authoritative Key chang
     selected: "42", usage: null, stats: null, page: 1, selections: ["42"]
   });
 
-  for (const name of ["loadCustomer", "refreshCurrentPage", "removeKey"]) {
+  for (const name of ["loadCustomer", "refreshCurrentPage"]) {
     assert.doesNotMatch(appFunction(app, name), /loadUsage\(|loadStats\(/, `${name} must let loadKeys own automatic Usage refresh`);
   }
 
@@ -562,14 +557,12 @@ test("Billing receipt detail ignores late selections and mismatched readback", a
 
 test("customer mutations cannot write shared state after their session is replaced", async () => {
   const app = await appSource();
+  const panel = await keysPanelSource();
   const minimumChecks: Record<string, number> = {
     submitWorkspaceLaunch: 5,
     revealWorkspace: 3,
     rotateWorkspace: 4,
     revealKey: 3,
-    toggleKey: 5,
-    removeKey: 5,
-    submitKey: 5,
     readAnnouncement: 4,
     provisionOperatorUser: 4
   };
@@ -589,73 +582,44 @@ test("customer mutations cannot write shared state after their session is replac
   const rotate = appFunction(app, "rotateWorkspace");
   assert.match(rotate, /await rotateWorkspaceCredentials\([\s\S]+if \(!requestStillCurrent\(\)\) return;\s*runtimeRotationIntent = null;\s*if \(!secretResponseStillCurrent/);
 
-  for (const [name, calls] of Object.entries({
-    toggleKey: ["updateGatewayKey", "getGatewayKey", "loadKeys"],
-    removeKey: ["deleteGatewayKey", "loadKeys"]
-  })) {
-    const body = appFunction(app, name);
-    for (const call of calls) assert.match(body, new RegExp(`await ${call.replace(".", "\\.")}\\([\\s\\S]+if \\(!requestStillCurrent\\(\\)\\) return;`));
+  assert.match(panel, /function currentSessionRequest\(\)/);
+  for (const name of ["submitKey", "mutateKey", "reveal", "removeKey"]) {
+    const body = appFunction(panel, name);
+    assert.match(body, /const requestStillCurrent = currentSessionRequest\(\)/, `${name} must bind the mutation to its session`);
+    assert.ok((body.match(/requestStillCurrent\(\)/g) || []).length >= 2, `${name} must guard post-request state writes`);
   }
+  assert.match(panel, /watch\(\(\) => props\.csrfToken[\s\S]+sessionGeneration \+= 1[\s\S]+clearKeyState\(\)/);
 });
 
-test("Key toggle keeps only the current target intent and replaces it when direction changes", async () => {
-  const app = await appSource();
-  const clearSession = appFunction(app, "clearSessionState");
-  const toggle = appFunction(app, "toggleKey");
+test("Key updates keep only the current per-resource input intent", async () => {
+  const panel = await keysPanelSource();
+  const mutate = appFunction(panel, "mutateKey");
 
-  assert.match(app, /const gatewayKeyToggleIntents = new Map<string, \{ targetStatus: GatewayKeySummaryDTO\["status"\]; idempotencyKey: string \}>\(\)/);
-  assert.match(clearSession, /gatewayKeyToggleIntents\.clear\(\)/);
-  assert.match(toggle, /let intent = gatewayKeyToggleIntents\.get\(key\.id\)/);
-  assert.match(toggle, /if \(!intent \|\| intent\.targetStatus !== expectedStatus\) \{[\s\S]+targetStatus: expectedStatus[\s\S]+key-toggle:\$\{crypto\.randomUUID\(\)\}[\s\S]+gatewayKeyToggleIntents\.set\(key\.id, intent\)/);
-  assert.match(toggle, /updateGatewayKey\([^;]+intent\.idempotencyKey\)[\s\S]+getGatewayKey\(key\.id\)/);
-  assert.equal((toggle.match(/updateGatewayKey\(/g) || []).length, 1);
-  assert.match(toggle, /if \(!readback\.available \|\| readback\.data\.status !== expectedStatus[^)]*\) throw[\s\S]+gatewayKeyToggleIntents\.delete\(key\.id\)/);
-  assert.doesNotMatch(toggle, /intentKey|gatewayKeyToggleIntents\.get\(expectedStatus\)/);
-  const finalCatch = toggle.slice(toggle.lastIndexOf("catch (error)"));
-  assert.doesNotMatch(finalCatch, /updateGatewayKey\(|gatewayKeyToggleIntents\.delete\(/);
-
-  const intentSelection = toggle.slice(toggle.indexOf("  const expectedStatus ="), toggle.indexOf("  gatewayBusy.value = true;"));
-  const selectIntent = new Function(
-    "key",
-    "gatewayKeyToggleIntents",
-    "crypto",
-    `${intentSelection}\nreturn intent.idempotencyKey;`
-  ) as (
-    key: { id: string; status: GatewayKeySummaryDTO["status"] },
-    intents: Map<string, { targetStatus: GatewayKeySummaryDTO["status"]; idempotencyKey: string }>,
-    crypto: { randomUUID(): string }
-  ) => string;
-  const intents = new Map<string, { targetStatus: GatewayKeySummaryDTO["status"]; idempotencyKey: string }>();
-  let nextUuid = 0;
-  const fakeCrypto = { randomUUID: () => `uuid-${++nextUuid}` };
-
-  assert.deepEqual([
-    selectIntent({ id: "41", status: "active" }, intents, fakeCrypto),
-    selectIntent({ id: "41", status: "active" }, intents, fakeCrypto),
-    selectIntent({ id: "41", status: "disabled" }, intents, fakeCrypto),
-    selectIntent({ id: "41", status: "active" }, intents, fakeCrypto)
-  ], ["key-toggle:uuid-1", "key-toggle:uuid-1", "key-toggle:uuid-2", "key-toggle:uuid-3"]);
-  assert.equal(intents.size, 1);
-  assert.deepEqual(intents.get("41"), { targetStatus: "disabled", idempotencyKey: "key-toggle:uuid-3" });
+  assert.match(panel, /const updateIntents = new Map<string, \{ signature: string; key: string \}>\(\)/);
+  assert.match(mutate, /const signature = JSON\.stringify\(input\)/);
+  assert.match(mutate, /let intent = updateIntents\.get\(key\.id\)/);
+  assert.match(mutate, /if \(!intent \|\| intent\.signature !== signature\)[\s\S]+updateIntents\.set\(key\.id, intent\)/);
+  assert.match(mutate, /updateGatewayKey\(key\.id, input, props\.csrfToken, intent\.key\)[\s\S]+getGatewayKey\(key\.id\)/);
+  assert.equal((mutate.match(/updateGatewayKey\(/g) || []).length, 1);
+  assert.match(mutate, /keyMatchesUpdate\(readback\.data, input\)[\s\S]+updateIntents\.delete\(key\.id\)/);
+  assert.equal((mutate.match(/updateIntents\.delete\(/g) || []).length, 1);
 });
 
 test("Key delete retries reuse a per-resource intent and only GET 404 confirms an unknown write", async () => {
-  const app = await appSource();
-  const clearSession = appFunction(app, "clearSessionState");
-  const remove = appFunction(app, "removeKey");
-  const errorCode = appFunction(app, "apiErrorCode");
+  const panel = await keysPanelSource();
+  const remove = appFunction(panel, "removeKey");
+  const errorCode = appFunction(panel, "apiErrorCode");
 
-  assert.match(app, /const gatewayKeyDeleteIntents = new Map<string, string>\(\)/);
-  assert.match(clearSession, /gatewayKeyDeleteIntents\.clear\(\)/);
-  assert.match(remove, /let idempotencyKey = gatewayKeyDeleteIntents\.get\(key\.id\)/);
-  assert.match(remove, /if \(!idempotencyKey\) \{[\s\S]+key-delete:\$\{crypto\.randomUUID\(\)\}[\s\S]+gatewayKeyDeleteIntents\.set\(key\.id, idempotencyKey\)/);
-  assert.match(remove, /deleteGatewayKey\([^;]+idempotencyKey\)/);
+  assert.match(panel, /const deleteIntents = new Map<string, string>\(\)/);
+  assert.match(remove, /const intent = deleteIntents\.get\(key\.id\) \|\| idempotencyKey\("key-delete"\)/);
+  assert.match(remove, /deleteIntents\.set\(key\.id, intent\)/);
+  assert.match(remove, /deleteGatewayKey\(key\.id, props\.csrfToken, intent\)/);
   assert.equal((remove.match(/deleteGatewayKey\(/g) || []).length, 1);
-  assert.match(remove, /if \(deleteError\) \{[\s\S]+getGatewayKey\(key\.id\)[\s\S]+apiErrorCode\(readError\) === "gateway_key_not_found"[\s\S]+gatewayKeyDeleteIntents\.delete\(key\.id\)/);
-  assert.equal((remove.match(/gatewayKeyDeleteIntents\.delete\(/g) || []).length, 1);
+  assert.match(remove, /if \(deleteError\) \{[\s\S]+getGatewayKey\(key\.id\)[\s\S]+apiErrorCode\(readError\) === "gateway_key_not_found"[\s\S]+deleteIntents\.delete\(key\.id\)/);
+  assert.equal((remove.match(/deleteIntents\.delete\(/g) || []).length, 1);
   assert.match(errorCode, /payload[\s\S]+\.error/);
   const finalCatch = remove.slice(remove.lastIndexOf("catch (error)"));
-  assert.doesNotMatch(finalCatch, /deleteGatewayKey\(|gatewayKeyDeleteIntents\.delete\(/);
+  assert.doesNotMatch(finalCatch, /deleteGatewayKey\(|deleteIntents\.delete\(/);
 });
 
 test("general API Key writes carry CSRF and opaque idempotency keys", async () => {

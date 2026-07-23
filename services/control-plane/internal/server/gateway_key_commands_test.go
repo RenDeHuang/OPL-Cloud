@@ -33,6 +33,23 @@ type gatewayKeyCommandClient struct {
 	userKeyReadIDs         []int64
 }
 
+func (*gatewayKeyCommandClient) PublicEndpoint() string { return "https://gflabtoken.cn/v1" }
+
+func (c *gatewayKeyCommandClient) UserGroups(_ context.Context, credential clients.SessionDelegatedCredential, userID int64) ([]clients.Sub2APIGroup, error) {
+	if err := c.rememberCredential(credential); err != nil || userID != 41 {
+		return nil, errors.New("wrong delegated group identity")
+	}
+	return []clients.Sub2APIGroup{{ID: 7, Name: "Basic", Platform: "openai", RateMultiplier: 1, Status: "active"}, {ID: 8, Name: "Pro", Platform: "openai", RateMultiplier: 1, Status: "active"}}, nil
+}
+
+func (c *gatewayKeyCommandClient) UserKeyPage(_ context.Context, credential clients.SessionDelegatedCredential, userID int64, query clients.Sub2APIKeyPageQuery) (clients.Sub2APIKeyPage, error) {
+	keys, err := c.UserKeys(context.Background(), credential, userID)
+	if err != nil {
+		return clients.Sub2APIKeyPage{}, err
+	}
+	return clients.Sub2APIKeyPage{Items: keys, Total: len(keys), Page: query.Page, PageSize: query.PageSize, Pages: 1}, nil
+}
+
 func (c *gatewayKeyCommandClient) rememberCredential(credential clients.SessionDelegatedCredential) error {
 	c.credentials = append(c.credentials, credential)
 	if credential.Bearer != "test-user-delegated-token" {
@@ -74,7 +91,13 @@ func (c *gatewayKeyCommandClient) CreateUserKey(_ context.Context, credential cl
 	c.createKeys = append(c.createKeys, idempotencyKey)
 	c.createCalls++
 	expiresAt := time.Date(2026, 8, 18, 1, 2, 3, 0, time.UTC)
-	key := clients.Sub2APIWorkspaceKey{ID: 19, UserID: userID, Name: input.Name, Key: "created-key-secret", Status: "active", QuotaUSDMicros: input.QuotaUSDMicros, ExpiresAt: &expiresAt}
+	groupID := input.GroupID
+	key := clients.Sub2APIWorkspaceKey{
+		ID: 19, UserID: userID, Name: input.Name, Key: "created-key-secret", GroupID: &groupID, Status: "active",
+		IPWhitelist: append([]string(nil), input.IPWhitelist...), IPBlacklist: append([]string(nil), input.IPBlacklist...),
+		QuotaUSDMicros: input.QuotaUSDMicros, RateLimit5hUSDMicros: input.RateLimit5hUSDMicros,
+		RateLimit1dUSDMicros: input.RateLimit1dUSDMicros, RateLimit7dUSDMicros: input.RateLimit7dUSDMicros, ExpiresAt: &expiresAt,
+	}
 	c.keys[key.ID] = key
 	return key, nil
 }
@@ -97,6 +120,38 @@ func (c *gatewayKeyCommandClient) UpdateUserKey(_ context.Context, credential cl
 	}
 	if input.QuotaUSDMicros != nil {
 		key.QuotaUSDMicros = *input.QuotaUSDMicros
+	}
+	if input.GroupID != nil {
+		groupID := *input.GroupID
+		key.GroupID = &groupID
+	}
+	if input.IPWhitelist != nil {
+		key.IPWhitelist = append([]string(nil), (*input.IPWhitelist)...)
+	}
+	if input.IPBlacklist != nil {
+		key.IPBlacklist = append([]string(nil), (*input.IPBlacklist)...)
+	}
+	if input.ExpiresAt != nil {
+		key.ExpiresAt = nil
+		if *input.ExpiresAt != "" {
+			parsed, _ := time.Parse(time.RFC3339, *input.ExpiresAt)
+			key.ExpiresAt = &parsed
+		}
+	}
+	if input.RateLimit5hUSDMicros != nil {
+		key.RateLimit5hUSDMicros = *input.RateLimit5hUSDMicros
+	}
+	if input.RateLimit1dUSDMicros != nil {
+		key.RateLimit1dUSDMicros = *input.RateLimit1dUSDMicros
+	}
+	if input.RateLimit7dUSDMicros != nil {
+		key.RateLimit7dUSDMicros = *input.RateLimit7dUSDMicros
+	}
+	if input.ResetQuota != nil && *input.ResetQuota {
+		key.QuotaUsedUSDMicros = 0
+	}
+	if input.ResetRateLimitUsage != nil && *input.ResetRateLimitUsage {
+		key.Usage5hUSDMicros, key.Usage1dUSDMicros, key.Usage7dUSDMicros = 0, 0, 0
 	}
 	if input.Enabled != nil {
 		key.Status = "disabled"
@@ -142,9 +197,10 @@ func newGatewayKeyCommandFixture(t *testing.T) (http.Handler, *gatewayKeyCommand
 		history:    map[int64][]clients.Sub2APIBalanceHistoryEntry{},
 	}
 	expiresAt := time.Date(2026, 8, 18, 1, 2, 3, 0, time.UTC)
+	groupID := int64(7)
 	client := &gatewayKeyCommandClient{customerFactsSub2API: base, keys: map[int64]clients.Sub2APIWorkspaceKey{
 		9:  {ID: 9, UserID: 41, Name: "opl-workspace", Key: "workspace-key-secret", Status: "active", QuotaUSDMicros: 50_000_000},
-		17: {ID: 17, UserID: 41, Name: "general-key", Key: "general-key-secret", Status: "active", QuotaUSDMicros: 10_000_000, ExpiresAt: &expiresAt},
+		17: {ID: 17, UserID: 41, Name: "general-key", Key: "general-key-secret", GroupID: &groupID, Status: "active", QuotaUSDMicros: 10_000_000, ExpiresAt: &expiresAt},
 		18: {ID: 18, UserID: 42, Name: "other-user-key", Key: "other-user-secret", Status: "active"},
 	}}
 	server, err := NewPersistentServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}, client), store)
@@ -155,11 +211,51 @@ func newGatewayKeyCommandFixture(t *testing.T) (http.Handler, *gatewayKeyCommand
 	return server, client, store, session
 }
 
-func TestGatewayPublicEndpointIsHardCut(t *testing.T) {
+func TestGatewayPublicEndpointUsesConfiguredSub2API(t *testing.T) {
 	server, _, _, session := newGatewayKeyCommandFixture(t)
 	response := requestWithSession(t, server, session, http.MethodGet, "/api/gateway/endpoint", "")
-	if response.Code != http.StatusNotFound {
-		t.Fatalf("endpoint status = %d, want 404: %s", response.Code, response.Body.String())
+	if response.Code != http.StatusOK {
+		t.Fatalf("endpoint status = %d, want 200: %s", response.Code, response.Body.String())
+	}
+	data := mapField(decodeOperatorEnvelope(t, response), "data")
+	if len(data) != 1 || data["baseUrl"] != "https://gflabtoken.cn/v1" {
+		t.Fatalf("endpoint data = %#v", data)
+	}
+}
+
+func TestGatewayGeneralKeyAcceptsSub2APIParityFields(t *testing.T) {
+	server, _, _, session := newGatewayKeyCommandFixture(t)
+	created := requestWithMutationKeyForTest(t, server, session, http.MethodPost, "/api/gateway/keys", `{
+		"name":"parity-key",
+		"groupId":"7",
+		"ipWhitelist":["203.0.113.10"],
+		"ipBlacklist":["198.51.100.0/24"],
+		"quotaUsdMicros":1250000,
+		"expiresInDays":30,
+		"rateLimit5hUsdMicros":5000000,
+		"rateLimit1dUsdMicros":10000000,
+		"rateLimit7dUsdMicros":20000000
+	}`, "create-parity-key-once")
+	if created.Code != http.StatusCreated {
+		t.Fatalf("parity create = %d: %s", created.Code, created.Body.String())
+	}
+	keyID := stringValue(mapField(decodeSourceEnvelope(t, created), "data")["id"])
+	updated := requestWithMutationKeyForTest(t, server, session, http.MethodPatch, "/api/gateway/keys/"+keyID, `{
+		"name":"parity-key-edited",
+		"groupId":"8",
+		"enabled":false,
+		"ipWhitelist":[],
+		"ipBlacklist":["192.0.2.0/24"],
+		"quotaUsdMicros":2500000,
+		"expiresAt":"2026-09-18T01:02:03Z",
+		"rateLimit5hUsdMicros":0,
+		"rateLimit1dUsdMicros":12000000,
+		"rateLimit7dUsdMicros":24000000,
+		"resetQuota":true,
+		"resetRateLimitUsage":true
+	}`, "update-parity-key-once")
+	if updated.Code != http.StatusOK {
+		t.Fatalf("parity update = %d: %s", updated.Code, updated.Body.String())
 	}
 }
 
@@ -180,7 +276,7 @@ func TestGatewayGeneralKey(t *testing.T) {
 		}
 	}
 
-	created := requestWithMutationKeyForTest(t, server, session, http.MethodPost, "/api/gateway/keys", `{"name":"new-general","quotaUsdMicros":1250000,"expiresInDays":30}`, "create-general-once")
+	created := requestWithMutationKeyForTest(t, server, session, http.MethodPost, "/api/gateway/keys", `{"name":"new-general","groupId":"7","quotaUsdMicros":1250000,"expiresInDays":30}`, "create-general-once")
 	if created.Code != http.StatusCreated || strings.Contains(created.Body.String(), "created-key-secret") {
 		t.Fatalf("create status = %d: %s", created.Code, created.Body.String())
 	}
@@ -222,13 +318,13 @@ func TestGatewayGeneralKeyReplayConvergence(t *testing.T) {
 	create := func(body string) *httptest.ResponseRecorder {
 		return requestWithMutationKeyForTest(t, server, session, http.MethodPost, "/api/gateway/keys", body, "create-replay")
 	}
-	if first := create(`{"name":"replay-key","quotaUsdMicros":1250000}`); first.Code != http.StatusCreated {
+	if first := create(`{"name":"replay-key","groupId":"7","quotaUsdMicros":1250000}`); first.Code != http.StatusCreated {
 		t.Fatalf("first create = %d: %s", first.Code, first.Body.String())
 	}
-	if replay := create(`{"name":"replay-key","quotaUsdMicros":1250000}`); replay.Code != http.StatusOK || client.createCalls != 1 {
+	if replay := create(`{"name":"replay-key","groupId":"7","quotaUsdMicros":1250000}`); replay.Code != http.StatusOK || client.createCalls != 1 {
 		t.Fatalf("create replay = %d calls=%d: %s", replay.Code, client.createCalls, replay.Body.String())
 	}
-	if conflict := create(`{"name":"different-key","quotaUsdMicros":1250000}`); conflict.Code != http.StatusConflict || client.createCalls != 1 {
+	if conflict := create(`{"name":"different-key","groupId":"7","quotaUsdMicros":1250000}`); conflict.Code != http.StatusConflict || client.createCalls != 1 {
 		t.Fatalf("create conflict = %d calls=%d: %s", conflict.Code, client.createCalls, conflict.Body.String())
 	}
 

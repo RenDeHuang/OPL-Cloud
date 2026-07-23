@@ -1,12 +1,8 @@
 # OPL Cloud Pilot V2 工程实施计划
 
-> **状态：owner 已批准本地 code-complete 执行。** 本文定义实施顺序、原子提交和验收门禁；
-> 未经再次批准仍不得执行真实写入、Acceptance、部署、push、PR 或 merge。
-
-> **实施纪律：** 每个切片在独立 clean worktree 中完成：先实际运行新增测试取得 RED，
-> 再做最小实现，focused PASS 后运行该切片列出的受影响 module 回归，形成一个原子 commit；
-> integration owner 只 cherry-pick 通过的 commit。故意失败的测试状态不提交到 integration 分支。
-> 第 8.1 节最终 integration 全量只在 S14 对最终 HEAD 运行一次。
+> **状态：Historical / Superseded。** 本文仅保留 2026-07-19 的设计与实施历史；
+> 当前行为以 `docs/invariants.md` 和 current machine contracts 为准。不得再次执行本文的
+> S0-S14、切片提交或发布步骤。
 
 **目标：** 以 owner 批准输入 `73c0ec09f3eff301cb4df842fda804c26ed37120` 及最终冻结 delta
 `c313f59a72b8a69c9ef7c5bdc4ab12c610d76a37`

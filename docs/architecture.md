@@ -20,6 +20,7 @@ outside this repository's mutation boundary.
 | Console area | Authority | Control Plane projection |
 | --- | --- | --- |
 | Signed-in identity | Sub2API identity plus local Session mapping | `/api/auth/me` |
+| Public model endpoint | configured Sub2API origin projected as `/v1` | `/api/gateway/endpoint` |
 | Wallet, owned Keys, per-Key Usage, account aggregate, balance history | live Sub2API JSON APIs | granular `/api/gateway/*` source DTOs |
 | Workspace and renewal state | Control Plane Workspace row | `/api/workspaces` and launch/renewal DTOs |
 | Runtime readiness | live Fabric/Kubernetes readback | `/api/workspaces/{workspaceId}/runtime-status` |
@@ -33,9 +34,10 @@ is omitted unless the authority supplies it. Browser identity parameters never
 override the current Session mapping, and raw downstream DTOs never cross the
 Control Plane boundary.
 
-Console has no browser-visible Gateway base-address API or card.
-`OPL_SUB2API_BASE_URL` remains server-only and `gflabtoken.cn` is never exposed as
-a customer link. Cloud does not inject a second Runtime Gateway base URL.
+Console displays and copies `https://gflabtoken.cn/v1` as the public model
+endpoint. It is never a link or redirect target, iframe, HTML source, or direct
+browser call to Sub2API management APIs. `OPL_SUB2API_BASE_URL` remains
+server-only, and Cloud does not inject a second Runtime Gateway base URL.
 
 `code-complete` means the local contracts, code, PostgreSQL, browser, and
 structure gates pass on one revision. `pilot-ready` additionally requires
@@ -133,8 +135,9 @@ The fixed candidates are App `6b334ef7f239eb01c40578159e6df9ed2e7f97dc`, shell
 `51d16f0e93aebf3fd5ccf96082490395fcbb8711`. The release workflow checks out all three detached, runs the existing
 `ensure:shell`, builds the active shell context into TCR, and reads back the immutable
 digest. Production manifests accept only the resulting target `repository@sha256`.
-The immutable TCR digest and Ready-Pod `imageID` are both pending real readback; no
-placeholder or local timestamp counts as publication or deployment evidence.
+The immutable Workspace image is pinned for deployment, but a customer
+Workspace Ready-Pod `imageID` readback remains pending. No configured digest,
+placeholder, or local timestamp substitutes for that Pod evidence.
 
 This is a real exception to the Control Plane product-command boundary: it
 carries Workspace HTML, API, and WebSocket data-plane traffic. The available
@@ -169,6 +172,10 @@ Fabric catalog exposes both Basic and Pro; availability means product access,
 while Tencent MonthlyPreflight remains the capacity authority before debit.
 Provider Acceptance, Pro real subscription verification, and fixed-slot live QA
 remain paused and do not gate ordinary deploy.
+
+The Cloud services have ordinary rollout and deployment readback evidence. That
+evidence does not complete the Basic canary, customer Workspace imageID, or model
+Usage checks, and it does not imply a real Pro purchase.
 
 Image publication accepts a full 40-character Cloud commit only. The release
 workflow reads back the exact checked-out HEAD and official Cloud `origin/main`,

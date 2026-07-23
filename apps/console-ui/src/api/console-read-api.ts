@@ -8,6 +8,9 @@ import type {
   BillingReceiptPage,
   CreateGatewayKeyRequest,
   GatewayAccountUsageSummaryDTO,
+  GatewayEndpointDTO,
+  GatewayGroupPageDTO,
+  GatewayKeyListQuery,
   GatewayKeyPageDTO,
   GatewayKeySecretDTO,
   GatewayKeySummaryDTO,
@@ -94,8 +97,21 @@ export function getGatewayWallet(signal?: AbortSignal): Promise<SourceEnvelope<G
   return sourceGet<GatewayWallet>("/api/gateway/wallet", signal);
 }
 
-export function getGatewayKeys(signal?: AbortSignal): Promise<SourceEnvelope<GatewayKeyPageDTO>> {
-  return sourceGet<GatewayKeyPageDTO>("/api/gateway/keys", signal);
+export function getGatewayKeys(query: GatewayKeyListQuery = {}, signal?: AbortSignal): Promise<SourceEnvelope<GatewayKeyPageDTO>> {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(query)) {
+    if (value !== undefined && value !== "") params.set(key, String(value));
+  }
+  const suffix = params.size > 0 ? `?${params}` : "";
+  return sourceGet<GatewayKeyPageDTO>(`/api/gateway/keys${suffix}`, signal);
+}
+
+export function getGatewayGroups(signal?: AbortSignal): Promise<SourceEnvelope<GatewayGroupPageDTO>> {
+  return sourceGet<GatewayGroupPageDTO>("/api/gateway/groups", signal);
+}
+
+export function getGatewayEndpoint(signal?: AbortSignal): Promise<SourceEnvelope<GatewayEndpointDTO>> {
+  return sourceGet<GatewayEndpointDTO>("/api/gateway/endpoint", signal);
 }
 
 export function getGatewayKey(keyId: string, signal?: AbortSignal): Promise<SourceEnvelope<GatewayKeySummaryDTO>> {

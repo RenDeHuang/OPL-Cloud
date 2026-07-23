@@ -92,9 +92,11 @@ and rollback never delete CBS.
 `autoRenew` defaults off. The current API rejects enabling it, and Console must
 not expose an enable control until a real renewal is proven.
 
-Console exposes no Gateway base-address API or card. `OPL_SUB2API_BASE_URL` is
-server-only, and ordinary users are never linked to the Sub2API backend. Cloud
-does not inject a second Gateway base URL into Runtime.
+Console displays and copies the public model endpoint
+`https://gflabtoken.cn/v1` through a Control Plane projection. The endpoint is
+text only: Console never links or redirects to Sub2API, embeds it, or calls its
+management API from the browser. `OPL_SUB2API_BASE_URL` remains server-only,
+and Cloud does not inject a second Gateway base URL into Runtime.
 
 Pilot V2 remains `code-complete` until separately approved real evidence meets
 the `pilot-ready` gate. Only the same immutable deployed revision with production
@@ -154,13 +156,16 @@ The `Deploy TKE Production` workflow installs database, internal-service,
 Sub2API, Tencent, image-pull, and Workspace secrets; renders the
 manifest; restarts Control Plane, Fabric, and Ledger; and waits for each rollout.
 
-Basic and Pro definitions and prices remain in code. Production catalog exposes
-Basic and marks Pro unavailable. Provider Acceptance, Pro verification, S9, and
-fixed-slot verification are paused and do not gate ordinary Basic rollout.
+Basic and Pro definitions and prices remain in code, and both are present in the
+production catalog. Catalog visibility is not evidence of a real purchase;
+Provider Acceptance, Pro purchase verification, S9, and fixed-slot verification
+remain paused and do not gate ordinary rollout.
 
 The retired local Console user seed is no longer accepted by deployment. The
 workflow bootstraps the fixed operator from Sub2API and invited owners are opened
-through `POST /api/operator/accounts`; production runtime evidence is still pending.
+through `POST /api/operator/accounts`. An ordinary Cloud rollout has been read
+back, but the Basic canary, customer Workspace imageID, and model Usage evidence
+remain incomplete.
 
 See [docs/runtime/production-runbook.md](./docs/runtime/production-runbook.md)
 for rollout and recovery commands.

@@ -420,11 +420,51 @@ func (app *controlPlaneServer) operatorAccountPage(ctx context.Context, service 
 		}
 		items = items[start:end]
 	}
+	app.populateOperatorKeyCounts(ctx, service, items)
 	status := "available"
 	if len(items) == 0 {
 		status = "empty"
 	}
 	return map[string]any{"items": items, "total": total, "page": page, "pageSize": pageSize}, status, nil
+}
+
+func (app *controlPlaneServer) populateOperatorKeyCounts(ctx context.Context, service *controlplane.Service, items []any) {
+	type keyCountResult struct {
+		index int
+		count int
+		err   error
+	}
+	results := make(chan keyCountResult, len(items))
+	gate := make(chan struct{}, 4)
+	var wait sync.WaitGroup
+	for index, raw := range items {
+		item, ok := raw.(map[string]any)
+		remoteID, err := strconv.ParseInt(stringValue(item["sub2apiUserId"]), 10, 64)
+		if !ok || err != nil || remoteID <= 0 {
+			continue
+		}
+		wait.Add(1)
+		go func(index int, userID int64) {
+			defer wait.Done()
+			select {
+			case gate <- struct{}{}:
+				defer func() { <-gate }()
+			case <-ctx.Done():
+				results <- keyCountResult{index: index, err: ctx.Err()}
+				return
+			}
+			keys, err := service.GatewayKeys(ctx, userID)
+			results <- keyCountResult{index: index, count: len(keys), err: err}
+		}(index, remoteID)
+	}
+	wait.Wait()
+	close(results)
+	for result := range results {
+		if result.err != nil {
+			continue
+		}
+		items[result.index].(map[string]any)["keyCount"] = sourceEnvelope("sub2api", "available", result.count, "")
+	}
 }
 
 func authoritativeSourceTimestamp(value any) string {

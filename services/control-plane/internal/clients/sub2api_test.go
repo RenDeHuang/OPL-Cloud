@@ -39,6 +39,8 @@ func writeSub2APISuccess(t *testing.T, w http.ResponseWriter, data any) {
 	}
 }
 
+func ptr[T any](value T) *T { return &value }
+
 func TestSub2APIAdminUsersPagination(t *testing.T) {
 	client := newSub2APITestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -209,7 +211,53 @@ func userKeyFixture(id int64, status string) map[string]any {
 	return map[string]any{
 		"id": id, "user_id": 41, "key": "sk-user-secret", "name": "general-key", "status": status,
 		"quota": 12.345678, "quota_used": 1.25, "usage_5h": 0.1, "usage_1d": 0.2, "usage_7d": 0.3,
-		"last_used_at": "2026-07-18T01:02:03Z", "expires_at": "2026-08-18T01:02:03Z",
+		"group_id": 7, "ip_whitelist": []string{"203.0.113.10"}, "ip_blacklist": []string{"198.51.100.0/24"},
+		"rate_limit_5h": 5.0, "rate_limit_1d": 10.0, "rate_limit_7d": 20.0, "current_concurrency": 2,
+		"last_used_at": "2026-07-18T01:02:03Z", "last_used_ip": "203.0.113.10", "expires_at": "2026-08-18T01:02:03Z",
+		"created_at": "2026-07-17T01:02:03Z", "updated_at": "2026-07-18T02:03:04Z",
+	}
+}
+
+func TestSub2APIUserKeyPageAndGroupsParity(t *testing.T) {
+	requests := 0
+	client := newSub2APITestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.Header.Get("Authorization") != "Bearer delegated-user-token" {
+			t.Fatalf("delegated authorization = %q", r.Header.Get("Authorization"))
+		}
+		switch r.URL.Path {
+		case "/api/v1/keys":
+			query := r.URL.Query()
+			if query.Get("page") != "2" || query.Get("page_size") != "20" || query.Get("search") != "pilot" || query.Get("status") != "inactive" || query.Get("group_id") != "7" || query.Get("sort_by") != "last_used_at" || query.Get("sort_order") != "asc" {
+				t.Fatalf("key query = %q", r.URL.RawQuery)
+			}
+			writeSub2APISuccess(t, w, map[string]any{"items": []any{userKeyFixture(17, "inactive")}, "total": 21, "page": 2, "page_size": 20, "pages": 2})
+		case "/api/v1/groups/available":
+			writeSub2APISuccess(t, w, []any{map[string]any{
+				"id": 7, "name": "Basic", "description": "Default group", "platform": "openai", "rate_multiplier": 1.25,
+				"subscription_type": "standard", "status": "active", "internal_secret": "must-not-project",
+			}})
+		default:
+			t.Fatalf("unexpected delegated route: %s %s", r.Method, r.URL.String())
+		}
+	}, time.Second)
+	credential := SessionDelegatedCredential{Bearer: "delegated-user-token", ExpiresAt: time.Now().Add(time.Hour)}
+	page, err := client.UserKeyPage(context.Background(), credential, 41, Sub2APIKeyPageQuery{
+		Page: 2, PageSize: 20, Search: "pilot", Status: "disabled", GroupID: ptr(int64(7)), SortBy: "lastUsedAt", SortOrder: "asc",
+	})
+	if err != nil || page.Total != 21 || page.Pages != 2 || len(page.Items) != 1 {
+		t.Fatalf("key page = %#v err=%v", page, err)
+	}
+	key := page.Items[0]
+	if key.Key != "sk-user-secret" || key.GroupID == nil || *key.GroupID != 7 || key.Status != "disabled" || key.CurrentConcurrency != 2 || key.RateLimit7dUSDMicros != 20_000_000 || key.CreatedAt.IsZero() || key.UpdatedAt.IsZero() {
+		t.Fatalf("key parity fields = %#v", key)
+	}
+	groups, err := client.UserGroups(context.Background(), credential, 41)
+	if err != nil || len(groups) != 1 || groups[0].ID != 7 || groups[0].Name != "Basic" || groups[0].RateMultiplier != 1.25 {
+		t.Fatalf("groups = %#v err=%v", groups, err)
+	}
+	if requests != 2 {
+		t.Fatalf("requests = %d, want 2", requests)
 	}
 }
 
@@ -288,6 +336,66 @@ func TestUserKeyUpdate(t *testing.T) {
 	})
 	if err != nil || key.Name != name || key.QuotaUSDMicros != quota || key.Status != "disabled" {
 		t.Fatalf("updated key = %#v err=%v", key, err)
+	}
+}
+
+func TestUserKeyParityCreateAndUpdatePayloads(t *testing.T) {
+	requests := 0
+	client := newSub2APITestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		var input map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			t.Fatal(err)
+		}
+		fixture := userKeyFixture(17, "active")
+		switch r.Method {
+		case http.MethodPost:
+			for field, want := range map[string]any{
+				"name": "parity-key", "group_id": float64(7), "quota": 1.25, "expires_in_days": float64(30),
+				"rate_limit_5h": 5.0, "rate_limit_1d": 10.0, "rate_limit_7d": 20.0,
+			} {
+				if input[field] != want {
+					t.Fatalf("create %s = %#v, want %#v; payload=%#v", field, input[field], want, input)
+				}
+			}
+		case http.MethodPut:
+			for field, want := range map[string]any{
+				"name": "edited", "group_id": float64(8), "status": "inactive", "quota": 2.5,
+				"expires_at": "2026-09-18T01:02:03Z", "rate_limit_5h": 0.0, "rate_limit_1d": 12.0,
+				"rate_limit_7d": 24.0, "reset_quota": true, "reset_rate_limit_usage": true,
+			} {
+				if input[field] != want {
+					t.Fatalf("update %s = %#v, want %#v; payload=%#v", field, input[field], want, input)
+				}
+			}
+			fixture["name"], fixture["group_id"], fixture["status"], fixture["quota"] = "edited", 8, "inactive", 2.5
+			fixture["rate_limit_5h"], fixture["rate_limit_1d"], fixture["rate_limit_7d"] = 0, 12, 24
+		default:
+			t.Fatalf("unexpected method %s", r.Method)
+		}
+		writeSub2APISuccess(t, w, fixture)
+	}, time.Second)
+	days := 30
+	created, err := client.CreateUserKey(context.Background(), SessionDelegatedCredential{Bearer: "delegated-user-token"}, 41, Sub2APICreateKeyInput{
+		Name: "parity-key", GroupID: 7, IPWhitelist: []string{"203.0.113.10"}, IPBlacklist: []string{"198.51.100.0/24"},
+		QuotaUSDMicros: 1_250_000, ExpiresInDays: &days, RateLimit5hUSDMicros: 5_000_000,
+		RateLimit1dUSDMicros: 10_000_000, RateLimit7dUSDMicros: 20_000_000,
+	}, "create-parity")
+	if err != nil || created.ID != 17 {
+		t.Fatalf("create parity = %#v err=%v", created, err)
+	}
+	name, groupID, quota, enabled := "edited", int64(8), int64(2_500_000), false
+	expiresAt, rate5h, rate1d, rate7d, reset := "2026-09-18T01:02:03Z", int64(0), int64(12_000_000), int64(24_000_000), true
+	updated, err := client.UpdateUserKey(context.Background(), SessionDelegatedCredential{Bearer: "delegated-user-token"}, 41, 17, Sub2APIUpdateKeyInput{
+		Name: &name, GroupID: &groupID, Enabled: &enabled, IPWhitelist: ptr([]string{}), IPBlacklist: ptr([]string{"192.0.2.0/24"}),
+		QuotaUSDMicros: &quota, ExpiresAt: &expiresAt, RateLimit5hUSDMicros: &rate5h, RateLimit1dUSDMicros: &rate1d,
+		RateLimit7dUSDMicros: &rate7d, ResetQuota: &reset, ResetRateLimitUsage: &reset,
+	})
+	if err != nil || updated.Name != name || updated.GroupID == nil || *updated.GroupID != groupID || updated.Status != "disabled" {
+		t.Fatalf("update parity = %#v err=%v", updated, err)
+	}
+	if requests != 2 {
+		t.Fatalf("requests = %d, want 2", requests)
 	}
 }
 

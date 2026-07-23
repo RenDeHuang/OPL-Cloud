@@ -77,7 +77,6 @@ func NewPersistentServer(service *controlplane.Service, store StateStore) (http.
 	registerSupportRoutes(mux, app)
 	registerAdminRoutes(mux, app, service)
 	registerProviderAcceptanceRoutes(mux, app, service)
-	registerExecutionRoutes(mux, app, service)
 	return &controlPlaneHTTPHandler{app: app, next: mux, service: service}, nil
 }
 
@@ -91,7 +90,9 @@ func retiredConsoleAPI(method, path string) bool {
 		"/api/workspaces/runtime-status", "/api/operator/summary", "/api/operator/accounts/invitations":
 		return true
 	}
-	if path == "/api/workspace-backups" || strings.HasPrefix(path, "/api/workspace-backups/") || strings.HasPrefix(path, "/api/payment") || strings.HasPrefix(path, "/api/orders") ||
+	if path == "/api/projects" || strings.HasPrefix(path, "/api/projects/") ||
+		path == "/api/execution-requests" || strings.HasPrefix(path, "/api/execution-requests/") ||
+		path == "/api/workspace-backups" || strings.HasPrefix(path, "/api/workspace-backups/") || strings.HasPrefix(path, "/api/payment") || strings.HasPrefix(path, "/api/orders") ||
 		strings.HasPrefix(path, "/api/api-keys") || strings.HasPrefix(path, "/api/keys") ||
 		strings.HasPrefix(path, "/api/users") || strings.HasPrefix(path, "/api/compute-allocations") ||
 		strings.HasPrefix(path, "/api/storage-volumes") || strings.HasPrefix(path, "/api/storage-attachments") ||

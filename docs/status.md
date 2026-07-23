@@ -11,8 +11,9 @@ The current V2 boundary requires:
 
 - one Console User to one Account to one Sub2API User/Wallet, with Session-scoped
   delegated Gateway credentials;
-- no browser Gateway base-address API, link, or Runtime override from Cloud;
-  `OPL_SUB2API_BASE_URL` remains server-only;
+- the public model endpoint `https://gflabtoken.cn/v1` is displayed and copied
+  through Control Plane only, with no link, redirect, iframe, browser-to-Sub2API
+  request, or Runtime override from Cloud; `OPL_SUB2API_BASE_URL` remains server-only;
 - general Key create/update/delete/reveal and authoritative per-Key Usage;
 - one primary Workspace purchase or renewal with exactly one USD-micros debit;
 - compute, storage, attachment, Gateway Secret, and Runtime as fulfillment only;
@@ -24,8 +25,9 @@ Remaining blockers:
 - Provider Acceptance, Pro real subscription evidence, S9, and fixed-slot
   verification are paused; Pro is open in the production catalog but its
   real evidence remains `not_executed_by_scope` and `productionProven=false`;
-- no approved real renewal, production rollout, browser login/WebSocket, model
-  request, exact-one Usage/wallet delta, or rollback evidence exists;
+- an ordinary Cloud rollout has deployment readback, while the approved Basic
+  canary, customer Workspace imageID, model Usage, exact-one wallet delta,
+  browser Workspace login/WebSocket, real renewal, and rollback evidence remain incomplete;
 - Runtime projects-entry and filesystem-usage product APIs are paused outside this
   release; Console does not display them and persistence is verified only with direct
   SHA256 markers on the Runtime Pod mounts;

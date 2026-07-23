@@ -288,16 +288,25 @@
     "keyListPaginationRule": "freeze first-page total pages and requested page_size; require coherent metadata, exact page numbers and ceiling, bounded items, positive unique Key IDs, mapped user_id on every item, and collected item count equal total before cardinality selection",
     "emptyListPaginationRule": { "appliesTo": ["Keys", "UserKeys", "Usage", "BalanceHistory"], "total": 0, "page": 1, "pages": 1, "items": [], "otherShapes": "reject" },
     "customerReadContract": "opl-cloud-console-source-truth-contract.json",
-    "customerMutationApis": ["create_general_key", "update_general_key", "delete_general_key", "reveal_owned_key"],
+    "customerReadApis": ["configured_public_endpoint", "available_groups", "paginated_filtered_sorted_owned_keys"],
+    "customerMutationApis": ["create_general_key", "update_general_key", "delete_general_key", "reveal_owned_key", "change_group", "reset_quota", "reset_rate_limit_usage"],
     "createKeyRequest": {
+      "groupRequired": true,
+      "groupAuthority": "live_sub2api_available_groups",
       "expiryField": "expiresInDays",
       "responseExpiryField": "expiresAt",
       "createThenUpdate": false
     },
+    "publicEndpoint": {
+      "route": "GET /api/gateway/endpoint",
+      "derivation": "configured_sub2api_base_url_plus_v1",
+      "productionValue": "https://gflabtoken.cn/v1",
+      "browserDirectAdminApi": false
+    },
     "revealApi": "POST /api/gateway/keys/{keyId}/reveal",
     "revealAuthorization": "owner_and_current_session_account_with_csrf",
     "revealCacheControl": "private, no-store",
-    "requiredCapabilities": ["mapped_user_identity", "mapped_user_balance", "mapped_user_key_list", "delegated_user_key_lifecycle", "request_usage_list", "aggregate_usage_stats", "batch_user_and_key_usage", "mapped_user_balance_history", "deterministic_idempotent_balance_adjustment"],
+    "requiredCapabilities": ["mapped_user_identity", "mapped_user_balance", "mapped_user_key_list", "available_user_groups", "delegated_user_key_lifecycle", "key_quota_ip_expiry_rate_limit_and_reset", "request_usage_list", "aggregate_usage_stats", "batch_user_and_key_usage", "mapped_user_balance_history", "deterministic_idempotent_balance_adjustment"],
     "compatibilityEvidence": ["contract_tests", "read_only_production_probe"],
     "usageScope": ["user_id", "api_key_id"],
     "usageListFields": ["user_id", "api_key_id", "request_id", "created_at", "model", "inbound_endpoint", "request_type", "input_tokens", "output_tokens", "cache_creation_tokens", "cache_read_tokens", "actual_cost"],
@@ -319,7 +328,7 @@
       "receiptType": "workspace.gateway_key_rotated.v1",
       "currentImplementation": "code_complete_local_focused_tests_only"
     },
-    "currentImplementation": "Session-delegated general Key create/update/delete/read/reveal, exact expiresInDays create input, authoritative expiresAt readback, per-Key Usage, and upstream account aggregate are code-complete and locally focused-tested without Key/Usage persistence; browser integration, a real model request, and production readback remain pending."
+    "currentImplementation": "Session-delegated authoritative group read, paginated filtered sorted Key list, full v0.1.162 general Key lifecycle and reset fields, audited no-store reveal, configured public endpoint projection, per-Key Usage, and current-page bounded operator Key counts are code-complete without Key/Usage persistence; local E2E, browser, and production readback remain pending."
   },
   "consoleFinancialProjection": {
     "mode": "read_only_projection",

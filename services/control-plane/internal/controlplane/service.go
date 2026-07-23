@@ -240,6 +240,30 @@ func (s *Service) GatewayUserKeys(ctx context.Context, credential clients.Sessio
 	return client.UserKeys(ctx, credential, userID)
 }
 
+func (s *Service) GatewayUserKeyPage(ctx context.Context, credential clients.SessionDelegatedCredential, userID int64, query clients.Sub2APIKeyPageQuery) (clients.Sub2APIKeyPage, error) {
+	client, ok := s.sub2API.(clients.Sub2APIUserKeyPageClient)
+	if !ok {
+		return clients.Sub2APIKeyPage{}, errors.New("sub2api_user_key_page_unavailable")
+	}
+	return client.UserKeyPage(ctx, credential, userID, query)
+}
+
+func (s *Service) GatewayUserGroups(ctx context.Context, credential clients.SessionDelegatedCredential, userID int64) ([]clients.Sub2APIGroup, error) {
+	client, ok := s.sub2API.(clients.Sub2APIUserGroupClient)
+	if !ok {
+		return nil, errors.New("sub2api_user_groups_unavailable")
+	}
+	return client.UserGroups(ctx, credential, userID)
+}
+
+func (s *Service) GatewayPublicEndpoint() (string, error) {
+	client, ok := s.sub2API.(clients.Sub2APIPublicEndpointClient)
+	if !ok || strings.TrimSpace(client.PublicEndpoint()) == "" {
+		return "", errors.New("sub2api_public_endpoint_unavailable")
+	}
+	return client.PublicEndpoint(), nil
+}
+
 func (s *Service) GatewayUserKey(ctx context.Context, credential clients.SessionDelegatedCredential, userID, keyID int64) (clients.Sub2APIWorkspaceKey, error) {
 	client, ok := s.sub2API.(clients.Sub2APIUserKeyReadClient)
 	if !ok {

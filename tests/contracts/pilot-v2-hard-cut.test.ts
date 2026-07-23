@@ -27,8 +27,9 @@ test("Pilot V2 contracts hard cut Gateway keys and source envelopes", async () =
     productionProven: false,
     saleable: false
   });
-  assert.equal(freeze.gateway.publicEndpoint, undefined);
-  assert.deepEqual(freeze.gateway.customerMutationApis, ["create_general_key", "update_general_key", "delete_general_key", "reveal_owned_key"]);
+  assert.equal(freeze.gateway.publicEndpoint.route, "GET /api/gateway/endpoint");
+  assert.deepEqual(freeze.gateway.customerMutationApis, ["create_general_key", "update_general_key", "delete_general_key", "reveal_owned_key", "change_group", "reset_quota", "reset_rate_limit_usage"]);
+  assert.equal(freeze.gateway.createKeyRequest.groupRequired, true);
   assert.equal(freeze.gateway.createKeyRequest.expiryField, "expiresInDays");
   assert.equal(freeze.gateway.createKeyRequest.responseExpiryField, "expiresAt");
   assert.equal(freeze.gateway.createKeyRequest.createThenUpdate, false);
@@ -36,7 +37,8 @@ test("Pilot V2 contracts hard cut Gateway keys and source envelopes", async () =
   assert.equal(sourceTruth.envelope.typeName, "SourceEnvelope<T>");
   assert.equal(sourceTruth.envelope.serverWriter, "writeSourceEnvelope");
   assert.equal(sourceTruth.envelope.fetchedAtMaySubstituteSourceUpdatedAt, false);
-  assert.equal(sourceTruth.sources.gateway.endpoint, undefined);
+  assert.equal(sourceTruth.sources.gateway.endpoint.authority, "existing_sub2api_base_url_plus_v1");
+  assert.equal(sourceTruth.sources.gateway.groups.authority, "live_sub2api_readback");
   assert.equal(sourceTruth.sources.gateway.keys.createRequest.expiryField, "expiresInDays");
   assert.equal(sourceTruth.sources.gateway.keys.revealRoute, "POST /api/gateway/keys/{keyId}/reveal");
   assert.equal(sourceTruth.sources.gateway.usage.route, "GET /api/gateway/keys/{keyId}/usage");
@@ -44,12 +46,12 @@ test("Pilot V2 contracts hard cut Gateway keys and source envelopes", async () =
   assert.equal(sourceTruth.sources.gateway.accountUsageStats.route, "GET /api/gateway/usage-summary");
 
   assert.deepEqual(boundary.customerMutationBoundary, { payment: false, topUp: false, keyCreate: true, keyRevoke: true });
-  assert.ok(boundary.externalServices.gateway.controlPlaneApi.includes("mutate owned general keys with delegated user credentials"));
+  assert.ok(boundary.externalServices.gateway.controlPlaneApi.includes("mutate owned general keys including group quota IP expiry rate limits and resets with delegated user credentials"));
   assert.doesNotMatch(dtos, /ProductSourceEnvelope/);
   assert.match(dtos, /type SourceEnvelope<T>/);
   for (const name of [
     "MoneyDTO", "OperationStatusDTO", "SessionDTO", "CurrentAccountDTO", "GatewayWalletDTO", "GatewayBalanceHistoryPageDTO",
-    "GatewayKeyPageDTO", "GatewayKeySummaryDTO", "CreateGatewayKeyRequest",
+    "GatewayEndpointDTO", "GatewayGroupPageDTO", "GatewayKeyPageDTO", "GatewayKeySummaryDTO", "CreateGatewayKeyRequest",
     "UpdateGatewayKeyRequest", "GatewayKeySecretDTO", "GatewayKeyUsagePageDTO",
     "GatewayUsageSummaryDTO", "GatewayAccountUsageSummaryDTO", "WorkspaceDTO",
     "WorkspaceLaunchRequest", "WorkspaceLaunchOperationDTO", "WorkspaceKeyRotationDTO",
@@ -65,7 +67,6 @@ test("Pilot V2 contracts hard cut Gateway keys and source envelopes", async () =
   ]) {
     assert.match(dtos, new RegExp(`export (?:interface|type) ${name}\\b`), `missing ${name}`);
   }
-  assert.doesNotMatch(dtos, /GatewayEndpointDTO/);
   assert.match(dtos, /interface CreateGatewayKeyRequest[\s\S]*expiresInDays/);
   const rotationDTO = dtos.match(/export interface WorkspaceKeyRotationDTO[\s\S]*?\n}/)?.[0] ?? "";
   assert.match(rotationDTO, /workspaceApiKeyId:\s*string;/);
@@ -216,11 +217,13 @@ test("Pilot V2 contracts hard cut operator resources, wallet adjustments, and an
     users: "GET /api/v1/admin/users",
     usersUsage: "POST /api/v1/admin/dashboard/users-usage",
     apiKeysUsage: "POST /api/v1/admin/dashboard/api-keys-usage",
+    currentPageKeyCounts: "GET /api/v1/admin/users/{userId}/api-keys",
     batchSizeMax: 50
   });
   assert.equal(management.operatorProjection.perAccountUserOrUsageNPlusOne, false);
   assert.equal(management.operatorProjection.usersPagination, "collect_all_coherent_sub2api_user_pages");
   assert.equal(management.operatorProjection.persistence, "none_request_join_only");
+  assert.equal(management.operatorProjection.keyCountRead, "selected_control_plane_page_only_bounded_concurrency_max_4");
   assert.equal(management.operatorProjection.readReplica, false);
   assert.equal(management.operatorProjection.partialFailure, "affected_nested_source_unavailable_without_zero_data");
   assert.equal(management.operatorAuthPolicy.defaultRoute, "/console/overview");
@@ -298,7 +301,7 @@ test("Pilot V2 contracts hard cut operator resources, wallet adjustments, and an
     "status", "createdAt", "expiresAt", "lastReadAt", "operationRef", "receiptRef"
   ]);
   assert.equal(resource.fabricAndLedgerPersistenceInControlPlane, false);
-  assert.equal(sourceTruth.sources.identity.operatorAccounts.pagination, "collect_all_coherent_sub2api_user_pages_then_control_plane_page");
+  assert.equal(sourceTruth.sources.identity.operatorAccounts.pagination, "collect_all_coherent_sub2api_user_pages_then_control_plane_page_with_key_counts_only_for_selected_page");
   assert.equal(sourceTruth.sources.identity.operatorAccounts.failure, "affected_nested_source_unavailable_without_zero_data");
   assert.deepEqual(sourceTruth.sources.operator.routes, {
     overview: "GET /api/operator/overview",
@@ -349,7 +352,7 @@ test("Pilot V2 contracts hard cut operator resources, wallet adjustments, and an
     recoveryRequestFields: ["accountId", "billingOperationId", "evidenceRef"],
     implementation: "integrated_local_fake_verified"
   });
-  assert.equal(boundary.externalServices.gateway.currentImplementation, "paginated_users_batch_user_and_key_usage_code_complete_local_only");
+  assert.equal(boundary.externalServices.gateway.currentImplementation, "paginated_users_batch_usage_current_page_bounded_key_counts_and_full_delegated_key_parity_code_complete_local_only");
   const announcement = business.objectKinds.find((entry: { kind: string }) => entry.kind === "Announcement");
   assert.equal(Boolean(announcement), true);
   assert.equal(announcement.implementation, "code_complete_local_focused_tests");

@@ -5,6 +5,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const NOW = "2026-07-19T12:00:00Z";
 const WORKSPACE_PASSWORD = "fixture-workspace-password";
 const WORKSPACE_KEY = "sk-fixture-workspace-key";
+const GENERAL_KEY = "sk-fixture-general-key";
 const VIEWPORTS = Object.freeze({
   desktop: Object.freeze({ width: 1440, height: 900 }),
   mobile: Object.freeze({ width: 390, height: 844 })
@@ -18,12 +19,15 @@ function unavailable(name) {
   return { source: name, status: "unavailable", available: false, fetchedAt: NOW };
 }
 
-function gatewayKey(id = "11", name = "General fixture key") {
+function gatewayKey(id = "11", name = "General fixture key", input = {}) {
   return {
     id, name, kind: id === "9" ? "workspace" : "general", status: "active",
-    quotaUsdMicros: 10_000_000, quotaUsedUsdMicros: 250_000,
-    usage5hUsdMicros: 0, usage1dUsdMicros: 10_000, usage7dUsdMicros: 25_000,
-    expiresAt: "2026-08-18T12:00:00Z", lastUsedAt: NOW,
+    groupId: input.groupId || "101", ipWhitelist: input.ipWhitelist || [], ipBlacklist: input.ipBlacklist || [],
+    quotaUsdMicros: input.quotaUsdMicros ?? 10_000_000, quotaUsedUsdMicros: 250_000,
+    rateLimit5hUsdMicros: input.rateLimit5hUsdMicros || 0, rateLimit1dUsdMicros: input.rateLimit1dUsdMicros || 0,
+    rateLimit7dUsdMicros: input.rateLimit7dUsdMicros || 0,
+    usage5hUsdMicros: 0, usage1dUsdMicros: 10_000, usage7dUsdMicros: 25_000, currentConcurrency: 0,
+    expiresAt: "2026-08-18T12:00:00Z", lastUsedAt: NOW, lastUsedIp: "127.0.0.1", createdAt: NOW, updatedAt: NOW,
     manageable: id !== "9", deletable: id !== "9"
   };
 }
@@ -136,30 +140,77 @@ async function apiFixture(route, state) {
   if (path === "/api/gateway/wallet") return fulfillJson(route, source({ userId: "9", currency: "USD", usdMicros: 50_000_000, status: "active" }, "sub2api"));
   if (path === "/api/gateway/usage-summary") return fulfillJson(route, source({ totalRequests: 1, totalInputTokens: 10, totalOutputTokens: 2, totalTokens: 12, totalActualCostUsdMicros: 25_000 }, "sub2api"));
   if (path === "/api/gateway/balance-history") return fulfillJson(route, source({ items: [], total: 0 }, "sub2api", "empty"));
+  if (path === "/api/gateway/endpoint") return fulfillJson(route, source({ baseUrl: "https://gflabtoken.cn/v1" }, "sub2api"));
+  if (path === "/api/gateway/groups") return fulfillJson(route, source({
+    items: [
+      { id: "101", name: "default", description: "", platform: "openai", rateMultiplier: 1, subscriptionType: "standard", status: "active" },
+      { id: "202", name: "priority", description: "", platform: "anthropic", rateMultiplier: 1, subscriptionType: "standard", status: "active" }
+    ],
+    total: 2
+  }, "sub2api"));
 
   if (path === "/api/gateway/keys" && method === "GET") {
     if (state.sourceState === "error") return fulfillJson(route, { error: "upstream_unavailable" }, 503);
     const keys = state.sourceState === "available" ? state.keys : [];
-    return fulfillJson(route, sourceForState(state, { items: keys, total: keys.length, page: 1, pageSize: 20 }, "sub2api"));
+    if (state.sourceState === "available" && keys.length === 0) state.emptyGatewayReadbacks += 1;
+    const data = { items: keys, total: keys.length, page: 1, pageSize: 20, pages: keys.length ? 1 : 0 };
+    return fulfillJson(route, state.sourceState === "available" && keys.length === 0
+      ? source(data, "sub2api", "empty")
+      : sourceForState(state, data, "sub2api"));
   }
   if (path === "/api/gateway/keys" && method === "POST") {
     const operation = request.headers()["idempotency-key"] || "";
     if (!operation) return fulfillJson(route, { error: "idempotency_key_required" }, 400);
+    const input = request.postDataJSON();
     state.gatewayWrites.add(operation);
-    if (!state.keys.some((item) => item.id === "12")) state.keys.push(gatewayKey("12", "Browser retry key"));
+    if (!state.keys.some((item) => item.id === "12")) state.keys.push(gatewayKey("12", input.name, input));
     if (!state.lostGatewayResponses.has(operation)) {
       state.lostGatewayResponses.add(operation);
       return route.abort("failed");
     }
-    return fulfillJson(route, source(gatewayKey("12", "Browser retry key"), "sub2api"));
+    return fulfillJson(route, source(state.keys.find((item) => item.id === "12"), "sub2api"));
   }
   const keyMatch = path.match(/^\/api\/gateway\/keys\/(\d+)$/);
-  if (keyMatch && method === "GET") return fulfillJson(route, source(state.keys.find((item) => item.id === keyMatch[1]) || gatewayKey(keyMatch[1]), "sub2api"));
+  if (keyMatch && method === "GET") {
+    const key = state.keys.find((item) => item.id === keyMatch[1]);
+    return key ? fulfillJson(route, source(key, "sub2api")) : fulfillJson(route, { error: "gateway_key_not_found" }, 404);
+  }
+  if (keyMatch && method === "PATCH") {
+    const operation = request.headers()["idempotency-key"] || "";
+    const key = state.keys.find((item) => item.id === keyMatch[1]);
+    if (!operation) return fulfillJson(route, { error: "idempotency_key_required" }, 400);
+    if (!key) return fulfillJson(route, { error: "gateway_key_not_found" }, 404);
+    const input = request.postDataJSON();
+    for (const field of ["name", "groupId", "ipWhitelist", "ipBlacklist", "quotaUsdMicros", "rateLimit5hUsdMicros", "rateLimit1dUsdMicros", "rateLimit7dUsdMicros", "expiresAt"]) {
+      if (input[field] !== undefined) key[field] = input[field] || (field === "expiresAt" ? null : input[field]);
+    }
+    if (input.enabled !== undefined) key.status = input.enabled ? "active" : "disabled";
+    if (input.resetQuota) key.quotaUsedUsdMicros = 0;
+    if (input.resetRateLimitUsage) key.usage5hUsdMicros = key.usage1dUsdMicros = key.usage7dUsdMicros = 0;
+    key.updatedAt = NOW;
+    state.gatewayMutationWrites.add(operation);
+    state.gatewayActions.push(input.resetQuota ? "quota-reset" : input.resetRateLimitUsage ? "rate-reset" : input.enabled === false ? "disable" : input.enabled === true ? "enable" : input.groupId && !input.name ? "group" : "edit");
+    return fulfillJson(route, source(key, "sub2api"));
+  }
+  if (keyMatch && method === "DELETE") {
+    const operation = request.headers()["idempotency-key"] || "";
+    if (!operation) return fulfillJson(route, { error: "idempotency_key_required" }, 400);
+    const index = state.keys.findIndex((item) => item.id === keyMatch[1]);
+    if (index < 0) return fulfillJson(route, { error: "gateway_key_not_found" }, 404);
+    state.keys.splice(index, 1);
+    state.gatewayMutationWrites.add(operation);
+    state.gatewayActions.push("delete");
+    return fulfillJson(route, source({ status: "deleted" }, "sub2api"));
+  }
   const revealMatch = path.match(/^\/api\/gateway\/keys\/(\d+)\/reveal$/);
-  if (revealMatch && method === "POST") return fulfillJson(route, source({
-    id: revealMatch[1], name: revealMatch[1] === "9" ? "Workspace Key" : "General fixture key",
-    status: "active", value: revealMatch[1] === "9" ? WORKSPACE_KEY : "sk-fixture-general-key"
-  }, "sub2api"));
+  if (revealMatch && method === "POST") {
+    const key = revealMatch[1] === "9" ? gatewayKey("9", "Workspace Key") : state.keys.find((item) => item.id === revealMatch[1]);
+    if (!key) return fulfillJson(route, { error: "gateway_key_not_found" }, 404);
+    state.revealCalls.set(key.id, (state.revealCalls.get(key.id) || 0) + 1);
+    return fulfillJson(route, source({
+      id: key.id, name: key.name, status: key.status, value: key.id === "9" ? WORKSPACE_KEY : GENERAL_KEY
+    }, "sub2api"), 200, { "cache-control": "private, no-store" });
+  }
 
   if (path === "/api/operator/overview") {
     const ready = source({ ready: true }, "control-plane");
@@ -233,15 +284,59 @@ async function assertNoViewportOverflow(page) {
   if (overflow > 1) throw new Error(`pilot_v2_browser_viewport_overflow:${overflow}`);
 }
 
-async function retryGatewayKey(page) {
+async function exerciseGatewayKeyLifecycle(page, state) {
   await page.getByRole("button", { name: "创建 Key" }).click();
-  const dialog = page.getByRole("dialog", { name: "api-key" });
+  const dialog = page.getByRole("dialog", { name: "创建 API Key" });
   await dialog.getByLabel("名称").fill("Browser retry key");
   const submit = dialog.getByRole("button", { name: "创建", exact: true });
   await submit.click();
   await page.waitForFunction(() => [...document.querySelectorAll("button")].some((button) => button.textContent?.trim() === "创建" && !button.disabled));
   await submit.click();
   await waitForText(page, "API Key 已创建");
+  await waitForText(page, GENERAL_KEY);
+
+  const secretRow = page.locator("tr.secret-row");
+  await secretRow.getByRole("button", { name: "复制", exact: true }).click();
+  if (await page.evaluate(() => navigator.clipboard.readText()) !== GENERAL_KEY) throw new Error("pilot_v2_browser_created_key_copy_failed");
+
+  let keyRow = page.getByRole("row").filter({ hasText: "Browser retry key" }).first();
+  await keyRow.getByRole("button", { name: "使用说明", exact: true }).click();
+  const useDialog = page.getByRole("dialog", { name: "使用说明" });
+  await waitForText(useDialog, "openai");
+  await waitForText(useDialog, "https://gflabtoken.cn/v1");
+  await waitForText(useDialog, GENERAL_KEY);
+  await useDialog.getByRole("button", { name: "复制配置", exact: true }).click();
+  const copiedConfiguration = await page.evaluate(() => navigator.clipboard.readText());
+  for (const value of ["https://gflabtoken.cn/v1", GENERAL_KEY, "openai"]) {
+    if (!copiedConfiguration.includes(value)) throw new Error(`pilot_v2_browser_key_configuration_missing:${value}`);
+  }
+  await useDialog.getByRole("button", { name: "关闭", exact: true }).last().click();
+
+  await keyRow.getByRole("button", { name: "编辑", exact: true }).click();
+  const editDialog = page.getByRole("dialog", { name: "编辑 API Key" });
+  await editDialog.getByLabel("名称").fill("Browser edited key");
+  await editDialog.getByRole("button", { name: "保存", exact: true }).click();
+  await waitForText(page, "API Key 已更新");
+
+  keyRow = page.getByRole("row").filter({ hasText: "Browser edited key" }).first();
+  await keyRow.getByLabel("快捷换组").selectOption("202");
+  await waitForText(page, "分组已更新");
+  keyRow = page.getByRole("row").filter({ hasText: "Browser edited key" }).first();
+  await keyRow.getByRole("button", { name: "停用", exact: true }).click();
+  await waitForText(page, "API Key 已停用");
+  await keyRow.getByRole("button", { name: "启用", exact: true }).click();
+  await waitForText(page, "API Key 已启用");
+  await keyRow.getByRole("button", { name: "重置配额", exact: true }).click();
+  await waitForText(page, "配额用量已重置");
+  await keyRow.getByRole("button", { name: "重置限速", exact: true }).click();
+  await waitForText(page, "限速用量已重置");
+  await keyRow.getByRole("button", { name: "删除", exact: true }).click();
+  const deleteDialog = page.getByRole("dialog", { name: "删除 API Key" });
+  await deleteDialog.getByRole("button", { name: "删除", exact: true }).click();
+  await waitForText(page, "API Key 已删除");
+  await waitForText(page, "暂无数据");
+
+  if (state.keys.length !== 0 || state.emptyGatewayReadbacks < 1) throw new Error("pilot_v2_browser_gateway_empty_readback_failed");
 }
 
 async function retryWalletAdjustment(page) {
@@ -266,8 +361,9 @@ export async function runPilotV2BrowserQa({
   const server = await serverFactory();
   let browser;
   const state = {
-    role: "customer", sourceState: "available", keys: [gatewayKey("9", "Workspace Key"), gatewayKey()],
+    role: "customer", sourceState: "available", keys: [],
     gatewayWrites: new Set(), walletWrites: new Set(), lostGatewayResponses: new Set(), lostWalletResponses: new Set(),
+    gatewayMutationWrites: new Set(), gatewayActions: [], revealCalls: new Map(), emptyGatewayReadbacks: 0,
     unexpectedApi: [], externalRequests: 0, pageErrors: []
   };
   try {
@@ -315,13 +411,13 @@ export async function runPilotV2BrowserQa({
         }
         state.sourceState = "available";
         await page.goto(`${server.origin}/console/api/keys?write=1`, { waitUntil: "networkidle" });
-        await retryGatewayKey(page);
+        await exerciseGatewayKeyLifecycle(page, state);
       }
 
       for (const sourceState of ["empty", "unavailable", "error"]) {
         state.sourceState = sourceState;
         await page.goto(`${server.origin}/console/api/keys?state=${sourceState}&viewport=${name}`, { waitUntil: "networkidle" });
-        await waitForText(page, sourceState === "empty" ? "暂无 API Key" : sourceState === "unavailable" ? "暂不可用" : "服务暂不可用");
+        await waitForText(page, sourceState === "empty" ? "暂无数据" : sourceState === "unavailable" ? "暂不可用" : "服务暂不可用");
       }
 
       state.role = "operator";
@@ -345,6 +441,11 @@ export async function runPilotV2BrowserQa({
     if (state.unexpectedApi.length) throw new Error(`pilot_v2_browser_unexpected_api:${state.unexpectedApi.join(",")}`);
     if (state.pageErrors.length) throw new Error(`pilot_v2_browser_page_error:${state.pageErrors.join(",")}`);
     if (state.gatewayWrites.size !== 1 || state.walletWrites.size !== 1) throw new Error("pilot_v2_browser_idempotency_failed");
+    const expectedGatewayActions = ["edit", "group", "disable", "enable", "quota-reset", "rate-reset", "delete"];
+    if (state.gatewayMutationWrites.size !== expectedGatewayActions.length || JSON.stringify(state.gatewayActions) !== JSON.stringify(expectedGatewayActions)) {
+      throw new Error(`pilot_v2_browser_gateway_lifecycle_failed:${JSON.stringify(state.gatewayActions)}`);
+    }
+    if (state.revealCalls.get("12") !== 1) throw new Error(`pilot_v2_browser_created_key_reveal_failed:${state.revealCalls.get("12") || 0}`);
     if (state.externalRequests !== 0) throw new Error(`pilot_v2_browser_external_request:${state.externalRequests}`);
     return {
       ok: true,
@@ -354,6 +455,7 @@ export async function runPilotV2BrowserQa({
       roles: ["customer", "operator"],
       sourceStates: ["available", "empty", "unavailable", "error"],
       repeatedWrites: { gatewayKey: state.gatewayWrites.size, walletAdjustment: state.walletWrites.size },
+      keyInteractions: state.gatewayActions,
       secretCleanup: true,
       externalRequests: state.externalRequests
     };

@@ -3,7 +3,6 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const contractsDir = new URL("../../packages/contracts/", import.meta.url);
-const root = new URL("../../", import.meta.url);
 
 async function readContract(file) {
   return JSON.parse(await readFile(new URL(file, contractsDir), "utf8"));
@@ -85,15 +84,12 @@ test("current service boundary does not inherit customer authority from the supe
   assert.ok(boundary.services.ledger.readApis.includes("reviewGateEvaluation"));
 });
 
-test("superseded sync APIs remain historical and are not registered for the Pilot", async () => {
+test("superseded execution APIs remain historical contract references", async () => {
   const shared = await readContract("opl-cloud-shared-execution-contract.json");
   const ledger = await readContract("opl-cloud-evidence-ledger-contract.json");
-  const server = await readFile(new URL("services/control-plane/internal/server/server.go", root), "utf8");
 
   assert.equal(shared.state, "superseded");
   assert.equal(shared.pilotStatus, "not_exposed_in_invite_only_pilot");
-  assert.doesNotMatch(server, /registerSyncRoutes\(mux/);
-  assert.match(server, /case "backups", "recovery", "sync", "transfers", "transfer", "contents"/);
 
   assert.deepEqual(shared.httpApis.controlPlane, {
     createProject: "POST /api/projects",

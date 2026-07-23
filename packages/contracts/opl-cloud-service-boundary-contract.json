@@ -144,20 +144,23 @@
       ],
       "controlPlaneApi": [
         "read mapped user balance",
-        "read mapped user API keys",
+        "read mapped user API keys with bounded upstream pagination filters and sorting",
+        "read mapped user available groups",
+        "project configured public model endpoint",
         "read scoped request usage",
         "read scoped aggregate usage stats",
         "read paginated users and batch user/key usage",
         "read mapped user balance history",
         "create and redeem adjustment",
-        "mutate owned general keys with delegated user credentials"
+        "mutate owned general keys including group quota IP expiry rate limits and resets with delegated user credentials"
       ],
       "customerProjection": "strict_allowlist_with_integer_usd_micros_and_no_local_usage_copy",
-      "currentImplementation": "paginated_users_batch_user_and_key_usage_code_complete_local_only"
+      "currentImplementation": "paginated_users_batch_usage_current_page_bounded_key_counts_and_full_delegated_key_parity_code_complete_local_only"
     }
   },
   "browserBoundary": {
     "onlyCalls": "control_plane_product_apis",
+    "publicEndpointDisplay": "copyable_text_only",
     "forbidden": ["sub2api_direct", "gflabtoken_link", "iframe", "html_scraping", "raw_admin_dto"]
   },
   "customerMutationBoundary": {
