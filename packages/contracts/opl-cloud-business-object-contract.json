@@ -29,7 +29,7 @@
     "ComputeAllocation is one replaceable account-owned dedicated CVM or Kubernetes node selected from the package catalog.",
     "StorageVolume can exist without compute; StorageAttachment mounts one volume to one current ComputeAllocation runtime.",
     "RuntimeTemplate/ImageRef is deployable runtime configuration only; it is not a billing object, storage owner, or Workspace identity.",
-    "Destroying compute suspends the Workspace URL and retains storage; rebuilding compute reuses the same Workspace URL and StorageVolume.",
+    "Destroying compute suspends the Workspace URL and retains storage; rebuilding compute with the same Workspace URL and StorageVolume is a future target with no Pilot customer route.",
     "Destroying storage makes the Workspace unrecoverable because the file body is gone.",
     "Sub2API owns the only spendable balance, API keys, AI usage, and real-time API debits.",
     "Sub2API owns customer credential authentication; Control Plane stores only the verified mapping and local Session.",

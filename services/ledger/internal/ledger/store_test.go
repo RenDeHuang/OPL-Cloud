@@ -104,7 +104,7 @@ func TestWalletAdjustmentReceipt(t *testing.T) {
 
 func validBillingReceiptInput() ReceiptInput {
 	return ReceiptInput{
-		Type: "billing.resource_purchased.v1", Status: "completed", Surface: "control_plane", AccountID: "acct-alpha", WorkspaceID: "workspace-alpha",
+		Type: "billing.reconciliation.v1", Status: "completed", Surface: "control_plane", AccountID: "acct-alpha", WorkspaceID: "workspace-alpha",
 		Cost: map[string]any{
 			"pricingVersion": "pricing-v1", "monthlyPriceCnyCents": int64(35_000), "chargeUsdMicros": int64(50_000_000),
 			"sub2apiUserId": int64(41), "sub2apiRedeemCode": "opl:test:billing-alpha:charge:v1", "periodStart": "2026-07-01T00:00:00Z",
@@ -116,6 +116,42 @@ func validBillingReceiptInput() ReceiptInput {
 
 func TestBillingReceiptSchemaMemory(t *testing.T) {
 	testBillingReceiptSchema(t, NewMemoryStore())
+}
+
+func TestLegacyResourceBillingReceiptsAreReadOnly(t *testing.T) {
+	store := NewMemoryStore()
+	ctx := context.Background()
+	legacyTypes := []string{
+		"billing.resource_purchased.v1",
+		"billing.resource_renewed.v1",
+		"billing.resource_expired.v1",
+		"billing.resource_refunded.v1",
+		"billing.charge_review_required.v1",
+	}
+	for _, receiptType := range legacyTypes {
+		t.Run(receiptType, func(t *testing.T) {
+			input := validBillingReceiptInput()
+			input.Type = receiptType
+			input.IdempotencyKey = "retired-" + receiptType
+			if _, err := store.RecordReceipt(ctx, input); !errors.Is(err, ErrInvalidReceiptInput) {
+				t.Fatalf("new legacy receipt write error = %v, want ErrInvalidReceiptInput", err)
+			}
+		})
+	}
+
+	legacy := validBillingReceiptInput()
+	legacy.Type = "billing.resource_purchased.v1"
+	legacy.IdempotencyKey = ""
+	receipt := Receipt{ReceiptInput: legacy, ReceiptID: "receipt-legacy-resource", CreatedAt: time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)}
+	store.receipts[receipt.ReceiptID] = receipt
+	read, err := store.Receipt(ctx, receipt.ReceiptID)
+	if err != nil || read.Type != legacy.Type {
+		t.Fatalf("legacy receipt read = %#v, err=%v", read, err)
+	}
+	page, err := store.ListReceipts(ctx, ReceiptQuery{Type: legacy.Type})
+	if err != nil || len(page.Receipts) != 1 || page.Receipts[0].ReceiptID != receipt.ReceiptID {
+		t.Fatalf("legacy receipt list = %#v, err=%v", page, err)
+	}
 }
 
 func validWorkspaceBillingReceiptInput(receiptType string) ReceiptInput {
@@ -241,14 +277,7 @@ func testBillingReceiptSchema(t *testing.T, store Store) {
 	t.Helper()
 	ctx := context.Background()
 	required := []string{"pricingVersion", "monthlyPriceCnyCents", "chargeUsdMicros", "sub2apiUserId", "sub2apiRedeemCode", "periodStart", "paidThrough", "resourceType", "resourceId"}
-	receiptTypes := []string{
-		"billing.resource_purchased.v1",
-		"billing.resource_renewed.v1",
-		"billing.resource_expired.v1",
-		"billing.resource_refunded.v1",
-		"billing.charge_review_required.v1",
-		"billing.reconciliation.v1",
-	}
+	receiptTypes := []string{"billing.reconciliation.v1"}
 	for _, receiptType := range receiptTypes {
 		t.Run(receiptType, func(t *testing.T) {
 			for _, field := range required {
@@ -263,9 +292,6 @@ func testBillingReceiptSchema(t *testing.T, store Store) {
 			}
 			input := validBillingReceiptInput()
 			input.Type = receiptType
-			if receiptType != "billing.resource_purchased.v1" {
-				input.IdempotencyKey += "-" + receiptType
-			}
 			if _, err := store.RecordReceipt(ctx, input); err != nil {
 				t.Fatalf("valid billing receipt: %v", err)
 			}

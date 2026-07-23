@@ -1,10 +1,8 @@
 package server
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
-	"log"
 	"strings"
 	"testing"
 )
@@ -117,45 +115,5 @@ func TestOperatorSummaryKeepsManualReviewAndPastDueAlerts(t *testing.T) {
 	}
 	if notifications["total"] != 2 || !codes["manual_review"] || !codes["past_due"] {
 		t.Fatalf("manual-review expiry notifications=%#v", notifications)
-	}
-}
-
-func TestMonthlyOperationalLogsAreStableDeduplicatedAndRedacted(t *testing.T) {
-	var output bytes.Buffer
-	previousOutput, previousFlags, previousPrefix := log.Writer(), log.Flags(), log.Prefix()
-	log.SetOutput(&output)
-	log.SetFlags(0)
-	log.SetPrefix("")
-	t.Cleanup(func() {
-		log.SetOutput(previousOutput)
-		log.SetFlags(previousFlags)
-		log.SetPrefix(previousPrefix)
-	})
-
-	app := newControlPlaneApp()
-	row := map[string]any{
-		"id":                "compute-sensitive-id",
-		"accountId":         "acct-sensitive",
-		"billingStatus":     "manual_review",
-		"lastBillingError":  "provider-secret-detail",
-		"sub2apiRedeemCode": "redeem-sensitive",
-	}
-	mustStore(t, app.saveMonthlyResource(context.Background(), "compute", row))
-	mustStore(t, app.saveMonthlyResource(context.Background(), "compute", row))
-	row["billingStatus"] = "active"
-	delete(row, "lastBillingError")
-	mustStore(t, app.saveMonthlyResource(context.Background(), "compute", row))
-
-	logs := output.String()
-	if strings.Count(logs, "event=opl_operational_state code=manual_review state=active") != 1 {
-		t.Fatalf("active transition should be logged once: %q", logs)
-	}
-	if strings.Count(logs, "event=opl_operational_state code=manual_review state=recovered") != 1 {
-		t.Fatalf("recovery transition should be logged once: %q", logs)
-	}
-	for _, secret := range []string{"compute-sensitive-id", "acct-sensitive", "provider-secret-detail", "redeem-sensitive"} {
-		if strings.Contains(logs, secret) {
-			t.Fatalf("operational log leaked %q: %q", secret, logs)
-		}
 	}
 }

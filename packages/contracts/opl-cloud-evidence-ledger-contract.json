@@ -8,21 +8,14 @@
     "type": "long_term_contract",
     "removalCondition": "Replace only with a newer current contract for the same boundary."
   },
-  "currentScope": "Invite-only Pilot Workspace receipts, internal resource compatibility receipts, reconciliation evidence, and non-customer general execution evidence.",
+  "currentScope": "Invite-only Pilot Workspace receipts, reconciliation evidence, and non-customer general execution evidence; retired resource receipts remain historical read-only compatibility.",
   "receiptTypes": [
     "workspace.created",
     "workspace.compute_stopped",
-    "workspace.compute_restarted",
-    "workspace.compute_recreated",
     "workspace.compute_destroyed",
     "workspace.storage_destroyed",
     "workspace.access_token_reset",
     "workspace.access_token_deleted",
-    "billing.resource_purchased.v1",
-    "billing.resource_renewed.v1",
-    "billing.resource_expired.v1",
-    "billing.resource_refunded.v1",
-    "billing.charge_review_required.v1",
     "billing.reconciliation.v1",
     "billing.workspace_purchased.v1",
     "billing.workspace_renewed.v1",
@@ -34,6 +27,19 @@
     "review.result.v1",
     "execution.receipt.v1"
   ],
+  "historicalReadOnlyReceiptCompatibility": {
+    "types": [
+      "workspace.compute_restarted",
+      "workspace.compute_recreated",
+      "billing.resource_purchased.v1",
+      "billing.resource_renewed.v1",
+      "billing.resource_expired.v1",
+      "billing.resource_refunded.v1",
+      "billing.charge_review_required.v1"
+    ],
+    "existingReceiptsReadable": true,
+    "newWritesAllowed": false
+  },
   "requiredFields": [
     "type",
     "status",
@@ -258,8 +264,7 @@
       "billing.resource_renewed.v1",
       "billing.resource_expired.v1",
       "billing.resource_refunded.v1",
-      "billing.charge_review_required.v1",
-      "billing.reconciliation.v1"
+      "billing.charge_review_required.v1"
     ],
     "requiredCostFields": [
       "pricingVersion",
@@ -283,8 +288,10 @@
       "resourceType": "non_empty_opaque_string",
       "resourceId": "non_empty_opaque_string"
     },
-    "writeProtocol": "append_first_with_idempotency",
-    "correctionProtocol": "append_superseding_receipt",
+    "existingReceiptsReadable": true,
+    "newWritesAllowed": false,
+    "writeProtocol": "forbidden",
+    "correctionProtocol": "historical_receipts_are_immutable",
     "forbiddenContentRule": "reject recursively by case-insensitive exact field name in maps, slices, and typed JSON containers; token-count fields such as inputTokens remain allowed",
     "forbiddenContent": [
       "apiKey",
@@ -294,6 +301,21 @@
       "password",
       "token"
     ]
+  },
+  "billingReconciliationReceiptV1": {
+    "type": "billing.reconciliation.v1",
+    "requiredCostFields": [
+      "pricingVersion",
+      "monthlyPriceCnyCents",
+      "chargeUsdMicros",
+      "sub2apiUserId",
+      "sub2apiRedeemCode",
+      "periodStart",
+      "paidThrough",
+      "resourceType",
+      "resourceId"
+    ],
+    "writeProtocol": "append_first_with_idempotency"
   },
   "workspaceMonthlyBillingReceiptV1": {
     "types": [
@@ -436,7 +458,7 @@
       "credentialStatus"
     ],
     "billingRefs": [
-      "billing.resource_purchased.v1",
+      "billing.workspace_purchased.v1",
       "sub2apiRedeemCode",
       "paidThrough"
     ],

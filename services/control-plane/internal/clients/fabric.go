@@ -28,9 +28,6 @@ type FabricClient interface {
 	WorkspaceRuntimeStatus(ctx context.Context, workspaceID string) (WorkspaceRuntime, error)
 	Readiness(ctx context.Context) (map[string]any, error)
 	ListOperations(ctx context.Context) ([]FabricOperation, error)
-	CreateJob(ctx context.Context, input JobInput, idempotencyKey string) (Job, error)
-	GetJob(ctx context.Context, jobID string) (Job, error)
-	CancelJob(ctx context.Context, jobID string, idempotencyKey string) (Job, error)
 }
 
 type FabricRenewalClient interface {
@@ -46,22 +43,6 @@ type FabricMonthlyProviderTruthClient interface {
 	MonthlyProviderTruth(context.Context, string, string) (MonthlyProviderTruth, error)
 }
 
-type FabricTransferClient interface {
-	CreateTransfer(context.Context, ContentTransferInput, string) (ContentTransfer, error)
-	Transfer(context.Context, string) (ContentTransfer, error)
-	PutTransferChunk(context.Context, string, int, []byte, string) (ContentTransfer, error)
-	CompleteTransfer(context.Context, string) (ContentTransfer, error)
-	Content(context.Context, string, string) (FabricContent, error)
-}
-
-type FabricRecoveryClient interface {
-	CreateStorageSnapshot(context.Context, StorageSnapshotInput, string) (StorageSnapshot, error)
-	GetStorageSnapshot(context.Context, string) (StorageSnapshot, error)
-	SyncStorageSnapshot(context.Context, string) (StorageSnapshot, error)
-	RestoreStorageSnapshot(context.Context, string, StorageRestoreInput, string) (StorageVolume, error)
-	DestroyStorageSnapshot(context.Context, string, string) (StorageSnapshot, error)
-}
-
 type FabricHTTPError struct {
 	StatusCode int
 	Body       string
@@ -69,36 +50,6 @@ type FabricHTTPError struct {
 
 func (e *FabricHTTPError) Error() string {
 	return fmt.Sprintf("fabric request failed: status %d: %s", e.StatusCode, e.Body)
-}
-
-type ContentTransferInput struct {
-	OrganizationID string `json:"organizationId"`
-	WorkspaceID    string `json:"workspaceId"`
-	ProjectID      string `json:"projectId"`
-	Path           string `json:"path"`
-	Digest         string `json:"digest"`
-	Size           int64  `json:"size"`
-}
-
-type ContentTransfer struct {
-	TransferID     string `json:"transferId"`
-	OrganizationID string `json:"organizationId"`
-	WorkspaceID    string `json:"workspaceId"`
-	ProjectID      string `json:"projectId"`
-	Path           string `json:"path"`
-	Digest         string `json:"digest"`
-	Size           int64  `json:"size"`
-	ChunkSize      int    `json:"chunkSize"`
-	ChunkCount     int    `json:"chunkCount"`
-	ReceivedChunks []int  `json:"receivedChunks"`
-	Status         string `json:"status"`
-}
-
-type FabricContent struct {
-	Digest      string
-	WorkspaceID string
-	Path        string
-	Body        []byte
 }
 
 type FabricCatalog struct {
@@ -228,29 +179,6 @@ type StorageVolume struct {
 	CostTags           map[string]string `json:"costTags,omitempty"`
 }
 
-type StorageSnapshotInput struct {
-	AccountID   string `json:"accountId"`
-	WorkspaceID string `json:"workspaceId"`
-	VolumeID    string `json:"volumeId"`
-}
-
-type StorageRestoreInput struct {
-	AccountID      string `json:"accountId"`
-	WorkspaceID    string `json:"workspaceId"`
-	TargetVolumeID string `json:"targetVolumeId"`
-}
-
-type StorageSnapshot struct {
-	ID                string `json:"id"`
-	AccountID         string `json:"accountId"`
-	WorkspaceID       string `json:"workspaceId"`
-	VolumeID          string `json:"volumeId"`
-	Status            string `json:"status"`
-	ProviderRequestID string `json:"providerRequestId"`
-	SizeGB            int    `json:"sizeGb"`
-	CreatedAt         string `json:"createdAt"`
-}
-
 type StorageAttachmentInput struct {
 	WorkspaceID string `json:"workspaceId"`
 	ComputeID   string `json:"computeId"`
@@ -327,34 +255,6 @@ type FabricOperation struct {
 	StartedAt               string         `json:"startedAt"`
 	FinishedAt              string         `json:"finishedAt,omitempty"`
 	CreatedAt               string         `json:"createdAt"`
-}
-
-type JobInput struct {
-	OrganizationID string `json:"organizationId"`
-	WorkspaceID    string `json:"workspaceId"`
-	ProjectID      string `json:"projectId"`
-	TaskID         string `json:"taskId"`
-	RequestID      string `json:"requestId"`
-	ApprovalID     string `json:"approvalId"`
-	EnvironmentRef string `json:"environmentRef,omitempty"`
-}
-
-type Job struct {
-	JobID          string   `json:"jobId"`
-	OrganizationID string   `json:"organizationId"`
-	WorkspaceID    string   `json:"workspaceId"`
-	ProjectID      string   `json:"projectId"`
-	TaskID         string   `json:"taskId"`
-	RequestID      string   `json:"requestId"`
-	ApprovalID     string   `json:"approvalId"`
-	EnvironmentRef string   `json:"environmentRef,omitempty"`
-	Status         string   `json:"status"`
-	Attempt        int      `json:"attempt"`
-	LeaseOwner     string   `json:"leaseOwner,omitempty"`
-	ArtifactIDs    []string `json:"artifactIds,omitempty"`
-	ReviewIDs      []string `json:"reviewIds,omitempty"`
-	ErrorCode      string   `json:"errorCode,omitempty"`
-	Replayed       bool     `json:"replayed,omitempty"`
 }
 
 type fabricHTTPClient struct {
@@ -443,36 +343,6 @@ func (c *fabricHTTPClient) DestroyStorageVolume(ctx context.Context, id string, 
 	return result, err
 }
 
-func (c *fabricHTTPClient) CreateStorageSnapshot(ctx context.Context, input StorageSnapshotInput, idempotencyKey string) (StorageSnapshot, error) {
-	var result StorageSnapshot
-	err := c.post(ctx, "/fabric/storage-snapshots", input, idempotencyKey, &result)
-	return result, err
-}
-
-func (c *fabricHTTPClient) GetStorageSnapshot(ctx context.Context, id string) (StorageSnapshot, error) {
-	var result StorageSnapshot
-	err := c.get(ctx, "/fabric/storage-snapshots/"+url.PathEscape(id), &result)
-	return result, err
-}
-
-func (c *fabricHTTPClient) SyncStorageSnapshot(ctx context.Context, id string) (StorageSnapshot, error) {
-	var result StorageSnapshot
-	err := c.post(ctx, "/fabric/storage-snapshots/"+url.PathEscape(id)+"/sync", map[string]any{}, "", &result)
-	return result, err
-}
-
-func (c *fabricHTTPClient) RestoreStorageSnapshot(ctx context.Context, id string, input StorageRestoreInput, idempotencyKey string) (StorageVolume, error) {
-	var result StorageVolume
-	err := c.post(ctx, "/fabric/storage-snapshots/"+url.PathEscape(id)+"/restore", input, idempotencyKey, &result)
-	return result, err
-}
-
-func (c *fabricHTTPClient) DestroyStorageSnapshot(ctx context.Context, id, idempotencyKey string) (StorageSnapshot, error) {
-	var result StorageSnapshot
-	err := c.post(ctx, "/fabric/storage-snapshots/"+url.PathEscape(id)+"/destroy", map[string]any{}, idempotencyKey, &result)
-	return result, err
-}
-
 func (c *fabricHTTPClient) CreateStorageAttachment(ctx context.Context, input StorageAttachmentInput, idempotencyKey string) (StorageAttachment, error) {
 	var result StorageAttachment
 	err := c.post(ctx, "/fabric/storage-attachments", input, idempotencyKey, &result)
@@ -528,73 +398,6 @@ func (c *fabricHTTPClient) ListOperations(ctx context.Context) ([]FabricOperatio
 	var result []FabricOperation
 	err := c.get(ctx, "/fabric/operations", &result)
 	return result, err
-}
-
-func (c *fabricHTTPClient) CreateJob(ctx context.Context, input JobInput, idempotencyKey string) (Job, error) {
-	var result Job
-	err := c.post(ctx, "/fabric/jobs", input, idempotencyKey, &result)
-	return result, err
-}
-
-func (c *fabricHTTPClient) GetJob(ctx context.Context, jobID string) (Job, error) {
-	var result Job
-	err := c.get(ctx, "/fabric/jobs/"+url.PathEscape(jobID), &result)
-	return result, err
-}
-
-func (c *fabricHTTPClient) CancelJob(ctx context.Context, jobID string, idempotencyKey string) (Job, error) {
-	var result Job
-	err := c.post(ctx, "/fabric/jobs/"+url.PathEscape(jobID)+"/cancel", map[string]any{}, idempotencyKey, &result)
-	return result, err
-}
-
-func (c *fabricHTTPClient) CreateTransfer(ctx context.Context, input ContentTransferInput, idempotencyKey string) (ContentTransfer, error) {
-	var result ContentTransfer
-	err := c.post(ctx, "/fabric/transfers", input, idempotencyKey, &result)
-	return result, err
-}
-
-func (c *fabricHTTPClient) Transfer(ctx context.Context, id string) (ContentTransfer, error) {
-	var result ContentTransfer
-	err := c.get(ctx, "/fabric/transfers/"+url.PathEscape(id), &result)
-	return result, err
-}
-
-func (c *fabricHTTPClient) PutTransferChunk(ctx context.Context, id string, index int, body []byte, digest string) (ContentTransfer, error) {
-	var result ContentTransfer
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, fmt.Sprintf("%s/fabric/transfers/%s/chunks/%d", c.baseURL, url.PathEscape(id), index), bytes.NewReader(body))
-	if err != nil {
-		return result, err
-	}
-	req.Header.Set("Content-Type", "application/octet-stream")
-	req.Header.Set("X-Chunk-SHA256", digest)
-	err = c.doJSON(req, &result)
-	return result, err
-}
-
-func (c *fabricHTTPClient) CompleteTransfer(ctx context.Context, id string) (ContentTransfer, error) {
-	var result ContentTransfer
-	err := c.post(ctx, "/fabric/transfers/"+url.PathEscape(id)+"/complete", map[string]any{}, "", &result)
-	return result, err
-}
-
-func (c *fabricHTTPClient) Content(ctx context.Context, workspaceID, digest string) (FabricContent, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/fabric/contents/"+url.PathEscape(digest), nil)
-	if err != nil {
-		return FabricContent{}, err
-	}
-	req.Header.Set("X-Workspace-ID", workspaceID)
-	c.authorize(req)
-	res, err := c.client.Do(req)
-	if err != nil {
-		return FabricContent{}, err
-	}
-	defer res.Body.Close()
-	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		return FabricContent{}, fabricHTTPResponseError(res)
-	}
-	body, err := io.ReadAll(res.Body)
-	return FabricContent{Digest: res.Header.Get("X-Content-SHA256"), WorkspaceID: res.Header.Get("X-Workspace-ID"), Path: res.Header.Get("X-Workspace-Path"), Body: body}, err
 }
 
 func (c *fabricHTTPClient) doJSON(req *http.Request, output any) error {

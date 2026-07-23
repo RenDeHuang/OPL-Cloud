@@ -260,12 +260,12 @@
     "otherAccountSecretAccess": "forbidden"
   },
   "operatorBillingReviewProjection": {
-    "included": ["workspace.launch.v2_manual_review", "workspace.renewal_manual_review", "compute_billingStatus_manual_review", "storage_billingStatus_manual_review", "BillingReconciliation_mismatch"],
+    "included": ["workspace.launch.v2_manual_review", "workspace.renewal_manual_review", "BillingReconciliation_mismatch"],
     "nonBillingRuntimeOperations": "excluded",
     "mismatchRecoveryAction": false
   },
   "operatorNotifications": {
-    "source": "Derived from current Workspace renewal operations plus current compute and storage compatibility state; no alert table or second source of truth.",
+    "source": "Derived from current Workspace launch and renewal operations; historical compute and storage billing rows are inert and never create alerts.",
     "activeCodes": [
       "manual_review",
       "past_due",

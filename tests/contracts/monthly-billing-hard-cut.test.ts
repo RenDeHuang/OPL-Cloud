@@ -175,20 +175,26 @@ test("receipt contract exposes monthly product behavior only", async () => {
 		readJson("opl-cloud-evidence-ledger-contract.json")
 	]);
 
-  for (const type of [
-    "billing.workspace_purchased.v1",
-    "billing.resource_purchased.v1",
-    "billing.resource_renewed.v1",
-    "billing.resource_expired.v1",
-    "billing.resource_refunded.v1",
-    "billing.charge_review_required.v1",
-    "billing.reconciliation.v1",
-    "billing.workspace_renewed.v1",
-    "billing.workspace_expired.v1",
-    "billing.workspace_refunded.v1"
-  ]) {
-    assert.ok(evidence.receiptTypes.includes(type), `missing receipt type ${type}`);
-  }
+	for (const type of [
+		"billing.workspace_purchased.v1",
+		"billing.reconciliation.v1",
+		"billing.workspace_renewed.v1",
+		"billing.workspace_expired.v1",
+		"billing.workspace_refunded.v1"
+	]) {
+		assert.ok(evidence.receiptTypes.includes(type), `missing receipt type ${type}`);
+	}
+	assert.deepEqual(evidence.monthlyBillingReceiptV1.types, [
+		"billing.resource_purchased.v1",
+		"billing.resource_renewed.v1",
+		"billing.resource_expired.v1",
+		"billing.resource_refunded.v1",
+		"billing.charge_review_required.v1"
+	]);
+	assert.equal(evidence.monthlyBillingReceiptV1.existingReceiptsReadable, true);
+	assert.equal(evidence.monthlyBillingReceiptV1.newWritesAllowed, false);
+	assert.deepEqual(billing.ledgerEvidencePolicy.historicalReadOnlyReceiptTypes, evidence.monthlyBillingReceiptV1.types);
+	assert.equal(billing.ledgerEvidencePolicy.resourceReceiptNewWritesAllowed, false);
 	assert.deepEqual(evidence.workspaceMonthlyBillingReceiptV1.exactComponents, {
 		compute: ["resourceType", "resourceId", "chargeUsdMicros"],
 		storage: ["resourceType", "resourceId", "sizeGb", "chargeUsdMicros"]
@@ -206,9 +212,14 @@ test("receipt contract exposes monthly product behavior only", async () => {
 	assert.deepEqual(evidence.reconciliationReportV1.workspaceRenewalAuthority, billing.reconciliationPolicy.workspaceRenewalAuthority);
 	const management = await readJson("opl-cloud-management-contract.json");
 	assert.equal(management.schemaVersion, 16);
+	assert.deepEqual(management.operatorBillingReviewProjection.included, [
+		"workspace.launch.v2_manual_review",
+		"workspace.renewal_manual_review",
+		"BillingReconciliation_mismatch"
+	]);
 	assert.equal(
 		management.operatorNotifications.source,
-		"Derived from current Workspace renewal operations plus current compute and storage compatibility state; no alert table or second source of truth."
+		"Derived from current Workspace launch and renewal operations; historical compute and storage billing rows are inert and never create alerts."
 	);
 	assert.deepEqual(management.operatorNotifications.activeCodes, [
 		"manual_review",

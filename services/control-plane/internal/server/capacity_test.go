@@ -26,7 +26,6 @@ const (
 	capacityConsoleUsers  = 100
 	capacityCommands      = 20
 	capacityRequestBudget = 5 * time.Second
-	capacityRenewalBudget = 5 * time.Minute
 )
 
 type capacityLedger struct {
@@ -237,12 +236,12 @@ func TestSinglePodCapacity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	renewalStarted := time.Now()
-	if err := scanApp.runLegacyMonthlyResourcesOnce(ctx, service, now); err != nil {
+	billingStarted := time.Now()
+	if err := scanApp.runMonthlyBillingOnce(ctx, service, now); err != nil {
 		t.Fatal(err)
 	}
-	renewalDuration := time.Since(renewalStarted)
-	if err := scanApp.runLegacyMonthlyResourcesOnce(ctx, service, now); err != nil {
+	billingDuration := time.Since(billingStarted)
+	if err := scanApp.runMonthlyBillingOnce(ctx, service, now); err != nil {
 		t.Fatal(err)
 	}
 	stopConnectionMonitor()
@@ -250,12 +249,11 @@ func TestSinglePodCapacity(t *testing.T) {
 	if connectionSample.err != nil {
 		t.Fatal(connectionSample.err)
 	}
-	wantSideEffects := capacityAccountCount
-	if got := capacitySub2APIChargeCount(sub2API); got != wantSideEffects {
-		t.Fatalf("charges after replayed scan = %d, want %d", got, wantSideEffects)
+	if got := capacitySub2APIChargeCount(sub2API); got != 0 {
+		t.Fatalf("Workspace scheduler charged historical resource rows: %d", got)
 	}
-	if got := ledger.count(); got != wantSideEffects {
-		t.Fatalf("receipts after replayed scan = %d, want %d", got, wantSideEffects)
+	if got := ledger.count(); got != 0 {
+		t.Fatalf("Workspace scheduler wrote resource receipts: %d", got)
 	}
 	if got := fabric.count(); got != 0 {
 		t.Fatalf("renewal created Fabric resources: prepares=%d", got)
@@ -264,23 +262,20 @@ func TestSinglePodCapacity(t *testing.T) {
 	if err := admin.QueryRowContext(ctx, `SELECT count(*), count(DISTINCT id), count(DISTINCT billing_operation_id) FROM `+schema+`.control_plane_compute_allocations`).Scan(&rows, &uniqueResources, &uniqueOperations); err != nil {
 		t.Fatal(err)
 	}
-	if rows != wantSideEffects || uniqueResources != rows || uniqueOperations != rows {
-		t.Fatalf("resource claims rows=%d resources=%d operations=%d", rows, uniqueResources, uniqueOperations)
+	if rows != capacityAccountCount || uniqueResources != rows || uniqueOperations != rows {
+		t.Fatalf("historical resource rows changed: rows=%d resources=%d operations=%d", rows, uniqueResources, uniqueOperations)
 	}
 
 	processAfter := capacityProcessUsage(t)
 	consoleP50, consoleP95, consoleErrors := capacityCallMetrics(consoleCalls)
 	commandP50, commandP95, commandErrors := capacityCallMetrics(commandCalls)
 	replayP50, replayP95, replayErrors := capacityCallMetrics(replayCalls)
-	t.Logf("single_pod_capacity accounts=%d resources=%d seed=%s console_requests=%d console_p50=%s console_p95=%s console_error_rate=%.4f console_total=%s commands=%d command_p50=%s command_p95=%s command_error_rate=%.4f command_total=%s replay_p50=%s replay_p95=%s replay_error_rate=%.4f replay_total=%s renewals=%d renewal_total=%s cpu=%s heap_before_mb=%.1f heap_after_mb=%.1f go_sys_mb=%.1f db_connections=%d",
+	t.Logf("single_pod_capacity accounts=%d historical_resources=%d seed=%s console_requests=%d console_p50=%s console_p95=%s console_error_rate=%.4f console_total=%s commands=%d command_p50=%s command_p95=%s command_error_rate=%.4f command_total=%s replay_p50=%s replay_p95=%s replay_error_rate=%.4f replay_total=%s workspace_billing_total=%s cpu=%s heap_before_mb=%.1f heap_after_mb=%.1f go_sys_mb=%.1f db_connections=%d",
 		capacityAccountCount, rows, seedDuration, capacityConsoleUsers, consoleP50, consoleP95, float64(consoleErrors)/capacityConsoleUsers, consoleDuration,
 		capacityCommands, commandP50, commandP95, float64(commandErrors)/capacityCommands, commandDuration, replayP50, replayP95, float64(replayErrors)/capacityCommands, replayDuration,
-		capacityAccountCount, renewalDuration, processAfter.cpu-processBefore.cpu, float64(processBefore.heapBytes)/(1<<20), float64(processAfter.heapBytes)/(1<<20), float64(processAfter.sysBytes)/(1<<20), connectionSample.max)
+		billingDuration, processAfter.cpu-processBefore.cpu, float64(processBefore.heapBytes)/(1<<20), float64(processAfter.heapBytes)/(1<<20), float64(processAfter.sysBytes)/(1<<20), connectionSample.max)
 	if consoleP95 > capacityRequestBudget || commandP95 > capacityRequestBudget || replayP95 > capacityRequestBudget {
 		t.Fatalf("request budget exceeded: console_p95=%s command_p95=%s replay_p95=%s budget=%s", consoleP95, commandP95, replayP95, capacityRequestBudget)
-	}
-	if renewalDuration > capacityRenewalBudget {
-		t.Fatalf("renewal scan exceeded budget: duration=%s budget=%s", renewalDuration, capacityRenewalBudget)
 	}
 	if connectionSample.max > controlPlaneMaxOpenDBConnections {
 		t.Fatalf("database connection budget exceeded: connections=%d budget=%d", connectionSample.max, controlPlaneMaxOpenDBConnections)

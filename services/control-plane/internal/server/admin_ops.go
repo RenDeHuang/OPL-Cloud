@@ -94,7 +94,7 @@ func (app *controlPlaneServer) appendAuditEvent(r *http.Request, action string, 
 }
 
 func (app *controlPlaneServer) appendBillingReviewResolutionAudit(r *http.Request, key string, result map[string]any) error {
-	action, resourceType, resourceID := "billing.review.resolve", monthlyResourceType(result), stringValue(result["resourceId"])
+	action, resourceType, resourceID := "billing.review.resolve", "workspace", stringValue(result["resourceId"])
 	event := app.auditEvent(r, action, resourceType, resourceID, stringValue(result["accountId"]), nil, result, "succeeded")
 	event["id"] = "audit-" + stableID(action, resourceType, resourceID, stringValue(result["billingOperationId"]), key)[:12]
 	event["createdAt"] = result["resolvedAt"]

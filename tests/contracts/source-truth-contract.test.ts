@@ -236,6 +236,17 @@ test("Console source truth contract fixes strict envelopes and live Gateway proj
         workspaceExpired: ["totalUsdMicros"],
         workspaceRefunded: ["totalUsdMicros", "refundUsdMicros"]
       },
+      historicalResourceReceiptPolicy: {
+        types: [
+          "billing.resource_purchased.v1",
+          "billing.resource_renewed.v1",
+          "billing.resource_expired.v1",
+          "billing.resource_refunded.v1",
+          "billing.charge_review_required.v1"
+        ],
+        existingReceiptsReadable: true,
+        newWritesAllowed: false
+      },
       workspaceChargeReferenceTypes: ["billing.workspace_purchased.v1", "billing.workspace_renewed.v1", "billing.workspace_refunded.v1"],
       workspaceFulfillmentReceiptTypes: ["billing.workspace_purchased.v1", "billing.workspace_renewed.v1"],
       workspaceFulfillmentFields: ["computeAllocationId", "storageId", "attachmentId", "workspaceApiKeyId", "runtimeId"],

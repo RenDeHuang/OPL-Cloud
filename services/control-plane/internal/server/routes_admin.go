@@ -234,13 +234,11 @@ func registerAdminRoutes(mux *http.ServeMux, app *controlPlaneServer, service *c
 			AccountID: strings.TrimSpace(stringValue(input["accountId"])), BillingOperationID: strings.TrimSpace(stringValue(input["billingOperationId"])),
 			Decision: strings.TrimSpace(stringValue(input["decision"])), EvidenceRef: evidenceRef, IdempotencyKey: key, Reviewer: app.sessionUserID(r),
 		}
-		var result map[string]any
-		var err error
-		if resolution.ResourceType == "workspace" {
-			result, err = app.resolveWorkspaceRenewalReview(r.Context(), service, resolution)
-		} else {
-			result, err = app.resolveMonthlyBillingReview(r.Context(), service, resolution)
+		if resolution.ResourceType != "workspace" {
+			writeError(w, http.StatusBadRequest, errInvalidBillingReview.Error())
+			return
 		}
+		result, err := app.resolveWorkspaceRenewalReview(r.Context(), service, resolution)
 		if err != nil {
 			writeBillingReviewResolutionError(w, err)
 			return
@@ -836,14 +834,6 @@ func (app *controlPlaneServer) operatorReconciliationPage(ctx context.Context, p
 	if err != nil {
 		return nil, "", err
 	}
-	computes, err := app.tables.ListComputes(ctx, "")
-	if err != nil {
-		return nil, "", err
-	}
-	storages, err := app.tables.ListStorages(ctx, "")
-	if err != nil {
-		return nil, "", err
-	}
 	items := make([]any, 0)
 	appendReview := func(resourceType, resourceID, accountID, operationID, phase, errorCode, action, receiptID string) {
 		if resourceID == "" || accountID == "" || operationID == "" {
@@ -879,18 +869,6 @@ func (app *controlPlaneServer) operatorReconciliationPage(ctx context.Context, p
 				firstNonEmpty(stringValue(operation["accountId"]), stringValue(details["accountId"])), operationID,
 				firstNonEmpty(stringValue(details["phase"]), "manual_review"), firstNonEmpty(stringValue(details["errorCode"]), stringValue(details["lastBillingError"])),
 				"resolve_billing_review", firstNonEmpty(stringValue(operation["receiptId"]), stringValue(details["receiptId"])),
-			)
-		}
-	}
-	for resourceType, rows := range map[string][]map[string]any{"compute": computes, "storage": storages} {
-		for _, row := range rows {
-			if stringValue(row["billingStatus"]) != "manual_review" {
-				continue
-			}
-			appendReview(
-				resourceType, stringValue(row["id"]), stringValue(row["accountId"]), stringValue(row["billingOperationId"]),
-				firstNonEmpty(stringValue(row["reviewResolutionPhase"]), "manual_review"), firstNonEmpty(stringValue(row["lastBillingError"]), stringValue(row["manualReviewReason"])),
-				"resolve_billing_review", firstNonEmpty(stringValue(row["lastReceiptId"]), stringValue(row["receiptId"])),
 			)
 		}
 	}
@@ -1107,7 +1085,7 @@ func writeBillingReviewResolutionError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusNotFound, err.Error())
 	case errors.Is(err, errIdempotencyConflict), errors.Is(err, errBillingReviewNotPending), errors.Is(err, errBillingReviewIdentity), errors.Is(err, errBillingReviewChargeFact), errors.Is(err, errBillingReviewProviderFact):
 		writeError(w, http.StatusConflict, err.Error())
-	case errors.Is(err, errBillingReviewReceipt), errors.Is(err, errBillingReviewRefund):
+	case errors.Is(err, errBillingReviewReceipt):
 		writeError(w, http.StatusBadGateway, err.Error())
 	default:
 		writeError(w, http.StatusInternalServerError, "state_persist_failed")

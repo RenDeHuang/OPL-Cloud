@@ -102,6 +102,9 @@ func retiredConsoleAPI(method, path string) bool {
 	if strings.HasPrefix(path, "/api/workspaces/") && strings.HasSuffix(path, "/gateway-secret/rotate") {
 		return true
 	}
+	if strings.HasPrefix(path, "/api/operator/billing-reviews/compute/") || strings.HasPrefix(path, "/api/operator/billing-reviews/storage/") {
+		return true
+	}
 	if strings.HasPrefix(path, "/api/gateway/keys/") && path != "/api/gateway/keys/opl-workspace/reveal" && !currentGatewayKeyAPI(method, path) {
 		return true
 	}
@@ -110,7 +113,7 @@ func retiredConsoleAPI(method, path string) bool {
 	}
 	for _, segment := range strings.Split(strings.Trim(path, "/"), "/")[3:] {
 		switch segment {
-		case "backups", "recovery", "sync", "transfers", "transfer", "contents":
+		case "backups", "recovery", "resume", "sync", "transfers", "transfer", "contents":
 			return true
 		}
 	}

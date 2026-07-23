@@ -100,30 +100,13 @@ func (app *controlPlaneServer) reconcileMonthlyCompute(ctx context.Context, serv
 	if row, ok = app.getCompute(id); !ok || !providerSyncDue(row, now) {
 		return nil
 	}
-	if stringValue(row["billingStatus"]) == "manual_review" {
-		return nil
-	}
-	if stringValue(row["billingStatus"]) == "preparing" {
-		_, err := app.resumeMonthlyPurchase(ctx, service, row)
-		return err
-	}
-	if stringValue(row["desiredStatus"]) == "destroyed" {
-		result, err := app.cleanupComputeResource(ctx, service, id, "provider-reconcile:destroy-compute:"+id)
-		if err != nil {
-			return err
-		}
-		body := computeResponse(mergeMaps(row, structToMap(result)))
-		body["status"] = "destroyed"
-		if stringValue(row["billingStatus"]) != "" {
-			body["billingStatus"] = "stopped"
-		}
-		return app.saveComputeFact(body)
-	}
 	result, err := service.SyncMonthlyCompute(ctx, id)
 	if err != nil {
 		return app.saveComputeFact(providerSyncFacts(row, err))
 	}
-	return app.saveComputeFact(providerSyncFacts(computeResponse(mergeMaps(row, structToMap(result))), nil))
+	readback := computeResponse(mergeMaps(row, structToMap(result)))
+	preserveHistoricalBillingStatus(readback, row)
+	return app.saveComputeFact(providerSyncFacts(readback, nil))
 }
 
 func (app *controlPlaneServer) reconcileMonthlyStorage(ctx context.Context, service *controlplane.Service, row map[string]any, now time.Time) error {
@@ -137,37 +120,26 @@ func (app *controlPlaneServer) reconcileMonthlyStorage(ctx context.Context, serv
 	if row, ok = app.getStorage(id); !ok || !providerSyncDue(row, now) {
 		return nil
 	}
-	if stringValue(row["billingStatus"]) == "manual_review" {
-		return nil
-	}
-	if stringValue(row["billingStatus"]) == "preparing" {
-		_, err := app.resumeMonthlyPurchase(ctx, service, row)
-		return err
-	}
-	if stringValue(row["desiredStatus"]) == "destroyed" {
-		result, err := service.CleanupMonthlyStorage(ctx, id, "provider-reconcile:destroy-storage:"+id)
-		if err != nil {
-			return err
-		}
-		body := storageResponse(mergeMaps(row, structToMap(result)))
-		if stringValue(row["billingStatus"]) != "" {
-			body["billingStatus"] = "stopped"
-		}
-		return app.saveStorageFact(body)
-	}
 	result, err := service.SyncMonthlyStorage(ctx, id)
 	if err != nil {
 		return app.saveStorageFact(providerSyncFacts(row, err))
 	}
-	return app.saveStorageFact(providerSyncFacts(storageResponse(mergeMaps(row, structToMap(result))), nil))
+	readback := storageResponse(mergeMaps(row, structToMap(result)))
+	preserveHistoricalBillingStatus(readback, row)
+	return app.saveStorageFact(providerSyncFacts(readback, nil))
+}
+
+func preserveHistoricalBillingStatus(readback, stored map[string]any) {
+	if billingStatus, ok := stored["billingStatus"]; ok {
+		readback["billingStatus"] = billingStatus
+	} else {
+		delete(readback, "billingStatus")
+	}
 }
 
 func providerSyncDue(row map[string]any, now time.Time) bool {
-	if isTerminalResourceStatus(stringValue(row["status"])) || stringValue(row["billingStatus"]) == "stopped" {
+	if isTerminalResourceStatus(stringValue(row["status"])) {
 		return false
-	}
-	if stringValue(row["billingStatus"]) == "preparing" || stringValue(row["desiredStatus"]) == "destroyed" {
-		return true
 	}
 	status := stringValue(row["status"])
 	if status != "provisioning" && status != "pending" && status != "creating" && status != "running" && status != "ready" && status != "active" && status != "available" && status != "bound" {

@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"errors"
-	"sort"
 	"sync"
 	"time"
 )
@@ -19,15 +18,11 @@ type memoryTableStore struct {
 	storages          controlPlaneRecordSet
 	attachments       controlPlaneRecordSet
 	workspaces        controlPlaneRecordSet
-	backups           controlPlaneRecordSet
 	auditEvents       []map[string]any
 	announcements     controlPlaneRecordSet
 	announcementReads controlPlaneRecordSet
 	support           controlPlaneRecordSet
 	runtimeOps        []map[string]any
-	projectTasks      controlPlaneRecordSet
-	syncEvents        []map[string]any
-	executionReqs     controlPlaneRecordSet
 	reconciliation    map[string]any
 }
 
@@ -42,12 +37,9 @@ func newMemoryTableStore() *memoryTableStore {
 		storages:          controlPlaneRecordSet{},
 		attachments:       controlPlaneRecordSet{},
 		workspaces:        controlPlaneRecordSet{},
-		backups:           controlPlaneRecordSet{},
 		announcements:     controlPlaneRecordSet{},
 		announcementReads: controlPlaneRecordSet{},
 		support:           controlPlaneRecordSet{},
-		projectTasks:      controlPlaneRecordSet{},
-		executionReqs:     controlPlaneRecordSet{},
 	}
 }
 
@@ -146,36 +138,6 @@ func (s *memoryTableStore) ApplyUserLifecycle(_ context.Context, user map[string
 		}
 	}
 	s.users, s.sessions, s.computes, s.storages, s.workspaces = users, sessions, computes, storages, workspaces
-	return nil
-}
-
-func (s *memoryTableStore) ListWorkspaceBackups(_ context.Context, workspaceID string) ([]map[string]any, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	out := make([]map[string]any, 0)
-	for _, row := range s.backups {
-		if workspaceID == "" || stringValue(row["workspaceId"]) == workspaceID {
-			out = append(out, cloneMap(row))
-		}
-	}
-	sort.Slice(out, func(i, j int) bool { return stringValue(out[i]["createdAt"]) < stringValue(out[j]["createdAt"]) })
-	return out, nil
-}
-
-func (s *memoryTableStore) SaveWorkspaceBackup(_ context.Context, row map[string]any) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for _, existing := range s.backups {
-		if stringValue(existing["idempotencyKey"]) != stringValue(row["idempotencyKey"]) {
-			continue
-		}
-		if stringValue(existing["requestHash"]) != stringValue(row["requestHash"]) {
-			return errIdempotencyConflict
-		}
-		s.backups[stringValue(existing["id"])] = cloneMap(row)
-		return nil
-	}
-	s.backups[stringValue(row["id"])] = cloneMap(row)
 	return nil
 }
 
@@ -329,65 +291,6 @@ func (s *memoryTableStore) SaveMembership(_ context.Context, row map[string]any)
 	return nil
 }
 
-func (s *memoryTableStore) ListProjectTaskSyncHeads(_ context.Context) ([]map[string]any, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return filteredRecords(s.projectTasks, "")
-}
-
-func (s *memoryTableStore) SaveProjectTaskSyncHead(_ context.Context, row map[string]any) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.projectTasks[stringValue(row["id"])] = cloneMap(row)
-	return nil
-}
-
-func (s *memoryTableStore) ListWorkspaceSyncEvents(_ context.Context, workspaceID string, after int64, limit int) ([]map[string]any, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	rows := make([]map[string]any, 0, len(s.syncEvents))
-	for _, row := range s.syncEvents {
-		if stringValue(row["workspaceId"]) == workspaceID && int64(numberField(row, "cursor", 0)) > after {
-			rows = append(rows, cloneMap(row))
-		}
-	}
-	sort.Slice(rows, func(i, j int) bool {
-		return numberField(rows[i], "cursor", 0) < numberField(rows[j], "cursor", 0)
-	})
-	if limit > 0 && len(rows) > limit {
-		rows = rows[:limit]
-	}
-	return rows, nil
-}
-
-func (s *memoryTableStore) SaveWorkspaceSyncEvent(_ context.Context, row map[string]any) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for _, existing := range s.syncEvents {
-		if stringValue(existing["id"]) == stringValue(row["id"]) || stringValue(existing["idempotencyKey"]) == stringValue(row["idempotencyKey"]) || (stringValue(existing["workspaceId"]) == stringValue(row["workspaceId"]) && stringValue(existing["operationId"]) == stringValue(row["operationId"])) {
-			if stringValue(existing["requestHash"]) == stringValue(row["requestHash"]) {
-				return nil
-			}
-			return errIdempotencyConflict
-		}
-	}
-	s.syncEvents = append(s.syncEvents, cloneMap(row))
-	return nil
-}
-
-func (s *memoryTableStore) ListExecutionRequests(_ context.Context) ([]map[string]any, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return filteredRecords(s.executionReqs, "")
-}
-
-func (s *memoryTableStore) SaveExecutionRequest(_ context.Context, row map[string]any) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.executionReqs[stringValue(row["id"])] = cloneMap(row)
-	return nil
-}
-
 func (s *memoryTableStore) ListComputes(_ context.Context, accountID string) ([]map[string]any, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -427,78 +330,6 @@ func (s *memoryTableStore) SaveStorage(_ context.Context, row map[string]any) er
 	}
 	s.storages[id] = cloneMap(row)
 	return nil
-}
-
-func (s *memoryTableStore) SetResourceAutoRenew(_ context.Context, resourceType, id, accountID string, autoRenew bool) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	var records controlPlaneRecordSet
-	switch resourceType {
-	case "compute":
-		records = s.computes
-	case "storage":
-		records = s.storages
-	default:
-		return errors.New("invalid_billing_resource_type")
-	}
-	current := records[id]
-	if current == nil {
-		return errors.New("resource_not_found")
-	}
-	if firstNonEmpty(stringValue(current["accountId"]), stringValue(current["ownerAccountId"])) != accountID {
-		return errIdempotencyConflict
-	}
-	current = cloneMap(current)
-	current["autoRenew"] = autoRenew
-	records[id] = current
-	return nil
-}
-
-func (s *memoryTableStore) ClaimResourceBillingOperation(_ context.Context, resourceType string, row map[string]any) (map[string]any, bool, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	var records controlPlaneRecordSet
-	switch resourceType {
-	case "compute":
-		records = s.computes
-	case "storage":
-		records = s.storages
-	default:
-		return nil, false, errors.New("invalid_billing_resource_type")
-	}
-	id, operationID := stringValue(row["id"]), stringValue(row["billingOperationId"])
-	if id == "" || operationID == "" {
-		return nil, false, errors.New("billing_operation_identity_required")
-	}
-	if !monthlyPriceSnapshotAvailable(row) {
-		return nil, false, errMonthlyPriceSnapshotUnavailable
-	}
-	existing := records[id]
-	if existing == nil {
-		records[id] = cloneMap(row)
-		return cloneMap(row), true, nil
-	}
-	if stringValue(existing["billingOperationId"]) == operationID {
-		if !billingOperationIdentityMatches(existing, row) {
-			return nil, false, errIdempotencyConflict
-		}
-		return cloneMap(existing), false, nil
-	}
-	if stringValue(row["billingStatus"]) == "renewal_pending" && existing["autoRenew"] != true {
-		return cloneMap(existing), false, nil
-	}
-	if billingOperationInProgress(stringValue(existing["billingStatus"])) {
-		return cloneMap(existing), false, errBillingOperationInProgress
-	}
-	claimed := preserveResourceAutoRenew(existing, mergeMaps(existing, row))
-	if _, confirmationExists := row["sub2apiChargeConfirmation"]; !confirmationExists {
-		delete(claimed, "sub2apiChargeConfirmation")
-	}
-	if lastReceiptID, reset := row["lastReceiptId"].(string); reset && lastReceiptID == "" {
-		claimed["lastReceiptId"] = ""
-	}
-	records[id] = claimed
-	return cloneMap(claimed), true, nil
 }
 
 func (s *memoryTableStore) DeleteStorage(_ context.Context, id string) error {
@@ -818,93 +649,6 @@ func (s *memoryTableStore) ClaimWorkspaceCreate(_ context.Context, workspace map
 	}
 	s.workspaces[workspaceID] = workspace
 	s.runtimeOps = append(s.runtimeOps, cloneMap(operation))
-	return nil
-}
-
-func (s *memoryTableStore) ClaimWorkspaceResume(_ context.Context, workspaceID string, operation map[string]any) (map[string]any, bool, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	now := time.Now().UTC()
-	for index := range s.runtimeOps {
-		existing := s.runtimeOps[index]
-		if stringValue(existing["id"]) != stringValue(operation["id"]) {
-			continue
-		}
-		result, err := decodeWorkspaceResumeOperation(existing)
-		if err != nil {
-			return nil, false, err
-		}
-		claim, _ := decodeWorkspaceResumeOperation(operation)
-		if result.RequestHash != claim.RequestHash {
-			return nil, false, errIdempotencyConflict
-		}
-		if stringValue(existing["status"]) == "succeeded" && result.Response != nil {
-			return cloneMap(result.Response), true, nil
-		}
-		if stringValue(existing["status"]) == "started" && result.LeaseExpiresAt != nil && result.LeaseExpiresAt.After(now) {
-			return nil, false, errWorkspaceResumeInProgress
-		}
-		s.runtimeOps[index] = cloneMap(operation)
-		workspace := cloneMap(s.workspaces[workspaceID])
-		workspace["state"], workspace["status"] = "resuming", "resuming"
-		s.workspaces[workspaceID] = workspace
-		return nil, false, nil
-	}
-	workspace, ok := s.workspaces[workspaceID]
-	if !ok {
-		return nil, false, errWorkspaceNotSuspended
-	}
-	state := firstNonEmpty(stringValue(workspace["state"]), stringValue(workspace["status"]))
-	if state == "resuming" {
-		return nil, false, errWorkspaceResumeInProgress
-	}
-	if state != "suspended" && state != "stopped" {
-		return nil, false, errWorkspaceNotSuspended
-	}
-	workspace = cloneMap(workspace)
-	workspace["state"], workspace["status"] = "resuming", "resuming"
-	s.workspaces[workspaceID] = workspace
-	s.runtimeOps = append(s.runtimeOps, cloneMap(operation))
-	return nil, false, nil
-}
-
-func (s *memoryTableStore) FailWorkspaceResume(_ context.Context, workspaceID string, operationID string, errorCode string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	workspace := cloneMap(s.workspaces[workspaceID])
-	if firstNonEmpty(stringValue(workspace["state"]), stringValue(workspace["status"])) == "resuming" {
-		workspace["state"], workspace["status"] = "suspended", "suspended"
-		s.workspaces[workspaceID] = workspace
-	}
-	for index := range s.runtimeOps {
-		if stringValue(s.runtimeOps[index]["id"]) != operationID {
-			continue
-		}
-		operation := cloneMap(s.runtimeOps[index])
-		result, err := decodeWorkspaceResumeOperation(operation)
-		if err != nil {
-			return err
-		}
-		result.ErrorCode = errorCode
-		result.LeaseExpiresAt = nil
-		operation["status"] = "retryable"
-		operation["result"] = encodeWorkspaceResumeOperation(result)
-		s.runtimeOps[index] = operation
-		break
-	}
-	return nil
-}
-
-func (s *memoryTableStore) CommitWorkspaceResume(_ context.Context, workspace map[string]any, audit map[string]any, operation map[string]any) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	workspace = cloneMap(workspace)
-	access := cloneMap(mapField(workspace, "access"))
-	delete(access, "password")
-	workspace["access"] = access
-	s.workspaces[stringValue(workspace["id"])] = workspace
-	s.auditEvents = upsertProjectionByID(s.auditEvents, cloneMap(audit))
-	s.runtimeOps = upsertProjectionByID(s.runtimeOps, cloneMap(operation))
 	return nil
 }
 

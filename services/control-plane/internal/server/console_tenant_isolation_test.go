@@ -125,7 +125,7 @@ func TestGatewayRevealDoesNotLeakAcrossAccounts(t *testing.T) {
 }
 
 func TestGatewayRevealAuditFailureDoesNotReturnKey(t *testing.T) {
-	store := &failingResumeCommitStore{memoryTableStore: newMemoryTableStore()}
+	store := &failingAuditStore{memoryTableStore: newMemoryTableStore()}
 	client := &sourceTruthGatewayClient{
 		customerFactsSub2API: &customerFactsSub2API{testSub2APIClient: &testSub2APIClient{balance: 123, charges: map[string]int64{}}},
 		keys:                 []clients.Sub2APIWorkspaceKey{{ID: 17, UserID: 41, Name: "general-key", Key: "general-key-secret", Status: "active"}},
@@ -161,7 +161,7 @@ func TestGatewayRevealFailsClosed(t *testing.T) {
 	}
 }
 
-func TestCustomerOwnerCannotUseEndpointsAcrossAccountsOrOrganizations(t *testing.T) {
+func TestCustomerOwnerCannotUseEndpointsAcrossAccounts(t *testing.T) {
 	app := newControlPlaneApp()
 	seedTenantMember(t, app.tables, "acct-alpha", "org-alpha", "usr-alpha", "alpha@example.com")
 	users, err := app.tables.ListUsers(context.Background(), false)
@@ -182,40 +182,6 @@ func TestCustomerOwnerCannotUseEndpointsAcrossAccountsOrOrganizations(t *testing
 	}
 	if app.canAccessResource(req, map[string]any{"id": "ws-other", "accountId": "acct-other"}) {
 		t.Fatal("owner accessed another account resource through a customer endpoint")
-	}
-
-	rec = httptest.NewRecorder()
-	if app.authorizeOrganization(rec, req, "org-other") || rec.Code != http.StatusForbidden {
-		t.Fatalf("cross-organization owner status=%d, want 403", rec.Code)
-	}
-}
-
-func TestNonOwnerMembershipCannotAuthorizeOrganization(t *testing.T) {
-	for _, role := range []string{"member", "admin"} {
-		t.Run(role, func(t *testing.T) {
-			store := newMemoryTableStore()
-			app, err := newControlPlaneAppWithStore(store)
-			if err != nil {
-				t.Fatal(err)
-			}
-			users, err := store.ListUsers(context.Background(), false)
-			if err != nil {
-				t.Fatal(err)
-			}
-			_, sessionID, err := app.createSession(findRecord(users, "usr-admin"), "test-operator-delegated-token")
-			if err != nil {
-				t.Fatal(err)
-			}
-			store.mu.Lock()
-			store.memberships["mem-admin"]["role"] = role
-			store.mu.Unlock()
-			req := httptest.NewRequest(http.MethodGet, "/api/test", nil)
-			req.AddCookie(sessionCookie(sessionID, 3600))
-			rec := httptest.NewRecorder()
-			if app.authorizeOrganization(rec, req, "org-admin") || rec.Code != http.StatusForbidden {
-				t.Fatalf("%s membership authorization status=%d, want 403", role, rec.Code)
-			}
-		})
 	}
 }
 

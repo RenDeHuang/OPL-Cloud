@@ -32,12 +32,31 @@
         "monthlyEntitlements",
         "billingOperations",
         "latestReconciliationGuard",
-        "projectTaskSyncHeads",
-        "executionRequests",
-        "approvals",
         "supportTicketMappings",
         "operationRequests"
       ],
+      "legacyInertPhysicalTables": {
+        "workspace_backups": {
+          "state": "legacy_inert",
+          "runtimeAccess": false,
+          "dropRequiresSeparateApprovedMigration": true
+        },
+        "control_plane_workspace_sync_events": {
+          "state": "legacy_inert",
+          "runtimeAccess": false,
+          "dropRequiresSeparateApprovedMigration": true
+        },
+        "control_plane_project_task_sync_heads": {
+          "state": "legacy_inert",
+          "runtimeAccess": false,
+          "dropRequiresSeparateApprovedMigration": true
+        },
+        "control_plane_execution_requests": {
+          "state": "legacy_inert",
+          "runtimeAccess": false,
+          "dropRequiresSeparateApprovedMigration": true
+        }
+      },
       "calls": {
         "ledger": "http",
         "fabric": "http",

@@ -11,8 +11,6 @@ import (
 	"opl-cloud/services/control-plane/internal/domain"
 )
 
-var errWorkspaceResumeInProgress = errors.New("workspace_resume_in_progress")
-var errWorkspaceNotSuspended = errors.New("workspace_not_suspended")
 var errBillingOperationInProgress = errors.New("billing_operation_in_progress")
 var errSub2APIAccountMappingConflict = errors.New("sub2api_account_mapping_conflict")
 var errPrimaryWorkspaceExists = errors.New("primary_workspace_already_exists")
@@ -24,14 +22,6 @@ var errMembershipExists = errors.New("membership_already_exists")
 var errAccountIdentityConflict = errors.New("account_identity_conflict")
 var errAnnouncementStateConflict = errors.New("announcement_state_conflict")
 var errAnnouncementNotActive = errors.New("announcement_not_active")
-
-type workspaceResumeOperationResult struct {
-	RequestHash    string                      `json:"requestHash"`
-	LeaseExpiresAt *time.Time                  `json:"leaseExpiresAt,omitempty"`
-	Response       map[string]any              `json:"response,omitempty"`
-	Workspace      *domain.WorkspaceProjection `json:"workspace,omitempty"`
-	ErrorCode      string                      `json:"errorCode,omitempty"`
-}
 
 type workspaceCreateOperationResult struct {
 	RequestHash          string                     `json:"requestHash"`
@@ -177,19 +167,6 @@ func workspaceCreateClaimCompatible(current, claim workspaceCreateOperationResul
 		workspaceCreateProjectionCompatible(persisted, claim.Workspace, claimBillingState, true)
 }
 
-func decodeWorkspaceResumeOperation(operation map[string]any) (workspaceResumeOperationResult, error) {
-	var result workspaceResumeOperationResult
-	if err := json.Unmarshal([]byte(stringValue(operation["result"])), &result); err != nil || result.RequestHash == "" {
-		return workspaceResumeOperationResult{}, errors.New("invalid_workspace_resume_operation")
-	}
-	return result, nil
-}
-
-func encodeWorkspaceResumeOperation(result workspaceResumeOperationResult) string {
-	payload, _ := json.Marshal(result)
-	return string(payload)
-}
-
 type controlPlaneTableStore interface {
 	ListAccounts(ctx context.Context, accountID string) ([]map[string]any, error)
 	SaveAccount(ctx context.Context, row map[string]any) error
@@ -211,8 +188,6 @@ type controlPlaneTableStore interface {
 	DeleteCompute(ctx context.Context, id string) error
 	ListStorages(ctx context.Context, accountID string) ([]map[string]any, error)
 	SaveStorage(ctx context.Context, row map[string]any) error
-	SetResourceAutoRenew(ctx context.Context, resourceType, id, accountID string, autoRenew bool) error
-	ClaimResourceBillingOperation(ctx context.Context, resourceType string, row map[string]any) (map[string]any, bool, error)
 	DeleteStorage(ctx context.Context, id string) error
 	ListAttachments(ctx context.Context, accountID string) ([]map[string]any, error)
 	SaveAttachment(ctx context.Context, row map[string]any) error
@@ -227,12 +202,7 @@ type controlPlaneTableStore interface {
 	PersistWorkspaceRenewal(ctx context.Context, update workspaceRenewalPersistCAS) error
 	ActivateWorkspace(ctx context.Context, row map[string]any) (map[string]any, error)
 	ClaimWorkspaceCreate(ctx context.Context, workspace map[string]any, operation map[string]any) error
-	ClaimWorkspaceResume(ctx context.Context, workspaceID string, operation map[string]any) (map[string]any, bool, error)
-	FailWorkspaceResume(ctx context.Context, workspaceID string, operationID string, errorCode string) error
-	CommitWorkspaceResume(ctx context.Context, workspace map[string]any, audit map[string]any, operation map[string]any) error
 	DeleteWorkspace(ctx context.Context, id string) error
-	ListWorkspaceBackups(ctx context.Context, workspaceID string) ([]map[string]any, error)
-	SaveWorkspaceBackup(ctx context.Context, row map[string]any) error
 
 	ListAuditEvents(ctx context.Context, accountID string) ([]map[string]any, error)
 	SaveAuditEvent(ctx context.Context, row map[string]any) error
@@ -244,12 +214,6 @@ type controlPlaneTableStore interface {
 	SaveSupportMapping(ctx context.Context, row map[string]any) error
 	ListRuntimeOperations(ctx context.Context) ([]map[string]any, error)
 	SaveRuntimeOperation(ctx context.Context, row map[string]any) error
-	ListProjectTaskSyncHeads(ctx context.Context) ([]map[string]any, error)
-	SaveProjectTaskSyncHead(ctx context.Context, row map[string]any) error
-	ListWorkspaceSyncEvents(ctx context.Context, workspaceID string, after int64, limit int) ([]map[string]any, error)
-	SaveWorkspaceSyncEvent(ctx context.Context, row map[string]any) error
-	ListExecutionRequests(ctx context.Context) ([]map[string]any, error)
-	SaveExecutionRequest(ctx context.Context, row map[string]any) error
 	BillingReconciliation(ctx context.Context) (map[string]any, bool, error)
 	SaveBillingReconciliation(ctx context.Context, row map[string]any) error
 }
@@ -452,39 +416,6 @@ func canonicalEmail(value string) (string, error) {
 
 func validAccountID(value string) bool {
 	return len(value) >= 3 && len(value) <= 48 && value == compactID(value)
-}
-
-func billingOperationIdentityMatches(existing, requested map[string]any) bool {
-	existingPriceVersion, existingChargeUSDMicros, existingPriceOK := monthlyPriceIdentity(existing)
-	requestedPriceVersion, requestedChargeUSDMicros, requestedPriceOK := monthlyPriceIdentity(requested)
-	if !existingPriceOK || !requestedPriceOK || existingPriceVersion != requestedPriceVersion || existingChargeUSDMicros != requestedChargeUSDMicros {
-		return false
-	}
-	for _, field := range []string{"accountId", "billingOperationId", "packageId", "periodStart", "paidThrough", "zone"} {
-		if stringValue(existing[field]) != stringValue(requested[field]) {
-			return false
-		}
-	}
-	if stringValue(existing["resourceType"]) == "storage" || stringValue(requested["resourceType"]) == "storage" || numberField(existing, "sizeGb", 0) > 0 || numberField(requested, "sizeGb", 0) > 0 {
-		if stringValue(existing["computeAllocationId"]) != stringValue(requested["computeAllocationId"]) {
-			return false
-		}
-	}
-	for _, field := range []string{"sizeGb"} {
-		if numberField(existing, field, 0) != numberField(requested, field, 0) {
-			return false
-		}
-	}
-	return true
-}
-
-func billingOperationInProgress(status string) bool {
-	switch status {
-	case "preparing", "charge_pending", "refund_pending", "renewal_pending", "manual_review":
-		return true
-	default:
-		return false
-	}
 }
 
 func preserveResourceAutoRenew(current, incoming map[string]any) controlPlaneRecord {

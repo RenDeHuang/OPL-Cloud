@@ -556,6 +556,28 @@ func TestWorkspaceRenewalUsesOneDebitStableProviderIDsAndOneReceipt(t *testing.T
 	}
 }
 
+func TestRunMonthlyBillingOnceScansWorkspacesOnly(t *testing.T) {
+	fixture := newWorkspaceRenewalWorkerFixture(t, []int64{100_000_000, 47_420_000})
+	legacyCompute := monthlyActiveResource("compute", "compute-legacy-orphan", fixture.paidThrough)
+	legacyStorage := monthlyActiveResource("storage", "storage-legacy-orphan", fixture.paidThrough)
+	legacyCompute["workspaceId"], legacyStorage["workspaceId"] = "workspace-legacy-orphan", "workspace-legacy-orphan"
+	mustStore(t, fixture.app.tables.SaveCompute(context.Background(), legacyCompute))
+	mustStore(t, fixture.app.tables.SaveStorage(context.Background(), legacyStorage))
+
+	if err := fixture.app.runMonthlyBillingOnce(context.Background(), fixture.service, fixture.paidThrough.Add(-monthlyRenewalLead)); err != nil {
+		t.Fatal(err)
+	}
+	storedCompute, _ := fixture.app.getCompute(stringValue(legacyCompute["id"]))
+	storedStorage, _ := fixture.app.getStorage(stringValue(legacyStorage["id"]))
+	if string(mustJSON(storedCompute)) != string(mustJSON(legacyCompute)) || string(mustJSON(storedStorage)) != string(mustJSON(legacyStorage)) {
+		t.Fatalf("Workspace scanner mutated legacy resources: compute=%#v storage=%#v", storedCompute, storedStorage)
+	}
+	if len(fixture.sub2API.charges) != 1 || len(fixture.fabric.computeRenewKeys) != 1 || len(fixture.fabric.storageRenewKeys) != 1 ||
+		len(fixture.ledger.receipts) != 1 || fixture.ledger.receipts[0].Type != "billing.workspace_renewed.v1" {
+		t.Fatalf("Workspace-only effects charges=%#v compute=%#v storage=%#v receipts=%#v", fixture.sub2API.charges, fixture.fabric.computeRenewKeys, fixture.fabric.storageRenewKeys, fixture.ledger.receipts)
+	}
+}
+
 func TestWorkspaceRenewalOriginalResourcesWithoutChildBilling(t *testing.T) {
 	fixture := newWorkspaceRenewalWorkerFixture(t, []int64{100_000_000, 47_420_000})
 	compute, _ := fixture.app.getCompute(stringValue(fixture.compute["id"]))

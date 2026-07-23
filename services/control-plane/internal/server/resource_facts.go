@@ -124,9 +124,6 @@ func providerSyncFacts(row map[string]any, err error) map[string]any {
 	if isExternallyDeletedStatus(status) {
 		out["providerStatus"] = "missing"
 		out["externalDeletedAt"] = firstNonEmpty(stringValue(out["externalDeletedAt"]), now)
-		if stringValue(out["billingStatus"]) != "" {
-			out["billingStatus"] = "stopped"
-		}
 		return out
 	}
 	out["providerStatus"] = firstNonEmpty(status, "running")

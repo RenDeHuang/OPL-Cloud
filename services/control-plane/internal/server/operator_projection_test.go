@@ -281,15 +281,15 @@ func TestOperatorAccountsKeepsIdentityWhenMappedWalletHasSubMicroBalance(t *test
 				},
 				"total": 4, "page": 1, "page_size": 50, "pages": 1,
 			})
-			case "/api/v1/admin/dashboard/users-usage":
-				write(map[string]any{"stats": map[string]any{
+		case "/api/v1/admin/dashboard/users-usage":
+			write(map[string]any{"stats": map[string]any{
 				"1":  map[string]any{"user_id": 1, "today_actual_cost": 0, "total_actual_cost": 0, "by_platform": []any{}},
 				"41": map[string]any{"user_id": 41, "today_actual_cost": 0, "total_actual_cost": 0, "by_platform": []any{}},
-					"42": map[string]any{"user_id": 42, "today_actual_cost": 0, "total_actual_cost": 0, "by_platform": []any{}},
-				}})
-			case "/api/v1/admin/users/1/api-keys", "/api/v1/admin/users/41/api-keys", "/api/v1/admin/users/42/api-keys":
-				write(map[string]any{"items": []any{}, "total": 0, "page": 1, "page_size": 1000, "pages": 1})
-			default:
+				"42": map[string]any{"user_id": 42, "today_actual_cost": 0, "total_actual_cost": 0, "by_platform": []any{}},
+			}})
+		case "/api/v1/admin/users/1/api-keys", "/api/v1/admin/users/41/api-keys", "/api/v1/admin/users/42/api-keys":
+			write(map[string]any{"items": []any{}, "total": 0, "page": 1, "page_size": 1000, "pages": 1})
+		default:
 			t.Errorf("unexpected Sub2API route %s %s", r.Method, r.URL.String())
 		}
 	}))
@@ -520,7 +520,7 @@ func TestOperatorReconciliationOnlyProjectsBillingReviewFacts(t *testing.T) {
 	}
 }
 
-func TestOperatorReconciliationProjectsResourceRenewalAndMismatchReviews(t *testing.T) {
+func TestOperatorReconciliationIgnoresHistoricalResourceBillingReviews(t *testing.T) {
 	store := newMemoryTableStore()
 	mustStore(t, store.SaveCompute(context.Background(), map[string]any{
 		"id": "compute-review", "accountId": "acct-alpha", "billingOperationId": "compute-billing", "billingStatus": "manual_review", "lastBillingError": "compute_unknown",
@@ -544,7 +544,7 @@ func TestOperatorReconciliationProjectsResourceRenewalAndMismatchReviews(t *test
 	}
 	data := mapField(decodeOperatorEnvelope(t, response), "data")
 	items := data["items"].([]any)
-	if data["total"] != float64(4) || len(items) != 4 {
+	if data["total"] != float64(2) || len(items) != 2 {
 		t.Fatalf("billing review items=%#v", data)
 	}
 	byID := map[string]map[string]any{}
@@ -552,12 +552,13 @@ func TestOperatorReconciliationProjectsResourceRenewalAndMismatchReviews(t *test
 		item := raw.(map[string]any)
 		byID[stringValue(item["id"])] = item
 	}
-	for id, resourceType := range map[string]string{"compute-review": "compute", "storage-review": "storage", "ws-alpha": "workspace"} {
-		item := byID[id]
-		actions, _ := item["allowedActions"].([]any)
-		if item["resourceType"] != resourceType || item["status"] != "manual_review" || len(actions) != 1 || actions[0] != "resolve_billing_review" {
-			t.Fatalf("%s review=%#v", id, item)
-		}
+	if byID["compute-review"] != nil || byID["storage-review"] != nil {
+		t.Fatalf("historical resource billing reviews leaked into active queue: %#v", byID)
+	}
+	item := byID["ws-alpha"]
+	actions, _ := item["allowedActions"].([]any)
+	if item["resourceType"] != "workspace" || item["status"] != "manual_review" || len(actions) != 1 || actions[0] != "resolve_billing_review" {
+		t.Fatalf("workspace renewal review=%#v", item)
 	}
 	if byID["ws-alpha"]["billingOperationId"] != renewal.ID || byID["ws-alpha"]["operationRef"] != renewal.ID {
 		t.Fatalf("renewal identity=%#v", byID["ws-alpha"])

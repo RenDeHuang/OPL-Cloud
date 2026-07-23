@@ -129,13 +129,16 @@
   "ledgerEvidencePolicy": {
     "owner": "opl-ledger",
     "recordApi": "POST /ledger/receipts",
-    "resourceReceiptSchemaStatus": "superseded_internal_compatibility",
-    "receiptTypes": [
+    "resourceReceiptSchemaStatus": "historical_read_only_compatibility",
+    "historicalReadOnlyReceiptTypes": [
       "billing.resource_purchased.v1",
       "billing.resource_renewed.v1",
       "billing.resource_expired.v1",
       "billing.resource_refunded.v1",
-      "billing.charge_review_required.v1",
+      "billing.charge_review_required.v1"
+    ],
+    "resourceReceiptNewWritesAllowed": false,
+    "receiptTypes": [
       "billing.reconciliation.v1",
       "billing.workspace_purchased.v1",
       "billing.workspace_renewed.v1",
@@ -144,7 +147,8 @@
       "gateway.wallet_adjustment.v1",
       "workspace.gateway_key_rotated.v1"
     ],
-    "requiredCostFields": [
+    "reconciliationReceiptType": "billing.reconciliation.v1",
+    "reconciliationRequiredCostFields": [
       "pricingVersion",
       "monthlyPriceCnyCents",
       "chargeUsdMicros",
@@ -155,7 +159,7 @@
       "resourceType",
       "resourceId"
     ],
-    "costFieldTypes": {
+    "reconciliationCostFieldTypes": {
       "pricingVersion": "non_empty_opaque_string",
       "monthlyPriceCnyCents": "non_negative_integer",
       "chargeUsdMicros": "non_negative_integer",

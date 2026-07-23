@@ -550,7 +550,9 @@ func validateReceiptInput(input ReceiptInput) error {
 	billingCostValid := true
 	if strings.HasPrefix(input.Type, "billing.") && strings.HasSuffix(input.Type, ".v1") {
 		switch input.Type {
-		case "billing.resource_purchased.v1", "billing.resource_renewed.v1", "billing.resource_expired.v1", "billing.resource_refunded.v1", "billing.charge_review_required.v1", "billing.reconciliation.v1":
+		case "billing.resource_purchased.v1", "billing.resource_renewed.v1", "billing.resource_expired.v1", "billing.resource_refunded.v1", "billing.charge_review_required.v1":
+			billingCostValid = false
+		case "billing.reconciliation.v1":
 			billingCostValid = validBillingCost(input.Cost)
 		case "billing.workspace_purchased.v1", "billing.workspace_renewed.v1", "billing.workspace_expired.v1", "billing.workspace_refunded.v1":
 			billingCostValid = validWorkspaceBillingCost(input.Cost, input.Type) && input.Cost["resourceId"] == input.WorkspaceID

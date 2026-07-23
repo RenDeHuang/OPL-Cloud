@@ -135,7 +135,7 @@ test("Workspace owns renewal while resource and general execution contracts are 
   assert.equal(billing.entitlementPolicy.customerRenewalAuthority, "workspace");
   assert.equal(billing.entitlementPolicy.resourceCompatibility.renewalIntentAuthority, false);
   assert.equal(billing.entitlementPolicy.resourceCompatibility.customerPricingAuthority, false);
-  assert.equal(billing.ledgerEvidencePolicy.resourceReceiptSchemaStatus, "superseded_internal_compatibility");
+  assert.equal(billing.ledgerEvidencePolicy.resourceReceiptSchemaStatus, "historical_read_only_compatibility");
   assert.equal(business.customerRenewalAuthority, "workspace");
   for (const kind of ["ComputeAllocation", "StorageVolume"]) {
     const object = business.objectKinds.find((entry) => entry.kind === kind);
@@ -144,6 +144,30 @@ test("Workspace owns renewal while resource and general execution contracts are 
   }
   assert.equal(evidence.generalReceiptV1.pilotStatus, "not_exposed_in_invite_only_pilot");
   assert.equal(evidence.monthlyBillingReceiptV1.status, "superseded_internal_compatibility");
+  for (const type of [
+    "workspace.compute_restarted",
+    "workspace.compute_recreated",
+    "billing.resource_purchased.v1",
+    "billing.resource_renewed.v1",
+    "billing.resource_expired.v1",
+    "billing.resource_refunded.v1",
+    "billing.charge_review_required.v1"
+  ]) {
+    assert.equal(evidence.receiptTypes.includes(type), false);
+  }
+  assert.deepEqual(evidence.historicalReadOnlyReceiptCompatibility, {
+    types: [
+      "workspace.compute_restarted",
+      "workspace.compute_recreated",
+      "billing.resource_purchased.v1",
+      "billing.resource_renewed.v1",
+      "billing.resource_expired.v1",
+      "billing.resource_refunded.v1",
+      "billing.charge_review_required.v1"
+    ],
+    existingReceiptsReadable: true,
+    newWritesAllowed: false
+  });
   assert.equal(evidence.receiptTypes.includes("workspace.storage_backup_created"), false);
   assert.equal(evidence.receiptTypes.includes("workspace.storage_restored"), false);
   assert.equal(shared.state, "superseded");

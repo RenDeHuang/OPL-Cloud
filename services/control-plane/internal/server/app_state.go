@@ -487,6 +487,11 @@ func workspaceDomain() string {
 	return strings.Trim(strings.TrimPrefix(strings.TrimPrefix(firstNonEmpty(os.Getenv("OPL_WORKSPACE_DOMAIN"), "workspace.medopl.cn"), "https://"), "http://"), "/")
 }
 
+func mustJSON(value any) []byte {
+	data, _ := json.Marshal(value)
+	return data
+}
+
 func stableID(parts ...string) string {
 	hash := sha1.New()
 	for _, part := range parts {

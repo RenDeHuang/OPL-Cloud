@@ -105,38 +105,6 @@ func TestProviderAcceptanceTokenDoesNotDependOnOperatorNetworkConfiguration(t *t
 	}
 }
 
-func newExecutionTestServer(t *testing.T, service *controlplane.Service) http.Handler {
-	t.Helper()
-	store := newMemoryTableStore()
-	seedTenantMember(t, store, "acct-alpha", "org-alpha", "usr-alpha", "alpha@execution.example")
-	mustStore(t, store.SaveWorkspace(context.Background(), map[string]any{"id": "workspace-alpha", "accountId": "acct-alpha", "status": "running"}))
-	server, err := NewPersistentServer(service, store)
-	if err != nil {
-		t.Fatalf("create execution test server: %v", err)
-	}
-	return server
-}
-
-type failingProjectIdentityStore struct {
-	*memoryTableStore
-	workspaceErr    error
-	organizationErr error
-}
-
-func (s *failingProjectIdentityStore) ListWorkspaces(ctx context.Context, accountID string) ([]map[string]any, error) {
-	if s.workspaceErr != nil {
-		return nil, s.workspaceErr
-	}
-	return s.memoryTableStore.ListWorkspaces(ctx, accountID)
-}
-
-func (s *failingProjectIdentityStore) ListOrganizations(ctx context.Context) ([]map[string]any, error) {
-	if s.organizationErr != nil {
-		return nil, s.organizationErr
-	}
-	return s.memoryTableStore.ListOrganizations(ctx)
-}
-
 func storedWorkspace(t *testing.T, app *controlPlaneServer, id string) map[string]any {
 	t.Helper()
 	workspace, ok := app.getWorkspace(id)
@@ -326,260 +294,11 @@ func TestUncontractedAdminDiagnosticsAPIRouteDoesNotReturnFakeEvidence(t *testin
 	}
 }
 
-func TestResumeWorkspaceRequiresOwningUserBeforeFabric(t *testing.T) {
-	store := newMemoryTableStore()
-	mustStore(t, store.SaveWorkspace(context.Background(), map[string]any{
-		"id": "workspace-alpha", "accountId": "acct-alpha", "ownerAccountId": "acct-alpha", "ownerUserId": "usr-owner",
-		"state": "suspended", "status": "suspended", "storageId": "storage-alpha",
-	}))
-	fabric := &fakeFabricClient{}
-	server, err := NewPersistentServer(newTestService(fakeLedgerClient{}, fabric), store)
-	if err != nil {
-		t.Fatal(err)
-	}
+type failingAuditStore struct{ *memoryTableStore }
 
-	session := tenantOwnerSessionForTest(t, server)
-	response := requestWithMutationKeyForTest(t, server, session, http.MethodPost, "/api/workspaces/workspace-alpha/resume", `{"computeAllocationId":"compute-new","attachmentId":"attachment-new"}`, "resume-owner-mismatch")
-	if response.Code != http.StatusForbidden || !strings.Contains(response.Body.String(), "workspace_owner_required") || len(fabric.gatewaySecretInputs) != 0 || len(fabric.runtimeInputs) != 0 {
-		t.Fatalf("owner mismatch resume status=%d gateway=%d runtime=%d body=%s", response.Code, len(fabric.gatewaySecretInputs), len(fabric.runtimeInputs), response.Body.String())
-	}
-}
-
-func TestResumeWorkspaceValidatesRetainedResourcesBeforeFabric(t *testing.T) {
-	calls := []string{}
-	store := newMemoryTableStore()
-	seedTenantMember(t, store, "acct-alpha", "org-alpha", "usr-alpha", "alpha@example.com")
-	seedTenantMember(t, store, "acct-beta", "org-beta", "usr-beta", "beta@example.com")
-	workspace := map[string]any{
-		"id": "workspace-alpha", "accountId": "acct-alpha", "ownerAccountId": "acct-alpha", "ownerUserId": "usr-alpha",
-		"name": "Alpha Lab", "packageId": "basic", "url": "https://workspace.medopl.cn/w/workspace-alpha/",
-		"state": "running", "status": "running", "storageId": "storage-alpha",
-		"currentComputeAllocationId": "", "currentAttachmentId": "", "runtimeId": "runtime-old",
-		"runtime": map[string]any{"serviceName": "opl-compute-old"}, "runtimeServiceName": "opl-compute-old-root", "serviceName": "opl-compute-old-legacy",
-	}
-	mustStore(t, store.SaveWorkspace(context.Background(), workspace))
-	mustStore(t, store.SaveStorage(context.Background(), map[string]any{"id": "storage-alpha", "accountId": "acct-alpha", "workspaceId": "workspace-alpha", "status": "available", "billingStatus": "active", "paidThrough": "2099-01-01T00:00:00Z"}))
-	mustStore(t, store.SaveCompute(context.Background(), map[string]any{"id": "compute-replacement", "accountId": "acct-alpha", "workspaceId": "workspace-alpha", "status": "running", "billingStatus": "active", "paidThrough": "2099-01-01T00:00:00Z"}))
-	mustStore(t, store.SaveAttachment(context.Background(), map[string]any{"id": "attachment-replacement", "accountId": "acct-alpha", "workspaceId": "workspace-alpha", "computeAllocationId": "compute-replacement", "storageId": "storage-alpha", "status": "attached"}))
-	mustStore(t, store.SaveProjectTaskSyncHead(context.Background(), map[string]any{"id": "project-alpha", "workspaceId": "workspace-alpha", "projectId": "project-alpha", "taskId": "task-alpha", "version": int64(7)}))
-	fabric := &fakeFabricClient{calls: &calls}
-	server, err := NewPersistentServer(newTestService(fakeLedgerClient{}, fabric), store)
-	if err != nil {
-		t.Fatalf("create resume server: %v", err)
-	}
-	owner := loginForTest(t, server, "alpha@example.com", "CorrectHorseBatteryStaple!")
-	outsider := loginForTest(t, server, "beta@example.com", "CorrectHorseBatteryStaple!")
-	body := `{"computeAllocationId":"compute-replacement","attachmentId":"attachment-replacement"}`
-	missingKeyReq := httptest.NewRequest(http.MethodPost, "/api/workspaces/workspace-alpha/resume", bytes.NewBufferString(body))
-	missingKeyReq.Header.Set("Content-Type", "application/json")
-	addAuth(missingKeyReq, owner)
-	missingKey := httptest.NewRecorder()
-	server.ServeHTTP(missingKey, missingKeyReq)
-	if missingKey.Code != http.StatusBadRequest || !strings.Contains(missingKey.Body.String(), "missing Idempotency-Key") || len(calls) != 0 {
-		t.Fatalf("missing-key resume = %d calls=%#v: %s", missingKey.Code, calls, missingKey.Body.String())
-	}
-
-	before := len(calls)
-	forbidden := requestWithSession(t, server, outsider, http.MethodPost, "/api/workspaces/workspace-alpha/resume", body)
-	if forbidden.Code != http.StatusForbidden || !strings.Contains(forbidden.Body.String(), "account_scope_forbidden") || len(calls) != before {
-		t.Fatalf("cross-account resume = %d calls=%#v body=%s", forbidden.Code, calls[before:], forbidden.Body.String())
-	}
-
-	wrongState := requestWithSession(t, server, owner, http.MethodPost, "/api/workspaces/workspace-alpha/resume", body)
-	if wrongState.Code != http.StatusConflict || len(calls) != before {
-		t.Fatalf("running resume = %d calls=%#v body=%s", wrongState.Code, calls[before:], wrongState.Body.String())
-	}
-
-	workspace["state"], workspace["status"] = "suspended", "suspended"
-	mustStore(t, store.SaveWorkspace(context.Background(), workspace))
-	computes, _ := store.ListComputes(context.Background(), "")
-	computes[0]["accountId"] = "acct-beta"
-	mustStore(t, store.SaveCompute(context.Background(), computes[0]))
-	wrongResourceAccount := requestWithSession(t, server, owner, http.MethodPost, "/api/workspaces/workspace-alpha/resume", body)
-	if wrongResourceAccount.Code != http.StatusConflict || len(calls) != before {
-		t.Fatalf("wrong-account resource resume = %d calls=%#v body=%s", wrongResourceAccount.Code, calls[before:], wrongResourceAccount.Body.String())
-	}
-	computes[0]["accountId"] = "acct-alpha"
-	mustStore(t, store.SaveCompute(context.Background(), computes[0]))
-	attachment, _ := store.ListAttachments(context.Background(), "")
-	attachment[0]["storageId"] = "storage-other"
-	mustStore(t, store.SaveAttachment(context.Background(), attachment[0]))
-	wrongStorage := requestWithSession(t, server, owner, http.MethodPost, "/api/workspaces/workspace-alpha/resume", body)
-	if wrongStorage.Code != http.StatusConflict || len(calls) != before {
-		t.Fatalf("wrong-storage resume = %d calls=%#v body=%s", wrongStorage.Code, calls[before:], wrongStorage.Body.String())
-	}
-
-	attachment[0]["storageId"] = "storage-alpha"
-	mustStore(t, store.SaveAttachment(context.Background(), attachment[0]))
-	resumed := requestWithSession(t, server, owner, http.MethodPost, "/api/workspaces/workspace-alpha/resume", body)
-	if resumed.Code != http.StatusOK {
-		t.Fatalf("resume status = %d: %s", resumed.Code, resumed.Body.String())
-	}
-	var result map[string]any
-	if err := json.NewDecoder(resumed.Body).Decode(&result); err != nil {
-		t.Fatalf("decode resume: %v", err)
-	}
-	if result["id"] != "workspace-alpha" || result["url"] != "https://workspace.medopl.cn/w/workspace-alpha/" || result["storageId"] != "storage-alpha" || result["currentComputeAllocationId"] != "compute-replacement" || result["currentAttachmentId"] != "attachment-replacement" {
-		t.Fatalf("resume changed stable identity or missed replacement resources: %#v", result)
-	}
-	if got := calls[before:]; !slices.Equal(got, []string{"fabric.gateway-secret", "fabric.runtime"}) {
-		t.Fatalf("resume Fabric calls = %#v", got)
-	}
-	if len(fabric.gatewaySecretInputs) != 1 || fabric.gatewaySecretInputs[0].AccountID != "acct-alpha" || fabric.gatewaySecretInputs[0].GatewayAPIKey != "workspace-key-secret" ||
-		len(fabric.runtimeInputs) != 1 || fabric.runtimeInputs[0].GatewaySecretRef != "opl-gateway-acct-alpha" {
-		t.Fatalf("resume Gateway Secret handoff = secret %#v runtime %#v", fabric.gatewaySecretInputs, fabric.runtimeInputs)
-	}
-	replayed := requestWithSession(t, server, owner, http.MethodPost, "/api/workspaces/workspace-alpha/resume", body)
-	if replayed.Code != http.StatusOK || len(calls[before:]) != 2 {
-		t.Fatalf("resume replay = %d calls=%#v body=%s", replayed.Code, calls[before:], replayed.Body.String())
-	}
-	var replayedResult map[string]any
-	if err := json.NewDecoder(replayed.Body).Decode(&replayedResult); err != nil || !reflect.DeepEqual(replayedResult, result) {
-		t.Fatalf("resume replay changed prior result: first=%#v replay=%#v err=%v", result, replayedResult, err)
-	}
-	changed := requestWithSession(t, server, owner, http.MethodPost, "/api/workspaces/workspace-alpha/resume", `{"computeAllocationId":"compute-other","attachmentId":"attachment-replacement"}`)
-	if changed.Code != http.StatusConflict || !strings.Contains(changed.Body.String(), "idempotency_conflict") || len(calls[before:]) != 2 {
-		t.Fatalf("changed resume replay = %d calls=%#v body=%s", changed.Code, calls[before:], changed.Body.String())
-	}
-	stored, _ := store.ListWorkspaces(context.Background(), "")
-	if nested(stored[0], "runtime", "serviceName") != "opl-compute-from-fabric" || stored[0]["runtimeServiceName"] != "opl-compute-from-fabric" || stored[0]["serviceName"] != "opl-compute-from-fabric" {
-		t.Fatalf("resume kept stale runtime service pointers: %#v", stored[0])
-	}
-	heads, err := store.ListProjectTaskSyncHeads(context.Background())
-	if err != nil || len(heads) != 1 || numberField(heads[0], "version", 0) != 7 {
-		t.Fatalf("resume changed project/task sync heads: %#v err=%v", heads, err)
-	}
-}
-
-type failingResumeCommitStore struct{ *memoryTableStore }
-
-func (s *failingResumeCommitStore) CommitWorkspaceResume(context.Context, map[string]any, map[string]any, map[string]any) error {
+func (s *failingAuditStore) SaveAuditEvent(context.Context, map[string]any) error {
 	return errors.New("audit write failed")
 }
-
-func (s *failingResumeCommitStore) SaveAuditEvent(context.Context, map[string]any) error {
-	return errors.New("audit write failed")
-}
-
-func TestResumeWorkspaceAuditFailureDoesNotPersistRunningProjection(t *testing.T) {
-	store := &failingResumeCommitStore{memoryTableStore: newMemoryTableStore()}
-	seedTenantMember(t, store, "acct-alpha", "org-alpha", "usr-alpha", "alpha@example.com")
-	mustStore(t, store.SaveWorkspace(context.Background(), map[string]any{"id": "workspace-alpha", "accountId": "acct-alpha", "ownerAccountId": "acct-alpha", "ownerUserId": "usr-alpha", "state": "suspended", "status": "suspended", "storageId": "storage-alpha", "url": "https://workspace.medopl.cn/w/workspace-alpha/"}))
-	mustStore(t, store.SaveStorage(context.Background(), map[string]any{"id": "storage-alpha", "accountId": "acct-alpha", "workspaceId": "workspace-alpha", "status": "available", "billingStatus": "active", "paidThrough": "2099-01-01T00:00:00Z"}))
-	mustStore(t, store.SaveCompute(context.Background(), map[string]any{"id": "compute-new", "accountId": "acct-alpha", "workspaceId": "workspace-alpha", "status": "running", "billingStatus": "active", "paidThrough": "2099-01-01T00:00:00Z"}))
-	mustStore(t, store.SaveAttachment(context.Background(), map[string]any{"id": "attachment-new", "accountId": "acct-alpha", "workspaceId": "workspace-alpha", "computeAllocationId": "compute-new", "storageId": "storage-alpha", "status": "attached"}))
-	server, err := NewPersistentServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}), store)
-	if err != nil {
-		t.Fatalf("create audit failure server: %v", err)
-	}
-	response := requestWithSession(t, server, loginForTest(t, server, "alpha@example.com", "CorrectHorseBatteryStaple!"), http.MethodPost, "/api/workspaces/workspace-alpha/resume", `{"computeAllocationId":"compute-new","attachmentId":"attachment-new"}`)
-	if response.Code != http.StatusInternalServerError {
-		t.Fatalf("audit failure status = %d: %s", response.Code, response.Body.String())
-	}
-	workspace, _ := store.ListWorkspaces(context.Background(), "")
-	if workspace[0]["state"] != "suspended" || workspace[0]["status"] != "suspended" {
-		t.Fatalf("audit failure left partial running projection: %#v", workspace[0])
-	}
-	operations, _ := store.ListRuntimeOperations(context.Background())
-	if len(operations) != 1 || operations[0]["status"] != "retryable" {
-		t.Fatalf("audit failure must leave deterministic retryable operation: %#v", operations)
-	}
-}
-
-func TestResumeWorkspaceKeepsUnreadyRuntimeClosedAndCredentialsIntact(t *testing.T) {
-	store := newMemoryTableStore()
-	workspace := map[string]any{"id": "workspace-alpha", "accountId": "acct-alpha", "ownerAccountId": "acct-alpha", "state": "suspended", "status": "suspended", "storageId": "storage-alpha", "url": "https://workspace.medopl.cn/w/workspace-alpha/", "runtime": map[string]any{"serviceName": "old-nested"}, "runtimeServiceName": "old-root", "serviceName": "old-legacy", "access": map[string]any{"account": "opl", "username": "opl", "credentialStatus": "configured", "credentialVersion": "v1", "secretRef": "old-secret"}}
-	mustStore(t, store.SaveWorkspace(context.Background(), workspace))
-	mustStore(t, store.SaveStorage(context.Background(), map[string]any{"id": "storage-alpha", "accountId": "acct-alpha", "workspaceId": "workspace-alpha", "status": "available", "billingStatus": "active", "paidThrough": "2099-01-01T00:00:00Z"}))
-	mustStore(t, store.SaveCompute(context.Background(), map[string]any{"id": "compute-new", "accountId": "acct-alpha", "workspaceId": "workspace-alpha", "status": "running", "billingStatus": "active", "paidThrough": "2099-01-01T00:00:00Z"}))
-	mustStore(t, store.SaveAttachment(context.Background(), map[string]any{"id": "attachment-new", "accountId": "acct-alpha", "workspaceId": "workspace-alpha", "computeAllocationId": "compute-new", "storageId": "storage-alpha", "status": "attached"}))
-	runtime := clients.WorkspaceRuntime{ID: "runtime-new", WorkspaceID: "workspace-alpha", Status: "running", Ready: false}
-	server, err := NewPersistentServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{runtime: runtime}), store)
-	if err != nil {
-		t.Fatalf("create provisioning resume server: %v", err)
-	}
-	session := tenantOwnerSessionForTest(t, server)
-	workspace["ownerUserId"] = sessionUserIDForTest(t, server, session)
-	mustStore(t, store.SaveWorkspace(context.Background(), workspace))
-	response := requestWithSession(t, server, session, http.MethodPost, "/api/workspaces/workspace-alpha/resume", `{"computeAllocationId":"compute-new","attachmentId":"attachment-new"}`)
-	if response.Code != http.StatusOK {
-		t.Fatalf("provisioning resume status = %d: %s", response.Code, response.Body.String())
-	}
-	var body map[string]any
-	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
-		t.Fatalf("decode provisioning resume: %v", err)
-	}
-	access := mapField(body, "access")
-	if body["state"] != "unready" || body["openable"] != false || access["tokenStatus"] != nil || access["credentialStatus"] != "configured" || access["secretRef"] != nil {
-		t.Fatalf("unready runtime became openable or cleared credentials: %#v", body)
-	}
-	stored, _ := store.ListWorkspaces(context.Background(), "")
-	if stringValue(nested(stored[0], "runtime", "serviceName")) != "" || stringValue(stored[0]["runtimeServiceName"]) != "" || stringValue(stored[0]["serviceName"]) != "" || stringValue(nested(stored[0], "access", "secretRef")) != "old-secret" {
-		t.Fatalf("provisioning resume kept stale service pointers: %#v", stored[0])
-	}
-}
-
-func TestConcurrentWorkspaceResumeWaitsForResourceMutation(t *testing.T) {
-	store := newMemoryTableStore()
-	workspace := map[string]any{"id": "workspace-alpha", "accountId": "acct-alpha", "ownerAccountId": "acct-alpha", "state": "suspended", "status": "suspended", "storageId": "storage-alpha", "url": "https://workspace.medopl.cn/w/workspace-alpha/"}
-	mustStore(t, store.SaveWorkspace(context.Background(), workspace))
-	mustStore(t, store.SaveStorage(context.Background(), map[string]any{"id": "storage-alpha", "accountId": "acct-alpha", "workspaceId": "workspace-alpha", "status": "available", "billingStatus": "active", "paidThrough": "2099-01-01T00:00:00Z"}))
-	mustStore(t, store.SaveCompute(context.Background(), map[string]any{"id": "compute-new", "accountId": "acct-alpha", "workspaceId": "workspace-alpha", "status": "running", "billingStatus": "active", "paidThrough": "2099-01-01T00:00:00Z"}))
-	mustStore(t, store.SaveAttachment(context.Background(), map[string]any{"id": "attachment-new", "accountId": "acct-alpha", "workspaceId": "workspace-alpha", "computeAllocationId": "compute-new", "storageId": "storage-alpha", "status": "attached"}))
-	fabric := &blockingResumeFabricClient{fakeFabricClient: fakeFabricClient{}, entered: make(chan struct{}, 2), release: make(chan struct{})}
-	server, err := NewPersistentServer(newTestService(fakeLedgerClient{}, fabric), store)
-	if err != nil {
-		t.Fatalf("create resume server: %v", err)
-	}
-	session := tenantOwnerSessionForTest(t, server)
-	workspace["ownerUserId"] = sessionUserIDForTest(t, server, session)
-	mustStore(t, store.SaveWorkspace(context.Background(), workspace))
-	resume := func(key string) <-chan *httptest.ResponseRecorder {
-		done := make(chan *httptest.ResponseRecorder, 1)
-		req := httptest.NewRequest(http.MethodPost, "/api/workspaces/workspace-alpha/resume", bytes.NewBufferString(`{"computeAllocationId":"compute-new","attachmentId":"attachment-new"}`))
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Idempotency-Key", key)
-		addAuth(req, session)
-		go func() {
-			rec := httptest.NewRecorder()
-			server.ServeHTTP(rec, req)
-			done <- rec
-		}()
-		return done
-	}
-	first := resume("resume-first")
-	select {
-	case <-fabric.entered:
-	case <-time.After(time.Second):
-		t.Fatal("first resume did not reach Fabric")
-	}
-	second := resume("resume-second")
-	select {
-	case <-fabric.entered:
-		close(fabric.release)
-		<-first
-		<-second
-		t.Fatal("concurrent resume reached Fabric twice")
-	case response := <-second:
-		close(fabric.release)
-		<-first
-		t.Fatalf("second resume crossed resource lock with status %d: %s", response.Code, response.Body.String())
-	case <-time.After(50 * time.Millisecond):
-	}
-	close(fabric.release)
-	if response := <-first; response.Code != http.StatusOK {
-		t.Fatalf("first resume status = %d: %s", response.Code, response.Body.String())
-	}
-	select {
-	case response := <-second:
-		if response.Code != http.StatusConflict {
-			t.Fatalf("second resume status = %d: %s", response.Code, response.Body.String())
-		}
-	case <-time.After(time.Second):
-		t.Fatal("second resume did not resolve after resource unlock")
-	}
-}
-
 func TestConsoleStateComputePoolsReadFabricCatalog(t *testing.T) {
 	server := NewServer(newTestService(fakeLedgerClient{}, &catalogFabricClient{}))
 	session := tenantAdminSessionForTest(t, server)
@@ -748,18 +467,45 @@ func TestProviderReconcilePreservesHistoricalChildBilling(t *testing.T) {
 	}
 }
 
-func TestProviderReconcilePreservesReleasedStorageStatus(t *testing.T) {
-	app := newControlPlaneAppEmpty()
-	row := map[string]any{"id": "storage-reconcile-released", "accountId": "acct-alpha", "status": "available", "desiredStatus": "destroyed", "billingStatus": "active"}
-	mustStore(t, app.tables.SaveStorage(context.Background(), row))
-	fabric := &fakeFabricClient{storageDestroyStatus: "released"}
-
-	if err := app.reconcileMonthlyStorage(context.Background(), newTestService(fakeLedgerClient{}, fabric), row, time.Now().UTC()); err != nil {
-		t.Fatal(err)
-	}
-	stored, _ := app.getStorage("storage-reconcile-released")
-	if stored["status"] != "released" || stored["desiredStatus"] != "destroyed" || stored["billingStatus"] != "stopped" {
-		t.Fatalf("reconciled storage=%#v", stored)
+func TestProviderReconcileNeverResumesHistoricalResourceBilling(t *testing.T) {
+	for _, resourceType := range []string{"compute", "storage"} {
+		for _, billingStatus := range []string{"preparing", "refund_pending"} {
+			t.Run(resourceType+"/"+billingStatus, func(t *testing.T) {
+				app := newControlPlaneAppEmpty()
+				row := map[string]any{
+					"id": resourceType + "-historical-" + billingStatus, "accountId": "acct-alpha", "workspaceId": "ws-alpha",
+					"status": "running", "billingStatus": billingStatus, "billingOperationId": "legacy-operation",
+					"lastProviderSyncAt": "2026-07-01T00:00:00Z",
+				}
+				if resourceType == "storage" {
+					row["status"] = "available"
+					mustStore(t, app.tables.SaveStorage(context.Background(), row))
+				} else {
+					mustStore(t, app.tables.SaveCompute(context.Background(), row))
+				}
+				calls := []string{}
+				fabric := &providerReconcileFabricClient{
+					fakeFabricClient: fakeFabricClient{calls: &calls},
+					computeResult:    clients.ComputeAllocation{ID: stringValue(row["id"]), Status: "running", Provider: "tencent-tke"},
+					storageResult:    clients.StorageVolume{ID: stringValue(row["id"]), Status: "available", Provider: "tencent-tke"},
+				}
+				service := newTestService(fakeLedgerClient{}, fabric)
+				var err error
+				if resourceType == "storage" {
+					err = app.reconcileMonthlyStorage(context.Background(), service, row, time.Now().UTC())
+				} else {
+					err = app.reconcileMonthlyCompute(context.Background(), service, row, time.Now().UTC())
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, call := range calls {
+					if strings.Contains(call, "destroy") {
+						t.Fatalf("historical billing triggered provider mutation: %#v", calls)
+					}
+				}
+			})
+		}
 	}
 }
 
@@ -1363,22 +1109,6 @@ type pendingComputeFabricClient struct {
 	provisioningComputeFabricClient
 }
 
-type blockingResumeFabricClient struct {
-	fakeFabricClient
-	entered chan struct{}
-	release chan struct{}
-}
-
-func (f *blockingResumeFabricClient) CreateWorkspaceRuntime(ctx context.Context, input clients.WorkspaceRuntimeInput, key string) (clients.WorkspaceRuntime, error) {
-	f.entered <- struct{}{}
-	select {
-	case <-f.release:
-		return f.fakeFabricClient.CreateWorkspaceRuntime(ctx, input, key)
-	case <-ctx.Done():
-		return clients.WorkspaceRuntime{}, ctx.Err()
-	}
-}
-
 func (f *fakeFabricClient) record(call string) {
 	if f != nil && f.calls != nil {
 		*f.calls = append(*f.calls, call)
@@ -1573,75 +1303,6 @@ func (f *fakeFabricClient) ListOperations(_ context.Context) ([]clients.FabricOp
 		FinishedAt:        "2026-07-07T00:01:00Z",
 		CreatedAt:         "2026-07-07T00:01:00Z",
 	}}, nil
-}
-
-func (f *fakeFabricClient) CreateJob(_ context.Context, input clients.JobInput, _ string) (clients.Job, error) {
-	f.record("fabric.job")
-	return clients.Job{JobID: "job-from-fabric", OrganizationID: input.OrganizationID, WorkspaceID: input.WorkspaceID, ProjectID: input.ProjectID, TaskID: input.TaskID, RequestID: input.RequestID, ApprovalID: input.ApprovalID, EnvironmentRef: input.EnvironmentRef, Status: "queued"}, nil
-}
-
-func (f *fakeFabricClient) GetJob(_ context.Context, jobID string) (clients.Job, error) {
-	f.record("fabric.job-get")
-	return clients.Job{JobID: jobID, Status: "queued"}, nil
-}
-
-func (f *fakeFabricClient) CancelJob(_ context.Context, jobID string, _ string) (clients.Job, error) {
-	f.record("fabric.job-cancel")
-	return clients.Job{JobID: jobID, Status: "cancelled"}, nil
-}
-
-func TestRetiredExecutionRoutesReturnNotFound(t *testing.T) {
-	server := newExecutionTestServer(t, newTestService(fakeLedgerClient{}, &fakeFabricClient{}))
-	for _, tc := range []struct {
-		method string
-		path   string
-	}{
-		{method: http.MethodGet, path: "/api/projects"},
-		{method: http.MethodPost, path: "/api/projects"},
-		{method: http.MethodPost, path: "/api/projects/project-legacy/tasks"},
-		{method: http.MethodGet, path: "/api/execution-requests"},
-		{method: http.MethodPost, path: "/api/execution-requests"},
-		{method: http.MethodGet, path: "/api/execution-requests/request-legacy"},
-		{method: http.MethodPost, path: "/api/execution-requests/request-legacy/approve"},
-	} {
-		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
-			req := httptest.NewRequest(tc.method, tc.path, nil)
-			rec := httptest.NewRecorder()
-			server.ServeHTTP(rec, req)
-			if rec.Code != http.StatusNotFound {
-				t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusNotFound, rec.Body.String())
-			}
-		})
-	}
-}
-
-type executionCompletionLedgerClient struct {
-	fakeLedgerClient
-}
-
-func (*executionCompletionLedgerClient) RecordReceipt(_ context.Context, input clients.ReceiptInput, _ string) (clients.Receipt, error) {
-	receiptID := "receipt-running"
-	continuationID := ""
-	if input.Status != "running" {
-		receiptID = "receipt-final"
-	}
-	if input.Status == "completed" {
-		continuationID = "continuation-final"
-	}
-	return clients.Receipt{ReceiptInput: input, ReceiptID: receiptID, ContinuationID: continuationID}, nil
-}
-
-func (*executionCompletionLedgerClient) Continuation(_ context.Context, receiptID string) (map[string]any, error) {
-	return map[string]any{"receiptId": receiptID, "continuationId": "continuation-final", "artifactIds": []any{"artifact-alpha"}}, nil
-}
-
-type completedExecutionFabricClient struct {
-	fakeFabricClient
-}
-
-func (f *completedExecutionFabricClient) GetJob(_ context.Context, jobID string) (clients.Job, error) {
-	f.record("fabric.job-get")
-	return clients.Job{JobID: jobID, Status: "succeeded", Attempt: 1, ArtifactIDs: []string{"artifact-alpha"}, ReviewIDs: []string{"review-alpha"}}, nil
 }
 
 type fabricClientWithResourceOperations struct {
