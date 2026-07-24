@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import test from "node:test";
 
 const root = new URL("../../", import.meta.url);
@@ -12,7 +12,17 @@ async function json(path) {
   return JSON.parse(await text(path));
 }
 
-test("current docs describe only the fast invite-only paid Pilot", async () => {
+async function filesUnder(directory, include = () => true) {
+  const files = [];
+  for (const entry of await readdir(new URL(`${directory}/`, root), { withFileTypes: true })) {
+    const path = `${directory}/${entry.name}`;
+    if (entry.isDirectory()) files.push(...await filesUnder(path, include));
+    else if (entry.isFile() && include(path)) files.push(path);
+  }
+  return files;
+}
+
+test("current docs describe only the operator-provisioned paid Pilot", async () => {
   const [readme, architecture, packages, invariants, status, runbook, tke] = await Promise.all([
     text("README.md"),
     text("docs/architecture.md"),
@@ -26,7 +36,7 @@ test("current docs describe only the fast invite-only paid Pilot", async () => {
   assert.match(readme, /Vue Console/);
   assert.match(readme, /Basic[^\n]*USD 50\.00[^\n]*USD 2\.58[^\n]*USD 52\.58/i);
   assert.match(readme, /Pro[^\n]*USD 214\.28[^\n]*USD 25\.80[^\n]*USD 240\.08/i);
-  assert.match(invariants, /2-5 invited customer accounts/i);
+  assert.match(invariants, /administrator-provisioned customer accounts/i);
   assert.match(invariants, /one Console User.*one OPL Account.*one Sub2API User\/Wallet/is);
   assert.match(invariants, /verification-slot-basic-01/);
   assert.match(invariants, /verification-slot-pro-01/);
@@ -46,14 +56,14 @@ test("current docs describe only the fast invite-only paid Pilot", async () => {
   assert.doesNotMatch(runbook, /reuse `verification-slot-01`/i);
 });
 
-test("identity contracts expose one owner account and keep Organization internal", async () => {
+test("identity contracts expose operator-provisioned owners and keep Organization internal", async () => {
   const [management, boundary] = await Promise.all([
     json("packages/contracts/opl-cloud-management-contract.json"),
     json("packages/contracts/opl-cloud-service-boundary-contract.json")
   ]);
 
   assert.deepEqual(management.pilotCohort, {
-    mode: "invite_only",
+    mode: "operator_provisioned",
     minimumCustomerAccounts: 2,
     maximumCustomerAccounts: 5,
     publicRegistration: false
@@ -88,7 +98,7 @@ test("current contracts expose only authoritative Pilot sources and controls", a
   ]);
 
   assert.deepEqual(freeze.pilotCohort, {
-    mode: "invite_only",
+    mode: "operator_provisioned",
     minimumCustomerAccounts: 2,
     maximumCustomerAccounts: 5,
     publicRegistration: false
@@ -115,6 +125,8 @@ test("current contracts expose only authoritative Pilot sources and controls", a
     "endpoint", "wallet", "groups", "keys", "usage", "usageStats", "accountUsageStats", "balanceHistory"
   ]);
   assert.equal(product.pilotBoundary.workspaceCardinality, "many_per_account");
+  assert.equal(product.pilotBoundary.accountProvisioning, "operator_provisioned");
+  assert.equal(product.pilotBoundary.publicRegistration, false);
   assert.equal(product.pilotBoundary.unpaidExpiry, "deny_access_zero_fabric_or_tencent_mutation_expire_by_provider");
   assert.equal(product.pilotBoundary.workspaceDataAuthority, "cbs");
   assert.deepEqual(product.pilotBoundary.unsupportedCustomerCapabilities, ["backup", "recovery", "sync", "transfer"]);
@@ -122,6 +134,41 @@ test("current contracts expose only authoritative Pilot sources and controls", a
   assert.equal(boundary.browserBoundary.onlyCalls, "control_plane_product_apis");
   assert.deepEqual(boundary.browserBoundary.forbidden, ["sub2api_direct", "gflabtoken_link", "iframe", "html_scraping", "raw_admin_dto"]);
   assert.deepEqual(boundary.customerMutationBoundary, { payment: false, topUp: false, keyCreate: true, keyRevoke: true });
+});
+
+test("current truth hard-cuts invitation and stage vocabulary", async () => {
+  const currentDocs = [
+    "README.md",
+    ...await filesUnder("docs", (path) => path.endsWith(".md")),
+    "packages/README.md",
+    "packages/contracts/README.md"
+  ];
+  const contractPaths = await filesUnder("packages/contracts", (path) => path.endsWith(".json"));
+  const currentContracts = [];
+  for (const path of contractPaths) {
+    if ((await json(path)).state === "current") currentContracts.push(path);
+  }
+  const currentUI = [
+    ...await filesUnder("apps/console-ui/src"),
+    "tools/console-browser-qa.ts"
+  ];
+  const activeCode = await filesUnder(
+    "services/control-plane",
+    (path) => path.endsWith(".go") && !path.endsWith("_test.go") && !path.startsWith("services/control-plane/migrations/")
+  );
+  const retiredStageVocabulary = new RegExp("\\bS(?:7|9)\\b|Stage\\s?B");
+  const documents = await Promise.all([...currentDocs, ...currentContracts, ...currentUI, ...activeCode].map(async (path) => [path, await text(path)]));
+  for (const [path, raw] of documents) {
+    let content = raw;
+    if (path === "services/control-plane/internal/server/ent_state_store.go") {
+      content = content.replaceAll("202607170001_invited_account_identity", "").replaceAll("ApplyInvitedAccountIdentity", "");
+    }
+    if (path === "services/control-plane/internal/server/server.go") {
+      content = content.replaceAll("/api/operator/accounts/invitations", "");
+    }
+    assert.doesNotMatch(content, /invite|invited|invitation|邀请制/i, path);
+    assert.doesNotMatch(content, retiredStageVocabulary, path);
+  }
 });
 
 test("Workspace owns renewal while resource and general execution contracts are non-Pilot compatibility", async () => {
@@ -143,7 +190,7 @@ test("Workspace owns renewal while resource and general execution contracts are 
     assert.equal(object.requiredBillingFields.includes("monthlyPriceCnyCents"), false);
     assert.equal(object.requiredBillingFields.includes("autoRenew"), false);
   }
-  assert.equal(evidence.generalReceiptV1.pilotStatus, "not_exposed_in_invite_only_pilot");
+  assert.equal(evidence.generalReceiptV1.pilotStatus, "not_exposed_in_operator_provisioned_pilot");
   assert.equal(evidence.monthlyBillingReceiptV1.status, "superseded_internal_compatibility");
   for (const type of [
     "workspace.compute_restarted",
@@ -172,7 +219,6 @@ test("Workspace owns renewal while resource and general execution contracts are 
   assert.equal(evidence.receiptTypes.includes("workspace.storage_backup_created"), false);
   assert.equal(evidence.receiptTypes.includes("workspace.storage_restored"), false);
   assert.equal(shared.state, "superseded");
-  assert.equal(shared.pilotStatus, "not_exposed_in_invite_only_pilot");
   assert.equal(packageBoundary.state, "superseded");
 });
 

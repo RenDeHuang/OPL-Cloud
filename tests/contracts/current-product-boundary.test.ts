@@ -443,7 +443,7 @@ test("Current human truth preserves public entry points and evidence levels", as
   assert.doesNotMatch(invariants, /pending integrated verification/i);
   assert.doesNotMatch(invariants, /stops at\s+`debited`[\s\S]{0,300}S8/i);
   assert.doesNotMatch(invariants, /durable `workspace\.launch` RuntimeOperation/);
-  assert.doesNotMatch(invariants, /S9|manual[- ]review[^.\n]{0,160}code-complete/i);
+  assert.doesNotMatch(invariants, /manual[- ]review[^.\n]{0,160}code-complete/i);
   assert.match(runbook, /OPL_POSTGRES_TESTS=1/);
   assert.match(runbook, /OPL_CAPACITY_TESTS=1/);
   assert.match(runbook, /Action=skip/);

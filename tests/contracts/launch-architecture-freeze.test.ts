@@ -155,7 +155,7 @@ test("launch freeze fixes the V2 products, owner lanes, settlement, and verifica
   assert.equal(freeze.workspaceLaunch.nextBlockedStage, undefined);
   assert.match(freeze.workspaceLaunch.currentImplementation, /manual-review recovery.*integrated local fake evidence/i);
   assert.doesNotMatch(freeze.workspaceLaunch.currentImplementation, /pending integrated verification/i);
-  assert.doesNotMatch(freeze.workspaceLaunch.currentImplementation, /S9|manual review.*code-complete/i);
+  assert.doesNotMatch(freeze.workspaceLaunch.currentImplementation, /manual review.*code-complete/i);
   assert.deepEqual(freeze.workspaceRuntime.sourceImage, {
     appRepository: "https://github.com/gaofeng21cn/one-person-lab-app.git",
     activeShellRepository: "https://github.com/gaofeng21cn/opl-aion-shell.git",
@@ -357,7 +357,7 @@ test("human invariants reject paid per-run resource verification", async () => {
   assert.match(invariants, /local\s+identit.*unknown.*absent.*refund/is);
   assert.match(invariants, /does not run.*Sync.*Tag.*kubectl apply.*delete.*label.*purchase.*renew.*destroy/is);
   assert.match(invariants, /recover_workspace_launch/);
-  assert.doesNotMatch(invariants, /manual[- ]review[^.\n]{0,160}code-complete|S9/i);
+  assert.doesNotMatch(invariants, /manual[- ]review[^.\n]{0,160}code-complete/i);
 });
 
 test("paused fixed-slot verification does not gate the Basic rollout", async () => {

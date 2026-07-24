@@ -26,7 +26,7 @@ test("Console browser covers customer and operator truth states at desktop and m
 test("Home Login Logo unchanged browser contract stays pinned", async () => {
   const app = await readFile("apps/console-ui/src/App.vue", "utf8");
   assert.match(app, /<h1>OPL Cloud<\/h1>/);
-  assert.match(app, /邀请制 Workspace 与 API 服务。/);
+  assert.match(app, /面向已开通用户的 Workspace 与 API 服务。/);
   assert.match(app, /<span>Console 登录<\/span>/);
   assert.match(app, /src="\/opl-app-icon\.png" alt="OPL Cloud"/);
 });

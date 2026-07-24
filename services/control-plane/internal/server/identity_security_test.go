@@ -11,7 +11,7 @@ func TestPasswordStrengthRejectsShortCreatePassword(t *testing.T) {
 	server := NewServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}))
 	handler := server.(*controlPlaneHTTPHandler)
 	_, err := handler.app.createUser(context.Background(), handler.service, map[string]any{
-		"email": "weak@invite.example", "accountId": "acct-weak", "password": "too-short",
+		"email": "weak@provisioned.example", "accountId": "acct-weak", "password": "too-short",
 	})
 	if !errors.Is(err, errWeakPassword) {
 		t.Fatalf("short create error=%v", err)
@@ -36,16 +36,16 @@ func TestNormalizedEmailCreateRejectsKnownCrossAccountConflictBeforeRemote(t *te
 	server := newIdentityTestServer(t, remote, nil)
 	handler := server.(*controlPlaneHTTPHandler)
 	created, err := handler.app.createUser(context.Background(), handler.service, map[string]any{
-		"email": " Owner@Invite.Example ", "accountId": "acct-normalized", "password": "CorrectHorseBatteryStaple!",
+		"email": " Owner@Provisioned.Example ", "accountId": "acct-normalized", "password": "CorrectHorseBatteryStaple!",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if created["email"] != "owner@invite.example" {
+	if created["email"] != "owner@provisioned.example" {
 		t.Fatalf("created email = %q", created["email"])
 	}
 	_, err = handler.app.createUser(context.Background(), handler.service, map[string]any{
-		"email": "OWNER@INVITE.EXAMPLE", "accountId": "acct-normalized-copy", "password": "CorrectHorseBatteryStaple!",
+		"email": "OWNER@PROVISIONED.EXAMPLE", "accountId": "acct-normalized-copy", "password": "CorrectHorseBatteryStaple!",
 	})
 	if !errors.Is(err, errUserExists) {
 		t.Fatalf("normalized duplicate error=%v", err)

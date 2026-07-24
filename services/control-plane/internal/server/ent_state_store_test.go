@@ -1650,8 +1650,8 @@ func TestPostgresSaveWorkspaceUpdatesWithoutDeleteInsert(t *testing.T) {
 func seedPostgresWorkspaceActivation(t *testing.T, store *postgresEntStateStore, ownerStatus string, mutateAttachment func(map[string]any)) map[string]any {
 	t.Helper()
 	ctx := context.Background()
-	account, owner, organization, membership := invitedAccountRowsFor("acct-renewal", "usr-renewal", "org-renewal", "renewal-owner@example.com", 41)
-	mustStore(t, store.CreateInvitedAccount(ctx, account, owner, organization, membership))
+	account, owner, organization, membership := provisionedAccountRowsFor("acct-renewal", "usr-renewal", "org-renewal", "renewal-owner@example.com", 41)
+	mustStore(t, store.CreateProvisionedAccount(ctx, account, owner, organization, membership))
 	if ownerStatus != "active" {
 		owner["status"] = ownerStatus
 		mustStore(t, store.ApplyUserLifecycle(ctx, owner))
@@ -1896,8 +1896,8 @@ func canonicalWorkspaceRenewalRow(autoRenew bool) map[string]any {
 func TestEntStateStoreSub2APIMappingAndMonthlyEntitlementRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	store := NewTestEntStateStore(t, t.TempDir()+"/monthly.sqlite")
-	accountRow, userRow, organizationRow, membershipRow := invitedAccountRowsFor("acct-monthly", "usr-monthly", "org-monthly", "monthly@example.com", 41)
-	mustStore(t, store.CreateInvitedAccount(ctx, accountRow, userRow, organizationRow, membershipRow))
+	accountRow, userRow, organizationRow, membershipRow := provisionedAccountRowsFor("acct-monthly", "usr-monthly", "org-monthly", "monthly@example.com", 41)
+	mustStore(t, store.CreateProvisionedAccount(ctx, accountRow, userRow, organizationRow, membershipRow))
 	accounts, err := store.ListAccounts(ctx, "acct-monthly")
 	if err != nil {
 		t.Fatalf("list accounts: %v", err)
@@ -1980,10 +1980,10 @@ func TestAccountStoresRejectDuplicateSub2APIUserMapping(t *testing.T) {
 		"ent":    NewTestEntStateStore(t, t.TempDir()+"/account-mapping.sqlite"),
 	} {
 		t.Run(name, func(t *testing.T) {
-			accountOne, userOne, organizationOne, membershipOne := invitedAccountRowsFor("acct-one", "usr-one", "org-one", "one@example.com", 41)
-			accountTwo, userTwo, organizationTwo, membershipTwo := invitedAccountRowsFor("acct-two", "usr-two", "org-two", "two@example.com", 42)
-			mustStore(t, store.CreateInvitedAccount(ctx, accountOne, userOne, organizationOne, membershipOne))
-			mustStore(t, store.CreateInvitedAccount(ctx, accountTwo, userTwo, organizationTwo, membershipTwo))
+			accountOne, userOne, organizationOne, membershipOne := provisionedAccountRowsFor("acct-one", "usr-one", "org-one", "one@example.com", 41)
+			accountTwo, userTwo, organizationTwo, membershipTwo := provisionedAccountRowsFor("acct-two", "usr-two", "org-two", "two@example.com", 42)
+			mustStore(t, store.CreateProvisionedAccount(ctx, accountOne, userOne, organizationOne, membershipOne))
+			mustStore(t, store.CreateProvisionedAccount(ctx, accountTwo, userTwo, organizationTwo, membershipTwo))
 			accountTwo["sub2apiUserId"] = int64(41)
 			if err := store.SaveAccount(ctx, accountTwo); err == nil || err.Error() != "sub2api_account_mapping_conflict" {
 				t.Fatalf("duplicate mapping error = %v", err)
@@ -1995,10 +1995,10 @@ func TestAccountStoresRejectDuplicateSub2APIUserMapping(t *testing.T) {
 func TestMemoryAccountStoreSerializesDuplicateSub2APIUserMapping(t *testing.T) {
 	store := newMemoryTableStore()
 	ctx := context.Background()
-	accountOne, userOne, organizationOne, membershipOne := invitedAccountRowsFor("acct-one", "usr-one", "org-one", "one@example.com", 41)
-	accountTwo, userTwo, organizationTwo, membershipTwo := invitedAccountRowsFor("acct-two", "usr-two", "org-two", "two@example.com", 42)
-	mustStore(t, store.CreateInvitedAccount(ctx, accountOne, userOne, organizationOne, membershipOne))
-	mustStore(t, store.CreateInvitedAccount(ctx, accountTwo, userTwo, organizationTwo, membershipTwo))
+	accountOne, userOne, organizationOne, membershipOne := provisionedAccountRowsFor("acct-one", "usr-one", "org-one", "one@example.com", 41)
+	accountTwo, userTwo, organizationTwo, membershipTwo := provisionedAccountRowsFor("acct-two", "usr-two", "org-two", "two@example.com", 42)
+	mustStore(t, store.CreateProvisionedAccount(ctx, accountOne, userOne, organizationOne, membershipOne))
+	mustStore(t, store.CreateProvisionedAccount(ctx, accountTwo, userTwo, organizationTwo, membershipTwo))
 	accountOne["sub2apiUserId"], accountTwo["sub2apiUserId"] = int64(99), int64(99)
 	start := make(chan struct{})
 	errorsByAccount := make(chan error, 2)

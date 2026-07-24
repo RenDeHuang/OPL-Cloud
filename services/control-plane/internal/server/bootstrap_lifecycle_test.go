@@ -101,8 +101,8 @@ func TestFreshPersistentServerFailsClosedWithoutRemoteOperatorIdentity(t *testin
 
 func TestPersistentServerBootstrapsOperatorAlongsideExistingCustomer(t *testing.T) {
 	store := freshIdentityMemoryStore()
-	account, user, organization, membership := strictInvitedAccountRows()
-	if err := store.CreateInvitedAccount(context.Background(), account, user, organization, membership); err != nil {
+	account, user, organization, membership := strictProvisionedAccountRows()
+	if err := store.CreateProvisionedAccount(context.Background(), account, user, organization, membership); err != nil {
 		t.Fatal(err)
 	}
 	remote := &bootstrapIdentitySub2API{
@@ -144,7 +144,7 @@ func TestPersistentServerValidatesCompleteLegacyOperatorGraphWithoutWriting(t *t
 	user := map[string]any{"id": "usr-admin", "email": "admin@medopl.cn", "accountId": "acct-admin", "role": "admin", "status": "active"}
 	organization := map[string]any{"id": "org-legacy-admin", "name": "Legacy operator", "billingAccountId": "acct-admin", "status": "active"}
 	membership := map[string]any{"id": "mem-legacy-admin", "accountId": "acct-admin", "organizationId": "org-legacy-admin", "userId": "usr-admin", "role": "owner", "status": "active"}
-	if err := store.CreateInvitedAccount(context.Background(), account, user, organization, membership); err != nil {
+	if err := store.CreateProvisionedAccount(context.Background(), account, user, organization, membership); err != nil {
 		t.Fatal(err)
 	}
 	beforeAccounts, beforeUsers := cloneStateTable(store.accounts), cloneStateTable(store.users)
@@ -169,7 +169,7 @@ func TestPersistentServerRejectsMalformedLocalOperatorEmailWithoutMutation(t *te
 	user := map[string]any{"id": "usr-admin", "email": "admin@medopl.cn", "accountId": "acct-admin", "role": "admin", "status": "active"}
 	organization := map[string]any{"id": "org-admin", "name": "OPL Cloud", "billingAccountId": "acct-admin", "status": "active"}
 	membership := map[string]any{"id": "mem-admin", "accountId": "acct-admin", "organizationId": "org-admin", "userId": "usr-admin", "role": "owner", "status": "active"}
-	if err := store.CreateInvitedAccount(context.Background(), account, user, organization, membership); err != nil {
+	if err := store.CreateProvisionedAccount(context.Background(), account, user, organization, membership); err != nil {
 		t.Fatal(err)
 	}
 	store.users["usr-admin"]["email"] = " Admin@medopl.cn "
@@ -196,7 +196,7 @@ func TestPersistentServerRejectsRemoteOperatorMappingMismatchWithoutWriting(t *t
 	user := map[string]any{"id": "usr-admin", "email": "admin@medopl.cn", "accountId": "acct-admin", "role": "admin", "status": "active"}
 	organization := map[string]any{"id": "org-admin", "name": "OPL Cloud", "billingAccountId": "acct-admin", "status": "active"}
 	membership := map[string]any{"id": "mem-admin", "accountId": "acct-admin", "organizationId": "org-admin", "userId": "usr-admin", "role": "owner", "status": "active"}
-	if err := store.CreateInvitedAccount(context.Background(), account, user, organization, membership); err != nil {
+	if err := store.CreateProvisionedAccount(context.Background(), account, user, organization, membership); err != nil {
 		t.Fatal(err)
 	}
 	beforeAccounts, beforeUsers := cloneStateTable(store.accounts), cloneStateTable(store.users)

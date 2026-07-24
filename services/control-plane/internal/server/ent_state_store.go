@@ -1074,7 +1074,7 @@ func (s *postgresEntStateStore) SaveAccount(ctx context.Context, row map[string]
 	return tx.Commit()
 }
 
-func (s *postgresEntStateStore) CreateInvitedAccount(ctx context.Context, accountRow, userRow, organizationRow, membershipRow map[string]any) error {
+func (s *postgresEntStateStore) CreateProvisionedAccount(ctx context.Context, accountRow, userRow, organizationRow, membershipRow map[string]any) error {
 	tx, err := s.client.Tx(ctx)
 	if err != nil {
 		return err
@@ -1112,7 +1112,7 @@ func (s *postgresEntStateStore) CreateInvitedAccount(ctx context.Context, accoun
 		}
 		if accounts[stringValue(accountRow["id"])] == nil || users[stringValue(userRow["id"])] == nil ||
 			organizations[stringValue(organizationRow["id"])] == nil || memberships[stringValue(membershipRow["id"])] == nil ||
-			stageInvitedAccount(accounts, users, organizations, memberships, accountRow, userRow, organizationRow, membershipRow) != nil {
+			stageProvisionedAccount(accounts, users, organizations, memberships, accountRow, userRow, organizationRow, membershipRow) != nil {
 			return finish(conflict)
 		}
 		return finish(nil)
@@ -1150,7 +1150,7 @@ func (s *postgresEntStateStore) CreateInvitedAccount(ctx context.Context, accoun
 	_, userExists := users[userID]
 	membershipID := stringValue(membershipRow["id"])
 	_, membershipExists := memberships[membershipID]
-	if err := stageInvitedAccount(accounts, users, organizations, memberships, accountRow, userRow, organizationRow, membershipRow); err != nil {
+	if err := stageProvisionedAccount(accounts, users, organizations, memberships, accountRow, userRow, organizationRow, membershipRow); err != nil {
 		return rollback(err)
 	}
 

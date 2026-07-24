@@ -172,7 +172,7 @@ func (app *controlPlaneServer) ensureBootstrapAdmin(ctx context.Context, service
 	user := map[string]any{"id": "usr-admin", "email": "admin@medopl.cn", "accountId": "acct-admin", "role": "admin", "status": "active"}
 	organization := map[string]any{"id": "org-admin", "name": "OPL Cloud", "billingAccountId": "acct-admin", "status": "active"}
 	membership := map[string]any{"id": "mem-admin", "accountId": "acct-admin", "organizationId": "org-admin", "userId": "usr-admin", "role": "owner", "status": "active"}
-	return app.tables.CreateInvitedAccount(ctx, account, user, organization, membership)
+	return app.tables.CreateProvisionedAccount(ctx, account, user, organization, membership)
 }
 
 func newControlPlaneAppEmpty() *controlPlaneServer {

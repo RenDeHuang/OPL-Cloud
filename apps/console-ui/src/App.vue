@@ -1449,7 +1449,7 @@ onBeforeUnmount(() => {
 <template>
   <main v-if="isPublicRoute" class="access-page">
     <nav class="public-nav"><a href="/" class="brand" @click.prevent="navigate('/')"><img src="/opl-app-icon.png" alt="" /><strong>OPL Cloud</strong></a><button class="button secondary" type="button" @click="navigate('/login')">登录</button></nav>
-    <section class="access-main"><div><p class="kicker">One Person Lab</p><h1>OPL Cloud</h1><p>邀请制 Workspace 与 API 服务。</p><button class="button primary" type="button" @click="navigate('/login')">进入 Console <ArrowUpRight :size="17" /></button></div><img class="access-mark" src="/opl-app-icon.png" alt="OPL Cloud" /></section>
+    <section class="access-main"><div><p class="kicker">One Person Lab</p><h1>OPL Cloud</h1><p>面向已开通用户的 Workspace 与 API 服务。</p><button class="button primary" type="button" @click="navigate('/login')">进入 Console <ArrowUpRight :size="17" /></button></div><img class="access-mark" src="/opl-app-icon.png" alt="OPL Cloud" /></section>
   </main>
 
   <main v-else-if="isLoginRoute" class="login-page">

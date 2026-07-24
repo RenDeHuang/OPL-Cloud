@@ -2,7 +2,7 @@
 
 ## Deployment Boundary
 
-Tencent TKE is the production runtime provider for the invite-only OPL Console
+Tencent TKE is the production runtime provider for the operator-provisioned OPL Console
 and OPL Workspace Pilot.
 
 The deployment owns:

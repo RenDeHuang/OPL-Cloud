@@ -970,7 +970,7 @@ func TestWorkspaceLaunchSingleTotalDebit(t *testing.T) {
 		t.Fatalf("Workspace debit calls=%#v", fixture.sub2API.charges)
 	}
 	if len(fixture.fabric.computeIDs) != 0 || len(fixture.fabric.storageIDs) != 0 || countStrings(*fixture.events, "fabric.attachment") != 0 || countStrings(*fixture.events, "fabric.runtime") != 0 {
-		t.Fatalf("S7 crossed fulfillment gate: events=%#v", *fixture.events)
+		t.Fatalf("request crossed fulfillment gate: events=%#v", *fixture.events)
 	}
 }
 

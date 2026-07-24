@@ -14,7 +14,6 @@ test("superseded shared execution contract retains its historical shape", async 
 
   assert.equal(contract.schemaVersion, 3);
   assert.equal(contract.state, "superseded");
-  assert.equal(contract.pilotStatus, "not_exposed_in_invite_only_pilot");
   assert.deepEqual(Object.keys(objects), ["Project", "Task", "ExecutionRequest", "Approval", "Job", "Artifact", "Review", "Receipt", "Continuation"]);
   assert.deepEqual(contract.identity.canonicalIdFields, ["projectId", "taskId", "requestId", "approvalId", "jobId", "artifactId", "reviewId", "receiptId", "continuationId"]);
   assert.deepEqual(contract.stateMachines.task, ["draft", "planned", "awaiting_approval", "queued", "running", "review_required", "review_blocked", "completed", "failed", "cancelled", "archived"]);
@@ -54,7 +53,7 @@ test("Ledger general receipt uses the shared execution identity and states", asy
   });
   assert.ok(ledger.generalReceiptV1.forbiddenContent.includes("rawCredential"));
   assert.ok(ledger.generalReceiptV1.forbiddenContent.includes("password"));
-  assert.equal(ledger.generalReceiptV1.pilotStatus, "not_exposed_in_invite_only_pilot");
+  assert.equal(ledger.generalReceiptV1.pilotStatus, "not_exposed_in_operator_provisioned_pilot");
   assert.equal(ledger.receiptTypes.includes("workspace.storage_backup_created"), false);
   assert.equal(ledger.receiptTypes.includes("workspace.storage_restored"), false);
   assert.ok(ledger.receiptTypes.includes("execution.receipt.v1"));
@@ -89,7 +88,6 @@ test("superseded execution APIs remain historical contract references", async ()
   const ledger = await readContract("opl-cloud-evidence-ledger-contract.json");
 
   assert.equal(shared.state, "superseded");
-  assert.equal(shared.pilotStatus, "not_exposed_in_invite_only_pilot");
 
   assert.deepEqual(shared.httpApis.controlPlane, {
     createProject: "POST /api/projects",

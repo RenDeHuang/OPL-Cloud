@@ -7,7 +7,7 @@ sign in -> list Workspaces -> select Basic or Pro -> confirm one Workspace total
         -> provision -> reveal/copy that Workspace access -> open Workspace
 ```
 
-The invite-only Pilot allows multiple independent Workspaces per account. Each
+The operator-provisioned Pilot allows multiple independent Workspaces per account. Each
 Workspace has its own launch identity, resources, Key, Secret, entitlement,
 Runtime, and Receipt. Home, Login, and Logo/brand entry points remain unchanged;
 the product does not redesign public Home or Login surfaces.

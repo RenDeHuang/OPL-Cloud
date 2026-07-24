@@ -8,7 +8,7 @@
     "type": "long_term_contract",
     "removalCondition": "Replace only with a newer current contract for the same boundary."
   },
-  "currentScope": "Invite-only Pilot Workspace receipts, reconciliation evidence, and non-customer general execution evidence; retired resource receipts remain historical read-only compatibility.",
+  "currentScope": "Operator-provisioned Pilot Workspace receipts, reconciliation evidence, and non-customer general execution evidence; retired resource receipts remain historical read-only compatibility.",
   "receiptTypes": [
     "workspace.created",
     "workspace.compute_stopped",
@@ -48,7 +48,7 @@
     "Idempotency-Key header"
   ],
   "generalReceiptV1": {
-    "pilotStatus": "not_exposed_in_invite_only_pilot",
+    "pilotStatus": "not_exposed_in_operator_provisioned_pilot",
     "api": {
       "record": "POST /ledger/receipts",
       "list": "GET /ledger/receipts",

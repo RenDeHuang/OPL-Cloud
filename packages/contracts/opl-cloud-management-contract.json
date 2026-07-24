@@ -3,13 +3,13 @@
   "owner": "OPL Console",
   "purpose": "Console customer identity, strict owner graph, Sub2API authentication authority, lifecycle, and management API contract.",
   "state": "current",
-  "machineBoundary": "One Console User, one OPL Account, and one Sub2API User/Wallet per invited customer; Organization and Membership are internal one-to-one compatibility records only.",
+  "machineBoundary": "One Console User, one OPL Account, and one Sub2API User/Wallet per administrator-provisioned customer; Organization and Membership are internal one-to-one compatibility records only.",
   "lifecycle": {
     "type": "long_term_contract",
     "removalCondition": "Replace only with a newer current contract for the same boundary."
   },
   "pilotCohort": {
-    "mode": "invite_only",
+    "mode": "operator_provisioned",
     "minimumCustomerAccounts": 2,
     "maximumCustomerAccounts": 5,
     "publicRegistration": false
