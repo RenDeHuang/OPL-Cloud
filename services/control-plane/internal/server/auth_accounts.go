@@ -90,7 +90,7 @@ func (app *controlPlaneServer) createUser(ctx context.Context, service *controlp
 		}
 	}
 	account := map[string]any{"id": accountID, "ownerUserId": id, "status": "active", "sub2apiUserId": preflightSub2APIUserID}
-	if err := stageInvitedAccount(recordSetFromRows(accounts), recordSetFromRows(users), recordSetFromRows(organizations), recordSetFromRows(memberships), account, user, organization, membership); err != nil {
+	if err := stageProvisionedAccount(recordSetFromRows(accounts), recordSetFromRows(users), recordSetFromRows(organizations), recordSetFromRows(memberships), account, user, organization, membership); err != nil {
 		return nil, err
 	}
 	identity, err := service.ResolveOrCreateSub2APIUser(ctx, email, password)
@@ -101,7 +101,7 @@ func (app *controlPlaneServer) createUser(ctx context.Context, service *controlp
 		return nil, errSub2APIUserMappingUnverified
 	}
 	account["sub2apiUserId"] = identity.ID
-	if err := app.tables.CreateInvitedAccount(ctx, account, user, organization, membership); err != nil {
+	if err := app.tables.CreateProvisionedAccount(ctx, account, user, organization, membership); err != nil {
 		return nil, err
 	}
 	return sanitizeUser(user), nil

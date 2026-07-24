@@ -9,18 +9,18 @@ import (
 	controlplaneent "opl-cloud/services/control-plane/ent"
 )
 
-func strictInvitedAccountRows() (map[string]any, map[string]any, map[string]any, map[string]any) {
-	user := map[string]any{"id": "usr-invite", "email": "owner@invite.example", "accountId": "acct-invite", "role": "owner", "status": "active"}
-	account := map[string]any{"id": "acct-invite", "ownerUserId": user["id"], "status": "active", "sub2apiUserId": int64(73)}
-	organization := map[string]any{"id": "org-invite", "name": "Organization acct-invite", "billingAccountId": "acct-invite", "status": "active"}
-	membership := map[string]any{"id": "mem-invite", "accountId": "acct-invite", "organizationId": "org-invite", "userId": user["id"], "role": "owner", "status": "active"}
+func strictProvisionedAccountRows() (map[string]any, map[string]any, map[string]any, map[string]any) {
+	user := map[string]any{"id": "usr-provisioned", "email": "owner@provisioned.example", "accountId": "acct-provisioned", "role": "owner", "status": "active"}
+	account := map[string]any{"id": "acct-provisioned", "ownerUserId": user["id"], "status": "active", "sub2apiUserId": int64(73)}
+	organization := map[string]any{"id": "org-provisioned", "name": "Organization acct-provisioned", "billingAccountId": "acct-provisioned", "status": "active"}
+	membership := map[string]any{"id": "mem-provisioned", "accountId": "acct-provisioned", "organizationId": "org-provisioned", "userId": user["id"], "role": "owner", "status": "active"}
 	return account, user, organization, membership
 }
 
 func TestMemoryIdentityFactsAreReciprocalOneToOne(t *testing.T) {
 	ctx := context.Background()
 	store := newMemoryTableStore()
-	account, user, organization, membership := strictInvitedAccountRows()
+	account, user, organization, membership := strictProvisionedAccountRows()
 	if err := store.SaveAccount(ctx, account); err != nil {
 		t.Fatal(err)
 	}
@@ -35,7 +35,7 @@ func TestMemoryIdentityFactsAreReciprocalOneToOne(t *testing.T) {
 	}
 
 	secondUser := cloneMap(user)
-	secondUser["id"], secondUser["email"] = "usr-second", "second@invite.example"
+	secondUser["id"], secondUser["email"] = "usr-second", "second@provisioned.example"
 	secondAccount := cloneMap(account)
 	secondAccount["id"] = "acct-second"
 	secondOrganization := cloneMap(organization)
@@ -65,8 +65,8 @@ func TestIdentityStoresRejectNonOwnerRole(t *testing.T) {
 					if storeType == "memory" {
 						store = newMemoryTableStore()
 					}
-					account, user, organization, membership := strictInvitedAccountRows()
-					if err := store.CreateInvitedAccount(context.Background(), account, user, organization, membership); err != nil {
+					account, user, organization, membership := strictProvisionedAccountRows()
+					if err := store.CreateProvisionedAccount(context.Background(), account, user, organization, membership); err != nil {
 						t.Fatal(err)
 					}
 					row, save := cloneMap(membership), store.SaveMembership
@@ -83,25 +83,25 @@ func TestIdentityStoresRejectNonOwnerRole(t *testing.T) {
 	}
 }
 
-func TestMemoryInvitedAccountReplayIsIdempotentAndConflictFailsClosed(t *testing.T) {
+func TestMemoryProvisionedAccountReplayIsIdempotentAndConflictFailsClosed(t *testing.T) {
 	ctx := context.Background()
 	store := newMemoryTableStore()
-	account, user, organization, membership := strictInvitedAccountRows()
-	if err := store.CreateInvitedAccount(ctx, account, user, organization, membership); err != nil {
+	account, user, organization, membership := strictProvisionedAccountRows()
+	if err := store.CreateProvisionedAccount(ctx, account, user, organization, membership); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.CreateInvitedAccount(ctx, account, user, organization, membership); err != nil {
+	if err := store.CreateProvisionedAccount(ctx, account, user, organization, membership); err != nil {
 		t.Fatalf("matching replay: %v", err)
 	}
 	conflicting := cloneMap(user)
-	conflicting["id"], conflicting["email"] = "usr-other", "other@invite.example"
-	if err := store.CreateInvitedAccount(ctx, account, conflicting, organization, membership); err == nil {
+	conflicting["id"], conflicting["email"] = "usr-other", "other@provisioned.example"
+	if err := store.CreateProvisionedAccount(ctx, account, conflicting, organization, membership); err == nil {
 		t.Fatal("second account user succeeded")
 	}
 	users, _ := store.ListUsers(ctx, true)
 	count := 0
 	for _, row := range users {
-		if row["accountId"] == "acct-invite" {
+		if row["accountId"] == "acct-provisioned" {
 			count++
 		}
 	}
@@ -110,14 +110,14 @@ func TestMemoryInvitedAccountReplayIsIdempotentAndConflictFailsClosed(t *testing
 	}
 }
 
-func TestEntInvitedAccountMatchingReplaySucceeds(t *testing.T) {
+func TestEntProvisionedAccountMatchingReplaySucceeds(t *testing.T) {
 	ctx := context.Background()
 	store := NewTestEntStateStore(t, t.TempDir()+"/identity-replay.sqlite").(*postgresEntStateStore)
-	account, user, organization, membership := strictInvitedAccountRows()
-	if err := store.CreateInvitedAccount(ctx, account, user, organization, membership); err != nil {
+	account, user, organization, membership := strictProvisionedAccountRows()
+	if err := store.CreateProvisionedAccount(ctx, account, user, organization, membership); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.CreateInvitedAccount(ctx, account, user, organization, membership); err != nil {
+	if err := store.CreateProvisionedAccount(ctx, account, user, organization, membership); err != nil {
 		t.Fatalf("matching replay: %v", err)
 	}
 	users, _ := store.ListUsers(ctx, true)
@@ -127,14 +127,14 @@ func TestEntInvitedAccountMatchingReplaySucceeds(t *testing.T) {
 	}
 }
 
-func TestPostgresInvitedAccountMatchingReplaySucceeds(t *testing.T) {
+func TestPostgresProvisionedAccountMatchingReplaySucceeds(t *testing.T) {
 	ctx := context.Background()
 	store, _ := newPostgresWorkspaceRenewalStoreWithDB(t)
-	account, user, organization, membership := strictInvitedAccountRows()
-	if err := store.CreateInvitedAccount(ctx, account, user, organization, membership); err != nil {
+	account, user, organization, membership := strictProvisionedAccountRows()
+	if err := store.CreateProvisionedAccount(ctx, account, user, organization, membership); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.CreateInvitedAccount(ctx, account, user, organization, membership); err != nil {
+	if err := store.CreateProvisionedAccount(ctx, account, user, organization, membership); err != nil {
 		t.Fatalf("matching replay: %v", err)
 	}
 	accounts, _ := store.ListAccounts(ctx, "")
@@ -149,12 +149,12 @@ func TestPostgresInvitedAccountMatchingReplaySucceeds(t *testing.T) {
 func TestPostgresIdentityDirectWritesRejectCrossAccountOwnerAndMembership(t *testing.T) {
 	ctx := context.Background()
 	store, _ := newPostgresWorkspaceRenewalStoreWithDB(t)
-	accountA, userA, organizationA, membershipA := invitedAccountRowsFor("acct-a", "usr-a", "org-a", "a@example.com", 71)
-	accountB, userB, organizationB, membershipB := invitedAccountRowsFor("acct-b", "usr-b", "org-b", "b@example.com", 72)
-	if err := store.CreateInvitedAccount(ctx, accountA, userA, organizationA, membershipA); err != nil {
+	accountA, userA, organizationA, membershipA := provisionedAccountRowsFor("acct-a", "usr-a", "org-a", "a@example.com", 71)
+	accountB, userB, organizationB, membershipB := provisionedAccountRowsFor("acct-b", "usr-b", "org-b", "b@example.com", 72)
+	if err := store.CreateProvisionedAccount(ctx, accountA, userA, organizationA, membershipA); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.CreateInvitedAccount(ctx, accountB, userB, organizationB, membershipB); err != nil {
+	if err := store.CreateProvisionedAccount(ctx, accountB, userB, organizationB, membershipB); err != nil {
 		t.Fatal(err)
 	}
 
@@ -179,8 +179,8 @@ func TestPostgresIdentityDirectWritesRejectCrossAccountOwnerAndMembership(t *tes
 func TestEntSaveUserDoesNotPersistLocalPasswordHash(t *testing.T) {
 	ctx := context.Background()
 	store := NewTestEntStateStore(t, t.TempDir()+"/identity-password.sqlite").(*postgresEntStateStore)
-	account, user, organization, membership := strictInvitedAccountRows()
-	if err := store.CreateInvitedAccount(ctx, account, user, organization, membership); err != nil {
+	account, user, organization, membership := strictProvisionedAccountRows()
+	if err := store.CreateProvisionedAccount(ctx, account, user, organization, membership); err != nil {
 		t.Fatal(err)
 	}
 	user["passwordHash"] = "local-password-secret"

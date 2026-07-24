@@ -156,7 +156,7 @@ Control Plane availability is coupled to every Workspace connection, and a
 authenticated Workspace session.
 
 Keeping the shared proxy avoids per-Workspace CLB rules and is the smallest
-topology for the initial 2-5 invited accounts. Control Plane selects the Runtime
+topology for the initial 2-5 operator-provisioned accounts. Control Plane selects the Runtime
 Service; the Runtime owns password validation, its authenticated session, and
 WebSocket access. Routing every Workspace Service directly with native TKE
 Ingress removes Control Plane from the data path, but does not replace Runtime
@@ -165,7 +165,7 @@ and orphan reconciliation responsibilities. Do not add those routes until live
 CLB limits justify the extra ownership.
 
 The current decision is to retain the single shared entry and explicitly accept
-Control Plane availability coupling for the invite-only Pilot. A dedicated
+Control Plane availability coupling for the operator-provisioned Pilot. A dedicated
 Workspace Router remains a later ownership and scaling decision; no router or
 security-model change is authorized by this document.
 
@@ -176,8 +176,8 @@ Deployments. Secrets are Kubernetes Secret references, configuration is a shared
 ConfigMap, and the deploy workflow waits for all three rollouts. The production
 Fabric catalog exposes both Basic and Pro; availability means product access,
 while Tencent MonthlyPreflight remains the capacity authority before debit.
-Provider Acceptance, Pro real subscription verification, and fixed-slot live QA
-remain paused and do not gate ordinary deploy.
+Separately approved provider verification remains paused and does not gate
+ordinary deploy.
 
 The Cloud services have ordinary rollout and deployment readback evidence. That
 evidence does not complete the Basic canary, customer Workspace imageID, or model

@@ -417,7 +417,7 @@ export async function runConsoleBrowserQa({
       });
 
       await page.goto(`${server.origin}/`, { waitUntil: "networkidle" });
-      await waitForText(page, "邀请制 Workspace 与 API 服务。");
+      await waitForText(page, "面向已开通用户的 Workspace 与 API 服务。");
       const logoLoaded = await page.getByAltText("OPL Cloud").evaluate((image) => image.complete && image.naturalWidth > 0);
       if (!logoLoaded) throw new Error("console_browser_logo_missing");
       await page.goto(`${server.origin}/login`, { waitUntil: "networkidle" });

@@ -12,7 +12,7 @@ test("Home Login Logo unchanged", async () => {
   const app = await source("apps/console-ui/src/App.vue");
 
   assert.match(app, /<nav class="public-nav"><a href="\/" class="brand" @click\.prevent="navigate\('\/'\)"><img src="\/opl-app-icon\.png" alt="" \/><strong>OPL Cloud<\/strong><\/a><button class="button secondary" type="button" @click="navigate\('\/login'\)">登录<\/button><\/nav>/);
-  assert.match(app, /<p class="kicker">One Person Lab<\/p><h1>OPL Cloud<\/h1><p>邀请制 Workspace 与 API 服务。<\/p>/);
+  assert.match(app, /<p class="kicker">One Person Lab<\/p><h1>OPL Cloud<\/h1><p>面向已开通用户的 Workspace 与 API 服务。<\/p>/);
   assert.match(app, /<section class="login-panel"><div class="login-brand"><img src="\/opl-app-icon\.png" alt="" \/><div><strong>OPL Cloud<\/strong><span>Console 登录<\/span><\/div><\/div><form @submit\.prevent="submitLogin">/);
   assert.match(app, /<button class="back-button" type="button" @click="navigate\('\/'\)">返回<\/button>/);
 });

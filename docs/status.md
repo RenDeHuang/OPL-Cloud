@@ -3,7 +3,7 @@
 ## Current Boundary
 
 Current status is the contract-frozen Pilot V2 implementation candidate for 2-5
-invited customer accounts. Delivery evidence is currently `code-complete=false`,
+administrator-provisioned customer accounts. Delivery evidence is currently `code-complete=false`,
 `pilot-ready=false`, and `production-proven=false`; contract targets are not
 runtime evidence and the product is not yet saleable.
 
@@ -23,8 +23,8 @@ The current V2 boundary requires:
 
 Remaining blockers:
 
-- Provider Acceptance, Pro real subscription evidence, S9, and fixed-slot
-  verification are paused; Pro is open in the production catalog but its
+- Separately approved provider verification remains paused; Pro is open in the
+  production catalog but its
   real evidence remains `not_executed_by_scope` and `productionProven=false`;
 - an ordinary Cloud rollout has deployment readback, while the approved Basic
   canary, customer Workspace imageID, model Usage, exact-one wallet delta,

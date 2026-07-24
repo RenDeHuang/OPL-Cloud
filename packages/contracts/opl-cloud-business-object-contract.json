@@ -10,7 +10,7 @@
   },
   "productTruth": "OPL Console / OPL Cloud Console commercial launch slice",
   "frameworkTruth": "one-person-lab",
-  "currentSlice": "Invite-only owner login, live Sub2API Wallet/Key/Usage facts, multiple independent Workspace subscriptions, live Fabric resource details, Runtime readiness, and Ledger receipts.",
+  "currentSlice": "Administrator-provisioned owner login, live Sub2API Wallet/Key/Usage facts, multiple independent Workspace subscriptions, live Fabric resource details, Runtime readiness, and Ledger receipts.",
   "customerRenewalAuthority": "workspace",
   "repositoryBoundaries": [
     "opl-console",

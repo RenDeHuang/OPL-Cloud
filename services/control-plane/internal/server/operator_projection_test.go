@@ -339,7 +339,7 @@ func newOperatorProjectionClient(users ...clients.Sub2APIUser) *operatorProjecti
 func seedOperatorProjectionAccount(t *testing.T, store controlPlaneTableStore, accountID, userID, email string, remoteID int64) {
 	t.Helper()
 	organizationID := "org-" + accountID
-	mustStore(t, store.CreateInvitedAccount(context.Background(),
+	mustStore(t, store.CreateProvisionedAccount(context.Background(),
 		map[string]any{"id": accountID, "ownerUserId": userID, "sub2apiUserId": remoteID, "status": "active", "updatedAt": operatorProjectionTime.Add(-2 * time.Hour).Format(time.RFC3339)},
 		map[string]any{"id": userID, "email": email, "accountId": accountID, "role": "owner", "status": "active"},
 		map[string]any{"id": organizationID, "name": "Organization " + accountID, "billingAccountId": accountID, "status": "active"},

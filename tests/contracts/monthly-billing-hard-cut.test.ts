@@ -70,7 +70,7 @@ test("management contract hard-cuts customer identity to Sub2API and one atomic 
     operatorException: "fixed_usr_admin_on_acct_admin_uses_admin_role_outside_customer_graph"
   });
   assert.deepEqual(management.pilotCohort, {
-    mode: "invite_only",
+    mode: "operator_provisioned",
     minimumCustomerAccounts: 2,
     maximumCustomerAccounts: 5,
     publicRegistration: false
@@ -94,7 +94,6 @@ test("management contract hard-cuts customer identity to Sub2API and one atomic 
 
   assert.equal(management.identitySecurity.passwordAuthority, "sub2api");
   assert.equal(management.identitySecurity.provisionPasswordHandling, "forward_to_sub2api_only_never_persist");
-  assert.equal(management.identitySecurity.invitePasswordHandling, undefined);
   assert.deepEqual(management.identitySecurity.localPasswordHash, {
     column: "control_plane_users.password_hash",
     requiredValue: "",

@@ -536,7 +536,7 @@ func runLocalE2EFullFlow(t *testing.T, process *localE2EProcess, adminEmail, adm
 	adjustmentKey := "wallet-local-full-" + strconv.FormatInt(time.Now().UnixNano(), 10)
 	adjustmentPath := "/api/operator/accounts/" + user.accountID + "/wallet-adjustments"
 	adjustmentBody := map[string]any{
-		"kind": "recharge", "amountUsd": "60.00", "reason": "local Stage B credit", "confirmationAccountId": user.accountID,
+		"kind": "recharge", "amountUsd": "60.00", "reason": "local integration credit", "confirmationAccountId": user.accountID,
 	}
 	start := make(chan struct{})
 	responses := make(chan localE2EResponse, 8)
@@ -978,7 +978,7 @@ func assertLocalE2ERedeemIdentities(t *testing.T, transport *localE2EFaultTransp
 	}
 }
 
-func TestOPLLocalToProdStageB(t *testing.T) {
+func TestOPLLocalToProdIntegration(t *testing.T) {
 	if os.Getenv("OPL_LOCAL_E2E") != "1" {
 		t.Fatal("OPL_LOCAL_E2E=1 is required with the local_e2e build tag")
 	}

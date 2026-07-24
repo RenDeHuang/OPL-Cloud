@@ -96,7 +96,7 @@ func (s *memoryTableStore) SaveAccount(_ context.Context, row map[string]any) er
 	return nil
 }
 
-func (s *memoryTableStore) CreateInvitedAccount(_ context.Context, account, user, organization, membership map[string]any) error {
+func (s *memoryTableStore) CreateProvisionedAccount(_ context.Context, account, user, organization, membership map[string]any) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -105,7 +105,7 @@ func (s *memoryTableStore) CreateInvitedAccount(_ context.Context, account, user
 	organizations := cloneStateTable(s.organizations)
 	memberships := cloneStateTable(s.memberships)
 
-	if err := stageInvitedAccount(accounts, users, organizations, memberships, account, user, organization, membership); err != nil {
+	if err := stageProvisionedAccount(accounts, users, organizations, memberships, account, user, organization, membership); err != nil {
 		return err
 	}
 

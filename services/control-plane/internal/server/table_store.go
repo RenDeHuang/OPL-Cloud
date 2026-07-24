@@ -182,7 +182,7 @@ type controlPlaneTableStore interface {
 	GetAccount(ctx context.Context, id string) (map[string]any, bool, error)
 	PageAccounts(ctx context.Context, query tablePageQuery) (tablePage, error)
 	SaveAccount(ctx context.Context, row map[string]any) error
-	CreateInvitedAccount(ctx context.Context, account, user, organization, membership map[string]any) error
+	CreateProvisionedAccount(ctx context.Context, account, user, organization, membership map[string]any) error
 	ApplyUserLifecycle(ctx context.Context, user map[string]any) error
 	ListUsers(ctx context.Context, includeDeleted bool) ([]map[string]any, error)
 	GetUser(ctx context.Context, id string) (map[string]any, bool, error)
@@ -314,7 +314,7 @@ func validateSub2APIAccountMapping(accounts []map[string]any, row map[string]any
 	return nil
 }
 
-func stageInvitedAccount(accounts, users, organizations, memberships controlPlaneRecordSet, account, user, organization, membership map[string]any) error {
+func stageProvisionedAccount(accounts, users, organizations, memberships controlPlaneRecordSet, account, user, organization, membership map[string]any) error {
 	accountID := stringValue(account["id"])
 	sub2APIUserID, mapped := positiveIntegerField(account, "sub2apiUserId")
 	userID := stringValue(user["id"])

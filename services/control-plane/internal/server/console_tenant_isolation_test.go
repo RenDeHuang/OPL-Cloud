@@ -262,7 +262,7 @@ func seedTenantMember(t *testing.T, store controlPlaneTableStore, accountID, org
 	user := map[string]any{"id": userID, "email": email, "accountId": accountID, "role": "owner", "status": "active"}
 	organization := map[string]any{"id": organizationID, "name": "Organization " + accountID, "billingAccountId": accountID, "status": "active"}
 	membership := map[string]any{"id": "mem-" + userID, "organizationId": organizationID, "userId": userID, "accountId": accountID, "role": "owner", "status": "active"}
-	mustStore(t, store.CreateInvitedAccount(context.Background(), account, user, organization, membership))
+	mustStore(t, store.CreateProvisionedAccount(context.Background(), account, user, organization, membership))
 }
 
 func TestCloudAdminSessionReportsAuthority(t *testing.T) {

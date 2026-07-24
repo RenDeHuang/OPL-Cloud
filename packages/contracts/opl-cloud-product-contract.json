@@ -33,7 +33,8 @@
   },
   "workspaceEntitlementRule": "Workspace is the customer subscription; compute and storage are provider/compatibility components of one accepted Workspace price and period.",
   "pilotBoundary": {
-    "inviteOnly": true,
+    "accountProvisioning": "operator_provisioned",
+    "publicRegistration": false,
     "workspaceCardinality": "many_per_account",
     "independentPerWorkspaceFacts": ["quote", "launchOperation", "compute", "storage", "attachment", "runtime", "workspaceApiKeyId", "gatewaySecretRef", "paidThrough", "renewalStatus", "purchaseReceiptId"],
     "workspaceDataAuthority": "cbs",

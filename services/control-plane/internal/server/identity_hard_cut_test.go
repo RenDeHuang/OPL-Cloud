@@ -178,7 +178,7 @@ func TestCreateUserRejectsKnownLocalIdentityConflictBeforeRemoteCreate(t *testin
 	accountID, email := "acct-existing", "existing@example.com"
 	userID := "usr-" + stableID("customer", email)[:18]
 	organizationID := "org-" + stableID("account", accountID)[:18]
-	if err := store.CreateInvitedAccount(context.Background(),
+	if err := store.CreateProvisionedAccount(context.Background(),
 		map[string]any{"id": accountID, "ownerUserId": userID, "status": "active", "sub2apiUserId": int64(71)},
 		map[string]any{"id": userID, "email": email, "accountId": accountID, "role": "owner", "status": "active"},
 		map[string]any{"id": organizationID, "name": "Organization " + accountID, "billingAccountId": accountID, "status": "active"},
@@ -196,13 +196,13 @@ func TestCreateUserRejectsKnownLocalIdentityConflictBeforeRemoteCreate(t *testin
 	}
 }
 
-type failOnceInviteStore struct {
+type failOnceProvisionStore struct {
 	*memoryTableStore
 	mu     sync.Mutex
 	failed bool
 }
 
-func (s *failOnceInviteStore) CreateInvitedAccount(ctx context.Context, account, user, organization, membership map[string]any) error {
+func (s *failOnceProvisionStore) CreateProvisionedAccount(ctx context.Context, account, user, organization, membership map[string]any) error {
 	s.mu.Lock()
 	if !s.failed {
 		s.failed = true
@@ -210,12 +210,12 @@ func (s *failOnceInviteStore) CreateInvitedAccount(ctx context.Context, account,
 		return errors.New("injected local transaction failure")
 	}
 	s.mu.Unlock()
-	return s.memoryTableStore.CreateInvitedAccount(ctx, account, user, organization, membership)
+	return s.memoryTableStore.CreateProvisionedAccount(ctx, account, user, organization, membership)
 }
 
 func TestCreateUserLocalFailureRetryDoesNotDuplicateRemoteOrLocalIdentity(t *testing.T) {
 	remote := newIdentityTestSub2API()
-	store := &failOnceInviteStore{memoryTableStore: newMemoryTableStore()}
+	store := &failOnceProvisionStore{memoryTableStore: newMemoryTableStore()}
 	server := newIdentityTestServer(t, remote, store)
 	input := map[string]any{"email": "retry@example.com", "accountId": "acct-retry", "password": "CorrectHorseBatteryStaple!"}
 	_, failed := createIdentityUser(server, input)
@@ -337,7 +337,7 @@ func TestCreateUserAccountLockWaiterHonorsContextCancellation(t *testing.T) {
 	remote.resolveRelease = release
 	service := controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}, remote)
 	app := NewServer(service).(*controlPlaneHTTPHandler).app
-	const accountID = "acct-canceled-invite"
+	const accountID = "acct-canceled-provision"
 	leaderResult := make(chan error, 1)
 	go func() {
 		_, err := app.createUser(context.Background(), service, map[string]any{

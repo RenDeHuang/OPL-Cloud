@@ -12,7 +12,7 @@ The four implementation owner lanes are Console/Control Plane, Fabric, Gateway i
 
 ## Pilot Scope
 
-- The first cohort is 2-5 invited customer accounts; public registration is forbidden.
+- The first cohort is 2-5 administrator-provisioned customer accounts; public registration is forbidden.
 - One Console User maps to one OPL Account and one Sub2API User/Wallet. Console
   and Sub2API email must match after `lower(trim(email))`.
 - Organization and Membership rows are internal one-to-one compatibility
@@ -35,7 +35,7 @@ The four implementation owner lanes are Console/Control Plane, Fabric, Gateway i
 - Sub2API authenticates customer credentials. Control Plane owns local Sessions,
   account mapping, quotes, monthly orchestration, entitlements, expiry, and
   operator review; it stores no second customer password truth.
-- Operators open invited customers through canonical `POST /api/operator/accounts`
+- Administrators provision users through canonical `POST /api/operator/accounts`
   with `ProvisionAccountRequest`. The command uses `provision` semantics,
   `account.provision` audit action, and an `account-provision` operation identity.
   The backend resolves or creates the Sub2API identity by normalized email and
@@ -323,7 +323,7 @@ Provider Acceptance owns two retained non-customer slots:
 
 | Stage | Business | Owners | Current state | Required output and evidence |
 | --- | --- | --- | --- | --- |
-| 1. Offer and identity | Show invited mapped owners Basic and Pro without the Acceptance SKUs. | Console, Gateway | Canonical `POST /api/operator/accounts` provisioning and the strict one-to-one mapped-owner graph have integrated local evidence; deployment and authenticated production identity readback remain pending. | Product contract, tenant tests, deployed account readback. |
+| 1. Offer and identity | Show operator-provisioned mapped owners Basic and Pro without the Acceptance SKUs. | Console, Gateway | Canonical `POST /api/operator/accounts` provisioning and the strict one-to-one mapped-owner graph have integrated local evidence; deployment and authenticated production identity readback remain pending. | Product contract, tenant tests, deployed account readback. |
 | 2. Wallet and quote | Show live wallet and exact Workspace quote before side effects. | Console, Gateway | Granular Wallet/Key/Usage/Stats/history DTOs, fixed USD Basic/Pro quotes, and local Console integration are code-complete; live authenticated Sub2API evidence is pending. | Source-contract tests, quote tests, unavailable-state UI tests. |
 | 3. Balance debit | Debit the exact monthly amount once before provider mutation. | Console, Gateway, Ledger | Durable one-submit launch, debit-first recovery, and replay are code-complete; deployed browser and live Sub2API evidence are pending. | Deterministic debit, balance check, replay/concurrency evidence. |
 | 4. Prepaid fulfillment | Open one-month PREPAID CVM/CBS after debit. | Fabric, Console | PREPAID CVM/CBS request/readback and pure-fulfillment recovery behind one Workspace debit are code-complete in local tests; live Tencent evidence is pending. | Request shapes, provider readback, duplicate-purchase guard. |

@@ -29,9 +29,9 @@ Console -> Control Plane -> Sub2API balance/charge
 Control Plane exposes product commands only. It has no generic Fabric, Ledger,
 or Sub2API proxy routes.
 
-## Invite-Only Pilot
+## Operator-Provisioned Pilot
 
-The first cohort is 2-5 manually invited customer accounts. One Console User
+The first cohort is 2-5 administrator-provisioned customer accounts. One Console User
 maps to one OPL Account and one Sub2API User/Wallet. Console and Sub2API emails
 must match after `lower(trim(email))`. Operators pre-fund the Sub2API wallet;
 there is no public registration or payment/order UI. Owners may manage general
@@ -129,8 +129,8 @@ npm run build
 ```
 
 Run the API locally with PostgreSQL and Sub2API admin credentials. Do not set
-the retired `OPL_CONSOLE_USERS_JSON`; invited owners are created through the
-operator API and resolved by normalized email in Sub2API.
+the retired `OPL_CONSOLE_USERS_JSON`; provisioned owners are created through
+the operator API and resolved by normalized email in Sub2API.
 
 ```bash
 DATABASE_URL=postgres://opl:secret@127.0.0.1:5432/opl_cloud \
@@ -162,11 +162,11 @@ manifest; restarts Control Plane, Fabric, and Ledger; and waits for each rollout
 
 Basic and Pro definitions and prices remain in code, and both are present in the
 production catalog. Catalog visibility is not evidence of a real purchase;
-Provider Acceptance, Pro purchase verification, S9, and fixed-slot verification
-remain paused and do not gate ordinary rollout.
+separately approved provider verification remains paused and does not gate
+ordinary rollout.
 
 The retired local Console user seed is no longer accepted by deployment. The
-workflow bootstraps the fixed operator from Sub2API and invited owners are opened
+workflow bootstraps the fixed operator from Sub2API and administrators open users
 through `POST /api/operator/accounts`. An ordinary Cloud rollout has been read
 back, but the Basic canary, customer Workspace imageID, and model Usage evidence
 remain incomplete.

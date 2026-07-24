@@ -9,7 +9,7 @@
     "removalCondition": "Replace only with a newer approved launch freeze and matching contract tests."
   },
   "pilotCohort": {
-    "mode": "invite_only",
+    "mode": "operator_provisioned",
     "minimumCustomerAccounts": 2,
     "maximumCustomerAccounts": 5,
     "publicRegistration": false
