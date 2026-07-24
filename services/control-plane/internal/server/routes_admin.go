@@ -444,8 +444,8 @@ func (app *controlPlaneServer) populateOperatorKeyCounts(ctx context.Context, se
 				results <- keyCountResult{index: index, err: ctx.Err()}
 				return
 			}
-			keys, err := service.GatewayKeys(ctx, userID)
-			results <- keyCountResult{index: index, count: len(keys), err: err}
+			count, err := service.AdminUserKeyCount(ctx, userID)
+			results <- keyCountResult{index: index, count: count, err: err}
 		}(index, remoteID)
 	}
 	wait.Wait()

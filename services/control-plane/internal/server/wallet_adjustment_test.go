@@ -90,7 +90,7 @@ func (s *walletAdjustmentSub2API) UsageStats(context.Context, clients.Sub2APIUsa
 	return clients.Sub2APIUsageStats{}, nil
 }
 
-func (s *walletAdjustmentSub2API) BalanceHistory(context.Context, int64) ([]clients.Sub2APIBalanceHistoryEntry, error) {
+func (s *walletAdjustmentSub2API) FinancialBalanceHistoryScan(context.Context, int64) ([]clients.Sub2APIBalanceHistoryEntry, error) {
 	if s.historyErr != nil {
 		return nil, s.historyErr
 	}

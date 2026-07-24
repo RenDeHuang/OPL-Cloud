@@ -52,6 +52,26 @@ test("API Key cleanup removes the raw value", () => {
   assert.deepEqual(maskGatewayKey(revealed), { ...revealed, value: "" });
 });
 
+test("balance history adapter requests exactly one explicit page", async () => {
+  let requestedUrl = "";
+  globalThis.fetch = async (input) => {
+    requestedUrl = String(input);
+    return new Response(JSON.stringify({
+      source: "sub2api",
+      status: "available",
+      available: true,
+      fetchedAt: "2026-07-24T00:00:00Z",
+      data: { items: [], total: 41, page: 3, pageSize: 20, pages: 3 }
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  };
+
+  const result = await readApi.getGatewayBalanceHistory(3, 20);
+  assert.equal(requestedUrl, "/api/gateway/balance-history?page=3&pageSize=20");
+  assert.equal(result.data.page, 3);
+  assert.equal(result.data.pageSize, 20);
+  assert.equal(result.data.pages, 3);
+});
+
 test("API, Gateway, and Workspace route changes clear secrets for direct and popstate navigation", async () => {
   const app = await appSource();
   assert.match(app, /let secretRequestGeneration = 0/);
@@ -102,6 +122,20 @@ test("session replacement clears login password and receipt refresh returns to t
   assert.match(clearSession, /loginForm\.password\s*=\s*""/);
   assert.match(clearSession, /loginForm\.email\s*=\s*""/);
   assert.match(loadReceipts, /if \(!cursor\)\s*receiptCursorStack\.value\s*=\s*\[\]/);
+});
+
+test("balance history pagination resets with the session and loads only the selected page", async () => {
+  const app = await appSource();
+  const load = appFunction(app, "loadHistory");
+  const changePage = appFunction(app, "changeBalanceHistoryPage");
+  const clearSession = appFunction(app, "clearSessionState");
+
+  assert.match(app, /const balanceHistoryPage = ref\(1\)/);
+  assert.match(app, /const balanceHistoryPageSize = 20/);
+  assert.match(load, /getGatewayBalanceHistory\(page, balanceHistoryPageSize\)/);
+  assert.match(load, /balanceHistoryPage\.value = result\.data\.page/);
+  assert.match(changePage, /void loadHistory\(page\)/);
+  assert.match(clearSession, /balanceHistoryPage\.value = 1/);
 });
 
 test("leaving Login clears the password without waiting for a session replacement", async () => {

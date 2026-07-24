@@ -645,7 +645,7 @@ func workspaceRuntimeGatewaySecretMatches(binding clients.WorkspaceRuntimeGatewa
 }
 
 func workspaceRotationKeys(ctx context.Context, service *controlplane.Service, credential clients.SessionDelegatedCredential, userID int64) ([]clients.Sub2APIWorkspaceKey, error) {
-	keys, err := service.GatewayUserKeys(ctx, credential, userID)
+	keys, err := service.GatewayWorkspaceKeysForConvergence(ctx, credential, userID)
 	if err != nil {
 		return nil, err
 	}

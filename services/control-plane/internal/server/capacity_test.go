@@ -84,7 +84,7 @@ type capacitySub2API struct {
 	nextKeyID   int64
 }
 
-func (c *capacitySub2API) UserKeys(ctx context.Context, credential clients.SessionDelegatedCredential, userID int64) ([]clients.Sub2APIWorkspaceKey, error) {
+func (c *capacitySub2API) WorkspaceUserKeysForConvergence(ctx context.Context, credential clients.SessionDelegatedCredential, userID int64) ([]clients.Sub2APIWorkspaceKey, error) {
 	if credential.Bearer != "test-user-delegated-token" {
 		return nil, errors.New("wrong delegated credential")
 	}
@@ -104,7 +104,7 @@ func (c *capacitySub2API) UserKeys(ctx context.Context, credential clients.Sessi
 }
 
 func (c *capacitySub2API) UserKey(ctx context.Context, credential clients.SessionDelegatedCredential, userID, keyID int64) (clients.Sub2APIWorkspaceKey, error) {
-	keys, err := c.UserKeys(ctx, credential, userID)
+	keys, err := c.WorkspaceUserKeysForConvergence(ctx, credential, userID)
 	if err != nil {
 		return clients.Sub2APIWorkspaceKey{}, err
 	}
@@ -139,8 +139,8 @@ func (*capacitySub2API) DeleteUserKey(context.Context, clients.SessionDelegatedC
 	return errors.New("unexpected Workspace Key delete")
 }
 
-func (c *capacitySub2API) Keys(ctx context.Context, userID int64) ([]clients.Sub2APIWorkspaceKey, error) {
-	return c.UserKeys(ctx, clients.SessionDelegatedCredential{Bearer: "test-user-delegated-token"}, userID)
+func (c *capacitySub2API) WorkspaceKeysForConvergence(ctx context.Context, userID int64) ([]clients.Sub2APIWorkspaceKey, error) {
+	return c.WorkspaceUserKeysForConvergence(ctx, clients.SessionDelegatedCredential{Bearer: "test-user-delegated-token"}, userID)
 }
 
 func newCapacitySub2API() *capacitySub2API {

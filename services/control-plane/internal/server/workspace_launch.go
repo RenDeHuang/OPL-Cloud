@@ -992,14 +992,14 @@ func (app *controlPlaneServer) debitWorkspaceLaunch(ctx context.Context, service
 	if err != nil {
 		return app.retryWorkspaceLaunchDebit(ctx, operation, errMonthlyAccountUnmapped.Error(), err)
 	}
-	key, err := service.Sub2APIWorkspaceKeyByID(ctx, userID, operation.WorkspaceAPIKeyID)
+	key, err := service.WorkspaceKeyByIDForConvergence(ctx, userID, operation.WorkspaceAPIKeyID)
 	if err != nil || key.ID != operation.WorkspaceAPIKeyID || key.UserID != userID || key.Name != workspaceReservedKeyName(operation.WorkspaceID) || key.Status != "active" {
 		return app.retryWorkspaceLaunchDebit(ctx, operation, "gateway_key_unavailable", err)
 	}
 	if operation.ChargeConfirmation == nil {
 		var charge clients.Sub2APICharge
 		if operation.ChargeAttempted || operation.Status == "unknown" {
-			history, historyErr := service.Sub2APIBalanceHistory(ctx, userID)
+			history, historyErr := service.FinancialBalanceHistoryScan(ctx, userID)
 			row := map[string]any{"sub2apiRedeemCode": operation.RedeemCode, "chargeUsdMicros": operation.TotalChargeUSDMicros}
 			switch code := sub2APIReconciliationCode(row, userID, history); {
 			case historyErr != nil || code == "sub2api_charge_missing":
@@ -1052,7 +1052,7 @@ func (app *controlPlaneServer) debitWorkspaceLaunch(ctx context.Context, service
 			return err
 		}
 	}
-	history, historyErr := service.Sub2APIBalanceHistory(ctx, userID)
+	history, historyErr := service.FinancialBalanceHistoryScan(ctx, userID)
 	row := map[string]any{"sub2apiRedeemCode": operation.RedeemCode, "chargeUsdMicros": operation.TotalChargeUSDMicros}
 	if historyErr != nil || sub2APIReconciliationCode(row, userID, history) == "sub2api_charge_missing" {
 		return app.retryWorkspaceLaunchDebit(ctx, operation, "sub2api_charge_history_unavailable", errors.Join(historyErr, clients.ErrSub2APIChargeUnknown))
@@ -1113,7 +1113,7 @@ func (app *controlPlaneServer) refundWorkspaceLaunch(ctx context.Context, servic
 	}
 	var refund clients.Sub2APIRefund
 	if recoverAttempt {
-		history, historyErr := service.Sub2APIBalanceHistory(ctx, userID)
+		history, historyErr := service.FinancialBalanceHistoryScan(ctx, userID)
 		matches := make([]clients.Sub2APIBalanceHistoryEntry, 0, 1)
 		for _, entry := range history {
 			if entry.Code == operation.RefundCode {

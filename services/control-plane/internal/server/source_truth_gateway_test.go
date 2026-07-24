@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -41,20 +42,20 @@ func (c *sourceTruthGatewayClient) Balance(ctx context.Context, userID int64) (c
 	return c.testSub2APIClient.Balance(ctx, userID)
 }
 
-func (c *sourceTruthGatewayClient) Keys(_ context.Context, userID int64) ([]clients.Sub2APIWorkspaceKey, error) {
+func (c *sourceTruthGatewayClient) WorkspaceKeysForConvergence(_ context.Context, userID int64) ([]clients.Sub2APIWorkspaceKey, error) {
 	c.keyUserIDs = append(c.keyUserIDs, userID)
 	return append([]clients.Sub2APIWorkspaceKey(nil), c.keys...), c.keysErr
 }
 
-func (c *sourceTruthGatewayClient) UserKeys(ctx context.Context, credential clients.SessionDelegatedCredential, userID int64) ([]clients.Sub2APIWorkspaceKey, error) {
+func (c *sourceTruthGatewayClient) WorkspaceUserKeysForConvergence(ctx context.Context, credential clients.SessionDelegatedCredential, userID int64) ([]clients.Sub2APIWorkspaceKey, error) {
 	if credential.Bearer != "test-user-delegated-token" {
 		return nil, errors.New("wrong delegated credential")
 	}
-	return c.Keys(ctx, userID)
+	return c.WorkspaceKeysForConvergence(ctx, userID)
 }
 
 func (c *sourceTruthGatewayClient) UserKeyPage(ctx context.Context, credential clients.SessionDelegatedCredential, userID int64, query clients.Sub2APIKeyPageQuery) (clients.Sub2APIKeyPage, error) {
-	keys, err := c.UserKeys(ctx, credential, userID)
+	keys, err := c.WorkspaceUserKeysForConvergence(ctx, credential, userID)
 	if err != nil {
 		return clients.Sub2APIKeyPage{}, err
 	}
@@ -193,13 +194,39 @@ func TestGatewaySourceTruthRoutesUseSessionIdentityAndStrictEnvelopes(t *testing
 		t.Fatalf("history = %d: %s", history.Code, history.Body.String())
 	}
 	historyEnvelope := decodeSourceEnvelope(t, history)
-	historyItems, _ := mapField(historyEnvelope, "data")["items"].([]any)
-	if len(historyItems) != 1 || len(historyItems[0].(map[string]any)) != 5 || historyItems[0].(map[string]any)["valueUsdMicros"] != float64(-5) {
+	historyData := mapField(historyEnvelope, "data")
+	historyItems, _ := historyData["items"].([]any)
+	if len(historyItems) != 1 || len(historyItems[0].(map[string]any)) != 5 || historyItems[0].(map[string]any)["valueUsdMicros"] != float64(-5) || historyData["total"] != float64(1) || historyData["page"] != float64(1) || historyData["pageSize"] != float64(20) || historyData["pages"] != float64(1) {
 		t.Fatalf("history envelope = %#v", historyEnvelope)
 	}
 
-	if len(client.keyUserIDs) != 3 || client.keyUserIDs[0] != 41 || client.keyUserIDs[1] != 41 || client.keyUserIDs[2] != 41 || base.usageQuery.UserID != 41 || base.usageQuery.APIKeyID != 9 || base.statsQuery.UserID != 41 || base.statsQuery.APIKeyID != 9 || len(base.historyIDs) != 1 || base.historyIDs[0] != 41 {
+	if len(client.keyUserIDs) != 3 || client.keyUserIDs[0] != 41 || client.keyUserIDs[1] != 41 || client.keyUserIDs[2] != 41 || base.usageQuery.UserID != 41 || base.usageQuery.APIKeyID != 9 || base.statsQuery.UserID != 41 || base.statsQuery.APIKeyID != 9 || len(base.historyIDs) != 1 || base.historyIDs[0] != 41 || !reflect.DeepEqual(base.historyPageQueries, []clients.Sub2APIBalanceHistoryPageQuery{{Page: 1, PageSize: 20}}) {
 		t.Fatalf("session identity was not authoritative: keys=%#v usage=%#v stats=%#v history=%#v", client.keyUserIDs, base.usageQuery, base.statsQuery, base.historyIDs)
+	}
+}
+
+func TestGatewayBalanceHistoryUsesOnlyRequestedPage(t *testing.T) {
+	createdAt := time.Date(2026, 7, 18, 1, 2, 3, 0, time.UTC)
+	rows := make([]clients.Sub2APIBalanceHistoryEntry, 41)
+	for index := range rows {
+		rows[index] = clients.Sub2APIBalanceHistoryEntry{Code: fmt.Sprintf("opl:history:%d", index), Type: "balance", ValueUSDMicros: int64(index), Status: "used", UsedAt: &createdAt, CreatedAt: createdAt}
+	}
+	client := &sourceTruthGatewayClient{customerFactsSub2API: &customerFactsSub2API{
+		testSub2APIClient: &testSub2APIClient{charges: map[string]int64{}},
+		history:           map[int64][]clients.Sub2APIBalanceHistoryEntry{41: rows},
+	}}
+	server, session := newGatewayOwnerTestServer(t, client, nil)
+	response := requestWithSession(t, server, session, http.MethodGet, "/api/gateway/balance-history?page=3&pageSize=20", "")
+	if response.Code != http.StatusOK {
+		t.Fatalf("history page = %d: %s", response.Code, response.Body.String())
+	}
+	data := mapField(decodeSourceEnvelope(t, response), "data")
+	items := data["items"].([]any)
+	if len(items) != 1 || data["total"] != float64(41) || data["page"] != float64(3) || data["pageSize"] != float64(20) || data["pages"] != float64(3) || items[0].(map[string]any)["valueUsdMicros"] != float64(40) {
+		t.Fatalf("history page data = %#v", data)
+	}
+	if !reflect.DeepEqual(client.historyPageQueries, []clients.Sub2APIBalanceHistoryPageQuery{{Page: 3, PageSize: 20}}) {
+		t.Fatalf("history page queries = %#v", client.historyPageQueries)
 	}
 }
 
@@ -325,13 +352,13 @@ func (c *workspaceKeyRotationClient) keyList(userID int64) []clients.Sub2APIWork
 	return keys
 }
 
-func (c *workspaceKeyRotationClient) Keys(_ context.Context, userID int64) ([]clients.Sub2APIWorkspaceKey, error) {
+func (c *workspaceKeyRotationClient) WorkspaceKeysForConvergence(_ context.Context, userID int64) ([]clients.Sub2APIWorkspaceKey, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.keyList(userID), nil
 }
 
-func (c *workspaceKeyRotationClient) UserKeys(_ context.Context, credential clients.SessionDelegatedCredential, userID int64) ([]clients.Sub2APIWorkspaceKey, error) {
+func (c *workspaceKeyRotationClient) WorkspaceUserKeysForConvergence(_ context.Context, credential clients.SessionDelegatedCredential, userID int64) ([]clients.Sub2APIWorkspaceKey, error) {
 	if credential.Bearer != "test-user-delegated-token" {
 		return nil, errors.New("wrong delegated credential")
 	}

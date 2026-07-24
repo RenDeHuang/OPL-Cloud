@@ -108,7 +108,7 @@ func (app *controlPlaneServer) billingReconciliationReport(ctx context.Context, 
 			facts.historyError = true
 		} else {
 			facts.userID = userID
-			facts.history, err = service.Sub2APIBalanceHistory(ctx, userID)
+			facts.history, err = service.FinancialBalanceHistoryScan(ctx, userID)
 			facts.historyError = err != nil
 		}
 		facts.receipts, err = reconciliationLedgerReceipts(ctx, service, accountID)

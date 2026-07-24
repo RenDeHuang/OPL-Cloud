@@ -66,5 +66,5 @@ Node TAP and Go JSON output, rejects every skip, runs all PostgreSQL suites with
 
 `pilot-ready` additionally requires separately approved real environment
 readback. `production-proven` requires the same immutable revision deployed and
-an end-to-end production evidence bundle. The exact levels and commands are in
-`docs/invariants.md` and the current Pilot V2 implementation plan.
+an end-to-end production evidence bundle. The exact evidence levels are defined
+in `docs/invariants.md`; executable gates are defined by the current PR workflow.

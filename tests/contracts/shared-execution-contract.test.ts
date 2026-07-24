@@ -14,6 +14,7 @@ test("superseded shared execution contract retains its historical shape", async 
 
   assert.equal(contract.schemaVersion, 3);
   assert.equal(contract.state, "superseded");
+  assert.equal(contract.pilotStatus, "not_exposed_in_operator_provisioned_pilot");
   assert.deepEqual(Object.keys(objects), ["Project", "Task", "ExecutionRequest", "Approval", "Job", "Artifact", "Review", "Receipt", "Continuation"]);
   assert.deepEqual(contract.identity.canonicalIdFields, ["projectId", "taskId", "requestId", "approvalId", "jobId", "artifactId", "reviewId", "receiptId", "continuationId"]);
   assert.deepEqual(contract.stateMachines.task, ["draft", "planned", "awaiting_approval", "queued", "running", "review_required", "review_blocked", "completed", "failed", "cancelled", "archived"]);

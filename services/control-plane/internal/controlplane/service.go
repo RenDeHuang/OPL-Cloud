@@ -72,19 +72,19 @@ func (s *Service) Sub2APIWorkspaceKey(ctx context.Context, userID int64) (client
 	return client.WorkspaceKey(ctx, userID)
 }
 
-func (s *Service) GatewayKeys(ctx context.Context, userID int64) ([]clients.Sub2APIWorkspaceKey, error) {
-	client, ok := s.sub2API.(clients.Sub2APIKeyListClient)
+func (s *Service) WorkspaceKeysForConvergence(ctx context.Context, userID int64) ([]clients.Sub2APIWorkspaceKey, error) {
+	client, ok := s.sub2API.(clients.Sub2APIWorkspaceKeyConvergenceClient)
 	if !ok {
-		return nil, errors.New("sub2api_key_list_unavailable")
+		return nil, errors.New("sub2api_workspace_key_convergence_unavailable")
 	}
-	return client.Keys(ctx, userID)
+	return client.WorkspaceKeysForConvergence(ctx, userID)
 }
 
-func (s *Service) Sub2APIWorkspaceKeyByID(ctx context.Context, userID, keyID int64) (clients.Sub2APIWorkspaceKey, error) {
+func (s *Service) WorkspaceKeyByIDForConvergence(ctx context.Context, userID, keyID int64) (clients.Sub2APIWorkspaceKey, error) {
 	if userID <= 0 || keyID <= 0 {
 		return clients.Sub2APIWorkspaceKey{}, clients.ErrSub2APIWorkspaceKeyMissing
 	}
-	keys, err := s.GatewayKeys(ctx, userID)
+	keys, err := s.WorkspaceKeysForConvergence(ctx, userID)
 	if err != nil {
 		return clients.Sub2APIWorkspaceKey{}, err
 	}
@@ -96,12 +96,12 @@ func (s *Service) Sub2APIWorkspaceKeyByID(ctx context.Context, userID, keyID int
 	return clients.Sub2APIWorkspaceKey{}, clients.ErrSub2APIWorkspaceKeyMissing
 }
 
-func (s *Service) GatewayUserKeys(ctx context.Context, credential clients.SessionDelegatedCredential, userID int64) ([]clients.Sub2APIWorkspaceKey, error) {
-	client, ok := s.sub2API.(clients.Sub2APIUserKeyReadClient)
+func (s *Service) GatewayWorkspaceKeysForConvergence(ctx context.Context, credential clients.SessionDelegatedCredential, userID int64) ([]clients.Sub2APIWorkspaceKey, error) {
+	client, ok := s.sub2API.(clients.Sub2APIWorkspaceUserKeyConvergenceClient)
 	if !ok {
-		return nil, errors.New("sub2api_user_key_unavailable")
+		return nil, errors.New("sub2api_workspace_key_convergence_unavailable")
 	}
-	return client.UserKeys(ctx, credential, userID)
+	return client.WorkspaceUserKeysForConvergence(ctx, credential, userID)
 }
 
 func (s *Service) GatewayUserKeyPage(ctx context.Context, credential clients.SessionDelegatedCredential, userID int64, query clients.Sub2APIKeyPageQuery) (clients.Sub2APIKeyPage, error) {
@@ -277,12 +277,28 @@ func (s *Service) GatewayAccountUsageStats(ctx context.Context, userID int64, pe
 	return client.UsageStats(ctx, clients.Sub2APIUsageStatsQuery{UserID: userID, Period: period})
 }
 
-func (s *Service) Sub2APIBalanceHistory(ctx context.Context, userID int64) ([]clients.Sub2APIBalanceHistoryEntry, error) {
-	client, ok := s.sub2API.(clients.Sub2APIUsageClient)
+func (s *Service) GatewayBalanceHistoryPage(ctx context.Context, userID int64, query clients.Sub2APIBalanceHistoryPageQuery) (clients.Sub2APIBalanceHistoryPage, error) {
+	client, ok := s.sub2API.(clients.Sub2APIBalanceHistoryPageClient)
+	if !ok {
+		return clients.Sub2APIBalanceHistoryPage{}, errors.New("sub2api_balance_history_unavailable")
+	}
+	return client.BalanceHistoryPage(ctx, userID, query)
+}
+
+func (s *Service) FinancialBalanceHistoryScan(ctx context.Context, userID int64) ([]clients.Sub2APIBalanceHistoryEntry, error) {
+	client, ok := s.sub2API.(clients.Sub2APIFinancialBalanceHistoryClient)
 	if !ok {
 		return nil, errors.New("sub2api_balance_history_unavailable")
 	}
-	return client.BalanceHistory(ctx, userID)
+	return client.FinancialBalanceHistoryScan(ctx, userID)
+}
+
+func (s *Service) AdminUserKeyCount(ctx context.Context, userID int64) (int, error) {
+	client, ok := s.sub2API.(clients.Sub2APIAdminUserKeyCountClient)
+	if !ok {
+		return 0, errors.New("sub2api_key_count_unavailable")
+	}
+	return client.AdminUserKeyCount(ctx, userID)
 }
 
 func (s *Service) BillingReceipt(ctx context.Context, receiptID string) (clients.Receipt, error) {
@@ -433,7 +449,7 @@ func (s *Service) gatewaySecretRefByID(ctx context.Context, accountID, workspace
 }
 
 func (s *Service) SyncWorkspaceGatewaySecretByID(ctx context.Context, accountID, workspaceID string, userID, keyID int64, keyName, idempotencyKey string) (clients.GatewaySecretWriteResult, error) {
-	key, err := s.Sub2APIWorkspaceKeyByID(ctx, userID, keyID)
+	key, err := s.WorkspaceKeyByIDForConvergence(ctx, userID, keyID)
 	if err != nil {
 		return clients.GatewaySecretWriteResult{}, err
 	}

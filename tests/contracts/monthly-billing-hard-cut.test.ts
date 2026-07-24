@@ -202,6 +202,8 @@ test("receipt contract exposes monthly product behavior only", async () => {
 		workspaceAccess: "deny_immediately",
 		autoRenew: false,
 		providerAction: "none_expire_by_provider",
+		providerReclamation: "tencent_prepaid_expiry_policy",
+		recoveryCommitment: "none",
 		fabricMutationCount: 0,
 		tencentMutationCount: 0
 	});

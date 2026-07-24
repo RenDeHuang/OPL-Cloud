@@ -432,12 +432,13 @@ export interface BalanceHistoryEntry {
   createdAt: string;
 }
 
-export interface BalanceHistoryData {
+export interface GatewayBalanceHistoryPageDTO {
   items: BalanceHistoryEntry[];
   total: number;
+  page: number;
+  pageSize: number;
+  pages: number;
 }
-
-export type GatewayBalanceHistoryPageDTO = BalanceHistoryData;
 
 export interface BillingReceipt {
   receiptId: string;

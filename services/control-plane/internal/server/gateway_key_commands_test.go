@@ -43,10 +43,10 @@ func (c *gatewayKeyCommandClient) UserGroups(_ context.Context, credential clien
 }
 
 func (c *gatewayKeyCommandClient) UserKeyPage(_ context.Context, credential clients.SessionDelegatedCredential, userID int64, query clients.Sub2APIKeyPageQuery) (clients.Sub2APIKeyPage, error) {
-	keys, err := c.UserKeys(context.Background(), credential, userID)
-	if err != nil {
+	if err := c.rememberCredential(credential); err != nil {
 		return clients.Sub2APIKeyPage{}, err
 	}
+	keys := c.keyList(userID)
 	return clients.Sub2APIKeyPage{Items: keys, Total: len(keys), Page: query.Page, PageSize: query.PageSize, Pages: 1}, nil
 }
 
@@ -58,17 +58,14 @@ func (c *gatewayKeyCommandClient) rememberCredential(credential clients.SessionD
 	return nil
 }
 
-func (c *gatewayKeyCommandClient) UserKeys(_ context.Context, credential clients.SessionDelegatedCredential, userID int64) ([]clients.Sub2APIWorkspaceKey, error) {
-	if err := c.rememberCredential(credential); err != nil {
-		return nil, err
-	}
+func (c *gatewayKeyCommandClient) keyList(userID int64) []clients.Sub2APIWorkspaceKey {
 	keys := make([]clients.Sub2APIWorkspaceKey, 0, len(c.keys))
 	for _, key := range c.keys {
 		if key.UserID == userID {
 			keys = append(keys, key)
 		}
 	}
-	return keys, nil
+	return keys
 }
 
 func (c *gatewayKeyCommandClient) UserKey(_ context.Context, credential clients.SessionDelegatedCredential, userID, keyID int64) (clients.Sub2APIWorkspaceKey, error) {

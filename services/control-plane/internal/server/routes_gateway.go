@@ -121,13 +121,17 @@ func registerGatewayRoutes(mux *http.ServeMux, app *controlPlaneServer, service 
 		if !ok {
 			return
 		}
-		history, err := service.Sub2APIBalanceHistory(r.Context(), userID)
+		pageNumber, pageSize, ok := gatewayBalanceHistoryPagination(w, r)
+		if !ok {
+			return
+		}
+		history, err := service.GatewayBalanceHistoryPage(r.Context(), userID, clients.Sub2APIBalanceHistoryPageQuery{Page: pageNumber, PageSize: pageSize})
 		if err != nil {
 			writeGatewaySourceError(w, err)
 			return
 		}
-		items := make([]any, 0, len(history))
-		for _, entry := range history {
+		items := make([]any, 0, len(history.Items))
+		for _, entry := range history.Items {
 			var usedAt any
 			if entry.UsedAt != nil {
 				usedAt = entry.UsedAt.UTC().Format(time.RFC3339Nano)
@@ -141,7 +145,7 @@ func registerGatewayRoutes(mux *http.ServeMux, app *controlPlaneServer, service 
 		if len(items) == 0 {
 			status = "empty"
 		}
-		writeSourceEnvelope(w, http.StatusOK, "sub2api", status, map[string]any{"items": items, "total": len(items)})
+		writeSourceEnvelope(w, http.StatusOK, "sub2api", status, map[string]any{"items": items, "total": history.Total, "page": history.Page, "pageSize": history.PageSize, "pages": history.Pages})
 	}))
 }
 
@@ -856,6 +860,27 @@ func gatewayUsagePagination(w http.ResponseWriter, r *http.Request) (int, int, b
 		value, err := strconv.Atoi(raw)
 		if err != nil || value < 1 || value > 100 {
 			writeError(w, http.StatusBadRequest, "invalid_gateway_usage_pagination")
+			return 0, 0, false
+		}
+		pageSize = value
+	}
+	return page, pageSize, true
+}
+
+func gatewayBalanceHistoryPagination(w http.ResponseWriter, r *http.Request) (int, int, bool) {
+	page, pageSize := 1, 20
+	if raw := strings.TrimSpace(r.URL.Query().Get("page")); raw != "" {
+		value, err := strconv.Atoi(raw)
+		if err != nil || value < 1 || value > 1_000_000 {
+			writeError(w, http.StatusBadRequest, "invalid_gateway_balance_history_pagination")
+			return 0, 0, false
+		}
+		page = value
+	}
+	if raw := strings.TrimSpace(r.URL.Query().Get("pageSize")); raw != "" {
+		value, err := strconv.Atoi(raw)
+		if err != nil || value < 1 || value > 100 {
+			writeError(w, http.StatusBadRequest, "invalid_gateway_balance_history_pagination")
 			return 0, 0, false
 		}
 		pageSize = value

@@ -54,13 +54,16 @@ type Sub2APIWorkspaceKeyClient interface {
 	WorkspaceKey(context.Context, int64) (Sub2APIWorkspaceKey, error)
 }
 
-type Sub2APIKeyListClient interface {
-	Keys(context.Context, int64) ([]Sub2APIWorkspaceKey, error)
+type Sub2APIWorkspaceKeyConvergenceClient interface {
+	WorkspaceKeysForConvergence(context.Context, int64) ([]Sub2APIWorkspaceKey, error)
 }
 
 type Sub2APIUserKeyReadClient interface {
-	UserKeys(context.Context, SessionDelegatedCredential, int64) ([]Sub2APIWorkspaceKey, error)
 	UserKey(context.Context, SessionDelegatedCredential, int64, int64) (Sub2APIWorkspaceKey, error)
+}
+
+type Sub2APIWorkspaceUserKeyConvergenceClient interface {
+	WorkspaceUserKeysForConvergence(context.Context, SessionDelegatedCredential, int64) ([]Sub2APIWorkspaceKey, error)
 }
 
 type Sub2APIUserKeyPageClient interface {
@@ -88,7 +91,18 @@ type Sub2APIRefundClient interface {
 type Sub2APIUsageClient interface {
 	Usage(context.Context, Sub2APIUsageQuery) (Sub2APIUsagePage, error)
 	UsageStats(context.Context, Sub2APIUsageStatsQuery) (Sub2APIUsageStats, error)
-	BalanceHistory(context.Context, int64) ([]Sub2APIBalanceHistoryEntry, error)
+}
+
+type Sub2APIBalanceHistoryPageClient interface {
+	BalanceHistoryPage(context.Context, int64, Sub2APIBalanceHistoryPageQuery) (Sub2APIBalanceHistoryPage, error)
+}
+
+type Sub2APIFinancialBalanceHistoryClient interface {
+	FinancialBalanceHistoryScan(context.Context, int64) ([]Sub2APIBalanceHistoryEntry, error)
+}
+
+type Sub2APIAdminUserKeyCountClient interface {
+	AdminUserKeyCount(context.Context, int64) (int, error)
 }
 
 type Sub2APIIdentityClient interface {
@@ -352,6 +366,19 @@ type Sub2APIBalanceHistoryEntry struct {
 	UsedBy         *int64     `json:"used_by"`
 	UsedAt         *time.Time `json:"used_at"`
 	CreatedAt      time.Time  `json:"created_at"`
+}
+
+type Sub2APIBalanceHistoryPageQuery struct {
+	Page     int
+	PageSize int
+}
+
+type Sub2APIBalanceHistoryPage struct {
+	Items    []Sub2APIBalanceHistoryEntry
+	Total    int64
+	Page     int
+	PageSize int
+	Pages    int
 }
 
 type Sub2APIChargeInput struct {
@@ -925,7 +952,7 @@ func normalizeSub2APIEmail(email string) string {
 	return strings.ToLower(strings.TrimSpace(email))
 }
 
-func (c *Sub2APIHTTPClient) Keys(ctx context.Context, userID int64) ([]Sub2APIWorkspaceKey, error) {
+func (c *Sub2APIHTTPClient) WorkspaceKeysForConvergence(ctx context.Context, userID int64) ([]Sub2APIWorkspaceKey, error) {
 	if userID <= 0 {
 		return nil, errors.New("sub2api user ID must be positive")
 	}
@@ -989,6 +1016,43 @@ func (c *Sub2APIHTTPClient) Keys(ctx context.Context, userID int64) ([]Sub2APIWo
 		}
 	}
 	return keys, nil
+}
+
+func (c *Sub2APIHTTPClient) AdminUserKeyCount(ctx context.Context, userID int64) (int, error) {
+	if userID <= 0 {
+		return 0, errors.New("sub2api user ID must be positive")
+	}
+	query := url.Values{"page": {"1"}, "page_size": {"1"}}
+	body, err := c.doAuthenticated(ctx, http.MethodGet, "/api/v1/admin/users/"+strconv.FormatInt(userID, 10)+"/api-keys?"+query.Encode(), nil, "")
+	if err != nil {
+		return 0, err
+	}
+	var data struct {
+		Items []struct {
+			ID     int64 `json:"id"`
+			UserID int64 `json:"user_id"`
+		} `json:"items"`
+		Page     int `json:"page"`
+		PageSize int `json:"page_size"`
+		Pages    int `json:"pages"`
+		Total    int `json:"total"`
+	}
+	if err := decodeSub2APIEnvelope(body, &data); err != nil {
+		return 0, err
+	}
+	expectedPages := 1
+	expectedItems := 0
+	if data.Total > 0 {
+		expectedPages = data.Total
+		expectedItems = 1
+	}
+	if data.Total < 0 || data.Total > maxSub2APIKeys || data.Page != 1 || data.PageSize != 1 || data.Pages != expectedPages || len(data.Items) != expectedItems {
+		return 0, errors.New("invalid sub2api api key pagination")
+	}
+	if len(data.Items) == 1 && (data.Items[0].ID <= 0 || data.Items[0].UserID != userID) {
+		return 0, errors.New("invalid sub2api api key pagination")
+	}
+	return data.Total, nil
 }
 
 func sub2APIKey(item sub2APIKeyPayload, userID int64) (Sub2APIWorkspaceKey, error) {
@@ -1141,7 +1205,7 @@ func (c *Sub2APIHTTPClient) UserGroups(ctx context.Context, credential SessionDe
 	return groups, nil
 }
 
-func (c *Sub2APIHTTPClient) UserKeys(ctx context.Context, credential SessionDelegatedCredential, userID int64) ([]Sub2APIWorkspaceKey, error) {
+func (c *Sub2APIHTTPClient) WorkspaceUserKeysForConvergence(ctx context.Context, credential SessionDelegatedCredential, userID int64) ([]Sub2APIWorkspaceKey, error) {
 	if err := validateDelegatedKeyRequest(credential, userID); err != nil {
 		return nil, err
 	}
@@ -1375,7 +1439,7 @@ func normalizeSub2APIKeyError(err error) error {
 }
 
 func (c *Sub2APIHTTPClient) WorkspaceKey(ctx context.Context, userID int64) (Sub2APIWorkspaceKey, error) {
-	keys, err := c.Keys(ctx, userID)
+	keys, err := c.WorkspaceKeysForConvergence(ctx, userID)
 	if err != nil {
 		return Sub2APIWorkspaceKey{}, err
 	}
@@ -1520,81 +1584,100 @@ func (c *Sub2APIHTTPClient) UsageStats(ctx context.Context, query Sub2APIUsageSt
 	}, nil
 }
 
-func (c *Sub2APIHTTPClient) BalanceHistory(ctx context.Context, userID int64) ([]Sub2APIBalanceHistoryEntry, error) {
+func (c *Sub2APIHTTPClient) BalanceHistoryPage(ctx context.Context, userID int64, query Sub2APIBalanceHistoryPageQuery) (Sub2APIBalanceHistoryPage, error) {
+	if userID <= 0 || query.Page <= 0 || query.Page > maxSub2APIUsagePage || query.PageSize <= 0 || query.PageSize > 100 {
+		return Sub2APIBalanceHistoryPage{}, errors.New("invalid sub2api balance history page query")
+	}
+	return c.balanceHistoryPage(ctx, userID, query.Page, query.PageSize)
+}
+
+func (c *Sub2APIHTTPClient) FinancialBalanceHistoryScan(ctx context.Context, userID int64) ([]Sub2APIBalanceHistoryEntry, error) {
 	if userID <= 0 {
 		return nil, errors.New("sub2api user ID must be positive")
 	}
 	entries := make([]Sub2APIBalanceHistoryEntry, 0)
 	var total int64 = -1
 	pages := -1
-	var collected int64
 	for page := 1; page <= maxSub2APIKeyPages; page++ {
-		values := url.Values{"page": {strconv.Itoa(page)}, "page_size": {strconv.Itoa(sub2APIKeyPageSize)}, "type": {"balance"}}
-		body, err := c.doAuthenticated(ctx, http.MethodGet, "/api/v1/admin/users/"+strconv.FormatInt(userID, 10)+"/balance-history?"+values.Encode(), nil, "")
+		result, err := c.balanceHistoryPage(ctx, userID, page, sub2APIKeyPageSize)
 		if err != nil {
 			return nil, err
 		}
-		var data struct {
-			Items []struct {
-				Code      string       `json:"code"`
-				Type      string       `json:"type"`
-				Value     *json.Number `json:"value"`
-				Status    string       `json:"status"`
-				UsedBy    *int64       `json:"used_by"`
-				UsedAt    *time.Time   `json:"used_at"`
-				CreatedAt *time.Time   `json:"created_at"`
-			} `json:"items"`
-			Total    int64 `json:"total"`
-			Page     int   `json:"page"`
-			PageSize int   `json:"page_size"`
-			Pages    int   `json:"pages"`
-		}
-		if err := decodeSub2APIEnvelope(body, &data); err != nil {
-			return nil, err
-		}
-		if data.Total < 0 || data.Total > int64(maxSub2APIKeys) {
-			return nil, errors.New("invalid sub2api balance history pagination")
-		}
-		expectedPages := 1
-		if data.Total > 0 {
-			expectedPages = int((data.Total + int64(sub2APIKeyPageSize) - 1) / int64(sub2APIKeyPageSize))
-		}
-		if data.Page != page || data.PageSize != sub2APIKeyPageSize || data.Pages != expectedPages || data.Pages > maxSub2APIKeyPages || len(data.Items) > sub2APIKeyPageSize {
-			return nil, errors.New("invalid sub2api balance history pagination")
-		}
 		if page == 1 {
-			total, pages = data.Total, data.Pages
-		} else if data.Total != total || data.Pages != pages {
+			total, pages = result.Total, result.Pages
+			if pages > maxSub2APIKeyPages {
+				return nil, errors.New("invalid sub2api balance history pagination")
+			}
+		} else if result.Total != total || result.Pages != pages {
 			return nil, errors.New("invalid sub2api balance history pagination")
 		}
-		for _, item := range data.Items {
-			if item.Code == "" || item.Type != "balance" || item.Status == "" || item.Value == nil || item.CreatedAt == nil || item.CreatedAt.IsZero() {
-				return nil, errors.New("invalid sub2api balance history entry")
-			}
-			if item.Status == "used" && (item.UsedBy == nil || *item.UsedBy != userID || item.UsedAt == nil) {
-				return nil, errors.New("sub2api balance history identity mismatch")
-			}
-			value, err := decimalUSDMicros(*item.Value)
-			if err != nil {
-				return nil, errors.New("invalid sub2api balance history amount")
-			}
-			entries = append(entries, Sub2APIBalanceHistoryEntry{Code: item.Code, Type: item.Type, ValueUSDMicros: value, Status: item.Status, UsedBy: item.UsedBy, UsedAt: item.UsedAt, CreatedAt: *item.CreatedAt})
-		}
+		entries = append(entries, result.Items...)
 		if len(entries) > maxSub2APIKeys {
 			return nil, errors.New("invalid sub2api balance history size")
 		}
-		collected += int64(len(data.Items))
-		if collected > total || (len(data.Items) == 0 && collected < total) {
-			return nil, errors.New("invalid sub2api balance history pagination")
-		}
 		if page == pages {
-			if collected != total {
+			if int64(len(entries)) != total {
 				return nil, errors.New("invalid sub2api balance history pagination")
 			}
 			return entries, nil
 		}
 	}
 	return nil, errors.New("invalid sub2api balance history pagination")
+}
+
+func (c *Sub2APIHTTPClient) balanceHistoryPage(ctx context.Context, userID int64, page, pageSize int) (Sub2APIBalanceHistoryPage, error) {
+	values := url.Values{"page": {strconv.Itoa(page)}, "page_size": {strconv.Itoa(pageSize)}, "type": {"balance"}}
+	body, err := c.doAuthenticated(ctx, http.MethodGet, "/api/v1/admin/users/"+strconv.FormatInt(userID, 10)+"/balance-history?"+values.Encode(), nil, "")
+	if err != nil {
+		return Sub2APIBalanceHistoryPage{}, err
+	}
+	var data struct {
+		Items []struct {
+			Code      string       `json:"code"`
+			Type      string       `json:"type"`
+			Value     *json.Number `json:"value"`
+			Status    string       `json:"status"`
+			UsedBy    *int64       `json:"used_by"`
+			UsedAt    *time.Time   `json:"used_at"`
+			CreatedAt *time.Time   `json:"created_at"`
+		} `json:"items"`
+		Total    int64 `json:"total"`
+		Page     int   `json:"page"`
+		PageSize int   `json:"page_size"`
+		Pages    int   `json:"pages"`
+	}
+	if err := decodeSub2APIEnvelope(body, &data); err != nil {
+		return Sub2APIBalanceHistoryPage{}, err
+	}
+	expectedPages := 1
+	expectedItems := 0
+	if data.Total > 0 {
+		expectedPages = int((data.Total + int64(pageSize) - 1) / int64(pageSize))
+		if page <= expectedPages {
+			expectedItems = pageSize
+			if remaining := data.Total - int64(page-1)*int64(pageSize); remaining < int64(expectedItems) {
+				expectedItems = int(remaining)
+			}
+		}
+	}
+	if data.Total < 0 || data.Total > int64(maxSub2APIKeys) || data.Page != page || data.PageSize != pageSize || data.Pages != expectedPages || page > data.Pages || len(data.Items) != expectedItems {
+		return Sub2APIBalanceHistoryPage{}, errors.New("invalid sub2api balance history pagination")
+	}
+	result := Sub2APIBalanceHistoryPage{Items: make([]Sub2APIBalanceHistoryEntry, 0, len(data.Items)), Total: data.Total, Page: data.Page, PageSize: data.PageSize, Pages: data.Pages}
+	for _, item := range data.Items {
+		if item.Code == "" || item.Type != "balance" || item.Status == "" || item.Value == nil || item.CreatedAt == nil || item.CreatedAt.IsZero() {
+			return Sub2APIBalanceHistoryPage{}, errors.New("invalid sub2api balance history entry")
+		}
+		if item.Status == "used" && (item.UsedBy == nil || *item.UsedBy != userID || item.UsedAt == nil) {
+			return Sub2APIBalanceHistoryPage{}, errors.New("sub2api balance history identity mismatch")
+		}
+		value, err := decimalUSDMicros(*item.Value)
+		if err != nil {
+			return Sub2APIBalanceHistoryPage{}, errors.New("invalid sub2api balance history amount")
+		}
+		result.Items = append(result.Items, Sub2APIBalanceHistoryEntry{Code: item.Code, Type: item.Type, ValueUSDMicros: value, Status: item.Status, UsedBy: item.UsedBy, UsedAt: item.UsedAt, CreatedAt: *item.CreatedAt})
+	}
+	return result, nil
 }
 
 func validUsageCounts(values ...*int64) bool {
@@ -1679,7 +1762,7 @@ func (c *Sub2APIHTTPClient) redeemBalance(ctx context.Context, userID int64, cod
 }
 
 func (c *Sub2APIHTTPClient) confirmAdjustmentReplay(ctx context.Context, userID int64, code string, valueUSDMicros int64) (string, error) {
-	history, err := c.BalanceHistory(ctx, userID)
+	history, err := c.FinancialBalanceHistoryScan(ctx, userID)
 	if err != nil {
 		return "", fmt.Errorf("%w: balance history unavailable: %w", ErrSub2APIChargeUnknown, err)
 	}

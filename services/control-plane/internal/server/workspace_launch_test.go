@@ -755,7 +755,7 @@ func (s *durableWorkspaceLaunchSub2API) UsageStats(context.Context, clients.Sub2
 	return clients.Sub2APIUsageStats{}, nil
 }
 
-func (s *durableWorkspaceLaunchSub2API) BalanceHistory(_ context.Context, userID int64) ([]clients.Sub2APIBalanceHistoryEntry, error) {
+func (s *durableWorkspaceLaunchSub2API) FinancialBalanceHistoryScan(_ context.Context, userID int64) ([]clients.Sub2APIBalanceHistoryEntry, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	usedAt := time.Date(2026, 7, 19, 12, 0, 0, 0, time.UTC)
@@ -800,7 +800,7 @@ func (s *workspaceLaunchSub2API) WorkspaceKey(ctx context.Context, userID int64)
 	return s.monthlySub2API.WorkspaceKey(ctx, userID)
 }
 
-func (s *workspaceLaunchSub2API) Keys(_ context.Context, userID int64) ([]clients.Sub2APIWorkspaceKey, error) {
+func (s *workspaceLaunchSub2API) WorkspaceKeysForConvergence(_ context.Context, userID int64) ([]clients.Sub2APIWorkspaceKey, error) {
 	keys := make([]clients.Sub2APIWorkspaceKey, 0, len(s.keys))
 	for _, key := range s.keys {
 		if key.UserID == userID {
@@ -810,7 +810,7 @@ func (s *workspaceLaunchSub2API) Keys(_ context.Context, userID int64) ([]client
 	return keys, nil
 }
 
-func (s *workspaceLaunchSub2API) UserKeys(_ context.Context, credential clients.SessionDelegatedCredential, userID int64) ([]clients.Sub2APIWorkspaceKey, error) {
+func (s *workspaceLaunchSub2API) WorkspaceUserKeysForConvergence(_ context.Context, credential clients.SessionDelegatedCredential, userID int64) ([]clients.Sub2APIWorkspaceKey, error) {
 	*s.events = append(*s.events, "sub2api.user_keys")
 	if credential.Bearer != "test-user-delegated-token" {
 		return nil, errors.New("wrong delegated credential")
@@ -868,7 +868,7 @@ func (s *workspaceLaunchSub2API) UsageStats(context.Context, clients.Sub2APIUsag
 	return clients.Sub2APIUsageStats{}, nil
 }
 
-func (s *workspaceLaunchSub2API) BalanceHistory(_ context.Context, userID int64) ([]clients.Sub2APIBalanceHistoryEntry, error) {
+func (s *workspaceLaunchSub2API) FinancialBalanceHistoryScan(_ context.Context, userID int64) ([]clients.Sub2APIBalanceHistoryEntry, error) {
 	usedAt := time.Date(2026, 7, 19, 12, 0, 0, 0, time.UTC)
 	rows := make([]clients.Sub2APIBalanceHistoryEntry, 0, len(s.charges))
 	for _, charge := range s.charges {

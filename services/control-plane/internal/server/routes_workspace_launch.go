@@ -281,7 +281,7 @@ func (app *controlPlaneServer) convergeAndPersistWorkspaceLaunchKey(ctx context.
 }
 
 func convergeWorkspaceAPIKey(ctx context.Context, service *controlplane.Service, credential clients.SessionDelegatedCredential, userID int64, workspaceID, operationID string) (clients.Sub2APIWorkspaceKey, error) {
-	keys, err := service.GatewayUserKeys(ctx, credential, userID)
+	keys, err := service.GatewayWorkspaceKeysForConvergence(ctx, credential, userID)
 	if err != nil {
 		return clients.Sub2APIWorkspaceKey{}, err
 	}
@@ -294,7 +294,7 @@ func convergeWorkspaceAPIKey(ctx context.Context, service *controlplane.Service,
 		return clients.Sub2APIWorkspaceKey{}, clients.ErrSub2APIWorkspaceKeyAmbiguous
 	}
 	created, createErr := service.CreateGatewayUserKey(ctx, credential, userID, clients.Sub2APICreateKeyInput{Name: name}, operationID+":workspace-key")
-	keys, readErr := service.GatewayUserKeys(ctx, credential, userID)
+	keys, readErr := service.GatewayWorkspaceKeysForConvergence(ctx, credential, userID)
 	if readErr != nil {
 		if createErr != nil {
 			return clients.Sub2APIWorkspaceKey{}, createErr

@@ -80,6 +80,8 @@
         "userAndBalanceRead": "current_page_exact_id_bounded_concurrency_max_4",
         "usageRead": "current_page_user_ids_batch_required",
         "workspaceCountRead": "single_control_plane_group_by_for_current_page",
+        "keyCountRead": "current_page_exact_user_id_page_1_size_1_total_only_bounded_concurrency_max_4",
+        "keyCountDecodedItemsMax": 1,
         "scaleInvariant": "same_page_size_request_count_equal_for_100_and_1000_accounts",
         "fabricStrategy": "current_workspace_page_only_batch_provider_facts",
         "runtimeStrategy": "bounded_concurrency_independent_timeout",

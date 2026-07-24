@@ -233,6 +233,8 @@
       "workspaceAccess": "deny_immediately",
       "autoRenew": false,
       "providerAction": "none_expire_by_provider",
+      "providerReclamation": "tencent_prepaid_expiry_policy",
+      "recoveryCommitment": "none",
       "fabricMutationCount": 0,
       "tencentMutationCount": 0
     },
@@ -260,7 +262,7 @@
     "ordinaryCloudDeploy": {
       "workspaceImageDefault": "update_for_new_fabric_operations",
       "existingWorkspaceDeployments": "preserved_not_restarted_or_waited",
-      "reason": "runtime_and_s9_rollout_paused"
+      "reason": "cloud_only_release_preserves_workspace_runtime_revision"
     },
     "mounts": ["/data", "/projects"],
     "projectFacts": {
@@ -305,8 +307,29 @@
     "legacyWorkspaceKeyName": "opl-workspace",
     "newWorkspaceKeyName": "stable_reserved_name_derived_from_workspace_id",
     "workspaceKeyActiveCardinality": "one_per_workspace",
-    "adminKeyListEndpoint": "GET /api/v1/admin/users/:id/api-keys",
-    "keyListPaginationRule": "freeze first-page total pages and requested page_size; require coherent metadata, exact page numbers and ceiling, bounded items, positive unique Key IDs, mapped user_id on every item, and collected item count equal total before cardinality selection",
+    "balanceHistoryReads": {
+      "display": {
+        "method": "BalanceHistoryPage",
+        "route": "GET /api/gateway/balance-history?page={page}&pageSize={pageSize}",
+        "pageDefault": 1,
+        "pageSizeDefault": 20,
+        "pageSizeMax": 100,
+        "upstreamPagesPerRequest": 1
+      },
+      "financialVerification": {
+        "method": "FinancialBalanceHistoryScan",
+        "allowedCallers": ["charge_confirmation", "refund_confirmation", "wallet_adjustment_recovery", "reconciliation"],
+        "pageSize": 1000,
+        "maxPages": 10,
+        "maxItems": 10000
+      }
+    },
+    "workspaceKeyConvergenceRead": {
+      "methods": ["WorkspaceKeysForConvergence", "WorkspaceUserKeysForConvergence"],
+      "scope": "workspace_reserved_key_convergence_only",
+      "completePaginationRequired": true,
+      "statisticsReuse": false
+    },
     "emptyListPaginationRule": { "appliesTo": ["Keys", "UserKeys", "Usage", "BalanceHistory"], "total": 0, "page": 1, "pages": 1, "items": [], "otherShapes": "reject" },
     "customerReadContract": "opl-cloud-console-source-truth-contract.json",
     "customerReadApis": ["configured_public_endpoint", "available_groups", "paginated_filtered_sorted_owned_keys"],
@@ -497,7 +520,7 @@
       "business": "Customer and Tencent periods renew once with debit-first recovery, manual Tencent renewal, and provider readback.",
       "owners": ["console", "fabric", "gateway", "ledger"],
       "currentState": "One Workspace-level claim, combined debit, same-ID PREPAID provider renewal/readback, expiry, refund/review, and receipt recovery are code-complete and locally tested. Enabling auto-renew and real renewal evidence remain pending.",
-      "requiredDeliverables": ["renewal debit", "provider renewal", "readback", "expiry and retained-storage policy"],
+      "requiredDeliverables": ["renewal debit", "provider renewal", "readback", "unpaid expiry access denial and provider-owned reclamation policy"],
       "completionEvidence": ["same-operation replay", "deadline readback", "manual-review and refund receipts"]
     },
     {

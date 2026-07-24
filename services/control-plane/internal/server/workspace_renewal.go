@@ -806,7 +806,7 @@ func (app *controlPlaneServer) debitWorkspaceRenewal(ctx context.Context, servic
 		}
 		var charge clients.Sub2APICharge
 		if operation.ChargeAttempted || operation.ErrorCode == "sub2api_charge_unconfirmed" {
-			history, historyErr := service.Sub2APIBalanceHistory(ctx, userID)
+			history, historyErr := service.FinancialBalanceHistoryScan(ctx, userID)
 			row := map[string]any{"sub2apiRedeemCode": operation.RedeemCode, "chargeUsdMicros": operation.TotalUSDMicros}
 			switch code := sub2APIReconciliationCode(row, userID, history); {
 			case historyErr != nil || code == "sub2api_charge_missing":
@@ -982,7 +982,7 @@ func (app *controlPlaneServer) refundWorkspaceRenewal(ctx context.Context, servi
 	}
 	var refund clients.Sub2APIRefund
 	if recoverAttempt {
-		history, historyErr := service.Sub2APIBalanceHistory(ctx, userID)
+		history, historyErr := service.FinancialBalanceHistoryScan(ctx, userID)
 		matches := make([]clients.Sub2APIBalanceHistoryEntry, 0, 1)
 		for _, entry := range history {
 			if entry.Code == operation.RefundCode {

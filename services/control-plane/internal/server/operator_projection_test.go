@@ -44,16 +44,17 @@ type operatorProjectionSub2API struct {
 	singleUserCalls    int
 	requestedUserIDs   [][]int64
 	requestedAPIKeyIDs [][]int64
-	keysByUser         map[int64][]clients.Sub2APIWorkspaceKey
-	keyListCalls       []int64
-	keyListMu          sync.Mutex
+	keyCounts          map[int64]int
+	keyCountErrs       map[int64]error
+	keyCountCalls      []int64
+	keyCountMu         sync.Mutex
 }
 
-func (c *operatorProjectionSub2API) Keys(_ context.Context, userID int64) ([]clients.Sub2APIWorkspaceKey, error) {
-	c.keyListMu.Lock()
-	defer c.keyListMu.Unlock()
-	c.keyListCalls = append(c.keyListCalls, userID)
-	return append([]clients.Sub2APIWorkspaceKey(nil), c.keysByUser[userID]...), nil
+func (c *operatorProjectionSub2API) AdminUserKeyCount(_ context.Context, userID int64) (int, error) {
+	c.keyCountMu.Lock()
+	defer c.keyCountMu.Unlock()
+	c.keyCountCalls = append(c.keyCountCalls, userID)
+	return c.keyCounts[userID], c.keyCountErrs[userID]
 }
 
 func (c *operatorProjectionSub2API) AdminUsers(_ context.Context, query clients.Sub2APIUserPageQuery) (clients.Sub2APIUserPage, error) {
@@ -332,7 +333,8 @@ func newOperatorProjectionClient(users ...clients.Sub2APIUser) *operatorProjecti
 		adminUserErrs:     map[int64]error{},
 		userUsage:         map[int64]clients.Sub2APIBatchUserUsage{},
 		keyUsage:          map[int64]clients.Sub2APIBatchKeyUsage{},
-		keysByUser:        map[int64][]clients.Sub2APIWorkspaceKey{},
+		keyCounts:         map[int64]int{},
+		keyCountErrs:      map[int64]error{},
 	}
 }
 
@@ -376,8 +378,8 @@ func TestOperatorProjectionUsesBatchAPIs(t *testing.T) {
 	)
 	client.userUsage[41] = clients.Sub2APIBatchUserUsage{UserID: 41, TodayActualCostUSDMicros: 1, TotalActualCostUSDMicros: 100}
 	client.userUsage[42] = clients.Sub2APIBatchUserUsage{UserID: 42, TodayActualCostUSDMicros: 2, TotalActualCostUSDMicros: 200}
-	client.keysByUser[41] = []clients.Sub2APIWorkspaceKey{{ID: 7, UserID: 41}, {ID: 8, UserID: 41}}
-	client.keysByUser[42] = []clients.Sub2APIWorkspaceKey{{ID: 9, UserID: 42}}
+	client.keyCounts[41] = 2
+	client.keyCounts[42] = 1
 	client.keyUsage[7] = clients.Sub2APIBatchKeyUsage{APIKeyID: 7, TotalActualCostUSDMicros: 70}
 	client.keyUsage[9] = clients.Sub2APIBatchKeyUsage{APIKeyID: 9, TotalActualCostUSDMicros: 90}
 	server, err := NewPersistentServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}, client), store)
@@ -419,8 +421,8 @@ func TestOperatorProjectionUsesBatchAPIs(t *testing.T) {
 	if mapField(keyUsage, "data")["totalActualCostUsdMicros"] != float64(70) {
 		t.Fatalf("workspace key usage = %#v", workspaceItems[0])
 	}
-	if client.adminUsersCalls != 0 || client.adminUserCalls != 3 || client.batchUsersCalls != 1 || client.batchKeysCalls != 1 || client.singleUserCalls != 0 || len(client.keyListCalls) != 3 {
-		t.Fatalf("projection calls userPages=%d exactUsers=%d batchUsers=%d batchKeys=%d identityUsers=%d keyLists=%#v", client.adminUsersCalls, client.adminUserCalls, client.batchUsersCalls, client.batchKeysCalls, client.singleUserCalls, client.keyListCalls)
+	if client.adminUsersCalls != 0 || client.adminUserCalls != 3 || client.batchUsersCalls != 1 || client.batchKeysCalls != 1 || client.singleUserCalls != 0 || len(client.keyCountCalls) != 3 {
+		t.Fatalf("projection calls userPages=%d exactUsers=%d batchUsers=%d batchKeys=%d identityUsers=%d keyCounts=%#v", client.adminUsersCalls, client.adminUserCalls, client.batchUsersCalls, client.batchKeysCalls, client.singleUserCalls, client.keyCountCalls)
 	}
 }
 
@@ -571,7 +573,7 @@ func TestOperatorAccountsKeepsIdentityWhenMappedWalletHasSubMicroBalance(t *test
 				"42": map[string]any{"user_id": 42, "today_actual_cost": 0, "total_actual_cost": 0, "by_platform": []any{}},
 			}})
 		case "/api/v1/admin/users/1/api-keys", "/api/v1/admin/users/41/api-keys", "/api/v1/admin/users/42/api-keys":
-			write(map[string]any{"items": []any{}, "total": 0, "page": 1, "page_size": 1000, "pages": 1})
+			write(map[string]any{"items": []any{}, "total": 0, "page": 1, "page_size": 1, "pages": 1})
 		default:
 			t.Errorf("unexpected Sub2API route %s %s", r.Method, r.URL.String())
 		}
@@ -1090,6 +1092,7 @@ func TestOperatorAccountFirstPageRemoteReadsStayBoundedAtScale(t *testing.T) {
 			client.testSub2APIClient.identities[email] = identity
 			client.users = append(client.users, operatorProjectionUser(remoteID, email, "active", int64(i)))
 			client.userUsage[remoteID] = clients.Sub2APIBatchUserUsage{UserID: remoteID}
+			client.keyCounts[remoteID] = 1001
 		}
 		server, err := NewPersistentServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}, client), store)
 		if err != nil {
@@ -1120,10 +1123,80 @@ func TestOperatorAccountFirstPageRemoteReadsStayBoundedAtScale(t *testing.T) {
 		if !slices.Equal(exactIDs, wantIDs) {
 			t.Fatalf("%d-account page-outside exact reads: got=%#v want=%#v", accountCount, exactIDs, wantIDs)
 		}
-		requestCounts[accountCount] = client.adminUserCalls + client.batchUsersCalls + client.batchKeysCalls + client.singleUserCalls + len(client.keyListCalls)
+		if len(client.keyCountCalls) != 20 || mapField(operatorAccountItem(data["items"].([]any), "acct-0001"), "keyCount")["data"] != float64(1001) {
+			t.Fatalf("%d-account key count reads=%#v page=%#v", accountCount, client.keyCountCalls, data)
+		}
+		requestCounts[accountCount] = client.adminUserCalls + client.batchUsersCalls + client.batchKeysCalls + client.singleUserCalls + len(client.keyCountCalls)
 	}
-	if requestCounts[100] != requestCounts[1000] || requestCounts[100] > 50 {
+	if requestCounts[100] != 41 || requestCounts[1000] != 41 {
 		t.Fatalf("first-page remote request count must be fixed and bounded: %#v", requestCounts)
+	}
+}
+
+func TestOperatorWorkspaceFirstPageKeyUsageStaysOneBatchAtScale(t *testing.T) {
+	requestCounts := map[int]int{}
+	for _, workspaceCount := range []int{100, 1000} {
+		store := newMemoryTableStore()
+		seedOperatorProjectionAccount(t, store, "acct-alpha", "usr-alpha", "alpha@example.com", 41)
+		client := newOperatorProjectionClient(operatorProjectionUser(41, "alpha@example.com", "active", 1_000_000))
+		for index := 1; index <= workspaceCount; index++ {
+			workspaceID := fmt.Sprintf("ws-%04d", index)
+			keyID := int64(1000 + index)
+			mustStore(t, store.SaveWorkspace(context.Background(), map[string]any{
+				"id": workspaceID, "ownerAccountId": "acct-alpha", "ownerUserId": "usr-alpha", "accountId": "acct-alpha",
+				"state": "active", "createdAt": operatorProjectionTime.Add(-time.Hour).Format(time.RFC3339),
+				"updatedAt": operatorProjectionTime.Format(time.RFC3339), "workspaceApiKeyId": keyID,
+			}))
+			client.keyUsage[keyID] = clients.Sub2APIBatchKeyUsage{APIKeyID: keyID}
+		}
+		app := &controlPlaneServer{tables: store}
+		data, status, err := app.operatorWorkspacePage(context.Background(), controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}, client), 1, 20)
+		if err != nil || status != "available" || data["total"] != workspaceCount || len(data["items"].([]any)) != 20 {
+			t.Fatalf("%d-workspace page=%#v status=%s err=%v", workspaceCount, data, status, err)
+		}
+		wantIDs := make([]int64, 0, 20)
+		for id := int64(1001); id <= 1020; id++ {
+			wantIDs = append(wantIDs, id)
+		}
+		if client.batchKeysCalls != 1 || len(client.requestedAPIKeyIDs) != 1 || !slices.Equal(client.requestedAPIKeyIDs[0], wantIDs) {
+			t.Fatalf("%d-workspace key usage calls=%d ids=%#v", workspaceCount, client.batchKeysCalls, client.requestedAPIKeyIDs)
+		}
+		requestCounts[workspaceCount] = client.batchKeysCalls
+	}
+	if requestCounts[100] != 1 || requestCounts[1000] != 1 {
+		t.Fatalf("workspace key usage request count must stay fixed: %#v", requestCounts)
+	}
+}
+
+func TestOperatorAccountKeyCountFailureIsIsolated(t *testing.T) {
+	store := newMemoryTableStore()
+	seedOperatorProjectionAccount(t, store, "acct-alpha", "usr-alpha", "alpha@example.com", 41)
+	seedOperatorProjectionAccount(t, store, "acct-beta", "usr-beta", "beta@example.com", 42)
+	client := newOperatorProjectionClient(
+		operatorProjectionUser(1, "admin@medopl.cn", "active", 0),
+		operatorProjectionUser(41, "alpha@example.com", "active", 10_000_000),
+		operatorProjectionUser(42, "beta@example.com", "active", 20_000_000),
+	)
+	client.userUsage[1] = clients.Sub2APIBatchUserUsage{UserID: 1}
+	client.userUsage[41] = clients.Sub2APIBatchUserUsage{UserID: 41}
+	client.userUsage[42] = clients.Sub2APIBatchUserUsage{UserID: 42}
+	client.keyCounts[1], client.keyCounts[42] = 1, 7
+	client.keyCountErrs[41] = errors.New("key count unavailable")
+	server, err := NewPersistentServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}, client), store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := requestWithSession(t, server, reservedOperatorSessionForTest(t, server), http.MethodGet, "/api/operator/accounts", "")
+	if response.Code != http.StatusOK {
+		t.Fatalf("partial key count=%d body=%s", response.Code, response.Body.String())
+	}
+	items := mapField(decodeOperatorEnvelope(t, response), "data")["items"].([]any)
+	alpha, beta := operatorAccountItem(items, "acct-alpha"), operatorAccountItem(items, "acct-beta")
+	if source := mapField(alpha, "keyCount"); source["available"] != false || source["status"] != "unavailable" {
+		t.Fatalf("failed key count source = %#v", source)
+	}
+	if source := mapField(beta, "keyCount"); source["available"] != true || source["data"] != float64(7) {
+		t.Fatalf("healthy key count source = %#v", source)
 	}
 }
 
