@@ -188,7 +188,7 @@
       "currentPageUsers": "GET /api/v1/admin/users/{userId}",
       "usersUsage": "POST /api/v1/admin/dashboard/users-usage",
       "apiKeysUsage": "POST /api/v1/admin/dashboard/api-keys-usage",
-      "currentPageKeyCounts": "GET /api/v1/admin/users/{userId}/api-keys",
+      "currentPageKeyCounts": "GET /api/v1/admin/users/{userId}/api-keys?page=1&page_size=1",
       "batchSizeMax": 50
     },
     "usersPagination": "control_plane_order_limit_offset_count_then_current_page_sub2api_reads",
@@ -200,7 +200,8 @@
     "userReadConcurrencyMax": 4,
     "usageRead": "current_page_user_ids_batch_required",
     "workspaceCountRead": "single_control_plane_group_by_for_current_page",
-    "keyCountRead": "selected_control_plane_page_only_bounded_concurrency_max_4",
+    "keyCountRead": "current_page_exact_user_id_page_1_size_1_total_only_bounded_concurrency_max_4",
+    "keyCountDecodedItemsMax": 1,
     "keyCountPersistence": "none_request_join_only",
     "persistence": "none_request_join_only",
     "readReplica": false,

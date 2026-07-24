@@ -54,6 +54,8 @@ test("current docs describe only the operator-provisioned paid Pilot", async () 
     assert.doesNotMatch(document, /verification-slot-01\b/, `${name} single slot`);
   }
   assert.doesNotMatch(runbook, /reuse `verification-slot-01`/i);
+  assert.doesNotMatch(status, /current Pilot V2 implementation plan/i);
+  assert.doesNotMatch(runbook, /current Pilot V2 implementation plan/i);
 });
 
 test("identity contracts expose operator-provisioned owners and keep Organization internal", async () => {
@@ -111,6 +113,31 @@ test("current contracts expose only authoritative Pilot sources and controls", a
   });
   assert.equal(freeze.gateway.summaryApi, undefined);
   assert.equal(freeze.gateway.customerReadContract, "opl-cloud-console-source-truth-contract.json");
+  assert.equal(freeze.gateway.adminKeyListEndpoint, undefined);
+  assert.equal(freeze.gateway.keyListPaginationRule, undefined);
+  assert.deepEqual(freeze.gateway.balanceHistoryReads, {
+    display: {
+      method: "BalanceHistoryPage",
+      route: "GET /api/gateway/balance-history?page={page}&pageSize={pageSize}",
+      pageDefault: 1,
+      pageSizeDefault: 20,
+      pageSizeMax: 100,
+      upstreamPagesPerRequest: 1
+    },
+    financialVerification: {
+      method: "FinancialBalanceHistoryScan",
+      allowedCallers: ["charge_confirmation", "refund_confirmation", "wallet_adjustment_recovery", "reconciliation"],
+      pageSize: 1000,
+      maxPages: 10,
+      maxItems: 10000
+    }
+  });
+  assert.deepEqual(freeze.gateway.workspaceKeyConvergenceRead, {
+    methods: ["WorkspaceKeysForConvergence", "WorkspaceUserKeysForConvergence"],
+    scope: "workspace_reserved_key_convergence_only",
+    completePaginationRequired: true,
+    statisticsReuse: false
+  });
   assert.deepEqual(freeze.gateway.customerMutationApis, [
     "create_general_key",
     "update_general_key",
@@ -134,6 +161,10 @@ test("current contracts expose only authoritative Pilot sources and controls", a
   assert.equal(boundary.browserBoundary.onlyCalls, "control_plane_product_apis");
   assert.deepEqual(boundary.browserBoundary.forbidden, ["sub2api_direct", "gflabtoken_link", "iframe", "html_scraping", "raw_admin_dto"]);
   assert.deepEqual(boundary.customerMutationBoundary, { payment: false, topUp: false, keyCreate: true, keyRevoke: true });
+  assert.equal(freeze.workspaceRuntime.ordinaryCloudDeploy.reason, "cloud_only_release_preserves_workspace_runtime_revision");
+  const renewalStage = freeze.launchStages.find((stage) => stage.id === "renewal_expiry_recovery");
+  assert.ok(renewalStage.requiredDeliverables.includes("unpaid expiry access denial and provider-owned reclamation policy"));
+  assert.equal(renewalStage.requiredDeliverables.includes("expiry and retained-storage policy"), false);
 });
 
 test("current truth hard-cuts invitation and stage vocabulary", async () => {

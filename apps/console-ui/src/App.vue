@@ -75,11 +75,11 @@ import type {
   AnnouncementDraftRequest,
   AnnouncementScheduleRequest,
   AuthSession,
-  BalanceHistoryData,
   BillingReceipt,
   BillingReceiptPage,
   BillingReviewResolutionRequest,
   GatewayAccountUsageSummaryDTO,
+  GatewayBalanceHistoryPageDTO,
   GatewayKeySecretDTO,
   GatewayKeyPageDTO,
   GatewayKeyUsagePageDTO,
@@ -142,7 +142,7 @@ const keySource = ref<SourceEnvelope<GatewayKeyPageDTO> | null>(null);
 const usageSource = ref<SourceEnvelope<GatewayKeyUsagePageDTO> | null>(null);
 const usageStatsSource = ref<SourceEnvelope<GatewayUsageSummaryDTO> | null>(null);
 const accountUsageSource = ref<SourceEnvelope<GatewayAccountUsageSummaryDTO> | null>(null);
-const balanceHistorySource = ref<SourceEnvelope<BalanceHistoryData> | null>(null);
+const balanceHistorySource = ref<SourceEnvelope<GatewayBalanceHistoryPageDTO> | null>(null);
 const receiptsSource = ref<SourceEnvelope<BillingReceiptPage> | null>(null);
 const receiptDetailSource = ref<SourceEnvelope<BillingReceipt> | null>(null);
 const announcementsSource = ref<SourceEnvelope<AnnouncementPageDTO> | null>(null);
@@ -161,6 +161,8 @@ const launchOperation = ref<WorkspaceLaunchResponse | null>(null);
 const revealedApiKey = ref<GatewayKeySecretDTO | null>(null);
 const revealedWorkspaceCredentials = ref<WorkspaceCredentialAccess | null>(null);
 const gatewayPageNumber = reactive({ page: 1, pages: 0, total: 0, pageSize: 20 });
+const balanceHistoryPage = ref(1);
+const balanceHistoryPageSize = 20;
 const operatorAccountPage = ref(1);
 const operatorWorkspacePage = ref(1);
 const operatorPageSize = 20;
@@ -195,6 +197,7 @@ let secretRequestGeneration = 0;
 let sessionGeneration = 0;
 let usageRequestGeneration = 0;
 let usageStatsRequestGeneration = 0;
+let balanceHistoryRequestGeneration = 0;
 let receiptRequestGeneration = 0;
 let receiptDetailRequestGeneration = 0;
 let launchPollGeneration = 0;
@@ -239,6 +242,7 @@ const usage = computed(() => usageSource.value?.available ? usageSource.value.da
 const keyStats = computed(() => usageStatsSource.value?.available ? usageStatsSource.value.data : null);
 const stats = computed(() => accountUsageSource.value?.available ? accountUsageSource.value.data : null);
 const history = computed(() => balanceHistorySource.value?.available ? balanceHistorySource.value.data.items : []);
+const balanceHistoryPages = computed(() => balanceHistorySource.value?.available ? balanceHistorySource.value.data.pages : 0);
 const receipts = computed(() => receiptsSource.value?.available ? receiptsSource.value.data.receipts : []);
 const receiptDetail = computed(() => receiptDetailSource.value?.available ? receiptDetailSource.value.data : null);
 const announcements = computed(() => announcementsSource.value?.available ? announcementsSource.value.data.items : []);
@@ -407,6 +411,7 @@ function clearSessionState() {
   launchPollGeneration += 1;
   usageRequestGeneration += 1;
   usageStatsRequestGeneration += 1;
+  balanceHistoryRequestGeneration += 1;
   receiptRequestGeneration += 1;
   workspaceStatusRequestGeneration += 1;
   workspaceSource.value = null;
@@ -435,6 +440,7 @@ function clearSessionState() {
   launchPollIssue.value = "";
   selectedUsageKeyId.value = "";
   Object.assign(gatewayPageNumber, { page: 1, pages: 0, total: 0 });
+  balanceHistoryPage.value = 1;
   operatorAccountPage.value = 1;
   operatorWorkspacePage.value = 1;
   receiptCursor.value = "";
@@ -652,18 +658,28 @@ async function loadAccountUsage() {
   finally { if (requestStillCurrent()) loading.accountStats = false; }
 }
 
-async function loadHistory() {
-  const requestStillCurrent = currentSessionRequest();
+async function loadHistory(pageOrEvent: number | Event = balanceHistoryPage.value) {
+  const sessionRequestStillCurrent = currentSessionRequest();
+  const page = typeof pageOrEvent === "number" ? pageOrEvent : balanceHistoryPage.value;
+  const generation = ++balanceHistoryRequestGeneration;
+  const requestStillCurrent = () => sessionRequestStillCurrent() && generation === balanceHistoryRequestGeneration;
   loading.history = true;
   resetSource("history");
-  balanceHistorySource.value = unavailableSource<BalanceHistoryData>("sub2api");
+  balanceHistorySource.value = unavailableSource<GatewayBalanceHistoryPageDTO>("sub2api");
   try {
-    const result = await getGatewayBalanceHistory();
+    const result = await getGatewayBalanceHistory(page, balanceHistoryPageSize);
     if (!requestStillCurrent()) return;
+    if (result.available && result.data.page !== page) throw new Error("gateway_balance_history_page_mismatch");
     balanceHistorySource.value = result;
+    if (result.available) balanceHistoryPage.value = result.data.page;
   }
-  catch (error) { if (!requestStillCurrent()) return; balanceHistorySource.value = unavailableSource<BalanceHistoryData>("sub2api"); errors.history = friendlyError(error); }
+  catch (error) { if (!requestStillCurrent()) return; balanceHistorySource.value = unavailableSource<GatewayBalanceHistoryPageDTO>("sub2api"); errors.history = friendlyError(error); }
   finally { if (requestStillCurrent()) loading.history = false; }
+}
+
+function changeBalanceHistoryPage(page: number) {
+  if (page < 1 || balanceHistoryPages.value > 0 && page > balanceHistoryPages.value) return;
+  void loadHistory(page);
 }
 
 async function loadReceipts(cursorOrEvent: string | Event = "") {
@@ -1587,7 +1603,7 @@ onBeforeUnmount(() => {
               <div v-if="loading.accountStats" class="loading-panel"><span class="spinner" />正在读取用量汇总...</div><div v-else-if="errors.accountStats" class="inline-error"><AlertCircle :size="17" />{{ errors.accountStats }}<button type="button" @click="loadAccountUsage">重试</button></div><div v-else-if="accountUsageSource?.status === 'unavailable'" class="empty-panel">用量汇总暂不可用 <button class="text-button" type="button" @click="loadAccountUsage">重试</button></div>
               <div v-if="loading.wallet" class="loading-panel"><span class="spinner" />正在读取余额...</div><div v-else-if="errors.wallet" class="inline-error"><AlertCircle :size="17" />{{ errors.wallet }}<button type="button" @click="loadWallet">重试</button></div><div v-else-if="walletSource?.status === 'unavailable'" class="empty-panel">余额暂不可用 <button class="text-button" type="button" @click="loadWallet">重试</button></div>
               <section class="metric-row"><article><WalletCards /><span>可用余额<strong>{{ wallet ? formatAvailableBalance({ ...wallet, available: true }) : "暂不可用" }}</strong></span></article><article><CircleDollarSign /><span>本月费用<strong>{{ stats ? formatUsdMicros(stats.totalActualCostUsdMicros) : "暂不可用" }}</strong></span></article><article><Activity /><span>请求次数<strong>{{ stats ? formatCount(stats.totalRequests) : "暂不可用" }}</strong></span></article></section>
-              <section class="panel"><div class="panel-title"><h2>余额记录</h2></div><div v-if="loading.history" class="loading-panel"><span class="spinner" />正在读取余额记录...</div><div v-else-if="errors.history" class="inline-error"><AlertCircle :size="17" />{{ errors.history }}<button type="button" @click="loadHistory">重试</button></div><div v-else-if="balanceHistorySource?.status === 'unavailable'" class="empty-panel">暂不可用 <button class="text-button" type="button" @click="loadHistory">重试</button></div><div v-else-if="balanceHistorySource?.status === 'empty'" class="empty-panel">暂无余额记录</div><div v-else class="table-wrap"><table><thead><tr><th>时间</th><th>类型</th><th>金额</th><th>状态</th></tr></thead><tbody><tr v-for="item in history" :key="`${item.createdAt}-${item.type}`"><td>{{ formatDate(item.createdAt, true) }}</td><td>{{ item.type }}</td><td>{{ formatUsdMicros(item.valueUsdMicros) }}</td><td>{{ item.status }}</td></tr></tbody></table></div></section>
+              <section class="panel"><div class="panel-title"><h2>余额记录</h2></div><div v-if="loading.history" class="loading-panel"><span class="spinner" />正在读取余额记录...</div><div v-else-if="errors.history" class="inline-error"><AlertCircle :size="17" />{{ errors.history }}<button type="button" @click="loadHistory">重试</button></div><div v-else-if="balanceHistorySource?.status === 'unavailable'" class="empty-panel">暂不可用 <button class="text-button" type="button" @click="loadHistory">重试</button></div><div v-else-if="balanceHistorySource?.status === 'empty'" class="empty-panel">暂无余额记录</div><div v-else class="table-wrap"><table><thead><tr><th>时间</th><th>类型</th><th>金额</th><th>状态</th></tr></thead><tbody><tr v-for="item in history" :key="`${item.createdAt}-${item.type}`"><td>{{ formatDate(item.createdAt, true) }}</td><td>{{ item.type }}</td><td>{{ formatUsdMicros(item.valueUsdMicros) }}</td><td>{{ item.status }}</td></tr></tbody></table></div><nav v-if="balanceHistorySource?.available && balanceHistoryPages > 1" class="pagination" aria-label="余额记录分页"><button class="button secondary" type="button" :disabled="loading.history || balanceHistoryPage <= 1" @click="changeBalanceHistoryPage(balanceHistoryPage - 1)"><ChevronLeft :size="16" />上一页</button><span>第 {{ balanceHistoryPage }} / {{ balanceHistoryPages }} 页</span><button class="button secondary" type="button" :disabled="loading.history || balanceHistoryPage >= balanceHistoryPages" @click="changeBalanceHistoryPage(balanceHistoryPage + 1)">下一页<ChevronRight :size="16" /></button></nav></section>
             </div>
             <section v-else-if="activeApiPage === 'usage'" class="panel">
               <div v-if="loading.keys" class="loading-panel"><span class="spinner" />正在读取 API Key...</div>
@@ -1611,7 +1627,7 @@ onBeforeUnmount(() => {
             <div v-if="loading.wallet" class="loading-panel"><span class="spinner" />正在读取余额...</div><div v-else-if="errors.wallet" class="inline-error"><AlertCircle :size="17" />{{ errors.wallet }}<button type="button" @click="loadWallet">重试</button></div><div v-else-if="walletSource?.status === 'unavailable'" class="empty-panel">余额暂不可用 <button class="text-button" type="button" @click="loadWallet">重试</button></div>
             <div class="metric-row"><article><WalletCards /><span>可用余额<strong>{{ wallet ? formatAvailableBalance({ ...wallet, available: true }) : "暂不可用" }}</strong></span></article><article><CircleDollarSign /><span>固定月支出<strong>{{ workspace ? formatUsdMicros(workspace.totalUsdMicros) : "暂不可用" }}</strong></span></article><article><Activity /><span>AI 用量<strong>{{ stats ? formatUsdMicros(stats.totalActualCostUsdMicros) : "暂不可用" }}</strong></span></article></div>
             <section class="panel"><div class="panel-title"><h2>Workspace 账单</h2></div><div v-if="workspaceSource?.status === 'unavailable'" class="empty-panel">暂不可用 <button class="text-button" type="button" @click="loadWorkspaces">重试</button></div><div v-else-if="workspace" class="table-wrap"><table><thead><tr><th>Workspace</th><th>计划</th><th>金额</th><th>有效期至</th><th>续费状态</th></tr></thead><tbody><tr><td>{{ workspace.name || "暂不可用" }}</td><td>{{ workspace.packageId || "暂不可用" }}</td><td>{{ formatUsdMicros(workspace.totalUsdMicros) }}</td><td>{{ formatDate(workspace.paidThrough) }}</td><td>{{ workspace.renewalStatus || "暂不可用" }}</td></tr></tbody></table></div><div v-else class="empty-panel">暂无 Workspace</div></section>
-            <section class="panel"><div class="panel-title"><h2>余额记录</h2></div><div v-if="loading.history" class="loading-panel"><span class="spinner" />正在读取余额记录...</div><div v-else-if="errors.history" class="inline-error"><AlertCircle :size="17" />{{ errors.history }}<button type="button" @click="loadHistory">重试</button></div><div v-else-if="balanceHistorySource?.status === 'unavailable'" class="empty-panel">暂不可用 <button class="text-button" type="button" @click="loadHistory">重试</button></div><div v-else-if="balanceHistorySource?.status === 'empty'" class="empty-panel">暂无余额记录</div><div v-else class="table-wrap"><table><thead><tr><th>时间</th><th>类型</th><th>金额</th><th>状态</th></tr></thead><tbody><tr v-for="item in history" :key="`${item.createdAt}-${item.type}`"><td>{{ formatDate(item.createdAt, true) }}</td><td>{{ item.type }}</td><td>{{ formatUsdMicros(item.valueUsdMicros) }}</td><td>{{ item.status }}</td></tr></tbody></table></div></section>
+            <section class="panel"><div class="panel-title"><h2>余额记录</h2></div><div v-if="loading.history" class="loading-panel"><span class="spinner" />正在读取余额记录...</div><div v-else-if="errors.history" class="inline-error"><AlertCircle :size="17" />{{ errors.history }}<button type="button" @click="loadHistory">重试</button></div><div v-else-if="balanceHistorySource?.status === 'unavailable'" class="empty-panel">暂不可用 <button class="text-button" type="button" @click="loadHistory">重试</button></div><div v-else-if="balanceHistorySource?.status === 'empty'" class="empty-panel">暂无余额记录</div><div v-else class="table-wrap"><table><thead><tr><th>时间</th><th>类型</th><th>金额</th><th>状态</th></tr></thead><tbody><tr v-for="item in history" :key="`${item.createdAt}-${item.type}`"><td>{{ formatDate(item.createdAt, true) }}</td><td>{{ item.type }}</td><td>{{ formatUsdMicros(item.valueUsdMicros) }}</td><td>{{ item.status }}</td></tr></tbody></table></div><nav v-if="balanceHistorySource?.available && balanceHistoryPages > 1" class="pagination" aria-label="余额记录分页"><button class="button secondary" type="button" :disabled="loading.history || balanceHistoryPage <= 1" @click="changeBalanceHistoryPage(balanceHistoryPage - 1)"><ChevronLeft :size="16" />上一页</button><span>第 {{ balanceHistoryPage }} / {{ balanceHistoryPages }} 页</span><button class="button secondary" type="button" :disabled="loading.history || balanceHistoryPage >= balanceHistoryPages" @click="changeBalanceHistoryPage(balanceHistoryPage + 1)">下一页<ChevronRight :size="16" /></button></nav></section>
             <section class="panel">
               <div class="panel-title"><h2>交易记录</h2></div>
               <div v-if="loading.receipts" class="loading-panel"><span class="spinner" />正在读取交易记录...</div><div v-else-if="errors.receipts" class="inline-error"><AlertCircle :size="17" />{{ errors.receipts }}<button type="button" @click="loadReceipts">重试</button></div><div v-else-if="receiptsSource?.status === 'unavailable'" class="empty-panel">暂不可用 <button class="text-button" type="button" @click="loadReceipts">重试</button></div><div v-else-if="receiptsSource?.status === 'empty'" class="empty-panel">暂无交易记录</div><div v-else class="table-wrap"><table><thead><tr><th>时间</th><th>交易</th><th>金额</th><th>有效期至</th><th>状态</th><th>操作</th></tr></thead><tbody><tr v-for="receipt in receipts" :key="receipt.receiptId"><td>{{ formatDate(receipt.createdAt, true) }}</td><td>{{ receiptLabel(receipt.type) }}</td><td>{{ formatUsdMicros(receipt.chargeUsdMicros ?? receipt.totalUsdMicros) }}</td><td>{{ formatDate(receipt.paidThrough) }}</td><td>{{ receipt.status }}</td><td><button class="text-button" type="button" :disabled="loading.receiptDetail && selectedReceiptId === receipt.receiptId" @click="loadReceiptDetail(receipt.receiptId)">{{ loading.receiptDetail && selectedReceiptId === receipt.receiptId ? "读取中..." : "查看" }}</button></td></tr></tbody></table></div>

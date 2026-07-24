@@ -140,6 +140,14 @@
         "identity": "session_account_to_control_plane_sub2api_user_mapping",
         "ignoredIdentityInputs": ["accountId", "user_id", "api_key_id", "sub2apiUserId"],
         "itemFields": ["type", "valueUsdMicros", "status", "usedAt", "createdAt"],
+        "dataFields": ["items", "total", "page", "pageSize", "pages"],
+        "pagination": {
+          "pageDefault": 1,
+          "pageSizeDefault": 20,
+          "pageSizeMax": 100,
+          "upstreamPagesPerRequest": 1
+        },
+        "financialScanAllowed": false,
         "emptyUpstreamPagination": { "total": 0, "page": 1, "pages": 1, "items": [], "otherShapes": "reject" },
         "empty": "real_zero_rows",
         "fetchedAt": "control_plane_response_fetch_completion_time",
@@ -202,6 +210,8 @@
         "usageRead": "current_page_user_ids_batch_required",
         "workspaceCountRead": "single_control_plane_group_by_for_current_page",
         "userReadConcurrencyMax": 4,
+        "keyCountRead": "current_page_exact_user_id_page_1_size_1_total_only_bounded_concurrency_max_4",
+        "keyCountDecodedItemsMax": 1,
         "keyCountConcurrencyMax": 4,
         "keyCountPersistence": "none_request_join_only",
         "failure": "affected_nested_source_unavailable_without_zero_data",

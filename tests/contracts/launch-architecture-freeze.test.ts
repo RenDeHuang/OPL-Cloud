@@ -148,6 +148,8 @@ test("launch freeze fixes the V2 products, owner lanes, settlement, and verifica
     workspaceAccess: "deny_immediately",
     autoRenew: false,
     providerAction: "none_expire_by_provider",
+    providerReclamation: "tencent_prepaid_expiry_policy",
+    recoveryCommitment: "none",
     fabricMutationCount: 0,
     tencentMutationCount: 0
   });

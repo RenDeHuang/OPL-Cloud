@@ -1261,7 +1261,7 @@ func (s *workspaceAdjustmentHistorySub2API) UsageStats(context.Context, clients.
 	return clients.Sub2APIUsageStats{}, nil
 }
 
-func (s *workspaceAdjustmentHistorySub2API) BalanceHistory(context.Context, int64) ([]clients.Sub2APIBalanceHistoryEntry, error) {
+func (s *workspaceAdjustmentHistorySub2API) FinancialBalanceHistoryScan(context.Context, int64) ([]clients.Sub2APIBalanceHistoryEntry, error) {
 	s.historyCalls++
 	if s.historyErr != nil {
 		return nil, s.historyErr

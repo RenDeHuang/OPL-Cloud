@@ -3,11 +3,11 @@ import type {
   AnnouncementPageDTO,
   AnnouncementDTO,
   AnnouncementReadDTO,
-  BalanceHistoryData,
   BillingReceipt,
   BillingReceiptPage,
   CreateGatewayKeyRequest,
   GatewayAccountUsageSummaryDTO,
+  GatewayBalanceHistoryPageDTO,
   GatewayEndpointDTO,
   GatewayGroupPageDTO,
   GatewayKeyListQuery,
@@ -130,8 +130,9 @@ export function deleteGatewayKey(keyId: string, csrfToken: string, idempotencyKe
   return sourceDelete<OperationStatusDTO>(`/api/gateway/keys/${encodeURIComponent(keyId)}`, csrfToken, idempotencyKey);
 }
 
-export function getGatewayBalanceHistory(signal?: AbortSignal): Promise<SourceEnvelope<BalanceHistoryData>> {
-  return sourceGet<BalanceHistoryData>("/api/gateway/balance-history", signal);
+export function getGatewayBalanceHistory(page = 1, pageSize = 20, signal?: AbortSignal): Promise<SourceEnvelope<GatewayBalanceHistoryPageDTO>> {
+  const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
+  return sourceGet<GatewayBalanceHistoryPageDTO>(`/api/gateway/balance-history?${params}`, signal);
 }
 
 export function revealGatewayKey(keyId: string, csrfToken: string): Promise<SourceEnvelope<GatewayKeySecretDTO>> {

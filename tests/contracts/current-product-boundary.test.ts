@@ -220,7 +220,7 @@ test("Current contracts hard cut operator resources, wallet adjustments, and ann
     currentPageUsers: "GET /api/v1/admin/users/{userId}",
     usersUsage: "POST /api/v1/admin/dashboard/users-usage",
     apiKeysUsage: "POST /api/v1/admin/dashboard/api-keys-usage",
-    currentPageKeyCounts: "GET /api/v1/admin/users/{userId}/api-keys",
+    currentPageKeyCounts: "GET /api/v1/admin/users/{userId}/api-keys?page=1&page_size=1",
     batchSizeMax: 50
   });
   assert.equal("perAccountUserOrUsageNPlusOne" in management.operatorProjection, false);
@@ -233,7 +233,8 @@ test("Current contracts hard cut operator resources, wallet adjustments, and ann
   assert.equal(management.operatorProjection.remoteReadScope, "current_control_plane_page_only");
   assert.equal(management.operatorProjection.scaleInvariant, "same_page_size_request_count_equal_for_100_and_1000_accounts");
   assert.equal(management.operatorProjection.persistence, "none_request_join_only");
-  assert.equal(management.operatorProjection.keyCountRead, "selected_control_plane_page_only_bounded_concurrency_max_4");
+  assert.equal(management.operatorProjection.keyCountRead, "current_page_exact_user_id_page_1_size_1_total_only_bounded_concurrency_max_4");
+  assert.equal(management.operatorProjection.keyCountDecodedItemsMax, 1);
   assert.equal(management.operatorProjection.readReplica, false);
   assert.equal(management.operatorProjection.partialFailure, "affected_nested_source_unavailable_without_zero_data");
   assert.equal(management.workspaceOwnership.cardinality, "many_workspaces_per_account");
@@ -317,6 +318,8 @@ test("Current contracts hard cut operator resources, wallet adjustments, and ann
   assert.equal(sourceTruth.sources.identity.operatorAccounts.userAndBalanceRead, "current_page_exact_id_bounded_concurrency_max_4");
   assert.equal(sourceTruth.sources.identity.operatorAccounts.usageRead, "current_page_user_ids_batch_required");
   assert.equal(sourceTruth.sources.identity.operatorAccounts.workspaceCountRead, "single_control_plane_group_by_for_current_page");
+  assert.equal(sourceTruth.sources.identity.operatorAccounts.keyCountRead, "current_page_exact_user_id_page_1_size_1_total_only_bounded_concurrency_max_4");
+  assert.equal(sourceTruth.sources.identity.operatorAccounts.keyCountDecodedItemsMax, 1);
   assert.equal(sourceTruth.sources.operator.resources.providerAuthority, "live_fabric_batch_readback_only");
   assert.equal(sourceTruth.sources.operator.resources.controlPlaneProviderSnapshotFallback, false);
   assert.deepEqual(boundary.services.fabric.providerFactsBatchRead, {
@@ -344,6 +347,8 @@ test("Current contracts hard cut operator resources, wallet adjustments, and ann
   assert.deepEqual(boundary.services.controlPlane.operatorProjection.authorities, ["control_plane", "sub2api", "fabric", "ledger", "runtime"]);
   assert.equal(boundary.services.controlPlane.operatorProjection.userAndBalanceRead, "current_page_exact_id_bounded_concurrency_max_4");
   assert.equal(boundary.services.controlPlane.operatorProjection.usageRead, "current_page_user_ids_batch_required");
+  assert.equal(boundary.services.controlPlane.operatorProjection.keyCountRead, "current_page_exact_user_id_page_1_size_1_total_only_bounded_concurrency_max_4");
+  assert.equal(boundary.services.controlPlane.operatorProjection.keyCountDecodedItemsMax, 1);
   assert.deepEqual(boundary.services.controlPlane.accountOwnerAuthorization, {
     authority: "active_account_owner_graph",
     reservedAdminOwnerAccount: "acct-admin",

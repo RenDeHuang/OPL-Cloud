@@ -1038,6 +1038,7 @@ func (s *postgresEntStateStore) PageAccounts(ctx context.Context, page tablePage
 		return tablePage{}, err
 	}
 	items, err := filteredRecords(rows, "")
+	sort.Slice(items, func(i, j int) bool { return stringValue(items[i]["id"]) < stringValue(items[j]["id"]) })
 	return tablePage{Items: items, Total: total}, err
 }
 
@@ -1593,6 +1594,7 @@ func (s *postgresEntStateStore) PageWorkspaces(ctx context.Context, accountID st
 		return tablePage{}, err
 	}
 	items, err := filteredRecords(rows, accountID)
+	sort.Slice(items, func(i, j int) bool { return stringValue(items[i]["id"]) < stringValue(items[j]["id"]) })
 	return tablePage{Items: items, Total: total}, err
 }
 

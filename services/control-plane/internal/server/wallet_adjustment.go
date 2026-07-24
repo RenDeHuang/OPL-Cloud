@@ -256,7 +256,7 @@ func (app *controlPlaneServer) prepareWalletAdjustmentRecovery(ctx context.Conte
 	if operation.ErrorCode == "wallet_adjustment_recovery_history_conflict" || operation.ErrorCode == "wallet_adjustment_recovery_balance_changed" {
 		return operation, errWalletAdjustmentConflict
 	}
-	history, err := service.Sub2APIBalanceHistory(ctx, operation.Sub2APIUserID)
+	history, err := service.FinancialBalanceHistoryScan(ctx, operation.Sub2APIUserID)
 	if err != nil {
 		recordWalletAdjustmentUpstreamFailure(&operation, "recovery_readback", err, "balance_history_unavailable")
 		operation.ErrorCode = "wallet_adjustment_recovery_readback_unavailable"
@@ -507,7 +507,7 @@ func (app *controlPlaneServer) runWalletAdjustment(r *http.Request, service *con
 			if operation.RedeemCodeVersion != "v2" || operation.CanonicalRedeemCode != walletAdjustmentRedeemCode(operationID) {
 				return operation, errWalletAdjustmentState
 			}
-			history, err := service.Sub2APIBalanceHistory(ctx, operation.Sub2APIUserID)
+			history, err := service.FinancialBalanceHistoryScan(ctx, operation.Sub2APIUserID)
 			entry, confirmErr := confirmWalletAdjustmentHistory(history, operation.CanonicalRedeemCode, operation)
 			if err != nil || confirmErr != nil {
 				recordWalletAdjustmentUpstreamFailure(&operation, "authoritative_readback", err, "balance_history_unavailable")

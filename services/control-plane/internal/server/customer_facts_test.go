@@ -31,15 +31,16 @@ type customerFactsLedger struct {
 
 type customerFactsSub2API struct {
 	*testSub2APIClient
-	usagePage  clients.Sub2APIUsagePage
-	usageErr   error
-	usageQuery clients.Sub2APIUsageQuery
-	usageStats clients.Sub2APIUsageStats
-	statsErr   error
-	statsQuery clients.Sub2APIUsageStatsQuery
-	history    map[int64][]clients.Sub2APIBalanceHistoryEntry
-	historyErr error
-	historyIDs []int64
+	usagePage          clients.Sub2APIUsagePage
+	usageErr           error
+	usageQuery         clients.Sub2APIUsageQuery
+	usageStats         clients.Sub2APIUsageStats
+	statsErr           error
+	statsQuery         clients.Sub2APIUsageStatsQuery
+	history            map[int64][]clients.Sub2APIBalanceHistoryEntry
+	historyErr         error
+	historyIDs         []int64
+	historyPageQueries []clients.Sub2APIBalanceHistoryPageQuery
 }
 
 type customerFactsFabric struct {
@@ -58,7 +59,32 @@ func (c *customerFactsSub2API) UsageStats(_ context.Context, query clients.Sub2A
 	return c.usageStats, c.statsErr
 }
 
-func (c *customerFactsSub2API) BalanceHistory(_ context.Context, userID int64) ([]clients.Sub2APIBalanceHistoryEntry, error) {
+func (c *customerFactsSub2API) BalanceHistoryPage(_ context.Context, userID int64, query clients.Sub2APIBalanceHistoryPageQuery) (clients.Sub2APIBalanceHistoryPage, error) {
+	c.historyIDs = append(c.historyIDs, userID)
+	c.historyPageQueries = append(c.historyPageQueries, query)
+	if c.historyErr != nil {
+		return clients.Sub2APIBalanceHistoryPage{}, c.historyErr
+	}
+	rows := c.history[userID]
+	pages := 1
+	if len(rows) > 0 {
+		pages = (len(rows) + query.PageSize - 1) / query.PageSize
+	}
+	start := (query.Page - 1) * query.PageSize
+	if start > len(rows) {
+		start = len(rows)
+	}
+	end := start + query.PageSize
+	if end > len(rows) {
+		end = len(rows)
+	}
+	return clients.Sub2APIBalanceHistoryPage{
+		Items: append([]clients.Sub2APIBalanceHistoryEntry(nil), rows[start:end]...),
+		Total: int64(len(rows)), Page: query.Page, PageSize: query.PageSize, Pages: pages,
+	}, nil
+}
+
+func (c *customerFactsSub2API) FinancialBalanceHistoryScan(_ context.Context, userID int64) ([]clients.Sub2APIBalanceHistoryEntry, error) {
 	c.historyIDs = append(c.historyIDs, userID)
 	return append([]clients.Sub2APIBalanceHistoryEntry(nil), c.history[userID]...), c.historyErr
 }

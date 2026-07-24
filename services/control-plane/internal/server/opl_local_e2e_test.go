@@ -584,7 +584,7 @@ func runLocalE2EFullFlow(t *testing.T, process *localE2EProcess, adminEmail, adm
 	if balance := localE2EWalletMicros(t, owner); balance != 60_000_000 {
 		t.Fatalf("local E2E replay balance=%d, want 60000000", balance)
 	}
-	history, err := sub2API.BalanceHistory(context.Background(), user.sub2APIUser)
+	history, err := sub2API.FinancialBalanceHistoryScan(context.Background(), user.sub2APIUser)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -705,7 +705,7 @@ func runLocalE2EFullFlow(t *testing.T, process *localE2EProcess, adminEmail, adm
 	if balance := localE2EWalletMicros(t, owner); balance != 7_420_000 {
 		t.Fatalf("local E2E post-Basic balance=%d, want 7420000", balance)
 	}
-	history, err = sub2API.BalanceHistory(context.Background(), user.sub2APIUser)
+	history, err = sub2API.FinancialBalanceHistoryScan(context.Background(), user.sub2APIUser)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -959,7 +959,7 @@ func recoverLocalE2EWalletFault(t *testing.T, admin *localE2EAPI, evidence local
 	if err != nil || balance.USDMicros != 60_000_000 {
 		t.Fatalf("local E2E recovered wallet balance=%d err=%v", balance.USDMicros, err)
 	}
-	history, err := sub2API.BalanceHistory(context.Background(), evidence.user.sub2APIUser)
+	history, err := sub2API.FinancialBalanceHistoryScan(context.Background(), evidence.user.sub2APIUser)
 	if err != nil || countLocalE2EHistory(history, evidence.code, 60_000_000) != 1 {
 		t.Fatal("local E2E recovery did not reuse the original stable redeem identity exactly once")
 	}

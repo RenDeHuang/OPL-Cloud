@@ -205,8 +205,8 @@ event with `Action=skip` fails the command. Every PostgreSQL suite sets
 `OPL_POSTGRES_TESTS=1`; a claimed zero-SKIP Control Plane full run also sets
 `OPL_CAPACITY_TESTS=1`. If the capacity suite cannot run, cancel the global
 zero-SKIP/code-complete claim rather than downgrading it manually. The exact
-stdlib-only parsers and commands live in section 8.1 of the current Pilot V2
-implementation plan.
+stdlib-only parsers and commands are maintained in
+`.github/workflows/pull-request-ci.yml`.
 
 Run the opt-in load test against a local or isolated PostgreSQL instance. It uses
 fake Sub2API, Fabric, and Ledger clients and never creates cloud resources or a

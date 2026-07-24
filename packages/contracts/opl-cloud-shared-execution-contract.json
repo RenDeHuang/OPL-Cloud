@@ -3,7 +3,7 @@
   "owner": "OPL Platform Architecture",
   "purpose": "Historical shared execution design retained for reference; it is not an invite-only Pilot surface.",
   "state": "superseded",
-  "pilotStatus": "not_exposed_in_invite_only_pilot",
+  "pilotStatus": "not_exposed_in_operator_provisioned_pilot",
   "machineBoundary": "Superseded Project-to-Continuation and Workspace sync design. Current Pilot authority lives in the launch, source-truth, management, billing, and service-boundary contracts.",
   "lifecycle": {
     "type": "historical_contract",

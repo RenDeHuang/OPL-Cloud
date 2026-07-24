@@ -119,6 +119,14 @@ test("Console source truth contract fixes strict envelopes and live Gateway proj
   assert.deepEqual(gateway.accountUsageStats.dataFields, gateway.usageStats.dataFields);
   assert.equal(gateway.accountUsageStats.aggregation, "upstream_only_never_current_page_sum");
   assert.deepEqual(gateway.balanceHistory.itemFields, ["type", "valueUsdMicros", "status", "usedAt", "createdAt"]);
+  assert.deepEqual(gateway.balanceHistory.dataFields, ["items", "total", "page", "pageSize", "pages"]);
+  assert.deepEqual(gateway.balanceHistory.pagination, {
+    pageDefault: 1,
+    pageSizeDefault: 20,
+    pageSizeMax: 100,
+    upstreamPagesPerRequest: 1
+  });
+  assert.equal(gateway.balanceHistory.financialScanAllowed, false);
   assert.deepEqual(gateway.balanceHistory.emptyUpstreamPagination, gateway.keys.emptyUpstreamPagination);
 
   const identity = contract.sources.identity;
@@ -177,6 +185,8 @@ test("Console source truth contract fixes strict envelopes and live Gateway proj
     usageRead: "current_page_user_ids_batch_required",
     workspaceCountRead: "single_control_plane_group_by_for_current_page",
     userReadConcurrencyMax: 4,
+    keyCountRead: "current_page_exact_user_id_page_1_size_1_total_only_bounded_concurrency_max_4",
+    keyCountDecodedItemsMax: 1,
     keyCountConcurrencyMax: 4,
     keyCountPersistence: "none_request_join_only",
     failure: "affected_nested_source_unavailable_without_zero_data",

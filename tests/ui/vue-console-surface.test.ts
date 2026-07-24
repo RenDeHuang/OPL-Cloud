@@ -46,6 +46,12 @@ test("customer views use granular V2 source projections and the one Workspace la
   }
 });
 
+test("fake browser serves the strict requested balance-history page envelope", async () => {
+  const browserQA = await source("tools/console-browser-qa.ts");
+  assert.match(browserQA, /path === "\/api\/gateway\/balance-history"[\s\S]+url\.searchParams\.get\("page"\)[\s\S]+url\.searchParams\.get\("pageSize"\)/);
+  assert.match(browserQA, /items: \[\], total: 0, page, pageSize, pages: 1/);
+});
+
 test("customer financial facts are direct server fields", async () => {
   const [app, model] = await Promise.all([
     source("apps/console-ui/src/App.vue"), source("apps/console-ui/src/console-model.ts")

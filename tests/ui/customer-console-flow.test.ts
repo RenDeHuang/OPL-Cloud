@@ -155,7 +155,21 @@ test("API overview and Billing expose every balance history state", async () => 
     assert.match(view, /balanceHistorySource\?\.status === 'unavailable'[\s\S]+@click="loadHistory"/, `${name} history unavailable retry`);
     assert.match(view, /balanceHistorySource\?\.status === 'empty'[\s\S]+暂无余额记录/, `${name} history empty`);
     assert.match(view, /v-else class="table-wrap"[\s\S]+v-for="item in history"/, `${name} history table`);
+	assert.match(view, /changeBalanceHistoryPage\(balanceHistoryPage - 1\)[\s\S]+上一页/, `${name} history previous page`);
+	assert.match(view, /第 \{\{ balanceHistoryPage \}\} \/ \{\{ balanceHistoryPages \}\} 页/, `${name} history page status`);
+	assert.match(view, /changeBalanceHistoryPage\(balanceHistoryPage \+ 1\)[\s\S]+下一页/, `${name} history next page`);
   }
+});
+
+test("balance history uses the explicit paged DTO without a legacy alias", async () => {
+  const [dto, api] = await Promise.all([
+    source("apps/console-ui/src/api/dtos.ts"),
+    source("apps/console-ui/src/api/console-read-api.ts")
+  ]);
+  assert.match(dto, /export interface GatewayBalanceHistoryPageDTO \{[\s\S]+page: number;[\s\S]+pageSize: number;[\s\S]+pages: number;/);
+  assert.doesNotMatch(dto, /interface BalanceHistoryData|type GatewayBalanceHistoryPageDTO = BalanceHistoryData/);
+  assert.match(api, /getGatewayBalanceHistory\(page = 1, pageSize = 20/);
+  assert.match(api, /new URLSearchParams\(\{ page: String\(page\), pageSize: String\(pageSize\) \}\)/);
 });
 
 test("Billing receipt rows open a customer-safe detail view", async () => {
