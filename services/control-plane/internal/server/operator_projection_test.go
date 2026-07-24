@@ -108,6 +108,27 @@ func (*operatorProjectionNoOperationsFabric) ListOperations(context.Context) ([]
 	return []clients.FabricOperation{}, nil
 }
 
+type operatorProjectionFactsFabric struct {
+	fakeFabricClient
+	facts  map[string]clients.ProviderFact
+	inputs []clients.ProviderFactsBatchInput
+}
+
+func (f *operatorProjectionFactsFabric) ProviderFactsBatch(_ context.Context, input clients.ProviderFactsBatchInput) (clients.ProviderFactsBatch, error) {
+	f.inputs = append(f.inputs, input)
+	result := clients.ProviderFactsBatch{Items: make([]clients.ProviderFact, 0, len(input.Items))}
+	for _, item := range input.Items {
+		fact, ok := f.facts[item.ResourceType+":"+item.ResourceID]
+		if !ok {
+			fact = clients.ProviderFact{
+				AccountID: item.AccountID, WorkspaceID: item.WorkspaceID, ResourceType: item.ResourceType, ResourceID: item.ResourceID,
+			}
+		}
+		result.Items = append(result.Items, fact)
+	}
+	return result, nil
+}
+
 func decodeOperatorEnvelope(t *testing.T, response *httptest.ResponseRecorder) map[string]any {
 	t.Helper()
 	var envelope map[string]any
@@ -574,19 +595,29 @@ func TestOperatorResourceOwnerFields(t *testing.T) {
 	seedOperatorProjectionAccount(t, store, "acct-alpha", "usr-alpha", "alpha@example.com", 41)
 	mustStore(t, store.SaveWorkspace(context.Background(), map[string]any{
 		"id": "ws-alpha", "name": "Alpha", "accountId": "acct-alpha", "ownerAccountId": "acct-alpha", "ownerUserId": "usr-alpha", "state": "active",
-		"packageId": "basic", "createdAt": "2026-07-18T00:00:00Z", "updatedAt": "2026-07-19T00:00:00Z", "receiptId": "receipt-workspace",
+		"packageId": "basic", "runtimeId": "runtime-alpha", "createdAt": "2026-07-18T00:00:00Z", "updatedAt": "2026-07-19T00:00:00Z", "receiptId": "receipt-workspace",
 	}))
 	mustStore(t, store.SaveCompute(context.Background(), map[string]any{
-		"id": "compute-alpha", "accountId": "acct-alpha", "workspaceId": "ws-alpha", "packageId": "basic", "instanceType": "S5.MEDIUM4",
-		"providerResourceId": "ins-alpha", "zone": "ap-shanghai-2", "providerStatus": "running", "status": "running", "deadline": "2026-08-18T00:00:00Z",
-		"lastProviderSyncAt": "2026-07-19T03:00:00Z", "operationId": "op-compute", "lastReceiptId": "receipt-compute", "createdAt": "2026-07-18T00:00:00Z", "updatedAt": "2026-07-19T03:00:00Z",
+		"id": "compute-alpha", "accountId": "acct-alpha", "workspaceId": "ws-alpha", "packageId": "basic", "instanceType": "STALE.INSTANCE",
+		"providerResourceId": "ins-stale", "zone": "ap-guangzhou-1", "providerStatus": "stopped", "status": "stopped", "deadline": "2026-07-18T00:00:00Z",
+		"lastProviderSyncAt": "2026-07-18T03:00:00Z", "operationId": "op-compute", "lastReceiptId": "receipt-compute", "createdAt": "2026-07-18T00:00:00Z", "updatedAt": "2026-07-19T03:00:00Z",
 	}))
 	ledger := &operatorProjectionLedger{receipts: map[string]clients.Receipt{
 		"receipt-workspace": {ReceiptInput: clients.ReceiptInput{AccountID: "acct-alpha", WorkspaceID: "ws-alpha", Type: "workspace.created", Status: "completed"}, ReceiptID: "receipt-workspace"},
 		"receipt-compute":   {ReceiptInput: clients.ReceiptInput{AccountID: "acct-alpha", WorkspaceID: "ws-alpha", Type: "billing.resource_purchased.v1", Status: "completed", Cost: map[string]any{"resourceType": "compute", "resourceId": "compute-alpha"}}, ReceiptID: "receipt-compute"},
 	}}
 	client := newOperatorProjectionClient(operatorProjectionUser(41, "alpha@example.com", "active", 1_000_000))
-	server, err := NewPersistentServer(controlplane.NewService(ledger, &fakeFabricClient{}, client), store)
+	fabric := &operatorProjectionFactsFabric{facts: map[string]clients.ProviderFact{
+		"compute:compute-alpha": {
+			AccountID: "acct-alpha", WorkspaceID: "ws-alpha", ResourceType: "compute", ResourceID: "compute-alpha", Available: true,
+			Facts: clients.ProviderResourceFacts{PackageOrSpec: "S5.MEDIUM4", ProviderID: "ins-alpha", Zone: "ap-shanghai-2", Status: "running", ExpiresAt: "2026-08-18T00:00:00Z", LastReadAt: "2026-07-19T03:00:00Z"},
+		},
+		"runtime:runtime-alpha": {
+			AccountID: "acct-alpha", WorkspaceID: "ws-alpha", ResourceType: "runtime", ResourceID: "runtime-alpha", Available: true,
+			Facts: clients.ProviderResourceFacts{ProviderID: "runtime-service-alpha", Status: "running", LastReadAt: "2026-07-19T03:01:00Z"},
+		},
+	}}
+	server, err := NewPersistentServer(controlplane.NewService(ledger, fabric, client), store)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -596,10 +627,22 @@ func TestOperatorResourceOwnerFields(t *testing.T) {
 	}
 	data := mapField(decodeOperatorEnvelope(t, response), "data")
 	resources := data["resources"].([]any)
-	if len(resources) != 1 {
+	if len(resources) != 2 {
 		t.Fatalf("resources = %#v", resources)
 	}
-	resource := resources[0].(map[string]any)
+	var resource, runtime map[string]any
+	for _, raw := range resources {
+		item := raw.(map[string]any)
+		switch mapField(item, "resourceType")["data"] {
+		case "compute":
+			resource = item
+		case "runtime":
+			runtime = item
+		}
+	}
+	if resource == nil || runtime == nil {
+		t.Fatalf("live resources = %#v", resources)
+	}
 	want := map[string]any{
 		"ownerAccount": "acct-alpha", "ownerUser": "usr-alpha", "workspace": "ws-alpha", "resourceType": "compute", "packageOrSpec": "S5.MEDIUM4",
 		"providerId": "ins-alpha", "zone": "ap-shanghai-2", "status": "running", "expiresAt": "2026-08-18T00:00:00Z", "lastReadAt": "2026-07-19T03:00:00Z", "operationRef": "op-compute", "receiptRef": "receipt-compute",
@@ -621,6 +664,48 @@ func TestOperatorResourceOwnerFields(t *testing.T) {
 	if created["status"] != "unavailable" || created["available"] != false {
 		t.Fatalf("provider createdAt must stay unavailable: %#v", created)
 	}
+	if mapField(runtime, "providerId")["data"] != "runtime-service-alpha" || mapField(runtime, "status")["data"] != "running" {
+		t.Fatalf("runtime provider facts = %#v", runtime)
+	}
+	if len(fabric.inputs) != 1 || len(fabric.inputs[0].Items) != 2 {
+		t.Fatalf("provider fact requests = %#v", fabric.inputs)
+	}
+}
+
+func TestOperatorWorkspaceProviderFactsOnlyReadCurrentPage(t *testing.T) {
+	store := newMemoryTableStore()
+	seedOperatorProjectionAccount(t, store, "acct-alpha", "usr-alpha", "alpha@example.com", 41)
+	fabric := &operatorProjectionFactsFabric{facts: map[string]clients.ProviderFact{}}
+	for index := 0; index < 30; index++ {
+		workspaceID := fmt.Sprintf("ws-%02d", index)
+		computeID := fmt.Sprintf("compute-%02d", index)
+		mustStore(t, store.SaveWorkspace(context.Background(), map[string]any{
+			"id": workspaceID, "accountId": "acct-alpha", "ownerAccountId": "acct-alpha", "ownerUserId": "usr-alpha", "state": "active",
+			"createdAt": "2026-07-18T00:00:00Z", "updatedAt": "2026-07-19T00:00:00Z",
+		}))
+		mustStore(t, store.SaveCompute(context.Background(), map[string]any{"id": computeID, "accountId": "acct-alpha", "workspaceId": workspaceID}))
+		fabric.facts["compute:"+computeID] = clients.ProviderFact{
+			AccountID: "acct-alpha", WorkspaceID: workspaceID, ResourceType: "compute", ResourceID: computeID, Available: true,
+			Facts: clients.ProviderResourceFacts{ProviderID: "ins-" + computeID, Status: "running", LastReadAt: "2026-07-19T03:00:00Z"},
+		}
+	}
+	server, err := NewPersistentServer(controlplane.NewService(fakeLedgerClient{}, fabric, newOperatorProjectionClient(operatorProjectionUser(41, "alpha@example.com", "active", 1_000_000))), store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := requestWithSession(t, server, reservedOperatorSessionForTest(t, server), http.MethodGet, "/api/operator/workspaces?page=2&pageSize=10", "")
+	if response.Code != http.StatusOK {
+		t.Fatalf("operator workspace page = %d: %s", response.Code, response.Body.String())
+	}
+	if len(fabric.inputs) != 1 || len(fabric.inputs[0].Items) != 10 {
+		t.Fatalf("provider fact requests = %#v", fabric.inputs)
+	}
+	for index, item := range fabric.inputs[0].Items {
+		want := fmt.Sprintf("compute-%02d", index+10)
+		if item.ResourceID != want || item.WorkspaceID != fmt.Sprintf("ws-%02d", index+10) {
+			t.Fatalf("provider fact item %d = %#v, want %s", index, item, want)
+		}
+	}
 }
 
 func TestOperatorResourceDoesNotLabelControlPlaneSnapshotAsFabric(t *testing.T) {
@@ -635,7 +720,13 @@ func TestOperatorResourceDoesNotLabelControlPlaneSnapshotAsFabric(t *testing.T) 
 		"providerResourceId": "ins-stale", "zone": "ap-shanghai-2", "providerStatus": "running", "status": "running",
 		"deadline": "2026-08-18T00:00:00Z", "lastProviderSyncAt": "2026-07-19T03:00:00Z",
 	}))
-	server, err := NewPersistentServer(controlplane.NewService(&operatorProjectionLedger{receipts: map[string]clients.Receipt{}}, &operatorProjectionNoOperationsFabric{}, newOperatorProjectionClient(operatorProjectionUser(41, "alpha@example.com", "active", 1_000_000))), store)
+	fabric := &operatorProjectionFactsFabric{facts: map[string]clients.ProviderFact{
+		"compute:compute-alpha": {
+			AccountID: "acct-other", WorkspaceID: "ws-alpha", ResourceType: "compute", ResourceID: "compute-alpha", Available: true,
+			Facts: clients.ProviderResourceFacts{PackageOrSpec: "S5.MEDIUM4", ProviderID: "ins-live", Status: "running", LastReadAt: "2026-07-19T04:00:00Z"},
+		},
+	}}
+	server, err := NewPersistentServer(controlplane.NewService(&operatorProjectionLedger{receipts: map[string]clients.Receipt{}}, fabric, newOperatorProjectionClient(operatorProjectionUser(41, "alpha@example.com", "active", 1_000_000))), store)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -653,6 +744,32 @@ func TestOperatorResourceDoesNotLabelControlPlaneSnapshotAsFabric(t *testing.T) 
 		if envelope["source"] == "fabric" && envelope["available"] == true {
 			t.Fatalf("Control Plane snapshot was mislabeled as live Fabric %s: %#v", field, envelope)
 		}
+	}
+}
+
+func TestOperatorOverviewDoesNotCountUnavailableProviderFacts(t *testing.T) {
+	store := newMemoryTableStore()
+	seedOperatorProjectionAccount(t, store, "acct-alpha", "usr-alpha", "alpha@example.com", 41)
+	mustStore(t, store.SaveWorkspace(context.Background(), map[string]any{
+		"id": "ws-alpha", "accountId": "acct-alpha", "ownerAccountId": "acct-alpha", "ownerUserId": "usr-alpha", "state": "active",
+		"createdAt": "2026-07-18T00:00:00Z", "updatedAt": "2026-07-19T00:00:00Z",
+	}))
+	mustStore(t, store.SaveCompute(context.Background(), map[string]any{
+		"id": "compute-alpha", "accountId": "acct-alpha", "workspaceId": "ws-alpha", "providerResourceId": "ins-stale", "status": "running",
+	}))
+	client := newOperatorProjectionClient(operatorProjectionUser(41, "alpha@example.com", "active", 1_000_000))
+	client.userUsage[41] = clients.Sub2APIBatchUserUsage{UserID: 41}
+	server, err := NewPersistentServer(controlplane.NewService(fakeLedgerClient{}, &operatorProjectionNoOperationsFabric{}, client), store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := requestWithSession(t, server, reservedOperatorSessionForTest(t, server), http.MethodGet, "/api/operator/overview", "")
+	if response.Code != http.StatusOK {
+		t.Fatalf("operator overview = %d: %s", response.Code, response.Body.String())
+	}
+	resources := mapField(mapField(decodeOperatorEnvelope(t, response), "data"), "resources")
+	if resources["status"] != "unavailable" || resources["available"] != false {
+		t.Fatalf("unavailable provider facts were counted as Fabric resources: %#v", resources)
 	}
 }
 

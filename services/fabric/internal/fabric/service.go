@@ -46,6 +46,17 @@ type monthlyProviderTruthProvider interface {
 	MonthlyProviderTruth(context.Context, ComputeAllocation, StorageVolume) (MonthlyProviderTruth, error)
 }
 
+type runtimeGatewaySecretProvider interface {
+	BindWorkspaceRuntimeGatewaySecret(context.Context, WorkspaceRuntimeGatewaySecretInput) (WorkspaceRuntimeGatewaySecretBinding, error)
+	WorkspaceRuntimeGatewaySecret(context.Context, string) (WorkspaceRuntimeGatewaySecretBinding, error)
+}
+
+type providerFactsReader interface {
+	ReadComputeAllocation(context.Context, ComputeAllocation) (ComputeAllocation, error)
+	ReadStorageVolume(context.Context, StorageVolume) (StorageVolume, error)
+	ReadStorageAttachment(context.Context, StorageAttachment, ComputeAllocation, StorageVolume) (StorageAttachment, error)
+}
+
 type Service struct {
 	provider    Provider
 	mu          sync.Mutex
@@ -1204,14 +1215,17 @@ func (s *Service) WorkspaceRuntimeStatus(ctx context.Context, workspaceID string
 }
 
 func (s *Service) UpsertGatewaySecret(ctx context.Context, input GatewaySecretInput) (GatewaySecret, error) {
-	if strings.TrimSpace(input.AccountID) == "" || strings.TrimSpace(input.GatewayAPIKey) == "" || strings.TrimSpace(input.IdempotencyKey) == "" {
+	if strings.TrimSpace(input.AccountID) == "" || strings.TrimSpace(input.WorkspaceID) == "" || input.WorkspaceAPIKeyID <= 0 || strings.TrimSpace(input.GatewayAPIKey) == "" || strings.TrimSpace(input.IdempotencyKey) == "" {
 		return GatewaySecret{}, fmt.Errorf("gateway_secret_input_required")
 	}
 	keyDigest := fmt.Sprintf("%x", sha256.Sum256([]byte(input.GatewayAPIKey)))
-	requestHash := hashInput(map[string]string{"accountId": input.AccountID, "keyDigest": keyDigest})
+	if input.Fingerprint != "sha256:"+keyDigest {
+		return GatewaySecret{}, fmt.Errorf("gateway_secret_fingerprint_mismatch")
+	}
+	requestHash := hashInput(map[string]any{"accountId": input.AccountID, "workspaceId": input.WorkspaceID, "workspaceApiKeyId": input.WorkspaceAPIKeyID, "fingerprint": input.Fingerprint})
 	now := s.now()
-	secretRef := gatewaySecretName(input.AccountID)
-	operation := newOperation("upsert_gateway_secret", "gateway_secret", secretRef, input.AccountID, "", input.IdempotencyKey, requestHash, now)
+	secretRef := gatewaySecretName(input.WorkspaceID)
+	operation := newOperation("upsert_gateway_secret", "gateway_secret", secretRef, input.AccountID, input.WorkspaceID, input.IdempotencyKey, requestHash, now)
 	operation.ID = "fop_gateway_secret_claim_" + stableSuffix("upsert_gateway_secret", input.IdempotencyKey)
 	operation.Status = "started"
 	operation.CreatedAt = now
@@ -1242,6 +1256,119 @@ func (s *Service) UpsertGatewaySecret(ctx context.Context, input GatewaySecretIn
 		return GatewaySecret{}, saveErr
 	}
 	return secret, providerErr
+}
+
+func (s *Service) BindWorkspaceRuntimeGatewaySecret(ctx context.Context, input WorkspaceRuntimeGatewaySecretInput) (WorkspaceRuntimeGatewaySecretBinding, error) {
+	if strings.TrimSpace(input.WorkspaceID) == "" || input.WorkspaceAPIKeyID <= 0 || input.SecretRef != gatewaySecretName(input.WorkspaceID) || strings.TrimSpace(input.Fingerprint) == "" || strings.TrimSpace(input.IdempotencyKey) == "" {
+		return WorkspaceRuntimeGatewaySecretBinding{}, fmt.Errorf("workspace_runtime_gateway_secret_input_required")
+	}
+	provider, ok := s.provider.(runtimeGatewaySecretProvider)
+	if !ok {
+		return WorkspaceRuntimeGatewaySecretBinding{}, fmt.Errorf("workspace_runtime_gateway_secret_unavailable")
+	}
+	return provider.BindWorkspaceRuntimeGatewaySecret(ctx, input)
+}
+
+func (s *Service) WorkspaceRuntimeGatewaySecret(ctx context.Context, workspaceID string) (WorkspaceRuntimeGatewaySecretBinding, error) {
+	if strings.TrimSpace(workspaceID) == "" {
+		return WorkspaceRuntimeGatewaySecretBinding{}, fmt.Errorf("workspace_runtime_gateway_secret_input_required")
+	}
+	provider, ok := s.provider.(runtimeGatewaySecretProvider)
+	if !ok {
+		return WorkspaceRuntimeGatewaySecretBinding{}, fmt.Errorf("workspace_runtime_gateway_secret_unavailable")
+	}
+	return provider.WorkspaceRuntimeGatewaySecret(ctx, workspaceID)
+}
+
+func (s *Service) ProviderFactsBatch(ctx context.Context, input ProviderFactsBatchInput) (ProviderFactsBatch, error) {
+	result := ProviderFactsBatch{Items: make([]ProviderFact, len(input.Items))}
+	if len(input.Items) == 0 || len(input.Items) > 50 {
+		return ProviderFactsBatch{}, fmt.Errorf("provider_facts_batch_invalid")
+	}
+	var wait sync.WaitGroup
+	for index, item := range input.Items {
+		wait.Add(1)
+		go func(index int, item ProviderFactInput) {
+			defer wait.Done()
+			itemCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			defer cancel()
+			result.Items[index] = s.providerFact(itemCtx, item)
+		}(index, item)
+	}
+	wait.Wait()
+	return result, nil
+}
+
+func (s *Service) providerFact(ctx context.Context, input ProviderFactInput) ProviderFact {
+	result := ProviderFact{AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, ResourceType: input.ResourceType, ResourceID: input.ResourceID}
+	if input.AccountID == "" || input.WorkspaceID == "" || input.ResourceID == "" {
+		result.ErrorCode = "provider_fact_identity_required"
+		return result
+	}
+	s.mu.Lock()
+	compute := s.computes[input.ResourceID]
+	storage := s.volumes[input.ResourceID]
+	attachment := s.attachments[input.ResourceID]
+	attachmentCompute := s.computes[attachment.ComputeID]
+	attachmentStorage := s.volumes[attachment.VolumeID]
+	s.mu.Unlock()
+	var facts ProviderResourceFacts
+	var err error
+	switch input.ResourceType {
+	case "compute":
+		provider, ok := s.provider.(providerFactsReader)
+		if !ok {
+			result.ErrorCode = "provider_facts_unavailable"
+			return result
+		}
+		if compute.ID == "" || compute.AccountID != input.AccountID || compute.WorkspaceID != input.WorkspaceID {
+			result.ErrorCode = "provider_fact_identity_mismatch"
+			return result
+		}
+		compute, err = provider.ReadComputeAllocation(ctx, compute)
+		facts = ProviderResourceFacts{PackageOrSpec: firstNonEmpty(compute.InstanceType, compute.ProviderData["instanceType"]), ProviderID: firstNonEmpty(compute.ProviderResourceID, compute.InstanceID, compute.CVMInstanceID), Zone: firstNonEmpty(compute.Zone, compute.ProviderData["zone"]), Status: firstNonEmpty(compute.CVMStatus, compute.Status), ExpiresAt: compute.Deadline, LastReadAt: s.now().Format(time.RFC3339Nano)}
+	case "storage":
+		provider, ok := s.provider.(providerFactsReader)
+		if !ok {
+			result.ErrorCode = "provider_facts_unavailable"
+			return result
+		}
+		if storage.ID == "" || storage.AccountID != input.AccountID || storage.WorkspaceID != input.WorkspaceID {
+			result.ErrorCode = "provider_fact_identity_mismatch"
+			return result
+		}
+		storage, err = provider.ReadStorageVolume(ctx, storage)
+		facts = ProviderResourceFacts{PackageOrSpec: firstNonEmpty(storage.DiskType, storage.StorageClass), ProviderID: storage.ProviderResourceID, Zone: storage.Zone, Status: firstNonEmpty(storage.CBSStatus, storage.Status), ExpiresAt: storage.Deadline, LastReadAt: s.now().Format(time.RFC3339Nano)}
+	case "attachment":
+		provider, ok := s.provider.(providerFactsReader)
+		if !ok {
+			result.ErrorCode = "provider_facts_unavailable"
+			return result
+		}
+		if attachment.ID == "" || attachment.WorkspaceID != input.WorkspaceID || attachmentCompute.AccountID != input.AccountID || attachmentCompute.WorkspaceID != input.WorkspaceID || attachmentStorage.AccountID != input.AccountID || attachmentStorage.WorkspaceID != input.WorkspaceID {
+			result.ErrorCode = "provider_fact_identity_mismatch"
+			return result
+		}
+		attachment, err = provider.ReadStorageAttachment(ctx, attachment, attachmentCompute, attachmentStorage)
+		facts = ProviderResourceFacts{PackageOrSpec: "/data", ProviderID: attachment.ProviderAttachmentID, Status: attachment.Status, LastReadAt: s.now().Format(time.RFC3339Nano)}
+	case "runtime":
+		var runtime WorkspaceRuntime
+		runtime, err = s.WorkspaceRuntimeStatus(ctx, input.WorkspaceID)
+		if err == nil && (runtime.ID != input.ResourceID || runtime.WorkspaceID != input.WorkspaceID) {
+			result.ErrorCode = "provider_fact_identity_mismatch"
+			return result
+		}
+		facts = ProviderResourceFacts{ProviderID: runtime.ServiceName, Status: runtime.Status, LastReadAt: s.now().Format(time.RFC3339Nano)}
+	default:
+		result.ErrorCode = "provider_fact_resource_type_invalid"
+		return result
+	}
+	if err != nil {
+		result.ErrorCode = errorCode(err)
+		return result
+	}
+	result.Available, result.Facts = true, facts
+	return result
 }
 
 func (s *Service) Readiness(ctx context.Context) (map[string]any, error) {
@@ -1801,7 +1928,7 @@ func validateRuntimeInput(input WorkspaceRuntimeInput, compute ComputeAllocation
 	if !isReadyResourceStatus(compute.Status) || volume.Status != "ready" {
 		return fmt.Errorf("resource_status_invalid")
 	}
-	if strings.TrimSpace(input.GatewaySecretRef) == "" || input.GatewaySecretRef != gatewaySecretName(compute.AccountID) {
+	if strings.TrimSpace(input.GatewaySecretRef) == "" || input.GatewaySecretRef != gatewaySecretName(input.WorkspaceID) {
 		return fmt.Errorf("gateway_secret_ref_mismatch")
 	}
 	return nil

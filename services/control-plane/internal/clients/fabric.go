@@ -30,6 +30,15 @@ type FabricClient interface {
 	ListOperations(ctx context.Context) ([]FabricOperation, error)
 }
 
+type FabricWorkspaceRuntimeGatewaySecretClient interface {
+	BindWorkspaceRuntimeGatewaySecret(context.Context, WorkspaceRuntimeGatewaySecretInput, string) (WorkspaceRuntimeGatewaySecretBinding, error)
+	WorkspaceRuntimeGatewaySecret(context.Context, string) (WorkspaceRuntimeGatewaySecretBinding, error)
+}
+
+type FabricProviderFactsClient interface {
+	ProviderFactsBatch(context.Context, ProviderFactsBatchInput) (ProviderFactsBatch, error)
+}
+
 type FabricRenewalClient interface {
 	RenewComputeAllocation(context.Context, string, string) (ComputeAllocation, error)
 	RenewStorageVolume(context.Context, string, string) (StorageVolume, error)
@@ -206,14 +215,67 @@ type WorkspaceRuntimeInput struct {
 }
 
 type GatewaySecretWriteInput struct {
-	AccountID     string `json:"accountId"`
-	GatewayAPIKey string `json:"gatewayApiKey"`
+	AccountID         string `json:"accountId"`
+	WorkspaceID       string `json:"workspaceId"`
+	WorkspaceAPIKeyID int64  `json:"workspaceApiKeyId"`
+	Fingerprint       string `json:"fingerprint"`
+	GatewayAPIKey     string `json:"gatewayApiKey"`
 }
 
 type GatewaySecretWriteResult struct {
 	SecretRef   string `json:"secretRef"`
 	Version     string `json:"version"`
 	Fingerprint string `json:"fingerprint"`
+}
+
+type WorkspaceRuntimeGatewaySecretInput struct {
+	WorkspaceID       string `json:"workspaceId"`
+	WorkspaceAPIKeyID int64  `json:"workspaceApiKeyId"`
+	SecretRef         string `json:"secretRef"`
+	Fingerprint       string `json:"fingerprint"`
+}
+
+type WorkspaceRuntimeGatewaySecretBinding struct {
+	WorkspaceID       string `json:"workspaceId"`
+	WorkspaceAPIKeyID int64  `json:"workspaceApiKeyId"`
+	SecretRef         string `json:"secretRef"`
+	Fingerprint       string `json:"fingerprint"`
+	Bound             bool   `json:"bound"`
+}
+
+type ProviderFactInput struct {
+	AccountID    string `json:"accountId"`
+	WorkspaceID  string `json:"workspaceId"`
+	ResourceType string `json:"resourceType"`
+	ResourceID   string `json:"resourceId"`
+}
+
+type ProviderFactsBatchInput struct {
+	Items []ProviderFactInput `json:"items"`
+}
+
+type ProviderResourceFacts struct {
+	PackageOrSpec string `json:"packageOrSpec,omitempty"`
+	ProviderID    string `json:"providerId,omitempty"`
+	Zone          string `json:"zone,omitempty"`
+	Status        string `json:"status,omitempty"`
+	CreatedAt     string `json:"createdAt,omitempty"`
+	ExpiresAt     string `json:"expiresAt,omitempty"`
+	LastReadAt    string `json:"lastReadAt,omitempty"`
+}
+
+type ProviderFact struct {
+	AccountID    string                `json:"accountId"`
+	WorkspaceID  string                `json:"workspaceId"`
+	ResourceType string                `json:"resourceType"`
+	ResourceID   string                `json:"resourceId"`
+	Available    bool                  `json:"available"`
+	Facts        ProviderResourceFacts `json:"facts,omitempty"`
+	ErrorCode    string                `json:"errorCode,omitempty"`
+}
+
+type ProviderFactsBatch struct {
+	Items []ProviderFact `json:"items"`
 }
 
 type WorkspaceRuntime struct {
@@ -368,6 +430,24 @@ func (c *fabricHTTPClient) WriteGatewaySecret(ctx context.Context, input Gateway
 		return GatewaySecretWriteResult{}, errors.New("fabric gateway secret response invalid")
 	}
 	return result, nil
+}
+
+func (c *fabricHTTPClient) BindWorkspaceRuntimeGatewaySecret(ctx context.Context, input WorkspaceRuntimeGatewaySecretInput, idempotencyKey string) (WorkspaceRuntimeGatewaySecretBinding, error) {
+	var result WorkspaceRuntimeGatewaySecretBinding
+	err := c.post(ctx, "/fabric/workspace-runtimes/"+url.PathEscape(input.WorkspaceID)+"/gateway-secret", input, idempotencyKey, &result)
+	return result, err
+}
+
+func (c *fabricHTTPClient) WorkspaceRuntimeGatewaySecret(ctx context.Context, workspaceID string) (WorkspaceRuntimeGatewaySecretBinding, error) {
+	var result WorkspaceRuntimeGatewaySecretBinding
+	err := c.get(ctx, "/fabric/workspace-runtimes/"+url.PathEscape(workspaceID)+"/gateway-secret", &result)
+	return result, err
+}
+
+func (c *fabricHTTPClient) ProviderFactsBatch(ctx context.Context, input ProviderFactsBatchInput) (ProviderFactsBatch, error) {
+	var result ProviderFactsBatch
+	err := c.post(ctx, "/fabric/provider-facts/batch", input, "", &result)
+	return result, err
 }
 
 func (c *fabricHTTPClient) CreateWorkspaceRuntime(ctx context.Context, input WorkspaceRuntimeInput, idempotencyKey string) (WorkspaceRuntime, error) {

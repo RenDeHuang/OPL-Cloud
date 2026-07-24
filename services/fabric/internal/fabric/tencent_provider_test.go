@@ -915,7 +915,7 @@ func TestTencentProviderWritesAccountGatewaySecretWithoutReturningRawKey(t *test
 		}
 	}
 
-	secret, err := provider.UpsertGatewaySecret(context.Background(), GatewaySecretInput{AccountID: "acct-alpha", GatewayAPIKey: "raw-gateway-key", IdempotencyKey: "gateway-once"})
+	secret, err := provider.UpsertGatewaySecret(context.Background(), GatewaySecretInput{AccountID: "acct-alpha", WorkspaceID: "ws-alpha", WorkspaceAPIKeyID: 19, Fingerprint: "sha256:12982dcaf26b60cde5b6b68b01556e591badb2768ac9b71525619cb4ebc646f0", GatewayAPIKey: "raw-gateway-key", IdempotencyKey: "gateway-once"})
 
 	if err != nil || secret.SecretRef == "" || secret.Version == "" || !strings.HasPrefix(secret.Fingerprint, "sha256:") {
 		t.Fatalf("gateway secret=%#v err=%v", secret, err)
@@ -930,11 +930,11 @@ func TestTencentProviderWritesAccountGatewaySecretWithoutReturningRawKey(t *test
 	if manifest["kind"] != "Secret" || nested(manifest, "metadata", "name") != secret.SecretRef || nested(manifest, "stringData", "opl_gateway_api_key") != "raw-gateway-key" {
 		t.Fatalf("account Gateway Secret manifest = %#v", manifest)
 	}
-	replayed, err := provider.UpsertGatewaySecret(context.Background(), GatewaySecretInput{AccountID: "acct-alpha", GatewayAPIKey: "raw-gateway-key", IdempotencyKey: "gateway-once"})
+	replayed, err := provider.UpsertGatewaySecret(context.Background(), GatewaySecretInput{AccountID: "acct-alpha", WorkspaceID: "ws-alpha", WorkspaceAPIKeyID: 19, Fingerprint: "sha256:12982dcaf26b60cde5b6b68b01556e591badb2768ac9b71525619cb4ebc646f0", GatewayAPIKey: "raw-gateway-key", IdempotencyKey: "gateway-once"})
 	if err != nil || replayed != secret {
 		t.Fatalf("replayed Gateway Secret=%#v original=%#v err=%v", replayed, secret, err)
 	}
-	rotated, err := provider.UpsertGatewaySecret(context.Background(), GatewaySecretInput{AccountID: "acct-alpha", GatewayAPIKey: "rotated-gateway-key", IdempotencyKey: "gateway-rotate"})
+	rotated, err := provider.UpsertGatewaySecret(context.Background(), GatewaySecretInput{AccountID: "acct-alpha", WorkspaceID: "ws-alpha", WorkspaceAPIKeyID: 20, Fingerprint: "sha256:46b91e2f7bc95555effd550e0dd92346b5a4548d9f644a18b11602c5f1c07c68", GatewayAPIKey: "rotated-gateway-key", IdempotencyKey: "gateway-rotate"})
 	if err != nil || rotated.SecretRef != secret.SecretRef || rotated.Version == secret.Version || rotated.Fingerprint == secret.Fingerprint {
 		t.Fatalf("rotated Gateway Secret=%#v original=%#v err=%v", rotated, secret, err)
 	}
@@ -987,7 +987,7 @@ func TestTencentProviderGatewaySecretReadbackFailsClosed(t *testing.T) {
 				return json.Marshal(secret)
 			}
 
-			_, err := provider.UpsertGatewaySecret(context.Background(), GatewaySecretInput{AccountID: "acct-alpha", GatewayAPIKey: "raw-gateway-key", IdempotencyKey: "gateway-once"})
+			_, err := provider.UpsertGatewaySecret(context.Background(), GatewaySecretInput{AccountID: "acct-alpha", WorkspaceID: "ws-alpha", WorkspaceAPIKeyID: 19, Fingerprint: "sha256:12982dcaf26b60cde5b6b68b01556e591badb2768ac9b71525619cb4ebc646f0", GatewayAPIKey: "raw-gateway-key", IdempotencyKey: "gateway-once"})
 			if err == nil || strings.Contains(err.Error(), "raw-gateway-key") || strings.Contains(err.Error(), "different-secret") {
 				t.Fatalf("Gateway Secret readback must fail closed without leaking secrets: %v", err)
 			}

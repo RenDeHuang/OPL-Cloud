@@ -345,7 +345,7 @@ func (app *controlPlaneServer) claimWorkspaceKeyRotation(ctx context.Context, op
 	}
 	operation := workspaceKeyRotationOperation{
 		RequestHash: requestHash, Phase: "replacement_check", OldKeyID: oldKeyID,
-		ReplacementName: "opl-workspace-replacement-" + stableID(operationID)[:12],
+		ReplacementName: workspaceReservedKeyName(workspaceID),
 		RetiredName:     "opl-workspace-retired-" + stableID(operationID)[:12],
 	}
 	if err := app.persistWorkspaceKeyRotation(ctx, operationID, accountID, workspaceID, "started", operation); err != nil {
@@ -492,11 +492,46 @@ func (app *controlPlaneServer) runWorkspaceKeyRotation(r *http.Request, service 
 				return operation, err
 			}
 		case "secret_write":
-			secret, err := service.SyncWorkspaceGatewayReplacementSecret(ctx, credential, accountID, userID, operation.NewKeyID, operation.ReplacementName, operationID)
+			secret, err := service.SyncWorkspaceGatewayReplacementSecret(ctx, credential, accountID, workspaceID, userID, operation.NewKeyID, operation.ReplacementName, operationID)
 			if err != nil {
 				return operation, err
 			}
-			operation.SecretRef, operation.Fingerprint, operation.Phase = secret.SecretRef, secret.Fingerprint, "retire_old"
+			operation.SecretRef, operation.Fingerprint, operation.Phase = secret.SecretRef, secret.Fingerprint, "runtime_bind"
+			if err := app.persistWorkspaceKeyRotation(ctx, operationID, accountID, workspaceID, "started", operation); err != nil {
+				return operation, err
+			}
+		case "runtime_bind":
+			binding, err := service.BindWorkspaceRuntimeGatewaySecret(ctx, clients.WorkspaceRuntimeGatewaySecretInput{
+				WorkspaceID: workspaceID, WorkspaceAPIKeyID: operation.NewKeyID,
+				SecretRef: operation.SecretRef, Fingerprint: operation.Fingerprint,
+			}, operationID+":runtime-bind")
+			if err != nil {
+				return operation, err
+			}
+			if !workspaceRuntimeGatewaySecretMatches(binding, operation, workspaceID) {
+				return operation, errWorkspaceKeyRotationConflict
+			}
+			operation.Phase = "runtime_readback"
+			if err := app.persistWorkspaceKeyRotation(ctx, operationID, accountID, workspaceID, "started", operation); err != nil {
+				return operation, err
+			}
+		case "runtime_readback":
+			binding, err := service.WorkspaceRuntimeGatewaySecret(ctx, workspaceID)
+			if err != nil {
+				return operation, err
+			}
+			if !workspaceRuntimeGatewaySecretMatches(binding, operation, workspaceID) {
+				return operation, errWorkspaceKeyRotationConflict
+			}
+			operation.Phase = "workspace_commit"
+			if err := app.persistWorkspaceKeyRotation(ctx, operationID, accountID, workspaceID, "started", operation); err != nil {
+				return operation, err
+			}
+		case "workspace_commit":
+			if err := app.tables.CompareAndSwapWorkspaceAPIKey(ctx, workspaceID, operation.OldKeyID, operation.NewKeyID); err != nil {
+				return operation, err
+			}
+			operation.Phase = "retire_old"
 			if err := app.persistWorkspaceKeyRotation(ctx, operationID, accountID, workspaceID, "started", operation); err != nil {
 				return operation, err
 			}
@@ -521,55 +556,7 @@ func (app *controlPlaneServer) runWorkspaceKeyRotation(r *http.Request, service 
 					return operation, errWorkspaceKeyRotationConflict
 				}
 			}
-			operation.Phase = "promote_replacement"
-			if err := app.persistWorkspaceKeyRotation(ctx, operationID, accountID, workspaceID, "started", operation); err != nil {
-				return operation, err
-			}
-		case "promote_replacement":
-			newKey, err := service.GatewayUserKey(ctx, credential, userID, operation.NewKeyID)
-			if err != nil {
-				return operation, err
-			}
-			if newKey.Name != "opl-workspace" || newKey.Status != "active" {
-				if newKey.Name != operation.ReplacementName || newKey.Status != "active" {
-					return operation, errWorkspaceKeyRotationConflict
-				}
-				enabled, reservedName := true, "opl-workspace"
-				if _, err := service.UpdateGatewayUserKey(ctx, credential, userID, operation.NewKeyID, clients.Sub2APIUpdateKeyInput{Name: &reservedName, Enabled: &enabled}); err != nil {
-					return operation, err
-				}
-				readback, err := service.GatewayUserKey(ctx, credential, userID, operation.NewKeyID)
-				if err != nil {
-					return operation, err
-				}
-				if readback.Name != "opl-workspace" || readback.Status != "active" {
-					return operation, errWorkspaceKeyRotationConflict
-				}
-			}
-			operation.Phase = "workspace_commit"
-			if err := app.persistWorkspaceKeyRotation(ctx, operationID, accountID, workspaceID, "started", operation); err != nil {
-				return operation, err
-			}
-		case "workspace_commit":
-			if err := app.tables.CompareAndSwapWorkspaceAPIKey(ctx, workspaceID, operation.OldKeyID, operation.NewKeyID); err != nil {
-				return operation, err
-			}
-			operation.Phase = "runtime_apply"
-			if err := app.persistWorkspaceKeyRotation(ctx, operationID, accountID, workspaceID, "started", operation); err != nil {
-				return operation, err
-			}
-		case "runtime_apply":
-			workspace, ok := app.getWorkspace(workspaceID)
-			if !ok || firstNonEmpty(stringValue(workspace["accountId"]), stringValue(workspace["ownerAccountId"])) != accountID || int64(numberField(workspace, "workspaceApiKeyId", 0)) != operation.NewKeyID {
-				return operation, errWorkspaceKeyRotationConflict
-			}
-			runtime, err := service.ReapplyWorkspaceRuntime(ctx, workspaceID,
-				firstNonEmpty(stringValue(workspace["currentComputeAllocationId"]), stringValue(workspace["computeAllocationId"])),
-				stringValue(workspace["storageId"]), operation.SecretRef, operationID)
-			if err != nil {
-				return operation, err
-			}
-			operation.RuntimeID, operation.Phase = runtime.ID, "delete_old"
+			operation.Phase = "delete_old"
 			if err := app.persistWorkspaceKeyRotation(ctx, operationID, accountID, workspaceID, "started", operation); err != nil {
 				return operation, err
 			}
@@ -611,7 +598,7 @@ func (app *controlPlaneServer) runWorkspaceKeyRotation(r *http.Request, service 
 				return operation, err
 			}
 		case "complete":
-			if !app.workspaceKeyRotationConverged(ctx, service, credential, userID, workspaceID, operation.NewKeyID) {
+			if !app.workspaceKeyRotationConverged(ctx, service, credential, userID, workspaceID, operation) {
 				return operation, errWorkspaceKeyRotationConflict
 			}
 			return operation, nil
@@ -620,6 +607,15 @@ func (app *controlPlaneServer) runWorkspaceKeyRotation(r *http.Request, service 
 		}
 	}
 	return operation, errWorkspaceKeyRotationState
+}
+
+func workspaceReservedKeyName(workspaceID string) string {
+	return "opl-workspace-" + stableID(workspaceID)[:12]
+}
+
+func workspaceRuntimeGatewaySecretMatches(binding clients.WorkspaceRuntimeGatewaySecretBinding, operation workspaceKeyRotationOperation, workspaceID string) bool {
+	return binding.Bound && binding.WorkspaceID == workspaceID && binding.WorkspaceAPIKeyID == operation.NewKeyID &&
+		binding.SecretRef == operation.SecretRef && binding.Fingerprint == operation.Fingerprint
 }
 
 func workspaceRotationKeys(ctx context.Context, service *controlplane.Service, credential clients.SessionDelegatedCredential, userID int64) ([]clients.Sub2APIWorkspaceKey, error) {
@@ -661,7 +657,7 @@ func workspaceKeysNamed(keys []clients.Sub2APIWorkspaceKey, name string) []clien
 	return matches
 }
 
-func (app *controlPlaneServer) workspaceKeyRotationConverged(ctx context.Context, service *controlplane.Service, credential clients.SessionDelegatedCredential, userID int64, workspaceID string, keyID int64) bool {
+func (app *controlPlaneServer) workspaceKeyRotationConverged(ctx context.Context, service *controlplane.Service, credential clients.SessionDelegatedCredential, userID int64, workspaceID string, operation workspaceKeyRotationOperation) bool {
 	keys, err := workspaceRotationKeys(ctx, service, credential, userID)
 	if err != nil {
 		return false
@@ -673,7 +669,10 @@ func (app *controlPlaneServer) workspaceKeyRotationConverged(ctx context.Context
 		}
 	}
 	workspace, ok := app.getWorkspace(workspaceID)
-	return ok && len(reserved) == 1 && reserved[0].ID == keyID && reserved[0].Name == "opl-workspace" && reserved[0].Status == "active" && int64(numberField(workspace, "workspaceApiKeyId", 0)) == keyID
+	binding, bindErr := service.WorkspaceRuntimeGatewaySecret(ctx, workspaceID)
+	return ok && bindErr == nil && len(reserved) == 1 && reserved[0].ID == operation.NewKeyID && reserved[0].Name == workspaceReservedKeyName(workspaceID) &&
+		reserved[0].Status == "active" && int64(numberField(workspace, "workspaceApiKeyId", 0)) == operation.NewKeyID &&
+		workspaceRuntimeGatewaySecretMatches(binding, operation, workspaceID)
 }
 
 func (app *controlPlaneServer) proxyWorkspace(w http.ResponseWriter, r *http.Request) {

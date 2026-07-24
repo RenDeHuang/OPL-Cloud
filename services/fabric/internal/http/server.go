@@ -66,6 +66,19 @@ func NewServer(service *fabric.Service, token string) http.Handler {
 		}
 		writeJSON(w, http.StatusOK, result)
 	})
+	mux.HandleFunc("POST /fabric/provider-facts/batch", func(w http.ResponseWriter, r *http.Request) {
+		var input fabric.ProviderFactsBatchInput
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid JSON body")
+			return
+		}
+		result, err := service.ProviderFactsBatch(r.Context(), input)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, result)
+	})
 	mux.HandleFunc("GET /fabric/operations", func(w http.ResponseWriter, r *http.Request) {
 		operations, err := service.ListOperations(r.Context())
 		if err != nil {
@@ -329,6 +342,22 @@ func NewServer(service *fabric.Service, token string) http.Handler {
 	mux.HandleFunc("GET /fabric/workspace-runtimes/{workspaceId}/status", func(w http.ResponseWriter, r *http.Request) {
 		runtime, err := service.WorkspaceRuntimeStatus(r.Context(), strings.TrimSpace(r.PathValue("workspaceId")))
 		writeResult(w, runtime, err)
+	})
+	mux.HandleFunc("POST /fabric/workspace-runtimes/{workspaceId}/gateway-secret", func(w http.ResponseWriter, r *http.Request) {
+		var input fabric.WorkspaceRuntimeGatewaySecretInput
+		if !decodeWrite(w, r, &input.IdempotencyKey, &input) {
+			return
+		}
+		if input.WorkspaceID != strings.TrimSpace(r.PathValue("workspaceId")) {
+			writeError(w, http.StatusBadRequest, "workspace_runtime_gateway_secret_input_required")
+			return
+		}
+		binding, err := service.BindWorkspaceRuntimeGatewaySecret(r.Context(), input)
+		writeResult(w, binding, err)
+	})
+	mux.HandleFunc("GET /fabric/workspace-runtimes/{workspaceId}/gateway-secret", func(w http.ResponseWriter, r *http.Request) {
+		binding, err := service.WorkspaceRuntimeGatewaySecret(r.Context(), strings.TrimSpace(r.PathValue("workspaceId")))
+		writeResult(w, binding, err)
 	})
 	mux.HandleFunc("POST /fabric/gateway-secrets", func(w http.ResponseWriter, r *http.Request) {
 		var input fabric.GatewaySecretInput

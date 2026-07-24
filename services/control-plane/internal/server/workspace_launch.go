@@ -361,7 +361,7 @@ func (app *controlPlaneServer) fulfillWorkspaceLaunch(ctx context.Context, servi
 			if err != nil {
 				return app.retryWorkspaceLaunchFulfillment(ctx, operation, "workspace_launch_account_mapping_unavailable", err)
 			}
-			secret, err := service.SyncWorkspaceGatewaySecretByID(ctx, operation.AccountID, userID, operation.WorkspaceAPIKeyID, operation.WorkspaceOperationID+":secret")
+			secret, err := service.SyncWorkspaceGatewaySecretByID(ctx, operation.AccountID, operation.WorkspaceID, userID, operation.WorkspaceAPIKeyID, operation.WorkspaceOperationID+":secret")
 			if err != nil {
 				return app.retryWorkspaceLaunchFulfillment(ctx, operation, "workspace_launch_secret_retryable", err)
 			}

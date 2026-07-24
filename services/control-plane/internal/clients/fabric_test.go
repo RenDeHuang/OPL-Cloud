@@ -45,7 +45,10 @@ func TestFabricHTTPClientGatewaySecretErrorDoesNotLeakKey(t *testing.T) {
 	defer upstream.Close()
 
 	client := NewFabricHTTPClient(upstream.URL, "internal-secret", upstream.Client())
-	_, err := client.WriteGatewaySecret(context.Background(), GatewaySecretWriteInput{AccountID: "acct-alpha", GatewayAPIKey: secret}, "workspace-once:gateway-secret")
+	_, err := client.WriteGatewaySecret(context.Background(), GatewaySecretWriteInput{
+		AccountID: "acct-alpha", WorkspaceID: "ws-alpha", WorkspaceAPIKeyID: 19,
+		Fingerprint: "sha256:20ad99c323ffc5eeac19c3a9b148f5911acb6b12826eaa089e09204e15ead7d5", GatewayAPIKey: secret,
+	}, "workspace-once:gateway-secret")
 	if err == nil || strings.Contains(err.Error(), secret) {
 		t.Fatalf("gateway secret error = %v", err)
 	}

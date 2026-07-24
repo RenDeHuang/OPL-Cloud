@@ -144,12 +144,13 @@ func registerWorkspaceRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 			return
 		}
 		accountID := firstNonEmpty(stringValue(workspace["accountId"]), stringValue(workspace["ownerAccountId"]))
-		sub2APIUserID, ok := app.mappedSub2APIUserID(w, r, accountID)
-		if !ok {
+		gatewaySecretRef, err := app.currentWorkspaceGatewaySecretRef(r.Context(), workspace)
+		if err != nil {
+			writeError(w, http.StatusConflict, "workspace_gateway_secret_ref_unavailable")
 			return
 		}
 		runtime, receipt, err := service.RotateWorkspaceCredential(r.Context(), controlplane.RotateWorkspaceCredentialInput{
-			WorkspaceID: workspaceID, AccountID: accountID, Sub2APIUserID: sub2APIUserID,
+			WorkspaceID: workspaceID, AccountID: accountID, GatewaySecretRef: gatewaySecretRef,
 			OwnerID:   firstNonEmpty(stringValue(workspace["ownerUserId"]), stringValue(workspace["ownerId"])),
 			ComputeID: firstNonEmpty(stringValue(workspace["currentComputeAllocationId"]), stringValue(workspace["computeAllocationId"])),
 			VolumeID:  stringValue(workspace["storageId"]),
@@ -264,6 +265,44 @@ func registerWorkspaceRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 		}
 		writeError(w, http.StatusConflict, errWorkspaceRenewalCASConflict.Error())
 	}))
+}
+
+func (app *controlPlaneServer) currentWorkspaceGatewaySecretRef(ctx context.Context, workspace map[string]any) (string, error) {
+	workspaceID := stringValue(workspace["id"])
+	accountID := firstNonEmpty(stringValue(workspace["accountId"]), stringValue(workspace["ownerAccountId"]))
+	keyID, ok := positiveIntegerField(workspace, "workspaceApiKeyId")
+	if workspaceID == "" || accountID == "" || !ok {
+		return "", errors.New("workspace_gateway_secret_ref_unavailable")
+	}
+	rows, err := app.tables.ListRuntimeOperations(ctx)
+	if err != nil {
+		return "", err
+	}
+	for _, row := range rows {
+		if stringValue(row["workspaceId"]) != workspaceID || stringValue(row["accountId"]) != accountID || stringValue(row["action"]) != "workspace.gateway_key.rotate" {
+			continue
+		}
+		operation, decodeErr := decodeWorkspaceKeyRotation(row)
+		if decodeErr != nil {
+			return "", decodeErr
+		}
+		if stringValue(row["status"]) != "succeeded" || operation.Phase != "complete" {
+			return "", errWorkspaceKeyRotationInProgress
+		}
+		if operation.NewKeyID == keyID && operation.SecretRef != "" {
+			return operation.SecretRef, nil
+		}
+	}
+	for _, row := range rows {
+		if stringValue(row["workspaceId"]) != workspaceID || stringValue(row["accountId"]) != accountID || stringValue(row["action"]) != workspaceLaunchAction {
+			continue
+		}
+		operation, decodeErr := decodeWorkspaceLaunchOperation(row)
+		if decodeErr == nil && operation.Status == "succeeded" && operation.WorkspaceAPIKeyID == keyID && operation.GatewaySecretRef != "" {
+			return operation.GatewaySecretRef, nil
+		}
+	}
+	return "", errors.New("workspace_gateway_secret_ref_unavailable")
 }
 
 func (app *controlPlaneServer) workspaceForSource(ctx context.Context, accountID, workspaceID string) (map[string]any, bool, error) {
