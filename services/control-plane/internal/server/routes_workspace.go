@@ -14,18 +14,22 @@ import (
 
 func registerWorkspaceRoutes(mux *http.ServeMux, app *controlPlaneServer, service *controlplane.Service) {
 	mux.HandleFunc("GET /api/workspaces", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
+		page, pageSize, ok := operatorPagination(w, r)
+		if !ok {
+			return
+		}
 		user, ok := app.sessionUserContext(r)
 		if !ok {
 			writeError(w, http.StatusUnauthorized, "not_authenticated")
 			return
 		}
-		rows, err := app.tables.ListWorkspaces(r.Context(), stringValue(user["accountId"]))
+		workspacePage, err := app.tables.PageWorkspaces(r.Context(), stringValue(user["accountId"]), tablePageQuery{Offset: (page - 1) * pageSize, Limit: pageSize})
 		if err != nil {
 			writeSourceEnvelope(w, http.StatusInternalServerError, "control-plane", "unavailable", nil)
 			return
 		}
-		items := make([]any, 0, len(rows))
-		for _, row := range rows {
+		items := make([]any, 0, len(workspacePage.Items))
+		for _, row := range workspacePage.Items {
 			item, ok := workspaceSourceProjection(row)
 			if !ok {
 				writeSourceEnvelope(w, http.StatusInternalServerError, "control-plane", "unavailable", nil)
@@ -37,7 +41,7 @@ func registerWorkspaceRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 		if len(items) == 0 {
 			status = "empty"
 		}
-		writeSourceEnvelope(w, http.StatusOK, "control-plane", status, map[string]any{"items": items, "total": len(items)})
+		writeSourceEnvelope(w, http.StatusOK, "control-plane", status, map[string]any{"items": items, "total": workspacePage.Total, "page": page, "pageSize": pageSize})
 	}))
 	mux.HandleFunc("GET /api/workspaces/{workspaceId}/runtime-status", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
 		workspaceID := strings.TrimSpace(r.PathValue("workspaceId"))
@@ -144,12 +148,13 @@ func registerWorkspaceRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 			return
 		}
 		accountID := firstNonEmpty(stringValue(workspace["accountId"]), stringValue(workspace["ownerAccountId"]))
-		sub2APIUserID, ok := app.mappedSub2APIUserID(w, r, accountID)
-		if !ok {
+		gatewaySecretRef, err := app.currentWorkspaceGatewaySecretRef(r.Context(), workspace)
+		if err != nil {
+			writeError(w, http.StatusConflict, "workspace_gateway_secret_ref_unavailable")
 			return
 		}
 		runtime, receipt, err := service.RotateWorkspaceCredential(r.Context(), controlplane.RotateWorkspaceCredentialInput{
-			WorkspaceID: workspaceID, AccountID: accountID, Sub2APIUserID: sub2APIUserID,
+			WorkspaceID: workspaceID, AccountID: accountID, GatewaySecretRef: gatewaySecretRef,
 			OwnerID:   firstNonEmpty(stringValue(workspace["ownerUserId"]), stringValue(workspace["ownerId"])),
 			ComputeID: firstNonEmpty(stringValue(workspace["currentComputeAllocationId"]), stringValue(workspace["computeAllocationId"])),
 			VolumeID:  stringValue(workspace["storageId"]),
@@ -266,13 +271,53 @@ func registerWorkspaceRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 	}))
 }
 
+func (app *controlPlaneServer) currentWorkspaceGatewaySecretRef(ctx context.Context, workspace map[string]any) (string, error) {
+	workspaceID := stringValue(workspace["id"])
+	accountID := firstNonEmpty(stringValue(workspace["accountId"]), stringValue(workspace["ownerAccountId"]))
+	keyID, ok := positiveIntegerField(workspace, "workspaceApiKeyId")
+	if workspaceID == "" || accountID == "" || !ok {
+		return "", errors.New("workspace_gateway_secret_ref_unavailable")
+	}
+	rows, err := app.tables.ListRuntimeOperations(ctx)
+	if err != nil {
+		return "", err
+	}
+	for _, row := range rows {
+		if stringValue(row["workspaceId"]) != workspaceID || stringValue(row["accountId"]) != accountID || stringValue(row["action"]) != "workspace.gateway_key.rotate" {
+			continue
+		}
+		operation, decodeErr := decodeWorkspaceKeyRotation(row)
+		if decodeErr != nil {
+			return "", decodeErr
+		}
+		if stringValue(row["status"]) != "succeeded" || operation.Phase != "complete" {
+			return "", errWorkspaceKeyRotationInProgress
+		}
+		if operation.NewKeyID == keyID && operation.SecretRef != "" {
+			return operation.SecretRef, nil
+		}
+	}
+	for _, row := range rows {
+		if stringValue(row["workspaceId"]) != workspaceID || stringValue(row["accountId"]) != accountID || stringValue(row["action"]) != workspaceLaunchAction {
+			continue
+		}
+		operation, decodeErr := decodeWorkspaceLaunchOperation(row)
+		if decodeErr == nil && operation.Status == "succeeded" && operation.WorkspaceAPIKeyID == keyID && operation.GatewaySecretRef != "" {
+			return operation.GatewaySecretRef, nil
+		}
+	}
+	return "", errors.New("workspace_gateway_secret_ref_unavailable")
+}
+
 func (app *controlPlaneServer) workspaceForSource(ctx context.Context, accountID, workspaceID string) (map[string]any, bool, error) {
-	rows, err := app.tables.ListWorkspaces(ctx, accountID)
+	workspace, ok, err := app.tables.GetWorkspace(ctx, workspaceID)
 	if err != nil {
 		return nil, false, err
 	}
-	workspace := findRecord(rows, workspaceID)
-	return workspace, workspace != nil, nil
+	if !ok || firstNonEmpty(stringValue(workspace["accountId"]), stringValue(workspace["ownerAccountId"])) != accountID {
+		return nil, false, nil
+	}
+	return workspace, true, nil
 }
 
 func workspaceSourceProjection(row map[string]any) (map[string]any, bool) {

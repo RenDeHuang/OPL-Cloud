@@ -35,8 +35,10 @@ The first cohort is 2-5 manually invited customer accounts. One Console User
 maps to one OPL Account and one Sub2API User/Wallet. Console and Sub2API emails
 must match after `lower(trim(email))`. Operators pre-fund the Sub2API wallet;
 there is no public registration or payment/order UI. Owners may manage general
-Keys through Control Plane using a Session-bound delegated credential; Workspace
-launch converges one reserved `opl-workspace` Key.
+Keys through Control Plane using a Session-bound delegated credential. Each
+Workspace launch converges its own reserved Key and Kubernetes Secret from a
+stable `workspaceId` identity; the legacy `opl-workspace` Key remains bound only
+to its existing Workspace.
 
 Customer prices are fixed monthly USD facts. The browser displays server DTOs
 and never converts provider costs or derives totals.
@@ -80,14 +82,16 @@ Workspace URLs use:
 https://workspace.medopl.cn/w/<workspaceId>/
 ```
 
-Opening a Workspace requires the Runtime password. One account owns exactly one
-primary Workspace. A second Workspace creation returns 409. Backup, recovery,
-sync, transfer, and collaboration flows are not Pilot capabilities.
+Opening a Workspace requires the Runtime password. One Account/Wallet may own
+multiple independent Workspaces; each idempotency identity replays one Workspace,
+while a new identity creates another Workspace with independent resources,
+Workspace Key, Secret, period, and Receipt. Backup, recovery, sync, transfer,
+and collaboration flows are not Pilot capabilities.
 
-Workspace file bodies stay on CBS and never enter OPL PostgreSQL or Ledger. CBS
-survives ordinary Pod/CVM replacement, but OPL provides no Workspace backup or
-recovery guarantee for deletion or corruption. Ordinary expiry, release, QA,
-and rollback never delete CBS.
+Workspace file bodies stay on CBS and never enter OPL PostgreSQL or Ledger. OPL
+provides no Workspace backup or recovery guarantee for provider expiry, deletion,
+or corruption. Unpaid expiry denies access and writes evidence only; it performs
+no Fabric or Tencent stop, renew, destroy, or delete mutation.
 
 `autoRenew` defaults off. The current API rejects enabling it, and Console must
 not expose an enable control until a real renewal is proven.

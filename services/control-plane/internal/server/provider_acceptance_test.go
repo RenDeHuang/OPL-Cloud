@@ -154,10 +154,10 @@ func (f *providerAcceptanceFabric) WriteGatewaySecret(_ context.Context, input c
 	defer f.mu.Unlock()
 	f.secretWrites++
 	f.mutationKeys = append(f.mutationKeys, key)
-	if input.AccountID == "" || input.GatewayAPIKey != "workspace-key-secret" {
+	if input.AccountID == "" || input.WorkspaceID == "" || input.WorkspaceAPIKeyID != 9 || input.GatewayAPIKey != "workspace-key-secret" || input.Fingerprint != "sha256:20ad99c323ffc5eeac19c3a9b148f5911acb6b12826eaa089e09204e15ead7d5" {
 		return clients.GatewaySecretWriteResult{}, errors.New("unexpected gateway secret input")
 	}
-	return clients.GatewaySecretWriteResult{SecretRef: "opl-gateway-verification-slot-01", Version: "v1", Fingerprint: "sha256:slot-fingerprint"}, nil
+	return clients.GatewaySecretWriteResult{SecretRef: "opl-gateway-verification-slot-01", Version: "v1", Fingerprint: input.Fingerprint}, nil
 }
 
 func (f *providerAcceptanceFabric) CreateWorkspaceRuntime(_ context.Context, input clients.WorkspaceRuntimeInput, key string) (clients.WorkspaceRuntime, error) {

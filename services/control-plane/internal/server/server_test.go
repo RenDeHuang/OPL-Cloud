@@ -1214,7 +1214,7 @@ func (f *fakeFabricClient) WriteGatewaySecret(_ context.Context, input clients.G
 	if f.gatewaySecret.SecretRef != "" {
 		return f.gatewaySecret, nil
 	}
-	return clients.GatewaySecretWriteResult{SecretRef: "opl-gateway-acct-alpha", Version: "v1", Fingerprint: "sha256:redacted"}, nil
+	return clients.GatewaySecretWriteResult{SecretRef: "opl-gateway-" + input.WorkspaceID, Version: "v1", Fingerprint: input.Fingerprint}, nil
 }
 
 func (f *fakeFabricClient) CreateWorkspaceRuntime(_ context.Context, input clients.WorkspaceRuntimeInput, _ string) (clients.WorkspaceRuntime, error) {

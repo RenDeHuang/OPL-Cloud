@@ -29,7 +29,7 @@ const ownerSeed = JSON.stringify([{
   sub2apiUserId: 41
 }]);
 const mutationApprovalJson = JSON.stringify({
-  approvalId: "approval-pilot-v2",
+  approvalId: "approval-production-verification",
   expiresAt: "2099-07-19T00:00:00Z",
   accountIds: [BASIC_ACCOUNT_ID],
   workspaceIds: ["workspace-slot-1"],
@@ -125,6 +125,58 @@ function browserFactory(state, { frames = true, responseSuffix = "" } = {}) {
     };
     return { newContext: async () => context, close: async () => {} };
   };
+}
+
+function readOnlyBrowserFactory(viewports) {
+  return async () => ({
+    newContext: async ({ viewport }) => {
+      viewports.push(viewport);
+      return {
+        newPage: async () => ({
+          goto: async () => ({ ok: () => true, status: () => 200 }),
+          locator: () => ({ innerText: async () => "OPL Cloud Console" })
+        }),
+        close: async () => {}
+      };
+    },
+    close: async () => {}
+  });
+}
+
+function readOnlyFixture({ healthStatus = 200 } = {}) {
+  const calls = [];
+  const viewports = [];
+  const fetchImpl = async (input, init = {}) => {
+    const url = new URL(String(input));
+    const method = init.method || "GET";
+    calls.push({ method, path: url.pathname });
+    if (url.pathname === "/api/healthz") return json({ status: "ok" }, healthStatus);
+    if (url.pathname === "/api/production/readiness") return json({ ready: true, cloudImagesReady: true, workspaceImagesReady: true, immutableImagesReady: true });
+    if (url.pathname === "/api/auth/login") {
+      return json({ user: { accountId: BASIC_ACCOUNT_ID, role: "owner" } }, 200, {
+        "set-cookie": "opl_session=session-read-only; Path=/; HttpOnly",
+        "x-opl-csrf-token": "csrf-read-only"
+      });
+    }
+    if (["/api/projects", "/api/execution-requests", "/api/workspaces/retired/resume"].includes(url.pathname)) {
+      return json({ error: "not_found" }, 404, { "content-security-policy": "default-src 'self'" });
+    }
+    const headers = new Headers(init.headers);
+    assert.match(headers.get("cookie") || "", /opl_session=session-read-only/);
+    if (url.pathname === "/api/gateway/endpoint") return source({ baseUrl: "https://gflabtoken.cn/v1" });
+    if (url.pathname === "/api/gateway/wallet") return source({ userId: "41", currency: "USD", usdMicros: 500_000_000, status: "active" });
+    if (url.pathname === "/api/workspaces") {
+      return source({ items: [{ id: "workspace-current", runtimeUrl: "https://workspace.medopl.cn/w/workspace-current/" }], total: 1, page: 1, pageSize: 20 }, "control-plane");
+    }
+    if (url.pathname === "/api/workspaces/workspace-current/runtime-status") {
+      return source({ workspaceId: "workspace-current", ready: true, url: "https://workspace.medopl.cn/w/workspace-current/" }, "fabric");
+    }
+    if (url.pathname === "/api/billing/receipts") {
+      return source({ receipts: [], nextCursor: "", hasMore: false }, "ledger", "empty");
+    }
+    return json({ error: "not_found" }, 404);
+  };
+  return { calls, viewports, fetchImpl, browserFactory: readOnlyBrowserFactory(viewports) };
 }
 
 function liveFixture({
@@ -336,7 +388,7 @@ function options(fixture) {
     modelTimeoutMs: 20,
     expectedModel: "gpt-5.5",
     mutationApprovalJson,
-    mutationApprovalId: "approval-pilot-v2",
+    mutationApprovalId: "approval-production-verification",
     browserFactory: fixture.browserFactory,
     fetchImpl: fixture.fetchImpl
   };
@@ -504,7 +556,7 @@ test("rollout QA CLI requires explicit one-request confirmation before network a
   let stderr = "";
   let calls = 0;
   const code = await runProductionLiveQaCli({
-    argv: ["--allow-gateway-write", "--allow-model-write", "--approval-id", "approval-pilot-v2"],
+    argv: ["--allow-gateway-write", "--allow-model-write", "--approval-id", "approval-production-verification"],
     env: {
       OPL_VERIFY_ACCOUNT_ID: BASIC_ACCOUNT_ID,
       OPL_VERIFY_MUTATION_APPROVAL_JSON: mutationApprovalJson
@@ -522,7 +574,7 @@ test("rollout QA CLI rejects an invalid slot descriptor before network access", 
   let stderr = "";
   let calls = 0;
   const code = await runProductionLiveQaCli({
-    argv: ["--allow-gateway-write", "--allow-model-write", "--approval-id", "approval-pilot-v2"],
+    argv: ["--allow-gateway-write", "--allow-model-write", "--approval-id", "approval-production-verification"],
     env: {
       OPL_CONSOLE_ORIGIN: "https://cloud.medopl.cn",
       OPL_VERIFY_AUTH_USERS_JSON: ownerSeed,
@@ -544,26 +596,55 @@ test("rollout QA CLI rejects an invalid slot descriptor before network access", 
 test("rollout QA read-only evidence level performs no model or Gateway write", async () => {
   let stdout = "";
   let stderr = "";
-  let calls = 0;
+  const fixture = readOnlyFixture();
   const code = await runProductionLiveQaCli({
     argv: ["--read-only"],
-    env: {},
+    env: {
+      OPL_CONSOLE_ORIGIN: "https://cloud.medopl.cn",
+      OPL_VERIFY_AUTH_USERS_JSON: ownerSeed,
+      OPL_VERIFY_ACCOUNT_ID: BASIC_ACCOUNT_ID
+    },
     stdout: { write: (chunk) => { stdout += chunk; } },
     stderr: { write: (chunk) => { stderr += chunk; } },
-    fetchImpl: async () => { calls += 1; return json({}); }
+    fetchImpl: fixture.fetchImpl,
+    browserFactory: fixture.browserFactory
   });
   assert.equal(code, 0, stderr);
-  assert.equal(calls, 0);
-  assert.deepEqual(JSON.parse(stdout), {
-    ok: true,
-    mode: "read-only",
-    evidenceLevel: "read-only",
-    writesPerformed: 0
-  });
+  const result = JSON.parse(stdout);
+  assert.equal(result.ok, true);
+  assert.equal(result.mode, "read-only");
+  assert.equal(result.evidenceLevel, "read-only");
+  assert.equal(result.writesPerformed, 0);
+  assert.deepEqual(result.viewports, ["desktop", "mobile"]);
+  assert.deepEqual(fixture.viewports, [{ width: 1440, height: 900 }, { width: 390, height: 844 }]);
+  assert.deepEqual(fixture.calls.filter((call) => call.method !== "GET"), [{ method: "POST", path: "/api/auth/login" }]);
+  assert.equal(fixture.calls.some((call) => call.path === "/api/healthz"), true);
+  assert.equal(fixture.calls.some((call) => call.path === "/api/production/readiness"), true);
+  assert.equal(fixture.calls.some((call) => call.path === "/api/gateway/endpoint"), true);
+  assert.equal(fixture.calls.some((call) => call.path === "/api/workspaces/workspace-current/runtime-status"), true);
+  assert.equal(fixture.calls.some((call) => call.path === "/api/billing/receipts"), true);
+  assert.equal(fixture.calls.filter((call) => ["/api/projects", "/api/execution-requests", "/api/workspaces/retired/resume"].includes(call.path)).length, 3);
 
   stderr = "";
+  const failed = await runProductionLiveQaCli({
+    argv: ["--read-only"],
+    env: {
+      OPL_CONSOLE_ORIGIN: "https://cloud.medopl.cn",
+      OPL_VERIFY_AUTH_USERS_JSON: ownerSeed,
+      OPL_VERIFY_ACCOUNT_ID: BASIC_ACCOUNT_ID
+    },
+    stdout: { write: () => {} },
+    stderr: { write: (chunk) => { stderr += chunk; } },
+    fetchImpl: readOnlyFixture({ healthStatus: 503 }).fetchImpl,
+    browserFactory: readOnlyBrowserFactory([])
+  });
+  assert.equal(failed, 1);
+  assert.match(stderr, /request_failed:GET:\/api\/healthz:503/);
+
+  stderr = "";
+  let calls = 0;
   const denied = await runProductionLiveQaCli({
-    argv: ["--allow-gateway-write", "--allow-model-write", "--approval-id", "approval-pilot-v2"],
+    argv: ["--allow-gateway-write", "--allow-model-write", "--approval-id", "approval-production-verification"],
     env: {},
     stdout: { write: () => {} },
     stderr: { write: (chunk) => { stderr += chunk; } },

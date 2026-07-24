@@ -89,7 +89,7 @@ test("Workspace contract is the stable URL, storage, and current runtime pointer
     "state"
   ]);
   assert.ok(contract.principles.includes("Ordinary Runtime status is non-secret; only the Workspace owner user may reveal or rotate the Runtime password through private, no-store commands, and passwords never enter the persisted Workspace projection, operation payloads, audit, logs, or Ledger."));
-  assert.ok(contract.principles.includes("Destroying compute suspends the Workspace URL and retains storage; rebuilding compute with the same Workspace URL and StorageVolume is a future target with no Pilot customer route."));
+  assert.ok(contract.principles.includes("At unpaid expiry Control Plane denies Workspace access and performs no Fabric or Tencent mutation; Tencent expiry policy owns eventual CVM/CBS reclamation and no customer resume route exists."));
   assert.ok(contract.principles.includes("Destroying storage makes the Workspace unrecoverable because the file body is gone."));
 });
 
@@ -107,7 +107,7 @@ test("ComputeAllocation contract requires dedicated CVM or Kubernetes node ident
     "privateIp",
     "publicIp",
     "ownerAccountId",
-    "workspaceIds",
+    "workspaceId",
     "providerStatus",
     "destroyedAt",
     "lastProviderSyncAt"

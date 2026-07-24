@@ -37,6 +37,9 @@ var pilotAnnouncements string
 //go:embed 202607230001_workspace_purchase_receipt_id.sql
 var workspacePurchaseReceiptID string
 
+//go:embed 202607240001_multi_workspace_pagination.sql
+var multiWorkspacePagination string
+
 func Apply(ctx context.Context, driver dialect.Driver) error {
 	return driver.Exec(ctx, monthlyHardCut, []any{}, nil)
 }
@@ -99,4 +102,8 @@ func ApplyPilotAnnouncements(ctx context.Context, driver dialect.Driver) error {
 
 func ApplyWorkspacePurchaseReceiptID(ctx context.Context, driver dialect.Driver) error {
 	return driver.Exec(ctx, workspacePurchaseReceiptID, []any{}, nil)
+}
+
+func ApplyMultiWorkspacePagination(ctx context.Context, driver dialect.Driver) error {
+	return driver.Exec(ctx, multiWorkspacePagination, []any{}, nil)
 }

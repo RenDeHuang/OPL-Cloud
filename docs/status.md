@@ -15,7 +15,8 @@ The current V2 boundary requires:
   through Control Plane only, with no link, redirect, iframe, browser-to-Sub2API
   request, or Runtime override from Cloud; `OPL_SUB2API_BASE_URL` remains server-only;
 - general Key create/update/delete/reveal and authoritative per-Key Usage;
-- one primary Workspace purchase or renewal with exactly one USD-micros debit;
+- N independent Workspace purchases or renewals per Account, each with exactly
+  one USD-micros debit per period and its own Key, Secret, resources, and Receipt;
 - compute, storage, attachment, Gateway Secret, and Runtime as fulfillment only;
 - source envelopes whose availability and timestamps report real owner readback;
 - operator wallet adjustment, resource facts, audit evidence, and announcements.
@@ -32,7 +33,12 @@ Remaining blockers:
   release; Console does not display them and persistence is verified only with direct
   SHA256 markers on the Runtime Pod mounts;
 - public registration, payment/order UI, backup/recovery/sync/transfer, HA, GPU,
-  and multiple Workspaces are outside the Pilot.
+  and shared multi-user collaboration are outside the Pilot.
+
+The current integration target also requires stable Control Plane pagination
+before any Sub2API/Fabric enrichment, live Fabric provider facts with no stale
+fallback, and unpaid expiry with zero Fabric/Tencent mutations. These truths are
+not production evidence until the matching implementation and final gate pass.
 
 Workspace file bodies remain only on CBS. Platform PostgreSQL contains identity,
 operation, reference, and audit facts only; PostgreSQL recovery does not back up

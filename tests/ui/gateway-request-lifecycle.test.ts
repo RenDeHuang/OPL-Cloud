@@ -126,6 +126,7 @@ test("Workspace reads preserve confirmed Runtime unless authority proves empty o
 
   async function runtimeAfter(result: unknown, rejects = false) {
     const workspace = { value: { id: "workspace-a" } };
+    const selectedWorkspaceId = { value: "workspace-a" };
     const workspaceSource = { value: { available: true, data: { items: [workspace.value] } } as unknown };
     const workspaceStatusSource = { value: confirmedRuntime as unknown };
     const loadWorkspaces = new Function(
@@ -133,18 +134,23 @@ test("Workspace reads preserve confirmed Runtime unless authority proves empty o
       "loading",
       "resetSource",
       "workspace",
+      "selectedWorkspaceId",
       "workspaceSource",
       "workspaceStatusSource",
       "getWorkspaces",
       "unavailableSource",
       "errors",
       "friendlyError",
+      "clearSecrets",
+      "runtimeRotationIntent",
+      "workspaceStatusRequestGeneration",
       `${source}\nreturn loadWorkspaces;`
     )(
       () => () => true,
-      { workspace: false },
+      { workspace: false, runtime: false },
       () => {},
       workspace,
+      selectedWorkspaceId,
       workspaceSource,
       workspaceStatusSource,
       async () => {
@@ -152,8 +158,11 @@ test("Workspace reads preserve confirmed Runtime unless authority proves empty o
         return result;
       },
       (owner: string) => ({ source: owner, status: "unavailable", available: false, fetchedAt: "" }),
-      { workspace: "" },
-      (error: Error) => error.message
+      { workspace: "", runtime: "" },
+      (error: Error) => error.message,
+      () => {},
+      null,
+      0
     ) as () => Promise<void>;
 
     await loadWorkspaces();
@@ -168,12 +177,16 @@ test("Workspace reads preserve confirmed Runtime unless authority proves empty o
       "workspace",
       "workspaceSource",
       "workspaceStatusSource",
+      "workspaceStatusRequestGeneration",
+      "loading",
       `${statusSource}\nreturn loadWorkspaceStatus;`
     )(
       () => () => true,
       { value: null },
       { value: workspaceState },
-      workspaceStatusSource
+      workspaceStatusSource,
+      0,
+      { runtime: false }
     ) as () => Promise<void>;
     await loadWorkspaceStatus();
     return workspaceStatusSource.value;
@@ -187,6 +200,59 @@ test("Workspace reads preserve confirmed Runtime unless authority proves empty o
   assert.strictEqual(await runtimeAfter({ source: "control-plane", status: "available", available: true, fetchedAt: "", data: { items: [{ id: "workspace-a" }, { id: "workspace-b" }] } }), confirmedRuntime);
   assert.equal(await runtimeAfter({ source: "control-plane", status: "empty", available: true, fetchedAt: "", data: { items: [] } }), null);
   assert.equal(await runtimeAfter({ source: "control-plane", status: "available", available: true, fetchedAt: "", data: { items: [{ id: "workspace-b" }] } }), null);
+});
+
+test("late Runtime readback cannot overwrite a newly selected Workspace", async () => {
+  const app = await appSource();
+  const source = appFunction(app, "loadWorkspaceStatus").replaceAll("unavailableSource<WorkspaceRuntimeDTO>", "unavailableSource");
+  const pending = new Map<string, (value: unknown) => void>();
+  const workspace = { value: { id: "workspace-a" } };
+  const workspaceStatusSource = { value: null as unknown };
+  const loading = { runtime: false };
+  const errors = { runtime: "" };
+  let generation = 0;
+  const loadWorkspaceStatus = new Function(
+    "currentSessionRequest",
+    "workspace",
+    "workspaceSource",
+    "workspaceStatusSource",
+    "loading",
+    "resetSource",
+    "errors",
+    "getWorkspaceRuntimeStatus",
+    "unavailableSource",
+    "friendlyError",
+    "getGeneration",
+    "setGeneration",
+    `${source
+      .replace(/\+\+workspaceStatusRequestGeneration/g, "setGeneration(getGeneration() + 1)")
+      .replace(/workspaceStatusRequestGeneration/g, "getGeneration()")}
+return loadWorkspaceStatus;`
+  )(
+    () => () => true,
+    workspace,
+    { value: { status: "available" } },
+    workspaceStatusSource,
+    loading,
+    () => {},
+    errors,
+    (workspaceId: string) => new Promise((resolve) => pending.set(workspaceId, resolve)),
+    (owner: string) => ({ source: owner, status: "unavailable", available: false, fetchedAt: "" }),
+    (error: Error) => error.message,
+    () => generation,
+    (value: number) => { generation = value; return value; }
+  ) as () => Promise<void>;
+
+  const first = loadWorkspaceStatus();
+  workspace.value = { id: "workspace-b" };
+  const second = loadWorkspaceStatus();
+  pending.get("workspace-b")?.({ source: "fabric", status: "available", available: true, fetchedAt: "", data: { workspaceId: "workspace-b" } });
+  await second;
+  pending.get("workspace-a")?.({ source: "fabric", status: "available", available: true, fetchedAt: "", data: { workspaceId: "workspace-a" } });
+  await first;
+
+  assert.deepEqual(workspaceStatusSource.value, { source: "fabric", status: "available", available: true, fetchedAt: "", data: { workspaceId: "workspace-b" } });
+  assert.equal(loading.runtime, false);
 });
 
 test("customer routes load only their page-owned sources and dispatch on every navigation", async () => {

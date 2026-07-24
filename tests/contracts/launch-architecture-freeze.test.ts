@@ -72,6 +72,12 @@ test("launch freeze fixes the V2 products, owner lanes, settlement, and verifica
   assert.equal(freeze.workspaceLaunch.packageAvailabilitySource, "live_fabric_catalog");
   assert.equal(freeze.workspaceLaunch.unavailablePackageBehavior, "package_unavailable_before_gateway_balance_debit_ledger_or_tencent_calls");
   assert.deepEqual(freeze.workspaceLaunch.requestHashFields, ["accountId", "ownerUserId", "name", "packageId", "sizeGb", "autoRenew", "priceVersion"]);
+  assert.deepEqual(freeze.workspaceLaunch.workspaceIdentity, {
+    derivation: "stable_from_account_id_and_launch_operation_idempotency_identity",
+    sameIdempotencyRequest: "same_workspace",
+    newIdempotencyRequest: "new_workspace",
+    accountConcurrentPaidLaunches: 1
+  });
   assert.equal(freeze.workspaceLaunch.autoRenew.submission, "required_false_boolean");
   assert.equal(freeze.workspaceLaunch.autoRenew.defaultProductIntent, false);
   assert.equal(freeze.workspaceLaunch.autoRenew.customerMutable, false);
@@ -138,6 +144,13 @@ test("launch freeze fixes the V2 products, owner lanes, settlement, and verifica
     storageRequiredFacts: ["capacity"],
     mismatch: "manual_review_without_activation"
   });
+  assert.deepEqual(freeze.providerProcurement.unpaidExpiry, {
+    workspaceAccess: "deny_immediately",
+    autoRenew: false,
+    providerAction: "none_expire_by_provider",
+    fabricMutationCount: 0,
+    tencentMutationCount: 0
+  });
   assert.equal(freeze.workspaceLaunch.codeCompleteThroughPhase, undefined);
   assert.equal(freeze.workspaceLaunch.nextBlockedStage, undefined);
   assert.match(freeze.workspaceLaunch.currentImplementation, /manual-review recovery.*integrated local fake evidence/i);
@@ -167,7 +180,15 @@ test("launch freeze fixes the V2 products, owner lanes, settlement, and verifica
     releaseValidation: "direct_runtime_pod_sha256_markers_only",
     correspondingEvidence: "not_claimed"
   });
-  assert.equal(freeze.workspaceRuntime.primaryWorkspacePerAccount, 1);
+  assert.equal(freeze.workspaceRuntime.workspaceCardinality, "many_per_account");
+  assert.deepEqual(freeze.workspaceRuntime.gatewaySecret, {
+    scope: "workspace",
+    writeIdentityFields: ["accountId", "workspaceId", "workspaceApiKeyId", "fingerprint"],
+    newWritePolicy: "workspace_scoped_deterministic_identity_only",
+    legacyReadCompatibility: "explicit_persisted_scope_or_ref_only",
+    legacyMigration: "first_target_workspace_key_rotation_without_automatic_runtime_restart",
+    scopeInferenceForbidden: ["workspace_count", "key_name"]
+  });
   assert.equal(freeze.workspaceRuntime.statusContainsPassword, false);
   assert.equal(freeze.workspaceRuntime.runtimeRequestIdentityBinding, "not_in_pilot_requires_sso");
   assert.deepEqual(freeze.workspaceRuntime.credentialCommands, {
@@ -185,7 +206,12 @@ test("launch freeze fixes the V2 products, owner lanes, settlement, and verifica
   assert.equal("compatibleVersions" in freeze.gateway, false);
   assert.deepEqual(freeze.gateway.compatibilityEvidence, ["contract_tests", "read_only_production_probe"]);
   assert.equal(freeze.productSurfaces.gateway.backend, freeze.gateway.backend);
-  assert.equal(freeze.gateway.keyName, "opl-workspace");
+  assert.equal(freeze.gateway.legacyWorkspaceKeyName, "opl-workspace");
+  assert.equal(freeze.gateway.newWorkspaceKeyName, "stable_reserved_name_derived_from_workspace_id");
+  assert.equal(freeze.gateway.workspaceKeyActiveCardinality, "one_per_workspace");
+  assert.deepEqual(freeze.gateway.workspaceKeyLifecycle.scopeIdentity, ["workspaceId", "workspaceApiKeyId"]);
+  assert.equal(freeze.gateway.workspaceKeyLifecycle.oldKeyRetirementGate, "only_after_runtime_authoritative_readback_and_atomic_workspace_commit");
+  assert.equal(freeze.gateway.workspaceKeyLifecycle.runtimeCredentialInvariant, "key_rotation_does_not_change_username_password_or_credential_version");
   assert.deepEqual(freeze.gateway.usageScope, ["user_id", "api_key_id"]);
   assert.equal(freeze.gateway.usageMoneySource, "actual_cost");
   assert.equal(freeze.gateway.usageMoneyRepresentation, "integer_usd_micros");
@@ -271,12 +297,12 @@ test("human launch contract pins the approved architecture authority revision", 
   assert.match(invariants, /metadata\/statfs API and Console presentation are paused/i);
 });
 
-test("public Workspace contract permits one primary Workspace only", async () => {
+test("public Workspace contract permits multiple independent Workspaces", async () => {
   const readme = await text("README.md");
 
-  assert.match(readme, /one account owns exactly one\s+primary Workspace/i);
-  assert.match(readme, /second Workspace.*409/i);
-  assert.doesNotMatch(readme, /one account can create\s+multiple Workspaces/i);
+  assert.match(readme, /one Account\/Wallet may own\s+multiple independent Workspaces/i);
+  assert.match(readme, /new identity creates another Workspace/i);
+  assert.doesNotMatch(readme, /one account owns exactly one\s+primary Workspace|second Workspace.*409/i);
 });
 
 test("every launch stage declares business, current state, deliverables, and evidence", async () => {

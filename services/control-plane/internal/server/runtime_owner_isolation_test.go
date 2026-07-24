@@ -348,8 +348,17 @@ func TestRuntimeCredentialRotateOwnerIdempotentAndNoLeak(t *testing.T) {
 		"computeAllocationId": "compute-alpha", "currentComputeAllocationId": "compute-alpha",
 		"storageId": "storage-alpha", "attachmentId": "attachment-alpha", "currentAttachmentId": "attachment-alpha",
 		"runtimeId": "runtime-alpha", "runtime": map[string]any{"serviceName": "opl-compute-alpha", "status": "running", "ready": true},
-		"access": map[string]any{"username": "opl", "credentialStatus": "configured", "credentialVersion": "v-before", "secretRef": "opl-compute-alpha-env"},
+		"access":            map[string]any{"username": "opl", "credentialStatus": "configured", "credentialVersion": "v-before", "secretRef": "opl-compute-alpha-env"},
+		"workspaceApiKeyId": int64(9),
 	})
+	mustStore(t, store.SaveRuntimeOperation(context.Background(), workspaceLaunchOperationRow(workspaceLaunchOperation{
+		ID: "workspace-launch-alpha", Status: "succeeded", CreatedAt: "2026-07-24T00:00:00Z",
+		SchemaVersion: workspaceLaunchSchemaVersion, RequestHash: "workspace-launch-alpha-request", Phase: "succeeded",
+		AccountID: "acct-alpha", OwnerUserID: ownerID, WorkspaceID: "ws-alpha", Name: "Workspace Alpha", PackageID: "basic",
+		StorageGB: 10, PriceVersion: "pilot-usd-2026-07-v1", TotalChargeUSDMicros: 52_580_000,
+		ComputeID: "compute-alpha", StorageID: "storage-alpha", WorkspaceAPIKeyID: 9, RedeemCode: "opl:workspace-launch-alpha",
+		GatewaySecretRef: "opl-gateway-ws-alpha",
+	})))
 
 	unauthorized := requestWithMutationKeyForTest(t, server, operator, http.MethodPost, "/api/workspaces/ws-alpha/runtime-credentials/rotate", `{}`, "rotate-operator")
 	if unauthorized.Code != http.StatusForbidden || len(sub2API.workspaceKeyUserIDs) != 0 || len(calls) != 0 || len(ledger.inputs) != 0 {
@@ -391,7 +400,7 @@ func TestRuntimeCredentialRotateOwnerIdempotentAndNoLeak(t *testing.T) {
 	}
 
 	firstOperationKey := "runtime-credential-rotate:ws-alpha:rotate-20260716-1"
-	if fabric.gatewayKeys[0] != firstOperationKey+":gateway:gateway-secret" || fabric.runtimeKeys[0] != firstOperationKey+":runtime" || ledger.keys[0] != firstOperationKey {
+	if len(fabric.gatewayKeys) != 0 || fabric.runtimeKeys[0] != firstOperationKey+":runtime" || ledger.keys[0] != firstOperationKey {
 		t.Fatalf("unstable child keys: gateway=%#v runtime=%#v ledger=%#v", fabric.gatewayKeys, fabric.runtimeKeys, ledger.keys)
 	}
 	for _, input := range ledger.inputs {

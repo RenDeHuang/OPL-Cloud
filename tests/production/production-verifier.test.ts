@@ -51,19 +51,19 @@ const ownerSeed = JSON.stringify([
 
 test("production mutation approval binds one approval to exact target allowlists", () => {
   const raw = JSON.stringify({
-    approvalId: "approval-pilot-v2",
+    approvalId: "approval-production-verification",
     expiresAt: "2099-07-19T00:00:00Z",
     accountIds: [BASIC_ACCOUNT_ID],
     workspaceIds: ["workspace-basic"],
     resourceIds: [FIXED_VERIFICATION_SLOT_ID]
   });
   const target = {
-    approvalId: "approval-pilot-v2",
+    approvalId: "approval-production-verification",
     accountId: BASIC_ACCOUNT_ID,
     workspaceId: "workspace-basic",
     resourceIds: [FIXED_VERIFICATION_SLOT_ID]
   };
-  assert.equal(mutationApprovalFromJson(raw, target, "verification").approvalId, "approval-pilot-v2");
+  assert.equal(mutationApprovalFromJson(raw, target, "verification").approvalId, "approval-production-verification");
   assert.throws(() => mutationApprovalFromJson(raw.replace('"2099-07-19T00:00:00Z"', "0"), target, "verification"), /verification_approval_manifest_invalid/);
   assert.throws(() => mutationApprovalFromJson(raw.replace("2099-07-19T00:00:00Z", "July 19, 2099 UTC"), target, "verification"), /verification_approval_manifest_invalid/);
   assert.throws(() => mutationApprovalFromJson(raw, { ...target, approvalId: "approval-other" }, "verification"), /verification_approval_id_mismatch/);

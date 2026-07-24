@@ -86,8 +86,8 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Test Pilot V2 browser
-        run: node tools/pilot-v2-browser-qa.ts --network=fake-only
+      - name: Test Console browser
+        run: node tools/console-browser-qa.ts --network=fake-only
 
       - name: Lint
         run: npm run lint

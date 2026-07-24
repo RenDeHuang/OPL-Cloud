@@ -3,13 +3,14 @@
 ## User Job
 
 ```text
-sign in -> select Basic or Pro -> confirm one Workspace total -> provision
-        -> reveal/copy access -> open Workspace
+sign in -> list Workspaces -> select Basic or Pro -> confirm one Workspace total
+        -> provision -> reveal/copy that Workspace access -> open Workspace
 ```
 
-The invite-only Pilot has one primary Workspace per account. Home, Login, and
-Logo/brand entry points remain unchanged; V2 does not redesign public Home or
-Login surfaces.
+The invite-only Pilot allows multiple independent Workspaces per account. Each
+Workspace has its own launch identity, resources, Key, Secret, entitlement,
+Runtime, and Receipt. Home, Login, and Logo/brand entry points remain unchanged;
+the product does not redesign public Home or Login surfaces.
 
 ## Owner Surface
 

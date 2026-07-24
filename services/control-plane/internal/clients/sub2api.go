@@ -105,6 +105,10 @@ type Sub2APIAdminUsersClient interface {
 	AdminUsers(context.Context, Sub2APIUserPageQuery) (Sub2APIUserPage, error)
 }
 
+type Sub2APIAdminUserClient interface {
+	AdminUser(context.Context, int64) (Sub2APIUser, error)
+}
+
 type Sub2APIBatchUsersUsageClient interface {
 	BatchUsersUsage(context.Context, []int64) (map[int64]Sub2APIBatchUserUsage, error)
 }
@@ -625,6 +629,36 @@ func (c *Sub2APIHTTPClient) User(ctx context.Context, userID int64) (Sub2APIIden
 		return Sub2APIIdentity{}, ErrSub2APIIdentityConflict
 	}
 	return identity, nil
+}
+
+func (c *Sub2APIHTTPClient) AdminUser(ctx context.Context, userID int64) (Sub2APIUser, error) {
+	if userID <= 0 {
+		return Sub2APIUser{}, ErrSub2APIIdentityUnknown
+	}
+	body, err := c.doAuthenticated(ctx, http.MethodGet, "/api/v1/admin/users/"+strconv.FormatInt(userID, 10), nil, "")
+	if err != nil {
+		return Sub2APIUser{}, err
+	}
+	var data struct {
+		ID        int64       `json:"id"`
+		Email     string      `json:"email"`
+		Balance   json.Number `json:"balance"`
+		Status    string      `json:"status"`
+		CreatedAt time.Time   `json:"created_at"`
+		UpdatedAt time.Time   `json:"updated_at"`
+	}
+	if err := decodeSub2APIEnvelope(body, &data); err != nil {
+		return Sub2APIUser{}, err
+	}
+	email := normalizeSub2APIEmail(data.Email)
+	balance, balanceErr := decimalUSDMicros(data.Balance)
+	if data.ID != userID || email == "" || data.Status != "active" && data.Status != "disabled" || data.CreatedAt.IsZero() || data.UpdatedAt.IsZero() || data.UpdatedAt.Before(data.CreatedAt) {
+		return Sub2APIUser{}, ErrSub2APIIdentityConflict
+	}
+	return Sub2APIUser{
+		ID: data.ID, Email: email, BalanceUSDMicros: balance, BalanceUnavailable: balanceErr != nil,
+		Status: data.Status, CreatedAt: data.CreatedAt.UTC(), UpdatedAt: data.UpdatedAt.UTC(),
+	}, nil
 }
 
 func (c *Sub2APIHTTPClient) AdminUsers(ctx context.Context, query Sub2APIUserPageQuery) (Sub2APIUserPage, error) {

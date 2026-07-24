@@ -20,11 +20,14 @@ The four implementation owner lanes are Console/Control Plane, Fabric, Gateway i
 - Operators manually pre-fund or adjust the Sub2API wallet through audited
   recharge, debit, and business-refund commands. There is no customer payment,
   top-up, or payment-order surface. Owners may manage general API Keys.
-- Each account has one Workspace. Basic and Pro are the only Pilot packages.
+- Each account may own multiple Workspaces. Basic and Pro are the only Pilot
+  packages, and every Workspace has an independent quote, launch operation,
+  entitlement period, provider resource set, Workspace Key, Secret, Runtime,
+  and Workspace Receipt.
 - `autoRenew` defaults off. Enabling it is rejected and hidden until a real
   renewal has been approved and proven.
-- Backup, recovery, sync, transfer, HA, and multiple Workspaces are not Pilot
-  capabilities.
+- Backup, recovery, sync, transfer, HA, public registration, and shared
+  multi-user collaboration are not Pilot capabilities.
 
 ## Console
 
@@ -95,8 +98,10 @@ The four implementation owner lanes are Console/Control Plane, Fabric, Gateway i
 - OPL Gateway uses the externally deployed Sub2API backend. Compatibility is gated by required API capabilities; the reported version is diagnostic metadata and never blocks an otherwise compatible deployment. Sub2API code, image, container, database, configuration, and deployment remain immutable from this repository.
 - Sub2API is the only owner of spendable USD balance, API keys, model routing, and request usage.
 - Control Plane maps the signed-in account through `sub2apiUserId`. Owners,
-  including the reserved administrator for its own account, may manage general Keys; Workspace
-  convergence separately requires exactly one active reserved Key named `opl-workspace` and fails closed otherwise.
+  including the reserved administrator for its own account, may manage general
+  Keys. Every new Workspace converges exactly one reserved Key whose stable name
+  is derived from `workspaceId`; the legacy `opl-workspace` name remains bound
+  only to an existing legacy Workspace and is never reused for a new Workspace.
 - Required read capabilities are mapped-user balance, available groups, the mapped user's paginated/filterable/sortable Key list, paginated request usage, and aggregate usage stats. Key creation requires a live Sub2API group. Request usage and stats are scoped by both `user_id` and the selected `api_key_id`; every returned identity is validated again by Control Plane.
 - For Keys, UserKeys, Usage, and BalanceHistory, a zero-row Sub2API v0.1.162
   response is valid only as `total=0,page=1,pages=1,items=[]`; every other empty
@@ -109,7 +114,11 @@ The four implementation owner lanes are Console/Control Plane, Fabric, Gateway i
   `POST /api/gateway/keys/{keyId}/reveal`. It is masked by default and
   never enters `/api/state`, browser storage, OPL PostgreSQL, Ledger, logs,
   caches, or operation payloads. The retired Gateway summary route is a 404.
-- Kubernetes Secret is the only authorized Key persistence point. Fabric writes or rotates an account-scoped Secret, and Workspace runtime receives only its reference.
+- Kubernetes Secret is the only authorized Key persistence point. Every new
+  Secret write is deterministically scoped by `accountId`, `workspaceId`,
+  `workspaceApiKeyId`, and Key fingerprint; Workspace runtime receives only its
+  reference. Existing account-scoped Secrets remain readable without automatic
+  Runtime restart and migrate one way on that Workspace's first Key rotation.
 - The global `OPL_CODEX_API_KEY` is forbidden for customer Workspaces.
 - Console may display and copy the public model endpoint derived from the existing
   configured Sub2API origin plus `/v1` (`https://gflabtoken.cn/v1` in production).
@@ -198,11 +207,13 @@ validate account and quote
 - Customer prices are fixed integer USD micros under
   `pilot-usd-2026-07-v1`; provider costs never derive a customer charge.
 - Provider SKU may vary by approved environment but must satisfy the customer CPU and memory contract.
-- One Workspace renewal uses one combined Sub2API debit, manual provider renewal
+- Each Workspace renewal uses one combined Sub2API debit, manual provider renewal
   of the same CVM/CBS, readback, entitlement extension, and one receipt.
 - Tencent automatic renewal is forbidden.
-- At unpaid expiry compute is stopped and access is denied. CBS is retained;
-  expiry, release, QA, and rollback never delete it.
+- At unpaid expiry Workspace access is denied and renewal intent is disabled.
+  OPL does not stop, destroy, delete, renew, or otherwise mutate CVM/CBS; Tencent
+  expiry policy owns eventual provider reclamation. The expiry receipt records
+  `providerAction=none_expire_by_provider`.
 - Workspace file bodies live only on CBS. OPL PostgreSQL and Ledger never store
   them, and OPL provides no backup/recovery/sync/transfer guarantee for deleted
   or corrupted CBS data.
@@ -215,7 +226,10 @@ validate account and quote
 - Only the signed-in user whose ID equals `Workspace.ownerUserId` may reveal or rotate the Runtime password. These responses are `private, no-store`; the password never enters Workspace persistence, RuntimeOperation, audit, logs, or Ledger.
 - Runtime credential rotation reuses stable Fabric and Ledger idempotency identities. A credential revision changes the Runtime Secret and Pod template so Kubernetes rolls the Deployment without exposing the password or seed in metadata.
 - Pilot Runtime isolation means only the owner receives the Runtime password. SSO and binding each Runtime HTTP request to the Console identity are not Pilot claims.
-- Workspace access requires active compute and storage entitlements plus real runtime readiness.
+- Workspace access requires a current Control Plane Workspace entitlement and
+  live Fabric readback for Compute, Storage, Attachment, and Runtime. A Fabric
+  timeout or unavailable item fails closed; Control Plane provider-state copies
+  are references and never substitute for live provider truth.
 - A Workspace release candidate is exactly one `one-person-lab-app` commit, one
   `opl-aion-shell` commit, and one `one-person-lab` Framework commit. Each input must be a full 40-character Git SHA already
   merged into its repository's `main`; branch names, short SHAs, and unmerged commits fail closed.
@@ -318,7 +332,7 @@ Provider Acceptance owns two retained non-customer slots:
 | 7. Gateway usage | Reveal the owner Key, make a metered Workspace model request, and show its customer-safe cost and Token facts. | Gateway, Console, Ledger | Wallet, Key list, request Usage, Usage Stats, balance history, and integer-cost projections are code-complete and locally tested; a real model request and production readback remain pending. | Tenant isolation, model response, request usage and stats projection, integer `actual_cost`, no leakage. |
 | 8. Renewal and recovery | Renew one Workspace period with deterministic recovery. | All four lanes | Workspace-level claim, combined debit, same-ID provider renewal/readback, expiry, refund/review, and receipt recovery are code-complete; enabling auto-renew and real renewal evidence are pending. | Isolated PostgreSQL concurrency, renewal replay, deadline readback, real approved renewal. |
 | 9. Reusable verification | Prove releases without per-run Tencent purchase or deletion. | All four lanes | Provider Acceptance, Pro verification, and fixed-slot verification are paused and do not gate the Basic rollout. | Future separately approved retained-slot evidence. |
-| 10. Production release | Declare ready from immutable artifacts, rollout, rollback, and real evidence. | All four lanes | Security, immutable imageID checks, ConfigMap-aware Cloud rollback, read-only TKE diagnostics, release tooling, Task 12 UI, Task 13A local gates, and the deployment identity cutover are code-complete locally; immutable publication, rollout, rollback, and runtime evidence remain pending. | Full local gates, immutable digests, rollout, rollback, source-truth QA, approved real evidence. |
+| 10. Production release | Declare ready from immutable artifacts, rollout, rollback, and real evidence. | All four lanes | Security, immutable imageID checks, ConfigMap-aware Cloud rollback, read-only TKE diagnostics, release tooling, Console browser coverage, local integration gates, and the deployment identity cutover are code-complete locally; immutable publication, rollout, rollback, and runtime evidence remain pending. | Full local gates, immutable digests, rollout, rollback, source-truth QA, approved real evidence. |
 
 ## Delivery Phases
 

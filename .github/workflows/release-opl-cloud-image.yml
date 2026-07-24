@@ -29,15 +29,15 @@ on:
           - "false"
       workspace_app_main_sha:
         description: Exact 40-character one-person-lab-app commit already merged into main.
-        required: true
+        required: false
         type: string
       workspace_shell_main_sha:
         description: Exact 40-character opl-aion-shell commit already merged into main.
-        required: true
+        required: false
         type: string
       workspace_framework_main_sha:
         description: Exact 40-character one-person-lab Framework commit already merged into main.
-        required: true
+        required: false
         type: string
 
 permissions:

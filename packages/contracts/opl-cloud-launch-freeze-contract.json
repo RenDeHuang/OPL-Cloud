@@ -1,7 +1,7 @@
 {
   "schemaVersion": 13,
   "owner": "OPL Platform Architecture",
-  "purpose": "Freeze the approved Pilot V2 products, delegated Gateway key lifecycle, one Workspace charge, prepaid Tencent fulfillment, Runtime facts, operator workflows, announcements, and evidence levels without claiming unfinished implementation or runtime evidence.",
+  "purpose": "Freeze the approved Pilot products, delegated Gateway key lifecycle, one charge per Workspace period, prepaid Tencent fulfillment, Runtime facts, operator workflows, announcements, and evidence levels without claiming unfinished implementation or runtime evidence.",
   "state": "current",
   "machineBoundary": "Six product surfaces including OPL Serve planned_not_in_launch, four implementation owner lanes, two customer products, ten launch stages, six delivery phases, and two paused production verification slots.",
   "lifecycle": {
@@ -149,6 +149,12 @@
     "packageAvailabilitySource": "live_fabric_catalog",
     "unavailablePackageBehavior": "package_unavailable_before_gateway_balance_debit_ledger_or_tencent_calls",
     "requestHashFields": ["accountId", "ownerUserId", "name", "packageId", "sizeGb", "autoRenew", "priceVersion"],
+    "workspaceIdentity": {
+      "derivation": "stable_from_account_id_and_launch_operation_idempotency_identity",
+      "sameIdempotencyRequest": "same_workspace",
+      "newIdempotencyRequest": "new_workspace",
+      "accountConcurrentPaidLaunches": 1
+    },
     "autoRenew": {
       "submission": "required_false_boolean",
       "defaultProductIntent": false,
@@ -223,10 +229,17 @@
     },
     "renewalOrder": ["capacity_preflight", "debit", "provider_renew", "claim", "extend_entitlement", "record_receipt"],
     "automaticRenewal": false,
+    "unpaidExpiry": {
+      "workspaceAccess": "deny_immediately",
+      "autoRenew": false,
+      "providerAction": "none_expire_by_provider",
+      "fabricMutationCount": 0,
+      "tencentMutationCount": 0
+    },
     "currentImplementation": "One-month PREPAID CVM/CBS requests, stable operations, provider readback, and pure-fulfillment wiring behind the single Workspace debit are code-complete in local tests; live Tencent evidence remains pending."
   },
   "workspaceRuntime": {
-    "primaryWorkspacePerAccount": 1,
+    "workspaceCardinality": "many_per_account",
     "sourceImage": {
       "appRepository": "https://github.com/gaofeng21cn/one-person-lab-app.git",
       "activeShellRepository": "https://github.com/gaofeng21cn/opl-aion-shell.git",
@@ -259,7 +272,14 @@
       "releaseValidation": "direct_runtime_pod_sha256_markers_only",
       "correspondingEvidence": "not_claimed"
     },
-    "gatewaySecret": "account-scoped Kubernetes Secret",
+    "gatewaySecret": {
+      "scope": "workspace",
+      "writeIdentityFields": ["accountId", "workspaceId", "workspaceApiKeyId", "fingerprint"],
+      "newWritePolicy": "workspace_scoped_deterministic_identity_only",
+      "legacyReadCompatibility": "explicit_persisted_scope_or_ref_only",
+      "legacyMigration": "first_target_workspace_key_rotation_without_automatic_runtime_restart",
+      "scopeInferenceForbidden": ["workspace_count", "key_name"]
+    },
     "gatewaySecretPersistence": "Kubernetes Secret only",
     "globalGatewayKeyForbidden": true,
     "authenticationMode": "runtime_password",
@@ -282,8 +302,9 @@
     "compatibilityGate": "required_capabilities",
     "versionRole": "diagnostic_only",
     "accountMapping": "sub2apiUserId",
-    "keyName": "opl-workspace",
-    "workspaceKeyActiveCardinality": 1,
+    "legacyWorkspaceKeyName": "opl-workspace",
+    "newWorkspaceKeyName": "stable_reserved_name_derived_from_workspace_id",
+    "workspaceKeyActiveCardinality": "one_per_workspace",
     "adminKeyListEndpoint": "GET /api/v1/admin/users/:id/api-keys",
     "keyListPaginationRule": "freeze first-page total pages and requested page_size; require coherent metadata, exact page numbers and ceiling, bounded items, positive unique Key IDs, mapped user_id on every item, and collected item count equal total before cardinality selection",
     "emptyListPaginationRule": { "appliesTo": ["Keys", "UserKeys", "Usage", "BalanceHistory"], "total": 0, "page": 1, "pages": 1, "items": [], "otherShapes": "reject" },
@@ -319,12 +340,15 @@
     "keyPersistence": "Kubernetes Secret only",
     "ownerOnlyReveal": true,
     "workspaceKeyLifecycle": {
-      "launchConvergence": "zero_create_one_active_reuse_other_fail_closed",
+      "scopeIdentity": ["workspaceId", "workspaceApiKeyId"],
+      "launchConvergence": "one_reserved_key_per_workspace",
       "rotationApi": "POST /api/workspaces/{workspaceId}/workspace-key/rotate",
       "mutationCredential": "session_delegated_user_bearer",
       "workspacePersistence": "workspace_api_key_id_only",
       "operationPersistence": "control_plane_runtime_operations_non_secret_phases",
-      "phases": ["replacement_check", "replacement_create", "secret_write", "retire_old", "promote_replacement", "workspace_commit", "runtime_apply", "delete_old", "receipt", "complete"],
+      "phases": ["replacement_check", "replacement_create", "secret_write", "runtime_bind", "runtime_readback", "workspace_commit", "retire_old", "promote_new", "delete_old", "receipt", "complete"],
+      "runtimeCredentialInvariant": "key_rotation_does_not_change_username_password_or_credential_version",
+      "oldKeyRetirementGate": "only_after_runtime_authoritative_readback_and_atomic_workspace_commit",
       "receiptType": "workspace.gateway_key_rotated.v1",
       "currentImplementation": "code_complete_local_focused_tests_only"
     },
@@ -488,7 +512,7 @@
       "id": "production_release",
       "business": "A release is ready only from merged code, immutable Cloud and App images, runtime checks, rollback proof, and reusable verification.",
       "owners": ["console", "fabric", "ledger", "gateway"],
-      "currentState": "Security, immutable Ready-Pod imageID checks, ConfigMap-aware Cloud rollback, read-only TKE diagnostics, release tooling, local Console integration, Task 13A gates, and the deployment identity cutover are code-complete locally; immutable publication, successful rollout, deployed browser, Gateway, and safe real verification evidence remain incomplete.",
+      "currentState": "Security, immutable Ready-Pod imageID checks, ConfigMap-aware Cloud rollback, read-only TKE diagnostics, release tooling, local Console integration gates, and the deployment identity cutover are code-complete locally; immutable publication, successful rollout, deployed browser, Gateway, and safe real verification evidence remain incomplete.",
       "requiredDeliverables": ["immutable digests", "production readiness", "ConfigMap-aware Cloud rollback", "read-only smoke", "verification receipt"],
       "completionEvidence": ["CI run", "rollout readback", "rollback and restore", "real QA evidence"]
     }

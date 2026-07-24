@@ -1188,6 +1188,23 @@ tbody tr:last-child td {
   padding: 8px 20px 22px;
 }
 
+.workspace-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.workspace-selector {
+  display: grid;
+  max-width: 420px;
+  gap: 7px;
+  margin-bottom: 16px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 680;
+}
+
 .workspace-details .data-list {
   border: 1px solid #e0e6ee;
   border-radius: 6px;
@@ -1608,6 +1625,8 @@ tbody tr:last-child td {
   }
 
   .workspace-heading .button,
+  .workspace-actions,
+  .workspace-actions .button,
   .page-actions .button {
     width: 100%;
   }

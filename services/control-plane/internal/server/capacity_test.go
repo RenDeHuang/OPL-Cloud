@@ -78,25 +78,78 @@ func (f *capacityFabric) count() int {
 
 type capacitySub2API struct {
 	*testSub2APIClient
+	keyMu       sync.Mutex
+	keys        map[int64]clients.Sub2APIWorkspaceKey
+	keyByIntent map[string]int64
+	nextKeyID   int64
 }
 
 func (c *capacitySub2API) UserKeys(ctx context.Context, credential clients.SessionDelegatedCredential, userID int64) ([]clients.Sub2APIWorkspaceKey, error) {
 	if credential.Bearer != "test-user-delegated-token" {
 		return nil, errors.New("wrong delegated credential")
 	}
-	key, err := c.WorkspaceKey(ctx, userID)
-	if err != nil {
-		return nil, err
+	c.keyMu.Lock()
+	defer c.keyMu.Unlock()
+	keys := make([]clients.Sub2APIWorkspaceKey, 0, len(c.keys)+1)
+	legacy, err := c.WorkspaceKey(ctx, userID)
+	if err == nil {
+		keys = append(keys, legacy)
 	}
-	return []clients.Sub2APIWorkspaceKey{key}, nil
+	for _, key := range c.keys {
+		if key.UserID == userID {
+			keys = append(keys, key)
+		}
+	}
+	return keys, nil
 }
 
 func (c *capacitySub2API) UserKey(ctx context.Context, credential clients.SessionDelegatedCredential, userID, keyID int64) (clients.Sub2APIWorkspaceKey, error) {
 	keys, err := c.UserKeys(ctx, credential, userID)
-	if err != nil || keys[0].ID != keyID {
-		return clients.Sub2APIWorkspaceKey{}, clients.ErrSub2APIKeyNotFound
+	if err != nil {
+		return clients.Sub2APIWorkspaceKey{}, err
 	}
-	return keys[0], nil
+	for _, key := range keys {
+		if key.ID == keyID {
+			return key, nil
+		}
+	}
+	return clients.Sub2APIWorkspaceKey{}, clients.ErrSub2APIKeyNotFound
+}
+
+func (c *capacitySub2API) CreateUserKey(_ context.Context, credential clients.SessionDelegatedCredential, userID int64, input clients.Sub2APICreateKeyInput, idempotencyKey string) (clients.Sub2APIWorkspaceKey, error) {
+	if credential.Bearer != "test-user-delegated-token" || idempotencyKey == "" || !strings.HasPrefix(input.Name, "opl-workspace-") {
+		return clients.Sub2APIWorkspaceKey{}, errors.New("invalid Workspace Key create")
+	}
+	c.keyMu.Lock()
+	defer c.keyMu.Unlock()
+	if keyID := c.keyByIntent[idempotencyKey]; keyID > 0 {
+		return c.keys[keyID], nil
+	}
+	c.nextKeyID++
+	key := clients.Sub2APIWorkspaceKey{ID: c.nextKeyID, UserID: userID, Name: input.Name, Key: "capacity-workspace-key-secret", Status: "active"}
+	c.keys[key.ID], c.keyByIntent[idempotencyKey] = key, key.ID
+	return key, nil
+}
+
+func (*capacitySub2API) UpdateUserKey(context.Context, clients.SessionDelegatedCredential, int64, int64, clients.Sub2APIUpdateKeyInput) (clients.Sub2APIWorkspaceKey, error) {
+	return clients.Sub2APIWorkspaceKey{}, errors.New("unexpected Workspace Key update")
+}
+
+func (*capacitySub2API) DeleteUserKey(context.Context, clients.SessionDelegatedCredential, int64, int64) error {
+	return errors.New("unexpected Workspace Key delete")
+}
+
+func (c *capacitySub2API) Keys(ctx context.Context, userID int64) ([]clients.Sub2APIWorkspaceKey, error) {
+	return c.UserKeys(ctx, clients.SessionDelegatedCredential{Bearer: "test-user-delegated-token"}, userID)
+}
+
+func newCapacitySub2API() *capacitySub2API {
+	return &capacitySub2API{
+		testSub2APIClient: &testSub2APIClient{balance: 100_000_000_000_000, charges: map[string]int64{}},
+		keys:              map[int64]clients.Sub2APIWorkspaceKey{},
+		keyByIntent:       map[string]int64{},
+		nextKeyID:         18,
+	}
 }
 
 type capacityCall struct {
@@ -168,7 +221,7 @@ func TestSinglePodCapacity(t *testing.T) {
 	}
 	seedDuration := time.Since(seedStarted)
 
-	sub2API := &capacitySub2API{testSub2APIClient: &testSub2APIClient{balance: 100_000_000_000_000, charges: map[string]int64{}}}
+	sub2API := newCapacitySub2API()
 	fabric := &capacityFabric{creates: map[string]string{}}
 	ledger := &capacityLedger{receipts: map[string]string{}}
 	service := controlplane.NewService(ledger, fabric, sub2API)

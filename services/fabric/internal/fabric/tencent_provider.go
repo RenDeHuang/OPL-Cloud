@@ -206,13 +206,20 @@ func applyMonthlyStorageTruth(storage *StorageVolume, response provisionerRespon
 
 func (p *TencentProvider) UpsertGatewaySecret(ctx context.Context, input GatewaySecretInput) (GatewaySecret, error) {
 	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(input.GatewayAPIKey)))
-	secret := GatewaySecret{SecretRef: gatewaySecretName(input.AccountID), Version: digest[:16], Fingerprint: "sha256:" + digest}
+	secret := GatewaySecret{SecretRef: gatewaySecretName(input.WorkspaceID), Version: digest[:16], Fingerprint: "sha256:" + digest}
+	if input.Fingerprint != secret.Fingerprint {
+		return GatewaySecret{}, fmt.Errorf("gateway_secret_fingerprint_mismatch")
+	}
 	manifest := mustJSON(map[string]any{
 		"apiVersion": "v1", "kind": "Secret", "type": "Opaque",
 		"metadata": map[string]any{
-			"name":        secret.SecretRef,
-			"labels":      map[string]any{"app.kubernetes.io/name": "opl-gateway-secret"},
-			"annotations": map[string]any{"oplcloud.cn/account-id": input.AccountID, "oplcloud.cn/secret-version": secret.Version, "oplcloud.cn/secret-fingerprint": secret.Fingerprint},
+			"name":   secret.SecretRef,
+			"labels": map[string]any{"app.kubernetes.io/name": "opl-gateway-secret"},
+			"annotations": map[string]any{
+				"oplcloud.cn/account-id": input.AccountID, "oplcloud.cn/workspace-id": input.WorkspaceID,
+				"oplcloud.cn/workspace-api-key-id": strconv.FormatInt(input.WorkspaceAPIKeyID, 10),
+				"oplcloud.cn/secret-version":       secret.Version, "oplcloud.cn/secret-fingerprint": secret.Fingerprint,
+			},
 		},
 		"stringData": map[string]any{"opl_gateway_api_key": input.GatewayAPIKey},
 	})
@@ -243,6 +250,7 @@ func (p *TencentProvider) UpsertGatewaySecret(ctx context.Context, input Gateway
 	actualDigest := fmt.Sprintf("%x", sha256.Sum256(rawKey))
 	if actual.Kind != "Secret" || actual.Type != "Opaque" || actual.Metadata.Name != secret.SecretRef ||
 		actual.Metadata.Labels["app.kubernetes.io/name"] != "opl-gateway-secret" || actual.Metadata.Annotations["oplcloud.cn/account-id"] != input.AccountID ||
+		actual.Metadata.Annotations["oplcloud.cn/workspace-id"] != input.WorkspaceID || actual.Metadata.Annotations["oplcloud.cn/workspace-api-key-id"] != strconv.FormatInt(input.WorkspaceAPIKeyID, 10) ||
 		actual.Metadata.Annotations["oplcloud.cn/secret-version"] != secret.Version || actual.Metadata.Annotations["oplcloud.cn/secret-fingerprint"] != secret.Fingerprint ||
 		"sha256:"+actualDigest != secret.Fingerprint {
 		return GatewaySecret{}, fmt.Errorf("gateway_secret_readback_mismatch")
@@ -250,8 +258,8 @@ func (p *TencentProvider) UpsertGatewaySecret(ctx context.Context, input Gateway
 	return secret, nil
 }
 
-func gatewaySecretName(accountID string) string {
-	return "opl-gateway-" + stableSuffix(accountID)[:16]
+func gatewaySecretName(workspaceID string) string {
+	return "opl-gateway-" + stableSuffix(workspaceID)[:16]
 }
 
 type provisionerRequest struct {
@@ -459,6 +467,10 @@ func (p *TencentProvider) SyncComputeAllocation(ctx context.Context, allocation 
 	return allocation, nil
 }
 
+func (p *TencentProvider) ReadComputeAllocation(ctx context.Context, allocation ComputeAllocation) (ComputeAllocation, error) {
+	return p.SyncComputeAllocation(ctx, allocation)
+}
+
 func (p *TencentProvider) RenewComputeAllocation(ctx context.Context, allocation ComputeAllocation) (ComputeAllocation, error) {
 	if !validComputeRenewalIdentity(allocation) {
 		return ComputeAllocation{}, fmt.Errorf("compute_allocation_renew_identity_required")
@@ -594,6 +606,32 @@ func (p *TencentProvider) CreateStorageVolume(ctx context.Context, input Storage
 }
 
 func (p *TencentProvider) SyncStorageVolume(ctx context.Context, volume StorageVolume) (StorageVolume, error) {
+	volume, err := p.ReadStorageVolume(ctx, volume)
+	if err != nil || volume.Status == "external_deleted" || volume.Status == "pending" {
+		return volume, err
+	}
+	if _, err := p.kubectl(ctx, []string{"apply", "-f", "-"}, staticCBSManifest(volume)); err != nil {
+		return volume, err
+	}
+	pvc := storagePVCName(volume)
+	raw, err := p.kubectl(ctx, []string{"get", "pvc/" + pvc, "-o", "json"}, nil)
+	if err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "notfound") || strings.Contains(strings.ToLower(err.Error()), "not found") {
+			volume.Status = "pending"
+			return volume, nil
+		}
+		return volume, err
+	}
+	pvcResource := findK8s(kubectlItems(raw), "PersistentVolumeClaim", pvc)
+	if pvcResource != nil && stringValue(nested(pvcResource, "status", "phase")) == "Bound" {
+		volume.Status = "ready"
+	} else {
+		volume.Status = "pending"
+	}
+	return volume, nil
+}
+
+func (p *TencentProvider) ReadStorageVolume(ctx context.Context, volume StorageVolume) (StorageVolume, error) {
 	if volume.ID == "" || !strings.HasPrefix(volume.ProviderResourceID, "disk-") {
 		return StorageVolume{}, fmt.Errorf("storage_volume_cbs_identity_required")
 	}
@@ -618,25 +656,7 @@ func (p *TencentProvider) SyncStorageVolume(ctx context.Context, volume StorageV
 		volume.Status = "pending"
 		return volume, nil
 	}
-	if _, err := p.kubectl(ctx, []string{"apply", "-f", "-"}, staticCBSManifest(volume)); err != nil {
-		return volume, err
-	}
-	pvc := storagePVCName(volume)
-	raw, err := p.kubectl(ctx, []string{"get", "pvc/" + pvc, "-o", "json"}, nil)
-	if err != nil {
-		if strings.Contains(strings.ToLower(err.Error()), "notfound") || strings.Contains(strings.ToLower(err.Error()), "not found") {
-			volume.Status = "pending"
-			return volume, nil
-		}
-		return volume, err
-	}
-	items := kubectlItems(raw)
-	pvcResource := findK8s(items, "PersistentVolumeClaim", pvc)
-	if pvcResource != nil && stringValue(nested(pvcResource, "status", "phase")) == "Bound" {
-		volume.Status = "ready"
-	} else {
-		volume.Status = "pending"
-	}
+	volume.Status = "ready"
 	if volume.Provider == "" {
 		volume.Provider = "tencent-tke"
 	}
@@ -854,6 +874,18 @@ func (p *TencentProvider) CreateStorageAttachment(ctx context.Context, input Sto
 	}, nil
 }
 
+func (p *TencentProvider) ReadStorageAttachment(ctx context.Context, attachment StorageAttachment, compute ComputeAllocation, volume StorageVolume) (StorageAttachment, error) {
+	readback, err := p.CreateStorageAttachment(ctx, StorageAttachmentInput{
+		WorkspaceID: attachment.WorkspaceID, ComputeID: attachment.ComputeID, VolumeID: attachment.VolumeID,
+		IdempotencyKey: attachment.ID, OperationID: attachment.ID,
+	}, compute, volume)
+	if err != nil {
+		return attachment, err
+	}
+	readback.ID, readback.CreatedAt = attachment.ID, attachment.CreatedAt
+	return readback, nil
+}
+
 func (p *TencentProvider) DetachStorageAttachment(_ context.Context, attachment StorageAttachment) (StorageAttachment, error) {
 	attachment.Status = "detached"
 	attachment.ProviderRequestID = providerRequestID("storage-detach", attachment.ID)
@@ -959,6 +991,71 @@ func (p *TencentProvider) WorkspaceRuntimeStatus(ctx context.Context, workspaceI
 		status = "unready"
 	}
 	return WorkspaceRuntime{WorkspaceID: workspaceID, URL: fmt.Sprintf("https://%s/w/%s/", workspaceDomain(), workspaceID), Status: status, ServiceName: serviceName, Access: access, Ready: ready, Checks: checks}, nil
+}
+
+func (p *TencentProvider) BindWorkspaceRuntimeGatewaySecret(ctx context.Context, input WorkspaceRuntimeGatewaySecretInput) (WorkspaceRuntimeGatewaySecretBinding, error) {
+	serviceName, _, err := p.workspaceRuntimeResourcesStrict(ctx, input.WorkspaceID, false)
+	if err != nil || serviceName == "" {
+		return WorkspaceRuntimeGatewaySecretBinding{}, fmt.Errorf("workspace_runtime_not_found")
+	}
+	patch := mustJSON(map[string]any{"spec": map[string]any{"template": map[string]any{
+		"metadata": map[string]any{"annotations": map[string]any{
+			"opl.medopl.cn/gateway-secret-ref":  input.SecretRef,
+			"opl.medopl.cn/gateway-key-id":      strconv.FormatInt(input.WorkspaceAPIKeyID, 10),
+			"opl.medopl.cn/gateway-fingerprint": input.Fingerprint,
+		}},
+		"spec": map[string]any{"volumes": []any{map[string]any{
+			"name": "workspace-secrets",
+			"projected": map[string]any{"sources": []any{
+				map[string]any{"secret": map[string]any{"name": serviceName + "-env", "items": []any{
+					map[string]any{"key": "webui_password", "path": "opl_webui_password"},
+					map[string]any{"key": "webui_session_secret", "path": "webui_session_secret"},
+				}}},
+				map[string]any{"secret": map[string]any{"name": input.SecretRef, "items": []any{
+					map[string]any{"key": "opl_gateway_api_key", "path": "opl_gateway_api_key"},
+				}}},
+			}},
+		}}},
+	}}})
+	if _, err := p.kubectl(ctx, []string{"patch", "deployment/" + serviceName, "--type=strategic", "-p", string(patch)}, nil); err != nil {
+		return WorkspaceRuntimeGatewaySecretBinding{}, err
+	}
+	return p.WorkspaceRuntimeGatewaySecret(ctx, input.WorkspaceID)
+}
+
+func (p *TencentProvider) WorkspaceRuntimeGatewaySecret(ctx context.Context, workspaceID string) (WorkspaceRuntimeGatewaySecretBinding, error) {
+	serviceName, _, err := p.workspaceRuntimeResourcesStrict(ctx, workspaceID, false)
+	if err != nil || serviceName == "" {
+		return WorkspaceRuntimeGatewaySecretBinding{}, fmt.Errorf("workspace_runtime_not_found")
+	}
+	raw, err := p.kubectl(ctx, []string{"get", "deployment/" + serviceName, "-o", "json"}, nil)
+	if err != nil {
+		return WorkspaceRuntimeGatewaySecretBinding{}, err
+	}
+	var deployment map[string]any
+	if json.Unmarshal(raw, &deployment) != nil || stringValue(nested(deployment, "metadata", "labels", "oplcloud.cn/workspace-id")) != workspaceID {
+		return WorkspaceRuntimeGatewaySecretBinding{}, fmt.Errorf("workspace_runtime_gateway_secret_readback_mismatch")
+	}
+	secretRef := stringValue(nested(deployment, "spec", "template", "metadata", "annotations", "opl.medopl.cn/gateway-secret-ref"))
+	fingerprint := stringValue(nested(deployment, "spec", "template", "metadata", "annotations", "opl.medopl.cn/gateway-fingerprint"))
+	keyID, parseErr := strconv.ParseInt(stringValue(nested(deployment, "spec", "template", "metadata", "annotations", "opl.medopl.cn/gateway-key-id")), 10, 64)
+	bound := false
+	volumes, _ := nested(deployment, "spec", "template", "spec", "volumes").([]any)
+	for _, rawVolume := range volumes {
+		volume, _ := rawVolume.(map[string]any)
+		if stringValue(volume["name"]) != "workspace-secrets" {
+			continue
+		}
+		sources, _ := nested(volume, "projected", "sources").([]any)
+		for _, rawSource := range sources {
+			source, _ := rawSource.(map[string]any)
+			bound = bound || stringValue(nested(source, "secret", "name")) == secretRef
+		}
+	}
+	if parseErr != nil || keyID <= 0 || secretRef == "" || fingerprint == "" || !bound {
+		return WorkspaceRuntimeGatewaySecretBinding{}, fmt.Errorf("workspace_runtime_gateway_secret_readback_mismatch")
+	}
+	return WorkspaceRuntimeGatewaySecretBinding{WorkspaceID: workspaceID, WorkspaceAPIKeyID: keyID, SecretRef: secretRef, Fingerprint: fingerprint, Bound: true}, nil
 }
 
 func runtimeAccessFromSecret(secret map[string]any, secretRef string) (RuntimeAccess, Check) {

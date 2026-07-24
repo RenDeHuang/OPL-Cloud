@@ -81,6 +81,88 @@ func TestSub2APIAdminUsersPagination(t *testing.T) {
 	}
 }
 
+func TestSub2APIAdminUserUsesExactIDAndAuthoritativeFacts(t *testing.T) {
+	client := newSub2APITestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/auth/login":
+			writeSub2APISuccess(t, w, map[string]any{"access_token": "admin-access", "refresh_token": "admin-refresh"})
+		case "/api/v1/admin/users/42":
+			if r.Method != http.MethodGet || r.URL.RawQuery != "" || r.Header.Get("Authorization") != "Bearer admin-access" {
+				t.Fatalf("admin user request = %s %s auth=%q", r.Method, r.URL.String(), r.Header.Get("Authorization"))
+			}
+			writeSub2APISuccess(t, w, map[string]any{
+				"id": 42, "email": " Pilot@Example.com ", "balance": 12.345678, "status": "active",
+				"created_at": "2026-07-18T09:02:03+08:00", "updated_at": "2026-07-19T12:05:06+08:00",
+			})
+		default:
+			t.Fatalf("unexpected route %s %s", r.Method, r.URL.String())
+		}
+	}, time.Second)
+
+	user, err := client.AdminUser(context.Background(), 42)
+	if err != nil {
+		t.Fatalf("admin user: %v", err)
+	}
+	if user.ID != 42 || user.Email != "pilot@example.com" || user.Status != "active" || user.BalanceUSDMicros != 12_345_678 || user.BalanceUnavailable {
+		t.Fatalf("admin user facts = %#v", user)
+	}
+	if user.CreatedAt.Location() != time.UTC || user.CreatedAt.Format(time.RFC3339Nano) != "2026-07-18T01:02:03Z" ||
+		user.UpdatedAt.Location() != time.UTC || user.UpdatedAt.Format(time.RFC3339Nano) != "2026-07-19T04:05:06Z" {
+		t.Fatalf("admin user authoritative times = %s / %s", user.CreatedAt.Format(time.RFC3339Nano), user.UpdatedAt.Format(time.RFC3339Nano))
+	}
+}
+
+func TestSub2APIAdminUserRejectsInvalidIdentityFacts(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		data map[string]any
+	}{
+		{name: "id mismatch", data: map[string]any{"id": 41, "email": "pilot@example.com", "balance": 1, "status": "active", "created_at": "2026-07-18T01:02:03Z", "updated_at": "2026-07-19T04:05:06Z"}},
+		{name: "empty normalized email", data: map[string]any{"id": 42, "email": "  ", "balance": 1, "status": "active", "created_at": "2026-07-18T01:02:03Z", "updated_at": "2026-07-19T04:05:06Z"}},
+		{name: "invalid status", data: map[string]any{"id": 42, "email": "pilot@example.com", "balance": 1, "status": "pending", "created_at": "2026-07-18T01:02:03Z", "updated_at": "2026-07-19T04:05:06Z"}},
+		{name: "missing created at", data: map[string]any{"id": 42, "email": "pilot@example.com", "balance": 1, "status": "active", "updated_at": "2026-07-19T04:05:06Z"}},
+		{name: "missing updated at", data: map[string]any{"id": 42, "email": "pilot@example.com", "balance": 1, "status": "active", "created_at": "2026-07-18T01:02:03Z"}},
+		{name: "updated before created", data: map[string]any{"id": 42, "email": "pilot@example.com", "balance": 1, "status": "active", "created_at": "2026-07-19T04:05:06Z", "updated_at": "2026-07-18T01:02:03Z"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client := newSub2APITestClient(t, func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/v1/auth/login":
+					writeSub2APISuccess(t, w, map[string]any{"access_token": "admin-access", "refresh_token": "admin-refresh"})
+				case "/api/v1/admin/users/42":
+					writeSub2APISuccess(t, w, tc.data)
+				default:
+					t.Fatalf("unexpected route %s", r.URL.Path)
+				}
+			}, time.Second)
+			if _, err := client.AdminUser(context.Background(), 42); !errors.Is(err, ErrSub2APIIdentityConflict) {
+				t.Fatalf("admin user error = %v", err)
+			}
+		})
+	}
+}
+
+func TestSub2APIAdminUserKeepsIdentityWhenBalanceIsSubMicro(t *testing.T) {
+	client := newSub2APITestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/auth/login":
+			writeSub2APISuccess(t, w, map[string]any{"access_token": "admin-access", "refresh_token": "admin-refresh"})
+		case "/api/v1/admin/users/42":
+			writeSub2APISuccess(t, w, map[string]any{
+				"id": 42, "email": "pilot@example.com", "balance": json.RawMessage("0.00000001"), "status": "disabled",
+				"created_at": "2026-07-18T01:02:03Z", "updated_at": "2026-07-19T04:05:06Z",
+			})
+		default:
+			t.Fatalf("unexpected route %s", r.URL.Path)
+		}
+	}, time.Second)
+
+	user, err := client.AdminUser(context.Background(), 42)
+	if err != nil || user.ID != 42 || user.Email != "pilot@example.com" || user.Status != "disabled" || !user.BalanceUnavailable {
+		t.Fatalf("sub-micro admin user = %#v err=%v", user, err)
+	}
+}
+
 func TestSub2APIEmptyListingsRequireV0162Pagination(t *testing.T) {
 	for _, tc := range []struct {
 		name string

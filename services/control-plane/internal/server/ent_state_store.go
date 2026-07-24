@@ -127,6 +127,9 @@ func newPostgresEntStateStore(databaseURL string) (StateStore, error) {
 		{Version: "202607230001_workspace_purchase_receipt_id", Run: func(ctx context.Context) error {
 			return controlplanemigrations.ApplyWorkspacePurchaseReceiptID(ctx, driver)
 		}},
+		{Version: "202607240001_multi_workspace_pagination", Run: func(ctx context.Context) error {
+			return controlplanemigrations.ApplyMultiWorkspacePagination(ctx, driver)
+		}},
 	}); err != nil {
 		_ = client.Close()
 		return nil, err
@@ -955,6 +958,17 @@ func (s *postgresEntStateStore) ListUsers(ctx context.Context, includeDeleted bo
 	return out, nil
 }
 
+func (s *postgresEntStateStore) GetUser(ctx context.Context, id string) (map[string]any, bool, error) {
+	entity, err := s.client.User.Get(ctx, id)
+	if controlplaneent.IsNotFound(err) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return recordFromEnt(entity, userEntFields), true, nil
+}
+
 func (s *postgresEntStateStore) SaveUser(ctx context.Context, row map[string]any) error {
 	operator := stringValue(row["id"]) == "usr-admin" && stringValue(row["accountId"]) == "acct-admin" && normalizeEmail(stringValue(row["email"])) == "admin@medopl.cn" && stringValue(row["role"]) == "admin"
 	if stringValue(row["role"]) != "owner" && !operator {
@@ -1000,6 +1014,31 @@ func (s *postgresEntStateStore) ListAccounts(ctx context.Context, accountID stri
 		return nil, err
 	}
 	return filteredRecords(rows, "")
+}
+
+func (s *postgresEntStateStore) GetAccount(ctx context.Context, id string) (map[string]any, bool, error) {
+	entity, err := s.client.Account.Get(ctx, id)
+	if controlplaneent.IsNotFound(err) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return recordFromEnt(entity, accountEntFields), true, nil
+}
+
+func (s *postgresEntStateStore) PageAccounts(ctx context.Context, page tablePageQuery) (tablePage, error) {
+	query := s.client.Account.Query()
+	total, err := query.Clone().Count(ctx)
+	if err != nil {
+		return tablePage{}, err
+	}
+	rows, err := loadRecordSet(ctx, query.Order(account.ByID()).Offset(page.Offset).Limit(page.Limit).All, accountEntFields)
+	if err != nil {
+		return tablePage{}, err
+	}
+	items, err := filteredRecords(rows, "")
+	return tablePage{Items: items, Total: total}, err
 }
 
 func (s *postgresEntStateStore) SaveAccount(ctx context.Context, row map[string]any) error {
@@ -1352,6 +1391,17 @@ func (s *postgresEntStateStore) ListComputes(ctx context.Context, accountID stri
 	return filteredRecords(rows, accountID)
 }
 
+func (s *postgresEntStateStore) GetCompute(ctx context.Context, id string) (map[string]any, bool, error) {
+	entity, err := s.client.ComputeAllocation.Get(ctx, id)
+	if controlplaneent.IsNotFound(err) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return recordFromEnt(entity, computeEntFields), true, nil
+}
+
 func (s *postgresEntStateStore) SaveCompute(ctx context.Context, row map[string]any) error {
 	return s.saveResourcePreservingAutoRenew(ctx, "compute", row)
 }
@@ -1374,6 +1424,17 @@ func (s *postgresEntStateStore) ListStorages(ctx context.Context, accountID stri
 		return nil, err
 	}
 	return filteredRecords(rows, accountID)
+}
+
+func (s *postgresEntStateStore) GetStorage(ctx context.Context, id string) (map[string]any, bool, error) {
+	entity, err := s.client.StorageVolume.Get(ctx, id)
+	if controlplaneent.IsNotFound(err) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return recordFromEnt(entity, storageEntFields), true, nil
 }
 
 func (s *postgresEntStateStore) SaveStorage(ctx context.Context, row map[string]any) error {
@@ -1472,6 +1533,17 @@ func (s *postgresEntStateStore) ListAttachments(ctx context.Context, accountID s
 	return filteredRecords(rows, accountID)
 }
 
+func (s *postgresEntStateStore) GetAttachment(ctx context.Context, id string) (map[string]any, bool, error) {
+	entity, err := s.client.StorageAttachment.Get(ctx, id)
+	if controlplaneent.IsNotFound(err) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return recordFromEnt(entity, attachmentEntFields), true, nil
+}
+
 func (s *postgresEntStateStore) SaveAttachment(ctx context.Context, row map[string]any) error {
 	return s.replaceRecord(ctx, row, func(id string) error { return s.client.StorageAttachment.DeleteOneID(id).Exec(ctx) }, func() any { return s.client.StorageAttachment.Create() }, attachmentEntFields)
 }
@@ -1494,6 +1566,68 @@ func (s *postgresEntStateStore) ListWorkspaces(ctx context.Context, accountID st
 		return nil, err
 	}
 	return filteredRecords(rows, accountID)
+}
+
+func (s *postgresEntStateStore) GetWorkspace(ctx context.Context, id string) (map[string]any, bool, error) {
+	entity, err := s.client.Workspace.Get(ctx, id)
+	if controlplaneent.IsNotFound(err) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return recordFromEnt(entity, workspaceEntFields), true, nil
+}
+
+func (s *postgresEntStateStore) PageWorkspaces(ctx context.Context, accountID string, page tablePageQuery) (tablePage, error) {
+	query := s.client.Workspace.Query()
+	if accountID != "" {
+		query.Where(workspace.Or(workspace.AccountID(accountID), workspace.And(workspace.AccountID(""), workspace.OwnerAccountID(accountID))))
+	}
+	total, err := query.Clone().Count(ctx)
+	if err != nil {
+		return tablePage{}, err
+	}
+	rows, err := loadRecordSet(ctx, query.Order(workspace.ByID()).Offset(page.Offset).Limit(page.Limit).All, workspaceEntFields)
+	if err != nil {
+		return tablePage{}, err
+	}
+	items, err := filteredRecords(rows, accountID)
+	return tablePage{Items: items, Total: total}, err
+}
+
+func (s *postgresEntStateStore) CountWorkspacesByAccount(ctx context.Context, accountIDs []string) (map[string]int, error) {
+	counts := make(map[string]int, len(accountIDs))
+	for _, accountID := range accountIDs {
+		counts[accountID] = 0
+	}
+	if len(counts) == 0 {
+		return counts, nil
+	}
+	ids := make([]string, 0, len(counts))
+	for accountID := range counts {
+		ids = append(ids, accountID)
+	}
+	var groups []struct {
+		AccountID      string `json:"account_id"`
+		OwnerAccountID string `json:"owner_account_id"`
+		Count          int    `json:"count"`
+	}
+	err := s.client.Workspace.Query().
+		Where(workspace.Or(workspace.AccountIDIn(ids...), workspace.And(workspace.AccountID(""), workspace.OwnerAccountIDIn(ids...)))).
+		GroupBy(workspace.FieldAccountID, workspace.FieldOwnerAccountID).
+		Aggregate(controlplaneent.As(controlplaneent.Count(), "count")).
+		Scan(ctx, &groups)
+	if err != nil {
+		return nil, err
+	}
+	for _, group := range groups {
+		accountID := firstNonEmpty(group.AccountID, group.OwnerAccountID)
+		if _, ok := counts[accountID]; ok {
+			counts[accountID] += group.Count
+		}
+	}
+	return counts, nil
 }
 
 func (s *postgresEntStateStore) SaveWorkspace(ctx context.Context, row map[string]any) error {

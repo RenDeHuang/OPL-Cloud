@@ -6,6 +6,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"slices"
+	"sync"
 	"testing"
 	"time"
 
@@ -15,12 +17,13 @@ import (
 
 type sourceTruthIdentityClient struct {
 	*testSub2APIClient
+	mu              sync.Mutex
 	users           map[int64]clients.Sub2APIIdentity
+	balances        map[int64]int64
 	userErrs        map[int64]error
 	userIDs         []int64
-	adminUsersCalls int
+	adminUserIDs    []int64
 	batchUsageCalls int
-	adminUsersErr   error
 }
 
 func (c *sourceTruthIdentityClient) User(_ context.Context, userID int64) (clients.Sub2APIIdentity, error) {
@@ -35,16 +38,21 @@ func (c *sourceTruthIdentityClient) User(_ context.Context, userID int64) (clien
 	return identity, nil
 }
 
-func (c *sourceTruthIdentityClient) AdminUsers(_ context.Context, query clients.Sub2APIUserPageQuery) (clients.Sub2APIUserPage, error) {
-	c.adminUsersCalls++
-	if c.adminUsersErr != nil {
-		return clients.Sub2APIUserPage{}, c.adminUsersErr
+func (c *sourceTruthIdentityClient) AdminUser(_ context.Context, userID int64) (clients.Sub2APIUser, error) {
+	c.mu.Lock()
+	c.adminUserIDs = append(c.adminUserIDs, userID)
+	c.mu.Unlock()
+	if err := c.userErrs[userID]; err != nil {
+		return clients.Sub2APIUser{}, err
 	}
-	items := make([]clients.Sub2APIUser, 0, len(c.users))
-	for _, identity := range c.users {
-		items = append(items, clients.Sub2APIUser{ID: identity.ID, Email: identity.Email, Status: identity.Status, CreatedAt: time.Date(2026, 7, 18, 0, 0, 0, 0, time.UTC), UpdatedAt: time.Date(2026, 7, 19, 0, 0, 0, 0, time.UTC)})
+	identity, ok := c.users[userID]
+	if !ok {
+		return clients.Sub2APIUser{}, errors.New("identity unavailable")
 	}
-	return clients.Sub2APIUserPage{Items: items, Total: int64(len(items)), Page: query.Page, PageSize: query.PageSize, Pages: 1}, nil
+	return clients.Sub2APIUser{
+		ID: identity.ID, Email: identity.Email, BalanceUSDMicros: c.balances[userID], Status: identity.Status,
+		CreatedAt: time.Date(2026, 7, 18, 0, 0, 0, 0, time.UTC), UpdatedAt: time.Date(2026, 7, 19, 0, 0, 0, 0, time.UTC),
+	}, nil
 }
 
 func (c *sourceTruthIdentityClient) BatchUsersUsage(_ context.Context, userIDs []int64) (map[int64]clients.Sub2APIBatchUserUsage, error) {
@@ -115,6 +123,7 @@ func TestOperatorAccountsJoinsControlPlaneMappingWithPaginatedBatchSub2APIReadba
 			41: {ID: 41, Email: "alpha@example.com", Status: "active"},
 			42: {ID: 42, Email: "beta@example.com", Status: "disabled"},
 		},
+		balances: map[int64]int64{41: 12_340_000, 42: 5_670_000},
 		userErrs: map[int64]error{},
 	}
 	server, err := NewPersistentServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}, client), store)
@@ -136,21 +145,24 @@ func TestOperatorAccountsJoinsControlPlaneMappingWithPaginatedBatchSub2APIReadba
 		t.Fatalf("operator accounts envelope = %#v", envelope)
 	}
 	alpha, beta := operatorAccountItem(items, "acct-alpha"), operatorAccountItem(items, "acct-beta")
-	if alpha["accountId"] != "acct-alpha" || alpha["consoleUserId"] != "usr-alpha" || alpha["role"] != "owner" || alpha["sub2apiUserId"] != "41" || alpha["email"] != "alpha@example.com" || alpha["status"] != "active" || mapField(alpha, "wallet")["available"] != true {
+	alphaWallet := mapField(alpha, "wallet")
+	if alpha["accountId"] != "acct-alpha" || alpha["consoleUserId"] != "usr-alpha" || alpha["role"] != "owner" || alpha["sub2apiUserId"] != "41" || alpha["email"] != "alpha@example.com" || alpha["status"] != "active" || alphaWallet["available"] != true || mapField(alphaWallet, "data")["usdMicros"] != float64(12_340_000) || alphaWallet["sourceUpdatedAt"] != "2026-07-19T00:00:00Z" {
 		t.Fatalf("alpha mapping = %#v", alpha)
 	}
 	if beta["accountId"] != "acct-beta" || beta["sub2apiUserId"] != "42" || beta["email"] != "beta@example.com" || beta["status"] != "active" || mapField(mapField(beta, "gatewayIdentity"), "data")["status"] != "disabled" {
 		t.Fatalf("beta mapping = %#v", beta)
 	}
-	if client.adminUsersCalls != 1 || client.batchUsageCalls != 1 || len(client.userIDs) != 0 {
-		t.Fatalf("operator batch readback users=%d usage=%d singles=%#v", client.adminUsersCalls, client.batchUsageCalls, client.userIDs)
+	exactIDs := slices.Clone(client.adminUserIDs)
+	slices.Sort(exactIDs)
+	if !slices.Equal(exactIDs, []int64{1, 41, 42}) || client.batchUsageCalls != 1 || len(client.userIDs) != 0 {
+		t.Fatalf("operator exact readback users=%#v usage=%d identityReads=%#v", exactIDs, client.batchUsageCalls, client.userIDs)
 	}
 
-	client.userIDs, client.adminUsersCalls, client.batchUsageCalls = nil, 0, 0
+	client.userIDs, client.adminUserIDs, client.batchUsageCalls = nil, nil, 0
 	customer := loginForTest(t, server, "alpha@example.com", "CorrectHorseBatteryStaple!")
 	forbidden := requestWithSession(t, server, customer, http.MethodGet, "/api/operator/accounts", "")
-	if forbidden.Code != http.StatusForbidden || client.adminUsersCalls != 0 || client.batchUsageCalls != 0 {
-		t.Fatalf("customer operator accounts = %d users=%d usage=%d: %s", forbidden.Code, client.adminUsersCalls, client.batchUsageCalls, forbidden.Body.String())
+	if forbidden.Code != http.StatusForbidden || len(client.adminUserIDs) != 0 || client.batchUsageCalls != 0 {
+		t.Fatalf("customer operator accounts = %d users=%#v usage=%d: %s", forbidden.Code, client.adminUserIDs, client.batchUsageCalls, forbidden.Body.String())
 	}
 
 	client.users[41] = clients.Sub2APIIdentity{ID: 41, Email: "mismatch@example.com", Status: "active"}

@@ -282,6 +282,10 @@ func (app *controlPlaneServer) listWorkspaces(accountID string) []map[string]any
 	return rows
 }
 
+func (app *controlPlaneServer) workspaceByID(ctx context.Context, id string) (map[string]any, bool, error) {
+	return app.tables.GetWorkspace(ctx, id)
+}
+
 func (app *controlPlaneServer) workspaceRecordSet(accountID string) controlPlaneRecordSet {
 	return recordSetFromRows(app.listWorkspaces(accountID))
 }

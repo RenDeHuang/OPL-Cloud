@@ -8,7 +8,7 @@ import * as workspaceApi from "../../apps/console-ui/src/api/workspaces-api.ts";
 const root = new URL("../../", import.meta.url);
 const source = (path: string) => readFile(new URL(path, root), "utf8");
 
-test("Task 12 exposes typed source adapters for the customer truth surfaces", async () => {
+test("Console exposes typed source adapters for the customer truth surfaces", async () => {
   assert.equal(typeof readApi.getGatewayWallet, "function");
   assert.equal(typeof readApi.getGatewayEndpoint, "function");
   assert.equal(typeof readApi.getGatewayGroups, "function");
@@ -59,12 +59,6 @@ test("critical frontend contracts use named DTOs instead of AnyRecord", async ()
   assert.doesNotMatch(dto, /interface (GatewayKeyReveal|WorkspaceRuntimeStatus)\b/);
   assert.doesNotMatch(readApiSource, /AnyRecord|Record<string, any>|map\[string\]any/);
   assert.doesNotMatch(workspaceSource, /AnyRecord|Record<string, any>|map\[string\]any/);
-});
-
-test("historical design evidence is explicitly superseded", async () => {
-  const designQA = await source("design-qa.md");
-  assert.match(designQA, /historical|superseded/i);
-  assert.match(designQA, /task12-freeze-v2/);
 });
 
 test("Workspace launch requires the authoritative total price and fixed SKU size pair", async () => {

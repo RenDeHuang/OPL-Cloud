@@ -12,7 +12,7 @@ async function json(path: string) {
   return JSON.parse(await text(path));
 }
 
-test("Pilot V2 contracts hard cut Gateway keys and source envelopes", async () => {
+test("Current contracts hard cut Gateway keys and source envelopes", async () => {
   const [freeze, sourceTruth, boundary, dtos] = await Promise.all([
     json("packages/contracts/opl-cloud-launch-freeze-contract.json"),
     json("packages/contracts/opl-cloud-console-source-truth-contract.json"),
@@ -73,7 +73,7 @@ test("Pilot V2 contracts hard cut Gateway keys and source envelopes", async () =
   assert.doesNotMatch(rotationDTO, /\n\s+keyId:\s*string;/);
 });
 
-test("Pilot V2 contracts hard cut Workspace purchase, access, and Runtime facts", async () => {
+test("Current contracts hard cut Workspace purchase, access, and Runtime facts", async () => {
   const [freeze, billing, pricing, business, product, evidence, sourceTruth] = await Promise.all([
     json("packages/contracts/opl-cloud-launch-freeze-contract.json"),
     json("packages/contracts/opl-cloud-billing-ledger-contract.json"),
@@ -91,16 +91,19 @@ test("Pilot V2 contracts hard cut Workspace purchase, access, and Runtime facts"
   assert.equal(freeze.workspaceLaunch.backgroundProgression, "non_review_and_manual_review_recovery_integrated_local_fake_verified");
   assert.equal(freeze.workspaceLaunch.nextBlockedStage, undefined);
   assert.deepEqual(freeze.workspaceLaunch.fulfillmentResources, ["compute", "storage", "attachment", "gateway_secret", "runtime"]);
-	assert.deepEqual(freeze.gateway.workspaceKeyLifecycle, {
-		launchConvergence: "zero_create_one_active_reuse_other_fail_closed",
-		rotationApi: "POST /api/workspaces/{workspaceId}/workspace-key/rotate",
-		mutationCredential: "session_delegated_user_bearer",
-		workspacePersistence: "workspace_api_key_id_only",
-		operationPersistence: "control_plane_runtime_operations_non_secret_phases",
-		phases: ["replacement_check", "replacement_create", "secret_write", "retire_old", "promote_replacement", "workspace_commit", "runtime_apply", "delete_old", "receipt", "complete"],
-		receiptType: "workspace.gateway_key_rotated.v1",
-		currentImplementation: "code_complete_local_focused_tests_only"
-	});
+  assert.deepEqual(freeze.gateway.workspaceKeyLifecycle, {
+    scopeIdentity: ["workspaceId", "workspaceApiKeyId"],
+    launchConvergence: "one_reserved_key_per_workspace",
+    rotationApi: "POST /api/workspaces/{workspaceId}/workspace-key/rotate",
+    mutationCredential: "session_delegated_user_bearer",
+    workspacePersistence: "workspace_api_key_id_only",
+    operationPersistence: "control_plane_runtime_operations_non_secret_phases",
+    phases: ["replacement_check", "replacement_create", "secret_write", "runtime_bind", "runtime_readback", "workspace_commit", "retire_old", "promote_new", "delete_old", "receipt", "complete"],
+    runtimeCredentialInvariant: "key_rotation_does_not_change_username_password_or_credential_version",
+    oldKeyRetirementGate: "only_after_runtime_authoritative_readback_and_atomic_workspace_commit",
+    receiptType: "workspace.gateway_key_rotated.v1",
+    currentImplementation: "code_complete_local_focused_tests_only"
+  });
   assert.equal(billing.chargePolicy.customerObject, "workspace");
   assert.equal(billing.chargePolicy.debitCardinalityPerPeriod, 1);
   assert.equal(billing.chargePolicy.launchOperationAction, "workspace.launch.v2");
@@ -182,7 +185,7 @@ test("Pilot V2 contracts hard cut Workspace purchase, access, and Runtime facts"
   });
 });
 
-test("Pilot V2 contracts hard cut operator resources, wallet adjustments, and announcements", async () => {
+test("Current contracts hard cut operator resources, wallet adjustments, and announcements", async () => {
   const [management, sourceTruth, business, boundary, evidence, billing] = await Promise.all([
     json("packages/contracts/opl-cloud-management-contract.json"),
     json("packages/contracts/opl-cloud-console-source-truth-contract.json"),
@@ -214,18 +217,26 @@ test("Pilot V2 contracts hard cut operator resources, wallet adjustments, and an
     health: "GET /api/operator/health"
   });
   assert.deepEqual(management.operatorProjection.sub2apiReads, {
-    users: "GET /api/v1/admin/users",
+    currentPageUsers: "GET /api/v1/admin/users/{userId}",
     usersUsage: "POST /api/v1/admin/dashboard/users-usage",
     apiKeysUsage: "POST /api/v1/admin/dashboard/api-keys-usage",
     currentPageKeyCounts: "GET /api/v1/admin/users/{userId}/api-keys",
     batchSizeMax: 50
   });
-  assert.equal(management.operatorProjection.perAccountUserOrUsageNPlusOne, false);
-  assert.equal(management.operatorProjection.usersPagination, "collect_all_coherent_sub2api_user_pages");
+  assert.equal("perAccountUserOrUsageNPlusOne" in management.operatorProjection, false);
+  assert.equal(management.operatorProjection.pageSizeDefault, 20);
+  assert.equal(management.operatorProjection.userAndBalanceRead, "current_page_exact_id_bounded_concurrency_max_4");
+  assert.equal(management.operatorProjection.userReadConcurrencyMax, 4);
+  assert.equal(management.operatorProjection.usageRead, "current_page_user_ids_batch_required");
+  assert.equal(management.operatorProjection.workspaceCountRead, "single_control_plane_group_by_for_current_page");
+  assert.equal(management.operatorProjection.usersPagination, "control_plane_order_limit_offset_count_then_current_page_sub2api_reads");
+  assert.equal(management.operatorProjection.remoteReadScope, "current_control_plane_page_only");
+  assert.equal(management.operatorProjection.scaleInvariant, "same_page_size_request_count_equal_for_100_and_1000_accounts");
   assert.equal(management.operatorProjection.persistence, "none_request_join_only");
   assert.equal(management.operatorProjection.keyCountRead, "selected_control_plane_page_only_bounded_concurrency_max_4");
   assert.equal(management.operatorProjection.readReplica, false);
   assert.equal(management.operatorProjection.partialFailure, "affected_nested_source_unavailable_without_zero_data");
+  assert.equal(management.workspaceOwnership.cardinality, "many_workspaces_per_account");
   assert.equal(management.operatorAuthPolicy.defaultRoute, "/console/overview");
   assert.equal(management.operatorAuthPolicy.consoleRouteBehavior, "owner_console_access");
   assert.equal(management.operatorAuthPolicy.navigation, "customer_routes_then_admin_routes");
@@ -301,7 +312,26 @@ test("Pilot V2 contracts hard cut operator resources, wallet adjustments, and an
     "status", "createdAt", "expiresAt", "lastReadAt", "operationRef", "receiptRef"
   ]);
   assert.equal(resource.fabricAndLedgerPersistenceInControlPlane, false);
-  assert.equal(sourceTruth.sources.identity.operatorAccounts.pagination, "collect_all_coherent_sub2api_user_pages_then_control_plane_page_with_key_counts_only_for_selected_page");
+  assert.equal(sourceTruth.sources.identity.operatorAccounts.pagination, "control_plane_order_limit_offset_count_then_current_page_sub2api_reads");
+  assert.equal(sourceTruth.sources.identity.operatorAccounts.remoteReadScope, "current_control_plane_page_only");
+  assert.equal(sourceTruth.sources.identity.operatorAccounts.userAndBalanceRead, "current_page_exact_id_bounded_concurrency_max_4");
+  assert.equal(sourceTruth.sources.identity.operatorAccounts.usageRead, "current_page_user_ids_batch_required");
+  assert.equal(sourceTruth.sources.identity.operatorAccounts.workspaceCountRead, "single_control_plane_group_by_for_current_page");
+  assert.equal(sourceTruth.sources.operator.resources.providerAuthority, "live_fabric_batch_readback_only");
+  assert.equal(sourceTruth.sources.operator.resources.controlPlaneProviderSnapshotFallback, false);
+  assert.deepEqual(boundary.services.fabric.providerFactsBatchRead, {
+    endpoint: "POST /fabric/provider-facts/batch",
+    requestDto: { items: ["accountId", "workspaceId", "resourceType", "resourceId"] },
+    responseDto: { items: ["accountId", "workspaceId", "resourceType", "resourceId", "available", "facts", "errorCode"] },
+    batchSizeMax: 50,
+    readOnly: true,
+    computeAndStorageAuthority: "tencent_describe",
+    attachmentAndRuntimeAuthority: "fabric_and_kubernetes_live_readback",
+    independentTimeouts: true,
+    unavailableFallback: "none",
+    tencentMutationCount: 0
+  });
+  assert.deepEqual(boundary.services.fabric.gatewaySecretWrite.requestFields, ["accountId", "workspaceId", "workspaceApiKeyId", "fingerprint", "gatewayApiKey"]);
   assert.equal(sourceTruth.sources.identity.operatorAccounts.failure, "affected_nested_source_unavailable_without_zero_data");
   assert.deepEqual(sourceTruth.sources.operator.routes, {
     overview: "GET /api/operator/overview",
@@ -312,6 +342,8 @@ test("Pilot V2 contracts hard cut operator resources, wallet adjustments, and an
   });
   assert.equal(boundary.services.controlPlane.operatorProjection.persistence, "none_request_join_only");
   assert.deepEqual(boundary.services.controlPlane.operatorProjection.authorities, ["control_plane", "sub2api", "fabric", "ledger", "runtime"]);
+  assert.equal(boundary.services.controlPlane.operatorProjection.userAndBalanceRead, "current_page_exact_id_bounded_concurrency_max_4");
+  assert.equal(boundary.services.controlPlane.operatorProjection.usageRead, "current_page_user_ids_batch_required");
   assert.deepEqual(boundary.services.controlPlane.accountOwnerAuthorization, {
     authority: "active_account_owner_graph",
     reservedAdminOwnerAccount: "acct-admin",
@@ -352,13 +384,13 @@ test("Pilot V2 contracts hard cut operator resources, wallet adjustments, and an
     recoveryRequestFields: ["accountId", "billingOperationId", "evidenceRef"],
     implementation: "integrated_local_fake_verified"
   });
-  assert.equal(boundary.externalServices.gateway.currentImplementation, "paginated_users_batch_usage_current_page_bounded_key_counts_and_full_delegated_key_parity_code_complete_local_only");
+  assert.equal(boundary.externalServices.gateway.currentImplementation, "exact_id_current_page_users_batch_usage_bounded_key_counts_and_full_delegated_key_parity_code_complete_local_only");
   const announcement = business.objectKinds.find((entry: { kind: string }) => entry.kind === "Announcement");
   assert.equal(Boolean(announcement), true);
   assert.equal(announcement.implementation, "code_complete_local_focused_tests");
 });
 
-test("Pilot V2 binds delegated Gateway credentials to process-local Console sessions", async () => {
+test("Current Console binds delegated Gateway credentials to process-local Console sessions", async () => {
   const [management, boundary, deployment] = await Promise.all([
     json("packages/contracts/opl-cloud-management-contract.json"),
     json("packages/contracts/opl-cloud-service-boundary-contract.json"),
@@ -384,7 +416,7 @@ test("Pilot V2 binds delegated Gateway credentials to process-local Console sess
   });
 });
 
-test("Pilot V2 current human truth preserves public entry points and evidence levels", async () => {
+test("Current human truth preserves public entry points and evidence levels", async () => {
   const [invariants, architecture, status, consoleProduct, runbook, readme, devGuide, decisions, project] = await Promise.all([
     text("docs/invariants.md"),
     text("docs/architecture.md"),

@@ -71,7 +71,10 @@ function serializedRuns(currentJob) {
   return (currentJob.steps || []).map((step) => step.run || "").join("\n");
 }
 
-function runImageMetadata(step, appSha, shellSha, frameworkSha) {
+function runImageMetadata(step, appSha, shellSha, frameworkSha, {
+  publishCloudImage = false,
+  publishWorkspaceImage = true
+} = {}) {
   return spawnSync("bash", ["-c", step.run], {
     cwd: fileURLToPath(repoFile(".")),
     encoding: "utf8",
@@ -81,12 +84,13 @@ function runImageMetadata(step, appSha, shellSha, frameworkSha) {
       GITHUB_OUTPUT: "/dev/null",
       OPL_CLOUD_IMAGE_REPOSITORY: "registry.example.test/opl/cloud",
       OPL_WORKSPACE_IMAGE_REPOSITORY: "registry.example.test/opl/workspace",
+      OPL_CLOUD_SHA: cloudCandidateSha,
       REQUESTED_IMAGE_TAG: "cloud-test",
       REQUESTED_WORKSPACE_APP_SHA: appSha,
       REQUESTED_WORKSPACE_SHELL_SHA: shellSha,
       REQUESTED_WORKSPACE_FRAMEWORK_SHA: frameworkSha,
-      PUBLISH_CLOUD_IMAGE: "false",
-      PUBLISH_WORKSPACE_IMAGE: "true"
+      PUBLISH_CLOUD_IMAGE: publishCloudImage ? "true" : "false",
+      PUBLISH_WORKSPACE_IMAGE: publishWorkspaceImage ? "true" : "false"
     }
   });
 }
@@ -266,6 +270,7 @@ test("TKE deploy workflow matches the current deployment contract", async () => 
   assert.equal(contract.productionBootstrapJob.releaseComplete, false);
   assert.equal(contract.productionBootstrapJob.approvalEnvironment, "production");
   assertWorkflowContract(deployWorkflow, contract.productionBootstrapJob, contract);
+  assertWorkflowContract(deployWorkflow, contract.productionReadOnlyRolloutVerifierJob, contract);
   assert.equal(contract.productionReleaseGateJob.bootstrapConclusion, "release_incomplete_failure");
   assertWorkflowContract(deployWorkflow, contract.productionReleaseGateJob, contract);
   assert.ok(contract.productionLegacySecretCleanupJob);
@@ -274,10 +279,22 @@ test("TKE deploy workflow matches the current deployment contract", async () => 
   assert.equal(contract.productionLegacySecretCleanupJob.accountScopedSecretDeletionForbidden, true);
   assert.equal(contract.productionLegacySecretCleanupJob.failureBehavior, "fail_workflow_without_image_rollback");
   assertWorkflowContract(deployWorkflow, contract.productionLegacySecretCleanupJob, contract);
-  assert.equal(contract.productionRollbackJob.trigger, "post_snapshot_deploy_or_bootstrap_readiness_not_successful");
+  assert.equal(contract.productionRollbackJob.trigger, "post_snapshot_deploy_bootstrap_or_read_only_verifier_not_successful");
   assertWorkflowContract(deployWorkflow, contract.productionRollbackJob, contract);
   assert.deepEqual(contract.imageReleaseWorkflow.outputs, ["cloud_image", "workspace_image"]);
   assert.equal(contract.imageReleaseWorkflow.skippedOutput, "empty");
+  assert.deepEqual(contract.imageReleaseWorkflow.workspaceSourceInputs, {
+    required: false,
+    requiredWhen: "publish_workspace_image=true",
+    cloudOnlyBehavior: "not_validated_not_cloned_not_built"
+  });
+  assert.deepEqual(contract.deployWorkflow.workspaceImageInputPolicy, {
+    required: false,
+    ordinaryAuthority: "opl-cloud-config.data.OPL_WORKSPACE_IMAGE",
+    providedValue: "must_equal_current_production_digest",
+    bootstrapWithoutConfigMap: "explicit_digest_required",
+    existingWorkspaceDeployments: "preserved_without_restart"
+  });
   assert.doesNotMatch(JSON.stringify(contract), /paid_confirmation|OPL_VERIFY_PAID_CONFIRMATION|OPL_VERIFY_MODEL_ACCESS_KEY/);
 });
 
@@ -319,7 +336,7 @@ test("ordinary TKE deploy has no Acceptance or live QA mutation gate", async () 
   const deployWorkflow = await readWorkflow(".github/workflows/deploy-tke-production.yml");
   const deploy = workflowJob(deployWorkflow, "deploy");
   const inputGate = stepsByName(deploy).get("Check deployment inputs");
-  const source = JSON.stringify(deployWorkflow);
+  const source = JSON.stringify(deploy);
   assert.equal(deployWorkflow.jobs["live-qa"], undefined);
   assert.equal(deployWorkflow.on.workflow_dispatch.inputs.live_qa_approval_id, undefined);
   assert.doesNotMatch(source, /OPL_VERIFY_|OPL_PROVIDER_ACCEPTANCE_TOKEN|production-provider-acceptance/);
@@ -350,6 +367,41 @@ test("TKE diagnostics are read only and mutually exclusive with deploy", async (
   assert.match(runs, /describe "\$pod"/);
   assert.match(runs, /logs/);
   assert.doesNotMatch(runs, /\b(?:apply|delete|patch|scale)\b|set image|rollout restart/);
+});
+
+test("ordinary TKE release requires the real read-only rollout verifier", async () => {
+  const [workflow, contract] = await Promise.all([
+    readWorkflow(".github/workflows/deploy-tke-production.yml"),
+    readJson(deploymentContractPath)
+  ]);
+  const verifier = workflowJob(workflow, "verify-rollout-read-only");
+  const releaseGate = workflowJob(workflow, "release-gate");
+  const rollback = workflowJob(workflow, "rollback-live-qa");
+  const cleanup = workflowJob(workflow, "retire-legacy-workspace-secret");
+  const verifierRun = serializedRuns(verifier);
+
+  assert.equal(verifier.needs, "deploy");
+  assert.match(String(verifier.if), /!inputs\.bootstrap_mode.*needs\.deploy\.result == 'success'/);
+  assert.deepEqual(verifier["runs-on"], ["self-hosted", "tencent-cloud", "opl-cloud", "tke-vpc"]);
+  assert.equal(verifier.environment, "production");
+  assert.match(verifierRun, /api\/healthz/);
+  assert.match(verifierRun, /api\/production\/readiness/);
+  assert.match(verifierRun, /imageID|imageId/);
+  assert.match(verifierRun, /metadata\?\.deletionTimestamp/);
+  assert.match(verifierRun, /condition\.type === "Ready"/);
+  assert.match(verifierRun, /OPL_CLOUD_IMAGE/);
+  assert.match(verifierRun, /OPL_WORKSPACE_IMAGE/);
+  assert.match(verifierRun, /production-live-qa\.ts --read-only/);
+  assert.match(verifierRun, /retired|404/);
+  assert.doesNotMatch(verifierRun, /purchase|redeem|model request|provider mutation/i);
+  assert.deepEqual(releaseGate.needs, ["deploy", "bootstrap-readiness", "verify-rollout-read-only", "rollback-live-qa"]);
+  assert.deepEqual(cleanup.needs, ["deploy", "verify-rollout-read-only"]);
+  assert.match(String(cleanup.if), /needs\.verify-rollout-read-only\.result == 'success'/);
+  assert.match(String(rollback.if), /verify-rollout-read-only/);
+  assert.deepEqual(rollback.needs, ["deploy", "bootstrap-readiness", "verify-rollout-read-only"]);
+  assert.equal(contract.productionReadOnlyRolloutVerifierJob.job, "verify-rollout-read-only");
+  assert.equal(contract.productionReadOnlyRolloutVerifierJob.readOnly, true);
+  assert.deepEqual(contract.productionReleaseGateJob.needs, ["deploy", "bootstrap-readiness", "verify-rollout-read-only", "rollback-live-qa"]);
 });
 
 test("TKE bootstrap deploy is approved, read only, and cannot complete a release", async () => {
@@ -383,13 +435,13 @@ test("TKE bootstrap deploy is approved, read only, and cannot complete a release
   assert.match(bootstrapRun, /release incomplete/i);
   assert.doesNotMatch(bootstrapRun, /production-live-qa|provider-acceptance|purchase|delete|renew|POST/i);
 
-  assert.deepEqual(releaseGate.needs, ["deploy", "bootstrap-readiness"]);
+  assert.deepEqual(releaseGate.needs, ["deploy", "bootstrap-readiness", "verify-rollout-read-only", "rollback-live-qa"]);
   assert.equal(releaseGate.if, "${{ always() && !inputs.diagnostics_only }}");
   assert.match(releaseRun, /release incomplete/i);
   assert.match(releaseRun, /releaseComplete.*false/s);
   assert.match(releaseRun, /exit 1/);
   assert.match(String(cleanup.if), /!inputs\.bootstrap_mode/);
-  assert.deepEqual(rollback.needs, ["deploy", "bootstrap-readiness"]);
+  assert.deepEqual(rollback.needs, ["deploy", "bootstrap-readiness", "verify-rollout-read-only"]);
   assert.match(String(rollback.if), /inputs\.bootstrap_mode.*needs\.bootstrap-readiness\.result != 'success'/);
   assert.match(String(rollback.if), /!inputs\.bootstrap_mode.*needs\.deploy\.result != 'success'/);
   assert.doesNotMatch(String(rollback.if), /release-gate/);
@@ -457,9 +509,9 @@ test("image release builds Workspace from exact merged-main App, active-shell, a
     "workspace_shell_main_sha",
     "workspace_framework_main_sha"
   ]);
-  assert.equal(inputs.workspace_app_main_sha.required, true);
-  assert.equal(inputs.workspace_shell_main_sha.required, true);
-  assert.equal(inputs.workspace_framework_main_sha.required, true);
+  assert.equal(inputs.workspace_app_main_sha.required, false);
+  assert.equal(inputs.workspace_shell_main_sha.required, false);
+  assert.equal(inputs.workspace_framework_main_sha.required, false);
   assert.doesNotMatch(metadata, /\$\{\{\s*inputs\./);
   assert.match(metadata, /\^\[0-9a-fA-F\]\{40\}\$/);
   assert.match(metadata, /tr '\[:upper:\]' '\[:lower:\]'/);
@@ -491,6 +543,12 @@ test("image release builds Workspace from exact merged-main App, active-shell, a
   assert.doesNotMatch(source, /mirror_workspace_image|workspace_source_image|MIRROR_WORKSPACE_IMAGE|REQUESTED_WORKSPACE_IMAGE_TAG|WORKSPACE_SOURCE_IMAGE/i);
   assert.doesNotMatch(runs, /docker login ghcr\.io|imagetools create|git ls-remote|org\.opencontainers\.image\.revision/);
   assert.doesNotMatch(source, /v?26\.7\.1[23]|:latest\b|@latest\b/);
+
+  const cloudOnly = runImageMetadata(steps.get("Image metadata"), "", "", "", {
+    publishCloudImage: true,
+    publishWorkspaceImage: false
+  });
+  assert.equal(cloudOnly.status, 0, cloudOnly.stderr);
 });
 
 test("image release switches isolate publication commands and leave skipped outputs empty", async () => {
@@ -728,8 +786,14 @@ test("TKE deploy requires image digests and rolls back Cloud images with the com
   const stepNames = [...stepsByName(currentJob).keys()];
 
   assert.equal(inputs.includes("exercise_rollback"), true);
+  assert.equal(workflow.on.workflow_dispatch.inputs.workspace_image.required, false);
   assert.match(String(currentJob.env.OPL_EXERCISE_ROLLBACK), /inputs\.exercise_rollback/);
   assert.match(checks, /repository@sha256/);
+  assert.match(checks, /get configmap opl-cloud-config/);
+  assert.match(checks, /--ignore-not-found[\s\S]*2>\/dev\/null \|\| true/);
+  assert.match(checks, /current_workspace_image/);
+  assert.match(checks, /requested_workspace_image/);
+  assert.match(checks, /must match the current production Workspace image/);
   assert.match(checks, /OPL_TENCENT_ZONE/);
   assert.match(checks, /sha256:\[0-9a-f\]\{64\}/);
   assert.doesNotMatch(checks, /must include a non-empty container tag/);
@@ -753,7 +817,7 @@ test("TKE deploy requires image digests and rolls back Cloud images with the com
   assert.doesNotMatch(apply, /set \+e/);
 });
 
-test("TKE deploy or bootstrap readiness failure schedules rollback from the captured image set", async () => {
+test("TKE deploy, bootstrap readiness, or read-only verifier failure schedules rollback from the captured image set", async () => {
   const workflow = await readWorkflow(".github/workflows/deploy-tke-production.yml");
   const deploy = workflowJob(workflow, "deploy");
   const rollback = workflowJob(workflow, "rollback-live-qa");
@@ -762,8 +826,8 @@ test("TKE deploy or bootstrap readiness failure schedules rollback from the capt
 
   assert.match(String(deploy.outputs?.rollback_image_set), /rollback_snapshot\.outputs\.artifact-id/);
   assert.equal(stepsByName(deploy).get("Upload rollback image set")?.id, "rollback_snapshot");
-  assert.deepEqual(rollback.needs, ["deploy", "bootstrap-readiness"]);
-  assert.match(String(rollback.if), /always\(\).*needs\.deploy\.outputs\.rollback_image_set != ''.*inputs\.bootstrap_mode.*needs\.bootstrap-readiness\.result != 'success'.*!inputs\.bootstrap_mode.*needs\.deploy\.result != 'success'/);
+  assert.deepEqual(rollback.needs, ["deploy", "bootstrap-readiness", "verify-rollout-read-only"]);
+  assert.match(String(rollback.if), /always\(\).*needs\.deploy\.outputs\.rollback_image_set != ''.*inputs\.bootstrap_mode.*needs\.bootstrap-readiness\.result != 'success'.*!inputs\.bootstrap_mode.*needs\.verify-rollout-read-only\.result != 'success'/);
   assert.deepEqual(rollback["runs-on"], ["self-hosted", "tencent-cloud", "opl-cloud", "tke-vpc"]);
   assert.equal(rollback.env.TENCENT_DEPLOY_KUBECONFIG_PATH, deploy.env.TENCENT_DEPLOY_KUBECONFIG_PATH);
   assert.equal(steps.get("Set up Node")?.uses, "actions/setup-node@v4");
@@ -782,8 +846,8 @@ test("TKE retires the legacy global Workspace secret only after successful ordin
   const rollback = workflowJob(workflow, "rollback-live-qa");
   const retire = serializedStep(stepsByName(cleanup).get("Retire legacy global Workspace secret"));
 
-  assert.equal(cleanup.needs, "deploy");
-  assert.equal(cleanup.if, "${{ !inputs.bootstrap_mode && needs.deploy.result == 'success' }}");
+  assert.deepEqual(cleanup.needs, ["deploy", "verify-rollout-read-only"]);
+  assert.equal(cleanup.if, "${{ !inputs.bootstrap_mode && needs.deploy.result == 'success' && needs.verify-rollout-read-only.result == 'success' }}");
   assert.deepEqual(cleanup["runs-on"], ["self-hosted", "tencent-cloud", "opl-cloud", "tke-vpc"]);
   assert.equal(cleanup.environment, "production");
   assert.notEqual(cleanup["continue-on-error"], true);
@@ -791,7 +855,7 @@ test("TKE retires the legacy global Workspace secret only after successful ordin
   assert.match(retire, /delete secret opl-cloud-workspace-codex --ignore-not-found/);
   assert.match(retire, /get secret opl-cloud-workspace-codex --ignore-not-found -o name/);
   assert.doesNotMatch(retire, /--selector|delete secrets|delete secret .*\*-env/);
-  assert.deepEqual(rollback.needs, ["deploy", "bootstrap-readiness"]);
+  assert.deepEqual(rollback.needs, ["deploy", "bootstrap-readiness", "verify-rollout-read-only"]);
   assert.doesNotMatch(String(rollback.if), /retire-legacy-workspace-secret|cleanup/);
 });
 

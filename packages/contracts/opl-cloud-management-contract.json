@@ -102,7 +102,9 @@
     "mutationRoutes": "retired"
   },
   "workspaceOwnership": {
-    "personalWorkspace": "ownerAccountId identifies the Console owner and its Sub2API mapping."
+    "personalWorkspace": "ownerAccountId identifies the Console owner and its Sub2API mapping.",
+    "cardinality": "many_workspaces_per_account",
+    "independentFacts": ["quote", "launchOperation", "compute", "storage", "attachment", "runtime", "workspaceApiKeyId", "gatewaySecretRef", "paidThrough", "renewalStatus", "purchaseReceiptId"]
   },
   "identityProvisioning": {
     "onlyMutation": "POST /api/operator/accounts",
@@ -183,15 +185,21 @@
   },
   "operatorProjection": {
     "sub2apiReads": {
-      "users": "GET /api/v1/admin/users",
+      "currentPageUsers": "GET /api/v1/admin/users/{userId}",
       "usersUsage": "POST /api/v1/admin/dashboard/users-usage",
       "apiKeysUsage": "POST /api/v1/admin/dashboard/api-keys-usage",
       "currentPageKeyCounts": "GET /api/v1/admin/users/{userId}/api-keys",
       "batchSizeMax": 50
     },
-    "usersPagination": "collect_all_coherent_sub2api_user_pages",
+    "usersPagination": "control_plane_order_limit_offset_count_then_current_page_sub2api_reads",
+    "pageSizeDefault": 20,
     "pageSizeMax": 50,
-    "perAccountUserOrUsageNPlusOne": false,
+    "remoteReadScope": "current_control_plane_page_only",
+    "scaleInvariant": "same_page_size_request_count_equal_for_100_and_1000_accounts",
+    "userAndBalanceRead": "current_page_exact_id_bounded_concurrency_max_4",
+    "userReadConcurrencyMax": 4,
+    "usageRead": "current_page_user_ids_batch_required",
+    "workspaceCountRead": "single_control_plane_group_by_for_current_page",
     "keyCountRead": "selected_control_plane_page_only_bounded_concurrency_max_4",
     "keyCountPersistence": "none_request_join_only",
     "persistence": "none_request_join_only",

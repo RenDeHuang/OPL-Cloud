@@ -73,7 +73,15 @@
       "operatorProjection": {
         "authorities": ["control_plane", "sub2api", "fabric", "ledger", "runtime"],
         "persistence": "none_request_join_only",
-        "sub2apiStrategy": "paginated_users_and_batch_user_key_usage_no_per_account_n_plus_one",
+        "controlPlanePaginationFirst": true,
+        "pageSizeDefault": 20,
+        "pageSizeMax": 50,
+        "sub2apiStrategy": "current_control_plane_page_exact_user_id_reads_and_batch_aggregates",
+        "userAndBalanceRead": "current_page_exact_id_bounded_concurrency_max_4",
+        "usageRead": "current_page_user_ids_batch_required",
+        "workspaceCountRead": "single_control_plane_group_by_for_current_page",
+        "scaleInvariant": "same_page_size_request_count_equal_for_100_and_1000_accounts",
+        "fabricStrategy": "current_workspace_page_only_batch_provider_facts",
         "runtimeStrategy": "bounded_concurrency_independent_timeout",
         "missingOwnerFact": "source_unavailable_without_zero_or_fallback",
         "readReplica": false
@@ -133,6 +141,28 @@
         "tencentcloud-sdk-go",
         "kubernetes-client-go"
       ],
+      "providerFactsBatchRead": {
+        "endpoint": "POST /fabric/provider-facts/batch",
+        "requestDto": {
+          "items": ["accountId", "workspaceId", "resourceType", "resourceId"]
+        },
+        "responseDto": {
+          "items": ["accountId", "workspaceId", "resourceType", "resourceId", "available", "facts", "errorCode"]
+        },
+        "batchSizeMax": 50,
+        "readOnly": true,
+        "computeAndStorageAuthority": "tencent_describe",
+        "attachmentAndRuntimeAuthority": "fabric_and_kubernetes_live_readback",
+        "independentTimeouts": true,
+        "unavailableFallback": "none",
+        "tencentMutationCount": 0
+      },
+      "gatewaySecretWrite": {
+        "endpoint": "POST /fabric/gateway-secrets",
+        "requestFields": ["accountId", "workspaceId", "workspaceApiKeyId", "fingerprint", "gatewayApiKey"],
+        "newWriteScope": "workspace",
+        "legacyReadCompatibility": "explicit_persisted_scope_or_ref_only"
+      },
       "workspaceLaunchManualReviewProviderTruth": {
         "endpoint": "GET /fabric/monthly-provider-truth?computeAllocationId=<id>&storageVolumeId=<id>",
         "scope": "workspace.launch.v2_manual_review_recovery_only",
@@ -168,13 +198,13 @@
         "project configured public model endpoint",
         "read scoped request usage",
         "read scoped aggregate usage stats",
-        "read paginated users and batch user/key usage",
+        "read mapped users by exact ID and batch user/key usage",
         "read mapped user balance history",
         "create and redeem adjustment",
         "mutate owned general keys including group quota IP expiry rate limits and resets with delegated user credentials"
       ],
       "customerProjection": "strict_allowlist_with_integer_usd_micros_and_no_local_usage_copy",
-      "currentImplementation": "paginated_users_batch_usage_current_page_bounded_key_counts_and_full_delegated_key_parity_code_complete_local_only"
+      "currentImplementation": "exact_id_current_page_users_batch_usage_bounded_key_counts_and_full_delegated_key_parity_code_complete_local_only"
     }
   },
   "browserBoundary": {

@@ -148,7 +148,7 @@ func TestServerDestroysWorkspaceRuntime(t *testing.T) {
 
 func TestServerWritesGatewaySecretWithoutReturningRawKey(t *testing.T) {
 	server := NewServer(fabric.NewService(testProvider{}), "internal-secret")
-	req := testRequest(http.MethodPost, "/fabric/gateway-secrets", bytes.NewBufferString(`{"accountId":"acct-alpha","gatewayApiKey":"raw-gateway-key"}`))
+	req := testRequest(http.MethodPost, "/fabric/gateway-secrets", bytes.NewBufferString(`{"accountId":"acct-alpha","workspaceId":"ws-alpha","workspaceApiKeyId":19,"fingerprint":"sha256:12982dcaf26b60cde5b6b68b01556e591badb2768ac9b71525619cb4ebc646f0","gatewayApiKey":"raw-gateway-key"}`))
 	req.Header.Set("Idempotency-Key", "gateway-once")
 	rec := httptest.NewRecorder()
 
@@ -866,7 +866,7 @@ func (testProvider) WorkspaceRuntimeStatus(_ context.Context, workspaceID string
 
 func (testProvider) UpsertGatewaySecret(_ context.Context, input fabric.GatewaySecretInput) (fabric.GatewaySecret, error) {
 	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(input.GatewayAPIKey)))
-	return fabric.GatewaySecret{SecretRef: "opl-gateway-acct-alpha", Version: digest[:16], Fingerprint: "sha256:" + digest}, nil
+	return fabric.GatewaySecret{SecretRef: "opl-gateway-ws-alpha", Version: digest[:16], Fingerprint: "sha256:" + digest}, nil
 }
 
 func (testProvider) Readiness(_ context.Context) (map[string]any, error) {

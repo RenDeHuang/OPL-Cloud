@@ -199,6 +199,14 @@ test("receipt contract exposes monthly product behavior only", async () => {
 		compute: ["resourceType", "resourceId", "chargeUsdMicros"],
 		storage: ["resourceType", "resourceId", "sizeGb", "chargeUsdMicros"]
 	});
+	assert.deepEqual(billing.entitlementPolicy.unpaidExpiry, {
+		workspaceAccess: "deny_immediately",
+		autoRenew: false,
+		providerAction: "none_expire_by_provider",
+		fabricMutationCount: 0,
+		tencentMutationCount: 0
+	});
+	assert.ok(evidence.workspaceMonthlyBillingReceiptV1.rules.includes("expired receipts contain providerAction=none_expire_by_provider and describe no Fabric or Tencent mutation"));
 	assert.equal(billing.ledgerEvidencePolicy.workspaceCostRules.outerWorkspaceIdentity, "cost.resourceId_equals_receipt.workspaceId");
 	assert.ok(evidence.workspaceMonthlyBillingReceiptV1.rules.includes("cost.resourceId equals receipt workspaceId"));
 	assert.deepEqual(billing.reconciliationPolicy.exceptions.resourceTypes, ["compute", "storage", "workspace"]);

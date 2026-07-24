@@ -15,7 +15,8 @@ import (
 
 type failingWorkspaceListStore struct {
 	controlPlaneTableStore
-	accountIDs []string
+	accountIDs  []string
+	pageQueries []tablePageQuery
 }
 
 func (s *failingWorkspaceListStore) ListWorkspaces(_ context.Context, accountID string) ([]map[string]any, error) {
@@ -23,14 +24,27 @@ func (s *failingWorkspaceListStore) ListWorkspaces(_ context.Context, accountID 
 	return nil, errors.New("workspace store unavailable")
 }
 
+func (s *failingWorkspaceListStore) PageWorkspaces(_ context.Context, accountID string, query tablePageQuery) (tablePage, error) {
+	s.accountIDs = append(s.accountIDs, accountID)
+	s.pageQueries = append(s.pageQueries, query)
+	return tablePage{}, errors.New("workspace store unavailable")
+}
+
 type scopedWorkspaceListStore struct {
 	controlPlaneTableStore
-	accountIDs []string
+	accountIDs  []string
+	pageQueries []tablePageQuery
 }
 
 func (s *scopedWorkspaceListStore) ListWorkspaces(ctx context.Context, accountID string) ([]map[string]any, error) {
 	s.accountIDs = append(s.accountIDs, accountID)
 	return s.controlPlaneTableStore.ListWorkspaces(ctx, accountID)
+}
+
+func (s *scopedWorkspaceListStore) PageWorkspaces(ctx context.Context, accountID string, query tablePageQuery) (tablePage, error) {
+	s.accountIDs = append(s.accountIDs, accountID)
+	s.pageQueries = append(s.pageQueries, query)
+	return s.controlPlaneTableStore.PageWorkspaces(ctx, accountID, query)
 }
 
 type sourceTruthRuntimeFabric struct {
@@ -107,6 +121,39 @@ func TestWorkspaceListIsStrictControlPlaneSource(t *testing.T) {
 	}
 }
 
+func TestWorkspaceListUsesStableAccountScopedPagination(t *testing.T) {
+	base := newMemoryTableStore()
+	store := &scopedWorkspaceListStore{controlPlaneTableStore: base}
+	seedTenantMember(t, store, "acct-alpha", "org-alpha", "usr-alpha", "alpha@example.com")
+	for _, id := range []string{"ws-alpha", "ws-beta"} {
+		mustStore(t, store.SaveWorkspace(context.Background(), workspaceGatewayTestRow(map[string]any{
+			"id": id, "accountId": "acct-alpha", "ownerAccountId": "acct-alpha", "ownerUserId": "usr-alpha",
+			"createdAt": "2026-07-18T00:00:00Z", "updatedAt": "2026-07-18T01:00:00Z", "state": "active",
+		})))
+	}
+	server, err := NewPersistentServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}), store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := loginForTest(t, server, "alpha@example.com", "CorrectHorseBatteryStaple!")
+	response := requestWithSession(t, server, session, http.MethodGet, "/api/workspaces?page=2&pageSize=1", "")
+	if response.Code != http.StatusOK {
+		t.Fatalf("workspace page status=%d body=%s", response.Code, response.Body.String())
+	}
+	var envelope map[string]any
+	if err := json.NewDecoder(response.Body).Decode(&envelope); err != nil {
+		t.Fatal(err)
+	}
+	data := mapField(envelope, "data")
+	items, _ := data["items"].([]any)
+	if data["total"] != float64(2) || data["page"] != float64(2) || data["pageSize"] != float64(1) || len(items) != 1 || stringValue(items[0].(map[string]any)["id"]) != "ws-beta" {
+		t.Fatalf("workspace page=%#v", data)
+	}
+	if !reflect.DeepEqual(store.accountIDs, []string{"acct-alpha"}) || !reflect.DeepEqual(store.pageQueries, []tablePageQuery{{Offset: 1, Limit: 1}}) {
+		t.Fatalf("workspace pagination calls accounts=%#v queries=%#v", store.accountIDs, store.pageQueries)
+	}
+}
+
 func TestWorkspaceListStoreFailureIsUnavailable(t *testing.T) {
 	base := newMemoryTableStore()
 	seedTenantMember(t, base, "acct-alpha", "org-alpha", "usr-alpha", "alpha@example.com")
@@ -118,8 +165,8 @@ func TestWorkspaceListStoreFailureIsUnavailable(t *testing.T) {
 	session := loginForTest(t, server, "alpha@example.com", "CorrectHorseBatteryStaple!")
 	response := requestWithSession(t, server, session, http.MethodGet, "/api/workspaces", "")
 	assertUnavailableWorkspaceEnvelope(t, response, http.StatusInternalServerError, "control-plane")
-	if len(store.accountIDs) != 1 || store.accountIDs[0] != "acct-alpha" {
-		t.Fatalf("workspace list account scope = %#v", store.accountIDs)
+	if len(store.accountIDs) != 1 || store.accountIDs[0] != "acct-alpha" || !reflect.DeepEqual(store.pageQueries, []tablePageQuery{{Offset: 0, Limit: 20}}) {
+		t.Fatalf("workspace list account scope = %#v queries=%#v", store.accountIDs, store.pageQueries)
 	}
 }
 

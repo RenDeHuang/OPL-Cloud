@@ -299,15 +299,69 @@ type RuntimeAccess struct {
 }
 
 type GatewaySecretInput struct {
-	AccountID      string `json:"accountId"`
-	GatewayAPIKey  string `json:"gatewayApiKey"`
-	IdempotencyKey string `json:"-"`
+	AccountID         string `json:"accountId"`
+	WorkspaceID       string `json:"workspaceId"`
+	WorkspaceAPIKeyID int64  `json:"workspaceApiKeyId"`
+	Fingerprint       string `json:"fingerprint"`
+	GatewayAPIKey     string `json:"gatewayApiKey"`
+	IdempotencyKey    string `json:"-"`
 }
 
 type GatewaySecret struct {
 	SecretRef   string `json:"secretRef"`
 	Version     string `json:"version"`
 	Fingerprint string `json:"fingerprint"`
+}
+
+type WorkspaceRuntimeGatewaySecretInput struct {
+	WorkspaceID       string `json:"workspaceId"`
+	WorkspaceAPIKeyID int64  `json:"workspaceApiKeyId"`
+	SecretRef         string `json:"secretRef"`
+	Fingerprint       string `json:"fingerprint"`
+	IdempotencyKey    string `json:"-"`
+}
+
+type WorkspaceRuntimeGatewaySecretBinding struct {
+	WorkspaceID       string `json:"workspaceId"`
+	WorkspaceAPIKeyID int64  `json:"workspaceApiKeyId"`
+	SecretRef         string `json:"secretRef"`
+	Fingerprint       string `json:"fingerprint"`
+	Bound             bool   `json:"bound"`
+}
+
+type ProviderFactInput struct {
+	AccountID    string `json:"accountId"`
+	WorkspaceID  string `json:"workspaceId"`
+	ResourceType string `json:"resourceType"`
+	ResourceID   string `json:"resourceId"`
+}
+
+type ProviderFactsBatchInput struct {
+	Items []ProviderFactInput `json:"items"`
+}
+
+type ProviderResourceFacts struct {
+	PackageOrSpec string `json:"packageOrSpec,omitempty"`
+	ProviderID    string `json:"providerId,omitempty"`
+	Zone          string `json:"zone,omitempty"`
+	Status        string `json:"status,omitempty"`
+	CreatedAt     string `json:"createdAt,omitempty"`
+	ExpiresAt     string `json:"expiresAt,omitempty"`
+	LastReadAt    string `json:"lastReadAt,omitempty"`
+}
+
+type ProviderFact struct {
+	AccountID    string                `json:"accountId"`
+	WorkspaceID  string                `json:"workspaceId"`
+	ResourceType string                `json:"resourceType"`
+	ResourceID   string                `json:"resourceId"`
+	Available    bool                  `json:"available"`
+	Facts        ProviderResourceFacts `json:"facts,omitempty"`
+	ErrorCode    string                `json:"errorCode,omitempty"`
+}
+
+type ProviderFactsBatch struct {
+	Items []ProviderFact `json:"items"`
 }
 
 type Check struct {

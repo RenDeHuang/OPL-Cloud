@@ -89,6 +89,28 @@ func registerWorkspaceLaunchRoutes(mux *http.ServeMux, app *controlPlaneServer, 
 				writeError(w, http.StatusConflict, errIdempotencyConflict.Error())
 				return
 			}
+			if persisted.Phase == "key_pending" {
+				unlockAccount := app.lockResource("account", accountID)
+				defer unlockAccount()
+				credentialUser, sub2APIUserID, credential, ok := app.gatewayUserContext(w, r)
+				if !ok {
+					return
+				}
+				if stringValue(credentialUser["accountId"]) != accountID {
+					writeError(w, http.StatusForbidden, "account_scope_forbidden")
+					return
+				}
+				if err := app.convergeAndPersistWorkspaceLaunchKey(r.Context(), service, credential, sub2APIUserID, &persisted); err != nil {
+					writeGatewayKeyError(w, err)
+					return
+				}
+				operations, err = app.tables.ListRuntimeOperations(r.Context())
+				if err != nil {
+					writeError(w, http.StatusInternalServerError, "state_read_failed")
+					return
+				}
+				row = findRecord(operations, operation.ID)
+			}
 			body, err := workspaceLaunchResponse(row)
 			if err != nil {
 				writeError(w, http.StatusInternalServerError, "state_read_failed")
@@ -99,15 +121,6 @@ func registerWorkspaceLaunchRoutes(mux *http.ServeMux, app *controlPlaneServer, 
 		}
 		if _, blocked := app.reconciliationBlocksNewWorkspaces(); blocked {
 			writeError(w, http.StatusConflict, "billing_reconciliation_blocked")
-			return
-		}
-		workspaces, err := app.tables.ListWorkspaces(r.Context(), accountID)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "state_read_failed")
-			return
-		}
-		if len(workspaces) != 0 {
-			writeError(w, http.StatusConflict, errPrimaryWorkspaceExists.Error())
 			return
 		}
 		for _, row := range operations {
@@ -145,12 +158,6 @@ func registerWorkspaceLaunchRoutes(mux *http.ServeMux, app *controlPlaneServer, 
 			writeError(w, http.StatusForbidden, "account_scope_forbidden")
 			return
 		}
-		workspaceKey, err := convergeWorkspaceAPIKey(r.Context(), service, credential, sub2APIUserID, operation.ID)
-		if err != nil {
-			writeGatewayKeyError(w, err)
-			return
-		}
-		operation.WorkspaceAPIKeyID = workspaceKey.ID
 		balance, err := service.Sub2APIBalance(r.Context(), sub2APIUserID)
 		if err != nil {
 			writeUpstreamError(w, err)
@@ -160,6 +167,7 @@ func registerWorkspaceLaunchRoutes(mux *http.ServeMux, app *controlPlaneServer, 
 			writeError(w, http.StatusConflict, errMonthlyInsufficientBalance.Error())
 			return
 		}
+		operation.Phase = "key_pending"
 		row := workspaceLaunchOperationRow(operation)
 		if err := app.tables.ClaimWorkspaceLaunch(r.Context(), workspaceLaunchClaimCAS{AccountID: accountID, DesiredOperation: row}); err != nil {
 			if errors.Is(err, errWorkspaceLaunchCASConflict) || errors.Is(err, errWorkspaceLaunchInProgress) {
@@ -187,6 +195,11 @@ func registerWorkspaceLaunchRoutes(mux *http.ServeMux, app *controlPlaneServer, 
 				return
 			}
 			writeError(w, http.StatusInternalServerError, "state_persist_failed")
+			return
+		}
+		operation.PersistedResult = stringValue(row["result"])
+		if err := app.convergeAndPersistWorkspaceLaunchKey(r.Context(), service, credential, sub2APIUserID, &operation); err != nil {
+			writeGatewayKeyError(w, err)
 			return
 		}
 		operations, err = app.tables.ListRuntimeOperations(r.Context())
@@ -257,19 +270,30 @@ func registerWorkspaceLaunchRoutes(mux *http.ServeMux, app *controlPlaneServer, 
 	}))
 }
 
-func convergeWorkspaceAPIKey(ctx context.Context, service *controlplane.Service, credential clients.SessionDelegatedCredential, userID int64, operationID string) (clients.Sub2APIWorkspaceKey, error) {
+func (app *controlPlaneServer) convergeAndPersistWorkspaceLaunchKey(ctx context.Context, service *controlplane.Service, credential clients.SessionDelegatedCredential, userID int64, operation *workspaceLaunchOperation) error {
+	workspaceKey, err := convergeWorkspaceAPIKey(ctx, service, credential, userID, operation.WorkspaceID, operation.ID)
+	if err != nil {
+		return err
+	}
+	operation.WorkspaceAPIKeyID = workspaceKey.ID
+	operation.Status, operation.Phase, operation.ErrorCode = "debit_pending", "debit_pending", ""
+	return app.persistWorkspaceLaunch(ctx, operation)
+}
+
+func convergeWorkspaceAPIKey(ctx context.Context, service *controlplane.Service, credential clients.SessionDelegatedCredential, userID int64, workspaceID, operationID string) (clients.Sub2APIWorkspaceKey, error) {
 	keys, err := service.GatewayUserKeys(ctx, credential, userID)
 	if err != nil {
 		return clients.Sub2APIWorkspaceKey{}, err
 	}
-	reserved := workspaceReservedKeys(keys, userID)
-	if len(reserved) == 1 && reserved[0].Name == "opl-workspace" && reserved[0].Status == "active" && reserved[0].ID > 0 {
+	name := workspaceReservedKeyName(workspaceID)
+	reserved := workspaceKeysNamed(keys, name)
+	if len(reserved) == 1 && reserved[0].UserID == userID && reserved[0].ID > 0 && reserved[0].Status == "active" {
 		return reserved[0], nil
 	}
 	if len(reserved) != 0 {
 		return clients.Sub2APIWorkspaceKey{}, clients.ErrSub2APIWorkspaceKeyAmbiguous
 	}
-	created, createErr := service.CreateGatewayUserKey(ctx, credential, userID, clients.Sub2APICreateKeyInput{Name: "opl-workspace"}, operationID+":workspace-key")
+	created, createErr := service.CreateGatewayUserKey(ctx, credential, userID, clients.Sub2APICreateKeyInput{Name: name}, operationID+":workspace-key")
 	keys, readErr := service.GatewayUserKeys(ctx, credential, userID)
 	if readErr != nil {
 		if createErr != nil {
@@ -277,8 +301,8 @@ func convergeWorkspaceAPIKey(ctx context.Context, service *controlplane.Service,
 		}
 		return clients.Sub2APIWorkspaceKey{}, readErr
 	}
-	reserved = workspaceReservedKeys(keys, userID)
-	if len(reserved) != 1 || reserved[0].Name != "opl-workspace" || reserved[0].Status != "active" || reserved[0].ID <= 0 || created.ID > 0 && created.ID != reserved[0].ID {
+	reserved = workspaceKeysNamed(keys, name)
+	if len(reserved) != 1 || reserved[0].UserID != userID || reserved[0].ID <= 0 || reserved[0].Status != "active" || created.ID > 0 && created.ID != reserved[0].ID {
 		return clients.Sub2APIWorkspaceKey{}, clients.ErrSub2APIWorkspaceKeyAmbiguous
 	}
 	return reserved[0], nil

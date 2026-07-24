@@ -998,7 +998,7 @@ func TestResourceMutationsAppendFabricOperationFacts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("attach storage: %v", err)
 	}
-	runtime, err := service.CreateWorkspaceRuntime(ctx, WorkspaceRuntimeInput{WorkspaceID: "ws-alpha", ComputeID: compute.ID, VolumeID: volume.ID, ImageID: "one-person-lab-app", GatewaySecretRef: gatewaySecretName("acct-alpha"), IdempotencyKey: "ops-runtime"})
+	runtime, err := service.CreateWorkspaceRuntime(ctx, WorkspaceRuntimeInput{WorkspaceID: "ws-alpha", ComputeID: compute.ID, VolumeID: volume.ID, ImageID: "one-person-lab-app", GatewaySecretRef: gatewaySecretName("ws-alpha"), IdempotencyKey: "ops-runtime"})
 	if err != nil {
 		t.Fatalf("create runtime: %v", err)
 	}
@@ -1094,7 +1094,7 @@ func TestWorkspaceRuntimeCreationDoesNotReturnCredential(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create storage: %v", err)
 	}
-	runtime, err := service.CreateWorkspaceRuntime(ctx, WorkspaceRuntimeInput{WorkspaceID: "ws-alpha", ComputeID: compute.ID, VolumeID: volume.ID, ImageID: "one-person-lab-app", GatewaySecretRef: gatewaySecretName("acct-alpha"), IdempotencyKey: "access-runtime"})
+	runtime, err := service.CreateWorkspaceRuntime(ctx, WorkspaceRuntimeInput{WorkspaceID: "ws-alpha", ComputeID: compute.ID, VolumeID: volume.ID, ImageID: "one-person-lab-app", GatewaySecretRef: gatewaySecretName("ws-alpha"), IdempotencyKey: "access-runtime"})
 	if err != nil {
 		t.Fatalf("create runtime: %v", err)
 	}
@@ -1128,6 +1128,22 @@ func TestWorkspaceRuntimeStatusBackfillsCreatedRuntimeIdentity(t *testing.T) {
 	}
 	if live.ID != created.ID || live.Status != "running" || !live.Ready || live.URL != "https://workspace.medopl.cn/w/workspace-alpha/" || live.ServiceName != "runtime-live" || !reflect.DeepEqual(live.Checks, []Check{{Name: "deployment_ready", OK: true}}) {
 		t.Fatalf("live runtime=%#v created=%#v", live, created)
+	}
+}
+
+func TestProviderFactsBatchBackfillsRuntimeIdentity(t *testing.T) {
+	provider := liveRuntimeWithoutIDProvider{runtimeIDs: map[string]string{"runtime-provider-facts": "runtime-stable"}}
+	service := runtimeTestService(provider, NewMemoryOperationStore())
+	created, err := service.CreateWorkspaceRuntime(context.Background(), runtimeTestInput("runtime-provider-facts"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	batch, err := service.ProviderFactsBatch(context.Background(), ProviderFactsBatchInput{Items: []ProviderFactInput{{
+		AccountID: "acct-alpha", WorkspaceID: "workspace-alpha", ResourceType: "runtime", ResourceID: created.ID,
+	}}})
+	if err != nil || len(batch.Items) != 1 || !batch.Items[0].Available || batch.Items[0].ResourceID != created.ID || batch.Items[0].Facts.ProviderID != "runtime-live" {
+		t.Fatalf("runtime provider facts=%#v err=%v", batch, err)
 	}
 }
 
@@ -1174,7 +1190,7 @@ func TestWorkspaceRuntimeRequiresOwnedGatewaySecretReference(t *testing.T) {
 	service := NewServiceWithOperationStore(provider, NewMemoryOperationStore())
 	service.computes["compute-alpha"] = ComputeAllocation{ID: "compute-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", Status: "running"}
 	service.volumes["storage-alpha"] = StorageVolume{ID: "storage-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", Status: "ready"}
-	for _, ref := range []string{"", gatewaySecretName("acct-other")} {
+	for _, ref := range []string{"", gatewaySecretName("ws-other")} {
 		_, err := service.CreateWorkspaceRuntime(context.Background(), WorkspaceRuntimeInput{
 			WorkspaceID: "ws-alpha", ComputeID: "compute-alpha", VolumeID: "storage-alpha", ImageID: "one-person-lab-app",
 			GatewaySecretRef: ref, IdempotencyKey: "runtime-ref-" + stableSuffix(ref)[:8],
@@ -1188,7 +1204,7 @@ func TestWorkspaceRuntimeRequiresOwnedGatewaySecretReference(t *testing.T) {
 	}
 	valid, err := service.CreateWorkspaceRuntime(context.Background(), WorkspaceRuntimeInput{
 		WorkspaceID: "ws-alpha", ComputeID: "compute-alpha", VolumeID: "storage-alpha", ImageID: "one-person-lab-app",
-		GatewaySecretRef: gatewaySecretName("acct-alpha"), IdempotencyKey: "runtime-ref-valid",
+		GatewaySecretRef: gatewaySecretName("ws-alpha"), IdempotencyKey: "runtime-ref-valid",
 	})
 	if err != nil || !valid.Ready || provider.calls.Load() != 1 {
 		t.Fatalf("valid runtime=%#v err=%v calls=%d", valid, err, provider.calls.Load())
@@ -1220,9 +1236,9 @@ func (p *countingGatewayProvider) UpsertGatewaySecret(ctx context.Context, input
 func TestGatewaySecretWriteReplaysOneRedactedOperation(t *testing.T) {
 	provider := &countingGatewayProvider{}
 	service := NewServiceWithOperationStore(provider, NewMemoryOperationStore())
-	input := GatewaySecretInput{AccountID: "acct-alpha", GatewayAPIKey: "raw-gateway-key", IdempotencyKey: "gateway-once"}
+	input := GatewaySecretInput{AccountID: "acct-alpha", WorkspaceID: "ws-alpha", WorkspaceAPIKeyID: 19, Fingerprint: "sha256:12982dcaf26b60cde5b6b68b01556e591badb2768ac9b71525619cb4ebc646f0", GatewayAPIKey: "raw-gateway-key", IdempotencyKey: "gateway-once"}
 	secret, err := service.UpsertGatewaySecret(context.Background(), input)
-	if err != nil || secret.SecretRef != gatewaySecretName("acct-alpha") || secret.Version == "" || secret.Fingerprint == "" {
+	if err != nil || secret.SecretRef != gatewaySecretName("ws-alpha") || secret.Version == "" || secret.Fingerprint == "" {
 		t.Fatalf("gateway secret=%#v err=%v", secret, err)
 	}
 	replayed, err := service.UpsertGatewaySecret(context.Background(), input)
@@ -1230,6 +1246,7 @@ func TestGatewaySecretWriteReplaysOneRedactedOperation(t *testing.T) {
 		t.Fatalf("gateway replay=%#v err=%v calls=%d", replayed, err, provider.calls.Load())
 	}
 	input.GatewayAPIKey = "rotated-gateway-key"
+	input.Fingerprint = "sha256:46b91e2f7bc95555effd550e0dd92346b5a4548d9f644a18b11602c5f1c07c68"
 	if _, err := service.UpsertGatewaySecret(context.Background(), input); err == nil || err.Error() != "gateway_secret_idempotency_conflict" {
 		t.Fatalf("changed Gateway key replay error=%v", err)
 	}
@@ -1255,7 +1272,7 @@ func TestGatewaySecretWriteReplaysOneRedactedOperation(t *testing.T) {
 func TestUpsertGatewaySecretReclaimsStaleOperationAfterSaveFailure(t *testing.T) {
 	provider := &countingGatewayProvider{}
 	store := &failFirstRuntimeSaveStore{OperationStore: NewMemoryOperationStore()}
-	input := GatewaySecretInput{AccountID: "acct-alpha", GatewayAPIKey: "raw-gateway-key", IdempotencyKey: "gateway-stale"}
+	input := GatewaySecretInput{AccountID: "acct-alpha", WorkspaceID: "ws-alpha", WorkspaceAPIKeyID: 19, Fingerprint: "sha256:12982dcaf26b60cde5b6b68b01556e591badb2768ac9b71525619cb4ebc646f0", GatewayAPIKey: "raw-gateway-key", IdempotencyKey: "gateway-stale"}
 	startedAt := time.Date(2026, 7, 17, 0, 0, 0, 0, time.UTC)
 
 	first := NewServiceWithOperationStore(provider, store)
@@ -1274,6 +1291,7 @@ func TestUpsertGatewaySecretReclaimsStaleOperationAfterSaveFailure(t *testing.T)
 	}
 	changed := input
 	changed.GatewayAPIKey = "rotated-gateway-key"
+	changed.Fingerprint = "sha256:46b91e2f7bc95555effd550e0dd92346b5a4548d9f644a18b11602c5f1c07c68"
 	stale := NewServiceWithOperationStore(provider, store)
 	stale.now = func() time.Time { return startedAt.Add(3 * time.Minute) }
 	if _, err := stale.UpsertGatewaySecret(context.Background(), changed); !errors.Is(err, ErrGatewaySecretIdempotencyConflict) {
@@ -1281,7 +1299,7 @@ func TestUpsertGatewaySecretReclaimsStaleOperationAfterSaveFailure(t *testing.T)
 	}
 
 	secret, err := stale.UpsertGatewaySecret(context.Background(), input)
-	if err != nil || secret.SecretRef != gatewaySecretName(input.AccountID) || provider.calls.Load() != 2 {
+	if err != nil || secret.SecretRef != gatewaySecretName(input.WorkspaceID) || provider.calls.Load() != 2 {
 		t.Fatalf("stale Gateway Secret=%#v err=%v providerCalls=%d", secret, err, provider.calls.Load())
 	}
 	replayed, err := NewServiceWithOperationStore(provider, store).UpsertGatewaySecret(context.Background(), input)
@@ -1660,7 +1678,7 @@ func TestAttachmentAndRuntimeRequireExactWorkspaceOwnership(t *testing.T) {
 			if err := validateAttachmentInput(StorageAttachmentInput{WorkspaceID: "ws-alpha"}, compute, volume); err == nil || errorCode(err) != "resource_workspace_mismatch" {
 				t.Fatalf("attachment workspace isolation error=%v", err)
 			}
-			if err := validateRuntimeInput(WorkspaceRuntimeInput{WorkspaceID: "ws-alpha", GatewaySecretRef: gatewaySecretName("acct-alpha")}, compute, volume); err == nil || errorCode(err) != "resource_workspace_mismatch" {
+			if err := validateRuntimeInput(WorkspaceRuntimeInput{WorkspaceID: "ws-alpha", GatewaySecretRef: gatewaySecretName("ws-alpha")}, compute, volume); err == nil || errorCode(err) != "resource_workspace_mismatch" {
 				t.Fatalf("runtime workspace isolation error=%v", err)
 			}
 		})
@@ -1691,7 +1709,7 @@ func TestServiceReplaysResourceStateFromOperationStore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("attach after replay: %v", err)
 	}
-	runtime, err := replayed.CreateWorkspaceRuntime(ctx, WorkspaceRuntimeInput{WorkspaceID: "ws-alpha", ComputeID: compute.ID, VolumeID: volume.ID, ImageID: "one-person-lab-app", GatewaySecretRef: gatewaySecretName("acct-alpha"), IdempotencyKey: "replay-runtime"})
+	runtime, err := replayed.CreateWorkspaceRuntime(ctx, WorkspaceRuntimeInput{WorkspaceID: "ws-alpha", ComputeID: compute.ID, VolumeID: volume.ID, ImageID: "one-person-lab-app", GatewaySecretRef: gatewaySecretName("ws-alpha"), IdempotencyKey: "replay-runtime"})
 	if err != nil {
 		t.Fatalf("runtime after replay: %v", err)
 	}
@@ -1873,7 +1891,7 @@ func TestCreateWorkspaceRuntimeReplaysIdempotentlyBeforeProvider(t *testing.T) {
 	service.computes["compute-alpha"] = ComputeAllocation{ID: "compute-alpha", AccountID: "acct-alpha", WorkspaceID: "workspace-alpha", Status: "running", ServiceName: "opl-compute-alpha"}
 	service.volumes["storage-alpha"] = StorageVolume{ID: "storage-alpha", AccountID: "acct-alpha", WorkspaceID: "workspace-alpha", Status: "ready", ProviderResourceID: "pvc/storage-alpha"}
 	service.volumes["storage-other"] = StorageVolume{ID: "storage-other", AccountID: "acct-alpha", WorkspaceID: "workspace-alpha", Status: "ready", ProviderResourceID: "pvc/storage-other"}
-	input := WorkspaceRuntimeInput{WorkspaceID: "workspace-alpha", ComputeID: "compute-alpha", VolumeID: "storage-alpha", ImageID: "one-person-lab-app", GatewaySecretRef: gatewaySecretName("acct-alpha"), IdempotencyKey: "runtime-once"}
+	input := WorkspaceRuntimeInput{WorkspaceID: "workspace-alpha", ComputeID: "compute-alpha", VolumeID: "storage-alpha", ImageID: "one-person-lab-app", GatewaySecretRef: gatewaySecretName("workspace-alpha"), IdempotencyKey: "runtime-once"}
 	first, err := service.CreateWorkspaceRuntime(context.Background(), input)
 	if err != nil {
 		t.Fatalf("create runtime: %v", err)
@@ -2064,7 +2082,7 @@ func runtimeTestService(provider Provider, store OperationStore) *Service {
 }
 
 func runtimeTestInput(key string) WorkspaceRuntimeInput {
-	return WorkspaceRuntimeInput{WorkspaceID: "workspace-alpha", ComputeID: "compute-alpha", VolumeID: "storage-alpha", ImageID: "one-person-lab-app", GatewaySecretRef: gatewaySecretName("acct-alpha"), IdempotencyKey: key}
+	return WorkspaceRuntimeInput{WorkspaceID: "workspace-alpha", ComputeID: "compute-alpha", VolumeID: "storage-alpha", ImageID: "one-person-lab-app", GatewaySecretRef: gatewaySecretName("workspace-alpha"), IdempotencyKey: key}
 }
 
 func attachmentTestService(provider Provider, store OperationStore) *Service {
@@ -2374,7 +2392,7 @@ func (testProvider) WorkspaceRuntimeStatus(_ context.Context, workspaceID string
 
 func (testProvider) UpsertGatewaySecret(_ context.Context, input GatewaySecretInput) (GatewaySecret, error) {
 	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(input.GatewayAPIKey)))
-	return GatewaySecret{SecretRef: gatewaySecretName(input.AccountID), Version: digest[:16], Fingerprint: "sha256:" + digest}, nil
+	return GatewaySecret{SecretRef: gatewaySecretName(input.WorkspaceID), Version: digest[:16], Fingerprint: "sha256:" + digest}, nil
 }
 
 func (testProvider) Readiness(_ context.Context) (map[string]any, error) {

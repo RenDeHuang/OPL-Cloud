@@ -7,7 +7,7 @@ import * as readApi from "../../apps/console-ui/src/api/console-read-api.ts";
 const root = new URL("../../", import.meta.url);
 const source = (path: string) => readFile(new URL(path, root), "utf8");
 
-test("Pilot V2 operator surfaces use the named read adapters", async () => {
+test("Operator Console surfaces use the named read adapters", async () => {
   for (const name of [
     "getOperatorOverview",
     "getOperatorAccountsPage",

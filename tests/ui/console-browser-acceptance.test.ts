@@ -2,13 +2,13 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-async function runPilotV2BrowserQa(options) {
-  const harness = await import("../../tools/pilot-v2-browser-qa.ts");
-  return harness.runPilotV2BrowserQa(options);
+async function runConsoleBrowserQa(options) {
+  const harness = await import("../../tools/console-browser-qa.ts");
+  return harness.runConsoleBrowserQa(options);
 }
 
-test("Pilot V2 browser covers customer and operator truth states at desktop and mobile", { timeout: 120_000 }, async () => {
-  const result = await runPilotV2BrowserQa({ network: "fake-only" });
+test("Console browser covers customer and operator truth states at desktop and mobile", { timeout: 120_000 }, async () => {
+  const result = await runConsoleBrowserQa({ network: "fake-only" });
 
   assert.equal(result.ok, true);
   assert.equal(result.evidenceLevel, "code-complete");
@@ -17,6 +17,8 @@ test("Pilot V2 browser covers customer and operator truth states at desktop and 
   assert.deepEqual(result.roles, ["customer", "operator"]);
   assert.deepEqual(result.sourceStates, ["available", "empty", "unavailable", "error"]);
   assert.deepEqual(result.repeatedWrites, { gatewayKey: 1, walletAdjustment: 1 });
+  assert.equal(result.workspaceSelection, true);
+  assert.deepEqual(result.workspaceSecretReads, { "ws-1": 1, "ws-2": 1 });
   assert.equal(result.secretCleanup, true);
   assert.equal(result.externalRequests, 0);
 });
@@ -29,30 +31,25 @@ test("Home Login Logo unchanged browser contract stays pinned", async () => {
   assert.match(app, /src="\/opl-app-icon\.png" alt="OPL Cloud"/);
 });
 
-test("Pilot V2 browser rejects non-fake network before starting a server or browser", async () => {
+test("Console browser rejects non-fake network before starting a server or browser", async () => {
   let started = 0;
-  await assert.rejects(() => runPilotV2BrowserQa({
+  await assert.rejects(() => runConsoleBrowserQa({
     network: "production",
     serverFactory: async () => { started += 1; },
     browserFactory: async () => { started += 1; }
-  }), /pilot_v2_browser_fake_only_required/);
+  }), /console_browser_fake_only_required/);
   assert.equal(started, 0);
 });
 
-test("Pilot V2 browser final gate machine-checks Node and Go SKIP counts", async () => {
-  const [workflow, plan] = await Promise.all([
-    readFile(".github/workflows/pull-request-ci.yml", "utf8"),
-    readFile("docs/superpowers/plans/2026-07-19-pilot-v2-implementation.md", "utf8")
-  ]);
+test("Console browser final gate machine-checks Node and Go SKIP counts", async () => {
+  const workflow = await readFile(".github/workflows/pull-request-ci.yml", "utf8");
   assert.match(workflow, /OPL_CAPACITY_TESTS:\s*["']1["']/);
   assert.match(workflow, /--test-reporter=tap/);
   assert.match(workflow, /Node SKIP result missing or nonzero/);
-  for (const gate of [workflow, plan]) {
-    assert.match(gate, /go list -f ['"]\{\{if or \.TestGoFiles \.XTestGoFiles\}\}\{\{\.ImportPath\}\}\{\{end\}\}['"] \.\/\.\.\./);
-    assert.doesNotMatch(gate, /go test(?: -race)? \.\/\.\.\. -json/);
-  }
+  assert.match(workflow, /go list -f ['"]\{\{if or \.TestGoFiles \.XTestGoFiles\}\}\{\{\.ImportPath\}\}\{\{end\}\}['"] \.\/\.\.\./);
+  assert.doesNotMatch(workflow, /go test(?: -race)? \.\/\.\.\. -json/);
   assert.match(workflow, /go test[^\n]*-json/);
   assert.match(workflow, /Action === ["']skip["']/);
   assert.match(workflow, /Go SKIP/);
-  assert.match(workflow, /pilot-v2-browser-qa\.ts --network=fake-only/);
+  assert.match(workflow, /console-browser-qa\.ts --network=fake-only/);
 });

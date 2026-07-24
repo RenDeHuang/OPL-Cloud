@@ -13,7 +13,7 @@ import {
 } from "../../tools/provider-acceptance.ts";
 
 const acceptanceToken = "provider-acceptance-token";
-const approvalId = "approval-pilot-v2";
+const approvalId = "approval-production-verification";
 
 function acceptanceAuthority(slotId, accountId) {
   return {
@@ -367,7 +367,7 @@ test("Provider Acceptance read-only evidence level requires no mutation authorit
 
   stderr = "";
   const denied = await runProviderAcceptanceCli({
-    argv: ["--allow-gateway-write", "--allow-provider-write", "--approval-id", "approval-pilot-v2"],
+    argv: ["--allow-gateway-write", "--allow-provider-write", "--approval-id", "approval-production-verification"],
     env: {},
     stdout: { write: () => {} },
     stderr: { write: (chunk) => { stderr += chunk; } },

@@ -49,9 +49,11 @@ immutable revision deployed and authoritatively read back in production.
 `apps/console-ui` owns presentation only. It has no persistence and never calls
 Fabric, Ledger, Tencent, Kubernetes, or Sub2API directly.
 
-`services/control-plane` owns local sessions, one-to-one account mappings,
-Workspaces, Workspace-level monthly operations, recovery state, and strict
-customer DTOs. Sub2API authenticates customer credentials. Organization and
+`services/control-plane` owns local sessions, one-to-one Account-to-Sub2API
+mappings, N Workspace entitlements per Account, Workspace-level monthly
+operations, provider references/current pointers, recovery state, and strict
+customer DTOs. It does not own live Compute, Storage, Attachment, or Runtime
+provider status. Sub2API authenticates customer credentials. Organization and
 Membership rows remain internal one-to-one compatibility records only; they are
 not shared-account or customer-authorization surfaces.
 
@@ -95,10 +97,11 @@ partial or unknown provider results enter manual review without refund or
 repurchase. Ledger receipt failure retries only the receipt. This behavior is
 code-complete; live Sub2API and Tencent evidence remains pending.
 
-One Workspace operation owns renewal intent and one combined monthly debit.
+Each Workspace operation owns renewal intent and one combined monthly debit.
 Compute and storage rows are provider/compatibility facts, not independent
-customer renewal controls. At unpaid expiry, compute is stopped and access is
-denied; CBS is retained and never deleted by the expiry path.
+customer renewal controls. At unpaid expiry, access is denied and auto-renew is
+disabled, but Control Plane performs no Fabric/Tencent stop, renew, destroy, or
+delete mutation; Tencent expiry policy owns eventual provider reclamation.
 
 ## Workspace Access Path
 
@@ -122,9 +125,12 @@ persisted Workspace state becomes `running`.
 Fabric runs the Workspace image in `cloud` deployment mode with `password`
 authentication. Fabric derives the runtime password and session secret from a
 stable per-Workspace credential seed and stores them in a Kubernetes Secret.
-Control Plane resolves exactly one active account-owned `opl-workspace` Sub2API
-Key and hands it transiently to Fabric; Fabric writes or rotates an account-scoped
-Kubernetes Secret and records only its ref, version, and fingerprint.
+Control Plane resolves the target Workspace's persisted `workspaceApiKeyId` and
+hands the Key transiently to Fabric. Fabric writes or rotates a deterministic
+Workspace-scoped Kubernetes Secret bound to account, Workspace, Key ID, and
+fingerprint, and records only its ref, version, and fingerprint. Existing
+account-scoped Secrets remain read-compatible until that Workspace's first Key
+rotation; ordinary reads never infer scope from Workspace count or Key name.
 Ordinary runtime status is non-secret. Dedicated owner-only POST commands reveal
 or rotate the password transiently; Control Plane never persists it, and Console
 retains it only in Workspace detail component memory. A Workspace image candidate
@@ -183,8 +189,8 @@ then requires the candidate to be contained in that main history before building
 
 Control Plane remains one Pod. Existing load evidence covers request concurrency
 and replay, but its historical per-resource renewal scan is not proof of the
-current Workspace renewal saga. Task 13 must rerun the current gates against an
-isolated PostgreSQL database. Additional replicas remain out of scope unless
+current Workspace renewal saga. The current gates must run against an isolated
+PostgreSQL database. Additional replicas remain out of scope unless
 production measurements justify the ownership and locking changes.
 
 Infrastructure alarms remain in Tencent Cloud Monitor. Business alarms are a

@@ -114,7 +114,8 @@ test("current contracts expose only authoritative Pilot sources and controls", a
   assert.deepEqual(Object.keys(sourceTruth.sources.gateway), [
     "endpoint", "wallet", "groups", "keys", "usage", "usageStats", "accountUsageStats", "balanceHistory"
   ]);
-  assert.equal(product.pilotBoundary.primaryWorkspacePerAccount, 1);
+  assert.equal(product.pilotBoundary.workspaceCardinality, "many_per_account");
+  assert.equal(product.pilotBoundary.unpaidExpiry, "deny_access_zero_fabric_or_tencent_mutation_expire_by_provider");
   assert.equal(product.pilotBoundary.workspaceDataAuthority, "cbs");
   assert.deepEqual(product.pilotBoundary.unsupportedCustomerCapabilities, ["backup", "recovery", "sync", "transfer"]);
   assert.equal(product.pilotBoundary.autoRenewCustomerControl, "hidden_until_real_renewal_evidence");
@@ -206,17 +207,4 @@ test("release contracts keep Acceptance and fixed-slot verification paused outsi
     identityDeploymentCutover: "code_complete_local_verification",
     productionEvidence: "pending"
   });
-});
-
-test("historical implementation plans are marked superseded", async () => {
-  for (const path of [
-    "docs/superpowers/plans/2026-07-16-slide-6-runtime-owner-isolation.md",
-    "docs/superpowers/plans/2026-07-16-slides-1-3-launch-operation.md",
-    "docs/superpowers/plans/2026-07-16-slides-4-8-10-production-proof.md",
-    "docs/superpowers/plans/2026-07-16-slides-5-7-customer-facts.md",
-    "docs/superpowers/plans/2026-07-17-paid-dual-sku-pilot-implementation.md",
-    "docs/superpowers/specs/2026-07-16-pilot-b-rolling-four-lanes-design.md"
-  ]) {
-    assert.match((await text(path)).split("\n").slice(0, 5).join("\n"), /Historical \/ Superseded - do not execute/, path);
-  }
 });

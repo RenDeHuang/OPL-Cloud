@@ -101,7 +101,7 @@ func encodeWorkspaceLaunchOperation(operation workspaceLaunchOperation) string {
 
 func newWorkspaceLaunchOperation(accountID, ownerUserID, name, packageID string, storageGB int, autoRenew bool, priceVersion string, totalChargeUSDMicros int64, key string) workspaceLaunchOperation {
 	operationID := "workspace-launch-" + stableID(accountID, key)[:18]
-	workspaceID := primaryWorkspaceID(accountID)
+	workspaceID := "ws-" + stableID("workspace-launch-v2", accountID, operationID)[:18]
 	now := time.Now().UTC()
 	return workspaceLaunchOperation{
 		ID: operationID, Status: "debit_pending", CreatedAt: now.Format(time.RFC3339Nano), Phase: "debit_pending", SchemaVersion: workspaceLaunchSchemaVersion,
@@ -138,9 +138,10 @@ func decodeWorkspaceLaunchOperation(row map[string]any) (workspaceLaunchOperatio
 			operation.PaidThrough = nextBillingMonth(start, operation.BillingAnchorDay).Format(time.RFC3339Nano)
 		}
 	}
+	keyPending := operation.Phase == "key_pending" && operation.WorkspaceAPIKeyID == 0
 	if operation.SchemaVersion != workspaceLaunchSchemaVersion || operation.ID == "" || operation.Status == "" || operation.RequestHash == "" || operation.AccountID == "" || operation.OwnerUserID == "" ||
 		operation.WorkspaceID == "" || operation.PriceVersion == "" || operation.PackageID == "" || operation.StorageGB <= 0 || operation.TotalChargeUSDMicros <= 0 ||
-		operation.WorkspaceAPIKeyID <= 0 || operation.RedeemCode == "" {
+		operation.WorkspaceAPIKeyID < 0 || operation.WorkspaceAPIKeyID == 0 && !keyPending || operation.RedeemCode == "" {
 		return workspaceLaunchOperation{}, errInvalidWorkspaceLaunchOperation
 	}
 	for field, want := range map[string]string{
@@ -224,6 +225,9 @@ func (app *controlPlaneServer) runWorkspaceLaunch(ctx context.Context, service *
 	operation, ok, err = app.workspaceLaunchOperation(ctx, operationID)
 	if err != nil || !ok || terminalWorkspaceLaunchStatus(operation.Status) || operation.Status == "manual_review" {
 		return err
+	}
+	if operation.Phase == "key_pending" {
+		return nil
 	}
 	unlockAccount := app.lockResource("account", operation.AccountID)
 	defer unlockAccount()
@@ -361,7 +365,7 @@ func (app *controlPlaneServer) fulfillWorkspaceLaunch(ctx context.Context, servi
 			if err != nil {
 				return app.retryWorkspaceLaunchFulfillment(ctx, operation, "workspace_launch_account_mapping_unavailable", err)
 			}
-			secret, err := service.SyncWorkspaceGatewaySecretByID(ctx, operation.AccountID, userID, operation.WorkspaceAPIKeyID, operation.WorkspaceOperationID+":secret")
+			secret, err := service.SyncWorkspaceGatewaySecretByID(ctx, operation.AccountID, operation.WorkspaceID, userID, operation.WorkspaceAPIKeyID, workspaceReservedKeyName(operation.WorkspaceID), operation.WorkspaceOperationID+":secret")
 			if err != nil {
 				return app.retryWorkspaceLaunchFulfillment(ctx, operation, "workspace_launch_secret_retryable", err)
 			}
@@ -379,7 +383,7 @@ func (app *controlPlaneServer) fulfillWorkspaceLaunch(ctx context.Context, servi
 				return app.retryWorkspaceLaunchFulfillment(ctx, operation, "workspace_launch_account_mapping_unavailable", err)
 			}
 			workspace, err := service.PrepareWorkspace(ctx, controlplane.CreateWorkspaceInput{
-				WorkspaceID: operation.WorkspaceID, AccountID: operation.AccountID, Sub2APIUserID: userID, WorkspaceAPIKeyID: operation.WorkspaceAPIKeyID,
+				WorkspaceID: operation.WorkspaceID, AccountID: operation.AccountID, Sub2APIUserID: userID, WorkspaceAPIKeyID: operation.WorkspaceAPIKeyID, WorkspaceAPIKeyName: workspaceReservedKeyName(operation.WorkspaceID),
 				OwnerID: operation.OwnerUserID, Name: operation.Name, PackageID: operation.PackageID, AttachmentID: operation.AttachmentID,
 				ComputeID: operation.ComputeID, VolumeID: operation.StorageID, GatewaySecretRef: operation.GatewaySecretRef,
 			}, operation.WorkspaceOperationID)
@@ -989,7 +993,7 @@ func (app *controlPlaneServer) debitWorkspaceLaunch(ctx context.Context, service
 		return app.retryWorkspaceLaunchDebit(ctx, operation, errMonthlyAccountUnmapped.Error(), err)
 	}
 	key, err := service.Sub2APIWorkspaceKeyByID(ctx, userID, operation.WorkspaceAPIKeyID)
-	if err != nil || key.ID != operation.WorkspaceAPIKeyID || key.UserID != userID || key.Name != "opl-workspace" || key.Status != "active" {
+	if err != nil || key.ID != operation.WorkspaceAPIKeyID || key.UserID != userID || key.Name != workspaceReservedKeyName(operation.WorkspaceID) || key.Status != "active" {
 		return app.retryWorkspaceLaunchDebit(ctx, operation, "gateway_key_unavailable", err)
 	}
 	if operation.ChargeConfirmation == nil {

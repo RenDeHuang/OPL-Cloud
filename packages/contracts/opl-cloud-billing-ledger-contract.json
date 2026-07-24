@@ -3,7 +3,7 @@
   "owner": "OPL Control Plane",
   "purpose": "One-charge Workspace purchase and renewal, fulfillment, entitlement, receipt, wallet-adjustment reference, and reconciliation ownership contract.",
   "state": "current",
-  "machineBoundary": "Sub2API owns spendable USD balance; Control Plane owns the single Workspace charge operation and monthly entitlement; Fabric owns provider fulfillment; Ledger owns append-only evidence receipts and reconciliation reports.",
+  "machineBoundary": "Sub2API owns one spendable USD wallet per Account; Control Plane owns independent Workspace charge operations and monthly entitlements; Fabric owns provider fulfillment and live resource facts; Ledger owns append-only evidence receipts and reconciliation reports.",
   "lifecycle": {
     "type": "long_term_contract",
     "removalCondition": "Replace only with a newer current contract for the same ownership boundary."
@@ -88,6 +88,7 @@
   "entitlementPolicy": {
     "owner": "opl-control-plane",
     "customerRenewalAuthority": "workspace",
+    "workspaceCardinality": "many_per_account",
     "workspaceCustomerFields": [
       "priceVersion",
       "currency",
@@ -123,8 +124,13 @@
       "periodStart",
       "paidThrough"
     ],
-    "computeExpiry": "destroy_and_deny_access",
-    "storageExpiry": "retain_and_deny_access"
+    "unpaidExpiry": {
+      "workspaceAccess": "deny_immediately",
+      "autoRenew": false,
+      "providerAction": "none_expire_by_provider",
+      "fabricMutationCount": 0,
+      "tencentMutationCount": 0
+    }
   },
   "ledgerEvidencePolicy": {
     "owner": "opl-ledger",

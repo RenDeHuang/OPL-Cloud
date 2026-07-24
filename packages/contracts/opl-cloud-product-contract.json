@@ -34,12 +34,14 @@
   "workspaceEntitlementRule": "Workspace is the customer subscription; compute and storage are provider/compatibility components of one accepted Workspace price and period.",
   "pilotBoundary": {
     "inviteOnly": true,
-    "primaryWorkspacePerAccount": 1,
+    "workspaceCardinality": "many_per_account",
+    "independentPerWorkspaceFacts": ["quote", "launchOperation", "compute", "storage", "attachment", "runtime", "workspaceApiKeyId", "gatewaySecretRef", "paidThrough", "renewalStatus", "purchaseReceiptId"],
     "workspaceDataAuthority": "cbs",
     "platformStoresWorkspaceFileBodies": false,
     "unsupportedCustomerCapabilities": ["backup", "recovery", "sync", "transfer"],
     "autoRenewDefault": false,
-    "autoRenewCustomerControl": "hidden_until_real_renewal_evidence"
+    "autoRenewCustomerControl": "hidden_until_real_renewal_evidence",
+    "unpaidExpiry": "deny_access_zero_fabric_or_tencent_mutation_expire_by_provider"
   },
   "publicEntryPoints": {
     "homeLoginLogo": "unchanged",

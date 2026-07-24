@@ -305,58 +305,34 @@ func operatorDisableShapeValid(input map[string]any, accountID string) bool {
 }
 
 func (app *controlPlaneServer) operatorAccountPage(ctx context.Context, service *controlplane.Service, page, pageSize int) (map[string]any, string, error) {
-	accounts, err := app.tables.ListAccounts(ctx, "")
+	accountPage, err := app.tables.PageAccounts(ctx, tablePageQuery{Offset: (page - 1) * pageSize, Limit: pageSize})
 	if err != nil {
 		return nil, "", err
 	}
-	users, err := app.tables.ListUsers(ctx, true)
-	if err != nil {
-		return nil, "", err
-	}
-	workspaces, err := app.tables.ListWorkspaces(ctx, "")
-	if err != nil {
-		return nil, "", err
-	}
-	sort.Slice(accounts, func(i, j int) bool { return stringValue(accounts[i]["id"]) < stringValue(accounts[j]["id"]) })
-	local := make([]map[string]any, 0, len(accounts))
-	remoteIDs := make([]int64, 0, len(accounts))
-	for _, account := range accounts {
+	local := make([]map[string]any, 0, len(accountPage.Items))
+	remoteIDs := make([]int64, 0, len(accountPage.Items))
+	accountIDs := make([]string, 0, len(accountPage.Items))
+	for _, account := range accountPage.Items {
 		remoteID, ok := positiveIntegerField(account, "sub2apiUserId")
-		owner := findRecord(users, stringValue(account["ownerUserId"]))
-		if !ok || !ownsAccount(account, owner) {
+		owner, ownerOK, ownerErr := app.tables.GetUser(ctx, stringValue(account["ownerUserId"]))
+		if ownerErr != nil {
+			return nil, "", ownerErr
+		}
+		if !ok || !ownerOK || !ownsAccount(account, owner) {
 			return nil, "", errAccountIdentityConflict
 		}
 		local = append(local, map[string]any{"account": account, "owner": owner, "remoteId": remoteID})
 		remoteIDs = append(remoteIDs, remoteID)
+		accountIDs = append(accountIDs, stringValue(account["id"]))
 	}
 	if len(local) == 0 {
-		return map[string]any{"items": []any{}, "total": 0, "page": page, "pageSize": pageSize}, "empty", nil
+		return map[string]any{"items": []any{}, "total": accountPage.Total, "page": page, "pageSize": pageSize}, "empty", nil
 	}
-	if len(local) > 50 {
-		return nil, "", errors.New("operator account projection exceeds Pilot limit")
+	workspaceCounts, err := app.tables.CountWorkspacesByAccount(ctx, accountIDs)
+	if err != nil {
+		return nil, "", err
 	}
-	remoteByID := make(map[int64]clients.Sub2APIUser)
-	remoteTotal, remotePages := int64(-1), -1
-	for remotePageNumber := 1; remotePageNumber <= remotePages || remotePages == -1; remotePageNumber++ {
-		remotePage, err := service.Sub2APIAdminUsers(ctx, clients.Sub2APIUserPageQuery{Page: remotePageNumber, PageSize: 50, SortBy: "id", SortOrder: "asc"})
-		if err != nil || remotePage.Page != remotePageNumber || remotePage.PageSize != 50 || remotePage.Pages < 1 {
-			return nil, "", errors.New("sub2api user projection unavailable")
-		}
-		if remotePageNumber == 1 {
-			remoteTotal, remotePages = remotePage.Total, remotePage.Pages
-		} else if remotePage.Total != remoteTotal || remotePage.Pages != remotePages {
-			return nil, "", errors.New("sub2api user projection unavailable")
-		}
-		for _, user := range remotePage.Items {
-			if _, duplicate := remoteByID[user.ID]; duplicate {
-				return nil, "", errors.New("sub2api user projection unavailable")
-			}
-			remoteByID[user.ID] = user
-		}
-	}
-	if int64(len(remoteByID)) != remoteTotal {
-		return nil, "", errors.New("sub2api user projection unavailable")
-	}
+	remoteByID := app.operatorCurrentPageUsers(ctx, service, local)
 	usageByID, usageErr := service.Sub2APIBatchUsersUsage(ctx, remoteIDs)
 	items := make([]any, 0, len(local))
 	for _, joined := range local {
@@ -372,13 +348,7 @@ func (app *controlPlaneServer) operatorAccountPage(ctx context.Context, service 
 			"sub2apiUserId": strconv.FormatInt(remoteID, 10), "email": normalizeEmail(stringValue(owner["email"])), "status": ownerStatus,
 			"keyCount": sourceEnvelope("sub2api", "unavailable", nil, ""),
 		}
-		workspaceCount := 0
-		for _, workspace := range workspaces {
-			if firstNonEmpty(stringValue(workspace["ownerAccountId"]), stringValue(workspace["accountId"])) == stringValue(account["id"]) {
-				workspaceCount++
-			}
-		}
-		item["workspaceCount"] = sourceEnvelope("control-plane", "available", workspaceCount, "")
+		item["workspaceCount"] = sourceEnvelope("control-plane", "available", workspaceCounts[stringValue(account["id"])], "")
 		remote, remoteOK := remoteByID[remoteID]
 		remoteOK = remoteOK && remote.ID == remoteID && remote.Email == normalizeEmail(stringValue(owner["email"])) && (remote.Status == "active" || remote.Status == "disabled")
 		if !remoteOK {
@@ -407,23 +377,46 @@ func (app *controlPlaneServer) operatorAccountPage(ctx context.Context, service 
 		}
 		items = append(items, item)
 	}
-	total := len(items)
-	start := (page - 1) * pageSize
-	if start >= total {
-		items = []any{}
-	} else {
-		end := start + pageSize
-		if end > total {
-			end = total
-		}
-		items = items[start:end]
-	}
 	app.populateOperatorKeyCounts(ctx, service, items)
 	status := "available"
 	if len(items) == 0 {
 		status = "empty"
 	}
-	return map[string]any{"items": items, "total": total, "page": page, "pageSize": pageSize}, status, nil
+	return map[string]any{"items": items, "total": accountPage.Total, "page": page, "pageSize": pageSize}, status, nil
+}
+
+func (app *controlPlaneServer) operatorCurrentPageUsers(ctx context.Context, service *controlplane.Service, local []map[string]any) map[int64]clients.Sub2APIUser {
+	type result struct {
+		user clients.Sub2APIUser
+	}
+	results := make(chan result, len(local))
+	gate := make(chan struct{}, 4)
+	var wait sync.WaitGroup
+	for _, joined := range local {
+		remoteID := joined["remoteId"].(int64)
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			select {
+			case gate <- struct{}{}:
+				defer func() { <-gate }()
+			case <-ctx.Done():
+				return
+			}
+			user, err := service.Sub2APIAdminUser(ctx, remoteID)
+			if err != nil {
+				return
+			}
+			results <- result{user: user}
+		}()
+	}
+	wait.Wait()
+	close(results)
+	remoteByID := make(map[int64]clients.Sub2APIUser, len(local))
+	for result := range results {
+		remoteByID[result.user.ID] = result.user
+	}
+	return remoteByID
 }
 
 func (app *controlPlaneServer) populateOperatorKeyCounts(ctx context.Context, service *controlplane.Service, items []any) {
@@ -478,36 +471,25 @@ func authoritativeSourceTimestamp(value any) string {
 }
 
 type operatorWorkspaceFacts struct {
-	accounts            []map[string]any
-	users               []map[string]any
-	computes            []map[string]any
-	storages            []map[string]any
-	attachments         []map[string]any
-	operations          []clients.FabricOperation
-	operationsAvailable bool
-	keyUsage            map[int64]clients.Sub2APIBatchKeyUsage
-	keyUsageAvailable   bool
+	accounts          []map[string]any
+	users             []map[string]any
+	computes          []map[string]any
+	storages          []map[string]any
+	attachments       []map[string]any
+	providerFacts     map[string]clients.ProviderFact
+	keyUsage          map[int64]clients.Sub2APIBatchKeyUsage
+	keyUsageAvailable bool
 }
 
 func (app *controlPlaneServer) operatorWorkspacePage(ctx context.Context, service *controlplane.Service, page, pageSize int) (map[string]any, string, error) {
-	workspaces, err := app.tables.ListWorkspaces(ctx, "")
+	workspacePage, err := app.tables.PageWorkspaces(ctx, "", tablePageQuery{Offset: (page - 1) * pageSize, Limit: pageSize})
 	if err != nil {
 		return nil, "", err
 	}
-	sort.Slice(workspaces, func(i, j int) bool { return stringValue(workspaces[i]["id"]) < stringValue(workspaces[j]["id"]) })
-	facts, err := app.loadOperatorWorkspaceFacts(ctx, service, workspaces)
+	selected := workspacePage.Items
+	facts, err := app.loadOperatorWorkspaceFacts(ctx, service, selected)
 	if err != nil {
 		return nil, "", err
-	}
-	total := len(workspaces)
-	start := (page - 1) * pageSize
-	selected := []map[string]any{}
-	if start < total {
-		end := start + pageSize
-		if end > total {
-			end = total
-		}
-		selected = workspaces[start:end]
 	}
 	items := make([]any, 0, len(selected))
 	for _, workspace := range selected {
@@ -517,19 +499,18 @@ func (app *controlPlaneServer) operatorWorkspacePage(ctx context.Context, servic
 	if len(items) == 0 {
 		status = "empty"
 	}
-	return map[string]any{"items": items, "total": total, "page": page, "pageSize": pageSize}, status, nil
+	return map[string]any{"items": items, "total": workspacePage.Total, "page": page, "pageSize": pageSize}, status, nil
 }
 
 func (app *controlPlaneServer) operatorWorkspaceDetail(ctx context.Context, service *controlplane.Service, workspaceID string) (map[string]any, bool, error) {
 	if workspaceID == "" {
 		return nil, false, nil
 	}
-	workspaces, err := app.tables.ListWorkspaces(ctx, "")
+	workspace, ok, err := app.tables.GetWorkspace(ctx, workspaceID)
 	if err != nil {
 		return nil, false, err
 	}
-	workspace := findRecord(workspaces, workspaceID)
-	if workspace == nil {
+	if !ok {
 		return nil, false, nil
 	}
 	facts, err := app.loadOperatorWorkspaceFacts(ctx, service, []map[string]any{workspace})
@@ -541,24 +522,40 @@ func (app *controlPlaneServer) operatorWorkspaceDetail(ctx context.Context, serv
 
 func (app *controlPlaneServer) loadOperatorWorkspaceFacts(ctx context.Context, service *controlplane.Service, workspaces []map[string]any) (operatorWorkspaceFacts, error) {
 	var facts operatorWorkspaceFacts
-	var err error
-	if facts.accounts, err = app.tables.ListAccounts(ctx, ""); err != nil {
-		return facts, err
+	seenRecords := map[string]bool{}
+	appendRecord := func(kind, id string, load func(context.Context, string) (map[string]any, bool, error), target *[]map[string]any) error {
+		if id == "" || seenRecords[kind+":"+id] {
+			return nil
+		}
+		seenRecords[kind+":"+id] = true
+		row, ok, err := load(ctx, id)
+		if err != nil {
+			return err
+		}
+		if ok {
+			*target = append(*target, row)
+		}
+		return nil
 	}
-	if facts.users, err = app.tables.ListUsers(ctx, true); err != nil {
-		return facts, err
+	for _, workspace := range workspaces {
+		for _, item := range []struct {
+			kind   string
+			id     string
+			load   func(context.Context, string) (map[string]any, bool, error)
+			target *[]map[string]any
+		}{
+			{"account", firstNonEmpty(stringValue(workspace["ownerAccountId"]), stringValue(workspace["accountId"])), app.tables.GetAccount, &facts.accounts},
+			{"user", stringValue(workspace["ownerUserId"]), app.tables.GetUser, &facts.users},
+			{"compute", firstNonEmpty(stringValue(workspace["currentComputeAllocationId"]), stringValue(workspace["computeAllocationId"])), app.tables.GetCompute, &facts.computes},
+			{"storage", stringValue(workspace["storageId"]), app.tables.GetStorage, &facts.storages},
+			{"attachment", firstNonEmpty(stringValue(workspace["currentAttachmentId"]), stringValue(workspace["attachmentId"])), app.tables.GetAttachment, &facts.attachments},
+		} {
+			if err := appendRecord(item.kind, item.id, item.load, item.target); err != nil {
+				return facts, err
+			}
+		}
 	}
-	if facts.computes, err = app.tables.ListComputes(ctx, ""); err != nil {
-		return facts, err
-	}
-	if facts.storages, err = app.tables.ListStorages(ctx, ""); err != nil {
-		return facts, err
-	}
-	if facts.attachments, err = app.tables.ListAttachments(ctx, ""); err != nil {
-		return facts, err
-	}
-	facts.operations, err = service.FabricOperations(ctx)
-	facts.operationsAvailable = err == nil
+	facts.providerFacts = app.loadOperatorProviderFacts(ctx, service, workspaces, facts)
 	keyIDs := make([]int64, 0, len(workspaces))
 	seen := map[int64]struct{}{}
 	for _, workspace := range workspaces {
@@ -573,10 +570,90 @@ func (app *controlPlaneServer) loadOperatorWorkspaceFacts(ctx context.Context, s
 		keyIDs = append(keyIDs, keyID)
 	}
 	if len(keyIDs) > 0 && len(keyIDs) <= 50 {
+		var err error
 		facts.keyUsage, err = service.Sub2APIBatchKeysUsage(ctx, keyIDs)
 		facts.keyUsageAvailable = err == nil
 	}
 	return facts, nil
+}
+
+func (app *controlPlaneServer) loadOperatorProviderFacts(ctx context.Context, service *controlplane.Service, workspaces []map[string]any, facts operatorWorkspaceFacts) map[string]clients.ProviderFact {
+	inputs := operatorProviderFactInputs(workspaces, facts)
+	result := make(map[string]clients.ProviderFact, len(inputs))
+	for start := 0; start < len(inputs); start += 50 {
+		end := start + 50
+		if end > len(inputs) {
+			end = len(inputs)
+		}
+		requested := make(map[string]struct{}, end-start)
+		for _, input := range inputs[start:end] {
+			requested[operatorProviderFactKey(input.AccountID, input.WorkspaceID, input.ResourceType, input.ResourceID)] = struct{}{}
+		}
+		batch, err := service.ProviderFactsBatch(ctx, clients.ProviderFactsBatchInput{Items: inputs[start:end]})
+		if err != nil {
+			continue
+		}
+		duplicates := map[string]struct{}{}
+		for _, fact := range batch.Items {
+			key := operatorProviderFactKey(fact.AccountID, fact.WorkspaceID, fact.ResourceType, fact.ResourceID)
+			if _, ok := requested[key]; !ok {
+				continue
+			}
+			if _, exists := result[key]; exists {
+				delete(result, key)
+				duplicates[key] = struct{}{}
+				continue
+			}
+			if _, duplicate := duplicates[key]; !duplicate {
+				result[key] = fact
+			}
+		}
+	}
+	return result
+}
+
+func operatorProviderFactInputs(workspaces []map[string]any, facts operatorWorkspaceFacts) []clients.ProviderFactInput {
+	workspaceByID := make(map[string]map[string]any, len(workspaces))
+	for _, workspace := range workspaces {
+		if workspaceID := stringValue(workspace["id"]); workspaceID != "" {
+			workspaceByID[workspaceID] = workspace
+		}
+	}
+	inputs := make([]clients.ProviderFactInput, 0, len(workspaces)*4)
+	appendRows := func(resourceType string, rows []map[string]any) {
+		for _, row := range rows {
+			workspaceID, resourceID := stringValue(row["workspaceId"]), stringValue(row["id"])
+			workspace := workspaceByID[workspaceID]
+			if workspace == nil || resourceID == "" {
+				continue
+			}
+			inputs = append(inputs, clients.ProviderFactInput{
+				AccountID:   firstNonEmpty(stringValue(workspace["ownerAccountId"]), stringValue(workspace["accountId"])),
+				WorkspaceID: workspaceID, ResourceType: resourceType, ResourceID: resourceID,
+			})
+		}
+	}
+	appendRows("compute", facts.computes)
+	appendRows("storage", facts.storages)
+	appendRows("attachment", facts.attachments)
+	for _, workspace := range workspaces {
+		if runtimeID := stringValue(workspace["runtimeId"]); runtimeID != "" {
+			inputs = append(inputs, clients.ProviderFactInput{
+				AccountID:   firstNonEmpty(stringValue(workspace["ownerAccountId"]), stringValue(workspace["accountId"])),
+				WorkspaceID: stringValue(workspace["id"]), ResourceType: "runtime", ResourceID: runtimeID,
+			})
+		}
+	}
+	sort.Slice(inputs, func(i, j int) bool {
+		left := inputs[i].WorkspaceID + ":" + inputs[i].ResourceType + ":" + inputs[i].ResourceID
+		right := inputs[j].WorkspaceID + ":" + inputs[j].ResourceType + ":" + inputs[j].ResourceID
+		return left < right
+	})
+	return inputs
+}
+
+func operatorProviderFactKey(accountID, workspaceID, resourceType, resourceID string) string {
+	return accountID + "\x00" + workspaceID + "\x00" + resourceType + "\x00" + resourceID
 }
 
 func (app *controlPlaneServer) operatorWorkspaceDTO(ctx context.Context, service *controlplane.Service, workspace map[string]any, facts operatorWorkspaceFacts, liveLedger bool) map[string]any {
@@ -624,6 +701,9 @@ func (app *controlPlaneServer) operatorWorkspaceDTO(ctx context.Context, service
 			rows = append(rows, resourceRow{kind: "attachment", row: row})
 		}
 	}
+	if runtimeID := stringValue(workspace["runtimeId"]); runtimeID != "" {
+		rows = append(rows, resourceRow{kind: "runtime", row: map[string]any{"id": runtimeID, "workspaceId": workspaceID}})
+	}
 	sort.Slice(rows, func(i, j int) bool {
 		left, right := rows[i].kind+":"+stringValue(rows[i].row["id"]), rows[j].kind+":"+stringValue(rows[j].row["id"])
 		return left < right
@@ -669,47 +749,26 @@ func (app *controlPlaneServer) operatorResourceDTO(ctx context.Context, service 
 		"ownerAccount": operatorOwnerAccountEnvelope(account),
 		"ownerUser":    operatorOwnerUserEnvelope(owner, accountID),
 		"workspace":    operatorFactEnvelope("control-plane", workspaceData, workspaceID != ""),
-		"resourceType": operatorFactEnvelope("fabric", kind, kind != "" && stringValue(row["id"]) != ""),
 	}
-	spec := ""
-	switch kind {
-	case "compute":
-		spec = firstNonEmpty(stringValue(row["instanceType"]), providerDataValue(row, "instanceType"))
-	case "storage":
-		spec = firstNonEmpty(stringValue(row["diskType"]), stringValue(row["storageClass"]))
-		if spec == "" {
-			if size := int64(numberField(row, "sizeGb", 0)); size > 0 {
-				spec = strconv.FormatInt(size, 10) + " GB"
-			}
-		}
-	case "attachment":
-		spec = stringValue(row["mountPath"])
+	resourceID := stringValue(row["id"])
+	fact, factAvailable := facts.providerFacts[operatorProviderFactKey(accountID, workspaceID, kind, resourceID)]
+	factAvailable = factAvailable && fact.Available
+	result["resourceType"] = operatorFactEnvelope("fabric", kind, factAvailable)
+	if !factAvailable {
+		fact.Facts = clients.ProviderResourceFacts{}
 	}
-	result["packageOrSpec"] = operatorStringFactEnvelope("fabric", spec)
-	providerID := firstNonEmpty(stringValue(row["providerResourceId"]), stringValue(row["providerAttachmentId"]))
-	result["providerId"] = operatorStringFactEnvelope("fabric", providerID)
-	result["zone"] = operatorStringFactEnvelope("fabric", stringValue(row["zone"]))
-	result["status"] = operatorStringFactEnvelope("fabric", firstNonEmpty(stringValue(row["providerStatus"]), stringValue(row["status"])))
-	result["createdAt"] = operatorTimestampFactEnvelope("fabric", stringValue(row["providerCreatedAt"]))
-	result["expiresAt"] = operatorTimestampFactEnvelope("fabric", stringValue(row["deadline"]))
-	result["lastReadAt"] = operatorTimestampFactEnvelope("fabric", stringValue(row["lastProviderSyncAt"]))
-	operationID, operationSource := stringValue(row["operationId"]), "control-plane"
-	if operationID == "" && facts.operationsAvailable {
-		for _, operation := range facts.operations {
-			if operation.ResourceID != stringValue(row["id"]) || (operation.AccountID != "" && operation.AccountID != accountID) || (operation.WorkspaceID != "" && operation.WorkspaceID != workspaceID) {
-				continue
-			}
-			candidate := firstNonEmpty(operation.OperationID, operation.ID)
-			if candidate != "" {
-				operationID, operationSource = candidate, "fabric"
-			}
-		}
-	}
-	result["operationRef"] = operatorStringFactEnvelope(operationSource, operationID)
+	result["packageOrSpec"] = operatorStringFactEnvelope("fabric", fact.Facts.PackageOrSpec)
+	result["providerId"] = operatorStringFactEnvelope("fabric", fact.Facts.ProviderID)
+	result["zone"] = operatorStringFactEnvelope("fabric", fact.Facts.Zone)
+	result["status"] = operatorStringFactEnvelope("fabric", fact.Facts.Status)
+	result["createdAt"] = operatorTimestampFactEnvelope("fabric", fact.Facts.CreatedAt)
+	result["expiresAt"] = operatorTimestampFactEnvelope("fabric", fact.Facts.ExpiresAt)
+	result["lastReadAt"] = operatorTimestampFactEnvelope("fabric", fact.Facts.LastReadAt)
+	result["operationRef"] = operatorStringFactEnvelope("control-plane", stringValue(row["operationId"]))
 	result["receiptRef"] = sourceEnvelope("ledger", "unavailable", nil, "")
 	if liveLedger {
 		receiptID := firstNonEmpty(stringValue(row["lastReceiptId"]), stringValue(row["receiptId"]))
-		if receipt, ok := operatorResourceReceipt(ctx, service, receiptID, accountID, workspaceID, kind, stringValue(row["id"])); ok {
+		if receipt, ok := operatorResourceReceipt(ctx, service, receiptID, accountID, workspaceID, kind, resourceID); ok {
 			result["receiptRef"] = sourceEnvelope("ledger", "available", receipt.ReceiptID, authoritativeSourceTimestamp(receipt.CreatedAt))
 		}
 	}
@@ -804,14 +863,24 @@ func (app *controlPlaneServer) operatorOverview(ctx context.Context, service *co
 	}
 	if workspaces, _, err := app.operatorWorkspacePage(ctx, service, 1, 50); err == nil {
 		items, _ := workspaces["items"].([]any)
-		resourceCount := 0
+		resourceCount, resourcesAvailable := 0, true
 		for _, raw := range items {
 			item, _ := raw.(map[string]any)
 			resources, _ := item["resources"].([]any)
-			resourceCount += len(resources)
+			for _, rawResource := range resources {
+				resource, _ := rawResource.(map[string]any)
+				resourceType, _ := resource["resourceType"].(map[string]any)
+				if resourceType["available"] != true {
+					resourcesAvailable = false
+					continue
+				}
+				resourceCount++
+			}
 		}
 		result["workspaces"] = sourceEnvelope("control-plane", "available", map[string]any{"total": int(numberField(workspaces, "total", 0))}, "")
-		result["resources"] = sourceEnvelope("fabric", "available", map[string]any{"total": resourceCount}, "")
+		if resourcesAvailable {
+			result["resources"] = sourceEnvelope("fabric", "available", map[string]any{"total": resourceCount}, "")
+		}
 	}
 	if reconciliation, _, err := app.operatorReconciliationPage(ctx, 1, 50); err == nil {
 		result["reconciliation"] = sourceEnvelope("control-plane", "available", map[string]any{"total": int(numberField(reconciliation, "total", 0))}, "")

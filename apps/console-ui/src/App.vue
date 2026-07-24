@@ -135,6 +135,7 @@ const session = ref<AuthSession | null>(null);
 const authStatus = ref(needsSession(path.value) ? "checking" : "public");
 const authError = ref("");
 const workspaceSource = ref<SourceEnvelope<WorkspaceListData> | null>(null);
+const selectedWorkspaceId = ref("");
 const workspaceStatusSource = ref<SourceEnvelope<WorkspaceRuntimeDTO> | null>(null);
 const walletSource = ref<SourceEnvelope<GatewayWallet> | null>(null);
 const keySource = ref<SourceEnvelope<GatewayKeyPageDTO> | null>(null);
@@ -197,6 +198,7 @@ let usageStatsRequestGeneration = 0;
 let receiptRequestGeneration = 0;
 let receiptDetailRequestGeneration = 0;
 let launchPollGeneration = 0;
+let workspaceStatusRequestGeneration = 0;
 let workspaceLaunchIntent: { input: WorkspaceLaunchRequest; idempotencyKey: string } | null = null;
 let runtimeRotationIntent: { workspaceId: string; idempotencyKey: string } | null = null;
 let walletAdjustmentIntent: { accountId: string; input: WalletAdjustmentRequest; idempotencyKey: string } | null = null;
@@ -222,10 +224,10 @@ const selectedPlanPrice = computed(() => {
   const value = selectedPlan.value ? previews[selectedPlan.value.id]?.totalChargeUsdMicros : undefined;
   return typeof value === "number" && Number.isSafeInteger(value) ? value : null;
 });
-const workspaceCanStart = computed(() => !launchOperation.value || launchOperation.value?.status === "refunded");
+const workspaceCanStart = computed(() => !launchOperation.value || isTerminalWorkspaceLaunch(launchOperation.value.status));
 const workspace = computed<WorkspaceDTO | null>(() => {
-  if (!workspaceSource.value?.available || workspaceSource.value.data.items.length !== 1) return null;
-  return workspaceSource.value.data.items[0];
+  if (!workspaceSource.value?.available) return null;
+  return workspaceSource.value.data.items.find((item) => item.id === selectedWorkspaceId.value) || null;
 });
 const workspacePlan = computed(() => catalog.value?.packages.find((plan) => plan.id === workspace.value?.packageId) || null);
 const runtime = computed(() => workspaceStatusSource.value?.available ? workspaceStatusSource.value.data : null);
@@ -406,7 +408,9 @@ function clearSessionState() {
   usageRequestGeneration += 1;
   usageStatsRequestGeneration += 1;
   receiptRequestGeneration += 1;
+  workspaceStatusRequestGeneration += 1;
   workspaceSource.value = null;
+  selectedWorkspaceId.value = "";
   workspaceStatusSource.value = null;
   walletSource.value = null;
   keySource.value = null;
@@ -469,8 +473,8 @@ function replaceSession(next: AuthSession | null) {
 
 async function loadWorkspaces() {
   const requestStillCurrent = currentSessionRequest();
-  const currentWorkspaceId = workspace.value?.id
-    || (workspaceStatusSource.value?.available ? workspaceStatusSource.value.data.workspaceId : "");
+  const currentWorkspaceId = selectedWorkspaceId.value || workspace.value?.id || "";
+  const currentRuntimeWorkspaceId = workspaceStatusSource.value?.available ? workspaceStatusSource.value.data.workspaceId : "";
   loading.workspace = true;
   resetSource("workspace");
   workspaceSource.value = null;
@@ -478,9 +482,22 @@ async function loadWorkspaces() {
     const result = await getWorkspaces();
     if (!requestStillCurrent()) return;
     workspaceSource.value = result;
-    const nextWorkspaceId = result.available && result.data.items.length === 1 ? result.data.items[0]?.id || "" : "";
-    if (result.status === "empty" || (nextWorkspaceId && nextWorkspaceId !== currentWorkspaceId)) workspaceStatusSource.value = null;
-    if (workspaceSource.value.available && workspaceSource.value.data.items.length > 1) errors.workspace = "账号存在多个 Workspace，暂不可用";
+    if (result.available) {
+      const nextWorkspaceId = result.data.items.some((item) => item.id === currentWorkspaceId)
+        ? currentWorkspaceId
+        : result.data.items[0]?.id || "";
+      if (nextWorkspaceId !== selectedWorkspaceId.value) {
+        clearSecrets();
+        runtimeRotationIntent = null;
+        selectedWorkspaceId.value = nextWorkspaceId;
+      }
+      if (!nextWorkspaceId || currentRuntimeWorkspaceId && currentRuntimeWorkspaceId !== nextWorkspaceId) {
+        workspaceStatusRequestGeneration += 1;
+        workspaceStatusSource.value = null;
+        loading.runtime = false;
+        errors.runtime = "";
+      }
+    }
   } catch (error) {
     if (!requestStillCurrent()) return;
     workspaceSource.value = unavailableSource<WorkspaceListData>("control-plane");
@@ -493,22 +510,42 @@ async function loadWorkspaces() {
 async function loadWorkspaceStatus() {
   const requestStillCurrent = currentSessionRequest();
   const current = workspace.value;
+  const requestGeneration = ++workspaceStatusRequestGeneration;
   if (!current) {
     if (workspaceSource.value?.status === "empty") workspaceStatusSource.value = null;
+    loading.runtime = false;
     return;
   }
+  const workspaceId = current.id;
   loading.runtime = true;
   resetSource("runtime");
   workspaceStatusSource.value = unavailableSource<WorkspaceRuntimeDTO>("fabric");
   try {
     const result = await getWorkspaceRuntimeStatus(current.id);
-    if (!requestStillCurrent()) return;
+    if (!requestStillCurrent() || requestGeneration !== workspaceStatusRequestGeneration || workspace.value?.id !== workspaceId) return;
     workspaceStatusSource.value = result;
   } catch (error) {
-    if (!requestStillCurrent()) return;
+    if (!requestStillCurrent() || requestGeneration !== workspaceStatusRequestGeneration || workspace.value?.id !== workspaceId) return;
     workspaceStatusSource.value = unavailableSource<WorkspaceRuntimeDTO>("fabric");
     errors.runtime = friendlyError(error);
-  } finally { if (requestStillCurrent()) loading.runtime = false; }
+  } finally { if (requestStillCurrent() && requestGeneration === workspaceStatusRequestGeneration) loading.runtime = false; }
+}
+
+function selectWorkspace(workspaceId: string) {
+  if (!workspaceSource.value?.available || selectedWorkspaceId.value === workspaceId
+    || !workspaceSource.value.data.items.some((item) => item.id === workspaceId)) return;
+  clearSecrets();
+  selectedWorkspaceId.value = workspaceId;
+  workspaceStatusRequestGeneration += 1;
+  workspaceStatusSource.value = null;
+  loading.runtime = false;
+  errors.runtime = "";
+  runtimeRotationIntent = null;
+  void loadWorkspaceStatus();
+}
+
+function changeWorkspaceSelection(event: Event) {
+  selectWorkspace((event.target as HTMLSelectElement).value);
 }
 
 async function loadWallet() {
@@ -884,7 +921,7 @@ async function signOut() {
 
 function openModal(next: "workspace" | "admin-user" | "wallet-adjustment" | "announcement") {
   modal.value = next;
-  if (next === "workspace") launchForm.name = workspace.value?.name || "";
+  if (next === "workspace") launchForm.name = "";
   if (next === "wallet-adjustment") walletAdjustmentForm.confirmationAccountId = selectedOperatorAccountId.value;
 }
 
@@ -905,6 +942,13 @@ async function pollWorkspaceLaunch(operationId: string) {
       launchOperation.value = next;
       if (next.status === "manual_review") return;
       if (isTerminalWorkspaceLaunch(next.status)) {
+        if (next.workspaceId && next.workspaceId !== selectedWorkspaceId.value) {
+          clearSecrets();
+          selectedWorkspaceId.value = next.workspaceId;
+          workspaceStatusRequestGeneration += 1;
+          workspaceStatusSource.value = null;
+          runtimeRotationIntent = null;
+        }
         await Promise.all([loadWorkspaces(), loadReceipts()]);
         await loadWorkspaceStatus();
         if (next.status === "succeeded") flash("Workspace 已开通");
@@ -930,13 +974,15 @@ async function recoverWorkspaceLaunch() {
     const launches = await getWorkspaceLaunches();
     if (!requestStillCurrent()) return;
     if (launches.length === 0) { launchOperation.value = null; return; }
-    if (launches.length !== 1 || !launches[0]?.operationId) {
+    const pending = launches.filter((operation) => !isTerminalWorkspaceLaunch(operation.status));
+    if (pending.length === 0) { launchOperation.value = null; return; }
+    if (pending.length !== 1 || !pending[0]?.operationId) {
       launchPollIssue.value = "error";
       return;
     }
-    launchOperation.value = launches[0];
-    if (!isTerminalWorkspaceLaunch(launches[0].status) && launches[0].status !== "manual_review") {
-      void pollWorkspaceLaunch(launches[0].operationId);
+    launchOperation.value = pending[0];
+    if (pending[0].status !== "manual_review") {
+      void pollWorkspaceLaunch(pending[0].operationId);
     }
   } catch {
     if (requestStillCurrent()) launchPollIssue.value = "error";
@@ -985,6 +1031,13 @@ async function submitWorkspaceLaunch() {
     if (!requestStillCurrent()) return;
     workspaceLaunchIntent = null;
     launchOperation.value = created;
+    if (created.workspaceId && created.workspaceId !== selectedWorkspaceId.value) {
+      clearSecrets();
+      selectedWorkspaceId.value = created.workspaceId;
+      workspaceStatusRequestGeneration += 1;
+      workspaceStatusSource.value = null;
+      runtimeRotationIntent = null;
+    }
     launchPollIssue.value = "";
     closeModal();
     if (!terminalStatuses.has(created.status) && created.status !== "manual_review") void pollWorkspaceLaunch(created.operationId);
@@ -1499,13 +1552,14 @@ onBeforeUnmount(() => {
 
           <section v-else-if="path.startsWith('/console/workspace')" class="workspace-page">
             <section class="panel">
-              <div class="panel-title"><h2>Workspace</h2><button v-if="workspace && workspaceCanOpen" class="button primary" type="button" @click="openWorkspace">打开 Workspace <ArrowUpRight :size="16" /></button><button v-else-if="!workspace && workspaceCanStart" class="button primary" type="button" :disabled="loading.workspace || !workspaceSource || workspaceSource.status === 'unavailable' || !plans.length" @click="openModal('workspace')"><Plus :size="16" />开通 Workspace</button></div>
+              <div class="panel-title"><h2>Workspace</h2><div class="workspace-actions"><button v-if="workspace && workspaceCanOpen" class="button primary" type="button" @click="openWorkspace">打开 Workspace <ArrowUpRight :size="16" /></button><button v-if="workspaceCanStart" class="button secondary" type="button" :disabled="loading.workspace || !workspaceSource || workspaceSource.status === 'unavailable' || !plans.length" @click="openModal('workspace')"><Plus :size="16" />{{ workspace ? "新建 Workspace" : "开通 Workspace" }}</button></div></div>
               <div v-if="launchStatusText" class="inline-notice"><span>{{ launchStatusText }}</span><button v-if="launchPollIssue" class="text-button" type="button" @click="retryWorkspaceLaunchPoll">重试</button></div>
               <div v-if="loading.workspace" class="loading-panel"><span class="spinner" />正在加载 Workspace...</div>
               <div v-else-if="errors.workspace" class="inline-error"><AlertCircle :size="17" />{{ errors.workspace }}<button type="button" @click="loadWorkspaces">重试</button></div>
               <div v-else-if="workspaceSource?.status === 'unavailable'" class="empty-panel">暂不可用 <button class="text-button" type="button" @click="loadWorkspaces">重试</button></div>
               <div v-else-if="workspaceSource?.status === 'empty'" class="empty-panel">暂无 Workspace</div>
               <div v-else-if="workspace" class="workspace-details">
+                <label class="workspace-selector">选择 Workspace<select :value="selectedWorkspaceId" aria-label="选择 Workspace" @change="changeWorkspaceSelection"><option v-for="item in workspaceSource.data.items" :key="item.id" :value="item.id">{{ item.name || item.id }}</option></select></label>
                 <dl class="data-list">
                   <div><dt>名称</dt><dd>{{ workspace.name || "暂不可用" }}</dd></div><div><dt>计划</dt><dd>{{ workspace.packageId ? workspace.packageId.toUpperCase() : "暂不可用" }}</dd></div><div><dt>套餐规格</dt><dd>{{ workspacePlan ? `${workspacePlan.cpu}C / ${workspacePlan.memoryGb}GB` : "暂不可用" }}</dd></div><div><dt>月价</dt><dd>{{ typeof workspace.totalUsdMicros === "number" ? formatUsdMicros(workspace.totalUsdMicros) : "暂不可用" }}</dd></div><div><dt>创建时间</dt><dd>{{ formatDate(workspace.createdAt, true) }}</dd></div><div><dt>已付至</dt><dd>{{ formatDate(workspace.paidThrough) }}</dd></div><div><dt>续费状态</dt><dd>{{ workspace.renewalStatus || "暂不可用" }}</dd></div><div><dt>存储容量</dt><dd>{{ typeof workspace.storageGb === "number" ? `${workspace.storageGb} GB` : "暂不可用" }}</dd></div>
                   <div><dt>自动续费</dt><dd class="renewal-control"><input type="checkbox" :checked="workspace.autoRenew === true" disabled aria-describedby="auto-renew-reason" /><span>{{ workspace.autoRenew === false ? "已关闭" : "暂不可用" }}</span><small id="auto-renew-reason">真实续费验证完成前不可启用</small></dd></div>

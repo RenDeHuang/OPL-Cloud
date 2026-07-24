@@ -10,7 +10,7 @@
   },
   "productTruth": "OPL Console / OPL Cloud Console commercial launch slice",
   "frameworkTruth": "one-person-lab",
-  "currentSlice": "Invite-only owner login, live Sub2API Wallet/Key/Usage facts, one Workspace subscription, Fabric resource details, Runtime readiness, and Ledger receipts.",
+  "currentSlice": "Invite-only owner login, live Sub2API Wallet/Key/Usage facts, multiple independent Workspace subscriptions, live Fabric resource details, Runtime readiness, and Ledger receipts.",
   "customerRenewalAuthority": "workspace",
   "repositoryBoundaries": [
     "opl-console",
@@ -26,17 +26,17 @@
     "Active business object contract contains only current commercial objects.",
     "Workspace is the stable commercial object: stable URL, access state, lifecycle, persistent StorageVolume, and current runtime pointer.",
     "Ordinary Runtime status is non-secret; only the Workspace owner user may reveal or rotate the Runtime password through private, no-store commands, and passwords never enter the persisted Workspace projection, operation payloads, audit, logs, or Ledger.",
-    "ComputeAllocation is one replaceable account-owned dedicated CVM or Kubernetes node selected from the package catalog.",
+    "ComputeAllocation is one replaceable Workspace-owned dedicated CVM or Kubernetes node selected from the package catalog.",
     "StorageVolume can exist without compute; StorageAttachment mounts one volume to one current ComputeAllocation runtime.",
     "RuntimeTemplate/ImageRef is deployable runtime configuration only; it is not a billing object, storage owner, or Workspace identity.",
-    "Destroying compute suspends the Workspace URL and retains storage; rebuilding compute with the same Workspace URL and StorageVolume is a future target with no Pilot customer route.",
+    "At unpaid expiry Control Plane denies Workspace access and performs no Fabric or Tencent mutation; Tencent expiry policy owns eventual CVM/CBS reclamation and no customer resume route exists.",
     "Destroying storage makes the Workspace unrecoverable because the file body is gone.",
     "Sub2API owns the only spendable balance, API keys, AI usage, and real-time API debits.",
     "Sub2API owns customer credential authentication; Control Plane stores only the verified mapping and local Session.",
     "Control Plane owns the account-to-Sub2API mapping, monthly charge operations, price snapshots, entitlement, renewal, and expiry policy.",
     "Workspace is the only customer monthly charge owner; new ComputeAllocation and StorageVolume rows are provider fulfillment facts without customer billing fields.",
     "Ledger owns append-only evidence receipts, review evidence, and reconciliation reports; it does not own a spendable balance.",
-    "Fabric owns provider execution evidence and FabricOperation facts.",
+    "Fabric owns live ComputeAllocation, StorageVolume, StorageAttachment, Workspace Runtime, provider execution evidence, and FabricOperation facts; unavailable live readback never falls back to a Control Plane status copy.",
     "Console presents Account, Session, Workspace lifecycle, AdminAuditEvent, SupportTicketMapping, and product DTOs; it calls only Control Plane product APIs.",
     "Frontend displays backend DTOs and must not derive pricing, billing, lifecycle, or provider state locally.",
     "Backup, recovery, sync, transfer, payment orders, and raw provider diagnostics are forbidden Pilot customer surfaces; owned general Key mutation is projected through Control Plane with delegated user credentials."
@@ -105,7 +105,7 @@
       "routeKind": "business_object",
       "lifecycle": "current",
       "evidenceRequired": true,
-      "boundary": "Account-owned dedicated CVM or Kubernetes node allocation selected from the package compute catalog; it is a provider fulfillment identity, not a customer charge owner.",
+      "boundary": "Workspace-owned dedicated CVM or Kubernetes node allocation selected from the package compute catalog; it is a provider fulfillment identity, not a customer charge owner.",
       "requiredProviderFields": [
         "nodePoolId",
         "cvmInstanceId",
@@ -114,7 +114,7 @@
         "privateIp",
         "publicIp",
         "ownerAccountId",
-        "workspaceIds",
+        "workspaceId",
         "providerStatus",
         "destroyedAt",
         "lastProviderSyncAt"
@@ -149,7 +149,7 @@
         "evidence"
       ],
       "evidenceRequired": true,
-      "boundary": "Account-owned persistent storage fulfillment for the Workspace entitlement; it can exist without compute and attach to one active ComputeAllocation at a time.",
+      "boundary": "Workspace-owned persistent storage fulfillment for one Workspace entitlement; it can exist without compute and attach to one active ComputeAllocation at a time.",
       "requiredBillingFields": [],
       "historicalBillingCompatibilityFields": [
         "billingStatus",
@@ -216,6 +216,8 @@
       "workspaceKeyRevealRoute": "POST /api/gateway/keys/{keyId}/reveal",
       "workspaceKeyRotationRoute": "POST /api/workspaces/{workspaceId}/workspace-key/rotate",
       "workspaceKeyPersistence": "workspace_api_key_id_only",
+      "workspaceCardinality": "many_per_account",
+      "independentPerWorkspaceFacts": ["quote", "launchOperation", "compute", "storage", "attachment", "runtime", "workspaceApiKeyId", "gatewaySecretRef", "paidThrough", "renewalStatus", "purchaseReceiptId"],
       "workspaceKeyRotationDTOFields": ["operationId", "workspaceId", "status", "workspaceApiKeyId", "fingerprint", "updatedAt", "receiptId"]
     },
     {

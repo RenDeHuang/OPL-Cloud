@@ -39,6 +39,16 @@ type announcementMutation struct {
 	AuditEvent      map[string]any
 }
 
+type tablePageQuery struct {
+	Offset int
+	Limit  int
+}
+
+type tablePage struct {
+	Items []map[string]any
+	Total int
+}
+
 func prepareAnnouncementMutation(current map[string]any, mutation announcementMutation, now time.Time) (map[string]any, error) {
 	if mutation.AnnouncementID == "" || mutation.RequestHash == "" || stringValue(mutation.AuditEvent["id"]) == "" {
 		return nil, errAnnouncementStateConflict
@@ -169,10 +179,13 @@ func workspaceCreateClaimCompatible(current, claim workspaceCreateOperationResul
 
 type controlPlaneTableStore interface {
 	ListAccounts(ctx context.Context, accountID string) ([]map[string]any, error)
+	GetAccount(ctx context.Context, id string) (map[string]any, bool, error)
+	PageAccounts(ctx context.Context, query tablePageQuery) (tablePage, error)
 	SaveAccount(ctx context.Context, row map[string]any) error
 	CreateInvitedAccount(ctx context.Context, account, user, organization, membership map[string]any) error
 	ApplyUserLifecycle(ctx context.Context, user map[string]any) error
 	ListUsers(ctx context.Context, includeDeleted bool) ([]map[string]any, error)
+	GetUser(ctx context.Context, id string) (map[string]any, bool, error)
 	SaveUser(ctx context.Context, row map[string]any) error
 	DeleteUser(ctx context.Context, id string) error
 	ListSessions(ctx context.Context) (controlPlaneRecordSet, error)
@@ -184,15 +197,21 @@ type controlPlaneTableStore interface {
 	SaveMembership(ctx context.Context, row map[string]any) error
 
 	ListComputes(ctx context.Context, accountID string) ([]map[string]any, error)
+	GetCompute(ctx context.Context, id string) (map[string]any, bool, error)
 	SaveCompute(ctx context.Context, row map[string]any) error
 	DeleteCompute(ctx context.Context, id string) error
 	ListStorages(ctx context.Context, accountID string) ([]map[string]any, error)
+	GetStorage(ctx context.Context, id string) (map[string]any, bool, error)
 	SaveStorage(ctx context.Context, row map[string]any) error
 	DeleteStorage(ctx context.Context, id string) error
 	ListAttachments(ctx context.Context, accountID string) ([]map[string]any, error)
+	GetAttachment(ctx context.Context, id string) (map[string]any, bool, error)
 	SaveAttachment(ctx context.Context, row map[string]any) error
 	DeleteAttachment(ctx context.Context, id string) error
 	ListWorkspaces(ctx context.Context, accountID string) ([]map[string]any, error)
+	GetWorkspace(ctx context.Context, id string) (map[string]any, bool, error)
+	PageWorkspaces(ctx context.Context, accountID string, query tablePageQuery) (tablePage, error)
+	CountWorkspacesByAccount(ctx context.Context, accountIDs []string) (map[string]int, error)
 	SaveWorkspace(ctx context.Context, row map[string]any) error
 	CompareAndSwapWorkspaceAPIKey(ctx context.Context, workspaceID string, expectedID, newID int64) error
 	ApplyWorkspaceRenewalIntent(ctx context.Context, update workspaceRenewalIntentCAS) error

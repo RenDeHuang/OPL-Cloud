@@ -117,6 +117,79 @@ func TestWorkspacePurchaseReceiptIDMigrationIsAdditiveAndIdempotent(t *testing.T
 	}
 }
 
+func TestMultiWorkspacePaginationMigrationIsAdditiveAndIdempotent(t *testing.T) {
+	raw, err := os.ReadFile("202607240001_multi_workspace_pagination.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlText := string(raw)
+	for _, required := range []string{
+		"DROP INDEX IF EXISTS control_plane_workspaces_primary_account_key",
+		"CREATE INDEX IF NOT EXISTS control_plane_workspaces_account_page_key",
+		"COALESCE(NULLIF(account_id, ''), owner_account_id)",
+		"customer_product",
+		"id",
+	} {
+		if !strings.Contains(sqlText, required) {
+			t.Fatalf("multi-Workspace migration missing %q", required)
+		}
+	}
+
+	databaseURL := requiredIdentityTestDatabaseURL(t)
+	admin, err := sql.Open("postgres", databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = admin.Close() })
+	schema := fmt.Sprintf("control_plane_multi_workspace_%d", time.Now().UnixNano())
+	if _, err := admin.Exec(`CREATE SCHEMA ` + schema); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = admin.Exec(`DROP SCHEMA ` + schema + ` CASCADE`) })
+	db, err := sql.Open("postgres", postgresURLWithSearchPath(databaseURL, schema))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if _, err := db.Exec(`
+		CREATE TABLE control_plane_workspaces (
+			id TEXT PRIMARY KEY,
+			account_id TEXT NOT NULL DEFAULT '',
+			owner_account_id TEXT NOT NULL DEFAULT '',
+			customer_product BOOLEAN NOT NULL DEFAULT TRUE
+		);
+		INSERT INTO control_plane_workspaces (id, account_id, owner_account_id)
+		VALUES ('ws-existing', 'acct-alpha', 'acct-alpha');
+		CREATE UNIQUE INDEX control_plane_workspaces_primary_account_key
+			ON control_plane_workspaces ((COALESCE(NULLIF(account_id, ''), owner_account_id)))
+			WHERE COALESCE(NULLIF(account_id, ''), owner_account_id) <> '';
+	`); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if _, err := db.Exec(sqlText); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := db.Exec(`INSERT INTO control_plane_workspaces (id, account_id, owner_account_id) VALUES ('ws-second', 'acct-alpha', 'acct-alpha')`); err != nil {
+		t.Fatalf("same account second Workspace rejected after migration: %v", err)
+	}
+	var rows int
+	if err := db.QueryRow(`SELECT count(*) FROM control_plane_workspaces WHERE account_id = 'acct-alpha'`).Scan(&rows); err != nil || rows != 2 {
+		t.Fatalf("same-account Workspaces=%d err=%v", rows, err)
+	}
+	var legacyUnique, pageIndex bool
+	if err := db.QueryRow(`SELECT to_regclass(current_schema() || '.control_plane_workspaces_primary_account_key') IS NOT NULL`).Scan(&legacyUnique); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(`SELECT to_regclass(current_schema() || '.control_plane_workspaces_account_page_key') IS NOT NULL`).Scan(&pageIndex); err != nil {
+		t.Fatal(err)
+	}
+	if legacyUnique || !pageIndex {
+		t.Fatalf("legacyUnique=%v pageIndex=%v", legacyUnique, pageIndex)
+	}
+}
+
 func (d *recordingDriver) Tx(context.Context) (dialect.Tx, error) {
 	return dialect.NopTx(d), nil
 }

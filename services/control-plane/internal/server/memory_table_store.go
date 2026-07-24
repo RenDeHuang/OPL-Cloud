@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"errors"
+	"sort"
 	"sync"
 	"time"
 )
@@ -53,6 +54,20 @@ func (s *memoryTableStore) ListAccounts(_ context.Context, accountID string) ([]
 		return []map[string]any{}, nil
 	}
 	return filteredRecords(s.accounts, "")
+}
+
+func (s *memoryTableStore) GetAccount(_ context.Context, id string) (map[string]any, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	row := s.accounts[id]
+	return cloneMap(row), row != nil, nil
+}
+
+func (s *memoryTableStore) PageAccounts(_ context.Context, query tablePageQuery) (tablePage, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rows, _ := filteredRecords(s.accounts, "")
+	return memoryPage(rows, query), nil
 }
 
 func (s *memoryTableStore) SaveAccount(_ context.Context, row map[string]any) error {
@@ -152,6 +167,13 @@ func (s *memoryTableStore) ListUsers(_ context.Context, includeDeleted bool) ([]
 		out = append(out, cloneMap(row))
 	}
 	return out, nil
+}
+
+func (s *memoryTableStore) GetUser(_ context.Context, id string) (map[string]any, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	row := s.users[id]
+	return cloneMap(row), row != nil, nil
 }
 
 func (s *memoryTableStore) SaveUser(_ context.Context, row map[string]any) error {
@@ -297,6 +319,13 @@ func (s *memoryTableStore) ListComputes(_ context.Context, accountID string) ([]
 	return filteredRecords(s.computes, accountID)
 }
 
+func (s *memoryTableStore) GetCompute(_ context.Context, id string) (map[string]any, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	row := s.computes[id]
+	return cloneMap(row), row != nil, nil
+}
+
 func (s *memoryTableStore) SaveCompute(_ context.Context, row map[string]any) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -319,6 +348,13 @@ func (s *memoryTableStore) ListStorages(_ context.Context, accountID string) ([]
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return filteredRecords(s.storages, accountID)
+}
+
+func (s *memoryTableStore) GetStorage(_ context.Context, id string) (map[string]any, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	row := s.storages[id]
+	return cloneMap(row), row != nil, nil
 }
 
 func (s *memoryTableStore) SaveStorage(_ context.Context, row map[string]any) error {
@@ -345,6 +381,13 @@ func (s *memoryTableStore) ListAttachments(_ context.Context, accountID string) 
 	return filteredRecords(s.attachments, accountID)
 }
 
+func (s *memoryTableStore) GetAttachment(_ context.Context, id string) (map[string]any, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	row := s.attachments[id]
+	return cloneMap(row), row != nil, nil
+}
+
 func (s *memoryTableStore) SaveAttachment(_ context.Context, row map[string]any) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -363,6 +406,50 @@ func (s *memoryTableStore) ListWorkspaces(_ context.Context, accountID string) (
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return filteredRecords(s.workspaces, accountID)
+}
+
+func (s *memoryTableStore) GetWorkspace(_ context.Context, id string) (map[string]any, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	row := s.workspaces[id]
+	return cloneMap(row), row != nil, nil
+}
+
+func (s *memoryTableStore) PageWorkspaces(_ context.Context, accountID string, query tablePageQuery) (tablePage, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rows, _ := filteredRecords(s.workspaces, accountID)
+	return memoryPage(rows, query), nil
+}
+
+func (s *memoryTableStore) CountWorkspacesByAccount(_ context.Context, accountIDs []string) (map[string]int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	counts := make(map[string]int, len(accountIDs))
+	allowed := make(map[string]bool, len(accountIDs))
+	for _, accountID := range accountIDs {
+		counts[accountID], allowed[accountID] = 0, true
+	}
+	for _, row := range s.workspaces {
+		accountID := firstNonEmpty(stringValue(row["accountId"]), stringValue(row["ownerAccountId"]))
+		if allowed[accountID] {
+			counts[accountID]++
+		}
+	}
+	return counts, nil
+}
+
+func memoryPage(rows []map[string]any, query tablePageQuery) tablePage {
+	sort.Slice(rows, func(i, j int) bool { return stringValue(rows[i]["id"]) < stringValue(rows[j]["id"]) })
+	total := len(rows)
+	if query.Offset >= total {
+		return tablePage{Items: []map[string]any{}, Total: total}
+	}
+	end := query.Offset + query.Limit
+	if end > total {
+		end = total
+	}
+	return tablePage{Items: rows[query.Offset:end], Total: total}
 }
 
 func (s *memoryTableStore) SaveWorkspace(_ context.Context, row map[string]any) error {

@@ -23,6 +23,10 @@ const DEFAULT_MODEL_TIMEOUT_MS = 180_000;
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 const MAX_USAGE_ITEMS = 10_000;
 const MAX_USAGE_PAGES = 100;
+const READ_ONLY_VIEWPORTS = Object.freeze({
+  desktop: Object.freeze({ width: 1440, height: 900 }),
+  mobile: Object.freeze({ width: 390, height: 844 })
+});
 
 function sleep(ms) {
   return ms > 0 ? new Promise((resolve) => setTimeout(resolve, ms)) : Promise.resolve();
@@ -34,6 +38,116 @@ function socketPath(url) {
   } catch {
     return false;
   }
+}
+
+function readOnlyRequestSignal(signal, timeoutMs) {
+  if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 300_000) throw new Error("verification_request_timeout_invalid");
+  const timeout = AbortSignal.timeout(timeoutMs);
+  return signal ? AbortSignal.any([signal, timeout]) : timeout;
+}
+
+async function verifyRetiredRoutes({ origin, fetchImpl, signal, requestTimeoutMs }) {
+  const paths = ["/api/projects", "/api/execution-requests", "/api/workspaces/retired/resume"];
+  for (const path of paths) {
+    const response = await fetchImpl(`${origin}${path}`, {
+      method: "GET",
+      signal: readOnlyRequestSignal(signal, requestTimeoutMs)
+    });
+    if (response.status !== 404 || !response.headers.get("content-security-policy")) {
+      throw new Error(`retired_route_404_required:${path}`);
+    }
+  }
+  return paths;
+}
+
+async function verifyConsoleViewports({ origin, browserFactory }) {
+  const createBrowser = browserFactory || (async () => {
+    const { chromium } = await import("playwright");
+    return chromium.launch({ headless: true });
+  });
+  const browser = await createBrowser();
+  const checked = [];
+  try {
+    for (const [name, viewport] of Object.entries(READ_ONLY_VIEWPORTS)) {
+      const context = await browser.newContext({ viewport });
+      try {
+        const page = await context.newPage();
+        const response = await page.goto(origin, { waitUntil: "domcontentloaded", timeout: DEFAULT_BROWSER_TIMEOUT_MS });
+        if (!response?.ok() || !(await page.locator("body").innerText()).trim()) throw new Error(`production_console_${name}_invalid`);
+        checked.push(name);
+      } finally {
+        await context.close();
+      }
+    }
+  } finally {
+    await browser.close();
+  }
+  return checked;
+}
+
+export async function verifyProductionReadOnlyRollout(options = {}) {
+  const {
+    origin,
+    authUsersJson,
+    accountId = "",
+    requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
+    fetchImpl = globalThis.fetch,
+    browserFactory,
+    signal
+  } = options;
+  const owner = verificationOwnerFromSeed(authUsersJson, accountId);
+  const normalizedOrigin = assertPublicHttpsUrl(origin, "public_console_origin_required", { hostname: "cloud.medopl.cn" }).origin;
+  const requestOptions = { fetchImpl, origin: normalizedOrigin, signal, timeoutMs: requestTimeoutMs };
+
+  const health = (await requestJson({ ...requestOptions, path: "/api/healthz" })).payload;
+  if (health?.status !== "ok" || Object.keys(health).length !== 1) throw new Error("production_health_invalid");
+  const readiness = (await requestJson({ ...requestOptions, path: "/api/production/readiness" })).payload;
+  if (readiness?.ready !== true || readiness?.cloudImagesReady !== true || readiness?.workspaceImagesReady !== true || readiness?.immutableImagesReady !== true) {
+    throw new Error("production_readiness_invalid");
+  }
+
+  const auth = await login({ ...requestOptions, email: owner.email, password: owner.password });
+  if (auth.user?.accountId !== owner.accountId) throw new Error("production_read_only_login_failed");
+  const endpoint = sourceEnvelope(await requestJson({ ...requestOptions, auth, path: "/api/gateway/endpoint" }), "sub2api").data;
+  if (endpoint?.baseUrl !== "https://gflabtoken.cn/v1") throw new Error("production_gateway_endpoint_invalid");
+  walletFact(sourceEnvelope(await requestJson({ ...requestOptions, auth, path: "/api/gateway/wallet" }), "sub2api"), owner.sub2apiUserId);
+
+  const workspaces = sourceEnvelope(await requestJson({ ...requestOptions, auth, path: "/api/workspaces?page=1&pageSize=20" }), "control-plane", true);
+  if (!Number.isSafeInteger(workspaces.data?.total) || workspaces.data.total < 0 || workspaces.data?.page !== 1 || workspaces.data?.pageSize !== 20 || !Array.isArray(workspaces.data?.items)) {
+    throw new Error("production_workspace_source_invalid");
+  }
+  const receipts = sourceEnvelope(await requestJson({ ...requestOptions, auth, path: "/api/billing/receipts?limit=20" }), "ledger", true);
+  if (!Array.isArray(receipts.data?.receipts) || typeof receipts.data?.hasMore !== "boolean") throw new Error("production_ledger_source_invalid");
+
+  let fabricSource = "not_applicable_no_workspace";
+  const workspace = workspaces.data.items[0];
+  if (workspace?.id) {
+    const runtime = sourceEnvelope(await requestJson({
+      ...requestOptions,
+      auth,
+      path: `/api/workspaces/${encodeURIComponent(workspace.id)}/runtime-status`
+    }), "fabric").data;
+    if (runtime?.workspaceId && runtime.workspaceId !== workspace.id) throw new Error("production_fabric_source_invalid");
+    fabricSource = "available";
+  }
+
+  const retiredRoutes = await verifyRetiredRoutes({ origin: normalizedOrigin, fetchImpl, signal, requestTimeoutMs });
+  const viewports = await verifyConsoleViewports({ origin: normalizedOrigin, browserFactory });
+  return {
+    ok: true,
+    mode: "read-only",
+    evidenceLevel: "read-only",
+    writesPerformed: 0,
+    accountId: owner.accountId,
+    checks: {
+      health: "ok",
+      readiness: "ready",
+      sources: ["sub2api", "control-plane", "ledger", fabricSource],
+      retiredRoutes,
+      viewports
+    },
+    viewports
+  };
 }
 
 async function waitFor(check, timeoutMs, error) {
@@ -410,7 +524,15 @@ export async function runProductionLiveQaCli({
     const args = cliArgs(argv);
     if (args["read-only"] === "true") {
       if (args["allow-gateway-write"] || args["allow-model-write"] || args["approval-id"]) throw new Error("production_live_qa_read_only_conflict");
-      stdout.write(`${JSON.stringify({ ok: true, mode: "read-only", evidenceLevel: "read-only", writesPerformed: 0 }, null, 2)}\n`);
+      const result = await verifyProductionReadOnlyRollout({
+        origin: args.origin || env.OPL_CONSOLE_ORIGIN,
+        authUsersJson: env.OPL_VERIFY_AUTH_USERS_JSON,
+        accountId: args.account || env.OPL_VERIFY_ACCOUNT_ID || "",
+        requestTimeoutMs: Number(args["request-timeout-ms"] || env.OPL_VERIFY_REQUEST_TIMEOUT_MS || DEFAULT_REQUEST_TIMEOUT_MS),
+        browserFactory,
+        fetchImpl
+      });
+      stdout.write(`${JSON.stringify(result, null, 2)}\n`);
       return 0;
     }
     if (args["allow-gateway-write"] !== "true" || args["allow-model-write"] !== "true") throw new Error("production_live_qa_write_allow_flags_required");

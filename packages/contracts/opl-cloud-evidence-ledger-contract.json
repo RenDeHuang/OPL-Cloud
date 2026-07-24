@@ -379,6 +379,7 @@
       "totalUsdMicros equals compute plus storage with int64 overflow rejection",
       "paidThrough is strictly after periodStart",
       "expired receipts contain no synthetic Sub2API charge identity",
+      "expired receipts contain providerAction=none_expire_by_provider and describe no Fabric or Tencent mutation",
       "refunded receipts require the original debit identity, a stable refund identity, and refundUsdMicros equal to totalUsdMicros"
     ],
     "writeProtocol": "append_first_with_idempotency",

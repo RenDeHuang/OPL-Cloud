@@ -3,7 +3,7 @@
   "owner": "OPL Fabric",
   "purpose": "Deployment workflow, immutable Cloud and Workspace images, TKE handoff, read-only diagnostics, and production-verification safety.",
   "state": "current",
-  "machineBoundary": "GitHub workflow structure, runner isolation, deploy-time env sources, secret handling, immutable image release, ConfigMap-aware Cloud rollback, read-only diagnostics, existing Workspace preservation, Basic rollout readiness, paused standalone verification, and legacy global Secret retirement.",
+  "machineBoundary": "GitHub workflow structure, runner isolation, deploy-time env sources, secret handling, immutable image release, ConfigMap-aware Cloud rollback, real read-only ordinary-rollout verification, read-only diagnostics, existing Workspace preservation, Basic rollout readiness, paused standalone verification, and legacy global Secret retirement.",
   "lifecycle": {
     "type": "long_term_contract",
     "removalCondition": "Replace only with a newer current contract for the same boundary."
@@ -172,6 +172,10 @@
       "Check deployment inputs": [
         "OPL_CLOUD_IMAGE",
         "OPL_WORKSPACE_IMAGE",
+        "get configmap opl-cloud-config",
+        "current_workspace_image",
+        "requested_workspace_image",
+        "must match the current production Workspace image",
         "sha256"
       ],
       "Install Kubernetes secrets": [
@@ -218,7 +222,14 @@
         "rmdir \"$secret_dir\""
       ]
     },
-    "existingWorkspaceRolloutPolicy": "preserve_existing_deployments_update_default_image_only",
+    "workspaceImageInputPolicy": {
+      "required": false,
+      "ordinaryAuthority": "opl-cloud-config.data.OPL_WORKSPACE_IMAGE",
+      "providedValue": "must_equal_current_production_digest",
+      "bootstrapWithoutConfigMap": "explicit_digest_required",
+      "existingWorkspaceDeployments": "preserved_without_restart"
+    },
+    "existingWorkspaceRolloutPolicy": "preserve_existing_deployments_reuse_current_digest_without_restart",
     "forbiddenRunTokens": [
       "--from-literal=DATABASE_URL",
       "--from-literal=OPL_INTERNAL_SERVICE_TOKEN",
@@ -491,9 +502,8 @@
     "runner": [
       "ubuntu-latest"
     ],
-    "inputs": [
-      "bootstrap_mode"
-    ],
+    "inputs": ["bootstrap_mode"],
+    "needs": ["deploy", "bootstrap-readiness", "verify-rollout-read-only", "rollback-live-qa"],
     "requiredEnv": [],
     "steps": [
       "Require completed ordinary release"
@@ -506,6 +516,84 @@
       ]
     },
     "forbiddenRunTokens": []
+  },
+  "productionReadOnlyRolloutVerifierJob": {
+    "file": ".github/workflows/deploy-tke-production.yml",
+    "job": "verify-rollout-read-only",
+    "trigger": "ordinary_deploy_success",
+    "readOnly": true,
+    "batchOrMutationCount": 0,
+    "runner": [
+      "self-hosted",
+      "tencent-cloud",
+      "opl-cloud",
+      "tke-vpc"
+    ],
+    "inputs": ["bootstrap_mode"],
+    "requiredEnv": [
+      "OPL_K8S_NAMESPACE",
+      "OPL_CLOUD_IMAGE",
+      "OPL_WORKSPACE_IMAGE",
+      "OPL_CONSOLE_ORIGIN",
+      "OPL_VERIFY_AUTH_USERS_JSON",
+      "OPL_VERIFY_ACCOUNT_ID",
+      "OPL_VERIFY_REQUEST_TIMEOUT_MS",
+      "TENCENT_DEPLOY_KUBECONFIG_PATH",
+      "TENCENT_DEPLOY_KUBECONFIG_B64",
+      "TENCENT_DEPLOY_KUBECONFIG"
+    ],
+    "secretEnv": [
+      "OPL_VERIFY_AUTH_USERS_JSON",
+      "TENCENT_DEPLOY_KUBECONFIG_B64",
+      "TENCENT_DEPLOY_KUBECONFIG"
+    ],
+    "steps": [
+      "Checkout",
+      "Set up Node",
+      "Install verifier dependencies",
+      "Install verifier browser",
+      "Prepare verifier kubeconfig",
+      "Verify Cloud image IDs and Workspace digest",
+      "Verify production read-only surfaces",
+      "Remove verifier kubeconfig"
+    ],
+    "requiredCommandsByStep": {
+      "Set up Node": [
+        "node-version",
+        "22"
+      ],
+      "Install verifier dependencies": [
+        "npm ci"
+      ],
+      "Install verifier browser": [
+        "playwright install chromium"
+      ],
+      "Prepare verifier kubeconfig": [
+        "TENCENT_DEPLOY_KUBECONFIG_PATH",
+        "TENCENT_DEPLOY_KUBECONFIG_B64",
+        "TENCENT_DEPLOY_KUBECONFIG"
+      ],
+      "Verify Cloud image IDs and Workspace digest": [
+        "OPL_CLOUD_IMAGE",
+        "imageID",
+        "OPL_WORKSPACE_IMAGE",
+        "get configmap opl-cloud-config"
+      ],
+      "Verify production read-only surfaces": [
+        "/api/healthz",
+        "/api/production/readiness",
+        "retired routes 404",
+        "production-live-qa.ts --read-only"
+      ],
+      "Remove verifier kubeconfig": [
+        "always()",
+        "find \"$secret_dir\" -mindepth 1 -delete",
+        "rmdir \"$secret_dir\""
+      ]
+    },
+    "checks": ["cloud_health", "production_readiness", "ready_pod_image_id", "workspace_digest_unchanged", "source_envelopes", "retired_routes_404", "desktop_console", "mobile_console"],
+    "forbidden": ["charge", "model_request", "tencent_mutation"],
+    "forbiddenRunTokens": ["--allow-gateway-write", "--allow-model-write", "provider-acceptance"]
   },
   "productionLegacySecretCleanupJob": {
     "file": ".github/workflows/deploy-tke-production.yml",
@@ -559,7 +647,7 @@
   "productionRollbackJob": {
     "file": ".github/workflows/deploy-tke-production.yml",
     "job": "rollback-live-qa",
-    "trigger": "post_snapshot_deploy_or_bootstrap_readiness_not_successful",
+    "trigger": "post_snapshot_deploy_bootstrap_or_read_only_verifier_not_successful",
     "runner": [
       "self-hosted",
       "tencent-cloud",
@@ -632,6 +720,11 @@
     ],
     "outputs": ["cloud_image", "workspace_image"],
     "skippedOutput": "empty",
+    "workspaceSourceInputs": {
+      "required": false,
+      "requiredWhen": "publish_workspace_image=true",
+      "cloudOnlyBehavior": "not_validated_not_cloned_not_built"
+    },
     "cloudCandidate": {
       "input": "ref",
       "repositoryAuthority": "github.repository",

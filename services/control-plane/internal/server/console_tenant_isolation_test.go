@@ -386,8 +386,8 @@ func TestPostgresStoreStartsFromFreshDatabase(t *testing.T) {
 	if err := check.QueryRow(`SELECT count(*) FROM opl_schema_migrations WHERE service = 'control-plane'`).Scan(&migrationCount); err != nil {
 		t.Fatalf("read control-plane migration journal: %v", err)
 	}
-	if migrationCount != 14 {
-		t.Fatalf("control-plane migration count = %d, want 14", migrationCount)
+	if migrationCount != 15 {
+		t.Fatalf("control-plane migration count = %d, want 15", migrationCount)
 	}
 	var autoRenewAuditMigration bool
 	if err := check.QueryRow(`SELECT EXISTS (SELECT 1 FROM opl_schema_migrations WHERE service = 'control-plane' AND version = '202607170003_workspace_auto_renew_audit')`).Scan(&autoRenewAuditMigration); err != nil || !autoRenewAuditMigration {
@@ -404,6 +404,10 @@ func TestPostgresStoreStartsFromFreshDatabase(t *testing.T) {
 	var workspacePurchaseReceiptMigration bool
 	if err := check.QueryRow(`SELECT EXISTS (SELECT 1 FROM opl_schema_migrations WHERE service = 'control-plane' AND version = '202607230001_workspace_purchase_receipt_id')`).Scan(&workspacePurchaseReceiptMigration); err != nil || !workspacePurchaseReceiptMigration {
 		t.Fatalf("Workspace purchase Receipt migration missing: applied=%v err=%v", workspacePurchaseReceiptMigration, err)
+	}
+	var multiWorkspaceMigration bool
+	if err := check.QueryRow(`SELECT EXISTS (SELECT 1 FROM opl_schema_migrations WHERE service = 'control-plane' AND version = '202607240001_multi_workspace_pagination')`).Scan(&multiWorkspaceMigration); err != nil || !multiWorkspaceMigration {
+		t.Fatalf("multi-Workspace pagination migration missing: applied=%v err=%v", multiWorkspaceMigration, err)
 	}
 	var announcementConstraints int
 	if err := check.QueryRow(`SELECT count(*) FROM pg_constraint WHERE conrelid IN ('control_plane_announcements'::regclass, 'control_plane_announcement_reads'::regclass) AND conname IN ('control_plane_announcements_status_check', 'control_plane_announcements_schedule_check', 'control_plane_announcement_reads_announcement_fk', 'control_plane_announcement_reads_user_unique')`).Scan(&announcementConstraints); err != nil || announcementConstraints != 4 {

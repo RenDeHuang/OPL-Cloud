@@ -16,6 +16,7 @@ import (
 	"entgo.io/ent/dialect"
 	_ "github.com/mattn/go-sqlite3"
 
+	controlplaneent "opl-cloud/services/control-plane/ent"
 	controlplaneenttest "opl-cloud/services/control-plane/ent/enttest"
 	"opl-cloud/services/control-plane/internal/clients"
 	"opl-cloud/services/control-plane/internal/controlplane"
@@ -82,6 +83,85 @@ func TestProductionPostgresStateStoreRejectsUnsafeTLSBeforeConnecting(t *testing
 	_, err := NewPostgresEntStateStore("host=/does-not-exist dbname=opl sslmode=disable")
 	if err == nil || !strings.Contains(err.Error(), "sslmode=verify-full") {
 		t.Fatalf("unsafe PostgreSQL error = %v", err)
+	}
+}
+
+func TestAccountAndWorkspacePagesAreStableAndScoped(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		new  func(*testing.T) controlPlaneTableStore
+	}{
+		{name: "memory", new: func(*testing.T) controlPlaneTableStore { return newMemoryTableStore() }},
+		{name: "sqlite", new: func(t *testing.T) controlPlaneTableStore {
+			return NewTestEntStateStore(t, t.TempDir()+"/pages.sqlite")
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := tc.new(t)
+			ctx := context.Background()
+			for _, row := range []map[string]any{
+				{"id": "acct-admin", "ownerUserId": "usr-admin", "sub2apiUserId": int64(1), "status": "active"},
+				{"id": "acct-c", "ownerUserId": "usr-c", "sub2apiUserId": int64(43), "status": "active"},
+				{"id": "acct-a", "ownerUserId": "usr-a", "sub2apiUserId": int64(41), "status": "active"},
+				{"id": "acct-b", "ownerUserId": "usr-b", "sub2apiUserId": int64(42), "status": "active"},
+			} {
+				mustStore(t, store.SaveAccount(ctx, row))
+			}
+			for _, row := range []map[string]any{
+				{"id": "ws-c", "accountId": "acct-a", "ownerAccountId": "acct-a"},
+				{"id": "ws-a", "accountId": "acct-a", "ownerAccountId": "acct-a"},
+				{"id": "ws-b", "accountId": "acct-b", "ownerAccountId": "acct-b"},
+			} {
+				mustStore(t, store.SaveWorkspace(ctx, row))
+			}
+
+			accounts, err := store.PageAccounts(ctx, tablePageQuery{Offset: 2, Limit: 2})
+			if err != nil || accounts.Total != 4 || len(accounts.Items) != 2 || stringValue(accounts.Items[0]["id"]) != "acct-b" || stringValue(accounts.Items[1]["id"]) != "acct-c" {
+				t.Fatalf("account page=%#v err=%v", accounts, err)
+			}
+			workspaces, err := store.PageWorkspaces(ctx, "acct-a", tablePageQuery{Offset: 0, Limit: 1})
+			if err != nil || workspaces.Total != 2 || len(workspaces.Items) != 1 || stringValue(workspaces.Items[0]["id"]) != "ws-a" {
+				t.Fatalf("Workspace page=%#v err=%v", workspaces, err)
+			}
+			counts, err := store.CountWorkspacesByAccount(ctx, []string{"acct-a", "acct-b", "acct-missing"})
+			if err != nil || counts["acct-a"] != 2 || counts["acct-b"] != 1 || counts["acct-missing"] != 0 {
+				t.Fatalf("Workspace counts=%#v err=%v", counts, err)
+			}
+		})
+	}
+}
+
+func TestEntWorkspaceCountsUseOneGroupedQuery(t *testing.T) {
+	var queries []string
+	client := controlplaneenttest.Open(t, dialect.SQLite, t.TempDir()+"/workspace-counts.sqlite?_fk=1",
+		controlplaneenttest.WithOptions(controlplaneent.Debug(), controlplaneent.Log(func(values ...any) {
+			queries = append(queries, fmt.Sprint(values...))
+		})),
+	)
+	t.Cleanup(func() { _ = client.Close() })
+	store := &postgresEntStateStore{client: client}
+	ctx := context.Background()
+	for _, row := range []map[string]any{
+		{"id": "ws-a", "accountId": "acct-a", "ownerAccountId": "acct-a"},
+		{"id": "ws-b", "accountId": "acct-a", "ownerAccountId": "acct-a"},
+		{"id": "ws-c", "accountId": "acct-b", "ownerAccountId": "acct-b"},
+	} {
+		mustStore(t, store.SaveWorkspace(ctx, row))
+	}
+	queries = nil
+	counts, err := store.CountWorkspacesByAccount(ctx, []string{"acct-a", "acct-b", "acct-missing"})
+	if err != nil || counts["acct-a"] != 2 || counts["acct-b"] != 1 || counts["acct-missing"] != 0 {
+		t.Fatalf("Workspace counts=%#v err=%v", counts, err)
+	}
+	workspaceQueries := make([]string, 0, len(queries))
+	for _, query := range queries {
+		upper := strings.ToUpper(query)
+		if strings.Contains(query, "control_plane_workspaces") && strings.Contains(upper, "SELECT") {
+			workspaceQueries = append(workspaceQueries, query)
+		}
+	}
+	if len(workspaceQueries) != 1 || !strings.Contains(strings.ToUpper(workspaceQueries[0]), "GROUP BY") {
+		t.Fatalf("Workspace counts must use one GROUP BY query: %#v", workspaceQueries)
 	}
 }
 
@@ -2396,7 +2476,7 @@ func TestWorkspaceCreateClaimBindsOuterAndProjectedIdentity(t *testing.T) {
 	}
 }
 
-func TestPostgresPrimaryWorkspaceAndVerifierFactsSurviveRestart(t *testing.T) {
+func TestPostgresProviderAcceptanceWorkspaceAndVerifierFactsSurviveRestart(t *testing.T) {
 	admin := openControlPlaneTestPostgres(t)
 	schema := fmt.Sprintf("control_plane_primary_workspace_%d", time.Now().UnixNano())
 	if _, err := admin.Exec(`CREATE SCHEMA ` + schema); err != nil {
@@ -2469,7 +2549,7 @@ func TestPostgresPrimaryWorkspaceAndVerifierFactsSurviveRestart(t *testing.T) {
 		go func() {
 			defer workers.Done()
 			<-start
-			workspaceID := fmt.Sprintf("ws-race-%d", index)
+			workspaceID := primaryWorkspaceID("acct-race")
 			row, op := workspaceCreateClaimForAccountForTest("acct-race", workspaceID, fmt.Sprintf("race-%d", index), fmt.Sprintf("attachment-%d", index))
 			errorsByRequest <- restarted.ClaimWorkspaceCreate(context.Background(), row, op)
 		}()
