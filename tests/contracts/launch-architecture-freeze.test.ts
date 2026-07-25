@@ -284,7 +284,7 @@ test("launch freeze fixes the V2 products, owner lanes, settlement, and verifica
   assert.deepEqual(freeze.verification.providerResourcesDeletedPerRun, []);
   assert.equal(freeze.launchStages.length, 10);
   assert.equal("slides" in freeze, false);
-  assert.equal(freeze.deliveryPhases.length, 6);
+  assert.equal("deliveryPhases" in freeze, false);
 });
 
 test("human launch contract pins the approved architecture authority revision", async () => {

@@ -230,6 +230,7 @@ func runtimeOperationFields() []ent.Field {
 		field.String("operation_id").Default(""),
 		field.String("account_id").Default(""),
 		field.String("workspace_id").Default(""),
+		field.String("period_start").Default(""),
 		field.String("resource_id").Default(""),
 		field.String("resource_kind").Default(""),
 		field.String("action").Default(""),

@@ -12,7 +12,11 @@ The four implementation owner lanes are Console/Control Plane, Fabric, Gateway i
 
 ## Pilot Scope
 
-- The first cohort is 2-5 administrator-provisioned customer accounts; public registration is forbidden.
+- Administrator-provisioned customer accounts are the only supported account
+  entry; public registration is forbidden.
+- Capacity evidence covers a 1000-provisioned-user data set. It does not claim
+  1000 concurrent users, concurrent logins, concurrent provisioning operations,
+  multiple Control Plane replicas, or HA.
 - One Console User maps to one OPL Account and one Sub2API User/Wallet. Console
   and Sub2API email must match after `lower(trim(email))`.
 - Organization and Membership rows are internal one-to-one compatibility
@@ -333,10 +337,6 @@ Provider Acceptance owns two retained non-customer slots:
 | 8. Renewal and recovery | Renew one Workspace period with deterministic recovery. | All four lanes | Workspace-level claim, combined debit, same-ID provider renewal/readback, expiry, refund/review, and receipt recovery are code-complete; enabling auto-renew and real renewal evidence are pending. | Isolated PostgreSQL concurrency, renewal replay, deadline readback, real approved renewal. |
 | 9. Reusable verification | Prove releases without per-run Tencent purchase or deletion. | All four lanes | Provider Acceptance, Pro verification, and fixed-slot verification are paused and do not gate the Basic rollout. | Future separately approved retained-slot evidence. |
 | 10. Production release | Declare ready from immutable artifacts, rollout, rollback, and real evidence. | All four lanes | Security, immutable imageID checks, ConfigMap-aware Cloud rollback, read-only TKE diagnostics, release tooling, Console browser coverage, local integration gates, and the deployment identity cutover are code-complete locally; immutable publication, rollout, rollback, and runtime evidence remain pending. | Full local gates, immutable digests, rollout, rollback, source-truth QA, approved real evidence. |
-
-## Delivery Phases
-
-The six delivery phases are: contract and cleanup; Fabric PREPAID and Workspace; Gateway account projection; commercial plans and settlement; Console UX and release safety; integration, real verification, and rollout. These phases organize four sessions and do not replace the ten business launch stages.
 
 ## Completion Rule
 

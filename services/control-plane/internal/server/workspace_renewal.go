@@ -378,7 +378,8 @@ func workspaceRenewalOperationRow(operation workspaceRenewalOperation) map[strin
 	return map[string]any{
 		"id": operation.ID, "operationId": operation.ID, "accountId": operation.AccountID, "workspaceId": operation.WorkspaceID,
 		"resourceId": operation.WorkspaceID, "resourceKind": "workspace_renewal", "action": "workspace.renewal", "status": operation.Status,
-		"result": encodeWorkspaceRenewalOperation(operation), "computeAllocationId": operation.ComputeID, "storageId": operation.StorageID, "createdAt": operation.CreatedAt,
+		"result": encodeWorkspaceRenewalOperation(operation), "computeAllocationId": operation.ComputeID, "storageId": operation.StorageID,
+		"periodStart": operation.PaidThrough, "createdAt": operation.CreatedAt,
 	}
 }
 
@@ -419,7 +420,7 @@ func (app *controlPlaneServer) processWorkspaceRenewal(ctx context.Context, serv
 		if err != nil {
 			return errInvalidWorkspaceBillingState
 		}
-		operations, err := app.tables.ListRuntimeOperations(ctx)
+		operations, err := queryRuntimeOperations(ctx, app.tables, runtimeOperationQuery{WorkspaceID: workspaceID, Action: "workspace.renewal"})
 		if err != nil {
 			return err
 		}
@@ -552,14 +553,12 @@ func (app *controlPlaneServer) manualReviewWorkspaceRenewal(ctx context.Context,
 }
 
 func (app *controlPlaneServer) loadWorkspaceRenewalOperation(ctx context.Context, operationID string) (workspaceRenewalOperation, error) {
-	rows, err := app.tables.ListRuntimeOperations(ctx)
+	row, found, err := app.tables.GetRuntimeOperation(ctx, operationID)
 	if err != nil {
 		return workspaceRenewalOperation{}, err
 	}
-	for _, row := range rows {
-		if stringValue(row["action"]) == "workspace.renewal" && firstNonEmpty(stringValue(row["operationId"]), stringValue(row["id"])) == operationID {
-			return decodeWorkspaceRenewalOperation(row)
-		}
+	if found && stringValue(row["action"]) == "workspace.renewal" && firstNonEmpty(stringValue(row["operationId"]), stringValue(row["id"])) == operationID {
+		return decodeWorkspaceRenewalOperation(row)
 	}
 	return workspaceRenewalOperation{}, errBillingReviewNotFound
 }
@@ -801,15 +800,21 @@ func (app *controlPlaneServer) debitWorkspaceRenewal(ctx context.Context, servic
 		return app.retryWorkspaceRenewal(ctx, operation, errMonthlyAccountUnmapped.Error(), err)
 	}
 	if operation.ChargeConfirmation == nil {
-		if _, err := service.Sub2APIWorkspaceKey(ctx, userID); err != nil {
-			return app.retryWorkspaceRenewal(ctx, operation, "gateway_key_unavailable", err)
+		workspace, ok := app.getWorkspace(operation.WorkspaceID)
+		keyID := int64(numberField(workspace, "workspaceApiKeyId", 0))
+		key, keyErr := service.WorkspaceKeyByIDForConvergence(ctx, userID, keyID, workspaceReservedKeyName(operation.WorkspaceID))
+		if !ok || keyErr != nil || key.ID != keyID || key.UserID != userID || key.Status != "active" {
+			return app.retryWorkspaceRenewal(ctx, operation, "gateway_key_unavailable", keyErr)
 		}
 		var charge clients.Sub2APICharge
 		if operation.ChargeAttempted || operation.ErrorCode == "sub2api_charge_unconfirmed" {
-			history, historyErr := service.FinancialBalanceHistoryScan(ctx, userID)
+			history, historyErr := service.FinancialBalanceHistoryByCodes(ctx, userID, []string{operation.RedeemCode})
+			if historyErr != nil {
+				return app.retryWorkspaceRenewal(ctx, operation, "sub2api_charge_history_unavailable", historyErr)
+			}
 			row := map[string]any{"sub2apiRedeemCode": operation.RedeemCode, "chargeUsdMicros": operation.TotalUSDMicros}
 			switch code := sub2APIReconciliationCode(row, userID, history); {
-			case historyErr != nil || code == "sub2api_charge_missing":
+			case code == "sub2api_charge_missing":
 				charge, err = service.ChargeSub2API(ctx, clients.Sub2APIChargeInput{
 					UserID: userID, Code: operation.RedeemCode, ChargeUSDMicros: operation.TotalUSDMicros, Notes: "OPL Workspace monthly " + operation.WorkspaceID,
 				})
@@ -982,20 +987,17 @@ func (app *controlPlaneServer) refundWorkspaceRenewal(ctx context.Context, servi
 	}
 	var refund clients.Sub2APIRefund
 	if recoverAttempt {
-		history, historyErr := service.FinancialBalanceHistoryScan(ctx, userID)
-		matches := make([]clients.Sub2APIBalanceHistoryEntry, 0, 1)
-		for _, entry := range history {
-			if entry.Code == operation.RefundCode {
-				matches = append(matches, entry)
-			}
+		history, historyErr := service.FinancialBalanceHistoryByCodes(ctx, userID, []string{operation.RefundCode})
+		if historyErr != nil {
+			return app.retryWorkspaceRenewal(ctx, operation, "sub2api_refund_history_unavailable", historyErr)
 		}
-		if historyErr != nil || len(matches) == 0 {
+		entry, found := history[operation.RefundCode]
+		if !found {
 			refund, err = service.RefundSub2API(ctx, clients.Sub2APIRefundInput{
 				UserID: userID, Code: operation.RefundCode, RefundUSDMicros: operation.TotalUSDMicros, Notes: "OPL Workspace renewal refund " + operation.WorkspaceID,
 			})
 		} else {
-			entry := matches[0]
-			if len(matches) != 1 || entry.Type != "balance" || entry.Status != "used" || entry.UsedBy == nil || *entry.UsedBy != userID || entry.ValueUSDMicros != operation.TotalUSDMicros {
+			if entry.Type != "balance" || entry.Status != "used" || entry.UsedBy == nil || *entry.UsedBy != userID || entry.ValueUSDMicros != operation.TotalUSDMicros {
 				return app.manualReviewWorkspaceRenewal(ctx, operation, "sub2api_refund_mismatch")
 			}
 			refund = clients.Sub2APIRefund{Code: operation.RefundCode, UserID: userID, RefundUSDMicros: operation.TotalUSDMicros, Status: "used"}

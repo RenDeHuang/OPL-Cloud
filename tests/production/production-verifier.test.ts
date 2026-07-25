@@ -8,7 +8,8 @@ import {
   requestJson,
   runProductionVerifierCli,
   verificationOwnerFromSeed,
-  verifyProductionChain
+  verifyProductionChain,
+  walletFact
 } from "../../tools/production-verifier.ts";
 
 const FIXED_VERIFICATION_SLOT_ID = "verification-slot-basic-01";
@@ -106,6 +107,18 @@ function source(payload, sourceName = "sub2api", status = "available", headers =
     ...headers
   });
 }
+
+test("production wallet verifier requires a canonical non-negative int64 decimal string", () => {
+  const envelope = (usdMicros) => ({
+    status: "available",
+    data: { userId: "41", currency: "USD", usdMicros, status: "active" }
+  });
+
+  assert.equal(walletFact(envelope("9223372036854775807"), "41").usdMicros, "9223372036854775807");
+  for (const value of [500_000_000, "01", "-1", "9223372036854775808"]) {
+    assert.throws(() => walletFact(envelope(value), "41"), /dedicated_workspace_wallet_required/);
+  }
+});
 
 function fixedSlotFixture({
   slotCount = 1,
@@ -224,7 +237,7 @@ function fixedSlotFixture({
       });
     }
     if (url.pathname === "/api/gateway/wallet") {
-      return source({ userId: accountId === PRO_ACCOUNT_ID ? "42" : "41", currency: "USD", usdMicros: 500_000_000, status: "active" });
+      return source({ userId: accountId === PRO_ACCOUNT_ID ? "42" : "41", currency: "USD", usdMicros: "500000000", status: "active" });
     }
     if (url.pathname === "/api/gateway/keys") {
       return source({ items: [{ id: accountId === PRO_ACCOUNT_ID ? "10" : "9", name: "opl-workspace", status: "active" }], total: 1 });
@@ -399,7 +412,7 @@ test("ordinary production verifier reuses exactly one fixed slot without resourc
   assert.equal(result.slot.storageProviderResourceId, "disk-slot-1");
   assert.equal(result.slot.persistentVolumeId, "pv-slot-1");
   assert.equal(result.workspaceId, "workspace-slot-1");
-  assert.equal(result.wallet.usdMicros, 500_000_000);
+  assert.equal(result.wallet.usdMicros, "500000000");
   assert.equal(result.key.id, "9");
   assert.equal(result.ledgerReceipt.receiptId, "receipt-current-1");
   assert.deepEqual(result.runtimeOperations.map(({ id, action, status, operationDigest }) => ({ id, action, status, digestLength: operationDigest.length })), [

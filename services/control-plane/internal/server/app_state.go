@@ -98,53 +98,30 @@ func newControlPlaneAppWithStore(store StateStore) (*controlPlaneServer, error) 
 }
 
 func (app *controlPlaneServer) ensureBootstrapAdmin(ctx context.Context, service *controlplane.Service) error {
-	accounts, err := app.tables.ListAccounts(ctx, "")
+	account, accountFound, err := app.tables.GetAccount(ctx, "acct-admin")
 	if err != nil {
 		return err
 	}
-	users, err := app.tables.ListUsers(ctx, true)
+	user, userFound, err := app.tables.GetUser(ctx, "usr-admin")
 	if err != nil {
 		return err
 	}
-	organizations, err := app.tables.ListOrganizations(ctx)
+	userByEmail, emailFound, err := app.tables.GetUserByEmail(ctx, "admin@medopl.cn", true)
 	if err != nil {
 		return err
 	}
-	memberships, err := app.tables.ListMemberships(ctx)
+	organization, organizationFound, err := app.tables.GetOrganizationByAccount(ctx, "acct-admin")
 	if err != nil {
 		return err
 	}
-	operatorAccounts := make([]map[string]any, 0, 1)
-	for _, account := range accounts {
-		if stringValue(account["id"]) == "acct-admin" || stringValue(account["ownerUserId"]) == "usr-admin" {
-			operatorAccounts = append(operatorAccounts, account)
-		}
+	membership, membershipFound, err := app.tables.GetMembershipByAccount(ctx, "acct-admin")
+	if err != nil {
+		return err
 	}
-	operatorUsers := make([]map[string]any, 0, 1)
-	for _, user := range users {
-		if stringValue(user["id"]) == "usr-admin" || normalizeEmail(stringValue(user["email"])) == "admin@medopl.cn" ||
-			stringValue(user["accountId"]) == "acct-admin" || stringValue(user["role"]) == "admin" {
-			operatorUsers = append(operatorUsers, user)
-		}
-	}
-	operatorOrganizations := make([]map[string]any, 0, 1)
-	for _, organization := range organizations {
-		if stringValue(organization["billingAccountId"]) == "acct-admin" {
-			operatorOrganizations = append(operatorOrganizations, organization)
-		}
-	}
-	operatorMemberships := make([]map[string]any, 0, 1)
-	for _, membership := range memberships {
-		if stringValue(membership["accountId"]) == "acct-admin" || stringValue(membership["userId"]) == "usr-admin" {
-			operatorMemberships = append(operatorMemberships, membership)
-		}
-	}
-	operatorPresent := len(operatorAccounts)+len(operatorUsers)+len(operatorOrganizations)+len(operatorMemberships) != 0
-	operatorComplete := len(operatorAccounts) == 1 && len(operatorUsers) == 1 && len(operatorOrganizations) == 1 && len(operatorMemberships) == 1
+	operatorPresent := accountFound || userFound || emailFound || organizationFound || membershipFound
+	operatorComplete := accountFound && userFound && emailFound && organizationFound && membershipFound && stringValue(userByEmail["id"]) == "usr-admin"
 	var localSub2APIUserID int64
 	if operatorComplete {
-		account, user := operatorAccounts[0], operatorUsers[0]
-		organization, membership := operatorOrganizations[0], operatorMemberships[0]
 		localSub2APIUserID, _ = positiveIntegerField(account, "sub2apiUserId")
 		operatorComplete = stringValue(account["id"]) == "acct-admin" && stringValue(account["ownerUserId"]) == "usr-admin" && localSub2APIUserID > 0 && stringValue(account["status"]) == "active" &&
 			stringValue(user["id"]) == "usr-admin" && stringValue(user["email"]) == "admin@medopl.cn" && stringValue(user["accountId"]) == "acct-admin" && stringValue(user["role"]) == "admin" && stringValue(user["status"]) == "active" &&
@@ -168,11 +145,11 @@ func (app *controlPlaneServer) ensureBootstrapAdmin(ctx context.Context, service
 		}
 		return nil
 	}
-	account := map[string]any{"id": "acct-admin", "ownerUserId": "usr-admin", "sub2apiUserId": identity.ID, "status": "active"}
-	user := map[string]any{"id": "usr-admin", "email": "admin@medopl.cn", "accountId": "acct-admin", "role": "admin", "status": "active"}
-	organization := map[string]any{"id": "org-admin", "name": "OPL Cloud", "billingAccountId": "acct-admin", "status": "active"}
-	membership := map[string]any{"id": "mem-admin", "accountId": "acct-admin", "organizationId": "org-admin", "userId": "usr-admin", "role": "owner", "status": "active"}
-	return app.tables.CreateProvisionedAccount(ctx, account, user, organization, membership)
+	bootstrapAccount := map[string]any{"id": "acct-admin", "ownerUserId": "usr-admin", "sub2apiUserId": identity.ID, "status": "active"}
+	bootstrapUser := map[string]any{"id": "usr-admin", "email": "admin@medopl.cn", "accountId": "acct-admin", "role": "admin", "status": "active"}
+	bootstrapOrganization := map[string]any{"id": "org-admin", "name": "OPL Cloud", "billingAccountId": "acct-admin", "status": "active"}
+	bootstrapMembership := map[string]any{"id": "mem-admin", "accountId": "acct-admin", "organizationId": "org-admin", "userId": "usr-admin", "role": "owner", "status": "active"}
+	return app.tables.CreateProvisionedAccount(ctx, bootstrapAccount, bootstrapUser, bootstrapOrganization, bootstrapMembership)
 }
 
 func newControlPlaneAppEmpty() *controlPlaneServer {
@@ -211,7 +188,7 @@ func (app *controlPlaneServer) state(accountID string, computePools []any) map[s
 		"auditEvents":            rowsAsAnyFromMaps(app.listAuditEvents(accountID)),
 		"resourceLedgerEvidence": app.resourceLedgerEvidenceLocked(accountID),
 		"notifications":          []any{},
-		"runtimeOperations":      rowsAsAnyFromMaps(rowsForAccount(app.listRuntimeOperations(), accountID)),
+		"runtimeOperations":      rowsAsAnyFromMaps(app.runtimeOperationRows(runtimeOperationQuery{AccountID: accountID})),
 		"generatedAt":            time.Now().UTC().Format(time.RFC3339),
 	}
 }
@@ -346,11 +323,13 @@ func (app *controlPlaneServer) listMemberships() []map[string]any {
 	return rows
 }
 
-func (app *controlPlaneServer) listRuntimeOperations() []map[string]any {
-	rows, err := app.tables.ListRuntimeOperations(context.Background())
+func (app *controlPlaneServer) runtimeOperationRows(query runtimeOperationQuery) []map[string]any {
+	query.Offset, query.Limit = 0, runtimeOperationPageSize
+	page, err := app.tables.PageRuntimeOperations(context.Background(), query)
 	if err != nil {
 		return nil
 	}
+	rows := page.Items
 	for _, row := range rows {
 		if result := stringValue(row["result"]); result != "" {
 			var payload map[string]any

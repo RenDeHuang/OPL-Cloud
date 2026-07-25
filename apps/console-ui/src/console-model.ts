@@ -37,8 +37,20 @@ export function needsSession(pathname = ""): boolean {
 }
 
 export function formatUsdMicros(value: unknown): string {
-  if (typeof value !== "number" || !Number.isSafeInteger(value)) return "-";
-  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(value / 1_000_000);
+  let micros: bigint;
+  if (typeof value === "string" && /^-?(0|[1-9][0-9]*)$/.test(value)) {
+    micros = BigInt(value);
+  } else if (typeof value === "number" && Number.isSafeInteger(value)) {
+    micros = BigInt(value);
+  } else {
+    return "-";
+  }
+  const negative = micros < 0n;
+  const absolute = negative ? -micros : micros;
+  const roundedCents = (absolute + 5_000n) / 10_000n;
+  const dollars = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(roundedCents / 100n);
+  const cents = String(roundedCents % 100n).padStart(2, "0");
+  return `${negative ? "-" : ""}$${dollars}.${cents}`;
 }
 
 export function formatCount(value: unknown): string {

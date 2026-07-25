@@ -90,6 +90,20 @@ func (rou *RuntimeOperationUpdate) SetNillableWorkspaceID(s *string) *RuntimeOpe
 	return rou
 }
 
+// SetPeriodStart sets the "period_start" field.
+func (rou *RuntimeOperationUpdate) SetPeriodStart(s string) *RuntimeOperationUpdate {
+	rou.mutation.SetPeriodStart(s)
+	return rou
+}
+
+// SetNillablePeriodStart sets the "period_start" field if the given value is not nil.
+func (rou *RuntimeOperationUpdate) SetNillablePeriodStart(s *string) *RuntimeOperationUpdate {
+	if s != nil {
+		rou.SetPeriodStart(*s)
+	}
+	return rou
+}
+
 // SetResourceID sets the "resource_id" field.
 func (rou *RuntimeOperationUpdate) SetResourceID(s string) *RuntimeOperationUpdate {
 	rou.mutation.SetResourceID(s)
@@ -365,6 +379,9 @@ func (rou *RuntimeOperationUpdate) sqlSave(ctx context.Context) (n int, err erro
 	if value, ok := rou.mutation.WorkspaceID(); ok {
 		_spec.SetField(runtimeoperation.FieldWorkspaceID, field.TypeString, value)
 	}
+	if value, ok := rou.mutation.PeriodStart(); ok {
+		_spec.SetField(runtimeoperation.FieldPeriodStart, field.TypeString, value)
+	}
 	if value, ok := rou.mutation.ResourceID(); ok {
 		_spec.SetField(runtimeoperation.FieldResourceID, field.TypeString, value)
 	}
@@ -488,6 +505,20 @@ func (rouo *RuntimeOperationUpdateOne) SetWorkspaceID(s string) *RuntimeOperatio
 func (rouo *RuntimeOperationUpdateOne) SetNillableWorkspaceID(s *string) *RuntimeOperationUpdateOne {
 	if s != nil {
 		rouo.SetWorkspaceID(*s)
+	}
+	return rouo
+}
+
+// SetPeriodStart sets the "period_start" field.
+func (rouo *RuntimeOperationUpdateOne) SetPeriodStart(s string) *RuntimeOperationUpdateOne {
+	rouo.mutation.SetPeriodStart(s)
+	return rouo
+}
+
+// SetNillablePeriodStart sets the "period_start" field if the given value is not nil.
+func (rouo *RuntimeOperationUpdateOne) SetNillablePeriodStart(s *string) *RuntimeOperationUpdateOne {
+	if s != nil {
+		rouo.SetPeriodStart(*s)
 	}
 	return rouo
 }
@@ -796,6 +827,9 @@ func (rouo *RuntimeOperationUpdateOne) sqlSave(ctx context.Context) (_node *Runt
 	}
 	if value, ok := rouo.mutation.WorkspaceID(); ok {
 		_spec.SetField(runtimeoperation.FieldWorkspaceID, field.TypeString, value)
+	}
+	if value, ok := rouo.mutation.PeriodStart(); ok {
+		_spec.SetField(runtimeoperation.FieldPeriodStart, field.TypeString, value)
 	}
 	if value, ok := rouo.mutation.ResourceID(); ok {
 		_spec.SetField(runtimeoperation.FieldResourceID, field.TypeString, value)

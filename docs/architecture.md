@@ -155,8 +155,8 @@ Control Plane availability is coupled to every Workspace connection, and a
 2xx/non-empty-page check can pass on the login page without proving an
 authenticated Workspace session.
 
-Keeping the shared proxy avoids per-Workspace CLB rules and is the smallest
-topology for the initial 2-5 operator-provisioned accounts. Control Plane selects the Runtime
+Keeping the shared proxy avoids per-Workspace CLB rules and is the current
+topology for administrator-provisioned accounts. Control Plane selects the Runtime
 Service; the Runtime owns password validation, its authenticated session, and
 WebSocket access. Routing every Workspace Service directly with native TKE
 Ingress removes Control Plane from the data path, but does not replace Runtime

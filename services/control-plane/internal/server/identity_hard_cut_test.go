@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -26,6 +28,39 @@ type identityTestSub2API struct {
 	authOverride   *clients.Sub2APIIdentity
 	resolveEntered chan struct{}
 	resolveRelease <-chan struct{}
+}
+
+type identityNoFullScanStore struct {
+	controlPlaneTableStore
+	mu    sync.Mutex
+	scans []string
+}
+
+func (s *identityNoFullScanStore) reject(name string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.scans = append(s.scans, name)
+	return errors.New("identity full-table scan: " + name)
+}
+
+func (s *identityNoFullScanStore) ListAccounts(context.Context, string) ([]map[string]any, error) {
+	return nil, s.reject("accounts")
+}
+
+func (s *identityNoFullScanStore) ListUsers(context.Context, bool) ([]map[string]any, error) {
+	return nil, s.reject("users")
+}
+
+func (s *identityNoFullScanStore) ListSessions(context.Context) (controlPlaneRecordSet, error) {
+	return nil, s.reject("sessions")
+}
+
+func (s *identityNoFullScanStore) ListOrganizations(context.Context) ([]map[string]any, error) {
+	return nil, s.reject("organizations")
+}
+
+func (s *identityNoFullScanStore) ListMemberships(context.Context) ([]map[string]any, error) {
+	return nil, s.reject("memberships")
 }
 
 func newIdentityTestSub2API() *identityTestSub2API {
@@ -438,6 +473,41 @@ func TestLoginUpstreamUnavailableIsNotCredentialFailureAndStoresNoSecrets(t *tes
 		if strings.Contains(string(encoded), secret) {
 			t.Fatalf("local facts leaked %q: %s", secret, encoded)
 		}
+	}
+}
+
+func TestLoginAndSessionValidationNeverScanIdentityTablesAtScale(t *testing.T) {
+	base := newMemoryTableStore()
+	remote := newIdentityTestSub2API()
+	for index := 1; index <= 1000; index++ {
+		accountID := fmt.Sprintf("acct-scale-%04d", index)
+		userID := fmt.Sprintf("usr-scale-%04d", index)
+		email := fmt.Sprintf("scale-%04d@example.com", index)
+		account, user, organization, membership := provisionedAccountRowsFor(accountID, userID, "org-"+accountID, email, int64(10_000+index))
+		if err := base.CreateProvisionedAccount(context.Background(), account, user, organization, membership); err != nil {
+			t.Fatalf("seed identity %d: %v", index, err)
+		}
+		remote.identities[email] = clients.Sub2APIIdentity{ID: int64(10_000 + index), Email: email, Status: "active"}
+		remote.passwords[email] = "password"
+	}
+	app, err := newControlPlaneAppWithStore(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	guard := &identityNoFullScanStore{controlPlaneTableStore: base}
+	app.tables = guard
+	service := controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}, remote)
+	_, sessionID, err := app.login(context.Background(), service, map[string]any{"email": "scale-1000@example.com", "password": "password"})
+	if err != nil {
+		t.Fatalf("login: %v scans=%#v", err, guard.scans)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/api/auth/me", nil)
+	request.AddCookie(&http.Cookie{Name: sessionCookieName, Value: sessionID})
+	if _, state := app.session(request); state != sessionAuthenticated {
+		t.Fatalf("session state=%v scans=%#v", state, guard.scans)
+	}
+	if len(guard.scans) != 0 {
+		t.Fatalf("identity hot path performed full-table scans: %#v", guard.scans)
 	}
 }
 

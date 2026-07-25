@@ -51,6 +51,7 @@
         "identity": "session_account_to_control_plane_sub2api_user_mapping",
         "ignoredIdentityInputs": ["accountId", "user_id", "api_key_id", "sub2apiUserId"],
         "dataFields": ["userId", "currency", "usdMicros", "status"],
+        "usdMicrosEncoding": "signed_int64_decimal_string",
         "fetchedAt": "control_plane_response_fetch_completion_time",
         "sourceUpdatedAt": "omit_unless_sub2api_returns_source_timestamp"
       },
@@ -140,6 +141,7 @@
         "identity": "session_account_to_control_plane_sub2api_user_mapping",
         "ignoredIdentityInputs": ["accountId", "user_id", "api_key_id", "sub2apiUserId"],
         "itemFields": ["type", "valueUsdMicros", "status", "usedAt", "createdAt"],
+        "valueUsdMicrosEncoding": "signed_int64_decimal_string",
         "dataFields": ["items", "total", "page", "pageSize", "pages"],
         "pagination": {
           "pageDefault": 1,

@@ -1147,6 +1147,93 @@ func TestProviderFactsBatchBackfillsRuntimeIdentity(t *testing.T) {
 	}
 }
 
+type boundedProviderFactsRuntimeProvider struct {
+	testProvider
+	mu        sync.Mutex
+	active    int
+	maxActive int
+	deadlines []time.Time
+	started   chan struct{}
+	release   <-chan struct{}
+}
+
+func (p *boundedProviderFactsRuntimeProvider) WorkspaceRuntimeStatus(ctx context.Context, workspaceID string) (WorkspaceRuntime, error) {
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return WorkspaceRuntime{}, errors.New("provider facts batch deadline missing")
+	}
+	p.mu.Lock()
+	p.active++
+	if p.active > p.maxActive {
+		p.maxActive = p.active
+	}
+	p.deadlines = append(p.deadlines, deadline)
+	p.mu.Unlock()
+	defer func() {
+		p.mu.Lock()
+		p.active--
+		p.mu.Unlock()
+	}()
+	p.started <- struct{}{}
+	select {
+	case <-p.release:
+		return WorkspaceRuntime{ID: "rt-" + workspaceID, WorkspaceID: workspaceID, Status: "running", Ready: true}, nil
+	case <-ctx.Done():
+		return WorkspaceRuntime{}, ctx.Err()
+	}
+}
+
+func TestProviderFactsBatchBoundsWorkersAndSharesOneDeadline(t *testing.T) {
+	release := make(chan struct{})
+	provider := &boundedProviderFactsRuntimeProvider{started: make(chan struct{}, 50), release: release}
+	service := NewService(provider)
+	items := make([]ProviderFactInput, 0, 50)
+	for index := 1; index <= 50; index++ {
+		workspaceID := fmt.Sprintf("workspace-%02d", index)
+		items = append(items, ProviderFactInput{AccountID: "acct-alpha", WorkspaceID: workspaceID, ResourceType: "runtime", ResourceID: "rt-" + workspaceID})
+	}
+	result := make(chan ProviderFactsBatch, 1)
+	errs := make(chan error, 1)
+	go func() {
+		batch, err := service.ProviderFactsBatch(context.Background(), ProviderFactsBatchInput{Items: items})
+		result <- batch
+		errs <- err
+	}()
+	for index := 0; index < 8; index++ {
+		select {
+		case <-provider.started:
+		case <-time.After(time.Second):
+			close(release)
+			<-result
+			<-errs
+			t.Fatal("provider facts batch did not start the fixed worker pool")
+		}
+	}
+	select {
+	case <-provider.started:
+		close(release)
+		<-result
+		<-errs
+		t.Fatal("provider facts batch exceeded eight active readers")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(release)
+	batch, err := <-result, <-errs
+	if err != nil || len(batch.Items) != 50 {
+		t.Fatalf("provider facts batch=%#v err=%v", batch, err)
+	}
+	provider.mu.Lock()
+	defer provider.mu.Unlock()
+	if provider.maxActive != 8 || len(provider.deadlines) != 50 {
+		t.Fatalf("provider facts concurrency=%d deadlines=%d", provider.maxActive, len(provider.deadlines))
+	}
+	for _, deadline := range provider.deadlines[1:] {
+		if !deadline.Equal(provider.deadlines[0]) {
+			t.Fatalf("provider facts did not use one batch deadline: first=%s next=%s", provider.deadlines[0], deadline)
+		}
+	}
+}
+
 func TestWorkspaceRuntimeStatusBackfillsLatestCreatedIdentityWithoutListOrder(t *testing.T) {
 	provider := liveRuntimeWithoutIDProvider{runtimeIDs: map[string]string{"runtime-status-old": "runtime-old", "runtime-status-new": "runtime-new"}}
 	store := NewMemoryOperationStore()

@@ -22,7 +22,7 @@ export type SourceEnvelope<T> = AvailableSource<T> | UnavailableSource;
 
 export interface MoneyDTO {
   currency: "USD";
-  usdMicros: number;
+  usdMicros: string;
 }
 
 export interface OperationStatusDTO {
@@ -281,7 +281,7 @@ export interface PricingPreviewResponse {
 export interface GatewayWallet {
   userId: string;
   currency: "USD";
-  usdMicros: number;
+  usdMicros: string;
   status: string;
 }
 
@@ -426,7 +426,7 @@ export type GatewayAccountUsageSummaryDTO = GatewayUsageSummaryDTO;
 
 export interface BalanceHistoryEntry {
   type: string;
-  valueUsdMicros: number;
+  valueUsdMicros: string;
   status: string;
   usedAt: string | null;
   createdAt: string;

@@ -23,6 +23,7 @@ const DEFAULT_MODEL_TIMEOUT_MS = 180_000;
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 const MAX_USAGE_ITEMS = 10_000;
 const MAX_USAGE_PAGES = 100;
+const PRODUCTION_ADMIN = Object.freeze({ email: "admin@medopl.cn", consoleUserId: "usr-admin", accountId: "acct-admin", role: "admin" });
 const READ_ONLY_VIEWPORTS = Object.freeze({
   desktop: Object.freeze({ width: 1440, height: 900 }),
   mobile: Object.freeze({ width: 390, height: 844 })
@@ -85,17 +86,47 @@ async function verifyConsoleViewports({ origin, browserFactory }) {
   return checked;
 }
 
+function existingAdminCredentials(email, password) {
+  const normalizedEmail = String(email || "").trim().toLowerCase();
+  if (normalizedEmail !== PRODUCTION_ADMIN.email || !String(password || "")) {
+    throw new Error("existing_admin_verifier_credentials_unavailable");
+  }
+  return { email: normalizedEmail, password: String(password) };
+}
+
+function readOnlyPage(result, expectedSource, { page = 1, pageSize = 20, pagesRequired = false } = {}) {
+  const envelope = sourceEnvelope(result, expectedSource, true);
+  const data = envelope.data;
+  if (!Array.isArray(data?.items) || !Number.isSafeInteger(data?.total) || data.total < 0 || data.page !== page || data.pageSize !== pageSize ||
+    envelope.status !== (data.items.length === 0 ? "empty" : "available")) {
+    throw new Error("production_read_only_page_invalid");
+  }
+  if (pagesRequired) {
+    const expectedPages = data.total === 0 ? 1 : Math.ceil(data.total / pageSize);
+    if (!Number.isSafeInteger(data.pages) || data.pages !== expectedPages) throw new Error("production_read_only_page_invalid");
+  }
+  return data;
+}
+
+function readOnlyNestedSource(value, expectedSource) {
+  if (!value || value.source !== expectedSource || value.available !== true || value.status !== "available" ||
+    !value.data || !Number.isFinite(Date.parse(value.fetchedAt))) {
+    throw new Error(`production_nested_source_invalid:${expectedSource}`);
+  }
+  return value.data;
+}
+
 export async function verifyProductionReadOnlyRollout(options = {}) {
   const {
     origin,
-    authUsersJson,
-    accountId = "",
+    adminEmail,
+    adminPassword,
     requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
     fetchImpl = globalThis.fetch,
     browserFactory,
     signal
   } = options;
-  const owner = verificationOwnerFromSeed(authUsersJson, accountId);
+  const credentials = existingAdminCredentials(adminEmail, adminPassword);
   const normalizedOrigin = assertPublicHttpsUrl(origin, "public_console_origin_required", { hostname: "cloud.medopl.cn" }).origin;
   const requestOptions = { fetchImpl, origin: normalizedOrigin, signal, timeoutMs: requestTimeoutMs };
 
@@ -106,21 +137,51 @@ export async function verifyProductionReadOnlyRollout(options = {}) {
     throw new Error("production_readiness_invalid");
   }
 
-  const auth = await login({ ...requestOptions, email: owner.email, password: owner.password });
-  if (auth.user?.accountId !== owner.accountId) throw new Error("production_read_only_login_failed");
+  const auth = await login({ ...requestOptions, ...credentials });
+  if (auth.user?.accountId !== PRODUCTION_ADMIN.accountId || auth.user?.role !== PRODUCTION_ADMIN.role) throw new Error("production_read_only_login_failed");
+  const identity = sourceEnvelope(await requestJson({ ...requestOptions, auth, path: "/api/auth/me" }), "sub2api").data;
+  const sub2apiUserId = String(identity?.sub2apiUserId || "");
+  if (identity?.consoleUserId !== PRODUCTION_ADMIN.consoleUserId || identity?.accountId !== PRODUCTION_ADMIN.accountId ||
+    identity?.role !== PRODUCTION_ADMIN.role || identity?.email !== PRODUCTION_ADMIN.email || identity?.status !== "active" ||
+    !/^[1-9][0-9]*$/.test(sub2apiUserId) || !Number.isSafeInteger(Number(sub2apiUserId))) {
+    throw new Error("production_admin_identity_invalid");
+  }
   const endpoint = sourceEnvelope(await requestJson({ ...requestOptions, auth, path: "/api/gateway/endpoint" }), "sub2api").data;
   if (endpoint?.baseUrl !== "https://gflabtoken.cn/v1") throw new Error("production_gateway_endpoint_invalid");
-  walletFact(sourceEnvelope(await requestJson({ ...requestOptions, auth, path: "/api/gateway/wallet" }), "sub2api"), owner.sub2apiUserId);
+  walletFact(sourceEnvelope(await requestJson({ ...requestOptions, auth, path: "/api/gateway/wallet" }), "sub2api"), sub2apiUserId);
 
-  const workspaces = sourceEnvelope(await requestJson({ ...requestOptions, auth, path: "/api/workspaces?page=1&pageSize=20" }), "control-plane", true);
-  if (!Number.isSafeInteger(workspaces.data?.total) || workspaces.data.total < 0 || workspaces.data?.page !== 1 || workspaces.data?.pageSize !== 20 || !Array.isArray(workspaces.data?.items)) {
-    throw new Error("production_workspace_source_invalid");
+  const keys = readOnlyPage(await requestJson({ ...requestOptions, auth, path: "/api/gateway/keys?page=1&pageSize=20" }), "sub2api", { pagesRequired: true });
+  if (keys.items.some((key) => !/^[1-9][0-9]*$/.test(String(key?.id || "")) || ["key", "value"].some((field) => Object.hasOwn(key || {}, field)))) {
+    throw new Error("production_gateway_key_page_invalid");
   }
+  let usage = "not_applicable_no_key";
+  if (keys.items[0]) {
+    readOnlyPage(await requestJson({
+      ...requestOptions,
+      auth,
+      path: `/api/gateway/keys/${encodeURIComponent(keys.items[0].id)}/usage?page=1&pageSize=20`
+    }), "sub2api", { pagesRequired: true });
+    usage = "available";
+  }
+  readOnlyPage(await requestJson({ ...requestOptions, auth, path: "/api/gateway/balance-history?page=1&pageSize=20" }), "sub2api", { pagesRequired: true });
+
+  const overview = sourceEnvelope(await requestJson({ ...requestOptions, auth, path: "/api/operator/overview" }), "control-plane").data;
+  readOnlyNestedSource(overview?.accounts, "control-plane");
+  const workspaceSummary = readOnlyNestedSource(overview?.workspaces, "control-plane");
+  if (!Number.isSafeInteger(workspaceSummary.total) || workspaceSummary.total < 0) throw new Error("production_workspace_summary_invalid");
+  readOnlyPage(await requestJson({ ...requestOptions, auth, path: "/api/operator/accounts?page=1&pageSize=20" }), "control-plane+sub2api");
+  readOnlyPage(await requestJson({ ...requestOptions, auth, path: "/api/operator/workspaces?page=1&pageSize=20" }), "control-plane+fabric+sub2api");
+
+  const workspaces = readOnlyPage(await requestJson({ ...requestOptions, auth, path: "/api/workspaces?page=1&pageSize=20" }), "control-plane");
   const receipts = sourceEnvelope(await requestJson({ ...requestOptions, auth, path: "/api/billing/receipts?limit=20" }), "ledger", true);
   if (!Array.isArray(receipts.data?.receipts) || typeof receipts.data?.hasMore !== "boolean") throw new Error("production_ledger_source_invalid");
 
-  let fabricSource = "not_applicable_no_workspace";
-  const workspace = workspaces.data.items[0];
+  let fabric = "not_applicable_no_workspace";
+  if (workspaceSummary.total > 0) {
+    readOnlyNestedSource(overview?.resources, "fabric");
+    fabric = "available";
+  }
+  const workspace = workspaces.items[0];
   if (workspace?.id) {
     const runtime = sourceEnvelope(await requestJson({
       ...requestOptions,
@@ -128,7 +189,6 @@ export async function verifyProductionReadOnlyRollout(options = {}) {
       path: `/api/workspaces/${encodeURIComponent(workspace.id)}/runtime-status`
     }), "fabric").data;
     if (runtime?.workspaceId && runtime.workspaceId !== workspace.id) throw new Error("production_fabric_source_invalid");
-    fabricSource = "available";
   }
 
   const retiredRoutes = await verifyRetiredRoutes({ origin: normalizedOrigin, fetchImpl, signal, requestTimeoutMs });
@@ -138,11 +198,20 @@ export async function verifyProductionReadOnlyRollout(options = {}) {
     mode: "read-only",
     evidenceLevel: "read-only",
     writesPerformed: 0,
-    accountId: owner.accountId,
+    accountId: PRODUCTION_ADMIN.accountId,
+    consoleUserId: PRODUCTION_ADMIN.consoleUserId,
+    sub2apiUserId,
     checks: {
       health: "ok",
       readiness: "ready",
-      sources: ["sub2api", "control-plane", "ledger", fabricSource],
+      identity: "authoritative",
+      wallet: "available",
+      keys: "page_1_size_20",
+      usage,
+      balanceHistory: "page_1_size_20",
+      operator: ["overview", "accounts_page_1_size_20", "workspaces_page_1_size_20"],
+      ledger: "available",
+      fabric,
       retiredRoutes,
       viewports
     },
@@ -246,6 +315,10 @@ function statsMatchRequest(before, after, request) {
   return delta.totalRequests === 1 && delta.totalInputTokens === request.inputTokens && delta.totalOutputTokens === request.outputTokens &&
     delta.totalTokens === request.inputTokens + request.outputTokens + request.cacheCreationTokens + request.cacheReadTokens &&
     delta.totalActualCostUsdMicros === request.actualCostUsdMicros;
+}
+
+function walletDebitMatches(before, after, actualCostUsdMicros) {
+  return BigInt(before.usdMicros) - BigInt(after.usdMicros) === BigInt(actualCostUsdMicros);
 }
 
 export async function verifyWorkspaceBrowserQa({
@@ -456,7 +529,7 @@ export async function verifyProductionLiveQa(options = {}) {
       statsAfter = await gatewayUsageStats(requestOptions, auth, keyBefore.id);
       walletAfter = walletFact(sourceEnvelope(await requestJson({ ...requestOptions, auth, path: "/api/gateway/wallet" }), "sub2api"), owner.sub2apiUserId);
       const statsMatch = statsMatchRequest(statsBefore, statsAfter, requestUsage);
-      const balanceMatch = walletBefore.usdMicros - walletAfter.usdMicros === requestUsage.actualCostUsdMicros;
+      const balanceMatch = walletDebitMatches(walletBefore, walletAfter, requestUsage.actualCostUsdMicros);
       if (statsMatch && balanceMatch) break;
       statsMismatch ||= !statsMatch;
       balanceMismatch ||= !balanceMatch;
@@ -465,7 +538,7 @@ export async function verifyProductionLiveQa(options = {}) {
   }
   if (!requestUsage) throw new Error("exact_gateway_request_not_found");
   if (!statsAfter || !statsMatchRequest(statsBefore, statsAfter, requestUsage)) throw new Error(statsMismatch ? "gateway_usage_stats_mismatch" : "gateway_usage_stats_invalid");
-  if (!walletAfter || walletBefore.usdMicros - walletAfter.usdMicros !== requestUsage.actualCostUsdMicros) {
+  if (!walletAfter || !walletDebitMatches(walletBefore, walletAfter, requestUsage.actualCostUsdMicros)) {
     throw new Error(balanceMismatch ? "gateway_balance_delta_mismatch" : "gateway_wallet_invalid");
   }
 
@@ -526,8 +599,8 @@ export async function runProductionLiveQaCli({
       if (args["allow-gateway-write"] || args["allow-model-write"] || args["approval-id"]) throw new Error("production_live_qa_read_only_conflict");
       const result = await verifyProductionReadOnlyRollout({
         origin: args.origin || env.OPL_CONSOLE_ORIGIN,
-        authUsersJson: env.OPL_VERIFY_AUTH_USERS_JSON,
-        accountId: args.account || env.OPL_VERIFY_ACCOUNT_ID || "",
+        adminEmail: env.OPL_SUB2API_ADMIN_EMAIL,
+        adminPassword: env.OPL_SUB2API_ADMIN_PASSWORD,
         requestTimeoutMs: Number(args["request-timeout-ms"] || env.OPL_VERIFY_REQUEST_TIMEOUT_MS || DEFAULT_REQUEST_TIMEOUT_MS),
         browserFactory,
         fetchImpl

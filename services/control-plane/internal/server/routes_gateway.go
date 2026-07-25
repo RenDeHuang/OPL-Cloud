@@ -63,7 +63,7 @@ func registerGatewayRoutes(mux *http.ServeMux, app *controlPlaneServer, service 
 			return
 		}
 		writeSourceEnvelope(w, http.StatusOK, "sub2api", "available", map[string]any{
-			"userId": strconv.FormatInt(balance.UserID, 10), "currency": "USD", "usdMicros": balance.USDMicros, "status": balance.Status,
+			"userId": strconv.FormatInt(balance.UserID, 10), "currency": "USD", "usdMicros": strconv.FormatInt(balance.USDMicros, 10), "status": balance.Status,
 		})
 	}))
 	mux.HandleFunc("GET /api/gateway/keys", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
@@ -137,7 +137,7 @@ func registerGatewayRoutes(mux *http.ServeMux, app *controlPlaneServer, service 
 				usedAt = entry.UsedAt.UTC().Format(time.RFC3339Nano)
 			}
 			items = append(items, map[string]any{
-				"type": entry.Type, "valueUsdMicros": entry.ValueUSDMicros, "status": entry.Status,
+				"type": entry.Type, "valueUsdMicros": strconv.FormatInt(entry.ValueUSDMicros, 10), "status": entry.Status,
 				"usedAt": usedAt, "createdAt": entry.CreatedAt.UTC().Format(time.RFC3339Nano),
 			})
 		}
@@ -926,21 +926,18 @@ func writeGatewayUsageStats(w http.ResponseWriter, stats clients.Sub2APIUsageSta
 }
 
 func (app *controlPlaneServer) gatewayKeyCommand(ctx context.Context, operationID string) (gatewayKeyCommandResult, bool, error) {
-	rows, err := app.tables.ListRuntimeOperations(ctx)
+	row, found, err := app.tables.GetRuntimeOperation(ctx, operationID)
 	if err != nil {
 		return gatewayKeyCommandResult{}, false, err
 	}
-	for _, row := range rows {
-		if stringValue(row["id"]) != operationID {
-			continue
-		}
-		var result gatewayKeyCommandResult
-		if json.Unmarshal([]byte(stringValue(row["result"])), &result) != nil || result.RequestHash == "" || result.TargetStatus == "" {
-			return gatewayKeyCommandResult{}, false, errors.New("invalid gateway key operation")
-		}
-		return result, true, nil
+	if !found {
+		return gatewayKeyCommandResult{}, false, nil
 	}
-	return gatewayKeyCommandResult{}, false, nil
+	var result gatewayKeyCommandResult
+	if json.Unmarshal([]byte(stringValue(row["result"])), &result) != nil || result.RequestHash == "" || result.TargetStatus == "" {
+		return gatewayKeyCommandResult{}, false, errors.New("invalid gateway key operation")
+	}
+	return result, true, nil
 }
 
 func (app *controlPlaneServer) saveGatewayKeyCommand(ctx context.Context, operationID, accountID, resourceID, action, status string, result gatewayKeyCommandResult) error {

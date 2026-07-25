@@ -10,13 +10,11 @@ import (
 	"os"
 	"strings"
 	"time"
-	"unicode/utf8"
 )
 
 const (
-	minimumPasswordRunes = 12
-	sessionCookieName    = "opl_session"
-	sessionLookupPrefix  = "sub2api-sha256:"
+	sessionCookieName   = "opl_session"
+	sessionLookupPrefix = "sub2api-sha256:"
 )
 
 type sessionRecord struct {
@@ -29,9 +27,6 @@ type sessionRecord struct {
 func validatePlaintextPassword(password string) error {
 	if password == "" {
 		return errMissingPassword
-	}
-	if utf8.RuneCountInString(password) < minimumPasswordRunes {
-		return errWeakPassword
 	}
 	return nil
 }

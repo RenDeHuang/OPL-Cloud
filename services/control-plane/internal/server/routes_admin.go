@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"math"
 	"net/http"
 	"regexp"
 	"sort"
@@ -18,6 +17,12 @@ import (
 )
 
 var billingReviewEvidenceRefPattern = regexp.MustCompile(`^case-[0-9]{8}-[a-z0-9]{3,16}$`)
+
+const (
+	operatorPageReadTimeout      = 5 * time.Second
+	operatorPageLaneConcurrency  = 4
+	operatorPageTotalConcurrency = 8
+)
 
 func registerAdminRoutes(mux *http.ServeMux, app *controlPlaneServer, service *controlplane.Service) {
 	mux.HandleFunc("POST /api/operator/accounts/{accountId}/wallet-adjustments", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
@@ -332,8 +337,6 @@ func (app *controlPlaneServer) operatorAccountPage(ctx context.Context, service 
 	if err != nil {
 		return nil, "", err
 	}
-	remoteByID := app.operatorCurrentPageUsers(ctx, service, local)
-	usageByID, usageErr := service.Sub2APIBatchUsersUsage(ctx, remoteIDs)
 	items := make([]any, 0, len(local))
 	for _, joined := range local {
 		account := joined["account"].(map[string]any)
@@ -346,16 +349,50 @@ func (app *controlPlaneServer) operatorAccountPage(ctx context.Context, service 
 		item := map[string]any{
 			"accountId": stringValue(account["id"]), "consoleUserId": stringValue(owner["id"]), "role": stringValue(owner["role"]),
 			"sub2apiUserId": strconv.FormatInt(remoteID, 10), "email": normalizeEmail(stringValue(owner["email"])), "status": ownerStatus,
-			"keyCount": sourceEnvelope("sub2api", "unavailable", nil, ""),
+			"gatewayIdentity": sourceEnvelope("sub2api", "unavailable", nil, ""),
+			"wallet":          sourceEnvelope("sub2api", "unavailable", nil, ""),
+			"usage":           sourceEnvelope("sub2api", "unavailable", nil, ""),
+			"keyCount":        sourceEnvelope("sub2api", "unavailable", nil, ""),
 		}
 		item["workspaceCount"] = sourceEnvelope("control-plane", "available", workspaceCounts[stringValue(account["id"])], "")
+		items = append(items, item)
+	}
+
+	pageCtx, cancel := context.WithTimeout(ctx, operatorPageReadTimeout)
+	defer cancel()
+	totalGate := make(chan struct{}, operatorPageTotalConcurrency)
+	var remoteByID map[int64]clients.Sub2APIUser
+	var usageByID map[int64]clients.Sub2APIBatchUserUsage
+	var usageErr error
+	var remoteReads sync.WaitGroup
+	remoteReads.Add(3)
+	go func() {
+		defer remoteReads.Done()
+		remoteByID = app.operatorCurrentPageUsers(pageCtx, service, local, totalGate)
+	}()
+	go func() {
+		defer remoteReads.Done()
+		release, ok := operatorPageReadPermit(pageCtx, totalGate)
+		if !ok {
+			usageErr = pageCtx.Err()
+			return
+		}
+		defer release()
+		usageByID, usageErr = service.Sub2APIBatchUsersUsage(pageCtx, remoteIDs)
+	}()
+	go func() {
+		defer remoteReads.Done()
+		app.populateOperatorKeyCounts(pageCtx, service, items, totalGate)
+	}()
+	remoteReads.Wait()
+
+	for index, joined := range local {
+		owner := joined["owner"].(map[string]any)
+		remoteID := joined["remoteId"].(int64)
+		item := items[index].(map[string]any)
 		remote, remoteOK := remoteByID[remoteID]
 		remoteOK = remoteOK && remote.ID == remoteID && remote.Email == normalizeEmail(stringValue(owner["email"])) && (remote.Status == "active" || remote.Status == "disabled")
 		if !remoteOK {
-			item["gatewayIdentity"] = sourceEnvelope("sub2api", "unavailable", nil, "")
-			item["wallet"] = sourceEnvelope("sub2api", "unavailable", nil, "")
-			item["usage"] = sourceEnvelope("sub2api", "unavailable", nil, "")
-			items = append(items, item)
 			continue
 		}
 		updatedAt := remote.UpdatedAt.UTC().Format(time.RFC3339Nano)
@@ -363,7 +400,7 @@ func (app *controlPlaneServer) operatorAccountPage(ctx context.Context, service 
 		if remote.BalanceUnavailable {
 			item["wallet"] = sourceEnvelope("sub2api", "unavailable", nil, "")
 		} else {
-			item["wallet"] = sourceEnvelope("sub2api", "available", map[string]any{"userId": strconv.FormatInt(remote.ID, 10), "currency": "USD", "usdMicros": remote.BalanceUSDMicros, "status": remote.Status}, updatedAt)
+			item["wallet"] = sourceEnvelope("sub2api", "available", map[string]any{"userId": strconv.FormatInt(remote.ID, 10), "currency": "USD", "usdMicros": strconv.FormatInt(remote.BalanceUSDMicros, 10), "status": remote.Status}, updatedAt)
 		}
 		usage, usageOK := usageByID[remoteID]
 		if usageErr != nil || !usageOK || usage.UserID != remoteID {
@@ -375,9 +412,7 @@ func (app *controlPlaneServer) operatorAccountPage(ctx context.Context, service 
 			}
 			item["usage"] = sourceEnvelope("sub2api", "available", map[string]any{"todayActualCostUsdMicros": usage.TodayActualCostUSDMicros, "totalActualCostUsdMicros": usage.TotalActualCostUSDMicros, "byPlatform": platforms}, "")
 		}
-		items = append(items, item)
 	}
-	app.populateOperatorKeyCounts(ctx, service, items)
 	status := "available"
 	if len(items) == 0 {
 		status = "empty"
@@ -385,24 +420,43 @@ func (app *controlPlaneServer) operatorAccountPage(ctx context.Context, service 
 	return map[string]any{"items": items, "total": accountPage.Total, "page": page, "pageSize": pageSize}, status, nil
 }
 
-func (app *controlPlaneServer) operatorCurrentPageUsers(ctx context.Context, service *controlplane.Service, local []map[string]any) map[int64]clients.Sub2APIUser {
+func operatorPageReadPermit(ctx context.Context, gates ...chan struct{}) (func(), bool) {
+	acquired := make([]chan struct{}, 0, len(gates))
+	for _, gate := range gates {
+		select {
+		case gate <- struct{}{}:
+			acquired = append(acquired, gate)
+		case <-ctx.Done():
+			for index := len(acquired) - 1; index >= 0; index-- {
+				<-acquired[index]
+			}
+			return nil, false
+		}
+	}
+	return func() {
+		for index := len(acquired) - 1; index >= 0; index-- {
+			<-acquired[index]
+		}
+	}, true
+}
+
+func (app *controlPlaneServer) operatorCurrentPageUsers(ctx context.Context, service *controlplane.Service, local []map[string]any, totalGate chan struct{}) map[int64]clients.Sub2APIUser {
 	type result struct {
 		user clients.Sub2APIUser
 	}
 	results := make(chan result, len(local))
-	gate := make(chan struct{}, 4)
+	laneGate := make(chan struct{}, operatorPageLaneConcurrency)
 	var wait sync.WaitGroup
 	for _, joined := range local {
 		remoteID := joined["remoteId"].(int64)
 		wait.Add(1)
 		go func() {
 			defer wait.Done()
-			select {
-			case gate <- struct{}{}:
-				defer func() { <-gate }()
-			case <-ctx.Done():
+			release, ok := operatorPageReadPermit(ctx, laneGate, totalGate)
+			if !ok {
 				return
 			}
+			defer release()
 			user, err := service.Sub2APIAdminUser(ctx, remoteID)
 			if err != nil {
 				return
@@ -419,14 +473,14 @@ func (app *controlPlaneServer) operatorCurrentPageUsers(ctx context.Context, ser
 	return remoteByID
 }
 
-func (app *controlPlaneServer) populateOperatorKeyCounts(ctx context.Context, service *controlplane.Service, items []any) {
+func (app *controlPlaneServer) populateOperatorKeyCounts(ctx context.Context, service *controlplane.Service, items []any, totalGate chan struct{}) {
 	type keyCountResult struct {
 		index int
 		count int
 		err   error
 	}
 	results := make(chan keyCountResult, len(items))
-	gate := make(chan struct{}, 4)
+	laneGate := make(chan struct{}, operatorPageLaneConcurrency)
 	var wait sync.WaitGroup
 	for index, raw := range items {
 		item, ok := raw.(map[string]any)
@@ -437,13 +491,12 @@ func (app *controlPlaneServer) populateOperatorKeyCounts(ctx context.Context, se
 		wait.Add(1)
 		go func(index int, userID int64) {
 			defer wait.Done()
-			select {
-			case gate <- struct{}{}:
-				defer func() { <-gate }()
-			case <-ctx.Done():
+			release, ok := operatorPageReadPermit(ctx, laneGate, totalGate)
+			if !ok {
 				results <- keyCountResult{index: index, err: ctx.Err()}
 				return
 			}
+			defer release()
 			count, err := service.AdminUserKeyCount(ctx, userID)
 			results <- keyCountResult{index: index, count: count, err: err}
 		}(index, remoteID)
@@ -810,7 +863,7 @@ func operatorResourceReceipt(ctx context.Context, service *controlplane.Service,
 
 func (app *controlPlaneServer) operatorOverview(ctx context.Context, service *controlplane.Service) (map[string]any, error) {
 	result := map[string]any{
-		"accounts":       sourceEnvelope("control-plane+sub2api", "unavailable", nil, ""),
+		"accounts":       sourceEnvelope("control-plane", "unavailable", nil, ""),
 		"wallet":         sourceEnvelope("sub2api", "unavailable", nil, ""),
 		"keys":           sourceEnvelope("sub2api", "unavailable", nil, ""),
 		"usage":          sourceEnvelope("sub2api", "unavailable", nil, ""),
@@ -818,74 +871,25 @@ func (app *controlPlaneServer) operatorOverview(ctx context.Context, service *co
 		"resources":      sourceEnvelope("fabric", "unavailable", nil, ""),
 		"reconciliation": sourceEnvelope("control-plane", "unavailable", nil, ""),
 	}
-	if accounts, _, err := app.operatorAccountPage(ctx, service, 1, 50); err == nil {
-		items, _ := accounts["items"].([]any)
-		active, disabled := 0, 0
-		walletTotal, todayUsage, totalUsage := int64(0), int64(0), int64(0)
-		walletAvailable, usageAvailable := true, true
-		for _, raw := range items {
-			item, _ := raw.(map[string]any)
-			if stringValue(item["status"]) == "active" {
-				active++
-			} else {
-				disabled++
-			}
-			wallet, ok := availableEnvelopeData(item["wallet"])
-			if !ok {
-				walletAvailable = false
-			} else if walletAvailable {
-				balance, valid := wallet["usdMicros"].(int64)
-				if !valid || balance > 0 && walletTotal > math.MaxInt64-balance || balance < 0 && walletTotal < math.MinInt64-balance {
-					walletAvailable = false
-				} else {
-					walletTotal += balance
-				}
-			}
-			usage, ok := availableEnvelopeData(item["usage"])
-			if !ok {
-				usageAvailable = false
-			} else if usageAvailable {
-				today, todayValid := usage["todayActualCostUsdMicros"].(int64)
-				total, totalValid := usage["totalActualCostUsdMicros"].(int64)
-				var todayOK, totalOK bool
-				todayUsage, todayOK = checkedAddInt64(todayUsage, today)
-				totalUsage, totalOK = checkedAddInt64(totalUsage, total)
-				usageAvailable = todayValid && totalValid && todayOK && totalOK
-			}
+	if counts, err := app.tables.CountAccountStatuses(ctx); err == nil {
+		total := 0
+		for _, count := range counts {
+			total += count
 		}
-		result["accounts"] = sourceEnvelope("control-plane", "available", map[string]any{"total": len(items), "active": active, "disabled": disabled}, "")
-		if walletAvailable {
-			result["wallet"] = sourceEnvelope("sub2api", "available", map[string]any{"currency": "USD", "usdMicros": walletTotal}, "")
-		}
-		if usageAvailable {
-			result["usage"] = sourceEnvelope("sub2api", "available", map[string]any{"todayActualCostUsdMicros": todayUsage, "totalActualCostUsdMicros": totalUsage}, "")
-		}
+		active := counts["active"]
+		result["accounts"] = sourceEnvelope("control-plane", "available", map[string]any{"total": total, "active": active, "disabled": total - active}, "")
 	}
-	if workspaces, _, err := app.operatorWorkspacePage(ctx, service, 1, 50); err == nil {
-		items, _ := workspaces["items"].([]any)
-		resourceCount, resourcesAvailable := 0, true
-		for _, raw := range items {
-			item, _ := raw.(map[string]any)
-			resources, _ := item["resources"].([]any)
-			for _, rawResource := range resources {
-				resource, _ := rawResource.(map[string]any)
-				resourceType, _ := resource["resourceType"].(map[string]any)
-				if resourceType["available"] != true {
-					resourcesAvailable = false
-					continue
-				}
-				resourceCount++
-			}
-		}
-		result["workspaces"] = sourceEnvelope("control-plane", "available", map[string]any{"total": int(numberField(workspaces, "total", 0))}, "")
-		if resourcesAvailable {
-			result["resources"] = sourceEnvelope("fabric", "available", map[string]any{"total": resourceCount}, "")
-		}
+	if total, err := app.tables.CountWorkspaces(ctx); err == nil {
+		result["workspaces"] = sourceEnvelope("control-plane", "available", map[string]any{"total": total}, "")
 	}
-	if reconciliation, _, err := app.operatorReconciliationPage(ctx, 1, 50); err == nil {
-		result["reconciliation"] = sourceEnvelope("control-plane", "available", map[string]any{"total": int(numberField(reconciliation, "total", 0))}, "")
+	if reconciliation, err := app.tables.PageRuntimeOperations(ctx, runtimeOperationQuery{Statuses: []string{"manual_review"}, Limit: 1}); err == nil {
+		result["reconciliation"] = sourceEnvelope("control-plane", "available", map[string]any{"total": reconciliation.Total}, "")
 	}
-	result["health"] = sourceEnvelope("control-plane", "available", app.operatorHealth(ctx, service), "")
+	health := app.operatorHealth(ctx, service)
+	result["health"] = sourceEnvelope("control-plane", "available", health, "")
+	if runtime, ok := availableEnvelopeData(health["runtime"]); ok {
+		result["resources"] = sourceEnvelope("fabric", "available", map[string]any{"total": runtime["total"]}, "")
+	}
 	return result, nil
 }
 
@@ -899,7 +903,7 @@ func availableEnvelopeData(value any) (map[string]any, bool) {
 }
 
 func (app *controlPlaneServer) operatorReconciliationPage(ctx context.Context, page, pageSize int) (map[string]any, string, error) {
-	operations, err := app.tables.ListRuntimeOperations(ctx)
+	operations, err := queryRuntimeOperations(ctx, app.tables, runtimeOperationQuery{Statuses: []string{"manual_review"}})
 	if err != nil {
 		return nil, "", err
 	}
@@ -919,9 +923,6 @@ func (app *controlPlaneServer) operatorReconciliationPage(ctx context.Context, p
 		items = append(items, item)
 	}
 	for _, operation := range operations {
-		if stringValue(operation["status"]) != "manual_review" {
-			continue
-		}
 		details := map[string]any{}
 		_ = json.Unmarshal([]byte(stringValue(operation["result"])), &details)
 		operationID := firstNonEmpty(stringValue(operation["operationId"]), stringValue(operation["id"]))
@@ -989,8 +990,8 @@ func (app *controlPlaneServer) operatorHealth(ctx context.Context, service *cont
 			"immutableImagesReady": readiness["immutableImagesReady"] == true,
 		}, "")
 	}
-	if workspaces, err := app.tables.ListWorkspaces(ctx, ""); err == nil {
-		for _, workspace := range workspaces {
+	if workspaces, err := app.tables.PageWorkspaces(ctx, "", tablePageQuery{Limit: 1}); err == nil {
+		for _, workspace := range workspaces.Items {
 			receiptID := stringValue(workspace["purchaseReceiptId"])
 			if receiptID == "" {
 				continue
@@ -1006,101 +1007,14 @@ func (app *controlPlaneServer) operatorHealth(ctx context.Context, service *cont
 }
 
 func (app *controlPlaneServer) operatorRuntimeHealth(ctx context.Context, service *controlplane.Service) map[string]any {
-	workspaces, err := app.tables.ListWorkspaces(ctx, "")
+	summary, err := service.RuntimeHealthSummary(ctx)
 	if err != nil {
 		return sourceEnvelope("runtime", "unavailable", nil, "")
 	}
-	active := make([]string, 0)
-	for _, workspace := range workspaces {
-		if state := stringValue(workspace["state"]); state == "active" || state == "running" || state == "provisioning" {
-			active = append(active, stringValue(workspace["id"]))
-		}
-	}
-	if len(active) == 0 {
-		return sourceEnvelope("runtime", "unavailable", nil, "")
-	}
-	type probeResult struct {
-		workspaceID string
-		status      string
-		ready       bool
-		available   bool
-	}
-	results := make(chan probeResult, len(active))
-	gate := make(chan struct{}, 3)
-	var wait sync.WaitGroup
-	for _, workspaceID := range active {
-		wait.Add(1)
-		go func(id string) {
-			defer wait.Done()
-			select {
-			case gate <- struct{}{}:
-				defer func() { <-gate }()
-			case <-ctx.Done():
-				results <- probeResult{workspaceID: id}
-				return
-			}
-			probeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-			defer cancel()
-			runtime, err := service.WorkspaceRuntimeStatus(probeCtx, id)
-			available := err == nil && runtime.WorkspaceID == id && runtime.Status != ""
-			results <- probeResult{workspaceID: id, status: runtime.Status, ready: runtime.Ready, available: available}
-		}(workspaceID)
-	}
-	wait.Wait()
-	close(results)
-	items := make([]any, 0, len(active))
-	availableCount, allReady := 0, true
-	for result := range results {
-		item := map[string]any{"workspaceId": result.workspaceID, "available": result.available}
-		if result.available {
-			availableCount++
-			item["status"], item["ready"] = result.status, result.ready
-		}
-		if !result.available || !result.ready {
-			allReady = false
-		}
-		items = append(items, item)
-	}
-	sort.Slice(items, func(i, j int) bool {
-		return stringValue(items[i].(map[string]any)["workspaceId"]) < stringValue(items[j].(map[string]any)["workspaceId"])
-	})
-	if availableCount == 0 {
-		return sourceEnvelope("runtime", "unavailable", nil, "")
-	}
-	return sourceEnvelope("runtime", "available", map[string]any{"ready": allReady, "total": len(active), "available": availableCount, "items": items}, "")
-}
-
-func (app *controlPlaneServer) operatorAccountMappings(ctx context.Context, service *controlplane.Service) ([]any, error) {
-	accounts, err := app.tables.ListAccounts(ctx, "")
-	if err != nil {
-		return nil, err
-	}
-	users, err := app.tables.ListUsers(ctx, true)
-	if err != nil {
-		return nil, err
-	}
-	sort.Slice(accounts, func(i, j int) bool { return stringValue(accounts[i]["id"]) < stringValue(accounts[j]["id"]) })
-	items := make([]any, 0, len(accounts))
-	for _, account := range accounts {
-		accountID := stringValue(account["id"])
-		remoteID, ok := positiveIntegerField(account, "sub2apiUserId")
-		owner := findRecord(users, stringValue(account["ownerUserId"]))
-		if !ok || !ownsAccount(account, owner) {
-			return nil, errAccountIdentityConflict
-		}
-		identity, err := service.Sub2APIUser(ctx, remoteID)
-		if err != nil {
-			return nil, err
-		}
-		if normalizeEmail(stringValue(owner["email"])) != identity.Email {
-			return nil, errAccountIdentityConflict
-		}
-		items = append(items, map[string]any{
-			"accountId": accountID, "consoleUserId": stringValue(owner["id"]), "role": stringValue(owner["role"]),
-			"sub2apiUserId": strconv.FormatInt(identity.ID, 10), "email": identity.Email, "status": identity.Status,
-		})
-	}
-	return items, nil
+	return sourceEnvelope("runtime", "available", map[string]any{
+		"ready": summary.Ready == summary.Total && summary.Unready == 0,
+		"total": summary.Total, "available": summary.Total, "readyCount": summary.Ready, "unready": summary.Unready,
+	}, "")
 }
 
 func billingReviewRequestShapeValid(input map[string]any) bool {

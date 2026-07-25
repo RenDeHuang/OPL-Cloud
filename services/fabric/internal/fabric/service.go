@@ -15,7 +15,12 @@ import (
 	"time"
 )
 
-const storageProvisionTimeout = 10 * time.Minute
+const (
+	storageProvisionTimeout       = 10 * time.Minute
+	providerFactsBatchTimeout     = 5 * time.Second
+	providerFactsBatchWorkerCount = 8
+	runtimeHealthSummaryTimeout   = 5 * time.Second
+)
 
 type Provider interface {
 	MonthlyPreflight(ctx context.Context, input MonthlyPreflightInput) (MonthlyPreflight, error)
@@ -55,6 +60,10 @@ type providerFactsReader interface {
 	ReadComputeAllocation(context.Context, ComputeAllocation) (ComputeAllocation, error)
 	ReadStorageVolume(context.Context, StorageVolume) (StorageVolume, error)
 	ReadStorageAttachment(context.Context, StorageAttachment, ComputeAllocation, StorageVolume) (StorageAttachment, error)
+}
+
+type runtimeHealthSummaryProvider interface {
+	RuntimeHealthSummary(context.Context) (RuntimeHealthSummary, error)
 }
 
 type Service struct {
@@ -1285,18 +1294,66 @@ func (s *Service) ProviderFactsBatch(ctx context.Context, input ProviderFactsBat
 	if len(input.Items) == 0 || len(input.Items) > 50 {
 		return ProviderFactsBatch{}, fmt.Errorf("provider_facts_batch_invalid")
 	}
-	var wait sync.WaitGroup
+	batchCtx, cancel := context.WithTimeout(ctx, providerFactsBatchTimeout)
+	defer cancel()
+	type job struct {
+		index int
+		item  ProviderFactInput
+	}
+	jobs := make(chan job, len(input.Items))
 	for index, item := range input.Items {
+		result.Items[index] = ProviderFact{AccountID: item.AccountID, WorkspaceID: item.WorkspaceID, ResourceType: item.ResourceType, ResourceID: item.ResourceID}
+		jobs <- job{index: index, item: item}
+	}
+	close(jobs)
+	workers := providerFactsBatchWorkerCount
+	if len(input.Items) < workers {
+		workers = len(input.Items)
+	}
+	var wait sync.WaitGroup
+	for worker := 0; worker < workers; worker++ {
 		wait.Add(1)
-		go func(index int, item ProviderFactInput) {
+		go func() {
 			defer wait.Done()
-			itemCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-			defer cancel()
-			result.Items[index] = s.providerFact(itemCtx, item)
-		}(index, item)
+			for {
+				select {
+				case <-batchCtx.Done():
+					return
+				case next, ok := <-jobs:
+					if !ok {
+						return
+					}
+					result.Items[next.index] = s.providerFact(batchCtx, next.item)
+				}
+			}
+		}()
 	}
 	wait.Wait()
+	if batchCtx.Err() != nil {
+		for index := range result.Items {
+			if !result.Items[index].Available && result.Items[index].ErrorCode == "" {
+				result.Items[index].ErrorCode = "provider_facts_timeout"
+			}
+		}
+	}
 	return result, nil
+}
+
+func (s *Service) RuntimeHealthSummary(ctx context.Context) (RuntimeHealthSummary, error) {
+	provider, ok := s.provider.(runtimeHealthSummaryProvider)
+	if !ok {
+		return RuntimeHealthSummary{}, ErrRuntimeHealthSummaryUnavailable
+	}
+	readCtx, cancel := context.WithTimeout(ctx, runtimeHealthSummaryTimeout)
+	defer cancel()
+	summary, err := provider.RuntimeHealthSummary(readCtx)
+	if err != nil {
+		return RuntimeHealthSummary{}, fmt.Errorf("%w: %v", ErrRuntimeHealthSummaryUnavailable, err)
+	}
+	if summary.Total < 0 || summary.Ready < 0 || summary.Unready < 0 || summary.Ready+summary.Unready != summary.Total {
+		return RuntimeHealthSummary{}, fmt.Errorf("%w: invalid_counts", ErrRuntimeHealthSummaryUnavailable)
+	}
+	return summary, nil
 }
 
 func (s *Service) providerFact(ctx context.Context, input ProviderFactInput) ProviderFact {

@@ -39,6 +39,12 @@ type FabricProviderFactsClient interface {
 	ProviderFactsBatch(context.Context, ProviderFactsBatchInput) (ProviderFactsBatch, error)
 }
 
+// FabricRuntimeHealthClient exposes Fabric's aggregate, read-only Runtime state.
+// It deliberately returns no per-Workspace identities or credentials.
+type FabricRuntimeHealthClient interface {
+	RuntimeHealthSummary(context.Context) (RuntimeHealthSummary, error)
+}
+
 type FabricRenewalClient interface {
 	RenewComputeAllocation(context.Context, string, string) (ComputeAllocation, error)
 	RenewStorageVolume(context.Context, string, string) (StorageVolume, error)
@@ -278,6 +284,12 @@ type ProviderFactsBatch struct {
 	Items []ProviderFact `json:"items"`
 }
 
+type RuntimeHealthSummary struct {
+	Total   int `json:"total"`
+	Ready   int `json:"ready"`
+	Unready int `json:"unready"`
+}
+
 type WorkspaceRuntime struct {
 	ID          string                 `json:"id"`
 	WorkspaceID string                 `json:"workspaceId"`
@@ -447,6 +459,12 @@ func (c *fabricHTTPClient) WorkspaceRuntimeGatewaySecret(ctx context.Context, wo
 func (c *fabricHTTPClient) ProviderFactsBatch(ctx context.Context, input ProviderFactsBatchInput) (ProviderFactsBatch, error) {
 	var result ProviderFactsBatch
 	err := c.post(ctx, "/fabric/provider-facts/batch", input, "", &result)
+	return result, err
+}
+
+func (c *fabricHTTPClient) RuntimeHealthSummary(ctx context.Context) (RuntimeHealthSummary, error) {
+	var result RuntimeHealthSummary
+	err := c.get(ctx, "/fabric/runtime-health-summary", &result)
 	return result, err
 }
 

@@ -334,6 +334,17 @@ test("Current contracts hard cut operator resources, wallet adjustments, and ann
     unavailableFallback: "none",
     tencentMutationCount: 0
   });
+  assert.deepEqual(boundary.services.fabric.runtimeHealthSummaryRead, {
+    endpoint: "GET /fabric/runtime-health-summary",
+    responseDto: ["total", "ready", "unready"],
+    scope: "operator_dashboard_only",
+    providerAuthority: "single_kubernetes_deployment_and_pod_aggregate_read",
+    deadlineSeconds: 5,
+    readOnly: true,
+    perWorkspaceItems: false,
+    unavailableFallback: "none",
+    tencentMutationCount: 0
+  });
   assert.deepEqual(boundary.services.fabric.gatewaySecretWrite.requestFields, ["accountId", "workspaceId", "workspaceApiKeyId", "fingerprint", "gatewayApiKey"]);
   assert.equal(sourceTruth.sources.identity.operatorAccounts.failure, "affected_nested_source_unavailable_without_zero_data");
   assert.deepEqual(sourceTruth.sources.operator.routes, {

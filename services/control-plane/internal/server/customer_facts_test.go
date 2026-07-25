@@ -84,9 +84,20 @@ func (c *customerFactsSub2API) BalanceHistoryPage(_ context.Context, userID int6
 	}, nil
 }
 
-func (c *customerFactsSub2API) FinancialBalanceHistoryScan(_ context.Context, userID int64) ([]clients.Sub2APIBalanceHistoryEntry, error) {
+func (c *customerFactsSub2API) FinancialBalanceHistoryByCodes(_ context.Context, userID int64, codes []string) (map[string]clients.Sub2APIBalanceHistoryEntry, error) {
 	c.historyIDs = append(c.historyIDs, userID)
-	return append([]clients.Sub2APIBalanceHistoryEntry(nil), c.history[userID]...), c.historyErr
+	if c.historyErr != nil {
+		return nil, c.historyErr
+	}
+	matches := make(map[string]clients.Sub2APIBalanceHistoryEntry)
+	for _, entry := range c.history[userID] {
+		for _, code := range codes {
+			if entry.Code == code {
+				matches[code] = entry
+			}
+		}
+	}
+	return matches, nil
 }
 
 func (l *customerFactsLedger) ListReceipts(_ context.Context, query clients.ReceiptQuery) (clients.ReceiptPage, error) {

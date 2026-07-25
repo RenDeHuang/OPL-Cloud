@@ -146,7 +146,7 @@ func TestOperatorAccountsJoinsControlPlaneMappingWithPaginatedBatchSub2APIReadba
 	}
 	alpha, beta := operatorAccountItem(items, "acct-alpha"), operatorAccountItem(items, "acct-beta")
 	alphaWallet := mapField(alpha, "wallet")
-	if alpha["accountId"] != "acct-alpha" || alpha["consoleUserId"] != "usr-alpha" || alpha["role"] != "owner" || alpha["sub2apiUserId"] != "41" || alpha["email"] != "alpha@example.com" || alpha["status"] != "active" || alphaWallet["available"] != true || mapField(alphaWallet, "data")["usdMicros"] != float64(12_340_000) || alphaWallet["sourceUpdatedAt"] != "2026-07-19T00:00:00Z" {
+	if alpha["accountId"] != "acct-alpha" || alpha["consoleUserId"] != "usr-alpha" || alpha["role"] != "owner" || alpha["sub2apiUserId"] != "41" || alpha["email"] != "alpha@example.com" || alpha["status"] != "active" || alphaWallet["available"] != true || mapField(alphaWallet, "data")["usdMicros"] != "12340000" || alphaWallet["sourceUpdatedAt"] != "2026-07-19T00:00:00Z" {
 		t.Fatalf("alpha mapping = %#v", alpha)
 	}
 	if beta["accountId"] != "acct-beta" || beta["sub2apiUserId"] != "42" || beta["email"] != "beta@example.com" || beta["status"] != "active" || mapField(mapField(beta, "gatewayIdentity"), "data")["status"] != "disabled" {

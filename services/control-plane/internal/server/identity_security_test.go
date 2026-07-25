@@ -3,31 +3,30 @@ package server
 import (
 	"context"
 	"errors"
-	"strings"
 	"testing"
 )
 
-func TestPasswordStrengthRejectsShortCreatePassword(t *testing.T) {
+func TestPasswordValidationDelegatesNonEmptyPasswordToSub2API(t *testing.T) {
 	server := NewServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}))
 	handler := server.(*controlPlaneHTTPHandler)
-	_, err := handler.app.createUser(context.Background(), handler.service, map[string]any{
-		"email": "weak@provisioned.example", "accountId": "acct-weak", "password": "too-short",
+	created, err := handler.app.createUser(context.Background(), handler.service, map[string]any{
+		"email": "short@provisioned.example", "accountId": "acct-short", "password": "x",
 	})
-	if !errors.Is(err, errWeakPassword) {
-		t.Fatalf("short create error=%v", err)
+	if err != nil || created["email"] != "short@provisioned.example" {
+		t.Fatalf("short non-empty password was not delegated: created=%#v err=%v", created, err)
 	}
-	accounts, _ := handler.app.tables.ListAccounts(context.Background(), "acct-weak")
-	if len(accounts) != 0 {
-		t.Fatalf("short create persisted account: %#v", accounts)
+	accounts, _ := handler.app.tables.ListAccounts(context.Background(), "acct-short")
+	if len(accounts) != 1 {
+		t.Fatalf("delegated create accounts=%#v", accounts)
 	}
 }
 
-func TestPasswordStrengthCountsUnicodeRunes(t *testing.T) {
-	if err := validatePlaintextPassword(strings.Repeat("界", 11)); err == nil || err.Error() != "weak_password" {
-		t.Fatalf("11-rune password error = %v", err)
+func TestPasswordValidationRejectsOnlyEmptyInputLocally(t *testing.T) {
+	if err := validatePlaintextPassword(""); !errors.Is(err, errMissingPassword) {
+		t.Fatalf("empty password error = %v", err)
 	}
-	if err := validatePlaintextPassword(strings.Repeat("界", 12)); err != nil {
-		t.Fatalf("12-rune password error = %v", err)
+	if err := validatePlaintextPassword("界"); err != nil {
+		t.Fatalf("non-empty password error = %v", err)
 	}
 }
 

@@ -191,15 +191,14 @@ func workspaceLaunchResponse(row map[string]any) (map[string]any, error) {
 }
 
 func (app *controlPlaneServer) runWorkspaceLaunchesOnce(ctx context.Context, service *controlplane.Service) error {
-	rows, err := app.tables.ListRuntimeOperations(ctx)
+	rows, err := queryRuntimeOperations(ctx, app.tables, runtimeOperationQuery{
+		Action: workspaceLaunchAction, ExcludedStatuses: []string{"succeeded", "refunded", "failed", "manual_review"},
+	})
 	if err != nil {
 		return err
 	}
 	var errs []error
 	for _, row := range rows {
-		if stringValue(row["action"]) != workspaceLaunchAction {
-			continue
-		}
 		operation, err := decodeWorkspaceLaunchOperation(row)
 		if err != nil {
 			errs = append(errs, err)
@@ -792,18 +791,15 @@ func terminalWorkspaceLaunchStatus(status string) bool {
 }
 
 func (app *controlPlaneServer) workspaceLaunchOperation(ctx context.Context, operationID string) (workspaceLaunchOperation, bool, error) {
-	rows, err := app.tables.ListRuntimeOperations(ctx)
+	row, found, err := app.tables.GetRuntimeOperation(ctx, operationID)
 	if err != nil {
 		return workspaceLaunchOperation{}, false, err
 	}
-	for _, row := range rows {
-		if stringValue(row["id"]) != operationID || stringValue(row["action"]) != workspaceLaunchAction {
-			continue
-		}
-		operation, err := decodeWorkspaceLaunchOperation(row)
-		return operation, err == nil, err
+	if !found || stringValue(row["action"]) != workspaceLaunchAction {
+		return workspaceLaunchOperation{}, false, nil
 	}
-	return workspaceLaunchOperation{}, false, nil
+	operation, err := decodeWorkspaceLaunchOperation(row)
+	return operation, err == nil, err
 }
 
 func (app *controlPlaneServer) recoverWorkspaceLaunchReview(ctx context.Context, service *controlplane.Service, input billingReviewResolutionInput) (map[string]any, error) {
@@ -992,17 +988,20 @@ func (app *controlPlaneServer) debitWorkspaceLaunch(ctx context.Context, service
 	if err != nil {
 		return app.retryWorkspaceLaunchDebit(ctx, operation, errMonthlyAccountUnmapped.Error(), err)
 	}
-	key, err := service.WorkspaceKeyByIDForConvergence(ctx, userID, operation.WorkspaceAPIKeyID)
+	key, err := service.WorkspaceKeyByIDForConvergence(ctx, userID, operation.WorkspaceAPIKeyID, workspaceReservedKeyName(operation.WorkspaceID))
 	if err != nil || key.ID != operation.WorkspaceAPIKeyID || key.UserID != userID || key.Name != workspaceReservedKeyName(operation.WorkspaceID) || key.Status != "active" {
 		return app.retryWorkspaceLaunchDebit(ctx, operation, "gateway_key_unavailable", err)
 	}
 	if operation.ChargeConfirmation == nil {
 		var charge clients.Sub2APICharge
 		if operation.ChargeAttempted || operation.Status == "unknown" {
-			history, historyErr := service.FinancialBalanceHistoryScan(ctx, userID)
+			history, historyErr := service.FinancialBalanceHistoryByCodes(ctx, userID, []string{operation.RedeemCode})
+			if historyErr != nil {
+				return app.retryWorkspaceLaunchDebit(ctx, operation, "sub2api_charge_history_unavailable", historyErr)
+			}
 			row := map[string]any{"sub2apiRedeemCode": operation.RedeemCode, "chargeUsdMicros": operation.TotalChargeUSDMicros}
 			switch code := sub2APIReconciliationCode(row, userID, history); {
-			case historyErr != nil || code == "sub2api_charge_missing":
+			case code == "sub2api_charge_missing":
 				charge, err = service.ChargeSub2API(ctx, clients.Sub2APIChargeInput{
 					UserID: userID, Code: operation.RedeemCode, ChargeUSDMicros: operation.TotalChargeUSDMicros, Notes: "OPL Workspace launch " + operation.WorkspaceID,
 				})
@@ -1052,7 +1051,7 @@ func (app *controlPlaneServer) debitWorkspaceLaunch(ctx context.Context, service
 			return err
 		}
 	}
-	history, historyErr := service.FinancialBalanceHistoryScan(ctx, userID)
+	history, historyErr := service.FinancialBalanceHistoryByCodes(ctx, userID, []string{operation.RedeemCode})
 	row := map[string]any{"sub2apiRedeemCode": operation.RedeemCode, "chargeUsdMicros": operation.TotalChargeUSDMicros}
 	if historyErr != nil || sub2APIReconciliationCode(row, userID, history) == "sub2api_charge_missing" {
 		return app.retryWorkspaceLaunchDebit(ctx, operation, "sub2api_charge_history_unavailable", errors.Join(historyErr, clients.ErrSub2APIChargeUnknown))
@@ -1113,20 +1112,17 @@ func (app *controlPlaneServer) refundWorkspaceLaunch(ctx context.Context, servic
 	}
 	var refund clients.Sub2APIRefund
 	if recoverAttempt {
-		history, historyErr := service.FinancialBalanceHistoryScan(ctx, userID)
-		matches := make([]clients.Sub2APIBalanceHistoryEntry, 0, 1)
-		for _, entry := range history {
-			if entry.Code == operation.RefundCode {
-				matches = append(matches, entry)
-			}
+		history, historyErr := service.FinancialBalanceHistoryByCodes(ctx, userID, []string{operation.RefundCode})
+		if historyErr != nil {
+			return app.retryWorkspaceLaunchFulfillment(ctx, operation, "sub2api_refund_history_unavailable", historyErr)
 		}
-		if historyErr != nil || len(matches) == 0 {
+		entry, found := history[operation.RefundCode]
+		if !found {
 			refund, err = service.RefundSub2API(ctx, clients.Sub2APIRefundInput{
 				UserID: userID, Code: operation.RefundCode, RefundUSDMicros: operation.TotalChargeUSDMicros, Notes: "OPL Workspace launch refund " + operation.WorkspaceID,
 			})
 		} else {
-			entry := matches[0]
-			if len(matches) != 1 || entry.Type != "balance" || entry.Status != "used" || entry.UsedBy == nil || *entry.UsedBy != userID || entry.ValueUSDMicros != operation.TotalChargeUSDMicros {
+			if entry.Type != "balance" || entry.Status != "used" || entry.UsedBy == nil || *entry.UsedBy != userID || entry.ValueUSDMicros != operation.TotalChargeUSDMicros {
 				return app.manualReviewWorkspaceLaunchFulfillment(ctx, operation, "sub2api_refund_mismatch")
 			}
 			refund = clients.Sub2APIRefund{Code: operation.RefundCode, UserID: userID, RefundUSDMicros: operation.TotalChargeUSDMicros, Status: "used"}

@@ -71,14 +71,15 @@ func registerWorkspaceLaunchRoutes(mux *http.ServeMux, app *controlPlaneServer, 
 
 		unlock := app.lockResource("workspace-launch", accountID)
 		defer unlock()
-		operations, err := app.tables.ListRuntimeOperations(r.Context())
+		row, found, err := app.tables.GetRuntimeOperation(r.Context(), operation.ID)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "state_read_failed")
 			return
 		}
-		for _, row := range operations {
-			if stringValue(row["id"]) != operation.ID || stringValue(row["action"]) != workspaceLaunchAction {
-				continue
+		if found {
+			if stringValue(row["action"]) != workspaceLaunchAction {
+				writeError(w, http.StatusConflict, errIdempotencyConflict.Error())
+				return
 			}
 			persisted, err := decodeWorkspaceLaunchOperation(row)
 			if err != nil {
@@ -104,12 +105,11 @@ func registerWorkspaceLaunchRoutes(mux *http.ServeMux, app *controlPlaneServer, 
 					writeGatewayKeyError(w, err)
 					return
 				}
-				operations, err = app.tables.ListRuntimeOperations(r.Context())
-				if err != nil {
+				row, found, err = app.tables.GetRuntimeOperation(r.Context(), operation.ID)
+				if err != nil || !found {
 					writeError(w, http.StatusInternalServerError, "state_read_failed")
 					return
 				}
-				row = findRecord(operations, operation.ID)
 			}
 			body, err := workspaceLaunchResponse(row)
 			if err != nil {
@@ -123,8 +123,15 @@ func registerWorkspaceLaunchRoutes(mux *http.ServeMux, app *controlPlaneServer, 
 			writeError(w, http.StatusConflict, "billing_reconciliation_blocked")
 			return
 		}
-		for _, row := range operations {
-			if stringValue(row["accountId"]) == accountID && isWorkspaceLaunchAction(stringValue(row["action"])) && !terminalWorkspaceLaunchStatus(stringValue(row["status"])) {
+		for _, action := range []string{workspaceLaunchAction, "workspace.launch"} {
+			active, err := queryRuntimeOperations(r.Context(), app.tables, runtimeOperationQuery{
+				AccountID: accountID, Action: action, ExcludedStatuses: []string{"succeeded", "refunded", "failed"},
+			})
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "state_read_failed")
+				return
+			}
+			if len(active) > 0 {
 				writeError(w, http.StatusConflict, errWorkspaceLaunchInProgress.Error())
 				return
 			}
@@ -168,22 +175,17 @@ func registerWorkspaceLaunchRoutes(mux *http.ServeMux, app *controlPlaneServer, 
 			return
 		}
 		operation.Phase = "key_pending"
-		row := workspaceLaunchOperationRow(operation)
+		row = workspaceLaunchOperationRow(operation)
 		if err := app.tables.ClaimWorkspaceLaunch(r.Context(), workspaceLaunchClaimCAS{AccountID: accountID, DesiredOperation: row}); err != nil {
 			if errors.Is(err, errWorkspaceLaunchCASConflict) || errors.Is(err, errWorkspaceLaunchInProgress) {
-				operations, readErr := app.tables.ListRuntimeOperations(r.Context())
-				if readErr == nil {
-					for _, existing := range operations {
-						if stringValue(existing["id"]) != operation.ID || stringValue(existing["action"]) != workspaceLaunchAction {
-							continue
-						}
-						persisted, decodeErr := decodeWorkspaceLaunchOperation(existing)
-						if decodeErr == nil && persisted.AccountID == accountID && persisted.RequestHash == operation.RequestHash {
-							body, responseErr := workspaceLaunchResponse(existing)
-							if responseErr == nil {
-								writeJSON(w, http.StatusAccepted, body)
-								return
-							}
+				existing, found, readErr := app.tables.GetRuntimeOperation(r.Context(), operation.ID)
+				if readErr == nil && found && stringValue(existing["action"]) == workspaceLaunchAction {
+					persisted, decodeErr := decodeWorkspaceLaunchOperation(existing)
+					if decodeErr == nil && persisted.AccountID == accountID && persisted.RequestHash == operation.RequestHash {
+						body, responseErr := workspaceLaunchResponse(existing)
+						if responseErr == nil {
+							writeJSON(w, http.StatusAccepted, body)
+							return
 						}
 					}
 				}
@@ -202,12 +204,11 @@ func registerWorkspaceLaunchRoutes(mux *http.ServeMux, app *controlPlaneServer, 
 			writeGatewayKeyError(w, err)
 			return
 		}
-		operations, err = app.tables.ListRuntimeOperations(r.Context())
-		if err != nil {
+		persistedRow, found, err := app.tables.GetRuntimeOperation(r.Context(), operation.ID)
+		if err != nil || !found {
 			writeError(w, http.StatusInternalServerError, "state_read_failed")
 			return
 		}
-		persistedRow := findRecord(operations, operation.ID)
 		body, err := workspaceLaunchResponse(persistedRow)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "state_read_failed")
@@ -224,16 +225,13 @@ func registerWorkspaceLaunchRoutes(mux *http.ServeMux, app *controlPlaneServer, 
 		if !ok {
 			return
 		}
-		operations, err := app.tables.ListRuntimeOperations(r.Context())
+		operations, err := queryRuntimeOperations(r.Context(), app.tables, runtimeOperationQuery{AccountID: accountID, Action: workspaceLaunchAction})
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "state_read_failed")
 			return
 		}
 		rows := make([]any, 0)
 		for _, operation := range operations {
-			if stringValue(operation["accountId"]) != accountID || stringValue(operation["action"]) != workspaceLaunchAction {
-				continue
-			}
 			body, err := workspaceLaunchResponse(operation)
 			if err != nil {
 				writeError(w, http.StatusInternalServerError, "state_read_failed")
@@ -249,22 +247,18 @@ func registerWorkspaceLaunchRoutes(mux *http.ServeMux, app *controlPlaneServer, 
 		if !ok {
 			return
 		}
-		operations, err := app.tables.ListRuntimeOperations(r.Context())
+		operation, found, err := app.tables.GetRuntimeOperation(r.Context(), r.PathValue("id"))
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "state_read_failed")
 			return
 		}
-		for _, operation := range operations {
-			if stringValue(operation["id"]) != r.PathValue("id") || stringValue(operation["accountId"]) != accountID || stringValue(operation["action"]) != workspaceLaunchAction {
-				continue
-			}
+		if found && stringValue(operation["accountId"]) == accountID && stringValue(operation["action"]) == workspaceLaunchAction {
 			body, err := workspaceLaunchResponse(operation)
 			if err != nil {
 				writeError(w, http.StatusInternalServerError, "state_read_failed")
 				return
 			}
 			writeJSON(w, http.StatusOK, body)
-			return
 		}
 		writeError(w, http.StatusNotFound, "workspace_launch_not_found")
 	}))
@@ -281,11 +275,11 @@ func (app *controlPlaneServer) convergeAndPersistWorkspaceLaunchKey(ctx context.
 }
 
 func convergeWorkspaceAPIKey(ctx context.Context, service *controlplane.Service, credential clients.SessionDelegatedCredential, userID int64, workspaceID, operationID string) (clients.Sub2APIWorkspaceKey, error) {
-	keys, err := service.GatewayWorkspaceKeysForConvergence(ctx, credential, userID)
+	name := workspaceReservedKeyName(workspaceID)
+	keys, err := service.GatewayWorkspaceKeysForConvergence(ctx, credential, userID, name)
 	if err != nil {
 		return clients.Sub2APIWorkspaceKey{}, err
 	}
-	name := workspaceReservedKeyName(workspaceID)
 	reserved := workspaceKeysNamed(keys, name)
 	if len(reserved) == 1 && reserved[0].UserID == userID && reserved[0].ID > 0 && reserved[0].Status == "active" {
 		return reserved[0], nil
@@ -294,7 +288,7 @@ func convergeWorkspaceAPIKey(ctx context.Context, service *controlplane.Service,
 		return clients.Sub2APIWorkspaceKey{}, clients.ErrSub2APIWorkspaceKeyAmbiguous
 	}
 	created, createErr := service.CreateGatewayUserKey(ctx, credential, userID, clients.Sub2APICreateKeyInput{Name: name}, operationID+":workspace-key")
-	keys, readErr := service.GatewayWorkspaceKeysForConvergence(ctx, credential, userID)
+	keys, readErr := service.GatewayWorkspaceKeysForConvergence(ctx, credential, userID, name)
 	if readErr != nil {
 		if createErr != nil {
 			return clients.Sub2APIWorkspaceKey{}, createErr

@@ -159,6 +159,17 @@
         "unavailableFallback": "none",
         "tencentMutationCount": 0
       },
+      "runtimeHealthSummaryRead": {
+        "endpoint": "GET /fabric/runtime-health-summary",
+        "responseDto": ["total", "ready", "unready"],
+        "scope": "operator_dashboard_only",
+        "providerAuthority": "single_kubernetes_deployment_and_pod_aggregate_read",
+        "deadlineSeconds": 5,
+        "readOnly": true,
+        "perWorkspaceItems": false,
+        "unavailableFallback": "none",
+        "tencentMutationCount": 0
+      },
       "gatewaySecretWrite": {
         "endpoint": "POST /fabric/gateway-secrets",
         "requestFields": ["accountId", "workspaceId", "workspaceApiKeyId", "fingerprint", "gatewayApiKey"],

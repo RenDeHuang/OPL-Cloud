@@ -23,6 +23,8 @@ const (
 	FieldAccountID = "account_id"
 	// FieldWorkspaceID holds the string denoting the workspace_id field in the database.
 	FieldWorkspaceID = "workspace_id"
+	// FieldPeriodStart holds the string denoting the period_start field in the database.
+	FieldPeriodStart = "period_start"
 	// FieldResourceID holds the string denoting the resource_id field in the database.
 	FieldResourceID = "resource_id"
 	// FieldResourceKind holds the string denoting the resource_kind field in the database.
@@ -65,6 +67,7 @@ var Columns = []string{
 	FieldOperationID,
 	FieldAccountID,
 	FieldWorkspaceID,
+	FieldPeriodStart,
 	FieldResourceID,
 	FieldResourceKind,
 	FieldAction,
@@ -105,6 +108,8 @@ var (
 	DefaultAccountID string
 	// DefaultWorkspaceID holds the default value on creation for the "workspace_id" field.
 	DefaultWorkspaceID string
+	// DefaultPeriodStart holds the default value on creation for the "period_start" field.
+	DefaultPeriodStart string
 	// DefaultResourceID holds the default value on creation for the "resource_id" field.
 	DefaultResourceID string
 	// DefaultResourceKind holds the default value on creation for the "resource_kind" field.
@@ -170,6 +175,11 @@ func ByAccountID(opts ...sql.OrderTermOption) OrderOption {
 // ByWorkspaceID orders the results by the workspace_id field.
 func ByWorkspaceID(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldWorkspaceID, opts...).ToFunc()
+}
+
+// ByPeriodStart orders the results by the period_start field.
+func ByPeriodStart(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldPeriodStart, opts...).ToFunc()
 }
 
 // ByResourceID orders the results by the resource_id field.

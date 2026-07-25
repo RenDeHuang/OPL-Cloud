@@ -1078,6 +1078,49 @@ func (p *TencentProvider) workspacePods(ctx context.Context, workspaceID string)
 	return kubectlItems(raw)
 }
 
+func (p *TencentProvider) RuntimeHealthSummary(ctx context.Context) (RuntimeHealthSummary, error) {
+	raw, err := p.kubectl(ctx, []string{"get", "deployment,pod", "-l", "oplcloud.cn/workspace-id", "-o", "json"}, nil)
+	if err != nil {
+		return RuntimeHealthSummary{}, err
+	}
+	var list struct {
+		Kind  string `json:"kind"`
+		Items []any  `json:"items"`
+	}
+	if err := json.Unmarshal(raw, &list); err != nil || list.Kind != "List" || list.Items == nil {
+		return RuntimeHealthSummary{}, fmt.Errorf("workspace_runtime_summary_response_invalid")
+	}
+	deployments := map[string]map[string]any{}
+	readyPods := map[string]bool{}
+	for _, item := range list.Items {
+		resource, _ := item.(map[string]any)
+		workspaceID := stringValue(nested(resource, "metadata", "labels", "oplcloud.cn/workspace-id"))
+		if workspaceID == "" {
+			continue
+		}
+		switch stringValue(resource["kind"]) {
+		case "Deployment":
+			if _, exists := deployments[workspaceID]; exists {
+				return RuntimeHealthSummary{}, fmt.Errorf("workspace_runtime_summary_duplicate_deployment")
+			}
+			deployments[workspaceID] = resource
+		case "Pod":
+			if stringValue(nested(resource, "status", "phase")) == "Running" && conditionStatuses(nested(resource, "status", "conditions"))["Ready"] == "True" {
+				readyPods[workspaceID] = true
+			}
+		}
+	}
+	summary := RuntimeHealthSummary{Total: len(deployments)}
+	for workspaceID, deployment := range deployments {
+		if number(nested(deployment, "status", "readyReplicas")) > 0 && number(nested(deployment, "status", "availableReplicas")) > 0 && readyPods[workspaceID] {
+			summary.Ready++
+		} else {
+			summary.Unready++
+		}
+	}
+	return summary, nil
+}
+
 func (p *TencentProvider) Readiness(ctx context.Context) (map[string]any, error) {
 	required := []string{"OPL_WORKSPACE_DOMAIN", "OPL_CLOUD_IMAGE", "OPL_WORKSPACE_IMAGE", "OPL_K8S_NAMESPACE", "OPL_IMAGE_PULL_SECRET_NAME", "OPL_WORKSPACE_STORAGE_CLASS", "OPL_TENCENT_PROVISIONER_BIN", "TENCENT_DEPLOY_KUBECONFIG_REF", "RUN_TENCENT_CREATE_RELEASE_EXECUTION"}
 	missing := []string{}

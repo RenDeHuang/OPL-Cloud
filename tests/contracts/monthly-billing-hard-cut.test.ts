@@ -71,8 +71,6 @@ test("management contract hard-cuts customer identity to Sub2API and one atomic 
   });
   assert.deepEqual(management.pilotCohort, {
     mode: "operator_provisioned",
-    minimumCustomerAccounts: 2,
-    maximumCustomerAccounts: 5,
     publicRegistration: false
   });
   assert.equal(management.internalCompatibilityRecords.sharedBehavior, false);
@@ -93,6 +91,8 @@ test("management contract hard-cuts customer identity to Sub2API and one atomic 
   assert.equal(management.identityProvisioning.mismatch, "fail_closed_without_mutation");
 
   assert.equal(management.identitySecurity.passwordAuthority, "sub2api");
+  assert.equal(management.identitySecurity.plaintextPasswordValidation, "non_empty_delegated_to_sub2api");
+  assert.equal(management.identitySecurity.plaintextPasswordMinimumCharacters, undefined);
   assert.equal(management.identitySecurity.provisionPasswordHandling, "forward_to_sub2api_only_never_persist");
   assert.deepEqual(management.identitySecurity.localPasswordHash, {
     column: "control_plane_users.password_hash",

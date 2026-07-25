@@ -40,6 +40,9 @@ var workspacePurchaseReceiptID string
 //go:embed 202607240001_multi_workspace_pagination.sql
 var multiWorkspacePagination string
 
+//go:embed 202607250001_control_plane_capacity_indexes.sql
+var controlPlaneCapacityIndexes string
+
 func Apply(ctx context.Context, driver dialect.Driver) error {
 	return driver.Exec(ctx, monthlyHardCut, []any{}, nil)
 }
@@ -106,4 +109,8 @@ func ApplyWorkspacePurchaseReceiptID(ctx context.Context, driver dialect.Driver)
 
 func ApplyMultiWorkspacePagination(ctx context.Context, driver dialect.Driver) error {
 	return driver.Exec(ctx, multiWorkspacePagination, []any{}, nil)
+}
+
+func ApplyControlPlaneCapacityIndexes(ctx context.Context, driver dialect.Driver) error {
+	return driver.Exec(ctx, controlPlaneCapacityIndexes, []any{}, nil)
 }

@@ -375,7 +375,7 @@ func writeCreateUserError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusConflict, err.Error())
 	case errors.Is(err, errSub2APIUserMappingUnverified):
 		writeError(w, http.StatusBadGateway, err.Error())
-	case errors.Is(err, errCallerSuppliedSub2APIUserID), errors.Is(err, errInvalidRole), errors.Is(err, errInvalidEmail), errors.Is(err, errInvalidAccountID), errors.Is(err, errMissingPassword), errors.Is(err, errWeakPassword):
+	case errors.Is(err, errCallerSuppliedSub2APIUserID), errors.Is(err, errInvalidRole), errors.Is(err, errInvalidEmail), errors.Is(err, errInvalidAccountID), errors.Is(err, errMissingPassword):
 		writeError(w, http.StatusBadRequest, err.Error())
 	default:
 		writeError(w, http.StatusInternalServerError, "state_persist_failed")

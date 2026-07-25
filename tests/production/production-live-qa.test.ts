@@ -20,6 +20,10 @@ const fixedSlotDescriptor = {
   renewFlag: "NOTIFY_AND_MANUAL_RENEW"
 };
 const BASIC_ACCOUNT_ID = "acct-verification-slot-basic-01";
+const ADMIN_ACCOUNT_ID = "acct-admin";
+const ADMIN_USER_ID = "usr-admin";
+const ADMIN_EMAIL = "admin@medopl.cn";
+const ADMIN_PASSWORD = "existing-admin-password";
 const ownerSeed = JSON.stringify([{
   id: "usr-verifier",
   email: "owner@example.com",
@@ -48,6 +52,10 @@ function source(payload, sourceName = "sub2api", status = "available", headers =
     "cache-control": "private, no-store",
     ...headers
   });
+}
+
+function nestedSource(payload, sourceName) {
+  return { source: sourceName, status: "available", available: true, fetchedAt: new Date().toISOString(), data: payload };
 }
 
 class FakeEmitter {
@@ -143,17 +151,18 @@ function readOnlyBrowserFactory(viewports) {
   });
 }
 
-function readOnlyFixture({ healthStatus = 200 } = {}) {
+function readOnlyFixture({ healthStatus = 200, noWorkspace = false, adminHasWorkspace = !noWorkspace, authMe = {}, operatorAccountsItems } = {}) {
   const calls = [];
   const viewports = [];
   const fetchImpl = async (input, init = {}) => {
     const url = new URL(String(input));
     const method = init.method || "GET";
-    calls.push({ method, path: url.pathname });
+    calls.push({ method, path: url.pathname, search: url.search });
     if (url.pathname === "/api/healthz") return json({ status: "ok" }, healthStatus);
     if (url.pathname === "/api/production/readiness") return json({ ready: true, cloudImagesReady: true, workspaceImagesReady: true, immutableImagesReady: true });
     if (url.pathname === "/api/auth/login") {
-      return json({ user: { accountId: BASIC_ACCOUNT_ID, role: "owner" } }, 200, {
+      assert.deepEqual(JSON.parse(init.body), { email: ADMIN_EMAIL, password: ADMIN_PASSWORD });
+      return json({ user: { id: ADMIN_USER_ID, accountId: ADMIN_ACCOUNT_ID, role: "admin" } }, 200, {
         "set-cookie": "opl_session=session-read-only; Path=/; HttpOnly",
         "x-opl-csrf-token": "csrf-read-only"
       });
@@ -163,10 +172,48 @@ function readOnlyFixture({ healthStatus = 200 } = {}) {
     }
     const headers = new Headers(init.headers);
     assert.match(headers.get("cookie") || "", /opl_session=session-read-only/);
+    if (url.pathname === "/api/auth/me") {
+      return source({
+        consoleUserId: ADMIN_USER_ID,
+        accountId: ADMIN_ACCOUNT_ID,
+        role: "admin",
+        sub2apiUserId: "41",
+        email: ADMIN_EMAIL,
+        status: "active",
+        ...authMe
+      });
+    }
     if (url.pathname === "/api/gateway/endpoint") return source({ baseUrl: "https://gflabtoken.cn/v1" });
-    if (url.pathname === "/api/gateway/wallet") return source({ userId: "41", currency: "USD", usdMicros: 500_000_000, status: "active" });
+    if (url.pathname === "/api/gateway/wallet") return source({ userId: "41", currency: "USD", usdMicros: "500000000", status: "active" });
+    if (url.pathname === "/api/gateway/keys") {
+      return source({ items: [{ id: "9", name: "admin-key", status: "active" }], total: 1, page: 1, pageSize: 20, pages: 1 });
+    }
+    if (url.pathname === "/api/gateway/keys/9/usage") {
+      return source({ items: [], total: 0, page: 1, pageSize: 20, pages: 1 }, "sub2api", "empty");
+    }
+    if (url.pathname === "/api/gateway/balance-history") {
+      return source({ items: [], total: 0, page: 1, pageSize: 20, pages: 1 }, "sub2api", "empty");
+    }
+    if (url.pathname === "/api/operator/overview") {
+      return source({
+        accounts: nestedSource({ total: 1000 }, "control-plane"),
+        workspaces: nestedSource({ total: noWorkspace ? 0 : 1 }, "control-plane"),
+        resources: nestedSource({ total: noWorkspace ? 0 : 1 }, "fabric")
+      }, "control-plane");
+    }
+    if (url.pathname === "/api/operator/accounts") {
+      return source({
+        items: operatorAccountsItems || [{ accountId: ADMIN_ACCOUNT_ID, consoleUserId: ADMIN_USER_ID }],
+        total: 1000,
+        page: 1,
+        pageSize: 20
+      }, "control-plane+sub2api");
+    }
+    if (url.pathname === "/api/operator/workspaces") {
+      return source({ items: noWorkspace ? [] : [{ id: "workspace-current" }], total: noWorkspace ? 0 : 1, page: 1, pageSize: 20 }, "control-plane+fabric+sub2api", noWorkspace ? "empty" : "available");
+    }
     if (url.pathname === "/api/workspaces") {
-      return source({ items: [{ id: "workspace-current", runtimeUrl: "https://workspace.medopl.cn/w/workspace-current/" }], total: 1, page: 1, pageSize: 20 }, "control-plane");
+      return source({ items: adminHasWorkspace ? [{ id: "workspace-current", runtimeUrl: "https://workspace.medopl.cn/w/workspace-current/" }] : [], total: adminHasWorkspace ? 1 : 0, page: 1, pageSize: 20 }, "control-plane", adminHasWorkspace ? "available" : "empty");
     }
     if (url.pathname === "/api/workspaces/workspace-current/runtime-status") {
       return source({ workspaceId: "workspace-current", ready: true, url: "https://workspace.medopl.cn/w/workspace-current/" }, "fabric");
@@ -313,7 +360,7 @@ function liveFixture({
     if (url.pathname === "/api/gateway/wallet") {
       const charged = state.modelRequests > 0 && !usageStuck;
       const delta = charged ? liveUsage.actualCostUsdMicros + (balanceMismatch ? 1 : 0) : 0;
-      return source({ userId: "41", currency: "USD", usdMicros: 500_000_000 - delta, status: "active" });
+      return source({ userId: "41", currency: "USD", usdMicros: String(500_000_000 - delta), status: "active" });
     }
     if (url.pathname === "/api/gateway/keys") {
       const keys = [{ id: "9", name: "opl-workspace", status: "active", quotaUsdMicros: 1_000_000, quotaUsedUsdMicros: 1_000 }];
@@ -413,7 +460,7 @@ test("rollout QA proves Workspace login, WebSocket frames, one model response, u
   assert.equal(result.usage.request.inputTokens + result.usage.request.outputTokens > 0, true);
   assert.equal(result.usage.request.actualCostUsdMicros, 120);
   assert.equal(result.usage.stats.delta.totalRequests, 1);
-  assert.equal(result.balance.before.usdMicros - result.balance.after.usdMicros, 120);
+  assert.equal(BigInt(result.balance.before.usdMicros) - BigInt(result.balance.after.usdMicros), 120n);
   assert.equal(result.ledgerReceipt.receiptId, "receipt-current-1");
   assert.equal(result.ledgerReceipt.type, "workspace.created");
   assert.equal(result.runtimeOperations.unchanged, true);
@@ -601,8 +648,8 @@ test("rollout QA read-only evidence level performs no model or Gateway write", a
     argv: ["--read-only"],
     env: {
       OPL_CONSOLE_ORIGIN: "https://cloud.medopl.cn",
-      OPL_VERIFY_AUTH_USERS_JSON: ownerSeed,
-      OPL_VERIFY_ACCOUNT_ID: BASIC_ACCOUNT_ID
+      OPL_SUB2API_ADMIN_EMAIL: ADMIN_EMAIL,
+      OPL_SUB2API_ADMIN_PASSWORD: ADMIN_PASSWORD
     },
     stdout: { write: (chunk) => { stdout += chunk; } },
     stderr: { write: (chunk) => { stderr += chunk; } },
@@ -617,10 +664,16 @@ test("rollout QA read-only evidence level performs no model or Gateway write", a
   assert.equal(result.writesPerformed, 0);
   assert.deepEqual(result.viewports, ["desktop", "mobile"]);
   assert.deepEqual(fixture.viewports, [{ width: 1440, height: 900 }, { width: 390, height: 844 }]);
-  assert.deepEqual(fixture.calls.filter((call) => call.method !== "GET"), [{ method: "POST", path: "/api/auth/login" }]);
+  assert.deepEqual(fixture.calls.filter((call) => call.method !== "GET").map(({ method, path }) => ({ method, path })), [{ method: "POST", path: "/api/auth/login" }]);
   assert.equal(fixture.calls.some((call) => call.path === "/api/healthz"), true);
   assert.equal(fixture.calls.some((call) => call.path === "/api/production/readiness"), true);
+  assert.equal(fixture.calls.some((call) => call.path === "/api/auth/me"), true);
   assert.equal(fixture.calls.some((call) => call.path === "/api/gateway/endpoint"), true);
+  assert.equal(fixture.calls.some((call) => call.path === "/api/gateway/keys" && call.search === "?page=1&pageSize=20"), true);
+  assert.equal(fixture.calls.some((call) => call.path === "/api/gateway/keys/9/usage" && call.search === "?page=1&pageSize=20"), true);
+  assert.equal(fixture.calls.some((call) => call.path === "/api/operator/overview"), true);
+  assert.equal(fixture.calls.some((call) => call.path === "/api/operator/accounts" && call.search === "?page=1&pageSize=20"), true);
+  assert.equal(fixture.calls.some((call) => call.path === "/api/operator/workspaces" && call.search === "?page=1&pageSize=20"), true);
   assert.equal(fixture.calls.some((call) => call.path === "/api/workspaces/workspace-current/runtime-status"), true);
   assert.equal(fixture.calls.some((call) => call.path === "/api/billing/receipts"), true);
   assert.equal(fixture.calls.filter((call) => ["/api/projects", "/api/execution-requests", "/api/workspaces/retired/resume"].includes(call.path)).length, 3);
@@ -630,8 +683,8 @@ test("rollout QA read-only evidence level performs no model or Gateway write", a
     argv: ["--read-only"],
     env: {
       OPL_CONSOLE_ORIGIN: "https://cloud.medopl.cn",
-      OPL_VERIFY_AUTH_USERS_JSON: ownerSeed,
-      OPL_VERIFY_ACCOUNT_ID: BASIC_ACCOUNT_ID
+      OPL_SUB2API_ADMIN_EMAIL: ADMIN_EMAIL,
+      OPL_SUB2API_ADMIN_PASSWORD: ADMIN_PASSWORD
     },
     stdout: { write: () => {} },
     stderr: { write: (chunk) => { stderr += chunk; } },
@@ -640,6 +693,78 @@ test("rollout QA read-only evidence level performs no model or Gateway write", a
   });
   assert.equal(failed, 1);
   assert.match(stderr, /request_failed:GET:\/api\/healthz:503/);
+
+  stderr = "";
+  const identityMismatch = await runProductionLiveQaCli({
+    argv: ["--read-only"],
+    env: {
+      OPL_CONSOLE_ORIGIN: "https://cloud.medopl.cn",
+      OPL_SUB2API_ADMIN_EMAIL: ADMIN_EMAIL,
+      OPL_SUB2API_ADMIN_PASSWORD: ADMIN_PASSWORD
+    },
+    stdout: { write: () => {} },
+    stderr: { write: (chunk) => { stderr += chunk; } },
+    fetchImpl: readOnlyFixture({ authMe: { accountId: "acct-other" } }).fetchImpl,
+    browserFactory: readOnlyBrowserFactory([])
+  });
+  assert.equal(identityMismatch, 1);
+  assert.match(stderr, /production_admin_identity_invalid/);
+
+  stdout = "";
+  stderr = "";
+  const noWorkspaceFixture = readOnlyFixture({ noWorkspace: true });
+  const noWorkspace = await runProductionLiveQaCli({
+    argv: ["--read-only"],
+    env: {
+      OPL_CONSOLE_ORIGIN: "https://cloud.medopl.cn",
+      OPL_SUB2API_ADMIN_EMAIL: ADMIN_EMAIL,
+      OPL_SUB2API_ADMIN_PASSWORD: ADMIN_PASSWORD
+    },
+    stdout: { write: (chunk) => { stdout += chunk; } },
+    stderr: { write: (chunk) => { stderr += chunk; } },
+    fetchImpl: noWorkspaceFixture.fetchImpl,
+    browserFactory: noWorkspaceFixture.browserFactory
+  });
+  assert.equal(noWorkspace, 0, stderr);
+  assert.equal(JSON.parse(stdout).checks.fabric, "not_applicable_no_workspace");
+
+  stdout = "";
+  stderr = "";
+  const adminOffFirstPageFixture = readOnlyFixture({
+    operatorAccountsItems: [{ accountId: "acct-customer-0001", consoleUserId: "usr-customer-0001" }]
+  });
+  const adminOffFirstPage = await runProductionLiveQaCli({
+    argv: ["--read-only"],
+    env: {
+      OPL_CONSOLE_ORIGIN: "https://cloud.medopl.cn",
+      OPL_SUB2API_ADMIN_EMAIL: ADMIN_EMAIL,
+      OPL_SUB2API_ADMIN_PASSWORD: ADMIN_PASSWORD
+    },
+    stdout: { write: (chunk) => { stdout += chunk; } },
+    stderr: { write: (chunk) => { stderr += chunk; } },
+    fetchImpl: adminOffFirstPageFixture.fetchImpl,
+    browserFactory: adminOffFirstPageFixture.browserFactory
+  });
+  assert.equal(adminOffFirstPage, 0, stderr);
+  assert.equal(JSON.parse(stdout).checks.identity, "authoritative");
+
+  stdout = "";
+  stderr = "";
+  const globalWorkspaceFixture = readOnlyFixture({ adminHasWorkspace: false });
+  const globalWorkspace = await runProductionLiveQaCli({
+    argv: ["--read-only"],
+    env: {
+      OPL_CONSOLE_ORIGIN: "https://cloud.medopl.cn",
+      OPL_SUB2API_ADMIN_EMAIL: ADMIN_EMAIL,
+      OPL_SUB2API_ADMIN_PASSWORD: ADMIN_PASSWORD
+    },
+    stdout: { write: (chunk) => { stdout += chunk; } },
+    stderr: { write: (chunk) => { stderr += chunk; } },
+    fetchImpl: globalWorkspaceFixture.fetchImpl,
+    browserFactory: globalWorkspaceFixture.browserFactory
+  });
+  assert.equal(globalWorkspace, 0, stderr);
+  assert.equal(JSON.parse(stdout).checks.fabric, "available");
 
   stderr = "";
   let calls = 0;

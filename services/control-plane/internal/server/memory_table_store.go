@@ -9,38 +9,46 @@ import (
 )
 
 type memoryTableStore struct {
-	mu                sync.Mutex
-	accounts          controlPlaneRecordSet
-	users             controlPlaneRecordSet
-	sessions          controlPlaneRecordSet
-	organizations     controlPlaneRecordSet
-	memberships       controlPlaneRecordSet
-	computes          controlPlaneRecordSet
-	storages          controlPlaneRecordSet
-	attachments       controlPlaneRecordSet
-	workspaces        controlPlaneRecordSet
-	auditEvents       []map[string]any
-	announcements     controlPlaneRecordSet
-	announcementReads controlPlaneRecordSet
-	support           controlPlaneRecordSet
-	runtimeOps        []map[string]any
-	reconciliation    map[string]any
+	mu                    sync.Mutex
+	accounts              controlPlaneRecordSet
+	users                 controlPlaneRecordSet
+	userIDByEmail         map[string]string
+	sessions              controlPlaneRecordSet
+	sessionIDsByUser      map[string]map[string]struct{}
+	organizations         controlPlaneRecordSet
+	organizationByAccount map[string]string
+	memberships           controlPlaneRecordSet
+	membershipByAccount   map[string]string
+	computes              controlPlaneRecordSet
+	storages              controlPlaneRecordSet
+	attachments           controlPlaneRecordSet
+	workspaces            controlPlaneRecordSet
+	auditEvents           []map[string]any
+	announcements         controlPlaneRecordSet
+	announcementReads     controlPlaneRecordSet
+	support               controlPlaneRecordSet
+	runtimeOps            []map[string]any
+	reconciliation        map[string]any
 }
 
 func newMemoryTableStore() *memoryTableStore {
 	return &memoryTableStore{
-		accounts:          controlPlaneRecordSet{"acct-admin": {"id": "acct-admin", "ownerUserId": "usr-admin", "sub2apiUserId": int64(1), "status": "active"}},
-		users:             controlPlaneRecordSet{"usr-admin": {"id": "usr-admin", "email": "admin@medopl.cn", "accountId": "acct-admin", "role": "admin", "status": "active"}},
-		sessions:          controlPlaneRecordSet{},
-		organizations:     controlPlaneRecordSet{"org-admin": {"id": "org-admin", "name": "OPL Cloud", "billingAccountId": "acct-admin", "status": "active"}},
-		memberships:       controlPlaneRecordSet{"mem-admin": {"id": "mem-admin", "accountId": "acct-admin", "organizationId": "org-admin", "userId": "usr-admin", "role": "owner", "status": "active"}},
-		computes:          controlPlaneRecordSet{},
-		storages:          controlPlaneRecordSet{},
-		attachments:       controlPlaneRecordSet{},
-		workspaces:        controlPlaneRecordSet{},
-		announcements:     controlPlaneRecordSet{},
-		announcementReads: controlPlaneRecordSet{},
-		support:           controlPlaneRecordSet{},
+		accounts:              controlPlaneRecordSet{"acct-admin": {"id": "acct-admin", "ownerUserId": "usr-admin", "sub2apiUserId": int64(1), "status": "active"}},
+		users:                 controlPlaneRecordSet{"usr-admin": {"id": "usr-admin", "email": "admin@medopl.cn", "accountId": "acct-admin", "role": "admin", "status": "active"}},
+		userIDByEmail:         map[string]string{"admin@medopl.cn": "usr-admin"},
+		sessions:              controlPlaneRecordSet{},
+		sessionIDsByUser:      map[string]map[string]struct{}{},
+		organizations:         controlPlaneRecordSet{"org-admin": {"id": "org-admin", "name": "OPL Cloud", "billingAccountId": "acct-admin", "status": "active"}},
+		organizationByAccount: map[string]string{"acct-admin": "org-admin"},
+		memberships:           controlPlaneRecordSet{"mem-admin": {"id": "mem-admin", "accountId": "acct-admin", "organizationId": "org-admin", "userId": "usr-admin", "role": "owner", "status": "active"}},
+		membershipByAccount:   map[string]string{"acct-admin": "mem-admin"},
+		computes:              controlPlaneRecordSet{},
+		storages:              controlPlaneRecordSet{},
+		attachments:           controlPlaneRecordSet{},
+		workspaces:            controlPlaneRecordSet{},
+		announcements:         controlPlaneRecordSet{},
+		announcementReads:     controlPlaneRecordSet{},
+		support:               controlPlaneRecordSet{},
 	}
 }
 
@@ -68,6 +76,16 @@ func (s *memoryTableStore) PageAccounts(_ context.Context, query tablePageQuery)
 	defer s.mu.Unlock()
 	rows, _ := filteredRecords(s.accounts, "")
 	return memoryPage(rows, query), nil
+}
+
+func (s *memoryTableStore) CountAccountStatuses(_ context.Context) (map[string]int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	counts := make(map[string]int)
+	for _, row := range s.accounts {
+		counts[stringValue(row["status"])]++
+	}
+	return counts, nil
 }
 
 func (s *memoryTableStore) SaveAccount(_ context.Context, row map[string]any) error {
@@ -110,6 +128,9 @@ func (s *memoryTableStore) CreateProvisionedAccount(_ context.Context, account, 
 	}
 
 	s.accounts, s.users, s.organizations, s.memberships = accounts, users, organizations, memberships
+	s.userIDByEmail[normalizeEmail(stringValue(user["email"]))] = stringValue(user["id"])
+	s.organizationByAccount[stringValue(organization["billingAccountId"])] = stringValue(organization["id"])
+	s.membershipByAccount[stringValue(membership["accountId"])] = stringValue(membership["id"])
 	return nil
 }
 
@@ -153,6 +174,7 @@ func (s *memoryTableStore) ApplyUserLifecycle(_ context.Context, user map[string
 		}
 	}
 	s.users, s.sessions, s.computes, s.storages, s.workspaces = users, sessions, computes, storages, workspaces
+	delete(s.sessionIDsByUser, userID)
 	return nil
 }
 
@@ -174,6 +196,20 @@ func (s *memoryTableStore) GetUser(_ context.Context, id string) (map[string]any
 	defer s.mu.Unlock()
 	row := s.users[id]
 	return cloneMap(row), row != nil, nil
+}
+
+func (s *memoryTableStore) GetUserByEmail(_ context.Context, email string, includeDeleted bool) (map[string]any, bool, error) {
+	email, err := canonicalEmail(email)
+	if err != nil {
+		return nil, false, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	row := s.users[s.userIDByEmail[email]]
+	if row == nil || !includeDeleted && stringValue(row["status"]) == "deleted" {
+		return nil, false, nil
+	}
+	return cloneMap(row), true, nil
 }
 
 func (s *memoryTableStore) SaveUser(_ context.Context, row map[string]any) error {
@@ -208,13 +244,20 @@ func (s *memoryTableStore) SaveUser(_ context.Context, row map[string]any) error
 	}
 	row = cloneMap(row)
 	row["email"] = email
+	if previous := s.users[userID]; previous != nil {
+		delete(s.userIDByEmail, normalizeEmail(stringValue(previous["email"])))
+	}
 	s.users[userID] = row
+	s.userIDByEmail[email] = userID
 	return nil
 }
 
 func (s *memoryTableStore) DeleteUser(_ context.Context, id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if row := s.users[id]; row != nil {
+		delete(s.userIDByEmail, normalizeEmail(stringValue(row["email"])))
+	}
 	delete(s.users, id)
 	return nil
 }
@@ -225,19 +268,47 @@ func (s *memoryTableStore) ListSessions(_ context.Context) (controlPlaneRecordSe
 	return cloneStateTable(s.sessions), nil
 }
 
+func (s *memoryTableStore) GetSession(_ context.Context, id string) (map[string]any, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	row := s.sessions[id]
+	return cloneMap(row), row != nil, nil
+}
+
+func (s *memoryTableStore) ListSessionsByUser(_ context.Context, userID string) (controlPlaneRecordSet, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rows := controlPlaneRecordSet{}
+	for id := range s.sessionIDsByUser[userID] {
+		rows[id] = cloneMap(s.sessions[id])
+	}
+	return rows, nil
+}
+
 func (s *memoryTableStore) SaveSession(_ context.Context, row map[string]any) error {
 	if !validSessionLookupKey(stringValue(row["id"])) {
 		return errors.New("invalid_session_id")
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.sessions[stringValue(row["id"])] = cloneMap(row)
+	id, userID := stringValue(row["id"]), stringValue(row["userId"])
+	if previous := s.sessions[id]; previous != nil {
+		delete(s.sessionIDsByUser[stringValue(previous["userId"])], id)
+	}
+	s.sessions[id] = cloneMap(row)
+	if s.sessionIDsByUser[userID] == nil {
+		s.sessionIDsByUser[userID] = map[string]struct{}{}
+	}
+	s.sessionIDsByUser[userID][id] = struct{}{}
 	return nil
 }
 
 func (s *memoryTableStore) DeleteSession(_ context.Context, id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if row := s.sessions[id]; row != nil {
+		delete(s.sessionIDsByUser[stringValue(row["userId"])], id)
+	}
 	delete(s.sessions, id)
 	return nil
 }
@@ -246,6 +317,13 @@ func (s *memoryTableStore) ListOrganizations(_ context.Context) ([]map[string]an
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return filteredRecords(s.organizations, "")
+}
+
+func (s *memoryTableStore) GetOrganizationByAccount(_ context.Context, accountID string) (map[string]any, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	row := s.organizations[s.organizationByAccount[accountID]]
+	return cloneMap(row), row != nil, nil
 }
 
 func (s *memoryTableStore) SaveOrganization(_ context.Context, row map[string]any) error {
@@ -263,7 +341,11 @@ func (s *memoryTableStore) SaveOrganization(_ context.Context, row map[string]an
 			return errMembershipAccountMismatch
 		}
 	}
+	if previous := s.organizations[organizationID]; previous != nil {
+		delete(s.organizationByAccount, stringValue(previous["billingAccountId"]))
+	}
 	s.organizations[organizationID] = cloneMap(row)
+	s.organizationByAccount[accountID] = organizationID
 	return nil
 }
 
@@ -271,6 +353,13 @@ func (s *memoryTableStore) ListMemberships(_ context.Context) ([]map[string]any,
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return filteredRecords(s.memberships, "")
+}
+
+func (s *memoryTableStore) GetMembershipByAccount(_ context.Context, accountID string) (map[string]any, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	row := s.memberships[s.membershipByAccount[accountID]]
+	return cloneMap(row), row != nil, nil
 }
 
 func (s *memoryTableStore) SaveMembership(_ context.Context, row map[string]any) error {
@@ -309,7 +398,11 @@ func (s *memoryTableStore) SaveMembership(_ context.Context, row map[string]any)
 			return errMembershipExists
 		}
 	}
+	if previous := s.memberships[membershipID]; previous != nil {
+		delete(s.membershipByAccount, stringValue(previous["accountId"]))
+	}
 	s.memberships[membershipID] = cloneMap(row)
+	s.membershipByAccount[accountID] = membershipID
 	return nil
 }
 
@@ -420,6 +513,12 @@ func (s *memoryTableStore) PageWorkspaces(_ context.Context, accountID string, q
 	defer s.mu.Unlock()
 	rows, _ := filteredRecords(s.workspaces, accountID)
 	return memoryPage(rows, query), nil
+}
+
+func (s *memoryTableStore) CountWorkspaces(_ context.Context) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.workspaces), nil
 }
 
 func (s *memoryTableStore) CountWorkspacesByAccount(_ context.Context, accountIDs []string) (map[string]int, error) {
@@ -837,6 +936,53 @@ func (s *memoryTableStore) ListRuntimeOperations(_ context.Context) ([]map[strin
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return filteredEvents(s.runtimeOps, ""), nil
+}
+
+func (s *memoryTableStore) GetRuntimeOperation(_ context.Context, id string) (map[string]any, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, row := range s.runtimeOps {
+		if stringValue(row["id"]) == id {
+			return cloneMap(row), true, nil
+		}
+	}
+	return nil, false, nil
+}
+
+func (s *memoryTableStore) PageRuntimeOperations(_ context.Context, query runtimeOperationQuery) (tablePage, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	statuses := make(map[string]struct{}, len(query.Statuses))
+	for _, status := range query.Statuses {
+		statuses[status] = struct{}{}
+	}
+	excludedStatuses := make(map[string]struct{}, len(query.ExcludedStatuses))
+	for _, status := range query.ExcludedStatuses {
+		excludedStatuses[status] = struct{}{}
+	}
+	rows := make([]map[string]any, 0)
+	for _, row := range s.runtimeOps {
+		if query.AccountID != "" && stringValue(row["accountId"]) != query.AccountID ||
+			query.WorkspaceID != "" && stringValue(row["workspaceId"]) != query.WorkspaceID ||
+			query.Action != "" && stringValue(row["action"]) != query.Action ||
+			query.PeriodStart != "" && stringValue(row["periodStart"]) != query.PeriodStart {
+			continue
+		}
+		if len(statuses) > 0 {
+			if _, ok := statuses[stringValue(row["status"])]; !ok {
+				continue
+			}
+		}
+		if _, excluded := excludedStatuses[stringValue(row["status"])]; excluded {
+			continue
+		}
+		rows = append(rows, cloneMap(row))
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		left, right := stringValue(rows[i]["createdAt"]), stringValue(rows[j]["createdAt"])
+		return left < right || left == right && stringValue(rows[i]["id"]) < stringValue(rows[j]["id"])
+	})
+	return memoryPage(rows, tablePageQuery{Offset: query.Offset, Limit: query.Limit}), nil
 }
 
 func (s *memoryTableStore) SaveRuntimeOperation(_ context.Context, row map[string]any) error {

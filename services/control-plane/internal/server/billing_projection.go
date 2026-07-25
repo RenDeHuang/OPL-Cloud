@@ -26,7 +26,7 @@ type billingReconciliationException struct {
 
 type billingReconciliationAccountFacts struct {
 	userID       int64
-	history      []clients.Sub2APIBalanceHistoryEntry
+	history      map[string]clients.Sub2APIBalanceHistoryEntry
 	historyError bool
 	receipts     []clients.Receipt
 	receiptError bool
@@ -45,16 +45,13 @@ func (app *controlPlaneServer) billingReconciliationReport(ctx context.Context, 
 	if err != nil {
 		return nil, err
 	}
-	runtimeOperations, err := app.tables.ListRuntimeOperations(ctx)
+	runtimeOperations, err := queryRuntimeOperations(ctx, app.tables, runtimeOperationQuery{Action: "workspace.renewal"})
 	if err != nil {
 		return nil, err
 	}
 	resources := make([]billingReconciliationResource, 0, len(computes)+len(storages)+len(workspaces))
 	workspaceRenewals := map[string]workspaceRenewalOperation{}
 	for _, row := range runtimeOperations {
-		if stringValue(row["action"]) != "workspace.renewal" {
-			continue
-		}
 		operation, decodeErr := decodeWorkspaceRenewalOperation(row)
 		workspace := findRecord(workspaces, operation.WorkspaceID)
 		workspacePaidThrough, workspaceTimeErr := time.Parse(time.RFC3339, stringValue(workspace["paidThrough"]))
@@ -96,6 +93,23 @@ func (app *controlPlaneServer) billingReconciliationReport(ctx context.Context, 
 		return reconciliationReport(reportID, 0, 0, nil), nil
 	}
 	operations, fabricErr := service.FabricOperations(ctx)
+	accountCodes := make(map[string][]string)
+	seenAccountCodes := make(map[string]map[string]struct{})
+	for _, resource := range resources {
+		accountID := stringValue(resource.row["accountId"])
+		code := stringValue(resource.row["sub2apiRedeemCode"])
+		if accountID == "" || code == "" {
+			continue
+		}
+		if seenAccountCodes[accountID] == nil {
+			seenAccountCodes[accountID] = make(map[string]struct{})
+		}
+		if _, seen := seenAccountCodes[accountID][code]; seen {
+			continue
+		}
+		seenAccountCodes[accountID][code] = struct{}{}
+		accountCodes[accountID] = append(accountCodes[accountID], code)
+	}
 	accountFacts := map[string]billingReconciliationAccountFacts{}
 	for _, resource := range resources {
 		accountID := stringValue(resource.row["accountId"])
@@ -108,7 +122,7 @@ func (app *controlPlaneServer) billingReconciliationReport(ctx context.Context, 
 			facts.historyError = true
 		} else {
 			facts.userID = userID
-			facts.history, err = service.FinancialBalanceHistoryScan(ctx, userID)
+			facts.history, err = service.FinancialBalanceHistoryByCodes(ctx, userID, accountCodes[accountID])
 			facts.historyError = err != nil
 		}
 		facts.receipts, err = reconciliationLedgerReceipts(ctx, service, accountID)
@@ -214,18 +228,13 @@ func validLocalBillingReconciliationFact(resourceType string, row map[string]any
 		stringValue(row["lastReceiptId"]) != ""
 }
 
-func sub2APIReconciliationCode(row map[string]any, userID int64, history []clients.Sub2APIBalanceHistoryEntry) string {
-	matches := make([]clients.Sub2APIBalanceHistoryEntry, 0, 1)
-	for _, entry := range history {
-		if entry.Code == stringValue(row["sub2apiRedeemCode"]) {
-			matches = append(matches, entry)
-		}
-	}
-	if len(matches) == 0 {
+func sub2APIReconciliationCode(row map[string]any, userID int64, history map[string]clients.Sub2APIBalanceHistoryEntry) string {
+	entry, found := history[stringValue(row["sub2apiRedeemCode"])]
+	if !found {
 		return "sub2api_charge_missing"
 	}
 	charge, validCharge := requiredNonNegativeInteger(row, "chargeUsdMicros")
-	if len(matches) != 1 || !validCharge || matches[0].Type != "balance" || matches[0].Status != "used" || matches[0].UsedBy == nil || *matches[0].UsedBy != userID || matches[0].ValueUSDMicros != -charge {
+	if !validCharge || entry.Type != "balance" || entry.Status != "used" || entry.UsedBy == nil || *entry.UsedBy != userID || entry.ValueUSDMicros != -charge {
 		return "sub2api_charge_mismatch"
 	}
 	return ""
@@ -435,7 +444,7 @@ func providerCostTags(accountID, workspaceID, resourceID, operationID string) ma
 }
 
 func (app *controlPlaneServer) operationEvidenceForResourceLocked(ids ...string) map[string]any {
-	operations := app.listRuntimeOperations()
+	operations := app.runtimeOperationRows(runtimeOperationQuery{})
 	for index := len(operations) - 1; index >= 0; index-- {
 		operation := operations[index]
 		if mapContainsAnyID(operation, ids...) {

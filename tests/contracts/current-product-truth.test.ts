@@ -52,6 +52,7 @@ test("current docs describe only the operator-provisioned paid Pilot", async () 
     assert.doesNotMatch(document, /\bReact\b/, `${name} React`);
     assert.doesNotMatch(document, /\bCNY\b|1 USD\s*=|exchange rate/i, `${name} customer CNY`);
     assert.doesNotMatch(document, /verification-slot-01\b/, `${name} single slot`);
+    assert.doesNotMatch(document, /\b2-5\b/, `${name} capped cohort`);
   }
   assert.doesNotMatch(runbook, /reuse `verification-slot-01`/i);
   assert.doesNotMatch(status, /current Pilot V2 implementation plan/i);
@@ -66,13 +67,13 @@ test("identity contracts expose operator-provisioned owners and keep Organizatio
 
   assert.deepEqual(management.pilotCohort, {
     mode: "operator_provisioned",
-    minimumCustomerAccounts: 2,
-    maximumCustomerAccounts: 5,
     publicRegistration: false
   });
   assert.equal(management.customerIdentityGraph.cardinality, "exactly_one_console_user_account_sub2api_user_wallet");
   assert.equal(management.customerIdentityGraph.normalizedEmail, "lower_trim_console_email_equals_lower_trim_sub2api_email");
   assert.equal(management.customerIdentityGraph.customerAccess, "session_user_owns_account_and_remote_identity_is_active");
+  assert.equal(management.identitySecurity.plaintextPasswordValidation, "non_empty_delegated_to_sub2api");
+  assert.equal(management.identitySecurity.plaintextPasswordMinimumCharacters, undefined);
   assert.deepEqual(management.internalCompatibilityRecords, {
     organizationAndMembership: "one_to_one_storage_only",
     customerAuthorizationAuthority: false,
@@ -101,10 +102,10 @@ test("current contracts expose only authoritative Pilot sources and controls", a
 
   assert.deepEqual(freeze.pilotCohort, {
     mode: "operator_provisioned",
-    minimumCustomerAccounts: 2,
-    maximumCustomerAccounts: 5,
     publicRegistration: false
   });
+  assert.equal(freeze.deliveryPhases, undefined);
+  assert.doesNotMatch(freeze.machineBoundary, /delivery phases/i);
   assert.deepEqual(freeze.customerFunding, {
     authority: "sub2api",
     mode: "manual_operator_prefund",
@@ -113,6 +114,8 @@ test("current contracts expose only authoritative Pilot sources and controls", a
   });
   assert.equal(freeze.gateway.summaryApi, undefined);
   assert.equal(freeze.gateway.customerReadContract, "opl-cloud-console-source-truth-contract.json");
+  assert.equal(sourceTruth.sources.gateway.wallet.usdMicrosEncoding, "signed_int64_decimal_string");
+  assert.equal(sourceTruth.sources.gateway.balanceHistory.valueUsdMicrosEncoding, "signed_int64_decimal_string");
   assert.equal(freeze.gateway.adminKeyListEndpoint, undefined);
   assert.equal(freeze.gateway.keyListPaginationRule, undefined);
   assert.deepEqual(freeze.gateway.balanceHistoryReads, {
@@ -125,11 +128,14 @@ test("current contracts expose only authoritative Pilot sources and controls", a
       upstreamPagesPerRequest: 1
     },
     financialVerification: {
-      method: "FinancialBalanceHistoryScan",
+      method: "FinancialBalanceHistoryByCodes",
       allowedCallers: ["charge_confirmation", "refund_confirmation", "wallet_adjustment_recovery", "reconciliation"],
-      pageSize: 1000,
-      maxPages: 10,
-      maxItems: 10000
+      pageSize: 100,
+      lookup: "target_redeem_codes_only",
+      stopWhen: "all_targets_found",
+      missingTarget: "scan_to_authoritative_last_page",
+      materialization: "matched_entries_only",
+      totalHistoryLimit: null
     }
   });
   assert.deepEqual(freeze.gateway.workspaceKeyConvergenceRead, {
@@ -162,6 +168,11 @@ test("current contracts expose only authoritative Pilot sources and controls", a
   assert.deepEqual(boundary.browserBoundary.forbidden, ["sub2api_direct", "gflabtoken_link", "iframe", "html_scraping", "raw_admin_dto"]);
   assert.deepEqual(boundary.customerMutationBoundary, { payment: false, topUp: false, keyCreate: true, keyRevoke: true });
   assert.equal(freeze.workspaceRuntime.ordinaryCloudDeploy.reason, "cloud_only_release_preserves_workspace_runtime_revision");
+  const accessStage = freeze.launchStages.find((stage) => stage.id === "workspace_access");
+  assert.match(accessStage.business, /Workspace-scoped Gateway Secret/);
+  assert.match(accessStage.currentState, /Workspace Secret/);
+  const usageStage = freeze.launchStages.find((stage) => stage.id === "gateway_usage");
+  assert.match(usageStage.business, /Workspace's reserved Key/);
   const renewalStage = freeze.launchStages.find((stage) => stage.id === "renewal_expiry_recovery");
   assert.ok(renewalStage.requiredDeliverables.includes("unpaid expiry access denial and provider-owned reclamation policy"));
   assert.equal(renewalStage.requiredDeliverables.includes("expiry and retained-storage policy"), false);

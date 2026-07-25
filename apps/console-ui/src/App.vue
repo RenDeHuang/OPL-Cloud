@@ -793,63 +793,131 @@ async function loadCustomer() {
   await Promise.all([loadWorkspaceStatus(), recoverWorkspaceLaunch()]);
 }
 
+async function loadOperatorOverview() {
+  const requestStillCurrent = currentSessionRequest();
+  loading.operatorOverview = true;
+  resetSource("operatorOverview");
+  operatorOverviewSource.value = unavailableSource<OperatorOverviewDTO>("control-plane");
+  try {
+    const result = await getOperatorOverview();
+    if (requestStillCurrent()) operatorOverviewSource.value = result;
+  } catch (error) {
+    if (requestStillCurrent()) errors.operatorOverview = friendlyError(error);
+  } finally {
+    if (requestStillCurrent()) loading.operatorOverview = false;
+  }
+}
+
+async function loadOperatorAccounts() {
+  const requestStillCurrent = currentSessionRequest();
+  loading.operatorAccounts = true;
+  resetSource("operatorAccounts");
+  operatorAccountsPageSource.value = unavailableSource<OperatorAccountPageDTO>("control-plane+sub2api");
+  try {
+    const result = await getOperatorAccountsPage(operatorAccountPage.value, operatorPageSize);
+    if (requestStillCurrent()) operatorAccountsPageSource.value = result;
+  } catch (error) {
+    if (requestStillCurrent()) errors.operatorAccounts = friendlyError(error);
+  } finally {
+    if (requestStillCurrent()) loading.operatorAccounts = false;
+  }
+}
+
+async function loadOperatorWorkspaces() {
+  const requestStillCurrent = currentSessionRequest();
+  loading.operatorWorkspaces = true;
+  resetSource("operatorWorkspaces");
+  operatorWorkspacesSource.value = unavailableSource<OperatorWorkspacePageDTO>("control-plane+fabric+sub2api");
+  try {
+    const result = await getOperatorWorkspaces(operatorWorkspacePage.value, operatorPageSize);
+    if (requestStillCurrent()) operatorWorkspacesSource.value = result;
+  } catch (error) {
+    if (requestStillCurrent()) errors.operatorWorkspaces = friendlyError(error);
+  } finally {
+    if (requestStillCurrent()) loading.operatorWorkspaces = false;
+  }
+}
+
+async function loadOperatorReconciliation() {
+  const requestStillCurrent = currentSessionRequest();
+  loading.operatorReconciliation = true;
+  resetSource("operatorReconciliation");
+  operatorReconciliationSource.value = unavailableSource<OperatorReconciliationPageDTO>("control-plane");
+  try {
+    const result = await getOperatorReconciliation();
+    if (requestStillCurrent()) operatorReconciliationSource.value = result;
+  } catch (error) {
+    if (requestStillCurrent()) errors.operatorReconciliation = friendlyError(error);
+  } finally {
+    if (requestStillCurrent()) loading.operatorReconciliation = false;
+  }
+}
+
+async function loadOperatorHealth() {
+  const requestStillCurrent = currentSessionRequest();
+  loading.operatorHealth = true;
+  resetSource("operatorHealth");
+  operatorHealthSource.value = unavailableSource<OperatorHealthDTO>("control-plane");
+  try {
+    const result = await getOperatorHealth();
+    if (requestStillCurrent()) operatorHealthSource.value = result;
+  } catch (error) {
+    if (requestStillCurrent()) errors.operatorHealth = friendlyError(error);
+  } finally {
+    if (requestStillCurrent()) loading.operatorHealth = false;
+  }
+}
+
+async function loadOperatorAnnouncements() {
+  const requestStillCurrent = currentSessionRequest();
+  loading.operatorAnnouncements = true;
+  resetSource("operatorAnnouncements");
+  operatorAnnouncementsSource.value = unavailableSource<OperatorAnnouncementPageDTO>("control-plane");
+  try {
+    const result = await getOperatorAnnouncements();
+    if (requestStillCurrent()) operatorAnnouncementsSource.value = result;
+  } catch (error) {
+    if (requestStillCurrent()) errors.operatorAnnouncements = friendlyError(error);
+  } finally {
+    if (requestStillCurrent()) loading.operatorAnnouncements = false;
+  }
+}
+
 async function loadAdmin() {
   const requestStillCurrent = currentSessionRequest();
   loading.admin = true;
-  loading.operatorOverview = true;
-  loading.operatorAccounts = true;
-  loading.operatorWorkspaces = true;
-  loading.operatorReconciliation = true;
-  loading.operatorHealth = true;
-  loading.operatorAnnouncements = true;
   resetSource("admin");
-  resetSource("operatorOverview");
-  resetSource("operatorAccounts");
-  resetSource("operatorWorkspaces");
-  resetSource("operatorReconciliation");
-  resetSource("operatorHealth");
-  resetSource("operatorAnnouncements");
-  operatorOverviewSource.value = unavailableSource<OperatorOverviewDTO>("control-plane");
-  operatorAccountsPageSource.value = unavailableSource<OperatorAccountPageDTO>("control-plane+sub2api");
-  operatorWorkspacesSource.value = unavailableSource<OperatorWorkspacePageDTO>("control-plane+fabric+sub2api");
-  operatorReconciliationSource.value = unavailableSource<OperatorReconciliationPageDTO>("control-plane");
-  operatorHealthSource.value = unavailableSource<OperatorHealthDTO>("control-plane");
-  operatorAnnouncementsSource.value = unavailableSource<OperatorAnnouncementPageDTO>("control-plane");
-  const [overviewResult, accountsResult, workspacesResult, reconciliationResult, healthResult, announcementsResult] = await Promise.allSettled([
-    getOperatorOverview(), getOperatorAccountsPage(operatorAccountPage.value, operatorPageSize), getOperatorWorkspaces(operatorWorkspacePage.value, operatorPageSize), getOperatorReconciliation(), getOperatorHealth(), getOperatorAnnouncements()
-  ]);
-  if (!requestStillCurrent()) return;
-  if (overviewResult.status === "fulfilled") operatorOverviewSource.value = overviewResult.value;
-  else errors.operatorOverview = friendlyError(overviewResult.reason);
-  if (accountsResult.status === "fulfilled") operatorAccountsPageSource.value = accountsResult.value;
-  else errors.operatorAccounts = friendlyError(accountsResult.reason);
-  if (workspacesResult.status === "fulfilled") operatorWorkspacesSource.value = workspacesResult.value;
-  else errors.operatorWorkspaces = friendlyError(workspacesResult.reason);
-  if (reconciliationResult.status === "fulfilled") operatorReconciliationSource.value = reconciliationResult.value;
-  else errors.operatorReconciliation = friendlyError(reconciliationResult.reason);
-  if (healthResult.status === "fulfilled") operatorHealthSource.value = healthResult.value;
-  else errors.operatorHealth = friendlyError(healthResult.reason);
-  if (announcementsResult.status === "fulfilled") operatorAnnouncementsSource.value = announcementsResult.value;
-  else errors.operatorAnnouncements = friendlyError(announcementsResult.reason);
-  loading.admin = false;
-  loading.operatorOverview = false;
-  loading.operatorAccounts = false;
-  loading.operatorWorkspaces = false;
-  loading.operatorReconciliation = false;
-  loading.operatorHealth = false;
-  loading.operatorAnnouncements = false;
+  try {
+    if (path.value === "/admin" || path.value === "/admin/overview") {
+      await Promise.all([loadOperatorOverview(), loadOperatorAnnouncements()]);
+    } else if (path.value.startsWith("/admin/accounts")) {
+      await loadOperatorAccounts();
+    } else if (path.value.startsWith("/admin/billing")) {
+      await loadOperatorReconciliation();
+    } else if (path.value.startsWith("/admin/resources")) {
+      await loadOperatorWorkspaces();
+    } else if (path.value.startsWith("/admin/announcements")) {
+      await loadOperatorAnnouncements();
+    } else {
+      await loadOperatorHealth();
+    }
+  } catch (error) {
+    if (requestStillCurrent()) errors.admin = friendlyError(error);
+  } finally {
+    if (requestStillCurrent()) loading.admin = false;
+  }
 }
 
 async function changeOperatorAccountPage(page: number) {
   if (page < 1 || (operatorAccountPages.value > 0 && page > operatorAccountPages.value) || page === operatorAccountPage.value) return;
   operatorAccountPage.value = page;
-  await loadAdmin();
+  await loadOperatorAccounts();
 }
 
 async function changeOperatorWorkspacePage(page: number) {
   if (page < 1 || (operatorWorkspacePages.value > 0 && page > operatorWorkspacePages.value) || page === operatorWorkspacePage.value) return;
   operatorWorkspacePage.value = page;
-  await loadAdmin();
+  await loadOperatorWorkspaces();
 }
 
 async function loadOperatorWorkspaceDetail(workspaceId: string) {
@@ -1302,7 +1370,7 @@ async function submitOperatorAnnouncement() {
     const result = await createOperatorAnnouncement(announcementCreateIntent.input, session.value?.csrfToken || "", announcementCreateIntent.idempotencyKey);
     if (result.id) flash("公告草稿已创建");
     announcementCreateIntent = null;
-    await loadAdmin();
+    await loadOperatorAnnouncements();
     closeModal();
   } catch (error) { flash(mutationError(error), "danger"); }
 }
@@ -1323,7 +1391,7 @@ async function publishOperatorAnnouncementAction(announcementId: string) {
     await publishOperatorAnnouncement(announcementId, intent.input, session.value?.csrfToken || "", intent.idempotencyKey);
     announcementPublishIntents.delete(announcementId);
     flash("公告已发布");
-    await loadAdmin();
+    await loadOperatorAnnouncements();
   } catch (error) { flash(mutationError(error), "danger"); }
 }
 
@@ -1335,7 +1403,7 @@ async function withdrawOperatorAnnouncementAction(announcementId: string) {
     await withdrawOperatorAnnouncement(announcementId, session.value?.csrfToken || "", idempotencyKey);
     announcementWithdrawIntents.delete(announcementId);
     flash("公告已撤下");
-    await loadAdmin();
+    await loadOperatorAnnouncements();
   } catch (error) { flash(mutationError(error), "danger"); }
 }
 
@@ -1369,7 +1437,7 @@ async function resolveOperatorReview() {
     }
     flash("复核命令已提交");
     selectedReview.value = null;
-    await loadAdmin();
+    await loadOperatorReconciliation();
   } catch (error) { flash(mutationError(error), "danger"); }
 }
 
@@ -1643,7 +1711,7 @@ onBeforeUnmount(() => {
       </div>
     </section>
 
-        <div v-if="modal" class="modal-backdrop" role="presentation" @click.self="closeModal"><section class="modal" role="dialog" aria-modal="true" :aria-label="modal"><header><h2>{{ modal === "workspace" ? "开通 Workspace" : modal === "wallet-adjustment" ? "钱包调整" : modal === "announcement" ? "新建公告草稿" : "开通用户" }}</h2><button class="icon-button" type="button" aria-label="关闭" @click="closeModal"><X :size="18" /></button></header><form v-if="modal === 'workspace'" @submit.prevent="submitWorkspaceLaunch"><label>Workspace 名称<input v-model.trim="launchForm.name" required maxlength="80" /></label><fieldset><legend>计划</legend><label v-for="plan in plans" :key="plan.id" class="plan-option" :class="{ selected: launchForm.packageId === plan.id }"><input v-model="launchForm.packageId" type="radio" :value="plan.id" :disabled="!plan.available" /><span><strong>{{ plan.name }}</strong><small>{{ plan.cpu }}C / {{ plan.memoryGb }}GB · {{ plan.diskGb }}GB</small></span><b>{{ typeof previews[plan.id]?.totalChargeUsdMicros === "number" ? `${formatUsdMicros(previews[plan.id]?.totalChargeUsdMicros)}/月` : "暂不可用" }}</b></label></fieldset><p class="source-note">自动续费默认关闭。</p><footer><button class="button secondary" type="button" @click="closeModal">取消</button><button class="button primary" type="submit" :disabled="launchBusy || !selectedPlan || selectedPlanPrice === null">{{ launchBusy ? "处理中..." : "确认开通" }}</button></footer></form><form v-else-if="modal === 'wallet-adjustment'" @submit.prevent="submitWalletAdjustment"><p class="source-note">二次确认会锁定目标账号、金额和原因；同一 Idempotency-Key 不会重复调整。</p><label>目标账号<input v-model.trim="walletAdjustmentForm.confirmationAccountId" required /></label><label>类型<select v-model="walletAdjustmentForm.kind"><option value="recharge">充值</option><option value="debit">扣款</option><option value="business_refund">业务退款</option></select></label><label>金额（USD）<input v-model.trim="walletAdjustmentForm.amountUsd" inputmode="decimal" required /></label><label>原因<textarea v-model.trim="walletAdjustmentForm.reason" required maxlength="200" /></label><label v-if="walletAdjustmentForm.kind === 'business_refund'">关联操作<input v-model.trim="walletAdjustmentForm.relatedOperationId" required /></label><p v-if="errors.walletAdjustment" class="form-error" role="alert">{{ errors.walletAdjustment }}</p><section v-if="walletAdjustmentOperation" class="wallet-adjustment-readback"><div class="inline-notice">操作 {{ walletAdjustmentOperation.operationId }}：{{ walletAdjustmentOperation.status }} <button class="text-button" type="button" @click="refreshWalletAdjustment">读取最新状态</button></div><dl class="data-list"><div><dt>调整前余额</dt><dd>{{ operatorSourceText(walletAdjustmentOperation.beforeBalance, (data) => formatUsdMicros(data.usdMicros)) }}</dd></div><div><dt>调整后余额</dt><dd>{{ operatorSourceText(walletAdjustmentOperation.afterBalance, (data) => formatUsdMicros(data.usdMicros)) }}</dd></div><div><dt>原因</dt><dd>{{ walletAdjustmentOperation.reason || "暂不可用" }}</dd></div><div><dt>关联操作</dt><dd>{{ walletAdjustmentOperation.relatedOperationId || "暂不可用" }}</dd></div><div><dt>余额记录引用</dt><dd>{{ walletAdjustmentOperation.balanceHistoryRef || "暂不可用" }}</dd></div><div><dt>Receipt</dt><dd>{{ walletAdjustmentOperation.receiptId || "暂不可用" }}</dd></div><div><dt>错误码</dt><dd>{{ walletAdjustmentOperation.errorCode || "暂不可用" }}</dd></div><div><dt>上游 HTTP</dt><dd>{{ walletAdjustmentOperation.upstreamFailure?.httpStatus ?? "暂不可用" }}</dd></div><div><dt>上游错误码</dt><dd>{{ walletAdjustmentOperation.upstreamFailure?.errorCode || "暂不可用" }}</dd></div><div><dt>上游 request ID</dt><dd>{{ walletAdjustmentOperation.upstreamFailure?.requestId || "暂不可用" }}</dd></div><div><dt>执行人</dt><dd>{{ walletAdjustmentOperation.actor || "暂不可用" }}</dd></div></dl></section><footer><button class="button secondary" type="button" @click="closeModal">取消</button><button v-if="walletAdjustmentOperation?.status === 'manual_review' && walletAdjustmentOperation.allowedActions?.includes('recover_wallet_adjustment')" class="button primary" type="button" :disabled="loading.walletAdjustment" @click="recoverWalletAdjustment">{{ loading.walletAdjustment ? "处理中..." : "恢复确认" }}</button><button v-else class="button primary" type="submit" :disabled="loading.walletAdjustment">{{ loading.walletAdjustment ? "处理中..." : "确认调整" }}</button></footer></form><form v-else-if="modal === 'announcement'" @submit.prevent="submitOperatorAnnouncement"><label>标题<input v-model.trim="announcementForm.title" required maxlength="120" /></label><label>正文<textarea v-model.trim="announcementForm.body" required maxlength="4000" /></label><label>开始时间（可选）<input v-model.trim="announcementForm.startsAt" placeholder="2026-07-20T00:00:00Z" /></label><label>结束时间（可选）<input v-model.trim="announcementForm.endsAt" placeholder="2026-07-21T00:00:00Z" /></label><footer><button class="button secondary" type="button" @click="closeModal">取消</button><button class="button primary" type="submit">保存草稿</button></footer></form><form v-else @submit.prevent="provisionOperatorUser"><label>登录邮箱<input v-model.trim="adminUserForm.email" type="email" required /></label><label>初始密码<input v-model="adminUserForm.password" type="password" required minlength="12" /></label><label>姓名<input v-model.trim="adminUserForm.name" /></label><footer><button class="button secondary" type="button" @click="closeModal">取消</button><button class="button primary" type="submit" :disabled="mutationBusy">{{ mutationBusy ? "处理中..." : "开通用户" }}</button></footer></form></section></div>
+        <div v-if="modal" class="modal-backdrop" role="presentation" @click.self="closeModal"><section class="modal" role="dialog" aria-modal="true" :aria-label="modal"><header><h2>{{ modal === "workspace" ? "开通 Workspace" : modal === "wallet-adjustment" ? "钱包调整" : modal === "announcement" ? "新建公告草稿" : "开通用户" }}</h2><button class="icon-button" type="button" aria-label="关闭" @click="closeModal"><X :size="18" /></button></header><form v-if="modal === 'workspace'" @submit.prevent="submitWorkspaceLaunch"><label>Workspace 名称<input v-model.trim="launchForm.name" required maxlength="80" /></label><fieldset><legend>计划</legend><label v-for="plan in plans" :key="plan.id" class="plan-option" :class="{ selected: launchForm.packageId === plan.id }"><input v-model="launchForm.packageId" type="radio" :value="plan.id" :disabled="!plan.available" /><span><strong>{{ plan.name }}</strong><small>{{ plan.cpu }}C / {{ plan.memoryGb }}GB · {{ plan.diskGb }}GB</small></span><b>{{ typeof previews[plan.id]?.totalChargeUsdMicros === "number" ? `${formatUsdMicros(previews[plan.id]?.totalChargeUsdMicros)}/月` : "暂不可用" }}</b></label></fieldset><p class="source-note">自动续费默认关闭。</p><footer><button class="button secondary" type="button" @click="closeModal">取消</button><button class="button primary" type="submit" :disabled="launchBusy || !selectedPlan || selectedPlanPrice === null">{{ launchBusy ? "处理中..." : "确认开通" }}</button></footer></form><form v-else-if="modal === 'wallet-adjustment'" @submit.prevent="submitWalletAdjustment"><p class="source-note">二次确认会锁定目标账号、金额和原因；同一 Idempotency-Key 不会重复调整。</p><label>目标账号<input v-model.trim="walletAdjustmentForm.confirmationAccountId" required /></label><label>类型<select v-model="walletAdjustmentForm.kind"><option value="recharge">充值</option><option value="debit">扣款</option><option value="business_refund">业务退款</option></select></label><label>金额（USD）<input v-model.trim="walletAdjustmentForm.amountUsd" inputmode="decimal" required /></label><label>原因<textarea v-model.trim="walletAdjustmentForm.reason" required maxlength="200" /></label><label v-if="walletAdjustmentForm.kind === 'business_refund'">关联操作<input v-model.trim="walletAdjustmentForm.relatedOperationId" required /></label><p v-if="errors.walletAdjustment" class="form-error" role="alert">{{ errors.walletAdjustment }}</p><section v-if="walletAdjustmentOperation" class="wallet-adjustment-readback"><div class="inline-notice">操作 {{ walletAdjustmentOperation.operationId }}：{{ walletAdjustmentOperation.status }} <button class="text-button" type="button" @click="refreshWalletAdjustment">读取最新状态</button></div><dl class="data-list"><div><dt>调整前余额</dt><dd>{{ operatorSourceText(walletAdjustmentOperation.beforeBalance, (data) => formatUsdMicros(data.usdMicros)) }}</dd></div><div><dt>调整后余额</dt><dd>{{ operatorSourceText(walletAdjustmentOperation.afterBalance, (data) => formatUsdMicros(data.usdMicros)) }}</dd></div><div><dt>原因</dt><dd>{{ walletAdjustmentOperation.reason || "暂不可用" }}</dd></div><div><dt>关联操作</dt><dd>{{ walletAdjustmentOperation.relatedOperationId || "暂不可用" }}</dd></div><div><dt>余额记录引用</dt><dd>{{ walletAdjustmentOperation.balanceHistoryRef || "暂不可用" }}</dd></div><div><dt>Receipt</dt><dd>{{ walletAdjustmentOperation.receiptId || "暂不可用" }}</dd></div><div><dt>错误码</dt><dd>{{ walletAdjustmentOperation.errorCode || "暂不可用" }}</dd></div><div><dt>上游 HTTP</dt><dd>{{ walletAdjustmentOperation.upstreamFailure?.httpStatus ?? "暂不可用" }}</dd></div><div><dt>上游错误码</dt><dd>{{ walletAdjustmentOperation.upstreamFailure?.errorCode || "暂不可用" }}</dd></div><div><dt>上游 request ID</dt><dd>{{ walletAdjustmentOperation.upstreamFailure?.requestId || "暂不可用" }}</dd></div><div><dt>执行人</dt><dd>{{ walletAdjustmentOperation.actor || "暂不可用" }}</dd></div></dl></section><footer><button class="button secondary" type="button" @click="closeModal">取消</button><button v-if="walletAdjustmentOperation?.status === 'manual_review' && walletAdjustmentOperation.allowedActions?.includes('recover_wallet_adjustment')" class="button primary" type="button" :disabled="loading.walletAdjustment" @click="recoverWalletAdjustment">{{ loading.walletAdjustment ? "处理中..." : "恢复确认" }}</button><button v-else class="button primary" type="submit" :disabled="loading.walletAdjustment">{{ loading.walletAdjustment ? "处理中..." : "确认调整" }}</button></footer></form><form v-else-if="modal === 'announcement'" @submit.prevent="submitOperatorAnnouncement"><label>标题<input v-model.trim="announcementForm.title" required maxlength="120" /></label><label>正文<textarea v-model.trim="announcementForm.body" required maxlength="4000" /></label><label>开始时间（可选）<input v-model.trim="announcementForm.startsAt" placeholder="2026-07-20T00:00:00Z" /></label><label>结束时间（可选）<input v-model.trim="announcementForm.endsAt" placeholder="2026-07-21T00:00:00Z" /></label><footer><button class="button secondary" type="button" @click="closeModal">取消</button><button class="button primary" type="submit">保存草稿</button></footer></form><form v-else @submit.prevent="provisionOperatorUser"><label>登录邮箱<input v-model.trim="adminUserForm.email" type="email" required /></label><label>初始密码<input v-model="adminUserForm.password" type="password" required /></label><label>姓名<input v-model.trim="adminUserForm.name" /></label><footer><button class="button secondary" type="button" @click="closeModal">取消</button><button class="button primary" type="submit" :disabled="mutationBusy">{{ mutationBusy ? "处理中..." : "开通用户" }}</button></footer></form></section></div>
     <div v-if="toast.text" class="toast" :class="toast.tone" role="status">{{ toast.text }}</div>
   </div>
 </template>

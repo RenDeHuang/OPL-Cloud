@@ -12,6 +12,14 @@ const WORKSPACE_KEYS = Object.freeze({
   "19": "sk-fixture-second-workspace-key"
 });
 const GENERAL_KEY = "sk-fixture-general-key";
+const OPERATOR_PAGE_READS = new Set([
+  "/api/operator/overview",
+  "/api/operator/accounts",
+  "/api/operator/workspaces",
+  "/api/operator/reconciliation",
+  "/api/operator/health",
+  "/api/operator/announcements"
+]);
 const VIEWPORTS = Object.freeze({
   desktop: Object.freeze({ width: 1440, height: 900 }),
   mobile: Object.freeze({ width: 390, height: 844 })
@@ -118,6 +126,7 @@ async function apiFixture(route, state) {
   const url = new URL(request.url());
   const path = url.pathname;
   const method = request.method();
+  if (method === "GET" && OPERATOR_PAGE_READS.has(path)) state.operatorPageReads.push(path);
   const emptyPage = { items: [], total: 0, page: 1, pageSize: 20 };
 
   if (path === "/api/auth/me") {
@@ -166,7 +175,7 @@ async function apiFixture(route, state) {
   });
   if (path === "/api/billing/receipts") return fulfillJson(route, source({ receipts: [], nextCursor: "", hasMore: false }, "ledger", "empty"));
   if (path === "/api/announcements") return fulfillJson(route, source(emptyPage, "control-plane", "empty"));
-  if (path === "/api/gateway/wallet") return fulfillJson(route, source({ userId: "9", currency: "USD", usdMicros: 50_000_000, status: "active" }, "sub2api"));
+  if (path === "/api/gateway/wallet") return fulfillJson(route, source({ userId: "9", currency: "USD", usdMicros: "50000000", status: "active" }, "sub2api"));
   if (path === "/api/gateway/usage-summary") return fulfillJson(route, source({ totalRequests: 1, totalInputTokens: 10, totalOutputTokens: 2, totalTokens: 12, totalActualCostUsdMicros: 25_000 }, "sub2api"));
   if (path === "/api/gateway/balance-history") {
     const page = Number(url.searchParams.get("page"));
@@ -250,7 +259,7 @@ async function apiFixture(route, state) {
   if (path === "/api/operator/overview") {
     const ready = source({ ready: true }, "control-plane");
     return fulfillJson(route, source({
-      accounts: source({ total: 1, active: 1, disabled: 0 }), wallet: source({ currency: "USD", usdMicros: 50_000_000 }, "sub2api"),
+      accounts: source({ total: 1, active: 1, disabled: 0 }), wallet: source({ currency: "USD", usdMicros: "50000000" }, "sub2api"),
       keys: source({ total: 2 }, "sub2api"), usage: source({ todayActualCostUsdMicros: 10_000, totalActualCostUsdMicros: 25_000 }, "sub2api"),
       workspaces: source({ total: 1 }), resources: source({ total: 1 }, "fabric"), reconciliation: source({ total: 0 }),
       health: source({ controlPlane: ready, gateway: ready, fabric: ready, runtime: ready, ledger: ready })
@@ -260,7 +269,7 @@ async function apiFixture(route, state) {
     items: [{
       accountId: "acct-1", consoleUserId: "user-customer", role: "owner", sub2apiUserId: "9", email: "pilot@example.com", status: "active",
       gatewayIdentity: source({ userId: "9", email: "pilot@example.com", status: "active" }, "sub2api"),
-      wallet: source({ userId: "9", currency: "USD", usdMicros: 50_000_000, status: "active" }, "sub2api"),
+      wallet: source({ userId: "9", currency: "USD", usdMicros: "50000000", status: "active" }, "sub2api"),
       keyCount: source(2, "sub2api"), usage: source({ todayActualCostUsdMicros: 10_000, totalActualCostUsdMicros: 25_000 }, "sub2api"), workspaceCount: source(1)
     }], total: 1, page: 1, pageSize: 20
   }));
@@ -285,8 +294,8 @@ async function apiFixture(route, state) {
     }
     return fulfillJson(route, {
       operationId: "wallet-adjustment-fixture", accountId: "acct-1", status: "succeeded", kind: "recharge",
-      amountUsd: "5", reason: "browser retry", beforeBalance: source({ currency: "USD", usdMicros: 50_000_000 }, "sub2api"),
-      afterBalance: source({ currency: "USD", usdMicros: 55_000_000 }, "sub2api"), balanceHistoryRef: "balance-history-fixture", actor: "user-operator"
+      amountUsd: "5", reason: "browser retry", beforeBalance: source({ currency: "USD", usdMicros: "50000000" }, "sub2api"),
+      afterBalance: source({ currency: "USD", usdMicros: "55000000" }, "sub2api"), balanceHistoryRef: "balance-history-fixture", actor: "user-operator"
     });
   }
 
@@ -317,6 +326,13 @@ async function waitForText(page, text) {
 async function assertNoViewportOverflow(page) {
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   if (overflow > 1) throw new Error(`console_browser_viewport_overflow:${overflow}`);
+}
+
+function assertOperatorPageReads(state, start, expected) {
+  const actual = state.operatorPageReads.slice(start);
+  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+    throw new Error(`console_browser_operator_route_fanout:${JSON.stringify({ expected, actual })}`);
+  }
 }
 
 async function exerciseGatewayKeyLifecycle(page, state) {
@@ -400,6 +416,7 @@ export async function runConsoleBrowserQa({
     gatewayWrites: new Set(), walletWrites: new Set(), lostGatewayResponses: new Set(), lostWalletResponses: new Set(),
     gatewayMutationWrites: new Set(), gatewayActions: [], revealCalls: new Map(), emptyGatewayReadbacks: 0,
     runtimeReads: new Map(), workspaceSecretReads: new Map(),
+    operatorPageReads: [],
     unexpectedApi: [], externalRequests: 0, pageErrors: []
   };
   try {
@@ -474,17 +491,41 @@ export async function runConsoleBrowserQa({
 
       state.role = "operator";
       state.sourceState = "available";
+      let operatorReadStart = state.operatorPageReads.length;
+      await page.goto(`${server.origin}/admin/overview?viewport=${name}`, { waitUntil: "networkidle" });
+      await waitForText(page, "运维概览");
+      assertOperatorPageReads(state, operatorReadStart, ["/api/operator/overview", "/api/operator/announcements"]);
+      operatorReadStart = state.operatorPageReads.length;
+      await page.goto(`${server.origin}/admin/billing?viewport=${name}`, { waitUntil: "networkidle" });
+      await waitForText(page, "暂无待复核项目");
+      assertOperatorPageReads(state, operatorReadStart, ["/api/operator/reconciliation"]);
+      operatorReadStart = state.operatorPageReads.length;
+      await page.goto(`${server.origin}/admin/system?viewport=${name}`, { waitUntil: "networkidle" });
+      await waitForText(page, "系统健康");
+      assertOperatorPageReads(state, operatorReadStart, ["/api/operator/health"]);
+      operatorReadStart = state.operatorPageReads.length;
+      await page.goto(`${server.origin}/admin/announcements?viewport=${name}`, { waitUntil: "networkidle" });
+      await waitForText(page, "暂无公告");
+      assertOperatorPageReads(state, operatorReadStart, ["/api/operator/announcements"]);
+      operatorReadStart = state.operatorPageReads.length;
       await page.goto(`${server.origin}/admin/resources?viewport=${name}`, { waitUntil: "networkidle" });
       await waitForText(page, "provider ID");
       await waitForText(page, "最近读回时间");
+      assertOperatorPageReads(state, operatorReadStart, ["/api/operator/workspaces"]);
       if (name === "desktop") {
+        operatorReadStart = state.operatorPageReads.length;
         await page.goto(`${server.origin}/admin/accounts?write=1`, { waitUntil: "networkidle" });
+        assertOperatorPageReads(state, operatorReadStart, ["/api/operator/accounts"]);
+        operatorReadStart = state.operatorPageReads.length;
         await retryWalletAdjustment(page);
+        assertOperatorPageReads(state, operatorReadStart, ["/api/operator/accounts"]);
       }
       for (const sourceState of ["empty", "unavailable", "error"]) {
         state.sourceState = sourceState;
+        operatorReadStart = state.operatorPageReads.length;
         await page.goto(`${server.origin}/admin/resources?state=${sourceState}&viewport=${name}`, { waitUntil: "networkidle" });
         await waitForText(page, sourceState === "empty" ? "暂无 Workspace" : sourceState === "unavailable" ? "Workspace 暂不可用" : "服务暂不可用");
+        assertOperatorPageReads(state, operatorReadStart, ["/api/operator/workspaces"]);
       }
       await assertNoViewportOverflow(page);
       await context.close();
@@ -513,6 +554,7 @@ export async function runConsoleBrowserQa({
       workspaceSecretReads: Object.fromEntries(state.workspaceSecretReads),
       keyInteractions: state.gatewayActions,
       secretCleanup: true,
+      operatorRouteLazyReads: true,
       externalRequests: state.externalRequests
     };
   } finally {

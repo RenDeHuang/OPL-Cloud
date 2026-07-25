@@ -60,7 +60,9 @@ test("Workspace status never invents a running state", () => {
 
 test("unavailable and zero are distinct source facts", () => {
   assert.equal(formatAvailableBalance({ available: false, status: "unavailable" }), "暂不可用");
-  assert.equal(formatAvailableBalance({ available: true, status: "available", usdMicros: 0 }), "$0.00");
+  assert.equal(formatAvailableBalance({ available: true, status: "available", usdMicros: "0" }), "$0.00");
+  assert.equal(formatUsdMicros("9223372036854775807"), "$9,223,372,036,854.78");
+  assert.equal(formatUsdMicros("-9223372036854775808"), "-$9,223,372,036,854.78");
   assert.equal(formatCount(undefined), "-");
   assert.equal(formatUsdMicros(undefined), "-");
   assert.deepEqual(readinessRows(null, null), [

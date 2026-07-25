@@ -20,6 +20,7 @@ test("Console browser covers customer and operator truth states at desktop and m
   assert.equal(result.workspaceSelection, true);
   assert.deepEqual(result.workspaceSecretReads, { "ws-1": 1, "ws-2": 1 });
   assert.equal(result.secretCleanup, true);
+  assert.equal(result.operatorRouteLazyReads, true);
   assert.equal(result.externalRequests, 0);
 });
 
@@ -29,6 +30,12 @@ test("Home Login Logo unchanged browser contract stays pinned", async () => {
   assert.match(app, /面向已开通用户的 Workspace 与 API 服务。/);
   assert.match(app, /<span>Console 登录<\/span>/);
   assert.match(app, /src="\/opl-app-icon\.png" alt="OPL Cloud"/);
+});
+
+test("operator provisioning delegates every non-empty password to Sub2API", async () => {
+  const app = await readFile("apps/console-ui/src/App.vue", "utf8");
+  assert.match(app, /v-model="adminUserForm\.password" type="password" required/);
+  assert.doesNotMatch(app, /minlength="12"/);
 });
 
 test("Console browser rejects non-fake network before starting a server or browser", async () => {

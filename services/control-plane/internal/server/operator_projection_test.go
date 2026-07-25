@@ -50,6 +50,80 @@ type operatorProjectionSub2API struct {
 	keyCountMu         sync.Mutex
 }
 
+type boundedOperatorPageSub2API struct {
+	*operatorProjectionSub2API
+	mu              sync.Mutex
+	active          int
+	maxActive       int
+	userActive      int
+	userMax         int
+	keyActive       int
+	keyMax          int
+	deadlines       []time.Time
+	missingDeadline bool
+	started         chan string
+	release         <-chan struct{}
+}
+
+func (c *boundedOperatorPageSub2API) begin(ctx context.Context, kind string) (func(), error) {
+	deadline, ok := ctx.Deadline()
+	c.mu.Lock()
+	c.missingDeadline = c.missingDeadline || !ok
+	if ok {
+		c.deadlines = append(c.deadlines, deadline)
+	}
+	c.active++
+	if c.active > c.maxActive {
+		c.maxActive = c.active
+	}
+	if kind == "user" {
+		c.userActive++
+		if c.userActive > c.userMax {
+			c.userMax = c.userActive
+		}
+	} else {
+		c.keyActive++
+		if c.keyActive > c.keyMax {
+			c.keyMax = c.keyActive
+		}
+	}
+	c.mu.Unlock()
+	c.started <- kind
+	select {
+	case <-c.release:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	return func() {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		c.active--
+		if kind == "user" {
+			c.userActive--
+		} else {
+			c.keyActive--
+		}
+	}, nil
+}
+
+func (c *boundedOperatorPageSub2API) AdminUser(ctx context.Context, userID int64) (clients.Sub2APIUser, error) {
+	done, err := c.begin(ctx, "user")
+	if err != nil {
+		return clients.Sub2APIUser{}, err
+	}
+	defer done()
+	return c.operatorProjectionSub2API.AdminUser(ctx, userID)
+}
+
+func (c *boundedOperatorPageSub2API) AdminUserKeyCount(ctx context.Context, userID int64) (int, error) {
+	done, err := c.begin(ctx, "key")
+	if err != nil {
+		return 0, err
+	}
+	defer done()
+	return c.operatorProjectionSub2API.AdminUserKeyCount(ctx, userID)
+}
+
 func (c *operatorProjectionSub2API) AdminUserKeyCount(_ context.Context, userID int64) (int, error) {
 	c.keyCountMu.Lock()
 	defer c.keyCountMu.Unlock()
@@ -200,6 +274,34 @@ type operatorWorkspacePagingStore struct {
 	getStorageIDs    []string
 	getAttachmentIDs []string
 	getIDs           []string
+}
+
+type operatorOverviewAggregateStore struct {
+	*memoryTableStore
+	pageAccountCalls int
+	aggregateCalls   int
+}
+
+func (s *operatorOverviewAggregateStore) PageAccounts(context.Context, tablePageQuery) (tablePage, error) {
+	s.pageAccountCalls++
+	return tablePage{}, errors.New("overview_must_not_page_accounts")
+}
+
+func (s *operatorOverviewAggregateStore) CountAccountStatuses(ctx context.Context) (map[string]int, error) {
+	s.aggregateCalls++
+	accounts, err := s.memoryTableStore.ListAccounts(ctx, "")
+	if err != nil {
+		return nil, err
+	}
+	counts := map[string]int{}
+	for _, account := range accounts {
+		counts[stringValue(account["status"])]++
+	}
+	return counts, nil
+}
+
+func (s *operatorOverviewAggregateStore) CountWorkspaces(context.Context) (int, error) {
+	return 0, nil
 }
 
 func (s *operatorWorkspacePagingStore) ListWorkspaces(ctx context.Context, accountID string) ([]map[string]any, error) {
@@ -398,7 +500,7 @@ func TestOperatorProjectionUsesBatchAPIs(t *testing.T) {
 		t.Fatalf("account page = %#v", accountData)
 	}
 	alpha := operatorAccountItem(items, "acct-alpha")
-	if mapField(mapField(alpha, "wallet"), "data")["usdMicros"] != float64(10_000_000) || mapField(mapField(alpha, "usage"), "data")["totalActualCostUsdMicros"] != float64(100) {
+	if mapField(mapField(alpha, "wallet"), "data")["usdMicros"] != "10000000" || mapField(mapField(alpha, "usage"), "data")["totalActualCostUsdMicros"] != float64(100) {
 		t.Fatalf("account projection = %#v", alpha)
 	}
 	if keyCount := mapField(alpha, "keyCount"); keyCount["available"] != true || keyCount["data"] != float64(2) {
@@ -423,6 +525,44 @@ func TestOperatorProjectionUsesBatchAPIs(t *testing.T) {
 	}
 	if client.adminUsersCalls != 0 || client.adminUserCalls != 3 || client.batchUsersCalls != 1 || client.batchKeysCalls != 1 || client.singleUserCalls != 0 || len(client.keyCountCalls) != 3 {
 		t.Fatalf("projection calls userPages=%d exactUsers=%d batchUsers=%d batchKeys=%d identityUsers=%d keyCounts=%#v", client.adminUsersCalls, client.adminUserCalls, client.batchUsersCalls, client.batchKeysCalls, client.singleUserCalls, client.keyCountCalls)
+	}
+}
+
+func TestOperatorOverviewUsesControlPlaneAggregatesInsteadOfCurrentPageProjection(t *testing.T) {
+	store := &operatorOverviewAggregateStore{memoryTableStore: newMemoryTableStore()}
+	seedOperatorProjectionAccount(t, store, "acct-alpha", "usr-alpha", "alpha@example.com", 41)
+	seedOperatorProjectionAccount(t, store, "acct-beta", "usr-beta", "beta@example.com", 42)
+	account, found, err := store.GetAccount(context.Background(), "acct-beta")
+	if err != nil || !found {
+		t.Fatalf("beta account = %#v found=%t err=%v", account, found, err)
+	}
+	account["status"] = "disabled"
+	mustStore(t, store.SaveAccount(context.Background(), account))
+
+	fabric := &runtimeHealthSummaryFabric{summary: clients.RuntimeHealthSummary{Total: 17, Ready: 16, Unready: 1}}
+	data, err := (&controlPlaneServer{tables: store}).operatorOverview(context.Background(), controlplane.NewService(fakeLedgerClient{}, fabric, newOperatorProjectionClient()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	accounts := mapField(data, "accounts")
+	if accounts["available"] != true || mapField(accounts, "data")["total"] != 3 || mapField(accounts, "data")["active"] != 2 || mapField(accounts, "data")["disabled"] != 1 {
+		t.Fatalf("overview accounts = %#v", accounts)
+	}
+	if store.pageAccountCalls != 0 || store.aggregateCalls != 1 {
+		t.Fatalf("overview must not derive totals from paged accounts: page=%d aggregate=%d", store.pageAccountCalls, store.aggregateCalls)
+	}
+	if wallet := mapField(data, "wallet"); wallet["available"] != false || wallet["status"] != "unavailable" {
+		t.Fatalf("untrusted global wallet must remain unavailable: %#v", wallet)
+	}
+	resources := mapField(data, "resources")
+	if resources["available"] != true || mapField(resources, "data")["total"] != 17 {
+		t.Fatalf("overview Fabric resources = %#v", resources)
+	}
+	fabric.mu.Lock()
+	statusCalls, summaryCalls := fabric.calls, fabric.summaryCalls
+	fabric.mu.Unlock()
+	if statusCalls != 0 || summaryCalls != 1 {
+		t.Fatalf("overview Runtime reads status=%d summary=%d", statusCalls, summaryCalls)
 	}
 }
 
@@ -465,8 +605,8 @@ func TestOperatorWorkspaceListAndDetailUseBoundedStoreReads(t *testing.T) {
 	if data["total"] != float64(2) || len(items) != 1 || len(store.pages) != 1 || store.pages[0].accountID != "" || store.pages[0].query != (tablePageQuery{Offset: 1, Limit: 1}) {
 		t.Fatalf("operator workspace pagination data=%#v pages=%#v", data, store.pages)
 	}
-	if len(store.accountLists) != 0 || store.userLists != 1 || len(store.computeLists) != 0 || len(store.storageLists) != 0 || len(store.attachLists) != 0 ||
-		!reflect.DeepEqual(store.getAccountIDs, []string{"acct-alpha"}) || !reflect.DeepEqual(store.getUserIDs, []string{"usr-alpha"}) ||
+	if len(store.accountLists) != 0 || store.userLists != 0 || len(store.computeLists) != 0 || len(store.storageLists) != 0 || len(store.attachLists) != 0 ||
+		!reflect.DeepEqual(store.getAccountIDs, []string{"acct-alpha"}) || !reflect.DeepEqual(store.getUserIDs, []string{"usr-admin", "usr-alpha"}) ||
 		!reflect.DeepEqual(store.getComputeIDs, []string{"compute-ws-beta"}) || !reflect.DeepEqual(store.getStorageIDs, []string{"storage-ws-beta"}) ||
 		!reflect.DeepEqual(store.getAttachmentIDs, []string{"attachment-ws-beta"}) {
 		t.Fatalf("operator current-page facts scanned tables: accounts=%#v users=%d computes=%#v storages=%#v attachments=%#v gets=%#v/%#v/%#v/%#v/%#v", store.accountLists, store.userLists, store.computeLists, store.storageLists, store.attachLists, store.getAccountIDs, store.getUserIDs, store.getComputeIDs, store.getStorageIDs, store.getAttachmentIDs)
@@ -1200,6 +1340,66 @@ func TestOperatorAccountKeyCountFailureIsIsolated(t *testing.T) {
 	}
 }
 
+func TestOperatorAccountPageSharesDeadlineAndBoundsCombinedFanout(t *testing.T) {
+	store := newMemoryTableStore()
+	base := newOperatorProjectionClient()
+	for index := 1; index <= 20; index++ {
+		accountID := fmt.Sprintf("acct-%04d", index)
+		userID := fmt.Sprintf("usr-%04d", index)
+		email := fmt.Sprintf("user-%04d@example.com", index)
+		remoteID := int64(1000 + index)
+		seedOperatorProjectionAccount(t, store, accountID, userID, email, remoteID)
+		base.users = append(base.users, operatorProjectionUser(remoteID, email, "active", int64(index)))
+		base.userUsage[remoteID] = clients.Sub2APIBatchUserUsage{UserID: remoteID}
+		base.keyCounts[remoteID] = index
+	}
+	release := make(chan struct{})
+	client := &boundedOperatorPageSub2API{
+		operatorProjectionSub2API: base,
+		started:                   make(chan string, 40),
+		release:                   release,
+	}
+	t.Cleanup(func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	})
+	result := make(chan error, 1)
+	go func() {
+		_, _, err := (&controlPlaneServer{tables: store}).operatorAccountPage(
+			context.Background(), controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}, client), 1, 20,
+		)
+		result <- err
+	}()
+	started := make([]string, 0, 8)
+	for len(started) < 8 {
+		select {
+		case kind := <-client.started:
+			started = append(started, kind)
+		case <-time.After(500 * time.Millisecond):
+			close(release)
+			<-result
+			t.Fatalf("current-page reads did not share the bounded fanout: started=%v", started)
+		}
+	}
+	close(release)
+	if err := <-result; err != nil {
+		t.Fatal(err)
+	}
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	if client.userMax != 4 || client.keyMax != 4 || client.maxActive > 8 || client.missingDeadline || len(client.deadlines) != 40 {
+		t.Fatalf("bounded page reads user=%d key=%d total=%d missingDeadline=%t deadlines=%d", client.userMax, client.keyMax, client.maxActive, client.missingDeadline, len(client.deadlines))
+	}
+	for _, deadline := range client.deadlines[1:] {
+		if !deadline.Equal(client.deadlines[0]) {
+			t.Fatalf("page reads used different deadlines: first=%s next=%s", client.deadlines[0], deadline)
+		}
+	}
+}
+
 func TestOperatorCurrentPageUserReadsUseAtMostFourConcurrentRequests(t *testing.T) {
 	users := make([]clients.Sub2APIUser, 0, 20)
 	local := make([]map[string]any, 0, 20)
@@ -1215,7 +1415,7 @@ func TestOperatorCurrentPageUserReadsUseAtMostFourConcurrentRequests(t *testing.
 	app := &controlPlaneServer{}
 	done := make(chan map[int64]clients.Sub2APIUser, 1)
 	go func() {
-		done <- app.operatorCurrentPageUsers(context.Background(), controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}, client), local)
+		done <- app.operatorCurrentPageUsers(context.Background(), controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}, client), local, make(chan struct{}, operatorPageTotalConcurrency))
 	}()
 
 	for index := 0; index < 4; index++ {
