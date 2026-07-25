@@ -160,7 +160,10 @@ npm run validate:production-manifest -- \
 
 The `Deploy TKE Production` workflow installs database, internal-service,
 Sub2API, Tencent, image-pull, and Workspace secrets; renders the
-manifest; restarts Control Plane, Fabric, and Ledger; and waits for each rollout.
+manifest once; and observes Control Plane, Fabric, and Ledger within one shared
+300-second deadline. It first requires healthy nodefs/imagefs capacity, preserves
+the current Workspace digest without restarting Workspace Deployments, and
+uploads failure diagnostics before the independent rollback job.
 
 Basic and Pro definitions and prices remain in code, and both are present in the
 production catalog. Catalog visibility is not evidence of a real purchase;

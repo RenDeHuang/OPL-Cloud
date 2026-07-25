@@ -368,30 +368,53 @@ require separate approval.
 ## Deploy
 
 Use the `Deploy TKE Production` workflow with immutable image references. It
-installs secrets, snapshots the current ConfigMap and Cloud images, renders the
-manifest, applies it, and waits for the three Cloud rollouts. It updates the
-immutable Workspace image default used by new Fabric operations, but does not
-restart or wait for existing Workspace Deployments while Runtime/Workspace rollout is
-paused. The current internal PostgreSQL endpoint has no TLS, so the manifest
-sets `PGSSLMODE=disable`. The application accepts that exception only for one
-RFC1918 IPv4 literal in `DATABASE_URL`; `verify-full` remains required for every
-other endpoint.
+first requires `DiskPressure=False` and at least 25 GiB available from the live
+kubelet `nodefs` and `imagefs` statistics. Insufficient capacity fails before
+any apply. The workflow snapshots the current ConfigMap and Cloud images, renders
+the manifest once, and lets that apply create at most one candidate revision for
+each of Control Plane, Ledger, and Fabric. It does not follow the apply with
+`set image` or `rollout restart`.
+
+All three Cloud Deployments share one maximum 300-second observation window.
+Evicted, DiskPressure, ImagePullBackOff, CrashLoopBackOff, and Unschedulable fail
+immediately. The Workspace digest must remain equal to its pre-deploy ConfigMap
+value; existing Workspace Deployments are neither restarted nor awaited. The
+current internal PostgreSQL endpoint has no TLS, so the manifest sets
+`PGSSLMODE=disable`. The application accepts that exception only for one RFC1918
+IPv4 literal in `DATABASE_URL`; `verify-full` remains required for every other
+endpoint.
 
 Set `diagnostics_only=true` to read Nodes, Cloud/Workspace Pod state, Events,
 and Cloud container logs without applying a manifest or changing a workload.
-On a failed deploy, rollback restores the complete previous ConfigMap data
-before restoring the three previous Cloud images.
+On a failed deploy or read-only verifier, a dedicated job first uploads complete
+Deployment, ReplicaSet, Pod, UID-event, current/previous-log, Node-condition,
+nodefs, and imagefs evidence. Only after that artifact succeeds may the single
+independent rollback job restore the complete previous ConfigMap and the three
+previous Cloud images. There is no rollback trap inside the deploy step.
 
-Manual bounded rollout checks:
+The ordinary verifier requires the three Cloud Pods to be Ready with image IDs
+matching the candidate digest, the Workspace ConfigMap digest to be unchanged,
+and the existing administrator and read-only pages to pass. It reads
+`/api/production/readiness` as a full-system diagnostic, but does not require
+`workspaceImagesReady`, `immutableImagesReady`, or overall `ready=true` for a
+Cloud-only rollout. `/api/healthz` is the Control Plane Pod-local readiness and
+liveness probe.
+
+Manual read-only inspection, when needed:
 
 ```bash
-kubectl -n opl-cloud rollout status deployment/opl-cloud-control-plane --timeout=5m
-kubectl -n opl-cloud rollout status deployment/opl-cloud-fabric --timeout=5m
-kubectl -n opl-cloud rollout status deployment/opl-cloud-ledger --timeout=5m
+kubectl -n opl-cloud get deployment opl-cloud-control-plane opl-cloud-ledger opl-cloud-fabric -o json
+kubectl -n opl-cloud get pods -l app.kubernetes.io/name=opl-cloud -o json
+kubectl get nodes -o json
+kubectl get --raw /api/v1/nodes/10.66.0.42/proxy/stats/summary
 ```
 
 Then check health and readiness through the production endpoints. An old image
 digest or timeout is a failed rollout.
+
+The broad immutable selector on the existing Control Plane Deployment requires
+a separately approved Deployment replacement. Ordinary rollout keeps that
+selector unchanged and must not recreate the Deployment.
 
 ## Paused Provider Verification
 

@@ -133,9 +133,7 @@ export async function verifyProductionReadOnlyRollout(options = {}) {
   const health = (await requestJson({ ...requestOptions, path: "/api/healthz" })).payload;
   if (health?.status !== "ok" || Object.keys(health).length !== 1) throw new Error("production_health_invalid");
   const readiness = (await requestJson({ ...requestOptions, path: "/api/production/readiness" })).payload;
-  if (readiness?.ready !== true || readiness?.cloudImagesReady !== true || readiness?.workspaceImagesReady !== true || readiness?.immutableImagesReady !== true) {
-    throw new Error("production_readiness_invalid");
-  }
+  if (readiness?.cloudImagesReady !== true) throw new Error("production_cloud_readiness_invalid");
 
   const auth = await login({ ...requestOptions, ...credentials });
   if (auth.user?.accountId !== PRODUCTION_ADMIN.accountId || auth.user?.role !== PRODUCTION_ADMIN.role) throw new Error("production_read_only_login_failed");
@@ -203,7 +201,12 @@ export async function verifyProductionReadOnlyRollout(options = {}) {
     sub2apiUserId,
     checks: {
       health: "ok",
-      readiness: "ready",
+      readiness: {
+        cloudImagesReady: true,
+        systemReady: readiness?.ready === true,
+        workspaceImagesReady: readiness?.workspaceImagesReady === true,
+        immutableImagesReady: readiness?.immutableImagesReady === true
+      },
       identity: "authoritative",
       wallet: "available",
       keys: "page_1_size_20",

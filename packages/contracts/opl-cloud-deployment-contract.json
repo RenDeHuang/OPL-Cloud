@@ -1,9 +1,9 @@
 {
-  "schemaVersion": 12,
+  "schemaVersion": 13,
   "owner": "OPL Fabric",
   "purpose": "Deployment workflow, immutable Cloud and Workspace images, TKE handoff, read-only diagnostics, and production-verification safety.",
   "state": "current",
-  "machineBoundary": "GitHub workflow structure, runner isolation, deploy-time env sources, secret handling, immutable image release, ConfigMap-aware Cloud rollback, real read-only ordinary-rollout verification, read-only diagnostics, existing Workspace preservation, Basic rollout readiness, paused standalone verification, and legacy global Secret retirement.",
+  "machineBoundary": "GitHub workflow structure, runner isolation, deploy-time env sources, secret handling, immutable image release, node-storage preflight, single-revision Cloud rollout, diagnostics-before-rollback, real read-only ordinary-rollout verification, existing Workspace preservation, and paused standalone verification.",
   "lifecycle": {
     "type": "long_term_contract",
     "removalCondition": "Replace only with a newer current contract for the same boundary."
@@ -25,6 +25,14 @@
     "persistence": "none",
     "restartBehavior": "reauthentication_required",
     "horizontalScaling": "blocked_pending_secure_shared_vault"
+  },
+  "deferredControlPlaneSelectorMigration": {
+    "deployment": "opl-cloud-control-plane",
+    "currentSelector": {"app.kubernetes.io/name": "opl-cloud"},
+    "targetSelectorAdds": {"app.kubernetes.io/component": "control-plane"},
+    "reason": "kubernetes_deployment_selector_is_immutable",
+    "ordinaryRolloutBehavior": "leave_unchanged",
+    "requires": "separate_approved_deployment_replacement"
   },
   "productionPostgresTransport": {
     "currentEndpoint": "internal_non_tls",
@@ -53,7 +61,6 @@
     "inputs": [
       "cloud_image",
       "workspace_image",
-      "exercise_rollback",
       "bootstrap_mode",
       "diagnostics_only"
     ],
@@ -128,6 +135,7 @@
       "Prepare kubeconfig",
       "Check deployment inputs",
       "Verify TKE access",
+      "Preflight rollout node storage",
       "Check TLS certificate inputs",
       "Install Kubernetes secrets",
       "Install and verify TLS secret",
@@ -138,6 +146,14 @@
       "Remove deployment secrets"
     ],
     "orderedSteps": [
+      [
+        "Verify TKE access",
+        "Preflight rollout node storage"
+      ],
+      [
+        "Preflight rollout node storage",
+        "Install Kubernetes secrets"
+      ],
       [
         "Check TLS certificate inputs",
         "Install Kubernetes secrets"
@@ -178,6 +194,11 @@
         "must match the current production Workspace image",
         "sha256"
       ],
+      "Preflight rollout node storage": [
+        "source tools/tke-image-rollout.sh",
+        "preflight_rollout_storage",
+        "node-storage-preflight.json"
+      ],
       "Install Kubernetes secrets": [
         "--from-file=DATABASE_URL=\"$secret_dir/database-url\"",
         "--from-file=OPL_INTERNAL_SERVICE_TOKEN=\"$secret_dir/internal-service-token\"",
@@ -199,7 +220,9 @@
         "opl-cloud-fabric:fabric",
         "get configmap opl-cloud-config",
         "-o json",
-        "opl-cloud-config.json"
+        "opl-cloud-config.json",
+        "deployment.json",
+        "node-storage-preflight.json"
       ],
       "Upload rollback image set": [
         "actions/upload-artifact@v4",
@@ -212,9 +235,7 @@
         "kubectl --kubeconfig \"$KUBECONFIG\" apply -f \"$OPL_DEPLOY_SECRET_DIR/opl-cloud.rendered.json\"",
         "source tools/tke-image-rollout.sh",
         "apply_candidate_images",
-        "apply_bootstrap_images",
-        "restore_previous_images",
-        "restore_previous_bootstrap_images"
+        "apply_bootstrap_images"
       ],
       "Remove deployment secrets": [
         "always()",
@@ -228,6 +249,20 @@
       "providedValue": "must_equal_current_production_digest",
       "bootstrapWithoutConfigMap": "explicit_digest_required",
       "existingWorkspaceDeployments": "preserved_without_restart"
+    },
+    "nodeStoragePreflight": {
+      "diskPressure": "False",
+      "source": "kubelet_stats_summary",
+      "filesystems": ["nodefs", "imagefs"],
+      "minimumAvailableBytes": 26843545600,
+      "failureBehavior": "fail_before_any_kubectl_apply"
+    },
+    "cloudRollout": {
+      "deployments": ["opl-cloud-control-plane", "opl-cloud-ledger", "opl-cloud-fabric"],
+      "candidateRevisionPerDeployment": 1,
+      "candidateMutation": "single_manifest_apply",
+      "sharedDeadlineSeconds": 300,
+      "failFastReasons": ["Evicted", "DiskPressure", "ImagePullBackOff", "CrashLoopBackOff", "Unschedulable"]
     },
     "existingWorkspaceRolloutPolicy": "preserve_existing_deployments_reuse_current_digest_without_restart",
     "forbiddenRunTokens": [
@@ -523,6 +558,9 @@
     "trigger": "ordinary_deploy_success",
     "readOnly": true,
     "batchOrMutationCount": 0,
+    "fullSystemReadinessRequired": false,
+    "podRequirements": ["three_cloud_pods_ready", "candidate_cloud_image_id"],
+    "workspaceRequirement": "configmap_digest_unchanged",
     "runner": [
       "self-hosted",
       "tencent-cloud",
@@ -596,13 +634,12 @@
     "forbidden": ["charge", "model_request", "tencent_mutation"],
     "forbiddenRunTokens": ["--allow-gateway-write", "--allow-model-write", "provider-acceptance"]
   },
-  "productionLegacySecretCleanupJob": {
+  "productionFailureDiagnosticsJob": {
     "file": ".github/workflows/deploy-tke-production.yml",
-    "job": "retire-legacy-workspace-secret",
-    "trigger": "candidate_rollout_successful",
-    "failureBehavior": "fail_workflow_without_image_rollback",
-    "legacySecretName": "opl-cloud-workspace-codex",
-    "accountScopedSecretDeletionForbidden": true,
+    "job": "capture-rollout-failure",
+    "trigger": "post_snapshot_deploy_bootstrap_or_read_only_verifier_not_successful",
+    "readOnly": true,
+    "artifactRequiredBeforeRollback": true,
     "runner": [
       "self-hosted",
       "tencent-cloud",
@@ -620,35 +657,46 @@
       "TENCENT_DEPLOY_KUBECONFIG"
     ],
     "steps": [
-      "Prepare cleanup kubeconfig",
-      "Retire legacy global Workspace secret",
-      "Remove cleanup kubeconfig"
+      "Checkout",
+      "Set up Node",
+      "Prepare failure diagnostics kubeconfig",
+      "Capture failed rollout diagnostics",
+      "Upload failed rollout diagnostics",
+      "Remove failure diagnostics kubeconfig"
     ],
     "requiredCommandsByStep": {
-      "Prepare cleanup kubeconfig": [
+      "Set up Node": [
+        "node-version",
+        "22"
+      ],
+      "Prepare failure diagnostics kubeconfig": [
         "TENCENT_DEPLOY_KUBECONFIG_PATH",
         "TENCENT_DEPLOY_KUBECONFIG_B64",
         "TENCENT_DEPLOY_KUBECONFIG"
       ],
-      "Retire legacy global Workspace secret": [
-        "delete secret opl-cloud-workspace-codex --ignore-not-found",
-        "get secret opl-cloud-workspace-codex --ignore-not-found -o name"
+      "Capture failed rollout diagnostics": [
+        "source tools/tke-image-rollout.sh",
+        "capture_rollout_diagnostics",
+        "production-rollout-diagnostics"
       ],
-      "Remove cleanup kubeconfig": [
+      "Upload failed rollout diagnostics": [
+        "actions/upload-artifact@v4",
+        "production-rollout-diagnostics",
+        "retention-days"
+      ],
+      "Remove failure diagnostics kubeconfig": [
         "always()",
         "find \"$secret_dir\" -mindepth 1 -delete",
         "rmdir \"$secret_dir\""
       ]
     },
-    "forbiddenRunTokens": [
-      "--selector",
-      "delete secrets"
-    ]
+    "evidence": ["deployment_revision_image_conditions", "replicaset_owner_reference", "pod_deletion_timestamp_image_id", "uid_events_timeline", "current_previous_logs", "node_conditions", "nodefs_imagefs_stats"],
+    "forbiddenRunTokens": []
   },
   "productionRollbackJob": {
     "file": ".github/workflows/deploy-tke-production.yml",
     "job": "rollback-live-qa",
-    "trigger": "post_snapshot_deploy_bootstrap_or_read_only_verifier_not_successful",
+    "trigger": "post_diagnostics_artifact_upload",
     "runner": [
       "self-hosted",
       "tencent-cloud",
@@ -670,7 +718,7 @@
       "Set up Node",
       "Prepare rollback kubeconfig",
       "Download rollback image set",
-      "Restore previous Cloud and App images",
+      "Restore previous Cloud images and ConfigMap",
       "Remove rollback kubeconfig"
     ],
     "requiredCommandsByStep": {
@@ -687,7 +735,7 @@
         "actions/download-artifact@v4",
         "production-rollback-images"
       ],
-      "Restore previous Cloud and App images": [
+      "Restore previous Cloud images and ConfigMap": [
         "source tools/tke-image-rollout.sh",
         "restore_previous_images",
         "restore_previous_bootstrap_images",
