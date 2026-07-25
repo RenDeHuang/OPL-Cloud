@@ -376,10 +376,15 @@ each of Control Plane, Ledger, and Fabric. It does not follow the apply with
 `set image` or `rollout restart`.
 
 All three Cloud Deployments share one maximum 300-second observation window.
-Evicted, DiskPressure, ImagePullBackOff, CrashLoopBackOff, and Unschedulable fail
-immediately. The Workspace digest must remain equal to its pre-deploy ConfigMap
-value; existing Workspace Deployments are neither restarted nor awaited. The
-current internal PostgreSQL endpoint has no TLS, so the manifest sets
+For each Deployment, the observer follows the current revision through exact
+Deployment-to-ReplicaSet and ReplicaSet-to-Pod controller owner UIDs and checks
+the expected image. Evicted, ImagePullBackOff, CrashLoopBackOff, and
+Unschedulable fail immediately only on those current-revision Pods;
+DiskPressure remains node-wide. Historical terminal Pods stay in diagnostic
+artifacts and do not affect candidate or rollback convergence. The Workspace
+digest must remain equal to its pre-deploy ConfigMap value; existing Workspace
+Deployments are neither restarted nor awaited. The current internal PostgreSQL
+endpoint has no TLS, so the manifest sets
 `PGSSLMODE=disable`. The application accepts that exception only for one RFC1918
 IPv4 literal in `DATABASE_URL`; `verify-full` remains required for every other
 endpoint.

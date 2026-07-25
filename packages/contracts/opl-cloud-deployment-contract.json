@@ -262,7 +262,14 @@
       "candidateRevisionPerDeployment": 1,
       "candidateMutation": "single_manifest_apply",
       "sharedDeadlineSeconds": 300,
-      "failFastReasons": ["Evicted", "DiskPressure", "ImagePullBackOff", "CrashLoopBackOff", "Unschedulable"]
+      "failFastReasons": ["Evicted", "DiskPressure", "ImagePullBackOff", "CrashLoopBackOff", "Unschedulable"],
+      "observerScope": {
+        "deployment": "current_uid_revision_and_expected_image",
+        "replicaSet": "deployment_controller_owner_uid_name_revision_and_expected_image",
+        "pod": "replicaset_controller_owner_uid",
+        "historicalTerminalPods": "diagnostics_only",
+        "candidateAndRollback": "same_owner_chain_rules"
+      }
     },
     "existingWorkspaceRolloutPolicy": "preserve_existing_deployments_reuse_current_digest_without_restart",
     "forbiddenRunTokens": [

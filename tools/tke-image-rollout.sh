@@ -153,15 +153,18 @@ NODE
     fi
     kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" get deployment \
       opl-cloud-control-plane opl-cloud-ledger opl-cloud-fabric -o json > "$state_dir/deployments.json" || return 1
+    kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" get replicasets \
+      -l app.kubernetes.io/name=opl-cloud -o json > "$state_dir/replicasets.json" || return 1
     kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" get pods \
       -l app.kubernetes.io/name=opl-cloud -o json > "$state_dir/pods.json" || return 1
 
     if CONTROL_PLANE_IMAGE="$control_plane_image" LEDGER_IMAGE="$ledger_image" FABRIC_IMAGE="$fabric_image" \
-      node - "$state_dir/nodes.json" "$state_dir/deployments.json" "$state_dir/pods.json" <<'NODE'
+      node - "$state_dir/nodes.json" "$state_dir/deployments.json" "$state_dir/replicasets.json" "$state_dir/pods.json" <<'NODE'
 const fs = require("node:fs");
 const nodes = JSON.parse(fs.readFileSync(process.argv[2], "utf8")).items || [];
 const deployments = JSON.parse(fs.readFileSync(process.argv[3], "utf8")).items || [];
-const pods = JSON.parse(fs.readFileSync(process.argv[4], "utf8")).items || [];
+const replicasets = JSON.parse(fs.readFileSync(process.argv[4], "utf8")).items || [];
+const pods = JSON.parse(fs.readFileSync(process.argv[5], "utf8")).items || [];
 for (const node of nodes) {
   const pressure = (node.status?.conditions || []).find((item) => item.type === "DiskPressure");
   if (pressure?.status === "True") throw new Error(`rollout_DiskPressure:${node.metadata?.name || "unknown"}`);
@@ -171,10 +174,16 @@ const expected = new Map([
   ["opl-cloud-ledger", ["ledger", process.env.LEDGER_IMAGE]],
   ["opl-cloud-fabric", ["fabric", process.env.FABRIC_IMAGE]]
 ]);
-const cloudComponents = new Set(["control-plane", "ledger", "fabric"]);
-for (const pod of pods) {
-  const component = pod.metadata?.labels?.["app.kubernetes.io/component"];
-  if (!cloudComponents.has(component)) continue;
+const revisionKey = "deployment.kubernetes.io/revision";
+const containerImage = (item, containerName) =>
+  (item.spec?.template?.spec?.containers || []).find((container) => container.name === containerName)?.image;
+const ownedBy = (item, kind, name, uid) => {
+  if (!name || !uid) return false;
+  return (item.metadata?.ownerReferences || []).some((owner) =>
+    owner.controller === true && owner.kind === kind && owner.name === name && owner.uid === uid
+  );
+};
+const failOnTerminalPod = (pod) => {
   if (pod.status?.reason === "Evicted") throw new Error(`rollout_Evicted:${pod.metadata?.name || "unknown"}`);
   const unschedulable = (pod.status?.conditions || []).find((item) =>
     item.type === "PodScheduled" && item.status === "False" && item.reason === "Unschedulable"
@@ -186,15 +195,35 @@ for (const pod of pods) {
       throw new Error(`rollout_${reason}:${pod.metadata?.name || "unknown"}:${status.name}`);
     }
   }
-}
+};
 let complete = true;
 for (const [name, [containerName, expectedImage]] of expected) {
   const deployment = deployments.find((item) => item.metadata?.name === name);
   if (!deployment) throw new Error(`rollout_deployment_missing:${name}`);
-  const image = (deployment.spec?.template?.spec?.containers || []).find((item) => item.name === containerName)?.image;
+  const image = containerImage(deployment, containerName);
   if (!expectedImage || image !== expectedImage) throw new Error(`rollout_image_mismatch:${name}`);
   const desired = Number(deployment.spec?.replicas ?? 1);
   const status = deployment.status || {};
+  const deploymentUid = String(deployment.metadata?.uid || "");
+  const revision = String(deployment.metadata?.annotations?.[revisionKey] || "");
+  const matchingReplicaSets = replicasets.filter((replicaSet) =>
+    ownedBy(replicaSet, "Deployment", name, deploymentUid) &&
+    String(replicaSet.metadata?.annotations?.[revisionKey] || "") === revision &&
+    containerImage(replicaSet, containerName) === expectedImage
+  );
+  if (!deploymentUid || !revision || matchingReplicaSets.length !== 1) {
+    complete = false;
+    continue;
+  }
+  const replicaSet = matchingReplicaSets[0];
+  const replicaSetName = String(replicaSet.metadata?.name || "");
+  const replicaSetUid = String(replicaSet.metadata?.uid || "");
+  const currentPods = pods.filter((pod) => ownedBy(pod, "ReplicaSet", replicaSetName, replicaSetUid));
+  for (const pod of currentPods) failOnTerminalPod(pod);
+  if (!replicaSetName || !replicaSetUid || (desired > 0 && currentPods.length === 0)) {
+    complete = false;
+    continue;
+  }
   if (Number(status.observedGeneration || 0) < Number(deployment.metadata?.generation || 0) ||
       Number(status.updatedReplicas || 0) !== desired || Number(status.readyReplicas || 0) !== desired ||
       Number(status.availableReplicas || 0) !== desired || Number(status.unavailableReplicas || 0) !== 0) {
