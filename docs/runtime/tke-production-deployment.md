@@ -33,7 +33,8 @@ Production manifests must:
 Production deploy workflow must:
 
 - run from the approved production environment;
-- use a VPC-capable self-hosted runner for cluster access;
+- use a VPC-capable self-hosted runner only for cluster access and a separate
+  GitHub-hosted Ubuntu runner for public API and browser verification;
 - validate rendered manifests before apply;
 - require `DiskPressure=False` and at least 25 GiB available on both live
   `nodefs` and `imagefs` before any apply;
@@ -50,8 +51,11 @@ Production deploy workflow must:
   independent rollback job runs;
 - preserve the Workspace ConfigMap digest and never restart or wait for existing
   Workspace Deployments;
-- verify the three Ready Cloud Pod image IDs, the unchanged Workspace digest,
-  the existing administrator identity, and read-only Console pages. Full-system
+- verify the three current-revision Ready Cloud Pod image IDs and unchanged
+  Workspace digest in the cluster job, then verify the existing administrator
+  identity and read-only Console pages in the public job. The cluster job holds
+  no administrator credentials or browser dependencies; the public job holds
+  no kubeconfig or Tencent deployment secrets. Full-system
   `/api/production/readiness` remains diagnostic and is not a Pod-local probe;
 - keep Provider Acceptance and Basic/Pro fixed-slot verification paused and out
   of the ordinary release gate;

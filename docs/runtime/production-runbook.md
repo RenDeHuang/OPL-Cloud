@@ -391,19 +391,23 @@ endpoint.
 
 Set `diagnostics_only=true` to read Nodes, Cloud/Workspace Pod state, Events,
 and Cloud container logs without applying a manifest or changing a workload.
-On a failed deploy or read-only verifier, a dedicated job first uploads complete
-Deployment, ReplicaSet, Pod, UID-event, current/previous-log, Node-condition,
-nodefs, and imagefs evidence. Only after that artifact succeeds may the single
-independent rollback job restore the complete previous ConfigMap and the three
-previous Cloud images. There is no rollback trap inside the deploy step.
+On a failed deploy, cluster verifier, or public read-only verifier, a dedicated
+job first uploads complete Deployment, ReplicaSet, Pod, UID-event,
+current/previous-log, Node-condition, nodefs, and imagefs evidence. Only after
+that artifact succeeds may the single independent rollback job restore the
+complete previous ConfigMap and the three previous Cloud images. There is no
+rollback trap inside the deploy step.
 
-The ordinary verifier requires the three Cloud Pods to be Ready with image IDs
-matching the candidate digest, the Workspace ConfigMap digest to be unchanged,
-and the existing administrator and read-only pages to pass. It reads
-`/api/production/readiness` as a full-system diagnostic, but does not require
-`workspaceImagesReady`, `immutableImagesReady`, or overall `ready=true` for a
-Cloud-only rollout. `/api/healthz` is the Control Plane Pod-local readiness and
-liveness probe.
+Ordinary verification is split by trust boundary. The VPC self-hosted cluster
+job holds only kubeconfig and requires the three current-revision Cloud Pods to
+be Ready with image IDs matching the candidate digest while the Workspace
+ConfigMap digest remains unchanged. A separate GitHub-hosted Ubuntu job holds
+only the existing administrator credentials, installs Chromium with its system
+dependencies, and verifies public API and desktop/mobile Console read-only
+surfaces. It reads `/api/production/readiness` as a full-system diagnostic, but
+does not require `workspaceImagesReady`, `immutableImagesReady`, or overall
+`ready=true` for a Cloud-only rollout. `/api/healthz` is the Control Plane
+Pod-local readiness and liveness probe.
 
 Manual read-only inspection, when needed:
 

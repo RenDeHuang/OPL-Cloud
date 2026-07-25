@@ -1,9 +1,9 @@
 {
-  "schemaVersion": 13,
+  "schemaVersion": 14,
   "owner": "OPL Fabric",
   "purpose": "Deployment workflow, immutable Cloud and Workspace images, TKE handoff, read-only diagnostics, and production-verification safety.",
   "state": "current",
-  "machineBoundary": "GitHub workflow structure, runner isolation, deploy-time env sources, secret handling, immutable image release, node-storage preflight, single-revision Cloud rollout, diagnostics-before-rollback, real read-only ordinary-rollout verification, existing Workspace preservation, and paused standalone verification.",
+  "machineBoundary": "GitHub workflow structure, cluster/public verifier runner isolation, deploy-time env sources, secret handling, immutable image release, node-storage preflight, single-revision Cloud rollout, diagnostics-before-rollback, real read-only ordinary-rollout verification, existing Workspace preservation, and paused standalone verification.",
   "lifecycle": {
     "type": "long_term_contract",
     "removalCondition": "Replace only with a newer current contract for the same boundary."
@@ -545,7 +545,7 @@
       "ubuntu-latest"
     ],
     "inputs": ["bootstrap_mode"],
-    "needs": ["deploy", "bootstrap-readiness", "verify-rollout-read-only", "rollback-live-qa"],
+    "needs": ["deploy", "bootstrap-readiness", "verify-rollout-cluster", "verify-rollout-public-read-only", "rollback-live-qa"],
     "requiredEnv": [],
     "steps": [
       "Require completed ordinary release"
@@ -559,13 +559,12 @@
     },
     "forbiddenRunTokens": []
   },
-  "productionReadOnlyRolloutVerifierJob": {
+  "productionRolloutClusterVerifierJob": {
     "file": ".github/workflows/deploy-tke-production.yml",
-    "job": "verify-rollout-read-only",
+    "job": "verify-rollout-cluster",
     "trigger": "ordinary_deploy_success",
     "readOnly": true,
-    "batchOrMutationCount": 0,
-    "fullSystemReadinessRequired": false,
+    "responsibility": "current_cloud_deployment_revision_ready_pod_image_id_and_unchanged_workspace_digest",
     "podRequirements": ["three_cloud_pods_ready", "candidate_cloud_image_id"],
     "workspaceRequirement": "configmap_digest_unchanged",
     "runner": [
@@ -579,72 +578,110 @@
       "OPL_K8S_NAMESPACE",
       "OPL_CLOUD_IMAGE",
       "OPL_WORKSPACE_IMAGE",
-      "OPL_CONSOLE_ORIGIN",
-      "OPL_SUB2API_ADMIN_EMAIL",
-      "OPL_SUB2API_ADMIN_PASSWORD",
-      "OPL_VERIFY_REQUEST_TIMEOUT_MS",
       "TENCENT_DEPLOY_KUBECONFIG_PATH",
       "TENCENT_DEPLOY_KUBECONFIG_B64",
       "TENCENT_DEPLOY_KUBECONFIG"
     ],
     "secretEnv": [
-      "OPL_SUB2API_ADMIN_EMAIL",
-      "OPL_SUB2API_ADMIN_PASSWORD",
       "TENCENT_DEPLOY_KUBECONFIG_B64",
       "TENCENT_DEPLOY_KUBECONFIG"
     ],
     "steps": [
       "Checkout",
       "Set up Node",
-      "Install verifier dependencies",
-      "Install verifier browser",
-      "Prepare verifier kubeconfig",
+      "Prepare cluster verifier kubeconfig",
       "Verify Cloud image IDs and Workspace digest",
-      "Verify production read-only surfaces",
-      "Remove verifier kubeconfig"
+      "Remove cluster verifier kubeconfig"
     ],
     "requiredCommandsByStep": {
       "Set up Node": [
         "node-version",
         "22"
       ],
-      "Install verifier dependencies": [
-        "npm ci"
-      ],
-      "Install verifier browser": [
-        "playwright install chromium"
-      ],
-      "Prepare verifier kubeconfig": [
+      "Prepare cluster verifier kubeconfig": [
         "TENCENT_DEPLOY_KUBECONFIG_PATH",
         "TENCENT_DEPLOY_KUBECONFIG_B64",
         "TENCENT_DEPLOY_KUBECONFIG"
       ],
       "Verify Cloud image IDs and Workspace digest": [
         "OPL_CLOUD_IMAGE",
+        "get deployments",
+        "get replicasets",
+        "deployment.kubernetes.io/revision",
+        "ownerReferences",
         "imageID",
         "OPL_WORKSPACE_IMAGE",
         "get configmap opl-cloud-config"
       ],
-      "Verify production read-only surfaces": [
-        "/api/healthz",
-        "/api/production/readiness",
-        "retired routes 404",
-        "production-live-qa.ts --read-only"
-      ],
-      "Remove verifier kubeconfig": [
+      "Remove cluster verifier kubeconfig": [
         "always()",
         "find \"$secret_dir\" -mindepth 1 -delete",
         "rmdir \"$secret_dir\""
       ]
     },
-    "checks": ["cloud_health", "production_readiness", "ready_pod_image_id", "workspace_digest_unchanged", "existing_admin_identity", "wallet", "key_usage_pagination", "operator_overview_accounts_workspaces", "fabric_ledger_source_envelopes", "retired_routes_404", "desktop_console", "mobile_console"],
-    "forbidden": ["charge", "model_request", "tencent_mutation"],
+    "checks": ["current_deployment_revision", "ready_pod_image_id", "workspace_digest_unchanged"],
+    "forbiddenEnv": ["OPL_CONSOLE_ORIGIN", "OPL_SUB2API_ADMIN_EMAIL", "OPL_SUB2API_ADMIN_PASSWORD"],
+    "forbiddenJobRunTokens": ["npm ci", "playwright", "production-live-qa", "/api/healthz", "/api/production/readiness"],
+    "forbiddenRunTokens": []
+  },
+  "productionPublicReadOnlyVerifierJob": {
+    "file": ".github/workflows/deploy-tke-production.yml",
+    "job": "verify-rollout-public-read-only",
+    "trigger": "ordinary_cluster_verifier_success",
+    "needs": ["deploy", "verify-rollout-cluster"],
+    "readOnly": true,
+    "businessMutationCount": 0,
+    "fullSystemReadinessRequired": false,
+    "runner": [
+      "ubuntu-latest"
+    ],
+    "inputs": ["bootstrap_mode"],
+    "requiredEnv": [
+      "OPL_CONSOLE_ORIGIN",
+      "OPL_SUB2API_ADMIN_EMAIL",
+      "OPL_SUB2API_ADMIN_PASSWORD",
+      "OPL_VERIFY_REQUEST_TIMEOUT_MS"
+    ],
+    "secretEnv": [
+      "OPL_SUB2API_ADMIN_EMAIL",
+      "OPL_SUB2API_ADMIN_PASSWORD"
+    ],
+    "steps": [
+      "Checkout",
+      "Set up Node",
+      "Install public verifier dependencies",
+      "Install public verifier browser and system dependencies",
+      "Verify production public read-only surfaces"
+    ],
+    "requiredCommandsByStep": {
+      "Set up Node": [
+        "node-version",
+        "22"
+      ],
+      "Install public verifier dependencies": [
+        "npm ci"
+      ],
+      "Install public verifier browser and system dependencies": [
+        "playwright install --with-deps chromium"
+      ],
+      "Verify production public read-only surfaces": [
+        "/api/healthz",
+        "/api/production/readiness",
+        "retired routes 404",
+        "production-live-qa.ts --read-only"
+      ]
+    },
+    "checks": ["cloud_health", "production_readiness", "existing_admin_identity", "wallet", "key_usage_pagination", "operator_overview_accounts_workspaces", "fabric_ledger_source_envelopes", "retired_routes_404", "desktop_console", "mobile_console"],
+    "forbiddenEnv": ["TENCENT_DEPLOY_KUBECONFIG_PATH", "TENCENT_DEPLOY_KUBECONFIG_B64", "TENCENT_DEPLOY_KUBECONFIG", "TENCENTCLOUD_SECRET_ID", "TENCENTCLOUD_SECRET_KEY"],
+    "forbidden": ["charge", "wallet_write", "key_write", "model_request", "workspace_write", "tencent_mutation"],
+    "forbiddenJobRunTokens": ["kubectl"],
     "forbiddenRunTokens": ["--allow-gateway-write", "--allow-model-write", "provider-acceptance"]
   },
   "productionFailureDiagnosticsJob": {
     "file": ".github/workflows/deploy-tke-production.yml",
     "job": "capture-rollout-failure",
-    "trigger": "post_snapshot_deploy_bootstrap_or_read_only_verifier_not_successful",
+    "trigger": "post_snapshot_deploy_bootstrap_cluster_or_public_read_only_verifier_not_successful",
+    "needs": ["deploy", "bootstrap-readiness", "verify-rollout-cluster", "verify-rollout-public-read-only"],
     "readOnly": true,
     "artifactRequiredBeforeRollback": true,
     "runner": [
@@ -704,6 +741,7 @@
     "file": ".github/workflows/deploy-tke-production.yml",
     "job": "rollback-live-qa",
     "trigger": "post_diagnostics_artifact_upload",
+    "needs": ["deploy", "bootstrap-readiness", "verify-rollout-cluster", "verify-rollout-public-read-only", "capture-rollout-failure"],
     "runner": [
       "self-hosted",
       "tencent-cloud",

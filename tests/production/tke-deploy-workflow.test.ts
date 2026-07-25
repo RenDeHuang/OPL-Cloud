@@ -199,11 +199,16 @@ function assertWorkflowContract(workflow, spec, rootContract) {
   for (const key of spec.secretEnv || []) {
     assert.ok(String(currentJob.env?.[key] || "").includes("secrets."), `${key} must come from GitHub secrets`);
   }
+  for (const key of spec.forbiddenEnv || []) {
+    assert.equal(Object.hasOwn(currentJob.env || {}, key), false, `${spec.file} ${spec.job} contains env ${key}`);
+  }
   for (const [stepName, tokens] of Object.entries(spec.requiredCommandsByStep || {})) {
     const text = serializedStep(stepMap.get(stepName));
     for (const token of tokens) assert.ok(text.includes(token), `${spec.file} ${stepName} missing ${token}`);
   }
 
+  const currentJobText = JSON.stringify(currentJob);
+  for (const token of spec.forbiddenJobRunTokens || []) assert.equal(currentJobText.includes(token), false, `${spec.file} ${spec.job} contains ${token}`);
   const text = JSON.stringify(workflow);
   for (const token of spec.forbiddenRunTokens || []) assert.equal(text.includes(token), false, `${spec.file} contains ${token}`);
 }
@@ -443,7 +448,8 @@ test("TKE deploy workflow matches the current deployment contract", async () => 
   assert.equal(contract.productionBootstrapJob.releaseComplete, false);
   assert.equal(contract.productionBootstrapJob.approvalEnvironment, "production");
   assertWorkflowContract(deployWorkflow, contract.productionBootstrapJob, contract);
-  assertWorkflowContract(deployWorkflow, contract.productionReadOnlyRolloutVerifierJob, contract);
+  assertWorkflowContract(deployWorkflow, contract.productionRolloutClusterVerifierJob, contract);
+  assertWorkflowContract(deployWorkflow, contract.productionPublicReadOnlyVerifierJob, contract);
   assert.equal(contract.productionReleaseGateJob.bootstrapConclusion, "release_incomplete_failure");
   assertWorkflowContract(deployWorkflow, contract.productionReleaseGateJob, contract);
   assert.equal(contract.productionLegacySecretCleanupJob, undefined);
@@ -559,55 +565,86 @@ test("TKE diagnostics are read only and mutually exclusive with deploy", async (
   assert.doesNotMatch(runs, /\b(?:apply|delete|patch|scale)\b|set image|rollout restart/);
 });
 
-test("ordinary TKE release requires the real read-only rollout verifier", async () => {
+test("ordinary TKE release isolates cluster and public read-only verifiers", async () => {
   const [workflow, contract] = await Promise.all([
     readWorkflow(".github/workflows/deploy-tke-production.yml"),
     readJson(deploymentContractPath)
   ]);
-  const verifier = workflowJob(workflow, "verify-rollout-read-only");
+  const clusterVerifier = workflowJob(workflow, "verify-rollout-cluster");
+  const publicVerifier = workflowJob(workflow, "verify-rollout-public-read-only");
   const releaseGate = workflowJob(workflow, "release-gate");
   const diagnostics = workflowJob(workflow, "capture-rollout-failure");
   const rollback = workflowJob(workflow, "rollback-live-qa");
-  const verifierRun = serializedRuns(verifier);
+  const clusterRun = serializedRuns(clusterVerifier);
+  const publicRun = serializedRuns(publicVerifier);
+  const releaseRun = serializedRuns(releaseGate);
 
-  assert.equal(verifier.needs, "deploy");
-  assert.match(String(verifier.if), /!inputs\.bootstrap_mode.*needs\.deploy\.result == 'success'/);
-  assert.deepEqual(verifier["runs-on"], ["self-hosted", "tencent-cloud", "opl-cloud", "tke-vpc"]);
-  assert.equal(verifier.environment, "production");
-  assert.equal(verifier.env.OPL_SUB2API_ADMIN_EMAIL, "${{ secrets.OPL_SUB2API_ADMIN_EMAIL }}");
-  assert.equal(verifier.env.OPL_SUB2API_ADMIN_PASSWORD, "${{ secrets.OPL_SUB2API_ADMIN_PASSWORD }}");
-  assert.equal(Object.hasOwn(verifier.env, "OPL_VERIFY_AUTH_USERS_JSON"), false);
-  assert.equal(Object.hasOwn(verifier.env, "OPL_VERIFY_ACCOUNT_ID"), false);
-  assert.match(verifierRun, /api\/healthz/);
-  assert.match(verifierRun, /api\/production\/readiness/);
-  assert.match(verifierRun, /imageID|imageId/);
-  assert.match(verifierRun, /metadata\?\.deletionTimestamp/);
-  assert.match(verifierRun, /condition\.type === "Ready"/);
-  assert.match(verifierRun, /OPL_CLOUD_IMAGE/);
-  assert.match(verifierRun, /OPL_WORKSPACE_IMAGE/);
-  assert.match(verifierRun, /production-live-qa\.ts --read-only/);
-  assert.match(verifierRun, /retired|404/);
-  assert.doesNotMatch(verifierRun, /purchase|redeem|model request|provider mutation/i);
-  assert.equal(contract.productionReadOnlyRolloutVerifierJob.fullSystemReadinessRequired, false);
-  assert.deepEqual(contract.productionReadOnlyRolloutVerifierJob.podRequirements, ["three_cloud_pods_ready", "candidate_cloud_image_id"]);
-  assert.equal(contract.productionReadOnlyRolloutVerifierJob.workspaceRequirement, "configmap_digest_unchanged");
-  assert.deepEqual(releaseGate.needs, ["deploy", "bootstrap-readiness", "verify-rollout-read-only", "rollback-live-qa"]);
-  assert.match(String(diagnostics.if), /verify-rollout-read-only/);
-  assert.match(String(rollback.if), /capture-rollout-failure/);
-  assert.deepEqual(rollback.needs, ["deploy", "bootstrap-readiness", "verify-rollout-read-only", "capture-rollout-failure"]);
-  assert.equal(contract.productionReadOnlyRolloutVerifierJob.job, "verify-rollout-read-only");
-  assert.equal(contract.productionReadOnlyRolloutVerifierJob.readOnly, true);
-  assert.equal(contract.productionReadOnlyRolloutVerifierJob.requiredEnv.includes("OPL_SUB2API_ADMIN_EMAIL"), true);
-  assert.equal(contract.productionReadOnlyRolloutVerifierJob.requiredEnv.includes("OPL_SUB2API_ADMIN_PASSWORD"), true);
-  assert.equal(contract.productionReadOnlyRolloutVerifierJob.requiredEnv.includes("OPL_VERIFY_AUTH_USERS_JSON"), false);
-  assert.equal(contract.productionReadOnlyRolloutVerifierJob.requiredEnv.includes("OPL_VERIFY_ACCOUNT_ID"), false);
-  assert.deepEqual(contract.productionReadOnlyRolloutVerifierJob.secretEnv, [
-    "OPL_SUB2API_ADMIN_EMAIL",
-    "OPL_SUB2API_ADMIN_PASSWORD",
+  assert.equal(workflow.jobs["verify-rollout-read-only"], undefined);
+  assert.equal(clusterVerifier.needs, "deploy");
+  assert.match(String(clusterVerifier.if), /!inputs\.bootstrap_mode.*needs\.deploy\.result == 'success'/);
+  assert.deepEqual(clusterVerifier["runs-on"], ["self-hosted", "tencent-cloud", "opl-cloud", "tke-vpc"]);
+  assert.equal(clusterVerifier.environment, "production");
+  assert.match(clusterRun, /imageID|imageId/);
+  assert.match(clusterRun, /metadata\?\.deletionTimestamp/);
+  assert.match(clusterRun, /condition\.type === "Ready"/);
+  assert.match(clusterRun, /deployment\.kubernetes\.io\/revision/);
+  assert.match(clusterRun, /get replicasets/);
+  assert.match(clusterRun, /ownerReferences/);
+  assert.match(clusterRun, /owner\.controller === true/);
+  assert.match(clusterRun, /owner\.kind === kind/);
+  assert.match(clusterRun, /owner\.name === name/);
+  assert.match(clusterRun, /owner\.uid === uid/);
+  assert.match(clusterRun, /OPL_CLOUD_IMAGE/);
+  assert.match(clusterRun, /OPL_WORKSPACE_IMAGE/);
+  assert.match(clusterRun, /get configmap opl-cloud-config/);
+  assert.doesNotMatch(clusterRun, /playwright|npm ci|production-live-qa|api\/healthz|api\/production\/readiness/i);
+  for (const key of ["OPL_CONSOLE_ORIGIN", "OPL_SUB2API_ADMIN_EMAIL", "OPL_SUB2API_ADMIN_PASSWORD", "OPL_VERIFY_REQUEST_TIMEOUT_MS"]) {
+    assert.equal(Object.hasOwn(clusterVerifier.env, key), false, `cluster verifier must not receive ${key}`);
+  }
+
+  assert.deepEqual(publicVerifier.needs, ["deploy", "verify-rollout-cluster"]);
+  assert.match(String(publicVerifier.if), /!inputs\.bootstrap_mode.*needs\.deploy\.result == 'success'.*needs\.verify-rollout-cluster\.result == 'success'/);
+  assert.equal(publicVerifier["runs-on"], "ubuntu-latest");
+  assert.equal(publicVerifier.environment, "production");
+  assert.equal(publicVerifier.env.OPL_SUB2API_ADMIN_EMAIL, "${{ secrets.OPL_SUB2API_ADMIN_EMAIL }}");
+  assert.equal(publicVerifier.env.OPL_SUB2API_ADMIN_PASSWORD, "${{ secrets.OPL_SUB2API_ADMIN_PASSWORD }}");
+  assert.equal(Object.hasOwn(publicVerifier.env, "OPL_VERIFY_AUTH_USERS_JSON"), false);
+  assert.equal(Object.hasOwn(publicVerifier.env, "OPL_VERIFY_ACCOUNT_ID"), false);
+  assert.match(publicRun, /npm ci/);
+  assert.match(publicRun, /playwright install --with-deps chromium/);
+  assert.match(publicRun, /production-live-qa\.ts --read-only/);
+  assert.match(publicRun, /api\/healthz/);
+  assert.match(publicRun, /api\/production\/readiness/);
+  assert.match(publicRun, /retired|404/);
+  assert.doesNotMatch(JSON.stringify(publicVerifier), /KUBECONFIG|TENCENT_DEPLOY|TENCENTCLOUD|kubectl/i);
+  assert.doesNotMatch(publicRun, /purchase|redeem|model request|provider mutation|--allow-gateway-write|--allow-model-write/i);
+
+  assert.equal(contract.productionReadOnlyRolloutVerifierJob, undefined);
+  assert.equal(contract.productionRolloutClusterVerifierJob.job, "verify-rollout-cluster");
+  assert.equal(contract.productionRolloutClusterVerifierJob.readOnly, true);
+  assert.deepEqual(contract.productionRolloutClusterVerifierJob.podRequirements, ["three_cloud_pods_ready", "candidate_cloud_image_id"]);
+  assert.equal(contract.productionRolloutClusterVerifierJob.workspaceRequirement, "configmap_digest_unchanged");
+  assert.deepEqual(contract.productionRolloutClusterVerifierJob.secretEnv, [
     "TENCENT_DEPLOY_KUBECONFIG_B64",
     "TENCENT_DEPLOY_KUBECONFIG"
   ]);
-  assert.deepEqual(contract.productionReleaseGateJob.needs, ["deploy", "bootstrap-readiness", "verify-rollout-read-only", "rollback-live-qa"]);
+  assert.equal(contract.productionPublicReadOnlyVerifierJob.job, "verify-rollout-public-read-only");
+  assert.equal(contract.productionPublicReadOnlyVerifierJob.readOnly, true);
+  assert.equal(contract.productionPublicReadOnlyVerifierJob.businessMutationCount, 0);
+  assert.deepEqual(contract.productionPublicReadOnlyVerifierJob.secretEnv, [
+    "OPL_SUB2API_ADMIN_EMAIL",
+    "OPL_SUB2API_ADMIN_PASSWORD"
+  ]);
+  assert.deepEqual(releaseGate.needs, ["deploy", "bootstrap-readiness", "verify-rollout-cluster", "verify-rollout-public-read-only", "rollback-live-qa"]);
+  assert.match(releaseRun, /needs\.deploy\.result.*success/);
+  assert.match(releaseRun, /needs\.verify-rollout-cluster\.result.*success/);
+  assert.match(releaseRun, /needs\.verify-rollout-public-read-only\.result.*success/);
+  assert.match(releaseRun, /needs\.rollback-live-qa\.result.*skipped/);
+  assert.match(String(diagnostics.if), /verify-rollout-cluster/);
+  assert.match(String(diagnostics.if), /verify-rollout-public-read-only/);
+  assert.match(String(rollback.if), /capture-rollout-failure/);
+  assert.deepEqual(rollback.needs, ["deploy", "bootstrap-readiness", "verify-rollout-cluster", "verify-rollout-public-read-only", "capture-rollout-failure"]);
+  assert.deepEqual(contract.productionReleaseGateJob.needs, ["deploy", "bootstrap-readiness", "verify-rollout-cluster", "verify-rollout-public-read-only", "rollback-live-qa"]);
 });
 
 test("TKE bootstrap deploy is approved, read only, and cannot complete a release", async () => {
@@ -641,12 +678,12 @@ test("TKE bootstrap deploy is approved, read only, and cannot complete a release
   assert.match(bootstrapRun, /release incomplete/i);
   assert.doesNotMatch(bootstrapRun, /production-live-qa|provider-acceptance|purchase|delete|renew|POST/i);
 
-  assert.deepEqual(releaseGate.needs, ["deploy", "bootstrap-readiness", "verify-rollout-read-only", "rollback-live-qa"]);
+  assert.deepEqual(releaseGate.needs, ["deploy", "bootstrap-readiness", "verify-rollout-cluster", "verify-rollout-public-read-only", "rollback-live-qa"]);
   assert.equal(releaseGate.if, "${{ always() && !inputs.diagnostics_only }}");
   assert.match(releaseRun, /release incomplete/i);
   assert.match(releaseRun, /releaseComplete.*false/s);
   assert.match(releaseRun, /exit 1/);
-  assert.deepEqual(rollback.needs, ["deploy", "bootstrap-readiness", "verify-rollout-read-only", "capture-rollout-failure"]);
+  assert.deepEqual(rollback.needs, ["deploy", "bootstrap-readiness", "verify-rollout-cluster", "verify-rollout-public-read-only", "capture-rollout-failure"]);
   assert.match(String(diagnostics.if), /inputs\.bootstrap_mode.*needs\.bootstrap-readiness\.result != 'success'/);
   assert.match(String(diagnostics.if), /!inputs\.bootstrap_mode.*needs\.deploy\.result != 'success'/);
   assert.doesNotMatch(String(rollback.if), /release-gate/);
@@ -1049,8 +1086,8 @@ test("TKE failure uploads complete diagnostics before the only rollback job", as
 
   assert.match(String(deploy.outputs?.rollback_image_set), /rollback_snapshot\.outputs\.artifact-id/);
   assert.equal(stepsByName(deploy).get("Upload rollback image set")?.id, "rollback_snapshot");
-  assert.deepEqual(diagnostics.needs, ["deploy", "bootstrap-readiness", "verify-rollout-read-only"]);
-  assert.match(String(diagnostics.if), /always\(\).*needs\.deploy\.outputs\.rollback_image_set != ''.*needs\.deploy\.result != 'success'.*needs\.verify-rollout-read-only\.result != 'success'/);
+  assert.deepEqual(diagnostics.needs, ["deploy", "bootstrap-readiness", "verify-rollout-cluster", "verify-rollout-public-read-only"]);
+  assert.match(String(diagnostics.if), /always\(\).*needs\.deploy\.outputs\.rollback_image_set != ''.*needs\.deploy\.result != 'success'.*needs\.verify-rollout-cluster\.result != 'success'.*needs\.verify-rollout-public-read-only\.result != 'success'/);
   assert.match(capture, /capture_rollout_diagnostics/);
   for (const token of ["deployments.json", "replicasets.json", "pods.json", "nodes.json", "events.json", "stats-summary", "ownerReferences", "deletionTimestamp", "previous"]) {
     assert.match(`${capture}\n${await readFile(repoFile("tools/tke-image-rollout.sh"), "utf8")}`, new RegExp(token));
@@ -1058,7 +1095,7 @@ test("TKE failure uploads complete diagnostics before the only rollback job", as
   assert.equal(upload?.uses, "actions/upload-artifact@v4");
   assert.match(String(upload?.with?.name), /production-rollout-diagnostics/);
   assert.ok([...diagnosticSteps.keys()].indexOf("Capture failed rollout diagnostics") < [...diagnosticSteps.keys()].indexOf("Upload failed rollout diagnostics"));
-  assert.deepEqual(rollback.needs, ["deploy", "bootstrap-readiness", "verify-rollout-read-only", "capture-rollout-failure"]);
+  assert.deepEqual(rollback.needs, ["deploy", "bootstrap-readiness", "verify-rollout-cluster", "verify-rollout-public-read-only", "capture-rollout-failure"]);
   assert.match(String(rollback.if), /needs\.capture-rollout-failure\.result == 'success'/);
   assert.deepEqual(rollback["runs-on"], ["self-hosted", "tencent-cloud", "opl-cloud", "tke-vpc"]);
   assert.equal(rollback.env.TENCENT_DEPLOY_KUBECONFIG_PATH, deploy.env.TENCENT_DEPLOY_KUBECONFIG_PATH);
