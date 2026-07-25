@@ -59,6 +59,33 @@ type MonthlyPreflight struct {
 	ProviderRequestIDs map[string]string `json:"providerRequestIds"`
 }
 
+type MonthlyPreflightReportInput struct {
+	PackageID string `json:"packageId"`
+	SizeGB    int    `json:"sizeGb"`
+	Zone      string `json:"zone"`
+}
+
+type MonthlyPreflightStage struct {
+	Stage      string         `json:"stage"`
+	Status     string         `json:"status"`
+	ErrorCode  string         `json:"errorCode,omitempty"`
+	BlockedBy  []string       `json:"blockedBy"`
+	DurationMS int64          `json:"durationMs"`
+	SafeFacts  map[string]any `json:"safeFacts"`
+}
+
+type MonthlyPreflightReport struct {
+	SchemaVersion           int                     `json:"schemaVersion"`
+	Status                  string                  `json:"status"`
+	PackageID               string                  `json:"packageId"`
+	SizeGB                  int                     `json:"sizeGb"`
+	Zone                    string                  `json:"zone"`
+	Items                   []MonthlyPreflightStage `json:"items"`
+	Sub2APIMutationCount    int                     `json:"sub2apiMutationCount"`
+	TencentMutationCount    int                     `json:"tencentMutationCount"`
+	KubernetesMutationCount int                     `json:"kubernetesMutationCount"`
+}
+
 type MonthlyProviderTruth struct {
 	ComputeState      string            `json:"computeState"`
 	StorageState      string            `json:"storageState"`

@@ -44,7 +44,7 @@ export async function launchWorkspace(
   idempotencyKey: string
 ): Promise<WorkspaceLaunchResponse> {
   try {
-    return decodeDto<WorkspaceLaunchResponse>(await postJson<unknown>("/api/workspace-launches", input, csrfToken, idempotencyKey));
+    return decodeDto<WorkspaceLaunchResponse>(await postJson<unknown>("/api/workspace-launches", input, csrfToken, idempotencyKey, 60_000));
   } catch (error) {
     const apiError = error as ApiError;
     if (apiError.payload !== undefined) throw error;

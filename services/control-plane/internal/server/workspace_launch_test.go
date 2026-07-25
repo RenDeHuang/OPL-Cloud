@@ -630,6 +630,10 @@ func TestWorkspaceLaunchListAndDetailAreTenantScoped(t *testing.T) {
 	if alphaDetail.Code != http.StatusOK || !strings.Contains(alphaDetail.Body.String(), operationID) || !strings.Contains(alphaDetail.Body.String(), `"autoRenew":false`) || !strings.Contains(alphaDetail.Body.String(), `"priceVersion":"pilot-usd-2026-07-v1"`) || strings.Contains(alphaDetail.Body.String(), "pricingVersion") {
 		t.Fatalf("alpha launch detail status=%d body=%s", alphaDetail.Code, alphaDetail.Body.String())
 	}
+	var detail map[string]any
+	if err := json.Unmarshal(alphaDetail.Body.Bytes(), &detail); err != nil || stringValue(detail["operationId"]) != operationID {
+		t.Fatalf("alpha launch detail must be one complete JSON object: detail=%#v err=%v body=%q", detail, err, alphaDetail.Body.String())
+	}
 
 	seedTenantMember(t, fixture.store, "acct-beta", "org-beta", "usr-beta", "beta@example.com")
 	betaSession := loginForTest(t, fixture.server, "beta@example.com", "CorrectHorseBatteryStaple!")
@@ -642,6 +646,17 @@ func TestWorkspaceLaunchListAndDetailAreTenantScoped(t *testing.T) {
 		if response.Code != http.StatusNotFound {
 			t.Fatalf("beta launch detail %s status=%d, want 404: %s", id, response.Code, response.Body.String())
 		}
+	}
+}
+
+func TestWorkspaceLaunchWorkerDefaultsToTenSecondsAndRunsIndependently(t *testing.T) {
+	if defaultWorkspaceLaunchInterval != 10*time.Second {
+		t.Fatalf("default interval=%s", defaultWorkspaceLaunchInterval)
+	}
+	t.Setenv("OPL_WORKSPACE_LAUNCH_WORKER_ENABLED", "true")
+	t.Setenv("OPL_WORKSPACE_LAUNCH_INTERVAL_MS", "25")
+	if !workspaceLaunchWorkerEnabled() || workspaceLaunchWorkerInterval() != 25*time.Millisecond {
+		t.Fatalf("worker enabled=%t interval=%s", workspaceLaunchWorkerEnabled(), workspaceLaunchWorkerInterval())
 	}
 }
 

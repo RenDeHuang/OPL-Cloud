@@ -59,6 +59,9 @@ func NewPersistentServer(service *controlplane.Service, store StateStore) (http.
 	if monthlyBillingWorkerEnabled() {
 		app.startMonthlyBillingWorker(context.Background(), service, monthlyBillingWorkerInterval())
 	}
+	if workspaceLaunchWorkerEnabled() {
+		app.startWorkspaceLaunchWorker(context.Background(), service, workspaceLaunchWorkerInterval())
+	}
 	if providerReconcileWorkerEnabled() {
 		app.startProviderReconcileWorker(context.Background(), service, providerReconcileInterval())
 	}

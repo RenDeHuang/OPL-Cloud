@@ -33,6 +33,22 @@ test("Workspace launch uses one durable request and caller idempotency key", asy
   assert.deepEqual(requests.map(({ init }) => JSON.parse(String(init?.body))), [input, input]);
 });
 
+test("Workspace launch alone uses a sixty second client deadline", async () => {
+  const deadlines: number[] = [];
+  const originalTimeout = AbortSignal.timeout;
+  AbortSignal.timeout = ((milliseconds: number) => {
+    deadlines.push(milliseconds);
+    return originalTimeout(milliseconds);
+  }) as typeof AbortSignal.timeout;
+  try {
+    globalThis.fetch = async () => response({ operationId: "launch-alpha", status: "preparing", phase: "debit_pending" }, 202);
+    await workspaceApi.launchWorkspace({ name: "Alpha", packageId: "basic", sizeGb: 10, autoRenew: false }, "csrf-alpha", "launch-once");
+  } finally {
+    AbortSignal.timeout = originalTimeout;
+  }
+  assert.deepEqual(deadlines, [60_000]);
+});
+
 test("Workspace launch transport failure remains unknown for safe replay", async () => {
   let request: RequestInit | undefined;
   globalThis.fetch = async (_input, init) => {

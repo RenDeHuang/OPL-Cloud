@@ -118,6 +118,18 @@ test("launch freeze fixes the V2 products, owner lanes, settlement, and verifica
     skipOnRecoveryWhenAnyPresent: ["ChargeAttempted", "ChargeConfirmation"],
     writes: "none"
   });
+  assert.deepEqual(freeze.workspaceLaunch.backgroundWorkers, {
+    activeLaunchWorker: {
+      intervalSeconds: 10,
+      query: "non_terminal_workspace.launch.v2_only",
+      purpose: "advance_active_launches"
+    },
+    providerReconcileWorker: {
+      intervalSeconds: 600,
+      purpose: "recovery_gate_and_provider_fact_reconciliation"
+    },
+    duplicateDebitOrProcurement: "prevented_by_existing_cas_lease_and_idempotency"
+  });
   assert.equal(freeze.providerProcurement.chargeType, "PREPAID");
   assert.equal(freeze.providerProcurement.periodMonths, 1);
   assert.equal(freeze.providerProcurement.renewFlag, "NOTIFY_AND_MANUAL_RENEW");

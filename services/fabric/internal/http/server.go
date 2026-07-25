@@ -47,6 +47,28 @@ func NewServer(service *fabric.Service, token string) http.Handler {
 		}
 		writeJSON(w, http.StatusOK, result)
 	})
+	mux.HandleFunc("GET /fabric/monthly-preflight-report", func(w http.ResponseWriter, r *http.Request) {
+		values := r.URL.Query()
+		if len(values["packageId"]) != 1 || len(values["sizeGb"]) != 1 || len(values["zone"]) != 1 {
+			writeError(w, http.StatusBadRequest, fabric.ErrInvalidMonthlyPreflight.Error())
+			return
+		}
+		sizeGB, err := strconv.Atoi(values.Get("sizeGb"))
+		if err != nil {
+			writeError(w, http.StatusBadRequest, fabric.ErrInvalidMonthlyPreflight.Error())
+			return
+		}
+		result, err := service.MonthlyPreflightReport(r.Context(), fabric.MonthlyPreflightReportInput{PackageID: values.Get("packageId"), SizeGB: sizeGB, Zone: values.Get("zone")})
+		if errors.Is(err, fabric.ErrInvalidMonthlyPreflight) {
+			writeError(w, http.StatusBadRequest, fabric.ErrInvalidMonthlyPreflight.Error())
+			return
+		}
+		if err != nil {
+			writeError(w, http.StatusServiceUnavailable, fabric.ErrMonthlyPreflightUnavailable.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, result)
+	})
 	mux.HandleFunc("GET /fabric/monthly-provider-truth", func(w http.ResponseWriter, r *http.Request) {
 		computeIDs, computeOK := r.URL.Query()["computeAllocationId"]
 		storageIDs, storageOK := r.URL.Query()["storageVolumeId"]

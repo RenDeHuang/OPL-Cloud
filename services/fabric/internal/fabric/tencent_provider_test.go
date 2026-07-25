@@ -261,6 +261,83 @@ func TestTencentProviderMonthlyPreflightDiscoversExactlyOneLabeledPool(t *testin
 	}
 }
 
+func TestTencentProviderMonthlyPreflightReportReturnsAllStagesAndMultipleFailures(t *testing.T) {
+	t.Setenv("RUN_TENCENT_CREATE_RELEASE_EXECUTION", "1")
+	t.Setenv("TENCENTCLOUD_SECRET_ID", "configured")
+	t.Setenv("TENCENTCLOUD_SECRET_KEY", "configured")
+	t.Setenv("TENCENTCLOUD_REGION", "na-siliconvalley")
+	t.Setenv("TENCENT_DEPLOY_CLUSTER_ID", "cls-production")
+	provider := NewTencentProvider()
+	provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
+		switch request.Action {
+		case "capacity_preflight":
+			return provisionerResponse{OK: false, ErrorCode: "tencent_capacity_node_pool_unavailable", PreflightStages: []MonthlyPreflightStage{
+				{Stage: "node_pool_discovery", Status: "failed", ErrorCode: "tencent_capacity_node_pool_unavailable", BlockedBy: []string{}, DurationMS: 2, SafeFacts: map[string]any{"matchCount": 0}},
+				{Stage: "node_pool_contract", Status: "blocked", ErrorCode: "preflight_dependency_blocked", BlockedBy: []string{"node_pool_discovery"}, DurationMS: 0, SafeFacts: map[string]any{}},
+				{Stage: "subnet", Status: "blocked", ErrorCode: "preflight_dependency_blocked", BlockedBy: []string{"node_pool_contract"}, DurationMS: 0, SafeFacts: map[string]any{}},
+				{Stage: "zone", Status: "blocked", ErrorCode: "preflight_dependency_blocked", BlockedBy: []string{"subnet"}, DurationMS: 0, SafeFacts: map[string]any{}},
+				{Stage: "cvm_prepaid_quota", Status: "failed", ErrorCode: "tencent_capacity_prepaid_quota_unavailable", BlockedBy: []string{}, DurationMS: 3, SafeFacts: map[string]any{"remainingQuota": 0}},
+				{Stage: "cvm_sku_price", Status: "passed", ErrorCode: "", BlockedBy: []string{}, DurationMS: 4, SafeFacts: map[string]any{"instanceType": "SA5.MEDIUM4", "providerPriceCny": 142.91}},
+			}}, nil
+		case "storage_preflight":
+			return provisionerResponse{OK: false, ErrorCode: "tencent_storage_price_unavailable", PreflightStages: []MonthlyPreflightStage{
+				{Stage: "cbs_prepaid_quota", Status: "passed", ErrorCode: "", BlockedBy: []string{}, DurationMS: 5, SafeFacts: map[string]any{"sizeGb": 10, "diskType": "CLOUD_BSSD"}},
+				{Stage: "cbs_price", Status: "failed", ErrorCode: "tencent_storage_price_unavailable", BlockedBy: []string{}, DurationMS: 6, SafeFacts: map[string]any{"sizeGb": 10}},
+			}}, nil
+		default:
+			t.Fatalf("unexpected provisioner action %q", request.Action)
+			return provisionerResponse{}, nil
+		}
+	}
+
+	report, err := provider.MonthlyPreflightReport(context.Background(), MonthlyPreflightReportInput{PackageID: "basic", SizeGB: 10, Zone: "na-siliconvalley-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantStages := []string{"launch_permission", "credentials", "node_pool_discovery", "node_pool_contract", "subnet", "zone", "cvm_prepaid_quota", "cvm_sku_price", "cbs_prepaid_quota", "cbs_price"}
+	if report.Status != "failed" || report.Sub2APIMutationCount != 0 || report.TencentMutationCount != 0 || report.KubernetesMutationCount != 0 || len(report.Items) != len(wantStages) {
+		t.Fatalf("report=%#v", report)
+	}
+	for index, item := range report.Items {
+		if item.Stage != wantStages[index] || item.Status == "" || item.BlockedBy == nil || item.SafeFacts == nil || item.DurationMS < 0 {
+			t.Fatalf("item[%d]=%#v", index, item)
+		}
+	}
+	encoded := string(mustJSON(report))
+	for _, forbidden := range []string{"configured", "cls-production", "providerRequestId", "providerRequestIds", "rawResponse", "wallet", "userData"} {
+		if strings.Contains(encoded, forbidden) {
+			t.Fatalf("report leaked %q: %s", forbidden, encoded)
+		}
+	}
+}
+
+func TestTencentProviderMonthlyPreflightReportBlocksTencentChecksWithoutCredentials(t *testing.T) {
+	t.Setenv("RUN_TENCENT_CREATE_RELEASE_EXECUTION", "1")
+	t.Setenv("TENCENTCLOUD_SECRET_ID", "")
+	t.Setenv("TENCENTCLOUD_SECRET_KEY", "")
+	t.Setenv("TENCENTCLOUD_REGION", "")
+	t.Setenv("TENCENT_DEPLOY_CLUSTER_ID", "")
+	provider := NewTencentProvider()
+	calls := 0
+	provider.provision = func(context.Context, provisionerRequest) (provisionerResponse, error) {
+		calls++
+		return provisionerResponse{}, errors.New("must not call provisioner without credentials")
+	}
+
+	report, err := provider.MonthlyPreflightReport(context.Background(), MonthlyPreflightReportInput{PackageID: "basic", SizeGB: 10, Zone: "na-siliconvalley-1"})
+	if err != nil || calls != 0 || report.Status != "failed" || len(report.Items) != 10 {
+		t.Fatalf("report=%#v err=%v calls=%d", report, err, calls)
+	}
+	if report.Items[0].Status != "passed" || report.Items[1].Stage != "credentials" || report.Items[1].Status != "failed" {
+		t.Fatalf("environment stages=%#v", report.Items[:2])
+	}
+	for _, item := range report.Items[2:] {
+		if item.Status != "blocked" || item.ErrorCode != "preflight_dependency_blocked" || !reflect.DeepEqual(item.BlockedBy, []string{"credentials"}) || len(item.SafeFacts) != 0 {
+			t.Fatalf("blocked item=%#v", item)
+		}
+	}
+}
+
 func boolPointer(value bool) *bool { return &value }
 
 func TestTencentProviderMonthlyProviderTruthReusesDescribeOnlyProvisionerAction(t *testing.T) {

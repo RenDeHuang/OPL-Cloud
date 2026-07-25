@@ -249,6 +249,46 @@ func TestServerMonthlyPreflightFailsClosedWithStableErrors(t *testing.T) {
 	}
 }
 
+type monthlyPreflightReportHTTPProvider struct{ testProvider }
+
+func (monthlyPreflightReportHTTPProvider) MonthlyPreflightReport(context.Context, fabric.MonthlyPreflightReportInput) (fabric.MonthlyPreflightReport, error) {
+	items := make([]fabric.MonthlyPreflightStage, 0, 10)
+	for _, stage := range []string{"launch_permission", "credentials", "node_pool_discovery", "node_pool_contract", "subnet", "zone", "cvm_prepaid_quota", "cvm_sku_price", "cbs_prepaid_quota", "cbs_price"} {
+		items = append(items, fabric.MonthlyPreflightStage{Stage: stage, Status: "passed", BlockedBy: []string{}, SafeFacts: map[string]any{}, DurationMS: 1})
+	}
+	return fabric.MonthlyPreflightReport{
+		SchemaVersion: 1, Status: "passed", PackageID: "basic", SizeGB: 10, Zone: "na-siliconvalley-1", Items: items,
+		Sub2APIMutationCount: 0, TencentMutationCount: 0, KubernetesMutationCount: 0,
+	}, nil
+}
+
+func TestServerMonthlyPreflightReportIsInternalReadOnlyAndStrictJSON(t *testing.T) {
+	server := NewServer(fabric.NewService(monthlyPreflightReportHTTPProvider{}), "internal-secret")
+	unauthorized := httptest.NewRecorder()
+	server.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodGet, "/fabric/monthly-preflight-report?packageId=basic&sizeGb=10&zone=na-siliconvalley-1", nil))
+	if unauthorized.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthorized status=%d body=%s", unauthorized.Code, unauthorized.Body.String())
+	}
+
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, testRequest(http.MethodGet, "/fabric/monthly-preflight-report?packageId=basic&sizeGb=10&zone=na-siliconvalley-1", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("report status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var report fabric.MonthlyPreflightReport
+	decoder := json.NewDecoder(recorder.Body)
+	if err := decoder.Decode(&report); err != nil {
+		t.Fatal(err)
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		t.Fatalf("report has trailing JSON: err=%v body=%s", err, recorder.Body.String())
+	}
+	if report.Status != "passed" || len(report.Items) != 10 || report.Sub2APIMutationCount != 0 || report.TencentMutationCount != 0 || report.KubernetesMutationCount != 0 {
+		t.Fatalf("report=%#v", report)
+	}
+}
+
 type monthlyTruthHTTPProvider struct {
 	testProvider
 	calls  int

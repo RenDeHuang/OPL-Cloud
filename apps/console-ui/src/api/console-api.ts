@@ -25,7 +25,7 @@ function throwApiError(payload: unknown): never {
   throw error;
 }
 
-async function writeJson<T>(method: "POST" | "PUT" | "PATCH" | "DELETE", path: string, body: unknown, csrfToken: string, idempotencyKey: string): Promise<T> {
+async function writeJson<T>(method: "POST" | "PUT" | "PATCH" | "DELETE", path: string, body: unknown, csrfToken: string, idempotencyKey: string, timeoutMs: number): Promise<T> {
   const headers: Record<string, string> = { "content-type": "application/json" };
   if (csrfToken) headers["x-opl-csrf"] = csrfToken;
   if (idempotencyKey) headers["Idempotency-Key"] = idempotencyKey;
@@ -33,27 +33,27 @@ async function writeJson<T>(method: "POST" | "PUT" | "PATCH" | "DELETE", path: s
     method,
     headers,
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(10_000)
+    signal: AbortSignal.timeout(timeoutMs)
   });
   const payload = await responsePayload(response);
   if (!response.ok || asObject(payload).ok === false) throwApiError(payload);
   return payload as T;
 }
 
-export function postJson<T>(path: string, body: unknown = {}, csrfToken = "", idempotencyKey = ""): Promise<T> {
-  return writeJson<T>("POST", path, body, csrfToken, idempotencyKey);
+export function postJson<T>(path: string, body: unknown = {}, csrfToken = "", idempotencyKey = "", timeoutMs = 10_000): Promise<T> {
+  return writeJson<T>("POST", path, body, csrfToken, idempotencyKey, timeoutMs);
 }
 
 export function patchJson<T>(path: string, body: unknown, csrfToken = "", idempotencyKey = ""): Promise<T> {
-  return writeJson<T>("PATCH", path, body, csrfToken, idempotencyKey);
+  return writeJson<T>("PATCH", path, body, csrfToken, idempotencyKey, 10_000);
 }
 
 export function putJson<T>(path: string, body: unknown, csrfToken = "", idempotencyKey = ""): Promise<T> {
-  return writeJson<T>("PUT", path, body, csrfToken, idempotencyKey);
+  return writeJson<T>("PUT", path, body, csrfToken, idempotencyKey, 10_000);
 }
 
 export function deleteJson<T>(path: string, csrfToken = "", idempotencyKey = ""): Promise<T> {
-  return writeJson<T>("DELETE", path, {}, csrfToken, idempotencyKey);
+  return writeJson<T>("DELETE", path, {}, csrfToken, idempotencyKey, 10_000);
 }
 
 export async function getJson<T>(path: string, { signal }: { signal?: AbortSignal } = {}): Promise<T> {
