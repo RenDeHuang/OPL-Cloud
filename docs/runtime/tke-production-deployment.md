@@ -41,8 +41,11 @@ Production deploy workflow must:
 - create one candidate revision for each of Control Plane, Fabric, and Ledger
   through the rendered manifest only, without `set image` plus `rollout restart`;
 - observe all three Cloud Deployments within one shared 300-second deadline and
-  fail immediately on eviction, disk pressure, image-pull backoff, crash-loop
-  backoff, or unschedulable Pods;
+  follow each current revision through exact Deployment-to-ReplicaSet and
+  ReplicaSet-to-Pod controller owner UIDs and expected images;
+- fail immediately on node disk pressure or current-revision Pod eviction,
+  image-pull backoff, crash-loop backoff, or unschedulability, while retaining
+  historical terminal Pods only as diagnostics for both candidate and rollback;
 - capture full rollout diagnostics and upload the artifact before the one
   independent rollback job runs;
 - preserve the Workspace ConfigMap digest and never restart or wait for existing

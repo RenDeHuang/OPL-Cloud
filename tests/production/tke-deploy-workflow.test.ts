@@ -232,6 +232,179 @@ async function manifestFixture() {
   };
 }
 
+const cloudRolloutTargets = [
+  { name: "opl-cloud-control-plane", component: "control-plane", container: "control-plane" },
+  { name: "opl-cloud-ledger", component: "ledger", container: "ledger" },
+  { name: "opl-cloud-fabric", component: "fabric", container: "fabric" }
+];
+
+function rolloutFixture(image, revision = "241") {
+  const deployments = [];
+  const replicasets = [];
+  const pods = [];
+  for (const target of cloudRolloutTargets) {
+    const deploymentUid = `deployment-${target.component}-uid`;
+    const replicaSetName = `${target.name}-current`;
+    const replicaSetUid = `replicaset-${target.component}-uid`;
+    deployments.push({
+      metadata: {
+        name: target.name,
+        uid: deploymentUid,
+        generation: 2,
+        annotations: { "deployment.kubernetes.io/revision": revision }
+      },
+      spec: { replicas: 1, template: { spec: { containers: [{ name: target.container, image }] } } },
+      status: {
+        observedGeneration: 2,
+        updatedReplicas: 1,
+        readyReplicas: 1,
+        availableReplicas: 1,
+        unavailableReplicas: 0
+      }
+    });
+    replicasets.push({
+      metadata: {
+        name: replicaSetName,
+        uid: replicaSetUid,
+        annotations: { "deployment.kubernetes.io/revision": revision },
+        ownerReferences: [{
+          apiVersion: "apps/v1",
+          kind: "Deployment",
+          name: target.name,
+          uid: deploymentUid,
+          controller: true
+        }]
+      },
+      spec: { replicas: 1, template: { spec: { containers: [{ name: target.container, image }] } } }
+    });
+    pods.push({
+      metadata: {
+        name: `${replicaSetName}-pod`,
+        labels: { "app.kubernetes.io/component": target.component },
+        ownerReferences: [{
+          apiVersion: "apps/v1",
+          kind: "ReplicaSet",
+          name: replicaSetName,
+          uid: replicaSetUid,
+          controller: true
+        }]
+      },
+      spec: { containers: [{ name: target.container, image }] },
+      status: {
+        conditions: [{ type: "Ready", status: "True" }],
+        containerStatuses: [{ name: target.container, state: { running: {} } }]
+      }
+    });
+  }
+  return { deployments, replicasets, pods };
+}
+
+function addHistoricalEvictedFabricPod(fixture, image, revision = "236") {
+  const deployment = fixture.deployments.find((item) => item.metadata.name === "opl-cloud-fabric");
+  const replicaSetName = "opl-cloud-fabric-historical";
+  const replicaSetUid = "replicaset-fabric-historical-uid";
+  fixture.replicasets.push({
+    metadata: {
+      name: replicaSetName,
+      uid: replicaSetUid,
+      annotations: { "deployment.kubernetes.io/revision": revision },
+      ownerReferences: [{
+        apiVersion: "apps/v1",
+        kind: "Deployment",
+        name: deployment.metadata.name,
+        uid: deployment.metadata.uid,
+        controller: true
+      }]
+    },
+    spec: { replicas: 0, template: { spec: { containers: [{ name: "fabric", image }] } } }
+  });
+  fixture.pods.push({
+    metadata: {
+      name: `${replicaSetName}-evicted`,
+      labels: { "app.kubernetes.io/component": "fabric" },
+      ownerReferences: [{
+        apiVersion: "apps/v1",
+        kind: "ReplicaSet",
+        name: replicaSetName,
+        uid: replicaSetUid,
+        controller: true
+      }]
+    },
+    spec: { containers: [{ name: "fabric", image }] },
+    status: { reason: "Evicted" }
+  });
+}
+
+function setRolloutPodFailure(pod, reason) {
+  pod.status = { conditions: [], containerStatuses: [] };
+  if (reason === "Evicted") {
+    pod.status.reason = reason;
+  } else if (reason === "Unschedulable") {
+    pod.status.conditions = [{ type: "PodScheduled", status: "False", reason }];
+  } else {
+    pod.status.containerStatuses = [{ name: "fabric", state: { waiting: { reason } } }];
+  }
+}
+
+async function runRolloutObserver({ fixture, image, mode = "candidate", previousImage = image }) {
+  const functions = await readFile(repoFile("tools/tke-image-rollout.sh"), "utf8");
+  const root = await mkdtemp(join(tmpdir(), "opl-rollout-owner-chain-"));
+  const rollbackDir = join(root, "previous-images");
+  const commandLog = join(root, "commands.log");
+  await mkdir(rollbackDir);
+  await Promise.all([
+    writeFile(commandLog, ""),
+    ...cloudRolloutTargets.map((target) => writeFile(join(rollbackDir, target.name), previousImage))
+  ]);
+  const harness = `
+kubectl() {
+  printf 'kubectl %s\\n' "$*" >> "$TEST_COMMAND_LOG"
+  case " $* " in
+    *" get nodes -o json "*) printf '%s' "$TEST_NODES_JSON" ;;
+    *" get deployment opl-cloud-control-plane opl-cloud-ledger opl-cloud-fabric -o json "*) printf '%s' "$TEST_DEPLOYMENTS_JSON" ;;
+    *" get replicasets -l app.kubernetes.io/name=opl-cloud -o json "*) printf '%s' "$TEST_REPLICASETS_JSON" ;;
+    *" get pods -l app.kubernetes.io/name=opl-cloud -o json "*) printf '%s' "$TEST_PODS_JSON" ;;
+    *) return 64 ;;
+  esac
+}
+sleep() {
+  printf 'sleep %s\\n' "$*" >> "$TEST_COMMAND_LOG"
+  exit 73
+}
+${functions}
+rollback_dir="$TEST_ROLLBACK_DIR"
+wait_cloud_rollouts "$TEST_MODE"
+`;
+  try {
+    const result = spawnSync("bash", ["-c", harness], {
+      cwd: fileURLToPath(repoFile(".")),
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        KUBECONFIG: "/dev/null",
+        OPL_CLOUD_IMAGE: image,
+        OPL_K8S_NAMESPACE: "opl-test",
+        OPL_ROLLOUT_POLL_SECONDS: "1",
+        OPL_ROLLOUT_STATE_DIR: join(root, "state"),
+        OPL_ROLLOUT_TIMEOUT_SECONDS: "5",
+        TEST_COMMAND_LOG: commandLog,
+        TEST_DEPLOYMENTS_JSON: JSON.stringify({ items: fixture.deployments }),
+        TEST_MODE: mode,
+        TEST_NODES_JSON: JSON.stringify({ items: [{
+          metadata: { name: "10.66.0.42" },
+          status: { conditions: [{ type: "DiskPressure", status: "False" }] }
+        }] }),
+        TEST_PODS_JSON: JSON.stringify({ items: fixture.pods }),
+        TEST_REPLICASETS_JSON: JSON.stringify({ items: fixture.replicasets }),
+        TEST_ROLLBACK_DIR: rollbackDir
+      }
+    });
+    return { result, commands: await readFile(commandLog, "utf8") };
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
 test("TKE deploy workflow matches the current deployment contract", async () => {
   const contract = await readJson(deploymentContractPath);
   const deployWorkflow = await readWorkflow(contract.deployWorkflow.file);
@@ -287,7 +460,14 @@ test("TKE deploy workflow matches the current deployment contract", async () => 
     candidateRevisionPerDeployment: 1,
     candidateMutation: "single_manifest_apply",
     sharedDeadlineSeconds: 300,
-    failFastReasons: ["Evicted", "DiskPressure", "ImagePullBackOff", "CrashLoopBackOff", "Unschedulable"]
+    failFastReasons: ["Evicted", "DiskPressure", "ImagePullBackOff", "CrashLoopBackOff", "Unschedulable"],
+    observerScope: {
+      deployment: "current_uid_revision_and_expected_image",
+      replicaSet: "deployment_controller_owner_uid_name_revision_and_expected_image",
+      pod: "replicaset_controller_owner_uid",
+      historicalTerminalPods: "diagnostics_only",
+      candidateAndRollback: "same_owner_chain_rules"
+    }
   });
   assert.equal(contract.productionRollbackJob.trigger, "post_diagnostics_artifact_upload");
   assertWorkflowContract(deployWorkflow, contract.productionRollbackJob, contract);
@@ -1009,6 +1189,71 @@ wait_cloud_rollouts candidate
   }
 });
 
+test("TKE rollout observer ignores an Evicted Pod from a historical revision", async () => {
+  const image = `registry.example.test/opl/cloud@sha256:${"b".repeat(64)}`;
+  const fixture = rolloutFixture(image);
+  addHistoricalEvictedFabricPod(fixture, `registry.example.test/opl/cloud@sha256:${"a".repeat(64)}`);
+
+  const { result, commands } = await runRolloutObserver({ fixture, image });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(commands, /get replicasets -l app\.kubernetes\.io\/name=opl-cloud -o json/);
+  assert.doesNotMatch(commands, /^sleep /m);
+});
+
+test("TKE rollout observer fail-fast reasons apply only to the current revision Pod", async () => {
+  const image = `registry.example.test/opl/cloud@sha256:${"b".repeat(64)}`;
+  for (const reason of ["Evicted", "Unschedulable", "ImagePullBackOff", "CrashLoopBackOff"]) {
+    const fixture = rolloutFixture(image);
+    const pod = fixture.pods.find((item) => item.metadata.labels["app.kubernetes.io/component"] === "fabric");
+    setRolloutPodFailure(pod, reason);
+
+    const { result, commands } = await runRolloutObserver({ fixture, image });
+
+    assert.notEqual(result.status, 0, `${reason} must fail the current revision`);
+    assert.match(result.stderr, new RegExp(`rollout_${reason}:${pod.metadata.name}`));
+    assert.doesNotMatch(commands, /^sleep /m, `${reason} must fail before sleeping`);
+  }
+});
+
+test("TKE rollback observer ignores historical eviction and confirms the restored image", async () => {
+  const previousImage = `registry.example.test/opl/cloud@sha256:${"a".repeat(64)}`;
+  const candidateImage = `registry.example.test/opl/cloud@sha256:${"b".repeat(64)}`;
+  const fixture = rolloutFixture(previousImage, "242");
+  addHistoricalEvictedFabricPod(fixture, candidateImage, "241");
+
+  const { result, commands } = await runRolloutObserver({
+    fixture,
+    image: candidateImage,
+    mode: "previous",
+    previousImage
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.doesNotMatch(commands, /^sleep /m);
+});
+
+test("TKE rollout observer treats ReplicaSet and Pod owner UID mismatches as pending", async () => {
+  const image = `registry.example.test/opl/cloud@sha256:${"b".repeat(64)}`;
+  for (const ownerKind of ["replicaset", "pod"]) {
+    const fixture = rolloutFixture(image);
+    const replicaSet = fixture.replicasets.find((item) => item.metadata.name === "opl-cloud-fabric-current");
+    const pod = fixture.pods.find((item) => item.metadata.labels["app.kubernetes.io/component"] === "fabric");
+    if (ownerKind === "replicaset") {
+      replicaSet.metadata.ownerReferences[0].uid = "wrong-deployment-uid";
+    } else {
+      pod.metadata.ownerReferences[0].uid = "wrong-replicaset-uid";
+    }
+    setRolloutPodFailure(pod, "Evicted");
+
+    const { result, commands } = await runRolloutObserver({ fixture, image });
+
+    assert.equal(result.status, 73, `${ownerKind} owner mismatch must remain pending: ${result.stderr}`);
+    assert.doesNotMatch(result.stderr, /rollout_Evicted/);
+    assert.match(commands, /^sleep 1$/m);
+  }
+});
+
 test("TKE rollback restores the complete ConfigMap and never rolls existing Workspaces", async () => {
   const functions = await readFile(repoFile("tools/tke-image-rollout.sh"), "utf8");
   assert.doesNotMatch(functions, /set \+e/);
@@ -1063,9 +1308,11 @@ test("TKE rollback restores the complete ConfigMap and never rolls existing Work
             if [[ " $* " == *" get nodes -o json "* ]]; then
               printf '{"items":[{"metadata":{"name":"node-1"},"status":{"conditions":[{"type":"DiskPressure","status":"False"}]}}]}'
             elif [[ " $* " == *" get deployment opl-cloud-control-plane opl-cloud-ledger opl-cloud-fabric -o json "* ]]; then
-              printf '{"items":[{"metadata":{"name":"opl-cloud-control-plane","generation":2},"spec":{"replicas":1,"template":{"spec":{"containers":[{"name":"control-plane","image":"%s"}]}}},"status":{"observedGeneration":2,"updatedReplicas":1,"readyReplicas":1,"availableReplicas":1}},{"metadata":{"name":"opl-cloud-ledger","generation":2},"spec":{"replicas":1,"template":{"spec":{"containers":[{"name":"ledger","image":"%s"}]}}},"status":{"observedGeneration":2,"updatedReplicas":1,"readyReplicas":1,"availableReplicas":1}},{"metadata":{"name":"opl-cloud-fabric","generation":2},"spec":{"replicas":1,"template":{"spec":{"containers":[{"name":"fabric","image":"%s"}]}}},"status":{"observedGeneration":2,"updatedReplicas":1,"readyReplicas":1,"availableReplicas":1}}]}' "\${images[opl-cloud-control-plane]}" "\${images[opl-cloud-ledger]}" "\${images[opl-cloud-fabric]}"
+              printf '{"items":[{"metadata":{"name":"opl-cloud-control-plane","uid":"deployment-control-plane","generation":2,"annotations":{"deployment.kubernetes.io/revision":"2"}},"spec":{"replicas":1,"template":{"spec":{"containers":[{"name":"control-plane","image":"%s"}]}}},"status":{"observedGeneration":2,"updatedReplicas":1,"readyReplicas":1,"availableReplicas":1,"unavailableReplicas":0}},{"metadata":{"name":"opl-cloud-ledger","uid":"deployment-ledger","generation":2,"annotations":{"deployment.kubernetes.io/revision":"2"}},"spec":{"replicas":1,"template":{"spec":{"containers":[{"name":"ledger","image":"%s"}]}}},"status":{"observedGeneration":2,"updatedReplicas":1,"readyReplicas":1,"availableReplicas":1,"unavailableReplicas":0}},{"metadata":{"name":"opl-cloud-fabric","uid":"deployment-fabric","generation":2,"annotations":{"deployment.kubernetes.io/revision":"2"}},"spec":{"replicas":1,"template":{"spec":{"containers":[{"name":"fabric","image":"%s"}]}}},"status":{"observedGeneration":2,"updatedReplicas":1,"readyReplicas":1,"availableReplicas":1,"unavailableReplicas":0}}]}' "\${images[opl-cloud-control-plane]}" "\${images[opl-cloud-ledger]}" "\${images[opl-cloud-fabric]}"
+            elif [[ " $* " == *" get replicasets -l app.kubernetes.io/name=opl-cloud -o json "* ]]; then
+              printf '{"items":[{"metadata":{"name":"opl-cloud-control-plane-current","uid":"replicaset-control-plane","annotations":{"deployment.kubernetes.io/revision":"2"},"ownerReferences":[{"controller":true,"kind":"Deployment","name":"opl-cloud-control-plane","uid":"deployment-control-plane"}]},"spec":{"template":{"spec":{"containers":[{"name":"control-plane","image":"%s"}]}}}},{"metadata":{"name":"opl-cloud-ledger-current","uid":"replicaset-ledger","annotations":{"deployment.kubernetes.io/revision":"2"},"ownerReferences":[{"controller":true,"kind":"Deployment","name":"opl-cloud-ledger","uid":"deployment-ledger"}]},"spec":{"template":{"spec":{"containers":[{"name":"ledger","image":"%s"}]}}}},{"metadata":{"name":"opl-cloud-fabric-current","uid":"replicaset-fabric","annotations":{"deployment.kubernetes.io/revision":"2"},"ownerReferences":[{"controller":true,"kind":"Deployment","name":"opl-cloud-fabric","uid":"deployment-fabric"}]},"spec":{"template":{"spec":{"containers":[{"name":"fabric","image":"%s"}]}}}}]}' "\${images[opl-cloud-control-plane]}" "\${images[opl-cloud-ledger]}" "\${images[opl-cloud-fabric]}"
             elif [[ " $* " == *" get pods -l app.kubernetes.io/name=opl-cloud -o json "* ]]; then
-              printf '{"items":[]}'
+              printf '{"items":[{"metadata":{"name":"opl-cloud-control-plane-current-pod","labels":{"app.kubernetes.io/component":"control-plane"},"ownerReferences":[{"controller":true,"kind":"ReplicaSet","name":"opl-cloud-control-plane-current","uid":"replicaset-control-plane"}]},"status":{"containerStatuses":[{"name":"control-plane","state":{"running":{}}}]}},{"metadata":{"name":"opl-cloud-ledger-current-pod","labels":{"app.kubernetes.io/component":"ledger"},"ownerReferences":[{"controller":true,"kind":"ReplicaSet","name":"opl-cloud-ledger-current","uid":"replicaset-ledger"}]},"status":{"containerStatuses":[{"name":"ledger","state":{"running":{}}}]}},{"metadata":{"name":"opl-cloud-fabric-current-pod","labels":{"app.kubernetes.io/component":"fabric"},"ownerReferences":[{"controller":true,"kind":"ReplicaSet","name":"opl-cloud-fabric-current","uid":"replicaset-fabric"}]},"status":{"containerStatuses":[{"name":"fabric","state":{"running":{}}}]}}]}'
             elif [[ " $* " == *" configmap opl-cloud-config "* ]]; then
               printf '%s' "$config_image"
             elif [[ " $* " == *" deployment/"*"jsonpath={.metadata.annotations.deployment"* ]]; then
