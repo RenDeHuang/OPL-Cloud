@@ -232,7 +232,9 @@ async function manifestFixture() {
       OPL_SUB2API_BASE_URL: "https://wallet.example.test",
       OPL_SUB2API_REQUEST_TIMEOUT_MS: "7000",
       OPL_MONTHLY_BILLING_WORKER_ENABLED: "1",
-      OPL_MONTHLY_BILLING_INTERVAL_MS: "60000"
+      OPL_MONTHLY_BILLING_INTERVAL_MS: "60000",
+      OPL_WORKSPACE_LAUNCH_WORKER_ENABLED: "1",
+      OPL_WORKSPACE_LAUNCH_INTERVAL_MS: "10000"
     }
   };
 }
@@ -492,6 +494,27 @@ test("TKE deploy workflow matches the current deployment contract", async () => 
     existingWorkspaceDeployments: "preserved_without_restart"
   });
   assert.doesNotMatch(JSON.stringify(contract), /paid_confirmation|OPL_VERIFY_PAID_CONFIRMATION|OPL_VERIFY_MODEL_ACCESS_KEY/);
+});
+
+test("Fabric MonthlyPreflight diagnostics runs inside the Ready Pod and is read only", async () => {
+  const contract = await readJson(deploymentContractPath);
+  const diagnostics = contract.fabricMonthlyPreflightDiagnosticsWorkflow;
+  const workflow = await readWorkflow(diagnostics.file);
+  const job = workflowJob(workflow, diagnostics.job);
+  const runs = serializedRuns(job);
+
+  assert.deepEqual(job["runs-on"], ["self-hosted", "tencent-cloud", "opl-cloud", "tke-vpc"]);
+  assert.match(runs, /get deployment\/opl-cloud-fabric/);
+  assert.match(runs, /get replicasets/);
+  assert.match(runs, /get pods/);
+  assert.match(runs, /ownerReferences/);
+  assert.match(runs, /kubectl[^\n]+exec -i/);
+  assert.match(runs, /http:\/\/127\.0\.0\.1:8082\/fabric\/monthly-preflight-report/);
+  assert.match(runs, /OPL_INTERNAL_SERVICE_TOKEN/);
+  assert.match(JSON.stringify(job.steps), /actions\/upload-artifact@v4/);
+  for (const forbidden of [" apply ", " patch ", " delete ", " scale ", " create ", "/api/workspace-launches", "control-plane"]) {
+    assert.equal(runs.includes(forbidden), false, forbidden);
+  }
 });
 
 test("production verification is read only and requires both reusable prepaid slots", async () => {
@@ -889,6 +912,8 @@ test("deployment inputs contain monthly and Sub2API config without retired billi
   for (const key of [
     "OPL_MONTHLY_BILLING_WORKER_ENABLED",
     "OPL_MONTHLY_BILLING_INTERVAL_MS",
+    "OPL_WORKSPACE_LAUNCH_WORKER_ENABLED",
+    "OPL_WORKSPACE_LAUNCH_INTERVAL_MS",
     "OPL_SUB2API_BASE_URL",
     "OPL_SUB2API_REQUEST_TIMEOUT_MS",
     "OPL_TENCENT_ZONE"

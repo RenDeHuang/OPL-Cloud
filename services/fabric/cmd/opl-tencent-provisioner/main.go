@@ -110,6 +110,16 @@ type Response struct {
 	TargetReplicas     int64             `json:"targetReplicas,omitempty"`
 	MachineType        string            `json:"machineType,omitempty"`
 	Zones              []string          `json:"zones,omitempty"`
+	PreflightStages    []PreflightStage  `json:"preflightStages,omitempty"`
+}
+
+type PreflightStage struct {
+	Stage      string         `json:"stage"`
+	Status     string         `json:"status"`
+	ErrorCode  string         `json:"errorCode,omitempty"`
+	BlockedBy  []string       `json:"blockedBy"`
+	DurationMS int64          `json:"durationMs"`
+	SafeFacts  map[string]any `json:"safeFacts"`
 }
 
 type MachineOutput struct {
@@ -363,6 +373,36 @@ func capacityFailure(code string, err error) Response {
 	return Response{Ok: false, ErrorCode: code, Message: message, Retryable: false}
 }
 
+func completedPreflightStage(stage, status, code string, started time.Time, blockedBy []string, facts map[string]any) PreflightStage {
+	if blockedBy == nil {
+		blockedBy = []string{}
+	}
+	if facts == nil {
+		facts = map[string]any{}
+	}
+	return PreflightStage{Stage: stage, Status: status, ErrorCode: code, BlockedBy: blockedBy, DurationMS: time.Since(started).Milliseconds(), SafeFacts: facts}
+}
+
+func failedPreflightResponse(stages []PreflightStage) Response {
+	code := "monthly_preflight_unavailable"
+	for _, stage := range stages {
+		if stage.Status == "failed" && stage.ErrorCode != "" {
+			code = stage.ErrorCode
+			break
+		}
+	}
+	return Response{Ok: false, ErrorCode: code, Message: code, Retryable: false, PreflightStages: stages}
+}
+
+func allPreflightStagesPassed(stages []PreflightStage) bool {
+	for _, stage := range stages {
+		if stage.Status != "passed" {
+			return false
+		}
+	}
+	return true
+}
+
 func containsString(values []*string, expected string) bool {
 	for _, current := range values {
 		if stringValue(current) == expected {
@@ -456,90 +496,157 @@ func (client *tencentSDKClient) capacityNodePool(request Request) (*tke2022.Node
 
 func (client *tencentSDKClient) Capacity(request Request, _ map[string]string) Response {
 	required := request.Pool.DesiredReplicas
-	if client == nil || client.nativeTkeClient == nil || client.nativeCvmClient == nil || client.nativeVpcClient == nil {
-		return capacityFailure("tencent_capacity_client_missing", nil)
-	}
 	if required <= 0 || strings.TrimSpace(request.Pool.InstanceType) == "" ||
 		(strings.TrimSpace(request.Pool.NodePoolId) == "" && (strings.TrimSpace(request.Pool.Id) == "" || strings.TrimSpace(request.PackageId) == "")) {
-		return capacityFailure("tencent_capacity_input_invalid", nil)
+		stages := []PreflightStage{}
+		for _, stage := range []string{"node_pool_discovery", "node_pool_contract", "subnet", "zone", "cvm_prepaid_quota", "cvm_sku_price"} {
+			stages = append(stages, completedPreflightStage(stage, "failed", "tencent_capacity_input_invalid", time.Now(), nil, nil))
+		}
+		return failedPreflightResponse(stages)
 	}
+	stages := make([]PreflightStage, 0, 6)
+	clientReady := client != nil && client.nativeTkeClient != nil && client.nativeCvmClient != nil && client.nativeVpcClient != nil
+	if !clientReady {
+		for _, stage := range []string{"node_pool_discovery", "node_pool_contract", "subnet", "zone", "cvm_prepaid_quota", "cvm_sku_price"} {
+			stages = append(stages, completedPreflightStage(stage, "failed", "tencent_capacity_client_missing", time.Now(), nil, nil))
+		}
+		return failedPreflightResponse(stages)
+	}
+
+	discoveryStarted := time.Now()
 	pool, nodePoolRequestId, err := client.capacityNodePool(request)
 	if err != nil {
-		return capacityFailure("tencent_capacity_node_pool_unavailable", err)
+		stages = append(stages, completedPreflightStage("node_pool_discovery", "failed", "tencent_capacity_node_pool_unavailable", discoveryStarted, nil, map[string]any{"matchCount": 0}))
+	} else {
+		stages = append(stages, completedPreflightStage("node_pool_discovery", "passed", "", discoveryStarted, nil, map[string]any{"matchCount": 1}))
 	}
-	native := pool.Native
-	if !isCVMNativeNodePool(pool) || strings.TrimSpace(stringValue(pool.LifeState)) != "Running" || native.Scaling == nil || native.Scaling.MaxReplicas == nil ||
-		native.Replicas == nil || native.ReadyReplicas == nil || native.EnableAutoscaling == nil || native.AutoRepair == nil ||
-		*native.EnableAutoscaling || *native.AutoRepair || *native.ReadyReplicas != *native.Replicas ||
-		*native.Scaling.MaxReplicas < *native.Replicas+required || len(native.InstanceTypes) != 1 || stringValue(native.InstanceTypes[0]) != request.Pool.InstanceType || len(native.SubnetIds) == 0 {
-		return capacityFailure("tencent_capacity_node_pool_unavailable", nil)
+
+	var native *tke2022.NativeNodePoolInfo
+	contractPassed := false
+	contractStarted := time.Now()
+	if pool == nil {
+		stages = append(stages, completedPreflightStage("node_pool_contract", "blocked", "preflight_dependency_blocked", contractStarted, []string{"node_pool_discovery"}, nil))
+	} else {
+		native = pool.Native
+		contractPassed = isCVMNativeNodePool(pool) && strings.TrimSpace(stringValue(pool.LifeState)) == "Running" && native.Scaling != nil && native.Scaling.MaxReplicas != nil &&
+			native.Replicas != nil && native.ReadyReplicas != nil && native.EnableAutoscaling != nil && native.AutoRepair != nil &&
+			!*native.EnableAutoscaling && !*native.AutoRepair && *native.ReadyReplicas == *native.Replicas &&
+			*native.Scaling.MaxReplicas >= *native.Replicas+required && len(native.InstanceTypes) == 1 && stringValue(native.InstanceTypes[0]) == request.Pool.InstanceType && len(native.SubnetIds) > 0
+		status, code := "passed", ""
+		if !contractPassed {
+			status, code = "failed", "tencent_capacity_node_pool_unavailable"
+		}
+		facts := map[string]any{"instanceType": request.Pool.InstanceType, "requiredCapacity": required}
+		if native != nil && native.Replicas != nil && native.ReadyReplicas != nil && native.Scaling != nil && native.Scaling.MaxReplicas != nil {
+			facts["currentReplicas"], facts["readyReplicas"], facts["maxReplicas"] = *native.Replicas, *native.ReadyReplicas, *native.Scaling.MaxReplicas
+		}
+		stages = append(stages, completedPreflightStage("node_pool_contract", status, code, contractStarted, nil, facts))
 	}
+
 	subnetIds := []string{}
-	seenSubnetIds := map[string]bool{}
-	for _, raw := range native.SubnetIds {
-		subnetId := strings.TrimSpace(stringValue(raw))
-		if subnetId == "" || seenSubnetIds[subnetId] {
-			return capacityFailure("tencent_capacity_subnet_invalid", nil)
-		}
-		seenSubnetIds[subnetId] = true
-		subnetIds = append(subnetIds, subnetId)
-	}
-	subnetRequest := vpc2017.NewDescribeSubnetsRequest()
-	subnetRequest.SubnetIds = stringsToPtrs(subnetIds)
-	subnetResponse, err := client.nativeVpcClient.DescribeSubnets(subnetRequest)
-	if err != nil || subnetResponse == nil || subnetResponse.Response == nil {
-		return capacityFailure("tencent_capacity_subnet_describe_failed", err)
-	}
-	subnetRequestID := stringValue(subnetResponse.Response.RequestId)
-	if subnetRequestID == "" || nodePoolRequestId == "" {
-		return capacityFailure("tencent_capacity_request_id_missing", nil)
-	}
 	zones := []string{}
-	seenZones := map[string]bool{}
-	foundSubnets := map[string]bool{}
-	for _, subnet := range subnetResponse.Response.SubnetSet {
-		if subnet == nil || !seenSubnetIds[stringValue(subnet.SubnetId)] || foundSubnets[stringValue(subnet.SubnetId)] || subnet.AvailableIpAddressCount == nil || int64(*subnet.AvailableIpAddressCount) < required {
-			return capacityFailure("tencent_capacity_subnet_unavailable", nil)
+	subnetRequestID := ""
+	subnetPassed := false
+	subnetStarted := time.Now()
+	if !contractPassed {
+		stages = append(stages, completedPreflightStage("subnet", "blocked", "preflight_dependency_blocked", subnetStarted, []string{"node_pool_contract"}, nil))
+	} else {
+		seenSubnetIds := map[string]bool{}
+		validSubnetIDs := true
+		for _, raw := range native.SubnetIds {
+			subnetID := strings.TrimSpace(stringValue(raw))
+			if subnetID == "" || seenSubnetIds[subnetID] {
+				validSubnetIDs = false
+				break
+			}
+			seenSubnetIds[subnetID] = true
+			subnetIds = append(subnetIds, subnetID)
 		}
-		zone := strings.TrimSpace(stringValue(subnet.Zone))
-		if zone == "" {
-			return capacityFailure("tencent_capacity_subnet_unavailable", nil)
+		if validSubnetIDs {
+			subnetRequest := vpc2017.NewDescribeSubnetsRequest()
+			subnetRequest.SubnetIds = stringsToPtrs(subnetIds)
+			subnetResponse, describeErr := client.nativeVpcClient.DescribeSubnets(subnetRequest)
+			if describeErr == nil && subnetResponse != nil && subnetResponse.Response != nil {
+				subnetRequestID = stringValue(subnetResponse.Response.RequestId)
+				seenZones, foundSubnets := map[string]bool{}, map[string]bool{}
+				for _, subnet := range subnetResponse.Response.SubnetSet {
+					if subnet == nil || !seenSubnetIds[stringValue(subnet.SubnetId)] || foundSubnets[stringValue(subnet.SubnetId)] || subnet.AvailableIpAddressCount == nil || int64(*subnet.AvailableIpAddressCount) < required || strings.TrimSpace(stringValue(subnet.Zone)) == "" {
+						validSubnetIDs = false
+						break
+					}
+					foundSubnets[stringValue(subnet.SubnetId)] = true
+					zone := strings.TrimSpace(stringValue(subnet.Zone))
+					if !seenZones[zone] {
+						seenZones[zone], zones = true, append(zones, zone)
+					}
+				}
+				subnetPassed = validSubnetIDs && len(foundSubnets) == len(subnetIds) && subnetRequestID != "" && nodePoolRequestId != ""
+			}
 		}
-		foundSubnets[stringValue(subnet.SubnetId)] = true
-		if !seenZones[zone] {
-			seenZones[zone] = true
-			zones = append(zones, zone)
+		status, code := "passed", ""
+		if !subnetPassed {
+			status, code = "failed", "tencent_capacity_subnet_unavailable"
 		}
+		stages = append(stages, completedPreflightStage("subnet", status, code, subnetStarted, nil, map[string]any{"subnetCount": len(subnetIds)}))
 	}
-	if len(foundSubnets) != len(subnetIds) {
-		return capacityFailure("tencent_capacity_subnet_unavailable", nil)
-	}
-	if len(zones) != 1 || (strings.TrimSpace(request.Zone) != "" && zones[0] != request.Zone) {
-		return capacityFailure("tencent_capacity_zone_unavailable", nil)
-	}
-	capacityZones := zones
-	quotaRequest := cvm2017.NewDescribeAccountQuotaRequest()
-	quotaResponse, err := client.nativeCvmClient.DescribeAccountQuota(quotaRequest)
-	if err != nil || quotaResponse == nil || quotaResponse.Response == nil || quotaResponse.Response.AccountQuotaOverview == nil || quotaResponse.Response.AccountQuotaOverview.AccountQuota == nil {
-		return capacityFailure("tencent_capacity_prepaid_quota_describe_failed", err)
-	}
-	quotaRequestID := stringValue(quotaResponse.Response.RequestId)
-	matchingQuotas := []*cvm2017.PrePaidQuota{}
-	for _, quota := range quotaResponse.Response.AccountQuotaOverview.AccountQuota.PrePaidQuotaSet {
-		if quota == nil || strings.TrimSpace(stringValue(quota.Zone)) == "" {
-			return capacityFailure("tencent_capacity_prepaid_quota_ambiguous", nil)
+	zoneStarted := time.Now()
+	zonePassed := subnetPassed && len(zones) == 1 && (strings.TrimSpace(request.Zone) == "" || zones[0] == request.Zone)
+	if !subnetPassed {
+		stages = append(stages, completedPreflightStage("zone", "blocked", "preflight_dependency_blocked", zoneStarted, []string{"subnet"}, nil))
+	} else {
+		status, code := "passed", ""
+		if !zonePassed {
+			status, code = "failed", "tencent_capacity_zone_unavailable"
 		}
-		if stringValue(quota.Zone) == capacityZones[0] {
-			matchingQuotas = append(matchingQuotas, quota)
+		stages = append(stages, completedPreflightStage("zone", status, code, zoneStarted, nil, map[string]any{"zone": firstNonEmpty(request.Zone, firstString(stringsToPtrs(zones)))}))
+	}
+	targetZone := strings.TrimSpace(request.Zone)
+	if targetZone == "" && len(zones) == 1 {
+		targetZone = zones[0]
+	}
+
+	remainingQuota := uint64(0)
+	quotaRequestID := ""
+	quotaStarted := time.Now()
+	if targetZone == "" {
+		stages = append(stages, completedPreflightStage("cvm_prepaid_quota", "blocked", "preflight_dependency_blocked", quotaStarted, []string{"zone"}, nil))
+	} else {
+		quotaRequest := cvm2017.NewDescribeAccountQuotaRequest()
+		quotaResponse, err := client.nativeCvmClient.DescribeAccountQuota(quotaRequest)
+		quotaPassed := false
+		code := "tencent_capacity_prepaid_quota_describe_failed"
+		if err == nil && quotaResponse != nil && quotaResponse.Response != nil && quotaResponse.Response.AccountQuotaOverview != nil && quotaResponse.Response.AccountQuotaOverview.AccountQuota != nil {
+			quotaRequestID = stringValue(quotaResponse.Response.RequestId)
+			matchingQuotas, ambiguous := []*cvm2017.PrePaidQuota{}, false
+			for _, quota := range quotaResponse.Response.AccountQuotaOverview.AccountQuota.PrePaidQuotaSet {
+				if quota == nil || strings.TrimSpace(stringValue(quota.Zone)) == "" {
+					ambiguous = true
+					continue
+				}
+				if stringValue(quota.Zone) == targetZone {
+					matchingQuotas = append(matchingQuotas, quota)
+				}
+			}
+			if !ambiguous && len(matchingQuotas) == 1 && matchingQuotas[0].RemainingQuota != nil {
+				remainingQuota = *matchingQuotas[0].RemainingQuota
+				quotaPassed = remainingQuota >= uint64(required) && quotaRequestID != ""
+				code = "tencent_capacity_prepaid_quota_unavailable"
+			}
 		}
+		status := "passed"
+		if !quotaPassed {
+			status = "failed"
+		}
+		stages = append(stages, completedPreflightStage("cvm_prepaid_quota", status, map[bool]string{true: "", false: code}[quotaPassed], quotaStarted, nil, map[string]any{"zone": targetZone, "remainingQuota": remainingQuota, "requiredCapacity": required}))
 	}
-	if len(matchingQuotas) != 1 || matchingQuotas[0].RemainingQuota == nil || *matchingQuotas[0].RemainingQuota < uint64(required) || quotaRequestID == "" {
-		return capacityFailure("tencent_capacity_prepaid_quota_unavailable", nil)
-	}
-	remainingQuota := *matchingQuotas[0].RemainingQuota
-	providerRequestIDs := map[string]string{"nodePool": nodePoolRequestId, "subnets": subnetRequestID, "quota": quotaRequestID}
+
 	providerPriceCNY := 0.0
-	for _, zone := range capacityZones {
+	availabilityRequestID := ""
+	priceStarted := time.Now()
+	if targetZone == "" {
+		stages = append(stages, completedPreflightStage("cvm_sku_price", "blocked", "preflight_dependency_blocked", priceStarted, []string{"zone"}, nil))
+	} else {
+		zone := targetZone
 		availabilityRequest := cvm2017.NewDescribeZoneInstanceConfigInfosRequest()
 		availabilityRequest.Filters = []*cvm2017.Filter{
 			{Name: common.StringPtr("zone"), Values: []*string{common.StringPtr(zone)}},
@@ -547,48 +654,61 @@ func (client *tencentSDKClient) Capacity(request Request, _ map[string]string) R
 			{Name: common.StringPtr("instance-charge-type"), Values: []*string{common.StringPtr("PREPAID")}},
 		}
 		availability, err := client.nativeCvmClient.DescribeZoneInstanceConfigInfos(availabilityRequest)
-		if err != nil || availability == nil || availability.Response == nil {
-			return capacityFailure("tencent_capacity_instance_describe_failed", err)
-		}
 		exactAvailability := 0
 		sell := false
 		zonePriceCNY := 0.0
-		for _, item := range availability.Response.InstanceTypeQuotaSet {
-			if item != nil && stringValue(item.Zone) == zone && stringValue(item.InstanceType) == request.Pool.InstanceType && stringValue(item.InstanceChargeType) == "PREPAID" {
-				exactAvailability++
-				sell = stringValue(item.Status) == "SELL"
-				if item.Price != nil && item.Price.DiscountPrice != nil {
-					zonePriceCNY = *item.Price.DiscountPrice
+		if err == nil && availability != nil && availability.Response != nil {
+			for _, item := range availability.Response.InstanceTypeQuotaSet {
+				if item != nil && stringValue(item.Zone) == zone && stringValue(item.InstanceType) == request.Pool.InstanceType && stringValue(item.InstanceChargeType) == "PREPAID" {
+					exactAvailability++
+					sell = stringValue(item.Status) == "SELL"
+					if item.Price != nil && item.Price.DiscountPrice != nil {
+						zonePriceCNY = *item.Price.DiscountPrice
+					}
 				}
 			}
+			availabilityRequestID = stringValue(availability.Response.RequestId)
 		}
-		availabilityRequestID := stringValue(availability.Response.RequestId)
-		if exactAvailability != 1 || !sell || zonePriceCNY <= 0 || availabilityRequestID == "" {
-			return capacityFailure("tencent_capacity_instance_unavailable", nil)
+		pricePassed := exactAvailability == 1 && sell && zonePriceCNY > 0 && availabilityRequestID != ""
+		status, code := "passed", ""
+		if !pricePassed {
+			status, code = "failed", "tencent_capacity_instance_unavailable"
 		}
 		providerPriceCNY = zonePriceCNY
-		providerRequestIDs["availability"] = availabilityRequestID
+		stages = append(stages, completedPreflightStage("cvm_sku_price", status, code, priceStarted, nil, map[string]any{"zone": targetZone, "instanceType": request.Pool.InstanceType, "available": sell, "providerPriceCny": zonePriceCNY}))
 	}
+	if !allPreflightStagesPassed(stages) {
+		return failedPreflightResponse(stages)
+	}
+	providerRequestIDs := map[string]string{"nodePool": nodePoolRequestId, "subnets": subnetRequestID, "quota": quotaRequestID, "availability": availabilityRequestID}
 	return Response{
 		Ok: true, Status: "ready", ProviderRequestId: nodePoolRequestId, NodePoolId: stringValue(pool.NodePoolId),
 		ProviderRequestIDs: providerRequestIDs, ProviderPriceCNY: providerPriceCNY,
-		ProviderData: map[string]string{"chargeType": "PREPAID", "periodMonths": "1", "renewFlag": "NOTIFY_AND_MANUAL_RENEW", "zone": firstNonEmpty(request.Zone, capacityZones[0])},
+		ProviderData: map[string]string{"chargeType": "PREPAID", "periodMonths": "1", "renewFlag": "NOTIFY_AND_MANUAL_RENEW", "zone": targetZone},
 		InstanceType: request.Pool.InstanceType, InstanceAvailable: true, RequiredCapacity: required,
 		RemainingQuota:  remainingQuota,
 		CurrentReplicas: *native.Replicas, ReadyReplicas: *native.ReadyReplicas,
-		MaxReplicas: *native.Scaling.MaxReplicas, TargetReplicas: *native.Replicas + required, MachineType: stringValue(native.MachineType), Zones: capacityZones,
+		MaxReplicas: *native.Scaling.MaxReplicas, TargetReplicas: *native.Replicas + required, MachineType: stringValue(native.MachineType), Zones: zones, PreflightStages: stages,
 	}
 }
 
 func (client *tencentSDKClient) StoragePreflight(request Request, env map[string]string) Response {
-	if client == nil || client.nativeCbsClient == nil {
-		return capacityFailure("tencent_storage_preflight_client_missing", nil)
-	}
 	storage := request.Storage
 	storage.DiskType = firstNonEmpty(storage.DiskType, env["TENCENT_CBS_DISK_TYPE"], "CLOUD_BSSD")
 	if storage.SizeGB == 0 || strings.TrimSpace(storage.Zone) == "" || strings.TrimSpace(storage.DiskType) == "" {
-		return capacityFailure("tencent_storage_preflight_input_invalid", nil)
+		return failedPreflightResponse([]PreflightStage{
+			completedPreflightStage("cbs_prepaid_quota", "failed", "tencent_storage_preflight_input_invalid", time.Now(), nil, nil),
+			completedPreflightStage("cbs_price", "failed", "tencent_storage_preflight_input_invalid", time.Now(), nil, nil),
+		})
 	}
+	if client == nil || client.nativeCbsClient == nil {
+		return failedPreflightResponse([]PreflightStage{
+			completedPreflightStage("cbs_prepaid_quota", "failed", "tencent_storage_preflight_client_missing", time.Now(), nil, nil),
+			completedPreflightStage("cbs_price", "failed", "tencent_storage_preflight_client_missing", time.Now(), nil, nil),
+		})
+	}
+	stages := make([]PreflightStage, 0, 2)
+	quotaStarted := time.Now()
 	quotaRequest := cbs2017.NewDescribeDiskConfigQuotaRequest()
 	quotaRequest.InquiryType = common.StringPtr("INQUIRY_CBS_CONFIG")
 	quotaRequest.DiskChargeType = common.StringPtr("PREPAID")
@@ -596,23 +716,28 @@ func (client *tencentSDKClient) StoragePreflight(request Request, env map[string
 	quotaRequest.Zones = []*string{common.StringPtr(storage.Zone)}
 	quotaRequest.DiskUsage = common.StringPtr("DATA_DISK")
 	quota, err := client.nativeCbsClient.DescribeDiskConfigQuota(quotaRequest)
-	if err != nil || quota == nil || quota.Response == nil {
-		return capacityFailure("tencent_storage_quota_unavailable", err)
-	}
-	quotaRequestID := stringValue(quota.Response.RequestId)
+	quotaRequestID := ""
 	matches := 0
 	available := false
-	for _, config := range quota.Response.DiskConfigSet {
-		if config == nil || stringValue(config.DiskChargeType) != "PREPAID" || stringValue(config.Zone) != storage.Zone || stringValue(config.DiskType) != storage.DiskType || stringValue(config.DiskUsage) != "DATA_DISK" {
-			continue
+	if err == nil && quota != nil && quota.Response != nil {
+		quotaRequestID = stringValue(quota.Response.RequestId)
+		for _, config := range quota.Response.DiskConfigSet {
+			if config == nil || stringValue(config.DiskChargeType) != "PREPAID" || stringValue(config.Zone) != storage.Zone || stringValue(config.DiskType) != storage.DiskType || stringValue(config.DiskUsage) != "DATA_DISK" {
+				continue
+			}
+			matches++
+			available = config.Available != nil && *config.Available && config.MinDiskSize != nil && config.MaxDiskSize != nil && config.StepSize != nil && *config.StepSize > 0 &&
+				storage.SizeGB >= *config.MinDiskSize && storage.SizeGB <= *config.MaxDiskSize && (storage.SizeGB-*config.MinDiskSize)%*config.StepSize == 0
 		}
-		matches++
-		available = config.Available != nil && *config.Available && config.MinDiskSize != nil && config.MaxDiskSize != nil && config.StepSize != nil && *config.StepSize > 0 &&
-			storage.SizeGB >= *config.MinDiskSize && storage.SizeGB <= *config.MaxDiskSize && (storage.SizeGB-*config.MinDiskSize)%*config.StepSize == 0
 	}
-	if quotaRequestID == "" || matches != 1 || !available {
-		return capacityFailure("tencent_storage_quota_unavailable", nil)
+	quotaPassed := quotaRequestID != "" && matches == 1 && available
+	quotaStatus, quotaCode := "passed", ""
+	if !quotaPassed {
+		quotaStatus, quotaCode = "failed", "tencent_storage_quota_unavailable"
 	}
+	stages = append(stages, completedPreflightStage("cbs_prepaid_quota", quotaStatus, quotaCode, quotaStarted, nil, map[string]any{"zone": storage.Zone, "diskType": storage.DiskType, "sizeGb": storage.SizeGB, "available": available}))
+
+	priceStarted := time.Now()
 	priceRequest := cbs2017.NewInquiryPriceCreateDisksRequest()
 	priceRequest.DiskChargeType = common.StringPtr("PREPAID")
 	priceRequest.DiskType = common.StringPtr(storage.DiskType)
@@ -620,14 +745,26 @@ func (client *tencentSDKClient) StoragePreflight(request Request, env map[string
 	priceRequest.DiskCount = common.Uint64Ptr(1)
 	priceRequest.DiskChargePrepaid = &cbs2017.DiskChargePrepaid{Period: common.Uint64Ptr(1), RenewFlag: common.StringPtr("NOTIFY_AND_MANUAL_RENEW")}
 	price, err := client.nativeCbsClient.InquiryPriceCreateDisks(priceRequest)
-	if err != nil || price == nil || price.Response == nil || price.Response.DiskPrice == nil || price.Response.DiskPrice.DiscountPrice == nil || *price.Response.DiskPrice.DiscountPrice <= 0 || stringValue(price.Response.RequestId) == "" {
-		return capacityFailure("tencent_storage_price_unavailable", err)
+	providerPriceCNY := 0.0
+	priceRequestID := ""
+	if err == nil && price != nil && price.Response != nil && price.Response.DiskPrice != nil && price.Response.DiskPrice.DiscountPrice != nil {
+		providerPriceCNY = *price.Response.DiskPrice.DiscountPrice
+		priceRequestID = stringValue(price.Response.RequestId)
 	}
-	priceRequestID := stringValue(price.Response.RequestId)
+	pricePassed := providerPriceCNY > 0 && priceRequestID != ""
+	priceStatus, priceCode := "passed", ""
+	if !pricePassed {
+		priceStatus, priceCode = "failed", "tencent_storage_price_unavailable"
+	}
+	stages = append(stages, completedPreflightStage("cbs_price", priceStatus, priceCode, priceStarted, nil, map[string]any{"zone": storage.Zone, "diskType": storage.DiskType, "sizeGb": storage.SizeGB, "providerPriceCny": providerPriceCNY}))
+	if !allPreflightStagesPassed(stages) {
+		return failedPreflightResponse(stages)
+	}
 	return Response{
 		Ok: true, Status: "ready", ProviderRequestId: priceRequestID,
-		ProviderRequestIDs: map[string]string{"quota": quotaRequestID, "price": priceRequestID}, ProviderPriceCNY: *price.Response.DiskPrice.DiscountPrice,
-		ProviderData: map[string]string{"chargeType": "PREPAID", "periodMonths": "1", "renewFlag": "NOTIFY_AND_MANUAL_RENEW", "zone": storage.Zone, "diskType": storage.DiskType, "sizeGb": strconv.FormatUint(storage.SizeGB, 10)},
+		ProviderRequestIDs: map[string]string{"quota": quotaRequestID, "price": priceRequestID}, ProviderPriceCNY: providerPriceCNY,
+		ProviderData:    map[string]string{"chargeType": "PREPAID", "periodMonths": "1", "renewFlag": "NOTIFY_AND_MANUAL_RENEW", "zone": storage.Zone, "diskType": storage.DiskType, "sizeGb": strconv.FormatUint(storage.SizeGB, 10)},
+		PreflightStages: stages,
 	}
 }
 

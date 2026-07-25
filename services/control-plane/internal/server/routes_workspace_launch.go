@@ -214,7 +214,7 @@ func registerWorkspaceLaunchRoutes(mux *http.ServeMux, app *controlPlaneServer, 
 			writeError(w, http.StatusInternalServerError, "state_read_failed")
 			return
 		}
-		if providerReconcileWorkerEnabled() {
+		if workspaceLaunchWorkerEnabled() {
 			go func() { _ = app.runWorkspaceLaunch(context.Background(), service, operation.ID) }()
 		}
 		writeJSON(w, http.StatusAccepted, body)
@@ -259,6 +259,7 @@ func registerWorkspaceLaunchRoutes(mux *http.ServeMux, app *controlPlaneServer, 
 				return
 			}
 			writeJSON(w, http.StatusOK, body)
+			return
 		}
 		writeError(w, http.StatusNotFound, "workspace_launch_not_found")
 	}))

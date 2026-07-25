@@ -95,6 +95,12 @@
     },
     "OPL_MONTHLY_BILLING_INTERVAL_MS": {
       "value": "3600000"
+    },
+    "OPL_WORKSPACE_LAUNCH_WORKER_ENABLED": {
+      "value": "1"
+    },
+    "OPL_WORKSPACE_LAUNCH_INTERVAL_MS": {
+      "value": "10000"
     }
   }
 }

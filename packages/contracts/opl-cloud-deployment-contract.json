@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 14,
+  "schemaVersion": 15,
   "owner": "OPL Fabric",
   "purpose": "Deployment workflow, immutable Cloud and Workspace images, TKE handoff, read-only diagnostics, and production-verification safety.",
   "state": "current",
@@ -90,6 +90,8 @@
       "OPL_WORKSPACE_PROJECTS_DIR",
       "OPL_MONTHLY_BILLING_WORKER_ENABLED",
       "OPL_MONTHLY_BILLING_INTERVAL_MS",
+      "OPL_WORKSPACE_LAUNCH_WORKER_ENABLED",
+      "OPL_WORKSPACE_LAUNCH_INTERVAL_MS",
       "OPL_TENCENT_ZONE",
       "OPL_BASIC_COMPUTE_INSTANCE_TYPE",
       "OPL_PRO_COMPUTE_INSTANCE_TYPE",
@@ -317,6 +319,28 @@
       ]
     },
     "mutationCommands": []
+  },
+  "fabricMonthlyPreflightDiagnosticsWorkflow": {
+    "file": ".github/workflows/fabric-monthly-preflight-diagnostics.yml",
+    "job": "diagnose",
+    "runner": ["self-hosted", "tencent-cloud", "opl-cloud", "tke-vpc"],
+    "environment": "production",
+    "scope": "current_ready_fabric_deployment_revision",
+    "podOwnership": "deployment_uid_and_revision_to_replicaset_owner_uid_to_pod_owner_uid",
+    "request": {
+      "method": "GET",
+      "url": "http://127.0.0.1:8082/fabric/monthly-preflight-report",
+      "packageId": "basic",
+      "sizeGb": 10,
+      "zoneSource": "current_fabric_pod_OPL_TENCENT_ZONE",
+      "authorization": "current_fabric_process_memory_only"
+    },
+    "artifact": "fabric-monthly-preflight-report",
+    "readOnly": true,
+    "requiredMutationCounts": {"sub2api": 0, "tencent": 0, "kubernetes": 0},
+    "forbiddenData": ["secret", "token", "raw_tencent_response", "provider_request_id", "wallet", "user_data"],
+    "mutationCommands": [],
+    "controlPlaneLaunchCalls": 0
   },
   "productionVerificationWorkflow": {
     "file": ".github/workflows/verify-production-chain.yml",

@@ -386,6 +386,17 @@ test("Current contracts hard cut operator resources, wallet adjustments, and ann
     absentRequires: "both_local_identities_and_exact_provider_describe_absence",
     forbiddenSideEffects: ["sync", "tag", "kubectl_apply", "delete", "label", "purchase", "renew", "destroy"]
   });
+  assert.deepEqual(boundary.services.fabric.monthlyPreflightDiagnostics, {
+    endpoint: "GET /fabric/monthly-preflight-report?packageId=<packageId>&sizeGb=<sizeGb>&zone=<zone>",
+    authentication: "internal_service_token",
+    evaluator: "shared_with_normal_monthly_preflight",
+    stages: ["launch_permission", "credentials", "node_pool_discovery", "node_pool_contract", "subnet", "zone", "cvm_prepaid_quota", "cvm_sku_price", "cbs_prepaid_quota", "cbs_price"],
+    independentChecks: "run_all_without_mutation",
+    dependentChecks: "blocked_with_blockedBy",
+    safeFactsOnly: true,
+    forbiddenData: ["secret", "token", "raw_tencent_response", "provider_request_id", "wallet", "user_data"],
+    mutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
+  });
   assert.equal(billing.chargePolicy.walletMutationSerializationContract, "opl-cloud-service-boundary-contract.json#services.controlPlane.walletMutationSerialization");
   assert.deepEqual(sourceTruth.sources.operator.workspaceLaunchReconciliation, {
     route: "GET /api/operator/reconciliation",

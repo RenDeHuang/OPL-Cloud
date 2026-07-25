@@ -1541,6 +1541,45 @@ func TestTencentSDKCapacityPreflightFailsClosedWithoutMutation(t *testing.T) {
 	}
 }
 
+func TestTencentSDKMonthlyPreflightEvaluatesIndependentFailuresWithoutMutation(t *testing.T) {
+	ready := int64(2)
+	tkeAPI := &fakeNativeTkeAPI{
+		nodePoolId: "np-basic", discoverNodePoolId: "np-basic", replicas: 2, maxReplicas: 10, readyReplicas: &ready,
+		enableAutoscaling: true, labelInstanceType: "SA5.MEDIUM4", instanceTypes: []string{"SA5.MEDIUM4"},
+	}
+	cvmAPI := &fakeNativeCvmAPI{zeroQuota: true, zoneConfigStatus: "SOLD_OUT"}
+	vpcAPI := &fakeNativeVpcAPI{}
+	compute := (&tencentSDKClient{region: "na-siliconvalley", clusterId: "cls-123", nativeTkeClient: tkeAPI, nativeCvmClient: cvmAPI, nativeVpcClient: vpcAPI}).Capacity(Request{
+		Action: "capacity_preflight", PackageId: "basic", Zone: "na-siliconvalley-1",
+		Pool: ComputePoolInput{Id: "pool-basic-2c4g", InstanceType: "SA5.MEDIUM4", DesiredReplicas: 1},
+	}, nil)
+	computeStages := map[string]PreflightStage{}
+	for _, stage := range compute.PreflightStages {
+		computeStages[stage.Stage] = stage
+	}
+	if compute.Ok || computeStages["node_pool_contract"].Status != "failed" || computeStages["cvm_prepaid_quota"].Status != "failed" || computeStages["cvm_sku_price"].Status != "failed" {
+		t.Fatalf("compute stages=%#v response=%#v", computeStages, compute)
+	}
+	if len(cvmAPI.describeAccountQuotaRequests) != 1 || len(cvmAPI.describeZoneConfigRequests) != 1 || tkeAPI.scaleNodePoolRequest != nil || tkeAPI.createNodePoolRequest != nil || tkeAPI.modifyNodePoolRequest != nil {
+		t.Fatalf("compute preflight calls tke=%#v cvm=%#v", tkeAPI, cvmAPI)
+	}
+
+	cbsAPI := &fakeNativeCbsAPI{quotaUnavailable: true, omitPrice: true}
+	storage := (&tencentSDKClient{nativeCbsClient: cbsAPI}).StoragePreflight(Request{
+		Action: "storage_preflight", PackageId: "basic", Storage: StorageInput{SizeGB: 10, Zone: "na-siliconvalley-1", DiskType: "CLOUD_BSSD"},
+	}, nil)
+	storageStages := map[string]PreflightStage{}
+	for _, stage := range storage.PreflightStages {
+		storageStages[stage.Stage] = stage
+	}
+	if storage.Ok || storageStages["cbs_prepaid_quota"].Status != "failed" || storageStages["cbs_price"].Status != "failed" {
+		t.Fatalf("storage stages=%#v response=%#v", storageStages, storage)
+	}
+	if len(cbsAPI.describeDiskConfigQuotaRequests) != 1 || len(cbsAPI.inquiryPriceCreateDisksRequests) != 1 || len(cbsAPI.createDisksRequests) != 0 || len(cbsAPI.renewDiskRequests) != 0 {
+		t.Fatalf("storage preflight calls=%#v", cbsAPI)
+	}
+}
+
 func (api *fakeNativeTkeAPI) DescribeClusterInstances(request *tke2022.DescribeClusterInstancesRequest) (*tke2022.DescribeClusterInstancesResponse, error) {
 	api.record("DescribeClusterInstances")
 	api.describeInstancesRequest = append(api.describeInstancesRequest, request)

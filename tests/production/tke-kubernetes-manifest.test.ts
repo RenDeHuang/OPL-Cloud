@@ -18,6 +18,8 @@ test("OPL Cloud TKE manifest declares three decoupled services and monthly Sub2A
   assert.equal(config.data.OPL_RUNTIME_PROVIDER, "tencent-tke");
   assert.equal(config.data.OPL_MONTHLY_BILLING_WORKER_ENABLED, "1");
   assert.equal(config.data.OPL_MONTHLY_BILLING_INTERVAL_MS, "3600000");
+  assert.equal(config.data.OPL_WORKSPACE_LAUNCH_WORKER_ENABLED, "1");
+  assert.equal(config.data.OPL_WORKSPACE_LAUNCH_INTERVAL_MS, "10000");
   assert.equal(config.data.OPL_SUB2API_BASE_URL, "https://gflabtoken.cn");
   assert.equal(config.data.OPL_GATEWAY_PUBLIC_BASE_URL, undefined);
   assert.equal(config.data.OPL_CODEX_BASE_URL, undefined);

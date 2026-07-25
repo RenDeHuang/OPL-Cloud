@@ -152,6 +152,21 @@ func (s *Service) MonthlyPreflight(ctx context.Context, input MonthlyPreflightIn
 	return result, nil
 }
 
+func (s *Service) MonthlyPreflightReport(ctx context.Context, input MonthlyPreflightReportInput) (MonthlyPreflightReport, error) {
+	provider, ok := s.provider.(monthlyPreflightReportProvider)
+	if !ok {
+		return MonthlyPreflightReport{}, ErrMonthlyPreflightUnavailable
+	}
+	report, err := provider.MonthlyPreflightReport(ctx, input)
+	if err != nil {
+		return MonthlyPreflightReport{}, err
+	}
+	report.Sub2APIMutationCount = 0
+	report.TencentMutationCount = 0
+	report.KubernetesMutationCount = 0
+	return report, nil
+}
+
 func (s *Service) MonthlyProviderTruth(ctx context.Context, computeID, storageID string) (MonthlyProviderTruth, error) {
 	computeID, storageID = strings.TrimSpace(computeID), strings.TrimSpace(storageID)
 	if computeID == "" || storageID == "" {

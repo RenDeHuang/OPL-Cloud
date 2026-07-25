@@ -37,6 +37,16 @@ type TencentProvider struct {
 	kubectl   func(context.Context, []string, []byte) ([]byte, error)
 }
 
+type monthlyPreflightReportProvider interface {
+	MonthlyPreflightReport(context.Context, MonthlyPreflightReportInput) (MonthlyPreflightReport, error)
+}
+
+type monthlyPreflightEvaluation struct {
+	Result MonthlyPreflight
+	Stages []MonthlyPreflightStage
+	Err    error
+}
+
 func NewTencentProvider() *TencentProvider {
 	return &TencentProvider{provision: executeProvisioner, kubectl: executeKubectl}
 }
@@ -45,25 +55,35 @@ func (p *TencentProvider) MonthlyPreflight(ctx context.Context, input MonthlyPre
 	if os.Getenv("RUN_TENCENT_CREATE_RELEASE_EXECUTION") != "1" {
 		return MonthlyPreflight{}, errors.New("live_mutation_flag_required")
 	}
+	evaluation := p.evaluateMonthlyPreflight(ctx, input)
+	return evaluation.Result, evaluation.Err
+}
+
+func (p *TencentProvider) evaluateMonthlyPreflight(ctx context.Context, input MonthlyPreflightInput) monthlyPreflightEvaluation {
 	if (input.ResourceType != "compute" && input.ResourceType != "storage") || (input.PackageID != "basic" && input.PackageID != "pro") || strings.TrimSpace(input.Zone) == "" ||
 		(input.ResourceType == "compute" && input.SizeGB != 0) || (input.ResourceType == "storage" && input.SizeGB <= 0) {
-		return MonthlyPreflight{}, ErrInvalidMonthlyPreflight
+		return monthlyPreflightEvaluation{Err: ErrInvalidMonthlyPreflight}
 	}
 	request := provisionerRequest{PackageID: input.PackageID, Zone: input.Zone}
 	plan := packagePlan(input.PackageID)
+	expectedStages := []string{"node_pool_discovery", "node_pool_contract", "subnet", "zone", "cvm_prepaid_quota", "cvm_sku_price"}
 	if input.ResourceType == "compute" {
 		request.Action = "capacity_preflight"
 		request.Pool = provisionerPool{ID: plan.ID, PackageID: input.PackageID, InstanceType: plan.InstanceType, DesiredReplicas: 1}
 	} else {
 		request.Action = "storage_preflight"
 		request.Storage = provisionerStorage{SizeGB: uint64(input.SizeGB), Zone: input.Zone, DiskType: firstNonEmpty(os.Getenv("TENCENT_CBS_DISK_TYPE"), "CLOUD_BSSD")}
+		expectedStages = []string{"cbs_prepaid_quota", "cbs_price"}
 	}
 	response, err := p.provision(ctx, request)
+	evaluation := monthlyPreflightEvaluation{Stages: reportStages(response, err, expectedStages)}
 	if err != nil {
-		return MonthlyPreflight{}, err
+		evaluation.Err = err
+		return evaluation
 	}
 	if !response.OK {
-		return MonthlyPreflight{}, provisionerError(response)
+		evaluation.Err = provisionerError(response)
+		return evaluation
 	}
 	validPrice := response.ProviderPriceCNY > 0 && !math.IsNaN(response.ProviderPriceCNY) && !math.IsInf(response.ProviderPriceCNY, 0)
 	validFacts := response.Status == "ready" && response.ProviderData["chargeType"] == "PREPAID" && response.ProviderData["periodMonths"] == "1" &&
@@ -76,13 +96,100 @@ func (p *TencentProvider) MonthlyPreflight(ctx context.Context, input MonthlyPre
 			strings.TrimSpace(response.ProviderRequestIDs["quota"]) != "" && strings.TrimSpace(response.ProviderRequestIDs["price"]) != ""
 	}
 	if !validPrice || !validFacts {
-		return MonthlyPreflight{}, fmt.Errorf("monthly_preflight_provider_mismatch")
+		evaluation.Err = fmt.Errorf("monthly_preflight_provider_mismatch")
+		return evaluation
 	}
-	return MonthlyPreflight{
+	evaluation.Result = MonthlyPreflight{
 		ResourceType: input.ResourceType, PackageID: input.PackageID, NodePoolID: response.NodePoolID, SizeGB: input.SizeGB, Zone: input.Zone,
 		Available: true, ChargeType: "PREPAID", PeriodMonths: 1, RenewFlag: "NOTIFY_AND_MANUAL_RENEW",
 		ProviderPriceCNY: response.ProviderPriceCNY, ProviderRequestIDs: response.ProviderRequestIDs,
-	}, nil
+	}
+	return evaluation
+}
+
+func (p *TencentProvider) MonthlyPreflightReport(ctx context.Context, input MonthlyPreflightReportInput) (MonthlyPreflightReport, error) {
+	items := []MonthlyPreflightStage{
+		monthlyPreflightEnvironmentStage("launch_permission", "RUN_TENCENT_CREATE_RELEASE_EXECUTION", "1"),
+		monthlyPreflightCredentialsStage(),
+	}
+	if input.PackageID != "basic" && input.PackageID != "pro" || input.SizeGB <= 0 || strings.TrimSpace(input.Zone) == "" || input.Zone != strings.TrimSpace(input.Zone) {
+		return MonthlyPreflightReport{}, ErrInvalidMonthlyPreflight
+	}
+	if items[1].Status != "passed" {
+		items = append(items, blockedPreflightStages([]string{"node_pool_discovery", "node_pool_contract", "subnet", "zone", "cvm_prepaid_quota", "cvm_sku_price", "cbs_prepaid_quota", "cbs_price"}, "credentials")...)
+	} else {
+		compute := p.evaluateMonthlyPreflight(ctx, MonthlyPreflightInput{ResourceType: "compute", PackageID: input.PackageID, Zone: input.Zone})
+		storage := p.evaluateMonthlyPreflight(ctx, MonthlyPreflightInput{ResourceType: "storage", PackageID: input.PackageID, SizeGB: input.SizeGB, Zone: input.Zone})
+		items = append(items, compute.Stages...)
+		items = append(items, storage.Stages...)
+	}
+	status := "passed"
+	for _, item := range items {
+		if item.Status != "passed" {
+			status = "failed"
+			break
+		}
+	}
+	return MonthlyPreflightReport{SchemaVersion: 1, Status: status, PackageID: input.PackageID, SizeGB: input.SizeGB, Zone: input.Zone, Items: items}, nil
+}
+
+func monthlyPreflightEnvironmentStage(stage, key, expected string) MonthlyPreflightStage {
+	status, code := "passed", ""
+	if os.Getenv(key) != expected {
+		status, code = "failed", "live_mutation_flag_required"
+	}
+	return MonthlyPreflightStage{Stage: stage, Status: status, ErrorCode: code, BlockedBy: []string{}, SafeFacts: map[string]any{"enabled": status == "passed"}}
+}
+
+func monthlyPreflightCredentialsStage() MonthlyPreflightStage {
+	missing := []string{}
+	for _, key := range []string{"TENCENTCLOUD_SECRET_ID", "TENCENTCLOUD_SECRET_KEY", "TENCENTCLOUD_REGION", "TENCENT_DEPLOY_CLUSTER_ID"} {
+		if strings.TrimSpace(os.Getenv(key)) == "" {
+			missing = append(missing, key)
+		}
+	}
+	status, code := "passed", ""
+	if len(missing) > 0 {
+		status, code = "failed", "tencent_env_missing"
+	}
+	return MonthlyPreflightStage{Stage: "credentials", Status: status, ErrorCode: code, BlockedBy: []string{}, SafeFacts: map[string]any{"available": len(missing) == 0}}
+}
+
+func blockedPreflightStages(names []string, dependency string) []MonthlyPreflightStage {
+	items := make([]MonthlyPreflightStage, 0, len(names))
+	for _, name := range names {
+		items = append(items, MonthlyPreflightStage{
+			Stage: name, Status: "blocked", ErrorCode: "preflight_dependency_blocked",
+			BlockedBy: []string{dependency}, SafeFacts: map[string]any{},
+		})
+	}
+	return items
+}
+
+func reportStages(response provisionerResponse, err error, expected []string) []MonthlyPreflightStage {
+	byName := map[string]MonthlyPreflightStage{}
+	for _, item := range response.PreflightStages {
+		byName[item.Stage] = item
+	}
+	items := make([]MonthlyPreflightStage, 0, len(expected))
+	for _, name := range expected {
+		item, ok := byName[name]
+		if !ok {
+			code := response.ErrorCode
+			if code == "" && err != nil {
+				code = "monthly_preflight_unavailable"
+			}
+			item = MonthlyPreflightStage{Stage: name, Status: "failed", ErrorCode: code, BlockedBy: []string{}, SafeFacts: map[string]any{}}
+		}
+		if item.BlockedBy == nil {
+			item.BlockedBy = []string{}
+		}
+		if item.SafeFacts == nil {
+			item.SafeFacts = map[string]any{}
+		}
+		items = append(items, item)
+	}
+	return items
 }
 
 func (p *TencentProvider) MonthlyProviderTruth(ctx context.Context, compute ComputeAllocation, storage StorageVolume) (MonthlyProviderTruth, error) {
@@ -306,34 +413,35 @@ type provisionerStorage struct {
 }
 
 type provisionerResponse struct {
-	OK                 bool                 `json:"ok"`
-	OperationID        string               `json:"operationId,omitempty"`
-	PoolID             string               `json:"poolId,omitempty"`
-	NodePoolID         string               `json:"nodePoolId,omitempty"`
-	InstanceID         string               `json:"instanceId,omitempty"`
-	NodeName           string               `json:"nodeName,omitempty"`
-	PrivateIP          string               `json:"privateIp,omitempty"`
-	PublicIP           string               `json:"publicIp,omitempty"`
-	MachinePresent     *bool                `json:"machinePresent,omitempty"`
-	StoragePresent     *bool                `json:"storagePresent,omitempty"`
-	StorageVolumeID    string               `json:"storageVolumeId,omitempty"`
-	CBSStatus          string               `json:"cbsStatus,omitempty"`
-	CVMStatus          string               `json:"cvmStatus,omitempty"`
-	TKEStatus          string               `json:"tkeStatus,omitempty"`
-	Status             string               `json:"status,omitempty"`
-	ProviderRequestID  string               `json:"providerRequestId,omitempty"`
-	ProviderRequestIDs map[string]string    `json:"providerRequestIds,omitempty"`
-	ProviderPriceCNY   float64              `json:"providerPriceCny,omitempty"`
-	ProviderData       map[string]string    `json:"providerData,omitempty"`
-	ErrorCode          string               `json:"errorCode,omitempty"`
-	Message            string               `json:"message,omitempty"`
-	Retryable          bool                 `json:"retryable,omitempty"`
-	MissingEnv         []string             `json:"missingEnv,omitempty"`
-	Machines           []provisionerMachine `json:"machines,omitempty"`
-	InstanceType       string               `json:"instanceType,omitempty"`
-	InstanceAvailable  bool                 `json:"instanceAvailable,omitempty"`
-	RemainingQuota     uint64               `json:"remainingQuota,omitempty"`
-	Zones              []string             `json:"zones,omitempty"`
+	OK                 bool                    `json:"ok"`
+	OperationID        string                  `json:"operationId,omitempty"`
+	PoolID             string                  `json:"poolId,omitempty"`
+	NodePoolID         string                  `json:"nodePoolId,omitempty"`
+	InstanceID         string                  `json:"instanceId,omitempty"`
+	NodeName           string                  `json:"nodeName,omitempty"`
+	PrivateIP          string                  `json:"privateIp,omitempty"`
+	PublicIP           string                  `json:"publicIp,omitempty"`
+	MachinePresent     *bool                   `json:"machinePresent,omitempty"`
+	StoragePresent     *bool                   `json:"storagePresent,omitempty"`
+	StorageVolumeID    string                  `json:"storageVolumeId,omitempty"`
+	CBSStatus          string                  `json:"cbsStatus,omitempty"`
+	CVMStatus          string                  `json:"cvmStatus,omitempty"`
+	TKEStatus          string                  `json:"tkeStatus,omitempty"`
+	Status             string                  `json:"status,omitempty"`
+	ProviderRequestID  string                  `json:"providerRequestId,omitempty"`
+	ProviderRequestIDs map[string]string       `json:"providerRequestIds,omitempty"`
+	ProviderPriceCNY   float64                 `json:"providerPriceCny,omitempty"`
+	ProviderData       map[string]string       `json:"providerData,omitempty"`
+	ErrorCode          string                  `json:"errorCode,omitempty"`
+	Message            string                  `json:"message,omitempty"`
+	Retryable          bool                    `json:"retryable,omitempty"`
+	MissingEnv         []string                `json:"missingEnv,omitempty"`
+	Machines           []provisionerMachine    `json:"machines,omitempty"`
+	InstanceType       string                  `json:"instanceType,omitempty"`
+	InstanceAvailable  bool                    `json:"instanceAvailable,omitempty"`
+	RemainingQuota     uint64                  `json:"remainingQuota,omitempty"`
+	Zones              []string                `json:"zones,omitempty"`
+	PreflightStages    []MonthlyPreflightStage `json:"preflightStages,omitempty"`
 }
 
 type provisionerMachine struct {

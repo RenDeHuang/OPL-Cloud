@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 13,
+  "schemaVersion": 14,
   "owner": "OPL Platform Architecture",
   "purpose": "Freeze the approved Pilot products, delegated Gateway key lifecycle, one charge per Workspace period, prepaid Tencent fulfillment, Runtime facts, operator workflows, announcements, and evidence levels without claiming unfinished implementation or runtime evidence.",
   "state": "current",
@@ -187,6 +187,18 @@
       "runWhen": "ChargeAttempted=false_and_ChargeConfirmation_absent",
       "skipOnRecoveryWhenAnyPresent": ["ChargeAttempted", "ChargeConfirmation"],
       "writes": "none"
+    },
+    "backgroundWorkers": {
+      "activeLaunchWorker": {
+        "intervalSeconds": 10,
+        "query": "non_terminal_workspace.launch.v2_only",
+        "purpose": "advance_active_launches"
+      },
+      "providerReconcileWorker": {
+        "intervalSeconds": 600,
+        "purpose": "recovery_gate_and_provider_fact_reconciliation"
+      },
+      "duplicateDebitOrProcurement": "prevented_by_existing_cas_lease_and_idempotency"
     },
     "totalBalanceSemantics": "read_only_preflight_not_hold_or_reservation",
     "customerDebitCardinality": 1,
