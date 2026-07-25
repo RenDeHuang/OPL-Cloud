@@ -192,7 +192,7 @@
                 ],
                 "readinessProbe": {
                   "httpGet": {
-                    "path": "/api/production/readiness",
+                    "path": "/api/healthz",
                     "port": 8787
                   },
                   "initialDelaySeconds": 10,

@@ -273,13 +273,23 @@ test("TKE deploy workflow matches the current deployment contract", async () => 
   assertWorkflowContract(deployWorkflow, contract.productionReadOnlyRolloutVerifierJob, contract);
   assert.equal(contract.productionReleaseGateJob.bootstrapConclusion, "release_incomplete_failure");
   assertWorkflowContract(deployWorkflow, contract.productionReleaseGateJob, contract);
-  assert.ok(contract.productionLegacySecretCleanupJob);
-  assert.equal(contract.productionLegacySecretCleanupJob.trigger, "candidate_rollout_successful");
-  assert.equal(contract.productionLegacySecretCleanupJob.legacySecretName, "opl-cloud-workspace-codex");
-  assert.equal(contract.productionLegacySecretCleanupJob.accountScopedSecretDeletionForbidden, true);
-  assert.equal(contract.productionLegacySecretCleanupJob.failureBehavior, "fail_workflow_without_image_rollback");
-  assertWorkflowContract(deployWorkflow, contract.productionLegacySecretCleanupJob, contract);
-  assert.equal(contract.productionRollbackJob.trigger, "post_snapshot_deploy_bootstrap_or_read_only_verifier_not_successful");
+  assert.equal(contract.productionLegacySecretCleanupJob, undefined);
+  assertWorkflowContract(deployWorkflow, contract.productionFailureDiagnosticsJob, contract);
+  assert.deepEqual(contract.deployWorkflow.nodeStoragePreflight, {
+    diskPressure: "False",
+    source: "kubelet_stats_summary",
+    filesystems: ["nodefs", "imagefs"],
+    minimumAvailableBytes: 25 * 1024 * 1024 * 1024,
+    failureBehavior: "fail_before_any_kubectl_apply"
+  });
+  assert.deepEqual(contract.deployWorkflow.cloudRollout, {
+    deployments: ["opl-cloud-control-plane", "opl-cloud-ledger", "opl-cloud-fabric"],
+    candidateRevisionPerDeployment: 1,
+    candidateMutation: "single_manifest_apply",
+    sharedDeadlineSeconds: 300,
+    failFastReasons: ["Evicted", "DiskPressure", "ImagePullBackOff", "CrashLoopBackOff", "Unschedulable"]
+  });
+  assert.equal(contract.productionRollbackJob.trigger, "post_diagnostics_artifact_upload");
   assertWorkflowContract(deployWorkflow, contract.productionRollbackJob, contract);
   assert.deepEqual(contract.imageReleaseWorkflow.outputs, ["cloud_image", "workspace_image"]);
   assert.equal(contract.imageReleaseWorkflow.skippedOutput, "empty");
@@ -376,8 +386,8 @@ test("ordinary TKE release requires the real read-only rollout verifier", async 
   ]);
   const verifier = workflowJob(workflow, "verify-rollout-read-only");
   const releaseGate = workflowJob(workflow, "release-gate");
+  const diagnostics = workflowJob(workflow, "capture-rollout-failure");
   const rollback = workflowJob(workflow, "rollback-live-qa");
-  const cleanup = workflowJob(workflow, "retire-legacy-workspace-secret");
   const verifierRun = serializedRuns(verifier);
 
   assert.equal(verifier.needs, "deploy");
@@ -398,11 +408,13 @@ test("ordinary TKE release requires the real read-only rollout verifier", async 
   assert.match(verifierRun, /production-live-qa\.ts --read-only/);
   assert.match(verifierRun, /retired|404/);
   assert.doesNotMatch(verifierRun, /purchase|redeem|model request|provider mutation/i);
+  assert.equal(contract.productionReadOnlyRolloutVerifierJob.fullSystemReadinessRequired, false);
+  assert.deepEqual(contract.productionReadOnlyRolloutVerifierJob.podRequirements, ["three_cloud_pods_ready", "candidate_cloud_image_id"]);
+  assert.equal(contract.productionReadOnlyRolloutVerifierJob.workspaceRequirement, "configmap_digest_unchanged");
   assert.deepEqual(releaseGate.needs, ["deploy", "bootstrap-readiness", "verify-rollout-read-only", "rollback-live-qa"]);
-  assert.deepEqual(cleanup.needs, ["deploy", "verify-rollout-read-only"]);
-  assert.match(String(cleanup.if), /needs\.verify-rollout-read-only\.result == 'success'/);
-  assert.match(String(rollback.if), /verify-rollout-read-only/);
-  assert.deepEqual(rollback.needs, ["deploy", "bootstrap-readiness", "verify-rollout-read-only"]);
+  assert.match(String(diagnostics.if), /verify-rollout-read-only/);
+  assert.match(String(rollback.if), /capture-rollout-failure/);
+  assert.deepEqual(rollback.needs, ["deploy", "bootstrap-readiness", "verify-rollout-read-only", "capture-rollout-failure"]);
   assert.equal(contract.productionReadOnlyRolloutVerifierJob.job, "verify-rollout-read-only");
   assert.equal(contract.productionReadOnlyRolloutVerifierJob.readOnly, true);
   assert.equal(contract.productionReadOnlyRolloutVerifierJob.requiredEnv.includes("OPL_SUB2API_ADMIN_EMAIL"), true);
@@ -424,10 +436,10 @@ test("TKE bootstrap deploy is approved, read only, and cannot complete a release
   const deploy = workflowJob(workflow, "deploy");
   const bootstrap = workflowJob(workflow, "bootstrap-readiness");
   const releaseGate = workflowJob(workflow, "release-gate");
-  const cleanup = workflowJob(workflow, "retire-legacy-workspace-secret");
+  const diagnostics = workflowJob(workflow, "capture-rollout-failure");
   const rollback = workflowJob(workflow, "rollback-live-qa");
   const rolloutRun = serializedStep(stepsByName(deploy).get("Render and apply manifest"));
-  const rollbackRun = serializedStep(stepsByName(rollback).get("Restore previous Cloud and App images"));
+  const rollbackRun = serializedStep(stepsByName(rollback).get("Restore previous Cloud images and ConfigMap"));
   const bootstrapRun = serializedRuns(bootstrap);
   const releaseRun = serializedRuns(releaseGate);
 
@@ -454,13 +466,12 @@ test("TKE bootstrap deploy is approved, read only, and cannot complete a release
   assert.match(releaseRun, /release incomplete/i);
   assert.match(releaseRun, /releaseComplete.*false/s);
   assert.match(releaseRun, /exit 1/);
-  assert.match(String(cleanup.if), /!inputs\.bootstrap_mode/);
-  assert.deepEqual(rollback.needs, ["deploy", "bootstrap-readiness", "verify-rollout-read-only"]);
-  assert.match(String(rollback.if), /inputs\.bootstrap_mode.*needs\.bootstrap-readiness\.result != 'success'/);
-  assert.match(String(rollback.if), /!inputs\.bootstrap_mode.*needs\.deploy\.result != 'success'/);
+  assert.deepEqual(rollback.needs, ["deploy", "bootstrap-readiness", "verify-rollout-read-only", "capture-rollout-failure"]);
+  assert.match(String(diagnostics.if), /inputs\.bootstrap_mode.*needs\.bootstrap-readiness\.result != 'success'/);
+  assert.match(String(diagnostics.if), /!inputs\.bootstrap_mode.*needs\.deploy\.result != 'success'/);
   assert.doesNotMatch(String(rollback.if), /release-gate/);
   assert.match(rolloutRun, /OPL_BOOTSTRAP_MODE[\s\S]*apply_bootstrap_images/);
-  assert.match(rolloutRun, /OPL_BOOTSTRAP_MODE[\s\S]*restore_previous_bootstrap_images/);
+  assert.doesNotMatch(rolloutRun, /restore_previous_bootstrap_images/);
   assert.match(rollbackRun, /inputs\.bootstrap_mode[\s\S]*restore_previous_bootstrap_images/);
 });
 
@@ -741,9 +752,10 @@ test("TKE deploy never applies a ConfigMap with a mismatched Tencent region and 
     await mkdir(rollbackDir);
     await Promise.all([
       ...["opl-cloud-control-plane", "opl-cloud-ledger", "opl-cloud-fabric"].map((name) => writeFile(join(rollbackDir, name), values.OPL_CLOUD_IMAGE)),
+      ...["opl-cloud-control-plane", "opl-cloud-ledger", "opl-cloud-fabric"].map((name) => writeFile(join(rollbackDir, `${name}.deployment.json`), JSON.stringify({ metadata: { annotations: { "deployment.kubernetes.io/revision": "1" } } }))),
       writeFile(join(rollbackDir, "opl-cloud-config.json"), JSON.stringify({ data: values })),
-      writeFile(join(rollbackDir, "OPL_WORKSPACE_IMAGE"), values.OPL_WORKSPACE_IMAGE),
-      writeFile(join(rollbackDir, "workspace-images.tsv"), "")
+      writeFile(join(rollbackDir, "node-storage-preflight.json"), "{}"),
+      writeFile(kubectlLog, "")
     ]);
     const result = spawnSync("bash", ["-c", `
       kubectl() {
@@ -759,7 +771,6 @@ ${apply}
         ...values,
         KUBECONFIG: "/dev/null",
         OPL_DEPLOY_SECRET_DIR: root,
-        OPL_EXERCISE_ROLLBACK: "false",
         OPL_TENCENT_ZONE: "na-siliconvalley-1",
         TENCENTCLOUD_REGION: "ap-guangzhou",
         TEST_KUBECTL_LOG: kubectlLog
@@ -788,20 +799,21 @@ test("TKE manifest renderer can leave shared Ingress ownership untouched", async
   assert.equal(rendered.items.some((item) => item.kind === "Ingress" && item.metadata?.name === "opl-cloud"), false);
 });
 
-test("TKE deploy requires image digests and rolls back Cloud images with the complete ConfigMap", async () => {
+test("TKE deploy preflights node storage and creates one candidate revision per Cloud Deployment", async () => {
   const workflow = await readWorkflow(".github/workflows/deploy-tke-production.yml");
   const currentJob = workflowJob(workflow, "deploy");
   const inputs = Object.keys(workflow.on.workflow_dispatch.inputs || {});
   const checks = serializedStep(stepsByName(currentJob).get("Check deployment inputs"));
+  const preflight = serializedStep(stepsByName(currentJob).get("Preflight rollout node storage"));
   const capture = serializedStep(stepsByName(currentJob).get("Capture rollback image set"));
   const upload = stepsByName(currentJob).get("Upload rollback image set");
   const apply = serializedStep(stepsByName(currentJob).get("Render and apply manifest"));
   const rolloutHelper = await readFile(repoFile("tools/tke-image-rollout.sh"), "utf8");
   const stepNames = [...stepsByName(currentJob).keys()];
 
-  assert.equal(inputs.includes("exercise_rollback"), true);
+  assert.equal(inputs.includes("exercise_rollback"), false);
   assert.equal(workflow.on.workflow_dispatch.inputs.workspace_image.required, false);
-  assert.match(String(currentJob.env.OPL_EXERCISE_ROLLBACK), /inputs\.exercise_rollback/);
+  assert.equal(Object.hasOwn(currentJob.env, "OPL_EXERCISE_ROLLBACK"), false);
   assert.match(checks, /repository@sha256/);
   assert.match(checks, /get configmap opl-cloud-config/);
   assert.match(checks, /--ignore-not-found[\s\S]*2>\/dev\/null \|\| true/);
@@ -811,6 +823,14 @@ test("TKE deploy requires image digests and rolls back Cloud images with the com
   assert.match(checks, /OPL_TENCENT_ZONE/);
   assert.match(checks, /sha256:\[0-9a-f\]\{64\}/);
   assert.doesNotMatch(checks, /must include a non-empty container tag/);
+  assert.ok(stepNames.indexOf("Preflight rollout node storage") < stepNames.indexOf("Install Kubernetes secrets"));
+  assert.match(preflight, /source tools\/tke-image-rollout\.sh/);
+  assert.match(preflight, /preflight_rollout_storage/);
+  assert.match(rolloutHelper, /DiskPressure/);
+  assert.match(rolloutHelper, /stats\/summary/);
+  assert.match(rolloutHelper, /nodefs/);
+  assert.match(rolloutHelper, /imagefs/);
+  assert.match(rolloutHelper, /26843545600/);
   assert.ok(stepNames.indexOf("Capture rollback image set") < stepNames.indexOf("Upload rollback image set"));
   assert.ok(stepNames.indexOf("Upload rollback image set") < stepNames.indexOf("Render and apply manifest"));
   assert.equal(upload?.uses, "actions/upload-artifact@v4");
@@ -820,28 +840,46 @@ test("TKE deploy requires image digests and rolls back Cloud images with the com
     assert.match(capture, new RegExp(deployment));
   }
   assert.match(capture, /get configmap opl-cloud-config[\s\S]*-o json[\s\S]*opl-cloud-config\.json/);
+  assert.match(capture, /deployment\.json/);
   assert.doesNotMatch(capture, /workspace-images\.tsv|list_workspace_images/);
   assert.doesNotMatch(rolloutHelper, /oplcloud\.cn\/workspace-id|set_workspace_images|wait_workspace_rollouts/);
   assert.match(apply, /source tools\/tke-image-rollout\.sh/);
   assert.match(apply, /apply_candidate_images/);
-  assert.match(apply, /restore_previous_images/);
-  assert.match(apply, /if \[ "\$OPL_EXERCISE_ROLLBACK" = "true" \]/);
-  assert.match(apply, /restore_previous_images[\s\S]*apply_candidate_images/);
-  assert.match(apply, /trap .*rollback.* ERR/);
+  assert.doesNotMatch(apply, /restore_previous|OPL_EXERCISE_ROLLBACK|trap .*ERR|set image|rollout restart/);
+  const candidateFunction = rolloutHelper.match(/apply_candidate_images\(\) \{([\s\S]*?)\n\}/)?.[1] || "";
+  assert.match(candidateFunction, /wait_cloud_rollouts candidate/);
+  assert.doesNotMatch(candidateFunction, /set_cloud_images|rollout restart|set image|patch_workspace_image/);
+  assert.match(rolloutHelper, /OPL_ROLLOUT_TIMEOUT_SECONDS:-300/);
+  for (const reason of ["Evicted", "DiskPressure", "ImagePullBackOff", "CrashLoopBackOff", "Unschedulable"]) {
+    assert.match(rolloutHelper, new RegExp(reason));
+  }
   assert.doesNotMatch(apply, /set \+e/);
 });
 
-test("TKE deploy, bootstrap readiness, or read-only verifier failure schedules rollback from the captured image set", async () => {
+test("TKE failure uploads complete diagnostics before the only rollback job", async () => {
   const workflow = await readWorkflow(".github/workflows/deploy-tke-production.yml");
   const deploy = workflowJob(workflow, "deploy");
+  const diagnostics = workflowJob(workflow, "capture-rollout-failure");
   const rollback = workflowJob(workflow, "rollback-live-qa");
+  const diagnosticSteps = stepsByName(diagnostics);
   const steps = stepsByName(rollback);
-  const restore = serializedStep(steps.get("Restore previous Cloud and App images"));
+  const restore = serializedStep(steps.get("Restore previous Cloud images and ConfigMap"));
+  const capture = serializedStep(diagnosticSteps.get("Capture failed rollout diagnostics"));
+  const upload = diagnosticSteps.get("Upload failed rollout diagnostics");
 
   assert.match(String(deploy.outputs?.rollback_image_set), /rollback_snapshot\.outputs\.artifact-id/);
   assert.equal(stepsByName(deploy).get("Upload rollback image set")?.id, "rollback_snapshot");
-  assert.deepEqual(rollback.needs, ["deploy", "bootstrap-readiness", "verify-rollout-read-only"]);
-  assert.match(String(rollback.if), /always\(\).*needs\.deploy\.outputs\.rollback_image_set != ''.*inputs\.bootstrap_mode.*needs\.bootstrap-readiness\.result != 'success'.*!inputs\.bootstrap_mode.*needs\.verify-rollout-read-only\.result != 'success'/);
+  assert.deepEqual(diagnostics.needs, ["deploy", "bootstrap-readiness", "verify-rollout-read-only"]);
+  assert.match(String(diagnostics.if), /always\(\).*needs\.deploy\.outputs\.rollback_image_set != ''.*needs\.deploy\.result != 'success'.*needs\.verify-rollout-read-only\.result != 'success'/);
+  assert.match(capture, /capture_rollout_diagnostics/);
+  for (const token of ["deployments.json", "replicasets.json", "pods.json", "nodes.json", "events.json", "stats-summary", "ownerReferences", "deletionTimestamp", "previous"]) {
+    assert.match(`${capture}\n${await readFile(repoFile("tools/tke-image-rollout.sh"), "utf8")}`, new RegExp(token));
+  }
+  assert.equal(upload?.uses, "actions/upload-artifact@v4");
+  assert.match(String(upload?.with?.name), /production-rollout-diagnostics/);
+  assert.ok([...diagnosticSteps.keys()].indexOf("Capture failed rollout diagnostics") < [...diagnosticSteps.keys()].indexOf("Upload failed rollout diagnostics"));
+  assert.deepEqual(rollback.needs, ["deploy", "bootstrap-readiness", "verify-rollout-read-only", "capture-rollout-failure"]);
+  assert.match(String(rollback.if), /needs\.capture-rollout-failure\.result == 'success'/);
   assert.deepEqual(rollback["runs-on"], ["self-hosted", "tencent-cloud", "opl-cloud", "tke-vpc"]);
   assert.equal(rollback.env.TENCENT_DEPLOY_KUBECONFIG_PATH, deploy.env.TENCENT_DEPLOY_KUBECONFIG_PATH);
   assert.equal(steps.get("Set up Node")?.uses, "actions/setup-node@v4");
@@ -853,70 +891,119 @@ test("TKE deploy, bootstrap readiness, or read-only verifier failure schedules r
   assert.doesNotMatch(restore, /set \+e/);
 });
 
-test("TKE retires the legacy global Workspace secret only after successful ordinary deploy", async () => {
+test("ordinary TKE rollout preserves every Workspace deployment and Secret", async () => {
   const workflow = await readWorkflow(".github/workflows/deploy-tke-production.yml");
   const deploy = workflowJob(workflow, "deploy");
-  const cleanup = workflowJob(workflow, "retire-legacy-workspace-secret");
-  const rollback = workflowJob(workflow, "rollback-live-qa");
-  const retire = serializedStep(stepsByName(cleanup).get("Retire legacy global Workspace secret"));
-
-  assert.deepEqual(cleanup.needs, ["deploy", "verify-rollout-read-only"]);
-  assert.equal(cleanup.if, "${{ !inputs.bootstrap_mode && needs.deploy.result == 'success' && needs.verify-rollout-read-only.result == 'success' }}");
-  assert.deepEqual(cleanup["runs-on"], ["self-hosted", "tencent-cloud", "opl-cloud", "tke-vpc"]);
-  assert.equal(cleanup.environment, "production");
-  assert.notEqual(cleanup["continue-on-error"], true);
-  assert.equal(cleanup.env.TENCENT_DEPLOY_KUBECONFIG_PATH, deploy.env.TENCENT_DEPLOY_KUBECONFIG_PATH);
-  assert.match(retire, /delete secret opl-cloud-workspace-codex --ignore-not-found/);
-  assert.match(retire, /get secret opl-cloud-workspace-codex --ignore-not-found -o name/);
-  assert.doesNotMatch(retire, /--selector|delete secrets|delete secret .*\*-env/);
-  assert.deepEqual(rollback.needs, ["deploy", "bootstrap-readiness", "verify-rollout-read-only"]);
-  assert.doesNotMatch(String(rollback.if), /retire-legacy-workspace-secret|cleanup/);
+  const source = JSON.stringify(workflow);
+  const helper = await readFile(repoFile("tools/tke-image-rollout.sh"), "utf8");
+  assert.equal(workflow.jobs["retire-legacy-workspace-secret"], undefined);
+  assert.doesNotMatch(source, /delete secret opl-cloud-workspace-codex|deployment\/workspace-|oplcloud\.cn\/workspace-id/);
+  assert.doesNotMatch(helper, /deployment\/workspace-|oplcloud\.cn\/workspace-id/);
+  assert.match(String(deploy.outputs?.workspace_image), /deployment_inputs\.outputs\.workspace_image/);
 });
 
-test("legacy global Workspace secret retirement verifies absence and propagates every kubectl failure", async () => {
-  const workflow = await readWorkflow(".github/workflows/deploy-tke-production.yml");
-  const retire = stepsByName(workflowJob(workflow, "retire-legacy-workspace-secret")).get("Retire legacy global Workspace secret")?.run;
-  const root = await mkdtemp(join(tmpdir(), "opl-legacy-secret-cleanup-"));
-  const kubectlLog = join(root, "kubectl.log");
+test("TKE storage preflight blocks every apply below 25 GiB and records nodefs/imagefs facts", async () => {
+  const functions = await readFile(repoFile("tools/tke-image-rollout.sh"), "utf8");
+  const root = await mkdtemp(join(tmpdir(), "opl-storage-preflight-"));
+  const commandLog = join(root, "kubectl.log");
+  const nodes = JSON.stringify({ items: [{
+    metadata: { name: "10.66.0.42" },
+    spec: {},
+    status: { conditions: [
+      { type: "Ready", status: "True" },
+      { type: "DiskPressure", status: "False" }
+    ] }
+  }] });
+  const stats = (availableBytes) => JSON.stringify({ node: {
+    nodeName: "10.66.0.42",
+    fs: { capacityBytes: 100 * 1024 ** 3, availableBytes },
+    runtime: { imageFs: { capacityBytes: 100 * 1024 ** 3, availableBytes } }
+  } });
   const harness = `
-    kubectl() {
-      printf '%s\\n' "$*" >> "$TEST_KUBECTL_LOG"
-      case " $* " in
-        *" delete secret opl-cloud-workspace-codex --ignore-not-found "*)
-          [ "\${TEST_DELETE_FAIL:-0}" != "1" ] || return 42
-          ;;
-        *" get secret opl-cloud-workspace-codex --ignore-not-found -o name "*)
-          [ "\${TEST_GET_FAIL:-0}" != "1" ] || return 43
-          [ "\${TEST_SECRET_REMAINS:-0}" != "1" ] || printf 'secret/opl-cloud-workspace-codex\\n'
-          ;;
-        *) return 64 ;;
-      esac
-    }
-${retire}
-  `;
-  const runCleanup = (extraEnv = {}) => spawnSync("bash", ["-c", harness], {
+set -euo pipefail
+kubectl() {
+  printf '%s\\n' "$*" >> "$TEST_COMMAND_LOG"
+  case " $* " in
+    *" get nodes -o json "*) printf '%s' "$TEST_NODES_JSON" ;;
+    *" get --raw /api/v1/nodes/10.66.0.42/proxy/stats/summary "*) printf '%s' "$TEST_STATS_JSON" ;;
+    *" apply -f candidate.json "*) ;;
+    *) return 64 ;;
+  esac
+}
+${functions}
+preflight_rollout_storage "$TEST_ROOT/preflight.json"
+kubectl --kubeconfig "$KUBECONFIG" apply -f candidate.json
+`;
+  const run = (availableBytes) => spawnSync("bash", ["-c", harness], {
     cwd: fileURLToPath(repoFile(".")),
     encoding: "utf8",
     env: {
       ...process.env,
       KUBECONFIG: "/dev/null",
       OPL_K8S_NAMESPACE: "opl-test",
-      TEST_KUBECTL_LOG: kubectlLog,
-      ...extraEnv
+      TEST_COMMAND_LOG: commandLog,
+      TEST_NODES_JSON: nodes,
+      TEST_ROOT: root,
+      TEST_STATS_JSON: stats(availableBytes)
     }
   });
 
   try {
-    await writeFile(kubectlLog, "");
-    const success = runCleanup();
-    assert.equal(success.status, 0, success.stderr);
-    assert.deepEqual((await readFile(kubectlLog, "utf8")).trim().split("\n"), [
-      "--kubeconfig /dev/null -n opl-test delete secret opl-cloud-workspace-codex --ignore-not-found",
-      "--kubeconfig /dev/null -n opl-test get secret opl-cloud-workspace-codex --ignore-not-found -o name"
-    ]);
-    assert.notEqual(runCleanup({ TEST_DELETE_FAIL: "1" }).status, 0);
-    assert.notEqual(runCleanup({ TEST_GET_FAIL: "1" }).status, 0);
-    assert.notEqual(runCleanup({ TEST_SECRET_REMAINS: "1" }).status, 0);
+    await writeFile(commandLog, "");
+    const lowDisk = run(24 * 1024 ** 3);
+    assert.notEqual(lowDisk.status, 0);
+    assert.doesNotMatch(await readFile(commandLog, "utf8"), / apply /);
+
+    await writeFile(commandLog, "");
+    const enoughDisk = run(26 * 1024 ** 3);
+    assert.equal(enoughDisk.status, 0, enoughDisk.stderr);
+    assert.match(await readFile(commandLog, "utf8"), / apply -f candidate\.json/);
+    const evidence = JSON.parse(await readFile(join(root, "preflight.json"), "utf8"));
+    assert.equal(evidence.minimumAvailableBytes, 25 * 1024 ** 3);
+    assert.equal(evidence.nodes[0].nodefs.availableBytes, 26 * 1024 ** 3);
+    assert.equal(evidence.nodes[0].imagefs.availableBytes, 26 * 1024 ** 3);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("TKE shared rollout observer fails before sleeping on DiskPressure", async () => {
+  const functions = await readFile(repoFile("tools/tke-image-rollout.sh"), "utf8");
+  const root = await mkdtemp(join(tmpdir(), "opl-rollout-observer-"));
+  const commandLog = join(root, "commands.log");
+  const nodes = JSON.stringify({ items: [{
+    metadata: { name: "10.66.0.42" },
+    status: { conditions: [{ type: "DiskPressure", status: "True", reason: "KubeletHasDiskPressure" }] }
+  }] });
+  const harness = `
+kubectl() {
+  printf 'kubectl %s\\n' "$*" >> "$TEST_COMMAND_LOG"
+  case " $* " in
+    *" get nodes -o json "*) printf '%s' "$TEST_NODES_JSON" ;;
+    *) return 64 ;;
+  esac
+}
+sleep() { printf 'sleep %s\\n' "$*" >> "$TEST_COMMAND_LOG"; }
+${functions}
+wait_cloud_rollouts candidate
+`;
+  try {
+    const result = spawnSync("bash", ["-c", harness], {
+      cwd: fileURLToPath(repoFile(".")),
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        KUBECONFIG: "/dev/null",
+        OPL_CLOUD_IMAGE: `registry.example.test/opl/cloud@sha256:${"b".repeat(64)}`,
+        OPL_K8S_NAMESPACE: "opl-test",
+        TEST_COMMAND_LOG: commandLog,
+        TEST_NODES_JSON: nodes,
+        TEST_ROOT: root
+      }
+    });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /DiskPressure/);
+    assert.doesNotMatch(await readFile(commandLog, "utf8"), /^sleep /m);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -937,6 +1024,7 @@ test("TKE rollback restores the complete ConfigMap and never rolls existing Work
     await mkdir(rollbackDir);
     await Promise.all([
       ...["opl-cloud-control-plane", "opl-cloud-ledger", "opl-cloud-fabric"].map((name) => writeFile(join(rollbackDir, name), oldCloud)),
+      ...["opl-cloud-control-plane", "opl-cloud-ledger", "opl-cloud-fabric"].map((name) => writeFile(join(rollbackDir, `${name}.deployment.json`), JSON.stringify({ metadata: { annotations: { "deployment.kubernetes.io/revision": "1" } } }))),
       writeFile(join(rollbackDir, "opl-cloud-config.json"), JSON.stringify({
         apiVersion: "v1",
         kind: "ConfigMap",
@@ -972,14 +1060,16 @@ test("TKE rollback restores the complete ConfigMap and never rolls existing Work
         done
         case "$command" in
           get)
-            if [[ " $* " == *" deployment -l oplcloud.cn/workspace-id -o json "* ]]; then
-              if [ "\${EMPTY_WORKSPACES:-0}" = "1" ]; then
-                printf '{"items":[]}'
-              else
-                printf '{"items":[{"metadata":{"name":"workspace-slot-1","labels":{"oplcloud.cn/workspace-id":"slot-1"}},"spec":{"template":{"spec":{"containers":[{"name":"workspace","image":"%s"}]}}}},{"metadata":{"name":"workspace-late","labels":{"oplcloud.cn/workspace-id":"late"}},"spec":{"template":{"spec":{"containers":[{"name":"workspace","image":"%s"}]}}}}]}' "\${images[workspace-slot-1]}" "\${images[workspace-late]}"
-              fi
+            if [[ " $* " == *" get nodes -o json "* ]]; then
+              printf '{"items":[{"metadata":{"name":"node-1"},"status":{"conditions":[{"type":"DiskPressure","status":"False"}]}}]}'
+            elif [[ " $* " == *" get deployment opl-cloud-control-plane opl-cloud-ledger opl-cloud-fabric -o json "* ]]; then
+              printf '{"items":[{"metadata":{"name":"opl-cloud-control-plane","generation":2},"spec":{"replicas":1,"template":{"spec":{"containers":[{"name":"control-plane","image":"%s"}]}}},"status":{"observedGeneration":2,"updatedReplicas":1,"readyReplicas":1,"availableReplicas":1}},{"metadata":{"name":"opl-cloud-ledger","generation":2},"spec":{"replicas":1,"template":{"spec":{"containers":[{"name":"ledger","image":"%s"}]}}},"status":{"observedGeneration":2,"updatedReplicas":1,"readyReplicas":1,"availableReplicas":1}},{"metadata":{"name":"opl-cloud-fabric","generation":2},"spec":{"replicas":1,"template":{"spec":{"containers":[{"name":"fabric","image":"%s"}]}}},"status":{"observedGeneration":2,"updatedReplicas":1,"readyReplicas":1,"availableReplicas":1}}]}' "\${images[opl-cloud-control-plane]}" "\${images[opl-cloud-ledger]}" "\${images[opl-cloud-fabric]}"
+            elif [[ " $* " == *" get pods -l app.kubernetes.io/name=opl-cloud -o json "* ]]; then
+              printf '{"items":[]}'
             elif [[ " $* " == *" configmap opl-cloud-config "* ]]; then
               printf '%s' "$config_image"
+            elif [[ " $* " == *" deployment/"*"jsonpath={.metadata.annotations.deployment"* ]]; then
+              printf '2'
             else
               printf '%s' "\${images[$target]}"
             fi
@@ -1006,11 +1096,19 @@ test("TKE rollback restores the complete ConfigMap and never rolls existing Work
         esac
       }
 ${functions}
+      apply_candidate_state() {
+        config_image="$OPL_WORKSPACE_IMAGE"
+        images[opl-cloud-control-plane]="$OPL_CLOUD_IMAGE"
+        images[opl-cloud-ledger]="$OPL_CLOUD_IMAGE"
+        images[opl-cloud-fabric]="$OPL_CLOUD_IMAGE"
+      }
       if [ "\${TEST_BOOTSTRAP_ONLY:-0}" = "1" ]; then
+        apply_candidate_state
         apply_bootstrap_images
         printf '%s\n' "$config_image" "\${images[opl-cloud-control-plane]}" "\${images[opl-cloud-ledger]}" "\${images[opl-cloud-fabric]}" "\${images[workspace-slot-1]}" "\${images[workspace-late]}" > "$TEST_ROOT/bootstrap-candidate.txt"
         restore_previous_bootstrap_images
         printf '%s\n' "$config_image" "\${images[opl-cloud-control-plane]}" "\${images[opl-cloud-ledger]}" "\${images[opl-cloud-fabric]}" "\${images[workspace-slot-1]}" "\${images[workspace-late]}" > "$TEST_ROOT/bootstrap-restored.txt"
+        apply_candidate_state
         apply_bootstrap_images
         printf '%s\n' "$config_image" "\${images[opl-cloud-control-plane]}" "\${images[opl-cloud-ledger]}" "\${images[opl-cloud-fabric]}" "\${images[workspace-slot-1]}" "\${images[workspace-late]}" > "$TEST_ROOT/bootstrap-exercised.txt"
         exit 0
@@ -1027,6 +1125,7 @@ ${functions}
       fi
       restore_previous_images
       printf '%s\n' "$config_image" "\${images[opl-cloud-control-plane]}" "\${images[opl-cloud-ledger]}" "\${images[opl-cloud-fabric]}" "\${images[workspace-slot-1]}" "\${images[workspace-late]}" > "$TEST_ROOT/restored.txt"
+      apply_candidate_state
       apply_candidate_images
       printf '%s\n' "$config_image" "\${images[opl-cloud-control-plane]}" "\${images[opl-cloud-ledger]}" "\${images[opl-cloud-fabric]}" "\${images[workspace-slot-1]}" "\${images[workspace-late]}" > "$TEST_ROOT/candidate.txt"
     `;
@@ -1038,17 +1137,18 @@ ${functions}
         KUBECONFIG: "/dev/null",
         OPL_CLOUD_IMAGE: candidateCloud,
         OPL_K8S_NAMESPACE: "opl-test",
-        OPL_WORKSPACE_IMAGE: candidateWorkspace,
+        OPL_WORKSPACE_IMAGE: oldWorkspace,
         TEST_ROOT: root
       }
     });
     assert.equal(result.status, 0, result.stderr);
-    assert.deepEqual((await readFile(join(root, "restored.txt"), "utf8")).trim().split("\n"), [oldWorkspace, oldCloud, oldCloud, oldCloud, candidateWorkspace, candidateWorkspace]);
-    assert.deepEqual((await readFile(join(root, "candidate.txt"), "utf8")).trim().split("\n"), [candidateWorkspace, candidateCloud, candidateCloud, candidateCloud, candidateWorkspace, candidateWorkspace]);
+    assert.deepEqual((await readFile(join(root, "restored.txt"), "utf8")).trim().split("\n"), [oldWorkspace, oldCloud, oldCloud, oldCloud, oldWorkspace, oldWorkspace]);
+    assert.deepEqual((await readFile(join(root, "candidate.txt"), "utf8")).trim().split("\n"), [oldWorkspace, candidateCloud, candidateCloud, candidateCloud, oldWorkspace, oldWorkspace]);
 
     const log = await readFile(join(root, "kubectl.log"), "utf8");
     for (const deployment of ["opl-cloud-control-plane", "opl-cloud-ledger", "opl-cloud-fabric"]) {
-      assert.equal(log.match(new RegExp(`get deployment/${deployment}`, "g"))?.length, 2, `${deployment} must be read back after restore and reapply`);
+      assert.equal(log.match(new RegExp(`set image deployment/${deployment}`, "g"))?.length, 1, `${deployment} must receive exactly one rollback image mutation`);
+      assert.equal(log.match(new RegExp(`get deployment/${deployment}`, "g"))?.length, 1, `${deployment} candidate revision must be checked once`);
     }
     assert.match(log, /patch configmap opl-cloud-config --type json -p/);
     assert.doesNotMatch(log, /(?:set image|rollout (?:restart|status)) deployment\/workspace-/);
@@ -1062,7 +1162,7 @@ ${functions}
         KUBECONFIG: "/dev/null",
         OPL_CLOUD_IMAGE: candidateCloud,
         OPL_K8S_NAMESPACE: "opl-test",
-        OPL_WORKSPACE_IMAGE: candidateWorkspace,
+        OPL_WORKSPACE_IMAGE: oldWorkspace,
         TEST_BOOTSTRAP_ONLY: "1",
         TEST_CURRENT_CLOUD_IMAGE: oldCloud,
         TEST_CURRENT_WORKSPACE_IMAGE: oldWorkspace,
@@ -1070,9 +1170,9 @@ ${functions}
       }
     });
     assert.equal(bootstrap.status, 0, bootstrap.stderr);
-    assert.deepEqual((await readFile(join(root, "bootstrap-candidate.txt"), "utf8")).trim().split("\n"), [candidateWorkspace, candidateCloud, candidateCloud, candidateCloud, oldWorkspace, oldWorkspace]);
+    assert.deepEqual((await readFile(join(root, "bootstrap-candidate.txt"), "utf8")).trim().split("\n"), [oldWorkspace, candidateCloud, candidateCloud, candidateCloud, oldWorkspace, oldWorkspace]);
     assert.deepEqual((await readFile(join(root, "bootstrap-restored.txt"), "utf8")).trim().split("\n"), [oldWorkspace, oldCloud, oldCloud, oldCloud, oldWorkspace, oldWorkspace]);
-    assert.deepEqual((await readFile(join(root, "bootstrap-exercised.txt"), "utf8")).trim().split("\n"), [candidateWorkspace, candidateCloud, candidateCloud, candidateCloud, oldWorkspace, oldWorkspace]);
+    assert.deepEqual((await readFile(join(root, "bootstrap-exercised.txt"), "utf8")).trim().split("\n"), [oldWorkspace, candidateCloud, candidateCloud, candidateCloud, oldWorkspace, oldWorkspace]);
     const bootstrapLog = await readFile(join(root, "kubectl.log"), "utf8");
     assert.doesNotMatch(bootstrapLog, /(?:set image|rollout (?:restart|status)) deployment\/workspace-/);
     assert.doesNotMatch(bootstrapLog, /get deployment -l oplcloud\.cn\/workspace-id/);

@@ -38,9 +38,19 @@ test("OPL Cloud TKE manifest declares three decoupled services and monthly Sub2A
   const controlPlane = deployments.find((item) => item.metadata.name === "opl-cloud-control-plane");
   assert.equal(controlPlane.spec.replicas, 1);
   assert.equal(controlPlane.spec.strategy.type, "Recreate");
+  assert.deepEqual(controlPlane.spec.selector.matchLabels, { "app.kubernetes.io/name": "opl-cloud" });
+  const deploymentContract = JSON.parse(await readFile("packages/contracts/opl-cloud-deployment-contract.json", "utf8"));
+  assert.deepEqual(deploymentContract.deferredControlPlaneSelectorMigration, {
+    deployment: "opl-cloud-control-plane",
+    currentSelector: { "app.kubernetes.io/name": "opl-cloud" },
+    targetSelectorAdds: { "app.kubernetes.io/component": "control-plane" },
+    reason: "kubernetes_deployment_selector_is_immutable",
+    ordinaryRolloutBehavior: "leave_unchanged",
+    requires: "separate_approved_deployment_replacement"
+  });
   const controlContainer = controlPlane.spec.template.spec.containers[0];
   assert.deepEqual(controlContainer.envFrom, [{ configMapRef: { name: "opl-cloud-config" } }]);
-  assert.equal(controlContainer.readinessProbe.httpGet.path, "/api/production/readiness");
+  assert.equal(controlContainer.readinessProbe.httpGet.path, "/api/healthz");
   assert.equal(controlContainer.livenessProbe.httpGet.path, "/api/healthz");
   assert.deepEqual(controlContainer.env.filter((item) => item.valueFrom).map((item) => item.name), [
     "DATABASE_URL",

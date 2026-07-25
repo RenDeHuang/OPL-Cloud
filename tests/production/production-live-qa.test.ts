@@ -151,7 +151,14 @@ function readOnlyBrowserFactory(viewports) {
   });
 }
 
-function readOnlyFixture({ healthStatus = 200, noWorkspace = false, adminHasWorkspace = !noWorkspace, authMe = {}, operatorAccountsItems } = {}) {
+function readOnlyFixture({
+  healthStatus = 200,
+  noWorkspace = false,
+  adminHasWorkspace = !noWorkspace,
+  authMe = {},
+  operatorAccountsItems,
+  readiness = { ready: false, cloudImagesReady: true, workspaceImagesReady: false, immutableImagesReady: false }
+} = {}) {
   const calls = [];
   const viewports = [];
   const fetchImpl = async (input, init = {}) => {
@@ -159,7 +166,7 @@ function readOnlyFixture({ healthStatus = 200, noWorkspace = false, adminHasWork
     const method = init.method || "GET";
     calls.push({ method, path: url.pathname, search: url.search });
     if (url.pathname === "/api/healthz") return json({ status: "ok" }, healthStatus);
-    if (url.pathname === "/api/production/readiness") return json({ ready: true, cloudImagesReady: true, workspaceImagesReady: true, immutableImagesReady: true });
+    if (url.pathname === "/api/production/readiness") return json(readiness);
     if (url.pathname === "/api/auth/login") {
       assert.deepEqual(JSON.parse(init.body), { email: ADMIN_EMAIL, password: ADMIN_PASSWORD });
       return json({ user: { id: ADMIN_USER_ID, accountId: ADMIN_ACCOUNT_ID, role: "admin" } }, 200, {
@@ -662,6 +669,12 @@ test("rollout QA read-only evidence level performs no model or Gateway write", a
   assert.equal(result.mode, "read-only");
   assert.equal(result.evidenceLevel, "read-only");
   assert.equal(result.writesPerformed, 0);
+  assert.deepEqual(result.checks.readiness, {
+    cloudImagesReady: true,
+    systemReady: false,
+    workspaceImagesReady: false,
+    immutableImagesReady: false
+  });
   assert.deepEqual(result.viewports, ["desktop", "mobile"]);
   assert.deepEqual(fixture.viewports, [{ width: 1440, height: 900 }, { width: 390, height: 844 }]);
   assert.deepEqual(fixture.calls.filter((call) => call.method !== "GET").map(({ method, path }) => ({ method, path })), [{ method: "POST", path: "/api/auth/login" }]);
@@ -693,6 +706,22 @@ test("rollout QA read-only evidence level performs no model or Gateway write", a
   });
   assert.equal(failed, 1);
   assert.match(stderr, /request_failed:GET:\/api\/healthz:503/);
+
+  stderr = "";
+  const cloudImagesUnavailable = await runProductionLiveQaCli({
+    argv: ["--read-only"],
+    env: {
+      OPL_CONSOLE_ORIGIN: "https://cloud.medopl.cn",
+      OPL_SUB2API_ADMIN_EMAIL: ADMIN_EMAIL,
+      OPL_SUB2API_ADMIN_PASSWORD: ADMIN_PASSWORD
+    },
+    stdout: { write: () => {} },
+    stderr: { write: (chunk) => { stderr += chunk; } },
+    fetchImpl: readOnlyFixture({ readiness: { ready: true, cloudImagesReady: false, workspaceImagesReady: true, immutableImagesReady: true } }).fetchImpl,
+    browserFactory: readOnlyBrowserFactory([])
+  });
+  assert.equal(cloudImagesUnavailable, 1);
+  assert.match(stderr, /production_cloud_readiness_invalid/);
 
   stderr = "";
   const identityMismatch = await runProductionLiveQaCli({
