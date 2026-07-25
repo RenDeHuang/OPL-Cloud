@@ -73,11 +73,20 @@ func newAuthoritativeReplaySub2API(t *testing.T, config authoritativeReplayConfi
 				balance = config.adjustedBalance
 			}
 			success(w, map[string]any{"id": 41, "balance": balance, "status": "active"})
+		case "/api/v1/admin/usage/search-api-keys":
+			name := workspaceReservedKeyName("workspace-monthly")
+			if r.URL.Query().Get("user_id") != "41" || r.URL.Query().Get("q") != name {
+				t.Fatalf("Workspace Key search = %s", r.URL.String())
+			}
+			success(w, []any{map[string]any{"id": 9, "user_id": 41, "name": name}})
 		case "/api/v1/admin/users/41/api-keys":
+			if r.URL.Query().Get("page") != "1" || r.URL.Query().Get("page_size") != "1" {
+				t.Fatalf("Workspace Key read = %s", r.URL.String())
+			}
 			success(w, map[string]any{"items": []any{map[string]any{
-				"id": 9, "user_id": 41, "name": "opl-workspace", "key": "workspace-key-secret", "status": "active",
+				"id": 9, "user_id": 41, "name": workspaceReservedKeyName("workspace-monthly"), "key": "workspace-key-secret", "status": "active",
 				"quota": 0, "quota_used": 0, "usage_5h": 0, "usage_1d": 0, "usage_7d": 0,
-			}}, "total": 1, "page": 1, "page_size": 1000, "pages": 1})
+			}}, "total": 1, "page": 1, "page_size": 1, "pages": 1})
 		case "/api/v1/admin/redeem-codes/create-and-redeem":
 			var input struct {
 				Code   string      `json:"code"`
@@ -112,7 +121,7 @@ func newAuthoritativeReplaySub2API(t *testing.T, config authoritativeReplayConfi
 			if config.historyEntries != nil {
 				items = config.historyEntries(code, value)
 			}
-			success(w, map[string]any{"items": items, "total": len(items), "page": 1, "page_size": 1000, "pages": 1})
+			success(w, map[string]any{"items": items, "total": len(items), "page": 1, "page_size": 100, "pages": 1})
 		default:
 			t.Fatalf("unexpected Sub2API route %s %s", r.Method, r.URL.Path)
 		}
@@ -158,6 +167,17 @@ func (s *monthlySub2API) WorkspaceKey(_ context.Context, userID int64) (clients.
 	return clients.Sub2APIWorkspaceKey{ID: 9, UserID: userID, Name: "opl-workspace", Key: "workspace-key-secret", Status: "active"}, nil
 }
 
+func (s *monthlySub2API) WorkspaceKeysForConvergence(_ context.Context, userID int64, name string) ([]clients.Sub2APIWorkspaceKey, error) {
+	s.workspaceKeyCalls = append(s.workspaceKeyCalls, userID)
+	if s.workspaceKeyErr != nil {
+		return nil, s.workspaceKeyErr
+	}
+	if userID != 41 || name != workspaceReservedKeyName("workspace-monthly") {
+		return nil, nil
+	}
+	return []clients.Sub2APIWorkspaceKey{{ID: 9, UserID: userID, Name: name, Key: "workspace-key-secret", Status: "active"}}, nil
+}
+
 func (s *monthlySub2API) Charge(_ context.Context, input clients.Sub2APIChargeInput) (clients.Sub2APICharge, error) {
 	*s.events = append(*s.events, "sub2api.charge")
 	s.charges = append(s.charges, input)
@@ -187,6 +207,10 @@ func (s *monthlySub2API) Refund(_ context.Context, input clients.Sub2APIRefundIn
 		}
 	}
 	return clients.Sub2APIRefund{Code: input.Code, UserID: input.UserID, RefundUSDMicros: input.RefundUSDMicros, Status: "used"}, nil
+}
+
+func (s *monthlySub2API) FinancialBalanceHistoryByCodes(context.Context, int64, []string) (map[string]clients.Sub2APIBalanceHistoryEntry, error) {
+	return map[string]clients.Sub2APIBalanceHistoryEntry{}, nil
 }
 
 type monthlyFabric struct {

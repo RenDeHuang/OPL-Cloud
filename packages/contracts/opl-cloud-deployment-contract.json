@@ -535,15 +535,16 @@
       "OPL_CLOUD_IMAGE",
       "OPL_WORKSPACE_IMAGE",
       "OPL_CONSOLE_ORIGIN",
-      "OPL_VERIFY_AUTH_USERS_JSON",
-      "OPL_VERIFY_ACCOUNT_ID",
+      "OPL_SUB2API_ADMIN_EMAIL",
+      "OPL_SUB2API_ADMIN_PASSWORD",
       "OPL_VERIFY_REQUEST_TIMEOUT_MS",
       "TENCENT_DEPLOY_KUBECONFIG_PATH",
       "TENCENT_DEPLOY_KUBECONFIG_B64",
       "TENCENT_DEPLOY_KUBECONFIG"
     ],
     "secretEnv": [
-      "OPL_VERIFY_AUTH_USERS_JSON",
+      "OPL_SUB2API_ADMIN_EMAIL",
+      "OPL_SUB2API_ADMIN_PASSWORD",
       "TENCENT_DEPLOY_KUBECONFIG_B64",
       "TENCENT_DEPLOY_KUBECONFIG"
     ],
@@ -591,7 +592,7 @@
         "rmdir \"$secret_dir\""
       ]
     },
-    "checks": ["cloud_health", "production_readiness", "ready_pod_image_id", "workspace_digest_unchanged", "source_envelopes", "retired_routes_404", "desktop_console", "mobile_console"],
+    "checks": ["cloud_health", "production_readiness", "ready_pod_image_id", "workspace_digest_unchanged", "existing_admin_identity", "wallet", "key_usage_pagination", "operator_overview_accounts_workspaces", "fabric_ledger_source_envelopes", "retired_routes_404", "desktop_console", "mobile_console"],
     "forbidden": ["charge", "model_request", "tencent_mutation"],
     "forbiddenRunTokens": ["--allow-gateway-write", "--allow-model-write", "provider-acceptance"]
   },

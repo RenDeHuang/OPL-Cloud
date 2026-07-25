@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"regexp"
@@ -90,11 +91,19 @@ func (s *walletAdjustmentSub2API) UsageStats(context.Context, clients.Sub2APIUsa
 	return clients.Sub2APIUsageStats{}, nil
 }
 
-func (s *walletAdjustmentSub2API) FinancialBalanceHistoryScan(context.Context, int64) ([]clients.Sub2APIBalanceHistoryEntry, error) {
+func (s *walletAdjustmentSub2API) FinancialBalanceHistoryByCodes(_ context.Context, _ int64, codes []string) (map[string]clients.Sub2APIBalanceHistoryEntry, error) {
 	if s.historyErr != nil {
 		return nil, s.historyErr
 	}
-	return append([]clients.Sub2APIBalanceHistoryEntry(nil), s.history...), nil
+	matches := make(map[string]clients.Sub2APIBalanceHistoryEntry)
+	for _, entry := range s.history {
+		for _, code := range codes {
+			if entry.Code == code {
+				matches[code] = entry
+			}
+		}
+	}
+	return matches, nil
 }
 
 type walletAdjustmentLedger struct {
@@ -268,7 +277,6 @@ func TestWalletAdjustmentValidation(t *testing.T) {
 		{name: "unknown kind", body: `{"kind":"credit","amountUsd":"1.00","reason":"manual correction","confirmationAccountId":"acct-alpha"}`},
 		{name: "fraction beyond micros", body: `{"kind":"debit","amountUsd":"1.0000001","reason":"manual correction","confirmationAccountId":"acct-alpha"}`},
 		{name: "non positive", body: `{"kind":"debit","amountUsd":"0","reason":"manual correction","confirmationAccountId":"acct-alpha"}`},
-		{name: "over maximum", body: `{"kind":"debit","amountUsd":"1000000.000001","reason":"manual correction","confirmationAccountId":"acct-alpha"}`},
 		{name: "wrong confirmation", body: `{"kind":"debit","amountUsd":"1.00","reason":"manual correction","confirmationAccountId":"acct-beta"}`},
 		{name: "refund missing link", body: `{"kind":"business_refund","amountUsd":"1.00","reason":"service recovery","confirmationAccountId":"acct-alpha"}`},
 		{name: "unexpected field", body: `{"kind":"recharge","amountUsd":"1.00","reason":"manual correction","confirmationAccountId":"acct-alpha","sub2apiUserId":41}`},
@@ -283,6 +291,18 @@ func TestWalletAdjustmentValidation(t *testing.T) {
 				t.Fatalf("invalid request reached Sub2API: charge=%d refund=%d", fixture.remote.chargeCalls, fixture.remote.refundCalls)
 			}
 		})
+	}
+}
+
+func TestWalletAdjustmentAmountUsesFullPositiveInt64MicrosRange(t *testing.T) {
+	request := walletAdjustmentRequest{Kind: "recharge", AmountUSD: "9223372036854.775807", Reason: "manual correction", ConfirmationAccountID: "acct-alpha"}
+	amount, ok := validWalletAdjustmentRequest(request, "acct-alpha", "wallet-max-int64")
+	if !ok || amount != math.MaxInt64 {
+		t.Fatalf("maximum int64 amount=%d ok=%t", amount, ok)
+	}
+	request.AmountUSD = "9223372036854.775808"
+	if amount, ok := validWalletAdjustmentRequest(request, "acct-alpha", "wallet-overflow"); ok || amount != 0 {
+		t.Fatalf("overflow amount=%d ok=%t", amount, ok)
 	}
 }
 
@@ -871,7 +891,7 @@ func TestWalletAdjustmentAudit(t *testing.T) {
 	body := decodeWalletAdjustmentResponse(t, response)
 	before := body["beforeBalance"].(map[string]any)
 	after := body["afterBalance"].(map[string]any)
-	if nested(before, "data", "usdMicros") != float64(100_000_000) || nested(after, "data", "usdMicros") != float64(102_500_000) || body["balanceHistoryRef"] == "" {
+	if nested(before, "data", "usdMicros") != "100000000" || nested(after, "data", "usdMicros") != "102500000" || body["balanceHistoryRef"] == "" {
 		t.Fatalf("authoritative balances=%#v", body)
 	}
 

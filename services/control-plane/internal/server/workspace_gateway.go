@@ -306,31 +306,30 @@ func (app *controlPlaneServer) persistWorkspaceKeyRotation(ctx context.Context, 
 }
 
 func (app *controlPlaneServer) workspaceKeyRotation(ctx context.Context, operationID, accountID, workspaceID, requestHash string) (workspaceKeyRotationOperation, bool, error) {
-	operations, err := app.tables.ListRuntimeOperations(ctx)
+	row, found, err := app.tables.GetRuntimeOperation(ctx, operationID)
 	if err != nil {
 		return workspaceKeyRotationOperation{}, false, errWorkspaceKeyRotationState
 	}
-	for _, row := range operations {
-		if stringValue(row["id"]) != operationID {
-			continue
-		}
-		operation, decodeErr := decodeWorkspaceKeyRotation(row)
-		if decodeErr != nil || stringValue(row["accountId"]) != accountID || stringValue(row["workspaceId"]) != workspaceID || stringValue(row["action"]) != "workspace.gateway_key.rotate" {
-			return workspaceKeyRotationOperation{}, false, errWorkspaceKeyRotationState
-		}
-		if operation.RequestHash != requestHash {
-			return workspaceKeyRotationOperation{}, false, errIdempotencyConflict
-		}
-		return operation, stringValue(row["status"]) == "succeeded", nil
+	if !found {
+		return workspaceKeyRotationOperation{}, false, nil
 	}
-	return workspaceKeyRotationOperation{}, false, nil
+	operation, decodeErr := decodeWorkspaceKeyRotation(row)
+	if decodeErr != nil || stringValue(row["accountId"]) != accountID || stringValue(row["workspaceId"]) != workspaceID || stringValue(row["action"]) != "workspace.gateway_key.rotate" {
+		return workspaceKeyRotationOperation{}, false, errWorkspaceKeyRotationState
+	}
+	if operation.RequestHash != requestHash {
+		return workspaceKeyRotationOperation{}, false, errIdempotencyConflict
+	}
+	return operation, stringValue(row["status"]) == "succeeded", nil
 }
 
 func (app *controlPlaneServer) claimWorkspaceKeyRotation(ctx context.Context, operationID, accountID, workspaceID, requestHash string, oldKeyID int64) (workspaceKeyRotationOperation, bool, error) {
 	if existing, complete, err := app.workspaceKeyRotation(ctx, operationID, accountID, workspaceID, requestHash); err != nil || existing.Phase != "" {
 		return existing, complete, err
 	}
-	operations, err := app.tables.ListRuntimeOperations(ctx)
+	operations, err := queryRuntimeOperations(ctx, app.tables, runtimeOperationQuery{
+		WorkspaceID: workspaceID, Action: "workspace.gateway_key.rotate", ExcludedStatuses: []string{"succeeded"},
+	})
 	if err != nil {
 		return workspaceKeyRotationOperation{}, false, errWorkspaceKeyRotationState
 	}
@@ -435,7 +434,7 @@ func (app *controlPlaneServer) runWorkspaceKeyRotation(r *http.Request, service 
 	for range 12 {
 		switch operation.Phase {
 		case "replacement_check":
-			keys, err := workspaceRotationKeys(ctx, service, credential, userID)
+			keys, err := workspaceRotationKeys(ctx, service, credential, userID, "opl-workspace", workspaceReservedKeyName(workspaceID))
 			if err != nil {
 				return operation, err
 			}
@@ -447,7 +446,7 @@ func (app *controlPlaneServer) runWorkspaceKeyRotation(r *http.Request, service 
 				return operation, err
 			}
 		case "replacement_create":
-			keys, err := workspaceRotationKeys(ctx, service, credential, userID)
+			keys, err := workspaceRotationKeys(ctx, service, credential, userID, operation.ReplacementName)
 			if err != nil {
 				return operation, err
 			}
@@ -644,17 +643,21 @@ func workspaceRuntimeGatewaySecretMatches(binding clients.WorkspaceRuntimeGatewa
 		binding.SecretRef == operation.SecretRef && binding.Fingerprint == operation.Fingerprint
 }
 
-func workspaceRotationKeys(ctx context.Context, service *controlplane.Service, credential clients.SessionDelegatedCredential, userID int64) ([]clients.Sub2APIWorkspaceKey, error) {
-	keys, err := service.GatewayWorkspaceKeysForConvergence(ctx, credential, userID)
-	if err != nil {
-		return nil, err
-	}
+func workspaceRotationKeys(ctx context.Context, service *controlplane.Service, credential clients.SessionDelegatedCredential, userID int64, names ...string) ([]clients.Sub2APIWorkspaceKey, error) {
+	keys := make([]clients.Sub2APIWorkspaceKey, 0, len(names))
 	seen := map[int64]bool{}
-	for _, key := range keys {
-		if key.ID <= 0 || key.UserID != userID || key.Name == "" || seen[key.ID] {
-			return nil, errWorkspaceKeyRotationConflict
+	for _, name := range names {
+		matches, err := service.GatewayWorkspaceKeysForConvergence(ctx, credential, userID, name)
+		if err != nil {
+			return nil, err
 		}
-		seen[key.ID] = true
+		for _, key := range matches {
+			if key.ID <= 0 || key.UserID != userID || key.Name != name || seen[key.ID] {
+				return nil, errWorkspaceKeyRotationConflict
+			}
+			seen[key.ID] = true
+			keys = append(keys, key)
+		}
 	}
 	return keys, nil
 }
@@ -686,23 +689,19 @@ func workspaceKeysNamed(keys []clients.Sub2APIWorkspaceKey, name string) []clien
 }
 
 func (app *controlPlaneServer) workspaceKeyRotationConverged(ctx context.Context, service *controlplane.Service, credential clients.SessionDelegatedCredential, userID int64, workspaceID string, operation workspaceKeyRotationOperation) bool {
-	keys, err := workspaceRotationKeys(ctx, service, credential, userID)
+	keys, err := workspaceRotationKeys(ctx, service, credential, userID, workspaceReservedKeyName(workspaceID))
 	if err != nil {
 		return false
 	}
-	canonical := make([]clients.Sub2APIWorkspaceKey, 0, 1)
 	oldKeyPresent := false
-	for _, key := range keys {
-		if key.ID == operation.OldKeyID {
-			oldKeyPresent = true
-		}
-		if key.Name == workspaceReservedKeyName(workspaceID) {
-			canonical = append(canonical, key)
-		}
+	if _, oldErr := service.GatewayUserKey(ctx, credential, userID, operation.OldKeyID); oldErr == nil {
+		oldKeyPresent = true
+	} else if !errors.Is(oldErr, clients.ErrSub2APIKeyNotFound) {
+		return false
 	}
 	workspace, ok := app.getWorkspace(workspaceID)
 	binding, bindErr := service.WorkspaceRuntimeGatewaySecret(ctx, workspaceID)
-	return ok && bindErr == nil && !oldKeyPresent && len(canonical) == 1 && canonical[0].ID == operation.NewKeyID && canonical[0].Status == "active" &&
+	return ok && bindErr == nil && !oldKeyPresent && len(keys) == 1 && keys[0].ID == operation.NewKeyID && keys[0].Status == "active" &&
 		int64(numberField(workspace, "workspaceApiKeyId", 0)) == operation.NewKeyID &&
 		workspaceRuntimeGatewaySecretMatches(binding, operation, workspaceID)
 }

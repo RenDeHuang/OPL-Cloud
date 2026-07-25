@@ -225,16 +225,13 @@ func registerWorkspaceRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 				writeError(w, http.StatusForbidden, "account_scope_forbidden")
 				return
 			}
-			operations, err := app.tables.ListRuntimeOperations(r.Context())
+			command, found, err := app.tables.GetRuntimeOperation(r.Context(), operationID)
 			if err != nil {
 				writeError(w, http.StatusInternalServerError, "state_read_failed")
 				return
 			}
-			for _, operation := range operations {
-				if stringValue(operation["id"]) != operationID {
-					continue
-				}
-				result, err := decodeWorkspaceAutoRenewCommand(operation)
+			if found {
+				result, err := decodeWorkspaceAutoRenewCommand(command)
 				if err != nil {
 					writeError(w, http.StatusInternalServerError, "state_read_failed")
 					return
@@ -244,6 +241,11 @@ func registerWorkspaceRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 					return
 				}
 				writeJSON(w, http.StatusOK, result.Response)
+				return
+			}
+			operations, err := queryRuntimeOperations(r.Context(), app.tables, runtimeOperationQuery{WorkspaceID: workspaceID})
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "state_read_failed")
 				return
 			}
 			update, response, err := planWorkspaceRenewalIntent(workspace, user, operations, autoRenew, key, time.Now().UTC())
@@ -278,14 +280,11 @@ func (app *controlPlaneServer) currentWorkspaceGatewaySecretRef(ctx context.Cont
 	if workspaceID == "" || accountID == "" || !ok {
 		return "", errors.New("workspace_gateway_secret_ref_unavailable")
 	}
-	rows, err := app.tables.ListRuntimeOperations(ctx)
+	rows, err := queryRuntimeOperations(ctx, app.tables, runtimeOperationQuery{AccountID: accountID, WorkspaceID: workspaceID, Action: "workspace.gateway_key.rotate"})
 	if err != nil {
 		return "", err
 	}
 	for _, row := range rows {
-		if stringValue(row["workspaceId"]) != workspaceID || stringValue(row["accountId"]) != accountID || stringValue(row["action"]) != "workspace.gateway_key.rotate" {
-			continue
-		}
 		operation, decodeErr := decodeWorkspaceKeyRotation(row)
 		if decodeErr != nil {
 			return "", decodeErr
@@ -297,10 +296,11 @@ func (app *controlPlaneServer) currentWorkspaceGatewaySecretRef(ctx context.Cont
 			return operation.SecretRef, nil
 		}
 	}
+	rows, err = queryRuntimeOperations(ctx, app.tables, runtimeOperationQuery{AccountID: accountID, WorkspaceID: workspaceID, Action: workspaceLaunchAction})
+	if err != nil {
+		return "", err
+	}
 	for _, row := range rows {
-		if stringValue(row["workspaceId"]) != workspaceID || stringValue(row["accountId"]) != accountID || stringValue(row["action"]) != workspaceLaunchAction {
-			continue
-		}
 		operation, decodeErr := decodeWorkspaceLaunchOperation(row)
 		if decodeErr == nil && operation.Status == "succeeded" && operation.WorkspaceAPIKeyID == keyID && operation.GatewaySecretRef != "" {
 			return operation.GatewaySecretRef, nil

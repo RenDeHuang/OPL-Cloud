@@ -43,7 +43,7 @@ func (app *controlPlaneServer) managementState(includeDeleted bool, computePools
 		"storageVolumes":         rowsAsAnyFromMaps(app.listStorages("")),
 		"storageAttachments":     rowsAsAnyFromMaps(app.listAttachments("")),
 		"resourceLedgerEvidence": app.resourceLedgerEvidenceLocked(),
-		"runtimeOperations":      rowsAsAnyFromMaps(app.listRuntimeOperations()),
+		"runtimeOperations":      rowsAsAnyFromMaps(app.runtimeOperationRows(runtimeOperationQuery{})),
 		"auditEvents":            rowsAsAnyFromMaps(app.listAuditEvents("")),
 		"billingReconciliation":  app.reconciliationProjectionLocked(),
 		"archive":                app.archiveStateLocked(),
@@ -58,7 +58,7 @@ func (app *controlPlaneServer) operatorSummary() map[string]any {
 	storages := app.storageRecordSet("")
 	workspaces := app.workspaceRecordSet("")
 	evidence := app.resourceLedgerEvidenceLocked()
-	runtimeOperations := app.listRuntimeOperations()
+	runtimeOperations := app.runtimeOperationRows(runtimeOperationQuery{})
 	workspaceAlerts := workspaceRenewalOperationalRows(workspaces, runtimeOperations)
 	running := countStatus(computes, "running")
 	accounts := app.accountsLocked("")

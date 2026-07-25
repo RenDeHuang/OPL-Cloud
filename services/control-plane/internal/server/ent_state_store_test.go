@@ -131,6 +131,44 @@ func TestAccountAndWorkspacePagesAreStableAndScoped(t *testing.T) {
 	}
 }
 
+func TestRuntimeOperationPointLookupAndFilteredPagesMatchAcrossStores(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		new  func(*testing.T) controlPlaneTableStore
+	}{
+		{name: "memory", new: func(*testing.T) controlPlaneTableStore { return newMemoryTableStore() }},
+		{name: "sqlite", new: func(t *testing.T) controlPlaneTableStore {
+			return NewTestEntStateStore(t, t.TempDir()+"/runtime-operation-query.sqlite")
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := tc.new(t)
+			ctx := context.Background()
+			for _, row := range []map[string]any{
+				{"id": "op-4", "operationId": "op-4", "accountId": "acct-b", "workspaceId": "ws-b", "action": "workspace.renewal", "status": "manual_review", "periodStart": "2026-09-01T00:00:00Z", "createdAt": "2026-07-25T00:00:04Z"},
+				{"id": "op-2", "operationId": "op-2", "accountId": "acct-a", "workspaceId": "ws-a", "action": "workspace.renewal", "status": "active", "periodStart": "2026-08-01T00:00:00Z", "createdAt": "2026-07-25T00:00:02Z"},
+				{"id": "op-3", "operationId": "op-3", "accountId": "acct-a", "workspaceId": "ws-a", "action": "workspace.launch", "status": "manual_review", "createdAt": "2026-07-25T00:00:03Z"},
+				{"id": "op-1", "operationId": "op-1", "accountId": "acct-a", "workspaceId": "ws-a", "action": "workspace.renewal", "status": "manual_review", "periodStart": "2026-08-01T00:00:00Z", "createdAt": "2026-07-25T00:00:01Z"},
+			} {
+				mustStore(t, store.SaveRuntimeOperation(ctx, row))
+			}
+
+			operation, found, err := store.GetRuntimeOperation(ctx, "op-3")
+			if err != nil || !found || stringValue(operation["action"]) != "workspace.launch" {
+				t.Fatalf("point lookup=%#v found=%t err=%v", operation, found, err)
+			}
+			page, err := store.PageRuntimeOperations(ctx, runtimeOperationQuery{
+				AccountID: "acct-a", WorkspaceID: "ws-a", Action: "workspace.renewal",
+				Statuses: []string{"manual_review", "active"}, PeriodStart: "2026-08-01T00:00:00Z",
+				Offset: 1, Limit: 1,
+			})
+			if err != nil || page.Total != 2 || len(page.Items) != 1 || stringValue(page.Items[0]["id"]) != "op-2" {
+				t.Fatalf("filtered page=%#v err=%v", page, err)
+			}
+		})
+	}
+}
+
 func TestEntWorkspaceCountsUseOneGroupedQuery(t *testing.T) {
 	var queries []string
 	client := controlplaneenttest.Open(t, dialect.SQLite, t.TempDir()+"/workspace-counts.sqlite?_fk=1",

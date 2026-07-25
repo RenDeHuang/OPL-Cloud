@@ -108,6 +108,28 @@ func TestFabricHTTPClientReadsMonthlyProviderTruthWithoutMutation(t *testing.T) 
 	}
 }
 
+func TestFabricHTTPClientReadsRuntimeHealthSummaryWithoutMutation(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/fabric/runtime-health-summary" || r.Header.Get("Authorization") != "Bearer internal-secret" {
+			t.Fatalf("unexpected request: %s %s auth=%q", r.Method, r.URL.Path, r.Header.Get("Authorization"))
+		}
+		if _, ok := r.Header["Idempotency-Key"]; ok {
+			t.Fatalf("read-only Runtime summary sent Idempotency-Key: %#v", r.Header.Values("Idempotency-Key"))
+		}
+		_ = json.NewEncoder(w).Encode(RuntimeHealthSummary{Total: 1000, Ready: 999, Unready: 1})
+	}))
+	defer upstream.Close()
+
+	client, ok := NewFabricHTTPClient(upstream.URL, "internal-secret", upstream.Client()).(FabricRuntimeHealthClient)
+	if !ok {
+		t.Fatal("Fabric HTTP client must implement Runtime health summary capability")
+	}
+	summary, err := client.RuntimeHealthSummary(context.Background())
+	if err != nil || summary.Total != 1000 || summary.Ready != 999 || summary.Unready != 1 {
+		t.Fatalf("Runtime health summary = %#v err=%v", summary, err)
+	}
+}
+
 func TestFabricHTTPClientCreatesZonedPrepaidStorage(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/fabric/storage-volumes" || r.Header.Get("Idempotency-Key") != "storage-once" {

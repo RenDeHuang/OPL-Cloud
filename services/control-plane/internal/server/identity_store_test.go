@@ -220,6 +220,55 @@ func TestSessionStoresRejectPreRemoteAuthorityLookupKeys(t *testing.T) {
 	}
 }
 
+func TestIdentityStoresProvideEquivalentPointLookups(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		store controlPlaneTableStore
+	}{
+		{name: "memory", store: newMemoryTableStore()},
+		{name: "ent", store: NewTestEntStateStore(t, t.TempDir()+"/identity-point-lookups.sqlite")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			account, user, organization, membership := strictProvisionedAccountRows()
+			if err := tc.store.CreateProvisionedAccount(ctx, account, user, organization, membership); err != nil {
+				t.Fatal(err)
+			}
+			sessionID := sessionLookupKey("point-lookup-session")
+			if err := tc.store.SaveSession(ctx, map[string]any{
+				"id": sessionID, "userId": user["id"], "csrf": "csrf", "expiresAt": "2099-01-01T00:00:00Z",
+			}); err != nil {
+				t.Fatal(err)
+			}
+
+			foundUser, ok, err := tc.store.GetUserByEmail(ctx, "owner@provisioned.example", false)
+			if err != nil || !ok || foundUser["id"] != user["id"] {
+				t.Fatalf("user by email=%#v ok=%v err=%v", foundUser, ok, err)
+			}
+			foundSession, ok, err := tc.store.GetSession(ctx, sessionID)
+			if err != nil || !ok || foundSession["userId"] != user["id"] {
+				t.Fatalf("session by id=%#v ok=%v err=%v", foundSession, ok, err)
+			}
+			foundAccount, ok, err := tc.store.GetAccount(ctx, stringValue(account["id"]))
+			if err != nil || !ok || foundAccount["ownerUserId"] != user["id"] {
+				t.Fatalf("account by id=%#v ok=%v err=%v", foundAccount, ok, err)
+			}
+			foundOrganization, ok, err := tc.store.GetOrganizationByAccount(ctx, stringValue(account["id"]))
+			if err != nil || !ok || foundOrganization["id"] != organization["id"] {
+				t.Fatalf("organization by account=%#v ok=%v err=%v", foundOrganization, ok, err)
+			}
+			foundMembership, ok, err := tc.store.GetMembershipByAccount(ctx, stringValue(account["id"]))
+			if err != nil || !ok || foundMembership["id"] != membership["id"] {
+				t.Fatalf("membership by account=%#v ok=%v err=%v", foundMembership, ok, err)
+			}
+			sessions, err := tc.store.ListSessionsByUser(ctx, stringValue(user["id"]))
+			if err != nil || len(sessions) != 1 || sessions[sessionID] == nil {
+				t.Fatalf("sessions by user=%#v err=%v", sessions, err)
+			}
+		})
+	}
+}
+
 func TestEntIdentitySchemaEnforcesOneToOneFields(t *testing.T) {
 	tests := []struct {
 		name string

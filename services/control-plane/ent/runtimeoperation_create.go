@@ -90,6 +90,20 @@ func (roc *RuntimeOperationCreate) SetNillableWorkspaceID(s *string) *RuntimeOpe
 	return roc
 }
 
+// SetPeriodStart sets the "period_start" field.
+func (roc *RuntimeOperationCreate) SetPeriodStart(s string) *RuntimeOperationCreate {
+	roc.mutation.SetPeriodStart(s)
+	return roc
+}
+
+// SetNillablePeriodStart sets the "period_start" field if the given value is not nil.
+func (roc *RuntimeOperationCreate) SetNillablePeriodStart(s *string) *RuntimeOperationCreate {
+	if s != nil {
+		roc.SetPeriodStart(*s)
+	}
+	return roc
+}
+
 // SetResourceID sets the "resource_id" field.
 func (roc *RuntimeOperationCreate) SetResourceID(s string) *RuntimeOperationCreate {
 	roc.mutation.SetResourceID(s)
@@ -361,6 +375,10 @@ func (roc *RuntimeOperationCreate) defaults() {
 		v := runtimeoperation.DefaultWorkspaceID
 		roc.mutation.SetWorkspaceID(v)
 	}
+	if _, ok := roc.mutation.PeriodStart(); !ok {
+		v := runtimeoperation.DefaultPeriodStart
+		roc.mutation.SetPeriodStart(v)
+	}
 	if _, ok := roc.mutation.ResourceID(); !ok {
 		v := runtimeoperation.DefaultResourceID
 		roc.mutation.SetResourceID(v)
@@ -439,6 +457,9 @@ func (roc *RuntimeOperationCreate) check() error {
 	}
 	if _, ok := roc.mutation.WorkspaceID(); !ok {
 		return &ValidationError{Name: "workspace_id", err: errors.New(`ent: missing required field "RuntimeOperation.workspace_id"`)}
+	}
+	if _, ok := roc.mutation.PeriodStart(); !ok {
+		return &ValidationError{Name: "period_start", err: errors.New(`ent: missing required field "RuntimeOperation.period_start"`)}
 	}
 	if _, ok := roc.mutation.ResourceID(); !ok {
 		return &ValidationError{Name: "resource_id", err: errors.New(`ent: missing required field "RuntimeOperation.resource_id"`)}
@@ -544,6 +565,10 @@ func (roc *RuntimeOperationCreate) createSpec() (*RuntimeOperation, *sqlgraph.Cr
 	if value, ok := roc.mutation.WorkspaceID(); ok {
 		_spec.SetField(runtimeoperation.FieldWorkspaceID, field.TypeString, value)
 		_node.WorkspaceID = value
+	}
+	if value, ok := roc.mutation.PeriodStart(); ok {
+		_spec.SetField(runtimeoperation.FieldPeriodStart, field.TypeString, value)
+		_node.PeriodStart = value
 	}
 	if value, ok := roc.mutation.ResourceID(); ok {
 		_spec.SetField(runtimeoperation.FieldResourceID, field.TypeString, value)

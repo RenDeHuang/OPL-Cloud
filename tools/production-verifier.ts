@@ -156,11 +156,14 @@ export function sourceEnvelope(result, expectedSource, allowEmpty = false) {
 
 export function walletFact(envelope, expectedUserId) {
   const wallet = envelope?.data;
+  const usdMicros = wallet?.usdMicros;
+  const validUsdMicros = typeof usdMicros === "string" && /^(0|[1-9][0-9]*)$/.test(usdMicros) &&
+    BigInt(usdMicros) <= 9_223_372_036_854_775_807n;
   if (envelope?.status !== "available" || String(wallet?.userId || "") !== String(expectedUserId) || wallet?.currency !== "USD" ||
-    wallet?.status !== "active" || !Number.isSafeInteger(wallet?.usdMicros) || wallet.usdMicros < 0) {
+    wallet?.status !== "active" || !validUsdMicros) {
     throw new Error("dedicated_workspace_wallet_required");
   }
-  return { userId: String(wallet.userId), currency: "USD", usdMicros: wallet.usdMicros, status: wallet.status };
+  return { userId: String(wallet.userId), currency: "USD", usdMicros, status: wallet.status };
 }
 
 export function dedicatedWorkspaceKey(envelope, expectedId = "") {

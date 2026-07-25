@@ -10,8 +10,6 @@
   },
   "pilotCohort": {
     "mode": "operator_provisioned",
-    "minimumCustomerAccounts": 2,
-    "maximumCustomerAccounts": 5,
     "publicRegistration": false
   },
   "entities": {
@@ -124,7 +122,7 @@
   },
   "identitySecurity": {
     "email": "Provision and bootstrap normalize email with lower(trim(email)); normalized email is unique in PostgreSQL and legacy blank or colliding values fail migration closed.",
-    "plaintextPasswordMinimumCharacters": 12,
+    "plaintextPasswordValidation": "non_empty_delegated_to_sub2api",
     "passwordAuthority": "sub2api",
     "provisionPasswordHandling": "forward_to_sub2api_only_never_persist",
     "localPasswordHash": {

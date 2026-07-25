@@ -49,6 +49,35 @@ type tablePage struct {
 	Total int
 }
 
+type runtimeOperationQuery struct {
+	AccountID        string
+	WorkspaceID      string
+	Action           string
+	Statuses         []string
+	ExcludedStatuses []string
+	PeriodStart      string
+	Offset           int
+	Limit            int
+}
+
+const runtimeOperationPageSize = 100
+
+func queryRuntimeOperations(ctx context.Context, store controlPlaneTableStore, query runtimeOperationQuery) ([]map[string]any, error) {
+	query.Offset, query.Limit = 0, runtimeOperationPageSize
+	rows := make([]map[string]any, 0)
+	for {
+		page, err := store.PageRuntimeOperations(ctx, query)
+		if err != nil {
+			return nil, err
+		}
+		rows = append(rows, page.Items...)
+		query.Offset += len(page.Items)
+		if query.Offset >= page.Total || len(page.Items) == 0 {
+			return rows, nil
+		}
+	}
+}
+
 func prepareAnnouncementMutation(current map[string]any, mutation announcementMutation, now time.Time) (map[string]any, error) {
 	if mutation.AnnouncementID == "" || mutation.RequestHash == "" || stringValue(mutation.AuditEvent["id"]) == "" {
 		return nil, errAnnouncementStateConflict
@@ -181,19 +210,25 @@ type controlPlaneTableStore interface {
 	ListAccounts(ctx context.Context, accountID string) ([]map[string]any, error)
 	GetAccount(ctx context.Context, id string) (map[string]any, bool, error)
 	PageAccounts(ctx context.Context, query tablePageQuery) (tablePage, error)
+	CountAccountStatuses(ctx context.Context) (map[string]int, error)
 	SaveAccount(ctx context.Context, row map[string]any) error
 	CreateProvisionedAccount(ctx context.Context, account, user, organization, membership map[string]any) error
 	ApplyUserLifecycle(ctx context.Context, user map[string]any) error
 	ListUsers(ctx context.Context, includeDeleted bool) ([]map[string]any, error)
 	GetUser(ctx context.Context, id string) (map[string]any, bool, error)
+	GetUserByEmail(ctx context.Context, email string, includeDeleted bool) (map[string]any, bool, error)
 	SaveUser(ctx context.Context, row map[string]any) error
 	DeleteUser(ctx context.Context, id string) error
 	ListSessions(ctx context.Context) (controlPlaneRecordSet, error)
+	GetSession(ctx context.Context, id string) (map[string]any, bool, error)
+	ListSessionsByUser(ctx context.Context, userID string) (controlPlaneRecordSet, error)
 	SaveSession(ctx context.Context, row map[string]any) error
 	DeleteSession(ctx context.Context, id string) error
 	ListOrganizations(ctx context.Context) ([]map[string]any, error)
+	GetOrganizationByAccount(ctx context.Context, accountID string) (map[string]any, bool, error)
 	SaveOrganization(ctx context.Context, row map[string]any) error
 	ListMemberships(ctx context.Context) ([]map[string]any, error)
+	GetMembershipByAccount(ctx context.Context, accountID string) (map[string]any, bool, error)
 	SaveMembership(ctx context.Context, row map[string]any) error
 
 	ListComputes(ctx context.Context, accountID string) ([]map[string]any, error)
@@ -211,6 +246,7 @@ type controlPlaneTableStore interface {
 	ListWorkspaces(ctx context.Context, accountID string) ([]map[string]any, error)
 	GetWorkspace(ctx context.Context, id string) (map[string]any, bool, error)
 	PageWorkspaces(ctx context.Context, accountID string, query tablePageQuery) (tablePage, error)
+	CountWorkspaces(ctx context.Context) (int, error)
 	CountWorkspacesByAccount(ctx context.Context, accountIDs []string) (map[string]int, error)
 	SaveWorkspace(ctx context.Context, row map[string]any) error
 	CompareAndSwapWorkspaceAPIKey(ctx context.Context, workspaceID string, expectedID, newID int64) error
@@ -232,6 +268,8 @@ type controlPlaneTableStore interface {
 	ListSupportMappings(ctx context.Context, accountID string) ([]map[string]any, error)
 	SaveSupportMapping(ctx context.Context, row map[string]any) error
 	ListRuntimeOperations(ctx context.Context) ([]map[string]any, error)
+	GetRuntimeOperation(ctx context.Context, id string) (map[string]any, bool, error)
+	PageRuntimeOperations(ctx context.Context, query runtimeOperationQuery) (tablePage, error)
 	SaveRuntimeOperation(ctx context.Context, row map[string]any) error
 	BillingReconciliation(ctx context.Context) (map[string]any, bool, error)
 	SaveBillingReconciliation(ctx context.Context, row map[string]any) error

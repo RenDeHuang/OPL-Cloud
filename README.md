@@ -31,14 +31,16 @@ or Sub2API proxy routes.
 
 ## Operator-Provisioned Pilot
 
-The first cohort is 2-5 administrator-provisioned customer accounts. One Console User
-maps to one OPL Account and one Sub2API User/Wallet. Console and Sub2API emails
-must match after `lower(trim(email))`. Operators pre-fund the Sub2API wallet;
-there is no public registration or payment/order UI. Owners may manage general
-Keys through Control Plane using a Session-bound delegated credential. Each
-Workspace launch converges its own reserved Key and Kubernetes Secret from a
-stable `workspaceId` identity; the legacy `opl-workspace` Key remains bound only
-to its existing Workspace.
+Accounts are administrator-provisioned. One Console User maps to one OPL Account
+and one Sub2API User/Wallet. Console and Sub2API emails must match after
+`lower(trim(email))`. Operators pre-fund the Sub2API wallet; there is no public
+registration or payment/order UI. The current launch capacity evidence uses a
+1000-provisioned-user data set; it is not a claim of 1000 concurrent users,
+concurrent logins, concurrent provisioning operations, or HA. Owners may manage
+general Keys through Control Plane using a Session-bound delegated credential.
+Each Workspace launch converges its own reserved Key and Kubernetes Secret from
+a stable `workspaceId` identity; the legacy `opl-workspace` Key remains bound
+only to its existing Workspace.
 
 Customer prices are fixed monthly USD facts. The browser displays server DTOs
 and never converts provider costs or derives totals.

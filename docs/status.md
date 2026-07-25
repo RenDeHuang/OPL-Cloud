@@ -2,8 +2,10 @@
 
 ## Current Boundary
 
-Current status is the contract-frozen Pilot V2 implementation candidate for 2-5
-administrator-provisioned customer accounts. Delivery evidence is currently `code-complete=false`,
+Current status is the contract-frozen Pilot V2 implementation candidate for
+administrator-provisioned customer accounts. Capacity evidence targets a
+1000-provisioned-user data set, not 1000 concurrent users, concurrent logins,
+concurrent provisioning operations, or HA. Delivery evidence is currently `code-complete=false`,
 `pilot-ready=false`, and `production-proven=false`; contract targets are not
 runtime evidence and the product is not yet saleable.
 

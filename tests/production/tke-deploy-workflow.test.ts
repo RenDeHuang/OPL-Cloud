@@ -384,6 +384,10 @@ test("ordinary TKE release requires the real read-only rollout verifier", async 
   assert.match(String(verifier.if), /!inputs\.bootstrap_mode.*needs\.deploy\.result == 'success'/);
   assert.deepEqual(verifier["runs-on"], ["self-hosted", "tencent-cloud", "opl-cloud", "tke-vpc"]);
   assert.equal(verifier.environment, "production");
+  assert.equal(verifier.env.OPL_SUB2API_ADMIN_EMAIL, "${{ secrets.OPL_SUB2API_ADMIN_EMAIL }}");
+  assert.equal(verifier.env.OPL_SUB2API_ADMIN_PASSWORD, "${{ secrets.OPL_SUB2API_ADMIN_PASSWORD }}");
+  assert.equal(Object.hasOwn(verifier.env, "OPL_VERIFY_AUTH_USERS_JSON"), false);
+  assert.equal(Object.hasOwn(verifier.env, "OPL_VERIFY_ACCOUNT_ID"), false);
   assert.match(verifierRun, /api\/healthz/);
   assert.match(verifierRun, /api\/production\/readiness/);
   assert.match(verifierRun, /imageID|imageId/);
@@ -401,6 +405,16 @@ test("ordinary TKE release requires the real read-only rollout verifier", async 
   assert.deepEqual(rollback.needs, ["deploy", "bootstrap-readiness", "verify-rollout-read-only"]);
   assert.equal(contract.productionReadOnlyRolloutVerifierJob.job, "verify-rollout-read-only");
   assert.equal(contract.productionReadOnlyRolloutVerifierJob.readOnly, true);
+  assert.equal(contract.productionReadOnlyRolloutVerifierJob.requiredEnv.includes("OPL_SUB2API_ADMIN_EMAIL"), true);
+  assert.equal(contract.productionReadOnlyRolloutVerifierJob.requiredEnv.includes("OPL_SUB2API_ADMIN_PASSWORD"), true);
+  assert.equal(contract.productionReadOnlyRolloutVerifierJob.requiredEnv.includes("OPL_VERIFY_AUTH_USERS_JSON"), false);
+  assert.equal(contract.productionReadOnlyRolloutVerifierJob.requiredEnv.includes("OPL_VERIFY_ACCOUNT_ID"), false);
+  assert.deepEqual(contract.productionReadOnlyRolloutVerifierJob.secretEnv, [
+    "OPL_SUB2API_ADMIN_EMAIL",
+    "OPL_SUB2API_ADMIN_PASSWORD",
+    "TENCENT_DEPLOY_KUBECONFIG_B64",
+    "TENCENT_DEPLOY_KUBECONFIG"
+  ]);
   assert.deepEqual(contract.productionReleaseGateJob.needs, ["deploy", "bootstrap-readiness", "verify-rollout-read-only", "rollback-live-qa"]);
 });
 

@@ -587,8 +587,8 @@ jobs:
       OPL_CLOUD_IMAGE: ${{ inputs.cloud_image }}
       OPL_WORKSPACE_IMAGE: ${{ needs.deploy.outputs.workspace_image }}
       OPL_CONSOLE_ORIGIN: ${{ vars.OPL_PUBLIC_URL || 'https://cloud.medopl.cn' }}
-      OPL_VERIFY_AUTH_USERS_JSON: ${{ secrets.OPL_VERIFY_AUTH_USERS_JSON }}
-      OPL_VERIFY_ACCOUNT_ID: acct-verification-slot-basic-01
+      OPL_SUB2API_ADMIN_EMAIL: ${{ secrets.OPL_SUB2API_ADMIN_EMAIL }}
+      OPL_SUB2API_ADMIN_PASSWORD: ${{ secrets.OPL_SUB2API_ADMIN_PASSWORD }}
       OPL_VERIFY_REQUEST_TIMEOUT_MS: "30000"
       TENCENT_DEPLOY_KUBECONFIG_PATH: ${{ vars.TENCENT_DEPLOY_KUBECONFIG_PATH || '/home/actions/.secrets/medopl/v22/kubeconfig-package-d-deploy' }}
       TENCENT_DEPLOY_KUBECONFIG_B64: ${{ secrets.TENCENT_DEPLOY_KUBECONFIG_B64 }}

@@ -18,6 +18,16 @@ import (
 	"opl-cloud/services/fabric/internal/fabric"
 )
 
+type runtimeHealthSummaryHTTPProvider struct {
+	testProvider
+	calls int
+}
+
+func (p *runtimeHealthSummaryHTTPProvider) RuntimeHealthSummary(context.Context) (fabric.RuntimeHealthSummary, error) {
+	p.calls++
+	return fabric.RuntimeHealthSummary{Total: 1000, Ready: 999, Unready: 1}, nil
+}
+
 func TestServerAuthenticatesEverythingExceptGetHealthz(t *testing.T) {
 	server := NewServer(fabric.NewService(testProvider{}), "internal-secret")
 	tests := []struct {
@@ -45,6 +55,32 @@ func TestServerAuthenticatesEverythingExceptGetHealthz(t *testing.T) {
 				t.Fatalf("status = %d, want %d", rec.Code, tt.want)
 			}
 		})
+	}
+}
+
+func TestRuntimeHealthSummaryHTTPIsAuthenticatedAndReadOnly(t *testing.T) {
+	provider := &runtimeHealthSummaryHTTPProvider{}
+	service := fabric.NewService(provider)
+	server := NewServer(service, "internal-secret")
+
+	unauthorized := httptest.NewRecorder()
+	server.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodGet, "/fabric/runtime-health-summary", nil))
+	if unauthorized.Code != http.StatusUnauthorized || provider.calls != 0 {
+		t.Fatalf("unauthorized status=%d calls=%d", unauthorized.Code, provider.calls)
+	}
+
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, testRequest(http.MethodGet, "/fabric/runtime-health-summary", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("summary status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var summary fabric.RuntimeHealthSummary
+	if err := json.NewDecoder(recorder.Body).Decode(&summary); err != nil || summary.Total != 1000 || summary.Ready != 999 || summary.Unready != 1 || provider.calls != 1 {
+		t.Fatalf("summary=%#v err=%v calls=%d", summary, err, provider.calls)
+	}
+	operations, err := service.ListOperations(context.Background())
+	if err != nil || len(operations) != 0 {
+		t.Fatalf("read-only summary operations=%#v err=%v", operations, err)
 	}
 }
 

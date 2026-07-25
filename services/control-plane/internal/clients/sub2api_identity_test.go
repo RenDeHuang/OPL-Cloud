@@ -36,20 +36,20 @@ func TestSub2APIIdentityResolveReusesOneExactEmailAcrossFullPagination(t *testin
 			writeSub2APISuccess(t, w, map[string]any{"access_token": "admin-access", "refresh_token": "admin-refresh"})
 		case "/api/v1/admin/users":
 			query := r.URL.Query()
-			if r.Method != http.MethodGet || query.Get("page_size") != "1000" || query.Get("search") != "owner@example.com" || query.Get("sort_by") != "id" || query.Get("sort_order") != "asc" {
+			if r.Method != http.MethodGet || query.Get("page_size") != "100" || query.Get("search") != "owner@example.com" || query.Get("sort_by") != "id" || query.Get("sort_order") != "asc" {
 				t.Fatalf("lookup request = %s %s", r.Method, r.URL.String())
 			}
 			requestedPages = append(requestedPages, query.Get("page"))
 			page, _ := strconv.Atoi(query.Get("page"))
 			if page == 1 {
-				items := make([]any, 0, 1000)
-				for id := 1; id <= 1000; id++ {
+				items := make([]any, 0, 100)
+				for id := 1; id <= 100; id++ {
 					items = append(items, map[string]any{"id": id, "email": fmt.Sprintf("other-%d@example.com", id), "status": "active", "notes": "private"})
 				}
-				writeSub2APISuccess(t, w, map[string]any{"items": items, "total": 1001, "page": 1, "page_size": 1000, "pages": 2})
+				writeSub2APISuccess(t, w, map[string]any{"items": items, "total": 101, "page": 1, "page_size": 100, "pages": 2})
 				return
 			}
-			writeSub2APISuccess(t, w, map[string]any{"items": []any{map[string]any{"id": 1001, "email": " Owner@Example.com ", "status": "active", "balance": 99}}, "total": 1001, "page": 2, "page_size": 1000, "pages": 2})
+			writeSub2APISuccess(t, w, map[string]any{"items": []any{map[string]any{"id": 1001, "email": " Owner@Example.com ", "status": "active", "balance": 99}}, "total": 101, "page": 2, "page_size": 100, "pages": 2})
 		case "/api/v1/admin/users/1001":
 			writeSub2APISuccess(t, w, map[string]any{"id": 1001, "email": "owner@example.com", "status": "active", "notes": "private"})
 		default:
@@ -88,7 +88,7 @@ func TestSub2APIIdentityResolveRequiresPasswordForExistingUser(t *testing.T) {
 		case "/api/v1/admin/users":
 			writeSub2APISuccess(t, w, map[string]any{"items": []any{
 				map[string]any{"id": 41, "email": "owner@example.com", "status": "active"},
-			}, "total": 1, "page": 1, "page_size": 1000, "pages": 1})
+			}, "total": 1, "page": 1, "page_size": 100, "pages": 1})
 		case "/api/v1/admin/users/41":
 			readbacks++
 			writeSub2APISuccess(t, w, map[string]any{"id": 41, "email": "owner@example.com", "status": "active"})
@@ -112,18 +112,18 @@ func TestSub2APIIdentityLookupRejectsShortNonFinalPage(t *testing.T) {
 			writeSub2APISuccess(t, w, map[string]any{"access_token": "admin-access", "refresh_token": "admin-refresh"})
 		case "/api/v1/admin/users":
 			page, _ := strconv.Atoi(r.URL.Query().Get("page"))
-			items := make([]any, 0, 999)
+			items := make([]any, 0, 99)
 			if page == 1 {
-				for id := 1; id <= 999; id++ {
+				for id := 1; id <= 99; id++ {
 					items = append(items, map[string]any{"id": id, "email": fmt.Sprintf("other-%d@example.com", id), "status": "active"})
 				}
 			} else {
 				items = append(items,
-					map[string]any{"id": 1000, "email": "owner@example.com", "status": "active"},
-					map[string]any{"id": 1001, "email": "other-1001@example.com", "status": "active"},
+					map[string]any{"id": 100, "email": "owner@example.com", "status": "active"},
+					map[string]any{"id": 101, "email": "other-101@example.com", "status": "active"},
 				)
 			}
-			writeSub2APISuccess(t, w, map[string]any{"items": items, "total": 1001, "page": page, "page_size": 1000, "pages": 2})
+			writeSub2APISuccess(t, w, map[string]any{"items": items, "total": 101, "page": page, "page_size": 100, "pages": 2})
 		default:
 			t.Fatalf("unexpected request %s %s", r.Method, r.URL.String())
 		}
@@ -176,7 +176,7 @@ func TestSub2APIIdentityResolveCreatesThenConvergesAfterLostResponse(t *testing.
 			if lookups > 1 {
 				items = append(items, map[string]any{"id": 41, "email": "owner@example.com", "status": "active", "notes": "private"})
 			}
-			writeSub2APISuccess(t, w, map[string]any{"items": items, "total": len(items), "page": 1, "page_size": 1000, "pages": 1})
+			writeSub2APISuccess(t, w, map[string]any{"items": items, "total": len(items), "page": 1, "page_size": 100, "pages": 1})
 		case "/api/v1/admin/users/41":
 			writeSub2APISuccess(t, w, map[string]any{"id": 41, "email": "owner@example.com", "status": "active"})
 		default:
@@ -218,7 +218,7 @@ func TestSub2APIIdentityResolveWaiterHonorsContextCancellation(t *testing.T) {
 		case "/api/v1/admin/users":
 			writeSub2APISuccess(t, w, map[string]any{"items": []any{
 				map[string]any{"id": 41, "email": "owner@example.com", "status": "active"},
-			}, "total": 1, "page": 1, "page_size": 1000, "pages": 1})
+			}, "total": 1, "page": 1, "page_size": 100, "pages": 1})
 		case "/api/v1/admin/users/41":
 			writeSub2APISuccess(t, w, map[string]any{"id": 41, "email": "owner@example.com", "status": "active"})
 		default:
@@ -309,7 +309,7 @@ func TestSub2APIIdentityConcurrentResolveCreatesUserOnce(t *testing.T) {
 			if wasCreated {
 				items = append(items, map[string]any{"id": 41, "email": "owner@example.com", "status": "active"})
 			}
-			writeSub2APISuccess(t, w, map[string]any{"items": items, "total": len(items), "page": 1, "page_size": 1000, "pages": 1})
+			writeSub2APISuccess(t, w, map[string]any{"items": items, "total": len(items), "page": 1, "page_size": 100, "pages": 1})
 		case "/api/v1/admin/users/41":
 			writeSub2APISuccess(t, w, map[string]any{"id": 41, "email": "owner@example.com", "status": "active"})
 		default:
@@ -352,8 +352,8 @@ func TestSub2APIIdentityResolveFailsClosedForAmbiguousOrIncoherentLookup(t *test
 		{name: "multiple exact matches", data: map[string]any{"items": []any{
 			map[string]any{"id": 41, "email": "owner@example.com", "status": "active"},
 			map[string]any{"id": 42, "email": " OWNER@example.com ", "status": "active"},
-		}, "total": 2, "page": 1, "page_size": 1000, "pages": 1}},
-		{name: "pagination drift", data: map[string]any{"items": []any{map[string]any{"id": 41, "email": "owner@example.com", "status": "active"}}, "total": 1, "page": 1, "page_size": 999, "pages": 1}},
+		}, "total": 2, "page": 1, "page_size": 100, "pages": 1}},
+		{name: "pagination drift", data: map[string]any{"items": []any{map[string]any{"id": 41, "email": "owner@example.com", "status": "active"}}, "total": 1, "page": 1, "page_size": 99, "pages": 1}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			client := newSub2APITestClient(t, func(w http.ResponseWriter, r *http.Request) {

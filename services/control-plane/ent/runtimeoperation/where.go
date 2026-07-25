@@ -89,6 +89,11 @@ func WorkspaceID(v string) predicate.RuntimeOperation {
 	return predicate.RuntimeOperation(sql.FieldEQ(FieldWorkspaceID, v))
 }
 
+// PeriodStart applies equality check predicate on the "period_start" field. It's identical to PeriodStartEQ.
+func PeriodStart(v string) predicate.RuntimeOperation {
+	return predicate.RuntimeOperation(sql.FieldEQ(FieldPeriodStart, v))
+}
+
 // ResourceID applies equality check predicate on the "resource_id" field. It's identical to ResourceIDEQ.
 func ResourceID(v string) predicate.RuntimeOperation {
 	return predicate.RuntimeOperation(sql.FieldEQ(FieldResourceID, v))
@@ -437,6 +442,71 @@ func WorkspaceIDEqualFold(v string) predicate.RuntimeOperation {
 // WorkspaceIDContainsFold applies the ContainsFold predicate on the "workspace_id" field.
 func WorkspaceIDContainsFold(v string) predicate.RuntimeOperation {
 	return predicate.RuntimeOperation(sql.FieldContainsFold(FieldWorkspaceID, v))
+}
+
+// PeriodStartEQ applies the EQ predicate on the "period_start" field.
+func PeriodStartEQ(v string) predicate.RuntimeOperation {
+	return predicate.RuntimeOperation(sql.FieldEQ(FieldPeriodStart, v))
+}
+
+// PeriodStartNEQ applies the NEQ predicate on the "period_start" field.
+func PeriodStartNEQ(v string) predicate.RuntimeOperation {
+	return predicate.RuntimeOperation(sql.FieldNEQ(FieldPeriodStart, v))
+}
+
+// PeriodStartIn applies the In predicate on the "period_start" field.
+func PeriodStartIn(vs ...string) predicate.RuntimeOperation {
+	return predicate.RuntimeOperation(sql.FieldIn(FieldPeriodStart, vs...))
+}
+
+// PeriodStartNotIn applies the NotIn predicate on the "period_start" field.
+func PeriodStartNotIn(vs ...string) predicate.RuntimeOperation {
+	return predicate.RuntimeOperation(sql.FieldNotIn(FieldPeriodStart, vs...))
+}
+
+// PeriodStartGT applies the GT predicate on the "period_start" field.
+func PeriodStartGT(v string) predicate.RuntimeOperation {
+	return predicate.RuntimeOperation(sql.FieldGT(FieldPeriodStart, v))
+}
+
+// PeriodStartGTE applies the GTE predicate on the "period_start" field.
+func PeriodStartGTE(v string) predicate.RuntimeOperation {
+	return predicate.RuntimeOperation(sql.FieldGTE(FieldPeriodStart, v))
+}
+
+// PeriodStartLT applies the LT predicate on the "period_start" field.
+func PeriodStartLT(v string) predicate.RuntimeOperation {
+	return predicate.RuntimeOperation(sql.FieldLT(FieldPeriodStart, v))
+}
+
+// PeriodStartLTE applies the LTE predicate on the "period_start" field.
+func PeriodStartLTE(v string) predicate.RuntimeOperation {
+	return predicate.RuntimeOperation(sql.FieldLTE(FieldPeriodStart, v))
+}
+
+// PeriodStartContains applies the Contains predicate on the "period_start" field.
+func PeriodStartContains(v string) predicate.RuntimeOperation {
+	return predicate.RuntimeOperation(sql.FieldContains(FieldPeriodStart, v))
+}
+
+// PeriodStartHasPrefix applies the HasPrefix predicate on the "period_start" field.
+func PeriodStartHasPrefix(v string) predicate.RuntimeOperation {
+	return predicate.RuntimeOperation(sql.FieldHasPrefix(FieldPeriodStart, v))
+}
+
+// PeriodStartHasSuffix applies the HasSuffix predicate on the "period_start" field.
+func PeriodStartHasSuffix(v string) predicate.RuntimeOperation {
+	return predicate.RuntimeOperation(sql.FieldHasSuffix(FieldPeriodStart, v))
+}
+
+// PeriodStartEqualFold applies the EqualFold predicate on the "period_start" field.
+func PeriodStartEqualFold(v string) predicate.RuntimeOperation {
+	return predicate.RuntimeOperation(sql.FieldEqualFold(FieldPeriodStart, v))
+}
+
+// PeriodStartContainsFold applies the ContainsFold predicate on the "period_start" field.
+func PeriodStartContainsFold(v string) predicate.RuntimeOperation {
+	return predicate.RuntimeOperation(sql.FieldContainsFold(FieldPeriodStart, v))
 }
 
 // ResourceIDEQ applies the EQ predicate on the "resource_id" field.

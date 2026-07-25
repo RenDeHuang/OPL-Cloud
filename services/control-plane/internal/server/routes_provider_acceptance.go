@@ -258,29 +258,20 @@ func (app *controlPlaneServer) providerAcceptanceProtected(next http.HandlerFunc
 }
 
 func (app *controlPlaneServer) providerAcceptanceIdentity(ctx context.Context, slot providerAcceptanceSlot) (string, int64, string) {
-	accounts, err := app.tables.ListAccounts(ctx, slot.AccountID)
-	if err != nil || len(accounts) != 1 || stringValue(accounts[0]["id"]) != slot.AccountID || stringValue(accounts[0]["status"]) != "active" {
+	account, found, err := app.tables.GetAccount(ctx, slot.AccountID)
+	if err != nil || !found || stringValue(account["id"]) != slot.AccountID || stringValue(account["status"]) != "active" {
 		return "", 0, "provider_acceptance_account_required"
 	}
 	sub2APIUserID, err := app.sub2APIUserID(ctx, slot.AccountID)
 	if err != nil {
 		return "", 0, "provider_acceptance_account_mapping_required"
 	}
-	users, err := app.tables.ListUsers(ctx, false)
-	if err != nil {
+	owner, found, err := app.tables.GetUser(ctx, stringValue(account["ownerUserId"]))
+	if err != nil || !found {
 		return "", 0, "provider_acceptance_owner_required"
 	}
-	ownerID := ""
-	for _, user := range users {
-		if stringValue(user["accountId"]) != slot.AccountID || stringValue(user["role"]) != "owner" || stringValue(user["status"]) != "active" || !strings.EqualFold(stringValue(user["email"]), slot.OwnerEmail) {
-			continue
-		}
-		if ownerID != "" {
-			return "", 0, "provider_acceptance_owner_ambiguous"
-		}
-		ownerID = stringValue(user["id"])
-	}
-	if ownerID == "" {
+	ownerID := stringValue(owner["id"])
+	if stringValue(owner["accountId"]) != slot.AccountID || stringValue(owner["role"]) != "owner" || stringValue(owner["status"]) != "active" || !strings.EqualFold(stringValue(owner["email"]), slot.OwnerEmail) {
 		return "", 0, "provider_acceptance_owner_required"
 	}
 	return ownerID, sub2APIUserID, ""
@@ -341,16 +332,11 @@ func providerAcceptanceOperationRow(status string, slot providerAcceptanceSlot) 
 }
 
 func (app *controlPlaneServer) providerAcceptanceOperation(ctx context.Context, slot providerAcceptanceSlot) (map[string]any, bool, error) {
-	operations, err := app.tables.ListRuntimeOperations(ctx)
+	operation, found, err := app.tables.GetRuntimeOperation(ctx, slot.OperationID)
 	if err != nil {
 		return nil, false, err
 	}
-	for _, operation := range operations {
-		if stringValue(operation["id"]) == slot.OperationID {
-			return operation, true, nil
-		}
-	}
-	return nil, false, nil
+	return operation, found, nil
 }
 
 func providerAcceptanceOperationValid(operation map[string]any, slot providerAcceptanceSlot) bool {

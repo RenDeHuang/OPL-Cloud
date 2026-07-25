@@ -386,8 +386,8 @@ func TestPostgresStoreStartsFromFreshDatabase(t *testing.T) {
 	if err := check.QueryRow(`SELECT count(*) FROM opl_schema_migrations WHERE service = 'control-plane'`).Scan(&migrationCount); err != nil {
 		t.Fatalf("read control-plane migration journal: %v", err)
 	}
-	if migrationCount != 15 {
-		t.Fatalf("control-plane migration count = %d, want 15", migrationCount)
+	if migrationCount != 16 {
+		t.Fatalf("control-plane migration count = %d, want 16", migrationCount)
 	}
 	var autoRenewAuditMigration bool
 	if err := check.QueryRow(`SELECT EXISTS (SELECT 1 FROM opl_schema_migrations WHERE service = 'control-plane' AND version = '202607170003_workspace_auto_renew_audit')`).Scan(&autoRenewAuditMigration); err != nil || !autoRenewAuditMigration {
@@ -408,6 +408,10 @@ func TestPostgresStoreStartsFromFreshDatabase(t *testing.T) {
 	var multiWorkspaceMigration bool
 	if err := check.QueryRow(`SELECT EXISTS (SELECT 1 FROM opl_schema_migrations WHERE service = 'control-plane' AND version = '202607240001_multi_workspace_pagination')`).Scan(&multiWorkspaceMigration); err != nil || !multiWorkspaceMigration {
 		t.Fatalf("multi-Workspace pagination migration missing: applied=%v err=%v", multiWorkspaceMigration, err)
+	}
+	var capacityIndexesMigration bool
+	if err := check.QueryRow(`SELECT EXISTS (SELECT 1 FROM opl_schema_migrations WHERE service = 'control-plane' AND version = '202607250001_control_plane_capacity_indexes')`).Scan(&capacityIndexesMigration); err != nil || !capacityIndexesMigration {
+		t.Fatalf("capacity indexes migration missing: applied=%v err=%v", capacityIndexesMigration, err)
 	}
 	var announcementConstraints int
 	if err := check.QueryRow(`SELECT count(*) FROM pg_constraint WHERE conrelid IN ('control_plane_announcements'::regclass, 'control_plane_announcement_reads'::regclass) AND conname IN ('control_plane_announcements_status_check', 'control_plane_announcements_schedule_check', 'control_plane_announcement_reads_announcement_fk', 'control_plane_announcement_reads_user_unique')`).Scan(&announcementConstraints); err != nil || announcementConstraints != 4 {

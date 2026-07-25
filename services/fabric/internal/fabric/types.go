@@ -18,6 +18,7 @@ var ErrInvalidMonthlyPreflight = errors.New("invalid_monthly_preflight")
 var ErrMonthlyPreflightUnavailable = errors.New("monthly_preflight_unavailable")
 var ErrInvalidMonthlyProviderTruth = errors.New("invalid_monthly_provider_truth")
 var ErrMonthlyProviderTruthUnavailable = errors.New("monthly_provider_truth_unavailable")
+var ErrRuntimeHealthSummaryUnavailable = errors.New("runtime_health_summary_unavailable")
 var ErrComputeIdempotencyConflict = errors.New("compute_idempotency_conflict")
 var ErrComputeOperationFailed = errors.New("compute_operation_failed")
 var ErrRuntimeIdempotencyConflict = errors.New("runtime_idempotency_conflict")
@@ -362,6 +363,12 @@ type ProviderFact struct {
 
 type ProviderFactsBatch struct {
 	Items []ProviderFact `json:"items"`
+}
+
+type RuntimeHealthSummary struct {
+	Total   int `json:"total"`
+	Ready   int `json:"ready"`
+	Unready int `json:"unready"`
 }
 
 type Check struct {

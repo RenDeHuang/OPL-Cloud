@@ -16,6 +16,7 @@ import (
 const (
 	defaultMonthlyBillingInterval = time.Hour
 	monthlyRenewalLead            = 24 * time.Hour
+	monthlyBillingWorkspacePage   = 50
 )
 
 func monthlyBillingWorkerEnabled() bool {
@@ -51,25 +52,57 @@ func (app *controlPlaneServer) startMonthlyBillingWorker(ctx context.Context, se
 }
 
 func (app *controlPlaneServer) runMonthlyBillingOnce(ctx context.Context, service *controlplane.Service, now time.Time) error {
-	workspaces, err := app.tables.ListWorkspaces(ctx, "")
+	recoveryOperations, err := queryRuntimeOperations(ctx, app.tables, runtimeOperationQuery{
+		Action: "workspace.renewal", Statuses: []string{"verifying"},
+	})
 	if err != nil {
 		return err
 	}
+	recoveryWorkspaces := make(map[string]struct{}, len(recoveryOperations))
+	for _, operation := range recoveryOperations {
+		if workspaceID := stringValue(operation["workspaceId"]); workspaceID != "" {
+			recoveryWorkspaces[workspaceID] = struct{}{}
+		}
+	}
+
 	var errs []error
-	for _, workspace := range workspaces {
-		_, present, stateErr := normalizeWorkspaceBillingStateForWorkspace(workspace, workspace)
-		if stateErr != nil {
-			errs = append(errs, fmt.Errorf("workspace %s: %w", stringValue(workspace["id"]), stateErr))
-			continue
+	for offset := 0; ; {
+		page, err := app.tables.PageWorkspaces(ctx, "", tablePageQuery{Offset: offset, Limit: monthlyBillingWorkspacePage})
+		if err != nil {
+			return errors.Join(append(errs, err)...)
 		}
-		if !present {
-			continue
+		for _, workspace := range page.Items {
+			state, present, stateErr := normalizeWorkspaceBillingStateForWorkspace(workspace, workspace)
+			if stateErr != nil {
+				errs = append(errs, fmt.Errorf("workspace %s: %w", stringValue(workspace["id"]), stateErr))
+				continue
+			}
+			if !present {
+				continue
+			}
+			workspaceID := stringValue(workspace["id"])
+			_, recovering := recoveryWorkspaces[workspaceID]
+			if !recovering && !workspaceRenewalDue(state, now) {
+				continue
+			}
+			if err := app.processWorkspaceRenewal(ctx, service, workspaceID, now.UTC()); err != nil && !monthlyBusinessOutcome(err) {
+				errs = append(errs, fmt.Errorf("workspace %s: %w", stringValue(workspace["id"]), err))
+			}
 		}
-		if err := app.processWorkspaceRenewal(ctx, service, stringValue(workspace["id"]), now.UTC()); err != nil && !monthlyBusinessOutcome(err) {
-			errs = append(errs, fmt.Errorf("workspace %s: %w", stringValue(workspace["id"]), err))
+		offset += len(page.Items)
+		if offset >= page.Total || len(page.Items) == 0 {
+			break
 		}
 	}
 	return errors.Join(errs...)
+}
+
+func workspaceRenewalDue(state workspaceBillingState, now time.Time) bool {
+	paidThrough, err := time.Parse(time.RFC3339, state.PaidThrough)
+	if err != nil {
+		return false
+	}
+	return !now.UTC().Before(paidThrough.UTC()) || state.AutoRenew && !now.UTC().Before(paidThrough.UTC().Add(-monthlyRenewalLead))
 }
 
 func monthlyBusinessOutcome(err error) bool {

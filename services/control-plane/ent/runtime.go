@@ -944,64 +944,68 @@ func init() {
 	runtimeoperationDescWorkspaceID := runtimeoperationFields[5].Descriptor()
 	// runtimeoperation.DefaultWorkspaceID holds the default value on creation for the workspace_id field.
 	runtimeoperation.DefaultWorkspaceID = runtimeoperationDescWorkspaceID.Default.(string)
+	// runtimeoperationDescPeriodStart is the schema descriptor for period_start field.
+	runtimeoperationDescPeriodStart := runtimeoperationFields[6].Descriptor()
+	// runtimeoperation.DefaultPeriodStart holds the default value on creation for the period_start field.
+	runtimeoperation.DefaultPeriodStart = runtimeoperationDescPeriodStart.Default.(string)
 	// runtimeoperationDescResourceID is the schema descriptor for resource_id field.
-	runtimeoperationDescResourceID := runtimeoperationFields[6].Descriptor()
+	runtimeoperationDescResourceID := runtimeoperationFields[7].Descriptor()
 	// runtimeoperation.DefaultResourceID holds the default value on creation for the resource_id field.
 	runtimeoperation.DefaultResourceID = runtimeoperationDescResourceID.Default.(string)
 	// runtimeoperationDescResourceKind is the schema descriptor for resource_kind field.
-	runtimeoperationDescResourceKind := runtimeoperationFields[7].Descriptor()
+	runtimeoperationDescResourceKind := runtimeoperationFields[8].Descriptor()
 	// runtimeoperation.DefaultResourceKind holds the default value on creation for the resource_kind field.
 	runtimeoperation.DefaultResourceKind = runtimeoperationDescResourceKind.Default.(string)
 	// runtimeoperationDescAction is the schema descriptor for action field.
-	runtimeoperationDescAction := runtimeoperationFields[8].Descriptor()
+	runtimeoperationDescAction := runtimeoperationFields[9].Descriptor()
 	// runtimeoperation.DefaultAction holds the default value on creation for the action field.
 	runtimeoperation.DefaultAction = runtimeoperationDescAction.Default.(string)
 	// runtimeoperationDescProvider is the schema descriptor for provider field.
-	runtimeoperationDescProvider := runtimeoperationFields[9].Descriptor()
+	runtimeoperationDescProvider := runtimeoperationFields[10].Descriptor()
 	// runtimeoperation.DefaultProvider holds the default value on creation for the provider field.
 	runtimeoperation.DefaultProvider = runtimeoperationDescProvider.Default.(string)
 	// runtimeoperationDescProviderRequestID is the schema descriptor for provider_request_id field.
-	runtimeoperationDescProviderRequestID := runtimeoperationFields[10].Descriptor()
+	runtimeoperationDescProviderRequestID := runtimeoperationFields[11].Descriptor()
 	// runtimeoperation.DefaultProviderRequestID holds the default value on creation for the provider_request_id field.
 	runtimeoperation.DefaultProviderRequestID = runtimeoperationDescProviderRequestID.Default.(string)
 	// runtimeoperationDescStatus is the schema descriptor for status field.
-	runtimeoperationDescStatus := runtimeoperationFields[11].Descriptor()
+	runtimeoperationDescStatus := runtimeoperationFields[12].Descriptor()
 	// runtimeoperation.DefaultStatus holds the default value on creation for the status field.
 	runtimeoperation.DefaultStatus = runtimeoperationDescStatus.Default.(string)
 	// runtimeoperationDescResult is the schema descriptor for result field.
-	runtimeoperationDescResult := runtimeoperationFields[12].Descriptor()
+	runtimeoperationDescResult := runtimeoperationFields[13].Descriptor()
 	// runtimeoperation.DefaultResult holds the default value on creation for the result field.
 	runtimeoperation.DefaultResult = runtimeoperationDescResult.Default.(string)
 	// runtimeoperationDescComputeAllocationID is the schema descriptor for compute_allocation_id field.
-	runtimeoperationDescComputeAllocationID := runtimeoperationFields[13].Descriptor()
+	runtimeoperationDescComputeAllocationID := runtimeoperationFields[14].Descriptor()
 	// runtimeoperation.DefaultComputeAllocationID holds the default value on creation for the compute_allocation_id field.
 	runtimeoperation.DefaultComputeAllocationID = runtimeoperationDescComputeAllocationID.Default.(string)
 	// runtimeoperationDescStorageID is the schema descriptor for storage_id field.
-	runtimeoperationDescStorageID := runtimeoperationFields[14].Descriptor()
+	runtimeoperationDescStorageID := runtimeoperationFields[15].Descriptor()
 	// runtimeoperation.DefaultStorageID holds the default value on creation for the storage_id field.
 	runtimeoperation.DefaultStorageID = runtimeoperationDescStorageID.Default.(string)
 	// runtimeoperationDescAttachmentID is the schema descriptor for attachment_id field.
-	runtimeoperationDescAttachmentID := runtimeoperationFields[15].Descriptor()
+	runtimeoperationDescAttachmentID := runtimeoperationFields[16].Descriptor()
 	// runtimeoperation.DefaultAttachmentID holds the default value on creation for the attachment_id field.
 	runtimeoperation.DefaultAttachmentID = runtimeoperationDescAttachmentID.Default.(string)
 	// runtimeoperationDescRuntimeServiceName is the schema descriptor for runtime_service_name field.
-	runtimeoperationDescRuntimeServiceName := runtimeoperationFields[16].Descriptor()
+	runtimeoperationDescRuntimeServiceName := runtimeoperationFields[17].Descriptor()
 	// runtimeoperation.DefaultRuntimeServiceName holds the default value on creation for the runtime_service_name field.
 	runtimeoperation.DefaultRuntimeServiceName = runtimeoperationDescRuntimeServiceName.Default.(string)
 	// runtimeoperationDescCvmInstanceID is the schema descriptor for cvm_instance_id field.
-	runtimeoperationDescCvmInstanceID := runtimeoperationFields[17].Descriptor()
+	runtimeoperationDescCvmInstanceID := runtimeoperationFields[18].Descriptor()
 	// runtimeoperation.DefaultCvmInstanceID holds the default value on creation for the cvm_instance_id field.
 	runtimeoperation.DefaultCvmInstanceID = runtimeoperationDescCvmInstanceID.Default.(string)
 	// runtimeoperationDescInstanceID is the schema descriptor for instance_id field.
-	runtimeoperationDescInstanceID := runtimeoperationFields[18].Descriptor()
+	runtimeoperationDescInstanceID := runtimeoperationFields[19].Descriptor()
 	// runtimeoperation.DefaultInstanceID holds the default value on creation for the instance_id field.
 	runtimeoperation.DefaultInstanceID = runtimeoperationDescInstanceID.Default.(string)
 	// runtimeoperationDescNodeName is the schema descriptor for node_name field.
-	runtimeoperationDescNodeName := runtimeoperationFields[19].Descriptor()
+	runtimeoperationDescNodeName := runtimeoperationFields[20].Descriptor()
 	// runtimeoperation.DefaultNodeName holds the default value on creation for the node_name field.
 	runtimeoperation.DefaultNodeName = runtimeoperationDescNodeName.Default.(string)
 	// runtimeoperationDescMachineName is the schema descriptor for machine_name field.
-	runtimeoperationDescMachineName := runtimeoperationFields[20].Descriptor()
+	runtimeoperationDescMachineName := runtimeoperationFields[21].Descriptor()
 	// runtimeoperation.DefaultMachineName holds the default value on creation for the machine_name field.
 	runtimeoperation.DefaultMachineName = runtimeoperationDescMachineName.Default.(string)
 	// runtimeoperationDescID is the schema descriptor for id field.

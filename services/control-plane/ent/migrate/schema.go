@@ -385,6 +385,7 @@ var (
 		{Name: "operation_id", Type: field.TypeString, Default: ""},
 		{Name: "account_id", Type: field.TypeString, Default: ""},
 		{Name: "workspace_id", Type: field.TypeString, Default: ""},
+		{Name: "period_start", Type: field.TypeString, Default: ""},
 		{Name: "resource_id", Type: field.TypeString, Default: ""},
 		{Name: "resource_kind", Type: field.TypeString, Default: ""},
 		{Name: "action", Type: field.TypeString, Default: ""},
@@ -406,6 +407,23 @@ var (
 		Name:       "control_plane_runtime_operations",
 		Columns:    ControlPlaneRuntimeOperationsColumns,
 		PrimaryKey: []*schema.Column{ControlPlaneRuntimeOperationsColumns[0]},
+		Indexes: []*schema.Index{
+			{
+				Name:    "runtimeoperation_action_status_created_at_id",
+				Unique:  false,
+				Columns: []*schema.Column{ControlPlaneRuntimeOperationsColumns[9], ControlPlaneRuntimeOperationsColumns[12], ControlPlaneRuntimeOperationsColumns[1], ControlPlaneRuntimeOperationsColumns[0]},
+			},
+			{
+				Name:    "runtimeoperation_account_id_action_status_created_at_id",
+				Unique:  false,
+				Columns: []*schema.Column{ControlPlaneRuntimeOperationsColumns[4], ControlPlaneRuntimeOperationsColumns[9], ControlPlaneRuntimeOperationsColumns[12], ControlPlaneRuntimeOperationsColumns[1], ControlPlaneRuntimeOperationsColumns[0]},
+			},
+			{
+				Name:    "runtimeoperation_workspace_id_action_status_period_start_created_at_id",
+				Unique:  false,
+				Columns: []*schema.Column{ControlPlaneRuntimeOperationsColumns[5], ControlPlaneRuntimeOperationsColumns[9], ControlPlaneRuntimeOperationsColumns[12], ControlPlaneRuntimeOperationsColumns[6], ControlPlaneRuntimeOperationsColumns[1], ControlPlaneRuntimeOperationsColumns[0]},
+			},
+		},
 	}
 	// ControlPlaneSessionsColumns holds the columns for the "control_plane_sessions" table.
 	ControlPlaneSessionsColumns = []*schema.Column{
@@ -421,6 +439,13 @@ var (
 		Name:       "control_plane_sessions",
 		Columns:    ControlPlaneSessionsColumns,
 		PrimaryKey: []*schema.Column{ControlPlaneSessionsColumns[0]},
+		Indexes: []*schema.Index{
+			{
+				Name:    "session_user_id",
+				Unique:  false,
+				Columns: []*schema.Column{ControlPlaneSessionsColumns[3]},
+			},
+		},
 	}
 	// ControlPlaneStorageAttachmentsColumns holds the columns for the "control_plane_storage_attachments" table.
 	ControlPlaneStorageAttachmentsColumns = []*schema.Column{
@@ -566,6 +591,13 @@ var (
 		Name:       "control_plane_workspaces",
 		Columns:    ControlPlaneWorkspacesColumns,
 		PrimaryKey: []*schema.Column{ControlPlaneWorkspacesColumns[0]},
+		Indexes: []*schema.Index{
+			{
+				Name:    "workspace_customer_product_id",
+				Unique:  false,
+				Columns: []*schema.Column{ControlPlaneWorkspacesColumns[29], ControlPlaneWorkspacesColumns[0]},
+			},
+		},
 	}
 	// WorkspaceBackupsColumns holds the columns for the "workspace_backups" table.
 	WorkspaceBackupsColumns = []*schema.Column{

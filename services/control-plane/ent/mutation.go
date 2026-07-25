@@ -15616,6 +15616,7 @@ type RuntimeOperationMutation struct {
 	operation_id          *string
 	account_id            *string
 	workspace_id          *string
+	period_start          *string
 	resource_id           *string
 	resource_kind         *string
 	action                *string
@@ -15919,6 +15920,42 @@ func (m *RuntimeOperationMutation) OldWorkspaceID(ctx context.Context) (v string
 // ResetWorkspaceID resets all changes to the "workspace_id" field.
 func (m *RuntimeOperationMutation) ResetWorkspaceID() {
 	m.workspace_id = nil
+}
+
+// SetPeriodStart sets the "period_start" field.
+func (m *RuntimeOperationMutation) SetPeriodStart(s string) {
+	m.period_start = &s
+}
+
+// PeriodStart returns the value of the "period_start" field in the mutation.
+func (m *RuntimeOperationMutation) PeriodStart() (r string, exists bool) {
+	v := m.period_start
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldPeriodStart returns the old "period_start" field's value of the RuntimeOperation entity.
+// If the RuntimeOperation object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *RuntimeOperationMutation) OldPeriodStart(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldPeriodStart is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldPeriodStart requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldPeriodStart: %w", err)
+	}
+	return oldValue.PeriodStart, nil
+}
+
+// ResetPeriodStart resets all changes to the "period_start" field.
+func (m *RuntimeOperationMutation) ResetPeriodStart() {
+	m.period_start = nil
 }
 
 // SetResourceID sets the "resource_id" field.
@@ -16495,7 +16532,7 @@ func (m *RuntimeOperationMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *RuntimeOperationMutation) Fields() []string {
-	fields := make([]string, 0, 20)
+	fields := make([]string, 0, 21)
 	if m.created_at != nil {
 		fields = append(fields, runtimeoperation.FieldCreatedAt)
 	}
@@ -16510,6 +16547,9 @@ func (m *RuntimeOperationMutation) Fields() []string {
 	}
 	if m.workspace_id != nil {
 		fields = append(fields, runtimeoperation.FieldWorkspaceID)
+	}
+	if m.period_start != nil {
+		fields = append(fields, runtimeoperation.FieldPeriodStart)
 	}
 	if m.resource_id != nil {
 		fields = append(fields, runtimeoperation.FieldResourceID)
@@ -16574,6 +16614,8 @@ func (m *RuntimeOperationMutation) Field(name string) (ent.Value, bool) {
 		return m.AccountID()
 	case runtimeoperation.FieldWorkspaceID:
 		return m.WorkspaceID()
+	case runtimeoperation.FieldPeriodStart:
+		return m.PeriodStart()
 	case runtimeoperation.FieldResourceID:
 		return m.ResourceID()
 	case runtimeoperation.FieldResourceKind:
@@ -16623,6 +16665,8 @@ func (m *RuntimeOperationMutation) OldField(ctx context.Context, name string) (e
 		return m.OldAccountID(ctx)
 	case runtimeoperation.FieldWorkspaceID:
 		return m.OldWorkspaceID(ctx)
+	case runtimeoperation.FieldPeriodStart:
+		return m.OldPeriodStart(ctx)
 	case runtimeoperation.FieldResourceID:
 		return m.OldResourceID(ctx)
 	case runtimeoperation.FieldResourceKind:
@@ -16696,6 +16740,13 @@ func (m *RuntimeOperationMutation) SetField(name string, value ent.Value) error 
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetWorkspaceID(v)
+		return nil
+	case runtimeoperation.FieldPeriodStart:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetPeriodStart(v)
 		return nil
 	case runtimeoperation.FieldResourceID:
 		v, ok := value.(string)
@@ -16865,6 +16916,9 @@ func (m *RuntimeOperationMutation) ResetField(name string) error {
 		return nil
 	case runtimeoperation.FieldWorkspaceID:
 		m.ResetWorkspaceID()
+		return nil
+	case runtimeoperation.FieldPeriodStart:
+		m.ResetPeriodStart()
 		return nil
 	case runtimeoperation.FieldResourceID:
 		m.ResetResourceID()

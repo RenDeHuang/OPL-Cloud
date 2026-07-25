@@ -5,447 +5,325 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"runtime"
-	"sort"
 	"strings"
 	"sync"
-	"syscall"
 	"testing"
 	"time"
 
+	"entgo.io/ent/dialect"
+	entsql "entgo.io/ent/dialect/sql"
+	controlplaneent "opl-cloud/services/control-plane/ent"
 	"opl-cloud/services/control-plane/internal/clients"
 	"opl-cloud/services/control-plane/internal/controlplane"
 )
 
 const (
-	capacityAccountCount  = 1000
-	capacityConsoleUsers  = 100
-	capacityCommands      = 20
-	capacityRequestBudget = 5 * time.Second
+	capacityHistoryPerWorkspace = 5
+	capacitySeedWorkers         = 8
+	capacityTestTimeout         = 10 * time.Minute
 )
 
-type capacityLedger struct {
-	fakeLedgerClient
-	mu       sync.Mutex
-	receipts map[string]string
-}
-
-func (l *capacityLedger) RecordReceipt(_ context.Context, _ clients.ReceiptInput, key string) (clients.Receipt, error) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if id := l.receipts[key]; id != "" {
-		return clients.Receipt{ReceiptID: id}, nil
-	}
-	id := "receipt-" + stableID(key)[:18]
-	l.receipts[key] = id
-	return clients.Receipt{ReceiptID: id}, nil
-}
-
-func (l *capacityLedger) count() int {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return len(l.receipts)
-}
-
-type capacityFabric struct {
-	fakeFabricClient
+type capacitySQLCounter struct {
 	mu      sync.Mutex
-	creates map[string]string
+	queries []string
 }
 
-func (f *capacityFabric) CreateComputeAllocation(_ context.Context, input clients.ComputeAllocationInput, key string) (clients.ComputeAllocation, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if id := f.creates[key]; id != "" && id != input.ID {
-		return clients.ComputeAllocation{}, fmt.Errorf("fabric idempotency conflict: %s", key)
+func (c *capacitySQLCounter) log(values ...any) {
+	message := fmt.Sprint(values...)
+	if !strings.Contains(message, "query=") {
+		return
 	}
-	f.creates[key] = input.ID
-	return clients.ComputeAllocation{
-		ID: input.ID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, PackageID: input.PackageID,
-		Status: "running", Provider: "capacity-fake", ProviderResourceID: "ins-" + input.ID, ProviderRequestID: "req-" + input.ID,
-	}, nil
+	c.mu.Lock()
+	c.queries = append(c.queries, message)
+	c.mu.Unlock()
 }
 
-func (f *capacityFabric) count() int {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return len(f.creates)
+func (c *capacitySQLCounter) reset() {
+	c.mu.Lock()
+	c.queries = nil
+	c.mu.Unlock()
 }
 
-type capacitySub2API struct {
-	*testSub2APIClient
-	keyMu       sync.Mutex
-	keys        map[int64]clients.Sub2APIWorkspaceKey
-	keyByIntent map[string]int64
-	nextKeyID   int64
+func (c *capacitySQLCounter) snapshot() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]string(nil), c.queries...)
 }
 
-func (c *capacitySub2API) WorkspaceUserKeysForConvergence(ctx context.Context, credential clients.SessionDelegatedCredential, userID int64) ([]clients.Sub2APIWorkspaceKey, error) {
-	if credential.Bearer != "test-user-delegated-token" {
-		return nil, errors.New("wrong delegated credential")
+type renewalCapacityStore struct {
+	*memoryTableStore
+	workspacePages   int
+	operationQueries []runtimeOperationQuery
+}
+
+func (s *renewalCapacityStore) ListWorkspaces(context.Context, string) ([]map[string]any, error) {
+	return nil, errors.New("full Workspace scan")
+}
+
+func (s *renewalCapacityStore) PageWorkspaces(ctx context.Context, accountID string, query tablePageQuery) (tablePage, error) {
+	s.workspacePages++
+	return s.memoryTableStore.PageWorkspaces(ctx, accountID, query)
+}
+
+func (s *renewalCapacityStore) ListRuntimeOperations(context.Context) ([]map[string]any, error) {
+	return nil, errors.New("full RuntimeOperation scan")
+}
+
+func (s *renewalCapacityStore) PageRuntimeOperations(ctx context.Context, query runtimeOperationQuery) (tablePage, error) {
+	s.operationQueries = append(s.operationQueries, query)
+	return s.memoryTableStore.PageRuntimeOperations(ctx, query)
+}
+
+func TestMonthlyBillingScanPagesNonCandidatesWithoutOperationFanout(t *testing.T) {
+	for _, total := range []int{100, 1000} {
+		t.Run(fmt.Sprintf("workspaces_%d", total), func(t *testing.T) {
+			store := &renewalCapacityStore{memoryTableStore: newMemoryTableStore()}
+			for index := 0; index < total; index++ {
+				id := fmt.Sprintf("ws-capacity-%04d", index)
+				mustStore(t, store.SaveWorkspace(context.Background(), map[string]any{
+					"id": id, "accountId": "acct-capacity", "ownerAccountId": "acct-capacity", "ownerUserId": "usr-capacity",
+					"state": "running", "status": "running", "customerProduct": true,
+				}))
+			}
+			app, err := newControlPlaneAppWithStore(store)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := app.runMonthlyBillingOnce(context.Background(), newTestService(fakeLedgerClient{}, &fakeFabricClient{}), time.Now().UTC()); err != nil {
+				t.Fatal(err)
+			}
+			wantPages := (total + 49) / 50
+			if store.workspacePages != wantPages || len(store.operationQueries) != 1 {
+				t.Fatalf("total=%d Workspace pages=%d want=%d operation queries=%#v", total, store.workspacePages, wantPages, store.operationQueries)
+			}
+			query := store.operationQueries[0]
+			if query.Action != "workspace.renewal" || len(query.Statuses) != 1 || query.Statuses[0] != "verifying" || query.WorkspaceID != "" {
+				t.Fatalf("renewal candidate query=%#v", query)
+			}
+		})
 	}
-	c.keyMu.Lock()
-	defer c.keyMu.Unlock()
-	keys := make([]clients.Sub2APIWorkspaceKey, 0, len(c.keys)+1)
-	legacy, err := c.WorkspaceKey(ctx, userID)
-	if err == nil {
-		keys = append(keys, legacy)
+}
+
+func seedCapacityAccount(ctx context.Context, store controlPlaneTableStore, now time.Time, index int) error {
+	accountID := fmt.Sprintf("acct-capacity-%04d", index)
+	userID := fmt.Sprintf("usr-capacity-%04d", index)
+	workspaceID := fmt.Sprintf("workspace-capacity-%04d", index)
+	email := fmt.Sprintf("capacity-%04d@example.com", index)
+	account, user, organization, membership := provisionedAccountRowsFor(accountID, userID, "org-"+accountID, email, int64(10_000+index))
+	if err := store.CreateProvisionedAccount(ctx, account, user, organization, membership); err != nil {
+		return fmt.Errorf("seed account %d: %w", index, err)
 	}
-	for _, key := range c.keys {
-		if key.UserID == userID {
-			keys = append(keys, key)
+	if err := store.SaveSession(ctx, map[string]any{
+		"id": sessionLookupKey(fmt.Sprintf("capacity-session-%04d", index)), "userId": userID,
+		"csrf": "capacity-csrf", "expiresAt": now.Add(24 * time.Hour).Format(time.RFC3339),
+	}); err != nil {
+		return fmt.Errorf("seed session %d: %w", index, err)
+	}
+	paidThrough := now.Add(90 * 24 * time.Hour)
+	workspace := canonicalWorkspaceRenewalRow(false)
+	workspace["id"], workspace["name"] = workspaceID, "Capacity Workspace"
+	workspace["accountId"], workspace["ownerAccountId"], workspace["ownerUserId"] = accountID, accountID, userID
+	workspace["state"], workspace["status"], workspace["customerProduct"] = "running", "running", true
+	workspace["currentComputeAllocationId"], workspace["computeAllocationId"] = "compute-"+workspaceID, "compute-"+workspaceID
+	workspace["storageId"] = "storage-" + workspaceID
+	workspace["autoRenew"], workspace["authorizedBy"], workspace["authorizedAt"] = false, "", ""
+	workspace["periodStart"] = paidThrough.AddDate(0, -1, 0).Format(time.RFC3339)
+	workspace["paidThrough"] = paidThrough.Format(time.RFC3339)
+	workspace["nextRenewalAt"] = paidThrough.Add(-24 * time.Hour).Format(time.RFC3339)
+	workspace["billingAnchorDay"] = int64(paidThrough.Day())
+	if err := store.SaveWorkspace(ctx, workspace); err != nil {
+		return fmt.Errorf("seed Workspace %d: %w", index, err)
+	}
+	for history := 0; history < capacityHistoryPerWorkspace; history++ {
+		historyPaidThrough := paidThrough.AddDate(0, -history-1, 0)
+		historyWorkspace := cloneMap(workspace)
+		historyWorkspace["periodStart"] = historyPaidThrough.AddDate(0, -1, 0).Format(time.RFC3339)
+		historyWorkspace["paidThrough"] = historyPaidThrough.Format(time.RFC3339)
+		operationID := fmt.Sprintf("operation-capacity-%04d-%02d", index, history)
+		operation, err := newWorkspaceRenewalOperation(historyWorkspace, now.AddDate(0, -history-1, 0))
+		if err != nil {
+			return fmt.Errorf("build operation %d/%d: %w", index, history, err)
+		}
+		operation.ID, operation.Status, operation.Phase = operationID, "active", "complete"
+		operation.ReceiptID = "receipt-" + operationID
+		if err := store.SaveRuntimeOperation(ctx, workspaceRenewalOperationRow(operation)); err != nil {
+			return fmt.Errorf("seed operation %d/%d: %w", index, history, err)
 		}
 	}
-	return keys, nil
-}
-
-func (c *capacitySub2API) UserKey(ctx context.Context, credential clients.SessionDelegatedCredential, userID, keyID int64) (clients.Sub2APIWorkspaceKey, error) {
-	keys, err := c.WorkspaceUserKeysForConvergence(ctx, credential, userID)
-	if err != nil {
-		return clients.Sub2APIWorkspaceKey{}, err
-	}
-	for _, key := range keys {
-		if key.ID == keyID {
-			return key, nil
-		}
-	}
-	return clients.Sub2APIWorkspaceKey{}, clients.ErrSub2APIKeyNotFound
-}
-
-func (c *capacitySub2API) CreateUserKey(_ context.Context, credential clients.SessionDelegatedCredential, userID int64, input clients.Sub2APICreateKeyInput, idempotencyKey string) (clients.Sub2APIWorkspaceKey, error) {
-	if credential.Bearer != "test-user-delegated-token" || idempotencyKey == "" || !strings.HasPrefix(input.Name, "opl-workspace-") {
-		return clients.Sub2APIWorkspaceKey{}, errors.New("invalid Workspace Key create")
-	}
-	c.keyMu.Lock()
-	defer c.keyMu.Unlock()
-	if keyID := c.keyByIntent[idempotencyKey]; keyID > 0 {
-		return c.keys[keyID], nil
-	}
-	c.nextKeyID++
-	key := clients.Sub2APIWorkspaceKey{ID: c.nextKeyID, UserID: userID, Name: input.Name, Key: "capacity-workspace-key-secret", Status: "active"}
-	c.keys[key.ID], c.keyByIntent[idempotencyKey] = key, key.ID
-	return key, nil
-}
-
-func (*capacitySub2API) UpdateUserKey(context.Context, clients.SessionDelegatedCredential, int64, int64, clients.Sub2APIUpdateKeyInput) (clients.Sub2APIWorkspaceKey, error) {
-	return clients.Sub2APIWorkspaceKey{}, errors.New("unexpected Workspace Key update")
-}
-
-func (*capacitySub2API) DeleteUserKey(context.Context, clients.SessionDelegatedCredential, int64, int64) error {
-	return errors.New("unexpected Workspace Key delete")
-}
-
-func (c *capacitySub2API) WorkspaceKeysForConvergence(ctx context.Context, userID int64) ([]clients.Sub2APIWorkspaceKey, error) {
-	return c.WorkspaceUserKeysForConvergence(ctx, clients.SessionDelegatedCredential{Bearer: "test-user-delegated-token"}, userID)
-}
-
-func newCapacitySub2API() *capacitySub2API {
-	return &capacitySub2API{
-		testSub2APIClient: &testSub2APIClient{balance: 100_000_000_000_000, charges: map[string]int64{}},
-		keys:              map[int64]clients.Sub2APIWorkspaceKey{},
-		keyByIntent:       map[string]int64{},
-		nextKeyID:         18,
-	}
-}
-
-type capacityCall struct {
-	duration time.Duration
-	status   int
-	body     string
-	err      error
-}
-
-type capacityProcessSample struct {
-	cpu       time.Duration
-	heapBytes uint64
-	sysBytes  uint64
-}
-
-type capacityConnectionSample struct {
-	max int
-	err error
+	return nil
 }
 
 func TestSinglePodCapacity(t *testing.T) {
 	if os.Getenv("OPL_CAPACITY_TESTS") != "1" {
-		t.Skip("set OPL_CAPACITY_TESTS=1 to run the isolated single-Pod load test")
+		t.Skip("set OPL_CAPACITY_TESTS=1 to run the isolated 1000-user data-scale test")
 	}
 	t.Setenv("OPL_MONTHLY_BILLING_WORKER_ENABLED", "false")
 	t.Setenv("OPL_PROVIDER_RECONCILE_WORKER_ENABLED", "false")
 	t.Setenv("OPL_ARCHIVE_RETENTION_WORKER_ENABLED", "false")
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
-	defer cancel()
-	admin := openControlPlaneTestPostgres(t)
-	schema := fmt.Sprintf("control_plane_capacity_%d", time.Now().UnixNano())
-	if _, err := admin.Exec(`CREATE SCHEMA ` + schema); err != nil {
-		t.Fatal(err)
+	type result struct {
+		loginQueries, sessionQueries, operationGetQueries, operationPageQueries int
 	}
-	t.Cleanup(func() {
-		_, _ = admin.Exec(`DROP SCHEMA ` + schema + ` CASCADE`)
-		_ = admin.Close()
-	})
-	applicationName := "opl_capacity_" + stableID(schema)[:12]
-	databaseURL := controlPlaneTestPostgresURL(t, "postgres", schema) + " application_name=" + applicationName
-	stateStore, err := newTestPostgresEntStateStore(databaseURL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	store := stateStore.(*postgresEntStateStore)
-	t.Cleanup(func() { _ = store.client.Close() })
-
-	now := time.Now().UTC().Truncate(time.Second)
-	seedStarted := time.Now()
-	for index := 0; index < capacityAccountCount; index++ {
-		accountID := fmt.Sprintf("acct-capacity-%04d", index)
-		sub2APIUserID := int64(10_000 + index)
-		if index == 0 {
-			accountID = "acct-alpha"
-			sub2APIUserID = 41
-		}
-		userID := fmt.Sprintf("usr-capacity-%04d", index)
-		organizationID := fmt.Sprintf("org-capacity-%04d", index)
-		account, user, organization, membership := provisionedAccountRowsFor(accountID, userID, organizationID, fmt.Sprintf("capacity-%04d@example.com", index), sub2APIUserID)
-		if err := store.CreateProvisionedAccount(ctx, account, user, organization, membership); err != nil {
-			t.Fatalf("seed account %d: %v", index, err)
-		}
-		row := monthlyActiveResource("compute", fmt.Sprintf("compute-capacity-%04d", index), now.Add(12*time.Hour))
-		row["accountId"], row["workspaceId"] = accountID, fmt.Sprintf("workspace-capacity-%04d", index)
-		if err := store.SaveCompute(ctx, row); err != nil {
-			t.Fatalf("seed compute %d: %v", index, err)
-		}
-	}
-	seedDuration := time.Since(seedStarted)
-
-	sub2API := newCapacitySub2API()
-	fabric := &capacityFabric{creates: map[string]string{}}
-	ledger := &capacityLedger{receipts: map[string]string{}}
-	service := controlplane.NewService(ledger, fabric, sub2API)
-	handler, err := NewPersistentServer(service, stateStore)
-	if err != nil {
-		t.Fatal(err)
-	}
-	httpServer := httptest.NewServer(handler)
-	defer httpServer.Close()
-	transport := &http.Transport{MaxIdleConns: 200, MaxIdleConnsPerHost: 200, MaxConnsPerHost: 200}
-	client := &http.Client{Transport: transport, Timeout: 30 * time.Second}
-	defer transport.CloseIdleConnections()
-	session := tenantAdminSessionForTest(t, handler)
-	cookies, csrf := session.Result().Cookies(), session.Header().Get("x-opl-csrf-token")
-
-	runtime.GC()
-	processBefore := capacityProcessUsage(t)
-	connectionContext, stopConnectionMonitor := context.WithCancel(ctx)
-	connectionSamples := capacityMonitorConnections(connectionContext, admin, applicationName)
-
-	consoleStarted := time.Now()
-	consoleCalls := capacityRunConcurrent(ctx, capacityConsoleUsers, func(ctx context.Context, _ int) capacityCall {
-		return capacityHTTPCall(ctx, client, httpServer.URL, http.MethodGet, "/api/state", "", "", cookies, csrf)
-	})
-	consoleDuration := time.Since(consoleStarted)
-	capacityRequireStatus(t, "console", consoleCalls, http.StatusOK)
-
-	commandBody := `{"packageId":"basic","name":"Capacity Workspace","sizeGb":10,"autoRenew":false}`
-	commandStarted := time.Now()
-	commandCalls := capacityRunConcurrent(ctx, capacityCommands, func(ctx context.Context, _ int) capacityCall {
-		return capacityHTTPCall(ctx, client, httpServer.URL, http.MethodPost, "/api/workspace-launches", commandBody, "capacity-workspace-launch", cookies, csrf)
-	})
-	commandDuration := time.Since(commandStarted)
-	capacityRequireStatus(t, "Workspace launch", commandCalls, http.StatusAccepted)
-	replayStarted := time.Now()
-	replayCalls := capacityRunConcurrent(ctx, capacityCommands, func(ctx context.Context, _ int) capacityCall {
-		return capacityHTTPCall(ctx, client, httpServer.URL, http.MethodPost, "/api/workspace-launches", commandBody, "capacity-workspace-launch", cookies, csrf)
-	})
-	replayDuration := time.Since(replayStarted)
-	capacityRequireStatus(t, "Workspace launch replay", replayCalls, http.StatusAccepted)
-	operations, err := store.ListRuntimeOperations(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	launches := make([]map[string]any, 0, 1)
-	for _, operation := range operations {
-		if operation["action"] == workspaceLaunchAction {
-			launches = append(launches, operation)
-		}
-	}
-	if len(launches) != 1 {
-		t.Fatalf("durable Workspace launches = %#v", launches)
-	}
-	if got := fabric.count(); got != 0 {
-		t.Fatalf("Workspace submission created Fabric resources: %d", got)
-	}
-	if got := capacitySub2APIChargeCount(sub2API); got != 0 {
-		t.Fatalf("Workspace submission charged before the worker: %d", got)
-	}
-	if got := ledger.count(); got != 0 {
-		t.Fatalf("Workspace submission recorded receipts before the worker: %d", got)
-	}
-
-	scanApp, err := newControlPlaneAppWithStore(stateStore)
-	if err != nil {
-		t.Fatal(err)
-	}
-	billingStarted := time.Now()
-	if err := scanApp.runMonthlyBillingOnce(ctx, service, now); err != nil {
-		t.Fatal(err)
-	}
-	billingDuration := time.Since(billingStarted)
-	if err := scanApp.runMonthlyBillingOnce(ctx, service, now); err != nil {
-		t.Fatal(err)
-	}
-	stopConnectionMonitor()
-	connectionSample := <-connectionSamples
-	if connectionSample.err != nil {
-		t.Fatal(connectionSample.err)
-	}
-	if got := capacitySub2APIChargeCount(sub2API); got != 0 {
-		t.Fatalf("Workspace scheduler charged historical resource rows: %d", got)
-	}
-	if got := ledger.count(); got != 0 {
-		t.Fatalf("Workspace scheduler wrote resource receipts: %d", got)
-	}
-	if got := fabric.count(); got != 0 {
-		t.Fatalf("renewal created Fabric resources: prepares=%d", got)
-	}
-	var rows, uniqueResources, uniqueOperations int
-	if err := admin.QueryRowContext(ctx, `SELECT count(*), count(DISTINCT id), count(DISTINCT billing_operation_id) FROM `+schema+`.control_plane_compute_allocations`).Scan(&rows, &uniqueResources, &uniqueOperations); err != nil {
-		t.Fatal(err)
-	}
-	if rows != capacityAccountCount || uniqueResources != rows || uniqueOperations != rows {
-		t.Fatalf("historical resource rows changed: rows=%d resources=%d operations=%d", rows, uniqueResources, uniqueOperations)
-	}
-
-	processAfter := capacityProcessUsage(t)
-	consoleP50, consoleP95, consoleErrors := capacityCallMetrics(consoleCalls)
-	commandP50, commandP95, commandErrors := capacityCallMetrics(commandCalls)
-	replayP50, replayP95, replayErrors := capacityCallMetrics(replayCalls)
-	t.Logf("single_pod_capacity accounts=%d historical_resources=%d seed=%s console_requests=%d console_p50=%s console_p95=%s console_error_rate=%.4f console_total=%s commands=%d command_p50=%s command_p95=%s command_error_rate=%.4f command_total=%s replay_p50=%s replay_p95=%s replay_error_rate=%.4f replay_total=%s workspace_billing_total=%s cpu=%s heap_before_mb=%.1f heap_after_mb=%.1f go_sys_mb=%.1f db_connections=%d",
-		capacityAccountCount, rows, seedDuration, capacityConsoleUsers, consoleP50, consoleP95, float64(consoleErrors)/capacityConsoleUsers, consoleDuration,
-		capacityCommands, commandP50, commandP95, float64(commandErrors)/capacityCommands, commandDuration, replayP50, replayP95, float64(replayErrors)/capacityCommands, replayDuration,
-		billingDuration, processAfter.cpu-processBefore.cpu, float64(processBefore.heapBytes)/(1<<20), float64(processAfter.heapBytes)/(1<<20), float64(processAfter.sysBytes)/(1<<20), connectionSample.max)
-	if consoleP95 > capacityRequestBudget || commandP95 > capacityRequestBudget || replayP95 > capacityRequestBudget {
-		t.Fatalf("request budget exceeded: console_p95=%s command_p95=%s replay_p95=%s budget=%s", consoleP95, commandP95, replayP95, capacityRequestBudget)
-	}
-	if connectionSample.max > controlPlaneMaxOpenDBConnections {
-		t.Fatalf("database connection budget exceeded: connections=%d budget=%d", connectionSample.max, controlPlaneMaxOpenDBConnections)
-	}
-}
-
-func capacityRunConcurrent(ctx context.Context, count int, call func(context.Context, int) capacityCall) []capacityCall {
-	results := make([]capacityCall, count)
-	start := make(chan struct{})
-	var wait sync.WaitGroup
-	wait.Add(count)
-	for index := range count {
-		go func() {
-			defer wait.Done()
-			<-start
-			results[index] = call(ctx, index)
-		}()
-	}
-	close(start)
-	wait.Wait()
-	return results
-}
-
-func capacityHTTPCall(ctx context.Context, client *http.Client, baseURL, method, path, body, key string, cookies []*http.Cookie, csrf string) capacityCall {
-	started := time.Now()
-	req, err := http.NewRequestWithContext(ctx, method, baseURL+path, strings.NewReader(body))
-	if err != nil {
-		return capacityCall{duration: time.Since(started), err: err}
-	}
-	for _, cookie := range cookies {
-		req.AddCookie(cookie)
-	}
-	if method != http.MethodGet {
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("x-opl-csrf", csrf)
-		req.Header.Set("Idempotency-Key", key)
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return capacityCall{duration: time.Since(started), err: err}
-	}
-	defer resp.Body.Close()
-	payload, readErr := io.ReadAll(resp.Body)
-	return capacityCall{duration: time.Since(started), status: resp.StatusCode, body: string(payload), err: readErr}
-}
-
-func capacityRequireStatus(t *testing.T, name string, calls []capacityCall, want int) {
-	t.Helper()
-	for index, call := range calls {
-		if call.err != nil || call.status != want {
-			t.Fatalf("%s %d status=%d err=%v body=%.200q", name, index, call.status, call.err, call.body)
-		}
-	}
-}
-
-func capacityCallMetrics(calls []capacityCall) (time.Duration, time.Duration, int) {
-	durations := make([]time.Duration, 0, len(calls))
-	errors := 0
-	for _, call := range calls {
-		durations = append(durations, call.duration)
-		if call.err != nil || call.status < 200 || call.status >= 300 {
-			errors++
-		}
-	}
-	sort.Slice(durations, func(i, j int) bool { return durations[i] < durations[j] })
-	percentile := func(numerator int) time.Duration {
-		index := (len(durations)*numerator + 99) / 100
-		return durations[max(0, index-1)]
-	}
-	return percentile(50), percentile(95), errors
-}
-
-func capacitySub2APIChargeCount(client *capacitySub2API) int {
-	client.mu.Lock()
-	defer client.mu.Unlock()
-	return len(client.charges)
-}
-
-func capacityMonitorConnections(ctx context.Context, db *sql.DB, applicationName string) <-chan capacityConnectionSample {
-	result := make(chan capacityConnectionSample, 1)
-	go func() {
-		ticker := time.NewTicker(100 * time.Millisecond)
-		defer ticker.Stop()
-		maxConnections := 0
-		for {
-			select {
-			case <-ctx.Done():
-				result <- capacityConnectionSample{max: maxConnections}
-				return
-			case <-ticker.C:
-				var connections int
-				if err := db.QueryRowContext(ctx, `SELECT count(*) FROM pg_stat_activity WHERE application_name = $1`, applicationName).Scan(&connections); err != nil {
-					if ctx.Err() != nil {
-						result <- capacityConnectionSample{max: maxConnections}
-					} else {
-						result <- capacityConnectionSample{max: maxConnections, err: err}
-					}
-					return
-				}
-				maxConnections = max(maxConnections, connections)
+	results := map[int]result{}
+	for _, total := range []int{100, 1000} {
+		t.Run(fmt.Sprintf("records_%d", total), func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), capacityTestTimeout)
+			defer cancel()
+			admin := openControlPlaneTestPostgres(t)
+			schema := fmt.Sprintf("control_plane_capacity_%d_%d", total, time.Now().UnixNano())
+			if _, err := admin.Exec(`CREATE SCHEMA ` + schema); err != nil {
+				t.Fatal(err)
 			}
-		}
-	}()
-	return result
-}
+			t.Cleanup(func() {
+				_, _ = admin.Exec(`DROP SCHEMA ` + schema + ` CASCADE`)
+				_ = admin.Close()
+			})
+			databaseURL := controlPlaneTestPostgresURL(t, "postgres", schema)
+			stateStore, err := newTestPostgresEntStateStore(databaseURL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			seedStore := stateStore.(*postgresEntStateStore)
+			t.Cleanup(func() { _ = seedStore.client.Close() })
 
-func capacityProcessUsage(t *testing.T) capacityProcessSample {
-	t.Helper()
-	var usage syscall.Rusage
-	if err := syscall.Getrusage(syscall.RUSAGE_SELF, &usage); err != nil {
-		t.Fatal(err)
+			now := time.Now().UTC().Truncate(time.Second)
+			seedStarted := time.Now()
+			jobs := make(chan int, total)
+			for index := 1; index <= total; index++ {
+				jobs <- index
+			}
+			close(jobs)
+			var workers sync.WaitGroup
+			var seedErr error
+			var seedErrOnce sync.Once
+			for range capacitySeedWorkers {
+				workers.Add(1)
+				go func() {
+					defer workers.Done()
+					for index := range jobs {
+						if err := seedCapacityAccount(ctx, seedStore, now, index); err != nil {
+							seedErrOnce.Do(func() { seedErr = err })
+						}
+					}
+				}()
+			}
+			workers.Wait()
+			if seedErr != nil {
+				t.Fatal(seedErr)
+			}
+			seedDuration := time.Since(seedStarted)
+
+			counter := &capacitySQLCounter{}
+			db, err := sql.Open("postgres", databaseURL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			db.SetMaxOpenConns(controlPlaneMaxOpenDBConnections)
+			driver := dialect.Debug(entsql.OpenDB(dialect.Postgres, db), counter.log)
+			measuredStore := &postgresEntStateStore{client: controlplaneent.NewClient(controlplaneent.Driver(driver))}
+			t.Cleanup(func() { _ = measuredStore.client.Close() })
+			app, err := newControlPlaneAppWithStore(measuredStore)
+			if err != nil {
+				t.Fatal(err)
+			}
+			targetEmail := fmt.Sprintf("capacity-%04d@example.com", total)
+			targetAccountID := fmt.Sprintf("acct-capacity-%04d", total)
+			targetWorkspaceID := fmt.Sprintf("workspace-capacity-%04d", total)
+			targetOperationID := fmt.Sprintf("operation-capacity-%04d-00", total)
+			remote := newIdentityTestSub2API()
+			remote.identities[targetEmail] = clients.Sub2APIIdentity{ID: int64(10_000 + total), Email: targetEmail, Status: "active"}
+			remote.passwords[targetEmail] = "capacity-password"
+			fabricCalls := []string{}
+			service := controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{calls: &fabricCalls}, remote)
+
+			counter.reset()
+			loginStarted := time.Now()
+			_, sessionID, err := app.login(ctx, service, map[string]any{"email": targetEmail, "password": "capacity-password"})
+			loginDuration := time.Since(loginStarted)
+			if err != nil {
+				t.Fatal(err)
+			}
+			loginQueries := len(counter.snapshot())
+			counter.reset()
+			sessionStarted := time.Now()
+			request := httptest.NewRequest(http.MethodGet, "/api/auth/me", nil)
+			request.AddCookie(&http.Cookie{Name: sessionCookieName, Value: sessionID})
+			if _, state := app.session(request); state != sessionAuthenticated {
+				t.Fatalf("session state=%v", state)
+			}
+			sessionDuration := time.Since(sessionStarted)
+			sessionQueries := len(counter.snapshot())
+
+			counter.reset()
+			operationStarted := time.Now()
+			operation, found, err := measuredStore.GetRuntimeOperation(ctx, targetOperationID)
+			operationDuration := time.Since(operationStarted)
+			if err != nil || !found || stringValue(operation["accountId"]) != targetAccountID {
+				t.Fatalf("operation point lookup=%#v found=%t err=%v", operation, found, err)
+			}
+			operationGetQueries := len(counter.snapshot())
+			counter.reset()
+			operationPageStarted := time.Now()
+			operationPage, err := measuredStore.PageRuntimeOperations(ctx, runtimeOperationQuery{
+				AccountID: targetAccountID, WorkspaceID: targetWorkspaceID, Action: "workspace.renewal", Statuses: []string{"active"}, Offset: 0, Limit: 20,
+			})
+			operationPageDuration := time.Since(operationPageStarted)
+			if err != nil || operationPage.Total != capacityHistoryPerWorkspace || len(operationPage.Items) != capacityHistoryPerWorkspace {
+				t.Fatalf("operation page=%#v err=%v", operationPage, err)
+			}
+			operationPageQueries := len(counter.snapshot())
+
+			counter.reset()
+			renewalStarted := time.Now()
+			if err := app.runMonthlyBillingOnce(ctx, service, now); err != nil {
+				t.Fatal(err)
+			}
+			renewalDuration := time.Since(renewalStarted)
+			renewalQueries := counter.snapshot()
+			runtimeQueries := 0
+			for _, query := range renewalQueries {
+				if strings.Contains(query, "control_plane_runtime_operations") {
+					runtimeQueries++
+					if !strings.Contains(query, "workspace.renewal") || !strings.Contains(query, "verifying") || strings.Contains(query, "workspace-capacity-") {
+						t.Fatalf("renewal scan used non-candidate operation query: %s", query)
+					}
+				}
+			}
+			if runtimeQueries != 2 {
+				t.Fatalf("renewal candidate SQL queries=%d want=2: %#v", runtimeQueries, renewalQueries)
+			}
+			if want := ((total+monthlyBillingWorkspacePage-1)/monthlyBillingWorkspacePage)*2 + 2; len(renewalQueries) != want {
+				t.Fatalf("renewal SQL queries=%d want=%d: %#v", len(renewalQueries), want, renewalQueries)
+			}
+			remote.identityMu.Lock()
+			sub2APIRequests := remote.authCalls
+			remote.identityMu.Unlock()
+			if sub2APIRequests != 1 || len(fabricCalls) != 0 {
+				t.Fatalf("capacity external reads sub2api=%d fabric=%#v", sub2APIRequests, fabricCalls)
+			}
+
+			var accounts, users, sessions, workspaces, operations int
+			if err := admin.QueryRowContext(ctx, fmt.Sprintf(`SELECT
+				(SELECT count(*) FROM %s.control_plane_accounts),
+				(SELECT count(*) FROM %s.control_plane_users),
+				(SELECT count(*) FROM %s.control_plane_sessions),
+				(SELECT count(*) FROM %s.control_plane_workspaces),
+				(SELECT count(*) FROM %s.control_plane_runtime_operations)`, schema, schema, schema, schema, schema)).Scan(&accounts, &users, &sessions, &workspaces, &operations); err != nil {
+				t.Fatal(err)
+			}
+			if accounts != total || users != total || sessions != total+1 || workspaces != total || operations != total*capacityHistoryPerWorkspace {
+				t.Fatalf("seeded facts accounts=%d users=%d sessions=%d workspaces=%d operations=%d", accounts, users, sessions, workspaces, operations)
+			}
+			results[total] = result{loginQueries, sessionQueries, operationGetQueries, operationPageQueries}
+			t.Logf("single_pod_capacity records=%d accounts=%d users=%d sessions=%d workspaces=%d operation_history=%d seed=%s sql_login=%d login=%s sql_auth_me=%d auth_me=%s sql_operation_get=%d operation_get=%s sql_operation_page=%d operation_page=%s sql_renewal=%d renewal=%s sub2api_requests=%d fabric_requests=%d max_downstream_concurrency=1",
+				total, accounts, users, sessions, workspaces, operations, seedDuration, loginQueries, loginDuration, sessionQueries, sessionDuration,
+				operationGetQueries, operationDuration, operationPageQueries, operationPageDuration, len(renewalQueries), renewalDuration, sub2APIRequests, len(fabricCalls))
+		})
 	}
-	var memory runtime.MemStats
-	runtime.ReadMemStats(&memory)
-	return capacityProcessSample{
-		cpu:       time.Duration(usage.Utime.Sec+usage.Stime.Sec)*time.Second + time.Duration(usage.Utime.Usec+usage.Stime.Usec)*time.Microsecond,
-		heapBytes: memory.HeapAlloc,
-		sysBytes:  memory.Sys,
+	if results[100] != results[1000] {
+		t.Fatalf("point-query SQL count changed with table size: 100=%#v 1000=%#v", results[100], results[1000])
 	}
 }

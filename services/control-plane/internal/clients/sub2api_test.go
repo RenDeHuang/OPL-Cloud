@@ -170,18 +170,10 @@ func TestSub2APIEmptyListingsRequireV0162Pagination(t *testing.T) {
 		call func(*Sub2APIHTTPClient) error
 	}{
 		{
-			name: "admin keys",
-			path: "/api/v1/admin/users/41/api-keys",
-			call: func(client *Sub2APIHTTPClient) error {
-				_, err := client.WorkspaceKeysForConvergence(context.Background(), 41)
-				return err
-			},
-		},
-		{
 			name: "delegated user keys",
 			path: "/api/v1/keys",
 			call: func(client *Sub2APIHTTPClient) error {
-				_, err := client.WorkspaceUserKeysForConvergence(context.Background(), SessionDelegatedCredential{Bearer: "delegated", ExpiresAt: time.Now().Add(time.Hour)}, 41)
+				_, err := client.WorkspaceUserKeysForConvergence(context.Background(), SessionDelegatedCredential{Bearer: "delegated", ExpiresAt: time.Now().Add(time.Hour)}, 41, "opl-workspace-test")
 				return err
 			},
 		},
@@ -197,7 +189,7 @@ func TestSub2APIEmptyListingsRequireV0162Pagination(t *testing.T) {
 			name: "balance history",
 			path: "/api/v1/admin/users/41/balance-history",
 			call: func(client *Sub2APIHTTPClient) error {
-				_, err := client.FinancialBalanceHistoryScan(context.Background(), 41)
+				_, err := client.FinancialBalanceHistoryByCodes(context.Background(), 41, []string{"opl:target"})
 				return err
 			},
 		},
@@ -213,9 +205,11 @@ func TestSub2APIEmptyListingsRequireV0162Pagination(t *testing.T) {
 						case "/api/v1/auth/login":
 							writeSub2APISuccess(t, w, map[string]any{"access_token": "access", "refresh_token": "refresh"})
 						case tc.path:
-							pageSize := 1000
+							pageSize := 100
 							if tc.path == "/api/v1/admin/usage" {
 								pageSize = 50
+							} else if tc.path == "/api/v1/admin/users/41/balance-history" {
+								pageSize = 100
 							}
 							writeSub2APISuccess(t, w, map[string]any{"items": []any{}, "total": 0, "page": 1, "page_size": pageSize, "pages": pagination.pages})
 						default:
@@ -640,20 +634,19 @@ func TestSub2APIClientBalanceAcceptsDisabledAndRejectsUnknownStatus(t *testing.T
 	}
 }
 
-func TestSub2APIClientListsStrictMappedUserKeys(t *testing.T) {
+func TestSub2APIClientReadsStrictMappedWorkspaceKeyByFilteredName(t *testing.T) {
 	lastUsedAt := "2026-07-18T01:02:03Z"
 	keyStatus := "active"
 	client := newSub2APITestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/v1/auth/login":
 			writeSub2APISuccess(t, w, map[string]any{"access_token": "access", "refresh_token": "refresh"})
+		case "/api/v1/admin/usage/search-api-keys":
+			writeSub2APISuccess(t, w, []any{map[string]any{"id": 9, "user_id": 41, "name": "opl-workspace"}})
 		case "/api/v1/admin/users/41/api-keys":
 			writeSub2APISuccess(t, w, map[string]any{
-				"items": []any{
-					map[string]any{"id": 8, "user_id": 41, "name": "retired", "key": "", "status": "disabled", "quota": 0, "quota_used": 0, "usage_5h": 0, "usage_1d": 0, "usage_7d": 0},
-					map[string]any{"id": 9, "user_id": 41, "name": "opl-workspace", "key": "workspace-secret", "status": keyStatus, "quota": 10.000001, "quota_used": 2.000002, "usage_5h": 1, "usage_1d": 2, "usage_7d": 3, "last_used_at": lastUsedAt},
-				},
-				"total": 2, "page": 1, "page_size": 1000, "pages": 1,
+				"items": []any{map[string]any{"id": 9, "user_id": 41, "name": "opl-workspace", "key": "workspace-secret", "status": keyStatus, "quota": 10.000001, "quota_used": 2.000002, "usage_5h": 1, "usage_1d": 2, "usage_7d": 3, "last_used_at": lastUsedAt}},
+				"total": 1, "page": 1, "page_size": 1, "pages": 1,
 			})
 		default:
 			t.Fatalf("unexpected Sub2API route %s %s", r.Method, r.URL.Path)
@@ -661,24 +654,68 @@ func TestSub2APIClientListsStrictMappedUserKeys(t *testing.T) {
 	}, time.Second)
 
 	keyClient, ok := any(client).(interface {
-		WorkspaceKeysForConvergence(context.Context, int64) ([]Sub2APIWorkspaceKey, error)
+		WorkspaceKeysForConvergence(context.Context, int64, string) ([]Sub2APIWorkspaceKey, error)
 	})
 	if !ok {
 		t.Fatal("Sub2API client does not expose strict key listing")
 	}
-	keys, err := keyClient.WorkspaceKeysForConvergence(context.Background(), 41)
+	keys, err := keyClient.WorkspaceKeysForConvergence(context.Background(), 41, "opl-workspace")
 	if err != nil {
 		t.Fatalf("list keys: %v", err)
 	}
-	if len(keys) != 2 || keys[0].ID != 8 || keys[0].Status != "disabled" || keys[1].ID != 9 || keys[1].UserID != 41 {
+	if len(keys) != 1 || keys[0].ID != 9 || keys[0].UserID != 41 {
 		t.Fatalf("keys = %#v", keys)
 	}
-	if keys[1].QuotaUSDMicros != 10_000_001 || keys[1].QuotaUsedUSDMicros != 2_000_002 || keys[1].LastUsedAt == nil || keys[1].LastUsedAt.Format(time.RFC3339) != lastUsedAt {
-		t.Fatalf("strict key fields = %#v", keys[1])
+	if keys[0].QuotaUSDMicros != 10_000_001 || keys[0].QuotaUsedUSDMicros != 2_000_002 || keys[0].LastUsedAt == nil || keys[0].LastUsedAt.Format(time.RFC3339) != lastUsedAt {
+		t.Fatalf("strict key fields = %#v", keys[0])
 	}
 	keyStatus = "unknown"
-	if _, err := keyClient.WorkspaceKeysForConvergence(context.Background(), 41); err == nil {
+	if _, err := keyClient.WorkspaceKeysForConvergence(context.Background(), 41, "opl-workspace"); err == nil {
 		t.Fatal("unknown key status was accepted")
+	}
+}
+
+func TestSub2APIWorkspaceKeyConvergenceFiltersByNameAndDoesNotDownloadAllKeys(t *testing.T) {
+	const targetName = "opl-workspace-0123456789ab"
+	listCalls := 0
+	client := newSub2APITestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/auth/login":
+			writeSub2APISuccess(t, w, map[string]any{"access_token": "access", "refresh_token": "refresh"})
+		case "/api/v1/admin/usage/search-api-keys":
+			if r.URL.Query().Get("user_id") != "41" || r.URL.Query().Get("q") != targetName {
+				t.Fatalf("workspace key search query = %s", r.URL.RawQuery)
+			}
+			writeSub2APISuccess(t, w, []any{
+				map[string]any{"id": 777, "user_id": 41, "name": targetName},
+				map[string]any{"id": 778, "user_id": 41, "name": targetName + "-fuzzy"},
+			})
+		case "/api/v1/admin/users/41/api-keys":
+			listCalls++
+			query := r.URL.Query()
+			page, err := strconv.Atoi(query.Get("page"))
+			if err != nil || page < 1 || page > 1001 || query.Get("page_size") != "1" || query.Get("sort_by") != "id" || query.Get("sort_order") != "asc" {
+				t.Fatalf("workspace key lookup query = %s", r.URL.RawQuery)
+			}
+			writeSub2APISuccess(t, w, map[string]any{
+				"items": []any{map[string]any{
+					"id": page, "user_id": 41, "name": map[bool]string{true: targetName, false: "other"}[page == 777],
+					"key": map[bool]string{true: "workspace-secret", false: "other-secret"}[page == 777], "status": "active",
+					"quota": 0, "quota_used": 0, "usage_5h": 0, "usage_1d": 0, "usage_7d": 0,
+				}},
+				"total": 1001, "page": page, "page_size": 1, "pages": 1001,
+			})
+		default:
+			t.Fatalf("unexpected Sub2API route %s %s", r.Method, r.URL.String())
+		}
+	}, time.Second)
+
+	keys, err := client.WorkspaceKeysForConvergence(context.Background(), 41, targetName)
+	if err != nil || len(keys) != 1 || keys[0].ID != 777 || keys[0].Name != targetName || keys[0].Key != "workspace-secret" {
+		t.Fatalf("workspace key convergence = %#v err=%v", keys, err)
+	}
+	if listCalls > 12 {
+		t.Fatalf("workspace key lookup downloaded too many rows: %d", listCalls)
 	}
 }
 
@@ -687,128 +724,19 @@ func TestSub2APIClientWorkspaceKeyRequiresSelectedSecret(t *testing.T) {
 		switch r.URL.Path {
 		case "/api/v1/auth/login":
 			writeSub2APISuccess(t, w, map[string]any{"access_token": "access", "refresh_token": "refresh"})
+		case "/api/v1/admin/usage/search-api-keys":
+			writeSub2APISuccess(t, w, []any{map[string]any{"id": 9, "user_id": 41, "name": "opl-workspace"}})
 		case "/api/v1/admin/users/41/api-keys":
 			writeSub2APISuccess(t, w, map[string]any{"items": []any{map[string]any{
 				"id": 9, "user_id": 41, "name": "opl-workspace", "key": "", "status": "active",
 				"quota": 0, "quota_used": 0, "usage_5h": 0, "usage_1d": 0, "usage_7d": 0,
-			}}, "total": 1, "page": 1, "page_size": 1000, "pages": 1})
+			}}, "total": 1, "page": 1, "page_size": 1, "pages": 1})
 		default:
 			t.Fatalf("unexpected route %s", r.URL.Path)
 		}
 	}, time.Second)
 	if _, err := client.WorkspaceKey(context.Background(), 41); err == nil {
 		t.Fatal("active Workspace key without secret was accepted")
-	}
-}
-
-func TestSub2APIClientSelectsOneActiveWorkspaceKeyAcrossPages(t *testing.T) {
-	pages := []string{}
-	client := newSub2APITestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/v1/auth/login":
-			writeSub2APISuccess(t, w, map[string]any{"access_token": "access", "refresh_token": "refresh"})
-		case "/api/v1/admin/system/version":
-			writeSub2APISuccess(t, w, map[string]any{"version": "0.1.155"})
-		case "/api/v1/admin/users/41/api-keys":
-			if r.Method != http.MethodGet || r.Header.Get("Authorization") != "Bearer access" || r.URL.Query().Get("page_size") != "1000" {
-				t.Fatalf("unexpected key request: %s %s auth=%q", r.Method, r.URL.String(), r.Header.Get("Authorization"))
-			}
-			page := r.URL.Query().Get("page")
-			pages = append(pages, page)
-			if page == "1" {
-				items := make([]any, 0, 1000)
-				for id := int64(1); id <= 1000; id++ {
-					items = append(items, map[string]any{"id": id, "user_id": 41, "name": "other", "key": "other-key", "status": "active", "quota": 0, "quota_used": 0, "usage_5h": 0, "usage_1d": 0, "usage_7d": 0})
-				}
-				writeSub2APISuccess(t, w, map[string]any{
-					"items": items, "total": 1001, "page": 1, "page_size": 1000, "pages": 2,
-				})
-				return
-			}
-			writeSub2APISuccess(t, w, map[string]any{
-				"items": []any{map[string]any{
-					"id": 1001, "user_id": 41, "name": "opl-workspace", "key": "workspace-key-secret", "status": "active",
-					"quota": 100.000001, "quota_used": 12.345678, "usage_5h": 1.000001, "usage_1d": 2.000002, "usage_7d": 3.000003,
-					"last_used_at": "2026-07-16T01:02:03Z",
-				}},
-				"total": 1001, "page": 2, "page_size": 1000, "pages": 2,
-			})
-		default:
-			t.Fatalf("unexpected Sub2API route %s %s", r.Method, r.URL.Path)
-		}
-	}, time.Second)
-
-	key, err := client.WorkspaceKey(context.Background(), 41)
-	if err != nil {
-		t.Fatalf("workspace key: %v", err)
-	}
-	if key.ID != 1001 || key.UserID != 41 || key.Name != "opl-workspace" || key.Key != "workspace-key-secret" || key.Status != "active" {
-		t.Fatalf("workspace key identity = %#v", key)
-	}
-	if key.QuotaUSDMicros != 100_000_001 || key.QuotaUsedUSDMicros != 12_345_678 || key.Usage5hUSDMicros != 1_000_001 || key.Usage1dUSDMicros != 2_000_002 || key.Usage7dUSDMicros != 3_000_003 {
-		t.Fatalf("workspace key usage = %#v", key)
-	}
-	if key.LastUsedAt == nil || key.LastUsedAt.Format(time.RFC3339) != "2026-07-16T01:02:03Z" {
-		t.Fatalf("workspace key last used = %#v", key.LastUsedAt)
-	}
-	if !slices.Equal(pages, []string{"1", "2"}) {
-		t.Fatalf("key pages = %#v", pages)
-	}
-}
-
-func TestSub2APIClientWorkspaceKeyRejectsIncoherentFullPagination(t *testing.T) {
-	items := func(start, count int64) []any {
-		result := make([]any, 0, count)
-		for id := start; id < start+count; id++ {
-			result = append(result, map[string]any{"id": id, "user_id": 41, "name": "other", "key": "other-key", "status": "active", "quota": 0, "quota_used": 0, "usage_5h": 0, "usage_1d": 0, "usage_7d": 0})
-		}
-		return result
-	}
-	active := func(id int64) map[string]any {
-		return map[string]any{
-			"id": id, "user_id": 41, "name": "opl-workspace", "key": "workspace-key-secret", "status": "active",
-			"quota": 0, "quota_used": 0, "usage_5h": 0, "usage_1d": 0, "usage_7d": 0,
-		}
-	}
-	page := func(items []any, total, number, pageSize, pages int) map[string]any {
-		return map[string]any{"items": items, "total": total, "page": number, "page_size": pageSize, "pages": pages}
-	}
-
-	fullFirstPage := items(1, 1000)
-	tooManyItems := append(items(1, 1000), active(1001))
-	for _, tc := range []struct {
-		name  string
-		pages []map[string]any
-	}{
-		{name: "first page size differs from request", pages: []map[string]any{page([]any{active(1)}, 1, 1, 999, 1)}},
-		{name: "pages differ from total ceiling", pages: []map[string]any{page([]any{active(1)}, 1, 1, 1000, 2), page(nil, 1, 2, 1000, 2)}},
-		{name: "total drifts between pages", pages: []map[string]any{page(fullFirstPage, 1001, 1, 1000, 2), page([]any{active(1001)}, 1002, 2, 1000, 2)}},
-		{name: "page size drifts between pages", pages: []map[string]any{page(fullFirstPage, 1001, 1, 1000, 2), page([]any{active(1001)}, 1001, 2, 999, 2)}},
-		{name: "items exceed page size", pages: []map[string]any{page(tooManyItems, 1001, 1, 1000, 2), page(nil, 1001, 2, 1000, 2)}},
-		{name: "empty page before total", pages: []map[string]any{page(nil, 1001, 1, 1000, 2), page([]any{active(1001)}, 1001, 2, 1000, 2)}},
-		{name: "duplicate key id", pages: []map[string]any{page(fullFirstPage, 1001, 1, 1000, 2), page([]any{active(1)}, 1001, 2, 1000, 2)}},
-		{name: "non-positive key id", pages: []map[string]any{page([]any{map[string]any{"id": 0, "user_id": 41, "name": "other", "key": "other-key", "status": "active"}}, 1, 1, 1000, 1)}},
-		{name: "collected count differs from total", pages: []map[string]any{page([]any{active(1)}, 2, 1, 1000, 1)}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			client := newSub2APITestClient(t, func(w http.ResponseWriter, r *http.Request) {
-				switch r.URL.Path {
-				case "/api/v1/auth/login":
-					writeSub2APISuccess(t, w, map[string]any{"access_token": "access", "refresh_token": "refresh"})
-				case "/api/v1/admin/users/41/api-keys":
-					requested, err := strconv.Atoi(r.URL.Query().Get("page"))
-					if err != nil || requested < 1 || requested > len(tc.pages) {
-						t.Fatalf("unexpected key page %q", r.URL.Query().Get("page"))
-					}
-					writeSub2APISuccess(t, w, tc.pages[requested-1])
-				default:
-					t.Fatalf("unexpected route %s", r.URL.Path)
-				}
-			}, time.Second)
-			if _, err := client.WorkspaceKey(context.Background(), 41); err == nil || !strings.Contains(err.Error(), "pagination") {
-				t.Fatalf("incoherent pagination error = %v", err)
-			}
-		})
 	}
 }
 
@@ -823,10 +751,10 @@ func TestSub2APIClientWorkspaceKeyRequiresUsageFieldsAndAcceptsZero(t *testing.T
 			switch r.URL.Path {
 			case "/api/v1/auth/login":
 				writeSub2APISuccess(t, w, map[string]any{"access_token": "access", "refresh_token": "refresh"})
-			case "/api/v1/admin/system/version":
-				writeSub2APISuccess(t, w, map[string]any{"version": "0.1.155"})
+			case "/api/v1/admin/usage/search-api-keys":
+				writeSub2APISuccess(t, w, []any{map[string]any{"id": 9, "user_id": 41, "name": "opl-workspace"}})
 			case "/api/v1/admin/users/41/api-keys":
-				writeSub2APISuccess(t, w, map[string]any{"items": []any{item}, "total": 1, "page": 1, "page_size": 1000, "pages": 1})
+				writeSub2APISuccess(t, w, map[string]any{"items": []any{item}, "total": 1, "page": 1, "page_size": 1, "pages": 1})
 			default:
 				t.Fatalf("unexpected route %s", r.URL.Path)
 			}
@@ -872,10 +800,12 @@ func TestSub2APIClientWorkspaceKeyCardinalityFailsClosed(t *testing.T) {
 				switch r.URL.Path {
 				case "/api/v1/auth/login":
 					writeSub2APISuccess(t, w, map[string]any{"access_token": "access", "refresh_token": "refresh"})
-				case "/api/v1/admin/system/version":
-					writeSub2APISuccess(t, w, map[string]any{"version": "0.1.155"})
-				case "/api/v1/admin/users/41/api-keys":
-					writeSub2APISuccess(t, w, map[string]any{"items": tc.items, "total": len(tc.items), "page": 1, "page_size": 1000, "pages": 1})
+				case "/api/v1/admin/usage/search-api-keys":
+					refs := make([]map[string]any, 0, len(tc.items))
+					for _, item := range tc.items {
+						refs = append(refs, map[string]any{"id": item["id"], "user_id": item["user_id"], "name": item["name"]})
+					}
+					writeSub2APISuccess(t, w, refs)
 				default:
 					t.Fatalf("unexpected route %s", r.URL.Path)
 				}
@@ -887,34 +817,40 @@ func TestSub2APIClientWorkspaceKeyCardinalityFailsClosed(t *testing.T) {
 	}
 }
 
-func TestSub2APIClientWorkspaceKeyRejectsExcessivePaginationWithoutContinuing(t *testing.T) {
-	for name, pagination := range map[string]map[string]any{
-		"pages": {"total": 1, "page": 1, "page_size": 1000, "pages": 11},
-		"total": {"total": 10_001, "page": 1, "page_size": 1000, "pages": 1},
-	} {
-		t.Run(name, func(t *testing.T) {
-			keyRequests := 0
-			client := newSub2APITestClient(t, func(w http.ResponseWriter, r *http.Request) {
-				switch r.URL.Path {
-				case "/api/v1/auth/login":
-					writeSub2APISuccess(t, w, map[string]any{"access_token": "access", "refresh_token": "refresh"})
-				case "/api/v1/admin/system/version":
-					writeSub2APISuccess(t, w, map[string]any{"version": "0.1.155"})
-				case "/api/v1/admin/users/41/api-keys":
-					keyRequests++
-					pagination["items"] = []any{}
-					writeSub2APISuccess(t, w, pagination)
-				default:
-					t.Fatalf("unexpected route %s", r.URL.Path)
-				}
-			}, time.Second)
-			if _, err := client.WorkspaceKey(context.Background(), 41); err == nil || !strings.Contains(err.Error(), "pagination") {
-				t.Fatalf("workspace key pagination error = %v", err)
+func TestSub2APIClientWorkspaceKeyRejectsPaginationIdentityDrift(t *testing.T) {
+	keyRequests := 0
+	client := newSub2APITestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/auth/login":
+			writeSub2APISuccess(t, w, map[string]any{"access_token": "access", "refresh_token": "refresh"})
+		case "/api/v1/admin/usage/search-api-keys":
+			writeSub2APISuccess(t, w, []any{map[string]any{"id": 3, "user_id": 41, "name": "opl-workspace"}})
+		case "/api/v1/admin/users/41/api-keys":
+			keyRequests++
+			page, err := strconv.Atoi(r.URL.Query().Get("page"))
+			if err != nil {
+				t.Fatalf("invalid page query: %v", err)
 			}
-			if keyRequests != 1 {
-				t.Fatalf("key requests = %d, want 1", keyRequests)
+			total := 4
+			if page > 1 {
+				total = 5
 			}
-		})
+			writeSub2APISuccess(t, w, map[string]any{
+				"items": []any{map[string]any{
+					"id": page, "user_id": 41, "name": "other", "key": "other-key", "status": "active",
+					"quota": 0, "quota_used": 0, "usage_5h": 0, "usage_1d": 0, "usage_7d": 0,
+				}},
+				"total": total, "page": page, "page_size": 1, "pages": total,
+			})
+		default:
+			t.Fatalf("unexpected route %s", r.URL.Path)
+		}
+	}, time.Second)
+	if _, err := client.WorkspaceKey(context.Background(), 41); err == nil || !strings.Contains(err.Error(), "pagination") {
+		t.Fatalf("workspace key pagination error = %v", err)
+	}
+	if keyRequests != 2 {
+		t.Fatalf("key requests = %d, want 2", keyRequests)
 	}
 }
 
@@ -924,10 +860,10 @@ func TestSub2APIClientWorkspaceKeyRejectsCrossUserAndDoesNotLeakKey(t *testing.T
 		switch r.URL.Path {
 		case "/api/v1/auth/login":
 			writeSub2APISuccess(t, w, map[string]any{"access_token": "access", "refresh_token": "refresh"})
-		case "/api/v1/admin/system/version":
-			writeSub2APISuccess(t, w, map[string]any{"version": "0.1.155"})
+		case "/api/v1/admin/usage/search-api-keys":
+			writeSub2APISuccess(t, w, []any{map[string]any{"id": 1, "user_id": 41, "name": "opl-workspace"}})
 		case "/api/v1/admin/users/41/api-keys":
-			writeSub2APISuccess(t, w, map[string]any{"items": []map[string]any{{"id": 1, "user_id": 42, "name": "opl-workspace", "key": secret, "status": "active"}}, "total": 1, "page": 1, "page_size": 1000, "pages": 1})
+			writeSub2APISuccess(t, w, map[string]any{"items": []map[string]any{{"id": 1, "user_id": 42, "name": "opl-workspace", "key": secret, "status": "active"}}, "total": 1, "page": 1, "page_size": 1, "pages": 1})
 		default:
 			t.Fatalf("unexpected route %s", r.URL.Path)
 		}
@@ -951,10 +887,6 @@ func TestSub2APIClientWorkspaceKeyBoundsAndRedactsUpstreamResponses(t *testing.T
 			client := newSub2APITestClient(t, func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path == "/api/v1/auth/login" {
 					writeSub2APISuccess(t, w, map[string]any{"access_token": "access", "refresh_token": "refresh"})
-					return
-				}
-				if r.URL.Path == "/api/v1/admin/system/version" {
-					writeSub2APISuccess(t, w, map[string]any{"version": "0.1.155"})
 					return
 				}
 				handler(w, r)
@@ -1189,13 +1121,15 @@ func TestSub2APIClientCapabilitiesDoNotRequestVersion(t *testing.T) {
 					http.Error(w, "unavailable", http.StatusServiceUnavailable)
 				case "/api/v1/admin/users/41":
 					writeSub2APISuccess(t, w, map[string]any{"id": 41, "balance": 12.345678, "status": "active"})
+				case "/api/v1/admin/usage/search-api-keys":
+					writeSub2APISuccess(t, w, []any{map[string]any{"id": 9, "user_id": 41, "name": "opl-workspace"}})
 				case "/api/v1/admin/users/41/api-keys":
 					writeSub2APISuccess(t, w, map[string]any{
 						"items": []any{map[string]any{
 							"id": 9, "user_id": 41, "name": "opl-workspace", "key": "workspace-key-secret", "status": "active",
 							"quota": 0, "quota_used": 0, "usage_5h": 0, "usage_1d": 0, "usage_7d": 0,
 						}},
-						"total": 1, "page": 1, "page_size": 1000, "pages": 1,
+						"total": 1, "page": 1, "page_size": 1, "pages": 1,
 					})
 				case "/api/v1/admin/redeem-codes/create-and-redeem":
 					var input struct {
@@ -1296,14 +1230,14 @@ func TestSub2APIAdjustmentReplay(t *testing.T) {
 						http.Error(w, "conflict", http.StatusConflict)
 					case "/api/v1/admin/users/41/balance-history":
 						historyCalls++
-						if r.URL.Query().Get("type") != "balance" || r.URL.Query().Get("page") != "1" || r.URL.Query().Get("page_size") != "1000" {
+						if r.URL.Query().Get("type") != "balance" || r.URL.Query().Get("page") != "1" || r.URL.Query().Get("page_size") != "100" {
 							t.Fatalf("history query = %s", r.URL.RawQuery)
 						}
 						if scenario.historyStatus != 0 {
 							http.Error(w, "unavailable", scenario.historyStatus)
 							return
 						}
-						writeSub2APISuccess(t, w, map[string]any{"items": scenario.items(), "total": scenario.total, "page": 1, "page_size": 1000, "pages": 1})
+						writeSub2APISuccess(t, w, map[string]any{"items": scenario.items(), "total": scenario.total, "page": 1, "page_size": 100, "pages": 1})
 					default:
 						t.Fatalf("unexpected route %s", r.URL.Path)
 					}
@@ -1603,7 +1537,7 @@ func TestSub2APIUsageStatsRejectsInvalidFacts(t *testing.T) {
 	}
 }
 
-func TestSub2APIFinancialBalanceHistoryScanIsBoundedAndDropsNotes(t *testing.T) {
+func TestSub2APIFinancialBalanceHistoryByCodesStopsAfterTargetPage(t *testing.T) {
 	requestedPages := []string{}
 	client := newSub2APITestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -1611,39 +1545,46 @@ func TestSub2APIFinancialBalanceHistoryScanIsBoundedAndDropsNotes(t *testing.T) 
 			writeSub2APISuccess(t, w, map[string]any{"access_token": "access", "refresh_token": "refresh"})
 		case "/api/v1/admin/users/41/balance-history":
 			query := r.URL.Query()
-			if query.Get("page_size") != "1000" || query.Get("type") != "balance" {
+			if query.Get("page_size") != "100" || query.Get("type") != "balance" {
 				t.Fatalf("history query = %s", r.URL.RawQuery)
 			}
 			requestedPages = append(requestedPages, query.Get("page"))
-			if query.Get("page") == "1" {
-				items := make([]any, 0, 1000)
-				items = append(items, map[string]any{"code": "opl:charge", "type": "balance", "value": -50.000000, "status": "used", "used_by": 41, "used_at": "2026-07-16T00:01:00Z", "created_at": "2026-07-16T00:00:00Z", "notes": "balance-secret"})
-				for i := 2; i <= 1000; i++ {
-					items = append(items, map[string]any{"code": fmt.Sprintf("opl:filler:%d", i), "type": "balance", "value": -0.000001, "status": "used", "used_by": 41, "used_at": "2026-07-16T00:01:00Z", "created_at": "2026-07-16T00:00:00Z", "notes": "balance-secret"})
-				}
-				writeSub2APISuccess(t, w, map[string]any{"items": items, "total": 1001, "page": 1, "page_size": 1000, "pages": 2, "total_recharged": 50})
-				return
+			page, err := strconv.Atoi(query.Get("page"))
+			if err != nil || page < 1 || page > 3 {
+				t.Fatalf("history page = %q", query.Get("page"))
 			}
-			writeSub2APISuccess(t, w, json.RawMessage(`{"items":[{"code":"opl:refund","type":"balance","value":50.000000,"status":"used","used_by":41,"used_at":"2026-07-16T00:03:00Z","created_at":"2026-07-16T00:02:00Z","notes":"balance-secret"}],"total":1001,"page":2,"page_size":1000,"pages":2,"total_recharged":50}`))
+			items := make([]any, 0, 100)
+			for index := 0; index < 100; index++ {
+				code := fmt.Sprintf("opl:filler:%d", (page-1)*100+index)
+				if page == 2 && index == 42 {
+					code = "opl:target"
+				}
+				items = append(items, map[string]any{
+					"code": code, "type": "balance", "value": -52.58, "status": "used", "used_by": 41,
+					"used_at": "2026-07-16T00:01:00Z", "created_at": "2026-07-16T00:00:00Z", "notes": "must-not-leak",
+				})
+			}
+			writeSub2APISuccess(t, w, map[string]any{"items": items, "total": 300, "page": page, "page_size": 100, "pages": 3})
 		default:
 			t.Fatalf("unexpected route %s", r.URL.Path)
 		}
 	}, time.Second)
 
-	entries, err := client.FinancialBalanceHistoryScan(context.Background(), 41)
-	if err != nil || len(entries) != 1001 || !slices.Equal(requestedPages, []string{"1", "2"}) {
-		t.Fatalf("balance history = %#v pages=%#v err=%v", entries, requestedPages, err)
+	matches, err := client.FinancialBalanceHistoryByCodes(context.Background(), 41, []string{"opl:target"})
+	if err != nil || !slices.Equal(requestedPages, []string{"1", "2"}) || len(matches) != 1 {
+		t.Fatalf("financial history matches=%#v pages=%#v err=%v", matches, requestedPages, err)
 	}
-	if entries[0].Code != "opl:charge" || entries[0].ValueUSDMicros != -50_000_000 || entries[0].UsedBy == nil || *entries[0].UsedBy != 41 || entries[1000].Code != "opl:refund" || entries[1000].ValueUSDMicros != 50_000_000 {
-		t.Fatalf("balance entries = %#v", entries)
+	entry := matches["opl:target"]
+	if entry.Code != "opl:target" || entry.ValueUSDMicros != -52_580_000 || entry.UsedBy == nil || *entry.UsedBy != 41 {
+		t.Fatalf("financial history entry = %#v", entry)
 	}
-	encoded, _ := json.Marshal(entries)
-	if strings.Contains(string(encoded), "balance-secret") || strings.Contains(string(encoded), "notes") {
-		t.Fatalf("balance history leaked notes: %s", encoded)
+	encoded, _ := json.Marshal(matches)
+	if strings.Contains(string(encoded), "must-not-leak") || strings.Contains(string(encoded), "notes") {
+		t.Fatalf("financial history leaked upstream fields: %s", encoded)
 	}
 }
 
-func TestSub2APIFinancialBalanceHistoryScanFindsLastPageCodeAcrossTenThousandRows(t *testing.T) {
+func TestSub2APIFinancialBalanceHistoryByCodesFindsTargetBeyondTenThousandRows(t *testing.T) {
 	requests := 0
 	client := newSub2APITestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -1651,14 +1592,18 @@ func TestSub2APIFinancialBalanceHistoryScanFindsLastPageCodeAcrossTenThousandRow
 			writeSub2APISuccess(t, w, map[string]any{"access_token": "access", "refresh_token": "refresh"})
 		case "/api/v1/admin/users/41/balance-history":
 			page, err := strconv.Atoi(r.URL.Query().Get("page"))
-			if err != nil || page < 1 || page > 10 || r.URL.Query().Get("page_size") != "1000" || r.URL.Query().Get("type") != "balance" {
+			if err != nil || page < 1 || page > 101 || r.URL.Query().Get("page_size") != "100" || r.URL.Query().Get("type") != "balance" {
 				t.Fatalf("history query = %s", r.URL.RawQuery)
 			}
 			requests++
-			items := make([]any, 0, 1000)
-			for index := 0; index < 1000; index++ {
-				code := fmt.Sprintf("opl:financial:%d", (page-1)*1000+index+1)
-				if page == 10 && index == 999 {
+			count := 100
+			if page == 101 {
+				count = 1
+			}
+			items := make([]any, 0, count)
+			for index := 0; index < count; index++ {
+				code := fmt.Sprintf("opl:financial:%d", (page-1)*100+index+1)
+				if page == 101 {
 					code = "opl:financial:last"
 				}
 				items = append(items, map[string]any{
@@ -1666,86 +1611,36 @@ func TestSub2APIFinancialBalanceHistoryScanFindsLastPageCodeAcrossTenThousandRow
 					"used_at": "2026-07-16T00:01:00Z", "created_at": "2026-07-16T00:00:00Z",
 				})
 			}
-			writeSub2APISuccess(t, w, map[string]any{"items": items, "total": 10000, "page": page, "page_size": 1000, "pages": 10})
+			writeSub2APISuccess(t, w, map[string]any{"items": items, "total": 10001, "page": page, "page_size": 100, "pages": 101})
 		default:
 			t.Fatalf("unexpected route %s", r.URL.Path)
 		}
 	}, 5*time.Second)
 
-	entries, err := client.FinancialBalanceHistoryScan(context.Background(), 41)
-	if err != nil || requests != 10 || len(entries) != 10000 || entries[9999].Code != "opl:financial:last" {
-		t.Fatalf("financial history requests=%d entries=%d last=%q err=%v", requests, len(entries), entries[len(entries)-1].Code, err)
+	matches, err := client.FinancialBalanceHistoryByCodes(context.Background(), 41, []string{"opl:financial:last"})
+	if err != nil || requests != 101 || len(matches) != 1 || matches["opl:financial:last"].Code != "opl:financial:last" {
+		t.Fatalf("financial history requests=%d matches=%#v err=%v", requests, matches, err)
 	}
 }
 
-func TestSub2APIFinancialBalanceHistoryScanAcceptsEmptyCoherentListing(t *testing.T) {
+func TestSub2APIFinancialBalanceHistoryByCodesAcceptsAuthoritativeMissingTarget(t *testing.T) {
 	client := newSub2APITestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/v1/auth/login" {
 			writeSub2APISuccess(t, w, map[string]any{"access_token": "access", "refresh_token": "refresh"})
 			return
 		}
-		writeSub2APISuccess(t, w, map[string]any{"items": []any{}, "total": 0, "page": 1, "page_size": 1000, "pages": 1})
+		writeSub2APISuccess(t, w, map[string]any{"items": []any{}, "total": 0, "page": 1, "page_size": 100, "pages": 1})
 	}, time.Second)
-	entries, err := client.FinancialBalanceHistoryScan(context.Background(), 41)
-	if err != nil || len(entries) != 0 {
-		t.Fatalf("empty balance history=%#v err=%v", entries, err)
+	matches, err := client.FinancialBalanceHistoryByCodes(context.Background(), 41, []string{"opl:missing"})
+	if err != nil || len(matches) != 0 {
+		t.Fatalf("missing balance history=%#v err=%v", matches, err)
 	}
 }
 
-func TestSub2APIFinancialBalanceHistoryScanRejectsIncoherentFullPagination(t *testing.T) {
-	entry := func(code string) map[string]any {
-		return map[string]any{
-			"code": code, "type": "balance", "value": -0.000001, "status": "used", "used_by": 41,
-			"used_at": "2026-07-16T00:01:00Z", "created_at": "2026-07-16T00:00:00Z",
-		}
-	}
-	entries := func(start, count int) []any {
-		result := make([]any, 0, count)
-		for i := start; i < start+count; i++ {
-			result = append(result, entry(fmt.Sprintf("opl:history:%d", i)))
-		}
-		return result
-	}
-	page := func(items []any, total, number, pageSize, pages int) map[string]any {
-		return map[string]any{"items": items, "total": total, "page": number, "page_size": pageSize, "pages": pages}
-	}
-	fullFirstPage := entries(1, 1000)
-	tooManyItems := append(entries(1, 1000), entry("opl:history:1001"))
-	for _, tc := range []struct {
-		name  string
-		pages []map[string]any
-	}{
-		{name: "first page size differs from request", pages: []map[string]any{page([]any{entry("opl:history:1")}, 1, 1, 999, 1)}},
-		{name: "pages differ from total ceiling", pages: []map[string]any{page([]any{entry("opl:history:1")}, 1, 1, 1000, 2), page(nil, 1, 2, 1000, 2)}},
-		{name: "total drifts between pages", pages: []map[string]any{page(fullFirstPage, 1001, 1, 1000, 2), page([]any{entry("opl:history:1001")}, 1002, 2, 1000, 2)}},
-		{name: "page size drifts between pages", pages: []map[string]any{page(fullFirstPage, 1001, 1, 1000, 2), page([]any{entry("opl:history:1001")}, 1001, 2, 999, 2)}},
-		{name: "items exceed page size", pages: []map[string]any{page(tooManyItems, 1001, 1, 1000, 2), page(nil, 1001, 2, 1000, 2)}},
-		{name: "empty page before total", pages: []map[string]any{page(nil, 1001, 1, 1000, 2), page([]any{entry("opl:history:1001")}, 1001, 2, 1000, 2)}},
-		{name: "collected count differs from total", pages: []map[string]any{page([]any{entry("opl:history:1")}, 2, 1, 1000, 1)}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			client := newSub2APITestClient(t, func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path == "/api/v1/auth/login" {
-					writeSub2APISuccess(t, w, map[string]any{"access_token": "access", "refresh_token": "refresh"})
-					return
-				}
-				requested, err := strconv.Atoi(r.URL.Query().Get("page"))
-				if r.URL.Path != "/api/v1/admin/users/41/balance-history" || err != nil || requested < 1 || requested > len(tc.pages) {
-					t.Fatalf("unexpected history request %s page=%q", r.URL.Path, r.URL.Query().Get("page"))
-				}
-				writeSub2APISuccess(t, w, tc.pages[requested-1])
-			}, time.Second)
-			if _, err := client.FinancialBalanceHistoryScan(context.Background(), 41); err == nil || !strings.Contains(err.Error(), "pagination") {
-				t.Fatalf("incoherent history pagination error = %v", err)
-			}
-		})
-	}
-}
-
-func TestSub2APIFinancialBalanceHistoryScanRejectsUntrustedIdentityAndPagination(t *testing.T) {
+func TestSub2APIFinancialBalanceHistoryByCodesRejectsUntrustedIdentityAndPagination(t *testing.T) {
 	for name, data := range map[string]string{
-		"used by another user": `{"items":[{"code":"opl:charge","type":"balance","value":-1,"status":"used","used_by":42,"used_at":"2026-07-16T00:01:00Z","created_at":"2026-07-16T00:00:00Z"}],"total":1,"page":1,"page_size":1000,"pages":1}`,
-		"too many pages":       `{"items":[],"total":10001,"page":1,"page_size":1000,"pages":11}`,
+		"used by another user": `{"items":[{"code":"opl:target","type":"balance","value":-1,"status":"used","used_by":42,"used_at":"2026-07-16T00:01:00Z","created_at":"2026-07-16T00:00:00Z"}],"total":1,"page":1,"page_size":100,"pages":1}`,
+		"wrong page count":     `{"items":[],"total":0,"page":1,"page_size":100,"pages":2}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			requests := 0
@@ -1757,13 +1652,31 @@ func TestSub2APIFinancialBalanceHistoryScanRejectsUntrustedIdentityAndPagination
 				requests++
 				writeSub2APISuccess(t, w, json.RawMessage(data))
 			}, time.Second)
-			if _, err := client.FinancialBalanceHistoryScan(context.Background(), 41); err == nil {
+			if _, err := client.FinancialBalanceHistoryByCodes(context.Background(), 41, []string{"opl:target"}); err == nil {
 				t.Fatalf("untrusted history accepted: %s", data)
 			}
 			if requests != 1 {
 				t.Fatalf("history requests = %d", requests)
 			}
 		})
+	}
+}
+
+func TestSub2APIFinancialBalanceHistoryByCodesUsesOneAbsoluteDeadline(t *testing.T) {
+	requests := 0
+	client := newSub2APITestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/auth/login" {
+			writeSub2APISuccess(t, w, map[string]any{"access_token": "access", "refresh_token": "refresh"})
+			return
+		}
+		requests++
+		<-r.Context().Done()
+	}, 25*time.Millisecond)
+	if _, err := client.FinancialBalanceHistoryByCodes(context.Background(), 41, []string{"opl:target"}); err == nil {
+		t.Fatal("financial history deadline was ignored")
+	}
+	if requests != 1 {
+		t.Fatalf("financial history requests = %d", requests)
 	}
 }
 
@@ -1806,11 +1719,11 @@ func TestSub2APIBalanceHistoryPageAllowsDisplayPaginationAcrossTenThousandRows(t
 		for index := range items {
 			items[index] = map[string]any{"code": fmt.Sprintf("opl:display:%d", index), "type": "balance", "value": -0.000001, "status": "used", "used_by": 41, "used_at": "2026-07-16T00:01:00Z", "created_at": "2026-07-16T00:00:00Z"}
 		}
-		writeSub2APISuccess(t, w, map[string]any{"items": items, "total": 10000, "page": 1, "page_size": 20, "pages": 500})
+		writeSub2APISuccess(t, w, map[string]any{"items": items, "total": 10001, "page": 1, "page_size": 20, "pages": 501})
 	}, time.Second)
 
 	page, err := client.BalanceHistoryPage(context.Background(), 41, Sub2APIBalanceHistoryPageQuery{Page: 1, PageSize: 20})
-	if err != nil || page.Total != 10000 || page.Pages != 500 || len(page.Items) != 20 {
+	if err != nil || page.Total != 10001 || page.Pages != 501 || len(page.Items) != 20 {
 		t.Fatalf("large display page = %#v err=%v", page, err)
 	}
 }

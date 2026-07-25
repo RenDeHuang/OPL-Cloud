@@ -79,6 +79,14 @@ func NewServer(service *fabric.Service, token string) http.Handler {
 		}
 		writeJSON(w, http.StatusOK, result)
 	})
+	mux.HandleFunc("GET /fabric/runtime-health-summary", func(w http.ResponseWriter, r *http.Request) {
+		result, err := service.RuntimeHealthSummary(r.Context())
+		if err != nil {
+			writeError(w, http.StatusServiceUnavailable, fabric.ErrRuntimeHealthSummaryUnavailable.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, result)
+	})
 	mux.HandleFunc("GET /fabric/operations", func(w http.ResponseWriter, r *http.Request) {
 		operations, err := service.ListOperations(r.Context())
 		if err != nil {

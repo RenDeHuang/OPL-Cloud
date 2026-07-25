@@ -190,6 +190,71 @@ func TestMultiWorkspacePaginationMigrationIsAdditiveAndIdempotent(t *testing.T) 
 	}
 }
 
+func TestControlPlaneCapacityIndexesMigrationIsAdditiveAndIdempotent(t *testing.T) {
+	raw, err := os.ReadFile("202607250001_control_plane_capacity_indexes.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlText := string(raw)
+	for _, required := range []string{
+		"ADD COLUMN IF NOT EXISTS period_start TEXT NOT NULL DEFAULT ''",
+		"control_plane_sessions_user_id_key",
+		"control_plane_runtime_operations_action_status_key",
+		"control_plane_runtime_operations_account_action_status_key",
+		"control_plane_runtime_operations_workspace_action_status_period_key",
+		"control_plane_workspaces_renewal_candidates_key",
+	} {
+		if !strings.Contains(sqlText, required) {
+			t.Fatalf("capacity migration missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"DROP ", "TRUNCATE ", "UPDATE ", "DELETE "} {
+		if strings.Contains(strings.ToUpper(sqlText), forbidden) {
+			t.Fatalf("capacity migration contains destructive statement %q", forbidden)
+		}
+	}
+
+	databaseURL := requiredIdentityTestDatabaseURL(t)
+	admin, err := sql.Open("postgres", databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = admin.Close() })
+	schema := fmt.Sprintf("control_plane_capacity_indexes_%d", time.Now().UnixNano())
+	if _, err := admin.Exec(`CREATE SCHEMA ` + schema); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = admin.Exec(`DROP SCHEMA ` + schema + ` CASCADE`) })
+	db, err := sql.Open("postgres", postgresURLWithSearchPath(databaseURL, schema))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if _, err := db.Exec(`
+		CREATE TABLE control_plane_sessions (id TEXT PRIMARY KEY, user_id TEXT NOT NULL);
+		CREATE TABLE control_plane_runtime_operations (
+			id TEXT PRIMARY KEY, account_id TEXT NOT NULL DEFAULT '', workspace_id TEXT NOT NULL DEFAULT '',
+			action TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT '', created_at TIMESTAMPTZ NOT NULL
+		);
+		CREATE TABLE control_plane_workspaces (
+			id TEXT PRIMARY KEY, customer_product BOOLEAN NOT NULL DEFAULT TRUE,
+			billing_state_json TEXT NOT NULL DEFAULT '{}'
+		);
+		INSERT INTO control_plane_runtime_operations (id, created_at) VALUES ('op-existing', now());
+	`); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if _, err := db.Exec(sqlText); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var periodStart string
+	if err := db.QueryRow(`SELECT period_start FROM control_plane_runtime_operations WHERE id = 'op-existing'`).Scan(&periodStart); err != nil || periodStart != "" {
+		t.Fatalf("existing operation periodStart=%q err=%v", periodStart, err)
+	}
+}
+
 func (d *recordingDriver) Tx(context.Context) (dialect.Tx, error) {
 	return dialect.NopTx(d), nil
 }

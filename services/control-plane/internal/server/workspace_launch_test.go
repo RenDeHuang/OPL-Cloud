@@ -755,19 +755,20 @@ func (s *durableWorkspaceLaunchSub2API) UsageStats(context.Context, clients.Sub2
 	return clients.Sub2APIUsageStats{}, nil
 }
 
-func (s *durableWorkspaceLaunchSub2API) FinancialBalanceHistoryScan(_ context.Context, userID int64) ([]clients.Sub2APIBalanceHistoryEntry, error) {
+func (s *durableWorkspaceLaunchSub2API) FinancialBalanceHistoryByCodes(_ context.Context, userID int64, codes []string) (map[string]clients.Sub2APIBalanceHistoryEntry, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	usedAt := time.Date(2026, 7, 19, 12, 0, 0, 0, time.UTC)
-	rows := make([]clients.Sub2APIBalanceHistoryEntry, 0, len(s.appliedCharges))
+	matches := make(map[string]clients.Sub2APIBalanceHistoryEntry)
 	for _, input := range s.appliedCharges {
-		usedBy := userID
-		rows = append(rows, clients.Sub2APIBalanceHistoryEntry{
-			Code: input.Code, Type: "balance", ValueUSDMicros: -input.ChargeUSDMicros, Status: "used",
-			UsedBy: &usedBy, UsedAt: &usedAt, CreatedAt: usedAt,
-		})
+		for _, code := range codes {
+			if input.Code == code {
+				usedBy := userID
+				matches[code] = clients.Sub2APIBalanceHistoryEntry{Code: input.Code, Type: "balance", ValueUSDMicros: -input.ChargeUSDMicros, Status: "used", UsedBy: &usedBy, UsedAt: &usedAt, CreatedAt: usedAt}
+			}
+		}
 	}
-	return rows, nil
+	return matches, nil
 }
 
 type workspaceLaunchRouteBarrierStore struct {
@@ -800,17 +801,17 @@ func (s *workspaceLaunchSub2API) WorkspaceKey(ctx context.Context, userID int64)
 	return s.monthlySub2API.WorkspaceKey(ctx, userID)
 }
 
-func (s *workspaceLaunchSub2API) WorkspaceKeysForConvergence(_ context.Context, userID int64) ([]clients.Sub2APIWorkspaceKey, error) {
+func (s *workspaceLaunchSub2API) WorkspaceKeysForConvergence(_ context.Context, userID int64, name string) ([]clients.Sub2APIWorkspaceKey, error) {
 	keys := make([]clients.Sub2APIWorkspaceKey, 0, len(s.keys))
 	for _, key := range s.keys {
-		if key.UserID == userID {
+		if key.UserID == userID && key.Name == name {
 			keys = append(keys, key)
 		}
 	}
 	return keys, nil
 }
 
-func (s *workspaceLaunchSub2API) WorkspaceUserKeysForConvergence(_ context.Context, credential clients.SessionDelegatedCredential, userID int64) ([]clients.Sub2APIWorkspaceKey, error) {
+func (s *workspaceLaunchSub2API) WorkspaceUserKeysForConvergence(_ context.Context, credential clients.SessionDelegatedCredential, userID int64, name string) ([]clients.Sub2APIWorkspaceKey, error) {
 	*s.events = append(*s.events, "sub2api.user_keys")
 	if credential.Bearer != "test-user-delegated-token" {
 		return nil, errors.New("wrong delegated credential")
@@ -820,7 +821,7 @@ func (s *workspaceLaunchSub2API) WorkspaceUserKeysForConvergence(_ context.Conte
 	}
 	keys := make([]clients.Sub2APIWorkspaceKey, 0, len(s.keys))
 	for _, key := range s.keys {
-		if key.UserID == userID {
+		if key.UserID == userID && key.Name == name {
 			keys = append(keys, key)
 		}
 	}
@@ -868,17 +869,18 @@ func (s *workspaceLaunchSub2API) UsageStats(context.Context, clients.Sub2APIUsag
 	return clients.Sub2APIUsageStats{}, nil
 }
 
-func (s *workspaceLaunchSub2API) FinancialBalanceHistoryScan(_ context.Context, userID int64) ([]clients.Sub2APIBalanceHistoryEntry, error) {
+func (s *workspaceLaunchSub2API) FinancialBalanceHistoryByCodes(_ context.Context, userID int64, codes []string) (map[string]clients.Sub2APIBalanceHistoryEntry, error) {
 	usedAt := time.Date(2026, 7, 19, 12, 0, 0, 0, time.UTC)
-	rows := make([]clients.Sub2APIBalanceHistoryEntry, 0, len(s.charges))
+	matches := make(map[string]clients.Sub2APIBalanceHistoryEntry)
 	for _, charge := range s.charges {
-		usedBy := userID
-		rows = append(rows, clients.Sub2APIBalanceHistoryEntry{
-			Code: charge.Code, Type: "balance", ValueUSDMicros: -charge.ChargeUSDMicros, Status: "used",
-			UsedBy: &usedBy, UsedAt: &usedAt, CreatedAt: usedAt,
-		})
+		for _, code := range codes {
+			if charge.Code == code {
+				usedBy := userID
+				matches[code] = clients.Sub2APIBalanceHistoryEntry{Code: charge.Code, Type: "balance", ValueUSDMicros: -charge.ChargeUSDMicros, Status: "used", UsedBy: &usedBy, UsedAt: &usedAt, CreatedAt: usedAt}
+			}
+		}
 	}
-	return rows, nil
+	return matches, nil
 }
 
 type workspaceLaunchWorkerFixture struct {

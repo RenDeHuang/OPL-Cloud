@@ -470,11 +470,12 @@ func loginLocalE2EUser(t *testing.T, process *localE2EProcess, user *localE2EUse
 func localE2EWalletMicros(t *testing.T, api *localE2EAPI) int64 {
 	t.Helper()
 	data := localE2EData(t, localE2EMustRequest(t, api, http.MethodGet, "/api/gateway/wallet", nil, "", http.StatusOK), "wallet")
-	value := numberField(data, "usdMicros", -1)
-	if value < 0 || value != float64(int64(value)) {
+	raw := stringValue(data["usdMicros"])
+	value, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || value < 0 || strconv.FormatInt(value, 10) != raw {
 		t.Fatal("local E2E wallet returned an invalid amount")
 	}
-	return int64(value)
+	return value
 }
 
 func localE2EStringItems(t *testing.T, value any, label string) []string {
@@ -584,11 +585,12 @@ func runLocalE2EFullFlow(t *testing.T, process *localE2EProcess, adminEmail, adm
 	if balance := localE2EWalletMicros(t, owner); balance != 60_000_000 {
 		t.Fatalf("local E2E replay balance=%d, want 60000000", balance)
 	}
-	history, err := sub2API.FinancialBalanceHistoryScan(context.Background(), user.sub2APIUser)
+	rechargeCode := walletAdjustmentRedeemCode(operationID)
+	history, err := sub2API.FinancialBalanceHistoryByCodes(context.Background(), user.sub2APIUser, []string{rechargeCode})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if countLocalE2EHistory(history, walletAdjustmentRedeemCode(operationID), 60_000_000) != 1 {
+	if !localE2EHistoryMatches(history, rechargeCode, 60_000_000) {
 		t.Fatal("local E2E concurrent recharge did not produce exactly one authoritative funds effect")
 	}
 
@@ -705,11 +707,11 @@ func runLocalE2EFullFlow(t *testing.T, process *localE2EProcess, adminEmail, adm
 	if balance := localE2EWalletMicros(t, owner); balance != 7_420_000 {
 		t.Fatalf("local E2E post-Basic balance=%d, want 7420000", balance)
 	}
-	history, err = sub2API.FinancialBalanceHistoryScan(context.Background(), user.sub2APIUser)
+	history, err = sub2API.FinancialBalanceHistoryByCodes(context.Background(), user.sub2APIUser, []string{operation.RedeemCode})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if countLocalE2EHistory(history, operation.RedeemCode, -52_580_000) != 1 {
+	if !localE2EHistoryMatches(history, operation.RedeemCode, -52_580_000) {
 		t.Fatal("local E2E Basic did not produce exactly one authoritative debit")
 	}
 
@@ -753,8 +755,22 @@ func runLocalE2EFullFlow(t *testing.T, process *localE2EProcess, adminEmail, adm
 		t.Fatal("operator Workspace detail does not expose the authoritative purchase receipt")
 	}
 	resources, ok := operatorWorkspace["resources"].([]any)
-	if !ok || len(resources) != 3 {
-		t.Fatal("operator Workspace detail does not expose Fabric resources")
+	if !ok || len(resources) != 4 {
+		t.Fatalf("operator Workspace detail Fabric resource count=%d, want 4", len(resources))
+	}
+	resourceKinds := map[string]int{}
+	for _, raw := range resources {
+		resource := localE2EMap(t, raw, "operator Workspace resource")
+		resourceType := localE2EMap(t, resource["resourceType"], "operator Workspace resource type")
+		if resourceType["source"] != "fabric" || resourceType["available"] != true {
+			t.Fatalf("operator Workspace resource is not authoritative Fabric data: %#v", resourceType)
+		}
+		resourceKinds[stringValue(resourceType["data"])]++
+	}
+	for _, kind := range []string{"compute", "storage", "attachment", "runtime"} {
+		if resourceKinds[kind] != 1 {
+			t.Fatalf("operator Workspace Fabric resources=%#v", resourceKinds)
+		}
 	}
 	health := localE2EData(t, localE2EMustRequest(t, admin, http.MethodGet, "/api/operator/health", nil, "", http.StatusOK), "operator health")
 	for _, source := range []string{"gateway", "fabric", "ledger"} {
@@ -787,14 +803,9 @@ func runLocalE2EFullFlow(t *testing.T, process *localE2EProcess, adminEmail, adm
 	}
 }
 
-func countLocalE2EHistory(history []clients.Sub2APIBalanceHistoryEntry, code string, amount int64) int {
-	count := 0
-	for _, entry := range history {
-		if entry.Code == code && entry.Type == "balance" && entry.Status == "used" && entry.ValueUSDMicros == amount && entry.UsedAt != nil {
-			count++
-		}
-	}
-	return count
+func localE2EHistoryMatches(history map[string]clients.Sub2APIBalanceHistoryEntry, code string, amount int64) bool {
+	entry, found := history[code]
+	return found && entry.Code == code && entry.Type == "balance" && entry.Status == "used" && entry.ValueUSDMicros == amount && entry.UsedAt != nil
 }
 
 func localE2EWorkspaceLaunch(t *testing.T, store StateStore, operationID string) workspaceLaunchOperation {
@@ -825,6 +836,103 @@ func configureLocalE2EFabric(fabric *monthlyFabric, operation workspaceLaunchOpe
 		ProviderRequestID: "req-" + operation.StorageID, SizeGB: operation.StorageGB, CBSStatus: "UNATTACHED",
 		DiskType: "CLOUD_PREMIUM", RenewFlag: "NOTIFY_AND_MANUAL_RENEW", Deadline: "2099-01-01T00:00:00Z",
 		Zone: "ap-shanghai-2", ProviderData: map[string]string{"chargeType": "PREPAID"},
+	}
+}
+
+func (f *monthlyFabric) CreateStorageAttachment(ctx context.Context, input clients.StorageAttachmentInput, key string) (clients.StorageAttachment, error) {
+	attachment, err := f.fakeFabricClient.CreateStorageAttachment(ctx, input, key)
+	if err == nil {
+		f.attachment = attachment
+	}
+	return attachment, err
+}
+
+func (f *monthlyFabric) ProviderFactsBatch(ctx context.Context, input clients.ProviderFactsBatchInput) (clients.ProviderFactsBatch, error) {
+	if len(input.Items) == 0 || len(input.Items) > 50 {
+		return clients.ProviderFactsBatch{}, errors.New("provider_facts_batch_invalid")
+	}
+	result := clients.ProviderFactsBatch{Items: make([]clients.ProviderFact, len(input.Items))}
+	for index, item := range input.Items {
+		fact := clients.ProviderFact{
+			AccountID: item.AccountID, WorkspaceID: item.WorkspaceID, ResourceType: item.ResourceType, ResourceID: item.ResourceID,
+		}
+		valid := false
+		switch item.ResourceType {
+		case "compute":
+			resource := f.computeSync
+			valid = resource.ID == item.ResourceID && resource.AccountID == item.AccountID && resource.WorkspaceID == item.WorkspaceID
+			fact.Facts = clients.ProviderResourceFacts{
+				PackageOrSpec: resource.InstanceType, ProviderID: resource.ProviderResourceID, Zone: resource.Zone,
+				Status: resource.Status, ExpiresAt: resource.Deadline, LastReadAt: time.Now().UTC().Format(time.RFC3339Nano),
+			}
+		case "storage":
+			resource := f.storageSync
+			valid = resource.ID == item.ResourceID && resource.AccountID == item.AccountID && resource.WorkspaceID == item.WorkspaceID
+			fact.Facts = clients.ProviderResourceFacts{
+				PackageOrSpec: resource.DiskType, ProviderID: resource.ProviderResourceID, Zone: resource.Zone,
+				Status: resource.Status, ExpiresAt: resource.Deadline, LastReadAt: time.Now().UTC().Format(time.RFC3339Nano),
+			}
+		case "attachment":
+			resource := f.attachment
+			valid = resource.ID == item.ResourceID && resource.WorkspaceID == item.WorkspaceID &&
+				f.computeSync.AccountID == item.AccountID && f.storageSync.AccountID == item.AccountID
+			fact.Facts = clients.ProviderResourceFacts{
+				PackageOrSpec: resource.MountPath, ProviderID: resource.ProviderAttachmentID,
+				Status: resource.Status, LastReadAt: time.Now().UTC().Format(time.RFC3339Nano),
+			}
+		case "runtime":
+			resource, err := f.WorkspaceRuntimeStatus(ctx, item.WorkspaceID)
+			valid = err == nil && resource.ID == item.ResourceID && resource.WorkspaceID == item.WorkspaceID && f.computeSync.AccountID == item.AccountID
+			fact.Facts = clients.ProviderResourceFacts{
+				ProviderID: resource.ServiceName, Status: resource.Status, LastReadAt: time.Now().UTC().Format(time.RFC3339Nano),
+			}
+		}
+		if valid {
+			fact.Available = true
+		} else {
+			fact.Facts = clients.ProviderResourceFacts{}
+			fact.ErrorCode = "provider_fact_identity_mismatch"
+		}
+		result.Items[index] = fact
+	}
+	return result, nil
+}
+
+func TestLocalE2EFabricProviderFactsExposeWorkspaceResources(t *testing.T) {
+	events := []string{}
+	fabric := &monthlyFabric{fakeFabricClient: fakeFabricClient{calls: &events}, events: &events}
+	operation := workspaceLaunchOperation{
+		AccountID: "acct-local", WorkspaceID: "workspace-local", PackageID: "basic", StorageGB: 10,
+		ComputeID: "compute-local", StorageID: "storage-local", AttachmentID: "attachment-local", RuntimeID: "runtime-local",
+	}
+	configureLocalE2EFabric(fabric, operation)
+	fabric.attachment = clients.StorageAttachment{
+		ID: operation.AttachmentID, WorkspaceID: operation.WorkspaceID, ComputeID: operation.ComputeID, VolumeID: operation.StorageID,
+		Status: "attached", ProviderAttachmentID: "deployment/runtime:pvc/storage:/data", MountPath: "/data",
+	}
+	fabric.runtime = clients.WorkspaceRuntime{
+		ID: operation.RuntimeID, WorkspaceID: operation.WorkspaceID, ServiceName: "runtime-local", Status: "running", Ready: true,
+	}
+
+	reader, ok := any(fabric).(clients.FabricProviderFactsClient)
+	if !ok {
+		t.Fatal("local E2E Fabric does not implement provider facts readback")
+	}
+	inputs := []clients.ProviderFactInput{
+		{AccountID: operation.AccountID, WorkspaceID: operation.WorkspaceID, ResourceType: "compute", ResourceID: operation.ComputeID},
+		{AccountID: operation.AccountID, WorkspaceID: operation.WorkspaceID, ResourceType: "storage", ResourceID: operation.StorageID},
+		{AccountID: operation.AccountID, WorkspaceID: operation.WorkspaceID, ResourceType: "attachment", ResourceID: operation.AttachmentID},
+		{AccountID: operation.AccountID, WorkspaceID: operation.WorkspaceID, ResourceType: "runtime", ResourceID: operation.RuntimeID},
+	}
+	batch, err := reader.ProviderFactsBatch(context.Background(), clients.ProviderFactsBatchInput{Items: inputs})
+	if err != nil || len(batch.Items) != len(inputs) {
+		t.Fatalf("local E2E provider facts count=%d err=%v", len(batch.Items), err)
+	}
+	for index, fact := range batch.Items {
+		want := inputs[index]
+		if !fact.Available || fact.AccountID != want.AccountID || fact.WorkspaceID != want.WorkspaceID || fact.ResourceType != want.ResourceType || fact.ResourceID != want.ResourceID {
+			t.Fatalf("local E2E provider fact %d = %#v, want %#v", index, fact, want)
+		}
 	}
 }
 
@@ -959,8 +1067,8 @@ func recoverLocalE2EWalletFault(t *testing.T, admin *localE2EAPI, evidence local
 	if err != nil || balance.USDMicros != 60_000_000 {
 		t.Fatalf("local E2E recovered wallet balance=%d err=%v", balance.USDMicros, err)
 	}
-	history, err := sub2API.FinancialBalanceHistoryScan(context.Background(), evidence.user.sub2APIUser)
-	if err != nil || countLocalE2EHistory(history, evidence.code, 60_000_000) != 1 {
+	history, err := sub2API.FinancialBalanceHistoryByCodes(context.Background(), evidence.user.sub2APIUser, []string{evidence.code})
+	if err != nil || !localE2EHistoryMatches(history, evidence.code, 60_000_000) {
 		t.Fatal("local E2E recovery did not reuse the original stable redeem identity exactly once")
 	}
 }

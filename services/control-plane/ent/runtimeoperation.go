@@ -27,6 +27,8 @@ type RuntimeOperation struct {
 	AccountID string `json:"account_id,omitempty"`
 	// WorkspaceID holds the value of the "workspace_id" field.
 	WorkspaceID string `json:"workspace_id,omitempty"`
+	// PeriodStart holds the value of the "period_start" field.
+	PeriodStart string `json:"period_start,omitempty"`
 	// ResourceID holds the value of the "resource_id" field.
 	ResourceID string `json:"resource_id,omitempty"`
 	// ResourceKind holds the value of the "resource_kind" field.
@@ -65,7 +67,7 @@ func (*RuntimeOperation) scanValues(columns []string) ([]any, error) {
 	values := make([]any, len(columns))
 	for i := range columns {
 		switch columns[i] {
-		case runtimeoperation.FieldID, runtimeoperation.FieldOperationID, runtimeoperation.FieldAccountID, runtimeoperation.FieldWorkspaceID, runtimeoperation.FieldResourceID, runtimeoperation.FieldResourceKind, runtimeoperation.FieldAction, runtimeoperation.FieldProvider, runtimeoperation.FieldProviderRequestID, runtimeoperation.FieldStatus, runtimeoperation.FieldResult, runtimeoperation.FieldComputeAllocationID, runtimeoperation.FieldStorageID, runtimeoperation.FieldAttachmentID, runtimeoperation.FieldRuntimeServiceName, runtimeoperation.FieldCvmInstanceID, runtimeoperation.FieldInstanceID, runtimeoperation.FieldNodeName, runtimeoperation.FieldMachineName:
+		case runtimeoperation.FieldID, runtimeoperation.FieldOperationID, runtimeoperation.FieldAccountID, runtimeoperation.FieldWorkspaceID, runtimeoperation.FieldPeriodStart, runtimeoperation.FieldResourceID, runtimeoperation.FieldResourceKind, runtimeoperation.FieldAction, runtimeoperation.FieldProvider, runtimeoperation.FieldProviderRequestID, runtimeoperation.FieldStatus, runtimeoperation.FieldResult, runtimeoperation.FieldComputeAllocationID, runtimeoperation.FieldStorageID, runtimeoperation.FieldAttachmentID, runtimeoperation.FieldRuntimeServiceName, runtimeoperation.FieldCvmInstanceID, runtimeoperation.FieldInstanceID, runtimeoperation.FieldNodeName, runtimeoperation.FieldMachineName:
 			values[i] = new(sql.NullString)
 		case runtimeoperation.FieldCreatedAt, runtimeoperation.FieldUpdatedAt:
 			values[i] = new(sql.NullTime)
@@ -119,6 +121,12 @@ func (ro *RuntimeOperation) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field workspace_id", values[i])
 			} else if value.Valid {
 				ro.WorkspaceID = value.String
+			}
+		case runtimeoperation.FieldPeriodStart:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field period_start", values[i])
+			} else if value.Valid {
+				ro.PeriodStart = value.String
 			}
 		case runtimeoperation.FieldResourceID:
 			if value, ok := values[i].(*sql.NullString); !ok {
@@ -260,6 +268,9 @@ func (ro *RuntimeOperation) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("workspace_id=")
 	builder.WriteString(ro.WorkspaceID)
+	builder.WriteString(", ")
+	builder.WriteString("period_start=")
+	builder.WriteString(ro.PeriodStart)
 	builder.WriteString(", ")
 	builder.WriteString("resource_id=")
 	builder.WriteString(ro.ResourceID)

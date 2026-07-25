@@ -72,36 +72,34 @@ func (s *Service) Sub2APIWorkspaceKey(ctx context.Context, userID int64) (client
 	return client.WorkspaceKey(ctx, userID)
 }
 
-func (s *Service) WorkspaceKeysForConvergence(ctx context.Context, userID int64) ([]clients.Sub2APIWorkspaceKey, error) {
+func (s *Service) WorkspaceKeysForConvergence(ctx context.Context, userID int64, name string) ([]clients.Sub2APIWorkspaceKey, error) {
 	client, ok := s.sub2API.(clients.Sub2APIWorkspaceKeyConvergenceClient)
 	if !ok {
 		return nil, errors.New("sub2api_workspace_key_convergence_unavailable")
 	}
-	return client.WorkspaceKeysForConvergence(ctx, userID)
+	return client.WorkspaceKeysForConvergence(ctx, userID, name)
 }
 
-func (s *Service) WorkspaceKeyByIDForConvergence(ctx context.Context, userID, keyID int64) (clients.Sub2APIWorkspaceKey, error) {
-	if userID <= 0 || keyID <= 0 {
+func (s *Service) WorkspaceKeyByIDForConvergence(ctx context.Context, userID, keyID int64, name string) (clients.Sub2APIWorkspaceKey, error) {
+	if userID <= 0 || keyID <= 0 || strings.TrimSpace(name) == "" {
 		return clients.Sub2APIWorkspaceKey{}, clients.ErrSub2APIWorkspaceKeyMissing
 	}
-	keys, err := s.WorkspaceKeysForConvergence(ctx, userID)
+	keys, err := s.WorkspaceKeysForConvergence(ctx, userID, name)
 	if err != nil {
 		return clients.Sub2APIWorkspaceKey{}, err
 	}
-	for _, key := range keys {
-		if key.ID == keyID && key.UserID == userID {
-			return key, nil
-		}
+	if len(keys) == 1 && keys[0].ID == keyID && keys[0].UserID == userID && keys[0].Name == name {
+		return keys[0], nil
 	}
 	return clients.Sub2APIWorkspaceKey{}, clients.ErrSub2APIWorkspaceKeyMissing
 }
 
-func (s *Service) GatewayWorkspaceKeysForConvergence(ctx context.Context, credential clients.SessionDelegatedCredential, userID int64) ([]clients.Sub2APIWorkspaceKey, error) {
+func (s *Service) GatewayWorkspaceKeysForConvergence(ctx context.Context, credential clients.SessionDelegatedCredential, userID int64, name string) ([]clients.Sub2APIWorkspaceKey, error) {
 	client, ok := s.sub2API.(clients.Sub2APIWorkspaceUserKeyConvergenceClient)
 	if !ok {
 		return nil, errors.New("sub2api_workspace_key_convergence_unavailable")
 	}
-	return client.WorkspaceUserKeysForConvergence(ctx, credential, userID)
+	return client.WorkspaceUserKeysForConvergence(ctx, credential, userID, name)
 }
 
 func (s *Service) GatewayUserKeyPage(ctx context.Context, credential clients.SessionDelegatedCredential, userID int64, query clients.Sub2APIKeyPageQuery) (clients.Sub2APIKeyPage, error) {
@@ -285,12 +283,12 @@ func (s *Service) GatewayBalanceHistoryPage(ctx context.Context, userID int64, q
 	return client.BalanceHistoryPage(ctx, userID, query)
 }
 
-func (s *Service) FinancialBalanceHistoryScan(ctx context.Context, userID int64) ([]clients.Sub2APIBalanceHistoryEntry, error) {
-	client, ok := s.sub2API.(clients.Sub2APIFinancialBalanceHistoryClient)
+func (s *Service) FinancialBalanceHistoryByCodes(ctx context.Context, userID int64, codes []string) (map[string]clients.Sub2APIBalanceHistoryEntry, error) {
+	client, ok := s.sub2API.(clients.Sub2APIFinancialBalanceHistoryLookupClient)
 	if !ok {
 		return nil, errors.New("sub2api_balance_history_unavailable")
 	}
-	return client.FinancialBalanceHistoryScan(ctx, userID)
+	return client.FinancialBalanceHistoryByCodes(ctx, userID, codes)
 }
 
 func (s *Service) AdminUserKeyCount(ctx context.Context, userID int64) (int, error) {
@@ -341,6 +339,21 @@ func (s *Service) ProviderFactsBatch(ctx context.Context, input clients.Provider
 		return clients.ProviderFactsBatch{}, errors.New("fabric_provider_facts_unavailable")
 	}
 	return client.ProviderFactsBatch(ctx, input)
+}
+
+func (s *Service) RuntimeHealthSummary(ctx context.Context) (clients.RuntimeHealthSummary, error) {
+	client, ok := s.fabric.(clients.FabricRuntimeHealthClient)
+	if !ok {
+		return clients.RuntimeHealthSummary{}, errors.New("fabric_runtime_health_summary_unavailable")
+	}
+	summary, err := client.RuntimeHealthSummary(ctx)
+	if err != nil {
+		return clients.RuntimeHealthSummary{}, err
+	}
+	if summary.Total < 0 || summary.Ready < 0 || summary.Unready < 0 || summary.Ready+summary.Unready != summary.Total {
+		return clients.RuntimeHealthSummary{}, errors.New("fabric_runtime_health_summary_invalid")
+	}
+	return summary, nil
 }
 
 func (s *Service) FabricCatalog(ctx context.Context) (clients.FabricCatalog, error) {
@@ -449,7 +462,7 @@ func (s *Service) gatewaySecretRefByID(ctx context.Context, accountID, workspace
 }
 
 func (s *Service) SyncWorkspaceGatewaySecretByID(ctx context.Context, accountID, workspaceID string, userID, keyID int64, keyName, idempotencyKey string) (clients.GatewaySecretWriteResult, error) {
-	key, err := s.WorkspaceKeyByIDForConvergence(ctx, userID, keyID)
+	key, err := s.WorkspaceKeyByIDForConvergence(ctx, userID, keyID, keyName)
 	if err != nil {
 		return clients.GatewaySecretWriteResult{}, err
 	}

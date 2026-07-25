@@ -328,6 +328,7 @@ func newWorkspaceRenewalWorkerFixture(t *testing.T, balances []int64) workspaceR
 		"id": workspaceID, "accountId": "acct-monthly", "ownerAccountId": "acct-monthly", "ownerUserId": ownerID,
 		"state": "running", "status": "running", "currentComputeAllocationId": computeID, "storageId": storageID,
 		"currentAttachmentId": "attachment-workspace-monthly", "attachmentId": "attachment-workspace-monthly",
+		"workspaceApiKeyId": int64(9),
 	}, billing)
 	mustStore(t, app.tables.SaveWorkspace(context.Background(), workspace))
 	fabric.computeRenew = clients.ComputeAllocation{
@@ -1261,28 +1262,32 @@ func (s *workspaceAdjustmentHistorySub2API) UsageStats(context.Context, clients.
 	return clients.Sub2APIUsageStats{}, nil
 }
 
-func (s *workspaceAdjustmentHistorySub2API) FinancialBalanceHistoryScan(context.Context, int64) ([]clients.Sub2APIBalanceHistoryEntry, error) {
+func (s *workspaceAdjustmentHistorySub2API) FinancialBalanceHistoryByCodes(_ context.Context, _ int64, codes []string) (map[string]clients.Sub2APIBalanceHistoryEntry, error) {
 	s.historyCalls++
 	if s.historyErr != nil {
 		return nil, s.historyErr
 	}
 	usedBy := int64(41)
 	usedAt := time.Date(2026, 8, 30, 9, 30, 0, 0, time.UTC)
-	entries := make([]clients.Sub2APIBalanceHistoryEntry, 0, len(s.charges)+len(s.refunds))
+	matches := make(map[string]clients.Sub2APIBalanceHistoryEntry)
 	for _, charge := range s.charges {
-		entries = append(entries, clients.Sub2APIBalanceHistoryEntry{
-			Code: charge.Code, Type: "balance", ValueUSDMicros: -charge.ChargeUSDMicros, Status: "used", UsedBy: &usedBy, UsedAt: &usedAt, CreatedAt: usedAt,
-		})
+		for _, code := range codes {
+			if charge.Code == code {
+				matches[code] = clients.Sub2APIBalanceHistoryEntry{Code: charge.Code, Type: "balance", ValueUSDMicros: -charge.ChargeUSDMicros, Status: "used", UsedBy: &usedBy, UsedAt: &usedAt, CreatedAt: usedAt}
+			}
+		}
 	}
 	for _, refund := range s.refunds {
 		if s.omitRefundHistory {
 			continue
 		}
-		entries = append(entries, clients.Sub2APIBalanceHistoryEntry{
-			Code: refund.Code, Type: "balance", ValueUSDMicros: refund.RefundUSDMicros, Status: "used", UsedBy: &usedBy, UsedAt: &usedAt, CreatedAt: usedAt,
-		})
+		for _, code := range codes {
+			if refund.Code == code {
+				matches[code] = clients.Sub2APIBalanceHistoryEntry{Code: refund.Code, Type: "balance", ValueUSDMicros: refund.RefundUSDMicros, Status: "used", UsedBy: &usedBy, UsedAt: &usedAt, CreatedAt: usedAt}
+			}
+		}
 	}
-	return entries, nil
+	return matches, nil
 }
 
 func TestWorkspaceRenewalRetriesStableRefundCodeWhenAttemptHistoryMissing(t *testing.T) {
@@ -1316,7 +1321,7 @@ func TestWorkspaceRenewalRefundPendingDefersExpiryCleanup(t *testing.T) {
 		t.Fatalf("initial refund err=%v", err)
 	}
 	for attempt := range 2 {
-		if err := fixture.app.runMonthlyBillingOnce(context.Background(), fixture.service, fixture.paidThrough.Add(time.Duration(attempt)*time.Second)); !errors.Is(err, clients.ErrSub2APIChargeUnknown) {
+		if err := fixture.app.runMonthlyBillingOnce(context.Background(), fixture.service, fixture.paidThrough.Add(time.Duration(attempt)*time.Second)); err == nil || !strings.Contains(err.Error(), "balance history unavailable") {
 			t.Fatalf("expired retry %d err=%v", attempt, err)
 		}
 	}
@@ -1328,7 +1333,7 @@ func TestWorkspaceRenewalRefundPendingDefersExpiryCleanup(t *testing.T) {
 	events := strings.Join(*fixture.events, ",")
 	if workspace["state"] != "suspended" || workspace["status"] != "suspended" || workspace["currentComputeAllocationId"] != fixture.compute["id"] ||
 		operation.Status != "refund_pending" || operation.Phase != "refund" || operation.ExpiryStatus != "past_due" || operation.ExpiryPhase != "financial" ||
-		strings.Contains(events, "fabric.compute.cleanup") || strings.Contains(events, "fabric.storage.cleanup") {
+		len(fixture.sub2API.refunds) != 1 || strings.Contains(events, "fabric.compute.cleanup") || strings.Contains(events, "fabric.storage.cleanup") {
 		t.Fatalf("refund-pending expiry workspace=%#v operation=%#v events=%#v", workspace, operation, *fixture.events)
 	}
 	for _, receipt := range fixture.ledger.receipts {

@@ -138,6 +138,38 @@ func TestTencentProviderReadinessRequiresExpectedImagesOnEveryReadyPod(t *testin
 	}
 }
 
+func TestTencentProviderRuntimeHealthSummaryUsesOneAggregateRead(t *testing.T) {
+	provider := NewTencentProvider()
+	calls := 0
+	provider.kubectl = func(_ context.Context, args []string, _ []byte) ([]byte, error) {
+		calls++
+		if !slices.Equal(args, []string{"get", "deployment,pod", "-l", "oplcloud.cn/workspace-id", "-o", "json"}) {
+			t.Fatalf("kubectl args = %#v", args)
+		}
+		return mustJSON(map[string]any{"kind": "List", "items": []any{
+			map[string]any{"kind": "Deployment", "metadata": map[string]any{"labels": map[string]any{"oplcloud.cn/workspace-id": "ws-ready"}}, "status": map[string]any{"readyReplicas": 1, "availableReplicas": 1}},
+			map[string]any{"kind": "Pod", "metadata": map[string]any{"labels": map[string]any{"oplcloud.cn/workspace-id": "ws-ready"}}, "status": map[string]any{"phase": "Running", "conditions": []any{map[string]any{"type": "Ready", "status": "True"}}}},
+			map[string]any{"kind": "Deployment", "metadata": map[string]any{"labels": map[string]any{"oplcloud.cn/workspace-id": "ws-unready"}}, "status": map[string]any{"readyReplicas": 0, "availableReplicas": 0}},
+			map[string]any{"kind": "Pod", "metadata": map[string]any{"labels": map[string]any{"oplcloud.cn/workspace-id": "ws-unready"}}, "status": map[string]any{"phase": "Pending"}},
+		}}), nil
+	}
+
+	summary, err := provider.RuntimeHealthSummary(context.Background())
+	if err != nil || summary.Total != 2 || summary.Ready != 1 || summary.Unready != 1 || calls != 1 {
+		t.Fatalf("summary=%#v err=%v calls=%d", summary, err, calls)
+	}
+}
+
+func TestTencentProviderRuntimeHealthSummaryFailsClosedOnInvalidList(t *testing.T) {
+	for _, payload := range [][]byte{[]byte("not-json"), []byte(`{"kind":"Deployment"}`)} {
+		provider := NewTencentProvider()
+		provider.kubectl = func(context.Context, []string, []byte) ([]byte, error) { return payload, nil }
+		if summary, err := provider.RuntimeHealthSummary(context.Background()); err == nil {
+			t.Fatalf("invalid payload returned summary=%#v", summary)
+		}
+	}
+}
+
 func TestTencentProviderMonthlyPreflightRequiresLiveMutationFlag(t *testing.T) {
 	for _, value := range []string{"", "0", "true"} {
 		t.Run(fmt.Sprintf("value_%q", value), func(t *testing.T) {

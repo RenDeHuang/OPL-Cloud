@@ -25,6 +25,8 @@ import (
 	"opl-cloud/services/control-plane/ent/announcementread"
 	"opl-cloud/services/control-plane/ent/billingreconciliation"
 	"opl-cloud/services/control-plane/ent/computeallocation"
+	"opl-cloud/services/control-plane/ent/membership"
+	"opl-cloud/services/control-plane/ent/organization"
 	"opl-cloud/services/control-plane/ent/productione2erecord"
 	"opl-cloud/services/control-plane/ent/runtimeoperation"
 	"opl-cloud/services/control-plane/ent/session"
@@ -129,6 +131,9 @@ func newPostgresEntStateStore(databaseURL string) (StateStore, error) {
 		}},
 		{Version: "202607240001_multi_workspace_pagination", Run: func(ctx context.Context) error {
 			return controlplanemigrations.ApplyMultiWorkspacePagination(ctx, driver)
+		}},
+		{Version: "202607250001_control_plane_capacity_indexes", Run: func(ctx context.Context) error {
+			return controlplanemigrations.ApplyControlPlaneCapacityIndexes(ctx, driver)
 		}},
 	}); err != nil {
 		_ = client.Close()
@@ -845,6 +850,7 @@ var (
 		textField("OperationID", "SetOperationID", "operationId"),
 		textField("AccountID", "SetAccountID", "accountId"),
 		textField("WorkspaceID", "SetWorkspaceID", "workspaceId"),
+		textField("PeriodStart", "SetPeriodStart", "periodStart"),
 		textField("ResourceID", "SetResourceID", "resourceId"),
 		textField("ResourceKind", "SetResourceKind", "resourceKind"),
 		textField("Action", "SetAction", "action"),
@@ -969,6 +975,25 @@ func (s *postgresEntStateStore) GetUser(ctx context.Context, id string) (map[str
 	return recordFromEnt(entity, userEntFields), true, nil
 }
 
+func (s *postgresEntStateStore) GetUserByEmail(ctx context.Context, email string, includeDeleted bool) (map[string]any, bool, error) {
+	email, err := canonicalEmail(email)
+	if err != nil {
+		return nil, false, err
+	}
+	query := s.client.User.Query().Where(user.Email(email))
+	if !includeDeleted {
+		query = query.Where(user.StatusNEQ("deleted"))
+	}
+	entity, err := query.Only(ctx)
+	if controlplaneent.IsNotFound(err) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return recordFromEnt(entity, userEntFields), true, nil
+}
+
 func (s *postgresEntStateStore) SaveUser(ctx context.Context, row map[string]any) error {
 	operator := stringValue(row["id"]) == "usr-admin" && stringValue(row["accountId"]) == "acct-admin" && normalizeEmail(stringValue(row["email"])) == "admin@medopl.cn" && stringValue(row["role"]) == "admin"
 	if stringValue(row["role"]) != "owner" && !operator {
@@ -987,6 +1012,21 @@ func (s *postgresEntStateStore) DeleteUser(ctx context.Context, id string) error
 
 func (s *postgresEntStateStore) ListSessions(ctx context.Context) (controlPlaneRecordSet, error) {
 	return loadRecordSet(ctx, s.client.Session.Query().All, sessionEntFields)
+}
+
+func (s *postgresEntStateStore) GetSession(ctx context.Context, id string) (map[string]any, bool, error) {
+	entity, err := s.client.Session.Get(ctx, id)
+	if controlplaneent.IsNotFound(err) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return recordFromEnt(entity, sessionEntFields), true, nil
+}
+
+func (s *postgresEntStateStore) ListSessionsByUser(ctx context.Context, userID string) (controlPlaneRecordSet, error) {
+	return loadRecordSet(ctx, s.client.Session.Query().Where(session.UserID(userID)).All, sessionEntFields)
 }
 
 func (s *postgresEntStateStore) SaveSession(ctx context.Context, row map[string]any) error {
@@ -1040,6 +1080,25 @@ func (s *postgresEntStateStore) PageAccounts(ctx context.Context, page tablePage
 	items, err := filteredRecords(rows, "")
 	sort.Slice(items, func(i, j int) bool { return stringValue(items[i]["id"]) < stringValue(items[j]["id"]) })
 	return tablePage{Items: items, Total: total}, err
+}
+
+func (s *postgresEntStateStore) CountAccountStatuses(ctx context.Context) (map[string]int, error) {
+	var groups []struct {
+		Status string `json:"status"`
+		Count  int    `json:"count"`
+	}
+	err := s.client.Account.Query().
+		GroupBy(account.FieldStatus).
+		Aggregate(controlplaneent.As(controlplaneent.Count(), "count")).
+		Scan(ctx, &groups)
+	if err != nil {
+		return nil, err
+	}
+	counts := make(map[string]int, len(groups))
+	for _, group := range groups {
+		counts[group.Status] = group.Count
+	}
+	return counts, nil
 }
 
 func (s *postgresEntStateStore) SaveAccount(ctx context.Context, row map[string]any) error {
@@ -1308,6 +1367,17 @@ func (s *postgresEntStateStore) ListOrganizations(ctx context.Context) ([]map[st
 	return filteredRecords(rows, "")
 }
 
+func (s *postgresEntStateStore) GetOrganizationByAccount(ctx context.Context, accountID string) (map[string]any, bool, error) {
+	entity, err := s.client.Organization.Query().Where(organization.BillingAccountID(accountID)).Only(ctx)
+	if controlplaneent.IsNotFound(err) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return recordFromEnt(entity, organizationEntFields), true, nil
+}
+
 func (s *postgresEntStateStore) SaveOrganization(ctx context.Context, row map[string]any) error {
 	tx, err := s.client.Tx(ctx)
 	if err != nil {
@@ -1334,6 +1404,17 @@ func (s *postgresEntStateStore) ListMemberships(ctx context.Context) ([]map[stri
 		return nil, err
 	}
 	return filteredRecords(rows, "")
+}
+
+func (s *postgresEntStateStore) GetMembershipByAccount(ctx context.Context, accountID string) (map[string]any, bool, error) {
+	entity, err := s.client.Membership.Query().Where(membership.AccountID(accountID)).Only(ctx)
+	if controlplaneent.IsNotFound(err) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return recordFromEnt(entity, membershipEntFields), true, nil
 }
 
 func (s *postgresEntStateStore) SaveMembership(ctx context.Context, row map[string]any) error {
@@ -1596,6 +1677,10 @@ func (s *postgresEntStateStore) PageWorkspaces(ctx context.Context, accountID st
 	items, err := filteredRecords(rows, accountID)
 	sort.Slice(items, func(i, j int) bool { return stringValue(items[i]["id"]) < stringValue(items[j]["id"]) })
 	return tablePage{Items: items, Total: total}, err
+}
+
+func (s *postgresEntStateStore) CountWorkspaces(ctx context.Context) (int, error) {
+	return s.client.Workspace.Query().Count(ctx)
 }
 
 func (s *postgresEntStateStore) CountWorkspacesByAccount(ctx context.Context, accountIDs []string) (map[string]int, error) {
@@ -2345,6 +2430,48 @@ func (s *postgresEntStateStore) SaveSupportMapping(ctx context.Context, row map[
 func (s *postgresEntStateStore) ListRuntimeOperations(ctx context.Context) ([]map[string]any, error) {
 	rows, err := loadEventRows(ctx, s.client.RuntimeOperation.Query().Order(controlplaneent.Asc(runtimeoperation.FieldCreatedAt, runtimeoperation.FieldID)).All, runtimeOpEntFields)
 	return rows, err
+}
+
+func (s *postgresEntStateStore) GetRuntimeOperation(ctx context.Context, id string) (map[string]any, bool, error) {
+	entity, err := s.client.RuntimeOperation.Get(ctx, id)
+	if controlplaneent.IsNotFound(err) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return recordFromEnt(entity, runtimeOpEntFields), true, nil
+}
+
+func (s *postgresEntStateStore) PageRuntimeOperations(ctx context.Context, page runtimeOperationQuery) (tablePage, error) {
+	query := s.client.RuntimeOperation.Query()
+	if page.AccountID != "" {
+		query.Where(runtimeoperation.AccountIDEQ(page.AccountID))
+	}
+	if page.WorkspaceID != "" {
+		query.Where(runtimeoperation.WorkspaceIDEQ(page.WorkspaceID))
+	}
+	if page.Action != "" {
+		query.Where(runtimeoperation.ActionEQ(page.Action))
+	}
+	if len(page.Statuses) > 0 {
+		query.Where(runtimeoperation.StatusIn(page.Statuses...))
+	}
+	if len(page.ExcludedStatuses) > 0 {
+		query.Where(runtimeoperation.StatusNotIn(page.ExcludedStatuses...))
+	}
+	if page.PeriodStart != "" {
+		query.Where(runtimeoperation.PeriodStartEQ(page.PeriodStart))
+	}
+	total, err := query.Clone().Count(ctx)
+	if err != nil {
+		return tablePage{}, err
+	}
+	rows, err := loadEventRows(ctx, query.Order(controlplaneent.Asc(runtimeoperation.FieldCreatedAt, runtimeoperation.FieldID)).Offset(page.Offset).Limit(page.Limit).All, runtimeOpEntFields)
+	if err != nil {
+		return tablePage{}, err
+	}
+	return tablePage{Items: rows, Total: total}, nil
 }
 
 func (s *postgresEntStateStore) SaveRuntimeOperation(ctx context.Context, row map[string]any) error {

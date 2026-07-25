@@ -3,15 +3,13 @@
   "owner": "OPL Platform Architecture",
   "purpose": "Freeze the approved Pilot products, delegated Gateway key lifecycle, one charge per Workspace period, prepaid Tencent fulfillment, Runtime facts, operator workflows, announcements, and evidence levels without claiming unfinished implementation or runtime evidence.",
   "state": "current",
-  "machineBoundary": "Six product surfaces including OPL Serve planned_not_in_launch, four implementation owner lanes, two customer products, ten launch stages, six delivery phases, and two paused production verification slots.",
+  "machineBoundary": "Six product surfaces including OPL Serve planned_not_in_launch, four implementation owner lanes, two customer products, ten launch stages, and two paused production verification slots.",
   "lifecycle": {
     "type": "long_term_contract",
     "removalCondition": "Replace only with a newer approved launch freeze and matching contract tests."
   },
   "pilotCohort": {
     "mode": "operator_provisioned",
-    "minimumCustomerAccounts": 2,
-    "maximumCustomerAccounts": 5,
     "publicRegistration": false
   },
   "customerFunding": {
@@ -317,11 +315,14 @@
         "upstreamPagesPerRequest": 1
       },
       "financialVerification": {
-        "method": "FinancialBalanceHistoryScan",
+        "method": "FinancialBalanceHistoryByCodes",
         "allowedCallers": ["charge_confirmation", "refund_confirmation", "wallet_adjustment_recovery", "reconciliation"],
-        "pageSize": 1000,
-        "maxPages": 10,
-        "maxItems": 10000
+        "pageSize": 100,
+        "lookup": "target_redeem_codes_only",
+        "stopWhen": "all_targets_found",
+        "missingTarget": "scan_to_authoritative_last_page",
+        "materialization": "matched_entries_only",
+        "totalHistoryLimit": null
       }
     },
     "workspaceKeyConvergenceRead": {
@@ -450,14 +451,6 @@
     "productionSmoke": "Read-only service and existing-resource checks; no monthly charge and no provider mutation.",
     "currentImplementation": "Dual Provider Acceptance and fixed-slot verification code remain available but are paused and do not gate the Basic rollout. The normal Console Basic canary is separate and has not run for the current candidate."
   },
-  "deliveryPhases": [
-    { "id": "contract_cleanup", "ownerSession": "main" },
-    { "id": "fabric_prepaid_workspace", "ownerSession": "fabric" },
-    { "id": "gateway_account_projection", "ownerSession": "gateway_commercial" },
-    { "id": "commercial_plans_settlement", "ownerSession": "gateway_commercial" },
-    { "id": "console_ux_release_safety", "ownerSession": "ux_release" },
-    { "id": "integration_real_verification_rollout", "ownerSession": "main" }
-  ],
   "launchStages": [
     {
       "id": "offer_identity",
@@ -501,15 +494,15 @@
     },
     {
       "id": "workspace_access",
-      "business": "The customer authenticates to a ready Workspace backed by owned compute, CBS, and an account-scoped Gateway Secret.",
+      "business": "The customer authenticates to a ready Workspace backed by owned compute, CBS, and a Workspace-scoped Gateway Secret.",
       "owners": ["console", "fabric", "ledger"],
-      "currentState": "V2 attachment, account Secret, Runtime readiness gating, activation, receipt-only recovery, non-secret status, and credential flows have local focused evidence on the non-review path. Runtime metadata/statfs API and Console presentation are paused outside this release; immutable image, browser, WebSocket, live model, direct mount-marker persistence, and deployed evidence remain pending.",
+      "currentState": "V2 attachment, Workspace Secret, Runtime readiness gating, activation, receipt-only recovery, non-secret status, and credential flows have local focused evidence on the non-review path. Runtime metadata/statfs API and Console presentation are paused outside this release; immutable image, browser, WebSocket, live model, direct mount-marker persistence, and deployed evidence remain pending.",
       "requiredDeliverables": ["runtime readiness", "password login", "owner-only Runtime credential reveal and rotation", "static CBS mounts", "secret rotation", "immutable image"],
       "completionEvidence": ["owner isolation tests", "post-login assertion", "WebSocket 101", "Secret fingerprint", "credential revision readback", "image digest readback"]
     },
     {
       "id": "gateway_usage",
-      "business": "The owner can reveal the account's opl-workspace Key, make a metered Workspace model request, and inspect its customer-safe cost and Token facts.",
+      "business": "The owner can reveal the Workspace's reserved Key, make a metered Workspace model request, and inspect its customer-safe cost and Token facts.",
       "owners": ["gateway", "console", "ledger"],
       "currentState": "Wallet, Key list/status, request-level Usage, Usage Stats, balance history, and customer-safe integer-cost projections are code-complete and locally tested; a real model request and production readback remain pending.",
       "requiredDeliverables": ["single active Key selection", "owner-only reveal", "Secret handoff", "request usage list", "aggregate usage stats", "customer-safe integer money projection"],
