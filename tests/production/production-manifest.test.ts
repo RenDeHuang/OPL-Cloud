@@ -6,14 +6,23 @@ import { validateProductionManifest } from "../../services/control-plane/ops/pro
 
 const cloudImage = `registry.example.com/opl/opl-cloud@sha256:${"a".repeat(64)}`;
 const workspaceImage = `registry.example.com/opl/one-person-lab-app@sha256:${"b".repeat(64)}`;
+const dedicatedNodePoolEnv = {
+  OPL_SYSTEM_COMPUTE_NODE_POOL_ID: { value: "np-system" },
+  OPL_SYSTEM_COMPUTE_MACHINE_ID: { value: "machine-system" },
+  OPL_SYSTEM_COMPUTE_NODE_NAME: { value: "10.66.0.42" },
+  OPL_SYSTEM_COMPUTE_CVM_ID: { value: "ins-system" },
+  OPL_BASIC_COMPUTE_NODE_POOL_ID: { value: "np-basic" },
+  OPL_PRO_COMPUTE_NODE_POOL_ID: { value: "np-pro" },
+  OPL_BASIC_COMPUTE_NODE_POOL_MAX_REPLICAS: { value: "20" },
+  OPL_PRO_COMPUTE_NODE_POOL_MAX_REPLICAS: { value: "8" }
+};
 
 test("ordinary production manifest omits Acceptance and browser Gateway configuration", async () => {
   const manifest = JSON.parse(await readFile("deploy/production-manifest.example.json", "utf8"));
   assert.equal(manifest.env.OPL_PROVIDER_ACCEPTANCE_TOKEN, undefined);
   assert.equal(manifest.env.OPL_GATEWAY_PUBLIC_BASE_URL, undefined);
   assert.equal(manifest.env.OPL_CODEX_BASE_URL, undefined);
-  assert.equal(manifest.env.OPL_BASIC_COMPUTE_NODE_POOL_ID, undefined);
-  assert.equal(manifest.env.OPL_PRO_COMPUTE_NODE_POOL_ID, undefined);
+  for (const key of Object.keys(dedicatedNodePoolEnv)) assert.ok(manifest.env[key], key);
   for (const key of ["OPL_VERIFY_MUTATION_APPROVAL_JSON", "OPL_VERIFY_MUTATION_APPROVAL_ID", "OPL_VERIFY_ALLOW_GATEWAY_WRITE", "OPL_VERIFY_ALLOW_MODEL_WRITE", "OPL_VERIFY_ALLOW_PROVIDER_WRITE"]) {
     assert.equal(Object.hasOwn(manifest.env, key), false);
   }
@@ -35,6 +44,7 @@ test("production manifest requires deployment secret refs for every launch varia
       OPL_IMAGE_PULL_SECRET_NAME: { value: "tcr-pull-secret" },
       OPL_WORKSPACE_STORAGE_CLASS: { value: "cbs" },
       OPL_TENCENT_ZONE: { value: "na-siliconvalley-1" },
+      ...dedicatedNodePoolEnv,
       TENCENT_DEPLOY_KUBECONFIG_REF: { secretRef: "opl-cloud/tencent-deploy-kubeconfig-ref" },
       TENCENT_DEPLOY_CLUSTER_ID: { value: "cls-123" },
       TENCENT_TCR_REGISTRY: { value: "registry.example.com" },
@@ -51,6 +61,8 @@ test("production manifest requires deployment secret refs for every launch varia
     "secret_refs:true",
     "runtime_provider:true",
     "verification_mutation_authority:true",
+    "dedicated_node_pool_identity:true",
+    "dedicated_node_pool_capacity:true",
     "registry_images:true",
     "workspace_domain:true"
   ]);
@@ -72,6 +84,7 @@ test("production manifest validates Tencent TKE fields only", () => {
       OPL_IMAGE_PULL_SECRET_NAME: { value: "tcr-pull-secret" },
       OPL_WORKSPACE_STORAGE_CLASS: { value: "cbs" },
       OPL_TENCENT_ZONE: { value: "na-siliconvalley-1" },
+      ...dedicatedNodePoolEnv,
       TENCENT_DEPLOY_KUBECONFIG_REF: { secretRef: "opl-cloud/tencent-deploy-kubeconfig-ref" },
       TENCENT_DEPLOY_CLUSTER_ID: { value: "cls-123" },
       TENCENT_TCR_REGISTRY: { value: "registry.example.com" },
@@ -88,6 +101,8 @@ test("production manifest validates Tencent TKE fields only", () => {
     "secret_refs:true",
     "runtime_provider:true",
     "verification_mutation_authority:true",
+    "dedicated_node_pool_identity:true",
+    "dedicated_node_pool_capacity:true",
     "registry_images:true",
     "workspace_domain:true"
   ]);
@@ -99,6 +114,23 @@ test("ordinary production manifests reject real-verification mutation authority"
     const report = validateProductionManifest({ env: { ...manifest.env, [key]: { value: "present" } } });
     assert.equal(report.ok, false, key);
     assert.ok(report.failedChecks.includes("verification_mutation_authority"), key);
+  }
+});
+
+test("production manifest rejects protected identity conflicts and implicit NodePool capacity", () => {
+  const manifest = {
+    OPL_RUNTIME_PROVIDER: { value: "tencent-tke" },
+    ...dedicatedNodePoolEnv
+  };
+  for (const [key, value, failedCheck] of [
+    ["OPL_SYSTEM_COMPUTE_CVM_ID", "system-cvm", "dedicated_node_pool_identity"],
+    ["OPL_BASIC_COMPUTE_NODE_POOL_ID", "np-system", "dedicated_node_pool_identity"],
+    ["OPL_PRO_COMPUTE_NODE_POOL_ID", "np-basic", "dedicated_node_pool_identity"],
+    ["OPL_BASIC_COMPUTE_NODE_POOL_MAX_REPLICAS", "0", "dedicated_node_pool_capacity"],
+    ["OPL_PRO_COMPUTE_NODE_POOL_MAX_REPLICAS", "10.5", "dedicated_node_pool_capacity"]
+  ]) {
+    const report = validateProductionManifest({ env: { ...manifest, [key]: { value } } });
+    assert.ok(report.failedChecks.includes(failedCheck), `${key}:${JSON.stringify(report.checks)}`);
   }
 });
 
@@ -153,6 +185,7 @@ test("production manifest rejects empty container image tags", () => {
       OPL_IMAGE_PULL_SECRET_NAME: { value: "tcr-pull-secret" },
       OPL_WORKSPACE_STORAGE_CLASS: { value: "cbs" },
       OPL_TENCENT_ZONE: { value: "na-siliconvalley-1" },
+      ...dedicatedNodePoolEnv,
       TENCENT_DEPLOY_KUBECONFIG_REF: { secretRef: "opl-cloud/tencent-deploy-kubeconfig-ref" },
       TENCENT_DEPLOY_CLUSTER_ID: { value: "cls-123" },
       TENCENT_TCR_REGISTRY: { value: "registry.example.com" },
@@ -185,6 +218,7 @@ test("production manifest rejects latest and every tag-only production image", (
         OPL_IMAGE_PULL_SECRET_NAME: { value: "tcr-pull-secret" },
         OPL_WORKSPACE_STORAGE_CLASS: { value: "cbs" },
         OPL_TENCENT_ZONE: { value: "na-siliconvalley-1" },
+        ...dedicatedNodePoolEnv,
         TENCENT_DEPLOY_KUBECONFIG_REF: { secretRef: "opl-cloud/tencent-deploy-kubeconfig-ref" },
         TENCENT_DEPLOY_CLUSTER_ID: { value: "cls-123" },
         TENCENT_TCR_REGISTRY: { value: "registry.example.com" },

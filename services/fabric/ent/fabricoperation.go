@@ -47,6 +47,12 @@ type FabricOperation struct {
 	ErrorCode string `json:"error_code,omitempty"`
 	// Retryable holds the value of the "retryable" field.
 	Retryable bool `json:"retryable,omitempty"`
+	// ComputePoolKey holds the value of the "compute_pool_key" field.
+	ComputePoolKey string `json:"compute_pool_key,omitempty"`
+	// ComputePoolLeaseOwner holds the value of the "compute_pool_lease_owner" field.
+	ComputePoolLeaseOwner string `json:"compute_pool_lease_owner,omitempty"`
+	// ComputePoolLeaseExpiresAt holds the value of the "compute_pool_lease_expires_at" field.
+	ComputePoolLeaseExpiresAt *time.Time `json:"compute_pool_lease_expires_at,omitempty"`
 	// StartedAt holds the value of the "started_at" field.
 	StartedAt time.Time `json:"started_at,omitempty"`
 	// FinishedAt holds the value of the "finished_at" field.
@@ -63,9 +69,9 @@ func (*FabricOperation) scanValues(columns []string) ([]any, error) {
 		switch columns[i] {
 		case fabricoperation.FieldRetryable:
 			values[i] = new(sql.NullBool)
-		case fabricoperation.FieldID, fabricoperation.FieldOperationID, fabricoperation.FieldCallerService, fabricoperation.FieldAction, fabricoperation.FieldResourceKind, fabricoperation.FieldResourceID, fabricoperation.FieldAccountID, fabricoperation.FieldWorkspaceID, fabricoperation.FieldProvider, fabricoperation.FieldProviderRequestID, fabricoperation.FieldIdempotencyKey, fabricoperation.FieldRequestHash, fabricoperation.FieldRedactedProviderPayload, fabricoperation.FieldStatus, fabricoperation.FieldErrorCode:
+		case fabricoperation.FieldID, fabricoperation.FieldOperationID, fabricoperation.FieldCallerService, fabricoperation.FieldAction, fabricoperation.FieldResourceKind, fabricoperation.FieldResourceID, fabricoperation.FieldAccountID, fabricoperation.FieldWorkspaceID, fabricoperation.FieldProvider, fabricoperation.FieldProviderRequestID, fabricoperation.FieldIdempotencyKey, fabricoperation.FieldRequestHash, fabricoperation.FieldRedactedProviderPayload, fabricoperation.FieldStatus, fabricoperation.FieldErrorCode, fabricoperation.FieldComputePoolKey, fabricoperation.FieldComputePoolLeaseOwner:
 			values[i] = new(sql.NullString)
-		case fabricoperation.FieldStartedAt, fabricoperation.FieldFinishedAt, fabricoperation.FieldCreatedAt:
+		case fabricoperation.FieldComputePoolLeaseExpiresAt, fabricoperation.FieldStartedAt, fabricoperation.FieldFinishedAt, fabricoperation.FieldCreatedAt:
 			values[i] = new(sql.NullTime)
 		default:
 			values[i] = new(sql.UnknownType)
@@ -178,6 +184,25 @@ func (fo *FabricOperation) assignValues(columns []string, values []any) error {
 			} else if value.Valid {
 				fo.Retryable = value.Bool
 			}
+		case fabricoperation.FieldComputePoolKey:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field compute_pool_key", values[i])
+			} else if value.Valid {
+				fo.ComputePoolKey = value.String
+			}
+		case fabricoperation.FieldComputePoolLeaseOwner:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field compute_pool_lease_owner", values[i])
+			} else if value.Valid {
+				fo.ComputePoolLeaseOwner = value.String
+			}
+		case fabricoperation.FieldComputePoolLeaseExpiresAt:
+			if value, ok := values[i].(*sql.NullTime); !ok {
+				return fmt.Errorf("unexpected type %T for field compute_pool_lease_expires_at", values[i])
+			} else if value.Valid {
+				fo.ComputePoolLeaseExpiresAt = new(time.Time)
+				*fo.ComputePoolLeaseExpiresAt = value.Time
+			}
 		case fabricoperation.FieldStartedAt:
 			if value, ok := values[i].(*sql.NullTime); !ok {
 				return fmt.Errorf("unexpected type %T for field started_at", values[i])
@@ -277,6 +302,17 @@ func (fo *FabricOperation) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("retryable=")
 	builder.WriteString(fmt.Sprintf("%v", fo.Retryable))
+	builder.WriteString(", ")
+	builder.WriteString("compute_pool_key=")
+	builder.WriteString(fo.ComputePoolKey)
+	builder.WriteString(", ")
+	builder.WriteString("compute_pool_lease_owner=")
+	builder.WriteString(fo.ComputePoolLeaseOwner)
+	builder.WriteString(", ")
+	if v := fo.ComputePoolLeaseExpiresAt; v != nil {
+		builder.WriteString("compute_pool_lease_expires_at=")
+		builder.WriteString(v.Format(time.ANSIC))
+	}
 	builder.WriteString(", ")
 	builder.WriteString("started_at=")
 	builder.WriteString(fo.StartedAt.Format(time.ANSIC))

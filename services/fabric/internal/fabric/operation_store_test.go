@@ -67,6 +67,56 @@ func TestMemoryOperationStoreReclaimRuntimeFencesOldOwner(t *testing.T) {
 	}
 }
 
+func TestMemoryOperationStoreComputePoolAdmissionIsFIFOAndFencesExpiredOwner(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemoryOperationStore()
+	createdAt := time.Date(2026, 7, 26, 1, 0, 0, 0, time.UTC)
+	first := newOperation("create_compute_allocation", "compute_allocation", "compute-first", "acct-alpha", "workspace-first", "compute-first", "hash-first", createdAt)
+	first.ID = "fop-compute-first"
+	first.Status = "started"
+	first.CreatedAt = createdAt
+	first.ComputePoolKey = "np-basic"
+	second := newOperation("create_compute_allocation", "compute_allocation", "compute-second", "acct-beta", "workspace-second", "compute-second", "hash-second", createdAt.Add(time.Second))
+	second.ID = "fop-compute-second"
+	second.Status = "started"
+	second.CreatedAt = createdAt.Add(time.Second)
+	second.ComputePoolKey = "np-basic"
+	for _, operation := range []FabricOperation{first, second} {
+		if _, claimed, err := store.ClaimComputePoolRuntime(ctx, operation); err != nil || !claimed {
+			t.Fatalf("seed compute operation %s: claimed=%v err=%v", operation.ID, claimed, err)
+		}
+	}
+
+	if queued, claimed, err := store.TryClaimComputePoolHead(ctx, second.ID, "np-basic", "lease-second", createdAt, createdAt.Add(time.Minute)); err != nil || claimed || queued.ID != first.ID {
+		t.Fatalf("non-head claim=%#v claimed=%v err=%v", queued, claimed, err)
+	}
+	firstOwner, claimed, err := store.TryClaimComputePoolHead(ctx, first.ID, "np-basic", "lease-first", createdAt, createdAt.Add(time.Minute))
+	if err != nil || !claimed || firstOwner.ComputePoolLeaseOwner != "lease-first" {
+		t.Fatalf("first head claim=%#v claimed=%v err=%v", firstOwner, claimed, err)
+	}
+	if current, claimed, err := store.TryClaimComputePoolHead(ctx, first.ID, "np-basic", "lease-other", createdAt.Add(30*time.Second), createdAt.Add(90*time.Second)); err != nil || claimed || current.ComputePoolLeaseOwner != "lease-first" {
+		t.Fatalf("live lease steal=%#v claimed=%v err=%v", current, claimed, err)
+	}
+	secondOwner, claimed, err := store.TryClaimComputePoolHead(ctx, first.ID, "np-basic", "lease-other", createdAt.Add(time.Minute), createdAt.Add(2*time.Minute))
+	if err != nil || !claimed || secondOwner.ComputePoolLeaseOwner != "lease-other" {
+		t.Fatalf("expired lease reclaim=%#v claimed=%v err=%v", secondOwner, claimed, err)
+	}
+
+	firstOwner.Status = "succeeded"
+	firstOwner.FinishedAt = createdAt.Add(70 * time.Second)
+	if err := store.SaveRuntime(ctx, firstOwner); !errors.Is(err, ErrRuntimeOperationNotCurrent) {
+		t.Fatalf("expired owner save error=%v, want ErrRuntimeOperationNotCurrent", err)
+	}
+	secondOwner.Status = "succeeded"
+	secondOwner.FinishedAt = createdAt.Add(80 * time.Second)
+	if err := store.SaveRuntime(ctx, secondOwner); err != nil {
+		t.Fatalf("current owner save: %v", err)
+	}
+	if queued, claimed, err := store.TryClaimComputePoolHead(ctx, second.ID, "np-basic", "lease-second", createdAt.Add(90*time.Second), createdAt.Add(3*time.Minute)); err != nil || !claimed || queued.ID != second.ID {
+		t.Fatalf("successor claim=%#v claimed=%v err=%v", queued, claimed, err)
+	}
+}
+
 func TestPostgresOperationSchemaDefinesFabricOperationsAuditTable(t *testing.T) {
 	schema := PostgresOperationSchemaSQL()
 	for _, marker := range []string{
@@ -79,6 +129,11 @@ func TestPostgresOperationSchemaDefinesFabricOperationsAuditTable(t *testing.T) 
 		"redacted_provider_payload TEXT NOT NULL DEFAULT '{}'",
 		"CREATE INDEX IF NOT EXISTS fabric_operations_resource_idx",
 		"CREATE UNIQUE INDEX IF NOT EXISTS fabric_operations_runtime_claim_idx",
+		"compute_pool_key TEXT NOT NULL DEFAULT ''",
+		"compute_pool_lease_owner TEXT NOT NULL DEFAULT ''",
+		"compute_pool_lease_expires_at TIMESTAMPTZ",
+		"CREATE INDEX IF NOT EXISTS fabric_operations_compute_pool_head_idx",
+		"CREATE UNIQUE INDEX IF NOT EXISTS fabric_operations_compute_claim_idx",
 	} {
 		if !strings.Contains(schema, marker) {
 			t.Fatalf("schema missing %q", marker)
@@ -100,6 +155,20 @@ func TestRuntimeClaimMigrationMatchesEmbeddedCopy(t *testing.T) {
 	}
 	if !bytes.Equal(formal, embedded) {
 		t.Fatal("formal and embedded runtime claim migrations differ")
+	}
+}
+
+func TestComputePoolAdmissionMigrationMatchesEmbeddedCopy(t *testing.T) {
+	formal, err := os.ReadFile("../../migrations/202607260001_compute_pool_admission.sql")
+	if err != nil {
+		t.Fatalf("read formal migration: %v", err)
+	}
+	embedded, err := os.ReadFile("ent_migrations/202607260001_compute_pool_admission.sql")
+	if err != nil {
+		t.Fatalf("read embedded migration: %v", err)
+	}
+	if !bytes.Equal(formal, embedded) {
+		t.Fatal("formal and embedded compute pool admission migrations differ")
 	}
 }
 

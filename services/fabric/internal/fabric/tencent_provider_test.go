@@ -14,7 +14,59 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"opl-cloud/services/fabric/internal/protectedresource"
 )
+
+func TestMain(m *testing.M) {
+	for key, value := range map[string]string{
+		"OPL_SYSTEM_COMPUTE_NODE_POOL_ID": "np-system",
+		"OPL_SYSTEM_COMPUTE_MACHINE_ID":   "machine-system",
+		"OPL_SYSTEM_COMPUTE_NODE_NAME":    "10.66.0.42",
+		"OPL_SYSTEM_COMPUTE_CVM_ID":       "ins-system",
+		"OPL_BASIC_COMPUTE_NODE_POOL_ID":  "np-basic",
+		"OPL_PRO_COMPUTE_NODE_POOL_ID":    "np-pro",
+	} {
+		_ = os.Setenv(key, value)
+	}
+	os.Exit(m.Run())
+}
+
+func setProtectedResourceEnv(t *testing.T) {
+	t.Helper()
+	for key, value := range map[string]string{
+		"OPL_SYSTEM_COMPUTE_NODE_POOL_ID": "np-system",
+		"OPL_SYSTEM_COMPUTE_MACHINE_ID":   "machine-system",
+		"OPL_SYSTEM_COMPUTE_NODE_NAME":    "10.66.0.42",
+		"OPL_SYSTEM_COMPUTE_CVM_ID":       "ins-system",
+		"OPL_BASIC_COMPUTE_NODE_POOL_ID":  "np-basic",
+		"OPL_PRO_COMPUTE_NODE_POOL_ID":    "np-pro",
+	} {
+		t.Setenv(key, value)
+	}
+}
+
+func TestKubernetesMutationRequiresProtectedResourceConfiguration(t *testing.T) {
+	for _, key := range []string{
+		"OPL_SYSTEM_COMPUTE_NODE_POOL_ID", "OPL_SYSTEM_COMPUTE_MACHINE_ID", "OPL_SYSTEM_COMPUTE_NODE_NAME",
+		"OPL_SYSTEM_COMPUTE_CVM_ID", "OPL_BASIC_COMPUTE_NODE_POOL_ID", "OPL_PRO_COMPUTE_NODE_POOL_ID",
+	} {
+		t.Setenv(key, "")
+	}
+	provider := NewTencentProvider()
+	calls := 0
+	provider.kubectl = func(_ context.Context, _ []string, _ []byte) ([]byte, error) {
+		calls++
+		return []byte(`{"items":[]}`), nil
+	}
+
+	if _, err := provider.callKubectl(context.Background(), []string{"apply", "-f", "-"}, []byte(`{}`), protectedresource.Target{}); err == nil || err.Error() != "protected_resource_guard_configuration_invalid" || calls != 0 {
+		t.Fatalf("mutation err=%v calls=%d", err, calls)
+	}
+	if _, err := provider.callKubectl(context.Background(), []string{"get", "pods", "-o", "json"}, nil, protectedresource.Target{}); err != nil || calls != 1 {
+		t.Fatalf("read-only err=%v calls=%d", err, calls)
+	}
+}
 
 func TestTKENodeSelectorPrefersClaimedNodeHostname(t *testing.T) {
 	withMachine := tkeNodeSelector(map[string]string{"machineName": "np-basic-2"}, "10.0.0.8")
@@ -191,7 +243,11 @@ func TestTencentProviderMonthlyPreflightRequiresLiveMutationFlag(t *testing.T) {
 	}
 }
 
-func TestTencentProviderMonthlyPreflightDiscoversExactlyOneLabeledPool(t *testing.T) {
+func TestTencentProviderMonthlyPreflightUsesExactConfiguredPackagePool(t *testing.T) {
+	t.Setenv("OPL_BASIC_COMPUTE_NODE_POOL_ID", "np-basic")
+	t.Setenv("OPL_PRO_COMPUTE_NODE_POOL_ID", "np-pro")
+	t.Setenv("OPL_BASIC_COMPUTE_NODE_POOL_MAX_REPLICAS", "40")
+	t.Setenv("OPL_PRO_COMPUTE_NODE_POOL_MAX_REPLICAS", "12")
 	for _, tc := range []struct {
 		name  string
 		input MonthlyPreflightInput
@@ -201,7 +257,7 @@ func TestTencentProviderMonthlyPreflightDiscoversExactlyOneLabeledPool(t *testin
 		{
 			name: "compute", input: MonthlyPreflightInput{ResourceType: "compute", PackageID: "basic", Zone: "na-siliconvalley-1"},
 			check: func(t *testing.T, request provisionerRequest) {
-				if request.Action != "capacity_preflight" || request.PackageID != "basic" || request.Zone != "na-siliconvalley-1" || request.Pool.ID != "pool-basic-2c4g" || request.Pool.NodePoolID != "" || request.Pool.InstanceType != "SA5.MEDIUM4" || request.Pool.DesiredReplicas != 1 {
+				if request.Action != "capacity_preflight" || request.PackageID != "basic" || request.Zone != "na-siliconvalley-1" || request.Pool.ID != "pool-basic-2c4g" || request.Pool.NodePoolID != "np-basic" || request.Pool.InstanceType != "SA5.MEDIUM4" || request.Pool.DesiredReplicas != 1 || request.Pool.MaxReplicas != 40 {
 					t.Fatalf("compute preflight request = %#v", request)
 				}
 			},
@@ -214,7 +270,7 @@ func TestTencentProviderMonthlyPreflightDiscoversExactlyOneLabeledPool(t *testin
 		{
 			name: "pro compute", input: MonthlyPreflightInput{ResourceType: "compute", PackageID: "pro", Zone: "na-siliconvalley-1"},
 			check: func(t *testing.T, request provisionerRequest) {
-				if request.Action != "capacity_preflight" || request.PackageID != "pro" || request.Zone != "na-siliconvalley-1" || request.Pool.ID != "pool-pro-8c16g" || request.Pool.NodePoolID != "" || request.Pool.InstanceType != "SA5.2XLARGE16" || request.Pool.DesiredReplicas != 1 {
+				if request.Action != "capacity_preflight" || request.PackageID != "pro" || request.Zone != "na-siliconvalley-1" || request.Pool.ID != "pool-pro-8c16g" || request.Pool.NodePoolID != "np-pro" || request.Pool.InstanceType != "SA5.2XLARGE16" || request.Pool.DesiredReplicas != 1 || request.Pool.MaxReplicas != 12 {
 					t.Fatalf("Pro compute preflight request = %#v", request)
 				}
 			},
@@ -261,28 +317,69 @@ func TestTencentProviderMonthlyPreflightDiscoversExactlyOneLabeledPool(t *testin
 	}
 }
 
-func TestTencentProviderMonthlyPreflightReportReturnsAllStagesAndMultipleFailures(t *testing.T) {
+func TestTencentProviderMonthlyComputePreflightFailsBeforeProvisionerWithoutPoolConfiguration(t *testing.T) {
+	t.Setenv("RUN_TENCENT_CREATE_RELEASE_EXECUTION", "1")
+	t.Setenv("OPL_BASIC_COMPUTE_NODE_POOL_ID", "")
+	t.Setenv("OPL_BASIC_COMPUTE_NODE_POOL_MAX_REPLICAS", "")
+	provider := NewTencentProvider()
+	provider.provision = func(context.Context, provisionerRequest) (provisionerResponse, error) {
+		t.Fatal("missing exact pool configuration reached provisioner")
+		return provisionerResponse{}, nil
+	}
+	if _, err := provider.MonthlyPreflight(context.Background(), MonthlyPreflightInput{ResourceType: "compute", PackageID: "basic", Zone: "na-siliconvalley-1"}); err == nil || err.Error() != "compute_node_pool_configuration_required" {
+		t.Fatalf("error=%v", err)
+	}
+}
+
+func TestTencentProviderPrepareComputeAllocationPersistsConfiguredPoolLimit(t *testing.T) {
+	t.Setenv("OPL_BASIC_COMPUTE_NODE_POOL_ID", "np-basic")
+	t.Setenv("OPL_PRO_COMPUTE_NODE_POOL_ID", "np-pro")
+	t.Setenv("OPL_BASIC_COMPUTE_NODE_POOL_MAX_REPLICAS", "40")
+	provider := NewTencentProvider()
+	provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
+		if request.Action != "prepare_compute_allocation" || request.Pool.NodePoolID != "np-basic" || request.Pool.MaxReplicas != 40 {
+			t.Fatalf("prepare request=%#v", request)
+		}
+		return provisionerResponse{OK: true, NodePoolID: "np-basic", CurrentReplicas: 2, TargetReplicas: 3, MaxReplicas: 40, Machines: []provisionerMachine{{MachineID: "machine-1"}, {MachineID: "machine-2"}}}, nil
+	}
+
+	prepared, err := provider.PrepareComputeAllocation(context.Background(), ComputeAllocationInput{ID: "compute-alpha", PackageID: "basic", NodePoolID: "np-basic"})
+	if err != nil || prepared.MaxReplicas != 40 || prepared.BaselineReplicas != 2 || prepared.TargetReplicas != 3 {
+		t.Fatalf("prepared=%#v err=%v", prepared, err)
+	}
+
+	if _, err := provider.PrepareComputeAllocation(context.Background(), ComputeAllocationInput{ID: "compute-alpha", PackageID: "basic", NodePoolID: "np-pro"}); err == nil || err.Error() != "compute_package_node_pool_mismatch" {
+		t.Fatalf("mismatched pool error=%v", err)
+	}
+}
+
+func TestTencentProviderMonthlyPreflightReportEvaluatesBasicAndPro(t *testing.T) {
 	t.Setenv("RUN_TENCENT_CREATE_RELEASE_EXECUTION", "1")
 	t.Setenv("TENCENTCLOUD_SECRET_ID", "configured")
 	t.Setenv("TENCENTCLOUD_SECRET_KEY", "configured")
 	t.Setenv("TENCENTCLOUD_REGION", "na-siliconvalley")
 	t.Setenv("TENCENT_DEPLOY_CLUSTER_ID", "cls-production")
+	t.Setenv("OPL_BASIC_COMPUTE_NODE_POOL_MAX_REPLICAS", "40")
+	t.Setenv("OPL_PRO_COMPUTE_NODE_POOL_MAX_REPLICAS", "20")
 	provider := NewTencentProvider()
+	calls := []string{}
 	provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
+		calls = append(calls, request.PackageID+":"+request.Action)
 		switch request.Action {
 		case "capacity_preflight":
+			instanceType := packagePlan(request.PackageID).InstanceType
 			return provisionerResponse{OK: false, ErrorCode: "tencent_capacity_node_pool_unavailable", PreflightStages: []MonthlyPreflightStage{
-				{Stage: "node_pool_discovery", Status: "failed", ErrorCode: "tencent_capacity_node_pool_unavailable", BlockedBy: []string{}, DurationMS: 2, SafeFacts: map[string]any{"matchCount": 0}},
+				{Stage: "node_pool_discovery", Status: "failed", ErrorCode: "tencent_capacity_node_pool_unavailable", BlockedBy: []string{}, DurationMS: 2, SafeFacts: map[string]any{"nodePoolId": request.Pool.NodePoolID, "matchCount": 0}},
 				{Stage: "node_pool_contract", Status: "blocked", ErrorCode: "preflight_dependency_blocked", BlockedBy: []string{"node_pool_discovery"}, DurationMS: 0, SafeFacts: map[string]any{}},
 				{Stage: "subnet", Status: "blocked", ErrorCode: "preflight_dependency_blocked", BlockedBy: []string{"node_pool_contract"}, DurationMS: 0, SafeFacts: map[string]any{}},
 				{Stage: "zone", Status: "blocked", ErrorCode: "preflight_dependency_blocked", BlockedBy: []string{"subnet"}, DurationMS: 0, SafeFacts: map[string]any{}},
 				{Stage: "cvm_prepaid_quota", Status: "failed", ErrorCode: "tencent_capacity_prepaid_quota_unavailable", BlockedBy: []string{}, DurationMS: 3, SafeFacts: map[string]any{"remainingQuota": 0}},
-				{Stage: "cvm_sku_price", Status: "passed", ErrorCode: "", BlockedBy: []string{}, DurationMS: 4, SafeFacts: map[string]any{"instanceType": "SA5.MEDIUM4", "providerPriceCny": 142.91}},
+				{Stage: "cvm_sku_price", Status: "passed", ErrorCode: "", BlockedBy: []string{}, DurationMS: 4, SafeFacts: map[string]any{"instanceType": instanceType, "providerPriceCny": 142.91}},
 			}}, nil
 		case "storage_preflight":
 			return provisionerResponse{OK: false, ErrorCode: "tencent_storage_price_unavailable", PreflightStages: []MonthlyPreflightStage{
-				{Stage: "cbs_prepaid_quota", Status: "passed", ErrorCode: "", BlockedBy: []string{}, DurationMS: 5, SafeFacts: map[string]any{"sizeGb": 10, "diskType": "CLOUD_BSSD"}},
-				{Stage: "cbs_price", Status: "failed", ErrorCode: "tencent_storage_price_unavailable", BlockedBy: []string{}, DurationMS: 6, SafeFacts: map[string]any{"sizeGb": 10}},
+				{Stage: "cbs_prepaid_quota", Status: "passed", ErrorCode: "", BlockedBy: []string{}, DurationMS: 5, SafeFacts: map[string]any{"sizeGb": request.Storage.SizeGB, "diskType": "CLOUD_BSSD"}},
+				{Stage: "cbs_price", Status: "failed", ErrorCode: "tencent_storage_price_unavailable", BlockedBy: []string{}, DurationMS: 6, SafeFacts: map[string]any{"sizeGb": request.Storage.SizeGB}},
 			}}, nil
 		default:
 			t.Fatalf("unexpected provisioner action %q", request.Action)
@@ -290,18 +387,42 @@ func TestTencentProviderMonthlyPreflightReportReturnsAllStagesAndMultipleFailure
 		}
 	}
 
-	report, err := provider.MonthlyPreflightReport(context.Background(), MonthlyPreflightReportInput{PackageID: "basic", SizeGB: 10, Zone: "na-siliconvalley-1"})
+	report, err := provider.MonthlyPreflightReport(context.Background(), MonthlyPreflightReportInput{Zone: "na-siliconvalley-1"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantStages := []string{"launch_permission", "credentials", "node_pool_discovery", "node_pool_contract", "subnet", "zone", "cvm_prepaid_quota", "cvm_sku_price", "cbs_prepaid_quota", "cbs_price"}
-	if report.Status != "failed" || report.Sub2APIMutationCount != 0 || report.TencentMutationCount != 0 || report.KubernetesMutationCount != 0 || len(report.Items) != len(wantStages) {
+	if report.Status != "failed" || report.Zone != "na-siliconvalley-1" || report.Sub2APIMutationCount != 0 || report.TencentMutationCount != 0 || report.KubernetesMutationCount != 0 {
 		t.Fatalf("report=%#v", report)
 	}
-	for index, item := range report.Items {
-		if item.Stage != wantStages[index] || item.Status == "" || item.BlockedBy == nil || item.SafeFacts == nil || item.DurationMS < 0 {
-			t.Fatalf("item[%d]=%#v", index, item)
+	var payload struct {
+		Items    []MonthlyPreflightStage `json:"items"`
+		Packages []struct {
+			PackageID string                  `json:"packageId"`
+			SizeGB    int                     `json:"sizeGb"`
+			Status    string                  `json:"status"`
+			Items     []MonthlyPreflightStage `json:"items"`
+		} `json:"packages"`
+	}
+	if err := json.Unmarshal(mustJSON(report), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.Items) != 2 || payload.Items[0].Stage != "launch_permission" || payload.Items[1].Stage != "credentials" || len(payload.Packages) != 2 {
+		t.Fatalf("payload=%#v", payload)
+	}
+	for index, packageReport := range payload.Packages {
+		wantPackage, wantSize := []string{"basic", "pro"}[index], []int{10, 100}[index]
+		if packageReport.PackageID != wantPackage || packageReport.SizeGB != wantSize || packageReport.Status != "failed" || len(packageReport.Items) != 8 {
+			t.Fatalf("package[%d]=%#v", index, packageReport)
 		}
+		for itemIndex, item := range packageReport.Items {
+			if item.Status == "" || item.BlockedBy == nil || item.SafeFacts == nil || item.DurationMS < 0 {
+				t.Fatalf("package[%d].item[%d]=%#v", index, itemIndex, item)
+			}
+		}
+	}
+	wantCalls := []string{"basic:capacity_preflight", "basic:storage_preflight", "pro:capacity_preflight", "pro:storage_preflight"}
+	if !reflect.DeepEqual(calls, wantCalls) {
+		t.Fatalf("calls=%#v want=%#v", calls, wantCalls)
 	}
 	encoded := string(mustJSON(report))
 	for _, forbidden := range []string{"configured", "cls-production", "providerRequestId", "providerRequestIds", "rawResponse", "wallet", "userData"} {
@@ -324,17 +445,16 @@ func TestTencentProviderMonthlyPreflightReportBlocksTencentChecksWithoutCredenti
 		return provisionerResponse{}, errors.New("must not call provisioner without credentials")
 	}
 
-	report, err := provider.MonthlyPreflightReport(context.Background(), MonthlyPreflightReportInput{PackageID: "basic", SizeGB: 10, Zone: "na-siliconvalley-1"})
-	if err != nil || calls != 0 || report.Status != "failed" || len(report.Items) != 10 {
+	report, err := provider.MonthlyPreflightReport(context.Background(), MonthlyPreflightReportInput{Zone: "na-siliconvalley-1"})
+	if err != nil || calls != 0 || report.Status != "failed" || len(report.Items) != 2 {
 		t.Fatalf("report=%#v err=%v calls=%d", report, err, calls)
 	}
 	if report.Items[0].Status != "passed" || report.Items[1].Stage != "credentials" || report.Items[1].Status != "failed" {
 		t.Fatalf("environment stages=%#v", report.Items[:2])
 	}
-	for _, item := range report.Items[2:] {
-		if item.Status != "blocked" || item.ErrorCode != "preflight_dependency_blocked" || !reflect.DeepEqual(item.BlockedBy, []string{"credentials"}) || len(item.SafeFacts) != 0 {
-			t.Fatalf("blocked item=%#v", item)
-		}
+	encoded := string(mustJSON(report))
+	if !strings.Contains(encoded, `"packageId":"basic"`) || !strings.Contains(encoded, `"packageId":"pro"`) || strings.Count(encoded, `"status":"blocked"`) != 16 {
+		t.Fatalf("blocked package reports=%s", encoded)
 	}
 }
 
@@ -500,6 +620,7 @@ func TestSyncComputeAllocationPreservesPaidIdentityWhenProviderReadbackFails(t *
 }
 
 func TestTencentTagComputeMachineWritesProviderIdentityBeforeNodeLabel(t *testing.T) {
+	setProtectedResourceEnv(t)
 	provider := NewTencentProvider()
 	var events []string
 	provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
@@ -510,16 +631,56 @@ func TestTencentTagComputeMachineWritesProviderIdentityBeforeNodeLabel(t *testin
 		return provisionerResponse{OK: true, Status: "tagged"}, nil
 	}
 	provider.kubectl = func(_ context.Context, args []string, _ []byte) ([]byte, error) {
-		events = append(events, "node")
-		if !slices.Equal(args, []string{"label", "node/node-alpha", "oplcloud.cn/resource-id=compute-alpha", "oplcloud.cn/account-id=acct-alpha", "oplcloud.cn/workspace-id=ws-alpha", "--overwrite"}) {
-			t.Fatalf("kubectl args = %#v", args)
+		switch args[0] {
+		case "label":
+			events = append(events, "label")
+			if !slices.Equal(args, []string{"label", "node/node-alpha", "medopl.cn/workload=workspace", "oplcloud.cn/resource-id=compute-alpha", "oplcloud.cn/account-id=acct-alpha", "oplcloud.cn/workspace-id=ws-alpha", "--overwrite"}) {
+				t.Fatalf("kubectl label args = %#v", args)
+			}
+		case "taint":
+			events = append(events, "taint")
+			if !slices.Equal(args, []string{"taint", "node/node-alpha", "oplcloud.cn/workspace-id=ws-alpha:NoSchedule", "--overwrite"}) {
+				t.Fatalf("kubectl taint args = %#v", args)
+			}
+		default:
+			t.Fatalf("unexpected kubectl args = %#v", args)
 		}
 		return nil, nil
 	}
 
-	err := provider.TagComputeMachine(context.Background(), ProviderMachine{MachineID: "machine-alpha", InstanceID: "ins-alpha", NodeName: "node-alpha", PrivateIP: "10.0.0.8"}, MachineOwnership{ResourceID: "compute-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", NodePoolID: "np-basic"})
-	if err != nil || !slices.Equal(events, []string{"provider", "node"}) {
+	err := provider.TagComputeMachine(context.Background(), ProviderMachine{MachineID: "machine-alpha", InstanceID: "ins-alpha", NodeName: "node-alpha", PrivateIP: "10.0.0.8"}, MachineOwnership{ResourceID: "compute-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", PackageID: "basic", NodePoolID: "np-basic"})
+	if err != nil || !slices.Equal(events, []string{"provider", "label", "taint"}) {
 		t.Fatalf("tag machine err=%v events=%#v", err, events)
+	}
+}
+
+func TestTencentTagComputeMachineRejectsProtectedSystemIdentityBeforeMutation(t *testing.T) {
+	setProtectedResourceEnv(t)
+	for _, test := range []struct {
+		name      string
+		machine   ProviderMachine
+		ownership MachineOwnership
+	}{
+		{name: "pool", machine: ProviderMachine{MachineID: "machine-alpha", InstanceID: "ins-alpha", NodeName: "node-alpha"}, ownership: MachineOwnership{PackageID: "basic", NodePoolID: "np-system"}},
+		{name: "machine", machine: ProviderMachine{MachineID: "machine-system", InstanceID: "ins-alpha", NodeName: "node-alpha"}, ownership: MachineOwnership{PackageID: "basic", NodePoolID: "np-basic"}},
+		{name: "node", machine: ProviderMachine{MachineID: "machine-alpha", InstanceID: "ins-alpha", NodeName: "10.66.0.42"}, ownership: MachineOwnership{PackageID: "basic", NodePoolID: "np-basic"}},
+		{name: "CVM", machine: ProviderMachine{MachineID: "machine-alpha", InstanceID: "ins-system", NodeName: "node-alpha"}, ownership: MachineOwnership{PackageID: "basic", NodePoolID: "np-basic"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			provider := NewTencentProvider()
+			provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
+				t.Fatalf("protected target reached Tencent: %#v", request)
+				return provisionerResponse{}, nil
+			}
+			provider.kubectl = func(_ context.Context, args []string, _ []byte) ([]byte, error) {
+				t.Fatalf("protected target reached Kubernetes: %#v", args)
+				return nil, nil
+			}
+			test.ownership.ResourceID, test.ownership.AccountID, test.ownership.WorkspaceID = "compute-alpha", "acct-alpha", "ws-alpha"
+			if err := provider.TagComputeMachine(context.Background(), test.machine, test.ownership); err == nil || err.Error() != "protected_system_resource" {
+				t.Fatalf("protected target error = %v", err)
+			}
+		})
 	}
 }
 
@@ -557,51 +718,6 @@ func TestDestroyExternallyDeletedComputeSkipsProviderMutation(t *testing.T) {
 	})
 	if err != nil || allocation.Status != "destroyed" || !kubectlCalled {
 		t.Fatalf("destroy externally deleted compute = %#v err=%v", allocation, err)
-	}
-}
-
-func TestDeleteComputeMachineForwardsOwnershipAndExactMachineIdentity(t *testing.T) {
-	provider := NewTencentProvider()
-	provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
-		if request.Action != "destroy_compute_allocation" || request.AccountID != "acct-alpha" || request.Pool.NodePoolID != "np-basic" ||
-			request.Allocation.ID != "compute-alpha" || request.Allocation.MachineName != "machine-alpha" ||
-			request.Allocation.InstanceID != "ins-alpha" || request.Allocation.NodeName != "node-alpha" || request.Allocation.PrivateIP != "10.0.0.8" {
-			t.Fatalf("destroy request lost ownership or machine identity: %#v", request)
-		}
-		return provisionerResponse{OK: true, Status: "destroyed"}, nil
-	}
-	err := provider.DeleteComputeMachine(context.Background(), ProviderMachine{
-		MachineID: "machine-alpha", InstanceID: "ins-alpha", NodeName: "node-alpha", PrivateIP: "10.0.0.8",
-	}, MachineOwnership{ResourceID: "compute-alpha", AccountID: "acct-alpha", NodePoolID: "np-basic"})
-	if err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestReconcileComputePoolPreservesRawMachineCount(t *testing.T) {
-	provider := NewTencentProvider()
-	provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
-		if request.Action != "reconcile_compute_pool" {
-			t.Fatalf("provider request = %#v", request)
-		}
-		return provisionerResponse{OK: true, ProviderData: map[string]string{"currentReplicas": "1"}}, nil
-	}
-
-	state, err := provider.ReconcileComputePool(context.Background(), ComputePoolDemand{PoolID: "basic", PackageID: "basic", DesiredReplicas: 0})
-	if err != nil || state.CurrentReplicas != 1 {
-		t.Fatalf("pool state = %#v err=%v", state, err)
-	}
-}
-
-func TestReconcileComputePoolPreservesDemandWhenProvisionerProcessFails(t *testing.T) {
-	provider := NewTencentProvider()
-	provider.provision = func(_ context.Context, _ provisionerRequest) (provisionerResponse, error) {
-		return provisionerResponse{}, errors.New("provisioner unavailable")
-	}
-
-	state, err := provider.ReconcileComputePool(context.Background(), ComputePoolDemand{PoolID: "basic", PackageID: "basic", NodePoolID: "np-basic", DesiredReplicas: 2})
-	if err == nil || state.PoolID != "basic" || state.NodePoolID != "np-basic" || state.DesiredReplicas != 2 {
-		t.Fatalf("pool state = %#v err=%v", state, err)
 	}
 }
 
@@ -683,9 +799,17 @@ func TestWorkspaceManifestIsolatesTenantRuntime(t *testing.T) {
 		nested(podSpec, "securityContext", "seccompProfile", "type") != "RuntimeDefault" {
 		t.Fatalf("workspace pod must use the RuntimeDefault seccomp profile: %#v", podSpec["securityContext"])
 	}
-	toleration := podSpec["tolerations"].([]any)[0].(map[string]any)
-	if toleration["key"] != "tke.cloud.tencent.com/eni-ip-unavailable" || toleration["effect"] != "NoSchedule" {
-		t.Fatalf("workspace pod must tolerate TKE ENI readiness taint: %#v", toleration)
+	tolerations := podSpec["tolerations"].([]any)
+	if len(tolerations) != 2 {
+		t.Fatalf("workspace pod must carry only ENI and exact Workspace tolerations: %#v", tolerations)
+	}
+	eniToleration := tolerations[0].(map[string]any)
+	if eniToleration["key"] != "tke.cloud.tencent.com/eni-ip-unavailable" || eniToleration["effect"] != "NoSchedule" {
+		t.Fatalf("workspace pod must tolerate TKE ENI readiness taint: %#v", eniToleration)
+	}
+	workspaceToleration := tolerations[1].(map[string]any)
+	if workspaceToleration["key"] != "oplcloud.cn/workspace-id" || workspaceToleration["operator"] != "Equal" || workspaceToleration["value"] != "ws-alpha" || workspaceToleration["effect"] != "NoSchedule" {
+		t.Fatalf("workspace pod must tolerate only its exact Workspace node taint: %#v", workspaceToleration)
 	}
 	container := podSpec["containers"].([]any)[0].(map[string]any)
 	containerSecurity, ok := container["securityContext"].(map[string]any)

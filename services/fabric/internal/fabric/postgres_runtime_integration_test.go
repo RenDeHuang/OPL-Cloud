@@ -373,6 +373,102 @@ func TestPostgresRuntimeClaimAcrossServiceInstances(t *testing.T) {
 	}
 }
 
+func TestPostgresComputePoolHeadSerializesDifferentWorkspacesAcrossServiceInstances(t *testing.T) {
+	databaseURL := fabricTestDatabaseURL(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	firstStore, err := newTestPostgresOperationStore(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer firstStore.client.Close()
+	secondStore, err := newTestPostgresOperationStore(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer secondStore.client.Close()
+
+	provider := newSerializedPoolProvider("workspace-alpha")
+	firstService := NewServiceWithOperationStore(provider, firstStore)
+	secondService := NewServiceWithOperationStore(provider, secondStore)
+	configureFastComputeAllocationPolling(firstService, 15*time.Millisecond)
+	configureFastComputeAllocationPolling(secondService, 100*time.Millisecond)
+	firstInput := ComputeAllocationInput{AccountID: "acct-alpha", WorkspaceID: "workspace-alpha", PackageID: "basic", NodePoolID: "np-basic", IdempotencyKey: "postgres-compute-alpha"}
+	secondInput := ComputeAllocationInput{AccountID: "acct-beta", WorkspaceID: "workspace-beta", PackageID: "basic", NodePoolID: "np-basic", IdempotencyKey: "postgres-compute-beta"}
+
+	first, err := firstService.CreateComputeAllocation(ctx, firstInput)
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-provider.firstHeadCall:
+	case <-ctx.Done():
+		t.Fatal("PostgreSQL head did not reach provider")
+	}
+	waitForComputeReconcileIdle(t, firstService, first.ID)
+	second, err := secondService.CreateComputeAllocation(ctx, secondInput)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForComputeReconcileIdle(t, secondService, second.ID)
+	if calls := provider.workspaceCalls("workspace-beta"); calls != 0 {
+		t.Fatalf("second PostgreSQL service bypassed persisted head: calls=%d", calls)
+	}
+	if calls := provider.workspacePrepareCalls("workspace-beta"); calls != 0 {
+		t.Fatalf("second PostgreSQL service prepared before persisted head: calls=%d", calls)
+	}
+
+	provider.allowHeadCompletion()
+	if _, err := secondService.CreateComputeAllocation(ctx, firstInput); err != nil {
+		t.Fatal(err)
+	}
+	waitForOperation(t, secondService, "create_compute_allocation", "compute_allocation", first.ID, "succeeded")
+	if _, err := firstService.CreateComputeAllocation(ctx, secondInput); err != nil {
+		t.Fatal(err)
+	}
+	waitForOperation(t, firstService, "create_compute_allocation", "compute_allocation", second.ID, "succeeded")
+	if targets, ambiguous := provider.allocationEvidence("np-basic"); !reflect.DeepEqual(targets, []int64{1, 2}) || ambiguous != 0 {
+		t.Fatalf("PostgreSQL scale targets=%v ambiguous=%d", targets, ambiguous)
+	}
+}
+
+func TestPostgresComputePoolLeaseUsesDatabaseClockAcrossServiceInstances(t *testing.T) {
+	databaseURL := fabricTestDatabaseURL(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	firstStore, err := newTestPostgresOperationStore(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer firstStore.client.Close()
+	secondStore, err := newTestPostgresOperationStore(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer secondStore.client.Close()
+
+	operation := newOperation("create_compute_allocation", "compute_allocation", "compute-clock-skew", "acct-alpha", "workspace-alpha", "compute-clock-skew", "hash-clock-skew", time.Now().UTC())
+	operation.ID = "fop_compute_claim_clock_skew"
+	operation.Status = "started"
+	operation.ComputePoolKey = "np-basic"
+	stored, claimed, err := firstStore.ClaimComputePoolRuntime(ctx, operation)
+	if err != nil || !claimed {
+		t.Fatalf("seed compute operation: claimed=%v err=%v", claimed, err)
+	}
+
+	skewedNow := time.Now().UTC().Add(-time.Hour)
+	if _, claimed, err := firstStore.TryClaimComputePoolHead(ctx, stored.ID, "np-basic", "lease-skewed", skewedNow, skewedNow.Add(time.Minute)); err != nil || !claimed {
+		t.Fatalf("first lease: claimed=%v err=%v", claimed, err)
+	}
+	current, claimed, err := secondStore.TryClaimComputePoolHead(ctx, stored.ID, "np-basic", "lease-current", time.Now().UTC(), time.Now().UTC().Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claimed || current.ComputePoolLeaseOwner != "lease-skewed" {
+		t.Fatalf("database lease was stolen because of process clock skew: claimed=%v current=%#v", claimed, current)
+	}
+}
+
 func TestPostgresDestroyRuntimeFailedRetryBindsWorkspaceAcrossServiceInstances(t *testing.T) {
 	databaseURL := fabricTestDatabaseURL(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -451,8 +547,8 @@ func TestPostgresOperationStoreRunsEmbeddedMigrationsOnce(t *testing.T) {
 	if err := db.QueryRow(`SELECT count(*) FROM opl_schema_migrations WHERE service = 'fabric'`).Scan(&migrationCount); err != nil {
 		t.Fatalf("read Fabric migration journal: %v", err)
 	}
-	if migrationCount != 4 {
-		t.Fatalf("Fabric migration count = %d, want 4", migrationCount)
+	if migrationCount != 5 {
+		t.Fatalf("Fabric migration count = %d, want 5", migrationCount)
 	}
 	if _, err := db.Exec(`DROP TABLE machine_ownerships`); err != nil {
 		t.Fatal(err)

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -45,7 +46,7 @@ func TestCreateComputeAllocationDryRunReturnsOwnership(t *testing.T) {
 		PackageId: "basic",
 		Pool: ComputePoolInput{
 			Id:           "pool-basic-2c4g",
-			InstanceType: "SA5.LARGE4",
+			InstanceType: "SA5.MEDIUM4",
 			NodePoolId:   "np-basic",
 		},
 		Allocation: ComputeAllocationInput{Id: "compute-alpha"},
@@ -79,7 +80,7 @@ func TestLiveComputeAllocationRequiresSafetyFlag(t *testing.T) {
 		PackageId: "basic",
 		Pool: ComputePoolInput{
 			Id:           "pool-basic-2c4g",
-			InstanceType: "SA5.LARGE4",
+			InstanceType: "SA5.MEDIUM4",
 		},
 		Allocation: ComputeAllocationInput{Id: "compute-alpha"},
 	}, env, unimplementedTencentClient{})
@@ -89,6 +90,84 @@ func TestLiveComputeAllocationRequiresSafetyFlag(t *testing.T) {
 	}
 	if response.ErrorCode != "live_mutation_flag_required" {
 		t.Fatalf("unexpected error code: %s", response.ErrorCode)
+	}
+}
+
+func protectedResourceEnv() map[string]string {
+	return map[string]string{
+		"TENCENTCLOUD_SECRET_ID":                   "sid",
+		"TENCENTCLOUD_SECRET_KEY":                  "skey",
+		"TENCENTCLOUD_REGION":                      "ap-guangzhou",
+		"TENCENT_DEPLOY_CLUSTER_ID":                "cls-123",
+		"OPL_SYSTEM_COMPUTE_NODE_POOL_ID":          "np-system",
+		"OPL_SYSTEM_COMPUTE_MACHINE_ID":            "machine-system",
+		"OPL_SYSTEM_COMPUTE_NODE_NAME":             "10.66.0.42",
+		"OPL_SYSTEM_COMPUTE_CVM_ID":                "ins-system",
+		"OPL_BASIC_COMPUTE_NODE_POOL_ID":           "np-basic",
+		"OPL_PRO_COMPUTE_NODE_POOL_ID":             "np-pro",
+		"OPL_BASIC_COMPUTE_NODE_POOL_MAX_REPLICAS": "20",
+		"OPL_PRO_COMPUTE_NODE_POOL_MAX_REPLICAS":   "20",
+		"RUN_TENCENT_CREATE_RELEASE_EXECUTION":     "1",
+	}
+}
+
+func TestLiveTencentMutationRejectsProtectedSystemIdentityBeforeClient(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		target ComputeAllocationInput
+		poolID string
+	}{
+		{name: "pool", poolID: "np-system"},
+		{name: "machine", poolID: "np-basic", target: ComputeAllocationInput{MachineName: "machine-system"}},
+		{name: "node", poolID: "np-basic", target: ComputeAllocationInput{NodeName: "10.66.0.42"}},
+		{name: "CVM", poolID: "np-basic", target: ComputeAllocationInput{InstanceId: "ins-system"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			client := &fakeTencentClient{}
+			request := Request{
+				Action: "destroy_compute_allocation", AccountId: "acct-alpha", PackageId: "basic",
+				Pool: ComputePoolInput{Id: "pool-basic-2c4g", NodePoolId: test.poolID}, Allocation: test.target,
+			}
+			request.Allocation.Id = "compute-alpha"
+			response := handleWithClient(request, protectedResourceEnv(), client)
+			if response.Ok || response.ErrorCode != "protected_system_resource" || client.destroyedRequest.Action != "" {
+				t.Fatalf("response=%#v client request=%#v", response, client.destroyedRequest)
+			}
+		})
+	}
+}
+
+func TestLiveTencentMutationRejectsPackagePoolMismatchBeforeClient(t *testing.T) {
+	client := &fakeTencentClient{}
+	response := handleWithClient(Request{
+		Action: "create_compute_allocation", AccountId: "acct-alpha", PackageId: "basic",
+		Pool: ComputePoolInput{Id: "pool-basic-2c4g", NodePoolId: "np-pro"}, Allocation: ComputeAllocationInput{Id: "compute-alpha"},
+	}, protectedResourceEnv(), client)
+	if response.Ok || response.ErrorCode != "compute_package_node_pool_mismatch" || client.createdRequest.Action != "" {
+		t.Fatalf("response=%#v client request=%#v", response, client.createdRequest)
+	}
+}
+
+func TestProtectedResourceCheckUsesLocalGuardWithoutTencentClient(t *testing.T) {
+	env := protectedResourceEnv()
+	for _, test := range []struct {
+		name      string
+		request   Request
+		ok        bool
+		errorCode string
+	}{
+		{name: "customer target", request: Request{Action: "protected_resource_check", PackageId: "basic", Pool: ComputePoolInput{NodePoolId: "np-basic"}, Allocation: ComputeAllocationInput{MachineName: "machine-basic", NodeName: "10.0.0.8", InstanceId: "ins-basic"}}, ok: true},
+		{name: "system pool", request: Request{Action: "protected_resource_check", PackageId: "basic", Pool: ComputePoolInput{NodePoolId: "np-system"}}, errorCode: "protected_system_resource"},
+		{name: "system machine", request: Request{Action: "protected_resource_check", PackageId: "basic", Pool: ComputePoolInput{NodePoolId: "np-basic"}, Allocation: ComputeAllocationInput{MachineName: "machine-system"}}, errorCode: "protected_system_resource"},
+		{name: "system node", request: Request{Action: "protected_resource_check", PackageId: "basic", Pool: ComputePoolInput{NodePoolId: "np-basic"}, Allocation: ComputeAllocationInput{NodeName: "10.66.0.42"}}, errorCode: "protected_system_resource"},
+		{name: "system CVM", request: Request{Action: "protected_resource_check", PackageId: "basic", Pool: ComputePoolInput{NodePoolId: "np-basic"}, Allocation: ComputeAllocationInput{InstanceId: "ins-system"}}, errorCode: "protected_system_resource"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			response := handleWithClient(test.request, env, unimplementedTencentClient{})
+			if response.Ok != test.ok || response.ErrorCode != test.errorCode {
+				t.Fatalf("response=%#v", response)
+			}
+		})
 	}
 }
 
@@ -165,6 +244,10 @@ func (client *fakeTencentClient) RenewComputeAllocation(request Request, _ map[s
 	return Response{Ok: true, InstanceId: request.Allocation.InstanceId, Status: "provider_ready"}
 }
 
+func (client *fakeTencentClient) BootstrapComputeNodePools(_ Request, _ map[string]string) Response {
+	return Response{Ok: true, Status: "registered"}
+}
+
 func TestProviderTruthUsesTencentClientBoundaryWithoutMutationFlag(t *testing.T) {
 	client := &fakeTencentClient{}
 	request := providerTruthRequest()
@@ -176,8 +259,8 @@ func TestProviderTruthUsesTencentClientBoundaryWithoutMutationFlag(t *testing.T)
 	}
 }
 
-func (client *fakeTencentClient) ReconcileComputePool(request Request, _ map[string]string) Response {
-	return Response{Ok: true, PoolId: request.Pool.Id, NodePoolId: request.Pool.NodePoolId, Status: "ready"}
+func (client *fakeTencentClient) PrepareComputeAllocation(request Request, _ map[string]string) Response {
+	return Response{Ok: true, PoolId: request.Pool.Id, NodePoolId: request.Pool.NodePoolId, Status: "prepared", CurrentReplicas: 0, TargetReplicas: 1}
 }
 
 func (client *fakeTencentClient) TagComputeMachine(request Request, _ map[string]string) Response {
@@ -188,10 +271,7 @@ func (client *fakeTencentClient) TagComputeMachine(request Request, _ map[string
 func TestTagComputeMachineLiveUsesTencentClientBoundary(t *testing.T) {
 	client := &fakeTencentClient{}
 	request := Request{Action: "tag_compute_machine", Tags: map[string]string{"opl_account_id": "acct-alpha", "opl_workspace_id": "ws-alpha", "opl_resource_id": "compute-alpha", "opl_operation_id": "owner-alpha"}, Allocation: ComputeAllocationInput{InstanceId: "ins-alpha"}}
-	response := handleWithClient(request, map[string]string{
-		"TENCENTCLOUD_SECRET_ID": "sid", "TENCENTCLOUD_SECRET_KEY": "skey", "TENCENTCLOUD_REGION": "ap-guangzhou",
-		"TENCENT_DEPLOY_CLUSTER_ID": "cls-123", "RUN_TENCENT_CREATE_RELEASE_EXECUTION": "1",
-	}, client)
+	response := handleWithClient(request, protectedResourceEnv(), client)
 	if !response.Ok || response.Status != "tagged" || client.taggedRequest.Allocation.InstanceId != "ins-alpha" {
 		t.Fatalf("tag response=%#v request=%#v", response, client.taggedRequest)
 	}
@@ -272,13 +352,7 @@ func (client *fakeTencentClient) SyncComputeAllocation(request Request, env map[
 }
 
 func TestCreateComputeAllocationLiveUsesTencentClientBoundary(t *testing.T) {
-	env := map[string]string{
-		"TENCENTCLOUD_SECRET_ID":               "sid",
-		"TENCENTCLOUD_SECRET_KEY":              "skey",
-		"TENCENTCLOUD_REGION":                  "ap-guangzhou",
-		"TENCENT_DEPLOY_CLUSTER_ID":            "cls-123",
-		"RUN_TENCENT_CREATE_RELEASE_EXECUTION": "1",
-	}
+	env := protectedResourceEnv()
 	client := &fakeTencentClient{}
 
 	response := handleWithClient(Request{
@@ -288,7 +362,7 @@ func TestCreateComputeAllocationLiveUsesTencentClientBoundary(t *testing.T) {
 		PackageId: "basic",
 		Pool: ComputePoolInput{
 			Id:           "pool-basic-2c4g",
-			InstanceType: "SA5.LARGE4",
+			InstanceType: "SA5.MEDIUM4",
 		},
 		Allocation: ComputeAllocationInput{Id: "compute-alpha"},
 	}, env, client)
@@ -337,13 +411,7 @@ func TestSyncComputeAllocationLiveUsesTencentClientBoundaryWithoutMutationFlag(t
 }
 
 func TestDestroyComputeAllocationLiveUsesTencentClientBoundary(t *testing.T) {
-	env := map[string]string{
-		"TENCENTCLOUD_SECRET_ID":               "sid",
-		"TENCENTCLOUD_SECRET_KEY":              "skey",
-		"TENCENTCLOUD_REGION":                  "ap-guangzhou",
-		"TENCENT_DEPLOY_CLUSTER_ID":            "cls-123",
-		"RUN_TENCENT_CREATE_RELEASE_EXECUTION": "1",
-	}
+	env := protectedResourceEnv()
 	client := &fakeTencentClient{}
 
 	response := handleWithClient(Request{
@@ -407,20 +475,12 @@ func TestBuildCreateNativeNodePoolRequestUsesCurrentPackageShape(t *testing.T) {
 		"TENCENT_CVM_SYSTEM_DISK_SIZE_GB": "50",
 	}
 	request := Request{
-		AccountId: "pi-alpha",
-		UserId:    "usr-alpha",
 		PackageId: "basic",
-		Tags: map[string]string{
-			"opl_account_id":   "pi-alpha",
-			"opl_workspace_id": "ws-alpha",
-			"opl_resource_id":  "compute-alpha",
-			"opl_operation_id": "op-alpha",
-		},
 		Pool: ComputePoolInput{
 			Id:           "pool-basic-2c4g",
-			InstanceType: "SA5.LARGE4",
+			InstanceType: "SA5.MEDIUM4",
+			MaxReplicas:  37,
 		},
-		Allocation: ComputeAllocationInput{Id: "compute-alpha"},
 	}
 
 	createRequest, response := buildCreateNativeNodePoolRequest(request, env)
@@ -453,6 +513,9 @@ func TestBuildCreateNativeNodePoolRequestUsesCurrentPackageShape(t *testing.T) {
 	if createRequest.Native.Replicas == nil || *createRequest.Native.Replicas != 0 {
 		t.Fatalf("node pool creation must not allocate a CVM immediately: %#v", createRequest.Native.Replicas)
 	}
+	if createRequest.Native.Scaling == nil || createRequest.Native.Scaling.MaxReplicas == nil || *createRequest.Native.Scaling.MaxReplicas != 37 {
+		t.Fatalf("node pool creation must use the explicit approved maxReplicas: %#v", createRequest.Native.Scaling)
+	}
 	if createRequest.Native.EnableAutoscaling == nil || *createRequest.Native.EnableAutoscaling {
 		t.Fatalf("Fabric-managed package node pools must disable TKE autoscaling: %#v", createRequest.Native.EnableAutoscaling)
 	}
@@ -462,7 +525,7 @@ func TestBuildCreateNativeNodePoolRequestUsesCurrentPackageShape(t *testing.T) {
 	if createRequest.Native.InternetAccessible != nil {
 		t.Fatalf("zero-bandwidth package nodes must omit legacy public network settings: %#v", createRequest.Native.InternetAccessible)
 	}
-	if len(createRequest.Native.InstanceTypes) != 1 || *createRequest.Native.InstanceTypes[0] != "SA5.LARGE4" {
+	if len(createRequest.Native.InstanceTypes) != 1 || *createRequest.Native.InstanceTypes[0] != "SA5.MEDIUM4" {
 		t.Fatalf("unexpected instance types: %#v", createRequest.Native.InstanceTypes)
 	}
 	if len(createRequest.Native.SecurityGroupIds) != 1 || *createRequest.Native.SecurityGroupIds[0] != "sg-123" {
@@ -474,30 +537,48 @@ func TestBuildCreateNativeNodePoolRequestUsesCurrentPackageShape(t *testing.T) {
 			labels[*label.Name] = *label.Value
 		}
 	}
-	if labels["oplcloud.cn/pool-id"] != "pool-basic-2c4g" || labels["oplcloud.cn/package-id"] != "basic" || labels["oplcloud.cn/instance-type"] != "SA5.LARGE4" {
+	if labels["oplcloud.cn/pool-id"] != "pool-basic-2c4g" || labels["oplcloud.cn/package-id"] != "basic" || labels["oplcloud.cn/instance-type"] != "SA5.MEDIUM4" || labels["medopl.cn/workload"] != "workspace" {
 		t.Fatalf("unexpected labels: %#v", labels)
 	}
-	if labels["oplcloud.cn/account-id"] != "pi-alpha" || labels["oplcloud.cn/resource-id"] != "compute-alpha" || labels["oplcloud.cn/operation-id"] != "op-alpha" {
-		t.Fatalf("node pool request must carry OPL cost labels: %#v", labels)
+	for _, forbidden := range []string{"oplcloud.cn/account-id", "oplcloud.cn/workspace-id", "oplcloud.cn/resource-id", "oplcloud.cn/operation-id"} {
+		if labels[forbidden] != "" {
+			t.Fatalf("node pool labels must not carry customer ownership %s: %#v", forbidden, labels)
+		}
 	}
-	if len(createRequest.Tags) != 1 || len(createRequest.Tags[0].Tags) != 4 {
-		t.Fatalf("node pool request must carry Tencent cost tags: %#v", createRequest.Tags)
+	if len(createRequest.Tags) != 0 {
+		t.Fatalf("node pool request must not carry first-customer Tencent tags: %#v", createRequest.Tags)
+	}
+	if len(createRequest.Taints) != 1 || stringValue(createRequest.Taints[0].Key) != "oplcloud.cn/workspace-id" || stringValue(createRequest.Taints[0].Value) != "unallocated" || stringValue(createRequest.Taints[0].Effect) != "NoSchedule" {
+		t.Fatalf("node pool must quarantine unallocated nodes: %#v", createRequest.Taints)
+	}
+
+	request.Pool.MaxReplicas = 0
+	if createRequest, response := buildCreateNativeNodePoolRequest(request, env); createRequest != nil || response == nil || response.ErrorCode != "max_replicas_required" {
+		t.Fatalf("missing maxReplicas request=%#v response=%#v", createRequest, response)
 	}
 }
 
 type fakeNativeTkeAPI struct {
 	createNodePoolRequest       *tke2022.CreateNodePoolRequest
+	createNodePoolRequests      []*tke2022.CreateNodePoolRequest
+	createNodePoolErrAt         int
+	createdNodePoolIDs          []string
+	nodePools                   []*tke2022.NodePool
 	describeInstancesRequest    []*tke2022.DescribeClusterInstancesRequest
 	describeMachinesRequest     []*tke2022.DescribeClusterMachinesRequest
 	describeNodePoolsRequest    []*tke2022.DescribeNodePoolsRequest
 	modifyNodePoolRequest       *tke2022.ModifyNodePoolRequest
 	scaleNodePoolRequest        *tke2022.ScaleNodePoolRequest
+	scaleNodePoolRequests       []*tke2022.ScaleNodePoolRequest
+	scaleNodePoolErr            error
+	applyScaleBeforeError       bool
 	deleteMachinesRequest       *tke2022.DeleteClusterMachinesRequest
 	nodePoolId                  string
 	discoverNodePoolId          string
 	ambiguousDiscovery          bool
 	truncatedDiscovery          bool
 	replicas                    int64
+	machineReplicas             *int64
 	maxReplicas                 int64
 	readyReplicas               *int64
 	omitNative                  bool
@@ -535,6 +616,434 @@ type fakeNativeTkeAPI struct {
 	describeClusterInstancesErr error
 	omitClusterInstances        bool
 	clusterInstanceID           string
+	systemMachineName           string
+	systemNodeName              string
+}
+
+func TestBootstrapComputeNodePoolsRequiresDedicatedMutationAuthority(t *testing.T) {
+	client := newFakeTencentSDKClient(&fakeNativeTkeAPI{nodePools: bootstrapInventory("np-system")})
+	env := protectedResourceEnv()
+	env["RUN_TENCENT_CREATE_RELEASE_EXECUTION"] = "1"
+	request := Request{Action: "bootstrap_compute_node_pools"}
+
+	response := handleWithClient(request, env, client)
+
+	if response.Ok || response.ErrorCode != "node_pool_bootstrap_flag_required" {
+		t.Fatalf("ordinary mutation authority must not bootstrap node pools: %#v", response)
+	}
+	if len(client.nativeTkeClient.(*fakeNativeTkeAPI).createNodePoolRequests) != 0 {
+		t.Fatal("missing dedicated authority must perform zero CreateNodePool calls")
+	}
+}
+
+func TestBootstrapComputeNodePoolsInventoriesAllPoolsBeforeMutation(t *testing.T) {
+	tkeAPI := &fakeNativeTkeAPI{nodePools: bootstrapInventory("np-system")}
+	client := newBootstrapTencentSDKClient(tkeAPI)
+	env := bootstrapEnv()
+
+	response := handleWithClient(Request{Action: "bootstrap_compute_node_pools"}, env, client)
+
+	if !response.Ok || response.Status != "created" || len(response.NodePools) != 2 || response.MutationCount != 2 {
+		t.Fatalf("bootstrap response=%#v", response)
+	}
+	firstCreate := slices.Index(tkeAPI.calls, "CreateNodePool")
+	if firstCreate < 2 || tkeAPI.calls[0] != "DescribeNodePools" || tkeAPI.calls[1] != "DescribeClusterMachines" || countStrings(tkeAPI.calls, "CreateNodePool") != 2 {
+		t.Fatalf("inventory must complete before ordered creates: %#v", tkeAPI.calls)
+	}
+	if got := stringValue(tkeAPI.createNodePoolRequests[0].Name); got != "pool-basic-2c4g" {
+		t.Fatalf("Basic pool must be created first, got %q", got)
+	}
+	if got := stringValue(tkeAPI.createNodePoolRequests[1].Name); got != "pool-pro-8c16g" {
+		t.Fatalf("Pro pool must be created second, got %q", got)
+	}
+	if tkeAPI.createNodePoolRequests[0].Native == nil || tkeAPI.createNodePoolRequests[0].Native.Scaling == nil || *tkeAPI.createNodePoolRequests[0].Native.Scaling.MaxReplicas != 20 {
+		t.Fatalf("Basic explicit maxReplicas missing: %#v", tkeAPI.createNodePoolRequests[0].Native)
+	}
+	if tkeAPI.createNodePoolRequests[1].Native == nil || tkeAPI.createNodePoolRequests[1].Native.Scaling == nil || *tkeAPI.createNodePoolRequests[1].Native.Scaling.MaxReplicas != 8 {
+		t.Fatalf("Pro explicit maxReplicas missing: %#v", tkeAPI.createNodePoolRequests[1].Native)
+	}
+}
+
+func TestBootstrapNodePoolInventoryPaginatesAllPools(t *testing.T) {
+	pools := make([]*tke2022.NodePool, 0, 205)
+	for index := 0; index < 205; index++ {
+		pools = append(pools, &tke2022.NodePool{NodePoolId: common.StringPtr(fmt.Sprintf("np-%03d", index))})
+	}
+	tkeAPI := &fakeNativeTkeAPI{nodePools: pools}
+	client := newFakeTencentSDKClient(tkeAPI)
+
+	inventory, err := client.bootstrapNodePoolInventory()
+
+	if err != nil || len(inventory) != 205 {
+		t.Fatalf("bootstrap inventory len=%d err=%v", len(inventory), err)
+	}
+	assertRequestOffsets(t, tkeAPI.describeNodePoolsRequest, []int64{0, 100, 200}, func(request *tke2022.DescribeNodePoolsRequest) *int64 {
+		return request.Offset
+	})
+}
+
+func TestBootstrapComputeNodePoolsIsIdempotentForCompliantPools(t *testing.T) {
+	tkeAPI := &fakeNativeTkeAPI{nodePools: bootstrapInventory("np-system", "np-basic", "np-pro")}
+	client := newBootstrapTencentSDKClient(tkeAPI)
+
+	response := handleWithClient(Request{Action: "bootstrap_compute_node_pools"}, bootstrapEnv(), client)
+
+	if !response.Ok || response.Status != "registered" || response.MutationCount != 0 || len(response.NodePools) != 2 {
+		t.Fatalf("idempotent bootstrap response=%#v", response)
+	}
+	for _, result := range response.NodePools {
+		if result.Status != "registered" || result.NodePoolID == "" {
+			t.Fatalf("existing pool not registered: %#v", result)
+		}
+	}
+	if len(tkeAPI.createNodePoolRequests) != 0 {
+		t.Fatalf("compliant inventory must not create pools: %#v", tkeAPI.createNodePoolRequests)
+	}
+}
+
+func TestBootstrapComputeNodePoolsRejectsInventoryConflictsBeforeMutation(t *testing.T) {
+	tests := []struct {
+		name  string
+		pools []*tke2022.NodePool
+	}{
+		{name: "duplicate Basic", pools: bootstrapInventory("np-system", "np-basic", "np-basic-copy")},
+		{name: "Basic labels on system pool", pools: []*tke2022.NodePool{
+			bootstrapNodePool("np-system", "pool-basic-2c4g", "basic", "SA5.MEDIUM4", 20),
+		}},
+		{name: "cross-labeled package pool", pools: []*tke2022.NodePool{
+			bootstrapNodePool("np-system", "system", "system", "S5.2XLARGE16", 20),
+			bootstrapNodePool("np-cross", "pool-basic-2c4g", "pro", "SA5.2XLARGE16", 8),
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			tkeAPI := &fakeNativeTkeAPI{nodePools: test.pools}
+			response := handleWithClient(Request{Action: "bootstrap_compute_node_pools"}, bootstrapEnv(), newFakeTencentSDKClient(tkeAPI))
+			if response.Ok || response.ErrorCode != "node_pool_bootstrap_inventory_conflict" || response.MutationCount != 0 {
+				t.Fatalf("conflict response=%#v", response)
+			}
+			if len(tkeAPI.createNodePoolRequests) != 0 {
+				t.Fatalf("conflict must perform zero CreateNodePool calls: %#v", tkeAPI.createNodePoolRequests)
+			}
+		})
+	}
+}
+
+func TestBootstrapComputeNodePoolsRejectsSystemIdentityMismatchBeforeMutation(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		configure func(*fakeNativeTkeAPI, *fakeNativeCvmAPI)
+	}{
+		{name: "machine", configure: func(tke *fakeNativeTkeAPI, _ *fakeNativeCvmAPI) { tke.systemMachineName = "machine-other" }},
+		{name: "node", configure: func(tke *fakeNativeTkeAPI, _ *fakeNativeCvmAPI) { tke.systemNodeName = "10.66.0.99" }},
+		{name: "CVM", configure: func(_ *fakeNativeTkeAPI, cvm *fakeNativeCvmAPI) { cvm.privateIPInstanceID = "ins-other" }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			tkeAPI := &fakeNativeTkeAPI{nodePools: bootstrapInventory("np-system")}
+			client := newBootstrapTencentSDKClient(tkeAPI)
+			test.configure(tkeAPI, client.nativeCvmClient.(*fakeNativeCvmAPI))
+			response := handleWithClient(Request{Action: "bootstrap_compute_node_pools"}, bootstrapEnv(), client)
+			if response.Ok || response.ErrorCode != "protected_system_identity_mismatch" || response.MutationCount != 0 {
+				t.Fatalf("system mismatch response=%#v", response)
+			}
+			if len(tkeAPI.createNodePoolRequests) != 0 {
+				t.Fatalf("system mismatch must perform zero CreateNodePool calls: %#v", tkeAPI.createNodePoolRequests)
+			}
+		})
+	}
+}
+
+func TestBootstrapComputeNodePoolsReportsPartialStateAndRetryOnlyCreatesMissingPool(t *testing.T) {
+	tkeAPI := &fakeNativeTkeAPI{nodePools: bootstrapInventory("np-system"), createNodePoolErrAt: 2}
+	client := newBootstrapTencentSDKClient(tkeAPI)
+	env := bootstrapEnv()
+
+	first := handleWithClient(Request{Action: "bootstrap_compute_node_pools"}, env, client)
+
+	if first.Ok || first.Status != "partial" || first.ErrorCode != "node_pool_bootstrap_partial" || first.MutationCount != 2 || len(first.NodePools) != 2 {
+		t.Fatalf("partial response=%#v", first)
+	}
+	if first.NodePools[0].PackageID != "basic" || first.NodePools[0].Status != "created" || first.NodePools[1].PackageID != "pro" || first.NodePools[1].Status != "failed" {
+		t.Fatalf("partial package results=%#v", first.NodePools)
+	}
+
+	tkeAPI.createNodePoolErrAt = 0
+	second := handleWithClient(Request{Action: "bootstrap_compute_node_pools"}, env, client)
+	if !second.Ok || second.Status != "completed" || second.MutationCount != 1 {
+		t.Fatalf("retry response=%#v", second)
+	}
+	if len(tkeAPI.createNodePoolRequests) != 3 || stringValue(tkeAPI.createNodePoolRequests[2].Name) != "pool-pro-8c16g" {
+		t.Fatalf("retry must only create missing Pro pool: %#v", tkeAPI.createNodePoolRequests)
+	}
+}
+
+func TestBootstrapComputeNodePoolsDoesNotRecreateExactCreatingPool(t *testing.T) {
+	creatingBasic := bootstrapNodePool("np-basic", "pool-basic-2c4g", "basic", "SA5.MEDIUM4", 20)
+	creatingBasic.LifeState = common.StringPtr("Creating")
+	tkeAPI := &fakeNativeTkeAPI{nodePools: append(bootstrapInventory("np-system", "np-pro"), creatingBasic)}
+
+	response := handleWithClient(Request{Action: "bootstrap_compute_node_pools"}, bootstrapEnv(), newBootstrapTencentSDKClient(tkeAPI))
+
+	if response.Ok || response.Status != "partial" || response.ErrorCode != "node_pool_bootstrap_partial" || response.MutationCount != 0 {
+		t.Fatalf("creating response=%#v", response)
+	}
+	if response.NodePools[0].PackageID != "basic" || response.NodePools[0].NodePoolID != "np-basic" || response.NodePools[0].Status != "pending" {
+		t.Fatalf("creating Basic result=%#v", response.NodePools[0])
+	}
+	if response.NodePools[1].PackageID != "pro" || response.NodePools[1].Status != "registered" {
+		t.Fatalf("registered Pro result=%#v", response.NodePools[1])
+	}
+	if len(tkeAPI.createNodePoolRequests) != 0 {
+		t.Fatalf("exact Creating pool must never be recreated: %#v", tkeAPI.createNodePoolRequests)
+	}
+}
+
+func TestBootstrapComputeNodePoolsRetryOnlyCreatesPoolMissingBesidePendingPool(t *testing.T) {
+	creatingBasic := bootstrapNodePool("np-basic", "pool-basic-2c4g", "basic", "SA5.MEDIUM4", 20)
+	creatingBasic.LifeState = common.StringPtr("Creating")
+	tkeAPI := &fakeNativeTkeAPI{nodePools: append(bootstrapInventory("np-system"), creatingBasic)}
+	client := newBootstrapTencentSDKClient(tkeAPI)
+
+	first := handleWithClient(Request{Action: "bootstrap_compute_node_pools"}, bootstrapEnv(), client)
+
+	if first.Ok || first.Status != "partial" || first.ErrorCode != "node_pool_bootstrap_partial" || first.MutationCount != 1 {
+		t.Fatalf("pending partial response=%#v", first)
+	}
+	if first.NodePools[0].Status != "pending" || first.NodePools[1].Status != "created" {
+		t.Fatalf("pending partial results=%#v", first.NodePools)
+	}
+	if len(tkeAPI.createNodePoolRequests) != 1 || stringValue(tkeAPI.createNodePoolRequests[0].Name) != "pool-pro-8c16g" {
+		t.Fatalf("retry must only create missing Pro pool: %#v", tkeAPI.createNodePoolRequests)
+	}
+
+	creatingBasic.LifeState = common.StringPtr("Running")
+	second := handleWithClient(Request{Action: "bootstrap_compute_node_pools"}, bootstrapEnv(), client)
+	if !second.Ok || second.Status != "registered" || second.MutationCount != 0 {
+		t.Fatalf("completed readback response=%#v", second)
+	}
+	if len(tkeAPI.createNodePoolRequests) != 1 {
+		t.Fatalf("completed readback must not create another pool: %#v", tkeAPI.createNodePoolRequests)
+	}
+}
+
+func TestBootstrapComputeNodePoolsDryRunReportsMissingWithoutMutation(t *testing.T) {
+	tkeAPI := &fakeNativeTkeAPI{nodePools: bootstrapInventory("np-system")}
+	env := bootstrapEnv()
+	delete(env, "RUN_TENCENT_CREATE_RELEASE_EXECUTION")
+	delete(env, "RUN_TENCENT_NODE_POOL_BOOTSTRAP")
+
+	response := handleWithClient(Request{Action: "bootstrap_compute_node_pools", DryRun: true}, env, newBootstrapTencentSDKClient(tkeAPI))
+
+	if !response.Ok || response.Status != "missing" || response.MutationCount != 0 || len(response.NodePools) != 2 {
+		t.Fatalf("dry-run response=%#v", response)
+	}
+	for _, result := range response.NodePools {
+		if result.Status != "missing" {
+			t.Fatalf("dry-run missing result=%#v", result)
+		}
+	}
+	if len(tkeAPI.createNodePoolRequests) != 0 {
+		t.Fatal("dry-run bootstrap must perform zero CreateNodePool calls")
+	}
+}
+
+func bootstrapEnv() map[string]string {
+	env := protectedResourceEnv()
+	env["RUN_TENCENT_CREATE_RELEASE_EXECUTION"] = "1"
+	env["RUN_TENCENT_NODE_POOL_BOOTSTRAP"] = "1"
+	env["TENCENT_CVM_SUBNET_ID"] = "subnet-workspace"
+	env["TENCENT_CVM_SECURITY_GROUP_IDS"] = "sg-workspace"
+	env["OPL_BASIC_COMPUTE_NODE_POOL_MAX_REPLICAS"] = "20"
+	env["OPL_PRO_COMPUTE_NODE_POOL_MAX_REPLICAS"] = "8"
+	env["OPL_BASIC_COMPUTE_NODE_POOL_ID"] = ""
+	env["OPL_PRO_COMPUTE_NODE_POOL_ID"] = ""
+	return env
+}
+
+func newBootstrapTencentSDKClient(tkeAPI *fakeNativeTkeAPI) *tencentSDKClient {
+	client := newFakeTencentSDKClient(tkeAPI)
+	client.nativeCvmClient = &fakeNativeCvmAPI{privateIPInstanceID: "ins-system"}
+	return client
+}
+
+func bootstrapInventory(ids ...string) []*tke2022.NodePool {
+	result := make([]*tke2022.NodePool, 0, len(ids))
+	for index, id := range ids {
+		switch {
+		case id == "np-system":
+			result = append(result, bootstrapNodePool(id, "system", "system", "S5.2XLARGE16", 20))
+		case strings.Contains(id, "pro"):
+			result = append(result, bootstrapNodePool(id, "pool-pro-8c16g", "pro", "SA5.2XLARGE16", 8))
+		default:
+			poolID := "pool-basic-2c4g"
+			if index > 1 {
+				poolID = "pool-basic-2c4g"
+			}
+			result = append(result, bootstrapNodePool(id, poolID, "basic", "SA5.MEDIUM4", 20))
+		}
+	}
+	return result
+}
+
+func bootstrapNodePool(nodePoolID, poolID, packageID, instanceType string, maxReplicas int64) *tke2022.NodePool {
+	api := &fakeNativeTkeAPI{maxReplicas: maxReplicas, instanceTypes: []string{instanceType}, labelPoolId: poolID, labelPackageId: packageID, labelInstanceType: instanceType}
+	return &tke2022.NodePool{
+		NodePoolId: common.StringPtr(nodePoolID), Name: common.StringPtr(poolID), Type: common.StringPtr("Native"), LifeState: common.StringPtr("Running"), DeletionProtection: common.BoolPtr(true),
+		Taints: []*tke2022.Taint{{Key: common.StringPtr("oplcloud.cn/workspace-id"), Value: common.StringPtr("unallocated"), Effect: common.StringPtr("NoSchedule")}},
+		Labels: []*tke2022.Label{
+			{Name: common.StringPtr("oplcloud.cn/pool-id"), Value: common.StringPtr(poolID)},
+			{Name: common.StringPtr("oplcloud.cn/package-id"), Value: common.StringPtr(packageID)},
+			{Name: common.StringPtr("oplcloud.cn/instance-type"), Value: common.StringPtr(instanceType)},
+			{Name: common.StringPtr("medopl.cn/workload"), Value: common.StringPtr("workspace")},
+		},
+		Native: fakeNativeNodePoolInfo(api),
+	}
+}
+
+func countStrings(values []string, expected string) int {
+	count := 0
+	for _, value := range values {
+		if value == expected {
+			count++
+		}
+	}
+	return count
+}
+
+func assertRequestOffsets[T any](t *testing.T, requests []*T, expected []int64, offset func(*T) *int64) {
+	t.Helper()
+	if len(requests) != len(expected) {
+		t.Fatalf("request count=%d want=%d", len(requests), len(expected))
+	}
+	for index, request := range requests {
+		actual := int64(0)
+		if value := offset(request); value != nil {
+			actual = *value
+		}
+		if actual != expected[index] {
+			t.Fatalf("request %d offset=%d want=%d", index, actual, expected[index])
+		}
+	}
+}
+
+func pageBounds(offsetPointer, limitPointer *int64, length int) (int, int) {
+	offset, limit := int64(0), int64(20)
+	if offsetPointer != nil {
+		offset = *offsetPointer
+	}
+	if limitPointer != nil {
+		limit = *limitPointer
+	}
+	if offset < 0 || limit <= 0 {
+		return 0, 0
+	}
+	start := min(int(offset), length)
+	end := min(start+int(limit), length)
+	return start, end
+}
+
+func TestPrepareComputeAllocationRequiresExactRegisteredPoolAndReturnsBaseline(t *testing.T) {
+	tkeAPI := &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 1, maxReplicas: 20, labelInstanceType: "SA5.MEDIUM4", instanceTypes: []string{"SA5.MEDIUM4"}, machineInstanceType: "SA5.MEDIUM4"}
+	client := newFakeTencentSDKClient(tkeAPI)
+	response := client.PrepareComputeAllocation(Request{
+		PackageId:  "basic",
+		Pool:       ComputePoolInput{Id: "pool-basic-2c4g", InstanceType: "SA5.MEDIUM4", NodePoolId: "np-basic", MaxReplicas: 20},
+		Allocation: ComputeAllocationInput{Id: "compute-alpha"},
+	}, nil)
+	if !response.Ok || response.NodePoolId != "np-basic" || response.CurrentReplicas != 1 || response.TargetReplicas != 2 || len(response.Machines) != 1 || response.Machines[0].MachineId != "node-basic-1" {
+		t.Fatalf("prepare response=%#v", response)
+	}
+	if tkeAPI.scaleNodePoolRequest != nil || tkeAPI.createNodePoolRequest != nil || tkeAPI.modifyNodePoolRequest != nil {
+		t.Fatalf("prepare mutated Tencent: scale=%#v create=%#v modify=%#v", tkeAPI.scaleNodePoolRequest, tkeAPI.createNodePoolRequest, tkeAPI.modifyNodePoolRequest)
+	}
+
+	missing := client.PrepareComputeAllocation(Request{
+		PackageId:  "basic",
+		Pool:       ComputePoolInput{Id: "pool-basic-2c4g", InstanceType: "SA5.MEDIUM4"},
+		Allocation: ComputeAllocationInput{Id: "compute-alpha"},
+	}, nil)
+	if missing.Ok || missing.ErrorCode != "compute_node_pool_id_required" {
+		t.Fatalf("missing exact pool response=%#v", missing)
+	}
+}
+
+func TestCreateComputeAllocationReusesPersistedAbsoluteTargetAfterLostScaleResponse(t *testing.T) {
+	tkeAPI := &fakeNativeTkeAPI{
+		nodePoolId: "np-basic", replicas: 1, maxReplicas: 20, labelInstanceType: "SA5.MEDIUM4", instanceTypes: []string{"SA5.MEDIUM4"}, machineInstanceType: "SA5.MEDIUM4",
+		scaleNodePoolErr: errors.New("response lost"), applyScaleBeforeError: true,
+	}
+	client := newFakeTencentSDKClient(tkeAPI)
+	client.nativeCvmClient = &fakeNativeCvmAPI{instanceType: "SA5.MEDIUM4", expiredTime: "2026-08-25T00:00:00Z"}
+	request := Request{
+		AccountId: "acct-alpha", PackageId: "basic",
+		Pool: ComputePoolInput{
+			Id: "pool-basic-2c4g", InstanceType: "SA5.MEDIUM4", NodePoolId: "np-basic", MaxReplicas: 20,
+			BaselineReplicas: 1, TargetReplicas: 2, BeforeMachineNames: []string{"node-basic-1"},
+		},
+		Allocation: ComputeAllocationInput{Id: "compute-alpha"},
+	}
+	first := client.CreateComputeAllocation(request, nil)
+	if first.Ok || !first.Retryable || first.ErrorCode != "tencent_scale_node_pool_result_unknown" || tkeAPI.replicas != 2 || len(tkeAPI.scaleNodePoolRequests) != 1 {
+		t.Fatalf("first=%#v replicas=%d scales=%d", first, tkeAPI.replicas, len(tkeAPI.scaleNodePoolRequests))
+	}
+	tkeAPI.scaleNodePoolErr = nil
+	second := client.CreateComputeAllocation(request, nil)
+	if !second.Ok || second.InstanceId == "" || second.ProviderData["machineName"] != "node-basic-2" || len(tkeAPI.scaleNodePoolRequests) != 1 {
+		t.Fatalf("second=%#v scales=%d", second, len(tkeAPI.scaleNodePoolRequests))
+	}
+	if tkeAPI.scaleNodePoolRequests[0].Replicas == nil || *tkeAPI.scaleNodePoolRequests[0].Replicas != 2 {
+		t.Fatalf("absolute target not preserved: %#v", tkeAPI.scaleNodePoolRequests[0])
+	}
+}
+
+func TestCreateComputeAllocationReplayAtMaxReplicasUsesPersistedTarget(t *testing.T) {
+	tkeAPI := &fakeNativeTkeAPI{
+		nodePoolId: "np-basic", replicas: 2, maxReplicas: 2, labelInstanceType: "SA5.MEDIUM4",
+		instanceTypes: []string{"SA5.MEDIUM4"}, machineInstanceType: "SA5.MEDIUM4",
+	}
+	client := newFakeTencentSDKClient(tkeAPI)
+	response := client.CreateComputeAllocation(Request{
+		AccountId: "acct-alpha", PackageId: "basic",
+		Pool: ComputePoolInput{
+			Id: "pool-basic-2c4g", InstanceType: "SA5.MEDIUM4", NodePoolId: "np-basic", MaxReplicas: 2,
+			BaselineReplicas: 1, TargetReplicas: 2, BeforeMachineNames: []string{"node-basic-1"},
+		},
+		Allocation: ComputeAllocationInput{Id: "compute-alpha"},
+	}, nil)
+
+	if !response.Ok || response.InstanceId != "ins-basic-2" || response.ProviderData["machineName"] != "node-basic-2" {
+		t.Fatalf("replay at max replicas response=%#v", response)
+	}
+	if len(tkeAPI.scaleNodePoolRequests) != 0 {
+		t.Fatalf("replay at persisted target must not scale again: %#v", tkeAPI.scaleNodePoolRequests)
+	}
+}
+
+func TestCreateComputeAllocationRejectsAmbiguousOrOldMachineDifference(t *testing.T) {
+	for _, test := range []struct {
+		name            string
+		machineReplicas int64
+		before          []string
+		wantCode        string
+		wantRetryable   bool
+	}{
+		{name: "no new machine", machineReplicas: 1, before: []string{"node-basic-1"}, wantCode: "compute_allocation_pending", wantRetryable: true},
+		{name: "more than one new machine", machineReplicas: 3, before: []string{"node-basic-1"}, wantCode: "compute_allocation_machine_difference_ambiguous"},
+		{name: "before machine missing", machineReplicas: 2, before: []string{"node-missing"}, wantCode: "compute_allocation_machine_difference_incomplete"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			tkeAPI := &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 2, machineReplicas: &test.machineReplicas, maxReplicas: 20, labelInstanceType: "SA5.MEDIUM4", instanceTypes: []string{"SA5.MEDIUM4"}, machineInstanceType: "SA5.MEDIUM4"}
+			client := newFakeTencentSDKClient(tkeAPI)
+			response := client.CreateComputeAllocation(Request{
+				AccountId: "acct-alpha", PackageId: "basic",
+				Pool:       ComputePoolInput{Id: "pool-basic-2c4g", InstanceType: "SA5.MEDIUM4", NodePoolId: "np-basic", MaxReplicas: 20, BaselineReplicas: 1, TargetReplicas: 2, BeforeMachineNames: test.before},
+				Allocation: ComputeAllocationInput{Id: "compute-alpha"},
+			}, nil)
+			if response.Ok || response.ErrorCode != test.wantCode || response.Retryable != test.wantRetryable || tkeAPI.scaleNodePoolRequest != nil {
+				t.Fatalf("response=%#v scale=%#v", response, tkeAPI.scaleNodePoolRequest)
+			}
+		})
+	}
 }
 
 type fakeNativeCvmAPI struct {
@@ -555,6 +1064,7 @@ type fakeNativeCvmAPI struct {
 	instanceName                 string
 	instanceType                 string
 	returnedInstanceID           string
+	privateIPInstanceID          string
 	instanceChargeType           string
 	renewFlag                    string
 	expiredTime                  string
@@ -895,7 +1405,7 @@ func cbsReadbackRequest(storage StorageInput) Request {
 
 func computeRenewalRequest() Request {
 	return Request{
-		AccountId: "acct-alpha", Zone: "ap-guangzhou-3", Tags: computeOwnershipTags(), Pool: ComputePoolInput{InstanceType: "SA5.LARGE4"},
+		AccountId: "acct-alpha", Zone: "ap-guangzhou-3", Tags: computeOwnershipTags(), Pool: ComputePoolInput{InstanceType: "SA5.MEDIUM4"},
 		Allocation: ComputeAllocationInput{Id: "compute-alpha", InstanceId: "ins-basic-1", Deadline: "2026-08-16T00:00:00Z"},
 	}
 }
@@ -1143,7 +1653,7 @@ func (api *fakeNativeCvmAPI) DescribeZoneInstanceConfigInfos(request *cvm2017.De
 		price = &cvm2017.ItemPrice{DiscountPrice: common.Float64Ptr(discount), OriginalPrice: common.Float64Ptr(150)}
 	}
 	items := []*cvm2017.InstanceTypeQuotaItem{{
-		Zone: common.StringPtr(firstNonEmpty(api.zone, "na-siliconvalley-1")), InstanceType: common.StringPtr("SA5.LARGE4"), InstanceChargeType: common.StringPtr(firstNonEmpty(api.zoneConfigChargeType, "PREPAID")), Status: common.StringPtr(firstNonEmpty(api.zoneConfigStatus, "SELL")), Price: price,
+		Zone: common.StringPtr(firstNonEmpty(api.zone, "na-siliconvalley-1")), InstanceType: common.StringPtr("SA5.MEDIUM4"), InstanceChargeType: common.StringPtr(firstNonEmpty(api.zoneConfigChargeType, "PREPAID")), Status: common.StringPtr(firstNonEmpty(api.zoneConfigStatus, "SELL")), Price: price,
 	}}
 	if api.omitZoneConfig {
 		items = nil
@@ -1197,7 +1707,7 @@ func (api *fakeNativeCvmAPI) DescribeInstances(request *cvm2017.DescribeInstance
 			tags = append(tags, &cvm2017.Tag{Key: common.StringPtr(key), Value: common.StringPtr(value)})
 		}
 		return &cvm2017.DescribeInstancesResponse{Response: &cvm2017.DescribeInstancesResponseParams{InstanceSet: []*cvm2017.Instance{{
-			InstanceId: common.StringPtr(firstNonEmpty(api.returnedInstanceID, stringValue(request.InstanceIds[0]))), InstanceName: common.StringPtr(firstNonEmpty(api.instanceName, "compute-alpha")), InstanceType: common.StringPtr(firstNonEmpty(api.instanceType, "SA5.LARGE4")),
+			InstanceId: common.StringPtr(firstNonEmpty(api.returnedInstanceID, stringValue(request.InstanceIds[0]))), InstanceName: common.StringPtr(firstNonEmpty(api.instanceName, "compute-alpha")), InstanceType: common.StringPtr(firstNonEmpty(api.instanceType, "SA5.MEDIUM4")),
 			PrivateIpAddresses: []*string{common.StringPtr("10.0.0.11")}, InstanceState: common.StringPtr("RUNNING"), Placement: &cvm2017.Placement{Zone: common.StringPtr(firstNonEmpty(api.zone, "ap-guangzhou-3"))},
 			InstanceChargeType: common.StringPtr(firstNonEmpty(api.instanceChargeType, "PREPAID")), RenewFlag: common.StringPtr(firstNonEmpty(api.renewFlag, "NOTIFY_AND_MANUAL_RENEW")), ExpiredTime: expiredTime, Tags: tags,
 		}}, TotalCount: common.Int64Ptr(1), RequestId: common.StringPtr("req-verify-cvm")}}, nil
@@ -1218,9 +1728,9 @@ func (api *fakeNativeCvmAPI) DescribeInstances(request *cvm2017.DescribeInstance
 	return &cvm2017.DescribeInstancesResponse{
 		Response: &cvm2017.DescribeInstancesResponseParams{
 			InstanceSet: []*cvm2017.Instance{{
-				InstanceId:         common.StringPtr(fmt.Sprintf("ins-basic-%d", instanceIndex)),
+				InstanceId:         common.StringPtr(firstNonEmpty(api.privateIPInstanceID, fmt.Sprintf("ins-basic-%d", instanceIndex))),
 				InstanceName:       common.StringPtr(fmt.Sprintf("node-basic-%d", instanceIndex)),
-				InstanceType:       common.StringPtr(firstNonEmpty(api.instanceType, "SA5.LARGE4")),
+				InstanceType:       common.StringPtr(firstNonEmpty(api.instanceType, "SA5.MEDIUM4")),
 				PrivateIpAddresses: []*string{common.StringPtr(privateIp)},
 				PublicIpAddresses:  []*string{common.StringPtr(publicIp)},
 				Placement:          &cvm2017.Placement{Zone: common.StringPtr(firstNonEmpty(api.zone, "ap-guangzhou-3"))},
@@ -1248,11 +1758,33 @@ func newFakeTencentSDKClient(tkeAPI *fakeNativeTkeAPI) *tencentSDKClient {
 func (api *fakeNativeTkeAPI) CreateNodePool(request *tke2022.CreateNodePoolRequest) (*tke2022.CreateNodePoolResponse, error) {
 	api.record("CreateNodePool")
 	api.createNodePoolRequest = request
-	api.nodePoolId = "np-created"
+	api.createNodePoolRequests = append(api.createNodePoolRequests, request)
+	call := len(api.createNodePoolRequests)
+	if api.createNodePoolErrAt == call {
+		return nil, errors.New("create node pool failed")
+	}
+	nodePoolID := fmt.Sprintf("np-created-%d", call)
+	api.createdNodePoolIDs = append(api.createdNodePoolIDs, nodePoolID)
+	labels := []*tke2022.Label{}
+	for _, label := range request.Labels {
+		if label != nil {
+			labels = append(labels, &tke2022.Label{Name: label.Name, Value: label.Value})
+		}
+	}
+	api.nodePools = append(api.nodePools, &tke2022.NodePool{
+		NodePoolId: common.StringPtr(nodePoolID), Name: request.Name, Type: request.Type, LifeState: common.StringPtr("Running"),
+		DeletionProtection: request.DeletionProtection, Labels: labels, Taints: request.Taints,
+		Native: &tke2022.NativeNodePoolInfo{
+			Scaling: request.Native.Scaling, SubnetIds: request.Native.SubnetIds, InstanceTypes: request.Native.InstanceTypes,
+			Replicas: common.Int64Ptr(0), ReadyReplicas: common.Int64Ptr(0), EnableAutoscaling: request.Native.EnableAutoscaling,
+			AutoRepair: request.Native.AutoRepair, MachineType: request.Native.MachineType, InstanceChargeType: request.Native.InstanceChargeType,
+			InstanceChargePrepaid: request.Native.InstanceChargePrepaid,
+		},
+	})
 	api.replicas = 0
 	return &tke2022.CreateNodePoolResponse{
 		Response: &tke2022.CreateNodePoolResponseParams{
-			NodePoolId: common.StringPtr(api.nodePoolId),
+			NodePoolId: common.StringPtr(nodePoolID),
 			RequestId:  common.StringPtr("req-create-pool"),
 		},
 	}, nil
@@ -1263,6 +1795,23 @@ func (api *fakeNativeTkeAPI) DescribeNodePools(request *tke2022.DescribeNodePool
 	api.describeNodePoolsRequest = append(api.describeNodePoolsRequest, request)
 	if api.describeNodePoolErr != nil {
 		return nil, api.describeNodePoolErr
+	}
+	if api.nodePools != nil {
+		pools := api.nodePools
+		if filterValue := nodePoolIdFilterValue(request); filterValue != "" {
+			pools = nil
+			for _, pool := range api.nodePools {
+				if pool != nil && stringValue(pool.NodePoolId) == filterValue {
+					pools = append(pools, pool)
+				}
+			}
+		}
+		totalCount := len(pools)
+		start, end := pageBounds(request.Offset, request.Limit, totalCount)
+		pools = pools[start:end]
+		return &tke2022.DescribeNodePoolsResponse{Response: &tke2022.DescribeNodePoolsResponseParams{
+			NodePools: pools, TotalCount: common.Int64Ptr(int64(totalCount)), RequestId: common.StringPtr("req-bootstrap-inventory"),
+		}}, nil
 	}
 	nodePoolId := api.nodePoolId
 	if nodePoolId == "" {
@@ -1297,7 +1846,7 @@ func (api *fakeNativeTkeAPI) DescribeNodePools(request *tke2022.DescribeNodePool
 		Labels: []*tke2022.Label{
 			{Name: common.StringPtr("oplcloud.cn/pool-id"), Value: common.StringPtr(firstNonEmpty(api.labelPoolId, "pool-basic-2c4g"))},
 			{Name: common.StringPtr("oplcloud.cn/package-id"), Value: common.StringPtr(firstNonEmpty(api.labelPackageId, "basic"))},
-			{Name: common.StringPtr("oplcloud.cn/instance-type"), Value: common.StringPtr(firstNonEmpty(api.labelInstanceType, "SA5.LARGE4"))},
+			{Name: common.StringPtr("oplcloud.cn/instance-type"), Value: common.StringPtr(firstNonEmpty(api.labelInstanceType, "SA5.MEDIUM4"))},
 		},
 		Native: fakeNativeNodePoolInfo(api),
 	}}
@@ -1354,7 +1903,7 @@ func fakeNativeNodePoolInfo(api *fakeNativeTkeAPI) *tke2022.NativeNodePoolInfo {
 	}
 	instanceTypes := api.instanceTypes
 	if len(instanceTypes) == 0 {
-		instanceTypes = []string{"SA5.LARGE4"}
+		instanceTypes = []string{"SA5.MEDIUM4"}
 	}
 	subnetIds := api.subnetIds
 	if len(subnetIds) == 0 {
@@ -1387,7 +1936,7 @@ func TestTencentSDKCapacityIsReadOnlyAndRequiresPrepaidQuota(t *testing.T) {
 		Action:    "capacity_preflight",
 		PackageId: "basic",
 		Zone:      "na-siliconvalley-1",
-		Pool:      ComputePoolInput{Id: "basic", InstanceType: "SA5.LARGE4", NodePoolId: "np-basic", DesiredReplicas: 5},
+		Pool:      ComputePoolInput{Id: "basic", InstanceType: "SA5.MEDIUM4", NodePoolId: "np-basic", DesiredReplicas: 5, MaxReplicas: 10},
 	}, map[string]string{})
 
 	if !response.Ok || response.Status != "ready" || !response.InstanceAvailable || response.RemainingQuota != 8 || response.RequiredCapacity != 5 {
@@ -1427,7 +1976,7 @@ func TestTencentSDKCapacityFailsClosedOnMissingZeroOrAmbiguousPrepaidQuota(t *te
 			cvmAPI := &fakeNativeCvmAPI{}
 			tc.configure(cvmAPI)
 			client := &tencentSDKClient{region: "na-siliconvalley", clusterId: "cls-123", nativeTkeClient: tkeAPI, nativeCvmClient: cvmAPI, nativeVpcClient: &fakeNativeVpcAPI{}}
-			response := client.Capacity(Request{Action: "capacity_preflight", PackageId: "basic", Zone: "na-siliconvalley-1", Pool: ComputePoolInput{Id: "basic", InstanceType: "SA5.LARGE4", NodePoolId: "np-basic", DesiredReplicas: 5}}, nil)
+			response := client.Capacity(Request{Action: "capacity_preflight", PackageId: "basic", Zone: "na-siliconvalley-1", Pool: ComputePoolInput{Id: "basic", InstanceType: "SA5.MEDIUM4", NodePoolId: "np-basic", DesiredReplicas: 5, MaxReplicas: 10}}, nil)
 			if response.Ok || len(cvmAPI.describeAccountQuotaRequests) != 1 {
 				t.Fatalf("invalid prepaid quota must fail closed: response=%#v quotaRequests=%d", response, len(cvmAPI.describeAccountQuotaRequests))
 			}
@@ -1447,7 +1996,7 @@ func TestTencentSDKCapacityRequiresExactSingleSKUAndZone(t *testing.T) {
 	}{
 		{
 			name: "multiple SKUs",
-			tke:  &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 2, maxReplicas: 10, readyReplicas: &ready, instanceTypes: []string{"SA5.LARGE4", "SA5.2XLARGE16"}},
+			tke:  &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 2, maxReplicas: 10, readyReplicas: &ready, instanceTypes: []string{"SA5.MEDIUM4", "SA5.2XLARGE16"}},
 			vpc:  &fakeNativeVpcAPI{},
 		},
 		{
@@ -1460,7 +2009,7 @@ func TestTencentSDKCapacityRequiresExactSingleSKUAndZone(t *testing.T) {
 			client := &tencentSDKClient{region: "na-siliconvalley", clusterId: "cls-123", nativeTkeClient: tc.tke, nativeCvmClient: &fakeNativeCvmAPI{}, nativeVpcClient: tc.vpc}
 			response := client.Capacity(Request{
 				Action: "capacity_preflight", PackageId: "basic", Zone: "na-siliconvalley-1",
-				Pool: ComputePoolInput{Id: "pool-basic-2c4g", InstanceType: "SA5.LARGE4", NodePoolId: "np-basic", DesiredReplicas: 5},
+				Pool: ComputePoolInput{Id: "pool-basic-2c4g", InstanceType: "SA5.MEDIUM4", NodePoolId: "np-basic", DesiredReplicas: 5, MaxReplicas: 10},
 			}, nil)
 			if response.Ok {
 				t.Fatalf("non-exact pool must fail closed: %#v", response)
@@ -1469,24 +2018,14 @@ func TestTencentSDKCapacityRequiresExactSingleSKUAndZone(t *testing.T) {
 	}
 }
 
-func TestTencentSDKCapacityDiscoveryRequiresOneUntruncatedMatchingPool(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		tke  *fakeNativeTkeAPI
-	}{
-		{name: "missing", tke: &fakeNativeTkeAPI{}},
-		{name: "ambiguous", tke: &fakeNativeTkeAPI{discoverNodePoolId: "np-basic", ambiguousDiscovery: true}},
-		{name: "truncated", tke: &fakeNativeTkeAPI{discoverNodePoolId: "np-basic", truncatedDiscovery: true}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			client := &tencentSDKClient{region: "na-siliconvalley", clusterId: "cls-123", nativeTkeClient: tc.tke, nativeCvmClient: &fakeNativeCvmAPI{}, nativeVpcClient: &fakeNativeVpcAPI{}}
-			response := client.Capacity(Request{Action: "capacity_preflight", PackageId: "basic", Pool: ComputePoolInput{
-				Id: "pool-basic-2c4g", InstanceType: "SA5.LARGE4", DesiredReplicas: 5,
-			}}, map[string]string{})
-			if response.Ok || tc.tke.scaleNodePoolRequest != nil || tc.tke.createNodePoolRequest != nil || tc.tke.modifyNodePoolRequest != nil {
-				t.Fatalf("discovery must fail closed without mutation: %#v", response)
-			}
-		})
+func TestTencentSDKCapacityRequiresExplicitPoolWithoutDiscovery(t *testing.T) {
+	tkeAPI := &fakeNativeTkeAPI{discoverNodePoolId: "np-basic"}
+	client := &tencentSDKClient{region: "na-siliconvalley", clusterId: "cls-123", nativeTkeClient: tkeAPI, nativeCvmClient: &fakeNativeCvmAPI{}, nativeVpcClient: &fakeNativeVpcAPI{}}
+	response := client.Capacity(Request{Action: "capacity_preflight", PackageId: "basic", Pool: ComputePoolInput{
+		Id: "pool-basic-2c4g", InstanceType: "SA5.MEDIUM4", DesiredReplicas: 5, MaxReplicas: 10,
+	}}, map[string]string{})
+	if response.Ok || len(tkeAPI.describeNodePoolsRequest) != 0 || tkeAPI.scaleNodePoolRequest != nil || tkeAPI.createNodePoolRequest != nil || tkeAPI.modifyNodePoolRequest != nil {
+		t.Fatalf("missing exact pool must fail before Describe or mutation: response=%#v tke=%#v", response, tkeAPI)
 	}
 }
 
@@ -1529,7 +2068,7 @@ func TestTencentSDKCapacityPreflightFailsClosedWithoutMutation(t *testing.T) {
 			}
 			client := &tencentSDKClient{region: "na-siliconvalley", clusterId: "cls-123", nativeTkeClient: tc.tke, nativeCvmClient: tc.cvm, nativeVpcClient: vpcAPI}
 			response := client.Capacity(Request{Action: "capacity_preflight", PackageId: "basic", Pool: ComputePoolInput{
-				Id: "pool-basic-2c4g", InstanceType: "SA5.LARGE4", NodePoolId: "np-basic", DesiredReplicas: 5,
+				Id: "pool-basic-2c4g", InstanceType: "SA5.MEDIUM4", NodePoolId: "np-basic", DesiredReplicas: 5, MaxReplicas: 10,
 			}}, map[string]string{})
 			if response.Ok {
 				t.Fatalf("capacity preflight must fail closed: %#v", response)
@@ -1551,7 +2090,7 @@ func TestTencentSDKMonthlyPreflightEvaluatesIndependentFailuresWithoutMutation(t
 	vpcAPI := &fakeNativeVpcAPI{}
 	compute := (&tencentSDKClient{region: "na-siliconvalley", clusterId: "cls-123", nativeTkeClient: tkeAPI, nativeCvmClient: cvmAPI, nativeVpcClient: vpcAPI}).Capacity(Request{
 		Action: "capacity_preflight", PackageId: "basic", Zone: "na-siliconvalley-1",
-		Pool: ComputePoolInput{Id: "pool-basic-2c4g", InstanceType: "SA5.MEDIUM4", DesiredReplicas: 1},
+		Pool: ComputePoolInput{Id: "pool-basic-2c4g", InstanceType: "SA5.MEDIUM4", NodePoolId: "np-basic", DesiredReplicas: 1, MaxReplicas: 10},
 	}, nil)
 	computeStages := map[string]PreflightStage{}
 	for _, stage := range compute.PreflightStages {
@@ -1620,10 +2159,13 @@ func (api *fakeNativeTkeAPI) DescribeClusterInstances(request *tke2022.DescribeC
 			NodeType:      common.StringPtr(firstNonEmpty(api.nodeType, "Native")),
 		})
 	}
+	totalCount := len(instances)
+	start, end := pageBounds(request.Offset, request.Limit, totalCount)
+	instances = instances[start:end]
 	return &tke2022.DescribeClusterInstancesResponse{
 		Response: &tke2022.DescribeClusterInstancesResponseParams{
 			InstanceSet: instances,
-			TotalCount:  common.Uint64Ptr(uint64(len(instances))),
+			TotalCount:  common.Uint64Ptr(uint64(totalCount)),
 			RequestId:   common.StringPtr("req-describe-tke-instances"),
 		},
 	}, nil
@@ -1638,8 +2180,20 @@ func (api *fakeNativeTkeAPI) DescribeClusterMachines(request *tke2022.DescribeCl
 	if api.rejectMachinePoolFilter && clusterMachineNodePoolIdFilterValue(request) != "" {
 		return nil, errors.New("[TencentCloudSDKError] Code=InvalidParameter, Message=invalid filter name NodePoolsId")
 	}
+	if clusterMachineNodePoolIdFilterValue(request) == "np-system" {
+		machineName := firstNonEmpty(api.systemMachineName, "machine-system")
+		nodeName := firstNonEmpty(api.systemNodeName, "10.66.0.42")
+		return &tke2022.DescribeClusterMachinesResponse{Response: &tke2022.DescribeClusterMachinesResponseParams{
+			Machines:   []*tke2022.Machine{{MachineName: common.StringPtr(machineName), MachineState: common.StringPtr("Running"), LanIP: common.StringPtr(nodeName), InstanceType: common.StringPtr("S5.2XLARGE16")}},
+			TotalCount: common.Int64Ptr(1), RequestId: common.StringPtr("req-describe-system-machine"),
+		}}, nil
+	}
 	machines := []*tke2022.Machine{}
-	for index := int64(1); index <= api.replicas; index++ {
+	machineReplicas := api.replicas
+	if api.machineReplicas != nil {
+		machineReplicas = *api.machineReplicas
+	}
+	for index := int64(1); index <= machineReplicas; index++ {
 		machineName := fmt.Sprintf("node-basic-%d", index)
 		if api.deletedMachineNames[machineName] {
 			continue
@@ -1652,17 +2206,20 @@ func (api *fakeNativeTkeAPI) DescribeClusterMachines(request *tke2022.DescribeCl
 			MachineName:  common.StringPtr(machineName),
 			MachineState: common.StringPtr("Running"),
 			LanIP:        common.StringPtr(lanIP),
-			InstanceType: common.StringPtr(firstNonEmpty(api.machineInstanceType, "SA5.LARGE4")),
+			InstanceType: common.StringPtr(firstNonEmpty(api.machineInstanceType, "SA5.MEDIUM4")),
 		})
 	}
 	if api.duplicateMachineName && clusterMachineNodePoolIdFilterValue(request) == "" && len(machines) > 0 {
 		duplicate := *machines[0]
 		machines = append(machines, &duplicate)
 	}
+	totalCount := len(machines)
+	start, end := pageBounds(request.Offset, request.Limit, totalCount)
+	machines = machines[start:end]
 	return &tke2022.DescribeClusterMachinesResponse{
 		Response: &tke2022.DescribeClusterMachinesResponseParams{
 			Machines:   machines,
-			TotalCount: common.Int64Ptr(int64(len(machines))),
+			TotalCount: common.Int64Ptr(int64(totalCount)),
 			RequestId:  common.StringPtr("req-describe-machines"),
 		},
 	}, nil
@@ -1707,8 +2264,12 @@ func cvmPrivateIpFilterValue(request *cvm2017.DescribeInstancesRequest) string {
 func (api *fakeNativeTkeAPI) ScaleNodePool(request *tke2022.ScaleNodePoolRequest) (*tke2022.ScaleNodePoolResponse, error) {
 	api.record("ScaleNodePool")
 	api.scaleNodePoolRequest = request
-	if request.Replicas != nil {
+	api.scaleNodePoolRequests = append(api.scaleNodePoolRequests, request)
+	if request.Replicas != nil && (api.scaleNodePoolErr == nil || api.applyScaleBeforeError) {
 		api.replicas = *request.Replicas
+	}
+	if api.scaleNodePoolErr != nil {
+		return nil, api.scaleNodePoolErr
 	}
 	return &tke2022.ScaleNodePoolResponse{
 		Response: &tke2022.ScaleNodePoolResponseParams{
@@ -1751,19 +2312,26 @@ func (api *fakeNativeTkeAPI) DeleteClusterMachines(request *tke2022.DeleteCluste
 	}, nil
 }
 
+func persistedAllocationPlan(poolID, instanceType, nodePoolID string, baseline int64) ComputePoolInput {
+	before := make([]string, 0, baseline)
+	for index := int64(1); index <= baseline; index++ {
+		before = append(before, fmt.Sprintf("node-basic-%d", index))
+	}
+	return ComputePoolInput{
+		Id: poolID, InstanceType: instanceType, NodePoolId: nodePoolID,
+		MaxReplicas: 10, BaselineReplicas: baseline, TargetReplicas: baseline + 1, BeforeMachineNames: before,
+	}
+}
+
 func TestTencentSDKClientCreateAllocationRejectsSelfProvisioningBeforeExplicitScale(t *testing.T) {
 	tkeAPI := &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 1, enableAutoscaling: true, autoRepair: true}
 	client := newFakeTencentSDKClient(tkeAPI)
 
 	response := client.CreateComputeAllocation(Request{
-		AccountId: "pi-alpha",
-		UserId:    "usr-alpha",
-		PackageId: "basic",
-		Pool: ComputePoolInput{
-			Id:           "pool-basic-2c4g",
-			InstanceType: "SA5.LARGE4",
-			NodePoolId:   "np-basic",
-		},
+		AccountId:  "pi-alpha",
+		UserId:     "usr-alpha",
+		PackageId:  "basic",
+		Pool:       persistedAllocationPlan("pool-basic-2c4g", "SA5.MEDIUM4", "np-basic", 1),
 		Allocation: ComputeAllocationInput{Id: "compute-alpha"},
 	}, map[string]string{})
 
@@ -1780,14 +2348,10 @@ func TestTencentSDKClientCreateAllocationScalesExistingPackageNodePool(t *testin
 	client := newFakeTencentSDKClient(tkeAPI)
 
 	response := client.CreateComputeAllocation(Request{
-		AccountId: "pi-alpha",
-		UserId:    "usr-alpha",
-		PackageId: "basic",
-		Pool: ComputePoolInput{
-			Id:           "pool-basic-2c4g",
-			InstanceType: "SA5.LARGE4",
-			NodePoolId:   "np-basic",
-		},
+		AccountId:  "pi-alpha",
+		UserId:     "usr-alpha",
+		PackageId:  "basic",
+		Pool:       persistedAllocationPlan("pool-basic-2c4g", "SA5.MEDIUM4", "np-basic", 1),
 		Allocation: ComputeAllocationInput{Id: "compute-alpha"},
 	}, map[string]string{})
 
@@ -1837,7 +2401,7 @@ func TestTencentSDKClientCreateAllocationUsesExactProPoolAndSKU(t *testing.T) {
 
 	response := client.CreateComputeAllocation(Request{
 		AccountId: "pi-pro", UserId: "usr-pro", PackageId: "pro",
-		Pool:       ComputePoolInput{Id: "pool-pro-8c16g", InstanceType: "SA5.2XLARGE16", NodePoolId: "np-pro"},
+		Pool:       persistedAllocationPlan("pool-pro-8c16g", "SA5.2XLARGE16", "np-pro", 1),
 		Allocation: ComputeAllocationInput{Id: "compute-pro"},
 	}, map[string]string{})
 
@@ -1852,14 +2416,10 @@ func TestTencentSDKClientCreateAllocationRequiresCvmIdentityWithoutTkeFallback(t
 	client.nativeCvmClient = &fakeNativeCvmAPI{empty: true}
 
 	response := client.CreateComputeAllocation(Request{
-		AccountId: "pi-alpha",
-		UserId:    "usr-alpha",
-		PackageId: "basic",
-		Pool: ComputePoolInput{
-			Id:           "pool-basic-2c4g",
-			InstanceType: "SA5.LARGE4",
-			NodePoolId:   "np-basic",
-		},
+		AccountId:  "pi-alpha",
+		UserId:     "usr-alpha",
+		PackageId:  "basic",
+		Pool:       persistedAllocationPlan("pool-basic-2c4g", "SA5.MEDIUM4", "np-basic", 1),
 		Allocation: ComputeAllocationInput{Id: "compute-alpha"},
 	}, map[string]string{})
 
@@ -1873,14 +2433,10 @@ func TestTencentSDKClientCreateAllocationFallsBackWhenClusterMachinesRejectsNode
 	client := newFakeTencentSDKClient(tkeAPI)
 
 	response := client.CreateComputeAllocation(Request{
-		AccountId: "pi-alpha",
-		UserId:    "usr-alpha",
-		PackageId: "basic",
-		Pool: ComputePoolInput{
-			Id:           "pool-basic-2c4g",
-			InstanceType: "SA5.LARGE4",
-			NodePoolId:   "np-basic",
-		},
+		AccountId:  "pi-alpha",
+		UserId:     "usr-alpha",
+		PackageId:  "basic",
+		Pool:       persistedAllocationPlan("pool-basic-2c4g", "SA5.MEDIUM4", "np-basic", 1),
 		Allocation: ComputeAllocationInput{Id: "compute-alpha"},
 	}, map[string]string{})
 
@@ -1890,7 +2446,7 @@ func TestTencentSDKClientCreateAllocationFallsBackWhenClusterMachinesRejectsNode
 	if response.NodeName == "" || response.PrivateIp == "" {
 		t.Fatalf("expected node identity after fallback: %#v", response)
 	}
-	if len(tkeAPI.describeMachinesRequest) < 3 {
+	if len(tkeAPI.describeMachinesRequest) != 2 {
 		t.Fatalf("expected filtered attempt and unfiltered fallback calls: %#v", tkeAPI.describeMachinesRequest)
 	}
 	if clusterMachineNodePoolIdFilterValue(tkeAPI.describeMachinesRequest[0]) != "np-basic" {
@@ -1901,7 +2457,36 @@ func TestTencentSDKClientCreateAllocationFallsBackWhenClusterMachinesRejectsNode
 	}
 }
 
-func TestTencentSDKClientPoolFallbackExcludesMachinesFromOtherPools(t *testing.T) {
+func TestDescribeClusterMachinesPaginatesCompleteInventory(t *testing.T) {
+	for _, test := range []struct {
+		name                       string
+		rejectMachinePoolFilter    bool
+		wantMachineRequestOffsets  []int64
+		wantInstanceRequestOffsets []int64
+	}{
+		{name: "filtered", wantMachineRequestOffsets: []int64{0, 100, 200}},
+		{name: "fallback", rejectMachinePoolFilter: true, wantMachineRequestOffsets: []int64{0, 0, 100, 200}, wantInstanceRequestOffsets: []int64{0, 100, 200}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			tkeAPI := &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 205, rejectMachinePoolFilter: test.rejectMachinePoolFilter}
+			client := newFakeTencentSDKClient(tkeAPI)
+
+			machines, _, err := client.describeClusterMachines("np-basic")
+
+			if err != nil || len(machines) != 205 || stringValue(machines[204].MachineName) != "node-basic-205" {
+				t.Fatalf("machine inventory len=%d err=%v", len(machines), err)
+			}
+			assertRequestOffsets(t, tkeAPI.describeMachinesRequest, test.wantMachineRequestOffsets, func(request *tke2022.DescribeClusterMachinesRequest) *int64 {
+				return request.Offset
+			})
+			assertRequestOffsets(t, tkeAPI.describeInstancesRequest, test.wantInstanceRequestOffsets, func(request *tke2022.DescribeClusterInstancesRequest) *int64 {
+				return request.Offset
+			})
+		})
+	}
+}
+
+func TestPrepareComputeAllocationFallbackExcludesMachinesFromOtherPools(t *testing.T) {
 	tkeAPI := &fakeNativeTkeAPI{
 		nodePoolId:              "np-basic",
 		replicas:                2,
@@ -1910,32 +2495,33 @@ func TestTencentSDKClientPoolFallbackExcludesMachinesFromOtherPools(t *testing.T
 	}
 	client := newFakeTencentSDKClient(tkeAPI)
 
-	response := client.ReconcileComputePool(Request{
+	response := client.PrepareComputeAllocation(Request{
 		PackageId: "basic",
-		Pool:      ComputePoolInput{Id: "pool-basic-2c4g", InstanceType: "SA5.LARGE4", NodePoolId: "np-basic", DesiredReplicas: 2},
+		Pool:      ComputePoolInput{Id: "pool-basic-2c4g", InstanceType: "SA5.MEDIUM4", NodePoolId: "np-basic", MaxReplicas: 10},
 	}, map[string]string{})
 
-	if !response.Ok || len(response.Machines) != 1 || response.Machines[0].MachineId != "node-basic-2" || response.Machines[0].Zone != "ap-guangzhou-3" {
+	if response.Ok || response.ErrorCode != "compute_allocation_machine_inventory_incomplete" {
 		t.Fatalf("pool fallback leaked another pool's machine: %#v", response)
 	}
 }
 
-func TestTencentSDKClientReconcileRequiresCvmIdentityWhenCVMIsAbsent(t *testing.T) {
+func TestTencentSDKClientCreateRequiresCvmIdentityWhenCVMIsAbsent(t *testing.T) {
 	tkeAPI := &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 1}
 	client := newFakeTencentSDKClient(tkeAPI)
 	client.nativeCvmClient = &fakeNativeCvmAPI{empty: true}
 
-	response := client.ReconcileComputePool(Request{
-		PackageId: "basic",
-		Pool:      ComputePoolInput{Id: "pool-basic-2c4g", InstanceType: "SA5.LARGE4", NodePoolId: "np-basic", DesiredReplicas: 1},
+	response := client.CreateComputeAllocation(Request{
+		PackageId: "basic", AccountId: "acct-alpha",
+		Pool:       persistedAllocationPlan("pool-basic-2c4g", "SA5.MEDIUM4", "np-basic", 1),
+		Allocation: ComputeAllocationInput{Id: "compute-alpha"},
 	}, map[string]string{})
 
 	if response.Ok || response.ErrorCode != "compute_cvm_identity_required" || len(tkeAPI.describeInstancesRequest) != 0 {
-		t.Fatalf("CVM pool reconcile must fail instead of using TKE-native identity: %#v", response)
+		t.Fatalf("CVM allocation must fail instead of using TKE-native identity: %#v", response)
 	}
 }
 
-func TestTencentSDKClientReconcileRejectsIncompleteCvmBillingFacts(t *testing.T) {
+func TestTencentSDKClientCreateRejectsIncompleteCvmBillingFacts(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
 		configure func(*fakeNativeCvmAPI)
@@ -1950,8 +2536,12 @@ func TestTencentSDKClientReconcileRejectsIncompleteCvmBillingFacts(t *testing.T)
 			tc.configure(cvmAPI)
 			client := newFakeTencentSDKClient(tkeAPI)
 			client.nativeCvmClient = cvmAPI
-			response := client.ReconcileComputePool(Request{PackageId: "basic", Pool: ComputePoolInput{Id: "pool-basic-2c4g", InstanceType: "SA5.LARGE4", NodePoolId: "np-basic", DesiredReplicas: 1}}, nil)
-			if response.Ok || len(response.Machines) != 0 {
+			response := client.CreateComputeAllocation(Request{
+				AccountId: "acct-alpha", PackageId: "basic",
+				Pool:       persistedAllocationPlan("pool-basic-2c4g", "SA5.MEDIUM4", "np-basic", 1),
+				Allocation: ComputeAllocationInput{Id: "compute-alpha"},
+			}, nil)
+			if response.Ok || response.ErrorCode != "compute_cvm_billing_facts_required" {
 				t.Fatalf("incomplete per-CVM billing facts must block claim: %#v", response)
 			}
 		})
@@ -1959,13 +2549,13 @@ func TestTencentSDKClientReconcileRejectsIncompleteCvmBillingFacts(t *testing.T)
 }
 
 func TestTencentSDKClientSyncRequiresOwnedPrepaidCvmBillingFacts(t *testing.T) {
-	request := Request{AccountId: "acct-alpha", Zone: "ap-guangzhou-3", Tags: computeOwnershipTags(), Pool: ComputePoolInput{Id: "basic", NodePoolId: "np-basic", InstanceType: "SA5.LARGE4"}, Allocation: ComputeAllocationInput{
+	request := Request{AccountId: "acct-alpha", Zone: "ap-guangzhou-3", Tags: computeOwnershipTags(), Pool: ComputePoolInput{Id: "basic", NodePoolId: "np-basic", InstanceType: "SA5.MEDIUM4"}, Allocation: ComputeAllocationInput{
 		Id: "compute-alpha", InstanceId: "ins-basic-1", MachineName: "node-basic-1", NodeName: "10.0.0.11", PrivateIp: "10.0.0.11",
 	}}
 	client := newFakeTencentSDKClient(&fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 1})
 	client.nativeCvmClient = &fakeNativeCvmAPI{instanceName: "compute-alpha", expiredTime: "2026-08-16T08:00:00+08:00", tags: computeOwnershipTags()}
 	response := client.SyncComputeAllocation(request, nil)
-	if !response.Ok || response.InstanceType != "SA5.LARGE4" || response.ProviderData["instanceType"] != "SA5.LARGE4" || response.ProviderData["chargeType"] != "PREPAID" || response.ProviderData["renewFlag"] != "NOTIFY_AND_MANUAL_RENEW" || response.ProviderData["deadline"] != "2026-08-16T00:00:00Z" || response.ProviderData["zone"] != "ap-guangzhou-3" {
+	if !response.Ok || response.InstanceType != "SA5.MEDIUM4" || response.ProviderData["instanceType"] != "SA5.MEDIUM4" || response.ProviderData["chargeType"] != "PREPAID" || response.ProviderData["renewFlag"] != "NOTIFY_AND_MANUAL_RENEW" || response.ProviderData["deadline"] != "2026-08-16T00:00:00Z" || response.ProviderData["zone"] != "ap-guangzhou-3" {
 		t.Fatalf("sync must return exact owned CVM billing facts: %#v", response)
 	}
 	for _, tc := range []struct {
@@ -1990,7 +2580,7 @@ func TestTencentSDKClientSyncRequiresOwnedPrepaidCvmBillingFacts(t *testing.T) {
 }
 
 func TestTencentSDKClientSyncRejectsWrongSelfConsistentInstanceType(t *testing.T) {
-	request := Request{AccountId: "acct-alpha", Zone: "ap-guangzhou-3", Tags: computeOwnershipTags(), Pool: ComputePoolInput{Id: "basic", NodePoolId: "np-basic", InstanceType: "SA5.LARGE4"}, Allocation: ComputeAllocationInput{
+	request := Request{AccountId: "acct-alpha", Zone: "ap-guangzhou-3", Tags: computeOwnershipTags(), Pool: ComputePoolInput{Id: "basic", NodePoolId: "np-basic", InstanceType: "SA5.MEDIUM4"}, Allocation: ComputeAllocationInput{
 		Id: "compute-alpha", InstanceId: "ins-basic-1", MachineName: "node-basic-1", NodeName: "10.0.0.11", PrivateIp: "10.0.0.11",
 	}}
 	client := newFakeTencentSDKClient(&fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 1, machineInstanceType: "SA5.2XLARGE16"})
@@ -1999,21 +2589,6 @@ func TestTencentSDKClientSyncRejectsWrongSelfConsistentInstanceType(t *testing.T
 	response := client.SyncComputeAllocation(request, nil)
 	if response.Ok || response.ErrorCode != "compute_instance_type_mismatch" {
 		t.Fatalf("wrong but self-consistent SKU must fail exact package claim: %#v", response)
-	}
-}
-
-func TestTencentSDKClientReconcileCompletesNativeIdentityWhenMachineLanIPIsMissing(t *testing.T) {
-	tkeAPI := &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 1, omitMachineLanIP: true, machineInstanceIDsMatch: true}
-	client := newFakeTencentSDKClient(tkeAPI)
-	client.nativeCvmClient = &fakeNativeCvmAPI{empty: true}
-
-	response := client.ReconcileComputePool(Request{
-		PackageId: "basic",
-		Pool:      ComputePoolInput{Id: "pool-basic-2c4g", InstanceType: "SA5.LARGE4", NodePoolId: "np-basic", DesiredReplicas: 1},
-	}, map[string]string{})
-
-	if response.Ok || response.ErrorCode != "compute_cvm_identity_required" {
-		t.Fatalf("TKE-discovered private IP still requires a real CVM identity: %#v", response)
 	}
 }
 
@@ -2040,7 +2615,7 @@ func TestTencentSDKClientRejectsCxmPoolBeforeAnyMutation(t *testing.T) {
 	client := newFakeTencentSDKClient(tkeAPI)
 	response := client.CreateComputeAllocation(Request{
 		AccountId: "pi-alpha", PackageId: "basic",
-		Pool:       ComputePoolInput{Id: "pool-basic-2c4g", InstanceType: "SA5.LARGE4", NodePoolId: "np-basic"},
+		Pool:       persistedAllocationPlan("pool-basic-2c4g", "SA5.MEDIUM4", "np-basic", 1),
 		Allocation: ComputeAllocationInput{Id: "compute-alpha"},
 	}, map[string]string{})
 	if response.Ok || response.ErrorCode != "tencent_cvm_node_pool_required" {
@@ -2087,14 +2662,6 @@ func TestTencentSDKClientRejectsRegularTKEIdentityWhenCVMIsAbsent(t *testing.T) 
 	client := newFakeTencentSDKClient(tkeAPI)
 	client.nativeCvmClient = &fakeNativeCvmAPI{empty: true}
 
-	reconcile := client.ReconcileComputePool(Request{
-		PackageId: "basic",
-		Pool:      ComputePoolInput{Id: "pool-basic-2c4g", InstanceType: "SA5.LARGE4", NodePoolId: "np-basic", DesiredReplicas: 1},
-	}, map[string]string{})
-	if reconcile.Ok || reconcile.ErrorCode != "compute_cvm_identity_required" {
-		t.Fatalf("regular machine without CVM identity = %#v", reconcile)
-	}
-
 	tagged := client.TagComputeMachine(Request{
 		Tags:       computeOwnershipTags(),
 		Pool:       ComputePoolInput{NodePoolId: "np-basic"},
@@ -2110,17 +2677,9 @@ func TestTencentSDKClientDoesNotTreatCVMAPIErrorAsNativeIdentity(t *testing.T) {
 	client := newFakeTencentSDKClient(tkeAPI)
 	client.nativeCvmClient = &fakeNativeCvmAPI{err: errors.New("cvm unavailable")}
 
-	reconcile := client.ReconcileComputePool(Request{
-		PackageId: "basic",
-		Pool:      ComputePoolInput{Id: "pool-basic-2c4g", InstanceType: "SA5.LARGE4", NodePoolId: "np-basic", DesiredReplicas: 1},
-	}, map[string]string{})
-	if reconcile.Ok || reconcile.ErrorCode != "tencent_describe_cvm_instance_failed" {
-		t.Fatalf("reconcile after CVM API error = %#v", reconcile)
-	}
-
 	created := client.CreateComputeAllocation(Request{
 		AccountId: "acct-alpha", PackageId: "basic",
-		Pool:       ComputePoolInput{Id: "pool-basic-2c4g", InstanceType: "SA5.LARGE4", NodePoolId: "np-basic"},
+		Pool:       persistedAllocationPlan("pool-basic-2c4g", "SA5.MEDIUM4", "np-basic", 1),
 		Allocation: ComputeAllocationInput{Id: "compute-alpha"},
 	}, map[string]string{})
 	if created.Ok || created.ErrorCode != "tencent_describe_cvm_instance_failed" {
@@ -2164,12 +2723,13 @@ func TestTencentSDKClientRejectsMalformedCVMResponses(t *testing.T) {
 			client := newFakeTencentSDKClient(tkeAPI)
 			client.nativeCvmClient = test.api
 
-			reconcile := client.ReconcileComputePool(Request{
-				PackageId: "basic",
-				Pool:      ComputePoolInput{Id: "pool-basic-2c4g", InstanceType: "SA5.LARGE4", NodePoolId: "np-basic", DesiredReplicas: 1},
+			created := client.CreateComputeAllocation(Request{
+				AccountId: "acct-alpha", PackageId: "basic",
+				Pool:       persistedAllocationPlan("pool-basic-2c4g", "SA5.MEDIUM4", "np-basic", 1),
+				Allocation: ComputeAllocationInput{Id: "compute-alpha"},
 			}, map[string]string{})
-			if reconcile.Ok || reconcile.ErrorCode != "tencent_describe_cvm_instance_failed" {
-				t.Fatalf("reconcile malformed CVM response = %#v", reconcile)
+			if created.Ok || created.ErrorCode != "tencent_describe_cvm_instance_failed" {
+				t.Fatalf("create malformed CVM response = %#v", created)
 			}
 
 			tagged := client.TagComputeMachine(Request{
@@ -2205,103 +2765,20 @@ func TestTencentSDKTagComputeMachineRejectsMalformedCVMReadback(t *testing.T) {
 	}
 }
 
-func TestTencentSDKClientReconcileEvidence(t *testing.T) {
-	tkeAPI := &fakeNativeTkeAPI{nodePoolId: "np-basic", labelPoolId: "basic"}
-	client := newFakeTencentSDKClient(tkeAPI)
-	client.nativeCvmClient = &fakeNativeCvmAPI{expiredTime: "2026-08-16T08:00:00+08:00"}
-
-	response := client.ReconcileComputePool(Request{
-		PackageId: "basic",
-		Pool:      ComputePoolInput{Id: "basic", InstanceType: "SA5.LARGE4", NodePoolId: "np-basic", DesiredReplicas: 1},
-	}, map[string]string{})
-
-	want := map[string]string{
-		"nodePoolId":                "np-basic",
-		"currentReplicas":           "1",
-		"desiredReplicas":           "1",
-		"scaleNodePoolRequestId":    "req-scale-pool",
-		"describeMachinesRequestId": "req-describe-machines",
-		"machineStates":             "node-basic-1=running",
-	}
-	if !response.Ok {
-		t.Fatalf("reconcile failed: %#v", response)
-	}
-	for key, value := range want {
-		if response.ProviderData[key] != value {
-			t.Fatalf("providerData[%q] = %q, want %q: %#v", key, response.ProviderData[key], value, response.ProviderData)
-		}
-	}
-	if len(response.Machines) != 1 || response.Machines[0].Deadline != "2026-08-16T00:00:00Z" {
-		t.Fatalf("reconcile deadline was not normalized: %#v", response.Machines)
-	}
-}
-
-func TestTencentSDKClientCreateAllocationDiscoversExistingPackageNodePool(t *testing.T) {
-	tkeAPI := &fakeNativeTkeAPI{discoverNodePoolId: "np-discovered", replicas: 2, labelPoolId: "basic"}
-	client := newFakeTencentSDKClient(tkeAPI)
-
-	response := client.CreateComputeAllocation(Request{
-		AccountId: "pi-alpha",
-		UserId:    "usr-alpha",
-		PackageId: "basic",
-		Pool: ComputePoolInput{
-			Id:           "basic",
-			InstanceType: "SA5.LARGE4",
-		},
-		Allocation: ComputeAllocationInput{Id: "compute-alpha"},
-	}, map[string]string{})
-
-	if !response.Ok {
-		t.Fatalf("expected ok response: %#v", response)
-	}
-	if response.NodePoolId != "np-discovered" {
-		t.Fatalf("expected discovered node pool id: %#v", response)
-	}
-	if response.NodeName == "" {
-		t.Fatalf("expected discovered pool allocation to return a node identity: %#v", response)
-	}
-	if tkeAPI.createNodePoolRequest != nil {
-		t.Fatalf("must reuse discovered package pool before creating: %#v", tkeAPI.createNodePoolRequest)
-	}
-	if tkeAPI.scaleNodePoolRequest == nil || tkeAPI.scaleNodePoolRequest.Replicas == nil || *tkeAPI.scaleNodePoolRequest.Replicas != 3 {
-		t.Fatalf("expected scale to 3 replicas: %#v", tkeAPI.scaleNodePoolRequest)
-	}
-	expectedCalls := []string{"DescribeNodePools", "DescribeClusterMachines", "ScaleNodePool", "DescribeClusterMachines"}
-	if len(tkeAPI.calls) != len(expectedCalls) {
-		t.Fatalf("unexpected call order: %#v", tkeAPI.calls)
-	}
-	for index, expected := range expectedCalls {
-		if tkeAPI.calls[index] != expected {
-			t.Fatalf("unexpected call order: %#v", tkeAPI.calls)
-		}
-	}
-}
-
 func TestTencentSDKClientMutationRejectsStaleConfiguredNodePoolWithoutMutation(t *testing.T) {
-	for _, action := range []string{"create", "reconcile"} {
-		t.Run(action, func(t *testing.T) {
-			tkeAPI := &fakeNativeTkeAPI{nodePoolId: "np-live", discoverNodePoolId: "np-live", replicas: 4}
-			client := newFakeTencentSDKClient(tkeAPI)
-			request := Request{AccountId: "pi-alpha", UserId: "usr-alpha", PackageId: "basic", Pool: ComputePoolInput{
-				Id: "pool-basic-2c4g", InstanceType: "SA5.LARGE4", NodePoolId: "np-stale", DesiredReplicas: 4,
-			}}
-			var response Response
-			if action == "create" {
-				request.Allocation = ComputeAllocationInput{Id: "compute-alpha"}
-				response = client.CreateComputeAllocation(request, map[string]string{})
-			} else {
-				response = client.ReconcileComputePool(request, map[string]string{})
-			}
-			if response.Ok {
-				t.Fatalf("stale explicit node pool must fail closed: %#v", response)
-			}
-			if tkeAPI.createNodePoolRequest != nil || tkeAPI.modifyNodePoolRequest != nil || tkeAPI.scaleNodePoolRequest != nil {
-				t.Fatalf("stale explicit node pool must not mutate another pool: %#v", tkeAPI)
-			}
-			if len(tkeAPI.calls) != 1 || tkeAPI.calls[0] != "DescribeNodePools" {
-				t.Fatalf("stale explicit node pool must not fall back to discovery: %#v", tkeAPI.calls)
-			}
-		})
+	tkeAPI := &fakeNativeTkeAPI{nodePoolId: "np-live", discoverNodePoolId: "np-live", replicas: 4}
+	client := newFakeTencentSDKClient(tkeAPI)
+	request := Request{AccountId: "pi-alpha", UserId: "usr-alpha", PackageId: "basic",
+		Pool: persistedAllocationPlan("pool-basic-2c4g", "SA5.MEDIUM4", "np-stale", 4), Allocation: ComputeAllocationInput{Id: "compute-alpha"}}
+	response := client.CreateComputeAllocation(request, map[string]string{})
+	if response.Ok {
+		t.Fatalf("stale explicit node pool must fail closed: %#v", response)
+	}
+	if tkeAPI.createNodePoolRequest != nil || tkeAPI.modifyNodePoolRequest != nil || tkeAPI.scaleNodePoolRequest != nil {
+		t.Fatalf("stale explicit node pool must not mutate another pool: %#v", tkeAPI)
+	}
+	if len(tkeAPI.calls) != 1 || tkeAPI.calls[0] != "DescribeNodePools" {
+		t.Fatalf("stale explicit node pool must not fall back to discovery: %#v", tkeAPI.calls)
 	}
 }
 
@@ -2321,54 +2798,28 @@ func TestTencentSDKClientMutationRejectsConflictingPoolReadbackWithoutMutation(t
 		{name: "prepaid period missing", configure: func(api *fakeNativeTkeAPI) { api.omitPrepaidPeriod = true }},
 		{name: "prepaid auto renew", configure: func(api *fakeNativeTkeAPI) { api.prepaidRenewFlag = "NOTIFY_AND_AUTO_RENEW" }},
 	} {
-		for _, action := range []string{"create", "reconcile"} {
-			t.Run(testCase.name+"/"+action, func(t *testing.T) {
-				tkeAPI := &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 1, maxReplicas: 10}
-				testCase.configure(tkeAPI)
-				client := newFakeTencentSDKClient(tkeAPI)
-				request := Request{PackageId: "basic", Pool: ComputePoolInput{
-					Id: "pool-basic-2c4g", NodePoolId: "np-basic", InstanceType: "SA5.LARGE4", DesiredReplicas: 2,
-				}}
-				var response Response
-				if action == "create" {
-					request.Allocation = ComputeAllocationInput{Id: "compute-alpha"}
-					response = client.CreateComputeAllocation(request, map[string]string{})
-				} else {
-					response = client.ReconcileComputePool(request, map[string]string{})
-				}
-				if response.Ok || tkeAPI.modifyNodePoolRequest != nil || tkeAPI.scaleNodePoolRequest != nil {
-					t.Fatalf("conflicting pool readback must fail before mutation: response=%#v calls=%#v", response, tkeAPI.calls)
-				}
-			})
-		}
+		t.Run(testCase.name, func(t *testing.T) {
+			tkeAPI := &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 1, maxReplicas: 10}
+			testCase.configure(tkeAPI)
+			client := newFakeTencentSDKClient(tkeAPI)
+			request := Request{PackageId: "basic", Pool: persistedAllocationPlan("pool-basic-2c4g", "SA5.MEDIUM4", "np-basic", 1), Allocation: ComputeAllocationInput{Id: "compute-alpha"}}
+			response := client.CreateComputeAllocation(request, map[string]string{})
+			if response.Ok || tkeAPI.modifyNodePoolRequest != nil || tkeAPI.scaleNodePoolRequest != nil {
+				t.Fatalf("conflicting pool readback must fail before mutation: response=%#v calls=%#v", response, tkeAPI.calls)
+			}
+		})
 	}
 }
 
 func TestTencentSDKClientMutationWaitsForCreatingPoolWithoutMutation(t *testing.T) {
 	tkeAPI := &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 0, lifeState: "Creating"}
 	client := newFakeTencentSDKClient(tkeAPI)
-	response := client.ReconcileComputePool(Request{PackageId: "basic", Pool: ComputePoolInput{
-		Id: "pool-basic-2c4g", NodePoolId: "np-basic", InstanceType: "SA5.LARGE4", DesiredReplicas: 1,
-	}}, map[string]string{})
+	response := client.CreateComputeAllocation(Request{PackageId: "basic", Pool: persistedAllocationPlan("pool-basic-2c4g", "SA5.MEDIUM4", "np-basic", 0), Allocation: ComputeAllocationInput{Id: "compute-alpha"}}, map[string]string{})
 	if response.Ok || !response.Retryable || response.ErrorCode != "tencent_node_pool_not_ready" {
 		t.Fatalf("creating pool must return retryable not-ready: %#v", response)
 	}
 	if tkeAPI.modifyNodePoolRequest != nil || tkeAPI.scaleNodePoolRequest != nil {
 		t.Fatalf("creating pool must not mutate: %#v", tkeAPI.calls)
-	}
-}
-
-func TestTencentSDKClientMutationDiscoversCreatingPoolWithoutCreatingDuplicate(t *testing.T) {
-	tkeAPI := &fakeNativeTkeAPI{discoverNodePoolId: "np-basic", replicas: 0, lifeState: "Creating"}
-	client := newFakeTencentSDKClient(tkeAPI)
-	response := client.ReconcileComputePool(Request{PackageId: "basic", Pool: ComputePoolInput{
-		Id: "pool-basic-2c4g", InstanceType: "SA5.LARGE4", DesiredReplicas: 1,
-	}}, map[string]string{})
-	if response.Ok || !response.Retryable || response.ErrorCode != "tencent_node_pool_not_ready" {
-		t.Fatalf("discovered creating pool must return retryable not-ready: %#v", response)
-	}
-	if tkeAPI.createNodePoolRequest != nil || tkeAPI.modifyNodePoolRequest != nil || tkeAPI.scaleNodePoolRequest != nil {
-		t.Fatalf("discovered creating pool must not create a duplicate or mutate: %#v", tkeAPI.calls)
 	}
 }
 
@@ -2385,112 +2836,18 @@ func TestTencentSDKClientMutationRejectsUnownedNodePoolWithoutMutation(t *testin
 		{name: "postpaid pool", tke: &fakeNativeTkeAPI{nodePoolId: "np-basic", instanceChargeType: "POSTPAID_BY_HOUR"}},
 	}
 	for _, tc := range cases {
-		for _, action := range []string{"create", "reconcile"} {
-			t.Run(tc.name+" "+action, func(t *testing.T) {
-				copy := *tc.tke
-				client := newFakeTencentSDKClient(&copy)
-				request := Request{PackageId: "basic", Pool: ComputePoolInput{
-					Id: "pool-basic-2c4g", InstanceType: "SA5.LARGE4", NodePoolId: "np-basic", DesiredReplicas: 1,
-				}}
-				var response Response
-				if action == "create" {
-					request.Allocation = ComputeAllocationInput{Id: "compute-alpha"}
-					response = client.CreateComputeAllocation(request, map[string]string{})
-				} else {
-					response = client.ReconcileComputePool(request, map[string]string{})
-				}
-				if response.Ok {
-					t.Fatalf("unowned node pool must fail closed: %#v", response)
-				}
-				if copy.createNodePoolRequest != nil || copy.modifyNodePoolRequest != nil || copy.scaleNodePoolRequest != nil {
-					t.Fatalf("unowned node pool must not be mutated: %#v", &copy)
-				}
-			})
-		}
-	}
-}
-
-func TestTencentSDKClientMutationDiscoveryRejectsDuplicateOrTruncatedResultsWithoutMutation(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		tke  *fakeNativeTkeAPI
-	}{
-		{name: "duplicate", tke: &fakeNativeTkeAPI{discoverNodePoolId: "np-basic", ambiguousDiscovery: true}},
-		{name: "truncated", tke: &fakeNativeTkeAPI{discoverNodePoolId: "np-basic", truncatedDiscovery: true}},
-	} {
-		for _, action := range []string{"create", "reconcile"} {
-			t.Run(tc.name+" "+action, func(t *testing.T) {
-				copy := *tc.tke
-				client := newFakeTencentSDKClient(&copy)
-				request := Request{PackageId: "basic", Pool: ComputePoolInput{
-					Id: "pool-basic-2c4g", InstanceType: "SA5.LARGE4", DesiredReplicas: 1,
-				}}
-				var response Response
-				if action == "create" {
-					request.Allocation = ComputeAllocationInput{Id: "compute-alpha"}
-					response = client.CreateComputeAllocation(request, map[string]string{})
-				} else {
-					response = client.ReconcileComputePool(request, map[string]string{})
-				}
-				if response.Ok {
-					t.Fatalf("incomplete discovery must fail closed: %#v", response)
-				}
-				if copy.createNodePoolRequest != nil || copy.modifyNodePoolRequest != nil || copy.scaleNodePoolRequest != nil {
-					t.Fatalf("incomplete discovery must not mutate: %#v", &copy)
-				}
-			})
-		}
-	}
-}
-
-func TestTencentSDKClientCreateAllocationCreatesMissingPackageNodePoolThenScales(t *testing.T) {
-	tkeAPI := &fakeNativeTkeAPI{}
-	client := newFakeTencentSDKClient(tkeAPI)
-	env := map[string]string{
-		"TENCENT_DEPLOY_CLUSTER_ID":       "cls-123",
-		"TENCENT_CVM_SUBNET_ID":           "subnet-123",
-		"TENCENT_CVM_SECURITY_GROUP_IDS":  "sg-123",
-		"TENCENT_CVM_SYSTEM_DISK_TYPE":    "CLOUD_BSSD",
-		"TENCENT_CVM_SYSTEM_DISK_SIZE_GB": "50",
-	}
-
-	response := client.CreateComputeAllocation(Request{
-		AccountId: "pi-alpha",
-		UserId:    "usr-alpha",
-		PackageId: "basic",
-		Pool: ComputePoolInput{
-			Id:           "pool-basic-2c4g",
-			InstanceType: "SA5.LARGE4",
-		},
-		Allocation: ComputeAllocationInput{Id: "compute-alpha"},
-	}, env)
-
-	if !response.Ok {
-		t.Fatalf("expected ok response: %#v", response)
-	}
-	if tkeAPI.createNodePoolRequest == nil {
-		t.Fatalf("expected CreateNodePool call")
-	}
-	if response.NodePoolId != "np-created" {
-		t.Fatalf("expected created node pool id: %#v", response)
-	}
-	if response.NodeName == "" {
-		t.Fatalf("expected created pool allocation to return a node identity: %#v", response)
-	}
-	if tkeAPI.scaleNodePoolRequest == nil || tkeAPI.scaleNodePoolRequest.NodePoolId == nil || *tkeAPI.scaleNodePoolRequest.NodePoolId != "np-created" {
-		t.Fatalf("expected scale of created node pool: %#v", tkeAPI.scaleNodePoolRequest)
-	}
-	if tkeAPI.scaleNodePoolRequest.Replicas == nil || *tkeAPI.scaleNodePoolRequest.Replicas != 1 {
-		t.Fatalf("expected scale to one replica: %#v", tkeAPI.scaleNodePoolRequest)
-	}
-	expectedCalls := []string{"DescribeNodePools", "CreateNodePool", "DescribeNodePools", "DescribeClusterMachines", "ScaleNodePool", "DescribeClusterMachines"}
-	if len(tkeAPI.calls) != len(expectedCalls) {
-		t.Fatalf("unexpected call order: %#v", tkeAPI.calls)
-	}
-	for index, expected := range expectedCalls {
-		if tkeAPI.calls[index] != expected {
-			t.Fatalf("unexpected call order: %#v", tkeAPI.calls)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			copy := *tc.tke
+			client := newFakeTencentSDKClient(&copy)
+			request := Request{PackageId: "basic", Pool: persistedAllocationPlan("pool-basic-2c4g", "SA5.MEDIUM4", "np-basic", 0), Allocation: ComputeAllocationInput{Id: "compute-alpha"}}
+			response := client.CreateComputeAllocation(request, map[string]string{})
+			if response.Ok {
+				t.Fatalf("unowned node pool must fail closed: %#v", response)
+			}
+			if copy.createNodePoolRequest != nil || copy.modifyNodePoolRequest != nil || copy.scaleNodePoolRequest != nil {
+				t.Fatalf("unowned node pool must not be mutated: %#v", &copy)
+			}
+		})
 	}
 }
 
@@ -2725,7 +3082,7 @@ func providerTruthRequest() Request {
 		},
 		ComputeTags: computeOwnershipTags(),
 		Storage:     StorageInput{SizeGB: 10, Zone: "ap-guangzhou-3", DiskType: "CLOUD_BSSD"},
-		Pool:        ComputePoolInput{ClusterId: "cls-123", NodePoolId: "np-basic", InstanceType: "SA5.LARGE4"},
+		Pool:        ComputePoolInput{ClusterId: "cls-123", NodePoolId: "np-basic", InstanceType: "SA5.MEDIUM4"},
 		Allocation: ComputeAllocationInput{
 			Id: "compute-alpha", MachineName: "node-basic-1", InstanceId: "ins-basic-1", NodeName: "10.0.0.11", PrivateIp: "10.0.0.11",
 		},
@@ -2935,7 +3292,7 @@ func TestTencentSDKProviderTruthReturnsKnownComputeWhenOnlyCBSIsAbsent(t *testin
 	if response.Ok || response.ErrorCode != "provider_truth_partial_identity" || response.MachinePresent == nil || !*response.MachinePresent || response.StoragePresent == nil || *response.StoragePresent || response.CBSStatus != "NOT_FOUND" {
 		t.Fatalf("mixed provider truth = %#v", response)
 	}
-	if response.ProviderData["instanceType"] != "SA5.LARGE4" || response.ProviderData["zone"] != "ap-guangzhou-3" || response.ProviderData["chargeType"] != "PREPAID" || response.ProviderData["renewFlag"] != "NOTIFY_AND_MANUAL_RENEW" || response.ProviderData["deadline"] != "2026-08-16T00:00:00Z" {
+	if response.ProviderData["instanceType"] != "SA5.MEDIUM4" || response.ProviderData["zone"] != "ap-guangzhou-3" || response.ProviderData["chargeType"] != "PREPAID" || response.ProviderData["renewFlag"] != "NOTIFY_AND_MANUAL_RENEW" || response.ProviderData["deadline"] != "2026-08-16T00:00:00Z" {
 		t.Fatalf("mixed provider truth lost exact compute facts: %#v", response.ProviderData)
 	}
 	assertProviderTruthDescribeOnly(t, tkeAPI.calls)

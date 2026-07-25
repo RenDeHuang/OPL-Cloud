@@ -25,7 +25,10 @@ import (
 type OperationStore interface {
 	Append(ctx context.Context, operation FabricOperation) error
 	ClaimRuntime(ctx context.Context, operation FabricOperation) (FabricOperation, bool, error)
+	ClaimComputePoolRuntime(ctx context.Context, operation FabricOperation) (FabricOperation, bool, error)
 	ReclaimRuntime(ctx context.Context, id string, priorStartedAt, startedAt time.Time) (FabricOperation, bool, error)
+	TryClaimComputePoolHead(ctx context.Context, operationID, poolKey, leaseOwner string, now, leaseExpiresAt time.Time) (FabricOperation, bool, error)
+	ReleaseComputePoolHead(ctx context.Context, operationID, poolKey, leaseOwner string) error
 	SaveRuntime(ctx context.Context, operation FabricOperation) error
 	List(ctx context.Context) ([]FabricOperation, error)
 	ClaimMachine(ctx context.Context, ownership MachineOwnership) (MachineOwnership, bool, error)
@@ -60,6 +63,10 @@ func (s *MemoryOperationStore) WithPoolLock(ctx context.Context, poolKey string,
 	lock.Lock()
 	defer lock.Unlock()
 	return fn(ctx)
+}
+
+func computePoolLockKey(poolKey string) string {
+	return "fabric-pool:" + poolKey
 }
 
 func (s *MemoryOperationStore) ClaimMachine(_ context.Context, ownership MachineOwnership) (MachineOwnership, bool, error) {
@@ -141,9 +148,27 @@ func (s *MemoryOperationStore) Append(_ context.Context, operation FabricOperati
 func (s *MemoryOperationStore) ClaimRuntime(_ context.Context, operation FabricOperation) (FabricOperation, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.claimRuntimeLocked(operation)
+}
+
+func (s *MemoryOperationStore) ClaimComputePoolRuntime(_ context.Context, operation FabricOperation) (FabricOperation, bool, error) {
+	if strings.TrimSpace(operation.ComputePoolKey) == "" {
+		return FabricOperation{}, false, fmt.Errorf("compute_pool_key_required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	operation.CreatedAt = time.Now().UTC()
+	return s.claimRuntimeLocked(operation)
+}
+
+func (s *MemoryOperationStore) claimRuntimeLocked(operation FabricOperation) (FabricOperation, bool, error) {
 	for index := len(s.operation) - 1; index >= 0; index-- {
 		existing := s.operation[index]
 		if existing.Action == operation.Action && existing.IdempotencyKey == operation.IdempotencyKey && existing.Status != "rejected" {
+			if existing.RequestHash == operation.RequestHash && existing.ComputePoolKey == "" && operation.ComputePoolKey != "" {
+				existing.ComputePoolKey = operation.ComputePoolKey
+				s.operation[index] = existing
+			}
 			if existing.Action == "destroy_workspace_runtime" && existing.Status == "failed" {
 				if !sameRuntimeOperationRequest(existing, operation) {
 					return existing, false, ErrRuntimeIdempotencyConflict
@@ -157,6 +182,54 @@ func (s *MemoryOperationStore) ClaimRuntime(_ context.Context, operation FabricO
 	}
 	s.operation = append(s.operation, operation)
 	return operation, true, nil
+}
+
+func (s *MemoryOperationStore) TryClaimComputePoolHead(_ context.Context, operationID, poolKey, leaseOwner string, now, leaseExpiresAt time.Time) (FabricOperation, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	head := -1
+	for index := range s.operation {
+		operation := s.operation[index]
+		if operation.Action != "create_compute_allocation" || operation.Status != "started" || operation.ComputePoolKey != poolKey {
+			continue
+		}
+		if head < 0 || operation.CreatedAt.Before(s.operation[head].CreatedAt) || (operation.CreatedAt.Equal(s.operation[head].CreatedAt) && operation.ID < s.operation[head].ID) {
+			head = index
+		}
+	}
+	if head < 0 {
+		return FabricOperation{}, false, fmt.Errorf("compute_pool_head_not_found")
+	}
+	current := s.operation[head]
+	if current.ID != operationID {
+		return current, false, nil
+	}
+	if current.ComputePoolLeaseOwner != "" && current.ComputePoolLeaseOwner != leaseOwner && current.ComputePoolLeaseExpires != nil && current.ComputePoolLeaseExpires.After(now) {
+		return current, false, nil
+	}
+	current.ComputePoolLeaseOwner = leaseOwner
+	current.ComputePoolLeaseExpires = &leaseExpiresAt
+	s.operation[head] = current
+	return current, true, nil
+}
+
+func (s *MemoryOperationStore) ReleaseComputePoolHead(_ context.Context, operationID, poolKey, leaseOwner string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for index := range s.operation {
+		operation := s.operation[index]
+		if operation.ID != operationID {
+			continue
+		}
+		if operation.ComputePoolKey != poolKey || operation.ComputePoolLeaseOwner != leaseOwner {
+			return ErrRuntimeOperationNotCurrent
+		}
+		operation.ComputePoolLeaseOwner = ""
+		operation.ComputePoolLeaseExpires = nil
+		s.operation[index] = operation
+		return nil
+	}
+	return fmt.Errorf("runtime_operation_not_found")
 }
 
 func (s *MemoryOperationStore) ReclaimRuntime(_ context.Context, id string, priorStartedAt, startedAt time.Time) (FabricOperation, bool, error) {
@@ -195,8 +268,13 @@ func (s *MemoryOperationStore) SaveRuntime(_ context.Context, operation FabricOp
 	defer s.mu.Unlock()
 	for index := range s.operation {
 		if s.operation[index].ID == operation.ID {
-			if s.operation[index].Status != "started" || !s.operation[index].StartedAt.Equal(operation.StartedAt) {
+			if s.operation[index].Status != "started" || !s.operation[index].StartedAt.Equal(operation.StartedAt) ||
+				(operation.ComputePoolKey != "" && (operation.ComputePoolLeaseOwner == "" || s.operation[index].ComputePoolLeaseOwner != operation.ComputePoolLeaseOwner)) {
 				return ErrRuntimeOperationNotCurrent
+			}
+			if operation.Status != "started" {
+				operation.ComputePoolLeaseOwner = ""
+				operation.ComputePoolLeaseExpires = nil
 			}
 			s.operation[index] = operation
 			return nil
@@ -447,6 +525,9 @@ func (s *PostgresOperationStore) Append(ctx context.Context, operation FabricOpe
 		SetStatus(operation.Status).
 		SetErrorCode(operation.ErrorCode).
 		SetRetryable(operation.Retryable).
+		SetComputePoolKey(operation.ComputePoolKey).
+		SetComputePoolLeaseOwner(operation.ComputePoolLeaseOwner).
+		SetNillableComputePoolLeaseExpiresAt(operation.ComputePoolLeaseExpires).
 		SetStartedAt(operation.StartedAt).
 		SetCreatedAt(operation.CreatedAt)
 	if !operation.FinishedAt.IsZero() {
@@ -569,7 +650,7 @@ func (s *PostgresOperationStore) WithPoolLock(ctx context.Context, poolKey strin
 		return err
 	}
 	defer conn.Close()
-	key := "fabric-pool:" + poolKey
+	key := computePoolLockKey(poolKey)
 	if _, err := conn.ExecContext(ctx, "SELECT pg_advisory_lock(hashtext($1))", key); err != nil {
 		return err
 	}
@@ -582,6 +663,21 @@ func (s *PostgresOperationStore) ClaimRuntime(ctx context.Context, operation Fab
 		Where(fabricoperation.Action(operation.Action), fabricoperation.IdempotencyKey(operation.IdempotencyKey), fabricoperation.StatusNEQ("rejected")).
 		Order(fabricent.Desc(fabricoperation.FieldCreatedAt, fabricoperation.FieldID)).First(ctx)
 	if err == nil {
+		if existing.RequestHash == operation.RequestHash && existing.ComputePoolKey == "" && operation.ComputePoolKey != "" {
+			updated, updateErr := s.client.FabricOperation.Update().
+				Where(fabricoperation.ID(existing.ID), fabricoperation.ComputePoolKey(""), fabricoperation.RequestHash(operation.RequestHash)).
+				SetComputePoolKey(operation.ComputePoolKey).
+				Save(ctx)
+			if updateErr != nil {
+				return FabricOperation{}, false, updateErr
+			}
+			if updated == 1 {
+				existing, err = s.client.FabricOperation.Get(ctx, existing.ID)
+				if err != nil {
+					return FabricOperation{}, false, err
+				}
+			}
+		}
 		if existing.Action == "destroy_workspace_runtime" && existing.Status == "failed" {
 			if !sameRuntimeOperationRequest(fabricOperationFromEnt(existing), operation) {
 				return FabricOperation{}, false, ErrRuntimeIdempotencyConflict
@@ -635,12 +731,13 @@ func (s *PostgresOperationStore) ClaimRuntime(ctx context.Context, operation Fab
 		INSERT INTO fabric_operations (
 			id, operation_id, caller_service, action, resource_kind, resource_id, account_id, workspace_id,
 			provider, provider_request_id, idempotency_key, request_hash, redacted_provider_payload, status,
-			error_code, retryable, started_at, created_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+			error_code, retryable, compute_pool_key, compute_pool_lease_owner, compute_pool_lease_expires_at, started_at, created_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
 		RETURNING started_at`,
 		operation.ID, operation.OperationID, operation.CallerService, operation.Action, operation.ResourceKind, operation.ResourceID,
 		operation.AccountID, operation.WorkspaceID, operation.Provider, operation.ProviderRequestID, operation.IdempotencyKey,
-		operation.RequestHash, payloadJSON, operation.Status, operation.ErrorCode, operation.Retryable, operation.StartedAt, operation.CreatedAt,
+		operation.RequestHash, payloadJSON, operation.Status, operation.ErrorCode, operation.Retryable, operation.ComputePoolKey,
+		operation.ComputePoolLeaseOwner, operation.ComputePoolLeaseExpires, operation.StartedAt, operation.CreatedAt,
 	).Scan(&operation.StartedAt)
 	if err == nil {
 		return operation, true, nil
@@ -650,6 +747,208 @@ func (s *PostgresOperationStore) ClaimRuntime(ctx context.Context, operation Fab
 		return FabricOperation{}, false, queryErr
 	}
 	return fabricOperationFromEnt(concurrent), false, nil
+}
+
+func (s *PostgresOperationStore) ClaimComputePoolRuntime(ctx context.Context, operation FabricOperation) (FabricOperation, bool, error) {
+	poolKey := strings.TrimSpace(operation.ComputePoolKey)
+	if poolKey == "" {
+		return FabricOperation{}, false, fmt.Errorf("compute_pool_key_required")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return FabricOperation{}, false, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+	if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtext($1))", computePoolLockKey(poolKey)); err != nil {
+		return FabricOperation{}, false, err
+	}
+	existing, err := postgresFabricOperationByClaim(ctx, tx, operation.Action, operation.IdempotencyKey)
+	if err == nil {
+		if existing.RequestHash == operation.RequestHash && existing.ComputePoolKey == "" {
+			result, updateErr := tx.ExecContext(ctx, `
+				UPDATE fabric_operations SET compute_pool_key = $1
+				WHERE id = $2 AND request_hash = $3 AND compute_pool_key = ''`, poolKey, existing.ID, operation.RequestHash)
+			if updateErr != nil {
+				return FabricOperation{}, false, updateErr
+			}
+			updated, updateErr := result.RowsAffected()
+			if updateErr != nil {
+				return FabricOperation{}, false, updateErr
+			}
+			if updated == 1 {
+				existing.ComputePoolKey = poolKey
+			}
+		}
+		if err := tx.Commit(); err != nil {
+			return FabricOperation{}, false, err
+		}
+		committed = true
+		return existing, false, nil
+	}
+	if err != sql.ErrNoRows {
+		return FabricOperation{}, false, err
+	}
+	payloadJSON, err := operationPayloadJSON(operation)
+	if err != nil {
+		return FabricOperation{}, false, err
+	}
+	err = tx.QueryRowContext(ctx, `
+		INSERT INTO fabric_operations (
+			id, operation_id, caller_service, action, resource_kind, resource_id, account_id, workspace_id,
+			provider, provider_request_id, idempotency_key, request_hash, redacted_provider_payload, status,
+			error_code, retryable, compute_pool_key, compute_pool_lease_owner, compute_pool_lease_expires_at, started_at, created_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, clock_timestamp())
+		ON CONFLICT (id) DO NOTHING
+		RETURNING started_at, created_at`,
+		operation.ID, operation.OperationID, operation.CallerService, operation.Action, operation.ResourceKind, operation.ResourceID,
+		operation.AccountID, operation.WorkspaceID, operation.Provider, operation.ProviderRequestID, operation.IdempotencyKey,
+		operation.RequestHash, payloadJSON, operation.Status, operation.ErrorCode, operation.Retryable, operation.ComputePoolKey,
+		operation.ComputePoolLeaseOwner, operation.ComputePoolLeaseExpires, operation.StartedAt,
+	).Scan(&operation.StartedAt, &operation.CreatedAt)
+	claimed := err == nil
+	if err == sql.ErrNoRows {
+		operation, err = postgresFabricOperationByClaim(ctx, tx, operation.Action, operation.IdempotencyKey)
+	}
+	if err != nil {
+		return FabricOperation{}, false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return FabricOperation{}, false, err
+	}
+	committed = true
+	return operation, claimed, nil
+}
+
+func postgresFabricOperationByClaim(ctx context.Context, tx *sql.Tx, action, idempotencyKey string) (FabricOperation, error) {
+	row := tx.QueryRowContext(ctx, `
+		SELECT id, operation_id, caller_service, action, resource_kind, resource_id, account_id, workspace_id,
+			provider, provider_request_id, idempotency_key, request_hash, redacted_provider_payload, status,
+			error_code, retryable, compute_pool_key, compute_pool_lease_owner, compute_pool_lease_expires_at,
+			started_at, finished_at, created_at
+		FROM fabric_operations
+		WHERE action = $1 AND idempotency_key = $2 AND status <> 'rejected'
+		ORDER BY created_at DESC, id DESC
+		LIMIT 1`, action, idempotencyKey)
+	return scanPostgresFabricOperation(row)
+}
+
+func postgresFabricOperationByPoolHead(ctx context.Context, tx *sql.Tx, poolKey string) (FabricOperation, error) {
+	row := tx.QueryRowContext(ctx, `
+		SELECT id, operation_id, caller_service, action, resource_kind, resource_id, account_id, workspace_id,
+			provider, provider_request_id, idempotency_key, request_hash, redacted_provider_payload, status,
+			error_code, retryable, compute_pool_key, compute_pool_lease_owner, compute_pool_lease_expires_at,
+			started_at, finished_at, created_at
+		FROM fabric_operations
+		WHERE action = 'create_compute_allocation' AND status = 'started' AND compute_pool_key = $1
+		ORDER BY created_at, id
+		LIMIT 1`, poolKey)
+	return scanPostgresFabricOperation(row)
+}
+
+type postgresRowScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanPostgresFabricOperation(row postgresRowScanner) (FabricOperation, error) {
+	var operation FabricOperation
+	var payload string
+	var leaseExpiresAt, finishedAt sql.NullTime
+	err := row.Scan(
+		&operation.ID, &operation.OperationID, &operation.CallerService, &operation.Action, &operation.ResourceKind, &operation.ResourceID,
+		&operation.AccountID, &operation.WorkspaceID, &operation.Provider, &operation.ProviderRequestID, &operation.IdempotencyKey,
+		&operation.RequestHash, &payload, &operation.Status, &operation.ErrorCode, &operation.Retryable, &operation.ComputePoolKey,
+		&operation.ComputePoolLeaseOwner, &leaseExpiresAt, &operation.StartedAt, &finishedAt, &operation.CreatedAt,
+	)
+	if err != nil {
+		return FabricOperation{}, err
+	}
+	if leaseExpiresAt.Valid {
+		operation.ComputePoolLeaseExpires = &leaseExpiresAt.Time
+	}
+	if finishedAt.Valid {
+		operation.FinishedAt = finishedAt.Time
+	}
+	if payload != "" {
+		_ = json.Unmarshal([]byte(payload), &operation.RedactedProviderPayload)
+	}
+	return operation, nil
+}
+
+func (s *PostgresOperationStore) TryClaimComputePoolHead(ctx context.Context, operationID, poolKey, leaseOwner string, now, leaseExpiresAt time.Time) (FabricOperation, bool, error) {
+	leaseDuration := leaseExpiresAt.Sub(now)
+	if leaseDuration <= 0 {
+		return FabricOperation{}, false, fmt.Errorf("compute_pool_lease_duration_invalid")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return FabricOperation{}, false, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+	if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtext($1))", computePoolLockKey(poolKey)); err != nil {
+		return FabricOperation{}, false, err
+	}
+	current, err := postgresFabricOperationByPoolHead(ctx, tx, poolKey)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return FabricOperation{}, false, fmt.Errorf("compute_pool_head_not_found")
+		}
+		return FabricOperation{}, false, err
+	}
+	claimed := false
+	if current.ID == operationID {
+		var databaseLeaseExpiresAt time.Time
+		updateErr := tx.QueryRowContext(ctx, `
+			UPDATE fabric_operations
+			SET compute_pool_lease_owner = $1,
+				compute_pool_lease_expires_at = clock_timestamp() + ($2 * interval '1 microsecond')
+			WHERE id = $3 AND status = 'started' AND compute_pool_key = $4
+				AND (compute_pool_lease_owner = '' OR compute_pool_lease_owner = $1
+					OR compute_pool_lease_expires_at IS NULL OR compute_pool_lease_expires_at <= clock_timestamp())
+			RETURNING compute_pool_lease_expires_at`, leaseOwner, leaseDuration.Microseconds(), operationID, poolKey).Scan(&databaseLeaseExpiresAt)
+		if updateErr != nil && updateErr != sql.ErrNoRows {
+			return FabricOperation{}, false, updateErr
+		}
+		if updateErr == nil {
+			current.ComputePoolLeaseOwner = leaseOwner
+			current.ComputePoolLeaseExpires = &databaseLeaseExpiresAt
+			claimed = true
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return FabricOperation{}, false, err
+	}
+	committed = true
+	return current, claimed, nil
+}
+
+func (s *PostgresOperationStore) ReleaseComputePoolHead(ctx context.Context, operationID, poolKey, leaseOwner string) error {
+	updated, err := s.client.FabricOperation.Update().
+		Where(
+			fabricoperation.ID(operationID),
+			fabricoperation.Status("started"),
+			fabricoperation.ComputePoolKey(poolKey),
+			fabricoperation.ComputePoolLeaseOwner(leaseOwner),
+		).
+		SetComputePoolLeaseOwner("").
+		ClearComputePoolLeaseExpiresAt().
+		Save(ctx)
+	if err != nil {
+		return err
+	}
+	if updated != 1 {
+		return ErrRuntimeOperationNotCurrent
+	}
+	return nil
 }
 
 func (s *PostgresOperationStore) ReclaimRuntime(ctx context.Context, id string, priorStartedAt, startedAt time.Time) (FabricOperation, bool, error) {
@@ -690,7 +989,14 @@ func (s *PostgresOperationStore) SaveRuntime(ctx context.Context, operation Fabr
 		return err
 	}
 	update := s.client.FabricOperation.Update().
-		Where(fabricoperation.ID(operation.ID), fabricoperation.Status("started"), fabricoperation.StartedAt(operation.StartedAt)).
+		Where(fabricoperation.ID(operation.ID), fabricoperation.Status("started"), fabricoperation.StartedAt(operation.StartedAt))
+	if operation.ComputePoolKey != "" {
+		if operation.ComputePoolLeaseOwner == "" {
+			return ErrRuntimeOperationNotCurrent
+		}
+		update.Where(fabricoperation.ComputePoolKey(operation.ComputePoolKey), fabricoperation.ComputePoolLeaseOwner(operation.ComputePoolLeaseOwner))
+	}
+	update.
 		SetResourceID(operation.ResourceID).
 		SetWorkspaceID(operation.WorkspaceID).
 		SetProvider(operation.Provider).
@@ -699,6 +1005,14 @@ func (s *PostgresOperationStore) SaveRuntime(ctx context.Context, operation Fabr
 		SetStatus(operation.Status).
 		SetErrorCode(operation.ErrorCode).
 		SetRetryable(operation.Retryable)
+	if operation.ComputePoolKey != "" {
+		update.SetComputePoolKey(operation.ComputePoolKey)
+		if operation.Status == "started" {
+			update.SetComputePoolLeaseOwner(operation.ComputePoolLeaseOwner).SetNillableComputePoolLeaseExpiresAt(operation.ComputePoolLeaseExpires)
+		} else {
+			update.SetComputePoolLeaseOwner("").ClearComputePoolLeaseExpiresAt()
+		}
+	}
 	if operation.FinishedAt.IsZero() {
 		update.ClearFinishedAt()
 	} else {
@@ -744,23 +1058,26 @@ func (s *PostgresOperationStore) List(ctx context.Context) ([]FabricOperation, e
 
 func fabricOperationFromEnt(row *fabricent.FabricOperation) FabricOperation {
 	operation := FabricOperation{
-		ID:                row.ID,
-		OperationID:       row.OperationID,
-		CallerService:     row.CallerService,
-		Action:            row.Action,
-		ResourceKind:      row.ResourceKind,
-		ResourceID:        row.ResourceID,
-		AccountID:         row.AccountID,
-		WorkspaceID:       row.WorkspaceID,
-		Provider:          row.Provider,
-		ProviderRequestID: row.ProviderRequestID,
-		IdempotencyKey:    row.IdempotencyKey,
-		RequestHash:       row.RequestHash,
-		Status:            row.Status,
-		ErrorCode:         row.ErrorCode,
-		Retryable:         row.Retryable,
-		StartedAt:         row.StartedAt,
-		CreatedAt:         row.CreatedAt,
+		ID:                      row.ID,
+		OperationID:             row.OperationID,
+		CallerService:           row.CallerService,
+		Action:                  row.Action,
+		ResourceKind:            row.ResourceKind,
+		ResourceID:              row.ResourceID,
+		AccountID:               row.AccountID,
+		WorkspaceID:             row.WorkspaceID,
+		Provider:                row.Provider,
+		ProviderRequestID:       row.ProviderRequestID,
+		IdempotencyKey:          row.IdempotencyKey,
+		RequestHash:             row.RequestHash,
+		Status:                  row.Status,
+		ErrorCode:               row.ErrorCode,
+		Retryable:               row.Retryable,
+		ComputePoolKey:          row.ComputePoolKey,
+		ComputePoolLeaseOwner:   row.ComputePoolLeaseOwner,
+		ComputePoolLeaseExpires: row.ComputePoolLeaseExpiresAt,
+		StartedAt:               row.StartedAt,
+		CreatedAt:               row.CreatedAt,
 	}
 	if row.FinishedAt != nil {
 		operation.FinishedAt = *row.FinishedAt

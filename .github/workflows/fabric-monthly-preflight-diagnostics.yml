@@ -103,8 +103,6 @@ jobs:
           const zone = process.env.OPL_TENCENT_ZONE;
           if (!token || !zone) throw new Error("fabric_diagnostics_environment_unavailable");
           const endpoint = new URL("http://127.0.0.1:8082/fabric/monthly-preflight-report");
-          endpoint.searchParams.set("packageId", "basic");
-          endpoint.searchParams.set("sizeGb", "10");
           endpoint.searchParams.set("zone", zone);
           const request = http.get(endpoint, { headers: { Authorization: `Bearer ${token}` } }, (response) => {
             let body = "";
@@ -139,6 +137,14 @@ jobs:
           const encoded = JSON.stringify(report);
           for (const forbidden of ["providerRequestId", "providerRequestIds", "rawResponse", "wallet", "userData", "secret", "token"]) {
             if (encoded.toLowerCase().includes(forbidden.toLowerCase())) throw new Error(`fabric_diagnostics_leaked_${forbidden}`);
+          }
+          const expectedPackages = [{ packageId: "basic", sizeGb: 10 }, { packageId: "pro", sizeGb: 100 }];
+          if (!Array.isArray(report.packages) || report.packages.length !== expectedPackages.length) throw new Error("fabric_diagnostics_package_count_invalid");
+          for (const [index, expected] of expectedPackages.entries()) {
+            const current = report.packages[index];
+            if (current.packageId !== expected.packageId || current.sizeGb !== expected.sizeGb || current.status !== "passed") {
+              throw new Error(`fabric_monthly_preflight_${expected.packageId}_not_ready`);
+            }
           }
           if (report.status !== "passed") throw new Error("fabric_monthly_preflight_not_ready");
           NODE

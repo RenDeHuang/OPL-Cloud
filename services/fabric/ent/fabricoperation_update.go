@@ -238,6 +238,54 @@ func (fou *FabricOperationUpdate) SetNillableRetryable(b *bool) *FabricOperation
 	return fou
 }
 
+// SetComputePoolKey sets the "compute_pool_key" field.
+func (fou *FabricOperationUpdate) SetComputePoolKey(s string) *FabricOperationUpdate {
+	fou.mutation.SetComputePoolKey(s)
+	return fou
+}
+
+// SetNillableComputePoolKey sets the "compute_pool_key" field if the given value is not nil.
+func (fou *FabricOperationUpdate) SetNillableComputePoolKey(s *string) *FabricOperationUpdate {
+	if s != nil {
+		fou.SetComputePoolKey(*s)
+	}
+	return fou
+}
+
+// SetComputePoolLeaseOwner sets the "compute_pool_lease_owner" field.
+func (fou *FabricOperationUpdate) SetComputePoolLeaseOwner(s string) *FabricOperationUpdate {
+	fou.mutation.SetComputePoolLeaseOwner(s)
+	return fou
+}
+
+// SetNillableComputePoolLeaseOwner sets the "compute_pool_lease_owner" field if the given value is not nil.
+func (fou *FabricOperationUpdate) SetNillableComputePoolLeaseOwner(s *string) *FabricOperationUpdate {
+	if s != nil {
+		fou.SetComputePoolLeaseOwner(*s)
+	}
+	return fou
+}
+
+// SetComputePoolLeaseExpiresAt sets the "compute_pool_lease_expires_at" field.
+func (fou *FabricOperationUpdate) SetComputePoolLeaseExpiresAt(t time.Time) *FabricOperationUpdate {
+	fou.mutation.SetComputePoolLeaseExpiresAt(t)
+	return fou
+}
+
+// SetNillableComputePoolLeaseExpiresAt sets the "compute_pool_lease_expires_at" field if the given value is not nil.
+func (fou *FabricOperationUpdate) SetNillableComputePoolLeaseExpiresAt(t *time.Time) *FabricOperationUpdate {
+	if t != nil {
+		fou.SetComputePoolLeaseExpiresAt(*t)
+	}
+	return fou
+}
+
+// ClearComputePoolLeaseExpiresAt clears the value of the "compute_pool_lease_expires_at" field.
+func (fou *FabricOperationUpdate) ClearComputePoolLeaseExpiresAt() *FabricOperationUpdate {
+	fou.mutation.ClearComputePoolLeaseExpiresAt()
+	return fou
+}
+
 // SetStartedAt sets the "started_at" field.
 func (fou *FabricOperationUpdate) SetStartedAt(t time.Time) *FabricOperationUpdate {
 	fou.mutation.SetStartedAt(t)
@@ -409,6 +457,18 @@ func (fou *FabricOperationUpdate) sqlSave(ctx context.Context) (n int, err error
 	}
 	if value, ok := fou.mutation.Retryable(); ok {
 		_spec.SetField(fabricoperation.FieldRetryable, field.TypeBool, value)
+	}
+	if value, ok := fou.mutation.ComputePoolKey(); ok {
+		_spec.SetField(fabricoperation.FieldComputePoolKey, field.TypeString, value)
+	}
+	if value, ok := fou.mutation.ComputePoolLeaseOwner(); ok {
+		_spec.SetField(fabricoperation.FieldComputePoolLeaseOwner, field.TypeString, value)
+	}
+	if value, ok := fou.mutation.ComputePoolLeaseExpiresAt(); ok {
+		_spec.SetField(fabricoperation.FieldComputePoolLeaseExpiresAt, field.TypeTime, value)
+	}
+	if fou.mutation.ComputePoolLeaseExpiresAtCleared() {
+		_spec.ClearField(fabricoperation.FieldComputePoolLeaseExpiresAt, field.TypeTime)
 	}
 	if value, ok := fou.mutation.StartedAt(); ok {
 		_spec.SetField(fabricoperation.FieldStartedAt, field.TypeTime, value)
@@ -652,6 +712,54 @@ func (fouo *FabricOperationUpdateOne) SetNillableRetryable(b *bool) *FabricOpera
 	return fouo
 }
 
+// SetComputePoolKey sets the "compute_pool_key" field.
+func (fouo *FabricOperationUpdateOne) SetComputePoolKey(s string) *FabricOperationUpdateOne {
+	fouo.mutation.SetComputePoolKey(s)
+	return fouo
+}
+
+// SetNillableComputePoolKey sets the "compute_pool_key" field if the given value is not nil.
+func (fouo *FabricOperationUpdateOne) SetNillableComputePoolKey(s *string) *FabricOperationUpdateOne {
+	if s != nil {
+		fouo.SetComputePoolKey(*s)
+	}
+	return fouo
+}
+
+// SetComputePoolLeaseOwner sets the "compute_pool_lease_owner" field.
+func (fouo *FabricOperationUpdateOne) SetComputePoolLeaseOwner(s string) *FabricOperationUpdateOne {
+	fouo.mutation.SetComputePoolLeaseOwner(s)
+	return fouo
+}
+
+// SetNillableComputePoolLeaseOwner sets the "compute_pool_lease_owner" field if the given value is not nil.
+func (fouo *FabricOperationUpdateOne) SetNillableComputePoolLeaseOwner(s *string) *FabricOperationUpdateOne {
+	if s != nil {
+		fouo.SetComputePoolLeaseOwner(*s)
+	}
+	return fouo
+}
+
+// SetComputePoolLeaseExpiresAt sets the "compute_pool_lease_expires_at" field.
+func (fouo *FabricOperationUpdateOne) SetComputePoolLeaseExpiresAt(t time.Time) *FabricOperationUpdateOne {
+	fouo.mutation.SetComputePoolLeaseExpiresAt(t)
+	return fouo
+}
+
+// SetNillableComputePoolLeaseExpiresAt sets the "compute_pool_lease_expires_at" field if the given value is not nil.
+func (fouo *FabricOperationUpdateOne) SetNillableComputePoolLeaseExpiresAt(t *time.Time) *FabricOperationUpdateOne {
+	if t != nil {
+		fouo.SetComputePoolLeaseExpiresAt(*t)
+	}
+	return fouo
+}
+
+// ClearComputePoolLeaseExpiresAt clears the value of the "compute_pool_lease_expires_at" field.
+func (fouo *FabricOperationUpdateOne) ClearComputePoolLeaseExpiresAt() *FabricOperationUpdateOne {
+	fouo.mutation.ClearComputePoolLeaseExpiresAt()
+	return fouo
+}
+
 // SetStartedAt sets the "started_at" field.
 func (fouo *FabricOperationUpdateOne) SetStartedAt(t time.Time) *FabricOperationUpdateOne {
 	fouo.mutation.SetStartedAt(t)
@@ -853,6 +961,18 @@ func (fouo *FabricOperationUpdateOne) sqlSave(ctx context.Context) (_node *Fabri
 	}
 	if value, ok := fouo.mutation.Retryable(); ok {
 		_spec.SetField(fabricoperation.FieldRetryable, field.TypeBool, value)
+	}
+	if value, ok := fouo.mutation.ComputePoolKey(); ok {
+		_spec.SetField(fabricoperation.FieldComputePoolKey, field.TypeString, value)
+	}
+	if value, ok := fouo.mutation.ComputePoolLeaseOwner(); ok {
+		_spec.SetField(fabricoperation.FieldComputePoolLeaseOwner, field.TypeString, value)
+	}
+	if value, ok := fouo.mutation.ComputePoolLeaseExpiresAt(); ok {
+		_spec.SetField(fabricoperation.FieldComputePoolLeaseExpiresAt, field.TypeTime, value)
+	}
+	if fouo.mutation.ComputePoolLeaseExpiresAtCleared() {
+		_spec.ClearField(fabricoperation.FieldComputePoolLeaseExpiresAt, field.TypeTime)
 	}
 	if value, ok := fouo.mutation.StartedAt(); ok {
 		_spec.SetField(fabricoperation.FieldStartedAt, field.TypeTime, value)

@@ -185,6 +185,76 @@ test("Current contracts hard cut Workspace purchase, access, and Runtime facts",
   });
 });
 
+test("Current Fabric contracts require dedicated package NodePools without weakening Workspace renewal", async () => {
+  const [boundary, catalog, deployment, freeze, provisioner] = await Promise.all([
+    json("packages/contracts/opl-cloud-service-boundary-contract.json"),
+    json("packages/contracts/opl-cloud-fabric-resource-catalog-contract.json"),
+    json("packages/contracts/opl-cloud-deployment-contract.json"),
+    json("packages/contracts/opl-cloud-launch-freeze-contract.json"),
+    text("services/fabric/cmd/opl-tencent-provisioner/main.go")
+  ]);
+
+  assert.deepEqual(boundary.services.fabric.computeProcurement, {
+    api: "CreateComputeAllocation",
+    scope: "allocation",
+    packageNodePools: { basic: "explicit_configured_pool", pro: "explicit_configured_pool" },
+    admission: "persisted_fifo_by_exact_node_pool",
+    admissionLock: "short_postgresql_transaction_advisory_lock_only",
+    headExecution: "only_started_head_can_prepare_scale_bounded_poll_and_claim",
+    executionFence: "short_lease_without_provider_call_holding_postgresql_connection",
+    crossPoolConcurrency: "independent_node_pools_parallel",
+    scale: "persist_baseline_and_absolute_target_N_plus_1_then_scale_once",
+    replay: "same_absolute_target",
+    claim: "unique_ready_after_minus_before_machine_only",
+    existingMachineAllocation: false,
+    nodePoolDiscoveryFallback: false,
+    customerLaunchCreateNodePool: false
+  });
+  assert.deepEqual(boundary.services.fabric.workspaceRenewal, {
+    primitives: ["RenewComputeAllocation", "RenewStorageVolume"],
+    resources: "same_existing_cvm_and_cbs",
+    chargeType: "PREPAID",
+    periodMonths: 1,
+    renewFlag: "NOTIFY_AND_MANUAL_RENEW",
+    idempotentReadback: true,
+    customerBillingOwner: "control_plane_workspace_single_operation",
+    currentBranchScope: "preserved_not_rewritten"
+  });
+  assert.equal(catalog.workspacePackageNodePools.basic.poolName, "pool-basic-2c4g");
+  assert.equal(catalog.workspacePackageNodePools.pro.poolName, "pool-pro-8c16g");
+  assert.equal(catalog.workspacePackageNodePools.basic.replicasMayBeZero, true);
+  assert.equal(catalog.workspacePackageNodePools.pro.replicasMayBeZero, true);
+  assert.equal(catalog.workspacePackageNodePools.maxReplicasPolicy, "required_explicit_configuration_no_default");
+  assert.deepEqual(deployment.workspaceNodePoolBootstrap, {
+    file: ".github/workflows/bootstrap-tke-workspace-nodepools.yml",
+    mode: "manual_inventory_then_optional_create_missing_zero_replica_pools",
+    packagePools: ["basic", "pro"],
+    maxReplicasInputs: "required",
+    idempotency: "register_running_wait_exact_creating_create_missing_only",
+    partialFailure: "preserve_created_pool_retry_missing_only",
+    createNodePoolOutsideBootstrap: false
+  });
+  assert.deepEqual(deployment.protectedSystemResources, {
+    nodePoolIdEnv: "OPL_SYSTEM_COMPUTE_NODE_POOL_ID",
+    machineIdEnv: "OPL_SYSTEM_COMPUTE_MACHINE_ID",
+    nodeNameEnv: "OPL_SYSTEM_COMPUTE_NODE_NAME",
+    cvmIdEnv: "OPL_SYSTEM_COMPUTE_CVM_ID",
+    guardCallers: ["fabric_tencent_mutations", "fabric_kubernetes_mutations", "cleanup_tke_compute_residual", "cleanup_tke_nodepool_machines"]
+  });
+  assert.equal(freeze.providerProcurement.workspaceRenewal.tencentRenewFlag, "NOTIFY_AND_MANUAL_RENEW");
+  assert.deepEqual(freeze.providerProcurement.workspaceRenewal.fabricPrimitives, ["RenewComputeAllocation", "RenewStorageVolume"]);
+  for (const retiredSymbol of [
+    "discoverNativeNodePool",
+    "matchesPackageNodePool",
+    "isDeletingNodePool",
+    "waitForNewPoolMachine",
+    "selectNewReadyMachine"
+  ]) {
+    assert.doesNotMatch(provisioner, new RegExp(`\\b${retiredSymbol}\\b`), retiredSymbol);
+  }
+  assert.match(provisioner, /\bexactNewReadyMachine\b/);
+});
+
 test("Current contracts hard cut operator resources, wallet adjustments, and announcements", async () => {
   const [management, sourceTruth, business, boundary, evidence, billing] = await Promise.all([
     json("packages/contracts/opl-cloud-management-contract.json"),
@@ -387,9 +457,10 @@ test("Current contracts hard cut operator resources, wallet adjustments, and ann
     forbiddenSideEffects: ["sync", "tag", "kubectl_apply", "delete", "label", "purchase", "renew", "destroy"]
   });
   assert.deepEqual(boundary.services.fabric.monthlyPreflightDiagnostics, {
-    endpoint: "GET /fabric/monthly-preflight-report?packageId=<packageId>&sizeGb=<sizeGb>&zone=<zone>",
+    endpoint: "GET /fabric/monthly-preflight-report?zone=<zone>",
     authentication: "internal_service_token",
     evaluator: "shared_with_normal_monthly_preflight",
+    packages: ["basic", "pro"],
     stages: ["launch_permission", "credentials", "node_pool_discovery", "node_pool_contract", "subnet", "zone", "cvm_prepaid_quota", "cvm_sku_price", "cbs_prepaid_quota", "cbs_price"],
     independentChecks: "run_all_without_mutation",
     dependentChecks: "blocked_with_blockedBy",

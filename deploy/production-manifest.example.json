@@ -69,6 +69,30 @@
     "OPL_PRO_COMPUTE_INSTANCE_TYPE": {
       "value": "SA5.2XLARGE16"
     },
+    "OPL_SYSTEM_COMPUTE_NODE_POOL_ID": {
+      "value": "np-systemexample"
+    },
+    "OPL_SYSTEM_COMPUTE_MACHINE_ID": {
+      "value": "machine-system-example"
+    },
+    "OPL_SYSTEM_COMPUTE_NODE_NAME": {
+      "value": "10.66.0.42"
+    },
+    "OPL_SYSTEM_COMPUTE_CVM_ID": {
+      "value": "ins-systemexample"
+    },
+    "OPL_BASIC_COMPUTE_NODE_POOL_ID": {
+      "value": "np-basicexample"
+    },
+    "OPL_PRO_COMPUTE_NODE_POOL_ID": {
+      "value": "np-proexample"
+    },
+    "OPL_BASIC_COMPUTE_NODE_POOL_MAX_REPLICAS": {
+      "value": "1"
+    },
+    "OPL_PRO_COMPUTE_NODE_POOL_MAX_REPLICAS": {
+      "value": "1"
+    },
     "OPL_CODEX_MODEL": {
       "value": "gpt-5.5"
     },

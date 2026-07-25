@@ -23,6 +23,14 @@ const DEPLOY_VALUE_KEYS = [
   "OPL_TENCENT_ZONE",
   "OPL_BASIC_COMPUTE_INSTANCE_TYPE",
   "OPL_PRO_COMPUTE_INSTANCE_TYPE",
+  "OPL_SYSTEM_COMPUTE_NODE_POOL_ID",
+  "OPL_SYSTEM_COMPUTE_MACHINE_ID",
+  "OPL_SYSTEM_COMPUTE_NODE_NAME",
+  "OPL_SYSTEM_COMPUTE_CVM_ID",
+  "OPL_BASIC_COMPUTE_NODE_POOL_ID",
+  "OPL_PRO_COMPUTE_NODE_POOL_ID",
+  "OPL_BASIC_COMPUTE_NODE_POOL_MAX_REPLICAS",
+  "OPL_PRO_COMPUTE_NODE_POOL_MAX_REPLICAS",
   "OPL_CODEX_MODEL",
   "OPL_CODEX_REASONING_EFFORT",
   "OPL_CONSOLE_TLS_SECRET_NAME",
@@ -76,6 +84,7 @@ function setDeployment(item, values) {
   if (!podSpec) return;
 
 	podSpec.imagePullSecrets = [{ name: values.OPL_IMAGE_PULL_SECRET_NAME }];
+	podSpec.nodeSelector = { "medopl.cn/workload": "medopl" };
 	for (const container of [...(podSpec.initContainers || []), ...(podSpec.containers || [])]) {
 		if (["control-plane", "ledger", "fabric", "ledger-schema-migration"].includes(container.name)) {
 			container.image = values.OPL_CLOUD_IMAGE;

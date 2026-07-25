@@ -552,15 +552,33 @@ func TestProductionCatalogKeepsBasicAndProAvailable(t *testing.T) {
 	}
 }
 
-func TestCreateComputeAllocationPersistsDiscoveredNodePoolID(t *testing.T) {
+func TestCreateComputeAllocationPersistsExplicitNodePoolID(t *testing.T) {
 	var input ComputeAllocationInput
 	if err := json.Unmarshal([]byte(`{"id":"compute-alpha","accountId":"acct-alpha","workspaceId":"ws-alpha","packageId":"basic","nodePoolId":"np-basic"}`), &input); err != nil {
 		t.Fatal(err)
 	}
-	input.IdempotencyKey = "compute-with-discovered-pool"
+	input.IdempotencyKey = "compute-with-explicit-pool"
 	allocation, err := NewServiceWithOperationStore(testProvider{}, NewMemoryOperationStore()).CreateComputeAllocation(context.Background(), input)
 	if err != nil || allocation.NodePoolID != "np-basic" {
 		t.Fatalf("compute allocation = %#v, err=%v", allocation, err)
+	}
+}
+
+func TestCreateComputeAllocationRequiresExactNodePoolID(t *testing.T) {
+	service := NewService(testProvider{})
+
+	allocation, err := service.CreateComputeAllocation(context.Background(), ComputeAllocationInput{
+		AccountID:      "acct-alpha",
+		WorkspaceID:    "ws-alpha",
+		PackageID:      "basic",
+		IdempotencyKey: "compute-node-pool-required",
+	})
+	if err == nil || err.Error() != "compute_node_pool_id_required" || allocation.ID != "" {
+		t.Fatalf("allocation=%#v err=%v, want exact NodePool rejection", allocation, err)
+	}
+	operations, listErr := service.ListOperations(context.Background())
+	if listErr != nil || len(operations) != 0 {
+		t.Fatalf("rejected request reached operation/provider path: operations=%#v err=%v", operations, listErr)
 	}
 }
 
@@ -571,9 +589,9 @@ type resourceBoundaryProvider struct {
 	storageInputs []StorageVolumeInput
 }
 
-func (p *resourceBoundaryProvider) ReconcileComputePool(ctx context.Context, input ComputePoolDemand) (ComputePoolState, error) {
+func (p *resourceBoundaryProvider) CreateComputeAllocation(ctx context.Context, input ComputeAllocationExecution) (ComputeAllocation, error) {
 	p.computeCalls++
-	return p.testProvider.ReconcileComputePool(ctx, input)
+	return p.testProvider.CreateComputeAllocation(ctx, input)
 }
 
 func (p *resourceBoundaryProvider) CreateStorageVolume(ctx context.Context, input StorageVolumeInput) (StorageVolume, error) {
@@ -766,6 +784,7 @@ func TestDryRunComputeAllocationRecordsProviderRequestIDWithoutLedgerTypes(t *te
 		AccountID:      "acct-alpha",
 		WorkspaceID:    "ws-alpha",
 		PackageID:      "basic",
+		NodePoolID:     "np-basic",
 		IdempotencyKey: "fabric-compute-once",
 		DryRun:         true,
 	})
@@ -788,6 +807,7 @@ func TestComputeAllocationReturnsProvisioningBeforeProviderCompletes(t *testing.
 		AccountID:      "acct-alpha",
 		WorkspaceID:    "ws-alpha",
 		PackageID:      "basic",
+		NodePoolID:     "np-basic",
 		IdempotencyKey: "compute-once",
 	})
 	if err != nil {
@@ -816,38 +836,38 @@ func TestComputeAllocationReturnsProvisioningBeforeProviderCompletes(t *testing.
 	t.Fatalf("allocation did not become running: %#v", current)
 }
 
-type countingBlockedPoolProvider struct {
+type countingBlockedAllocationProvider struct {
 	testProvider
 	calls   atomic.Int32
-	entered chan ComputePoolDemand
+	entered chan ComputeAllocationExecution
 	release chan struct{}
 }
 
-func (p *countingBlockedPoolProvider) ReconcileComputePool(ctx context.Context, input ComputePoolDemand) (ComputePoolState, error) {
+func (p *countingBlockedAllocationProvider) CreateComputeAllocation(ctx context.Context, input ComputeAllocationExecution) (ComputeAllocation, error) {
 	p.calls.Add(1)
 	p.entered <- input
 	select {
 	case <-p.release:
-		return testProvider{}.ReconcileComputePool(ctx, input)
+		return testProvider{}.CreateComputeAllocation(ctx, input)
 	case <-ctx.Done():
-		return ComputePoolState{}, ctx.Err()
+		return ComputeAllocation{}, ctx.Err()
 	}
 }
 
 func TestCreateComputeAllocationReplaysStartedClaimWithoutIncreasingDemand(t *testing.T) {
-	provider := &countingBlockedPoolProvider{entered: make(chan ComputePoolDemand, 2), release: make(chan struct{})}
+	provider := &countingBlockedAllocationProvider{entered: make(chan ComputeAllocationExecution, 2), release: make(chan struct{})}
 	service := NewServiceWithOperationStore(provider, NewMemoryOperationStore())
-	input := ComputeAllocationInput{AccountID: "acct-alpha", WorkspaceID: "ws-alpha", PackageID: "basic", IdempotencyKey: "compute-replay"}
+	input := ComputeAllocationInput{AccountID: "acct-alpha", WorkspaceID: "ws-alpha", PackageID: "basic", NodePoolID: "np-basic", IdempotencyKey: "compute-replay"}
 	t.Cleanup(func() { close(provider.release) })
 
 	first, err := service.CreateComputeAllocation(context.Background(), input)
 	if err != nil {
 		t.Fatal(err)
 	}
-	demand := <-provider.entered
+	execution := <-provider.entered
 	replayed, err := service.CreateComputeAllocation(context.Background(), input)
-	if err != nil || replayed.ID != first.ID || replayed.Status != first.Status || demand.DesiredReplicas != 1 || provider.calls.Load() != 1 {
-		t.Fatalf("first=%#v replayed=%#v err=%v demand=%#v calls=%d", first, replayed, err, demand, provider.calls.Load())
+	if err != nil || replayed.ID != first.ID || replayed.Status != first.Status || execution.Plan.TargetReplicas != 1 || provider.calls.Load() != 1 {
+		t.Fatalf("first=%#v replayed=%#v err=%v execution=%#v calls=%d", first, replayed, err, execution, provider.calls.Load())
 	}
 	operations, err := service.ListOperations(context.Background())
 	if err != nil || len(operations) != 1 || operations[0].Status != "started" {
@@ -857,11 +877,11 @@ func TestCreateComputeAllocationReplaysStartedClaimWithoutIncreasingDemand(t *te
 
 func TestServiceResumesStartedComputeClaimAfterRestart(t *testing.T) {
 	store := NewMemoryOperationStore()
-	input := ComputeAllocationInput{AccountID: "acct-alpha", WorkspaceID: "ws-alpha", PackageID: "basic", IdempotencyKey: "compute-restart"}
+	input := ComputeAllocationInput{AccountID: "acct-alpha", WorkspaceID: "ws-alpha", PackageID: "basic", NodePoolID: "np-basic", IdempotencyKey: "compute-restart"}
 	now := time.Now().UTC()
 	allocation := ComputeAllocation{
 		ID: "ca_" + stableSuffix("create_compute_allocation", input.IdempotencyKey)[:18], AccountID: input.AccountID, WorkspaceID: input.WorkspaceID,
-		PackageID: input.PackageID, Status: "provisioning", Provider: "tencent-tke", ProviderRequestID: providerRequestID("compute", input.IdempotencyKey), CreatedAt: now,
+		PackageID: input.PackageID, NodePoolID: input.NodePoolID, Status: "provisioning", Provider: "tencent-tke", ProviderRequestID: providerRequestID("compute", input.IdempotencyKey), CreatedAt: now,
 	}
 	operation := newOperation("create_compute_allocation", "compute_allocation", allocation.ID, input.AccountID, input.WorkspaceID, input.IdempotencyKey, hashInput(input), now)
 	operation.ID = "fop_compute_claim_" + stableSuffix("create_compute_allocation", input.IdempotencyKey)
@@ -873,7 +893,7 @@ func TestServiceResumesStartedComputeClaimAfterRestart(t *testing.T) {
 	}
 	release := make(chan struct{})
 	close(release)
-	provider := &countingBlockedPoolProvider{entered: make(chan ComputePoolDemand, 2), release: release}
+	provider := &countingBlockedAllocationProvider{entered: make(chan ComputeAllocationExecution, 2), release: release}
 
 	restarted := NewServiceWithOperationStore(provider, store)
 	if replayed, err := restarted.CreateComputeAllocation(context.Background(), input); err != nil || replayed.ID != allocation.ID {
@@ -887,26 +907,26 @@ func TestServiceResumesStartedComputeClaimAfterRestart(t *testing.T) {
 }
 
 func TestCreateComputeAllocationRejectsSameKeyWithDifferentRequest(t *testing.T) {
-	provider := &countingBlockedPoolProvider{entered: make(chan ComputePoolDemand, 2), release: make(chan struct{})}
+	provider := &countingBlockedAllocationProvider{entered: make(chan ComputeAllocationExecution, 2), release: make(chan struct{})}
 	service := NewServiceWithOperationStore(provider, NewMemoryOperationStore())
 	t.Cleanup(func() { close(provider.release) })
 
-	first, err := service.CreateComputeAllocation(context.Background(), ComputeAllocationInput{AccountID: "acct-alpha", WorkspaceID: "ws-alpha", PackageID: "basic", IdempotencyKey: "compute-conflict"})
+	first, err := service.CreateComputeAllocation(context.Background(), ComputeAllocationInput{AccountID: "acct-alpha", WorkspaceID: "ws-alpha", PackageID: "basic", NodePoolID: "np-basic", IdempotencyKey: "compute-conflict"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	<-provider.entered
-	replayed, err := service.CreateComputeAllocation(context.Background(), ComputeAllocationInput{AccountID: "acct-alpha", WorkspaceID: "ws-other", PackageID: "basic", IdempotencyKey: "compute-conflict"})
+	replayed, err := service.CreateComputeAllocation(context.Background(), ComputeAllocationInput{AccountID: "acct-alpha", WorkspaceID: "ws-other", PackageID: "basic", NodePoolID: "np-basic", IdempotencyKey: "compute-conflict"})
 	if err == nil || err.Error() != "compute_idempotency_conflict" || replayed.ID != "" || provider.calls.Load() != 1 {
 		t.Fatalf("first=%#v replayed=%#v err=%v calls=%d", first, replayed, err, provider.calls.Load())
 	}
 }
 
 func TestCreateComputeAllocationConcurrentSameKeyClaimsOnce(t *testing.T) {
-	provider := &countingBlockedPoolProvider{entered: make(chan ComputePoolDemand, 20), release: make(chan struct{})}
+	provider := &countingBlockedAllocationProvider{entered: make(chan ComputeAllocationExecution, 20), release: make(chan struct{})}
 	store := NewMemoryOperationStore()
 	service := NewServiceWithOperationStore(provider, store)
-	input := ComputeAllocationInput{AccountID: "acct-alpha", WorkspaceID: "ws-alpha", PackageID: "basic", IdempotencyKey: "compute-concurrent"}
+	input := ComputeAllocationInput{AccountID: "acct-alpha", WorkspaceID: "ws-alpha", PackageID: "basic", NodePoolID: "np-basic", IdempotencyKey: "compute-concurrent"}
 	t.Cleanup(func() { close(provider.release) })
 
 	const callers = 16
@@ -940,16 +960,16 @@ func TestCreateComputeAllocationConcurrentSameKeyClaimsOnce(t *testing.T) {
 	}
 }
 
-type failedPoolProvider struct{ testProvider }
+type failedAllocationProvider struct{ testProvider }
 
-func (failedPoolProvider) ReconcileComputePool(_ context.Context, input ComputePoolDemand) (ComputePoolState, error) {
-	return ComputePoolState{PoolID: input.PoolID, DesiredReplicas: input.DesiredReplicas, CurrentReplicas: 0}, nil
+func (failedAllocationProvider) CreateComputeAllocation(_ context.Context, input ComputeAllocationExecution) (ComputeAllocation, error) {
+	return input.Allocation, fmt.Errorf("compute_provider_rejected")
 }
 
 func TestCreateComputeAllocationReplaysSucceededAndFailedResults(t *testing.T) {
 	t.Run("succeeded", func(t *testing.T) {
 		service := NewServiceWithOperationStore(testProvider{}, NewMemoryOperationStore())
-		input := ComputeAllocationInput{AccountID: "acct-alpha", WorkspaceID: "ws-alpha", PackageID: "basic", IdempotencyKey: "compute-succeeded"}
+		input := ComputeAllocationInput{AccountID: "acct-alpha", WorkspaceID: "ws-alpha", PackageID: "basic", NodePoolID: "np-basic", IdempotencyKey: "compute-succeeded"}
 		first, err := service.CreateComputeAllocation(context.Background(), input)
 		if err != nil {
 			t.Fatal(err)
@@ -962,18 +982,15 @@ func TestCreateComputeAllocationReplaysSucceededAndFailedResults(t *testing.T) {
 	})
 
 	t.Run("failed", func(t *testing.T) {
-		previousAttempts := poolReconcileAttempts
-		poolReconcileAttempts = 1
-		t.Cleanup(func() { poolReconcileAttempts = previousAttempts })
-		service := NewServiceWithOperationStore(failedPoolProvider{}, NewMemoryOperationStore())
-		input := ComputeAllocationInput{AccountID: "acct-alpha", WorkspaceID: "ws-alpha", PackageID: "basic", IdempotencyKey: "compute-failed"}
+		service := NewServiceWithOperationStore(failedAllocationProvider{}, NewMemoryOperationStore())
+		input := ComputeAllocationInput{AccountID: "acct-alpha", WorkspaceID: "ws-alpha", PackageID: "basic", NodePoolID: "np-basic", IdempotencyKey: "compute-failed"}
 		first, err := service.CreateComputeAllocation(context.Background(), input)
 		if err != nil {
 			t.Fatal(err)
 		}
 		waitForOperation(t, service, "create_compute_allocation", "compute_allocation", first.ID, "failed")
 		replayed, err := service.CreateComputeAllocation(context.Background(), input)
-		if err == nil || err.Error() != "compute_operation_failed" || replayed.ID != first.ID || replayed.Status != "failed" {
+		if err == nil || err.Error() != "compute_operation_failed" || replayed.ID != first.ID || replayed.Status != "quarantined" {
 			t.Fatalf("first=%#v replayed=%#v err=%v", first, replayed, err)
 		}
 	})
@@ -984,7 +1001,7 @@ func TestResourceMutationsAppendFabricOperationFacts(t *testing.T) {
 	service := NewServiceWithOperationStore(testProvider{}, store)
 	ctx := context.Background()
 
-	compute, err := service.CreateComputeAllocation(ctx, ComputeAllocationInput{AccountID: "acct-alpha", WorkspaceID: "ws-alpha", PackageID: "basic", IdempotencyKey: "ops-compute"})
+	compute, err := service.CreateComputeAllocation(ctx, ComputeAllocationInput{AccountID: "acct-alpha", WorkspaceID: "ws-alpha", PackageID: "basic", NodePoolID: "np-basic", IdempotencyKey: "ops-compute"})
 	if err != nil {
 		t.Fatalf("create compute: %v", err)
 	}
@@ -1038,7 +1055,7 @@ func TestStorageSnapshotRestorePersistsAndKeepsSourceVolume(t *testing.T) {
 	ctx := context.Background()
 	store := NewMemoryOperationStore()
 	service := NewServiceWithOperationStore(testProvider{}, store)
-	compute, err := service.CreateComputeAllocation(ctx, ComputeAllocationInput{AccountID: "acct-alpha", WorkspaceID: "ws-alpha", PackageID: "basic", IdempotencyKey: "source-compute"})
+	compute, err := service.CreateComputeAllocation(ctx, ComputeAllocationInput{AccountID: "acct-alpha", WorkspaceID: "ws-alpha", PackageID: "basic", NodePoolID: "np-basic", IdempotencyKey: "source-compute"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1085,7 +1102,7 @@ func TestWorkspaceRuntimeCreationDoesNotReturnCredential(t *testing.T) {
 	service := NewServiceWithOperationStore(testProvider{}, store)
 	ctx := context.Background()
 
-	compute, err := service.CreateComputeAllocation(ctx, ComputeAllocationInput{AccountID: "acct-alpha", WorkspaceID: "ws-alpha", PackageID: "basic", IdempotencyKey: "access-compute"})
+	compute, err := service.CreateComputeAllocation(ctx, ComputeAllocationInput{AccountID: "acct-alpha", WorkspaceID: "ws-alpha", PackageID: "basic", NodePoolID: "np-basic", IdempotencyKey: "access-compute"})
 	if err != nil {
 		t.Fatalf("create compute: %v", err)
 	}
@@ -1701,12 +1718,12 @@ func TestFabricRejectsIllegalResourceMutationsWithOperationFacts(t *testing.T) {
 		t.Fatalf("attach missing compute/storage must fail")
 	}
 
-	compute, err := service.CreateComputeAllocation(ctx, ComputeAllocationInput{AccountID: "acct-alpha", WorkspaceID: "ws-alpha", PackageID: "basic", IdempotencyKey: "reject-compute"})
+	compute, err := service.CreateComputeAllocation(ctx, ComputeAllocationInput{AccountID: "acct-alpha", WorkspaceID: "ws-alpha", PackageID: "basic", NodePoolID: "np-basic", IdempotencyKey: "reject-compute"})
 	if err != nil {
 		t.Fatalf("create compute: %v", err)
 	}
 	waitForOperation(t, service, "create_compute_allocation", "compute_allocation", compute.ID, "succeeded")
-	otherCompute, err := service.CreateComputeAllocation(ctx, ComputeAllocationInput{AccountID: "acct-beta", WorkspaceID: "ws-beta", PackageID: "basic", IdempotencyKey: "reject-compute-beta"})
+	otherCompute, err := service.CreateComputeAllocation(ctx, ComputeAllocationInput{AccountID: "acct-beta", WorkspaceID: "ws-beta", PackageID: "basic", NodePoolID: "np-basic", IdempotencyKey: "reject-compute-beta"})
 	if err != nil {
 		t.Fatalf("create other compute: %v", err)
 	}
@@ -1777,7 +1794,7 @@ func TestServiceReplaysResourceStateFromOperationStore(t *testing.T) {
 	ctx := context.Background()
 	original := NewServiceWithOperationStore(testProvider{}, store)
 
-	compute, err := original.CreateComputeAllocation(ctx, ComputeAllocationInput{AccountID: "acct-alpha", WorkspaceID: "ws-alpha", PackageID: "basic", IdempotencyKey: "replay-compute"})
+	compute, err := original.CreateComputeAllocation(ctx, ComputeAllocationInput{AccountID: "acct-alpha", WorkspaceID: "ws-alpha", PackageID: "basic", NodePoolID: "np-basic", IdempotencyKey: "replay-compute"})
 	if err != nil {
 		t.Fatalf("create compute: %v", err)
 	}
@@ -2224,9 +2241,9 @@ type blockingProvider struct {
 	done chan struct{}
 }
 
-func (p *blockingProvider) ReconcileComputePool(ctx context.Context, input ComputePoolDemand) (ComputePoolState, error) {
+func (p *blockingProvider) CreateComputeAllocation(ctx context.Context, input ComputeAllocationExecution) (ComputeAllocation, error) {
 	<-p.done
-	return testProvider{}.ReconcileComputePool(ctx, input)
+	return testProvider{}.CreateComputeAllocation(ctx, input)
 }
 
 type blockingComputeDestroyProvider struct {
@@ -2248,7 +2265,7 @@ func (p *blockingComputeDestroyProvider) DestroyComputeAllocation(_ context.Cont
 func TestComputeAsyncDestroyReturnsBeforeProviderCleanupAndReplays(t *testing.T) {
 	provider := &blockingComputeDestroyProvider{entered: make(chan struct{}), release: make(chan struct{})}
 	service := NewServiceWithOperationStore(provider, NewMemoryOperationStore())
-	compute, err := service.CreateComputeAllocation(context.Background(), ComputeAllocationInput{AccountID: "acct-alpha", WorkspaceID: "ws-alpha", PackageID: "basic", IdempotencyKey: "async-destroy-create"})
+	compute, err := service.CreateComputeAllocation(context.Background(), ComputeAllocationInput{AccountID: "acct-alpha", WorkspaceID: "ws-alpha", PackageID: "basic", NodePoolID: "np-basic", IdempotencyKey: "async-destroy-create"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2370,13 +2387,23 @@ func (p *contentTestProvider) PublishWorkspaceContent(_ context.Context, _ strin
 	return nil
 }
 
-func (testProvider) ReconcileComputePool(_ context.Context, input ComputePoolDemand) (ComputePoolState, error) {
-	machines := make([]ProviderMachine, 0, input.DesiredReplicas)
-	for index := int64(0); index < input.DesiredReplicas; index++ {
-		id := fmt.Sprintf("%s-%03d", input.PoolID, index+1)
-		machines = append(machines, ProviderMachine{MachineID: id, InstanceID: "ins-" + id, NodeName: id, InstanceType: input.InstanceType, Zone: "ap-guangzhou-3", ChargeType: "PREPAID", RenewFlag: "NOTIFY_AND_MANUAL_RENEW", Deadline: "2026-08-16T00:00:00Z", Ready: true})
-	}
-	return ComputePoolState{PoolID: input.PoolID, NodePoolID: "np-" + input.PoolID, DesiredReplicas: input.DesiredReplicas, CurrentReplicas: input.DesiredReplicas, ProviderRequestID: "pool-test", Machines: machines}, nil
+func (testProvider) PrepareComputeAllocation(_ context.Context, input ComputeAllocationInput) (ComputeAllocationPreparation, error) {
+	plan := packagePlan(input.PackageID)
+	return ComputeAllocationPreparation{
+		PoolID: plan.ID, PackageID: input.PackageID, NodePoolID: input.NodePoolID, InstanceType: plan.InstanceType,
+		MaxReplicas: 10, BaselineReplicas: 0, TargetReplicas: 1, BeforeMachineNames: []string{},
+	}, nil
+}
+
+func (testProvider) CreateComputeAllocation(_ context.Context, input ComputeAllocationExecution) (ComputeAllocation, error) {
+	machine := firstNonEmpty(input.Allocation.ID, "machine-test")
+	return ComputeAllocation{
+		ID: input.Allocation.ID, AccountID: input.Allocation.AccountID, WorkspaceID: input.Allocation.WorkspaceID, PackageID: input.Allocation.PackageID,
+		Status: "running", Provider: "tencent-tke", ProviderResourceID: "machine/" + machine, ProviderRequestID: "compute-test",
+		PoolID: input.Plan.PoolID, NodePoolID: input.Plan.NodePoolID, MachineName: machine, InstanceID: "ins-" + machine, CVMInstanceID: "ins-" + machine,
+		NodeName: "10.0.0.11", PrivateIP: "10.0.0.11", InstanceType: input.Plan.InstanceType, Zone: "ap-guangzhou-3", ChargeType: "PREPAID",
+		RenewFlag: "NOTIFY_AND_MANUAL_RENEW", Deadline: "2026-08-16T00:00:00Z", ProviderData: map[string]string{"instanceType": input.Plan.InstanceType, "zone": "ap-guangzhou-3", "chargeType": "PREPAID", "renewFlag": "NOTIFY_AND_MANUAL_RENEW", "deadline": "2026-08-16T00:00:00Z"},
+	}, nil
 }
 
 func (testProvider) MonthlyPreflight(_ context.Context, input MonthlyPreflightInput) (MonthlyPreflight, error) {
@@ -2388,10 +2415,6 @@ func (testProvider) MonthlyPreflight(_ context.Context, input MonthlyPreflightIn
 }
 
 func (testProvider) TagComputeMachine(_ context.Context, _ ProviderMachine, _ MachineOwnership) error {
-	return nil
-}
-
-func (testProvider) DeleteComputeMachine(_ context.Context, _ ProviderMachine, _ MachineOwnership) error {
 	return nil
 }
 

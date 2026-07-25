@@ -21,6 +21,7 @@ var ErrMonthlyProviderTruthUnavailable = errors.New("monthly_provider_truth_unav
 var ErrRuntimeHealthSummaryUnavailable = errors.New("runtime_health_summary_unavailable")
 var ErrComputeIdempotencyConflict = errors.New("compute_idempotency_conflict")
 var ErrComputeOperationFailed = errors.New("compute_operation_failed")
+var ErrComputeAllocationPending = errors.New("compute_allocation_pending")
 var ErrRuntimeIdempotencyConflict = errors.New("runtime_idempotency_conflict")
 var ErrRuntimeOperationInProgress = errors.New("runtime_operation_in_progress")
 var ErrRuntimeOperationFailed = errors.New("runtime_operation_failed")
@@ -60,9 +61,7 @@ type MonthlyPreflight struct {
 }
 
 type MonthlyPreflightReportInput struct {
-	PackageID string `json:"packageId"`
-	SizeGB    int    `json:"sizeGb"`
-	Zone      string `json:"zone"`
+	Zone string `json:"zone"`
 }
 
 type MonthlyPreflightStage struct {
@@ -75,15 +74,21 @@ type MonthlyPreflightStage struct {
 }
 
 type MonthlyPreflightReport struct {
-	SchemaVersion           int                     `json:"schemaVersion"`
-	Status                  string                  `json:"status"`
-	PackageID               string                  `json:"packageId"`
-	SizeGB                  int                     `json:"sizeGb"`
-	Zone                    string                  `json:"zone"`
-	Items                   []MonthlyPreflightStage `json:"items"`
-	Sub2APIMutationCount    int                     `json:"sub2apiMutationCount"`
-	TencentMutationCount    int                     `json:"tencentMutationCount"`
-	KubernetesMutationCount int                     `json:"kubernetesMutationCount"`
+	SchemaVersion           int                             `json:"schemaVersion"`
+	Status                  string                          `json:"status"`
+	Zone                    string                          `json:"zone"`
+	Items                   []MonthlyPreflightStage         `json:"items"`
+	Packages                []MonthlyPreflightPackageReport `json:"packages"`
+	Sub2APIMutationCount    int                             `json:"sub2apiMutationCount"`
+	TencentMutationCount    int                             `json:"tencentMutationCount"`
+	KubernetesMutationCount int                             `json:"kubernetesMutationCount"`
+}
+
+type MonthlyPreflightPackageReport struct {
+	PackageID string                  `json:"packageId"`
+	SizeGB    int                     `json:"sizeGb"`
+	Status    string                  `json:"status"`
+	Items     []MonthlyPreflightStage `json:"items"`
 }
 
 type MonthlyProviderTruth struct {
@@ -191,23 +196,22 @@ type ProviderMachine struct {
 	Ready        bool   `json:"ready"`
 }
 
-type ComputePoolDemand struct {
-	PoolID          string `json:"poolId"`
-	PackageID       string `json:"packageId"`
-	NodePoolID      string `json:"nodePoolId,omitempty"`
-	InstanceType    string `json:"instanceType"`
-	DesiredReplicas int64  `json:"desiredReplicas"`
-	DryRun          bool   `json:"dryRun,omitempty"`
+type ComputeAllocationPreparation struct {
+	PoolID             string   `json:"poolId"`
+	PackageID          string   `json:"packageId"`
+	NodePoolID         string   `json:"nodePoolId"`
+	InstanceType       string   `json:"instanceType"`
+	MaxReplicas        int64    `json:"maxReplicas"`
+	BaselineReplicas   int64    `json:"baselineReplicas"`
+	TargetReplicas     int64    `json:"targetReplicas"`
+	BeforeMachineNames []string `json:"beforeMachineNames"`
+	ProviderRequestID  string   `json:"providerRequestId,omitempty"`
 }
 
-type ComputePoolState struct {
-	PoolID            string            `json:"poolId"`
-	NodePoolID        string            `json:"nodePoolId"`
-	DesiredReplicas   int64             `json:"desiredReplicas"`
-	CurrentReplicas   int64             `json:"currentReplicas"`
-	ProviderRequestID string            `json:"providerRequestId,omitempty"`
-	ProviderData      map[string]string `json:"providerData,omitempty"`
-	Machines          []ProviderMachine `json:"machines"`
+type ComputeAllocationExecution struct {
+	Allocation ComputeAllocation            `json:"allocation"`
+	Plan       ComputeAllocationPreparation `json:"plan"`
+	DryRun     bool                         `json:"dryRun,omitempty"`
 }
 
 type StorageVolumeInput struct {
@@ -481,6 +485,9 @@ type FabricOperation struct {
 	Status                  string         `json:"status"`
 	ErrorCode               string         `json:"errorCode,omitempty"`
 	Retryable               bool           `json:"retryable,omitempty"`
+	ComputePoolKey          string         `json:"-"`
+	ComputePoolLeaseOwner   string         `json:"-"`
+	ComputePoolLeaseExpires *time.Time     `json:"-"`
 	StartedAt               time.Time      `json:"startedAt"`
 	FinishedAt              time.Time      `json:"finishedAt,omitempty"`
 	CreatedAt               time.Time      `json:"createdAt"`

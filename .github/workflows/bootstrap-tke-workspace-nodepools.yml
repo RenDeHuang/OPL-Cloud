@@ -1,0 +1,176 @@
+name: Bootstrap TKE Workspace NodePools
+
+on:
+  workflow_dispatch:
+    inputs:
+      basic_max_replicas:
+        description: Approved Basic NodePool maximum replicas.
+        required: true
+        type: string
+      pro_max_replicas:
+        description: Approved Pro NodePool maximum replicas.
+        required: true
+        type: string
+      mutate_missing_pools:
+        description: Create only missing compliant pools after complete read-only inventory.
+        required: true
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-nodepool-bootstrap
+  cancel-in-progress: false
+
+jobs:
+  bootstrap:
+    name: Inventory and bootstrap dedicated Workspace NodePools
+    runs-on: [self-hosted, tencent-cloud, opl-cloud, tke-vpc]
+    timeout-minutes: 20
+    environment: production-nodepool-bootstrap
+    env:
+      OPL_K8S_NAMESPACE: ${{ vars.OPL_K8S_NAMESPACE || 'opl-cloud' }}
+      OPL_SYSTEM_COMPUTE_NODE_POOL_ID: ${{ vars.OPL_SYSTEM_COMPUTE_NODE_POOL_ID || 'np-6l4nkdto' }}
+      OPL_SYSTEM_COMPUTE_MACHINE_ID: ${{ vars.OPL_SYSTEM_COMPUTE_MACHINE_ID || 'np-6l4nkdto-2cdtm' }}
+      OPL_SYSTEM_COMPUTE_NODE_NAME: ${{ vars.OPL_SYSTEM_COMPUTE_NODE_NAME || '10.66.0.42' }}
+      OPL_BASIC_COMPUTE_NODE_POOL_ID: ${{ vars.OPL_BASIC_COMPUTE_NODE_POOL_ID }}
+      OPL_PRO_COMPUTE_NODE_POOL_ID: ${{ vars.OPL_PRO_COMPUTE_NODE_POOL_ID }}
+      OPL_BASIC_COMPUTE_NODE_POOL_MAX_REPLICAS: ${{ inputs.basic_max_replicas }}
+      OPL_PRO_COMPUTE_NODE_POOL_MAX_REPLICAS: ${{ inputs.pro_max_replicas }}
+      TENCENT_DEPLOY_KUBECONFIG_PATH: ${{ vars.TENCENT_DEPLOY_KUBECONFIG_PATH || '/home/actions/.secrets/medopl/v22/kubeconfig-package-d-deploy' }}
+      TENCENT_DEPLOY_KUBECONFIG_B64: ${{ secrets.TENCENT_DEPLOY_KUBECONFIG_B64 }}
+      TENCENT_DEPLOY_KUBECONFIG: ${{ secrets.TENCENT_DEPLOY_KUBECONFIG }}
+      TENCENTCLOUD_SECRET_ID: ${{ secrets.TENCENT_MUTATION_SECRET_ID }}
+      TENCENTCLOUD_SECRET_KEY: ${{ secrets.TENCENT_MUTATION_SECRET_KEY }}
+      TENCENTCLOUD_REGION: ${{ vars.TENCENTCLOUD_REGION || vars.TENCENT_TCR_REGION || 'na-siliconvalley' }}
+      TENCENT_DEPLOY_CLUSTER_ID: ${{ vars.TENCENT_DEPLOY_CLUSTER_ID }}
+      TENCENT_CVM_SUBNET_ID: ${{ vars.TENCENT_CVM_SUBNET_ID }}
+      TENCENT_CVM_SECURITY_GROUP_IDS: ${{ vars.TENCENT_CVM_SECURITY_GROUP_IDS }}
+      TENCENT_CVM_SYSTEM_DISK_TYPE: ${{ vars.TENCENT_CVM_SYSTEM_DISK_TYPE || 'CLOUD_BSSD' }}
+      TENCENT_CVM_SYSTEM_DISK_SIZE_GB: ${{ vars.TENCENT_CVM_SYSTEM_DISK_SIZE_GB || '50' }}
+      RUN_TENCENT_CREATE_RELEASE_EXECUTION: ${{ inputs.mutate_missing_pools == 'true' && '1' || '0' }}
+      RUN_TENCENT_NODE_POOL_BOOTSTRAP: ${{ inputs.mutate_missing_pools == 'true' && '1' || '0' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - name: Prepare bootstrap workspace
+        shell: bash
+        run: |
+          set -euo pipefail
+          secret_dir="$(mktemp -d)"
+          artifact_dir="$RUNNER_TEMP/bootstrap-nodepool-report"
+          mkdir -p "$artifact_dir"
+          chmod 700 "$secret_dir" "$artifact_dir"
+          kubeconfig="$secret_dir/kubeconfig"
+          echo "OPL_BOOTSTRAP_SECRET_DIR=$secret_dir" >> "$GITHUB_ENV"
+          echo "OPL_BOOTSTRAP_ARTIFACT_DIR=$artifact_dir" >> "$GITHUB_ENV"
+          if [ -f "$TENCENT_DEPLOY_KUBECONFIG_PATH" ]; then
+            cp "$TENCENT_DEPLOY_KUBECONFIG_PATH" "$kubeconfig"
+          elif [ -n "${TENCENT_DEPLOY_KUBECONFIG_B64:-}" ]; then
+            printf '%s' "$TENCENT_DEPLOY_KUBECONFIG_B64" | base64 -d > "$kubeconfig"
+          elif [ -n "${TENCENT_DEPLOY_KUBECONFIG:-}" ]; then
+            printf '%s' "$TENCENT_DEPLOY_KUBECONFIG" > "$kubeconfig"
+          else
+            echo "No deploy kubeconfig was provided." >&2
+            exit 1
+          fi
+          chmod 600 "$kubeconfig"
+          echo "KUBECONFIG=$kubeconfig" >> "$GITHUB_ENV"
+
+      - name: Read protected system CVM identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          node_json="$OPL_BOOTSTRAP_SECRET_DIR/system-node.json"
+          kubectl --kubeconfig "$KUBECONFIG" get node "$OPL_SYSTEM_COMPUTE_NODE_NAME" -o json > "$node_json"
+          OPL_SYSTEM_NODE_JSON="$node_json" node <<'NODE'
+          const fs = require("node:fs");
+          const node = JSON.parse(fs.readFileSync(process.env.OPL_SYSTEM_NODE_JSON, "utf8"));
+          if (node.metadata?.name !== process.env.OPL_SYSTEM_COMPUTE_NODE_NAME) throw new Error("system_node_identity_mismatch");
+          const matches = String(node.spec?.providerID || "").match(/ins-[A-Za-z0-9]+/g) || [];
+          const unique = [...new Set(matches)];
+          if (unique.length !== 1) throw new Error(`system_cvm_provider_id_unavailable:${unique.length}`);
+          fs.appendFileSync(process.env.GITHUB_ENV, `OPL_SYSTEM_COMPUTE_CVM_ID=${unique[0]}\n`, { mode: 0o600 });
+          NODE
+
+      - name: Build current provisioner
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd services/fabric
+          go build -o "$OPL_BOOTSTRAP_SECRET_DIR/opl-tencent-provisioner" ./cmd/opl-tencent-provisioner
+
+      - name: Inventory and bootstrap package NodePools
+        id: bootstrap_action
+        continue-on-error: true
+        shell: bash
+        env:
+          MUTATE_MISSING_POOLS: ${{ inputs.mutate_missing_pools }}
+        run: |
+          set -euo pipefail
+          request="$OPL_BOOTSTRAP_SECRET_DIR/request.json"
+          MUTATE_MISSING_POOLS="$MUTATE_MISSING_POOLS" REQUEST_PATH="$request" node <<'NODE'
+          const fs = require("node:fs");
+          fs.writeFileSync(process.env.REQUEST_PATH, JSON.stringify({
+            action: "bootstrap_compute_node_pools",
+            dryRun: process.env.MUTATE_MISSING_POOLS !== "true"
+          }));
+          NODE
+          "$OPL_BOOTSTRAP_SECRET_DIR/opl-tencent-provisioner" < "$request" > "$OPL_BOOTSTRAP_ARTIFACT_DIR/bootstrap-nodepool-report.json"
+
+      - name: Validate bootstrap report
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          REPORT_PATH="$OPL_BOOTSTRAP_ARTIFACT_DIR/bootstrap-nodepool-report.json" node <<'NODE'
+          const fs = require("node:fs");
+          const report = JSON.parse(fs.readFileSync(process.env.REPORT_PATH, "utf8"));
+          if (!Array.isArray(report.nodePools) || report.nodePools.length !== 2) throw new Error("bootstrap_nodepool_report_invalid");
+          if (report.mutationCount < 0 || report.mutationCount > 2) throw new Error("bootstrap_nodepool_mutation_count_invalid");
+          const packages = report.nodePools.map((item) => item.packageId).sort().join(",");
+          if (packages !== "basic,pro") throw new Error("bootstrap_nodepool_packages_invalid");
+          const encoded = JSON.stringify(report).toLowerCase();
+          for (const forbidden of ["secret", "token", "providerrequestid", "rawresponse", "wallet", "userdata"]) {
+            if (encoded.includes(forbidden)) throw new Error(`bootstrap_nodepool_report_leaked_${forbidden}`);
+          }
+          NODE
+
+      - name: Upload bootstrap report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bootstrap-nodepool-report
+          path: ${{ runner.temp }}/bootstrap-nodepool-report
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Require bootstrap action success
+        if: ${{ steps.bootstrap_action.outcome != 'success' }}
+        shell: bash
+        run: |
+          echo "NodePool bootstrap did not complete; inspect the uploaded partial-state report." >&2
+          exit 1
+
+      - name: Remove bootstrap secrets
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          secret_dir="${OPL_BOOTSTRAP_SECRET_DIR:-}"
+          if [ -n "$secret_dir" ] && [ -d "$secret_dir" ]; then
+            find "$secret_dir" -mindepth 1 -delete
+            rmdir "$secret_dir"
+          fi
