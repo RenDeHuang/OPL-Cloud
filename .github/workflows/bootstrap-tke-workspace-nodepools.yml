@@ -40,6 +40,7 @@ jobs:
       OPL_SYSTEM_COMPUTE_NODE_POOL_ID: ${{ vars.OPL_SYSTEM_COMPUTE_NODE_POOL_ID || 'np-6l4nkdto' }}
       OPL_SYSTEM_COMPUTE_MACHINE_ID: ${{ vars.OPL_SYSTEM_COMPUTE_MACHINE_ID || 'np-6l4nkdto-2cdtm' }}
       OPL_SYSTEM_COMPUTE_NODE_NAME: ${{ vars.OPL_SYSTEM_COMPUTE_NODE_NAME || '10.66.0.42' }}
+      OPL_SYSTEM_COMPUTE_CVM_ID: ${{ vars.OPL_SYSTEM_COMPUTE_CVM_ID }}
       OPL_BASIC_COMPUTE_NODE_POOL_ID: ${{ vars.OPL_BASIC_COMPUTE_NODE_POOL_ID }}
       OPL_PRO_COMPUTE_NODE_POOL_ID: ${{ vars.OPL_PRO_COMPUTE_NODE_POOL_ID }}
       OPL_BASIC_COMPUTE_INSTANCE_TYPE: ""
@@ -116,22 +117,6 @@ jobs:
           chmod 600 "$kubeconfig"
           echo "KUBECONFIG=$kubeconfig" >> "$GITHUB_ENV"
 
-      - name: Read protected system CVM identity
-        shell: bash
-        run: |
-          set -euo pipefail
-          node_json="$OPL_BOOTSTRAP_SECRET_DIR/system-node.json"
-          kubectl --kubeconfig "$KUBECONFIG" get node "$OPL_SYSTEM_COMPUTE_NODE_NAME" -o json > "$node_json"
-          OPL_SYSTEM_NODE_JSON="$node_json" node <<'NODE'
-          const fs = require("node:fs");
-          const node = JSON.parse(fs.readFileSync(process.env.OPL_SYSTEM_NODE_JSON, "utf8"));
-          if (node.metadata?.name !== process.env.OPL_SYSTEM_COMPUTE_NODE_NAME) throw new Error("system_node_identity_mismatch");
-          const matches = String(node.spec?.providerID || "").match(/ins-[A-Za-z0-9]+/g) || [];
-          const unique = [...new Set(matches)];
-          if (unique.length !== 1) throw new Error(`system_cvm_provider_id_unavailable:${unique.length}`);
-          fs.appendFileSync(process.env.GITHUB_ENV, `OPL_SYSTEM_COMPUTE_CVM_ID=${unique[0]}\n`, { mode: 0o600 });
-          NODE
-
       - name: Build current provisioner
         shell: bash
         run: |
@@ -170,7 +155,7 @@ jobs:
           }
           const system = report.protectedSystem || {};
           if (system.nodePoolId !== process.env.OPL_SYSTEM_COMPUTE_NODE_POOL_ID || system.machineId !== process.env.OPL_SYSTEM_COMPUTE_MACHINE_ID ||
-              system.nodeName !== process.env.OPL_SYSTEM_COMPUTE_NODE_NAME || system.cvmId !== process.env.OPL_SYSTEM_COMPUTE_CVM_ID) {
+              system.nodeName !== process.env.OPL_SYSTEM_COMPUTE_NODE_NAME || !/^ins-[A-Za-z0-9]+$/.test(system.cvmId || "")) {
             throw new Error("workspace_sku_inventory_system_identity_mismatch");
           }
           const selected = {};
@@ -184,7 +169,7 @@ jobs:
             }
             selected[packageId] = current.recommendedInstanceType;
           }
-          fs.appendFileSync(process.env.GITHUB_ENV, `OPL_BASIC_COMPUTE_INSTANCE_TYPE=${selected.basic}\nOPL_PRO_COMPUTE_INSTANCE_TYPE=${selected.pro}\n`, { mode: 0o600 });
+          fs.appendFileSync(process.env.GITHUB_ENV, `OPL_SYSTEM_COMPUTE_CVM_ID=${system.cvmId}\nOPL_BASIC_COMPUTE_INSTANCE_TYPE=${selected.basic}\nOPL_PRO_COMPUTE_INSTANCE_TYPE=${selected.pro}\n`, { mode: 0o600 });
           const encoded = JSON.stringify(report).toLowerCase();
           for (const forbidden of ["secret", "token", "requestid", "request id", "providerrequestid", "rawresponse"]) {
             if (encoded.includes(forbidden)) throw new Error(`workspace_sku_inventory_leaked_${forbidden}`);

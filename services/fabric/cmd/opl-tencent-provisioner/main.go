@@ -625,15 +625,7 @@ func (client *tencentSDKClient) bootstrapSystemFacts(env map[string]string) (Pro
 	if matchCount != 1 {
 		return ProtectedSystemFacts{}, fmt.Errorf("protected system NodePool identity is unavailable")
 	}
-	if err := client.verifyBootstrapSystemIdentity(env); err != nil {
-		return ProtectedSystemFacts{}, err
-	}
-	return ProtectedSystemFacts{
-		NodePoolID: systemPoolID,
-		MachineID:  strings.TrimSpace(env["OPL_SYSTEM_COMPUTE_MACHINE_ID"]),
-		NodeName:   strings.TrimSpace(env["OPL_SYSTEM_COMPUTE_NODE_NAME"]),
-		CVMID:      strings.TrimSpace(env["OPL_SYSTEM_COMPUTE_CVM_ID"]),
-	}, nil
+	return client.verifyBootstrapSystemIdentity(env)
 }
 
 func (client *tencentSDKClient) WorkspaceSKUInventory(request Request, env map[string]string) Response {
@@ -3087,31 +3079,39 @@ func bootstrapInventoryMatches(pools []*tke2022.NodePool, env map[string]string,
 	return matches, nil
 }
 
-func (client *tencentSDKClient) verifyBootstrapSystemIdentity(env map[string]string) error {
+func (client *tencentSDKClient) verifyBootstrapSystemIdentity(env map[string]string) (ProtectedSystemFacts, error) {
 	systemPoolID := strings.TrimSpace(env["OPL_SYSTEM_COMPUTE_NODE_POOL_ID"])
-	machines, _, err := client.describeClusterMachines(systemPoolID)
-	if err != nil {
-		return err
-	}
 	wantMachine := strings.TrimSpace(env["OPL_SYSTEM_COMPUTE_MACHINE_ID"])
 	wantNode := strings.TrimSpace(env["OPL_SYSTEM_COMPUTE_NODE_NAME"])
+	if systemPoolID == "" || wantMachine == "" || wantNode == "" {
+		return ProtectedSystemFacts{}, fmt.Errorf("protected system Pool, Machine, and Node identities are required")
+	}
+	machines, _, err := client.describeClusterMachines(systemPoolID)
+	if err != nil {
+		return ProtectedSystemFacts{}, err
+	}
 	var matched *tke2022.Machine
 	for _, machine := range machines {
 		if machine != nil && stringValue(machine.MachineName) == wantMachine {
 			if matched != nil {
-				return fmt.Errorf("protected system Machine identity is ambiguous")
+				return ProtectedSystemFacts{}, fmt.Errorf("protected system Machine identity is ambiguous")
 			}
 			matched = machine
 		}
 	}
 	if matched == nil || kubernetesNodeName(matched) != wantNode {
-		return fmt.Errorf("protected system Machine and Node identities do not match")
+		return ProtectedSystemFacts{}, fmt.Errorf("protected system Machine and Node identities do not match")
 	}
 	cvm, _, err := client.describeCvmInstanceByPrivateIp(stringValue(matched.LanIP))
-	if err != nil || cvm == nil || stringValue(cvm.InstanceId) != strings.TrimSpace(env["OPL_SYSTEM_COMPUTE_CVM_ID"]) {
-		return fmt.Errorf("protected system CVM identity does not match")
+	if err != nil || cvm == nil {
+		return ProtectedSystemFacts{}, fmt.Errorf("protected system CVM identity does not match")
 	}
-	return nil
+	resolvedCVMID := strings.TrimSpace(stringValue(cvm.InstanceId))
+	configuredCVMID := strings.TrimSpace(env["OPL_SYSTEM_COMPUTE_CVM_ID"])
+	if len(resolvedCVMID) <= len("ins-") || !strings.HasPrefix(resolvedCVMID, "ins-") || (configuredCVMID != "" && configuredCVMID != resolvedCVMID) {
+		return ProtectedSystemFacts{}, fmt.Errorf("protected system CVM identity does not match")
+	}
+	return ProtectedSystemFacts{NodePoolID: systemPoolID, MachineID: wantMachine, NodeName: wantNode, CVMID: resolvedCVMID}, nil
 }
 
 func bootstrapInventoryCapacity(request Request, env map[string]string) (int64, *Response) {
@@ -3245,7 +3245,7 @@ func (client *tencentSDKClient) BootstrapComputeNodePools(request Request, env m
 	if failure != nil {
 		return *failure
 	}
-	if err := client.verifyBootstrapSystemIdentity(effectiveEnv); err != nil {
+	if _, err := client.verifyBootstrapSystemIdentity(effectiveEnv); err != nil {
 		return Response{Ok: false, ErrorCode: "protected_system_identity_mismatch", Message: "Protected system identity is unavailable or inconsistent.", Retryable: false}
 	}
 	results := make([]NodePoolBootstrapResult, 0, len(specs))

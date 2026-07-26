@@ -555,6 +555,7 @@ test("dedicated NodePool bootstrap is the only manual CreateNodePool workflow", 
   assert.equal(inputs.mutate_missing_pools.default, "false");
   assert.equal(job.env.OPL_BASIC_COMPUTE_INSTANCE_TYPE, "");
   assert.equal(job.env.OPL_PRO_COMPUTE_INSTANCE_TYPE, "");
+  assert.equal(job.env.OPL_SYSTEM_COMPUTE_CVM_ID, "${{ vars.OPL_SYSTEM_COMPUTE_CVM_ID }}");
   assert.equal(job.env.OPL_BASIC_COMPUTE_NODE_POOL_MAX_REPLICAS, "100");
   assert.equal(job.env.OPL_PRO_COMPUTE_NODE_POOL_MAX_REPLICAS, "100");
   assert.equal(String(job.if), "${{ github.ref == 'refs/heads/main' && github.sha == inputs.merged_sha }}");
@@ -569,8 +570,7 @@ test("dedicated NodePool bootstrap is the only manual CreateNodePool workflow", 
   assert.match(String(job.env.RUN_TENCENT_NODE_POOL_BOOTSTRAP), /mutation_confirmation/);
   assert.match(String(job.env.RUN_TENCENT_NODE_POOL_BOOTSTRAP), /CREATE_MISSING_WORKSPACE_NODEPOOLS/);
   assert.equal(job.env.RUN_TENCENT_NODE_POOL_BOOTSTRAP_CONFIRMATION, "${{ inputs.mutation_confirmation }}");
-  assert.match(runs, /get node "\$OPL_SYSTEM_COMPUTE_NODE_NAME" -o json/);
-  assert.match(runs, /providerID/);
+  assert.doesNotMatch(runs, /get node "\$OPL_SYSTEM_COMPUTE_NODE_NAME" -o json|providerID/);
   assert.match(runs, /actions\/upload-artifact@v4|bootstrap-nodepool-report/);
   assert.match(runs, /workspace_sku_inventory/);
   assert.match(runs, /requiredCapacity[^\n]+200/);
@@ -580,6 +580,11 @@ test("dedicated NodePool bootstrap is the only manual CreateNodePool workflow", 
   assert.match(runs, /subnets/);
   assert.match(runs, /tkeClusterNodeLimit/);
   assert.match(runs, /protectedSystem/);
+  assert.match(runs, /OPL_SYSTEM_COMPUTE_CVM_ID=\$\{system\.cvmId\}/);
+  assert.ok(
+    [...stepsByName(job).keys()].indexOf("Build current provisioner") <
+      [...stepsByName(job).keys()].indexOf("Inventory and select Workspace SKUs")
+  );
   assert.match(runs, /"requestid"/);
   assert.match(runs, /OPL_BASIC_COMPUTE_INSTANCE_TYPE/);
   assert.match(runs, /OPL_PRO_COMPUTE_INSTANCE_TYPE/);

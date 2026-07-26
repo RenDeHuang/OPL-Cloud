@@ -738,6 +738,65 @@ func TestWorkspaceSKUInventorySelectsDeterministicCheapestEligiblePackages(t *te
 	}
 }
 
+func TestWorkspaceSKUInventoryResolvesProtectedSystemCVMWhenUnconfigured(t *testing.T) {
+	tkeAPI := &fakeNativeTkeAPI{nodePools: bootstrapInventory("np-system")}
+	client := newWorkspaceSKUInventoryTencentSDKClient(tkeAPI)
+	env := workspaceInventoryEnv()
+	delete(env, "OPL_SYSTEM_COMPUTE_CVM_ID")
+
+	response := handleWithClient(Request{Action: "workspace_sku_inventory", Zone: "na-siliconvalley-1", RequiredCapacity: 200}, env, client)
+
+	if !response.Ok || response.ProtectedSystem.CVMID != "ins-system" || response.MutationCount != 0 {
+		t.Fatalf("protected system CVM was not resolved read-only: %#v", response)
+	}
+	if len(tkeAPI.createNodePoolRequests) != 0 || len(tkeAPI.scaleNodePoolRequests) != 0 || len(client.nativeCvmClient.(*fakeNativeCvmAPI).modifyInstancesRequest) != 0 {
+		t.Fatal("protected system inventory must perform zero Tencent mutations")
+	}
+}
+
+func TestWorkspaceSKUInventoryFailsClosedOnUnverifiableProtectedSystemCVM(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		configure func(*fakeNativeTkeAPI, *fakeNativeCvmAPI, map[string]string)
+	}{
+		{name: "no CVM", configure: func(_ *fakeNativeTkeAPI, cvm *fakeNativeCvmAPI, _ map[string]string) { cvm.empty = true }},
+		{name: "multiple CVMs", configure: func(_ *fakeNativeTkeAPI, cvm *fakeNativeCvmAPI, _ map[string]string) { cvm.privateIPInstanceCount = 2 }},
+		{name: "Machine mismatch", configure: func(tke *fakeNativeTkeAPI, _ *fakeNativeCvmAPI, _ map[string]string) {
+			tke.systemMachineName = "machine-other"
+		}},
+		{name: "Node mismatch", configure: func(tke *fakeNativeTkeAPI, _ *fakeNativeCvmAPI, _ map[string]string) {
+			tke.systemNodeName = "10.66.0.99"
+		}},
+		{name: "invalid CVM identity", configure: func(_ *fakeNativeTkeAPI, cvm *fakeNativeCvmAPI, _ map[string]string) {
+			cvm.privateIPInstanceID = "machine-system"
+		}},
+		{name: "empty CVM identity suffix", configure: func(_ *fakeNativeTkeAPI, cvm *fakeNativeCvmAPI, _ map[string]string) {
+			cvm.privateIPInstanceID = "ins-"
+		}},
+		{name: "configured CVM mismatch", configure: func(_ *fakeNativeTkeAPI, cvm *fakeNativeCvmAPI, env map[string]string) {
+			env["OPL_SYSTEM_COMPUTE_CVM_ID"] = "ins-expected"
+			cvm.privateIPInstanceID = "ins-other"
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			tkeAPI := &fakeNativeTkeAPI{nodePools: bootstrapInventory("np-system")}
+			client := newWorkspaceSKUInventoryTencentSDKClient(tkeAPI)
+			env := workspaceInventoryEnv()
+			delete(env, "OPL_SYSTEM_COMPUTE_CVM_ID")
+			test.configure(tkeAPI, client.nativeCvmClient.(*fakeNativeCvmAPI), env)
+
+			response := handleWithClient(Request{Action: "workspace_sku_inventory", Zone: "na-siliconvalley-1", RequiredCapacity: 200}, env, client)
+
+			if response.Ok || response.ErrorCode != "protected_system_identity_mismatch" || response.MutationCount != 0 {
+				t.Fatalf("unverifiable protected system identity accepted: %#v", response)
+			}
+			if len(tkeAPI.createNodePoolRequests) != 0 || len(tkeAPI.scaleNodePoolRequests) != 0 || len(client.nativeCvmClient.(*fakeNativeCvmAPI).modifyInstancesRequest) != 0 {
+				t.Fatal("failed protected system inventory must perform zero Tencent mutations")
+			}
+		})
+	}
+}
+
 func TestWorkspaceSKUInventoryFailsClosedWhenApprovedCapacityIsUnavailable(t *testing.T) {
 	for _, test := range []struct {
 		name      string
