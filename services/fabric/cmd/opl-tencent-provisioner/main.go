@@ -132,6 +132,7 @@ type Response struct {
 	TKEClusterNodeLimit      uint64                    `json:"tkeClusterNodeLimit,omitempty"`
 	TKECurrentNodeCount      uint64                    `json:"tkeCurrentNodeCount,omitempty"`
 	TKEAvailableNodeCapacity uint64                    `json:"tkeAvailableNodeCapacity,omitempty"`
+	TKECapacity              *TKEClusterCapacityFacts  `json:"tkeCapacity,omitempty"`
 	ProtectedSystem          ProtectedSystemFacts      `json:"protectedSystem,omitempty"`
 	MutationCount            int                       `json:"mutationCount"`
 }
@@ -159,6 +160,18 @@ type WorkspaceSubnetFact struct {
 	VPCID                string `json:"vpcId"`
 	Zone                 string `json:"zone"`
 	AvailableIPAddresses uint64 `json:"availableIpAddresses"`
+}
+
+type TKEClusterCapacityFacts struct {
+	ClusterLevel     string                `json:"clusterLevel"`
+	CurrentNodeCount uint64                `json:"currentNodeCount"`
+	LevelAttributes  []TKEClusterLevelFact `json:"levelAttributes"`
+}
+
+type TKEClusterLevelFact struct {
+	Name      string  `json:"name"`
+	NodeCount *uint64 `json:"nodeCount,omitempty"`
+	Enable    *bool   `json:"enable,omitempty"`
 }
 
 type ProtectedSystemFacts struct {
@@ -574,41 +587,60 @@ func (client *tencentSDKClient) workspaceSubnetFacts(env map[string]string, zone
 	return facts, available, nil
 }
 
-func (client *tencentSDKClient) workspaceTKECapacity() (uint64, uint64, uint64, error) {
+func (client *tencentSDKClient) workspaceTKECapacity() (uint64, uint64, uint64, TKEClusterCapacityFacts, error) {
 	clustersRequest := tke2018.NewDescribeClustersRequest()
 	clustersRequest.ClusterIds = []*string{common.StringPtr(client.clusterId)}
 	clustersRequest.Limit = common.Int64Ptr(1)
 	clusters, err := client.nativeLegacyTkeClient.DescribeClusters(clustersRequest)
 	if err != nil || clusters == nil || clusters.Response == nil || clusters.Response.TotalCount == nil || *clusters.Response.TotalCount != 1 ||
 		len(clusters.Response.Clusters) != 1 || clusters.Response.Clusters[0] == nil || strings.TrimSpace(stringValue(clusters.Response.RequestId)) == "" {
-		return 0, 0, 0, fmt.Errorf("Tencent TKE cluster inventory is unavailable")
+		return 0, 0, 0, TKEClusterCapacityFacts{}, fmt.Errorf("Tencent TKE cluster inventory is unavailable")
 	}
 	cluster := clusters.Response.Clusters[0]
 	level := strings.TrimSpace(stringValue(cluster.ClusterLevel))
 	if stringValue(cluster.ClusterId) != client.clusterId || !strings.EqualFold(stringValue(cluster.ClusterStatus), "Running") || level == "" || cluster.ClusterNodeNum == nil {
-		return 0, 0, 0, fmt.Errorf("Tencent TKE cluster identity or level is unavailable")
+		return 0, 0, 0, TKEClusterCapacityFacts{}, fmt.Errorf("Tencent TKE cluster identity or level is unavailable")
 	}
+	facts := TKEClusterCapacityFacts{ClusterLevel: level, CurrentNodeCount: *cluster.ClusterNodeNum, LevelAttributes: []TKEClusterLevelFact{}}
 	levelRequest := tke2018.NewDescribeClusterLevelAttributeRequest()
 	levelRequest.ClusterID = common.StringPtr(client.clusterId)
 	levels, err := client.nativeLegacyTkeClient.DescribeClusterLevelAttribute(levelRequest)
 	if err != nil || levels == nil || levels.Response == nil || levels.Response.TotalCount == nil ||
 		*levels.Response.TotalCount != int64(len(levels.Response.Items)) || strings.TrimSpace(stringValue(levels.Response.RequestId)) == "" {
-		return 0, 0, 0, fmt.Errorf("Tencent TKE cluster level inventory is unavailable")
+		return 0, 0, 0, facts, fmt.Errorf("Tencent TKE cluster level inventory is unavailable")
 	}
+	for _, item := range levels.Response.Items {
+		if item == nil {
+			continue
+		}
+		attribute := TKEClusterLevelFact{Name: strings.TrimSpace(stringValue(item.Name))}
+		if item.NodeCount != nil {
+			nodeCount := *item.NodeCount
+			attribute.NodeCount = &nodeCount
+		}
+		if item.Enable != nil {
+			enable := *item.Enable
+			attribute.Enable = &enable
+		}
+		facts.LevelAttributes = append(facts.LevelAttributes, attribute)
+	}
+	sort.Slice(facts.LevelAttributes, func(i, j int) bool {
+		return facts.LevelAttributes[i].Name < facts.LevelAttributes[j].Name
+	})
 	var nodeLimit *uint64
 	for _, item := range levels.Response.Items {
 		// The running cluster's matching NodeCount is the capacity fact; Enable is unrelated metadata.
 		if item != nil && stringValue(item.Name) == level && item.NodeCount != nil {
 			if nodeLimit != nil {
-				return 0, 0, 0, fmt.Errorf("Tencent TKE cluster level inventory is ambiguous")
+				return 0, 0, 0, facts, fmt.Errorf("Tencent TKE cluster level inventory is ambiguous")
 			}
 			nodeLimit = item.NodeCount
 		}
 	}
 	if nodeLimit == nil || *cluster.ClusterNodeNum > *nodeLimit {
-		return 0, 0, 0, fmt.Errorf("Tencent TKE cluster node limit is unavailable")
+		return 0, 0, 0, facts, fmt.Errorf("Tencent TKE cluster node limit is unavailable")
 	}
-	return *nodeLimit, *cluster.ClusterNodeNum, *nodeLimit - *cluster.ClusterNodeNum, nil
+	return *nodeLimit, *cluster.ClusterNodeNum, *nodeLimit - *cluster.ClusterNodeNum, facts, nil
 }
 
 func (client *tencentSDKClient) bootstrapSystemFacts(env map[string]string) (ProtectedSystemFacts, error) {
@@ -672,10 +704,13 @@ func (client *tencentSDKClient) WorkspaceSKUInventory(request Request, env map[s
 		response.SKUPackages, response.PrepaidQuotaRemaining = packages, quota
 		return response
 	}
-	nodeLimit, currentNodes, availableNodes, err := client.workspaceTKECapacity()
+	nodeLimit, currentNodes, availableNodes, tkeCapacity, err := client.workspaceTKECapacity()
 	if err != nil {
 		response := workspaceSKUInventoryFailure("workspace_sku_inventory_unavailable", err)
 		response.SKUPackages, response.PrepaidQuotaRemaining, response.Subnets = packages, quota, subnets
+		if tkeCapacity.ClusterLevel != "" {
+			response.TKECapacity = &tkeCapacity
+		}
 		return response
 	}
 	protectedSystem, err := client.bootstrapSystemFacts(env)
@@ -688,7 +723,8 @@ func (client *tencentSDKClient) WorkspaceSKUInventory(request Request, env map[s
 	response := Response{
 		Ok: true, Status: "ready", RequiredCapacity: request.RequiredCapacity, SKUPackages: packages,
 		PrepaidQuotaRemaining: quota, Subnets: subnets, TKEClusterNodeLimit: nodeLimit,
-		TKECurrentNodeCount: currentNodes, TKEAvailableNodeCapacity: availableNodes, ProtectedSystem: protectedSystem, MutationCount: 0,
+		TKECurrentNodeCount: currentNodes, TKEAvailableNodeCapacity: availableNodes, TKECapacity: &tkeCapacity,
+		ProtectedSystem: protectedSystem, MutationCount: 0,
 	}
 	if quota < uint64(request.RequiredCapacity) || subnetCapacity < uint64(request.RequiredCapacity) || availableNodes < uint64(request.RequiredCapacity) {
 		response.Ok = false

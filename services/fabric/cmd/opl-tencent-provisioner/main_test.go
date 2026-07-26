@@ -756,7 +756,7 @@ func TestWorkspaceTKECapacityUsesCurrentLevelNodeCountIndependentOfEnableMetadat
 			}
 			client := &tencentSDKClient{clusterId: "cls-123", nativeLegacyTkeClient: legacyAPI}
 
-			limit, current, available, err := client.workspaceTKECapacity()
+			limit, current, available, _, err := client.workspaceTKECapacity()
 
 			if err != nil {
 				t.Fatalf("current cluster level NodeCount must remain authoritative independently of Enable metadata: %v", err)
@@ -765,6 +765,75 @@ func TestWorkspaceTKECapacityUsesCurrentLevelNodeCountIndependentOfEnableMetadat
 				t.Fatalf("capacity facts=(%d,%d,%d)", limit, current, available)
 			}
 		})
+	}
+}
+
+func TestWorkspaceSKUInventoryReportsSafeTKELevelFactsWhenNodeLimitIsUnavailable(t *testing.T) {
+	tkeAPI := &fakeNativeTkeAPI{nodePools: bootstrapInventory("np-system")}
+	client := newWorkspaceSKUInventoryTencentSDKClient(tkeAPI)
+	legacyAPI := client.nativeLegacyTkeClient.(*fakeLegacyTkeAPI)
+	legacyAPI.clusterLevel = "L5"
+	legacyAPI.attributeLevel = "L10"
+	legacyAPI.clusterNodeCount = 1
+	legacyAPI.nodeLimit = 250
+
+	response := handleWithClient(Request{Action: "workspace_sku_inventory", Zone: "na-siliconvalley-1", RequiredCapacity: 200}, workspaceInventoryEnv(), client)
+
+	if response.Ok || response.ErrorCode != "workspace_sku_inventory_unavailable" || response.MutationCount != 0 {
+		t.Fatalf("inventory response=%#v", response)
+	}
+	encoded, err := json.Marshal(response)
+	if err != nil {
+		t.Fatalf("marshal inventory response: %v", err)
+	}
+	var document map[string]any
+	if err := json.Unmarshal(encoded, &document); err != nil {
+		t.Fatalf("decode inventory response: %v", err)
+	}
+	capacity, ok := document["tkeCapacity"].(map[string]any)
+	if !ok {
+		t.Fatalf("safe TKE capacity facts missing: %s", encoded)
+	}
+	if capacity["clusterLevel"] != "L5" || capacity["currentNodeCount"] != float64(1) {
+		t.Fatalf("current cluster facts=%#v", capacity)
+	}
+	attributes, ok := capacity["levelAttributes"].([]any)
+	if !ok || len(attributes) != 1 {
+		t.Fatalf("level attributes=%#v", capacity["levelAttributes"])
+	}
+	attribute, ok := attributes[0].(map[string]any)
+	if !ok || attribute["name"] != "L10" || attribute["nodeCount"] != float64(250) || attribute["enable"] != true {
+		t.Fatalf("level attribute=%#v", attributes[0])
+	}
+	for _, forbidden := range []string{"requestId", "providerRequestId", "rawResponse", "secret", "token"} {
+		if strings.Contains(strings.ToLower(string(encoded)), strings.ToLower(forbidden)) {
+			t.Fatalf("TKE capacity facts leaked %q: %s", forbidden, encoded)
+		}
+	}
+	if len(tkeAPI.createNodePoolRequests) != 0 || len(tkeAPI.scaleNodePoolRequests) != 0 || len(client.nativeCvmClient.(*fakeNativeCvmAPI).modifyInstancesRequest) != 0 {
+		t.Fatal("TKE capacity diagnostics must perform zero Tencent mutations")
+	}
+}
+
+func TestWorkspaceSKUInventoryOmitsTKEFactsWhenClusterIdentityIsUnavailable(t *testing.T) {
+	tkeAPI := &fakeNativeTkeAPI{nodePools: bootstrapInventory("np-system")}
+	client := newWorkspaceSKUInventoryTencentSDKClient(tkeAPI)
+	client.nativeLegacyTkeClient.(*fakeLegacyTkeAPI).clusterID = "cls-other"
+
+	response := handleWithClient(Request{Action: "workspace_sku_inventory", Zone: "na-siliconvalley-1", RequiredCapacity: 200}, workspaceInventoryEnv(), client)
+
+	if response.Ok || response.ErrorCode != "workspace_sku_inventory_unavailable" || response.MutationCount != 0 {
+		t.Fatalf("inventory response=%#v", response)
+	}
+	encoded, err := json.Marshal(response)
+	if err != nil {
+		t.Fatalf("marshal inventory response: %v", err)
+	}
+	if strings.Contains(string(encoded), `"tkeCapacity"`) {
+		t.Fatalf("unverified TKE capacity facts must be omitted: %s", encoded)
+	}
+	if len(tkeAPI.createNodePoolRequests) != 0 || len(tkeAPI.scaleNodePoolRequests) != 0 || len(client.nativeCvmClient.(*fakeNativeCvmAPI).modifyInstancesRequest) != 0 {
+		t.Fatal("failed TKE identity inventory must perform zero Tencent mutations")
 	}
 }
 
@@ -1266,6 +1335,7 @@ func workspaceSKUItemWithoutPrice(instanceType string, cpu, memory int64) *cvm20
 type fakeLegacyTkeAPI struct {
 	clusterID        string
 	clusterLevel     string
+	attributeLevel   string
 	clusterNodeCount uint64
 	nodeLimit        uint64
 	levelEnabled     *bool
@@ -1286,7 +1356,7 @@ func (api *fakeLegacyTkeAPI) DescribeClusters(_ *tke2018.DescribeClustersRequest
 }
 
 func (api *fakeLegacyTkeAPI) DescribeClusterLevelAttribute(_ *tke2018.DescribeClusterLevelAttributeRequest) (*tke2018.DescribeClusterLevelAttributeResponse, error) {
-	clusterLevel := firstNonEmpty(api.clusterLevel, "L5")
+	clusterLevel := firstNonEmpty(api.attributeLevel, firstNonEmpty(api.clusterLevel, "L5"))
 	nodeLimit := api.nodeLimit
 	if nodeLimit == 0 {
 		nodeLimit = 500
