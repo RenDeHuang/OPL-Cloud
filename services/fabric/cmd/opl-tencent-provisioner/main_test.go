@@ -14,6 +14,7 @@ import (
 	"github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common"
 	tcerrors "github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common/errors"
 	cvm2017 "github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/cvm/v20170312"
+	tke2018 "github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/tke/v20180525"
 	tke2022 "github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/tke/v20220501"
 	vpc2017 "github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/vpc/v20170312"
 )
@@ -251,6 +252,10 @@ func (client *fakeTencentClient) RenewComputeAllocation(request Request, _ map[s
 
 func (client *fakeTencentClient) BootstrapComputeNodePools(_ Request, _ map[string]string) Response {
 	return Response{Ok: true, Status: "registered"}
+}
+
+func (client *fakeTencentClient) WorkspaceSKUInventory(_ Request, _ map[string]string) Response {
+	return Response{Ok: true, Status: "ready", MutationCount: 0}
 }
 
 func TestProviderTruthUsesTencentClientBoundaryWithoutMutationFlag(t *testing.T) {
@@ -677,6 +682,149 @@ func TestBootstrapComputeNodePoolsRequiresExplicitMutationConfirmation(t *testin
 	}
 }
 
+func TestWorkspaceSKUInventorySelectsDeterministicCheapestEligiblePackages(t *testing.T) {
+	tkeAPI := &fakeNativeTkeAPI{nodePools: bootstrapInventory("np-system")}
+	client := newWorkspaceSKUInventoryTencentSDKClient(tkeAPI)
+	cvmAPI := client.nativeCvmClient.(*fakeNativeCvmAPI)
+	cvmAPI.zoneConfigItems = []*cvm2017.InstanceTypeQuotaItem{
+		workspaceSKUItem("S5.MEDIUM4", 2, 4, "PREPAID", "SELL", 48),
+		workspaceSKUItem("SA5.2XLARGE16", 8, 16, "PREPAID", "SELL", 120),
+		workspaceSKUItem("SA5.MEDIUM4", 2, 4, "PREPAID", "SELL", 42),
+		workspaceSKUItem("S5.2XLARGE16", 8, 16, "PREPAID", "SELL", 120),
+		workspaceSKUItem("S5.MEDIUM4-SOLD", 2, 4, "PREPAID", "SOLD_OUT", 1),
+		workspaceSKUItem("S5.MEDIUM4-HOURLY", 2, 4, "POSTPAID_BY_HOUR", "SELL", 1),
+		workspaceSKUItem("S5.LARGE8", 4, 8, "PREPAID", "SELL", 1),
+		workspaceSKUItemWithoutPrice("S5.MEDIUM4-NOPRICE", 2, 4),
+	}
+
+	response := handleWithClient(Request{Action: "workspace_sku_inventory", Zone: "na-siliconvalley-1", RequiredCapacity: 200}, workspaceInventoryEnv(), client)
+
+	if !response.Ok || response.Status != "ready" || response.MutationCount != 0 {
+		t.Fatalf("inventory response=%#v", response)
+	}
+	if response.RequiredCapacity != 200 || response.PrepaidQuotaRemaining != 500 || response.TKEClusterNodeLimit != 500 || response.TKECurrentNodeCount != 1 || response.TKEAvailableNodeCapacity != 499 {
+		t.Fatalf("capacity facts=%#v", response)
+	}
+	if len(response.Subnets) != 1 || response.Subnets[0].AvailableIPAddresses != 500 || response.Subnets[0].Zone != "na-siliconvalley-1" || response.Subnets[0].VPCID != "vpc-workspace" {
+		t.Fatalf("subnet facts=%#v", response.Subnets)
+	}
+	if response.ProtectedSystem.NodePoolID != "np-system" || response.ProtectedSystem.MachineID != "machine-system" || response.ProtectedSystem.NodeName != "10.66.0.42" || response.ProtectedSystem.CVMID != "ins-system" {
+		t.Fatalf("protected facts=%#v", response.ProtectedSystem)
+	}
+	if len(response.SKUPackages) != 2 {
+		t.Fatalf("package inventory=%#v", response.SKUPackages)
+	}
+	basic, pro := response.SKUPackages[0], response.SKUPackages[1]
+	if basic.PackageID != "basic" || basic.CPU != 2 || basic.MemoryGB != 4 || basic.RecommendedInstanceType != "SA5.MEDIUM4" || basic.RecommendedMonthlyPriceCNY != 42 || len(basic.Candidates) != 2 {
+		t.Fatalf("Basic inventory=%#v", basic)
+	}
+	if basic.Candidates[0].InstanceType != "SA5.MEDIUM4" || basic.Candidates[1].InstanceType != "S5.MEDIUM4" {
+		t.Fatalf("Basic candidates not sorted by price then type: %#v", basic.Candidates)
+	}
+	if pro.PackageID != "pro" || pro.CPU != 8 || pro.MemoryGB != 16 || pro.RecommendedInstanceType != "S5.2XLARGE16" || pro.RecommendedMonthlyPriceCNY != 120 || len(pro.Candidates) != 2 {
+		t.Fatalf("Pro inventory=%#v", pro)
+	}
+	if len(tkeAPI.createNodePoolRequests) != 0 || len(tkeAPI.scaleNodePoolRequests) != 0 || len(cvmAPI.modifyInstancesRequest) != 0 {
+		t.Fatalf("read-only inventory mutated Tencent: tke=%#v cvm=%#v", tkeAPI, cvmAPI)
+	}
+	encoded, err := json.Marshal(response)
+	if err != nil {
+		t.Fatalf("marshal inventory: %v", err)
+	}
+	for _, forbidden := range []string{"providerRequestId", "providerRequestIds", "rawResponse", "secret", "token"} {
+		if strings.Contains(strings.ToLower(string(encoded)), strings.ToLower(forbidden)) {
+			t.Fatalf("inventory leaked %q: %s", forbidden, encoded)
+		}
+	}
+}
+
+func TestWorkspaceSKUInventoryFailsClosedWhenApprovedCapacityIsUnavailable(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		configure func(*tencentSDKClient)
+	}{
+		{name: "prepaid quota", configure: func(client *tencentSDKClient) { client.nativeCvmClient.(*fakeNativeCvmAPI).quotaRemaining = 199 }},
+		{name: "subnet IPs", configure: func(client *tencentSDKClient) { client.nativeVpcClient.(*fakeNativeVpcAPI).availableIpCount = 199 }},
+		{name: "TKE node limit", configure: func(client *tencentSDKClient) { client.nativeLegacyTkeClient.(*fakeLegacyTkeAPI).nodeLimit = 200 }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			tkeAPI := &fakeNativeTkeAPI{nodePools: bootstrapInventory("np-system")}
+			client := newWorkspaceSKUInventoryTencentSDKClient(tkeAPI)
+			test.configure(client)
+
+			response := handleWithClient(Request{Action: "workspace_sku_inventory", Zone: "na-siliconvalley-1", RequiredCapacity: 200}, workspaceInventoryEnv(), client)
+
+			if response.Ok || response.ErrorCode != "workspace_capacity_insufficient" || response.MutationCount != 0 {
+				t.Fatalf("capacity response=%#v", response)
+			}
+			if len(tkeAPI.createNodePoolRequests) != 0 || len(tkeAPI.scaleNodePoolRequests) != 0 {
+				t.Fatalf("failed inventory mutated TKE: %#v", tkeAPI)
+			}
+		})
+	}
+}
+
+func TestWorkspaceSKUInventoryRedactsProviderErrors(t *testing.T) {
+	tkeAPI := &fakeNativeTkeAPI{
+		nodePools:           bootstrapInventory("np-system"),
+		describeNodePoolErr: errors.New("Tencent requestId=req-sensitive token=provider-secret"),
+	}
+	client := newWorkspaceSKUInventoryTencentSDKClient(tkeAPI)
+
+	response := handleWithClient(Request{Action: "workspace_sku_inventory", Zone: "na-siliconvalley-1", RequiredCapacity: 200}, workspaceInventoryEnv(), client)
+
+	if response.Ok || response.ErrorCode != "protected_system_identity_mismatch" || response.MutationCount != 0 {
+		t.Fatalf("provider failure response=%#v", response)
+	}
+	encoded, err := json.Marshal(response)
+	if err != nil {
+		t.Fatalf("marshal provider failure: %v", err)
+	}
+	for _, forbidden := range []string{"req-sensitive", "provider-secret", "requestId", "token"} {
+		if strings.Contains(strings.ToLower(string(encoded)), strings.ToLower(forbidden)) {
+			t.Fatalf("provider failure leaked %q: %s", forbidden, encoded)
+		}
+	}
+}
+
+func TestBootstrapComputeNodePoolsDryRunUsesRecommendedWorkspaceSKUs(t *testing.T) {
+	tkeAPI := &fakeNativeTkeAPI{nodePools: bootstrapInventory("np-system")}
+	client := newWorkspaceSKUInventoryTencentSDKClient(tkeAPI)
+	env := workspaceInventoryEnv()
+	env["OPL_BASIC_COMPUTE_NODE_POOL_MAX_REPLICAS"] = "100"
+	env["OPL_PRO_COMPUTE_NODE_POOL_MAX_REPLICAS"] = "100"
+
+	response := handleWithClient(Request{Action: "bootstrap_compute_node_pools", DryRun: true, Zone: "na-siliconvalley-1", RequiredCapacity: 200}, env, client)
+
+	if !response.Ok || response.Status != "missing" || response.MutationCount != 0 || len(response.NodePools) != 2 {
+		t.Fatalf("bootstrap dry-run=%#v", response)
+	}
+	if response.NodePools[0].InstanceType != "SA5.MEDIUM4" || response.NodePools[1].InstanceType != "SA5.2XLARGE16" || response.NodePools[0].MaxReplicas != 100 || response.NodePools[1].MaxReplicas != 100 {
+		t.Fatalf("recommended package specs=%#v", response.NodePools)
+	}
+	if len(tkeAPI.createNodePoolRequests) != 0 {
+		t.Fatalf("dry-run created NodePool: %#v", tkeAPI.createNodePoolRequests)
+	}
+}
+
+func TestBootstrapComputeNodePoolsRevalidatesSelectedSKUImmediatelyBeforeMutation(t *testing.T) {
+	tkeAPI := &fakeNativeTkeAPI{nodePools: bootstrapInventory("np-system")}
+	client := newWorkspaceSKUInventoryTencentSDKClient(tkeAPI)
+	env := bootstrapEnv()
+	env["OPL_BASIC_COMPUTE_NODE_POOL_MAX_REPLICAS"] = "100"
+	env["OPL_PRO_COMPUTE_NODE_POOL_MAX_REPLICAS"] = "100"
+	env["OPL_BASIC_COMPUTE_INSTANCE_TYPE"] = "S5.MEDIUM4-NO-LONGER-SELLING"
+
+	response := handleWithClient(Request{Action: "bootstrap_compute_node_pools", Zone: "na-siliconvalley-1", RequiredCapacity: 200}, env, client)
+
+	if response.Ok || response.ErrorCode != "workspace_sku_selection_invalid" || response.MutationCount != 0 {
+		t.Fatalf("revalidation response=%#v", response)
+	}
+	if len(tkeAPI.createNodePoolRequests) != 0 {
+		t.Fatalf("invalid selected SKU created NodePool: %#v", tkeAPI.createNodePoolRequests)
+	}
+}
+
 func TestBootstrapComputeNodePoolsInventoriesAllPoolsBeforeMutation(t *testing.T) {
 	tkeAPI := &fakeNativeTkeAPI{nodePools: bootstrapInventory("np-system")}
 	client := newBootstrapTencentSDKClient(tkeAPI)
@@ -799,7 +947,7 @@ func TestBootstrapComputeNodePoolsRejectsInventoryConflictsBeforeMutation(t *tes
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			tkeAPI := &fakeNativeTkeAPI{nodePools: test.pools}
-			response := handleWithClient(Request{Action: "bootstrap_compute_node_pools"}, bootstrapEnv(), newFakeTencentSDKClient(tkeAPI))
+			response := handleWithClient(Request{Action: "bootstrap_compute_node_pools"}, bootstrapEnv(), newWorkspaceSKUInventoryTencentSDKClient(tkeAPI))
 			if response.Ok || response.ErrorCode != "node_pool_bootstrap_inventory_conflict" || response.MutationCount != 0 {
 				t.Fatalf("conflict response=%#v", response)
 			}
@@ -852,6 +1000,42 @@ func TestBootstrapComputeNodePoolsReportsPartialStateAndRetryOnlyCreatesMissingP
 	second := handleWithClient(Request{Action: "bootstrap_compute_node_pools"}, env, client)
 	if !second.Ok || second.Status != "completed" || second.MutationCount != 1 {
 		t.Fatalf("retry response=%#v", second)
+	}
+	if len(tkeAPI.createNodePoolRequests) != 3 || stringValue(tkeAPI.createNodePoolRequests[2].Name) != "pool-pro-8c16g" {
+		t.Fatalf("retry must only create missing Pro pool: %#v", tkeAPI.createNodePoolRequests)
+	}
+}
+
+func TestBootstrapComputeNodePoolsRetryPreservesExistingPoolWhenRecommendationChanges(t *testing.T) {
+	tkeAPI := &fakeNativeTkeAPI{nodePools: bootstrapInventory("np-system"), createNodePoolErrAt: 2}
+	client := newBootstrapTencentSDKClient(tkeAPI)
+	env := bootstrapEnv()
+
+	first := handleWithClient(Request{Action: "bootstrap_compute_node_pools"}, env, client)
+	if first.Ok || first.NodePools[0].Status != "created" || first.NodePools[1].Status != "failed" {
+		t.Fatalf("partial response=%#v", first)
+	}
+
+	client.nativeCvmClient.(*fakeNativeCvmAPI).zoneConfigItems = []*cvm2017.InstanceTypeQuotaItem{
+		workspaceSKUItem("C6.MEDIUM4", 2, 4, "PREPAID", "SELL", 40),
+		workspaceSKUItem(basicResolvedInstanceType, 2, 4, "PREPAID", "SELL", 60),
+		workspaceSKUItem("C6.2XLARGE16", 8, 16, "PREPAID", "SELL", 130),
+		workspaceSKUItem(proResolvedInstanceType, 8, 16, "PREPAID", "SELL", 160),
+	}
+	env["OPL_BASIC_COMPUTE_INSTANCE_TYPE"] = "C6.MEDIUM4"
+	env["OPL_PRO_COMPUTE_INSTANCE_TYPE"] = "C6.2XLARGE16"
+	tkeAPI.createNodePoolErrAt = 0
+
+	second := handleWithClient(Request{Action: "bootstrap_compute_node_pools"}, env, client)
+
+	if !second.Ok || second.Status != "completed" || second.MutationCount != 1 {
+		t.Fatalf("retry response=%#v", second)
+	}
+	if second.NodePools[0].InstanceType != basicResolvedInstanceType || second.NodePools[0].Status != "registered" {
+		t.Fatalf("existing Basic pool was not preserved: %#v", second.NodePools[0])
+	}
+	if second.NodePools[1].InstanceType != "C6.2XLARGE16" || second.NodePools[1].Status != "created" {
+		t.Fatalf("missing Pro pool did not use the current recommendation: %#v", second.NodePools[1])
 	}
 	if len(tkeAPI.createNodePoolRequests) != 3 || stringValue(tkeAPI.createNodePoolRequests[2].Name) != "pool-pro-8c16g" {
 		t.Fatalf("retry must only create missing Pro pool: %#v", tkeAPI.createNodePoolRequests)
@@ -912,8 +1096,6 @@ func TestBootstrapComputeNodePoolsDryRunReportsMissingWithoutMutation(t *testing
 	env := bootstrapEnv()
 	delete(env, "RUN_TENCENT_CREATE_RELEASE_EXECUTION")
 	delete(env, "RUN_TENCENT_NODE_POOL_BOOTSTRAP")
-	delete(env, "OPL_BASIC_COMPUTE_NODE_POOL_MAX_REPLICAS")
-	delete(env, "OPL_PRO_COMPUTE_NODE_POOL_MAX_REPLICAS")
 
 	response := handleWithClient(Request{Action: "bootstrap_compute_node_pools", DryRun: true}, env, newBootstrapTencentSDKClient(tkeAPI))
 
@@ -921,7 +1103,7 @@ func TestBootstrapComputeNodePoolsDryRunReportsMissingWithoutMutation(t *testing
 		t.Fatalf("dry-run response=%#v", response)
 	}
 	for _, result := range response.NodePools {
-		if result.Status != "missing" || result.MaxReplicas != 0 {
+		if result.Status != "missing" || result.MaxReplicas <= 0 {
 			t.Fatalf("dry-run missing result=%#v", result)
 		}
 	}
@@ -935,7 +1117,7 @@ func TestBootstrapComputeNodePoolsDryRunReportsMissingWithoutMutation(t *testing
 	}
 	for _, raw := range report["nodePools"].([]any) {
 		pool := raw.(map[string]any)
-		if pool["maxReplicasSource"] != "not_configured" || pool["maxReplicasDecision"] != "release_owner_approval_required" ||
+		if pool["maxReplicasSource"] != "workflow_input" || pool["maxReplicasDecision"] != "release_owner_approval_required" ||
 			pool["maxReplicasConstraint"] != "positive_integer_subject_to_current_tencent_account_region_quota" ||
 			pool["maxReplicasRecommendation"] != "release_owner_selects_after_inventory_and_quota_review" {
 			t.Fatalf("dry-run maxReplicas policy missing: %#v", pool)
@@ -952,6 +1134,7 @@ func bootstrapEnv() map[string]string {
 	env["RUN_TENCENT_NODE_POOL_BOOTSTRAP"] = "1"
 	env["RUN_TENCENT_NODE_POOL_BOOTSTRAP_CONFIRMATION"] = nodePoolBootstrapMutationConfirmation
 	env["TENCENT_CVM_SUBNET_ID"] = "subnet-workspace"
+	env["OPL_TENCENT_ZONE"] = "na-siliconvalley-1"
 	env["TENCENT_CVM_SECURITY_GROUP_IDS"] = "sg-workspace"
 	env["OPL_BASIC_COMPUTE_NODE_POOL_MAX_REPLICAS"] = "20"
 	env["OPL_PRO_COMPUTE_NODE_POOL_MAX_REPLICAS"] = "8"
@@ -963,8 +1146,79 @@ func bootstrapEnv() map[string]string {
 }
 
 func newBootstrapTencentSDKClient(tkeAPI *fakeNativeTkeAPI) *tencentSDKClient {
+	return newWorkspaceSKUInventoryTencentSDKClient(tkeAPI)
+}
+
+func workspaceInventoryEnv() map[string]string {
+	env := protectedResourceEnv()
+	env["TENCENTCLOUD_REGION"] = "na-siliconvalley"
+	env["OPL_TENCENT_ZONE"] = "na-siliconvalley-1"
+	env["TENCENT_CVM_SUBNET_ID"] = "subnet-workspace"
+	env["OPL_BASIC_COMPUTE_INSTANCE_TYPE"] = ""
+	env["OPL_PRO_COMPUTE_INSTANCE_TYPE"] = ""
+	return env
+}
+
+func workspaceSKUItem(instanceType string, cpu, memory int64, chargeType, status string, monthlyPrice float64) *cvm2017.InstanceTypeQuotaItem {
+	return &cvm2017.InstanceTypeQuotaItem{
+		Zone: common.StringPtr("na-siliconvalley-1"), InstanceType: common.StringPtr(instanceType),
+		InstanceChargeType: common.StringPtr(chargeType), Cpu: common.Int64Ptr(cpu), Memory: common.Int64Ptr(memory),
+		Status: common.StringPtr(status), StatusCategory: common.StringPtr("EnoughStock"),
+		Price: &cvm2017.ItemPrice{OriginalPrice: common.Float64Ptr(monthlyPrice + 10), DiscountPrice: common.Float64Ptr(monthlyPrice)},
+	}
+}
+
+func workspaceSKUItemWithoutPrice(instanceType string, cpu, memory int64) *cvm2017.InstanceTypeQuotaItem {
+	item := workspaceSKUItem(instanceType, cpu, memory, "PREPAID", "SELL", 1)
+	item.Price = nil
+	return item
+}
+
+type fakeLegacyTkeAPI struct {
+	clusterID        string
+	clusterLevel     string
+	clusterNodeCount uint64
+	nodeLimit        uint64
+}
+
+func (api *fakeLegacyTkeAPI) DescribeClusters(_ *tke2018.DescribeClustersRequest) (*tke2018.DescribeClustersResponse, error) {
+	clusterID := firstNonEmpty(api.clusterID, "cls-123")
+	clusterLevel := firstNonEmpty(api.clusterLevel, "L5")
+	nodeCount := api.clusterNodeCount
+	if nodeCount == 0 {
+		nodeCount = 1
+	}
+	return &tke2018.DescribeClustersResponse{Response: &tke2018.DescribeClustersResponseParams{
+		TotalCount: common.Int64Ptr(1), RequestId: common.StringPtr("req-describe-cluster"),
+		Clusters: []*tke2018.Cluster{{ClusterId: common.StringPtr(clusterID), ClusterStatus: common.StringPtr("Running"), ClusterLevel: common.StringPtr(clusterLevel), ClusterNodeNum: common.Uint64Ptr(nodeCount)}},
+	}}, nil
+}
+
+func (api *fakeLegacyTkeAPI) DescribeClusterLevelAttribute(_ *tke2018.DescribeClusterLevelAttributeRequest) (*tke2018.DescribeClusterLevelAttributeResponse, error) {
+	clusterLevel := firstNonEmpty(api.clusterLevel, "L5")
+	nodeLimit := api.nodeLimit
+	if nodeLimit == 0 {
+		nodeLimit = 500
+	}
+	return &tke2018.DescribeClusterLevelAttributeResponse{Response: &tke2018.DescribeClusterLevelAttributeResponseParams{
+		TotalCount: common.Int64Ptr(1), RequestId: common.StringPtr("req-describe-cluster-level"),
+		Items: []*tke2018.ClusterLevelAttribute{{Name: common.StringPtr(clusterLevel), NodeCount: common.Uint64Ptr(nodeLimit), Enable: common.BoolPtr(true)}},
+	}}, nil
+}
+
+func newWorkspaceSKUInventoryTencentSDKClient(tkeAPI *fakeNativeTkeAPI) *tencentSDKClient {
 	client := newFakeTencentSDKClient(tkeAPI)
-	client.nativeCvmClient = &fakeNativeCvmAPI{privateIPInstanceID: "ins-system"}
+	client.nativeLegacyTkeClient = &fakeLegacyTkeAPI{}
+	client.nativeCvmClient = &fakeNativeCvmAPI{
+		quotaRemaining: 500, privateIPInstanceID: "ins-system",
+		zoneConfigItems: []*cvm2017.InstanceTypeQuotaItem{
+			workspaceSKUItem("SA5.MEDIUM4", 2, 4, "PREPAID", "SELL", 50),
+			workspaceSKUItem(basicResolvedInstanceType, 2, 4, "PREPAID", "SELL", 60),
+			workspaceSKUItem("SA5.2XLARGE16", 8, 16, "PREPAID", "SELL", 150),
+			workspaceSKUItem(proResolvedInstanceType, 8, 16, "PREPAID", "SELL", 160),
+		},
+	}
+	client.nativeVpcClient = &fakeNativeVpcAPI{availableIpCount: 500, zone: "na-siliconvalley-1", vpcID: "vpc-workspace"}
 	return client
 }
 
@@ -1293,6 +1547,7 @@ type fakeNativeCvmAPI struct {
 	omitZoneConfigMemory         bool
 	zoneConfigDiscountPrice      float64
 	omitZoneConfigPrice          bool
+	zoneConfigItems              []*cvm2017.InstanceTypeQuotaItem
 	describeInstancesRequest     []*cvm2017.DescribeInstancesRequest
 	modifyInstancesRequest       []*cvm2017.ModifyInstancesAttributeRequest
 	renewInstancesRequests       []*cvm2017.RenewInstancesRequest
@@ -1889,6 +2144,12 @@ func (api *fakeNativeCvmAPI) DescribeAccountQuota(request *cvm2017.DescribeAccou
 
 func (api *fakeNativeCvmAPI) DescribeZoneInstanceConfigInfos(request *cvm2017.DescribeZoneInstanceConfigInfosRequest) (*cvm2017.DescribeZoneInstanceConfigInfosResponse, error) {
 	api.describeZoneConfigRequests = append(api.describeZoneConfigRequests, request)
+	if api.zoneConfigItems != nil {
+		return &cvm2017.DescribeZoneInstanceConfigInfosResponse{Response: &cvm2017.DescribeZoneInstanceConfigInfosResponseParams{
+			InstanceTypeQuotaSet: api.zoneConfigItems,
+			RequestId:            common.StringPtr("req-zone-capacity"),
+		}}, nil
+	}
 	var price *cvm2017.ItemPrice
 	if !api.omitZoneConfigPrice {
 		discount := api.zoneConfigDiscountPrice

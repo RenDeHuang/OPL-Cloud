@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -20,6 +21,7 @@ import (
 	tchttp "github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common/http"
 	"github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common/profile"
 	cvm2017 "github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/cvm/v20170312"
+	tke2018 "github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/tke/v20180525"
 	tke2022 "github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/tke/v20220501"
 	vpc2017 "github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/vpc/v20170312"
 )
@@ -38,18 +40,19 @@ const tkeListPageLimit int64 = 100
 const nodePoolBootstrapMutationConfirmation = "CREATE_MISSING_WORKSPACE_NODEPOOLS"
 
 type Request struct {
-	Action          string                 `json:"action"`
-	DryRun          bool                   `json:"dryRun,omitempty"`
-	AccountId       string                 `json:"accountId,omitempty"`
-	UserId          string                 `json:"userId,omitempty"`
-	PackageId       string                 `json:"packageId,omitempty"`
-	Zone            string                 `json:"zone,omitempty"`
-	StorageVolumeId string                 `json:"storageVolumeId,omitempty"`
-	Tags            map[string]string      `json:"tags,omitempty"`
-	ComputeTags     map[string]string      `json:"computeTags,omitempty"`
-	Pool            ComputePoolInput       `json:"pool,omitempty"`
-	Allocation      ComputeAllocationInput `json:"allocation,omitempty"`
-	Storage         StorageInput           `json:"storage,omitempty"`
+	Action           string                 `json:"action"`
+	DryRun           bool                   `json:"dryRun,omitempty"`
+	AccountId        string                 `json:"accountId,omitempty"`
+	UserId           string                 `json:"userId,omitempty"`
+	PackageId        string                 `json:"packageId,omitempty"`
+	Zone             string                 `json:"zone,omitempty"`
+	StorageVolumeId  string                 `json:"storageVolumeId,omitempty"`
+	RequiredCapacity int64                  `json:"requiredCapacity,omitempty"`
+	Tags             map[string]string      `json:"tags,omitempty"`
+	ComputeTags      map[string]string      `json:"computeTags,omitempty"`
+	Pool             ComputePoolInput       `json:"pool,omitempty"`
+	Allocation       ComputeAllocationInput `json:"allocation,omitempty"`
+	Storage          StorageInput           `json:"storage,omitempty"`
 }
 
 type ComputePoolInput struct {
@@ -87,43 +90,82 @@ type StorageInput struct {
 }
 
 type Response struct {
-	Ok                 bool                      `json:"ok"`
-	OperationId        string                    `json:"operationId,omitempty"`
-	PoolId             string                    `json:"poolId,omitempty"`
-	NodePoolId         string                    `json:"nodePoolId,omitempty"`
-	InstanceId         string                    `json:"instanceId,omitempty"`
-	NodeName           string                    `json:"nodeName,omitempty"`
-	PrivateIp          string                    `json:"privateIp,omitempty"`
-	MachinePresent     *bool                     `json:"machinePresent,omitempty"`
-	StoragePresent     *bool                     `json:"storagePresent,omitempty"`
-	CVMStatus          string                    `json:"cvmStatus,omitempty"`
-	TKEStatus          string                    `json:"tkeStatus,omitempty"`
-	CBSStatus          string                    `json:"cbsStatus,omitempty"`
-	StorageVolumeId    string                    `json:"storageVolumeId,omitempty"`
-	PublicIp           string                    `json:"publicIp,omitempty"`
-	Status             string                    `json:"status,omitempty"`
-	ProviderRequestId  string                    `json:"providerRequestId,omitempty"`
-	ProviderRequestIDs map[string]string         `json:"providerRequestIds,omitempty"`
-	ProviderPriceCNY   float64                   `json:"providerPriceCny,omitempty"`
-	ProviderData       map[string]string         `json:"providerData,omitempty"`
-	ErrorCode          string                    `json:"errorCode,omitempty"`
-	Message            string                    `json:"message,omitempty"`
-	Retryable          bool                      `json:"retryable,omitempty"`
-	MissingEnv         []string                  `json:"missingEnv,omitempty"`
-	Machines           []MachineOutput           `json:"machines,omitempty"`
-	InstanceType       string                    `json:"instanceType,omitempty"`
-	InstanceAvailable  bool                      `json:"instanceAvailable,omitempty"`
-	RequiredCapacity   int64                     `json:"requiredCapacity,omitempty"`
-	RemainingQuota     uint64                    `json:"remainingQuota,omitempty"`
-	CurrentReplicas    int64                     `json:"currentReplicas,omitempty"`
-	ReadyReplicas      int64                     `json:"readyReplicas,omitempty"`
-	MaxReplicas        int64                     `json:"maxReplicas,omitempty"`
-	TargetReplicas     int64                     `json:"targetReplicas,omitempty"`
-	MachineType        string                    `json:"machineType,omitempty"`
-	Zones              []string                  `json:"zones,omitempty"`
-	PreflightStages    []PreflightStage          `json:"preflightStages,omitempty"`
-	NodePools          []NodePoolBootstrapResult `json:"nodePools,omitempty"`
-	MutationCount      int                       `json:"mutationCount,omitempty"`
+	Ok                       bool                      `json:"ok"`
+	OperationId              string                    `json:"operationId,omitempty"`
+	PoolId                   string                    `json:"poolId,omitempty"`
+	NodePoolId               string                    `json:"nodePoolId,omitempty"`
+	InstanceId               string                    `json:"instanceId,omitempty"`
+	NodeName                 string                    `json:"nodeName,omitempty"`
+	PrivateIp                string                    `json:"privateIp,omitempty"`
+	MachinePresent           *bool                     `json:"machinePresent,omitempty"`
+	StoragePresent           *bool                     `json:"storagePresent,omitempty"`
+	CVMStatus                string                    `json:"cvmStatus,omitempty"`
+	TKEStatus                string                    `json:"tkeStatus,omitempty"`
+	CBSStatus                string                    `json:"cbsStatus,omitempty"`
+	StorageVolumeId          string                    `json:"storageVolumeId,omitempty"`
+	PublicIp                 string                    `json:"publicIp,omitempty"`
+	Status                   string                    `json:"status,omitempty"`
+	ProviderRequestId        string                    `json:"providerRequestId,omitempty"`
+	ProviderRequestIDs       map[string]string         `json:"providerRequestIds,omitempty"`
+	ProviderPriceCNY         float64                   `json:"providerPriceCny,omitempty"`
+	ProviderData             map[string]string         `json:"providerData,omitempty"`
+	ErrorCode                string                    `json:"errorCode,omitempty"`
+	Message                  string                    `json:"message,omitempty"`
+	Retryable                bool                      `json:"retryable,omitempty"`
+	MissingEnv               []string                  `json:"missingEnv,omitempty"`
+	Machines                 []MachineOutput           `json:"machines,omitempty"`
+	InstanceType             string                    `json:"instanceType,omitempty"`
+	InstanceAvailable        bool                      `json:"instanceAvailable,omitempty"`
+	RequiredCapacity         int64                     `json:"requiredCapacity,omitempty"`
+	RemainingQuota           uint64                    `json:"remainingQuota,omitempty"`
+	CurrentReplicas          int64                     `json:"currentReplicas,omitempty"`
+	ReadyReplicas            int64                     `json:"readyReplicas,omitempty"`
+	MaxReplicas              int64                     `json:"maxReplicas,omitempty"`
+	TargetReplicas           int64                     `json:"targetReplicas,omitempty"`
+	MachineType              string                    `json:"machineType,omitempty"`
+	Zones                    []string                  `json:"zones,omitempty"`
+	PreflightStages          []PreflightStage          `json:"preflightStages,omitempty"`
+	NodePools                []NodePoolBootstrapResult `json:"nodePools,omitempty"`
+	SKUPackages              []WorkspaceSKUPackage     `json:"skuPackages,omitempty"`
+	PrepaidQuotaRemaining    uint64                    `json:"prepaidQuotaRemaining,omitempty"`
+	Subnets                  []WorkspaceSubnetFact     `json:"subnets,omitempty"`
+	TKEClusterNodeLimit      uint64                    `json:"tkeClusterNodeLimit,omitempty"`
+	TKECurrentNodeCount      uint64                    `json:"tkeCurrentNodeCount,omitempty"`
+	TKEAvailableNodeCapacity uint64                    `json:"tkeAvailableNodeCapacity,omitempty"`
+	ProtectedSystem          ProtectedSystemFacts      `json:"protectedSystem,omitempty"`
+	MutationCount            int                       `json:"mutationCount"`
+}
+
+type WorkspaceSKUCandidate struct {
+	InstanceType    string  `json:"instanceType"`
+	CPU             uint64  `json:"cpu"`
+	MemoryGB        uint64  `json:"memoryGb"`
+	MonthlyPriceCNY float64 `json:"monthlyPriceCny"`
+	StockStatus     string  `json:"stockStatus"`
+	StockCategory   string  `json:"stockCategory,omitempty"`
+}
+
+type WorkspaceSKUPackage struct {
+	PackageID                  string                  `json:"packageId"`
+	CPU                        uint64                  `json:"cpu"`
+	MemoryGB                   uint64                  `json:"memoryGb"`
+	RecommendedInstanceType    string                  `json:"recommendedInstanceType"`
+	RecommendedMonthlyPriceCNY float64                 `json:"recommendedMonthlyPriceCny"`
+	Candidates                 []WorkspaceSKUCandidate `json:"candidates"`
+}
+
+type WorkspaceSubnetFact struct {
+	SubnetID             string `json:"subnetId"`
+	VPCID                string `json:"vpcId"`
+	Zone                 string `json:"zone"`
+	AvailableIPAddresses uint64 `json:"availableIpAddresses"`
+}
+
+type ProtectedSystemFacts struct {
+	NodePoolID string `json:"nodePoolId"`
+	MachineID  string `json:"machineId"`
+	NodeName   string `json:"nodeName"`
+	CVMID      string `json:"cvmId"`
 }
 
 type NodePoolBootstrapResult struct {
@@ -166,6 +208,7 @@ type MachineOutput struct {
 }
 
 type TencentClient interface {
+	WorkspaceSKUInventory(request Request, env map[string]string) Response
 	Capacity(request Request, env map[string]string) Response
 	StoragePreflight(request Request, env map[string]string) Response
 	ProviderTruth(request Request, env map[string]string) Response
@@ -184,13 +227,14 @@ type TencentClient interface {
 type unimplementedTencentClient struct{}
 
 type tencentSDKClient struct {
-	region          string
-	clusterId       string
-	nativeTkeClient tkeNativeAPI
-	nativeCvmClient cvmNativeAPI
-	nativeCbsClient cbsNativeAPI
-	nativeVpcClient vpcNativeAPI
-	nativeTagClient tagNativeAPI
+	region                string
+	clusterId             string
+	nativeTkeClient       tkeNativeAPI
+	nativeLegacyTkeClient tkeLegacyAPI
+	nativeCvmClient       cvmNativeAPI
+	nativeCbsClient       cbsNativeAPI
+	nativeVpcClient       vpcNativeAPI
+	nativeTagClient       tagNativeAPI
 }
 
 type tagNativeAPI interface {
@@ -249,6 +293,11 @@ type tkeNativeAPI interface {
 	DeleteClusterMachines(request *tke2022.DeleteClusterMachinesRequest) (*tke2022.DeleteClusterMachinesResponse, error)
 }
 
+type tkeLegacyAPI interface {
+	DescribeClusters(request *tke2018.DescribeClustersRequest) (*tke2018.DescribeClustersResponse, error)
+	DescribeClusterLevelAttribute(request *tke2018.DescribeClusterLevelAttributeRequest) (*tke2018.DescribeClusterLevelAttributeResponse, error)
+}
+
 type cvmNativeAPI interface {
 	DescribeAccountQuota(request *cvm2017.DescribeAccountQuotaRequest) (*cvm2017.DescribeAccountQuotaResponse, error)
 	DescribeInstances(request *cvm2017.DescribeInstancesRequest) (*cvm2017.DescribeInstancesResponse, error)
@@ -267,6 +316,10 @@ type cbsNativeAPI interface {
 
 type vpcNativeAPI interface {
 	DescribeSubnets(request *vpc2017.DescribeSubnetsRequest) (*vpc2017.DescribeSubnetsResponse, error)
+}
+
+func (unimplementedTencentClient) WorkspaceSKUInventory(_ Request, _ map[string]string) Response {
+	return Response{Ok: false, ErrorCode: "tencent_live_not_implemented", Message: "Tencent live Workspace SKU inventory is not implemented in this build.", Retryable: false}
 }
 
 func (unimplementedTencentClient) Capacity(_ Request, _ map[string]string) Response {
@@ -360,6 +413,12 @@ func newTencentSDKClient(env map[string]string) (*tencentSDKClient, *Response) {
 			Retryable: false,
 		}
 	}
+	legacyTkeProfile := profile.NewClientProfile()
+	legacyTkeProfile.HttpProfile.Endpoint = "tke.tencentcloudapi.com"
+	legacyTkeClient, err := tke2018.NewClient(credential, env["TENCENTCLOUD_REGION"], legacyTkeProfile)
+	if err != nil {
+		return nil, &Response{Ok: false, ErrorCode: "tencent_sdk_client_failed", Message: err.Error(), Retryable: false}
+	}
 	cvmProfile := profile.NewClientProfile()
 	cvmProfile.HttpProfile.Endpoint = "cvm.tencentcloudapi.com"
 	cvmClient, err := cvm2017.NewClient(credential, env["TENCENTCLOUD_REGION"], cvmProfile)
@@ -389,14 +448,262 @@ func newTencentSDKClient(env map[string]string) (*tencentSDKClient, *Response) {
 	tagClient.Init(env["TENCENTCLOUD_REGION"]).WithCredential(credential).WithProfile(tagProfile)
 
 	return &tencentSDKClient{
-		region:          env["TENCENTCLOUD_REGION"],
-		clusterId:       env["TENCENT_DEPLOY_CLUSTER_ID"],
-		nativeTkeClient: tkeClient,
-		nativeCvmClient: cvmClient,
-		nativeCbsClient: cbsClient,
-		nativeVpcClient: vpcClient,
-		nativeTagClient: &tencentTagClient{client: tagClient, region: env["TENCENTCLOUD_REGION"]},
+		region:                env["TENCENTCLOUD_REGION"],
+		clusterId:             env["TENCENT_DEPLOY_CLUSTER_ID"],
+		nativeTkeClient:       tkeClient,
+		nativeLegacyTkeClient: legacyTkeClient,
+		nativeCvmClient:       cvmClient,
+		nativeCbsClient:       cbsClient,
+		nativeVpcClient:       vpcClient,
+		nativeTagClient:       &tencentTagClient{client: tagClient, region: env["TENCENTCLOUD_REGION"]},
 	}, nil
+}
+
+func workspaceSKUInventoryFailure(code string, err error) Response {
+	message := code
+	if err != nil {
+		message = err.Error()
+	}
+	return Response{Ok: false, ErrorCode: code, Message: message, Retryable: false, MutationCount: 0}
+}
+
+func workspaceSKUShape(packageID string) (uint64, uint64) {
+	cpu, memoryGB, _ := customerPackageResourceShape(packageID)
+	return cpu, memoryGB
+}
+
+func workspaceSKUPackage(items []*cvm2017.InstanceTypeQuotaItem, packageID, zone string) (WorkspaceSKUPackage, error) {
+	cpu, memoryGB := workspaceSKUShape(packageID)
+	result := WorkspaceSKUPackage{PackageID: packageID, CPU: cpu, MemoryGB: memoryGB, Candidates: []WorkspaceSKUCandidate{}}
+	seen := map[string]bool{}
+	for _, item := range items {
+		if item == nil || stringValue(item.Zone) != zone || stringValue(item.InstanceChargeType) != "PREPAID" || stringValue(item.Status) != "SELL" ||
+			!exactInt64(item.Cpu, cpu) || !exactInt64(item.Memory, memoryGB) || item.Price == nil || item.Price.OriginalPrice == nil || *item.Price.OriginalPrice <= 0 ||
+			item.Price.DiscountPrice == nil || *item.Price.DiscountPrice <= 0 {
+			continue
+		}
+		instanceType := strings.TrimSpace(stringValue(item.InstanceType))
+		if instanceType == "" || len(instanceType) > 64 || strings.ContainsAny(instanceType, " \t\r\n") || seen[instanceType] {
+			return result, fmt.Errorf("eligible %s SKU inventory contains an empty or duplicate instance type", packageID)
+		}
+		seen[instanceType] = true
+		result.Candidates = append(result.Candidates, WorkspaceSKUCandidate{
+			InstanceType: instanceType, CPU: cpu, MemoryGB: memoryGB, MonthlyPriceCNY: *item.Price.DiscountPrice,
+			StockStatus: stringValue(item.Status), StockCategory: stringValue(item.StatusCategory),
+		})
+	}
+	sort.Slice(result.Candidates, func(i, j int) bool {
+		if result.Candidates[i].MonthlyPriceCNY != result.Candidates[j].MonthlyPriceCNY {
+			return result.Candidates[i].MonthlyPriceCNY < result.Candidates[j].MonthlyPriceCNY
+		}
+		return result.Candidates[i].InstanceType < result.Candidates[j].InstanceType
+	})
+	if len(result.Candidates) == 0 {
+		return result, fmt.Errorf("no eligible %s PREPAID SKU matches the package shape in %s", packageID, zone)
+	}
+	result.RecommendedInstanceType = result.Candidates[0].InstanceType
+	result.RecommendedMonthlyPriceCNY = result.Candidates[0].MonthlyPriceCNY
+	return result, nil
+}
+
+func (client *tencentSDKClient) workspacePrepaidQuota(zone string) (uint64, error) {
+	response, err := client.nativeCvmClient.DescribeAccountQuota(cvm2017.NewDescribeAccountQuotaRequest())
+	if err != nil || response == nil || response.Response == nil || strings.TrimSpace(stringValue(response.Response.RequestId)) == "" ||
+		response.Response.AccountQuotaOverview == nil || response.Response.AccountQuotaOverview.AccountQuota == nil {
+		return 0, fmt.Errorf("Tencent PREPAID quota inventory is unavailable")
+	}
+	var matched *cvm2017.PrePaidQuota
+	for _, quota := range response.Response.AccountQuotaOverview.AccountQuota.PrePaidQuotaSet {
+		if quota == nil || strings.TrimSpace(stringValue(quota.Zone)) == "" {
+			return 0, fmt.Errorf("Tencent PREPAID quota inventory is incomplete")
+		}
+		if stringValue(quota.Zone) == zone {
+			if matched != nil {
+				return 0, fmt.Errorf("Tencent PREPAID quota inventory is ambiguous")
+			}
+			matched = quota
+		}
+	}
+	if matched == nil || matched.RemainingQuota == nil {
+		return 0, fmt.Errorf("Tencent PREPAID quota inventory is unavailable for %s", zone)
+	}
+	return *matched.RemainingQuota, nil
+}
+
+func (client *tencentSDKClient) workspaceSubnetFacts(env map[string]string, zone string) ([]WorkspaceSubnetFact, uint64, error) {
+	configured := splitCsv(env["TENCENT_CVM_SUBNET_ID"])
+	seen := map[string]bool{}
+	for _, subnetID := range configured {
+		if seen[subnetID] {
+			return nil, 0, fmt.Errorf("Workspace subnet configuration contains duplicate identities")
+		}
+		seen[subnetID] = true
+	}
+	if len(configured) == 0 {
+		return nil, 0, fmt.Errorf("Workspace subnet configuration is missing")
+	}
+	request := vpc2017.NewDescribeSubnetsRequest()
+	request.SubnetIds = stringsToPtrs(configured)
+	response, err := client.nativeVpcClient.DescribeSubnets(request)
+	if err != nil || response == nil || response.Response == nil || response.Response.TotalCount == nil ||
+		strings.TrimSpace(stringValue(response.Response.RequestId)) == "" || *response.Response.TotalCount != uint64(len(configured)) || len(response.Response.SubnetSet) != len(configured) {
+		return nil, 0, fmt.Errorf("Tencent Workspace subnet inventory is unavailable")
+	}
+	facts := make([]WorkspaceSubnetFact, 0, len(configured))
+	matched := map[string]bool{}
+	vpcID := ""
+	available := uint64(0)
+	for _, subnet := range response.Response.SubnetSet {
+		if subnet == nil || subnet.AvailableIpAddressCount == nil || !seen[stringValue(subnet.SubnetId)] || matched[stringValue(subnet.SubnetId)] ||
+			stringValue(subnet.Zone) != zone || strings.TrimSpace(stringValue(subnet.VpcId)) == "" {
+			return nil, 0, fmt.Errorf("Tencent Workspace subnet inventory does not match the configured Zone and VPC")
+		}
+		if vpcID == "" {
+			vpcID = stringValue(subnet.VpcId)
+		} else if vpcID != stringValue(subnet.VpcId) {
+			return nil, 0, fmt.Errorf("Workspace subnets span multiple VPCs")
+		}
+		if ^uint64(0)-available < *subnet.AvailableIpAddressCount {
+			return nil, 0, fmt.Errorf("Workspace subnet capacity overflow")
+		}
+		available += *subnet.AvailableIpAddressCount
+		matched[stringValue(subnet.SubnetId)] = true
+		facts = append(facts, WorkspaceSubnetFact{SubnetID: stringValue(subnet.SubnetId), VPCID: vpcID, Zone: zone, AvailableIPAddresses: *subnet.AvailableIpAddressCount})
+	}
+	sort.Slice(facts, func(i, j int) bool { return facts[i].SubnetID < facts[j].SubnetID })
+	return facts, available, nil
+}
+
+func (client *tencentSDKClient) workspaceTKECapacity() (uint64, uint64, uint64, error) {
+	clustersRequest := tke2018.NewDescribeClustersRequest()
+	clustersRequest.ClusterIds = []*string{common.StringPtr(client.clusterId)}
+	clustersRequest.Limit = common.Int64Ptr(1)
+	clusters, err := client.nativeLegacyTkeClient.DescribeClusters(clustersRequest)
+	if err != nil || clusters == nil || clusters.Response == nil || clusters.Response.TotalCount == nil || *clusters.Response.TotalCount != 1 ||
+		len(clusters.Response.Clusters) != 1 || clusters.Response.Clusters[0] == nil || strings.TrimSpace(stringValue(clusters.Response.RequestId)) == "" {
+		return 0, 0, 0, fmt.Errorf("Tencent TKE cluster inventory is unavailable")
+	}
+	cluster := clusters.Response.Clusters[0]
+	level := strings.TrimSpace(stringValue(cluster.ClusterLevel))
+	if stringValue(cluster.ClusterId) != client.clusterId || !strings.EqualFold(stringValue(cluster.ClusterStatus), "Running") || level == "" || cluster.ClusterNodeNum == nil {
+		return 0, 0, 0, fmt.Errorf("Tencent TKE cluster identity or level is unavailable")
+	}
+	levelRequest := tke2018.NewDescribeClusterLevelAttributeRequest()
+	levelRequest.ClusterID = common.StringPtr(client.clusterId)
+	levels, err := client.nativeLegacyTkeClient.DescribeClusterLevelAttribute(levelRequest)
+	if err != nil || levels == nil || levels.Response == nil || levels.Response.TotalCount == nil ||
+		*levels.Response.TotalCount != int64(len(levels.Response.Items)) || strings.TrimSpace(stringValue(levels.Response.RequestId)) == "" {
+		return 0, 0, 0, fmt.Errorf("Tencent TKE cluster level inventory is unavailable")
+	}
+	var nodeLimit *uint64
+	for _, item := range levels.Response.Items {
+		if item != nil && stringValue(item.Name) == level && item.Enable != nil && *item.Enable && item.NodeCount != nil {
+			if nodeLimit != nil {
+				return 0, 0, 0, fmt.Errorf("Tencent TKE cluster level inventory is ambiguous")
+			}
+			nodeLimit = item.NodeCount
+		}
+	}
+	if nodeLimit == nil || *cluster.ClusterNodeNum > *nodeLimit {
+		return 0, 0, 0, fmt.Errorf("Tencent TKE cluster node limit is unavailable")
+	}
+	return *nodeLimit, *cluster.ClusterNodeNum, *nodeLimit - *cluster.ClusterNodeNum, nil
+}
+
+func (client *tencentSDKClient) bootstrapSystemFacts(env map[string]string) (ProtectedSystemFacts, error) {
+	pools, err := client.bootstrapNodePoolInventory()
+	if err != nil {
+		return ProtectedSystemFacts{}, err
+	}
+	systemPoolID := strings.TrimSpace(env["OPL_SYSTEM_COMPUTE_NODE_POOL_ID"])
+	matchCount := 0
+	for _, pool := range pools {
+		if stringValue(pool.NodePoolId) == systemPoolID {
+			matchCount++
+		}
+	}
+	if matchCount != 1 {
+		return ProtectedSystemFacts{}, fmt.Errorf("protected system NodePool identity is unavailable")
+	}
+	if err := client.verifyBootstrapSystemIdentity(env); err != nil {
+		return ProtectedSystemFacts{}, err
+	}
+	return ProtectedSystemFacts{
+		NodePoolID: systemPoolID,
+		MachineID:  strings.TrimSpace(env["OPL_SYSTEM_COMPUTE_MACHINE_ID"]),
+		NodeName:   strings.TrimSpace(env["OPL_SYSTEM_COMPUTE_NODE_NAME"]),
+		CVMID:      strings.TrimSpace(env["OPL_SYSTEM_COMPUTE_CVM_ID"]),
+	}, nil
+}
+
+func (client *tencentSDKClient) WorkspaceSKUInventory(request Request, env map[string]string) Response {
+	zone := strings.TrimSpace(request.Zone)
+	configuredZone := strings.TrimSpace(env["OPL_TENCENT_ZONE"])
+	if zone == "" {
+		zone = configuredZone
+	}
+	if zone == "" || (configuredZone != "" && configuredZone != zone) || request.RequiredCapacity <= 0 {
+		return workspaceSKUInventoryFailure("workspace_sku_inventory_invalid", nil)
+	}
+	if client == nil || client.nativeTkeClient == nil || client.nativeLegacyTkeClient == nil || client.nativeCvmClient == nil || client.nativeVpcClient == nil {
+		return workspaceSKUInventoryFailure("workspace_sku_inventory_unavailable", fmt.Errorf("Tencent inventory clients are incomplete"))
+	}
+	availabilityRequest := cvm2017.NewDescribeZoneInstanceConfigInfosRequest()
+	availabilityRequest.Filters = []*cvm2017.Filter{
+		{Name: common.StringPtr("zone"), Values: []*string{common.StringPtr(zone)}},
+		{Name: common.StringPtr("instance-charge-type"), Values: []*string{common.StringPtr("PREPAID")}},
+	}
+	availability, err := client.nativeCvmClient.DescribeZoneInstanceConfigInfos(availabilityRequest)
+	if err != nil || availability == nil || availability.Response == nil || strings.TrimSpace(stringValue(availability.Response.RequestId)) == "" {
+		return workspaceSKUInventoryFailure("workspace_sku_inventory_unavailable", fmt.Errorf("Tencent Workspace SKU inventory is unavailable"))
+	}
+	packages := make([]WorkspaceSKUPackage, 0, 2)
+	for _, packageID := range []string{"basic", "pro"} {
+		current, packageErr := workspaceSKUPackage(availability.Response.InstanceTypeQuotaSet, packageID, zone)
+		if packageErr != nil {
+			response := workspaceSKUInventoryFailure("workspace_sku_unavailable", packageErr)
+			response.SKUPackages = packages
+			return response
+		}
+		packages = append(packages, current)
+	}
+	quota, err := client.workspacePrepaidQuota(zone)
+	if err != nil {
+		response := workspaceSKUInventoryFailure("workspace_sku_inventory_unavailable", err)
+		response.SKUPackages = packages
+		return response
+	}
+	subnets, subnetCapacity, err := client.workspaceSubnetFacts(env, zone)
+	if err != nil {
+		response := workspaceSKUInventoryFailure("workspace_sku_inventory_unavailable", err)
+		response.SKUPackages, response.PrepaidQuotaRemaining = packages, quota
+		return response
+	}
+	nodeLimit, currentNodes, availableNodes, err := client.workspaceTKECapacity()
+	if err != nil {
+		response := workspaceSKUInventoryFailure("workspace_sku_inventory_unavailable", err)
+		response.SKUPackages, response.PrepaidQuotaRemaining, response.Subnets = packages, quota, subnets
+		return response
+	}
+	protectedSystem, err := client.bootstrapSystemFacts(env)
+	if err != nil {
+		response := workspaceSKUInventoryFailure("protected_system_identity_mismatch", fmt.Errorf("Protected system identity inventory is unavailable or inconsistent"))
+		response.SKUPackages, response.PrepaidQuotaRemaining, response.Subnets = packages, quota, subnets
+		response.TKEClusterNodeLimit, response.TKECurrentNodeCount, response.TKEAvailableNodeCapacity = nodeLimit, currentNodes, availableNodes
+		return response
+	}
+	response := Response{
+		Ok: true, Status: "ready", RequiredCapacity: request.RequiredCapacity, SKUPackages: packages,
+		PrepaidQuotaRemaining: quota, Subnets: subnets, TKEClusterNodeLimit: nodeLimit,
+		TKECurrentNodeCount: currentNodes, TKEAvailableNodeCapacity: availableNodes, ProtectedSystem: protectedSystem, MutationCount: 0,
+	}
+	if quota < uint64(request.RequiredCapacity) || subnetCapacity < uint64(request.RequiredCapacity) || availableNodes < uint64(request.RequiredCapacity) {
+		response.Ok = false
+		response.Status = "blocked"
+		response.ErrorCode = "workspace_capacity_insufficient"
+		response.Message = "Approved Workspace NodePool capacity exceeds current PREPAID quota, subnet IP, or TKE node limits."
+	}
+	return response
 }
 
 func capacityFailure(code string, err error) Response {
@@ -2807,24 +3114,139 @@ func (client *tencentSDKClient) verifyBootstrapSystemIdentity(env map[string]str
 	return nil
 }
 
+func bootstrapInventoryCapacity(request Request, env map[string]string) (int64, *Response) {
+	basicMax, err := requiredPositiveInt64(env, "OPL_BASIC_COMPUTE_NODE_POOL_MAX_REPLICAS")
+	if err != nil {
+		return 0, &Response{Ok: false, ErrorCode: "max_replicas_required", Message: err.Error(), Retryable: false}
+	}
+	proMax, err := requiredPositiveInt64(env, "OPL_PRO_COMPUTE_NODE_POOL_MAX_REPLICAS")
+	if err != nil || basicMax > int64(^uint64(0)>>1)-proMax {
+		if err == nil {
+			err = fmt.Errorf("Workspace NodePool maxReplicas total overflows int64")
+		}
+		return 0, &Response{Ok: false, ErrorCode: "max_replicas_required", Message: err.Error(), Retryable: false}
+	}
+	required := basicMax + proMax
+	if request.RequiredCapacity > 0 && request.RequiredCapacity != required {
+		return 0, &Response{Ok: false, ErrorCode: "workspace_capacity_input_mismatch", Message: "requiredCapacity must equal the approved Basic and Pro maxReplicas total.", Retryable: false}
+	}
+	return required, nil
+}
+
+func copyStringMap(source map[string]string) map[string]string {
+	result := make(map[string]string, len(source)+2)
+	for key, value := range source {
+		result[key] = value
+	}
+	return result
+}
+
+func selectedWorkspaceSKU(inventory Response, packageID, configured string) (string, error) {
+	for _, current := range inventory.SKUPackages {
+		if current.PackageID != packageID {
+			continue
+		}
+		selected := strings.TrimSpace(configured)
+		if selected == "" {
+			selected = current.RecommendedInstanceType
+		}
+		for _, candidate := range current.Candidates {
+			if candidate.InstanceType == selected {
+				return selected, nil
+			}
+		}
+		return "", fmt.Errorf("selected %s instance type is not an eligible current PREPAID candidate", packageID)
+	}
+	return "", fmt.Errorf("%s SKU inventory is missing", packageID)
+}
+
+func existingBootstrapPackageSKU(pool *tke2022.NodePool, spec bootstrapPackageSpec) string {
+	if pool == nil || stringValue(pool.Name) != spec.PoolID {
+		return ""
+	}
+	labels := nodePoolLabels(pool)
+	if labels["oplcloud.cn/pool-id"] != spec.PoolID || labels["oplcloud.cn/package-id"] != spec.PackageID || pool.Native == nil || len(pool.Native.InstanceTypes) != 1 {
+		return ""
+	}
+	labelSKU := strings.TrimSpace(labels["oplcloud.cn/instance-type"])
+	nativeSKU := strings.TrimSpace(stringValue(pool.Native.InstanceTypes[0]))
+	if labelSKU == "" || labelSKU != nativeSKU {
+		return ""
+	}
+	return labelSKU
+}
+
+func preserveExistingBootstrapSKUs(pools []*tke2022.NodePool, specs []bootstrapPackageSpec, inventory Response, systemPoolID string) *Response {
+	for index := range specs {
+		var existing *tke2022.NodePool
+		for _, pool := range pools {
+			if pool == nil || stringValue(pool.NodePoolId) == systemPoolID || !poolTouchesBootstrapSpec(pool, specs[index]) {
+				continue
+			}
+			if existing != nil {
+				existing = nil
+				break
+			}
+			existing = pool
+		}
+		if existing == nil {
+			continue
+		}
+		existingSKU := existingBootstrapPackageSKU(existing, specs[index])
+		if existingSKU == "" {
+			continue
+		}
+		if _, err := selectedWorkspaceSKU(inventory, specs[index].PackageID, existingSKU); err != nil {
+			return &Response{Ok: false, ErrorCode: "workspace_sku_selection_invalid", Message: err.Error(), Retryable: false, MutationCount: 0}
+		}
+		specs[index].InstanceType = existingSKU
+	}
+	return nil
+}
+
 func (client *tencentSDKClient) BootstrapComputeNodePools(request Request, env map[string]string) Response {
-	specs, failure := bootstrapPackageSpecs(env, !request.DryRun)
+	requiredCapacity, failure := bootstrapInventoryCapacity(request, env)
 	if failure != nil {
 		return *failure
 	}
-	if failure = validateBootstrapSystemConfig(env, specs); failure != nil {
+	inventory := client.WorkspaceSKUInventory(Request{Action: "workspace_sku_inventory", Zone: request.Zone, RequiredCapacity: requiredCapacity}, env)
+	if !inventory.Ok {
+		return inventory
+	}
+	if !request.DryRun && (strings.TrimSpace(env["OPL_BASIC_COMPUTE_INSTANCE_TYPE"]) == "" || strings.TrimSpace(env["OPL_PRO_COMPUTE_INSTANCE_TYPE"]) == "") {
+		return Response{Ok: false, ErrorCode: "instance_type_required", Message: "Mutation requires the Basic and Pro instance types selected by the preceding read-only inventory.", Retryable: false, MutationCount: 0}
+	}
+	effectiveEnv := copyStringMap(env)
+	basicSKU, err := selectedWorkspaceSKU(inventory, "basic", env["OPL_BASIC_COMPUTE_INSTANCE_TYPE"])
+	if err != nil {
+		return Response{Ok: false, ErrorCode: "workspace_sku_selection_invalid", Message: err.Error(), Retryable: false, MutationCount: 0}
+	}
+	proSKU, err := selectedWorkspaceSKU(inventory, "pro", env["OPL_PRO_COMPUTE_INSTANCE_TYPE"])
+	if err != nil {
+		return Response{Ok: false, ErrorCode: "workspace_sku_selection_invalid", Message: err.Error(), Retryable: false, MutationCount: 0}
+	}
+	effectiveEnv["OPL_BASIC_COMPUTE_INSTANCE_TYPE"] = basicSKU
+	effectiveEnv["OPL_PRO_COMPUTE_INSTANCE_TYPE"] = proSKU
+	specs, failure := bootstrapPackageSpecs(effectiveEnv, true)
+	if failure != nil {
+		return *failure
+	}
+	if failure = validateBootstrapSystemConfig(effectiveEnv, specs); failure != nil {
 		return *failure
 	}
 	pools, err := client.bootstrapNodePoolInventory()
 	if err != nil {
-		return Response{Ok: false, ErrorCode: "node_pool_bootstrap_inventory_unavailable", Message: err.Error(), Retryable: false}
+		return Response{Ok: false, ErrorCode: "node_pool_bootstrap_inventory_unavailable", Message: "Tencent NodePool inventory is unavailable.", Retryable: false}
 	}
-	matches, failure := bootstrapInventoryMatches(pools, env, specs)
+	if failure = preserveExistingBootstrapSKUs(pools, specs, inventory, strings.TrimSpace(effectiveEnv["OPL_SYSTEM_COMPUTE_NODE_POOL_ID"])); failure != nil {
+		return *failure
+	}
+	matches, failure := bootstrapInventoryMatches(pools, effectiveEnv, specs)
 	if failure != nil {
 		return *failure
 	}
-	if err := client.verifyBootstrapSystemIdentity(env); err != nil {
-		return Response{Ok: false, ErrorCode: "protected_system_identity_mismatch", Message: err.Error(), Retryable: false}
+	if err := client.verifyBootstrapSystemIdentity(effectiveEnv); err != nil {
+		return Response{Ok: false, ErrorCode: "protected_system_identity_mismatch", Message: "Protected system identity is unavailable or inconsistent.", Retryable: false}
 	}
 	results := make([]NodePoolBootstrapResult, 0, len(specs))
 	missing, pendingCount := 0, 0
@@ -2873,7 +3295,7 @@ func (client *tencentSDKClient) BootstrapComputeNodePools(request Request, env m
 		if results[index].Status != "missing" {
 			continue
 		}
-		createRequest, buildFailure := buildCreateNativeNodePoolRequest(Request{PackageId: spec.PackageID, Pool: ComputePoolInput{Id: spec.PoolID, InstanceType: spec.InstanceType, MaxReplicas: spec.MaxReplicas}}, env)
+		createRequest, buildFailure := buildCreateNativeNodePoolRequest(Request{PackageId: spec.PackageID, Pool: ComputePoolInput{Id: spec.PoolID, InstanceType: spec.InstanceType, MaxReplicas: spec.MaxReplicas}}, effectiveEnv)
 		if buildFailure != nil {
 			results[index].Status = "failed"
 			results[index].ErrorCode = buildFailure.ErrorCode
@@ -2889,7 +3311,7 @@ func (client *tencentSDKClient) BootstrapComputeNodePools(request Request, env m
 			continue
 		}
 		createdID := strings.TrimSpace(stringValue(created.Response.NodePoolId))
-		if createdID == strings.TrimSpace(env["OPL_SYSTEM_COMPUTE_NODE_POOL_ID"]) || (index > 0 && results[0].NodePoolID == createdID) {
+		if createdID == strings.TrimSpace(effectiveEnv["OPL_SYSTEM_COMPUTE_NODE_POOL_ID"]) || (index > 0 && results[0].NodePoolID == createdID) {
 			results[index].Status = "failed"
 			results[index].ErrorCode = "node_pool_create_identity_conflict"
 			failedCount++
@@ -3033,6 +3455,9 @@ func handleWithClient(request Request, env map[string]string, client TencentClie
 			MissingEnv: missing,
 			Retryable:  false,
 		}
+	}
+	if request.Action == "workspace_sku_inventory" {
+		return client.WorkspaceSKUInventory(request, env)
 	}
 	if request.Action == "bootstrap_compute_node_pools" {
 		if !request.DryRun && strings.TrimSpace(env["RUN_TENCENT_NODE_POOL_BOOTSTRAP_CONFIRMATION"]) != nodePoolBootstrapMutationConfirmation {

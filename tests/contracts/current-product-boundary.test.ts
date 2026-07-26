@@ -236,12 +236,12 @@ test("Current Fabric contracts require dedicated package NodePools without weake
   });
   assert.equal(catalog.workspacePackageNodePools.basic.poolName, "pool-basic-2c4g");
   assert.deepEqual(catalog.workspacePackageNodePools.basic.resourceContract, { cpu: 2, memoryGb: 4 });
-  assert.equal(catalog.workspacePackageNodePools.basic.resolvedInstanceTypeSource, "release_owner_approved_bootstrap_input");
+  assert.equal(catalog.workspacePackageNodePools.basic.resolvedInstanceTypeSource, "deterministic_zone_prepaid_sell_shape_price_inventory_then_bootstrap_registration");
   assert.equal(Object.hasOwn(catalog.workspacePackageNodePools.basic, "instanceType"), false);
   assert.doesNotMatch(JSON.stringify(catalog.workspacePackageNodePools.basic), /SA5\.MEDIUM4/);
   assert.equal(catalog.workspacePackageNodePools.pro.poolName, "pool-pro-8c16g");
   assert.deepEqual(catalog.workspacePackageNodePools.pro.resourceContract, { cpu: 8, memoryGb: 16 });
-  assert.equal(catalog.workspacePackageNodePools.pro.resolvedInstanceTypeSource, "release_owner_approved_bootstrap_input");
+  assert.equal(catalog.workspacePackageNodePools.pro.resolvedInstanceTypeSource, "deterministic_zone_prepaid_sell_shape_price_inventory_then_bootstrap_registration");
   assert.equal(Object.hasOwn(catalog.workspacePackageNodePools.pro, "instanceType"), false);
   assert.doesNotMatch(JSON.stringify(catalog.workspacePackageNodePools.pro), /SA5\.2XLARGE16/);
   assert.equal(catalog.workspacePackageNodePools.basic.replicasMayBeZero, true);
@@ -249,14 +249,18 @@ test("Current Fabric contracts require dedicated package NodePools without weake
   assert.equal(catalog.workspacePackageNodePools.maxReplicasPolicy, "required_explicit_configuration_no_default");
   assert.deepEqual(deployment.workspaceNodePoolBootstrap, {
     file: ".github/workflows/bootstrap-tke-workspace-nodepools.yml",
-    mode: "manual_inventory_then_optional_create_missing_zero_replica_pools",
+    mode: "manual_deterministic_inventory_then_optional_create_missing_zero_replica_pools",
     environment: "production",
     credentials: "existing_production_tencent_credentials_and_kubeconfig",
     packagePools: ["basic", "pro"],
-    resolvedInstanceTypeInputs: { basic: "required_release_owner_approved_value", pro: "required_release_owner_approved_value" },
+    skuInventoryAction: "workspace_sku_inventory",
+    skuRecommendation: "lowest_monthly_price_then_instance_type_for_exact_package_shape",
+    skuMutationGate: "selected_candidate_revalidated_immediately_before_create",
+    requiredCapacity: 200,
+    capacityGates: ["prepaid_quota", "subnet_available_ip", "tke_cluster_node_limit"],
     mutationSource: "exact_merged_origin_main_sha",
     resolvedInstanceTypeRegistration: ["bootstrap_report", "node_pool_label", "tke_native_instance_types", "production_configuration"],
-    maxReplicasInputs: "optional_for_inventory_required_for_mutation",
+    maxReplicas: { basic: 100, pro: 100, source: "release_owner_approved_workflow_configuration_no_code_default" },
     mutationConfirmation: "CREATE_MISSING_WORKSPACE_NODEPOOLS",
     dryRunMutationCount: 0,
     idempotency: "register_running_wait_exact_creating_create_missing_only",
@@ -274,6 +278,14 @@ test("Current Fabric contracts require dedicated package NodePools without weake
     runner: "tools/production-live-qa.ts --basic-customer-canary",
     workflow: ".github/workflows/production-basic-customer-operation.yml",
     authority: "manual_release_owner_explicit_write_approval_only",
+    runnerIsolation: {
+      prepare: "self_hosted_tke_vpc_revision_fabric_kubernetes_and_business_authority",
+      complete: "ubuntu_latest_public_browser_websocket_and_single_model_request",
+      sharedConcurrency: "production-resource-verification",
+      hostedRunnerKubeconfig: false,
+      vpcRunnerBrowser: false
+    },
+    handoff: "same_run_redacted_runtime_ready_evidence_plus_authoritative_public_readback_no_checkpoint_authority",
     publicTestMode: false,
     accountProvisionApi: "POST /api/operator/accounts",
     walletRechargeApi: "POST /api/operator/accounts/{accountId}/wallet-adjustments",
@@ -291,6 +303,13 @@ test("Current Fabric contracts require dedicated package NodePools without weake
       failure: "fail_closed_zero_business_posts",
       productionReadinessBooleanAccepted: false
     },
+    fabricInternalAccess: {
+      tokenSource: "current_kubernetes_secret_opl-cloud-internal-service",
+      tokenHandling: "step_memory_only_immediate_mask_no_github_secret",
+      podScope: "current_ready_fabric_revision_owner_chain",
+      transport: "localhost_kubectl_port_forward",
+      cleanup: "exit_trap_kills_port_forward_and_temp_files_removed"
+    },
     basicResourceContract: { cpu: 2, memoryGb: 4 },
     skuConsistency: ["node_pool_allocation_plan", "fabric_compute_allocation", "tencent_provider_truth", "operator_provider_fact"],
     resourceEvidence: ["fabric_catalog_cpu_memory", "runtime_pod_limits"],
@@ -306,6 +325,14 @@ test("Current Fabric contracts require dedicated package NodePools without weake
     runner: "tools/production-live-qa.ts",
     mode: "--basic-customer-canary",
     execution: "manual_release_owner_only_not_ci_rollout_or_e2e",
+    runnerIsolation: {
+      prepare: "self_hosted_tke_vpc_revision_fabric_kubernetes_and_business_authority",
+      complete: "ubuntu_latest_public_browser_websocket_and_single_model_request",
+      sharedConcurrency: "production-resource-verification",
+      hostedRunnerKubeconfig: false,
+      vpcRunnerBrowser: false
+    },
+    handoff: "same_run_redacted_runtime_ready_evidence_plus_authoritative_public_readback_no_checkpoint_authority",
     publicApiAdditions: 0,
     workspaceLaunchPostCount: 1,
     launchPolling: "same_operation_get_only",
@@ -320,6 +347,13 @@ test("Current Fabric contracts require dedicated package NodePools without weake
       imageMatch: "deployment_replicaset_and_ready_pod_image_id_equal_approved_cloud_digest",
       failure: "fail_closed_zero_business_posts",
       productionReadinessBooleanAccepted: false
+    },
+    fabricInternalAccess: {
+      tokenSource: "current_kubernetes_secret_opl-cloud-internal-service",
+      tokenHandling: "step_memory_only_immediate_mask_no_github_secret",
+      podScope: "current_ready_fabric_revision_owner_chain",
+      transport: "localhost_kubectl_port_forward",
+      cleanup: "exit_trap_kills_port_forward_and_temp_files_removed"
     },
     basicResourceContract: { cpu: 2, memoryGb: 4 },
     skuConsistency: ["node_pool_allocation_plan", "fabric_compute_allocation", "tencent_provider_truth", "operator_provider_fact"],

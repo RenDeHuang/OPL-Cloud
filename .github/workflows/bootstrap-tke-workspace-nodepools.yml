@@ -7,24 +7,6 @@ on:
         description: Exact full SHA currently at origin/main; mutation is rejected from every other ref or revision.
         required: true
         type: string
-      basic_resolved_instance_type:
-        description: Release-owner-approved Tencent SKU that read-only availability and price checks resolved for the Basic 2C/4GiB contract.
-        required: true
-        type: string
-      pro_resolved_instance_type:
-        description: Release-owner-approved Tencent SKU that read-only availability and price checks resolved for the Pro 8C/16GiB contract.
-        required: true
-        type: string
-      basic_max_replicas:
-        description: Release-owner proposed Basic NodePool maximum replicas; optional for inventory, required for mutation.
-        required: false
-        default: ""
-        type: string
-      pro_max_replicas:
-        description: Release-owner proposed Pro NodePool maximum replicas; optional for inventory, required for mutation.
-        required: false
-        default: ""
-        type: string
       mutate_missing_pools:
         description: Create only missing compliant pools after complete read-only inventory.
         required: true
@@ -34,7 +16,7 @@ on:
           - "false"
           - "true"
       mutation_confirmation:
-        description: Enter CREATE_MISSING_WORKSPACE_NODEPOOLS only after approving both maxReplicas values.
+        description: Enter CREATE_MISSING_WORKSPACE_NODEPOOLS to create only missing zero-replica pools after all approved 100/100 capacity gates pass.
         required: false
         default: ""
         type: string
@@ -49,7 +31,7 @@ concurrency:
 jobs:
   bootstrap:
     name: Inventory and bootstrap dedicated Workspace NodePools
-    if: ${{ inputs.mutate_missing_pools != 'true' || (github.ref == 'refs/heads/main' && github.sha == inputs.merged_sha) }}
+    if: ${{ github.ref == 'refs/heads/main' && github.sha == inputs.merged_sha }}
     runs-on: [self-hosted, tencent-cloud, opl-cloud, tke-vpc]
     timeout-minutes: 20
     environment: production
@@ -60,10 +42,11 @@ jobs:
       OPL_SYSTEM_COMPUTE_NODE_NAME: ${{ vars.OPL_SYSTEM_COMPUTE_NODE_NAME || '10.66.0.42' }}
       OPL_BASIC_COMPUTE_NODE_POOL_ID: ${{ vars.OPL_BASIC_COMPUTE_NODE_POOL_ID }}
       OPL_PRO_COMPUTE_NODE_POOL_ID: ${{ vars.OPL_PRO_COMPUTE_NODE_POOL_ID }}
-      OPL_BASIC_COMPUTE_INSTANCE_TYPE: ${{ inputs.basic_resolved_instance_type }}
-      OPL_PRO_COMPUTE_INSTANCE_TYPE: ${{ inputs.pro_resolved_instance_type }}
-      OPL_BASIC_COMPUTE_NODE_POOL_MAX_REPLICAS: ${{ inputs.basic_max_replicas }}
-      OPL_PRO_COMPUTE_NODE_POOL_MAX_REPLICAS: ${{ inputs.pro_max_replicas }}
+      OPL_BASIC_COMPUTE_INSTANCE_TYPE: ""
+      OPL_PRO_COMPUTE_INSTANCE_TYPE: ""
+      OPL_BASIC_COMPUTE_NODE_POOL_MAX_REPLICAS: "100"
+      OPL_PRO_COMPUTE_NODE_POOL_MAX_REPLICAS: "100"
+      OPL_TENCENT_ZONE: ${{ vars.OPL_TENCENT_ZONE || 'na-siliconvalley-1' }}
       TENCENT_DEPLOY_KUBECONFIG_PATH: ${{ vars.TENCENT_DEPLOY_KUBECONFIG_PATH || '/home/actions/.secrets/medopl/v22/kubeconfig-package-d-deploy' }}
       TENCENT_DEPLOY_KUBECONFIG_B64: ${{ secrets.TENCENT_DEPLOY_KUBECONFIG_B64 }}
       TENCENT_DEPLOY_KUBECONFIG: ${{ secrets.TENCENT_DEPLOY_KUBECONFIG }}
@@ -156,6 +139,89 @@ jobs:
           cd services/fabric
           go build -o "$OPL_BOOTSTRAP_SECRET_DIR/opl-tencent-provisioner" ./cmd/opl-tencent-provisioner
 
+      - name: Inventory and select Workspace SKUs
+        shell: bash
+        run: |
+          set -euo pipefail
+          request="$OPL_BOOTSTRAP_SECRET_DIR/sku-inventory-request.json"
+          REQUEST_PATH="$request" node <<'NODE'
+          const fs = require("node:fs");
+          fs.writeFileSync(process.env.REQUEST_PATH, JSON.stringify({
+            action: "workspace_sku_inventory",
+            zone: process.env.OPL_TENCENT_ZONE,
+            requiredCapacity: 200
+          }));
+          NODE
+          set +e
+          "$OPL_BOOTSTRAP_SECRET_DIR/opl-tencent-provisioner" < "$request" > "$OPL_BOOTSTRAP_ARTIFACT_DIR/sku-inventory.json"
+          inventory_status=$?
+          set -e
+          REPORT_PATH="$OPL_BOOTSTRAP_ARTIFACT_DIR/sku-inventory.json" INVENTORY_STATUS="$inventory_status" node <<'NODE'
+          const fs = require("node:fs");
+          const report = JSON.parse(fs.readFileSync(process.env.REPORT_PATH, "utf8"));
+          if (process.env.INVENTORY_STATUS !== "0" || report.ok !== true || report.status !== "ready" || report.mutationCount !== 0 || report.requiredCapacity !== 200) {
+            throw new Error(`workspace_sku_inventory_failed:${report.errorCode || "unknown"}`);
+          }
+          if (report.prepaidQuotaRemaining < 200 || report.tkeAvailableNodeCapacity < 200 || report.tkeClusterNodeLimit < report.tkeCurrentNodeCount + 200) {
+            throw new Error("workspace_sku_inventory_capacity_insufficient");
+          }
+          if (!Array.isArray(report.subnets) || report.subnets.length < 1 || report.subnets.reduce((sum, subnet) => sum + Number(subnet.availableIpAddresses || 0), 0) < 200) {
+            throw new Error("workspace_sku_inventory_subnet_capacity_insufficient");
+          }
+          const system = report.protectedSystem || {};
+          if (system.nodePoolId !== process.env.OPL_SYSTEM_COMPUTE_NODE_POOL_ID || system.machineId !== process.env.OPL_SYSTEM_COMPUTE_MACHINE_ID ||
+              system.nodeName !== process.env.OPL_SYSTEM_COMPUTE_NODE_NAME || system.cvmId !== process.env.OPL_SYSTEM_COMPUTE_CVM_ID) {
+            throw new Error("workspace_sku_inventory_system_identity_mismatch");
+          }
+          const selected = {};
+          for (const [packageId, cpu, memoryGb] of [["basic", 2, 4], ["pro", 8, 16]]) {
+            const packages = (report.skuPackages || []).filter((item) => item.packageId === packageId);
+            if (packages.length !== 1) throw new Error(`workspace_sku_inventory_${packageId}_missing`);
+            const current = packages[0];
+            if (current.cpu !== cpu || current.memoryGb !== memoryGb || !current.recommendedInstanceType || !Array.isArray(current.candidates) || current.candidates.length < 1 ||
+                current.candidates[0].instanceType !== current.recommendedInstanceType || current.candidates[0].monthlyPriceCny !== current.recommendedMonthlyPriceCny) {
+              throw new Error(`workspace_sku_inventory_${packageId}_invalid`);
+            }
+            selected[packageId] = current.recommendedInstanceType;
+          }
+          fs.appendFileSync(process.env.GITHUB_ENV, `OPL_BASIC_COMPUTE_INSTANCE_TYPE=${selected.basic}\nOPL_PRO_COMPUTE_INSTANCE_TYPE=${selected.pro}\n`, { mode: 0o600 });
+          const encoded = JSON.stringify(report).toLowerCase();
+          for (const forbidden of ["secret", "token", "requestid", "request id", "providerrequestid", "rawresponse"]) {
+            if (encoded.includes(forbidden)) throw new Error(`workspace_sku_inventory_leaked_${forbidden}`);
+          }
+          NODE
+
+      - name: Revalidate selected Workspace SKUs before mutation
+        shell: bash
+        run: |
+          set -euo pipefail
+          request="$OPL_BOOTSTRAP_SECRET_DIR/pre-mutation-sku-inventory-request.json"
+          REQUEST_PATH="$request" node <<'NODE'
+          const fs = require("node:fs");
+          fs.writeFileSync(process.env.REQUEST_PATH, JSON.stringify({
+            action: "workspace_sku_inventory",
+            zone: process.env.OPL_TENCENT_ZONE,
+            requiredCapacity: 200
+          }));
+          NODE
+          set +e
+          "$OPL_BOOTSTRAP_SECRET_DIR/opl-tencent-provisioner" < "$request" > "$OPL_BOOTSTRAP_ARTIFACT_DIR/pre-mutation-sku-inventory.json"
+          inventory_status=$?
+          set -e
+          REPORT_PATH="$OPL_BOOTSTRAP_ARTIFACT_DIR/pre-mutation-sku-inventory.json" INVENTORY_STATUS="$inventory_status" node <<'NODE'
+          const fs = require("node:fs");
+          const report = JSON.parse(fs.readFileSync(process.env.REPORT_PATH, "utf8"));
+          if (process.env.INVENTORY_STATUS !== "0" || report.ok !== true || report.mutationCount !== 0 || report.requiredCapacity !== 200) {
+            throw new Error(`workspace_sku_revalidation_failed:${report.errorCode || "unknown"}`);
+          }
+          for (const [packageId, selected] of [["basic", process.env.OPL_BASIC_COMPUTE_INSTANCE_TYPE], ["pro", process.env.OPL_PRO_COMPUTE_INSTANCE_TYPE]]) {
+            const current = (report.skuPackages || []).find((item) => item.packageId === packageId);
+            if (!current || !(current.candidates || []).some((candidate) => candidate.instanceType === selected)) {
+              throw new Error(`workspace_sku_revalidation_${packageId}_failed`);
+            }
+          }
+          NODE
+
       - name: Inventory and bootstrap package NodePools
         id: bootstrap_action
         continue-on-error: true
@@ -169,7 +235,9 @@ jobs:
           const fs = require("node:fs");
           fs.writeFileSync(process.env.REQUEST_PATH, JSON.stringify({
             action: "bootstrap_compute_node_pools",
-            dryRun: process.env.MUTATE_MISSING_POOLS !== "true"
+            dryRun: process.env.MUTATE_MISSING_POOLS !== "true",
+            zone: process.env.OPL_TENCENT_ZONE,
+            requiredCapacity: 200
           }));
           NODE
           "$OPL_BOOTSTRAP_SECRET_DIR/opl-tencent-provisioner" < "$request" > "$OPL_BOOTSTRAP_ARTIFACT_DIR/bootstrap-nodepool-report.json"
@@ -179,19 +247,27 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          REPORT_PATH="$OPL_BOOTSTRAP_ARTIFACT_DIR/bootstrap-nodepool-report.json" node <<'NODE'
+          REPORT_PATH="$OPL_BOOTSTRAP_ARTIFACT_DIR/bootstrap-nodepool-report.json" INVENTORY_PATH="$OPL_BOOTSTRAP_ARTIFACT_DIR/sku-inventory.json" node <<'NODE'
           const fs = require("node:fs");
           const report = JSON.parse(fs.readFileSync(process.env.REPORT_PATH, "utf8"));
+          const inventory = JSON.parse(fs.readFileSync(process.env.INVENTORY_PATH, "utf8"));
           if (!Array.isArray(report.nodePools) || report.nodePools.length !== 2) throw new Error("bootstrap_nodepool_report_invalid");
           if (report.mutationCount < 0 || report.mutationCount > 2) throw new Error("bootstrap_nodepool_mutation_count_invalid");
           const packages = report.nodePools.map((item) => item.packageId).sort().join(",");
           if (packages !== "basic,pro") throw new Error("bootstrap_nodepool_packages_invalid");
           const basic = report.nodePools.find((item) => item.packageId === "basic");
           const pro = report.nodePools.find((item) => item.packageId === "pro");
-          if (!basic || basic.instanceType !== process.env.OPL_BASIC_COMPUTE_INSTANCE_TYPE || basic.cpu !== 2 || basic.memoryGb !== 4) throw new Error("bootstrap_basic_resolved_instance_type_invalid");
-          if (!pro || pro.instanceType !== process.env.OPL_PRO_COMPUTE_INSTANCE_TYPE || pro.cpu !== 8 || pro.memoryGb !== 16) throw new Error("bootstrap_pro_resolved_instance_type_invalid");
+          function validatePool(pool, packageId, cpu, memoryGb, selected) {
+            const current = (inventory.skuPackages || []).find((item) => item.packageId === packageId);
+            if (!pool || pool.cpu !== cpu || pool.memoryGb !== memoryGb || !current || !Array.isArray(current.candidates) ||
+                !current.candidates.some((candidate) => candidate.instanceType === pool.instanceType) || (!pool.nodePoolId && pool.instanceType !== selected)) {
+              throw new Error(`bootstrap_${packageId}_resolved_instance_type_invalid`);
+            }
+          }
+          validatePool(basic, "basic", 2, 4, process.env.OPL_BASIC_COMPUTE_INSTANCE_TYPE);
+          validatePool(pro, "pro", 8, 16, process.env.OPL_PRO_COMPUTE_INSTANCE_TYPE);
           const encoded = JSON.stringify(report).toLowerCase();
-          for (const forbidden of ["secret", "token", "providerrequestid", "rawresponse", "wallet", "userdata"]) {
+          for (const forbidden of ["secret", "token", "requestid", "request id", "providerrequestid", "rawresponse", "wallet", "userdata"]) {
             if (encoded.includes(forbidden)) throw new Error(`bootstrap_nodepool_report_leaked_${forbidden}`);
           }
           NODE

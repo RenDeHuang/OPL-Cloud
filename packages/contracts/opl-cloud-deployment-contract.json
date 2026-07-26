@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 15,
+  "schemaVersion": 16,
   "owner": "OPL Fabric",
   "purpose": "Deployment workflow, immutable Cloud and Workspace images, TKE handoff, read-only diagnostics, and production-verification safety.",
   "state": "current",
@@ -359,14 +359,18 @@
   },
   "workspaceNodePoolBootstrap": {
     "file": ".github/workflows/bootstrap-tke-workspace-nodepools.yml",
-    "mode": "manual_inventory_then_optional_create_missing_zero_replica_pools",
+    "mode": "manual_deterministic_inventory_then_optional_create_missing_zero_replica_pools",
     "environment": "production",
     "credentials": "existing_production_tencent_credentials_and_kubeconfig",
     "packagePools": ["basic", "pro"],
-    "resolvedInstanceTypeInputs": {"basic": "required_release_owner_approved_value", "pro": "required_release_owner_approved_value"},
+    "skuInventoryAction": "workspace_sku_inventory",
+    "skuRecommendation": "lowest_monthly_price_then_instance_type_for_exact_package_shape",
+    "skuMutationGate": "selected_candidate_revalidated_immediately_before_create",
+    "requiredCapacity": 200,
+    "capacityGates": ["prepaid_quota", "subnet_available_ip", "tke_cluster_node_limit"],
     "mutationSource": "exact_merged_origin_main_sha",
     "resolvedInstanceTypeRegistration": ["bootstrap_report", "node_pool_label", "tke_native_instance_types", "production_configuration"],
-    "maxReplicasInputs": "optional_for_inventory_required_for_mutation",
+    "maxReplicas": {"basic": 100, "pro": 100, "source": "release_owner_approved_workflow_configuration_no_code_default"},
     "mutationConfirmation": "CREATE_MISSING_WORKSPACE_NODEPOOLS",
     "dryRunMutationCount": 0,
     "idempotency": "register_running_wait_exact_creating_create_missing_only",
@@ -378,6 +382,14 @@
     "mode": "--basic-customer-canary",
     "workflow": ".github/workflows/production-basic-customer-operation.yml",
     "execution": "manual_release_owner_only_not_ci_rollout_or_e2e",
+    "runnerIsolation": {
+      "prepare": "self_hosted_tke_vpc_revision_fabric_kubernetes_and_business_authority",
+      "complete": "ubuntu_latest_public_browser_websocket_and_single_model_request",
+      "sharedConcurrency": "production-resource-verification",
+      "hostedRunnerKubeconfig": false,
+      "vpcRunnerBrowser": false
+    },
+    "handoff": "same_run_redacted_runtime_ready_evidence_plus_authoritative_public_readback_no_checkpoint_authority",
     "publicApiAdditions": 0,
     "workspaceLaunchPostCount": 1,
     "launchPolling": "same_operation_get_only",
@@ -391,6 +403,13 @@
       "imageMatch": "deployment_replicaset_and_ready_pod_image_id_equal_approved_cloud_digest",
       "failure": "fail_closed_zero_business_posts",
       "productionReadinessBooleanAccepted": false
+    },
+    "fabricInternalAccess": {
+      "tokenSource": "current_kubernetes_secret_opl-cloud-internal-service",
+      "tokenHandling": "step_memory_only_immediate_mask_no_github_secret",
+      "podScope": "current_ready_fabric_revision_owner_chain",
+      "transport": "localhost_kubectl_port_forward",
+      "cleanup": "exit_trap_kills_port_forward_and_temp_files_removed"
     },
     "basicResourceContract": {"cpu": 2, "memoryGb": 4},
     "skuConsistency": ["node_pool_allocation_plan", "fabric_compute_allocation", "tencent_provider_truth", "operator_provider_fact"],
