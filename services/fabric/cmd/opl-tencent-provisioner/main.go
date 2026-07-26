@@ -597,7 +597,8 @@ func (client *tencentSDKClient) workspaceTKECapacity() (uint64, uint64, uint64, 
 	}
 	var nodeLimit *uint64
 	for _, item := range levels.Response.Items {
-		if item != nil && stringValue(item.Name) == level && item.Enable != nil && *item.Enable && item.NodeCount != nil {
+		// The running cluster's matching NodeCount is the capacity fact; Enable is unrelated metadata.
+		if item != nil && stringValue(item.Name) == level && item.NodeCount != nil {
 			if nodeLimit != nil {
 				return 0, 0, 0, fmt.Errorf("Tencent TKE cluster level inventory is ambiguous")
 			}
