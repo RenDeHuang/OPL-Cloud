@@ -1,5 +1,10 @@
 import assert from "node:assert/strict";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
+
+import * as productionLiveQa from "../../tools/production-live-qa.ts";
 
 import {
   LIVE_QA_CONFIRMATION,
@@ -38,6 +43,85 @@ const mutationApprovalJson = JSON.stringify({
   accountIds: [BASIC_ACCOUNT_ID],
   workspaceIds: ["workspace-slot-1"],
   resourceIds: [fixedSlotDescriptor.id, "9"]
+});
+
+test("customer Basic canary orchestration stays inside production-live-qa", () => {
+  assert.equal(typeof productionLiveQa.verifyProductionBasicCustomerCanary, "function");
+});
+
+test("customer Basic canary Pod evidence uses one read-only kubectl get", async () => {
+  assert.equal(typeof productionLiveQa.readBasicCanaryRuntimePodEvidence, "function");
+  const calls = [];
+  const result = await productionLiveQa.readBasicCanaryRuntimePodEvidence({
+    workspaceId: BASIC_CANARY_WORKSPACE_ID,
+    expectedDigest: BASIC_CANARY_DIGEST,
+    kubeconfigPath: "/run/secrets/kubeconfig",
+    namespace: "opl-cloud",
+    execFileImpl: async (command, args) => {
+      calls.push({ command, args });
+      return { stdout: JSON.stringify({
+        kind: "List",
+        items: [{
+          metadata: {
+            name: "runtime-basic-canary-abc",
+            labels: { "oplcloud.cn/workspace-id": BASIC_CANARY_WORKSPACE_ID },
+            ownerReferences: [{ apiVersion: "apps/v1", kind: "ReplicaSet", name: "runtime-basic-canary-rs", uid: "rs-uid", controller: true }]
+          },
+          spec: {
+            nodeName: "10.66.1.18",
+            containers: [{ name: "workspace", resources: { limits: { cpu: "2", memory: "4Gi" } } }]
+          },
+          status: {
+            phase: "Running",
+            conditions: [{ type: "Ready", status: "True" }],
+            containerStatuses: [{ name: "workspace", ready: true, imageID: `containerd://${BASIC_CANARY_DIGEST}` }]
+          }
+        }]
+      }) };
+    }
+  });
+  assert.deepEqual(calls, [{
+    command: "kubectl",
+    args: ["--kubeconfig", "/run/secrets/kubeconfig", "-n", "opl-cloud", "get", "pods", "-l", `oplcloud.cn/workspace-id=${BASIC_CANARY_WORKSPACE_ID}`, "-o", "json"]
+  }]);
+  assert.deepEqual(result, {
+    podName: "runtime-basic-canary-abc",
+    nodeName: "10.66.1.18",
+    containerName: "workspace",
+    ready: true,
+    imageID: `containerd://${BASIC_CANARY_DIGEST}`,
+    resources: { cpu: 2, memoryGb: 4 },
+    ownerReference: { kind: "ReplicaSet", name: "runtime-basic-canary-rs", uid: "rs-uid" }
+  });
+});
+
+test("customer Basic canary Pod evidence rejects empty node, multiple current Pods, and historical-only Pods", async () => {
+  const pod = () => ({
+    metadata: {
+      name: "runtime-basic-canary-abc",
+      labels: { "oplcloud.cn/workspace-id": BASIC_CANARY_WORKSPACE_ID },
+      ownerReferences: [{ apiVersion: "apps/v1", kind: "ReplicaSet", name: "runtime-basic-canary-rs", uid: "rs-uid", controller: true }]
+    },
+    spec: { nodeName: "10.66.1.18", containers: [{ name: "workspace", resources: { limits: { cpu: "2", memory: "4Gi" } } }] },
+    status: {
+      phase: "Running",
+      conditions: [{ type: "Ready", status: "True" }],
+      containerStatuses: [{ name: "workspace", ready: true, imageID: `containerd://${BASIC_CANARY_DIGEST}` }]
+    }
+  });
+  for (const [name, items] of [
+    ["empty node", [{ ...pod(), spec: { ...pod().spec, nodeName: "" } }]],
+    ["multiple current Pods", [pod(), { ...pod(), metadata: { ...pod().metadata, name: "runtime-basic-canary-def" } }]],
+    ["historical only", [{ ...pod(), metadata: { ...pod().metadata, deletionTimestamp: "2026-07-26T00:00:00Z" } }]]
+  ]) {
+    await assert.rejects(() => productionLiveQa.readBasicCanaryRuntimePodEvidence({
+      workspaceId: BASIC_CANARY_WORKSPACE_ID,
+      expectedDigest: BASIC_CANARY_DIGEST,
+      kubeconfigPath: "/run/secrets/kubeconfig",
+      namespace: "opl-cloud",
+      execFileImpl: async () => ({ stdout: JSON.stringify({ kind: "List", items }) })
+    }), /production_basic_canary_runtime_pod_invalid/, name);
+  }
 });
 
 function json(payload, status = 200, headers = {}) {
@@ -150,6 +234,914 @@ function readOnlyBrowserFactory(viewports) {
     close: async () => {}
   });
 }
+
+const BASIC_CANARY_DIGEST = `sha256:${"a".repeat(64)}`;
+const BASIC_CANARY_CLOUD_DIGEST = `sha256:${"b".repeat(64)}`;
+const BASIC_CANARY_CLOUD_IMAGE = `uswccr.ccs.tencentyun.com/oplcloud/opl-cloud@${BASIC_CANARY_CLOUD_DIGEST}`;
+const BASIC_CANARY_MERGED_SHA = "c".repeat(40);
+const BASIC_CANARY_APPROVAL_ID = "approval-production-basic-canary";
+const BASIC_CANARY_CONFIRMATION = "I_UNDERSTAND_THIS_PROVISIONS_ONE_REAL_BASIC_WORKSPACE_AND_SENDS_ONE_MODEL_REQUEST";
+const BASIC_CANARY_CUSTOMER_EMAIL = "basic-canary@example.com";
+const BASIC_CANARY_CUSTOMER_PASSWORD = "customer-password";
+const BASIC_CANARY_ACCOUNT_ID = "acct-31c43adae1a4dc1805";
+const BASIC_CANARY_WALLET_OPERATION_ID = "wallet-adjustment-ca5b714ed4b0ae2451";
+const BASIC_CANARY_LAUNCH_OPERATION_ID = "workspace-launch-295abada3ddad29c7d";
+const BASIC_CANARY_WORKSPACE_ID = "ws-f55d9cdbcf57afb726";
+const BASIC_CANARY_KEY_ID = "91";
+const BASIC_CANARY_LAUNCH_KEY = "workspace-launch:prod-basic-canary-20260726-01";
+const BASIC_CANARY_RESOLVED_INSTANCE_TYPE = "S5.MEDIUM4";
+
+function basicCanaryApprovalJson() {
+  return JSON.stringify({
+    approvalId: BASIC_CANARY_APPROVAL_ID,
+    expiresAt: "2099-07-26T00:00:00Z",
+    customer: { email: BASIC_CANARY_CUSTOMER_EMAIL, name: "Basic Canary Customer" },
+    rechargeUsdMicros: "100000000",
+    idempotencyKeys: {
+      accountProvision: "account-provision:prod-basic-canary-20260726-01",
+      walletAdjustment: "wallet-adjustment:prod-basic-canary-20260726-01",
+      workspaceLaunch: BASIC_CANARY_LAUNCH_KEY
+    },
+    launch: { name: "Basic Canary 2026-07-26", packageId: "basic", sizeGb: 10, autoRenew: false },
+    expected: {
+      mergedSha: BASIC_CANARY_MERGED_SHA,
+      cloudImageDigest: BASIC_CANARY_CLOUD_DIGEST,
+      nodePoolId: "np-basic",
+      resolvedInstanceType: BASIC_CANARY_RESOLVED_INSTANCE_TYPE,
+      workspaceImageDigest: BASIC_CANARY_DIGEST,
+      model: "gpt-5.5"
+    }
+  });
+}
+
+function cloudRevisionFixture({ component = "", failure = "", remoteMainSha = BASIC_CANARY_MERGED_SHA } = {}) {
+  const definitions = [
+    ["opl-cloud-control-plane", "control-plane", "101"],
+    ["opl-cloud-fabric", "fabric", "202"],
+    ["opl-cloud-ledger", "ledger", "303"]
+  ];
+  const deployments = definitions.map(([name, container, revision]) => ({
+    metadata: { name, uid: `${name}-uid`, generation: 8, annotations: { "deployment.kubernetes.io/revision": revision } },
+    spec: { replicas: 1, template: { spec: { containers: [{ name: container, image: component === container && failure === "deployment_digest" ? `${BASIC_CANARY_CLOUD_IMAGE}-wrong` : BASIC_CANARY_CLOUD_IMAGE }] } } },
+    status: { observedGeneration: 8, updatedReplicas: 1, readyReplicas: 1, availableReplicas: 1, unavailableReplicas: 0 }
+  }));
+  const replicaSets = definitions.map(([name, container, revision]) => ({
+    metadata: {
+      name: `${name}-rs`,
+      uid: `${name}-rs-uid`,
+      annotations: { "deployment.kubernetes.io/revision": component === container && failure === "replicaset_revision" ? `${Number(revision) - 1}` : revision },
+      ownerReferences: [{ kind: "Deployment", name, uid: `${name}-uid`, controller: true }]
+    },
+    spec: { template: { spec: { containers: [{ name: container, image: BASIC_CANARY_CLOUD_IMAGE }] } } }
+  }));
+  const pods = definitions.map(([name, container]) => ({
+    metadata: {
+      name: `${name}-pod`,
+      uid: `${name}-pod-uid`,
+      ownerReferences: [{ kind: "ReplicaSet", name: `${name}-rs`, uid: component === container && failure === "pod_owner" ? "wrong-rs-uid" : `${name}-rs-uid`, controller: true }]
+    },
+    status: {
+      phase: "Running",
+      conditions: [{ type: "Ready", status: "True" }],
+      containerStatuses: [{
+        name: container,
+        ready: true,
+        imageID: `containerd://${BASIC_CANARY_CLOUD_IMAGE}${component === container && failure === "pod_digest" ? "-wrong" : ""}`
+      }]
+    }
+  }));
+  replicaSets.push({
+    metadata: {
+      name: "opl-cloud-fabric-rs-historical",
+      uid: "opl-cloud-fabric-rs-historical-uid",
+      annotations: { "deployment.kubernetes.io/revision": "201" },
+      ownerReferences: [{ kind: "Deployment", name: "opl-cloud-fabric", uid: "opl-cloud-fabric-uid", controller: true }]
+    },
+    spec: { template: { spec: { containers: [{ name: "fabric", image: `uswccr.ccs.tencentyun.com/oplcloud/opl-cloud@sha256:${"d".repeat(64)}` }] } } }
+  });
+  pods.push({
+    metadata: {
+      name: "opl-cloud-fabric-historical-evicted",
+      uid: "opl-cloud-fabric-historical-evicted-uid",
+      deletionTimestamp: "2026-07-25T23:59:00Z",
+      ownerReferences: [{ kind: "ReplicaSet", name: "opl-cloud-fabric-rs-historical", uid: "opl-cloud-fabric-rs-historical-uid", controller: true }]
+    },
+    status: {
+      phase: "Failed",
+      reason: "Evicted",
+      conditions: [{ type: "Ready", status: "False" }],
+      containerStatuses: []
+    }
+  });
+  const calls = [];
+  const execFileImpl = async (command, args) => {
+    calls.push({ command, args });
+    if (command === "git" && args.join(" ") === "rev-parse HEAD") return { stdout: `${BASIC_CANARY_MERGED_SHA}\n`, stderr: "" };
+    if (command === "git" && args.join(" ") === "rev-parse refs/remotes/origin/main") return { stdout: `${BASIC_CANARY_MERGED_SHA}\n`, stderr: "" };
+    if (command === "git" && args.join(" ") === "ls-remote --exit-code origin refs/heads/main") {
+      return { stdout: `${remoteMainSha}\trefs/heads/main\n`, stderr: "" };
+    }
+    if (command !== "kubectl") throw new Error(`unexpected_command:${command}`);
+    const resource = args[args.indexOf("get") + 1];
+    if (resource === "configmap") return { stdout: JSON.stringify({ metadata: { name: "opl-cloud-config" }, data: { OPL_CLOUD_IMAGE: BASIC_CANARY_CLOUD_IMAGE } }), stderr: "" };
+    if (resource === "deployments") return { stdout: JSON.stringify({ kind: "List", items: deployments }), stderr: "" };
+    if (resource === "replicasets") return { stdout: JSON.stringify({ kind: "List", items: replicaSets }), stderr: "" };
+    if (resource === "pods") return { stdout: JSON.stringify({ kind: "List", items: pods }), stderr: "" };
+    throw new Error(`unexpected_resource:${resource}`);
+  };
+  return { calls, execFileImpl };
+}
+
+test("customer Basic canary reads one exact immutable Cloud revision before business writes", async () => {
+  const fixture = cloudRevisionFixture();
+  const result = await productionLiveQa.readBasicCanaryCloudRevisionEvidence({
+    expectedMergedSha: BASIC_CANARY_MERGED_SHA,
+    expectedCloudDigest: BASIC_CANARY_CLOUD_DIGEST,
+    kubeconfigPath: "/run/secrets/kubeconfig",
+    namespace: "opl-cloud",
+    execFileImpl: fixture.execFileImpl
+  });
+
+  assert.equal(result.mergedSha, BASIC_CANARY_MERGED_SHA);
+  assert.equal(result.cloudDigest, BASIC_CANARY_CLOUD_DIGEST);
+  assert.deepEqual(Object.keys(result.services).sort(), ["controlPlane", "fabric", "ledger"]);
+  assert.deepEqual(Object.values(result.services).map((service) => service.revision), ["101", "202", "303"]);
+  assert.equal(result.services.fabric.replicaSet, "opl-cloud-fabric-rs");
+  assert.equal(fixture.calls.some(({ command, args }) => command === "git" && args.join(" ") === "ls-remote --exit-code origin refs/heads/main"), true);
+  assert.equal(fixture.calls.every(({ command, args }) => command === "git" && ["rev-parse", "ls-remote"].includes(args[0]) || command === "kubectl" && args.includes("get")), true);
+});
+
+test("customer Basic canary Cloud revision evidence fails closed on every service digest, revision, and owner mismatch", async () => {
+  for (const component of ["control-plane", "fabric", "ledger"]) {
+    for (const failure of ["deployment_digest", "replicaset_revision", "pod_digest", "pod_owner"]) {
+      const fixture = cloudRevisionFixture({ component, failure });
+      await assert.rejects(() => productionLiveQa.readBasicCanaryCloudRevisionEvidence({
+        expectedMergedSha: BASIC_CANARY_MERGED_SHA,
+        expectedCloudDigest: BASIC_CANARY_CLOUD_DIGEST,
+        kubeconfigPath: "/run/secrets/kubeconfig",
+        namespace: "opl-cloud",
+        execFileImpl: fixture.execFileImpl
+      }), /production_basic_canary_cloud_revision_invalid/, `${component}:${failure}`);
+    }
+  }
+});
+
+test("customer Basic canary Cloud revision evidence fails closed when live origin main moves", async () => {
+  const fixture = cloudRevisionFixture({ remoteMainSha: "d".repeat(40) });
+  await assert.rejects(() => productionLiveQa.readBasicCanaryCloudRevisionEvidence({
+    expectedMergedSha: BASIC_CANARY_MERGED_SHA,
+    expectedCloudDigest: BASIC_CANARY_CLOUD_DIGEST,
+    kubeconfigPath: "/run/secrets/kubeconfig",
+    namespace: "opl-cloud",
+    execFileImpl: fixture.execFileImpl
+  }), /production_basic_canary_cloud_revision_invalid/);
+});
+
+function basicCanaryFixture({
+  terminalStatus = "succeeded",
+  truthStorageProviderId = "disk-basic-canary",
+  basicCpu = 2,
+  basicMemoryGb = 4,
+  podNodeName = "10.66.1.18",
+  allocationCpu = 2,
+  allocationMemoryGb = 4,
+  initialProvisioned = false,
+  initialRecharged = false,
+  initialLaunchStatus = "",
+  cloudRevisionError = "",
+  loseResponseAfter = ""
+} = {}) {
+  const calls = [];
+  const state = {
+    provisionPosts: 0,
+    rechargePosts: 0,
+    launchPosts: 0,
+    launchPolls: 0,
+    modelRequests: 0,
+    provisioned: initialProvisioned,
+    launched: Boolean(initialLaunchStatus),
+    recharged: initialRecharged,
+    initialLaunchStatus,
+    podReads: 0,
+    cloudRevisionReads: 0,
+    lostResponses: new Set()
+  };
+  const periodStart = "2026-07-26T00:00:00Z";
+  const paidThrough = "2026-08-26T00:00:00Z";
+  const receipt = {
+    receiptId: "receipt-basic-canary",
+    type: "billing.workspace_purchased.v1",
+    status: "completed",
+    workspaceId: BASIC_CANARY_WORKSPACE_ID,
+    createdAt: periodStart,
+    resourceType: "workspace",
+    resourceId: BASIC_CANARY_WORKSPACE_ID,
+    priceVersion: "pilot-usd-2026-07-v1",
+    currency: "USD",
+    periodStart,
+    paidThrough,
+    totalUsdMicros: 52_580_000,
+    components: {
+      compute: { resourceType: "compute", resourceId: "ca-basic-canary", chargeUsdMicros: 50_000_000 },
+      storage: { resourceType: "storage", resourceId: "vol-basic-canary", sizeGb: 10, chargeUsdMicros: 2_580_000 }
+    },
+    fulfillment: {
+      computeAllocationId: "ca-basic-canary",
+      storageId: "vol-basic-canary",
+      attachmentId: "attachment-basic-canary",
+      runtimeId: "runtime-basic-canary",
+      workspaceApiKeyId: BASIC_CANARY_KEY_ID
+    },
+    chargeReference: "must-not-emit-redeem-code"
+  };
+  const usageRecord = {
+    requestId: "req-basic-canary",
+    apiKeyId: BASIC_CANARY_KEY_ID,
+    model: "gpt-5.5",
+    requestType: "sync",
+    inboundEndpoint: "/v1/responses",
+    inputTokens: 4,
+    outputTokens: 3,
+    cacheCreationTokens: 0,
+    cacheReadTokens: 0,
+    actualCostUsdMicros: 120
+  };
+  const launch = (status, phase = status) => ({
+    operationId: BASIC_CANARY_LAUNCH_OPERATION_ID,
+    accountId: BASIC_CANARY_ACCOUNT_ID,
+    workspaceId: BASIC_CANARY_WORKSPACE_ID,
+    status,
+    phase,
+    name: "Basic Canary 2026-07-26",
+    packageId: "basic",
+    sizeGb: 10,
+    autoRenew: false,
+    priceVersion: "pilot-usd-2026-07-v1",
+    currency: "USD",
+    totalChargeUsdMicros: 52_580_000,
+    computeAllocationId: "ca-basic-canary",
+    storageId: "vol-basic-canary",
+    attachmentId: status === "succeeded" ? "attachment-basic-canary" : "",
+    workspaceApiKeyId: BASIC_CANARY_KEY_ID,
+    workspaceKeyStatus: status === "succeeded" ? "active" : "pending",
+    runtimeServiceName: status === "succeeded" ? "workspace-service-basic-canary" : "",
+    url: status === "succeeded" ? `https://workspace.medopl.cn/w/${BASIC_CANARY_WORKSPACE_ID}/` : "",
+    receiptId: status === "succeeded" ? receipt.receiptId : "",
+    errorCode: status === "manual_review" ? "provider_result_unknown" : ""
+  });
+  const resourceFact = (type, providerId, packageOrSpec, status = "running") => ({
+    resourceType: nestedSource(type, "fabric"),
+    packageOrSpec: nestedSource(packageOrSpec, "fabric"),
+    providerId: nestedSource(providerId, "fabric"),
+    zone: nestedSource("na-siliconvalley-1", "fabric"),
+    status: nestedSource(status, "fabric"),
+    createdAt: nestedSource(periodStart, "fabric"),
+    expiresAt: nestedSource(paidThrough, "fabric"),
+    lastReadAt: nestedSource("2026-07-26T00:10:00Z", "fabric"),
+    operationRef: nestedSource(`operation-${type}`, "control-plane"),
+    receiptRef: nestedSource(receipt.receiptId, "ledger")
+  });
+  const controlPlanePage = (items) => source({ items, total: items.length, page: 1, pageSize: 20 }, "control-plane", items.length === 0 ? "empty" : "available");
+  const gatewayPage = (items) => source({ items, total: items.length, page: 1, pageSize: 20, pages: 1 }, "sub2api", items.length === 0 ? "empty" : "available");
+  const operatorAccountPage = () => {
+    const items = state.provisioned ? [{
+      accountId: BASIC_CANARY_ACCOUNT_ID,
+      consoleUserId: "usr-basic-canary",
+      sub2apiUserId: "143",
+      email: BASIC_CANARY_CUSTOMER_EMAIL,
+      role: "owner",
+      status: "active"
+    }] : [];
+    return source({ items, total: items.length, page: 1, pageSize: 50 }, "control-plane+sub2api", items.length === 0 ? "empty" : "available");
+  };
+  const walletAdjustment = () => ({
+    operationId: BASIC_CANARY_WALLET_OPERATION_ID,
+    accountId: BASIC_CANARY_ACCOUNT_ID,
+    kind: "recharge",
+    amountUsd: "100.00",
+    reason: "production Basic customer canary precharge",
+    status: "succeeded",
+    phase: "succeeded",
+    beforeBalance: nestedSource({ currency: "USD", usdMicros: "0" }, "sub2api"),
+    afterBalance: nestedSource({ currency: "USD", usdMicros: "100000000" }, "sub2api")
+  });
+  const walletBalance = () => {
+    const value = (state.recharged ? 100_000_000 : 0) - (state.launched ? 52_580_000 : 0) - state.modelRequests * usageRecord.actualCostUsdMicros;
+    return source({ userId: "143", currency: "USD", usdMicros: String(value), status: "active" });
+  };
+  const fabricOperations = () => [{
+    id: "fabric-op-compute",
+    operationId: `${BASIC_CANARY_LAUNCH_OPERATION_ID}:compute`,
+    action: "create_compute_allocation",
+    resourceKind: "compute_allocation",
+    resourceId: "ca-basic-canary",
+    accountId: BASIC_CANARY_ACCOUNT_ID,
+    workspaceId: BASIC_CANARY_WORKSPACE_ID,
+    providerRequestId: "must-not-emit-provider-request-id",
+    status: "succeeded",
+    redactedProviderPayload: {
+      allocationPlan: {
+        poolId: "pool-basic-2c4g",
+        packageId: "basic",
+        nodePoolId: "np-basic",
+        instanceType: BASIC_CANARY_RESOLVED_INSTANCE_TYPE,
+        maxReplicas: 20,
+        baselineReplicas: 7,
+        targetReplicas: 8,
+        beforeMachineNames: Array.from({ length: 7 }, (_, index) => `np-basic-old-${index + 1}`)
+      }
+    }
+  }, ...["create_storage_volume", "create_storage_attachment", "upsert_gateway_secret", "create_workspace_runtime"].map((action) => ({
+    id: `fabric-op-${action}`,
+    operationId: `${BASIC_CANARY_LAUNCH_OPERATION_ID}:${action}`,
+    action,
+    resourceKind: action,
+    resourceId: action === "create_storage_volume" ? "vol-basic-canary" : `${action}-basic-canary`,
+    accountId: BASIC_CANARY_ACCOUNT_ID,
+    workspaceId: BASIC_CANARY_WORKSPACE_ID,
+    providerRequestId: `must-not-emit-${action}-request-id`,
+    status: "succeeded",
+    redactedProviderPayload: {}
+  }))];
+
+  const fetchImpl = async (input, init = {}) => {
+    const url = new URL(String(input));
+    const method = init.method || "GET";
+    const headers = new Headers(init.headers);
+    calls.push({ host: url.host, method, path: url.pathname, search: url.search, body: init.body, headers });
+    if (url.hostname === "fabric.opl-cloud.svc") {
+      assert.equal(headers.get("authorization"), "Bearer internal-service-token");
+      if (url.pathname === "/fabric/catalog") return json({
+        schemaVersion: 1,
+        owner: "OPL Fabric",
+        workspacePackages: [
+          { id: "basic", name: "Basic Workspace", computeProfileId: "cpu-basic", cpu: basicCpu, memoryGb: basicMemoryGb, diskGb: 10, provider: "tencent-tke", available: true },
+          { id: "pro", name: "Pro Workspace", computeProfileId: "cpu-pro", cpu: 8, memoryGb: 16, diskGb: 100, provider: "tencent-tke", available: true }
+        ],
+        storageClasses: [],
+        ingressDomains: []
+      });
+      if (url.pathname === "/fabric/operations") return json(fabricOperations());
+      if (url.pathname === "/fabric/compute-allocations/ca-basic-canary") return json({
+        id: "ca-basic-canary", accountId: BASIC_CANARY_ACCOUNT_ID, workspaceId: BASIC_CANARY_WORKSPACE_ID, packageId: "basic",
+        status: "running", provider: "tencent-tke", providerResourceId: "ins-basic-canary", nodePoolId: "np-basic",
+        instanceId: "ins-basic-canary", cvmInstanceId: "ins-basic-canary", machineName: "np-basic-new-8", nodeName: "10.66.1.18",
+        privateIp: "10.66.1.18", instanceType: BASIC_CANARY_RESOLVED_INSTANCE_TYPE, zone: "na-siliconvalley-1", cvmStatus: "RUNNING",
+        chargeType: "PREPAID", renewFlag: "NOTIFY_AND_MANUAL_RENEW", deadline: paidThrough,
+        providerData: { cpu: String(allocationCpu), memoryGb: String(allocationMemoryGb), instanceType: BASIC_CANARY_RESOLVED_INSTANCE_TYPE },
+        providerRequestId: "must-not-emit-provider-request-id"
+      });
+      if (url.pathname === "/fabric/machine-ownerships/ca-basic-canary") return json({
+        resourceId: "ca-basic-canary", accountId: BASIC_CANARY_ACCOUNT_ID, workspaceId: BASIC_CANARY_WORKSPACE_ID, packageId: "basic",
+        nodePoolId: "np-basic", machineId: "np-basic-new-8", instanceId: "ins-basic-canary", nodeName: "10.66.1.18", status: "active",
+        providerRequestId: "must-not-emit-provider-request-id"
+      });
+      if (url.pathname === "/fabric/monthly-provider-truth") return json({
+        computeState: "ready", storageState: "ready",
+        compute: { id: "ca-basic-canary", accountId: BASIC_CANARY_ACCOUNT_ID, workspaceId: BASIC_CANARY_WORKSPACE_ID, packageId: "basic", providerResourceId: "ins-basic-canary", nodePoolId: "np-basic", machineName: "np-basic-new-8", instanceId: "ins-basic-canary", instanceType: BASIC_CANARY_RESOLVED_INSTANCE_TYPE, zone: "na-siliconvalley-1", chargeType: "PREPAID", renewFlag: "NOTIFY_AND_MANUAL_RENEW", deadline: paidThrough, providerData: { cpu: String(allocationCpu), memoryGb: String(allocationMemoryGb), instanceType: BASIC_CANARY_RESOLVED_INSTANCE_TYPE } },
+        storage: { id: "vol-basic-canary", accountId: BASIC_CANARY_ACCOUNT_ID, workspaceId: BASIC_CANARY_WORKSPACE_ID, providerResourceId: truthStorageProviderId, sizeGb: 10, zone: "na-siliconvalley-1", chargeType: "PREPAID", renewFlag: "NOTIFY_AND_MANUAL_RENEW", deadline: paidThrough }
+      });
+      return json({ error: "not_found" }, 404);
+    }
+    if (url.pathname === "/api/auth/login") {
+      const body = JSON.parse(init.body);
+      const admin = body.email === ADMIN_EMAIL;
+      assert.equal(body.password, admin ? ADMIN_PASSWORD : BASIC_CANARY_CUSTOMER_PASSWORD);
+      if (!admin && !state.provisioned) return json({ error: "invalid_credentials" }, 401);
+      return json({ user: { id: admin ? ADMIN_USER_ID : "usr-basic-canary", accountId: admin ? ADMIN_ACCOUNT_ID : BASIC_CANARY_ACCOUNT_ID, role: admin ? "admin" : "owner" } }, 200, {
+        "set-cookie": `opl_session=${admin ? "session-admin" : "session-customer"}; Path=/; HttpOnly`,
+        "x-opl-csrf-token": admin ? "csrf-admin" : "csrf-customer"
+      });
+    }
+    if (url.pathname === "/api/operator/accounts" && method === "POST") {
+      state.provisionPosts += 1;
+      assert.equal(headers.get("idempotency-key"), "account-provision:prod-basic-canary-20260726-01");
+      assert.deepEqual(JSON.parse(init.body), { email: BASIC_CANARY_CUSTOMER_EMAIL, password: BASIC_CANARY_CUSTOMER_PASSWORD, name: "Basic Canary Customer" });
+      state.provisioned = true;
+      if (loseResponseAfter === "account" && !state.lostResponses.has("account")) {
+        state.lostResponses.add("account");
+        throw new Error("simulated_account_response_lost");
+      }
+      return json({ operationId: "account-provision-f6b06edcc89bf02427", accountId: BASIC_CANARY_ACCOUNT_ID, status: "succeeded" }, 201);
+    }
+    if (url.pathname === "/api/operator/accounts" && method === "GET") return operatorAccountPage();
+    if (url.pathname === `/api/operator/accounts/${BASIC_CANARY_ACCOUNT_ID}/wallet-adjustments` && method === "POST") {
+      state.rechargePosts += 1;
+      assert.equal(headers.get("idempotency-key"), "wallet-adjustment:prod-basic-canary-20260726-01");
+      assert.deepEqual(JSON.parse(init.body), { kind: "recharge", amountUsd: "100.000000", reason: "production Basic customer canary precharge", confirmationAccountId: BASIC_CANARY_ACCOUNT_ID });
+      state.recharged = true;
+      if (loseResponseAfter === "wallet" && !state.lostResponses.has("wallet")) {
+        state.lostResponses.add("wallet");
+        throw new Error("simulated_wallet_response_lost");
+      }
+      return json(walletAdjustment(), 201);
+    }
+    if (url.pathname === `/api/operator/wallet-adjustments/${BASIC_CANARY_WALLET_OPERATION_ID}` && method === "GET") {
+      return state.recharged
+        ? json(walletAdjustment())
+        : json({ error: "not_found" }, 404);
+    }
+    if (url.pathname === "/api/auth/me") return source({ consoleUserId: "usr-basic-canary", accountId: BASIC_CANARY_ACCOUNT_ID, sub2apiUserId: 143, email: BASIC_CANARY_CUSTOMER_EMAIL, role: "owner", status: "active" });
+    if (url.pathname === "/api/gateway/wallet") return walletBalance();
+    if (url.pathname === "/api/operator/reconciliation") return source({ items: [], total: 0, page: 1, pageSize: 20 }, "control-plane", "empty");
+    if (url.pathname === "/api/pricing/preview") return json({ resourceType: "workspace", packageId: "basic", sizeGb: 10, priceVersion: "pilot-usd-2026-07-v1", currency: "USD", totalChargeUsdMicros: 52_580_000, autoRenew: false });
+    if (url.pathname === "/api/workspaces") return controlPlanePage(state.launched ? [{ id: BASIC_CANARY_WORKSPACE_ID, name: "Basic Canary 2026-07-26", packageId: "basic", state: "active", url: `https://workspace.medopl.cn/w/${BASIC_CANARY_WORKSPACE_ID}/`, paidThrough }] : []);
+    if (url.pathname === "/api/workspace-launches" && method === "GET") return json(state.launched ? [launch(state.initialLaunchStatus || "succeeded")] : []);
+    if (url.pathname === "/api/workspace-launches" && method === "POST") {
+      state.launchPosts += 1;
+      assert.equal(headers.get("idempotency-key"), BASIC_CANARY_LAUNCH_KEY);
+      assert.deepEqual(JSON.parse(init.body), { name: "Basic Canary 2026-07-26", packageId: "basic", sizeGb: 10, autoRenew: false });
+      state.launched = true;
+      state.initialLaunchStatus = "debit_pending";
+      if (loseResponseAfter === "launch" && !state.lostResponses.has("launch")) {
+        state.lostResponses.add("launch");
+        throw new Error("simulated_launch_response_lost");
+      }
+      return json(launch("debit_pending"), 202);
+    }
+    if (url.pathname === `/api/workspace-launches/${BASIC_CANARY_LAUNCH_OPERATION_ID}`) {
+      if (!state.launched) return json({ error: "workspace_launch_not_found" }, 404);
+      state.launchPolls += 1;
+      if (state.initialLaunchStatus === "succeeded") return json(launch("succeeded"));
+      if (state.launchPolls === 1) return json(launch(state.initialLaunchStatus || "fulfilling_compute"));
+      return json(launch(terminalStatus, terminalStatus));
+    }
+    if (url.pathname === "/api/gateway/keys") {
+      return gatewayPage(state.launched ? [{ id: BASIC_CANARY_KEY_ID, name: `opl-ws-${BASIC_CANARY_WORKSPACE_ID}`, status: "active" }] : []);
+    }
+    if (url.pathname === `/api/gateway/keys/${BASIC_CANARY_KEY_ID}/usage`) return gatewayPage(state.modelRequests ? [usageRecord] : []);
+    if (url.pathname === `/api/gateway/keys/${BASIC_CANARY_KEY_ID}/usage-summary`) {
+      const count = state.modelRequests;
+      return source({ totalRequests: count, totalInputTokens: count * 4, totalOutputTokens: count * 3, totalTokens: count * 7, totalActualCostUsdMicros: count * 120 });
+    }
+    if (url.pathname === "/api/billing/receipts") return source({ receipts: state.launched ? [receipt] : [], nextCursor: "", hasMore: false }, "ledger", state.launched ? "available" : "empty");
+    if (url.pathname === `/api/billing/receipts/${receipt.receiptId}`) return source(receipt, "ledger");
+    if (url.pathname === `/api/workspaces/${BASIC_CANARY_WORKSPACE_ID}/runtime-status`) return source({
+      workspaceId: BASIC_CANARY_WORKSPACE_ID, runtimeId: "runtime-basic-canary", status: "running", ready: true,
+      url: `https://workspace.medopl.cn/w/${BASIC_CANARY_WORKSPACE_ID}/`, serviceName: "workspace-service-basic-canary",
+      checks: [{ name: "deployment_ready", ok: true }], access: { username: "opl", credentialStatus: "configured", credentialVersion: "v1" }
+    }, "fabric");
+    if (url.pathname === `/api/workspaces/${BASIC_CANARY_WORKSPACE_ID}/runtime-credentials/reveal`) return json({
+      workspaceId: BASIC_CANARY_WORKSPACE_ID, access: { username: "opl", password: "workspace-password", credentialStatus: "configured", credentialVersion: "v1" }
+    }, 200, { "cache-control": "private, no-store" });
+    if (url.pathname === `/api/operator/workspaces/${BASIC_CANARY_WORKSPACE_ID}`) return source({
+      workspace: nestedSource({ id: BASIC_CANARY_WORKSPACE_ID, state: "active", packageId: "basic" }, "control-plane"),
+      workspaceKeyUsage: nestedSource({ keyId: BASIC_CANARY_KEY_ID, totalActualCostUsdMicros: state.modelRequests * 120 }, "sub2api"),
+      receipt: nestedSource(receipt, "ledger"),
+      resources: [
+        resourceFact("compute", "ins-basic-canary", BASIC_CANARY_RESOLVED_INSTANCE_TYPE),
+        resourceFact("storage", "disk-basic-canary", "CLOUD_BSSD"),
+        resourceFact("attachment", "attachment-basic-canary", "/data", "attached"),
+        resourceFact("runtime", "workspace-service-basic-canary", "workspace", "running")
+      ]
+    }, "control-plane+fabric+ledger");
+    if (url.pathname === "/api/production/readiness") return json({ ready: true, cloudImagesReady: true, workspaceImagesReady: true, immutableImagesReady: true });
+    return json({ error: "not_found" }, 404);
+  };
+
+  return {
+    calls,
+    state,
+    fetchImpl,
+    browserFactory: browserFactory(state),
+    runtimePodEvidenceReader: async ({ workspaceId, expectedDigest }) => {
+      state.podReads += 1;
+      assert.equal(workspaceId, BASIC_CANARY_WORKSPACE_ID);
+      assert.equal(expectedDigest, BASIC_CANARY_DIGEST);
+      return {
+        podName: "runtime-basic-canary-abc",
+        nodeName: podNodeName,
+        containerName: "workspace",
+        ready: true,
+        imageID: `containerd://${BASIC_CANARY_DIGEST}`,
+        resources: { cpu: 2, memoryGb: 4 }
+      };
+    },
+    cloudRevisionEvidenceReader: async ({ expectedMergedSha, expectedCloudDigest }) => {
+      state.cloudRevisionReads += 1;
+      assert.equal(expectedMergedSha, BASIC_CANARY_MERGED_SHA);
+      assert.equal(expectedCloudDigest, BASIC_CANARY_CLOUD_DIGEST);
+      if (cloudRevisionError) throw new Error(cloudRevisionError);
+      return {
+        mergedSha: BASIC_CANARY_MERGED_SHA,
+        cloudDigest: BASIC_CANARY_CLOUD_DIGEST,
+        services: {
+          controlPlane: { revision: "101", imageID: `containerd://${BASIC_CANARY_CLOUD_IMAGE}` },
+          fabric: { revision: "202", imageID: `containerd://${BASIC_CANARY_CLOUD_IMAGE}` },
+          ledger: { revision: "303", imageID: `containerd://${BASIC_CANARY_CLOUD_IMAGE}` }
+        }
+      };
+    }
+  };
+}
+
+function basicCanaryOptions(fixture) {
+  return {
+    origin: "https://cloud.medopl.cn",
+    fabricOrigin: "http://fabric.opl-cloud.svc:8082",
+    internalServiceToken: "internal-service-token",
+    adminEmail: ADMIN_EMAIL,
+    adminPassword: ADMIN_PASSWORD,
+    customerPassword: BASIC_CANARY_CUSTOMER_PASSWORD,
+    approvalJson: basicCanaryApprovalJson(),
+    approvalId: BASIC_CANARY_APPROVAL_ID,
+    confirmation: BASIC_CANARY_CONFIRMATION,
+    mergedSha: BASIC_CANARY_MERGED_SHA,
+    runId: "production-basic-canary-20260726",
+    launchPollAttempts: 3,
+    launchPollDelayMs: 0,
+    usageAttempts: 2,
+    usageRetryDelayMs: 0,
+    browserTimeoutMs: 20,
+    modelTimeoutMs: 20,
+    fetchImpl: fixture.fetchImpl,
+    fabricFetchImpl: fixture.fetchImpl,
+    browserFactory: fixture.browserFactory,
+    cloudRevisionEvidenceReader: fixture.cloudRevisionEvidenceReader,
+    runtimePodEvidenceReader: fixture.runtimePodEvidenceReader,
+    now: new Date("2026-07-26T00:00:00Z")
+  };
+}
+
+test("customer Basic canary uses one launch POST and returns redacted end-to-end evidence", async () => {
+  const fixture = basicCanaryFixture();
+  const result = await productionLiveQa.verifyProductionBasicCustomerCanary(basicCanaryOptions(fixture));
+
+  assert.equal(result.ok, true);
+  assert.equal(result.status, "passed");
+  assert.equal(result.accountId, BASIC_CANARY_ACCOUNT_ID);
+  assert.equal(result.workspaceId, BASIC_CANARY_WORKSPACE_ID);
+  assert.equal(result.operationId, BASIC_CANARY_LAUNCH_OPERATION_ID);
+  assert.deepEqual(result.wallet.deltas, { rechargeUsdMicros: "100000000", basicPurchaseUsdMicros: "52580000", modelUsageUsdMicros: "120" });
+  assert.deepEqual(result.compute.procurement, { nodePoolId: "np-basic", baselineReplicas: 7, targetReplicas: 8, beforeMachineCount: 7, machineWasNew: true });
+  assert.equal(result.compute.instanceId, "ins-basic-canary");
+  assert.equal(result.compute.sku, BASIC_CANARY_RESOLVED_INSTANCE_TYPE);
+  assert.deepEqual(result.compute.resources, { cpu: 2, memoryGb: 4 });
+  assert.equal(result.storage.providerId, "disk-basic-canary");
+  assert.equal(result.receipt.type, "billing.workspace_purchased.v1");
+  assert.equal(result.receipt.totalUsdMicros, 52_580_000);
+  assert.equal(result.usage.requestId, "req-basic-canary");
+  assert.equal(result.usage.actualCostUsdMicros, 120);
+  assert.equal(result.runtime.pod.imageID, `containerd://${BASIC_CANARY_DIGEST}`);
+  assert.equal(result.runtime.pod.nodeName, "10.66.1.18");
+  assert.equal(result.runtime.pod.nodeName, result.compute.nodeName);
+  assert.deepEqual(result.runtime.pod.resources, { cpu: 2, memoryGb: 4 });
+  assert.equal(result.runtime.id, "runtime-basic-canary");
+  assert.equal(result.runtime.providerId, "workspace-service-basic-canary");
+  assert.equal(result.runtime.websocket.status, 101);
+  assert.deepEqual(result.writeCounts, {
+    accountProvisionPosts: 1,
+    walletAdjustmentPosts: 1,
+    workspaceLaunchPosts: 1,
+    modelRequests: 1,
+    workspaceKeysCreated: 1,
+    workspacePurchaseDebits: 1,
+    tencentCvmPurchases: 1,
+    tencentCbsPurchases: 1
+  });
+  assert.deepEqual(result.httpAttempts, {
+    accountProvision: null,
+    walletAdjustment: null,
+    workspaceLaunch: null,
+    modelRequest: null
+  });
+  assert.equal(fixture.state.provisionPosts, 1);
+  assert.equal(fixture.state.rechargePosts, 1);
+  assert.equal(fixture.state.launchPosts, 1);
+  assert.equal(fixture.state.launchPolls, 2);
+  assert.equal(fixture.state.modelRequests, 1);
+  assert.equal(fixture.state.podReads, 1);
+  assert.equal(fixture.state.cloudRevisionReads, 5);
+  assert.equal(fixture.calls.filter((call) => call.host === "fabric.opl-cloud.svc:8082" && call.path === "/fabric/catalog" && call.method === "GET").length, 1);
+  assert.equal(fixture.calls.filter((call) => call.path === "/api/workspace-launches" && call.method === "POST").length, 1);
+  assert.equal(fixture.calls.filter((call) => call.path === `/api/workspace-launches/${BASIC_CANARY_LAUNCH_OPERATION_ID}`).every((call) => call.method === "GET"), true);
+  assert.doesNotMatch(JSON.stringify(result), /customer-password|workspace-password|internal-service-token|must-not-emit|redeem/i);
+});
+
+for (const [failureAtRead, expectedPosts] of [
+  [2, { account: 0, wallet: 0, launch: 0, model: 0 }],
+  [3, { account: 1, wallet: 0, launch: 0, model: 0 }],
+  [4, { account: 1, wallet: 1, launch: 0, model: 0 }],
+  [5, { account: 1, wallet: 1, launch: 1, model: 0 }]
+]) {
+  test(`customer Basic canary rechecks immutable Cloud revision before business write ${failureAtRead - 1}`, async () => {
+    const fixture = basicCanaryFixture();
+    const original = fixture.cloudRevisionEvidenceReader;
+    let reads = 0;
+    fixture.cloudRevisionEvidenceReader = async (input) => {
+      reads += 1;
+      if (reads === failureAtRead) throw new Error("production_basic_canary_cloud_revision_invalid:changed_mid_run");
+      return original(input);
+    };
+
+    await assert.rejects(() => productionLiveQa.verifyProductionBasicCustomerCanary(basicCanaryOptions(fixture)), /production_basic_canary_cloud_revision_invalid/);
+    assert.deepEqual({
+      account: fixture.state.provisionPosts,
+      wallet: fixture.state.rechargePosts,
+      launch: fixture.state.launchPosts,
+      model: fixture.state.modelRequests
+    }, expectedPosts);
+  });
+}
+
+test("customer Basic canary rejects every Cloud service revision mismatch before all business POSTs", async () => {
+  for (const component of ["control-plane", "fabric", "ledger"]) {
+    const fixture = basicCanaryFixture({ cloudRevisionError: `production_basic_canary_cloud_revision_invalid:${component}` });
+    await assert.rejects(() => productionLiveQa.verifyProductionBasicCustomerCanary(basicCanaryOptions(fixture)), /production_basic_canary_cloud_revision_invalid/);
+    assert.deepEqual({
+      account: fixture.state.provisionPosts,
+      wallet: fixture.state.rechargePosts,
+      launch: fixture.state.launchPosts,
+      model: fixture.state.modelRequests
+    }, { account: 0, wallet: 0, launch: 0, model: 0 }, component);
+    assert.equal(fixture.calls.length, 0, component);
+  }
+});
+
+for (const [name, initial, expectedPosts] of [
+  ["account", { initialProvisioned: true }, { provision: 0, recharge: 1, launch: 1 }],
+  ["wallet", { initialProvisioned: true, initialRecharged: true }, { provision: 0, recharge: 0, launch: 1 }],
+  ["launch", { initialProvisioned: true, initialRecharged: true, initialLaunchStatus: "fulfilling_compute" }, { provision: 0, recharge: 0, launch: 0 }]
+]) {
+  test(`customer Basic canary recovers ${name} authority with no checkpoint`, async () => {
+    const fixture = basicCanaryFixture(initial);
+    const result = await productionLiveQa.verifyProductionBasicCustomerCanary(basicCanaryOptions(fixture));
+
+    assert.equal(result.status, "passed");
+    assert.deepEqual({
+      provision: fixture.state.provisionPosts,
+      recharge: fixture.state.rechargePosts,
+      launch: fixture.state.launchPosts
+    }, expectedPosts);
+    assert.equal(fixture.state.modelRequests, 1);
+    assert.equal(fixture.calls.some((call) => call.path === "/api/operator/accounts" && call.method === "GET"), true);
+    assert.equal(fixture.calls.some((call) => call.path === `/api/operator/wallet-adjustments/${BASIC_CANARY_WALLET_OPERATION_ID}` && call.method === "GET"), true);
+    assert.equal(fixture.calls.some((call) => call.path === `/api/workspace-launches/${BASIC_CANARY_LAUNCH_OPERATION_ID}` && call.method === "GET"), true);
+  });
+}
+
+for (const stage of ["account_provision_attempted", "wallet_adjustment_attempted", "workspace_launch_attempted"]) {
+  test(`customer Basic canary recovers authoritative absence after ${stage}`, async (t) => {
+    const directory = await mkdtemp(join(tmpdir(), "opl-basic-canary-attempted-"));
+    t.after(() => rm(directory, { recursive: true, force: true }));
+    const checkpointPath = join(directory, "checkpoint.json");
+    const fixture = basicCanaryFixture();
+    let interrupted = false;
+
+    await assert.rejects(() => productionLiveQa.verifyProductionBasicCustomerCanary({
+      ...basicCanaryOptions(fixture),
+      checkpointPath,
+      afterCheckpoint: async (checkpointStage) => {
+        if (!interrupted && checkpointStage === stage) {
+          interrupted = true;
+          throw new Error(`simulated_exit_after_${stage}`);
+        }
+      }
+    }), new RegExp(`simulated_exit_after_${stage}`));
+
+    const result = await productionLiveQa.verifyProductionBasicCustomerCanary({ ...basicCanaryOptions(fixture), checkpointPath });
+    assert.equal(result.status, "passed");
+    assert.deepEqual({
+      account: fixture.state.provisionPosts,
+      wallet: fixture.state.rechargePosts,
+      launch: fixture.state.launchPosts,
+      model: fixture.state.modelRequests
+    }, { account: 1, wallet: 1, launch: 1, model: 1 });
+  });
+}
+
+for (const [name, expectedReadbackPath] of [
+  ["account", "/api/operator/accounts"],
+  ["wallet", `/api/operator/wallet-adjustments/${BASIC_CANARY_WALLET_OPERATION_ID}`],
+  ["launch", `/api/workspace-launches/${BASIC_CANARY_LAUNCH_OPERATION_ID}`]
+]) {
+  test(`customer Basic canary recovers ${name} after the service commits and the response is lost`, async (t) => {
+    const directory = await mkdtemp(join(tmpdir(), "opl-basic-canary-response-lost-"));
+    t.after(() => rm(directory, { recursive: true, force: true }));
+    const checkpointPath = join(directory, "checkpoint.json");
+    const fixture = basicCanaryFixture({ loseResponseAfter: name });
+
+    await assert.rejects(() => productionLiveQa.verifyProductionBasicCustomerCanary({
+      ...basicCanaryOptions(fixture),
+      checkpointPath
+    }), new RegExp(`simulated_${name}_response_lost`));
+    const callsBeforeRecovery = fixture.calls.length;
+
+    const result = await productionLiveQa.verifyProductionBasicCustomerCanary({
+      ...basicCanaryOptions(fixture),
+      checkpointPath
+    });
+    assert.equal(result.status, "passed");
+    assert.deepEqual({
+      account: fixture.state.provisionPosts,
+      wallet: fixture.state.rechargePosts,
+      launch: fixture.state.launchPosts,
+      model: fixture.state.modelRequests
+    }, { account: 1, wallet: 1, launch: 1, model: 1 });
+    assert.equal(fixture.calls.slice(callsBeforeRecovery).some((call) => call.path === expectedReadbackPath && call.method === "GET"), true);
+  });
+}
+
+test("customer Basic canary treats model_request_attempted as unknown after authoritative recovery and never resends", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "opl-basic-canary-model-attempted-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const checkpointPath = join(directory, "checkpoint.json");
+  const fixture = basicCanaryFixture();
+
+  await assert.rejects(() => productionLiveQa.verifyProductionBasicCustomerCanary({
+    ...basicCanaryOptions(fixture),
+    checkpointPath,
+    afterCheckpoint: async (stage) => {
+      if (stage === "model_request_attempted") throw new Error("simulated_exit_after_model_request_attempted");
+    }
+  }), /simulated_exit_after_model_request_attempted/);
+  const callsBeforeRecovery = fixture.calls.length;
+
+  await assert.rejects(() => productionLiveQa.verifyProductionBasicCustomerCanary({
+    ...basicCanaryOptions(fixture),
+    checkpointPath
+  }), /production_basic_canary_model_result_unknown/);
+  assert.equal(fixture.state.modelRequests, 0);
+  assert.equal(fixture.calls.slice(callsBeforeRecovery).some((call) => call.path === `/api/workspace-launches/${BASIC_CANARY_LAUNCH_OPERATION_ID}` && call.method === "GET"), true);
+  assert.equal(fixture.calls.slice(callsBeforeRecovery).some((call) => call.path === `/api/operator/wallet-adjustments/${BASIC_CANARY_WALLET_OPERATION_ID}` && call.method === "GET"), true);
+});
+
+test("customer Basic canary without a checkpoint fails model_result_unknown for an already Ready Workspace", async () => {
+  const fixture = basicCanaryFixture({ initialProvisioned: true, initialRecharged: true, initialLaunchStatus: "succeeded" });
+
+  await assert.rejects(() => productionLiveQa.verifyProductionBasicCustomerCanary(basicCanaryOptions(fixture)), /production_basic_canary_model_result_unknown/);
+  assert.deepEqual({
+    account: fixture.state.provisionPosts,
+    wallet: fixture.state.rechargePosts,
+    launch: fixture.state.launchPosts,
+    model: fixture.state.modelRequests
+  }, { account: 0, wallet: 0, launch: 0, model: 0 });
+});
+
+for (const stage of ["account_provisioned", "wallet_recharged", "launch_accepted", "runtime_ready"]) {
+  test(`customer Basic canary resumes after ${stage} without a second business mutation`, async (t) => {
+    const directory = await mkdtemp(join(tmpdir(), "opl-basic-canary-"));
+    t.after(() => rm(directory, { recursive: true, force: true }));
+    const checkpointPath = join(directory, "checkpoint.json");
+    const fixture = basicCanaryFixture();
+    let interrupted = false;
+
+    await assert.rejects(() => productionLiveQa.verifyProductionBasicCustomerCanary({
+      ...basicCanaryOptions(fixture),
+      checkpointPath,
+      afterCheckpoint: async (checkpointStage) => {
+        if (!interrupted && checkpointStage === stage) {
+          interrupted = true;
+          throw new Error(`simulated_exit_after_${stage}`);
+        }
+      }
+    }), new RegExp(`simulated_exit_after_${stage}`));
+
+    const result = await productionLiveQa.verifyProductionBasicCustomerCanary({
+      ...basicCanaryOptions(fixture),
+      checkpointPath
+    });
+    assert.equal(result.status, "passed");
+    assert.deepEqual({
+      accountProvisionPosts: fixture.state.provisionPosts,
+      walletAdjustmentPosts: fixture.state.rechargePosts,
+      workspaceLaunchPosts: fixture.state.launchPosts,
+      modelRequests: fixture.state.modelRequests
+    }, {
+      accountProvisionPosts: 1,
+      walletAdjustmentPosts: 1,
+      workspaceLaunchPosts: 1,
+      modelRequests: 1
+    });
+    assert.deepEqual(result.httpAttempts, {
+      accountProvision: null,
+      walletAdjustment: null,
+      workspaceLaunch: null,
+      modelRequest: null
+    });
+    const checkpoint = await readFile(checkpointPath, "utf8");
+    assert.doesNotMatch(checkpoint, /password|token|secret|redeem|providerRequestId/i);
+    assert.match(checkpoint, /"approvalDigest": "[0-9a-f]{64}"/);
+  });
+}
+
+test("customer Basic canary stops on manual review without replaying launch or sending a model request", async () => {
+  const fixture = basicCanaryFixture({ terminalStatus: "manual_review" });
+  await assert.rejects(() => productionLiveQa.verifyProductionBasicCustomerCanary(basicCanaryOptions(fixture)), /production_basic_canary_manual_review/);
+  assert.equal(fixture.state.launchPosts, 1);
+  assert.equal(fixture.state.modelRequests, 0);
+  assert.equal(fixture.calls.filter((call) => call.path === "/api/workspace-launches" && call.method === "POST").length, 1);
+});
+
+test("customer Basic canary rejects storage truth without an authoritative provider identity", async () => {
+  const fixture = basicCanaryFixture({ truthStorageProviderId: "" });
+  await assert.rejects(() => productionLiveQa.verifyProductionBasicCustomerCanary(basicCanaryOptions(fixture)), /production_basic_canary_provider_truth_invalid/);
+  assert.equal(fixture.state.launchPosts, 1);
+  assert.equal(fixture.state.modelRequests, 0);
+});
+
+test("customer Basic canary requires a release-owner resolved instance type before network access", async () => {
+  const fixture = basicCanaryFixture();
+  const approval = JSON.parse(basicCanaryApprovalJson());
+  delete approval.expected.resolvedInstanceType;
+
+  await assert.rejects(() => productionLiveQa.verifyProductionBasicCustomerCanary({
+    ...basicCanaryOptions(fixture),
+    approvalJson: JSON.stringify(approval)
+  }), /production_basic_canary_approval_invalid/);
+  assert.equal(fixture.calls.length, 0);
+});
+
+test("customer Basic canary fails before writes unless Fabric catalog proves 2C and 4GiB", async () => {
+  const fixture = basicCanaryFixture({ basicMemoryGb: 8 });
+
+  await assert.rejects(() => productionLiveQa.verifyProductionBasicCustomerCanary(basicCanaryOptions(fixture)), /production_basic_canary_resource_contract_invalid/);
+  assert.equal(fixture.state.provisionPosts, 0);
+  assert.equal(fixture.state.rechargePosts, 0);
+  assert.equal(fixture.state.launchPosts, 0);
+  assert.equal(fixture.state.modelRequests, 0);
+});
+
+test("customer Basic canary fails closed unless Fabric allocation truth proves 2C and 4GiB", async () => {
+  const fixture = basicCanaryFixture({ allocationMemoryGb: 8 });
+
+  await assert.rejects(() => productionLiveQa.verifyProductionBasicCustomerCanary(basicCanaryOptions(fixture)), /production_basic_canary_compute_allocation_invalid/);
+  assert.equal(fixture.state.launchPosts, 1);
+  assert.equal(fixture.state.modelRequests, 0);
+});
+
+test("customer Basic canary requires the Runtime Pod on the allocated and owned Machine node", async () => {
+  const fixture = basicCanaryFixture({ podNodeName: "10.66.1.99" });
+
+  await assert.rejects(() => productionLiveQa.verifyProductionBasicCustomerCanary(basicCanaryOptions(fixture)), /production_basic_canary_runtime_pod_invalid/);
+  assert.equal(fixture.state.launchPosts, 1);
+  assert.equal(fixture.state.modelRequests, 0);
+});
+
+test("customer Basic canary CLI requires every explicit write authorization before network access", async () => {
+  let stderr = "";
+  let calls = 0;
+  const code = await runProductionLiveQaCli({
+    argv: ["--basic-customer-canary", "--approval-id", BASIC_CANARY_APPROVAL_ID],
+    env: {
+      OPL_BASIC_CANARY_APPROVAL_JSON: basicCanaryApprovalJson(),
+      OPL_BASIC_CANARY_CONFIRMATION: BASIC_CANARY_CONFIRMATION
+    },
+    stdout: { write: () => {} },
+    stderr: { write: (chunk) => { stderr += chunk; } },
+    fetchImpl: async () => { calls += 1; return json({}); }
+  });
+  assert.equal(code, 1);
+  assert.match(stderr, /production_basic_canary_write_allow_flags_required/);
+  assert.equal(calls, 0);
+});
+
+test("customer Basic canary CLI invokes the same redacted orchestration", async () => {
+  const fixture = basicCanaryFixture();
+  let stdout = "";
+  let stderr = "";
+  const code = await runProductionLiveQaCli({
+    argv: [
+      "--basic-customer-canary",
+      "--allow-account-provision",
+      "--allow-wallet-recharge",
+      "--allow-workspace-purchase",
+      "--allow-model-write",
+      "--approval-id", BASIC_CANARY_APPROVAL_ID
+    ],
+    env: {
+      OPL_CONSOLE_ORIGIN: "https://cloud.medopl.cn",
+      OPL_FABRIC_INTERNAL_ORIGIN: "http://fabric.opl-cloud.svc:8082",
+      OPL_INTERNAL_SERVICE_TOKEN: "internal-service-token",
+      OPL_SUB2API_ADMIN_EMAIL: ADMIN_EMAIL,
+      OPL_SUB2API_ADMIN_PASSWORD: ADMIN_PASSWORD,
+      OPL_BASIC_CANARY_CUSTOMER_PASSWORD: BASIC_CANARY_CUSTOMER_PASSWORD,
+      OPL_BASIC_CANARY_APPROVAL_JSON: basicCanaryApprovalJson(),
+      OPL_BASIC_CANARY_CONFIRMATION: BASIC_CANARY_CONFIRMATION,
+      OPL_MERGED_SHA: BASIC_CANARY_MERGED_SHA,
+      OPL_VERIFY_RUN_ID: "production-basic-canary-20260726",
+      OPL_VERIFY_LAUNCH_POLL_ATTEMPTS: "3",
+      OPL_VERIFY_LAUNCH_POLL_DELAY_MS: "0",
+      OPL_VERIFY_USAGE_ATTEMPTS: "2",
+      OPL_VERIFY_USAGE_RETRY_DELAY_MS: "0",
+      OPL_VERIFY_BROWSER_TIMEOUT_MS: "20",
+      OPL_VERIFY_MODEL_TIMEOUT_MS: "20"
+    },
+    stdout: { write: (chunk) => { stdout += chunk; } },
+    stderr: { write: (chunk) => { stderr += chunk; } },
+    fetchImpl: fixture.fetchImpl,
+    fabricFetchImpl: fixture.fetchImpl,
+    browserFactory: fixture.browserFactory,
+    cloudRevisionEvidenceReader: fixture.cloudRevisionEvidenceReader,
+    runtimePodEvidenceReader: fixture.runtimePodEvidenceReader,
+    now: new Date("2026-07-26T00:00:00Z")
+  });
+  assert.equal(code, 0, stderr);
+  const result = JSON.parse(stdout);
+  assert.equal(result.status, "passed");
+  assert.equal(result.writeCounts.workspaceLaunchPosts, 1);
+  assert.doesNotMatch(stdout, /customer-password|workspace-password|internal-service-token|must-not-emit|redeem/i);
+});
 
 function readOnlyFixture({
   healthStatus = 200,

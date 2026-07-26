@@ -78,11 +78,14 @@ The four implementation owner lanes are Console/Control Plane, Fabric, Gateway i
 - The shared real-Tencent monthly preflight fails closed unless
   `RUN_TENCENT_CREATE_RELEASE_EXECUTION=1`; this check runs before every first
   Sub2API debit and leaves both the charge count and Fabric mutation count at zero on failure.
-- Basic and Pro use separate pre-created TKE NativeCVM NodePools:
-  `pool-basic-2c4g` for `SA5.MEDIUM4` and `pool-pro-8c16g` for
-  `SA5.2XLARGE16`. Empty `0/0` pools are valid templates, not idle-machine
-  inventory. Each launch uses the exact NodePool ID persisted by preflight;
-  label discovery fallback and customer-path NodePool creation are forbidden.
+- Basic and Pro use separate pre-created TKE NativeCVM NodePools. Basic's
+  customer resource contract is `2c4g`; Pro's is `8c16g`. Each Tencent instance
+  type is resolved from read-only availability and price evidence, explicitly
+  approved by the release owner, and registered by bootstrap and production
+  configuration. Empty `0/0` pools are valid templates, not idle-machine
+  inventory. Each launch uses the exact NodePool ID and instance type persisted
+  by preflight; label discovery fallback, per-launch SKU selection, and customer-
+  path NodePool creation are forbidden.
 - Fabric persists a FIFO admission queue per exact NodePool. A short PostgreSQL
   transaction lock orders admission only; no database connection is held during
   provider work. Only the persisted `started` head may prepare, scale, bounded-
@@ -93,15 +96,27 @@ The four implementation owner lanes are Console/Control Plane, Fabric, Gateway i
   Replay aligns that same target and claims only the unique Ready machine in
   `after - before`; it never allocates an old, idle, orphaned, or unregistered
   machine.
+- Machine claim and Sync require Tencent to explicitly report `Ready` or
+  `Running`; an empty or unknown state never defaults to running. Private-IP CVM
+  resolution must return exactly one instance whose TKE Machine, `ins-*` CVM,
+  VPC, and Subnet identities all match. Zero, multiple, incomplete, or
+  inconsistent results fail closed.
 - The system NodePool `np-6l4nkdto`, Machine `np-6l4nkdto-2cdtm`, Node
   `10.66.0.42`, and its production-configured `ins-*` CVM identity are protected
   from every Tencent/Kubernetes mutation and cleanup path. The Basic and Pro
   pools must be distinct from each other and from the system pool.
 - NodePool creation exists only in the manually approved bootstrap workflow.
   It inventories System/Basic/Pro first, creates only an unambiguously missing
-  package pool at replicas 0, requires explicit maxReplicas, and preserves a
-  successfully created pool when the other package fails so retry fills only
-  the missing pool.
+  package pool at replicas 0, and preserves a successfully created pool when
+  the other package fails so retry fills only the missing pool. The workflow
+  reuses the existing `production` Tencent credentials and kubeconfig. Dry-run
+  accepts no maxReplicas and performs zero mutation; mutation requires two
+  release-owner-approved maxReplicas values plus the exact confirmation
+  `CREATE_MISSING_WORKSPACE_NODEPOOLS`. Basic and Pro inventory and mutation also
+  require their release-owner-approved resolved instance types; the report,
+  NodePool label, Native `InstanceTypes`, and production configuration must
+  register the same value. Mutation runs only from the exact merged `origin/main`
+  SHA; dry-run remains inventory-only with zero mutation.
 - Fabric creates CBS with a stable `ClientToken`, reads back CVM/CBS identity and billing facts, then binds CBS through a static PV/PVC in the compute Zone.
 - Static CBS uses `com.tencent.cloud.csi.cbs`, `volumeHandle=disk-*`, RWO, empty `storageClassName`, Zone affinity, and `persistentVolumeReclaimPolicy=Retain`.
 - `UNATTACHED` or `ATTACHED` is provider-ready; PVC `Bound` is required before Workspace deployment.
@@ -344,6 +359,9 @@ Provider Acceptance owns two retained non-customer slots:
 | `verification-slot-basic-01` | Basic | `SA5.MEDIUM4` (`2c4g`) | 10GB | `PREPAID`, one month, manual renew |
 | `verification-slot-pro-01` | Pro | `SA5.2XLARGE16` (`8c16g`) | 100GB | `PREPAID`, one month, manual renew |
 
+These paused non-customer slot SKUs do not define the customer Basic resource
+contract or select the SKU for a customer launch.
+
 - Lifetime purchase budget is one per slot. Read-only inventory runs first;
   multiple or ambiguous candidates stop without purchase.
 - Provider Acceptance, Pro verification, and the fixed-slot production verifier
@@ -352,6 +370,26 @@ Provider Acceptance owns two retained non-customer slots:
 - The normal Console Basic canary is the only planned write-path validation for
   this rollout. It runs once after health/readiness and uses normal account,
   wallet, Key, launch, Fabric, Runtime, Usage, and Ledger paths.
+- Ordinary rollout and its verifiers remain read-only and perform zero customer,
+  wallet, model, Workspace, Tencent, or Kubernetes business mutation. The Basic
+  customer operation is a separate manual workflow and is never called by CI,
+  release, ordinary rollout, or E2E.
+- The canary is a manual release-owner invocation of the existing
+  `production-live-qa` runner, not CI, rollout, E2E, or a public test API. It
+  requires explicit approval for account provisioning, wallet recharge,
+  Workspace purchase, and one model request; submits exactly one launch POST,
+  polls only that operation, proves separate recharge/product/Usage wallet
+  deltas, the approved resolved SKU across the NodePool plan, Fabric allocation,
+  Tencent truth and operator facts, the Basic `2c4g` catalog and Runtime limits,
+  and the dedicated-pool `N -> N+1` resource chain, and emits only redacted
+  evidence. Before every business write, the runner revalidates the approved
+  merged SHA (including a live `origin/main` read) and Cloud digest against the
+  current Control Plane, Fabric, and Ledger Deployment revision -> ReplicaSet -> Ready Pod owner chain; a boolean
+  readiness response is not accepted as this gate. Its atomic checkpoint is only
+  a recovery hint: deterministic account, wallet-operation, launch-operation,
+  and Workspace identities are recovered from authoritative service readback,
+  unknown historical HTTP attempts remain null, and an attempted or otherwise
+  unprovable model result is never sent again.
 - Paused verification code and fake tests are not production evidence.
 
 ## Launch Stages

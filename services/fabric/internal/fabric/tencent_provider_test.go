@@ -26,6 +26,8 @@ func TestMain(m *testing.M) {
 		"OPL_SYSTEM_COMPUTE_CVM_ID":       "ins-system",
 		"OPL_BASIC_COMPUTE_NODE_POOL_ID":  "np-basic",
 		"OPL_PRO_COMPUTE_NODE_POOL_ID":    "np-pro",
+		"OPL_BASIC_COMPUTE_INSTANCE_TYPE": "SA5.MEDIUM4",
+		"OPL_PRO_COMPUTE_INSTANCE_TYPE":   "SA5.2XLARGE16",
 	} {
 		_ = os.Setenv(key, value)
 	}
@@ -257,7 +259,7 @@ func TestTencentProviderMonthlyPreflightUsesExactConfiguredPackagePool(t *testin
 		{
 			name: "compute", input: MonthlyPreflightInput{ResourceType: "compute", PackageID: "basic", Zone: "na-siliconvalley-1"},
 			check: func(t *testing.T, request provisionerRequest) {
-				if request.Action != "capacity_preflight" || request.PackageID != "basic" || request.Zone != "na-siliconvalley-1" || request.Pool.ID != "pool-basic-2c4g" || request.Pool.NodePoolID != "np-basic" || request.Pool.InstanceType != "SA5.MEDIUM4" || request.Pool.DesiredReplicas != 1 || request.Pool.MaxReplicas != 40 {
+				if request.Action != "capacity_preflight" || request.PackageID != "basic" || request.Zone != "na-siliconvalley-1" || request.Pool.ID != "pool-basic-2c4g" || request.Pool.NodePoolID != "np-basic" || request.Pool.InstanceType != "SA5.MEDIUM4" || request.Pool.CPU != 2 || request.Pool.MemoryGB != 4 || request.Pool.DesiredReplicas != 1 || request.Pool.MaxReplicas != 40 {
 					t.Fatalf("compute preflight request = %#v", request)
 				}
 			},
@@ -270,7 +272,7 @@ func TestTencentProviderMonthlyPreflightUsesExactConfiguredPackagePool(t *testin
 		{
 			name: "pro compute", input: MonthlyPreflightInput{ResourceType: "compute", PackageID: "pro", Zone: "na-siliconvalley-1"},
 			check: func(t *testing.T, request provisionerRequest) {
-				if request.Action != "capacity_preflight" || request.PackageID != "pro" || request.Zone != "na-siliconvalley-1" || request.Pool.ID != "pool-pro-8c16g" || request.Pool.NodePoolID != "np-pro" || request.Pool.InstanceType != "SA5.2XLARGE16" || request.Pool.DesiredReplicas != 1 || request.Pool.MaxReplicas != 12 {
+				if request.Action != "capacity_preflight" || request.PackageID != "pro" || request.Zone != "na-siliconvalley-1" || request.Pool.ID != "pool-pro-8c16g" || request.Pool.NodePoolID != "np-pro" || request.Pool.InstanceType != "SA5.2XLARGE16" || request.Pool.CPU != 8 || request.Pool.MemoryGB != 16 || request.Pool.DesiredReplicas != 1 || request.Pool.MaxReplicas != 12 {
 					t.Fatalf("Pro compute preflight request = %#v", request)
 				}
 			},
@@ -327,6 +329,21 @@ func TestTencentProviderMonthlyComputePreflightFailsBeforeProvisionerWithoutPool
 		return provisionerResponse{}, nil
 	}
 	if _, err := provider.MonthlyPreflight(context.Background(), MonthlyPreflightInput{ResourceType: "compute", PackageID: "basic", Zone: "na-siliconvalley-1"}); err == nil || err.Error() != "compute_node_pool_configuration_required" {
+		t.Fatalf("error=%v", err)
+	}
+}
+
+func TestTencentProviderCustomerComputeRequiresReleaseOwnerResolvedInstanceType(t *testing.T) {
+	t.Setenv("RUN_TENCENT_CREATE_RELEASE_EXECUTION", "1")
+	t.Setenv("OPL_PRO_COMPUTE_NODE_POOL_ID", "np-pro")
+	t.Setenv("OPL_PRO_COMPUTE_NODE_POOL_MAX_REPLICAS", "12")
+	t.Setenv("OPL_PRO_COMPUTE_INSTANCE_TYPE", "")
+	provider := NewTencentProvider()
+	provider.provision = func(context.Context, provisionerRequest) (provisionerResponse, error) {
+		t.Fatal("missing release-owner resolved SKU reached provisioner")
+		return provisionerResponse{}, nil
+	}
+	if _, err := provider.MonthlyPreflight(context.Background(), MonthlyPreflightInput{ResourceType: "compute", PackageID: "pro", Zone: "na-siliconvalley-1"}); err == nil || err.Error() != "compute_instance_type_configuration_required" {
 		t.Fatalf("error=%v", err)
 	}
 }
@@ -585,12 +602,12 @@ func TestTencentProviderMonthlyProviderTruthRejectsIncompleteLocalIdentityWithou
 func TestSyncComputeAllocationRestoresClaimedMachineSelector(t *testing.T) {
 	provider := NewTencentProvider()
 	provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
-		if request.Pool.InstanceType != "SA5.MEDIUM4" {
+		if request.Pool.InstanceType != "SA5.MEDIUM4" || request.Pool.CPU != 2 || request.Pool.MemoryGB != 4 {
 			t.Fatalf("sync request missing exact package SKU: %#v", request.Pool)
 		}
 		return provisionerResponse{
 			OK: true, Status: "running", InstanceID: "np-basic-2", NodeName: "10.0.0.8",
-			InstanceType: "SA5.MEDIUM4", ProviderData: map[string]string{"machineName": "np-basic-2", "instanceType": "SA5.MEDIUM4"},
+			InstanceType: "SA5.MEDIUM4", ProviderData: map[string]string{"machineName": "np-basic-2", "instanceType": "SA5.MEDIUM4", "cpu": "2", "memoryGb": "4"},
 		}, nil
 	}
 

@@ -34,13 +34,15 @@
     "basic": {
       "poolName": "pool-basic-2c4g",
       "packageId": "basic",
-      "instanceType": "SA5.MEDIUM4",
+      "resourceContract": {"cpu": 2, "memoryGb": 4},
+      "resolvedInstanceTypeSource": "release_owner_approved_bootstrap_input",
       "replicasMayBeZero": true
     },
     "pro": {
       "poolName": "pool-pro-8c16g",
       "packageId": "pro",
-      "instanceType": "SA5.2XLARGE16",
+      "resourceContract": {"cpu": 8, "memoryGb": 16},
+      "resolvedInstanceTypeSource": "release_owner_approved_bootstrap_input",
       "replicasMayBeZero": true
     },
     "maxReplicasPolicy": "required_explicit_configuration_no_default",

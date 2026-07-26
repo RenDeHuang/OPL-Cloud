@@ -1454,6 +1454,75 @@ func TestWorkspaceLaunchRestartRecoversLostDebitResponse(t *testing.T) {
 	}
 }
 
+func TestPostgresWorkspaceLaunchRestartAfterDebitRefundsProviderFailureExactlyOnce(t *testing.T) {
+	t.Setenv("OPL_MONTHLY_BILLING_WORKER_ENABLED", "false")
+	t.Setenv("OPL_PROVIDER_RECONCILE_WORKER_ENABLED", "false")
+	t.Setenv("OPL_ARCHIVE_RETENTION_WORKER_ENABLED", "false")
+	store := newPostgresWorkspaceRenewalStore(t)
+	seedTenantMember(t, store, "acct-alpha", "org-alpha", "usr-alpha", "alpha@example.com")
+	events := []string{}
+	sub2API := &workspaceLaunchSub2API{monthlySub2API: &monthlySub2API{events: &events, balances: []int64{1_000_000_000, 1_000_000_000, 947_420_000}}}
+	fabric := &monthlyFabric{fakeFabricClient: fakeFabricClient{calls: &events}, events: &events}
+	ledger := &workspaceLaunchLedger{events: &events, receipts: map[string]clients.Receipt{}}
+	service := controlplane.NewService(ledger, fabric, sub2API)
+	server, err := NewPersistentServer(service, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := loginForTest(t, server, "alpha@example.com", "CorrectHorseBatteryStaple!")
+	created := requestWithMutationKeyForTest(t, server, session, http.MethodPost, "/api/workspace-launches", `{"name":"Alpha","packageId":"basic","sizeGb":10,"autoRenew":false}`, "launch-postgres-provider-failure")
+	if created.Code != http.StatusAccepted {
+		t.Fatalf("launch status=%d body=%s", created.Code, created.Body.String())
+	}
+	var response map[string]any
+	if err := json.NewDecoder(created.Body).Decode(&response); err != nil {
+		t.Fatal(err)
+	}
+	operationID := stringValue(response["operationId"])
+	first, err := newControlPlaneAppWithStore(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := first.runWorkspaceLaunchesOnce(context.Background(), service); err != nil {
+		t.Fatal(err)
+	}
+	row, found, err := store.GetRuntimeOperation(context.Background(), operationID)
+	if err != nil || !found {
+		t.Fatalf("debited operation found=%t err=%v", found, err)
+	}
+	debited, err := decodeWorkspaceLaunchOperation(row)
+	if err != nil || debited.Status != "debited" || debited.Phase != "debited" || len(sub2API.charges) != 1 || len(fabric.computeIDs) != 0 {
+		t.Fatalf("debited operation=%#v err=%v charges=%#v compute=%#v", debited, err, sub2API.charges, fabric.computeIDs)
+	}
+
+	fabric.createErr = errors.New("provider failed after debit")
+	fabric.computeSync = clients.ComputeAllocation{ID: debited.ComputeID, AccountID: debited.AccountID, WorkspaceID: debited.WorkspaceID, Status: "external_deleted"}
+	fabric.storageSyncErr = &clients.FabricHTTPError{StatusCode: http.StatusInternalServerError, Body: `{"error":"storage_volume_not_found"}`}
+	for range 2 {
+		restarted, restartErr := newControlPlaneAppWithStore(store)
+		if restartErr != nil {
+			t.Fatal(restartErr)
+		}
+		if restartErr := restarted.runWorkspaceLaunchesOnce(context.Background(), service); restartErr != nil {
+			t.Fatal(restartErr)
+		}
+	}
+
+	row, found, err = store.GetRuntimeOperation(context.Background(), operationID)
+	if err != nil || !found {
+		t.Fatalf("refunded operation found=%t err=%v", found, err)
+	}
+	refunded, err := decodeWorkspaceLaunchOperation(row)
+	if err != nil || refunded.Status != "refunded" || refunded.Phase != "refunded" {
+		t.Fatalf("refunded operation=%#v err=%v", refunded, err)
+	}
+	if len(sub2API.charges) != 1 || len(sub2API.refunds) != 1 || sub2API.refunds[0].RefundUSDMicros != 52_580_000 ||
+		len(fabric.computeIDs) != 1 || len(fabric.storageIDs) != 0 || countStrings(events, "fabric.compute.prepare") != 1 ||
+		countStrings(events, "fabric.storage.sync") != 1 || len(ledger.receiptInputs) != 1 || ledger.receiptInputs[0].Type != "billing.workspace_refunded.v1" {
+		t.Fatalf("recovery charges=%#v refunds=%#v compute=%#v storage=%#v receipts=%#v events=%#v", sub2API.charges, sub2API.refunds, fabric.computeIDs, fabric.storageIDs, ledger.receiptInputs, events)
+	}
+}
+
 func TestWorkspaceLaunchConcurrentWorkers(t *testing.T) {
 	fixture := newWorkspaceLaunchWorkerFixture(t, []int64{1_000_000_000}, nil, nil)
 	configureWorkspaceLaunchFulfillment(t, fixture)

@@ -11,12 +11,23 @@ import (
 	"log"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"opl-cloud/services/fabric/internal/fabric"
 )
+
+func TestMain(m *testing.M) {
+	for key, value := range map[string]string{
+		"OPL_BASIC_COMPUTE_INSTANCE_TYPE": "SA5.MEDIUM4",
+		"OPL_PRO_COMPUTE_INSTANCE_TYPE":   "SA5.2XLARGE16",
+	} {
+		_ = os.Setenv(key, value)
+	}
+	os.Exit(m.Run())
+}
 
 type runtimeHealthSummaryHTTPProvider struct {
 	testProvider

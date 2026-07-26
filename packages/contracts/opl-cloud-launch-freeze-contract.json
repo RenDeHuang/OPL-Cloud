@@ -231,13 +231,15 @@
       "basic": {
         "stablePoolName": "pool-basic-2c4g",
         "packageId": "basic",
-        "instanceType": "SA5.MEDIUM4",
+        "resourceContract": {"cpu": 2, "memoryGb": 4},
+        "resolvedInstanceTypeSource": "release_owner_approved_bootstrap_input",
         "replicasMayBeZero": true
       },
       "pro": {
         "stablePoolName": "pool-pro-8c16g",
         "packageId": "pro",
-        "instanceType": "SA5.2XLARGE16",
+        "resourceContract": {"cpu": 8, "memoryGb": 16},
+        "resolvedInstanceTypeSource": "release_owner_approved_bootstrap_input",
         "replicasMayBeZero": true
       },
       "packagePoolsDistinctFromEachOtherAndSystem": true,
@@ -257,16 +259,36 @@
       "claim": "exactly_one_ready_machine_in_after_minus_before",
       "zeroDifference": "bounded_poll_same_persisted_absolute_target",
       "unsafeDifference": "manual_review_without_second_scale_or_old_machine_claim",
+      "machineIdentityReadback": {
+        "readyStates": ["Ready", "Running"],
+        "missingOrUnknownState": "fail_closed_never_default_running",
+        "privateIpCvmMatches": "exactly_one",
+        "exactIdentityChain": ["nodePoolId", "machineName", "cvmInstanceId", "privateIp", "vpcId", "subnetId"],
+        "instanceTypeConsistency": ["node_pool", "machine", "native", "cvm"],
+        "resourceShapeRequired": ["machine_cpu_memory", "native_cpu_memory", "cvm_cpu_memory"],
+        "zeroMultipleMissingOrMismatch": "fail_closed"
+      },
       "ownershipWriteGate": ["cvm_ins_id", "sku", "zone", "chargeType=PREPAID", "periodMonths=1", "renewFlag=NOTIFY_AND_MANUAL_RENEW", "deadline"],
       "customerMachineSource": "new_machine_created_for_this_workspace_only"
     },
     "nodePoolBootstrap": {
       "authority": "manual_approved_bootstrap_workflow_only",
+      "environment": "production",
+      "credentials": "existing_production_tencent_credentials_and_kubeconfig",
       "inventoryFirst": ["system", "basic", "pro"],
       "createOnlyWhenMissingAndUnambiguous": true,
       "newPoolReplicas": 0,
       "stableInfrastructureLabelsOnly": true,
       "customerOwnershipLabels": false,
+      "resolvedInstanceTypeInputs": {
+        "basic": "required_release_owner_approved_value",
+        "pro": "required_release_owner_approved_value"
+      },
+      "mutationSource": "exact_merged_origin_main_sha",
+      "resolvedInstanceTypeRegistration": ["bootstrap_report", "node_pool_label", "tke_native_instance_types", "production_configuration"],
+      "maxReplicas": "optional_for_inventory_required_for_mutation_no_default",
+      "mutationConfirmation": "CREATE_MISSING_WORKSPACE_NODEPOOLS",
+      "dryRunMutationCount": 0,
       "idempotency": "running_or_exact_creating_pool_is_registered_or_pending_without_duplicate_create",
       "partialState": "preserve_successful_pool_report_failure_retry_missing_only",
       "ordinaryCallerCreateNodePoolCount": 0
@@ -517,6 +539,38 @@
       "dedicatedKeyCount": 1,
       "modelRequestCount": 1,
       "providerMutationCount": 0
+    },
+    "customerBasicCanary": {
+      "runner": "tools/production-live-qa.ts --basic-customer-canary",
+      "workflow": ".github/workflows/production-basic-customer-operation.yml",
+      "authority": "manual_release_owner_explicit_write_approval_only",
+      "publicTestMode": false,
+      "accountProvisionApi": "POST /api/operator/accounts",
+      "walletRechargeApi": "POST /api/operator/accounts/{accountId}/wallet-adjustments",
+      "workspaceLaunchApi": "POST /api/workspace-launches",
+      "workspaceLaunchPostCount": 1,
+      "launchReplay": false,
+      "approvalExpected": ["mergedSha", "cloudImageDigest", "nodePoolId", "resolvedInstanceType", "workspaceImageDigest", "model"],
+      "preBusinessPostRevisionGate": {
+        "releaseSource": "exact_merged_origin_main_sha",
+        "remoteMainVerification": "live_git_ls_remote_before_each_business_write",
+        "deploySource": "opl-cloud-config_OPL_CLOUD_IMAGE",
+        "services": ["control-plane", "fabric", "ledger"],
+        "ownerChain": "deployment_uid_current_revision_to_replicaset_uid_to_ready_pod",
+        "imageMatch": "deployment_replicaset_and_ready_pod_image_id_equal_approved_cloud_digest",
+        "failure": "fail_closed_zero_business_posts",
+        "productionReadinessBooleanAccepted": false
+      },
+      "basicResourceContract": {"cpu": 2, "memoryGb": 4},
+      "skuConsistency": ["node_pool_allocation_plan", "fabric_compute_allocation", "tencent_provider_truth", "operator_provider_fact"],
+      "resourceEvidence": ["fabric_catalog_cpu_memory", "runtime_pod_limits"],
+      "recovery": "checkpoint_hint_only_deterministic_account_operation_workspace_authoritative_readback",
+      "checkpointAuthority": false,
+      "modelResultUnknown": "attempted_or_ready_without_authoritative_request_identity_never_resend",
+      "attemptAccounting": "http_attempts_separate_from_authoritative_mutation_counts",
+      "evidence": ["wallet_recharge_delta", "basic_purchase_delta", "model_usage_delta", "dedicated_pool_N_plus_1", "resolved_instance_type", "basic_2c4g", "new_cvm", "new_cbs", "attachment", "runtime", "workspace_image_id", "password_login", "websocket_101_bidirectional_frames", "single_model_response", "single_usage_record", "billing.workspace_purchased.v1"],
+      "redaction": "no_password_token_secret_redeem_code_or_provider_request_id",
+      "currentState": "orchestration_and_fake_tests_only_external_mutation_count_zero"
     },
     "perRunTencentPurchase": false,
     "monthlyBillingBackend": "fake",

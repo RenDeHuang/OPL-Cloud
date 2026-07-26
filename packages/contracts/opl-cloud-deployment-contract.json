@@ -139,6 +139,11 @@
       "TENCENT_DEPLOY_KUBECONFIG_B64",
       "TENCENT_DEPLOY_KUBECONFIG"
     ],
+    "customerPackageInstanceTypePolicy": {
+      "basic": "required_release_owner_approved_registered_configuration",
+      "pro": "required_release_owner_approved_registered_configuration",
+      "codeDefault": null
+    },
     "steps": [
       "Checkout",
       "Set up Node",
@@ -355,11 +360,47 @@
   "workspaceNodePoolBootstrap": {
     "file": ".github/workflows/bootstrap-tke-workspace-nodepools.yml",
     "mode": "manual_inventory_then_optional_create_missing_zero_replica_pools",
+    "environment": "production",
+    "credentials": "existing_production_tencent_credentials_and_kubeconfig",
     "packagePools": ["basic", "pro"],
-    "maxReplicasInputs": "required",
+    "resolvedInstanceTypeInputs": {"basic": "required_release_owner_approved_value", "pro": "required_release_owner_approved_value"},
+    "mutationSource": "exact_merged_origin_main_sha",
+    "resolvedInstanceTypeRegistration": ["bootstrap_report", "node_pool_label", "tke_native_instance_types", "production_configuration"],
+    "maxReplicasInputs": "optional_for_inventory_required_for_mutation",
+    "mutationConfirmation": "CREATE_MISSING_WORKSPACE_NODEPOOLS",
+    "dryRunMutationCount": 0,
     "idempotency": "register_running_wait_exact_creating_create_missing_only",
     "partialFailure": "preserve_created_pool_retry_missing_only",
     "createNodePoolOutsideBootstrap": false
+  },
+  "productionBasicCustomerCanary": {
+    "runner": "tools/production-live-qa.ts",
+    "mode": "--basic-customer-canary",
+    "workflow": ".github/workflows/production-basic-customer-operation.yml",
+    "execution": "manual_release_owner_only_not_ci_rollout_or_e2e",
+    "publicApiAdditions": 0,
+    "workspaceLaunchPostCount": 1,
+    "launchPolling": "same_operation_get_only",
+    "approvalExpected": ["mergedSha", "cloudImageDigest", "nodePoolId", "resolvedInstanceType", "workspaceImageDigest", "model"],
+    "preBusinessPostRevisionGate": {
+      "releaseSource": "exact_merged_origin_main_sha",
+      "remoteMainVerification": "live_git_ls_remote_before_each_business_write",
+      "deploySource": "opl-cloud-config_OPL_CLOUD_IMAGE",
+      "services": ["control-plane", "fabric", "ledger"],
+      "ownerChain": "deployment_uid_current_revision_to_replicaset_uid_to_ready_pod",
+      "imageMatch": "deployment_replicaset_and_ready_pod_image_id_equal_approved_cloud_digest",
+      "failure": "fail_closed_zero_business_posts",
+      "productionReadinessBooleanAccepted": false
+    },
+    "basicResourceContract": {"cpu": 2, "memoryGb": 4},
+    "skuConsistency": ["node_pool_allocation_plan", "fabric_compute_allocation", "tencent_provider_truth", "operator_provider_fact"],
+    "requiredWriteApprovals": ["account_provision", "wallet_recharge", "workspace_purchase", "single_model_request"],
+    "recovery": "checkpoint_hint_only_deterministic_account_operation_workspace_authoritative_readback",
+    "checkpointAuthority": false,
+    "modelResultUnknown": "attempted_or_ready_without_authoritative_request_identity_never_resend",
+    "attemptAccounting": "http_attempts_separate_from_authoritative_mutation_counts",
+    "output": "redacted_evidence_only",
+    "currentState": "implemented_and_fake_tested_not_executed"
   },
   "protectedSystemResources": {
     "nodePoolIdEnv": "OPL_SYSTEM_COMPUTE_NODE_POOL_ID",

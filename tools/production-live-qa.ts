@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 
 import {
@@ -15,6 +17,7 @@ import {
 } from "./production-verifier.ts";
 
 export const LIVE_QA_CONFIRMATION = "I_UNDERSTAND_THIS_SENDS_ONE_REAL_MODEL_REQUEST";
+export const BASIC_CUSTOMER_CANARY_CONFIRMATION = "I_UNDERSTAND_THIS_PROVISIONS_ONE_REAL_BASIC_WORKSPACE_AND_SENDS_ONE_MODEL_REQUEST";
 
 const DEFAULT_USAGE_ATTEMPTS = 24;
 const DEFAULT_USAGE_RETRY_DELAY_MS = 5_000;
@@ -220,6 +223,1023 @@ export async function verifyProductionReadOnlyRollout(options = {}) {
     },
     viewports
   };
+}
+
+function exactObjectKeys(value, keys) {
+  return value && typeof value === "object" && !Array.isArray(value) &&
+    Object.keys(value).sort().join("\u0000") === [...keys].sort().join("\u0000");
+}
+
+function basicCustomerCanaryApproval(value, approvalId, confirmation, now) {
+  if (confirmation !== BASIC_CUSTOMER_CANARY_CONFIRMATION) throw new Error("production_basic_canary_confirmation_required");
+  let approval;
+  try {
+    approval = typeof value === "string" ? JSON.parse(value) : value;
+  } catch {
+    throw new Error("production_basic_canary_approval_invalid");
+  }
+  if (!exactObjectKeys(approval, ["approvalId", "expiresAt", "customer", "rechargeUsdMicros", "idempotencyKeys", "launch", "expected"]) ||
+    approval.approvalId !== approvalId || !Number.isFinite(Date.parse(approval.expiresAt)) || Date.parse(approval.expiresAt) <= now.getTime() ||
+    !exactObjectKeys(approval.customer, ["email", "name"]) || !exactObjectKeys(approval.idempotencyKeys, ["accountProvision", "walletAdjustment", "workspaceLaunch"]) ||
+    !exactObjectKeys(approval.launch, ["name", "packageId", "sizeGb", "autoRenew"]) ||
+    !exactObjectKeys(approval.expected, ["mergedSha", "cloudImageDigest", "nodePoolId", "resolvedInstanceType", "workspaceImageDigest", "model"])) {
+    throw new Error("production_basic_canary_approval_invalid");
+  }
+  approval.customer.email = String(approval.customer.email || "").trim().toLowerCase();
+  approval.expected.resolvedInstanceType = String(approval.expected.resolvedInstanceType || "").trim();
+  const recharge = String(approval.rechargeUsdMicros || "");
+  const keys = Object.values(approval.idempotencyKeys);
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(approval.customer.email) || !String(approval.customer.name || "").trim() ||
+    !/^[1-9][0-9]*$/.test(recharge) || BigInt(recharge) <= 52_580_000n ||
+    keys.some((key) => typeof key !== "string" || key.trim() !== key || key.length < 8 || key.length > 200) || new Set(keys).size !== keys.length ||
+    approval.launch.packageId !== "basic" || approval.launch.sizeGb !== 10 || approval.launch.autoRenew !== false || !String(approval.launch.name || "").trim() ||
+    !/^[a-f0-9]{40}$/.test(String(approval.expected.mergedSha || "")) || !/^sha256:[a-f0-9]{64}$/.test(String(approval.expected.cloudImageDigest || "")) ||
+    !/^np-[A-Za-z0-9-]+$/.test(approval.expected.nodePoolId) || !/^sha256:[a-f0-9]{64}$/.test(approval.expected.workspaceImageDigest) ||
+    !/^[A-Za-z0-9][A-Za-z0-9.-]{1,63}$/.test(approval.expected.resolvedInstanceType) || !String(approval.expected.model || "").trim()) {
+    throw new Error("production_basic_canary_approval_invalid");
+  }
+  return approval;
+}
+
+function usdMicrosToDecimal(value) {
+  const micros = BigInt(value);
+  return `${micros / 1_000_000n}.${String(micros % 1_000_000n).padStart(6, "0")}`;
+}
+
+function usdDecimalMicros(value) {
+  const match = String(value || "").match(/^(0|[1-9][0-9]{0,12})(?:\.([0-9]{1,6}))?$/);
+  if (!match) return null;
+  const micros = BigInt(match[1]) * 1_000_000n + BigInt((match[2] || "").padEnd(6, "0") || "0");
+  return micros <= 9_223_372_036_854_775_807n ? micros : null;
+}
+
+function internalFabricOrigin(value) {
+  let parsed;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new Error("production_basic_canary_internal_fabric_origin_required");
+  }
+  const privateHost = parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1" || parsed.hostname.endsWith(".svc") ||
+    /^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.)/.test(parsed.hostname);
+  if (!privateHost || !["http:", "https:"].includes(parsed.protocol) || parsed.pathname !== "/" || parsed.search || parsed.hash || parsed.username || parsed.password) {
+    throw new Error("production_basic_canary_internal_fabric_origin_required");
+  }
+  return parsed.origin;
+}
+
+async function defaultExecFile(command, args, options) {
+  const { execFile } = await import("node:child_process");
+  return new Promise((resolve, reject) => {
+    execFile(command, args, options, (error, stdout, stderr) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve({ stdout, stderr });
+    });
+  });
+}
+
+function parseExecJson(stdout, error) {
+  try {
+    return JSON.parse(stdout);
+  } catch {
+    throw new Error(error);
+  }
+}
+
+function immutableDigestFromImageId(value) {
+  const match = String(value || "").match(/(?:@|^[a-z-]+:\/\/)(sha256:[a-f0-9]{64})$/);
+  return match?.[1] || "";
+}
+
+function validateBasicCanaryCloudRevisionEvidence(evidence, expectedMergedSha, expectedCloudDigest) {
+  const services = evidence?.services;
+  if (evidence?.mergedSha !== expectedMergedSha || evidence?.cloudDigest !== expectedCloudDigest ||
+    !exactObjectKeys(services, ["controlPlane", "fabric", "ledger"])) {
+    throw new Error("production_basic_canary_cloud_revision_invalid");
+  }
+  for (const service of Object.values(services)) {
+    if (!/^[1-9][0-9]*$/.test(String(service?.revision || "")) || immutableDigestFromImageId(service?.imageID) !== expectedCloudDigest) {
+      throw new Error("production_basic_canary_cloud_revision_invalid");
+    }
+  }
+  return evidence;
+}
+
+export async function readBasicCanaryCloudRevisionEvidence({
+  expectedMergedSha,
+  expectedCloudDigest,
+  kubeconfigPath,
+  namespace,
+  execFileImpl = defaultExecFile
+}) {
+  if (!/^[a-f0-9]{40}$/.test(String(expectedMergedSha || "")) || !/^sha256:[a-f0-9]{64}$/.test(String(expectedCloudDigest || "")) ||
+    !String(kubeconfigPath || "").startsWith("/") || !/^[a-z0-9][a-z0-9-]{0,62}$/.test(String(namespace || ""))) {
+    throw new Error("production_basic_canary_cloud_revision_config_invalid");
+  }
+  const options = { encoding: "utf8", maxBuffer: 8 * 1024 * 1024 };
+  const [head, originMain, remoteMain, configMapResult, deploymentsResult, replicaSetsResult, podsResult] = await Promise.all([
+    execFileImpl("git", ["rev-parse", "HEAD"], options),
+    execFileImpl("git", ["rev-parse", "refs/remotes/origin/main"], options),
+    execFileImpl("git", ["ls-remote", "--exit-code", "origin", "refs/heads/main"], options),
+    execFileImpl("kubectl", ["--kubeconfig", String(kubeconfigPath), "-n", String(namespace), "get", "configmap", "opl-cloud-config", "-o", "json"], options),
+    execFileImpl("kubectl", ["--kubeconfig", String(kubeconfigPath), "-n", String(namespace), "get", "deployments", "opl-cloud-control-plane", "opl-cloud-fabric", "opl-cloud-ledger", "-o", "json"], options),
+    execFileImpl("kubectl", ["--kubeconfig", String(kubeconfigPath), "-n", String(namespace), "get", "replicasets", "-l", "app.kubernetes.io/name=opl-cloud", "-o", "json"], options),
+    execFileImpl("kubectl", ["--kubeconfig", String(kubeconfigPath), "-n", String(namespace), "get", "pods", "-l", "app.kubernetes.io/name=opl-cloud", "-o", "json"], options)
+  ]);
+  const remoteMainFields = String(remoteMain.stdout || "").trim().split(/\s+/);
+  if (String(head.stdout || "").trim() !== expectedMergedSha || String(originMain.stdout || "").trim() !== expectedMergedSha ||
+    remoteMainFields.length !== 2 || remoteMainFields[0] !== expectedMergedSha || remoteMainFields[1] !== "refs/heads/main") {
+    throw new Error("production_basic_canary_cloud_revision_invalid");
+  }
+  const configMap = parseExecJson(configMapResult.stdout, "production_basic_canary_cloud_revision_invalid");
+  const deploymentsDocument = parseExecJson(deploymentsResult.stdout, "production_basic_canary_cloud_revision_invalid");
+  const replicaSetsDocument = parseExecJson(replicaSetsResult.stdout, "production_basic_canary_cloud_revision_invalid");
+  const podsDocument = parseExecJson(podsResult.stdout, "production_basic_canary_cloud_revision_invalid");
+  const expectedImage = String(configMap?.data?.OPL_CLOUD_IMAGE || "");
+  if (configMap?.metadata?.name !== "opl-cloud-config" || !expectedImage.endsWith(`@${expectedCloudDigest}`) ||
+    deploymentsDocument?.kind !== "List" || replicaSetsDocument?.kind !== "List" || podsDocument?.kind !== "List" ||
+    !Array.isArray(deploymentsDocument.items) || !Array.isArray(replicaSetsDocument.items) || !Array.isArray(podsDocument.items)) {
+    throw new Error("production_basic_canary_cloud_revision_invalid");
+  }
+
+  const revisionKey = "deployment.kubernetes.io/revision";
+  const definitions = [
+    ["controlPlane", "opl-cloud-control-plane", "control-plane"],
+    ["fabric", "opl-cloud-fabric", "fabric"],
+    ["ledger", "opl-cloud-ledger", "ledger"]
+  ];
+  const containerImage = (item, name) => (item?.spec?.template?.spec?.containers || []).find((container) => container?.name === name)?.image;
+  const ownedBy = (item, kind, name, uid) => Boolean(name && uid) && (item?.metadata?.ownerReferences || []).some((owner) =>
+    owner?.controller === true && owner?.kind === kind && owner?.name === name && owner?.uid === uid);
+  const services = {};
+  for (const [key, deploymentName, containerName] of definitions) {
+    const deploymentMatches = deploymentsDocument.items.filter((item) => item?.metadata?.name === deploymentName);
+    const deployment = deploymentMatches[0];
+    const deploymentUid = String(deployment?.metadata?.uid || "");
+    const revision = String(deployment?.metadata?.annotations?.[revisionKey] || "");
+    const desired = Number(deployment?.spec?.replicas ?? 1);
+    const status = deployment?.status || {};
+    if (deploymentMatches.length !== 1 || !deploymentUid || !/^[1-9][0-9]*$/.test(revision) || !Number.isInteger(desired) || desired < 1 ||
+      containerImage(deployment, containerName) !== expectedImage || Number(status.observedGeneration || 0) < Number(deployment?.metadata?.generation || 0) ||
+      Number(status.updatedReplicas || 0) !== desired || Number(status.readyReplicas || 0) !== desired ||
+      Number(status.availableReplicas || 0) !== desired || Number(status.unavailableReplicas || 0) !== 0) {
+      throw new Error("production_basic_canary_cloud_revision_invalid");
+    }
+    const currentReplicaSets = replicaSetsDocument.items.filter((replicaSet) =>
+      ownedBy(replicaSet, "Deployment", deploymentName, deploymentUid) &&
+      String(replicaSet?.metadata?.annotations?.[revisionKey] || "") === revision &&
+      containerImage(replicaSet, containerName) === expectedImage);
+    const replicaSet = currentReplicaSets[0];
+    const replicaSetName = String(replicaSet?.metadata?.name || "");
+    const replicaSetUid = String(replicaSet?.metadata?.uid || "");
+    if (currentReplicaSets.length !== 1 || !replicaSetName || !replicaSetUid) {
+      throw new Error("production_basic_canary_cloud_revision_invalid");
+    }
+    const currentPods = podsDocument.items.filter((pod) => !pod?.metadata?.deletionTimestamp && ownedBy(pod, "ReplicaSet", replicaSetName, replicaSetUid));
+    if (currentPods.length !== desired) throw new Error("production_basic_canary_cloud_revision_invalid");
+    let imageID = "";
+    for (const pod of currentPods) {
+      const ready = (pod?.status?.conditions || []).some((condition) => condition?.type === "Ready" && condition?.status === "True");
+      const containerStatus = (pod?.status?.containerStatuses || []).find((item) => item?.name === containerName);
+      if (pod?.status?.phase !== "Running" || !ready || containerStatus?.ready !== true || immutableDigestFromImageId(containerStatus?.imageID || containerStatus?.imageId) !== expectedCloudDigest) {
+        throw new Error("production_basic_canary_cloud_revision_invalid");
+      }
+      imageID = String(containerStatus.imageID || containerStatus.imageId);
+    }
+    services[key] = {
+      deployment: deploymentName,
+      deploymentUid,
+      revision,
+      replicaSet: replicaSetName,
+      replicaSetUid,
+      pod: String(currentPods[0]?.metadata?.name || ""),
+      podUid: String(currentPods[0]?.metadata?.uid || ""),
+      imageID
+    };
+  }
+  return validateBasicCanaryCloudRevisionEvidence({ mergedSha: expectedMergedSha, cloudDigest: expectedCloudDigest, cloudImage: expectedImage, services }, expectedMergedSha, expectedCloudDigest);
+}
+
+export async function readBasicCanaryRuntimePodEvidence({
+  workspaceId,
+  expectedDigest,
+  kubeconfigPath,
+  namespace,
+  execFileImpl = defaultExecFile
+}) {
+  if (!/^[A-Za-z0-9][A-Za-z0-9-]{1,99}$/.test(String(workspaceId || "")) || !/^sha256:[a-f0-9]{64}$/.test(String(expectedDigest || "")) ||
+    !String(kubeconfigPath || "").startsWith("/") || !/^[a-z0-9][a-z0-9-]{0,62}$/.test(String(namespace || ""))) {
+    throw new Error("production_basic_canary_runtime_pod_config_invalid");
+  }
+  const args = [
+    "--kubeconfig", String(kubeconfigPath),
+    "-n", String(namespace),
+    "get", "pods",
+    "-l", `oplcloud.cn/workspace-id=${workspaceId}`,
+    "-o", "json"
+  ];
+  const { stdout } = await execFileImpl("kubectl", args, { encoding: "utf8", maxBuffer: 4 * 1024 * 1024 });
+  let list;
+  try {
+    list = JSON.parse(stdout);
+  } catch {
+    throw new Error("production_basic_canary_runtime_pod_invalid");
+  }
+  if (list?.kind !== "List" || !Array.isArray(list.items)) throw new Error("production_basic_canary_runtime_pod_invalid");
+  const matches = list.items.flatMap((pod) => {
+    const labels = pod?.metadata?.labels;
+    const ready = (pod?.status?.conditions || []).some((condition) => condition?.type === "Ready" && condition?.status === "True");
+    const owners = (pod?.metadata?.ownerReferences || []).filter((owner) => owner?.controller === true && owner?.kind === "ReplicaSet" && owner?.name && owner?.uid);
+    const nodeName = String(pod?.spec?.nodeName || "");
+    const containers = (pod?.status?.containerStatuses || []).filter((container) => container?.name === "workspace" && container?.ready === true &&
+      String(container?.imageID || "").endsWith(expectedDigest));
+    const specs = (pod?.spec?.containers || []).filter((container) => container?.name === "workspace" &&
+      String(container?.resources?.limits?.cpu || "") === "2" && String(container?.resources?.limits?.memory || "") === "4Gi");
+    if (pod?.metadata?.deletionTimestamp || labels?.["oplcloud.cn/workspace-id"] !== workspaceId || pod?.status?.phase !== "Running" ||
+      !ready || owners.length !== 1 || containers.length !== 1 || specs.length !== 1 || !pod?.metadata?.name || !nodeName) {
+      return [];
+    }
+    return [{
+      podName: pod.metadata.name,
+      nodeName,
+      containerName: "workspace",
+      ready: true,
+      imageID: containers[0].imageID,
+      resources: { cpu: 2, memoryGb: 4 },
+      ownerReference: { kind: "ReplicaSet", name: owners[0].name, uid: owners[0].uid }
+    }];
+  });
+  if (matches.length !== 1) throw new Error("production_basic_canary_runtime_pod_invalid");
+  return matches[0];
+}
+
+function basicCanaryResourceContract(catalog) {
+  const basics = Array.isArray(catalog?.workspacePackages) ? catalog.workspacePackages.filter((item) => item?.id === "basic") : [];
+  const basic = basics[0];
+  if (basics.length !== 1 || basic?.cpu !== 2 || basic?.memoryGb !== 4 || basic?.diskGb !== 10 || basic?.provider !== "tencent-tke" || basic?.available !== true) {
+    throw new Error("production_basic_canary_resource_contract_invalid");
+  }
+  return { cpu: 2, memoryGb: 4 };
+}
+
+function controlPlaneCanaryPage(result, pageSize = 20) {
+  const envelope = sourceEnvelope(result, "control-plane", true);
+  const data = envelope.data;
+  if (!Array.isArray(data?.items) || !Number.isSafeInteger(data?.total) || data.total < 0 || data.page !== 1 || data.pageSize !== pageSize ||
+    Object.hasOwn(data, "pages") || data.items.length !== Math.min(data.total, pageSize)) {
+    throw new Error("production_basic_canary_page_invalid");
+  }
+  return data;
+}
+
+function gatewayCanaryPage(result, pageSize = 20) {
+  const envelope = sourceEnvelope(result, "sub2api", true);
+  const data = envelope.data;
+  if (!Array.isArray(data?.items) || !Number.isSafeInteger(data?.total) || data.total < 0 || data.page !== 1 || data.pageSize !== pageSize ||
+    !Number.isSafeInteger(data.pages) || data.pages !== Math.max(1, Math.ceil(data.total / pageSize)) || data.items.length !== Math.min(data.total, pageSize)) {
+    throw new Error("production_basic_canary_page_invalid");
+  }
+  return data;
+}
+
+function canaryReceipt(result, expected) {
+  const receipt = sourceEnvelope(result, "ledger").data;
+  const compute = receipt?.components?.compute;
+  const storage = receipt?.components?.storage;
+  const fulfillment = receipt?.fulfillment;
+  if (receipt?.receiptId !== expected.receiptId || receipt?.type !== "billing.workspace_purchased.v1" || receipt?.status !== "completed" ||
+    receipt?.workspaceId !== expected.workspaceId || receipt?.totalUsdMicros !== 52_580_000 ||
+    compute?.resourceId !== expected.computeAllocationId || compute?.chargeUsdMicros !== 50_000_000 ||
+    storage?.resourceId !== expected.storageId || storage?.sizeGb !== 10 || storage?.chargeUsdMicros !== 2_580_000 ||
+    fulfillment?.computeAllocationId !== expected.computeAllocationId || fulfillment?.storageId !== expected.storageId ||
+    fulfillment?.attachmentId !== expected.attachmentId || fulfillment?.runtimeId !== expected.runtimeId || fulfillment?.workspaceApiKeyId !== expected.workspaceApiKeyId) {
+    throw new Error("production_basic_canary_receipt_invalid");
+  }
+  return {
+    receiptId: receipt.receiptId,
+    type: receipt.type,
+    status: receipt.status,
+    totalUsdMicros: receipt.totalUsdMicros,
+    components: {
+      compute: { resourceId: compute.resourceId, chargeUsdMicros: compute.chargeUsdMicros },
+      storage: { resourceId: storage.resourceId, sizeGb: storage.sizeGb, chargeUsdMicros: storage.chargeUsdMicros }
+    },
+    fulfillment: {
+      computeAllocationId: fulfillment.computeAllocationId,
+      storageId: fulfillment.storageId,
+      attachmentId: fulfillment.attachmentId,
+      runtimeId: fulfillment.runtimeId,
+      workspaceApiKeyId: fulfillment.workspaceApiKeyId
+    }
+  };
+}
+
+function operatorResource(detail, resourceType) {
+  const matches = (detail?.resources || []).filter((item) => readOnlyNestedSource(item?.resourceType, "fabric") === resourceType);
+  if (matches.length !== 1) throw new Error(`production_basic_canary_${resourceType}_facts_invalid`);
+  const item = matches[0];
+  return {
+    type: resourceType,
+    packageOrSpec: readOnlyNestedSource(item.packageOrSpec, "fabric"),
+    providerId: readOnlyNestedSource(item.providerId, "fabric"),
+    zone: readOnlyNestedSource(item.zone, "fabric"),
+    status: readOnlyNestedSource(item.status, "fabric"),
+    expiresAt: readOnlyNestedSource(item.expiresAt, "fabric")
+  };
+}
+
+function validateFabricCanaryEvidence({ operations, allocation, ownership, truth, launch, approval }) {
+  if (!Array.isArray(operations)) throw new Error("production_basic_canary_fabric_operations_invalid");
+  const workspaceOperations = operations.filter((operation) => operation?.workspaceId === launch.workspaceId);
+  const actionCount = (action) => workspaceOperations.filter((operation) => operation?.action === action && operation?.status === "succeeded").length;
+  for (const action of ["create_compute_allocation", "create_storage_volume", "create_storage_attachment", "upsert_gateway_secret", "create_workspace_runtime"]) {
+    if (actionCount(action) !== 1) throw new Error(`production_basic_canary_fabric_operation_cardinality:${action}`);
+  }
+  const computeOperation = workspaceOperations.find((operation) => operation.action === "create_compute_allocation" && operation.resourceId === launch.computeAllocationId);
+  const plan = computeOperation?.redactedProviderPayload?.allocationPlan;
+  const resolvedInstanceType = approval.expected.resolvedInstanceType;
+  if (!plan || plan.packageId !== "basic" || plan.poolId !== "pool-basic-2c4g" || plan.nodePoolId !== approval.expected.nodePoolId ||
+    plan.instanceType !== resolvedInstanceType || !Number.isSafeInteger(plan.baselineReplicas) || plan.baselineReplicas < 0 ||
+    plan.targetReplicas !== plan.baselineReplicas + 1 || !Array.isArray(plan.beforeMachineNames) || plan.beforeMachineNames.length !== plan.baselineReplicas ||
+    new Set(plan.beforeMachineNames).size !== plan.beforeMachineNames.length) {
+    throw new Error("production_basic_canary_compute_plan_invalid");
+  }
+  const instanceId = String(allocation?.cvmInstanceId || allocation?.instanceId || "");
+  if (allocation?.id !== launch.computeAllocationId || allocation?.accountId !== launch.accountId || allocation?.workspaceId !== launch.workspaceId ||
+    allocation?.packageId !== "basic" || allocation?.nodePoolId !== approval.expected.nodePoolId || allocation?.instanceType !== resolvedInstanceType ||
+    allocation?.providerData?.instanceType !== resolvedInstanceType || String(allocation?.providerData?.cpu || "") !== "2" || String(allocation?.providerData?.memoryGb || "") !== "4" ||
+    allocation?.status !== "running" || allocation?.cvmStatus !== "RUNNING" || !/^ins-/.test(instanceId) || !allocation?.machineName ||
+    plan.beforeMachineNames.includes(allocation.machineName) || allocation?.chargeType !== "PREPAID" || allocation?.renewFlag !== "NOTIFY_AND_MANUAL_RENEW" || !allocation?.deadline) {
+    throw new Error("production_basic_canary_compute_allocation_invalid");
+  }
+  if (ownership?.resourceId !== allocation.id || ownership?.accountId !== launch.accountId || ownership?.workspaceId !== launch.workspaceId ||
+    ownership?.packageId !== "basic" || ownership?.nodePoolId !== approval.expected.nodePoolId || ownership?.machineId !== allocation.machineName ||
+    ownership?.instanceId !== instanceId || ownership?.nodeName !== allocation.nodeName || ownership?.status !== "active") {
+    throw new Error("production_basic_canary_machine_ownership_invalid");
+  }
+  if (truth?.computeState !== "ready" || truth?.storageState !== "ready" || truth?.compute?.id !== allocation.id ||
+    truth?.compute?.accountId !== launch.accountId || truth?.compute?.workspaceId !== launch.workspaceId || truth?.compute?.packageId !== "basic" ||
+    truth?.compute?.providerResourceId !== instanceId || truth?.compute?.machineName !== allocation.machineName || truth?.compute?.instanceId !== instanceId ||
+    truth?.compute?.nodePoolId !== approval.expected.nodePoolId || truth?.compute?.instanceType !== resolvedInstanceType || truth?.compute?.zone !== allocation.zone ||
+    truth?.compute?.providerData?.instanceType !== resolvedInstanceType || String(truth?.compute?.providerData?.cpu || "") !== "2" || String(truth?.compute?.providerData?.memoryGb || "") !== "4" ||
+    truth?.compute?.chargeType !== "PREPAID" || truth?.compute?.renewFlag !== "NOTIFY_AND_MANUAL_RENEW" || truth?.compute?.deadline !== allocation.deadline ||
+    truth?.storage?.id !== launch.storageId || truth?.storage?.accountId !== launch.accountId || truth?.storage?.workspaceId !== launch.workspaceId ||
+    !/^disk-/.test(String(truth?.storage?.providerResourceId || "")) || truth?.storage?.sizeGb !== 10 || truth?.storage?.zone !== allocation.zone ||
+    truth?.storage?.chargeType !== "PREPAID" || truth?.storage?.renewFlag !== "NOTIFY_AND_MANUAL_RENEW" || !truth?.storage?.deadline) {
+    throw new Error("production_basic_canary_provider_truth_invalid");
+  }
+  return {
+    instanceId,
+    machineId: allocation.machineName,
+    nodeName: allocation.nodeName,
+    zone: allocation.zone,
+    sku: allocation.instanceType,
+    deadline: allocation.deadline,
+    procurement: {
+      nodePoolId: plan.nodePoolId,
+      baselineReplicas: plan.baselineReplicas,
+      targetReplicas: plan.targetReplicas,
+      beforeMachineCount: plan.beforeMachineNames.length,
+      machineWasNew: true
+    },
+    actionCount
+  };
+}
+
+function canaryUsageSnapshot(result) {
+  const page = gatewayCanaryPage(result);
+  const ids = new Set();
+  for (const item of page.items) {
+    const id = String(item?.requestId || "");
+    if (!id || ids.has(id)) throw new Error("production_basic_canary_usage_invalid");
+    ids.add(id);
+  }
+  return { total: page.total, ids, items: page.items };
+}
+
+const BASIC_CANARY_CHECKPOINT_STAGES = Object.freeze([
+  "initial",
+  "account_provision_attempted",
+  "account_provisioned",
+  "baseline_ready",
+  "wallet_adjustment_attempted",
+  "wallet_recharged",
+  "workspace_launch_attempted",
+  "launch_accepted",
+  "launch_succeeded",
+  "runtime_ready",
+  "model_request_attempted",
+  "completed"
+]);
+
+function stableCanaryId(...parts) {
+  const hash = createHash("sha1");
+  for (const part of parts) {
+    hash.update(String(part));
+    hash.update(Buffer.from([0]));
+  }
+  return hash.digest("hex");
+}
+
+function canonicalJson(value) {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (!value || typeof value !== "object") return JSON.stringify(value);
+  return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(",")}}`;
+}
+
+function basicCanaryCheckpointIdentity(approval) {
+  const accountId = `acct-${stableCanaryId("account", approval.customer.email).slice(0, 18)}`;
+  const launchOperationId = `workspace-launch-${stableCanaryId(accountId, approval.idempotencyKeys.workspaceLaunch).slice(0, 18)}`;
+  return {
+    accountId,
+    accountOperationId: `account-provision-${stableCanaryId(approval.idempotencyKeys.accountProvision, approval.customer.email).slice(0, 18)}`,
+    walletOperationId: `wallet-adjustment-${stableCanaryId(accountId, approval.idempotencyKeys.walletAdjustment).slice(0, 18)}`,
+    launchOperationId,
+    workspaceId: `ws-${stableCanaryId("workspace-launch-v2", accountId, launchOperationId).slice(0, 18)}`
+  };
+}
+
+function checkpointAtLeast(checkpoint, stage) {
+  return BASIC_CANARY_CHECKPOINT_STAGES.indexOf(checkpoint.stage) >= BASIC_CANARY_CHECKPOINT_STAGES.indexOf(stage);
+}
+
+async function loadBasicCanaryCheckpoint(path, approval) {
+  const identities = basicCanaryCheckpointIdentity(approval);
+  const initial = {
+    schemaVersion: 2,
+    approvalDigest: createHash("sha256").update(canonicalJson(approval)).digest("hex"),
+    stage: "initial",
+    identities,
+    httpAttempts: { accountProvision: null, walletAdjustment: null, workspaceLaunch: null, modelRequest: null },
+    baseline: { walletBeforeRechargeUsdMicros: "", walletAfterRechargeUsdMicros: "" }
+  };
+  if (!path) return { checkpoint: initial, present: false };
+  let parsed;
+  try {
+    parsed = JSON.parse(await readFile(path, "utf8"));
+  } catch (error) {
+    if (error?.code === "ENOENT") return { checkpoint: initial, present: false };
+    throw new Error("production_basic_canary_checkpoint_invalid");
+  }
+  const attempts = parsed?.httpAttempts;
+  const baseline = parsed?.baseline;
+  if (!exactObjectKeys(parsed, ["schemaVersion", "approvalDigest", "stage", "identities", "httpAttempts", "baseline"]) ||
+    parsed.schemaVersion !== initial.schemaVersion || parsed.approvalDigest !== initial.approvalDigest ||
+    !BASIC_CANARY_CHECKPOINT_STAGES.includes(parsed.stage) || JSON.stringify(parsed.identities) !== JSON.stringify(identities) ||
+    !exactObjectKeys(attempts, ["accountProvision", "walletAdjustment", "workspaceLaunch", "modelRequest"]) ||
+    Object.values(attempts).some((value) => value !== null && (!Number.isInteger(value) || value < 0 || value > 1)) ||
+    !exactObjectKeys(baseline, ["walletBeforeRechargeUsdMicros", "walletAfterRechargeUsdMicros"]) ||
+    (checkpointAtLeast(parsed, "baseline_ready") && !/^[0-9]+$/.test(baseline.walletBeforeRechargeUsdMicros)) ||
+    (checkpointAtLeast(parsed, "wallet_recharged") && !/^[0-9]+$/.test(baseline.walletAfterRechargeUsdMicros))) {
+    throw new Error("production_basic_canary_checkpoint_invalid");
+  }
+  if (parsed.stage === "completed") throw new Error("production_basic_canary_already_completed");
+  return { checkpoint: parsed, present: true };
+}
+
+async function saveBasicCanaryCheckpoint(checkpoint, stage, path, afterCheckpoint) {
+  if (!BASIC_CANARY_CHECKPOINT_STAGES.includes(stage) || BASIC_CANARY_CHECKPOINT_STAGES.indexOf(stage) < BASIC_CANARY_CHECKPOINT_STAGES.indexOf(checkpoint.stage)) {
+    throw new Error("production_basic_canary_checkpoint_transition_invalid");
+  }
+  checkpoint.stage = stage;
+  await writeVerificationManifest(path, checkpoint);
+  if (typeof afterCheckpoint === "function") await afterCheckpoint(stage);
+}
+
+function recordBasicCanaryHttpAttempt(checkpoint, name) {
+  const current = checkpoint.httpAttempts[name];
+  checkpoint.httpAttempts[name] = current === 0 ? 1 : null;
+}
+
+async function authoritativeGet(options) {
+  try {
+    return { found: true, ...(await requestJson(options)) };
+  } catch (error) {
+    if (String(error?.message || "").startsWith(`request_failed:GET:${options.path}:404:`)) return { found: false };
+    throw error;
+  }
+}
+
+async function readBasicCanaryAccountAuthority(requestOptions, adminAuth, approval, expectedAccountId) {
+  const pageSize = 50;
+  let expectedTotal = null;
+  const matches = [];
+  for (let page = 1; ; page += 1) {
+    const envelope = sourceEnvelope(await requestJson({
+      ...requestOptions,
+      auth: adminAuth,
+      path: `/api/operator/accounts?page=${page}&pageSize=${pageSize}`
+    }), "control-plane+sub2api", true);
+    const data = envelope.data;
+    if (!Array.isArray(data?.items) || !Number.isSafeInteger(data?.total) || data.total < 0 || data.page !== page || data.pageSize !== pageSize ||
+      data.items.length > pageSize || (expectedTotal !== null && data.total !== expectedTotal)) {
+      throw new Error("production_basic_canary_account_readback_failed");
+    }
+    expectedTotal ??= data.total;
+    const pages = Math.max(1, Math.ceil(data.total / pageSize));
+    const expectedItems = page < pages ? pageSize : data.total - (page - 1) * pageSize;
+    if (data.items.length !== Math.max(0, expectedItems)) throw new Error("production_basic_canary_account_readback_failed");
+    for (const item of data.items) {
+      const email = String(item?.email || "").trim().toLowerCase();
+      if (item?.accountId === expectedAccountId || email === approval.customer.email) matches.push(item);
+    }
+    if (page >= pages) break;
+  }
+  if (matches.length === 0) return { found: false };
+  const account = matches[0];
+  if (matches.length !== 1 || account?.accountId !== expectedAccountId || String(account?.email || "").trim().toLowerCase() !== approval.customer.email ||
+    account?.role !== "owner" || account?.status !== "active" || !/^usr-/.test(String(account?.consoleUserId || "")) ||
+    !/^[1-9][0-9]*$/.test(String(account?.sub2apiUserId || ""))) {
+    throw new Error("production_basic_canary_account_readback_failed");
+  }
+  return { found: true, account };
+}
+
+function basicCanaryWalletAdjustment(payload, expectedOperationId, expectedAccountId, expectedAmountMicros) {
+  if (payload?.operationId !== expectedOperationId || payload?.accountId !== expectedAccountId || payload?.kind !== "recharge" ||
+    usdDecimalMicros(payload?.amountUsd) !== BigInt(expectedAmountMicros) || payload?.reason !== "production Basic customer canary precharge" ||
+    payload?.status !== "succeeded" || payload?.phase !== "succeeded") {
+    throw new Error("production_basic_canary_recharge_readback_failed");
+  }
+  const before = readOnlyNestedSource(payload.beforeBalance, "sub2api");
+  const after = readOnlyNestedSource(payload.afterBalance, "sub2api");
+  for (const balance of [before, after]) {
+    if (balance?.currency !== "USD" || !/^(0|[1-9][0-9]*)$/.test(String(balance?.usdMicros || "")) ||
+      BigInt(balance.usdMicros) > 9_223_372_036_854_775_807n) {
+      throw new Error("production_basic_canary_recharge_readback_failed");
+    }
+  }
+  if (BigInt(after.usdMicros) - BigInt(before.usdMicros) !== BigInt(expectedAmountMicros)) {
+    throw new Error("production_basic_canary_recharge_readback_failed");
+  }
+  return { before: { usdMicros: String(before.usdMicros) }, after: { usdMicros: String(after.usdMicros) } };
+}
+
+function basicCanaryLaunchIdentity(launch, approval, expected) {
+  if (launch?.operationId !== expected.operationId || launch?.workspaceId !== expected.workspaceId || launch?.accountId !== expected.accountId ||
+    launch?.name !== approval.launch.name || launch?.packageId !== "basic" || launch?.sizeGb !== 10 || launch?.autoRenew !== false ||
+    launch?.priceVersion !== "pilot-usd-2026-07-v1" || launch?.currency !== "USD" || launch?.totalChargeUsdMicros !== 52_580_000) {
+    throw new Error("production_basic_canary_launch_readback_failed");
+  }
+  return launch;
+}
+
+async function readEmptyBasicCanaryLaunchBaseline(requestOptions, customerAuth, { allowNonWorkspaceReceipts = false } = {}) {
+  const workspaces = controlPlaneCanaryPage(await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/workspaces?page=1&pageSize=20" }));
+  const launches = (await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/workspace-launches" })).payload;
+  const keys = gatewayCanaryPage(await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/gateway/keys?page=1&pageSize=20" }));
+  const receipts = sourceEnvelope(await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/billing/receipts?limit=20" }), "ledger", true).data;
+  const receiptItems = receipts?.receipts;
+  const workspaceReceipts = Array.isArray(receiptItems) ? receiptItems.filter((receipt) => receipt?.type === "billing.workspace_purchased.v1" || receipt?.workspaceId) : [];
+  if (workspaces.total !== 0 || !Array.isArray(launches) || launches.length !== 0 || keys.total !== 0 || !Array.isArray(receiptItems) ||
+    (!allowNonWorkspaceReceipts && receiptItems.length !== 0) || workspaceReceipts.length !== 0 || receipts.hasMore !== false) {
+    throw new Error("production_basic_canary_baseline_not_empty");
+  }
+}
+
+export async function verifyProductionBasicCustomerCanary(options = {}) {
+  const {
+    origin,
+    fabricOrigin,
+    internalServiceToken,
+    adminEmail,
+    adminPassword,
+    customerPassword,
+    approvalJson,
+    approvalId,
+    confirmation,
+    mergedSha,
+    runId,
+    launchPollAttempts = 180,
+    launchPollDelayMs = 10_000,
+    usageAttempts = DEFAULT_USAGE_ATTEMPTS,
+    usageRetryDelayMs = DEFAULT_USAGE_RETRY_DELAY_MS,
+    browserTimeoutMs = DEFAULT_BROWSER_TIMEOUT_MS,
+    modelTimeoutMs = DEFAULT_MODEL_TIMEOUT_MS,
+    requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
+    fetchImpl = globalThis.fetch,
+    fabricFetchImpl = fetchImpl,
+    browserFactory,
+    cloudRevisionEvidenceReader,
+    runtimePodEvidenceReader,
+    checkpointPath,
+    afterCheckpoint,
+    signal,
+    now = new Date()
+  } = options;
+  const approval = basicCustomerCanaryApproval(approvalJson, approvalId, confirmation, now);
+  const credentials = existingAdminCredentials(adminEmail, adminPassword);
+  if (mergedSha !== approval.expected.mergedSha || typeof cloudRevisionEvidenceReader !== "function" || !String(customerPassword || "") ||
+    typeof runtimePodEvidenceReader !== "function" || !String(internalServiceToken || "") ||
+    !Number.isInteger(launchPollAttempts) || launchPollAttempts < 1 || !Number.isFinite(launchPollDelayMs) || launchPollDelayMs < 0 ||
+    !Number.isInteger(usageAttempts) || usageAttempts < 1 || !Number.isFinite(usageRetryDelayMs) || usageRetryDelayMs < 0) {
+    throw new Error("production_basic_canary_config_invalid");
+  }
+  const loadedCheckpoint = await loadBasicCanaryCheckpoint(checkpointPath, approval);
+  const { checkpoint, present: checkpointPresent } = loadedCheckpoint;
+  const initialCheckpointStage = checkpoint.stage;
+  const expectedIdentities = checkpoint.identities;
+  const normalizedOrigin = assertPublicHttpsUrl(origin, "public_console_origin_required", { hostname: "cloud.medopl.cn" }).origin;
+  const normalizedFabricOrigin = internalFabricOrigin(fabricOrigin);
+  const requestOptions = { fetchImpl, origin: normalizedOrigin, signal, timeoutMs: requestTimeoutMs };
+  const fabricOptions = {
+    fetchImpl: fabricFetchImpl,
+    origin: normalizedFabricOrigin,
+    signal,
+    timeoutMs: requestTimeoutMs,
+    headers: { authorization: `Bearer ${internalServiceToken}` }
+  };
+  const assertCloudRevision = async () => validateBasicCanaryCloudRevisionEvidence(await cloudRevisionEvidenceReader({
+    expectedMergedSha: approval.expected.mergedSha,
+    expectedCloudDigest: approval.expected.cloudImageDigest,
+    signal
+  }), approval.expected.mergedSha, approval.expected.cloudImageDigest);
+  await assertCloudRevision();
+  const resourceContract = basicCanaryResourceContract((await requestJson({
+    ...fabricOptions,
+    path: "/fabric/catalog",
+    headers: fabricOptions.headers
+  })).payload);
+
+  const adminAuth = await login({ ...requestOptions, ...credentials });
+  if (adminAuth.user?.accountId !== PRODUCTION_ADMIN.accountId || adminAuth.user?.role !== PRODUCTION_ADMIN.role || !adminAuth.csrfToken) {
+    throw new Error("production_basic_canary_admin_login_failed");
+  }
+  const accountAuthority = await readBasicCanaryAccountAuthority(requestOptions, adminAuth, approval, expectedIdentities.accountId);
+  if (!accountAuthority.found) {
+    if (checkpointAtLeast(checkpoint, "account_provisioned")) throw new Error("production_basic_canary_account_readback_failed");
+    await assertCloudRevision();
+    recordBasicCanaryHttpAttempt(checkpoint, "accountProvision");
+    await saveBasicCanaryCheckpoint(checkpoint, "account_provision_attempted", checkpointPath, afterCheckpoint);
+    const provision = await requestJson({
+      ...requestOptions,
+      auth: adminAuth,
+      path: "/api/operator/accounts",
+      method: "POST",
+      headers: { "Idempotency-Key": approval.idempotencyKeys.accountProvision },
+      body: { email: approval.customer.email, password: String(customerPassword), name: approval.customer.name }
+    });
+    if (provision.response.status !== 201 || provision.payload?.status !== "succeeded" ||
+      provision.payload?.operationId !== expectedIdentities.accountOperationId || provision.payload?.accountId !== expectedIdentities.accountId) {
+      throw new Error("production_basic_canary_account_provision_failed");
+    }
+  }
+  const accountId = expectedIdentities.accountId;
+  const customerAuth = await login({ ...requestOptions, email: approval.customer.email, password: String(customerPassword) });
+  if (customerAuth.user?.accountId !== accountId || customerAuth.user?.role !== "owner" || !customerAuth.csrfToken) {
+    throw new Error("production_basic_canary_customer_login_failed");
+  }
+  const identity = sourceEnvelope(await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/auth/me" }), "sub2api").data;
+  const sub2apiUserId = String(identity?.sub2apiUserId || "");
+  if (identity?.accountId !== accountId || identity?.email !== approval.customer.email || identity?.role !== "owner" || identity?.status !== "active" ||
+    !/^usr-/.test(String(identity?.consoleUserId || "")) || !/^[1-9][0-9]*$/.test(sub2apiUserId)) {
+    throw new Error("production_basic_canary_identity_invalid");
+  }
+  if (!checkpointAtLeast(checkpoint, "account_provisioned")) {
+    await saveBasicCanaryCheckpoint(checkpoint, "account_provisioned", checkpointPath, afterCheckpoint);
+  }
+
+  const walletAdjustmentPath = `/api/operator/wallet-adjustments/${encodeURIComponent(expectedIdentities.walletOperationId)}`;
+  let walletAuthority = await authoritativeGet({ ...requestOptions, auth: adminAuth, path: walletAdjustmentPath });
+  let walletBeforeRecharge;
+  let walletAfterRecharge;
+  if (walletAuthority.found) {
+    const adjustment = basicCanaryWalletAdjustment(walletAuthority.payload, expectedIdentities.walletOperationId, accountId, approval.rechargeUsdMicros);
+    walletBeforeRecharge = adjustment.before;
+    walletAfterRecharge = adjustment.after;
+  } else {
+    if (checkpointAtLeast(checkpoint, "wallet_recharged")) throw new Error("production_basic_canary_recharge_readback_failed");
+    walletBeforeRecharge = walletFact(sourceEnvelope(await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/gateway/wallet" }), "sub2api"), sub2apiUserId);
+    if (checkpoint.baseline.walletBeforeRechargeUsdMicros && checkpoint.baseline.walletBeforeRechargeUsdMicros !== walletBeforeRecharge.usdMicros) {
+      throw new Error("production_basic_canary_recharge_readback_failed");
+    }
+    await readEmptyBasicCanaryLaunchBaseline(requestOptions, customerAuth);
+    checkpoint.baseline.walletBeforeRechargeUsdMicros = walletBeforeRecharge.usdMicros;
+    if (!checkpointAtLeast(checkpoint, "baseline_ready")) {
+      await saveBasicCanaryCheckpoint(checkpoint, "baseline_ready", checkpointPath, afterCheckpoint);
+    }
+  }
+  const reconciliation = sourceEnvelope(await requestJson({ ...requestOptions, auth: adminAuth, path: "/api/operator/reconciliation?page=1&pageSize=20" }), "control-plane", true).data;
+  if (!Array.isArray(reconciliation?.items) || reconciliation.total !== 0) throw new Error("production_basic_canary_reconciliation_blocker");
+  const quote = (await requestJson({
+    ...requestOptions,
+    auth: customerAuth,
+    path: "/api/pricing/preview",
+    method: "POST",
+    body: { resourceType: "workspace", packageId: "basic", sizeGb: 10 }
+  })).payload;
+  if (quote?.packageId !== "basic" || quote?.sizeGb !== 10 || quote?.currency !== "USD" || quote?.totalChargeUsdMicros !== 52_580_000 || quote?.autoRenew !== false) {
+    throw new Error("production_basic_canary_quote_invalid");
+  }
+
+  if (!walletAuthority.found) {
+    await assertCloudRevision();
+    recordBasicCanaryHttpAttempt(checkpoint, "walletAdjustment");
+    await saveBasicCanaryCheckpoint(checkpoint, "wallet_adjustment_attempted", checkpointPath, afterCheckpoint);
+    const adjustment = await requestJson({
+      ...requestOptions,
+      auth: adminAuth,
+      path: `/api/operator/accounts/${encodeURIComponent(accountId)}/wallet-adjustments`,
+      method: "POST",
+      headers: { "Idempotency-Key": approval.idempotencyKeys.walletAdjustment },
+      body: {
+        kind: "recharge",
+        amountUsd: usdMicrosToDecimal(approval.rechargeUsdMicros),
+        reason: "production Basic customer canary precharge",
+        confirmationAccountId: accountId
+      }
+    });
+    if (adjustment.response.status !== 201) throw new Error("production_basic_canary_recharge_failed");
+    basicCanaryWalletAdjustment(adjustment.payload, expectedIdentities.walletOperationId, accountId, approval.rechargeUsdMicros);
+    walletAuthority = await authoritativeGet({ ...requestOptions, auth: adminAuth, path: walletAdjustmentPath });
+    if (!walletAuthority.found) throw new Error("production_basic_canary_recharge_readback_failed");
+    const recovered = basicCanaryWalletAdjustment(walletAuthority.payload, expectedIdentities.walletOperationId, accountId, approval.rechargeUsdMicros);
+    walletBeforeRecharge = recovered.before;
+    walletAfterRecharge = recovered.after;
+  }
+  if (!walletBeforeRecharge || !walletAfterRecharge ||
+    checkpoint.baseline.walletBeforeRechargeUsdMicros && checkpoint.baseline.walletBeforeRechargeUsdMicros !== walletBeforeRecharge.usdMicros ||
+    checkpoint.baseline.walletAfterRechargeUsdMicros && checkpoint.baseline.walletAfterRechargeUsdMicros !== walletAfterRecharge.usdMicros) {
+    throw new Error("production_basic_canary_recharge_readback_failed");
+  }
+  if (BigInt(walletAfterRecharge.usdMicros) - BigInt(walletBeforeRecharge.usdMicros) !== BigInt(approval.rechargeUsdMicros) || BigInt(walletAfterRecharge.usdMicros) <= 52_580_000n) {
+    throw new Error("production_basic_canary_recharge_delta_invalid");
+  }
+  checkpoint.baseline.walletBeforeRechargeUsdMicros = walletBeforeRecharge.usdMicros;
+  checkpoint.baseline.walletAfterRechargeUsdMicros = walletAfterRecharge.usdMicros;
+  if (!checkpointAtLeast(checkpoint, "wallet_recharged")) {
+    await saveBasicCanaryCheckpoint(checkpoint, "wallet_recharged", checkpointPath, afterCheckpoint);
+  }
+
+  const fixedLaunchIdentity = {
+    operationId: expectedIdentities.launchOperationId,
+    accountId,
+    workspaceId: expectedIdentities.workspaceId
+  };
+  const launchPath = `/api/workspace-launches/${encodeURIComponent(fixedLaunchIdentity.operationId)}`;
+  let launchAuthority = await authoritativeGet({ ...requestOptions, auth: customerAuth, path: launchPath });
+  const launchSucceededWithoutCheckpoint = !checkpointPresent && launchAuthority.found && launchAuthority.payload?.status === "succeeded";
+  let launch;
+  if (!launchAuthority.found) {
+    if (checkpointAtLeast(checkpoint, "launch_accepted")) throw new Error("production_basic_canary_launch_readback_failed");
+    const currentWallet = walletFact(sourceEnvelope(await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/gateway/wallet" }), "sub2api"), sub2apiUserId);
+    if (currentWallet.usdMicros !== walletAfterRecharge.usdMicros) throw new Error("production_basic_canary_recharge_readback_failed");
+    await readEmptyBasicCanaryLaunchBaseline(requestOptions, customerAuth, { allowNonWorkspaceReceipts: true });
+    await assertCloudRevision();
+    recordBasicCanaryHttpAttempt(checkpoint, "workspaceLaunch");
+    await saveBasicCanaryCheckpoint(checkpoint, "workspace_launch_attempted", checkpointPath, afterCheckpoint);
+    const launched = await requestJson({
+      ...requestOptions,
+      auth: customerAuth,
+      path: "/api/workspace-launches",
+      method: "POST",
+      headers: { "Idempotency-Key": approval.idempotencyKeys.workspaceLaunch },
+      body: approval.launch
+    });
+    if (launched.response.status !== 202) throw new Error("production_basic_canary_launch_not_accepted");
+    basicCanaryLaunchIdentity(launched.payload, approval, fixedLaunchIdentity);
+    launchAuthority = await authoritativeGet({ ...requestOptions, auth: customerAuth, path: launchPath });
+    if (!launchAuthority.found) throw new Error("production_basic_canary_launch_readback_failed");
+  }
+  launch = basicCanaryLaunchIdentity(launchAuthority.payload, approval, fixedLaunchIdentity);
+  if (!checkpointAtLeast(checkpoint, "launch_accepted")) {
+    await saveBasicCanaryCheckpoint(checkpoint, "launch_accepted", checkpointPath, afterCheckpoint);
+  }
+  for (let attempt = 1; attempt <= launchPollAttempts && launch.status !== "succeeded"; attempt += 1) {
+    if (["manual_review", "refunded", "failed"].includes(launch.status)) throw new Error(`production_basic_canary_${launch.status}`);
+    if (attempt > 1 || launchPollDelayMs > 0) await sleep(launchPollDelayMs);
+    const poll = await authoritativeGet({ ...requestOptions, auth: customerAuth, path: launchPath });
+    if (!poll.found) throw new Error("production_basic_canary_launch_readback_failed");
+    launch = basicCanaryLaunchIdentity(poll.payload, approval, fixedLaunchIdentity);
+  }
+  if (["manual_review", "refunded", "failed"].includes(launch.status)) throw new Error(`production_basic_canary_${launch.status}`);
+  if (launch.status !== "succeeded" || launch.phase !== "succeeded") throw new Error("production_basic_canary_launch_timeout");
+  const runtimeServiceName = String(launch.runtimeServiceName || "");
+  if (!launch.computeAllocationId || !launch.storageId || !launch.attachmentId || !launch.workspaceApiKeyId || !runtimeServiceName || !launch.receiptId || !launch.url) {
+    throw new Error("production_basic_canary_launch_result_incomplete");
+  }
+  if (!checkpointAtLeast(checkpoint, "launch_succeeded")) {
+    await saveBasicCanaryCheckpoint(checkpoint, "launch_succeeded", checkpointPath, afterCheckpoint);
+  }
+  const runtime = sourceEnvelope(await requestJson({
+    ...requestOptions,
+    auth: customerAuth,
+    path: `/api/workspaces/${encodeURIComponent(launch.workspaceId)}/runtime-status`
+  }), "fabric").data;
+  const runtimeId = String(runtime?.runtimeId || "");
+  if (!runtimeId || runtime?.workspaceId !== launch.workspaceId || runtime?.serviceName !== runtimeServiceName || runtime?.url !== launch.url ||
+    runtime?.ready !== true || runtime?.status !== "running" || runtime?.access?.credentialStatus !== "configured" || !runtime?.access?.username) {
+    throw new Error("production_basic_canary_runtime_invalid");
+  }
+  if (initialCheckpointStage === "model_request_attempted" || launchSucceededWithoutCheckpoint) {
+    checkpoint.httpAttempts.modelRequest = null;
+    if (!checkpointAtLeast(checkpoint, "model_request_attempted")) {
+      await saveBasicCanaryCheckpoint(checkpoint, "model_request_attempted", checkpointPath, afterCheckpoint);
+    }
+    throw new Error("production_basic_canary_model_result_unknown");
+  }
+
+  const walletAfterPurchase = walletFact(sourceEnvelope(await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/gateway/wallet" }), "sub2api"), sub2apiUserId);
+  if (BigInt(walletAfterRecharge.usdMicros) - BigInt(walletAfterPurchase.usdMicros) !== 52_580_000n) {
+    throw new Error("production_basic_canary_purchase_delta_invalid");
+  }
+  const workspacePage = controlPlaneCanaryPage(await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/workspaces?page=1&pageSize=20" }));
+  const keyPage = gatewayCanaryPage(await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/gateway/keys?page=1&pageSize=20" }));
+  if (workspacePage.total !== 1 || workspacePage.items[0]?.id !== launch.workspaceId || workspacePage.items[0]?.state !== "active" ||
+    keyPage.total !== 1 || String(keyPage.items[0]?.id || "") !== launch.workspaceApiKeyId || keyPage.items[0]?.status !== "active") {
+    throw new Error("production_basic_canary_workspace_or_key_invalid");
+  }
+  const receiptPage = sourceEnvelope(await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/billing/receipts?limit=20" }), "ledger").data;
+  if (!Array.isArray(receiptPage?.receipts) || receiptPage.receipts.length !== 1 || receiptPage.hasMore !== false || receiptPage.receipts[0]?.receiptId !== launch.receiptId) {
+    throw new Error("production_basic_canary_receipt_cardinality_invalid");
+  }
+  const receipt = canaryReceipt(await requestJson({
+    ...requestOptions,
+    auth: customerAuth,
+    path: `/api/billing/receipts/${encodeURIComponent(launch.receiptId)}`
+  }), {
+    receiptId: launch.receiptId,
+    workspaceId: launch.workspaceId,
+    computeAllocationId: launch.computeAllocationId,
+    storageId: launch.storageId,
+    attachmentId: launch.attachmentId,
+    runtimeId,
+    workspaceApiKeyId: launch.workspaceApiKeyId
+  });
+
+  const detail = sourceEnvelope(await requestJson({
+    ...requestOptions,
+    auth: adminAuth,
+    path: `/api/operator/workspaces/${encodeURIComponent(launch.workspaceId)}`
+  }), "control-plane+fabric+ledger").data;
+  const workspaceFact = readOnlyNestedSource(detail?.workspace, "control-plane");
+  const computeFact = operatorResource(detail, "compute");
+  const storageFact = operatorResource(detail, "storage");
+  const attachmentFact = operatorResource(detail, "attachment");
+  const runtimeFact = operatorResource(detail, "runtime");
+  if (workspaceFact?.id !== launch.workspaceId || workspaceFact?.state !== "active" || workspaceFact?.packageId !== "basic") {
+    throw new Error("production_basic_canary_workspace_fact_invalid");
+  }
+
+  const fabricHeaders = fabricOptions.headers;
+  const operations = (await requestJson({ ...fabricOptions, path: "/fabric/operations", headers: fabricHeaders })).payload;
+  const allocation = (await requestJson({ ...fabricOptions, path: `/fabric/compute-allocations/${encodeURIComponent(launch.computeAllocationId)}`, headers: fabricHeaders })).payload;
+  const ownership = (await requestJson({ ...fabricOptions, path: `/fabric/machine-ownerships/${encodeURIComponent(launch.computeAllocationId)}`, headers: fabricHeaders })).payload;
+  const truth = (await requestJson({
+    ...fabricOptions,
+    path: `/fabric/monthly-provider-truth?computeAllocationId=${encodeURIComponent(launch.computeAllocationId)}&storageVolumeId=${encodeURIComponent(launch.storageId)}`,
+    headers: fabricHeaders
+  })).payload;
+  const compute = validateFabricCanaryEvidence({ operations, allocation, ownership, truth, launch, approval });
+  if (computeFact.providerId !== compute.instanceId || computeFact.packageOrSpec !== approval.expected.resolvedInstanceType || computeFact.zone !== compute.zone ||
+    storageFact.providerId !== truth.storage.providerResourceId || storageFact.zone !== truth.storage.zone || storageFact.expiresAt !== truth.storage.deadline || attachmentFact.status !== "attached" ||
+    runtimeFact.providerId !== runtimeServiceName || runtimeFact.status !== "running") {
+    throw new Error("production_basic_canary_operator_provider_facts_invalid");
+  }
+
+  const pod = await runtimePodEvidenceReader({ workspaceId: launch.workspaceId, expectedDigest: approval.expected.workspaceImageDigest, signal });
+  if (pod?.ready !== true || pod?.containerName !== "workspace" || !pod?.podName || !String(pod?.imageID || "").endsWith(approval.expected.workspaceImageDigest) ||
+    pod?.resources?.cpu !== resourceContract.cpu || pod?.resources?.memoryGb !== resourceContract.memoryGb || !pod?.nodeName ||
+    pod.nodeName !== compute.nodeName || pod.nodeName !== ownership.nodeName) {
+    throw new Error("production_basic_canary_runtime_pod_invalid");
+  }
+  if (!checkpointAtLeast(checkpoint, "runtime_ready")) {
+    await saveBasicCanaryCheckpoint(checkpoint, "runtime_ready", checkpointPath, afterCheckpoint);
+  }
+  const revealed = await requestJson({
+    ...requestOptions,
+    auth: customerAuth,
+    path: `/api/workspaces/${encodeURIComponent(launch.workspaceId)}/runtime-credentials/reveal`,
+    method: "POST",
+    body: {}
+  });
+  if (revealed.response.headers.get("cache-control") !== "private, no-store" || revealed.payload?.workspaceId !== launch.workspaceId ||
+    revealed.payload?.access?.username !== runtime.access.username || !revealed.payload?.access?.password) {
+    throw new Error("production_basic_canary_runtime_credentials_invalid");
+  }
+
+  const usageBefore = canaryUsageSnapshot(await requestJson({
+    ...requestOptions,
+    auth: customerAuth,
+    path: `/api/gateway/keys/${encodeURIComponent(launch.workspaceApiKeyId)}/usage?page=1&pageSize=20`
+  }));
+  const statsBefore = await gatewayUsageStats(requestOptions, customerAuth, launch.workspaceApiKeyId);
+  if (usageBefore.total !== 0 || Object.values(statsBefore).some((value) => value !== 0)) {
+    checkpoint.httpAttempts.modelRequest = null;
+    await saveBasicCanaryCheckpoint(checkpoint, "model_request_attempted", checkpointPath, afterCheckpoint);
+    throw new Error("production_basic_canary_model_result_unknown");
+  }
+  const walletBeforeModel = walletAfterPurchase;
+  await assertCloudRevision();
+  recordBasicCanaryHttpAttempt(checkpoint, "modelRequest");
+  await saveBasicCanaryCheckpoint(checkpoint, "model_request_attempted", checkpointPath, afterCheckpoint);
+  const browserEvidence = await verifyWorkspaceBrowserQa({
+    url: runtime.url || launch.url,
+    username: revealed.payload.access.username,
+    password: revealed.payload.access.password,
+    runId,
+    browserTimeoutMs,
+    modelTimeoutMs,
+    browserFactory
+  });
+  let usageAfter;
+  let usageRecord;
+  let statsAfter;
+  let walletAfterModel;
+  for (let attempt = 1; attempt <= usageAttempts; attempt += 1) {
+    usageAfter = canaryUsageSnapshot(await requestJson({
+      ...requestOptions,
+      auth: customerAuth,
+      path: `/api/gateway/keys/${encodeURIComponent(launch.workspaceApiKeyId)}/usage?page=1&pageSize=20`
+    }));
+    usageRecord = exactUsageRecord(usageBefore, usageAfter, approval.expected.model, launch.workspaceApiKeyId);
+    if (usageRecord) {
+      statsAfter = await gatewayUsageStats(requestOptions, customerAuth, launch.workspaceApiKeyId);
+      walletAfterModel = walletFact(sourceEnvelope(await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/gateway/wallet" }), "sub2api"), sub2apiUserId);
+      if (statsMatchRequest(statsBefore, statsAfter, usageRecord) && walletDebitMatches(walletBeforeModel, walletAfterModel, usageRecord.actualCostUsdMicros)) break;
+    }
+    if (attempt < usageAttempts) await sleep(usageRetryDelayMs);
+  }
+  if (!usageRecord || !statsAfter || !statsMatchRequest(statsBefore, statsAfter, usageRecord) ||
+    !walletAfterModel || !walletDebitMatches(walletBeforeModel, walletAfterModel, usageRecord.actualCostUsdMicros)) {
+    throw new Error("production_basic_canary_usage_evidence_invalid");
+  }
+  const readiness = (await requestJson({ ...requestOptions, path: "/api/production/readiness" })).payload;
+  if (readiness?.ready !== true || readiness?.cloudImagesReady !== true || readiness?.workspaceImagesReady !== true || readiness?.immutableImagesReady !== true) {
+    throw new Error("production_basic_canary_readiness_invalid");
+  }
+
+  const result = {
+    ok: true,
+    status: "passed",
+    evidenceLevel: "real_customer_basic_canary",
+    accountId,
+    consoleUserId: identity.consoleUserId,
+    sub2apiUserId,
+    operationId: launch.operationId,
+    workspaceId: launch.workspaceId,
+    workspaceApiKeyId: launch.workspaceApiKeyId,
+    wallet: {
+      beforeRechargeUsdMicros: walletBeforeRecharge.usdMicros,
+      afterRechargeUsdMicros: walletAfterRecharge.usdMicros,
+      afterBasicPurchaseUsdMicros: walletAfterPurchase.usdMicros,
+      afterModelUsageUsdMicros: walletAfterModel.usdMicros,
+      deltas: {
+        rechargeUsdMicros: String(BigInt(walletAfterRecharge.usdMicros) - BigInt(walletBeforeRecharge.usdMicros)),
+        basicPurchaseUsdMicros: String(BigInt(walletAfterRecharge.usdMicros) - BigInt(walletAfterPurchase.usdMicros)),
+        modelUsageUsdMicros: String(BigInt(walletBeforeModel.usdMicros) - BigInt(walletAfterModel.usdMicros))
+      }
+    },
+    compute: {
+      allocationId: launch.computeAllocationId,
+      instanceId: compute.instanceId,
+      machineId: compute.machineId,
+      nodeName: compute.nodeName,
+      zone: compute.zone,
+      sku: compute.sku,
+      resources: resourceContract,
+      deadline: compute.deadline,
+      procurement: compute.procurement
+    },
+    storage: { id: launch.storageId, providerId: storageFact.providerId, sizeGb: 10, zone: storageFact.zone, status: storageFact.status, expiresAt: storageFact.expiresAt },
+    attachment: { id: launch.attachmentId, providerId: attachmentFact.providerId, status: attachmentFact.status },
+    runtime: {
+      id: runtimeId,
+      providerId: runtimeFact.providerId,
+      url: runtime.url || launch.url,
+      ready: true,
+      pod: { podName: pod.podName, nodeName: pod.nodeName, containerName: pod.containerName, ready: true, imageID: pod.imageID, resources: pod.resources },
+      login: browserEvidence.login,
+      websocket: browserEvidence.websocket,
+      modelResponse: browserEvidence.modelResponse
+    },
+    usage: {
+      requestId: usageRecord.requestId,
+      apiKeyId: usageRecord.apiKeyId,
+      model: usageRecord.model,
+      inputTokens: usageRecord.inputTokens,
+      outputTokens: usageRecord.outputTokens,
+      actualCostUsdMicros: usageRecord.actualCostUsdMicros
+    },
+    receipt,
+    readiness: { ready: true, cloudImagesReady: true, workspaceImagesReady: true, immutableImagesReady: true },
+    httpAttempts: { ...checkpoint.httpAttempts },
+    writeCounts: {
+      accountProvisionPosts: 1,
+      walletAdjustmentPosts: 1,
+      workspaceLaunchPosts: 1,
+      modelRequests: 1,
+      workspaceKeysCreated: keyPage.total,
+      workspacePurchaseDebits: 1,
+      tencentCvmPurchases: compute.actionCount("create_compute_allocation"),
+      tencentCbsPurchases: compute.actionCount("create_storage_volume")
+    }
+  };
+  await saveBasicCanaryCheckpoint(checkpoint, "completed", checkpointPath, afterCheckpoint);
+  return result;
 }
 
 async function waitFor(check, timeoutMs, error) {
@@ -589,17 +1609,22 @@ export async function runProductionLiveQaCli({
   stdout = process.stdout,
   stderr = process.stderr,
   fetchImpl = globalThis.fetch,
-  browserFactory
+  fabricFetchImpl = fetchImpl,
+  browserFactory,
+  cloudRevisionEvidenceReader,
+  runtimePodEvidenceReader,
+  execFileImpl,
+  now = new Date()
 } = {}) {
   if (argv.includes("--help") || argv.includes("-h")) {
-    stdout.write("Usage: node tools/production-live-qa.ts --read-only\nA model request additionally requires --allow-gateway-write --allow-model-write --approval-id <id> and OPL_VERIFY_MUTATION_APPROVAL_JSON.\n");
+    stdout.write("Usage: node tools/production-live-qa.ts --read-only\nA fixed-slot model request requires --allow-gateway-write --allow-model-write. A real customer canary requires --basic-customer-canary plus all four explicit write flags and an exact approval.\n");
     return 0;
   }
   try {
     if (env.OPL_VERIFY_MODEL_ACCESS_KEY) throw new Error("production_live_qa_raw_key_forbidden");
     const args = cliArgs(argv);
     if (args["read-only"] === "true") {
-      if (args["allow-gateway-write"] || args["allow-model-write"] || args["approval-id"]) throw new Error("production_live_qa_read_only_conflict");
+      if (args["basic-customer-canary"] || args["allow-gateway-write"] || args["allow-model-write"] || args["approval-id"]) throw new Error("production_live_qa_read_only_conflict");
       const result = await verifyProductionReadOnlyRollout({
         origin: args.origin || env.OPL_CONSOLE_ORIGIN,
         adminEmail: env.OPL_SUB2API_ADMIN_EMAIL,
@@ -607,6 +1632,53 @@ export async function runProductionLiveQaCli({
         requestTimeoutMs: Number(args["request-timeout-ms"] || env.OPL_VERIFY_REQUEST_TIMEOUT_MS || DEFAULT_REQUEST_TIMEOUT_MS),
         browserFactory,
         fetchImpl
+      });
+      stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+      return 0;
+    }
+    if (args["basic-customer-canary"] === "true") {
+      for (const flag of ["allow-account-provision", "allow-wallet-recharge", "allow-workspace-purchase", "allow-model-write"]) {
+        if (args[flag] !== "true") throw new Error("production_basic_canary_write_allow_flags_required");
+      }
+      const kubeconfigPath = env.KUBECONFIG || env.TENCENT_DEPLOY_KUBECONFIG_PATH;
+      const namespace = env.OPL_K8S_NAMESPACE || "opl-cloud";
+      let cloudEvidenceReader = cloudRevisionEvidenceReader;
+      let podEvidenceReader = runtimePodEvidenceReader;
+      if (!cloudEvidenceReader || !podEvidenceReader) {
+        if (!String(kubeconfigPath || "").startsWith("/")) throw new Error("production_basic_canary_runtime_pod_config_invalid");
+      }
+      if (!cloudEvidenceReader) {
+        cloudEvidenceReader = (input) => readBasicCanaryCloudRevisionEvidence({ ...input, kubeconfigPath, namespace, execFileImpl });
+      }
+      if (!podEvidenceReader) {
+        podEvidenceReader = (input) => readBasicCanaryRuntimePodEvidence({ ...input, kubeconfigPath, namespace, execFileImpl });
+      }
+      const result = await verifyProductionBasicCustomerCanary({
+        origin: args.origin || env.OPL_CONSOLE_ORIGIN,
+        fabricOrigin: env.OPL_FABRIC_INTERNAL_ORIGIN,
+        internalServiceToken: env.OPL_INTERNAL_SERVICE_TOKEN,
+        adminEmail: env.OPL_SUB2API_ADMIN_EMAIL,
+        adminPassword: env.OPL_SUB2API_ADMIN_PASSWORD,
+        customerPassword: env.OPL_BASIC_CANARY_CUSTOMER_PASSWORD,
+        approvalJson: env.OPL_BASIC_CANARY_APPROVAL_JSON,
+        approvalId: args["approval-id"] || "",
+        confirmation: env.OPL_BASIC_CANARY_CONFIRMATION,
+        mergedSha: env.OPL_MERGED_SHA,
+        runId: args["run-id"] || env.OPL_VERIFY_RUN_ID,
+        launchPollAttempts: Number(env.OPL_VERIFY_LAUNCH_POLL_ATTEMPTS || 180),
+        launchPollDelayMs: Number(env.OPL_VERIFY_LAUNCH_POLL_DELAY_MS || 10_000),
+        usageAttempts: Number(env.OPL_VERIFY_USAGE_ATTEMPTS || DEFAULT_USAGE_ATTEMPTS),
+        usageRetryDelayMs: Number(env.OPL_VERIFY_USAGE_RETRY_DELAY_MS || DEFAULT_USAGE_RETRY_DELAY_MS),
+        browserTimeoutMs: Number(env.OPL_VERIFY_BROWSER_TIMEOUT_MS || DEFAULT_BROWSER_TIMEOUT_MS),
+        modelTimeoutMs: Number(env.OPL_VERIFY_MODEL_TIMEOUT_MS || DEFAULT_MODEL_TIMEOUT_MS),
+        requestTimeoutMs: Number(env.OPL_VERIFY_REQUEST_TIMEOUT_MS || DEFAULT_REQUEST_TIMEOUT_MS),
+        fetchImpl,
+        fabricFetchImpl,
+        browserFactory,
+        cloudRevisionEvidenceReader: cloudEvidenceReader,
+        runtimePodEvidenceReader: podEvidenceReader,
+        checkpointPath: env.OPL_BASIC_CANARY_CHECKPOINT_PATH,
+        now
       });
       stdout.write(`${JSON.stringify(result, null, 2)}\n`);
       return 0;

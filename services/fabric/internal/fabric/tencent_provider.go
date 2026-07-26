@@ -81,7 +81,10 @@ func (p *TencentProvider) evaluateMonthlyPreflight(ctx context.Context, input Mo
 		return monthlyPreflightEvaluation{Err: ErrInvalidMonthlyPreflight}
 	}
 	request := provisionerRequest{PackageID: input.PackageID, Zone: input.Zone}
-	plan := packagePlan(input.PackageID)
+	plan, err := configuredPackagePlan(input.PackageID)
+	if err != nil {
+		return monthlyPreflightEvaluation{Err: err}
+	}
 	expectedStages := []string{"node_pool_discovery", "node_pool_contract", "subnet", "zone", "cvm_prepaid_quota", "cvm_sku_price"}
 	if input.ResourceType == "compute" {
 		poolConfig, err := configuredPackageNodePool(input.PackageID)
@@ -89,7 +92,7 @@ func (p *TencentProvider) evaluateMonthlyPreflight(ctx context.Context, input Mo
 			return monthlyPreflightEvaluation{Err: err}
 		}
 		request.Action = "capacity_preflight"
-		request.Pool = provisionerPool{ID: plan.ID, PackageID: input.PackageID, InstanceType: plan.InstanceType, NodePoolID: poolConfig.NodePoolID, DesiredReplicas: 1, MaxReplicas: poolConfig.MaxReplicas}
+		request.Pool = provisionerPool{ID: plan.ID, PackageID: input.PackageID, InstanceType: plan.InstanceType, CPU: uint64(plan.CPU), MemoryGB: uint64(plan.MemoryGB), NodePoolID: poolConfig.NodePoolID, DesiredReplicas: 1, MaxReplicas: poolConfig.MaxReplicas}
 	} else {
 		request.Action = "storage_preflight"
 		request.Storage = provisionerStorage{SizeGB: uint64(input.SizeGB), Zone: input.Zone, DiskType: firstNonEmpty(os.Getenv("TENCENT_CBS_DISK_TYPE"), "CLOUD_BSSD")}
@@ -444,6 +447,8 @@ type provisionerPool struct {
 	ClusterID          string            `json:"clusterId,omitempty"`
 	PackageID          string            `json:"packageId,omitempty"`
 	InstanceType       string            `json:"instanceType,omitempty"`
+	CPU                uint64            `json:"cpu,omitempty"`
+	MemoryGB           uint64            `json:"memoryGb,omitempty"`
 	NodePoolID         string            `json:"nodePoolId,omitempty"`
 	Labels             map[string]string `json:"desiredNodeLabels,omitempty"`
 	DesiredReplicas    int64             `json:"desiredReplicas,omitempty"`
@@ -563,7 +568,10 @@ type plan struct {
 }
 
 func (p *TencentProvider) PrepareComputeAllocation(ctx context.Context, input ComputeAllocationInput) (ComputeAllocationPreparation, error) {
-	packagePlan := packagePlan(input.PackageID)
+	packagePlan, err := configuredPackagePlan(input.PackageID)
+	if err != nil {
+		return ComputeAllocationPreparation{}, err
+	}
 	poolConfig, err := configuredPackageNodePool(input.PackageID)
 	prepared := ComputeAllocationPreparation{PoolID: packagePlan.ID, PackageID: input.PackageID, NodePoolID: poolConfig.NodePoolID, InstanceType: packagePlan.InstanceType, MaxReplicas: poolConfig.MaxReplicas}
 	if err != nil {
@@ -574,7 +582,10 @@ func (p *TencentProvider) PrepareComputeAllocation(ctx context.Context, input Co
 	}
 	response, err := p.provision(ctx, provisionerRequest{
 		Action: "prepare_compute_allocation", DryRun: input.DryRun, PackageID: input.PackageID,
-		Pool:       provisionerPool{ID: packagePlan.ID, PackageID: input.PackageID, InstanceType: packagePlan.InstanceType, NodePoolID: prepared.NodePoolID, MaxReplicas: prepared.MaxReplicas},
+		Pool: provisionerPool{
+			ID: packagePlan.ID, PackageID: input.PackageID, InstanceType: packagePlan.InstanceType,
+			CPU: uint64(packagePlan.CPU), MemoryGB: uint64(packagePlan.MemoryGB), NodePoolID: prepared.NodePoolID, MaxReplicas: prepared.MaxReplicas,
+		},
 		Allocation: provisionerAllocation{ID: input.ID},
 	})
 	if err != nil {
@@ -595,11 +606,13 @@ func (p *TencentProvider) PrepareComputeAllocation(ctx context.Context, input Co
 
 func (p *TencentProvider) CreateComputeAllocation(ctx context.Context, input ComputeAllocationExecution) (ComputeAllocation, error) {
 	allocation, prepared := input.Allocation, input.Plan
+	packagePlan := packagePlan(prepared.PackageID)
 	response, err := p.provision(ctx, provisionerRequest{
 		Action: "create_compute_allocation", DryRun: input.DryRun, AccountID: allocation.AccountID, PackageID: allocation.PackageID,
 		Tags: oplCostTags(allocation.AccountID, allocation.WorkspaceID, allocation.ID, allocation.ProviderRequestID),
 		Pool: provisionerPool{
 			ID: prepared.PoolID, PackageID: prepared.PackageID, InstanceType: prepared.InstanceType, NodePoolID: prepared.NodePoolID,
+			CPU: uint64(packagePlan.CPU), MemoryGB: uint64(packagePlan.MemoryGB),
 			MaxReplicas: prepared.MaxReplicas, BaselineReplicas: prepared.BaselineReplicas, TargetReplicas: prepared.TargetReplicas, BeforeMachineNames: append([]string(nil), prepared.BeforeMachineNames...),
 		},
 		Allocation: provisionerAllocation{ID: allocation.ID},
@@ -670,14 +683,20 @@ func (p *TencentProvider) SyncComputeAllocation(ctx context.Context, allocation 
 	if allocation.ID == "" {
 		return ComputeAllocation{}, fmt.Errorf("compute_allocation_id_required")
 	}
-	plan := packagePlan(firstNonEmpty(allocation.PackageID, "basic"))
+	plan, err := configuredPackagePlan(firstNonEmpty(allocation.PackageID, "basic"))
+	if err != nil {
+		return allocation, err
+	}
 	response, err := p.provision(ctx, provisionerRequest{
 		Action:    "sync_compute_allocation",
 		AccountID: allocation.AccountID,
 		PackageID: allocation.PackageID,
 		Zone:      allocation.ProviderData["zone"],
 		Tags:      allocation.CostTags,
-		Pool:      provisionerPool{ID: allocation.PoolID, NodePoolID: allocation.NodePoolID, InstanceType: plan.InstanceType},
+		Pool: provisionerPool{
+			ID: allocation.PoolID, PackageID: allocation.PackageID, NodePoolID: allocation.NodePoolID,
+			InstanceType: plan.InstanceType, CPU: uint64(plan.CPU), MemoryGB: uint64(plan.MemoryGB),
+		},
 		Allocation: provisionerAllocation{
 			ID:          allocation.ID,
 			InstanceID:  firstNonEmpty(allocation.InstanceID, allocation.CVMInstanceID),
@@ -716,6 +735,9 @@ func (p *TencentProvider) SyncComputeAllocation(ctx context.Context, allocation 
 	}
 	if response.InstanceType != plan.InstanceType || response.ProviderData["instanceType"] != plan.InstanceType {
 		return allocation, fmt.Errorf("compute_instance_type_mismatch")
+	}
+	if response.ProviderData["cpu"] != strconv.Itoa(plan.CPU) || response.ProviderData["memoryGb"] != strconv.Itoa(plan.MemoryGB) {
+		return allocation, fmt.Errorf("compute_resource_shape_mismatch")
 	}
 	return allocation, nil
 }
@@ -1561,9 +1583,27 @@ func (p *TencentProvider) PublishWorkspaceContent(ctx context.Context, workspace
 
 func packagePlan(packageID string) plan {
 	if packageID == "pro" {
-		return plan{ID: "pool-pro-8c16g", Server: "8c16g", CPU: 8, MemoryGB: 16, DiskGB: 100, InstanceType: firstNonEmpty(os.Getenv("OPL_PRO_COMPUTE_INSTANCE_TYPE"), "SA5.2XLARGE16")}
+		return plan{ID: "pool-pro-8c16g", Server: "8c16g", CPU: 8, MemoryGB: 16, DiskGB: 100, InstanceType: strings.TrimSpace(os.Getenv("OPL_PRO_COMPUTE_INSTANCE_TYPE"))}
 	}
-	return plan{ID: "pool-basic-2c4g", Server: "2c4g", CPU: 2, MemoryGB: 4, DiskGB: 10, InstanceType: firstNonEmpty(os.Getenv("OPL_BASIC_COMPUTE_INSTANCE_TYPE"), "SA5.MEDIUM4")}
+	return plan{ID: "pool-basic-2c4g", Server: "2c4g", CPU: 2, MemoryGB: 4, DiskGB: 10, InstanceType: strings.TrimSpace(os.Getenv("OPL_BASIC_COMPUTE_INSTANCE_TYPE"))}
+}
+
+func configuredPackagePlan(packageID string) (plan, error) {
+	current := packagePlan(packageID)
+	key := ""
+	switch packageID {
+	case "basic":
+		key = "OPL_BASIC_COMPUTE_INSTANCE_TYPE"
+	case "pro":
+		key = "OPL_PRO_COMPUTE_INSTANCE_TYPE"
+	default:
+		return plan{}, ErrUnsupportedComputePackage
+	}
+	current.InstanceType = strings.TrimSpace(os.Getenv(key))
+	if current.InstanceType == "" || len(current.InstanceType) > 64 || strings.ContainsAny(current.InstanceType, " \t\r\n") {
+		return current, fmt.Errorf("compute_instance_type_configuration_required")
+	}
+	return current, nil
 }
 
 func staticCBSManifest(volume StorageVolume) []byte {

@@ -208,6 +208,11 @@
           "basic": "explicit_configured_pool",
           "pro": "explicit_configured_pool"
         },
+        "packageResourceContracts": {
+          "basic": {"cpu": 2, "memoryGb": 4},
+          "pro": {"cpu": 8, "memoryGb": 16}
+        },
+        "resolvedInstanceTypeSource": "release_owner_approved_bootstrap_and_production_configuration",
         "admission": "persisted_fifo_by_exact_node_pool",
         "admissionLock": "short_postgresql_transaction_advisory_lock_only",
         "headExecution": "only_started_head_can_prepare_scale_bounded_poll_and_claim",
@@ -216,6 +221,15 @@
         "scale": "persist_baseline_and_absolute_target_N_plus_1_then_scale_once",
         "replay": "same_absolute_target",
         "claim": "unique_ready_after_minus_before_machine_only",
+        "machineIdentityReadback": {
+          "readyStates": ["Ready", "Running"],
+          "missingOrUnknownState": "fail_closed_never_default_running",
+          "privateIpCvmMatches": "exactly_one",
+          "exactIdentityChain": ["nodePoolId", "machineName", "cvmInstanceId", "privateIp", "vpcId", "subnetId"],
+          "instanceTypeConsistency": ["node_pool", "machine", "native", "cvm"],
+          "resourceShapeRequired": ["machine_cpu_memory", "native_cpu_memory", "cvm_cpu_memory"],
+          "zeroMultipleMissingOrMismatch": "fail_closed"
+        },
         "existingMachineAllocation": false,
         "nodePoolDiscoveryFallback": false,
         "customerLaunchCreateNodePool": false

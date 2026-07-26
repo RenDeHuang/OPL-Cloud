@@ -1,0 +1,185 @@
+name: Production Basic Customer Operation
+
+on:
+  workflow_dispatch:
+    inputs:
+      merged_sha:
+        description: Exact full SHA currently at origin/main.
+        required: true
+        type: string
+      approval_id:
+        description: Exact release-owner approval ID encoded by the production approval document.
+        required: true
+        type: string
+      confirm_account_provision:
+        description: Approve one real operator account provision.
+        required: true
+        default: false
+        type: boolean
+      confirm_wallet_recharge:
+        description: Approve one real Sub2API wallet recharge.
+        required: true
+        default: false
+        type: boolean
+      confirm_workspace_purchase:
+        description: Approve one real Basic Workspace purchase.
+        required: true
+        default: false
+        type: boolean
+      confirm_single_model_request:
+        description: Approve one real model request after Runtime readiness.
+        required: true
+        default: false
+        type: boolean
+      resume_run_id:
+        description: Optional prior run ID whose redacted checkpoint should be resumed with the same approval.
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: production-resource-verification
+  cancel-in-progress: false
+
+jobs:
+  basic-customer-operation:
+    name: Execute one approved Basic customer operation
+    if: ${{ github.ref == 'refs/heads/main' && github.sha == inputs.merged_sha && inputs.confirm_account_provision && inputs.confirm_wallet_recharge && inputs.confirm_workspace_purchase && inputs.confirm_single_model_request }}
+    runs-on: [self-hosted, tencent-cloud, opl-cloud, tke-vpc]
+    timeout-minutes: 45
+    environment: production
+    env:
+      OPL_MERGED_SHA: ${{ inputs.merged_sha }}
+      OPL_BASIC_CANARY_APPROVAL_ID: ${{ inputs.approval_id }}
+      OPL_BASIC_CANARY_APPROVAL_JSON: ${{ secrets.OPL_BASIC_CANARY_APPROVAL_JSON }}
+      OPL_BASIC_CANARY_CUSTOMER_PASSWORD: ${{ secrets.OPL_BASIC_CANARY_CUSTOMER_PASSWORD }}
+      OPL_BASIC_CANARY_CONFIRMATION: I_UNDERSTAND_THIS_PROVISIONS_ONE_REAL_BASIC_WORKSPACE_AND_SENDS_ONE_MODEL_REQUEST
+      OPL_CONSOLE_ORIGIN: ${{ vars.OPL_CONSOLE_ORIGIN || 'https://cloud.medopl.cn' }}
+      OPL_FABRIC_INTERNAL_ORIGIN: ${{ vars.OPL_FABRIC_INTERNAL_ORIGIN }}
+      OPL_INTERNAL_SERVICE_TOKEN: ${{ secrets.OPL_INTERNAL_SERVICE_TOKEN }}
+      OPL_SUB2API_ADMIN_EMAIL: ${{ secrets.OPL_SUB2API_ADMIN_EMAIL }}
+      OPL_SUB2API_ADMIN_PASSWORD: ${{ secrets.OPL_SUB2API_ADMIN_PASSWORD }}
+      OPL_K8S_NAMESPACE: ${{ vars.OPL_K8S_NAMESPACE || 'opl-cloud' }}
+      OPL_VERIFY_REQUEST_TIMEOUT_MS: ${{ vars.OPL_VERIFY_REQUEST_TIMEOUT_MS || '30000' }}
+      OPL_VERIFY_LAUNCH_POLL_ATTEMPTS: ${{ vars.OPL_VERIFY_LAUNCH_POLL_ATTEMPTS || '180' }}
+      OPL_VERIFY_LAUNCH_POLL_DELAY_MS: ${{ vars.OPL_VERIFY_LAUNCH_POLL_DELAY_MS || '10000' }}
+      OPL_VERIFY_USAGE_ATTEMPTS: ${{ vars.OPL_VERIFY_USAGE_ATTEMPTS || '24' }}
+      OPL_VERIFY_USAGE_RETRY_DELAY_MS: ${{ vars.OPL_VERIFY_USAGE_RETRY_DELAY_MS || '5000' }}
+      TENCENT_DEPLOY_KUBECONFIG_PATH: ${{ vars.TENCENT_DEPLOY_KUBECONFIG_PATH || '/home/actions/.secrets/medopl/v22/kubeconfig-package-d-deploy' }}
+      TENCENT_DEPLOY_KUBECONFIG_B64: ${{ secrets.TENCENT_DEPLOY_KUBECONFIG_B64 }}
+      TENCENT_DEPLOY_KUBECONFIG: ${{ secrets.TENCENT_DEPLOY_KUBECONFIG }}
+
+    steps:
+      - name: Checkout exact merged main
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.merged_sha }}
+          fetch-depth: 0
+
+      - name: Verify exact origin main
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! [[ "$OPL_MERGED_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "A full merged main SHA is required." >&2
+            exit 1
+          fi
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          head_sha="$(git rev-parse HEAD)"
+          main_sha="$(git rev-parse refs/remotes/origin/main)"
+          if [ "$head_sha" != "$OPL_MERGED_SHA" ] || [ "$main_sha" != "$OPL_MERGED_SHA" ]; then
+            echo "Customer operation source is not the exact current origin/main revision." >&2
+            exit 1
+          fi
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Prepare redacted checkpoint and kubeconfig
+        shell: bash
+        run: |
+          set -euo pipefail
+          secret_dir="$(mktemp -d)"
+          artifact_dir="$RUNNER_TEMP/production-basic-customer-operation"
+          mkdir -p "$artifact_dir"
+          chmod 700 "$secret_dir" "$artifact_dir"
+          kubeconfig="$secret_dir/kubeconfig"
+          if [ -f "$TENCENT_DEPLOY_KUBECONFIG_PATH" ]; then
+            cp "$TENCENT_DEPLOY_KUBECONFIG_PATH" "$kubeconfig"
+          elif [ -n "${TENCENT_DEPLOY_KUBECONFIG_B64:-}" ]; then
+            printf '%s' "$TENCENT_DEPLOY_KUBECONFIG_B64" | base64 -d > "$kubeconfig"
+          elif [ -n "${TENCENT_DEPLOY_KUBECONFIG:-}" ]; then
+            printf '%s' "$TENCENT_DEPLOY_KUBECONFIG" > "$kubeconfig"
+          else
+            echo "No production kubeconfig was provided." >&2
+            exit 1
+          fi
+          chmod 600 "$kubeconfig"
+          echo "OPL_BASIC_CANARY_SECRET_DIR=$secret_dir" >> "$GITHUB_ENV"
+          echo "OPL_BASIC_CANARY_ARTIFACT_DIR=$artifact_dir" >> "$GITHUB_ENV"
+          echo "OPL_BASIC_CANARY_CHECKPOINT_PATH=$artifact_dir/checkpoint.json" >> "$GITHUB_ENV"
+          echo "KUBECONFIG=$kubeconfig" >> "$GITHUB_ENV"
+
+      - name: Download prior redacted checkpoint
+        if: ${{ inputs.resume_run_id != '' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: production-basic-customer-operation
+          path: ${{ runner.temp }}/production-basic-customer-operation
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.resume_run_id }}
+
+      - name: Run approved Basic customer canary
+        id: canary
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          node tools/production-live-qa.ts --basic-customer-canary \
+            --allow-account-provision \
+            --allow-wallet-recharge \
+            --allow-workspace-purchase \
+            --allow-model-write \
+            --approval-id "$OPL_BASIC_CANARY_APPROVAL_ID" \
+            --run-id "$GITHUB_RUN_ID" > "$OPL_BASIC_CANARY_ARTIFACT_DIR/evidence.json"
+
+      - name: Upload redacted Basic customer evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-basic-customer-operation
+          path: ${{ runner.temp }}/production-basic-customer-operation
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Remove customer operation secrets
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          secret_dir="${OPL_BASIC_CANARY_SECRET_DIR:-}"
+          if [ -n "$secret_dir" ] && [ -d "$secret_dir" ]; then
+            find "$secret_dir" -mindepth 1 -delete
+            rmdir "$secret_dir"
+          fi
+
+      - name: Require customer operation success
+        if: ${{ steps.canary.outcome != 'success' }}
+        shell: bash
+        run: |
+          echo "Basic customer operation stopped; inspect the redacted checkpoint and evidence artifact." >&2
+          exit 1

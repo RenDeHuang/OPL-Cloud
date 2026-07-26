@@ -28,6 +28,8 @@ test("OPL Cloud TKE manifest declares three decoupled services and monthly Sub2A
   assert.equal(config.data.OPL_SYSTEM_COMPUTE_NODE_POOL_ID, "np-6l4nkdto");
   assert.equal(config.data.OPL_SYSTEM_COMPUTE_MACHINE_ID, "np-6l4nkdto-2cdtm");
   assert.equal(config.data.OPL_SYSTEM_COMPUTE_NODE_NAME, "10.66.0.42");
+  assert.equal(config.data.OPL_BASIC_COMPUTE_INSTANCE_TYPE, "");
+  assert.equal(config.data.OPL_PRO_COMPUTE_INSTANCE_TYPE, "");
   for (const key of [
     "OPL_SYSTEM_COMPUTE_CVM_ID",
     "OPL_BASIC_COMPUTE_NODE_POOL_ID",
@@ -143,6 +145,11 @@ test("ordinary deploy configures dedicated package pools and omits retired netwo
     readFile(".github/workflows/deploy-tke-production.yml", "utf8")
   ]);
   const config = manifest.items.find((item) => item.kind === "ConfigMap");
+  assert.deepEqual(deployment.deployWorkflow.customerPackageInstanceTypePolicy, {
+    basic: "required_release_owner_approved_registered_configuration",
+    pro: "required_release_owner_approved_registered_configuration",
+    codeDefault: null
+  });
   for (const key of ["OPL_OPERATOR_CIDRS", "OPL_TRUSTED_PROXY_CIDRS", "OPL_GATEWAY_PUBLIC_BASE_URL", "OPL_CODEX_BASE_URL"]) {
     assert.equal(config.data[key], undefined, key);
     assert.equal(deployment.deployWorkflow.requiredEnv.includes(key), false, key);
