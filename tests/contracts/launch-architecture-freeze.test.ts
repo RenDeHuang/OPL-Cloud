@@ -78,11 +78,12 @@ test("launch freeze fixes the V2 products, owner lanes, settlement, and verifica
     newIdempotencyRequest: "new_workspace",
     accountConcurrentPaidLaunches: 1
   });
-  assert.equal(freeze.workspaceLaunch.autoRenew.submission, "required_false_boolean");
+  assert.equal(freeze.workspaceLaunch.autoRenew.submission, "customer_boolean_default_false");
   assert.equal(freeze.workspaceLaunch.autoRenew.defaultProductIntent, false);
-  assert.equal(freeze.workspaceLaunch.autoRenew.customerMutable, false);
-  assert.equal(freeze.workspaceLaunch.autoRenew.enablementGate, "hidden_until_real_renewal_evidence");
-  assert.equal(freeze.workspaceLaunch.autoRenew.childProjection, "read_only_compute_and_storage_compatibility_until_workspace_canonical_state");
+  assert.equal(freeze.workspaceLaunch.autoRenew.customerMutable, true);
+  assert.equal(freeze.workspaceLaunch.autoRenew.intentAuthority, "control_plane_workspace");
+  assert.equal(freeze.workspaceLaunch.autoRenew.tencentAutomaticRenewal, false);
+  assert.equal(freeze.workspaceLaunch.autoRenew.currentBranchImplementation, "deferred_control_plane_ui_and_monthly_worker_outside_fabric_nodepool_hard_cut");
   assert.deepEqual(freeze.workspaceLaunch.customerResponsePricingFields, ["priceVersion", "currency", "totalChargeUsdMicros"]);
   assert.deepEqual(freeze.workspaceLaunch.manualReviewRecovery, {
     route: "POST /api/operator/workspace-launches/{operationId}/recover",
@@ -140,13 +141,45 @@ test("launch freeze fixes the V2 products, owner lanes, settlement, and verifica
     check: "shared_tencent_monthly_preflight_before_sub2api_debit",
     failure: "zero_charge_zero_fabric_mutation"
   });
-  assert.deepEqual(freeze.providerProcurement.nodePoolDiscovery, {
-    api: "DescribeNodePools",
-    matchLabels: ["oplcloud.cn/pool-id", "oplcloud.cn/package-id", "oplcloud.cn/instance-type"],
-    requiredMatchCount: 1,
-    zeroOrMultipleMatches: "preflight_failure_before_debit",
-    actualNodePoolIdPersistence: "workspace.launch.v2 operation before debit",
-    repeatPreflightMismatch: "preflight_failure_before_debit"
+  assert.deepEqual(freeze.providerProcurement.dedicatedNodePools, {
+    system: { nodePoolId: "np-6l4nkdto", machineId: "np-6l4nkdto-2cdtm", nodeName: "10.66.0.42", cvmId: "required_production_configuration" },
+    basic: { stablePoolName: "pool-basic-2c4g", packageId: "basic", instanceType: "SA5.MEDIUM4", replicasMayBeZero: true },
+    pro: { stablePoolName: "pool-pro-8c16g", packageId: "pro", instanceType: "SA5.2XLARGE16", replicasMayBeZero: true },
+    packagePoolsDistinctFromEachOtherAndSystem: true,
+    maxReplicas: "required_explicit_production_configuration_no_default"
+  });
+  assert.deepEqual(freeze.providerProcurement.computeAllocation, {
+    nodePoolIdentitySource: "persisted_exact_monthly_preflight_node_pool_id",
+    discoveryFallback: false,
+    createNodePool: false,
+    admission: "persisted_fifo_by_exact_node_pool",
+    admissionLock: "short_postgresql_transaction_advisory_lock_only",
+    headExecution: "only_started_head_can_prepare_scale_bounded_poll_and_claim",
+    executionFence: "short_lease_without_provider_call_holding_postgresql_connection",
+    crossPoolConcurrency: "independent_node_pools_parallel",
+    persistBeforeTencentMutation: ["baselineReplicas", "targetReplicas=baselineReplicas+1", "beforeMachineNames"],
+    replay: "align_same_absolute_target_never_recompute_current_plus_one",
+    claim: "exactly_one_ready_machine_in_after_minus_before",
+    zeroDifference: "bounded_poll_same_persisted_absolute_target",
+    unsafeDifference: "manual_review_without_second_scale_or_old_machine_claim",
+    ownershipWriteGate: ["cvm_ins_id", "sku", "zone", "chargeType=PREPAID", "periodMonths=1", "renewFlag=NOTIFY_AND_MANUAL_RENEW", "deadline"],
+    customerMachineSource: "new_machine_created_for_this_workspace_only"
+  });
+  assert.deepEqual(freeze.providerProcurement.nodePoolBootstrap, {
+    authority: "manual_approved_bootstrap_workflow_only",
+    inventoryFirst: ["system", "basic", "pro"],
+    createOnlyWhenMissingAndUnambiguous: true,
+    newPoolReplicas: 0,
+    stableInfrastructureLabelsOnly: true,
+    customerOwnershipLabels: false,
+    idempotency: "running_or_exact_creating_pool_is_registered_or_pending_without_duplicate_create",
+    partialState: "preserve_successful_pool_report_failure_retry_missing_only",
+    ordinaryCallerCreateNodePoolCount: 0
+  });
+  assert.deepEqual(freeze.providerProcurement.protectedResourceGuard, {
+    identities: ["system_node_pool", "system_machine", "system_node", "system_cvm"],
+    appliesTo: ["tencent_mutation", "kubernetes_mutation", "cleanup_workflows"],
+    failure: "reject_before_provider_client_or_kubectl_mutation"
   });
   assert.deepEqual(freeze.providerProcurement.activationReadback, {
     apis: ["SyncMonthlyCompute", "SyncMonthlyStorage"],
@@ -164,6 +197,24 @@ test("launch freeze fixes the V2 products, owner lanes, settlement, and verifica
     recoveryCommitment: "none",
     fabricMutationCount: 0,
     tencentMutationCount: 0
+  });
+  assert.deepEqual(freeze.providerProcurement.workspaceRenewal, {
+    intentAuthority: "control_plane_workspace_autoRenew",
+    autoRenewFalse: "zero_debit_zero_fabric_renewal",
+    autoRenewTrueOperation: [
+      "read_autoRenew_and_paidThrough",
+      "wallet_and_compute_storage_read_only_preflight",
+      "single_workspace_total_debit",
+      "renew_same_cvm",
+      "renew_same_cbs",
+      "fabric_authoritative_deadline_readback",
+      "extend_workspace_paidThrough",
+      "billing.workspace_renewed.v1"
+    ],
+    tencentRenewFlag: "NOTIFY_AND_MANUAL_RENEW",
+    partialOrUnknown: "manual_review_without_duplicate_debit_renewal_or_purchase",
+    fabricPrimitives: ["RenewComputeAllocation", "RenewStorageVolume"],
+    currentBranchScope: "preserve_fabric_primitives_only_control_plane_switch_ui_and_worker_deferred"
   });
   assert.equal(freeze.workspaceLaunch.codeCompleteThroughPhase, undefined);
   assert.equal(freeze.workspaceLaunch.nextBlockedStage, undefined);

@@ -137,12 +137,20 @@ func init() {
 	fabricoperationDescRetryable := fabricoperationFields[15].Descriptor()
 	// fabricoperation.DefaultRetryable holds the default value on creation for the retryable field.
 	fabricoperation.DefaultRetryable = fabricoperationDescRetryable.Default.(bool)
+	// fabricoperationDescComputePoolKey is the schema descriptor for compute_pool_key field.
+	fabricoperationDescComputePoolKey := fabricoperationFields[16].Descriptor()
+	// fabricoperation.DefaultComputePoolKey holds the default value on creation for the compute_pool_key field.
+	fabricoperation.DefaultComputePoolKey = fabricoperationDescComputePoolKey.Default.(string)
+	// fabricoperationDescComputePoolLeaseOwner is the schema descriptor for compute_pool_lease_owner field.
+	fabricoperationDescComputePoolLeaseOwner := fabricoperationFields[17].Descriptor()
+	// fabricoperation.DefaultComputePoolLeaseOwner holds the default value on creation for the compute_pool_lease_owner field.
+	fabricoperation.DefaultComputePoolLeaseOwner = fabricoperationDescComputePoolLeaseOwner.Default.(string)
 	// fabricoperationDescStartedAt is the schema descriptor for started_at field.
-	fabricoperationDescStartedAt := fabricoperationFields[16].Descriptor()
+	fabricoperationDescStartedAt := fabricoperationFields[19].Descriptor()
 	// fabricoperation.DefaultStartedAt holds the default value on creation for the started_at field.
 	fabricoperation.DefaultStartedAt = fabricoperationDescStartedAt.Default.(func() time.Time)
 	// fabricoperationDescCreatedAt is the schema descriptor for created_at field.
-	fabricoperationDescCreatedAt := fabricoperationFields[18].Descriptor()
+	fabricoperationDescCreatedAt := fabricoperationFields[21].Descriptor()
 	// fabricoperation.DefaultCreatedAt holds the default value on creation for the created_at field.
 	fabricoperation.DefaultCreatedAt = fabricoperationDescCreatedAt.Default.(func() time.Time)
 	// fabricoperationDescID is the schema descriptor for id field.

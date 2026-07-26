@@ -182,6 +182,48 @@ func (foc *FabricOperationCreate) SetNillableRetryable(b *bool) *FabricOperation
 	return foc
 }
 
+// SetComputePoolKey sets the "compute_pool_key" field.
+func (foc *FabricOperationCreate) SetComputePoolKey(s string) *FabricOperationCreate {
+	foc.mutation.SetComputePoolKey(s)
+	return foc
+}
+
+// SetNillableComputePoolKey sets the "compute_pool_key" field if the given value is not nil.
+func (foc *FabricOperationCreate) SetNillableComputePoolKey(s *string) *FabricOperationCreate {
+	if s != nil {
+		foc.SetComputePoolKey(*s)
+	}
+	return foc
+}
+
+// SetComputePoolLeaseOwner sets the "compute_pool_lease_owner" field.
+func (foc *FabricOperationCreate) SetComputePoolLeaseOwner(s string) *FabricOperationCreate {
+	foc.mutation.SetComputePoolLeaseOwner(s)
+	return foc
+}
+
+// SetNillableComputePoolLeaseOwner sets the "compute_pool_lease_owner" field if the given value is not nil.
+func (foc *FabricOperationCreate) SetNillableComputePoolLeaseOwner(s *string) *FabricOperationCreate {
+	if s != nil {
+		foc.SetComputePoolLeaseOwner(*s)
+	}
+	return foc
+}
+
+// SetComputePoolLeaseExpiresAt sets the "compute_pool_lease_expires_at" field.
+func (foc *FabricOperationCreate) SetComputePoolLeaseExpiresAt(t time.Time) *FabricOperationCreate {
+	foc.mutation.SetComputePoolLeaseExpiresAt(t)
+	return foc
+}
+
+// SetNillableComputePoolLeaseExpiresAt sets the "compute_pool_lease_expires_at" field if the given value is not nil.
+func (foc *FabricOperationCreate) SetNillableComputePoolLeaseExpiresAt(t *time.Time) *FabricOperationCreate {
+	if t != nil {
+		foc.SetComputePoolLeaseExpiresAt(*t)
+	}
+	return foc
+}
+
 // SetStartedAt sets the "started_at" field.
 func (foc *FabricOperationCreate) SetStartedAt(t time.Time) *FabricOperationCreate {
 	foc.mutation.SetStartedAt(t)
@@ -301,6 +343,14 @@ func (foc *FabricOperationCreate) defaults() {
 		v := fabricoperation.DefaultRetryable
 		foc.mutation.SetRetryable(v)
 	}
+	if _, ok := foc.mutation.ComputePoolKey(); !ok {
+		v := fabricoperation.DefaultComputePoolKey
+		foc.mutation.SetComputePoolKey(v)
+	}
+	if _, ok := foc.mutation.ComputePoolLeaseOwner(); !ok {
+		v := fabricoperation.DefaultComputePoolLeaseOwner
+		foc.mutation.SetComputePoolLeaseOwner(v)
+	}
 	if _, ok := foc.mutation.StartedAt(); !ok {
 		v := fabricoperation.DefaultStartedAt()
 		foc.mutation.SetStartedAt(v)
@@ -387,6 +437,12 @@ func (foc *FabricOperationCreate) check() error {
 	}
 	if _, ok := foc.mutation.Retryable(); !ok {
 		return &ValidationError{Name: "retryable", err: errors.New(`ent: missing required field "FabricOperation.retryable"`)}
+	}
+	if _, ok := foc.mutation.ComputePoolKey(); !ok {
+		return &ValidationError{Name: "compute_pool_key", err: errors.New(`ent: missing required field "FabricOperation.compute_pool_key"`)}
+	}
+	if _, ok := foc.mutation.ComputePoolLeaseOwner(); !ok {
+		return &ValidationError{Name: "compute_pool_lease_owner", err: errors.New(`ent: missing required field "FabricOperation.compute_pool_lease_owner"`)}
 	}
 	if _, ok := foc.mutation.StartedAt(); !ok {
 		return &ValidationError{Name: "started_at", err: errors.New(`ent: missing required field "FabricOperation.started_at"`)}
@@ -493,6 +549,18 @@ func (foc *FabricOperationCreate) createSpec() (*FabricOperation, *sqlgraph.Crea
 	if value, ok := foc.mutation.Retryable(); ok {
 		_spec.SetField(fabricoperation.FieldRetryable, field.TypeBool, value)
 		_node.Retryable = value
+	}
+	if value, ok := foc.mutation.ComputePoolKey(); ok {
+		_spec.SetField(fabricoperation.FieldComputePoolKey, field.TypeString, value)
+		_node.ComputePoolKey = value
+	}
+	if value, ok := foc.mutation.ComputePoolLeaseOwner(); ok {
+		_spec.SetField(fabricoperation.FieldComputePoolLeaseOwner, field.TypeString, value)
+		_node.ComputePoolLeaseOwner = value
+	}
+	if value, ok := foc.mutation.ComputePoolLeaseExpiresAt(); ok {
+		_spec.SetField(fabricoperation.FieldComputePoolLeaseExpiresAt, field.TypeTime, value)
+		_node.ComputePoolLeaseExpiresAt = &value
 	}
 	if value, ok := foc.mutation.StartedAt(); ok {
 		_spec.SetField(fabricoperation.FieldStartedAt, field.TypeTime, value)

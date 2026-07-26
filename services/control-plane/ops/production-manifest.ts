@@ -18,6 +18,14 @@ const REQUIRED_TKE_ENV = [
   "OPL_IMAGE_PULL_SECRET_NAME",
   "OPL_WORKSPACE_STORAGE_CLASS",
   "OPL_TENCENT_ZONE",
+  "OPL_SYSTEM_COMPUTE_NODE_POOL_ID",
+  "OPL_SYSTEM_COMPUTE_MACHINE_ID",
+  "OPL_SYSTEM_COMPUTE_NODE_NAME",
+  "OPL_SYSTEM_COMPUTE_CVM_ID",
+  "OPL_BASIC_COMPUTE_NODE_POOL_ID",
+  "OPL_PRO_COMPUTE_NODE_POOL_ID",
+  "OPL_BASIC_COMPUTE_NODE_POOL_MAX_REPLICAS",
+  "OPL_PRO_COMPUTE_NODE_POOL_MAX_REPLICAS",
   "TENCENT_DEPLOY_KUBECONFIG_REF",
   "TENCENT_DEPLOY_CLUSTER_ID",
   "TENCENT_TCR_REGISTRY",
@@ -82,6 +90,28 @@ function looksLikeProductionDomain(domain) {
   return Boolean(domain && domain.includes(".") && !domain.includes("localhost") && !domain.startsWith("127."));
 }
 
+function hasDedicatedNodePoolIdentity(values) {
+  const systemPool = String(values.OPL_SYSTEM_COMPUTE_NODE_POOL_ID || "").trim();
+  const basicPool = String(values.OPL_BASIC_COMPUTE_NODE_POOL_ID || "").trim();
+  const proPool = String(values.OPL_PRO_COMPUTE_NODE_POOL_ID || "").trim();
+  const pools = [systemPool, basicPool, proPool];
+  return pools.every((value) => /^np-[A-Za-z0-9-]+$/.test(value)) &&
+    new Set(pools).size === pools.length &&
+    Boolean(String(values.OPL_SYSTEM_COMPUTE_MACHINE_ID || "").trim()) &&
+    Boolean(String(values.OPL_SYSTEM_COMPUTE_NODE_NAME || "").trim()) &&
+    /^ins-[A-Za-z0-9]+$/.test(String(values.OPL_SYSTEM_COMPUTE_CVM_ID || "").trim());
+}
+
+function isPositiveInt64(value) {
+  const normalized = String(value || "").trim();
+  if (!/^[1-9][0-9]*$/.test(normalized)) return false;
+  try {
+    return BigInt(normalized) <= 9223372036854775807n;
+  } catch {
+    return false;
+  }
+}
+
 export function productionManifestRequiredEnv() {
   return [...new Set([
     ...REQUIRED_COMMON_ENV,
@@ -109,6 +139,12 @@ export function validateProductionManifest({ env = {} } = {}) {
     check("secret_refs", inlineSecretEnv.length === 0, "Sensitive production values must use secretRef"),
     check("runtime_provider", provider === PROVIDERS.TENCENT_TKE, "OPL_RUNTIME_PROVIDER must be tencent-tke"),
     check("verification_mutation_authority", !hasVerificationMutationAuthority, "Ordinary production manifests must not carry real-verification approvals or write flags"),
+    check("dedicated_node_pool_identity", hasDedicatedNodePoolIdentity(values), "System, Basic, and Pro resource identities must be explicit, valid, and distinct"),
+    check(
+      "dedicated_node_pool_capacity",
+      isPositiveInt64(values.OPL_BASIC_COMPUTE_NODE_POOL_MAX_REPLICAS) && isPositiveInt64(values.OPL_PRO_COMPUTE_NODE_POOL_MAX_REPLICAS),
+      "Basic and Pro NodePool maxReplicas must be explicitly approved positive int64 values"
+    ),
     check(
       "registry_images",
       looksLikeRegistryImage({ image: values.OPL_CLOUD_IMAGE, registry: values.TENCENT_TCR_REGISTRY }) &&

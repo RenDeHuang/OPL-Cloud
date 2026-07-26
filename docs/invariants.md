@@ -28,8 +28,10 @@ The four implementation owner lanes are Console/Control Plane, Fabric, Gateway i
   packages, and every Workspace has an independent quote, launch operation,
   entitlement period, provider resource set, Workspace Key, Secret, Runtime,
   and Workspace Receipt.
-- `autoRenew` defaults off. Enabling it is rejected and hidden until a real
-  renewal has been approved and proven.
+- Every Workspace owns an independent customer-controlled `autoRenew` intent,
+  defaulting to false. The Fabric NodePool hard-cut preserves the renewal
+  primitives; Control Plane/UI enablement and monthly-worker changes are a
+  separate implementation closure.
 - Backup, recovery, sync, transfer, HA, public registration, and shared
   multi-user collaboration are not Pilot capabilities.
 
@@ -76,11 +78,30 @@ The four implementation owner lanes are Console/Control Plane, Fabric, Gateway i
 - The shared real-Tencent monthly preflight fails closed unless
   `RUN_TENCENT_CREATE_RELEASE_EXECUTION=1`; this check runs before every first
   Sub2API debit and leaves both the charge count and Fabric mutation count at zero on failure.
-- Compute preflight discovers the existing TKE NodePool with `DescribeNodePools`
-  by exact `oplcloud.cn/pool-id`, `oplcloud.cn/package-id`, and
-  `oplcloud.cn/instance-type` labels. Exactly one match is required. Zero,
-  multiple, incomplete, or changed matches fail before debit; the Tencent
-  NodePool ID is stored on `workspace.launch.v2` before debit.
+- Basic and Pro use separate pre-created TKE NativeCVM NodePools:
+  `pool-basic-2c4g` for `SA5.MEDIUM4` and `pool-pro-8c16g` for
+  `SA5.2XLARGE16`. Empty `0/0` pools are valid templates, not idle-machine
+  inventory. Each launch uses the exact NodePool ID persisted by preflight;
+  label discovery fallback and customer-path NodePool creation are forbidden.
+- Fabric persists a FIFO admission queue per exact NodePool. A short PostgreSQL
+  transaction lock orders admission only; no database connection is held during
+  provider work. Only the persisted `started` head may prepare, scale, bounded-
+  poll, or claim. A fenced short execution lease permits crash recovery without
+  allowing a later Workspace to pass the head, while different NodePools run in
+  parallel. Before Tencent mutation the head persists the current replica
+  baseline, the absolute `N+1` target, and the complete before-machine set.
+  Replay aligns that same target and claims only the unique Ready machine in
+  `after - before`; it never allocates an old, idle, orphaned, or unregistered
+  machine.
+- The system NodePool `np-6l4nkdto`, Machine `np-6l4nkdto-2cdtm`, Node
+  `10.66.0.42`, and its production-configured `ins-*` CVM identity are protected
+  from every Tencent/Kubernetes mutation and cleanup path. The Basic and Pro
+  pools must be distinct from each other and from the system pool.
+- NodePool creation exists only in the manually approved bootstrap workflow.
+  It inventories System/Basic/Pro first, creates only an unambiguously missing
+  package pool at replicas 0, requires explicit maxReplicas, and preserves a
+  successfully created pool when the other package fails so retry fills only
+  the missing pool.
 - Fabric creates CBS with a stable `ClientToken`, reads back CVM/CBS identity and billing facts, then binds CBS through a static PV/PVC in the compute Zone.
 - Static CBS uses `com.tencent.cloud.csi.cbs`, `volumeHandle=disk-*`, RWO, empty `storageClassName`, Zone affinity, and `persistentVolumeReclaimPolicy=Retain`.
 - `UNATTACHED` or `ATTACHED` is provider-ready; PVC `Bound` is required before Workspace deployment.
@@ -211,9 +232,19 @@ validate account and quote
 - Customer prices are fixed integer USD micros under
   `pilot-usd-2026-07-v1`; provider costs never derive a customer charge.
 - Provider SKU may vary by approved environment but must satisfy the customer CPU and memory contract.
-- Each Workspace renewal uses one combined Sub2API debit, manual provider renewal
-  of the same CVM/CBS, readback, entitlement extension, and one receipt.
-- Tencent automatic renewal is forbidden.
+- At renewal evaluation, `autoRenew=false` performs no debit and no Fabric
+  renewal call. `autoRenew=true` performs one Workspace commercial operation:
+  read the Workspace intent and `paidThrough`, run wallet and compute/storage
+  read-only preflight, debit the combined monthly price once, renew the same CVM
+  and CBS, read back both deadlines from Fabric, extend `paidThrough`, and append
+  one `billing.workspace_renewed.v1` Receipt.
+- OPL-controlled renewal never enables Tencent automatic renewal. CVM and CBS
+  remain `PREPAID`, one month, and `NOTIFY_AND_MANUAL_RENEW`; Fabric retains
+  idempotent `RenewComputeAllocation` and `RenewStorageVolume` readback paths.
+- Insufficient balance, partial provider success, or an unknown provider result
+  enters `manual_review` without a duplicate debit, renewal, or replacement
+  purchase. Once `paidThrough` is reached, access is denied even while review is
+  unresolved.
 - At unpaid expiry Workspace access is denied and renewal intent is disabled.
   OPL does not stop, destroy, delete, renew, or otherwise mutate CVM/CBS; Tencent
   expiry policy owns eventual provider reclamation. The expiry receipt records
@@ -330,11 +361,11 @@ Provider Acceptance owns two retained non-customer slots:
 | 1. Offer and identity | Show operator-provisioned mapped owners Basic and Pro without the Acceptance SKUs. | Console, Gateway | Canonical `POST /api/operator/accounts` provisioning and the strict one-to-one mapped-owner graph have integrated local evidence; deployment and authenticated production identity readback remain pending. | Product contract, tenant tests, deployed account readback. |
 | 2. Wallet and quote | Show live wallet and exact Workspace quote before side effects. | Console, Gateway | Granular Wallet/Key/Usage/Stats/history DTOs, fixed USD Basic/Pro quotes, and local Console integration are code-complete; live authenticated Sub2API evidence is pending. | Source-contract tests, quote tests, unavailable-state UI tests. |
 | 3. Balance debit | Debit the exact monthly amount once before provider mutation. | Console, Gateway, Ledger | Durable one-submit launch, debit-first recovery, and replay are code-complete; deployed browser and live Sub2API evidence are pending. | Deterministic debit, balance check, replay/concurrency evidence. |
-| 4. Prepaid fulfillment | Open one-month PREPAID CVM/CBS after debit. | Fabric, Console | PREPAID CVM/CBS request/readback and pure-fulfillment recovery behind one Workspace debit are code-complete in local tests; live Tencent evidence is pending. | Request shapes, provider readback, duplicate-purchase guard. |
+| 4. Prepaid fulfillment | Scale the exact package NodePool from N to N+1 and open one independent CBS only after debit. | Fabric, Console | Allocation-scoped procurement, absolute-target replay, unique new-machine claim, bootstrap, and system-resource guards have local evidence; real NodePool creation and Tencent procurement remain pending. | Request shape, before/after machine proof, provider readback, duplicate-purchase protection. |
 | 5. Claim and activate | Activate only after every resource is owned and read back. | All four lanes | Non-review V2 claim, confirmed-absence one-refund convergence, activation, purchased/refunded Receipt paths, dedicated launch review recovery, and its reconciliation DTO have integrated local fake evidence; live evidence remains pending. | Claim identity, confirmed-absence refund, ambiguous-result review. |
 | 6. Workspace access | Authenticate to a ready, persistent, account-keyed Workspace. | Fabric, Console, Ledger | V2 attachment, Secret, Runtime readiness gate, activation, receipt-only recovery, status, and credential flows have local focused evidence on the non-review path. Runtime metadata/statfs API and Console presentation are paused; immutable image, browser, WebSocket, model, direct mount-marker persistence, and deployed evidence remain pending. | Owner isolation, login, WebSocket 101, Secret rotation, credential revision, digest readback, and direct `/data`/`/projects` marker retention. |
 | 7. Gateway usage | Reveal the owner Key, make a metered Workspace model request, and show its customer-safe cost and Token facts. | Gateway, Console, Ledger | Wallet, Key list, request Usage, Usage Stats, balance history, and integer-cost projections are code-complete and locally tested; a real model request and production readback remain pending. | Tenant isolation, model response, request usage and stats projection, integer `actual_cost`, no leakage. |
-| 8. Renewal and recovery | Renew one Workspace period with deterministic recovery. | All four lanes | Workspace-level claim, combined debit, same-ID provider renewal/readback, expiry, refund/review, and receipt recovery are code-complete; enabling auto-renew and real renewal evidence are pending. | Isolated PostgreSQL concurrency, renewal replay, deadline readback, real approved renewal. |
+| 8. Renewal and recovery | Renew one Workspace period only when its customer-controlled autoRenew intent is true. | All four lanes | Same-CVM/CBS Fabric renewal and readback primitives remain locally tested. Control Plane/UI intent enablement, worker selection, and real renewal evidence are outside the Fabric NodePool hard-cut. | Isolated PostgreSQL concurrency, zero calls when false, one combined debit when true, renewal replay, deadline readback, real approved renewal. |
 | 9. Reusable verification | Prove releases without per-run Tencent purchase or deletion. | All four lanes | Provider Acceptance, Pro verification, and fixed-slot verification are paused and do not gate the Basic rollout. | Future separately approved retained-slot evidence. |
 | 10. Production release | Declare ready from immutable artifacts, rollout, rollback, and real evidence. | All four lanes | Security, immutable imageID checks, ConfigMap-aware Cloud rollback, read-only TKE diagnostics, release tooling, Console browser coverage, local integration gates, and the deployment identity cutover are code-complete locally; immutable publication, rollout, rollback, and runtime evidence remain pending. | Full local gates, immutable digests, rollout, rollback, source-truth QA, approved real evidence. |
 

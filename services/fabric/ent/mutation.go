@@ -1724,31 +1724,34 @@ func (m *ContentTransferChunkMutation) ResetEdge(name string) error {
 // FabricOperationMutation represents an operation that mutates the FabricOperation nodes in the graph.
 type FabricOperationMutation struct {
 	config
-	op                        Op
-	typ                       string
-	id                        *string
-	operation_id              *string
-	caller_service            *string
-	action                    *string
-	resource_kind             *string
-	resource_id               *string
-	account_id                *string
-	workspace_id              *string
-	provider                  *string
-	provider_request_id       *string
-	idempotency_key           *string
-	request_hash              *string
-	redacted_provider_payload *string
-	status                    *string
-	error_code                *string
-	retryable                 *bool
-	started_at                *time.Time
-	finished_at               *time.Time
-	created_at                *time.Time
-	clearedFields             map[string]struct{}
-	done                      bool
-	oldValue                  func(context.Context) (*FabricOperation, error)
-	predicates                []predicate.FabricOperation
+	op                            Op
+	typ                           string
+	id                            *string
+	operation_id                  *string
+	caller_service                *string
+	action                        *string
+	resource_kind                 *string
+	resource_id                   *string
+	account_id                    *string
+	workspace_id                  *string
+	provider                      *string
+	provider_request_id           *string
+	idempotency_key               *string
+	request_hash                  *string
+	redacted_provider_payload     *string
+	status                        *string
+	error_code                    *string
+	retryable                     *bool
+	compute_pool_key              *string
+	compute_pool_lease_owner      *string
+	compute_pool_lease_expires_at *time.Time
+	started_at                    *time.Time
+	finished_at                   *time.Time
+	created_at                    *time.Time
+	clearedFields                 map[string]struct{}
+	done                          bool
+	oldValue                      func(context.Context) (*FabricOperation, error)
+	predicates                    []predicate.FabricOperation
 }
 
 var _ ent.Mutation = (*FabricOperationMutation)(nil)
@@ -2395,6 +2398,127 @@ func (m *FabricOperationMutation) ResetRetryable() {
 	m.retryable = nil
 }
 
+// SetComputePoolKey sets the "compute_pool_key" field.
+func (m *FabricOperationMutation) SetComputePoolKey(s string) {
+	m.compute_pool_key = &s
+}
+
+// ComputePoolKey returns the value of the "compute_pool_key" field in the mutation.
+func (m *FabricOperationMutation) ComputePoolKey() (r string, exists bool) {
+	v := m.compute_pool_key
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldComputePoolKey returns the old "compute_pool_key" field's value of the FabricOperation entity.
+// If the FabricOperation object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *FabricOperationMutation) OldComputePoolKey(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldComputePoolKey is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldComputePoolKey requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldComputePoolKey: %w", err)
+	}
+	return oldValue.ComputePoolKey, nil
+}
+
+// ResetComputePoolKey resets all changes to the "compute_pool_key" field.
+func (m *FabricOperationMutation) ResetComputePoolKey() {
+	m.compute_pool_key = nil
+}
+
+// SetComputePoolLeaseOwner sets the "compute_pool_lease_owner" field.
+func (m *FabricOperationMutation) SetComputePoolLeaseOwner(s string) {
+	m.compute_pool_lease_owner = &s
+}
+
+// ComputePoolLeaseOwner returns the value of the "compute_pool_lease_owner" field in the mutation.
+func (m *FabricOperationMutation) ComputePoolLeaseOwner() (r string, exists bool) {
+	v := m.compute_pool_lease_owner
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldComputePoolLeaseOwner returns the old "compute_pool_lease_owner" field's value of the FabricOperation entity.
+// If the FabricOperation object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *FabricOperationMutation) OldComputePoolLeaseOwner(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldComputePoolLeaseOwner is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldComputePoolLeaseOwner requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldComputePoolLeaseOwner: %w", err)
+	}
+	return oldValue.ComputePoolLeaseOwner, nil
+}
+
+// ResetComputePoolLeaseOwner resets all changes to the "compute_pool_lease_owner" field.
+func (m *FabricOperationMutation) ResetComputePoolLeaseOwner() {
+	m.compute_pool_lease_owner = nil
+}
+
+// SetComputePoolLeaseExpiresAt sets the "compute_pool_lease_expires_at" field.
+func (m *FabricOperationMutation) SetComputePoolLeaseExpiresAt(t time.Time) {
+	m.compute_pool_lease_expires_at = &t
+}
+
+// ComputePoolLeaseExpiresAt returns the value of the "compute_pool_lease_expires_at" field in the mutation.
+func (m *FabricOperationMutation) ComputePoolLeaseExpiresAt() (r time.Time, exists bool) {
+	v := m.compute_pool_lease_expires_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldComputePoolLeaseExpiresAt returns the old "compute_pool_lease_expires_at" field's value of the FabricOperation entity.
+// If the FabricOperation object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *FabricOperationMutation) OldComputePoolLeaseExpiresAt(ctx context.Context) (v *time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldComputePoolLeaseExpiresAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldComputePoolLeaseExpiresAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldComputePoolLeaseExpiresAt: %w", err)
+	}
+	return oldValue.ComputePoolLeaseExpiresAt, nil
+}
+
+// ClearComputePoolLeaseExpiresAt clears the value of the "compute_pool_lease_expires_at" field.
+func (m *FabricOperationMutation) ClearComputePoolLeaseExpiresAt() {
+	m.compute_pool_lease_expires_at = nil
+	m.clearedFields[fabricoperation.FieldComputePoolLeaseExpiresAt] = struct{}{}
+}
+
+// ComputePoolLeaseExpiresAtCleared returns if the "compute_pool_lease_expires_at" field was cleared in this mutation.
+func (m *FabricOperationMutation) ComputePoolLeaseExpiresAtCleared() bool {
+	_, ok := m.clearedFields[fabricoperation.FieldComputePoolLeaseExpiresAt]
+	return ok
+}
+
+// ResetComputePoolLeaseExpiresAt resets all changes to the "compute_pool_lease_expires_at" field.
+func (m *FabricOperationMutation) ResetComputePoolLeaseExpiresAt() {
+	m.compute_pool_lease_expires_at = nil
+	delete(m.clearedFields, fabricoperation.FieldComputePoolLeaseExpiresAt)
+}
+
 // SetStartedAt sets the "started_at" field.
 func (m *FabricOperationMutation) SetStartedAt(t time.Time) {
 	m.started_at = &t
@@ -2550,7 +2674,7 @@ func (m *FabricOperationMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *FabricOperationMutation) Fields() []string {
-	fields := make([]string, 0, 18)
+	fields := make([]string, 0, 21)
 	if m.operation_id != nil {
 		fields = append(fields, fabricoperation.FieldOperationID)
 	}
@@ -2595,6 +2719,15 @@ func (m *FabricOperationMutation) Fields() []string {
 	}
 	if m.retryable != nil {
 		fields = append(fields, fabricoperation.FieldRetryable)
+	}
+	if m.compute_pool_key != nil {
+		fields = append(fields, fabricoperation.FieldComputePoolKey)
+	}
+	if m.compute_pool_lease_owner != nil {
+		fields = append(fields, fabricoperation.FieldComputePoolLeaseOwner)
+	}
+	if m.compute_pool_lease_expires_at != nil {
+		fields = append(fields, fabricoperation.FieldComputePoolLeaseExpiresAt)
 	}
 	if m.started_at != nil {
 		fields = append(fields, fabricoperation.FieldStartedAt)
@@ -2643,6 +2776,12 @@ func (m *FabricOperationMutation) Field(name string) (ent.Value, bool) {
 		return m.ErrorCode()
 	case fabricoperation.FieldRetryable:
 		return m.Retryable()
+	case fabricoperation.FieldComputePoolKey:
+		return m.ComputePoolKey()
+	case fabricoperation.FieldComputePoolLeaseOwner:
+		return m.ComputePoolLeaseOwner()
+	case fabricoperation.FieldComputePoolLeaseExpiresAt:
+		return m.ComputePoolLeaseExpiresAt()
 	case fabricoperation.FieldStartedAt:
 		return m.StartedAt()
 	case fabricoperation.FieldFinishedAt:
@@ -2688,6 +2827,12 @@ func (m *FabricOperationMutation) OldField(ctx context.Context, name string) (en
 		return m.OldErrorCode(ctx)
 	case fabricoperation.FieldRetryable:
 		return m.OldRetryable(ctx)
+	case fabricoperation.FieldComputePoolKey:
+		return m.OldComputePoolKey(ctx)
+	case fabricoperation.FieldComputePoolLeaseOwner:
+		return m.OldComputePoolLeaseOwner(ctx)
+	case fabricoperation.FieldComputePoolLeaseExpiresAt:
+		return m.OldComputePoolLeaseExpiresAt(ctx)
 	case fabricoperation.FieldStartedAt:
 		return m.OldStartedAt(ctx)
 	case fabricoperation.FieldFinishedAt:
@@ -2808,6 +2953,27 @@ func (m *FabricOperationMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetRetryable(v)
 		return nil
+	case fabricoperation.FieldComputePoolKey:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetComputePoolKey(v)
+		return nil
+	case fabricoperation.FieldComputePoolLeaseOwner:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetComputePoolLeaseOwner(v)
+		return nil
+	case fabricoperation.FieldComputePoolLeaseExpiresAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetComputePoolLeaseExpiresAt(v)
+		return nil
 	case fabricoperation.FieldStartedAt:
 		v, ok := value.(time.Time)
 		if !ok {
@@ -2859,6 +3025,9 @@ func (m *FabricOperationMutation) AddField(name string, value ent.Value) error {
 // mutation.
 func (m *FabricOperationMutation) ClearedFields() []string {
 	var fields []string
+	if m.FieldCleared(fabricoperation.FieldComputePoolLeaseExpiresAt) {
+		fields = append(fields, fabricoperation.FieldComputePoolLeaseExpiresAt)
+	}
 	if m.FieldCleared(fabricoperation.FieldFinishedAt) {
 		fields = append(fields, fabricoperation.FieldFinishedAt)
 	}
@@ -2876,6 +3045,9 @@ func (m *FabricOperationMutation) FieldCleared(name string) bool {
 // error if the field is not defined in the schema.
 func (m *FabricOperationMutation) ClearField(name string) error {
 	switch name {
+	case fabricoperation.FieldComputePoolLeaseExpiresAt:
+		m.ClearComputePoolLeaseExpiresAt()
+		return nil
 	case fabricoperation.FieldFinishedAt:
 		m.ClearFinishedAt()
 		return nil
@@ -2931,6 +3103,15 @@ func (m *FabricOperationMutation) ResetField(name string) error {
 		return nil
 	case fabricoperation.FieldRetryable:
 		m.ResetRetryable()
+		return nil
+	case fabricoperation.FieldComputePoolKey:
+		m.ResetComputePoolKey()
+		return nil
+	case fabricoperation.FieldComputePoolLeaseOwner:
+		m.ResetComputePoolLeaseOwner()
+		return nil
+	case fabricoperation.FieldComputePoolLeaseExpiresAt:
+		m.ResetComputePoolLeaseExpiresAt()
 		return nil
 	case fabricoperation.FieldStartedAt:
 		m.ResetStartedAt()

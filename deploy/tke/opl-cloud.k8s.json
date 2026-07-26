@@ -65,6 +65,14 @@
         "OPL_TENCENT_ZONE": "ap-guangzhou-3",
         "OPL_BASIC_COMPUTE_INSTANCE_TYPE": "SA5.MEDIUM4",
         "OPL_PRO_COMPUTE_INSTANCE_TYPE": "SA5.2XLARGE16",
+        "OPL_SYSTEM_COMPUTE_NODE_POOL_ID": "np-6l4nkdto",
+        "OPL_SYSTEM_COMPUTE_MACHINE_ID": "np-6l4nkdto-2cdtm",
+        "OPL_SYSTEM_COMPUTE_NODE_NAME": "10.66.0.42",
+        "OPL_SYSTEM_COMPUTE_CVM_ID": "",
+        "OPL_BASIC_COMPUTE_NODE_POOL_ID": "",
+        "OPL_PRO_COMPUTE_NODE_POOL_ID": "",
+        "OPL_BASIC_COMPUTE_NODE_POOL_MAX_REPLICAS": "",
+        "OPL_PRO_COMPUTE_NODE_POOL_MAX_REPLICAS": "",
         "OPL_CODEX_MODEL": "gpt-5.5",
         "OPL_CODEX_REASONING_EFFORT": "xhigh",
         "OPL_SUB2API_BASE_URL": "https://gflabtoken.cn",
@@ -113,6 +121,9 @@
           "spec": {
             "serviceAccountName": "opl-cloud-control-plane",
             "automountServiceAccountToken": false,
+            "nodeSelector": {
+              "medopl.cn/workload": "medopl"
+            },
             "imagePullSecrets": [
               {
                 "name": "tcr-pull-secret"
@@ -337,6 +348,9 @@
           "spec": {
             "serviceAccountName": "opl-cloud-control-plane",
             "automountServiceAccountToken": false,
+            "nodeSelector": {
+              "medopl.cn/workload": "medopl"
+            },
             "imagePullSecrets": [
               {
                 "name": "tcr-pull-secret"
@@ -529,6 +543,9 @@
           "spec": {
             "serviceAccountName": "opl-cloud-control-plane",
             "automountServiceAccountToken": false,
+            "nodeSelector": {
+              "medopl.cn/workload": "medopl"
+            },
             "imagePullSecrets": [
               {
                 "name": "tcr-pull-secret"

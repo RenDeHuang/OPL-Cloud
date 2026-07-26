@@ -7,6 +7,7 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"math"
@@ -16,17 +17,21 @@ import (
 )
 
 const (
-	storageProvisionTimeout       = 10 * time.Minute
-	providerFactsBatchTimeout     = 5 * time.Second
-	providerFactsBatchWorkerCount = 8
-	runtimeHealthSummaryTimeout   = 5 * time.Second
+	storageProvisionTimeout          = 10 * time.Minute
+	computeAllocationPollInterval    = 10 * time.Second
+	computeAllocationPollWindow      = 10 * time.Minute
+	computeAllocationAttemptTimeout  = 30 * time.Second
+	computeAllocationFinalizeTimeout = 2 * time.Minute
+	providerFactsBatchTimeout        = 5 * time.Second
+	providerFactsBatchWorkerCount    = 8
+	runtimeHealthSummaryTimeout      = 5 * time.Second
 )
 
 type Provider interface {
 	MonthlyPreflight(ctx context.Context, input MonthlyPreflightInput) (MonthlyPreflight, error)
-	ReconcileComputePool(ctx context.Context, input ComputePoolDemand) (ComputePoolState, error)
+	PrepareComputeAllocation(ctx context.Context, input ComputeAllocationInput) (ComputeAllocationPreparation, error)
+	CreateComputeAllocation(ctx context.Context, input ComputeAllocationExecution) (ComputeAllocation, error)
 	TagComputeMachine(ctx context.Context, machine ProviderMachine, ownership MachineOwnership) error
-	DeleteComputeMachine(ctx context.Context, machine ProviderMachine, ownership MachineOwnership) error
 	SyncComputeAllocation(ctx context.Context, allocation ComputeAllocation) (ComputeAllocation, error)
 	RenewComputeAllocation(ctx context.Context, allocation ComputeAllocation) (ComputeAllocation, error)
 	DestroyComputeAllocation(ctx context.Context, allocation ComputeAllocation) (ComputeAllocation, error)
@@ -67,18 +72,22 @@ type runtimeHealthSummaryProvider interface {
 }
 
 type Service struct {
-	provider    Provider
-	mu          sync.Mutex
-	jobMu       sync.Mutex
-	computes    map[string]ComputeAllocation
-	volumes     map[string]StorageVolume
-	snapshots   map[string]StorageSnapshot
-	attachments map[string]StorageAttachment
-	destroying  map[string]bool
-	reconciling map[string]bool
-	operations  OperationStore
-	transfers   TransferStore
-	now         func() time.Time
+	provider                         Provider
+	mu                               sync.Mutex
+	jobMu                            sync.Mutex
+	computes                         map[string]ComputeAllocation
+	volumes                          map[string]StorageVolume
+	snapshots                        map[string]StorageSnapshot
+	attachments                      map[string]StorageAttachment
+	destroying                       map[string]bool
+	reconciling                      map[string]bool
+	operations                       OperationStore
+	transfers                        TransferStore
+	now                              func() time.Time
+	computeAllocationPollInterval    time.Duration
+	computeAllocationPollWindow      time.Duration
+	computeAllocationAttemptTimeout  time.Duration
+	computeAllocationFinalizeTimeout time.Duration
 }
 
 const runtimeClaimStaleAfter = 2 * time.Minute
@@ -110,7 +119,13 @@ func NewServiceWithOperationStore(provider Provider, operations OperationStore) 
 	if transferStore == nil {
 		transferStore = newMemoryTransferStore()
 	}
-	return &Service{provider: provider, computes: computes, volumes: volumes, snapshots: snapshots, attachments: attachments, destroying: map[string]bool{}, reconciling: map[string]bool{}, operations: operations, transfers: transferStore, now: func() time.Time { return time.Now().UTC() }}
+	return &Service{
+		provider: provider, computes: computes, volumes: volumes, snapshots: snapshots, attachments: attachments,
+		destroying: map[string]bool{}, reconciling: map[string]bool{}, operations: operations, transfers: transferStore,
+		now:                           func() time.Time { return time.Now().UTC() },
+		computeAllocationPollInterval: computeAllocationPollInterval, computeAllocationPollWindow: computeAllocationPollWindow,
+		computeAllocationAttemptTimeout: computeAllocationAttemptTimeout, computeAllocationFinalizeTimeout: computeAllocationFinalizeTimeout,
+	}
 }
 
 func (s *Service) Catalog(_ context.Context) Catalog {
@@ -243,6 +258,9 @@ func (s *Service) CreateComputeAllocation(ctx context.Context, input ComputeAllo
 	if input.PackageID != "basic" && input.PackageID != "pro" {
 		return ComputeAllocation{}, ErrUnsupportedComputePackage
 	}
+	if strings.TrimSpace(input.NodePoolID) == "" {
+		return ComputeAllocation{}, fmt.Errorf("compute_node_pool_id_required")
+	}
 	if strings.TrimSpace(input.IdempotencyKey) == "" {
 		return ComputeAllocation{}, fmt.Errorf("compute_idempotency_key_required")
 	}
@@ -265,24 +283,28 @@ func (s *Service) CreateComputeAllocation(ctx context.Context, input ComputeAllo
 	operation.ID = "fop_compute_claim_" + stableSuffix("create_compute_allocation", input.IdempotencyKey)
 	operation.Status = "started"
 	operation.CreatedAt = now
+	operation.ComputePoolKey = allocation.NodePoolID
 	fillOperationResource(&operation, allocation)
-	stored, claimed, err := s.operations.ClaimRuntime(ctx, operation)
+	stored, claimed, err := s.operations.ClaimComputePoolRuntime(ctx, operation)
 	if err != nil {
 		return ComputeAllocation{}, err
+	}
+	if stored.ComputePoolKey != operation.ComputePoolKey {
+		return ComputeAllocation{}, ErrComputeIdempotencyConflict
 	}
 	if !claimed {
 		replayed, err := replayComputeAllocationOperation(stored, requestHash)
 		if err == nil && stored.Status == "started" {
-			s.startComputeReconcile(replayed, input.DryRun)
+			s.startComputeAllocation(stored, replayed, input.DryRun)
 		}
 		return replayed, err
 	}
 	input.OperationID = operation.OperationID
-	s.startComputeReconcile(allocation, input.DryRun)
+	s.startComputeAllocation(stored, allocation, input.DryRun)
 	return allocation, nil
 }
 
-func (s *Service) startComputeReconcile(allocation ComputeAllocation, dryRun bool) {
+func (s *Service) startComputeAllocation(operation FabricOperation, allocation ComputeAllocation, dryRun bool) {
 	s.mu.Lock()
 	if s.reconciling[allocation.ID] {
 		s.mu.Unlock()
@@ -297,8 +319,271 @@ func (s *Service) startComputeReconcile(allocation ComputeAllocation, dryRun boo
 			delete(s.reconciling, allocation.ID)
 			s.mu.Unlock()
 		}()
-		_ = s.reconcileComputePool(allocation.PackageID, dryRun)
+		s.finishCreateComputeAllocation(operation, allocation, dryRun)
 	}()
+}
+
+func (s *Service) finishCreateComputeAllocation(operation FabricOperation, allocation ComputeAllocation, dryRun bool) {
+	plan := packagePlan(allocation.PackageID)
+	poolKey := allocation.NodePoolID
+	leaseOwner, err := newLeaseToken()
+	if err != nil {
+		return
+	}
+	claimLease := func(duration time.Duration) bool {
+		now := s.now()
+		current, claimed, claimErr := s.operations.TryClaimComputePoolHead(context.Background(), operation.ID, poolKey, leaseOwner, now, now.Add(duration))
+		if claimErr != nil || !claimed {
+			return false
+		}
+		operation = current
+		return true
+	}
+	pollLease := s.computeAllocationAttemptTimeout + 2*s.computeAllocationPollInterval
+	if !claimLease(pollLease) {
+		return
+	}
+	terminal := false
+	defer func() {
+		if !terminal {
+			_ = s.operations.ReleaseComputePoolHead(context.Background(), operation.ID, poolKey, leaseOwner)
+		}
+	}()
+
+	prepared, hasPlan := decodeComputeAllocationPlan(operation)
+	if !hasPlan {
+		prepareCtx, cancel := context.WithTimeout(context.Background(), s.computeAllocationAttemptTimeout)
+		prepared, err = s.provider.PrepareComputeAllocation(prepareCtx, ComputeAllocationInput{
+			ID: allocation.ID, AccountID: allocation.AccountID, WorkspaceID: allocation.WorkspaceID,
+			PackageID: allocation.PackageID, NodePoolID: allocation.NodePoolID, DryRun: dryRun,
+		})
+		cancel()
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+			return
+		}
+		if err != nil {
+			terminal = true
+			_ = computeAllocationFailure(context.Background(), s, operation, allocation, prepared, err)
+			return
+		}
+		if err := validateComputeAllocationPreparation(prepared, allocation, plan); err != nil {
+			terminal = true
+			_ = computeAllocationFailure(context.Background(), s, operation, allocation, prepared, err)
+			return
+		}
+		operation.RedactedProviderPayload = computeAllocationOperationPayload(allocation, prepared)
+		if err := s.operations.SaveRuntime(context.Background(), operation); err != nil {
+			return
+		}
+	}
+
+	pollDeadline := time.Now().Add(s.computeAllocationPollWindow)
+	var result ComputeAllocation
+	attempted := false
+	for {
+		if attempted && !time.Now().Before(pollDeadline) {
+			return
+		}
+		if !claimLease(pollLease) {
+			return
+		}
+		attemptCtx, cancel := context.WithTimeout(context.Background(), s.computeAllocationAttemptTimeout)
+		result, err = s.provider.CreateComputeAllocation(attemptCtx, ComputeAllocationExecution{Allocation: allocation, Plan: prepared, DryRun: dryRun})
+		cancel()
+		attempted = true
+		result = mergeComputeAllocation(result, allocation, prepared)
+		if errors.Is(err, ErrComputeAllocationPending) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+			operation.RedactedProviderPayload = computeAllocationOperationPayload(result, prepared)
+			operation.ProviderRequestID = firstNonEmpty(result.ProviderRequestID, operation.ProviderRequestID)
+			if saveErr := s.operations.SaveRuntime(context.Background(), operation); saveErr != nil {
+				return
+			}
+			s.mu.Lock()
+			s.computes[result.ID] = result
+			s.mu.Unlock()
+			remaining := time.Until(pollDeadline)
+			if remaining <= 0 {
+				return
+			}
+			wait := min(s.computeAllocationPollInterval, remaining)
+			timer := time.NewTimer(wait)
+			<-timer.C
+			continue
+		}
+		if err != nil {
+			terminal = true
+			_ = computeAllocationFailure(context.Background(), s, operation, result, prepared, err)
+			return
+		}
+		break
+	}
+
+	if !claimLease(s.computeAllocationFinalizeTimeout + s.computeAllocationPollInterval) {
+		return
+	}
+	finalizeCtx, cancel := context.WithTimeout(context.Background(), s.computeAllocationFinalizeTimeout)
+	defer cancel()
+	if err := validateNewComputeAllocation(result, prepared); err != nil {
+		terminal = true
+		_ = computeAllocationFailure(context.Background(), s, operation, result, prepared, err)
+		return
+	}
+	machine := ProviderMachine{
+		MachineID: result.MachineName, InstanceID: firstNonEmpty(result.InstanceID, result.CVMInstanceID), NodeName: result.NodeName,
+		PrivateIP: result.PrivateIP, PublicIP: result.PublicIP, InstanceType: result.InstanceType, Zone: result.Zone,
+		ChargeType: result.ChargeType, RenewFlag: result.RenewFlag, Deadline: result.Deadline, Ready: true,
+	}
+	ownership := MachineOwnership{
+		ID: "owner_" + stableSuffix(result.ID, result.MachineName)[:16], ResourceID: result.ID, AccountID: result.AccountID,
+		WorkspaceID: result.WorkspaceID, PackageID: result.PackageID, NodePoolID: result.NodePoolID, MachineID: result.MachineName,
+		InstanceID: firstNonEmpty(result.InstanceID, result.CVMInstanceID), NodeName: result.NodeName, Status: "claimed",
+		ProviderRequestID: result.ProviderRequestID, ClaimedAt: s.now(),
+	}
+	claimed, _, claimErr := s.operations.ClaimMachine(finalizeCtx, ownership)
+	if claimErr != nil {
+		terminal = true
+		_ = computeAllocationFailure(context.Background(), s, operation, result, prepared, claimErr)
+		return
+	}
+	result.CostTags = oplCostTags(result.AccountID, result.WorkspaceID, result.ID, claimed.ID)
+	if tagErr := s.provider.TagComputeMachine(finalizeCtx, machine, claimed); tagErr != nil {
+		claimed.Status = "quarantined"
+		_ = s.operations.SaveMachineOwnership(context.Background(), claimed)
+		terminal = true
+		_ = computeAllocationFailure(context.Background(), s, operation, result, prepared, tagErr)
+		return
+	}
+	verified, verifyErr := s.provider.SyncComputeAllocation(finalizeCtx, result)
+	verified = mergeComputeAllocation(verified, result, prepared)
+	if verifyErr != nil || validateNewComputeAllocation(verified, prepared) != nil || !isReadyResourceStatus(verified.Status) {
+		claimed.Status = "quarantined"
+		_ = s.operations.SaveMachineOwnership(context.Background(), claimed)
+		if verifyErr == nil {
+			verifyErr = fmt.Errorf("compute_provider_readback_mismatch")
+		}
+		terminal = true
+		_ = computeAllocationFailure(context.Background(), s, operation, verified, prepared, verifyErr)
+		return
+	}
+	claimed.Status = "active"
+	if err := s.operations.SaveMachineOwnership(finalizeCtx, claimed); err != nil {
+		terminal = true
+		_ = computeAllocationFailure(context.Background(), s, operation, verified, prepared, err)
+		return
+	}
+	operation.Status = "succeeded"
+	operation.FinishedAt = s.now()
+	operation.ProviderRequestID = firstNonEmpty(verified.ProviderRequestID, operation.ProviderRequestID)
+	operation.RedactedProviderPayload = computeAllocationOperationPayload(verified, prepared)
+	if err := s.operations.SaveRuntime(finalizeCtx, operation); err != nil {
+		return
+	}
+	terminal = true
+	s.mu.Lock()
+	s.computes[verified.ID] = verified
+	s.mu.Unlock()
+}
+
+func validateComputeAllocationPreparation(prepared ComputeAllocationPreparation, allocation ComputeAllocation, expected plan) error {
+	if prepared.PoolID != expected.ID || prepared.PackageID != allocation.PackageID || prepared.NodePoolID != allocation.NodePoolID ||
+		prepared.InstanceType != expected.InstanceType || prepared.MaxReplicas <= 0 || prepared.BaselineReplicas < 0 || prepared.TargetReplicas != prepared.BaselineReplicas+1 || prepared.TargetReplicas > prepared.MaxReplicas ||
+		int64(len(prepared.BeforeMachineNames)) != prepared.BaselineReplicas {
+		return fmt.Errorf("compute_allocation_preparation_mismatch")
+	}
+	seen := map[string]bool{}
+	for _, name := range prepared.BeforeMachineNames {
+		if strings.TrimSpace(name) == "" || seen[name] {
+			return fmt.Errorf("compute_allocation_preparation_mismatch")
+		}
+		seen[name] = true
+	}
+	return nil
+}
+
+func validateNewComputeAllocation(allocation ComputeAllocation, prepared ComputeAllocationPreparation) error {
+	if prepared.NodePoolID == "" || allocation.NodePoolID != prepared.NodePoolID || allocation.PoolID != prepared.PoolID || allocation.PackageID != prepared.PackageID ||
+		allocation.InstanceType != prepared.InstanceType || allocation.MachineName == "" || !strings.HasPrefix(firstNonEmpty(allocation.InstanceID, allocation.CVMInstanceID), "ins-") ||
+		allocation.NodeName == "" || allocation.PrivateIP == "" || allocation.Zone == "" || allocation.ChargeType != "PREPAID" ||
+		allocation.RenewFlag != "NOTIFY_AND_MANUAL_RENEW" || allocation.Deadline == "" {
+		return fmt.Errorf("compute_provider_readback_mismatch")
+	}
+	for _, existing := range prepared.BeforeMachineNames {
+		if allocation.MachineName == existing {
+			return fmt.Errorf("compute_allocation_machine_not_new")
+		}
+	}
+	return nil
+}
+
+func mergeComputeAllocation(current, fallback ComputeAllocation, prepared ComputeAllocationPreparation) ComputeAllocation {
+	current.ID = firstNonEmpty(current.ID, fallback.ID)
+	current.AccountID = firstNonEmpty(current.AccountID, fallback.AccountID)
+	current.WorkspaceID = firstNonEmpty(current.WorkspaceID, fallback.WorkspaceID)
+	current.PackageID = firstNonEmpty(current.PackageID, fallback.PackageID, prepared.PackageID)
+	current.Status = firstNonEmpty(current.Status, fallback.Status, "provisioning")
+	current.Provider = firstNonEmpty(current.Provider, fallback.Provider, "tencent-tke")
+	current.ProviderRequestID = firstNonEmpty(current.ProviderRequestID, fallback.ProviderRequestID)
+	current.PoolID = firstNonEmpty(current.PoolID, fallback.PoolID, prepared.PoolID)
+	current.NodePoolID = firstNonEmpty(current.NodePoolID, fallback.NodePoolID, prepared.NodePoolID)
+	current.InstanceType = firstNonEmpty(current.InstanceType, fallback.InstanceType, prepared.InstanceType)
+	if current.CreatedAt.IsZero() {
+		current.CreatedAt = fallback.CreatedAt
+	}
+	if current.ProviderData == nil {
+		current.ProviderData = maps.Clone(fallback.ProviderData)
+	}
+	if current.ProviderData == nil {
+		current.ProviderData = map[string]string{}
+	}
+	current.ProviderData["instanceType"] = firstNonEmpty(current.ProviderData["instanceType"], prepared.InstanceType)
+	return current
+}
+
+func computeAllocationFailure(ctx context.Context, s *Service, operation FabricOperation, allocation ComputeAllocation, prepared ComputeAllocationPreparation, cause error) error {
+	if allocation.ID == "" {
+		return cause
+	}
+	allocation.Status = "quarantined"
+	if allocation.ProviderData == nil {
+		allocation.ProviderData = map[string]string{}
+	}
+	allocation.ProviderData["recoveryAction"] = "manual_review"
+	operation.Status = "failed"
+	operation.ErrorCode = errorCode(cause)
+	operation.FinishedAt = s.now()
+	operation.ProviderRequestID = firstNonEmpty(allocation.ProviderRequestID, operation.ProviderRequestID)
+	operation.RedactedProviderPayload = computeAllocationOperationPayload(allocation, prepared)
+	if saveErr := s.operations.SaveRuntime(ctx, operation); saveErr != nil {
+		return saveErr
+	}
+	s.mu.Lock()
+	s.computes[allocation.ID] = allocation
+	s.mu.Unlock()
+	return cause
+}
+
+func computeAllocationOperationPayload(allocation ComputeAllocation, prepared ComputeAllocationPreparation) map[string]any {
+	payload := map[string]any{"resource": allocation, "providerResourceId": allocation.ProviderResourceID, "nodeName": allocation.NodeName, "instanceId": firstNonEmpty(allocation.CVMInstanceID, allocation.InstanceID), "costTags": allocation.CostTags}
+	if prepared.NodePoolID != "" {
+		payload["allocationPlan"] = prepared
+	}
+	return payload
+}
+
+func decodeComputeAllocationPlan(operation FabricOperation) (ComputeAllocationPreparation, bool) {
+	value, ok := operation.RedactedProviderPayload["allocationPlan"]
+	if !ok {
+		return ComputeAllocationPreparation{}, false
+	}
+	body, err := json.Marshal(value)
+	if err != nil {
+		return ComputeAllocationPreparation{}, false
+	}
+	var prepared ComputeAllocationPreparation
+	if json.Unmarshal(body, &prepared) != nil {
+		return ComputeAllocationPreparation{}, false
+	}
+	return prepared, prepared.NodePoolID != ""
 }
 
 func replayComputeAllocationOperation(operation FabricOperation, requestHash string) (ComputeAllocation, error) {
@@ -558,9 +843,6 @@ func (s *Service) finishDestroyComputeAllocation(operation FabricOperation, exis
 			return providerErr
 		}
 		if err := s.releaseMachineOwnership(lockCtx, existing.ID); err != nil {
-			return err
-		}
-		if err := s.reconcileComputePoolLocked(lockCtx, firstNonEmpty(existing.PackageID, "basic"), false); err != nil {
 			return err
 		}
 		return s.cancelPendingComputeCreation(lockCtx, existing.ID, allocation)

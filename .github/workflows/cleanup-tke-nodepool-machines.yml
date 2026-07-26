@@ -6,14 +6,24 @@ on:
       node_pool_id:
         description: TKE NodePool id that owns the target machines.
         required: true
-        default: "np-m17obipm"
         type: string
+      package_id:
+        description: Package pool that owns every target machine.
+        required: true
+        type: choice
+        options:
+          - basic
+          - pro
       machine_names:
         description: Comma-separated TKE machine names to delete.
         required: true
         type: string
       node_names:
         description: Comma-separated Kubernetes node names matching machine_names order.
+        required: true
+        type: string
+      cvm_instance_ids:
+        description: Comma-separated Tencent ins-* ids matching machine_names order.
         required: true
         type: string
       dry_run:
@@ -51,10 +61,18 @@ jobs:
       TENCENTCLOUD_SECRET_KEY: ${{ secrets.TENCENT_MUTATION_SECRET_KEY }}
       TENCENTCLOUD_REGION: ${{ vars.TENCENTCLOUD_REGION || vars.TENCENT_TCR_REGION || 'na-siliconvalley' }}
       TENCENT_DEPLOY_CLUSTER_ID: ${{ vars.TENCENT_DEPLOY_CLUSTER_ID }}
+      OPL_SYSTEM_COMPUTE_NODE_POOL_ID: ${{ vars.OPL_SYSTEM_COMPUTE_NODE_POOL_ID || 'np-6l4nkdto' }}
+      OPL_SYSTEM_COMPUTE_MACHINE_ID: ${{ vars.OPL_SYSTEM_COMPUTE_MACHINE_ID || 'np-6l4nkdto-2cdtm' }}
+      OPL_SYSTEM_COMPUTE_NODE_NAME: ${{ vars.OPL_SYSTEM_COMPUTE_NODE_NAME || '10.66.0.42' }}
+      OPL_SYSTEM_COMPUTE_CVM_ID: ${{ vars.OPL_SYSTEM_COMPUTE_CVM_ID }}
+      OPL_BASIC_COMPUTE_NODE_POOL_ID: ${{ vars.OPL_BASIC_COMPUTE_NODE_POOL_ID }}
+      OPL_PRO_COMPUTE_NODE_POOL_ID: ${{ vars.OPL_PRO_COMPUTE_NODE_POOL_ID }}
       RUN_TENCENT_CREATE_RELEASE_EXECUTION: "1"
       NODE_POOL_ID: ${{ inputs.node_pool_id }}
+      PACKAGE_ID: ${{ inputs.package_id }}
       MACHINE_NAMES: ${{ inputs.machine_names }}
       NODE_NAMES: ${{ inputs.node_names }}
+      CVM_INSTANCE_IDS: ${{ inputs.cvm_instance_ids }}
       DRY_RUN: ${{ inputs.dry_run }}
       CONFIRM_MACHINE_NAMES: ${{ inputs.confirm_machine_names }}
 
@@ -95,6 +113,10 @@ jobs:
             echo "node_pool_id must match ^np-[A-Za-z0-9-]+$" >&2
             exit 1
           fi
+          if [ "$PACKAGE_ID" != "basic" ] && [ "$PACKAGE_ID" != "pro" ]; then
+            echo "package_id must be basic or pro." >&2
+            exit 1
+          fi
           if ! printf '%s' "$MACHINE_NAMES" | grep -Eq '^[A-Za-z0-9._:-]+(,[A-Za-z0-9._:-]+)*$'; then
             echo "machine_names must be a comma-separated list of machine ids." >&2
             exit 1
@@ -103,10 +125,15 @@ jobs:
             echo "node_names must be a comma-separated list of Kubernetes node names." >&2
             exit 1
           fi
+          if ! printf '%s' "$CVM_INSTANCE_IDS" | grep -Eq '^ins-[A-Za-z0-9]+(,ins-[A-Za-z0-9]+)*$'; then
+            echo "cvm_instance_ids must be a comma-separated list of Tencent ins-* ids." >&2
+            exit 1
+          fi
           IFS=',' read -r -a machines <<< "$MACHINE_NAMES"
           IFS=',' read -r -a nodes <<< "$NODE_NAMES"
-          if [ "${#machines[@]}" -ne "${#nodes[@]}" ]; then
-            echo "machine_names and node_names must have the same length." >&2
+          IFS=',' read -r -a cvms <<< "$CVM_INSTANCE_IDS"
+          if [ "${#machines[@]}" -ne "${#nodes[@]}" ] || [ "${#machines[@]}" -ne "${#cvms[@]}" ]; then
+            echo "machine_names, node_names, and cvm_instance_ids must have the same length." >&2
             exit 1
           fi
           if [ "${#machines[@]}" -gt 10 ]; then
@@ -148,12 +175,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [ -x /usr/local/bin/opl-tencent-provisioner ]; then
-            cp /usr/local/bin/opl-tencent-provisioner /tmp/opl-tencent-provisioner
-          else
-            cd cmd/opl-tencent-provisioner
-            go build -o /tmp/opl-tencent-provisioner .
-          fi
+          cd services/fabric
+          go build -o /tmp/opl-tencent-provisioner ./cmd/opl-tencent-provisioner
           /tmp/opl-tencent-provisioner <<<'{"action":"readiness"}'
 
       - name: Delete selected machines through TKE
@@ -162,24 +185,46 @@ jobs:
           set -euo pipefail
           IFS=',' read -r -a machines <<< "$MACHINE_NAMES"
           IFS=',' read -r -a nodes <<< "$NODE_NAMES"
+          IFS=',' read -r -a cvms <<< "$CVM_INSTANCE_IDS"
           for index in "${!machines[@]}"; do
             machine="${machines[$index]}"
             node_name="${nodes[$index]}"
+            cvm_instance_id="${cvms[$index]}"
+            protected_resource_check="$(
+              MACHINE_NAME="$machine" NODE_NAME="$node_name" CVM_INSTANCE_ID="$cvm_instance_id" node -e '
+                process.stdout.write(JSON.stringify({
+                  action: "protected_resource_check",
+                  packageId: process.env.PACKAGE_ID,
+                  pool: { nodePoolId: process.env.NODE_POOL_ID },
+                  allocation: {
+                    machineName: process.env.MACHINE_NAME,
+                    nodeName: process.env.NODE_NAME,
+                    instanceId: process.env.CVM_INSTANCE_ID
+                  }
+                }));
+              ' | /tmp/opl-tencent-provisioner
+            )"
+            PROTECTED_RESOURCE_CHECK="$protected_resource_check" node -e '
+              const response = JSON.parse(process.env.PROTECTED_RESOURCE_CHECK || "{}");
+              if (!response.ok || response.status !== "allowed") process.exit(1);
+            '
             response="$(
-              MACHINE_NAME="$machine" NODE_NAME="$node_name" node -e '
+              MACHINE_NAME="$machine" NODE_NAME="$node_name" CVM_INSTANCE_ID="$cvm_instance_id" node -e '
                 const clean = String(process.env.MACHINE_NAME).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
                 const payload = {
                   action: "destroy_compute_allocation",
                   dryRun: process.env.DRY_RUN !== "false",
                   accountId: "ops-nodepool-cleanup",
+                  packageId: process.env.PACKAGE_ID,
                   pool: {
-                    id: "pool-basic-2c4g",
+                    id: process.env.PACKAGE_ID === "pro" ? "pool-pro-8c16g" : "pool-basic-2c4g",
                     nodePoolId: process.env.NODE_POOL_ID
                   },
                   allocation: {
                     id: `compute-nodepool-cleanup-${clean}`.slice(0, 63),
                     machineName: process.env.MACHINE_NAME,
-                    nodeName: process.env.NODE_NAME
+                    nodeName: process.env.NODE_NAME,
+                    instanceId: process.env.CVM_INSTANCE_ID
                   }
                 };
                 process.stdout.write(JSON.stringify(payload));

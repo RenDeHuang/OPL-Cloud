@@ -25,8 +25,16 @@ test("OPL Cloud TKE manifest declares three decoupled services and monthly Sub2A
   assert.equal(config.data.OPL_CODEX_BASE_URL, undefined);
   assert.equal(config.data.OPL_OPERATOR_CIDRS, undefined);
   assert.equal(config.data.OPL_TRUSTED_PROXY_CIDRS, undefined);
-  assert.equal(config.data.OPL_BASIC_COMPUTE_NODE_POOL_ID, undefined);
-  assert.equal(config.data.OPL_PRO_COMPUTE_NODE_POOL_ID, undefined);
+  assert.equal(config.data.OPL_SYSTEM_COMPUTE_NODE_POOL_ID, "np-6l4nkdto");
+  assert.equal(config.data.OPL_SYSTEM_COMPUTE_MACHINE_ID, "np-6l4nkdto-2cdtm");
+  assert.equal(config.data.OPL_SYSTEM_COMPUTE_NODE_NAME, "10.66.0.42");
+  for (const key of [
+    "OPL_SYSTEM_COMPUTE_CVM_ID",
+    "OPL_BASIC_COMPUTE_NODE_POOL_ID",
+    "OPL_PRO_COMPUTE_NODE_POOL_ID",
+    "OPL_BASIC_COMPUTE_NODE_POOL_MAX_REPLICAS",
+    "OPL_PRO_COMPUTE_NODE_POOL_MAX_REPLICAS"
+  ]) assert.equal(Object.hasOwn(config.data, key), true, key);
   assert.equal(config.data.OPL_COMPUTE_LAUNCH_ZONE, undefined);
   assert.equal(config.data.OPL_SUB2API_REQUEST_TIMEOUT_MS, "5000");
   assert.equal(config.data.PGSSLMODE, "disable");
@@ -73,6 +81,10 @@ test("OPL Cloud TKE manifest declares three decoupled services and monthly Sub2A
   assert.deepEqual(fabric.spec.template.spec.volumes, [
     { name: "deploy-kubeconfig", secret: { secretName: "opl-cloud-deploy-kubeconfig" } }
   ]);
+
+  for (const deployment of deployments) {
+    assert.deepEqual(deployment.spec.template.spec.nodeSelector, { "medopl.cn/workload": "medopl" }, deployment.metadata.name);
+  }
 
   const ingress = manifest.items.find((item) => item.kind === "Ingress");
   assert.equal(ingress.spec.ingressClassName, "qcloud");
@@ -122,7 +134,7 @@ test("TKE workloads and internal services enforce native isolation", async () =>
   }
 });
 
-test("ordinary deploy omits retired network, static pool, and Gateway URL variables", async () => {
+test("ordinary deploy configures dedicated package pools and omits retired network and Gateway URL variables", async () => {
   const [manifest, deployment, management, renderer, workflow] = await Promise.all([
     readFile("deploy/tke/opl-cloud.k8s.json", "utf8").then(JSON.parse),
     readFile("packages/contracts/opl-cloud-deployment-contract.json", "utf8").then(JSON.parse),
@@ -131,18 +143,26 @@ test("ordinary deploy omits retired network, static pool, and Gateway URL variab
     readFile(".github/workflows/deploy-tke-production.yml", "utf8")
   ]);
   const config = manifest.items.find((item) => item.kind === "ConfigMap");
-  for (const key of [
-    "OPL_OPERATOR_CIDRS",
-    "OPL_TRUSTED_PROXY_CIDRS",
-    "OPL_BASIC_COMPUTE_NODE_POOL_ID",
-    "OPL_PRO_COMPUTE_NODE_POOL_ID",
-    "OPL_GATEWAY_PUBLIC_BASE_URL",
-    "OPL_CODEX_BASE_URL"
-  ]) {
+  for (const key of ["OPL_OPERATOR_CIDRS", "OPL_TRUSTED_PROXY_CIDRS", "OPL_GATEWAY_PUBLIC_BASE_URL", "OPL_CODEX_BASE_URL"]) {
     assert.equal(config.data[key], undefined, key);
     assert.equal(deployment.deployWorkflow.requiredEnv.includes(key), false, key);
     assert.doesNotMatch(renderer, new RegExp(`"${key}"`));
     assert.doesNotMatch(workflow, new RegExp(`${key}:`));
+  }
+  for (const key of [
+    "OPL_SYSTEM_COMPUTE_NODE_POOL_ID",
+    "OPL_SYSTEM_COMPUTE_MACHINE_ID",
+    "OPL_SYSTEM_COMPUTE_NODE_NAME",
+    "OPL_SYSTEM_COMPUTE_CVM_ID",
+    "OPL_BASIC_COMPUTE_NODE_POOL_ID",
+    "OPL_PRO_COMPUTE_NODE_POOL_ID",
+    "OPL_BASIC_COMPUTE_NODE_POOL_MAX_REPLICAS",
+    "OPL_PRO_COMPUTE_NODE_POOL_MAX_REPLICAS"
+  ]) {
+    assert.equal(Object.hasOwn(config.data, key), true, key);
+    assert.equal(deployment.deployWorkflow.requiredEnv.includes(key), true, key);
+    assert.match(renderer, new RegExp(`"${key}"`));
+    assert.match(workflow, new RegExp(`${key}:`));
   }
   assert.equal(management.operatorAuthPolicy.productionNetworkGate, undefined);
 });
@@ -167,7 +187,16 @@ test("production env examples use the launch zone and pinned images", async () =
     assert.match(source, /^DATABASE_URL=.*sslmode=verify-full$/m, path);
     assert.doesNotMatch(source, /^OPL_OPERATOR_CIDRS=/m, path);
     assert.doesNotMatch(source, /^OPL_TRUSTED_PROXY_CIDRS=/m, path);
-    assert.doesNotMatch(source, /^OPL_(?:BASIC|PRO)_COMPUTE_NODE_POOL_ID=/m, path);
+    for (const key of [
+      "OPL_SYSTEM_COMPUTE_NODE_POOL_ID",
+      "OPL_SYSTEM_COMPUTE_MACHINE_ID",
+      "OPL_SYSTEM_COMPUTE_NODE_NAME",
+      "OPL_SYSTEM_COMPUTE_CVM_ID",
+      "OPL_BASIC_COMPUTE_NODE_POOL_ID",
+      "OPL_PRO_COMPUTE_NODE_POOL_ID",
+      "OPL_BASIC_COMPUTE_NODE_POOL_MAX_REPLICAS",
+      "OPL_PRO_COMPUTE_NODE_POOL_MAX_REPLICAS"
+    ]) assert.match(source, new RegExp(`^${key}=` , "m"), `${path}:${key}`);
     assert.doesNotMatch(source, /^OPL_OPERATOR_SUMMARY_TOKEN=/m, path);
   }
   assert.match(await readFile(".env.example", "utf8"), /^OPL_WORKSPACE_IMAGE=$/m);

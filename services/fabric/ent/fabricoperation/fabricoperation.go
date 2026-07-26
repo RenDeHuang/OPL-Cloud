@@ -43,6 +43,12 @@ const (
 	FieldErrorCode = "error_code"
 	// FieldRetryable holds the string denoting the retryable field in the database.
 	FieldRetryable = "retryable"
+	// FieldComputePoolKey holds the string denoting the compute_pool_key field in the database.
+	FieldComputePoolKey = "compute_pool_key"
+	// FieldComputePoolLeaseOwner holds the string denoting the compute_pool_lease_owner field in the database.
+	FieldComputePoolLeaseOwner = "compute_pool_lease_owner"
+	// FieldComputePoolLeaseExpiresAt holds the string denoting the compute_pool_lease_expires_at field in the database.
+	FieldComputePoolLeaseExpiresAt = "compute_pool_lease_expires_at"
 	// FieldStartedAt holds the string denoting the started_at field in the database.
 	FieldStartedAt = "started_at"
 	// FieldFinishedAt holds the string denoting the finished_at field in the database.
@@ -71,6 +77,9 @@ var Columns = []string{
 	FieldStatus,
 	FieldErrorCode,
 	FieldRetryable,
+	FieldComputePoolKey,
+	FieldComputePoolLeaseOwner,
+	FieldComputePoolLeaseExpiresAt,
 	FieldStartedAt,
 	FieldFinishedAt,
 	FieldCreatedAt,
@@ -117,6 +126,10 @@ var (
 	DefaultErrorCode string
 	// DefaultRetryable holds the default value on creation for the "retryable" field.
 	DefaultRetryable bool
+	// DefaultComputePoolKey holds the default value on creation for the "compute_pool_key" field.
+	DefaultComputePoolKey string
+	// DefaultComputePoolLeaseOwner holds the default value on creation for the "compute_pool_lease_owner" field.
+	DefaultComputePoolLeaseOwner string
 	// DefaultStartedAt holds the default value on creation for the "started_at" field.
 	DefaultStartedAt func() time.Time
 	// DefaultCreatedAt holds the default value on creation for the "created_at" field.
@@ -206,6 +219,21 @@ func ByErrorCode(opts ...sql.OrderTermOption) OrderOption {
 // ByRetryable orders the results by the retryable field.
 func ByRetryable(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldRetryable, opts...).ToFunc()
+}
+
+// ByComputePoolKey orders the results by the compute_pool_key field.
+func ByComputePoolKey(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldComputePoolKey, opts...).ToFunc()
+}
+
+// ByComputePoolLeaseOwner orders the results by the compute_pool_lease_owner field.
+func ByComputePoolLeaseOwner(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldComputePoolLeaseOwner, opts...).ToFunc()
+}
+
+// ByComputePoolLeaseExpiresAt orders the results by the compute_pool_lease_expires_at field.
+func ByComputePoolLeaseExpiresAt(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldComputePoolLeaseExpiresAt, opts...).ToFunc()
 }
 
 // ByStartedAt orders the results by the started_at field.

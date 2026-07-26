@@ -49,16 +49,11 @@ func NewServer(service *fabric.Service, token string) http.Handler {
 	})
 	mux.HandleFunc("GET /fabric/monthly-preflight-report", func(w http.ResponseWriter, r *http.Request) {
 		values := r.URL.Query()
-		if len(values["packageId"]) != 1 || len(values["sizeGb"]) != 1 || len(values["zone"]) != 1 {
+		if len(values) != 1 || len(values["zone"]) != 1 {
 			writeError(w, http.StatusBadRequest, fabric.ErrInvalidMonthlyPreflight.Error())
 			return
 		}
-		sizeGB, err := strconv.Atoi(values.Get("sizeGb"))
-		if err != nil {
-			writeError(w, http.StatusBadRequest, fabric.ErrInvalidMonthlyPreflight.Error())
-			return
-		}
-		result, err := service.MonthlyPreflightReport(r.Context(), fabric.MonthlyPreflightReportInput{PackageID: values.Get("packageId"), SizeGB: sizeGB, Zone: values.Get("zone")})
+		result, err := service.MonthlyPreflightReport(r.Context(), fabric.MonthlyPreflightReportInput{Zone: values.Get("zone")})
 		if errors.Is(err, fabric.ErrInvalidMonthlyPreflight) {
 			writeError(w, http.StatusBadRequest, fabric.ErrInvalidMonthlyPreflight.Error())
 			return

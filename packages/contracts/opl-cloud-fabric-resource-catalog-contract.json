@@ -30,6 +30,22 @@
   "availabilityAuthority": "GET /fabric/catalog workspacePackages[].available",
   "availabilityMeaning": "product_open_not_tencent_capacity",
   "capacityAuthority": "Tencent MonthlyPreflight immediately before first debit",
+  "workspacePackageNodePools": {
+    "basic": {
+      "poolName": "pool-basic-2c4g",
+      "packageId": "basic",
+      "instanceType": "SA5.MEDIUM4",
+      "replicasMayBeZero": true
+    },
+    "pro": {
+      "poolName": "pool-pro-8c16g",
+      "packageId": "pro",
+      "instanceType": "SA5.2XLARGE16",
+      "replicasMayBeZero": true
+    },
+    "maxReplicasPolicy": "required_explicit_configuration_no_default",
+    "customerLaunchBehavior": "scale_exact_configured_pool_from_N_to_N_plus_1_without_nodepool_creation_or_existing_machine_claim"
+  },
   "pilotV2": {
     "computeAndStorageRole": "workspace_fulfillment_only",
     "customerChargeAuthority": false

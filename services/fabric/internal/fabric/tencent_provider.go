@@ -22,6 +22,8 @@ import (
 	"strings"
 	"time"
 
+	"opl-cloud/services/fabric/internal/protectedresource"
+
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8slabels "k8s.io/apimachinery/pkg/labels"
 )
@@ -35,6 +37,20 @@ const (
 type TencentProvider struct {
 	provision func(context.Context, provisionerRequest) (provisionerResponse, error)
 	kubectl   func(context.Context, []string, []byte) ([]byte, error)
+}
+
+func (p *TencentProvider) callKubectl(ctx context.Context, args []string, stdin []byte, target protectedresource.Target) ([]byte, error) {
+	if len(args) == 0 {
+		return nil, fmt.Errorf("kubectl_action_required")
+	}
+	switch args[0] {
+	case "get", "wait", "logs", "describe", "version":
+	default:
+		if err := protectedresource.FromEnv().Check(target); err != nil {
+			return nil, err
+		}
+	}
+	return p.kubectl(ctx, args, stdin)
 }
 
 type monthlyPreflightReportProvider interface {
@@ -68,8 +84,12 @@ func (p *TencentProvider) evaluateMonthlyPreflight(ctx context.Context, input Mo
 	plan := packagePlan(input.PackageID)
 	expectedStages := []string{"node_pool_discovery", "node_pool_contract", "subnet", "zone", "cvm_prepaid_quota", "cvm_sku_price"}
 	if input.ResourceType == "compute" {
+		poolConfig, err := configuredPackageNodePool(input.PackageID)
+		if err != nil {
+			return monthlyPreflightEvaluation{Err: err}
+		}
 		request.Action = "capacity_preflight"
-		request.Pool = provisionerPool{ID: plan.ID, PackageID: input.PackageID, InstanceType: plan.InstanceType, DesiredReplicas: 1}
+		request.Pool = provisionerPool{ID: plan.ID, PackageID: input.PackageID, InstanceType: plan.InstanceType, NodePoolID: poolConfig.NodePoolID, DesiredReplicas: 1, MaxReplicas: poolConfig.MaxReplicas}
 	} else {
 		request.Action = "storage_preflight"
 		request.Storage = provisionerStorage{SizeGB: uint64(input.SizeGB), Zone: input.Zone, DiskType: firstNonEmpty(os.Getenv("TENCENT_CBS_DISK_TYPE"), "CLOUD_BSSD")}
@@ -112,25 +132,60 @@ func (p *TencentProvider) MonthlyPreflightReport(ctx context.Context, input Mont
 		monthlyPreflightEnvironmentStage("launch_permission", "RUN_TENCENT_CREATE_RELEASE_EXECUTION", "1"),
 		monthlyPreflightCredentialsStage(),
 	}
-	if input.PackageID != "basic" && input.PackageID != "pro" || input.SizeGB <= 0 || strings.TrimSpace(input.Zone) == "" || input.Zone != strings.TrimSpace(input.Zone) {
+	if strings.TrimSpace(input.Zone) == "" || input.Zone != strings.TrimSpace(input.Zone) {
 		return MonthlyPreflightReport{}, ErrInvalidMonthlyPreflight
 	}
-	if items[1].Status != "passed" {
-		items = append(items, blockedPreflightStages([]string{"node_pool_discovery", "node_pool_contract", "subnet", "zone", "cvm_prepaid_quota", "cvm_sku_price", "cbs_prepaid_quota", "cbs_price"}, "credentials")...)
-	} else {
-		compute := p.evaluateMonthlyPreflight(ctx, MonthlyPreflightInput{ResourceType: "compute", PackageID: input.PackageID, Zone: input.Zone})
-		storage := p.evaluateMonthlyPreflight(ctx, MonthlyPreflightInput{ResourceType: "storage", PackageID: input.PackageID, SizeGB: input.SizeGB, Zone: input.Zone})
-		items = append(items, compute.Stages...)
-		items = append(items, storage.Stages...)
+	packages := make([]MonthlyPreflightPackageReport, 0, 2)
+	for _, current := range []struct {
+		packageID string
+		sizeGB    int
+	}{{packageID: "basic", sizeGB: 10}, {packageID: "pro", sizeGB: 100}} {
+		packageItems := []MonthlyPreflightStage{}
+		if items[1].Status != "passed" {
+			packageItems = blockedPreflightStages(monthlyPreflightProviderStageNames(), "credentials")
+		} else {
+			compute := p.evaluateMonthlyPreflight(ctx, MonthlyPreflightInput{ResourceType: "compute", PackageID: current.packageID, Zone: input.Zone})
+			storage := p.evaluateMonthlyPreflight(ctx, MonthlyPreflightInput{ResourceType: "storage", PackageID: current.packageID, SizeGB: current.sizeGB, Zone: input.Zone})
+			packageItems = append(packageItems, normalizedPreflightStages(compute, []string{"node_pool_discovery", "node_pool_contract", "subnet", "zone", "cvm_prepaid_quota", "cvm_sku_price"})...)
+			packageItems = append(packageItems, normalizedPreflightStages(storage, []string{"cbs_prepaid_quota", "cbs_price"})...)
+		}
+		packages = append(packages, MonthlyPreflightPackageReport{PackageID: current.packageID, SizeGB: current.sizeGB, Status: preflightStatus(packageItems), Items: packageItems})
 	}
-	status := "passed"
-	for _, item := range items {
-		if item.Status != "passed" {
+	status := preflightStatus(items)
+	for _, packageReport := range packages {
+		if packageReport.Status != "passed" {
 			status = "failed"
-			break
 		}
 	}
-	return MonthlyPreflightReport{SchemaVersion: 1, Status: status, PackageID: input.PackageID, SizeGB: input.SizeGB, Zone: input.Zone, Items: items}, nil
+	return MonthlyPreflightReport{SchemaVersion: 1, Status: status, Zone: input.Zone, Items: items, Packages: packages}, nil
+}
+
+func monthlyPreflightProviderStageNames() []string {
+	return []string{"node_pool_discovery", "node_pool_contract", "subnet", "zone", "cvm_prepaid_quota", "cvm_sku_price", "cbs_prepaid_quota", "cbs_price"}
+}
+
+func normalizedPreflightStages(evaluation monthlyPreflightEvaluation, expected []string) []MonthlyPreflightStage {
+	if len(evaluation.Stages) == len(expected) {
+		return evaluation.Stages
+	}
+	code := "monthly_preflight_unavailable"
+	if evaluation.Err != nil {
+		code = evaluation.Err.Error()
+	}
+	items := make([]MonthlyPreflightStage, 0, len(expected))
+	for _, stage := range expected {
+		items = append(items, MonthlyPreflightStage{Stage: stage, Status: "failed", ErrorCode: code, BlockedBy: []string{}, SafeFacts: map[string]any{}})
+	}
+	return items
+}
+
+func preflightStatus(items []MonthlyPreflightStage) string {
+	for _, item := range items {
+		if item.Status != "passed" {
+			return "failed"
+		}
+	}
+	return "passed"
 }
 
 func monthlyPreflightEnvironmentStage(stage, key, expected string) MonthlyPreflightStage {
@@ -330,10 +385,10 @@ func (p *TencentProvider) UpsertGatewaySecret(ctx context.Context, input Gateway
 		},
 		"stringData": map[string]any{"opl_gateway_api_key": input.GatewayAPIKey},
 	})
-	if _, err := p.kubectl(ctx, []string{"apply", "-f", "-"}, manifest); err != nil {
+	if _, err := p.callKubectl(ctx, []string{"apply", "-f", "-"}, manifest, protectedresource.Target{}); err != nil {
 		return GatewaySecret{}, err
 	}
-	readback, err := p.kubectl(ctx, []string{"get", "secret/" + secret.SecretRef, "-o", "json"}, nil)
+	readback, err := p.callKubectl(ctx, []string{"get", "secret/" + secret.SecretRef, "-o", "json"}, nil, protectedresource.Target{})
 	if err != nil {
 		return GatewaySecret{}, err
 	}
@@ -385,13 +440,49 @@ type provisionerRequest struct {
 }
 
 type provisionerPool struct {
-	ID              string            `json:"id,omitempty"`
-	ClusterID       string            `json:"clusterId,omitempty"`
-	PackageID       string            `json:"packageId,omitempty"`
-	InstanceType    string            `json:"instanceType,omitempty"`
-	NodePoolID      string            `json:"nodePoolId,omitempty"`
-	Labels          map[string]string `json:"desiredNodeLabels,omitempty"`
-	DesiredReplicas int64             `json:"desiredReplicas,omitempty"`
+	ID                 string            `json:"id,omitempty"`
+	ClusterID          string            `json:"clusterId,omitempty"`
+	PackageID          string            `json:"packageId,omitempty"`
+	InstanceType       string            `json:"instanceType,omitempty"`
+	NodePoolID         string            `json:"nodePoolId,omitempty"`
+	Labels             map[string]string `json:"desiredNodeLabels,omitempty"`
+	DesiredReplicas    int64             `json:"desiredReplicas,omitempty"`
+	MaxReplicas        int64             `json:"maxReplicas,omitempty"`
+	BaselineReplicas   int64             `json:"baselineReplicas,omitempty"`
+	TargetReplicas     int64             `json:"targetReplicas,omitempty"`
+	BeforeMachineNames []string          `json:"beforeMachineNames,omitempty"`
+}
+
+type packageNodePoolConfig struct {
+	NodePoolID  string
+	MaxReplicas int64
+}
+
+func configuredPackageNodePool(packageID string) (packageNodePoolConfig, error) {
+	prefix := ""
+	switch packageID {
+	case "basic":
+		prefix = "OPL_BASIC_COMPUTE_NODE_POOL_"
+	case "pro":
+		prefix = "OPL_PRO_COMPUTE_NODE_POOL_"
+	default:
+		return packageNodePoolConfig{}, ErrUnsupportedComputePackage
+	}
+	config := packageNodePoolConfig{NodePoolID: strings.TrimSpace(os.Getenv(prefix + "ID"))}
+	maxRaw := strings.TrimSpace(os.Getenv(prefix + "MAX_REPLICAS"))
+	maxReplicas, err := strconv.ParseInt(maxRaw, 10, 64)
+	if config.NodePoolID == "" || err != nil || maxReplicas <= 0 {
+		return packageNodePoolConfig{}, fmt.Errorf("compute_node_pool_configuration_required")
+	}
+	config.MaxReplicas = maxReplicas
+	otherPrefix := "OPL_PRO_COMPUTE_NODE_POOL_ID"
+	if packageID == "pro" {
+		otherPrefix = "OPL_BASIC_COMPUTE_NODE_POOL_ID"
+	}
+	if other := strings.TrimSpace(os.Getenv(otherPrefix)); other != "" && other == config.NodePoolID {
+		return packageNodePoolConfig{}, fmt.Errorf("compute_node_pool_configuration_invalid")
+	}
+	return config, nil
 }
 
 type provisionerAllocation struct {
@@ -442,6 +533,10 @@ type provisionerResponse struct {
 	RemainingQuota     uint64                  `json:"remainingQuota,omitempty"`
 	Zones              []string                `json:"zones,omitempty"`
 	PreflightStages    []MonthlyPreflightStage `json:"preflightStages,omitempty"`
+	CurrentReplicas    int64                   `json:"currentReplicas,omitempty"`
+	ReadyReplicas      int64                   `json:"readyReplicas,omitempty"`
+	MaxReplicas        int64                   `json:"maxReplicas,omitempty"`
+	TargetReplicas     int64                   `json:"targetReplicas,omitempty"`
 }
 
 type provisionerMachine struct {
@@ -467,37 +562,92 @@ type plan struct {
 	InstanceType string
 }
 
-func (p *TencentProvider) ReconcileComputePool(ctx context.Context, input ComputePoolDemand) (ComputePoolState, error) {
-	state := ComputePoolState{PoolID: input.PoolID, NodePoolID: input.NodePoolID, DesiredReplicas: input.DesiredReplicas}
-	response, err := p.provision(ctx, provisionerRequest{Action: "reconcile_compute_pool", DryRun: input.DryRun, PackageID: input.PackageID, Pool: provisionerPool{ID: input.PoolID, PackageID: input.PackageID, InstanceType: input.InstanceType, NodePoolID: input.NodePoolID, DesiredReplicas: input.DesiredReplicas}})
+func (p *TencentProvider) PrepareComputeAllocation(ctx context.Context, input ComputeAllocationInput) (ComputeAllocationPreparation, error) {
+	packagePlan := packagePlan(input.PackageID)
+	poolConfig, err := configuredPackageNodePool(input.PackageID)
+	prepared := ComputeAllocationPreparation{PoolID: packagePlan.ID, PackageID: input.PackageID, NodePoolID: poolConfig.NodePoolID, InstanceType: packagePlan.InstanceType, MaxReplicas: poolConfig.MaxReplicas}
 	if err != nil {
-		return state, err
+		return prepared, err
 	}
-	currentReplicas := int64(len(response.Machines))
-	if value, parseErr := strconv.ParseInt(response.ProviderData["currentReplicas"], 10, 64); parseErr == nil {
-		currentReplicas = value
+	if strings.TrimSpace(input.NodePoolID) != prepared.NodePoolID {
+		return prepared, protectedresource.ErrPackagePoolMismatch
 	}
-	state = ComputePoolState{PoolID: firstNonEmpty(response.PoolID, input.PoolID), NodePoolID: firstNonEmpty(response.NodePoolID, input.NodePoolID), DesiredReplicas: input.DesiredReplicas, CurrentReplicas: currentReplicas, ProviderRequestID: response.ProviderRequestID, ProviderData: response.ProviderData}
-	for _, machine := range response.Machines {
-		state.Machines = append(state.Machines, ProviderMachine{
-			MachineID: machine.MachineID, InstanceID: machine.InstanceID, NodeName: machine.NodeName, PrivateIP: machine.PrivateIP, PublicIP: machine.PublicIP,
-			InstanceType: machine.InstanceType, Zone: machine.Zone, ChargeType: machine.ChargeType, RenewFlag: machine.RenewFlag, Deadline: machine.Deadline, Ready: machine.Ready,
-		})
+	response, err := p.provision(ctx, provisionerRequest{
+		Action: "prepare_compute_allocation", DryRun: input.DryRun, PackageID: input.PackageID,
+		Pool:       provisionerPool{ID: packagePlan.ID, PackageID: input.PackageID, InstanceType: packagePlan.InstanceType, NodePoolID: prepared.NodePoolID, MaxReplicas: prepared.MaxReplicas},
+		Allocation: provisionerAllocation{ID: input.ID},
+	})
+	if err != nil {
+		return prepared, err
 	}
 	if !response.OK {
-		return state, provisionerError(response)
+		return prepared, provisionerError(response)
 	}
-	return state, nil
+	prepared.BaselineReplicas = response.CurrentReplicas
+	prepared.TargetReplicas = response.TargetReplicas
+	prepared.ProviderRequestID = response.ProviderRequestID
+	prepared.BeforeMachineNames = make([]string, 0, len(response.Machines))
+	for _, machine := range response.Machines {
+		prepared.BeforeMachineNames = append(prepared.BeforeMachineNames, machine.MachineID)
+	}
+	return prepared, nil
+}
+
+func (p *TencentProvider) CreateComputeAllocation(ctx context.Context, input ComputeAllocationExecution) (ComputeAllocation, error) {
+	allocation, prepared := input.Allocation, input.Plan
+	response, err := p.provision(ctx, provisionerRequest{
+		Action: "create_compute_allocation", DryRun: input.DryRun, AccountID: allocation.AccountID, PackageID: allocation.PackageID,
+		Tags: oplCostTags(allocation.AccountID, allocation.WorkspaceID, allocation.ID, allocation.ProviderRequestID),
+		Pool: provisionerPool{
+			ID: prepared.PoolID, PackageID: prepared.PackageID, InstanceType: prepared.InstanceType, NodePoolID: prepared.NodePoolID,
+			MaxReplicas: prepared.MaxReplicas, BaselineReplicas: prepared.BaselineReplicas, TargetReplicas: prepared.TargetReplicas, BeforeMachineNames: append([]string(nil), prepared.BeforeMachineNames...),
+		},
+		Allocation: provisionerAllocation{ID: allocation.ID},
+	})
+	if err != nil {
+		return allocation, err
+	}
+	allocation.ProviderRequestID = firstNonEmpty(response.ProviderRequestID, allocation.ProviderRequestID)
+	allocation.PoolID = prepared.PoolID
+	allocation.NodePoolID = prepared.NodePoolID
+	allocation.InstanceType = prepared.InstanceType
+	allocation.Status = firstNonEmpty(response.Status, allocation.Status)
+	allocation.InstanceID = response.InstanceID
+	allocation.CVMInstanceID = response.InstanceID
+	allocation.MachineName = response.ProviderData["machineName"]
+	allocation.NodeName = response.NodeName
+	allocation.PrivateIP = response.PrivateIP
+	allocation.PublicIP = response.PublicIP
+	allocation.Zone = response.ProviderData["zone"]
+	allocation.ChargeType = response.ProviderData["chargeType"]
+	allocation.RenewFlag = response.ProviderData["renewFlag"]
+	allocation.Deadline = response.ProviderData["deadline"]
+	allocation.ProviderData = maps.Clone(response.ProviderData)
+	allocation.ProviderResourceID = firstNonEmpty(response.InstanceID, allocation.ProviderResourceID)
+	if !response.OK {
+		if response.Retryable {
+			return allocation, ErrComputeAllocationPending
+		}
+		return allocation, provisionerError(response)
+	}
+	return allocation, nil
 }
 
 func (p *TencentProvider) TagComputeMachine(ctx context.Context, machine ProviderMachine, ownership MachineOwnership) error {
 	if machine.InstanceID == "" || machine.NodeName == "" {
 		return fmt.Errorf("compute_machine_identity_required")
 	}
+	if err := protectedresource.FromEnv().Check(protectedresource.Target{
+		PackageID: ownership.PackageID, NodePoolID: ownership.NodePoolID,
+		MachineID: machine.MachineID, NodeName: machine.NodeName, CVMID: machine.InstanceID,
+	}); err != nil {
+		return err
+	}
 	response, err := p.provision(ctx, provisionerRequest{
-		Action: "tag_compute_machine",
-		Tags:   oplCostTags(ownership.AccountID, ownership.WorkspaceID, ownership.ResourceID, ownership.ID),
-		Pool:   provisionerPool{NodePoolID: ownership.NodePoolID},
+		Action:    "tag_compute_machine",
+		PackageID: ownership.PackageID,
+		Tags:      oplCostTags(ownership.AccountID, ownership.WorkspaceID, ownership.ResourceID, ownership.ID),
+		Pool:      provisionerPool{NodePoolID: ownership.NodePoolID},
 		Allocation: provisionerAllocation{
 			ID: ownership.ResourceID, InstanceID: machine.InstanceID, MachineName: machine.MachineID, NodeName: machine.NodeName, PrivateIP: machine.PrivateIP,
 		},
@@ -508,16 +658,11 @@ func (p *TencentProvider) TagComputeMachine(ctx context.Context, machine Provide
 	if !response.OK {
 		return provisionerError(response)
 	}
-	_, err = p.kubectl(ctx, []string{"label", "node/" + machine.NodeName, "oplcloud.cn/resource-id=" + ownership.ResourceID, "oplcloud.cn/account-id=" + ownership.AccountID, "oplcloud.cn/workspace-id=" + ownership.WorkspaceID, "--overwrite"}, nil)
-	return err
-}
-
-func (p *TencentProvider) DeleteComputeMachine(ctx context.Context, machine ProviderMachine, ownership MachineOwnership) error {
-	_, err := p.DestroyComputeAllocation(ctx, ComputeAllocation{
-		ID: ownership.ResourceID, AccountID: ownership.AccountID, NodePoolID: ownership.NodePoolID,
-		MachineName: machine.MachineID, InstanceID: machine.InstanceID, CVMInstanceID: machine.InstanceID,
-		NodeName: machine.NodeName, PrivateIP: machine.PrivateIP, PublicIP: machine.PublicIP, Provider: "tencent-tke",
-	})
+	target := protectedresource.Target{PackageID: ownership.PackageID, NodePoolID: ownership.NodePoolID, MachineID: machine.MachineID, NodeName: machine.NodeName, CVMID: machine.InstanceID}
+	if _, err = p.callKubectl(ctx, []string{"label", "node/" + machine.NodeName, "medopl.cn/workload=workspace", "oplcloud.cn/resource-id=" + ownership.ResourceID, "oplcloud.cn/account-id=" + ownership.AccountID, "oplcloud.cn/workspace-id=" + ownership.WorkspaceID, "--overwrite"}, nil, target); err != nil {
+		return err
+	}
+	_, err = p.callKubectl(ctx, []string{"taint", "node/" + machine.NodeName, "oplcloud.cn/workspace-id=" + ownership.WorkspaceID + ":NoSchedule", "--overwrite"}, nil, target)
 	return err
 }
 
@@ -663,7 +808,7 @@ func (p *TencentProvider) DestroyComputeAllocation(ctx context.Context, allocati
 		serviceName = k8sName(allocation.ID)
 	}
 	if serviceName != "" {
-		if _, err := p.kubectl(ctx, []string{"delete", "deployment/" + serviceName, "service/" + serviceName, "secret/" + serviceName + "-env", "--ignore-not-found=true", "--wait=true"}, nil); err != nil {
+		if _, err := p.callKubectl(ctx, []string{"delete", "deployment/" + serviceName, "service/" + serviceName, "secret/" + serviceName + "-env", "--ignore-not-found=true", "--wait=true"}, nil, protectedresource.Target{PackageID: allocation.PackageID, NodePoolID: allocation.NodePoolID, MachineID: allocation.MachineName, NodeName: allocation.NodeName, CVMID: firstNonEmpty(allocation.InstanceID, allocation.CVMInstanceID)}); err != nil {
 			return ComputeAllocation{}, err
 		}
 		allocation.ServiceName = serviceName
@@ -706,7 +851,7 @@ func (p *TencentProvider) CreateStorageVolume(ctx context.Context, input Storage
 		return volume, fmt.Errorf("storage_cbs_identity_required")
 	}
 	if isCBSProviderReady(volume.CBSStatus) {
-		if _, err := p.kubectl(ctx, []string{"apply", "-f", "-"}, staticCBSManifest(volume)); err != nil {
+		if _, err := p.callKubectl(ctx, []string{"apply", "-f", "-"}, staticCBSManifest(volume), protectedresource.Target{}); err != nil {
 			return volume, err
 		}
 	}
@@ -718,11 +863,11 @@ func (p *TencentProvider) SyncStorageVolume(ctx context.Context, volume StorageV
 	if err != nil || volume.Status == "external_deleted" || volume.Status == "pending" {
 		return volume, err
 	}
-	if _, err := p.kubectl(ctx, []string{"apply", "-f", "-"}, staticCBSManifest(volume)); err != nil {
+	if _, err := p.callKubectl(ctx, []string{"apply", "-f", "-"}, staticCBSManifest(volume), protectedresource.Target{}); err != nil {
 		return volume, err
 	}
 	pvc := storagePVCName(volume)
-	raw, err := p.kubectl(ctx, []string{"get", "pvc/" + pvc, "-o", "json"}, nil)
+	raw, err := p.callKubectl(ctx, []string{"get", "pvc/" + pvc, "-o", "json"}, nil, protectedresource.Target{})
 	if err != nil {
 		if strings.Contains(strings.ToLower(err.Error()), "notfound") || strings.Contains(strings.ToLower(err.Error()), "not found") {
 			volume.Status = "pending"
@@ -784,7 +929,7 @@ func (p *TencentProvider) DestroyStorageVolume(ctx context.Context, volume Stora
 		resources = append(resources, "pv/"+pv)
 	}
 	if len(resources) > 0 {
-		if _, err := p.kubectl(ctx, append([]string{"delete"}, append(resources, "--ignore-not-found=true", "--wait=true")...), nil); err != nil {
+		if _, err := p.callKubectl(ctx, append([]string{"delete"}, append(resources, "--ignore-not-found=true", "--wait=true")...), nil, protectedresource.Target{}); err != nil {
 			return StorageVolume{}, err
 		}
 	}
@@ -850,10 +995,10 @@ func (p *TencentProvider) CreateStorageSnapshot(ctx context.Context, input Stora
 	if snapshotClass == "" {
 		return StorageSnapshot{}, fmt.Errorf("storage_snapshot_class_required")
 	}
-	if _, err := p.kubectl(ctx, []string{"apply", "-f", "-"}, volumeSnapshotManifest(name, pvcName, snapshotClass, input)); err != nil {
+	if _, err := p.callKubectl(ctx, []string{"apply", "-f", "-"}, volumeSnapshotManifest(name, pvcName, snapshotClass, input), protectedresource.Target{}); err != nil {
 		return StorageSnapshot{}, err
 	}
-	if _, err := p.kubectl(ctx, []string{"wait", "--for=jsonpath={.status.readyToUse}=true", "volumesnapshot/" + name, "--timeout=300s"}, nil); err != nil {
+	if _, err := p.callKubectl(ctx, []string{"wait", "--for=jsonpath={.status.readyToUse}=true", "volumesnapshot/" + name, "--timeout=300s"}, nil, protectedresource.Target{}); err != nil {
 		return StorageSnapshot{}, err
 	}
 	return StorageSnapshot{ID: id, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, VolumeID: input.VolumeID, Status: "ready", Provider: "tencent-tke", ProviderSnapshotRef: "volumesnapshot/" + name, ProviderRequestID: providerRequestID("snapshot", input.IdempotencyKey), SnapshotClass: snapshotClass, SizeGB: volume.SizeGB, CreatedAt: now}, nil
@@ -864,7 +1009,7 @@ func (p *TencentProvider) SyncStorageSnapshot(ctx context.Context, snapshot Stor
 	if name == "" {
 		return StorageSnapshot{}, fmt.Errorf("storage_snapshot_provider_ref_required")
 	}
-	raw, err := p.kubectl(ctx, []string{"get", "volumesnapshot/" + name, "-o", "json"}, nil)
+	raw, err := p.callKubectl(ctx, []string{"get", "volumesnapshot/" + name, "-o", "json"}, nil, protectedresource.Target{})
 	if err != nil {
 		return StorageSnapshot{}, err
 	}
@@ -891,10 +1036,10 @@ func (p *TencentProvider) RestoreStorageSnapshot(ctx context.Context, input Stor
 		return StorageVolume{}, fmt.Errorf("storage_snapshot_size_required")
 	}
 	name := k8sName(input.TargetVolumeID)
-	if _, err := p.kubectl(ctx, []string{"apply", "-f", "-"}, restoredPVCManifest(name, input.TargetVolumeID, input.AccountID, sizeGB, snapshotName)); err != nil {
+	if _, err := p.callKubectl(ctx, []string{"apply", "-f", "-"}, restoredPVCManifest(name, input.TargetVolumeID, input.AccountID, sizeGB, snapshotName), protectedresource.Target{}); err != nil {
 		return StorageVolume{}, err
 	}
-	if _, err := p.kubectl(ctx, []string{"wait", "--for=jsonpath={.status.phase}=Bound", "pvc/" + name + "-data", "--timeout=300s"}, nil); err != nil {
+	if _, err := p.callKubectl(ctx, []string{"wait", "--for=jsonpath={.status.phase}=Bound", "pvc/" + name + "-data", "--timeout=300s"}, nil, protectedresource.Target{}); err != nil {
 		return StorageVolume{}, err
 	}
 	return StorageVolume{ID: input.TargetVolumeID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, Status: "ready", Provider: "tencent-tke", ProviderResourceID: "pvc/" + name + "-data", ProviderRequestID: providerRequestID("restore", input.IdempotencyKey), SizeGB: sizeGB, StorageClass: os.Getenv("OPL_WORKSPACE_STORAGE_CLASS"), CreatedAt: time.Now().UTC()}, nil
@@ -905,7 +1050,7 @@ func (p *TencentProvider) DestroyStorageSnapshot(ctx context.Context, snapshot S
 	if name == "" {
 		return StorageSnapshot{}, fmt.Errorf("storage_snapshot_provider_ref_required")
 	}
-	if _, err := p.kubectl(ctx, []string{"delete", "volumesnapshot/" + name, "--ignore-not-found=true"}, nil); err != nil {
+	if _, err := p.callKubectl(ctx, []string{"delete", "volumesnapshot/" + name, "--ignore-not-found=true"}, nil, protectedresource.Target{}); err != nil {
 		return StorageSnapshot{}, err
 	}
 	snapshot.Status = "destroyed"
@@ -924,7 +1069,7 @@ func (p *TencentProvider) CreateStorageAttachment(ctx context.Context, input Sto
 	if !isReadyResourceStatus(compute.Status) || volume.Status != "ready" {
 		return StorageAttachment{}, fmt.Errorf("resource_status_invalid")
 	}
-	raw, err := p.kubectl(ctx, []string{"get", "pv/" + pvName, "pvc/" + pvcName, "--ignore-not-found", "-o", "json"}, nil)
+	raw, err := p.callKubectl(ctx, []string{"get", "pv/" + pvName, "pvc/" + pvcName, "--ignore-not-found", "-o", "json"}, nil, protectedresource.Target{})
 	if err != nil {
 		return StorageAttachment{}, err
 	}
@@ -1008,7 +1153,8 @@ func (p *TencentProvider) CreateWorkspaceRuntime(ctx context.Context, input Work
 	serviceName := firstNonEmpty(compute.ServiceName, k8sName(compute.ID))
 	credentialSeed := stableID(input.WorkspaceID, input.IdempotencyKey)[:24]
 	tags := oplCostTags(compute.AccountID, input.WorkspaceID, input.WorkspaceID, input.OperationID)
-	if _, err := p.kubectl(ctx, []string{"apply", "-f", "-"}, workspaceManifest(input.WorkspaceID, input.WorkspaceID, credentialSeed, serviceName, compute, volume, input.GatewaySecretRef, tags)); err != nil {
+	runtimeTarget := protectedresource.Target{PackageID: compute.PackageID, NodePoolID: compute.NodePoolID, MachineID: compute.MachineName, NodeName: compute.NodeName, CVMID: firstNonEmpty(compute.InstanceID, compute.CVMInstanceID)}
+	if _, err := p.callKubectl(ctx, []string{"apply", "-f", "-"}, workspaceManifest(input.WorkspaceID, input.WorkspaceID, credentialSeed, serviceName, compute, volume, input.GatewaySecretRef, tags), runtimeTarget); err != nil {
 		return WorkspaceRuntime{}, err
 	}
 	runtime, err := p.WorkspaceRuntimeStatus(ctx, input.WorkspaceID)
@@ -1031,7 +1177,7 @@ func (p *TencentProvider) DestroyWorkspaceRuntime(ctx context.Context, workspace
 		return WorkspaceRuntime{}, err
 	}
 	if serviceName != "" {
-		if _, err := p.kubectl(ctx, []string{"delete", "deployment/" + serviceName, "service/" + serviceName, "networkpolicy/" + serviceName, "secret/" + serviceName + "-env", "--ignore-not-found=true"}, nil); err != nil {
+		if _, err := p.callKubectl(ctx, []string{"delete", "deployment/" + serviceName, "service/" + serviceName, "networkpolicy/" + serviceName, "secret/" + serviceName + "-env", "--ignore-not-found=true"}, nil, protectedresource.Target{}); err != nil {
 			return WorkspaceRuntime{}, err
 		}
 	}
@@ -1044,11 +1190,11 @@ func (p *TencentProvider) WorkspaceRuntimeStatus(ctx context.Context, workspaceI
 		return WorkspaceRuntime{WorkspaceID: workspaceID, Status: "not_found", Ready: false, Checks: []Check{{Name: "workspace_resources_found", OK: false}}}, nil
 	}
 	secretRef := serviceName + "-env"
-	raw, err := p.kubectl(ctx, []string{"get", "deployment/" + serviceName, "pvc/" + pvcName, "service/" + serviceName, "ingress/opl-cloud", "endpoints/" + serviceName, "secret/" + secretRef, "--ignore-not-found", "-o", "json"}, nil)
+	raw, err := p.callKubectl(ctx, []string{"get", "deployment/" + serviceName, "pvc/" + pvcName, "service/" + serviceName, "ingress/opl-cloud", "endpoints/" + serviceName, "secret/" + secretRef, "--ignore-not-found", "-o", "json"}, nil, protectedresource.Target{})
 	if err != nil {
 		return WorkspaceRuntime{WorkspaceID: workspaceID, Status: "unready", ServiceName: serviceName, Ready: false, Checks: []Check{{Name: "kubectl_get", OK: false}}}, nil
 	}
-	policyRaw, err := p.kubectl(ctx, []string{"get", "networkpolicy", "-o", "json"}, nil)
+	policyRaw, err := p.callKubectl(ctx, []string{"get", "networkpolicy", "-o", "json"}, nil, protectedresource.Target{})
 	if err != nil {
 		return WorkspaceRuntime{WorkspaceID: workspaceID, Status: "unready", ServiceName: serviceName, Ready: false, Checks: []Check{{Name: "kubectl_get", OK: false}}}, nil
 	}
@@ -1125,7 +1271,7 @@ func (p *TencentProvider) BindWorkspaceRuntimeGatewaySecret(ctx context.Context,
 			}},
 		}}},
 	}}})
-	if _, err := p.kubectl(ctx, []string{"patch", "deployment/" + serviceName, "--type=strategic", "-p", string(patch)}, nil); err != nil {
+	if _, err := p.callKubectl(ctx, []string{"patch", "deployment/" + serviceName, "--type=strategic", "-p", string(patch)}, nil, protectedresource.Target{}); err != nil {
 		return WorkspaceRuntimeGatewaySecretBinding{}, err
 	}
 	return p.WorkspaceRuntimeGatewaySecret(ctx, input.WorkspaceID)
@@ -1136,7 +1282,7 @@ func (p *TencentProvider) WorkspaceRuntimeGatewaySecret(ctx context.Context, wor
 	if err != nil || serviceName == "" {
 		return WorkspaceRuntimeGatewaySecretBinding{}, fmt.Errorf("workspace_runtime_not_found")
 	}
-	raw, err := p.kubectl(ctx, []string{"get", "deployment/" + serviceName, "-o", "json"}, nil)
+	raw, err := p.callKubectl(ctx, []string{"get", "deployment/" + serviceName, "-o", "json"}, nil, protectedresource.Target{})
 	if err != nil {
 		return WorkspaceRuntimeGatewaySecretBinding{}, err
 	}
@@ -1179,7 +1325,7 @@ func runtimeAccessFromSecret(secret map[string]any, secretRef string) (RuntimeAc
 }
 
 func (p *TencentProvider) workspacePods(ctx context.Context, workspaceID string) []any {
-	raw, err := p.kubectl(ctx, []string{"get", "pod", "-l", "oplcloud.cn/workspace-id=" + workspaceID, "-o", "json"}, nil)
+	raw, err := p.callKubectl(ctx, []string{"get", "pod", "-l", "oplcloud.cn/workspace-id=" + workspaceID, "-o", "json"}, nil, protectedresource.Target{})
 	if err != nil {
 		return nil
 	}
@@ -1187,7 +1333,7 @@ func (p *TencentProvider) workspacePods(ctx context.Context, workspaceID string)
 }
 
 func (p *TencentProvider) RuntimeHealthSummary(ctx context.Context) (RuntimeHealthSummary, error) {
-	raw, err := p.kubectl(ctx, []string{"get", "deployment,pod", "-l", "oplcloud.cn/workspace-id", "-o", "json"}, nil)
+	raw, err := p.callKubectl(ctx, []string{"get", "deployment,pod", "-l", "oplcloud.cn/workspace-id", "-o", "json"}, nil, protectedresource.Target{})
 	if err != nil {
 		return RuntimeHealthSummary{}, err
 	}
@@ -1253,7 +1399,7 @@ func (p *TencentProvider) Readiness(ctx context.Context) (map[string]any, error)
 			missing = append(missing, "provisioner_failed")
 		}
 	}
-	podRaw, podErr := p.kubectl(ctx, []string{"get", "pod", "-o", "json"}, nil)
+	podRaw, podErr := p.callKubectl(ctx, []string{"get", "pod", "-o", "json"}, nil, protectedresource.Target{})
 	pods := kubectlItems(podRaw)
 	imageChecks := map[string]bool{
 		"control_plane_image_id": podImageIDsMatch(pods, "app.kubernetes.io/component", "control-plane", "control-plane", os.Getenv("OPL_CLOUD_IMAGE")),
@@ -1355,7 +1501,7 @@ func (p *TencentProvider) workspaceRuntimeResourcesStrict(ctx context.Context, w
 	if includeSecret {
 		resourceKinds += ",secret"
 	}
-	raw, err := p.kubectl(ctx, []string{"get", resourceKinds, "-l", "oplcloud.cn/workspace-id=" + workspaceID, "-o", "json"}, nil)
+	raw, err := p.callKubectl(ctx, []string{"get", resourceKinds, "-l", "oplcloud.cn/workspace-id=" + workspaceID, "-o", "json"}, nil, protectedresource.Target{})
 	if err != nil {
 		return "", "", err
 	}
@@ -1380,10 +1526,10 @@ func (p *TencentProvider) PublishWorkspaceContent(ctx context.Context, workspace
 	digest := fmt.Sprintf("%x", sha256.Sum256(body))
 	temporary := target + ".opl-upload-" + digest[:12]
 	deployment := "deployment/" + serviceName
-	if _, err := p.kubectl(ctx, []string{"exec", deployment, "--", "mkdir", "-p", path.Dir(target)}, nil); err != nil {
+	if _, err := p.callKubectl(ctx, []string{"exec", deployment, "--", "mkdir", "-p", path.Dir(target)}, nil, protectedresource.Target{}); err != nil {
 		return err
 	}
-	if _, err := p.kubectl(ctx, []string{"exec", deployment, "--", "rm", "-f", temporary}, nil); err != nil {
+	if _, err := p.callKubectl(ctx, []string{"exec", deployment, "--", "rm", "-f", temporary}, nil, protectedresource.Target{}); err != nil {
 		return err
 	}
 	// ponytail: TKE exec stdin corrupts large writes; use bounded command arguments until measured throughput justifies object storage.
@@ -1392,14 +1538,14 @@ func (p *TencentProvider) PublishWorkspaceContent(ctx context.Context, workspace
 		end := min(offset+execChunkSize, len(body))
 		encoded := base64.StdEncoding.EncodeToString(body[offset:end])
 		args := []string{"exec", deployment, "--", "sh", "-c", `printf %s "$1" | base64 -d >> "$2"`, "--", encoded, temporary}
-		if _, err := p.kubectl(ctx, args, nil); err != nil {
+		if _, err := p.callKubectl(ctx, args, nil, protectedresource.Target{}); err != nil {
 			return err
 		}
 	}
-	if _, err := p.kubectl(ctx, []string{"exec", deployment, "--", "mv", temporary, target}, nil); err != nil {
+	if _, err := p.callKubectl(ctx, []string{"exec", deployment, "--", "mv", temporary, target}, nil, protectedresource.Target{}); err != nil {
 		return err
 	}
-	digestOutput, err := p.kubectl(ctx, []string{"exec", deployment, "--", "sha256sum", target}, nil)
+	digestOutput, err := p.callKubectl(ctx, []string{"exec", deployment, "--", "sha256sum", target}, nil, protectedresource.Target{})
 	if err != nil {
 		return fmt.Errorf("workspace_content_digest_command_failed: %w", err)
 	}
@@ -1522,7 +1668,7 @@ func workspaceManifest(workspaceID string, workspaceName string, credentialSeed 
 	}
 	secretVolume := map[string]any{"name": "workspace-secrets", "projected": map[string]any{"sources": secretSources}}
 	podAnnotations := stringAnyMap(mergeStringMaps(tags, map[string]string{"opl.medopl.cn/credential-revision": stableID("workspace-credential", workspaceID, credentialSeed)[:16]}))
-	deployment := map[string]any{"apiVersion": "apps/v1", "kind": "Deployment", "metadata": map[string]any{"name": serviceName, "labels": labels, "annotations": tags}, "spec": map[string]any{"replicas": 1, "selector": map[string]any{"matchLabels": selectorLabels}, "template": map[string]any{"metadata": map[string]any{"labels": labels, "annotations": podAnnotations}, "spec": map[string]any{"automountServiceAccountToken": false, "dnsPolicy": "ClusterFirst", "securityContext": map[string]any{"runAsNonRoot": true, "runAsUser": 10001, "runAsGroup": 10001, "fsGroup": 10001, "seccompProfile": map[string]any{"type": "RuntimeDefault"}}, "imagePullSecrets": []any{map[string]any{"name": os.Getenv("OPL_IMAGE_PULL_SECRET_NAME")}}, "nodeSelector": compute.NodeSelector, "tolerations": []any{map[string]any{"key": "tke.cloud.tencent.com/eni-ip-unavailable", "operator": "Exists", "effect": "NoSchedule"}}, "containers": []any{workspaceContainer}, "volumes": []any{map[string]any{"name": "workspace-data", "persistentVolumeClaim": map[string]any{"claimName": pvcName}}, secretVolume}}}}}
+	deployment := map[string]any{"apiVersion": "apps/v1", "kind": "Deployment", "metadata": map[string]any{"name": serviceName, "labels": labels, "annotations": tags}, "spec": map[string]any{"replicas": 1, "selector": map[string]any{"matchLabels": selectorLabels}, "template": map[string]any{"metadata": map[string]any{"labels": labels, "annotations": podAnnotations}, "spec": map[string]any{"automountServiceAccountToken": false, "dnsPolicy": "ClusterFirst", "securityContext": map[string]any{"runAsNonRoot": true, "runAsUser": 10001, "runAsGroup": 10001, "fsGroup": 10001, "seccompProfile": map[string]any{"type": "RuntimeDefault"}}, "imagePullSecrets": []any{map[string]any{"name": os.Getenv("OPL_IMAGE_PULL_SECRET_NAME")}}, "nodeSelector": compute.NodeSelector, "tolerations": []any{map[string]any{"key": "tke.cloud.tencent.com/eni-ip-unavailable", "operator": "Exists", "effect": "NoSchedule"}, map[string]any{"key": "oplcloud.cn/workspace-id", "operator": "Equal", "value": workspaceID, "effect": "NoSchedule"}}, "containers": []any{workspaceContainer}, "volumes": []any{map[string]any{"name": "workspace-data", "persistentVolumeClaim": map[string]any{"claimName": pvcName}}, secretVolume}}}}}
 	service := map[string]any{"apiVersion": "v1", "kind": "Service", "metadata": map[string]any{"name": serviceName, "labels": labels, "annotations": tags}, "spec": map[string]any{"type": "ClusterIP", "selector": selectorLabels, "ports": []any{map[string]any{"name": "http", "port": 3000, "targetPort": "http"}}}}
 	networkPolicy := map[string]any{"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy", "metadata": map[string]any{"name": serviceName, "labels": labels, "annotations": tags}, "spec": map[string]any{"podSelector": map[string]any{"matchLabels": selectorLabels}, "policyTypes": []any{"Ingress", "Egress"}, "ingress": []any{map[string]any{"from": []any{map[string]any{"podSelector": map[string]any{"matchLabels": map[string]any{"app.kubernetes.io/name": "opl-cloud", "app.kubernetes.io/component": "control-plane"}}}}, "ports": []any{map[string]any{"protocol": "TCP", "port": 3000}}}}, "egress": workspaceEgressRules()}}
 	return mustJSON(map[string]any{"apiVersion": "v1", "kind": "List", "items": []any{secret, deployment, service, networkPolicy}})

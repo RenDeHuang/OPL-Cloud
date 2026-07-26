@@ -139,6 +139,21 @@ func Retryable(v bool) predicate.FabricOperation {
 	return predicate.FabricOperation(sql.FieldEQ(FieldRetryable, v))
 }
 
+// ComputePoolKey applies equality check predicate on the "compute_pool_key" field. It's identical to ComputePoolKeyEQ.
+func ComputePoolKey(v string) predicate.FabricOperation {
+	return predicate.FabricOperation(sql.FieldEQ(FieldComputePoolKey, v))
+}
+
+// ComputePoolLeaseOwner applies equality check predicate on the "compute_pool_lease_owner" field. It's identical to ComputePoolLeaseOwnerEQ.
+func ComputePoolLeaseOwner(v string) predicate.FabricOperation {
+	return predicate.FabricOperation(sql.FieldEQ(FieldComputePoolLeaseOwner, v))
+}
+
+// ComputePoolLeaseExpiresAt applies equality check predicate on the "compute_pool_lease_expires_at" field. It's identical to ComputePoolLeaseExpiresAtEQ.
+func ComputePoolLeaseExpiresAt(v time.Time) predicate.FabricOperation {
+	return predicate.FabricOperation(sql.FieldEQ(FieldComputePoolLeaseExpiresAt, v))
+}
+
 // StartedAt applies equality check predicate on the "started_at" field. It's identical to StartedAtEQ.
 func StartedAt(v time.Time) predicate.FabricOperation {
 	return predicate.FabricOperation(sql.FieldEQ(FieldStartedAt, v))
@@ -1072,6 +1087,186 @@ func RetryableEQ(v bool) predicate.FabricOperation {
 // RetryableNEQ applies the NEQ predicate on the "retryable" field.
 func RetryableNEQ(v bool) predicate.FabricOperation {
 	return predicate.FabricOperation(sql.FieldNEQ(FieldRetryable, v))
+}
+
+// ComputePoolKeyEQ applies the EQ predicate on the "compute_pool_key" field.
+func ComputePoolKeyEQ(v string) predicate.FabricOperation {
+	return predicate.FabricOperation(sql.FieldEQ(FieldComputePoolKey, v))
+}
+
+// ComputePoolKeyNEQ applies the NEQ predicate on the "compute_pool_key" field.
+func ComputePoolKeyNEQ(v string) predicate.FabricOperation {
+	return predicate.FabricOperation(sql.FieldNEQ(FieldComputePoolKey, v))
+}
+
+// ComputePoolKeyIn applies the In predicate on the "compute_pool_key" field.
+func ComputePoolKeyIn(vs ...string) predicate.FabricOperation {
+	return predicate.FabricOperation(sql.FieldIn(FieldComputePoolKey, vs...))
+}
+
+// ComputePoolKeyNotIn applies the NotIn predicate on the "compute_pool_key" field.
+func ComputePoolKeyNotIn(vs ...string) predicate.FabricOperation {
+	return predicate.FabricOperation(sql.FieldNotIn(FieldComputePoolKey, vs...))
+}
+
+// ComputePoolKeyGT applies the GT predicate on the "compute_pool_key" field.
+func ComputePoolKeyGT(v string) predicate.FabricOperation {
+	return predicate.FabricOperation(sql.FieldGT(FieldComputePoolKey, v))
+}
+
+// ComputePoolKeyGTE applies the GTE predicate on the "compute_pool_key" field.
+func ComputePoolKeyGTE(v string) predicate.FabricOperation {
+	return predicate.FabricOperation(sql.FieldGTE(FieldComputePoolKey, v))
+}
+
+// ComputePoolKeyLT applies the LT predicate on the "compute_pool_key" field.
+func ComputePoolKeyLT(v string) predicate.FabricOperation {
+	return predicate.FabricOperation(sql.FieldLT(FieldComputePoolKey, v))
+}
+
+// ComputePoolKeyLTE applies the LTE predicate on the "compute_pool_key" field.
+func ComputePoolKeyLTE(v string) predicate.FabricOperation {
+	return predicate.FabricOperation(sql.FieldLTE(FieldComputePoolKey, v))
+}
+
+// ComputePoolKeyContains applies the Contains predicate on the "compute_pool_key" field.
+func ComputePoolKeyContains(v string) predicate.FabricOperation {
+	return predicate.FabricOperation(sql.FieldContains(FieldComputePoolKey, v))
+}
+
+// ComputePoolKeyHasPrefix applies the HasPrefix predicate on the "compute_pool_key" field.
+func ComputePoolKeyHasPrefix(v string) predicate.FabricOperation {
+	return predicate.FabricOperation(sql.FieldHasPrefix(FieldComputePoolKey, v))
+}
+
+// ComputePoolKeyHasSuffix applies the HasSuffix predicate on the "compute_pool_key" field.
+func ComputePoolKeyHasSuffix(v string) predicate.FabricOperation {
+	return predicate.FabricOperation(sql.FieldHasSuffix(FieldComputePoolKey, v))
+}
+
+// ComputePoolKeyEqualFold applies the EqualFold predicate on the "compute_pool_key" field.
+func ComputePoolKeyEqualFold(v string) predicate.FabricOperation {
+	return predicate.FabricOperation(sql.FieldEqualFold(FieldComputePoolKey, v))
+}
+
+// ComputePoolKeyContainsFold applies the ContainsFold predicate on the "compute_pool_key" field.
+func ComputePoolKeyContainsFold(v string) predicate.FabricOperation {
+	return predicate.FabricOperation(sql.FieldContainsFold(FieldComputePoolKey, v))
+}
+
+// ComputePoolLeaseOwnerEQ applies the EQ predicate on the "compute_pool_lease_owner" field.
+func ComputePoolLeaseOwnerEQ(v string) predicate.FabricOperation {
+	return predicate.FabricOperation(sql.FieldEQ(FieldComputePoolLeaseOwner, v))
+}
+
+// ComputePoolLeaseOwnerNEQ applies the NEQ predicate on the "compute_pool_lease_owner" field.
+func ComputePoolLeaseOwnerNEQ(v string) predicate.FabricOperation {
+	return predicate.FabricOperation(sql.FieldNEQ(FieldComputePoolLeaseOwner, v))
+}
+
+// ComputePoolLeaseOwnerIn applies the In predicate on the "compute_pool_lease_owner" field.
+func ComputePoolLeaseOwnerIn(vs ...string) predicate.FabricOperation {
+	return predicate.FabricOperation(sql.FieldIn(FieldComputePoolLeaseOwner, vs...))
+}
+
+// ComputePoolLeaseOwnerNotIn applies the NotIn predicate on the "compute_pool_lease_owner" field.
+func ComputePoolLeaseOwnerNotIn(vs ...string) predicate.FabricOperation {
+	return predicate.FabricOperation(sql.FieldNotIn(FieldComputePoolLeaseOwner, vs...))
+}
+
+// ComputePoolLeaseOwnerGT applies the GT predicate on the "compute_pool_lease_owner" field.
+func ComputePoolLeaseOwnerGT(v string) predicate.FabricOperation {
+	return predicate.FabricOperation(sql.FieldGT(FieldComputePoolLeaseOwner, v))
+}
+
+// ComputePoolLeaseOwnerGTE applies the GTE predicate on the "compute_pool_lease_owner" field.
+func ComputePoolLeaseOwnerGTE(v string) predicate.FabricOperation {
+	return predicate.FabricOperation(sql.FieldGTE(FieldComputePoolLeaseOwner, v))
+}
+
+// ComputePoolLeaseOwnerLT applies the LT predicate on the "compute_pool_lease_owner" field.
+func ComputePoolLeaseOwnerLT(v string) predicate.FabricOperation {
+	return predicate.FabricOperation(sql.FieldLT(FieldComputePoolLeaseOwner, v))
+}
+
+// ComputePoolLeaseOwnerLTE applies the LTE predicate on the "compute_pool_lease_owner" field.
+func ComputePoolLeaseOwnerLTE(v string) predicate.FabricOperation {
+	return predicate.FabricOperation(sql.FieldLTE(FieldComputePoolLeaseOwner, v))
+}
+
+// ComputePoolLeaseOwnerContains applies the Contains predicate on the "compute_pool_lease_owner" field.
+func ComputePoolLeaseOwnerContains(v string) predicate.FabricOperation {
+	return predicate.FabricOperation(sql.FieldContains(FieldComputePoolLeaseOwner, v))
+}
+
+// ComputePoolLeaseOwnerHasPrefix applies the HasPrefix predicate on the "compute_pool_lease_owner" field.
+func ComputePoolLeaseOwnerHasPrefix(v string) predicate.FabricOperation {
+	return predicate.FabricOperation(sql.FieldHasPrefix(FieldComputePoolLeaseOwner, v))
+}
+
+// ComputePoolLeaseOwnerHasSuffix applies the HasSuffix predicate on the "compute_pool_lease_owner" field.
+func ComputePoolLeaseOwnerHasSuffix(v string) predicate.FabricOperation {
+	return predicate.FabricOperation(sql.FieldHasSuffix(FieldComputePoolLeaseOwner, v))
+}
+
+// ComputePoolLeaseOwnerEqualFold applies the EqualFold predicate on the "compute_pool_lease_owner" field.
+func ComputePoolLeaseOwnerEqualFold(v string) predicate.FabricOperation {
+	return predicate.FabricOperation(sql.FieldEqualFold(FieldComputePoolLeaseOwner, v))
+}
+
+// ComputePoolLeaseOwnerContainsFold applies the ContainsFold predicate on the "compute_pool_lease_owner" field.
+func ComputePoolLeaseOwnerContainsFold(v string) predicate.FabricOperation {
+	return predicate.FabricOperation(sql.FieldContainsFold(FieldComputePoolLeaseOwner, v))
+}
+
+// ComputePoolLeaseExpiresAtEQ applies the EQ predicate on the "compute_pool_lease_expires_at" field.
+func ComputePoolLeaseExpiresAtEQ(v time.Time) predicate.FabricOperation {
+	return predicate.FabricOperation(sql.FieldEQ(FieldComputePoolLeaseExpiresAt, v))
+}
+
+// ComputePoolLeaseExpiresAtNEQ applies the NEQ predicate on the "compute_pool_lease_expires_at" field.
+func ComputePoolLeaseExpiresAtNEQ(v time.Time) predicate.FabricOperation {
+	return predicate.FabricOperation(sql.FieldNEQ(FieldComputePoolLeaseExpiresAt, v))
+}
+
+// ComputePoolLeaseExpiresAtIn applies the In predicate on the "compute_pool_lease_expires_at" field.
+func ComputePoolLeaseExpiresAtIn(vs ...time.Time) predicate.FabricOperation {
+	return predicate.FabricOperation(sql.FieldIn(FieldComputePoolLeaseExpiresAt, vs...))
+}
+
+// ComputePoolLeaseExpiresAtNotIn applies the NotIn predicate on the "compute_pool_lease_expires_at" field.
+func ComputePoolLeaseExpiresAtNotIn(vs ...time.Time) predicate.FabricOperation {
+	return predicate.FabricOperation(sql.FieldNotIn(FieldComputePoolLeaseExpiresAt, vs...))
+}
+
+// ComputePoolLeaseExpiresAtGT applies the GT predicate on the "compute_pool_lease_expires_at" field.
+func ComputePoolLeaseExpiresAtGT(v time.Time) predicate.FabricOperation {
+	return predicate.FabricOperation(sql.FieldGT(FieldComputePoolLeaseExpiresAt, v))
+}
+
+// ComputePoolLeaseExpiresAtGTE applies the GTE predicate on the "compute_pool_lease_expires_at" field.
+func ComputePoolLeaseExpiresAtGTE(v time.Time) predicate.FabricOperation {
+	return predicate.FabricOperation(sql.FieldGTE(FieldComputePoolLeaseExpiresAt, v))
+}
+
+// ComputePoolLeaseExpiresAtLT applies the LT predicate on the "compute_pool_lease_expires_at" field.
+func ComputePoolLeaseExpiresAtLT(v time.Time) predicate.FabricOperation {
+	return predicate.FabricOperation(sql.FieldLT(FieldComputePoolLeaseExpiresAt, v))
+}
+
+// ComputePoolLeaseExpiresAtLTE applies the LTE predicate on the "compute_pool_lease_expires_at" field.
+func ComputePoolLeaseExpiresAtLTE(v time.Time) predicate.FabricOperation {
+	return predicate.FabricOperation(sql.FieldLTE(FieldComputePoolLeaseExpiresAt, v))
+}
+
+// ComputePoolLeaseExpiresAtIsNil applies the IsNil predicate on the "compute_pool_lease_expires_at" field.
+func ComputePoolLeaseExpiresAtIsNil() predicate.FabricOperation {
+	return predicate.FabricOperation(sql.FieldIsNull(FieldComputePoolLeaseExpiresAt))
+}
+
+// ComputePoolLeaseExpiresAtNotNil applies the NotNil predicate on the "compute_pool_lease_expires_at" field.
+func ComputePoolLeaseExpiresAtNotNil() predicate.FabricOperation {
+	return predicate.FabricOperation(sql.FieldNotNull(FieldComputePoolLeaseExpiresAt))
 }
 
 // StartedAtEQ applies the EQ predicate on the "started_at" field.

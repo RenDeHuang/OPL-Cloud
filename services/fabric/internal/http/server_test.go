@@ -146,7 +146,7 @@ func testRequest(method, path string, body io.Reader) *http.Request {
 
 func createReadyCompute(t *testing.T, service *fabric.Service, server http.Handler, accountID, workspaceID, key string) fabric.ComputeAllocation {
 	t.Helper()
-	request := testRequest(http.MethodPost, "/fabric/compute-allocations", bytes.NewBufferString(fmt.Sprintf(`{"accountId":%q,"workspaceId":%q,"packageId":"basic"}`, accountID, workspaceID)))
+	request := testRequest(http.MethodPost, "/fabric/compute-allocations", bytes.NewBufferString(fmt.Sprintf(`{"accountId":%q,"workspaceId":%q,"packageId":"basic","nodePoolId":"np-basic"}`, accountID, workspaceID)))
 	request.Header.Set("Idempotency-Key", key)
 	recorder := httptest.NewRecorder()
 	server.ServeHTTP(recorder, request)
@@ -252,12 +252,12 @@ func TestServerMonthlyPreflightFailsClosedWithStableErrors(t *testing.T) {
 type monthlyPreflightReportHTTPProvider struct{ testProvider }
 
 func (monthlyPreflightReportHTTPProvider) MonthlyPreflightReport(context.Context, fabric.MonthlyPreflightReportInput) (fabric.MonthlyPreflightReport, error) {
-	items := make([]fabric.MonthlyPreflightStage, 0, 10)
-	for _, stage := range []string{"launch_permission", "credentials", "node_pool_discovery", "node_pool_contract", "subnet", "zone", "cvm_prepaid_quota", "cvm_sku_price", "cbs_prepaid_quota", "cbs_price"} {
+	items := make([]fabric.MonthlyPreflightStage, 0, 2)
+	for _, stage := range []string{"launch_permission", "credentials"} {
 		items = append(items, fabric.MonthlyPreflightStage{Stage: stage, Status: "passed", BlockedBy: []string{}, SafeFacts: map[string]any{}, DurationMS: 1})
 	}
 	return fabric.MonthlyPreflightReport{
-		SchemaVersion: 1, Status: "passed", PackageID: "basic", SizeGB: 10, Zone: "na-siliconvalley-1", Items: items,
+		SchemaVersion: 1, Status: "passed", Zone: "na-siliconvalley-1", Items: items,
 		Sub2APIMutationCount: 0, TencentMutationCount: 0, KubernetesMutationCount: 0,
 	}, nil
 }
@@ -265,13 +265,13 @@ func (monthlyPreflightReportHTTPProvider) MonthlyPreflightReport(context.Context
 func TestServerMonthlyPreflightReportIsInternalReadOnlyAndStrictJSON(t *testing.T) {
 	server := NewServer(fabric.NewService(monthlyPreflightReportHTTPProvider{}), "internal-secret")
 	unauthorized := httptest.NewRecorder()
-	server.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodGet, "/fabric/monthly-preflight-report?packageId=basic&sizeGb=10&zone=na-siliconvalley-1", nil))
+	server.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodGet, "/fabric/monthly-preflight-report?zone=na-siliconvalley-1", nil))
 	if unauthorized.Code != http.StatusUnauthorized {
 		t.Fatalf("unauthorized status=%d body=%s", unauthorized.Code, unauthorized.Body.String())
 	}
 
 	recorder := httptest.NewRecorder()
-	server.ServeHTTP(recorder, testRequest(http.MethodGet, "/fabric/monthly-preflight-report?packageId=basic&sizeGb=10&zone=na-siliconvalley-1", nil))
+	server.ServeHTTP(recorder, testRequest(http.MethodGet, "/fabric/monthly-preflight-report?zone=na-siliconvalley-1", nil))
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("report status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
@@ -284,8 +284,14 @@ func TestServerMonthlyPreflightReportIsInternalReadOnlyAndStrictJSON(t *testing.
 	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
 		t.Fatalf("report has trailing JSON: err=%v body=%s", err, recorder.Body.String())
 	}
-	if report.Status != "passed" || len(report.Items) != 10 || report.Sub2APIMutationCount != 0 || report.TencentMutationCount != 0 || report.KubernetesMutationCount != 0 {
+	if report.Status != "passed" || len(report.Items) != 2 || report.Sub2APIMutationCount != 0 || report.TencentMutationCount != 0 || report.KubernetesMutationCount != 0 {
 		t.Fatalf("report=%#v", report)
+	}
+
+	legacy := httptest.NewRecorder()
+	server.ServeHTTP(legacy, testRequest(http.MethodGet, "/fabric/monthly-preflight-report?packageId=basic&sizeGb=10&zone=na-siliconvalley-1", nil))
+	if legacy.Code != http.StatusBadRequest {
+		t.Fatalf("legacy diagnostics query status=%d body=%s", legacy.Code, legacy.Body.String())
 	}
 }
 
@@ -389,7 +395,7 @@ func TestMonthlyProviderTruthHTTPIsAuthenticatedReadOnlyAndValidatesQuery(t *tes
 
 func TestServerRenewsComputeAllocation(t *testing.T) {
 	service := fabric.NewService(testProvider{})
-	allocation, err := service.CreateComputeAllocation(context.Background(), fabric.ComputeAllocationInput{ID: "compute-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", PackageID: "basic", IdempotencyKey: "compute-create"})
+	allocation, err := service.CreateComputeAllocation(context.Background(), fabric.ComputeAllocationInput{ID: "compute-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", PackageID: "basic", NodePoolID: "np-basic", IdempotencyKey: "compute-create"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -576,7 +582,7 @@ func TestResourceBoundaryHTTPReturnsBadRequest(t *testing.T) {
 func TestSyncComputeAllocationHTTPWaitsForMachineOwnership(t *testing.T) {
 	service := fabric.NewService(testProvider{})
 	server := NewServer(service, "internal-secret")
-	create := testRequest(http.MethodPost, "/fabric/compute-allocations", bytes.NewBufferString(`{"accountId":"acct-alpha","workspaceId":"ws-alpha","packageId":"basic"}`))
+	create := testRequest(http.MethodPost, "/fabric/compute-allocations", bytes.NewBufferString(`{"accountId":"acct-alpha","workspaceId":"ws-alpha","packageId":"basic","nodePoolId":"np-basic"}`))
 	create.Header.Set("Idempotency-Key", "sync-http-create")
 	createRec := httptest.NewRecorder()
 	server.ServeHTTP(createRec, create)
@@ -822,13 +828,33 @@ func (testProvider) PublishWorkspaceContent(_ context.Context, _, _ string, _ []
 	return nil
 }
 
-func (testProvider) ReconcileComputePool(_ context.Context, input fabric.ComputePoolDemand) (fabric.ComputePoolState, error) {
-	machines := make([]fabric.ProviderMachine, 0, input.DesiredReplicas)
-	for index := int64(0); index < input.DesiredReplicas; index++ {
-		id := fmt.Sprintf("%s-%03d", input.PoolID, index+1)
-		machines = append(machines, fabric.ProviderMachine{MachineID: id, InstanceID: "ins-" + id, NodeName: id, InstanceType: input.InstanceType, Zone: "ap-guangzhou-3", ChargeType: "PREPAID", RenewFlag: "NOTIFY_AND_MANUAL_RENEW", Deadline: "2026-08-16T00:00:00Z", Ready: true})
+func (testProvider) PrepareComputeAllocation(_ context.Context, input fabric.ComputeAllocationInput) (fabric.ComputeAllocationPreparation, error) {
+	instanceType := "SA5.MEDIUM4"
+	poolID := "pool-basic-2c4g"
+	if input.PackageID == "pro" {
+		instanceType = "SA5.2XLARGE16"
+		poolID = "pool-pro-8c16g"
 	}
-	return fabric.ComputePoolState{PoolID: input.PoolID, NodePoolID: "np-" + input.PoolID, DesiredReplicas: input.DesiredReplicas, CurrentReplicas: input.DesiredReplicas, ProviderRequestID: "pool-test", Machines: machines}, nil
+	return fabric.ComputeAllocationPreparation{
+		PoolID: poolID, PackageID: input.PackageID, NodePoolID: input.NodePoolID, InstanceType: instanceType,
+		MaxReplicas: 10, BaselineReplicas: 0, TargetReplicas: 1, BeforeMachineNames: []string{},
+	}, nil
+}
+
+func (testProvider) CreateComputeAllocation(_ context.Context, input fabric.ComputeAllocationExecution) (fabric.ComputeAllocation, error) {
+	id := input.Allocation.ID
+	return fabric.ComputeAllocation{
+		ID: id, AccountID: input.Allocation.AccountID, WorkspaceID: input.Allocation.WorkspaceID, PackageID: input.Allocation.PackageID,
+		Status: "running", Provider: "tencent-tke", ProviderResourceID: "machine/" + id, ProviderRequestID: "compute-test",
+		PoolID: input.Plan.PoolID, NodePoolID: input.Plan.NodePoolID, MachineName: id, InstanceID: "ins-" + id, CVMInstanceID: "ins-" + id,
+		NodeName: "10.0.0.11", PrivateIP: "10.0.0.11", InstanceType: input.Plan.InstanceType, Zone: "ap-guangzhou-3",
+		ChargeType: "PREPAID", RenewFlag: "NOTIFY_AND_MANUAL_RENEW", Deadline: "2026-08-16T00:00:00Z",
+		ProviderData: map[string]string{"instanceType": input.Plan.InstanceType, "zone": "ap-guangzhou-3", "chargeType": "PREPAID", "renewFlag": "NOTIFY_AND_MANUAL_RENEW", "deadline": "2026-08-16T00:00:00Z"},
+		CostTags: map[string]string{
+			"opl_account_id": input.Allocation.AccountID, "opl_workspace_id": input.Allocation.WorkspaceID,
+			"opl_resource_id": id, "opl_operation_id": "owner-" + id,
+		},
+	}, nil
 }
 
 func (testProvider) MonthlyPreflight(_ context.Context, input fabric.MonthlyPreflightInput) (fabric.MonthlyPreflight, error) {
@@ -845,10 +871,6 @@ func (testProvider) MonthlyPreflight(_ context.Context, input fabric.MonthlyPref
 }
 
 func (testProvider) TagComputeMachine(_ context.Context, _ fabric.ProviderMachine, _ fabric.MachineOwnership) error {
-	return nil
-}
-
-func (testProvider) DeleteComputeMachine(_ context.Context, _ fabric.ProviderMachine, _ fabric.MachineOwnership) error {
 	return nil
 }
 

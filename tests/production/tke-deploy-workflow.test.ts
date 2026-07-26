@@ -234,7 +234,12 @@ async function manifestFixture() {
       OPL_MONTHLY_BILLING_WORKER_ENABLED: "1",
       OPL_MONTHLY_BILLING_INTERVAL_MS: "60000",
       OPL_WORKSPACE_LAUNCH_WORKER_ENABLED: "1",
-      OPL_WORKSPACE_LAUNCH_INTERVAL_MS: "10000"
+      OPL_WORKSPACE_LAUNCH_INTERVAL_MS: "10000",
+      OPL_SYSTEM_COMPUTE_CVM_ID: "ins-system-test",
+      OPL_BASIC_COMPUTE_NODE_POOL_ID: "np-basic-test",
+      OPL_PRO_COMPUTE_NODE_POOL_ID: "np-pro-test",
+      OPL_BASIC_COMPUTE_NODE_POOL_MAX_REPLICAS: "20",
+      OPL_PRO_COMPUTE_NODE_POOL_MAX_REPLICAS: "8"
     }
   };
 }
@@ -426,8 +431,6 @@ test("TKE deploy workflow matches the current deployment contract", async () => 
   for (const key of [
     "OPL_OPERATOR_CIDRS",
     "OPL_TRUSTED_PROXY_CIDRS",
-    "OPL_BASIC_COMPUTE_NODE_POOL_ID",
-    "OPL_PRO_COMPUTE_NODE_POOL_ID",
     "OPL_CODEX_BASE_URL",
     "OPL_GATEWAY_PUBLIC_BASE_URL",
     "OPL_PROVIDER_ACCEPTANCE_TOKEN",
@@ -437,6 +440,16 @@ test("TKE deploy workflow matches the current deployment contract", async () => 
   ]) {
     assert.equal(contract.deployWorkflow.requiredEnv.includes(key), false, key);
   }
+  for (const key of [
+    "OPL_SYSTEM_COMPUTE_NODE_POOL_ID",
+    "OPL_SYSTEM_COMPUTE_MACHINE_ID",
+    "OPL_SYSTEM_COMPUTE_NODE_NAME",
+    "OPL_SYSTEM_COMPUTE_CVM_ID",
+    "OPL_BASIC_COMPUTE_NODE_POOL_ID",
+    "OPL_PRO_COMPUTE_NODE_POOL_ID",
+    "OPL_BASIC_COMPUTE_NODE_POOL_MAX_REPLICAS",
+    "OPL_PRO_COMPUTE_NODE_POOL_MAX_REPLICAS"
+  ]) assert.equal(contract.deployWorkflow.requiredEnv.includes(key), true, key);
   assert.equal(contract.productionVerificationWorkflow.launchStatus, "paused");
   assert.equal(contract.productionVerificationWorkflow.mode, "read_only_dual_fixed_slots");
   assert.deepEqual(contract.productionVerificationWorkflow.requiredInputs, []);
@@ -510,10 +523,53 @@ test("Fabric MonthlyPreflight diagnostics runs inside the Ready Pod and is read 
   assert.match(runs, /ownerReferences/);
   assert.match(runs, /kubectl[^\n]+exec -i/);
   assert.match(runs, /http:\/\/127\.0\.0\.1:8082\/fabric\/monthly-preflight-report/);
+  assert.match(runs, /searchParams\.set\("zone", zone\)/);
+  assert.doesNotMatch(runs, /searchParams\.set\("packageId"/);
+  assert.doesNotMatch(runs, /searchParams\.set\("sizeGb"/);
+  assert.match(runs, /packageId[^\n]+basic/);
+  assert.match(runs, /packageId[^\n]+pro/);
   assert.match(runs, /OPL_INTERNAL_SERVICE_TOKEN/);
   assert.match(JSON.stringify(job.steps), /actions\/upload-artifact@v4/);
   for (const forbidden of [" apply ", " patch ", " delete ", " scale ", " create ", "/api/workspace-launches", "control-plane"]) {
     assert.equal(runs.includes(forbidden), false, forbidden);
+  }
+});
+
+test("dedicated NodePool bootstrap is the only manual CreateNodePool workflow", async () => {
+  const workflow = await readWorkflow(".github/workflows/bootstrap-tke-workspace-nodepools.yml");
+  const job = workflowJob(workflow, "bootstrap");
+  const runs = serializedRuns(job);
+  const inputs = workflow.on.workflow_dispatch.inputs;
+
+  assert.deepEqual(job["runs-on"], ["self-hosted", "tencent-cloud", "opl-cloud", "tke-vpc"]);
+  assert.equal(job.environment, "production-nodepool-bootstrap");
+  assert.equal(inputs.basic_max_replicas.required, true);
+  assert.equal(inputs.pro_max_replicas.required, true);
+  assert.equal(inputs.mutate_missing_pools.default, "false");
+  assert.match(runs, /bootstrap_compute_node_pools/);
+  assert.equal(job.env.RUN_TENCENT_NODE_POOL_BOOTSTRAP, "${{ inputs.mutate_missing_pools == 'true' && '1' || '0' }}");
+  assert.match(runs, /get node "\$OPL_SYSTEM_COMPUTE_NODE_NAME" -o json/);
+  assert.match(runs, /providerID/);
+  assert.match(runs, /actions\/upload-artifact@v4|bootstrap-nodepool-report/);
+  assert.doesNotMatch(runs, /workspace-launches|control-plane|ScaleNodePool|DeleteClusterMachines/);
+});
+
+test("manual cleanup workflows invoke the shared four-identity protected-resource guard", async () => {
+  for (const [path, mutationBoundary] of [
+    [".github/workflows/cleanup-tke-nodepool-machines.yml", 'action: "destroy_compute_allocation"'],
+    [".github/workflows/cleanup-tke-compute-residual.yml", 'kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" delete']
+  ]) {
+    const source = await readFile(repoFile(path), "utf8");
+    for (const token of [
+      "protected_resource_check",
+      "OPL_SYSTEM_COMPUTE_NODE_POOL_ID",
+      "OPL_SYSTEM_COMPUTE_MACHINE_ID",
+      "OPL_SYSTEM_COMPUTE_NODE_NAME",
+      "OPL_SYSTEM_COMPUTE_CVM_ID",
+      "OPL_BASIC_COMPUTE_NODE_POOL_ID",
+      "OPL_PRO_COMPUTE_NODE_POOL_ID"
+    ]) assert.match(source, new RegExp(token), `${path}:${token}`);
+    assert.ok(source.indexOf("protected_resource_check") < source.indexOf(mutationBoundary), path);
   }
 });
 
@@ -560,9 +616,12 @@ test("ordinary TKE deploy has no Acceptance or live QA mutation gate", async () 
   assert.equal(deployWorkflow.on.workflow_dispatch.inputs.live_qa_approval_id, undefined);
   assert.doesNotMatch(source, /OPL_VERIFY_|OPL_PROVIDER_ACCEPTANCE_TOKEN|production-provider-acceptance/);
   assert.doesNotMatch(source, /OPL_OPERATOR_CIDRS|OPL_TRUSTED_PROXY_CIDRS/);
-  assert.doesNotMatch(source, /OPL_BASIC_COMPUTE_NODE_POOL_ID|OPL_PRO_COMPUTE_NODE_POOL_ID/);
+  assert.match(source, /OPL_BASIC_COMPUTE_NODE_POOL_ID/);
+  assert.match(source, /OPL_PRO_COMPUTE_NODE_POOL_ID/);
   assert.doesNotMatch(source, /OPL_CODEX_BASE_URL|OPL_GATEWAY_PUBLIC_BASE_URL/);
-  assert.doesNotMatch(inputGate.run, /NODE_POOL_ID|GATEWAY_PUBLIC_BASE_URL|PROVIDER_ACCEPTANCE|OPL_VERIFY_/);
+  assert.match(inputGate.run, /OPL_BASIC_COMPUTE_NODE_POOL_ID/);
+  assert.match(inputGate.run, /OPL_PRO_COMPUTE_NODE_POOL_ID/);
+  assert.doesNotMatch(inputGate.run, /GATEWAY_PUBLIC_BASE_URL|PROVIDER_ACCEPTANCE|OPL_VERIFY_/);
 });
 
 test("TKE diagnostics are read only and mutually exclusive with deploy", async () => {

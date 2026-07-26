@@ -25,6 +25,9 @@ func (FabricOperation) Fields() []ent.Field {
 		field.String("status").NotEmpty(),
 		field.String("error_code").Default(""),
 		field.Bool("retryable").Default(false),
+		field.String("compute_pool_key").Default(""),
+		field.String("compute_pool_lease_owner").Default(""),
+		field.Time("compute_pool_lease_expires_at").Optional().Nillable(),
 	}
 	return append(fields, operationTimeFields()...)
 }

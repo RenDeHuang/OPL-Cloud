@@ -95,6 +95,14 @@
       "OPL_TENCENT_ZONE",
       "OPL_BASIC_COMPUTE_INSTANCE_TYPE",
       "OPL_PRO_COMPUTE_INSTANCE_TYPE",
+      "OPL_SYSTEM_COMPUTE_NODE_POOL_ID",
+      "OPL_SYSTEM_COMPUTE_MACHINE_ID",
+      "OPL_SYSTEM_COMPUTE_NODE_NAME",
+      "OPL_SYSTEM_COMPUTE_CVM_ID",
+      "OPL_BASIC_COMPUTE_NODE_POOL_ID",
+      "OPL_PRO_COMPUTE_NODE_POOL_ID",
+      "OPL_BASIC_COMPUTE_NODE_POOL_MAX_REPLICAS",
+      "OPL_PRO_COMPUTE_NODE_POOL_MAX_REPLICAS",
       "OPL_CODEX_MODEL",
       "OPL_CODEX_REASONING_EFFORT",
       "OPL_SUB2API_BASE_URL",
@@ -330,8 +338,10 @@
     "request": {
       "method": "GET",
       "url": "http://127.0.0.1:8082/fabric/monthly-preflight-report",
-      "packageId": "basic",
-      "sizeGb": 10,
+      "packages": [
+        {"packageId": "basic", "sizeGb": 10},
+        {"packageId": "pro", "sizeGb": 100}
+      ],
       "zoneSource": "current_fabric_pod_OPL_TENCENT_ZONE",
       "authorization": "current_fabric_process_memory_only"
     },
@@ -341,6 +351,22 @@
     "forbiddenData": ["secret", "token", "raw_tencent_response", "provider_request_id", "wallet", "user_data"],
     "mutationCommands": [],
     "controlPlaneLaunchCalls": 0
+  },
+  "workspaceNodePoolBootstrap": {
+    "file": ".github/workflows/bootstrap-tke-workspace-nodepools.yml",
+    "mode": "manual_inventory_then_optional_create_missing_zero_replica_pools",
+    "packagePools": ["basic", "pro"],
+    "maxReplicasInputs": "required",
+    "idempotency": "register_running_wait_exact_creating_create_missing_only",
+    "partialFailure": "preserve_created_pool_retry_missing_only",
+    "createNodePoolOutsideBootstrap": false
+  },
+  "protectedSystemResources": {
+    "nodePoolIdEnv": "OPL_SYSTEM_COMPUTE_NODE_POOL_ID",
+    "machineIdEnv": "OPL_SYSTEM_COMPUTE_MACHINE_ID",
+    "nodeNameEnv": "OPL_SYSTEM_COMPUTE_NODE_NAME",
+    "cvmIdEnv": "OPL_SYSTEM_COMPUTE_CVM_ID",
+    "guardCallers": ["fabric_tencent_mutations", "fabric_kubernetes_mutations", "cleanup_tke_compute_residual", "cleanup_tke_nodepool_machines"]
   },
   "productionVerificationWorkflow": {
     "file": ".github/workflows/verify-production-chain.yml",
