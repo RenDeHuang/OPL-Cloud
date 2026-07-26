@@ -738,6 +738,36 @@ func TestWorkspaceSKUInventorySelectsDeterministicCheapestEligiblePackages(t *te
 	}
 }
 
+func TestWorkspaceTKECapacityUsesCurrentLevelNodeCountIndependentOfEnableMetadata(t *testing.T) {
+	for _, test := range []struct {
+		name             string
+		levelEnabled     *bool
+		omitLevelEnabled bool
+	}{
+		{name: "disabled", levelEnabled: common.BoolPtr(false)},
+		{name: "omitted", omitLevelEnabled: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			legacyAPI := &fakeLegacyTkeAPI{
+				clusterNodeCount: 1,
+				nodeLimit:        500,
+				levelEnabled:     test.levelEnabled,
+				omitLevelEnabled: test.omitLevelEnabled,
+			}
+			client := &tencentSDKClient{clusterId: "cls-123", nativeLegacyTkeClient: legacyAPI}
+
+			limit, current, available, err := client.workspaceTKECapacity()
+
+			if err != nil {
+				t.Fatalf("current cluster level NodeCount must remain authoritative independently of Enable metadata: %v", err)
+			}
+			if limit != 500 || current != 1 || available != 499 {
+				t.Fatalf("capacity facts=(%d,%d,%d)", limit, current, available)
+			}
+		})
+	}
+}
+
 func TestWorkspaceSKUInventoryResolvesProtectedSystemCVMWhenUnconfigured(t *testing.T) {
 	tkeAPI := &fakeNativeTkeAPI{nodePools: bootstrapInventory("np-system")}
 	client := newWorkspaceSKUInventoryTencentSDKClient(tkeAPI)
@@ -1238,6 +1268,8 @@ type fakeLegacyTkeAPI struct {
 	clusterLevel     string
 	clusterNodeCount uint64
 	nodeLimit        uint64
+	levelEnabled     *bool
+	omitLevelEnabled bool
 }
 
 func (api *fakeLegacyTkeAPI) DescribeClusters(_ *tke2018.DescribeClustersRequest) (*tke2018.DescribeClustersResponse, error) {
@@ -1259,9 +1291,16 @@ func (api *fakeLegacyTkeAPI) DescribeClusterLevelAttribute(_ *tke2018.DescribeCl
 	if nodeLimit == 0 {
 		nodeLimit = 500
 	}
+	levelEnabled := common.BoolPtr(true)
+	if api.levelEnabled != nil {
+		levelEnabled = api.levelEnabled
+	}
+	if api.omitLevelEnabled {
+		levelEnabled = nil
+	}
 	return &tke2018.DescribeClusterLevelAttributeResponse{Response: &tke2018.DescribeClusterLevelAttributeResponseParams{
 		TotalCount: common.Int64Ptr(1), RequestId: common.StringPtr("req-describe-cluster-level"),
-		Items: []*tke2018.ClusterLevelAttribute{{Name: common.StringPtr(clusterLevel), NodeCount: common.Uint64Ptr(nodeLimit), Enable: common.BoolPtr(true)}},
+		Items: []*tke2018.ClusterLevelAttribute{{Name: common.StringPtr(clusterLevel), NodeCount: common.Uint64Ptr(nodeLimit), Enable: levelEnabled}},
 	}}, nil
 }
 
