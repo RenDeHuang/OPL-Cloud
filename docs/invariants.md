@@ -80,9 +80,9 @@ The four implementation owner lanes are Console/Control Plane, Fabric, Gateway i
   Sub2API debit and leaves both the charge count and Fabric mutation count at zero on failure.
 - Basic and Pro use separate pre-created TKE NativeCVM NodePools. Basic's
   customer resource contract is `2c4g`; Pro's is `8c16g`. Each Tencent instance
-  type is resolved from read-only availability and price evidence, explicitly
-  approved by the release owner, and registered by bootstrap and production
-  configuration. Empty `0/0` pools are valid templates, not idle-machine
+  type is resolved by stable sorting of the current Zone's PREPAID, SELL, exact-
+  shape candidates by monthly price and then instance type, and registered by
+  bootstrap and production configuration. Empty `0/0` pools are valid templates, not idle-machine
   inventory. Each launch uses the exact NodePool ID and instance type persisted
   by preflight; label discovery fallback, per-launch SKU selection, and customer-
   path NodePool creation are forbidden.
@@ -110,13 +110,15 @@ The four implementation owner lanes are Console/Control Plane, Fabric, Gateway i
   package pool at replicas 0, and preserves a successfully created pool when
   the other package fails so retry fills only the missing pool. The workflow
   reuses the existing `production` Tencent credentials and kubeconfig. Dry-run
-  accepts no maxReplicas and performs zero mutation; mutation requires two
-  release-owner-approved maxReplicas values plus the exact confirmation
-  `CREATE_MISSING_WORKSPACE_NODEPOOLS`. Basic and Pro inventory and mutation also
-  require their release-owner-approved resolved instance types; the report,
-  NodePool label, Native `InstanceTypes`, and production configuration must
-  register the same value. Mutation runs only from the exact merged `origin/main`
-  SHA; dry-run remains inventory-only with zero mutation.
+  automatically reports the recommended Basic and Pro SKU and performs zero
+  mutation. For the first production bootstrap, the approved Basic and Pro
+  `maxReplicas` values are both 100; these are explicit workflow configuration,
+  not code defaults. Before mutation, the workflow re-reads PREPAID quota,
+  Subnet IP capacity, the TKE cluster node limit, and SKU availability for the
+  combined capacity of 200, then verifies each selected SKU remains eligible.
+  The report, NodePool label, Native `InstanceTypes`, and production configuration
+  must register the same value. Mutation also requires the exact confirmation
+  `CREATE_MISSING_WORKSPACE_NODEPOOLS` and exact merged `origin/main` SHA.
 - Fabric creates CBS with a stable `ClientToken`, reads back CVM/CBS identity and billing facts, then binds CBS through a static PV/PVC in the compute Zone.
 - Static CBS uses `com.tencent.cloud.csi.cbs`, `volumeHandle=disk-*`, RWO, empty `storageClassName`, Zone affinity, and `persistentVolumeReclaimPolicy=Retain`.
 - `UNATTACHED` or `ATTACHED` is provider-ready; PVC `Bound` is required before Workspace deployment.
@@ -376,7 +378,13 @@ contract or select the SKU for a customer launch.
   release, ordinary rollout, or E2E.
 - The canary is a manual release-owner invocation of the existing
   `production-live-qa` runner, not CI, rollout, E2E, or a public test API. It
-  requires explicit approval for account provisioning, wallet recharge,
+  runs as one concurrency-locked workflow: the self-hosted TKE VPC job owns
+  revision, Fabric, Kubernetes, account, wallet, and launch evidence without a
+  browser; the dependent `ubuntu-latest` job re-reads public authority and owns
+  the Workspace browser, WebSocket, and single model request without kubeconfig
+  or Tencent credentials. Their same-run handoff is redacted evidence, never a
+  substitute for account, wallet, launch, Usage, or Ledger authority.
+  The workflow requires explicit approval for account provisioning, wallet recharge,
   Workspace purchase, and one model request; submits exactly one launch POST,
   polls only that operation, proves separate recharge/product/Usage wallet
   deltas, the approved resolved SKU across the NodePool plan, Fabric allocation,

@@ -818,6 +818,51 @@ test("customer Basic canary uses one launch POST and returns redacted end-to-end
   assert.doesNotMatch(JSON.stringify(result), /customer-password|workspace-password|internal-service-token|must-not-emit|redeem/i);
 });
 
+test("customer Basic canary splits VPC preparation from hosted browser completion without replaying business writes", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "opl-basic-canary-split-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const checkpointPath = join(directory, "checkpoint.json");
+  const fixture = basicCanaryFixture();
+
+  const prepared = await productionLiveQa.verifyProductionBasicCustomerCanary({
+    ...basicCanaryOptions(fixture),
+    phase: "prepare",
+    checkpointPath
+  });
+
+  assert.equal(prepared.ok, true);
+  assert.equal(prepared.status, "prepared");
+  assert.equal(prepared.stage, "runtime_ready");
+  assert.equal(fixture.state.provisionPosts, 1);
+  assert.equal(fixture.state.rechargePosts, 1);
+  assert.equal(fixture.state.launchPosts, 1);
+  assert.equal(fixture.state.modelRequests, 0);
+  assert.equal(fixture.calls.some((call) => call.path.endsWith("/runtime-credentials/reveal")), false);
+  assert.doesNotMatch(JSON.stringify(prepared), /password|token|secret|redeem|providerRequestId/i);
+
+  const fabricCallsBeforeCompletion = fixture.calls.filter((call) => call.host === "fabric.opl-cloud.svc:8082").length;
+  const result = await productionLiveQa.verifyProductionBasicCustomerCanary({
+    ...basicCanaryOptions(fixture),
+    phase: "complete",
+    preparedEvidence: prepared,
+    checkpointPath,
+    fabricOrigin: undefined,
+    internalServiceToken: undefined,
+    fabricFetchImpl: async () => { throw new Error("hosted_completion_must_not_call_internal_fabric"); },
+    cloudRevisionEvidenceReader: undefined,
+    runtimePodEvidenceReader: undefined
+  });
+
+  assert.equal(result.status, "passed");
+  assert.deepEqual({
+    account: fixture.state.provisionPosts,
+    wallet: fixture.state.rechargePosts,
+    launch: fixture.state.launchPosts,
+    model: fixture.state.modelRequests
+  }, { account: 1, wallet: 1, launch: 1, model: 1 });
+  assert.equal(fixture.calls.filter((call) => call.host === "fabric.opl-cloud.svc:8082").length, fabricCallsBeforeCompletion);
+});
+
 for (const [failureAtRead, expectedPosts] of [
   [2, { account: 0, wallet: 0, launch: 0, model: 0 }],
   [3, { account: 1, wallet: 0, launch: 0, model: 0 }],

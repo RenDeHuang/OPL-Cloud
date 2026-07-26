@@ -547,18 +547,17 @@ test("dedicated NodePool bootstrap is the only manual CreateNodePool workflow", 
   assert.equal(job.environment, "production");
   assert.equal(workflow.concurrency.group, "production-resource-verification");
   assert.equal(inputs.merged_sha.required, true);
-  assert.equal(inputs.basic_resolved_instance_type.required, true);
-  assert.equal(inputs.pro_resolved_instance_type.required, true);
-  assert.equal(inputs.basic_max_replicas.required, false);
-  assert.equal(inputs.pro_max_replicas.required, false);
+  assert.equal(inputs.basic_resolved_instance_type, undefined);
+  assert.equal(inputs.pro_resolved_instance_type, undefined);
+  assert.equal(inputs.basic_max_replicas, undefined);
+  assert.equal(inputs.pro_max_replicas, undefined);
   assert.equal(inputs.mutation_confirmation.required, false);
   assert.equal(inputs.mutate_missing_pools.default, "false");
-  assert.equal(job.env.OPL_BASIC_COMPUTE_INSTANCE_TYPE, "${{ inputs.basic_resolved_instance_type }}");
-  assert.equal(job.env.OPL_PRO_COMPUTE_INSTANCE_TYPE, "${{ inputs.pro_resolved_instance_type }}");
-  assert.match(String(job.if), /mutate_missing_pools/);
-  assert.match(String(job.if), /refs\/heads\/main/);
-  assert.match(String(job.if), /github\.sha/);
-  assert.match(String(job.if), /inputs\.merged_sha/);
+  assert.equal(job.env.OPL_BASIC_COMPUTE_INSTANCE_TYPE, "");
+  assert.equal(job.env.OPL_PRO_COMPUTE_INSTANCE_TYPE, "");
+  assert.equal(job.env.OPL_BASIC_COMPUTE_NODE_POOL_MAX_REPLICAS, "100");
+  assert.equal(job.env.OPL_PRO_COMPUTE_NODE_POOL_MAX_REPLICAS, "100");
+  assert.equal(String(job.if), "${{ github.ref == 'refs/heads/main' && github.sha == inputs.merged_sha }}");
   const checkout = stepsByName(job).get("Checkout exact source");
   assert.equal(checkout.with.ref, "${{ inputs.merged_sha }}");
   assert.equal(checkout.with["fetch-depth"], 0);
@@ -573,23 +572,42 @@ test("dedicated NodePool bootstrap is the only manual CreateNodePool workflow", 
   assert.match(runs, /get node "\$OPL_SYSTEM_COMPUTE_NODE_NAME" -o json/);
   assert.match(runs, /providerID/);
   assert.match(runs, /actions\/upload-artifact@v4|bootstrap-nodepool-report/);
+  assert.match(runs, /workspace_sku_inventory/);
+  assert.match(runs, /requiredCapacity[^\n]+200/);
+  assert.match(runs, /recommendedInstanceType/);
+  assert.match(runs, /pre-mutation-sku-inventory\.json/);
+  assert.match(runs, /prepaidQuotaRemaining/);
+  assert.match(runs, /subnets/);
+  assert.match(runs, /tkeClusterNodeLimit/);
+  assert.match(runs, /protectedSystem/);
+  assert.match(runs, /"requestid"/);
   assert.match(runs, /OPL_BASIC_COMPUTE_INSTANCE_TYPE/);
   assert.match(runs, /OPL_PRO_COMPUTE_INSTANCE_TYPE/);
   assert.match(runs, /instanceType/);
+  const reportGate = serializedStep(stepsByName(job).get("Validate bootstrap report"));
+  assert.match(reportGate, /sku-inventory\.json/);
+  assert.match(reportGate, /current\.candidates/);
+  assert.match(reportGate, /nodePoolId/);
   assert.doesNotMatch(runs, /workspace-launches|control-plane|ScaleNodePool|DeleteClusterMachines/);
 });
 
 test("manual production Basic customer operation is isolated behind merged-main and four explicit approvals", async () => {
   const path = ".github/workflows/production-basic-customer-operation.yml";
   const workflow = await readWorkflow(path);
-  const job = workflowJob(workflow, "basic-customer-operation");
+  const prepareJob = workflowJob(workflow, "prepare-basic-customer-operation");
+  const completeJob = workflowJob(workflow, "complete-basic-customer-operation");
   const inputs = workflow.on.workflow_dispatch.inputs;
-  const steps = stepsByName(job);
-  const runs = serializedRuns(job);
+  const prepareSteps = stepsByName(prepareJob);
+  const completeSteps = stepsByName(completeJob);
+  const prepareRuns = serializedRuns(prepareJob);
+  const completeRuns = serializedRuns(completeJob);
 
   assert.deepEqual(Object.keys(workflow.on), ["workflow_dispatch"]);
-  assert.deepEqual(job["runs-on"], ["self-hosted", "tencent-cloud", "opl-cloud", "tke-vpc"]);
-  assert.equal(job.environment, "production");
+  assert.deepEqual(prepareJob["runs-on"], ["self-hosted", "tencent-cloud", "opl-cloud", "tke-vpc"]);
+  assert.equal(completeJob["runs-on"], "ubuntu-latest");
+  assert.equal(completeJob.needs, "prepare-basic-customer-operation");
+  assert.equal(prepareJob.environment, "production");
+  assert.equal(completeJob.environment, "production");
   assert.equal(workflow.concurrency.group, "production-resource-verification");
   assert.equal(workflow.concurrency["cancel-in-progress"], false);
   assert.equal(inputs.merged_sha.required, true);
@@ -598,31 +616,67 @@ test("manual production Basic customer operation is isolated behind merged-main 
     assert.equal(inputs[name].type, "boolean");
     assert.equal(inputs[name].required, true);
     assert.equal(inputs[name].default, false);
-    assert.match(String(job.if), new RegExp(`inputs\\.${name}`));
+    assert.match(String(prepareJob.if), new RegExp(`inputs\\.${name}`));
+    assert.match(String(completeJob.if), new RegExp(`inputs\\.${name}`));
   }
-  assert.match(String(job.if), /github\.ref == 'refs\/heads\/main'/);
-  assert.match(String(job.if), /github\.sha == inputs\.merged_sha/);
+  for (const job of [prepareJob, completeJob]) {
+    assert.match(String(job.if), /github\.ref == 'refs\/heads\/main'/);
+    assert.match(String(job.if), /github\.sha == inputs\.merged_sha/);
+  }
 
-  const checkout = steps.get("Checkout exact merged main");
-  assert.equal(checkout.with.ref, "${{ inputs.merged_sha }}");
-  assert.equal(checkout.with["fetch-depth"], 0);
-  const sourceGate = serializedStep(steps.get("Verify exact origin main"));
-  assert.match(sourceGate, /git rev-parse HEAD/);
-  assert.match(sourceGate, /refs\/remotes\/origin\/main/);
-  assert.match(sourceGate, /OPL_MERGED_SHA/);
-  assert.match(runs, /npm ci/);
-  assert.match(runs, /playwright install --with-deps chromium/);
-  assert.match(runs, /production-live-qa\.ts --basic-customer-canary/);
-  for (const flag of ["--allow-account-provision", "--allow-wallet-recharge", "--allow-workspace-purchase", "--allow-model-write"]) {
-    assert.match(runs, new RegExp(flag));
+  for (const steps of [prepareSteps, completeSteps]) {
+    const checkout = steps.get("Checkout exact merged main");
+    assert.equal(checkout.with.ref, "${{ inputs.merged_sha }}");
+    assert.equal(checkout.with["fetch-depth"], 0);
+    const sourceGate = serializedStep(steps.get("Verify exact origin main"));
+    assert.match(sourceGate, /git rev-parse HEAD/);
+    assert.match(sourceGate, /refs\/remotes\/origin\/main/);
+    assert.match(sourceGate, /OPL_MERGED_SHA/);
   }
-  assert.match(runs, /--approval-id "\$OPL_BASIC_CANARY_APPROVAL_ID"/);
-  assert.match(runs, /OPL_BASIC_CANARY_CHECKPOINT_PATH/);
-  assert.match(JSON.stringify(job.steps), /actions\/upload-artifact@v4/);
-  assert.equal(job.env.OPL_BASIC_CANARY_APPROVAL_ID, "${{ inputs.approval_id }}");
-  assert.equal(job.env.OPL_MERGED_SHA, "${{ inputs.merged_sha }}");
-  assert.equal(job.env.OPL_BASIC_CANARY_APPROVAL_JSON, "${{ secrets.OPL_BASIC_CANARY_APPROVAL_JSON }}");
-  assert.equal(job.env.OPL_BASIC_CANARY_CUSTOMER_PASSWORD, "${{ secrets.OPL_BASIC_CANARY_CUSTOMER_PASSWORD }}");
+  assert.doesNotMatch(prepareRuns, /npm ci|playwright|chromium/);
+  assert.match(completeRuns, /npm ci/);
+  assert.match(completeRuns, /playwright install --with-deps chromium/);
+  assert.match(prepareRuns, /production-live-qa\.ts --basic-customer-canary/);
+  assert.match(prepareRuns, /--phase prepare/);
+  assert.match(completeRuns, /production-live-qa\.ts --basic-customer-canary/);
+  assert.match(completeRuns, /--phase complete/);
+  assert.match(completeRuns, /--prepared-evidence/);
+  for (const flag of ["--allow-account-provision", "--allow-wallet-recharge", "--allow-workspace-purchase", "--allow-model-write"]) {
+    assert.match(prepareRuns, new RegExp(flag));
+    assert.match(completeRuns, new RegExp(flag));
+  }
+  assert.match(prepareRuns, /--approval-id "\$OPL_BASIC_CANARY_APPROVAL_ID"/);
+  assert.match(prepareRuns, /OPL_BASIC_CANARY_CHECKPOINT_PATH/);
+  assert.match(JSON.stringify(prepareJob.steps), /actions\/upload-artifact@v4/);
+  assert.match(JSON.stringify(completeJob.steps), /actions\/download-artifact@v4/);
+  assert.match(JSON.stringify(completeJob.steps), /actions\/upload-artifact@v4/);
+  for (const job of [prepareJob, completeJob]) {
+    assert.equal(job.env.OPL_BASIC_CANARY_APPROVAL_ID, "${{ inputs.approval_id }}");
+    assert.equal(job.env.OPL_MERGED_SHA, "${{ inputs.merged_sha }}");
+    assert.equal(job.env.OPL_BASIC_CANARY_APPROVAL_JSON, "${{ secrets.OPL_BASIC_CANARY_APPROVAL_JSON }}");
+    assert.equal(job.env.OPL_BASIC_CANARY_CUSTOMER_PASSWORD, "${{ secrets.OPL_BASIC_CANARY_CUSTOMER_PASSWORD }}");
+  }
+  assert.equal(prepareJob.env.OPL_INTERNAL_SERVICE_TOKEN, undefined);
+  assert.equal(prepareJob.env.OPL_FABRIC_INTERNAL_ORIGIN, undefined);
+  assert.match(prepareRuns, /get secret opl-cloud-internal-service/);
+  assert.match(prepareRuns, /\.data\.OPL_INTERNAL_SERVICE_TOKEN/);
+  assert.match(prepareRuns, /::add-mask::/);
+  assert.match(prepareRuns, /get deployment\/opl-cloud-fabric/);
+  assert.match(prepareRuns, /deployment\.kubernetes\.io\/revision/);
+  assert.match(prepareRuns, /ownerReferences/);
+  assert.match(prepareRuns, /port-forward[^\n]+pod\/\$fabric_pod[^\n]+18082:8082/);
+  assert.match(prepareRuns, /OPL_FABRIC_INTERNAL_ORIGIN=http:\/\/127\.0\.0\.1:18082/);
+  assert.match(prepareRuns, /trap[^\n]+EXIT/);
+  assert.match(prepareRuns, /kill[^\n]+port_forward_pid/);
+  assert.doesNotMatch(JSON.stringify(completeJob), /KUBECONFIG|TENCENT_|OPL_INTERNAL_SERVICE_TOKEN|port-forward|kubectl/);
+  const deployment = await readJson(repoFile("packages/contracts/opl-cloud-deployment-contract.json"));
+  assert.deepEqual(deployment.productionBasicCustomerCanary.runnerIsolation, {
+    prepare: "self_hosted_tke_vpc_revision_fabric_kubernetes_and_business_authority",
+    complete: "ubuntu_latest_public_browser_websocket_and_single_model_request",
+    sharedConcurrency: "production-resource-verification",
+    hostedRunnerKubeconfig: false,
+    vpcRunnerBrowser: false
+  });
   const liveQa = await readFile(repoFile("tools/production-live-qa.ts"), "utf8");
   assert.match(liveQa, /readBasicCanaryCloudRevisionEvidence/);
   assert.match(liveQa, /deployment\.kubernetes\.io\/revision/);

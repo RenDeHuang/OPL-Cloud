@@ -650,6 +650,10 @@ function canonicalJson(value) {
   return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(",")}}`;
 }
 
+function basicCanaryApprovalDigest(approval) {
+  return createHash("sha256").update(canonicalJson(approval)).digest("hex");
+}
+
 function basicCanaryCheckpointIdentity(approval) {
   const accountId = `acct-${stableCanaryId("account", approval.customer.email).slice(0, 18)}`;
   const launchOperationId = `workspace-launch-${stableCanaryId(accountId, approval.idempotencyKeys.workspaceLaunch).slice(0, 18)}`;
@@ -670,7 +674,7 @@ async function loadBasicCanaryCheckpoint(path, approval) {
   const identities = basicCanaryCheckpointIdentity(approval);
   const initial = {
     schemaVersion: 2,
-    approvalDigest: createHash("sha256").update(canonicalJson(approval)).digest("hex"),
+    approvalDigest: basicCanaryApprovalDigest(approval),
     stage: "initial",
     identities,
     httpAttempts: { accountProvision: null, walletAdjustment: null, workspaceLaunch: null, modelRequest: null },
@@ -698,6 +702,27 @@ async function loadBasicCanaryCheckpoint(path, approval) {
   }
   if (parsed.stage === "completed") throw new Error("production_basic_canary_already_completed");
   return { checkpoint: parsed, present: true };
+}
+
+function validatePreparedBasicCanaryEvidence(prepared, approval, identities, runId) {
+  if (!exactObjectKeys(prepared, [
+    "schemaVersion", "ok", "status", "stage", "approvalDigest", "runId", "mergedSha", "cloudRevision", "identities",
+    "resourceContract", "operationId", "workspaceId", "wallet", "compute", "storage", "attachment", "runtime", "receipt", "httpAttempts", "writeCounts"
+  ]) || prepared.schemaVersion !== 1 || prepared.ok !== true || prepared.status !== "prepared" || prepared.stage !== "runtime_ready" ||
+    prepared.approvalDigest !== basicCanaryApprovalDigest(approval) || prepared.runId !== runId || prepared.mergedSha !== approval.expected.mergedSha ||
+    JSON.stringify(prepared.identities) !== JSON.stringify(identities) || prepared.operationId !== identities.launchOperationId || prepared.workspaceId !== identities.workspaceId ||
+    prepared.resourceContract?.cpu !== 2 || prepared.resourceContract?.memoryGb !== 4 ||
+    prepared.compute?.allocationId == null || prepared.compute?.sku !== approval.expected.resolvedInstanceType ||
+    prepared.compute?.procurement?.nodePoolId !== approval.expected.nodePoolId || prepared.compute?.resources?.cpu !== 2 || prepared.compute?.resources?.memoryGb !== 4 ||
+    prepared.runtime?.ready !== true || prepared.runtime?.pod?.ready !== true || prepared.runtime?.pod?.resources?.cpu !== 2 || prepared.runtime?.pod?.resources?.memoryGb !== 4 ||
+    prepared.runtime?.pod?.nodeName !== prepared.compute?.nodeName ||
+    prepared.writeCounts?.accountProvisionPosts !== 1 || prepared.writeCounts?.walletAdjustmentPosts !== 1 || prepared.writeCounts?.workspaceLaunchPosts !== 1 ||
+    prepared.writeCounts?.modelRequests !== 0 || prepared.writeCounts?.workspaceKeysCreated !== 1 || prepared.writeCounts?.workspacePurchaseDebits !== 1 ||
+    prepared.writeCounts?.tencentCvmPurchases !== 1 || prepared.writeCounts?.tencentCbsPurchases !== 1) {
+    throw new Error("production_basic_canary_prepared_evidence_invalid");
+  }
+  validateBasicCanaryCloudRevisionEvidence(prepared.cloudRevision, approval.expected.mergedSha, approval.expected.cloudImageDigest);
+  return prepared;
 }
 
 async function saveBasicCanaryCheckpoint(checkpoint, stage, path, afterCheckpoint) {
@@ -825,6 +850,8 @@ export async function verifyProductionBasicCustomerCanary(options = {}) {
     browserFactory,
     cloudRevisionEvidenceReader,
     runtimePodEvidenceReader,
+    phase = "all",
+    preparedEvidence,
     checkpointPath,
     afterCheckpoint,
     signal,
@@ -832,8 +859,10 @@ export async function verifyProductionBasicCustomerCanary(options = {}) {
   } = options;
   const approval = basicCustomerCanaryApproval(approvalJson, approvalId, confirmation, now);
   const credentials = existingAdminCredentials(adminEmail, adminPassword);
-  if (mergedSha !== approval.expected.mergedSha || typeof cloudRevisionEvidenceReader !== "function" || !String(customerPassword || "") ||
-    typeof runtimePodEvidenceReader !== "function" || !String(internalServiceToken || "") ||
+  const preparing = phase === "prepare";
+  const completing = phase === "complete";
+  if (!new Set(["all", "prepare", "complete"]).has(phase) || mergedSha !== approval.expected.mergedSha || !String(customerPassword || "") ||
+    (!completing && (typeof cloudRevisionEvidenceReader !== "function" || typeof runtimePodEvidenceReader !== "function" || !String(internalServiceToken || ""))) ||
     !Number.isInteger(launchPollAttempts) || launchPollAttempts < 1 || !Number.isFinite(launchPollDelayMs) || launchPollDelayMs < 0 ||
     !Number.isInteger(usageAttempts) || usageAttempts < 1 || !Number.isFinite(usageRetryDelayMs) || usageRetryDelayMs < 0) {
     throw new Error("production_basic_canary_config_invalid");
@@ -842,27 +871,36 @@ export async function verifyProductionBasicCustomerCanary(options = {}) {
   const { checkpoint, present: checkpointPresent } = loadedCheckpoint;
   const initialCheckpointStage = checkpoint.stage;
   const expectedIdentities = checkpoint.identities;
+  const prepared = completing ? validatePreparedBasicCanaryEvidence(preparedEvidence, approval, expectedIdentities, runId) : null;
   const normalizedOrigin = assertPublicHttpsUrl(origin, "public_console_origin_required", { hostname: "cloud.medopl.cn" }).origin;
-  const normalizedFabricOrigin = internalFabricOrigin(fabricOrigin);
+  const normalizedFabricOrigin = completing ? "" : internalFabricOrigin(fabricOrigin);
   const requestOptions = { fetchImpl, origin: normalizedOrigin, signal, timeoutMs: requestTimeoutMs };
-  const fabricOptions = {
+  const fabricOptions = completing ? null : {
     fetchImpl: fabricFetchImpl,
     origin: normalizedFabricOrigin,
     signal,
     timeoutMs: requestTimeoutMs,
     headers: { authorization: `Bearer ${internalServiceToken}` }
   };
-  const assertCloudRevision = async () => validateBasicCanaryCloudRevisionEvidence(await cloudRevisionEvidenceReader({
-    expectedMergedSha: approval.expected.mergedSha,
-    expectedCloudDigest: approval.expected.cloudImageDigest,
-    signal
-  }), approval.expected.mergedSha, approval.expected.cloudImageDigest);
+  let latestCloudRevisionEvidence;
+  const assertCloudRevision = async () => {
+    latestCloudRevisionEvidence = completing
+      ? validateBasicCanaryCloudRevisionEvidence(prepared.cloudRevision, approval.expected.mergedSha, approval.expected.cloudImageDigest)
+      : validateBasicCanaryCloudRevisionEvidence(await cloudRevisionEvidenceReader({
+        expectedMergedSha: approval.expected.mergedSha,
+        expectedCloudDigest: approval.expected.cloudImageDigest,
+        signal
+      }), approval.expected.mergedSha, approval.expected.cloudImageDigest);
+    return latestCloudRevisionEvidence;
+  };
   await assertCloudRevision();
-  const resourceContract = basicCanaryResourceContract((await requestJson({
-    ...fabricOptions,
-    path: "/fabric/catalog",
-    headers: fabricOptions.headers
-  })).payload);
+  const resourceContract = completing
+    ? { ...prepared.resourceContract }
+    : basicCanaryResourceContract((await requestJson({
+      ...fabricOptions,
+      path: "/fabric/catalog",
+      headers: fabricOptions.headers
+    })).payload);
 
   const adminAuth = await login({ ...requestOptions, ...credentials });
   if (adminAuth.user?.accountId !== PRODUCTION_ADMIN.accountId || adminAuth.user?.role !== PRODUCTION_ADMIN.role || !adminAuth.csrfToken) {
@@ -870,7 +908,7 @@ export async function verifyProductionBasicCustomerCanary(options = {}) {
   }
   const accountAuthority = await readBasicCanaryAccountAuthority(requestOptions, adminAuth, approval, expectedIdentities.accountId);
   if (!accountAuthority.found) {
-    if (checkpointAtLeast(checkpoint, "account_provisioned")) throw new Error("production_basic_canary_account_readback_failed");
+    if (completing || checkpointAtLeast(checkpoint, "account_provisioned")) throw new Error("production_basic_canary_account_readback_failed");
     await assertCloudRevision();
     recordBasicCanaryHttpAttempt(checkpoint, "accountProvision");
     await saveBasicCanaryCheckpoint(checkpoint, "account_provision_attempted", checkpointPath, afterCheckpoint);
@@ -911,7 +949,7 @@ export async function verifyProductionBasicCustomerCanary(options = {}) {
     walletBeforeRecharge = adjustment.before;
     walletAfterRecharge = adjustment.after;
   } else {
-    if (checkpointAtLeast(checkpoint, "wallet_recharged")) throw new Error("production_basic_canary_recharge_readback_failed");
+    if (completing || checkpointAtLeast(checkpoint, "wallet_recharged")) throw new Error("production_basic_canary_recharge_readback_failed");
     walletBeforeRecharge = walletFact(sourceEnvelope(await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/gateway/wallet" }), "sub2api"), sub2apiUserId);
     if (checkpoint.baseline.walletBeforeRechargeUsdMicros && checkpoint.baseline.walletBeforeRechargeUsdMicros !== walletBeforeRecharge.usdMicros) {
       throw new Error("production_basic_canary_recharge_readback_failed");
@@ -984,7 +1022,7 @@ export async function verifyProductionBasicCustomerCanary(options = {}) {
   const launchSucceededWithoutCheckpoint = !checkpointPresent && launchAuthority.found && launchAuthority.payload?.status === "succeeded";
   let launch;
   if (!launchAuthority.found) {
-    if (checkpointAtLeast(checkpoint, "launch_accepted")) throw new Error("production_basic_canary_launch_readback_failed");
+    if (completing || checkpointAtLeast(checkpoint, "launch_accepted")) throw new Error("production_basic_canary_launch_readback_failed");
     const currentWallet = walletFact(sourceEnvelope(await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/gateway/wallet" }), "sub2api"), sub2apiUserId);
     if (currentWallet.usdMicros !== walletAfterRecharge.usdMicros) throw new Error("production_basic_canary_recharge_readback_failed");
     await readEmptyBasicCanaryLaunchBaseline(requestOptions, customerAuth, { allowNonWorkspaceReceipts: true });
@@ -1084,30 +1122,111 @@ export async function verifyProductionBasicCustomerCanary(options = {}) {
     throw new Error("production_basic_canary_workspace_fact_invalid");
   }
 
-  const fabricHeaders = fabricOptions.headers;
-  const operations = (await requestJson({ ...fabricOptions, path: "/fabric/operations", headers: fabricHeaders })).payload;
-  const allocation = (await requestJson({ ...fabricOptions, path: `/fabric/compute-allocations/${encodeURIComponent(launch.computeAllocationId)}`, headers: fabricHeaders })).payload;
-  const ownership = (await requestJson({ ...fabricOptions, path: `/fabric/machine-ownerships/${encodeURIComponent(launch.computeAllocationId)}`, headers: fabricHeaders })).payload;
-  const truth = (await requestJson({
-    ...fabricOptions,
-    path: `/fabric/monthly-provider-truth?computeAllocationId=${encodeURIComponent(launch.computeAllocationId)}&storageVolumeId=${encodeURIComponent(launch.storageId)}`,
-    headers: fabricHeaders
-  })).payload;
-  const compute = validateFabricCanaryEvidence({ operations, allocation, ownership, truth, launch, approval });
+  let compute;
+  let pod;
+  let storageEvidence;
+  let ownershipNodeName;
+  if (completing) {
+    if (prepared.operationId !== launch.operationId || prepared.workspaceId !== launch.workspaceId || prepared.compute?.allocationId !== launch.computeAllocationId ||
+      prepared.storage?.id !== launch.storageId || prepared.attachment?.id !== launch.attachmentId || prepared.runtime?.id !== runtimeId ||
+      prepared.runtime?.providerId !== runtimeServiceName || prepared.runtime?.url !== (runtime.url || launch.url) ||
+      prepared.wallet?.beforeRechargeUsdMicros !== walletBeforeRecharge.usdMicros || prepared.wallet?.afterRechargeUsdMicros !== walletAfterRecharge.usdMicros ||
+      prepared.wallet?.afterBasicPurchaseUsdMicros !== walletAfterPurchase.usdMicros || canonicalJson(prepared.receipt) !== canonicalJson(receipt)) {
+      throw new Error("production_basic_canary_prepared_evidence_mismatch");
+    }
+    compute = {
+      ...prepared.compute,
+      actionCount: (action) => ({ create_compute_allocation: prepared.writeCounts.tencentCvmPurchases, create_storage_volume: prepared.writeCounts.tencentCbsPurchases })[action] || 0
+    };
+    pod = prepared.runtime.pod;
+    storageEvidence = { providerId: prepared.storage.providerId, zone: prepared.storage.zone, deadline: prepared.storage.expiresAt };
+    ownershipNodeName = prepared.compute.nodeName;
+  } else {
+    const fabricHeaders = fabricOptions.headers;
+    const operations = (await requestJson({ ...fabricOptions, path: "/fabric/operations", headers: fabricHeaders })).payload;
+    const allocation = (await requestJson({ ...fabricOptions, path: `/fabric/compute-allocations/${encodeURIComponent(launch.computeAllocationId)}`, headers: fabricHeaders })).payload;
+    const ownership = (await requestJson({ ...fabricOptions, path: `/fabric/machine-ownerships/${encodeURIComponent(launch.computeAllocationId)}`, headers: fabricHeaders })).payload;
+    const truth = (await requestJson({
+      ...fabricOptions,
+      path: `/fabric/monthly-provider-truth?computeAllocationId=${encodeURIComponent(launch.computeAllocationId)}&storageVolumeId=${encodeURIComponent(launch.storageId)}`,
+      headers: fabricHeaders
+    })).payload;
+    compute = validateFabricCanaryEvidence({ operations, allocation, ownership, truth, launch, approval });
+    pod = await runtimePodEvidenceReader({ workspaceId: launch.workspaceId, expectedDigest: approval.expected.workspaceImageDigest, signal });
+    storageEvidence = { providerId: truth.storage.providerResourceId, zone: truth.storage.zone, deadline: truth.storage.deadline };
+    ownershipNodeName = ownership.nodeName;
+  }
   if (computeFact.providerId !== compute.instanceId || computeFact.packageOrSpec !== approval.expected.resolvedInstanceType || computeFact.zone !== compute.zone ||
-    storageFact.providerId !== truth.storage.providerResourceId || storageFact.zone !== truth.storage.zone || storageFact.expiresAt !== truth.storage.deadline || attachmentFact.status !== "attached" ||
+    storageFact.providerId !== storageEvidence.providerId || storageFact.zone !== storageEvidence.zone || storageFact.expiresAt !== storageEvidence.deadline || attachmentFact.status !== "attached" ||
     runtimeFact.providerId !== runtimeServiceName || runtimeFact.status !== "running") {
     throw new Error("production_basic_canary_operator_provider_facts_invalid");
   }
 
-  const pod = await runtimePodEvidenceReader({ workspaceId: launch.workspaceId, expectedDigest: approval.expected.workspaceImageDigest, signal });
   if (pod?.ready !== true || pod?.containerName !== "workspace" || !pod?.podName || !String(pod?.imageID || "").endsWith(approval.expected.workspaceImageDigest) ||
     pod?.resources?.cpu !== resourceContract.cpu || pod?.resources?.memoryGb !== resourceContract.memoryGb || !pod?.nodeName ||
-    pod.nodeName !== compute.nodeName || pod.nodeName !== ownership.nodeName) {
+    pod.nodeName !== compute.nodeName || pod.nodeName !== ownershipNodeName) {
     throw new Error("production_basic_canary_runtime_pod_invalid");
   }
   if (!checkpointAtLeast(checkpoint, "runtime_ready")) {
     await saveBasicCanaryCheckpoint(checkpoint, "runtime_ready", checkpointPath, afterCheckpoint);
+  }
+  if (preparing) {
+    const cloudRevision = await assertCloudRevision();
+    return {
+      schemaVersion: 1,
+      ok: true,
+      status: "prepared",
+      stage: "runtime_ready",
+      approvalDigest: basicCanaryApprovalDigest(approval),
+      runId,
+      mergedSha,
+      cloudRevision,
+      identities: { ...expectedIdentities },
+      resourceContract: { ...resourceContract },
+      operationId: launch.operationId,
+      workspaceId: launch.workspaceId,
+      wallet: {
+        beforeRechargeUsdMicros: walletBeforeRecharge.usdMicros,
+        afterRechargeUsdMicros: walletAfterRecharge.usdMicros,
+        afterBasicPurchaseUsdMicros: walletAfterPurchase.usdMicros,
+        deltas: {
+          rechargeUsdMicros: String(BigInt(walletAfterRecharge.usdMicros) - BigInt(walletBeforeRecharge.usdMicros)),
+          basicPurchaseUsdMicros: String(BigInt(walletAfterRecharge.usdMicros) - BigInt(walletAfterPurchase.usdMicros))
+        }
+      },
+      compute: {
+        allocationId: launch.computeAllocationId,
+        instanceId: compute.instanceId,
+        machineId: compute.machineId,
+        nodeName: compute.nodeName,
+        zone: compute.zone,
+        sku: compute.sku,
+        resources: { ...resourceContract },
+        deadline: compute.deadline,
+        procurement: compute.procurement
+      },
+      storage: { id: launch.storageId, providerId: storageFact.providerId, sizeGb: 10, zone: storageFact.zone, status: storageFact.status, expiresAt: storageFact.expiresAt },
+      attachment: { id: launch.attachmentId, providerId: attachmentFact.providerId, status: attachmentFact.status },
+      runtime: {
+        id: runtimeId,
+        providerId: runtimeFact.providerId,
+        url: runtime.url || launch.url,
+        ready: true,
+        pod: { podName: pod.podName, nodeName: pod.nodeName, containerName: pod.containerName, ready: true, imageID: pod.imageID, resources: pod.resources }
+      },
+      receipt,
+      httpAttempts: { ...checkpoint.httpAttempts },
+      writeCounts: {
+        accountProvisionPosts: 1,
+        walletAdjustmentPosts: 1,
+        workspaceLaunchPosts: 1,
+        modelRequests: 0,
+        workspaceKeysCreated: keyPage.total,
+        workspacePurchaseDebits: 1,
+        tencentCvmPurchases: compute.actionCount("create_compute_allocation"),
+        tencentCbsPurchases: compute.actionCount("create_storage_volume")
+      }
+    };
   }
   const revealed = await requestJson({
     ...requestOptions,
@@ -1640,17 +1759,29 @@ export async function runProductionLiveQaCli({
       for (const flag of ["allow-account-provision", "allow-wallet-recharge", "allow-workspace-purchase", "allow-model-write"]) {
         if (args[flag] !== "true") throw new Error("production_basic_canary_write_allow_flags_required");
       }
+      const phase = args.phase || "all";
+      if (!new Set(["all", "prepare", "complete"]).has(phase)) throw new Error("production_basic_canary_phase_invalid");
+      let preparedEvidence;
+      if (phase === "complete") {
+        const preparedPath = String(args["prepared-evidence"] || "");
+        if (!preparedPath.startsWith("/")) throw new Error("production_basic_canary_prepared_evidence_invalid");
+        try {
+          preparedEvidence = JSON.parse(await readFile(preparedPath, "utf8"));
+        } catch {
+          throw new Error("production_basic_canary_prepared_evidence_invalid");
+        }
+      }
       const kubeconfigPath = env.KUBECONFIG || env.TENCENT_DEPLOY_KUBECONFIG_PATH;
       const namespace = env.OPL_K8S_NAMESPACE || "opl-cloud";
       let cloudEvidenceReader = cloudRevisionEvidenceReader;
       let podEvidenceReader = runtimePodEvidenceReader;
-      if (!cloudEvidenceReader || !podEvidenceReader) {
+      if (phase !== "complete" && (!cloudEvidenceReader || !podEvidenceReader)) {
         if (!String(kubeconfigPath || "").startsWith("/")) throw new Error("production_basic_canary_runtime_pod_config_invalid");
       }
-      if (!cloudEvidenceReader) {
+      if (phase !== "complete" && !cloudEvidenceReader) {
         cloudEvidenceReader = (input) => readBasicCanaryCloudRevisionEvidence({ ...input, kubeconfigPath, namespace, execFileImpl });
       }
-      if (!podEvidenceReader) {
+      if (phase !== "complete" && !podEvidenceReader) {
         podEvidenceReader = (input) => readBasicCanaryRuntimePodEvidence({ ...input, kubeconfigPath, namespace, execFileImpl });
       }
       const result = await verifyProductionBasicCustomerCanary({
@@ -1677,6 +1808,8 @@ export async function runProductionLiveQaCli({
         browserFactory,
         cloudRevisionEvidenceReader: cloudEvidenceReader,
         runtimePodEvidenceReader: podEvidenceReader,
+        phase,
+        preparedEvidence,
         checkpointPath: env.OPL_BASIC_CANARY_CHECKPOINT_PATH,
         now
       });

@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 5,
+  "schemaVersion": 6,
   "owner": "OPL Fabric",
   "purpose": "Expose productized resource choices to OPL Console without making Console own cloud resource inventory.",
   "state": "current",
@@ -35,14 +35,14 @@
       "poolName": "pool-basic-2c4g",
       "packageId": "basic",
       "resourceContract": {"cpu": 2, "memoryGb": 4},
-      "resolvedInstanceTypeSource": "release_owner_approved_bootstrap_input",
+      "resolvedInstanceTypeSource": "deterministic_zone_prepaid_sell_shape_price_inventory_then_bootstrap_registration",
       "replicasMayBeZero": true
     },
     "pro": {
       "poolName": "pool-pro-8c16g",
       "packageId": "pro",
       "resourceContract": {"cpu": 8, "memoryGb": 16},
-      "resolvedInstanceTypeSource": "release_owner_approved_bootstrap_input",
+      "resolvedInstanceTypeSource": "deterministic_zone_prepaid_sell_shape_price_inventory_then_bootstrap_registration",
       "replicasMayBeZero": true
     },
     "maxReplicasPolicy": "required_explicit_configuration_no_default",

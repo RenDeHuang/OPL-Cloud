@@ -46,11 +46,11 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  basic-customer-operation:
-    name: Execute one approved Basic customer operation
+  prepare-basic-customer-operation:
+    name: Prepare one approved Basic customer operation in TKE VPC
     if: ${{ github.ref == 'refs/heads/main' && github.sha == inputs.merged_sha && inputs.confirm_account_provision && inputs.confirm_wallet_recharge && inputs.confirm_workspace_purchase && inputs.confirm_single_model_request }}
     runs-on: [self-hosted, tencent-cloud, opl-cloud, tke-vpc]
-    timeout-minutes: 45
+    timeout-minutes: 40
     environment: production
     env:
       OPL_MERGED_SHA: ${{ inputs.merged_sha }}
@@ -59,16 +59,12 @@ jobs:
       OPL_BASIC_CANARY_CUSTOMER_PASSWORD: ${{ secrets.OPL_BASIC_CANARY_CUSTOMER_PASSWORD }}
       OPL_BASIC_CANARY_CONFIRMATION: I_UNDERSTAND_THIS_PROVISIONS_ONE_REAL_BASIC_WORKSPACE_AND_SENDS_ONE_MODEL_REQUEST
       OPL_CONSOLE_ORIGIN: ${{ vars.OPL_CONSOLE_ORIGIN || 'https://cloud.medopl.cn' }}
-      OPL_FABRIC_INTERNAL_ORIGIN: ${{ vars.OPL_FABRIC_INTERNAL_ORIGIN }}
-      OPL_INTERNAL_SERVICE_TOKEN: ${{ secrets.OPL_INTERNAL_SERVICE_TOKEN }}
       OPL_SUB2API_ADMIN_EMAIL: ${{ secrets.OPL_SUB2API_ADMIN_EMAIL }}
       OPL_SUB2API_ADMIN_PASSWORD: ${{ secrets.OPL_SUB2API_ADMIN_PASSWORD }}
       OPL_K8S_NAMESPACE: ${{ vars.OPL_K8S_NAMESPACE || 'opl-cloud' }}
       OPL_VERIFY_REQUEST_TIMEOUT_MS: ${{ vars.OPL_VERIFY_REQUEST_TIMEOUT_MS || '30000' }}
       OPL_VERIFY_LAUNCH_POLL_ATTEMPTS: ${{ vars.OPL_VERIFY_LAUNCH_POLL_ATTEMPTS || '180' }}
       OPL_VERIFY_LAUNCH_POLL_DELAY_MS: ${{ vars.OPL_VERIFY_LAUNCH_POLL_DELAY_MS || '10000' }}
-      OPL_VERIFY_USAGE_ATTEMPTS: ${{ vars.OPL_VERIFY_USAGE_ATTEMPTS || '24' }}
-      OPL_VERIFY_USAGE_RETRY_DELAY_MS: ${{ vars.OPL_VERIFY_USAGE_RETRY_DELAY_MS || '5000' }}
       TENCENT_DEPLOY_KUBECONFIG_PATH: ${{ vars.TENCENT_DEPLOY_KUBECONFIG_PATH || '/home/actions/.secrets/medopl/v22/kubeconfig-package-d-deploy' }}
       TENCENT_DEPLOY_KUBECONFIG_B64: ${{ secrets.TENCENT_DEPLOY_KUBECONFIG_B64 }}
       TENCENT_DEPLOY_KUBECONFIG: ${{ secrets.TENCENT_DEPLOY_KUBECONFIG }}
@@ -100,13 +96,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "22"
-          cache: npm
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Install browser
-        run: npx playwright install --with-deps chromium
 
       - name: Prepare redacted checkpoint and kubeconfig
         shell: bash
@@ -143,13 +132,200 @@ jobs:
           repository: ${{ github.repository }}
           run-id: ${{ inputs.resume_run_id }}
 
-      - name: Run approved Basic customer canary
+      - name: Prepare approved Basic customer canary
         id: canary
         continue-on-error: true
         shell: bash
         run: |
           set -euo pipefail
+          port_forward_pid=""
+          cleanup_port_forward() {
+            if [ -n "$port_forward_pid" ]; then
+              kill "$port_forward_pid" 2>/dev/null || true
+              wait "$port_forward_pid" 2>/dev/null || true
+            fi
+          }
+          trap cleanup_port_forward EXIT
+
+          token_b64="$(kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" get secret opl-cloud-internal-service -o jsonpath='{.data.OPL_INTERNAL_SERVICE_TOKEN}')"
+          if [ -z "$token_b64" ]; then
+            echo "Current internal service token is unavailable." >&2
+            exit 1
+          fi
+          OPL_INTERNAL_SERVICE_TOKEN="$(printf '%s' "$token_b64" | base64 -d)"
+          unset token_b64
+          if [ -z "$OPL_INTERNAL_SERVICE_TOKEN" ]; then
+            echo "Current internal service token is empty." >&2
+            exit 1
+          fi
+          echo "::add-mask::$OPL_INTERNAL_SERVICE_TOKEN"
+          export OPL_INTERNAL_SERVICE_TOKEN
+
+          kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" get deployment/opl-cloud-fabric -o json > "$OPL_BASIC_CANARY_SECRET_DIR/fabric-deployment.json"
+          kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" get replicasets -o json > "$OPL_BASIC_CANARY_SECRET_DIR/fabric-replicasets.json"
+          kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" get pods -o json > "$OPL_BASIC_CANARY_SECRET_DIR/fabric-pods.json"
+          fabric_pod="$(node <<'NODE'
+          const fs = require("node:fs");
+          const path = require("node:path");
+          const root = process.env.OPL_BASIC_CANARY_SECRET_DIR;
+          const deployment = JSON.parse(fs.readFileSync(path.join(root, "fabric-deployment.json"), "utf8"));
+          const replicaSets = JSON.parse(fs.readFileSync(path.join(root, "fabric-replicasets.json"), "utf8")).items || [];
+          const pods = JSON.parse(fs.readFileSync(path.join(root, "fabric-pods.json"), "utf8")).items || [];
+          const revisionKey = "deployment.kubernetes.io/revision";
+          const revision = deployment.metadata?.annotations?.[revisionKey];
+          const deploymentUID = deployment.metadata?.uid;
+          const expectedImage = deployment.spec?.template?.spec?.containers?.find((item) => item.name === "fabric")?.image;
+          const ownedBy = (item, kind, name, uid) => Boolean(name && uid) && (item.metadata?.ownerReferences || []).some((owner) =>
+            owner.controller === true && owner.kind === kind && owner.name === name && owner.uid === uid);
+          const currentReplicaSets = replicaSets.filter((item) =>
+            ownedBy(item, "Deployment", deployment.metadata?.name, deploymentUID) &&
+            item.metadata?.annotations?.[revisionKey] === revision &&
+            item.spec?.template?.spec?.containers?.some((container) => container.name === "fabric" && container.image === expectedImage));
+          if (!deploymentUID || !revision || !expectedImage || currentReplicaSets.length !== 1) {
+            throw new Error(`current_fabric_replicaset_count:${currentReplicaSets.length}`);
+          }
+          const replicaSet = currentReplicaSets[0];
+          const readyPods = pods.filter((item) =>
+            !item.metadata?.deletionTimestamp && ownedBy(item, "ReplicaSet", replicaSet.metadata?.name, replicaSet.metadata?.uid) &&
+            item.status?.phase === "Running" && item.status?.conditions?.some((condition) => condition.type === "Ready" && condition.status === "True") &&
+            item.spec?.containers?.some((container) => container.name === "fabric" && container.image === expectedImage));
+          if (readyPods.length !== 1) throw new Error(`current_ready_fabric_pod_count:${readyPods.length}`);
+          process.stdout.write(readyPods[0].metadata.name);
+          NODE
+          )"
+          if [ -z "$fabric_pod" ]; then
+            echo "Current Ready Fabric Pod is unavailable." >&2
+            exit 1
+          fi
+          kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" port-forward pod/$fabric_pod 18082:8082 > "$OPL_BASIC_CANARY_SECRET_DIR/fabric-port-forward.log" 2>&1 &
+          port_forward_pid=$!
+          OPL_FABRIC_INTERNAL_ORIGIN=http://127.0.0.1:18082
+          export OPL_FABRIC_INTERNAL_ORIGIN
+          port_forward_ready=0
+          for _ in $(seq 1 30); do
+            if ! kill -0 "$port_forward_pid" 2>/dev/null; then
+              break
+            fi
+            if curl --fail --silent --show-error --max-time 1 "$OPL_FABRIC_INTERNAL_ORIGIN/healthz" >/dev/null; then
+              port_forward_ready=1
+              break
+            fi
+            sleep 1
+          done
+          if [ "$port_forward_ready" != "1" ]; then
+            echo "Fabric localhost port-forward did not become ready." >&2
+            exit 1
+          fi
           node tools/production-live-qa.ts --basic-customer-canary \
+            --phase prepare \
+            --allow-account-provision \
+            --allow-wallet-recharge \
+            --allow-workspace-purchase \
+            --allow-model-write \
+            --approval-id "$OPL_BASIC_CANARY_APPROVAL_ID" \
+            --run-id "$GITHUB_RUN_ID" > "$OPL_BASIC_CANARY_ARTIFACT_DIR/prepared-evidence.json"
+
+      - name: Upload redacted Basic customer checkpoint
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-basic-customer-operation
+          path: ${{ runner.temp }}/production-basic-customer-operation
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 30
+
+      - name: Remove customer operation secrets
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          secret_dir="${OPL_BASIC_CANARY_SECRET_DIR:-}"
+          if [ -n "$secret_dir" ] && [ -d "$secret_dir" ]; then
+            find "$secret_dir" -mindepth 1 -delete
+            rmdir "$secret_dir"
+          fi
+
+      - name: Require customer preparation success
+        if: ${{ steps.canary.outcome != 'success' }}
+        shell: bash
+        run: |
+          echo "Basic customer preparation stopped; inspect the redacted checkpoint and evidence artifact." >&2
+          exit 1
+
+  complete-basic-customer-operation:
+    name: Complete one approved Basic customer browser and model check
+    needs: prepare-basic-customer-operation
+    if: ${{ always() && needs.prepare-basic-customer-operation.result == 'success' && github.ref == 'refs/heads/main' && github.sha == inputs.merged_sha && inputs.confirm_account_provision && inputs.confirm_wallet_recharge && inputs.confirm_workspace_purchase && inputs.confirm_single_model_request }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    env:
+      OPL_MERGED_SHA: ${{ inputs.merged_sha }}
+      OPL_BASIC_CANARY_APPROVAL_ID: ${{ inputs.approval_id }}
+      OPL_BASIC_CANARY_APPROVAL_JSON: ${{ secrets.OPL_BASIC_CANARY_APPROVAL_JSON }}
+      OPL_BASIC_CANARY_CUSTOMER_PASSWORD: ${{ secrets.OPL_BASIC_CANARY_CUSTOMER_PASSWORD }}
+      OPL_BASIC_CANARY_CONFIRMATION: I_UNDERSTAND_THIS_PROVISIONS_ONE_REAL_BASIC_WORKSPACE_AND_SENDS_ONE_MODEL_REQUEST
+      OPL_CONSOLE_ORIGIN: ${{ vars.OPL_CONSOLE_ORIGIN || 'https://cloud.medopl.cn' }}
+      OPL_SUB2API_ADMIN_EMAIL: ${{ secrets.OPL_SUB2API_ADMIN_EMAIL }}
+      OPL_SUB2API_ADMIN_PASSWORD: ${{ secrets.OPL_SUB2API_ADMIN_PASSWORD }}
+      OPL_VERIFY_REQUEST_TIMEOUT_MS: ${{ vars.OPL_VERIFY_REQUEST_TIMEOUT_MS || '30000' }}
+      OPL_VERIFY_USAGE_ATTEMPTS: ${{ vars.OPL_VERIFY_USAGE_ATTEMPTS || '24' }}
+      OPL_VERIFY_USAGE_RETRY_DELAY_MS: ${{ vars.OPL_VERIFY_USAGE_RETRY_DELAY_MS || '5000' }}
+
+    steps:
+      - name: Checkout exact merged main
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.merged_sha }}
+          fetch-depth: 0
+
+      - name: Verify exact origin main
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! [[ "$OPL_MERGED_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "A full merged main SHA is required." >&2
+            exit 1
+          fi
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          head_sha="$(git rev-parse HEAD)"
+          main_sha="$(git rev-parse refs/remotes/origin/main)"
+          if [ "$head_sha" != "$OPL_MERGED_SHA" ] || [ "$main_sha" != "$OPL_MERGED_SHA" ]; then
+            echo "Customer operation source is not the exact current origin/main revision." >&2
+            exit 1
+          fi
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Download prepared customer evidence
+        uses: actions/download-artifact@v4
+        with:
+          name: production-basic-customer-operation
+          path: ${{ runner.temp }}/production-basic-customer-operation
+
+      - name: Complete approved Basic customer canary
+        id: canary
+        continue-on-error: true
+        shell: bash
+        env:
+          OPL_BASIC_CANARY_ARTIFACT_DIR: ${{ runner.temp }}/production-basic-customer-operation
+          OPL_BASIC_CANARY_CHECKPOINT_PATH: ${{ runner.temp }}/production-basic-customer-operation/checkpoint.json
+        run: |
+          set -euo pipefail
+          node tools/production-live-qa.ts --basic-customer-canary \
+            --phase complete \
+            --prepared-evidence "$OPL_BASIC_CANARY_ARTIFACT_DIR/prepared-evidence.json" \
             --allow-account-provision \
             --allow-wallet-recharge \
             --allow-workspace-purchase \
@@ -164,18 +340,8 @@ jobs:
           name: production-basic-customer-operation
           path: ${{ runner.temp }}/production-basic-customer-operation
           if-no-files-found: error
+          overwrite: true
           retention-days: 30
-
-      - name: Remove customer operation secrets
-        if: always()
-        shell: bash
-        run: |
-          set -euo pipefail
-          secret_dir="${OPL_BASIC_CANARY_SECRET_DIR:-}"
-          if [ -n "$secret_dir" ] && [ -d "$secret_dir" ]; then
-            find "$secret_dir" -mindepth 1 -delete
-            rmdir "$secret_dir"
-          fi
 
       - name: Require customer operation success
         if: ${{ steps.canary.outcome != 'success' }}
