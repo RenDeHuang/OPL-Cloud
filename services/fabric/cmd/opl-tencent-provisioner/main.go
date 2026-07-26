@@ -35,6 +35,7 @@ var errCVMInstanceNotFound = errors.New("CVM instance not found")
 var errTKEInstanceNotFound = errors.New("TKE instance not found")
 
 const tkeListPageLimit int64 = 100
+const nodePoolBootstrapMutationConfirmation = "CREATE_MISSING_WORKSPACE_NODEPOOLS"
 
 type Request struct {
 	Action          string                 `json:"action"`
@@ -56,6 +57,8 @@ type ComputePoolInput struct {
 	ClusterId          string            `json:"clusterId,omitempty"`
 	PackageId          string            `json:"packageId,omitempty"`
 	InstanceType       string            `json:"instanceType,omitempty"`
+	CPU                uint64            `json:"cpu,omitempty"`
+	MemoryGB           uint64            `json:"memoryGb,omitempty"`
 	NodePoolId         string            `json:"nodePoolId,omitempty"`
 	DesiredNodeLabels  map[string]string `json:"desiredNodeLabels,omitempty"`
 	DesiredReplicas    int64             `json:"desiredReplicas,omitempty"`
@@ -124,13 +127,19 @@ type Response struct {
 }
 
 type NodePoolBootstrapResult struct {
-	PackageID    string `json:"packageId"`
-	PoolID       string `json:"poolId"`
-	NodePoolID   string `json:"nodePoolId,omitempty"`
-	InstanceType string `json:"instanceType"`
-	MaxReplicas  int64  `json:"maxReplicas"`
-	Status       string `json:"status"`
-	ErrorCode    string `json:"errorCode,omitempty"`
+	PackageID                 string `json:"packageId"`
+	PoolID                    string `json:"poolId"`
+	NodePoolID                string `json:"nodePoolId,omitempty"`
+	InstanceType              string `json:"instanceType"`
+	CPU                       uint64 `json:"cpu"`
+	MemoryGB                  uint64 `json:"memoryGb"`
+	MaxReplicas               int64  `json:"maxReplicas"`
+	MaxReplicasSource         string `json:"maxReplicasSource"`
+	MaxReplicasDecision       string `json:"maxReplicasDecision"`
+	MaxReplicasConstraint     string `json:"maxReplicasConstraint"`
+	MaxReplicasRecommendation string `json:"maxReplicasRecommendation"`
+	Status                    string `json:"status"`
+	ErrorCode                 string `json:"errorCode,omitempty"`
 }
 
 type PreflightStage struct {
@@ -474,6 +483,50 @@ func mutationNodePoolFailure(pool *tke2022.NodePool, request Request, requestID 
 	return nil
 }
 
+func readbackNodePoolFailure(pool *tke2022.NodePool, request Request, requestID string) *Response {
+	if !isCVMNativeNodePool(pool) || !strings.EqualFold(strings.TrimSpace(stringValue(pool.LifeState)), "running") ||
+		!matchesCapacityNodePool(pool, request) || pool.Native == nil || len(pool.Native.InstanceTypes) != 1 ||
+		stringValue(pool.Native.InstanceTypes[0]) != request.Pool.InstanceType {
+		return &Response{Ok: false, ErrorCode: "compute_instance_type_mismatch", Message: "Tencent NodePool instance type does not match the requested package.", ProviderRequestId: requestID, Retryable: true}
+	}
+	return nil
+}
+
+func exactUint64(value *uint64, expected uint64) bool {
+	return expected > 0 && value != nil && *value == expected
+}
+
+func exactInt64(value *int64, expected uint64) bool {
+	return expected > 0 && value != nil && *value > 0 && uint64(*value) == expected
+}
+
+func machineResourceShapeMatches(machine *tke2022.Machine, pool ComputePoolInput) bool {
+	return machine != nil && exactUint64(machine.CPU, pool.CPU) && exactUint64(machine.Memory, pool.MemoryGB)
+}
+
+func nativeResourceShapeMatches(native *tke2022.NativeNodeInfo, pool ComputePoolInput) bool {
+	return native != nil && exactUint64(native.CPU, pool.CPU) && exactUint64(native.Memory, pool.MemoryGB)
+}
+
+func cvmResourceShapeMatches(instance *cvm2017.Instance, pool ComputePoolInput) bool {
+	return instance != nil && exactInt64(instance.CPU, pool.CPU) && exactInt64(instance.Memory, pool.MemoryGB)
+}
+
+func customerPackageResourceShape(packageID string) (uint64, uint64, bool) {
+	switch packageID {
+	case "basic":
+		return 2, 4, true
+	case "pro":
+		return 8, 16, true
+	default:
+		return 0, 0, false
+	}
+}
+
+func computeResourceShapeFailure(requestID string) Response {
+	return Response{Ok: false, ErrorCode: "compute_resource_shape_mismatch", Message: "Tencent Machine, Native instance, and CVM CPU and memory must exactly match the package resource contract.", ProviderRequestId: requestID, Retryable: true}
+}
+
 func matchesCapacityNodePool(pool *tke2022.NodePool, request Request) bool {
 	labels := nodePoolLabels(pool)
 	return request.Pool.Id != "" && request.PackageId != "" && request.Pool.InstanceType != "" &&
@@ -508,7 +561,9 @@ func (client *tencentSDKClient) capacityNodePool(request Request) (*tke2022.Node
 
 func (client *tencentSDKClient) Capacity(request Request, _ map[string]string) Response {
 	required := request.Pool.DesiredReplicas
-	if required <= 0 || request.Pool.MaxReplicas <= 0 || strings.TrimSpace(request.Pool.InstanceType) == "" || strings.TrimSpace(request.Pool.NodePoolId) == "" || strings.TrimSpace(request.Pool.Id) == "" || strings.TrimSpace(request.PackageId) == "" {
+	expectedCPU, expectedMemoryGB, packageShapeKnown := customerPackageResourceShape(request.PackageId)
+	if required <= 0 || request.Pool.MaxReplicas <= 0 || strings.TrimSpace(request.Pool.InstanceType) == "" || strings.TrimSpace(request.Pool.NodePoolId) == "" || strings.TrimSpace(request.Pool.Id) == "" ||
+		!packageShapeKnown || request.Pool.CPU != expectedCPU || request.Pool.MemoryGB != expectedMemoryGB {
 		stages := []PreflightStage{}
 		for _, stage := range []string{"node_pool_discovery", "node_pool_contract", "subnet", "zone", "cvm_prepaid_quota", "cvm_sku_price"} {
 			stages = append(stages, completedPreflightStage(stage, "failed", "tencent_capacity_input_invalid", time.Now(), nil, nil))
@@ -668,11 +723,21 @@ func (client *tencentSDKClient) Capacity(request Request, _ map[string]string) R
 		exactAvailability := 0
 		sell := false
 		zonePriceCNY := 0.0
+		shapeMatches := false
+		var actualCPU any
+		var actualMemoryGB any
 		if err == nil && availability != nil && availability.Response != nil {
 			for _, item := range availability.Response.InstanceTypeQuotaSet {
 				if item != nil && stringValue(item.Zone) == zone && stringValue(item.InstanceType) == request.Pool.InstanceType && stringValue(item.InstanceChargeType) == "PREPAID" {
 					exactAvailability++
 					sell = stringValue(item.Status) == "SELL"
+					if item.Cpu != nil {
+						actualCPU = *item.Cpu
+					}
+					if item.Memory != nil {
+						actualMemoryGB = *item.Memory
+					}
+					shapeMatches = exactInt64(item.Cpu, expectedCPU) && exactInt64(item.Memory, expectedMemoryGB)
 					if item.Price != nil && item.Price.DiscountPrice != nil {
 						zonePriceCNY = *item.Price.DiscountPrice
 					}
@@ -680,13 +745,19 @@ func (client *tencentSDKClient) Capacity(request Request, _ map[string]string) R
 			}
 			availabilityRequestID = stringValue(availability.Response.RequestId)
 		}
-		pricePassed := exactAvailability == 1 && sell && zonePriceCNY > 0 && availabilityRequestID != ""
+		pricePassed := exactAvailability == 1 && shapeMatches && sell && zonePriceCNY > 0 && availabilityRequestID != ""
 		status, code := "passed", ""
 		if !pricePassed {
 			status, code = "failed", "tencent_capacity_instance_unavailable"
+			if exactAvailability == 1 && !shapeMatches {
+				code = "tencent_capacity_instance_shape_mismatch"
+			}
 		}
 		providerPriceCNY = zonePriceCNY
-		stages = append(stages, completedPreflightStage("cvm_sku_price", status, code, priceStarted, nil, map[string]any{"zone": targetZone, "instanceType": request.Pool.InstanceType, "available": sell, "providerPriceCny": zonePriceCNY}))
+		stages = append(stages, completedPreflightStage("cvm_sku_price", status, code, priceStarted, nil, map[string]any{
+			"zone": targetZone, "instanceType": request.Pool.InstanceType, "cpu": actualCPU, "memoryGb": actualMemoryGB,
+			"available": sell, "providerPriceCny": zonePriceCNY,
+		}))
 	}
 	if !allPreflightStagesPassed(stages) {
 		return failedPreflightResponse(stages)
@@ -1101,6 +1172,11 @@ func (client *tencentSDKClient) computeRenewalReadback(request Request) Response
 			InstanceId: allocation.InstanceId, ProviderRequestId: requestID, ProviderData: map[string]string{"instanceType": stringValue(instance.InstanceType)}, Retryable: true,
 		}
 	}
+	if (request.Pool.CPU > 0 || request.Pool.MemoryGB > 0) && !cvmResourceShapeMatches(instance, request.Pool) {
+		response := computeResourceShapeFailure(requestID)
+		response.InstanceId = allocation.InstanceId
+		return response
+	}
 	if stringValue(instance.InstanceId) != allocation.InstanceId || stringValue(instance.InstanceName) != allocation.Id ||
 		stringValue(instance.InstanceChargeType) != "PREPAID" || stringValue(instance.RenewFlag) != "NOTIFY_AND_MANUAL_RENEW" ||
 		deadline == "" || zone != request.Zone || tagErr != nil ||
@@ -1124,6 +1200,10 @@ func (client *tencentSDKClient) computeRenewalReadback(request Request) Response
 			"chargeType":   stringValue(instance.InstanceChargeType), "renewFlag": stringValue(instance.RenewFlag),
 			"deadline": deadline, "zone": zone, "privateIp": firstString(instance.PrivateIpAddresses), "describeCvmRequestId": requestID,
 		},
+	}
+	if instance.CPU != nil && instance.Memory != nil {
+		response.ProviderData["cpu"] = strconv.FormatInt(*instance.CPU, 10)
+		response.ProviderData["memoryGb"] = strconv.FormatInt(*instance.Memory, 10)
 	}
 	for _, key := range cbsOwnershipTagKeys {
 		response.ProviderData[key] = actualTags[key]
@@ -1170,11 +1250,11 @@ func (client *tencentSDKClient) PrepareComputeAllocation(request Request, _ map[
 }
 
 func (client *tencentSDKClient) CreateComputeAllocation(request Request, _ map[string]string) Response {
-	if client == nil || client.nativeTkeClient == nil {
-		return Response{Ok: false, ErrorCode: "tencent_sdk_client_missing", Message: "Tencent TKE SDK client is missing.", Retryable: false}
+	if client == nil || client.nativeTkeClient == nil || client.nativeCvmClient == nil || client.nativeVpcClient == nil {
+		return Response{Ok: false, ErrorCode: "tencent_sdk_client_missing", Message: "Tencent TKE, CVM, and VPC SDK clients are required.", Retryable: false}
 	}
 	nodePoolId := strings.TrimSpace(request.Pool.NodePoolId)
-	if nodePoolId == "" || request.Pool.MaxReplicas <= 0 || request.Pool.BaselineReplicas < 0 || request.Pool.TargetReplicas != request.Pool.BaselineReplicas+1 || request.Pool.TargetReplicas > request.Pool.MaxReplicas || int64(len(request.Pool.BeforeMachineNames)) != request.Pool.BaselineReplicas {
+	if nodePoolId == "" || request.Pool.CPU == 0 || request.Pool.MemoryGB == 0 || request.Pool.MaxReplicas <= 0 || request.Pool.BaselineReplicas < 0 || request.Pool.TargetReplicas != request.Pool.BaselineReplicas+1 || request.Pool.TargetReplicas > request.Pool.MaxReplicas || int64(len(request.Pool.BeforeMachineNames)) != request.Pool.BaselineReplicas {
 		return Response{Ok: false, ErrorCode: "compute_allocation_plan_invalid", Message: "A persisted allocation plan with an exact NodePool ID is required.", Retryable: false}
 	}
 	pool, describeRequestId, err := client.describeNativeNodePool(nodePoolId)
@@ -1212,6 +1292,36 @@ func (client *tencentSDKClient) CreateComputeAllocation(request Request, _ map[s
 	}
 	machineName := stringValue(machine.MachineName)
 	privateIp := stringValue(machine.LanIP)
+	if !machineResourceShapeMatches(machine, request.Pool) {
+		response := computeResourceShapeFailure(firstNonEmpty(machineRequestId, scaleRequestId, describeRequestId))
+		return response
+	}
+	tkeInstance, tkeRequestID, err := client.describeNativeTkeClusterInstanceByMachineName(machineName, nodePoolId)
+	if err != nil {
+		response := sdkErrorResponse("tencent_describe_tke_instance_failed", err)
+		response.ProviderRequestId = firstNonEmpty(tkeRequestID, machineRequestId, scaleRequestId, describeRequestId)
+		response.Retryable = true
+		return response
+	}
+	if failure := validateNativeTkeAllocationIdentity(tkeInstance, machine, request); failure != nil {
+		failure.ProviderRequestId = firstNonEmpty(tkeRequestID, machineRequestId, scaleRequestId, describeRequestId)
+		return *failure
+	}
+	nativeIdentity := tkeInstance.Native
+	if !nativeResourceShapeMatches(nativeIdentity, request.Pool) {
+		response := computeResourceShapeFailure(firstNonEmpty(tkeRequestID, machineRequestId, scaleRequestId, describeRequestId))
+		return response
+	}
+	targetVpcID, subnetRequestID, err := client.describeNodePoolSubnetVpc(pool, stringValue(nativeIdentity.SubnetId))
+	if err != nil {
+		response := sdkErrorResponse("tencent_describe_allocation_subnet_failed", err)
+		response.ProviderRequestId = firstNonEmpty(subnetRequestID, tkeRequestID, machineRequestId, scaleRequestId, describeRequestId)
+		response.Retryable = true
+		return response
+	}
+	if stringValue(nativeIdentity.VpcId) != targetVpcID {
+		return Response{Ok: false, ErrorCode: "compute_tke_network_identity_mismatch", Message: "Tencent TKE native identity does not match the exact NodePool VPC and subnet.", ProviderRequestId: firstNonEmpty(subnetRequestID, tkeRequestID, machineRequestId, scaleRequestId, describeRequestId), Retryable: true}
+	}
 	instanceId := ""
 	publicIp := ""
 	instanceIdentitySource := ""
@@ -1226,6 +1336,22 @@ func (client *tencentSDKClient) CreateComputeAllocation(request Request, _ map[s
 		response := sdkErrorResponse("tencent_describe_cvm_instance_failed", err)
 		response.ProviderRequestId = firstNonEmpty(cvmRequestId, machineRequestId, scaleRequestId)
 		return response
+	}
+	if cvmInstance.VirtualPrivateCloud == nil || instanceId != stringValue(nativeIdentity.InstanceId) ||
+		!containsString(cvmInstance.PrivateIpAddresses, privateIp) ||
+		stringValue(cvmInstance.VirtualPrivateCloud.VpcId) != targetVpcID ||
+		stringValue(cvmInstance.VirtualPrivateCloud.SubnetId) != stringValue(nativeIdentity.SubnetId) {
+		return Response{Ok: false, ErrorCode: "compute_cvm_identity_mismatch", Message: "Tencent CVM identity does not match the exact TKE Machine, VPC, and subnet.", ProviderRequestId: firstNonEmpty(cvmRequestId, subnetRequestID, tkeRequestID, machineRequestId, scaleRequestId), Retryable: true}
+	}
+	if stringValue(cvmInstance.InstanceType) != request.Pool.InstanceType {
+		return Response{Ok: false, ErrorCode: "compute_instance_type_mismatch", Message: "Tencent NodePool, Machine, Native instance, and CVM instance types must exactly match.", ProviderRequestId: firstNonEmpty(cvmRequestId, tkeRequestID, machineRequestId, scaleRequestId, describeRequestId), Retryable: true}
+	}
+	if !cvmResourceShapeMatches(cvmInstance, request.Pool) {
+		response := computeResourceShapeFailure(firstNonEmpty(cvmRequestId, tkeRequestID, machineRequestId, scaleRequestId, describeRequestId))
+		return response
+	}
+	if !strings.EqualFold(strings.TrimSpace(stringValue(cvmInstance.InstanceState)), "running") {
+		return Response{Ok: false, ErrorCode: "compute_cvm_not_ready", Message: "Tencent CVM has not explicitly reported RUNNING.", ProviderRequestId: firstNonEmpty(cvmRequestId, subnetRequestID, tkeRequestID, machineRequestId, scaleRequestId), Retryable: true}
 	}
 	zone := ""
 	if cvmInstance.Placement != nil {
@@ -1262,17 +1388,25 @@ func (client *tencentSDKClient) CreateComputeAllocation(request Request, _ map[s
 			"describeNodePoolRequestId":  describeRequestId,
 			"describeMachinesReadyReqId": machineRequestId,
 			"describeCvmRequestId":       cvmRequestId,
+			"describeTkeInstanceReqId":   tkeRequestID,
+			"describeSubnetRequestId":    subnetRequestID,
 			"scaleNodePoolRequestId":     scaleRequestId,
 			"instanceType":               request.Pool.InstanceType,
+			"cpu":                        strconv.FormatUint(request.Pool.CPU, 10),
+			"memoryGb":                   strconv.FormatUint(request.Pool.MemoryGB, 10),
 			"replicasBefore":             fmt.Sprintf("%d", request.Pool.BaselineReplicas),
 			"replicasAfter":              fmt.Sprintf("%d", request.Pool.TargetReplicas),
 			"instanceId":                 instanceId,
 			"instanceIdentitySource":     instanceIdentitySource,
 			"machineName":                machineName,
+			"machineState":               strings.ToLower(strings.TrimSpace(stringValue(machine.MachineState))),
+			"tkeInstanceState":           strings.ToLower(strings.TrimSpace(stringValue(tkeInstance.InstanceState))),
 			"nodeName":                   nodeName,
 			"privateIp":                  privateIp,
 			"publicIp":                   publicIp,
 			"zone":                       zone,
+			"vpcId":                      targetVpcID,
+			"subnetId":                   stringValue(nativeIdentity.SubnetId),
 			"chargeType":                 chargeType,
 			"renewFlag":                  renewFlag,
 			"deadline":                   deadline,
@@ -1313,13 +1447,76 @@ func exactNewReadyMachine(after []*tke2022.Machine, before []string, instanceTyp
 	}
 	machine := newMachines[0]
 	state := strings.ToLower(strings.TrimSpace(stringValue(machine.MachineState)))
-	if state != "" && state != "running" && state != "normal" && state != "ready" {
+	if !explicitReadyState(state) {
 		return nil, "compute_allocation_pending"
 	}
 	if stringValue(machine.InstanceType) != instanceType {
 		return nil, "compute_allocation_machine_identity_mismatch"
 	}
 	return machine, ""
+}
+
+func explicitReadyState(state string) bool {
+	switch strings.ToLower(strings.TrimSpace(state)) {
+	case "ready", "running":
+		return true
+	default:
+		return false
+	}
+}
+
+func validateNativeTkeAllocationIdentity(instance *tke2022.Instance, machine *tke2022.Machine, request Request) *Response {
+	machineName := stringValue(machine.MachineName)
+	privateIP := stringValue(machine.LanIP)
+	if instance == nil {
+		return &Response{Ok: false, ErrorCode: "compute_tke_identity_mismatch", Message: "Tencent TKE instance does not match the exact Ready NativeCVM Machine identity.", Retryable: true}
+	}
+	native := instance.Native
+	valid := instance != nil && native != nil && stringValue(instance.InstanceId) == machineName &&
+		stringValue(instance.NodePoolId) == request.Pool.NodePoolId && strings.EqualFold(stringValue(instance.NodeType), "Native") &&
+		strings.EqualFold(strings.TrimSpace(stringValue(instance.InstanceState)), "running") && stringValue(instance.LanIP) == privateIP &&
+		stringValue(native.MachineName) == machineName && explicitReadyState(stringValue(native.MachineState)) &&
+		stringValue(native.LanIp) == privateIP && stringValue(native.InstanceType) == request.Pool.InstanceType &&
+		strings.EqualFold(stringValue(native.MachineType), "NativeCVM") && strings.HasPrefix(stringValue(native.InstanceId), "ins-") &&
+		strings.TrimSpace(stringValue(native.VpcId)) != "" && strings.TrimSpace(stringValue(native.SubnetId)) != ""
+	if valid {
+		return nil
+	}
+	return &Response{Ok: false, ErrorCode: "compute_tke_identity_mismatch", Message: "Tencent TKE instance does not match the exact Ready NativeCVM Machine identity.", Retryable: true}
+}
+
+func (client *tencentSDKClient) describeNodePoolSubnetVpc(pool *tke2022.NodePool, subnetID string) (string, string, error) {
+	if client == nil || client.nativeVpcClient == nil || pool == nil || pool.Native == nil || strings.TrimSpace(subnetID) == "" {
+		return "", "", fmt.Errorf("exact NodePool subnet identity is required")
+	}
+	allowed := false
+	seen := map[string]bool{}
+	for _, raw := range pool.Native.SubnetIds {
+		candidate := strings.TrimSpace(stringValue(raw))
+		if candidate == "" || seen[candidate] {
+			return "", "", fmt.Errorf("NodePool subnet inventory is invalid")
+		}
+		seen[candidate] = true
+		allowed = allowed || candidate == subnetID
+	}
+	if !allowed {
+		return "", "", fmt.Errorf("native instance subnet is not registered on the exact NodePool")
+	}
+	request := vpc2017.NewDescribeSubnetsRequest()
+	request.SubnetIds = []*string{common.StringPtr(subnetID)}
+	response, err := client.nativeVpcClient.DescribeSubnets(request)
+	if err != nil {
+		return "", "", err
+	}
+	if response == nil || response.Response == nil {
+		return "", "", fmt.Errorf("Tencent VPC DescribeSubnets response is missing")
+	}
+	requestID := stringValue(response.Response.RequestId)
+	if response.Response.TotalCount == nil || *response.Response.TotalCount != 1 || len(response.Response.SubnetSet) != 1 || response.Response.SubnetSet[0] == nil ||
+		stringValue(response.Response.SubnetSet[0].SubnetId) != subnetID || strings.TrimSpace(stringValue(response.Response.SubnetSet[0].VpcId)) == "" {
+		return "", requestID, fmt.Errorf("Tencent VPC subnet identity is missing or ambiguous")
+	}
+	return stringValue(response.Response.SubnetSet[0].VpcId), requestID, nil
 }
 
 func (client *tencentSDKClient) TagComputeMachine(request Request, _ map[string]string) Response {
@@ -1579,11 +1776,20 @@ func (client *tencentSDKClient) SyncComputeAllocation(request Request, _ map[str
 	if client == nil || client.nativeTkeClient == nil || client.nativeCvmClient == nil {
 		return Response{Ok: false, ErrorCode: "tencent_sdk_client_missing", Message: "Tencent TKE and CVM SDK clients are required.", Retryable: false}
 	}
-	if strings.TrimSpace(request.Pool.InstanceType) == "" {
-		return Response{Ok: false, ErrorCode: "instance_type_required", Message: "The exact package instance type is required for compute sync.", Retryable: false}
+	if strings.TrimSpace(request.Pool.InstanceType) == "" || request.Pool.CPU == 0 || request.Pool.MemoryGB == 0 {
+		return Response{Ok: false, ErrorCode: "compute_resource_shape_required", Message: "The exact package instance type, CPU, and memory are required for compute sync.", Retryable: false}
 	}
-	if strings.TrimSpace(request.AccountId) == "" || strings.TrimSpace(request.Allocation.Id) == "" || !strings.HasPrefix(request.Allocation.InstanceId, "ins-") || strings.TrimSpace(request.Zone) == "" || !validOwnershipTags(request.Tags) || request.Tags["opl_account_id"] != request.AccountId || request.Tags["opl_resource_id"] != request.Allocation.Id {
+	if strings.TrimSpace(request.AccountId) == "" || strings.TrimSpace(request.PackageId) == "" || strings.TrimSpace(request.Pool.Id) == "" || strings.TrimSpace(request.Pool.NodePoolId) == "" || strings.TrimSpace(request.Allocation.Id) == "" || !strings.HasPrefix(request.Allocation.InstanceId, "ins-") || strings.TrimSpace(request.Zone) == "" || !validOwnershipTags(request.Tags) || request.Tags["opl_account_id"] != request.AccountId || request.Tags["opl_resource_id"] != request.Allocation.Id {
 		return Response{Ok: false, ErrorCode: "compute_sync_identity_required", Message: "Exact compute account, resource, CVM instance, Zone, and ownership tags are required for compute sync.", Retryable: false}
+	}
+	pool, poolRequestID, err := client.describeNativeNodePool(request.Pool.NodePoolId)
+	if err != nil {
+		response := sdkErrorResponse("tencent_describe_node_pool_failed", err)
+		response.ProviderRequestId = poolRequestID
+		return response
+	}
+	if failure := readbackNodePoolFailure(pool, request, poolRequestID); failure != nil {
+		return *failure
 	}
 	machines, requestId, err := client.describeClusterMachines(request.Pool.NodePoolId)
 	if err != nil {
@@ -1594,7 +1800,7 @@ func (client *tencentSDKClient) SyncComputeAllocation(request Request, _ map[str
 	machine := findComputeMachine(machines, request.Allocation)
 	cvm := client.computeRenewalReadback(request)
 	if !cvm.Ok {
-		if cvm.ErrorCode != "compute_instance_type_mismatch" {
+		if cvm.ErrorCode != "compute_instance_type_mismatch" && cvm.ErrorCode != "compute_resource_shape_mismatch" {
 			cvm.ErrorCode = "tencent_sync_cvm_readback_failed"
 		}
 		return cvm
@@ -1629,12 +1835,37 @@ func (client *tencentSDKClient) SyncComputeAllocation(request Request, _ map[str
 		}
 	}
 	if machine == nil || cvm.Status == "external_deleted" {
-		return Response{Ok: false, ErrorCode: "compute_provider_partial_identity", Message: "Tencent compute identity is only partially present.", ProviderRequestId: firstNonEmpty(cvm.ProviderRequestId, requestId), Retryable: true}
+		return Response{Ok: false, ErrorCode: "compute_provider_partial_identity", Message: "Tencent compute identity is only partially present.", ProviderRequestId: firstNonEmpty(cvm.ProviderRequestId, requestId, poolRequestID), Retryable: true}
 	}
 	privateIP := firstNonEmpty(stringValue(machine.LanIP), request.Allocation.PrivateIp)
 	nodeName := firstNonEmpty(kubernetesNodeName(machine), request.Allocation.NodeName)
 	machineName := firstNonEmpty(stringValue(machine.MachineName), request.Allocation.MachineName)
-	status := firstNonEmpty(strings.ToLower(strings.TrimSpace(stringValue(machine.MachineState))), "running")
+	status := strings.ToLower(strings.TrimSpace(stringValue(machine.MachineState)))
+	if !explicitReadyState(status) {
+		return Response{Ok: false, ErrorCode: "compute_machine_state_unready", Message: "Tencent Machine has not explicitly reported Ready or Running.", ProviderRequestId: firstNonEmpty(cvm.ProviderRequestId, requestId, poolRequestID), Retryable: true}
+	}
+	if !machineResourceShapeMatches(machine, request.Pool) {
+		response := computeResourceShapeFailure(firstNonEmpty(cvm.ProviderRequestId, requestId, poolRequestID))
+		return response
+	}
+	tkeInstance, tkeRequestID, err := client.describeNativeTkeClusterInstanceByMachineName(machineName, request.Pool.NodePoolId)
+	if err != nil {
+		response := sdkErrorResponse("tencent_describe_tke_instance_failed", err)
+		response.ProviderRequestId = firstNonEmpty(tkeRequestID, cvm.ProviderRequestId, requestId, poolRequestID)
+		response.Retryable = true
+		return response
+	}
+	if failure := validateNativeTkeAllocationIdentity(tkeInstance, machine, request); failure != nil {
+		failure.ProviderRequestId = firstNonEmpty(tkeRequestID, cvm.ProviderRequestId, requestId, poolRequestID)
+		return *failure
+	}
+	if !nativeResourceShapeMatches(tkeInstance.Native, request.Pool) {
+		response := computeResourceShapeFailure(firstNonEmpty(tkeRequestID, cvm.ProviderRequestId, requestId, poolRequestID))
+		return response
+	}
+	if !strings.EqualFold(strings.TrimSpace(cvm.CVMStatus), "running") {
+		return Response{Ok: false, ErrorCode: "compute_cvm_not_ready", Message: "Tencent CVM has not explicitly reported RUNNING.", ProviderRequestId: firstNonEmpty(cvm.ProviderRequestId, requestId), Retryable: true}
+	}
 	if stringValue(machine.InstanceType) != request.Pool.InstanceType || cvm.ProviderData["instanceType"] != request.Pool.InstanceType {
 		cvm.ProviderData["tkeInstanceType"] = stringValue(machine.InstanceType)
 		return Response{Ok: false, ErrorCode: "compute_instance_type_mismatch", Message: "Tencent TKE and CVM instance types must exactly match the requested package.", InstanceId: request.Allocation.InstanceId, NodeName: nodeName, PrivateIp: privateIP, InstanceType: firstNonEmpty(cvm.ProviderData["instanceType"], stringValue(machine.InstanceType)), ProviderRequestId: firstNonEmpty(cvm.ProviderRequestId, requestId), ProviderData: cvm.ProviderData, Retryable: true}
@@ -1651,6 +1882,10 @@ func (client *tencentSDKClient) SyncComputeAllocation(request Request, _ map[str
 	providerData["privateIp"] = privateIP
 	providerData["syncResult"] = "found"
 	providerData["describeClusterMachinesReq"] = requestId
+	providerData["describeNodePoolRequestId"] = poolRequestID
+	providerData["describeTkeInstanceReqId"] = tkeRequestID
+	providerData["cpu"] = strconv.FormatUint(request.Pool.CPU, 10)
+	providerData["memoryGb"] = strconv.FormatUint(request.Pool.MemoryGB, 10)
 	return Response{
 		Ok:                true,
 		OperationId:       "op-sync-compute-" + stableSuffix(request.AccountId, request.Allocation.Id, request.Pool.NodePoolId, machineName, privateIP)[:12],
@@ -2087,7 +2322,7 @@ func (client *tencentSDKClient) describeCvmInstanceByPrivateIp(privateIp string)
 		Name:   common.StringPtr("private-ip-address"),
 		Values: []*string{common.StringPtr(privateIp)},
 	}}
-	describeRequest.Limit = common.Int64Ptr(1)
+	describeRequest.Limit = common.Int64Ptr(100)
 	describeResponse, err := client.nativeCvmClient.DescribeInstances(describeRequest)
 	if err != nil {
 		return nil, "", err
@@ -2096,11 +2331,18 @@ func (client *tencentSDKClient) describeCvmInstanceByPrivateIp(privateIp string)
 		return nil, "", fmt.Errorf("Tencent CVM DescribeInstances response is missing")
 	}
 	requestId := stringValue(describeResponse.Response.RequestId)
-	if len(describeResponse.Response.InstanceSet) > 0 {
-		if describeResponse.Response.InstanceSet[0] == nil {
-			return nil, requestId, fmt.Errorf("Tencent CVM DescribeInstances returned an empty instance")
+	if describeResponse.Response.TotalCount == nil || *describeResponse.Response.TotalCount != int64(len(describeResponse.Response.InstanceSet)) {
+		return nil, requestId, fmt.Errorf("Tencent CVM DescribeInstances response is incomplete")
+	}
+	if *describeResponse.Response.TotalCount > 1 {
+		return nil, requestId, fmt.Errorf("Tencent CVM private IP identity is ambiguous")
+	}
+	if *describeResponse.Response.TotalCount == 1 {
+		instance := describeResponse.Response.InstanceSet[0]
+		if instance == nil || !containsString(instance.PrivateIpAddresses, privateIp) {
+			return nil, requestId, fmt.Errorf("Tencent CVM DescribeInstances returned a mismatched instance")
 		}
-		return describeResponse.Response.InstanceSet[0], requestId, nil
+		return instance, requestId, nil
 	}
 	return nil, requestId, fmt.Errorf("%w for private IP %s", errCVMInstanceNotFound, privateIp)
 }
@@ -2183,22 +2425,34 @@ func (client *tencentSDKClient) describeNativeTkeClusterInstanceByMachineName(ma
 	describeRequest.ClusterId = common.StringPtr(client.clusterId)
 	describeRequest.Limit = common.Int64Ptr(100)
 	describeRequest.Filters = []*tke2022.Filter{
+		{Name: common.StringPtr("InstanceIds"), Values: []*string{common.StringPtr(machineName)}},
 		{Name: common.StringPtr("NodePoolIds"), Values: []*string{common.StringPtr(nodePoolId)}},
 	}
 	describeResponse, err := client.nativeTkeClient.DescribeClusterInstances(describeRequest)
 	if err != nil {
 		return nil, "", err
 	}
-	if describeResponse == nil || describeResponse.Response == nil {
+	if describeResponse == nil || describeResponse.Response == nil || describeResponse.Response.TotalCount == nil ||
+		*describeResponse.Response.TotalCount != uint64(len(describeResponse.Response.InstanceSet)) {
 		return nil, "", fmt.Errorf("Tencent TKE DescribeClusterInstances response is missing")
 	}
 	requestID := stringValue(describeResponse.Response.RequestId)
+	var matched *tke2022.Instance
 	for _, instance := range describeResponse.Response.InstanceSet {
-		if instance != nil && stringValue(instance.InstanceId) == machineName && stringValue(instance.NodePoolId) == nodePoolId && strings.EqualFold(stringValue(instance.NodeType), "Native") && stringValue(instance.LanIP) != "" {
-			return instance, requestID, nil
+		if instance == nil {
+			return nil, requestID, fmt.Errorf("Tencent TKE DescribeClusterInstances returned an empty instance")
+		}
+		if stringValue(instance.InstanceId) == machineName && stringValue(instance.NodePoolId) == nodePoolId && strings.EqualFold(stringValue(instance.NodeType), "Native") {
+			if matched != nil {
+				return nil, requestID, fmt.Errorf("Tencent TKE Machine identity is ambiguous")
+			}
+			matched = instance
 		}
 	}
-	return nil, requestID, nil
+	if matched == nil {
+		return nil, requestID, fmt.Errorf("%w for Machine %s", errTKEInstanceNotFound, machineName)
+	}
+	return matched, requestID, nil
 }
 
 func (client *tencentSDKClient) describeNativeNodePool(nodePoolId string) (*tke2022.NodePool, string, error) {
@@ -2326,23 +2580,41 @@ type bootstrapPackageSpec struct {
 	PackageID          string
 	PoolID             string
 	InstanceType       string
+	CPU                uint64
+	MemoryGB           uint64
 	MaxReplicas        int64
 	ExpectedNodePoolID string
 }
 
-func bootstrapPackageSpecs(env map[string]string) ([]bootstrapPackageSpec, *Response) {
-	basicMax, err := requiredPositiveInt64(env, "OPL_BASIC_COMPUTE_NODE_POOL_MAX_REPLICAS")
+func bootstrapPackageSpecs(env map[string]string, requireMaxReplicas bool) ([]bootstrapPackageSpec, *Response) {
+	basicInstanceType := strings.TrimSpace(env["OPL_BASIC_COMPUTE_INSTANCE_TYPE"])
+	if basicInstanceType == "" || len(basicInstanceType) > 64 || strings.ContainsAny(basicInstanceType, " \t\r\n") {
+		return nil, &Response{Ok: false, ErrorCode: "instance_type_required", Message: "OPL_BASIC_COMPUTE_INSTANCE_TYPE must be the release-owner-approved resolved Basic instance type.", Retryable: false}
+	}
+	proInstanceType := strings.TrimSpace(env["OPL_PRO_COMPUTE_INSTANCE_TYPE"])
+	if proInstanceType == "" || len(proInstanceType) > 64 || strings.ContainsAny(proInstanceType, " \t\r\n") {
+		return nil, &Response{Ok: false, ErrorCode: "instance_type_required", Message: "OPL_PRO_COMPUTE_INSTANCE_TYPE must be the release-owner-approved resolved Pro instance type.", Retryable: false}
+	}
+	basicMax, err := bootstrapMaxReplicas(env, "OPL_BASIC_COMPUTE_NODE_POOL_MAX_REPLICAS", requireMaxReplicas)
 	if err != nil {
 		return nil, &Response{Ok: false, ErrorCode: "max_replicas_required", Message: err.Error(), Retryable: false}
 	}
-	proMax, err := requiredPositiveInt64(env, "OPL_PRO_COMPUTE_NODE_POOL_MAX_REPLICAS")
+	proMax, err := bootstrapMaxReplicas(env, "OPL_PRO_COMPUTE_NODE_POOL_MAX_REPLICAS", requireMaxReplicas)
 	if err != nil {
 		return nil, &Response{Ok: false, ErrorCode: "max_replicas_required", Message: err.Error(), Retryable: false}
 	}
 	return []bootstrapPackageSpec{
-		{PackageID: "basic", PoolID: "pool-basic-2c4g", InstanceType: "SA5.MEDIUM4", MaxReplicas: basicMax, ExpectedNodePoolID: strings.TrimSpace(env["OPL_BASIC_COMPUTE_NODE_POOL_ID"])},
-		{PackageID: "pro", PoolID: "pool-pro-8c16g", InstanceType: "SA5.2XLARGE16", MaxReplicas: proMax, ExpectedNodePoolID: strings.TrimSpace(env["OPL_PRO_COMPUTE_NODE_POOL_ID"])},
+		{PackageID: "basic", PoolID: "pool-basic-2c4g", InstanceType: basicInstanceType, CPU: 2, MemoryGB: 4, MaxReplicas: basicMax, ExpectedNodePoolID: strings.TrimSpace(env["OPL_BASIC_COMPUTE_NODE_POOL_ID"])},
+		{PackageID: "pro", PoolID: "pool-pro-8c16g", InstanceType: proInstanceType, CPU: 8, MemoryGB: 16, MaxReplicas: proMax, ExpectedNodePoolID: strings.TrimSpace(env["OPL_PRO_COMPUTE_NODE_POOL_ID"])},
 	}, nil
+}
+
+func bootstrapMaxReplicas(env map[string]string, key string, required bool) (int64, error) {
+	raw := strings.TrimSpace(env[key])
+	if raw == "" && !required {
+		return 0, nil
+	}
+	return requiredPositiveInt64(env, key)
 }
 
 func requiredPositiveInt64(env map[string]string, key string) (int64, error) {
@@ -2431,7 +2703,7 @@ func poolTouchesBootstrapSpec(pool *tke2022.NodePool, spec bootstrapPackageSpec)
 	}
 	labels := nodePoolLabels(pool)
 	return stringValue(pool.Name) == spec.PoolID || labels["oplcloud.cn/pool-id"] == spec.PoolID ||
-		labels["oplcloud.cn/package-id"] == spec.PackageID || labels["oplcloud.cn/instance-type"] == spec.InstanceType ||
+		labels["oplcloud.cn/package-id"] == spec.PackageID ||
 		(spec.ExpectedNodePoolID != "" && stringValue(pool.NodePoolId) == spec.ExpectedNodePoolID)
 }
 
@@ -2453,7 +2725,7 @@ func bootstrapPackagePoolStatus(pool *tke2022.NodePool, spec bootstrapPackageSpe
 	}
 	native := pool.Native
 	if native == nil || native.Scaling == nil || native.Scaling.MinReplicas == nil || *native.Scaling.MinReplicas != 0 ||
-		native.Scaling.MaxReplicas == nil || *native.Scaling.MaxReplicas != spec.MaxReplicas || native.Replicas == nil || native.ReadyReplicas == nil ||
+		native.Scaling.MaxReplicas == nil || *native.Scaling.MaxReplicas <= 0 || (spec.MaxReplicas > 0 && *native.Scaling.MaxReplicas != spec.MaxReplicas) || native.Replicas == nil || native.ReadyReplicas == nil ||
 		*native.Replicas != *native.ReadyReplicas || native.EnableAutoscaling == nil || *native.EnableAutoscaling || native.AutoRepair == nil || *native.AutoRepair ||
 		len(native.InstanceTypes) != 1 || stringValue(native.InstanceTypes[0]) != spec.InstanceType || len(native.SubnetIds) == 0 {
 		return ""
@@ -2536,7 +2808,7 @@ func (client *tencentSDKClient) verifyBootstrapSystemIdentity(env map[string]str
 }
 
 func (client *tencentSDKClient) BootstrapComputeNodePools(request Request, env map[string]string) Response {
-	specs, failure := bootstrapPackageSpecs(env)
+	specs, failure := bootstrapPackageSpecs(env, !request.DryRun)
 	if failure != nil {
 		return *failure
 	}
@@ -2557,10 +2829,27 @@ func (client *tencentSDKClient) BootstrapComputeNodePools(request Request, env m
 	results := make([]NodePoolBootstrapResult, 0, len(specs))
 	missing, pendingCount := 0, 0
 	for _, spec := range specs {
-		result := NodePoolBootstrapResult{PackageID: spec.PackageID, PoolID: spec.PoolID, InstanceType: spec.InstanceType, MaxReplicas: spec.MaxReplicas}
+		result := NodePoolBootstrapResult{
+			PackageID: spec.PackageID, PoolID: spec.PoolID, InstanceType: spec.InstanceType, CPU: spec.CPU, MemoryGB: spec.MemoryGB, MaxReplicas: spec.MaxReplicas,
+			MaxReplicasSource: "not_configured", MaxReplicasDecision: "release_owner_approval_required",
+			MaxReplicasConstraint:     "positive_integer_subject_to_current_tencent_account_region_quota",
+			MaxReplicasRecommendation: "release_owner_selects_after_inventory_and_quota_review",
+		}
+		if spec.MaxReplicas > 0 {
+			result.MaxReplicasSource = "workflow_input"
+			if !request.DryRun {
+				result.MaxReplicasSource = "release_owner_approved_input"
+				result.MaxReplicasDecision = "approved_for_mutation"
+			}
+		}
 		if pool := matches[spec.PackageID]; pool != nil {
 			result.NodePoolID = stringValue(pool.NodePoolId)
 			result.Status = bootstrapPackagePoolStatus(pool, spec)
+			if spec.MaxReplicas == 0 && pool.Native != nil && pool.Native.Scaling != nil && pool.Native.Scaling.MaxReplicas != nil {
+				result.MaxReplicas = *pool.Native.Scaling.MaxReplicas
+				result.MaxReplicasSource = "tencent_node_pool_readback"
+				result.MaxReplicasDecision = "existing_pool_inventory"
+			}
 			if result.Status == "pending" {
 				pendingCount++
 			}
@@ -2746,6 +3035,9 @@ func handleWithClient(request Request, env map[string]string, client TencentClie
 		}
 	}
 	if request.Action == "bootstrap_compute_node_pools" {
+		if !request.DryRun && strings.TrimSpace(env["RUN_TENCENT_NODE_POOL_BOOTSTRAP_CONFIRMATION"]) != nodePoolBootstrapMutationConfirmation {
+			return Response{Ok: false, ErrorCode: "node_pool_bootstrap_confirmation_required", Message: "The exact node pool bootstrap mutation confirmation is required.", Retryable: false}
+		}
 		if !request.DryRun && strings.TrimSpace(env["RUN_TENCENT_CREATE_RELEASE_EXECUTION"]) != "1" {
 			return Response{Ok: false, ErrorCode: "live_mutation_flag_required", Message: "Set RUN_TENCENT_CREATE_RELEASE_EXECUTION=1 to run live Tencent resource mutations.", Retryable: false}
 		}

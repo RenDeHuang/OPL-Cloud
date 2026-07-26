@@ -198,6 +198,11 @@ test("Current Fabric contracts require dedicated package NodePools without weake
     api: "CreateComputeAllocation",
     scope: "allocation",
     packageNodePools: { basic: "explicit_configured_pool", pro: "explicit_configured_pool" },
+    packageResourceContracts: {
+      basic: { cpu: 2, memoryGb: 4 },
+      pro: { cpu: 8, memoryGb: 16 }
+    },
+    resolvedInstanceTypeSource: "release_owner_approved_bootstrap_and_production_configuration",
     admission: "persisted_fifo_by_exact_node_pool",
     admissionLock: "short_postgresql_transaction_advisory_lock_only",
     headExecution: "only_started_head_can_prepare_scale_bounded_poll_and_claim",
@@ -206,6 +211,15 @@ test("Current Fabric contracts require dedicated package NodePools without weake
     scale: "persist_baseline_and_absolute_target_N_plus_1_then_scale_once",
     replay: "same_absolute_target",
     claim: "unique_ready_after_minus_before_machine_only",
+    machineIdentityReadback: {
+      readyStates: ["Ready", "Running"],
+      missingOrUnknownState: "fail_closed_never_default_running",
+      privateIpCvmMatches: "exactly_one",
+      exactIdentityChain: ["nodePoolId", "machineName", "cvmInstanceId", "privateIp", "vpcId", "subnetId"],
+      instanceTypeConsistency: ["node_pool", "machine", "native", "cvm"],
+      resourceShapeRequired: ["machine_cpu_memory", "native_cpu_memory", "cvm_cpu_memory"],
+      zeroMultipleMissingOrMismatch: "fail_closed"
+    },
     existingMachineAllocation: false,
     nodePoolDiscoveryFallback: false,
     customerLaunchCreateNodePool: false
@@ -221,15 +235,30 @@ test("Current Fabric contracts require dedicated package NodePools without weake
     currentBranchScope: "preserved_not_rewritten"
   });
   assert.equal(catalog.workspacePackageNodePools.basic.poolName, "pool-basic-2c4g");
+  assert.deepEqual(catalog.workspacePackageNodePools.basic.resourceContract, { cpu: 2, memoryGb: 4 });
+  assert.equal(catalog.workspacePackageNodePools.basic.resolvedInstanceTypeSource, "release_owner_approved_bootstrap_input");
+  assert.equal(Object.hasOwn(catalog.workspacePackageNodePools.basic, "instanceType"), false);
+  assert.doesNotMatch(JSON.stringify(catalog.workspacePackageNodePools.basic), /SA5\.MEDIUM4/);
   assert.equal(catalog.workspacePackageNodePools.pro.poolName, "pool-pro-8c16g");
+  assert.deepEqual(catalog.workspacePackageNodePools.pro.resourceContract, { cpu: 8, memoryGb: 16 });
+  assert.equal(catalog.workspacePackageNodePools.pro.resolvedInstanceTypeSource, "release_owner_approved_bootstrap_input");
+  assert.equal(Object.hasOwn(catalog.workspacePackageNodePools.pro, "instanceType"), false);
+  assert.doesNotMatch(JSON.stringify(catalog.workspacePackageNodePools.pro), /SA5\.2XLARGE16/);
   assert.equal(catalog.workspacePackageNodePools.basic.replicasMayBeZero, true);
   assert.equal(catalog.workspacePackageNodePools.pro.replicasMayBeZero, true);
   assert.equal(catalog.workspacePackageNodePools.maxReplicasPolicy, "required_explicit_configuration_no_default");
   assert.deepEqual(deployment.workspaceNodePoolBootstrap, {
     file: ".github/workflows/bootstrap-tke-workspace-nodepools.yml",
     mode: "manual_inventory_then_optional_create_missing_zero_replica_pools",
+    environment: "production",
+    credentials: "existing_production_tencent_credentials_and_kubeconfig",
     packagePools: ["basic", "pro"],
-    maxReplicasInputs: "required",
+    resolvedInstanceTypeInputs: { basic: "required_release_owner_approved_value", pro: "required_release_owner_approved_value" },
+    mutationSource: "exact_merged_origin_main_sha",
+    resolvedInstanceTypeRegistration: ["bootstrap_report", "node_pool_label", "tke_native_instance_types", "production_configuration"],
+    maxReplicasInputs: "optional_for_inventory_required_for_mutation",
+    mutationConfirmation: "CREATE_MISSING_WORKSPACE_NODEPOOLS",
+    dryRunMutationCount: 0,
     idempotency: "register_running_wait_exact_creating_create_missing_only",
     partialFailure: "preserve_created_pool_retry_missing_only",
     createNodePoolOutsideBootstrap: false
@@ -241,6 +270,68 @@ test("Current Fabric contracts require dedicated package NodePools without weake
     cvmIdEnv: "OPL_SYSTEM_COMPUTE_CVM_ID",
     guardCallers: ["fabric_tencent_mutations", "fabric_kubernetes_mutations", "cleanup_tke_compute_residual", "cleanup_tke_nodepool_machines"]
   });
+  assert.deepEqual(freeze.verification.customerBasicCanary, {
+    runner: "tools/production-live-qa.ts --basic-customer-canary",
+    workflow: ".github/workflows/production-basic-customer-operation.yml",
+    authority: "manual_release_owner_explicit_write_approval_only",
+    publicTestMode: false,
+    accountProvisionApi: "POST /api/operator/accounts",
+    walletRechargeApi: "POST /api/operator/accounts/{accountId}/wallet-adjustments",
+    workspaceLaunchApi: "POST /api/workspace-launches",
+    workspaceLaunchPostCount: 1,
+    launchReplay: false,
+    approvalExpected: ["mergedSha", "cloudImageDigest", "nodePoolId", "resolvedInstanceType", "workspaceImageDigest", "model"],
+    preBusinessPostRevisionGate: {
+      releaseSource: "exact_merged_origin_main_sha",
+      remoteMainVerification: "live_git_ls_remote_before_each_business_write",
+      deploySource: "opl-cloud-config_OPL_CLOUD_IMAGE",
+      services: ["control-plane", "fabric", "ledger"],
+      ownerChain: "deployment_uid_current_revision_to_replicaset_uid_to_ready_pod",
+      imageMatch: "deployment_replicaset_and_ready_pod_image_id_equal_approved_cloud_digest",
+      failure: "fail_closed_zero_business_posts",
+      productionReadinessBooleanAccepted: false
+    },
+    basicResourceContract: { cpu: 2, memoryGb: 4 },
+    skuConsistency: ["node_pool_allocation_plan", "fabric_compute_allocation", "tencent_provider_truth", "operator_provider_fact"],
+    resourceEvidence: ["fabric_catalog_cpu_memory", "runtime_pod_limits"],
+    recovery: "checkpoint_hint_only_deterministic_account_operation_workspace_authoritative_readback",
+    checkpointAuthority: false,
+    modelResultUnknown: "attempted_or_ready_without_authoritative_request_identity_never_resend",
+    attemptAccounting: "http_attempts_separate_from_authoritative_mutation_counts",
+    evidence: ["wallet_recharge_delta", "basic_purchase_delta", "model_usage_delta", "dedicated_pool_N_plus_1", "resolved_instance_type", "basic_2c4g", "new_cvm", "new_cbs", "attachment", "runtime", "workspace_image_id", "password_login", "websocket_101_bidirectional_frames", "single_model_response", "single_usage_record", "billing.workspace_purchased.v1"],
+    redaction: "no_password_token_secret_redeem_code_or_provider_request_id",
+    currentState: "orchestration_and_fake_tests_only_external_mutation_count_zero"
+  });
+  assert.deepEqual(deployment.productionBasicCustomerCanary, {
+    runner: "tools/production-live-qa.ts",
+    mode: "--basic-customer-canary",
+    execution: "manual_release_owner_only_not_ci_rollout_or_e2e",
+    publicApiAdditions: 0,
+    workspaceLaunchPostCount: 1,
+    launchPolling: "same_operation_get_only",
+    workflow: ".github/workflows/production-basic-customer-operation.yml",
+    approvalExpected: ["mergedSha", "cloudImageDigest", "nodePoolId", "resolvedInstanceType", "workspaceImageDigest", "model"],
+    preBusinessPostRevisionGate: {
+      releaseSource: "exact_merged_origin_main_sha",
+      remoteMainVerification: "live_git_ls_remote_before_each_business_write",
+      deploySource: "opl-cloud-config_OPL_CLOUD_IMAGE",
+      services: ["control-plane", "fabric", "ledger"],
+      ownerChain: "deployment_uid_current_revision_to_replicaset_uid_to_ready_pod",
+      imageMatch: "deployment_replicaset_and_ready_pod_image_id_equal_approved_cloud_digest",
+      failure: "fail_closed_zero_business_posts",
+      productionReadinessBooleanAccepted: false
+    },
+    basicResourceContract: { cpu: 2, memoryGb: 4 },
+    skuConsistency: ["node_pool_allocation_plan", "fabric_compute_allocation", "tencent_provider_truth", "operator_provider_fact"],
+    requiredWriteApprovals: ["account_provision", "wallet_recharge", "workspace_purchase", "single_model_request"],
+    recovery: "checkpoint_hint_only_deterministic_account_operation_workspace_authoritative_readback",
+    checkpointAuthority: false,
+    modelResultUnknown: "attempted_or_ready_without_authoritative_request_identity_never_resend",
+    attemptAccounting: "http_attempts_separate_from_authoritative_mutation_counts",
+    output: "redacted_evidence_only",
+    currentState: "implemented_and_fake_tested_not_executed"
+  });
+  assert.doesNotMatch(await text("tools/production-live-qa.ts"), /SA5\.MEDIUM4/);
   assert.equal(freeze.providerProcurement.workspaceRenewal.tencentRenewFlag, "NOTIFY_AND_MANUAL_RENEW");
   assert.deepEqual(freeze.providerProcurement.workspaceRenewal.fabricPrimitives, ["RenewComputeAllocation", "RenewStorageVolume"]);
   for (const retiredSymbol of [

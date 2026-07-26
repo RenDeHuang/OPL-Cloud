@@ -64,10 +64,10 @@
       "value": "na-siliconvalley-1"
     },
     "OPL_BASIC_COMPUTE_INSTANCE_TYPE": {
-      "value": "SA5.MEDIUM4"
+      "value": "<approved-basic-2c4g-instance-type>"
     },
     "OPL_PRO_COMPUTE_INSTANCE_TYPE": {
-      "value": "SA5.2XLARGE16"
+      "value": "<approved-pro-8c16g-instance-type>"
     },
     "OPL_SYSTEM_COMPUTE_NODE_POOL_ID": {
       "value": "np-systemexample"

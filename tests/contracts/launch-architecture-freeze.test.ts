@@ -143,8 +143,20 @@ test("launch freeze fixes the V2 products, owner lanes, settlement, and verifica
   });
   assert.deepEqual(freeze.providerProcurement.dedicatedNodePools, {
     system: { nodePoolId: "np-6l4nkdto", machineId: "np-6l4nkdto-2cdtm", nodeName: "10.66.0.42", cvmId: "required_production_configuration" },
-    basic: { stablePoolName: "pool-basic-2c4g", packageId: "basic", instanceType: "SA5.MEDIUM4", replicasMayBeZero: true },
-    pro: { stablePoolName: "pool-pro-8c16g", packageId: "pro", instanceType: "SA5.2XLARGE16", replicasMayBeZero: true },
+    basic: {
+      stablePoolName: "pool-basic-2c4g",
+      packageId: "basic",
+      resourceContract: { cpu: 2, memoryGb: 4 },
+      resolvedInstanceTypeSource: "release_owner_approved_bootstrap_input",
+      replicasMayBeZero: true
+    },
+    pro: {
+      stablePoolName: "pool-pro-8c16g",
+      packageId: "pro",
+      resourceContract: { cpu: 8, memoryGb: 16 },
+      resolvedInstanceTypeSource: "release_owner_approved_bootstrap_input",
+      replicasMayBeZero: true
+    },
     packagePoolsDistinctFromEachOtherAndSystem: true,
     maxReplicas: "required_explicit_production_configuration_no_default"
   });
@@ -162,16 +174,33 @@ test("launch freeze fixes the V2 products, owner lanes, settlement, and verifica
     claim: "exactly_one_ready_machine_in_after_minus_before",
     zeroDifference: "bounded_poll_same_persisted_absolute_target",
     unsafeDifference: "manual_review_without_second_scale_or_old_machine_claim",
+    machineIdentityReadback: {
+      readyStates: ["Ready", "Running"],
+      missingOrUnknownState: "fail_closed_never_default_running",
+      privateIpCvmMatches: "exactly_one",
+      exactIdentityChain: ["nodePoolId", "machineName", "cvmInstanceId", "privateIp", "vpcId", "subnetId"],
+      instanceTypeConsistency: ["node_pool", "machine", "native", "cvm"],
+      resourceShapeRequired: ["machine_cpu_memory", "native_cpu_memory", "cvm_cpu_memory"],
+      zeroMultipleMissingOrMismatch: "fail_closed"
+    },
     ownershipWriteGate: ["cvm_ins_id", "sku", "zone", "chargeType=PREPAID", "periodMonths=1", "renewFlag=NOTIFY_AND_MANUAL_RENEW", "deadline"],
     customerMachineSource: "new_machine_created_for_this_workspace_only"
   });
   assert.deepEqual(freeze.providerProcurement.nodePoolBootstrap, {
     authority: "manual_approved_bootstrap_workflow_only",
+    environment: "production",
+    credentials: "existing_production_tencent_credentials_and_kubeconfig",
     inventoryFirst: ["system", "basic", "pro"],
     createOnlyWhenMissingAndUnambiguous: true,
     newPoolReplicas: 0,
     stableInfrastructureLabelsOnly: true,
     customerOwnershipLabels: false,
+    resolvedInstanceTypeInputs: { basic: "required_release_owner_approved_value", pro: "required_release_owner_approved_value" },
+    mutationSource: "exact_merged_origin_main_sha",
+    resolvedInstanceTypeRegistration: ["bootstrap_report", "node_pool_label", "tke_native_instance_types", "production_configuration"],
+    maxReplicas: "optional_for_inventory_required_for_mutation_no_default",
+    mutationConfirmation: "CREATE_MISSING_WORKSPACE_NODEPOOLS",
+    dryRunMutationCount: 0,
     idempotency: "running_or_exact_creating_pool_is_registered_or_pending_without_duplicate_create",
     partialState: "preserve_successful_pool_report_failure_retry_missing_only",
     ordinaryCallerCreateNodePoolCount: 0

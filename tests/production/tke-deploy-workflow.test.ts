@@ -235,6 +235,8 @@ async function manifestFixture() {
       OPL_MONTHLY_BILLING_INTERVAL_MS: "60000",
       OPL_WORKSPACE_LAUNCH_WORKER_ENABLED: "1",
       OPL_WORKSPACE_LAUNCH_INTERVAL_MS: "10000",
+      OPL_BASIC_COMPUTE_INSTANCE_TYPE: "S5.MEDIUM4",
+      OPL_PRO_COMPUTE_INSTANCE_TYPE: "S5.2XLARGE16",
       OPL_SYSTEM_COMPUTE_CVM_ID: "ins-system-test",
       OPL_BASIC_COMPUTE_NODE_POOL_ID: "np-basic-test",
       OPL_PRO_COMPUTE_NODE_POOL_ID: "np-pro-test",
@@ -542,16 +544,94 @@ test("dedicated NodePool bootstrap is the only manual CreateNodePool workflow", 
   const inputs = workflow.on.workflow_dispatch.inputs;
 
   assert.deepEqual(job["runs-on"], ["self-hosted", "tencent-cloud", "opl-cloud", "tke-vpc"]);
-  assert.equal(job.environment, "production-nodepool-bootstrap");
-  assert.equal(inputs.basic_max_replicas.required, true);
-  assert.equal(inputs.pro_max_replicas.required, true);
+  assert.equal(job.environment, "production");
+  assert.equal(workflow.concurrency.group, "production-resource-verification");
+  assert.equal(inputs.merged_sha.required, true);
+  assert.equal(inputs.basic_resolved_instance_type.required, true);
+  assert.equal(inputs.pro_resolved_instance_type.required, true);
+  assert.equal(inputs.basic_max_replicas.required, false);
+  assert.equal(inputs.pro_max_replicas.required, false);
+  assert.equal(inputs.mutation_confirmation.required, false);
   assert.equal(inputs.mutate_missing_pools.default, "false");
+  assert.equal(job.env.OPL_BASIC_COMPUTE_INSTANCE_TYPE, "${{ inputs.basic_resolved_instance_type }}");
+  assert.equal(job.env.OPL_PRO_COMPUTE_INSTANCE_TYPE, "${{ inputs.pro_resolved_instance_type }}");
+  assert.match(String(job.if), /mutate_missing_pools/);
+  assert.match(String(job.if), /refs\/heads\/main/);
+  assert.match(String(job.if), /github\.sha/);
+  assert.match(String(job.if), /inputs\.merged_sha/);
+  const checkout = stepsByName(job).get("Checkout exact source");
+  assert.equal(checkout.with.ref, "${{ inputs.merged_sha }}");
+  assert.equal(checkout.with["fetch-depth"], 0);
+  const sourceGate = serializedStep(stepsByName(job).get("Verify mutation source"));
+  assert.match(sourceGate, /refs\/remotes\/origin\/main/);
+  assert.match(sourceGate, /git rev-parse HEAD/);
+  assert.match(sourceGate, /OPL_MERGED_SHA/);
   assert.match(runs, /bootstrap_compute_node_pools/);
-  assert.equal(job.env.RUN_TENCENT_NODE_POOL_BOOTSTRAP, "${{ inputs.mutate_missing_pools == 'true' && '1' || '0' }}");
+  assert.match(String(job.env.RUN_TENCENT_NODE_POOL_BOOTSTRAP), /mutation_confirmation/);
+  assert.match(String(job.env.RUN_TENCENT_NODE_POOL_BOOTSTRAP), /CREATE_MISSING_WORKSPACE_NODEPOOLS/);
+  assert.equal(job.env.RUN_TENCENT_NODE_POOL_BOOTSTRAP_CONFIRMATION, "${{ inputs.mutation_confirmation }}");
   assert.match(runs, /get node "\$OPL_SYSTEM_COMPUTE_NODE_NAME" -o json/);
   assert.match(runs, /providerID/);
   assert.match(runs, /actions\/upload-artifact@v4|bootstrap-nodepool-report/);
+  assert.match(runs, /OPL_BASIC_COMPUTE_INSTANCE_TYPE/);
+  assert.match(runs, /OPL_PRO_COMPUTE_INSTANCE_TYPE/);
+  assert.match(runs, /instanceType/);
   assert.doesNotMatch(runs, /workspace-launches|control-plane|ScaleNodePool|DeleteClusterMachines/);
+});
+
+test("manual production Basic customer operation is isolated behind merged-main and four explicit approvals", async () => {
+  const path = ".github/workflows/production-basic-customer-operation.yml";
+  const workflow = await readWorkflow(path);
+  const job = workflowJob(workflow, "basic-customer-operation");
+  const inputs = workflow.on.workflow_dispatch.inputs;
+  const steps = stepsByName(job);
+  const runs = serializedRuns(job);
+
+  assert.deepEqual(Object.keys(workflow.on), ["workflow_dispatch"]);
+  assert.deepEqual(job["runs-on"], ["self-hosted", "tencent-cloud", "opl-cloud", "tke-vpc"]);
+  assert.equal(job.environment, "production");
+  assert.equal(workflow.concurrency.group, "production-resource-verification");
+  assert.equal(workflow.concurrency["cancel-in-progress"], false);
+  assert.equal(inputs.merged_sha.required, true);
+  assert.equal(inputs.approval_id.required, true);
+  for (const name of ["confirm_account_provision", "confirm_wallet_recharge", "confirm_workspace_purchase", "confirm_single_model_request"]) {
+    assert.equal(inputs[name].type, "boolean");
+    assert.equal(inputs[name].required, true);
+    assert.equal(inputs[name].default, false);
+    assert.match(String(job.if), new RegExp(`inputs\\.${name}`));
+  }
+  assert.match(String(job.if), /github\.ref == 'refs\/heads\/main'/);
+  assert.match(String(job.if), /github\.sha == inputs\.merged_sha/);
+
+  const checkout = steps.get("Checkout exact merged main");
+  assert.equal(checkout.with.ref, "${{ inputs.merged_sha }}");
+  assert.equal(checkout.with["fetch-depth"], 0);
+  const sourceGate = serializedStep(steps.get("Verify exact origin main"));
+  assert.match(sourceGate, /git rev-parse HEAD/);
+  assert.match(sourceGate, /refs\/remotes\/origin\/main/);
+  assert.match(sourceGate, /OPL_MERGED_SHA/);
+  assert.match(runs, /npm ci/);
+  assert.match(runs, /playwright install --with-deps chromium/);
+  assert.match(runs, /production-live-qa\.ts --basic-customer-canary/);
+  for (const flag of ["--allow-account-provision", "--allow-wallet-recharge", "--allow-workspace-purchase", "--allow-model-write"]) {
+    assert.match(runs, new RegExp(flag));
+  }
+  assert.match(runs, /--approval-id "\$OPL_BASIC_CANARY_APPROVAL_ID"/);
+  assert.match(runs, /OPL_BASIC_CANARY_CHECKPOINT_PATH/);
+  assert.match(JSON.stringify(job.steps), /actions\/upload-artifact@v4/);
+  assert.equal(job.env.OPL_BASIC_CANARY_APPROVAL_ID, "${{ inputs.approval_id }}");
+  assert.equal(job.env.OPL_MERGED_SHA, "${{ inputs.merged_sha }}");
+  assert.equal(job.env.OPL_BASIC_CANARY_APPROVAL_JSON, "${{ secrets.OPL_BASIC_CANARY_APPROVAL_JSON }}");
+  assert.equal(job.env.OPL_BASIC_CANARY_CUSTOMER_PASSWORD, "${{ secrets.OPL_BASIC_CANARY_CUSTOMER_PASSWORD }}");
+  const liveQa = await readFile(repoFile("tools/production-live-qa.ts"), "utf8");
+  assert.match(liveQa, /readBasicCanaryCloudRevisionEvidence/);
+  assert.match(liveQa, /deployment\.kubernetes\.io\/revision/);
+  assert.match(liveQa, /production_basic_canary_model_result_unknown/);
+  assert.doesNotMatch(JSON.stringify(workflow.on), /pull_request|push|workflow_call|schedule/);
+
+  for (const other of [".github/workflows/pull-request-ci.yml", ".github/workflows/deploy-tke-production.yml", ".github/workflows/release-opl-cloud-image.yml"]) {
+    assert.doesNotMatch(await readFile(repoFile(other), "utf8"), /production-basic-customer-operation/);
+  }
 });
 
 test("manual cleanup workflows invoke the shared four-identity protected-resource guard", async () => {
@@ -947,6 +1027,8 @@ test("TKE deploy installs Sub2API credentials without Acceptance credentials", a
   assert.doesNotMatch(install, /provider-acceptance|OPL_PROVIDER_ACCEPTANCE_TOKEN/);
   assert.equal(currentJob.env.OPL_TENCENT_ZONE, "${{ vars.OPL_TENCENT_ZONE || 'na-siliconvalley-1' }}");
   assert.equal(currentJob.env.TENCENTCLOUD_REGION, "${{ vars.TENCENTCLOUD_REGION || 'na-siliconvalley' }}");
+  assert.equal(currentJob.env.OPL_BASIC_COMPUTE_INSTANCE_TYPE, "${{ vars.OPL_BASIC_COMPUTE_INSTANCE_TYPE }}");
+  assert.equal(currentJob.env.OPL_PRO_COMPUTE_INSTANCE_TYPE, "${{ vars.OPL_PRO_COMPUTE_INSTANCE_TYPE }}");
   assert.equal(Object.hasOwn(currentJob.env, "OPL_CODEX_API_KEY"), false);
   assert.doesNotMatch(install, /OPL_CODEX_API_KEY|opl-cloud-workspace-codex/);
   assert.doesNotMatch(install, /console\.log\([^)]*(?:password|auth-users-json)/i);

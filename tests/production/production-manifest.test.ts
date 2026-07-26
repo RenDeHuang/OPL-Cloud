@@ -22,6 +22,8 @@ test("ordinary production manifest omits Acceptance and browser Gateway configur
   assert.equal(manifest.env.OPL_PROVIDER_ACCEPTANCE_TOKEN, undefined);
   assert.equal(manifest.env.OPL_GATEWAY_PUBLIC_BASE_URL, undefined);
   assert.equal(manifest.env.OPL_CODEX_BASE_URL, undefined);
+  assert.equal(manifest.env.OPL_BASIC_COMPUTE_INSTANCE_TYPE.value, "<approved-basic-2c4g-instance-type>");
+  assert.equal(manifest.env.OPL_PRO_COMPUTE_INSTANCE_TYPE.value, "<approved-pro-8c16g-instance-type>");
   for (const key of Object.keys(dedicatedNodePoolEnv)) assert.ok(manifest.env[key], key);
   for (const key of ["OPL_VERIFY_MUTATION_APPROVAL_JSON", "OPL_VERIFY_MUTATION_APPROVAL_ID", "OPL_VERIFY_ALLOW_GATEWAY_WRITE", "OPL_VERIFY_ALLOW_MODEL_WRITE", "OPL_VERIFY_ALLOW_PROVIDER_WRITE"]) {
     assert.equal(Object.hasOwn(manifest.env, key), false);
