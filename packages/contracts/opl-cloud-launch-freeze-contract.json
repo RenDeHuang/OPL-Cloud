@@ -290,11 +290,11 @@
         "dryRun": "automatic_recommended",
         "mutation": "selected_candidate_revalidated_immediately_before_create"
       },
-      "requiredCapacity": 200,
+      "requiredCapacity": 1,
       "capacityGates": ["prepaid_quota", "subnet_available_ip", "tke_cluster_node_limit"],
       "mutationSource": "exact_merged_origin_main_sha",
       "resolvedInstanceTypeRegistration": ["bootstrap_report", "node_pool_label", "tke_native_instance_types", "production_configuration"],
-      "maxReplicas": {"basic": 100, "pro": 100, "source": "release_owner_approved_workflow_configuration_no_code_default"},
+      "maxReplicas": {"basic": 500, "pro": 500, "source": "release_owner_approved_workflow_configuration_no_code_default_independent_pool_limits"},
       "mutationConfirmation": "CREATE_MISSING_WORKSPACE_NODEPOOLS",
       "dryRunMutationCount": 0,
       "idempotency": "running_or_exact_creating_pool_is_registered_or_pending_without_duplicate_create",

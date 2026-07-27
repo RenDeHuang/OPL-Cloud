@@ -111,11 +111,14 @@ The four implementation owner lanes are Console/Control Plane, Fabric, Gateway i
   the other package fails so retry fills only the missing pool. The workflow
   reuses the existing `production` Tencent credentials and kubeconfig. Dry-run
   automatically reports the recommended Basic and Pro SKU and performs zero
-  mutation. For the first production bootstrap, the approved Basic and Pro
-  `maxReplicas` values are both 100; these are explicit workflow configuration,
-  not code defaults. Before mutation, the workflow re-reads PREPAID quota,
-  Subnet IP capacity, the TKE cluster node limit, and SKU availability for the
-  combined capacity of 200, then verifies each selected SKU remains eligible.
+  mutation. The production bootstrap configures independent Basic and Pro
+  `maxReplicas` values of 500; these are explicit workflow configuration, not
+  code defaults, and do not reserve or add capacity across pools. Before
+  mutation, the workflow re-reads PREPAID quota, Subnet IP capacity, and the
+  TKE cluster node limit for one immediate launch headroom, then verifies each
+  selected SKU remains eligible. A customer launch repeats this instantaneous
+  global TKE capacity check immediately before debit; it does not create a
+  reservation or a second capacity ledger.
   The report, NodePool label, Native `InstanceTypes`, and production configuration
   must register the same value. Mutation also requires the exact confirmation
   `CREATE_MISSING_WORKSPACE_NODEPOOLS` and exact merged `origin/main` SHA.

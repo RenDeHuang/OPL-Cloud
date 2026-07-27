@@ -319,6 +319,25 @@ func TestTencentProviderMonthlyPreflightUsesExactConfiguredPackagePool(t *testin
 	}
 }
 
+func TestTencentProviderPreservesProvisionerTKECapacityDependencyStages(t *testing.T) {
+	stages := reportStages(provisionerResponse{
+		ErrorCode: "tencent_capacity_cluster_headroom_unavailable",
+		PreflightStages: []MonthlyPreflightStage{
+			{Stage: "node_pool_discovery", Status: "passed", BlockedBy: []string{}, SafeFacts: map[string]any{}},
+			{Stage: "tke_cluster_capacity", Status: "failed", ErrorCode: "tencent_capacity_cluster_headroom_unavailable", BlockedBy: []string{}, SafeFacts: map[string]any{}},
+			{Stage: "node_pool_contract", Status: "blocked", ErrorCode: "preflight_dependency_blocked", BlockedBy: []string{"tke_cluster_capacity"}, SafeFacts: map[string]any{}},
+		},
+	}, nil, []string{"node_pool_discovery", "tke_cluster_capacity", "node_pool_contract", "subnet", "zone", "cvm_prepaid_quota", "cvm_sku_price"})
+	byName := map[string]MonthlyPreflightStage{}
+	for _, stage := range stages {
+		byName[stage.Stage] = stage
+	}
+	if byName["tke_cluster_capacity"].Status != "failed" || byName["node_pool_contract"].Status != "blocked" ||
+		!reflect.DeepEqual(byName["node_pool_contract"].BlockedBy, []string{"tke_cluster_capacity"}) {
+		t.Fatalf("provisioner dependency stage was not preserved: %#v", byName)
+	}
+}
+
 func TestTencentProviderMonthlyComputePreflightFailsBeforeProvisionerWithoutPoolConfiguration(t *testing.T) {
 	t.Setenv("RUN_TENCENT_CREATE_RELEASE_EXECUTION", "1")
 	t.Setenv("OPL_BASIC_COMPUTE_NODE_POOL_ID", "")
@@ -387,7 +406,8 @@ func TestTencentProviderMonthlyPreflightReportEvaluatesBasicAndPro(t *testing.T)
 			instanceType := packagePlan(request.PackageID).InstanceType
 			return provisionerResponse{OK: false, ErrorCode: "tencent_capacity_node_pool_unavailable", PreflightStages: []MonthlyPreflightStage{
 				{Stage: "node_pool_discovery", Status: "failed", ErrorCode: "tencent_capacity_node_pool_unavailable", BlockedBy: []string{}, DurationMS: 2, SafeFacts: map[string]any{"nodePoolId": request.Pool.NodePoolID, "matchCount": 0}},
-				{Stage: "node_pool_contract", Status: "blocked", ErrorCode: "preflight_dependency_blocked", BlockedBy: []string{"node_pool_discovery"}, DurationMS: 0, SafeFacts: map[string]any{}},
+				{Stage: "tke_cluster_capacity", Status: "failed", ErrorCode: "tencent_capacity_cluster_headroom_unavailable", BlockedBy: []string{}, DurationMS: 1, SafeFacts: map[string]any{"requiredReplicas": 1, "availableNodes": 0}},
+				{Stage: "node_pool_contract", Status: "blocked", ErrorCode: "preflight_dependency_blocked", BlockedBy: []string{"tke_cluster_capacity"}, DurationMS: 0, SafeFacts: map[string]any{}},
 				{Stage: "subnet", Status: "blocked", ErrorCode: "preflight_dependency_blocked", BlockedBy: []string{"node_pool_contract"}, DurationMS: 0, SafeFacts: map[string]any{}},
 				{Stage: "zone", Status: "blocked", ErrorCode: "preflight_dependency_blocked", BlockedBy: []string{"subnet"}, DurationMS: 0, SafeFacts: map[string]any{}},
 				{Stage: "cvm_prepaid_quota", Status: "failed", ErrorCode: "tencent_capacity_prepaid_quota_unavailable", BlockedBy: []string{}, DurationMS: 3, SafeFacts: map[string]any{"remainingQuota": 0}},
@@ -428,7 +448,7 @@ func TestTencentProviderMonthlyPreflightReportEvaluatesBasicAndPro(t *testing.T)
 	}
 	for index, packageReport := range payload.Packages {
 		wantPackage, wantSize := []string{"basic", "pro"}[index], []int{10, 100}[index]
-		if packageReport.PackageID != wantPackage || packageReport.SizeGB != wantSize || packageReport.Status != "failed" || len(packageReport.Items) != 8 {
+		if packageReport.PackageID != wantPackage || packageReport.SizeGB != wantSize || packageReport.Status != "failed" || len(packageReport.Items) != 9 {
 			t.Fatalf("package[%d]=%#v", index, packageReport)
 		}
 		for itemIndex, item := range packageReport.Items {
@@ -470,7 +490,7 @@ func TestTencentProviderMonthlyPreflightReportBlocksTencentChecksWithoutCredenti
 		t.Fatalf("environment stages=%#v", report.Items[:2])
 	}
 	encoded := string(mustJSON(report))
-	if !strings.Contains(encoded, `"packageId":"basic"`) || !strings.Contains(encoded, `"packageId":"pro"`) || strings.Count(encoded, `"status":"blocked"`) != 16 {
+	if !strings.Contains(encoded, `"packageId":"basic"`) || !strings.Contains(encoded, `"packageId":"pro"`) || strings.Count(encoded, `"status":"blocked"`) != 18 {
 		t.Fatalf("blocked package reports=%s", encoded)
 	}
 }

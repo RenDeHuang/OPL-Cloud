@@ -697,12 +697,12 @@ func TestWorkspaceSKUInventorySelectsDeterministicCheapestEligiblePackages(t *te
 		workspaceSKUItemWithoutPrice("S5.MEDIUM4-NOPRICE", 2, 4),
 	}
 
-	response := handleWithClient(Request{Action: "workspace_sku_inventory", Zone: "na-siliconvalley-1", RequiredCapacity: 200}, workspaceInventoryEnv(), client)
+	response := handleWithClient(Request{Action: "workspace_sku_inventory", Zone: "na-siliconvalley-1", RequiredCapacity: 1}, workspaceInventoryEnv(), client)
 
 	if !response.Ok || response.Status != "ready" || response.MutationCount != 0 {
 		t.Fatalf("inventory response=%#v", response)
 	}
-	if response.RequiredCapacity != 200 || response.PrepaidQuotaRemaining != 500 || response.TKEClusterNodeLimit != 500 || response.TKECurrentNodeCount != 1 || response.TKEAvailableNodeCapacity != 499 {
+	if response.RequiredCapacity != 1 || response.PrepaidQuotaRemaining != 500 || response.TKEClusterNodeLimit != 500 || response.TKECurrentNodeCount != 1 || response.TKEAvailableNodeCapacity != 499 {
 		t.Fatalf("capacity facts=%#v", response)
 	}
 	if len(response.Subnets) != 1 || response.Subnets[0].AvailableIPAddresses != 500 || response.Subnets[0].Zone != "na-siliconvalley-1" || response.Subnets[0].VPCID != "vpc-workspace" {
@@ -768,16 +768,82 @@ func TestWorkspaceTKECapacityUsesCurrentLevelNodeCountIndependentOfEnableMetadat
 	}
 }
 
+func TestWorkspaceTKECapacityMatchesCurrentLevelByProviderNameOrAlias(t *testing.T) {
+	for _, test := range []struct {
+		name           string
+		attributeName  string
+		attributeAlias string
+	}{
+		{name: "machine identity in Name", attributeName: "L5", attributeAlias: "500 nodes"},
+		{name: "machine identity in Alias", attributeName: "5 nodes", attributeAlias: "L5"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			legacyAPI := &fakeLegacyTkeAPI{
+				clusterLevel:     "L5",
+				attributeLevel:   test.attributeName,
+				attributeAlias:   test.attributeAlias,
+				clusterNodeCount: 1,
+				nodeLimit:        500,
+			}
+			client := &tencentSDKClient{clusterId: "cls-123", nativeLegacyTkeClient: legacyAPI}
+
+			limit, current, available, _, err := client.workspaceTKECapacity()
+
+			if err != nil {
+				t.Fatalf("current cluster level identity must match Name or Alias exactly: %v", err)
+			}
+			if limit != 500 || current != 1 || available != 499 {
+				t.Fatalf("capacity facts=(%d,%d,%d)", limit, current, available)
+			}
+		})
+	}
+}
+
+func TestWorkspaceTKECapacityRejectsAmbiguousNameAndAliasMatches(t *testing.T) {
+	legacyAPI := &fakeLegacyTkeAPI{
+		clusterLevel:     "L5",
+		attributeLevel:   "L5",
+		attributeAlias:   "500 nodes",
+		clusterNodeCount: 1,
+		nodeLimit:        500,
+		extraLevelItems: []*tke2018.ClusterLevelAttribute{{
+			Name: common.StringPtr("5 nodes"), Alias: common.StringPtr("L5"), Enable: common.BoolPtr(true),
+		}},
+	}
+	client := &tencentSDKClient{clusterId: "cls-123", nativeLegacyTkeClient: legacyAPI}
+
+	_, _, _, _, err := client.workspaceTKECapacity()
+
+	if err == nil || !strings.Contains(err.Error(), "ambiguous") {
+		t.Fatalf("cross-field duplicate level identity must fail closed: %v", err)
+	}
+}
+
+func TestWorkspaceTKECapacityRejectsUniqueMatchWithoutNodeCount(t *testing.T) {
+	legacyAPI := &fakeLegacyTkeAPI{
+		clusterLevel: "L5", attributeLevel: "5 nodes", attributeAlias: "L5", clusterNodeCount: 1,
+		nodeLimit: 500, omitNodeCount: true,
+	}
+	client := &tencentSDKClient{clusterId: "cls-123", nativeLegacyTkeClient: legacyAPI}
+
+	_, _, _, _, err := client.workspaceTKECapacity()
+
+	if err == nil || !strings.Contains(err.Error(), "node limit") {
+		t.Fatalf("unique matching level without NodeCount must fail closed: %v", err)
+	}
+}
+
 func TestWorkspaceSKUInventoryReportsSafeTKELevelFactsWhenNodeLimitIsUnavailable(t *testing.T) {
 	tkeAPI := &fakeNativeTkeAPI{nodePools: bootstrapInventory("np-system")}
 	client := newWorkspaceSKUInventoryTencentSDKClient(tkeAPI)
 	legacyAPI := client.nativeLegacyTkeClient.(*fakeLegacyTkeAPI)
 	legacyAPI.clusterLevel = "L5"
 	legacyAPI.attributeLevel = "L10"
+	legacyAPI.attributeAlias = "10 nodes"
 	legacyAPI.clusterNodeCount = 1
 	legacyAPI.nodeLimit = 250
 
-	response := handleWithClient(Request{Action: "workspace_sku_inventory", Zone: "na-siliconvalley-1", RequiredCapacity: 200}, workspaceInventoryEnv(), client)
+	response := handleWithClient(Request{Action: "workspace_sku_inventory", Zone: "na-siliconvalley-1", RequiredCapacity: 1}, workspaceInventoryEnv(), client)
 
 	if response.Ok || response.ErrorCode != "workspace_sku_inventory_unavailable" || response.MutationCount != 0 {
 		t.Fatalf("inventory response=%#v", response)
@@ -802,7 +868,7 @@ func TestWorkspaceSKUInventoryReportsSafeTKELevelFactsWhenNodeLimitIsUnavailable
 		t.Fatalf("level attributes=%#v", capacity["levelAttributes"])
 	}
 	attribute, ok := attributes[0].(map[string]any)
-	if !ok || attribute["name"] != "L10" || attribute["nodeCount"] != float64(250) || attribute["enable"] != true {
+	if !ok || attribute["name"] != "L10" || attribute["alias"] != "10 nodes" || attribute["nodeCount"] != float64(250) || attribute["enable"] != true {
 		t.Fatalf("level attribute=%#v", attributes[0])
 	}
 	for _, forbidden := range []string{"requestId", "providerRequestId", "rawResponse", "secret", "token"} {
@@ -820,7 +886,7 @@ func TestWorkspaceSKUInventoryOmitsTKEFactsWhenClusterIdentityIsUnavailable(t *t
 	client := newWorkspaceSKUInventoryTencentSDKClient(tkeAPI)
 	client.nativeLegacyTkeClient.(*fakeLegacyTkeAPI).clusterID = "cls-other"
 
-	response := handleWithClient(Request{Action: "workspace_sku_inventory", Zone: "na-siliconvalley-1", RequiredCapacity: 200}, workspaceInventoryEnv(), client)
+	response := handleWithClient(Request{Action: "workspace_sku_inventory", Zone: "na-siliconvalley-1", RequiredCapacity: 1}, workspaceInventoryEnv(), client)
 
 	if response.Ok || response.ErrorCode != "workspace_sku_inventory_unavailable" || response.MutationCount != 0 {
 		t.Fatalf("inventory response=%#v", response)
@@ -843,7 +909,7 @@ func TestWorkspaceSKUInventoryResolvesProtectedSystemCVMWhenUnconfigured(t *test
 	env := workspaceInventoryEnv()
 	delete(env, "OPL_SYSTEM_COMPUTE_CVM_ID")
 
-	response := handleWithClient(Request{Action: "workspace_sku_inventory", Zone: "na-siliconvalley-1", RequiredCapacity: 200}, env, client)
+	response := handleWithClient(Request{Action: "workspace_sku_inventory", Zone: "na-siliconvalley-1", RequiredCapacity: 1}, env, client)
 
 	if !response.Ok || response.ProtectedSystem.CVMID != "ins-system" || response.MutationCount != 0 {
 		t.Fatalf("protected system CVM was not resolved read-only: %#v", response)
@@ -884,7 +950,7 @@ func TestWorkspaceSKUInventoryFailsClosedOnUnverifiableProtectedSystemCVM(t *tes
 			delete(env, "OPL_SYSTEM_COMPUTE_CVM_ID")
 			test.configure(tkeAPI, client.nativeCvmClient.(*fakeNativeCvmAPI), env)
 
-			response := handleWithClient(Request{Action: "workspace_sku_inventory", Zone: "na-siliconvalley-1", RequiredCapacity: 200}, env, client)
+			response := handleWithClient(Request{Action: "workspace_sku_inventory", Zone: "na-siliconvalley-1", RequiredCapacity: 1}, env, client)
 
 			if response.Ok || response.ErrorCode != "protected_system_identity_mismatch" || response.MutationCount != 0 {
 				t.Fatalf("unverifiable protected system identity accepted: %#v", response)
@@ -901,16 +967,16 @@ func TestWorkspaceSKUInventoryFailsClosedWhenApprovedCapacityIsUnavailable(t *te
 		name      string
 		configure func(*tencentSDKClient)
 	}{
-		{name: "prepaid quota", configure: func(client *tencentSDKClient) { client.nativeCvmClient.(*fakeNativeCvmAPI).quotaRemaining = 199 }},
-		{name: "subnet IPs", configure: func(client *tencentSDKClient) { client.nativeVpcClient.(*fakeNativeVpcAPI).availableIpCount = 199 }},
-		{name: "TKE node limit", configure: func(client *tencentSDKClient) { client.nativeLegacyTkeClient.(*fakeLegacyTkeAPI).nodeLimit = 200 }},
+		{name: "prepaid quota", configure: func(client *tencentSDKClient) { client.nativeCvmClient.(*fakeNativeCvmAPI).zeroQuota = true }},
+		{name: "subnet IPs", configure: func(client *tencentSDKClient) { client.nativeVpcClient.(*fakeNativeVpcAPI).zeroAvailableIP = true }},
+		{name: "TKE node limit", configure: func(client *tencentSDKClient) { client.nativeLegacyTkeClient.(*fakeLegacyTkeAPI).nodeLimit = 1 }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			tkeAPI := &fakeNativeTkeAPI{nodePools: bootstrapInventory("np-system")}
 			client := newWorkspaceSKUInventoryTencentSDKClient(tkeAPI)
 			test.configure(client)
 
-			response := handleWithClient(Request{Action: "workspace_sku_inventory", Zone: "na-siliconvalley-1", RequiredCapacity: 200}, workspaceInventoryEnv(), client)
+			response := handleWithClient(Request{Action: "workspace_sku_inventory", Zone: "na-siliconvalley-1", RequiredCapacity: 1}, workspaceInventoryEnv(), client)
 
 			if response.Ok || response.ErrorCode != "workspace_capacity_insufficient" || response.MutationCount != 0 {
 				t.Fatalf("capacity response=%#v", response)
@@ -929,7 +995,7 @@ func TestWorkspaceSKUInventoryRedactsProviderErrors(t *testing.T) {
 	}
 	client := newWorkspaceSKUInventoryTencentSDKClient(tkeAPI)
 
-	response := handleWithClient(Request{Action: "workspace_sku_inventory", Zone: "na-siliconvalley-1", RequiredCapacity: 200}, workspaceInventoryEnv(), client)
+	response := handleWithClient(Request{Action: "workspace_sku_inventory", Zone: "na-siliconvalley-1", RequiredCapacity: 1}, workspaceInventoryEnv(), client)
 
 	if response.Ok || response.ErrorCode != "protected_system_identity_mismatch" || response.MutationCount != 0 {
 		t.Fatalf("provider failure response=%#v", response)
@@ -949,16 +1015,39 @@ func TestBootstrapComputeNodePoolsDryRunUsesRecommendedWorkspaceSKUs(t *testing.
 	tkeAPI := &fakeNativeTkeAPI{nodePools: bootstrapInventory("np-system")}
 	client := newWorkspaceSKUInventoryTencentSDKClient(tkeAPI)
 	env := workspaceInventoryEnv()
-	env["OPL_BASIC_COMPUTE_NODE_POOL_MAX_REPLICAS"] = "100"
-	env["OPL_PRO_COMPUTE_NODE_POOL_MAX_REPLICAS"] = "100"
+	env["OPL_BASIC_COMPUTE_NODE_POOL_MAX_REPLICAS"] = "500"
+	env["OPL_PRO_COMPUTE_NODE_POOL_MAX_REPLICAS"] = "500"
 
-	response := handleWithClient(Request{Action: "bootstrap_compute_node_pools", DryRun: true, Zone: "na-siliconvalley-1", RequiredCapacity: 200}, env, client)
+	response := handleWithClient(Request{Action: "bootstrap_compute_node_pools", DryRun: true, Zone: "na-siliconvalley-1", RequiredCapacity: 1}, env, client)
 
 	if !response.Ok || response.Status != "missing" || response.MutationCount != 0 || len(response.NodePools) != 2 {
 		t.Fatalf("bootstrap dry-run=%#v", response)
 	}
-	if response.NodePools[0].InstanceType != "SA5.MEDIUM4" || response.NodePools[1].InstanceType != "SA5.2XLARGE16" || response.NodePools[0].MaxReplicas != 100 || response.NodePools[1].MaxReplicas != 100 {
+	if response.NodePools[0].InstanceType != "SA5.MEDIUM4" || response.NodePools[1].InstanceType != "SA5.2XLARGE16" || response.NodePools[0].MaxReplicas != 500 || response.NodePools[1].MaxReplicas != 500 {
 		t.Fatalf("recommended package specs=%#v", response.NodePools)
+	}
+	if len(tkeAPI.createNodePoolRequests) != 0 {
+		t.Fatalf("dry-run created NodePool: %#v", tkeAPI.createNodePoolRequests)
+	}
+}
+
+func TestBootstrapComputeNodePoolsUsesIndependentMaxReplicasAndImmediateHeadroom(t *testing.T) {
+	tkeAPI := &fakeNativeTkeAPI{nodePools: bootstrapInventory("np-system")}
+	client := newWorkspaceSKUInventoryTencentSDKClient(tkeAPI)
+	env := bootstrapEnv()
+	env["OPL_BASIC_COMPUTE_NODE_POOL_MAX_REPLICAS"] = "500"
+	env["OPL_PRO_COMPUTE_NODE_POOL_MAX_REPLICAS"] = "500"
+
+	response := handleWithClient(Request{Action: "bootstrap_compute_node_pools", DryRun: true, Zone: "na-siliconvalley-1", RequiredCapacity: 1}, env, client)
+
+	if !response.Ok || response.Status != "missing" || response.MutationCount != 0 || len(response.NodePools) != 2 {
+		t.Fatalf("independent max bootstrap dry-run=%#v", response)
+	}
+	if response.RequiredCapacity != 1 || response.NodePools[0].MaxReplicas != 500 || response.NodePools[1].MaxReplicas != 500 {
+		t.Fatalf("bootstrap capacity semantics=%#v", response)
+	}
+	if response.TKEClusterNodeLimit != 500 || response.TKEAvailableNodeCapacity < 1 {
+		t.Fatalf("bootstrap must report one-node immediate headroom=%#v", response)
 	}
 	if len(tkeAPI.createNodePoolRequests) != 0 {
 		t.Fatalf("dry-run created NodePool: %#v", tkeAPI.createNodePoolRequests)
@@ -969,11 +1058,11 @@ func TestBootstrapComputeNodePoolsRevalidatesSelectedSKUImmediatelyBeforeMutatio
 	tkeAPI := &fakeNativeTkeAPI{nodePools: bootstrapInventory("np-system")}
 	client := newWorkspaceSKUInventoryTencentSDKClient(tkeAPI)
 	env := bootstrapEnv()
-	env["OPL_BASIC_COMPUTE_NODE_POOL_MAX_REPLICAS"] = "100"
-	env["OPL_PRO_COMPUTE_NODE_POOL_MAX_REPLICAS"] = "100"
+	env["OPL_BASIC_COMPUTE_NODE_POOL_MAX_REPLICAS"] = "500"
+	env["OPL_PRO_COMPUTE_NODE_POOL_MAX_REPLICAS"] = "500"
 	env["OPL_BASIC_COMPUTE_INSTANCE_TYPE"] = "S5.MEDIUM4-NO-LONGER-SELLING"
 
-	response := handleWithClient(Request{Action: "bootstrap_compute_node_pools", Zone: "na-siliconvalley-1", RequiredCapacity: 200}, env, client)
+	response := handleWithClient(Request{Action: "bootstrap_compute_node_pools", Zone: "na-siliconvalley-1", RequiredCapacity: 1}, env, client)
 
 	if response.Ok || response.ErrorCode != "workspace_sku_selection_invalid" || response.MutationCount != 0 {
 		t.Fatalf("revalidation response=%#v", response)
@@ -1336,10 +1425,13 @@ type fakeLegacyTkeAPI struct {
 	clusterID        string
 	clusterLevel     string
 	attributeLevel   string
+	attributeAlias   string
 	clusterNodeCount uint64
 	nodeLimit        uint64
 	levelEnabled     *bool
 	omitLevelEnabled bool
+	omitNodeCount    bool
+	extraLevelItems  []*tke2018.ClusterLevelAttribute
 }
 
 func (api *fakeLegacyTkeAPI) DescribeClusters(_ *tke2018.DescribeClustersRequest) (*tke2018.DescribeClustersResponse, error) {
@@ -1368,9 +1460,15 @@ func (api *fakeLegacyTkeAPI) DescribeClusterLevelAttribute(_ *tke2018.DescribeCl
 	if api.omitLevelEnabled {
 		levelEnabled = nil
 	}
+	var nodeCount *uint64
+	if !api.omitNodeCount {
+		nodeCount = common.Uint64Ptr(nodeLimit)
+	}
+	items := []*tke2018.ClusterLevelAttribute{{Name: common.StringPtr(clusterLevel), Alias: common.StringPtr(api.attributeAlias), NodeCount: nodeCount, Enable: levelEnabled}}
+	items = append(items, api.extraLevelItems...)
 	return &tke2018.DescribeClusterLevelAttributeResponse{Response: &tke2018.DescribeClusterLevelAttributeResponseParams{
-		TotalCount: common.Int64Ptr(1), RequestId: common.StringPtr("req-describe-cluster-level"),
-		Items: []*tke2018.ClusterLevelAttribute{{Name: common.StringPtr(clusterLevel), NodeCount: common.Uint64Ptr(nodeLimit), Enable: levelEnabled}},
+		TotalCount: common.Int64Ptr(int64(len(items))), RequestId: common.StringPtr("req-describe-cluster-level"),
+		Items: items,
 	}}, nil
 }
 
@@ -2261,6 +2359,7 @@ type fakeNativeVpcAPI struct {
 	describeSubnetsRequests []*vpc2017.DescribeSubnetsRequest
 	omitSubnet              bool
 	omitSubnetZone          bool
+	zeroAvailableIP         bool
 	availableIpCount        uint64
 	zone                    string
 	zones                   []string
@@ -2279,7 +2378,11 @@ func (api *fakeNativeVpcAPI) DescribeSubnets(request *vpc2017.DescribeSubnetsReq
 		if api.omitSubnetZone {
 			zone = nil
 		}
-		subnets = append(subnets, &vpc2017.Subnet{VpcId: common.StringPtr(firstNonEmpty(api.vpcID, "vpc-workspace")), SubnetId: rawID, Zone: zone, AvailableIpAddressCount: common.Uint64Ptr(firstNonZeroUint(api.availableIpCount, 8))})
+		availableIP := firstNonZeroUint(api.availableIpCount, 8)
+		if api.zeroAvailableIP {
+			availableIP = 0
+		}
+		subnets = append(subnets, &vpc2017.Subnet{VpcId: common.StringPtr(firstNonEmpty(api.vpcID, "vpc-workspace")), SubnetId: rawID, Zone: zone, AvailableIpAddressCount: common.Uint64Ptr(availableIP)})
 	}
 	if api.omitSubnet {
 		subnets = nil
@@ -2644,7 +2747,7 @@ func TestTencentSDKCapacityIsReadOnlyAndRequiresPrepaidQuota(t *testing.T) {
 	tkeAPI := &fakeNativeTkeAPI{nodePoolId: "np-basic", discoverNodePoolId: "np-basic", replicas: 2, maxReplicas: 10, labelPoolId: "basic"}
 	cvmAPI := &fakeNativeCvmAPI{}
 	vpcAPI := &fakeNativeVpcAPI{}
-	client := &tencentSDKClient{region: "na-siliconvalley", clusterId: "cls-123", nativeTkeClient: tkeAPI, nativeCvmClient: cvmAPI, nativeVpcClient: vpcAPI}
+	client := &tencentSDKClient{region: "na-siliconvalley", clusterId: "cls-123", nativeTkeClient: tkeAPI, nativeLegacyTkeClient: &fakeLegacyTkeAPI{}, nativeCvmClient: cvmAPI, nativeVpcClient: vpcAPI}
 
 	response := client.Capacity(Request{
 		Action:    "capacity_preflight",
@@ -2697,7 +2800,7 @@ func TestTencentSDKCapacityRequiresPackageResourceShape(t *testing.T) {
 			}
 			cvmAPI := &fakeNativeCvmAPI{zoneConfigInstanceType: test.instanceType, zoneConfigCPU: int64(test.cpu), zoneConfigMemoryGB: int64(test.memoryGB)}
 			response := (&tencentSDKClient{
-				region: "na-siliconvalley", clusterId: "cls-123", nativeTkeClient: tkeAPI, nativeCvmClient: cvmAPI, nativeVpcClient: &fakeNativeVpcAPI{},
+				region: "na-siliconvalley", clusterId: "cls-123", nativeTkeClient: tkeAPI, nativeLegacyTkeClient: &fakeLegacyTkeAPI{}, nativeCvmClient: cvmAPI, nativeVpcClient: &fakeNativeVpcAPI{},
 			}).Capacity(Request{
 				Action: "capacity_preflight", PackageId: test.packageID, Zone: "na-siliconvalley-1",
 				Pool: ComputePoolInput{Id: test.poolID, InstanceType: test.instanceType, CPU: test.cpu, MemoryGB: test.memoryGB, NodePoolId: test.nodePoolID, DesiredReplicas: 1, MaxReplicas: 10},
@@ -2756,7 +2859,7 @@ func TestTencentSDKCapacityFailsClosedOnMissingOrMismatchedPackageResourceShapeW
 				omitZoneConfigCPU: test.omitCPU, omitZoneConfigMemory: test.omitMemory,
 			}
 			response := (&tencentSDKClient{
-				region: "na-siliconvalley", clusterId: "cls-123", nativeTkeClient: tkeAPI, nativeCvmClient: cvmAPI, nativeVpcClient: &fakeNativeVpcAPI{},
+				region: "na-siliconvalley", clusterId: "cls-123", nativeTkeClient: tkeAPI, nativeLegacyTkeClient: &fakeLegacyTkeAPI{}, nativeCvmClient: cvmAPI, nativeVpcClient: &fakeNativeVpcAPI{},
 			}).Capacity(Request{
 				Action: "capacity_preflight", PackageId: test.packageID, Zone: "na-siliconvalley-1",
 				Pool: ComputePoolInput{Id: test.poolID, InstanceType: test.instanceType, CPU: test.expectedCPU, MemoryGB: test.expectedMemoryGB, NodePoolId: test.nodePoolID, DesiredReplicas: 1, MaxReplicas: 10},
@@ -2800,7 +2903,7 @@ func TestTencentSDKCapacityFailsClosedOnMissingZeroOrAmbiguousPrepaidQuota(t *te
 			tkeAPI := &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 2, maxReplicas: 10, labelPoolId: "basic"}
 			cvmAPI := &fakeNativeCvmAPI{}
 			tc.configure(cvmAPI)
-			client := &tencentSDKClient{region: "na-siliconvalley", clusterId: "cls-123", nativeTkeClient: tkeAPI, nativeCvmClient: cvmAPI, nativeVpcClient: &fakeNativeVpcAPI{}}
+			client := &tencentSDKClient{region: "na-siliconvalley", clusterId: "cls-123", nativeTkeClient: tkeAPI, nativeLegacyTkeClient: &fakeLegacyTkeAPI{}, nativeCvmClient: cvmAPI, nativeVpcClient: &fakeNativeVpcAPI{}}
 			response := client.Capacity(Request{Action: "capacity_preflight", PackageId: "basic", Zone: "na-siliconvalley-1", Pool: ComputePoolInput{Id: "basic", InstanceType: "SA5.MEDIUM4", CPU: 2, MemoryGB: 4, NodePoolId: "np-basic", DesiredReplicas: 5, MaxReplicas: 10}}, nil)
 			if response.Ok || len(cvmAPI.describeAccountQuotaRequests) != 1 {
 				t.Fatalf("invalid prepaid quota must fail closed: response=%#v quotaRequests=%d", response, len(cvmAPI.describeAccountQuotaRequests))
@@ -2831,7 +2934,7 @@ func TestTencentSDKCapacityRequiresExactSingleSKUAndZone(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			client := &tencentSDKClient{region: "na-siliconvalley", clusterId: "cls-123", nativeTkeClient: tc.tke, nativeCvmClient: &fakeNativeCvmAPI{}, nativeVpcClient: tc.vpc}
+			client := &tencentSDKClient{region: "na-siliconvalley", clusterId: "cls-123", nativeTkeClient: tc.tke, nativeLegacyTkeClient: &fakeLegacyTkeAPI{}, nativeCvmClient: &fakeNativeCvmAPI{}, nativeVpcClient: tc.vpc}
 			response := client.Capacity(Request{
 				Action: "capacity_preflight", PackageId: "basic", Zone: "na-siliconvalley-1",
 				Pool: ComputePoolInput{Id: "pool-basic-2c4g", InstanceType: "SA5.MEDIUM4", CPU: 2, MemoryGB: 4, NodePoolId: "np-basic", DesiredReplicas: 5, MaxReplicas: 10},
@@ -2845,7 +2948,7 @@ func TestTencentSDKCapacityRequiresExactSingleSKUAndZone(t *testing.T) {
 
 func TestTencentSDKCapacityRequiresExplicitPoolWithoutDiscovery(t *testing.T) {
 	tkeAPI := &fakeNativeTkeAPI{discoverNodePoolId: "np-basic"}
-	client := &tencentSDKClient{region: "na-siliconvalley", clusterId: "cls-123", nativeTkeClient: tkeAPI, nativeCvmClient: &fakeNativeCvmAPI{}, nativeVpcClient: &fakeNativeVpcAPI{}}
+	client := &tencentSDKClient{region: "na-siliconvalley", clusterId: "cls-123", nativeTkeClient: tkeAPI, nativeLegacyTkeClient: &fakeLegacyTkeAPI{}, nativeCvmClient: &fakeNativeCvmAPI{}, nativeVpcClient: &fakeNativeVpcAPI{}}
 	response := client.Capacity(Request{Action: "capacity_preflight", PackageId: "basic", Pool: ComputePoolInput{
 		Id: "pool-basic-2c4g", InstanceType: "SA5.MEDIUM4", CPU: 2, MemoryGB: 4, DesiredReplicas: 5, MaxReplicas: 10,
 	}}, map[string]string{})
@@ -2891,7 +2994,7 @@ func TestTencentSDKCapacityPreflightFailsClosedWithoutMutation(t *testing.T) {
 			if vpcAPI == nil {
 				vpcAPI = &fakeNativeVpcAPI{}
 			}
-			client := &tencentSDKClient{region: "na-siliconvalley", clusterId: "cls-123", nativeTkeClient: tc.tke, nativeCvmClient: tc.cvm, nativeVpcClient: vpcAPI}
+			client := &tencentSDKClient{region: "na-siliconvalley", clusterId: "cls-123", nativeTkeClient: tc.tke, nativeLegacyTkeClient: &fakeLegacyTkeAPI{}, nativeCvmClient: tc.cvm, nativeVpcClient: vpcAPI}
 			response := client.Capacity(Request{Action: "capacity_preflight", PackageId: "basic", Pool: ComputePoolInput{
 				Id: "pool-basic-2c4g", InstanceType: "SA5.MEDIUM4", CPU: 2, MemoryGB: 4, NodePoolId: "np-basic", DesiredReplicas: 5, MaxReplicas: 10,
 			}}, map[string]string{})
@@ -2905,6 +3008,33 @@ func TestTencentSDKCapacityPreflightFailsClosedWithoutMutation(t *testing.T) {
 	}
 }
 
+func TestTencentSDKCapacityRequiresGlobalTKEImmediateHeadroom(t *testing.T) {
+	ready := int64(0)
+	tkeAPI := &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 0, maxReplicas: 500, readyReplicas: &ready}
+	client := newFakeTencentSDKClient(tkeAPI)
+	client.nativeLegacyTkeClient = &fakeLegacyTkeAPI{clusterLevel: "L5", attributeLevel: "L5", clusterNodeCount: 500, nodeLimit: 500}
+
+	response := client.Capacity(Request{Action: "capacity_preflight", PackageId: "basic", Zone: "na-siliconvalley-1", Pool: ComputePoolInput{
+		Id: "pool-basic-2c4g", InstanceType: "SA5.MEDIUM4", CPU: 2, MemoryGB: 4, NodePoolId: "np-basic", DesiredReplicas: 1, MaxReplicas: 500,
+	}}, map[string]string{})
+
+	if response.Ok || response.ErrorCode != "tencent_capacity_cluster_headroom_unavailable" {
+		t.Fatalf("global TKE headroom must fail closed before mutation: %#v", response)
+	}
+	var stages map[string]PreflightStage
+	stages = make(map[string]PreflightStage, len(response.PreflightStages))
+	for _, stage := range response.PreflightStages {
+		stages[stage.Stage] = stage
+	}
+	if stages["tke_cluster_capacity"].Status != "failed" || stages["node_pool_contract"].Status != "blocked" ||
+		!reflect.DeepEqual(stages["node_pool_contract"].BlockedBy, []string{"tke_cluster_capacity"}) {
+		t.Fatalf("node pool contract must be blocked by global TKE capacity: %#v", stages)
+	}
+	if tkeAPI.scaleNodePoolRequest != nil || tkeAPI.createNodePoolRequest != nil || tkeAPI.modifyNodePoolRequest != nil {
+		t.Fatalf("global capacity failure must remain read-only: %#v", tkeAPI)
+	}
+}
+
 func TestTencentSDKMonthlyPreflightEvaluatesIndependentFailuresWithoutMutation(t *testing.T) {
 	ready := int64(2)
 	tkeAPI := &fakeNativeTkeAPI{
@@ -2913,7 +3043,7 @@ func TestTencentSDKMonthlyPreflightEvaluatesIndependentFailuresWithoutMutation(t
 	}
 	cvmAPI := &fakeNativeCvmAPI{zeroQuota: true, zoneConfigStatus: "SOLD_OUT"}
 	vpcAPI := &fakeNativeVpcAPI{}
-	compute := (&tencentSDKClient{region: "na-siliconvalley", clusterId: "cls-123", nativeTkeClient: tkeAPI, nativeCvmClient: cvmAPI, nativeVpcClient: vpcAPI}).Capacity(Request{
+	compute := (&tencentSDKClient{region: "na-siliconvalley", clusterId: "cls-123", nativeTkeClient: tkeAPI, nativeLegacyTkeClient: &fakeLegacyTkeAPI{}, nativeCvmClient: cvmAPI, nativeVpcClient: vpcAPI}).Capacity(Request{
 		Action: "capacity_preflight", PackageId: "basic", Zone: "na-siliconvalley-1",
 		Pool: ComputePoolInput{Id: "pool-basic-2c4g", InstanceType: "SA5.MEDIUM4", CPU: 2, MemoryGB: 4, NodePoolId: "np-basic", DesiredReplicas: 1, MaxReplicas: 10},
 	}, nil)

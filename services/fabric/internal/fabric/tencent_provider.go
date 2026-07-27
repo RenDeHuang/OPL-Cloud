@@ -85,7 +85,7 @@ func (p *TencentProvider) evaluateMonthlyPreflight(ctx context.Context, input Mo
 	if err != nil {
 		return monthlyPreflightEvaluation{Err: err}
 	}
-	expectedStages := []string{"node_pool_discovery", "node_pool_contract", "subnet", "zone", "cvm_prepaid_quota", "cvm_sku_price"}
+	expectedStages := []string{"node_pool_discovery", "tke_cluster_capacity", "node_pool_contract", "subnet", "zone", "cvm_prepaid_quota", "cvm_sku_price"}
 	if input.ResourceType == "compute" {
 		poolConfig, err := configuredPackageNodePool(input.PackageID)
 		if err != nil {
@@ -149,7 +149,7 @@ func (p *TencentProvider) MonthlyPreflightReport(ctx context.Context, input Mont
 		} else {
 			compute := p.evaluateMonthlyPreflight(ctx, MonthlyPreflightInput{ResourceType: "compute", PackageID: current.packageID, Zone: input.Zone})
 			storage := p.evaluateMonthlyPreflight(ctx, MonthlyPreflightInput{ResourceType: "storage", PackageID: current.packageID, SizeGB: current.sizeGB, Zone: input.Zone})
-			packageItems = append(packageItems, normalizedPreflightStages(compute, []string{"node_pool_discovery", "node_pool_contract", "subnet", "zone", "cvm_prepaid_quota", "cvm_sku_price"})...)
+			packageItems = append(packageItems, normalizedPreflightStages(compute, []string{"node_pool_discovery", "tke_cluster_capacity", "node_pool_contract", "subnet", "zone", "cvm_prepaid_quota", "cvm_sku_price"})...)
 			packageItems = append(packageItems, normalizedPreflightStages(storage, []string{"cbs_prepaid_quota", "cbs_price"})...)
 		}
 		packages = append(packages, MonthlyPreflightPackageReport{PackageID: current.packageID, SizeGB: current.sizeGB, Status: preflightStatus(packageItems), Items: packageItems})
@@ -164,7 +164,7 @@ func (p *TencentProvider) MonthlyPreflightReport(ctx context.Context, input Mont
 }
 
 func monthlyPreflightProviderStageNames() []string {
-	return []string{"node_pool_discovery", "node_pool_contract", "subnet", "zone", "cvm_prepaid_quota", "cvm_sku_price", "cbs_prepaid_quota", "cbs_price"}
+	return []string{"node_pool_discovery", "tke_cluster_capacity", "node_pool_contract", "subnet", "zone", "cvm_prepaid_quota", "cvm_sku_price", "cbs_prepaid_quota", "cbs_price"}
 }
 
 func normalizedPreflightStages(evaluation monthlyPreflightEvaluation, expected []string) []MonthlyPreflightStage {

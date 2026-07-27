@@ -170,6 +170,7 @@ type TKEClusterCapacityFacts struct {
 
 type TKEClusterLevelFact struct {
 	Name      string  `json:"name"`
+	Alias     string  `json:"alias,omitempty"`
 	NodeCount *uint64 `json:"nodeCount,omitempty"`
 	Enable    *bool   `json:"enable,omitempty"`
 }
@@ -588,6 +589,9 @@ func (client *tencentSDKClient) workspaceSubnetFacts(env map[string]string, zone
 }
 
 func (client *tencentSDKClient) workspaceTKECapacity() (uint64, uint64, uint64, TKEClusterCapacityFacts, error) {
+	if client == nil || client.nativeLegacyTkeClient == nil || strings.TrimSpace(client.clusterId) == "" {
+		return 0, 0, 0, TKEClusterCapacityFacts{}, fmt.Errorf("Tencent TKE cluster inventory is unavailable")
+	}
 	clustersRequest := tke2018.NewDescribeClustersRequest()
 	clustersRequest.ClusterIds = []*string{common.StringPtr(client.clusterId)}
 	clustersRequest.Limit = common.Int64Ptr(1)
@@ -613,7 +617,7 @@ func (client *tencentSDKClient) workspaceTKECapacity() (uint64, uint64, uint64, 
 		if item == nil {
 			continue
 		}
-		attribute := TKEClusterLevelFact{Name: strings.TrimSpace(stringValue(item.Name))}
+		attribute := TKEClusterLevelFact{Name: strings.TrimSpace(stringValue(item.Name)), Alias: strings.TrimSpace(stringValue(item.Alias))}
 		if item.NodeCount != nil {
 			nodeCount := *item.NodeCount
 			attribute.NodeCount = &nodeCount
@@ -627,17 +631,22 @@ func (client *tencentSDKClient) workspaceTKECapacity() (uint64, uint64, uint64, 
 	sort.Slice(facts.LevelAttributes, func(i, j int) bool {
 		return facts.LevelAttributes[i].Name < facts.LevelAttributes[j].Name
 	})
+	matchCount := 0
 	var nodeLimit *uint64
 	for _, item := range levels.Response.Items {
 		// The running cluster's matching NodeCount is the capacity fact; Enable is unrelated metadata.
-		if item != nil && stringValue(item.Name) == level && item.NodeCount != nil {
-			if nodeLimit != nil {
-				return 0, 0, 0, facts, fmt.Errorf("Tencent TKE cluster level inventory is ambiguous")
-			}
+		if item == nil || (strings.TrimSpace(stringValue(item.Name)) != level && strings.TrimSpace(stringValue(item.Alias)) != level) {
+			continue
+		}
+		matchCount++
+		if matchCount > 1 {
+			return 0, 0, 0, facts, fmt.Errorf("Tencent TKE cluster level inventory is ambiguous")
+		}
+		if item.NodeCount != nil {
 			nodeLimit = item.NodeCount
 		}
 	}
-	if nodeLimit == nil || *cluster.ClusterNodeNum > *nodeLimit {
+	if matchCount != 1 || nodeLimit == nil || *cluster.ClusterNodeNum > *nodeLimit {
 		return 0, 0, 0, facts, fmt.Errorf("Tencent TKE cluster node limit is unavailable")
 	}
 	return *nodeLimit, *cluster.ClusterNodeNum, *nodeLimit - *cluster.ClusterNodeNum, facts, nil
@@ -901,15 +910,15 @@ func (client *tencentSDKClient) Capacity(request Request, _ map[string]string) R
 	if required <= 0 || request.Pool.MaxReplicas <= 0 || strings.TrimSpace(request.Pool.InstanceType) == "" || strings.TrimSpace(request.Pool.NodePoolId) == "" || strings.TrimSpace(request.Pool.Id) == "" ||
 		!packageShapeKnown || request.Pool.CPU != expectedCPU || request.Pool.MemoryGB != expectedMemoryGB {
 		stages := []PreflightStage{}
-		for _, stage := range []string{"node_pool_discovery", "node_pool_contract", "subnet", "zone", "cvm_prepaid_quota", "cvm_sku_price"} {
+		for _, stage := range []string{"node_pool_discovery", "tke_cluster_capacity", "node_pool_contract", "subnet", "zone", "cvm_prepaid_quota", "cvm_sku_price"} {
 			stages = append(stages, completedPreflightStage(stage, "failed", "tencent_capacity_input_invalid", time.Now(), nil, nil))
 		}
 		return failedPreflightResponse(stages)
 	}
-	stages := make([]PreflightStage, 0, 6)
-	clientReady := client != nil && client.nativeTkeClient != nil && client.nativeCvmClient != nil && client.nativeVpcClient != nil
+	stages := make([]PreflightStage, 0, 7)
+	clientReady := client != nil && client.nativeTkeClient != nil && client.nativeLegacyTkeClient != nil && client.nativeCvmClient != nil && client.nativeVpcClient != nil
 	if !clientReady {
-		for _, stage := range []string{"node_pool_discovery", "node_pool_contract", "subnet", "zone", "cvm_prepaid_quota", "cvm_sku_price"} {
+		for _, stage := range []string{"node_pool_discovery", "tke_cluster_capacity", "node_pool_contract", "subnet", "zone", "cvm_prepaid_quota", "cvm_sku_price"} {
 			stages = append(stages, completedPreflightStage(stage, "failed", "tencent_capacity_client_missing", time.Now(), nil, nil))
 		}
 		return failedPreflightResponse(stages)
@@ -923,20 +932,37 @@ func (client *tencentSDKClient) Capacity(request Request, _ map[string]string) R
 		stages = append(stages, completedPreflightStage("node_pool_discovery", "passed", "", discoveryStarted, nil, map[string]any{"matchCount": 1}))
 	}
 
+	clusterCapacityStarted := time.Now()
+	clusterLimit, currentNodes, availableNodes, clusterFacts, clusterCapacityErr := client.workspaceTKECapacity()
+	clusterCapacityPassed := clusterCapacityErr == nil && availableNodes >= uint64(required)
+	clusterCapacityStatus, clusterCapacityCode := "passed", ""
+	if clusterCapacityErr != nil {
+		clusterCapacityStatus, clusterCapacityCode = "failed", "tencent_capacity_cluster_inventory_unavailable"
+	} else if !clusterCapacityPassed {
+		clusterCapacityStatus, clusterCapacityCode = "failed", "tencent_capacity_cluster_headroom_unavailable"
+	}
+	clusterSafeFacts := map[string]any{"clusterLevel": clusterFacts.ClusterLevel, "nodeLimit": clusterLimit, "currentNodes": currentNodes, "availableNodes": availableNodes, "requiredReplicas": required}
+	stages = append(stages, completedPreflightStage("tke_cluster_capacity", clusterCapacityStatus, clusterCapacityCode, clusterCapacityStarted, nil, clusterSafeFacts))
+
 	var native *tke2022.NativeNodePoolInfo
 	contractPassed := false
 	contractStarted := time.Now()
-	if pool == nil {
+	if !clusterCapacityPassed {
+		stages = append(stages, completedPreflightStage("node_pool_contract", "blocked", "preflight_dependency_blocked", contractStarted, []string{"tke_cluster_capacity"}, nil))
+	} else if pool == nil {
 		stages = append(stages, completedPreflightStage("node_pool_contract", "blocked", "preflight_dependency_blocked", contractStarted, []string{"node_pool_discovery"}, nil))
 	} else {
 		native = pool.Native
-		contractPassed = isCVMNativeNodePool(pool) && strings.TrimSpace(stringValue(pool.LifeState)) == "Running" && native.Scaling != nil && native.Scaling.MinReplicas != nil && *native.Scaling.MinReplicas == 0 && native.Scaling.MaxReplicas != nil && *native.Scaling.MaxReplicas == request.Pool.MaxReplicas &&
+		contractPassed = clusterLimit >= uint64(request.Pool.MaxReplicas) && isCVMNativeNodePool(pool) && strings.TrimSpace(stringValue(pool.LifeState)) == "Running" && native.Scaling != nil && native.Scaling.MinReplicas != nil && *native.Scaling.MinReplicas == 0 && native.Scaling.MaxReplicas != nil && *native.Scaling.MaxReplicas == request.Pool.MaxReplicas &&
 			native.Replicas != nil && native.ReadyReplicas != nil && native.EnableAutoscaling != nil && native.AutoRepair != nil &&
 			!*native.EnableAutoscaling && !*native.AutoRepair && *native.ReadyReplicas == *native.Replicas &&
 			*native.Scaling.MaxReplicas >= *native.Replicas+required && len(native.InstanceTypes) == 1 && stringValue(native.InstanceTypes[0]) == request.Pool.InstanceType && len(native.SubnetIds) > 0
 		status, code := "passed", ""
 		if !contractPassed {
 			status, code = "failed", "tencent_capacity_node_pool_unavailable"
+			if clusterCapacityPassed && clusterLimit < uint64(request.Pool.MaxReplicas) {
+				code = "tencent_capacity_node_pool_limit_exceeded"
+			}
 		}
 		facts := nodePoolSafeFacts(pool, request, required)
 		if native != nil && native.Replicas != nil && native.ReadyReplicas != nil && native.Scaling != nil && native.Scaling.MaxReplicas != nil {
@@ -1107,6 +1133,7 @@ func (client *tencentSDKClient) Capacity(request Request, _ map[string]string) R
 		RemainingQuota:  remainingQuota,
 		CurrentReplicas: *native.Replicas, ReadyReplicas: *native.ReadyReplicas,
 		MaxReplicas: *native.Scaling.MaxReplicas, TargetReplicas: *native.Replicas + required, MachineType: stringValue(native.MachineType), Zones: zones, PreflightStages: stages,
+		TKEClusterNodeLimit: clusterLimit, TKECurrentNodeCount: currentNodes, TKEAvailableNodeCapacity: availableNodes, TKECapacity: &clusterFacts,
 	}
 }
 
@@ -3152,22 +3179,37 @@ func (client *tencentSDKClient) verifyBootstrapSystemIdentity(env map[string]str
 }
 
 func bootstrapInventoryCapacity(request Request, env map[string]string) (int64, *Response) {
-	basicMax, err := requiredPositiveInt64(env, "OPL_BASIC_COMPUTE_NODE_POOL_MAX_REPLICAS")
-	if err != nil {
-		return 0, &Response{Ok: false, ErrorCode: "max_replicas_required", Message: err.Error(), Retryable: false}
-	}
-	proMax, err := requiredPositiveInt64(env, "OPL_PRO_COMPUTE_NODE_POOL_MAX_REPLICAS")
-	if err != nil || basicMax > int64(^uint64(0)>>1)-proMax {
-		if err == nil {
-			err = fmt.Errorf("Workspace NodePool maxReplicas total overflows int64")
+	for _, key := range []string{"OPL_BASIC_COMPUTE_NODE_POOL_MAX_REPLICAS", "OPL_PRO_COMPUTE_NODE_POOL_MAX_REPLICAS"} {
+		if _, err := requiredPositiveInt64(env, key); err != nil {
+			return 0, &Response{Ok: false, ErrorCode: "max_replicas_required", Message: err.Error(), Retryable: false}
 		}
-		return 0, &Response{Ok: false, ErrorCode: "max_replicas_required", Message: err.Error(), Retryable: false}
 	}
-	required := basicMax + proMax
-	if request.RequiredCapacity > 0 && request.RequiredCapacity != required {
-		return 0, &Response{Ok: false, ErrorCode: "workspace_capacity_input_mismatch", Message: "requiredCapacity must equal the approved Basic and Pro maxReplicas total.", Retryable: false}
+	const immediateHeadroom int64 = 1
+	if request.RequiredCapacity > 0 && request.RequiredCapacity != immediateHeadroom {
+		return 0, &Response{Ok: false, ErrorCode: "workspace_capacity_input_mismatch", Message: "bootstrap requiredCapacity must be exactly one immediate launch headroom.", Retryable: false}
 	}
-	return required, nil
+	return immediateHeadroom, nil
+}
+
+func validateBootstrapMaxReplicas(nodeLimit uint64, specs []bootstrapPackageSpec) *Response {
+	for _, spec := range specs {
+		if spec.MaxReplicas <= 0 || uint64(spec.MaxReplicas) > nodeLimit {
+			return &Response{Ok: false, ErrorCode: "workspace_node_pool_max_exceeds_tke_limit", Message: fmt.Sprintf("%s maxReplicas exceeds the current Tencent TKE node limit.", spec.PackageID), Retryable: false, MutationCount: 0}
+		}
+	}
+	return nil
+}
+
+func withBootstrapInventoryFacts(response Response, inventory Response, requiredCapacity int64) Response {
+	response.RequiredCapacity = requiredCapacity
+	response.PrepaidQuotaRemaining = inventory.PrepaidQuotaRemaining
+	response.Subnets = inventory.Subnets
+	response.TKEClusterNodeLimit = inventory.TKEClusterNodeLimit
+	response.TKECurrentNodeCount = inventory.TKECurrentNodeCount
+	response.TKEAvailableNodeCapacity = inventory.TKEAvailableNodeCapacity
+	response.TKECapacity = inventory.TKECapacity
+	response.ProtectedSystem = inventory.ProtectedSystem
+	return response
 }
 
 func copyStringMap(source map[string]string) map[string]string {
@@ -3268,6 +3310,9 @@ func (client *tencentSDKClient) BootstrapComputeNodePools(request Request, env m
 	if failure != nil {
 		return *failure
 	}
+	if failure = validateBootstrapMaxReplicas(inventory.TKEClusterNodeLimit, specs); failure != nil {
+		return *failure
+	}
 	if failure = validateBootstrapSystemConfig(effectiveEnv, specs); failure != nil {
 		return *failure
 	}
@@ -3325,7 +3370,7 @@ func (client *tencentSDKClient) BootstrapComputeNodePools(request Request, env m
 		} else if pendingCount > 0 {
 			status = "pending"
 		}
-		return Response{Ok: true, Status: status, NodePools: results, MutationCount: 0}
+		return withBootstrapInventoryFacts(Response{Ok: true, Status: status, NodePools: results, MutationCount: 0}, inventory, requiredCapacity)
 	}
 	mutationCount, createdCount, failedCount := 0, 0, 0
 	for index, spec := range specs {
@@ -3375,7 +3420,7 @@ func (client *tencentSDKClient) BootstrapComputeNodePools(request Request, env m
 		}
 	}
 	if failedCount > 0 || pendingCount > 0 {
-		return Response{Ok: false, Status: "partial", ErrorCode: "node_pool_bootstrap_partial", Message: "One or more package NodePools were not created; existing successful pools were preserved.", NodePools: results, MutationCount: mutationCount, Retryable: false}
+		return withBootstrapInventoryFacts(Response{Ok: false, Status: "partial", ErrorCode: "node_pool_bootstrap_partial", Message: "One or more package NodePools were not created; existing successful pools were preserved.", NodePools: results, MutationCount: mutationCount, Retryable: false}, inventory, requiredCapacity)
 	}
 	status := "completed"
 	if createdCount == len(specs) {
@@ -3383,7 +3428,7 @@ func (client *tencentSDKClient) BootstrapComputeNodePools(request Request, env m
 	} else if createdCount == 0 {
 		status = "registered"
 	}
-	return Response{Ok: true, Status: status, NodePools: results, MutationCount: mutationCount}
+	return withBootstrapInventoryFacts(Response{Ok: true, Status: status, NodePools: results, MutationCount: mutationCount}, inventory, requiredCapacity)
 }
 
 func tkeTagSpecifications(tags map[string]string, resourceType string) []*tke2022.TagSpecification {
