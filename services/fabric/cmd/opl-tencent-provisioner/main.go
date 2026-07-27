@@ -957,16 +957,13 @@ func (client *tencentSDKClient) Capacity(request Request, _ map[string]string) R
 		stages = append(stages, completedPreflightStage("node_pool_contract", "blocked", "preflight_dependency_blocked", contractStarted, []string{"node_pool_discovery"}, nil))
 	} else {
 		native = pool.Native
-		contractPassed = clusterLimit >= uint64(request.Pool.MaxReplicas) && isCVMNativeNodePool(pool) && strings.TrimSpace(stringValue(pool.LifeState)) == "Running" && native.Scaling != nil && native.Scaling.MinReplicas != nil && *native.Scaling.MinReplicas == 0 && native.Scaling.MaxReplicas != nil && *native.Scaling.MaxReplicas == request.Pool.MaxReplicas &&
+		contractPassed = isCVMNativeNodePool(pool) && strings.TrimSpace(stringValue(pool.LifeState)) == "Running" && native.Scaling != nil && native.Scaling.MinReplicas != nil && *native.Scaling.MinReplicas == 0 && native.Scaling.MaxReplicas != nil && *native.Scaling.MaxReplicas == request.Pool.MaxReplicas &&
 			native.Replicas != nil && native.ReadyReplicas != nil && native.EnableAutoscaling != nil && native.AutoRepair != nil &&
 			!*native.EnableAutoscaling && !*native.AutoRepair && *native.ReadyReplicas == *native.Replicas &&
 			*native.Scaling.MaxReplicas >= *native.Replicas+required && len(native.InstanceTypes) == 1 && stringValue(native.InstanceTypes[0]) == request.Pool.InstanceType && len(native.SubnetIds) > 0
 		status, code := "passed", ""
 		if !contractPassed {
 			status, code = "failed", "tencent_capacity_node_pool_unavailable"
-			if clusterCapacityPassed && clusterLimit < uint64(request.Pool.MaxReplicas) {
-				code = "tencent_capacity_node_pool_limit_exceeded"
-			}
 		}
 		facts := nodePoolSafeFacts(pool, request, required)
 		if native != nil && native.Replicas != nil && native.ReadyReplicas != nil && native.Scaling != nil && native.Scaling.MaxReplicas != nil {
