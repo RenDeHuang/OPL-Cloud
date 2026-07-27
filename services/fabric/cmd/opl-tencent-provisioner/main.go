@@ -3303,15 +3303,6 @@ func bootstrapInventoryCapacity(request Request, env map[string]string) (int64, 
 	return immediateHeadroom, nil
 }
 
-func validateBootstrapMaxReplicas(nodeLimit uint64, specs []bootstrapPackageSpec) *Response {
-	for _, spec := range specs {
-		if spec.MaxReplicas <= 0 || uint64(spec.MaxReplicas) > nodeLimit {
-			return &Response{Ok: false, ErrorCode: "workspace_node_pool_max_exceeds_tke_limit", Message: fmt.Sprintf("%s maxReplicas exceeds the current Tencent TKE node limit.", spec.PackageID), Retryable: false, MutationCount: 0}
-		}
-	}
-	return nil
-}
-
 func withBootstrapInventoryFacts(response Response, inventory Response, requiredCapacity int64) Response {
 	response.RequiredCapacity = requiredCapacity
 	response.PrepaidQuotaRemaining = inventory.PrepaidQuotaRemaining
@@ -3420,9 +3411,6 @@ func (client *tencentSDKClient) BootstrapComputeNodePools(request Request, env m
 	effectiveEnv["OPL_PRO_COMPUTE_INSTANCE_TYPE"] = proSKU
 	specs, failure := bootstrapPackageSpecs(effectiveEnv, true)
 	if failure != nil {
-		return *failure
-	}
-	if failure = validateBootstrapMaxReplicas(inventory.TKEClusterNodeLimit, specs); failure != nil {
 		return *failure
 	}
 	if failure = validateBootstrapSystemConfig(effectiveEnv, specs); failure != nil {
