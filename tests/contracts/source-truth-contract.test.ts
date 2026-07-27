@@ -79,6 +79,14 @@ test("Console source truth contract fixes strict envelopes and live Gateway proj
     assert.equal(source.authority, "live_sub2api_readback");
   }
   assert.deepEqual(gateway.wallet.dataFields, ["userId", "currency", "usdMicros", "status"]);
+  assert.equal(gateway.wallet.usdMicrosEncoding, "non_negative_int64_decimal_string");
+  assert.deepEqual(gateway.wallet.balanceProjection, {
+    meaning: "conservative_spendable_lower_bound",
+    conversion: "floor(rawDecimalUSD * 1000000)",
+    exactRawBalanceCopy: false,
+    unavailableWhen: ["non_numeric", "negative", "non_finite", "int64_overflow"],
+    failureBehavior: "gateway_surface_unavailable_never_zero"
+  });
   assert.deepEqual(gateway.groups.itemFields, ["id", "name", "description", "platform", "rateMultiplier", "subscriptionType", "status"]);
   assert.deepEqual(gateway.keys.itemFields, [
     "id", "name", "groupId", "kind", "status", "ipWhitelist", "ipBlacklist", "quotaUsdMicros", "quotaUsedUsdMicros",

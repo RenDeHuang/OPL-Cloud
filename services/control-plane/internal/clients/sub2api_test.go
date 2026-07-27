@@ -577,6 +577,73 @@ func TestSub2APIClientLogsInRefreshesOnceAndParsesDecimalBalance(t *testing.T) {
 	}
 }
 
+func TestSub2APIClientBalanceFloorsLiveDecimalToSpendableMicros(t *testing.T) {
+	client := newSub2APITestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/auth/login":
+			writeSub2APISuccess(t, w, map[string]any{"access_token": "access", "refresh_token": "refresh"})
+		case "/api/v1/admin/users/41":
+			writeSub2APISuccess(t, w, json.RawMessage(`{"id":41,"balance":60.00000001,"status":"active"}`))
+		default:
+			t.Fatalf("unexpected Sub2API route %s %s", r.Method, r.URL.Path)
+		}
+	}, time.Second)
+
+	balance, err := client.Balance(context.Background(), 41)
+	if err != nil || balance != (Sub2APIBalance{UserID: 41, USDMicros: 60_000_000, Status: "active"}) {
+		t.Fatalf("balance = %#v, err=%v", balance, err)
+	}
+}
+
+func TestFloorUSDDecimalToSpendableMicros(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		value string
+		want  int64
+	}{
+		{name: "sub-micro becomes zero", value: "0.00000001", want: 0},
+		{name: "fractional micro is floored", value: "60.00000001", want: 60_000_000},
+		{name: "largest representable floor", value: "9223372036854.7758079", want: 9_223_372_036_854_775_807},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := floorUSDDecimalToSpendableMicros(json.Number(tc.value))
+			if err != nil || got != tc.want {
+				t.Fatalf("floor spendable micros = %d, err=%v, want %d", got, err, tc.want)
+			}
+		})
+	}
+}
+
+func TestFloorUSDDecimalToSpendableMicrosPreservesIntegerDebitDelta(t *testing.T) {
+	pre, err := floorUSDDecimalToSpendableMicros(json.Number("60.00000001"))
+	if err != nil {
+		t.Fatalf("pre-balance projection: %v", err)
+	}
+	post, err := floorUSDDecimalToSpendableMicros(json.Number("7.42000001"))
+	if err != nil {
+		t.Fatalf("post-balance projection: %v", err)
+	}
+	if delta := pre - post; delta != 52_580_000 {
+		t.Fatalf("projected debit delta = %d, want 52580000", delta)
+	}
+}
+
+func TestFloorUSDDecimalToSpendableMicrosFailsClosed(t *testing.T) {
+	for _, value := range []string{
+		"-0.00000001",
+		"9223372036854.775808",
+		"not-a-number",
+		"NaN",
+		"Inf",
+	} {
+		t.Run(value, func(t *testing.T) {
+			if _, err := floorUSDDecimalToSpendableMicros(json.Number(value)); err == nil {
+				t.Fatalf("invalid live balance %q was accepted", value)
+			}
+		})
+	}
+}
+
 func TestSub2APIClientReloginsOnceWhenAccessOnlyTokenExpires(t *testing.T) {
 	loginCalls, refreshCalls, userCalls := 0, 0, 0
 	client := newSub2APITestClient(t, func(w http.ResponseWriter, r *http.Request) {

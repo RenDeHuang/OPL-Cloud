@@ -51,7 +51,14 @@
         "identity": "session_account_to_control_plane_sub2api_user_mapping",
         "ignoredIdentityInputs": ["accountId", "user_id", "api_key_id", "sub2apiUserId"],
         "dataFields": ["userId", "currency", "usdMicros", "status"],
-        "usdMicrosEncoding": "signed_int64_decimal_string",
+        "usdMicrosEncoding": "non_negative_int64_decimal_string",
+        "balanceProjection": {
+          "meaning": "conservative_spendable_lower_bound",
+          "conversion": "floor(rawDecimalUSD * 1000000)",
+          "exactRawBalanceCopy": false,
+          "unavailableWhen": ["non_numeric", "negative", "non_finite", "int64_overflow"],
+          "failureBehavior": "gateway_surface_unavailable_never_zero"
+        },
         "fetchedAt": "control_plane_response_fetch_completion_time",
         "sourceUpdatedAt": "omit_unless_sub2api_returns_source_timestamp"
       },
