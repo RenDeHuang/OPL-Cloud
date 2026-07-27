@@ -237,11 +237,12 @@ async function manifestFixture() {
       OPL_WORKSPACE_LAUNCH_INTERVAL_MS: "10000",
       OPL_BASIC_COMPUTE_INSTANCE_TYPE: "S5.MEDIUM4",
       OPL_PRO_COMPUTE_INSTANCE_TYPE: "S5.2XLARGE16",
-      OPL_SYSTEM_COMPUTE_CVM_ID: "ins-system-test",
+      OPL_SYSTEM_COMPUTE_MACHINE_TYPE: "NativeCVM",
+      OPL_SYSTEM_COMPUTE_CVM_ID: "ins-systemtest",
       OPL_BASIC_COMPUTE_NODE_POOL_ID: "np-basic-test",
       OPL_PRO_COMPUTE_NODE_POOL_ID: "np-pro-test",
-      OPL_BASIC_COMPUTE_NODE_POOL_MAX_REPLICAS: "20",
-      OPL_PRO_COMPUTE_NODE_POOL_MAX_REPLICAS: "8"
+      OPL_BASIC_COMPUTE_NODE_POOL_MAX_REPLICAS: "50",
+      OPL_PRO_COMPUTE_NODE_POOL_MAX_REPLICAS: "50"
     }
   };
 }
@@ -446,6 +447,7 @@ test("TKE deploy workflow matches the current deployment contract", async () => 
     "OPL_SYSTEM_COMPUTE_NODE_POOL_ID",
     "OPL_SYSTEM_COMPUTE_MACHINE_ID",
     "OPL_SYSTEM_COMPUTE_NODE_NAME",
+    "OPL_SYSTEM_COMPUTE_MACHINE_TYPE",
     "OPL_SYSTEM_COMPUTE_CVM_ID",
     "OPL_BASIC_COMPUTE_NODE_POOL_ID",
     "OPL_PRO_COMPUTE_NODE_POOL_ID",
@@ -555,9 +557,10 @@ test("dedicated NodePool bootstrap is the only manual CreateNodePool workflow", 
   assert.equal(inputs.mutate_missing_pools.default, "false");
   assert.equal(job.env.OPL_BASIC_COMPUTE_INSTANCE_TYPE, "");
   assert.equal(job.env.OPL_PRO_COMPUTE_INSTANCE_TYPE, "");
+  assert.equal(job.env.OPL_SYSTEM_COMPUTE_MACHINE_TYPE, "${{ vars.OPL_SYSTEM_COMPUTE_MACHINE_TYPE }}");
   assert.equal(job.env.OPL_SYSTEM_COMPUTE_CVM_ID, "${{ vars.OPL_SYSTEM_COMPUTE_CVM_ID }}");
-  assert.equal(job.env.OPL_BASIC_COMPUTE_NODE_POOL_MAX_REPLICAS, "500");
-  assert.equal(job.env.OPL_PRO_COMPUTE_NODE_POOL_MAX_REPLICAS, "500");
+  assert.equal(job.env.OPL_BASIC_COMPUTE_NODE_POOL_MAX_REPLICAS, "50");
+  assert.equal(job.env.OPL_PRO_COMPUTE_NODE_POOL_MAX_REPLICAS, "50");
   assert.equal(String(job.if), "${{ github.ref == 'refs/heads/main' && github.sha == inputs.merged_sha }}");
   const checkout = stepsByName(job).get("Checkout exact source");
   assert.equal(checkout.with.ref, "${{ inputs.merged_sha }}");
@@ -580,7 +583,12 @@ test("dedicated NodePool bootstrap is the only manual CreateNodePool workflow", 
   assert.match(runs, /subnets/);
   assert.match(runs, /tkeClusterNodeLimit/);
   assert.match(runs, /protectedSystem/);
-  assert.match(runs, /OPL_SYSTEM_COMPUTE_CVM_ID=\$\{system\.cvmId\}/);
+  assert.match(runs, /poolCheckStatus/);
+  assert.match(runs, /machineCheckStatus/);
+  assert.match(runs, /nodeCheckStatus/);
+  assert.match(runs, /cvmCheckStatus/);
+  assert.match(runs, /cvmApplicable/);
+  assert.match(runs, /OPL_SYSTEM_COMPUTE_MACHINE_TYPE=\$\{system\.machineType\}/);
   assert.ok(
     [...stepsByName(job).keys()].indexOf("Build current provisioner") <
       [...stepsByName(job).keys()].indexOf("Inventory and select Workspace SKUs")
@@ -736,6 +744,7 @@ test("manual cleanup workflows invoke the shared four-identity protected-resourc
       "OPL_SYSTEM_COMPUTE_NODE_POOL_ID",
       "OPL_SYSTEM_COMPUTE_MACHINE_ID",
       "OPL_SYSTEM_COMPUTE_NODE_NAME",
+      "OPL_SYSTEM_COMPUTE_MACHINE_TYPE",
       "OPL_SYSTEM_COMPUTE_CVM_ID",
       "OPL_BASIC_COMPUTE_NODE_POOL_ID",
       "OPL_PRO_COMPUTE_NODE_POOL_ID"

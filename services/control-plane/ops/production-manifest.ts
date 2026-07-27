@@ -21,6 +21,7 @@ const REQUIRED_TKE_ENV = [
   "OPL_SYSTEM_COMPUTE_NODE_POOL_ID",
   "OPL_SYSTEM_COMPUTE_MACHINE_ID",
   "OPL_SYSTEM_COMPUTE_NODE_NAME",
+  "OPL_SYSTEM_COMPUTE_MACHINE_TYPE",
   "OPL_SYSTEM_COMPUTE_CVM_ID",
   "OPL_BASIC_COMPUTE_NODE_POOL_ID",
   "OPL_PRO_COMPUTE_NODE_POOL_ID",
@@ -95,11 +96,16 @@ function hasDedicatedNodePoolIdentity(values) {
   const basicPool = String(values.OPL_BASIC_COMPUTE_NODE_POOL_ID || "").trim();
   const proPool = String(values.OPL_PRO_COMPUTE_NODE_POOL_ID || "").trim();
   const pools = [systemPool, basicPool, proPool];
+  const machineType = String(values.OPL_SYSTEM_COMPUTE_MACHINE_TYPE || "").trim();
+  const cvmId = String(values.OPL_SYSTEM_COMPUTE_CVM_ID || "").trim();
+  const cvmIdentityValid = machineType === "NativeCVM"
+    ? /^ins-[A-Za-z0-9]+$/.test(cvmId)
+    : (machineType === "Native" || machineType === "CXM") && cvmId === "";
   return pools.every((value) => /^np-[A-Za-z0-9-]+$/.test(value)) &&
     new Set(pools).size === pools.length &&
     Boolean(String(values.OPL_SYSTEM_COMPUTE_MACHINE_ID || "").trim()) &&
     Boolean(String(values.OPL_SYSTEM_COMPUTE_NODE_NAME || "").trim()) &&
-    /^ins-[A-Za-z0-9]+$/.test(String(values.OPL_SYSTEM_COMPUTE_CVM_ID || "").trim());
+    cvmIdentityValid;
 }
 
 function isPositiveInt64(value) {
@@ -131,7 +137,13 @@ export function validateProductionManifest({ env = {} } = {}) {
     ...SECRET_COMMON_ENV,
     ...providerConfig.secretEnv
   ];
-  const missingEnv = requiredEnv.filter((key) => !env[key] || (!hasSecretRef(env[key]) && !String(valueOf(env[key])).trim()));
+  const systemMachineType = String(values.OPL_SYSTEM_COMPUTE_MACHINE_TYPE || "").trim();
+  const missingEnv = requiredEnv.filter((key) => {
+    if (key === "OPL_SYSTEM_COMPUTE_CVM_ID" && (systemMachineType === "Native" || systemMachineType === "CXM")) {
+      return !Object.hasOwn(env, key);
+    }
+    return !env[key] || (!hasSecretRef(env[key]) && !String(valueOf(env[key])).trim());
+  });
   const inlineSecretEnv = secretEnv.filter((key) => env[key] && !hasSecretRef(env[key]));
   const hasVerificationMutationAuthority = FORBIDDEN_VERIFICATION_MUTATION_ENV.some((key) => Object.hasOwn(env, key));
   const checks = [

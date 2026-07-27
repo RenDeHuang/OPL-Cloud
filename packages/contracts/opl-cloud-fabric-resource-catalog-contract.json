@@ -36,14 +36,16 @@
       "packageId": "basic",
       "resourceContract": {"cpu": 2, "memoryGb": 4},
       "resolvedInstanceTypeSource": "deterministic_zone_prepaid_sell_shape_price_inventory_then_bootstrap_registration",
-      "replicasMayBeZero": true
+      "replicasMayBeZero": true,
+      "maxReplicas": 50
     },
     "pro": {
       "poolName": "pool-pro-8c16g",
       "packageId": "pro",
       "resourceContract": {"cpu": 8, "memoryGb": 16},
       "resolvedInstanceTypeSource": "deterministic_zone_prepaid_sell_shape_price_inventory_then_bootstrap_registration",
-      "replicasMayBeZero": true
+      "replicasMayBeZero": true,
+      "maxReplicas": 50
     },
     "maxReplicasPolicy": "required_explicit_configuration_no_default",
     "customerLaunchBehavior": "scale_exact_configured_pool_from_N_to_N_plus_1_without_nodepool_creation_or_existing_machine_claim"

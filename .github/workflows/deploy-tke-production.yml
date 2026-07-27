@@ -136,6 +136,7 @@ jobs:
       OPL_SYSTEM_COMPUTE_NODE_POOL_ID: ${{ vars.OPL_SYSTEM_COMPUTE_NODE_POOL_ID || 'np-6l4nkdto' }}
       OPL_SYSTEM_COMPUTE_MACHINE_ID: ${{ vars.OPL_SYSTEM_COMPUTE_MACHINE_ID || 'np-6l4nkdto-2cdtm' }}
       OPL_SYSTEM_COMPUTE_NODE_NAME: ${{ vars.OPL_SYSTEM_COMPUTE_NODE_NAME || '10.66.0.42' }}
+      OPL_SYSTEM_COMPUTE_MACHINE_TYPE: ${{ vars.OPL_SYSTEM_COMPUTE_MACHINE_TYPE }}
       OPL_SYSTEM_COMPUTE_CVM_ID: ${{ vars.OPL_SYSTEM_COMPUTE_CVM_ID }}
       OPL_BASIC_COMPUTE_NODE_POOL_ID: ${{ vars.OPL_BASIC_COMPUTE_NODE_POOL_ID }}
       OPL_PRO_COMPUTE_NODE_POOL_ID: ${{ vars.OPL_PRO_COMPUTE_NODE_POOL_ID }}
@@ -222,7 +223,7 @@ jobs:
             OPL_SYSTEM_COMPUTE_NODE_POOL_ID
             OPL_SYSTEM_COMPUTE_MACHINE_ID
             OPL_SYSTEM_COMPUTE_NODE_NAME
-            OPL_SYSTEM_COMPUTE_CVM_ID
+            OPL_SYSTEM_COMPUTE_MACHINE_TYPE
             OPL_BASIC_COMPUTE_NODE_POOL_ID
             OPL_PRO_COMPUTE_NODE_POOL_ID
             OPL_BASIC_COMPUTE_NODE_POOL_MAX_REPLICAS
@@ -242,6 +243,24 @@ jobs:
             printf 'Missing required deploy inputs: %s\n' "${missing[*]}" >&2
             exit 1
           fi
+          case "$OPL_SYSTEM_COMPUTE_MACHINE_TYPE" in
+            NativeCVM)
+              if ! [[ "${OPL_SYSTEM_COMPUTE_CVM_ID:-}" =~ ^ins-[A-Za-z0-9]+$ ]]; then
+                echo "NativeCVM system identity requires a verified ins-* CVM id." >&2
+                exit 1
+              fi
+              ;;
+            Native|CXM)
+              if [ -n "${OPL_SYSTEM_COMPUTE_CVM_ID:-}" ]; then
+                echo "$OPL_SYSTEM_COMPUTE_MACHINE_TYPE system identity must not configure a CVM id." >&2
+                exit 1
+              fi
+              ;;
+            *)
+              echo "OPL_SYSTEM_COMPUTE_MACHINE_TYPE must be NativeCVM, Native, or CXM." >&2
+              exit 1
+              ;;
+          esac
           validate_image_ref() {
             name="$1"
             image="$2"

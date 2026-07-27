@@ -31,6 +31,7 @@ test("OPL Cloud TKE manifest declares three decoupled services and monthly Sub2A
   assert.equal(config.data.OPL_BASIC_COMPUTE_INSTANCE_TYPE, "");
   assert.equal(config.data.OPL_PRO_COMPUTE_INSTANCE_TYPE, "");
   for (const key of [
+    "OPL_SYSTEM_COMPUTE_MACHINE_TYPE",
     "OPL_SYSTEM_COMPUTE_CVM_ID",
     "OPL_BASIC_COMPUTE_NODE_POOL_ID",
     "OPL_PRO_COMPUTE_NODE_POOL_ID",
@@ -160,6 +161,7 @@ test("ordinary deploy configures dedicated package pools and omits retired netwo
     "OPL_SYSTEM_COMPUTE_NODE_POOL_ID",
     "OPL_SYSTEM_COMPUTE_MACHINE_ID",
     "OPL_SYSTEM_COMPUTE_NODE_NAME",
+    "OPL_SYSTEM_COMPUTE_MACHINE_TYPE",
     "OPL_SYSTEM_COMPUTE_CVM_ID",
     "OPL_BASIC_COMPUTE_NODE_POOL_ID",
     "OPL_PRO_COMPUTE_NODE_POOL_ID",
@@ -198,6 +200,7 @@ test("production env examples use the launch zone and pinned images", async () =
       "OPL_SYSTEM_COMPUTE_NODE_POOL_ID",
       "OPL_SYSTEM_COMPUTE_MACHINE_ID",
       "OPL_SYSTEM_COMPUTE_NODE_NAME",
+      "OPL_SYSTEM_COMPUTE_MACHINE_TYPE",
       "OPL_SYSTEM_COMPUTE_CVM_ID",
       "OPL_BASIC_COMPUTE_NODE_POOL_ID",
       "OPL_PRO_COMPUTE_NODE_POOL_ID",

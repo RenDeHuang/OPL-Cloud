@@ -78,6 +78,9 @@
     "OPL_SYSTEM_COMPUTE_NODE_NAME": {
       "value": "10.66.0.42"
     },
+    "OPL_SYSTEM_COMPUTE_MACHINE_TYPE": {
+      "value": "NativeCVM"
+    },
     "OPL_SYSTEM_COMPUTE_CVM_ID": {
       "value": "ins-systemexample"
     },
@@ -88,10 +91,10 @@
       "value": "np-proexample"
     },
     "OPL_BASIC_COMPUTE_NODE_POOL_MAX_REPLICAS": {
-      "value": "1"
+      "value": "50"
     },
     "OPL_PRO_COMPUTE_NODE_POOL_MAX_REPLICAS": {
-      "value": "1"
+      "value": "50"
     },
     "OPL_CODEX_MODEL": {
       "value": "gpt-5.5"

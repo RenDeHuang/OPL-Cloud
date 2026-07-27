@@ -38,6 +38,10 @@ var errTKEInstanceNotFound = errors.New("TKE instance not found")
 
 const tkeListPageLimit int64 = 100
 const nodePoolBootstrapMutationConfirmation = "CREATE_MISSING_WORKSPACE_NODEPOOLS"
+const protectedCheckNotChecked = "not_checked"
+const protectedCheckPassed = "passed"
+const protectedCheckFailed = "failed"
+const protectedCheckNotApplicable = "not_applicable"
 
 type Request struct {
 	Action           string                 `json:"action"`
@@ -176,10 +180,16 @@ type TKEClusterLevelFact struct {
 }
 
 type ProtectedSystemFacts struct {
-	NodePoolID string `json:"nodePoolId"`
-	MachineID  string `json:"machineId"`
-	NodeName   string `json:"nodeName"`
-	CVMID      string `json:"cvmId"`
+	NodePoolID         string `json:"nodePoolId,omitempty"`
+	PoolCheckStatus    string `json:"poolCheckStatus"`
+	MachineID          string `json:"machineId,omitempty"`
+	MachineCheckStatus string `json:"machineCheckStatus"`
+	NodeName           string `json:"nodeName,omitempty"`
+	NodeCheckStatus    string `json:"nodeCheckStatus"`
+	MachineType        string `json:"machineType,omitempty"`
+	CVMApplicable      bool   `json:"cvmApplicable"`
+	CVMID              string `json:"cvmId,omitempty"`
+	CVMCheckStatus     string `json:"cvmCheckStatus"`
 }
 
 type NodePoolBootstrapResult struct {
@@ -653,21 +663,13 @@ func (client *tencentSDKClient) workspaceTKECapacity() (uint64, uint64, uint64, 
 }
 
 func (client *tencentSDKClient) bootstrapSystemFacts(env map[string]string) (ProtectedSystemFacts, error) {
+	facts := newProtectedSystemFacts()
 	pools, err := client.bootstrapNodePoolInventory()
 	if err != nil {
-		return ProtectedSystemFacts{}, err
+		facts.PoolCheckStatus = protectedCheckFailed
+		return facts, err
 	}
-	systemPoolID := strings.TrimSpace(env["OPL_SYSTEM_COMPUTE_NODE_POOL_ID"])
-	matchCount := 0
-	for _, pool := range pools {
-		if stringValue(pool.NodePoolId) == systemPoolID {
-			matchCount++
-		}
-	}
-	if matchCount != 1 {
-		return ProtectedSystemFacts{}, fmt.Errorf("protected system NodePool identity is unavailable")
-	}
-	return client.verifyBootstrapSystemIdentity(env)
+	return client.verifyBootstrapSystemIdentity(pools, env)
 }
 
 func (client *tencentSDKClient) WorkspaceSKUInventory(request Request, env map[string]string) Response {
@@ -727,6 +729,7 @@ func (client *tencentSDKClient) WorkspaceSKUInventory(request Request, env map[s
 		response := workspaceSKUInventoryFailure("protected_system_identity_mismatch", fmt.Errorf("Protected system identity inventory is unavailable or inconsistent"))
 		response.SKUPackages, response.PrepaidQuotaRemaining, response.Subnets = packages, quota, subnets
 		response.TKEClusterNodeLimit, response.TKECurrentNodeCount, response.TKEAvailableNodeCapacity = nodeLimit, currentNodes, availableNodes
+		response.ProtectedSystem = protectedSystem
 		return response
 	}
 	response := Response{
@@ -2989,14 +2992,40 @@ func requiredPositiveInt64(env map[string]string, key string) (int64, error) {
 	return value, nil
 }
 
+func canonicalNativeMachineType(value string) (string, bool, bool) {
+	switch {
+	case strings.EqualFold(strings.TrimSpace(value), "NativeCVM"):
+		return "NativeCVM", true, true
+	case strings.EqualFold(strings.TrimSpace(value), "Native"):
+		return "Native", false, true
+	case strings.EqualFold(strings.TrimSpace(value), "CXM"):
+		return "CXM", false, true
+	default:
+		return strings.TrimSpace(value), false, false
+	}
+}
+
+func validTencentCVMID(value string) bool {
+	value = strings.TrimSpace(value)
+	return len(value) > len("ins-") && strings.HasPrefix(value, "ins-")
+}
+
 func validateBootstrapSystemConfig(env map[string]string, specs []bootstrapPackageSpec) *Response {
-	for _, key := range []string{"OPL_SYSTEM_COMPUTE_NODE_POOL_ID", "OPL_SYSTEM_COMPUTE_MACHINE_ID", "OPL_SYSTEM_COMPUTE_NODE_NAME", "OPL_SYSTEM_COMPUTE_CVM_ID"} {
+	for _, key := range []string{"OPL_SYSTEM_COMPUTE_NODE_POOL_ID", "OPL_SYSTEM_COMPUTE_MACHINE_ID", "OPL_SYSTEM_COMPUTE_NODE_NAME", "OPL_SYSTEM_COMPUTE_MACHINE_TYPE"} {
 		if strings.TrimSpace(env[key]) == "" {
 			return &Response{Ok: false, ErrorCode: "protected_resource_guard_configuration_invalid", Message: key + " is required for node pool bootstrap.", Retryable: false}
 		}
 	}
-	if !strings.HasPrefix(strings.TrimSpace(env["OPL_SYSTEM_COMPUTE_CVM_ID"]), "ins-") {
-		return &Response{Ok: false, ErrorCode: "protected_resource_guard_configuration_invalid", Message: "System CVM identity must be a verified ins-* value.", Retryable: false}
+	machineType, cvmApplicable, supported := canonicalNativeMachineType(env["OPL_SYSTEM_COMPUTE_MACHINE_TYPE"])
+	if !supported {
+		return &Response{Ok: false, ErrorCode: "protected_resource_guard_configuration_invalid", Message: "System MachineType must be NativeCVM, Native, or CXM.", Retryable: false}
+	}
+	cvmID := strings.TrimSpace(env["OPL_SYSTEM_COMPUTE_CVM_ID"])
+	if cvmApplicable && !validTencentCVMID(cvmID) {
+		return &Response{Ok: false, ErrorCode: "protected_resource_guard_configuration_invalid", Message: "NativeCVM system identity requires a verified ins-* value.", Retryable: false}
+	}
+	if !cvmApplicable && cvmID != "" {
+		return &Response{Ok: false, ErrorCode: "protected_resource_guard_configuration_invalid", Message: machineType + " system identity must not configure a CVM identity.", Retryable: false}
 	}
 	systemPoolID := strings.TrimSpace(env["OPL_SYSTEM_COMPUTE_NODE_POOL_ID"])
 	seen := map[string]bool{systemPoolID: true}
@@ -3143,39 +3172,122 @@ func bootstrapInventoryMatches(pools []*tke2022.NodePool, env map[string]string,
 	return matches, nil
 }
 
-func (client *tencentSDKClient) verifyBootstrapSystemIdentity(env map[string]string) (ProtectedSystemFacts, error) {
+func newProtectedSystemFacts() ProtectedSystemFacts {
+	return ProtectedSystemFacts{
+		PoolCheckStatus:    protectedCheckNotChecked,
+		MachineCheckStatus: protectedCheckNotChecked,
+		NodeCheckStatus:    protectedCheckNotChecked,
+		CVMCheckStatus:     protectedCheckNotChecked,
+	}
+}
+
+func (client *tencentSDKClient) verifyBootstrapSystemIdentity(pools []*tke2022.NodePool, env map[string]string) (ProtectedSystemFacts, error) {
+	facts := newProtectedSystemFacts()
 	systemPoolID := strings.TrimSpace(env["OPL_SYSTEM_COMPUTE_NODE_POOL_ID"])
 	wantMachine := strings.TrimSpace(env["OPL_SYSTEM_COMPUTE_MACHINE_ID"])
 	wantNode := strings.TrimSpace(env["OPL_SYSTEM_COMPUTE_NODE_NAME"])
-	if systemPoolID == "" || wantMachine == "" || wantNode == "" {
-		return ProtectedSystemFacts{}, fmt.Errorf("protected system Pool, Machine, and Node identities are required")
+	if systemPoolID == "" {
+		facts.PoolCheckStatus = protectedCheckFailed
+		return facts, fmt.Errorf("protected system NodePool identity is required")
+	}
+	var systemPool *tke2022.NodePool
+	for _, pool := range pools {
+		if pool != nil && stringValue(pool.NodePoolId) == systemPoolID {
+			if systemPool != nil {
+				facts.PoolCheckStatus = protectedCheckFailed
+				return facts, fmt.Errorf("protected system NodePool identity is ambiguous")
+			}
+			systemPool = pool
+		}
+	}
+	if systemPool == nil {
+		facts.PoolCheckStatus = protectedCheckFailed
+		return facts, fmt.Errorf("protected system NodePool identity is unavailable")
+	}
+	facts.NodePoolID = systemPoolID
+	facts.PoolCheckStatus = protectedCheckPassed
+	rawMachineType := ""
+	if systemPool.Native != nil {
+		rawMachineType = stringValue(systemPool.Native.MachineType)
+	}
+	machineType, cvmApplicable, supportedMachineType := canonicalNativeMachineType(rawMachineType)
+	facts.MachineType = machineType
+	facts.CVMApplicable = cvmApplicable
+	if wantMachine == "" {
+		facts.MachineCheckStatus = protectedCheckFailed
+		return facts, fmt.Errorf("protected system Machine identity is required")
 	}
 	machines, _, err := client.describeClusterMachines(systemPoolID)
 	if err != nil {
-		return ProtectedSystemFacts{}, err
+		facts.MachineCheckStatus = protectedCheckFailed
+		return facts, err
 	}
 	var matched *tke2022.Machine
 	for _, machine := range machines {
 		if machine != nil && stringValue(machine.MachineName) == wantMachine {
 			if matched != nil {
-				return ProtectedSystemFacts{}, fmt.Errorf("protected system Machine identity is ambiguous")
+				facts.MachineCheckStatus = protectedCheckFailed
+				return facts, fmt.Errorf("protected system Machine identity is ambiguous")
 			}
 			matched = machine
 		}
 	}
-	if matched == nil || kubernetesNodeName(matched) != wantNode {
-		return ProtectedSystemFacts{}, fmt.Errorf("protected system Machine and Node identities do not match")
+	if matched == nil {
+		facts.MachineCheckStatus = protectedCheckFailed
+		return facts, fmt.Errorf("protected system Machine identity does not match")
+	}
+	facts.MachineID = wantMachine
+	facts.MachineCheckStatus = protectedCheckPassed
+	if wantNode == "" {
+		facts.NodeCheckStatus = protectedCheckFailed
+		return facts, fmt.Errorf("protected system Node identity is required")
+	}
+	nodeMatches := 0
+	for _, machine := range machines {
+		if machine != nil && kubernetesNodeName(machine) == wantNode {
+			nodeMatches++
+		}
+	}
+	if kubernetesNodeName(matched) != wantNode || nodeMatches != 1 {
+		facts.NodeCheckStatus = protectedCheckFailed
+		return facts, fmt.Errorf("protected system Machine and Node identities do not match uniquely")
+	}
+	facts.NodeName = wantNode
+	facts.NodeCheckStatus = protectedCheckPassed
+	if !supportedMachineType {
+		facts.CVMCheckStatus = protectedCheckFailed
+		return facts, fmt.Errorf("protected system MachineType is unsupported")
+	}
+	configuredMachineType := strings.TrimSpace(env["OPL_SYSTEM_COMPUTE_MACHINE_TYPE"])
+	if configuredMachineType != "" {
+		expectedMachineType, _, configuredMachineTypeSupported := canonicalNativeMachineType(configuredMachineType)
+		if !configuredMachineTypeSupported || expectedMachineType != machineType {
+			facts.CVMCheckStatus = protectedCheckFailed
+			return facts, fmt.Errorf("protected system MachineType does not match configured identity")
+		}
+	}
+	configuredCVMID := strings.TrimSpace(env["OPL_SYSTEM_COMPUTE_CVM_ID"])
+	if !cvmApplicable {
+		if configuredCVMID != "" {
+			facts.CVMCheckStatus = protectedCheckFailed
+			return facts, fmt.Errorf("protected non-CVM system identity configured an unexpected CVM")
+		}
+		facts.CVMCheckStatus = protectedCheckNotApplicable
+		return facts, nil
 	}
 	cvm, _, err := client.describeCvmInstanceByPrivateIp(stringValue(matched.LanIP))
 	if err != nil || cvm == nil {
-		return ProtectedSystemFacts{}, fmt.Errorf("protected system CVM identity does not match")
+		facts.CVMCheckStatus = protectedCheckFailed
+		return facts, fmt.Errorf("protected system CVM identity does not match")
 	}
 	resolvedCVMID := strings.TrimSpace(stringValue(cvm.InstanceId))
-	configuredCVMID := strings.TrimSpace(env["OPL_SYSTEM_COMPUTE_CVM_ID"])
-	if len(resolvedCVMID) <= len("ins-") || !strings.HasPrefix(resolvedCVMID, "ins-") || (configuredCVMID != "" && configuredCVMID != resolvedCVMID) {
-		return ProtectedSystemFacts{}, fmt.Errorf("protected system CVM identity does not match")
+	if !validTencentCVMID(resolvedCVMID) || (configuredCVMID != "" && configuredCVMID != resolvedCVMID) {
+		facts.CVMCheckStatus = protectedCheckFailed
+		return facts, fmt.Errorf("protected system CVM identity does not match")
 	}
-	return ProtectedSystemFacts{NodePoolID: systemPoolID, MachineID: wantMachine, NodeName: wantNode, CVMID: resolvedCVMID}, nil
+	facts.CVMID = resolvedCVMID
+	facts.CVMCheckStatus = protectedCheckPassed
+	return facts, nil
 }
 
 func bootstrapInventoryCapacity(request Request, env map[string]string) (int64, *Response) {
@@ -3327,9 +3439,11 @@ func (client *tencentSDKClient) BootstrapComputeNodePools(request Request, env m
 	if failure != nil {
 		return *failure
 	}
-	if _, err := client.verifyBootstrapSystemIdentity(effectiveEnv); err != nil {
-		return Response{Ok: false, ErrorCode: "protected_system_identity_mismatch", Message: "Protected system identity is unavailable or inconsistent.", Retryable: false}
+	protectedSystem, err := client.verifyBootstrapSystemIdentity(pools, effectiveEnv)
+	if err != nil {
+		return Response{Ok: false, ErrorCode: "protected_system_identity_mismatch", Message: "Protected system identity is unavailable or inconsistent.", ProtectedSystem: protectedSystem, MutationCount: 0, Retryable: false}
 	}
+	inventory.ProtectedSystem = protectedSystem
 	results := make([]NodePoolBootstrapResult, 0, len(specs))
 	missing, pendingCount := 0, 0
 	for _, spec := range specs {

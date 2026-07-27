@@ -107,6 +107,7 @@ func protectedResourceEnv() map[string]string {
 		"OPL_SYSTEM_COMPUTE_NODE_POOL_ID":          "np-system",
 		"OPL_SYSTEM_COMPUTE_MACHINE_ID":            "machine-system",
 		"OPL_SYSTEM_COMPUTE_NODE_NAME":             "10.66.0.42",
+		"OPL_SYSTEM_COMPUTE_MACHINE_TYPE":          "NativeCVM",
 		"OPL_SYSTEM_COMPUTE_CVM_ID":                "ins-system",
 		"OPL_BASIC_COMPUTE_NODE_POOL_ID":           "np-basic",
 		"OPL_PRO_COMPUTE_NODE_POOL_ID":             "np-pro",
@@ -647,6 +648,7 @@ type fakeNativeTkeAPI struct {
 	zeroNativeMemory            bool
 	systemMachineName           string
 	systemNodeName              string
+	duplicateSystemNode         bool
 }
 
 func TestBootstrapComputeNodePoolsRequiresDedicatedMutationAuthority(t *testing.T) {
@@ -708,7 +710,11 @@ func TestWorkspaceSKUInventorySelectsDeterministicCheapestEligiblePackages(t *te
 	if len(response.Subnets) != 1 || response.Subnets[0].AvailableIPAddresses != 500 || response.Subnets[0].Zone != "na-siliconvalley-1" || response.Subnets[0].VPCID != "vpc-workspace" {
 		t.Fatalf("subnet facts=%#v", response.Subnets)
 	}
-	if response.ProtectedSystem.NodePoolID != "np-system" || response.ProtectedSystem.MachineID != "machine-system" || response.ProtectedSystem.NodeName != "10.66.0.42" || response.ProtectedSystem.CVMID != "ins-system" {
+	if response.ProtectedSystem.NodePoolID != "np-system" || response.ProtectedSystem.PoolCheckStatus != "passed" ||
+		response.ProtectedSystem.MachineID != "machine-system" || response.ProtectedSystem.MachineCheckStatus != "passed" ||
+		response.ProtectedSystem.NodeName != "10.66.0.42" || response.ProtectedSystem.NodeCheckStatus != "passed" ||
+		response.ProtectedSystem.MachineType != "NativeCVM" || !response.ProtectedSystem.CVMApplicable ||
+		response.ProtectedSystem.CVMID != "ins-system" || response.ProtectedSystem.CVMCheckStatus != "passed" {
 		t.Fatalf("protected facts=%#v", response.ProtectedSystem)
 	}
 	if len(response.SKUPackages) != 2 {
@@ -903,15 +909,17 @@ func TestWorkspaceSKUInventoryOmitsTKEFactsWhenClusterIdentityIsUnavailable(t *t
 	}
 }
 
-func TestWorkspaceSKUInventoryResolvesProtectedSystemCVMWhenUnconfigured(t *testing.T) {
+func TestWorkspaceSKUInventoryDiscoversProtectedSystemMachineTypeAndCVMWhenUnconfigured(t *testing.T) {
 	tkeAPI := &fakeNativeTkeAPI{nodePools: bootstrapInventory("np-system")}
 	client := newWorkspaceSKUInventoryTencentSDKClient(tkeAPI)
 	env := workspaceInventoryEnv()
+	delete(env, "OPL_SYSTEM_COMPUTE_MACHINE_TYPE")
 	delete(env, "OPL_SYSTEM_COMPUTE_CVM_ID")
 
 	response := handleWithClient(Request{Action: "workspace_sku_inventory", Zone: "na-siliconvalley-1", RequiredCapacity: 1}, env, client)
 
-	if !response.Ok || response.ProtectedSystem.CVMID != "ins-system" || response.MutationCount != 0 {
+	if !response.Ok || response.ProtectedSystem.MachineType != "NativeCVM" || !response.ProtectedSystem.CVMApplicable ||
+		response.ProtectedSystem.CVMID != "ins-system" || response.ProtectedSystem.CVMCheckStatus != "passed" || response.MutationCount != 0 {
 		t.Fatalf("protected system CVM was not resolved read-only: %#v", response)
 	}
 	if len(tkeAPI.createNodePoolRequests) != 0 || len(tkeAPI.scaleNodePoolRequests) != 0 || len(client.nativeCvmClient.(*fakeNativeCvmAPI).modifyInstancesRequest) != 0 {
@@ -919,28 +927,83 @@ func TestWorkspaceSKUInventoryResolvesProtectedSystemCVMWhenUnconfigured(t *test
 	}
 }
 
-func TestWorkspaceSKUInventoryFailsClosedOnUnverifiableProtectedSystemCVM(t *testing.T) {
+func TestWorkspaceSKUInventoryDiscoversExplicitNonCVMSystemMachineTypes(t *testing.T) {
+	for _, machineType := range []string{"Native", "CXM"} {
+		t.Run(machineType, func(t *testing.T) {
+			tkeAPI := &fakeNativeTkeAPI{nodePools: bootstrapInventory("np-system")}
+			tkeAPI.nodePools[0].Native.MachineType = common.StringPtr(machineType)
+			client := newWorkspaceSKUInventoryTencentSDKClient(tkeAPI)
+			cvmAPI := client.nativeCvmClient.(*fakeNativeCvmAPI)
+			cvmAPI.err = errors.New("non-CVM system identity must not call CVM")
+			env := workspaceInventoryEnv()
+			delete(env, "OPL_SYSTEM_COMPUTE_MACHINE_TYPE")
+			delete(env, "OPL_SYSTEM_COMPUTE_CVM_ID")
+
+			response := handleWithClient(Request{Action: "workspace_sku_inventory", Zone: "na-siliconvalley-1", RequiredCapacity: 1}, env, client)
+
+			facts := response.ProtectedSystem
+			if !response.Ok || response.MutationCount != 0 || facts.NodePoolID != "np-system" || facts.PoolCheckStatus != "passed" ||
+				facts.MachineID != "machine-system" || facts.MachineCheckStatus != "passed" || facts.NodeName != "10.66.0.42" || facts.NodeCheckStatus != "passed" ||
+				facts.MachineType != machineType || facts.CVMApplicable || facts.CVMID != "" || facts.CVMCheckStatus != "not_applicable" {
+				t.Fatalf("non-CVM protected system facts=%#v response=%#v", facts, response)
+			}
+			if len(cvmAPI.describeInstancesRequest) != 0 {
+				t.Fatalf("non-CVM system identity queried CVM: %#v", cvmAPI.describeInstancesRequest)
+			}
+		})
+	}
+}
+
+func TestWorkspaceSKUInventoryFailsClosedOnUnverifiableProtectedSystemIdentity(t *testing.T) {
 	for _, test := range []struct {
-		name      string
-		configure func(*fakeNativeTkeAPI, *fakeNativeCvmAPI, map[string]string)
+		name               string
+		configure          func(*fakeNativeTkeAPI, *fakeNativeCvmAPI, map[string]string)
+		machineType        string
+		cvmApplicable      bool
+		poolCheckStatus    string
+		machineCheckStatus string
+		nodeCheckStatus    string
+		cvmCheckStatus     string
 	}{
-		{name: "no CVM", configure: func(_ *fakeNativeTkeAPI, cvm *fakeNativeCvmAPI, _ map[string]string) { cvm.empty = true }},
-		{name: "multiple CVMs", configure: func(_ *fakeNativeTkeAPI, cvm *fakeNativeCvmAPI, _ map[string]string) { cvm.privateIPInstanceCount = 2 }},
+		{name: "duplicate system NodePool", configure: func(tke *fakeNativeTkeAPI, _ *fakeNativeCvmAPI, _ map[string]string) {
+			tke.nodePools = append(tke.nodePools, bootstrapNodePool("np-system", "system-copy", "system", "S5.2XLARGE16", 20))
+		}, poolCheckStatus: "failed", machineCheckStatus: "not_checked", nodeCheckStatus: "not_checked", cvmCheckStatus: "not_checked"},
+		{name: "duplicate system Machine", configure: func(tke *fakeNativeTkeAPI, _ *fakeNativeCvmAPI, _ map[string]string) {
+			tke.duplicateMachineName = true
+		}, machineType: "NativeCVM", cvmApplicable: true, poolCheckStatus: "passed", machineCheckStatus: "failed", nodeCheckStatus: "not_checked", cvmCheckStatus: "not_checked"},
+		{name: "duplicate system Node", configure: func(tke *fakeNativeTkeAPI, _ *fakeNativeCvmAPI, _ map[string]string) {
+			tke.duplicateSystemNode = true
+		}, machineType: "NativeCVM", cvmApplicable: true, poolCheckStatus: "passed", machineCheckStatus: "passed", nodeCheckStatus: "failed", cvmCheckStatus: "not_checked"},
+		{name: "no CVM", machineType: "NativeCVM", cvmApplicable: true, poolCheckStatus: "passed", machineCheckStatus: "passed", nodeCheckStatus: "passed", cvmCheckStatus: "failed", configure: func(_ *fakeNativeTkeAPI, cvm *fakeNativeCvmAPI, _ map[string]string) { cvm.empty = true }},
+		{name: "multiple CVMs", machineType: "NativeCVM", cvmApplicable: true, poolCheckStatus: "passed", machineCheckStatus: "passed", nodeCheckStatus: "passed", cvmCheckStatus: "failed", configure: func(_ *fakeNativeTkeAPI, cvm *fakeNativeCvmAPI, _ map[string]string) { cvm.privateIPInstanceCount = 2 }},
 		{name: "Machine mismatch", configure: func(tke *fakeNativeTkeAPI, _ *fakeNativeCvmAPI, _ map[string]string) {
 			tke.systemMachineName = "machine-other"
-		}},
+		}, machineType: "NativeCVM", cvmApplicable: true, poolCheckStatus: "passed", machineCheckStatus: "failed", nodeCheckStatus: "not_checked", cvmCheckStatus: "not_checked"},
 		{name: "Node mismatch", configure: func(tke *fakeNativeTkeAPI, _ *fakeNativeCvmAPI, _ map[string]string) {
 			tke.systemNodeName = "10.66.0.99"
-		}},
+		}, machineType: "NativeCVM", cvmApplicable: true, poolCheckStatus: "passed", machineCheckStatus: "passed", nodeCheckStatus: "failed", cvmCheckStatus: "not_checked"},
 		{name: "invalid CVM identity", configure: func(_ *fakeNativeTkeAPI, cvm *fakeNativeCvmAPI, _ map[string]string) {
 			cvm.privateIPInstanceID = "machine-system"
-		}},
+		}, machineType: "NativeCVM", cvmApplicable: true, poolCheckStatus: "passed", machineCheckStatus: "passed", nodeCheckStatus: "passed", cvmCheckStatus: "failed"},
 		{name: "empty CVM identity suffix", configure: func(_ *fakeNativeTkeAPI, cvm *fakeNativeCvmAPI, _ map[string]string) {
 			cvm.privateIPInstanceID = "ins-"
-		}},
+		}, machineType: "NativeCVM", cvmApplicable: true, poolCheckStatus: "passed", machineCheckStatus: "passed", nodeCheckStatus: "passed", cvmCheckStatus: "failed"},
 		{name: "configured CVM mismatch", configure: func(_ *fakeNativeTkeAPI, cvm *fakeNativeCvmAPI, env map[string]string) {
 			env["OPL_SYSTEM_COMPUTE_CVM_ID"] = "ins-expected"
 			cvm.privateIPInstanceID = "ins-other"
+		}, machineType: "NativeCVM", cvmApplicable: true, poolCheckStatus: "passed", machineCheckStatus: "passed", nodeCheckStatus: "passed", cvmCheckStatus: "failed"},
+		{name: "configured MachineType mismatch", configure: func(tke *fakeNativeTkeAPI, _ *fakeNativeCvmAPI, env map[string]string) {
+			tke.nodePools[0].Native.MachineType = common.StringPtr("Native")
+			env["OPL_SYSTEM_COMPUTE_MACHINE_TYPE"] = "NativeCVM"
+		}, machineType: "Native", poolCheckStatus: "passed", machineCheckStatus: "passed", nodeCheckStatus: "passed", cvmCheckStatus: "failed"},
+		{name: "non-CVM system configured with CVM", configure: func(tke *fakeNativeTkeAPI, _ *fakeNativeCvmAPI, env map[string]string) {
+			tke.nodePools[0].Native.MachineType = common.StringPtr("Native")
+			env["OPL_SYSTEM_COMPUTE_MACHINE_TYPE"] = "Native"
+			env["OPL_SYSTEM_COMPUTE_CVM_ID"] = "ins-unexpected"
+		}, machineType: "Native", poolCheckStatus: "passed", machineCheckStatus: "passed", nodeCheckStatus: "passed", cvmCheckStatus: "failed"},
+		{name: "unknown MachineType", machineType: "Unknown", poolCheckStatus: "passed", machineCheckStatus: "passed", nodeCheckStatus: "passed", cvmCheckStatus: "failed", configure: func(tke *fakeNativeTkeAPI, _ *fakeNativeCvmAPI, env map[string]string) {
+			tke.nodePools[0].Native.MachineType = common.StringPtr("Unknown")
+			delete(env, "OPL_SYSTEM_COMPUTE_MACHINE_TYPE")
 		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -954,6 +1017,11 @@ func TestWorkspaceSKUInventoryFailsClosedOnUnverifiableProtectedSystemCVM(t *tes
 
 			if response.Ok || response.ErrorCode != "protected_system_identity_mismatch" || response.MutationCount != 0 {
 				t.Fatalf("unverifiable protected system identity accepted: %#v", response)
+			}
+			facts := response.ProtectedSystem
+			if facts.MachineType != test.machineType || facts.CVMApplicable != test.cvmApplicable || facts.PoolCheckStatus != test.poolCheckStatus ||
+				facts.MachineCheckStatus != test.machineCheckStatus || facts.NodeCheckStatus != test.nodeCheckStatus || facts.CVMCheckStatus != test.cvmCheckStatus {
+				t.Fatalf("protected system failure facts=%#v", facts)
 			}
 			if len(tkeAPI.createNodePoolRequests) != 0 || len(tkeAPI.scaleNodePoolRequests) != 0 || len(client.nativeCvmClient.(*fakeNativeCvmAPI).modifyInstancesRequest) != 0 {
 				t.Fatal("failed protected system inventory must perform zero Tencent mutations")
@@ -1015,15 +1083,16 @@ func TestBootstrapComputeNodePoolsDryRunUsesRecommendedWorkspaceSKUs(t *testing.
 	tkeAPI := &fakeNativeTkeAPI{nodePools: bootstrapInventory("np-system")}
 	client := newWorkspaceSKUInventoryTencentSDKClient(tkeAPI)
 	env := workspaceInventoryEnv()
-	env["OPL_BASIC_COMPUTE_NODE_POOL_MAX_REPLICAS"] = "500"
-	env["OPL_PRO_COMPUTE_NODE_POOL_MAX_REPLICAS"] = "500"
+	env["OPL_SYSTEM_COMPUTE_MACHINE_TYPE"] = "NativeCVM"
+	env["OPL_BASIC_COMPUTE_NODE_POOL_MAX_REPLICAS"] = "50"
+	env["OPL_PRO_COMPUTE_NODE_POOL_MAX_REPLICAS"] = "50"
 
 	response := handleWithClient(Request{Action: "bootstrap_compute_node_pools", DryRun: true, Zone: "na-siliconvalley-1", RequiredCapacity: 1}, env, client)
 
 	if !response.Ok || response.Status != "missing" || response.MutationCount != 0 || len(response.NodePools) != 2 {
 		t.Fatalf("bootstrap dry-run=%#v", response)
 	}
-	if response.NodePools[0].InstanceType != "SA5.MEDIUM4" || response.NodePools[1].InstanceType != "SA5.2XLARGE16" || response.NodePools[0].MaxReplicas != 500 || response.NodePools[1].MaxReplicas != 500 {
+	if response.NodePools[0].InstanceType != "SA5.MEDIUM4" || response.NodePools[1].InstanceType != "SA5.2XLARGE16" || response.NodePools[0].MaxReplicas != 50 || response.NodePools[1].MaxReplicas != 50 {
 		t.Fatalf("recommended package specs=%#v", response.NodePools)
 	}
 	if len(tkeAPI.createNodePoolRequests) != 0 {
@@ -1035,15 +1104,15 @@ func TestBootstrapComputeNodePoolsUsesIndependentMaxReplicasAndImmediateHeadroom
 	tkeAPI := &fakeNativeTkeAPI{nodePools: bootstrapInventory("np-system")}
 	client := newWorkspaceSKUInventoryTencentSDKClient(tkeAPI)
 	env := bootstrapEnv()
-	env["OPL_BASIC_COMPUTE_NODE_POOL_MAX_REPLICAS"] = "500"
-	env["OPL_PRO_COMPUTE_NODE_POOL_MAX_REPLICAS"] = "500"
+	env["OPL_BASIC_COMPUTE_NODE_POOL_MAX_REPLICAS"] = "50"
+	env["OPL_PRO_COMPUTE_NODE_POOL_MAX_REPLICAS"] = "50"
 
 	response := handleWithClient(Request{Action: "bootstrap_compute_node_pools", DryRun: true, Zone: "na-siliconvalley-1", RequiredCapacity: 1}, env, client)
 
 	if !response.Ok || response.Status != "missing" || response.MutationCount != 0 || len(response.NodePools) != 2 {
 		t.Fatalf("independent max bootstrap dry-run=%#v", response)
 	}
-	if response.RequiredCapacity != 1 || response.NodePools[0].MaxReplicas != 500 || response.NodePools[1].MaxReplicas != 500 {
+	if response.RequiredCapacity != 1 || response.NodePools[0].MaxReplicas != 50 || response.NodePools[1].MaxReplicas != 50 {
 		t.Fatalf("bootstrap capacity semantics=%#v", response)
 	}
 	if response.TKEClusterNodeLimit != 500 || response.TKEAvailableNodeCapacity < 1 {
@@ -1058,8 +1127,8 @@ func TestBootstrapComputeNodePoolsRevalidatesSelectedSKUImmediatelyBeforeMutatio
 	tkeAPI := &fakeNativeTkeAPI{nodePools: bootstrapInventory("np-system")}
 	client := newWorkspaceSKUInventoryTencentSDKClient(tkeAPI)
 	env := bootstrapEnv()
-	env["OPL_BASIC_COMPUTE_NODE_POOL_MAX_REPLICAS"] = "500"
-	env["OPL_PRO_COMPUTE_NODE_POOL_MAX_REPLICAS"] = "500"
+	env["OPL_BASIC_COMPUTE_NODE_POOL_MAX_REPLICAS"] = "50"
+	env["OPL_PRO_COMPUTE_NODE_POOL_MAX_REPLICAS"] = "50"
 	env["OPL_BASIC_COMPUTE_INSTANCE_TYPE"] = "S5.MEDIUM4-NO-LONGER-SELLING"
 
 	response := handleWithClient(Request{Action: "bootstrap_compute_node_pools", Zone: "na-siliconvalley-1", RequiredCapacity: 1}, env, client)
@@ -1092,10 +1161,10 @@ func TestBootstrapComputeNodePoolsInventoriesAllPoolsBeforeMutation(t *testing.T
 	if got := stringValue(tkeAPI.createNodePoolRequests[1].Name); got != "pool-pro-8c16g" {
 		t.Fatalf("Pro pool must be created second, got %q", got)
 	}
-	if tkeAPI.createNodePoolRequests[0].Native == nil || tkeAPI.createNodePoolRequests[0].Native.Scaling == nil || *tkeAPI.createNodePoolRequests[0].Native.Scaling.MaxReplicas != 20 {
+	if tkeAPI.createNodePoolRequests[0].Native == nil || tkeAPI.createNodePoolRequests[0].Native.Scaling == nil || *tkeAPI.createNodePoolRequests[0].Native.Scaling.MaxReplicas != 50 {
 		t.Fatalf("Basic explicit maxReplicas missing: %#v", tkeAPI.createNodePoolRequests[0].Native)
 	}
-	if tkeAPI.createNodePoolRequests[1].Native == nil || tkeAPI.createNodePoolRequests[1].Native.Scaling == nil || *tkeAPI.createNodePoolRequests[1].Native.Scaling.MaxReplicas != 8 {
+	if tkeAPI.createNodePoolRequests[1].Native == nil || tkeAPI.createNodePoolRequests[1].Native.Scaling == nil || *tkeAPI.createNodePoolRequests[1].Native.Scaling.MaxReplicas != 50 {
 		t.Fatalf("Pro explicit maxReplicas missing: %#v", tkeAPI.createNodePoolRequests[1].Native)
 	}
 	if response.NodePools[0].InstanceType != basicResolvedInstanceType || len(tkeAPI.createNodePoolRequests[0].Native.InstanceTypes) != 1 ||
@@ -1290,7 +1359,7 @@ func TestBootstrapComputeNodePoolsRetryPreservesExistingPoolWhenRecommendationCh
 }
 
 func TestBootstrapComputeNodePoolsDoesNotRecreateExactCreatingPool(t *testing.T) {
-	creatingBasic := bootstrapNodePool("np-basic", "pool-basic-2c4g", "basic", basicResolvedInstanceType, 20)
+	creatingBasic := bootstrapNodePool("np-basic", "pool-basic-2c4g", "basic", basicResolvedInstanceType, 50)
 	creatingBasic.LifeState = common.StringPtr("Creating")
 	tkeAPI := &fakeNativeTkeAPI{nodePools: append(bootstrapInventory("np-system", "np-pro"), creatingBasic)}
 
@@ -1311,7 +1380,7 @@ func TestBootstrapComputeNodePoolsDoesNotRecreateExactCreatingPool(t *testing.T)
 }
 
 func TestBootstrapComputeNodePoolsRetryOnlyCreatesPoolMissingBesidePendingPool(t *testing.T) {
-	creatingBasic := bootstrapNodePool("np-basic", "pool-basic-2c4g", "basic", basicResolvedInstanceType, 20)
+	creatingBasic := bootstrapNodePool("np-basic", "pool-basic-2c4g", "basic", basicResolvedInstanceType, 50)
 	creatingBasic.LifeState = common.StringPtr("Creating")
 	tkeAPI := &fakeNativeTkeAPI{nodePools: append(bootstrapInventory("np-system"), creatingBasic)}
 	client := newBootstrapTencentSDKClient(tkeAPI)
@@ -1383,8 +1452,8 @@ func bootstrapEnv() map[string]string {
 	env["TENCENT_CVM_SUBNET_ID"] = "subnet-workspace"
 	env["OPL_TENCENT_ZONE"] = "na-siliconvalley-1"
 	env["TENCENT_CVM_SECURITY_GROUP_IDS"] = "sg-workspace"
-	env["OPL_BASIC_COMPUTE_NODE_POOL_MAX_REPLICAS"] = "20"
-	env["OPL_PRO_COMPUTE_NODE_POOL_MAX_REPLICAS"] = "8"
+	env["OPL_BASIC_COMPUTE_NODE_POOL_MAX_REPLICAS"] = "50"
+	env["OPL_PRO_COMPUTE_NODE_POOL_MAX_REPLICAS"] = "50"
 	env["OPL_BASIC_COMPUTE_NODE_POOL_ID"] = ""
 	env["OPL_PRO_COMPUTE_NODE_POOL_ID"] = ""
 	env["OPL_BASIC_COMPUTE_INSTANCE_TYPE"] = basicResolvedInstanceType
@@ -1495,13 +1564,13 @@ func bootstrapInventory(ids ...string) []*tke2022.NodePool {
 		case id == "np-system":
 			result = append(result, bootstrapNodePool(id, "system", "system", "S5.2XLARGE16", 20))
 		case strings.Contains(id, "pro"):
-			result = append(result, bootstrapNodePool(id, "pool-pro-8c16g", "pro", proResolvedInstanceType, 8))
+			result = append(result, bootstrapNodePool(id, "pool-pro-8c16g", "pro", proResolvedInstanceType, 50))
 		default:
 			poolID := "pool-basic-2c4g"
 			if index > 1 {
 				poolID = "pool-basic-2c4g"
 			}
-			result = append(result, bootstrapNodePool(id, poolID, "basic", basicResolvedInstanceType, 20))
+			result = append(result, bootstrapNodePool(id, poolID, "basic", basicResolvedInstanceType, 50))
 		}
 	}
 	return result
@@ -3166,9 +3235,17 @@ func (api *fakeNativeTkeAPI) DescribeClusterMachines(request *tke2022.DescribeCl
 	if clusterMachineNodePoolIdFilterValue(request) == "np-system" {
 		machineName := firstNonEmpty(api.systemMachineName, "machine-system")
 		nodeName := firstNonEmpty(api.systemNodeName, "10.66.0.42")
+		machines := []*tke2022.Machine{{MachineName: common.StringPtr(machineName), MachineState: common.StringPtr("Running"), LanIP: common.StringPtr(nodeName), InstanceType: common.StringPtr("S5.2XLARGE16")}}
+		if api.duplicateMachineName {
+			duplicate := *machines[0]
+			machines = append(machines, &duplicate)
+		}
+		if api.duplicateSystemNode {
+			machines = append(machines, &tke2022.Machine{MachineName: common.StringPtr("machine-system-other"), MachineState: common.StringPtr("Running"), LanIP: common.StringPtr(nodeName), InstanceType: common.StringPtr("S5.2XLARGE16")})
+		}
 		return &tke2022.DescribeClusterMachinesResponse{Response: &tke2022.DescribeClusterMachinesResponseParams{
-			Machines:   []*tke2022.Machine{{MachineName: common.StringPtr(machineName), MachineState: common.StringPtr("Running"), LanIP: common.StringPtr(nodeName), InstanceType: common.StringPtr("S5.2XLARGE16")}},
-			TotalCount: common.Int64Ptr(1), RequestId: common.StringPtr("req-describe-system-machine"),
+			Machines:   machines,
+			TotalCount: common.Int64Ptr(int64(len(machines))), RequestId: common.StringPtr("req-describe-system-machine"),
 		}}, nil
 	}
 	machines := []*tke2022.Machine{}
