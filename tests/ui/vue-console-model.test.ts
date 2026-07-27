@@ -12,13 +12,15 @@ import {
   formatUsdMicros,
   needsSession,
   readinessRows,
+  workspaceIdFromPath,
+  workspacePage,
   workspaceStatusLabel
 } from "../../apps/console-ui/src/console-model.ts";
 
 test("customer navigation exposes the five pilot surfaces", () => {
   assert.deepEqual(customerMenu.map(({ label, path }) => ({ label, path })), [
     { label: "概览", path: "/console/overview" },
-    { label: "Workspace", path: "/console/workspace" },
+    { label: "Workspace", path: "/console/workspaces" },
     { label: "API 服务", path: "/console/api" },
     { label: "账单", path: "/console/billing" },
     { label: "公告", path: "/console/announcements" }
@@ -31,6 +33,18 @@ test("customer navigation exposes the five pilot surfaces", () => {
   assert.equal(apiPage("/console/api"), "overview");
   assert.equal(apiPage("/console/api/usage"), "usage");
   assert.equal(apiPage("/console/api/keys"), "keys");
+});
+
+test("Workspace routes separate list, launch, and refreshable detail views", () => {
+  assert.equal(workspacePage("/console/workspaces"), "list");
+  assert.equal(workspacePage("/console/workspaces/"), "list");
+  assert.equal(workspacePage("/console/workspaces/new"), "new");
+  assert.equal(workspacePage("/console/workspaces/ws%20alpha"), "detail");
+  assert.equal(workspacePage("/console/workspaces/ws-alpha"), "detail");
+  assert.equal(workspaceIdFromPath("/console/workspaces/ws%20alpha"), "ws alpha");
+  assert.equal(workspaceIdFromPath("/console/workspaces/new"), "");
+  assert.equal(workspacePage("/console/workspaces/ws-alpha/extra"), null);
+  assert.equal(workspacePage("/console/workspace"), null);
 });
 
 test("operator navigation has the five frozen operations surfaces", () => {

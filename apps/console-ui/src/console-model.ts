@@ -2,7 +2,7 @@ import type { GatewayKeySecretDTO, GatewayWallet, ReadinessFact, WorkspaceRuntim
 
 export const customerMenu = Object.freeze([
   { id: "overview", label: "概览", path: "/console/overview", icon: "LayoutDashboard" },
-  { id: "workspace", label: "Workspace", path: "/console/workspace", icon: "Database" },
+  { id: "workspace", label: "Workspace", path: "/console/workspaces", icon: "Database" },
   { id: "api", label: "API 服务", path: "/console/api", icon: "Server" },
   { id: "billing", label: "账单", path: "/console/billing", icon: "ReceiptText" },
   { id: "announcements", label: "公告", path: "/console/announcements", icon: "Megaphone" }
@@ -30,6 +30,24 @@ export function apiPage(pathname = ""): "overview" | "usage" | "keys" {
   if (pathname.endsWith("/usage")) return "usage";
   if (pathname.endsWith("/keys")) return "keys";
   return "overview";
+}
+
+export function workspacePage(pathname = ""): "list" | "new" | "detail" | null {
+  const normalized = pathname.length > 1 ? pathname.replace(/\/+$/, "") : pathname;
+  if (normalized === "/console/workspaces") return "list";
+  if (normalized === "/console/workspaces/new") return "new";
+  return workspaceIdFromPath(normalized) ? "detail" : null;
+}
+
+export function workspaceIdFromPath(pathname = ""): string {
+  const normalized = pathname.length > 1 ? pathname.replace(/\/+$/, "") : pathname;
+  const match = /^\/console\/workspaces\/([^/]+)$/.exec(normalized);
+  if (!match?.[1] || match[1] === "new") return "";
+  try {
+    return decodeURIComponent(match[1]);
+  } catch {
+    return "";
+  }
 }
 
 export function needsSession(pathname = ""): boolean {
