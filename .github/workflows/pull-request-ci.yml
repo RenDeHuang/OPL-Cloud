@@ -37,14 +37,16 @@ jobs:
 
       - name: Test Node
         run: |
+          set -o pipefail
           node --test --test-reporter=tap "tests/**/*.test.ts" | node -e '
             let output = "";
             process.stdin.setEncoding("utf8");
             process.stdin.on("data", (chunk) => { process.stdout.write(chunk); output += chunk; });
             process.stdin.on("end", () => {
-              const matches = [...output.matchAll(/^# skipped (\d+)$/gm)];
-              if (matches.length !== 1 || Number(matches[0][1]) !== 0) {
-                console.error("Node SKIP result missing or nonzero");
+              const failed = [...output.matchAll(/^# fail (\d+)$/gm)];
+              const skipped = [...output.matchAll(/^# skipped (\d+)$/gm)];
+              if (failed.length !== 1 || skipped.length !== 1 || Number(failed[0][1]) !== 0 || Number(skipped[0][1]) !== 0) {
+                console.error(`Node FAIL ${failed[0]?.[1] ?? "missing"} SKIP ${skipped[0]?.[1] ?? "missing"}; Node SKIP result missing or nonzero`);
                 process.exit(1);
               }
             });
@@ -110,6 +112,7 @@ jobs:
       - name: Test PostgreSQL migrations
         working-directory: services/internal/postgresmigrate
         run: |
+          set -o pipefail
           go test -run '^$' ./...
           package_list="$(go list -f '{{if or .TestGoFiles .XTestGoFiles}}{{.ImportPath}}{{end}}' ./...)"
           mapfile -t test_packages < <(sed '/^$/d' <<< "$package_list")
@@ -119,14 +122,20 @@ jobs:
             process.stdin.setEncoding("utf8");
             process.stdin.on("data", (chunk) => { process.stdout.write(chunk); output += chunk; });
             process.stdin.on("end", () => {
-              const skipped = output.trim().split(/\n/).filter(Boolean).map(JSON.parse).filter((event) => event.Action === "skip");
-              if (skipped.length) { console.error(`Go SKIP ${skipped.length}`); process.exit(1); }
+              const events = output.trim().split(/\n/).filter(Boolean).map(JSON.parse);
+              const failed = events.filter((event) => event.Action === "fail");
+              const skipped = events.filter((event) => event.Action === "skip");
+              if (failed.length || skipped.length) {
+                console.error(`Go FAIL ${failed.length} SKIP ${skipped.length}; Go SKIP result missing or nonzero`);
+                process.exit(1);
+              }
             });
           '
 
       - name: Test Ledger
         working-directory: services/ledger
         run: |
+          set -o pipefail
           go test -run '^$' ./...
           package_list="$(go list -f '{{if or .TestGoFiles .XTestGoFiles}}{{.ImportPath}}{{end}}' ./...)"
           mapfile -t test_packages < <(sed '/^$/d' <<< "$package_list")
@@ -136,8 +145,13 @@ jobs:
             process.stdin.setEncoding("utf8");
             process.stdin.on("data", (chunk) => { process.stdout.write(chunk); output += chunk; });
             process.stdin.on("end", () => {
-              const skipped = output.trim().split(/\n/).filter(Boolean).map(JSON.parse).filter((event) => event.Action === "skip");
-              if (skipped.length) { console.error(`Go SKIP ${skipped.length}`); process.exit(1); }
+              const events = output.trim().split(/\n/).filter(Boolean).map(JSON.parse);
+              const failed = events.filter((event) => event.Action === "fail");
+              const skipped = events.filter((event) => event.Action === "skip");
+              if (failed.length || skipped.length) {
+                console.error(`Go FAIL ${failed.length} SKIP ${skipped.length}; Go SKIP result missing or nonzero`);
+                process.exit(1);
+              }
             });
           '
 
@@ -185,6 +199,7 @@ jobs:
       - name: Test Control Plane
         working-directory: services/control-plane
         run: |
+          set -o pipefail
           go test -run '^$' ./...
           package_list="$(go list -f '{{if or .TestGoFiles .XTestGoFiles}}{{.ImportPath}}{{end}}' ./...)"
           mapfile -t test_packages < <(sed '/^$/d' <<< "$package_list")
@@ -198,7 +213,7 @@ jobs:
               const failed = events.filter((event) => event.Action === "fail");
               const skipped = events.filter((event) => event.Action === "skip");
               if (failed.length || skipped.length) {
-                console.error(`Go FAIL ${failed.length} SKIP ${skipped.length}`);
+                console.error(`Go FAIL ${failed.length} SKIP ${skipped.length}; Go SKIP result missing or nonzero`);
                 process.exit(1);
               }
             });
@@ -247,6 +262,7 @@ jobs:
       - name: Test Fabric
         working-directory: services/fabric
         run: |
+          set -o pipefail
           go test -run '^$' ./...
           package_list="$(go list -f '{{if or .TestGoFiles .XTestGoFiles}}{{.ImportPath}}{{end}}' ./...)"
           mapfile -t test_packages < <(sed '/^$/d' <<< "$package_list")
@@ -256,8 +272,13 @@ jobs:
             process.stdin.setEncoding("utf8");
             process.stdin.on("data", (chunk) => { process.stdout.write(chunk); output += chunk; });
             process.stdin.on("end", () => {
-              const skipped = output.trim().split(/\n/).filter(Boolean).map(JSON.parse).filter((event) => event.Action === "skip");
-              if (skipped.length) { console.error(`Go SKIP ${skipped.length}`); process.exit(1); }
+              const events = output.trim().split(/\n/).filter(Boolean).map(JSON.parse);
+              const failed = events.filter((event) => event.Action === "fail");
+              const skipped = events.filter((event) => event.Action === "skip");
+              if (failed.length || skipped.length) {
+                console.error(`Go FAIL ${failed.length} SKIP ${skipped.length}; Go SKIP result missing or nonzero`);
+                process.exit(1);
+              }
             });
           '
 
