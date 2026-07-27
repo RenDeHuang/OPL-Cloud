@@ -590,8 +590,26 @@ func TestResourceBoundaryHTTPReturnsBadRequest(t *testing.T) {
 	}
 }
 
+type blockingComputeCreateHTTPProvider struct {
+	testProvider
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (p *blockingComputeCreateHTTPProvider) CreateComputeAllocation(ctx context.Context, input fabric.ComputeAllocationExecution) (fabric.ComputeAllocation, error) {
+	p.entered <- struct{}{}
+	select {
+	case <-p.release:
+		return p.testProvider.CreateComputeAllocation(ctx, input)
+	case <-ctx.Done():
+		return input.Allocation, ctx.Err()
+	}
+}
+
 func TestSyncComputeAllocationHTTPWaitsForMachineOwnership(t *testing.T) {
-	service := fabric.NewService(testProvider{})
+	provider := &blockingComputeCreateHTTPProvider{entered: make(chan struct{}), release: make(chan struct{})}
+	defer close(provider.release)
+	service := fabric.NewService(provider)
 	server := NewServer(service, "internal-secret")
 	create := testRequest(http.MethodPost, "/fabric/compute-allocations", bytes.NewBufferString(`{"accountId":"acct-alpha","workspaceId":"ws-alpha","packageId":"basic","nodePoolId":"np-basic"}`))
 	create.Header.Set("Idempotency-Key", "sync-http-create")
@@ -603,6 +621,10 @@ func TestSyncComputeAllocationHTTPWaitsForMachineOwnership(t *testing.T) {
 	var created fabric.ComputeAllocation
 	if err := json.NewDecoder(createRec.Body).Decode(&created); err != nil {
 		t.Fatalf("decode create: %v", err)
+	}
+	<-provider.entered
+	if _, err := service.MachineOwnership(context.Background(), created.ID); !errors.Is(err, fabric.ErrMachineOwnershipNotFound) {
+		t.Fatalf("machine ownership before provider completion: %v", err)
 	}
 
 	req := testRequest(http.MethodPost, "/fabric/compute-allocations/"+created.ID+"/sync", bytes.NewBufferString(`{}`))
