@@ -48,6 +48,10 @@
       "maxReplicas": 50
     },
     "maxReplicasPolicy": "required_explicit_configuration_no_default",
+    "bootstrapInventoryPolicy": {
+      "evidence": "sorted_complete_node_pool_ids_before_mutation",
+      "unknownNodePool": "fail_closed_before_create"
+    },
     "customerLaunchBehavior": "scale_exact_configured_pool_from_N_to_N_plus_1_without_nodepool_creation_or_existing_machine_claim"
   },
   "pilotV2": {

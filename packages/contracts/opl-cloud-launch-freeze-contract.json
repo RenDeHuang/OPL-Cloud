@@ -293,6 +293,8 @@
       },
       "requiredCapacity": 1,
       "capacityGates": ["prepaid_quota", "subnet_available_ip", "tke_cluster_node_limit"],
+      "inventoryEvidence": "sorted_complete_node_pool_ids_before_mutation",
+      "unknownNodePool": "fail_closed_before_create",
       "mutationSource": "exact_merged_origin_main_sha",
       "resolvedInstanceTypeRegistration": ["bootstrap_report", "node_pool_label", "tke_native_instance_types", "production_configuration"],
       "maxReplicas": {"basic": 50, "pro": 50, "source": "release_owner_approved_workflow_configuration_no_code_default_independent_pool_limits"},

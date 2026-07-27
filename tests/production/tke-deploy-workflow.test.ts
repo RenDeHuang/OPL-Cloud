@@ -601,6 +601,8 @@ test("dedicated NodePool bootstrap is the only manual CreateNodePool workflow", 
   assert.match(reportGate, /sku-inventory\.json/);
   assert.match(reportGate, /current\.candidates/);
   assert.match(reportGate, /nodePoolId/);
+  assert.match(reportGate, /nodePoolInventoryBeforeMutation/);
+  assert.match(reportGate, /bootstrap_nodepool_inventory_before_mutation_invalid/);
   assert.doesNotMatch(runs, /workspace-launches|control-plane|ScaleNodePool|DeleteClusterMachines/);
 });
 
