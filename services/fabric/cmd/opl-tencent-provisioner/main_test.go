@@ -2897,6 +2897,35 @@ func TestTencentSDKCapacityIsReadOnlyAndRequiresPrepaidQuota(t *testing.T) {
 	}
 }
 
+func TestTencentSDKCapacityAllowsIndependentPoolMaxAboveCurrentTKELevel(t *testing.T) {
+	tkeAPI := &fakeNativeTkeAPI{
+		nodePoolId: "np-basic", discoverNodePoolId: "np-basic", replicas: 0, maxReplicas: 50,
+		labelPoolId: "pool-basic-2c4g", labelPackageId: "basic", labelInstanceType: "SA5.MEDIUM4",
+		instanceTypes: []string{"SA5.MEDIUM4"},
+	}
+	legacyAPI := &fakeLegacyTkeAPI{clusterLevel: "L5", attributeLevel: "L5", clusterNodeCount: 1, nodeLimit: 5}
+	client := &tencentSDKClient{
+		region: "na-siliconvalley", clusterId: "cls-123", nativeTkeClient: tkeAPI, nativeLegacyTkeClient: legacyAPI,
+		nativeCvmClient: &fakeNativeCvmAPI{}, nativeVpcClient: &fakeNativeVpcAPI{},
+	}
+
+	response := client.Capacity(Request{
+		Action: "capacity_preflight", PackageId: "basic", Zone: "na-siliconvalley-1",
+		Pool: ComputePoolInput{Id: "pool-basic-2c4g", InstanceType: "SA5.MEDIUM4", CPU: 2, MemoryGB: 4, NodePoolId: "np-basic", DesiredReplicas: 1, MaxReplicas: 50},
+	}, nil)
+
+	if !response.Ok || response.Status != "ready" || response.MutationCount != 0 {
+		t.Fatalf("independent pool max must not be constrained by current TKE level: %#v", response)
+	}
+	stages := map[string]PreflightStage{}
+	for _, stage := range response.PreflightStages {
+		stages[stage.Stage] = stage
+	}
+	if stages["tke_cluster_capacity"].Status != "passed" || stages["node_pool_contract"].Status != "passed" {
+		t.Fatalf("capacity stages=%#v", stages)
+	}
+}
+
 func TestTencentSDKCapacityRequiresPackageResourceShape(t *testing.T) {
 	for _, test := range []struct {
 		name         string
