@@ -328,6 +328,15 @@ test("launch freeze fixes the V2 products, owner lanes, settlement, and verifica
   assert.deepEqual(freeze.gateway.usageScope, ["user_id", "api_key_id"]);
   assert.equal(freeze.gateway.usageMoneySource, "actual_cost");
   assert.equal(freeze.gateway.usageMoneyRepresentation, "integer_usd_micros");
+  assert.deepEqual(freeze.gateway.liveBalanceProjection, {
+    method: "Sub2APIHTTPClient.Balance",
+    meaning: "conservative_spendable_lower_bound",
+    conversion: "floor(rawDecimalUSD * 1000000)",
+    exactRawBalanceCopy: false,
+    unavailableWhen: ["non_numeric", "negative", "non_finite", "int64_overflow"],
+    failureBehavior: "dependent_surface_unavailable_never_zero",
+    integerMicrosDebitInvariant: "projected_pre_minus_projected_post_equals_exact_integer_micros_debit"
+  });
   assert.equal(freeze.gateway.rawAdminDTOForwarding, false);
   assert.equal(freeze.gateway.missingCapabilityBehavior, "dependent_surface_unavailable_never_zero");
   assert.equal(freeze.gateway.summaryApi, undefined);

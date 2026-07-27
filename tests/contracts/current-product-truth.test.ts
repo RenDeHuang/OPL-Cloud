@@ -114,7 +114,11 @@ test("current contracts expose only authoritative Pilot sources and controls", a
   });
   assert.equal(freeze.gateway.summaryApi, undefined);
   assert.equal(freeze.gateway.customerReadContract, "opl-cloud-console-source-truth-contract.json");
-  assert.equal(sourceTruth.sources.gateway.wallet.usdMicrosEncoding, "signed_int64_decimal_string");
+  assert.equal(sourceTruth.sources.gateway.wallet.usdMicrosEncoding, "non_negative_int64_decimal_string");
+  assert.equal(sourceTruth.sources.gateway.wallet.balanceProjection.meaning, "conservative_spendable_lower_bound");
+  assert.equal(sourceTruth.sources.gateway.wallet.balanceProjection.exactRawBalanceCopy, false);
+  assert.equal(freeze.gateway.liveBalanceProjection.meaning, sourceTruth.sources.gateway.wallet.balanceProjection.meaning);
+  assert.equal(freeze.gateway.liveBalanceProjection.conversion, sourceTruth.sources.gateway.wallet.balanceProjection.conversion);
   assert.equal(sourceTruth.sources.gateway.balanceHistory.valueUsdMicrosEncoding, "signed_int64_decimal_string");
   assert.equal(freeze.gateway.adminKeyListEndpoint, undefined);
   assert.equal(freeze.gateway.keyListPaginationRule, undefined);

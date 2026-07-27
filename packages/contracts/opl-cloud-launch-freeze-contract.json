@@ -467,6 +467,15 @@
     "usageStatsFields": ["total_requests", "total_input_tokens", "total_output_tokens", "total_tokens", "total_actual_cost"],
     "usageMoneySource": "actual_cost",
     "usageMoneyRepresentation": "integer_usd_micros",
+    "liveBalanceProjection": {
+      "method": "Sub2APIHTTPClient.Balance",
+      "meaning": "conservative_spendable_lower_bound",
+      "conversion": "floor(rawDecimalUSD * 1000000)",
+      "exactRawBalanceCopy": false,
+      "unavailableWhen": ["non_numeric", "negative", "non_finite", "int64_overflow"],
+      "failureBehavior": "dependent_surface_unavailable_never_zero",
+      "integerMicrosDebitInvariant": "projected_pre_minus_projected_post_equals_exact_integer_micros_debit"
+    },
     "rawAdminDTOForwarding": false,
     "missingCapabilityBehavior": "dependent_surface_unavailable_never_zero",
     "keyDTOUsageSource": ["quota_used", "usage_5h", "usage_1d", "usage_7d", "last_used_at"],

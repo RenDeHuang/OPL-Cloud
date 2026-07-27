@@ -528,7 +528,7 @@ func (c *Sub2APIHTTPClient) Balance(ctx context.Context, userID int64) (Sub2APIB
 	if data.Status != "active" && data.Status != "disabled" {
 		return Sub2APIBalance{}, errors.New("invalid sub2api user status")
 	}
-	micros, err := decimalUSDMicros(data.Balance)
+	micros, err := floorUSDDecimalToSpendableMicros(data.Balance)
 	if err != nil {
 		return Sub2APIBalance{}, fmt.Errorf("invalid sub2api balance: %w", err)
 	}
@@ -2036,6 +2036,22 @@ func decimalUSDMicros(value json.Number) (int64, error) {
 		return 0, errors.New("decimal is not representable as USD micros")
 	}
 	return rational.Num().Int64(), nil
+}
+
+func floorUSDDecimalToSpendableMicros(value json.Number) (int64, error) {
+	rational, ok := new(big.Rat).SetString(value.String())
+	if !ok {
+		return 0, errors.New("invalid decimal")
+	}
+	if rational.Sign() < 0 {
+		return 0, errors.New("spendable balance must not be negative")
+	}
+	rational.Mul(rational, big.NewRat(1_000_000, 1))
+	micros := new(big.Int).Quo(rational.Num(), rational.Denom())
+	if !micros.IsInt64() {
+		return 0, errors.New("spendable balance overflows USD micros")
+	}
+	return micros.Int64(), nil
 }
 
 func ParseUSDDecimalMicros(value string) (int64, error) {
