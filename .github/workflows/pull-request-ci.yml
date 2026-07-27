@@ -13,30 +13,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  validate:
-    name: validate
+  node_console:
+    name: node-console
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_HOST_AUTH_METHOD: trust
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres -d postgres"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-    env:
-      PGHOST: 127.0.0.1
-      PGPORT: 5432
-      PGUSER: postgres
-      PGDATABASE: postgres
-      PGSSLMODE: disable
-      OPL_POSTGRES_TESTS: "1"
-      OPL_CAPACITY_TESTS: "1"
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -48,16 +28,6 @@ jobs:
         with:
           node-version: "24"
           cache: npm
-
-      - name: Set up Go
-        uses: actions/setup-go@v6
-        with:
-          go-version: "1.22.x"
-          cache-dependency-path: |
-            services/control-plane/go.sum
-            services/fabric/go.sum
-            services/ledger/go.sum
-            services/internal/postgresmigrate/go.sum
 
       - name: Install Node dependencies
         run: npm ci --no-audit --no-fund
@@ -92,6 +62,51 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      - name: Check diff whitespace
+        run: git diff --check "origin/${{ github.base_ref }}...HEAD"
+
+  postgres_ledger:
+    name: postgres-ledger
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: 5432
+      PGUSER: postgres
+      PGDATABASE: postgres
+      PGSSLMODE: disable
+      OPL_POSTGRES_TESTS: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node 24
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.22.x"
+          cache-dependency-path: |
+            services/ledger/go.sum
+            services/internal/postgresmigrate/go.sum
+
       - name: Test PostgreSQL migrations
         working-directory: services/internal/postgresmigrate
         run: |
@@ -100,45 +115,6 @@ jobs:
           mapfile -t test_packages < <(sed '/^$/d' <<< "$package_list")
           ((${#test_packages[@]} > 0))
           go test -race -count=1 -json "${test_packages[@]}" | node -e '
-            let output = "";
-            process.stdin.setEncoding("utf8");
-            process.stdin.on("data", (chunk) => { process.stdout.write(chunk); output += chunk; });
-            process.stdin.on("end", () => {
-              const skipped = output.trim().split(/\n/).filter(Boolean).map(JSON.parse).filter((event) => event.Action === "skip");
-              if (skipped.length) { console.error(`Go SKIP ${skipped.length}`); process.exit(1); }
-            });
-          '
-
-      - name: Test Control Plane
-        working-directory: services/control-plane
-        run: |
-          go test -run '^$' ./...
-          package_list="$(go list -f '{{if or .TestGoFiles .XTestGoFiles}}{{.ImportPath}}{{end}}' ./...)"
-          mapfile -t test_packages < <(sed '/^$/d' <<< "$package_list")
-          ((${#test_packages[@]} > 0))
-          go test -timeout=15m -count=1 -json "${test_packages[@]}" | node -e '
-            let output = "";
-            process.stdin.setEncoding("utf8");
-            process.stdin.on("data", (chunk) => { process.stdout.write(chunk); output += chunk; });
-            process.stdin.on("end", () => {
-              const events = output.trim().split(/\n/).filter(Boolean).map(JSON.parse);
-              const failed = events.filter((event) => event.Action === "fail");
-              const skipped = events.filter((event) => event.Action === "skip");
-              if (failed.length || skipped.length) {
-                console.error(`Go FAIL ${failed.length} SKIP ${skipped.length}`);
-                process.exit(1);
-              }
-            });
-          '
-
-      - name: Test Fabric
-        working-directory: services/fabric
-        run: |
-          go test -run '^$' ./...
-          package_list="$(go list -f '{{if or .TestGoFiles .XTestGoFiles}}{{.ImportPath}}{{end}}' ./...)"
-          mapfile -t test_packages < <(sed '/^$/d' <<< "$package_list")
-          ((${#test_packages[@]} > 0))
-          go test -count=1 -json "${test_packages[@]}" | node -e '
             let output = "";
             process.stdin.setEncoding("utf8");
             process.stdin.on("data", (chunk) => { process.stdout.write(chunk); output += chunk; });
@@ -165,5 +141,152 @@ jobs:
             });
           '
 
-      - name: Check diff whitespace
-        run: git diff --check "origin/${{ github.base_ref }}...HEAD"
+  control_plane:
+    name: control-plane
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: 5432
+      PGUSER: postgres
+      PGDATABASE: postgres
+      PGSSLMODE: disable
+      OPL_POSTGRES_TESTS: "1"
+      OPL_CAPACITY_TESTS: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node 24
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.22.x"
+          cache-dependency-path: services/control-plane/go.sum
+
+      - name: Test Control Plane
+        working-directory: services/control-plane
+        run: |
+          go test -run '^$' ./...
+          package_list="$(go list -f '{{if or .TestGoFiles .XTestGoFiles}}{{.ImportPath}}{{end}}' ./...)"
+          mapfile -t test_packages < <(sed '/^$/d' <<< "$package_list")
+          ((${#test_packages[@]} > 0))
+          go test -timeout=15m -count=1 -json "${test_packages[@]}" | node -e '
+            let output = "";
+            process.stdin.setEncoding("utf8");
+            process.stdin.on("data", (chunk) => { process.stdout.write(chunk); output += chunk; });
+            process.stdin.on("end", () => {
+              const events = output.trim().split(/\n/).filter(Boolean).map(JSON.parse);
+              const failed = events.filter((event) => event.Action === "fail");
+              const skipped = events.filter((event) => event.Action === "skip");
+              if (failed.length || skipped.length) {
+                console.error(`Go FAIL ${failed.length} SKIP ${skipped.length}`);
+                process.exit(1);
+              }
+            });
+          '
+
+  fabric:
+    name: fabric
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: 5432
+      PGUSER: postgres
+      PGDATABASE: postgres
+      PGSSLMODE: disable
+      OPL_POSTGRES_TESTS: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node 24
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.22.x"
+          cache-dependency-path: services/fabric/go.sum
+
+      - name: Test Fabric
+        working-directory: services/fabric
+        run: |
+          go test -run '^$' ./...
+          package_list="$(go list -f '{{if or .TestGoFiles .XTestGoFiles}}{{.ImportPath}}{{end}}' ./...)"
+          mapfile -t test_packages < <(sed '/^$/d' <<< "$package_list")
+          ((${#test_packages[@]} > 0))
+          go test -count=1 -json "${test_packages[@]}" | node -e '
+            let output = "";
+            process.stdin.setEncoding("utf8");
+            process.stdin.on("data", (chunk) => { process.stdout.write(chunk); output += chunk; });
+            process.stdin.on("end", () => {
+              const skipped = output.trim().split(/\n/).filter(Boolean).map(JSON.parse).filter((event) => event.Action === "skip");
+              if (skipped.length) { console.error(`Go SKIP ${skipped.length}`); process.exit(1); }
+            });
+          '
+
+  validate:
+    name: validate
+    if: ${{ always() }}
+    needs:
+      - node_console
+      - postgres_ledger
+      - control_plane
+      - fabric
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require successful test jobs
+        env:
+          NODE_CONSOLE_RESULT: ${{ needs.node_console.result }}
+          POSTGRES_LEDGER_RESULT: ${{ needs.postgres_ledger.result }}
+          CONTROL_PLANE_RESULT: ${{ needs.control_plane.result }}
+          FABRIC_RESULT: ${{ needs.fabric.result }}
+        run: |
+          if [[ "$NODE_CONSOLE_RESULT" != "success" ||
+                "$POSTGRES_LEDGER_RESULT" != "success" ||
+                "$CONTROL_PLANE_RESULT" != "success" ||
+                "$FABRIC_RESULT" != "success" ]]; then
+            printf 'node-console=%s\npostgres-ledger=%s\ncontrol-plane=%s\nfabric=%s\n' \
+              "$NODE_CONSOLE_RESULT" \
+              "$POSTGRES_LEDGER_RESULT" \
+              "$CONTROL_PLANE_RESULT" \
+              "$FABRIC_RESULT"
+            exit 1
+          fi
