@@ -10,11 +10,12 @@ const dedicatedNodePoolEnv = {
   OPL_SYSTEM_COMPUTE_NODE_POOL_ID: { value: "np-system" },
   OPL_SYSTEM_COMPUTE_MACHINE_ID: { value: "machine-system" },
   OPL_SYSTEM_COMPUTE_NODE_NAME: { value: "10.66.0.42" },
+  OPL_SYSTEM_COMPUTE_MACHINE_TYPE: { value: "NativeCVM" },
   OPL_SYSTEM_COMPUTE_CVM_ID: { value: "ins-system" },
   OPL_BASIC_COMPUTE_NODE_POOL_ID: { value: "np-basic" },
   OPL_PRO_COMPUTE_NODE_POOL_ID: { value: "np-pro" },
-  OPL_BASIC_COMPUTE_NODE_POOL_MAX_REPLICAS: { value: "20" },
-  OPL_PRO_COMPUTE_NODE_POOL_MAX_REPLICAS: { value: "8" }
+  OPL_BASIC_COMPUTE_NODE_POOL_MAX_REPLICAS: { value: "50" },
+  OPL_PRO_COMPUTE_NODE_POOL_MAX_REPLICAS: { value: "50" }
 };
 
 test("ordinary production manifest omits Acceptance and browser Gateway configuration", async () => {
@@ -125,6 +126,7 @@ test("production manifest rejects protected identity conflicts and implicit Node
     ...dedicatedNodePoolEnv
   };
   for (const [key, value, failedCheck] of [
+    ["OPL_SYSTEM_COMPUTE_MACHINE_TYPE", "Unknown", "dedicated_node_pool_identity"],
     ["OPL_SYSTEM_COMPUTE_CVM_ID", "system-cvm", "dedicated_node_pool_identity"],
     ["OPL_BASIC_COMPUTE_NODE_POOL_ID", "np-system", "dedicated_node_pool_identity"],
     ["OPL_PRO_COMPUTE_NODE_POOL_ID", "np-basic", "dedicated_node_pool_identity"],
@@ -134,6 +136,20 @@ test("production manifest rejects protected identity conflicts and implicit Node
     const report = validateProductionManifest({ env: { ...manifest, [key]: { value } } });
     assert.ok(report.failedChecks.includes(failedCheck), `${key}:${JSON.stringify(report.checks)}`);
   }
+});
+
+test("production manifest accepts explicit non-CVM system identity without a fabricated CVM", async () => {
+  const manifest = JSON.parse(await readFile("deploy/production-manifest.example.json", "utf8"));
+  const report = validateProductionManifest({
+    env: {
+      ...manifest.env,
+      OPL_SYSTEM_COMPUTE_MACHINE_TYPE: { value: "Native" },
+      OPL_SYSTEM_COMPUTE_CVM_ID: { value: "" }
+    }
+  });
+
+  assert.equal(report.ok, true, JSON.stringify(report));
+  assert.equal(report.missingEnv.includes("OPL_SYSTEM_COMPUTE_CVM_ID"), false);
 });
 
 test("production manifest fails closed on missing env and inline secret values", () => {

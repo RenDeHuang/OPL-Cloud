@@ -26,6 +26,7 @@ const DEPLOY_VALUE_KEYS = [
   "OPL_SYSTEM_COMPUTE_NODE_POOL_ID",
   "OPL_SYSTEM_COMPUTE_MACHINE_ID",
   "OPL_SYSTEM_COMPUTE_NODE_NAME",
+  "OPL_SYSTEM_COMPUTE_MACHINE_TYPE",
   "OPL_SYSTEM_COMPUTE_CVM_ID",
   "OPL_BASIC_COMPUTE_NODE_POOL_ID",
   "OPL_PRO_COMPUTE_NODE_POOL_ID",
@@ -49,8 +50,17 @@ const DEPLOY_VALUE_KEYS = [
   "TENCENT_DEPLOY_KUBECONFIG_REF"
 ];
 function requiredValues(values) {
-  const missing = DEPLOY_VALUE_KEYS.filter((key) => !String(values?.[key] ?? "").trim());
+  const missing = DEPLOY_VALUE_KEYS.filter((key) => key !== "OPL_SYSTEM_COMPUTE_CVM_ID" && !String(values?.[key] ?? "").trim());
   if (missing.length) throw new Error(`missing_tke_manifest_values:${missing.join(",")}`);
+  const machineType = String(values.OPL_SYSTEM_COMPUTE_MACHINE_TYPE || "").trim();
+  const cvmId = String(values.OPL_SYSTEM_COMPUTE_CVM_ID || "").trim();
+  if (machineType === "NativeCVM") {
+    if (!/^ins-[A-Za-z0-9]+$/.test(cvmId)) throw new Error("nativecvm_system_cvm_id_required");
+  } else if (machineType === "Native" || machineType === "CXM") {
+    if (cvmId) throw new Error("non_cvm_system_cvm_id_forbidden");
+  } else {
+    throw new Error("system_compute_machine_type_invalid");
+  }
   if (String(values.OPL_TENCENT_ZONE).match(/^(.*)-\d+$/)?.[1] !== String(values.TENCENTCLOUD_REGION)) {
     throw new Error("tencent_zone_region_mismatch");
   }

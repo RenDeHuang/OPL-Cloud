@@ -246,6 +246,8 @@ test("Current Fabric contracts require dedicated package NodePools without weake
   assert.doesNotMatch(JSON.stringify(catalog.workspacePackageNodePools.pro), /SA5\.2XLARGE16/);
   assert.equal(catalog.workspacePackageNodePools.basic.replicasMayBeZero, true);
   assert.equal(catalog.workspacePackageNodePools.pro.replicasMayBeZero, true);
+  assert.equal(catalog.workspacePackageNodePools.basic.maxReplicas, 50);
+  assert.equal(catalog.workspacePackageNodePools.pro.maxReplicas, 50);
   assert.equal(catalog.workspacePackageNodePools.maxReplicasPolicy, "required_explicit_configuration_no_default");
   assert.deepEqual(deployment.workspaceNodePoolBootstrap, {
     file: ".github/workflows/bootstrap-tke-workspace-nodepools.yml",
@@ -260,7 +262,7 @@ test("Current Fabric contracts require dedicated package NodePools without weake
     capacityGates: ["prepaid_quota", "subnet_available_ip", "tke_cluster_node_limit"],
     mutationSource: "exact_merged_origin_main_sha",
     resolvedInstanceTypeRegistration: ["bootstrap_report", "node_pool_label", "tke_native_instance_types", "production_configuration"],
-    maxReplicas: { basic: 500, pro: 500, source: "release_owner_approved_workflow_configuration_no_code_default_independent_pool_limits" },
+    maxReplicas: { basic: 50, pro: 50, source: "release_owner_approved_workflow_configuration_no_code_default_independent_pool_limits" },
     mutationConfirmation: "CREATE_MISSING_WORKSPACE_NODEPOOLS",
     dryRunMutationCount: 0,
     idempotency: "register_running_wait_exact_creating_create_missing_only",
@@ -271,7 +273,14 @@ test("Current Fabric contracts require dedicated package NodePools without weake
     nodePoolIdEnv: "OPL_SYSTEM_COMPUTE_NODE_POOL_ID",
     machineIdEnv: "OPL_SYSTEM_COMPUTE_MACHINE_ID",
     nodeNameEnv: "OPL_SYSTEM_COMPUTE_NODE_NAME",
+    machineTypeEnv: "OPL_SYSTEM_COMPUTE_MACHINE_TYPE",
     cvmIdEnv: "OPL_SYSTEM_COMPUTE_CVM_ID",
+    cvmApplicability: {
+      NativeCVM: "required_unique_ins_id_resolved_by_machine_lan_ip",
+      Native: "not_applicable_empty_cvm_id",
+      CXM: "not_applicable_empty_cvm_id",
+      unknown: "fail_closed"
+    },
     guardCallers: ["fabric_tencent_mutations", "fabric_kubernetes_mutations", "cleanup_tke_compute_residual", "cleanup_tke_nodepool_machines"]
   });
   assert.deepEqual(freeze.verification.customerBasicCanary, {

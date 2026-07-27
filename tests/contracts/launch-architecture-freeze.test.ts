@@ -142,7 +142,13 @@ test("launch freeze fixes the V2 products, owner lanes, settlement, and verifica
     failure: "zero_charge_zero_fabric_mutation"
   });
   assert.deepEqual(freeze.providerProcurement.dedicatedNodePools, {
-    system: { nodePoolId: "np-6l4nkdto", machineId: "np-6l4nkdto-2cdtm", nodeName: "10.66.0.42", cvmId: "required_production_configuration" },
+    system: {
+      nodePoolId: "np-6l4nkdto",
+      machineId: "np-6l4nkdto-2cdtm",
+      nodeName: "10.66.0.42",
+      machineType: "readback_from_exact_system_node_pool",
+      cvmId: "required_only_for_nativecvm"
+    },
     basic: {
       stablePoolName: "pool-basic-2c4g",
       packageId: "basic",
@@ -209,7 +215,7 @@ test("launch freeze fixes the V2 products, owner lanes, settlement, and verifica
     capacityGates: ["prepaid_quota", "subnet_available_ip", "tke_cluster_node_limit"],
     mutationSource: "exact_merged_origin_main_sha",
     resolvedInstanceTypeRegistration: ["bootstrap_report", "node_pool_label", "tke_native_instance_types", "production_configuration"],
-    maxReplicas: { basic: 500, pro: 500, source: "release_owner_approved_workflow_configuration_no_code_default_independent_pool_limits" },
+    maxReplicas: { basic: 50, pro: 50, source: "release_owner_approved_workflow_configuration_no_code_default_independent_pool_limits" },
     mutationConfirmation: "CREATE_MISSING_WORKSPACE_NODEPOOLS",
     dryRunMutationCount: 0,
     idempotency: "running_or_exact_creating_pool_is_registered_or_pending_without_duplicate_create",
@@ -217,7 +223,7 @@ test("launch freeze fixes the V2 products, owner lanes, settlement, and verifica
     ordinaryCallerCreateNodePoolCount: 0
   });
   assert.deepEqual(freeze.providerProcurement.protectedResourceGuard, {
-    identities: ["system_node_pool", "system_machine", "system_node", "system_cvm"],
+    identities: ["system_node_pool", "system_machine", "system_node", "system_cvm_when_applicable"],
     appliesTo: ["tencent_mutation", "kubernetes_mutation", "cleanup_workflows"],
     failure: "reject_before_provider_client_or_kubectl_mutation"
   });

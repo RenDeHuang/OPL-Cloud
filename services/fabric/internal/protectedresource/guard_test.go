@@ -4,12 +4,13 @@ import "testing"
 
 func TestGuardRejectsProtectedSystemIdentitiesAndPackagePoolMismatch(t *testing.T) {
 	config := Config{
-		SystemNodePoolID: "np-system",
-		SystemMachineID:  "machine-system",
-		SystemNodeName:   "10.66.0.42",
-		SystemCVMID:      "ins-system",
-		BasicNodePoolID:  "np-basic",
-		ProNodePoolID:    "np-pro",
+		SystemNodePoolID:  "np-system",
+		SystemMachineID:   "machine-system",
+		SystemNodeName:    "10.66.0.42",
+		SystemMachineType: "NativeCVM",
+		SystemCVMID:       "ins-system",
+		BasicNodePoolID:   "np-basic",
+		ProNodePoolID:     "np-pro",
 	}
 
 	if err := config.Validate(); err != nil {
@@ -46,18 +47,21 @@ func TestGuardRejectsProtectedSystemIdentitiesAndPackagePoolMismatch(t *testing.
 
 func TestGuardConfigurationFailsClosed(t *testing.T) {
 	valid := Config{
-		SystemNodePoolID: "np-system",
-		SystemMachineID:  "machine-system",
-		SystemNodeName:   "10.66.0.42",
-		SystemCVMID:      "ins-system",
-		BasicNodePoolID:  "np-basic",
-		ProNodePoolID:    "np-pro",
+		SystemNodePoolID:  "np-system",
+		SystemMachineID:   "machine-system",
+		SystemNodeName:    "10.66.0.42",
+		SystemMachineType: "NativeCVM",
+		SystemCVMID:       "ins-system",
+		BasicNodePoolID:   "np-basic",
+		ProNodePoolID:     "np-pro",
 	}
 	for _, test := range []struct {
 		name   string
 		mutate func(*Config)
 	}{
+		{name: "missing system machine type", mutate: func(value *Config) { value.SystemMachineType = "" }},
 		{name: "missing system CVM", mutate: func(value *Config) { value.SystemCVMID = "" }},
+		{name: "non CVM system with CVM identity", mutate: func(value *Config) { value.SystemMachineType = "Native" }},
 		{name: "shared customer pools", mutate: func(value *Config) { value.ProNodePoolID = value.BasicNodePoolID }},
 		{name: "Basic is system pool", mutate: func(value *Config) { value.BasicNodePoolID = value.SystemNodePoolID }},
 		{name: "Pro is system pool", mutate: func(value *Config) { value.ProNodePoolID = value.SystemNodePoolID }},
@@ -67,6 +71,32 @@ func TestGuardConfigurationFailsClosed(t *testing.T) {
 			test.mutate(&config)
 			if err := config.Validate(); err == nil {
 				t.Fatalf("invalid config accepted: %#v", config)
+			}
+		})
+	}
+}
+
+func TestGuardAcceptsExplicitNonCVMSystemIdentityWithoutCVM(t *testing.T) {
+	for _, machineType := range []string{"Native", "CXM"} {
+		t.Run(machineType, func(t *testing.T) {
+			config := Config{
+				SystemNodePoolID:  "np-system",
+				SystemMachineID:   "machine-system",
+				SystemNodeName:    "10.66.0.42",
+				SystemMachineType: machineType,
+				BasicNodePoolID:   "np-basic",
+				ProNodePoolID:     "np-pro",
+			}
+			if err := config.Validate(); err != nil {
+				t.Fatalf("explicit non-CVM system config rejected: %v", err)
+			}
+			if err := config.Check(Target{PackageID: "basic", NodePoolID: "np-basic", CVMID: "ins-basic"}); err != nil {
+				t.Fatalf("customer CVM rejected by non-CVM system guard: %v", err)
+			}
+			for _, target := range []Target{{NodePoolID: "np-system"}, {MachineID: "machine-system"}, {NodeName: "10.66.0.42"}} {
+				if err := config.Check(target); err != ErrProtectedResource {
+					t.Fatalf("protected target %#v err=%v", target, err)
+				}
 			}
 		})
 	}

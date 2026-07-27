@@ -23,6 +23,7 @@ func TestMain(m *testing.M) {
 		"OPL_SYSTEM_COMPUTE_NODE_POOL_ID": "np-system",
 		"OPL_SYSTEM_COMPUTE_MACHINE_ID":   "machine-system",
 		"OPL_SYSTEM_COMPUTE_NODE_NAME":    "10.66.0.42",
+		"OPL_SYSTEM_COMPUTE_MACHINE_TYPE": "NativeCVM",
 		"OPL_SYSTEM_COMPUTE_CVM_ID":       "ins-system",
 		"OPL_BASIC_COMPUTE_NODE_POOL_ID":  "np-basic",
 		"OPL_PRO_COMPUTE_NODE_POOL_ID":    "np-pro",
@@ -40,6 +41,7 @@ func setProtectedResourceEnv(t *testing.T) {
 		"OPL_SYSTEM_COMPUTE_NODE_POOL_ID": "np-system",
 		"OPL_SYSTEM_COMPUTE_MACHINE_ID":   "machine-system",
 		"OPL_SYSTEM_COMPUTE_NODE_NAME":    "10.66.0.42",
+		"OPL_SYSTEM_COMPUTE_MACHINE_TYPE": "NativeCVM",
 		"OPL_SYSTEM_COMPUTE_CVM_ID":       "ins-system",
 		"OPL_BASIC_COMPUTE_NODE_POOL_ID":  "np-basic",
 		"OPL_PRO_COMPUTE_NODE_POOL_ID":    "np-pro",
@@ -51,7 +53,7 @@ func setProtectedResourceEnv(t *testing.T) {
 func TestKubernetesMutationRequiresProtectedResourceConfiguration(t *testing.T) {
 	for _, key := range []string{
 		"OPL_SYSTEM_COMPUTE_NODE_POOL_ID", "OPL_SYSTEM_COMPUTE_MACHINE_ID", "OPL_SYSTEM_COMPUTE_NODE_NAME",
-		"OPL_SYSTEM_COMPUTE_CVM_ID", "OPL_BASIC_COMPUTE_NODE_POOL_ID", "OPL_PRO_COMPUTE_NODE_POOL_ID",
+		"OPL_SYSTEM_COMPUTE_MACHINE_TYPE", "OPL_SYSTEM_COMPUTE_CVM_ID", "OPL_BASIC_COMPUTE_NODE_POOL_ID", "OPL_PRO_COMPUTE_NODE_POOL_ID",
 	} {
 		t.Setenv(key, "")
 	}
@@ -67,6 +69,22 @@ func TestKubernetesMutationRequiresProtectedResourceConfiguration(t *testing.T) 
 	}
 	if _, err := provider.callKubectl(context.Background(), []string{"get", "pods", "-o", "json"}, nil, protectedresource.Target{}); err != nil || calls != 1 {
 		t.Fatalf("read-only err=%v calls=%d", err, calls)
+	}
+}
+
+func TestKubernetesMutationAcceptsExplicitNonCVMSystemIdentityWithoutCVM(t *testing.T) {
+	setProtectedResourceEnv(t)
+	t.Setenv("OPL_SYSTEM_COMPUTE_MACHINE_TYPE", "Native")
+	t.Setenv("OPL_SYSTEM_COMPUTE_CVM_ID", "")
+	provider := NewTencentProvider()
+	calls := 0
+	provider.kubectl = func(_ context.Context, _ []string, _ []byte) ([]byte, error) {
+		calls++
+		return []byte(`{"items":[]}`), nil
+	}
+
+	if _, err := provider.callKubectl(context.Background(), []string{"apply", "-f", "-"}, []byte(`{}`), protectedresource.Target{}); err != nil || calls != 1 {
+		t.Fatalf("non-CVM system mutation guard err=%v calls=%d", err, calls)
 	}
 }
 

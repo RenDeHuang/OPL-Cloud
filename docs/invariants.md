@@ -101,10 +101,14 @@ The four implementation owner lanes are Console/Control Plane, Fabric, Gateway i
   resolution must return exactly one instance whose TKE Machine, `ins-*` CVM,
   VPC, and Subnet identities all match. Zero, multiple, incomplete, or
   inconsistent results fail closed.
-- The system NodePool `np-6l4nkdto`, Machine `np-6l4nkdto-2cdtm`, Node
-  `10.66.0.42`, and its production-configured `ins-*` CVM identity are protected
-  from every Tencent/Kubernetes mutation and cleanup path. The Basic and Pro
-  pools must be distinct from each other and from the system pool.
+- The system NodePool `np-6l4nkdto`, Machine `np-6l4nkdto-2cdtm`, and Node
+  `10.66.0.42` must each resolve uniquely and are protected from every
+  Tencent/Kubernetes mutation and cleanup path. Its actual NodePool MachineType
+  must be `NativeCVM`, `Native`, or `CXM`: `NativeCVM` must resolve exactly one
+  `ins-*` through the Machine LanIP, while `Native` and `CXM` make CVM identity
+  explicitly not applicable. Unknown, ambiguous, or configured/actual identity
+  mismatches fail closed. The Basic and Pro pools must be distinct from each
+  other and from the system pool.
 - NodePool creation exists only in the manually approved bootstrap workflow.
   It inventories System/Basic/Pro first, creates only an unambiguously missing
   package pool at replicas 0, and preserves a successfully created pool when
@@ -112,7 +116,7 @@ The four implementation owner lanes are Console/Control Plane, Fabric, Gateway i
   reuses the existing `production` Tencent credentials and kubeconfig. Dry-run
   automatically reports the recommended Basic and Pro SKU and performs zero
   mutation. The production bootstrap configures independent Basic and Pro
-  `maxReplicas` values of 500; these are explicit workflow configuration, not
+  `maxReplicas` values of 50; these are explicit workflow configuration, not
   code defaults, and do not reserve or add capacity across pools. Before
   mutation, the workflow re-reads PREPAID quota, Subnet IP capacity, and the
   TKE cluster node limit for one immediate launch headroom, then verifies each

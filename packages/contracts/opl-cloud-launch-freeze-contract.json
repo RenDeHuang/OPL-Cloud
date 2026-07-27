@@ -226,7 +226,8 @@
         "nodePoolId": "np-6l4nkdto",
         "machineId": "np-6l4nkdto-2cdtm",
         "nodeName": "10.66.0.42",
-        "cvmId": "required_production_configuration"
+        "machineType": "readback_from_exact_system_node_pool",
+        "cvmId": "required_only_for_nativecvm"
       },
       "basic": {
         "stablePoolName": "pool-basic-2c4g",
@@ -294,7 +295,7 @@
       "capacityGates": ["prepaid_quota", "subnet_available_ip", "tke_cluster_node_limit"],
       "mutationSource": "exact_merged_origin_main_sha",
       "resolvedInstanceTypeRegistration": ["bootstrap_report", "node_pool_label", "tke_native_instance_types", "production_configuration"],
-      "maxReplicas": {"basic": 500, "pro": 500, "source": "release_owner_approved_workflow_configuration_no_code_default_independent_pool_limits"},
+      "maxReplicas": {"basic": 50, "pro": 50, "source": "release_owner_approved_workflow_configuration_no_code_default_independent_pool_limits"},
       "mutationConfirmation": "CREATE_MISSING_WORKSPACE_NODEPOOLS",
       "dryRunMutationCount": 0,
       "idempotency": "running_or_exact_creating_pool_is_registered_or_pending_without_duplicate_create",
@@ -302,7 +303,7 @@
       "ordinaryCallerCreateNodePoolCount": 0
     },
     "protectedResourceGuard": {
-      "identities": ["system_node_pool", "system_machine", "system_node", "system_cvm"],
+      "identities": ["system_node_pool", "system_machine", "system_node", "system_cvm_when_applicable"],
       "appliesTo": ["tencent_mutation", "kubernetes_mutation", "cleanup_workflows"],
       "failure": "reject_before_provider_client_or_kubectl_mutation"
     },
@@ -342,7 +343,7 @@
       "fabricMutationCount": 0,
       "tencentMutationCount": 0
     },
-    "currentImplementation": "Dedicated package NodePool allocation uses a persisted per-pool FIFO head and fenced short execution lease, persists the exact N to N+1 target and before-machine set, claims only one new Ready NativeCVM, creates one independent CBS, and protects the system Pool/Machine/Node/CVM identities. Manual one-month PREPAID compute and storage renewal primitives and readback remain intact; Control Plane autoRenew switching and worker behavior are outside this branch. Live Tencent evidence remains pending."
+    "currentImplementation": "Dedicated package NodePool allocation uses a persisted per-pool FIFO head and fenced short execution lease, persists the exact N to N+1 target and before-machine set, claims only one new Ready NativeCVM, creates one independent CBS, and protects the system Pool/Machine/Node plus CVM identity when applicable. Manual one-month PREPAID compute and storage renewal primitives and readback remain intact; Control Plane autoRenew switching and worker behavior are outside this branch. Live Tencent evidence remains pending."
   },
   "workspaceRuntime": {
     "workspaceCardinality": "many_per_account",
