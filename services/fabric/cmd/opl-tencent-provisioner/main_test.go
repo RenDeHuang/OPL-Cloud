@@ -1102,8 +1102,15 @@ func TestBootstrapComputeNodePoolsDryRunUsesRecommendedWorkspaceSKUs(t *testing.
 
 func TestBootstrapComputeNodePoolsUsesIndependentMaxReplicasAndImmediateHeadroom(t *testing.T) {
 	tkeAPI := &fakeNativeTkeAPI{nodePools: bootstrapInventory("np-system")}
+	tkeAPI.nodePools[0].Native.MachineType = common.StringPtr("Native")
 	client := newWorkspaceSKUInventoryTencentSDKClient(tkeAPI)
+	legacyAPI := client.nativeLegacyTkeClient.(*fakeLegacyTkeAPI)
+	legacyAPI.clusterLevel = "L5"
+	legacyAPI.clusterNodeCount = 1
+	legacyAPI.nodeLimit = 5
 	env := bootstrapEnv()
+	env["OPL_SYSTEM_COMPUTE_MACHINE_TYPE"] = "Native"
+	delete(env, "OPL_SYSTEM_COMPUTE_CVM_ID")
 	env["OPL_BASIC_COMPUTE_NODE_POOL_MAX_REPLICAS"] = "50"
 	env["OPL_PRO_COMPUTE_NODE_POOL_MAX_REPLICAS"] = "50"
 
@@ -1115,7 +1122,7 @@ func TestBootstrapComputeNodePoolsUsesIndependentMaxReplicasAndImmediateHeadroom
 	if response.RequiredCapacity != 1 || response.NodePools[0].MaxReplicas != 50 || response.NodePools[1].MaxReplicas != 50 {
 		t.Fatalf("bootstrap capacity semantics=%#v", response)
 	}
-	if response.TKEClusterNodeLimit != 500 || response.TKEAvailableNodeCapacity < 1 {
+	if response.TKEClusterNodeLimit != 5 || response.TKECurrentNodeCount != 1 || response.TKEAvailableNodeCapacity != 4 {
 		t.Fatalf("bootstrap must report one-node immediate headroom=%#v", response)
 	}
 	if len(tkeAPI.createNodePoolRequests) != 0 {
@@ -1144,6 +1151,10 @@ func TestBootstrapComputeNodePoolsRevalidatesSelectedSKUImmediatelyBeforeMutatio
 func TestBootstrapComputeNodePoolsInventoriesAllPoolsBeforeMutation(t *testing.T) {
 	tkeAPI := &fakeNativeTkeAPI{nodePools: bootstrapInventory("np-system")}
 	client := newBootstrapTencentSDKClient(tkeAPI)
+	legacyAPI := client.nativeLegacyTkeClient.(*fakeLegacyTkeAPI)
+	legacyAPI.clusterLevel = "L5"
+	legacyAPI.clusterNodeCount = 1
+	legacyAPI.nodeLimit = 5
 	env := bootstrapEnv()
 
 	response := handleWithClient(Request{Action: "bootstrap_compute_node_pools"}, env, client)
@@ -1166,6 +1177,11 @@ func TestBootstrapComputeNodePoolsInventoriesAllPoolsBeforeMutation(t *testing.T
 	}
 	if tkeAPI.createNodePoolRequests[1].Native == nil || tkeAPI.createNodePoolRequests[1].Native.Scaling == nil || *tkeAPI.createNodePoolRequests[1].Native.Scaling.MaxReplicas != 50 {
 		t.Fatalf("Pro explicit maxReplicas missing: %#v", tkeAPI.createNodePoolRequests[1].Native)
+	}
+	for _, request := range tkeAPI.createNodePoolRequests {
+		if request.Native.Replicas == nil || *request.Native.Replicas != 0 || request.Native.Scaling.MinReplicas == nil || *request.Native.Scaling.MinReplicas != 0 {
+			t.Fatalf("bootstrap must create an empty NodePool: %#v", request.Native)
+		}
 	}
 	if response.NodePools[0].InstanceType != basicResolvedInstanceType || len(tkeAPI.createNodePoolRequests[0].Native.InstanceTypes) != 1 ||
 		stringValue(tkeAPI.createNodePoolRequests[0].Native.InstanceTypes[0]) != basicResolvedInstanceType ||
