@@ -138,6 +138,7 @@ type Response struct {
 	TKEAvailableNodeCapacity uint64                    `json:"tkeAvailableNodeCapacity,omitempty"`
 	TKECapacity              *TKEClusterCapacityFacts  `json:"tkeCapacity,omitempty"`
 	ProtectedSystem          ProtectedSystemFacts      `json:"protectedSystem,omitempty"`
+	NodePoolInventory        []string                  `json:"nodePoolInventoryBeforeMutation,omitempty"`
 	MutationCount            int                       `json:"mutationCount"`
 }
 
@@ -3081,7 +3082,7 @@ func (client *tencentSDKClient) bootstrapNodePoolInventory() ([]*tke2022.NodePoo
 			return nil, fmt.Errorf("Tencent TKE NodePool inventory contains an empty identity")
 		}
 		id := strings.TrimSpace(stringValue(pool.NodePoolId))
-		if id == "" || ids[id] {
+		if len(id) <= len("np-") || !strings.HasPrefix(id, "np-") || ids[id] {
 			return nil, fmt.Errorf("Tencent TKE NodePool inventory contains an empty or duplicate identity")
 		}
 		ids[id] = true
@@ -3097,6 +3098,15 @@ func poolTouchesBootstrapSpec(pool *tke2022.NodePool, spec bootstrapPackageSpec)
 	return stringValue(pool.Name) == spec.PoolID || labels["oplcloud.cn/pool-id"] == spec.PoolID ||
 		labels["oplcloud.cn/package-id"] == spec.PackageID ||
 		(spec.ExpectedNodePoolID != "" && stringValue(pool.NodePoolId) == spec.ExpectedNodePoolID)
+}
+
+func bootstrapNodePoolIDs(pools []*tke2022.NodePool) []string {
+	ids := make([]string, 0, len(pools))
+	for _, pool := range pools {
+		ids = append(ids, strings.TrimSpace(stringValue(pool.NodePoolId)))
+	}
+	sort.Strings(ids)
+	return ids
 }
 
 func bootstrapPackagePoolStatus(pool *tke2022.NodePool, spec bootstrapPackageSpec) string {
@@ -3152,6 +3162,20 @@ func bootstrapInventoryMatches(pools []*tke2022.NodePool, env map[string]string,
 	for _, spec := range specs {
 		if poolTouchesBootstrapSpec(systemPool, spec) {
 			return nil, &Response{Ok: false, ErrorCode: "node_pool_bootstrap_inventory_conflict", Message: "Protected system NodePool conflicts with a customer package identity.", Retryable: false}
+		}
+	}
+	for _, pool := range pools {
+		if pool == systemPool {
+			continue
+		}
+		matchCount := 0
+		for _, spec := range specs {
+			if poolTouchesBootstrapSpec(pool, spec) {
+				matchCount++
+			}
+		}
+		if matchCount != 1 {
+			return nil, &Response{Ok: false, ErrorCode: "node_pool_bootstrap_inventory_conflict", Message: "NodePool inventory contains an unknown or ambiguous package identity.", Retryable: false}
 		}
 	}
 	matches := map[string]*tke2022.NodePool{}
@@ -3312,6 +3336,7 @@ func withBootstrapInventoryFacts(response Response, inventory Response, required
 	response.TKEAvailableNodeCapacity = inventory.TKEAvailableNodeCapacity
 	response.TKECapacity = inventory.TKECapacity
 	response.ProtectedSystem = inventory.ProtectedSystem
+	response.NodePoolInventory = inventory.NodePoolInventory
 	return response
 }
 
@@ -3420,16 +3445,19 @@ func (client *tencentSDKClient) BootstrapComputeNodePools(request Request, env m
 	if err != nil {
 		return Response{Ok: false, ErrorCode: "node_pool_bootstrap_inventory_unavailable", Message: "Tencent NodePool inventory is unavailable.", Retryable: false}
 	}
+	inventory.NodePoolInventory = bootstrapNodePoolIDs(pools)
 	if failure = preserveExistingBootstrapSKUs(pools, specs, inventory, strings.TrimSpace(effectiveEnv["OPL_SYSTEM_COMPUTE_NODE_POOL_ID"])); failure != nil {
+		failure.NodePoolInventory = inventory.NodePoolInventory
 		return *failure
 	}
 	matches, failure := bootstrapInventoryMatches(pools, effectiveEnv, specs)
 	if failure != nil {
+		failure.NodePoolInventory = inventory.NodePoolInventory
 		return *failure
 	}
 	protectedSystem, err := client.verifyBootstrapSystemIdentity(pools, effectiveEnv)
 	if err != nil {
-		return Response{Ok: false, ErrorCode: "protected_system_identity_mismatch", Message: "Protected system identity is unavailable or inconsistent.", ProtectedSystem: protectedSystem, MutationCount: 0, Retryable: false}
+		return Response{Ok: false, ErrorCode: "protected_system_identity_mismatch", Message: "Protected system identity is unavailable or inconsistent.", ProtectedSystem: protectedSystem, NodePoolInventory: inventory.NodePoolInventory, MutationCount: 0, Retryable: false}
 	}
 	inventory.ProtectedSystem = protectedSystem
 	results := make([]NodePoolBootstrapResult, 0, len(specs))

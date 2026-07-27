@@ -119,8 +119,9 @@ The four implementation owner lanes are Console/Control Plane, Fabric, Gateway i
   `maxReplicas` values of 50; these are explicit workflow configuration, not
   code defaults, and do not reserve or add capacity across pools. Before
   mutation, the workflow re-reads PREPAID quota, Subnet IP capacity, and the
-  TKE cluster node limit for one immediate launch headroom, then verifies each
-  selected SKU remains eligible. A customer launch repeats this instantaneous
+  TKE cluster node limit for one immediate launch headroom, reports the complete
+  sorted pre-mutation NodePool ID inventory, rejects every unknown pool, then
+  verifies each selected SKU remains eligible. A customer launch repeats this instantaneous
   global TKE capacity check immediately before debit; it does not create a
   reservation or a second capacity ledger.
   The report, NodePool label, Native `InstanceTypes`, and production configuration

@@ -249,6 +249,10 @@ test("Current Fabric contracts require dedicated package NodePools without weake
   assert.equal(catalog.workspacePackageNodePools.basic.maxReplicas, 50);
   assert.equal(catalog.workspacePackageNodePools.pro.maxReplicas, 50);
   assert.equal(catalog.workspacePackageNodePools.maxReplicasPolicy, "required_explicit_configuration_no_default");
+  assert.deepEqual(catalog.workspacePackageNodePools.bootstrapInventoryPolicy, {
+    evidence: "sorted_complete_node_pool_ids_before_mutation",
+    unknownNodePool: "fail_closed_before_create"
+  });
   assert.deepEqual(deployment.workspaceNodePoolBootstrap, {
     file: ".github/workflows/bootstrap-tke-workspace-nodepools.yml",
     mode: "manual_deterministic_inventory_then_optional_create_missing_zero_replica_pools",
@@ -260,6 +264,8 @@ test("Current Fabric contracts require dedicated package NodePools without weake
     skuMutationGate: "selected_candidate_revalidated_immediately_before_create",
     requiredCapacity: 1,
     capacityGates: ["prepaid_quota", "subnet_available_ip", "tke_cluster_node_limit"],
+    inventoryEvidence: "sorted_complete_node_pool_ids_before_mutation",
+    unknownNodePool: "fail_closed_before_create",
     mutationSource: "exact_merged_origin_main_sha",
     resolvedInstanceTypeRegistration: ["bootstrap_report", "node_pool_label", "tke_native_instance_types", "production_configuration"],
     maxReplicas: { basic: 50, pro: 50, source: "release_owner_approved_workflow_configuration_no_code_default_independent_pool_limits" },

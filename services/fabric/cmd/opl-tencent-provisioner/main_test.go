@@ -1243,6 +1243,18 @@ func TestBootstrapNodePoolInventoryPaginatesAllPools(t *testing.T) {
 	})
 }
 
+func TestBootstrapNodePoolInventoryRejectsInvalidIdentity(t *testing.T) {
+	tkeAPI := &fakeNativeTkeAPI{nodePools: []*tke2022.NodePool{{NodePoolId: common.StringPtr("pool-system")}}}
+	client := newFakeTencentSDKClient(tkeAPI)
+
+	if inventory, err := client.bootstrapNodePoolInventory(); err == nil || inventory != nil {
+		t.Fatalf("invalid NodePool identity inventory=%#v err=%v", inventory, err)
+	}
+	if len(tkeAPI.createNodePoolRequests) != 0 {
+		t.Fatalf("invalid inventory mutated TKE: %#v", tkeAPI.createNodePoolRequests)
+	}
+}
+
 func TestBootstrapComputeNodePoolsIsIdempotentForCompliantPools(t *testing.T) {
 	tkeAPI := &fakeNativeTkeAPI{nodePools: bootstrapInventory("np-system", "np-basic", "np-pro")}
 	client := newBootstrapTencentSDKClient(tkeAPI)
@@ -1264,17 +1276,22 @@ func TestBootstrapComputeNodePoolsIsIdempotentForCompliantPools(t *testing.T) {
 
 func TestBootstrapComputeNodePoolsRejectsInventoryConflictsBeforeMutation(t *testing.T) {
 	tests := []struct {
-		name  string
-		pools []*tke2022.NodePool
+		name      string
+		pools     []*tke2022.NodePool
+		inventory []string
 	}{
-		{name: "duplicate Basic", pools: bootstrapInventory("np-system", "np-basic", "np-basic-copy")},
+		{name: "duplicate Basic", pools: bootstrapInventory("np-system", "np-basic", "np-basic-copy"), inventory: []string{"np-basic", "np-basic-copy", "np-system"}},
 		{name: "Basic labels on system pool", pools: []*tke2022.NodePool{
 			bootstrapNodePool("np-system", "pool-basic-2c4g", "basic", basicResolvedInstanceType, 20),
-		}},
+		}, inventory: []string{"np-system"}},
 		{name: "cross-labeled package pool", pools: []*tke2022.NodePool{
 			bootstrapNodePool("np-system", "system", "system", "S5.2XLARGE16", 20),
 			bootstrapNodePool("np-cross", "pool-basic-2c4g", "pro", "SA5.2XLARGE16", 8),
-		}},
+		}, inventory: []string{"np-cross", "np-system"}},
+		{name: "unknown pool", pools: []*tke2022.NodePool{
+			bootstrapNodePool("np-system", "system", "system", "S5.2XLARGE16", 20),
+			bootstrapNodePool("np-legacy", "legacy", "legacy", "S5.MEDIUM4", 20),
+		}, inventory: []string{"np-legacy", "np-system"}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -1285,6 +1302,19 @@ func TestBootstrapComputeNodePoolsRejectsInventoryConflictsBeforeMutation(t *tes
 			}
 			if len(tkeAPI.createNodePoolRequests) != 0 {
 				t.Fatalf("conflict must perform zero CreateNodePool calls: %#v", tkeAPI.createNodePoolRequests)
+			}
+			encoded, err := json.Marshal(response)
+			if err != nil {
+				t.Fatalf("marshal conflict response: %v", err)
+			}
+			var report struct {
+				NodePoolInventoryBeforeMutation []string `json:"nodePoolInventoryBeforeMutation"`
+			}
+			if err := json.Unmarshal(encoded, &report); err != nil {
+				t.Fatalf("decode conflict response: %v", err)
+			}
+			if !reflect.DeepEqual(report.NodePoolInventoryBeforeMutation, test.inventory) {
+				t.Fatalf("conflict inventory=%#v want=%#v", report.NodePoolInventoryBeforeMutation, test.inventory)
 			}
 		})
 	}
@@ -1446,6 +1476,9 @@ func TestBootstrapComputeNodePoolsDryRunReportsMissingWithoutMutation(t *testing
 	var report map[string]any
 	if err := json.Unmarshal(encoded, &report); err != nil {
 		t.Fatalf("decode dry-run report: %v", err)
+	}
+	if !reflect.DeepEqual(report["nodePoolInventoryBeforeMutation"], []any{"np-system"}) {
+		t.Fatalf("dry-run NodePool inventory=%#v", report["nodePoolInventoryBeforeMutation"])
 	}
 	for _, raw := range report["nodePools"].([]any) {
 		pool := raw.(map[string]any)
