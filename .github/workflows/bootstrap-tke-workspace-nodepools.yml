@@ -16,7 +16,7 @@ on:
           - "false"
           - "true"
       mutation_confirmation:
-        description: Enter CREATE_MISSING_WORKSPACE_NODEPOOLS to create only missing zero-replica pools after all approved 100/100 capacity gates pass.
+        description: Enter CREATE_MISSING_WORKSPACE_NODEPOOLS to create only missing zero-replica pools after the read-only one-launch headroom gates pass.
         required: false
         default: ""
         type: string
@@ -45,8 +45,8 @@ jobs:
       OPL_PRO_COMPUTE_NODE_POOL_ID: ${{ vars.OPL_PRO_COMPUTE_NODE_POOL_ID }}
       OPL_BASIC_COMPUTE_INSTANCE_TYPE: ""
       OPL_PRO_COMPUTE_INSTANCE_TYPE: ""
-      OPL_BASIC_COMPUTE_NODE_POOL_MAX_REPLICAS: "100"
-      OPL_PRO_COMPUTE_NODE_POOL_MAX_REPLICAS: "100"
+      OPL_BASIC_COMPUTE_NODE_POOL_MAX_REPLICAS: "500"
+      OPL_PRO_COMPUTE_NODE_POOL_MAX_REPLICAS: "500"
       OPL_TENCENT_ZONE: ${{ vars.OPL_TENCENT_ZONE || 'na-siliconvalley-1' }}
       TENCENT_DEPLOY_KUBECONFIG_PATH: ${{ vars.TENCENT_DEPLOY_KUBECONFIG_PATH || '/home/actions/.secrets/medopl/v22/kubeconfig-package-d-deploy' }}
       TENCENT_DEPLOY_KUBECONFIG_B64: ${{ secrets.TENCENT_DEPLOY_KUBECONFIG_B64 }}
@@ -134,7 +134,7 @@ jobs:
           fs.writeFileSync(process.env.REQUEST_PATH, JSON.stringify({
             action: "workspace_sku_inventory",
             zone: process.env.OPL_TENCENT_ZONE,
-            requiredCapacity: 200
+            requiredCapacity: 1
           }));
           NODE
           set +e
@@ -144,13 +144,13 @@ jobs:
           REPORT_PATH="$OPL_BOOTSTRAP_ARTIFACT_DIR/sku-inventory.json" INVENTORY_STATUS="$inventory_status" node <<'NODE'
           const fs = require("node:fs");
           const report = JSON.parse(fs.readFileSync(process.env.REPORT_PATH, "utf8"));
-          if (process.env.INVENTORY_STATUS !== "0" || report.ok !== true || report.status !== "ready" || report.mutationCount !== 0 || report.requiredCapacity !== 200) {
+          if (process.env.INVENTORY_STATUS !== "0" || report.ok !== true || report.status !== "ready" || report.mutationCount !== 0 || report.requiredCapacity !== 1) {
             throw new Error(`workspace_sku_inventory_failed:${report.errorCode || "unknown"}`);
           }
-          if (report.prepaidQuotaRemaining < 200 || report.tkeAvailableNodeCapacity < 200 || report.tkeClusterNodeLimit < report.tkeCurrentNodeCount + 200) {
+          if (report.prepaidQuotaRemaining < 1 || report.tkeAvailableNodeCapacity < 1 || report.tkeClusterNodeLimit < report.tkeCurrentNodeCount + 1) {
             throw new Error("workspace_sku_inventory_capacity_insufficient");
           }
-          if (!Array.isArray(report.subnets) || report.subnets.length < 1 || report.subnets.reduce((sum, subnet) => sum + Number(subnet.availableIpAddresses || 0), 0) < 200) {
+          if (!Array.isArray(report.subnets) || report.subnets.length < 1 || report.subnets.reduce((sum, subnet) => sum + Number(subnet.availableIpAddresses || 0), 0) < 1) {
             throw new Error("workspace_sku_inventory_subnet_capacity_insufficient");
           }
           const system = report.protectedSystem || {};
@@ -186,7 +186,7 @@ jobs:
           fs.writeFileSync(process.env.REQUEST_PATH, JSON.stringify({
             action: "workspace_sku_inventory",
             zone: process.env.OPL_TENCENT_ZONE,
-            requiredCapacity: 200
+            requiredCapacity: 1
           }));
           NODE
           set +e
@@ -196,7 +196,7 @@ jobs:
           REPORT_PATH="$OPL_BOOTSTRAP_ARTIFACT_DIR/pre-mutation-sku-inventory.json" INVENTORY_STATUS="$inventory_status" node <<'NODE'
           const fs = require("node:fs");
           const report = JSON.parse(fs.readFileSync(process.env.REPORT_PATH, "utf8"));
-          if (process.env.INVENTORY_STATUS !== "0" || report.ok !== true || report.mutationCount !== 0 || report.requiredCapacity !== 200) {
+          if (process.env.INVENTORY_STATUS !== "0" || report.ok !== true || report.mutationCount !== 0 || report.requiredCapacity !== 1) {
             throw new Error(`workspace_sku_revalidation_failed:${report.errorCode || "unknown"}`);
           }
           for (const [packageId, selected] of [["basic", process.env.OPL_BASIC_COMPUTE_INSTANCE_TYPE], ["pro", process.env.OPL_PRO_COMPUTE_INSTANCE_TYPE]]) {
@@ -222,7 +222,7 @@ jobs:
             action: "bootstrap_compute_node_pools",
             dryRun: process.env.MUTATE_MISSING_POOLS !== "true",
             zone: process.env.OPL_TENCENT_ZONE,
-            requiredCapacity: 200
+            requiredCapacity: 1
           }));
           NODE
           "$OPL_BOOTSTRAP_SECRET_DIR/opl-tencent-provisioner" < "$request" > "$OPL_BOOTSTRAP_ARTIFACT_DIR/bootstrap-nodepool-report.json"
@@ -230,9 +230,25 @@ jobs:
       - name: Validate bootstrap report
         if: always()
         shell: bash
+        env:
+          BOOTSTRAP_ACTION_OUTCOME: ${{ steps.bootstrap_action.outcome }}
         run: |
           set -euo pipefail
-          REPORT_PATH="$OPL_BOOTSTRAP_ARTIFACT_DIR/bootstrap-nodepool-report.json" INVENTORY_PATH="$OPL_BOOTSTRAP_ARTIFACT_DIR/sku-inventory.json" node <<'NODE'
+          report_path="$OPL_BOOTSTRAP_ARTIFACT_DIR/bootstrap-nodepool-report.json"
+          inventory_path="$OPL_BOOTSTRAP_ARTIFACT_DIR/sku-inventory.json"
+          if [ ! -f "$report_path" ]; then
+            if [ "$BOOTSTRAP_ACTION_OUTCOME" = "success" ]; then
+              echo "bootstrap_nodepool_report_missing" >&2
+              exit 1
+            fi
+            echo "Bootstrap report was not produced because an upstream step failed; preserving the upstream failure." >&2
+            exit 0
+          fi
+          if [ ! -f "$inventory_path" ]; then
+            echo "bootstrap_nodepool_inventory_report_missing" >&2
+            exit 1
+          fi
+          REPORT_PATH="$report_path" INVENTORY_PATH="$inventory_path" node <<'NODE'
           const fs = require("node:fs");
           const report = JSON.parse(fs.readFileSync(process.env.REPORT_PATH, "utf8"));
           const inventory = JSON.parse(fs.readFileSync(process.env.INVENTORY_PATH, "utf8"));

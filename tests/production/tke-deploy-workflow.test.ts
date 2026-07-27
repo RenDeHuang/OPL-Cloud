@@ -556,8 +556,8 @@ test("dedicated NodePool bootstrap is the only manual CreateNodePool workflow", 
   assert.equal(job.env.OPL_BASIC_COMPUTE_INSTANCE_TYPE, "");
   assert.equal(job.env.OPL_PRO_COMPUTE_INSTANCE_TYPE, "");
   assert.equal(job.env.OPL_SYSTEM_COMPUTE_CVM_ID, "${{ vars.OPL_SYSTEM_COMPUTE_CVM_ID }}");
-  assert.equal(job.env.OPL_BASIC_COMPUTE_NODE_POOL_MAX_REPLICAS, "100");
-  assert.equal(job.env.OPL_PRO_COMPUTE_NODE_POOL_MAX_REPLICAS, "100");
+  assert.equal(job.env.OPL_BASIC_COMPUTE_NODE_POOL_MAX_REPLICAS, "500");
+  assert.equal(job.env.OPL_PRO_COMPUTE_NODE_POOL_MAX_REPLICAS, "500");
   assert.equal(String(job.if), "${{ github.ref == 'refs/heads/main' && github.sha == inputs.merged_sha }}");
   const checkout = stepsByName(job).get("Checkout exact source");
   assert.equal(checkout.with.ref, "${{ inputs.merged_sha }}");
@@ -573,7 +573,7 @@ test("dedicated NodePool bootstrap is the only manual CreateNodePool workflow", 
   assert.doesNotMatch(runs, /get node "\$OPL_SYSTEM_COMPUTE_NODE_NAME" -o json|providerID/);
   assert.match(runs, /actions\/upload-artifact@v4|bootstrap-nodepool-report/);
   assert.match(runs, /workspace_sku_inventory/);
-  assert.match(runs, /requiredCapacity[^\n]+200/);
+  assert.match(runs, /requiredCapacity[^\n]+1/);
   assert.match(runs, /recommendedInstanceType/);
   assert.match(runs, /pre-mutation-sku-inventory\.json/);
   assert.match(runs, /prepaidQuotaRemaining/);
@@ -594,6 +594,38 @@ test("dedicated NodePool bootstrap is the only manual CreateNodePool workflow", 
   assert.match(reportGate, /current\.candidates/);
   assert.match(reportGate, /nodePoolId/);
   assert.doesNotMatch(runs, /workspace-launches|control-plane|ScaleNodePool|DeleteClusterMachines/);
+});
+
+test("bootstrap report validation preserves an earlier inventory failure when bootstrap did not run", async () => {
+  const workflow = await readWorkflow(".github/workflows/bootstrap-tke-workspace-nodepools.yml");
+  const steps = stepsByName(workflowJob(workflow, "bootstrap"));
+  const validation = steps.get("Validate bootstrap report");
+  const upload = steps.get("Upload bootstrap report");
+  const root = await mkdtemp(join(tmpdir(), "opl-bootstrap-report-"));
+
+  try {
+    await writeFile(join(root, "sku-inventory.json"), JSON.stringify({
+      ok: false,
+      errorCode: "workspace_sku_inventory_unavailable",
+      mutationCount: 0
+    }));
+    const result = spawnSync("bash", ["-c", validation.run], {
+      cwd: fileURLToPath(repoFile(".")),
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        OPL_BOOTSTRAP_ARTIFACT_DIR: root,
+        BOOTSTRAP_ACTION_OUTCOME: "skipped"
+      }
+    });
+
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.doesNotMatch(`${result.stdout}\n${result.stderr}`, /ENOENT/);
+    assert.equal(String(upload.if), "always()");
+    assert.match(String(upload.with.path), /bootstrap-nodepool-report/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("manual production Basic customer operation is isolated behind merged-main and four explicit approvals", async () => {

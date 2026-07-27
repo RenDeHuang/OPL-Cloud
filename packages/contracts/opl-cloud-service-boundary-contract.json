@@ -194,7 +194,7 @@
         "authentication": "internal_service_token",
         "evaluator": "shared_with_normal_monthly_preflight",
         "packages": ["basic", "pro"],
-        "stages": ["launch_permission", "credentials", "node_pool_discovery", "node_pool_contract", "subnet", "zone", "cvm_prepaid_quota", "cvm_sku_price", "cbs_prepaid_quota", "cbs_price"],
+        "stages": ["launch_permission", "credentials", "node_pool_discovery", "tke_cluster_capacity", "node_pool_contract", "subnet", "zone", "cvm_prepaid_quota", "cvm_sku_price", "cbs_prepaid_quota", "cbs_price"],
         "independentChecks": "run_all_without_mutation",
         "dependentChecks": "blocked_with_blockedBy",
         "safeFactsOnly": true,
