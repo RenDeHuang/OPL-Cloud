@@ -11,6 +11,14 @@ on:
         description: Exact release-owner approval ID encoded by the production approval document.
         required: true
         type: string
+      operation_mode:
+        description: customer_operation performs the approved customer canary; manual_review_diagnose is a read-only identity diagnosis.
+        required: true
+        default: customer_operation
+        type: choice
+        options:
+          - customer_operation
+          - manual_review_diagnose
       funding_mode:
         description: operator_precharge performs the approved provision and recharge; operator_precharge_recovery reads one approved completed precharge before the purchase.
         required: true
@@ -44,6 +52,11 @@ on:
         required: false
         default: ""
         type: string
+      diagnose_target_json:
+        description: Non-secret manual-review diagnostic target identity JSON. Required only for manual_review_diagnose.
+        required: false
+        default: ""
+        type: string
 
 permissions:
   actions: read
@@ -56,7 +69,7 @@ concurrency:
 jobs:
   prepare-basic-customer-operation:
     name: Prepare one approved Basic customer operation in TKE VPC
-    if: ${{ github.ref == 'refs/heads/main' && github.sha == inputs.merged_sha && inputs.confirm_workspace_purchase && inputs.confirm_single_model_request && ((inputs.funding_mode == 'operator_precharge' && inputs.confirm_account_provision && inputs.confirm_wallet_recharge) || (inputs.funding_mode == 'operator_precharge_recovery' && !inputs.confirm_account_provision && !inputs.confirm_wallet_recharge)) }}
+    if: ${{ github.ref == 'refs/heads/main' && github.sha == inputs.merged_sha && inputs.operation_mode == 'customer_operation' && inputs.confirm_workspace_purchase && inputs.confirm_single_model_request && ((inputs.funding_mode == 'operator_precharge' && inputs.confirm_account_provision && inputs.confirm_wallet_recharge) || (inputs.funding_mode == 'operator_precharge_recovery' && !inputs.confirm_account_provision && !inputs.confirm_wallet_recharge)) }}
     runs-on: [self-hosted, tencent-cloud, opl-cloud, tke-vpc]
     timeout-minutes: 40
     environment: production
@@ -297,7 +310,7 @@ jobs:
   complete-basic-customer-operation:
     name: Complete one approved Basic customer browser and model check
     needs: prepare-basic-customer-operation
-    if: ${{ always() && needs.prepare-basic-customer-operation.result == 'success' && github.ref == 'refs/heads/main' && github.sha == inputs.merged_sha && inputs.confirm_workspace_purchase && inputs.confirm_single_model_request && ((inputs.funding_mode == 'operator_precharge' && inputs.confirm_account_provision && inputs.confirm_wallet_recharge) || (inputs.funding_mode == 'operator_precharge_recovery' && !inputs.confirm_account_provision && !inputs.confirm_wallet_recharge)) }}
+    if: ${{ always() && needs.prepare-basic-customer-operation.result == 'success' && github.ref == 'refs/heads/main' && github.sha == inputs.merged_sha && inputs.operation_mode == 'customer_operation' && inputs.confirm_workspace_purchase && inputs.confirm_single_model_request && ((inputs.funding_mode == 'operator_precharge' && inputs.confirm_account_provision && inputs.confirm_wallet_recharge) || (inputs.funding_mode == 'operator_precharge_recovery' && !inputs.confirm_account_provision && !inputs.confirm_wallet_recharge)) }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: production
@@ -422,4 +435,151 @@ jobs:
         shell: bash
         run: |
           echo "Basic customer operation stopped; inspect the redacted checkpoint and evidence artifact." >&2
+          exit 1
+
+  manual-review-diagnose:
+    name: Diagnose one existing Basic launch manual review in TKE VPC
+    if: ${{ github.ref == 'refs/heads/main' && github.sha == inputs.merged_sha && inputs.operation_mode == 'manual_review_diagnose' && inputs.resume_run_id == '' && !inputs.confirm_account_provision && !inputs.confirm_wallet_recharge && !inputs.confirm_workspace_purchase && !inputs.confirm_single_model_request }}
+    runs-on: [self-hosted, tencent-cloud, opl-cloud, tke-vpc]
+    timeout-minutes: 15
+    environment: production
+    env:
+      OPL_MERGED_SHA: ${{ inputs.merged_sha }}
+      OPL_BASIC_CANARY_RESUME_RUN_ID: ${{ inputs.resume_run_id }}
+      OPL_BASIC_CANARY_DIAGNOSE_TARGET_JSON: ${{ inputs.diagnose_target_json }}
+      OPL_K8S_NAMESPACE: ${{ vars.OPL_K8S_NAMESPACE || 'opl-cloud' }}
+      KUBECONFIG: ${{ vars.TENCENT_DEPLOY_KUBECONFIG_PATH || '/home/actions/.secrets/medopl/v22/kubeconfig-package-d-deploy' }}
+
+    steps:
+      - name: Checkout exact merged main
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.merged_sha }}
+          fetch-depth: 0
+
+      - name: Verify exact origin main
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! [[ "$OPL_MERGED_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "A full merged main SHA is required." >&2
+            exit 1
+          fi
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          head_sha="$(git rev-parse HEAD)"
+          main_sha="$(git rev-parse refs/remotes/origin/main)"
+          if [ "$head_sha" != "$OPL_MERGED_SHA" ] || [ "$main_sha" != "$OPL_MERGED_SHA" ]; then
+            echo "Manual-review diagnosis source is not the exact current origin/main revision." >&2
+            exit 1
+          fi
+
+      - name: Validate read-only diagnostic inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "$OPL_BASIC_CANARY_RESUME_RUN_ID" ] || [ -z "$OPL_BASIC_CANARY_DIAGNOSE_TARGET_JSON" ]; then
+            echo "Manual-review diagnosis requires an empty resume_run_id and a target identity." >&2
+            exit 1
+          fi
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Validate runner diagnose kubeconfig
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -r "$KUBECONFIG" ]; then
+            echo "The release-owned runner kubeconfig is unavailable." >&2
+            exit 1
+          fi
+
+      - name: Prepare redacted manual-review artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          artifact_dir="$RUNNER_TEMP/production-basic-manual-review-diagnose"
+          mkdir -p "$artifact_dir"
+          chmod 700 "$artifact_dir"
+          echo "OPL_BASIC_CANARY_DIAGNOSE_ARTIFACT_DIR=$artifact_dir" >> "$GITHUB_ENV"
+
+      - name: Run manual-review diagnosis
+        id: diagnose
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          fabric_pod="$(node <<'NODE'
+          const { execFileSync } = require("node:child_process");
+          const kubectl = (...args) => JSON.parse(execFileSync("kubectl", [
+            "--kubeconfig", process.env.KUBECONFIG, "-n", process.env.OPL_K8S_NAMESPACE, ...args
+          ], { encoding: "utf8", maxBuffer: 8 * 1024 * 1024 }));
+          const deployment = kubectl("get", "deployment/opl-cloud-fabric", "-o", "json");
+          const replicaSets = kubectl("get", "replicasets", "-o", "json").items || [];
+          const pods = kubectl("get", "pods", "-o", "json").items || [];
+          const revisionKey = "deployment.kubernetes.io/revision";
+          const revision = deployment.metadata?.annotations?.[revisionKey];
+          const deploymentUID = deployment.metadata?.uid;
+          const expectedImage = deployment.spec?.template?.spec?.containers?.find((item) => item.name === "fabric")?.image;
+          const ownedBy = (item, kind, name, uid) => Boolean(name && uid) && (item.metadata?.ownerReferences || []).some((owner) =>
+            owner.controller === true && owner.kind === kind && owner.name === name && owner.uid === uid);
+          const currentReplicaSets = replicaSets.filter((item) =>
+            ownedBy(item, "Deployment", deployment.metadata?.name, deploymentUID) &&
+            item.metadata?.annotations?.[revisionKey] === revision &&
+            item.spec?.template?.spec?.containers?.some((container) => container.name === "fabric" && container.image === expectedImage));
+          if (!deploymentUID || !revision || !expectedImage || currentReplicaSets.length !== 1) {
+            throw new Error(`current_fabric_replicaset_count:${currentReplicaSets.length}`);
+          }
+          const replicaSet = currentReplicaSets[0];
+          const readyPods = pods.filter((item) =>
+            !item.metadata?.deletionTimestamp && ownedBy(item, "ReplicaSet", replicaSet.metadata?.name, replicaSet.metadata?.uid) &&
+            item.status?.phase === "Running" && item.status?.conditions?.some((condition) => condition.type === "Ready" && condition.status === "True") &&
+            item.spec?.containers?.some((container) => container.name === "fabric" && container.image === expectedImage));
+          if (readyPods.length !== 1) throw new Error(`current_ready_fabric_pod_count:${readyPods.length}`);
+          process.stdout.write(readyPods[0].metadata.name);
+          NODE
+          )"
+          if [ -z "$fabric_pod" ]; then
+            echo "Current Ready Fabric Pod is unavailable." >&2
+            exit 1
+          fi
+          node tools/production-live-qa.ts --manual-review-diagnose \
+            --diagnose-target-json "$OPL_BASIC_CANARY_DIAGNOSE_TARGET_JSON" \
+            --fabric-pod "$fabric_pod" \
+            --fabric-namespace "$OPL_K8S_NAMESPACE" > "$OPL_BASIC_CANARY_DIAGNOSE_ARTIFACT_DIR/manual-review-diagnosis.json"
+
+      - name: Upload redacted manual-review diagnosis
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-basic-manual-review-diagnose
+          path: ${{ runner.temp }}/production-basic-manual-review-diagnose
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 30
+
+      - name: Require recovery-eligible diagnosis
+        if: ${{ steps.diagnose.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const fs = require("node:fs");
+          const path = `${process.env.OPL_BASIC_CANARY_DIAGNOSE_ARTIFACT_DIR}/manual-review-diagnosis.json`;
+          const result = JSON.parse(fs.readFileSync(path, "utf8"));
+          if (result?.schemaVersion !== 1 || result?.operationMode !== "manual_review_diagnose" ||
+            result?.recoveryEligible !== true || result?.errorCode !== "none" ||
+            result?.mutationCounts?.sub2api !== 0 || result?.mutationCounts?.tencent !== 0 || result?.mutationCounts?.kubernetes !== 0) {
+            console.error(`Manual-review diagnosis blocked: ${String(result?.errorCode || "diagnosis_artifact_invalid")}`);
+            process.exit(1);
+          }
+          NODE
+
+      - name: Require manual-review diagnosis success
+        if: ${{ steps.diagnose.outcome != 'success' }}
+        shell: bash
+        run: |
+          echo "Manual-review diagnosis stopped; inspect the redacted diagnosis artifact." >&2
           exit 1
