@@ -521,7 +521,6 @@ test("responsive tables and secret controls stay inside the mobile page", async 
   const styles = await source("apps/console-ui/src/styles.css");
   assert.match(styles, /\.panel,\s*\.spend-strip[^{]*\{[^}]*min-width:\s*0/);
   assert.match(styles, /\.table-wrap\s*\{[^}]*width:\s*100%/);
-  assert.match(styles, /@media \(max-width: 820px\)[\s\S]*\.key-row\s*\{[^}]*grid-template-columns:\s*1fr/);
   assert.match(styles, /\.credential-actions\s*\{[^}]*flex-wrap:\s*wrap/);
   assert.match(styles, /\.workspace-access-panel \.data-list a\s*\{[^}]*overflow-wrap:\s*anywhere/);
 });

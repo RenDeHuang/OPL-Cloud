@@ -34,14 +34,6 @@ npm run staging:ui
 
 `staging:local` loads the ignored `.env.staging.local`, builds the Go Tencent provisioner, requires `OPL_RUNTIME_PROVIDER=tencent-tke`, and uses staging PostgreSQL. It does not reset state or seed demo users.
 
-Run real local-to-staging E2E only after readiness passes and you intend to create billable Tencent Cloud resources:
-
-```bash
-OPL_CONFIRM_REAL_CLOUD_E2E=1 npm run staging:e2e
-```
-
-This verifier may use a local Console origin such as `http://127.0.0.1:8787`, but the Workspace URL still must be a public HTTPS staging URL.
-
 ## Cloud Staging E2E
 
 After rollout, run the public verifier against the deployed Console. Both Console and Workspace URLs must be public HTTPS URLs.

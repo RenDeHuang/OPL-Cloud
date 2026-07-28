@@ -1534,26 +1534,6 @@ tbody tr:last-child td {
   font-weight: 620;
 }
 
-.key-row {
-  display: grid;
-  min-height: 62px;
-  grid-template-columns: minmax(160px, 1fr) auto auto;
-  align-items: center;
-  gap: 18px;
-  padding: 8px 18px;
-}
-
-.key-row > span:first-child {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.key-row code {
-  overflow-wrap: anywhere;
-  color: #24292f;
-}
-
 .workspace-details {
   padding: 8px 20px 22px;
 }
@@ -1700,11 +1680,6 @@ tbody tr:last-child td {
 .source-note {
   margin: 0;
   padding: 16px 20px;
-}
-
-.key-actions {
-  display: flex;
-  gap: 8px;
 }
 
 .metric-row {
@@ -2326,16 +2301,6 @@ tbody tr:last-child td {
   .gateway-usage-toolbar .segmented-control {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-
-  .key-row {
-    grid-template-columns: 1fr;
-    gap: 10px;
-    padding: 14px 18px;
-  }
-
-  .key-actions {
-    flex-wrap: wrap;
   }
 
   .empty-cell {
