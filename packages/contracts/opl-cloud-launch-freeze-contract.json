@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 15,
+  "schemaVersion": 16,
   "owner": "OPL Platform Architecture",
   "purpose": "Freeze the approved Pilot products, delegated Gateway key lifecycle, one charge per Workspace period, prepaid Tencent fulfillment, Runtime facts, operator workflows, announcements, and evidence levels without claiming unfinished implementation or runtime evidence.",
   "state": "current",
@@ -606,6 +606,38 @@
       "evidence": ["wallet_recharge_delta", "basic_purchase_delta", "model_usage_delta", "dedicated_pool_N_plus_1", "resolved_instance_type", "basic_2c4g", "new_cvm", "new_cbs", "attachment", "runtime", "workspace_image_id", "password_login", "websocket_101_bidirectional_frames", "single_model_response", "single_usage_record", "billing.workspace_purchased.v1"],
       "redaction": "no_password_token_secret_redeem_code_or_provider_request_id",
       "currentState": "orchestration_and_fake_tests_only_external_mutation_count_zero"
+    },
+    "customerBasicCanaryPrechargeRecovery": {
+      "baseCanary": "verification.customerBasicCanary",
+      "fundingMode": "operator_precharge_recovery",
+      "approval": {
+        "customerFields": ["email", "accountId"],
+        "prechargeOperationId": "non_secret_exact_existing_wallet_adjustment_operation_id",
+        "rechargeUsdMicros": "60000000",
+        "idempotencyKeys": ["workspaceLaunch"],
+        "expectedAdditionalFields": ["launchOperationId", "workspaceId"]
+      },
+      "confirmationInputs": {
+        "accountProvision": false,
+        "walletRecharge": false,
+        "workspacePurchase": true,
+        "singleModelRequest": true
+      },
+      "historicalPrecharge": {
+        "readApi": "GET /api/operator/wallet-adjustments/{prechargeOperationId}",
+        "requiredFacts": ["accountId", "kind=recharge", "amountUsd=60000000_micros", "reason=production Basic customer canary precharge", "status=succeeded", "phase=complete", "afterBalanceUsdMicros-beforeBalanceUsdMicros=60000000"],
+        "rawWalletIdempotencyKey": "never_read_derived_or_recovered",
+        "failure": "zero_business_posts"
+      },
+      "existingAccount": "authoritative_active_email_and_accountId_readback_only_missing_or_mismatch_zero_business_posts",
+      "launch": {
+        "precondition": "live_spendable_wallet_usd_micros > current_server_basic_quote_usd_micros",
+        "postCount": 1,
+        "identity": "approval_expected_launchOperationId_and_workspaceId_authoritative_get_only_after_first_post",
+        "secondPostOnApprovalOrCheckpointChange": false
+      },
+      "purchaseProof": "control_plane_exact_debit_pre_gt_quote_post_equals_pre_minus_quote_and_one_billing.workspace_purchased.v1_receipt",
+      "currentState": "runner_and_focused_fake_tests_only_external_mutation_count_zero"
     },
     "perRunTencentPurchase": false,
     "monthlyBillingBackend": "fake",

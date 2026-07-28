@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 16,
+  "schemaVersion": 17,
   "owner": "OPL Fabric",
   "purpose": "Deployment workflow, immutable Cloud and Workspace images, TKE handoff, read-only diagnostics, and production-verification safety.",
   "state": "current",
@@ -422,6 +422,30 @@
     "modelResultUnknown": "attempted_or_ready_without_authoritative_request_identity_never_resend",
     "attemptAccounting": "http_attempts_separate_from_authoritative_mutation_counts",
     "output": "redacted_evidence_only",
+    "currentState": "implemented_and_fake_tested_not_executed"
+  },
+  "productionBasicCustomerCanaryPrechargeRecovery": {
+    "baseCanary": "productionBasicCustomerCanary",
+    "workflowInput": "funding_mode=operator_precharge_recovery",
+    "confirmationInputs": {
+      "confirm_account_provision": false,
+      "confirm_wallet_recharge": false,
+      "confirm_workspace_purchase": true,
+      "confirm_single_model_request": true
+    },
+    "approvalRequired": ["fundingMode", "customer.email", "customer.accountId", "prechargeOperationId", "rechargeUsdMicros=60000000", "idempotencyKeys.workspaceLaunch", "expected.launchOperationId", "expected.workspaceId"],
+    "historicalPrecharge": {
+      "read": "GET exact approved /api/operator/wallet-adjustments/{prechargeOperationId}",
+      "validate": ["account", "recharge kind", "approved amount", "fixed reason", "succeeded", "complete", "exact before_after_delta"],
+      "accountProvisionPosts": 0,
+      "walletAdjustmentPosts": 0,
+      "rawWalletIdempotencyKey": "forbidden"
+    },
+    "launch": {
+      "precondition": "live_spendable_wallet_usd_micros > current_server_quote_usd_micros",
+      "postCount": 1,
+      "recovery": "GET only approved launchOperationId and workspaceId never a second POST"
+    },
     "currentState": "implemented_and_fake_tested_not_executed"
   },
   "protectedSystemResources": {

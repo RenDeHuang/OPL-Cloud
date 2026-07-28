@@ -638,7 +638,7 @@ test("bootstrap report validation preserves an earlier inventory failure when bo
   }
 });
 
-test("manual production Basic customer operation is isolated behind merged-main and four explicit approvals", async () => {
+test("manual production Basic customer operation supports full and recovered precharge approvals behind merged-main", async () => {
   const path = ".github/workflows/production-basic-customer-operation.yml";
   const workflow = await readWorkflow(path);
   const prepareJob = workflowJob(workflow, "prepare-basic-customer-operation");
@@ -659,12 +659,24 @@ test("manual production Basic customer operation is isolated behind merged-main 
   assert.equal(workflow.concurrency["cancel-in-progress"], false);
   assert.equal(inputs.merged_sha.required, true);
   assert.equal(inputs.approval_id.required, true);
+  assert.equal(inputs.funding_mode.type, "choice");
+  assert.equal(inputs.funding_mode.required, true);
+  assert.equal(inputs.funding_mode.default, "operator_precharge");
+  assert.deepEqual(inputs.funding_mode.options, ["operator_precharge", "operator_precharge_recovery"]);
   for (const name of ["confirm_account_provision", "confirm_wallet_recharge", "confirm_workspace_purchase", "confirm_single_model_request"]) {
     assert.equal(inputs[name].type, "boolean");
     assert.equal(inputs[name].required, true);
     assert.equal(inputs[name].default, false);
-    assert.match(String(prepareJob.if), new RegExp(`inputs\\.${name}`));
-    assert.match(String(completeJob.if), new RegExp(`inputs\\.${name}`));
+  }
+  for (const job of [prepareJob, completeJob]) {
+    assert.match(String(job.if), /inputs\.funding_mode == 'operator_precharge'/);
+    assert.match(String(job.if), /inputs\.funding_mode == 'operator_precharge_recovery'/);
+    assert.match(String(job.if), /inputs\.confirm_account_provision/);
+    assert.match(String(job.if), /inputs\.confirm_wallet_recharge/);
+    assert.match(String(job.if), /inputs\.confirm_workspace_purchase/);
+    assert.match(String(job.if), /inputs\.confirm_single_model_request/);
+    assert.match(String(job.if), /!inputs\.confirm_account_provision/);
+    assert.match(String(job.if), /!inputs\.confirm_wallet_recharge/);
   }
   for (const job of [prepareJob, completeJob]) {
     assert.match(String(job.if), /github\.ref == 'refs\/heads\/main'/);
@@ -688,10 +700,12 @@ test("manual production Basic customer operation is isolated behind merged-main 
   assert.match(completeRuns, /production-live-qa\.ts --basic-customer-canary/);
   assert.match(completeRuns, /--phase complete/);
   assert.match(completeRuns, /--prepared-evidence/);
-  for (const flag of ["--allow-account-provision", "--allow-wallet-recharge", "--allow-workspace-purchase", "--allow-model-write"]) {
+  for (const flag of ["--allow-account-provision", "--allow-wallet-recharge", "--allow-existing-precharge-recovery", "--allow-workspace-purchase", "--allow-model-write"]) {
     assert.match(prepareRuns, new RegExp(flag));
     assert.match(completeRuns, new RegExp(flag));
   }
+  assert.match(prepareRuns, /--funding-mode "\$OPL_BASIC_CANARY_FUNDING_MODE"/);
+  assert.match(completeRuns, /--funding-mode "\$OPL_BASIC_CANARY_FUNDING_MODE"/);
   assert.match(prepareRuns, /--approval-id "\$OPL_BASIC_CANARY_APPROVAL_ID"/);
   assert.match(prepareRuns, /OPL_BASIC_CANARY_CHECKPOINT_PATH/);
   assert.match(JSON.stringify(prepareJob.steps), /actions\/upload-artifact@v4/);
@@ -699,6 +713,7 @@ test("manual production Basic customer operation is isolated behind merged-main 
   assert.match(JSON.stringify(completeJob.steps), /actions\/upload-artifact@v4/);
   for (const job of [prepareJob, completeJob]) {
     assert.equal(job.env.OPL_BASIC_CANARY_APPROVAL_ID, "${{ inputs.approval_id }}");
+    assert.equal(job.env.OPL_BASIC_CANARY_FUNDING_MODE, "${{ inputs.funding_mode }}");
     assert.equal(job.env.OPL_MERGED_SHA, "${{ inputs.merged_sha }}");
     assert.equal(job.env.OPL_BASIC_CANARY_APPROVAL_JSON, "${{ secrets.OPL_BASIC_CANARY_APPROVAL_JSON }}");
     assert.equal(job.env.OPL_BASIC_CANARY_CUSTOMER_PASSWORD, "${{ secrets.OPL_BASIC_CANARY_CUSTOMER_PASSWORD }}");
