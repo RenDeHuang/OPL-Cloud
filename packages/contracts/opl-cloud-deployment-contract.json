@@ -427,6 +427,7 @@
   "productionBasicCustomerCanaryPrechargeRecovery": {
     "baseCanary": "productionBasicCustomerCanary",
     "workflowInput": "funding_mode=operator_precharge_recovery",
+    "resumeRunId": "must_be_empty_no_prior_checkpoint_download_or_use",
     "confirmationInputs": {
       "confirm_account_provision": false,
       "confirm_wallet_recharge": false,

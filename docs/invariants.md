@@ -399,7 +399,8 @@ contract or select the SKU for a customer launch.
   operation, validates its mapped active account, recharge reason, status,
   phase, and exact USD-micros delta, and performs zero account-provision or
   wallet-adjustment POSTs. It never derives or recovers a raw wallet idempotency
-  key. Its approval binds one new launch idempotency key plus the deterministic
+  key. Recovery requires an empty `resume_run_id`; it never downloads or uses an
+  earlier checkpoint. Its approval binds one new launch idempotency key plus the deterministic
   launch-operation and Workspace IDs; every first submission or later recovery
   reads only those public identities and never submits a second launch. Both
   modes read the current server quote and live spendable wallet before their
@@ -412,7 +413,7 @@ contract or select the SKU for a customer launch.
   Before every business write, the runner revalidates the approved
   merged SHA (including a live `origin/main` read) and Cloud digest against the
   current Control Plane, Fabric, and Ledger Deployment revision -> ReplicaSet -> Ready Pod owner chain; a boolean
-  readiness response is not accepted as this gate. Its atomic checkpoint is only
+  readiness response is not accepted as this gate. Its same-run atomic checkpoint is only
   a recovery hint: deterministic account, wallet-operation, launch-operation,
   and Workspace identities are recovered from authoritative service readback,
   unknown historical HTTP attempts remain null, and an attempted or otherwise

@@ -623,6 +623,7 @@
         "workspacePurchase": true,
         "singleModelRequest": true
       },
+      "resumeRunId": "must_be_empty_no_prior_checkpoint_download_or_use",
       "historicalPrecharge": {
         "readApi": "GET /api/operator/wallet-adjustments/{prechargeOperationId}",
         "requiredFacts": ["accountId", "kind=recharge", "amountUsd=60000000_micros", "reason=production Basic customer canary precharge", "status=succeeded", "phase=complete", "afterBalanceUsdMicros-beforeBalanceUsdMicros=60000000"],

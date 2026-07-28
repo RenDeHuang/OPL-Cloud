@@ -691,7 +691,36 @@ test("manual production Basic customer operation supports full and recovered pre
     assert.match(sourceGate, /git rev-parse HEAD/);
     assert.match(sourceGate, /refs\/remotes\/origin\/main/);
     assert.match(sourceGate, /OPL_MERGED_SHA/);
+
+    const recoveryResumeGate = steps.get("Reject recovered-precharge checkpoint resume");
+    const recoveryResumeRun = serializedStep(recoveryResumeGate);
+    assert.match(recoveryResumeRun, /operator_precharge_recovery/);
+    assert.match(recoveryResumeRun, /OPL_BASIC_CANARY_RESUME_RUN_ID/);
+    assert.match(recoveryResumeRun, /exit 1/);
+    const emptyRecoveryResume = spawnSync("bash", ["-c", recoveryResumeGate?.run || ""], {
+      cwd: fileURLToPath(repoFile(".")),
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        OPL_BASIC_CANARY_FUNDING_MODE: "operator_precharge_recovery",
+        OPL_BASIC_CANARY_RESUME_RUN_ID: ""
+      }
+    });
+    assert.equal(emptyRecoveryResume.status, 0, `${emptyRecoveryResume.stdout}\n${emptyRecoveryResume.stderr}`);
+    const staleRecoveryResume = spawnSync("bash", ["-c", recoveryResumeGate?.run || ""], {
+      cwd: fileURLToPath(repoFile(".")),
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        OPL_BASIC_CANARY_FUNDING_MODE: "operator_precharge_recovery",
+        OPL_BASIC_CANARY_RESUME_RUN_ID: "30326406621"
+      }
+    });
+    assert.notEqual(staleRecoveryResume.status, 0);
   }
+  const priorCheckpointDownload = prepareSteps.get("Download prior redacted checkpoint");
+  assert.match(String(priorCheckpointDownload?.if || ""), /inputs\.funding_mode == 'operator_precharge'/);
+  assert.match(String(priorCheckpointDownload?.if || ""), /inputs\.resume_run_id != ''/);
   assert.doesNotMatch(prepareRuns, /npm ci|playwright|chromium/);
   assert.match(completeRuns, /npm ci/);
   assert.match(completeRuns, /playwright install --with-deps chromium/);
@@ -714,6 +743,7 @@ test("manual production Basic customer operation supports full and recovered pre
   for (const job of [prepareJob, completeJob]) {
     assert.equal(job.env.OPL_BASIC_CANARY_APPROVAL_ID, "${{ inputs.approval_id }}");
     assert.equal(job.env.OPL_BASIC_CANARY_FUNDING_MODE, "${{ inputs.funding_mode }}");
+    assert.equal(job.env.OPL_BASIC_CANARY_RESUME_RUN_ID, "${{ inputs.resume_run_id }}");
     assert.equal(job.env.OPL_MERGED_SHA, "${{ inputs.merged_sha }}");
     assert.equal(job.env.OPL_BASIC_CANARY_APPROVAL_JSON, "${{ secrets.OPL_BASIC_CANARY_APPROVAL_JSON }}");
     assert.equal(job.env.OPL_BASIC_CANARY_CUSTOMER_PASSWORD, "${{ secrets.OPL_BASIC_CANARY_CUSTOMER_PASSWORD }}");
