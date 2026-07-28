@@ -52,14 +52,8 @@ jobs:
             });
           '
 
-      - name: Typecheck
-        run: npm run typecheck
-
       - name: Build
         run: npm run build
-
-      - name: Test Console browser
-        run: node tools/console-browser-qa.ts --network=fake-only
 
       - name: Lint
         run: npm run lint

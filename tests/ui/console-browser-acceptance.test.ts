@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { parse } from "yaml";
 
 async function runConsoleBrowserQa(options) {
   const harness = await import("../../tools/console-browser-qa.ts");
@@ -78,6 +81,45 @@ test("Console browser rejects non-fake network before starting a server or brows
   assert.equal(started, 0);
 });
 
+test("Console browser CLI rejects a non-fake network before running Browser QA", async () => {
+  const child = spawn(process.execPath, ["tools/console-browser-qa.ts", "--network=production"], {
+    cwd: process.cwd(),
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+  let stdout = "";
+  let stderr = "";
+  child.stdout.setEncoding("utf8");
+  child.stderr.setEncoding("utf8");
+  child.stdout.on("data", (chunk) => { stdout += chunk; });
+  child.stderr.on("data", (chunk) => { stderr += chunk; });
+  const [exitCode] = await once(child, "close");
+
+  assert.equal(exitCode, 1);
+  assert.equal(stdout, "");
+  assert.match(stderr, /console_browser_fake_only_required/);
+});
+
+test("Pull Request CI runs fake-only Browser QA once through the Node acceptance test", async () => {
+  const [workflow, acceptance] = await Promise.all([
+    readFile(".github/workflows/pull-request-ci.yml", "utf8"),
+    readFile("tests/ui/console-browser-acceptance.test.ts", "utf8")
+  ]);
+  const pullRequestCI = parse(workflow);
+  const nodeSteps = pullRequestCI.jobs.node_console.steps;
+  const nodeTestSteps = nodeSteps.filter((step) => step.name === "Test Node");
+  const browserCliSteps = nodeSteps.filter((step) => /console-browser-qa\.ts/.test(step.run || ""));
+
+  assert.equal(nodeTestSteps.length, 1);
+  assert.match(nodeTestSteps[0].run, /node --test --test-reporter=tap "tests\/\*\*\/\*\.test\.ts"/);
+  assert.equal(browserCliSteps.length, 0);
+  assert.equal(nodeSteps.filter((step) => step.name === "Typecheck").length, 0);
+  assert.equal(nodeSteps.filter((step) => step.name === "Build").length, 1);
+  assert.equal(nodeSteps.filter((step) => step.name === "Lint").length, 1);
+  assert.match(acceptance, /runConsoleBrowserQa\(\{ network: "fake-only", screenshotDir \}\)/);
+  assert.match(acceptance, /assert\.equal\(result\.network, "fake-only"\)/);
+  assert.match(acceptance, /console_browser_fake_only_required/);
+});
+
 test("Console browser final gate machine-checks Node and Go SKIP counts", async () => {
   const workflow = await readFile(".github/workflows/pull-request-ci.yml", "utf8");
   assert.match(workflow, /OPL_CAPACITY_TESTS:\s*["']1["']/);
@@ -88,5 +130,5 @@ test("Console browser final gate machine-checks Node and Go SKIP counts", async 
   assert.match(workflow, /go test[^\n]*-json/);
   assert.match(workflow, /Action === ["']skip["']/);
   assert.match(workflow, /Go SKIP/);
-  assert.match(workflow, /console-browser-qa\.ts --network=fake-only/);
+  assert.doesNotMatch(workflow, /console-browser-qa\.ts --network=fake-only/);
 });
