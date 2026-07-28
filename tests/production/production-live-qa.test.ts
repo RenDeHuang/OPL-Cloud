@@ -424,6 +424,7 @@ function basicCanaryFixture({
   truthStorageProviderId = "disk-basic-canary",
   basicCpu = 2,
   basicMemoryGb = 4,
+  basicDiskGb = 10,
   podNodeName = "10.66.1.18",
   allocationCpu = 2,
   allocationMemoryGb = 4,
@@ -434,7 +435,16 @@ function basicCanaryFixture({
   loseResponseAfter = "",
   existingGeneralKeys = [],
   existingWorkspaceKeys = [],
-  workspaceKeysAfter = [workspaceKey()]
+  workspaceKeysAfter = [workspaceKey()],
+  quoteTotalUsdMicros = 52_580_000,
+  quoteComputeUsdMicros = 50_000_000,
+  quoteStorageUsdMicros = 2_580_000,
+  quoteStorageSizeGb = 10,
+  launchTotalUsdMicros = quoteTotalUsdMicros,
+  walletPurchaseUsdMicros = quoteTotalUsdMicros,
+  receiptTotalUsdMicros = quoteTotalUsdMicros,
+  receiptComputeUsdMicros = quoteComputeUsdMicros,
+  receiptStorageUsdMicros = quoteStorageUsdMicros
 } = {}) {
   const calls = [];
   const state = {
@@ -465,10 +475,10 @@ function basicCanaryFixture({
     currency: "USD",
     periodStart,
     paidThrough,
-    totalUsdMicros: 52_580_000,
+    totalUsdMicros: receiptTotalUsdMicros,
     components: {
-      compute: { resourceType: "compute", resourceId: "ca-basic-canary", chargeUsdMicros: 50_000_000 },
-      storage: { resourceType: "storage", resourceId: "vol-basic-canary", sizeGb: 10, chargeUsdMicros: 2_580_000 }
+      compute: { resourceType: "compute", resourceId: "ca-basic-canary", chargeUsdMicros: receiptComputeUsdMicros },
+      storage: { resourceType: "storage", resourceId: "vol-basic-canary", sizeGb: 10, chargeUsdMicros: receiptStorageUsdMicros }
     },
     fulfillment: {
       computeAllocationId: "ca-basic-canary",
@@ -503,7 +513,7 @@ function basicCanaryFixture({
     autoRenew: false,
     priceVersion: "pilot-usd-2026-07-v1",
     currency: "USD",
-    totalChargeUsdMicros: 52_580_000,
+    totalChargeUsdMicros: launchTotalUsdMicros,
     computeAllocationId: "ca-basic-canary",
     storageId: "vol-basic-canary",
     attachmentId: status === "succeeded" ? "attachment-basic-canary" : "",
@@ -557,7 +567,7 @@ function basicCanaryFixture({
     afterBalance: nestedSource({ currency: "USD", usdMicros: "100000000" }, "sub2api")
   });
   const walletBalance = () => {
-    const value = (state.recharged ? 100_000_000 : 0) - (state.launched ? 52_580_000 : 0) - state.modelRequests * usageRecord.actualCostUsdMicros;
+    const value = (state.recharged ? 100_000_000 : 0) - (state.launched ? walletPurchaseUsdMicros : 0) - state.modelRequests * usageRecord.actualCostUsdMicros;
     return source({ userId: "143", currency: "USD", usdMicros: String(value), status: "active" });
   };
   const fabricOperations = () => [{
@@ -606,7 +616,7 @@ function basicCanaryFixture({
         schemaVersion: 1,
         owner: "OPL Fabric",
         workspacePackages: [
-          { id: "basic", name: "Basic Workspace", computeProfileId: "cpu-basic", cpu: basicCpu, memoryGb: basicMemoryGb, diskGb: 10, provider: "tencent-tke", available: true },
+          { id: "basic", name: "Basic Workspace", computeProfileId: "cpu-basic", cpu: basicCpu, memoryGb: basicMemoryGb, diskGb: basicDiskGb, provider: "tencent-tke", available: true },
           { id: "pro", name: "Pro Workspace", computeProfileId: "cpu-pro", cpu: 8, memoryGb: 16, diskGb: 100, provider: "tencent-tke", available: true }
         ],
         storageClasses: [],
@@ -675,7 +685,52 @@ function basicCanaryFixture({
     if (url.pathname === "/api/auth/me") return source({ consoleUserId: "usr-basic-canary", accountId: BASIC_CANARY_ACCOUNT_ID, sub2apiUserId: 143, email: BASIC_CANARY_CUSTOMER_EMAIL, role: "owner", status: "active" });
     if (url.pathname === "/api/gateway/wallet") return walletBalance();
     if (url.pathname === "/api/operator/reconciliation") return source({ items: [], total: 0, page: 1, pageSize: 20 }, "control-plane", "empty");
-    if (url.pathname === "/api/pricing/preview") return json({ resourceType: "workspace", packageId: "basic", sizeGb: 10, priceVersion: "pilot-usd-2026-07-v1", currency: "USD", totalChargeUsdMicros: 52_580_000, autoRenew: false });
+    if (url.pathname === "/api/pricing/preview") return json({
+      resourceType: "workspace",
+      priceVersion: "pilot-usd-2026-07-v1",
+      packageId: "basic",
+      currency: "USD",
+      displayCurrency: "USD",
+      billingUnit: "calendar_month",
+      compute: {
+        resourceType: "compute",
+        priceVersion: "pilot-usd-2026-07-v1",
+        packageId: "basic",
+        currency: "USD",
+        displayCurrency: "USD",
+        billingUnit: "calendar_month",
+        chargeUsdMicros: quoteComputeUsdMicros,
+        priceSnapshot: {
+          resourceType: "compute",
+          priceVersion: "pilot-usd-2026-07-v1",
+          packageId: "basic",
+          currency: "USD",
+          displayCurrency: "USD",
+          billingUnit: "calendar_month",
+          chargeUsdMicros: quoteComputeUsdMicros
+        }
+      },
+      storage: {
+        resourceType: "storage",
+        priceVersion: "pilot-usd-2026-07-v1",
+        packageId: "basic",
+        currency: "USD",
+        displayCurrency: "USD",
+        billingUnit: "calendar_month",
+        chargeUsdMicros: quoteStorageUsdMicros,
+        priceSnapshot: {
+          resourceType: "storage",
+          priceVersion: "pilot-usd-2026-07-v1",
+          packageId: "basic",
+          sizeGb: quoteStorageSizeGb,
+          currency: "USD",
+          displayCurrency: "USD",
+          billingUnit: "calendar_month",
+          chargeUsdMicros: quoteStorageUsdMicros
+        }
+      },
+      totalChargeUsdMicros: quoteTotalUsdMicros
+    });
     if (url.pathname === "/api/workspaces") return controlPlanePage(state.launched ? [{ id: BASIC_CANARY_WORKSPACE_ID, name: "Basic Canary 2026-07-26", packageId: "basic", state: "active", url: `https://workspace.medopl.cn/w/${BASIC_CANARY_WORKSPACE_ID}/`, paidThrough }] : []);
     if (url.pathname === "/api/workspace-launches" && method === "GET") return json(state.launched ? [launch(state.initialLaunchStatus || "succeeded")] : []);
     if (url.pathname === "/api/workspace-launches" && method === "POST") {
@@ -852,6 +907,84 @@ test("customer Basic canary uses one launch POST and returns redacted end-to-end
   assert.equal(fixture.calls.filter((call) => call.path === `/api/workspace-launches/${BASIC_CANARY_LAUNCH_OPERATION_ID}`).every((call) => call.method === "GET"), true);
   assert.doesNotMatch(JSON.stringify(result), /customer-password|workspace-password|internal-service-token|must-not-emit|redeem/i);
 });
+
+test("customer Basic canary accepts the real pricing preview DTO without top-level sizeGb or autoRenew", async () => {
+  const fixture = basicCanaryFixture();
+  const result = await productionLiveQa.verifyProductionBasicCustomerCanary(basicCanaryOptions(fixture));
+
+  assert.equal(result.status, "passed");
+  assert.equal(fixture.state.rechargePosts, 1);
+  assert.equal(fixture.state.launchPosts, 1);
+});
+
+test("customer Basic canary carries a non-fixed pricing preview amount through launch, wallet, and receipt", async () => {
+  const quoteTotalUsdMicros = 51_234_567;
+  const fixture = basicCanaryFixture({
+    quoteTotalUsdMicros,
+    quoteComputeUsdMicros: 49_000_000,
+    quoteStorageUsdMicros: 2_234_567
+  });
+
+  const result = await productionLiveQa.verifyProductionBasicCustomerCanary(basicCanaryOptions(fixture));
+
+  assert.equal(result.status, "passed");
+  assert.equal(result.wallet.deltas.basicPurchaseUsdMicros, String(quoteTotalUsdMicros));
+  assert.equal(result.receipt.totalUsdMicros, quoteTotalUsdMicros);
+  assert.equal(result.receipt.components.compute.chargeUsdMicros + result.receipt.components.storage.chargeUsdMicros, quoteTotalUsdMicros);
+  assert.equal(fixture.state.rechargePosts, 1);
+  assert.equal(fixture.state.launchPosts, 1);
+});
+
+test("customer Basic canary rejects a non-10GiB pricing preview before recharge", async () => {
+  const fixture = basicCanaryFixture({ initialProvisioned: true, quoteStorageSizeGb: 20 });
+
+  await assert.rejects(() => productionLiveQa.verifyProductionBasicCustomerCanary(basicCanaryOptions(fixture)), /production_basic_canary_quote_invalid/);
+  assert.equal(fixture.state.rechargePosts, 0);
+  assert.equal(fixture.state.launchPosts, 0);
+  assert.equal(fixture.state.modelRequests, 0);
+});
+
+test("customer Basic canary rejects a non-safe pricing preview amount before recharge", async () => {
+  const fixture = basicCanaryFixture({ initialProvisioned: true, quoteTotalUsdMicros: Number.MAX_SAFE_INTEGER + 1 });
+
+  await assert.rejects(() => productionLiveQa.verifyProductionBasicCustomerCanary(basicCanaryOptions(fixture)), /production_basic_canary_quote_invalid/);
+  assert.equal(fixture.state.rechargePosts, 0);
+  assert.equal(fixture.state.launchPosts, 0);
+});
+
+test("customer Basic canary rejects an approved recharge that cannot cover the server quote before recharge", async () => {
+  const fixture = basicCanaryFixture({
+    initialProvisioned: true,
+    quoteTotalUsdMicros: 100_000_001,
+    quoteComputeUsdMicros: 97_000_000,
+    quoteStorageUsdMicros: 3_000_001
+  });
+
+  await assert.rejects(() => productionLiveQa.verifyProductionBasicCustomerCanary(basicCanaryOptions(fixture)), /production_basic_canary_recharge_insufficient/);
+  assert.equal(fixture.state.rechargePosts, 0);
+  assert.equal(fixture.state.launchPosts, 0);
+});
+
+for (const [name, override, error] of [
+  ["launch", { launchTotalUsdMicros: 51_234_568 }, /production_basic_canary_launch_readback_failed/],
+  ["wallet debit", { walletPurchaseUsdMicros: 51_234_568 }, /production_basic_canary_purchase_delta_invalid/],
+  ["receipt total", { receiptTotalUsdMicros: 51_234_568 }, /production_basic_canary_receipt_invalid/],
+  ["receipt components", { receiptComputeUsdMicros: 49_000_001 }, /production_basic_canary_receipt_invalid/]
+]) {
+  test(`customer Basic canary rejects a ${name} amount that differs from the server quote`, async () => {
+    const fixture = basicCanaryFixture({
+      quoteTotalUsdMicros: 51_234_567,
+      quoteComputeUsdMicros: 49_000_000,
+      quoteStorageUsdMicros: 2_234_567,
+      ...override
+    });
+
+    await assert.rejects(() => productionLiveQa.verifyProductionBasicCustomerCanary(basicCanaryOptions(fixture)), error);
+    assert.equal(fixture.state.rechargePosts, 1);
+    assert.equal(fixture.state.launchPosts, 1);
+    assert.equal(fixture.state.modelRequests, 0);
+  });
+}
 
 test("customer Basic canary accepts four existing general Keys and proves only one Workspace Key was added", async () => {
   const existingGeneralKeys = [1, 2, 3, 4].map((id) => generalKey(id, `general-${id}`));
@@ -1195,6 +1328,16 @@ test("customer Basic canary requires a release-owner resolved instance type befo
 
 test("customer Basic canary fails before writes unless Fabric catalog proves 2C and 4GiB", async () => {
   const fixture = basicCanaryFixture({ basicMemoryGb: 8 });
+
+  await assert.rejects(() => productionLiveQa.verifyProductionBasicCustomerCanary(basicCanaryOptions(fixture)), /production_basic_canary_resource_contract_invalid/);
+  assert.equal(fixture.state.provisionPosts, 0);
+  assert.equal(fixture.state.rechargePosts, 0);
+  assert.equal(fixture.state.launchPosts, 0);
+  assert.equal(fixture.state.modelRequests, 0);
+});
+
+test("customer Basic canary fails before writes unless Fabric catalog proves 10GiB", async () => {
+  const fixture = basicCanaryFixture({ basicDiskGb: 20 });
 
   await assert.rejects(() => productionLiveQa.verifyProductionBasicCustomerCanary(basicCanaryOptions(fixture)), /production_basic_canary_resource_contract_invalid/);
   assert.equal(fixture.state.provisionPosts, 0);

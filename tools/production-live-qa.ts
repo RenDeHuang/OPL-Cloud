@@ -251,7 +251,7 @@ function basicCustomerCanaryApproval(value, approvalId, confirmation, now) {
   const recharge = String(approval.rechargeUsdMicros || "");
   const keys = Object.values(approval.idempotencyKeys);
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(approval.customer.email) || !String(approval.customer.name || "").trim() ||
-    !/^[1-9][0-9]*$/.test(recharge) || BigInt(recharge) <= 52_580_000n ||
+    !/^[1-9][0-9]*$/.test(recharge) ||
     keys.some((key) => typeof key !== "string" || key.trim() !== key || key.length < 8 || key.length > 200) || new Set(keys).size !== keys.length ||
     approval.launch.packageId !== "basic" || approval.launch.sizeGb !== 10 || approval.launch.autoRenew !== false || !String(approval.launch.name || "").trim() ||
     !/^[a-f0-9]{40}$/.test(String(approval.expected.mergedSha || "")) || !/^sha256:[a-f0-9]{64}$/.test(String(approval.expected.cloudImageDigest || "")) ||
@@ -591,15 +591,30 @@ function basicCanaryKeyEvidence(snapshot, baseline, workspaceId, workspaceApiKey
   };
 }
 
+function basicCanaryQuote(value) {
+  const totalChargeUsdMicros = value?.totalChargeUsdMicros;
+  const storage = value?.storage;
+  const priceVersion = String(value?.priceVersion || "");
+  if (value?.resourceType !== "workspace" || value?.packageId !== "basic" || value?.currency !== "USD" ||
+    !priceVersion || storage?.resourceType !== "storage" || storage?.packageId !== "basic" ||
+    storage?.priceSnapshot?.sizeGb !== 10 || !Number.isSafeInteger(totalChargeUsdMicros) || totalChargeUsdMicros <= 0) {
+    throw new Error("production_basic_canary_quote_invalid");
+  }
+  return { totalChargeUsdMicros, priceVersion, currency: "USD" };
+}
+
 function canaryReceipt(result, expected) {
   const receipt = sourceEnvelope(result, "ledger").data;
   const compute = receipt?.components?.compute;
   const storage = receipt?.components?.storage;
   const fulfillment = receipt?.fulfillment;
+  const receiptAmounts = [receipt?.totalUsdMicros, compute?.chargeUsdMicros, storage?.chargeUsdMicros];
+  const receiptAmountsAreSafe = receiptAmounts.every((amount) => Number.isSafeInteger(amount) && amount > 0);
   if (receipt?.receiptId !== expected.receiptId || receipt?.type !== "billing.workspace_purchased.v1" || receipt?.status !== "completed" ||
-    receipt?.workspaceId !== expected.workspaceId || receipt?.totalUsdMicros !== 52_580_000 ||
-    compute?.resourceId !== expected.computeAllocationId || compute?.chargeUsdMicros !== 50_000_000 ||
-    storage?.resourceId !== expected.storageId || storage?.sizeGb !== 10 || storage?.chargeUsdMicros !== 2_580_000 ||
+    receipt?.workspaceId !== expected.workspaceId || !receiptAmountsAreSafe || receipt?.totalUsdMicros !== expected.totalUsdMicros ||
+    BigInt(compute.chargeUsdMicros) + BigInt(storage.chargeUsdMicros) !== BigInt(receipt.totalUsdMicros) ||
+    compute?.resourceType !== "compute" || compute?.resourceId !== expected.computeAllocationId ||
+    storage?.resourceType !== "storage" || storage?.resourceId !== expected.storageId || storage?.sizeGb !== 10 ||
     fulfillment?.computeAllocationId !== expected.computeAllocationId || fulfillment?.storageId !== expected.storageId ||
     fulfillment?.attachmentId !== expected.attachmentId || fulfillment?.runtimeId !== expected.runtimeId || fulfillment?.workspaceApiKeyId !== expected.workspaceApiKeyId) {
     throw new Error("production_basic_canary_receipt_invalid");
@@ -904,10 +919,12 @@ function basicCanaryWalletAdjustment(payload, expectedOperationId, expectedAccou
   return { before: { usdMicros: String(before.usdMicros) }, after: { usdMicros: String(after.usdMicros) } };
 }
 
-function basicCanaryLaunchIdentity(launch, approval, expected) {
+function basicCanaryLaunchIdentity(launch, approval, expected, quote) {
+  const priceVersion = String(launch?.priceVersion || "");
   if (launch?.operationId !== expected.operationId || launch?.workspaceId !== expected.workspaceId || launch?.accountId !== expected.accountId ||
     launch?.name !== approval.launch.name || launch?.packageId !== "basic" || launch?.sizeGb !== 10 || launch?.autoRenew !== false ||
-    launch?.priceVersion !== "pilot-usd-2026-07-v1" || launch?.currency !== "USD" || launch?.totalChargeUsdMicros !== 52_580_000) {
+    !priceVersion || launch?.currency !== "USD" || !Number.isSafeInteger(launch?.totalChargeUsdMicros) || launch.totalChargeUsdMicros <= 0 ||
+    quote && (priceVersion !== quote.priceVersion || launch.currency !== quote.currency || launch.totalChargeUsdMicros !== quote.totalChargeUsdMicros)) {
     throw new Error("production_basic_canary_launch_readback_failed");
   }
   return launch;
@@ -1088,15 +1105,18 @@ export async function verifyProductionBasicCustomerCanary(options = {}) {
   }
   const reconciliation = sourceEnvelope(await requestJson({ ...requestOptions, auth: adminAuth, path: "/api/operator/reconciliation?page=1&pageSize=20" }), "control-plane", true).data;
   if (!Array.isArray(reconciliation?.items) || reconciliation.total !== 0) throw new Error("production_basic_canary_reconciliation_blocker");
-  const quote = (await requestJson({
+  const quote = basicCanaryQuote((await requestJson({
     ...requestOptions,
     auth: customerAuth,
     path: "/api/pricing/preview",
     method: "POST",
     body: { resourceType: "workspace", packageId: "basic", sizeGb: 10 }
-  })).payload;
-  if (quote?.packageId !== "basic" || quote?.sizeGb !== 10 || quote?.currency !== "USD" || quote?.totalChargeUsdMicros !== 52_580_000 || quote?.autoRenew !== false) {
-    throw new Error("production_basic_canary_quote_invalid");
+  })).payload);
+  if (BigInt(approval.rechargeUsdMicros) <= BigInt(quote.totalChargeUsdMicros)) {
+    throw new Error("production_basic_canary_recharge_insufficient");
+  }
+  if (launchAuthority.found) {
+    basicCanaryLaunchIdentity(launchAuthority.payload, approval, fixedLaunchIdentity, quote);
   }
 
   if (!walletAuthority.found) {
@@ -1129,7 +1149,8 @@ export async function verifyProductionBasicCustomerCanary(options = {}) {
     checkpoint.baseline.walletAfterRechargeUsdMicros && checkpoint.baseline.walletAfterRechargeUsdMicros !== walletAfterRecharge.usdMicros) {
     throw new Error("production_basic_canary_recharge_readback_failed");
   }
-  if (BigInt(walletAfterRecharge.usdMicros) - BigInt(walletBeforeRecharge.usdMicros) !== BigInt(approval.rechargeUsdMicros) || BigInt(walletAfterRecharge.usdMicros) <= 52_580_000n) {
+  if (BigInt(walletAfterRecharge.usdMicros) - BigInt(walletBeforeRecharge.usdMicros) !== BigInt(approval.rechargeUsdMicros) ||
+    BigInt(walletAfterRecharge.usdMicros) <= BigInt(quote.totalChargeUsdMicros)) {
     throw new Error("production_basic_canary_recharge_delta_invalid");
   }
   checkpoint.baseline.walletBeforeRechargeUsdMicros = walletBeforeRecharge.usdMicros;
@@ -1161,11 +1182,11 @@ export async function verifyProductionBasicCustomerCanary(options = {}) {
       body: approval.launch
     });
     if (launched.response.status !== 202) throw new Error("production_basic_canary_launch_not_accepted");
-    basicCanaryLaunchIdentity(launched.payload, approval, fixedLaunchIdentity);
+    basicCanaryLaunchIdentity(launched.payload, approval, fixedLaunchIdentity, quote);
     launchAuthority = await authoritativeGet({ ...requestOptions, auth: customerAuth, path: launchPath });
     if (!launchAuthority.found) throw new Error("production_basic_canary_launch_readback_failed");
   }
-  launch = basicCanaryLaunchIdentity(launchAuthority.payload, approval, fixedLaunchIdentity);
+  launch = basicCanaryLaunchIdentity(launchAuthority.payload, approval, fixedLaunchIdentity, quote);
   if (!checkpointAtLeast(checkpoint, "launch_accepted")) {
     await saveBasicCanaryCheckpoint(checkpoint, "launch_accepted", checkpointPath, afterCheckpoint);
   }
@@ -1174,7 +1195,7 @@ export async function verifyProductionBasicCustomerCanary(options = {}) {
     if (attempt > 1 || launchPollDelayMs > 0) await sleep(launchPollDelayMs);
     const poll = await authoritativeGet({ ...requestOptions, auth: customerAuth, path: launchPath });
     if (!poll.found) throw new Error("production_basic_canary_launch_readback_failed");
-    launch = basicCanaryLaunchIdentity(poll.payload, approval, fixedLaunchIdentity);
+    launch = basicCanaryLaunchIdentity(poll.payload, approval, fixedLaunchIdentity, quote);
   }
   if (["manual_review", "refunded", "failed"].includes(launch.status)) throw new Error(`production_basic_canary_${launch.status}`);
   if (launch.status !== "succeeded" || launch.phase !== "succeeded") throw new Error("production_basic_canary_launch_timeout");
@@ -1204,7 +1225,7 @@ export async function verifyProductionBasicCustomerCanary(options = {}) {
   }
 
   const walletAfterPurchase = walletFact(sourceEnvelope(await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/gateway/wallet" }), "sub2api"), sub2apiUserId);
-  if (BigInt(walletAfterRecharge.usdMicros) - BigInt(walletAfterPurchase.usdMicros) !== 52_580_000n) {
+  if (BigInt(walletAfterRecharge.usdMicros) - BigInt(walletAfterPurchase.usdMicros) !== BigInt(quote.totalChargeUsdMicros)) {
     throw new Error("production_basic_canary_purchase_delta_invalid");
   }
   const workspacePage = controlPlaneCanaryPage(await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/workspaces?page=1&pageSize=20" }));
@@ -1229,7 +1250,8 @@ export async function verifyProductionBasicCustomerCanary(options = {}) {
     storageId: launch.storageId,
     attachmentId: launch.attachmentId,
     runtimeId,
-    workspaceApiKeyId: launch.workspaceApiKeyId
+    workspaceApiKeyId: launch.workspaceApiKeyId,
+    totalUsdMicros: quote.totalChargeUsdMicros
   });
 
   const detail = sourceEnvelope(await requestJson({
