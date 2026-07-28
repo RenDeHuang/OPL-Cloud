@@ -432,6 +432,7 @@ function basicCanaryFixture({
   initialRecharged = false,
   rechargeUsdMicros = 100_000_000,
   walletAdjustmentPhase = "complete",
+  walletAdjustmentOverrides = {},
   walletAdjustmentPostPayload = null,
   initialLaunchStatus = "",
   cloudRevisionError = "",
@@ -439,12 +440,13 @@ function basicCanaryFixture({
   existingGeneralKeys = [],
   existingWorkspaceKeys = [],
   workspaceKeysAfter = [workspaceKey()],
+  generalKeySpendBeforeLaunchUsdMicros = 0,
+  generalKeySpendAfterModelUsdMicros = 0,
   quoteTotalUsdMicros = 52_580_000,
   quoteComputeUsdMicros = 50_000_000,
   quoteStorageUsdMicros = 2_580_000,
   quoteStorageSizeGb = 10,
   launchTotalUsdMicros = quoteTotalUsdMicros,
-  walletPurchaseUsdMicros = quoteTotalUsdMicros,
   receiptTotalUsdMicros = quoteTotalUsdMicros,
   receiptComputeUsdMicros = quoteComputeUsdMicros,
   receiptStorageUsdMicros = quoteStorageUsdMicros
@@ -568,10 +570,12 @@ function basicCanaryFixture({
     status: "succeeded",
     phase: walletAdjustmentPhase,
     beforeBalance: nestedSource({ currency: "USD", usdMicros: "0" }, "sub2api"),
-    afterBalance: nestedSource({ currency: "USD", usdMicros: String(rechargeUsdMicros) }, "sub2api")
+    afterBalance: nestedSource({ currency: "USD", usdMicros: String(rechargeUsdMicros) }, "sub2api"),
+    ...walletAdjustmentOverrides
   });
   const walletBalance = () => {
-    const value = (state.recharged ? rechargeUsdMicros : 0) - (state.launched ? walletPurchaseUsdMicros : 0) - state.modelRequests * usageRecord.actualCostUsdMicros;
+    const generalKeySpend = generalKeySpendBeforeLaunchUsdMicros + (state.modelRequests > 0 ? generalKeySpendAfterModelUsdMicros : 0);
+    const value = (state.recharged ? rechargeUsdMicros : 0) - (state.launched ? launchTotalUsdMicros : 0) - state.modelRequests * usageRecord.actualCostUsdMicros - generalKeySpend;
     return source({ userId: "143", currency: "USD", usdMicros: String(value), status: "active" });
   };
   const fabricOperations = () => [{
@@ -866,7 +870,13 @@ test("customer Basic canary uses one launch POST and returns redacted end-to-end
   assert.equal(result.accountId, BASIC_CANARY_ACCOUNT_ID);
   assert.equal(result.workspaceId, BASIC_CANARY_WORKSPACE_ID);
   assert.equal(result.operationId, BASIC_CANARY_LAUNCH_OPERATION_ID);
-  assert.deepEqual(result.wallet.deltas, { rechargeUsdMicros: "100000000", basicPurchaseUsdMicros: "52580000", modelUsageUsdMicros: "120" });
+  assert.deepEqual(result.wallet, {
+    operationId: BASIC_CANARY_WALLET_OPERATION_ID,
+    source: "wallet_adjustment_authoritative_readback",
+    beforeUsdMicros: "0",
+    afterUsdMicros: "100000000",
+    deltaUsdMicros: "100000000"
+  });
   assert.deepEqual(result.compute.procurement, { nodePoolId: "np-basic", baselineReplicas: 7, targetReplicas: 8, beforeMachineCount: 7, machineWasNew: true });
   assert.equal(result.compute.instanceId, "ins-basic-canary");
   assert.equal(result.compute.sku, BASIC_CANARY_RESOLVED_INSTANCE_TYPE);
@@ -956,7 +966,7 @@ test("customer Basic canary recovers an existing 60000000-micros wallet operatio
   );
 
   assert.equal(result.status, "passed");
-  assert.equal(result.wallet.deltas.rechargeUsdMicros, "60000000");
+  assert.equal(result.wallet.deltaUsdMicros, "60000000");
   assert.equal(fixture.state.provisionPosts, 0);
   assert.equal(fixture.state.rechargePosts, 0);
   assert.equal(fixture.state.launchPosts, 1);
@@ -964,6 +974,84 @@ test("customer Basic canary recovers an existing 60000000-micros wallet operatio
   assert.equal(result.writeCounts.walletAdjustmentPosts, 0);
   assert.equal(result.writeCounts.workspaceLaunchPosts, 1);
 });
+
+test("customer Basic canary uses the current live wallet rather than the immutable recharge after-balance", async () => {
+  const existingGeneralKeys = [1, 2, 3, 4].map((id) => generalKey(id));
+  const fixture = basicCanaryFixture({
+    initialProvisioned: true,
+    initialRecharged: true,
+    rechargeUsdMicros: 60_000_000,
+    existingGeneralKeys,
+    generalKeySpendBeforeLaunchUsdMicros: 1,
+    generalKeySpendAfterModelUsdMicros: 1
+  });
+
+  const result = await productionLiveQa.verifyProductionBasicCustomerCanary(
+    basicCanaryOptions(fixture, { rechargeUsdMicros: "60000000" })
+  );
+
+  assert.equal(result.status, "passed");
+  assert.equal(fixture.state.rechargePosts, 0);
+  assert.equal(fixture.state.launchPosts, 1);
+  assert.equal(fixture.state.modelRequests, 1);
+  assert.deepEqual(result.keyEvidence.generalKeyIds, ["1", "2", "3", "4"]);
+  assert.deepEqual(result.wallet, {
+    operationId: BASIC_CANARY_WALLET_OPERATION_ID,
+    source: "wallet_adjustment_authoritative_readback",
+    beforeUsdMicros: "0",
+    afterUsdMicros: "60000000",
+    deltaUsdMicros: "60000000"
+  });
+});
+
+for (const [name, generalKeySpendBeforeLaunchUsdMicros] of [
+  ["equals", 7_420_000],
+  ["is below", 7_420_001]
+]) {
+  test(`customer Basic canary blocks launch when the current live wallet ${name} the quote`, async () => {
+    const fixture = basicCanaryFixture({
+      initialProvisioned: true,
+      initialRecharged: true,
+      rechargeUsdMicros: 60_000_000,
+      generalKeySpendBeforeLaunchUsdMicros
+    });
+
+    await assert.rejects(
+      () => productionLiveQa.verifyProductionBasicCustomerCanary(basicCanaryOptions(fixture, { rechargeUsdMicros: "60000000" })),
+      /production_basic_canary_live_wallet_insufficient/
+    );
+    assert.equal(fixture.state.rechargePosts, 0);
+    assert.equal(fixture.state.launchPosts, 0);
+    assert.equal(fixture.state.modelRequests, 0);
+  });
+}
+
+for (const [name, walletAdjustmentOverrides] of [
+  ["operation id", { operationId: "wallet-adjustment-other" }],
+  ["account identity", { accountId: "acct-other" }],
+  ["kind", { kind: "debit" }],
+  ["status", { status: "pending" }],
+  ["phase", { phase: "succeeded" }],
+  ["amount", { amountUsd: "59.999999" }],
+  ["exact recharge delta", { afterBalance: nestedSource({ currency: "USD", usdMicros: "59999999" }, "sub2api") }]
+]) {
+  test(`customer Basic canary fails closed for an invalid immutable recharge ${name}`, async () => {
+    const fixture = basicCanaryFixture({
+      initialProvisioned: true,
+      initialRecharged: true,
+      rechargeUsdMicros: 60_000_000,
+      walletAdjustmentOverrides
+    });
+
+    await assert.rejects(
+      () => productionLiveQa.verifyProductionBasicCustomerCanary(basicCanaryOptions(fixture, { rechargeUsdMicros: "60000000" })),
+      /production_basic_canary_recharge_readback_failed/
+    );
+    assert.equal(fixture.state.rechargePosts, 0);
+    assert.equal(fixture.state.launchPosts, 0);
+    assert.equal(fixture.state.modelRequests, 0);
+  });
+}
 
 test("customer Basic canary accepts the real pricing preview DTO without top-level sizeGb or autoRenew", async () => {
   const fixture = basicCanaryFixture();
@@ -974,7 +1062,7 @@ test("customer Basic canary accepts the real pricing preview DTO without top-lev
   assert.equal(fixture.state.launchPosts, 1);
 });
 
-test("customer Basic canary carries a non-fixed pricing preview amount through launch, wallet, and receipt", async () => {
+test("customer Basic canary carries a non-fixed pricing preview amount through launch and receipt", async () => {
   const quoteTotalUsdMicros = 51_234_567;
   const fixture = basicCanaryFixture({
     quoteTotalUsdMicros,
@@ -985,7 +1073,7 @@ test("customer Basic canary carries a non-fixed pricing preview amount through l
   const result = await productionLiveQa.verifyProductionBasicCustomerCanary(basicCanaryOptions(fixture));
 
   assert.equal(result.status, "passed");
-  assert.equal(result.wallet.deltas.basicPurchaseUsdMicros, String(quoteTotalUsdMicros));
+  assert.equal(result.wallet.deltaUsdMicros, "100000000");
   assert.equal(result.receipt.totalUsdMicros, quoteTotalUsdMicros);
   assert.equal(result.receipt.components.compute.chargeUsdMicros + result.receipt.components.storage.chargeUsdMicros, quoteTotalUsdMicros);
   assert.equal(fixture.state.rechargePosts, 1);
@@ -1024,7 +1112,6 @@ test("customer Basic canary rejects an approved recharge that cannot cover the s
 
 for (const [name, override, error] of [
   ["launch", { launchTotalUsdMicros: 51_234_568 }, /production_basic_canary_launch_readback_failed/],
-  ["wallet debit", { walletPurchaseUsdMicros: 51_234_568 }, /production_basic_canary_purchase_delta_invalid/],
   ["receipt total", { receiptTotalUsdMicros: 51_234_568 }, /production_basic_canary_receipt_invalid/],
   ["receipt components", { receiptComputeUsdMicros: 49_000_001 }, /production_basic_canary_receipt_invalid/]
 ]) {
