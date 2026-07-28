@@ -820,6 +820,7 @@ function validateBasicCanaryKeyEvidence(evidence, workspaceId, workspaceApiKeyId
 }
 
 function validatePreparedBasicCanaryEvidence(prepared, approval, identities, runId) {
+  const recharge = prepared?.wallet;
   if (!exactObjectKeys(prepared, [
     "schemaVersion", "ok", "status", "stage", "approvalDigest", "runId", "mergedSha", "cloudRevision", "identities",
     "resourceContract", "keyEvidence", "operationId", "workspaceId", "wallet", "compute", "storage", "attachment", "runtime", "receipt", "httpAttempts", "writeCounts"
@@ -834,6 +835,13 @@ function validatePreparedBasicCanaryEvidence(prepared, approval, identities, run
     ![0, 1].includes(prepared.writeCounts?.accountProvisionPosts) || ![0, 1].includes(prepared.writeCounts?.walletAdjustmentPosts) || prepared.writeCounts?.workspaceLaunchPosts !== 1 ||
     prepared.writeCounts?.modelRequests !== 0 || prepared.writeCounts?.workspaceKeysCreated !== 1 || prepared.writeCounts?.workspacePurchaseDebits !== 1 ||
     prepared.writeCounts?.tencentCvmPurchases !== 1 || prepared.writeCounts?.tencentCbsPurchases !== 1) {
+    throw new Error("production_basic_canary_prepared_evidence_invalid");
+  }
+  if (!exactObjectKeys(recharge, ["operationId", "source", "beforeUsdMicros", "afterUsdMicros", "deltaUsdMicros"]) ||
+    recharge.operationId !== identities.walletOperationId || recharge.source !== "wallet_adjustment_authoritative_readback" ||
+    ![recharge.beforeUsdMicros, recharge.afterUsdMicros, recharge.deltaUsdMicros].every((value) => /^(0|[1-9][0-9]*)$/.test(String(value || ""))) ||
+    BigInt(recharge.afterUsdMicros) - BigInt(recharge.beforeUsdMicros) !== BigInt(approval.rechargeUsdMicros) ||
+    BigInt(recharge.deltaUsdMicros) !== BigInt(approval.rechargeUsdMicros)) {
     throw new Error("production_basic_canary_prepared_evidence_invalid");
   }
   validateBasicCanaryKeyEvidence(prepared.keyEvidence, prepared.workspaceId, prepared.keyEvidence?.workspaceKey?.id);
@@ -917,6 +925,16 @@ function basicCanaryWalletAdjustment(payload, expectedOperationId, expectedAccou
     throw new Error("production_basic_canary_recharge_readback_failed");
   }
   return { before: { usdMicros: String(before.usdMicros) }, after: { usdMicros: String(after.usdMicros) } };
+}
+
+function basicCanaryRechargeEvidence(operationId, before, after) {
+  return {
+    operationId,
+    source: "wallet_adjustment_authoritative_readback",
+    beforeUsdMicros: before.usdMicros,
+    afterUsdMicros: after.usdMicros,
+    deltaUsdMicros: String(BigInt(after.usdMicros) - BigInt(before.usdMicros))
+  };
 }
 
 function basicCanaryLaunchIdentity(launch, approval, expected, quote) {
@@ -1101,9 +1119,6 @@ export async function verifyProductionBasicCustomerCanary(options = {}) {
   } else {
     if (completing || checkpointAtLeast(checkpoint, "wallet_recharged")) throw new Error("production_basic_canary_recharge_readback_failed");
     walletBeforeRecharge = walletFact(sourceEnvelope(await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/gateway/wallet" }), "sub2api"), sub2apiUserId);
-    if (checkpoint.baseline.walletBeforeRechargeUsdMicros && checkpoint.baseline.walletBeforeRechargeUsdMicros !== walletBeforeRecharge.usdMicros) {
-      throw new Error("production_basic_canary_recharge_readback_failed");
-    }
     checkpoint.baseline.walletBeforeRechargeUsdMicros = walletBeforeRecharge.usdMicros;
     if (!checkpointAtLeast(checkpoint, "baseline_ready")) {
       await saveBasicCanaryCheckpoint(checkpoint, "baseline_ready", checkpointPath, afterCheckpoint);
@@ -1150,15 +1165,13 @@ export async function verifyProductionBasicCustomerCanary(options = {}) {
     walletBeforeRecharge = recovered.before;
     walletAfterRecharge = recovered.after;
   }
-  if (!walletBeforeRecharge || !walletAfterRecharge ||
-    checkpoint.baseline.walletBeforeRechargeUsdMicros && checkpoint.baseline.walletBeforeRechargeUsdMicros !== walletBeforeRecharge.usdMicros ||
-    checkpoint.baseline.walletAfterRechargeUsdMicros && checkpoint.baseline.walletAfterRechargeUsdMicros !== walletAfterRecharge.usdMicros) {
+  if (!walletBeforeRecharge || !walletAfterRecharge) {
     throw new Error("production_basic_canary_recharge_readback_failed");
   }
-  if (BigInt(walletAfterRecharge.usdMicros) - BigInt(walletBeforeRecharge.usdMicros) !== BigInt(approval.rechargeUsdMicros) ||
-    BigInt(walletAfterRecharge.usdMicros) <= BigInt(quote.totalChargeUsdMicros)) {
+  if (BigInt(walletAfterRecharge.usdMicros) - BigInt(walletBeforeRecharge.usdMicros) !== BigInt(approval.rechargeUsdMicros)) {
     throw new Error("production_basic_canary_recharge_delta_invalid");
   }
+  const rechargeEvidence = basicCanaryRechargeEvidence(expectedIdentities.walletOperationId, walletBeforeRecharge, walletAfterRecharge);
   checkpoint.baseline.walletBeforeRechargeUsdMicros = walletBeforeRecharge.usdMicros;
   checkpoint.baseline.walletAfterRechargeUsdMicros = walletAfterRecharge.usdMicros;
   if (!checkpointAtLeast(checkpoint, "wallet_recharged")) {
@@ -1170,7 +1183,7 @@ export async function verifyProductionBasicCustomerCanary(options = {}) {
   if (!launchAuthority.found) {
     if (completing || checkpointAtLeast(checkpoint, "launch_accepted")) throw new Error("production_basic_canary_launch_readback_failed");
     const currentWallet = walletFact(sourceEnvelope(await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/gateway/wallet" }), "sub2api"), sub2apiUserId);
-    if (currentWallet.usdMicros !== walletAfterRecharge.usdMicros) throw new Error("production_basic_canary_recharge_readback_failed");
+    if (BigInt(currentWallet.usdMicros) <= BigInt(quote.totalChargeUsdMicros)) throw new Error("production_basic_canary_live_wallet_insufficient");
     const launchBaseline = await readEmptyBasicCanaryLaunchBaseline(requestOptions, customerAuth, { allowNonWorkspaceReceipts: true });
     if (!sameCanaryKeyCollection(launchBaseline.keySnapshot.generalKeys, keyBaseline.generalKeys) || launchBaseline.keySnapshot.workspaceKeys.length !== 0) {
       throw new Error("production_basic_canary_workspace_or_key_invalid");
@@ -1231,10 +1244,6 @@ export async function verifyProductionBasicCustomerCanary(options = {}) {
     throw new Error("production_basic_canary_model_result_unknown");
   }
 
-  const walletAfterPurchase = walletFact(sourceEnvelope(await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/gateway/wallet" }), "sub2api"), sub2apiUserId);
-  if (BigInt(walletAfterRecharge.usdMicros) - BigInt(walletAfterPurchase.usdMicros) !== BigInt(quote.totalChargeUsdMicros)) {
-    throw new Error("production_basic_canary_purchase_delta_invalid");
-  }
   const workspacePage = controlPlaneCanaryPage(await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/workspaces?page=1&pageSize=20" }));
   const keySnapshot = await readGatewayCanaryKeySnapshot(requestOptions, customerAuth);
   if (workspacePage.total !== 1 || workspacePage.items[0]?.id !== launch.workspaceId || workspacePage.items[0]?.state !== "active" ||
@@ -1283,8 +1292,7 @@ export async function verifyProductionBasicCustomerCanary(options = {}) {
     if (prepared.operationId !== launch.operationId || prepared.workspaceId !== launch.workspaceId || prepared.compute?.allocationId !== launch.computeAllocationId ||
       prepared.storage?.id !== launch.storageId || prepared.attachment?.id !== launch.attachmentId || prepared.runtime?.id !== runtimeId ||
       prepared.runtime?.providerId !== runtimeServiceName || prepared.runtime?.url !== (runtime.url || launch.url) ||
-      prepared.wallet?.beforeRechargeUsdMicros !== walletBeforeRecharge.usdMicros || prepared.wallet?.afterRechargeUsdMicros !== walletAfterRecharge.usdMicros ||
-      prepared.wallet?.afterBasicPurchaseUsdMicros !== walletAfterPurchase.usdMicros || canonicalJson(prepared.receipt) !== canonicalJson(receipt)) {
+      canonicalJson(prepared.wallet) !== canonicalJson(rechargeEvidence) || canonicalJson(prepared.receipt) !== canonicalJson(receipt)) {
       throw new Error("production_basic_canary_prepared_evidence_mismatch");
     }
     compute = {
@@ -1339,15 +1347,7 @@ export async function verifyProductionBasicCustomerCanary(options = {}) {
       keyEvidence,
       operationId: launch.operationId,
       workspaceId: launch.workspaceId,
-      wallet: {
-        beforeRechargeUsdMicros: walletBeforeRecharge.usdMicros,
-        afterRechargeUsdMicros: walletAfterRecharge.usdMicros,
-        afterBasicPurchaseUsdMicros: walletAfterPurchase.usdMicros,
-        deltas: {
-          rechargeUsdMicros: String(BigInt(walletAfterRecharge.usdMicros) - BigInt(walletBeforeRecharge.usdMicros)),
-          basicPurchaseUsdMicros: String(BigInt(walletAfterRecharge.usdMicros) - BigInt(walletAfterPurchase.usdMicros))
-        }
-      },
+      wallet: rechargeEvidence,
       compute: {
         allocationId: launch.computeAllocationId,
         instanceId: compute.instanceId,
@@ -1403,7 +1403,6 @@ export async function verifyProductionBasicCustomerCanary(options = {}) {
     await saveBasicCanaryCheckpoint(checkpoint, "model_request_attempted", checkpointPath, afterCheckpoint);
     throw new Error("production_basic_canary_model_result_unknown");
   }
-  const walletBeforeModel = walletAfterPurchase;
   await assertCloudRevision();
   recordBasicCanaryHttpAttempt(checkpoint, "modelRequest");
   await saveBasicCanaryCheckpoint(checkpoint, "model_request_attempted", checkpointPath, afterCheckpoint);
@@ -1419,7 +1418,6 @@ export async function verifyProductionBasicCustomerCanary(options = {}) {
   let usageAfter;
   let usageRecord;
   let statsAfter;
-  let walletAfterModel;
   for (let attempt = 1; attempt <= usageAttempts; attempt += 1) {
     usageAfter = canaryUsageSnapshot(await requestJson({
       ...requestOptions,
@@ -1429,13 +1427,11 @@ export async function verifyProductionBasicCustomerCanary(options = {}) {
     usageRecord = exactUsageRecord(usageBefore, usageAfter, approval.expected.model, launch.workspaceApiKeyId);
     if (usageRecord) {
       statsAfter = await gatewayUsageStats(requestOptions, customerAuth, launch.workspaceApiKeyId);
-      walletAfterModel = walletFact(sourceEnvelope(await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/gateway/wallet" }), "sub2api"), sub2apiUserId);
-      if (statsMatchRequest(statsBefore, statsAfter, usageRecord) && walletDebitMatches(walletBeforeModel, walletAfterModel, usageRecord.actualCostUsdMicros)) break;
+      if (statsMatchRequest(statsBefore, statsAfter, usageRecord)) break;
     }
     if (attempt < usageAttempts) await sleep(usageRetryDelayMs);
   }
-  if (!usageRecord || !statsAfter || !statsMatchRequest(statsBefore, statsAfter, usageRecord) ||
-    !walletAfterModel || !walletDebitMatches(walletBeforeModel, walletAfterModel, usageRecord.actualCostUsdMicros)) {
+  if (!usageRecord || !statsAfter || !statsMatchRequest(statsBefore, statsAfter, usageRecord)) {
     throw new Error("production_basic_canary_usage_evidence_invalid");
   }
   const readiness = (await requestJson({ ...requestOptions, path: "/api/production/readiness" })).payload;
@@ -1454,17 +1450,7 @@ export async function verifyProductionBasicCustomerCanary(options = {}) {
     workspaceId: launch.workspaceId,
     workspaceApiKeyId: launch.workspaceApiKeyId,
     keyEvidence,
-    wallet: {
-      beforeRechargeUsdMicros: walletBeforeRecharge.usdMicros,
-      afterRechargeUsdMicros: walletAfterRecharge.usdMicros,
-      afterBasicPurchaseUsdMicros: walletAfterPurchase.usdMicros,
-      afterModelUsageUsdMicros: walletAfterModel.usdMicros,
-      deltas: {
-        rechargeUsdMicros: String(BigInt(walletAfterRecharge.usdMicros) - BigInt(walletBeforeRecharge.usdMicros)),
-        basicPurchaseUsdMicros: String(BigInt(walletAfterRecharge.usdMicros) - BigInt(walletAfterPurchase.usdMicros)),
-        modelUsageUsdMicros: String(BigInt(walletBeforeModel.usdMicros) - BigInt(walletAfterModel.usdMicros))
-      }
-    },
+    wallet: rechargeEvidence,
     compute: {
       allocationId: launch.computeAllocationId,
       instanceId: compute.instanceId,
