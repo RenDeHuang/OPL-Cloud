@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -251,6 +252,27 @@ const BASIC_CANARY_KEY_ID = "91";
 const BASIC_CANARY_LAUNCH_KEY = "workspace-launch:prod-basic-canary-20260726-01";
 const BASIC_CANARY_RESOLVED_INSTANCE_TYPE = "S5.MEDIUM4";
 
+function stableCanaryId(...parts) {
+  const hash = createHash("sha1");
+  for (const part of parts) {
+    hash.update(String(part));
+    hash.update(Buffer.from([0]));
+  }
+  return hash.digest("hex");
+}
+
+function basicWorkspaceKeyName(workspaceId = BASIC_CANARY_WORKSPACE_ID) {
+  return `opl-workspace-${stableCanaryId(workspaceId).slice(0, 12)}`;
+}
+
+function generalKey(id, name = `general-${id}`, status = "active") {
+  return { id: String(id), kind: "general", name, status };
+}
+
+function workspaceKey(id = BASIC_CANARY_KEY_ID, { name = basicWorkspaceKeyName(), status = "active" } = {}) {
+  return { id: String(id), kind: "workspace", name, status };
+}
+
 function basicCanaryApprovalJson() {
   return JSON.stringify({
     approvalId: BASIC_CANARY_APPROVAL_ID,
@@ -409,7 +431,10 @@ function basicCanaryFixture({
   initialRecharged = false,
   initialLaunchStatus = "",
   cloudRevisionError = "",
-  loseResponseAfter = ""
+  loseResponseAfter = "",
+  existingGeneralKeys = [],
+  existingWorkspaceKeys = [],
+  workspaceKeysAfter = [workspaceKey()]
 } = {}) {
   const calls = [];
   const state = {
@@ -502,7 +527,13 @@ function basicCanaryFixture({
     receiptRef: nestedSource(receipt.receiptId, "ledger")
   });
   const controlPlanePage = (items) => source({ items, total: items.length, page: 1, pageSize: 20 }, "control-plane", items.length === 0 ? "empty" : "available");
-  const gatewayPage = (items) => source({ items, total: items.length, page: 1, pageSize: 20, pages: 1 }, "sub2api", items.length === 0 ? "empty" : "available");
+  const gatewayPage = (items, page = 1, pageSize = 20, total = items.length) => {
+    const pages = Math.max(1, Math.ceil(total / pageSize));
+    return source({ items, total, page, pageSize, pages }, "sub2api", items.length === 0 ? "empty" : "available");
+  };
+  const keyItems = () => state.launched
+    ? [...existingGeneralKeys, ...workspaceKeysAfter]
+    : [...existingGeneralKeys, ...existingWorkspaceKeys];
   const operatorAccountPage = () => {
     const items = state.provisioned ? [{
       accountId: BASIC_CANARY_ACCOUNT_ID,
@@ -667,7 +698,11 @@ function basicCanaryFixture({
       return json(launch(terminalStatus, terminalStatus));
     }
     if (url.pathname === "/api/gateway/keys") {
-      return gatewayPage(state.launched ? [{ id: BASIC_CANARY_KEY_ID, name: `opl-ws-${BASIC_CANARY_WORKSPACE_ID}`, status: "active" }] : []);
+      const page = Number(url.searchParams.get("page") || "1");
+      const pageSize = Number(url.searchParams.get("pageSize") || "20");
+      const items = keyItems();
+      if (!Number.isInteger(page) || page < 1 || !Number.isInteger(pageSize) || pageSize < 1) return json({ error: "invalid_page" }, 400);
+      return gatewayPage(items.slice((page - 1) * pageSize, page * pageSize), page, pageSize, items.length);
     }
     if (url.pathname === `/api/gateway/keys/${BASIC_CANARY_KEY_ID}/usage`) return gatewayPage(state.modelRequests ? [usageRecord] : []);
     if (url.pathname === `/api/gateway/keys/${BASIC_CANARY_KEY_ID}/usage-summary`) {
@@ -816,6 +851,67 @@ test("customer Basic canary uses one launch POST and returns redacted end-to-end
   assert.equal(fixture.calls.filter((call) => call.path === "/api/workspace-launches" && call.method === "POST").length, 1);
   assert.equal(fixture.calls.filter((call) => call.path === `/api/workspace-launches/${BASIC_CANARY_LAUNCH_OPERATION_ID}`).every((call) => call.method === "GET"), true);
   assert.doesNotMatch(JSON.stringify(result), /customer-password|workspace-password|internal-service-token|must-not-emit|redeem/i);
+});
+
+test("customer Basic canary accepts four existing general Keys and proves only one Workspace Key was added", async () => {
+  const existingGeneralKeys = [1, 2, 3, 4].map((id) => generalKey(id, `general-${id}`));
+  const fixture = basicCanaryFixture({ existingGeneralKeys });
+
+  const result = await productionLiveQa.verifyProductionBasicCustomerCanary(basicCanaryOptions(fixture));
+
+  assert.equal(result.status, "passed");
+  assert.equal(result.keyEvidence.generalKeysUnchanged, true);
+  assert.deepEqual(result.keyEvidence.generalKeyIds, ["1", "2", "3", "4"]);
+  assert.deepEqual(result.keyEvidence.workspaceKey, workspaceKey());
+  assert.equal(result.writeCounts.workspaceKeysCreated, 1);
+  assert.equal(fixture.state.rechargePosts, 1);
+  assert.equal(fixture.state.launchPosts, 1);
+  assert.equal(fixture.state.modelRequests, 1);
+});
+
+test("customer Basic canary fails before recharge when an existing Workspace Key is present", async () => {
+  const fixture = basicCanaryFixture({
+    initialProvisioned: true,
+    existingWorkspaceKeys: [workspaceKey("77")]
+  });
+
+  await assert.rejects(() => productionLiveQa.verifyProductionBasicCustomerCanary(basicCanaryOptions(fixture)), /production_basic_canary_baseline_not_empty/);
+  assert.equal(fixture.state.provisionPosts, 0);
+  assert.equal(fixture.state.rechargePosts, 0);
+  assert.equal(fixture.state.launchPosts, 0);
+  assert.equal(fixture.state.modelRequests, 0);
+});
+
+for (const [name, workspaceKeysAfter] of [
+  ["missing target", []],
+  ["wrong id", [workspaceKey("92")]],
+  ["wrong status", [workspaceKey(BASIC_CANARY_KEY_ID, { status: "disabled" })]],
+  ["multiple Workspace Keys", [workspaceKey(), workspaceKey("92", { name: `opl-workspace-${stableCanaryId("second").slice(0, 12)}` })]]
+]) {
+  test(`customer Basic canary fails closed after launch for ${name}`, async () => {
+    const fixture = basicCanaryFixture({
+      existingGeneralKeys: [generalKey("1")],
+      workspaceKeysAfter
+    });
+
+    await assert.rejects(() => productionLiveQa.verifyProductionBasicCustomerCanary(basicCanaryOptions(fixture)), /production_basic_canary_workspace_or_key_invalid/);
+    assert.equal(fixture.state.rechargePosts, 1);
+    assert.equal(fixture.state.launchPosts, 1);
+    assert.equal(fixture.state.modelRequests, 0);
+  });
+}
+
+test("customer Basic canary reads a Workspace Key on the second Key page", async () => {
+  const existingGeneralKeys = Array.from({ length: 20 }, (_, index) => generalKey(index + 1, `general-${index + 1}`));
+  const fixture = basicCanaryFixture({ existingGeneralKeys });
+
+  const result = await productionLiveQa.verifyProductionBasicCustomerCanary(basicCanaryOptions(fixture));
+
+  assert.equal(result.status, "passed");
+  assert.equal(result.keyEvidence.workspaceKey.id, BASIC_CANARY_KEY_ID);
+  assert.equal(result.writeCounts.workspaceKeysCreated, 1);
+  assert.equal(fixture.calls.some((call) => call.path === "/api/gateway/keys" && call.search === "?page=2&pageSize=20"), true);
+  assert.equal(fixture.state.modelRequests, 1);
 });
 
 test("customer Basic canary splits VPC preparation from hosted browser completion without replaying business writes", async (t) => {
