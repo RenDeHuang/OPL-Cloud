@@ -26,6 +26,7 @@ const DEFAULT_MODEL_TIMEOUT_MS = 180_000;
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 const MAX_USAGE_ITEMS = 10_000;
 const MAX_USAGE_PAGES = 100;
+const MAX_CANARY_KEY_ITEMS = 10_000;
 const PRODUCTION_ADMIN = Object.freeze({ email: "admin@medopl.cn", consoleUserId: "usr-admin", accountId: "acct-admin", role: "admin" });
 const READ_ONLY_VIEWPORTS = Object.freeze({
   desktop: Object.freeze({ width: 1440, height: 900 }),
@@ -495,14 +496,99 @@ function controlPlaneCanaryPage(result, pageSize = 20) {
   return data;
 }
 
-function gatewayCanaryPage(result, pageSize = 20) {
+function gatewayCanaryPage(result, pageSize = 20, expectedPage = 1) {
   const envelope = sourceEnvelope(result, "sub2api", true);
   const data = envelope.data;
-  if (!Array.isArray(data?.items) || !Number.isSafeInteger(data?.total) || data.total < 0 || data.page !== 1 || data.pageSize !== pageSize ||
-    !Number.isSafeInteger(data.pages) || data.pages !== Math.max(1, Math.ceil(data.total / pageSize)) || data.items.length !== Math.min(data.total, pageSize)) {
+  const expectedItems = data?.total === 0 ? 0 : Math.min(pageSize, Math.max(0, data?.total - (expectedPage - 1) * pageSize));
+  if (!Array.isArray(data?.items) || !Number.isSafeInteger(data?.total) || data.total < 0 || data.page !== expectedPage || data.pageSize !== pageSize ||
+    !Number.isSafeInteger(data.pages) || data.pages !== Math.max(1, Math.ceil(data.total / pageSize)) || data.items.length !== expectedItems) {
     throw new Error("production_basic_canary_page_invalid");
   }
   return data;
+}
+
+function canaryKeySummary(item) {
+  if (!item || typeof item !== "object" || ["key", "value", "maskedValue"].some((field) => Object.hasOwn(item, field))) {
+    throw new Error("production_basic_canary_key_invalid");
+  }
+  const id = String(item.id || "");
+  const kind = String(item.kind || "");
+  const name = String(item.name || "");
+  const status = String(item.status || "");
+  if (!/^[1-9][0-9]*$/.test(id) || !["general", "workspace"].includes(kind) || !name || !status) {
+    throw new Error("production_basic_canary_key_invalid");
+  }
+  return { id, kind, name, status };
+}
+
+function sortedCanaryKeys(items) {
+  return items.map(canaryKeySummary).sort((left, right) => left.id.localeCompare(right.id));
+}
+
+function sameCanaryKeyCollection(left, right) {
+  return canonicalJson(sortedCanaryKeys(left || [])) === canonicalJson(sortedCanaryKeys(right || []));
+}
+
+async function readGatewayCanaryKeySnapshot(requestOptions, customerAuth) {
+  const pageSize = 20;
+  const items = [];
+  let total = null;
+  let pages = null;
+  for (let page = 1; ; page += 1) {
+    if (page > MAX_CANARY_KEY_ITEMS) throw new Error("production_basic_canary_key_page_limit_exceeded");
+    const data = gatewayCanaryPage(await requestJson({
+      ...requestOptions,
+      auth: customerAuth,
+      path: `/api/gateway/keys?page=${page}&pageSize=${pageSize}`
+    }), pageSize, page);
+    if (total === null) {
+      total = data.total;
+      pages = data.pages;
+      if (total > MAX_CANARY_KEY_ITEMS) throw new Error("production_basic_canary_key_page_limit_exceeded");
+    } else if (data.total !== total || data.pages !== pages) {
+      throw new Error("production_basic_canary_key_pagination_changed");
+    }
+    items.push(...data.items.map(canaryKeySummary));
+    if (page >= pages) break;
+  }
+  if (items.length !== total) throw new Error("production_basic_canary_key_pagination_incomplete");
+  const generalKeys = items.filter((item) => item.kind === "general");
+  const workspaceKeys = items.filter((item) => item.kind === "workspace");
+  return {
+    total,
+    pages,
+    items: sortedCanaryKeys(items),
+    generalKeys: sortedCanaryKeys(generalKeys),
+    workspaceKeys: sortedCanaryKeys(workspaceKeys)
+  };
+}
+
+function canonicalWorkspaceKeyName(workspaceId) {
+  return `opl-workspace-${stableCanaryId(workspaceId).slice(0, 12)}`;
+}
+
+function basicCanaryKeyEvidence(snapshot, baseline, workspaceId, workspaceApiKeyId) {
+  const canonicalName = canonicalWorkspaceKeyName(workspaceId);
+  const baselineWorkspaceKeys = baseline?.workspaceKeys || [];
+  const expectedExistingWorkspace = baselineWorkspaceKeys.length === 1 &&
+    baselineWorkspaceKeys[0]?.id === String(workspaceApiKeyId) && baselineWorkspaceKeys[0]?.kind === "workspace" &&
+    baselineWorkspaceKeys[0]?.name === canonicalName && baselineWorkspaceKeys[0]?.status === "active";
+  if (baselineWorkspaceKeys.length > 1 || baselineWorkspaceKeys.length === 1 && !expectedExistingWorkspace) {
+    throw new Error("production_basic_canary_baseline_not_empty");
+  }
+  if (snapshot.workspaceKeys.length !== 1) throw new Error("production_basic_canary_workspace_or_key_invalid");
+  const workspaceKey = snapshot.workspaceKeys[0];
+  if (workspaceKey.id !== String(workspaceApiKeyId) || workspaceKey.kind !== "workspace" || workspaceKey.name !== canonicalName || workspaceKey.status !== "active" ||
+    !sameCanaryKeyCollection(snapshot.generalKeys, baseline.generalKeys)) {
+    throw new Error("production_basic_canary_workspace_or_key_invalid");
+  }
+  return {
+    generalKeysUnchanged: true,
+    generalKeys: baseline.generalKeys,
+    generalKeyIds: baseline.generalKeys.map((key) => key.id),
+    workspaceKey,
+    workspaceKeysCreated: 1
+  };
 }
 
 function canaryReceipt(result, expected) {
@@ -704,10 +790,24 @@ async function loadBasicCanaryCheckpoint(path, approval) {
   return { checkpoint: parsed, present: true };
 }
 
+function validateBasicCanaryKeyEvidence(evidence, workspaceId, workspaceApiKeyId) {
+  if (!evidence || evidence.generalKeysUnchanged !== true || evidence.workspaceKeysCreated !== 1 || !Array.isArray(evidence.generalKeys) ||
+    !Array.isArray(evidence.generalKeyIds) || evidence.generalKeyIds.length !== evidence.generalKeys.length || !evidence.workspaceKey) {
+    throw new Error("production_basic_canary_prepared_evidence_invalid");
+  }
+  const generalKeys = sortedCanaryKeys(evidence.generalKeys);
+  const workspaceKey = canaryKeySummary(evidence.workspaceKey);
+  if (generalKeys.some((key) => key.kind !== "general") || canonicalJson(evidence.generalKeyIds) !== canonicalJson(generalKeys.map((key) => key.id)) ||
+    workspaceKey.id !== String(workspaceApiKeyId) || workspaceKey.kind !== "workspace" || workspaceKey.name !== canonicalWorkspaceKeyName(workspaceId) || workspaceKey.status !== "active") {
+    throw new Error("production_basic_canary_prepared_evidence_invalid");
+  }
+  return { generalKeys, generalKeyIds: generalKeys.map((key) => key.id), workspaceKey, generalKeysUnchanged: true, workspaceKeysCreated: 1 };
+}
+
 function validatePreparedBasicCanaryEvidence(prepared, approval, identities, runId) {
   if (!exactObjectKeys(prepared, [
     "schemaVersion", "ok", "status", "stage", "approvalDigest", "runId", "mergedSha", "cloudRevision", "identities",
-    "resourceContract", "operationId", "workspaceId", "wallet", "compute", "storage", "attachment", "runtime", "receipt", "httpAttempts", "writeCounts"
+    "resourceContract", "keyEvidence", "operationId", "workspaceId", "wallet", "compute", "storage", "attachment", "runtime", "receipt", "httpAttempts", "writeCounts"
   ]) || prepared.schemaVersion !== 1 || prepared.ok !== true || prepared.status !== "prepared" || prepared.stage !== "runtime_ready" ||
     prepared.approvalDigest !== basicCanaryApprovalDigest(approval) || prepared.runId !== runId || prepared.mergedSha !== approval.expected.mergedSha ||
     JSON.stringify(prepared.identities) !== JSON.stringify(identities) || prepared.operationId !== identities.launchOperationId || prepared.workspaceId !== identities.workspaceId ||
@@ -721,6 +821,7 @@ function validatePreparedBasicCanaryEvidence(prepared, approval, identities, run
     prepared.writeCounts?.tencentCvmPurchases !== 1 || prepared.writeCounts?.tencentCbsPurchases !== 1) {
     throw new Error("production_basic_canary_prepared_evidence_invalid");
   }
+  validateBasicCanaryKeyEvidence(prepared.keyEvidence, prepared.workspaceId, prepared.keyEvidence?.workspaceKey?.id);
   validateBasicCanaryCloudRevisionEvidence(prepared.cloudRevision, approval.expected.mergedSha, approval.expected.cloudImageDigest);
   return prepared;
 }
@@ -815,14 +916,15 @@ function basicCanaryLaunchIdentity(launch, approval, expected) {
 async function readEmptyBasicCanaryLaunchBaseline(requestOptions, customerAuth, { allowNonWorkspaceReceipts = false } = {}) {
   const workspaces = controlPlaneCanaryPage(await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/workspaces?page=1&pageSize=20" }));
   const launches = (await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/workspace-launches" })).payload;
-  const keys = gatewayCanaryPage(await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/gateway/keys?page=1&pageSize=20" }));
+  const keySnapshot = await readGatewayCanaryKeySnapshot(requestOptions, customerAuth);
   const receipts = sourceEnvelope(await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/billing/receipts?limit=20" }), "ledger", true).data;
   const receiptItems = receipts?.receipts;
   const workspaceReceipts = Array.isArray(receiptItems) ? receiptItems.filter((receipt) => receipt?.type === "billing.workspace_purchased.v1" || receipt?.workspaceId) : [];
-  if (workspaces.total !== 0 || !Array.isArray(launches) || launches.length !== 0 || keys.total !== 0 || !Array.isArray(receiptItems) ||
+  if (workspaces.total !== 0 || !Array.isArray(launches) || launches.length !== 0 || keySnapshot.workspaceKeys.length !== 0 || !Array.isArray(receiptItems) ||
     (!allowNonWorkspaceReceipts && receiptItems.length !== 0) || workspaceReceipts.length !== 0 || receipts.hasMore !== false) {
     throw new Error("production_basic_canary_baseline_not_empty");
   }
+  return { keySnapshot };
 }
 
 export async function verifyProductionBasicCustomerCanary(options = {}) {
@@ -940,6 +1042,31 @@ export async function verifyProductionBasicCustomerCanary(options = {}) {
     await saveBasicCanaryCheckpoint(checkpoint, "account_provisioned", checkpointPath, afterCheckpoint);
   }
 
+  const fixedLaunchIdentity = {
+    operationId: expectedIdentities.launchOperationId,
+    accountId,
+    workspaceId: expectedIdentities.workspaceId
+  };
+  const launchPath = `/api/workspace-launches/${encodeURIComponent(fixedLaunchIdentity.operationId)}`;
+  let launchAuthority = await authoritativeGet({ ...requestOptions, auth: customerAuth, path: launchPath });
+  let keyBaseline;
+  if (completing) {
+    keyBaseline = { generalKeys: prepared.keyEvidence.generalKeys, workspaceKeys: [] };
+  } else if (launchAuthority.found) {
+    basicCanaryLaunchIdentity(launchAuthority.payload, approval, fixedLaunchIdentity);
+    const recoveredKeySnapshot = await readGatewayCanaryKeySnapshot(requestOptions, customerAuth);
+    const canonicalName = canonicalWorkspaceKeyName(launchAuthority.payload.workspaceId);
+    if (recoveredKeySnapshot.workspaceKeys.length > 1 ||
+      recoveredKeySnapshot.workspaceKeys.some((key) => key.id !== String(launchAuthority.payload.workspaceApiKeyId) || key.name !== canonicalName || key.status !== "active")) {
+      throw new Error("production_basic_canary_baseline_not_empty");
+    }
+    keyBaseline = recoveredKeySnapshot;
+  } else if (!checkpointAtLeast(checkpoint, "launch_accepted")) {
+    keyBaseline = (await readEmptyBasicCanaryLaunchBaseline(requestOptions, customerAuth)).keySnapshot;
+  } else {
+    keyBaseline = await readGatewayCanaryKeySnapshot(requestOptions, customerAuth);
+  }
+
   const walletAdjustmentPath = `/api/operator/wallet-adjustments/${encodeURIComponent(expectedIdentities.walletOperationId)}`;
   let walletAuthority = await authoritativeGet({ ...requestOptions, auth: adminAuth, path: walletAdjustmentPath });
   let walletBeforeRecharge;
@@ -954,7 +1081,6 @@ export async function verifyProductionBasicCustomerCanary(options = {}) {
     if (checkpoint.baseline.walletBeforeRechargeUsdMicros && checkpoint.baseline.walletBeforeRechargeUsdMicros !== walletBeforeRecharge.usdMicros) {
       throw new Error("production_basic_canary_recharge_readback_failed");
     }
-    await readEmptyBasicCanaryLaunchBaseline(requestOptions, customerAuth);
     checkpoint.baseline.walletBeforeRechargeUsdMicros = walletBeforeRecharge.usdMicros;
     if (!checkpointAtLeast(checkpoint, "baseline_ready")) {
       await saveBasicCanaryCheckpoint(checkpoint, "baseline_ready", checkpointPath, afterCheckpoint);
@@ -1012,20 +1138,17 @@ export async function verifyProductionBasicCustomerCanary(options = {}) {
     await saveBasicCanaryCheckpoint(checkpoint, "wallet_recharged", checkpointPath, afterCheckpoint);
   }
 
-  const fixedLaunchIdentity = {
-    operationId: expectedIdentities.launchOperationId,
-    accountId,
-    workspaceId: expectedIdentities.workspaceId
-  };
-  const launchPath = `/api/workspace-launches/${encodeURIComponent(fixedLaunchIdentity.operationId)}`;
-  let launchAuthority = await authoritativeGet({ ...requestOptions, auth: customerAuth, path: launchPath });
   const launchSucceededWithoutCheckpoint = !checkpointPresent && launchAuthority.found && launchAuthority.payload?.status === "succeeded";
   let launch;
   if (!launchAuthority.found) {
     if (completing || checkpointAtLeast(checkpoint, "launch_accepted")) throw new Error("production_basic_canary_launch_readback_failed");
     const currentWallet = walletFact(sourceEnvelope(await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/gateway/wallet" }), "sub2api"), sub2apiUserId);
     if (currentWallet.usdMicros !== walletAfterRecharge.usdMicros) throw new Error("production_basic_canary_recharge_readback_failed");
-    await readEmptyBasicCanaryLaunchBaseline(requestOptions, customerAuth, { allowNonWorkspaceReceipts: true });
+    const launchBaseline = await readEmptyBasicCanaryLaunchBaseline(requestOptions, customerAuth, { allowNonWorkspaceReceipts: true });
+    if (!sameCanaryKeyCollection(launchBaseline.keySnapshot.generalKeys, keyBaseline.generalKeys) || launchBaseline.keySnapshot.workspaceKeys.length !== 0) {
+      throw new Error("production_basic_canary_workspace_or_key_invalid");
+    }
+    keyBaseline = launchBaseline.keySnapshot;
     await assertCloudRevision();
     recordBasicCanaryHttpAttempt(checkpoint, "workspaceLaunch");
     await saveBasicCanaryCheckpoint(checkpoint, "workspace_launch_attempted", checkpointPath, afterCheckpoint);
@@ -1085,11 +1208,12 @@ export async function verifyProductionBasicCustomerCanary(options = {}) {
     throw new Error("production_basic_canary_purchase_delta_invalid");
   }
   const workspacePage = controlPlaneCanaryPage(await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/workspaces?page=1&pageSize=20" }));
-  const keyPage = gatewayCanaryPage(await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/gateway/keys?page=1&pageSize=20" }));
+  const keySnapshot = await readGatewayCanaryKeySnapshot(requestOptions, customerAuth);
   if (workspacePage.total !== 1 || workspacePage.items[0]?.id !== launch.workspaceId || workspacePage.items[0]?.state !== "active" ||
-    keyPage.total !== 1 || String(keyPage.items[0]?.id || "") !== launch.workspaceApiKeyId || keyPage.items[0]?.status !== "active") {
+    keySnapshot.workspaceKeys.length !== 1) {
     throw new Error("production_basic_canary_workspace_or_key_invalid");
   }
+  const keyEvidence = basicCanaryKeyEvidence(keySnapshot, keyBaseline, launch.workspaceId, launch.workspaceApiKeyId);
   const receiptPage = sourceEnvelope(await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/billing/receipts?limit=20" }), "ledger").data;
   if (!Array.isArray(receiptPage?.receipts) || receiptPage.receipts.length !== 1 || receiptPage.hasMore !== false || receiptPage.receipts[0]?.receiptId !== launch.receiptId) {
     throw new Error("production_basic_canary_receipt_cardinality_invalid");
@@ -1183,6 +1307,7 @@ export async function verifyProductionBasicCustomerCanary(options = {}) {
       cloudRevision,
       identities: { ...expectedIdentities },
       resourceContract: { ...resourceContract },
+      keyEvidence,
       operationId: launch.operationId,
       workspaceId: launch.workspaceId,
       wallet: {
@@ -1221,7 +1346,7 @@ export async function verifyProductionBasicCustomerCanary(options = {}) {
         walletAdjustmentPosts: 1,
         workspaceLaunchPosts: 1,
         modelRequests: 0,
-        workspaceKeysCreated: keyPage.total,
+        workspaceKeysCreated: keyEvidence.workspaceKeysCreated,
         workspacePurchaseDebits: 1,
         tencentCvmPurchases: compute.actionCount("create_compute_allocation"),
         tencentCbsPurchases: compute.actionCount("create_storage_volume")
@@ -1301,6 +1426,7 @@ export async function verifyProductionBasicCustomerCanary(options = {}) {
     operationId: launch.operationId,
     workspaceId: launch.workspaceId,
     workspaceApiKeyId: launch.workspaceApiKeyId,
+    keyEvidence,
     wallet: {
       beforeRechargeUsdMicros: walletBeforeRecharge.usdMicros,
       afterRechargeUsdMicros: walletAfterRecharge.usdMicros,
@@ -1351,7 +1477,7 @@ export async function verifyProductionBasicCustomerCanary(options = {}) {
       walletAdjustmentPosts: 1,
       workspaceLaunchPosts: 1,
       modelRequests: 1,
-      workspaceKeysCreated: keyPage.total,
+      workspaceKeysCreated: keyEvidence.workspaceKeysCreated,
       workspacePurchaseDebits: 1,
       tencentCvmPurchases: compute.actionCount("create_compute_allocation"),
       tencentCbsPurchases: compute.actionCount("create_storage_volume")
