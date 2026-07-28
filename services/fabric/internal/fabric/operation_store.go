@@ -30,9 +30,11 @@ type OperationStore interface {
 	TryClaimComputePoolHead(ctx context.Context, operationID, poolKey, leaseOwner string, now, leaseExpiresAt time.Time) (FabricOperation, bool, error)
 	ReleaseComputePoolHead(ctx context.Context, operationID, poolKey, leaseOwner string) error
 	SaveRuntime(ctx context.Context, operation FabricOperation) error
+	SaveComputeClaimRecovery(ctx context.Context, current, next FabricOperation) error
 	List(ctx context.Context) ([]FabricOperation, error)
 	ClaimMachine(ctx context.Context, ownership MachineOwnership) (MachineOwnership, bool, error)
 	SaveMachineOwnership(ctx context.Context, ownership MachineOwnership) error
+	ActivateComputeClaimRecoveryOwnership(ctx context.Context, ownership MachineOwnership) error
 	MachineOwnership(ctx context.Context, resourceID string) (MachineOwnership, error)
 	ListMachineOwnerships(ctx context.Context) ([]MachineOwnership, error)
 	WithPoolLock(ctx context.Context, poolKey string, fn func(context.Context) error) error
@@ -118,6 +120,23 @@ func (s *MemoryOperationStore) SaveMachineOwnership(_ context.Context, ownership
 	return nil
 }
 
+func (s *MemoryOperationStore) ActivateComputeClaimRecoveryOwnership(_ context.Context, ownership MachineOwnership) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	current, ok := s.machineOwnerships[ownership.ResourceID]
+	if !ok {
+		return ErrMachineOwnershipNotFound
+	}
+	if ownership.Status != "active" || ownership.ReleasedAt != nil || !sameComputeClaimRecoveryOwnership(current, ownership) ||
+		(current.Status != "quarantined" && current.Status != "active") || current.ReleasedAt != nil {
+		return ErrMachineOwnershipConflict
+	}
+	current.Status = "active"
+	current.ReleasedAt = nil
+	s.machineOwnerships[current.ResourceID] = current
+	return nil
+}
+
 func (s *MemoryOperationStore) MachineOwnership(_ context.Context, resourceID string) (MachineOwnership, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -190,7 +209,7 @@ func (s *MemoryOperationStore) TryClaimComputePoolHead(_ context.Context, operat
 	head := -1
 	for index := range s.operation {
 		operation := s.operation[index]
-		if operation.Action != "create_compute_allocation" || operation.Status != "started" || operation.ComputePoolKey != poolKey {
+		if operation.Action != "create_compute_allocation" || !computePoolHeadStatus(operation.Status) || operation.ComputePoolKey != poolKey {
 			continue
 		}
 		if head < 0 || operation.CreatedAt.Before(s.operation[head].CreatedAt) || (operation.CreatedAt.Equal(s.operation[head].CreatedAt) && operation.ID < s.operation[head].ID) {
@@ -202,6 +221,9 @@ func (s *MemoryOperationStore) TryClaimComputePoolHead(_ context.Context, operat
 	}
 	current := s.operation[head]
 	if current.ID != operationID {
+		return current, false, nil
+	}
+	if current.Status != "started" {
 		return current, false, nil
 	}
 	if current.ComputePoolLeaseOwner != "" && current.ComputePoolLeaseOwner != leaseOwner && current.ComputePoolLeaseExpires != nil && current.ComputePoolLeaseExpires.After(now) {
@@ -279,6 +301,35 @@ func (s *MemoryOperationStore) SaveRuntime(_ context.Context, operation FabricOp
 			s.operation[index] = operation
 			return nil
 		}
+	}
+	return fmt.Errorf("runtime_operation_not_found")
+}
+
+func (s *MemoryOperationStore) SaveComputeClaimRecovery(_ context.Context, expected, next FabricOperation) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !validComputeClaimRecoveryTransition(expected.Status, next.Status) || !sameComputeClaimRecoveryOperation(expected, next) ||
+		!validComputeClaimRecoveryBindingTransition(expected, next) {
+		return ErrRuntimeOperationNotCurrent
+	}
+	expectedPayload, err := operationPayloadJSON(expected)
+	if err != nil {
+		return err
+	}
+	for index := range s.operation {
+		current := s.operation[index]
+		if current.ID != next.ID {
+			continue
+		}
+		currentPayload, err := operationPayloadJSON(current)
+		if err != nil {
+			return err
+		}
+		if current.Status != expected.Status || !sameComputeClaimRecoveryOperation(current, expected) || currentPayload != expectedPayload {
+			return ErrRuntimeOperationNotCurrent
+		}
+		s.operation[index] = next
+		return nil
 	}
 	return fmt.Errorf("runtime_operation_not_found")
 }
@@ -621,6 +672,42 @@ func (s *PostgresOperationStore) SaveMachineOwnership(ctx context.Context, owner
 	}
 }
 
+func (s *PostgresOperationStore) ActivateComputeClaimRecoveryOwnership(ctx context.Context, ownership MachineOwnership) error {
+	if ownership.Status != "active" || ownership.ReleasedAt != nil {
+		return ErrMachineOwnershipConflict
+	}
+	updated, err := s.client.MachineOwnership.Update().Where(
+		machineownership.ID(ownership.ID), machineownership.ResourceID(ownership.ResourceID),
+		machineownership.AccountID(ownership.AccountID), machineownership.WorkspaceID(ownership.WorkspaceID),
+		machineownership.PackageID(ownership.PackageID), machineownership.NodePoolID(ownership.NodePoolID),
+		machineownership.MachineID(ownership.MachineID), machineownership.InstanceID(ownership.InstanceID),
+		machineownership.NodeName(ownership.NodeName), machineownership.ProviderRequestID(ownership.ProviderRequestID),
+		machineownership.ClaimedAt(ownership.ClaimedAt), machineownership.Status("quarantined"),
+		machineownership.ReleasedAtIsNil(),
+	).SetStatus("active").ClearReleasedAt().Save(ctx)
+	if err != nil {
+		return err
+	}
+	if updated == 1 {
+		return nil
+	}
+	current, err := s.MachineOwnership(ctx, ownership.ResourceID)
+	if err != nil {
+		return err
+	}
+	if current.Status == "active" && current.ReleasedAt == nil && sameComputeClaimRecoveryOwnership(current, ownership) {
+		return nil
+	}
+	return ErrMachineOwnershipConflict
+}
+
+func sameComputeClaimRecoveryOwnership(current, target MachineOwnership) bool {
+	return current.ID == target.ID && current.ResourceID == target.ResourceID && current.AccountID == target.AccountID &&
+		current.WorkspaceID == target.WorkspaceID && current.PackageID == target.PackageID && current.NodePoolID == target.NodePoolID &&
+		current.MachineID == target.MachineID && current.InstanceID == target.InstanceID && current.NodeName == target.NodeName &&
+		current.ProviderRequestID == target.ProviderRequestID && current.ClaimedAt.Equal(target.ClaimedAt)
+}
+
 func (s *PostgresOperationStore) MachineOwnership(ctx context.Context, resourceID string) (MachineOwnership, error) {
 	row, err := s.client.MachineOwnership.Query().Where(machineownership.ResourceID(resourceID)).Only(ctx)
 	if fabricent.IsNotFound(err) {
@@ -844,10 +931,14 @@ func postgresFabricOperationByPoolHead(ctx context.Context, tx *sql.Tx, poolKey 
 			error_code, retryable, compute_pool_key, compute_pool_lease_owner, compute_pool_lease_expires_at,
 			started_at, finished_at, created_at
 		FROM fabric_operations
-		WHERE action = 'create_compute_allocation' AND status = 'started' AND compute_pool_key = $1
+		WHERE action = 'create_compute_allocation' AND status IN ('started', 'claim_pending') AND compute_pool_key = $1
 		ORDER BY created_at, id
 		LIMIT 1`, poolKey)
 	return scanPostgresFabricOperation(row)
+}
+
+func computePoolHeadStatus(status string) bool {
+	return status == "started" || status == "claim_pending"
 }
 
 type postgresRowScanner interface {
@@ -1033,6 +1124,73 @@ func (s *PostgresOperationStore) SaveRuntime(ctx context.Context, operation Fabr
 		return err
 	}
 	return ErrRuntimeOperationNotCurrent
+}
+
+func (s *PostgresOperationStore) SaveComputeClaimRecovery(ctx context.Context, expected, next FabricOperation) error {
+	if !validComputeClaimRecoveryTransition(expected.Status, next.Status) || !sameComputeClaimRecoveryOperation(expected, next) ||
+		!validComputeClaimRecoveryBindingTransition(expected, next) {
+		return ErrRuntimeOperationNotCurrent
+	}
+	expectedPayloadJSON, err := operationPayloadJSON(expected)
+	if err != nil {
+		return err
+	}
+	nextPayloadJSON, err := operationPayloadJSON(next)
+	if err != nil {
+		return err
+	}
+	update := s.client.FabricOperation.Update().Where(
+		fabricoperation.ID(expected.ID), fabricoperation.Status(expected.Status),
+		fabricoperation.Action("create_compute_allocation"), fabricoperation.ResourceKind(expected.ResourceKind),
+		fabricoperation.ResourceID(expected.ResourceID), fabricoperation.AccountID(expected.AccountID),
+		fabricoperation.WorkspaceID(expected.WorkspaceID), fabricoperation.IdempotencyKey(expected.IdempotencyKey),
+		fabricoperation.RequestHash(expected.RequestHash),
+		func(selector *entsql.Selector) {
+			selector.Where(entsql.P(func(builder *entsql.Builder) {
+				builder.WriteString(selector.C(fabricoperation.FieldRedactedProviderPayload)).WriteString("::jsonb = ").Arg(expectedPayloadJSON).WriteString("::jsonb")
+			}))
+		},
+	).SetStatus(next.Status).SetErrorCode(next.ErrorCode).SetRetryable(false).
+		SetProvider(next.Provider).SetProviderRequestID(next.ProviderRequestID).SetRedactedProviderPayload(nextPayloadJSON)
+	if next.Status == "claim_pending" {
+		update.ClearFinishedAt()
+	} else if next.FinishedAt.IsZero() {
+		return ErrRuntimeOperationNotCurrent
+	} else {
+		update.SetFinishedAt(next.FinishedAt)
+	}
+	updated, err := update.Save(ctx)
+	if err != nil {
+		return err
+	}
+	if updated != 1 {
+		return ErrRuntimeOperationNotCurrent
+	}
+	return nil
+}
+
+func validComputeClaimRecoveryTransition(currentStatus, nextStatus string) bool {
+	return currentStatus == "failed" && nextStatus == "claim_pending" ||
+		currentStatus == "claim_pending" && nextStatus == "claim_pending" ||
+		currentStatus == "claim_pending" && nextStatus == "succeeded"
+}
+
+func sameComputeClaimRecoveryOperation(current, next FabricOperation) bool {
+	return current.ID == next.ID && current.Action == "create_compute_allocation" && current.Action == next.Action &&
+		current.ResourceKind == next.ResourceKind && current.ResourceID == next.ResourceID && current.AccountID == next.AccountID &&
+		current.WorkspaceID == next.WorkspaceID && current.IdempotencyKey == next.IdempotencyKey && current.RequestHash == next.RequestHash
+}
+
+func validComputeClaimRecoveryBindingTransition(current, next FabricOperation) bool {
+	currentBinding, currentPresent, currentValid := decodeComputeClaimRecoveryBinding(current)
+	nextBinding, nextPresent, nextValid := decodeComputeClaimRecoveryBinding(next)
+	if !nextPresent || !nextValid {
+		return false
+	}
+	if currentPresent {
+		return currentValid && currentBinding == nextBinding
+	}
+	return next.Status == "claim_pending"
 }
 
 func operationPayloadJSON(operation FabricOperation) (string, error) {

@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 17,
+  "schemaVersion": 18,
   "owner": "OPL Fabric",
   "purpose": "Deployment workflow, immutable Cloud and Workspace images, TKE handoff, read-only diagnostics, and production-verification safety.",
   "state": "current",
@@ -448,6 +448,41 @@
       "recovery": "GET only approved launchOperationId and workspaceId never a second POST"
     },
     "currentState": "implemented_and_fake_tested_not_executed"
+  },
+  "productionComputeClaimRecovery": {
+    "workflow": ".github/workflows/production-basic-customer-operation.yml",
+    "execution": "manual_release_owner_only_not_ci_release_rollout_or_e2e",
+    "sharedConcurrency": "production-resource-verification",
+    "runner": ["self-hosted", "tencent-cloud", "opl-cloud", "tke-vpc"],
+    "modes": {
+      "diagnose": {
+        "input": "operation_mode=compute_claim_diagnose",
+        "environment": "production",
+        "route": "POST /fabric/compute-claim-recovery/proof",
+        "credentials": "current_ready_fabric_pod_process_only",
+        "mutationApproval": false,
+        "requiredMutationCounts": {"sub2api": 0, "tencent": 0, "kubernetes": 0}
+      },
+      "recover": {
+        "input": "operation_mode=compute_claim_recover",
+        "environment": "production-compute-claim-recovery",
+        "route": "POST /api/operator/workspace-launches/{operationId}/compute-claim-recovery/claim",
+        "approvalSecret": "OPL_COMPUTE_CLAIM_RECOVERY_APPROVAL_JSON",
+        "serverCapability": {
+          "source": "current_kubernetes_secret_opl-cloud-internal-service",
+          "header": "x-opl-compute-claim-capability",
+          "ordinaryOperatorSessionAccepted": false,
+          "handling": "step_memory_only_immediate_mask"
+        },
+        "confirmation": "CLAIM_PROVEN_COMPUTE_RESOURCE"
+      }
+    },
+    "releaseBinding": ["exact_merged_origin_main_sha", "immutable_cloud_digest", "control_plane_fabric_ledger_ready_pod_image_id", "approval_id_and_idempotency_key"],
+    "targetBinding": ["launch", "account", "workspace", "compute", "machine", "node", "cvm", "pool", "node_pool", "sku", "zone", "private_ip", "billing_facts"],
+    "mutationBounds": {"sub2api": 0, "tencent": {"min": 0, "max": 5}, "kubernetes": {"min": 0, "max": 1}},
+    "artifactGate": ["exact_target_owned_readback", "sub2api_zero", "tencent_zero_to_five", "kubernetes_zero_to_one"],
+    "claimForbidden": ["debit", "refund", "recharge", "scale", "create_compute", "create_storage", "delete", "replace"],
+    "currentState": "code_complete_local_focused_and_postgresql_verified_not_merged_released_deployed_or_executed"
   },
   "protectedSystemResources": {
     "nodePoolIdEnv": "OPL_SYSTEM_COMPUTE_NODE_POOL_ID",

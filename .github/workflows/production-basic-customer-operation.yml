@@ -12,13 +12,15 @@ on:
         required: true
         type: string
       operation_mode:
-        description: customer_operation performs the approved customer canary; manual_review_diagnose is a read-only identity diagnosis.
+        description: Select the customer operation, a read-only diagnosis, or the separately approved compute claim convergence.
         required: true
         default: customer_operation
         type: choice
         options:
           - customer_operation
           - manual_review_diagnose
+          - compute_claim_diagnose
+          - compute_claim_recover
       funding_mode:
         description: operator_precharge performs the approved provision and recharge; operator_precharge_recovery reads one approved completed precharge before the purchase.
         required: true
@@ -57,6 +59,21 @@ on:
         required: false
         default: ""
         type: string
+      compute_claim_target_json:
+        description: Non-secret exact launch and compute identity JSON. Required only for compute claim modes.
+        required: false
+        default: ""
+        type: string
+      compute_claim_cloud_digest:
+        description: Exact immutable deployed Cloud sha256 digest. Required only for compute claim modes.
+        required: false
+        default: ""
+        type: string
+      confirm_compute_claim_recovery:
+        description: Approve claim-only convergence after a separately reviewed compute claim proof. Must be false for diagnosis.
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   actions: read
@@ -582,4 +599,233 @@ jobs:
         shell: bash
         run: |
           echo "Manual-review diagnosis stopped; inspect the redacted diagnosis artifact." >&2
+          exit 1
+
+  compute-claim-diagnose:
+    name: Prove one partial Workspace compute claim in TKE VPC
+    if: ${{ github.ref == 'refs/heads/main' && github.sha == inputs.merged_sha && inputs.operation_mode == 'compute_claim_diagnose' && inputs.resume_run_id == '' && inputs.diagnose_target_json == '' && !inputs.confirm_account_provision && !inputs.confirm_wallet_recharge && !inputs.confirm_workspace_purchase && !inputs.confirm_single_model_request && !inputs.confirm_compute_claim_recovery }}
+    runs-on: [self-hosted, tencent-cloud, opl-cloud, tke-vpc]
+    timeout-minutes: 15
+    environment: production
+    env:
+      OPL_MERGED_SHA: ${{ inputs.merged_sha }}
+      OPL_COMPUTE_CLAIM_TARGET_JSON: ${{ inputs.compute_claim_target_json }}
+      OPL_COMPUTE_CLAIM_CLOUD_DIGEST: ${{ inputs.compute_claim_cloud_digest }}
+      OPL_K8S_NAMESPACE: ${{ vars.OPL_K8S_NAMESPACE || 'opl-cloud' }}
+      KUBECONFIG: ${{ vars.TENCENT_DEPLOY_KUBECONFIG_PATH || '/home/actions/.secrets/medopl/v22/kubeconfig-package-d-deploy' }}
+
+    steps:
+      - name: Checkout exact merged main
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.merged_sha }}
+          fetch-depth: 0
+
+      - name: Verify exact origin main
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! [[ "$OPL_MERGED_SHA" =~ ^[0-9a-f]{40}$ ]] || ! [[ "$OPL_COMPUTE_CLAIM_CLOUD_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "A full merged main SHA and immutable Cloud digest are required." >&2
+            exit 1
+          fi
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          head_sha="$(git rev-parse HEAD)"
+          main_sha="$(git rev-parse refs/remotes/origin/main)"
+          if [ "$head_sha" != "$OPL_MERGED_SHA" ] || [ "$main_sha" != "$OPL_MERGED_SHA" ]; then
+            echo "Compute claim diagnosis source is not the exact current origin/main revision." >&2
+            exit 1
+          fi
+
+      - name: Validate read-only compute claim inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "$OPL_COMPUTE_CLAIM_TARGET_JSON" ] || [ ! -r "$KUBECONFIG" ]; then
+            echo "Compute claim diagnosis requires the exact target and release-owned runner kubeconfig." >&2
+            exit 1
+          fi
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Prepare redacted compute claim proof artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          artifact_dir="$RUNNER_TEMP/production-compute-claim-diagnosis"
+          mkdir -p "$artifact_dir"
+          chmod 700 "$artifact_dir"
+          echo "OPL_COMPUTE_CLAIM_ARTIFACT_DIR=$artifact_dir" >> "$GITHUB_ENV"
+
+      - name: Run compute claim diagnosis
+        id: diagnose
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          node tools/production-live-qa.ts --compute-claim-diagnose \
+            --compute-claim-target-json "$OPL_COMPUTE_CLAIM_TARGET_JSON" \
+            > "$OPL_COMPUTE_CLAIM_ARTIFACT_DIR/compute-claim-diagnosis.json"
+
+      - name: Upload redacted compute claim diagnosis
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-compute-claim-diagnosis
+          path: ${{ runner.temp }}/production-compute-claim-diagnosis
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 30
+
+      - name: Require complete zero-mutation compute proof
+        if: ${{ steps.diagnose.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const fs = require("node:fs");
+          const path = `${process.env.OPL_COMPUTE_CLAIM_ARTIFACT_DIR}/compute-claim-diagnosis.json`;
+          const result = JSON.parse(fs.readFileSync(path, "utf8"));
+          if (result?.schemaVersion !== 1 || result?.operationMode !== "compute_claim_diagnose" || result?.status !== "proven" ||
+            result?.recoveryEligible !== true || result?.errorCode !== "none" || result?.proof?.storageState !== "storage_not_started" ||
+            result?.mutationCounts?.sub2api !== 0 || result?.mutationCounts?.tencent !== 0 || result?.mutationCounts?.kubernetes !== 0) {
+            console.error(`Compute claim diagnosis blocked: ${String(result?.errorCode || "diagnosis_artifact_invalid")}`);
+            process.exit(1);
+          }
+          NODE
+
+      - name: Require compute claim diagnosis success
+        if: ${{ steps.diagnose.outcome != 'success' }}
+        shell: bash
+        run: |
+          echo "Compute claim diagnosis stopped; inspect the redacted diagnosis artifact." >&2
+          exit 1
+
+  compute-claim-recover:
+    name: Converge one separately approved partial Workspace compute claim
+    if: ${{ github.ref == 'refs/heads/main' && github.sha == inputs.merged_sha && inputs.operation_mode == 'compute_claim_recover' && inputs.resume_run_id == '' && inputs.diagnose_target_json == '' && !inputs.confirm_account_provision && !inputs.confirm_wallet_recharge && !inputs.confirm_workspace_purchase && !inputs.confirm_single_model_request && inputs.confirm_compute_claim_recovery }}
+    runs-on: [self-hosted, tencent-cloud, opl-cloud, tke-vpc]
+    timeout-minutes: 15
+    environment: production-compute-claim-recovery
+    env:
+      OPL_MERGED_SHA: ${{ inputs.merged_sha }}
+      OPL_COMPUTE_CLAIM_RECOVERY_APPROVAL_ID: ${{ inputs.approval_id }}
+      OPL_COMPUTE_CLAIM_RECOVERY_APPROVAL_JSON: ${{ secrets.OPL_COMPUTE_CLAIM_RECOVERY_APPROVAL_JSON }}
+      OPL_COMPUTE_CLAIM_TARGET_JSON: ${{ inputs.compute_claim_target_json }}
+      OPL_COMPUTE_CLAIM_CLOUD_DIGEST: ${{ inputs.compute_claim_cloud_digest }}
+      OPL_CONSOLE_ORIGIN: ${{ vars.OPL_CONSOLE_ORIGIN || 'https://cloud.medopl.cn' }}
+      OPL_SUB2API_ADMIN_EMAIL: ${{ secrets.OPL_SUB2API_ADMIN_EMAIL }}
+      OPL_SUB2API_ADMIN_PASSWORD: ${{ secrets.OPL_SUB2API_ADMIN_PASSWORD }}
+      OPL_K8S_NAMESPACE: ${{ vars.OPL_K8S_NAMESPACE || 'opl-cloud' }}
+      OPL_VERIFY_REQUEST_TIMEOUT_MS: ${{ vars.OPL_VERIFY_REQUEST_TIMEOUT_MS || '30000' }}
+      KUBECONFIG: ${{ vars.TENCENT_DEPLOY_KUBECONFIG_PATH || '/home/actions/.secrets/medopl/v22/kubeconfig-package-d-deploy' }}
+
+    steps:
+      - name: Checkout exact merged main
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.merged_sha }}
+          fetch-depth: 0
+
+      - name: Verify exact approved source
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! [[ "$OPL_MERGED_SHA" =~ ^[0-9a-f]{40}$ ]] || ! [[ "$OPL_COMPUTE_CLAIM_CLOUD_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "A full merged main SHA and immutable Cloud digest are required." >&2
+            exit 1
+          fi
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          head_sha="$(git rev-parse HEAD)"
+          main_sha="$(git rev-parse refs/remotes/origin/main)"
+          if [ "$head_sha" != "$OPL_MERGED_SHA" ] || [ "$main_sha" != "$OPL_MERGED_SHA" ]; then
+            echo "Compute claim recovery source is not the exact current origin/main revision." >&2
+            exit 1
+          fi
+
+      - name: Validate approved compute claim inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "$OPL_COMPUTE_CLAIM_TARGET_JSON" ] || [ -z "$OPL_COMPUTE_CLAIM_RECOVERY_APPROVAL_ID" ] ||
+            [ -z "$OPL_COMPUTE_CLAIM_RECOVERY_APPROVAL_JSON" ] || [ ! -r "$KUBECONFIG" ]; then
+            echo "Compute claim recovery requires its exact target, independent approval, and release-owned runner kubeconfig." >&2
+            exit 1
+          fi
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Prepare redacted compute claim recovery artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          artifact_dir="$RUNNER_TEMP/production-compute-claim-recovery"
+          mkdir -p "$artifact_dir"
+          chmod 700 "$artifact_dir"
+          echo "OPL_COMPUTE_CLAIM_ARTIFACT_DIR=$artifact_dir" >> "$GITHUB_ENV"
+
+      - name: Run approved compute claim recovery
+        id: recover
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          token_b64="$(kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" get secret opl-cloud-internal-service -o jsonpath='{.data.OPL_INTERNAL_SERVICE_TOKEN}')"
+          if [ -z "$token_b64" ]; then
+            echo "Current internal service capability is unavailable." >&2
+            exit 1
+          fi
+          OPL_INTERNAL_SERVICE_TOKEN="$(printf '%s' "$token_b64" | base64 -d)"
+          unset token_b64
+          if [ -z "$OPL_INTERNAL_SERVICE_TOKEN" ]; then
+            echo "Current internal service capability is empty." >&2
+            exit 1
+          fi
+          echo "::add-mask::$OPL_INTERNAL_SERVICE_TOKEN"
+          export OPL_INTERNAL_SERVICE_TOKEN
+          node tools/production-live-qa.ts --compute-claim-recover \
+            --compute-claim-target-json "$OPL_COMPUTE_CLAIM_TARGET_JSON" \
+            --approval-id "$OPL_COMPUTE_CLAIM_RECOVERY_APPROVAL_ID" \
+            > "$OPL_COMPUTE_CLAIM_ARTIFACT_DIR/compute-claim-recovery.json"
+
+      - name: Upload redacted compute claim recovery
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-compute-claim-recovery
+          path: ${{ runner.temp }}/production-compute-claim-recovery
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 30
+
+      - name: Require approved claim readback
+        if: ${{ steps.recover.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const fs = require("node:fs");
+          const path = `${process.env.OPL_COMPUTE_CLAIM_ARTIFACT_DIR}/compute-claim-recovery.json`;
+          const result = JSON.parse(fs.readFileSync(path, "utf8"));
+          if (result?.schemaVersion !== 1 || result?.operationMode !== "compute_claim_recover" || result?.status !== "claimed" ||
+            result?.recoveryEligible !== true || result?.errorCode !== "none" || result?.proof?.nodeOwnershipState !== "target_owned" ||
+            result?.proof?.cvmOwnershipState !== "target_owned" || result?.mutationCounts?.sub2api !== 0 ||
+            !Number.isInteger(result?.mutationCounts?.tencent) || result.mutationCounts.tencent < 0 || result.mutationCounts.tencent > 5 ||
+            !Number.isInteger(result?.mutationCounts?.kubernetes) || result.mutationCounts.kubernetes < 0 || result.mutationCounts.kubernetes > 1) {
+            console.error(`Compute claim recovery blocked: ${String(result?.errorCode || "recovery_artifact_invalid")}`);
+            process.exit(1);
+          }
+          NODE
+
+      - name: Require compute claim recovery success
+        if: ${{ steps.recover.outcome != 'success' }}
+        shell: bash
+        run: |
+          echo "Compute claim recovery stopped; inspect the redacted recovery artifact." >&2
           exit 1

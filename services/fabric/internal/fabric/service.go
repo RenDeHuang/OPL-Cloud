@@ -56,6 +56,14 @@ type monthlyProviderTruthProvider interface {
 	MonthlyProviderTruth(context.Context, ComputeAllocation, StorageVolume) (MonthlyProviderTruth, error)
 }
 
+type computeClaimRecoveryProvider interface {
+	ProveComputeClaimRecovery(context.Context, ComputeAllocation, ComputeAllocationPreparation, MachineOwnership) (ComputeClaimProviderProof, error)
+}
+
+type computeClaimRecoveryClaimProvider interface {
+	ClaimComputeRecovery(context.Context, ComputeAllocation, ComputeAllocationPreparation, MachineOwnership) (ComputeClaimProviderClaim, error)
+}
+
 type runtimeGatewaySecretProvider interface {
 	BindWorkspaceRuntimeGatewaySecret(context.Context, WorkspaceRuntimeGatewaySecretInput) (WorkspaceRuntimeGatewaySecretBinding, error)
 	WorkspaceRuntimeGatewaySecret(context.Context, string) (WorkspaceRuntimeGatewaySecretBinding, error)
@@ -206,6 +214,345 @@ func (s *Service) MonthlyProviderTruth(ctx context.Context, computeID, storageID
 		return unknown, fmt.Errorf("%w: provider_identity", ErrMonthlyProviderTruthUnavailable)
 	}
 	return result, nil
+}
+
+func (s *Service) ComputeClaimRecoveryProof(ctx context.Context, input ComputeClaimRecoveryInput) (ComputeClaimRecoveryProof, error) {
+	proof := newComputeClaimRecoveryProof(input)
+	if !validComputeClaimRecoveryInput(input) {
+		proof.Reason = "local_identity"
+		return proof, ErrInvalidComputeClaimRecovery
+	}
+	operations, err := s.operations.List(ctx)
+	if err != nil {
+		proof.Reason = "local_identity"
+		return proof, fmt.Errorf("%w: local_identity", ErrComputeClaimRecoveryUnavailable)
+	}
+	computeOperations := make([]FabricOperation, 0, 1)
+	storageOperations := 0
+	for _, operation := range operations {
+		if operation.Action == "create_compute_allocation" && (operation.ResourceID == input.ComputeAllocationID ||
+			operation.IdempotencyKey == input.LaunchOperationID+":compute" || operation.AccountID == input.AccountID && operation.WorkspaceID == input.WorkspaceID) {
+			computeOperations = append(computeOperations, operation)
+		}
+		if operation.Action == "create_storage_volume" &&
+			(operation.ResourceID == input.StorageVolumeID || operation.IdempotencyKey == input.LaunchOperationID+":storage" ||
+				operation.AccountID == input.AccountID && operation.WorkspaceID == input.WorkspaceID) {
+			storageOperations++
+		}
+	}
+	if storageOperations != 0 {
+		proof.Reason = "storage_already_started"
+		return proof, fmt.Errorf("%w: storage_already_started", ErrComputeClaimRecoveryUnavailable)
+	}
+	if len(computeOperations) != 1 {
+		proof.Reason = "local_identity"
+		return proof, fmt.Errorf("%w: local_identity", ErrComputeClaimRecoveryUnavailable)
+	}
+	operation := computeOperations[0]
+	var allocation ComputeAllocation
+	plan, hasPlan := decodeComputeAllocationPlan(operation)
+	if operation.AccountID != input.AccountID || operation.WorkspaceID != input.WorkspaceID || operation.IdempotencyKey != input.LaunchOperationID+":compute" ||
+		(operation.Status != "failed" && operation.Status != "claim_pending" && operation.Status != "succeeded") || !decodeOperationResource(operation, &allocation) || !hasPlan ||
+		!validComputeClaimRecoveryLocalIdentity(input, allocation, plan) {
+		proof.Reason = "local_identity"
+		return proof, fmt.Errorf("%w: local_identity", ErrComputeClaimRecoveryUnavailable)
+	}
+	ownership, err := s.operations.MachineOwnership(ctx, input.ComputeAllocationID)
+	if err != nil || !validComputeClaimRecoveryOwnership(allocation, ownership) {
+		proof.Reason = "local_identity"
+		return proof, fmt.Errorf("%w: local_identity", ErrComputeClaimRecoveryUnavailable)
+	}
+	provider, ok := s.provider.(computeClaimRecoveryProvider)
+	if !ok {
+		proof.Reason = "provider_describe"
+		return proof, fmt.Errorf("%w: provider_describe", ErrComputeClaimRecoveryUnavailable)
+	}
+	providerProof, err := provider.ProveComputeClaimRecovery(ctx, allocation, plan, ownership)
+	if err != nil {
+		proof.Reason = safeComputeClaimRecoveryReason(providerProof.Reason, "provider_describe")
+		return proof, fmt.Errorf("%w: %s", ErrComputeClaimRecoveryUnavailable, proof.Reason)
+	}
+	if !validComputeClaimProviderProof(providerProof, allocation, plan) {
+		proof.Reason = safeComputeClaimRecoveryReason(providerProof.Reason, "identity_mismatch")
+		return proof, fmt.Errorf("%w: %s", ErrComputeClaimRecoveryUnavailable, proof.Reason)
+	}
+	proof.Eligible, proof.Reason, proof.StorageState = true, "none", "storage_not_started"
+	proof.MachineName, proof.NodeName, proof.CVMInstanceID = providerProof.MachineName, providerProof.NodeName, providerProof.CVMInstanceID
+	proof.PrivateIP, proof.InstanceType, proof.Zone = providerProof.PrivateIP, providerProof.InstanceType, providerProof.Zone
+	proof.ChargeType, proof.PeriodMonths, proof.RenewFlag, proof.Deadline = providerProof.ChargeType, providerProof.PeriodMonths, providerProof.RenewFlag, providerProof.Deadline
+	proof.NodeOwnershipState, proof.CVMOwnershipState = providerProof.NodeOwnershipState, providerProof.CVMOwnershipState
+	return proof, nil
+}
+
+func newComputeClaimRecoveryProof(input ComputeClaimRecoveryInput) ComputeClaimRecoveryProof {
+	return ComputeClaimRecoveryProof{
+		SchemaVersion: 1, Reason: "local_identity", StorageState: "unknown", LaunchOperationID: input.LaunchOperationID,
+		AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, ComputeAllocationID: input.ComputeAllocationID,
+		StorageVolumeID: input.StorageVolumeID, PackageID: input.PackageID, NodePoolID: input.NodePoolID,
+		PoolID: input.PoolID,
+	}
+}
+
+func validComputeClaimRecoveryInput(input ComputeClaimRecoveryInput) bool {
+	values := []string{input.LaunchOperationID, input.AccountID, input.WorkspaceID, input.ComputeAllocationID, input.StorageVolumeID, input.PackageID, input.PoolID, input.NodePoolID}
+	for _, value := range values {
+		if value == "" || value != strings.TrimSpace(value) {
+			return false
+		}
+	}
+	return input.PackageID == "basic" || input.PackageID == "pro"
+}
+
+func validComputeClaimRecoveryLocalIdentity(input ComputeClaimRecoveryInput, allocation ComputeAllocation, plan ComputeAllocationPreparation) bool {
+	if allocation.ID != input.ComputeAllocationID || allocation.AccountID != input.AccountID || allocation.WorkspaceID != input.WorkspaceID ||
+		allocation.PackageID != input.PackageID || allocation.Provider != "tencent-tke" || allocation.PoolID != input.PoolID || allocation.NodePoolID != input.NodePoolID ||
+		allocation.PoolID != plan.PoolID || plan.PackageID != input.PackageID || plan.NodePoolID != input.NodePoolID || plan.PoolID != packagePlan(input.PackageID).ID ||
+		plan.InstanceType != packagePlan(input.PackageID).InstanceType || plan.BeforeMachineNames == nil || plan.BaselineReplicas < 0 || plan.TargetReplicas != plan.BaselineReplicas+1 ||
+		int64(len(plan.BeforeMachineNames)) != plan.BaselineReplicas || allocation.MachineName == "" || allocation.InstanceType != plan.InstanceType ||
+		!strings.HasPrefix(firstNonEmpty(allocation.InstanceID, allocation.CVMInstanceID), "ins-") || allocation.NodeName == "" || allocation.PrivateIP == "" ||
+		allocation.Zone == "" || allocation.ChargeType != "PREPAID" || allocation.RenewFlag != "NOTIFY_AND_MANUAL_RENEW" || allocation.Deadline == "" ||
+		allocation.ProviderData["instanceType"] != plan.InstanceType || allocation.ProviderData["zone"] != allocation.Zone ||
+		allocation.ProviderData["chargeType"] != "PREPAID" || allocation.ProviderData["periodMonths"] != "1" ||
+		allocation.ProviderData["renewFlag"] != "NOTIFY_AND_MANUAL_RENEW" || allocation.ProviderData["deadline"] != allocation.Deadline ||
+		allocation.ProviderData["machineName"] != allocation.MachineName {
+		return false
+	}
+	seen := map[string]bool{}
+	for _, name := range plan.BeforeMachineNames {
+		if name == "" || seen[name] || name == allocation.MachineName {
+			return false
+		}
+		seen[name] = true
+	}
+	return true
+}
+
+func validComputeClaimRecoveryOwnership(allocation ComputeAllocation, ownership MachineOwnership) bool {
+	return ownership.ResourceID == allocation.ID && ownership.AccountID == allocation.AccountID && ownership.WorkspaceID == allocation.WorkspaceID &&
+		ownership.PackageID == allocation.PackageID && ownership.NodePoolID == allocation.NodePoolID && ownership.MachineID == allocation.MachineName &&
+		ownership.InstanceID == firstNonEmpty(allocation.InstanceID, allocation.CVMInstanceID) && ownership.NodeName == allocation.NodeName &&
+		(ownership.Status == "quarantined" || ownership.Status == "active")
+}
+
+func validComputeClaimProviderProof(proof ComputeClaimProviderProof, allocation ComputeAllocation, plan ComputeAllocationPreparation) bool {
+	deadline, deadlineErr := time.Parse(time.RFC3339, proof.Deadline)
+	return proof.Status == "proven" && (proof.NodeOwnershipState == "unallocated" || proof.NodeOwnershipState == "target_owned") &&
+		(proof.CVMOwnershipState == "recoverable" || proof.CVMOwnershipState == "target_owned") &&
+		proof.MachineName == allocation.MachineName && proof.NodeName == allocation.NodeName && proof.CVMInstanceID == firstNonEmpty(allocation.InstanceID, allocation.CVMInstanceID) &&
+		proof.PrivateIP == allocation.PrivateIP && proof.InstanceType == plan.InstanceType && proof.Zone == allocation.Zone && proof.ChargeType == "PREPAID" &&
+		proof.PeriodMonths == 1 && proof.RenewFlag == "NOTIFY_AND_MANUAL_RENEW" && proof.Deadline == allocation.Deadline && deadlineErr == nil && !deadline.IsZero()
+}
+
+func safeComputeClaimRecoveryReason(value, fallback string) string {
+	switch value {
+	case "local_identity", "provider_describe", "iam_rbac", "multiple_candidate", "identity_mismatch", "node_ownership_conflict", "storage_already_started":
+		return value
+	default:
+		return fallback
+	}
+}
+
+func (s *Service) ClaimComputeRecovery(ctx context.Context, input ComputeClaimRecoveryClaimInput) (ComputeClaimRecoveryProof, error) {
+	result := newComputeClaimRecoveryProof(input.ComputeClaimRecoveryInput)
+	if !validComputeClaimRecoveryClaimInput(input) {
+		result.Reason = "local_identity"
+		return result, ErrInvalidComputeClaimRecovery
+	}
+	err := s.operations.WithPoolLock(ctx, workspaceLaunchResourceLockKey(input.LaunchOperationID), func(lockCtx context.Context) error {
+		proof, err := s.ComputeClaimRecoveryProof(lockCtx, input.ComputeClaimRecoveryInput)
+		result = proof
+		if err != nil {
+			return err
+		}
+		if input.MachineName != proof.MachineName || input.NodeName != proof.NodeName || input.CVMInstanceID != proof.CVMInstanceID || input.PrivateIP != proof.PrivateIP ||
+			input.InstanceType != proof.InstanceType || input.Zone != proof.Zone || input.PoolID != proof.PoolID {
+			result.Eligible, result.Reason = false, "identity_mismatch"
+			return fmt.Errorf("%w: identity_mismatch", ErrComputeClaimRecoveryUnavailable)
+		}
+		operation, allocation, plan, ownership, err := s.computeClaimRecoveryLocalState(lockCtx, input.ComputeClaimRecoveryInput)
+		if err != nil {
+			result.Eligible, result.Reason = false, "local_identity"
+			return err
+		}
+		binding := newComputeClaimRecoveryBinding(input)
+		persistedBinding, bindingPresent, bindingValid := decodeComputeClaimRecoveryBinding(operation)
+		if bindingPresent && (!bindingValid || persistedBinding != binding) {
+			result.Eligible, result.Reason = false, "identity_mismatch"
+			return ErrComputeClaimRecoveryIdempotencyConflict
+		}
+		if !bindingPresent {
+			if operation.Status == "succeeded" {
+				result.Eligible, result.Reason = false, "identity_mismatch"
+				return ErrComputeClaimRecoveryIdempotencyConflict
+			}
+			pending := operation
+			pending.Status, pending.ErrorCode, pending.FinishedAt = "claim_pending", "", time.Time{}
+			pending.RedactedProviderPayload = withComputeClaimRecoveryBinding(operation.RedactedProviderPayload, binding)
+			if err := s.operations.SaveComputeClaimRecovery(lockCtx, operation, pending); err != nil {
+				result.Eligible, result.Reason = false, "local_identity"
+				return err
+			}
+			operation = pending
+		}
+		if ownership.Status == "active" {
+			if proof.CVMOwnershipState != "target_owned" || proof.NodeOwnershipState != "target_owned" {
+				result.Eligible, result.Reason = false, "identity_mismatch"
+				return fmt.Errorf("%w: identity_mismatch", ErrComputeClaimRecoveryUnavailable)
+			}
+		} else if proof.CVMOwnershipState != "target_owned" || proof.NodeOwnershipState != "target_owned" {
+			provider, ok := s.provider.(computeClaimRecoveryClaimProvider)
+			if !ok {
+				result.Eligible, result.Reason = false, "provider_describe"
+				return fmt.Errorf("%w: provider_describe", ErrComputeClaimRecoveryUnavailable)
+			}
+			claimed, claimErr := provider.ClaimComputeRecovery(lockCtx, allocation, plan, ownership)
+			result.TencentMutationCount = max(0, claimed.TencentMutationCount)
+			result.KubernetesMutationCount = max(0, claimed.KubernetesMutationCount)
+			if claimErr != nil || !validComputeClaimProviderProof(claimed.Proof, allocation, plan) ||
+				claimed.Proof.CVMOwnershipState != "target_owned" || claimed.Proof.NodeOwnershipState != "target_owned" ||
+				claimed.TencentMutationCount < 0 || claimed.TencentMutationCount > 5 ||
+				claimed.KubernetesMutationCount < 0 || claimed.KubernetesMutationCount > 1 {
+				result.Eligible = false
+				result.Reason = safeComputeClaimRecoveryReason(claimed.Proof.Reason, "identity_mismatch")
+				if claimErr != nil && claimed.Proof.Reason == "" {
+					result.Reason = "provider_describe"
+				}
+				return fmt.Errorf("%w: %s", ErrComputeClaimRecoveryUnavailable, result.Reason)
+			}
+			result.MachineName, result.NodeName, result.CVMInstanceID = claimed.Proof.MachineName, claimed.Proof.NodeName, claimed.Proof.CVMInstanceID
+			result.PrivateIP, result.InstanceType, result.Zone = claimed.Proof.PrivateIP, claimed.Proof.InstanceType, claimed.Proof.Zone
+			result.ChargeType, result.PeriodMonths, result.RenewFlag, result.Deadline = claimed.Proof.ChargeType, claimed.Proof.PeriodMonths, claimed.Proof.RenewFlag, claimed.Proof.Deadline
+			result.NodeOwnershipState, result.CVMOwnershipState, result.Eligible, result.Reason = "target_owned", "target_owned", true, "none"
+		}
+		allocation.Status = "ready"
+		allocation.CostTags = oplCostTags(allocation.AccountID, allocation.WorkspaceID, allocation.ID, ownership.ID)
+		allocation.NodeSelector = tkeNodeSelector(allocation.ProviderData, allocation.NodeName)
+		ownership.Status, ownership.ReleasedAt = "active", nil
+		if err := s.operations.ActivateComputeClaimRecoveryOwnership(lockCtx, ownership); err != nil {
+			result.Eligible, result.Reason = false, "local_identity"
+			return err
+		}
+		if operation.Status != "succeeded" {
+			recovered := operation
+			recovered.Status, recovered.ErrorCode, recovered.FinishedAt = "succeeded", "", s.now()
+			recovered.RedactedProviderPayload = withComputeClaimRecoveryBinding(computeAllocationOperationPayload(allocation, plan), binding)
+			if err := s.operations.SaveComputeClaimRecovery(lockCtx, operation, recovered); err != nil {
+				result.Eligible, result.Reason = false, "local_identity"
+				return err
+			}
+		}
+		s.mu.Lock()
+		s.computes[allocation.ID] = allocation
+		s.mu.Unlock()
+		return nil
+	})
+	return result, err
+}
+
+func validComputeClaimRecoveryClaimInput(input ComputeClaimRecoveryClaimInput) bool {
+	if !validComputeClaimRecoveryInput(input.ComputeClaimRecoveryInput) {
+		return false
+	}
+	for _, value := range []string{input.MachineName, input.NodeName, input.CVMInstanceID, input.PrivateIP, input.InstanceType, input.Zone, input.IdempotencyKey} {
+		if value == "" || value != strings.TrimSpace(value) {
+			return false
+		}
+	}
+	return strings.HasPrefix(input.CVMInstanceID, "ins-")
+}
+
+type computeClaimRecoveryBinding struct {
+	LaunchOperationID string `json:"launchOperationId"`
+	IdempotencyKey    string `json:"idempotencyKey"`
+	TargetHash        string `json:"targetHash"`
+	RequestHash       string `json:"requestHash"`
+}
+
+func newComputeClaimRecoveryBinding(input ComputeClaimRecoveryClaimInput) computeClaimRecoveryBinding {
+	target := struct {
+		MachineName   string `json:"machineName"`
+		NodeName      string `json:"nodeName"`
+		CVMInstanceID string `json:"cvmInstanceId"`
+		PrivateIP     string `json:"privateIp"`
+		InstanceType  string `json:"instanceType"`
+		Zone          string `json:"zone"`
+	}{input.MachineName, input.NodeName, input.CVMInstanceID, input.PrivateIP, input.InstanceType, input.Zone}
+	return computeClaimRecoveryBinding{
+		LaunchOperationID: input.LaunchOperationID,
+		IdempotencyKey:    input.IdempotencyKey,
+		TargetHash:        hashInput(target),
+		RequestHash:       hashInput(input),
+	}
+}
+
+func decodeComputeClaimRecoveryBinding(operation FabricOperation) (computeClaimRecoveryBinding, bool, bool) {
+	value, ok := operation.RedactedProviderPayload["computeClaimRecovery"]
+	if !ok {
+		return computeClaimRecoveryBinding{}, false, false
+	}
+	body, err := json.Marshal(value)
+	if err != nil {
+		return computeClaimRecoveryBinding{}, true, false
+	}
+	var binding computeClaimRecoveryBinding
+	if json.Unmarshal(body, &binding) != nil || binding.LaunchOperationID == "" || binding.IdempotencyKey == "" || binding.TargetHash == "" || binding.RequestHash == "" {
+		return computeClaimRecoveryBinding{}, true, false
+	}
+	return binding, true, true
+}
+
+func withComputeClaimRecoveryBinding(payload map[string]any, binding computeClaimRecoveryBinding) map[string]any {
+	result := maps.Clone(payload)
+	if result == nil {
+		result = map[string]any{}
+	}
+	result["computeClaimRecovery"] = map[string]any{
+		"launchOperationId": binding.LaunchOperationID,
+		"idempotencyKey":    binding.IdempotencyKey,
+		"targetHash":        binding.TargetHash,
+		"requestHash":       binding.RequestHash,
+	}
+	return result
+}
+
+func (s *Service) computeClaimRecoveryLocalState(ctx context.Context, input ComputeClaimRecoveryInput) (FabricOperation, ComputeAllocation, ComputeAllocationPreparation, MachineOwnership, error) {
+	operations, err := s.operations.List(ctx)
+	if err != nil {
+		return FabricOperation{}, ComputeAllocation{}, ComputeAllocationPreparation{}, MachineOwnership{}, err
+	}
+	var operation FabricOperation
+	computeCount, storageCount := 0, 0
+	for _, candidate := range operations {
+		if candidate.Action == "create_compute_allocation" && (candidate.ResourceID == input.ComputeAllocationID ||
+			candidate.IdempotencyKey == input.LaunchOperationID+":compute" || candidate.AccountID == input.AccountID && candidate.WorkspaceID == input.WorkspaceID) {
+			computeCount++
+			operation = candidate
+		}
+		if candidate.Action == "create_storage_volume" &&
+			(candidate.ResourceID == input.StorageVolumeID || candidate.IdempotencyKey == input.LaunchOperationID+":storage" ||
+				candidate.AccountID == input.AccountID && candidate.WorkspaceID == input.WorkspaceID) {
+			storageCount++
+		}
+	}
+	if computeCount != 1 || storageCount != 0 || operation.AccountID != input.AccountID || operation.WorkspaceID != input.WorkspaceID ||
+		operation.IdempotencyKey != input.LaunchOperationID+":compute" ||
+		(operation.Status != "failed" && operation.Status != "claim_pending" && operation.Status != "succeeded") {
+		return FabricOperation{}, ComputeAllocation{}, ComputeAllocationPreparation{}, MachineOwnership{}, fmt.Errorf("%w: local_identity", ErrComputeClaimRecoveryUnavailable)
+	}
+	var allocation ComputeAllocation
+	plan, hasPlan := decodeComputeAllocationPlan(operation)
+	if !decodeOperationResource(operation, &allocation) || !hasPlan || !validComputeClaimRecoveryLocalIdentity(input, allocation, plan) {
+		return FabricOperation{}, ComputeAllocation{}, ComputeAllocationPreparation{}, MachineOwnership{}, fmt.Errorf("%w: local_identity", ErrComputeClaimRecoveryUnavailable)
+	}
+	ownership, err := s.operations.MachineOwnership(ctx, input.ComputeAllocationID)
+	if err != nil || !validComputeClaimRecoveryOwnership(allocation, ownership) {
+		return FabricOperation{}, ComputeAllocation{}, ComputeAllocationPreparation{}, MachineOwnership{}, fmt.Errorf("%w: local_identity", ErrComputeClaimRecoveryUnavailable)
+	}
+	return operation, allocation, plan, ownership, nil
+}
+
+func workspaceLaunchResourceLockKey(launchOperationID string) string {
+	return "workspace-launch-resources:" + strings.TrimSpace(launchOperationID)
 }
 
 func unknownMonthlyProviderTruth(compute ComputeAllocation, storage StorageVolume) MonthlyProviderTruth {
@@ -450,7 +797,7 @@ func (s *Service) finishCreateComputeAllocation(operation FabricOperation, alloc
 		claimed.Status = "quarantined"
 		_ = s.operations.SaveMachineOwnership(context.Background(), claimed)
 		terminal = true
-		_ = computeAllocationFailure(context.Background(), s, operation, result, prepared, tagErr)
+		_ = computeAllocationClaimPending(context.Background(), s, operation, result, prepared, tagErr)
 		return
 	}
 	verified, verifyErr := s.provider.SyncComputeAllocation(finalizeCtx, result)
@@ -462,7 +809,7 @@ func (s *Service) finishCreateComputeAllocation(operation FabricOperation, alloc
 			verifyErr = fmt.Errorf("compute_provider_readback_mismatch")
 		}
 		terminal = true
-		_ = computeAllocationFailure(context.Background(), s, operation, verified, prepared, verifyErr)
+		_ = computeAllocationClaimPending(context.Background(), s, operation, verified, prepared, verifyErr)
 		return
 	}
 	claimed.Status = "active"
@@ -562,6 +909,29 @@ func computeAllocationFailure(ctx context.Context, s *Service, operation FabricO
 	return cause
 }
 
+func computeAllocationClaimPending(ctx context.Context, s *Service, operation FabricOperation, allocation ComputeAllocation, prepared ComputeAllocationPreparation, cause error) error {
+	if allocation.ID == "" {
+		return cause
+	}
+	allocation.Status = "compute_claim_pending"
+	if allocation.ProviderData == nil {
+		allocation.ProviderData = map[string]string{}
+	}
+	allocation.ProviderData["recoveryAction"] = "compute_claim_recovery"
+	operation.Status = "claim_pending"
+	operation.ErrorCode = errorCode(cause)
+	operation.FinishedAt = time.Time{}
+	operation.ProviderRequestID = firstNonEmpty(allocation.ProviderRequestID, operation.ProviderRequestID)
+	operation.RedactedProviderPayload = computeAllocationOperationPayload(allocation, prepared)
+	if saveErr := s.operations.SaveRuntime(ctx, operation); saveErr != nil {
+		return saveErr
+	}
+	s.mu.Lock()
+	s.computes[allocation.ID] = allocation
+	s.mu.Unlock()
+	return cause
+}
+
 func computeAllocationOperationPayload(allocation ComputeAllocation, prepared ComputeAllocationPreparation) map[string]any {
 	payload := map[string]any{"resource": allocation, "providerResourceId": allocation.ProviderResourceID, "nodeName": allocation.NodeName, "instanceId": firstNonEmpty(allocation.CVMInstanceID, allocation.InstanceID), "costTags": allocation.CostTags}
 	if prepared.NodePoolID != "" {
@@ -594,7 +964,7 @@ func replayComputeAllocationOperation(operation FabricOperation, requestHash str
 	if !decodeOperationResource(operation, &allocation) {
 		return ComputeAllocation{}, ErrComputeOperationFailed
 	}
-	if operation.Status == "started" || operation.Status == "succeeded" {
+	if operation.Status == "started" || operation.Status == "claim_pending" || operation.Status == "succeeded" {
 		return allocation, nil
 	}
 	return allocation, ErrComputeOperationFailed
@@ -680,23 +1050,8 @@ func (s *Service) SyncComputeAllocation(ctx context.Context, allocationID string
 			_ = s.recordOperation(ctx, operation, "failed", allocation, ownershipErr)
 			return allocation, ownershipErr
 		}
-		if ownershipErr == nil && ownership.Status == "quarantined" {
-			machine := ProviderMachine{
-				MachineID: firstNonEmpty(allocation.MachineName, ownership.MachineID), InstanceID: firstNonEmpty(allocation.InstanceID, allocation.CVMInstanceID, ownership.InstanceID),
-				NodeName: firstNonEmpty(allocation.NodeName, ownership.NodeName), PrivateIP: allocation.PrivateIP, PublicIP: allocation.PublicIP,
-				InstanceType: allocation.ProviderData["instanceType"], Zone: allocation.ProviderData["zone"], ChargeType: allocation.ChargeType,
-				RenewFlag: allocation.RenewFlag, Deadline: allocation.Deadline, Ready: true,
-			}
-			if err := s.provider.TagComputeMachine(ctx, machine, ownership); err != nil {
-				_ = s.recordOperation(ctx, operation, "failed", allocation, err)
-				return allocation, err
-			}
-			ownership.Status = "active"
-			ownership.ReleasedAt = nil
-			if err := s.operations.SaveMachineOwnership(ctx, ownership); err != nil {
-				_ = s.recordOperation(ctx, operation, "failed", allocation, err)
-				return allocation, err
-			}
+		if ownershipErr == nil && (ownership.Status == "claimed" || ownership.Status == "quarantined") {
+			allocation.Status = "compute_claim_pending"
 		}
 	}
 	if err := s.recordOperation(ctx, operation, "succeeded", allocation, nil); err != nil {
@@ -937,7 +1292,11 @@ func (s *Service) CreateStorageVolume(ctx context.Context, input StorageVolumeIn
 	}
 	requestHash := hashInput(input)
 	var volume StorageVolume
-	err := s.operations.WithPoolLock(ctx, "storage-create:"+firstNonEmpty(input.IdempotencyKey, input.ID), func(lockCtx context.Context) error {
+	lockKey := "storage-create:" + firstNonEmpty(input.IdempotencyKey, input.ID)
+	if strings.HasSuffix(input.IdempotencyKey, ":storage") {
+		lockKey = workspaceLaunchResourceLockKey(strings.TrimSuffix(input.IdempotencyKey, ":storage"))
+	}
+	err := s.operations.WithPoolLock(ctx, lockKey, func(lockCtx context.Context) error {
 		operations, err := s.operations.List(lockCtx)
 		if err != nil {
 			return err

@@ -1179,6 +1179,82 @@ func TestWorkspaceLaunchCASStoresFenceConcurrentClaimsAndStalePersists(t *testin
 	}
 }
 
+func TestPostgresWorkspaceComputeClaimLegacyNormalizationCASIsSingleWinner(t *testing.T) {
+	if controlPlaneTestPostgresBaseURL() == "" {
+		t.Skip("local PostgreSQL unavailable: set CONTROL_PLANE_TEST_DATABASE_URL or OPL_POSTGRES_TESTS=1 with isolated PG settings")
+	}
+	ctx := context.Background()
+	store := newPostgresWorkspaceRenewalStore(t)
+	operation := newWorkspaceLaunchOperation("acct-claim-cas", "usr-claim-cas", "Claim CAS", "basic", 10, false, pricingCatalogVersion, 52_580_000, "claim-cas")
+	operation.Status, operation.Phase, operation.ErrorCode = "manual_review", "compute_fulfilling", "legacy_compute_claim_interrupted"
+	operation.ComputeNodePoolID = "np-claim-cas"
+	operation.WorkspaceAPIKeyID = 9
+	if err := store.SaveRuntimeOperation(ctx, workspaceLaunchOperationRow(operation)); err != nil {
+		t.Fatal(err)
+	}
+	row, ok, err := store.GetRuntimeOperation(ctx, operation.ID)
+	if err != nil || !ok {
+		t.Fatalf("load legacy operation: ok=%v err=%v row=%#v", ok, err, row)
+	}
+	legacy, err := decodeWorkspaceLaunchOperation(row)
+	if err != nil {
+		t.Fatal(err)
+	}
+	normalized := legacy
+	normalized.ComputePoolID, normalized.ComputeMachineName, normalized.ComputeNodeName = "pool-basic-2c4g", "machine-claim-cas", "node-claim-cas"
+	normalized.ComputeCVMInstanceID, normalized.ComputePrivateIP = "ins-claim-cas", "10.20.30.50"
+	normalized.ComputeInstanceType, normalized.ComputeZone = "S5.MEDIUM4", "ap-shanghai-2"
+	normalized.ComputeChargeType, normalized.ComputeRenewFlag, normalized.ComputeDeadline = "PREPAID", "NOTIFY_AND_MANUAL_RENEW", "2099-01-01T00:00:00Z"
+	normalized.Status, normalized.Phase, normalized.ErrorCode = "compute_claim_pending", "compute_claim_pending", ""
+	desired := workspaceLaunchOperationRow(normalized)
+	update := workspaceLaunchPersistCAS{OperationID: legacy.ID, ExpectedOperationResult: legacy.PersistedResult, DesiredOperation: desired}
+
+	start := make(chan struct{})
+	results := make(chan error, 2)
+	for range 2 {
+		go func() {
+			<-start
+			results <- store.PersistWorkspaceLaunch(ctx, update)
+		}()
+	}
+	close(start)
+	winners, conflicts := 0, 0
+	for range 2 {
+		switch err := <-results; {
+		case err == nil:
+			winners++
+		case errors.Is(err, errWorkspaceLaunchCASConflict):
+			conflicts++
+		default:
+			t.Fatalf("legacy normalization CAS error=%v", err)
+		}
+	}
+	if winners != 1 || conflicts != 1 {
+		t.Fatalf("legacy normalization winners=%d conflicts=%d", winners, conflicts)
+	}
+	row, ok, err = store.GetRuntimeOperation(ctx, operation.ID)
+	if err != nil || !ok {
+		t.Fatalf("load normalized operation: ok=%v err=%v row=%#v", ok, err, row)
+	}
+	current, err := decodeWorkspaceLaunchOperation(row)
+	if err != nil || current.Status != "compute_claim_pending" || current.Phase != "compute_claim_pending" || current.RequestHash != legacy.RequestHash ||
+		current.ComputePoolID != normalized.ComputePoolID || current.ComputeMachineName != normalized.ComputeMachineName || current.ComputeNodeName != normalized.ComputeNodeName ||
+		current.ComputeCVMInstanceID != normalized.ComputeCVMInstanceID || current.ComputePrivateIP != normalized.ComputePrivateIP ||
+		current.ComputeInstanceType != normalized.ComputeInstanceType || current.ComputeZone != normalized.ComputeZone || current.ComputeDeadline != normalized.ComputeDeadline {
+		t.Fatalf("normalized operation=%#v err=%v", current, err)
+	}
+	if err := store.PersistWorkspaceLaunch(ctx, update); !errors.Is(err, errWorkspaceLaunchCASConflict) {
+		t.Fatalf("stale legacy replay error=%v, want %v", err, errWorkspaceLaunchCASConflict)
+	}
+	drifted := current
+	drifted.RequestHash = "different-launch-request-hash"
+	if err := store.PersistWorkspaceLaunch(ctx, workspaceLaunchPersistCAS{
+		OperationID: current.ID, ExpectedOperationResult: current.PersistedResult, DesiredOperation: workspaceLaunchOperationRow(drifted),
+	}); !errors.Is(err, errWorkspaceLaunchCASConflict) {
+		t.Fatalf("request hash drift error=%v, want %v", err, errWorkspaceLaunchCASConflict)
+	}
+}
+
 func TestWorkspaceRenewalClaimIsAtomicAndRejectsDifferentRequestHash(t *testing.T) {
 	for _, storeCase := range []struct {
 		name string

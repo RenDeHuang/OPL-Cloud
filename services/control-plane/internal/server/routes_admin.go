@@ -2,9 +2,12 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"net/http"
+	"os"
 	"regexp"
 	"sort"
 	"strconv"
@@ -17,6 +20,8 @@ import (
 )
 
 var billingReviewEvidenceRefPattern = regexp.MustCompile(`^case-[0-9]{8}-[a-z0-9]{3,16}$`)
+var computeClaimMergedSHAPattern = regexp.MustCompile(`^[a-f0-9]{40}$`)
+var computeClaimCloudDigestPattern = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
 
 const (
 	operatorPageReadTimeout      = 5 * time.Second
@@ -214,6 +219,46 @@ func registerAdminRoutes(mux *http.ServeMux, app *controlPlaneServer, service *c
 		}
 		writeJSON(w, http.StatusOK, result)
 	}))
+	mux.HandleFunc("POST /api/operator/workspace-launches/{operationId}/compute-claim-recovery/proof", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
+		operationID := strings.TrimSpace(r.PathValue("operationId"))
+		input, ok := workspaceComputeClaimRecoveryRequestFromMap(operationID, decodeJSON(r), false)
+		if !ok {
+			writeError(w, http.StatusBadRequest, errWorkspaceComputeClaimInvalid.Error())
+			return
+		}
+		proof, err := app.diagnoseWorkspaceComputeClaim(r.Context(), service, input)
+		if err == nil {
+			writeJSON(w, http.StatusOK, proof)
+			return
+		}
+		if workspaceComputeClaimSafeFailure(proof) {
+			writeJSON(w, http.StatusConflict, proof)
+			return
+		}
+		writeWorkspaceComputeClaimError(w, err)
+	}))
+	mux.HandleFunc("POST /api/operator/workspace-launches/{operationId}/compute-claim-recovery/claim", app.protected(true, app.computeClaimCapabilityProtected(func(w http.ResponseWriter, r *http.Request) {
+		key, ok := requiredMutationKey(w, r)
+		if !ok {
+			return
+		}
+		operationID := strings.TrimSpace(r.PathValue("operationId"))
+		input, ok := workspaceComputeClaimRecoveryRequestFromMap(operationID, decodeJSON(r), true)
+		if !ok || !validBillingReviewOpaqueID(key) {
+			writeError(w, http.StatusBadRequest, errWorkspaceComputeClaimInvalid.Error())
+			return
+		}
+		proof, err := app.claimWorkspaceCompute(r.Context(), service, input, key)
+		if err == nil {
+			writeJSON(w, http.StatusOK, proof)
+			return
+		}
+		if workspaceComputeClaimSafeFailure(proof) {
+			writeJSON(w, http.StatusConflict, proof)
+			return
+		}
+		writeWorkspaceComputeClaimError(w, err)
+	})))
 	mux.HandleFunc("POST /api/operator/billing-reviews/{resourceType}/{id}/resolve", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
 		input := decodeJSON(r)
 		if !billingReviewRequestShapeValid(input) {
@@ -254,6 +299,72 @@ func registerAdminRoutes(mux *http.ServeMux, app *controlPlaneServer, service *c
 		}
 		writeJSON(w, http.StatusOK, result)
 	}))
+}
+
+func (app *controlPlaneServer) computeClaimCapabilityProtected(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		expected := os.Getenv("OPL_INTERNAL_SERVICE_TOKEN")
+		want := sha256.Sum256([]byte(expected))
+		got := sha256.Sum256([]byte(r.Header.Get("x-opl-compute-claim-capability")))
+		if expected == "" || subtle.ConstantTimeCompare(got[:], want[:]) != 1 {
+			writeError(w, http.StatusForbidden, "workspace_compute_claim_capability_invalid")
+			return
+		}
+		next(w, r)
+	}
+}
+
+func workspaceComputeClaimRecoveryRequestFromMap(operationID string, input map[string]any, approved bool) (workspaceComputeClaimRecoveryRequest, bool) {
+	want := []string{"accountId", "workspaceId", "computeAllocationId", "storageId", "packageId", "poolId", "nodePoolId", "machineName", "nodeName", "cvmInstanceId", "privateIp", "instanceType", "zone"}
+	if approved {
+		want = append(want, "approvalId", "mergedMainSha", "cloudImageDigest", "confirm")
+	}
+	if operationID == "" || len(input) != len(want) {
+		return workspaceComputeClaimRecoveryRequest{}, false
+	}
+	values := make(map[string]string, len(want))
+	for _, field := range want {
+		value, ok := input[field].(string)
+		if !ok || value == "" || value != strings.TrimSpace(value) {
+			return workspaceComputeClaimRecoveryRequest{}, false
+		}
+		values[field] = value
+	}
+	request := workspaceComputeClaimRecoveryRequest{
+		LaunchOperationID: operationID, AccountID: values["accountId"], WorkspaceID: values["workspaceId"],
+		ComputeID: values["computeAllocationId"], StorageID: values["storageId"], PackageID: values["packageId"],
+		PoolID: values["poolId"], NodePoolID: values["nodePoolId"], MachineName: values["machineName"], NodeName: values["nodeName"],
+		CVMInstanceID: values["cvmInstanceId"], PrivateIP: values["privateIp"], InstanceType: values["instanceType"], Zone: values["zone"],
+		ApprovalID: values["approvalId"], MergedMainSHA: values["mergedMainSha"], CloudImageDigest: values["cloudImageDigest"], Confirmation: values["confirm"],
+	}
+	if request.PackageID != "basic" && request.PackageID != "pro" || !strings.HasPrefix(request.CVMInstanceID, "ins-") {
+		return workspaceComputeClaimRecoveryRequest{}, false
+	}
+	if approved && (!validBillingReviewOpaqueID(request.ApprovalID) || !computeClaimMergedSHAPattern.MatchString(request.MergedMainSHA) ||
+		!computeClaimCloudDigestPattern.MatchString(request.CloudImageDigest) || request.Confirmation != "CLAIM_PROVEN_COMPUTE_RESOURCE") {
+		return workspaceComputeClaimRecoveryRequest{}, false
+	}
+	return request, true
+}
+
+func workspaceComputeClaimSafeFailure(proof clients.ComputeClaimRecoveryProof) bool {
+	return proof.SchemaVersion == 1 && proof.Reason != "" && proof.Reason != "none" && safeWorkspaceComputeClaimReason(proof.Reason) &&
+		proof.Sub2APIMutationCount == 0 && proof.TencentMutationCount >= 0 && proof.TencentMutationCount <= 5 &&
+		proof.KubernetesMutationCount >= 0 && proof.KubernetesMutationCount <= 1
+}
+
+func writeWorkspaceComputeClaimError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, errWorkspaceComputeClaimInvalid):
+		writeError(w, http.StatusBadRequest, err.Error())
+	case errors.Is(err, errBillingReviewNotFound):
+		writeError(w, http.StatusNotFound, "workspace_launch_not_found")
+	case errors.Is(err, errWorkspaceComputeClaimIdentity), errors.Is(err, errWorkspaceComputeClaimNotPending), errors.Is(err, errWorkspaceComputeClaimProof),
+		errors.Is(err, errWorkspaceLaunchCASConflict):
+		writeError(w, http.StatusConflict, err.Error())
+	default:
+		writeError(w, http.StatusBadGateway, "workspace_compute_claim_unavailable")
+	}
 }
 
 func operatorPagination(w http.ResponseWriter, r *http.Request) (int, int, bool) {

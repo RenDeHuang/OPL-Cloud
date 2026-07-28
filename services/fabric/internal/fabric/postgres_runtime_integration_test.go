@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"net/url"
 	"os"
@@ -432,6 +433,48 @@ func TestPostgresComputePoolHeadSerializesDifferentWorkspacesAcrossServiceInstan
 	}
 }
 
+func TestPostgresComputeClaimPendingKeepsFIFOHead(t *testing.T) {
+	databaseURL := fabricTestDatabaseURL(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	store, err := newTestPostgresOperationStore(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.client.Close()
+	createdAt := time.Date(2026, 7, 26, 1, 0, 0, 0, time.UTC)
+	first := newOperation("create_compute_allocation", "compute_allocation", "compute-first", "acct-alpha", "workspace-first", "compute-first", "hash-first", createdAt)
+	first.ID = "fop-compute-first"
+	first.Status = "started"
+	first.CreatedAt = createdAt
+	first.ComputePoolKey = "np-basic"
+	second := newOperation("create_compute_allocation", "compute_allocation", "compute-second", "acct-beta", "workspace-second", "compute-second", "hash-second", createdAt.Add(time.Second))
+	second.ID = "fop-compute-second"
+	second.Status = "started"
+	second.CreatedAt = createdAt.Add(time.Second)
+	second.ComputePoolKey = "np-basic"
+	for _, operation := range []FabricOperation{first, second} {
+		if _, claimed, err := store.ClaimComputePoolRuntime(ctx, operation); err != nil || !claimed {
+			t.Fatalf("seed compute operation %s: claimed=%v err=%v", operation.ID, claimed, err)
+		}
+	}
+
+	head, claimed, err := store.TryClaimComputePoolHead(ctx, first.ID, "np-basic", "lease-first", createdAt, createdAt.Add(time.Minute))
+	if err != nil || !claimed {
+		t.Fatalf("claim first head=%#v claimed=%v err=%v", head, claimed, err)
+	}
+	head.Status = "claim_pending"
+	head.FinishedAt = time.Time{}
+	if err := store.SaveRuntime(ctx, head); err != nil {
+		t.Fatalf("persist claim_pending head: %v", err)
+	}
+
+	queued, claimed, err := store.TryClaimComputePoolHead(ctx, second.ID, "np-basic", "lease-second", createdAt.Add(time.Minute), createdAt.Add(2*time.Minute))
+	if err != nil || claimed || queued.ID != first.ID || queued.Status != "claim_pending" {
+		t.Fatalf("claim_pending head was bypassed: queued=%#v claimed=%v err=%v", queued, claimed, err)
+	}
+}
+
 func TestPostgresComputePoolLeaseUsesDatabaseClockAcrossServiceInstances(t *testing.T) {
 	databaseURL := fabricTestDatabaseURL(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -529,6 +572,475 @@ func TestPostgresDestroyRuntimeFailedRetryBindsWorkspaceAcrossServiceInstances(t
 	}
 }
 
+func TestPostgresComputeClaimRecoveryOperationCASRejectsSkippedTransition(t *testing.T) {
+	databaseURL := fabricTestDatabaseURL(t)
+	store, err := newTestPostgresOperationStore(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.client.Close()
+
+	operation := postgresComputeClaimOperation("skipped", "failed")
+	if err := store.Append(context.Background(), operation); err != nil {
+		t.Fatal(err)
+	}
+	recovered := operation
+	recovered.Status = "succeeded"
+	recovered.FinishedAt = operation.CreatedAt.Add(time.Minute)
+	if err := store.SaveComputeClaimRecovery(context.Background(), operation, recovered); !errors.Is(err, ErrRuntimeOperationNotCurrent) {
+		t.Fatalf("failed -> succeeded error=%v, want ErrRuntimeOperationNotCurrent", err)
+	}
+	operations, err := store.List(context.Background())
+	if err != nil || len(operations) != 1 || operations[0].Status != "failed" {
+		t.Fatalf("skipped transition changed operation: operations=%#v err=%v", operations, err)
+	}
+}
+
+func TestPostgresComputeClaimRecoveryOperationCASRejectsStaleAndRequestHashDrift(t *testing.T) {
+	databaseURL := fabricTestDatabaseURL(t)
+	store, err := newTestPostgresOperationStore(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.client.Close()
+
+	operation := postgresComputeClaimOperation("identity", "failed")
+	if err := store.Append(context.Background(), operation); err != nil {
+		t.Fatal(err)
+	}
+	pending := operation
+	pending.Status = "claim_pending"
+	pending.FinishedAt = time.Time{}
+	pending.RedactedProviderPayload = withComputeClaimRecoveryBinding(pending.RedactedProviderPayload, postgresComputeClaimRecoveryBinding("identity"))
+	if err := store.SaveComputeClaimRecovery(context.Background(), operation, pending); err != nil {
+		t.Fatalf("failed -> claim_pending: %v", err)
+	}
+	recovered := pending
+	recovered.Status = "succeeded"
+	recovered.FinishedAt = operation.CreatedAt.Add(time.Minute)
+	if err := store.SaveComputeClaimRecovery(context.Background(), operation, recovered); !errors.Is(err, ErrRuntimeOperationNotCurrent) {
+		t.Fatalf("stale failed owner error=%v, want ErrRuntimeOperationNotCurrent", err)
+	}
+	drifted := recovered
+	drifted.RequestHash = "different-request-hash"
+	if err := store.SaveComputeClaimRecovery(context.Background(), pending, drifted); !errors.Is(err, ErrRuntimeOperationNotCurrent) {
+		t.Fatalf("request hash drift error=%v, want ErrRuntimeOperationNotCurrent", err)
+	}
+	if err := store.SaveComputeClaimRecovery(context.Background(), pending, recovered); err != nil {
+		t.Fatalf("claim_pending -> succeeded: %v", err)
+	}
+	if err := store.SaveComputeClaimRecovery(context.Background(), pending, recovered); !errors.Is(err, ErrRuntimeOperationNotCurrent) {
+		t.Fatalf("stale claim_pending owner error=%v, want ErrRuntimeOperationNotCurrent", err)
+	}
+}
+
+func TestPostgresComputeClaimRecoveryOperationCASRejectsBindingDrift(t *testing.T) {
+	drifts := map[string]func(*computeClaimRecoveryBinding){
+		"launch": func(binding *computeClaimRecoveryBinding) { binding.LaunchOperationID = "launch-postgres-other" },
+		"idempotency": func(binding *computeClaimRecoveryBinding) {
+			binding.IdempotencyKey = "launch-postgres-binding:compute-claim-other"
+		},
+		"target":  func(binding *computeClaimRecoveryBinding) { binding.TargetHash = "different-target-hash" },
+		"request": func(binding *computeClaimRecoveryBinding) { binding.RequestHash = "different-request-hash" },
+	}
+	for name, drift := range drifts {
+		t.Run(name, func(t *testing.T) {
+			databaseURL := fabricTestDatabaseURL(t)
+			store, err := newTestPostgresOperationStore(databaseURL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer store.client.Close()
+
+			operation := postgresComputeClaimOperation("binding", "failed")
+			if err := store.Append(context.Background(), operation); err != nil {
+				t.Fatal(err)
+			}
+			pending := operation
+			pending.Status, pending.FinishedAt = "claim_pending", time.Time{}
+			binding := postgresComputeClaimRecoveryBinding("binding")
+			pending.RedactedProviderPayload = withComputeClaimRecoveryBinding(pending.RedactedProviderPayload, binding)
+			if err := store.SaveComputeClaimRecovery(context.Background(), operation, pending); err != nil {
+				t.Fatalf("failed -> claim_pending: %v", err)
+			}
+			drift(&binding)
+			drifted := pending
+			drifted.Status, drifted.FinishedAt = "succeeded", operation.CreatedAt.Add(time.Minute)
+			drifted.RedactedProviderPayload = withComputeClaimRecoveryBinding(drifted.RedactedProviderPayload, binding)
+			if err := store.SaveComputeClaimRecovery(context.Background(), pending, drifted); !errors.Is(err, ErrRuntimeOperationNotCurrent) {
+				t.Fatalf("binding drift error=%v, want ErrRuntimeOperationNotCurrent", err)
+			}
+			operations, err := store.List(context.Background())
+			if err != nil || len(operations) != 1 {
+				t.Fatalf("binding drift changed operation: operations=%#v err=%v", operations, err)
+			}
+			expectedPayloadJSON, expectedPayloadErr := operationPayloadJSON(pending)
+			var expectedPayload map[string]any
+			if expectedPayloadErr != nil || json.Unmarshal([]byte(expectedPayloadJSON), &expectedPayload) != nil ||
+				operations[0].Status != "claim_pending" || !reflect.DeepEqual(operations[0].RedactedProviderPayload, expectedPayload) {
+				t.Fatalf("binding drift changed operation: operations=%#v expectedPayload=%#v", operations, expectedPayload)
+			}
+		})
+	}
+}
+
+func TestPostgresComputeClaimRecoveryOperationCASHasSingleConcurrentWinner(t *testing.T) {
+	databaseURL := fabricTestDatabaseURL(t)
+	firstStore, err := newTestPostgresOperationStore(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer firstStore.client.Close()
+	secondStore, err := newTestPostgresOperationStore(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer secondStore.client.Close()
+
+	operation := postgresComputeClaimOperation("concurrent", "claim_pending")
+	if err := firstStore.Append(context.Background(), operation); err != nil {
+		t.Fatal(err)
+	}
+	recovered := operation
+	recovered.Status = "succeeded"
+	recovered.FinishedAt = operation.CreatedAt.Add(time.Minute)
+	start := make(chan struct{})
+	results := make(chan error, 2)
+	for _, store := range []*PostgresOperationStore{firstStore, secondStore} {
+		store := store
+		go func() {
+			<-start
+			results <- store.SaveComputeClaimRecovery(context.Background(), operation, recovered)
+		}()
+	}
+	close(start)
+	winners := 0
+	for range 2 {
+		err := <-results
+		if err == nil {
+			winners++
+			continue
+		}
+		if !errors.Is(err, ErrRuntimeOperationNotCurrent) {
+			t.Fatalf("concurrent CAS error=%v", err)
+		}
+	}
+	if winners != 1 {
+		t.Fatalf("concurrent CAS winners=%d, want 1", winners)
+	}
+}
+
+func TestPostgresComputeClaimRecoveryOwnershipCASActivatesOnlySameTarget(t *testing.T) {
+	databaseURL := fabricTestDatabaseURL(t)
+	store, err := newTestPostgresOperationStore(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.client.Close()
+
+	ownership := postgresComputeClaimOwnership("identity")
+	stored, created, err := store.ClaimMachine(context.Background(), ownership)
+	if err != nil || !created {
+		t.Fatalf("seed ownership=%#v created=%v err=%v", stored, created, err)
+	}
+	target := stored
+	target.Status = "active"
+	target.ReleasedAt = nil
+	if err := store.ActivateComputeClaimRecoveryOwnership(context.Background(), target); err != nil {
+		t.Fatalf("quarantined -> active: %v", err)
+	}
+	active, err := store.MachineOwnership(context.Background(), target.ResourceID)
+	if err != nil || active.Status != "active" || !sameComputeClaimRecoveryOwnership(active, target) {
+		t.Fatalf("active ownership=%#v err=%v", active, err)
+	}
+	if err := store.ActivateComputeClaimRecoveryOwnership(context.Background(), target); err != nil {
+		t.Fatalf("active replay: %v", err)
+	}
+
+	drifts := map[string]func(*MachineOwnership){
+		"account":   func(value *MachineOwnership) { value.AccountID = "acct-other" },
+		"workspace": func(value *MachineOwnership) { value.WorkspaceID = "workspace-other" },
+		"package":   func(value *MachineOwnership) { value.PackageID = "pro" },
+		"pool":      func(value *MachineOwnership) { value.NodePoolID = "np-other" },
+		"machine":   func(value *MachineOwnership) { value.MachineID = "machine-other" },
+		"node":      func(value *MachineOwnership) { value.NodeName = "node-other" },
+		"cvm":       func(value *MachineOwnership) { value.InstanceID = "ins-other" },
+	}
+	for name, drift := range drifts {
+		t.Run(name, func(t *testing.T) {
+			conflict := target
+			drift(&conflict)
+			if err := store.ActivateComputeClaimRecoveryOwnership(context.Background(), conflict); !errors.Is(err, ErrMachineOwnershipConflict) {
+				t.Fatalf("identity drift error=%v, want ErrMachineOwnershipConflict", err)
+			}
+			current, err := store.MachineOwnership(context.Background(), target.ResourceID)
+			if err != nil || !reflect.DeepEqual(current, active) {
+				t.Fatalf("identity drift changed ownership: current=%#v active=%#v err=%v", current, active, err)
+			}
+		})
+	}
+}
+
+func TestPostgresComputeClaimRecoveryOwnershipCASRejectsNonRecoverableStatus(t *testing.T) {
+	databaseURL := fabricTestDatabaseURL(t)
+	store, err := newTestPostgresOperationStore(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.client.Close()
+
+	ownership := postgresComputeClaimOwnership("status")
+	ownership.Status = "claimed"
+	stored, created, err := store.ClaimMachine(context.Background(), ownership)
+	if err != nil || !created {
+		t.Fatalf("seed ownership=%#v created=%v err=%v", stored, created, err)
+	}
+	target := stored
+	target.Status = "active"
+	if err := store.ActivateComputeClaimRecoveryOwnership(context.Background(), target); !errors.Is(err, ErrMachineOwnershipConflict) {
+		t.Fatalf("claimed -> active error=%v, want ErrMachineOwnershipConflict", err)
+	}
+	current, err := store.MachineOwnership(context.Background(), target.ResourceID)
+	if err != nil || current.Status != "claimed" {
+		t.Fatalf("non-recoverable status changed ownership: current=%#v err=%v", current, err)
+	}
+}
+
+type postgresComputeClaimRecoveryProvider struct {
+	fakeComputeClaimRecoveryProvider
+	storageCreates atomic.Int32
+}
+
+func (p *postgresComputeClaimRecoveryProvider) CreateStorageVolume(_ context.Context, input StorageVolumeInput) (StorageVolume, error) {
+	p.storageCreates.Add(1)
+	return StorageVolume{
+		ID: input.ID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, Status: "ready", Provider: "tencent-tke",
+		ProviderResourceID: "disk-postgres-fixture", ProviderRequestID: providerRequestID("storage", input.IdempotencyKey),
+		Zone: input.Zone, SizeGB: input.SizeGB,
+	}, nil
+}
+
+func TestPostgresComputeClaimRecoveryRestartAfterActiveOwnershipSkipsProviderMutation(t *testing.T) {
+	databaseURL := fabricTestDatabaseURL(t)
+	firstStore, err := newTestPostgresOperationStore(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer firstStore.client.Close()
+	provider, input, claimInput := seedPostgresActiveComputeClaimRecovery(t, firstStore, "pro")
+	secondStore, err := newTestPostgresOperationStore(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer secondStore.client.Close()
+
+	restarted := NewServiceWithOperationStore(provider, secondStore)
+	result, err := restarted.ClaimComputeRecovery(context.Background(), claimInput)
+	operations, operationsErr := secondStore.List(context.Background())
+	if err != nil || operationsErr != nil || !result.Eligible || result.TencentMutationCount != 0 || result.KubernetesMutationCount != 0 ||
+		provider.proofCalls != 1 || provider.claimCalls != 0 || provider.tagCalls != 0 || provider.scaleCalls != 0 || provider.storageCreates.Load() != 0 {
+		t.Fatalf("restart result=%#v err=%v operationsErr=%v provider=%#v storageCreates=%d", result, err, operationsErr, provider, provider.storageCreates.Load())
+	}
+	assertRecoveredComputeOperation(t, operations, input, "succeeded")
+	ownership, err := secondStore.MachineOwnership(context.Background(), input.ComputeAllocationID)
+	if err != nil || ownership.Status != "active" {
+		t.Fatalf("restart ownership=%#v err=%v", ownership, err)
+	}
+}
+
+func TestPostgresComputeClaimRecoveryRestartAfterTargetOwnedReadbackConvergesLocalStateOnly(t *testing.T) {
+	databaseURL := fabricTestDatabaseURL(t)
+	firstStore, err := newTestPostgresOperationStore(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider, input, claimInput := seedPostgresComputeClaimRecovery(t, firstStore, "basic", false)
+	if err := firstStore.client.Close(); err != nil {
+		t.Fatal(err)
+	}
+	secondStore, err := newTestPostgresOperationStore(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer secondStore.client.Close()
+
+	result, err := NewServiceWithOperationStore(provider, secondStore).ClaimComputeRecovery(context.Background(), claimInput)
+	operations, operationsErr := secondStore.List(context.Background())
+	ownership, ownershipErr := secondStore.MachineOwnership(context.Background(), input.ComputeAllocationID)
+	if err != nil || operationsErr != nil || ownershipErr != nil || !result.Eligible || ownership.Status != "active" ||
+		result.TencentMutationCount != 0 || result.KubernetesMutationCount != 0 || provider.proofCalls != 1 || provider.claimCalls != 0 ||
+		provider.tagCalls != 0 || provider.scaleCalls != 0 || provider.storageCreates.Load() != 0 {
+		t.Fatalf("restart result=%#v err=%v operationsErr=%v ownership=%#v ownershipErr=%v provider=%#v storageCreates=%d", result, err, operationsErr, ownership, ownershipErr, provider, provider.storageCreates.Load())
+	}
+	assertRecoveredComputeOperation(t, operations, input, "succeeded")
+}
+
+func TestPostgresComputeClaimRecoveryStorageIdentityCreatesCBSOnceAcrossRestart(t *testing.T) {
+	databaseURL := fabricTestDatabaseURL(t)
+	firstStore, err := newTestPostgresOperationStore(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer firstStore.client.Close()
+	provider, input, claimInput := seedPostgresActiveComputeClaimRecovery(t, firstStore, "basic")
+	firstService := NewServiceWithOperationStore(provider, firstStore)
+	if result, err := firstService.ClaimComputeRecovery(context.Background(), claimInput); err != nil || !result.Eligible {
+		t.Fatalf("claim recovery result=%#v err=%v", result, err)
+	}
+	secondStore, err := newTestPostgresOperationStore(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer secondStore.client.Close()
+	secondService := NewServiceWithOperationStore(provider, secondStore)
+	storageInput := StorageVolumeInput{
+		ID: input.StorageVolumeID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID,
+		ComputeID: input.ComputeAllocationID, Zone: claimInput.Zone, SizeGB: 10,
+		IdempotencyKey: input.LaunchOperationID + ":storage",
+	}
+
+	start := make(chan struct{})
+	type storageResult struct {
+		volume StorageVolume
+		err    error
+	}
+	results := make(chan storageResult, 2)
+	for _, service := range []*Service{firstService, secondService} {
+		service := service
+		go func() {
+			<-start
+			volume, err := service.CreateStorageVolume(context.Background(), storageInput)
+			results <- storageResult{volume: volume, err: err}
+		}()
+	}
+	close(start)
+	for range 2 {
+		result := <-results
+		if result.err != nil || result.volume.ID != input.StorageVolumeID || result.volume.ProviderResourceID != "disk-postgres-fixture" {
+			t.Fatalf("storage result=%#v err=%v", result.volume, result.err)
+		}
+	}
+	thirdStore, err := newTestPostgresOperationStore(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer thirdStore.client.Close()
+	replayed, err := NewServiceWithOperationStore(provider, thirdStore).CreateStorageVolume(context.Background(), storageInput)
+	if err != nil || replayed.ID != input.StorageVolumeID || provider.storageCreates.Load() != 1 {
+		t.Fatalf("storage restart replay=%#v err=%v providerCreates=%d", replayed, err, provider.storageCreates.Load())
+	}
+	operations, err := thirdStore.List(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	started, succeeded := 0, 0
+	for _, operation := range operations {
+		if operation.Action != "create_storage_volume" {
+			continue
+		}
+		if operation.ResourceID != input.StorageVolumeID || operation.IdempotencyKey != input.LaunchOperationID+":storage" {
+			t.Fatalf("unexpected storage identity: %#v", operation)
+		}
+		switch operation.Status {
+		case "started":
+			started++
+		case "succeeded":
+			succeeded++
+		}
+	}
+	if started != 1 || succeeded != 1 {
+		t.Fatalf("storage transitions started=%d succeeded=%d operations=%#v", started, succeeded, operations)
+	}
+}
+
+func seedPostgresActiveComputeClaimRecovery(t *testing.T, store *PostgresOperationStore, packageID string) (*postgresComputeClaimRecoveryProvider, ComputeClaimRecoveryInput, ComputeClaimRecoveryClaimInput) {
+	return seedPostgresComputeClaimRecovery(t, store, packageID, true)
+}
+
+func seedPostgresComputeClaimRecovery(t *testing.T, store *PostgresOperationStore, packageID string, activateOwnership bool) (*postgresComputeClaimRecoveryProvider, ComputeClaimRecoveryInput, ComputeClaimRecoveryClaimInput) {
+	t.Helper()
+	_, memoryStore, fixtureProvider, input := seedComputeClaimRecovery(t, packageID)
+	operations, err := memoryStore.List(context.Background())
+	if err != nil || len(operations) != 1 {
+		t.Fatalf("fixture operations=%#v err=%v", operations, err)
+	}
+	operation := operations[0]
+	if err := store.Append(context.Background(), operation); err != nil {
+		t.Fatal(err)
+	}
+	provider := &postgresComputeClaimRecoveryProvider{fakeComputeClaimRecoveryProvider: *fixtureProvider}
+	provider.proof.NodeOwnershipState = "target_owned"
+	provider.proof.CVMOwnershipState = "target_owned"
+	claimInput := ComputeClaimRecoveryClaimInput{
+		ComputeClaimRecoveryInput: input, MachineName: provider.proof.MachineName, NodeName: provider.proof.NodeName,
+		CVMInstanceID: provider.proof.CVMInstanceID, PrivateIP: provider.proof.PrivateIP,
+		InstanceType: provider.proof.InstanceType, Zone: provider.proof.Zone,
+		IdempotencyKey: input.LaunchOperationID + ":compute-claim",
+	}
+	pending := operation
+	pending.Status, pending.ErrorCode, pending.FinishedAt = "claim_pending", "", time.Time{}
+	pending.RedactedProviderPayload = withComputeClaimRecoveryBinding(pending.RedactedProviderPayload, newComputeClaimRecoveryBinding(claimInput))
+	if err := store.SaveComputeClaimRecovery(context.Background(), operation, pending); err != nil {
+		t.Fatal(err)
+	}
+	ownership, err := memoryStore.MachineOwnership(context.Background(), input.ComputeAllocationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored, created, err := store.ClaimMachine(context.Background(), ownership)
+	if err != nil || !created {
+		t.Fatalf("seed PostgreSQL ownership=%#v created=%v err=%v", stored, created, err)
+	}
+	if activateOwnership {
+		stored.Status, stored.ReleasedAt = "active", nil
+		if err := store.ActivateComputeClaimRecoveryOwnership(context.Background(), stored); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return provider, input, claimInput
+}
+
+func postgresComputeClaimOperation(suffix, status string) FabricOperation {
+	now := time.Date(2026, 7, 28, 1, 0, 0, 0, time.UTC)
+	operation := newOperation(
+		"create_compute_allocation", "compute_allocation", "ca-postgres-"+suffix,
+		"acct-postgres-"+suffix, "workspace-postgres-"+suffix, "launch-postgres-"+suffix+":compute",
+		"request-hash-"+suffix, now,
+	)
+	operation.ID = "fop-postgres-compute-claim-" + suffix
+	operation.Status = status
+	operation.CreatedAt = now
+	if status == "failed" {
+		operation.FinishedAt = now.Add(time.Second)
+	}
+	fillOperationResource(&operation, ComputeAllocation{
+		ID: operation.ResourceID, AccountID: operation.AccountID, WorkspaceID: operation.WorkspaceID,
+	})
+	if status == "claim_pending" {
+		operation.RedactedProviderPayload = withComputeClaimRecoveryBinding(operation.RedactedProviderPayload, postgresComputeClaimRecoveryBinding(suffix))
+	}
+	return operation
+}
+
+func postgresComputeClaimRecoveryBinding(suffix string) computeClaimRecoveryBinding {
+	return computeClaimRecoveryBinding{
+		LaunchOperationID: "launch-postgres-" + suffix,
+		IdempotencyKey:    "launch-postgres-" + suffix + ":compute-claim",
+		TargetHash:        "target-hash-" + suffix,
+		RequestHash:       "claim-request-hash-" + suffix,
+	}
+}
+
+func postgresComputeClaimOwnership(suffix string) MachineOwnership {
+	return MachineOwnership{
+		ID: "owner-postgres-" + suffix, ResourceID: "ca-postgres-" + suffix,
+		AccountID: "acct-postgres-" + suffix, WorkspaceID: "workspace-postgres-" + suffix,
+		PackageID: "basic", NodePoolID: "np-postgres-basic", MachineID: "machine-postgres-" + suffix,
+		InstanceID: "ins-postgres-" + suffix, NodeName: "node-postgres-" + suffix, Status: "quarantined",
+		ProviderRequestID: "redacted-provider-reference", ClaimedAt: time.Date(2026, 7, 28, 1, 0, 0, 0, time.UTC),
+	}
+}
+
 func TestPostgresOperationStoreRunsEmbeddedMigrationsOnce(t *testing.T) {
 	databaseURL := fabricTestDatabaseURL(t)
 	first, err := newTestPostgresOperationStore(databaseURL)
@@ -547,8 +1059,8 @@ func TestPostgresOperationStoreRunsEmbeddedMigrationsOnce(t *testing.T) {
 	if err := db.QueryRow(`SELECT count(*) FROM opl_schema_migrations WHERE service = 'fabric'`).Scan(&migrationCount); err != nil {
 		t.Fatalf("read Fabric migration journal: %v", err)
 	}
-	if migrationCount != 5 {
-		t.Fatalf("Fabric migration count = %d, want 5", migrationCount)
+	if migrationCount != 6 {
+		t.Fatalf("Fabric migration count = %d, want 6", migrationCount)
 	}
 	if _, err := db.Exec(`DROP TABLE machine_ownerships`); err != nil {
 		t.Fatal(err)

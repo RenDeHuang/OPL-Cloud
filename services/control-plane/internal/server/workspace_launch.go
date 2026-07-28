@@ -16,6 +16,10 @@ var (
 	errInvalidWorkspaceLaunchOperation = errors.New("invalid_workspace_launch_operation")
 	errWorkspaceLaunchInProgress       = errors.New("workspace_launch_in_progress")
 	errWorkspaceLaunchCASConflict      = errors.New("workspace_launch_cas_conflict")
+	errWorkspaceComputeClaimInvalid    = errors.New("workspace_compute_claim_invalid")
+	errWorkspaceComputeClaimIdentity   = errors.New("workspace_compute_claim_identity_mismatch")
+	errWorkspaceComputeClaimNotPending = errors.New("workspace_compute_claim_not_pending")
+	errWorkspaceComputeClaimProof      = errors.New("workspace_compute_claim_proof_failed")
 )
 
 const (
@@ -28,58 +32,74 @@ func isWorkspaceLaunchAction(action string) bool {
 }
 
 type workspaceLaunchOperation struct {
-	ID                         string         `json:"-"`
-	Status                     string         `json:"-"`
-	CreatedAt                  string         `json:"-"`
-	PersistedResult            string         `json:"-"`
-	SchemaVersion              int            `json:"schemaVersion"`
-	RequestHash                string         `json:"requestHash"`
-	Phase                      string         `json:"phase"`
-	AccountID                  string         `json:"accountId"`
-	OwnerUserID                string         `json:"ownerUserId"`
-	WorkspaceID                string         `json:"workspaceId"`
-	Name                       string         `json:"name"`
-	PackageID                  string         `json:"packageId"`
-	StorageGB                  int            `json:"sizeGb"`
-	AutoRenew                  bool           `json:"autoRenew"`
-	PriceVersion               string         `json:"priceVersion"`
-	TotalChargeUSDMicros       int64          `json:"totalChargeUsdMicros"`
-	PeriodStart                string         `json:"periodStart,omitempty"`
-	PaidThrough                string         `json:"paidThrough,omitempty"`
-	BillingAnchorDay           int            `json:"billingAnchorDay,omitempty"`
-	ComputeID                  string         `json:"computeAllocationId"`
-	ComputeNodePoolID          string         `json:"computeNodePoolId"`
-	StorageID                  string         `json:"storageId"`
-	AttachmentID               string         `json:"attachmentId,omitempty"`
-	AttachmentOperationID      string         `json:"attachmentOperationId"`
-	WorkspaceOperationID       string         `json:"workspaceOperationId"`
-	WorkspaceAPIKeyID          int64          `json:"workspaceApiKeyId"`
-	RedeemCode                 string         `json:"sub2apiRedeemCode"`
-	RefundCode                 string         `json:"sub2apiRefundCode,omitempty"`
-	ChargeAttempted            bool           `json:"chargeAttempted,omitempty"`
-	ChargeConfirmation         map[string]any `json:"chargeConfirmation,omitempty"`
-	PreChargeBalanceUSDMicros  int64          `json:"preChargeBalanceUsdMicros,omitempty"`
-	PostChargeBalanceUSDMicros int64          `json:"postChargeBalanceUsdMicros,omitempty"`
-	PostChargeBalanceKnown     bool           `json:"postChargeBalanceKnown,omitempty"`
-	RefundAttempted            bool           `json:"refundAttempted,omitempty"`
-	RefundConfirmation         map[string]any `json:"refundConfirmation,omitempty"`
-	RefundReason               string         `json:"refundReason,omitempty"`
-	RefundReceiptID            string         `json:"refundReceiptId,omitempty"`
-	LeaseToken                 string         `json:"leaseToken,omitempty"`
-	LeaseExpiresAt             string         `json:"leaseExpiresAt,omitempty"`
-	GatewaySecretRef           string         `json:"gatewaySecretRef,omitempty"`
-	WorkspaceKeyStatus         string         `json:"workspaceKeyStatus,omitempty"`
-	WorkspaceKeyFingerprint    string         `json:"workspaceKeyFingerprint,omitempty"`
-	RuntimeID                  string         `json:"runtimeId,omitempty"`
-	RuntimeReady               bool           `json:"runtimeReady,omitempty"`
-	RuntimeServiceName         string         `json:"runtimeServiceName,omitempty"`
-	RuntimeUsername            string         `json:"runtimeUsername,omitempty"`
-	CredentialStatus           string         `json:"credentialStatus,omitempty"`
-	CredentialVersion          string         `json:"credentialVersion,omitempty"`
-	CredentialSecretRef        string         `json:"credentialSecretRef,omitempty"`
-	URL                        string         `json:"url,omitempty"`
-	ReceiptID                  string         `json:"receiptId,omitempty"`
-	ErrorCode                  string         `json:"errorCode,omitempty"`
+	ID                         string                             `json:"-"`
+	Status                     string                             `json:"-"`
+	CreatedAt                  string                             `json:"-"`
+	PersistedResult            string                             `json:"-"`
+	SchemaVersion              int                                `json:"schemaVersion"`
+	RequestHash                string                             `json:"requestHash"`
+	Phase                      string                             `json:"phase"`
+	AccountID                  string                             `json:"accountId"`
+	OwnerUserID                string                             `json:"ownerUserId"`
+	WorkspaceID                string                             `json:"workspaceId"`
+	Name                       string                             `json:"name"`
+	PackageID                  string                             `json:"packageId"`
+	StorageGB                  int                                `json:"sizeGb"`
+	AutoRenew                  bool                               `json:"autoRenew"`
+	PriceVersion               string                             `json:"priceVersion"`
+	TotalChargeUSDMicros       int64                              `json:"totalChargeUsdMicros"`
+	PeriodStart                string                             `json:"periodStart,omitempty"`
+	PaidThrough                string                             `json:"paidThrough,omitempty"`
+	BillingAnchorDay           int                                `json:"billingAnchorDay,omitempty"`
+	ComputeID                  string                             `json:"computeAllocationId"`
+	ComputePoolID              string                             `json:"computePoolId,omitempty"`
+	ComputeNodePoolID          string                             `json:"computeNodePoolId"`
+	ComputeMachineName         string                             `json:"computeMachineName,omitempty"`
+	ComputeNodeName            string                             `json:"computeNodeName,omitempty"`
+	ComputeCVMInstanceID       string                             `json:"computeCvmInstanceId,omitempty"`
+	ComputeInstanceType        string                             `json:"computeInstanceType,omitempty"`
+	ComputeZone                string                             `json:"computeZone,omitempty"`
+	ComputePrivateIP           string                             `json:"computePrivateIp,omitempty"`
+	ComputeChargeType          string                             `json:"computeChargeType,omitempty"`
+	ComputeRenewFlag           string                             `json:"computeRenewFlag,omitempty"`
+	ComputeDeadline            string                             `json:"computeDeadline,omitempty"`
+	ComputeClaimRequestHash    string                             `json:"computeClaimRequestHash,omitempty"`
+	ComputeClaimApprovalID     string                             `json:"computeClaimApprovalId,omitempty"`
+	ComputeClaimMergedMainSHA  string                             `json:"computeClaimMergedMainSha,omitempty"`
+	ComputeClaimCloudDigest    string                             `json:"computeClaimCloudImageDigest,omitempty"`
+	ComputeClaimPrivateIP      string                             `json:"computeClaimPrivateIp,omitempty"`
+	ComputeClaimProof          *clients.ComputeClaimRecoveryProof `json:"computeClaimProof,omitempty"`
+	StorageID                  string                             `json:"storageId"`
+	AttachmentID               string                             `json:"attachmentId,omitempty"`
+	AttachmentOperationID      string                             `json:"attachmentOperationId"`
+	WorkspaceOperationID       string                             `json:"workspaceOperationId"`
+	WorkspaceAPIKeyID          int64                              `json:"workspaceApiKeyId"`
+	RedeemCode                 string                             `json:"sub2apiRedeemCode"`
+	RefundCode                 string                             `json:"sub2apiRefundCode,omitempty"`
+	ChargeAttempted            bool                               `json:"chargeAttempted,omitempty"`
+	ChargeConfirmation         map[string]any                     `json:"chargeConfirmation,omitempty"`
+	PreChargeBalanceUSDMicros  int64                              `json:"preChargeBalanceUsdMicros,omitempty"`
+	PostChargeBalanceUSDMicros int64                              `json:"postChargeBalanceUsdMicros,omitempty"`
+	PostChargeBalanceKnown     bool                               `json:"postChargeBalanceKnown,omitempty"`
+	RefundAttempted            bool                               `json:"refundAttempted,omitempty"`
+	RefundConfirmation         map[string]any                     `json:"refundConfirmation,omitempty"`
+	RefundReason               string                             `json:"refundReason,omitempty"`
+	RefundReceiptID            string                             `json:"refundReceiptId,omitempty"`
+	LeaseToken                 string                             `json:"leaseToken,omitempty"`
+	LeaseExpiresAt             string                             `json:"leaseExpiresAt,omitempty"`
+	GatewaySecretRef           string                             `json:"gatewaySecretRef,omitempty"`
+	WorkspaceKeyStatus         string                             `json:"workspaceKeyStatus,omitempty"`
+	WorkspaceKeyFingerprint    string                             `json:"workspaceKeyFingerprint,omitempty"`
+	RuntimeID                  string                             `json:"runtimeId,omitempty"`
+	RuntimeReady               bool                               `json:"runtimeReady,omitempty"`
+	RuntimeServiceName         string                             `json:"runtimeServiceName,omitempty"`
+	RuntimeUsername            string                             `json:"runtimeUsername,omitempty"`
+	CredentialStatus           string                             `json:"credentialStatus,omitempty"`
+	CredentialVersion          string                             `json:"credentialVersion,omitempty"`
+	CredentialSecretRef        string                             `json:"credentialSecretRef,omitempty"`
+	URL                        string                             `json:"url,omitempty"`
+	ReceiptID                  string                             `json:"receiptId,omitempty"`
+	ErrorCode                  string                             `json:"errorCode,omitempty"`
 }
 
 type workspaceLaunchClaimCAS struct {
@@ -92,6 +112,27 @@ type workspaceLaunchPersistCAS struct {
 	OperationID             string
 	ExpectedOperationResult string
 	DesiredOperation        map[string]any
+}
+
+type workspaceComputeClaimRecoveryRequest struct {
+	LaunchOperationID string
+	AccountID         string
+	WorkspaceID       string
+	ComputeID         string
+	StorageID         string
+	PackageID         string
+	PoolID            string
+	NodePoolID        string
+	MachineName       string
+	NodeName          string
+	CVMInstanceID     string
+	PrivateIP         string
+	InstanceType      string
+	Zone              string
+	MergedMainSHA     string
+	CloudImageDigest  string
+	ApprovalID        string
+	Confirmation      string
 }
 
 func encodeWorkspaceLaunchOperation(operation workspaceLaunchOperation) string {
@@ -139,9 +180,10 @@ func decodeWorkspaceLaunchOperation(row map[string]any) (workspaceLaunchOperatio
 		}
 	}
 	keyPending := operation.Phase == "key_pending" && operation.WorkspaceAPIKeyID == 0
+	computeClaimPending := operation.Phase == "compute_claim_pending"
 	if operation.SchemaVersion != workspaceLaunchSchemaVersion || operation.ID == "" || operation.Status == "" || operation.RequestHash == "" || operation.AccountID == "" || operation.OwnerUserID == "" ||
 		operation.WorkspaceID == "" || operation.PriceVersion == "" || operation.PackageID == "" || operation.StorageGB <= 0 || operation.TotalChargeUSDMicros <= 0 ||
-		operation.WorkspaceAPIKeyID < 0 || operation.WorkspaceAPIKeyID == 0 && !keyPending || operation.RedeemCode == "" {
+		operation.WorkspaceAPIKeyID < 0 || operation.WorkspaceAPIKeyID == 0 && !keyPending || operation.RedeemCode == "" || computeClaimPending && !validWorkspaceLaunchComputeClaimIdentity(operation) {
 		return workspaceLaunchOperation{}, errInvalidWorkspaceLaunchOperation
 	}
 	for field, want := range map[string]string{
@@ -153,6 +195,26 @@ func decodeWorkspaceLaunchOperation(row map[string]any) (workspaceLaunchOperatio
 		}
 	}
 	return operation, nil
+}
+
+func validWorkspaceLaunchComputeClaimIdentity(operation workspaceLaunchOperation) bool {
+	deadline, err := time.Parse(time.RFC3339, operation.ComputeDeadline)
+	return operation.ComputeID != "" && operation.StorageID != "" && operation.ComputePoolID != "" && operation.ComputeNodePoolID != "" &&
+		operation.ComputeMachineName != "" && operation.ComputeNodeName != "" && operation.ComputeCVMInstanceID != "" && operation.ComputePrivateIP != "" &&
+		operation.ComputeInstanceType != "" && operation.ComputeZone != "" && operation.ComputeChargeType == "PREPAID" &&
+		operation.ComputeRenewFlag == "NOTIFY_AND_MANUAL_RENEW" && err == nil && !deadline.IsZero()
+}
+
+func validWorkspaceLaunchLegacyComputeClaimIdentity(operation workspaceLaunchOperation) bool {
+	if validWorkspaceLaunchComputeClaimIdentity(operation) {
+		return true
+	}
+	return operation.ComputeID != "" && operation.StorageID != "" && operation.ComputeNodePoolID != "" &&
+		operation.ComputePoolID == "" && operation.ComputeMachineName == "" && operation.ComputeNodeName == "" &&
+		operation.ComputeCVMInstanceID == "" && operation.ComputePrivateIP == "" && operation.ComputeInstanceType == "" &&
+		operation.ComputeZone == "" && operation.ComputeChargeType == "" && operation.ComputeRenewFlag == "" && operation.ComputeDeadline == "" &&
+		operation.ComputeClaimRequestHash == "" && operation.ComputeClaimApprovalID == "" && operation.ComputeClaimMergedMainSHA == "" &&
+		operation.ComputeClaimCloudDigest == "" && operation.ComputeClaimPrivateIP == "" && operation.ComputeClaimProof == nil
 }
 
 func workspaceLaunchOperationRow(operation workspaceLaunchOperation) map[string]any {
@@ -225,7 +287,7 @@ func (app *controlPlaneServer) runWorkspaceLaunch(ctx context.Context, service *
 	if err != nil || !ok || terminalWorkspaceLaunchStatus(operation.Status) || operation.Status == "manual_review" {
 		return err
 	}
-	if operation.Phase == "key_pending" {
+	if operation.Phase == "key_pending" || operation.Phase == "compute_claim_pending" {
 		return nil
 	}
 	unlockAccount := app.lockResource("account", operation.AccountID)
@@ -329,6 +391,10 @@ func (app *controlPlaneServer) fulfillWorkspaceLaunch(ctx context.Context, servi
 				return app.manualReviewWorkspaceLaunchFulfillment(ctx, operation, "fabric_storage_confirmed_absent_after_compute_created")
 			case "waiting":
 				return app.waitWorkspaceLaunchFulfillment(ctx, operation)
+			case "compute_claim_pending":
+				operation.Status, operation.Phase, operation.ErrorCode = "compute_claim_pending", "compute_claim_pending", ""
+				releaseWorkspaceLaunchLease(operation)
+				return app.persistWorkspaceLaunch(ctx, operation)
 			default:
 				return app.manualReviewWorkspaceLaunchFulfillment(ctx, operation, "fabric_"+resourceType+"_fulfillment_unconfirmed")
 			}
@@ -443,6 +509,8 @@ func (app *controlPlaneServer) fulfillWorkspaceLaunch(ctx context.Context, servi
 			return app.recordWorkspaceLaunchPurchaseReceipt(ctx, service, operation)
 		case "refund_pending":
 			return app.refundWorkspaceLaunch(ctx, service, operation, operation.RefundReason)
+		case "compute_claim_pending":
+			return nil
 		case "succeeded", "refunded":
 			return nil
 		default:
@@ -470,6 +538,11 @@ func (app *controlPlaneServer) fulfillWorkspaceLaunchResource(ctx context.Contex
 	if prepareErr == nil && !workspaceLaunchResourceIdentityMatches(resourceType, preparedFacts, *operation) {
 		return "unknown", nil
 	}
+	if resourceType == "compute" && prepareErr == nil {
+		if allocation, ok := prepared.(clients.ComputeAllocation); ok && allocation.Status == "compute_claim_pending" {
+			return app.persistWorkspaceLaunchComputeClaimIdentity(ctx, operation, allocation)
+		}
+	}
 
 	var readback any
 	var readErr error
@@ -481,6 +554,11 @@ func (app *controlPlaneServer) fulfillWorkspaceLaunchResource(ctx context.Contex
 	facts := structToMap(readback)
 	if !workspaceLaunchResourceIdentityMatches(resourceType, facts, *operation) {
 		return "unknown", nil
+	}
+	if resourceType == "compute" && readErr == nil {
+		if allocation, ok := readback.(clients.ComputeAllocation); ok && allocation.Status == "compute_claim_pending" {
+			return app.persistWorkspaceLaunchComputeClaimIdentity(ctx, operation, allocation)
+		}
 	}
 	candidate := mergeMaps(row, facts)
 	stripWorkspaceLaunchResourceBilling(candidate)
@@ -508,6 +586,31 @@ func (app *controlPlaneServer) fulfillWorkspaceLaunchResource(ctx context.Contex
 		return "unknown", nil
 	}
 	return "ready", nil
+}
+
+func (app *controlPlaneServer) persistWorkspaceLaunchComputeClaimIdentity(ctx context.Context, operation *workspaceLaunchOperation, allocation clients.ComputeAllocation) (string, error) {
+	cvmID := firstNonEmpty(allocation.CVMInstanceID, allocation.InstanceID)
+	if allocation.ID != operation.ComputeID || allocation.AccountID != operation.AccountID || allocation.WorkspaceID != operation.WorkspaceID ||
+		allocation.PackageID != operation.PackageID || allocation.PoolID == "" || allocation.NodePoolID != operation.ComputeNodePoolID ||
+		allocation.MachineName == "" || allocation.NodeName == "" || cvmID == "" || allocation.InstanceType == "" || allocation.Zone == "" {
+		return "unknown", nil
+	}
+	row := mergeMaps(workspaceLaunchResourceRow(*operation, "compute"), structToMap(allocation))
+	stripWorkspaceLaunchResourceBilling(row)
+	if err := app.tables.SaveCompute(ctx, row); err != nil {
+		return "", err
+	}
+	operation.ComputePoolID = allocation.PoolID
+	operation.ComputeMachineName = allocation.MachineName
+	operation.ComputeNodeName = allocation.NodeName
+	operation.ComputeCVMInstanceID = cvmID
+	operation.ComputeInstanceType = allocation.InstanceType
+	operation.ComputeZone = allocation.Zone
+	operation.ComputePrivateIP = allocation.PrivateIP
+	operation.ComputeChargeType = allocation.ChargeType
+	operation.ComputeRenewFlag = allocation.RenewFlag
+	operation.ComputeDeadline = allocation.Deadline
+	return "compute_claim_pending", nil
 }
 
 func workspaceLaunchResourceRow(operation workspaceLaunchOperation, resourceType string) map[string]any {
@@ -800,6 +903,240 @@ func (app *controlPlaneServer) workspaceLaunchOperation(ctx context.Context, ope
 	}
 	operation, err := decodeWorkspaceLaunchOperation(row)
 	return operation, err == nil, err
+}
+
+func workspaceComputeClaimRecoveryInput(operation workspaceLaunchOperation, input workspaceComputeClaimRecoveryRequest) clients.ComputeClaimRecoveryInput {
+	return clients.ComputeClaimRecoveryInput{
+		LaunchOperationID: operation.ID, AccountID: operation.AccountID, WorkspaceID: operation.WorkspaceID,
+		ComputeAllocationID: operation.ComputeID, StorageVolumeID: operation.StorageID, PackageID: operation.PackageID,
+		PoolID: firstNonEmpty(operation.ComputePoolID, input.PoolID), NodePoolID: operation.ComputeNodePoolID,
+	}
+}
+
+func workspaceComputeClaimRecoveryRequestMatches(operation workspaceLaunchOperation, input workspaceComputeClaimRecoveryRequest) bool {
+	if input.LaunchOperationID != operation.ID || input.AccountID != operation.AccountID || input.WorkspaceID != operation.WorkspaceID ||
+		input.ComputeID != operation.ComputeID || input.StorageID != operation.StorageID || input.PackageID != operation.PackageID ||
+		input.NodePoolID != operation.ComputeNodePoolID {
+		return false
+	}
+	if !validWorkspaceLaunchComputeClaimIdentity(operation) {
+		return workspaceComputeClaimLegacyCandidate(operation) && validWorkspaceLaunchLegacyComputeClaimIdentity(operation)
+	}
+	return input.PoolID == operation.ComputePoolID && input.MachineName == operation.ComputeMachineName && input.NodeName == operation.ComputeNodeName &&
+		input.CVMInstanceID == operation.ComputeCVMInstanceID && input.PrivateIP == operation.ComputePrivateIP && input.InstanceType == operation.ComputeInstanceType &&
+		input.Zone == operation.ComputeZone
+}
+
+func workspaceComputeClaimRequestHash(input workspaceComputeClaimRecoveryRequest, idempotencyKey string) string {
+	return stableID(
+		input.LaunchOperationID, input.AccountID, input.WorkspaceID, input.ComputeID, input.StorageID, input.PackageID,
+		input.PoolID, input.NodePoolID, input.MachineName, input.NodeName, input.CVMInstanceID, input.PrivateIP, input.InstanceType, input.Zone,
+		input.MergedMainSHA, input.CloudImageDigest, input.ApprovalID, input.Confirmation, idempotencyKey,
+	)
+}
+
+func safeWorkspaceComputeClaimReason(reason string) bool {
+	switch reason {
+	case "none", "local_identity", "provider_describe", "iam_rbac", "multiple_candidate", "identity_mismatch", "node_ownership_conflict", "storage_already_started":
+		return true
+	default:
+		return false
+	}
+}
+
+func workspaceComputeClaimProofBaseMatches(operation workspaceLaunchOperation, input workspaceComputeClaimRecoveryRequest, proof clients.ComputeClaimRecoveryProof) bool {
+	return proof.SchemaVersion == 1 && proof.LaunchOperationID == operation.ID && proof.AccountID == operation.AccountID &&
+		proof.WorkspaceID == operation.WorkspaceID && proof.ComputeAllocationID == operation.ComputeID && proof.StorageVolumeID == operation.StorageID &&
+		proof.PackageID == operation.PackageID && proof.PoolID == input.PoolID && proof.NodePoolID == operation.ComputeNodePoolID &&
+		proof.Sub2APIMutationCount == 0 && proof.TencentMutationCount >= 0 && proof.TencentMutationCount <= 5 &&
+		proof.KubernetesMutationCount >= 0 && proof.KubernetesMutationCount <= 1 && safeWorkspaceComputeClaimReason(proof.Reason)
+}
+
+func workspaceComputeClaimProofEligible(operation workspaceLaunchOperation, input workspaceComputeClaimRecoveryRequest, proof clients.ComputeClaimRecoveryProof, claimed bool) bool {
+	deadline, deadlineErr := time.Parse(time.RFC3339, proof.Deadline)
+	if !workspaceComputeClaimProofBaseMatches(operation, input, proof) || !proof.Eligible || proof.Reason != "none" || proof.StorageState != "storage_not_started" ||
+		proof.MachineName != input.MachineName || proof.NodeName != input.NodeName || proof.CVMInstanceID != input.CVMInstanceID || proof.PrivateIP != input.PrivateIP ||
+		proof.InstanceType != input.InstanceType || proof.Zone != input.Zone || proof.ChargeType != "PREPAID" || proof.PeriodMonths != 1 ||
+		proof.RenewFlag != "NOTIFY_AND_MANUAL_RENEW" || deadlineErr != nil || deadline.IsZero() ||
+		validWorkspaceLaunchComputeClaimIdentity(operation) && proof.Deadline != operation.ComputeDeadline {
+		return false
+	}
+	if claimed {
+		return proof.NodeOwnershipState == "target_owned" && proof.CVMOwnershipState == "target_owned"
+	}
+	return (proof.NodeOwnershipState == "unallocated" || proof.NodeOwnershipState == "target_owned") &&
+		(proof.CVMOwnershipState == "recoverable" || proof.CVMOwnershipState == "target_owned")
+}
+
+func persistWorkspaceComputeClaimIdentityFromProof(operation *workspaceLaunchOperation, proof clients.ComputeClaimRecoveryProof) bool {
+	operation.ComputePoolID, operation.ComputeMachineName, operation.ComputeNodeName = proof.PoolID, proof.MachineName, proof.NodeName
+	operation.ComputeCVMInstanceID, operation.ComputePrivateIP = proof.CVMInstanceID, proof.PrivateIP
+	operation.ComputeInstanceType, operation.ComputeZone = proof.InstanceType, proof.Zone
+	operation.ComputeChargeType, operation.ComputeRenewFlag, operation.ComputeDeadline = proof.ChargeType, proof.RenewFlag, proof.Deadline
+	return validWorkspaceLaunchComputeClaimIdentity(*operation)
+}
+
+func workspaceComputeClaimCanonical(operation workspaceLaunchOperation) bool {
+	return operation.Phase == "compute_claim_pending" && (operation.Status == "compute_claim_pending" || operation.Status == "manual_review")
+}
+
+func workspaceComputeClaimLegacyCandidate(operation workspaceLaunchOperation) bool {
+	return operation.Status == "manual_review" && operation.Phase == "compute_fulfilling"
+}
+
+func (app *controlPlaneServer) loadWorkspaceComputeClaimOperation(ctx context.Context, operationID string, input workspaceComputeClaimRecoveryRequest, allowLegacy bool) (workspaceLaunchOperation, error) {
+	operation, ok, err := app.workspaceLaunchOperation(ctx, operationID)
+	if err != nil {
+		return workspaceLaunchOperation{}, err
+	}
+	if !ok {
+		return workspaceLaunchOperation{}, errBillingReviewNotFound
+	}
+	if !workspaceComputeClaimRecoveryRequestMatches(operation, input) {
+		return workspaceLaunchOperation{}, errWorkspaceComputeClaimIdentity
+	}
+	if !workspaceComputeClaimCanonical(operation) && (!allowLegacy || !workspaceComputeClaimLegacyCandidate(operation)) {
+		return workspaceLaunchOperation{}, errWorkspaceComputeClaimNotPending
+	}
+	userID, err := app.sub2APIUserID(ctx, operation.AccountID)
+	validIdentity := validWorkspaceLaunchComputeClaimIdentity(operation)
+	if workspaceComputeClaimLegacyCandidate(operation) {
+		validIdentity = validWorkspaceLaunchLegacyComputeClaimIdentity(operation)
+	}
+	if err != nil || !validIdentity || !workspaceLaunchChargeConfirmed(operation, userID) {
+		return workspaceLaunchOperation{}, errWorkspaceComputeClaimIdentity
+	}
+	return operation, nil
+}
+
+func (app *controlPlaneServer) diagnoseWorkspaceComputeClaim(ctx context.Context, service *controlplane.Service, input workspaceComputeClaimRecoveryRequest) (clients.ComputeClaimRecoveryProof, error) {
+	operation, ok, err := app.workspaceLaunchOperation(ctx, input.LaunchOperationID)
+	if err != nil || !ok {
+		if err == nil {
+			err = errBillingReviewNotFound
+		}
+		return clients.ComputeClaimRecoveryProof{}, err
+	}
+	unlock := app.lockResource("workspace-launch", operation.AccountID)
+	defer unlock()
+	operation, err = app.loadWorkspaceComputeClaimOperation(ctx, input.LaunchOperationID, input, true)
+	if err != nil {
+		return clients.ComputeClaimRecoveryProof{}, err
+	}
+	proof, proofErr := service.ComputeClaimRecoveryProof(ctx, workspaceComputeClaimRecoveryInput(operation, input))
+	if !workspaceComputeClaimProofBaseMatches(operation, input, proof) || proof.TencentMutationCount != 0 || proof.KubernetesMutationCount != 0 {
+		return clients.ComputeClaimRecoveryProof{}, errWorkspaceComputeClaimProof
+	}
+	if proofErr != nil || !workspaceComputeClaimProofEligible(operation, input, proof, false) {
+		return proof, errWorkspaceComputeClaimProof
+	}
+	return proof, nil
+}
+
+func (app *controlPlaneServer) claimWorkspaceCompute(ctx context.Context, service *controlplane.Service, input workspaceComputeClaimRecoveryRequest, key string) (clients.ComputeClaimRecoveryProof, error) {
+	operation, ok, err := app.workspaceLaunchOperation(ctx, input.LaunchOperationID)
+	if err != nil || !ok {
+		if err == nil {
+			err = errBillingReviewNotFound
+		}
+		return clients.ComputeClaimRecoveryProof{}, err
+	}
+	unlock := app.lockResource("workspace-launch", operation.AccountID)
+	defer unlock()
+	operation, ok, err = app.workspaceLaunchOperation(ctx, input.LaunchOperationID)
+	if err != nil || !ok {
+		if err == nil {
+			err = errBillingReviewNotFound
+		}
+		return clients.ComputeClaimRecoveryProof{}, err
+	}
+	requestHash := workspaceComputeClaimRequestHash(input, key)
+	if operation.ComputeClaimProof != nil {
+		if operation.ComputeClaimRequestHash != requestHash || operation.ComputeClaimApprovalID != input.ApprovalID ||
+			operation.ComputeClaimMergedMainSHA != input.MergedMainSHA || operation.ComputeClaimCloudDigest != input.CloudImageDigest ||
+			operation.ComputeClaimPrivateIP != input.PrivateIP || operation.ComputeClaimProof.PrivateIP != input.PrivateIP ||
+			!workspaceComputeClaimRecoveryRequestMatches(operation, input) || !workspaceComputeClaimProofEligible(operation, input, *operation.ComputeClaimProof, true) {
+			return clients.ComputeClaimRecoveryProof{}, errWorkspaceComputeClaimIdentity
+		}
+		return *operation.ComputeClaimProof, nil
+	}
+	operation, err = app.loadWorkspaceComputeClaimOperation(ctx, input.LaunchOperationID, input, true)
+	if err != nil {
+		return clients.ComputeClaimRecoveryProof{}, err
+	}
+
+	proof, proofErr := service.ComputeClaimRecoveryProof(ctx, workspaceComputeClaimRecoveryInput(operation, input))
+	if !workspaceComputeClaimProofBaseMatches(operation, input, proof) || proof.TencentMutationCount != 0 || proof.KubernetesMutationCount != 0 {
+		proof = workspaceComputeClaimFailureProof(operation, "local_identity")
+		proofErr = errWorkspaceComputeClaimProof
+	}
+	if proofErr != nil || !workspaceComputeClaimProofEligible(operation, input, proof, false) {
+		if !safeWorkspaceComputeClaimReason(proof.Reason) || proof.Reason == "none" {
+			proof.Reason = "provider_describe"
+		}
+		operation.Status, operation.ErrorCode = "manual_review", "workspace_compute_claim_"+proof.Reason
+		releaseWorkspaceLaunchLease(&operation)
+		if err := app.persistWorkspaceLaunch(ctx, &operation); err != nil {
+			return clients.ComputeClaimRecoveryProof{}, err
+		}
+		return proof, errWorkspaceComputeClaimProof
+	}
+	if workspaceComputeClaimLegacyCandidate(operation) {
+		if !persistWorkspaceComputeClaimIdentityFromProof(&operation, proof) {
+			return clients.ComputeClaimRecoveryProof{}, errWorkspaceComputeClaimIdentity
+		}
+		operation.Status, operation.Phase, operation.ErrorCode = "compute_claim_pending", "compute_claim_pending", ""
+		releaseWorkspaceLaunchLease(&operation)
+		if err := app.persistWorkspaceLaunch(ctx, &operation); err != nil {
+			return clients.ComputeClaimRecoveryProof{}, err
+		}
+		operation, err = app.loadWorkspaceComputeClaimOperation(ctx, input.LaunchOperationID, input, false)
+		if err != nil || operation.Status != "compute_claim_pending" || operation.Phase != "compute_claim_pending" {
+			if err == nil {
+				err = errWorkspaceComputeClaimNotPending
+			}
+			return clients.ComputeClaimRecoveryProof{}, err
+		}
+	}
+
+	claimed, claimErr := service.ClaimComputeRecovery(ctx, clients.ComputeClaimRecoveryClaimInput{
+		ComputeClaimRecoveryInput: workspaceComputeClaimRecoveryInput(operation, input), MachineName: operation.ComputeMachineName,
+		NodeName: operation.ComputeNodeName, CVMInstanceID: operation.ComputeCVMInstanceID, PrivateIP: operation.ComputePrivateIP,
+		InstanceType: operation.ComputeInstanceType, Zone: operation.ComputeZone,
+	}, key)
+	if claimErr != nil || !workspaceComputeClaimProofEligible(operation, input, claimed, true) {
+		if !workspaceComputeClaimProofBaseMatches(operation, input, claimed) {
+			claimed = workspaceComputeClaimFailureProof(operation, "identity_mismatch")
+		}
+		if !safeWorkspaceComputeClaimReason(claimed.Reason) || claimed.Reason == "none" {
+			claimed.Reason = "provider_describe"
+		}
+		operation.Status, operation.ErrorCode = "manual_review", "workspace_compute_claim_"+claimed.Reason
+		releaseWorkspaceLaunchLease(&operation)
+		if err := app.persistWorkspaceLaunch(ctx, &operation); err != nil {
+			return clients.ComputeClaimRecoveryProof{}, err
+		}
+		return claimed, errWorkspaceComputeClaimProof
+	}
+
+	operation.Status, operation.Phase, operation.ErrorCode = "preparing", "storage_fulfilling", ""
+	operation.ComputeClaimRequestHash, operation.ComputeClaimApprovalID = requestHash, input.ApprovalID
+	operation.ComputeClaimMergedMainSHA, operation.ComputeClaimCloudDigest = input.MergedMainSHA, input.CloudImageDigest
+	operation.ComputeClaimPrivateIP = input.PrivateIP
+	operation.ComputeClaimProof = &claimed
+	releaseWorkspaceLaunchLease(&operation)
+	if err := app.persistWorkspaceLaunch(ctx, &operation); err != nil {
+		return clients.ComputeClaimRecoveryProof{}, err
+	}
+	return claimed, nil
+}
+
+func workspaceComputeClaimFailureProof(operation workspaceLaunchOperation, reason string) clients.ComputeClaimRecoveryProof {
+	return clients.ComputeClaimRecoveryProof{
+		SchemaVersion: 1, Reason: reason, StorageState: "unknown", LaunchOperationID: operation.ID, AccountID: operation.AccountID,
+		WorkspaceID: operation.WorkspaceID, ComputeAllocationID: operation.ComputeID, StorageVolumeID: operation.StorageID,
+		PackageID: operation.PackageID, PoolID: operation.ComputePoolID, NodePoolID: operation.ComputeNodePoolID,
+	}
 }
 
 func (app *controlPlaneServer) recoverWorkspaceLaunchReview(ctx context.Context, service *controlplane.Service, input billingReviewResolutionInput) (map[string]any, error) {

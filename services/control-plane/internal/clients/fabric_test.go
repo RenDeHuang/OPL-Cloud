@@ -3,6 +3,7 @@ package clients
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -105,6 +106,99 @@ func TestFabricHTTPClientReadsMonthlyProviderTruthWithoutMutation(t *testing.T) 
 	truth, err := client.MonthlyProviderTruth(context.Background(), "compute alpha", "storage/alpha")
 	if err != nil || truth.ComputeState != "ready" || truth.StorageState != "absent" || truth.Compute.ID != "compute alpha" || truth.Storage.ID != "storage/alpha" || truth.ProviderRequestID != "req-truth" {
 		t.Fatalf("monthly provider truth = %#v err=%v", truth, err)
+	}
+}
+
+func TestFabricHTTPClientSeparatesComputeClaimProofAndMutation(t *testing.T) {
+	requests := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.Method != http.MethodPost || r.Header.Get("Authorization") != "Bearer internal-secret" {
+			t.Fatalf("unexpected request: %s %s auth=%q", r.Method, r.URL.Path, r.Header.Get("Authorization"))
+		}
+		var input ComputeClaimRecoveryClaimInput
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			t.Fatal(err)
+		}
+		if input.LaunchOperationID != "launch-fixture" || input.AccountID != "acct-fixture" || input.WorkspaceID != "ws-fixture" ||
+			input.ComputeAllocationID != "ca-fixture" || input.StorageVolumeID != "vol-fixture" || input.PackageID != "pro" ||
+			input.PoolID != "pool-pro-8c16g" || input.NodePoolID != "np-workspace-pro" {
+			t.Fatalf("identity input=%#v", input)
+		}
+		response := ComputeClaimRecoveryProof{
+			SchemaVersion: 1, Eligible: true, Reason: "none", StorageState: "storage_not_started",
+			LaunchOperationID: input.LaunchOperationID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID,
+			ComputeAllocationID: input.ComputeAllocationID, StorageVolumeID: input.StorageVolumeID, PackageID: input.PackageID,
+			PoolID: input.PoolID, NodePoolID: input.NodePoolID, MachineName: "machine-fixture", NodeName: "10.0.0.18",
+			CVMInstanceID: "ins-fixture", PrivateIP: "10.0.0.18", InstanceType: "SA5.2XLARGE16", Zone: "ap-guangzhou-3",
+			ChargeType: "PREPAID", PeriodMonths: 1, RenewFlag: "NOTIFY_AND_MANUAL_RENEW", Deadline: "2026-08-28T00:00:00Z",
+			NodeOwnershipState: "unallocated", CVMOwnershipState: "recoverable",
+		}
+		switch r.URL.Path {
+		case "/fabric/compute-claim-recovery/proof":
+			if _, ok := r.Header["Idempotency-Key"]; ok {
+				t.Fatalf("read-only proof sent Idempotency-Key: %#v", r.Header.Values("Idempotency-Key"))
+			}
+		case "/fabric/compute-claim-recovery/claim":
+			if r.Header.Get("Idempotency-Key") != "launch-fixture:compute-claim" || input.MachineName != response.MachineName ||
+				input.NodeName != response.NodeName || input.CVMInstanceID != response.CVMInstanceID || input.PrivateIP != response.PrivateIP ||
+				input.InstanceType != response.InstanceType || input.Zone != response.Zone {
+				t.Fatalf("claim input=%#v key=%q", input, r.Header.Get("Idempotency-Key"))
+			}
+			response.NodeOwnershipState = "target_owned"
+			response.CVMOwnershipState = "target_owned"
+			response.TencentMutationCount = 1
+			response.KubernetesMutationCount = 1
+		default:
+			t.Fatalf("unexpected path=%q", r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(response)
+	}))
+	defer upstream.Close()
+
+	client, ok := NewFabricHTTPClient(upstream.URL, "internal-secret", upstream.Client()).(FabricComputeClaimRecoveryClient)
+	if !ok {
+		t.Fatal("Fabric HTTP client must implement compute claim recovery capability")
+	}
+	input := ComputeClaimRecoveryInput{
+		LaunchOperationID: "launch-fixture", AccountID: "acct-fixture", WorkspaceID: "ws-fixture",
+		ComputeAllocationID: "ca-fixture", StorageVolumeID: "vol-fixture", PackageID: "pro",
+		PoolID: "pool-pro-8c16g", NodePoolID: "np-workspace-pro",
+	}
+	proof, err := client.ComputeClaimRecoveryProof(context.Background(), input)
+	if err != nil || !proof.Eligible || proof.StorageState != "storage_not_started" || proof.TencentMutationCount != 0 || proof.KubernetesMutationCount != 0 {
+		t.Fatalf("proof=%#v err=%v", proof, err)
+	}
+	claim, err := client.ClaimComputeRecovery(context.Background(), ComputeClaimRecoveryClaimInput{
+		ComputeClaimRecoveryInput: input, MachineName: proof.MachineName, NodeName: proof.NodeName, CVMInstanceID: proof.CVMInstanceID,
+		PrivateIP: proof.PrivateIP, InstanceType: proof.InstanceType, Zone: proof.Zone,
+	}, "launch-fixture:compute-claim")
+	if err != nil || !claim.Eligible || claim.NodeOwnershipState != "target_owned" || claim.CVMOwnershipState != "target_owned" || claim.TencentMutationCount != 1 || claim.KubernetesMutationCount != 1 || requests != 2 {
+		t.Fatalf("claim=%#v err=%v requests=%d", claim, err, requests)
+	}
+}
+
+func TestFabricHTTPClientPreservesSafeComputeClaimFailureProof(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusConflict)
+		_ = json.NewEncoder(w).Encode(ComputeClaimRecoveryProof{
+			SchemaVersion: 1, Eligible: false, Reason: "storage_already_started", StorageState: "unknown",
+			LaunchOperationID: "launch-fixture", AccountID: "acct-fixture", WorkspaceID: "ws-fixture",
+			ComputeAllocationID: "ca-fixture", StorageVolumeID: "vol-fixture", PackageID: "basic",
+			PoolID: "pool-basic-2c4g", NodePoolID: "np-workspace-basic",
+		})
+	}))
+	defer upstream.Close()
+
+	client := NewFabricHTTPClient(upstream.URL, "internal-secret", upstream.Client()).(FabricComputeClaimRecoveryClient)
+	proof, err := client.ComputeClaimRecoveryProof(context.Background(), ComputeClaimRecoveryInput{
+		LaunchOperationID: "launch-fixture", AccountID: "acct-fixture", WorkspaceID: "ws-fixture", ComputeAllocationID: "ca-fixture",
+		StorageVolumeID: "vol-fixture", PackageID: "basic", PoolID: "pool-basic-2c4g", NodePoolID: "np-workspace-basic",
+	})
+	var upstreamErr *FabricHTTPError
+	if !errors.As(err, &upstreamErr) || upstreamErr.StatusCode != http.StatusConflict || proof.Eligible || proof.Reason != "storage_already_started" ||
+		proof.Sub2APIMutationCount != 0 || proof.TencentMutationCount != 0 || proof.KubernetesMutationCount != 0 {
+		t.Fatalf("proof=%#v err=%v", proof, err)
 	}
 }
 

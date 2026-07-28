@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 12,
+  "schemaVersion": 13,
   "owner": "OPL Platform Architecture",
   "purpose": "Current ownership contract for Console UI, Control Plane, Ledger, Fabric, and external Sub2API.",
   "state": "current",
@@ -188,6 +188,33 @@
         "unknownPolicy": "remain_manual_review_never_absent_never_refund",
         "absentRequires": "both_local_identities_and_exact_provider_describe_absence",
         "forbiddenSideEffects": ["sync", "tag", "kubectl_apply", "delete", "label", "purchase", "renew", "destroy"]
+      },
+      "workspaceComputeClaimRecovery": {
+        "proofEndpoint": "POST /fabric/compute-claim-recovery/proof",
+        "claimEndpoint": "POST /fabric/compute-claim-recovery/claim",
+        "scope": "workspace.launch.v2_compute_claim_pending_before_storage_create",
+        "proofAuthority": ["launch_operation", "compute_allocation", "allocation_plan", "machine_ownership", "tencent_describe", "kubernetes_get"],
+        "packages": ["basic", "pro"],
+        "storageGate": "zero_create_storage_volume_operations_returns_storage_not_started",
+        "uniqueComputeRule": "one_ready_or_running_machine_in_after_minus_before",
+        "exactIdentity": ["account", "workspace", "compute_operation", "pool", "node_pool", "machine", "node", "private_ip", "cvm", "sku", "zone"],
+        "billingFacts": {"chargeType": "PREPAID", "periodMonths": 1, "renewFlag": "NOTIFY_AND_MANUAL_RENEW", "deadline": "exact"},
+        "ownershipProof": {"node": ["unallocated", "target_owned"], "cvm": ["recoverable", "target_owned"]},
+        "reasons": ["local_identity", "provider_describe", "iam_rbac", "multiple_candidate", "identity_mismatch", "node_ownership_conflict", "storage_already_started"],
+        "proofMutationCounts": {"sub2api": 0, "tencent": 0, "kubernetes": 0},
+        "idempotencyBinding": ["launch_operation_id", "idempotency_key", "target_hash", "request_hash"],
+        "bindingPersistence": "original_create_compute_allocation_operation_payload_cas",
+        "malformedOrDriftedBinding": "fail_closed_conflict_zero_provider_mutation",
+        "replay": "same_key_and_target_returns_same_proof_zero_incremental_external_mutation",
+        "claimWrites": ["same_cvm_instance_name", "same_cvm_four_ownership_tags", "same_node_single_labels_and_taint_patch", "same_machine_ownership_active"],
+        "claimMutationBounds": {
+          "sub2api": 0,
+          "tencent": {"min": 0, "max": 5, "meaning": "one_instance_name_plus_four_ownership_tags"},
+          "kubernetes": {"min": 0, "max": 1, "meaning": "one_exact_node_json_patch"}
+        },
+        "strictReadback": ["cvm_target_owned", "node_target_owned", "machine_ownership_active"],
+        "forbiddenCalls": ["CreateComputeAllocation", "scale", "debit", "refund", "recharge", "create_storage_volume", "delete", "replace_cvm"],
+        "fullMonthlyProviderTruthUnchanged": true
       },
       "monthlyPreflightDiagnostics": {
         "endpoint": "GET /fabric/monthly-preflight-report?zone=<zone>",

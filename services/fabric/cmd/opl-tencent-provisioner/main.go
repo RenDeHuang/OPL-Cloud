@@ -237,6 +237,8 @@ type TencentClient interface {
 	Capacity(request Request, env map[string]string) Response
 	StoragePreflight(request Request, env map[string]string) Response
 	ProviderTruth(request Request, env map[string]string) Response
+	ComputeClaimTruth(request Request, env map[string]string) Response
+	ClaimComputeMachine(request Request, env map[string]string) Response
 	PrepareComputeAllocation(request Request, env map[string]string) Response
 	CreateComputeAllocation(request Request, env map[string]string) Response
 	TagComputeMachine(request Request, env map[string]string) Response
@@ -357,6 +359,14 @@ func (unimplementedTencentClient) StoragePreflight(_ Request, _ map[string]strin
 
 func (unimplementedTencentClient) ProviderTruth(_ Request, _ map[string]string) Response {
 	return Response{Ok: false, ErrorCode: "tencent_live_not_implemented", Message: "Tencent live provider truth is not implemented in this build.", Retryable: false}
+}
+
+func (unimplementedTencentClient) ComputeClaimTruth(_ Request, _ map[string]string) Response {
+	return Response{Ok: false, ErrorCode: "provider_describe", Message: "Compute claim truth is unavailable.", Retryable: false}
+}
+
+func (unimplementedTencentClient) ClaimComputeMachine(_ Request, _ map[string]string) Response {
+	return Response{Ok: false, ErrorCode: "provider_describe", Message: "Compute claim convergence is unavailable.", Retryable: false}
 }
 
 func (unimplementedTencentClient) PrepareComputeAllocation(_ Request, _ map[string]string) Response {
@@ -1776,6 +1786,220 @@ func (client *tencentSDKClient) CreateComputeAllocation(request Request, _ map[s
 			"deadline":                   deadline,
 		},
 	}
+}
+
+func (client *tencentSDKClient) ComputeClaimTruth(request Request, _ map[string]string) Response {
+	if client == nil || client.nativeTkeClient == nil || client.nativeCvmClient == nil || client.nativeVpcClient == nil {
+		return computeClaimTruthFailure("provider_describe")
+	}
+	expectedCPU, expectedMemoryGB, knownPackage := customerPackageResourceShape(request.PackageId)
+	if !knownPackage || request.Pool.CPU != expectedCPU || request.Pool.MemoryGB != expectedMemoryGB ||
+		strings.TrimSpace(request.AccountId) == "" || strings.TrimSpace(request.Zone) == "" || strings.TrimSpace(request.Pool.Id) == "" ||
+		strings.TrimSpace(request.Pool.NodePoolId) == "" || strings.TrimSpace(request.Pool.InstanceType) == "" || request.Pool.MaxReplicas <= 0 ||
+		request.Pool.BaselineReplicas < 0 || request.Pool.TargetReplicas != request.Pool.BaselineReplicas+1 ||
+		int64(len(request.Pool.BeforeMachineNames)) != request.Pool.BaselineReplicas || strings.TrimSpace(request.Allocation.Id) == "" ||
+		!strings.HasPrefix(request.Allocation.InstanceId, "ins-") || strings.TrimSpace(request.Allocation.MachineName) == "" ||
+		strings.TrimSpace(request.Allocation.NodeName) == "" || strings.TrimSpace(request.Allocation.PrivateIp) == "" ||
+		strings.TrimSpace(request.Allocation.Deadline) == "" || !validOwnershipTags(request.Tags) ||
+		request.Tags["opl_account_id"] != request.AccountId || request.Tags["opl_resource_id"] != request.Allocation.Id {
+		return computeClaimTruthFailure("identity_mismatch")
+	}
+	pool, _, err := client.describeNativeNodePool(request.Pool.NodePoolId)
+	if err != nil {
+		return computeClaimTruthFailure(computeClaimDescribeReason(err))
+	}
+	machines, _, err := client.describeClusterMachines(request.Pool.NodePoolId)
+	if err != nil {
+		return computeClaimTruthFailure(computeClaimDescribeReason(err))
+	}
+	machine, differenceCode := exactNewReadyMachine(machines, request.Pool.BeforeMachineNames, request.Pool.InstanceType)
+	if differenceCode != "" {
+		if differenceCode == "compute_allocation_machine_difference_ambiguous" {
+			return computeClaimTruthFailure("multiple_candidate")
+		}
+		return computeClaimTruthFailure("identity_mismatch")
+	}
+	if !computeClaimNodePoolMatches(pool, request) {
+		return computeClaimTruthFailure("identity_mismatch")
+	}
+	machineName, privateIP := stringValue(machine.MachineName), stringValue(machine.LanIP)
+	if machineName != request.Allocation.MachineName || kubernetesNodeName(machine) != request.Allocation.NodeName || privateIP != request.Allocation.PrivateIp ||
+		!machineResourceShapeMatches(machine, request.Pool) {
+		return computeClaimTruthFailure("identity_mismatch")
+	}
+	tkeInstance, _, err := client.describeNativeTkeClusterInstanceByMachineName(machineName, request.Pool.NodePoolId)
+	if err != nil {
+		return computeClaimTruthFailure(computeClaimDescribeReason(err))
+	}
+	if validateNativeTkeAllocationIdentity(tkeInstance, machine, request) != nil || !nativeResourceShapeMatches(tkeInstance.Native, request.Pool) {
+		return computeClaimTruthFailure("identity_mismatch")
+	}
+	targetVPCID, _, err := client.describeNodePoolSubnetVpc(pool, stringValue(tkeInstance.Native.SubnetId))
+	if err != nil {
+		return computeClaimTruthFailure(computeClaimDescribeReason(err))
+	}
+	if stringValue(tkeInstance.Native.VpcId) != targetVPCID {
+		return computeClaimTruthFailure("identity_mismatch")
+	}
+	cvmInstance, _, err := client.describeCvmInstanceByPrivateIp(privateIP)
+	if err != nil {
+		return computeClaimTruthFailure(computeClaimDescribeReason(err))
+	}
+	if cvmInstance == nil || cvmInstance.VirtualPrivateCloud == nil || stringValue(cvmInstance.InstanceId) != request.Allocation.InstanceId ||
+		!containsString(cvmInstance.PrivateIpAddresses, privateIP) || stringValue(cvmInstance.VirtualPrivateCloud.VpcId) != targetVPCID ||
+		stringValue(cvmInstance.VirtualPrivateCloud.SubnetId) != stringValue(tkeInstance.Native.SubnetId) ||
+		stringValue(cvmInstance.InstanceType) != request.Pool.InstanceType || !cvmResourceShapeMatches(cvmInstance, request.Pool) ||
+		!strings.EqualFold(strings.TrimSpace(stringValue(cvmInstance.InstanceState)), "running") {
+		return computeClaimTruthFailure("identity_mismatch")
+	}
+	zone := ""
+	if cvmInstance.Placement != nil {
+		zone = stringValue(cvmInstance.Placement.Zone)
+	}
+	deadline := normalizeTencentDeadline(stringValue(cvmInstance.ExpiredTime))
+	if zone != request.Zone || stringValue(cvmInstance.InstanceChargeType) != "PREPAID" ||
+		stringValue(cvmInstance.RenewFlag) != "NOTIFY_AND_MANUAL_RENEW" || deadline == "" || deadline != request.Allocation.Deadline {
+		return computeClaimTruthFailure("identity_mismatch")
+	}
+	ownershipState, ok := computeClaimCVMOwnershipState(cvmInstance, machineName, request)
+	if !ok {
+		return computeClaimTruthFailure("identity_mismatch")
+	}
+	return Response{
+		Ok: true, Status: "proven", PoolId: request.Pool.Id, NodePoolId: request.Pool.NodePoolId,
+		InstanceId: request.Allocation.InstanceId, NodeName: request.Allocation.NodeName, PrivateIp: privateIP,
+		PublicIp: firstString(cvmInstance.PublicIpAddresses), InstanceType: request.Pool.InstanceType, CVMStatus: "RUNNING", TKEStatus: "RUNNING",
+		ProviderData: map[string]string{
+			"machineName": machineName, "zone": zone, "chargeType": "PREPAID", "periodMonths": "1",
+			"renewFlag": "NOTIFY_AND_MANUAL_RENEW", "deadline": deadline, "cvmOwnershipState": ownershipState,
+		},
+	}
+}
+
+func computeClaimNodePoolMatches(pool *tke2022.NodePool, request Request) bool {
+	return pool != nil && pool.Native != nil && pool.Native.Scaling != nil && isCVMNativeNodePool(pool) &&
+		strings.EqualFold(strings.TrimSpace(stringValue(pool.LifeState)), "running") && matchesCapacityNodePool(pool, request) &&
+		pool.Native.Replicas != nil && *pool.Native.Replicas == request.Pool.TargetReplicas &&
+		pool.Native.ReadyReplicas != nil && *pool.Native.ReadyReplicas == request.Pool.TargetReplicas &&
+		pool.Native.Scaling.MinReplicas != nil && *pool.Native.Scaling.MinReplicas == 0 && pool.Native.Scaling.MaxReplicas != nil &&
+		*pool.Native.Scaling.MaxReplicas == request.Pool.MaxReplicas && pool.Native.EnableAutoscaling != nil && !*pool.Native.EnableAutoscaling &&
+		pool.Native.AutoRepair != nil && !*pool.Native.AutoRepair && len(pool.Native.InstanceTypes) == 1 &&
+		stringValue(pool.Native.InstanceTypes[0]) == request.Pool.InstanceType && len(pool.Native.SubnetIds) > 0
+}
+
+func computeClaimCVMOwnershipState(instance *cvm2017.Instance, machineName string, request Request) (string, bool) {
+	tags, err := cvmOwnershipTags(instance)
+	if err != nil {
+		return "", false
+	}
+	targetCount := 0
+	for _, key := range cbsOwnershipTagKeys {
+		actual := strings.TrimSpace(tags[key])
+		if actual == "" {
+			continue
+		}
+		if actual != request.Tags[key] {
+			return "", false
+		}
+		targetCount++
+	}
+	instanceName := strings.TrimSpace(stringValue(instance.InstanceName))
+	if instanceName != "" && instanceName != machineName && instanceName != request.Allocation.Id {
+		return "", false
+	}
+	if instanceName == request.Allocation.Id && targetCount == len(cbsOwnershipTagKeys) {
+		return "target_owned", true
+	}
+	return "recoverable", true
+}
+
+func computeClaimDescribeReason(err error) string {
+	if err == nil {
+		return "provider_describe"
+	}
+	value := strings.ToLower(err.Error())
+	if sdkErr, ok := err.(*tcerrors.TencentCloudSDKError); ok {
+		value += " " + strings.ToLower(sdkErr.Code)
+	}
+	for _, marker := range []string{"authfailure", "unauthorized", "forbidden", "permission", "accessdenied", "invalidcredential", "secretid"} {
+		if strings.Contains(value, marker) {
+			return "iam_rbac"
+		}
+	}
+	return "provider_describe"
+}
+
+func computeClaimTruthFailure(reason string) Response {
+	switch reason {
+	case "provider_describe", "iam_rbac", "multiple_candidate", "identity_mismatch":
+	default:
+		reason = "provider_describe"
+	}
+	return Response{Ok: false, ErrorCode: reason, Message: "Compute claim truth could not be proven.", Retryable: false}
+}
+
+func (client *tencentSDKClient) ClaimComputeMachine(request Request, _ map[string]string) Response {
+	truth := client.ComputeClaimTruth(request, nil)
+	if !truth.Ok {
+		return truth
+	}
+	instance, _, err := client.describeCvmInstanceByID(request.Allocation.InstanceId)
+	if err != nil || instance == nil || stringValue(instance.InstanceId) != request.Allocation.InstanceId {
+		return computeClaimTruthFailure(computeClaimDescribeReason(err))
+	}
+	ownershipState, ok := computeClaimCVMOwnershipState(instance, request.Allocation.MachineName, request)
+	if !ok {
+		return computeClaimTruthFailure("identity_mismatch")
+	}
+	if ownershipState == "target_owned" {
+		return Response{Ok: true, Status: "claimed", InstanceId: request.Allocation.InstanceId, ProviderData: map[string]string{"cvmOwnershipState": "target_owned"}}
+	}
+	tags, err := cvmOwnershipTags(instance)
+	if err != nil || client.nativeTagClient == nil {
+		return computeClaimTruthFailure("provider_describe")
+	}
+	mutationCount := 0
+	if strings.TrimSpace(stringValue(instance.InstanceName)) != request.Allocation.Id {
+		modify := cvm2017.NewModifyInstancesAttributeRequest()
+		modify.InstanceIds = []*string{common.StringPtr(request.Allocation.InstanceId)}
+		modify.InstanceName = common.StringPtr(request.Allocation.Id)
+		mutationCount++
+		if _, err := client.nativeCvmClient.ModifyInstancesAttribute(modify); err != nil {
+			return computeClaimMutationFailure(computeClaimDescribeReason(err), mutationCount)
+		}
+	}
+	for _, key := range cbsOwnershipTagKeys {
+		actual := strings.TrimSpace(tags[key])
+		if actual == request.Tags[key] {
+			continue
+		}
+		if actual != "" {
+			return computeClaimMutationFailure("identity_mismatch", mutationCount)
+		}
+		_, attached := tags[key]
+		mutationCount++
+		if _, err := client.nativeTagClient.SetCVMTag(request.Allocation.InstanceId, key, request.Tags[key], attached); err != nil {
+			return computeClaimMutationFailure(computeClaimDescribeReason(err), mutationCount)
+		}
+	}
+	readback, _, err := client.describeCvmInstanceByID(request.Allocation.InstanceId)
+	if err != nil || readback == nil || stringValue(readback.InstanceId) != request.Allocation.InstanceId || stringValue(readback.InstanceName) != request.Allocation.Id {
+		return computeClaimMutationFailure(computeClaimDescribeReason(err), mutationCount)
+	}
+	readbackState, ok := computeClaimCVMOwnershipState(readback, request.Allocation.MachineName, request)
+	if !ok || readbackState != "target_owned" {
+		return computeClaimMutationFailure("identity_mismatch", mutationCount)
+	}
+	return Response{
+		Ok: true, Status: "claimed", InstanceId: request.Allocation.InstanceId, MutationCount: mutationCount,
+		ProviderData: map[string]string{"cvmOwnershipState": "target_owned"},
+	}
+}
+
+func computeClaimMutationFailure(reason string, mutationCount int) Response {
+	response := computeClaimTruthFailure(reason)
+	response.MutationCount = mutationCount
+	return response
 }
 
 func exactNewReadyMachine(after []*tke2022.Machine, before []string, instanceType string) (*tke2022.Machine, string) {
@@ -3705,6 +3929,10 @@ func handleWithClient(request Request, env map[string]string, client TencentClie
 		return client.StoragePreflight(request, env)
 	case "provider_truth":
 		return client.ProviderTruth(request, env)
+	case "compute_claim_truth":
+		return client.ComputeClaimTruth(request, env)
+	case "claim_compute_machine":
+		return client.ClaimComputeMachine(request, env)
 	case "prepare_compute_allocation":
 		if request.DryRun {
 			return Response{Ok: true, PoolId: request.Pool.Id, NodePoolId: request.Pool.NodePoolId, Status: "prepared", ProviderRequestId: "dryrun-prepare-" + request.Pool.NodePoolId, CurrentReplicas: 0, TargetReplicas: 1, Machines: []MachineOutput{}}
@@ -3752,7 +3980,7 @@ func isLiveMutation(request Request) bool {
 	if request.DryRun {
 		return false
 	}
-	return request.Action == "bootstrap_compute_node_pools" || request.Action == "create_compute_allocation" || request.Action == "tag_compute_machine" ||
+	return request.Action == "bootstrap_compute_node_pools" || request.Action == "create_compute_allocation" || request.Action == "tag_compute_machine" || request.Action == "claim_compute_machine" ||
 		request.Action == "destroy_compute_allocation" || request.Action == "renew_compute_allocation" || request.Action == "create_storage_volume" || request.Action == "renew_storage_volume"
 }
 
