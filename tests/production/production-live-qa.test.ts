@@ -907,6 +907,382 @@ function recoveredPrechargeBasicCanaryOptions(fixture, approval = {}) {
   };
 }
 
+const MANUAL_REVIEW_DIAGNOSE_TARGET = Object.freeze({
+  accountId: "acct-f947b18f844e42b3c0",
+  launchOperationId: "workspace-launch-f0375970d7678d0a3e",
+  workspaceId: "ws-4357c2c5b3ea1a344c",
+  computeAllocationId: "ca_1419503719b9589dcf",
+  storageId: "vol_9495f34527345cdf59",
+  nodePoolId: "np-33sy1qqa",
+  machineId: "np-33sy1qqa-j2hc4",
+  nodeName: "10.66.0.41",
+  cvmInstanceId: "ins-q4hts2k0"
+});
+
+function manualReviewDiagnosisFixture({
+  storageOperation = null,
+  providerTruthAvailable = true,
+  providerTruthStorageState = "unknown",
+  nodeAvailable = true,
+  nodeTaints = [{ key: "oplcloud.cn/workspace-id", value: "unallocated", effect: "NoSchedule" }]
+} = {}) {
+  const calls = [];
+  const execCalls = [];
+  const allocation = {
+    id: MANUAL_REVIEW_DIAGNOSE_TARGET.computeAllocationId,
+    accountId: MANUAL_REVIEW_DIAGNOSE_TARGET.accountId,
+    workspaceId: MANUAL_REVIEW_DIAGNOSE_TARGET.workspaceId,
+    packageId: "basic",
+    nodePoolId: MANUAL_REVIEW_DIAGNOSE_TARGET.nodePoolId,
+    machineName: MANUAL_REVIEW_DIAGNOSE_TARGET.machineId,
+    nodeName: MANUAL_REVIEW_DIAGNOSE_TARGET.nodeName,
+    privateIp: MANUAL_REVIEW_DIAGNOSE_TARGET.nodeName,
+    instanceId: MANUAL_REVIEW_DIAGNOSE_TARGET.cvmInstanceId,
+    cvmInstanceId: MANUAL_REVIEW_DIAGNOSE_TARGET.cvmInstanceId,
+    instanceType: "SA5.MEDIUM4",
+    zone: "na-siliconvalley-1",
+    chargeType: "PREPAID",
+    renewFlag: "NOTIFY_AND_MANUAL_RENEW",
+    status: "failed",
+    providerData: {
+      instanceType: "SA5.MEDIUM4",
+      zone: "na-siliconvalley-1",
+      chargeType: "PREPAID",
+      renewFlag: "NOTIFY_AND_MANUAL_RENEW"
+    }
+  };
+  const ownership = {
+    resourceId: MANUAL_REVIEW_DIAGNOSE_TARGET.computeAllocationId,
+    accountId: MANUAL_REVIEW_DIAGNOSE_TARGET.accountId,
+    workspaceId: MANUAL_REVIEW_DIAGNOSE_TARGET.workspaceId,
+    packageId: "basic",
+    nodePoolId: MANUAL_REVIEW_DIAGNOSE_TARGET.nodePoolId,
+    machineId: MANUAL_REVIEW_DIAGNOSE_TARGET.machineId,
+    nodeName: MANUAL_REVIEW_DIAGNOSE_TARGET.nodeName,
+    instanceId: MANUAL_REVIEW_DIAGNOSE_TARGET.cvmInstanceId,
+    status: "quarantined",
+    providerRequestId: "must-not-emit-provider-request-id"
+  };
+  const computeOperation = {
+    id: "fabric-compute-operation",
+    operationId: `${MANUAL_REVIEW_DIAGNOSE_TARGET.launchOperationId}:compute`,
+    action: "create_compute_allocation",
+    resourceId: MANUAL_REVIEW_DIAGNOSE_TARGET.computeAllocationId,
+    accountId: MANUAL_REVIEW_DIAGNOSE_TARGET.accountId,
+    workspaceId: MANUAL_REVIEW_DIAGNOSE_TARGET.workspaceId,
+    status: "failed",
+    providerRequestId: "must-not-emit-provider-request-id",
+    redactedProviderPayload: {
+      allocationPlan: {
+        nodePoolId: MANUAL_REVIEW_DIAGNOSE_TARGET.nodePoolId,
+        instanceType: "SA5.MEDIUM4"
+      }
+    }
+  };
+  const truth = {
+    computeState: "ready",
+    storageState: providerTruthStorageState,
+    compute: {
+      ...allocation,
+      providerResourceId: MANUAL_REVIEW_DIAGNOSE_TARGET.cvmInstanceId
+    },
+    storage: { id: MANUAL_REVIEW_DIAGNOSE_TARGET.storageId }
+  };
+  const fetchImpl = async (input, init = {}) => {
+    const url = new URL(String(input));
+    const method = init.method || "GET";
+    const headers = new Headers(init.headers);
+    calls.push({ method, path: url.pathname, search: url.search, headers });
+    assert.equal(url.hostname, "fabric.opl-cloud.svc");
+    assert.equal(headers.get("authorization"), "Bearer internal-service-token");
+    if (url.pathname === `/fabric/compute-allocations/${MANUAL_REVIEW_DIAGNOSE_TARGET.computeAllocationId}`) return json(allocation);
+    if (url.pathname === `/fabric/machine-ownerships/${MANUAL_REVIEW_DIAGNOSE_TARGET.computeAllocationId}`) return json(ownership);
+    if (url.pathname === "/fabric/operations") return json([computeOperation, ...(storageOperation ? [storageOperation] : [])]);
+    if (url.pathname === "/fabric/monthly-provider-truth") {
+      if (!providerTruthAvailable) return json({ error: "monthly_provider_truth_unavailable" }, 503);
+      return json(truth);
+    }
+    return json({ error: "not_found" }, 404);
+  };
+  const execFileImpl = async (command, args) => {
+    execCalls.push({ command, args });
+    assert.equal(command, "kubectl");
+    if (!nodeAvailable) throw new Error("node_get_unavailable");
+    return {
+      stdout: JSON.stringify({
+        metadata: {
+          name: MANUAL_REVIEW_DIAGNOSE_TARGET.nodeName,
+          labels: {
+            "oplcloud.cn/resource-id": MANUAL_REVIEW_DIAGNOSE_TARGET.computeAllocationId,
+            "oplcloud.cn/account-id": MANUAL_REVIEW_DIAGNOSE_TARGET.accountId,
+            "oplcloud.cn/workspace-id": MANUAL_REVIEW_DIAGNOSE_TARGET.workspaceId
+          }
+        },
+        spec: {
+          taints: nodeTaints
+        },
+        status: {
+          addresses: [{ type: "InternalIP", address: MANUAL_REVIEW_DIAGNOSE_TARGET.nodeName }]
+        }
+      })
+    };
+  };
+  return { calls, execCalls, fetchImpl, execFileImpl };
+}
+
+test("manual-review diagnose emits a redacted read-only identity artifact for an unstarted storage volume", async () => {
+  assert.equal(typeof productionLiveQa.diagnoseManualReviewRecovery, "function");
+  const fixture = manualReviewDiagnosisFixture();
+  const result = await productionLiveQa.diagnoseManualReviewRecovery({
+    fabricOrigin: "http://fabric.opl-cloud.svc:8082",
+    internalServiceToken: "internal-service-token",
+    target: MANUAL_REVIEW_DIAGNOSE_TARGET,
+    kubeconfigPath: "/run/secrets/kubeconfig",
+    execFileImpl: fixture.execFileImpl,
+    fetchImpl: fixture.fetchImpl
+  });
+
+  assert.deepEqual(Object.keys(result).sort(), [
+    "allocation", "computeOperation", "errorCode", "identity", "mutationCounts", "node", "operationMode", "ownership", "providerTruth", "recoveryEligible", "schemaVersion", "status", "storage"
+  ]);
+  assert.deepEqual(result, {
+    schemaVersion: 1,
+    operationMode: "manual_review_diagnose",
+    status: "diagnosed",
+    recoveryEligible: true,
+    errorCode: "none",
+    allocation: { state: "present", status: "failed" },
+    ownership: { state: "present", status: "quarantined" },
+    computeOperation: { state: "present", status: "failed" },
+    providerTruth: { state: "available", computeState: "ready", storageState: "unknown", errorCode: "none" },
+    identity: {
+      accountMatches: true,
+      workspaceMatches: true,
+      launchOperationMatches: true,
+      poolMatches: true,
+      machineMatches: true,
+      cvmMatches: true,
+      nodeMatches: true,
+      privateIpMatches: true,
+      skuMatches: true,
+      zoneMatches: true,
+      prepaidMatches: true,
+      manualRenewMatches: true
+    },
+    node: {
+      resourceIdLabelMatches: true,
+      accountIdLabelMatches: true,
+      workspaceIdLabelMatches: true,
+      unallocatedTaint: true
+    },
+    storage: { state: "not_started" },
+    mutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
+  });
+  assert.equal(fixture.calls.length, 4);
+  assert.equal(fixture.calls.every((call) => call.method === "GET"), true);
+  assert.deepEqual(fixture.execCalls, [{
+    command: "kubectl",
+    args: ["--kubeconfig", "/run/secrets/kubeconfig", "get", "node", MANUAL_REVIEW_DIAGNOSE_TARGET.nodeName, "-o", "json"]
+  }]);
+  assert.doesNotMatch(JSON.stringify(result), /providerRequestId|must-not-emit|token|secret|password|raw/i);
+});
+
+test("manual-review diagnose uses the Ready Fabric Pod without passing a runner token", async () => {
+  const fixture = manualReviewDiagnosisFixture();
+  const podExecCalls = [];
+  const execFileImpl = async (command, args, options) => {
+    podExecCalls.push({ command, args });
+    if (!args.includes("exec")) return fixture.execFileImpl(command, args, options);
+    const path = String(args.at(-1));
+    const response = await fixture.fetchImpl(`http://fabric.opl-cloud.svc:8082${path}`, {
+      method: "GET",
+      headers: { authorization: "Bearer internal-service-token" }
+    });
+    const body = await response.json();
+    return {
+      stdout: JSON.stringify({
+        statusCode: response.status,
+        payload: response.status === 200 ? body : null,
+        errorCode: response.status === 200 ? "none" : body.error
+      })
+    };
+  };
+
+  const result = await productionLiveQa.diagnoseManualReviewRecovery({
+    target: MANUAL_REVIEW_DIAGNOSE_TARGET,
+    kubeconfigPath: "/run/secrets/kubeconfig",
+    fabricPod: "opl-cloud-fabric-7b8c9d",
+    fabricNamespace: "opl-cloud",
+    execFileImpl
+  });
+
+  assert.equal(result.recoveryEligible, true);
+  assert.equal(fixture.calls.length, 4);
+  const fabricReads = podExecCalls.filter(({ args }) => args.includes("exec"));
+  assert.equal(fabricReads.length, 4);
+  assert.equal(fabricReads.every(({ command, args }) =>
+    command === "kubectl" && args.includes("exec") && args.includes("opl-cloud-fabric-7b8c9d") && args.includes("node") &&
+    !args.some((value) => String(value).includes("internal-service-token"))), true);
+  assert.equal(podExecCalls.some(({ args }) => args.includes("port-forward")), false);
+});
+
+test("manual-review diagnose preserves a Fabric authorization failure as a safe error code", async () => {
+  const fixture = manualReviewDiagnosisFixture();
+  const execFileImpl = async (command, args, options) => {
+    if (args.includes("exec")) {
+      return { stdout: JSON.stringify({ statusCode: 401, payload: null, errorCode: "unauthorized" }) };
+    }
+    return fixture.execFileImpl(command, args, options);
+  };
+  const result = await productionLiveQa.diagnoseManualReviewRecovery({
+    target: MANUAL_REVIEW_DIAGNOSE_TARGET,
+    kubeconfigPath: "/run/secrets/kubeconfig",
+    fabricPod: "opl-cloud-fabric-7b8c9d",
+    fabricNamespace: "opl-cloud",
+    execFileImpl
+  });
+
+  assert.equal(result.recoveryEligible, false);
+  assert.equal(result.errorCode, "fabric_get_unauthorized");
+  assert.deepEqual(result.mutationCounts, { sub2api: 0, tencent: 0, kubernetes: 0 });
+});
+
+test("manual-review diagnose blocks an unknown storage create attempt without any write", async () => {
+  const fixture = manualReviewDiagnosisFixture({
+    storageOperation: {
+      id: "fabric-storage-operation",
+      operationId: `${MANUAL_REVIEW_DIAGNOSE_TARGET.launchOperationId}:storage`,
+      action: "create_storage_volume",
+      resourceId: MANUAL_REVIEW_DIAGNOSE_TARGET.storageId,
+      accountId: MANUAL_REVIEW_DIAGNOSE_TARGET.accountId,
+      workspaceId: MANUAL_REVIEW_DIAGNOSE_TARGET.workspaceId,
+      status: "failed",
+      providerRequestId: "must-not-emit-provider-request-id"
+    }
+  });
+  const result = await productionLiveQa.diagnoseManualReviewRecovery({
+    fabricOrigin: "http://fabric.opl-cloud.svc:8082",
+    internalServiceToken: "internal-service-token",
+    target: MANUAL_REVIEW_DIAGNOSE_TARGET,
+    kubeconfigPath: "/run/secrets/kubeconfig",
+    execFileImpl: fixture.execFileImpl,
+    fetchImpl: fixture.fetchImpl
+  });
+
+  assert.equal(result.recoveryEligible, false);
+  assert.equal(result.errorCode, "storage_create_attempt_unknown");
+  assert.deepEqual(result.storage, { state: "attempted_unknown" });
+  assert.equal(fixture.calls.every((call) => call.method === "GET"), true);
+  assert.equal(fixture.execCalls.every(({ args }) => args.includes("get") && !args.some((value) => ["apply", "delete", "label", "taint", "exec", "patch"].includes(value))), true);
+});
+
+test("manual-review diagnose fails closed on unavailable provider truth without any mutation", async () => {
+  const fixture = manualReviewDiagnosisFixture({ providerTruthAvailable: false });
+  const result = await productionLiveQa.diagnoseManualReviewRecovery({
+    fabricOrigin: "http://fabric.opl-cloud.svc:8082",
+    internalServiceToken: "internal-service-token",
+    target: MANUAL_REVIEW_DIAGNOSE_TARGET,
+    kubeconfigPath: "/run/secrets/kubeconfig",
+    execFileImpl: fixture.execFileImpl,
+    fetchImpl: fixture.fetchImpl
+  });
+
+  assert.equal(result.recoveryEligible, false);
+  assert.equal(result.errorCode, "monthly_provider_truth_unavailable");
+  assert.deepEqual(result.providerTruth, {
+    state: "unavailable",
+    computeState: "unknown",
+    storageState: "unknown",
+    errorCode: "monthly_provider_truth_unavailable"
+  });
+  assert.deepEqual(result.mutationCounts, { sub2api: 0, tencent: 0, kubernetes: 0 });
+  assert.equal(fixture.calls.every((call) => call.method === "GET"), true);
+});
+
+test("manual-review diagnose reports a node read failure before identity mismatch", async () => {
+  const fixture = manualReviewDiagnosisFixture({ nodeAvailable: false });
+  const result = await productionLiveQa.diagnoseManualReviewRecovery({
+    fabricOrigin: "http://fabric.opl-cloud.svc:8082",
+    internalServiceToken: "internal-service-token",
+    target: MANUAL_REVIEW_DIAGNOSE_TARGET,
+    kubeconfigPath: "/run/secrets/kubeconfig",
+    execFileImpl: fixture.execFileImpl,
+    fetchImpl: fixture.fetchImpl
+  });
+
+  assert.equal(result.recoveryEligible, false);
+  assert.equal(result.errorCode, "node_get_unavailable");
+  assert.deepEqual(result.mutationCounts, { sub2api: 0, tencent: 0, kubernetes: 0 });
+  assert.equal(fixture.calls.every((call) => call.method === "GET"), true);
+});
+
+test("manual-review diagnose blocks storage truth without a matching storage operation", async () => {
+  const fixture = manualReviewDiagnosisFixture({ providerTruthStorageState: "ready" });
+  const result = await productionLiveQa.diagnoseManualReviewRecovery({
+    fabricOrigin: "http://fabric.opl-cloud.svc:8082",
+    internalServiceToken: "internal-service-token",
+    target: MANUAL_REVIEW_DIAGNOSE_TARGET,
+    kubeconfigPath: "/run/secrets/kubeconfig",
+    execFileImpl: fixture.execFileImpl,
+    fetchImpl: fixture.fetchImpl
+  });
+
+  assert.equal(result.recoveryEligible, false);
+  assert.equal(result.errorCode, "storage_create_attempt_unknown");
+  assert.deepEqual(result.storage, { state: "attempted_unknown" });
+  assert.deepEqual(result.mutationCounts, { sub2api: 0, tencent: 0, kubernetes: 0 });
+});
+
+test("manual-review diagnose rejects an ambiguous workspace ownership taint", async () => {
+  const fixture = manualReviewDiagnosisFixture({
+    nodeTaints: [
+      { key: "oplcloud.cn/workspace-id", value: "unallocated", effect: "NoSchedule" },
+      { key: "oplcloud.cn/workspace-id", value: MANUAL_REVIEW_DIAGNOSE_TARGET.workspaceId, effect: "NoSchedule" }
+    ]
+  });
+  const result = await productionLiveQa.diagnoseManualReviewRecovery({
+    fabricOrigin: "http://fabric.opl-cloud.svc:8082",
+    internalServiceToken: "internal-service-token",
+    target: MANUAL_REVIEW_DIAGNOSE_TARGET,
+    kubeconfigPath: "/run/secrets/kubeconfig",
+    execFileImpl: fixture.execFileImpl,
+    fetchImpl: fixture.fetchImpl
+  });
+
+  assert.equal(result.recoveryEligible, false);
+  assert.equal(result.errorCode, "node_ownership_or_taint_mismatch");
+  assert.equal(result.node.unallocatedTaint, false);
+  assert.deepEqual(result.mutationCounts, { sub2api: 0, tencent: 0, kubernetes: 0 });
+});
+
+test("manual-review diagnose implementation uses only Fabric GET and no Kubernetes write commands", async () => {
+  const source = await readFile(new URL("../../tools/production-live-qa.ts", import.meta.url), "utf8");
+  const helperStart = source.indexOf("const MANUAL_REVIEW_FABRIC_POD_GET_SCRIPT");
+  const start = source.indexOf("export async function diagnoseManualReviewRecovery");
+  const end = source.indexOf("\nasync function defaultExecFile", start);
+  assert.notEqual(helperStart, -1);
+  assert.notEqual(start, -1);
+  assert.notEqual(end, -1);
+  const readOnlyImplementation = source.slice(helperStart, end);
+  assert.match(readOnlyImplementation, /method: "GET"/);
+  assert.match(readOnlyImplementation, /fabricPod/);
+  assert.match(readOnlyImplementation, /"exec"/);
+  assert.match(readOnlyImplementation, /http\.get/);
+  assert.match(readOnlyImplementation, /"kubectl"[\s\S]*"get", "node"/);
+  assert.doesNotMatch(readOnlyImplementation, /method:\s*"(?:POST|PUT|PATCH|DELETE)"/);
+  assert.doesNotMatch(readOnlyImplementation, /"(?:apply|delete|label|taint|patch)"/);
+  assert.doesNotMatch(readOnlyImplementation, /wallet-adjustments|workspace-launches|\/recover/);
+
+  const cliStart = source.indexOf('if (args["manual-review-diagnose"] === "true")');
+  const cliEnd = source.indexOf('if (args["basic-customer-canary"] === "true")', cliStart);
+  assert.notEqual(cliStart, -1);
+  assert.notEqual(cliEnd, -1);
+  const cliDiagnose = source.slice(cliStart, cliEnd);
+  assert.match(cliDiagnose, /fabricPod: args\["fabric-pod"\]/);
+  assert.match(cliDiagnose, /fabricNamespace: args\["fabric-namespace"\]/);
+  assert.doesNotMatch(cliDiagnose, /internalServiceToken|OPL_INTERNAL_SERVICE_TOKEN/);
+});
+
 test("customer Basic canary uses one launch POST and returns redacted end-to-end evidence", async () => {
   const fixture = basicCanaryFixture();
   const result = await productionLiveQa.verifyProductionBasicCustomerCanary(basicCanaryOptions(fixture));

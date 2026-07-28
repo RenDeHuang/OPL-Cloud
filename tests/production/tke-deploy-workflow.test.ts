@@ -780,6 +780,66 @@ test("manual production Basic customer operation supports full and recovered pre
   }
 });
 
+test("manual-review diagnose is isolated to the VPC runner and statically contains no business or kubectl writes", async () => {
+  const workflow = await readWorkflow(".github/workflows/production-basic-customer-operation.yml");
+  const inputs = workflow.on.workflow_dispatch.inputs;
+  const diagnose = workflowJob(workflow, "manual-review-diagnose");
+  const steps = stepsByName(diagnose);
+  const runs = serializedRuns(diagnose);
+
+  assert.equal(inputs.operation_mode.type, "choice");
+  assert.equal(inputs.operation_mode.default, "customer_operation");
+  assert.deepEqual(inputs.operation_mode.options, ["customer_operation", "manual_review_diagnose"]);
+  assert.equal(inputs.diagnose_target_json.required, false);
+  assert.match(String(diagnose.if), /inputs\.operation_mode == 'manual_review_diagnose'/);
+  assert.match(String(diagnose.if), /inputs\.resume_run_id == ''/);
+  for (const confirmation of ["account_provision", "wallet_recharge", "workspace_purchase", "single_model_request"]) {
+    assert.match(String(diagnose.if), new RegExp(`!inputs\\.confirm_${confirmation}`));
+  }
+  assert.deepEqual(diagnose["runs-on"], ["self-hosted", "tencent-cloud", "opl-cloud", "tke-vpc"]);
+  assert.equal(diagnose.environment, "production");
+  assert.equal(diagnose.env.OPL_BASIC_CANARY_CUSTOMER_PASSWORD, undefined);
+  assert.equal(diagnose.env.OPL_BASIC_CANARY_APPROVAL_JSON, undefined);
+  assert.equal(diagnose.env.OPL_SUB2API_ADMIN_EMAIL, undefined);
+  assert.equal(diagnose.env.OPL_SUB2API_ADMIN_PASSWORD, undefined);
+  assert.equal(diagnose.env.OPL_INTERNAL_SERVICE_TOKEN, undefined);
+  assert.equal(diagnose.env.TENCENT_DEPLOY_KUBECONFIG_B64, undefined);
+  assert.equal(diagnose.env.TENCENT_DEPLOY_KUBECONFIG, undefined);
+  assert.equal(diagnose.env.OPL_BASIC_CANARY_DIAGNOSE_TARGET_JSON, "${{ inputs.diagnose_target_json }}");
+  assert.match(runs, /kubectl\("get", "deployment\/opl-cloud-fabric", "-o", "json"\)/);
+  assert.match(runs, /kubectl\("get", "replicasets", "-o", "json"\)/);
+  assert.match(runs, /kubectl\("get", "pods", "-o", "json"\)/);
+  assert.match(runs, /production-live-qa\.ts --manual-review-diagnose/);
+  assert.match(runs, /--diagnose-target-json/);
+  assert.match(runs, /--fabric-pod "\$fabric_pod"/);
+  assert.match(runs, /--fabric-namespace "\$OPL_K8S_NAMESPACE"/);
+  assert.match(JSON.stringify(diagnose.steps), /actions\/upload-artifact@v4/);
+  for (const forbidden of [
+    /get secret opl-cloud-internal-service/,
+    /OPL_INTERNAL_SERVICE_TOKEN/,
+    /secrets\.TENCENT_DEPLOY_KUBECONFIG/,
+    /port-forward/,
+    /--basic-customer-canary/,
+    /allow-workspace-purchase/,
+    /allow-wallet-recharge/,
+    /allow-account-provision/,
+    /allow-model-write/,
+    /\/api\/operator\//,
+    /\/api\/workspace-launches/,
+    /\bkubectl\s+--[^\n]*(?:apply|delete|label|taint|patch|exec)/,
+    /kubectl\("(?:apply|delete|label|taint|patch|exec)"/,
+    /\bcurl\b[^\n]*(?:-X\s*(?:POST|PUT|PATCH|DELETE)|--request\s*(?:POST|PUT|PATCH|DELETE))/i
+  ]) assert.doesNotMatch(runs, forbidden);
+
+  const sourceGate = serializedStep(steps.get("Verify exact origin main"));
+  assert.match(sourceGate, /git rev-parse HEAD/);
+  assert.match(sourceGate, /refs\/remotes\/origin\/main/);
+  assert.match(sourceGate, /OPL_MERGED_SHA/);
+  const artifactPreparation = serializedStep(steps.get("Prepare redacted manual-review artifact"));
+  assert.match(artifactPreparation, /OPL_BASIC_CANARY_DIAGNOSE_ARTIFACT_DIR/);
+  assert.doesNotMatch(runs, /OPL_BASIC_CANARY_DIAGNOSE_SECRET_DIR/);
+});
+
 test("manual cleanup workflows invoke the shared four-identity protected-resource guard", async () => {
   for (const [path, mutationBoundary] of [
     [".github/workflows/cleanup-tke-nodepool-machines.yml", 'action: "destroy_compute_allocation"'],

@@ -323,6 +323,324 @@ function internalFabricOrigin(value) {
   return parsed.origin;
 }
 
+const MANUAL_REVIEW_DIAGNOSE_MODE = "manual_review_diagnose";
+const MANUAL_REVIEW_FABRIC_POD_GET_SCRIPT = String.raw`
+const http = require("node:http");
+const path = process.argv[1];
+if (!/^\/fabric\/[A-Za-z0-9_?=.&/%-]{1,1024}$/.test(path || "")) {
+  process.stderr.write("manual_review_fabric_path_invalid\\n");
+  process.exit(1);
+}
+const token = process.env.OPL_INTERNAL_SERVICE_TOKEN;
+if (!token) {
+  process.stderr.write("manual_review_fabric_auth_unavailable\\n");
+  process.exit(1);
+}
+const request = http.get({
+  hostname: "127.0.0.1",
+  port: 8082,
+  path,
+  headers: { Authorization: "Bearer " + token }
+}, (response) => {
+  let body = "";
+  response.setEncoding("utf8");
+  response.on("data", (chunk) => {
+    body += chunk;
+    if (Buffer.byteLength(body) > 4 * 1024 * 1024) request.destroy(new Error("manual_review_fabric_response_too_large"));
+  });
+  response.on("end", () => {
+    if (response.statusCode === 200) {
+      try {
+        process.stdout.write(JSON.stringify({ statusCode: 200, payload: JSON.parse(body), errorCode: "none" }));
+      } catch {
+        process.stdout.write(JSON.stringify({ statusCode: 0, payload: null, errorCode: "manual_review_fabric_response_invalid" }));
+      }
+      return;
+    }
+    let errorCode = "manual_review_fabric_get_http_error";
+    try {
+      const parsed = JSON.parse(body);
+      if (/^[a-z0-9_]{1,80}$/.test(String(parsed?.error || ""))) errorCode = parsed.error;
+    } catch {}
+    process.stdout.write(JSON.stringify({ statusCode: Number(response.statusCode || 0), payload: null, errorCode }));
+  });
+});
+request.setTimeout(120000, () => request.destroy(new Error("manual_review_fabric_get_timeout")));
+request.on("error", () => {
+  process.stderr.write("manual_review_fabric_get_unavailable\\n");
+  process.exitCode = 1;
+});
+`;
+
+function manualReviewDiagnoseTarget(value) {
+  let target;
+  try {
+    target = typeof value === "string" ? JSON.parse(value) : value;
+  } catch {
+    throw new Error("manual_review_diagnose_target_invalid");
+  }
+  const targetKeys = [
+    "accountId", "launchOperationId", "workspaceId", "computeAllocationId", "storageId",
+    "nodePoolId", "machineId", "nodeName", "cvmInstanceId"
+  ];
+  if (!exactObjectKeys(target, targetKeys) ||
+    !/^acct-[A-Za-z0-9-]+$/.test(String(target.accountId || "")) ||
+    !/^workspace-launch-[A-Za-z0-9-]+$/.test(String(target.launchOperationId || "")) ||
+    !/^ws-[A-Za-z0-9-]+$/.test(String(target.workspaceId || "")) ||
+    !/^ca_[A-Za-z0-9-]+$/.test(String(target.computeAllocationId || "")) ||
+    !/^vol_[A-Za-z0-9-]+$/.test(String(target.storageId || "")) ||
+    !/^np-[A-Za-z0-9-]+$/.test(String(target.nodePoolId || "")) ||
+    !/^np-[A-Za-z0-9-]+$/.test(String(target.machineId || "")) ||
+    !/^[0-9]{1,3}(?:\.[0-9]{1,3}){3}$/.test(String(target.nodeName || "")) ||
+    !/^ins-[A-Za-z0-9-]+$/.test(String(target.cvmInstanceId || ""))) {
+    throw new Error("manual_review_diagnose_target_invalid");
+  }
+  return target;
+}
+
+function safeManualReviewStatus(value) {
+  const status = String(value || "");
+  return /^[a-z][a-z0-9_]{0,63}$/.test(status) ? status : "unknown";
+}
+
+function safeManualReviewErrorCode(value, fallback) {
+  const explicit = String(value?.errorCode || "");
+  const match = String(value?.message || value || "").match(/^request_failed:GET:[^:]+:[0-9]+:([a-z0-9_]+)$/);
+  const code = explicit || match?.[1] || "";
+  return new Set([
+    "compute_allocation_not_found",
+    "machine_ownership_not_found",
+    "monthly_provider_truth_unavailable",
+    "invalid_monthly_provider_truth"
+  ]).has(code) ? code : fallback;
+}
+
+function manualReviewFabricPodName(value) {
+  const pod = String(value || "");
+  if (!/^[a-z0-9](?:[-a-z0-9]{0,251}[a-z0-9])?$/.test(pod)) throw new Error("manual_review_diagnose_config_invalid");
+  return pod;
+}
+
+function manualReviewFabricNamespace(value) {
+  const namespace = String(value || "");
+  if (!/^[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?$/.test(namespace)) throw new Error("manual_review_diagnose_config_invalid");
+  return namespace;
+}
+
+async function manualReviewFabricPodGet({ kubeconfigPath, fabricNamespace, fabricPod, execFileImpl }, path) {
+  const result = await execFileImpl("kubectl", [
+    "--kubeconfig", String(kubeconfigPath), "-n", fabricNamespace, "exec", fabricPod, "-c", "fabric", "--",
+    "node", "-e", MANUAL_REVIEW_FABRIC_POD_GET_SCRIPT, path
+  ], {
+    encoding: "utf8",
+    maxBuffer: 4 * 1024 * 1024
+  });
+  let response;
+  try {
+    response = JSON.parse(result.stdout);
+  } catch {
+    throw new Error("manual_review_fabric_response_invalid");
+  }
+  if (!response || !Number.isInteger(response.statusCode) || response.statusCode < 0 || response.statusCode > 599 ||
+    !Object.hasOwn(response, "payload") || !/^[a-z0-9_]{1,80}$/.test(String(response.errorCode || ""))) {
+    throw new Error("manual_review_fabric_response_invalid");
+  }
+  return response;
+}
+
+async function manualReviewFabricGet(options, path, absentCode, unavailableCode) {
+  try {
+    const response = options.fabricPod
+      ? await manualReviewFabricPodGet(options, path)
+      : { statusCode: 200, payload: (await requestJson({ ...options, path, method: "GET" })).payload, errorCode: "none" };
+    if (response.statusCode === 200 && response.errorCode === "none") {
+      return { state: "present", payload: response.payload, errorCode: "none" };
+    }
+    if (response.statusCode === 404) return { state: "absent", payload: null, errorCode: absentCode };
+    if (response.statusCode === 401) return { state: "unavailable", payload: null, errorCode: "fabric_get_unauthorized" };
+    if (response.statusCode === 403) return { state: "unavailable", payload: null, errorCode: "fabric_get_forbidden" };
+    return { state: "unavailable", payload: null, errorCode: safeManualReviewErrorCode(response, unavailableCode) };
+  } catch (error) {
+    const message = String(error?.message || "");
+    if (message.startsWith(`request_failed:GET:${path}:404:`)) {
+      return { state: "absent", payload: null, errorCode: absentCode };
+    }
+    return { state: "unavailable", payload: null, errorCode: safeManualReviewErrorCode(error, unavailableCode) };
+  }
+}
+
+function manualReviewComputeOperation(operations, target) {
+  const matches = Array.isArray(operations)
+    ? operations.filter((operation) => operation?.action === "create_compute_allocation" && operation?.resourceId === target.computeAllocationId)
+    : [];
+  if (matches.length === 0) return { state: "absent", status: "unknown", operation: null };
+  if (matches.length !== 1) return { state: "multiple", status: "unknown", operation: null };
+  return { state: "present", status: safeManualReviewStatus(matches[0]?.status), operation: matches[0] };
+}
+
+function manualReviewStorageState(operations, truth, target) {
+  const matches = Array.isArray(operations)
+    ? operations.filter((operation) => operation?.action === "create_storage_volume" && operation?.resourceId === target.storageId)
+    : [];
+  if (matches.length === 0) {
+    if (truth?.state === "present" && ["ready", "absent"].includes(truth.payload?.storageState)) return "attempted_unknown";
+    return "not_started";
+  }
+  if (matches.length !== 1) return "attempted_unknown";
+  const operation = matches[0];
+  const storage = truth?.payload?.storage;
+  const exactOperation = operation?.accountId === target.accountId && operation?.workspaceId === target.workspaceId &&
+    operation?.operationId === `${target.launchOperationId}:storage`;
+  const exactStorage = storage?.id === target.storageId && storage?.accountId === target.accountId && storage?.workspaceId === target.workspaceId &&
+    /^disk-/.test(String(storage?.providerResourceId || "")) && storage?.sizeGb === 10 && storage?.chargeType === "PREPAID" &&
+    storage?.renewFlag === "NOTIFY_AND_MANUAL_RENEW";
+  if (truth?.state === "present" && exactOperation && exactStorage && truth.payload?.storageState === "ready") return "present";
+  if (truth?.state === "present" && exactOperation && exactStorage && truth.payload?.storageState === "absent") return "absent";
+  return "attempted_unknown";
+}
+
+function manualReviewNodeEvidence(node, target, allocation) {
+  const labels = node?.metadata?.labels || {};
+  const taints = Array.isArray(node?.spec?.taints) ? node.spec.taints : [];
+  const workspaceTaints = taints.filter((taint) => taint?.key === "oplcloud.cn/workspace-id");
+  const privateIPs = (node?.status?.addresses || []).filter((address) => address?.type === "InternalIP").map((address) => String(address.address || ""));
+  return {
+    resourceIdLabelMatches: labels["oplcloud.cn/resource-id"] === target.computeAllocationId,
+    accountIdLabelMatches: labels["oplcloud.cn/account-id"] === target.accountId,
+    workspaceIdLabelMatches: labels["oplcloud.cn/workspace-id"] === target.workspaceId,
+    unallocatedTaint: workspaceTaints.length === 1 && workspaceTaints[0]?.value === "unallocated" && workspaceTaints[0]?.effect === "NoSchedule",
+    nodeMatches: node?.metadata?.name === target.nodeName,
+    privateIpMatches: privateIPs.length === 1 && privateIPs[0] === allocation?.privateIp
+  };
+}
+
+export async function diagnoseManualReviewRecovery({
+  fabricOrigin,
+  internalServiceToken,
+  fabricPod,
+  fabricNamespace,
+  target: rawTarget,
+  kubeconfigPath,
+  fetchImpl = globalThis.fetch,
+  execFileImpl = defaultExecFile
+} = {}) {
+  const target = manualReviewDiagnoseTarget(rawTarget);
+  if (!String(kubeconfigPath || "").startsWith("/")) {
+    throw new Error("manual_review_diagnose_config_invalid");
+  }
+  const podTransport = Boolean(fabricPod || fabricNamespace);
+  const options = podTransport
+    ? {
+        kubeconfigPath: String(kubeconfigPath),
+        fabricPod: manualReviewFabricPodName(fabricPod),
+        fabricNamespace: manualReviewFabricNamespace(fabricNamespace),
+        execFileImpl
+      }
+    : (() => {
+        const origin = internalFabricOrigin(fabricOrigin);
+        if (!String(internalServiceToken || "")) throw new Error("manual_review_diagnose_config_invalid");
+        return { fetchImpl, origin, headers: { authorization: `Bearer ${internalServiceToken}` } };
+      })();
+  const computeRead = await manualReviewFabricGet(
+    options,
+    `/fabric/compute-allocations/${encodeURIComponent(target.computeAllocationId)}`,
+    "compute_allocation_not_found",
+    "compute_allocation_unavailable"
+  );
+  const ownershipRead = await manualReviewFabricGet(
+    options,
+    `/fabric/machine-ownerships/${encodeURIComponent(target.computeAllocationId)}`,
+    "machine_ownership_not_found",
+    "machine_ownership_unavailable"
+  );
+  const operationsRead = await manualReviewFabricGet(options, "/fabric/operations", "fabric_operations_not_found", "fabric_operations_unavailable");
+  const providerTruthRead = await manualReviewFabricGet(
+    options,
+    `/fabric/monthly-provider-truth?computeAllocationId=${encodeURIComponent(target.computeAllocationId)}&storageVolumeId=${encodeURIComponent(target.storageId)}`,
+    "monthly_provider_truth_unavailable",
+    "monthly_provider_truth_unavailable"
+  );
+
+  let nodeRead;
+  try {
+    const result = await execFileImpl("kubectl", ["--kubeconfig", String(kubeconfigPath), "get", "node", target.nodeName, "-o", "json"], {
+      encoding: "utf8",
+      maxBuffer: 4 * 1024 * 1024
+    });
+    nodeRead = { state: "present", payload: JSON.parse(result.stdout), errorCode: "none" };
+  } catch {
+    nodeRead = { state: "unavailable", payload: null, errorCode: "node_get_unavailable" };
+  }
+
+  const allocation = computeRead.payload;
+  const ownership = ownershipRead.payload;
+  const computeOperation = manualReviewComputeOperation(operationsRead.payload, target);
+  const operation = computeOperation.operation;
+  const plan = operation?.redactedProviderPayload?.allocationPlan;
+  const truth = providerTruthRead.payload;
+  const truthCompute = truth?.compute;
+  const node = manualReviewNodeEvidence(nodeRead.payload, target, allocation);
+  const truthReady = providerTruthRead.state === "present" && truth?.computeState === "ready";
+  const identity = {
+    accountMatches: computeRead.state === "present" && ownershipRead.state === "present" && allocation?.accountId === target.accountId && ownership?.accountId === target.accountId &&
+      truthReady && truthCompute?.accountId === target.accountId,
+    workspaceMatches: computeRead.state === "present" && ownershipRead.state === "present" && allocation?.workspaceId === target.workspaceId && ownership?.workspaceId === target.workspaceId &&
+      truthReady && truthCompute?.workspaceId === target.workspaceId,
+    launchOperationMatches: computeOperation.state === "present" && operation?.operationId === `${target.launchOperationId}:compute` && operation?.accountId === target.accountId && operation?.workspaceId === target.workspaceId,
+    poolMatches: allocation?.nodePoolId === target.nodePoolId && ownership?.nodePoolId === target.nodePoolId && plan?.nodePoolId === target.nodePoolId &&
+      truthReady && truthCompute?.nodePoolId === target.nodePoolId,
+    machineMatches: allocation?.machineName === target.machineId && ownership?.machineId === target.machineId && truthReady && truthCompute?.machineName === target.machineId,
+    cvmMatches: String(allocation?.cvmInstanceId || allocation?.instanceId || "") === target.cvmInstanceId && ownership?.instanceId === target.cvmInstanceId &&
+      truthReady && String(truthCompute?.providerResourceId || truthCompute?.cvmInstanceId || truthCompute?.instanceId || "") === target.cvmInstanceId,
+    nodeMatches: allocation?.nodeName === target.nodeName && ownership?.nodeName === target.nodeName && truthReady && truthCompute?.nodeName === target.nodeName && node.nodeMatches,
+    privateIpMatches: node.privateIpMatches && truthReady && truthCompute?.privateIp === allocation?.privateIp,
+    skuMatches: Boolean(allocation?.instanceType) && allocation?.instanceType === plan?.instanceType && allocation?.instanceType === allocation?.providerData?.instanceType &&
+      truthReady && truthCompute?.instanceType === allocation?.instanceType && truthCompute?.providerData?.instanceType === allocation?.instanceType,
+    zoneMatches: Boolean(allocation?.zone) && allocation?.zone === allocation?.providerData?.zone && truthReady && truthCompute?.zone === allocation?.zone && truthCompute?.providerData?.zone === allocation?.zone,
+    prepaidMatches: allocation?.chargeType === "PREPAID" && allocation?.providerData?.chargeType === "PREPAID" && truthReady && truthCompute?.chargeType === "PREPAID" && truthCompute?.providerData?.chargeType === "PREPAID",
+    manualRenewMatches: allocation?.renewFlag === "NOTIFY_AND_MANUAL_RENEW" && allocation?.providerData?.renewFlag === "NOTIFY_AND_MANUAL_RENEW" &&
+      truthReady && truthCompute?.renewFlag === "NOTIFY_AND_MANUAL_RENEW" && truthCompute?.providerData?.renewFlag === "NOTIFY_AND_MANUAL_RENEW"
+  };
+  const storage = { state: manualReviewStorageState(operationsRead.payload, providerTruthRead, target) };
+  const nodeProjection = {
+    resourceIdLabelMatches: node.resourceIdLabelMatches,
+    accountIdLabelMatches: node.accountIdLabelMatches,
+    workspaceIdLabelMatches: node.workspaceIdLabelMatches,
+    unallocatedTaint: node.unallocatedTaint
+  };
+  let errorCode = "none";
+  if (computeRead.state !== "present") errorCode = computeRead.errorCode;
+  else if (ownershipRead.state !== "present") errorCode = ownershipRead.errorCode;
+  else if (operationsRead.state !== "present") errorCode = operationsRead.errorCode;
+  else if (computeOperation.state !== "present") errorCode = "compute_allocation_operation_identity_invalid";
+  else if (providerTruthRead.state !== "present") errorCode = providerTruthRead.errorCode;
+  else if (nodeRead.state !== "present") errorCode = nodeRead.errorCode;
+  else if (Object.values(identity).some((matches) => matches !== true)) errorCode = "compute_identity_mismatch";
+  else if (!Object.values(nodeProjection).every((matches) => matches === true)) errorCode = "node_ownership_or_taint_mismatch";
+  else if (storage.state === "attempted_unknown") errorCode = "storage_create_attempt_unknown";
+  else if (storage.state === "absent") errorCode = "storage_absent_recovery_not_authorized";
+  return {
+    schemaVersion: 1,
+    operationMode: MANUAL_REVIEW_DIAGNOSE_MODE,
+    status: "diagnosed",
+    recoveryEligible: errorCode === "none" && storage.state === "not_started",
+    errorCode,
+    allocation: { state: computeRead.state, status: safeManualReviewStatus(allocation?.status) },
+    ownership: { state: ownershipRead.state, status: safeManualReviewStatus(ownership?.status) },
+    computeOperation: { state: computeOperation.state, status: computeOperation.status },
+    providerTruth: {
+      state: providerTruthRead.state === "present" ? "available" : providerTruthRead.state,
+      computeState: ["ready", "absent", "unknown"].includes(truth?.computeState) ? truth.computeState : "unknown",
+      storageState: ["ready", "absent", "unknown"].includes(truth?.storageState) ? truth.storageState : "unknown",
+      errorCode: providerTruthRead.state === "present" ? "none" : providerTruthRead.errorCode
+    },
+    identity,
+    node: nodeProjection,
+    storage,
+    mutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
+  };
+}
+
 async function defaultExecFile(command, args, options) {
   const { execFile } = await import("node:child_process");
   return new Promise((resolve, reject) => {
@@ -1974,7 +2292,7 @@ export async function runProductionLiveQaCli({
   now = new Date()
 } = {}) {
   if (argv.includes("--help") || argv.includes("-h")) {
-    stdout.write("Usage: node tools/production-live-qa.ts --read-only\nA fixed-slot model request requires --allow-gateway-write --allow-model-write. A real customer canary requires --basic-customer-canary, an exact funding mode, and its explicit approvals.\n");
+    stdout.write("Usage: node tools/production-live-qa.ts --read-only\nA manual-review diagnosis requires --manual-review-diagnose and a non-secret target JSON. A fixed-slot model request requires --allow-gateway-write --allow-model-write. A real customer canary requires --basic-customer-canary, an exact funding mode, and its explicit approvals.\n");
     return 0;
   }
   try {
@@ -1989,6 +2307,23 @@ export async function runProductionLiveQaCli({
         requestTimeoutMs: Number(args["request-timeout-ms"] || env.OPL_VERIFY_REQUEST_TIMEOUT_MS || DEFAULT_REQUEST_TIMEOUT_MS),
         browserFactory,
         fetchImpl
+      });
+      stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+      return 0;
+    }
+    if (args["manual-review-diagnose"] === "true") {
+      if (args["basic-customer-canary"] || args["read-only"] || args["allow-account-provision"] || args["allow-wallet-recharge"] ||
+        args["allow-workspace-purchase"] || args["allow-model-write"] || args["allow-gateway-write"] || args["approval-id"] || args["funding-mode"] || args.phase) {
+        throw new Error("manual_review_diagnose_conflict");
+      }
+      const result = await diagnoseManualReviewRecovery({
+        fabricOrigin: env.OPL_FABRIC_INTERNAL_ORIGIN,
+        fabricPod: args["fabric-pod"],
+        fabricNamespace: args["fabric-namespace"],
+        target: args["diagnose-target-json"] || env.OPL_BASIC_CANARY_DIAGNOSE_TARGET_JSON,
+        kubeconfigPath: env.KUBECONFIG || env.TENCENT_DEPLOY_KUBECONFIG_PATH,
+        fetchImpl: fabricFetchImpl,
+        execFileImpl
       });
       stdout.write(`${JSON.stringify(result, null, 2)}\n`);
       return 0;
