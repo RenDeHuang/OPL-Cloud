@@ -831,7 +831,7 @@ function validatePreparedBasicCanaryEvidence(prepared, approval, identities, run
     prepared.compute?.procurement?.nodePoolId !== approval.expected.nodePoolId || prepared.compute?.resources?.cpu !== 2 || prepared.compute?.resources?.memoryGb !== 4 ||
     prepared.runtime?.ready !== true || prepared.runtime?.pod?.ready !== true || prepared.runtime?.pod?.resources?.cpu !== 2 || prepared.runtime?.pod?.resources?.memoryGb !== 4 ||
     prepared.runtime?.pod?.nodeName !== prepared.compute?.nodeName ||
-    prepared.writeCounts?.accountProvisionPosts !== 1 || prepared.writeCounts?.walletAdjustmentPosts !== 1 || prepared.writeCounts?.workspaceLaunchPosts !== 1 ||
+    ![0, 1].includes(prepared.writeCounts?.accountProvisionPosts) || ![0, 1].includes(prepared.writeCounts?.walletAdjustmentPosts) || prepared.writeCounts?.workspaceLaunchPosts !== 1 ||
     prepared.writeCounts?.modelRequests !== 0 || prepared.writeCounts?.workspaceKeysCreated !== 1 || prepared.writeCounts?.workspacePurchaseDebits !== 1 ||
     prepared.writeCounts?.tencentCvmPurchases !== 1 || prepared.writeCounts?.tencentCbsPurchases !== 1) {
     throw new Error("production_basic_canary_prepared_evidence_invalid");
@@ -902,7 +902,7 @@ async function readBasicCanaryAccountAuthority(requestOptions, adminAuth, approv
 function basicCanaryWalletAdjustment(payload, expectedOperationId, expectedAccountId, expectedAmountMicros) {
   if (payload?.operationId !== expectedOperationId || payload?.accountId !== expectedAccountId || payload?.kind !== "recharge" ||
     usdDecimalMicros(payload?.amountUsd) !== BigInt(expectedAmountMicros) || payload?.reason !== "production Basic customer canary precharge" ||
-    payload?.status !== "succeeded" || payload?.phase !== "succeeded") {
+    payload?.status !== "succeeded" || payload?.phase !== "complete") {
     throw new Error("production_basic_canary_recharge_readback_failed");
   }
   const before = readOnlyNestedSource(payload.beforeBalance, "sub2api");
@@ -991,6 +991,11 @@ export async function verifyProductionBasicCustomerCanary(options = {}) {
   const initialCheckpointStage = checkpoint.stage;
   const expectedIdentities = checkpoint.identities;
   const prepared = completing ? validatePreparedBasicCanaryEvidence(preparedEvidence, approval, expectedIdentities, runId) : null;
+  const businessPostCounts = {
+    accountProvisionPosts: prepared?.writeCounts.accountProvisionPosts || 0,
+    walletAdjustmentPosts: prepared?.writeCounts.walletAdjustmentPosts || 0,
+    workspaceLaunchPosts: prepared?.writeCounts.workspaceLaunchPosts || 0
+  };
   const normalizedOrigin = assertPublicHttpsUrl(origin, "public_console_origin_required", { hostname: "cloud.medopl.cn" }).origin;
   const normalizedFabricOrigin = completing ? "" : internalFabricOrigin(fabricOrigin);
   const requestOptions = { fetchImpl, origin: normalizedOrigin, signal, timeoutMs: requestTimeoutMs };
@@ -1031,6 +1036,7 @@ export async function verifyProductionBasicCustomerCanary(options = {}) {
     await assertCloudRevision();
     recordBasicCanaryHttpAttempt(checkpoint, "accountProvision");
     await saveBasicCanaryCheckpoint(checkpoint, "account_provision_attempted", checkpointPath, afterCheckpoint);
+    businessPostCounts.accountProvisionPosts += 1;
     const provision = await requestJson({
       ...requestOptions,
       auth: adminAuth,
@@ -1123,6 +1129,7 @@ export async function verifyProductionBasicCustomerCanary(options = {}) {
     await assertCloudRevision();
     recordBasicCanaryHttpAttempt(checkpoint, "walletAdjustment");
     await saveBasicCanaryCheckpoint(checkpoint, "wallet_adjustment_attempted", checkpointPath, afterCheckpoint);
+    businessPostCounts.walletAdjustmentPosts += 1;
     const adjustment = await requestJson({
       ...requestOptions,
       auth: adminAuth,
@@ -1137,7 +1144,6 @@ export async function verifyProductionBasicCustomerCanary(options = {}) {
       }
     });
     if (adjustment.response.status !== 201) throw new Error("production_basic_canary_recharge_failed");
-    basicCanaryWalletAdjustment(adjustment.payload, expectedIdentities.walletOperationId, accountId, approval.rechargeUsdMicros);
     walletAuthority = await authoritativeGet({ ...requestOptions, auth: adminAuth, path: walletAdjustmentPath });
     if (!walletAuthority.found) throw new Error("production_basic_canary_recharge_readback_failed");
     const recovered = basicCanaryWalletAdjustment(walletAuthority.payload, expectedIdentities.walletOperationId, accountId, approval.rechargeUsdMicros);
@@ -1173,6 +1179,7 @@ export async function verifyProductionBasicCustomerCanary(options = {}) {
     await assertCloudRevision();
     recordBasicCanaryHttpAttempt(checkpoint, "workspaceLaunch");
     await saveBasicCanaryCheckpoint(checkpoint, "workspace_launch_attempted", checkpointPath, afterCheckpoint);
+    businessPostCounts.workspaceLaunchPosts += 1;
     const launched = await requestJson({
       ...requestOptions,
       auth: customerAuth,
@@ -1364,9 +1371,7 @@ export async function verifyProductionBasicCustomerCanary(options = {}) {
       receipt,
       httpAttempts: { ...checkpoint.httpAttempts },
       writeCounts: {
-        accountProvisionPosts: 1,
-        walletAdjustmentPosts: 1,
-        workspaceLaunchPosts: 1,
+        ...businessPostCounts,
         modelRequests: 0,
         workspaceKeysCreated: keyEvidence.workspaceKeysCreated,
         workspacePurchaseDebits: 1,
@@ -1495,9 +1500,7 @@ export async function verifyProductionBasicCustomerCanary(options = {}) {
     readiness: { ready: true, cloudImagesReady: true, workspaceImagesReady: true, immutableImagesReady: true },
     httpAttempts: { ...checkpoint.httpAttempts },
     writeCounts: {
-      accountProvisionPosts: 1,
-      walletAdjustmentPosts: 1,
-      workspaceLaunchPosts: 1,
+      ...businessPostCounts,
       modelRequests: 1,
       workspaceKeysCreated: keyEvidence.workspaceKeysCreated,
       workspacePurchaseDebits: 1,
