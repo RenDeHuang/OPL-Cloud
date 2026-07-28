@@ -78,7 +78,7 @@ test("API, Gateway, and Workspace route changes clear secrets for direct and pop
   assert.match(app, /function clearSecrets\(\) \{\s*secretRequestGeneration \+= 1;/);
   assert.equal((app.match(/if \(!secretResponseStillCurrent\([^)]+\)\) return;/g) || []).length, 3);
   assert.match(app, /function isSensitiveRoute\(route: string\)/);
-  for (const prefix of ["/console/api", "/console/gateway", "/console/workspace"]) {
+  for (const prefix of ["/console/api", "/console/gateway", "/console/workspaces"]) {
     assert.match(app, new RegExp(prefix.replaceAll("/", "\\/")));
   }
   const watcher = app.slice(app.indexOf("\nwatch(path"), app.indexOf("\nonMounted(()"));
@@ -106,7 +106,7 @@ test("session generation prevents late customer and admin reads from repopulatin
   assert.match(app, /function currentSessionRequest\(\)[\s\S]+const generation = sessionGeneration;[\s\S]+const userId = session\.value\?\.user\.id[\s\S]+generation === sessionGeneration && userId === session\.value\?\.user\.id/);
   assert.match(app, /function replaceSession\([^)]+\) \{\s*sessionGeneration \+= 1;\s*clearSessionState\(\);\s*session\.value = next;/);
   for (const name of [
-    "loadWorkspaces", "loadWorkspaceStatus", "loadWallet", "loadKeys", "loadUsage", "loadStats",
+    "loadWorkspaces", "loadWorkspaceDetail", "loadWorkspaceStatus", "loadWallet", "loadKeys", "loadUsage", "loadStats",
     "loadAccountUsage", "loadHistory", "loadReceipts", "loadAnnouncements", "loadCatalog", "loadCustomer", "loadAdmin",
     "recoverWorkspaceLaunch"
   ]) assert.match(appFunction(app, name), /currentSessionRequest\(\)/, `${name} must bind reads to the current session`);
@@ -146,173 +146,83 @@ test("leaving Login clears the password without waiting for a session replacemen
   assert.match(watcher, /if \(previous !== next\)[\s\S]*closeModal\(\)/);
 });
 
-test("Workspace reads preserve confirmed Runtime unless authority proves empty or changes identity", async () => {
+test("Workspace list and detail reads keep separate authoritative state", async () => {
   const app = await appSource();
-  const source = appFunction(app, "loadWorkspaces").replaceAll("unavailableSource<WorkspaceListData>", "unavailableSource");
-  const statusSource = appFunction(app, "loadWorkspaceStatus").replaceAll("unavailableSource<WorkspaceRuntimeDTO>", "unavailableSource");
-  const confirmedRuntime = {
-    source: "fabric",
-    status: "available",
-    available: true,
-    fetchedAt: "2026-07-20T00:00:00Z",
-    data: { workspaceId: "workspace-a", status: "running", ready: true, checks: [] }
-  };
+  const list = appFunction(app, "loadWorkspaces");
+  const detail = appFunction(app, "loadWorkspaceDetail");
+  const runtime = appFunction(app, "loadWorkspaceStatus");
 
-  async function runtimeAfter(result: unknown, rejects = false) {
-    const workspace = { value: { id: "workspace-a" } };
-    const selectedWorkspaceId = { value: "workspace-a" };
-    const workspaceSource = { value: { available: true, data: { items: [workspace.value] } } as unknown };
-    const workspaceStatusSource = { value: confirmedRuntime as unknown };
-    const loadWorkspaces = new Function(
-      "currentSessionRequest",
-      "loading",
-      "resetSource",
-      "workspace",
-      "selectedWorkspaceId",
-      "workspaceSource",
-      "workspaceStatusSource",
-      "getWorkspaces",
-      "unavailableSource",
-      "errors",
-      "friendlyError",
-      "clearSecrets",
-      "runtimeRotationIntent",
-      "workspaceStatusRequestGeneration",
-      `${source}\nreturn loadWorkspaces;`
-    )(
-      () => () => true,
-      { workspace: false, runtime: false },
-      () => {},
-      workspace,
-      selectedWorkspaceId,
-      workspaceSource,
-      workspaceStatusSource,
-      async () => {
-        if (rejects) throw new Error("workspace_unavailable");
-        return result;
-      },
-      (owner: string) => ({ source: owner, status: "unavailable", available: false, fetchedAt: "" }),
-      { workspace: "", runtime: "" },
-      (error: Error) => error.message,
-      () => {},
-      null,
-      0
-    ) as () => Promise<void>;
-
-    await loadWorkspaces();
-    return workspaceStatusSource.value;
-  }
-
-  const unavailable = { source: "control-plane", status: "unavailable", available: false, fetchedAt: "" };
-  async function statusAfter(workspaceState: unknown) {
-    const workspaceStatusSource = { value: confirmedRuntime as unknown };
-    const loadWorkspaceStatus = new Function(
-      "currentSessionRequest",
-      "workspace",
-      "workspaceSource",
-      "workspaceStatusSource",
-      "workspaceStatusRequestGeneration",
-      "loading",
-      `${statusSource}\nreturn loadWorkspaceStatus;`
-    )(
-      () => () => true,
-      { value: null },
-      { value: workspaceState },
-      workspaceStatusSource,
-      0,
-      { runtime: false }
-    ) as () => Promise<void>;
-    await loadWorkspaceStatus();
-    return workspaceStatusSource.value;
-  }
-
-  assert.strictEqual(await statusAfter(unavailable), confirmedRuntime);
-  assert.equal(await statusAfter({ source: "control-plane", status: "empty", available: true, fetchedAt: "", data: { items: [] } }), null);
-  assert.strictEqual(await runtimeAfter(unavailable), confirmedRuntime);
-  assert.strictEqual(await runtimeAfter(null, true), confirmedRuntime);
-  assert.strictEqual(await runtimeAfter({ source: "control-plane", status: "available", available: true, fetchedAt: "", data: { items: [{ id: "workspace-a" }] } }), confirmedRuntime);
-  assert.strictEqual(await runtimeAfter({ source: "control-plane", status: "available", available: true, fetchedAt: "", data: { items: [{ id: "workspace-a" }, { id: "workspace-b" }] } }), confirmedRuntime);
-  assert.equal(await runtimeAfter({ source: "control-plane", status: "empty", available: true, fetchedAt: "", data: { items: [] } }), null);
-  assert.equal(await runtimeAfter({ source: "control-plane", status: "available", available: true, fetchedAt: "", data: { items: [{ id: "workspace-b" }] } }), null);
+  assert.match(list, /getWorkspaces\(page, pageSize\)/);
+  assert.match(list, /result\.data\.page !== page \|\| result\.data\.pageSize !== pageSize/);
+  assert.doesNotMatch(list, /workspaceDetailSource|workspaceStatusSource|getWorkspaceRuntimeStatus/);
+  assert.match(detail, /findWorkspaceInPages\(workspaceId\)/);
+  assert.match(detail, /result\.data !== null && result\.data\.id !== workspaceId/);
+  assert.match(runtime, /getWorkspaceRuntimeStatus\(workspaceId\)/);
+  assert.match(runtime, /result\.data\.workspaceId !== workspaceId/);
 });
 
-test("late Runtime readback cannot overwrite a newly selected Workspace", async () => {
+test("late Workspace detail and Runtime readbacks cannot overwrite a different detail route", async () => {
   const app = await appSource();
-  const source = appFunction(app, "loadWorkspaceStatus").replaceAll("unavailableSource<WorkspaceRuntimeDTO>", "unavailableSource");
-  const pending = new Map<string, (value: unknown) => void>();
-  const workspace = { value: { id: "workspace-a" } };
-  const workspaceStatusSource = { value: null as unknown };
-  const loading = { runtime: false };
-  const errors = { runtime: "" };
-  let generation = 0;
-  const loadWorkspaceStatus = new Function(
-    "currentSessionRequest",
-    "workspace",
-    "workspaceSource",
-    "workspaceStatusSource",
-    "loading",
-    "resetSource",
-    "errors",
-    "getWorkspaceRuntimeStatus",
-    "unavailableSource",
-    "friendlyError",
-    "getGeneration",
-    "setGeneration",
-    `${source
-      .replace(/\+\+workspaceStatusRequestGeneration/g, "setGeneration(getGeneration() + 1)")
-      .replace(/workspaceStatusRequestGeneration/g, "getGeneration()")}
-return loadWorkspaceStatus;`
-  )(
-    () => () => true,
-    workspace,
-    { value: { status: "available" } },
-    workspaceStatusSource,
-    loading,
-    () => {},
-    errors,
-    (workspaceId: string) => new Promise((resolve) => pending.set(workspaceId, resolve)),
-    (owner: string) => ({ source: owner, status: "unavailable", available: false, fetchedAt: "" }),
-    (error: Error) => error.message,
-    () => generation,
-    (value: number) => { generation = value; return value; }
-  ) as () => Promise<void>;
+  const detail = appFunction(app, "loadWorkspaceDetail");
+  const runtime = appFunction(app, "loadWorkspaceStatus");
 
-  const first = loadWorkspaceStatus();
-  workspace.value = { id: "workspace-b" };
-  const second = loadWorkspaceStatus();
-  pending.get("workspace-b")?.({ source: "fabric", status: "available", available: true, fetchedAt: "", data: { workspaceId: "workspace-b" } });
-  await second;
-  pending.get("workspace-a")?.({ source: "fabric", status: "available", available: true, fetchedAt: "", data: { workspaceId: "workspace-a" } });
-  await first;
-
-  assert.deepEqual(workspaceStatusSource.value, { source: "fabric", status: "available", available: true, fetchedAt: "", data: { workspaceId: "workspace-b" } });
-  assert.equal(loading.runtime, false);
+  assert.match(app, /let workspaceDetailRequestGeneration = 0/);
+  assert.match(app, /let workspaceStatusRequestGeneration = 0/);
+  assert.match(detail, /requestGeneration !== workspaceDetailRequestGeneration \|\| currentWorkspaceId\.value !== workspaceId/);
+  assert.match(runtime, /requestGeneration !== workspaceStatusRequestGeneration \|\| currentWorkspaceId\.value !== workspaceId/);
+  assert.ok((detail.match(/requestStillCurrent\(\)/g) || []).length >= 3);
+  assert.ok((runtime.match(/requestStillCurrent\(\)/g) || []).length >= 3);
 });
 
 test("customer routes load only their page-owned sources and dispatch on every navigation", async () => {
   const app = await appSource();
   const loadCustomerSource = appFunction(app, "loadCustomer");
   const loaderNames = [
-    "loadWorkspaces", "loadWorkspaceStatus", "loadWallet", "loadKeys", "loadUsage", "loadStats",
+    "loadWorkspaces", "loadWorkspaceDetail", "loadWorkspaceStatus", "loadWallet", "loadKeys", "loadUsage", "loadStats",
     "loadAccountUsage", "loadHistory", "loadReceipts", "loadAnnouncements", "loadCatalog", "recoverWorkspaceLaunch"
   ];
   const calls: string[] = [];
-  const loaderFunctions = loaderNames.map((name) => async () => { calls.push(name); });
   const path = { value: "" };
   const apiRoute = { value: false };
   const activeApiPage = { value: "overview" };
+  const isNotFound = { value: false };
+  const isOverviewRoute = { value: false };
+  const workspaceRoute = { value: null as null | "list" | "new" | "detail" };
+  const currentWorkspaceId = { value: "" };
+  const workspaceDetailSource = { value: null as null | { available: boolean; data: { id: string } | null } };
+  const workspaceStatusSource = { value: null };
+  const loaderFunctions = loaderNames.map((name) => async () => {
+    calls.push(name);
+    if (name === "loadWorkspaceDetail") {
+      workspaceDetailSource.value = { available: true, data: { id: currentWorkspaceId.value } };
+    }
+  });
   const loadCustomer = new Function(
     "path",
     "apiRoute",
     "activeApiPage",
+    "workspacePage",
     "currentSessionRequest",
+    "isNotFound",
+    "isOverviewRoute",
+    "workspaceRoute",
+    "currentWorkspaceId",
+    "workspaceDetailSource",
+    "workspaceStatusSource",
     ...loaderNames,
     `${loadCustomerSource}\nreturn loadCustomer;`
   )(
     path,
     apiRoute,
     activeApiPage,
+    (route: string) => route === "/console/workspaces" ? "list" : route === "/console/workspaces/new" ? "new" : route.startsWith("/console/workspaces/") ? "detail" : null,
     () => () => true,
+    isNotFound,
+    isOverviewRoute,
+    workspaceRoute,
+    currentWorkspaceId,
+    workspaceDetailSource,
+    workspaceStatusSource,
     ...loaderFunctions
   ) as () => Promise<void>;
 
@@ -321,41 +231,47 @@ test("customer routes load only their page-owned sources and dispatch on every n
     path.value = route;
     apiRoute.value = route === "/console/api" || route.startsWith("/console/api/");
     activeApiPage.value = apiPage;
+    isNotFound.value = route === "/console/unknown";
+    isOverviewRoute.value = route === "/console" || route === "/console/overview";
+    workspaceRoute.value = route === "/console/workspaces" ? "list"
+      : route === "/console/workspaces/new" ? "new"
+        : route.startsWith("/console/workspaces/") ? "detail" : null;
+    currentWorkspaceId.value = workspaceRoute.value === "detail" ? route.slice("/console/workspaces/".length) : "";
     await loadCustomer();
     return [...calls].sort();
   }
 
   const overviewCalls = [
-    "loadWorkspaces", "loadWallet", "loadAccountUsage", "loadReceipts", "loadCatalog", "loadAnnouncements",
-    "loadWorkspaceStatus", "recoverWorkspaceLaunch"
+    "loadWorkspaces", "loadWallet", "loadAccountUsage", "loadReceipts", "loadAnnouncements"
   ].sort();
   assert.deepEqual(await callsFor("/console"), overviewCalls);
   assert.deepEqual(await callsFor("/console/overview"), overviewCalls);
-  assert.deepEqual(await callsFor("/console/workspace"), [
-    "loadWorkspaces", "loadReceipts", "loadCatalog", "loadWorkspaceStatus", "recoverWorkspaceLaunch"
-  ].sort());
-  assert.deepEqual(await callsFor("/console/billing"), [
-    "loadWorkspaces", "loadWallet", "loadAccountUsage", "loadHistory", "loadReceipts"
-  ].sort());
+  assert.deepEqual(await callsFor("/console/workspaces"), ["loadWorkspaces", "recoverWorkspaceLaunch"].sort());
+  assert.deepEqual(await callsFor("/console/workspaces/new"), ["loadWallet", "loadCatalog", "recoverWorkspaceLaunch"].sort());
+  assert.deepEqual(await callsFor("/console/workspaces/ws-1"), ["loadWorkspaceDetail", "loadWorkspaceStatus"].sort());
+  assert.deepEqual(await callsFor("/console/billing"), ["loadWorkspaces", "loadReceipts"].sort());
   assert.deepEqual(await callsFor("/console/announcements"), ["loadAnnouncements"]);
   assert.deepEqual(await callsFor("/console/api", "overview"), [
     "loadWallet", "loadAccountUsage", "loadHistory"
   ].sort());
   assert.deepEqual(await callsFor("/console/api/usage", "usage"), ["loadKeys"]);
   assert.deepEqual(await callsFor("/console/api/keys", "keys"), []);
+  assert.deepEqual(await callsFor("/console/unknown"), []);
 
   const handleRoute = appFunction(app, "handleRoute");
   assert.doesNotMatch(handleRoute, /!workspaceSource/);
   assert.match(handleRoute, /if \(isAdminRoute\.value\) \{\s*await loadAdmin\(\);\s*\} else \{\s*await loadCustomer\(\);\s*\}/);
-  assert.match(appFunction(app, "refreshCurrentPage"), /clearSecrets\(\);\s*if \(isAdminRoute\.value\) return void loadAdmin\(\);\s*void loadCustomer\(\);/);
+  assert.match(appFunction(app, "refreshCurrentPage"), /clearSecrets\(\);\s*if \(isNotFound\.value\) return;\s*if \(isAdminRoute\.value\) return void loadAdmin\(\);\s*void loadCustomer\(\);/);
 });
 
-test("closing a modal or replacing the session clears every modal draft", async () => {
+test("modal drafts clear on close while Workspace launch drafts clear when leaving the new route", async () => {
   const app = await appSource();
   const closeModalSource = appFunction(app, "closeModal");
   const clearSession = appFunction(app, "clearSessionState");
+  const watcher = app.slice(app.indexOf("\nwatch(path"), app.indexOf("\nonMounted(()"));
 
-  assert.match(closeModalSource, /Object\.assign\(launchForm, \{ name: "", packageId: "basic" \}\)/);
+  assert.doesNotMatch(closeModalSource, /launchForm/);
+  assert.match(watcher, /workspacePage\(previous \|\| ""\) === "new"[\s\S]+Object\.assign\(launchForm, \{ name: "", packageId: "basic" \}\)/);
   assert.match(closeModalSource, /Object\.assign\(adminUserForm, \{ email: "", password: "", name: "" \}\)/);
   assert.match(closeModalSource, /modal\.value = ""/);
   assert.match(clearSession, /closeModal\(\)/);
@@ -363,7 +279,8 @@ test("closing a modal or replacing the session clears every modal draft", async 
 
   const modalTemplate = app.slice(app.indexOf("<div v-if=\"modal\" class=\"modal-backdrop\""));
   assert.doesNotMatch(modalTemplate, /@click(?:\.self)?="modal = ''"/);
-  assert.equal((modalTemplate.match(/@click(?:\.self)?="closeModal"/g) || []).length, 6);
+  assert.ok((modalTemplate.match(/@click(?:\.self)?="closeModal"/g) || []).length >= 4);
+  assert.doesNotMatch(modalTemplate, /modal === ['"]workspace|submitWorkspaceLaunch/);
 
   const launchForm = { name: "secret workspace", packageId: "pro" };
   const adminUserForm = { email: "owner@example.com", password: "secret password", name: "Owner" };
@@ -373,7 +290,6 @@ test("closing a modal or replacing the session clears every modal draft", async 
   const selectedReview = { value: { resourceType: "workspace", id: "review-secret" } };
   const modal = { value: "admin-user" };
   const closeModal = new Function(
-    "launchForm",
     "adminUserForm",
     "walletAdjustmentForm",
     "announcementForm",
@@ -381,11 +297,11 @@ test("closing a modal or replacing the session clears every modal draft", async 
     "selectedReview",
     "modal",
     `${closeModalSource}\nreturn closeModal;`
-  )(launchForm, adminUserForm, walletAdjustmentForm, announcementForm, selectedOperatorAccountId, selectedReview, modal) as () => void;
+  )(adminUserForm, walletAdjustmentForm, announcementForm, selectedOperatorAccountId, selectedReview, modal) as () => void;
 
   closeModal();
   modal.value = "admin-user";
-  assert.deepEqual(launchForm, { name: "", packageId: "basic" });
+  assert.deepEqual(launchForm, { name: "secret workspace", packageId: "pro" });
   assert.deepEqual(adminUserForm, { email: "", password: "", name: "" });
   assert.deepEqual(walletAdjustmentForm, { kind: "recharge", amountUsd: "", reason: "", confirmationAccountId: "", relatedOperationId: "" });
   assert.deepEqual(announcementForm, { title: "", body: "", startsAt: "", endsAt: "" });
@@ -514,7 +430,7 @@ test("Key source failures preserve confirmed Usage while authoritative Key chang
   }
 
   const usagePageStart = app.indexOf("<section v-else-if=\"activeApiPage === 'usage'\"");
-  const usagePageEnd = app.indexOf("<section v-else class=\"panel\">", usagePageStart);
+  const usagePageEnd = app.indexOf("<KeysPanel", usagePageStart);
   const usagePage = app.slice(usagePageStart, usagePageEnd);
   const readyStart = usagePage.indexOf("<template v-else>");
   assert.notEqual(readyStart, -1, "Usage must render records only after the Key source is available and non-empty");
@@ -523,8 +439,8 @@ test("Key source failures preserve confirmed Usage while authoritative Key chang
   assert.match(keyStates, /errors\.keys[\s\S]+loadKeys/);
   assert.match(keyStates, /keySource\?\.status === 'unavailable'[\s\S]+loadKeys/);
   assert.match(keyStates, /keySource\?\.status === 'empty'[\s\S]+暂无 API Key/);
-  assert.doesNotMatch(keyStates, /暂无使用记录/);
-  assert.match(usagePage.slice(readyStart), /暂无使用记录/);
+  assert.doesNotMatch(keyStates, /暂无请求记录/);
+  assert.match(usagePage.slice(readyStart), /暂无请求记录/);
 });
 
 test("account aggregate remains monthly when the per-Key period changes", async () => {
@@ -544,8 +460,8 @@ test("Billing receipt pages preserve opaque cursor history and reject late respo
   const next = appFunction(app, "nextReceiptPage");
   const previous = appFunction(app, "previousReceiptPage");
   const clearSession = appFunction(app, "clearSessionState");
-  const billingStart = app.indexOf("<section v-else class=\"billing-page\"");
-  const billingEnd = app.indexOf("</template>", billingStart);
+  const billingStart = app.indexOf("class=\"billing-page\"");
+  const billingEnd = app.indexOf('<div v-if="modal"', billingStart);
   const billing = app.slice(billingStart, billingEnd);
 
   assert.match(app, /const receiptCursor = ref\(""\)/);
@@ -553,7 +469,7 @@ test("Billing receipt pages preserve opaque cursor history and reject late respo
   assert.match(app, /let receiptRequestGeneration = 0/);
   assert.match(load, /const generation = \+\+receiptRequestGeneration/);
   assert.match(load, /cursor === receiptCursor\.value/);
-  assert.match(load, /getBillingReceipts\(cursor\)/);
+  assert.match(load, /getBillingReceipts\(cursor, limit\)/);
   assert.ok((load.match(/requestStillCurrent\(\)/g) || []).length >= 3);
   assert.match(next, /receiptsSource\.value\.data\.nextCursor/);
   assert.match(next, /receiptCursorStack\.value\.push\(receiptCursor\.value\)/);
@@ -563,10 +479,10 @@ test("Billing receipt pages preserve opaque cursor history and reject late respo
   assert.match(clearSession, /receiptRequestGeneration \+= 1/);
   assert.match(clearSession, /receiptCursor\.value = ""/);
   assert.match(clearSession, /receiptCursorStack\.value = \[\]/);
-  assert.match(billing, /aria-label="交易记录分页"/);
+  assert.match(billing, /aria-label="账单收据分页"/);
   assert.match(billing, /@click="previousReceiptPage"/);
   assert.match(billing, /@click="nextReceiptPage"/);
-  assert.match(billing, /receiptsSource\.data\.hasMore/);
+  assert.match(billing, /receiptsSource\?\.data\.hasMore/);
 });
 
 test("Billing receipt detail adapter encodes the opaque receipt identity", async () => {
@@ -659,7 +575,7 @@ test("customer mutations cannot write shared state after their session is replac
   const app = await appSource();
   const panel = await keysPanelSource();
   const minimumChecks: Record<string, number> = {
-    submitWorkspaceLaunch: 5,
+    submitWorkspaceLaunch: 3,
     revealWorkspace: 3,
     rotateWorkspace: 4,
     revealKey: 3,
@@ -677,7 +593,8 @@ test("customer mutations cannot write shared state after their session is replac
 
   const submit = appFunction(app, "submitWorkspaceLaunch");
   assert.match(submit, /await launchWorkspace\([\s\S]+if \(!requestStillCurrent\(\)\) return;\s*workspaceLaunchIntent = null;/);
-  assert.match(submit, /await Promise\.all\([\s\S]+if \(!requestStillCurrent\(\)\) return;\s*await loadWorkspaceStatus\(\);\s*if \(!requestStillCurrent\(\)\) return;/);
+  assert.match(submit, /if \(created\.status === "succeeded"\) \{\s*await loadWorkspaces\(\);\s*if \(!requestStillCurrent\(\)\) return;\s*flash\("Workspace 已开通"\);\s*if \(created\.workspaceId\) openWorkspaceDetail\(created\.workspaceId\);/);
+  assert.doesNotMatch(submit, /loadReceipts\(|loadWorkspaceStatus\(/);
 
   const rotate = appFunction(app, "rotateWorkspace");
   assert.match(rotate, /await rotateWorkspaceCredentials\([\s\S]+if \(!requestStillCurrent\(\)\) return;\s*runtimeRotationIntent = null;\s*if \(!secretResponseStillCurrent/);

@@ -1,12 +1,17 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import test from "node:test";
+import { afterEach, test } from "node:test";
 
 import * as readApi from "../../apps/console-ui/src/api/console-read-api.ts";
 import * as workspaceApi from "../../apps/console-ui/src/api/workspaces-api.ts";
 
 const root = new URL("../../", import.meta.url);
 const source = (path: string) => readFile(new URL(path, root), "utf8");
+const originalFetch = globalThis.fetch;
+
+afterEach(() => {
+  globalThis.fetch = originalFetch;
+});
 
 test("Home Login Logo unchanged", async () => {
   const app = await source("apps/console-ui/src/App.vue");
@@ -19,7 +24,7 @@ test("Home Login Logo unchanged", async () => {
 
 test("Workspace access answers URL username password and corresponding Workspace Key", async () => {
   const app = await source("apps/console-ui/src/App.vue");
-  const workspaceView = app.slice(app.indexOf("path.startsWith('/console/workspace')"), app.indexOf("<section v-else-if=\"apiRoute\""));
+  const workspaceView = app.slice(app.indexOf("workspaceRoute === 'detail'"), app.indexOf("<section v-else-if=\"apiRoute\""));
 
   for (const label of ["Workspace URL", "用户名", "密码", "Workspace Key"]) {
     assert.match(workspaceView, new RegExp(label));
@@ -31,41 +36,53 @@ test("Workspace access answers URL username password and corresponding Workspace
   assert.doesNotMatch(app, /keys\.value\.find\(\(item\) => item\.name === "opl-workspace"\)/);
 });
 
-test("Workspace access selects one of many independent Workspace subscriptions", async () => {
+test("Workspace list links each subscription to an independent refreshable detail route", async () => {
   const app = await source("apps/console-ui/src/App.vue");
-  const workspaceView = app.slice(app.indexOf("path.startsWith('/console/workspace')"), app.indexOf("<section v-else-if=\"apiRoute\""));
+  const listStart = app.indexOf("workspaceRoute === 'list'");
+  const listEnd = app.indexOf("workspaceRoute === 'new'", listStart);
+  const listView = app.slice(listStart, listEnd);
 
-  assert.match(app, /const selectedWorkspaceId = ref\(""\)/);
-  assert.match(app, /workspaceSource\.value\.data\.items\.find\(\(item\) => item\.id === selectedWorkspaceId\.value\)/);
-  assert.match(app, /function selectWorkspace\(workspaceId: string\)/);
-  assert.match(app, /selectWorkspace[\s\S]+clearSecrets\(\)[\s\S]+workspaceStatusSource\.value = null[\s\S]+runtimeRotationIntent = null/);
-  assert.match(workspaceView, /aria-label="选择 Workspace"/);
-  assert.match(workspaceView, /v-for="item in workspaceSource\.data\.items"/);
-  assert.match(workspaceView, /@change="changeWorkspaceSelection"/);
-  assert.match(app, /if \(next === "workspace"\) launchForm\.name = ""/);
-  assert.match(workspaceView, /新建 Workspace/);
+  assert.match(listView, /v-for="item in workspaceRows"/);
+  assert.match(listView, /openWorkspaceDetail\(item\.id\)/);
+  assert.match(listView, /workspaceSource\.data\.total/);
+  assert.match(listView, /changeWorkspacePage\(workspacePageNumber - 1\)/);
+  assert.match(listView, /navigate\('\/console\/workspaces\/new'\)/);
+  assert.match(app, /const currentWorkspaceId = computed\(\(\) => workspaceIdFromPath\(path\.value\)\)/);
+  assert.match(app, /findWorkspaceInPages\(workspaceId\)/);
+  assert.match(app, /getWorkspaceRuntimeStatus\(workspaceId\)/);
+  assert.match(app, /<UiRadioGroup[^>]+:options="workspacePlanOptions"/);
+  assert.doesNotMatch(app, /selectedWorkspaceId|changeWorkspaceSelection|selectWorkspace\(/);
   assert.doesNotMatch(app, /items\.length !== 1/);
   assert.doesNotMatch(app, /账号存在多个 Workspace，暂不可用/);
 });
 
+test("Workspace adapter exposes paged list and exact lookup without an eager all-pages aggregate", () => {
+  assert.equal(typeof workspaceApi.getWorkspaces, "function");
+  assert.equal(typeof workspaceApi.findWorkspaceInPages, "function");
+  assert.equal("getAllWorkspaces" in workspaceApi, false);
+});
+
 test("Workspace and Overview render only server-owned package runtime and billing facts", async () => {
   const app = await source("apps/console-ui/src/App.vue");
-  const workspaceView = app.slice(app.indexOf("path.startsWith('/console/workspace')"), app.indexOf("<section v-else-if=\"apiRoute\""));
-  const overviewStart = app.indexOf("<section v-if=\"path === '/console' || path === '/console/overview'\" class=\"overview-layout\"");
-  const overviewEnd = app.indexOf("<section v-else-if=\"path.startsWith('/console/workspace')\"", overviewStart);
+  const workspaceView = app.slice(app.indexOf("workspaceRoute === 'detail'"), app.indexOf("<section v-else-if=\"apiRoute\""));
+  const overviewStart = app.indexOf("<section v-if=\"isOverviewRoute\" class=\"overview-page\"");
+  const overviewEnd = app.indexOf("workspaceRoute === 'list'", overviewStart);
   const overview = app.slice(overviewStart, overviewEnd);
 
-  assert.match(app, /const workspacePlan = computed\(\(\) => catalog\.value\?\.packages\.find\(\(plan\) => plan\.id === workspace\.value\?\.packageId\) \|\| null\)/);
   assert.match(app, /const mountCheck = computed\(\(\) => runtime\.value\?\.checks\.find\(\(check\) => check\.name === "ready_pod_uses_retained_pvc"\) \|\| null\)/);
   assert.match(workspaceView, /<dt>创建时间<\/dt><dd>\{\{ formatDate\(workspace\.createdAt, true\) \}\}<\/dd>/);
   assert.match(workspaceView, /<dt>续费状态<\/dt><dd>\{\{ workspace\.renewalStatus \|\| "暂不可用" \}\}<\/dd>/);
-  assert.match(workspaceView, /<dt>套餐规格<\/dt>[\s\S]+workspacePlan\.cpu[\s\S]+workspacePlan\.memoryGb/);
+  assert.match(workspaceView, /<dt>月度条款<\/dt>[\s\S]+workspace\.totalUsdMicros/);
+  assert.match(workspaceView, /<dt>存储容量<\/dt>[\s\S]+workspace\.storageGb/);
   assert.match(workspaceView, /<dt>挂载状态<\/dt>[\s\S]+mountCheck\.ok/);
   assert.match(workspaceView, /<dt>服务健康<\/dt>[\s\S]+runtime\.ready/);
 
-  assert.match(overview, /Workspace 月费[\s\S]+typeof workspace\?\.totalUsdMicros === "number"[\s\S]+formatUsdMicros\(workspace\.totalUsdMicros\)/);
-  assert.match(overview, /计费周期[\s\S]+workspace\?\.periodStart[\s\S]+workspace\?\.paidThrough[\s\S]+formatDate\(workspace\.periodStart\)[\s\S]+formatDate\(workspace\.paidThrough\)/);
+  assert.match(overview, /Workspace 总数[\s\S]+workspaceSource\.data\.total/);
+  assert.match(overview, /本月 API 费用[\s\S]+stats\.totalActualCostUsdMicros/);
+  assert.doesNotMatch(overview, /Ledger/);
+  assert.doesNotMatch(overview, /Workspace 月费|计费周期|常用入口/);
   assert.doesNotMatch(overview, /previews|selectedPlanPrice|totalChargeUsdMicros/);
+  assert.doesNotMatch(workspaceView, /workspacePlan|catalog\.value\?\.packages/);
 });
 
 test("Customer Console general Key path supports create read reveal toggle and delete", async () => {
@@ -99,7 +116,7 @@ test("API Key kind and Workspace receipt types use customer-facing labels", asyn
   assert.match(keysView, /revealed\?\.id === key\.id[\s\S]+:colspan="columnCount"/);
 });
 
-test("Customer Console API projects the configured endpoint and uses V2 usage owners", async () => {
+test("API Key surface shows the configured endpoint without frontend environment fallbacks", async () => {
   const [app, keysPanel] = await Promise.all([
     source("apps/console-ui/src/App.vue"),
     source("apps/console-ui/src/components/keys/KeysPanel.vue")
@@ -114,51 +131,54 @@ test("Customer Console API projects the configured endpoint and uses V2 usage ow
   assert.equal(typeof readApi.getGatewayGroups, "function");
   assert.match(keysPanel, /getGatewayEndpoint\(/);
   assert.match(keysPanel, /getGatewayGroups\(/);
-  assert.match(keysPanel, /API Endpoint/);
+  const header = keysPanel.slice(keysPanel.indexOf('<header class="keys-header">'), keysPanel.indexOf("</header>", keysPanel.indexOf('<header class="keys-header">')));
+  const usageInstructions = keysPanel.slice(keysPanel.indexOf('<div v-else class="use-body">'));
+  assert.match(header, /endpoint-line[\s\S]+API Endpoint[\s\S]+UiCopyButton/);
+  assert.match(usageInstructions, /API Endpoint/);
   assert.doesNotMatch(keysPanel, /OPL_SUB2API_BASE_URL|gflabtoken\.cn|<iframe|window\.__ENV|import\.meta\.env|window\.open\(/);
 });
 
-test("every wallet summary has independent loading error unavailable and retry states", async () => {
+test("Overview and API overview keep independent wallet states while Billing omits wallet data", async () => {
   const app = await source("apps/console-ui/src/App.vue");
-  const overviewStart = app.indexOf("<section v-if=\"path === '/console' || path === '/console/overview'\" class=\"overview-layout\"");
-  const overviewEnd = app.indexOf("<section v-else-if=\"path.startsWith('/console/workspace')\"", overviewStart);
+  const overviewStart = app.indexOf("<section v-if=\"isOverviewRoute\" class=\"overview-page\"");
+  const overviewEnd = app.indexOf("workspaceRoute === 'list'", overviewStart);
   const apiStart = app.indexOf("<div v-if=\"activeApiPage === 'overview'\" class=\"api-overview\"");
   const apiEnd = app.indexOf("<section v-else-if=\"activeApiPage === 'usage'\"", apiStart);
-  const billingStart = app.indexOf("<section v-else class=\"billing-page\"");
-  const billingEnd = app.indexOf("</template>", billingStart);
+  const billingStart = app.indexOf("class=\"billing-page\"");
+  const billingEnd = app.indexOf('<div v-if="modal"', billingStart);
 
   for (const [name, view] of [
     ["Overview", app.slice(overviewStart, overviewEnd)],
-    ["API overview", app.slice(apiStart, apiEnd)],
-    ["Billing", app.slice(billingStart, billingEnd)]
+    ["API overview", app.slice(apiStart, apiEnd)]
   ]) {
-    assert.match(view, /loading\.wallet[\s\S]+正在读取余额/, `${name} wallet loading`);
+    assert.match(view, /loading\.wallet/, `${name} wallet loading`);
     assert.match(view, /errors\.wallet[\s\S]+@click="loadWallet"/, `${name} wallet error retry`);
-    assert.match(view, /walletSource\?\.status === 'unavailable'[\s\S]+@click="loadWallet"/, `${name} wallet unavailable retry`);
   }
+  assert.doesNotMatch(app.slice(billingStart, billingEnd), /loading\.wallet|errors\.wallet|walletSource|可用余额/);
 });
 
-test("API overview and Billing expose every balance history state", async () => {
+test("API overview owns balance history and Billing stays focused on terms and receipts", async () => {
   const app = await source("apps/console-ui/src/App.vue");
   const apiStart = app.indexOf("<div v-if=\"activeApiPage === 'overview'\" class=\"api-overview\"");
   const apiEnd = app.indexOf("<section v-else-if=\"activeApiPage === 'usage'\"", apiStart);
-  const billingStart = app.indexOf("<section v-else class=\"billing-page\"");
-  const billingEnd = app.indexOf("</template>", billingStart);
+  const billingStart = app.indexOf("class=\"billing-page\"");
+  const billingEnd = app.indexOf('<div v-if="modal"', billingStart);
+  const apiOverview = app.slice(apiStart, apiEnd);
+  const billing = app.slice(billingStart, billingEnd);
 
-  for (const [name, view] of [
-    ["API overview", app.slice(apiStart, apiEnd)],
-    ["Billing", app.slice(billingStart, billingEnd)]
-  ]) {
-    assert.match(view, /<h2>余额记录<\/h2>/, `${name} balance history`);
-    assert.match(view, /loading\.history[\s\S]+正在读取余额记录/, `${name} history loading`);
-    assert.match(view, /errors\.history[\s\S]+@click="loadHistory"/, `${name} history error retry`);
-    assert.match(view, /balanceHistorySource\?\.status === 'unavailable'[\s\S]+@click="loadHistory"/, `${name} history unavailable retry`);
-    assert.match(view, /balanceHistorySource\?\.status === 'empty'[\s\S]+暂无余额记录/, `${name} history empty`);
-    assert.match(view, /v-else class="table-wrap"[\s\S]+v-for="item in history"/, `${name} history table`);
-	assert.match(view, /changeBalanceHistoryPage\(balanceHistoryPage - 1\)[\s\S]+上一页/, `${name} history previous page`);
-	assert.match(view, /第 \{\{ balanceHistoryPage \}\} \/ \{\{ balanceHistoryPages \}\} 页/, `${name} history page status`);
-	assert.match(view, /changeBalanceHistoryPage\(balanceHistoryPage \+ 1\)[\s\S]+下一页/, `${name} history next page`);
-  }
+  assert.match(apiOverview, /<h2>余额记录<\/h2>/);
+  assert.match(apiOverview, /loading\.history[\s\S]+正在读取余额记录/);
+  assert.match(apiOverview, /errors\.history[\s\S]+@click="loadHistory"/);
+  assert.match(apiOverview, /balanceHistorySource\?\.status === 'unavailable'[\s\S]+@click="loadHistory"/);
+  assert.match(apiOverview, /balanceHistorySource\?\.status === 'empty'[\s\S]+暂无余额记录/);
+  assert.match(apiOverview, /v-else class="table-wrap"[\s\S]+v-for="item in history"/);
+  assert.match(apiOverview, /changeBalanceHistoryPage\(balanceHistoryPage - 1\)[\s\S]+上一页/);
+  assert.match(apiOverview, /第 \{\{ balanceHistoryPage \}\} \/ \{\{ balanceHistoryPages \}\} 页/);
+  assert.match(apiOverview, /changeBalanceHistoryPage\(balanceHistoryPage \+ 1\)[\s\S]+下一页/);
+  assert.match(billing, /Workspace 条款/);
+  assert.match(billing, /账单收据/);
+  assert.doesNotMatch(billing, /Ledger/);
+  assert.doesNotMatch(billing, /余额记录|balanceHistorySource|loadHistory/);
 });
 
 test("balance history uses the explicit paged DTO without a legacy alias", async () => {
@@ -175,16 +195,19 @@ test("balance history uses the explicit paged DTO without a legacy alias", async
 test("Billing receipt rows open a customer-safe detail view", async () => {
   assert.equal(typeof readApi.getBillingReceipt, "function");
   const app = await source("apps/console-ui/src/App.vue");
-  const billingStart = app.indexOf("<section v-else class=\"billing-page\"");
-  const billingEnd = app.indexOf("</template>", billingStart);
+  const billingStart = app.indexOf("class=\"billing-page\"");
+  const billingEnd = app.indexOf('<div v-if="modal"', billingStart);
   const billing = app.slice(billingStart, billingEnd);
-  const detailStart = billing.indexOf("<section v-if=\"selectedReceiptId\" class=\"panel receipt-detail\"");
+  const detailStart = billing.indexOf("class=\"panel receipt-detail\"");
   const detailEnd = billing.indexOf("</section>", detailStart) + "</section>".length;
   const detail = billing.slice(detailStart, detailEnd);
 
+  assert.match(billing, /v-for="item in workspaceRows"/);
+  assert.match(billing, /Workspace 条款/);
+  assert.doesNotMatch(billing, /wallet|accountUsageSource|stats|balanceHistorySource|余额记录|AI 用量/);
   assert.match(billing, /@click="loadReceiptDetail\(receipt\.receiptId\)"/);
-  assert.match(detail, /<h2>交易详情<\/h2>/);
-  assert.match(detail, /loading\.receiptDetail[\s\S]+正在读取交易详情/);
+  assert.match(detail, /<h2>收据详情<\/h2>/);
+  assert.match(detail, /loading\.receiptDetail[\s\S]+正在读取收据详情/);
   assert.match(detail, /errors\.receiptDetail[\s\S]+loadReceiptDetail\(selectedReceiptId\)/);
   assert.match(detail, /receiptDetailSource\?\.status === 'unavailable'[\s\S]+loadReceiptDetail\(selectedReceiptId\)/);
   assert.match(detail, /@click="clearReceiptDetail"/);
@@ -203,7 +226,7 @@ test("Customer Console announcements keep actionable states without exposing env
 
   const app = await source("apps/console-ui/src/App.vue");
   const announcementsStart = app.indexOf("<section v-else-if=\"path.startsWith('/console/announcements')\"");
-  const announcementsEnd = app.indexOf("<section v-else class=\"billing-page\">", announcementsStart);
+  const announcementsEnd = app.indexOf("<section v-else-if=\"path === '/console/billing'\"", announcementsStart);
   const announcementsView = app.slice(announcementsStart, announcementsEnd);
   assert.match(app, /getAnnouncements\(/);
   assert.match(app, /markAnnouncementRead\([^,]+,[^,]+,[^)]+\)/);
@@ -222,18 +245,18 @@ test("Customer Console announcements keep actionable states without exposing env
 
 test("authenticated Overview shows actionable announcements in every source state", async () => {
   const app = await source("apps/console-ui/src/App.vue");
-  const overviewStart = app.indexOf("<section v-if=\"path === '/console' || path === '/console/overview'\" class=\"overview-layout\"");
-  const overviewEnd = app.indexOf("<section v-else-if=\"path.startsWith('/console/workspace')\"", overviewStart);
+  const overviewStart = app.indexOf("<section v-if=\"isOverviewRoute\" class=\"overview-page\"");
+  const overviewEnd = app.indexOf("workspaceRoute === 'list'", overviewStart);
   const overview = app.slice(overviewStart, overviewEnd);
 
   assert.notEqual(overviewStart, -1);
   assert.notEqual(overviewEnd, -1);
   assert.match(overview, /class="panel overview-announcements"[\s\S]+<h2>公告<\/h2>/);
   assert.match(overview, /loading\.announcements[\s\S]+正在读取公告/);
-  assert.match(overview, /errors\.announcements[\s\S]+@click="loadAnnouncements"/);
-  assert.match(overview, /announcementsUnavailable[\s\S]+@click="loadAnnouncements"/);
+  assert.match(overview, /errors\.announcements[\s\S]+@click="loadAnnouncements\(3\)"/);
+  assert.match(overview, /announcementsUnavailable[\s\S]+@click="loadAnnouncements\(3\)"/);
   assert.match(overview, /announcementsEmpty[\s\S]+暂无公告/);
-  assert.match(overview, /v-else class="announcement-list"[\s\S]+announcement\.title[\s\S]+announcement\.body/);
+  assert.match(overview, /v-else class="compact-announcement-list"[\s\S]+announcement\.title[\s\S]+announcement\.body/);
   assert.match(overview, /formatDate\(announcement\.publishedAt \|\| announcement\.startsAt, true\)/);
   assert.match(overview, /announcement\.read[\s\S]+@click="readAnnouncement\(announcement\.id\)"/);
   assert.doesNotMatch(overview, /announcementsSource\?\.(?:source|status|available|fetchedAt|sourceUpdatedAt)/);
@@ -286,13 +309,13 @@ test("Customer Console source blocks fail independently and remain retryable", a
     assert.match(app, new RegExp(`errors\\.${key}`));
     if (key === "announcements") assert.match(app, /announcementsUnavailable/);
     else assert.match(app, new RegExp(`${sourceName}\\?\\.status === 'unavailable'`));
-    assert.match(app, new RegExp(`@click="${retry}"`));
+    assert.match(app, new RegExp(`@click="${retry}(?:\\(\\))?"`));
   }
 });
 
 test("Customer Console auto renewal stays disabled with an owner reason", async () => {
   const app = await source("apps/console-ui/src/App.vue");
-  const workspaceView = app.slice(app.indexOf("path.startsWith('/console/workspace')"), app.indexOf("<section v-else-if=\"apiRoute\""));
+  const workspaceView = app.slice(app.indexOf("workspaceRoute === 'detail'"), app.indexOf("<section v-else-if=\"apiRoute\""));
 
   assert.match(workspaceView, /自动续费/);
   assert.match(workspaceView, /disabled[^>]*aria-describedby="auto-renew-reason"/);

@@ -3,7 +3,7 @@ import {
   Activity,
   AlertCircle,
   ArrowUpRight,
-  CalendarDays,
+  Ban,
   ChevronLeft,
   ChevronRight,
   CircleDollarSign,
@@ -18,15 +18,22 @@ import {
   RefreshCw,
   Server,
   ShieldCheck,
-  UserRound,
   UsersRound,
   WalletCards,
   X
 } from "@lucide/vue";
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch, type Component } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch, type Component } from "vue";
 
 import { currentSession, login, logoutLocalFirst } from "./api/auth-api.ts";
 import KeysPanel from "./components/keys/KeysPanel.vue";
+import {
+  UiAvatar,
+  UiButton,
+  UiRadioGroup,
+  UiSegmentedControl,
+  UiSelect,
+  UiTooltip
+} from "./components/ui/index.ts";
 import {
   createOperatorAnnouncement,
   createWalletAdjustment,
@@ -60,6 +67,7 @@ import {
   withdrawOperatorAnnouncement
 } from "./api/console-read-api.ts";
 import {
+  findWorkspaceInPages,
   getWorkspaceLaunch,
   getWorkspaceLaunches,
   getWorkspaces,
@@ -121,6 +129,8 @@ import {
   formatUsdMicros,
   maskGatewayKey,
   needsSession,
+  workspaceIdFromPath,
+  workspacePage,
   workspaceStatusLabel
 } from "./console-model.ts";
 
@@ -129,13 +139,30 @@ const terminalStatuses = new Set(["succeeded", "failed", "refunded"]);
 const workspaceLaunchPollIntervalMs = 10_000;
 const workspaceLaunchPollAttempts = 30;
 const secretLifetimeMs = 60_000;
+const usagePeriodOptions = [
+  { value: "today", label: "今日" },
+  { value: "week", label: "本周" },
+  { value: "month", label: "本月" }
+];
+const billingViewOptions = [
+  { value: "terms", label: "Workspace 条款" },
+  { value: "receipts", label: "账单收据" }
+];
+const mobileCustomerMenu = customerMenu
+  .filter((item) => item.id !== "announcements")
+  .map((item) => ({ ...item, mobileLabel: item.id === "workspace" ? "Workspace" : item.label }));
+const mobileAdminMenu = adminMenu.map((item) => ({
+  ...item,
+  mobileLabel: ({ overview: "概览", accounts: "客户", billing: "计费", resources: "资源", system: "系统" } as Record<string, string>)[item.id] || item.label
+}));
+const mobileNavigationQuery = window.matchMedia("(max-width: 820px)");
 
 const path = ref(window.location.pathname);
 const session = ref<AuthSession | null>(null);
 const authStatus = ref(needsSession(path.value) ? "checking" : "public");
 const authError = ref("");
 const workspaceSource = ref<SourceEnvelope<WorkspaceListData> | null>(null);
-const selectedWorkspaceId = ref("");
+const workspaceDetailSource = ref<SourceEnvelope<WorkspaceDTO | null> | null>(null);
 const workspaceStatusSource = ref<SourceEnvelope<WorkspaceRuntimeDTO> | null>(null);
 const walletSource = ref<SourceEnvelope<GatewayWallet> | null>(null);
 const keySource = ref<SourceEnvelope<GatewayKeyPageDTO> | null>(null);
@@ -161,6 +188,8 @@ const launchOperation = ref<WorkspaceLaunchResponse | null>(null);
 const revealedApiKey = ref<GatewayKeySecretDTO | null>(null);
 const revealedWorkspaceCredentials = ref<WorkspaceCredentialAccess | null>(null);
 const gatewayPageNumber = reactive({ page: 1, pages: 0, total: 0, pageSize: 20 });
+const workspacePageNumber = ref(1);
+const workspacePageSize = 10;
 const balanceHistoryPage = ref(1);
 const balanceHistoryPageSize = 20;
 const operatorAccountPage = ref(1);
@@ -171,8 +200,15 @@ const selectedUsageKeyId = ref("");
 const receiptCursor = ref("");
 const receiptCursorStack = ref<string[]>([]);
 const selectedReceiptId = ref("");
+const billingView = ref<"terms" | "receipts">("terms");
+const launchStep = ref<"configure" | "confirm">("configure");
+const launchConfirmed = ref(false);
 const sidebarOpen = ref(false);
-const modal = ref<"workspace" | "admin-user" | "wallet-adjustment" | "announcement" | "">("");
+const isMobileNavigation = ref(mobileNavigationQuery.matches);
+const modal = ref<"admin-user" | "wallet-adjustment" | "announcement" | "">("");
+const modalRoot = ref<HTMLElement | null>(null);
+const launchNameInput = ref<HTMLInputElement | null>(null);
+const launchReviewHeading = ref<HTMLElement | null>(null);
 const mutationBusy = ref(false);
 const gatewayBusy = ref(false);
 const announcementBusy = ref("");
@@ -189,8 +225,8 @@ const walletAdjustmentForm = reactive<WalletAdjustmentRequest>({ kind: "recharge
 const announcementForm = reactive<AnnouncementDraftRequest>({ title: "", body: "", startsAt: "", endsAt: "" });
 const selectedOperatorAccountId = ref("");
 const selectedReview = ref<OperatorReconciliationItemDTO | null>(null);
-const loading = reactive({ workspace: false, runtime: false, wallet: false, keys: false, usage: false, stats: false, accountStats: false, history: false, receipts: false, receiptDetail: false, announcements: false, catalog: false, accounts: false, admin: false, readiness: false, operatorOverview: false, operatorAccounts: false, operatorWorkspaces: false, operatorWorkspaceDetail: false, operatorReconciliation: false, operatorHealth: false, operatorAnnouncements: false, walletAdjustment: false, review: false });
-const errors = reactive({ workspace: "", runtime: "", wallet: "", keys: "", usage: "", stats: "", accountStats: "", history: "", receipts: "", receiptDetail: "", announcements: "", catalog: "", accounts: "", admin: "", readiness: "", operatorOverview: "", operatorAccounts: "", operatorWorkspaces: "", operatorWorkspaceDetail: "", operatorReconciliation: "", operatorHealth: "", operatorAnnouncements: "", walletAdjustment: "", review: "" });
+const loading = reactive({ workspace: false, workspaceDetail: false, runtime: false, wallet: false, keys: false, usage: false, stats: false, accountStats: false, history: false, receipts: false, receiptDetail: false, announcements: false, catalog: false, accounts: false, admin: false, readiness: false, operatorOverview: false, operatorAccounts: false, operatorWorkspaces: false, operatorWorkspaceDetail: false, operatorReconciliation: false, operatorHealth: false, operatorAnnouncements: false, walletAdjustment: false, review: false });
+const errors = reactive({ workspace: "", workspaceDetail: "", runtime: "", wallet: "", keys: "", usage: "", stats: "", accountStats: "", history: "", receipts: "", receiptDetail: "", announcements: "", catalog: "", accounts: "", admin: "", readiness: "", operatorOverview: "", operatorAccounts: "", operatorWorkspaces: "", operatorWorkspaceDetail: "", operatorReconciliation: "", operatorHealth: "", operatorAnnouncements: "", walletAdjustment: "", review: "" });
 let toastTimer: number | undefined;
 let secretTimer: number | undefined;
 let secretRequestGeneration = 0;
@@ -201,6 +237,7 @@ let balanceHistoryRequestGeneration = 0;
 let receiptRequestGeneration = 0;
 let receiptDetailRequestGeneration = 0;
 let launchPollGeneration = 0;
+let workspaceDetailRequestGeneration = 0;
 let workspaceStatusRequestGeneration = 0;
 let workspaceLaunchIntent: { input: WorkspaceLaunchRequest; idempotencyKey: string } | null = null;
 let runtimeRotationIntent: { workspaceId: string; idempotencyKey: string } | null = null;
@@ -210,6 +247,8 @@ let operatorProvisionIntent: { input: ProvisionAccountRequest; idempotencyKey: s
 let billingReviewIntent: { resourceType: string; resourceId: string; input: BillingReviewResolutionRequest; idempotencyKey: string } | null = null;
 let workspaceLaunchRecoveryIntent: { operationId: string; input: WorkspaceLaunchRecoveryRequest; idempotencyKey: string } | null = null;
 let announcementCreateIntent: { input: AnnouncementDraftRequest; idempotencyKey: string } | null = null;
+let modalReturnFocus: HTMLElement | null = null;
+let bodyOverflowBeforeModal = "";
 const operatorDisableIntents = new Map<string, string>();
 const announcementPublishIntents = new Map<string, { input: AnnouncementScheduleRequest; idempotencyKey: string }>();
 const announcementWithdrawIntents = new Map<string, string>();
@@ -217,30 +256,64 @@ const announcementWithdrawIntents = new Map<string, string>();
 const isAdminRoute = computed(() => path.value === "/admin" || path.value.startsWith("/admin/"));
 const isLoginRoute = computed(() => path.value === "/login");
 const isForbidden = computed(() => path.value === "/403");
-const isPublicRoute = computed(() => !needsSession(path.value) && !isLoginRoute.value && !isForbidden.value);
 const isOperator = computed(() => session.value?.isOperator === true);
-const apiRoute = computed(() => path.value === "/console/api" || path.value.startsWith("/console/api/") || path.value.startsWith("/console/gateway"));
-const activeApiPage = computed(() => apiPage(path.value.replace("/console/gateway", "/console/api")));
+const mobileNavigationItems = computed(() => isAdminRoute.value ? mobileAdminMenu : mobileCustomerMenu);
+const normalizedApiPath = computed(() => path.value.replace("/console/gateway", "/console/api").replace(/\/+$/, ""));
+const apiRoute = computed(() => ["/console/api", "/console/api/usage", "/console/api/keys"].includes(normalizedApiPath.value));
+const activeApiPage = computed(() => apiPage(normalizedApiPath.value));
+const workspaceRoute = computed(() => workspacePage(path.value));
+const currentWorkspaceId = computed(() => workspaceIdFromPath(path.value));
+const isOverviewRoute = computed(() => path.value === "/console" || path.value === "/console/overview");
+const isKnownAdminRoute = computed(() => ["/admin", "/admin/overview", "/admin/accounts", "/admin/billing", "/admin/resources", "/admin/system", "/admin/announcements"].includes(path.value.replace(/\/+$/, "")));
+const isKnownRoute = computed(() => path.value === "/" || isLoginRoute.value || isForbidden.value || isOverviewRoute.value
+  || workspaceRoute.value !== null || apiRoute.value || path.value === "/console/billing"
+  || path.value === "/console/announcements" || isKnownAdminRoute.value);
+const isNotFound = computed(() => !isKnownRoute.value);
+const isPublicRoute = computed(() => path.value === "/");
 const plans = computed(() => (catalog.value?.packages || []).filter((plan) => plan.id === "basic" || plan.id === "pro"));
+const workspacePlanOptions = computed(() => plans.value.map((plan) => ({
+  value: plan.id,
+  label: plan.name,
+  description: `${plan.cpu}C / ${plan.memoryGb}GB · ${plan.diskGb}GB · ${typeof previews[plan.id]?.totalChargeUsdMicros === "number" ? `${formatUsdMicros(previews[plan.id]?.totalChargeUsdMicros)}/月` : "价格暂不可用"}`,
+  disabled: !plan.available
+})));
 const selectedPlan = computed(() => plans.value.find((plan) => plan.id === launchForm.packageId && plan.available) || null);
+const selectedPlanStorageGb = computed(() => selectedPlan.value?.diskGb ?? null);
 const selectedPlanPrice = computed(() => {
   const value = selectedPlan.value ? previews[selectedPlan.value.id]?.totalChargeUsdMicros : undefined;
   return typeof value === "number" && Number.isSafeInteger(value) ? value : null;
 });
-const workspaceCanStart = computed(() => !launchOperation.value || isTerminalWorkspaceLaunch(launchOperation.value.status));
-const workspace = computed<WorkspaceDTO | null>(() => {
-  if (!workspaceSource.value?.available) return null;
-  return workspaceSource.value.data.items.find((item) => item.id === selectedWorkspaceId.value) || null;
+const wallet = computed(() => walletSource.value?.available ? walletSource.value.data : null);
+const workspaceLaunchBalanceSufficient = computed(() => {
+  if (!wallet.value || selectedPlanPrice.value === null) return null;
+  try {
+    return BigInt(wallet.value.usdMicros) > BigInt(selectedPlanPrice.value);
+  } catch {
+    return null;
+  }
 });
-const workspacePlan = computed(() => catalog.value?.packages.find((plan) => plan.id === workspace.value?.packageId) || null);
+const workspace = computed<WorkspaceDTO | null>(() => workspaceDetailSource.value?.available ? workspaceDetailSource.value.data : null);
+const workspaceRows = computed(() => workspaceSource.value?.available ? workspaceSource.value.data.items : []);
+const workspacePages = computed(() => workspaceSource.value?.available
+  ? Math.max(1, Math.ceil(workspaceSource.value.data.total / workspaceSource.value.data.pageSize))
+  : 0);
+const overviewPrimaryAction = computed(() => {
+  const runningWorkspace = workspaceRows.value.find((item) => item.state === "running");
+  if (runningWorkspace) return { action: "open" as const, label: "打开 Workspace", workspaceId: runningWorkspace.id };
+  if (workspaceSource.value?.status === "empty") return { action: "create" as const, label: "新建 Workspace", workspaceId: "" };
+  if (errors.workspace || workspaceSource.value?.status === "unavailable") return { action: "retry" as const, label: "重试 Workspace", workspaceId: "" };
+  if (workspaceSource.value?.available && workspaceSource.value.data.total > 0) return { action: "list" as const, label: "查看 Workspace", workspaceId: "" };
+  return { action: "none" as const, label: "", workspaceId: "" };
+});
+const workspaceCanStart = computed(() => !launchOperation.value || isTerminalWorkspaceLaunch(launchOperation.value.status));
 const runtime = computed(() => workspaceStatusSource.value?.available ? workspaceStatusSource.value.data : null);
 const mountCheck = computed(() => runtime.value?.checks.find((check) => check.name === "ready_pod_uses_retained_pvc") || null);
-const wallet = computed(() => walletSource.value?.available ? walletSource.value.data : null);
 const keys = computed(() => keySource.value?.available ? keySource.value.data.items : []);
 const workspaceKeyId = computed(() => workspace.value?.workspaceApiKeyId || "");
 const usage = computed(() => usageSource.value?.available ? usageSource.value.data : null);
 const keyStats = computed(() => usageStatsSource.value?.available ? usageStatsSource.value.data : null);
 const stats = computed(() => accountUsageSource.value?.available ? accountUsageSource.value.data : null);
+const usageKeyOptions = computed(() => keys.value.map((key) => ({ value: key.id, label: key.name })));
 const history = computed(() => balanceHistorySource.value?.available ? balanceHistorySource.value.data.items : []);
 const balanceHistoryPages = computed(() => balanceHistorySource.value?.available ? balanceHistorySource.value.data.pages : 0);
 const receipts = computed(() => receiptsSource.value?.available ? receiptsSource.value.data.receipts : []);
@@ -274,7 +347,7 @@ const operatorHealthRows = computed(() => {
   ] as const;
 });
 const pageTitle = computed(() => {
-  if (path.value.startsWith("/console/workspace")) return "Workspace";
+  if (workspaceRoute.value) return workspaceRoute.value === "new" ? "新建 Workspace" : "Workspace";
   if (apiRoute.value) return "API 服务";
   if (path.value.startsWith("/console/billing")) return "账单";
   if (path.value.startsWith("/console/announcements")) return "公告";
@@ -300,6 +373,71 @@ const launchStatusText = computed(() => {
   return "暂不可用";
 });
 
+function workspaceLaunchStatusLabel(status: string) {
+  return {
+    debit_pending: "等待余额校验",
+    unknown: "结果待确认",
+    insufficient: "余额不足",
+    debited: "已完成扣款",
+    preparing: "正在开通",
+    waiting: "等待服务就绪",
+    retryable: "等待重试",
+    refund_pending: "正在退款",
+    manual_review: "需要人工处理",
+    succeeded: "开通成功",
+    refunded: "已退款",
+    failed: "开通失败"
+  }[status] || status || "暂不可用";
+}
+
+function workspaceLaunchPhaseLabel(phase: string) {
+  return {
+    debit_pending: "正在校验余额与报价",
+    debited: "扣款已确认",
+    key_pending: "正在准备 Workspace Key",
+    compute_fulfilling: "正在准备计算资源",
+    storage_fulfilling: "正在准备存储资源",
+    attaching: "正在挂载存储",
+    secret_writing: "正在配置访问密钥",
+    runtime_starting: "正在启动服务",
+    activating: "正在激活 Workspace",
+    receipt_pending: "正在记录账单",
+    refund_pending: "正在处理退款",
+    succeeded: "开通已完成",
+    refunded: "退款已完成"
+  }[phase] || phase || "暂不可用";
+}
+
+function workspaceStateLabel(state: string) {
+  return ({
+    running: "运行中",
+    provisioning: "开通中",
+    preparing: "准备中",
+    starting: "启动中",
+    unready: "未就绪",
+    stopped: "已停止",
+    suspended: "已暂停",
+    failed: "失败",
+    expired: "已到期",
+    destroyed: "已销毁",
+    not_found: "未找到"
+  } as Record<string, string>)[state] || "暂不可用";
+}
+
+function receiptStatusLabel(status: string) {
+  return ({
+    succeeded: "已完成",
+    completed: "已完成",
+    paid: "已完成",
+    processing: "处理中",
+    pending: "待处理",
+    running: "处理中",
+    refunded: "已退款",
+    failed: "失败",
+    manual_review: "人工复核"
+  } as Record<string, string>)[status] || "暂不可用";
+}
+
 function navigate(next: string) {
   const normalized = next.startsWith("/console/gateway") ? next.replace("/console/gateway", "/console/api") : next;
   window.history.pushState({}, "", normalized);
@@ -307,12 +445,27 @@ function navigate(next: string) {
   sidebarOpen.value = false;
 }
 
+function updateMobileNavigation(event: MediaQueryListEvent) {
+  isMobileNavigation.value = event.matches;
+  if (!event.matches) sidebarOpen.value = false;
+}
+
 function isSensitiveRoute(route: string) {
-  return route.startsWith("/console/api") || route.startsWith("/console/gateway") || route.startsWith("/console/workspace");
+  return route.startsWith("/console/api") || route.startsWith("/console/gateway") || route.startsWith("/console/workspaces");
+}
+
+function openWorkspaceDetail(workspaceId: string) {
+  navigate(`/console/workspaces/${encodeURIComponent(workspaceId)}`);
 }
 
 function openWorkspace() {
   if (workspaceCanOpen.value && runtime.value?.url) window.open(runtime.value.url, "_blank", "noopener,noreferrer");
+}
+
+function selectBillingView(value: string | number) {
+  if (value !== "terms" && value !== "receipts") return;
+  billingView.value = value;
+  if (value === "terms") clearReceiptDetail();
 }
 
 function flash(text: string, tone = "good") {
@@ -332,6 +485,7 @@ function friendlyError(error: unknown): string {
     gateway_key_ambiguous: "API Key 状态异常，请联系管理员",
     monthly_account_unmapped: "API 服务尚未开通",
     authentication_unavailable: "身份服务暂不可用，请稍后重试",
+    workspace_not_found: "Workspace 不存在或无权访问",
     workspace_credentials_unavailable: "Workspace 凭证暂不可用",
     workspace_not_running: "Workspace 尚未就绪",
     upstream_unavailable: "服务暂不可用，请稍后重试"
@@ -360,6 +514,10 @@ function clearSecrets() {
   revealedWorkspaceCredentials.value = null;
 }
 
+function selectLaunchPlan(value: string | number) {
+  if (value === "basic" || value === "pro") launchForm.packageId = value;
+}
+
 function armSecretTimeout() {
   if (secretTimer) window.clearTimeout(secretTimer);
   secretTimer = window.setTimeout(clearSecrets, secretLifetimeMs);
@@ -367,7 +525,7 @@ function armSecretTimeout() {
 
 function secretResponseStillCurrent(generation: number, requestPath: string, userId: string, workspaceId = "") {
   return generation === secretRequestGeneration && path.value === requestPath && session.value?.user.id === userId
-    && (!workspaceId || workspace.value?.id === workspaceId);
+    && (!workspaceId || currentWorkspaceId.value === workspaceId);
 }
 
 function resetSource<K extends keyof typeof errors>(key: K) {
@@ -387,7 +545,6 @@ function currentSessionRequest() {
 function closeModal() {
   if (modal.value === "admin-user") operatorProvisionIntent = null;
   if (modal.value === "announcement") announcementCreateIntent = null;
-  Object.assign(launchForm, { name: "", packageId: "basic" });
   Object.assign(adminUserForm, { email: "", password: "", name: "" });
   Object.assign(walletAdjustmentForm, { kind: "recharge", amountUsd: "", reason: "", confirmationAccountId: "", relatedOperationId: "" });
   Object.assign(announcementForm, { title: "", body: "", startsAt: "", endsAt: "" });
@@ -413,9 +570,10 @@ function clearSessionState() {
   usageStatsRequestGeneration += 1;
   balanceHistoryRequestGeneration += 1;
   receiptRequestGeneration += 1;
+  workspaceDetailRequestGeneration += 1;
   workspaceStatusRequestGeneration += 1;
   workspaceSource.value = null;
-  selectedWorkspaceId.value = "";
+  workspaceDetailSource.value = null;
   workspaceStatusSource.value = null;
   walletSource.value = null;
   keySource.value = null;
@@ -438,13 +596,17 @@ function clearSessionState() {
   walletAdjustmentOperation.value = null;
   launchOperation.value = null;
   launchPollIssue.value = "";
+  launchStep.value = "configure";
+  launchConfirmed.value = false;
   selectedUsageKeyId.value = "";
   Object.assign(gatewayPageNumber, { page: 1, pages: 0, total: 0 });
+  workspacePageNumber.value = 1;
   balanceHistoryPage.value = 1;
   operatorAccountPage.value = 1;
   operatorWorkspacePage.value = 1;
   receiptCursor.value = "";
   receiptCursorStack.value = [];
+  billingView.value = "terms";
   workspaceLaunchIntent = null;
   runtimeRotationIntent = null;
   walletAdjustmentIntent = null;
@@ -467,6 +629,7 @@ function clearSessionState() {
   loginError.value = "";
   loginForm.email = "";
   loginForm.password = "";
+  Object.assign(launchForm, { name: "", packageId: "basic" });
   for (const key of Object.keys(loading) as Array<keyof typeof loading>) loading[key] = false;
   for (const key of Object.keys(errors) as Array<keyof typeof errors>) errors[key] = "";
 }
@@ -477,33 +640,18 @@ function replaceSession(next: AuthSession | null) {
   session.value = next;
 }
 
-async function loadWorkspaces() {
+async function loadWorkspaces(page = workspacePageNumber.value, pageSize = workspacePageSize) {
   const requestStillCurrent = currentSessionRequest();
-  const currentWorkspaceId = selectedWorkspaceId.value || workspace.value?.id || "";
-  const currentRuntimeWorkspaceId = workspaceStatusSource.value?.available ? workspaceStatusSource.value.data.workspaceId : "";
   loading.workspace = true;
   resetSource("workspace");
-  workspaceSource.value = null;
   try {
-    const result = await getWorkspaces();
+    const result = await getWorkspaces(page, pageSize);
     if (!requestStillCurrent()) return;
-    workspaceSource.value = result;
-    if (result.available) {
-      const nextWorkspaceId = result.data.items.some((item) => item.id === currentWorkspaceId)
-        ? currentWorkspaceId
-        : result.data.items[0]?.id || "";
-      if (nextWorkspaceId !== selectedWorkspaceId.value) {
-        clearSecrets();
-        runtimeRotationIntent = null;
-        selectedWorkspaceId.value = nextWorkspaceId;
-      }
-      if (!nextWorkspaceId || currentRuntimeWorkspaceId && currentRuntimeWorkspaceId !== nextWorkspaceId) {
-        workspaceStatusRequestGeneration += 1;
-        workspaceStatusSource.value = null;
-        loading.runtime = false;
-        errors.runtime = "";
-      }
+    if (result.available && (result.data.page !== page || result.data.pageSize !== pageSize)) {
+      throw new Error("workspace_page_mismatch");
     }
+    workspaceSource.value = result;
+    if (result.available) workspacePageNumber.value = result.data.page;
   } catch (error) {
     if (!requestStillCurrent()) return;
     workspaceSource.value = unavailableSource<WorkspaceListData>("control-plane");
@@ -513,47 +661,55 @@ async function loadWorkspaces() {
   }
 }
 
-async function loadWorkspaceStatus() {
+async function loadWorkspaceDetail(workspaceId = currentWorkspaceId.value) {
   const requestStillCurrent = currentSessionRequest();
-  const current = workspace.value;
+  const requestGeneration = ++workspaceDetailRequestGeneration;
+  if (!workspaceId) return;
+  loading.workspaceDetail = true;
+  resetSource("workspaceDetail");
+  workspaceDetailSource.value = unavailableSource<WorkspaceDTO | null>("control-plane");
+  try {
+    const result = await findWorkspaceInPages(workspaceId);
+    if (!requestStillCurrent() || requestGeneration !== workspaceDetailRequestGeneration || currentWorkspaceId.value !== workspaceId) return;
+    if (result.available && result.data !== null && result.data.id !== workspaceId) throw new Error("workspace_detail_identity_mismatch");
+    workspaceDetailSource.value = result;
+  } catch (error) {
+    if (!requestStillCurrent() || requestGeneration !== workspaceDetailRequestGeneration || currentWorkspaceId.value !== workspaceId) return;
+    workspaceDetailSource.value = unavailableSource<WorkspaceDTO | null>("control-plane");
+    errors.workspaceDetail = friendlyError(error);
+  } finally {
+    if (requestStillCurrent() && requestGeneration === workspaceDetailRequestGeneration) loading.workspaceDetail = false;
+  }
+}
+
+async function loadWorkspaceStatus(workspaceId = currentWorkspaceId.value) {
+  const requestStillCurrent = currentSessionRequest();
   const requestGeneration = ++workspaceStatusRequestGeneration;
-  if (!current) {
-    if (workspaceSource.value?.status === "empty") workspaceStatusSource.value = null;
+  if (!workspaceId) {
+    workspaceStatusSource.value = null;
     loading.runtime = false;
     return;
   }
-  const workspaceId = current.id;
   loading.runtime = true;
   resetSource("runtime");
   workspaceStatusSource.value = unavailableSource<WorkspaceRuntimeDTO>("fabric");
   try {
-    const result = await getWorkspaceRuntimeStatus(current.id);
-    if (!requestStillCurrent() || requestGeneration !== workspaceStatusRequestGeneration || workspace.value?.id !== workspaceId) return;
+    const result = await getWorkspaceRuntimeStatus(workspaceId);
+    if (!requestStillCurrent() || requestGeneration !== workspaceStatusRequestGeneration || currentWorkspaceId.value !== workspaceId) return;
+    if (result.available && result.data.workspaceId !== workspaceId) throw new Error("workspace_runtime_identity_mismatch");
     workspaceStatusSource.value = result;
   } catch (error) {
-    if (!requestStillCurrent() || requestGeneration !== workspaceStatusRequestGeneration || workspace.value?.id !== workspaceId) return;
+    if (!requestStillCurrent() || requestGeneration !== workspaceStatusRequestGeneration || currentWorkspaceId.value !== workspaceId) return;
     workspaceStatusSource.value = unavailableSource<WorkspaceRuntimeDTO>("fabric");
     errors.runtime = friendlyError(error);
   } finally { if (requestStillCurrent() && requestGeneration === workspaceStatusRequestGeneration) loading.runtime = false; }
 }
 
-function selectWorkspace(workspaceId: string) {
-  if (!workspaceSource.value?.available || selectedWorkspaceId.value === workspaceId
-    || !workspaceSource.value.data.items.some((item) => item.id === workspaceId)) return;
+function changeWorkspacePage(page: number) {
+  if (page < 1 || workspacePages.value > 0 && page > workspacePages.value || page === workspacePageNumber.value) return;
   clearSecrets();
-  selectedWorkspaceId.value = workspaceId;
-  workspaceStatusRequestGeneration += 1;
-  workspaceStatusSource.value = null;
-  loading.runtime = false;
-  errors.runtime = "";
-  runtimeRotationIntent = null;
-  void loadWorkspaceStatus();
+  void loadWorkspaces(page);
 }
-
-function changeWorkspaceSelection(event: Event) {
-  selectWorkspace((event.target as HTMLSelectElement).value);
-}
-
 async function loadWallet() {
   const requestStillCurrent = currentSessionRequest();
   loading.wallet = true;
@@ -682,7 +838,7 @@ function changeBalanceHistoryPage(page: number) {
   void loadHistory(page);
 }
 
-async function loadReceipts(cursorOrEvent: string | Event = "") {
+async function loadReceipts(cursorOrEvent: string | Event = "", limit = 20) {
   const sessionRequestStillCurrent = currentSessionRequest();
   const cursor = typeof cursorOrEvent === "string" ? cursorOrEvent : receiptCursor.value;
   const generation = ++receiptRequestGeneration;
@@ -694,7 +850,7 @@ async function loadReceipts(cursorOrEvent: string | Event = "") {
   resetSource("receipts");
   receiptsSource.value = unavailableSource<BillingReceiptPage>("ledger");
   try {
-    const result = await getBillingReceipts(cursor);
+    const result = await getBillingReceipts(cursor, limit);
     if (!requestStillCurrent()) return;
     receiptsSource.value = result;
   }
@@ -738,13 +894,14 @@ function previousReceiptPage() {
   void loadReceipts(previousCursor);
 }
 
-async function loadAnnouncements() {
+async function loadAnnouncements(pageSizeOrEvent: number | Event = 20) {
   const requestStillCurrent = currentSessionRequest();
+  const pageSize = typeof pageSizeOrEvent === "number" ? pageSizeOrEvent : 20;
   loading.announcements = true;
   resetSource("announcements");
   announcementsSource.value = unavailableSource<AnnouncementPageDTO>("control-plane");
   try {
-    const result = await getAnnouncements();
+    const result = await getAnnouncements(1, pageSize);
     if (!requestStillCurrent()) return;
     announcementsSource.value = result;
   }
@@ -772,25 +929,40 @@ async function loadCatalog() {
 
 async function loadCustomer() {
   const requestStillCurrent = currentSessionRequest();
+  if (isNotFound.value) return;
   if (apiRoute.value) {
     if (activeApiPage.value === "overview") await Promise.all([loadWallet(), loadAccountUsage(), loadHistory()]);
     else if (activeApiPage.value === "usage") await loadKeys();
     return;
   }
-  if (path.value.startsWith("/console/announcements")) {
+  if (path.value === "/console/announcements") {
     await loadAnnouncements();
     return;
   }
-  if (path.value.startsWith("/console/billing")) {
-    await Promise.all([loadWorkspaces(), loadWallet(), loadAccountUsage(), loadHistory(), loadReceipts()]);
+  if (path.value === "/console/billing") {
+    await Promise.all([loadWorkspaces(1), loadReceipts()]);
     return;
   }
-  const overview = path.value === "/console" || path.value === "/console/overview";
-  await Promise.all(overview
-    ? [loadWorkspaces(), loadWallet(), loadAccountUsage(), loadReceipts(), loadCatalog(), loadAnnouncements()]
-    : [loadWorkspaces(), loadReceipts(), loadCatalog()]);
-  if (!requestStillCurrent()) return;
-  await Promise.all([loadWorkspaceStatus(), recoverWorkspaceLaunch()]);
+  if (isOverviewRoute.value) {
+    await Promise.all([loadWorkspaces(1, 1), loadWallet(), loadAccountUsage(), loadReceipts("", 3), loadAnnouncements(3)]);
+    return;
+  }
+  if (workspaceRoute.value === "list") {
+    await Promise.all([loadWorkspaces(), recoverWorkspaceLaunch()]);
+    return;
+  }
+  if (workspaceRoute.value === "new") {
+    await Promise.all([loadWallet(), loadCatalog(), recoverWorkspaceLaunch()]);
+    return;
+  }
+  if (workspaceRoute.value === "detail") {
+    const workspaceId = currentWorkspaceId.value;
+    workspaceDetailSource.value = null;
+    workspaceStatusSource.value = null;
+    await loadWorkspaceDetail(workspaceId);
+    if (!requestStillCurrent() || !workspaceDetailSource.value?.available || workspaceDetailSource.value.data === null) return;
+    await loadWorkspaceStatus(workspaceId);
+  }
 }
 
 async function loadOperatorOverview() {
@@ -962,10 +1134,15 @@ async function ensureSession(): Promise<boolean> {
 }
 
 async function handleRoute() {
+  if (path.value === "/console/workspace") {
+    navigate("/console/workspaces");
+    return;
+  }
   if (!needsSession(path.value)) { authStatus.value = "public"; return; }
   if (!session.value && !(await ensureSession())) return;
   if (isAdminRoute.value && !isOperator.value) { navigate("/403"); return; }
   authStatus.value = "ready";
+  if (isNotFound.value) return;
   if (isAdminRoute.value) {
     await loadAdmin();
   } else {
@@ -1003,10 +1180,33 @@ async function signOut() {
   }
 }
 
-function openModal(next: "workspace" | "admin-user" | "wallet-adjustment" | "announcement") {
+function openModal(next: "admin-user" | "wallet-adjustment" | "announcement") {
   modal.value = next;
-  if (next === "workspace") launchForm.name = "";
   if (next === "wallet-adjustment") walletAdjustmentForm.confirmationAccountId = selectedOperatorAccountId.value;
+}
+
+function modalFocusableElements() {
+  return Array.from(modalRoot.value?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [href], [tabindex]:not([tabindex="-1"])') || []);
+}
+
+function onModalKeydown(event: KeyboardEvent) {
+  if (event.key === "Escape") {
+    event.preventDefault();
+    closeModal();
+    return;
+  }
+  if (event.key !== "Tab") return;
+  const focusable = modalFocusableElements();
+  if (!focusable.length) return;
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
 }
 
 function sleep(milliseconds: number) {
@@ -1015,6 +1215,7 @@ function sleep(milliseconds: number) {
 
 async function pollWorkspaceLaunch(operationId: string) {
   const requestStillCurrent = currentSessionRequest();
+  const requestPath = path.value;
   const generation = ++launchPollGeneration;
   launchPollIssue.value = "";
   for (let attempt = 0; attempt < workspaceLaunchPollAttempts; attempt += 1) {
@@ -1026,17 +1227,18 @@ async function pollWorkspaceLaunch(operationId: string) {
       launchOperation.value = next;
       if (next.status === "manual_review") return;
       if (isTerminalWorkspaceLaunch(next.status)) {
-        if (next.workspaceId && next.workspaceId !== selectedWorkspaceId.value) {
-          clearSecrets();
-          selectedWorkspaceId.value = next.workspaceId;
-          workspaceStatusRequestGeneration += 1;
-          workspaceStatusSource.value = null;
-          runtimeRotationIntent = null;
+        if (next.status === "succeeded") {
+          await loadWorkspaces();
+          if (!requestStillCurrent()) return;
+          flash("Workspace 已开通");
+          if (next.workspaceId && path.value === requestPath && workspacePage(requestPath) === "new") {
+            openWorkspaceDetail(next.workspaceId);
+          }
+        } else if (next.status === "refunded") {
+          await loadWallet();
+          if (!requestStillCurrent()) return;
+          flash("Workspace 未完成，已退款", "danger");
         }
-        await Promise.all([loadWorkspaces(), loadReceipts()]);
-        await loadWorkspaceStatus();
-        if (next.status === "succeeded") flash("Workspace 已开通");
-        else if (next.status === "refunded") flash("Workspace 未完成，已退款", "danger");
         return;
       }
     } catch (error) {
@@ -1086,6 +1288,21 @@ function sameWorkspaceLaunchRequest(left: WorkspaceLaunchRequest, right: Workspa
   return left.name === right.name && left.packageId === right.packageId && left.sizeGb === right.sizeGb && left.autoRenew === right.autoRenew;
 }
 
+async function reviewWorkspaceLaunch() {
+  if (!launchForm.name.trim() || !selectedPlan.value || selectedPlanPrice.value === null || workspaceLaunchBalanceSufficient.value !== true) return;
+  launchConfirmed.value = false;
+  launchStep.value = "confirm";
+  await nextTick();
+  launchReviewHeading.value?.focus();
+}
+
+async function editWorkspaceLaunch() {
+  launchStep.value = "configure";
+  launchConfirmed.value = false;
+  await nextTick();
+  launchNameInput.value?.focus();
+}
+
 function unknownWorkspaceLaunchResult(error: unknown) {
   const payload = error && typeof error === "object" && "payload" in error
     ? (error as { payload?: unknown }).payload
@@ -1097,7 +1314,7 @@ async function submitWorkspaceLaunch() {
   const requestStillCurrent = currentSessionRequest();
   const plan = selectedPlan.value;
   const name = launchForm.name.trim();
-  if (!plan || selectedPlanPrice.value === null || !name || mutationBusy.value) return;
+  if (launchStep.value !== "confirm" || !launchConfirmed.value || !plan || selectedPlanPrice.value === null || workspaceLaunchBalanceSufficient.value !== true || !name || mutationBusy.value) return;
   mutationBusy.value = true;
   launchBusy.value = true;
   launchOperation.value = null;
@@ -1115,22 +1332,18 @@ async function submitWorkspaceLaunch() {
     if (!requestStillCurrent()) return;
     workspaceLaunchIntent = null;
     launchOperation.value = created;
-    if (created.workspaceId && created.workspaceId !== selectedWorkspaceId.value) {
-      clearSecrets();
-      selectedWorkspaceId.value = created.workspaceId;
-      workspaceStatusRequestGeneration += 1;
-      workspaceStatusSource.value = null;
-      runtimeRotationIntent = null;
-    }
     launchPollIssue.value = "";
-    closeModal();
     if (!terminalStatuses.has(created.status) && created.status !== "manual_review") void pollWorkspaceLaunch(created.operationId);
-    await Promise.all([loadWorkspaces(), loadReceipts()]);
-    if (!requestStillCurrent()) return;
-    await loadWorkspaceStatus();
-    if (!requestStillCurrent()) return;
-    if (launchOperation.value?.status === "succeeded") flash("Workspace 已开通");
-    else if (launchOperation.value?.status === "refunded") flash("Workspace 未完成，已退款", "danger");
+    if (created.status === "succeeded") {
+      await loadWorkspaces();
+      if (!requestStillCurrent()) return;
+      flash("Workspace 已开通");
+      if (created.workspaceId) openWorkspaceDetail(created.workspaceId);
+    } else if (created.status === "refunded") {
+      await loadWallet();
+      if (!requestStillCurrent()) return;
+      flash("Workspace 未完成，已退款", "danger");
+    }
   } catch (error) {
     if (!requestStillCurrent()) return;
     if (!unknownWorkspaceLaunchResult(error)) workspaceLaunchIntent = null;
@@ -1257,8 +1470,30 @@ function operatorHealthText(value: SourceEnvelope<{ ready?: boolean }> | undefin
   return "暂不可用";
 }
 
+function sourceStatusLabel(status?: string) {
+  return ({
+    available: "正常",
+    empty: "暂无数据",
+    unavailable: "暂不可用"
+  } as Record<string, string>)[status] || "暂不可用";
+}
+
 function operatorAnnouncementStatus(status: string) {
   return ({ draft: "草稿", scheduled: "已排期", published: "已发布", withdrawn: "已撤下" } as Record<string, string>)[status] || "暂不可用";
+}
+
+function operatorAccountStatus(status: string) {
+  return ({ active: "正常", disabled: "已停用" } as Record<string, string>)[status] || "暂不可用";
+}
+
+function walletOperationStatus(status: string) {
+  return ({
+    queued: "等待处理",
+    processing: "处理中",
+    succeeded: "已完成",
+    failed: "处理失败",
+    manual_review: "待人工确认"
+  } as Record<string, string>)[status] || "暂不可用";
 }
 
 async function submitWalletAdjustment() {
@@ -1268,7 +1503,7 @@ async function submitWalletAdjustment() {
     flash("请确认账号、金额和原因", "danger");
     return;
   }
-  if (!window.confirm("请再次确认该钱包调整：提交后将写入权威钱包并记录审计。")) return;
+  if (!window.confirm("请再次确认这笔余额操作：提交后会写入客户账户并保留操作记录。")) return;
   const input = { ...walletAdjustmentForm, confirmationAccountId: accountId };
   if (!walletAdjustmentIntent || walletAdjustmentIntent.accountId !== accountId || JSON.stringify(walletAdjustmentIntent.input) !== JSON.stringify(input)) {
     walletAdjustmentIntent = { accountId, input, idempotencyKey: `wallet-adjustment:${crypto.randomUUID()}` };
@@ -1282,7 +1517,7 @@ async function submitWalletAdjustment() {
     if (result.status === "manual_review") flash("结果待确认，已进入人工复核", "danger");
     else {
       walletAdjustmentIntent = null;
-      flash("钱包调整已提交");
+      flash("余额操作已提交");
     }
     await loadAdmin();
     if (result.status !== "manual_review") closeModal();
@@ -1332,7 +1567,7 @@ async function recoverWalletAdjustment() {
     if (result.status === "succeeded") {
       walletAdjustmentRecoveryIntent = null;
       walletAdjustmentIntent = null;
-      flash("钱包调整已确认");
+      flash("余额操作已确认");
     } else {
       flash("恢复结果仍待人工确认", "danger");
     }
@@ -1346,13 +1581,13 @@ async function recoverWalletAdjustment() {
 }
 
 async function disableOperatorAccount(accountId: string) {
-  if (!window.confirm("确认禁用该账号？账号与历史账单仍会保留。")) return;
+  if (!window.confirm("确认停用该客户？账号会立即停用；历史账单、收据和审计记录会保留。")) return;
   const idempotencyKey = operatorDisableIntents.get(accountId) || `account-disable:${accountId}:${crypto.randomUUID()}`;
   operatorDisableIntents.set(accountId, idempotencyKey);
   try {
     await disableOperatorAccountCommand(accountId, "operator_requested", session.value?.csrfToken || "", idempotencyKey);
     operatorDisableIntents.delete(accountId);
-    flash("账号已禁用");
+    flash("客户已停用");
     await loadAdmin();
   } catch (error) { flash(mutationError(error), "danger"); }
 }
@@ -1490,6 +1725,7 @@ function selectPeriod(period: string) {
 
 function refreshCurrentPage() {
   clearSecrets();
+  if (isNotFound.value) return;
   if (isAdminRoute.value) return void loadAdmin();
   void loadCustomer();
 }
@@ -1503,10 +1739,44 @@ function receiptLabel(type: string) {
   return type ? "账单记录" : "暂不可用";
 }
 
+watch(modal, async (value, previous) => {
+  if (value) {
+    modalReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    bodyOverflowBeforeModal = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    await nextTick();
+    (modalRoot.value?.querySelector<HTMLElement>("[data-autofocus]") || modalFocusableElements()[0])?.focus();
+  } else if (previous) {
+    document.body.style.overflow = bodyOverflowBeforeModal;
+    await nextTick();
+    modalReturnFocus?.focus();
+    modalReturnFocus = null;
+  }
+});
+
 watch(path, (next, previous) => {
   if (previous !== next) {
     closeModal();
     if (isSensitiveRoute(previous || "")) clearSecrets();
+    if (workspaceIdFromPath(previous || "") !== workspaceIdFromPath(next)) {
+      workspaceDetailRequestGeneration += 1;
+      workspaceDetailSource.value = null;
+      loading.workspaceDetail = false;
+      errors.workspaceDetail = "";
+      workspaceStatusRequestGeneration += 1;
+      workspaceStatusSource.value = null;
+      loading.runtime = false;
+      errors.runtime = "";
+      runtimeRotationIntent = null;
+    }
+    if (workspacePage(previous || "") === "new" && workspacePage(next) !== "new") {
+      launchPollGeneration += 1;
+      launchPollIssue.value = "";
+      workspaceLaunchIntent = null;
+      Object.assign(launchForm, { name: "", packageId: "basic" });
+      launchStep.value = "configure";
+      launchConfirmed.value = false;
+    }
     if (previous === "/login") {
       loginForm.email = "";
       loginForm.password = "";
@@ -1518,6 +1788,7 @@ watch(path, (next, previous) => {
 onMounted(() => {
   const onPopState = () => { path.value = window.location.pathname; };
   window.addEventListener("popstate", onPopState);
+  mobileNavigationQuery.addEventListener("change", updateMobileNavigation);
   (window as unknown as { __oplPopState?: () => void }).__oplPopState = onPopState;
   void handleRoute();
 });
@@ -1526,6 +1797,8 @@ onBeforeUnmount(() => {
   clearSecrets();
   launchPollGeneration += 1;
   window.removeEventListener("popstate", (window as unknown as { __oplPopState?: () => void }).__oplPopState || (() => {}));
+  mobileNavigationQuery.removeEventListener("change", updateMobileNavigation);
+  document.body.style.overflow = bodyOverflowBeforeModal;
   if (toastTimer) window.clearTimeout(toastTimer);
 });
 </script>
@@ -1544,39 +1817,43 @@ onBeforeUnmount(() => {
   <main v-else-if="isForbidden" class="message-page"><ShieldCheck :size="34" /><h1>无权访问</h1><p>此页面仅对 OPL Cloud 管理员开放。</p><button class="button primary" type="button" @click="navigate('/console/overview')">返回 Console</button></main>
   <main v-else-if="authStatus === 'checking'" class="message-page" aria-live="polite"><span class="spinner" /><p>正在恢复登录...</p></main>
   <main v-else-if="authStatus === 'error'" class="message-page"><AlertCircle :size="34" /><h1>无法恢复登录</h1><p>{{ authError }}</p><button class="button primary" type="button" @click="ensureSession">重试</button></main>
+  <main v-else-if="isNotFound" class="message-page"><AlertCircle :size="34" /><h1>页面不存在</h1><p>该地址无效或页面已移动。</p><button class="button primary" type="button" @click="navigate(session ? '/console/overview' : '/')">返回</button></main>
 
   <div v-else class="app-shell">
-    <button class="mobile-menu" type="button" aria-label="打开导航" @click="sidebarOpen = true"><Menu /></button>
-    <aside class="sidebar" :class="{ open: sidebarOpen }">
+    <button class="mobile-menu" type="button" :disabled="sidebarOpen || Boolean(modal)" aria-controls="console-navigation" :aria-expanded="sidebarOpen" aria-label="打开导航" @click="sidebarOpen = true"><Menu /></button>
+    <aside id="console-navigation" class="sidebar" :class="{ open: sidebarOpen }" :inert="Boolean(modal)">
       <div class="sidebar-head"><a href="/console/overview" class="brand" @click.prevent="navigate('/console/overview')"><img src="/opl-app-icon.png" alt="" /><strong>OPL Console</strong></a><button class="sidebar-close" type="button" aria-label="关闭导航" @click="sidebarOpen = false"><X /></button></div>
       <nav class="side-nav" aria-label="主导航">
         <template v-for="item in customerMenu" :key="item.path">
-          <a :href="item.path" :class="{ active: item.id === 'api' ? apiRoute : path === item.path || (item.id === 'overview' && path === '/console') }" @click.prevent="navigate(item.path)"><component :is="menuIcons[item.icon]" :size="19" />{{ item.label }}</a>
+          <a :href="item.path" :class="{ active: item.id === 'api' ? apiRoute : item.id === 'workspace' ? workspaceRoute !== null : path === item.path || (item.id === 'overview' && path === '/console') }" @click.prevent="navigate(item.path)"><component :is="menuIcons[item.icon]" :size="19" />{{ item.label }}</a>
           <div v-if="item.id === 'api' && apiRoute" class="side-subnav"><a v-for="child in apiMenu" :key="child.path" :href="child.path" :class="{ active: activeApiPage === child.id }" @click.prevent="navigate(child.path)">{{ child.label }}</a></div>
         </template>
-        <div v-if="isOperator" class="operator-nav"><div class="side-subnav"><a v-for="item in adminMenu" :key="item.path" :href="item.path" :class="{ active: path === item.path || (item.id === 'overview' && path === '/admin') }" @click.prevent="navigate(item.path)"><component :is="menuIcons[item.icon]" :size="16" />{{ item.label }}</a></div></div>
+        <div v-if="isOperator" class="operator-nav"><p class="nav-section-label">Admin</p><div class="admin-nav-links"><a v-for="item in adminMenu" :key="item.path" :href="item.path" :class="{ active: path === item.path || (item.id === 'overview' && path === '/admin') }" @click.prevent="navigate(item.path)"><component :is="menuIcons[item.icon]" :size="17" />{{ item.label }}</a></div></div>
       </nav>
-      <div class="sidebar-account"><UserRound :size="18" /><span><strong>{{ session?.user.email }}</strong><small>{{ isOperator ? "管理员" : "用户" }}</small></span><button type="button" aria-label="退出登录" title="退出登录" @click="signOut"><LogOut :size="17" /></button></div>
+      <div class="sidebar-account"><span class="account-avatar-wrap"><UiAvatar :name="session?.user.email || ''" color="primary" :size="30" /><i v-if="isOperator" class="account-online-dot" aria-label="在线" /></span><span><strong>{{ session?.user.email }}</strong><small>{{ isOperator ? "客户管理员" : "客户用户" }}</small></span><button type="button" aria-label="退出登录" title="退出登录" @click="signOut"><LogOut :size="17" /></button></div>
     </aside>
     <button v-if="sidebarOpen" class="sidebar-scrim" type="button" aria-label="关闭导航" @click="sidebarOpen = false" />
 
-    <section class="main-column"><header class="topbar"><h1>{{ pageTitle }}</h1><button class="icon-button" type="button" title="刷新" aria-label="刷新" @click="refreshCurrentPage"><RefreshCw :size="17" /></button></header>
+    <section class="main-column" :inert="Boolean(modal) || (sidebarOpen && isMobileNavigation)"><header class="topbar"><div class="topbar-title"><h1>{{ pageTitle }}</h1></div><div class="topbar-actions"><UiTooltip text="刷新当前页面"><UiButton class="icon-button" variant="outline" color="secondary" size="sm" aria-label="刷新" @click="refreshCurrentPage"><RefreshCw :size="17" /></UiButton></UiTooltip></div></header>
       <div v-if="isAdminRoute" class="page-content">
         <div v-if="loading.admin && !operatorOverviewSource" class="loading-panel"><span class="spinner" />正在加载运维数据...</div>
         <div v-else-if="errors.admin && !operatorOverviewSource" class="empty-panel"><AlertCircle /><p>{{ errors.admin }}</p><button class="button secondary" type="button" @click="loadAdmin">重试</button></div>
         <template v-else>
           <div v-if="errors.admin" class="inline-error"><AlertCircle :size="17" />{{ errors.admin }}<button type="button" @click="loadAdmin">重试</button></div>
           <section v-if="path === '/admin' || path === '/admin/overview'" class="admin-dashboard">
-            <div class="metric-row operator-metrics">
-              <article><UsersRound /><span>计费账户<strong>{{ operatorSourceText(operatorOverview?.accounts, (data) => formatCount(data.total)) }}</strong></span></article>
-              <article><WalletCards /><span>钱包余额<strong>{{ operatorSourceText(operatorOverview?.wallet, (data) => formatUsdMicros(data.usdMicros)) }}</strong></span></article>
-              <article><Activity /><span>API 用量<strong>{{ operatorSourceText(operatorOverview?.usage, (data) => formatUsdMicros(data.totalActualCostUsdMicros)) }}</strong></span></article>
-              <article><AlertCircle /><span>待复核<strong>{{ operatorSourceText(operatorOverview?.reconciliation, (data) => formatCount(data.total)) }}</strong></span></article>
-            </div>
-            <section class="panel"><div class="panel-title"><h2>运维概览</h2><button class="button primary" type="button" @click="openModal('wallet-adjustment')"><WalletCards :size="16" />钱包调整</button></div><p class="source-note">每个指标保留权威来源状态；不可用不会被当作零值。</p><div v-if="errors.operatorOverview" class="inline-error"><AlertCircle :size="17" />{{ errors.operatorOverview }}<button type="button" @click="loadAdmin">重试</button></div><div v-else-if="operatorOverviewSource?.status === 'unavailable'" class="empty-panel">概览暂不可用 <button class="text-button" type="button" @click="loadAdmin">重试</button></div><div v-else class="table-wrap"><table><thead><tr><th>来源</th><th>状态</th><th>最近读回</th></tr></thead><tbody><tr><td>账号与映射</td><td>{{ operatorOverview?.accounts?.status || "暂不可用" }}</td><td>{{ operatorOverview?.accounts?.fetchedAt ? formatDate(operatorOverview.accounts.fetchedAt, true) : "暂不可用" }}</td></tr><tr><td>资源与 Workspace</td><td>{{ operatorOverview?.resources?.status || "暂不可用" }}</td><td>{{ operatorOverview?.resources?.fetchedAt ? formatDate(operatorOverview.resources.fetchedAt, true) : "暂不可用" }}</td></tr><tr><td>健康</td><td>{{ operatorOverview?.health?.status || "暂不可用" }}</td><td>{{ operatorOverview?.health?.fetchedAt ? formatDate(operatorOverview.health.fetchedAt, true) : "暂不可用" }}</td></tr></tbody></table></div></section>
+            <section class="account-band admin-account-band">
+              <div class="account-band-copy"><p class="eyebrow">OPL Admin</p><h2>运营概览</h2><p>客户、计费与系统状态。</p></div>
+              <div class="band-metrics operator-metrics">
+                <article class="band-metric"><span>计费账户</span><strong>{{ operatorSourceText(operatorOverview?.accounts, (data) => formatCount(data.total)) }}</strong><small>客户账户</small></article>
+                <article class="band-metric available-metric"><span>账户余额</span><strong>{{ operatorSourceText(operatorOverview?.wallet, (data) => formatUsdMicros(data.usdMicros)) }}</strong><small>当前余额</small></article>
+                <article class="band-metric"><span>API 用量</span><strong>{{ operatorSourceText(operatorOverview?.usage, (data) => formatUsdMicros(data.totalActualCostUsdMicros)) }}</strong><small>实际费用</small></article>
+                <article class="band-metric"><span>待复核</span><strong>{{ operatorSourceText(operatorOverview?.reconciliation, (data) => formatCount(data.total)) }}</strong><small>需处理事项</small></article>
+              </div>
+            </section>
+            <section class="panel"><div class="panel-title"><h2>运维概览</h2><button class="button primary" type="button" @click="openModal('wallet-adjustment')"><WalletCards :size="16" />余额操作</button></div><p class="source-note">状态来自当前服务读取；不可用不会显示为零。</p><div v-if="errors.operatorOverview" class="inline-error"><AlertCircle :size="17" />{{ errors.operatorOverview }}<button type="button" @click="loadAdmin">重试</button></div><div v-else-if="operatorOverviewSource?.status === 'unavailable'" class="empty-panel">概览暂不可用 <button class="text-button" type="button" @click="loadAdmin">重试</button></div><div v-else class="table-wrap"><table><thead><tr><th>来源</th><th>状态</th><th>最近读回</th></tr></thead><tbody><tr><td>账号与映射</td><td>{{ sourceStatusLabel(operatorOverview?.accounts?.status) }}</td><td>{{ operatorOverview?.accounts?.fetchedAt ? formatDate(operatorOverview.accounts.fetchedAt, true) : "暂不可用" }}</td></tr><tr><td>资源与 Workspace</td><td>{{ sourceStatusLabel(operatorOverview?.resources?.status) }}</td><td>{{ operatorOverview?.resources?.fetchedAt ? formatDate(operatorOverview.resources.fetchedAt, true) : "暂不可用" }}</td></tr><tr><td>健康</td><td>{{ sourceStatusLabel(operatorOverview?.health?.status) }}</td><td>{{ operatorOverview?.health?.fetchedAt ? formatDate(operatorOverview.health.fetchedAt, true) : "暂不可用" }}</td></tr></tbody></table></div></section>
             <section class="panel"><div class="panel-title"><h2>公告</h2><button class="button secondary" type="button" @click="openModal('announcement')"><Plus :size="16" />新建草稿</button></div><div v-if="loading.operatorAnnouncements" class="loading-panel"><span class="spinner" />正在读取公告...</div><div v-else-if="errors.operatorAnnouncements" class="inline-error"><AlertCircle :size="17" />{{ errors.operatorAnnouncements }}<button type="button" @click="loadAdmin">重试</button></div><div v-else-if="operatorAnnouncementsSource?.status === 'unavailable'" class="empty-panel">公告暂不可用 <button class="text-button" type="button" @click="loadAdmin">重试</button></div><div v-else-if="operatorAnnouncementsSource?.status === 'empty'" class="empty-panel">暂无公告</div><div v-else class="announcement-list"><article v-for="announcement in operatorAnnouncementRows" :key="announcement.id" class="announcement-item"><header><div><h3>{{ announcement.title }}</h3><span>{{ operatorAnnouncementStatus(announcement.status) }}</span></div><span>{{ formatDate(announcement.updatedAt, true) }}</span></header><p>{{ announcement.body }}</p><footer class="table-actions"><button v-if="announcement.status === 'draft' || announcement.status === 'scheduled'" class="text-button" type="button" @click="publishOperatorAnnouncementAction(announcement.id)">发布</button><button v-if="announcement.status === 'published'" class="text-button danger-text" type="button" @click="withdrawOperatorAnnouncementAction(announcement.id)">撤下</button></footer></article></div></section>
           </section>
-          <section v-else-if="path.startsWith('/admin/accounts')" class="panel"><div class="panel-title"><h2>客户与计费账户</h2><button class="button primary" type="button" @click="openModal('admin-user')"><Plus :size="16" />开通用户</button></div><div v-if="loading.operatorAccounts" class="loading-panel"><span class="spinner" />正在读取账号...</div><div v-else-if="errors.operatorAccounts" class="inline-error"><AlertCircle :size="17" />{{ errors.operatorAccounts }}<button type="button" @click="loadAdmin">重试</button></div><div v-else-if="operatorAccountsPageSource?.status === 'unavailable'" class="empty-panel">账号暂不可用 <button class="text-button" type="button" @click="loadAdmin">重试</button></div><div v-else-if="operatorAccountsPageSource?.status === 'empty'" class="empty-panel">暂无用户</div><div v-else class="table-wrap"><table><thead><tr><th>邮箱</th><th>计费账户编号</th><th>映射</th><th>余额</th><th>Key 数</th><th>用量</th><th>Workspace</th><th>状态</th><th>操作</th></tr></thead><tbody><tr v-for="account in operatorAccountRows" :key="account.accountId"><td>{{ account.email }} <span v-if="account.role === 'admin'" class="status-pill good">管理员</span></td><td>{{ account.accountId }}</td><td>{{ operatorSourceText(account.gatewayIdentity, (data) => data.userId) }}</td><td>{{ operatorSourceText(account.wallet, (data) => formatUsdMicros(data.usdMicros)) }}</td><td>{{ operatorSourceText(account.keyCount, formatCount) }}</td><td>{{ operatorSourceText(account.usage, (data) => formatUsdMicros(data.totalActualCostUsdMicros)) }}</td><td>{{ operatorSourceText(account.workspaceCount, formatCount) }}</td><td>{{ account.status }}</td><td class="table-actions"><button class="text-button" type="button" @click="selectedOperatorAccountId = account.accountId; walletAdjustmentForm.confirmationAccountId = account.accountId; openModal('wallet-adjustment')">调整钱包</button><button v-if="account.status === 'active' && account.accountId !== 'acct-admin'" class="text-button danger-text" type="button" @click="disableOperatorAccount(account.accountId)">禁用</button></td></tr></tbody></table></div></section>
+          <section v-else-if="path.startsWith('/admin/accounts')" class="panel"><div class="panel-title operator-accounts-panel-title"><div class="operator-accounts-title"><h2>客户与计费账户</h2></div><button class="button primary" type="button" @click="openModal('admin-user')"><Plus :size="16" />开通用户</button></div><div v-if="loading.operatorAccounts" class="loading-panel"><span class="spinner" />正在读取账号...</div><div v-else-if="errors.operatorAccounts" class="inline-error"><AlertCircle :size="17" />{{ errors.operatorAccounts }}<button type="button" @click="loadAdmin">重试</button></div><div v-else-if="operatorAccountsPageSource?.status === 'unavailable'" class="empty-panel">账号暂不可用 <button class="text-button" type="button" @click="loadAdmin">重试</button></div><div v-else-if="operatorAccountsPageSource?.status === 'empty'" class="empty-panel">暂无用户</div><div v-else-if="operatorAccountRows.length === 0" class="empty-panel">当前页暂无客户</div><div v-else class="table-wrap"><table><thead><tr><th>邮箱</th><th>计费账户编号</th><th>映射</th><th>余额</th><th>Key 数</th><th>用量</th><th>Workspace</th><th>状态</th><th>操作</th></tr></thead><tbody><tr v-for="account in operatorAccountRows" :key="account.accountId"><td>{{ account.email }} <span v-if="account.role === 'admin'" class="status-pill good">管理员</span></td><td>{{ account.accountId }}</td><td>{{ operatorSourceText(account.gatewayIdentity, (data) => data.userId) }}</td><td>{{ operatorSourceText(account.wallet, (data) => formatUsdMicros(data.usdMicros)) }}</td><td>{{ operatorSourceText(account.keyCount, formatCount) }}</td><td>{{ operatorSourceText(account.usage, (data) => formatUsdMicros(data.totalActualCostUsdMicros)) }}</td><td>{{ operatorSourceText(account.workspaceCount, formatCount) }}</td><td><span class="status-pill" :class="{ good: account.status === 'active' }">{{ operatorAccountStatus(account.status) }}</span></td><td class="table-actions"><button class="text-button" type="button" @click="selectedOperatorAccountId = account.accountId; walletAdjustmentForm.confirmationAccountId = account.accountId; openModal('wallet-adjustment')">余额操作</button><button v-if="account.status === 'active' && account.accountId !== 'acct-admin'" class="text-button danger-text" type="button" @click="disableOperatorAccount(account.accountId)"><Ban :size="15" />停用</button><span v-else-if="account.accountId === 'acct-admin'" class="account-read-only">仅查看</span></td></tr></tbody></table></div></section>
           <section v-else-if="path.startsWith('/admin/billing')" class="panel"><div class="panel-title"><h2>计费复核</h2></div><div v-if="loading.operatorReconciliation" class="loading-panel"><span class="spinner" />正在读取复核项...</div><div v-else-if="errors.operatorReconciliation" class="inline-error"><AlertCircle :size="17" />{{ errors.operatorReconciliation }}<button type="button" @click="loadAdmin">重试</button></div><div v-else-if="operatorReconciliationSource?.status === 'unavailable'" class="empty-panel">复核数据暂不可用 <button class="text-button" type="button" @click="loadAdmin">重试</button></div><div v-else-if="operatorReconciliationSource?.status === 'empty'" class="empty-panel">暂无待复核项目</div><div v-else class="table-wrap"><table><thead><tr><th>资源类型</th><th>状态</th><th>operation</th><th>Receipt</th><th>操作</th></tr></thead><tbody><tr v-for="item in operatorReconciliationRows" :key="item.id"><td>{{ item.resourceType }}</td><td>{{ item.status }}</td><td>{{ item.operationRef || "暂不可用" }}</td><td>{{ item.receiptRef || "暂不可用" }}</td><td><button v-if="item.status === 'manual_review' && item.allowedActions.includes('recover_workspace_launch')" class="text-button" type="button" @click="selectedReview = item; resolveOperatorReview()">恢复 Launch</button><button v-else-if="item.status === 'manual_review' && item.allowedActions.includes('resolve_billing_review')" class="text-button" type="button" @click="selectedReview = item; resolveOperatorReview()">人工复核</button><span v-else>暂不可用</span></td></tr></tbody></table></div></section>
           <section v-else-if="path.startsWith('/admin/resources')" class="admin-dashboard">
             <section class="panel">
@@ -1623,45 +1900,164 @@ onBeforeUnmount(() => {
       </div>
 
       <div v-else class="page-content">
-          <div v-if="errors.catalog && !workspace && (path === '/console' || path === '/console/overview' || path.startsWith('/console/workspace'))" class="inline-error"><AlertCircle :size="17" />计划与价格暂不可用<button type="button" @click="loadCatalog">重试</button></div>
-          <section v-if="path === '/console' || path === '/console/overview'" class="overview-layout">
-            <div class="overview-main">
-              <section class="panel workspace-panel"><div class="workspace-heading"><div><span class="section-label">Workspace</span><h2>{{ workspace?.name || (workspaceSource?.status === 'empty' ? "暂无 Workspace" : "暂不可用") }}<span v-if="runtime" class="status-pill" :class="{ good: workspaceCanOpen }">{{ workspaceStatusLabel(runtime) }}</span></h2></div><button v-if="workspace" class="button primary" type="button" :disabled="!workspaceCanOpen" @click="openWorkspace">打开 Workspace <ArrowUpRight :size="16" /></button><button v-else-if="workspaceCanStart" class="button primary" type="button" :disabled="loading.workspace || !workspaceSource || workspaceSource.status === 'unavailable' || !plans.length" @click="openModal('workspace')"><Plus :size="16" />开通 Workspace</button></div><div v-if="loading.workspace" class="loading-panel"><span class="spinner" />正在加载 Workspace...</div><div v-else-if="errors.workspace" class="inline-error"><AlertCircle :size="17" />{{ errors.workspace }}<button type="button" @click="loadWorkspaces">重试</button></div><div v-if="launchStatusText" class="inline-notice"><span>{{ launchStatusText }}</span><button v-if="launchPollIssue" class="text-button" type="button" @click="retryWorkspaceLaunchPoll">重试</button></div></section>
-              <div v-if="loading.wallet" class="loading-panel"><span class="spinner" />正在读取余额...</div><div v-else-if="errors.wallet" class="inline-error"><AlertCircle :size="17" />{{ errors.wallet }}<button type="button" @click="loadWallet">重试</button></div><div v-else-if="walletSource?.status === 'unavailable'" class="empty-panel">余额暂不可用 <button class="text-button" type="button" @click="loadWallet">重试</button></div>
-              <section class="metric-row"><article><WalletCards /><span>可用余额<strong>{{ wallet ? formatAvailableBalance({ ...wallet, available: true }) : "暂不可用" }}</strong></span></article><article><Activity /><span>AI 用量<strong>{{ stats ? formatUsdMicros(stats.totalActualCostUsdMicros) : "暂不可用" }}</strong></span></article><article><ReceiptText /><span>交易记录<strong>{{ receiptsSource?.available ? formatCount(receipts.length) : "暂不可用" }}</strong></span></article></section>
-              <section class="panel overview-announcements"><div class="panel-title"><h2>公告</h2><button class="icon-button" type="button" title="刷新" aria-label="刷新公告" :disabled="loading.announcements" @click="loadAnnouncements"><RefreshCw :size="16" /></button></div><div v-if="loading.announcements" class="loading-panel"><span class="spinner" />正在读取公告...</div><div v-else-if="errors.announcements" class="inline-error"><AlertCircle :size="17" />{{ errors.announcements }}<button type="button" @click="loadAnnouncements">重试</button></div><div v-else-if="announcementsUnavailable" class="empty-panel">暂不可用 <button class="text-button" type="button" @click="loadAnnouncements">重试</button></div><div v-else-if="announcementsEmpty" class="empty-panel">暂无公告</div><div v-else class="announcement-list"><article v-for="announcement in announcements" :key="announcement.id" class="announcement-item"><header><div><h3>{{ announcement.title }}</h3><span>{{ formatDate(announcement.publishedAt || announcement.startsAt, true) }}</span></div><span class="status-pill" :class="{ good: announcement.read }">{{ announcement.read ? "已读" : "未读" }}</span></header><p>{{ announcement.body }}</p><button v-if="!announcement.read" class="button secondary" type="button" :disabled="announcementBusy === announcement.id" @click="readAnnouncement(announcement.id)">{{ announcementBusy === announcement.id ? "处理中..." : "标记已读" }}</button></article></div></section>
+          <section v-if="isOverviewRoute" class="overview-page">
+            <section class="account-band overview-band">
+              <div class="account-band-copy">
+                <h2>账户概览</h2>
+                <button v-if="overviewPrimaryAction.action === 'open'" class="button primary account-band-action" type="button" @click="openWorkspaceDetail(overviewPrimaryAction.workspaceId)">{{ overviewPrimaryAction.label }}<ArrowUpRight :size="16" /></button>
+                <button v-else-if="overviewPrimaryAction.action === 'create'" class="button primary account-band-action" type="button" @click="navigate('/console/workspaces/new')"><Plus :size="16" />{{ overviewPrimaryAction.label }}</button>
+                <button v-else-if="overviewPrimaryAction.action === 'retry'" class="button primary account-band-action" type="button" @click="loadWorkspaces(1, 1)"><RefreshCw :size="16" />{{ overviewPrimaryAction.label }}</button>
+                <button v-else-if="overviewPrimaryAction.action === 'list'" class="button primary account-band-action" type="button" @click="navigate('/console/workspaces')">{{ overviewPrimaryAction.label }}<ChevronRight :size="16" /></button>
+              </div>
+              <div class="metric-row overview-metrics" aria-label="账户概览">
+                <article class="band-metric available-metric"><span>可用余额<strong>{{ wallet ? formatAvailableBalance({ ...wallet, available: true }) : "暂不可用" }}</strong><small>API 服务账户</small></span></article>
+                <article class="band-metric"><span>本月 API 费用<strong>{{ stats ? formatUsdMicros(stats.totalActualCostUsdMicros) : "暂不可用" }}</strong><small>实际结算</small></span></article>
+                <article class="band-metric"><span>Workspace 总数<strong>{{ workspaceSource?.available ? formatCount(workspaceSource.data.total) : "暂不可用" }}</strong><small>服务端总数</small></span></article>
+              </div>
+            </section>
+            <div v-if="loading.wallet || loading.accountStats" class="overview-source-status compact-status" aria-live="polite"><span class="spinner" />正在更新账户数据...</div>
+            <div v-if="errors.wallet" class="inline-error"><AlertCircle :size="17" />{{ errors.wallet }}<button type="button" @click="loadWallet">重试</button></div>
+            <div v-if="errors.accountStats" class="inline-error"><AlertCircle :size="17" />{{ errors.accountStats }}<button type="button" @click="loadAccountUsage">重试</button></div>
+
+            <div class="overview-grid">
+              <section class="panel overview-workspaces">
+                <div class="panel-title"><div><h2>Workspace 状态</h2></div><button class="text-button" type="button" @click="navigate('/console/workspaces')">查看全部</button></div>
+                <div class="table-wrap overview-workspace-table"><table><thead><tr><th>Workspace</th><th>套餐</th><th>状态</th><th>已付至</th><th aria-label="详情" /></tr></thead><tbody v-if="workspaceRows.length"><tr v-for="item in workspaceRows" :key="item.id"><td><a :href="`/console/workspaces/${encodeURIComponent(item.id)}`" @click.prevent="openWorkspaceDetail(item.id)"><strong>{{ item.name || item.id }}</strong><small>{{ item.id }}</small></a></td><td>{{ item.packageId ? item.packageId.toUpperCase() : "暂不可用" }}</td><td><span class="status-pill" :class="{ good: item.state === 'running' }">{{ workspaceStateLabel(item.state) }}</span></td><td>{{ formatDate(item.paidThrough) }}</td><td><ChevronRight :size="16" /></td></tr></tbody><tbody v-else><tr><td colspan="5" class="overview-table-state"><span v-if="loading.workspace"><span class="spinner" />正在读取 Workspace...</span><span v-else-if="errors.workspace"><AlertCircle :size="16" />{{ errors.workspace }} <button class="text-button" type="button" @click="loadWorkspaces(1, 1)">重试</button></span><span v-else-if="workspaceSource?.status === 'unavailable'">Workspace 暂不可用 <button class="text-button" type="button" @click="loadWorkspaces(1, 1)">重试</button></span><span v-else-if="workspaceSource?.status === 'empty'" class="overview-empty-state"><strong>暂无 Workspace</strong><small>创建后，运行状态和到期时间会显示在这里。</small></span><span v-else>Workspace 暂不可用</span></td></tr></tbody></table></div>
+              </section>
+
+              <section class="panel overview-receipts">
+                <div class="panel-title"><div><p class="eyebrow">账单</p><h2>最近账单</h2></div><button class="text-button" type="button" @click="navigate('/console/billing')">全部</button></div>
+                <div v-if="loading.receipts" class="compact-status"><span class="spinner" />正在读取账单...</div>
+                <div v-else-if="errors.receipts" class="inline-error"><AlertCircle :size="17" />{{ errors.receipts }}<button type="button" @click="loadReceipts('', 3)">重试</button></div>
+                <div v-else-if="receiptsSource?.status === 'unavailable'" class="compact-empty">账单暂不可用 <button class="text-button" type="button" @click="loadReceipts('', 3)">重试</button></div>
+                <div v-else-if="receiptsSource?.status === 'empty'" class="compact-empty">暂无账单</div>
+                <div v-else class="overview-receipt-list">
+                  <button v-for="receipt in receipts" :key="receipt.receiptId" type="button" @click="navigate('/console/billing')">
+                    <span><strong>{{ receiptLabel(receipt.type) }}</strong><small>{{ formatDate(receipt.createdAt, true) }}</small></span>
+                    <span><strong>{{ formatUsdMicros(receipt.refundUsdMicros ?? receipt.chargeUsdMicros ?? receipt.totalUsdMicros) }}</strong><small>{{ receiptStatusLabel(receipt.status) }}</small></span>
+                    <ChevronRight :size="18" />
+                  </button>
+                </div>
+              </section>
+
+              <section class="panel overview-announcements">
+                <div class="panel-title"><div><h2>公告</h2></div><button class="icon-button" type="button" title="刷新" aria-label="刷新公告" :disabled="loading.announcements" @click="loadAnnouncements(3)"><RefreshCw :size="16" /></button></div>
+                <div v-if="loading.announcements" class="compact-status"><span class="spinner" />正在读取公告...</div>
+                <div v-else-if="errors.announcements" class="inline-error"><AlertCircle :size="17" />{{ errors.announcements }}<button type="button" @click="loadAnnouncements(3)">重试</button></div>
+                <div v-else-if="announcementsUnavailable" class="compact-empty">公告暂不可用 <button class="text-button" type="button" @click="loadAnnouncements(3)">重试</button></div>
+                <div v-else-if="announcementsEmpty" class="compact-empty">暂无公告</div>
+                <div v-else class="compact-announcement-list">
+                  <article v-for="announcement in announcements" :key="announcement.id">
+                    <div><strong>{{ announcement.title }}</strong><small>{{ formatDate(announcement.publishedAt || announcement.startsAt, true) }}</small></div>
+                    <p>{{ announcement.body }}</p>
+                    <button v-if="!announcement.read" class="text-button" type="button" :disabled="announcementBusy === announcement.id" @click="readAnnouncement(announcement.id)">{{ announcementBusy === announcement.id ? "处理中..." : "标记已读" }}</button>
+                  </article>
+                </div>
+              </section>
             </div>
-            <aside class="overview-rail panel"><div><ShieldCheck /><span>Workspace 状态<strong>{{ workspaceSource?.status === 'empty' ? "暂无 Runtime 数据" : runtime ? workspaceStatusLabel(runtime) : "暂不可用" }}</strong></span></div><div><CircleDollarSign /><span>Workspace 月费<strong>{{ typeof workspace?.totalUsdMicros === "number" ? formatUsdMicros(workspace.totalUsdMicros) : "暂不可用" }}</strong></span></div><div><CalendarDays /><span>计费周期<strong>{{ workspace?.periodStart && workspace?.paidThrough ? `${formatDate(workspace.periodStart)} 至 ${formatDate(workspace.paidThrough)}` : "暂不可用" }}</strong></span></div><button type="button" @click="navigate('/console/api')"><Server /><span>查看 API 服务</span><ChevronRight /></button></aside>
           </section>
 
-          <section v-else-if="path.startsWith('/console/workspace')" class="workspace-page">
-            <section class="panel">
-              <div class="panel-title"><h2>Workspace</h2><div class="workspace-actions"><button v-if="workspace && workspaceCanOpen" class="button primary" type="button" @click="openWorkspace">打开 Workspace <ArrowUpRight :size="16" /></button><button v-if="workspaceCanStart" class="button secondary" type="button" :disabled="loading.workspace || !workspaceSource || workspaceSource.status === 'unavailable' || !plans.length" @click="openModal('workspace')"><Plus :size="16" />{{ workspace ? "新建 Workspace" : "开通 Workspace" }}</button></div></div>
-              <div v-if="launchStatusText" class="inline-notice"><span>{{ launchStatusText }}</span><button v-if="launchPollIssue" class="text-button" type="button" @click="retryWorkspaceLaunchPoll">重试</button></div>
+          <section v-else-if="workspaceRoute === 'list'" class="workspace-list-page">
+            <div class="page-toolbar">
+              <p>{{ workspaceSource?.available ? `共 ${formatCount(workspaceSource.data.total)} 个 Workspace` : "管理已开通的 Workspace" }}</p>
+              <button class="button primary" type="button" @click="navigate('/console/workspaces/new')"><Plus :size="16" />新建 Workspace</button>
+            </div>
+            <div v-if="launchStatusText" class="inline-notice"><span>{{ launchStatusText }}</span><button v-if="launchPollIssue" class="text-button" type="button" @click="retryWorkspaceLaunchPoll">重试</button></div>
+            <section class="panel workspace-list-panel">
+              <div class="workspace-list-head" aria-hidden="true"><span>Workspace</span><span>套餐</span><span>状态</span><span>已付至</span><span /></div>
               <div v-if="loading.workspace" class="loading-panel"><span class="spinner" />正在加载 Workspace...</div>
-              <div v-else-if="errors.workspace" class="inline-error"><AlertCircle :size="17" />{{ errors.workspace }}<button type="button" @click="loadWorkspaces">重试</button></div>
-              <div v-else-if="workspaceSource?.status === 'unavailable'" class="empty-panel">暂不可用 <button class="text-button" type="button" @click="loadWorkspaces">重试</button></div>
-              <div v-else-if="workspaceSource?.status === 'empty'" class="empty-panel">暂无 Workspace</div>
-              <div v-else-if="workspace" class="workspace-details">
-                <label class="workspace-selector">选择 Workspace<select :value="selectedWorkspaceId" aria-label="选择 Workspace" @change="changeWorkspaceSelection"><option v-for="item in workspaceSource.data.items" :key="item.id" :value="item.id">{{ item.name || item.id }}</option></select></label>
-                <dl class="data-list">
-                  <div><dt>名称</dt><dd>{{ workspace.name || "暂不可用" }}</dd></div><div><dt>计划</dt><dd>{{ workspace.packageId ? workspace.packageId.toUpperCase() : "暂不可用" }}</dd></div><div><dt>套餐规格</dt><dd>{{ workspacePlan ? `${workspacePlan.cpu}C / ${workspacePlan.memoryGb}GB` : "暂不可用" }}</dd></div><div><dt>月价</dt><dd>{{ typeof workspace.totalUsdMicros === "number" ? formatUsdMicros(workspace.totalUsdMicros) : "暂不可用" }}</dd></div><div><dt>创建时间</dt><dd>{{ formatDate(workspace.createdAt, true) }}</dd></div><div><dt>已付至</dt><dd>{{ formatDate(workspace.paidThrough) }}</dd></div><div><dt>续费状态</dt><dd>{{ workspace.renewalStatus || "暂不可用" }}</dd></div><div><dt>存储容量</dt><dd>{{ typeof workspace.storageGb === "number" ? `${workspace.storageGb} GB` : "暂不可用" }}</dd></div>
-                  <div><dt>自动续费</dt><dd class="renewal-control"><input type="checkbox" :checked="workspace.autoRenew === true" disabled aria-describedby="auto-renew-reason" /><span>{{ workspace.autoRenew === false ? "已关闭" : "暂不可用" }}</span><small id="auto-renew-reason">真实续费验证完成前不可启用</small></dd></div>
-                </dl>
-                <div v-if="loading.runtime" class="loading-panel"><span class="spinner" />正在读取访问状态...</div>
-                <div v-else-if="errors.runtime" class="inline-error"><AlertCircle :size="17" />{{ errors.runtime }}<button type="button" @click="loadWorkspaceStatus">重试</button></div>
-                <div v-else-if="workspaceStatusSource?.status === 'unavailable'" class="empty-panel">访问状态暂不可用 <button class="text-button" type="button" @click="loadWorkspaceStatus">重试</button></div>
-                <dl v-else class="data-list access-list">
-                  <div><dt>状态</dt><dd>{{ runtime ? workspaceStatusLabel(runtime) : "暂不可用" }}</dd></div>
-                  <div><dt>挂载状态</dt><dd>{{ mountCheck ? (mountCheck.ok ? "正常" : "需处理") : "暂不可用" }}</dd></div>
-                  <div><dt>服务健康</dt><dd>{{ runtime ? (runtime.ready ? "正常" : "需处理") : "暂不可用" }}</dd></div>
-                  <div><dt>Workspace URL</dt><dd><a v-if="runtime?.url" :href="runtime.url" target="_blank" rel="noreferrer">{{ runtime.url }} <ArrowUpRight :size="14" /></a><span v-else>暂不可用</span></dd></div>
-                  <div><dt>用户名</dt><dd>{{ runtime?.access?.username || "暂不可用" }}</dd></div>
-                  <div><dt>密码</dt><dd class="secret-value"><code>{{ revealedWorkspaceCredentials?.password || "已隐藏" }}</code><button class="text-button" type="button" :disabled="runtimeBusy || !workspaceCanOpen" @click="toggleWorkspaceCredentials">{{ revealedWorkspaceCredentials ? "隐藏" : "显示" }}</button><button class="text-button" type="button" :disabled="!revealedWorkspaceCredentials?.password" @click="copyWorkspacePassword"><Copy :size="15" />复制</button></dd></div>
-                  <div><dt>Workspace Key</dt><dd class="secret-value"><code>{{ revealedApiKey?.id === workspaceKeyId ? revealedApiKey.value : workspaceKeyId ? "已隐藏" : "暂不可用" }}</code><button class="text-button" type="button" :disabled="gatewayBusy || !workspaceKeyId" @click="revealedApiKey?.id === workspaceKeyId ? hideKey() : revealKey()">{{ revealedApiKey?.id === workspaceKeyId ? "隐藏" : "显示" }}</button><button class="text-button" type="button" :disabled="revealedApiKey?.id !== workspaceKeyId || !revealedApiKey?.value" @click="copyWorkspaceKey"><Copy :size="15" />复制</button></dd></div>
-                </dl>
-                <div class="credential-actions"><button class="button secondary" type="button" :disabled="runtimeBusy || !workspaceCanOpen" @click="rotateWorkspace"><RefreshCw :size="16" />轮换密码</button></div>
+              <div v-else-if="errors.workspace" class="inline-error"><AlertCircle :size="17" />{{ errors.workspace }}<button type="button" @click="loadWorkspaces()">重试</button></div>
+              <div v-else-if="workspaceSource?.status === 'unavailable'" class="compact-empty">Workspace 暂不可用 <button class="text-button" type="button" @click="loadWorkspaces()">重试</button></div>
+              <div v-else-if="workspaceSource?.status === 'empty'" class="compact-empty">暂无 Workspace</div>
+              <div v-else class="workspace-list" role="list">
+                <a v-for="item in workspaceRows" :key="item.id" role="listitem" :href="`/console/workspaces/${encodeURIComponent(item.id)}`" @click.prevent="openWorkspaceDetail(item.id)">
+                  <span class="workspace-list-name"><strong>{{ item.name || item.id }}</strong><small>{{ item.id }}</small></span>
+                  <span><small>套餐</small><strong>{{ item.packageId ? item.packageId.toUpperCase() : "暂不可用" }}</strong></span>
+                  <span><small>状态</small><strong><span class="status-pill" :class="{ good: item.state === 'running' }">{{ workspaceStateLabel(item.state) }}</span></strong></span>
+                  <span><small>已付至</small><strong>{{ formatDate(item.paidThrough) }}</strong></span>
+                  <ChevronRight :size="18" />
+                </a>
               </div>
+            </section>
+            <nav v-if="workspaceSource?.available && workspacePages > 1" class="pagination" aria-label="Workspace 分页">
+              <button class="button secondary" type="button" :disabled="loading.workspace || workspacePageNumber <= 1" @click="changeWorkspacePage(workspacePageNumber - 1)"><ChevronLeft :size="16" />上一页</button>
+              <span>第 {{ workspacePageNumber }} / {{ workspacePages }} 页</span>
+              <button class="button secondary" type="button" :disabled="loading.workspace || workspacePageNumber >= workspacePages" @click="changeWorkspacePage(workspacePageNumber + 1)">下一页<ChevronRight :size="16" /></button>
+            </nav>
+          </section>
+
+          <section v-else-if="workspaceRoute === 'new'" class="workspace-launch-page">
+            <button class="back-link" type="button" @click="navigate('/console/workspaces')"><ChevronLeft :size="17" />返回 Workspace 列表</button>
+            <div v-if="errors.catalog" class="inline-error"><AlertCircle :size="17" />计划与价格暂不可用<button type="button" @click="loadCatalog">重试</button></div>
+            <div v-if="errors.wallet" class="inline-error"><AlertCircle :size="17" />余额暂不可用<button type="button" @click="loadWallet">重试</button></div>
+            <section class="panel launch-panel">
+              <div v-if="launchOperation" class="launch-operation">
+                <header class="launch-operation-head"><div><h2>{{ launchStatusText }}</h2><p>{{ launchOperation.name }} · {{ launchOperation.packageId.toUpperCase() }}</p></div><span class="status-pill" :class="{ good: launchOperation.status === 'succeeded', danger: launchOperation.status === 'failed' || launchOperation.status === 'refunded' }">{{ workspaceLaunchStatusLabel(launchOperation.status) }}</span></header>
+                <dl class="operation-readback"><div><dt>操作编号</dt><dd><code>{{ launchOperation.operationId }}</code></dd></div><div><dt>当前状态</dt><dd>{{ workspaceLaunchStatusLabel(launchOperation.status) }}<small>{{ launchOperation.status }}</small></dd></div><div><dt>当前阶段</dt><dd>{{ workspaceLaunchPhaseLabel(launchOperation.phase) }}<small>{{ launchOperation.phase || "暂不可用" }}</small></dd></div><div><dt>最后更新</dt><dd>{{ formatDate(launchOperation.updatedAt || launchOperation.createdAt, true) }}</dd></div></dl>
+                <div v-if="launchOperation.errorCode" class="inline-error"><AlertCircle :size="17" />{{ launchOperation.errorCode }}</div>
+                <footer class="launch-operation-actions"><button class="button secondary" type="button" @click="navigate('/console/workspaces')">返回列表</button><button v-if="launchPollIssue" class="button secondary" type="button" @click="retryWorkspaceLaunchPoll"><RefreshCw :size="16" />刷新进度</button><button v-if="launchOperation.status === 'succeeded' && launchOperation.workspaceId" class="button primary" type="button" @click="openWorkspaceDetail(launchOperation.workspaceId)">查看 Workspace<ArrowUpRight :size="16" /></button></footer>
+              </div>
+              <div v-else-if="loading.catalog" class="loading-panel"><span class="spinner" />正在读取套餐...</div>
+              <form v-else-if="launchStep === 'configure'" class="workspace-launch-form" @submit.prevent="reviewWorkspaceLaunch">
+                <label>Workspace 名称<input ref="launchNameInput" v-model.trim="launchForm.name" data-autofocus required maxlength="80" placeholder="例如：产品研发" /></label>
+                <UiRadioGroup :model-value="launchForm.packageId" :options="workspacePlanOptions" label="选择套餐" @update:model-value="selectLaunchPlan" />
+                <dl class="workspace-launch-balance" aria-label="开通余额核对"><div><dt>可用余额</dt><dd>{{ loading.wallet ? "读取中..." : wallet ? formatAvailableBalance({ ...wallet, available: true }) : "暂不可用" }}</dd></div><div><dt>本次预付</dt><dd>{{ selectedPlanPrice === null ? "暂不可用" : formatUsdMicros(selectedPlanPrice) }}</dd></div></dl>
+                <p v-if="workspaceLaunchBalanceSufficient === false" class="launch-balance-warning" role="alert">余额不足，请联系管理员充值</p>
+                <p class="source-note">自动续费默认关闭，实际扣款金额以上述服务端报价为准。</p>
+                <footer><button class="button secondary" type="button" @click="navigate('/console/workspaces')">取消</button><button class="button primary" type="submit" :disabled="!workspaceCanStart || !selectedPlan || selectedPlanPrice === null || workspaceLaunchBalanceSufficient !== true || !launchForm.name.trim()">下一步：确认</button></footer>
+              </form>
+              <form v-else class="workspace-launch-confirm" @submit.prevent="submitWorkspaceLaunch">
+                <header><h2 ref="launchReviewHeading" tabindex="-1">确认开通信息</h2></header>
+                <dl class="launch-confirm-list"><div><dt>Workspace 名称</dt><dd>{{ launchForm.name.trim() }}</dd></div><div><dt>套餐</dt><dd>{{ selectedPlan?.name || launchForm.packageId.toUpperCase() }}</dd></div><div><dt>存储</dt><dd>{{ selectedPlanStorageGb === null ? "暂不可用" : `${selectedPlanStorageGb} GB` }}</dd></div><div><dt>权威报价</dt><dd class="confirm-price">{{ selectedPlanPrice === null ? "暂不可用" : formatUsdMicros(selectedPlanPrice) }}</dd></div><div><dt>可用余额</dt><dd>{{ wallet ? formatAvailableBalance({ ...wallet, available: true }) : "暂不可用" }}</dd></div><div><dt>续费设置</dt><dd>自动续费关闭</dd></div></dl>
+                <p v-if="workspaceLaunchBalanceSufficient === false" class="launch-balance-warning" role="alert">余额不足，请联系管理员充值</p>
+                <label class="launch-confirm-check"><input v-model="launchConfirmed" type="checkbox" /><span>我确认名称、套餐、存储、报价与续费设置</span></label>
+                <footer><button class="button secondary" type="button" @click="editWorkspaceLaunch">返回修改</button><button class="button primary" type="submit" :disabled="launchBusy || !launchConfirmed || !workspaceCanStart || !selectedPlan || selectedPlanPrice === null || workspaceLaunchBalanceSufficient !== true">{{ launchBusy ? "处理中..." : "确认预付并开通" }}</button></footer>
+              </form>
+            </section>
+          </section>
+
+          <section v-else-if="workspaceRoute === 'detail'" class="workspace-detail-page">
+            <div class="page-toolbar workspace-detail-toolbar">
+              <button class="back-link" type="button" @click="navigate('/console/workspaces')"><ChevronLeft :size="17" />Workspace 列表</button>
+              <button v-if="workspace" class="button primary" type="button" :disabled="!workspaceCanOpen" @click="openWorkspace">打开 Workspace <ArrowUpRight :size="16" /></button>
+            </div>
+            <section class="panel workspace-identity-panel">
+              <div v-if="loading.workspaceDetail" class="loading-panel"><span class="spinner" />正在读取 Workspace...</div>
+              <div v-else-if="errors.workspaceDetail" class="inline-error"><AlertCircle :size="17" />{{ errors.workspaceDetail }}<button type="button" @click="loadWorkspaceDetail()">重试</button></div>
+              <div v-else-if="workspaceDetailSource?.status === 'unavailable'" class="compact-empty">Workspace 暂不可用 <button class="text-button" type="button" @click="loadWorkspaceDetail()">重试</button></div>
+              <div v-else-if="workspaceDetailSource?.status === 'empty'" class="compact-empty">Workspace 不存在</div>
+              <div v-else-if="workspace" class="workspace-name-row"><div><span class="section-label">{{ workspace.id }}</span><h2>{{ workspace.name || workspace.id }}</h2></div><span v-if="runtime" class="status-pill" :class="{ good: workspaceCanOpen }">{{ workspaceStatusLabel(runtime) }}</span></div>
+            </section>
+
+            <section v-if="workspace" class="panel workspace-access-panel">
+              <div class="panel-title"><h2>访问与凭据</h2></div>
+              <div v-if="loading.runtime" class="loading-panel"><span class="spinner" />正在读取访问状态...</div>
+              <div v-else-if="errors.runtime" class="inline-error"><AlertCircle :size="17" />{{ errors.runtime }}<button type="button" @click="loadWorkspaceStatus()">重试</button></div>
+              <div v-else-if="workspaceStatusSource?.status === 'unavailable'" class="compact-empty">访问状态暂不可用 <button class="text-button" type="button" @click="loadWorkspaceStatus()">重试</button></div>
+              <div v-else-if="workspaceStatusSource?.status === 'empty'" class="compact-empty">暂无 Runtime 数据</div>
+              <dl v-else class="data-list access-list">
+                <div><dt>状态</dt><dd>{{ runtime ? workspaceStatusLabel(runtime) : "暂不可用" }}</dd></div>
+                <div><dt>挂载状态</dt><dd>{{ mountCheck ? (mountCheck.ok ? "正常" : "需处理") : "暂不可用" }}</dd></div>
+                <div><dt>服务健康</dt><dd>{{ runtime ? (runtime.ready ? "正常" : "需处理") : "暂不可用" }}</dd></div>
+                <div><dt>Workspace URL</dt><dd><a v-if="runtime?.url" :href="runtime.url" target="_blank" rel="noopener noreferrer">{{ runtime.url }} <ArrowUpRight :size="14" /></a><span v-else>暂不可用</span></dd></div>
+                <div><dt>用户名</dt><dd>{{ runtime?.access?.username || "暂不可用" }}</dd></div>
+                <div><dt>密码</dt><dd class="secret-value"><code>{{ revealedWorkspaceCredentials?.password || "已隐藏" }}</code><button class="text-button" type="button" :disabled="runtimeBusy || !workspaceCanOpen" @click="toggleWorkspaceCredentials">{{ revealedWorkspaceCredentials ? "隐藏" : "显示" }}</button><button class="text-button" type="button" :disabled="!revealedWorkspaceCredentials?.password" @click="copyWorkspacePassword"><Copy :size="15" />复制</button></dd></div>
+                <div><dt>Workspace Key</dt><dd class="secret-value"><code>{{ revealedApiKey?.id === workspaceKeyId ? revealedApiKey.value : workspaceKeyId ? "已隐藏" : "暂不可用" }}</code><button class="text-button" type="button" :disabled="gatewayBusy || !workspaceKeyId" @click="revealedApiKey?.id === workspaceKeyId ? hideKey() : revealKey()">{{ revealedApiKey?.id === workspaceKeyId ? "隐藏" : "显示" }}</button><button class="text-button" type="button" :disabled="revealedApiKey?.id !== workspaceKeyId || !revealedApiKey?.value" @click="copyWorkspaceKey"><Copy :size="15" />复制</button></dd></div>
+              </dl>
+              <div class="credential-actions"><button class="button secondary" type="button" :disabled="runtimeBusy || !workspaceCanOpen" @click="rotateWorkspace"><RefreshCw :size="16" />轮换密码</button></div>
+            </section>
+
+            <section v-if="workspace" class="panel workspace-facts-panel">
+              <div class="panel-title"><h2>套餐与条款</h2></div>
+              <dl class="data-list">
+                <div><dt>套餐</dt><dd>{{ workspace.packageId ? workspace.packageId.toUpperCase() : "暂不可用" }}</dd></div>
+                <div><dt>月度条款</dt><dd>{{ typeof workspace.totalUsdMicros === "number" ? formatUsdMicros(workspace.totalUsdMicros) : "暂不可用" }}</dd></div>
+                <div><dt>存储容量</dt><dd>{{ typeof workspace.storageGb === "number" ? `${workspace.storageGb} GB` : "暂不可用" }}</dd></div>
+                <div><dt>创建时间</dt><dd>{{ formatDate(workspace.createdAt, true) }}</dd></div>
+                <div><dt>已付至</dt><dd>{{ formatDate(workspace.paidThrough) }}</dd></div>
+                <div><dt>续费状态</dt><dd>{{ workspace.renewalStatus || "暂不可用" }}</dd></div>
+                <div><dt>自动续费</dt><dd class="renewal-control"><input type="checkbox" :checked="workspace.autoRenew === true" disabled aria-describedby="auto-renew-reason" /><span>{{ workspace.autoRenew === false ? "已关闭" : "暂不可用" }}</span><small id="auto-renew-reason">真实续费验证完成前不可启用</small></dd></div>
+              </dl>
             </section>
           </section>
 
@@ -1679,9 +2075,17 @@ onBeforeUnmount(() => {
               <div v-else-if="keySource?.status === 'unavailable'" class="empty-panel">API Key 暂不可用 <button class="text-button" type="button" @click="loadKeys">重试</button></div>
               <div v-else-if="keySource?.status === 'empty'" class="empty-panel">暂无 API Key</div>
               <template v-else>
-                <div class="gateway-usage-toolbar"><label>API Key<select v-model="selectedUsageKeyId" @change="selectUsageKey(selectedUsageKeyId)"><option v-for="key in keys" :key="key.id" :value="key.id">{{ key.name }}</option></select></label><div class="segmented-control" aria-label="用量周期"><button v-for="item in [{ id: 'today', label: '今日' }, { id: 'week', label: '本周' }, { id: 'month', label: '本月' }]" :key="item.id" type="button" :class="{ active: gatewayPeriod === item.id }" @click="selectPeriod(item.id)">{{ item.label }}</button></div></div>
-                <div v-if="errors.stats" class="inline-error"><AlertCircle :size="17" />{{ errors.stats }}<button type="button" @click="loadStats">重试</button></div><div v-else-if="usageStatsSource?.status === 'unavailable'" class="empty-panel">用量汇总暂不可用 <button class="text-button" type="button" @click="loadStats">重试</button></div><section v-else-if="keyStats" class="metric-row"><article><Activity /><span>请求次数<strong>{{ formatCount(keyStats.totalRequests) }}</strong></span></article><article><CircleDollarSign /><span>实际金额<strong>{{ formatUsdMicros(keyStats.totalActualCostUsdMicros) }}</strong></span></article></section>
-                <div v-if="loading.usage" class="loading-panel"><span class="spinner" />正在读取使用记录...</div><div v-else-if="errors.usage" class="inline-error"><AlertCircle :size="17" />{{ errors.usage }}<button type="button" @click="loadUsage">重试</button></div><div v-else-if="usageSource?.status === 'unavailable'" class="empty-panel">暂不可用 <button class="text-button" type="button" @click="loadUsage">重试</button></div><div v-else-if="!selectedUsageKeyId || usageSource?.status === 'empty'" class="empty-panel">暂无使用记录</div><div v-else class="table-wrap"><table class="gateway-usage-table"><thead><tr><th>时间</th><th>模型</th><th>端点</th><th>输入 Token</th><th>输出 Token</th><th>实际金额</th><th>请求编号</th></tr></thead><tbody><tr v-for="item in usage?.items || []" :key="item.requestId"><td>{{ formatDate(item.createdAt, true) }}</td><td>{{ item.model }}</td><td>{{ item.inboundEndpoint }}</td><td>{{ formatCount(item.inputTokens) }}</td><td>{{ formatCount(item.outputTokens) }}</td><td>{{ formatUsdMicros(item.actualCostUsdMicros) }}</td><td><code>{{ item.requestId }}</code></td></tr></tbody></table></div><div class="pagination"><button class="icon-button" type="button" aria-label="上一页" :disabled="gatewayPageNumber.page <= 1 || loading.usage" @click="changeUsagePage(gatewayPageNumber.page - 1)"><ChevronLeft :size="16" /></button><span>{{ gatewayPageNumber.page }}</span><button class="icon-button" type="button" aria-label="下一页" :disabled="gatewayPageNumber.pages === 0 || gatewayPageNumber.page >= gatewayPageNumber.pages || loading.usage" @click="changeUsagePage(gatewayPageNumber.page + 1)"><ChevronRight :size="16" /></button></div>
+                <div class="gateway-usage-toolbar"><UiSelect :model-value="selectedUsageKeyId" label="API Key" :options="usageKeyOptions" @update:model-value="selectUsageKey(String($event))" /><UiSegmentedControl :model-value="gatewayPeriod" :options="usagePeriodOptions" label="用量周期" @update:model-value="selectPeriod" /></div>
+                <div v-if="errors.stats" class="inline-error"><AlertCircle :size="17" />{{ errors.stats }}<button type="button" @click="loadStats">重试</button></div><div v-else-if="usageStatsSource?.status === 'unavailable'" class="empty-panel">用量汇总暂不可用 <button class="text-button" type="button" @click="loadStats">重试</button></div><dl v-else-if="keyStats" class="usage-summary-strip" aria-label="用量汇总"><div><dt>请求次数</dt><dd>{{ formatCount(keyStats.totalRequests) }}</dd></div><div><dt>总 Token</dt><dd>{{ formatCount(keyStats.totalTokens) }}</dd></div><div><dt>实际金额</dt><dd>{{ formatUsdMicros(keyStats.totalActualCostUsdMicros) }}</dd></div></dl>
+                <div v-if="loading.usage" class="loading-panel"><span class="spinner" />正在读取请求记录...</div>
+                <div v-else-if="errors.usage" class="inline-error"><AlertCircle :size="17" />{{ errors.usage }}<button type="button" @click="loadUsage">重试</button></div>
+                <div v-else-if="usageSource?.status === 'unavailable'" class="empty-panel">请求记录暂不可用 <button class="text-button" type="button" @click="loadUsage">重试</button></div>
+                <div v-else-if="!selectedUsageKeyId || usageSource?.status === 'empty'" class="empty-panel">暂无请求记录</div>
+                <template v-else>
+                  <div class="table-wrap request-table-desktop"><table class="gateway-usage-table"><thead><tr><th>时间</th><th>模型</th><th>端点</th><th>实际金额</th><th>请求编号</th></tr></thead><tbody><tr v-for="item in usage?.items || []" :key="item.requestId"><td>{{ formatDate(item.createdAt, true) }}</td><td>{{ item.model }}</td><td>{{ item.inboundEndpoint }}</td><td>{{ formatUsdMicros(item.actualCostUsdMicros) }}</td><td><code>{{ item.requestId }}</code></td></tr></tbody></table></div>
+                  <div class="request-list-mobile" role="list"><article v-for="item in usage?.items || []" :key="item.requestId" role="listitem"><span><strong>{{ item.model }}</strong><small>{{ formatDate(item.createdAt, true) }}</small></span><span><strong>{{ formatUsdMicros(item.actualCostUsdMicros) }}</strong><small>{{ item.inboundEndpoint }}</small></span><code>{{ item.requestId }}</code></article></div>
+                  <div class="pagination"><button class="icon-button" type="button" aria-label="上一页" :disabled="gatewayPageNumber.page <= 1 || loading.usage" @click="changeUsagePage(gatewayPageNumber.page - 1)"><ChevronLeft :size="16" /></button><span>{{ gatewayPageNumber.page }}</span><button class="icon-button" type="button" aria-label="下一页" :disabled="gatewayPageNumber.pages === 0 || gatewayPageNumber.page >= gatewayPageNumber.pages || loading.usage" @click="changeUsagePage(gatewayPageNumber.page + 1)"><ChevronRight :size="16" /></button></div>
+                </template>
               </template>
             </section>
             <KeysPanel v-else :csrf-token="session?.csrfToken || ''" />
@@ -1691,27 +2095,50 @@ onBeforeUnmount(() => {
             <section class="panel"><div class="panel-title"><h2>公告</h2><button class="icon-button" type="button" title="刷新" aria-label="刷新公告" :disabled="loading.announcements" @click="loadAnnouncements"><RefreshCw :size="16" /></button></div><div v-if="loading.announcements" class="loading-panel"><span class="spinner" />正在读取公告...</div><div v-else-if="errors.announcements" class="inline-error"><AlertCircle :size="17" />{{ errors.announcements }}<button type="button" @click="loadAnnouncements">重试</button></div><div v-else-if="announcementsUnavailable" class="empty-panel">暂不可用 <button class="text-button" type="button" @click="loadAnnouncements">重试</button></div><div v-else-if="announcementsEmpty" class="empty-panel">暂无公告</div><div v-else class="announcement-list"><article v-for="announcement in announcements" :key="announcement.id" class="announcement-item"><header><div><h3>{{ announcement.title }}</h3><span>{{ formatDate(announcement.publishedAt || announcement.startsAt, true) }}</span></div><span class="status-pill" :class="{ good: announcement.read }">{{ announcement.read ? "已读" : "未读" }}</span></header><p>{{ announcement.body }}</p><button v-if="!announcement.read" class="button secondary" type="button" :disabled="announcementBusy === announcement.id" @click="readAnnouncement(announcement.id)">{{ announcementBusy === announcement.id ? "处理中..." : "标记已读" }}</button></article></div></section>
           </section>
 
-          <section v-else class="billing-page">
-            <div v-if="loading.wallet" class="loading-panel"><span class="spinner" />正在读取余额...</div><div v-else-if="errors.wallet" class="inline-error"><AlertCircle :size="17" />{{ errors.wallet }}<button type="button" @click="loadWallet">重试</button></div><div v-else-if="walletSource?.status === 'unavailable'" class="empty-panel">余额暂不可用 <button class="text-button" type="button" @click="loadWallet">重试</button></div>
-            <div class="metric-row"><article><WalletCards /><span>可用余额<strong>{{ wallet ? formatAvailableBalance({ ...wallet, available: true }) : "暂不可用" }}</strong></span></article><article><CircleDollarSign /><span>固定月支出<strong>{{ workspace ? formatUsdMicros(workspace.totalUsdMicros) : "暂不可用" }}</strong></span></article><article><Activity /><span>AI 用量<strong>{{ stats ? formatUsdMicros(stats.totalActualCostUsdMicros) : "暂不可用" }}</strong></span></article></div>
-            <section class="panel"><div class="panel-title"><h2>Workspace 账单</h2></div><div v-if="workspaceSource?.status === 'unavailable'" class="empty-panel">暂不可用 <button class="text-button" type="button" @click="loadWorkspaces">重试</button></div><div v-else-if="workspace" class="table-wrap"><table><thead><tr><th>Workspace</th><th>计划</th><th>金额</th><th>有效期至</th><th>续费状态</th></tr></thead><tbody><tr><td>{{ workspace.name || "暂不可用" }}</td><td>{{ workspace.packageId || "暂不可用" }}</td><td>{{ formatUsdMicros(workspace.totalUsdMicros) }}</td><td>{{ formatDate(workspace.paidThrough) }}</td><td>{{ workspace.renewalStatus || "暂不可用" }}</td></tr></tbody></table></div><div v-else class="empty-panel">暂无 Workspace</div></section>
-            <section class="panel"><div class="panel-title"><h2>余额记录</h2></div><div v-if="loading.history" class="loading-panel"><span class="spinner" />正在读取余额记录...</div><div v-else-if="errors.history" class="inline-error"><AlertCircle :size="17" />{{ errors.history }}<button type="button" @click="loadHistory">重试</button></div><div v-else-if="balanceHistorySource?.status === 'unavailable'" class="empty-panel">暂不可用 <button class="text-button" type="button" @click="loadHistory">重试</button></div><div v-else-if="balanceHistorySource?.status === 'empty'" class="empty-panel">暂无余额记录</div><div v-else class="table-wrap"><table><thead><tr><th>时间</th><th>类型</th><th>金额</th><th>状态</th></tr></thead><tbody><tr v-for="item in history" :key="`${item.createdAt}-${item.type}`"><td>{{ formatDate(item.createdAt, true) }}</td><td>{{ item.type }}</td><td>{{ formatUsdMicros(item.valueUsdMicros) }}</td><td>{{ item.status }}</td></tr></tbody></table></div><nav v-if="balanceHistorySource?.available && balanceHistoryPages > 1" class="pagination" aria-label="余额记录分页"><button class="button secondary" type="button" :disabled="loading.history || balanceHistoryPage <= 1" @click="changeBalanceHistoryPage(balanceHistoryPage - 1)"><ChevronLeft :size="16" />上一页</button><span>第 {{ balanceHistoryPage }} / {{ balanceHistoryPages }} 页</span><button class="button secondary" type="button" :disabled="loading.history || balanceHistoryPage >= balanceHistoryPages" @click="changeBalanceHistoryPage(balanceHistoryPage + 1)">下一页<ChevronRight :size="16" /></button></nav></section>
-            <section class="panel">
-              <div class="panel-title"><h2>交易记录</h2></div>
-              <div v-if="loading.receipts" class="loading-panel"><span class="spinner" />正在读取交易记录...</div><div v-else-if="errors.receipts" class="inline-error"><AlertCircle :size="17" />{{ errors.receipts }}<button type="button" @click="loadReceipts">重试</button></div><div v-else-if="receiptsSource?.status === 'unavailable'" class="empty-panel">暂不可用 <button class="text-button" type="button" @click="loadReceipts">重试</button></div><div v-else-if="receiptsSource?.status === 'empty'" class="empty-panel">暂无交易记录</div><div v-else class="table-wrap"><table><thead><tr><th>时间</th><th>交易</th><th>金额</th><th>有效期至</th><th>状态</th><th>操作</th></tr></thead><tbody><tr v-for="receipt in receipts" :key="receipt.receiptId"><td>{{ formatDate(receipt.createdAt, true) }}</td><td>{{ receiptLabel(receipt.type) }}</td><td>{{ formatUsdMicros(receipt.chargeUsdMicros ?? receipt.totalUsdMicros) }}</td><td>{{ formatDate(receipt.paidThrough) }}</td><td>{{ receipt.status }}</td><td><button class="text-button" type="button" :disabled="loading.receiptDetail && selectedReceiptId === receipt.receiptId" @click="loadReceiptDetail(receipt.receiptId)">{{ loading.receiptDetail && selectedReceiptId === receipt.receiptId ? "读取中..." : "查看" }}</button></td></tr></tbody></table></div>
-              <nav v-if="receiptsSource?.available && (receiptCursorStack.length || receiptsSource.data.hasMore)" class="pagination" aria-label="交易记录分页"><button class="button secondary" type="button" :disabled="loading.receipts || receiptCursorStack.length === 0" @click="previousReceiptPage"><ChevronLeft :size="16" />上一页</button><span>第 {{ receiptCursorStack.length + 1 }} 页</span><button class="button secondary" type="button" :disabled="loading.receipts || !receiptsSource.data.hasMore || !receiptsSource.data.nextCursor" @click="nextReceiptPage">下一页<ChevronRight :size="16" /></button></nav>
+          <section v-else-if="path === '/console/billing'" class="billing-page">
+            <UiSegmentedControl class="billing-switcher" :model-value="billingView" :options="billingViewOptions" label="账单内容" @update:model-value="selectBillingView" />
+
+            <section v-if="billingView === 'terms'" class="panel billing-surface">
+              <div class="panel-title"><h2>Workspace 条款</h2><span v-if="workspaceSource?.available">{{ formatCount(workspaceSource.data.total) }} 个 Workspace</span></div>
+              <div v-if="loading.workspace" class="loading-panel"><span class="spinner" />正在读取 Workspace 条款...</div>
+              <div v-else-if="errors.workspace" class="inline-error"><AlertCircle :size="17" />{{ errors.workspace }}<button type="button" @click="loadWorkspaces()">重试</button></div>
+              <div v-else-if="workspaceSource?.status === 'unavailable'" class="empty-panel">Workspace 条款暂不可用 <button class="text-button" type="button" @click="loadWorkspaces()">重试</button></div>
+              <div v-else-if="workspaceSource?.status === 'empty'" class="compact-empty">暂无 Workspace 条款</div>
+              <template v-else>
+                <div class="table-wrap billing-table-desktop"><table><thead><tr><th>Workspace</th><th>套餐</th><th>月度条款</th><th>计费周期</th><th>续费状态</th></tr></thead><tbody><tr v-for="item in workspaceRows" :key="item.id"><td><a :href="`/console/workspaces/${encodeURIComponent(item.id)}`" @click.prevent="openWorkspaceDetail(item.id)">{{ item.name || item.id }}</a></td><td>{{ item.packageId ? item.packageId.toUpperCase() : "暂不可用" }}</td><td>{{ formatUsdMicros(item.totalUsdMicros) }}</td><td>{{ item.periodStart && item.paidThrough ? `${formatDate(item.periodStart)} 至 ${formatDate(item.paidThrough)}` : "暂不可用" }}</td><td>{{ item.renewalStatus || "暂不可用" }}</td></tr></tbody></table></div>
+                <div class="billing-list-mobile" role="list"><a v-for="item in workspaceRows" :key="item.id" role="listitem" :href="`/console/workspaces/${encodeURIComponent(item.id)}`" @click.prevent="openWorkspaceDetail(item.id)"><span><strong>{{ item.name || item.id }}</strong><small>{{ item.packageId ? item.packageId.toUpperCase() : "暂不可用" }}</small></span><span><strong>{{ formatUsdMicros(item.totalUsdMicros) }}</strong><small>已付至 {{ formatDate(item.paidThrough) }}</small></span><ChevronRight :size="18" /></a></div>
+                <nav v-if="workspacePages > 1" class="pagination" aria-label="Workspace 条款分页"><button class="button secondary" type="button" :disabled="loading.workspace || workspacePageNumber <= 1" @click="changeWorkspacePage(workspacePageNumber - 1)"><ChevronLeft :size="16" />上一页</button><span>第 {{ workspacePageNumber }} / {{ workspacePages }} 页</span><button class="button secondary" type="button" :disabled="loading.workspace || workspacePageNumber >= workspacePages" @click="changeWorkspacePage(workspacePageNumber + 1)">下一页<ChevronRight :size="16" /></button></nav>
+              </template>
             </section>
-            <section v-if="selectedReceiptId" class="panel receipt-detail">
-              <div class="panel-title"><h2>交易详情</h2><button class="icon-button" type="button" title="关闭" aria-label="关闭交易详情" @click="clearReceiptDetail"><X :size="18" /></button></div>
-              <div v-if="loading.receiptDetail" class="loading-panel"><span class="spinner" />正在读取交易详情...</div><div v-else-if="errors.receiptDetail" class="inline-error"><AlertCircle :size="17" />{{ errors.receiptDetail }}<button type="button" @click="loadReceiptDetail(selectedReceiptId)">重试</button></div><div v-else-if="receiptDetailSource?.status === 'unavailable'" class="empty-panel">交易详情暂不可用 <button class="text-button" type="button" @click="loadReceiptDetail(selectedReceiptId)">重试</button></div>
-              <dl v-else-if="receiptDetail" class="data-list"><div><dt>交易</dt><dd>{{ receiptLabel(receiptDetail.type) }}</dd></div><div><dt>状态</dt><dd>{{ receiptDetail.status || "暂不可用" }}</dd></div><div><dt>时间</dt><dd>{{ formatDate(receiptDetail.createdAt, true) }}</dd></div><div><dt>Workspace</dt><dd>{{ workspace?.id === receiptDetail.workspaceId ? workspace.name : receiptDetail.workspaceId || "暂不可用" }}</dd></div><div><dt>金额</dt><dd>{{ formatUsdMicros(receiptDetail.refundUsdMicros ?? receiptDetail.chargeUsdMicros ?? receiptDetail.totalUsdMicros) }}</dd></div><div><dt>计费周期</dt><dd>{{ receiptDetail.periodStart && receiptDetail.paidThrough ? `${formatDate(receiptDetail.periodStart)} 至 ${formatDate(receiptDetail.paidThrough)}` : "暂不可用" }}</dd></div><div><dt>价格版本</dt><dd>{{ receiptDetail.priceVersion || "暂不可用" }}</dd></div></dl>
-              <div v-else class="empty-panel">交易详情暂不可用 <button class="text-button" type="button" @click="loadReceiptDetail(selectedReceiptId)">重试</button></div>
+
+            <section v-else class="panel billing-surface">
+              <div class="panel-title"><h2>账单收据</h2></div>
+              <div v-if="loading.receipts" class="loading-panel"><span class="spinner" />正在读取账单收据...</div>
+              <div v-else-if="errors.receipts" class="inline-error"><AlertCircle :size="17" />{{ errors.receipts }}<button type="button" @click="loadReceipts">重试</button></div>
+              <div v-else-if="receiptsSource?.status === 'unavailable'" class="empty-panel">账单收据暂不可用 <button class="text-button" type="button" @click="loadReceipts">重试</button></div>
+              <div v-else-if="receiptsSource?.status === 'empty'" class="compact-empty">暂无账单收据</div>
+              <template v-else>
+              <div class="table-wrap billing-table-desktop"><table><thead><tr><th>时间</th><th>类型</th><th>Workspace</th><th>金额</th><th>状态</th><th>操作</th></tr></thead><tbody><tr v-for="receipt in receipts" :key="receipt.receiptId"><td>{{ formatDate(receipt.createdAt, true) }}</td><td>{{ receiptLabel(receipt.type) }}</td><td>{{ receipt.workspaceId || "暂不可用" }}</td><td>{{ formatUsdMicros(receipt.refundUsdMicros ?? receipt.chargeUsdMicros ?? receipt.totalUsdMicros) }}</td><td>{{ receiptStatusLabel(receipt.status) }}</td><td><button class="text-button" type="button" :disabled="loading.receiptDetail && selectedReceiptId === receipt.receiptId" @click="loadReceiptDetail(receipt.receiptId)">{{ loading.receiptDetail && selectedReceiptId === receipt.receiptId ? "读取中..." : "查看" }}</button></td></tr></tbody></table></div>
+                <div class="billing-list-mobile" role="list"><button v-for="receipt in receipts" :key="receipt.receiptId" type="button" role="listitem" @click="loadReceiptDetail(receipt.receiptId)"><span><strong>{{ receiptLabel(receipt.type) }}</strong><small>{{ formatDate(receipt.createdAt, true) }}</small></span><span><strong>{{ formatUsdMicros(receipt.refundUsdMicros ?? receipt.chargeUsdMicros ?? receipt.totalUsdMicros) }}</strong><small>{{ receiptStatusLabel(receipt.status) }}</small></span><ChevronRight :size="18" /></button></div>
+                <nav v-if="receiptCursorStack.length || receiptsSource?.data.hasMore" class="pagination" aria-label="账单收据分页"><button class="button secondary" type="button" :disabled="loading.receipts || receiptCursorStack.length === 0" @click="previousReceiptPage"><ChevronLeft :size="16" />上一页</button><span>第 {{ receiptCursorStack.length + 1 }} 页</span><button class="button secondary" type="button" :disabled="loading.receipts || !receiptsSource?.data.hasMore || !receiptsSource?.data.nextCursor" @click="nextReceiptPage">下一页<ChevronRight :size="16" /></button></nav>
+              </template>
+            </section>
+
+            <section v-if="billingView === 'receipts' && selectedReceiptId" class="panel receipt-detail">
+              <div class="panel-title"><h2>收据详情</h2><button class="icon-button" type="button" title="关闭" aria-label="关闭收据详情" @click="clearReceiptDetail"><X :size="18" /></button></div>
+              <div v-if="loading.receiptDetail" class="loading-panel"><span class="spinner" />正在读取收据详情...</div>
+              <div v-else-if="errors.receiptDetail" class="inline-error"><AlertCircle :size="17" />{{ errors.receiptDetail }}<button type="button" @click="loadReceiptDetail(selectedReceiptId)">重试</button></div>
+              <div v-else-if="receiptDetailSource?.status === 'unavailable'" class="empty-panel">收据详情暂不可用 <button class="text-button" type="button" @click="loadReceiptDetail(selectedReceiptId)">重试</button></div>
+              <dl v-else-if="receiptDetail" class="data-list"><div><dt>类型</dt><dd>{{ receiptLabel(receiptDetail.type) }}</dd></div><div><dt>状态</dt><dd>{{ receiptStatusLabel(receiptDetail.status) }}</dd></div><div><dt>时间</dt><dd>{{ formatDate(receiptDetail.createdAt, true) }}</dd></div><div><dt>Workspace</dt><dd>{{ receiptDetail.workspaceId || "暂不可用" }}</dd></div><div><dt>金额</dt><dd>{{ formatUsdMicros(receiptDetail.refundUsdMicros ?? receiptDetail.chargeUsdMicros ?? receiptDetail.totalUsdMicros) }}</dd></div><div><dt>计费周期</dt><dd>{{ receiptDetail.periodStart && receiptDetail.paidThrough ? `${formatDate(receiptDetail.periodStart)} 至 ${formatDate(receiptDetail.paidThrough)}` : "暂不可用" }}</dd></div><div><dt>价格版本</dt><dd>{{ receiptDetail.priceVersion || "暂不可用" }}</dd></div></dl>
+              <div v-else class="empty-panel">收据详情暂不可用 <button class="text-button" type="button" @click="loadReceiptDetail(selectedReceiptId)">重试</button></div>
             </section>
           </section>
       </div>
     </section>
 
-        <div v-if="modal" class="modal-backdrop" role="presentation" @click.self="closeModal"><section class="modal" role="dialog" aria-modal="true" :aria-label="modal"><header><h2>{{ modal === "workspace" ? "开通 Workspace" : modal === "wallet-adjustment" ? "钱包调整" : modal === "announcement" ? "新建公告草稿" : "开通用户" }}</h2><button class="icon-button" type="button" aria-label="关闭" @click="closeModal"><X :size="18" /></button></header><form v-if="modal === 'workspace'" @submit.prevent="submitWorkspaceLaunch"><label>Workspace 名称<input v-model.trim="launchForm.name" required maxlength="80" /></label><fieldset><legend>计划</legend><label v-for="plan in plans" :key="plan.id" class="plan-option" :class="{ selected: launchForm.packageId === plan.id }"><input v-model="launchForm.packageId" type="radio" :value="plan.id" :disabled="!plan.available" /><span><strong>{{ plan.name }}</strong><small>{{ plan.cpu }}C / {{ plan.memoryGb }}GB · {{ plan.diskGb }}GB</small></span><b>{{ typeof previews[plan.id]?.totalChargeUsdMicros === "number" ? `${formatUsdMicros(previews[plan.id]?.totalChargeUsdMicros)}/月` : "暂不可用" }}</b></label></fieldset><p class="source-note">自动续费默认关闭。</p><footer><button class="button secondary" type="button" @click="closeModal">取消</button><button class="button primary" type="submit" :disabled="launchBusy || !selectedPlan || selectedPlanPrice === null">{{ launchBusy ? "处理中..." : "确认开通" }}</button></footer></form><form v-else-if="modal === 'wallet-adjustment'" @submit.prevent="submitWalletAdjustment"><p class="source-note">二次确认会锁定目标账号、金额和原因；同一 Idempotency-Key 不会重复调整。</p><label>目标账号<input v-model.trim="walletAdjustmentForm.confirmationAccountId" required /></label><label>类型<select v-model="walletAdjustmentForm.kind"><option value="recharge">充值</option><option value="debit">扣款</option><option value="business_refund">业务退款</option></select></label><label>金额（USD）<input v-model.trim="walletAdjustmentForm.amountUsd" inputmode="decimal" required /></label><label>原因<textarea v-model.trim="walletAdjustmentForm.reason" required maxlength="200" /></label><label v-if="walletAdjustmentForm.kind === 'business_refund'">关联操作<input v-model.trim="walletAdjustmentForm.relatedOperationId" required /></label><p v-if="errors.walletAdjustment" class="form-error" role="alert">{{ errors.walletAdjustment }}</p><section v-if="walletAdjustmentOperation" class="wallet-adjustment-readback"><div class="inline-notice">操作 {{ walletAdjustmentOperation.operationId }}：{{ walletAdjustmentOperation.status }} <button class="text-button" type="button" @click="refreshWalletAdjustment">读取最新状态</button></div><dl class="data-list"><div><dt>调整前余额</dt><dd>{{ operatorSourceText(walletAdjustmentOperation.beforeBalance, (data) => formatUsdMicros(data.usdMicros)) }}</dd></div><div><dt>调整后余额</dt><dd>{{ operatorSourceText(walletAdjustmentOperation.afterBalance, (data) => formatUsdMicros(data.usdMicros)) }}</dd></div><div><dt>原因</dt><dd>{{ walletAdjustmentOperation.reason || "暂不可用" }}</dd></div><div><dt>关联操作</dt><dd>{{ walletAdjustmentOperation.relatedOperationId || "暂不可用" }}</dd></div><div><dt>余额记录引用</dt><dd>{{ walletAdjustmentOperation.balanceHistoryRef || "暂不可用" }}</dd></div><div><dt>Receipt</dt><dd>{{ walletAdjustmentOperation.receiptId || "暂不可用" }}</dd></div><div><dt>错误码</dt><dd>{{ walletAdjustmentOperation.errorCode || "暂不可用" }}</dd></div><div><dt>上游 HTTP</dt><dd>{{ walletAdjustmentOperation.upstreamFailure?.httpStatus ?? "暂不可用" }}</dd></div><div><dt>上游错误码</dt><dd>{{ walletAdjustmentOperation.upstreamFailure?.errorCode || "暂不可用" }}</dd></div><div><dt>上游 request ID</dt><dd>{{ walletAdjustmentOperation.upstreamFailure?.requestId || "暂不可用" }}</dd></div><div><dt>执行人</dt><dd>{{ walletAdjustmentOperation.actor || "暂不可用" }}</dd></div></dl></section><footer><button class="button secondary" type="button" @click="closeModal">取消</button><button v-if="walletAdjustmentOperation?.status === 'manual_review' && walletAdjustmentOperation.allowedActions?.includes('recover_wallet_adjustment')" class="button primary" type="button" :disabled="loading.walletAdjustment" @click="recoverWalletAdjustment">{{ loading.walletAdjustment ? "处理中..." : "恢复确认" }}</button><button v-else class="button primary" type="submit" :disabled="loading.walletAdjustment">{{ loading.walletAdjustment ? "处理中..." : "确认调整" }}</button></footer></form><form v-else-if="modal === 'announcement'" @submit.prevent="submitOperatorAnnouncement"><label>标题<input v-model.trim="announcementForm.title" required maxlength="120" /></label><label>正文<textarea v-model.trim="announcementForm.body" required maxlength="4000" /></label><label>开始时间（可选）<input v-model.trim="announcementForm.startsAt" placeholder="2026-07-20T00:00:00Z" /></label><label>结束时间（可选）<input v-model.trim="announcementForm.endsAt" placeholder="2026-07-21T00:00:00Z" /></label><footer><button class="button secondary" type="button" @click="closeModal">取消</button><button class="button primary" type="submit">保存草稿</button></footer></form><form v-else @submit.prevent="provisionOperatorUser"><label>登录邮箱<input v-model.trim="adminUserForm.email" type="email" required /></label><label>初始密码<input v-model="adminUserForm.password" type="password" required /></label><label>姓名<input v-model.trim="adminUserForm.name" /></label><footer><button class="button secondary" type="button" @click="closeModal">取消</button><button class="button primary" type="submit" :disabled="mutationBusy">{{ mutationBusy ? "处理中..." : "开通用户" }}</button></footer></form></section></div>
+        <nav v-if="!isAdminRoute" class="mobile-bottom-nav" :inert="Boolean(modal)" aria-label="移动主导航"><a v-for="item in mobileNavigationItems" :key="item.path" :href="item.path" :class="{ active: item.id === 'api' ? apiRoute : item.id === 'workspace' ? Boolean(workspaceRoute) : path === item.path || (item.id === 'overview' && path === '/console') }" @click.prevent="navigate(item.path)"><component :is="menuIcons[item.icon]" :size="18" />{{ item.mobileLabel }}</a></nav>
+        <nav v-else-if="isOperator" class="mobile-bottom-nav admin-mobile-nav" :inert="Boolean(modal)" aria-label="移动 Admin 导航"><a v-for="item in mobileNavigationItems" :key="item.path" :href="item.path" :class="{ active: path === item.path || (item.id === 'overview' && path === '/admin') }" @click.prevent="navigate(item.path)"><component :is="menuIcons[item.icon]" :size="18" />{{ item.mobileLabel }}</a></nav>
+        <div v-if="modal" class="modal-backdrop" role="presentation" @click.self="closeModal"><section ref="modalRoot" class="modal" :class="{ 'wallet-adjustment-modal': modal === 'wallet-adjustment' }" role="dialog" aria-modal="true" :aria-label="modal === 'wallet-adjustment' ? '账户余额操作' : modal" @keydown="onModalKeydown"><header><h2>{{ modal === "wallet-adjustment" ? "账户余额操作" : modal === "announcement" ? "新建公告草稿" : "开通用户" }}</h2><button class="icon-button" type="button" aria-label="关闭" @click="closeModal"><X :size="18" /></button></header><form v-if="modal === 'wallet-adjustment'" @submit.prevent="submitWalletAdjustment"><p class="source-note">提交前请确认客户、金额和原因；每次操作都会保留记录。</p><label>目标账号<input v-model.trim="walletAdjustmentForm.confirmationAccountId" data-autofocus required /></label><label>类型<select v-model="walletAdjustmentForm.kind"><option value="recharge">充值</option><option value="debit">扣款</option><option value="business_refund">业务退款</option></select></label><label>金额（USD）<input v-model.trim="walletAdjustmentForm.amountUsd" inputmode="decimal" required /></label><label>原因<textarea v-model.trim="walletAdjustmentForm.reason" required maxlength="200" /></label><label v-if="walletAdjustmentForm.kind === 'business_refund'">关联操作<input v-model.trim="walletAdjustmentForm.relatedOperationId" required /></label><p v-if="errors.walletAdjustment" class="form-error" role="alert">{{ errors.walletAdjustment }}</p><section v-if="walletAdjustmentOperation" class="wallet-adjustment-readback"><div class="inline-notice"><span>操作结果：{{ walletOperationStatus(walletAdjustmentOperation.status) }}</span><button class="text-button" type="button" @click="refreshWalletAdjustment">刷新</button></div><dl class="data-list"><div><dt>调整前余额</dt><dd>{{ operatorSourceText(walletAdjustmentOperation.beforeBalance, (data) => formatUsdMicros(data.usdMicros)) }}</dd></div><div><dt>调整后余额</dt><dd>{{ operatorSourceText(walletAdjustmentOperation.afterBalance, (data) => formatUsdMicros(data.usdMicros)) }}</dd></div><div><dt>原因</dt><dd>{{ walletAdjustmentOperation.reason || "暂不可用" }}</dd></div><div><dt>关联操作</dt><dd>{{ walletAdjustmentOperation.relatedOperationId || "暂不可用" }}</dd></div><div><dt>余额记录引用</dt><dd>{{ walletAdjustmentOperation.balanceHistoryRef || "暂不可用" }}</dd></div><div><dt>收据编号</dt><dd>{{ walletAdjustmentOperation.receiptId || "暂不可用" }}</dd></div><div><dt>错误码</dt><dd>{{ walletAdjustmentOperation.errorCode || "暂不可用" }}</dd></div><div><dt>服务状态码</dt><dd>{{ walletAdjustmentOperation.upstreamFailure?.httpStatus ?? "暂不可用" }}</dd></div><div><dt>服务错误码</dt><dd>{{ walletAdjustmentOperation.upstreamFailure?.errorCode || "暂不可用" }}</dd></div><div><dt>请求编号</dt><dd>{{ walletAdjustmentOperation.upstreamFailure?.requestId || "暂不可用" }}</dd></div><div><dt>执行人</dt><dd>{{ walletAdjustmentOperation.actor || "暂不可用" }}</dd></div></dl></section><footer><button class="button secondary" type="button" @click="closeModal">取消</button><button v-if="walletAdjustmentOperation?.status === 'manual_review' && walletAdjustmentOperation.allowedActions?.includes('recover_wallet_adjustment')" class="button primary" type="button" :disabled="loading.walletAdjustment" @click="recoverWalletAdjustment">{{ loading.walletAdjustment ? "处理中..." : "恢复确认" }}</button><button v-else class="button primary" type="submit" :disabled="loading.walletAdjustment">{{ loading.walletAdjustment ? "处理中..." : "确认操作" }}</button></footer></form><form v-else-if="modal === 'announcement'" @submit.prevent="submitOperatorAnnouncement"><label>标题<input v-model.trim="announcementForm.title" data-autofocus required maxlength="120" /></label><label>正文<textarea v-model.trim="announcementForm.body" required maxlength="4000" /></label><label>开始时间（可选）<input v-model.trim="announcementForm.startsAt" placeholder="2026-07-20T00:00:00Z" /></label><label>结束时间（可选）<input v-model.trim="announcementForm.endsAt" placeholder="2026-07-21T00:00:00Z" /></label><footer><button class="button secondary" type="button" @click="closeModal">取消</button><button class="button primary" type="submit">保存草稿</button></footer></form><form v-else @submit.prevent="provisionOperatorUser"><label>登录邮箱<input v-model.trim="adminUserForm.email" data-autofocus type="email" required /></label><label>初始密码<input v-model="adminUserForm.password" type="password" required /></label><label>姓名<input v-model.trim="adminUserForm.name" /></label><footer><button class="button secondary" type="button" @click="closeModal">取消</button><button class="button primary" type="submit" :disabled="mutationBusy">{{ mutationBusy ? "处理中..." : "开通用户" }}</button></footer></form></section></div>
     <div v-if="toast.text" class="toast" :class="toast.tone" role="status">{{ toast.text }}</div>
   </div>
 </template>

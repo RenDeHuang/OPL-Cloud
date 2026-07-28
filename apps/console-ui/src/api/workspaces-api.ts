@@ -1,11 +1,13 @@
 import { decodeDto, decodeSource } from "./dtos.ts";
 import type {
+  AvailableSource,
   RuntimeCredentialResponse,
   SourceEnvelope,
   WorkspaceLaunchRequest,
   WorkspaceLaunchListResponse,
   WorkspaceLaunchResponse,
   WorkspaceListData,
+  WorkspaceDTO,
   WorkspaceRenewalRequest,
   WorkspaceRenewalResponse,
   WorkspaceRuntimeDTO
@@ -65,8 +67,60 @@ export function getWorkspaceLaunches(): Promise<WorkspaceLaunchListResponse> {
   });
 }
 
-export function getWorkspaces(): Promise<SourceEnvelope<WorkspaceListData>> {
-  return sourceRequest<WorkspaceListData>(() => getJson<unknown>("/api/workspaces"));
+export function getWorkspaces(page = 1, pageSize = 20): Promise<SourceEnvelope<WorkspaceListData>> {
+  const query = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
+  return sourceRequest<WorkspaceListData>(() => getJson<unknown>(`/api/workspaces?${query}`));
+}
+
+export async function findWorkspaceInPages(
+  workspaceId: string,
+  pageSize = 50
+): Promise<SourceEnvelope<WorkspaceDTO | null>> {
+  if (!Number.isSafeInteger(pageSize) || pageSize < 1) {
+    throw new Error("workspace_list_page_size_invalid");
+  }
+
+  let page = 1;
+  let total: number | null = null;
+  let inspected = 0;
+  let firstPage: AvailableSource<WorkspaceListData> | null = null;
+
+  while (true) {
+    const result = await getWorkspaces(page, pageSize);
+    if (result.available === false) return result;
+    if (result.data.page !== page || result.data.pageSize !== pageSize) {
+      throw new Error("workspace_list_page_mismatch");
+    }
+
+    if (!firstPage) {
+      firstPage = result;
+      total = result.data.total;
+      if (!Number.isSafeInteger(total) || total < 0) throw new Error("workspace_list_total_invalid");
+    } else if (result.data.total !== total) {
+      throw new Error("workspace_list_total_mismatch");
+    }
+
+    const workspace = result.data.items.find((item) => item.id === workspaceId);
+    if (workspace) {
+      return {
+        ...result,
+        status: "available",
+        data: workspace
+      };
+    }
+
+    inspected += result.data.items.length;
+    if (inspected > total) throw new Error("workspace_list_page_overflow");
+    if (inspected === total) {
+      return {
+        ...firstPage,
+        status: "empty",
+        data: null
+      };
+    }
+    if (result.data.items.length === 0) throw new Error("workspace_list_page_incomplete");
+    page += 1;
+  }
 }
 
 export function getWorkspaceRuntimeStatus(workspaceId: string): Promise<SourceEnvelope<WorkspaceRuntimeDTO>> {

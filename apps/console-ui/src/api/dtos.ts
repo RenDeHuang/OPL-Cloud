@@ -100,6 +100,8 @@ export interface WorkspaceDTO extends Workspace {
 export interface WorkspaceListData {
   items: WorkspaceDTO[];
   total: number;
+  page: number;
+  pageSize: number;
 }
 
 export type PlanId = "basic" | "pro";

@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 async function runConsoleBrowserQa(options) {
@@ -7,8 +9,11 @@ async function runConsoleBrowserQa(options) {
   return harness.runConsoleBrowserQa(options);
 }
 
-test("Console browser covers customer and operator truth states at desktop and mobile", { timeout: 120_000 }, async () => {
-  const result = await runConsoleBrowserQa({ network: "fake-only" });
+test("Console browser covers customer and operator truth states at desktop and mobile", { timeout: 120_000 }, async (t) => {
+  const configuredScreenshotDir = process.env.OPL_CONSOLE_QA_SCREENSHOT_DIR;
+  const screenshotDir = configuredScreenshotDir || await mkdtemp(join(tmpdir(), "opl-console-fixture-"));
+  if (!configuredScreenshotDir) t.after(() => rm(screenshotDir, { recursive: true, force: true }));
+  const result = await runConsoleBrowserQa({ network: "fake-only", screenshotDir });
 
   assert.equal(result.ok, true);
   assert.equal(result.evidenceLevel, "code-complete");
@@ -17,11 +22,36 @@ test("Console browser covers customer and operator truth states at desktop and m
   assert.deepEqual(result.roles, ["customer", "operator"]);
   assert.deepEqual(result.sourceStates, ["available", "empty", "unavailable", "error"]);
   assert.deepEqual(result.repeatedWrites, { gatewayKey: 1, walletAdjustment: 1 });
-  assert.equal(result.workspaceSelection, true);
+  assert.equal(result.operatorAccountDisableWrites, 1);
+  assert.deepEqual(result.operatorAccountStatuses, { "acct-1": "disabled", "acct-2": "disabled" });
+  assert.deepEqual(result.operatorAccountViewports, ["desktop", "mobile"]);
+  assert.deepEqual(result.unavailablePlanKeyboardViewports, ["mobile"]);
+  assert.equal(result.workspaceNavigation, true);
+  assert.equal(result.workspacePagination, true);
+  assert.equal(result.directDetailRefresh, true);
+  assert.deepEqual(result.requestRecordFields, ["time", "model", "endpoint", "actualAmount", "requestId"]);
+  assert.equal(result.billingViews, true);
+  assert.equal(result.loginSubmissions, 2);
+  assert.deepEqual(result.customerRoutes, [
+    "/login",
+    "/console/overview",
+    "/console/workspaces",
+    "/console/workspaces/new",
+    "/console/workspaces/ws-1",
+    "/console/workspaces/ws-2",
+    "/console/api",
+    "/console/api/usage",
+    "/console/api/keys",
+    "/console/billing",
+    "/console/announcements"
+  ]);
   assert.deepEqual(result.workspaceSecretReads, { "ws-1": 1, "ws-2": 1 });
   assert.equal(result.secretCleanup, true);
   assert.equal(result.operatorRouteLazyReads, true);
   assert.equal(result.externalRequests, 0);
+  assert.deepEqual(result.consoleErrors, []);
+  await stat(join(screenshotDir, "fixture-console-overview-desktop.png"));
+  await stat(join(screenshotDir, "fixture-console-overview-mobile.png"));
 });
 
 test("Home Login Logo unchanged browser contract stays pinned", async () => {

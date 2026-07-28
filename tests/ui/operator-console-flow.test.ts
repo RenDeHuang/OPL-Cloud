@@ -49,16 +49,21 @@ test("operator workspace rows expose available product and lifecycle facts", asy
   }
 });
 
-test("operator wallet adjustment is confirmed, idempotent, and reviewable", async () => {
-  const [app, readApiSource] = await Promise.all([
+test("operator balance operation is confirmed, idempotent, and reviewable", async () => {
+  const [app, readApiSource, consoleApiSource] = await Promise.all([
     source("apps/console-ui/src/App.vue"),
-    source("apps/console-ui/src/api/console-read-api.ts")
+    source("apps/console-ui/src/api/console-read-api.ts"),
+    source("apps/console-ui/src/api/console-api.ts")
   ]);
   for (const token of ["wallet-adjustments", "Idempotency-Key", "confirmationAccountId", "manual_review"]) {
-    assert.match(`${app}\n${readApiSource}`, new RegExp(token));
+    assert.match(`${app}\n${readApiSource}\n${consoleApiSource}`, new RegExp(token));
   }
-  assert.match(app, /二次确认/);
+  assert.match(app, /请再次确认这笔余额操作/);
   assert.match(app, /结果待确认/);
+  assert.match(app, /余额操作/);
+  assert.match(app, /wallet-adjustment-modal/);
+  assert.match(app, /:aria-label="modal === 'wallet-adjustment' \? '账户余额操作' : modal"/);
+  assert.match(await source("apps/console-ui/src/styles.css"), /\.wallet-adjustment-modal\s*\{[\s\S]+\.wallet-adjustment-readback\s*\{/);
   assert.doesNotMatch(app, /createUser\([^)]*sub2apiUserId/);
 });
 
@@ -69,7 +74,7 @@ test("wallet adjustment readback shows non-secret audit facts", async () => {
     source("apps/console-ui/src/api/console-read-api.ts")
   ]);
   const modal = app.slice(app.indexOf('<div v-if="modal"'), app.indexOf('<div v-if="toast.text"'));
-  for (const label of ["调整前余额", "调整后余额", "原因", "关联操作", "余额记录引用", "Receipt", "上游 HTTP", "上游错误码", "上游 request ID", "执行人"]) {
+  for (const label of ["调整前余额", "调整后余额", "原因", "关联操作", "余额记录引用", "收据编号", "服务状态码", "服务错误码", "请求编号", "执行人"]) {
     assert.match(modal, new RegExp(label));
   }
   assert.match(modal, /walletAdjustmentOperation\.beforeBalance/);
@@ -115,12 +120,20 @@ test("operator announcement publish preserves the saved schedule", async () => {
   assert.match(app, /endsAt: announcement\.endsAt \|\| ""/);
 });
 
-test("operator accounts provision and disable without delete", async () => {
+test("operator accounts display authoritative active and disabled states through the existing disable command", async () => {
   const app = await source("apps/console-ui/src/App.vue");
+  const disableAction = app.match(/async function disableOperatorAccount[\s\S]*?\n}/)?.[0] ?? "";
   assert.match(app, /开通用户/);
   assert.doesNotMatch(app, /邀请用户/);
-  assert.match(app, /禁用/);
-  assert.doesNotMatch(app, /删除账号|deleteAccount|\/api\/operator\/accounts\/[^"']+\/delete/);
+  assert.match(app, /active: "正常", disabled: "已停用"/);
+  assert.match(app, /computed\(\(\) => operatorAccountsPageSource\.value\?\.available \? operatorAccountsPageSource\.value\.data\.items : \[\]\)/);
+  assert.match(disableAction, /确认停用该客户/);
+  assert.match(disableAction, /disableOperatorAccountCommand\(accountId, "operator_requested"/);
+  assert.match(disableAction, /客户已停用/);
+  assert.match(disableAction, /await loadAdmin\(\)/);
+  assert.doesNotMatch(app, /归档|operatorAccountView|value: "archived"/);
+  assert.match(await source("apps/console-ui/src/api/console-read-api.ts"), /\/api\/operator\/accounts\/\$\{encodeURIComponent\(accountId\)\}\/disable/);
+  assert.doesNotMatch(app, /删除客户|客户已删除|删除账号|deleteAccount|\/api\/operator\/accounts\/[^"']+\/delete/);
 });
 
 test("operator accounts and workspaces expose server-side pagination", async () => {
