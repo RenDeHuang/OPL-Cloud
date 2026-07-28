@@ -392,16 +392,28 @@ contract or select the SKU for a customer launch.
   the Workspace browser, WebSocket, and single model request without kubeconfig
   or Tencent credentials. Their same-run handoff is redacted evidence, never a
   substitute for account, wallet, launch, Usage, or Ledger authority.
-  The workflow requires explicit approval for account provisioning, wallet recharge,
-  Workspace purchase, and one model request; submits exactly one launch POST,
-  polls only that operation, proves separate recharge/product/Usage wallet
-  deltas, the approved resolved SKU across the NodePool plan, Fabric allocation,
-  Tencent truth and operator facts, the Basic `2c4g` catalog and Runtime limits,
-  and the dedicated-pool `N -> N+1` resource chain, and emits only redacted
-  evidence. Before every business write, the runner revalidates the approved
+  `operator_precharge` retains the explicit account-provision, wallet-recharge,
+  Workspace-purchase, and model-request approvals. A narrowly approved
+  `operator_precharge_recovery` may continue the same E2E only after a completed
+  historical precharge: it reads the exact non-secret approved wallet-adjustment
+  operation, validates its mapped active account, recharge reason, status,
+  phase, and exact USD-micros delta, and performs zero account-provision or
+  wallet-adjustment POSTs. It never derives or recovers a raw wallet idempotency
+  key. Recovery requires an empty `resume_run_id`; it never downloads or uses an
+  earlier checkpoint. Its approval binds one new launch idempotency key plus the deterministic
+  launch-operation and Workspace IDs; every first submission or later recovery
+  reads only those public identities and never submits a second launch. Both
+  modes read the current server quote and live spendable wallet before their
+  first launch POST, then prove the exact Control Plane debit, receipt, and one
+  Workspace resource chain. The runner submits exactly one launch POST, polls
+  only that operation, proves separate recharge/product/Usage evidence, the
+  approved resolved SKU across the NodePool plan, Fabric allocation, Tencent
+  truth and operator facts, the Basic `2c4g` catalog and Runtime limits, and the
+  dedicated-pool `N -> N+1` resource chain, and emits only redacted evidence.
+  Before every business write, the runner revalidates the approved
   merged SHA (including a live `origin/main` read) and Cloud digest against the
   current Control Plane, Fabric, and Ledger Deployment revision -> ReplicaSet -> Ready Pod owner chain; a boolean
-  readiness response is not accepted as this gate. Its atomic checkpoint is only
+  readiness response is not accepted as this gate. Its same-run atomic checkpoint is only
   a recovery hint: deterministic account, wallet-operation, launch-operation,
   and Workspace identities are recovered from authoritative service readback,
   unknown historical HTTP attempts remain null, and an attempted or otherwise

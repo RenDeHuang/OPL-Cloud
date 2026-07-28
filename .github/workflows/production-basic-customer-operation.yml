@@ -11,13 +11,21 @@ on:
         description: Exact release-owner approval ID encoded by the production approval document.
         required: true
         type: string
+      funding_mode:
+        description: operator_precharge performs the approved provision and recharge; operator_precharge_recovery reads one approved completed precharge before the purchase.
+        required: true
+        default: operator_precharge
+        type: choice
+        options:
+          - operator_precharge
+          - operator_precharge_recovery
       confirm_account_provision:
-        description: Approve one real operator account provision.
+        description: "operator_precharge only: approve one real operator account provision. Must be false for operator_precharge_recovery."
         required: true
         default: false
         type: boolean
       confirm_wallet_recharge:
-        description: Approve one real Sub2API wallet recharge.
+        description: "operator_precharge only: approve one real Sub2API wallet recharge. Must be false for operator_precharge_recovery."
         required: true
         default: false
         type: boolean
@@ -48,13 +56,15 @@ concurrency:
 jobs:
   prepare-basic-customer-operation:
     name: Prepare one approved Basic customer operation in TKE VPC
-    if: ${{ github.ref == 'refs/heads/main' && github.sha == inputs.merged_sha && inputs.confirm_account_provision && inputs.confirm_wallet_recharge && inputs.confirm_workspace_purchase && inputs.confirm_single_model_request }}
+    if: ${{ github.ref == 'refs/heads/main' && github.sha == inputs.merged_sha && inputs.confirm_workspace_purchase && inputs.confirm_single_model_request && ((inputs.funding_mode == 'operator_precharge' && inputs.confirm_account_provision && inputs.confirm_wallet_recharge) || (inputs.funding_mode == 'operator_precharge_recovery' && !inputs.confirm_account_provision && !inputs.confirm_wallet_recharge)) }}
     runs-on: [self-hosted, tencent-cloud, opl-cloud, tke-vpc]
     timeout-minutes: 40
     environment: production
     env:
       OPL_MERGED_SHA: ${{ inputs.merged_sha }}
       OPL_BASIC_CANARY_APPROVAL_ID: ${{ inputs.approval_id }}
+      OPL_BASIC_CANARY_FUNDING_MODE: ${{ inputs.funding_mode }}
+      OPL_BASIC_CANARY_RESUME_RUN_ID: ${{ inputs.resume_run_id }}
       OPL_BASIC_CANARY_APPROVAL_JSON: ${{ secrets.OPL_BASIC_CANARY_APPROVAL_JSON }}
       OPL_BASIC_CANARY_CUSTOMER_PASSWORD: ${{ secrets.OPL_BASIC_CANARY_CUSTOMER_PASSWORD }}
       OPL_BASIC_CANARY_CONFIRMATION: I_UNDERSTAND_THIS_PROVISIONS_ONE_REAL_BASIC_WORKSPACE_AND_SENDS_ONE_MODEL_REQUEST
@@ -92,6 +102,25 @@ jobs:
             exit 1
           fi
 
+      - name: Reject recovered-precharge checkpoint resume
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$OPL_BASIC_CANARY_FUNDING_MODE" in
+            operator_precharge)
+              ;;
+            operator_precharge_recovery)
+              if [ -n "$OPL_BASIC_CANARY_RESUME_RUN_ID" ]; then
+                echo "Recovered precharge requires an empty resume_run_id." >&2
+                exit 1
+              fi
+              ;;
+            *)
+              echo "Unsupported Basic canary funding mode." >&2
+              exit 1
+              ;;
+          esac
+
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
@@ -123,7 +152,7 @@ jobs:
           echo "KUBECONFIG=$kubeconfig" >> "$GITHUB_ENV"
 
       - name: Download prior redacted checkpoint
-        if: ${{ inputs.resume_run_id != '' }}
+        if: ${{ inputs.funding_mode == 'operator_precharge' && inputs.resume_run_id != '' }}
         uses: actions/download-artifact@v4
         with:
           name: production-basic-customer-operation
@@ -216,10 +245,22 @@ jobs:
             echo "Fabric localhost port-forward did not become ready." >&2
             exit 1
           fi
+          case "$OPL_BASIC_CANARY_FUNDING_MODE" in
+            operator_precharge)
+              funding_flags=(--allow-account-provision --allow-wallet-recharge)
+              ;;
+            operator_precharge_recovery)
+              funding_flags=(--allow-existing-precharge-recovery)
+              ;;
+            *)
+              echo "Unsupported Basic canary funding mode." >&2
+              exit 1
+              ;;
+          esac
           node tools/production-live-qa.ts --basic-customer-canary \
             --phase prepare \
-            --allow-account-provision \
-            --allow-wallet-recharge \
+            --funding-mode "$OPL_BASIC_CANARY_FUNDING_MODE" \
+            "${funding_flags[@]}" \
             --allow-workspace-purchase \
             --allow-model-write \
             --approval-id "$OPL_BASIC_CANARY_APPROVAL_ID" \
@@ -256,13 +297,15 @@ jobs:
   complete-basic-customer-operation:
     name: Complete one approved Basic customer browser and model check
     needs: prepare-basic-customer-operation
-    if: ${{ always() && needs.prepare-basic-customer-operation.result == 'success' && github.ref == 'refs/heads/main' && github.sha == inputs.merged_sha && inputs.confirm_account_provision && inputs.confirm_wallet_recharge && inputs.confirm_workspace_purchase && inputs.confirm_single_model_request }}
+    if: ${{ always() && needs.prepare-basic-customer-operation.result == 'success' && github.ref == 'refs/heads/main' && github.sha == inputs.merged_sha && inputs.confirm_workspace_purchase && inputs.confirm_single_model_request && ((inputs.funding_mode == 'operator_precharge' && inputs.confirm_account_provision && inputs.confirm_wallet_recharge) || (inputs.funding_mode == 'operator_precharge_recovery' && !inputs.confirm_account_provision && !inputs.confirm_wallet_recharge)) }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: production
     env:
       OPL_MERGED_SHA: ${{ inputs.merged_sha }}
       OPL_BASIC_CANARY_APPROVAL_ID: ${{ inputs.approval_id }}
+      OPL_BASIC_CANARY_FUNDING_MODE: ${{ inputs.funding_mode }}
+      OPL_BASIC_CANARY_RESUME_RUN_ID: ${{ inputs.resume_run_id }}
       OPL_BASIC_CANARY_APPROVAL_JSON: ${{ secrets.OPL_BASIC_CANARY_APPROVAL_JSON }}
       OPL_BASIC_CANARY_CUSTOMER_PASSWORD: ${{ secrets.OPL_BASIC_CANARY_CUSTOMER_PASSWORD }}
       OPL_BASIC_CANARY_CONFIRMATION: I_UNDERSTAND_THIS_PROVISIONS_ONE_REAL_BASIC_WORKSPACE_AND_SENDS_ONE_MODEL_REQUEST
@@ -296,6 +339,25 @@ jobs:
             exit 1
           fi
 
+      - name: Reject recovered-precharge checkpoint resume
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$OPL_BASIC_CANARY_FUNDING_MODE" in
+            operator_precharge)
+              ;;
+            operator_precharge_recovery)
+              if [ -n "$OPL_BASIC_CANARY_RESUME_RUN_ID" ]; then
+                echo "Recovered precharge requires an empty resume_run_id." >&2
+                exit 1
+              fi
+              ;;
+            *)
+              echo "Unsupported Basic canary funding mode." >&2
+              exit 1
+              ;;
+          esac
+
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
@@ -323,11 +385,23 @@ jobs:
           OPL_BASIC_CANARY_CHECKPOINT_PATH: ${{ runner.temp }}/production-basic-customer-operation/checkpoint.json
         run: |
           set -euo pipefail
+          case "$OPL_BASIC_CANARY_FUNDING_MODE" in
+            operator_precharge)
+              funding_flags=(--allow-account-provision --allow-wallet-recharge)
+              ;;
+            operator_precharge_recovery)
+              funding_flags=(--allow-existing-precharge-recovery)
+              ;;
+            *)
+              echo "Unsupported Basic canary funding mode." >&2
+              exit 1
+              ;;
+          esac
           node tools/production-live-qa.ts --basic-customer-canary \
             --phase complete \
             --prepared-evidence "$OPL_BASIC_CANARY_ARTIFACT_DIR/prepared-evidence.json" \
-            --allow-account-provision \
-            --allow-wallet-recharge \
+            --funding-mode "$OPL_BASIC_CANARY_FUNDING_MODE" \
+            "${funding_flags[@]}" \
             --allow-workspace-purchase \
             --allow-model-write \
             --approval-id "$OPL_BASIC_CANARY_APPROVAL_ID" \

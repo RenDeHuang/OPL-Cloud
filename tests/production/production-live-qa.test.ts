@@ -296,6 +296,34 @@ function basicCanaryApprovalJson({ rechargeUsdMicros = "100000000" } = {}) {
   });
 }
 
+function recoveredPrechargeBasicCanaryApprovalJson({
+  prechargeOperationId = BASIC_CANARY_WALLET_OPERATION_ID,
+  rechargeUsdMicros = "60000000",
+  launchOperationId = BASIC_CANARY_LAUNCH_OPERATION_ID,
+  workspaceId = BASIC_CANARY_WORKSPACE_ID
+} = {}) {
+  return JSON.stringify({
+    approvalId: BASIC_CANARY_APPROVAL_ID,
+    expiresAt: "2099-07-26T00:00:00Z",
+    fundingMode: "operator_precharge_recovery",
+    customer: { email: BASIC_CANARY_CUSTOMER_EMAIL, accountId: BASIC_CANARY_ACCOUNT_ID },
+    prechargeOperationId,
+    rechargeUsdMicros,
+    idempotencyKeys: { workspaceLaunch: BASIC_CANARY_LAUNCH_KEY },
+    launch: { name: "Basic Canary 2026-07-26", packageId: "basic", sizeGb: 10, autoRenew: false },
+    expected: {
+      mergedSha: BASIC_CANARY_MERGED_SHA,
+      cloudImageDigest: BASIC_CANARY_CLOUD_DIGEST,
+      nodePoolId: "np-basic",
+      resolvedInstanceType: BASIC_CANARY_RESOLVED_INSTANCE_TYPE,
+      workspaceImageDigest: BASIC_CANARY_DIGEST,
+      model: "gpt-5.5",
+      launchOperationId,
+      workspaceId
+    }
+  });
+}
+
 function cloudRevisionFixture({ component = "", failure = "", remoteMainSha = BASIC_CANARY_MERGED_SHA } = {}) {
   const definitions = [
     ["opl-cloud-control-plane", "control-plane", "101"],
@@ -430,6 +458,7 @@ function basicCanaryFixture({
   allocationMemoryGb = 4,
   initialProvisioned = false,
   initialRecharged = false,
+  initialWalletUsdMicros = null,
   rechargeUsdMicros = 100_000_000,
   walletAdjustmentPhase = "complete",
   walletAdjustmentOverrides = {},
@@ -442,6 +471,7 @@ function basicCanaryFixture({
   workspaceKeysAfter = [workspaceKey()],
   generalKeySpendBeforeLaunchUsdMicros = 0,
   generalKeySpendAfterModelUsdMicros = 0,
+  walletPayload = null,
   quoteTotalUsdMicros = 52_580_000,
   quoteComputeUsdMicros = 50_000_000,
   quoteStorageUsdMicros = 2_580_000,
@@ -456,6 +486,9 @@ function basicCanaryFixture({
     provisionPosts: 0,
     rechargePosts: 0,
     launchPosts: 0,
+    workspacePurchaseDebits: 0,
+    tencentCvmPurchases: 0,
+    tencentCbsPurchases: 0,
     launchPolls: 0,
     modelRequests: 0,
     provisioned: initialProvisioned,
@@ -574,8 +607,10 @@ function basicCanaryFixture({
     ...walletAdjustmentOverrides
   });
   const walletBalance = () => {
+    if (walletPayload) return source(walletPayload);
     const generalKeySpend = generalKeySpendBeforeLaunchUsdMicros + (state.modelRequests > 0 ? generalKeySpendAfterModelUsdMicros : 0);
-    const value = (state.recharged ? rechargeUsdMicros : 0) - (state.launched ? launchTotalUsdMicros : 0) - state.modelRequests * usageRecord.actualCostUsdMicros - generalKeySpend;
+    const openingBalance = initialWalletUsdMicros ?? (state.recharged ? rechargeUsdMicros : 0);
+    const value = openingBalance - (state.launched ? launchTotalUsdMicros : 0) - state.modelRequests * usageRecord.actualCostUsdMicros - generalKeySpend;
     return source({ userId: "143", currency: "USD", usdMicros: String(value), status: "active" });
   };
   const fabricOperations = () => [{
@@ -746,6 +781,9 @@ function basicCanaryFixture({
       assert.equal(headers.get("idempotency-key"), BASIC_CANARY_LAUNCH_KEY);
       assert.deepEqual(JSON.parse(init.body), { name: "Basic Canary 2026-07-26", packageId: "basic", sizeGb: 10, autoRenew: false });
       state.launched = true;
+      state.workspacePurchaseDebits += 1;
+      state.tencentCvmPurchases += 1;
+      state.tencentCbsPurchases += 1;
       state.initialLaunchStatus = "debit_pending";
       if (loseResponseAfter === "launch" && !state.lostResponses.has("launch")) {
         state.lostResponses.add("launch");
@@ -858,6 +896,14 @@ function basicCanaryOptions(fixture, { rechargeUsdMicros = "100000000" } = {}) {
     cloudRevisionEvidenceReader: fixture.cloudRevisionEvidenceReader,
     runtimePodEvidenceReader: fixture.runtimePodEvidenceReader,
     now: new Date("2026-07-26T00:00:00Z")
+  };
+}
+
+function recoveredPrechargeBasicCanaryOptions(fixture, approval = {}) {
+  return {
+    ...basicCanaryOptions(fixture),
+    approvalJson: recoveredPrechargeBasicCanaryApprovalJson(approval),
+    fundingMode: "operator_precharge_recovery"
   };
 }
 
@@ -1002,6 +1048,226 @@ test("customer Basic canary uses the current live wallet rather than the immutab
     afterUsdMicros: "60000000",
     deltaUsdMicros: "60000000"
   });
+});
+
+test("customer Basic canary recovers the exact historical precharge without its raw wallet idempotency key", async () => {
+  const existingGeneralKeys = [1, 2, 3, 4].map((id) => generalKey(id));
+  const fixture = basicCanaryFixture({
+    initialProvisioned: true,
+    initialRecharged: true,
+    rechargeUsdMicros: 60_000_000,
+    existingGeneralKeys
+  });
+
+  const result = await productionLiveQa.verifyProductionBasicCustomerCanary(
+    recoveredPrechargeBasicCanaryOptions(fixture)
+  );
+
+  assert.equal(result.status, "passed");
+  assert.deepEqual(result.wallet, {
+    operationId: BASIC_CANARY_WALLET_OPERATION_ID,
+    source: "wallet_adjustment_authoritative_readback",
+    beforeUsdMicros: "0",
+    afterUsdMicros: "60000000",
+    deltaUsdMicros: "60000000"
+  });
+  assert.deepEqual(result.keyEvidence.generalKeyIds, ["1", "2", "3", "4"]);
+  assert.deepEqual(result.writeCounts, {
+    accountProvisionPosts: 0,
+    walletAdjustmentPosts: 0,
+    workspaceLaunchPosts: 1,
+    modelRequests: 1,
+    workspaceKeysCreated: 1,
+    workspacePurchaseDebits: 1,
+    tencentCvmPurchases: 1,
+    tencentCbsPurchases: 1
+  });
+  assert.deepEqual(result.httpAttempts, { workspaceLaunch: null, modelRequest: null });
+  assert.equal(fixture.state.provisionPosts, 0);
+  assert.equal(fixture.state.rechargePosts, 0);
+  assert.equal(fixture.state.launchPosts, 1);
+  assert.equal(fixture.state.workspacePurchaseDebits, 1);
+  assert.equal(fixture.state.tencentCvmPurchases, 1);
+  assert.equal(fixture.state.tencentCbsPurchases, 1);
+  assert.equal(fixture.state.modelRequests, 1);
+  assert.equal(fixture.calls.filter((call) => call.path === "/api/operator/accounts" && call.method === "POST").length, 0);
+  assert.deepEqual(
+    fixture.calls.filter((call) => call.path.includes("wallet-adjustments")).map((call) => `${call.method} ${call.path}`),
+    [`GET /api/operator/wallet-adjustments/${BASIC_CANARY_WALLET_OPERATION_ID}`]
+  );
+});
+
+test("customer Basic canary rejects an explicit empty funding mode before any network call", async () => {
+  const fixture = basicCanaryFixture();
+  const approval = JSON.parse(basicCanaryApprovalJson());
+  approval.fundingMode = "";
+
+  await assert.rejects(
+    () => productionLiveQa.verifyProductionBasicCustomerCanary({
+      ...basicCanaryOptions(fixture),
+      approvalJson: JSON.stringify(approval)
+    }),
+    /production_basic_canary_approval_invalid/
+  );
+  assert.equal(fixture.calls.length, 0);
+  assert.deepEqual({
+    account: fixture.state.provisionPosts,
+    wallet: fixture.state.rechargePosts,
+    launch: fixture.state.launchPosts,
+    debit: fixture.state.workspacePurchaseDebits,
+    cvm: fixture.state.tencentCvmPurchases,
+    cbs: fixture.state.tencentCbsPurchases,
+    model: fixture.state.modelRequests
+  }, { account: 0, wallet: 0, launch: 0, debit: 0, cvm: 0, cbs: 0, model: 0 });
+});
+
+for (const [name, approval] of [
+  ["launch operation", { launchOperationId: "workspace-launch-wrong" }],
+  ["workspace", { workspaceId: "ws-wrong" }]
+]) {
+  test(`customer Basic canary recovery rejects an approval with a mismatched expected ${name} before writes`, async () => {
+    const fixture = basicCanaryFixture({
+      initialProvisioned: true,
+      initialRecharged: true,
+      rechargeUsdMicros: 60_000_000
+    });
+
+    await assert.rejects(
+      () => productionLiveQa.verifyProductionBasicCustomerCanary(recoveredPrechargeBasicCanaryOptions(fixture, approval)),
+      /production_basic_canary_approval_invalid/
+    );
+    assert.deepEqual({
+      account: fixture.state.provisionPosts,
+      wallet: fixture.state.rechargePosts,
+      launch: fixture.state.launchPosts,
+      debit: fixture.state.workspacePurchaseDebits,
+      cvm: fixture.state.tencentCvmPurchases,
+      cbs: fixture.state.tencentCbsPurchases,
+      model: fixture.state.modelRequests
+    }, { account: 0, wallet: 0, launch: 0, debit: 0, cvm: 0, cbs: 0, model: 0 });
+  });
+}
+
+for (const [name, initialWalletUsdMicros] of [
+  ["equals", 52_580_000],
+  ["is below", 52_579_999]
+]) {
+  test(`customer Basic canary recovery blocks launch when live wallet ${name} the quote`, async () => {
+    const fixture = basicCanaryFixture({
+      initialProvisioned: true,
+      initialRecharged: true,
+      rechargeUsdMicros: 60_000_000,
+      initialWalletUsdMicros
+    });
+
+    await assert.rejects(
+      () => productionLiveQa.verifyProductionBasicCustomerCanary(recoveredPrechargeBasicCanaryOptions(fixture)),
+      /production_basic_canary_live_wallet_insufficient/
+    );
+    assert.deepEqual({
+      account: fixture.state.provisionPosts,
+      wallet: fixture.state.rechargePosts,
+      launch: fixture.state.launchPosts,
+      debit: fixture.state.workspacePurchaseDebits,
+      cvm: fixture.state.tencentCvmPurchases,
+      cbs: fixture.state.tencentCbsPurchases,
+      model: fixture.state.modelRequests
+    }, { account: 0, wallet: 0, launch: 0, debit: 0, cvm: 0, cbs: 0, model: 0 });
+    assert.deepEqual(
+      fixture.calls.filter((call) => call.path.includes("wallet-adjustments")).map((call) => `${call.method} ${call.path}`),
+      [`GET /api/operator/wallet-adjustments/${BASIC_CANARY_WALLET_OPERATION_ID}`]
+    );
+  });
+}
+
+for (const [name, walletAdjustmentOverrides] of [
+  ["operation", { operationId: "wallet-adjustment-wrong" }],
+  ["account", { accountId: "acct-wrong" }],
+  ["amount", { amountUsd: "59.000000" }],
+  ["reason", { reason: "wrong reason" }],
+  ["status", { status: "pending" }],
+  ["phase", { phase: "succeeded" }],
+  ["delta", {
+    beforeBalance: nestedSource({ currency: "USD", usdMicros: "1" }, "sub2api"),
+    afterBalance: nestedSource({ currency: "USD", usdMicros: "60000000" }, "sub2api")
+  }]
+]) {
+  test(`customer Basic canary recovery fails closed when the historical precharge ${name} is invalid`, async () => {
+    const fixture = basicCanaryFixture({
+      initialProvisioned: true,
+      initialRecharged: true,
+      rechargeUsdMicros: 60_000_000,
+      walletAdjustmentOverrides
+    });
+
+    await assert.rejects(
+      () => productionLiveQa.verifyProductionBasicCustomerCanary(recoveredPrechargeBasicCanaryOptions(fixture)),
+      /production_basic_canary_recharge_readback_failed/
+    );
+    assert.deepEqual({
+      account: fixture.state.provisionPosts,
+      wallet: fixture.state.rechargePosts,
+      launch: fixture.state.launchPosts,
+      debit: fixture.state.workspacePurchaseDebits,
+      cvm: fixture.state.tencentCvmPurchases,
+      cbs: fixture.state.tencentCbsPurchases,
+      model: fixture.state.modelRequests
+    }, { account: 0, wallet: 0, launch: 0, debit: 0, cvm: 0, cbs: 0, model: 0 });
+    assert.equal(fixture.calls.filter((call) => call.path.includes("wallet-adjustments") && call.method !== "GET").length, 0);
+  });
+}
+
+test("customer Basic canary recovery requires the approved existing account without provisioning it", async () => {
+  const fixture = basicCanaryFixture({ initialRecharged: true, rechargeUsdMicros: 60_000_000 });
+
+  await assert.rejects(
+    () => productionLiveQa.verifyProductionBasicCustomerCanary(recoveredPrechargeBasicCanaryOptions(fixture)),
+    /production_basic_canary_existing_account_required/
+  );
+  assert.equal(fixture.state.provisionPosts, 0);
+  assert.equal(fixture.state.rechargePosts, 0);
+  assert.equal(fixture.state.launchPosts, 0);
+  assert.equal(fixture.calls.filter((call) => call.path.includes("wallet-adjustments")).length, 0);
+});
+
+test("customer Basic canary recovery fails closed when the approved historical precharge is absent", async () => {
+  const fixture = basicCanaryFixture({ initialProvisioned: true });
+
+  await assert.rejects(
+    () => productionLiveQa.verifyProductionBasicCustomerCanary(recoveredPrechargeBasicCanaryOptions(fixture)),
+    /production_basic_canary_recharge_readback_failed/
+  );
+  assert.deepEqual({
+    account: fixture.state.provisionPosts,
+    wallet: fixture.state.rechargePosts,
+    launch: fixture.state.launchPosts,
+    debit: fixture.state.workspacePurchaseDebits,
+    cvm: fixture.state.tencentCvmPurchases,
+    cbs: fixture.state.tencentCbsPurchases,
+    model: fixture.state.modelRequests
+  }, { account: 0, wallet: 0, launch: 0, debit: 0, cvm: 0, cbs: 0, model: 0 });
+  assert.deepEqual(
+    fixture.calls.filter((call) => call.path.includes("wallet-adjustments")).map((call) => `${call.method} ${call.path}`),
+    [`GET /api/operator/wallet-adjustments/${BASIC_CANARY_WALLET_OPERATION_ID}`]
+  );
+});
+
+test("customer Basic canary recovery rejects a pre-existing Workspace Key before launch", async () => {
+  const fixture = basicCanaryFixture({
+    initialProvisioned: true,
+    initialRecharged: true,
+    rechargeUsdMicros: 60_000_000,
+    existingWorkspaceKeys: [workspaceKey("77")]
+  });
+
+  await assert.rejects(
+    () => productionLiveQa.verifyProductionBasicCustomerCanary(recoveredPrechargeBasicCanaryOptions(fixture)),
+    /production_basic_canary_baseline_not_empty/
+  );
+  assert.equal(fixture.state.provisionPosts, 0);
+  assert.equal(fixture.state.rechargePosts, 0);
+  assert.equal(fixture.state.launchPosts, 0);
+  assert.equal(fixture.calls.filter((call) => call.path.includes("wallet-adjustments") && call.method !== "GET").length, 0);
 });
 
 for (const [name, generalKeySpendBeforeLaunchUsdMicros] of [
@@ -1284,6 +1550,83 @@ test("customer Basic canary split phases preserve zero recovered account and wal
   assert.equal(fixture.state.rechargePosts, 0);
   assert.equal(fixture.state.launchPosts, 1);
   assert.equal(fixture.state.modelRequests, 1);
+});
+
+test("customer Basic canary recovery completes split phases from the same historical precharge", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "opl-basic-canary-precharge-recovery-split-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const checkpointPath = join(directory, "checkpoint.json");
+  const fixture = basicCanaryFixture({
+    initialProvisioned: true,
+    initialRecharged: true,
+    rechargeUsdMicros: 60_000_000
+  });
+  const options = recoveredPrechargeBasicCanaryOptions(fixture);
+
+  const prepared = await productionLiveQa.verifyProductionBasicCustomerCanary({
+    ...options,
+    phase: "prepare",
+    checkpointPath
+  });
+
+  assert.equal(prepared.status, "prepared");
+  assert.deepEqual(prepared.wallet, {
+    operationId: BASIC_CANARY_WALLET_OPERATION_ID,
+    source: "wallet_adjustment_authoritative_readback",
+    beforeUsdMicros: "0",
+    afterUsdMicros: "60000000",
+    deltaUsdMicros: "60000000"
+  });
+  assert.deepEqual(prepared.httpAttempts, { workspaceLaunch: null, modelRequest: null });
+  assert.equal(prepared.writeCounts.accountProvisionPosts, 0);
+  assert.equal(prepared.writeCounts.walletAdjustmentPosts, 0);
+  assert.equal(prepared.writeCounts.workspaceLaunchPosts, 1);
+
+  const result = await productionLiveQa.verifyProductionBasicCustomerCanary({
+    ...options,
+    phase: "complete",
+    preparedEvidence: prepared,
+    checkpointPath,
+    fabricOrigin: undefined,
+    internalServiceToken: undefined,
+    fabricFetchImpl: async () => { throw new Error("hosted_completion_must_not_call_internal_fabric"); },
+    cloudRevisionEvidenceReader: undefined,
+    runtimePodEvidenceReader: undefined
+  });
+
+  assert.equal(result.status, "passed");
+  assert.equal(result.writeCounts.accountProvisionPosts, 0);
+  assert.equal(result.writeCounts.walletAdjustmentPosts, 0);
+  assert.equal(result.writeCounts.workspaceLaunchPosts, 1);
+  assert.equal(fixture.calls.filter((call) => call.path.includes("wallet-adjustments") && call.method !== "GET").length, 0);
+  assert.equal(fixture.calls.filter((call) => call.path === `/api/workspace-launches/${BASIC_CANARY_LAUNCH_OPERATION_ID}` && call.method === "GET").length > 0, true);
+});
+
+test("customer Basic canary recovery reads the approved launch identity after a lost launch response without a second POST", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "opl-basic-canary-precharge-launch-recovery-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const checkpointPath = join(directory, "checkpoint.json");
+  const fixture = basicCanaryFixture({
+    initialProvisioned: true,
+    initialRecharged: true,
+    rechargeUsdMicros: 60_000_000,
+    loseResponseAfter: "launch"
+  });
+  const options = recoveredPrechargeBasicCanaryOptions(fixture);
+
+  await assert.rejects(
+    () => productionLiveQa.verifyProductionBasicCustomerCanary({ ...options, checkpointPath }),
+    /simulated_launch_response_lost/
+  );
+  assert.equal(fixture.state.launchPosts, 1);
+
+  const result = await productionLiveQa.verifyProductionBasicCustomerCanary({ ...options, checkpointPath });
+  assert.equal(result.status, "passed");
+  assert.equal(result.operationId, BASIC_CANARY_LAUNCH_OPERATION_ID);
+  assert.equal(result.workspaceId, BASIC_CANARY_WORKSPACE_ID);
+  assert.equal(fixture.state.launchPosts, 1);
+  assert.equal(fixture.calls.filter((call) => call.path === "/api/workspace-launches" && call.method === "POST").length, 1);
+  assert.equal(fixture.calls.filter((call) => call.path === `/api/workspace-launches/${BASIC_CANARY_LAUNCH_OPERATION_ID}` && call.method === "GET").length > 0, true);
 });
 
 for (const [failureAtRead, expectedPosts] of [
@@ -1619,6 +1962,62 @@ test("customer Basic canary CLI invokes the same redacted orchestration", async 
   assert.equal(result.status, "passed");
   assert.equal(result.writeCounts.workspaceLaunchPosts, 1);
   assert.doesNotMatch(stdout, /customer-password|workspace-password|internal-service-token|must-not-emit|redeem/i);
+});
+
+test("customer Basic canary CLI accepts only the historical-precharge recovery authorization", async () => {
+  const fixture = basicCanaryFixture({
+    initialProvisioned: true,
+    initialRecharged: true,
+    rechargeUsdMicros: 60_000_000
+  });
+  let stdout = "";
+  let stderr = "";
+  const code = await runProductionLiveQaCli({
+    argv: [
+      "--basic-customer-canary",
+      "--funding-mode", "operator_precharge_recovery",
+      "--allow-existing-precharge-recovery",
+      "--allow-workspace-purchase",
+      "--allow-model-write",
+      "--approval-id", BASIC_CANARY_APPROVAL_ID
+    ],
+    env: {
+      OPL_CONSOLE_ORIGIN: "https://cloud.medopl.cn",
+      OPL_FABRIC_INTERNAL_ORIGIN: "http://fabric.opl-cloud.svc:8082",
+      OPL_INTERNAL_SERVICE_TOKEN: "internal-service-token",
+      OPL_SUB2API_ADMIN_EMAIL: ADMIN_EMAIL,
+      OPL_SUB2API_ADMIN_PASSWORD: ADMIN_PASSWORD,
+      OPL_BASIC_CANARY_CUSTOMER_PASSWORD: BASIC_CANARY_CUSTOMER_PASSWORD,
+      OPL_BASIC_CANARY_APPROVAL_JSON: recoveredPrechargeBasicCanaryApprovalJson(),
+      OPL_BASIC_CANARY_CONFIRMATION: BASIC_CANARY_CONFIRMATION,
+      OPL_MERGED_SHA: BASIC_CANARY_MERGED_SHA,
+      OPL_VERIFY_RUN_ID: "production-basic-canary-precharge-recovery",
+      OPL_VERIFY_LAUNCH_POLL_ATTEMPTS: "3",
+      OPL_VERIFY_LAUNCH_POLL_DELAY_MS: "0",
+      OPL_VERIFY_USAGE_ATTEMPTS: "2",
+      OPL_VERIFY_USAGE_RETRY_DELAY_MS: "0",
+      OPL_VERIFY_BROWSER_TIMEOUT_MS: "20",
+      OPL_VERIFY_MODEL_TIMEOUT_MS: "20"
+    },
+    stdout: { write: (chunk) => { stdout += chunk; } },
+    stderr: { write: (chunk) => { stderr += chunk; } },
+    fetchImpl: fixture.fetchImpl,
+    fabricFetchImpl: fixture.fetchImpl,
+    browserFactory: fixture.browserFactory,
+    cloudRevisionEvidenceReader: fixture.cloudRevisionEvidenceReader,
+    runtimePodEvidenceReader: fixture.runtimePodEvidenceReader,
+    now: new Date("2026-07-26T00:00:00Z")
+  });
+
+  assert.equal(code, 0, stderr);
+  const result = JSON.parse(stdout);
+  assert.equal(result.status, "passed");
+  assert.equal(result.writeCounts.accountProvisionPosts, 0);
+  assert.equal(result.writeCounts.walletAdjustmentPosts, 0);
+  assert.equal(result.writeCounts.workspaceLaunchPosts, 1);
+  assert.equal(fixture.state.provisionPosts, 0);
+  assert.equal(fixture.state.rechargePosts, 0);
+  assert.equal(fixture.state.launchPosts, 1);
 });
 
 function readOnlyFixture({
