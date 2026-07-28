@@ -789,7 +789,7 @@ test("manual-review diagnose is isolated to the VPC runner and statically contai
 
   assert.equal(inputs.operation_mode.type, "choice");
   assert.equal(inputs.operation_mode.default, "customer_operation");
-  assert.deepEqual(inputs.operation_mode.options, ["customer_operation", "manual_review_diagnose"]);
+  assert.deepEqual(inputs.operation_mode.options, ["customer_operation", "manual_review_diagnose", "compute_claim_diagnose", "compute_claim_recover"]);
   assert.equal(inputs.diagnose_target_json.required, false);
   assert.match(String(diagnose.if), /inputs\.operation_mode == 'manual_review_diagnose'/);
   assert.match(String(diagnose.if), /inputs\.resume_run_id == ''/);
@@ -838,6 +838,59 @@ test("manual-review diagnose is isolated to the VPC runner and statically contai
   const artifactPreparation = serializedStep(steps.get("Prepare redacted manual-review artifact"));
   assert.match(artifactPreparation, /OPL_BASIC_CANARY_DIAGNOSE_ARTIFACT_DIR/);
   assert.doesNotMatch(runs, /OPL_BASIC_CANARY_DIAGNOSE_SECRET_DIR/);
+});
+
+test("compute claim diagnosis and recovery are isolated VPC modes with separate approval authority", async () => {
+  const workflow = await readWorkflow(".github/workflows/production-basic-customer-operation.yml");
+  const inputs = workflow.on.workflow_dispatch.inputs;
+  const diagnose = workflowJob(workflow, "compute-claim-diagnose");
+  const recover = workflowJob(workflow, "compute-claim-recover");
+  const diagnoseRuns = serializedRuns(diagnose);
+  const recoverRuns = serializedRuns(recover);
+
+  assert.equal(inputs.compute_claim_target_json.required, false);
+  assert.equal(inputs.compute_claim_cloud_digest.required, false);
+  assert.equal(inputs.confirm_compute_claim_recovery.type, "boolean");
+  assert.equal(inputs.confirm_compute_claim_recovery.default, false);
+  for (const job of [diagnose, recover]) {
+    assert.deepEqual(job["runs-on"], ["self-hosted", "tencent-cloud", "opl-cloud", "tke-vpc"]);
+    assert.match(String(job.if), /github\.ref == 'refs\/heads\/main'/);
+    assert.match(String(job.if), /github\.sha == inputs\.merged_sha/);
+    assert.match(String(job.if), /inputs\.resume_run_id == ''/);
+    for (const confirmation of ["account_provision", "wallet_recharge", "workspace_purchase", "single_model_request"]) {
+      assert.match(String(job.if), new RegExp(`!inputs\\.confirm_${confirmation}`));
+    }
+  }
+  assert.match(String(diagnose.if), /inputs\.operation_mode == 'compute_claim_diagnose'/);
+  assert.match(String(diagnose.if), /!inputs\.confirm_compute_claim_recovery/);
+  assert.equal(diagnose.environment, "production");
+  assert.equal(diagnose.env.OPL_COMPUTE_CLAIM_RECOVERY_APPROVAL_JSON, undefined);
+  assert.equal(diagnose.env.OPL_SUB2API_ADMIN_EMAIL, undefined);
+  assert.equal(diagnose.env.OPL_SUB2API_ADMIN_PASSWORD, undefined);
+  assert.match(diagnoseRuns, /production-live-qa\.ts --compute-claim-diagnose/);
+  assert.doesNotMatch(diagnoseRuns, /--compute-claim-recover|compute-claim-recovery\/claim|Idempotency-Key|wallet-adjustments|create_storage_volume|CreateComputeAllocation|scale|debit|refund/i);
+
+  assert.match(String(recover.if), /inputs\.operation_mode == 'compute_claim_recover'/);
+  assert.match(String(recover.if), /inputs\.confirm_compute_claim_recovery/);
+  assert.equal(recover.environment, "production-compute-claim-recovery");
+  assert.equal(recover.env.OPL_COMPUTE_CLAIM_RECOVERY_APPROVAL_JSON, "${{ secrets.OPL_COMPUTE_CLAIM_RECOVERY_APPROVAL_JSON }}");
+  assert.equal(recover.env.OPL_SUB2API_ADMIN_EMAIL, "${{ secrets.OPL_SUB2API_ADMIN_EMAIL }}");
+  assert.equal(recover.env.OPL_SUB2API_ADMIN_PASSWORD, "${{ secrets.OPL_SUB2API_ADMIN_PASSWORD }}");
+  assert.match(recoverRuns, /production-live-qa\.ts --compute-claim-recover/);
+  assert.match(recoverRuns, /--approval-id "\$OPL_COMPUTE_CLAIM_RECOVERY_APPROVAL_ID"/);
+  assert.match(recoverRuns, /get secret opl-cloud-internal-service/);
+  assert.match(recoverRuns, /\.data\.OPL_INTERNAL_SERVICE_TOKEN/);
+  assert.match(recoverRuns, /::add-mask::\$OPL_INTERNAL_SERVICE_TOKEN/);
+  assert.match(recoverRuns, /result\.mutationCounts\.tencent > 5/);
+  assert.match(recoverRuns, /result\.mutationCounts\.kubernetes > 1/);
+  assert.doesNotMatch(recoverRuns, /--basic-customer-canary|allow-workspace-purchase|allow-wallet-recharge|allow-account-provision|allow-model-write|create_storage_volume|CreateComputeAllocation|scale|debit|refund/i);
+  assert.match(JSON.stringify(diagnose.steps), /actions\/upload-artifact@v4/);
+  assert.match(JSON.stringify(recover.steps), /actions\/upload-artifact@v4/);
+
+  for (const other of [".github/workflows/pull-request-ci.yml", ".github/workflows/deploy-tke-production.yml", ".github/workflows/release-opl-cloud-image.yml"]) {
+    const source = await readFile(repoFile(other), "utf8");
+    assert.doesNotMatch(source, /compute_claim_recover|--compute-claim-recover/);
+  }
 });
 
 test("manual cleanup workflows invoke the shared four-identity protected-resource guard", async () => {

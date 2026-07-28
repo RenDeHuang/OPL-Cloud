@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -667,6 +668,7 @@ type recordingWorkspaceLaunchStore struct {
 	lifecycleSignal            sync.Once
 	workspaceLaunchClaimed     chan struct{}
 	workspaceLaunchClaimSignal sync.Once
+	workspaceLaunchPersistErr  error
 }
 
 func (s *recordingWorkspaceLaunchStore) ApplyUserLifecycle(ctx context.Context, user map[string]any) error {
@@ -684,6 +686,13 @@ func (s *recordingWorkspaceLaunchStore) ClaimWorkspaceLaunch(ctx context.Context
 		s.workspaceLaunchClaimSignal.Do(func() { close(s.workspaceLaunchClaimed) })
 	}
 	return s.memoryTableStore.ClaimWorkspaceLaunch(ctx, claim)
+}
+
+func (s *recordingWorkspaceLaunchStore) PersistWorkspaceLaunch(ctx context.Context, update workspaceLaunchPersistCAS) error {
+	if s.workspaceLaunchPersistErr != nil {
+		return s.workspaceLaunchPersistErr
+	}
+	return s.memoryTableStore.PersistWorkspaceLaunch(ctx, update)
 }
 
 type workspaceLaunchLedger struct {
@@ -1139,6 +1148,480 @@ func TestWorkspaceLaunchFulfillmentUsesPersistedNodePool(t *testing.T) {
 	}
 	if len(fixture.fabric.computeInputs) != 1 || structToMap(fixture.fabric.computeInputs[0])["nodePoolId"] != "np-basic" {
 		t.Fatalf("compute fulfillment did not use persisted NodePoolID: %#v", fixture.fabric.computeInputs)
+	}
+}
+
+func TestWorkspaceLaunchPersistsComputeClaimPendingAndWorkerStops(t *testing.T) {
+	for _, packageID := range []string{"basic", "pro"} {
+		t.Run(packageID, func(t *testing.T) {
+			storageGB := 10
+			instanceType := "S5.MEDIUM4"
+			totalCharge := int64(52_580_000)
+			if packageID == "pro" {
+				storageGB = 100
+				instanceType = "SA5.2XLARGE16"
+				totalCharge = 240_080_000
+			}
+			fixture := newWorkspaceLaunchWorkerFixtureForPlan(t, []int64{1_000_000_000, 1_000_000_000, 1_000_000_000 - totalCharge}, nil, nil, packageID, storageGB, false)
+			operation := fixture.operation(t)
+			pending := clients.ComputeAllocation{
+				ID: operation.ComputeID, AccountID: operation.AccountID, WorkspaceID: operation.WorkspaceID, PackageID: packageID,
+				Status: "compute_claim_pending", Provider: "tencent-tke", PoolID: "pool-" + packageID, NodePoolID: "np-" + packageID,
+				MachineName: "machine-claim-fixture", NodeName: "node-claim-fixture", InstanceID: "ins-claim-fixture", CVMInstanceID: "ins-claim-fixture",
+				PrivateIP: "10.20.30.40", InstanceType: instanceType, Zone: "ap-shanghai-2", ChargeType: "PREPAID",
+				RenewFlag: "NOTIFY_AND_MANUAL_RENEW", Deadline: "2099-01-01T00:00:00Z", ProviderData: map[string]string{"recoveryAction": "compute_claim_recovery"},
+			}
+			fixture.fabric.mutateCompute = func(created *clients.ComputeAllocation) { *created = pending }
+			fixture.fabric.computeSync = pending
+
+			for range 2 {
+				if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err != nil {
+					t.Fatal(err)
+				}
+			}
+			persisted := fixture.operation(t)
+			if persisted.Status != "compute_claim_pending" || persisted.Phase != "compute_claim_pending" ||
+				persisted.ComputePoolID != pending.PoolID || persisted.ComputeNodePoolID != pending.NodePoolID ||
+				persisted.ComputeMachineName != pending.MachineName || persisted.ComputeNodeName != pending.NodeName ||
+				persisted.ComputeCVMInstanceID != pending.CVMInstanceID || persisted.ComputeInstanceType != pending.InstanceType || persisted.ComputeZone != pending.Zone {
+				t.Fatalf("compute claim pending identity not persisted: %#v", persisted)
+			}
+			if len(fixture.fabric.computeIDs) != 1 || len(fixture.fabric.storageIDs) != 0 || len(fixture.sub2API.charges) != 1 || len(fixture.sub2API.refunds) != 0 ||
+				countStrings(*fixture.events, "fabric.attachment") != 0 || countStrings(*fixture.events, "fabric.compute-claim.proof") != 0 || countStrings(*fixture.events, "fabric.compute-claim.claim") != 0 {
+				t.Fatalf("pending replay crossed recovery gate: events=%#v compute=%#v storage=%#v charges=%#v refunds=%#v", *fixture.events, fixture.fabric.computeIDs, fixture.fabric.storageIDs, fixture.sub2API.charges, fixture.sub2API.refunds)
+			}
+		})
+	}
+}
+
+func workspaceLaunchComputeClaimPendingFixture(t *testing.T, packageID string) (workspaceLaunchWorkerFixture, workspaceLaunchOperation) {
+	t.Helper()
+	storageGB := 10
+	totalCharge := int64(52_580_000)
+	instanceType := "S5.MEDIUM4"
+	if packageID == "pro" {
+		storageGB = 100
+		totalCharge = 240_080_000
+		instanceType = "SA5.2XLARGE16"
+	}
+	fixture := newWorkspaceLaunchWorkerFixtureForPlan(t, []int64{1_000_000_000, 1_000_000_000, 1_000_000_000 - totalCharge}, nil, nil, packageID, storageGB, false)
+	if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err != nil {
+		t.Fatal(err)
+	}
+	operation := fixture.operation(t)
+	pending := clients.ComputeAllocation{
+		ID: operation.ComputeID, AccountID: operation.AccountID, WorkspaceID: operation.WorkspaceID, PackageID: packageID,
+		Status: "compute_claim_pending", Provider: "tencent-tke", PoolID: "pool-" + packageID, NodePoolID: operation.ComputeNodePoolID,
+		MachineName: "machine-claim-fixture", NodeName: "node-claim-fixture", InstanceID: "ins-claim-fixture", CVMInstanceID: "ins-claim-fixture",
+		PrivateIP: "10.20.30.40", InstanceType: instanceType, Zone: "ap-shanghai-2", ChargeType: "PREPAID",
+		RenewFlag: "NOTIFY_AND_MANUAL_RENEW", Deadline: "2099-01-01T00:00:00Z", ProviderData: map[string]string{"recoveryAction": "compute_claim_recovery"},
+	}
+	fixture.fabric.mutateCompute = func(created *clients.ComputeAllocation) { *created = pending }
+	fixture.fabric.computeSync = pending
+	if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err != nil {
+		t.Fatal(err)
+	}
+	operation = fixture.operation(t)
+	if operation.Status != "compute_claim_pending" || operation.Phase != "compute_claim_pending" {
+		t.Fatalf("launch did not enter compute claim pending: %#v", operation)
+	}
+	return fixture, operation
+}
+
+func computeClaimRecoveryProofForLaunch(operation workspaceLaunchOperation, nodeOwnershipState string) clients.ComputeClaimRecoveryProof {
+	return clients.ComputeClaimRecoveryProof{
+		SchemaVersion: 1, Eligible: true, Reason: "none", StorageState: "storage_not_started",
+		LaunchOperationID: operation.ID, AccountID: operation.AccountID, WorkspaceID: operation.WorkspaceID,
+		ComputeAllocationID: operation.ComputeID, StorageVolumeID: operation.StorageID, PackageID: operation.PackageID,
+		PoolID: operation.ComputePoolID, NodePoolID: operation.ComputeNodePoolID, MachineName: operation.ComputeMachineName,
+		NodeName: operation.ComputeNodeName, CVMInstanceID: operation.ComputeCVMInstanceID, PrivateIP: operation.ComputePrivateIP,
+		InstanceType: operation.ComputeInstanceType, Zone: operation.ComputeZone, ChargeType: "PREPAID", PeriodMonths: 1,
+		RenewFlag: "NOTIFY_AND_MANUAL_RENEW", Deadline: "2099-01-01T00:00:00Z", NodeOwnershipState: nodeOwnershipState,
+		CVMOwnershipState: "target_owned",
+	}
+}
+
+func computeClaimRecoveryRequestBody(t *testing.T, operation workspaceLaunchOperation, approved bool) string {
+	t.Helper()
+	body := map[string]any{
+		"accountId": operation.AccountID, "workspaceId": operation.WorkspaceID, "computeAllocationId": operation.ComputeID,
+		"storageId": operation.StorageID, "packageId": operation.PackageID, "poolId": operation.ComputePoolID,
+		"nodePoolId": operation.ComputeNodePoolID, "machineName": operation.ComputeMachineName, "nodeName": operation.ComputeNodeName,
+		"cvmInstanceId": operation.ComputeCVMInstanceID, "privateIp": operation.ComputePrivateIP,
+		"instanceType": operation.ComputeInstanceType, "zone": operation.ComputeZone,
+	}
+	if approved {
+		body["approvalId"] = "approval-compute-claim-fixture"
+		body["mergedMainSha"] = strings.Repeat("a", 40)
+		body["cloudImageDigest"] = "sha256:" + strings.Repeat("b", 64)
+		body["confirm"] = "CLAIM_PROVEN_COMPUTE_RESOURCE"
+	}
+	encoded, err := json.Marshal(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(encoded)
+}
+
+func requestComputeClaimWithCapabilityForTest(t *testing.T, server http.Handler, session *httptest.ResponseRecorder, path, body, key string) *httptest.ResponseRecorder {
+	t.Helper()
+	t.Setenv("OPL_INTERNAL_SERVICE_TOKEN", "compute-claim-internal-capability")
+	req := httptest.NewRequest(http.MethodPost, path, bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Idempotency-Key", key)
+	req.Header.Set("x-opl-compute-claim-capability", "compute-claim-internal-capability")
+	addAuth(req, session)
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	return rec
+}
+
+func workspaceLaunchLegacyComputeClaimFixture(t *testing.T, packageID string) (workspaceLaunchWorkerFixture, workspaceLaunchOperation) {
+	t.Helper()
+	fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, packageID)
+	target := operation
+	operation.Status, operation.Phase, operation.ErrorCode = "manual_review", "compute_fulfilling", "legacy_compute_claim_interrupted"
+	operation.ComputePoolID, operation.ComputeMachineName, operation.ComputeNodeName = "", "", ""
+	operation.ComputeCVMInstanceID, operation.ComputePrivateIP, operation.ComputeInstanceType = "", "", ""
+	operation.ComputeZone, operation.ComputeChargeType, operation.ComputeRenewFlag, operation.ComputeDeadline = "", "", "", ""
+	mustStore(t, fixture.store.SaveRuntimeOperation(context.Background(), workspaceLaunchOperationRow(operation)))
+	return fixture, target
+}
+
+func TestWorkspaceComputeClaimDiagnosisIsReadOnlyAndExact(t *testing.T) {
+	fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, "basic")
+	fixture.fabric.computeClaimProof = computeClaimRecoveryProofForLaunch(operation, "unallocated")
+	path := "/api/operator/workspace-launches/" + operation.ID + "/compute-claim-recovery/proof"
+
+	response := requestWithSession(t, fixture.server, fixture.operator, http.MethodPost, path, computeClaimRecoveryRequestBody(t, operation, false))
+	if response.Code != http.StatusOK {
+		t.Fatalf("compute claim diagnosis status=%d body=%s", response.Code, response.Body.String())
+	}
+	var proof clients.ComputeClaimRecoveryProof
+	if err := json.NewDecoder(response.Body).Decode(&proof); err != nil {
+		t.Fatal(err)
+	}
+	current := fixture.operation(t)
+	if !proof.Eligible || proof.StorageState != "storage_not_started" || proof.Reason != "none" || proof.Sub2APIMutationCount != 0 || proof.TencentMutationCount != 0 || proof.KubernetesMutationCount != 0 ||
+		current.Status != "compute_claim_pending" || current.Phase != "compute_claim_pending" || len(fixture.fabric.computeClaimInputs) != 1 || len(fixture.fabric.computeClaimCalls) != 0 ||
+		len(fixture.fabric.storageIDs) != 0 || len(fixture.sub2API.charges) != 1 || len(fixture.sub2API.refunds) != 0 || countStrings(*fixture.events, "fabric.monthly-provider-truth") != 0 {
+		t.Fatalf("diagnosis mutated state: proof=%#v current=%#v inputs=%#v claims=%#v events=%#v", proof, current, fixture.fabric.computeClaimInputs, fixture.fabric.computeClaimCalls, *fixture.events)
+	}
+
+	mismatch := operation
+	mismatch.ComputeMachineName = "machine-other-fixture"
+	response = requestWithSession(t, fixture.server, fixture.operator, http.MethodPost, path, computeClaimRecoveryRequestBody(t, mismatch, false))
+	if response.Code != http.StatusConflict || len(fixture.fabric.computeClaimInputs) != 1 || len(fixture.fabric.computeClaimCalls) != 0 {
+		t.Fatalf("mismatched diagnosis crossed identity gate: status=%d body=%s inputs=%#v claims=%#v", response.Code, response.Body.String(), fixture.fabric.computeClaimInputs, fixture.fabric.computeClaimCalls)
+	}
+}
+
+func TestWorkspaceComputeClaimDiagnosisAcceptsLegacyPhaseWithoutMutation(t *testing.T) {
+	for _, packageID := range []string{"basic", "pro"} {
+		t.Run(packageID, func(t *testing.T) {
+			fixture, operation := workspaceLaunchLegacyComputeClaimFixture(t, packageID)
+			fixture.fabric.computeClaimProof = computeClaimRecoveryProofForLaunch(operation, "unallocated")
+			path := "/api/operator/workspace-launches/" + operation.ID + "/compute-claim-recovery/proof"
+
+			response := requestWithSession(t, fixture.server, fixture.operator, http.MethodPost, path, computeClaimRecoveryRequestBody(t, operation, false))
+			current := fixture.operation(t)
+			if response.Code != http.StatusOK || current.Status != "manual_review" || current.Phase != "compute_fulfilling" ||
+				len(fixture.fabric.computeClaimInputs) != 1 || len(fixture.fabric.computeClaimCalls) != 0 || len(fixture.fabric.storageIDs) != 0 ||
+				len(fixture.sub2API.charges) != 1 || len(fixture.sub2API.refunds) != 0 {
+				t.Fatalf("legacy diagnosis crossed read-only boundary: status=%d body=%s operation=%#v proofs=%#v claims=%#v", response.Code, response.Body.String(), current, fixture.fabric.computeClaimInputs, fixture.fabric.computeClaimCalls)
+			}
+		})
+	}
+}
+
+func TestWorkspaceComputeClaimLegacyPhaseRejectsPartialPersistedIdentityBeforeFabric(t *testing.T) {
+	fixture, target := workspaceLaunchLegacyComputeClaimFixture(t, "basic")
+	legacy := fixture.operation(t)
+	legacy.ComputePrivateIP = target.ComputePrivateIP
+	mustStore(t, fixture.store.SaveRuntimeOperation(context.Background(), workspaceLaunchOperationRow(legacy)))
+	path := "/api/operator/workspace-launches/" + target.ID + "/compute-claim-recovery/proof"
+
+	response := requestWithSession(t, fixture.server, fixture.operator, http.MethodPost, path, computeClaimRecoveryRequestBody(t, target, false))
+	if response.Code != http.StatusConflict || len(fixture.fabric.computeClaimInputs) != 0 || len(fixture.fabric.computeClaimCalls) != 0 ||
+		len(fixture.fabric.storageIDs) != 0 || len(fixture.sub2API.refunds) != 0 {
+		t.Fatalf("partial legacy identity crossed Fabric gate: status=%d body=%s proofs=%#v claims=%#v", response.Code, response.Body.String(), fixture.fabric.computeClaimInputs, fixture.fabric.computeClaimCalls)
+	}
+}
+
+func TestWorkspaceComputeClaimLegacyPhaseNormalizesOnlyAfterProof(t *testing.T) {
+	fixture, operation := workspaceLaunchLegacyComputeClaimFixture(t, "basic")
+	fixture.fabric.computeClaimProof = computeClaimRecoveryProofForLaunch(operation, "unallocated")
+	claimed := computeClaimRecoveryProofForLaunch(operation, "target_owned")
+	fixture.fabric.computeClaimResult = &claimed
+	fixture.fabric.beforeComputeClaim = func() {
+		current := fixture.operation(t)
+		if current.Status != "compute_claim_pending" || current.Phase != "compute_claim_pending" {
+			t.Fatalf("Fabric claim called before legacy CAS normalization: %#v", current)
+		}
+	}
+	path := "/api/operator/workspace-launches/" + operation.ID + "/compute-claim-recovery/claim"
+
+	response := requestComputeClaimWithCapabilityForTest(t, fixture.server, fixture.operator, path, computeClaimRecoveryRequestBody(t, operation, true), "compute-claim-legacy")
+	current := fixture.operation(t)
+	if response.Code != http.StatusOK || current.Status != "preparing" || current.Phase != "storage_fulfilling" ||
+		len(fixture.fabric.computeClaimInputs) != 1 || len(fixture.fabric.computeClaimCalls) != 1 || len(fixture.fabric.storageIDs) != 0 ||
+		len(fixture.sub2API.charges) != 1 || len(fixture.sub2API.refunds) != 0 {
+		t.Fatalf("legacy claim did not normalize and resume original launch: status=%d body=%s operation=%#v proofs=%#v claims=%#v", response.Code, response.Body.String(), current, fixture.fabric.computeClaimInputs, fixture.fabric.computeClaimCalls)
+	}
+}
+
+func TestWorkspaceComputeClaimLegacyPhaseProofFailureDoesNotNormalize(t *testing.T) {
+	fixture, operation := workspaceLaunchLegacyComputeClaimFixture(t, "pro")
+	proof := computeClaimRecoveryProofForLaunch(operation, "unallocated")
+	proof.Eligible, proof.Reason, proof.StorageState = false, "identity_mismatch", "unknown"
+	fixture.fabric.computeClaimProof = proof
+	fixture.fabric.computeClaimProofErr = errors.New("legacy proof rejected")
+	path := "/api/operator/workspace-launches/" + operation.ID + "/compute-claim-recovery/claim"
+
+	response := requestComputeClaimWithCapabilityForTest(t, fixture.server, fixture.operator, path, computeClaimRecoveryRequestBody(t, operation, true), "compute-claim-legacy-proof-failure")
+	current := fixture.operation(t)
+	if response.Code != http.StatusConflict || current.Status != "manual_review" || current.Phase != "compute_fulfilling" ||
+		len(fixture.fabric.computeClaimInputs) != 1 || len(fixture.fabric.computeClaimCalls) != 0 || len(fixture.fabric.storageIDs) != 0 ||
+		len(fixture.sub2API.charges) != 1 || len(fixture.sub2API.refunds) != 0 {
+		t.Fatalf("failed legacy proof normalized or mutated: status=%d body=%s operation=%#v proofs=%#v claims=%#v", response.Code, response.Body.String(), current, fixture.fabric.computeClaimInputs, fixture.fabric.computeClaimCalls)
+	}
+}
+
+func TestWorkspaceComputeClaimLegacyPhaseCASConflictStopsBeforeFabricClaim(t *testing.T) {
+	fixture, operation := workspaceLaunchLegacyComputeClaimFixture(t, "basic")
+	fixture.fabric.computeClaimProof = computeClaimRecoveryProofForLaunch(operation, "unallocated")
+	fixture.store.workspaceLaunchPersistErr = errWorkspaceLaunchCASConflict
+	path := "/api/operator/workspace-launches/" + operation.ID + "/compute-claim-recovery/claim"
+
+	response := requestComputeClaimWithCapabilityForTest(t, fixture.server, fixture.operator, path, computeClaimRecoveryRequestBody(t, operation, true), "compute-claim-legacy-cas-conflict")
+	current := fixture.operation(t)
+	if response.Code != http.StatusConflict || current.Status != "manual_review" || current.Phase != "compute_fulfilling" ||
+		len(fixture.fabric.computeClaimInputs) != 1 || len(fixture.fabric.computeClaimCalls) != 0 || len(fixture.fabric.storageIDs) != 0 ||
+		len(fixture.sub2API.charges) != 1 || len(fixture.sub2API.refunds) != 0 {
+		t.Fatalf("legacy CAS conflict crossed claim boundary: status=%d body=%s operation=%#v proofs=%#v claims=%#v", response.Code, response.Body.String(), current, fixture.fabric.computeClaimInputs, fixture.fabric.computeClaimCalls)
+	}
+}
+
+func TestWorkspaceComputeClaimRequiresServerCapabilityBeforeFabric(t *testing.T) {
+	for _, capability := range []string{"", "wrong-capability"} {
+		t.Run(firstNonEmpty(capability, "missing"), func(t *testing.T) {
+			fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, "basic")
+			t.Setenv("OPL_INTERNAL_SERVICE_TOKEN", "compute-claim-internal-capability")
+			path := "/api/operator/workspace-launches/" + operation.ID + "/compute-claim-recovery/claim"
+			req := httptest.NewRequest(http.MethodPost, path, bytes.NewBufferString(computeClaimRecoveryRequestBody(t, operation, true)))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Idempotency-Key", "compute-claim-capability-gate")
+			if capability != "" {
+				req.Header.Set("x-opl-compute-claim-capability", capability)
+			}
+			addAuth(req, fixture.operator)
+			response := httptest.NewRecorder()
+			fixture.server.ServeHTTP(response, req)
+
+			if response.Code != http.StatusForbidden || len(fixture.fabric.computeClaimInputs) != 0 || len(fixture.fabric.computeClaimCalls) != 0 ||
+				len(fixture.fabric.storageIDs) != 0 || len(fixture.sub2API.refunds) != 0 {
+				t.Fatalf("invalid capability crossed Fabric gate: status=%d body=%s proofs=%#v claims=%#v", response.Code, response.Body.String(), fixture.fabric.computeClaimInputs, fixture.fabric.computeClaimCalls)
+			}
+		})
+	}
+}
+
+func TestWorkspaceComputeClaimRejectsInvalidApprovalAndTargetBeforeFabric(t *testing.T) {
+	cases := []struct {
+		name   string
+		mutate func(map[string]any)
+		status int
+	}{
+		{name: "missing private ip", mutate: func(body map[string]any) { delete(body, "privateIp") }, status: http.StatusBadRequest},
+		{name: "private ip identity", mutate: func(body map[string]any) { body["privateIp"] = "10.20.30.99" }, status: http.StatusConflict},
+		{name: "approval id", mutate: func(body map[string]any) { body["approvalId"] = "x" }, status: http.StatusBadRequest},
+		{name: "merged sha", mutate: func(body map[string]any) { body["mergedMainSha"] = strings.Repeat("a", 39) }, status: http.StatusBadRequest},
+		{name: "cloud digest", mutate: func(body map[string]any) { body["cloudImageDigest"] = "sha256:" + strings.Repeat("b", 63) }, status: http.StatusBadRequest},
+		{name: "confirmation", mutate: func(body map[string]any) { body["confirm"] = "CLAIM_SOMETHING_ELSE" }, status: http.StatusBadRequest},
+		{name: "machine identity", mutate: func(body map[string]any) { body["machineName"] = "machine-other-fixture" }, status: http.StatusConflict},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, "basic")
+			fixture.fabric.computeClaimProof = computeClaimRecoveryProofForLaunch(operation, "target_owned")
+			path := "/api/operator/workspace-launches/" + operation.ID + "/compute-claim-recovery/claim"
+			var body map[string]any
+			if err := json.Unmarshal([]byte(computeClaimRecoveryRequestBody(t, operation, true)), &body); err != nil {
+				t.Fatal(err)
+			}
+			tc.mutate(body)
+			encoded, err := json.Marshal(body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			response := requestComputeClaimWithCapabilityForTest(t, fixture.server, fixture.operator, path, string(encoded), "compute-claim-invalid")
+			if response.Code != tc.status || len(fixture.fabric.computeClaimInputs) != 0 || len(fixture.fabric.computeClaimCalls) != 0 {
+				t.Fatalf("invalid %s crossed Fabric gate: status=%d body=%s proofs=%#v claims=%#v", tc.name, response.Code, response.Body.String(), fixture.fabric.computeClaimInputs, fixture.fabric.computeClaimCalls)
+			}
+		})
+	}
+}
+
+func TestWorkspaceComputeClaimApprovalResumesOriginalStorageOnce(t *testing.T) {
+	for _, packageID := range []string{"basic", "pro"} {
+		t.Run(packageID, func(t *testing.T) {
+			fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, packageID)
+			fixture.fabric.computeClaimProof = computeClaimRecoveryProofForLaunch(operation, "target_owned")
+			configureWorkspaceLaunchFulfillment(t, fixture)
+			fixture.fabric.computeSync.InstanceType = operation.ComputeInstanceType
+			fixture.fabric.computeSync.ProviderData["instanceType"] = operation.ComputeInstanceType
+			path := "/api/operator/workspace-launches/" + operation.ID + "/compute-claim-recovery/claim"
+			body := computeClaimRecoveryRequestBody(t, operation, true)
+
+			first := requestComputeClaimWithCapabilityForTest(t, fixture.server, fixture.operator, path, body, "compute-claim-fixture")
+			second := requestComputeClaimWithCapabilityForTest(t, fixture.server, fixture.operator, path, body, "compute-claim-fixture")
+			var driftedIPBody map[string]any
+			if err := json.Unmarshal([]byte(body), &driftedIPBody); err != nil {
+				t.Fatal(err)
+			}
+			driftedIPBody["privateIp"] = "10.20.30.99"
+			driftedIPJSON, err := json.Marshal(driftedIPBody)
+			if err != nil {
+				t.Fatal(err)
+			}
+			driftedIP := requestComputeClaimWithCapabilityForTest(t, fixture.server, fixture.operator, path, string(driftedIPJSON), "compute-claim-fixture")
+			changedKey := requestComputeClaimWithCapabilityForTest(t, fixture.server, fixture.operator, path, body, "compute-claim-other")
+			claimed := fixture.operation(t)
+			if first.Code != http.StatusOK || second.Code != http.StatusOK || driftedIP.Code != http.StatusConflict || changedKey.Code != http.StatusConflict ||
+				claimed.Status != "preparing" || claimed.Phase != "storage_fulfilling" || claimed.ComputeClaimProof == nil || claimed.ComputeClaimProof.PrivateIP != operation.ComputePrivateIP ||
+				len(fixture.fabric.computeClaimCalls) != 1 || len(fixture.fabric.computeClaimKeys) != 1 || fixture.fabric.computeClaimKeys[0] != "compute-claim-fixture" ||
+				len(fixture.fabric.storageIDs) != 0 || len(fixture.fabric.computeIDs) != 1 || len(fixture.sub2API.charges) != 1 || len(fixture.sub2API.refunds) != 0 {
+				t.Fatalf("claim did not bind replay identity or stop at original storage phase: first=%d second=%d driftedIP=%d changedKey=%d operation=%#v calls=%#v keys=%#v compute=%#v storage=%#v", first.Code, second.Code, driftedIP.Code, changedKey.Code, claimed, fixture.fabric.computeClaimCalls, fixture.fabric.computeClaimKeys, fixture.fabric.computeIDs, fixture.fabric.storageIDs)
+			}
+			for range 2 {
+				if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err != nil {
+					t.Fatal(err)
+				}
+			}
+			completed := fixture.operation(t)
+			if completed.Status != "succeeded" || len(fixture.fabric.storageIDs) != 1 || fixture.fabric.storageIDs[0] != operation.StorageID ||
+				len(fixture.fabric.storageCreateKeys) != 1 || fixture.fabric.storageCreateKeys[0] != operation.ID+":storage" ||
+				len(fixture.fabric.computeIDs) != 1 || len(fixture.sub2API.charges) != 1 || len(fixture.sub2API.refunds) != 0 {
+				t.Fatalf("recovered launch duplicated fulfillment: operation=%#v compute=%#v storage=%#v keys=%#v charges=%#v refunds=%#v", completed, fixture.fabric.computeIDs, fixture.fabric.storageIDs, fixture.fabric.storageCreateKeys, fixture.sub2API.charges, fixture.sub2API.refunds)
+			}
+		})
+	}
+}
+
+func TestWorkspaceComputeClaimPrivateIPProofAndReadbackDriftStopBeforeStorage(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		driftReadback bool
+		wantClaims    int
+	}{
+		{name: "proof", wantClaims: 0},
+		{name: "readback", driftReadback: true, wantClaims: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, "pro")
+			proof := computeClaimRecoveryProofForLaunch(operation, "unallocated")
+			if tc.driftReadback {
+				fixture.fabric.computeClaimProof = proof
+				readback := computeClaimRecoveryProofForLaunch(operation, "target_owned")
+				readback.PrivateIP = "10.20.30.99"
+				fixture.fabric.computeClaimResult = &readback
+			} else {
+				proof.PrivateIP = "10.20.30.99"
+				fixture.fabric.computeClaimProof = proof
+			}
+			path := "/api/operator/workspace-launches/" + operation.ID + "/compute-claim-recovery/claim"
+			response := requestComputeClaimWithCapabilityForTest(t, fixture.server, fixture.operator, path, computeClaimRecoveryRequestBody(t, operation, true), "compute-claim-private-ip-drift")
+			current := fixture.operation(t)
+			if response.Code != http.StatusConflict || current.Status != "manual_review" || current.Phase != "compute_claim_pending" ||
+				len(fixture.fabric.computeClaimCalls) != tc.wantClaims || len(fixture.fabric.storageIDs) != 0 || len(fixture.fabric.computeIDs) != 1 ||
+				len(fixture.sub2API.charges) != 1 || len(fixture.sub2API.refunds) != 0 {
+				t.Fatalf("private IP %s drift crossed recovery gate: status=%d operation=%#v proofs=%#v claims=%#v storage=%#v", tc.name, response.Code, current, fixture.fabric.computeClaimInputs, fixture.fabric.computeClaimCalls, fixture.fabric.storageIDs)
+			}
+		})
+	}
+}
+
+func TestWorkspaceComputeClaimPartialMutationFailurePreservesCountsAndStops(t *testing.T) {
+	fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, "pro")
+	fixture.fabric.computeClaimProof = computeClaimRecoveryProofForLaunch(operation, "unallocated")
+	failed := computeClaimRecoveryProofForLaunch(operation, "unallocated")
+	failed.Eligible, failed.Reason = false, "iam_rbac"
+	failed.TencentMutationCount, failed.KubernetesMutationCount = 3, 1
+	fixture.fabric.computeClaimResult = &failed
+	fixture.fabric.computeClaimErr = errors.New("classified claim readback failure")
+	path := "/api/operator/workspace-launches/" + operation.ID + "/compute-claim-recovery/claim"
+
+	response := requestComputeClaimWithCapabilityForTest(t, fixture.server, fixture.operator, path, computeClaimRecoveryRequestBody(t, operation, true), "compute-claim-partial")
+	var result clients.ComputeClaimRecoveryProof
+	if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
+		t.Fatal(err)
+	}
+	current := fixture.operation(t)
+	if response.Code != http.StatusConflict || result.Reason != "iam_rbac" || result.TencentMutationCount != 3 || result.KubernetesMutationCount != 1 ||
+		current.Status != "manual_review" || current.Phase != "compute_claim_pending" || len(fixture.fabric.computeClaimInputs) != 1 ||
+		len(fixture.fabric.computeClaimCalls) != 1 || len(fixture.fabric.storageIDs) != 0 || len(fixture.fabric.computeIDs) != 1 ||
+		len(fixture.sub2API.charges) != 1 || len(fixture.sub2API.refunds) != 0 {
+		t.Fatalf("partial claim failure lost counts or advanced state: status=%d result=%#v operation=%#v events=%#v", response.Code, result, current, *fixture.events)
+	}
+}
+
+func TestWorkspaceComputeClaimRejectsMutationCountsAboveHardBoundsBeforeStorage(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		sub2API    int
+		tencent    int
+		kubernetes int
+	}{
+		{name: "sub2api", sub2API: 1},
+		{name: "tencent", tencent: 6},
+		{name: "kubernetes", kubernetes: 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, "basic")
+			fixture.fabric.computeClaimProof = computeClaimRecoveryProofForLaunch(operation, "unallocated")
+			claimed := computeClaimRecoveryProofForLaunch(operation, "target_owned")
+			claimed.Sub2APIMutationCount = tc.sub2API
+			claimed.TencentMutationCount = tc.tencent
+			claimed.KubernetesMutationCount = tc.kubernetes
+			fixture.fabric.computeClaimResult = &claimed
+			path := "/api/operator/workspace-launches/" + operation.ID + "/compute-claim-recovery/claim"
+
+			response := requestComputeClaimWithCapabilityForTest(t, fixture.server, fixture.operator, path, computeClaimRecoveryRequestBody(t, operation, true), "compute-claim-over-bound")
+			current := fixture.operation(t)
+			if response.Code != http.StatusConflict || current.Status != "manual_review" || current.Phase != "compute_claim_pending" ||
+				len(fixture.fabric.computeClaimCalls) != 1 || len(fixture.fabric.storageIDs) != 0 || len(fixture.fabric.computeIDs) != 1 ||
+				len(fixture.sub2API.charges) != 1 || len(fixture.sub2API.refunds) != 0 {
+				t.Fatalf("over-bound %s crossed storage gate: status=%d operation=%#v result=%s", tc.name, response.Code, current, response.Body.String())
+			}
+		})
+	}
+}
+
+func TestWorkspaceComputeClaimFailureStopsInManualReviewWithSafeReason(t *testing.T) {
+	for _, reason := range []string{"iam_rbac", "provider_describe", "multiple_candidate", "identity_mismatch", "node_ownership_conflict", "storage_already_started"} {
+		t.Run(reason, func(t *testing.T) {
+			fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, "basic")
+			proof := computeClaimRecoveryProofForLaunch(operation, "unallocated")
+			proof.Eligible, proof.Reason, proof.StorageState = false, reason, "unknown"
+			fixture.fabric.computeClaimProof = proof
+			fixture.fabric.computeClaimProofErr = errors.New("classified compute claim failure")
+			path := "/api/operator/workspace-launches/" + operation.ID + "/compute-claim-recovery/claim"
+
+			response := requestComputeClaimWithCapabilityForTest(t, fixture.server, fixture.operator, path, computeClaimRecoveryRequestBody(t, operation, true), "compute-claim-failure")
+			if response.Code != http.StatusConflict {
+				t.Fatalf("classified claim status=%d body=%s", response.Code, response.Body.String())
+			}
+			var result clients.ComputeClaimRecoveryProof
+			if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
+				t.Fatal(err)
+			}
+			current := fixture.operation(t)
+			if result.Reason != reason || result.Sub2APIMutationCount != 0 || result.TencentMutationCount != 0 || result.KubernetesMutationCount != 0 ||
+				current.Status != "manual_review" || current.Phase != "compute_claim_pending" || len(fixture.fabric.computeClaimCalls) != 0 ||
+				len(fixture.fabric.storageIDs) != 0 || len(fixture.fabric.computeIDs) != 1 || len(fixture.sub2API.charges) != 1 || len(fixture.sub2API.refunds) != 0 {
+				t.Fatalf("classified claim crossed fail-closed gate: result=%#v operation=%#v events=%#v", result, current, *fixture.events)
+			}
+		})
 	}
 }
 

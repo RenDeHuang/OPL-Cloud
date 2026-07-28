@@ -58,6 +58,11 @@ type FabricMonthlyProviderTruthClient interface {
 	MonthlyProviderTruth(context.Context, string, string) (MonthlyProviderTruth, error)
 }
 
+type FabricComputeClaimRecoveryClient interface {
+	ComputeClaimRecoveryProof(context.Context, ComputeClaimRecoveryInput) (ComputeClaimRecoveryProof, error)
+	ClaimComputeRecovery(context.Context, ComputeClaimRecoveryClaimInput, string) (ComputeClaimRecoveryProof, error)
+}
+
 type FabricHTTPError struct {
 	StatusCode int
 	Body       string
@@ -136,6 +141,57 @@ type MonthlyProviderTruth struct {
 	Storage           StorageVolume     `json:"storage"`
 	ProviderRequestID string            `json:"providerRequestId,omitempty"`
 	ErrorCode         string            `json:"errorCode,omitempty"`
+}
+
+type ComputeClaimRecoveryInput struct {
+	LaunchOperationID   string `json:"launchOperationId"`
+	AccountID           string `json:"accountId"`
+	WorkspaceID         string `json:"workspaceId"`
+	ComputeAllocationID string `json:"computeAllocationId"`
+	StorageVolumeID     string `json:"storageVolumeId"`
+	PackageID           string `json:"packageId"`
+	PoolID              string `json:"poolId"`
+	NodePoolID          string `json:"nodePoolId"`
+}
+
+type ComputeClaimRecoveryClaimInput struct {
+	ComputeClaimRecoveryInput
+	MachineName   string `json:"machineName"`
+	NodeName      string `json:"nodeName"`
+	CVMInstanceID string `json:"cvmInstanceId"`
+	PrivateIP     string `json:"privateIp"`
+	InstanceType  string `json:"instanceType"`
+	Zone          string `json:"zone"`
+}
+
+type ComputeClaimRecoveryProof struct {
+	SchemaVersion           int    `json:"schemaVersion"`
+	Eligible                bool   `json:"eligible"`
+	Reason                  string `json:"reason"`
+	StorageState            string `json:"storageState"`
+	LaunchOperationID       string `json:"launchOperationId"`
+	AccountID               string `json:"accountId"`
+	WorkspaceID             string `json:"workspaceId"`
+	ComputeAllocationID     string `json:"computeAllocationId"`
+	StorageVolumeID         string `json:"storageVolumeId"`
+	PackageID               string `json:"packageId"`
+	PoolID                  string `json:"poolId"`
+	NodePoolID              string `json:"nodePoolId"`
+	MachineName             string `json:"machineName,omitempty"`
+	NodeName                string `json:"nodeName,omitempty"`
+	CVMInstanceID           string `json:"cvmInstanceId,omitempty"`
+	PrivateIP               string `json:"privateIp,omitempty"`
+	InstanceType            string `json:"instanceType,omitempty"`
+	Zone                    string `json:"zone,omitempty"`
+	ChargeType              string `json:"chargeType,omitempty"`
+	PeriodMonths            int    `json:"periodMonths,omitempty"`
+	RenewFlag               string `json:"renewFlag,omitempty"`
+	Deadline                string `json:"deadline,omitempty"`
+	NodeOwnershipState      string `json:"nodeOwnershipState,omitempty"`
+	CVMOwnershipState       string `json:"cvmOwnershipState,omitempty"`
+	Sub2APIMutationCount    int    `json:"sub2apiMutationCount"`
+	TencentMutationCount    int    `json:"tencentMutationCount"`
+	KubernetesMutationCount int    `json:"kubernetesMutationCount"`
 }
 
 type ComputeAllocation struct {
@@ -361,6 +417,27 @@ func (c *fabricHTTPClient) MonthlyProviderTruth(ctx context.Context, computeID, 
 	var result MonthlyProviderTruth
 	err := c.get(ctx, "/fabric/monthly-provider-truth?"+params.Encode(), &result)
 	return result, err
+}
+
+func (c *fabricHTTPClient) ComputeClaimRecoveryProof(ctx context.Context, input ComputeClaimRecoveryInput) (ComputeClaimRecoveryProof, error) {
+	var result ComputeClaimRecoveryProof
+	err := c.post(ctx, "/fabric/compute-claim-recovery/proof", input, "", &result)
+	decodeComputeClaimRecoveryError(err, &result)
+	return result, err
+}
+
+func (c *fabricHTTPClient) ClaimComputeRecovery(ctx context.Context, input ComputeClaimRecoveryClaimInput, idempotencyKey string) (ComputeClaimRecoveryProof, error) {
+	var result ComputeClaimRecoveryProof
+	err := c.post(ctx, "/fabric/compute-claim-recovery/claim", input, idempotencyKey, &result)
+	decodeComputeClaimRecoveryError(err, &result)
+	return result, err
+}
+
+func decodeComputeClaimRecoveryError(err error, result *ComputeClaimRecoveryProof) {
+	var httpErr *FabricHTTPError
+	if errors.As(err, &httpErr) {
+		_ = json.Unmarshal([]byte(httpErr.Body), result)
+	}
 }
 
 func (c *fabricHTTPClient) CreateComputeAllocation(ctx context.Context, input ComputeAllocationInput, idempotencyKey string) (ComputeAllocation, error) {

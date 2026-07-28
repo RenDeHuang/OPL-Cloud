@@ -101,6 +101,27 @@ The four implementation owner lanes are Console/Control Plane, Fabric, Gateway i
   resolution must return exactly one instance whose TKE Machine, `ins-*` CVM,
   VPC, and Subnet identities all match. Zero, multiple, incomplete, or
   inconsistent results fail closed.
+- If the unique new NativeCVM was created but ownership claim was interrupted
+  before any storage operation started, Fabric exposes a separate compute-only,
+  Describe/get-only proof. It derives identity from the original launch,
+  compute allocation, persisted allocation plan, and MachineOwnership; requires
+  the unique Ready/Running Machine in `after - before`; verifies the exact
+  NodePool/Machine/Node/private-IP/CVM/SKU/Zone and PREPAID one-month manual-renew
+  facts; and accepts only an unallocated Node or the exact target ownership.
+  Success explicitly reports `storage_not_started` and zero Sub2API, Tencent,
+  and Kubernetes mutations. The strict compute-plus-storage
+  `MonthlyProviderTruth` contract remains unchanged.
+- Compute claim convergence may run only after that complete proof and may only
+  converge the same CVM name and four ownership tags, one exact Node
+  labels/taint patch, and the same MachineOwnership on the proved CVM and Node.
+  The original compute operation persists the launch ID, idempotency key,
+  target hash, and request hash; a missing, malformed, or drifted existing
+  binding fails closed. Exact-key, exact-target replay is idempotent with zero
+  incremental external mutation. Sub2API mutations are always zero, Tencent
+  mutations are bounded to zero through five, and Kubernetes mutations are
+  bounded to zero or one. Ambiguity,
+  conflicting ownership, provider/IAM/RBAC failure, or any existing storage
+  operation fails closed before mutation and remains manual review.
 - The system NodePool `np-6l4nkdto`, Machine `np-6l4nkdto-2cdtm`, and Node
   `10.66.0.42` must each resolve uniquely and are protected from every
   Tencent/Kubernetes mutation and cleanup path. Its actual NodePool MachineType
@@ -219,6 +240,21 @@ validate account and quote
 - Debit failure forbids every Tencent resource write.
 - A confirmed provider result showing no billable resource exists permits exactly one idempotent refund.
 - A partial or unknown provider result enters `manual_review` without refund or a second purchase.
+- A transient tag, label, taint, or strict compute Sync failure after creation
+  persists `compute_claim_pending`. The same launch may perform only claim-only
+  convergence for its original compute identity; it never repeats preflight,
+  debit, compute prepare, scale, or procurement. Only successful strict claim
+  readback advances the original launch to `storage_fulfilling`, where the
+  original storage operation identity still permits at most one CBS create.
+  Unprovable or conflicting state remains `manual_review` without refund or a
+  replacement CVM.
+- Legacy `workspace.launch.v2` rows in `manual_review/compute_fulfilling` are
+  read-only diagnosis candidates. Only a confirmed debit, the persisted launch
+  identity, a complete identity proved from the matching Fabric allocation,
+  allocation plan, and MachineOwnership, zero storage-create operations, and a
+  successful compute-only proof permit a PostgreSQL CAS that persists the proof
+  identity and enters `compute_claim_pending`; that normalization performs zero
+  Sub2API, Tencent, and Kubernetes mutations.
 - Immediately before activation, `SyncMonthlyCompute` and `SyncMonthlyStorage`
   must revalidate resource/account/Workspace identity, Zone, compute SKU, storage
   capacity, `PREPAID`, `NOTIFY_AND_MANUAL_RENEW`, and deadline. A mismatch remains
@@ -419,6 +455,18 @@ contract or select the SKU for a customer launch.
   unknown historical HTTP attempts remain null, and an attempted or otherwise
   unprovable model result is never sent again.
 - Paused verification code and fake tests are not production evidence.
+- Compute-claim diagnosis and mutation are separate manual modes in the existing
+  production customer-operation workflow and run only on the self-hosted
+  `tke-vpc` runner. After an ordinary rollout, release handling may dispatch one
+  read-only diagnosis bound to the exact merged Cloud SHA and immutable digest.
+  Claim mutation additionally requires a separate release-owner approval bound
+  to the exact launch/account/Workspace/compute/Machine/Node/CVM/Pool/SKU facts;
+  `nodeName` and private IP remain independently supplied and verified. The
+  Control Plane also requires the current internal-runner capability from the
+  deployed Kubernetes Secret, so an ordinary operator session cannot authorize
+  claim by self-supplying approval fields. The approval ID and HTTP mutation
+  idempotency key are part of the persisted
+  replay identity, and a successful diagnosis never authorizes claim by itself.
 
 ## Launch Stages
 

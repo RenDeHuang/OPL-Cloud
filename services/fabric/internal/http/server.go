@@ -83,6 +83,30 @@ func NewServer(service *fabric.Service, token string) http.Handler {
 		}
 		writeJSON(w, http.StatusOK, result)
 	})
+	mux.HandleFunc("POST /fabric/compute-claim-recovery/proof", func(w http.ResponseWriter, r *http.Request) {
+		var input fabric.ComputeClaimRecoveryInput
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid JSON body")
+			return
+		}
+		proof, err := service.ComputeClaimRecoveryProof(r.Context(), input)
+		writeComputeClaimRecoveryResult(w, http.StatusOK, proof, err)
+	})
+	mux.HandleFunc("POST /fabric/compute-claim-recovery/claim", func(w http.ResponseWriter, r *http.Request) {
+		idempotencyKey := r.Header.Get("Idempotency-Key")
+		if strings.TrimSpace(idempotencyKey) == "" || idempotencyKey != strings.TrimSpace(idempotencyKey) {
+			writeError(w, http.StatusBadRequest, "missing Idempotency-Key")
+			return
+		}
+		var input fabric.ComputeClaimRecoveryClaimInput
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid JSON body")
+			return
+		}
+		input.IdempotencyKey = idempotencyKey
+		proof, err := service.ClaimComputeRecovery(r.Context(), input)
+		writeComputeClaimRecoveryResult(w, http.StatusAccepted, proof, err)
+	})
 	mux.HandleFunc("POST /fabric/provider-facts/batch", func(w http.ResponseWriter, r *http.Request) {
 		var input fabric.ProviderFactsBatchInput
 		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
@@ -438,6 +462,20 @@ func writeResult(w http.ResponseWriter, body any, err error) {
 		return
 	}
 	writeJSON(w, http.StatusAccepted, body)
+}
+
+func writeComputeClaimRecoveryResult(w http.ResponseWriter, successStatus int, proof fabric.ComputeClaimRecoveryProof, err error) {
+	if err == nil {
+		writeJSON(w, successStatus, proof)
+		return
+	}
+	status := http.StatusConflict
+	if errors.Is(err, fabric.ErrInvalidComputeClaimRecovery) {
+		status = http.StatusBadRequest
+	} else if proof.Reason == "provider_describe" || proof.Reason == "iam_rbac" {
+		status = http.StatusServiceUnavailable
+	}
+	writeJSON(w, status, proof)
 }
 
 func writeJobResult(w http.ResponseWriter, status int, body fabric.Job, err error) {

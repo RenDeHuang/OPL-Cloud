@@ -117,6 +117,42 @@ func TestMemoryOperationStoreComputePoolAdmissionIsFIFOAndFencesExpiredOwner(t *
 	}
 }
 
+func TestMemoryOperationStoreComputeClaimPendingKeepsFIFOHead(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemoryOperationStore()
+	createdAt := time.Date(2026, 7, 26, 1, 0, 0, 0, time.UTC)
+	first := newOperation("create_compute_allocation", "compute_allocation", "compute-first", "acct-alpha", "workspace-first", "compute-first", "hash-first", createdAt)
+	first.ID = "fop-compute-first"
+	first.Status = "started"
+	first.CreatedAt = createdAt
+	first.ComputePoolKey = "np-basic"
+	second := newOperation("create_compute_allocation", "compute_allocation", "compute-second", "acct-beta", "workspace-second", "compute-second", "hash-second", createdAt.Add(time.Second))
+	second.ID = "fop-compute-second"
+	second.Status = "started"
+	second.CreatedAt = createdAt.Add(time.Second)
+	second.ComputePoolKey = "np-basic"
+	for _, operation := range []FabricOperation{first, second} {
+		if _, claimed, err := store.ClaimComputePoolRuntime(ctx, operation); err != nil || !claimed {
+			t.Fatalf("seed compute operation %s: claimed=%v err=%v", operation.ID, claimed, err)
+		}
+	}
+
+	head, claimed, err := store.TryClaimComputePoolHead(ctx, first.ID, "np-basic", "lease-first", createdAt, createdAt.Add(time.Minute))
+	if err != nil || !claimed {
+		t.Fatalf("claim first head=%#v claimed=%v err=%v", head, claimed, err)
+	}
+	head.Status = "claim_pending"
+	head.FinishedAt = time.Time{}
+	if err := store.SaveRuntime(ctx, head); err != nil {
+		t.Fatalf("persist claim_pending head: %v", err)
+	}
+
+	queued, claimed, err := store.TryClaimComputePoolHead(ctx, second.ID, "np-basic", "lease-second", createdAt.Add(time.Minute), createdAt.Add(2*time.Minute))
+	if err != nil || claimed || queued.ID != first.ID || queued.Status != "claim_pending" {
+		t.Fatalf("claim_pending head was bypassed: queued=%#v claimed=%v err=%v", queued, claimed, err)
+	}
+}
+
 func TestPostgresOperationSchemaDefinesFabricOperationsAuditTable(t *testing.T) {
 	schema := PostgresOperationSchemaSQL()
 	for _, marker := range []string{
@@ -169,6 +205,20 @@ func TestComputePoolAdmissionMigrationMatchesEmbeddedCopy(t *testing.T) {
 	}
 	if !bytes.Equal(formal, embedded) {
 		t.Fatal("formal and embedded compute pool admission migrations differ")
+	}
+}
+
+func TestComputeClaimPendingPoolHeadMigrationMatchesEmbeddedCopy(t *testing.T) {
+	formal, err := os.ReadFile("../../migrations/202607290001_compute_claim_pending_pool_head.sql")
+	if err != nil {
+		t.Fatalf("read formal migration: %v", err)
+	}
+	embedded, err := os.ReadFile("ent_migrations/202607290001_compute_claim_pending_pool_head.sql")
+	if err != nil {
+		t.Fatalf("read embedded migration: %v", err)
+	}
+	if !bytes.Equal(formal, embedded) {
+		t.Fatal("formal and embedded compute claim pending pool head migrations differ")
 	}
 }
 

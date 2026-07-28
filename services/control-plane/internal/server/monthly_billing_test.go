@@ -231,6 +231,14 @@ type monthlyFabric struct {
 	preflightInputs       []clients.MonthlyPreflightInput
 	providerTruth         *clients.MonthlyProviderTruth
 	providerTruthErr      error
+	computeClaimProof     clients.ComputeClaimRecoveryProof
+	computeClaimProofErr  error
+	computeClaimResult    *clients.ComputeClaimRecoveryProof
+	computeClaimErr       error
+	computeClaimInputs    []clients.ComputeClaimRecoveryInput
+	computeClaimCalls     []clients.ComputeClaimRecoveryClaimInput
+	computeClaimKeys      []string
+	beforeComputeClaim    func()
 	mutateCompute         func(*clients.ComputeAllocation)
 	mutateStorage         func(*clients.StorageVolume)
 	computeIDs            []string
@@ -248,6 +256,25 @@ type monthlyFabric struct {
 	computeRenewKeys      []string
 	storageRenewKeys      []string
 	afterRuntime          func()
+}
+
+func (f *monthlyFabric) ComputeClaimRecoveryProof(_ context.Context, input clients.ComputeClaimRecoveryInput) (clients.ComputeClaimRecoveryProof, error) {
+	*f.events = append(*f.events, "fabric.compute-claim.proof")
+	f.computeClaimInputs = append(f.computeClaimInputs, input)
+	return f.computeClaimProof, f.computeClaimProofErr
+}
+
+func (f *monthlyFabric) ClaimComputeRecovery(_ context.Context, input clients.ComputeClaimRecoveryClaimInput, key string) (clients.ComputeClaimRecoveryProof, error) {
+	if f.beforeComputeClaim != nil {
+		f.beforeComputeClaim()
+	}
+	*f.events = append(*f.events, "fabric.compute-claim.claim")
+	f.computeClaimCalls = append(f.computeClaimCalls, input)
+	f.computeClaimKeys = append(f.computeClaimKeys, key)
+	if f.computeClaimResult != nil {
+		return *f.computeClaimResult, f.computeClaimErr
+	}
+	return f.computeClaimProof, f.computeClaimProofErr
 }
 
 func (f *monthlyFabric) CreateWorkspaceRuntime(ctx context.Context, input clients.WorkspaceRuntimeInput, key string) (clients.WorkspaceRuntime, error) {

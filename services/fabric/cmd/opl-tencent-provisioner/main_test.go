@@ -231,6 +231,14 @@ func (client *fakeTencentClient) ProviderTruth(request Request, _ map[string]str
 	return Response{Ok: true, Status: "present", InstanceId: request.Allocation.InstanceId}
 }
 
+func (client *fakeTencentClient) ComputeClaimTruth(request Request, _ map[string]string) Response {
+	return Response{Ok: true, Status: "proven", PoolId: request.Pool.Id, NodePoolId: request.Pool.NodePoolId, InstanceId: request.Allocation.InstanceId, NodeName: request.Allocation.NodeName, PrivateIp: request.Allocation.PrivateIp, InstanceType: request.Pool.InstanceType}
+}
+
+func (client *fakeTencentClient) ClaimComputeMachine(request Request, _ map[string]string) Response {
+	return Response{Ok: true, Status: "claimed", InstanceId: request.Allocation.InstanceId}
+}
+
 func (client *fakeTencentClient) CreateStorageVolume(request Request, _ map[string]string) Response {
 	client.storageRequest = request
 	return Response{Ok: true, StorageVolumeId: "disk-test", Status: "provider_ready"}
@@ -314,6 +322,170 @@ func TestTencentSDKTagComputeMachineRequiresEveryOwnershipTag(t *testing.T) {
 
 func computeOwnershipTags() map[string]string {
 	return map[string]string{"opl_account_id": "acct-alpha", "opl_workspace_id": "ws-alpha", "opl_resource_id": "compute-alpha", "opl_operation_id": "owner-alpha"}
+}
+
+func computeClaimTruthRequest() Request {
+	return Request{
+		Action: "compute_claim_truth", AccountId: "acct-alpha", PackageId: "basic", Zone: "ap-guangzhou-3", Tags: computeOwnershipTags(),
+		Pool: persistedAllocationPlan("pool-basic-2c4g", "SA5.MEDIUM4", "np-basic", 1),
+		Allocation: ComputeAllocationInput{
+			Id: "compute-alpha", InstanceId: "ins-basic-2", MachineName: "node-basic-2", NodeName: "10.0.0.12",
+			PrivateIp: "10.0.0.12", Deadline: "2026-08-16T00:00:00Z",
+		},
+	}
+}
+
+func TestTencentSDKComputeClaimTruthProvesOriginalUniqueNativeCVMWithoutMutation(t *testing.T) {
+	tkeAPI := &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 2, maxReplicas: 10}
+	client := newFakeTencentSDKClient(tkeAPI)
+	cvmAPI := client.nativeCvmClient.(*fakeNativeCvmAPI)
+	cvmAPI.instanceName = "node-basic-2"
+	cvmAPI.tags = map[string]string{}
+
+	response := client.ComputeClaimTruth(computeClaimTruthRequest(), nil)
+
+	if !response.Ok || response.Status != "proven" || response.ErrorCode != "" || response.MutationCount != 0 ||
+		response.PoolId != "pool-basic-2c4g" || response.NodePoolId != "np-basic" || response.InstanceId != "ins-basic-2" ||
+		response.NodeName != "10.0.0.12" || response.PrivateIp != "10.0.0.12" || response.InstanceType != "SA5.MEDIUM4" ||
+		response.ProviderData["machineName"] != "node-basic-2" || response.ProviderData["zone"] != "ap-guangzhou-3" ||
+		response.ProviderData["chargeType"] != "PREPAID" || response.ProviderData["periodMonths"] != "1" ||
+		response.ProviderData["renewFlag"] != "NOTIFY_AND_MANUAL_RENEW" || response.ProviderData["deadline"] != "2026-08-16T00:00:00Z" ||
+		response.ProviderData["cvmOwnershipState"] != "recoverable" || response.ProviderRequestId != "" || len(response.ProviderRequestIDs) != 0 {
+		t.Fatalf("compute claim truth=%#v", response)
+	}
+	if tkeAPI.scaleNodePoolRequest != nil || tkeAPI.modifyNodePoolRequest != nil || tkeAPI.createNodePoolRequest != nil || tkeAPI.deleteMachinesRequest != nil ||
+		len(cvmAPI.modifyInstancesRequest) != 0 {
+		t.Fatalf("read-only truth mutated provider: tke=%#v cvm=%#v", tkeAPI, cvmAPI.modifyInstancesRequest)
+	}
+}
+
+func TestTencentSDKComputeClaimTruthFailsClosedWithoutMutation(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		wantReason string
+		configure  func(*Request, *fakeNativeTkeAPI, *fakeNativeCvmAPI)
+	}{
+		{name: "multiple candidate", wantReason: "multiple_candidate", configure: func(_ *Request, tke *fakeNativeTkeAPI, _ *fakeNativeCvmAPI) { tke.replicas = 3 }},
+		{name: "old machine", wantReason: "identity_mismatch", configure: func(request *Request, _ *fakeNativeTkeAPI, _ *fakeNativeCvmAPI) {
+			request.Allocation.MachineName = "node-basic-1"
+		}},
+		{name: "wrong sku", wantReason: "identity_mismatch", configure: func(_ *Request, _ *fakeNativeTkeAPI, cvm *fakeNativeCvmAPI) { cvm.instanceType = "SA5.2XLARGE16" }},
+		{name: "wrong zone", wantReason: "identity_mismatch", configure: func(_ *Request, _ *fakeNativeTkeAPI, cvm *fakeNativeCvmAPI) { cvm.zone = "ap-guangzhou-4" }},
+		{name: "postpaid", wantReason: "identity_mismatch", configure: func(_ *Request, _ *fakeNativeTkeAPI, cvm *fakeNativeCvmAPI) {
+			cvm.instanceChargeType = "POSTPAID_BY_HOUR"
+		}},
+		{name: "auto renew", wantReason: "identity_mismatch", configure: func(_ *Request, _ *fakeNativeTkeAPI, cvm *fakeNativeCvmAPI) { cvm.renewFlag = "NOTIFY_AND_AUTO_RENEW" }},
+		{name: "ownership conflict", wantReason: "identity_mismatch", configure: func(_ *Request, _ *fakeNativeTkeAPI, cvm *fakeNativeCvmAPI) {
+			cvm.tags = map[string]string{"opl_workspace_id": "ws-other"}
+		}},
+		{name: "provider failure", wantReason: "provider_describe", configure: func(_ *Request, tke *fakeNativeTkeAPI, _ *fakeNativeCvmAPI) {
+			tke.describeMachineErr = errors.New("provider unavailable request-id-sensitive")
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			request := computeClaimTruthRequest()
+			tkeAPI := &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 2, maxReplicas: 10}
+			client := newFakeTencentSDKClient(tkeAPI)
+			cvmAPI := client.nativeCvmClient.(*fakeNativeCvmAPI)
+			cvmAPI.instanceName = "node-basic-2"
+			cvmAPI.tags = map[string]string{}
+			tc.configure(&request, tkeAPI, cvmAPI)
+
+			response := client.ComputeClaimTruth(request, nil)
+
+			if response.Ok || response.ErrorCode != tc.wantReason || response.MutationCount != 0 || response.ProviderRequestId != "" ||
+				len(response.ProviderRequestIDs) != 0 || strings.Contains(response.Message, "request-id-sensitive") {
+				t.Fatalf("response=%#v", response)
+			}
+			if tkeAPI.scaleNodePoolRequest != nil || tkeAPI.modifyNodePoolRequest != nil || tkeAPI.createNodePoolRequest != nil || tkeAPI.deleteMachinesRequest != nil || len(cvmAPI.modifyInstancesRequest) != 0 {
+				t.Fatalf("rejected proof mutated provider: tke=%#v cvm=%#v", tkeAPI, cvmAPI.modifyInstancesRequest)
+			}
+		})
+	}
+}
+
+func TestTencentSDKClaimComputeMachineConvergesRecoverableCVMAndReplaysWithoutMutation(t *testing.T) {
+	request := computeClaimTruthRequest()
+	request.Action = "claim_compute_machine"
+	tkeAPI := &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 2, maxReplicas: 10}
+	client := newFakeTencentSDKClient(tkeAPI)
+	cvmAPI := client.nativeCvmClient.(*fakeNativeCvmAPI)
+	cvmAPI.instanceName = "node-basic-2"
+	cvmAPI.tags = map[string]string{}
+
+	claimed := client.ClaimComputeMachine(request, nil)
+
+	if !claimed.Ok || claimed.Status != "claimed" || claimed.MutationCount != 5 || claimed.ProviderRequestId != "" ||
+		claimed.ProviderData["cvmOwnershipState"] != "target_owned" || len(cvmAPI.modifyInstancesRequest) != 1 ||
+		stringValue(cvmAPI.modifyInstancesRequest[0].InstanceName) != "compute-alpha" || !reflect.DeepEqual(cvmAPI.tags, computeOwnershipTags()) {
+		t.Fatalf("claimed=%#v modify=%#v tags=%#v", claimed, cvmAPI.modifyInstancesRequest, cvmAPI.tags)
+	}
+	if tkeAPI.scaleNodePoolRequest != nil || tkeAPI.modifyNodePoolRequest != nil || tkeAPI.createNodePoolRequest != nil || tkeAPI.deleteMachinesRequest != nil {
+		t.Fatalf("claim changed TKE capacity: %#v", tkeAPI)
+	}
+
+	replayed := client.ClaimComputeMachine(request, nil)
+	if !replayed.Ok || replayed.Status != "claimed" || replayed.MutationCount != 0 || len(cvmAPI.modifyInstancesRequest) != 1 {
+		t.Fatalf("replayed=%#v modify=%#v", replayed, cvmAPI.modifyInstancesRequest)
+	}
+}
+
+func TestTencentSDKClaimComputeMachineRejectsOwnershipConflictBeforeMutation(t *testing.T) {
+	request := computeClaimTruthRequest()
+	request.Action = "claim_compute_machine"
+	tkeAPI := &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 2, maxReplicas: 10}
+	client := newFakeTencentSDKClient(tkeAPI)
+	cvmAPI := client.nativeCvmClient.(*fakeNativeCvmAPI)
+	cvmAPI.instanceName = "node-basic-2"
+	cvmAPI.tags = map[string]string{"opl_workspace_id": "ws-other"}
+
+	response := client.ClaimComputeMachine(request, nil)
+
+	if response.Ok || response.ErrorCode != "identity_mismatch" || response.MutationCount != 0 || len(cvmAPI.modifyInstancesRequest) != 0 ||
+		len(client.nativeTagClient.(*fakeNativeTagAPI).calls) != 0 {
+		t.Fatalf("response=%#v modify=%#v tags=%#v", response, cvmAPI.modifyInstancesRequest, client.nativeTagClient.(*fakeNativeTagAPI).calls)
+	}
+}
+
+func TestTencentSDKClaimComputeMachineCountsAttemptedMutationOnProviderError(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		configure func(*fakeNativeCvmAPI, *fakeNativeTagAPI)
+		wantCount int
+	}{
+		{
+			name: "rename timeout",
+			configure: func(cvm *fakeNativeCvmAPI, _ *fakeNativeTagAPI) {
+				cvm.modifyInstancesErr = errors.New("rename timed out")
+			},
+			wantCount: 1,
+		},
+		{
+			name: "tag timeout after rename",
+			configure: func(_ *fakeNativeCvmAPI, tags *fakeNativeTagAPI) {
+				tags.err = errors.New("tag timed out")
+			},
+			wantCount: 2,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			request := computeClaimTruthRequest()
+			request.Action = "claim_compute_machine"
+			tkeAPI := &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 2, maxReplicas: 10}
+			client := newFakeTencentSDKClient(tkeAPI)
+			cvmAPI := client.nativeCvmClient.(*fakeNativeCvmAPI)
+			cvmAPI.instanceName = "node-basic-2"
+			cvmAPI.tags = map[string]string{}
+			tagAPI := client.nativeTagClient.(*fakeNativeTagAPI)
+			tc.configure(cvmAPI, tagAPI)
+
+			response := client.ClaimComputeMachine(request, nil)
+
+			if response.Ok || response.ErrorCode != "provider_describe" || response.MutationCount != tc.wantCount {
+				t.Fatalf("provider error response=%#v", response)
+			}
+		})
+	}
 }
 
 func (client *fakeTencentClient) CreateComputeAllocation(request Request, env map[string]string) Response {
@@ -1963,12 +2135,14 @@ type fakeNativeCvmAPI struct {
 	subnetID                     string
 	omitVirtualPrivateCloud      bool
 	tags                         map[string]string
+	modifyInstancesErr           error
 }
 
 type fakeNativeTagAPI struct {
 	cvm      *fakeNativeCvmAPI
 	calls    []string
 	attached map[string]bool
+	err      error
 }
 
 func (api *fakeNativeTagAPI) SetCVMTag(_ string, key, value string, attached bool) (string, error) {
@@ -1981,6 +2155,9 @@ func (api *fakeNativeTagAPI) SetCVMTag(_ string, key, value string, attached boo
 		api.cvm.tags = map[string]string{}
 	}
 	api.cvm.tags[key] = value
+	if api.err != nil {
+		return "", api.err
+	}
 	return "req-tag-" + key, nil
 }
 
@@ -2564,6 +2741,9 @@ func (api *fakeNativeCvmAPI) DescribeZoneInstanceConfigInfos(request *cvm2017.De
 func (api *fakeNativeCvmAPI) ModifyInstancesAttribute(request *cvm2017.ModifyInstancesAttributeRequest) (*cvm2017.ModifyInstancesAttributeResponse, error) {
 	api.modifyInstancesRequest = append(api.modifyInstancesRequest, request)
 	api.instanceName = stringValue(request.InstanceName)
+	if api.modifyInstancesErr != nil {
+		return nil, api.modifyInstancesErr
+	}
 	return &cvm2017.ModifyInstancesAttributeResponse{Response: &cvm2017.ModifyInstancesAttributeResponseParams{RequestId: common.StringPtr("req-modify-cvm")}}, nil
 }
 
@@ -2633,9 +2813,13 @@ func (api *fakeNativeCvmAPI) DescribeInstances(request *cvm2017.DescribeInstance
 		if !api.omitVirtualPrivateCloud {
 			network = &cvm2017.VirtualPrivateCloud{VpcId: common.StringPtr(firstNonEmpty(api.vpcID, "vpc-workspace")), SubnetId: common.StringPtr(firstNonEmpty(api.subnetID, "subnet-basic"))}
 		}
+		tags := make([]*cvm2017.Tag, 0, len(api.tags))
+		for key, value := range api.tags {
+			tags = append(tags, &cvm2017.Tag{Key: common.StringPtr(key), Value: common.StringPtr(value)})
+		}
 		instances = append(instances, &cvm2017.Instance{
 			InstanceId:          common.StringPtr(firstNonEmpty(api.privateIPInstanceID, fmt.Sprintf("ins-basic-%d", instanceIndex))),
-			InstanceName:        common.StringPtr(fmt.Sprintf("node-basic-%d", instanceIndex)),
+			InstanceName:        common.StringPtr(firstNonEmpty(api.instanceName, fmt.Sprintf("node-basic-%d", instanceIndex))),
 			InstanceType:        common.StringPtr(firstNonEmpty(api.instanceType, "SA5.MEDIUM4")),
 			CPU:                 optionalInt64(api.cpu, 2, api.omitCPU, false),
 			Memory:              optionalInt64(api.memoryGB, 4, false, api.zeroMemory),
@@ -2647,6 +2831,7 @@ func (api *fakeNativeCvmAPI) DescribeInstances(request *cvm2017.DescribeInstance
 			InstanceChargeType:  common.StringPtr(firstNonEmpty(api.instanceChargeType, "PREPAID")),
 			RenewFlag:           common.StringPtr(firstNonEmpty(api.renewFlag, "NOTIFY_AND_MANUAL_RENEW")),
 			ExpiredTime:         expiredTime,
+			Tags:                tags,
 		})
 	}
 	return &cvm2017.DescribeInstancesResponse{

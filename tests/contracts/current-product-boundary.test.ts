@@ -87,7 +87,7 @@ test("Current contracts hard cut Workspace purchase, access, and Runtime facts",
   assert.equal(freeze.workspaceLaunch.customerDebitCardinality, 1);
   assert.equal(freeze.workspaceLaunch.persistence, "control_plane_runtime_operations with action=workspace.launch.v2 and result.schemaVersion=2");
   assert.equal(freeze.workspaceLaunch.codeCompleteThroughPhase, undefined);
-  assert.equal(freeze.workspaceLaunch.legacyNonTerminalPolicy, "clear_or_manual_handle_before_cutover_never_resume_in_v2_worker");
+  assert.equal(freeze.workspaceLaunch.legacyNonTerminalPolicy, "manual_review_compute_fulfilling_is_read_only_candidate_normalized_only_after_debit_identity_storage_zero_and_compute_proof_via_postgresql_cas");
   assert.equal(freeze.workspaceLaunch.backgroundProgression, "non_review_and_manual_review_recovery_integrated_local_fake_verified");
   assert.equal(freeze.workspaceLaunch.nextBlockedStage, undefined);
   assert.deepEqual(freeze.workspaceLaunch.fulfillmentResources, ["compute", "storage", "attachment", "gateway_secret", "runtime"]);
@@ -380,6 +380,41 @@ test("Current Fabric contracts require dedicated package NodePools without weake
     output: "redacted_evidence_only",
     currentState: "implemented_and_fake_tested_not_executed"
   });
+  assert.deepEqual(deployment.productionComputeClaimRecovery, {
+    workflow: ".github/workflows/production-basic-customer-operation.yml",
+    execution: "manual_release_owner_only_not_ci_release_rollout_or_e2e",
+    sharedConcurrency: "production-resource-verification",
+    runner: ["self-hosted", "tencent-cloud", "opl-cloud", "tke-vpc"],
+    modes: {
+      diagnose: {
+        input: "operation_mode=compute_claim_diagnose",
+        environment: "production",
+        route: "POST /fabric/compute-claim-recovery/proof",
+        credentials: "current_ready_fabric_pod_process_only",
+        mutationApproval: false,
+        requiredMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
+      },
+      recover: {
+        input: "operation_mode=compute_claim_recover",
+        environment: "production-compute-claim-recovery",
+        route: "POST /api/operator/workspace-launches/{operationId}/compute-claim-recovery/claim",
+        approvalSecret: "OPL_COMPUTE_CLAIM_RECOVERY_APPROVAL_JSON",
+        serverCapability: {
+          source: "current_kubernetes_secret_opl-cloud-internal-service",
+          header: "x-opl-compute-claim-capability",
+          ordinaryOperatorSessionAccepted: false,
+          handling: "step_memory_only_immediate_mask"
+        },
+        confirmation: "CLAIM_PROVEN_COMPUTE_RESOURCE"
+      }
+    },
+    releaseBinding: ["exact_merged_origin_main_sha", "immutable_cloud_digest", "control_plane_fabric_ledger_ready_pod_image_id", "approval_id_and_idempotency_key"],
+    targetBinding: ["launch", "account", "workspace", "compute", "machine", "node", "cvm", "pool", "node_pool", "sku", "zone", "private_ip", "billing_facts"],
+    mutationBounds: { sub2api: 0, tencent: { min: 0, max: 5 }, kubernetes: { min: 0, max: 1 } },
+    artifactGate: ["exact_target_owned_readback", "sub2api_zero", "tencent_zero_to_five", "kubernetes_zero_to_one"],
+    claimForbidden: ["debit", "refund", "recharge", "scale", "create_compute", "create_storage", "delete", "replace"],
+    currentState: "code_complete_local_focused_and_postgresql_verified_not_merged_released_deployed_or_executed"
+  });
   assert.doesNotMatch(await text("tools/production-live-qa.ts"), /SA5\.MEDIUM4/);
   assert.equal(freeze.providerProcurement.workspaceRenewal.tencentRenewFlag, "NOTIFY_AND_MANUAL_RENEW");
   assert.deepEqual(freeze.providerProcurement.workspaceRenewal.fabricPrimitives, ["RenewComputeAllocation", "RenewStorageVolume"]);
@@ -595,6 +630,33 @@ test("Current contracts hard cut operator resources, wallet adjustments, and ann
     unknownPolicy: "remain_manual_review_never_absent_never_refund",
     absentRequires: "both_local_identities_and_exact_provider_describe_absence",
     forbiddenSideEffects: ["sync", "tag", "kubectl_apply", "delete", "label", "purchase", "renew", "destroy"]
+  });
+  assert.deepEqual(boundary.services.fabric.workspaceComputeClaimRecovery, {
+    proofEndpoint: "POST /fabric/compute-claim-recovery/proof",
+    claimEndpoint: "POST /fabric/compute-claim-recovery/claim",
+    scope: "workspace.launch.v2_compute_claim_pending_before_storage_create",
+    proofAuthority: ["launch_operation", "compute_allocation", "allocation_plan", "machine_ownership", "tencent_describe", "kubernetes_get"],
+    packages: ["basic", "pro"],
+    storageGate: "zero_create_storage_volume_operations_returns_storage_not_started",
+    uniqueComputeRule: "one_ready_or_running_machine_in_after_minus_before",
+    exactIdentity: ["account", "workspace", "compute_operation", "pool", "node_pool", "machine", "node", "private_ip", "cvm", "sku", "zone"],
+    billingFacts: { chargeType: "PREPAID", periodMonths: 1, renewFlag: "NOTIFY_AND_MANUAL_RENEW", deadline: "exact" },
+    ownershipProof: { node: ["unallocated", "target_owned"], cvm: ["recoverable", "target_owned"] },
+    reasons: ["local_identity", "provider_describe", "iam_rbac", "multiple_candidate", "identity_mismatch", "node_ownership_conflict", "storage_already_started"],
+    proofMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
+    idempotencyBinding: ["launch_operation_id", "idempotency_key", "target_hash", "request_hash"],
+    bindingPersistence: "original_create_compute_allocation_operation_payload_cas",
+    malformedOrDriftedBinding: "fail_closed_conflict_zero_provider_mutation",
+    replay: "same_key_and_target_returns_same_proof_zero_incremental_external_mutation",
+    claimWrites: ["same_cvm_instance_name", "same_cvm_four_ownership_tags", "same_node_single_labels_and_taint_patch", "same_machine_ownership_active"],
+    claimMutationBounds: {
+      sub2api: 0,
+      tencent: { min: 0, max: 5, meaning: "one_instance_name_plus_four_ownership_tags" },
+      kubernetes: { min: 0, max: 1, meaning: "one_exact_node_json_patch" }
+    },
+    strictReadback: ["cvm_target_owned", "node_target_owned", "machine_ownership_active"],
+    forbiddenCalls: ["CreateComputeAllocation", "scale", "debit", "refund", "recharge", "create_storage_volume", "delete", "replace_cvm"],
+    fullMonthlyProviderTruthUnchanged: true
   });
   assert.deepEqual(boundary.services.fabric.monthlyPreflightDiagnostics, {
     endpoint: "GET /fabric/monthly-preflight-report?zone=<zone>",

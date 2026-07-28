@@ -18,6 +18,7 @@ import {
 
 export const LIVE_QA_CONFIRMATION = "I_UNDERSTAND_THIS_SENDS_ONE_REAL_MODEL_REQUEST";
 export const BASIC_CUSTOMER_CANARY_CONFIRMATION = "I_UNDERSTAND_THIS_PROVISIONS_ONE_REAL_BASIC_WORKSPACE_AND_SENDS_ONE_MODEL_REQUEST";
+export const COMPUTE_CLAIM_RECOVERY_CONFIRMATION = "CLAIM_PROVEN_COMPUTE_RESOURCE";
 
 const DEFAULT_USAGE_ATTEMPTS = 24;
 const DEFAULT_USAGE_RETRY_DELAY_MS = 5_000;
@@ -639,6 +640,369 @@ export async function diagnoseManualReviewRecovery({
     storage,
     mutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
   };
+}
+
+const COMPUTE_CLAIM_DIAGNOSE_MODE = "compute_claim_diagnose";
+const COMPUTE_CLAIM_RECOVER_MODE = "compute_claim_recover";
+const COMPUTE_CLAIM_REASONS = new Set([
+  "none", "local_identity", "provider_describe", "iam_rbac", "multiple_candidate",
+  "identity_mismatch", "node_ownership_conflict", "storage_already_started"
+]);
+const COMPUTE_CLAIM_TARGET_KEYS = [
+  "launchOperationId", "accountId", "workspaceId", "computeAllocationId", "storageId", "packageId", "poolId", "nodePoolId",
+  "machineName", "nodeName", "cvmInstanceId", "privateIp", "instanceType", "zone", "chargeType", "periodMonths", "renewFlag", "deadline"
+];
+const COMPUTE_CLAIM_FABRIC_POD_PROOF_SCRIPT = String.raw`
+const http = require("node:http");
+const path = process.argv[1];
+const body = process.argv[2];
+if (path !== "/fabric/compute-claim-recovery/proof" || !body || Buffer.byteLength(body) > 16384) {
+  process.stderr.write("compute_claim_fabric_request_invalid\\n");
+  process.exit(1);
+}
+const token = process.env.OPL_INTERNAL_SERVICE_TOKEN;
+if (!token) {
+  process.stderr.write("compute_claim_fabric_auth_unavailable\\n");
+  process.exit(1);
+}
+const request = http.request({
+  hostname: "127.0.0.1",
+  port: 8082,
+  path,
+  method: "POST",
+  headers: {
+    Authorization: "Bearer " + token,
+    "Content-Type": "application/json",
+    "Content-Length": Buffer.byteLength(body)
+  }
+}, (response) => {
+  let responseBody = "";
+  response.setEncoding("utf8");
+  response.on("data", (chunk) => {
+    responseBody += chunk;
+    if (Buffer.byteLength(responseBody) > 1024 * 1024) request.destroy(new Error("compute_claim_fabric_response_too_large"));
+  });
+  response.on("end", () => {
+    let payload = null;
+    try { payload = JSON.parse(responseBody); } catch {}
+    const reason = String(payload?.reason || payload?.error || "provider_describe");
+    process.stdout.write(JSON.stringify({ statusCode: Number(response.statusCode || 0), payload, errorCode: /^[a-z0-9_]{1,80}$/.test(reason) ? reason : "provider_describe" }));
+  });
+});
+request.setTimeout(120000, () => request.destroy(new Error("compute_claim_fabric_proof_timeout")));
+request.on("error", () => {
+  process.stderr.write("compute_claim_fabric_proof_unavailable\\n");
+  process.exitCode = 1;
+});
+request.end(body);
+`;
+
+function validIPv4(value) {
+  const parts = String(value || "").split(".");
+  return parts.length === 4 && parts.every((part) => /^(?:0|[1-9][0-9]{0,2})$/.test(part) && Number(part) <= 255);
+}
+
+function computeClaimTarget(value) {
+  let target;
+  try {
+    target = typeof value === "string" ? JSON.parse(value) : value;
+  } catch {
+    throw new Error("compute_claim_recovery_target_invalid");
+  }
+  if (!exactObjectKeys(target, COMPUTE_CLAIM_TARGET_KEYS) ||
+    !/^workspace-launch-[A-Za-z0-9-]+$/.test(String(target.launchOperationId || "")) ||
+    !/^acct-[A-Za-z0-9-]+$/.test(String(target.accountId || "")) ||
+    !/^ws-[A-Za-z0-9-]+$/.test(String(target.workspaceId || "")) ||
+    !/^ca_[A-Za-z0-9_\-]+$/.test(String(target.computeAllocationId || "")) ||
+    !/^vol_[A-Za-z0-9_\-]+$/.test(String(target.storageId || "")) ||
+    !new Set(["basic", "pro"]).has(target.packageId) ||
+    !/^pool-[A-Za-z0-9-]+$/.test(String(target.poolId || "")) ||
+    !/^np-[A-Za-z0-9-]+$/.test(String(target.nodePoolId || "")) ||
+    !/^[A-Za-z0-9][A-Za-z0-9.-]{1,127}$/.test(String(target.machineName || "")) ||
+    !validIPv4(target.nodeName) || !validIPv4(target.privateIp) ||
+    !/^ins-[A-Za-z0-9-]+$/.test(String(target.cvmInstanceId || "")) ||
+    !/^[A-Za-z0-9][A-Za-z0-9.-]{1,63}$/.test(String(target.instanceType || "")) ||
+    !/^[a-z][a-z0-9-]{2,63}$/.test(String(target.zone || "")) || target.chargeType !== "PREPAID" || target.periodMonths !== 1 ||
+    target.renewFlag !== "NOTIFY_AND_MANUAL_RENEW" || !Number.isFinite(Date.parse(target.deadline))) {
+    throw new Error("compute_claim_recovery_target_invalid");
+  }
+  return { ...target };
+}
+
+function computeClaimBaseRequest(target) {
+  return {
+    launchOperationId: target.launchOperationId,
+    accountId: target.accountId,
+    workspaceId: target.workspaceId,
+    computeAllocationId: target.computeAllocationId,
+    storageVolumeId: target.storageId,
+    packageId: target.packageId,
+    poolId: target.poolId,
+    nodePoolId: target.nodePoolId
+  };
+}
+
+function computeClaimControlPlaneRequest(target) {
+  return {
+    accountId: target.accountId,
+    workspaceId: target.workspaceId,
+    computeAllocationId: target.computeAllocationId,
+    storageId: target.storageId,
+    packageId: target.packageId,
+    poolId: target.poolId,
+    nodePoolId: target.nodePoolId,
+    machineName: target.machineName,
+    nodeName: target.nodeName,
+    cvmInstanceId: target.cvmInstanceId,
+    privateIp: target.privateIp,
+    instanceType: target.instanceType,
+    zone: target.zone
+  };
+}
+
+function computeClaimProofProjection(value) {
+  const integer = (field) => Number.isInteger(value?.[field]) && value[field] >= 0 ? value[field] : -1;
+  return {
+    schemaVersion: Number(value?.schemaVersion || 0),
+    eligible: value?.eligible === true,
+    reason: COMPUTE_CLAIM_REASONS.has(String(value?.reason || "")) ? String(value.reason) : "provider_describe",
+    storageState: new Set(["storage_not_started", "unknown"]).has(String(value?.storageState || "")) ? String(value.storageState) : "unknown",
+    launchOperationId: String(value?.launchOperationId || ""),
+    accountId: String(value?.accountId || ""),
+    workspaceId: String(value?.workspaceId || ""),
+    computeAllocationId: String(value?.computeAllocationId || ""),
+    storageVolumeId: String(value?.storageVolumeId || ""),
+    packageId: String(value?.packageId || ""),
+    poolId: String(value?.poolId || ""),
+    nodePoolId: String(value?.nodePoolId || ""),
+    machineName: String(value?.machineName || ""),
+    nodeName: String(value?.nodeName || ""),
+    cvmInstanceId: String(value?.cvmInstanceId || ""),
+    privateIp: String(value?.privateIp || ""),
+    instanceType: String(value?.instanceType || ""),
+    zone: String(value?.zone || ""),
+    chargeType: String(value?.chargeType || ""),
+    periodMonths: integer("periodMonths"),
+    renewFlag: String(value?.renewFlag || ""),
+    deadline: String(value?.deadline || ""),
+    nodeOwnershipState: String(value?.nodeOwnershipState || ""),
+    cvmOwnershipState: String(value?.cvmOwnershipState || ""),
+    sub2apiMutationCount: integer("sub2apiMutationCount"),
+    tencentMutationCount: integer("tencentMutationCount"),
+    kubernetesMutationCount: integer("kubernetesMutationCount")
+  };
+}
+
+function computeClaimProofBaseMatches(proof, target) {
+  return proof.schemaVersion === 1 && proof.launchOperationId === target.launchOperationId && proof.accountId === target.accountId &&
+    proof.workspaceId === target.workspaceId && proof.computeAllocationId === target.computeAllocationId && proof.storageVolumeId === target.storageId &&
+    proof.packageId === target.packageId && proof.poolId === target.poolId && proof.nodePoolId === target.nodePoolId &&
+	proof.sub2apiMutationCount === 0 && proof.tencentMutationCount >= 0 && proof.tencentMutationCount <= 5 &&
+	proof.kubernetesMutationCount >= 0 && proof.kubernetesMutationCount <= 1;
+}
+
+function computeClaimProofMatchesTarget(proof, target, claimed = false) {
+  return computeClaimProofBaseMatches(proof, target) && proof.eligible && proof.reason === "none" && proof.storageState === "storage_not_started" &&
+    proof.machineName === target.machineName && proof.nodeName === target.nodeName && proof.cvmInstanceId === target.cvmInstanceId &&
+    proof.privateIp === target.privateIp && proof.instanceType === target.instanceType && proof.zone === target.zone &&
+    proof.chargeType === target.chargeType && proof.periodMonths === target.periodMonths && proof.renewFlag === target.renewFlag && proof.deadline === target.deadline &&
+    (claimed ? proof.nodeOwnershipState === "target_owned" : new Set(["unallocated", "target_owned"]).has(proof.nodeOwnershipState)) &&
+    (claimed ? proof.cvmOwnershipState === "target_owned" : new Set(["recoverable", "target_owned"]).has(proof.cvmOwnershipState));
+}
+
+function computeClaimReleaseEvidence(evidence) {
+  return {
+    mergedSha: String(evidence.mergedSha),
+    cloudImageDigest: String(evidence.cloudDigest),
+    revisions: {
+      controlPlane: String(evidence.services.controlPlane.revision),
+      fabric: String(evidence.services.fabric.revision),
+      ledger: String(evidence.services.ledger.revision)
+    }
+  };
+}
+
+async function currentComputeClaimCloudRevision({ mergedSha, cloudImageDigest, kubeconfigPath, namespace, cloudRevisionEvidenceReader, execFileImpl }) {
+  const reader = cloudRevisionEvidenceReader || ((input) => readBasicCanaryCloudRevisionEvidence({
+    ...input,
+    kubeconfigPath,
+    namespace,
+    execFileImpl
+  }));
+  const evidence = await reader({ expectedMergedSha: mergedSha, expectedCloudDigest: cloudImageDigest });
+  return validateBasicCanaryCloudRevisionEvidence(evidence, mergedSha, cloudImageDigest);
+}
+
+async function computeClaimFabricPodProof({ target, fabricPod, kubeconfigPath, namespace, execFileImpl }) {
+  const body = JSON.stringify(computeClaimBaseRequest(target));
+  const result = await execFileImpl("kubectl", [
+    "--kubeconfig", String(kubeconfigPath), "-n", namespace, "exec", manualReviewFabricPodName(fabricPod), "-c", "fabric", "--",
+    "node", "-e", COMPUTE_CLAIM_FABRIC_POD_PROOF_SCRIPT, "/fabric/compute-claim-recovery/proof", body
+  ], { encoding: "utf8", maxBuffer: 1024 * 1024 });
+  const response = parseExecJson(result.stdout, "compute_claim_recovery_fabric_response_invalid");
+  if (!response || !Number.isInteger(response.statusCode) || response.statusCode < 100 || response.statusCode > 599 ||
+    !Object.hasOwn(response, "payload") || !/^[a-z0-9_]{1,80}$/.test(String(response.errorCode || ""))) {
+    throw new Error("compute_claim_recovery_fabric_response_invalid");
+  }
+  return response;
+}
+
+function computeClaimArtifact(mode, target, release, proof, eligible, errorCode, approvalId = "") {
+  const artifact = {
+    schemaVersion: 1,
+    operationMode: mode,
+    status: eligible ? (mode === COMPUTE_CLAIM_DIAGNOSE_MODE ? "proven" : "claimed") : "blocked",
+    recoveryEligible: eligible,
+    errorCode,
+    release: computeClaimReleaseEvidence(release),
+    target: { ...target },
+    proof,
+    mutationCounts: {
+      sub2api: proof.sub2apiMutationCount,
+      tencent: proof.tencentMutationCount,
+      kubernetes: proof.kubernetesMutationCount
+    }
+  };
+  if (approvalId) artifact.approval = { approvalId };
+  return artifact;
+}
+
+export async function diagnoseComputeClaimRecovery({
+  target: rawTarget,
+  mergedSha,
+  cloudImageDigest,
+  kubeconfigPath,
+  namespace,
+  cloudRevisionEvidenceReader,
+  execFileImpl = defaultExecFile
+} = {}) {
+  const target = computeClaimTarget(rawTarget);
+  if (!/^[a-f0-9]{40}$/.test(String(mergedSha || "")) || !/^sha256:[a-f0-9]{64}$/.test(String(cloudImageDigest || "")) ||
+    !String(kubeconfigPath || "").startsWith("/") || !/^[a-z0-9][a-z0-9-]{0,62}$/.test(String(namespace || ""))) {
+    throw new Error("compute_claim_recovery_config_invalid");
+  }
+  const release = await currentComputeClaimCloudRevision({ mergedSha, cloudImageDigest, kubeconfigPath, namespace, cloudRevisionEvidenceReader, execFileImpl });
+  const response = await computeClaimFabricPodProof({
+    target,
+    fabricPod: release.services.fabric.pod,
+    kubeconfigPath,
+    namespace,
+    execFileImpl
+  });
+  const proof = computeClaimProofProjection(response.payload);
+  const eligible = response.statusCode === 200 && computeClaimProofMatchesTarget(proof, target, false) &&
+    proof.tencentMutationCount === 0 && proof.kubernetesMutationCount === 0;
+  let errorCode = eligible ? "none" : proof.reason;
+  if (!computeClaimProofBaseMatches(proof, target) || proof.tencentMutationCount !== 0 || proof.kubernetesMutationCount !== 0) {
+    errorCode = "identity_mismatch";
+  }
+  return computeClaimArtifact(COMPUTE_CLAIM_DIAGNOSE_MODE, target, release, proof, eligible, errorCode);
+}
+
+function computeClaimRecoveryApproval(value, expected, now) {
+  let approval;
+  try {
+    approval = typeof value === "string" ? JSON.parse(value) : value;
+  } catch {
+    throw new Error("compute_claim_recovery_approval_invalid");
+  }
+  const keys = ["schemaVersion", "approvalId", "expiresAt", "mergedMainSha", "cloudImageDigest", "confirmation", "idempotencyKey", "target"];
+  let approvedTarget;
+  try {
+    approvedTarget = computeClaimTarget(approval?.target);
+  } catch {
+    throw new Error("compute_claim_recovery_approval_invalid");
+  }
+  const validOpaque = (value) => /^[a-z0-9][a-z0-9-]{2,47}$/.test(String(value || "")) &&
+    !/(?:api-?key|bearer|credential|password|secret|token)/.test(String(value));
+  if (!exactObjectKeys(approval, keys) || approval.schemaVersion !== 1 || approval.approvalId !== expected.approvalId ||
+    !validOpaque(approval.approvalId) || !validOpaque(approval.idempotencyKey) || !Number.isFinite(Date.parse(approval.expiresAt)) ||
+    Date.parse(approval.expiresAt) <= now.getTime() || approval.mergedMainSha !== expected.mergedSha || approval.cloudImageDigest !== expected.cloudImageDigest ||
+    approval.confirmation !== COMPUTE_CLAIM_RECOVERY_CONFIRMATION || JSON.stringify(approvedTarget) !== JSON.stringify(expected.target)) {
+    throw new Error("compute_claim_recovery_approval_invalid");
+  }
+  return { ...approval, target: approvedTarget };
+}
+
+async function computeClaimControlPlanePost({ fetchImpl, origin, auth, path, body, idempotencyKey, capability, requestTimeoutMs }) {
+  const response = await fetchImpl(`${origin}${path}`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      cookie: auth.cookie,
+      "x-opl-csrf": auth.csrfToken,
+      "x-opl-compute-claim-capability": capability,
+      ...(idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {})
+    },
+    body: JSON.stringify(body),
+    signal: readOnlyRequestSignal(undefined, requestTimeoutMs)
+  });
+  const text = await response.text();
+  let payload;
+  try {
+    payload = text ? JSON.parse(text) : {};
+  } catch {
+    throw new Error("compute_claim_recovery_control_plane_response_invalid");
+  }
+  return { statusCode: response.status, payload };
+}
+
+export async function recoverComputeClaim({
+  target: rawTarget,
+  approvalJson,
+  approvalId,
+  mergedSha,
+  cloudImageDigest,
+  origin,
+  adminEmail,
+  adminPassword,
+  internalServiceToken,
+  kubeconfigPath,
+  namespace,
+  requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
+  cloudRevisionEvidenceReader,
+  execFileImpl = defaultExecFile,
+  fetchImpl = globalThis.fetch,
+  now = new Date()
+} = {}) {
+  const target = computeClaimTarget(rawTarget);
+  const approval = computeClaimRecoveryApproval(approvalJson, { approvalId, mergedSha, cloudImageDigest, target }, now);
+  if (!internalServiceToken || internalServiceToken !== String(internalServiceToken).trim()) {
+    throw new Error("compute_claim_recovery_capability_required");
+  }
+  const credentials = existingAdminCredentials(adminEmail, adminPassword);
+  const normalizedOrigin = assertPublicHttpsUrl(origin, "public_console_origin_required", { hostname: "cloud.medopl.cn" }).origin;
+  if (!String(kubeconfigPath || "").startsWith("/") || !/^[a-z0-9][a-z0-9-]{0,62}$/.test(String(namespace || "")) ||
+    !Number.isInteger(requestTimeoutMs) || requestTimeoutMs < 1 || requestTimeoutMs > 300_000) {
+    throw new Error("compute_claim_recovery_config_invalid");
+  }
+  const release = await currentComputeClaimCloudRevision({ mergedSha, cloudImageDigest, kubeconfigPath, namespace, cloudRevisionEvidenceReader, execFileImpl });
+  const auth = await login({ fetchImpl, origin: normalizedOrigin, ...credentials, timeoutMs: requestTimeoutMs });
+  if (auth.user?.accountId !== PRODUCTION_ADMIN.accountId || auth.user?.role !== PRODUCTION_ADMIN.role || !auth.csrfToken) {
+    throw new Error("compute_claim_recovery_admin_login_failed");
+  }
+  const path = `/api/operator/workspace-launches/${encodeURIComponent(target.launchOperationId)}/compute-claim-recovery`;
+  const requestBody = computeClaimControlPlaneRequest(target);
+  const claimResponse = await computeClaimControlPlanePost({
+    fetchImpl,
+    origin: normalizedOrigin,
+    auth,
+    path: `${path}/claim`,
+    idempotencyKey: approval.idempotencyKey,
+    capability: internalServiceToken,
+    requestTimeoutMs,
+    body: {
+      ...requestBody,
+      approvalId: approval.approvalId,
+      mergedMainSha: approval.mergedMainSha,
+      cloudImageDigest: approval.cloudImageDigest,
+      confirm: approval.confirmation
+    }
+  });
+  const claimed = computeClaimProofProjection(claimResponse.payload);
+  const eligible = claimResponse.statusCode === 200 && computeClaimProofMatchesTarget(claimed, target, true);
+  const errorCode = eligible ? "none" : computeClaimProofBaseMatches(claimed, target) ? claimed.reason : "identity_mismatch";
+  return computeClaimArtifact(COMPUTE_CLAIM_RECOVER_MODE, target, release, claimed, eligible, errorCode, approval.approvalId);
 }
 
 async function defaultExecFile(command, args, options) {
@@ -2292,7 +2656,7 @@ export async function runProductionLiveQaCli({
   now = new Date()
 } = {}) {
   if (argv.includes("--help") || argv.includes("-h")) {
-    stdout.write("Usage: node tools/production-live-qa.ts --read-only\nA manual-review diagnosis requires --manual-review-diagnose and a non-secret target JSON. A fixed-slot model request requires --allow-gateway-write --allow-model-write. A real customer canary requires --basic-customer-canary, an exact funding mode, and its explicit approvals.\n");
+    stdout.write("Usage: node tools/production-live-qa.ts --read-only\nCompute claim modes use --compute-claim-diagnose or --compute-claim-recover with a non-secret target JSON. A manual-review diagnosis requires --manual-review-diagnose and a non-secret target JSON. A fixed-slot model request requires --allow-gateway-write --allow-model-write. A real customer canary requires --basic-customer-canary, an exact funding mode, and its explicit approvals.\n");
     return 0;
   }
   try {
@@ -2304,6 +2668,7 @@ export async function runProductionLiveQaCli({
         origin: args.origin || env.OPL_CONSOLE_ORIGIN,
         adminEmail: env.OPL_SUB2API_ADMIN_EMAIL,
         adminPassword: env.OPL_SUB2API_ADMIN_PASSWORD,
+        internalServiceToken: env.OPL_INTERNAL_SERVICE_TOKEN,
         requestTimeoutMs: Number(args["request-timeout-ms"] || env.OPL_VERIFY_REQUEST_TIMEOUT_MS || DEFAULT_REQUEST_TIMEOUT_MS),
         browserFactory,
         fetchImpl
@@ -2327,6 +2692,55 @@ export async function runProductionLiveQaCli({
       });
       stdout.write(`${JSON.stringify(result, null, 2)}\n`);
       return 0;
+    }
+    if (args["compute-claim-diagnose"] === "true") {
+      if (args["compute-claim-recover"] || args["manual-review-diagnose"] || args["basic-customer-canary"] || args["read-only"] ||
+        args["allow-account-provision"] || args["allow-wallet-recharge"] || args["allow-workspace-purchase"] || args["allow-model-write"] ||
+        args["allow-gateway-write"] || args["approval-id"] || args["funding-mode"] || args.phase) {
+        throw new Error("compute_claim_diagnose_conflict");
+      }
+      const kubeconfigPath = env.KUBECONFIG || env.TENCENT_DEPLOY_KUBECONFIG_PATH;
+      const namespace = env.OPL_K8S_NAMESPACE || "opl-cloud";
+      const result = await diagnoseComputeClaimRecovery({
+        target: args["compute-claim-target-json"] || env.OPL_COMPUTE_CLAIM_TARGET_JSON,
+        mergedSha: env.OPL_MERGED_SHA,
+        cloudImageDigest: env.OPL_COMPUTE_CLAIM_CLOUD_DIGEST,
+        kubeconfigPath,
+        namespace,
+        cloudRevisionEvidenceReader,
+        execFileImpl
+      });
+      stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+      return 0;
+    }
+    if (args["compute-claim-recover"] === "true") {
+      if (!args["approval-id"] || args["compute-claim-diagnose"] || args["manual-review-diagnose"] || args["basic-customer-canary"] || args["read-only"] ||
+        args["allow-account-provision"] || args["allow-wallet-recharge"] || args["allow-workspace-purchase"] || args["allow-model-write"] ||
+        args["allow-gateway-write"] || args["funding-mode"] || args.phase) {
+        throw new Error("compute_claim_recovery_approval_required");
+      }
+      const kubeconfigPath = env.KUBECONFIG || env.TENCENT_DEPLOY_KUBECONFIG_PATH;
+      const namespace = env.OPL_K8S_NAMESPACE || "opl-cloud";
+      const result = await recoverComputeClaim({
+        target: args["compute-claim-target-json"] || env.OPL_COMPUTE_CLAIM_TARGET_JSON,
+        approvalJson: env.OPL_COMPUTE_CLAIM_RECOVERY_APPROVAL_JSON,
+        approvalId: args["approval-id"],
+        mergedSha: env.OPL_MERGED_SHA,
+        cloudImageDigest: env.OPL_COMPUTE_CLAIM_CLOUD_DIGEST,
+        origin: args.origin || env.OPL_CONSOLE_ORIGIN,
+        adminEmail: env.OPL_SUB2API_ADMIN_EMAIL,
+        adminPassword: env.OPL_SUB2API_ADMIN_PASSWORD,
+		internalServiceToken: env.OPL_INTERNAL_SERVICE_TOKEN,
+        kubeconfigPath,
+        namespace,
+        requestTimeoutMs: Number(args["request-timeout-ms"] || env.OPL_VERIFY_REQUEST_TIMEOUT_MS || DEFAULT_REQUEST_TIMEOUT_MS),
+        cloudRevisionEvidenceReader,
+        execFileImpl,
+        fetchImpl,
+        now
+      });
+      stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+      return result.status === "claimed" ? 0 : 1;
     }
     if (args["basic-customer-canary"] === "true") {
       const fundingMode = args["funding-mode"] || BASIC_CANARY_OPERATOR_PRECHARGE_MODE;

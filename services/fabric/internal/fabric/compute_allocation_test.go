@@ -21,6 +21,41 @@ type allocationScopedProvider struct {
 	executions     []ComputeAllocationExecution
 }
 
+type claimInterruptedAllocationProvider struct {
+	allocationScopedProvider
+	failAt       string
+	tagCalls     int
+	syncCalls    int
+	storageCalls int
+}
+
+func (p *claimInterruptedAllocationProvider) TagComputeMachine(_ context.Context, _ ProviderMachine, _ MachineOwnership) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.tagCalls++
+	if p.failAt == "tag" {
+		return errors.New("transient claim tag failure")
+	}
+	return nil
+}
+
+func (p *claimInterruptedAllocationProvider) SyncComputeAllocation(_ context.Context, allocation ComputeAllocation) (ComputeAllocation, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.syncCalls++
+	if p.failAt == "sync" {
+		return allocation, errors.New("transient strict sync failure")
+	}
+	return allocation, nil
+}
+
+func (p *claimInterruptedAllocationProvider) CreateStorageVolume(_ context.Context, _ StorageVolumeInput) (StorageVolume, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.storageCalls++
+	return StorageVolume{}, errors.New("storage must not start during compute claim recovery")
+}
+
 type serializedPoolProvider struct {
 	testProvider
 	mu                sync.Mutex
@@ -372,6 +407,79 @@ func TestComputeAllocationPersistsAbsoluteTargetBeforeProviderMutationAndResumes
 			t.Fatalf("execution recomputed target: %#v", execution)
 		}
 	}
+}
+
+func TestComputeAllocationClaimInterruptionPersistsClaimOnlyStateAndNeverRecreates(t *testing.T) {
+	for _, failAt := range []string{"tag", "sync"} {
+		t.Run(failAt, func(t *testing.T) {
+			provider := &claimInterruptedAllocationProvider{
+				allocationScopedProvider: allocationScopedProvider{
+					preparation: ComputeAllocationPreparation{
+						PoolID: "pool-basic-2c4g", PackageID: "basic", NodePoolID: "np-basic", InstanceType: "SA5.MEDIUM4",
+						MaxReplicas: 20, BaselineReplicas: 1, TargetReplicas: 2, BeforeMachineNames: []string{"machine-existing"},
+					},
+					executeResults: []ComputeAllocation{readyComputeAllocation("machine-new", "ins-new", "10.0.0.12")},
+				},
+				failAt: failAt,
+			}
+			store := NewMemoryOperationStore()
+			service := NewServiceWithOperationStore(provider, store)
+			configureFastComputeAllocationPolling(service, 100*time.Millisecond)
+			input := ComputeAllocationInput{
+				AccountID: "acct-alpha", WorkspaceID: "ws-alpha", PackageID: "basic", NodePoolID: "np-basic", IdempotencyKey: "claim-interrupted-" + failAt,
+			}
+
+			created, err := service.CreateComputeAllocation(context.Background(), input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			waitForComputeClaimPending(t, service, created.ID)
+			current, ok := service.GetComputeAllocation(context.Background(), created.ID)
+			ownership, ownershipErr := store.MachineOwnership(context.Background(), created.ID)
+			if !ok || ownershipErr != nil || current.Status != "compute_claim_pending" || current.ProviderData["recoveryAction"] != "compute_claim_recovery" || ownership.Status != "quarantined" {
+				t.Fatalf("current=%#v ok=%v ownership=%#v ownershipErr=%v", current, ok, ownership, ownershipErr)
+			}
+
+			provider.mu.Lock()
+			prepareCalls, executeCalls, tagCalls, syncCalls, storageCalls := provider.prepareCalls, provider.executeCalls, provider.tagCalls, provider.syncCalls, provider.storageCalls
+			provider.mu.Unlock()
+			if prepareCalls != 1 || executeCalls != 1 || tagCalls != 1 || syncCalls != map[string]int{"tag": 0, "sync": 1}[failAt] || storageCalls != 0 {
+				t.Fatalf("before replay calls prepare=%d execute=%d tag=%d sync=%d storage=%d", prepareCalls, executeCalls, tagCalls, syncCalls, storageCalls)
+			}
+
+			replayed, err := service.CreateComputeAllocation(context.Background(), input)
+			if err != nil || replayed.ID != created.ID || replayed.Status != "compute_claim_pending" {
+				t.Fatalf("replayed=%#v err=%v", replayed, err)
+			}
+			waitForComputeReconcileIdle(t, service, created.ID)
+			provider.mu.Lock()
+			defer provider.mu.Unlock()
+			if provider.prepareCalls != 1 || provider.executeCalls != 1 || provider.tagCalls != 1 || provider.syncCalls != syncCalls || provider.storageCalls != 0 {
+				t.Fatalf("replay performed provider mutation: prepare=%d execute=%d tag=%d sync=%d storage=%d", provider.prepareCalls, provider.executeCalls, provider.tagCalls, provider.syncCalls, provider.storageCalls)
+			}
+		})
+	}
+}
+
+func waitForComputeClaimPending(t *testing.T, service *Service, resourceID string) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		operations, err := service.ListOperations(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, operation := range operations {
+			if operation.Action == "create_compute_allocation" && operation.ResourceID == resourceID && operation.Status == "claim_pending" {
+				if operation.ErrorCode == "" || !operation.FinishedAt.IsZero() {
+					t.Fatalf("claim pending operation audit fields=%#v", operation)
+				}
+				return
+			}
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("missing claim_pending compute operation %s", resourceID)
 }
 
 func TestComputeAllocationNeverClaimsMachinePresentBeforeScale(t *testing.T) {

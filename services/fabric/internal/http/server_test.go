@@ -404,6 +404,159 @@ func TestMonthlyProviderTruthHTTPIsAuthenticatedReadOnlyAndValidatesQuery(t *tes
 	}
 }
 
+type computeClaimHTTPProvider struct {
+	testProvider
+	proof      fabric.ComputeClaimProviderProof
+	claim      fabric.ComputeClaimProviderClaim
+	proofCalls int
+	claimCalls int
+}
+
+func (p *computeClaimHTTPProvider) ProveComputeClaimRecovery(_ context.Context, _ fabric.ComputeAllocation, _ fabric.ComputeAllocationPreparation, _ fabric.MachineOwnership) (fabric.ComputeClaimProviderProof, error) {
+	p.proofCalls++
+	return p.proof, nil
+}
+
+func (p *computeClaimHTTPProvider) ClaimComputeRecovery(_ context.Context, _ fabric.ComputeAllocation, _ fabric.ComputeAllocationPreparation, _ fabric.MachineOwnership) (fabric.ComputeClaimProviderClaim, error) {
+	p.claimCalls++
+	return p.claim, nil
+}
+
+func computeClaimHTTPFixture(t *testing.T) (*fabric.Service, *fabric.MemoryOperationStore, *computeClaimHTTPProvider, fabric.ComputeClaimRecoveryInput) {
+	t.Helper()
+	input := fabric.ComputeClaimRecoveryInput{
+		LaunchOperationID: "launch-fixture", AccountID: "acct-fixture", WorkspaceID: "ws-fixture",
+		ComputeAllocationID: "ca-fixture", StorageVolumeID: "vol-fixture", PackageID: "basic",
+		PoolID: "pool-basic-2c4g", NodePoolID: "np-workspace-basic",
+	}
+	plan := fabric.ComputeAllocationPreparation{
+		PoolID: input.PoolID, PackageID: input.PackageID, NodePoolID: input.NodePoolID, InstanceType: "SA5.MEDIUM4",
+		MaxReplicas: 10, BaselineReplicas: 1, TargetReplicas: 2, BeforeMachineNames: []string{"machine-before"},
+	}
+	allocation := fabric.ComputeAllocation{
+		ID: input.ComputeAllocationID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, PackageID: input.PackageID,
+		Status: "quarantined", Provider: "tencent-tke", ProviderResourceID: "ins-fixture", PoolID: input.PoolID, NodePoolID: input.NodePoolID,
+		MachineName: "machine-after", InstanceID: "ins-fixture", CVMInstanceID: "ins-fixture", NodeName: "10.0.0.18", PrivateIP: "10.0.0.18",
+		InstanceType: plan.InstanceType, Zone: "ap-guangzhou-3", ChargeType: "PREPAID", RenewFlag: "NOTIFY_AND_MANUAL_RENEW", Deadline: "2026-08-28T00:00:00Z",
+		ProviderData: map[string]string{
+			"instanceType": plan.InstanceType, "zone": "ap-guangzhou-3", "chargeType": "PREPAID", "periodMonths": "1",
+			"renewFlag": "NOTIFY_AND_MANUAL_RENEW", "deadline": "2026-08-28T00:00:00Z", "machineName": "machine-after",
+		},
+	}
+	ownership := fabric.MachineOwnership{
+		ID: "owner-fixture", ResourceID: allocation.ID, AccountID: allocation.AccountID, WorkspaceID: allocation.WorkspaceID,
+		PackageID: allocation.PackageID, NodePoolID: allocation.NodePoolID, MachineID: allocation.MachineName,
+		InstanceID: allocation.InstanceID, NodeName: allocation.NodeName, Status: "quarantined", ClaimedAt: time.Now().UTC(),
+	}
+	operation := fabric.FabricOperation{
+		ID: "fop-compute-fixture", OperationID: "op-compute-fixture", CallerService: "control-plane", Action: "create_compute_allocation",
+		ResourceKind: "compute_allocation", ResourceID: allocation.ID, AccountID: allocation.AccountID, WorkspaceID: allocation.WorkspaceID,
+		Provider: "tencent-tke", IdempotencyKey: input.LaunchOperationID + ":compute", RequestHash: "fixture-hash", Status: "failed",
+		RedactedProviderPayload: map[string]any{"resource": allocation, "allocationPlan": plan}, CreatedAt: time.Now().UTC(), FinishedAt: time.Now().UTC(),
+	}
+	store := fabric.NewMemoryOperationStore()
+	if err := store.Append(context.Background(), operation); err != nil {
+		t.Fatal(err)
+	}
+	if _, claimed, err := store.ClaimMachine(context.Background(), ownership); err != nil || !claimed {
+		t.Fatalf("seed ownership: claimed=%v err=%v", claimed, err)
+	}
+	provider := &computeClaimHTTPProvider{proof: fabric.ComputeClaimProviderProof{
+		Status: "proven", NodeOwnershipState: "unallocated", CVMOwnershipState: "recoverable", MachineName: allocation.MachineName,
+		NodeName: allocation.NodeName, CVMInstanceID: allocation.InstanceID, PrivateIP: allocation.PrivateIP, InstanceType: allocation.InstanceType,
+		Zone: allocation.Zone, ChargeType: "PREPAID", PeriodMonths: 1, RenewFlag: "NOTIFY_AND_MANUAL_RENEW", Deadline: allocation.Deadline,
+	}}
+	provider.claim = fabric.ComputeClaimProviderClaim{Proof: provider.proof, TencentMutationCount: 1, KubernetesMutationCount: 1}
+	provider.claim.Proof.NodeOwnershipState = "target_owned"
+	provider.claim.Proof.CVMOwnershipState = "target_owned"
+	return fabric.NewServiceWithOperationStore(provider, store), store, provider, input
+}
+
+func TestComputeClaimRecoveryHTTPSeparatesReadOnlyProofAndIdempotentClaim(t *testing.T) {
+	service, store, provider, input := computeClaimHTTPFixture(t)
+	server := NewServer(service, "internal-secret")
+	proofBody, _ := json.Marshal(input)
+
+	unauthorized := httptest.NewRecorder()
+	server.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodPost, "/fabric/compute-claim-recovery/proof", bytes.NewReader(proofBody)))
+	if unauthorized.Code != http.StatusUnauthorized || provider.proofCalls != 0 || provider.claimCalls != 0 {
+		t.Fatalf("unauthorized status=%d proofCalls=%d claimCalls=%d", unauthorized.Code, provider.proofCalls, provider.claimCalls)
+	}
+
+	proofRecorder := httptest.NewRecorder()
+	server.ServeHTTP(proofRecorder, testRequest(http.MethodPost, "/fabric/compute-claim-recovery/proof", bytes.NewReader(proofBody)))
+	var proof fabric.ComputeClaimRecoveryProof
+	if proofRecorder.Code != http.StatusOK || json.NewDecoder(proofRecorder.Body).Decode(&proof) != nil || !proof.Eligible || proof.Reason != "none" ||
+		proof.StorageState != "storage_not_started" || proof.Sub2APIMutationCount != 0 || proof.TencentMutationCount != 0 || proof.KubernetesMutationCount != 0 ||
+		provider.proofCalls != 1 || provider.claimCalls != 0 {
+		t.Fatalf("proof status=%d proof=%#v calls=%d/%d body=%s", proofRecorder.Code, proof, provider.proofCalls, provider.claimCalls, proofRecorder.Body.String())
+	}
+	operations, _ := store.List(context.Background())
+	ownership, _ := store.MachineOwnership(context.Background(), input.ComputeAllocationID)
+	if len(operations) != 1 || operations[0].Status != "failed" || ownership.Status != "quarantined" {
+		t.Fatalf("read-only proof mutated state: operations=%#v ownership=%#v", operations, ownership)
+	}
+
+	claimInput := fabric.ComputeClaimRecoveryClaimInput{
+		ComputeClaimRecoveryInput: input, MachineName: proof.MachineName, NodeName: proof.NodeName, CVMInstanceID: proof.CVMInstanceID,
+		PrivateIP: proof.PrivateIP, InstanceType: proof.InstanceType, Zone: proof.Zone,
+	}
+	claimBody, _ := json.Marshal(claimInput)
+	missingKey := httptest.NewRecorder()
+	server.ServeHTTP(missingKey, testRequest(http.MethodPost, "/fabric/compute-claim-recovery/claim", bytes.NewReader(claimBody)))
+	if missingKey.Code != http.StatusBadRequest || provider.proofCalls != 1 || provider.claimCalls != 0 {
+		t.Fatalf("missing key status=%d calls=%d/%d body=%s", missingKey.Code, provider.proofCalls, provider.claimCalls, missingKey.Body.String())
+	}
+
+	claimRequest := testRequest(http.MethodPost, "/fabric/compute-claim-recovery/claim", bytes.NewReader(claimBody))
+	claimRequest.Header.Set("Idempotency-Key", "launch-fixture:compute-claim")
+	claimRecorder := httptest.NewRecorder()
+	server.ServeHTTP(claimRecorder, claimRequest)
+	var claimed fabric.ComputeClaimRecoveryProof
+	if claimRecorder.Code != http.StatusAccepted || json.NewDecoder(claimRecorder.Body).Decode(&claimed) != nil || !claimed.Eligible ||
+		claimed.NodeOwnershipState != "target_owned" || claimed.TencentMutationCount != 1 || claimed.KubernetesMutationCount != 1 ||
+		provider.proofCalls != 2 || provider.claimCalls != 1 {
+		t.Fatalf("claim status=%d claim=%#v calls=%d/%d body=%s", claimRecorder.Code, claimed, provider.proofCalls, provider.claimCalls, claimRecorder.Body.String())
+	}
+	operations, _ = store.List(context.Background())
+	binding, _ := operations[0].RedactedProviderPayload["computeClaimRecovery"].(map[string]any)
+	if len(operations) != 1 || binding["launchOperationId"] != input.LaunchOperationID ||
+		binding["idempotencyKey"] != "launch-fixture:compute-claim" || binding["targetHash"] == "" || binding["requestHash"] == "" {
+		t.Fatalf("claim binding was not persisted on original operation: operations=%#v binding=%#v", operations, binding)
+	}
+
+	provider.proof.NodeOwnershipState = "target_owned"
+	provider.proof.CVMOwnershipState = "target_owned"
+	replayRequest := testRequest(http.MethodPost, "/fabric/compute-claim-recovery/claim", bytes.NewReader(claimBody))
+	replayRequest.Header.Set("Idempotency-Key", "launch-fixture:compute-claim")
+	replayRecorder := httptest.NewRecorder()
+	server.ServeHTTP(replayRecorder, replayRequest)
+	var replayed fabric.ComputeClaimRecoveryProof
+	if replayRecorder.Code != http.StatusAccepted || json.NewDecoder(replayRecorder.Body).Decode(&replayed) != nil || !replayed.Eligible ||
+		replayed.TencentMutationCount != 0 || replayed.KubernetesMutationCount != 0 || provider.claimCalls != 1 {
+		t.Fatalf("claim replay status=%d proof=%#v calls=%d/%d body=%s", replayRecorder.Code, replayed, provider.proofCalls, provider.claimCalls, replayRecorder.Body.String())
+	}
+
+	conflictRequest := testRequest(http.MethodPost, "/fabric/compute-claim-recovery/claim", bytes.NewReader(claimBody))
+	conflictRequest.Header.Set("Idempotency-Key", "launch-fixture:compute-claim-other")
+	conflictRecorder := httptest.NewRecorder()
+	server.ServeHTTP(conflictRecorder, conflictRequest)
+	if conflictRecorder.Code != http.StatusConflict || provider.claimCalls != 1 {
+		t.Fatalf("different claim key status=%d calls=%d/%d body=%s", conflictRecorder.Code, provider.proofCalls, provider.claimCalls, conflictRecorder.Body.String())
+	}
+
+	driftedInput := claimInput
+	driftedInput.PrivateIP = "10.0.0.99"
+	driftedBody, _ := json.Marshal(driftedInput)
+	driftedRequest := testRequest(http.MethodPost, "/fabric/compute-claim-recovery/claim", bytes.NewReader(driftedBody))
+	driftedRequest.Header.Set("Idempotency-Key", "launch-fixture:compute-claim")
+	driftedRecorder := httptest.NewRecorder()
+	server.ServeHTTP(driftedRecorder, driftedRequest)
+	if driftedRecorder.Code != http.StatusConflict || provider.claimCalls != 1 {
+		t.Fatalf("claim target drift status=%d calls=%d/%d body=%s", driftedRecorder.Code, provider.proofCalls, provider.claimCalls, driftedRecorder.Body.String())
+	}
+}
+
 func TestServerRenewsComputeAllocation(t *testing.T) {
 	service := fabric.NewService(testProvider{})
 	allocation, err := service.CreateComputeAllocation(context.Background(), fabric.ComputeAllocationInput{ID: "compute-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", PackageID: "basic", NodePoolID: "np-basic", IdempotencyKey: "compute-create"})

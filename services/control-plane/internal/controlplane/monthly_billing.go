@@ -45,6 +45,22 @@ func (s *Service) MonthlyProviderTruth(ctx context.Context, computeID, storageID
 	return client.MonthlyProviderTruth(ctx, computeID, storageID)
 }
 
+func (s *Service) ComputeClaimRecoveryProof(ctx context.Context, input clients.ComputeClaimRecoveryInput) (clients.ComputeClaimRecoveryProof, error) {
+	client, ok := s.fabric.(clients.FabricComputeClaimRecoveryClient)
+	if !ok {
+		return clients.ComputeClaimRecoveryProof{Reason: "provider_describe"}, errors.New("fabric_compute_claim_recovery_unavailable")
+	}
+	return client.ComputeClaimRecoveryProof(ctx, input)
+}
+
+func (s *Service) ClaimComputeRecovery(ctx context.Context, input clients.ComputeClaimRecoveryClaimInput, key string) (clients.ComputeClaimRecoveryProof, error) {
+	client, ok := s.fabric.(clients.FabricComputeClaimRecoveryClient)
+	if !ok {
+		return clients.ComputeClaimRecoveryProof{Reason: "provider_describe"}, errors.New("fabric_compute_claim_recovery_unavailable")
+	}
+	return client.ClaimComputeRecovery(ctx, input, key)
+}
+
 func (s *Service) PrepareMonthlyCompute(ctx context.Context, input clients.ComputeAllocationInput, key string) (clients.ComputeAllocation, error) {
 	return s.fabric.CreateComputeAllocation(ctx, input, key)
 }

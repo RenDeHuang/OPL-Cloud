@@ -103,6 +103,25 @@ test("launch freeze fixes the V2 products, owner lanes, settlement, and verifica
     },
     implementation: "integrated_local_fake_verified"
   });
+  assert.deepEqual(freeze.workspaceLaunch.computeClaimRecovery, {
+    trigger: "debit_confirmed_unique_compute_created_claim_interrupted_storage_not_started",
+    pendingState: "compute_claim_pending",
+    proofRoute: "POST /api/operator/workspace-launches/{operationId}/compute-claim-recovery/proof",
+    claimRoute: "POST /api/operator/workspace-launches/{operationId}/compute-claim-recovery/claim",
+    proofContract: "opl-cloud-service-boundary-contract.json#services.fabric.workspaceComputeClaimRecovery",
+    identitySource: ["workspace.launch.v2", "create_compute_allocation", "allocation_plan", "machine_ownership"],
+    legacyCandidates: [{ status: "manual_review", phase: "compute_fulfilling" }],
+    legacyNormalization: "after_debit_identity_storage_zero_and_compute_proof_postgresql_cas_to_compute_claim_pending",
+    normalizationMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
+    claimAuthorization: "operator_session_plus_internal_runner_capability_and_exact_release_owner_approval",
+    fabricIdempotencyBinding: ["launch_operation_id", "idempotency_key", "target_hash", "request_hash"],
+    claimMutationBounds: { sub2api: 0, tencent: { min: 0, max: 5 }, kubernetes: { min: 0, max: 1 } },
+    normalRetry: "same_operation_claim_only_never_prepare_or_scale_again",
+    successTransition: "same_launch_storage_fulfilling_with_original_storage_identity",
+    failureTransition: "manual_review_without_refund_or_replacement",
+    forbidden: ["second_debit", "refund", "second_cvm", "early_cbs", "replacement_compute"],
+    currentImplementation: "code_complete_local_focused_and_postgresql_verified_not_merged_released_deployed_or_executed"
+  });
 
   assert.deepEqual(freeze.monthlySettlement.protocol, ["debit", "fabric_fulfillment", "claim", "activate", "record_workspace_receipt"]);
   assert.equal(freeze.monthlySettlement.confirmedNoResourceAfterDebit, "idempotent_refund");

@@ -542,6 +542,7 @@ type provisionerResponse struct {
 	ReadyReplicas      int64                   `json:"readyReplicas,omitempty"`
 	MaxReplicas        int64                   `json:"maxReplicas,omitempty"`
 	TargetReplicas     int64                   `json:"targetReplicas,omitempty"`
+	MutationCount      int                     `json:"mutationCount"`
 }
 
 type provisionerMachine struct {
@@ -644,6 +645,297 @@ func (p *TencentProvider) CreateComputeAllocation(ctx context.Context, input Com
 		return allocation, provisionerError(response)
 	}
 	return allocation, nil
+}
+
+func (p *TencentProvider) ProveComputeClaimRecovery(ctx context.Context, allocation ComputeAllocation, prepared ComputeAllocationPreparation, ownership MachineOwnership) (ComputeClaimProviderProof, error) {
+	proof := ComputeClaimProviderProof{Reason: "identity_mismatch"}
+	plan := packagePlan(allocation.PackageID)
+	instanceID := firstNonEmpty(allocation.InstanceID, allocation.CVMInstanceID)
+	if allocation.ID == "" || allocation.AccountID == "" || allocation.WorkspaceID == "" || (allocation.PackageID != "basic" && allocation.PackageID != "pro") ||
+		allocation.PoolID != prepared.PoolID || allocation.NodePoolID != prepared.NodePoolID || prepared.PackageID != allocation.PackageID ||
+		prepared.InstanceType != plan.InstanceType || allocation.InstanceType != prepared.InstanceType || prepared.MaxReplicas <= 0 || prepared.BaselineReplicas < 0 ||
+		prepared.TargetReplicas != prepared.BaselineReplicas+1 || int64(len(prepared.BeforeMachineNames)) != prepared.BaselineReplicas ||
+		allocation.MachineName == "" || !strings.HasPrefix(instanceID, "ins-") || allocation.NodeName == "" || allocation.PrivateIP == "" || allocation.Zone == "" ||
+		ownership.ResourceID != allocation.ID || ownership.AccountID != allocation.AccountID || ownership.WorkspaceID != allocation.WorkspaceID ||
+		ownership.PackageID != allocation.PackageID || ownership.NodePoolID != allocation.NodePoolID || ownership.MachineID != allocation.MachineName ||
+		ownership.InstanceID != instanceID || ownership.NodeName != allocation.NodeName || ownership.ID == "" {
+		return proof, computeClaimProviderError(proof.Reason)
+	}
+	if err := protectedresource.FromEnv().Check(protectedresource.Target{
+		PackageID: ownership.PackageID, NodePoolID: ownership.NodePoolID, MachineID: ownership.MachineID,
+		NodeName: ownership.NodeName, CVMID: ownership.InstanceID,
+	}); err != nil {
+		return proof, computeClaimProviderError(proof.Reason)
+	}
+	response, err := p.provision(ctx, provisionerRequest{
+		Action: "compute_claim_truth", AccountID: allocation.AccountID, PackageID: allocation.PackageID, Zone: allocation.Zone,
+		Tags: oplCostTags(allocation.AccountID, allocation.WorkspaceID, allocation.ID, ownership.ID),
+		Pool: provisionerPool{
+			ID: prepared.PoolID, PackageID: prepared.PackageID, InstanceType: prepared.InstanceType, CPU: uint64(plan.CPU), MemoryGB: uint64(plan.MemoryGB),
+			NodePoolID: prepared.NodePoolID, MaxReplicas: prepared.MaxReplicas, BaselineReplicas: prepared.BaselineReplicas,
+			TargetReplicas: prepared.TargetReplicas, BeforeMachineNames: append([]string(nil), prepared.BeforeMachineNames...),
+		},
+		Allocation: provisionerAllocation{
+			ID: allocation.ID, InstanceID: instanceID, MachineName: allocation.MachineName, NodeName: allocation.NodeName,
+			PrivateIP: allocation.PrivateIP, PublicIP: allocation.PublicIP, Deadline: allocation.Deadline,
+		},
+	})
+	if err != nil {
+		proof.Reason = "provider_describe"
+		return proof, computeClaimProviderError(proof.Reason)
+	}
+	if !response.OK {
+		proof.Reason = safeComputeClaimRecoveryReason(response.ErrorCode, "provider_describe")
+		return proof, computeClaimProviderError(proof.Reason)
+	}
+	periodMonths, periodErr := strconv.Atoi(response.ProviderData["periodMonths"])
+	proof = ComputeClaimProviderProof{
+		Status: response.Status, MachineName: response.ProviderData["machineName"], NodeName: response.NodeName,
+		CVMInstanceID: response.InstanceID, PrivateIP: response.PrivateIP, InstanceType: response.InstanceType,
+		Zone: response.ProviderData["zone"], ChargeType: response.ProviderData["chargeType"], PeriodMonths: periodMonths,
+		RenewFlag: response.ProviderData["renewFlag"], Deadline: response.ProviderData["deadline"],
+		CVMOwnershipState: response.ProviderData["cvmOwnershipState"],
+	}
+	if periodErr != nil || proof.Status != "proven" || proof.MachineName != allocation.MachineName || proof.NodeName != allocation.NodeName ||
+		proof.CVMInstanceID != instanceID || proof.PrivateIP != allocation.PrivateIP || proof.InstanceType != prepared.InstanceType || proof.Zone != allocation.Zone ||
+		proof.ChargeType != "PREPAID" || proof.PeriodMonths != 1 || proof.RenewFlag != "NOTIFY_AND_MANUAL_RENEW" || proof.Deadline != allocation.Deadline ||
+		(proof.CVMOwnershipState != "recoverable" && proof.CVMOwnershipState != "target_owned") {
+		proof.Reason = "identity_mismatch"
+		return proof, computeClaimProviderError(proof.Reason)
+	}
+	nodeRaw, err := p.callKubectl(ctx, []string{"get", "node/" + allocation.NodeName, "-o", "json"}, nil, protectedresource.Target{})
+	if err != nil {
+		proof.Reason = "provider_describe"
+		message := strings.ToLower(err.Error())
+		if strings.Contains(message, "forbidden") || strings.Contains(message, "unauthorized") || strings.Contains(message, "permission") {
+			proof.Reason = "iam_rbac"
+		}
+		return proof, computeClaimProviderError(proof.Reason)
+	}
+	nodeState, ok := computeClaimNodeOwnershipState(nodeRaw, allocation, ownership)
+	if !ok {
+		proof.Reason = "node_ownership_conflict"
+		if nodeState == "identity_mismatch" {
+			proof.Reason = "identity_mismatch"
+		}
+		return proof, computeClaimProviderError(proof.Reason)
+	}
+	proof.NodeOwnershipState = nodeState
+	proof.Reason = ""
+	return proof, nil
+}
+
+func (p *TencentProvider) ClaimComputeRecovery(ctx context.Context, allocation ComputeAllocation, prepared ComputeAllocationPreparation, ownership MachineOwnership) (ComputeClaimProviderClaim, error) {
+	result := ComputeClaimProviderClaim{}
+	proof, err := p.ProveComputeClaimRecovery(ctx, allocation, prepared, ownership)
+	result.Proof = proof
+	if err != nil {
+		return result, err
+	}
+	target := protectedresource.Target{
+		PackageID: ownership.PackageID, NodePoolID: ownership.NodePoolID, MachineID: ownership.MachineID,
+		NodeName: ownership.NodeName, CVMID: ownership.InstanceID,
+	}
+	if err := protectedresource.FromEnv().Check(target); err != nil {
+		result.Proof.Reason = "identity_mismatch"
+		return result, err
+	}
+	var nodeRaw []byte
+	var nodeState string
+	if proof.NodeOwnershipState == "unallocated" {
+		nodeRaw, err = p.callKubectl(ctx, []string{"get", "node/" + allocation.NodeName, "-o", "json"}, nil, protectedresource.Target{})
+		if err != nil {
+			result.Proof.Reason = computeClaimKubectlReason(err)
+			return result, computeClaimProviderError(result.Proof.Reason)
+		}
+		nodeState, _ = computeClaimNodeOwnershipState(nodeRaw, allocation, ownership)
+		if nodeState != "unallocated" {
+			result.Proof.Reason = "node_ownership_conflict"
+			return result, computeClaimProviderError(result.Proof.Reason)
+		}
+	}
+	if proof.CVMOwnershipState == "recoverable" {
+		response, provisionErr := p.provision(ctx, computeClaimProvisionerRequest("claim_compute_machine", allocation, prepared, ownership))
+		result.TencentMutationCount = max(0, response.MutationCount)
+		if provisionErr != nil {
+			result.Proof.Reason = "provider_describe"
+			return result, computeClaimProviderError(result.Proof.Reason)
+		}
+		if !response.OK || response.Status != "claimed" || response.InstanceID != firstNonEmpty(allocation.InstanceID, allocation.CVMInstanceID) ||
+			response.ProviderData["cvmOwnershipState"] != "target_owned" || response.MutationCount < 0 || response.MutationCount > 5 {
+			result.Proof.Reason = safeComputeClaimRecoveryReason(response.ErrorCode, "identity_mismatch")
+			return result, computeClaimProviderError(result.Proof.Reason)
+		}
+	}
+	if proof.NodeOwnershipState == "unallocated" {
+		patch, patchErr := computeClaimNodePatch(nodeRaw, allocation, ownership)
+		if patchErr != nil {
+			result.Proof.Reason = "node_ownership_conflict"
+			return result, computeClaimProviderError(result.Proof.Reason)
+		}
+		result.KubernetesMutationCount = 1
+		if _, err := p.callKubectl(ctx, []string{"patch", "node/" + allocation.NodeName, "--type=json", "-f", "-"}, patch, target); err != nil {
+			result.Proof.Reason = computeClaimKubectlReason(err)
+			return result, computeClaimProviderError(result.Proof.Reason)
+		}
+	}
+	readback, err := p.ProveComputeClaimRecovery(ctx, allocation, prepared, ownership)
+	result.Proof = readback
+	if err != nil || readback.CVMOwnershipState != "target_owned" || readback.NodeOwnershipState != "target_owned" {
+		if result.Proof.Reason == "" {
+			result.Proof.Reason = "identity_mismatch"
+		}
+		return result, computeClaimProviderError(result.Proof.Reason)
+	}
+	return result, nil
+}
+
+func computeClaimProvisionerRequest(action string, allocation ComputeAllocation, prepared ComputeAllocationPreparation, ownership MachineOwnership) provisionerRequest {
+	plan := packagePlan(allocation.PackageID)
+	return provisionerRequest{
+		Action: action, AccountID: allocation.AccountID, PackageID: allocation.PackageID, Zone: allocation.Zone,
+		Tags: oplCostTags(allocation.AccountID, allocation.WorkspaceID, allocation.ID, ownership.ID),
+		Pool: provisionerPool{
+			ID: prepared.PoolID, PackageID: prepared.PackageID, InstanceType: prepared.InstanceType, CPU: uint64(plan.CPU), MemoryGB: uint64(plan.MemoryGB),
+			NodePoolID: prepared.NodePoolID, MaxReplicas: prepared.MaxReplicas, BaselineReplicas: prepared.BaselineReplicas,
+			TargetReplicas: prepared.TargetReplicas, BeforeMachineNames: append([]string(nil), prepared.BeforeMachineNames...),
+		},
+		Allocation: provisionerAllocation{
+			ID: allocation.ID, InstanceID: firstNonEmpty(allocation.InstanceID, allocation.CVMInstanceID), MachineName: allocation.MachineName,
+			NodeName: allocation.NodeName, PrivateIP: allocation.PrivateIP, PublicIP: allocation.PublicIP, Deadline: allocation.Deadline,
+		},
+	}
+}
+
+func computeClaimKubectlReason(err error) string {
+	if err == nil {
+		return "provider_describe"
+	}
+	message := strings.ToLower(err.Error())
+	if strings.Contains(message, "forbidden") || strings.Contains(message, "unauthorized") || strings.Contains(message, "permission") {
+		return "iam_rbac"
+	}
+	if strings.Contains(message, "test failed") || strings.Contains(message, "conflict") || strings.Contains(message, "resourceversion") {
+		return "node_ownership_conflict"
+	}
+	return "provider_describe"
+}
+
+func computeClaimNodePatch(raw []byte, allocation ComputeAllocation, ownership MachineOwnership) ([]byte, error) {
+	var node struct {
+		Metadata struct {
+			Name            string            `json:"name"`
+			ResourceVersion string            `json:"resourceVersion"`
+			Labels          map[string]string `json:"labels"`
+		} `json:"metadata"`
+		Spec struct {
+			Taints []struct {
+				Key, Value, Effect string
+			} `json:"taints"`
+		} `json:"spec"`
+	}
+	if json.Unmarshal(raw, &node) != nil || node.Metadata.Name != allocation.NodeName || node.Metadata.ResourceVersion == "" {
+		return nil, fmt.Errorf("node_identity_mismatch")
+	}
+	taintIndex := -1
+	for index, taint := range node.Spec.Taints {
+		if taint.Key == "oplcloud.cn/workspace-id" {
+			if taintIndex >= 0 || taint.Value != "unallocated" || taint.Effect != "NoSchedule" {
+				return nil, fmt.Errorf("node_ownership_conflict")
+			}
+			taintIndex = index
+		}
+	}
+	if taintIndex < 0 {
+		return nil, fmt.Errorf("node_ownership_conflict")
+	}
+	patch := []map[string]any{
+		{"op": "test", "path": "/metadata/resourceVersion", "value": node.Metadata.ResourceVersion},
+		{"op": "test", "path": fmt.Sprintf("/spec/taints/%d/value", taintIndex), "value": "unallocated"},
+	}
+	if node.Metadata.Labels == nil {
+		patch = append(patch, map[string]any{"op": "add", "path": "/metadata/labels", "value": map[string]string{}})
+	}
+	for _, label := range []struct{ key, value string }{
+		{key: "medopl.cn/workload", value: "workspace"},
+		{key: "oplcloud.cn/resource-id", value: ownership.ResourceID},
+		{key: "oplcloud.cn/account-id", value: ownership.AccountID},
+		{key: "oplcloud.cn/workspace-id", value: ownership.WorkspaceID},
+	} {
+		patch = append(patch, map[string]any{"op": "add", "path": "/metadata/labels/" + strings.ReplaceAll(label.key, "/", "~1"), "value": label.value})
+	}
+	patch = append(patch, map[string]any{"op": "replace", "path": fmt.Sprintf("/spec/taints/%d/value", taintIndex), "value": ownership.WorkspaceID})
+	return json.Marshal(patch)
+}
+
+func computeClaimProviderError(reason string) error {
+	return fmt.Errorf("compute_claim_recovery_%s", safeComputeClaimRecoveryReason(reason, "provider_describe"))
+}
+
+func computeClaimNodeOwnershipState(raw []byte, allocation ComputeAllocation, ownership MachineOwnership) (string, bool) {
+	var node struct {
+		Metadata struct {
+			Name   string            `json:"name"`
+			Labels map[string]string `json:"labels"`
+		} `json:"metadata"`
+		Spec struct {
+			Taints []struct {
+				Key, Value, Effect string
+			} `json:"taints"`
+		} `json:"spec"`
+		Status struct {
+			Addresses []struct {
+				Type, Address string
+			} `json:"addresses"`
+		} `json:"status"`
+	}
+	if json.Unmarshal(raw, &node) != nil || node.Metadata.Name != allocation.NodeName {
+		return "identity_mismatch", false
+	}
+	internalIPCount := 0
+	for _, address := range node.Status.Addresses {
+		if address.Type == "InternalIP" && address.Address == allocation.PrivateIP {
+			internalIPCount++
+		}
+	}
+	if internalIPCount != 1 {
+		return "identity_mismatch", false
+	}
+	taintValue, taintCount := "", 0
+	for _, taint := range node.Spec.Taints {
+		if taint.Key == "oplcloud.cn/workspace-id" {
+			taintCount++
+			if taint.Effect != "NoSchedule" {
+				return "node_ownership_conflict", false
+			}
+			taintValue = taint.Value
+		}
+	}
+	if taintCount != 1 {
+		return "node_ownership_conflict", false
+	}
+	expected := map[string]string{
+		"medopl.cn/workload": "workspace", "oplcloud.cn/resource-id": ownership.ResourceID,
+		"oplcloud.cn/account-id": ownership.AccountID, "oplcloud.cn/workspace-id": ownership.WorkspaceID,
+	}
+	targetOwned := taintValue == ownership.WorkspaceID
+	unallocated := taintValue == "unallocated"
+	for key, value := range expected {
+		actual := node.Metadata.Labels[key]
+		if targetOwned && actual != value {
+			return "node_ownership_conflict", false
+		}
+		if unallocated && actual != "" && actual != value {
+			return "node_ownership_conflict", false
+		}
+	}
+	if targetOwned {
+		return "target_owned", true
+	}
+	if unallocated {
+		return "unallocated", true
+	}
+	return "node_ownership_conflict", false
 }
 
 func (p *TencentProvider) TagComputeMachine(ctx context.Context, machine ProviderMachine, ownership MachineOwnership) error {

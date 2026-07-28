@@ -18,6 +18,9 @@ var ErrInvalidMonthlyPreflight = errors.New("invalid_monthly_preflight")
 var ErrMonthlyPreflightUnavailable = errors.New("monthly_preflight_unavailable")
 var ErrInvalidMonthlyProviderTruth = errors.New("invalid_monthly_provider_truth")
 var ErrMonthlyProviderTruthUnavailable = errors.New("monthly_provider_truth_unavailable")
+var ErrInvalidComputeClaimRecovery = errors.New("invalid_compute_claim_recovery")
+var ErrComputeClaimRecoveryUnavailable = errors.New("compute_claim_recovery_unavailable")
+var ErrComputeClaimRecoveryIdempotencyConflict = errors.New("compute_claim_recovery_idempotency_conflict")
 var ErrRuntimeHealthSummaryUnavailable = errors.New("runtime_health_summary_unavailable")
 var ErrComputeIdempotencyConflict = errors.New("compute_idempotency_conflict")
 var ErrComputeOperationFailed = errors.New("compute_operation_failed")
@@ -98,6 +101,81 @@ type MonthlyProviderTruth struct {
 	Storage           StorageVolume     `json:"storage"`
 	ProviderRequestID string            `json:"providerRequestId,omitempty"`
 	ErrorCode         string            `json:"errorCode,omitempty"`
+}
+
+type ComputeClaimRecoveryInput struct {
+	LaunchOperationID   string `json:"launchOperationId"`
+	AccountID           string `json:"accountId"`
+	WorkspaceID         string `json:"workspaceId"`
+	ComputeAllocationID string `json:"computeAllocationId"`
+	StorageVolumeID     string `json:"storageVolumeId"`
+	PackageID           string `json:"packageId"`
+	PoolID              string `json:"poolId"`
+	NodePoolID          string `json:"nodePoolId"`
+}
+
+type ComputeClaimRecoveryClaimInput struct {
+	ComputeClaimRecoveryInput
+	MachineName    string `json:"machineName"`
+	NodeName       string `json:"nodeName"`
+	CVMInstanceID  string `json:"cvmInstanceId"`
+	PrivateIP      string `json:"privateIp"`
+	InstanceType   string `json:"instanceType"`
+	Zone           string `json:"zone"`
+	IdempotencyKey string `json:"-"`
+}
+
+type ComputeClaimProviderProof struct {
+	Status             string `json:"status"`
+	Reason             string `json:"reason,omitempty"`
+	NodeOwnershipState string `json:"nodeOwnershipState"`
+	CVMOwnershipState  string `json:"cvmOwnershipState"`
+	MachineName        string `json:"machineName"`
+	NodeName           string `json:"nodeName"`
+	CVMInstanceID      string `json:"cvmInstanceId"`
+	PrivateIP          string `json:"privateIp"`
+	InstanceType       string `json:"instanceType"`
+	Zone               string `json:"zone"`
+	ChargeType         string `json:"chargeType"`
+	PeriodMonths       int    `json:"periodMonths"`
+	RenewFlag          string `json:"renewFlag"`
+	Deadline           string `json:"deadline"`
+}
+
+type ComputeClaimProviderClaim struct {
+	Proof                   ComputeClaimProviderProof `json:"proof"`
+	TencentMutationCount    int                       `json:"tencentMutationCount"`
+	KubernetesMutationCount int                       `json:"kubernetesMutationCount"`
+}
+
+type ComputeClaimRecoveryProof struct {
+	SchemaVersion           int    `json:"schemaVersion"`
+	Eligible                bool   `json:"eligible"`
+	Reason                  string `json:"reason"`
+	StorageState            string `json:"storageState"`
+	LaunchOperationID       string `json:"launchOperationId"`
+	AccountID               string `json:"accountId"`
+	WorkspaceID             string `json:"workspaceId"`
+	ComputeAllocationID     string `json:"computeAllocationId"`
+	StorageVolumeID         string `json:"storageVolumeId"`
+	PackageID               string `json:"packageId"`
+	PoolID                  string `json:"poolId"`
+	NodePoolID              string `json:"nodePoolId"`
+	MachineName             string `json:"machineName,omitempty"`
+	NodeName                string `json:"nodeName,omitempty"`
+	CVMInstanceID           string `json:"cvmInstanceId,omitempty"`
+	PrivateIP               string `json:"privateIp,omitempty"`
+	InstanceType            string `json:"instanceType,omitempty"`
+	Zone                    string `json:"zone,omitempty"`
+	ChargeType              string `json:"chargeType,omitempty"`
+	PeriodMonths            int    `json:"periodMonths,omitempty"`
+	RenewFlag               string `json:"renewFlag,omitempty"`
+	Deadline                string `json:"deadline,omitempty"`
+	NodeOwnershipState      string `json:"nodeOwnershipState,omitempty"`
+	CVMOwnershipState       string `json:"cvmOwnershipState,omitempty"`
+	Sub2APIMutationCount    int    `json:"sub2apiMutationCount"`
+	TencentMutationCount    int    `json:"tencentMutationCount"`
+	KubernetesMutationCount int    `json:"kubernetesMutationCount"`
 }
 
 type WorkspacePackage struct {
