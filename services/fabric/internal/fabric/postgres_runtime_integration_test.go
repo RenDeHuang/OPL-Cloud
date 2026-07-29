@@ -875,6 +875,80 @@ func TestPostgresComputeClaimRecoveryRestartAfterTargetOwnedReadbackConvergesLoc
 	assertRecoveredComputeOperation(t, operations, input, "succeeded")
 }
 
+func TestPostgresComputeClaimRecoveryFailureReplayDoesNotMutateAcrossServiceInstances(t *testing.T) {
+	databaseURL := fabricTestDatabaseURL(t)
+	firstStore, err := newTestPostgresOperationStore(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider, _, claimInput := seedPostgresComputeClaimRecovery(t, firstStore, "basic", false)
+	provider.proof.NodeOwnershipState = "unallocated"
+	provider.proof.CVMOwnershipState = "recoverable"
+	provider.claim.Proof = provider.proof
+	provider.claim.Proof.Reason = "provider_describe"
+	provider.claim.TencentMutationCount = 1
+	provider.claim.KubernetesMutationCount = 0
+	provider.claim.FailureStage = "cvm_tag_readback"
+	provider.claim.ProviderErrorClass = "timeout"
+	provider.claim.Evidence = &ComputeClaimEvidence{
+		CVM:  ComputeClaimMutationEvidence{Attempted: 1, Unknown: 1, Missing: []string{"opl_workspace_id"}},
+		Node: ComputeClaimMutationEvidence{},
+	}
+	provider.claimErr = errors.New("provider readback timed out")
+
+	first, firstErr := NewServiceWithOperationStore(provider, firstStore).ClaimComputeRecovery(context.Background(), claimInput)
+	if closeErr := firstStore.client.Close(); closeErr != nil {
+		t.Fatal(closeErr)
+	}
+	secondStore, err := newTestPostgresOperationStore(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer secondStore.client.Close()
+	provider.proofErr = errors.New("provider proof unavailable")
+	second, secondErr := NewServiceWithOperationStore(provider, secondStore).ClaimComputeRecovery(context.Background(), claimInput)
+
+	if firstErr == nil || secondErr == nil || first.Eligible || second.Eligible || provider.claimCalls != 1 || provider.proofCalls != 2 {
+		t.Fatalf("first=%#v firstErr=%v second=%#v secondErr=%v provider=%#v", first, firstErr, second, secondErr, provider)
+	}
+	if second.Reason != first.Reason || second.TencentMutationCount != first.TencentMutationCount ||
+		second.KubernetesMutationCount != first.KubernetesMutationCount || second.FailureStage != first.FailureStage ||
+		second.ProviderErrorClass != first.ProviderErrorClass || !reflect.DeepEqual(second.Evidence, first.Evidence) {
+		t.Fatalf("PostgreSQL replay changed persisted mutation proof: first=%#v second=%#v", first, second)
+	}
+}
+
+func TestPostgresComputeClaimRecoveryObservedSuccessReadbackRegressionFailsClosedAcrossRestart(t *testing.T) {
+	databaseURL := fabricTestDatabaseURL(t)
+	firstStore, err := newTestPostgresOperationStore(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider, input, claimInput := seedPostgresComputeClaimRecovery(t, firstStore, "basic", false)
+	provider.proof.NodeOwnershipState = "unallocated"
+	provider.proof.CVMOwnershipState = "recoverable"
+	activationStore := &failOnceComputeClaimActivationStore{OperationStore: firstStore, fail: true}
+
+	first, firstErr := NewServiceWithOperationStore(provider, activationStore).ClaimComputeRecovery(context.Background(), claimInput)
+	if closeErr := firstStore.client.Close(); closeErr != nil {
+		t.Fatal(closeErr)
+	}
+	secondStore, err := newTestPostgresOperationStore(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer secondStore.client.Close()
+	second, secondErr := NewServiceWithOperationStore(provider, secondStore).ClaimComputeRecovery(context.Background(), claimInput)
+	ownership, ownershipErr := secondStore.MachineOwnership(context.Background(), input.ComputeAllocationID)
+
+	if firstErr == nil || secondErr == nil || first.TencentMutationCount != 1 || first.KubernetesMutationCount != 1 ||
+		second.Eligible || second.Reason != "identity_mismatch" || second.FailureStage != "claim_final_readback" ||
+		second.ProviderErrorClass != "readback_mismatch" || second.TencentMutationCount != 1 || second.KubernetesMutationCount != 1 ||
+		ownershipErr != nil || ownership.Status != "quarantined" || provider.proofCalls != 2 || provider.claimCalls != 1 {
+		t.Fatalf("first=%#v firstErr=%v second=%#v secondErr=%v ownership=%#v ownershipErr=%v provider=%#v", first, firstErr, second, secondErr, ownership, ownershipErr, provider)
+	}
+}
+
 func TestPostgresComputeClaimRecoveryStorageIdentityCreatesCBSOnceAcrossRestart(t *testing.T) {
 	databaseURL := fabricTestDatabaseURL(t)
 	firstStore, err := newTestPostgresOperationStore(databaseURL)

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -301,7 +302,7 @@ func TestTencentSDKTagComputeMachineWritesAndReadsBackCVMOwnership(t *testing.T)
 	cvmAPI := &fakeNativeCvmAPI{}
 	client := &tencentSDKClient{nativeCvmClient: cvmAPI, nativeTagClient: &fakeNativeTagAPI{cvm: cvmAPI}}
 	response := client.TagComputeMachine(Request{Tags: wantTags, Allocation: ComputeAllocationInput{InstanceId: "ins-alpha"}}, nil)
-	if !response.Ok || response.ProviderRequestId != "req-verify-cvm" || len(cvmAPI.modifyInstancesRequest) != 1 || stringValue(cvmAPI.modifyInstancesRequest[0].InstanceName) != "compute-alpha" || !reflect.DeepEqual(cvmAPI.tags, wantTags) {
+	if !response.Ok || response.ProviderRequestId != "req-verify-cvm" || len(cvmAPI.modifyInstancesRequest) != 0 || !reflect.DeepEqual(cvmAPI.tags, wantTags) {
 		t.Fatalf("tag response=%#v modify requests=%#v tags=%#v", response, cvmAPI.modifyInstancesRequest, cvmAPI.tags)
 	}
 }
@@ -322,6 +323,17 @@ func TestTencentSDKTagComputeMachineRequiresEveryOwnershipTag(t *testing.T) {
 
 func computeOwnershipTags() map[string]string {
 	return map[string]string{"opl_account_id": "acct-alpha", "opl_workspace_id": "ws-alpha", "opl_resource_id": "compute-alpha", "opl_operation_id": "owner-alpha"}
+}
+
+func ownershipTagsThrough(last string) map[string]string {
+	result := map[string]string{}
+	for _, key := range cbsOwnershipTagKeys {
+		result[key] = computeOwnershipTags()[key]
+		if key == last {
+			break
+		}
+	}
+	return result
 }
 
 func computeClaimTruthRequest() Request {
@@ -415,7 +427,7 @@ func TestTencentSDKClaimComputeMachineConvergesRecoverableCVMAndReplaysWithoutMu
 
 	claimed := client.ClaimComputeMachine(request, nil)
 
-	if !claimed.Ok || claimed.Status != "claimed" || claimed.MutationCount != 5 || claimed.ProviderRequestId != "" ||
+	if !claimed.Ok || claimed.Status != "claimed" || claimed.MutationCount != 5 || claimed.ProviderRequestId != "req-verify-cvm" ||
 		claimed.ProviderData["cvmOwnershipState"] != "target_owned" || len(cvmAPI.modifyInstancesRequest) != 1 ||
 		stringValue(cvmAPI.modifyInstancesRequest[0].InstanceName) != "compute-alpha" || !reflect.DeepEqual(cvmAPI.tags, computeOwnershipTags()) {
 		t.Fatalf("claimed=%#v modify=%#v tags=%#v", claimed, cvmAPI.modifyInstancesRequest, cvmAPI.tags)
@@ -457,6 +469,7 @@ func TestTencentSDKClaimComputeMachineCountsAttemptedMutationOnProviderError(t *
 			name: "rename timeout",
 			configure: func(cvm *fakeNativeCvmAPI, _ *fakeNativeTagAPI) {
 				cvm.modifyInstancesErr = errors.New("rename timed out")
+				cvm.modifyInstancesErrBeforeApply = true
 			},
 			wantCount: 1,
 		},
@@ -485,6 +498,245 @@ func TestTencentSDKClaimComputeMachineCountsAttemptedMutationOnProviderError(t *
 				t.Fatalf("provider error response=%#v", response)
 			}
 		})
+	}
+}
+
+func TestTencentSDKClaimComputeMachineConfirmsRenameAfterTimeout(t *testing.T) {
+	request := computeClaimTruthRequest()
+	request.Action = "claim_compute_machine"
+	tkeAPI := &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 2, maxReplicas: 10}
+	client := newFakeTencentSDKClient(tkeAPI)
+	cvmAPI := client.nativeCvmClient.(*fakeNativeCvmAPI)
+	cvmAPI.instanceName = "node-basic-2"
+	cvmAPI.tags = map[string]string{}
+	cvmAPI.modifyInstancesErr = context.DeadlineExceeded
+	cvmAPI.modifyInstancesApplyBeforeError = true
+
+	response := client.ClaimComputeMachine(request, nil)
+
+	if !response.Ok || response.Status != "claimed" || response.ProviderData["cvmOwnershipState"] != "target_owned" || response.MutationCount != 5 || len(cvmAPI.modifyInstancesRequest) != 1 || !reflect.DeepEqual(cvmAPI.tags, computeOwnershipTags()) {
+		t.Fatalf("timeout-after-rename response=%#v modify=%#v tags=%#v", response, cvmAPI.modifyInstancesRequest, cvmAPI.tags)
+	}
+}
+
+func TestTencentSDKClaimComputeMachineConfirmsTagAfterTimeout(t *testing.T) {
+	request := computeClaimTruthRequest()
+	request.Action = "claim_compute_machine"
+	tkeAPI := &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 2, maxReplicas: 10}
+	client := newFakeTencentSDKClient(tkeAPI)
+	cvmAPI := client.nativeCvmClient.(*fakeNativeCvmAPI)
+	cvmAPI.instanceName = "node-basic-2"
+	cvmAPI.tags = map[string]string{}
+	tagAPI := client.nativeTagClient.(*fakeNativeTagAPI)
+	tagAPI.err = context.DeadlineExceeded
+	tagAPI.errOnce = true
+	tagAPI.applyBeforeError = true
+
+	response := client.ClaimComputeMachine(request, nil)
+
+	if !response.Ok || response.Status != "claimed" || response.ProviderData["cvmOwnershipState"] != "target_owned" || response.MutationCount != 5 || len(tagAPI.calls) != 4 || !reflect.DeepEqual(cvmAPI.tags, computeOwnershipTags()) {
+		t.Fatalf("timeout-after-tag response=%#v tagCalls=%#v tags=%#v", response, tagAPI.calls, cvmAPI.tags)
+	}
+}
+
+func TestTencentSDKTagComputeMachineConfirmsEachCVMFieldBeforeTheNextMutation(t *testing.T) {
+	wantTags := computeOwnershipTags()
+	events := []string{}
+	cvmAPI := &fakeNativeCvmAPI{
+		instanceName: "machine-before", tags: map[string]string{}, returnedInstanceID: "ins-alpha", callLog: &events,
+		describeSnapshots: []fakeCVMOwnershipSnapshot{
+			{instanceName: "machine-before", tags: map[string]string{}},
+			{instanceName: "machine-before", tags: map[string]string{}},
+			{instanceName: "compute-alpha", tags: map[string]string{}},
+			{instanceName: "compute-alpha", tags: ownershipTagsThrough("opl_account_id")},
+			{instanceName: "compute-alpha", tags: ownershipTagsThrough("opl_workspace_id")},
+			{instanceName: "compute-alpha", tags: ownershipTagsThrough("opl_resource_id")},
+			{instanceName: "compute-alpha", tags: ownershipTagsThrough("opl_operation_id")},
+		},
+	}
+	tagAPI := &fakeNativeTagAPI{cvm: cvmAPI}
+	response := (&tencentSDKClient{nativeCvmClient: cvmAPI, nativeTagClient: tagAPI}).TagComputeMachine(Request{
+		Tags: wantTags, Allocation: ComputeAllocationInput{InstanceId: "ins-alpha", MachineName: "machine-before"},
+	}, nil)
+
+	wantEvents := []string{
+		"DescribeCVMInstances", "ModifyCVMName", "DescribeCVMInstances", "DescribeCVMInstances",
+		"SetCVMTag:opl_account_id", "DescribeCVMInstances",
+		"SetCVMTag:opl_workspace_id", "DescribeCVMInstances",
+		"SetCVMTag:opl_resource_id", "DescribeCVMInstances",
+		"SetCVMTag:opl_operation_id", "DescribeCVMInstances",
+		"DescribeCVMInstances",
+	}
+	if !response.Ok || response.MutationCount != 5 || response.MutationEvidence == nil || response.MutationEvidence.Attempted != 5 || response.MutationEvidence.Confirmed != 5 ||
+		response.MutationEvidence.Unknown != 0 || len(response.MutationEvidence.Missing) != 0 || !reflect.DeepEqual(events, wantEvents) ||
+		len(cvmAPI.modifyInstancesRequest) != 1 || len(tagAPI.calls) != 4 {
+		t.Fatalf("response=%#v events=%#v modify=%d tagCalls=%#v", response, events, len(cvmAPI.modifyInstancesRequest), tagAPI.calls)
+	}
+}
+
+func TestTencentSDKTagComputeMachineRequiresAllOwnershipFieldsInOneFinalSnapshot(t *testing.T) {
+	wantTags := computeOwnershipTags()
+	cvmAPI := &fakeNativeCvmAPI{
+		instanceName: "machine-before", tags: map[string]string{}, returnedInstanceID: "ins-alpha",
+		describeSnapshots: []fakeCVMOwnershipSnapshot{
+			{instanceName: "machine-before", tags: map[string]string{}},
+			{instanceName: "compute-alpha", tags: map[string]string{}},
+			{instanceName: "compute-alpha", tags: map[string]string{"opl_account_id": wantTags["opl_account_id"]}},
+			{instanceName: "compute-alpha", tags: map[string]string{"opl_workspace_id": wantTags["opl_workspace_id"]}},
+			{instanceName: "compute-alpha", tags: map[string]string{"opl_resource_id": wantTags["opl_resource_id"]}},
+			{instanceName: "compute-alpha", tags: map[string]string{"opl_operation_id": wantTags["opl_operation_id"]}},
+			{instanceName: "compute-alpha", tags: map[string]string{"opl_account_id": wantTags["opl_account_id"]}},
+			{instanceName: "compute-alpha", tags: map[string]string{"opl_workspace_id": wantTags["opl_workspace_id"]}},
+			{instanceName: "compute-alpha", tags: map[string]string{"opl_operation_id": wantTags["opl_operation_id"]}},
+		},
+	}
+	tagAPI := &fakeNativeTagAPI{cvm: cvmAPI}
+	response := (&tencentSDKClient{nativeCvmClient: cvmAPI, nativeTagClient: tagAPI}).TagComputeMachine(Request{
+		Tags: wantTags, Allocation: ComputeAllocationInput{InstanceId: "ins-alpha", MachineName: "machine-before"},
+	}, nil)
+
+	if response.Ok || response.ErrorCode != "tencent_verify_compute_machine_tag_failed" || response.FailureStage != "cvm_final_readback" ||
+		response.ProviderErrorClass != "readback_mismatch" || response.MutationCount != 5 || response.MutationEvidence == nil ||
+		response.MutationEvidence.Attempted != 5 || response.MutationEvidence.Confirmed != 5 || response.MutationEvidence.Unknown != 0 ||
+		!reflect.DeepEqual(response.MutationEvidence.Missing, []string{"opl_account_id", "opl_workspace_id", "opl_resource_id"}) ||
+		len(cvmAPI.describeInstancesRequest) != 9 || len(cvmAPI.modifyInstancesRequest) != 1 || len(tagAPI.calls) != 4 {
+		t.Fatalf("response=%#v describe=%d modify=%d tagCalls=%#v", response, len(cvmAPI.describeInstancesRequest), len(cvmAPI.modifyInstancesRequest), tagAPI.calls)
+	}
+}
+
+func TestTencentSDKTagComputeMachineFinalReadbackUnavailableWithoutMutationKeepsEvidenceCardinality(t *testing.T) {
+	wantTags := computeOwnershipTags()
+	cvmAPI := &fakeNativeCvmAPI{
+		instanceName: "compute-alpha", tags: wantTags, returnedInstanceID: "ins-alpha",
+		describeSnapshots: []fakeCVMOwnershipSnapshot{
+			{instanceName: "compute-alpha", tags: wantTags},
+			{err: errors.New("final readback unavailable")},
+			{err: errors.New("final readback unavailable")},
+			{err: errors.New("final readback unavailable")},
+		},
+	}
+	response := (&tencentSDKClient{nativeCvmClient: cvmAPI, nativeTagClient: &fakeNativeTagAPI{cvm: cvmAPI}}).TagComputeMachine(Request{
+		Tags: wantTags, Allocation: ComputeAllocationInput{InstanceId: "ins-alpha", MachineName: "machine-before"},
+	}, nil)
+
+	wantMissing := []string{"instance_name", "opl_account_id", "opl_workspace_id", "opl_resource_id", "opl_operation_id"}
+	if response.Ok || response.FailureStage != "cvm_final_readback" || response.MutationCount != 0 || response.MutationEvidence == nil ||
+		response.MutationEvidence.Attempted != 0 || response.MutationEvidence.Confirmed != 0 || response.MutationEvidence.Unknown != 0 ||
+		!reflect.DeepEqual(response.MutationEvidence.Missing, wantMissing) || len(cvmAPI.modifyInstancesRequest) != 0 {
+		t.Fatalf("zero-mutation final readback evidence must remain internally consistent: %#v", response)
+	}
+}
+
+func TestTencentSDKTagComputeMachineUsesThirdReadbackAfterTimeoutWithoutRepeatingMutation(t *testing.T) {
+	wantTags := computeOwnershipTags()
+	cvmAPI := &fakeNativeCvmAPI{
+		instanceName: "machine-before", tags: map[string]string{}, returnedInstanceID: "ins-alpha",
+		modifyInstancesErr: context.DeadlineExceeded, modifyInstancesApplyBeforeError: true,
+		describeSnapshots: []fakeCVMOwnershipSnapshot{
+			{instanceName: "machine-before", tags: map[string]string{}},
+			{instanceName: "machine-before", tags: map[string]string{}},
+			{instanceName: "machine-before", tags: map[string]string{}},
+			{instanceName: "compute-alpha", tags: map[string]string{}},
+			{instanceName: "compute-alpha", tags: ownershipTagsThrough("opl_account_id")},
+			{instanceName: "compute-alpha", tags: ownershipTagsThrough("opl_workspace_id")},
+			{instanceName: "compute-alpha", tags: ownershipTagsThrough("opl_resource_id")},
+			{instanceName: "compute-alpha", tags: ownershipTagsThrough("opl_operation_id")},
+		},
+	}
+	tagAPI := &fakeNativeTagAPI{cvm: cvmAPI}
+	response := (&tencentSDKClient{nativeCvmClient: cvmAPI, nativeTagClient: tagAPI}).TagComputeMachine(Request{
+		Tags: wantTags, Allocation: ComputeAllocationInput{InstanceId: "ins-alpha", MachineName: "machine-before"},
+	}, nil)
+
+	if !response.Ok || response.MutationCount != 5 || len(cvmAPI.modifyInstancesRequest) != 1 || len(tagAPI.calls) != 4 || len(cvmAPI.describeInstancesRequest) != 9 {
+		t.Fatalf("response=%#v describe=%d modify=%d tagCalls=%#v", response, len(cvmAPI.describeInstancesRequest), len(cvmAPI.modifyInstancesRequest), tagAPI.calls)
+	}
+}
+
+func TestTencentSDKTagComputeMachineFailsClosedAfterThreePersistentOldReadbacks(t *testing.T) {
+	cvmAPI := &fakeNativeCvmAPI{
+		instanceName: "machine-before", tags: map[string]string{}, returnedInstanceID: "ins-alpha",
+		describeSnapshots: []fakeCVMOwnershipSnapshot{
+			{instanceName: "machine-before", tags: map[string]string{}},
+			{instanceName: "machine-before", tags: map[string]string{}},
+			{instanceName: "machine-before", tags: map[string]string{}},
+			{instanceName: "machine-before", tags: map[string]string{}},
+		},
+	}
+	tagAPI := &fakeNativeTagAPI{cvm: cvmAPI}
+	response := (&tencentSDKClient{nativeCvmClient: cvmAPI, nativeTagClient: tagAPI}).TagComputeMachine(Request{
+		Tags: computeOwnershipTags(), Allocation: ComputeAllocationInput{InstanceId: "ins-alpha", MachineName: "machine-before"},
+	}, nil)
+
+	if response.Ok || response.MutationCount != 1 || response.MutationEvidence == nil || response.MutationEvidence.Attempted != 1 || response.MutationEvidence.Confirmed != 0 ||
+		response.MutationEvidence.Unknown != 0 || !reflect.DeepEqual(response.MutationEvidence.Missing, []string{"instance_name"}) ||
+		len(cvmAPI.describeInstancesRequest) != 4 || len(cvmAPI.modifyInstancesRequest) != 1 || len(tagAPI.calls) != 0 {
+		t.Fatalf("response=%#v describe=%d modify=%d tagCalls=%#v", response, len(cvmAPI.describeInstancesRequest), len(cvmAPI.modifyInstancesRequest), tagAPI.calls)
+	}
+}
+
+func TestTencentSDKTagComputeMachineFailsClosedAfterThreeUnreadableReadbacks(t *testing.T) {
+	cvmAPI := &fakeNativeCvmAPI{
+		instanceName: "machine-before", tags: map[string]string{}, returnedInstanceID: "ins-alpha",
+		describeSnapshots: []fakeCVMOwnershipSnapshot{
+			{instanceName: "machine-before", tags: map[string]string{}},
+			{err: errors.New("readback unavailable")},
+			{err: errors.New("readback unavailable")},
+			{err: errors.New("readback unavailable")},
+		},
+	}
+	tagAPI := &fakeNativeTagAPI{cvm: cvmAPI}
+	response := (&tencentSDKClient{nativeCvmClient: cvmAPI, nativeTagClient: tagAPI}).TagComputeMachine(Request{
+		Tags: computeOwnershipTags(), Allocation: ComputeAllocationInput{InstanceId: "ins-alpha", MachineName: "machine-before"},
+	}, nil)
+
+	if response.Ok || response.MutationCount != 1 || response.MutationEvidence == nil || response.MutationEvidence.Attempted != 1 || response.MutationEvidence.Confirmed != 0 ||
+		response.MutationEvidence.Unknown != 1 || !reflect.DeepEqual(response.MutationEvidence.Missing, []string{"instance_name"}) ||
+		len(cvmAPI.describeInstancesRequest) != 4 || len(cvmAPI.modifyInstancesRequest) != 1 || len(tagAPI.calls) != 0 {
+		t.Fatalf("response=%#v describe=%d modify=%d tagCalls=%#v", response, len(cvmAPI.describeInstancesRequest), len(cvmAPI.modifyInstancesRequest), tagAPI.calls)
+	}
+}
+
+func TestTencentSDKTagComputeMachineStopsOnReadbackConflictWithoutLaterMutation(t *testing.T) {
+	cvmAPI := &fakeNativeCvmAPI{
+		instanceName: "machine-before", tags: map[string]string{}, returnedInstanceID: "ins-alpha",
+		describeSnapshots: []fakeCVMOwnershipSnapshot{
+			{instanceName: "machine-before", tags: map[string]string{}},
+			{instanceName: "compute-other", tags: map[string]string{}},
+		},
+	}
+	tagAPI := &fakeNativeTagAPI{cvm: cvmAPI}
+	response := (&tencentSDKClient{nativeCvmClient: cvmAPI, nativeTagClient: tagAPI}).TagComputeMachine(Request{
+		Tags: computeOwnershipTags(), Allocation: ComputeAllocationInput{InstanceId: "ins-alpha", MachineName: "machine-before"},
+	}, nil)
+
+	if response.Ok || response.ErrorCode != "tencent_tag_compute_machine_failed" || response.MutationCount != 1 || len(cvmAPI.describeInstancesRequest) != 2 ||
+		len(cvmAPI.modifyInstancesRequest) != 1 || len(tagAPI.calls) != 0 {
+		t.Fatalf("response=%#v describe=%d modify=%d tagCalls=%#v", response, len(cvmAPI.describeInstancesRequest), len(cvmAPI.modifyInstancesRequest), tagAPI.calls)
+	}
+}
+
+func TestTencentSDKTagComputeMachineRejectsOwnershipConflictBeforeMutation(t *testing.T) {
+	wantTags := computeOwnershipTags()
+	cvmAPI := &fakeNativeCvmAPI{instanceName: "machine-before", tags: map[string]string{"oplcloud.cn/workspace-id": "ws-other"}, returnedInstanceID: "ins-alpha"}
+	tagAPI := &fakeNativeTagAPI{cvm: cvmAPI}
+	response := (&tencentSDKClient{nativeCvmClient: cvmAPI, nativeTagClient: tagAPI}).TagComputeMachine(Request{Tags: wantTags, Allocation: ComputeAllocationInput{InstanceId: "ins-alpha"}}, nil)
+
+	if response.Ok || len(cvmAPI.modifyInstancesRequest) != 0 || len(tagAPI.calls) != 0 {
+		t.Fatalf("conflicting ownership must fail before mutation: response=%#v modify=%#v tags=%#v", response, cvmAPI.modifyInstancesRequest, tagAPI.calls)
+	}
+}
+
+func TestTencentSDKTagComputeMachineOnlyFillsMissingOwnershipFields(t *testing.T) {
+	wantTags := computeOwnershipTags()
+	cvmAPI := &fakeNativeCvmAPI{instanceName: "compute-alpha", tags: map[string]string{
+		"opl_account_id": "acct-alpha", "opl_resource_id": "compute-alpha",
+	}, returnedInstanceID: "ins-alpha"}
+	tagAPI := &fakeNativeTagAPI{cvm: cvmAPI}
+	response := (&tencentSDKClient{nativeCvmClient: cvmAPI, nativeTagClient: tagAPI}).TagComputeMachine(Request{Tags: wantTags, Allocation: ComputeAllocationInput{InstanceId: "ins-alpha"}}, nil)
+
+	if !response.Ok || len(cvmAPI.modifyInstancesRequest) != 0 || !reflect.DeepEqual(tagAPI.calls, []string{"opl_workspace_id=ws-alpha", "opl_operation_id=owner-alpha"}) {
+		t.Fatalf("partial ownership should only fill missing fields: response=%#v modify=%#v tagCalls=%#v", response, cvmAPI.modifyInstancesRequest, tagAPI.calls)
 	}
 }
 
@@ -2087,65 +2339,82 @@ func TestCreateComputeAllocationClaimsOrderedNPlusOneMachinesFromShuffledReadbac
 }
 
 type fakeNativeCvmAPI struct {
-	describeAccountQuotaRequests []*cvm2017.DescribeAccountQuotaRequest
-	describeZoneConfigRequests   []*cvm2017.DescribeZoneInstanceConfigInfosRequest
-	quotaRemaining               uint64
-	zeroQuota                    bool
-	omitQuotaRemaining           bool
-	ambiguousPrepaidQuota        bool
-	omitZoneConfig               bool
-	zoneConfigStatus             string
-	zoneConfigChargeType         string
-	zoneConfigInstanceType       string
-	zoneConfigCPU                int64
-	zoneConfigMemoryGB           int64
-	omitZoneConfigCPU            bool
-	omitZoneConfigMemory         bool
-	zoneConfigDiscountPrice      float64
-	omitZoneConfigPrice          bool
-	zoneConfigItems              []*cvm2017.InstanceTypeQuotaItem
-	describeInstancesRequest     []*cvm2017.DescribeInstancesRequest
-	modifyInstancesRequest       []*cvm2017.ModifyInstancesAttributeRequest
-	renewInstancesRequests       []*cvm2017.RenewInstancesRequest
-	instanceName                 string
-	instanceType                 string
-	cpu                          int64
-	memoryGB                     int64
-	omitCPU                      bool
-	zeroMemory                   bool
-	returnedInstanceID           string
-	privateIPInstanceID          string
-	privateIPInstanceCount       int
-	instanceChargeType           string
-	instanceState                string
-	renewFlag                    string
-	expiredTime                  string
-	renewedExpiredTime           string
-	omitExpiredTime              bool
-	empty                        bool
-	err                          error
-	nilResponse                  bool
-	nilEnvelope                  bool
-	nilResponseCall              int
-	nilEnvelopeCall              int
-	nilInstanceCall              int
-	callLog                      *[]string
-	zone                         string
-	vpcID                        string
-	subnetID                     string
-	omitVirtualPrivateCloud      bool
-	tags                         map[string]string
-	modifyInstancesErr           error
+	describeAccountQuotaRequests    []*cvm2017.DescribeAccountQuotaRequest
+	describeZoneConfigRequests      []*cvm2017.DescribeZoneInstanceConfigInfosRequest
+	quotaRemaining                  uint64
+	zeroQuota                       bool
+	omitQuotaRemaining              bool
+	ambiguousPrepaidQuota           bool
+	omitZoneConfig                  bool
+	zoneConfigStatus                string
+	zoneConfigChargeType            string
+	zoneConfigInstanceType          string
+	zoneConfigCPU                   int64
+	zoneConfigMemoryGB              int64
+	omitZoneConfigCPU               bool
+	omitZoneConfigMemory            bool
+	zoneConfigDiscountPrice         float64
+	omitZoneConfigPrice             bool
+	zoneConfigItems                 []*cvm2017.InstanceTypeQuotaItem
+	describeInstancesRequest        []*cvm2017.DescribeInstancesRequest
+	modifyInstancesRequest          []*cvm2017.ModifyInstancesAttributeRequest
+	renewInstancesRequests          []*cvm2017.RenewInstancesRequest
+	instanceName                    string
+	instanceType                    string
+	cpu                             int64
+	memoryGB                        int64
+	omitCPU                         bool
+	zeroMemory                      bool
+	returnedInstanceID              string
+	privateIPInstanceID             string
+	privateIPInstanceCount          int
+	instanceChargeType              string
+	instanceState                   string
+	renewFlag                       string
+	expiredTime                     string
+	renewedExpiredTime              string
+	omitExpiredTime                 bool
+	empty                           bool
+	err                             error
+	nilResponse                     bool
+	nilEnvelope                     bool
+	nilResponseCall                 int
+	nilEnvelopeCall                 int
+	nilInstanceCall                 int
+	nilResponseFromCall             int
+	nilEnvelopeFromCall             int
+	nilInstanceFromCall             int
+	callLog                         *[]string
+	zone                            string
+	vpcID                           string
+	subnetID                        string
+	omitVirtualPrivateCloud         bool
+	tags                            map[string]string
+	modifyInstancesErr              error
+	modifyInstancesErrBeforeApply   bool
+	modifyInstancesApplyBeforeError bool
+	describeSnapshots               []fakeCVMOwnershipSnapshot
+}
+
+type fakeCVMOwnershipSnapshot struct {
+	instanceName string
+	tags         map[string]string
+	err          error
 }
 
 type fakeNativeTagAPI struct {
-	cvm      *fakeNativeCvmAPI
-	calls    []string
-	attached map[string]bool
-	err      error
+	cvm              *fakeNativeCvmAPI
+	calls            []string
+	attached         map[string]bool
+	err              error
+	errOnce          bool
+	applyBeforeError bool
 }
 
 func (api *fakeNativeTagAPI) SetCVMTag(_ string, key, value string, attached bool) (string, error) {
+	if api.cvm.callLog != nil {
+		*api.cvm.callLog = append(*api.cvm.callLog, "SetCVMTag:"+key)
+	}
 	api.calls = append(api.calls, key+"="+value)
 	if api.attached == nil {
 		api.attached = map[string]bool{}
@@ -2154,9 +2423,15 @@ func (api *fakeNativeTagAPI) SetCVMTag(_ string, key, value string, attached boo
 	if api.cvm.tags == nil {
 		api.cvm.tags = map[string]string{}
 	}
-	api.cvm.tags[key] = value
+	if api.err == nil || api.applyBeforeError {
+		api.cvm.tags[key] = value
+	}
 	if api.err != nil {
-		return "", api.err
+		err := api.err
+		if api.errOnce {
+			api.err = nil
+		}
+		return "", err
 	}
 	return "req-tag-" + key, nil
 }
@@ -2739,8 +3014,13 @@ func (api *fakeNativeCvmAPI) DescribeZoneInstanceConfigInfos(request *cvm2017.De
 }
 
 func (api *fakeNativeCvmAPI) ModifyInstancesAttribute(request *cvm2017.ModifyInstancesAttributeRequest) (*cvm2017.ModifyInstancesAttributeResponse, error) {
+	if api.callLog != nil {
+		*api.callLog = append(*api.callLog, "ModifyCVMName")
+	}
 	api.modifyInstancesRequest = append(api.modifyInstancesRequest, request)
-	api.instanceName = stringValue(request.InstanceName)
+	if api.modifyInstancesErr == nil || api.modifyInstancesApplyBeforeError || !api.modifyInstancesErrBeforeApply {
+		api.instanceName = stringValue(request.InstanceName)
+	}
 	if api.modifyInstancesErr != nil {
 		return nil, api.modifyInstancesErr
 	}
@@ -2753,16 +3033,32 @@ func (api *fakeNativeCvmAPI) DescribeInstances(request *cvm2017.DescribeInstance
 	}
 	api.describeInstancesRequest = append(api.describeInstancesRequest, request)
 	call := len(api.describeInstancesRequest)
+	if len(request.InstanceIds) == 1 && call <= len(api.describeSnapshots) {
+		snapshot := api.describeSnapshots[call-1]
+		if snapshot.err != nil {
+			return nil, snapshot.err
+		}
+		tags := make([]*cvm2017.Tag, 0, len(snapshot.tags))
+		for key, value := range snapshot.tags {
+			tags = append(tags, &cvm2017.Tag{Key: common.StringPtr(key), Value: common.StringPtr(value)})
+		}
+		return &cvm2017.DescribeInstancesResponse{Response: &cvm2017.DescribeInstancesResponseParams{InstanceSet: []*cvm2017.Instance{{
+			InstanceId: common.StringPtr(firstNonEmpty(api.returnedInstanceID, stringValue(request.InstanceIds[0]))), InstanceName: common.StringPtr(snapshot.instanceName),
+			InstanceType: common.StringPtr(firstNonEmpty(api.instanceType, "SA5.MEDIUM4")), CPU: common.Int64Ptr(2), Memory: common.Int64Ptr(4),
+			PrivateIpAddresses: []*string{common.StringPtr("10.0.0.11")}, InstanceState: common.StringPtr("RUNNING"), Placement: &cvm2017.Placement{Zone: common.StringPtr("ap-guangzhou-3")},
+			InstanceChargeType: common.StringPtr("PREPAID"), RenewFlag: common.StringPtr("NOTIFY_AND_MANUAL_RENEW"), ExpiredTime: common.StringPtr("2026-08-16T00:00:00Z"), Tags: tags,
+		}}, TotalCount: common.Int64Ptr(1), RequestId: common.StringPtr(fmt.Sprintf("req-cvm-snapshot-%d", call))}}, nil
+	}
 	if api.err != nil {
 		return nil, api.err
 	}
-	if api.nilResponse || api.nilResponseCall == call {
+	if api.nilResponse || api.nilResponseCall == call || api.nilResponseFromCall > 0 && call >= api.nilResponseFromCall {
 		return nil, nil
 	}
-	if api.nilEnvelope || api.nilEnvelopeCall == call {
+	if api.nilEnvelope || api.nilEnvelopeCall == call || api.nilEnvelopeFromCall > 0 && call >= api.nilEnvelopeFromCall {
 		return &cvm2017.DescribeInstancesResponse{}, nil
 	}
-	if api.nilInstanceCall == call {
+	if api.nilInstanceCall == call || api.nilInstanceFromCall > 0 && call >= api.nilInstanceFromCall {
 		return &cvm2017.DescribeInstancesResponse{Response: &cvm2017.DescribeInstancesResponseParams{InstanceSet: []*cvm2017.Instance{nil}, TotalCount: common.Int64Ptr(1), RequestId: common.StringPtr("req-malformed-cvm")}}, nil
 	}
 	if api.empty {
@@ -4166,9 +4462,9 @@ func TestTencentSDKTagComputeMachineRejectsMalformedCVMReadback(t *testing.T) {
 		name string
 		api  *fakeNativeCvmAPI
 	}{
-		{name: "nil response", api: &fakeNativeCvmAPI{nilResponseCall: 2}},
-		{name: "nil envelope", api: &fakeNativeCvmAPI{nilEnvelopeCall: 2}},
-		{name: "nil instance", api: &fakeNativeCvmAPI{nilInstanceCall: 2}},
+		{name: "nil response", api: &fakeNativeCvmAPI{nilResponseFromCall: 2}},
+		{name: "nil envelope", api: &fakeNativeCvmAPI{nilEnvelopeFromCall: 2}},
+		{name: "nil instance", api: &fakeNativeCvmAPI{nilInstanceFromCall: 2}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			client := &tencentSDKClient{nativeCvmClient: test.api, nativeTagClient: &fakeNativeTagAPI{cvm: test.api}}
