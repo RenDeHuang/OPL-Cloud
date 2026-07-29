@@ -1009,6 +1009,67 @@ function computeClaimCloudRevisionEvidence() {
   };
 }
 
+function computeClaimContinuationLaunch({ phase, status = "preparing", overrides = {} } = {}) {
+  const terminal = status === "succeeded" && phase === "succeeded";
+  return {
+    operationId: COMPUTE_CLAIM_TARGET.launchOperationId,
+    accountId: COMPUTE_CLAIM_TARGET.accountId,
+    workspaceId: COMPUTE_CLAIM_TARGET.workspaceId,
+    status,
+    phase,
+    packageId: COMPUTE_CLAIM_TARGET.packageId,
+    sizeGb: 10,
+    autoRenew: false,
+    priceVersion: "pilot-usd-2026-07-v1",
+    currency: "USD",
+    totalChargeUsdMicros: 52580000,
+    computeAllocationId: COMPUTE_CLAIM_TARGET.computeAllocationId,
+    storageId: COMPUTE_CLAIM_TARGET.storageId,
+    attachmentId: terminal ? "attachment-compute-claim-fixture" : "",
+    workspaceApiKeyId: terminal ? "42" : "",
+    receiptId: terminal ? "receipt-compute-claim-fixture" : "",
+    runtimeServiceName: terminal ? "workspace-service-compute-claim-fixture" : "",
+    url: terminal ? `https://workspace.medopl.cn/w/${COMPUTE_CLAIM_TARGET.workspaceId}/` : "",
+    errorCode: "",
+    ...overrides
+  };
+}
+
+function computeClaimRuntimeStatus(overrides = {}) {
+  return source({
+    workspaceId: COMPUTE_CLAIM_TARGET.workspaceId,
+    runtimeId: "runtime-compute-claim-fixture",
+    serviceName: "workspace-service-compute-claim-fixture",
+    status: "running",
+    ready: true,
+    url: `https://workspace.medopl.cn/w/${COMPUTE_CLAIM_TARGET.workspaceId}/`,
+    access: { username: "opl", credentialStatus: "configured" },
+    ...overrides
+  }, "fabric");
+}
+
+function computeClaimContinuationReceipt(overrides = {}) {
+  return source({
+    receiptId: "receipt-compute-claim-fixture",
+    type: "billing.workspace_purchased.v1",
+    status: "completed",
+    workspaceId: COMPUTE_CLAIM_TARGET.workspaceId,
+    totalUsdMicros: 52580000,
+    components: {
+      compute: { resourceType: "compute", resourceId: COMPUTE_CLAIM_TARGET.computeAllocationId, chargeUsdMicros: 50000000 },
+      storage: { resourceType: "storage", resourceId: COMPUTE_CLAIM_TARGET.storageId, sizeGb: 10, chargeUsdMicros: 2580000 }
+    },
+    fulfillment: {
+      computeAllocationId: COMPUTE_CLAIM_TARGET.computeAllocationId,
+      storageId: COMPUTE_CLAIM_TARGET.storageId,
+      attachmentId: "attachment-compute-claim-fixture",
+      runtimeId: "runtime-compute-claim-fixture",
+      workspaceApiKeyId: "42"
+    },
+    ...overrides
+  }, "ledger");
+}
+
 test("compute-claim diagnosis proves the exact compute identity through the current Ready Fabric Pod with zero mutation", async () => {
   assert.equal(typeof productionLiveQa.diagnoseComputeClaimRecovery, "function");
   const execCalls = [];
@@ -1119,6 +1180,243 @@ test("compute-claim recovery requires an exact release approval and calls only t
   assert.equal(calls.some(({ path }) => /wallet|refund|compute-allocations|storage-volumes/.test(path)), false);
 });
 
+test("compute-claim continuation polls the same launch and runtime with no business writes", async () => {
+  assert.equal(typeof productionLiveQa.continueComputeClaimWorkspace, "function");
+  const calls = [];
+  let launchReads = 0;
+  const phases = [
+    ["storage_fulfilling", "preparing"],
+    ["attaching", "preparing"],
+    ["secret_writing", "preparing"],
+    ["runtime_starting", "preparing"],
+    ["activating", "preparing"],
+    ["receipt_pending", "preparing"],
+    ["succeeded", "succeeded"]
+  ];
+  const fetchImpl = async (input, init = {}) => {
+    const url = new URL(String(input));
+    const method = init.method || "GET";
+    calls.push({ method, path: url.pathname, body: init.body ? JSON.parse(String(init.body)) : null });
+    if (url.pathname === "/api/auth/login") {
+      return json({ user: { accountId: COMPUTE_CLAIM_TARGET.accountId, role: "owner" } }, 200, {
+        "set-cookie": "opl_session=customer-fixture; Path=/; HttpOnly",
+        "x-opl-csrf-token": "csrf-customer"
+      });
+    }
+    if (url.pathname === "/api/auth/me") return source({
+      accountId: COMPUTE_CLAIM_TARGET.accountId,
+      email: "huangrende@fenggaolab.org",
+      role: "owner",
+      status: "active"
+    }, "sub2api");
+    if (url.pathname === `/api/workspace-launches/${COMPUTE_CLAIM_TARGET.launchOperationId}`) {
+      const [phase, status] = phases[Math.min(launchReads++, phases.length - 1)];
+      return json(computeClaimContinuationLaunch({ phase, status }));
+    }
+    if (url.pathname === `/api/workspaces/${COMPUTE_CLAIM_TARGET.workspaceId}/runtime-status`) return computeClaimRuntimeStatus();
+    if (url.pathname === "/api/billing/receipts/receipt-compute-claim-fixture") return computeClaimContinuationReceipt();
+    return json({ error: "not_found" }, 404);
+  };
+
+  const result = await productionLiveQa.continueComputeClaimWorkspace({
+    target: COMPUTE_CLAIM_TARGET,
+    mergedSha: BASIC_CANARY_MERGED_SHA,
+    cloudImageDigest: BASIC_CANARY_CLOUD_DIGEST,
+    origin: "https://cloud.medopl.cn",
+    customerEmail: "huangrende@fenggaolab.org",
+    customerPassword: "customer-password-fixture",
+    kubeconfigPath: "/run/secrets/kubeconfig",
+    namespace: "opl-cloud",
+    launchPollAttempts: 8,
+    launchPollDelayMs: 0,
+    cloudRevisionEvidenceReader: async () => computeClaimCloudRevisionEvidence(),
+    fetchImpl,
+    now: new Date("2026-08-28T00:00:00Z")
+  });
+
+  assert.equal(result.operationMode, "compute_claim_recover_continuation");
+  assert.equal(result.status, "succeeded");
+  assert.equal(result.recoveryEligible, true);
+  assert.equal(result.launch.status, "succeeded");
+  assert.equal(result.launch.phase, "succeeded");
+  assert.equal(result.launch.computeAllocationId, COMPUTE_CLAIM_TARGET.computeAllocationId);
+  assert.equal(result.launch.storageId, COMPUTE_CLAIM_TARGET.storageId);
+  assert.equal(result.launch.attachmentId, "attachment-compute-claim-fixture");
+  assert.equal(result.launch.receiptId, "receipt-compute-claim-fixture");
+  assert.equal(result.receipt.type, "billing.workspace_purchased.v1");
+  assert.equal(result.receipt.components.storage.resourceId, COMPUTE_CLAIM_TARGET.storageId);
+  assert.equal(result.receipt.components.storage.sizeGb, 10);
+  assert.equal(result.receipt.fulfillment.attachmentId, result.launch.attachmentId);
+  assert.equal(result.receipt.fulfillment.runtimeId, result.runtime.runtimeId);
+  assert.equal(result.runtime.ready, true);
+  assert.equal(result.runtime.status, "running");
+  assert.equal(result.runtime.url, result.launch.url);
+  assert.deepEqual(result.mutationCounts, { sub2api: 0, tencent: 0, kubernetes: 0 });
+  assert.deepEqual(calls.map(({ method, path }) => [method, path]), [
+    ["POST", "/api/auth/login"],
+    ["GET", "/api/auth/me"],
+    ...Array.from({ length: phases.length }, () => ["GET", `/api/workspace-launches/${COMPUTE_CLAIM_TARGET.launchOperationId}`]),
+    ["GET", `/api/workspaces/${COMPUTE_CLAIM_TARGET.workspaceId}/runtime-status`],
+    ["GET", "/api/billing/receipts/receipt-compute-claim-fixture"]
+  ]);
+  assert.equal(calls.filter(({ method, path }) => method === "POST" && /launch|claim|debit|wallet|storage/i.test(path)).length, 0);
+  assert.doesNotMatch(JSON.stringify(result), /password|secret|token|cookie|providerRequestId/i);
+});
+
+test("compute-claim continuation fails closed on terminal error, identity drift, and runtime URL mismatch", async () => {
+  const scenarios = [
+    {
+      name: "manual review",
+      launch: () => computeClaimContinuationLaunch({ phase: "compute_claim_pending", status: "manual_review", overrides: { errorCode: "workspace_launch_manual_review" } }),
+      expected: /compute_claim_continuation_manual_review/
+    },
+    {
+      name: "identity drift",
+      launch: (count) => computeClaimContinuationLaunch({ phase: count === 0 ? "storage_fulfilling" : "succeeded", status: count === 0 ? "preparing" : "succeeded", overrides: count === 0 ? {} : { storageId: "vol-other" } }),
+      expected: /compute_claim_continuation_identity_mismatch/
+    },
+    {
+      name: "unexpected launch error code",
+      launch: () => computeClaimContinuationLaunch({ phase: "storage_fulfilling", status: "preparing", overrides: { errorCode: "workspace_launch_provider_error" } }),
+      expected: /compute_claim_continuation_error_code/
+    },
+    {
+      name: "runtime URL mismatch",
+      launch: () => computeClaimContinuationLaunch({ phase: "succeeded", status: "succeeded" }),
+      runtime: () => computeClaimRuntimeStatus({ url: "https://workspace.medopl.cn/w/other/" }),
+      expected: /compute_claim_continuation_runtime_invalid/
+    }
+  ];
+  for (const scenario of scenarios) {
+    let launchReads = 0;
+    const calls = [];
+    const fetchImpl = async (input, init = {}) => {
+      const url = new URL(String(input));
+      const method = init.method || "GET";
+      calls.push({ method, path: url.pathname });
+      if (url.pathname === "/api/auth/login") {
+        return json({ user: { accountId: COMPUTE_CLAIM_TARGET.accountId, role: "owner" } }, 200, {
+          "set-cookie": "opl_session=customer-fixture; Path=/; HttpOnly",
+          "x-opl-csrf-token": "csrf-customer"
+        });
+      }
+      if (url.pathname === "/api/auth/me") return source({
+        accountId: COMPUTE_CLAIM_TARGET.accountId,
+        email: "huangrende@fenggaolab.org",
+        role: "owner",
+        status: "active"
+      }, "sub2api");
+      if (url.pathname === `/api/workspace-launches/${COMPUTE_CLAIM_TARGET.launchOperationId}`) return json(scenario.launch(launchReads++));
+      if (url.pathname === `/api/workspaces/${COMPUTE_CLAIM_TARGET.workspaceId}/runtime-status`) return scenario.runtime ? scenario.runtime() : computeClaimRuntimeStatus();
+      if (url.pathname === "/api/billing/receipts/receipt-compute-claim-fixture") return computeClaimContinuationReceipt();
+      return json({ error: "not_found" }, 404);
+    };
+    await assert.rejects(() => productionLiveQa.continueComputeClaimWorkspace({
+      target: COMPUTE_CLAIM_TARGET,
+      mergedSha: BASIC_CANARY_MERGED_SHA,
+      cloudImageDigest: BASIC_CANARY_CLOUD_DIGEST,
+      origin: "https://cloud.medopl.cn",
+      customerEmail: "huangrende@fenggaolab.org",
+      customerPassword: "customer-password-fixture",
+      kubeconfigPath: "/run/secrets/kubeconfig",
+      namespace: "opl-cloud",
+      launchPollAttempts: 3,
+      launchPollDelayMs: 0,
+      cloudRevisionEvidenceReader: async () => computeClaimCloudRevisionEvidence(),
+      fetchImpl,
+      now: new Date("2026-08-28T00:00:00Z")
+    }), scenario.expected, scenario.name);
+    assert.equal(calls.filter(({ method, path }) => method === "POST" && /launch|claim|debit|wallet|storage/i.test(path)).length, 0, scenario.name);
+  }
+});
+
+test("compute-claim continuation rejects a mismatched purchase receipt without business writes", async () => {
+  const calls = [];
+  const fetchImpl = async (input, init = {}) => {
+    const url = new URL(String(input));
+    const method = init.method || "GET";
+    calls.push({ method, path: url.pathname });
+    if (url.pathname === "/api/auth/login") {
+      return json({ user: { accountId: COMPUTE_CLAIM_TARGET.accountId, role: "owner" } }, 200, {
+        "set-cookie": "opl_session=customer-fixture; Path=/; HttpOnly",
+        "x-opl-csrf-token": "csrf-customer"
+      });
+    }
+    if (url.pathname === "/api/auth/me") return source({ accountId: COMPUTE_CLAIM_TARGET.accountId, email: "huangrende@fenggaolab.org", role: "owner", status: "active" }, "sub2api");
+    if (url.pathname === `/api/workspace-launches/${COMPUTE_CLAIM_TARGET.launchOperationId}`) return json(computeClaimContinuationLaunch({ phase: "succeeded", status: "succeeded" }));
+    if (url.pathname === `/api/workspaces/${COMPUTE_CLAIM_TARGET.workspaceId}/runtime-status`) return computeClaimRuntimeStatus();
+    if (url.pathname === "/api/billing/receipts/receipt-compute-claim-fixture") return computeClaimContinuationReceipt({ components: { compute: { resourceType: "compute", resourceId: COMPUTE_CLAIM_TARGET.computeAllocationId, chargeUsdMicros: 50000000 }, storage: { resourceType: "storage", resourceId: COMPUTE_CLAIM_TARGET.storageId, sizeGb: 20, chargeUsdMicros: 2580000 } } });
+    return json({ error: "not_found" }, 404);
+  };
+  await assert.rejects(() => productionLiveQa.continueComputeClaimWorkspace({
+    target: COMPUTE_CLAIM_TARGET,
+    mergedSha: BASIC_CANARY_MERGED_SHA,
+    cloudImageDigest: BASIC_CANARY_CLOUD_DIGEST,
+    origin: "https://cloud.medopl.cn",
+    customerEmail: "huangrende@fenggaolab.org",
+    customerPassword: "customer-password-fixture",
+    kubeconfigPath: "/run/secrets/kubeconfig",
+    namespace: "opl-cloud",
+    launchPollAttempts: 1,
+    launchPollDelayMs: 0,
+    cloudRevisionEvidenceReader: async () => computeClaimCloudRevisionEvidence(),
+    fetchImpl,
+    now: new Date("2026-08-28T00:00:00Z")
+  }), /compute_claim_continuation_receipt_invalid/);
+  assert.equal(calls.filter(({ method, path }) => method === "POST" && /launch|claim|debit|wallet|storage/i.test(path)).length, 0);
+});
+
+test("compute-claim continuation CLI reads only the customer password environment secret", async () => {
+  let stdout = "";
+  let stderr = "";
+  const calls = [];
+  const code = await runProductionLiveQaCli({
+    argv: ["--compute-claim-continue", "--compute-claim-target-json", JSON.stringify(COMPUTE_CLAIM_TARGET), "--launch-poll-delay-ms", "0"],
+    env: {
+      OPL_MERGED_SHA: BASIC_CANARY_MERGED_SHA,
+      OPL_COMPUTE_CLAIM_CLOUD_DIGEST: BASIC_CANARY_CLOUD_DIGEST,
+      OPL_CONSOLE_ORIGIN: "https://cloud.medopl.cn",
+      OPL_BASIC_CANARY_CUSTOMER_EMAIL: "huangrende@fenggaolab.org",
+      OPL_BASIC_CANARY_CUSTOMER_PASSWORD: "customer-password-fixture",
+      OPL_K8S_NAMESPACE: "opl-cloud",
+      KUBECONFIG: "/run/secrets/kubeconfig"
+    },
+    stdout: { write: (chunk) => { stdout += chunk; } },
+    stderr: { write: (chunk) => { stderr += chunk; } },
+    cloudRevisionEvidenceReader: async () => computeClaimCloudRevisionEvidence(),
+    fetchImpl: async (input, init = {}) => {
+      const url = new URL(String(input));
+      const method = init.method || "GET";
+      calls.push({ method, path: url.pathname });
+      if (url.pathname === "/api/auth/login") {
+        assert.deepEqual(JSON.parse(String(init.body)), { email: "huangrende@fenggaolab.org", password: "customer-password-fixture" });
+        return json({ user: { accountId: COMPUTE_CLAIM_TARGET.accountId, role: "owner" } }, 200, {
+          "set-cookie": "opl_session=customer-fixture; Path=/; HttpOnly",
+          "x-opl-csrf-token": "csrf-customer"
+        });
+      }
+      if (url.pathname === "/api/auth/me") return source({ accountId: COMPUTE_CLAIM_TARGET.accountId, email: "huangrende@fenggaolab.org", role: "owner", status: "active" }, "sub2api");
+      if (url.pathname === `/api/workspace-launches/${COMPUTE_CLAIM_TARGET.launchOperationId}`) return json(computeClaimContinuationLaunch({ phase: "succeeded", status: "succeeded" }));
+      if (url.pathname === `/api/workspaces/${COMPUTE_CLAIM_TARGET.workspaceId}/runtime-status`) return computeClaimRuntimeStatus();
+      if (url.pathname === "/api/billing/receipts/receipt-compute-claim-fixture") return computeClaimContinuationReceipt();
+      return json({ error: "not_found" }, 404);
+    },
+    now: new Date("2026-08-28T00:00:00Z")
+  });
+
+  assert.equal(code, 0, stderr);
+  const result = JSON.parse(stdout);
+  assert.equal(result.status, "succeeded");
+  assert.deepEqual(calls.map(({ method, path }) => [method, path]), [
+    ["POST", "/api/auth/login"],
+    ["GET", "/api/auth/me"],
+    ["GET", `/api/workspace-launches/${COMPUTE_CLAIM_TARGET.launchOperationId}`],
+    ["GET", `/api/workspaces/${COMPUTE_CLAIM_TARGET.workspaceId}/runtime-status`],
+    ["GET", "/api/billing/receipts/receipt-compute-claim-fixture"]
+  ]);
+  assert.doesNotMatch(stdout, /customer-password-fixture|password|secret|token/i);
+});
+
 test("compute-claim recovery rejects missing runner capability and mutation counts above the hard bounds", async () => {
   let networkCalls = 0;
   let revisionCalls = 0;
@@ -1178,6 +1476,33 @@ test("compute-claim recovery rejects missing runner capability and mutation coun
     assert.equal(result.status, "blocked");
     assert.equal(result.recoveryEligible, false);
     assert.equal(result.errorCode, "identity_mismatch");
+  }
+});
+
+test("compute-claim recovery rejects missing or non-admin credentials before the claim POST", async () => {
+  for (const credentials of [
+    { adminEmail: ADMIN_EMAIL, adminPassword: "" },
+    { adminEmail: "owner@example.com", adminPassword: ADMIN_PASSWORD }
+  ]) {
+    let networkCalls = 0;
+    let revisionCalls = 0;
+    await assert.rejects(() => productionLiveQa.recoverComputeClaim({
+      target: COMPUTE_CLAIM_TARGET,
+      approvalJson: computeClaimApprovalJson(),
+      approvalId: "approval-compute-claim-fixture",
+      mergedSha: BASIC_CANARY_MERGED_SHA,
+      cloudImageDigest: BASIC_CANARY_CLOUD_DIGEST,
+      origin: "https://cloud.medopl.cn",
+      ...credentials,
+      internalServiceToken: "compute-claim-runner-capability",
+      kubeconfigPath: "/run/secrets/kubeconfig",
+      namespace: "opl-cloud",
+      cloudRevisionEvidenceReader: async () => { revisionCalls += 1; return computeClaimCloudRevisionEvidence(); },
+      fetchImpl: async () => { networkCalls += 1; return json({}); },
+      now: new Date("2026-08-28T00:00:00Z")
+    }), /existing_admin_verifier_credentials_unavailable/);
+    assert.equal(networkCalls, 0);
+    assert.equal(revisionCalls, 0);
   }
 });
 

@@ -708,8 +708,8 @@ jobs:
     name: Converge one separately approved partial Workspace compute claim
     if: ${{ github.ref == 'refs/heads/main' && github.sha == inputs.merged_sha && inputs.operation_mode == 'compute_claim_recover' && inputs.resume_run_id == '' && inputs.diagnose_target_json == '' && !inputs.confirm_account_provision && !inputs.confirm_wallet_recharge && !inputs.confirm_workspace_purchase && !inputs.confirm_single_model_request && inputs.confirm_compute_claim_recovery }}
     runs-on: [self-hosted, tencent-cloud, opl-cloud, tke-vpc]
-    timeout-minutes: 15
-    environment: production-compute-claim-recovery
+    timeout-minutes: 40
+    environment: production
     env:
       OPL_MERGED_SHA: ${{ inputs.merged_sha }}
       OPL_COMPUTE_CLAIM_RECOVERY_APPROVAL_ID: ${{ inputs.approval_id }}
@@ -719,8 +719,12 @@ jobs:
       OPL_CONSOLE_ORIGIN: ${{ vars.OPL_CONSOLE_ORIGIN || 'https://cloud.medopl.cn' }}
       OPL_SUB2API_ADMIN_EMAIL: ${{ secrets.OPL_SUB2API_ADMIN_EMAIL }}
       OPL_SUB2API_ADMIN_PASSWORD: ${{ secrets.OPL_SUB2API_ADMIN_PASSWORD }}
+      OPL_BASIC_CANARY_CUSTOMER_EMAIL: huangrende@fenggaolab.org
+      OPL_BASIC_CANARY_CUSTOMER_PASSWORD: ${{ secrets.OPL_BASIC_CANARY_CUSTOMER_PASSWORD }}
       OPL_K8S_NAMESPACE: ${{ vars.OPL_K8S_NAMESPACE || 'opl-cloud' }}
       OPL_VERIFY_REQUEST_TIMEOUT_MS: ${{ vars.OPL_VERIFY_REQUEST_TIMEOUT_MS || '30000' }}
+      OPL_VERIFY_LAUNCH_POLL_ATTEMPTS: ${{ vars.OPL_VERIFY_LAUNCH_POLL_ATTEMPTS || '180' }}
+      OPL_VERIFY_LAUNCH_POLL_DELAY_MS: ${{ vars.OPL_VERIFY_LAUNCH_POLL_DELAY_MS || '10000' }}
       KUBECONFIG: ${{ vars.TENCENT_DEPLOY_KUBECONFIG_PATH || '/home/actions/.secrets/medopl/v22/kubeconfig-package-d-deploy' }}
 
     steps:
@@ -765,7 +769,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          artifact_dir="$RUNNER_TEMP/production-compute-claim-recovery"
+          artifact_dir="$RUNNER_TEMP/production-basic-compute-claim-evidence"
           mkdir -p "$artifact_dir"
           chmod 700 "$artifact_dir"
           echo "OPL_COMPUTE_CLAIM_ARTIFACT_DIR=$artifact_dir" >> "$GITHUB_ENV"
@@ -794,17 +798,8 @@ jobs:
             --approval-id "$OPL_COMPUTE_CLAIM_RECOVERY_APPROVAL_ID" \
             > "$OPL_COMPUTE_CLAIM_ARTIFACT_DIR/compute-claim-recovery.json"
 
-      - name: Upload redacted compute claim recovery
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: production-compute-claim-recovery
-          path: ${{ runner.temp }}/production-compute-claim-recovery
-          if-no-files-found: error
-          overwrite: true
-          retention-days: 30
-
       - name: Require approved claim readback
+        id: claim_readback
         if: ${{ steps.recover.outcome == 'success' }}
         shell: bash
         run: |
@@ -823,9 +818,68 @@ jobs:
           }
           NODE
 
+      - name: Continue original launch with GET-only readback
+        id: continue
+        if: ${{ steps.recover.outcome == 'success' && steps.claim_readback.outcome == 'success' }}
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          node tools/production-live-qa.ts --compute-claim-continue \
+            --compute-claim-target-json "$OPL_COMPUTE_CLAIM_TARGET_JSON" \
+            --launch-poll-attempts "$OPL_VERIFY_LAUNCH_POLL_ATTEMPTS" \
+            --launch-poll-delay-ms "$OPL_VERIFY_LAUNCH_POLL_DELAY_MS" \
+            > "$OPL_COMPUTE_CLAIM_ARTIFACT_DIR/workspace-launch-continuation.json"
+
+      - name: Upload redacted compute claim recovery
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-basic-compute-claim-evidence
+          path: ${{ runner.temp }}/production-basic-compute-claim-evidence
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 30
+
+      - name: Require original launch continuation success
+        if: ${{ steps.continue.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const fs = require("node:fs");
+          const path = `${process.env.OPL_COMPUTE_CLAIM_ARTIFACT_DIR}/workspace-launch-continuation.json`;
+          const result = JSON.parse(fs.readFileSync(path, "utf8"));
+          const target = JSON.parse(process.env.OPL_COMPUTE_CLAIM_TARGET_JSON);
+          const launch = result?.launch;
+          const runtime = result?.runtime;
+          if (result?.schemaVersion !== 1 || result?.operationMode !== "compute_claim_recover_continuation" ||
+            result?.status !== "succeeded" || result?.recoveryEligible !== true || result?.errorCode !== "none" ||
+            result?.mutationCounts?.sub2api !== 0 || result?.mutationCounts?.tencent !== 0 || result?.mutationCounts?.kubernetes !== 0 ||
+            launch?.operationId !== target.launchOperationId || launch?.accountId !== target.accountId ||
+            launch?.workspaceId !== target.workspaceId || launch?.computeAllocationId !== target.computeAllocationId ||
+            launch?.storageId !== target.storageId || launch?.status !== "succeeded" || launch?.phase !== "succeeded" ||
+            !launch?.attachmentId || !launch?.receiptId || !launch?.url || runtime?.workspaceId !== target.workspaceId ||
+            runtime?.ready !== true || runtime?.status !== "running" || runtime?.url !== launch.url ||
+            result?.receipt?.type !== "billing.workspace_purchased.v1" || result?.receipt?.status !== "completed" ||
+            result?.receipt?.workspaceId !== target.workspaceId || result?.receipt?.components?.storage?.resourceId !== target.storageId ||
+            result?.receipt?.components?.storage?.sizeGb !== 10 || result?.receipt?.fulfillment?.attachmentId !== launch.attachmentId ||
+            result?.receipt?.fulfillment?.runtimeId !== runtime.runtimeId) {
+            console.error(`Original launch continuation blocked: ${String(result?.errorCode || "continuation_artifact_invalid")}`);
+            process.exit(1);
+          }
+          NODE
+
       - name: Require compute claim recovery success
         if: ${{ steps.recover.outcome != 'success' }}
         shell: bash
         run: |
           echo "Compute claim recovery stopped; inspect the redacted recovery artifact." >&2
+          exit 1
+
+      - name: Require compute claim continuation success
+        if: ${{ steps.continue.outcome != 'success' }}
+        shell: bash
+        run: |
+          echo "Original launch continuation stopped; inspect the redacted recovery artifact." >&2
           exit 1

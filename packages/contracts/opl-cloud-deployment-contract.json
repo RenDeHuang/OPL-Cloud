@@ -483,16 +483,27 @@
       },
       "recover": {
         "input": "operation_mode=compute_claim_recover",
-        "environment": "production-compute-claim-recovery",
+        "environment": "production",
         "route": "POST /api/operator/workspace-launches/{operationId}/compute-claim-recovery/claim",
         "approvalSecret": "OPL_COMPUTE_CLAIM_RECOVERY_APPROVAL_JSON",
+        "adminSecrets": ["OPL_SUB2API_ADMIN_EMAIL", "OPL_SUB2API_ADMIN_PASSWORD"],
+        "customerReadOnlyPasswordSecret": "OPL_BASIC_CANARY_CUSTOMER_PASSWORD",
+        "customerEmailSource": "existing_account_workflow_value",
         "serverCapability": {
           "source": "current_kubernetes_secret_opl-cloud-internal-service",
           "header": "x-opl-compute-claim-capability",
           "ordinaryOperatorSessionAccepted": false,
           "handling": "step_memory_only_immediate_mask"
         },
-        "confirmation": "CLAIM_PROVEN_COMPUTE_RESOURCE"
+        "confirmation": "CLAIM_PROVEN_COMPUTE_RESOURCE",
+        "continuation": {
+          "mode": "GET_only_same_launch_after_claim",
+          "launchRoute": "GET /api/workspace-launches/{operationId}",
+          "runtimeRoute": "GET /api/workspaces/{workspaceId}/runtime-status",
+          "terminal": ["status=succeeded", "phase=succeeded", "attachmentId", "receiptId", "url", "receipt.type=billing.workspace_purchased.v1", "receipt.storage.resourceId=storageId", "receipt.storage.sizeGb=10", "receipt.fulfillment.attachmentId=attachmentId", "receipt.fulfillment.runtimeId=runtimeId", "runtime.ready=true", "runtime.status=running", "runtime.url=launch.url"],
+          "forbiddenWrites": ["second_launch", "second_claim", "debit", "recharge", "scale", "create_compute", "create_storage", "delete", "replace"],
+          "mutationCounts": {"sub2api": 0, "tencent": 0, "kubernetes": 0}
+        }
       }
     },
     "releaseBinding": ["exact_merged_origin_main_sha", "immutable_cloud_digest", "control_plane_fabric_ledger_ready_pod_image_id", "approval_id_and_idempotency_key"],
