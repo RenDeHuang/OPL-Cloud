@@ -689,9 +689,18 @@ jobs:
           const fs = require("node:fs");
           const path = `${process.env.OPL_COMPUTE_CLAIM_ARTIFACT_DIR}/compute-claim-diagnosis.json`;
           const result = JSON.parse(fs.readFileSync(path, "utf8"));
-          if (result?.schemaVersion !== 1 || result?.operationMode !== "compute_claim_diagnose" || result?.status !== "proven" ||
+          const proof = result?.proof;
+          const completeEvidence = (evidence, count, maximum) => Number.isInteger(count) && count >= 0 && count <= maximum &&
+            Number.isInteger(evidence?.attempted) && evidence.attempted === count && Number.isInteger(evidence.confirmed) &&
+            evidence.confirmed >= 0 && evidence.confirmed <= evidence.attempted && Number.isInteger(evidence.unknown) &&
+            evidence.unknown >= 0 && evidence.unknown <= evidence.attempted && evidence.confirmed + evidence.unknown <= evidence.attempted &&
+            evidence.confirmed === evidence.attempted && evidence.unknown === 0 && Array.isArray(evidence.missing) && evidence.missing.length === 0;
+          if (result?.schemaVersion !== 2 || result?.operationMode !== "compute_claim_diagnose" || result?.status !== "proven" ||
             result?.recoveryEligible !== true || result?.errorCode !== "none" || result?.proof?.storageState !== "storage_not_started" ||
-            result?.mutationCounts?.sub2api !== 0 || result?.mutationCounts?.tencent !== 0 || result?.mutationCounts?.kubernetes !== 0) {
+            result?.runnerDirectMutationCounts?.sub2api !== 0 || result?.runnerDirectMutationCounts?.tencent !== 0 ||
+            result?.runnerDirectMutationCounts?.kubernetes !== 0 || proof?.sub2apiMutationCount !== 0 || proof?.tencentMutationCount !== 0 ||
+            proof?.kubernetesMutationCount !== 0 || !completeEvidence(proof?.evidence?.cvm, proof?.tencentMutationCount, 5) ||
+            !completeEvidence(proof?.evidence?.node, proof?.kubernetesMutationCount, 1)) {
             console.error(`Compute claim diagnosis blocked: ${String(result?.errorCode || "diagnosis_artifact_invalid")}`);
             process.exit(1);
           }
@@ -805,14 +814,32 @@ jobs:
         run: |
           set -euo pipefail
           node <<'NODE'
+          const { createHash } = require("node:crypto");
           const fs = require("node:fs");
           const path = `${process.env.OPL_COMPUTE_CLAIM_ARTIFACT_DIR}/compute-claim-recovery.json`;
           const result = JSON.parse(fs.readFileSync(path, "utf8"));
-          if (result?.schemaVersion !== 1 || result?.operationMode !== "compute_claim_recover" || result?.status !== "claimed" ||
+          const approval = JSON.parse(process.env.OPL_COMPUTE_CLAIM_RECOVERY_APPROVAL_JSON);
+          const canonicalJson = (value) => Array.isArray(value)
+            ? `[${value.map(canonicalJson).join(",")}]`
+            : !value || typeof value !== "object"
+              ? JSON.stringify(value)
+              : `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(",")}}`;
+          const approvalDigest = createHash("sha256").update(canonicalJson(approval)).digest("hex");
+          const proof = result?.proof;
+          const completeEvidence = (evidence, count, maximum) => Number.isInteger(count) && count >= 0 && count <= maximum &&
+            Number.isInteger(evidence?.attempted) && evidence.attempted === count && Number.isInteger(evidence.confirmed) &&
+            evidence.confirmed >= 0 && evidence.confirmed <= evidence.attempted && Number.isInteger(evidence.unknown) &&
+            evidence.unknown >= 0 && evidence.unknown <= evidence.attempted && evidence.confirmed + evidence.unknown <= evidence.attempted &&
+            evidence.confirmed === evidence.attempted && evidence.unknown === 0 && Array.isArray(evidence.missing) && evidence.missing.length === 0;
+          if (result?.schemaVersion !== 2 || result?.operationMode !== "compute_claim_recover" || result?.status !== "claimed" ||
             result?.recoveryEligible !== true || result?.errorCode !== "none" || result?.proof?.nodeOwnershipState !== "target_owned" ||
-            result?.proof?.cvmOwnershipState !== "target_owned" || result?.mutationCounts?.sub2api !== 0 ||
-            !Number.isInteger(result?.mutationCounts?.tencent) || result.mutationCounts.tencent < 0 || result.mutationCounts.tencent > 5 ||
-            !Number.isInteger(result?.mutationCounts?.kubernetes) || result.mutationCounts.kubernetes < 0 || result.mutationCounts.kubernetes > 1) {
+            result?.proof?.cvmOwnershipState !== "target_owned" || result?.runnerDirectMutationCounts?.sub2api !== 0 ||
+            result?.approval?.approvalId !== approval.approvalId || approval.approvalId !== process.env.OPL_COMPUTE_CLAIM_RECOVERY_APPROVAL_ID ||
+            result?.approval?.approvalDigest !== approvalDigest ||
+            result?.runnerDirectMutationCounts?.tencent !== 0 || result?.runnerDirectMutationCounts?.kubernetes !== 0 ||
+            proof?.sub2apiMutationCount !== 0 || !Number.isInteger(proof?.tencentMutationCount) || proof.tencentMutationCount < 0 || proof.tencentMutationCount > 5 ||
+            !Number.isInteger(proof?.kubernetesMutationCount) || proof.kubernetesMutationCount < 0 || proof.kubernetesMutationCount > 1 ||
+            !completeEvidence(proof?.evidence?.cvm, proof?.tencentMutationCount, 5) || !completeEvidence(proof?.evidence?.node, proof?.kubernetesMutationCount, 1)) {
             console.error(`Compute claim recovery blocked: ${String(result?.errorCode || "recovery_artifact_invalid")}`);
             process.exit(1);
           }
@@ -853,14 +880,16 @@ jobs:
           const target = JSON.parse(process.env.OPL_COMPUTE_CLAIM_TARGET_JSON);
           const launch = result?.launch;
           const runtime = result?.runtime;
-          if (result?.schemaVersion !== 1 || result?.operationMode !== "compute_claim_recover_continuation" ||
+          const expectedWorkspaceUrl = `https://workspace.medopl.cn/w/${target.workspaceId}/`;
+          if (result?.schemaVersion !== 2 || result?.operationMode !== "compute_claim_recover_continuation" ||
             result?.status !== "succeeded" || result?.recoveryEligible !== true || result?.errorCode !== "none" ||
-            result?.mutationCounts?.sub2api !== 0 || result?.mutationCounts?.tencent !== 0 || result?.mutationCounts?.kubernetes !== 0 ||
+            result?.runnerDirectMutationCounts?.sub2api !== 0 || result?.runnerDirectMutationCounts?.tencent !== 0 ||
+            result?.runnerDirectMutationCounts?.kubernetes !== 0 || result?.backgroundMutationCountsState !== "unknown" ||
             launch?.operationId !== target.launchOperationId || launch?.accountId !== target.accountId ||
             launch?.workspaceId !== target.workspaceId || launch?.computeAllocationId !== target.computeAllocationId ||
             launch?.storageId !== target.storageId || launch?.status !== "succeeded" || launch?.phase !== "succeeded" ||
-            !launch?.attachmentId || !launch?.receiptId || !launch?.url || runtime?.workspaceId !== target.workspaceId ||
-            runtime?.ready !== true || runtime?.status !== "running" || runtime?.url !== launch.url ||
+            !launch?.attachmentId || !launch?.receiptId || launch?.url !== expectedWorkspaceUrl || runtime?.workspaceId !== target.workspaceId ||
+            runtime?.ready !== true || runtime?.status !== "running" || runtime?.url !== expectedWorkspaceUrl || runtime?.url !== launch.url ||
             result?.receipt?.type !== "billing.workspace_purchased.v1" || result?.receipt?.status !== "completed" ||
             result?.receipt?.workspaceId !== target.workspaceId || result?.receipt?.components?.storage?.resourceId !== target.storageId ||
             result?.receipt?.components?.storage?.sizeGb !== 10 || result?.receipt?.fulfillment?.attachmentId !== launch.attachmentId ||

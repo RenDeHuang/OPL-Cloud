@@ -132,7 +132,7 @@ func TestFabricHTTPClientSeparatesComputeClaimProofAndMutation(t *testing.T) {
 			PoolID: input.PoolID, NodePoolID: input.NodePoolID, MachineName: "machine-fixture", NodeName: "10.0.0.18",
 			CVMInstanceID: "ins-fixture", PrivateIP: "10.0.0.18", InstanceType: "SA5.2XLARGE16", Zone: "ap-guangzhou-3",
 			ChargeType: "PREPAID", PeriodMonths: 1, RenewFlag: "NOTIFY_AND_MANUAL_RENEW", Deadline: "2026-08-28T00:00:00Z",
-			NodeOwnershipState: "unallocated", CVMOwnershipState: "recoverable",
+			NodeOwnershipState: "unallocated", CVMOwnershipState: "recoverable", Evidence: &ComputeClaimEvidence{},
 		}
 		switch r.URL.Path {
 		case "/fabric/compute-claim-recovery/proof":
@@ -149,6 +149,10 @@ func TestFabricHTTPClientSeparatesComputeClaimProofAndMutation(t *testing.T) {
 			response.CVMOwnershipState = "target_owned"
 			response.TencentMutationCount = 1
 			response.KubernetesMutationCount = 1
+			response.Evidence = &ComputeClaimEvidence{
+				CVM:  ComputeClaimMutationEvidence{Attempted: 1, Confirmed: 1},
+				Node: ComputeClaimMutationEvidence{Attempted: 1, Confirmed: 1},
+			}
 		default:
 			t.Fatalf("unexpected path=%q", r.URL.Path)
 		}
@@ -186,6 +190,7 @@ func TestFabricHTTPClientPreservesSafeComputeClaimFailureProof(t *testing.T) {
 			LaunchOperationID: "launch-fixture", AccountID: "acct-fixture", WorkspaceID: "ws-fixture",
 			ComputeAllocationID: "ca-fixture", StorageVolumeID: "vol-fixture", PackageID: "basic",
 			PoolID: "pool-basic-2c4g", NodePoolID: "np-workspace-basic",
+			Evidence: &ComputeClaimEvidence{},
 		})
 	}))
 	defer upstream.Close()

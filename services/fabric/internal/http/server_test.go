@@ -466,7 +466,13 @@ func computeClaimHTTPFixture(t *testing.T) (*fabric.Service, *fabric.MemoryOpera
 		NodeName: allocation.NodeName, CVMInstanceID: allocation.InstanceID, PrivateIP: allocation.PrivateIP, InstanceType: allocation.InstanceType,
 		Zone: allocation.Zone, ChargeType: "PREPAID", PeriodMonths: 1, RenewFlag: "NOTIFY_AND_MANUAL_RENEW", Deadline: allocation.Deadline,
 	}}
-	provider.claim = fabric.ComputeClaimProviderClaim{Proof: provider.proof, TencentMutationCount: 1, KubernetesMutationCount: 1}
+	provider.claim = fabric.ComputeClaimProviderClaim{
+		Proof: provider.proof, TencentMutationCount: 1, KubernetesMutationCount: 1,
+		Evidence: &fabric.ComputeClaimEvidence{
+			CVM:  fabric.ComputeClaimMutationEvidence{Attempted: 1, Confirmed: 1},
+			Node: fabric.ComputeClaimMutationEvidence{Attempted: 1, Confirmed: 1},
+		},
+	}
 	provider.claim.Proof.NodeOwnershipState = "target_owned"
 	provider.claim.Proof.CVMOwnershipState = "target_owned"
 	return fabric.NewServiceWithOperationStore(provider, store), store, provider, input
@@ -512,11 +518,23 @@ func TestComputeClaimRecoveryHTTPSeparatesReadOnlyProofAndIdempotentClaim(t *tes
 	claimRequest.Header.Set("Idempotency-Key", "launch-fixture:compute-claim")
 	claimRecorder := httptest.NewRecorder()
 	server.ServeHTTP(claimRecorder, claimRequest)
+	claimPayload := append([]byte(nil), claimRecorder.Body.Bytes()...)
 	var claimed fabric.ComputeClaimRecoveryProof
 	if claimRecorder.Code != http.StatusAccepted || json.NewDecoder(claimRecorder.Body).Decode(&claimed) != nil || !claimed.Eligible ||
 		claimed.NodeOwnershipState != "target_owned" || claimed.TencentMutationCount != 1 || claimed.KubernetesMutationCount != 1 ||
 		provider.proofCalls != 2 || provider.claimCalls != 1 {
 		t.Fatalf("claim status=%d claim=%#v calls=%d/%d body=%s", claimRecorder.Code, claimed, provider.proofCalls, provider.claimCalls, claimRecorder.Body.String())
+	}
+	var wire map[string]any
+	if err := json.Unmarshal(claimPayload, &wire); err != nil {
+		t.Fatal(err)
+	}
+	evidence, _ := wire["evidence"].(map[string]any)
+	for _, kind := range []string{"cvm", "node"} {
+		item, _ := evidence[kind].(map[string]any)
+		if _, present := item["missing"]; present {
+			t.Fatalf("successful Go HTTP evidence must exercise the omitempty wire shape: %s", claimPayload)
+		}
 	}
 	operations, _ = store.List(context.Background())
 	binding, _ := operations[0].RedactedProviderPayload["computeClaimRecovery"].(map[string]any)
@@ -554,6 +572,38 @@ func TestComputeClaimRecoveryHTTPSeparatesReadOnlyProofAndIdempotentClaim(t *tes
 	server.ServeHTTP(driftedRecorder, driftedRequest)
 	if driftedRecorder.Code != http.StatusConflict || provider.claimCalls != 1 {
 		t.Fatalf("claim target drift status=%d calls=%d/%d body=%s", driftedRecorder.Code, provider.proofCalls, provider.claimCalls, driftedRecorder.Body.String())
+	}
+}
+
+func TestComputeClaimRecoveryHTTPNeverReturnsUnallowlistedMutationEvidence(t *testing.T) {
+	service, _, provider, input := computeClaimHTTPFixture(t)
+	const marker = "ghp_secret"
+	provider.claim.Proof.Reason = "provider_describe"
+	provider.claim.TencentMutationCount = 1
+	provider.claim.KubernetesMutationCount = 0
+	provider.claim.FailureStage = "cvm_final_readback"
+	provider.claim.ProviderErrorClass = "readback_mismatch"
+	provider.claim.Evidence = &fabric.ComputeClaimEvidence{
+		CVM:  fabric.ComputeClaimMutationEvidence{Attempted: 1, Unknown: 1, Missing: []string{marker}},
+		Node: fabric.ComputeClaimMutationEvidence{},
+	}
+	claimInput := fabric.ComputeClaimRecoveryClaimInput{
+		ComputeClaimRecoveryInput: input, MachineName: provider.proof.MachineName, NodeName: provider.proof.NodeName,
+		CVMInstanceID: provider.proof.CVMInstanceID, PrivateIP: provider.proof.PrivateIP,
+		InstanceType: provider.proof.InstanceType, Zone: provider.proof.Zone,
+	}
+	body, err := json.Marshal(claimInput)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := testRequest(http.MethodPost, "/fabric/compute-claim-recovery/claim", bytes.NewReader(body))
+	request.Header.Set("Idempotency-Key", "launch-fixture:compute-claim")
+	recorder := httptest.NewRecorder()
+
+	NewServer(service, "internal-secret").ServeHTTP(recorder, request)
+
+	if recorder.Code < 400 || provider.proofCalls != 1 || provider.claimCalls != 1 || strings.Contains(recorder.Body.String(), marker) {
+		t.Fatalf("status=%d calls=%d/%d body=%s", recorder.Code, provider.proofCalls, provider.claimCalls, recorder.Body.String())
 	}
 }
 

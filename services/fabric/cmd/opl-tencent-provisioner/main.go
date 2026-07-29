@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/sha1"
 	"encoding/hex"
 	"encoding/json"
@@ -140,6 +141,16 @@ type Response struct {
 	ProtectedSystem          ProtectedSystemFacts      `json:"protectedSystem,omitempty"`
 	NodePoolInventory        []string                  `json:"nodePoolInventoryBeforeMutation,omitempty"`
 	MutationCount            int                       `json:"mutationCount"`
+	FailureStage             string                    `json:"failureStage,omitempty"`
+	ProviderErrorClass       string                    `json:"providerErrorClass,omitempty"`
+	MutationEvidence         *MutationEvidence         `json:"mutationEvidence,omitempty"`
+}
+
+type MutationEvidence struct {
+	Attempted int      `json:"attempted"`
+	Confirmed int      `json:"confirmed"`
+	Unknown   int      `json:"unknown"`
+	Missing   []string `json:"missing,omitempty"`
 }
 
 type WorkspaceSKUCandidate struct {
@@ -262,6 +273,8 @@ type tencentSDKClient struct {
 	nativeCbsClient       cbsNativeAPI
 	nativeVpcClient       vpcNativeAPI
 	nativeTagClient       tagNativeAPI
+	convergenceContext    context.Context
+	convergenceWait       func(context.Context, int) error
 }
 
 type tagNativeAPI interface {
@@ -491,7 +504,23 @@ func newTencentSDKClient(env map[string]string) (*tencentSDKClient, *Response) {
 		nativeCbsClient:       cbsClient,
 		nativeVpcClient:       vpcClient,
 		nativeTagClient:       &tencentTagClient{client: tagClient, region: env["TENCENTCLOUD_REGION"]},
+		convergenceContext:    context.Background(),
+		convergenceWait:       boundedConvergenceWait,
 	}, nil
+}
+
+func boundedConvergenceWait(ctx context.Context, attempt int) error {
+	if attempt <= 0 {
+		return nil
+	}
+	timer := time.NewTimer(time.Duration(attempt) * 200 * time.Millisecond)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 func workspaceSKUInventoryFailure(code string, err error) Response {
@@ -1914,6 +1943,266 @@ func computeClaimCVMOwnershipState(instance *cvm2017.Instance, machineName strin
 	return "recoverable", true
 }
 
+type cvmOwnershipTarget struct {
+	InstanceID  string
+	CurrentName string
+	TargetName  string
+	Tags        map[string]string
+}
+
+type cvmOwnershipConvergence struct {
+	Attempted       int
+	Confirmed       int
+	Unknown         int
+	ProviderData    map[string]string
+	ProviderRequest string
+}
+
+const cvmOwnershipSnapshotField = "cvm_ownership_snapshot"
+
+func (client *tencentSDKClient) convergeCVMOwnership(target cvmOwnershipTarget) (cvmOwnershipConvergence, *Response) {
+	result := cvmOwnershipConvergence{ProviderData: map[string]string{}}
+	if client == nil || client.nativeCvmClient == nil {
+		failure := computeClaimConvergenceFailure("provider_describe", "cvm_pre_read", "client_unavailable", result, nil)
+		return result, &failure
+	}
+	instance, requestID, err := client.describeCvmInstanceByID(target.InstanceID)
+	result.ProviderRequest = requestID
+	if err != nil || instance == nil || stringValue(instance.InstanceId) != target.InstanceID {
+		missing := []string(nil)
+		if err == nil {
+			missing = []string{"instance"}
+		}
+		failure := computeClaimConvergenceFailure(computeClaimDescribeReason(err), "cvm_pre_read", computeClaimProviderErrorClass(err), result, missing)
+		return result, &failure
+	}
+	states, tags, conflict, err := classifyCVMOwnership(instance, target)
+	if err != nil {
+		failure := computeClaimConvergenceFailure("identity_mismatch", "cvm_pre_read", "malformed_readback", result, nil)
+		return result, &failure
+	}
+	currentName := strings.TrimSpace(stringValue(instance.InstanceName))
+	if target.CurrentName == "" {
+		target.CurrentName = currentName
+		states, tags, conflict, err = classifyCVMOwnership(instance, target)
+		if err != nil {
+			failure := computeClaimConvergenceFailure("identity_mismatch", "cvm_pre_read", "malformed_readback", result, nil)
+			return result, &failure
+		}
+	}
+	if conflict != "" {
+		failure := computeClaimConvergenceFailure("identity_mismatch", "cvm_conflict_check", "ownership_conflict", result, []string{conflict})
+		return result, &failure
+	}
+	missingTags := []string{}
+	for _, key := range cbsOwnershipTagKeys {
+		if states[key] == "missing" {
+			missingTags = append(missingTags, key)
+		}
+	}
+	if len(missingTags) > 0 && client.nativeTagClient == nil {
+		failure := computeClaimConvergenceFailure("provider_describe", "cvm_mutation_precondition", "client_unavailable", result, missingTags)
+		return result, &failure
+	}
+	fields := append([]string{"instance_name"}, cbsOwnershipTagKeys[:]...)
+	for _, field := range fields {
+		if states[field] == "target_owned" {
+			continue
+		}
+		var mutationErr error
+		result.Attempted++
+		stage := "cvm_tag_readback"
+		if field == "instance_name" {
+			stage = "cvm_rename_readback"
+			modify := cvm2017.NewModifyInstancesAttributeRequest()
+			modify.InstanceIds = []*string{common.StringPtr(target.InstanceID)}
+			modify.InstanceName = common.StringPtr(target.TargetName)
+			modified, modifyErr := client.nativeCvmClient.ModifyInstancesAttribute(modify)
+			mutationErr = modifyErr
+			if modified != nil && modified.Response != nil {
+				result.ProviderData["modifyInstanceRequestId"] = stringValue(modified.Response.RequestId)
+			}
+		} else {
+			_, attached := tags[field]
+			tagRequestID, tagErr := client.nativeTagClient.SetCVMTag(target.InstanceID, field, target.Tags[field], attached)
+			mutationErr = tagErr
+			if tagRequestID != "" {
+				result.ProviderData["tagRequestId:"+field] = tagRequestID
+			}
+		}
+		state, readbackStates, readbackTags, readbackRequestID, readbackErr := client.readCVMOwnershipField(target, field)
+		result.ProviderRequest = firstNonEmpty(readbackRequestID, result.ProviderRequest)
+		if state == "target_owned" {
+			result.Confirmed++
+			states, tags = readbackStates, readbackTags
+			continue
+		}
+		if state == "unknown" {
+			result.Unknown++
+		}
+		reason, providerClass := "provider_describe", "readback_mismatch"
+		failureErr := readbackErr
+		if mutationErr != nil {
+			failureErr = mutationErr
+		}
+		if state == "conflict" {
+			reason, providerClass = "identity_mismatch", "ownership_conflict"
+		} else if failureErr != nil {
+			reason, providerClass = computeClaimDescribeReason(failureErr), computeClaimProviderErrorClass(failureErr)
+		}
+		failure := computeClaimConvergenceFailure(reason, stage, providerClass, result, []string{field})
+		return result, &failure
+	}
+	state, finalStates, finalTags, readbackRequestID, readbackErr := client.readCVMOwnershipField(target, cvmOwnershipSnapshotField)
+	result.ProviderRequest = firstNonEmpty(readbackRequestID, result.ProviderRequest)
+	if state != "target_owned" {
+		reason, providerClass := "provider_describe", "readback_mismatch"
+		if state == "unknown" {
+			result.Unknown, result.Confirmed = result.Attempted, 0
+		}
+		if state == "conflict" {
+			reason, providerClass = "identity_mismatch", "ownership_conflict"
+		} else if readbackErr != nil {
+			reason, providerClass = computeClaimDescribeReason(readbackErr), computeClaimProviderErrorClass(readbackErr)
+		}
+		failure := computeClaimConvergenceFailure(reason, "cvm_final_readback", providerClass, result, missingCVMOwnershipFields(finalStates))
+		return result, &failure
+	}
+	tags = finalTags
+	for _, key := range cbsOwnershipTagKeys {
+		result.ProviderData[key] = tags[key]
+	}
+	return result, nil
+}
+
+func (client *tencentSDKClient) readCVMOwnershipField(target cvmOwnershipTarget, field string) (string, map[string]string, map[string]string, string, error) {
+	ctx := client.convergenceContext
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	var requestID string
+	lastState := "unknown"
+	var lastErr error
+	var lastStates map[string]string
+	var lastTags map[string]string
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 && client.convergenceWait != nil {
+			if err := client.convergenceWait(ctx, attempt); err != nil {
+				return "unknown", nil, nil, requestID, err
+			}
+		}
+		instance, currentRequestID, err := client.describeCvmInstanceByID(target.InstanceID)
+		requestID = firstNonEmpty(currentRequestID, requestID)
+		if err != nil || instance == nil || stringValue(instance.InstanceId) != target.InstanceID {
+			lastState, lastErr = "unknown", err
+			if lastErr == nil {
+				lastErr = fmt.Errorf("Tencent CVM readback instance is missing")
+			}
+			continue
+		}
+		states, tags, conflict, classifyErr := classifyCVMOwnership(instance, target)
+		if classifyErr != nil {
+			return "conflict", nil, nil, requestID, classifyErr
+		}
+		if conflict != "" {
+			return "conflict", states, tags, requestID, nil
+		}
+		lastStates, lastTags, lastErr = states, tags, nil
+		lastState = cvmOwnershipReadbackState(states, field)
+		if lastState == "target_owned" {
+			return lastState, states, tags, requestID, nil
+		}
+	}
+	return lastState, lastStates, lastTags, requestID, lastErr
+}
+
+func cvmOwnershipReadbackState(states map[string]string, field string) string {
+	if field != cvmOwnershipSnapshotField {
+		return states[field]
+	}
+	if len(missingCVMOwnershipFields(states)) == 0 {
+		return "target_owned"
+	}
+	return "missing"
+}
+
+func missingCVMOwnershipFields(states map[string]string) []string {
+	fields := append([]string{"instance_name"}, cbsOwnershipTagKeys[:]...)
+	missing := make([]string, 0, len(fields))
+	for _, field := range fields {
+		if states[field] != "target_owned" {
+			missing = append(missing, field)
+		}
+	}
+	return missing
+}
+
+func classifyCVMOwnership(instance *cvm2017.Instance, target cvmOwnershipTarget) (map[string]string, map[string]string, string, error) {
+	states := map[string]string{}
+	if instance == nil || stringValue(instance.InstanceId) != target.InstanceID {
+		return states, nil, "instance", fmt.Errorf("Tencent CVM instance identity is missing")
+	}
+	tags, err := cvmOwnershipTags(instance)
+	if err != nil {
+		return states, nil, "ownership_tags", err
+	}
+	actualName := strings.TrimSpace(stringValue(instance.InstanceName))
+	switch {
+	case actualName == target.TargetName:
+		states["instance_name"] = "target_owned"
+	case actualName == "" || actualName == target.CurrentName:
+		states["instance_name"] = "missing"
+	default:
+		return states, tags, "instance_name", nil
+	}
+	for legacyKey, canonicalKey := range cvmOwnershipTagAliases {
+		actual := strings.TrimSpace(tags[legacyKey])
+		if actual != "" && actual != target.Tags[canonicalKey] {
+			return states, tags, legacyKey, nil
+		}
+	}
+	for _, key := range cbsOwnershipTagKeys {
+		actual := strings.TrimSpace(tags[key])
+		switch {
+		case actual == target.Tags[key]:
+			states[key] = "target_owned"
+		case actual == "":
+			states[key] = "missing"
+		default:
+			return states, tags, key, nil
+		}
+	}
+	return states, tags, "", nil
+}
+
+func computeClaimProviderErrorClass(err error) string {
+	if err == nil {
+		return "readback_mismatch"
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return "timeout"
+	}
+	if computeClaimDescribeReason(err) == "iam_rbac" {
+		return "iam_rbac"
+	}
+	return "provider_error"
+}
+
+func computeClaimConvergenceFailure(reason, stage, providerClass string, evidence cvmOwnershipConvergence, missing []string) Response {
+	response := computeClaimTruthFailure(reason)
+	response.MutationCount = evidence.Attempted
+	response.FailureStage = stage
+	response.ProviderErrorClass = providerClass
+	response.ProviderRequestId = evidence.ProviderRequest
+	response.MutationEvidence = &MutationEvidence{
+		Attempted: evidence.Attempted,
+		Confirmed: evidence.Confirmed,
+		Unknown:   evidence.Unknown,
+		Missing:   append([]string(nil), missing...),
+	}
+	return response
+}
+
 func computeClaimDescribeReason(err error) string {
 	if err == nil {
 		return "provider_describe"
@@ -1944,63 +2233,19 @@ func (client *tencentSDKClient) ClaimComputeMachine(request Request, _ map[strin
 	if !truth.Ok {
 		return truth
 	}
-	instance, _, err := client.describeCvmInstanceByID(request.Allocation.InstanceId)
-	if err != nil || instance == nil || stringValue(instance.InstanceId) != request.Allocation.InstanceId {
-		return computeClaimTruthFailure(computeClaimDescribeReason(err))
+	converged, failure := client.convergeCVMOwnership(cvmOwnershipTarget{
+		InstanceID: request.Allocation.InstanceId, CurrentName: request.Allocation.MachineName,
+		TargetName: request.Allocation.Id, Tags: request.Tags,
+	})
+	if failure != nil {
+		return *failure
 	}
-	ownershipState, ok := computeClaimCVMOwnershipState(instance, request.Allocation.MachineName, request)
-	if !ok {
-		return computeClaimTruthFailure("identity_mismatch")
-	}
-	if ownershipState == "target_owned" {
-		return Response{Ok: true, Status: "claimed", InstanceId: request.Allocation.InstanceId, ProviderData: map[string]string{"cvmOwnershipState": "target_owned"}}
-	}
-	tags, err := cvmOwnershipTags(instance)
-	if err != nil || client.nativeTagClient == nil {
-		return computeClaimTruthFailure("provider_describe")
-	}
-	mutationCount := 0
-	if strings.TrimSpace(stringValue(instance.InstanceName)) != request.Allocation.Id {
-		modify := cvm2017.NewModifyInstancesAttributeRequest()
-		modify.InstanceIds = []*string{common.StringPtr(request.Allocation.InstanceId)}
-		modify.InstanceName = common.StringPtr(request.Allocation.Id)
-		mutationCount++
-		if _, err := client.nativeCvmClient.ModifyInstancesAttribute(modify); err != nil {
-			return computeClaimMutationFailure(computeClaimDescribeReason(err), mutationCount)
-		}
-	}
-	for _, key := range cbsOwnershipTagKeys {
-		actual := strings.TrimSpace(tags[key])
-		if actual == request.Tags[key] {
-			continue
-		}
-		if actual != "" {
-			return computeClaimMutationFailure("identity_mismatch", mutationCount)
-		}
-		_, attached := tags[key]
-		mutationCount++
-		if _, err := client.nativeTagClient.SetCVMTag(request.Allocation.InstanceId, key, request.Tags[key], attached); err != nil {
-			return computeClaimMutationFailure(computeClaimDescribeReason(err), mutationCount)
-		}
-	}
-	readback, _, err := client.describeCvmInstanceByID(request.Allocation.InstanceId)
-	if err != nil || readback == nil || stringValue(readback.InstanceId) != request.Allocation.InstanceId || stringValue(readback.InstanceName) != request.Allocation.Id {
-		return computeClaimMutationFailure(computeClaimDescribeReason(err), mutationCount)
-	}
-	readbackState, ok := computeClaimCVMOwnershipState(readback, request.Allocation.MachineName, request)
-	if !ok || readbackState != "target_owned" {
-		return computeClaimMutationFailure("identity_mismatch", mutationCount)
-	}
+	converged.ProviderData["cvmOwnershipState"] = "target_owned"
 	return Response{
-		Ok: true, Status: "claimed", InstanceId: request.Allocation.InstanceId, MutationCount: mutationCount,
-		ProviderData: map[string]string{"cvmOwnershipState": "target_owned"},
+		Ok: true, Status: "claimed", InstanceId: request.Allocation.InstanceId, ProviderRequestId: converged.ProviderRequest,
+		MutationCount: converged.Attempted, ProviderData: converged.ProviderData,
+		MutationEvidence: &MutationEvidence{Attempted: converged.Attempted, Confirmed: converged.Confirmed},
 	}
-}
-
-func computeClaimMutationFailure(reason string, mutationCount int) Response {
-	response := computeClaimTruthFailure(reason)
-	response.MutationCount = mutationCount
-	return response
 }
 
 func exactNewReadyMachine(after []*tke2022.Machine, before []string, instanceType string) (*tke2022.Machine, string) {
@@ -2120,78 +2365,46 @@ func (client *tencentSDKClient) TagComputeMachine(request Request, _ map[string]
 	if !strings.HasPrefix(instanceID, "ins-") {
 		return Response{Ok: false, ErrorCode: "compute_machine_identity_unverified", Message: "Tencent machine identity source is unsupported.", Retryable: false}
 	}
-	describe := cvm2017.NewDescribeInstancesRequest()
-	describe.InstanceIds = []*string{common.StringPtr(instanceID)}
-	described, err := client.nativeCvmClient.DescribeInstances(describe)
-	if err != nil {
-		return sdkErrorResponse("tencent_verify_compute_machine_failed", err)
+	converged, failure := client.convergeCVMOwnership(cvmOwnershipTarget{
+		InstanceID: instanceID, CurrentName: request.Allocation.MachineName,
+		TargetName: resourceID, Tags: request.Tags,
+	})
+	if failure != nil {
+		return tagComputeMachineFailure(*failure)
 	}
-	if described == nil || described.Response == nil {
-		return sdkErrorResponse("tencent_verify_compute_machine_failed", fmt.Errorf("Tencent CVM DescribeInstances response is missing"))
+	return Response{
+		Ok: true, InstanceId: instanceID, Status: "tagged", ProviderRequestId: converged.ProviderRequest,
+		ProviderData: converged.ProviderData, MutationCount: converged.Attempted,
+		MutationEvidence: &MutationEvidence{Attempted: converged.Attempted, Confirmed: converged.Confirmed},
 	}
-	if len(described.Response.InstanceSet) == 0 {
-		return Response{Ok: false, ErrorCode: "compute_machine_identity_unverified", Message: "Tencent CVM instance did not match the claimed machine identity.", ProviderRequestId: stringValue(described.Response.RequestId), Retryable: true}
-	}
-	if len(described.Response.InstanceSet) != 1 || described.Response.InstanceSet[0] == nil || stringValue(described.Response.InstanceSet[0].InstanceId) != instanceID {
-		return Response{Ok: false, ErrorCode: "compute_machine_identity_unverified", Message: "Tencent CVM instance did not match the claimed machine identity.", ProviderRequestId: stringValue(described.Response.RequestId), Retryable: true}
-	}
-	actualTags, tagErr := cvmOwnershipTags(described.Response.InstanceSet[0])
-	if tagErr != nil {
-		return Response{Ok: false, ErrorCode: "compute_machine_tags_unverified", Message: tagErr.Error(), ProviderRequestId: stringValue(described.Response.RequestId), Retryable: true}
-	}
-	if client.nativeTagClient == nil {
-		return Response{Ok: false, ErrorCode: "tencent_sdk_client_missing", Message: "Tencent Tag SDK client is missing.", Retryable: false}
-	}
-	modify := cvm2017.NewModifyInstancesAttributeRequest()
-	modify.InstanceIds = []*string{common.StringPtr(instanceID)}
-	modify.InstanceName = common.StringPtr(resourceID)
-	modified, err := client.nativeCvmClient.ModifyInstancesAttribute(modify)
-	if err != nil {
-		return sdkErrorResponse("tencent_tag_compute_machine_failed", err)
-	}
-	tagRequestIDs := map[string]string{}
-	for _, key := range cbsOwnershipTagKeys {
-		if actualTags[key] == request.Tags[key] {
-			continue
+}
+
+func tagComputeMachineFailure(response Response) Response {
+	switch response.FailureStage {
+	case "cvm_pre_read":
+		if response.MutationEvidence != nil && len(response.MutationEvidence.Missing) == 1 && response.MutationEvidence.Missing[0] == "instance" {
+			response.ErrorCode = "compute_machine_identity_unverified"
+		} else {
+			response.ErrorCode = "tencent_verify_compute_machine_failed"
 		}
-		_, attached := actualTags[key]
-		requestID, err := client.nativeTagClient.SetCVMTag(instanceID, key, request.Tags[key], attached)
-		if err != nil {
-			return sdkErrorResponse("tencent_tag_compute_machine_failed", err)
+	case "cvm_conflict_check":
+		response.ErrorCode = "compute_machine_tag_unverified"
+	case "cvm_mutation_precondition":
+		response.ErrorCode = "tencent_sdk_client_missing"
+	case "cvm_final_readback":
+		response.ErrorCode = "tencent_verify_compute_machine_tag_failed"
+	case "cvm_rename_readback", "cvm_tag_readback":
+		if response.MutationEvidence != nil && response.MutationEvidence.Unknown > 0 {
+			response.ErrorCode = "tencent_verify_compute_machine_tag_failed"
+		} else {
+			response.ErrorCode = "tencent_tag_compute_machine_failed"
 		}
-		tagRequestIDs[key] = requestID
+	default:
+		response.ErrorCode = "tencent_tag_compute_machine_failed"
 	}
-	describe = cvm2017.NewDescribeInstancesRequest()
-	describe.InstanceIds = []*string{common.StringPtr(instanceID)}
-	described, err = client.nativeCvmClient.DescribeInstances(describe)
-	if err != nil {
-		return sdkErrorResponse("tencent_verify_compute_machine_tag_failed", err)
-	}
-	if described == nil || described.Response == nil {
-		return sdkErrorResponse("tencent_verify_compute_machine_tag_failed", fmt.Errorf("Tencent CVM DescribeInstances readback response is missing"))
-	}
-	if len(described.Response.InstanceSet) != 1 || described.Response.InstanceSet[0] == nil {
-		return sdkErrorResponse("tencent_verify_compute_machine_tag_failed", fmt.Errorf("Tencent CVM DescribeInstances readback instance is missing"))
-	}
-	readbackTags, tagErr := cvmOwnershipTags(described.Response.InstanceSet[0])
-	if stringValue(described.Response.InstanceSet[0].InstanceId) != instanceID || stringValue(described.Response.InstanceSet[0].InstanceName) != resourceID || tagErr != nil {
-		return Response{Ok: false, ErrorCode: "compute_machine_tag_unverified", Message: "Tencent CVM instance identity or ownership tags were malformed after update.", Retryable: true}
-	}
-	for _, key := range cbsOwnershipTagKeys {
-		if readbackTags[key] != request.Tags[key] {
-			return Response{Ok: false, ErrorCode: "compute_machine_tag_unverified", Message: "Tencent CVM ownership tags did not match after update.", Retryable: true}
-		}
-	}
-	modifyRequestID := ""
-	if modified.Response != nil {
-		modifyRequestID = stringValue(modified.Response.RequestId)
-	}
-	providerData := map[string]string{"modifyInstanceRequestId": modifyRequestID}
-	for _, key := range cbsOwnershipTagKeys {
-		providerData[key] = readbackTags[key]
-		providerData["tagRequestId:"+key] = tagRequestIDs[key]
-	}
-	return Response{Ok: true, InstanceId: instanceID, Status: "tagged", ProviderRequestId: firstNonEmpty(stringValue(described.Response.RequestId), modifyRequestID), ProviderData: providerData}
+	response.Message = "Tencent CVM ownership convergence could not be confirmed."
+	response.Retryable = response.ErrorCode != "tencent_sdk_client_missing"
+	return response
 }
 
 func validOwnershipTags(tags map[string]string) bool {
@@ -3800,6 +4013,13 @@ func tkeTagSpecifications(tags map[string]string, resourceType string) []*tke202
 }
 
 var cbsOwnershipTagKeys = [...]string{"opl_account_id", "opl_workspace_id", "opl_resource_id", "opl_operation_id"}
+
+var cvmOwnershipTagAliases = map[string]string{
+	"oplcloud.cn/account-id":   "opl_account_id",
+	"oplcloud.cn/workspace-id": "opl_workspace_id",
+	"oplcloud.cn/resource-id":  "opl_resource_id",
+	"oplcloud.cn/operation-id": "opl_operation_id",
+}
 
 func cbsTags(tags map[string]string) []*cbs2017.Tag {
 	items := []*cbs2017.Tag{}

@@ -35,8 +35,9 @@ const (
 )
 
 type TencentProvider struct {
-	provision func(context.Context, provisionerRequest) (provisionerResponse, error)
-	kubectl   func(context.Context, []string, []byte) ([]byte, error)
+	provision       func(context.Context, provisionerRequest) (provisionerResponse, error)
+	kubectl         func(context.Context, []string, []byte) ([]byte, error)
+	convergenceWait func(context.Context, int) error
 }
 
 func (p *TencentProvider) callKubectl(ctx context.Context, args []string, stdin []byte, target protectedresource.Target) ([]byte, error) {
@@ -64,7 +65,21 @@ type monthlyPreflightEvaluation struct {
 }
 
 func NewTencentProvider() *TencentProvider {
-	return &TencentProvider{provision: executeProvisioner, kubectl: executeKubectl}
+	return &TencentProvider{provision: executeProvisioner, kubectl: executeKubectl, convergenceWait: boundedClaimReadbackWait}
+}
+
+func boundedClaimReadbackWait(ctx context.Context, attempt int) error {
+	if attempt <= 0 {
+		return nil
+	}
+	timer := time.NewTimer(time.Duration(attempt) * 100 * time.Millisecond)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 func (p *TencentProvider) MonthlyPreflight(ctx context.Context, input MonthlyPreflightInput) (MonthlyPreflight, error) {
@@ -509,40 +524,43 @@ type provisionerStorage struct {
 }
 
 type provisionerResponse struct {
-	OK                 bool                    `json:"ok"`
-	OperationID        string                  `json:"operationId,omitempty"`
-	PoolID             string                  `json:"poolId,omitempty"`
-	NodePoolID         string                  `json:"nodePoolId,omitempty"`
-	InstanceID         string                  `json:"instanceId,omitempty"`
-	NodeName           string                  `json:"nodeName,omitempty"`
-	PrivateIP          string                  `json:"privateIp,omitempty"`
-	PublicIP           string                  `json:"publicIp,omitempty"`
-	MachinePresent     *bool                   `json:"machinePresent,omitempty"`
-	StoragePresent     *bool                   `json:"storagePresent,omitempty"`
-	StorageVolumeID    string                  `json:"storageVolumeId,omitempty"`
-	CBSStatus          string                  `json:"cbsStatus,omitempty"`
-	CVMStatus          string                  `json:"cvmStatus,omitempty"`
-	TKEStatus          string                  `json:"tkeStatus,omitempty"`
-	Status             string                  `json:"status,omitempty"`
-	ProviderRequestID  string                  `json:"providerRequestId,omitempty"`
-	ProviderRequestIDs map[string]string       `json:"providerRequestIds,omitempty"`
-	ProviderPriceCNY   float64                 `json:"providerPriceCny,omitempty"`
-	ProviderData       map[string]string       `json:"providerData,omitempty"`
-	ErrorCode          string                  `json:"errorCode,omitempty"`
-	Message            string                  `json:"message,omitempty"`
-	Retryable          bool                    `json:"retryable,omitempty"`
-	MissingEnv         []string                `json:"missingEnv,omitempty"`
-	Machines           []provisionerMachine    `json:"machines,omitempty"`
-	InstanceType       string                  `json:"instanceType,omitempty"`
-	InstanceAvailable  bool                    `json:"instanceAvailable,omitempty"`
-	RemainingQuota     uint64                  `json:"remainingQuota,omitempty"`
-	Zones              []string                `json:"zones,omitempty"`
-	PreflightStages    []MonthlyPreflightStage `json:"preflightStages,omitempty"`
-	CurrentReplicas    int64                   `json:"currentReplicas,omitempty"`
-	ReadyReplicas      int64                   `json:"readyReplicas,omitempty"`
-	MaxReplicas        int64                   `json:"maxReplicas,omitempty"`
-	TargetReplicas     int64                   `json:"targetReplicas,omitempty"`
-	MutationCount      int                     `json:"mutationCount"`
+	OK                 bool                          `json:"ok"`
+	OperationID        string                        `json:"operationId,omitempty"`
+	PoolID             string                        `json:"poolId,omitempty"`
+	NodePoolID         string                        `json:"nodePoolId,omitempty"`
+	InstanceID         string                        `json:"instanceId,omitempty"`
+	NodeName           string                        `json:"nodeName,omitempty"`
+	PrivateIP          string                        `json:"privateIp,omitempty"`
+	PublicIP           string                        `json:"publicIp,omitempty"`
+	MachinePresent     *bool                         `json:"machinePresent,omitempty"`
+	StoragePresent     *bool                         `json:"storagePresent,omitempty"`
+	StorageVolumeID    string                        `json:"storageVolumeId,omitempty"`
+	CBSStatus          string                        `json:"cbsStatus,omitempty"`
+	CVMStatus          string                        `json:"cvmStatus,omitempty"`
+	TKEStatus          string                        `json:"tkeStatus,omitempty"`
+	Status             string                        `json:"status,omitempty"`
+	ProviderRequestID  string                        `json:"providerRequestId,omitempty"`
+	ProviderRequestIDs map[string]string             `json:"providerRequestIds,omitempty"`
+	ProviderPriceCNY   float64                       `json:"providerPriceCny,omitempty"`
+	ProviderData       map[string]string             `json:"providerData,omitempty"`
+	ErrorCode          string                        `json:"errorCode,omitempty"`
+	Message            string                        `json:"message,omitempty"`
+	Retryable          bool                          `json:"retryable,omitempty"`
+	MissingEnv         []string                      `json:"missingEnv,omitempty"`
+	Machines           []provisionerMachine          `json:"machines,omitempty"`
+	InstanceType       string                        `json:"instanceType,omitempty"`
+	InstanceAvailable  bool                          `json:"instanceAvailable,omitempty"`
+	RemainingQuota     uint64                        `json:"remainingQuota,omitempty"`
+	Zones              []string                      `json:"zones,omitempty"`
+	PreflightStages    []MonthlyPreflightStage       `json:"preflightStages,omitempty"`
+	CurrentReplicas    int64                         `json:"currentReplicas,omitempty"`
+	ReadyReplicas      int64                         `json:"readyReplicas,omitempty"`
+	MaxReplicas        int64                         `json:"maxReplicas,omitempty"`
+	TargetReplicas     int64                         `json:"targetReplicas,omitempty"`
+	MutationCount      int                           `json:"mutationCount"`
+	FailureStage       string                        `json:"failureStage,omitempty"`
+	ProviderErrorClass string                        `json:"providerErrorClass,omitempty"`
+	MutationEvidence   *ComputeClaimMutationEvidence `json:"mutationEvidence,omitempty"`
 }
 
 type provisionerMachine struct {
@@ -726,7 +744,7 @@ func (p *TencentProvider) ProveComputeClaimRecovery(ctx context.Context, allocat
 }
 
 func (p *TencentProvider) ClaimComputeRecovery(ctx context.Context, allocation ComputeAllocation, prepared ComputeAllocationPreparation, ownership MachineOwnership) (ComputeClaimProviderClaim, error) {
-	result := ComputeClaimProviderClaim{}
+	result := ComputeClaimProviderClaim{Evidence: &ComputeClaimEvidence{}}
 	proof, err := p.ProveComputeClaimRecovery(ctx, allocation, prepared, ownership)
 	result.Proof = proof
 	if err != nil {
@@ -740,42 +758,60 @@ func (p *TencentProvider) ClaimComputeRecovery(ctx context.Context, allocation C
 		result.Proof.Reason = "identity_mismatch"
 		return result, err
 	}
-	var nodeRaw []byte
-	var nodeState string
-	if proof.NodeOwnershipState == "unallocated" {
-		nodeRaw, err = p.callKubectl(ctx, []string{"get", "node/" + allocation.NodeName, "-o", "json"}, nil, protectedresource.Target{})
-		if err != nil {
-			result.Proof.Reason = computeClaimKubectlReason(err)
-			return result, computeClaimProviderError(result.Proof.Reason)
-		}
-		nodeState, _ = computeClaimNodeOwnershipState(nodeRaw, allocation, ownership)
-		if nodeState != "unallocated" {
-			result.Proof.Reason = "node_ownership_conflict"
-			return result, computeClaimProviderError(result.Proof.Reason)
-		}
-	}
 	if proof.CVMOwnershipState == "recoverable" {
+		nodeRaw, nodeReadErr := p.callKubectl(ctx, []string{"get", "node/" + allocation.NodeName, "-o", "json"}, nil, protectedresource.Target{})
+		if nodeReadErr != nil {
+			result.Proof.Reason = computeClaimKubectlReason(nodeReadErr)
+			result.FailureStage, result.ProviderErrorClass = "node_pre_cvm_read", computeClaimKubectlErrorClass(nodeReadErr)
+			return result, computeClaimProviderError(result.Proof.Reason)
+		}
+		nodeState, nodeOK := computeClaimNodeOwnershipState(nodeRaw, allocation, ownership)
+		if !nodeOK {
+			result.Proof.Reason = "node_ownership_conflict"
+			if nodeState == "identity_mismatch" {
+				result.Proof.Reason = "identity_mismatch"
+			}
+			result.FailureStage, result.ProviderErrorClass = "node_pre_cvm_read", "ownership_conflict"
+			return result, computeClaimProviderError(result.Proof.Reason)
+		}
+		result.Proof.NodeOwnershipState = nodeState
 		response, provisionErr := p.provision(ctx, computeClaimProvisionerRequest("claim_compute_machine", allocation, prepared, ownership))
 		result.TencentMutationCount = max(0, response.MutationCount)
+		if response.MutationEvidence != nil {
+			result.Evidence.CVM = cloneComputeClaimMutationEvidence(*response.MutationEvidence)
+		}
 		if provisionErr != nil {
 			result.Proof.Reason = "provider_describe"
+			result.FailureStage, result.ProviderErrorClass = "cvm_provisioner_transport", "transport_error"
+			if response.MutationEvidence == nil {
+				result.TencentMutationCount = 5
+				result.Evidence.CVM = ComputeClaimMutationEvidence{
+					Attempted: 5,
+					Unknown:   5,
+					Missing:   []string{"instance_name", "opl_account_id", "opl_workspace_id", "opl_resource_id", "opl_operation_id"},
+				}
+			}
 			return result, computeClaimProviderError(result.Proof.Reason)
 		}
+		if response.FailureStage != "" || response.ProviderErrorClass != "" {
+			result.FailureStage, result.ProviderErrorClass = response.FailureStage, response.ProviderErrorClass
+		}
 		if !response.OK || response.Status != "claimed" || response.InstanceID != firstNonEmpty(allocation.InstanceID, allocation.CVMInstanceID) ||
-			response.ProviderData["cvmOwnershipState"] != "target_owned" || response.MutationCount < 0 || response.MutationCount > 5 {
+			response.ProviderData["cvmOwnershipState"] != "target_owned" || !validConfirmedComputeClaimMutation(response.MutationEvidence, response.MutationCount, 5) {
 			result.Proof.Reason = safeComputeClaimRecoveryReason(response.ErrorCode, "identity_mismatch")
+			if result.FailureStage == "" {
+				result.FailureStage, result.ProviderErrorClass = "cvm_mutation_evidence", "evidence_incomplete"
+			}
 			return result, computeClaimProviderError(result.Proof.Reason)
 		}
 	}
-	if proof.NodeOwnershipState == "unallocated" {
-		patch, patchErr := computeClaimNodePatch(nodeRaw, allocation, ownership)
-		if patchErr != nil {
-			result.Proof.Reason = "node_ownership_conflict"
-			return result, computeClaimProviderError(result.Proof.Reason)
-		}
-		result.KubernetesMutationCount = 1
-		if _, err := p.callKubectl(ctx, []string{"patch", "node/" + allocation.NodeName, "--type=json", "-f", "-"}, patch, target); err != nil {
-			result.Proof.Reason = computeClaimKubectlReason(err)
+	if proof.NodeOwnershipState != "target_owned" {
+		nodeEvidence, nodeErr := p.convergeComputeClaimNode(ctx, allocation, ownership, target)
+		result.KubernetesMutationCount = nodeEvidence.Attempted
+		result.Evidence.Node = cloneComputeClaimMutationEvidence(nodeEvidence)
+		if nodeErr != nil {
+			result.Proof.Reason = safeComputeClaimRecoveryReason(nodeErr.Reason, "provider_describe")
+			result.FailureStage, result.ProviderErrorClass = nodeErr.Stage, nodeErr.ProviderClass
 			return result, computeClaimProviderError(result.Proof.Reason)
 		}
 	}
@@ -785,9 +821,126 @@ func (p *TencentProvider) ClaimComputeRecovery(ctx context.Context, allocation C
 		if result.Proof.Reason == "" {
 			result.Proof.Reason = "identity_mismatch"
 		}
+		if result.FailureStage == "" {
+			result.FailureStage, result.ProviderErrorClass = "claim_final_readback", "readback_mismatch"
+		}
 		return result, computeClaimProviderError(result.Proof.Reason)
 	}
 	return result, nil
+}
+
+func cloneComputeClaimMutationEvidence(value ComputeClaimMutationEvidence) ComputeClaimMutationEvidence {
+	value.Missing = append([]string(nil), value.Missing...)
+	return value
+}
+
+func validConfirmedComputeClaimMutation(evidence *ComputeClaimMutationEvidence, count, maximum int) bool {
+	return evidence != nil && count >= 0 && count <= maximum && evidence.Attempted == count && evidence.Attempted == evidence.Confirmed &&
+		evidence.Unknown == 0 && len(evidence.Missing) == 0
+}
+
+type computeClaimNodeConvergenceError struct {
+	Reason        string
+	Stage         string
+	ProviderClass string
+}
+
+func (p *TencentProvider) convergeComputeClaimNode(ctx context.Context, allocation ComputeAllocation, ownership MachineOwnership, target protectedresource.Target) (ComputeClaimMutationEvidence, *computeClaimNodeConvergenceError) {
+	evidence := ComputeClaimMutationEvidence{}
+	nodeRaw, err := p.callKubectl(ctx, []string{"get", "node/" + allocation.NodeName, "-o", "json"}, nil, protectedresource.Target{})
+	if err != nil {
+		reason := computeClaimKubectlReason(err)
+		return evidence, &computeClaimNodeConvergenceError{Reason: reason, Stage: "node_pre_read", ProviderClass: computeClaimKubectlErrorClass(err)}
+	}
+	nodeState, ok := computeClaimNodeOwnershipState(nodeRaw, allocation, ownership)
+	if !ok {
+		reason := "node_ownership_conflict"
+		if nodeState == "identity_mismatch" {
+			reason = "identity_mismatch"
+		}
+		return evidence, &computeClaimNodeConvergenceError{Reason: reason, Stage: "node_conflict_check", ProviderClass: "ownership_conflict"}
+	}
+	if nodeState == "target_owned" {
+		return evidence, nil
+	}
+	patch, patchErr := computeClaimNodePatch(nodeRaw, allocation, ownership)
+	if patchErr != nil {
+		return evidence, &computeClaimNodeConvergenceError{Reason: "node_ownership_conflict", Stage: "node_patch_build", ProviderClass: "ownership_conflict"}
+	}
+	evidence.Attempted = 1
+	_, patchErr = p.callKubectl(ctx, []string{"patch", "node/" + allocation.NodeName, "--type=json", "-f", "-"}, patch, target)
+	readbackState, readbackOK, readbackErr, readbackClass := p.readNodeOwnershipAfterMutation(ctx, allocation, ownership)
+	if readbackOK && readbackState == "target_owned" {
+		evidence.Confirmed = 1
+		return evidence, nil
+	}
+	evidence.Missing = []string{"node_ownership"}
+	if readbackState == "identity_mismatch" {
+		return evidence, &computeClaimNodeConvergenceError{Reason: "identity_mismatch", Stage: "node_final_readback", ProviderClass: "ownership_conflict"}
+	}
+	if readbackState == "node_ownership_conflict" {
+		return evidence, &computeClaimNodeConvergenceError{Reason: "node_ownership_conflict", Stage: "node_final_readback", ProviderClass: "ownership_conflict"}
+	}
+	if readbackErr != nil {
+		evidence.Unknown = 1
+		reason := computeClaimKubectlReason(readbackErr)
+		providerClass := readbackClass
+		if patchErr != nil && reason == "provider_describe" {
+			reason = computeClaimKubectlReason(patchErr)
+			providerClass = computeClaimKubectlErrorClass(patchErr)
+		}
+		return evidence, &computeClaimNodeConvergenceError{Reason: reason, Stage: "node_patch_readback", ProviderClass: providerClass}
+	}
+	if patchErr != nil {
+		return evidence, &computeClaimNodeConvergenceError{Reason: computeClaimKubectlReason(patchErr), Stage: "node_patch_readback", ProviderClass: computeClaimKubectlErrorClass(patchErr)}
+	}
+	return evidence, &computeClaimNodeConvergenceError{Reason: "node_ownership_conflict", Stage: "node_final_readback", ProviderClass: "readback_mismatch"}
+}
+
+// readNodeOwnershipAfterMutation performs bounded authoritative reads after a
+// patch. It never retries the patch itself: a target-owned readback is the only
+// success proof, while an explicit ownership conflict stops immediately.
+func (p *TencentProvider) readNodeOwnershipAfterMutation(ctx context.Context, allocation ComputeAllocation, ownership MachineOwnership) (string, bool, error, string) {
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 && p.convergenceWait != nil {
+			if err := p.convergenceWait(ctx, attempt); err != nil {
+				return "unknown", false, err, computeClaimKubectlErrorClass(err)
+			}
+		}
+		raw, err := p.callKubectl(ctx, []string{"get", "node/" + allocation.NodeName, "-o", "json"}, nil, protectedresource.Target{})
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		state, ok := computeClaimNodeOwnershipState(raw, allocation, ownership)
+		if ok && state == "target_owned" {
+			return state, true, nil, "readback_mismatch"
+		}
+		if !ok && (state == "identity_mismatch" || state == "node_ownership_conflict") {
+			return state, false, nil, "ownership_conflict"
+		}
+	}
+	if lastErr != nil {
+		return "unknown", false, lastErr, computeClaimKubectlErrorClass(lastErr)
+	}
+	return "unallocated", true, nil, "readback_mismatch"
+}
+
+func computeClaimKubectlErrorClass(err error) string {
+	if err == nil {
+		return "readback_mismatch"
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return "timeout"
+	}
+	if computeClaimKubectlReason(err) == "iam_rbac" {
+		return "iam_rbac"
+	}
+	if computeClaimKubectlReason(err) == "node_ownership_conflict" {
+		return "ownership_conflict"
+	}
+	return "provider_error"
 }
 
 func computeClaimProvisionerRequest(action string, allocation ComputeAllocation, prepared ComputeAllocationPreparation, ownership MachineOwnership) provisionerRequest {
@@ -960,15 +1113,19 @@ func (p *TencentProvider) TagComputeMachine(ctx context.Context, machine Provide
 	if err != nil {
 		return err
 	}
-	if !response.OK {
+	if !response.OK || !validConfirmedComputeClaimMutation(response.MutationEvidence, response.MutationCount, 5) {
 		return provisionerError(response)
 	}
 	target := protectedresource.Target{PackageID: ownership.PackageID, NodePoolID: ownership.NodePoolID, MachineID: machine.MachineID, NodeName: machine.NodeName, CVMID: machine.InstanceID}
-	if _, err = p.callKubectl(ctx, []string{"label", "node/" + machine.NodeName, "medopl.cn/workload=workspace", "oplcloud.cn/resource-id=" + ownership.ResourceID, "oplcloud.cn/account-id=" + ownership.AccountID, "oplcloud.cn/workspace-id=" + ownership.WorkspaceID, "--overwrite"}, nil, target); err != nil {
-		return err
+	_, nodeErr := p.convergeComputeClaimNode(ctx, ComputeAllocation{
+		ID: ownership.ResourceID, AccountID: ownership.AccountID, WorkspaceID: ownership.WorkspaceID,
+		PackageID: ownership.PackageID, NodePoolID: ownership.NodePoolID, MachineName: machine.MachineID,
+		InstanceID: machine.InstanceID, CVMInstanceID: machine.InstanceID, NodeName: machine.NodeName, PrivateIP: machine.PrivateIP,
+	}, ownership, target)
+	if nodeErr != nil {
+		return fmt.Errorf("compute_machine_node_claim_%s", safeComputeClaimRecoveryReason(nodeErr.Reason, "provider_describe"))
 	}
-	_, err = p.callKubectl(ctx, []string{"taint", "node/" + machine.NodeName, "oplcloud.cn/workspace-id=" + ownership.WorkspaceID + ":NoSchedule", "--overwrite"}, nil, target)
-	return err
+	return nil
 }
 
 func (p *TencentProvider) SyncComputeAllocation(ctx context.Context, allocation ComputeAllocation) (ComputeAllocation, error) {

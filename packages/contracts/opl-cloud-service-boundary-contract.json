@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 13,
+  "schemaVersion": 15,
   "owner": "OPL Platform Architecture",
   "purpose": "Current ownership contract for Console UI, Control Plane, Ledger, Fabric, and external Sub2API.",
   "state": "current",
@@ -205,12 +205,32 @@
         "idempotencyBinding": ["launch_operation_id", "idempotency_key", "target_hash", "request_hash"],
         "bindingPersistence": "original_create_compute_allocation_operation_payload_cas",
         "malformedOrDriftedBinding": "fail_closed_conflict_zero_provider_mutation",
+        "mutationLedger": {
+          "persistence": "original_create_compute_allocation_operation_payload_cas_before_provider_call",
+          "states": ["reserved", "observed"],
+          "legacyBindingUpgrade": "binding_without_mutation_ledger_may_reserve_once_after_exact_read_only_proof",
+          "replayAfterReservation": "authoritative_readback_only_zero_incremental_external_mutation",
+          "missingOutcome": "conservative_unknown_at_full_bound",
+          "replayProofUnavailable": "return_persisted_mutation_evidence_zero_incremental_external_mutation",
+          "observedSuccessReadbackMismatch": "fail_closed_identity_mismatch_claim_final_readback"
+        },
         "replay": "same_key_and_target_returns_same_proof_zero_incremental_external_mutation",
         "claimWrites": ["same_cvm_instance_name", "same_cvm_four_ownership_tags", "same_node_single_labels_and_taint_patch", "same_machine_ownership_active"],
         "claimMutationBounds": {
           "sub2api": 0,
           "tencent": {"min": 0, "max": 5, "meaning": "one_instance_name_plus_four_ownership_tags"},
           "kubernetes": {"min": 0, "max": 1, "meaning": "one_exact_node_json_patch"}
+        },
+        "mutationEvidence": {
+          "fields": ["attempted", "confirmed", "unknown", "missing"],
+          "cardinality": "confirmed_lte_attempted_unknown_lte_attempted_confirmed_plus_unknown_lte_attempted",
+          "success": "attempted_equals_count_confirmed_equals_attempted_unknown_zero_missing_empty",
+          "omittedMissing": "normalize_to_empty_only_when_attempted_equals_confirmed_and_unknown_zero",
+          "missingAllowlist": {
+            "cvm": ["instance", "instance_name", "opl_account_id", "opl_workspace_id", "opl_resource_id", "opl_operation_id"],
+            "node": ["node_ownership"]
+          },
+          "unstructuredTransport": "bounded_conservative_attempted_equals_count_equals_unknown_and_node_write_forbidden"
         },
         "strictReadback": ["cvm_target_owned", "node_target_owned", "machine_ownership_active"],
         "forbiddenCalls": ["CreateComputeAllocation", "scale", "debit", "refund", "recharge", "create_storage_volume", "delete", "replace_cvm"],

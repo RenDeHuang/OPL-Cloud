@@ -1237,7 +1237,7 @@ func computeClaimRecoveryProofForLaunch(operation workspaceLaunchOperation, node
 		NodeName: operation.ComputeNodeName, CVMInstanceID: operation.ComputeCVMInstanceID, PrivateIP: operation.ComputePrivateIP,
 		InstanceType: operation.ComputeInstanceType, Zone: operation.ComputeZone, ChargeType: "PREPAID", PeriodMonths: 1,
 		RenewFlag: "NOTIFY_AND_MANUAL_RENEW", Deadline: "2099-01-01T00:00:00Z", NodeOwnershipState: nodeOwnershipState,
-		CVMOwnershipState: "target_owned",
+		CVMOwnershipState: "target_owned", Evidence: &clients.ComputeClaimEvidence{},
 	}
 }
 
@@ -1547,6 +1547,11 @@ func TestWorkspaceComputeClaimPartialMutationFailurePreservesCountsAndStops(t *t
 	failed := computeClaimRecoveryProofForLaunch(operation, "unallocated")
 	failed.Eligible, failed.Reason = false, "iam_rbac"
 	failed.TencentMutationCount, failed.KubernetesMutationCount = 3, 1
+	failed.FailureStage, failed.ProviderErrorClass = "node_patch_readback", "iam_rbac"
+	failed.Evidence = &clients.ComputeClaimEvidence{
+		CVM:  clients.ComputeClaimMutationEvidence{Attempted: 3, Confirmed: 3},
+		Node: clients.ComputeClaimMutationEvidence{Attempted: 1, Unknown: 1, Missing: []string{"node_ownership"}},
+	}
 	fixture.fabric.computeClaimResult = &failed
 	fixture.fabric.computeClaimErr = errors.New("classified claim readback failure")
 	path := "/api/operator/workspace-launches/" + operation.ID + "/compute-claim-recovery/claim"
@@ -1594,6 +1599,77 @@ func TestWorkspaceComputeClaimRejectsMutationCountsAboveHardBoundsBeforeStorage(
 				t.Fatalf("over-bound %s crossed storage gate: status=%d operation=%#v result=%s", tc.name, response.Code, current, response.Body.String())
 			}
 		})
+	}
+}
+
+func TestWorkspaceComputeClaimRejectsUnknownOrMissingMutationEvidenceBeforeStorage(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate func(*clients.ComputeClaimRecoveryProof)
+	}{
+		{name: "unknown cvm", mutate: func(proof *clients.ComputeClaimRecoveryProof) {
+			proof.TencentMutationCount = 1
+			proof.Evidence.CVM = clients.ComputeClaimMutationEvidence{Attempted: 1, Unknown: 1, Missing: []string{"opl_workspace_id"}}
+		}},
+		{name: "unconfirmed node", mutate: func(proof *clients.ComputeClaimRecoveryProof) {
+			proof.KubernetesMutationCount = 1
+			proof.Evidence.Node = clients.ComputeClaimMutationEvidence{Attempted: 1, Missing: []string{"node_ownership"}}
+		}},
+		{name: "confirmed and unknown overlap", mutate: func(proof *clients.ComputeClaimRecoveryProof) {
+			proof.TencentMutationCount = 1
+			proof.Evidence.CVM = clients.ComputeClaimMutationEvidence{Attempted: 1, Confirmed: 1, Unknown: 1, Missing: []string{"instance_name"}}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, "basic")
+			fixture.fabric.computeClaimProof = computeClaimRecoveryProofForLaunch(operation, "unallocated")
+			claimed := computeClaimRecoveryProofForLaunch(operation, "target_owned")
+			tc.mutate(&claimed)
+			claimed.FailureStage, claimed.ProviderErrorClass = "claim_final_readback", "readback_mismatch"
+			fixture.fabric.computeClaimResult = &claimed
+			path := "/api/operator/workspace-launches/" + operation.ID + "/compute-claim-recovery/claim"
+
+			response := requestComputeClaimWithCapabilityForTest(t, fixture.server, fixture.operator, path, computeClaimRecoveryRequestBody(t, operation, true), "compute-claim-evidence")
+			current := fixture.operation(t)
+			if response.Code != http.StatusConflict || current.Status != "manual_review" || current.Phase != "compute_claim_pending" ||
+				len(fixture.fabric.computeClaimCalls) != 1 || len(fixture.fabric.storageIDs) != 0 || len(fixture.fabric.computeIDs) != 1 ||
+				len(fixture.sub2API.charges) != 1 || len(fixture.sub2API.refunds) != 0 {
+				t.Fatalf("%s evidence crossed storage gate: status=%d operation=%#v result=%s", tc.name, response.Code, current, response.Body.String())
+			}
+		})
+	}
+}
+
+func TestWorkspaceComputeClaimRejectsAndRedactsUnallowlistedMutationEvidence(t *testing.T) {
+	fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, "basic")
+	fixture.fabric.computeClaimProof = computeClaimRecoveryProofForLaunch(operation, "unallocated")
+	const marker = "ghp_secret"
+	claimed := computeClaimRecoveryProofForLaunch(operation, "target_owned")
+	claimed.Eligible, claimed.Reason = false, "provider_describe"
+	claimed.TencentMutationCount = 1
+	claimed.Evidence.CVM = clients.ComputeClaimMutationEvidence{Attempted: 1, Unknown: 1, Missing: []string{marker}}
+	claimed.FailureStage, claimed.ProviderErrorClass = "cvm_final_readback", "readback_mismatch"
+	fixture.fabric.computeClaimResult = &claimed
+	path := "/api/operator/workspace-launches/" + operation.ID + "/compute-claim-recovery/claim"
+
+	response := requestComputeClaimWithCapabilityForTest(t, fixture.server, fixture.operator, path, computeClaimRecoveryRequestBody(t, operation, true), "compute-claim-unallowlisted-evidence")
+	current := fixture.operation(t)
+
+	if response.Code != http.StatusConflict || current.Status != "manual_review" || current.Phase != "compute_claim_pending" ||
+		len(fixture.fabric.computeClaimCalls) != 1 || len(fixture.fabric.storageIDs) != 0 || strings.Contains(response.Body.String(), marker) {
+		t.Fatalf("unallowlisted evidence crossed or leaked from the storage gate: status=%d operation=%#v result=%s", response.Code, current, response.Body.String())
+	}
+}
+
+func TestWorkspaceComputeClaimMutationEvidenceRejectsOverlappingCardinality(t *testing.T) {
+	evidence := clients.ComputeClaimMutationEvidence{
+		Attempted: 1,
+		Confirmed: 1,
+		Unknown:   1,
+		Missing:   []string{"instance_name"},
+	}
+	if workspaceComputeClaimMutationEvidenceMatches(evidence, 1, 5, "cvm", false) {
+		t.Fatal("confirmed plus unknown may not exceed attempted")
 	}
 }
 
