@@ -3714,6 +3714,9 @@ func TestTencentSDKClientCreateAllocationScalesExistingPackageNodePool(t *testin
 	if response.ProviderData["instanceId"] != "ins-basic-2" {
 		t.Fatalf("native scale allocation must preserve Tencent instance id as provider evidence: %#v", response.ProviderData)
 	}
+	if response.ProviderData["periodMonths"] != "1" {
+		t.Fatalf("native scale allocation must persist the verified one-month period: %#v", response.ProviderData)
+	}
 	if response.ProviderData["zone"] != "ap-guangzhou-3" {
 		t.Fatalf("native allocation must preserve the exact CVM Zone for CBS binding: %#v", response.ProviderData)
 	}
