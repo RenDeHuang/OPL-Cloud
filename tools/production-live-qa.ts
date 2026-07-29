@@ -648,6 +648,20 @@ const COMPUTE_CLAIM_REASONS = new Set([
   "none", "local_identity", "provider_describe", "iam_rbac", "multiple_candidate",
   "identity_mismatch", "node_ownership_conflict", "storage_already_started"
 ]);
+const COMPUTE_CLAIM_BLOCKED_ERROR_CODES = new Set([...COMPUTE_CLAIM_REASONS, "identity_mismatch"]);
+const COMPUTE_CLAIM_FAILURE_STAGES = new Set([
+  "", "cvm_pre_read", "cvm_conflict_check", "cvm_mutation_precondition", "cvm_rename_readback", "cvm_tag_readback", "cvm_final_readback",
+  "cvm_provisioner_transport", "cvm_mutation_evidence", "node_pre_cvm_read", "node_pre_read", "node_conflict_check", "node_patch_build",
+  "node_patch_readback", "node_final_readback", "claim_final_readback"
+]);
+const COMPUTE_CLAIM_PROVIDER_ERROR_CLASSES = new Set([
+  "", "client_unavailable", "malformed_readback", "ownership_conflict", "readback_mismatch", "timeout", "iam_rbac", "provider_error",
+  "transport_error", "evidence_incomplete"
+]);
+const COMPUTE_CLAIM_CVM_MISSING_FIELDS = new Set([
+  "instance", "instance_name", "opl_account_id", "opl_workspace_id", "opl_resource_id", "opl_operation_id"
+]);
+const COMPUTE_CLAIM_NODE_MISSING_FIELDS = new Set(["node_ownership"]);
 const COMPUTE_CLAIM_TARGET_KEYS = [
   "launchOperationId", "accountId", "workspaceId", "computeAllocationId", "storageId", "packageId", "poolId", "nodePoolId",
   "machineName", "nodeName", "cvmInstanceId", "privateIp", "instanceType", "zone", "chargeType", "periodMonths", "renewFlag", "deadline"
@@ -715,7 +729,7 @@ function computeClaimTarget(value) {
     !/^ws-[A-Za-z0-9-]+$/.test(String(target.workspaceId || "")) ||
     !/^ca_[A-Za-z0-9_\-]+$/.test(String(target.computeAllocationId || "")) ||
     !/^vol_[A-Za-z0-9_\-]+$/.test(String(target.storageId || "")) ||
-    !new Set(["basic", "pro"]).has(target.packageId) ||
+    target.packageId !== "basic" ||
     !/^pool-[A-Za-z0-9-]+$/.test(String(target.poolId || "")) ||
     !/^np-[A-Za-z0-9-]+$/.test(String(target.nodePoolId || "")) ||
     !/^[A-Za-z0-9][A-Za-z0-9.-]{1,127}$/.test(String(target.machineName || "")) ||
@@ -762,6 +776,20 @@ function computeClaimControlPlaneRequest(target) {
 
 function computeClaimProofProjection(value) {
   const integer = (field) => Number.isInteger(value?.[field]) && value[field] >= 0 ? value[field] : -1;
+  const mutationEvidence = (source, missingFields) => {
+    const attempted = Number.isInteger(source?.attempted) && source.attempted >= 0 ? source.attempted : -1;
+    const confirmed = Number.isInteger(source?.confirmed) && source.confirmed >= 0 ? source.confirmed : -1;
+    const unknown = Number.isInteger(source?.unknown) && source.unknown >= 0 ? source.unknown : -1;
+    let missing = null;
+    if (Array.isArray(source?.missing) && source.missing.every((field) => typeof field === "string" && missingFields.has(field))) {
+      missing = [...source.missing];
+    } else if (source && !Object.hasOwn(source, "missing") && attempted === confirmed && attempted >= 0 && unknown === 0) {
+      missing = [];
+    }
+    return { attempted, confirmed, unknown, missing };
+  };
+  const failureStage = String(value?.failureStage || "");
+  const providerErrorClass = String(value?.providerErrorClass || "");
   return {
     schemaVersion: Number(value?.schemaVersion || 0),
     eligible: value?.eligible === true,
@@ -789,16 +817,36 @@ function computeClaimProofProjection(value) {
     cvmOwnershipState: String(value?.cvmOwnershipState || ""),
     sub2apiMutationCount: integer("sub2apiMutationCount"),
     tencentMutationCount: integer("tencentMutationCount"),
-    kubernetesMutationCount: integer("kubernetesMutationCount")
+    kubernetesMutationCount: integer("kubernetesMutationCount"),
+    failureStage: COMPUTE_CLAIM_FAILURE_STAGES.has(failureStage) ? failureStage : "invalid",
+    providerErrorClass: COMPUTE_CLAIM_PROVIDER_ERROR_CLASSES.has(providerErrorClass) ? providerErrorClass : "invalid",
+    evidence: {
+      cvm: mutationEvidence(value?.evidence?.cvm, COMPUTE_CLAIM_CVM_MISSING_FIELDS),
+      node: mutationEvidence(value?.evidence?.node, COMPUTE_CLAIM_NODE_MISSING_FIELDS)
+    }
   };
+}
+
+function computeClaimMutationEvidenceMatches(evidence, count, maximum, confirmed) {
+  if (!evidence || !Number.isInteger(count) || count < 0 || count > maximum || evidence.attempted !== count ||
+    !Number.isInteger(evidence.confirmed) || evidence.confirmed < 0 || evidence.confirmed > evidence.attempted ||
+    !Number.isInteger(evidence.unknown) || evidence.unknown < 0 || evidence.unknown > evidence.attempted ||
+    evidence.confirmed + evidence.unknown > evidence.attempted || !Array.isArray(evidence.missing) ||
+    new Set(evidence.missing).size !== evidence.missing.length) return false;
+  return !confirmed || evidence.confirmed === evidence.attempted && evidence.unknown === 0 && evidence.missing.length === 0;
+}
+
+function computeClaimEvidenceMatches(proof, confirmed) {
+  return COMPUTE_CLAIM_FAILURE_STAGES.has(proof.failureStage) && COMPUTE_CLAIM_PROVIDER_ERROR_CLASSES.has(proof.providerErrorClass) &&
+    computeClaimMutationEvidenceMatches(proof.evidence?.cvm, proof.tencentMutationCount, 5, confirmed) &&
+    computeClaimMutationEvidenceMatches(proof.evidence?.node, proof.kubernetesMutationCount, 1, confirmed);
 }
 
 function computeClaimProofBaseMatches(proof, target) {
   return proof.schemaVersion === 1 && proof.launchOperationId === target.launchOperationId && proof.accountId === target.accountId &&
     proof.workspaceId === target.workspaceId && proof.computeAllocationId === target.computeAllocationId && proof.storageVolumeId === target.storageId &&
     proof.packageId === target.packageId && proof.poolId === target.poolId && proof.nodePoolId === target.nodePoolId &&
-	proof.sub2apiMutationCount === 0 && proof.tencentMutationCount >= 0 && proof.tencentMutationCount <= 5 &&
-	proof.kubernetesMutationCount >= 0 && proof.kubernetesMutationCount <= 1;
+	proof.sub2apiMutationCount === 0 && computeClaimEvidenceMatches(proof, false);
 }
 
 function computeClaimProofMatchesTarget(proof, target, claimed = false) {
@@ -807,7 +855,8 @@ function computeClaimProofMatchesTarget(proof, target, claimed = false) {
     proof.privateIp === target.privateIp && proof.instanceType === target.instanceType && proof.zone === target.zone &&
     proof.chargeType === target.chargeType && proof.periodMonths === target.periodMonths && proof.renewFlag === target.renewFlag && proof.deadline === target.deadline &&
     (claimed ? proof.nodeOwnershipState === "target_owned" : new Set(["unallocated", "target_owned"]).has(proof.nodeOwnershipState)) &&
-    (claimed ? proof.cvmOwnershipState === "target_owned" : new Set(["recoverable", "target_owned"]).has(proof.cvmOwnershipState));
+    (claimed ? proof.cvmOwnershipState === "target_owned" : new Set(["recoverable", "target_owned"]).has(proof.cvmOwnershipState)) &&
+    computeClaimEvidenceMatches(proof, true) && proof.failureStage === "" && proof.providerErrorClass === "";
 }
 
 function computeClaimReleaseEvidence(evidence) {
@@ -847,9 +896,10 @@ async function computeClaimFabricPodProof({ target, fabricPod, kubeconfigPath, n
   return response;
 }
 
-function computeClaimArtifact(mode, target, release, proof, eligible, errorCode, approvalId = "") {
+function computeClaimArtifact(mode, target, release, proof, eligible, errorCode, approval = null) {
+  if (!eligible) return blockedComputeClaimArtifact(mode, errorCode);
   const artifact = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     operationMode: mode,
     status: eligible ? (mode === COMPUTE_CLAIM_DIAGNOSE_MODE ? "proven" : "claimed") : "blocked",
     recoveryEligible: eligible,
@@ -857,13 +907,14 @@ function computeClaimArtifact(mode, target, release, proof, eligible, errorCode,
     release: computeClaimReleaseEvidence(release),
     target: { ...target },
     proof,
-    mutationCounts: {
-      sub2api: proof.sub2apiMutationCount,
-      tencent: proof.tencentMutationCount,
-      kubernetes: proof.kubernetesMutationCount
-    }
+    runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
   };
-  if (approvalId) artifact.approval = { approvalId };
+  if (approval) {
+    artifact.approval = {
+      approvalId: approval.approvalId,
+      approvalDigest: createHash("sha256").update(canonicalJson(approval)).digest("hex")
+    };
+  }
   return artifact;
 }
 
@@ -935,6 +986,7 @@ async function computeClaimControlPlanePost({ fetchImpl, origin, auth, path, bod
       ...(idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {})
     },
     body: JSON.stringify(body),
+    redirect: "manual",
     signal: readOnlyRequestSignal(undefined, requestTimeoutMs)
   });
   const text = await response.text();
@@ -1002,7 +1054,7 @@ export async function recoverComputeClaim({
   const claimed = computeClaimProofProjection(claimResponse.payload);
   const eligible = claimResponse.statusCode === 200 && computeClaimProofMatchesTarget(claimed, target, true);
   const errorCode = eligible ? "none" : computeClaimProofBaseMatches(claimed, target) ? claimed.reason : "identity_mismatch";
-  return computeClaimArtifact(COMPUTE_CLAIM_RECOVER_MODE, target, release, claimed, eligible, errorCode, approval.approvalId);
+  return computeClaimArtifact(COMPUTE_CLAIM_RECOVER_MODE, target, release, claimed, eligible, errorCode, approval);
 }
 
 const COMPUTE_CLAIM_CONTINUATION_MODE = "compute_claim_recover_continuation";
@@ -1017,6 +1069,14 @@ function computeClaimContinuationCredentials(email, password) {
     throw new Error("compute_claim_continuation_customer_credentials_unavailable");
   }
   return { email: normalizedEmail, password: String(password) };
+}
+
+function computeClaimWorkspaceUrl(value, workspaceId) {
+  const errorCode = "compute_claim_continuation_workspace_url_invalid";
+  const expected = `https://workspace.medopl.cn/w/${workspaceId}/`;
+  if (value !== expected) throw new Error(errorCode);
+  const parsed = assertPublicHttpsUrl(value, errorCode, { hostname: "workspace.medopl.cn" });
+  return parsed.toString();
 }
 
 function computeClaimContinuationLaunch(value, target) {
@@ -1059,6 +1119,7 @@ function computeClaimContinuationLaunch(value, target) {
   if (launch.status === "succeeded" && (!launch.attachmentId || !launch.receiptId || !launch.runtimeServiceName || !launch.url)) {
     throw new Error("compute_claim_continuation_launch_result_incomplete");
   }
+  if (launch.status === "succeeded") launch.url = computeClaimWorkspaceUrl(launch.url, target.workspaceId);
   return launch;
 }
 
@@ -1080,7 +1141,7 @@ function computeClaimContinuationRuntime(value, target, launch) {
 
 function computeClaimContinuationReceipt(value, target, launch, runtime) {
   try {
-    return canaryReceipt(value, {
+    const receipt = canaryReceipt(value, {
       receiptId: launch.receiptId,
       workspaceId: target.workspaceId,
       computeAllocationId: target.computeAllocationId,
@@ -1090,6 +1151,7 @@ function computeClaimContinuationReceipt(value, target, launch, runtime) {
       workspaceApiKeyId: launch.workspaceApiKeyId,
       totalUsdMicros: launch.totalChargeUsdMicros
     });
+    return { ...receipt, workspaceId: target.workspaceId };
   } catch {
     throw new Error("compute_claim_continuation_receipt_invalid");
   }
@@ -1165,7 +1227,7 @@ export async function continueComputeClaimWorkspace({
     path: `/api/billing/receipts/${encodeURIComponent(launch.receiptId)}`
   }), target, launch, runtime);
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     operationMode: COMPUTE_CLAIM_CONTINUATION_MODE,
     status: "succeeded",
     recoveryEligible: true,
@@ -1175,7 +1237,8 @@ export async function continueComputeClaimWorkspace({
     launch,
     runtime,
     receipt,
-    mutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
+    runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
+    backgroundMutationCountsState: "unknown",
     verifiedAt: now.toISOString()
   };
 }
@@ -2817,6 +2880,33 @@ function cliArgs(argv) {
   return args;
 }
 
+function computeClaimCliMode(argv) {
+  if (argv.includes("--compute-claim-diagnose")) return COMPUTE_CLAIM_DIAGNOSE_MODE;
+  if (argv.includes("--compute-claim-recover")) return COMPUTE_CLAIM_RECOVER_MODE;
+  if (argv.includes("--compute-claim-continue")) return COMPUTE_CLAIM_CONTINUATION_MODE;
+  return "";
+}
+
+function blockedComputeClaimArtifact(operationMode, rawErrorCode = "") {
+  const fallbackErrorCode = operationMode === COMPUTE_CLAIM_DIAGNOSE_MODE
+    ? "compute_claim_diagnosis_failed"
+    : operationMode === COMPUTE_CLAIM_RECOVER_MODE
+      ? "compute_claim_recovery_failed"
+      : "compute_claim_continuation_failed";
+  const errorCode = rawErrorCode !== "none" && COMPUTE_CLAIM_BLOCKED_ERROR_CODES.has(rawErrorCode)
+    ? rawErrorCode
+    : fallbackErrorCode;
+  return {
+    schemaVersion: 2,
+    operationMode,
+    status: "blocked",
+    recoveryEligible: false,
+    errorCode,
+    runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
+    ...(operationMode === COMPUTE_CLAIM_CONTINUATION_MODE ? { backgroundMutationCountsState: "unknown" } : {})
+  };
+}
+
 export async function runProductionLiveQaCli({
   argv = process.argv.slice(2),
   env = process.env,
@@ -2834,6 +2924,7 @@ export async function runProductionLiveQaCli({
     stdout.write("Usage: node tools/production-live-qa.ts --read-only\nCompute claim modes use --compute-claim-diagnose, --compute-claim-recover, or --compute-claim-continue with a non-secret target JSON. A manual-review diagnosis requires --manual-review-diagnose and a non-secret target JSON. A fixed-slot model request requires --allow-gateway-write --allow-model-write. A real customer canary requires --basic-customer-canary, an exact funding mode, and its explicit approvals.\n");
     return 0;
   }
+  const computeClaimMode = computeClaimCliMode(argv);
   try {
     if (env.OPL_VERIFY_MODEL_ACCESS_KEY) throw new Error("production_live_qa_raw_key_forbidden");
     const args = cliArgs(argv);
@@ -3052,6 +3143,12 @@ export async function runProductionLiveQaCli({
     stdout.write(`${JSON.stringify(result, null, 2)}\n`);
     return 0;
   } catch (error) {
+    if (computeClaimMode) {
+      const artifact = blockedComputeClaimArtifact(computeClaimMode);
+      stdout.write(`${JSON.stringify(artifact, null, 2)}\n`);
+      stderr.write(`${JSON.stringify({ ok: false, errorCode: artifact.errorCode }, null, 2)}\n`);
+      return 1;
+    }
     stderr.write(`${JSON.stringify({ ok: false, error: error.message }, null, 2)}\n`);
     return 1;
   }

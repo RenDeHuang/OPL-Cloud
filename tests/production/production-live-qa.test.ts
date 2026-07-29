@@ -925,19 +925,28 @@ const COMPUTE_CLAIM_TARGET = Object.freeze({
   workspaceId: "ws-compute-claim-fixture",
   computeAllocationId: "ca_compute_claim_fixture",
   storageId: "vol_compute_claim_fixture",
-  packageId: "pro",
-  poolId: "pool-pro-8c16g",
-  nodePoolId: "np-workspace-pro",
-  machineName: "np-workspace-pro-machine-fixture",
+  packageId: "basic",
+  poolId: "pool-basic-2c4g",
+  nodePoolId: "np-workspace-basic",
+  machineName: "np-workspace-basic-machine-fixture",
   nodeName: "10.20.30.41",
   cvmInstanceId: "ins-compute-claim-fixture",
   privateIp: "10.20.30.42",
-  instanceType: "SA5.2XLARGE16",
+  instanceType: "SA5.MEDIUM4",
   zone: "na-siliconvalley-1",
   chargeType: "PREPAID",
   periodMonths: 1,
   renewFlag: "NOTIFY_AND_MANUAL_RENEW",
   deadline: "2099-08-28T00:00:00Z"
+});
+
+const COMPUTE_CLAIM_PRO_TARGET = Object.freeze({
+  ...COMPUTE_CLAIM_TARGET,
+  packageId: "pro",
+  poolId: "pool-pro-8c16g",
+  nodePoolId: "np-workspace-pro",
+  machineName: "np-workspace-pro-machine-fixture",
+  instanceType: "SA5.2XLARGE16"
 });
 
 function computeClaimProof(overrides = {}) {
@@ -969,6 +978,12 @@ function computeClaimProof(overrides = {}) {
     sub2apiMutationCount: 0,
     tencentMutationCount: 0,
     kubernetesMutationCount: 0,
+    failureStage: "",
+    providerErrorClass: "",
+    evidence: {
+      cvm: { attempted: 0, confirmed: 0, unknown: 0 },
+      node: { attempted: 0, confirmed: 0, unknown: 0 }
+    },
     ...overrides
   };
 }
@@ -985,6 +1000,16 @@ function computeClaimApprovalJson(overrides = {}) {
     target: COMPUTE_CLAIM_TARGET,
     ...overrides
   });
+}
+
+function canonicalJsonForTest(value) {
+  if (Array.isArray(value)) return `[${value.map(canonicalJsonForTest).join(",")}]`;
+  if (!value || typeof value !== "object") return JSON.stringify(value);
+  return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJsonForTest(value[key])}`).join(",")}}`;
+}
+
+function computeClaimApprovalDigestForTest(approvalJson) {
+  return createHash("sha256").update(canonicalJsonForTest(JSON.parse(approvalJson))).digest("hex");
 }
 
 function computeClaimCloudRevisionEvidence() {
@@ -1070,6 +1095,57 @@ function computeClaimContinuationReceipt(overrides = {}) {
   }, "ledger");
 }
 
+test("compute-claim runner rejects Pro recovery before revision or Fabric access", async () => {
+  let revisionReads = 0;
+  let fabricReads = 0;
+  await assert.rejects(() => productionLiveQa.diagnoseComputeClaimRecovery({
+    target: COMPUTE_CLAIM_PRO_TARGET,
+    mergedSha: BASIC_CANARY_MERGED_SHA,
+    cloudImageDigest: BASIC_CANARY_CLOUD_DIGEST,
+    kubeconfigPath: "/run/secrets/kubeconfig",
+    namespace: "opl-cloud",
+    cloudRevisionEvidenceReader: async () => {
+      revisionReads += 1;
+      return computeClaimCloudRevisionEvidence();
+    },
+    execFileImpl: async () => {
+      fabricReads += 1;
+      return { stdout: JSON.stringify({ statusCode: 200, payload: computeClaimProof(), errorCode: "none" }) };
+    }
+  }), /compute_claim_recovery_target_invalid/);
+  assert.equal(revisionReads, 0);
+  assert.equal(fabricReads, 0);
+});
+
+test("compute-claim recovery rejects Pro before revision, login, or claim access", async () => {
+  let revisionReads = 0;
+  let fetchCalls = 0;
+  await assert.rejects(() => productionLiveQa.recoverComputeClaim({
+    target: COMPUTE_CLAIM_PRO_TARGET,
+    approvalJson: computeClaimApprovalJson({ target: COMPUTE_CLAIM_PRO_TARGET }),
+    approvalId: "approval-compute-claim-fixture",
+    mergedSha: BASIC_CANARY_MERGED_SHA,
+    cloudImageDigest: BASIC_CANARY_CLOUD_DIGEST,
+    origin: "https://cloud.medopl.cn",
+    adminEmail: ADMIN_EMAIL,
+    adminPassword: ADMIN_PASSWORD,
+    internalServiceToken: "compute-claim-runner-capability",
+    kubeconfigPath: "/run/secrets/kubeconfig",
+    namespace: "opl-cloud",
+    cloudRevisionEvidenceReader: async () => {
+      revisionReads += 1;
+      return computeClaimCloudRevisionEvidence();
+    },
+    fetchImpl: async () => {
+      fetchCalls += 1;
+      return json({ error: "unexpected_request" }, 500);
+    },
+    now: new Date("2026-08-28T00:00:00Z")
+  }), /compute_claim_recovery_target_invalid/);
+  assert.equal(revisionReads, 0);
+  assert.equal(fetchCalls, 0);
+});
+
 test("compute-claim diagnosis proves the exact compute identity through the current Ready Fabric Pod with zero mutation", async () => {
   assert.equal(typeof productionLiveQa.diagnoseComputeClaimRecovery, "function");
   const execCalls = [];
@@ -1086,12 +1162,16 @@ test("compute-claim diagnosis proves the exact compute identity through the curr
     }
   });
 
-  assert.equal(result.schemaVersion, 1);
+  assert.equal(result.schemaVersion, 2);
   assert.equal(result.operationMode, "compute_claim_diagnose");
   assert.equal(result.status, "proven");
   assert.equal(result.recoveryEligible, true);
   assert.equal(result.errorCode, "none");
-  assert.deepEqual(result.mutationCounts, { sub2api: 0, tencent: 0, kubernetes: 0 });
+  assert.deepEqual(result.runnerDirectMutationCounts, { sub2api: 0, tencent: 0, kubernetes: 0 });
+  assert.deepEqual(result.proof.evidence, {
+    cvm: { attempted: 0, confirmed: 0, unknown: 0, missing: [] },
+    node: { attempted: 0, confirmed: 0, unknown: 0, missing: [] }
+  });
   assert.equal(result.proof.nodeOwnershipState, "unallocated");
   assert.equal(result.proof.cvmOwnershipState, "recoverable");
   assert.equal(execCalls.length, 1);
@@ -1119,7 +1199,105 @@ test("compute-claim diagnosis preserves classified failure and zero mutation", a
   assert.equal(result.status, "blocked");
   assert.equal(result.recoveryEligible, false);
   assert.equal(result.errorCode, "storage_already_started");
-  assert.deepEqual(result.mutationCounts, { sub2api: 0, tencent: 0, kubernetes: 0 });
+  assert.deepEqual(result.runnerDirectMutationCounts, { sub2api: 0, tencent: 0, kubernetes: 0 });
+});
+
+test("compute-claim blocked artifacts never project untrusted provider strings", async () => {
+  const marker = "provider_private_error_payload";
+  const result = await productionLiveQa.diagnoseComputeClaimRecovery({
+    target: COMPUTE_CLAIM_TARGET,
+    mergedSha: BASIC_CANARY_MERGED_SHA,
+    cloudImageDigest: BASIC_CANARY_CLOUD_DIGEST,
+    kubeconfigPath: "/run/secrets/kubeconfig",
+    namespace: "opl-cloud",
+    cloudRevisionEvidenceReader: async () => computeClaimCloudRevisionEvidence(),
+    execFileImpl: async () => ({ stdout: JSON.stringify({
+      statusCode: 409,
+      payload: computeClaimProof({ eligible: false, reason: marker, machineName: marker }),
+      errorCode: marker
+    }) })
+  });
+
+  assert.doesNotMatch(JSON.stringify(result), new RegExp(marker));
+  assert.deepEqual(result, {
+    schemaVersion: 2,
+    operationMode: "compute_claim_diagnose",
+    status: "blocked",
+    recoveryEligible: false,
+    errorCode: "provider_describe",
+    runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
+  });
+});
+
+test("compute-claim runner rejects mutation evidence fields outside the CVM and Node allowlists", async () => {
+  const marker = "ghp_secret";
+  const result = await productionLiveQa.diagnoseComputeClaimRecovery({
+    target: COMPUTE_CLAIM_TARGET,
+    mergedSha: BASIC_CANARY_MERGED_SHA,
+    cloudImageDigest: BASIC_CANARY_CLOUD_DIGEST,
+    kubeconfigPath: "/run/secrets/kubeconfig",
+    namespace: "opl-cloud",
+    cloudRevisionEvidenceReader: async () => computeClaimCloudRevisionEvidence(),
+    execFileImpl: async () => ({ stdout: JSON.stringify({
+      statusCode: 409,
+      payload: computeClaimProof({
+        eligible: false,
+        reason: "provider_describe",
+        tencentMutationCount: 0,
+        failureStage: "cvm_final_readback",
+        providerErrorClass: "readback_mismatch",
+        evidence: {
+          cvm: { attempted: 0, confirmed: 0, unknown: 0, missing: [marker] },
+          node: { attempted: 0, confirmed: 0, unknown: 0, missing: [] }
+        }
+      }),
+      errorCode: "provider_describe"
+    }) })
+  });
+
+  assert.equal(result.errorCode, "identity_mismatch");
+  assert.doesNotMatch(JSON.stringify(result), new RegExp(marker));
+});
+
+test("compute-claim runner rejects omitted missing for unknown or unconfirmed Go evidence", async () => {
+  for (const evidence of [
+    { attempted: 1, confirmed: 0, unknown: 1 },
+    { attempted: 1, confirmed: 0, unknown: 0 },
+    { attempted: 1, confirmed: 1, unknown: 1 }
+  ]) {
+    const result = await productionLiveQa.diagnoseComputeClaimRecovery({
+      target: COMPUTE_CLAIM_TARGET,
+      mergedSha: BASIC_CANARY_MERGED_SHA,
+      cloudImageDigest: BASIC_CANARY_CLOUD_DIGEST,
+      kubeconfigPath: "/run/secrets/kubeconfig",
+      namespace: "opl-cloud",
+      cloudRevisionEvidenceReader: async () => computeClaimCloudRevisionEvidence(),
+      execFileImpl: async () => ({ stdout: JSON.stringify({
+        statusCode: 409,
+        payload: computeClaimProof({
+          eligible: false,
+          reason: "provider_describe",
+          tencentMutationCount: 1,
+          failureStage: "cvm_final_readback",
+          providerErrorClass: "readback_mismatch",
+          evidence: { cvm: evidence, node: { attempted: 0, confirmed: 0, unknown: 0 } }
+        }),
+        errorCode: "provider_describe"
+      }) })
+    });
+    assert.equal(result.schemaVersion, 2);
+    assert.equal(result.status, "blocked");
+    assert.equal(result.recoveryEligible, false);
+    assert.equal(result.errorCode, "identity_mismatch");
+    assert.deepEqual(result, {
+      schemaVersion: 2,
+      operationMode: "compute_claim_diagnose",
+      status: "blocked",
+      recoveryEligible: false,
+      errorCode: "identity_mismatch",
+      runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
+    });
+  }
 });
 
 test("compute-claim recovery requires an exact release approval and calls only the proof-gated claim route", async () => {
@@ -1141,12 +1319,16 @@ test("compute-claim recovery requires an exact release approval and calls only t
         nodeOwnershipState: "target_owned",
         cvmOwnershipState: "target_owned",
         tencentMutationCount: 1,
-        kubernetesMutationCount: 1
+        kubernetesMutationCount: 1,
+        evidence: {
+          cvm: { attempted: 1, confirmed: 1, unknown: 0 },
+          node: { attempted: 1, confirmed: 1, unknown: 0 }
+        }
       }));
     }
     return json({ error: "not_found" }, 404);
   };
-  const result = await productionLiveQa.recoverComputeClaim({
+  const recoverInput = {
     target: COMPUTE_CLAIM_TARGET,
     approvalJson: computeClaimApprovalJson(),
     approvalId: "approval-compute-claim-fixture",
@@ -1161,13 +1343,31 @@ test("compute-claim recovery requires an exact release approval and calls only t
     cloudRevisionEvidenceReader: async () => computeClaimCloudRevisionEvidence(),
     fetchImpl,
     now: new Date("2026-08-28T00:00:00Z")
-  });
+  };
+  const result = await productionLiveQa.recoverComputeClaim(recoverInput);
+  const changedApprovalJson = computeClaimApprovalJson({ idempotencyKey: "compute-claim-recovery-other" });
+  const changedApproval = await productionLiveQa.recoverComputeClaim({ ...recoverInput, approvalJson: changedApprovalJson });
 
   assert.equal(result.operationMode, "compute_claim_recover");
+  assert.equal(result.schemaVersion, 2);
   assert.equal(result.status, "claimed");
-  assert.deepEqual(result.approval, { approvalId: "approval-compute-claim-fixture" });
-  assert.deepEqual(result.mutationCounts, { sub2api: 0, tencent: 1, kubernetes: 1 });
+  assert.deepEqual(result.approval, {
+    approvalId: "approval-compute-claim-fixture",
+    approvalDigest: computeClaimApprovalDigestForTest(computeClaimApprovalJson())
+  });
+  assert.equal(changedApproval.approval.approvalId, result.approval.approvalId);
+  assert.equal(changedApproval.approval.approvalDigest, computeClaimApprovalDigestForTest(changedApprovalJson));
+  assert.notEqual(changedApproval.approval.approvalDigest, result.approval.approvalDigest);
+  assert.deepEqual(result.runnerDirectMutationCounts, { sub2api: 0, tencent: 0, kubernetes: 0 });
+  assert.equal(result.proof.tencentMutationCount, 1);
+  assert.equal(result.proof.kubernetesMutationCount, 1);
+  assert.deepEqual(result.proof.evidence, {
+    cvm: { attempted: 1, confirmed: 1, unknown: 0, missing: [] },
+    node: { attempted: 1, confirmed: 1, unknown: 0, missing: [] }
+  });
   assert.deepEqual(calls.map(({ method, path }) => [method, path]), [
+    ["POST", "/api/auth/login"],
+    ["POST", `/api/operator/workspace-launches/${COMPUTE_CLAIM_TARGET.launchOperationId}/compute-claim-recovery/claim`],
     ["POST", "/api/auth/login"],
     ["POST", `/api/operator/workspace-launches/${COMPUTE_CLAIM_TARGET.launchOperationId}/compute-claim-recovery/claim`]
   ]);
@@ -1175,9 +1375,58 @@ test("compute-claim recovery requires an exact release approval and calls only t
   assert.equal(calls[1].body.privateIp, COMPUTE_CLAIM_TARGET.privateIp);
   assert.notEqual(calls[1].body.nodeName, calls[1].body.privateIp);
   assert.equal(calls[1].headers.get("idempotency-key"), "compute-claim-recovery-fixture");
+  assert.equal(calls[3].headers.get("idempotency-key"), "compute-claim-recovery-other");
   assert.equal(calls[1].headers.get("x-opl-compute-claim-capability"), "compute-claim-runner-capability");
-  assert.equal(calls.slice(1).every(({ headers }) => headers.get("x-opl-csrf") === "csrf-compute-claim"), true);
+  assert.equal(calls.filter(({ path }) => path.endsWith("/claim")).every(({ headers }) => headers.get("x-opl-csrf") === "csrf-compute-claim"), true);
   assert.equal(calls.some(({ path }) => /wallet|refund|compute-allocations|storage-volumes/.test(path)), false);
+});
+
+test("compute-claim recovery never follows a claim redirect with the internal capability", async () => {
+  const calls = [];
+  const fetchImpl = async (input, init = {}) => {
+    const url = new URL(String(input));
+    const headers = new Headers(init.headers);
+    calls.push({ origin: url.origin, path: url.pathname, redirect: init.redirect, headers });
+    if (url.pathname === "/api/auth/login") {
+      return json({ user: { accountId: "acct-admin", role: "admin" } }, 200, {
+        "set-cookie": "opl_session=session-fixture; Path=/; HttpOnly",
+        "x-opl-csrf-token": "csrf-compute-claim"
+      });
+    }
+    if (url.origin === "https://cloud.medopl.cn") {
+      if (init.redirect === "manual") {
+        return new Response(null, { status: 302, headers: { location: "https://redirect.example.test/claim" } });
+      }
+      return fetchImpl("https://redirect.example.test/claim", init);
+    }
+    return json(computeClaimProof({
+      nodeOwnershipState: "target_owned",
+      cvmOwnershipState: "target_owned"
+    }));
+  };
+
+  const result = await productionLiveQa.recoverComputeClaim({
+    target: COMPUTE_CLAIM_TARGET,
+    approvalJson: computeClaimApprovalJson(),
+    approvalId: "approval-compute-claim-fixture",
+    mergedSha: BASIC_CANARY_MERGED_SHA,
+    cloudImageDigest: BASIC_CANARY_CLOUD_DIGEST,
+    origin: "https://cloud.medopl.cn",
+    adminEmail: ADMIN_EMAIL,
+    adminPassword: ADMIN_PASSWORD,
+    internalServiceToken: "compute-claim-runner-capability",
+    kubeconfigPath: "/run/secrets/kubeconfig",
+    namespace: "opl-cloud",
+    cloudRevisionEvidenceReader: async () => computeClaimCloudRevisionEvidence(),
+    fetchImpl,
+    now: new Date("2026-08-28T00:00:00Z")
+  });
+
+  assert.equal(result.status, "blocked");
+  assert.equal(calls.filter(({ origin }) => origin === "https://redirect.example.test").length, 0);
+  const claim = calls.find(({ path }) => path.endsWith("/compute-claim-recovery/claim"));
+  assert.equal(claim.redirect, "manual");
+  assert.equal(claim.headers.get("x-opl-compute-claim-capability"), "compute-claim-runner-capability");
 });
 
 test("compute-claim continuation polls the same launch and runtime with no business writes", async () => {
@@ -1235,6 +1484,7 @@ test("compute-claim continuation polls the same launch and runtime with no busin
   });
 
   assert.equal(result.operationMode, "compute_claim_recover_continuation");
+  assert.equal(result.schemaVersion, 2);
   assert.equal(result.status, "succeeded");
   assert.equal(result.recoveryEligible, true);
   assert.equal(result.launch.status, "succeeded");
@@ -1243,6 +1493,7 @@ test("compute-claim continuation polls the same launch and runtime with no busin
   assert.equal(result.launch.storageId, COMPUTE_CLAIM_TARGET.storageId);
   assert.equal(result.launch.attachmentId, "attachment-compute-claim-fixture");
   assert.equal(result.launch.receiptId, "receipt-compute-claim-fixture");
+  assert.equal(result.receipt.workspaceId, COMPUTE_CLAIM_TARGET.workspaceId);
   assert.equal(result.receipt.type, "billing.workspace_purchased.v1");
   assert.equal(result.receipt.components.storage.resourceId, COMPUTE_CLAIM_TARGET.storageId);
   assert.equal(result.receipt.components.storage.sizeGb, 10);
@@ -1251,7 +1502,8 @@ test("compute-claim continuation polls the same launch and runtime with no busin
   assert.equal(result.runtime.ready, true);
   assert.equal(result.runtime.status, "running");
   assert.equal(result.runtime.url, result.launch.url);
-  assert.deepEqual(result.mutationCounts, { sub2api: 0, tencent: 0, kubernetes: 0 });
+  assert.deepEqual(result.runnerDirectMutationCounts, { sub2api: 0, tencent: 0, kubernetes: 0 });
+  assert.equal(result.backgroundMutationCountsState, "unknown");
   assert.deepEqual(calls.map(({ method, path }) => [method, path]), [
     ["POST", "/api/auth/login"],
     ["GET", "/api/auth/me"],
@@ -1261,6 +1513,71 @@ test("compute-claim continuation polls the same launch and runtime with no busin
   ]);
   assert.equal(calls.filter(({ method, path }) => method === "POST" && /launch|claim|debit|wallet|storage/i.test(path)).length, 0);
   assert.doesNotMatch(JSON.stringify(result), /password|secret|token|cookie|providerRequestId/i);
+});
+
+test("compute-claim continuation rejects non-public or noncanonical Workspace URLs", async () => {
+  const invalidUrls = [
+    `http://workspace.medopl.cn/w/${COMPUTE_CLAIM_TARGET.workspaceId}/`,
+    `https://localhost/w/${COMPUTE_CLAIM_TARGET.workspaceId}/`,
+    `https://10.20.30.40/w/${COMPUTE_CLAIM_TARGET.workspaceId}/`,
+    `https://user:password@workspace.medopl.cn/w/${COMPUTE_CLAIM_TARGET.workspaceId}/`,
+    `https://workspace.example.test/w/${COMPUTE_CLAIM_TARGET.workspaceId}/`,
+    "https://workspace.medopl.cn/w/other/",
+    `https://workspace.medopl.cn/w/${COMPUTE_CLAIM_TARGET.workspaceId}/?token=secret`,
+    `https://workspace.medopl.cn/w/${COMPUTE_CLAIM_TARGET.workspaceId}/#fragment`,
+    `https://workspace.medopl.cn/w/${COMPUTE_CLAIM_TARGET.workspaceId}/?`,
+    `https://workspace.medopl.cn/w/${COMPUTE_CLAIM_TARGET.workspaceId}/#`,
+    `https://workspace.medopl.cn:443/w/${COMPUTE_CLAIM_TARGET.workspaceId}/`,
+    `https://:@workspace.medopl.cn/w/${COMPUTE_CLAIM_TARGET.workspaceId}/`
+  ];
+  for (const invalidUrl of invalidUrls) {
+    const calls = [];
+    const fetchImpl = async (input) => {
+      const url = new URL(String(input));
+      calls.push(url.pathname);
+      if (url.pathname === "/api/auth/login") {
+        return json({ user: { accountId: COMPUTE_CLAIM_TARGET.accountId, role: "owner" } }, 200, {
+          "set-cookie": "opl_session=customer-fixture; Path=/; HttpOnly",
+          "x-opl-csrf-token": "csrf-customer"
+        });
+      }
+      if (url.pathname === "/api/auth/me") return source({
+        accountId: COMPUTE_CLAIM_TARGET.accountId,
+        email: "huangrende@fenggaolab.org",
+        role: "owner",
+        status: "active"
+      }, "sub2api");
+      if (url.pathname === `/api/workspace-launches/${COMPUTE_CLAIM_TARGET.launchOperationId}`) {
+        return json(computeClaimContinuationLaunch({
+          phase: "succeeded",
+          status: "succeeded",
+          overrides: { url: invalidUrl }
+        }));
+      }
+      if (url.pathname === `/api/workspaces/${COMPUTE_CLAIM_TARGET.workspaceId}/runtime-status`) {
+        return computeClaimRuntimeStatus({ url: invalidUrl });
+      }
+      if (url.pathname === "/api/billing/receipts/receipt-compute-claim-fixture") return computeClaimContinuationReceipt();
+      return json({ error: "not_found" }, 404);
+    };
+
+    await assert.rejects(() => productionLiveQa.continueComputeClaimWorkspace({
+      target: COMPUTE_CLAIM_TARGET,
+      mergedSha: BASIC_CANARY_MERGED_SHA,
+      cloudImageDigest: BASIC_CANARY_CLOUD_DIGEST,
+      origin: "https://cloud.medopl.cn",
+      customerEmail: "huangrende@fenggaolab.org",
+      customerPassword: "customer-password-fixture",
+      kubeconfigPath: "/run/secrets/kubeconfig",
+      namespace: "opl-cloud",
+      launchPollAttempts: 1,
+      launchPollDelayMs: 0,
+      cloudRevisionEvidenceReader: async () => computeClaimCloudRevisionEvidence(),
+      fetchImpl,
+      now: new Date("2026-08-28T00:00:00Z")
+    }), /compute_claim_continuation_workspace_url_invalid/, invalidUrl);
+    assert.equal(calls.includes(`/api/workspaces/${COMPUTE_CLAIM_TARGET.workspaceId}/runtime-status`), false, invalidUrl);
+  }
 });
 
 test("compute-claim continuation fails closed on terminal error, identity drift, and runtime URL mismatch", async () => {
@@ -1346,6 +1663,42 @@ test("compute-claim continuation rejects a mismatched purchase receipt without b
     if (url.pathname === `/api/workspace-launches/${COMPUTE_CLAIM_TARGET.launchOperationId}`) return json(computeClaimContinuationLaunch({ phase: "succeeded", status: "succeeded" }));
     if (url.pathname === `/api/workspaces/${COMPUTE_CLAIM_TARGET.workspaceId}/runtime-status`) return computeClaimRuntimeStatus();
     if (url.pathname === "/api/billing/receipts/receipt-compute-claim-fixture") return computeClaimContinuationReceipt({ components: { compute: { resourceType: "compute", resourceId: COMPUTE_CLAIM_TARGET.computeAllocationId, chargeUsdMicros: 50000000 }, storage: { resourceType: "storage", resourceId: COMPUTE_CLAIM_TARGET.storageId, sizeGb: 20, chargeUsdMicros: 2580000 } } });
+    return json({ error: "not_found" }, 404);
+  };
+  await assert.rejects(() => productionLiveQa.continueComputeClaimWorkspace({
+    target: COMPUTE_CLAIM_TARGET,
+    mergedSha: BASIC_CANARY_MERGED_SHA,
+    cloudImageDigest: BASIC_CANARY_CLOUD_DIGEST,
+    origin: "https://cloud.medopl.cn",
+    customerEmail: "huangrende@fenggaolab.org",
+    customerPassword: "customer-password-fixture",
+    kubeconfigPath: "/run/secrets/kubeconfig",
+    namespace: "opl-cloud",
+    launchPollAttempts: 1,
+    launchPollDelayMs: 0,
+    cloudRevisionEvidenceReader: async () => computeClaimCloudRevisionEvidence(),
+    fetchImpl,
+    now: new Date("2026-08-28T00:00:00Z")
+  }), /compute_claim_continuation_receipt_invalid/);
+  assert.equal(calls.filter(({ method, path }) => method === "POST" && /launch|claim|debit|wallet|storage/i.test(path)).length, 0);
+});
+
+test("compute-claim continuation rejects a receipt for another Workspace without business writes", async () => {
+  const calls = [];
+  const fetchImpl = async (input, init = {}) => {
+    const url = new URL(String(input));
+    const method = init.method || "GET";
+    calls.push({ method, path: url.pathname });
+    if (url.pathname === "/api/auth/login") {
+      return json({ user: { accountId: COMPUTE_CLAIM_TARGET.accountId, role: "owner" } }, 200, {
+        "set-cookie": "opl_session=customer-fixture; Path=/; HttpOnly",
+        "x-opl-csrf-token": "csrf-customer"
+      });
+    }
+    if (url.pathname === "/api/auth/me") return source({ accountId: COMPUTE_CLAIM_TARGET.accountId, email: "huangrende@fenggaolab.org", role: "owner", status: "active" }, "sub2api");
+    if (url.pathname === `/api/workspace-launches/${COMPUTE_CLAIM_TARGET.launchOperationId}`) return json(computeClaimContinuationLaunch({ phase: "succeeded", status: "succeeded" }));
+    if (url.pathname === `/api/workspaces/${COMPUTE_CLAIM_TARGET.workspaceId}/runtime-status`) return computeClaimRuntimeStatus();
+    if (url.pathname === "/api/billing/receipts/receipt-compute-claim-fixture") return computeClaimContinuationReceipt({ workspaceId: "ws-other" });
     return json({ error: "not_found" }, 404);
   };
   await assert.rejects(() => productionLiveQa.continueComputeClaimWorkspace({
@@ -1552,8 +1905,9 @@ test("compute-claim diagnosis CLI emits the same zero-mutation artifact", async 
   });
   assert.equal(code, 0, stderr);
   const result = JSON.parse(stdout);
+  assert.equal(result.schemaVersion, 2);
   assert.equal(result.operationMode, "compute_claim_diagnose");
-	assert.deepEqual(result.mutationCounts, { sub2api: 0, tencent: 0, kubernetes: 0 });
+  assert.deepEqual(result.runnerDirectMutationCounts, { sub2api: 0, tencent: 0, kubernetes: 0 });
 });
 
 test("compute-claim recovery CLI forwards the internal runner capability", async () => {
@@ -1594,14 +1948,21 @@ test("compute-claim recovery CLI forwards the internal runner capability", async
 				nodeOwnershipState: "target_owned",
 				cvmOwnershipState: "target_owned",
 				tencentMutationCount: 1,
-				kubernetesMutationCount: 1
+				kubernetesMutationCount: 1,
+					evidence: {
+						cvm: { attempted: 1, confirmed: 1, unknown: 0 },
+						node: { attempted: 1, confirmed: 1, unknown: 0 }
+					}
 			}));
 		},
 		now: new Date("2026-08-28T00:00:00Z")
 	});
 
 	assert.equal(code, 0, stderr);
-	assert.equal(JSON.parse(stdout).status, "claimed");
+	const artifact = JSON.parse(stdout);
+	assert.equal(artifact.schemaVersion, 2);
+	assert.equal(artifact.status, "claimed");
+	assert.deepEqual(artifact.runnerDirectMutationCounts, { sub2api: 0, tencent: 0, kubernetes: 0 });
 	assert.deepEqual(calls.map(({ path }) => path), [
 		"/api/auth/login",
 		`/api/operator/workspace-launches/${COMPUTE_CLAIM_TARGET.launchOperationId}/compute-claim-recovery/claim`
@@ -1610,6 +1971,7 @@ test("compute-claim recovery CLI forwards the internal runner capability", async
 });
 
 test("compute-claim recovery CLI rejects missing explicit approval before access", async () => {
+  let stdout = "";
   let stderr = "";
   let fetchCalls = 0;
   let execCalls = 0;
@@ -1622,15 +1984,59 @@ test("compute-claim recovery CLI rejects missing explicit approval before access
       OPL_K8S_NAMESPACE: "opl-cloud",
       KUBECONFIG: "/run/secrets/kubeconfig"
     },
-    stdout: { write: () => {} },
+    stdout: { write: (chunk) => { stdout += chunk; } },
     stderr: { write: (chunk) => { stderr += chunk; } },
     fetchImpl: async () => { fetchCalls += 1; return json({}); },
     execFileImpl: async () => { execCalls += 1; return { stdout: "{}" }; }
   });
   assert.equal(code, 1);
-  assert.match(stderr, /compute_claim_recovery_approval_required/);
+  const artifact = JSON.parse(stdout);
+  assert.deepEqual(artifact, {
+    schemaVersion: 2,
+    operationMode: "compute_claim_recover",
+    status: "blocked",
+    recoveryEligible: false,
+    errorCode: "compute_claim_recovery_failed",
+    runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
+  });
+  assert.doesNotMatch(`${stdout}\n${stderr}`, /approval_required|password|secret|token|provider payload/i);
   assert.equal(fetchCalls, 0);
   assert.equal(execCalls, 0);
+});
+
+test("all compute-claim CLI modes emit a non-empty redacted blocked artifact on exceptions", async () => {
+  const contract = JSON.parse(await readFile(new URL("../../packages/contracts/opl-cloud-deployment-contract.json", import.meta.url), "utf8"));
+  for (const [flag, operationMode, errorCode] of [
+    ["--compute-claim-diagnose", "compute_claim_diagnose", "compute_claim_diagnosis_failed"],
+    ["--compute-claim-recover", "compute_claim_recover", "compute_claim_recovery_failed"],
+    ["--compute-claim-continue", "compute_claim_recover_continuation", "compute_claim_continuation_failed"]
+  ]) {
+    let stdout = "";
+    let stderr = "";
+    const code = await runProductionLiveQaCli({
+      argv: [flag, "--read-only"],
+      env: { OPL_SUB2API_ADMIN_PASSWORD: "must-not-leak" },
+      stdout: { write: (chunk) => { stdout += chunk; } },
+      stderr: { write: (chunk) => { stderr += chunk; } }
+    });
+    assert.equal(code, 1);
+    assert.notEqual(stdout.trim(), "");
+    const artifact = JSON.parse(stdout);
+    assert.equal(artifact.schemaVersion, 2);
+    assert.equal(artifact.operationMode, operationMode);
+    assert.equal(artifact.status, "blocked");
+    assert.equal(artifact.recoveryEligible, false);
+    assert.equal(artifact.errorCode, errorCode);
+    assert.deepEqual(artifact.runnerDirectMutationCounts, { sub2api: 0, tencent: 0, kubernetes: 0 });
+    assert.deepEqual(
+      Object.keys(artifact).sort(),
+      [...contract.productionComputeClaimRecovery.artifact.blockedArtifactFieldsByMode[operationMode]].sort()
+    );
+    if (operationMode === "compute_claim_recover_continuation") {
+      assert.equal(artifact.backgroundMutationCountsState, "unknown");
+    }
+    assert.doesNotMatch(`${stdout}\n${stderr}`, /must-not-leak|password|secret|token|provider payload|conflict/i);
+  }
 });
 
 function manualReviewDiagnosisFixture({

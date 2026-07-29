@@ -122,6 +122,18 @@ The four implementation owner lanes are Console/Control Plane, Fabric, Gateway i
   bounded to zero or one. Ambiguity,
   conflicting ownership, provider/IAM/RBAC failure, or any existing storage
   operation fails closed before mutation and remains manual review.
+- Compute-claim diagnosis, recovery, and continuation artifacts alone use
+  schema version 2; the separate manual-review diagnosis remains schema version
+  1 with its existing `mutationCounts`. Runner-direct counts are always zero.
+  Provider attempts come only from the proof counts and per-CVM/per-Node
+  `attempted`, `confirmed`, `unknown`, and `missing` evidence. Success requires
+  the evidence count to equal `attempted`, every attempt to be confirmed, zero
+  unknowns, and no missing fields. A Go response may omit an empty `missing`
+  array only for that fully confirmed shape. CVM `missing` accepts only
+  `instance`, `instance_name`, and the four `opl_*` ownership tags; Node
+  `missing` accepts only `node_ownership`. Continuation reports background
+  mutation counts as unknown and proves completion from the same launch,
+  storage, attachment, Runtime, and Receipt identities instead.
 - The system NodePool `np-6l4nkdto`, Machine `np-6l4nkdto-2cdtm`, and Node
   `10.66.0.42` must each resolve uniquely and are protected from every
   Tencent/Kubernetes mutation and cleanup path. Its actual NodePool MachineType
@@ -465,8 +477,16 @@ contract or select the SKU for a customer launch.
   Control Plane also requires the current internal-runner capability from the
   deployed Kubernetes Secret, so an ordinary operator session cannot authorize
   claim by self-supplying approval fields. The approval ID and HTTP mutation
-  idempotency key are part of the persisted
-  replay identity, and a successful diagnosis never authorizes claim by itself.
+  idempotency key are part of the persisted replay identity. The recovery
+  artifact carries a canonical SHA-256 digest of the complete approval, and the
+  workflow independently recomputes it before continuation. A successful
+  diagnosis never authorizes claim by itself.
+  Before the claim provider can write, Fabric CAS-reserves the bounded Tencent
+  and Kubernetes mutation budget in the original compute operation. A legacy
+  binding without this ledger may reserve once after the same exact read-only
+  proof; once reserved, every same-key retry is readback-only. A missing provider
+  outcome remains conservatively unknown at the full bound and never authorizes
+  another external write.
 
 ## Launch Stages
 

@@ -380,6 +380,7 @@ test("Current Fabric contracts require dedicated package NodePools without weake
     output: "redacted_evidence_only",
     currentState: "implemented_and_fake_tested_not_executed"
   });
+  assert.equal(deployment.schemaVersion, 21);
   assert.deepEqual(deployment.productionComputeClaimRecovery, {
     workflow: ".github/workflows/production-basic-customer-operation.yml",
     execution: "manual_release_owner_only_not_ci_release_rollout_or_e2e",
@@ -392,12 +393,19 @@ test("Current Fabric contracts require dedicated package NodePools without weake
         route: "POST /fabric/compute-claim-recovery/proof",
         credentials: "current_ready_fabric_pod_process_only",
         mutationApproval: false,
-        requiredMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
+        requiredProofMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
       },
       recover: {
         input: "operation_mode=compute_claim_recover",
         environment: "production",
+        packageId: "basic",
         route: "POST /api/operator/workspace-launches/{operationId}/compute-claim-recovery/claim",
+        claimTransport: {
+          redirect: "manual",
+          acceptedStatusCode: 200,
+          redirectStatusCodes: "all_3xx_blocked",
+          crossOriginCapabilityForwarding: false
+        },
         approvalSecret: "OPL_COMPUTE_CLAIM_RECOVERY_APPROVAL_JSON",
         adminSecrets: ["OPL_SUB2API_ADMIN_EMAIL", "OPL_SUB2API_ADMIN_PASSWORD"],
         customerReadOnlyPasswordSecret: "OPL_BASIC_CANARY_CUSTOMER_PASSWORD",
@@ -413,16 +421,39 @@ test("Current Fabric contracts require dedicated package NodePools without weake
           mode: "GET_only_same_launch_after_claim",
           launchRoute: "GET /api/workspace-launches/{operationId}",
           runtimeRoute: "GET /api/workspaces/{workspaceId}/runtime-status",
-          terminal: ["status=succeeded", "phase=succeeded", "attachmentId", "receiptId", "url", "receipt.type=billing.workspace_purchased.v1", "receipt.storage.resourceId=storageId", "receipt.storage.sizeGb=10", "receipt.fulfillment.attachmentId=attachmentId", "receipt.fulfillment.runtimeId=runtimeId", "runtime.ready=true", "runtime.status=running", "runtime.url=launch.url"],
+          terminal: ["status=succeeded", "phase=succeeded", "attachmentId", "receiptId", "launch.url=https://workspace.medopl.cn/w/{workspaceId}/", "receipt.workspaceId=workspaceId", "receipt.type=billing.workspace_purchased.v1", "receipt.storage.resourceId=storageId", "receipt.storage.sizeGb=10", "receipt.fulfillment.attachmentId=attachmentId", "receipt.fulfillment.runtimeId=runtimeId", "runtime.ready=true", "runtime.status=running", "runtime.url=launch.url"],
           forbiddenWrites: ["second_launch", "second_claim", "debit", "recharge", "scale", "create_compute", "create_storage", "delete", "replace"],
-          mutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
+          runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
+          backgroundMutationCountsState: "unknown"
         }
+      }
+    },
+    artifact: {
+      schemaVersion: 2,
+      manualReviewSchemaVersion: 1,
+      runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
+      providerMutationAuthority: ["proof.sub2apiMutationCount", "proof.tencentMutationCount", "proof.kubernetesMutationCount", "proof.evidence"],
+      failure: "non_empty_redacted_blocked_json_with_allowlisted_error_code",
+      successApprovalFields: ["approvalId", "approvalDigest"],
+      blockedArtifactFieldsByMode: {
+        compute_claim_diagnose: ["schemaVersion", "operationMode", "status", "recoveryEligible", "errorCode", "runnerDirectMutationCounts"],
+        compute_claim_recover: ["schemaVersion", "operationMode", "status", "recoveryEligible", "errorCode", "runnerDirectMutationCounts"],
+        compute_claim_recover_continuation: ["schemaVersion", "operationMode", "status", "recoveryEligible", "errorCode", "runnerDirectMutationCounts", "backgroundMutationCountsState"]
       }
     },
     releaseBinding: ["exact_merged_origin_main_sha", "immutable_cloud_digest", "control_plane_fabric_ledger_ready_pod_image_id", "approval_id_and_idempotency_key"],
     targetBinding: ["launch", "account", "workspace", "compute", "machine", "node", "cvm", "pool", "node_pool", "sku", "zone", "private_ip", "billing_facts"],
     mutationBounds: { sub2api: 0, tencent: { min: 0, max: 5 }, kubernetes: { min: 0, max: 1 } },
-    artifactGate: ["exact_target_owned_readback", "sub2api_zero", "tencent_zero_to_five", "kubernetes_zero_to_one"],
+    mutationLedger: {
+      persistence: "original_create_compute_allocation_operation_payload_cas_before_provider_call",
+      states: ["reserved", "observed"],
+      legacyBindingUpgrade: "binding_without_mutation_ledger_may_reserve_once_after_exact_read_only_proof",
+      replayAfterReservation: "authoritative_readback_only_zero_incremental_external_mutation",
+      missingOutcome: "conservative_unknown_at_full_bound",
+      replayProofUnavailable: "return_persisted_mutation_evidence_zero_incremental_external_mutation",
+      observedSuccessReadbackMismatch: "fail_closed_identity_mismatch_claim_final_readback"
+    },
+    artifactGate: ["exact_target_owned_readback", "proof_sub2api_zero", "proof_tencent_zero_to_five", "proof_kubernetes_zero_to_one", "attempted_equals_count", "confirmed_equals_attempted", "unknown_zero", "missing_empty"],
     claimForbidden: ["debit", "refund", "recharge", "scale", "create_compute", "create_storage", "delete", "replace"],
     currentState: "code_complete_local_focused_and_postgresql_verified_not_merged_released_deployed_or_executed"
   });
@@ -642,6 +673,7 @@ test("Current contracts hard cut operator resources, wallet adjustments, and ann
     absentRequires: "both_local_identities_and_exact_provider_describe_absence",
     forbiddenSideEffects: ["sync", "tag", "kubectl_apply", "delete", "label", "purchase", "renew", "destroy"]
   });
+  assert.equal(boundary.schemaVersion, 15);
   assert.deepEqual(boundary.services.fabric.workspaceComputeClaimRecovery, {
     proofEndpoint: "POST /fabric/compute-claim-recovery/proof",
     claimEndpoint: "POST /fabric/compute-claim-recovery/claim",
@@ -658,12 +690,32 @@ test("Current contracts hard cut operator resources, wallet adjustments, and ann
     idempotencyBinding: ["launch_operation_id", "idempotency_key", "target_hash", "request_hash"],
     bindingPersistence: "original_create_compute_allocation_operation_payload_cas",
     malformedOrDriftedBinding: "fail_closed_conflict_zero_provider_mutation",
+    mutationLedger: {
+      persistence: "original_create_compute_allocation_operation_payload_cas_before_provider_call",
+      states: ["reserved", "observed"],
+      legacyBindingUpgrade: "binding_without_mutation_ledger_may_reserve_once_after_exact_read_only_proof",
+      replayAfterReservation: "authoritative_readback_only_zero_incremental_external_mutation",
+      missingOutcome: "conservative_unknown_at_full_bound",
+      replayProofUnavailable: "return_persisted_mutation_evidence_zero_incremental_external_mutation",
+      observedSuccessReadbackMismatch: "fail_closed_identity_mismatch_claim_final_readback"
+    },
     replay: "same_key_and_target_returns_same_proof_zero_incremental_external_mutation",
     claimWrites: ["same_cvm_instance_name", "same_cvm_four_ownership_tags", "same_node_single_labels_and_taint_patch", "same_machine_ownership_active"],
     claimMutationBounds: {
       sub2api: 0,
       tencent: { min: 0, max: 5, meaning: "one_instance_name_plus_four_ownership_tags" },
       kubernetes: { min: 0, max: 1, meaning: "one_exact_node_json_patch" }
+    },
+    mutationEvidence: {
+      fields: ["attempted", "confirmed", "unknown", "missing"],
+      cardinality: "confirmed_lte_attempted_unknown_lte_attempted_confirmed_plus_unknown_lte_attempted",
+      success: "attempted_equals_count_confirmed_equals_attempted_unknown_zero_missing_empty",
+      omittedMissing: "normalize_to_empty_only_when_attempted_equals_confirmed_and_unknown_zero",
+      missingAllowlist: {
+        cvm: ["instance", "instance_name", "opl_account_id", "opl_workspace_id", "opl_resource_id", "opl_operation_id"],
+        node: ["node_ownership"]
+      },
+      unstructuredTransport: "bounded_conservative_attempted_equals_count_equals_unknown_and_node_write_forbidden"
     },
     strictReadback: ["cvm_target_owned", "node_target_owned", "machine_ownership_active"],
     forbiddenCalls: ["CreateComputeAllocation", "scale", "debit", "refund", "recharge", "create_storage_volume", "delete", "replace_cvm"],

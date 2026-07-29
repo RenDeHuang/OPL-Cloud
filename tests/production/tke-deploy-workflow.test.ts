@@ -866,6 +866,7 @@ test("compute claim diagnosis and recovery are isolated VPC modes with separate 
   const recover = workflowJob(workflow, "compute-claim-recover");
   const diagnoseRuns = serializedRuns(diagnose);
   const recoverRuns = serializedRuns(recover);
+  const manualReviewRuns = serializedRuns(workflowJob(workflow, "manual-review-diagnose"));
 
   assert.equal(inputs.compute_claim_target_json.required, false);
   assert.equal(inputs.compute_claim_cloud_digest.required, false);
@@ -902,13 +903,34 @@ test("compute claim diagnosis and recovery are isolated VPC modes with separate 
   assert.match(recoverRuns, /get secret opl-cloud-internal-service/);
   assert.match(recoverRuns, /\.data\.OPL_INTERNAL_SERVICE_TOKEN/);
   assert.match(recoverRuns, /::add-mask::\$OPL_INTERNAL_SERVICE_TOKEN/);
-  assert.match(recoverRuns, /result\.mutationCounts\.tencent > 5/);
-  assert.match(recoverRuns, /result\.mutationCounts\.kubernetes > 1/);
+  for (const runs of [diagnoseRuns, recoverRuns]) {
+    assert.match(runs, /result\?\.schemaVersion !== 2/);
+    assert.match(runs, /runnerDirectMutationCounts\?\.sub2api !== 0/);
+    assert.match(runs, /proof\?\.sub2apiMutationCount !== 0/);
+    assert.match(runs, /evidence\?\.cvm/);
+    assert.match(runs, /evidence\?\.node/);
+    assert.match(runs, /confirmed === evidence\.attempted/);
+    assert.match(runs, /unknown === 0/);
+    assert.match(runs, /missing\.length === 0/);
+  }
+  assert.match(recoverRuns, /proof\.tencentMutationCount > 5/);
+  assert.match(recoverRuns, /proof\.kubernetesMutationCount > 1/);
+  assert.match(recoverRuns, /createHash\("sha256"\)/);
+  assert.match(recoverRuns, /canonicalJson/);
+  assert.match(recoverRuns, /result\?\.approval\?\.approvalDigest !== approvalDigest/);
+  assert.match(recoverRuns, /result\?\.approval\?\.approvalId !== approval\.approvalId/);
+  assert.doesNotMatch(`${diagnoseRuns}\n${recoverRuns}`, /result\?\.mutationCounts/);
+  assert.match(manualReviewRuns, /result\?\.schemaVersion !== 1/);
+  assert.match(manualReviewRuns, /result\?\.mutationCounts\?\.sub2api !== 0/);
   assert.match(recoverRuns, /production-live-qa\.ts --compute-claim-continue/);
   assert.match(JSON.stringify(recover), /OPL_BASIC_CANARY_CUSTOMER_EMAIL/);
   assert.match(JSON.stringify(recover), /OPL_BASIC_CANARY_CUSTOMER_PASSWORD/);
   assert.match(recoverRuns, /workspace-launch-continuation\.json/);
   assert.match(recoverRuns, /result\?\.status !== "succeeded"/);
+  assert.match(recoverRuns, /backgroundMutationCountsState !== "unknown"/);
+  assert.match(recoverRuns, /const expectedWorkspaceUrl = `https:\/\/workspace\.medopl\.cn\/w\/\$\{target\.workspaceId\}\//);
+  assert.match(recoverRuns, /launch\?\.url !== expectedWorkspaceUrl/);
+  assert.match(recoverRuns, /runtime\?\.url !== expectedWorkspaceUrl/);
   assert.match(recoverRuns, /receipt\?\.components\?\.storage\?\.sizeGb !== 10/);
   assert.match(String(recover.steps.find((step) => step.id === "claim_readback")?.if), /steps\.recover\.outcome == 'success'/);
   assert.match(String(recover.steps.find((step) => step.id === "continue")?.if), /steps\.claim_readback\.outcome == 'success'/);
