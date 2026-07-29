@@ -20,25 +20,86 @@ preflight_rollout_storage() {
   local evidence_file="$1"
   local nodes_file="${evidence_file}.nodes"
   local names_file="${evidence_file}.names"
+  local preflight_stderr="${evidence_file}.stderr"
+  local system_file="${evidence_file}.system.json"
   local node_name stats_file
   local -a stats_args=()
 
+  if [ -z "${OPL_SYSTEM_COMPUTE_NODE_POOL_ID:-}" ] ||
+      [ -z "${OPL_SYSTEM_COMPUTE_MACHINE_ID:-}" ] ||
+      [ -z "${OPL_SYSTEM_COMPUTE_NODE_NAME:-}" ]; then
+    echo "rollout_system_identity_input_missing" >&2
+    return 1
+  fi
+
+  umask 077
   kubectl --kubeconfig "$KUBECONFIG" get nodes -o json > "$nodes_file"
-  node - "$nodes_file" > "$names_file" <<'NODE'
+  if ! node - "$nodes_file" "$names_file" "$system_file" > /dev/null 2> "$preflight_stderr" <<'NODE'
 const fs = require("node:fs");
-const payload = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
-const nodes = Array.isArray(payload.items) ? payload.items : [];
-if (nodes.length !== 1) throw new Error(`rollout_single_node_required:${nodes.length}`);
-for (const node of nodes) {
-  const name = String(node.metadata?.name || "");
-  if (!/^[a-zA-Z0-9.-]+$/.test(name)) throw new Error("rollout_node_name_invalid");
-  const condition = (type) => (node.status?.conditions || []).find((item) => item.type === type)?.status;
-  if (condition("Ready") !== "True") throw new Error(`rollout_node_not_ready:${name}`);
-  if (condition("DiskPressure") !== "False") throw new Error(`rollout_node_DiskPressure:${name}`);
-  if (node.spec?.unschedulable === true) throw new Error(`rollout_node_Unschedulable:${name}`);
-  process.stdout.write(`${name}\n`);
+const [nodesPath, namesPath, selectionPath] = process.argv.slice(2);
+const fail = (code) => {
+  process.stderr.write(`${code}\n`);
+  process.exit(1);
+};
+let payload;
+try {
+  payload = JSON.parse(fs.readFileSync(nodesPath, "utf8"));
+} catch {
+  fail("rollout_system_node_inventory_invalid");
 }
+if (!payload || typeof payload !== "object" || !Array.isArray(payload.items)) {
+  fail("rollout_system_node_inventory_invalid");
+}
+const expected = {
+  nodePoolId: String(process.env.OPL_SYSTEM_COMPUTE_NODE_POOL_ID || ""),
+  machineId: String(process.env.OPL_SYSTEM_COMPUTE_MACHINE_ID || ""),
+  nodeName: String(process.env.OPL_SYSTEM_COMPUTE_NODE_NAME || "")
+};
+const poolLabel = "node.tke.cloud.tencent.com/machineset";
+const machineLabel = "node.tke.cloud.tencent.com/machine";
+const nodes = payload.items.filter((node) => node && typeof node === "object" && !Array.isArray(node));
+const namedSystemNodes = nodes.filter((node) => String(node.metadata?.name || "") === expected.nodeName);
+if (namedSystemNodes.length === 0) fail("rollout_system_node_missing");
+if (namedSystemNodes.length !== 1) fail("rollout_system_node_ambiguous");
+const identityNodes = nodes.filter((node) => {
+  const labels = node.metadata?.labels;
+  return labels && typeof labels === "object" && !Array.isArray(labels) &&
+    labels[poolLabel] === expected.nodePoolId && labels[machineLabel] === expected.machineId;
+});
+if (identityNodes.length === 0) fail("rollout_system_identity_mismatch");
+if (identityNodes.length !== 1) fail("rollout_system_identity_ambiguous");
+const systemNode = namedSystemNodes[0];
+if (identityNodes[0] !== systemNode) fail("rollout_system_identity_mismatch");
+const condition = (type) => {
+  const conditions = Array.isArray(systemNode.status?.conditions) ? systemNode.status.conditions : [];
+  return conditions.find((item) => item?.type === type)?.status;
+};
+if (condition("Ready") !== "True") fail(`rollout_node_not_ready:${expected.nodeName}`);
+if (condition("DiskPressure") !== "False") fail(`rollout_node_DiskPressure:${expected.nodeName}`);
+const unschedulable = systemNode.spec?.unschedulable;
+if (unschedulable !== undefined && typeof unschedulable !== "boolean") fail("rollout_node_scheduling_state_invalid");
+if (unschedulable === true) fail(`rollout_node_Unschedulable:${expected.nodeName}`);
+fs.writeFileSync(namesPath, `${expected.nodeName}\n`);
+fs.writeFileSync(selectionPath, JSON.stringify({
+  systemNodeCount: 1,
+  systemIdentity: { nodePoolMatched: true, machineMatched: true, nodeMatched: true },
+  node: {
+    name: expected.nodeName,
+    ready: condition("Ready"),
+    diskPressure: condition("DiskPressure"),
+    unschedulable: unschedulable === true
+  }
+}) + "\n");
 NODE
+  then
+    local node_error
+    node_error="$(sed -n '1p' "$preflight_stderr" 2>/dev/null || true)"
+    rm -f "$preflight_stderr" "$system_file" "$names_file" "$nodes_file"
+    if [ -z "$node_error" ]; then node_error="rollout_system_node_inventory_invalid"; fi
+    echo "$node_error" >&2
+    return 1
+  fi
+  rm -f "$preflight_stderr"
 
   while IFS= read -r node_name; do
     [ -n "$node_name" ] || continue
@@ -47,45 +108,59 @@ NODE
     stats_args+=("$node_name" "$stats_file")
   done < "$names_file"
 
-  node - "$nodes_file" "$evidence_file" "$OPL_MIN_ROLLOUT_AVAILABLE_BYTES" "${stats_args[@]}" <<'NODE'
+  local preflight_status
+  if node - "$system_file" "$evidence_file" "$OPL_MIN_ROLLOUT_AVAILABLE_BYTES" "${stats_args[@]}" <<'NODE'
 const fs = require("node:fs");
-const [nodesPath, evidencePath, minimumText, ...statsArgs] = process.argv.slice(2);
+const [selectionPath, evidencePath, minimumText, ...statsArgs] = process.argv.slice(2);
+const fail = (code) => {
+  process.stderr.write(`${code}\n`);
+  process.exit(1);
+};
 const minimumAvailableBytes = Number(minimumText);
-const nodesPayload = JSON.parse(fs.readFileSync(nodesPath, "utf8"));
+const selection = JSON.parse(fs.readFileSync(selectionPath, "utf8"));
+if (selection.systemNodeCount !== 1 || !selection.node || selection.systemIdentity?.nodePoolMatched !== true ||
+    selection.systemIdentity?.machineMatched !== true || selection.systemIdentity?.nodeMatched !== true) {
+  fail("rollout_system_candidate_count_invalid");
+}
 const statsByNode = new Map();
 for (let index = 0; index < statsArgs.length; index += 2) {
   statsByNode.set(statsArgs[index], JSON.parse(fs.readFileSync(statsArgs[index + 1], "utf8")));
 }
+const systemNode = selection.node;
+const stats = statsByNode.get(systemNode.name)?.node;
+const nodefs = stats?.fs;
+const imagefs = stats?.runtime?.imageFs;
+for (const [label, value] of [["nodefs", nodefs], ["imagefs", imagefs]]) {
+  if (!Number.isFinite(value?.capacityBytes) || !Number.isFinite(value?.availableBytes)) {
+    fail(`rollout_${label}_stats_unavailable:${systemNode.name}`);
+  }
+}
+systemNode.nodefs = { capacityBytes: nodefs.capacityBytes, availableBytes: nodefs.availableBytes };
+systemNode.imagefs = { capacityBytes: imagefs.capacityBytes, availableBytes: imagefs.availableBytes };
+if (systemNode.nodefs.availableBytes < minimumAvailableBytes) fail(`rollout_nodefs_below_25GiB:${systemNode.name}`);
+if (systemNode.imagefs.availableBytes < minimumAvailableBytes) fail(`rollout_imagefs_below_25GiB:${systemNode.name}`);
 const result = {
   checkedAt: new Date().toISOString(),
   minimumAvailableBytes,
-  nodes: (nodesPayload.items || []).map((node) => {
-    const name = node.metadata.name;
-    const stats = statsByNode.get(name)?.node;
-    const nodefs = stats?.fs;
-    const imagefs = stats?.runtime?.imageFs;
-    const diskPressure = (node.status?.conditions || []).find((item) => item.type === "DiskPressure")?.status;
-    for (const [label, value] of [["nodefs", nodefs], ["imagefs", imagefs]]) {
-      if (!Number.isFinite(value?.capacityBytes) || !Number.isFinite(value?.availableBytes)) {
-        throw new Error(`rollout_${label}_stats_unavailable:${name}`);
-      }
-    }
-    return {
-      name,
-      diskPressure,
-      nodefs: { capacityBytes: nodefs.capacityBytes, availableBytes: nodefs.availableBytes },
-      imagefs: { capacityBytes: imagefs.capacityBytes, availableBytes: imagefs.availableBytes }
-    };
-  })
+  systemNodeCount: selection.systemNodeCount,
+  systemIdentity: selection.systemIdentity,
+  nodes: [systemNode]
 };
 fs.writeFileSync(evidencePath, `${JSON.stringify(result, null, 2)}\n`);
-for (const node of result.nodes) {
-  if (node.diskPressure !== "False") throw new Error(`rollout_node_DiskPressure:${node.name}`);
-  if (node.nodefs.availableBytes < minimumAvailableBytes) throw new Error(`rollout_nodefs_below_25GiB:${node.name}`);
-  if (node.imagefs.availableBytes < minimumAvailableBytes) throw new Error(`rollout_imagefs_below_25GiB:${node.name}`);
-}
 process.stdout.write(`${JSON.stringify(result)}\n`);
 NODE
+  then
+    preflight_status=0
+  else
+    preflight_status=$?
+  fi
+
+  rm -f "$system_file" "$names_file" "$nodes_file"
+  local stats_index
+  for ((stats_index = 1; stats_index < ${#stats_args[@]}; stats_index += 2)); do
+    rm -f "${stats_args[$stats_index]}"
+  done
+  return "$preflight_status"
 }
 
 expected_cloud_image() {

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { tmpdir } from "node:os";
@@ -474,12 +474,31 @@ test("TKE deploy workflow matches the current deployment contract", async () => 
   assert.equal(contract.productionLegacySecretCleanupJob, undefined);
   assertWorkflowContract(deployWorkflow, contract.productionFailureDiagnosticsJob, contract);
   assert.deepEqual(contract.deployWorkflow.nodeStoragePreflight, {
+    identitySource: "kubectl_get_nodes_tke_native_identity_labels",
+    identityBindings: {
+      nodePoolId: {
+        env: "OPL_SYSTEM_COMPUTE_NODE_POOL_ID",
+        nodeLabel: "node.tke.cloud.tencent.com/machineset"
+      },
+      machineId: {
+        env: "OPL_SYSTEM_COMPUTE_MACHINE_ID",
+        nodeLabel: "node.tke.cloud.tencent.com/machine"
+      },
+      nodeName: {
+        env: "OPL_SYSTEM_COMPUTE_NODE_NAME",
+        nodeField: "metadata.name"
+      }
+    },
+    candidateScope: "configured_system_node_only",
+    nonSystemNodes: "ignored_for_preflight_identity_health_and_storage",
+    purchaseCapacityGates: "bootstrap_only_not_ordinary_rollout",
     diskPressure: "False",
     source: "kubelet_stats_summary",
     filesystems: ["nodefs", "imagefs"],
     minimumAvailableBytes: 25 * 1024 * 1024 * 1024,
     failureBehavior: "fail_before_any_kubectl_apply"
   });
+  assert.doesNotMatch(JSON.stringify(contract.deployWorkflow.nodeStoragePreflight), /\b(np|ins)-[A-Za-z0-9-]+\b|\b10\.\d+\.\d+\.\d+\b/);
   assert.deepEqual(contract.deployWorkflow.cloudRollout, {
     deployments: ["opl-cloud-control-plane", "opl-cloud-ledger", "opl-cloud-fabric"],
     candidateRevisionPerDeployment: 1,
@@ -1499,6 +1518,158 @@ test("TKE deploy preflights node storage and creates one candidate revision per 
   assert.doesNotMatch(apply, /set \+e/);
 });
 
+test("TKE rollout storage preflight checks only the configured system Node and ignores customer Nodes", async () => {
+  const functions = await readFile(repoFile("tools/tke-image-rollout.sh"), "utf8");
+  const root = await mkdtemp(join(tmpdir(), "opl-system-node-preflight-"));
+  const commandLog = join(root, "kubectl.log");
+  const provisioner = join(root, "provisioner");
+  const provisionerLog = join(root, "provisioner.log");
+  const systemPool = "np-system-test";
+  const systemMachine = "machine-system-test";
+  const systemNode = "node-system.test";
+  const makeNode = (name, {
+    workload = "medopl",
+    nodePoolId = name === systemNode ? systemPool : `np-${name}`,
+    machineId = name === systemNode ? systemMachine : `machine-${name}`,
+    ready = true,
+    diskPressure = false,
+    unschedulable = false,
+    taints = []
+  } = {}) => ({
+    metadata: { name, labels: {
+      "medopl.cn/workload": workload,
+      "node.tke.cloud.tencent.com/machineset": nodePoolId,
+      "node.tke.cloud.tencent.com/machine": machineId
+    } },
+    spec: {
+      ...(unschedulable ? { unschedulable } : {}),
+      ...(taints.length > 0 ? { taints } : {})
+    },
+    status: {
+      conditions: [
+        { type: "Ready", status: ready ? "True" : "False" },
+        { type: "DiskPressure", status: diskPressure ? "True" : "False" }
+      ]
+    }
+  });
+  const makeStats = (nodefsAvailable = 26 * 1024 ** 3, imagefsAvailable = nodefsAvailable) => JSON.stringify({ node: {
+    fs: { capacityBytes: 100 * 1024 ** 3, availableBytes: nodefsAvailable },
+    runtime: { imageFs: { capacityBytes: 100 * 1024 ** 3, availableBytes: imagefsAvailable } }
+  } });
+
+  await writeFile(provisioner, "#!/usr/bin/env bash\nprintf 'called\\n' >> \"$TEST_PROVISIONER_LOG\"\nexit 91\n");
+  await chmod(provisioner, 0o700);
+
+  const run = async ({
+    nodes,
+    stats = makeStats(),
+    expectStatus,
+    expectError = "",
+    expectApply = false,
+    expectStatsNode = systemNode
+  }) => {
+    await writeFile(commandLog, "");
+    await writeFile(provisionerLog, "");
+    const result = spawnSync("bash", ["-c", `
+      set -euo pipefail
+      kubectl() {
+        printf 'kubectl %s\\n' "$*" >> "$TEST_COMMAND_LOG"
+        case " $* " in
+          *" get nodes -o json "*) printf '%s' "$TEST_NODES_JSON" ;;
+          *" get --raw /api/v1/nodes/"*"/proxy/stats/summary "*) printf '%s' "$TEST_STATS_JSON" ;;
+          *" apply -f candidate.json "*) : ;;
+          *) return 64 ;;
+        esac
+      }
+      ${functions}
+      set +e
+      preflight_rollout_storage "$TEST_ROOT/preflight.json"
+      status=$?
+      set -e
+      if [ "$status" -eq 0 ]; then
+        kubectl --kubeconfig "$KUBECONFIG" apply -f candidate.json
+      fi
+      exit "$status"
+    `], {
+      cwd: fileURLToPath(repoFile(".")),
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        KUBECONFIG: "/dev/null",
+        OPL_K8S_NAMESPACE: "opl-test",
+        OPL_TENCENT_PROVISIONER_BIN: provisioner,
+        OPL_SYSTEM_COMPUTE_NODE_POOL_ID: systemPool,
+        OPL_SYSTEM_COMPUTE_MACHINE_ID: systemMachine,
+        OPL_SYSTEM_COMPUTE_NODE_NAME: systemNode,
+        TEST_COMMAND_LOG: commandLog,
+        TEST_PROVISIONER_LOG: provisionerLog,
+        TEST_ROOT: root,
+        TEST_NODES_JSON: JSON.stringify({ items: nodes }),
+        TEST_STATS_JSON: stats
+      }
+    });
+    const commands = await readFile(commandLog, "utf8");
+    assert.equal(await readFile(provisionerLog, "utf8"), "", "ordinary rollout must not call Workspace SKU/capacity inventory");
+    assert.equal(result.status, expectStatus, `${result.stdout}\n${result.stderr}`);
+    if (expectError) assert.match(`${result.stdout}\n${result.stderr}`, new RegExp(expectError));
+    assert.equal((commands.match(/ apply -f candidate\.json/g) || []).length, expectApply ? 1 : 0, commands);
+    let evidence;
+    if (expectApply) {
+      assert.match(commands, new RegExp(`get --raw /api/v1/nodes/${expectStatsNode}/proxy/stats/summary`));
+      assert.equal((commands.match(/ get --raw \/api\/v1\/nodes\/.+\/proxy\/stats\/summary/g) || []).length, 1, commands);
+      evidence = JSON.parse(await readFile(join(root, "preflight.json"), "utf8"));
+      assert.equal(evidence.systemNodeCount, 1);
+      assert.equal(evidence.systemIdentity.nodePoolMatched, true);
+      assert.equal(evidence.systemIdentity.machineMatched, true);
+      assert.equal(evidence.systemIdentity.nodeMatched, true);
+      assert.deepEqual(evidence.nodes.map((node) => node.name), [systemNode]);
+    }
+    if (!expectApply) assert.doesNotMatch(commands, / apply -f /);
+    return { result, commands, evidence };
+  };
+
+  try {
+    await run({
+      nodes: [makeNode(systemNode)],
+      expectStatus: 0,
+      expectApply: true
+    });
+    await run({
+      nodes: [
+        makeNode(systemNode),
+        makeNode("node-customer-a", { workload: "medopl", taints: [{ key: "tenant.example/reserved", effect: "NoSchedule" }] }),
+        makeNode("node-customer-b", { workload: "medopl", unschedulable: true }),
+        makeNode("node-customer-c", { workload: "other", taints: [{ key: "tenant.example/preferred", effect: "PreferNoSchedule" }] })
+      ],
+      expectStatus: 0,
+      expectApply: true
+    });
+    await run({
+      nodes: [makeNode(systemNode), makeNode("node-customer-a"), makeNode("node-customer-b"), makeNode("node-customer-c")],
+      expectStatus: 0,
+      expectApply: true
+    });
+
+    const failures = [
+      { name: "system Node missing", nodes: [makeNode("node-customer-a")], error: "rollout_system_node_missing" },
+      { name: "system identity drift", nodes: [makeNode(systemNode, { nodePoolId: "np-other", machineId: "machine-other" })], error: "rollout_system_identity_mismatch" },
+      { name: "Machine is not in configured NodePool", nodes: [makeNode(systemNode, { nodePoolId: "np-other" })], error: "rollout_system_identity_mismatch" },
+      { name: "Node is not in configured Machine", nodes: [makeNode(systemNode, { machineId: "machine-other" })], error: "rollout_system_identity_mismatch" },
+      { name: "multiple authoritative system candidates", nodes: [makeNode(systemNode), makeNode("node-system-duplicate.test", { nodePoolId: systemPool, machineId: systemMachine })], error: "rollout_system_identity_ambiguous" },
+      { name: "NotReady", nodes: [makeNode(systemNode, { ready: false })], error: "rollout_node_not_ready" },
+      { name: "DiskPressure", nodes: [makeNode(systemNode, { diskPressure: true })], error: "rollout_node_DiskPressure" },
+      { name: "unschedulable", nodes: [makeNode(systemNode, { unschedulable: true })], error: "rollout_node_Unschedulable" },
+      { name: "nodefs below minimum", nodes: [makeNode(systemNode)], stats: makeStats(24 * 1024 ** 3), error: "rollout_nodefs_below_25GiB" },
+      { name: "imagefs below minimum", nodes: [makeNode(systemNode)], stats: makeStats(26 * 1024 ** 3, 24 * 1024 ** 3), error: "rollout_imagefs_below_25GiB" }
+    ];
+    for (const failure of failures) {
+      await run({ ...failure, expectStatus: 1, expectError: failure.error, expectApply: false });
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("TKE failure uploads complete diagnostics before the only rollback job", async () => {
   const workflow = await readWorkflow(".github/workflows/deploy-tke-production.yml");
   const deploy = workflowJob(workflow, "deploy");
@@ -1549,8 +1720,15 @@ test("TKE storage preflight blocks every apply below 25 GiB and records nodefs/i
   const functions = await readFile(repoFile("tools/tke-image-rollout.sh"), "utf8");
   const root = await mkdtemp(join(tmpdir(), "opl-storage-preflight-"));
   const commandLog = join(root, "kubectl.log");
+  const systemPool = "np-storage-test";
+  const systemMachine = "machine-storage-test";
+  const systemNode = "node-storage.test";
   const nodes = JSON.stringify({ items: [{
-    metadata: { name: "10.66.0.42" },
+    metadata: { name: systemNode, labels: {
+      "medopl.cn/workload": "medopl",
+      "node.tke.cloud.tencent.com/machineset": systemPool,
+      "node.tke.cloud.tencent.com/machine": systemMachine
+    } },
     spec: {},
     status: { conditions: [
       { type: "Ready", status: "True" },
@@ -1558,7 +1736,7 @@ test("TKE storage preflight blocks every apply below 25 GiB and records nodefs/i
     ] }
   }] });
   const stats = (availableBytes) => JSON.stringify({ node: {
-    nodeName: "10.66.0.42",
+    nodeName: systemNode,
     fs: { capacityBytes: 100 * 1024 ** 3, availableBytes },
     runtime: { imageFs: { capacityBytes: 100 * 1024 ** 3, availableBytes } }
   } });
@@ -1568,7 +1746,7 @@ kubectl() {
   printf '%s\\n' "$*" >> "$TEST_COMMAND_LOG"
   case " $* " in
     *" get nodes -o json "*) printf '%s' "$TEST_NODES_JSON" ;;
-    *" get --raw /api/v1/nodes/10.66.0.42/proxy/stats/summary "*) printf '%s' "$TEST_STATS_JSON" ;;
+    *" get --raw /api/v1/nodes/${systemNode}/proxy/stats/summary "*) printf '%s' "$TEST_STATS_JSON" ;;
     *" apply -f candidate.json "*) ;;
     *) return 64 ;;
   esac
@@ -1584,6 +1762,9 @@ kubectl --kubeconfig "$KUBECONFIG" apply -f candidate.json
       ...process.env,
       KUBECONFIG: "/dev/null",
       OPL_K8S_NAMESPACE: "opl-test",
+      OPL_SYSTEM_COMPUTE_NODE_POOL_ID: systemPool,
+      OPL_SYSTEM_COMPUTE_MACHINE_ID: systemMachine,
+      OPL_SYSTEM_COMPUTE_NODE_NAME: systemNode,
       TEST_COMMAND_LOG: commandLog,
       TEST_NODES_JSON: nodes,
       TEST_ROOT: root,

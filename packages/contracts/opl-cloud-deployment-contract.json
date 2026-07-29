@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 18,
+  "schemaVersion": 19,
   "owner": "OPL Fabric",
   "purpose": "Deployment workflow, immutable Cloud and Workspace images, TKE handoff, read-only diagnostics, and production-verification safety.",
   "state": "current",
@@ -267,6 +267,24 @@
       "existingWorkspaceDeployments": "preserved_without_restart"
     },
     "nodeStoragePreflight": {
+      "identitySource": "kubectl_get_nodes_tke_native_identity_labels",
+      "identityBindings": {
+        "nodePoolId": {
+          "env": "OPL_SYSTEM_COMPUTE_NODE_POOL_ID",
+          "nodeLabel": "node.tke.cloud.tencent.com/machineset"
+        },
+        "machineId": {
+          "env": "OPL_SYSTEM_COMPUTE_MACHINE_ID",
+          "nodeLabel": "node.tke.cloud.tencent.com/machine"
+        },
+        "nodeName": {
+          "env": "OPL_SYSTEM_COMPUTE_NODE_NAME",
+          "nodeField": "metadata.name"
+        }
+      },
+      "candidateScope": "configured_system_node_only",
+      "nonSystemNodes": "ignored_for_preflight_identity_health_and_storage",
+      "purchaseCapacityGates": "bootstrap_only_not_ordinary_rollout",
       "diskPressure": "False",
       "source": "kubelet_stats_summary",
       "filesystems": ["nodefs", "imagefs"],
