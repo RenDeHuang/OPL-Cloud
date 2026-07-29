@@ -1005,6 +1005,181 @@ export async function recoverComputeClaim({
   return computeClaimArtifact(COMPUTE_CLAIM_RECOVER_MODE, target, release, claimed, eligible, errorCode, approval.approvalId);
 }
 
+const COMPUTE_CLAIM_CONTINUATION_MODE = "compute_claim_recover_continuation";
+const COMPUTE_CLAIM_CONTINUATION_PHASES = new Set([
+  "storage_fulfilling", "attaching", "secret_writing", "runtime_starting", "activating", "receipt_pending"
+]);
+const COMPUTE_CLAIM_CONTINUATION_TERMINAL_STATUSES = new Set(["manual_review", "failed", "refunded"]);
+
+function computeClaimContinuationCredentials(email, password) {
+  const normalizedEmail = String(email || "").trim().toLowerCase();
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(normalizedEmail) || !String(password || "")) {
+    throw new Error("compute_claim_continuation_customer_credentials_unavailable");
+  }
+  return { email: normalizedEmail, password: String(password) };
+}
+
+function computeClaimContinuationLaunch(value, target) {
+  const launch = {
+    operationId: String(value?.operationId || ""),
+    accountId: String(value?.accountId || ""),
+    workspaceId: String(value?.workspaceId || ""),
+    status: String(value?.status || ""),
+    phase: String(value?.phase || ""),
+    packageId: String(value?.packageId || ""),
+    sizeGb: Number(value?.sizeGb),
+    autoRenew: value?.autoRenew,
+    priceVersion: String(value?.priceVersion || ""),
+    currency: String(value?.currency || ""),
+    totalChargeUsdMicros: Number(value?.totalChargeUsdMicros),
+    computeAllocationId: String(value?.computeAllocationId || ""),
+    storageId: String(value?.storageId || ""),
+    attachmentId: String(value?.attachmentId || ""),
+    workspaceApiKeyId: String(value?.workspaceApiKeyId || ""),
+    receiptId: String(value?.receiptId || ""),
+    runtimeServiceName: String(value?.runtimeServiceName || ""),
+    url: String(value?.url || ""),
+    errorCode: String(value?.errorCode || "")
+  };
+  if (COMPUTE_CLAIM_CONTINUATION_TERMINAL_STATUSES.has(launch.status)) {
+    throw new Error(`compute_claim_continuation_${launch.status}`);
+  }
+  if (launch.errorCode) throw new Error("compute_claim_continuation_error_code");
+  if (launch.status === "succeeded" || launch.phase === "succeeded") {
+    if (launch.status !== "succeeded" || launch.phase !== "succeeded") throw new Error("compute_claim_continuation_phase_invalid");
+  } else if (!COMPUTE_CLAIM_CONTINUATION_PHASES.has(launch.phase)) {
+    throw new Error("compute_claim_continuation_phase_invalid");
+  }
+  if (launch.operationId !== target.launchOperationId || launch.accountId !== target.accountId || launch.workspaceId !== target.workspaceId ||
+    launch.packageId !== target.packageId || launch.sizeGb !== 10 || launch.autoRenew !== false || launch.currency !== "USD" ||
+    !launch.priceVersion || !Number.isSafeInteger(launch.totalChargeUsdMicros) || launch.totalChargeUsdMicros <= 0 ||
+    launch.computeAllocationId !== target.computeAllocationId || launch.storageId !== target.storageId) {
+    throw new Error("compute_claim_continuation_identity_mismatch");
+  }
+  if (launch.status === "succeeded" && (!launch.attachmentId || !launch.receiptId || !launch.runtimeServiceName || !launch.url)) {
+    throw new Error("compute_claim_continuation_launch_result_incomplete");
+  }
+  return launch;
+}
+
+function computeClaimContinuationRuntime(value, target, launch) {
+  const runtime = {
+    workspaceId: String(value?.workspaceId || ""),
+    runtimeId: String(value?.runtimeId || ""),
+    serviceName: String(value?.serviceName || ""),
+    status: String(value?.status || ""),
+    ready: value?.ready === true,
+    url: String(value?.url || "")
+  };
+  if (runtime.workspaceId !== target.workspaceId || !runtime.runtimeId || runtime.serviceName !== launch.runtimeServiceName ||
+    runtime.status !== "running" || runtime.ready !== true || !runtime.url || runtime.url !== launch.url) {
+    throw new Error("compute_claim_continuation_runtime_invalid");
+  }
+  return runtime;
+}
+
+function computeClaimContinuationReceipt(value, target, launch, runtime) {
+  try {
+    return canaryReceipt(value, {
+      receiptId: launch.receiptId,
+      workspaceId: target.workspaceId,
+      computeAllocationId: target.computeAllocationId,
+      storageId: target.storageId,
+      attachmentId: launch.attachmentId,
+      runtimeId: runtime.runtimeId,
+      workspaceApiKeyId: launch.workspaceApiKeyId,
+      totalUsdMicros: launch.totalChargeUsdMicros
+    });
+  } catch {
+    throw new Error("compute_claim_continuation_receipt_invalid");
+  }
+}
+
+export async function continueComputeClaimWorkspace({
+  target: rawTarget,
+  mergedSha,
+  cloudImageDigest,
+  origin,
+  customerEmail,
+  customerPassword,
+  kubeconfigPath,
+  namespace,
+  launchPollAttempts = 180,
+  launchPollDelayMs = 10_000,
+  requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
+  cloudRevisionEvidenceReader,
+  fetchImpl = globalThis.fetch,
+  execFileImpl = defaultExecFile,
+  signal,
+  now = new Date()
+} = {}) {
+  const target = computeClaimTarget(rawTarget);
+  if (!/^[a-f0-9]{40}$/.test(String(mergedSha || "")) || !/^sha256:[a-f0-9]{64}$/.test(String(cloudImageDigest || "")) ||
+    !String(kubeconfigPath || "").startsWith("/") || !/^[a-z0-9][a-z0-9-]{0,62}$/.test(String(namespace || "")) ||
+    !Number.isInteger(launchPollAttempts) || launchPollAttempts < 1 || launchPollAttempts > 1000 ||
+    !Number.isFinite(launchPollDelayMs) || launchPollDelayMs < 0 || launchPollDelayMs > 300_000 ||
+    !Number.isInteger(requestTimeoutMs) || requestTimeoutMs < 1 || requestTimeoutMs > 300_000) {
+    throw new Error("compute_claim_continuation_config_invalid");
+  }
+  const credentials = computeClaimContinuationCredentials(customerEmail, customerPassword);
+  const normalizedOrigin = assertPublicHttpsUrl(origin, "public_console_origin_required", { hostname: "cloud.medopl.cn" }).origin;
+  const release = await currentComputeClaimCloudRevision({
+    mergedSha,
+    cloudImageDigest,
+    kubeconfigPath,
+    namespace,
+    cloudRevisionEvidenceReader,
+    execFileImpl
+  });
+  const requestOptions = { fetchImpl, origin: normalizedOrigin, signal, timeoutMs: requestTimeoutMs };
+  const customerAuth = await login({ ...requestOptions, ...credentials });
+  if (customerAuth.user?.accountId !== target.accountId || customerAuth.user?.role !== "owner" || !customerAuth.csrfToken) {
+    throw new Error("compute_claim_continuation_customer_login_failed");
+  }
+  const identity = sourceEnvelope(await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/auth/me" }), "sub2api").data;
+  if (identity?.accountId !== target.accountId || String(identity?.email || "").trim().toLowerCase() !== credentials.email ||
+    identity?.role !== "owner" || identity?.status !== "active") {
+    throw new Error("compute_claim_continuation_customer_identity_mismatch");
+  }
+
+  const launchPath = `/api/workspace-launches/${encodeURIComponent(target.launchOperationId)}`;
+  let launch;
+  for (let attempt = 1; attempt <= launchPollAttempts; attempt += 1) {
+    if (attempt > 1 && launch?.status !== "succeeded") await sleep(launchPollDelayMs);
+    const authority = await authoritativeGet({ ...requestOptions, auth: customerAuth, path: launchPath });
+    if (!authority.found) throw new Error("compute_claim_continuation_launch_readback_failed");
+    launch = computeClaimContinuationLaunch(authority.payload, target);
+    if (launch.status === "succeeded" && launch.phase === "succeeded") break;
+    if (attempt === launchPollAttempts) throw new Error("compute_claim_continuation_timeout");
+  }
+  if (launch.status !== "succeeded" || launch.phase !== "succeeded") throw new Error("compute_claim_continuation_timeout");
+  const runtimeEnvelope = await requestJson({
+    ...requestOptions,
+    auth: customerAuth,
+    path: `/api/workspaces/${encodeURIComponent(target.workspaceId)}/runtime-status`
+  });
+  const runtime = computeClaimContinuationRuntime(sourceEnvelope(runtimeEnvelope, "fabric").data, target, launch);
+  const receipt = computeClaimContinuationReceipt(await requestJson({
+    ...requestOptions,
+    auth: customerAuth,
+    path: `/api/billing/receipts/${encodeURIComponent(launch.receiptId)}`
+  }), target, launch, runtime);
+  return {
+    schemaVersion: 1,
+    operationMode: COMPUTE_CLAIM_CONTINUATION_MODE,
+    status: "succeeded",
+    recoveryEligible: true,
+    errorCode: "none",
+    release: computeClaimReleaseEvidence(release),
+    target: { ...target },
+    launch,
+    runtime,
+    receipt,
+    mutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
+    verifiedAt: now.toISOString()
+  };
+}
+
 async function defaultExecFile(command, args, options) {
   const { execFile } = await import("node:child_process");
   return new Promise((resolve, reject) => {
@@ -2656,14 +2831,14 @@ export async function runProductionLiveQaCli({
   now = new Date()
 } = {}) {
   if (argv.includes("--help") || argv.includes("-h")) {
-    stdout.write("Usage: node tools/production-live-qa.ts --read-only\nCompute claim modes use --compute-claim-diagnose or --compute-claim-recover with a non-secret target JSON. A manual-review diagnosis requires --manual-review-diagnose and a non-secret target JSON. A fixed-slot model request requires --allow-gateway-write --allow-model-write. A real customer canary requires --basic-customer-canary, an exact funding mode, and its explicit approvals.\n");
+    stdout.write("Usage: node tools/production-live-qa.ts --read-only\nCompute claim modes use --compute-claim-diagnose, --compute-claim-recover, or --compute-claim-continue with a non-secret target JSON. A manual-review diagnosis requires --manual-review-diagnose and a non-secret target JSON. A fixed-slot model request requires --allow-gateway-write --allow-model-write. A real customer canary requires --basic-customer-canary, an exact funding mode, and its explicit approvals.\n");
     return 0;
   }
   try {
     if (env.OPL_VERIFY_MODEL_ACCESS_KEY) throw new Error("production_live_qa_raw_key_forbidden");
     const args = cliArgs(argv);
     if (args["read-only"] === "true") {
-      if (args["basic-customer-canary"] || args["allow-gateway-write"] || args["allow-model-write"] || args["approval-id"]) throw new Error("production_live_qa_read_only_conflict");
+      if (args["compute-claim-continue"] || args["basic-customer-canary"] || args["allow-gateway-write"] || args["allow-model-write"] || args["approval-id"]) throw new Error("production_live_qa_read_only_conflict");
       const result = await verifyProductionReadOnlyRollout({
         origin: args.origin || env.OPL_CONSOLE_ORIGIN,
         adminEmail: env.OPL_SUB2API_ADMIN_EMAIL,
@@ -2677,7 +2852,7 @@ export async function runProductionLiveQaCli({
       return 0;
     }
     if (args["manual-review-diagnose"] === "true") {
-      if (args["basic-customer-canary"] || args["read-only"] || args["allow-account-provision"] || args["allow-wallet-recharge"] ||
+      if (args["compute-claim-continue"] || args["basic-customer-canary"] || args["read-only"] || args["allow-account-provision"] || args["allow-wallet-recharge"] ||
         args["allow-workspace-purchase"] || args["allow-model-write"] || args["allow-gateway-write"] || args["approval-id"] || args["funding-mode"] || args.phase) {
         throw new Error("manual_review_diagnose_conflict");
       }
@@ -2694,7 +2869,7 @@ export async function runProductionLiveQaCli({
       return 0;
     }
     if (args["compute-claim-diagnose"] === "true") {
-      if (args["compute-claim-recover"] || args["manual-review-diagnose"] || args["basic-customer-canary"] || args["read-only"] ||
+      if (args["compute-claim-recover"] || args["compute-claim-continue"] || args["manual-review-diagnose"] || args["basic-customer-canary"] || args["read-only"] ||
         args["allow-account-provision"] || args["allow-wallet-recharge"] || args["allow-workspace-purchase"] || args["allow-model-write"] ||
         args["allow-gateway-write"] || args["approval-id"] || args["funding-mode"] || args.phase) {
         throw new Error("compute_claim_diagnose_conflict");
@@ -2714,7 +2889,7 @@ export async function runProductionLiveQaCli({
       return 0;
     }
     if (args["compute-claim-recover"] === "true") {
-      if (!args["approval-id"] || args["compute-claim-diagnose"] || args["manual-review-diagnose"] || args["basic-customer-canary"] || args["read-only"] ||
+      if (!args["approval-id"] || args["compute-claim-diagnose"] || args["compute-claim-continue"] || args["manual-review-diagnose"] || args["basic-customer-canary"] || args["read-only"] ||
         args["allow-account-provision"] || args["allow-wallet-recharge"] || args["allow-workspace-purchase"] || args["allow-model-write"] ||
         args["allow-gateway-write"] || args["funding-mode"] || args.phase) {
         throw new Error("compute_claim_recovery_approval_required");
@@ -2741,6 +2916,34 @@ export async function runProductionLiveQaCli({
       });
       stdout.write(`${JSON.stringify(result, null, 2)}\n`);
       return result.status === "claimed" ? 0 : 1;
+    }
+    if (args["compute-claim-continue"] === "true") {
+      if (args["compute-claim-recover"] || args["compute-claim-diagnose"] || args["manual-review-diagnose"] || args["basic-customer-canary"] || args["read-only"] ||
+        args["allow-account-provision"] || args["allow-wallet-recharge"] || args["allow-workspace-purchase"] || args["allow-model-write"] ||
+        args["allow-gateway-write"] || args["approval-id"] || args["funding-mode"] || args.phase) {
+        throw new Error("compute_claim_continuation_conflict");
+      }
+      const kubeconfigPath = env.KUBECONFIG || env.TENCENT_DEPLOY_KUBECONFIG_PATH;
+      const namespace = env.OPL_K8S_NAMESPACE || "opl-cloud";
+      const result = await continueComputeClaimWorkspace({
+        target: args["compute-claim-target-json"] || env.OPL_COMPUTE_CLAIM_TARGET_JSON,
+        mergedSha: env.OPL_MERGED_SHA,
+        cloudImageDigest: env.OPL_COMPUTE_CLAIM_CLOUD_DIGEST,
+        origin: args.origin || env.OPL_CONSOLE_ORIGIN,
+        customerEmail: env.OPL_BASIC_CANARY_CUSTOMER_EMAIL,
+        customerPassword: env.OPL_BASIC_CANARY_CUSTOMER_PASSWORD,
+        kubeconfigPath,
+        namespace,
+        launchPollAttempts: Number(args["launch-poll-attempts"] || env.OPL_VERIFY_LAUNCH_POLL_ATTEMPTS || 180),
+        launchPollDelayMs: Number(args["launch-poll-delay-ms"] || env.OPL_VERIFY_LAUNCH_POLL_DELAY_MS || 10_000),
+        requestTimeoutMs: Number(args["request-timeout-ms"] || env.OPL_VERIFY_REQUEST_TIMEOUT_MS || DEFAULT_REQUEST_TIMEOUT_MS),
+        cloudRevisionEvidenceReader,
+        execFileImpl,
+        fetchImpl,
+        now
+      });
+      stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+      return result.status === "succeeded" ? 0 : 1;
     }
     if (args["basic-customer-canary"] === "true") {
       const fundingMode = args["funding-mode"] || BASIC_CANARY_OPERATOR_PRECHARGE_MODE;

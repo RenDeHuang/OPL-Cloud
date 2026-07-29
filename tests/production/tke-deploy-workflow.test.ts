@@ -891,10 +891,12 @@ test("compute claim diagnosis and recovery are isolated VPC modes with separate 
 
   assert.match(String(recover.if), /inputs\.operation_mode == 'compute_claim_recover'/);
   assert.match(String(recover.if), /inputs\.confirm_compute_claim_recovery/);
-  assert.equal(recover.environment, "production-compute-claim-recovery");
+  assert.equal(recover.environment, "production");
   assert.equal(recover.env.OPL_COMPUTE_CLAIM_RECOVERY_APPROVAL_JSON, "${{ secrets.OPL_COMPUTE_CLAIM_RECOVERY_APPROVAL_JSON }}");
   assert.equal(recover.env.OPL_SUB2API_ADMIN_EMAIL, "${{ secrets.OPL_SUB2API_ADMIN_EMAIL }}");
   assert.equal(recover.env.OPL_SUB2API_ADMIN_PASSWORD, "${{ secrets.OPL_SUB2API_ADMIN_PASSWORD }}");
+  assert.equal(recover.env.OPL_BASIC_CANARY_CUSTOMER_PASSWORD, "${{ secrets.OPL_BASIC_CANARY_CUSTOMER_PASSWORD }}");
+  assert.equal(recover.env.OPL_BASIC_CANARY_CUSTOMER_EMAIL, "huangrende@fenggaolab.org");
   assert.match(recoverRuns, /production-live-qa\.ts --compute-claim-recover/);
   assert.match(recoverRuns, /--approval-id "\$OPL_COMPUTE_CLAIM_RECOVERY_APPROVAL_ID"/);
   assert.match(recoverRuns, /get secret opl-cloud-internal-service/);
@@ -902,9 +904,22 @@ test("compute claim diagnosis and recovery are isolated VPC modes with separate 
   assert.match(recoverRuns, /::add-mask::\$OPL_INTERNAL_SERVICE_TOKEN/);
   assert.match(recoverRuns, /result\.mutationCounts\.tencent > 5/);
   assert.match(recoverRuns, /result\.mutationCounts\.kubernetes > 1/);
+  assert.match(recoverRuns, /production-live-qa\.ts --compute-claim-continue/);
+  assert.match(JSON.stringify(recover), /OPL_BASIC_CANARY_CUSTOMER_EMAIL/);
+  assert.match(JSON.stringify(recover), /OPL_BASIC_CANARY_CUSTOMER_PASSWORD/);
+  assert.match(recoverRuns, /workspace-launch-continuation\.json/);
+  assert.match(recoverRuns, /result\?\.status !== "succeeded"/);
+  assert.match(recoverRuns, /receipt\?\.components\?\.storage\?\.sizeGb !== 10/);
+  assert.match(String(recover.steps.find((step) => step.id === "claim_readback")?.if), /steps\.recover\.outcome == 'success'/);
+  assert.match(String(recover.steps.find((step) => step.id === "continue")?.if), /steps\.claim_readback\.outcome == 'success'/);
   assert.doesNotMatch(recoverRuns, /--basic-customer-canary|allow-workspace-purchase|allow-wallet-recharge|allow-account-provision|allow-model-write|create_storage_volume|CreateComputeAllocation|scale|debit|refund/i);
   assert.match(JSON.stringify(diagnose.steps), /actions\/upload-artifact@v4/);
   assert.match(JSON.stringify(recover.steps), /actions\/upload-artifact@v4/);
+
+  for (const customerJobName of ["prepare-basic-customer-operation", "complete-basic-customer-operation"]) {
+    const customerRuns = serializedRuns(workflowJob(workflow, customerJobName));
+    assert.doesNotMatch(customerRuns, /compute-claim-recovery|--compute-claim-(?:diagnose|recover|continue)/i);
+  }
 
   for (const other of [".github/workflows/pull-request-ci.yml", ".github/workflows/deploy-tke-production.yml", ".github/workflows/release-opl-cloud-image.yml"]) {
     const source = await readFile(repoFile(other), "utf8");
