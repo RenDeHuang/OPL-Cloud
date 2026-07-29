@@ -304,6 +304,7 @@ func validComputeClaimRecoveryInput(input ComputeClaimRecoveryInput) bool {
 }
 
 func validComputeClaimRecoveryLocalIdentity(input ComputeClaimRecoveryInput, allocation ComputeAllocation, plan ComputeAllocationPreparation) bool {
+	persistedPeriodMonths := strings.TrimSpace(allocation.ProviderData["periodMonths"])
 	if allocation.ID != input.ComputeAllocationID || allocation.AccountID != input.AccountID || allocation.WorkspaceID != input.WorkspaceID ||
 		allocation.PackageID != input.PackageID || allocation.Provider != "tencent-tke" || allocation.PoolID != input.PoolID || allocation.NodePoolID != input.NodePoolID ||
 		allocation.PoolID != plan.PoolID || plan.PackageID != input.PackageID || plan.NodePoolID != input.NodePoolID || plan.PoolID != packagePlan(input.PackageID).ID ||
@@ -312,7 +313,7 @@ func validComputeClaimRecoveryLocalIdentity(input ComputeClaimRecoveryInput, all
 		!strings.HasPrefix(firstNonEmpty(allocation.InstanceID, allocation.CVMInstanceID), "ins-") || allocation.NodeName == "" || allocation.PrivateIP == "" ||
 		allocation.Zone == "" || allocation.ChargeType != "PREPAID" || allocation.RenewFlag != "NOTIFY_AND_MANUAL_RENEW" || allocation.Deadline == "" ||
 		allocation.ProviderData["instanceType"] != plan.InstanceType || allocation.ProviderData["zone"] != allocation.Zone ||
-		allocation.ProviderData["chargeType"] != "PREPAID" || allocation.ProviderData["periodMonths"] != "1" ||
+		allocation.ProviderData["chargeType"] != "PREPAID" || (persistedPeriodMonths != "" && persistedPeriodMonths != "1") ||
 		allocation.ProviderData["renewFlag"] != "NOTIFY_AND_MANUAL_RENEW" || allocation.ProviderData["deadline"] != allocation.Deadline ||
 		allocation.ProviderData["machineName"] != allocation.MachineName {
 		return false

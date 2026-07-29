@@ -43,6 +43,10 @@ func (p *fakeComputeClaimRecoveryProvider) CreateStorageVolume(_ context.Context
 }
 
 func seedComputeClaimRecovery(t *testing.T, packageID string) (*Service, *MemoryOperationStore, *fakeComputeClaimRecoveryProvider, ComputeClaimRecoveryInput) {
+	return seedComputeClaimRecoveryWithPeriod(t, packageID, "1")
+}
+
+func seedComputeClaimRecoveryWithPeriod(t *testing.T, packageID, periodMonths string) (*Service, *MemoryOperationStore, *fakeComputeClaimRecoveryProvider, ComputeClaimRecoveryInput) {
 	t.Helper()
 	instanceType := "SA5.MEDIUM4"
 	poolID := "pool-basic-2c4g"
@@ -67,12 +71,16 @@ func seedComputeClaimRecovery(t *testing.T, packageID string) (*Service, *Memory
 		PoolID: poolID, PackageID: packageID, NodePoolID: nodePoolID, InstanceType: instanceType,
 		MaxReplicas: 20, BaselineReplicas: 1, TargetReplicas: 2, BeforeMachineNames: []string{"machine-before"},
 	}
+	providerData := map[string]string{"instanceType": instanceType, "zone": "ap-guangzhou-3", "chargeType": "PREPAID", "renewFlag": "NOTIFY_AND_MANUAL_RENEW", "deadline": "2026-08-28T00:00:00Z", "machineName": "machine-after"}
+	if periodMonths != "" {
+		providerData["periodMonths"] = periodMonths
+	}
 	allocation := ComputeAllocation{
 		ID: input.ComputeAllocationID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, PackageID: packageID,
 		Status: "quarantined", Provider: "tencent-tke", ProviderResourceID: "ins-fixture", PoolID: poolID, NodePoolID: nodePoolID,
 		MachineName: "machine-after", InstanceID: "ins-fixture", CVMInstanceID: "ins-fixture", NodeName: "10.0.0.18", PrivateIP: "10.0.0.18",
 		InstanceType: instanceType, Zone: "ap-guangzhou-3", ChargeType: "PREPAID", RenewFlag: "NOTIFY_AND_MANUAL_RENEW", Deadline: "2026-08-28T00:00:00Z",
-		ProviderData: map[string]string{"instanceType": instanceType, "zone": "ap-guangzhou-3", "chargeType": "PREPAID", "periodMonths": "1", "renewFlag": "NOTIFY_AND_MANUAL_RENEW", "deadline": "2026-08-28T00:00:00Z", "machineName": "machine-after"},
+		ProviderData: providerData,
 		CreatedAt:    now,
 	}
 	ownership := MachineOwnership{
@@ -109,6 +117,46 @@ func seedComputeClaimRecovery(t *testing.T, packageID string) (*Service, *Memory
 	service := NewServiceWithOperationStore(provider, store)
 	service.computes[allocation.ID] = allocation
 	return service, store, provider, input
+}
+
+func TestComputeClaimRecoveryProofAllowsHistoricalMissingPeriodWhenProviderProvesOneMonth(t *testing.T) {
+	service, _, provider, input := seedComputeClaimRecoveryWithPeriod(t, "basic", "")
+
+	proof, err := service.ComputeClaimRecoveryProof(context.Background(), input)
+
+	if err != nil || !proof.Eligible || proof.Reason != "none" || proof.PeriodMonths != 1 || provider.proofCalls != 1 {
+		t.Fatalf("proof=%#v err=%v providerProofCalls=%d", proof, err, provider.proofCalls)
+	}
+	if proof.Sub2APIMutationCount != 0 || proof.TencentMutationCount != 0 || proof.KubernetesMutationCount != 0 {
+		t.Fatalf("historical proof mutation counts=%#v", proof)
+	}
+}
+
+func TestComputeClaimRecoveryProofRejectsHistoricalMissingPeriodWhenProviderDoesNotProveOneMonth(t *testing.T) {
+	service, _, provider, input := seedComputeClaimRecoveryWithPeriod(t, "basic", "")
+	provider.proof.PeriodMonths = 2
+
+	proof, err := service.ComputeClaimRecoveryProof(context.Background(), input)
+
+	if err == nil || proof.Eligible || proof.Reason != "identity_mismatch" || provider.proofCalls != 1 {
+		t.Fatalf("proof=%#v err=%v providerProofCalls=%d", proof, err, provider.proofCalls)
+	}
+	if proof.Sub2APIMutationCount != 0 || proof.TencentMutationCount != 0 || proof.KubernetesMutationCount != 0 {
+		t.Fatalf("non-monthly provider proof mutation counts=%#v", proof)
+	}
+}
+
+func TestComputeClaimRecoveryProofRejectsPersistedNonMonthlyPeriodBeforeProvider(t *testing.T) {
+	service, _, provider, input := seedComputeClaimRecoveryWithPeriod(t, "basic", "2")
+
+	proof, err := service.ComputeClaimRecoveryProof(context.Background(), input)
+
+	if err == nil || proof.Eligible || proof.Reason != "local_identity" || provider.proofCalls != 0 {
+		t.Fatalf("proof=%#v err=%v providerProofCalls=%d", proof, err, provider.proofCalls)
+	}
+	if proof.Sub2APIMutationCount != 0 || proof.TencentMutationCount != 0 || proof.KubernetesMutationCount != 0 {
+		t.Fatalf("persisted non-monthly mutation counts=%#v", proof)
+	}
 }
 
 func TestComputeClaimRecoveryProofSupportsBasicAndProWithoutMutation(t *testing.T) {

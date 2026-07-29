@@ -1782,6 +1782,7 @@ func (client *tencentSDKClient) CreateComputeAllocation(request Request, _ map[s
 			"vpcId":                      targetVpcID,
 			"subnetId":                   stringValue(nativeIdentity.SubnetId),
 			"chargeType":                 chargeType,
+			"periodMonths":               "1",
 			"renewFlag":                  renewFlag,
 			"deadline":                   deadline,
 		},
