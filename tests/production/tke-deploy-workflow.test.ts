@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
@@ -69,6 +70,30 @@ function serializedStep(step) {
 
 function serializedRuns(currentJob) {
   return (currentJob.steps || []).map((step) => step.run || "").join("\n");
+}
+
+async function runWorkflowArtifactGate(step, filename, artifact, env = {}) {
+  const root = await mkdtemp(join(tmpdir(), "opl-workflow-artifact-gate-"));
+  try {
+    await writeFile(join(root, filename), `${JSON.stringify(artifact)}\n`);
+    return spawnSync("bash", ["-c", step.run], {
+      cwd: fileURLToPath(repoFile(".")),
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        OPL_COMPUTE_CLAIM_ARTIFACT_DIR: root,
+        ...env
+      }
+    });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
+function canonicalJson(value) {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (!value || typeof value !== "object") return JSON.stringify(value);
+  return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(",")}}`;
 }
 
 function runImageMetadata(step, appSha, shellSha, frameworkSha, {
@@ -947,6 +972,172 @@ test("compute claim diagnosis and recovery are isolated VPC modes with separate 
     const source = await readFile(repoFile(other), "utf8");
     assert.doesNotMatch(source, /compute_claim_recover|--compute-claim-recover/);
   }
+});
+
+test("compute claim workflow executes the recovery and continuation artifact gates", async () => {
+  const workflow = await readWorkflow(".github/workflows/production-basic-customer-operation.yml");
+  const steps = stepsByName(workflowJob(workflow, "compute-claim-recover"));
+  const claimGate = steps.get("Require approved claim readback");
+  const continuationGate = steps.get("Require original launch continuation success");
+  assert.ok(claimGate?.run);
+  assert.ok(continuationGate?.run);
+
+  const target = {
+    launchOperationId: "workspace-launch-compute-claim-fixture",
+    accountId: "acct-compute-claim-fixture",
+    workspaceId: "ws-compute-claim-fixture",
+    computeAllocationId: "ca_compute_claim_fixture",
+    storageId: "vol_compute_claim_fixture",
+    packageId: "basic",
+    poolId: "pool-basic-2c4g",
+    nodePoolId: "np-workspace-basic",
+    machineName: "np-workspace-basic-machine-fixture",
+    nodeName: "10.20.30.41",
+    cvmInstanceId: "ins-compute-claim-fixture",
+    privateIp: "10.20.30.42",
+    instanceType: "SA5.MEDIUM4",
+    zone: "na-siliconvalley-1",
+    chargeType: "PREPAID",
+    periodMonths: 1,
+    renewFlag: "NOTIFY_AND_MANUAL_RENEW",
+    deadline: "2099-08-28T00:00:00Z"
+  };
+  const approval = {
+    schemaVersion: 1,
+    approvalId: "approval-compute-claim-fixture",
+    expiresAt: "2099-08-28T00:00:00Z",
+    mergedMainSha: cloudCandidateSha,
+    cloudImageDigest: digestA,
+    confirmation: "CLAIM_PROVEN_COMPUTE_RESOURCE",
+    idempotencyKey: "compute-claim-recovery-fixture",
+    target
+  };
+  const approvalDigest = createHash("sha256").update(canonicalJson(approval)).digest("hex");
+  const claimArtifact = {
+    schemaVersion: 2,
+    operationMode: "compute_claim_recover",
+    status: "claimed",
+    recoveryEligible: true,
+    errorCode: "none",
+    release: { mergedSha: cloudCandidateSha, cloudImageDigest: digestA },
+    target,
+    proof: {
+      nodeOwnershipState: "target_owned",
+      cvmOwnershipState: "target_owned",
+      sub2apiMutationCount: 0,
+      tencentMutationCount: 1,
+      kubernetesMutationCount: 1,
+      evidence: {
+        cvm: { attempted: 1, confirmed: 1, unknown: 0, missing: [] },
+        node: { attempted: 1, confirmed: 1, unknown: 0, missing: [] }
+      }
+    },
+    approval: { approvalId: approval.approvalId, approvalDigest },
+    runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
+  };
+  const claimEnv = {
+    OPL_COMPUTE_CLAIM_RECOVERY_APPROVAL_JSON: JSON.stringify(approval),
+    OPL_COMPUTE_CLAIM_RECOVERY_APPROVAL_ID: approval.approvalId
+  };
+  const validClaim = await runWorkflowArtifactGate(claimGate, "compute-claim-recovery.json", claimArtifact, claimEnv);
+  assert.equal(validClaim.status, 0, validClaim.stderr || validClaim.stdout);
+
+  const changedApproval = { ...approval, idempotencyKey: "compute-claim-recovery-other" };
+  const mismatchedApproval = await runWorkflowArtifactGate(claimGate, "compute-claim-recovery.json", claimArtifact, {
+    ...claimEnv,
+    OPL_COMPUTE_CLAIM_RECOVERY_APPROVAL_JSON: JSON.stringify(changedApproval)
+  });
+  assert.notEqual(mismatchedApproval.status, 0, "claim gate accepted an artifact bound to a different approval digest");
+  const blockedClaim = await runWorkflowArtifactGate(claimGate, "compute-claim-recovery.json", {
+    schemaVersion: 2,
+    operationMode: "compute_claim_recover",
+    status: "blocked",
+    recoveryEligible: false,
+    errorCode: "compute_claim_recovery_failed",
+    runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
+  }, claimEnv);
+  assert.notEqual(blockedClaim.status, 0, "claim gate accepted a runner blocked artifact");
+
+  const workspaceUrl = `https://workspace.medopl.cn/w/${target.workspaceId}/`;
+  const continuationArtifact = {
+    schemaVersion: 2,
+    operationMode: "compute_claim_recover_continuation",
+    status: "succeeded",
+    recoveryEligible: true,
+    errorCode: "none",
+    release: { mergedSha: cloudCandidateSha, cloudImageDigest: digestA },
+    target,
+    launch: {
+      operationId: target.launchOperationId,
+      accountId: target.accountId,
+      workspaceId: target.workspaceId,
+      computeAllocationId: target.computeAllocationId,
+      storageId: target.storageId,
+      status: "succeeded",
+      phase: "succeeded",
+      attachmentId: "attachment-compute-claim-fixture",
+      receiptId: "receipt-compute-claim-fixture",
+      url: workspaceUrl
+    },
+    runtime: {
+      workspaceId: target.workspaceId,
+      runtimeId: "runtime-compute-claim-fixture",
+      status: "running",
+      ready: true,
+      url: workspaceUrl
+    },
+    receipt: {
+      receiptId: "receipt-compute-claim-fixture",
+      type: "billing.workspace_purchased.v1",
+      status: "completed",
+      workspaceId: target.workspaceId,
+      components: { storage: { resourceId: target.storageId, sizeGb: 10 } },
+      fulfillment: {
+        attachmentId: "attachment-compute-claim-fixture",
+        runtimeId: "runtime-compute-claim-fixture"
+      }
+    },
+    runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
+    backgroundMutationCountsState: "unknown",
+    verifiedAt: "2026-08-28T00:00:00.000Z"
+  };
+  const continuationEnv = { OPL_COMPUTE_CLAIM_TARGET_JSON: JSON.stringify(target) };
+  const validContinuation = await runWorkflowArtifactGate(
+    continuationGate,
+    "workspace-launch-continuation.json",
+    continuationArtifact,
+    continuationEnv
+  );
+  assert.equal(validContinuation.status, 0, validContinuation.stderr || validContinuation.stdout);
+
+  for (const [name, mutate] of [
+    ["noncanonical URL", (artifact) => {
+      artifact.launch.url = `https://attacker.example/w/${target.workspaceId}/`;
+      artifact.runtime.url = artifact.launch.url;
+    }],
+    ["receipt Workspace drift", (artifact) => { artifact.receipt.workspaceId = "ws-other"; }],
+    ["claimed background mutation count", (artifact) => { artifact.backgroundMutationCountsState = "zero"; }]
+  ]) {
+    const artifact = JSON.parse(JSON.stringify(continuationArtifact));
+    mutate(artifact);
+    const result = await runWorkflowArtifactGate(
+      continuationGate,
+      "workspace-launch-continuation.json",
+      artifact,
+      continuationEnv
+    );
+    assert.notEqual(result.status, 0, `continuation gate accepted ${name}`);
+  }
+  const blockedContinuation = await runWorkflowArtifactGate(continuationGate, "workspace-launch-continuation.json", {
+    schemaVersion: 2,
+    operationMode: "compute_claim_recover_continuation",
+    status: "blocked",
+    recoveryEligible: false,
+    errorCode: "compute_claim_continuation_failed",
+    runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
+    backgroundMutationCountsState: "unknown"
+  }, continuationEnv);
+  assert.notEqual(blockedContinuation.status, 0, "continuation gate accepted a runner blocked artifact");
 });
 
 test("manual cleanup workflows invoke the shared four-identity protected-resource guard", async () => {

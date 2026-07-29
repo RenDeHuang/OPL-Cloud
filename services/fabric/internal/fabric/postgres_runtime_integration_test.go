@@ -875,6 +875,50 @@ func TestPostgresComputeClaimRecoveryRestartAfterTargetOwnedReadbackConvergesLoc
 	assertRecoveredComputeOperation(t, operations, input, "succeeded")
 }
 
+func TestPostgresComputeClaimRecoveryReservedReplayAfterRestartReturnsUnknownWithoutMutation(t *testing.T) {
+	databaseURL := fabricTestDatabaseURL(t)
+	firstStore, err := newTestPostgresOperationStore(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider, input, claimInput := seedPostgresComputeClaimRecovery(t, firstStore, "basic", false)
+	operations, err := firstStore.List(context.Background())
+	if err != nil || len(operations) != 1 {
+		t.Fatalf("seed operations=%#v err=%v", operations, err)
+	}
+	reserved := operations[0]
+	reserved.RedactedProviderPayload = withComputeClaimRecoveryMutation(reserved.RedactedProviderPayload, reservedComputeClaimRecoveryMutation())
+	if err := firstStore.SaveComputeClaimRecovery(context.Background(), operations[0], reserved); err != nil {
+		t.Fatal(err)
+	}
+	if err := firstStore.client.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	secondStore, err := newTestPostgresOperationStore(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer secondStore.client.Close()
+	result, claimErr := NewServiceWithOperationStore(provider, secondStore).ClaimComputeRecovery(context.Background(), claimInput)
+	ownership, ownershipErr := secondStore.MachineOwnership(context.Background(), input.ComputeAllocationID)
+	stored, listErr := secondStore.List(context.Background())
+	if listErr != nil || len(stored) != 1 {
+		t.Fatalf("stored operations=%#v err=%v", stored, listErr)
+	}
+	ledger, ledgerPresent, ledgerValid := decodeComputeClaimRecoveryMutation(stored[0])
+
+	if claimErr == nil || result.Eligible || result.Reason != "provider_describe" || result.TencentMutationCount != 5 ||
+		result.KubernetesMutationCount != 1 || result.Evidence == nil || result.Evidence.CVM.Attempted != 5 ||
+		result.Evidence.CVM.Confirmed != 0 || result.Evidence.CVM.Unknown != 5 || result.Evidence.Node.Attempted != 1 ||
+		result.Evidence.Node.Confirmed != 0 || result.Evidence.Node.Unknown != 1 || ownershipErr != nil ||
+		ownership.Status != "quarantined" || stored[0].Status != "claim_pending" || !ledgerPresent || !ledgerValid ||
+		!reflect.DeepEqual(ledger, reservedComputeClaimRecoveryMutation()) || provider.proofCalls != 1 || provider.claimCalls != 0 ||
+		provider.tagCalls != 0 || provider.scaleCalls != 0 || provider.storageCreates.Load() != 0 {
+		t.Fatalf("result=%#v claimErr=%v ownership=%#v ownershipErr=%v stored=%#v ledger=%#v present=%v valid=%v provider=%#v storageCreates=%d", result, claimErr, ownership, ownershipErr, stored, ledger, ledgerPresent, ledgerValid, provider, provider.storageCreates.Load())
+	}
+}
+
 func TestPostgresComputeClaimRecoveryFailureReplayDoesNotMutateAcrossServiceInstances(t *testing.T) {
 	databaseURL := fabricTestDatabaseURL(t)
 	firstStore, err := newTestPostgresOperationStore(databaseURL)
