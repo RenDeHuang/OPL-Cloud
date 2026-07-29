@@ -349,8 +349,8 @@ func workspaceComputeClaimRecoveryRequestFromMap(operationID string, input map[s
 
 func workspaceComputeClaimSafeFailure(proof clients.ComputeClaimRecoveryProof) bool {
 	return proof.SchemaVersion == 1 && proof.Reason != "" && proof.Reason != "none" && safeWorkspaceComputeClaimReason(proof.Reason) &&
-		proof.Sub2APIMutationCount == 0 && proof.TencentMutationCount >= 0 && proof.TencentMutationCount <= 5 &&
-		proof.KubernetesMutationCount >= 0 && proof.KubernetesMutationCount <= 1
+		proof.Sub2APIMutationCount == 0 && workspaceComputeClaimEvidenceMatches(proof, false) &&
+		(proof.FailureStage == "" && proof.ProviderErrorClass == "" || proof.FailureStage != "" && proof.ProviderErrorClass != "")
 }
 
 func writeWorkspaceComputeClaimError(w http.ResponseWriter, err error) {

@@ -944,12 +944,71 @@ func safeWorkspaceComputeClaimReason(reason string) bool {
 	}
 }
 
+func safeWorkspaceComputeClaimFailureStage(value string) bool {
+	switch value {
+	case "", "cvm_pre_read", "cvm_conflict_check", "cvm_mutation_precondition", "cvm_rename_readback", "cvm_tag_readback", "cvm_final_readback",
+		"cvm_provisioner_transport", "cvm_mutation_evidence", "node_pre_cvm_read", "node_pre_read", "node_conflict_check", "node_patch_build",
+		"node_patch_readback", "node_final_readback", "claim_final_readback":
+		return true
+	default:
+		return false
+	}
+}
+
+func safeWorkspaceComputeClaimProviderErrorClass(value string) bool {
+	switch value {
+	case "", "client_unavailable", "malformed_readback", "ownership_conflict", "readback_mismatch", "timeout", "iam_rbac", "provider_error",
+		"transport_error", "evidence_incomplete":
+		return true
+	default:
+		return false
+	}
+}
+
+func workspaceComputeClaimMissingField(domain, field string) bool {
+	switch domain {
+	case "cvm":
+		switch field {
+		case "instance", "instance_name", "opl_account_id", "opl_workspace_id", "opl_resource_id", "opl_operation_id":
+			return true
+		}
+	case "node":
+		return field == "node_ownership"
+	}
+	return false
+}
+
+func workspaceComputeClaimMutationEvidenceMatches(evidence clients.ComputeClaimMutationEvidence, count, maximum int, domain string, confirmed bool) bool {
+	if count < 0 || count > maximum || evidence.Attempted != count || evidence.Confirmed < 0 || evidence.Confirmed > maximum ||
+		evidence.Unknown < 0 || evidence.Unknown > maximum || evidence.Confirmed > evidence.Attempted ||
+		evidence.Unknown > evidence.Attempted || evidence.Confirmed+evidence.Unknown > evidence.Attempted {
+		return false
+	}
+	seen := map[string]bool{}
+	for _, field := range evidence.Missing {
+		if !workspaceComputeClaimMissingField(domain, field) || seen[field] {
+			return false
+		}
+		seen[field] = true
+	}
+	if confirmed {
+		return evidence.Confirmed == evidence.Attempted && evidence.Unknown == 0 && len(evidence.Missing) == 0
+	}
+	return evidence.Confirmed <= evidence.Attempted
+}
+
+func workspaceComputeClaimEvidenceMatches(proof clients.ComputeClaimRecoveryProof, confirmed bool) bool {
+	return proof.Evidence != nil && safeWorkspaceComputeClaimFailureStage(proof.FailureStage) &&
+		safeWorkspaceComputeClaimProviderErrorClass(proof.ProviderErrorClass) &&
+		workspaceComputeClaimMutationEvidenceMatches(proof.Evidence.CVM, proof.TencentMutationCount, 5, "cvm", confirmed) &&
+		workspaceComputeClaimMutationEvidenceMatches(proof.Evidence.Node, proof.KubernetesMutationCount, 1, "node", confirmed)
+}
+
 func workspaceComputeClaimProofBaseMatches(operation workspaceLaunchOperation, input workspaceComputeClaimRecoveryRequest, proof clients.ComputeClaimRecoveryProof) bool {
 	return proof.SchemaVersion == 1 && proof.LaunchOperationID == operation.ID && proof.AccountID == operation.AccountID &&
 		proof.WorkspaceID == operation.WorkspaceID && proof.ComputeAllocationID == operation.ComputeID && proof.StorageVolumeID == operation.StorageID &&
 		proof.PackageID == operation.PackageID && proof.PoolID == input.PoolID && proof.NodePoolID == operation.ComputeNodePoolID &&
-		proof.Sub2APIMutationCount == 0 && proof.TencentMutationCount >= 0 && proof.TencentMutationCount <= 5 &&
-		proof.KubernetesMutationCount >= 0 && proof.KubernetesMutationCount <= 1 && safeWorkspaceComputeClaimReason(proof.Reason)
+		proof.Sub2APIMutationCount == 0 && safeWorkspaceComputeClaimReason(proof.Reason) && workspaceComputeClaimEvidenceMatches(proof, false)
 }
 
 func workspaceComputeClaimProofEligible(operation workspaceLaunchOperation, input workspaceComputeClaimRecoveryRequest, proof clients.ComputeClaimRecoveryProof, claimed bool) bool {
@@ -958,7 +1017,8 @@ func workspaceComputeClaimProofEligible(operation workspaceLaunchOperation, inpu
 		proof.MachineName != input.MachineName || proof.NodeName != input.NodeName || proof.CVMInstanceID != input.CVMInstanceID || proof.PrivateIP != input.PrivateIP ||
 		proof.InstanceType != input.InstanceType || proof.Zone != input.Zone || proof.ChargeType != "PREPAID" || proof.PeriodMonths != 1 ||
 		proof.RenewFlag != "NOTIFY_AND_MANUAL_RENEW" || deadlineErr != nil || deadline.IsZero() ||
-		validWorkspaceLaunchComputeClaimIdentity(operation) && proof.Deadline != operation.ComputeDeadline {
+		validWorkspaceLaunchComputeClaimIdentity(operation) && proof.Deadline != operation.ComputeDeadline ||
+		!workspaceComputeClaimEvidenceMatches(proof, true) || proof.FailureStage != "" || proof.ProviderErrorClass != "" {
 		return false
 	}
 	if claimed {
@@ -966,6 +1026,13 @@ func workspaceComputeClaimProofEligible(operation workspaceLaunchOperation, inpu
 	}
 	return (proof.NodeOwnershipState == "unallocated" || proof.NodeOwnershipState == "target_owned") &&
 		(proof.CVMOwnershipState == "recoverable" || proof.CVMOwnershipState == "target_owned")
+}
+
+func workspaceComputeClaimSafeFailureForOperation(operation workspaceLaunchOperation, input workspaceComputeClaimRecoveryRequest, proof clients.ComputeClaimRecoveryProof) bool {
+	if !workspaceComputeClaimProofBaseMatches(operation, input, proof) || proof.Eligible || proof.Reason == "none" || !safeWorkspaceComputeClaimReason(proof.Reason) {
+		return false
+	}
+	return proof.FailureStage == "" && proof.ProviderErrorClass == "" || proof.FailureStage != "" && proof.ProviderErrorClass != ""
 }
 
 func persistWorkspaceComputeClaimIdentityFromProof(operation *workspaceLaunchOperation, proof clients.ComputeClaimRecoveryProof) bool {
@@ -1071,8 +1138,8 @@ func (app *controlPlaneServer) claimWorkspaceCompute(ctx context.Context, servic
 		proofErr = errWorkspaceComputeClaimProof
 	}
 	if proofErr != nil || !workspaceComputeClaimProofEligible(operation, input, proof, false) {
-		if !safeWorkspaceComputeClaimReason(proof.Reason) || proof.Reason == "none" {
-			proof.Reason = "provider_describe"
+		if !workspaceComputeClaimSafeFailureForOperation(operation, input, proof) {
+			proof = workspaceComputeClaimFailureProof(operation, "provider_describe")
 		}
 		operation.Status, operation.ErrorCode = "manual_review", "workspace_compute_claim_"+proof.Reason
 		releaseWorkspaceLaunchLease(&operation)
@@ -1105,11 +1172,8 @@ func (app *controlPlaneServer) claimWorkspaceCompute(ctx context.Context, servic
 		InstanceType: operation.ComputeInstanceType, Zone: operation.ComputeZone,
 	}, key)
 	if claimErr != nil || !workspaceComputeClaimProofEligible(operation, input, claimed, true) {
-		if !workspaceComputeClaimProofBaseMatches(operation, input, claimed) {
+		if !workspaceComputeClaimSafeFailureForOperation(operation, input, claimed) {
 			claimed = workspaceComputeClaimFailureProof(operation, "identity_mismatch")
-		}
-		if !safeWorkspaceComputeClaimReason(claimed.Reason) || claimed.Reason == "none" {
-			claimed.Reason = "provider_describe"
 		}
 		operation.Status, operation.ErrorCode = "manual_review", "workspace_compute_claim_"+claimed.Reason
 		releaseWorkspaceLaunchLease(&operation)
@@ -1136,6 +1200,7 @@ func workspaceComputeClaimFailureProof(operation workspaceLaunchOperation, reaso
 		SchemaVersion: 1, Reason: reason, StorageState: "unknown", LaunchOperationID: operation.ID, AccountID: operation.AccountID,
 		WorkspaceID: operation.WorkspaceID, ComputeAllocationID: operation.ComputeID, StorageVolumeID: operation.StorageID,
 		PackageID: operation.PackageID, PoolID: operation.ComputePoolID, NodePoolID: operation.ComputeNodePoolID,
+		Evidence: &clients.ComputeClaimEvidence{},
 	}
 }
 

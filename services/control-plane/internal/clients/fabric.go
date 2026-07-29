@@ -164,34 +164,49 @@ type ComputeClaimRecoveryClaimInput struct {
 	Zone          string `json:"zone"`
 }
 
+type ComputeClaimMutationEvidence struct {
+	Attempted int      `json:"attempted"`
+	Confirmed int      `json:"confirmed"`
+	Unknown   int      `json:"unknown"`
+	Missing   []string `json:"missing,omitempty"`
+}
+
+type ComputeClaimEvidence struct {
+	CVM  ComputeClaimMutationEvidence `json:"cvm"`
+	Node ComputeClaimMutationEvidence `json:"node"`
+}
+
 type ComputeClaimRecoveryProof struct {
-	SchemaVersion           int    `json:"schemaVersion"`
-	Eligible                bool   `json:"eligible"`
-	Reason                  string `json:"reason"`
-	StorageState            string `json:"storageState"`
-	LaunchOperationID       string `json:"launchOperationId"`
-	AccountID               string `json:"accountId"`
-	WorkspaceID             string `json:"workspaceId"`
-	ComputeAllocationID     string `json:"computeAllocationId"`
-	StorageVolumeID         string `json:"storageVolumeId"`
-	PackageID               string `json:"packageId"`
-	PoolID                  string `json:"poolId"`
-	NodePoolID              string `json:"nodePoolId"`
-	MachineName             string `json:"machineName,omitempty"`
-	NodeName                string `json:"nodeName,omitempty"`
-	CVMInstanceID           string `json:"cvmInstanceId,omitempty"`
-	PrivateIP               string `json:"privateIp,omitempty"`
-	InstanceType            string `json:"instanceType,omitempty"`
-	Zone                    string `json:"zone,omitempty"`
-	ChargeType              string `json:"chargeType,omitempty"`
-	PeriodMonths            int    `json:"periodMonths,omitempty"`
-	RenewFlag               string `json:"renewFlag,omitempty"`
-	Deadline                string `json:"deadline,omitempty"`
-	NodeOwnershipState      string `json:"nodeOwnershipState,omitempty"`
-	CVMOwnershipState       string `json:"cvmOwnershipState,omitempty"`
-	Sub2APIMutationCount    int    `json:"sub2apiMutationCount"`
-	TencentMutationCount    int    `json:"tencentMutationCount"`
-	KubernetesMutationCount int    `json:"kubernetesMutationCount"`
+	SchemaVersion           int                   `json:"schemaVersion"`
+	Eligible                bool                  `json:"eligible"`
+	Reason                  string                `json:"reason"`
+	StorageState            string                `json:"storageState"`
+	LaunchOperationID       string                `json:"launchOperationId"`
+	AccountID               string                `json:"accountId"`
+	WorkspaceID             string                `json:"workspaceId"`
+	ComputeAllocationID     string                `json:"computeAllocationId"`
+	StorageVolumeID         string                `json:"storageVolumeId"`
+	PackageID               string                `json:"packageId"`
+	PoolID                  string                `json:"poolId"`
+	NodePoolID              string                `json:"nodePoolId"`
+	MachineName             string                `json:"machineName,omitempty"`
+	NodeName                string                `json:"nodeName,omitempty"`
+	CVMInstanceID           string                `json:"cvmInstanceId,omitempty"`
+	PrivateIP               string                `json:"privateIp,omitempty"`
+	InstanceType            string                `json:"instanceType,omitempty"`
+	Zone                    string                `json:"zone,omitempty"`
+	ChargeType              string                `json:"chargeType,omitempty"`
+	PeriodMonths            int                   `json:"periodMonths,omitempty"`
+	RenewFlag               string                `json:"renewFlag,omitempty"`
+	Deadline                string                `json:"deadline,omitempty"`
+	NodeOwnershipState      string                `json:"nodeOwnershipState,omitempty"`
+	CVMOwnershipState       string                `json:"cvmOwnershipState,omitempty"`
+	Sub2APIMutationCount    int                   `json:"sub2apiMutationCount"`
+	TencentMutationCount    int                   `json:"tencentMutationCount"`
+	KubernetesMutationCount int                   `json:"kubernetesMutationCount"`
+	FailureStage            string                `json:"failureStage,omitempty"`
+	ProviderErrorClass      string                `json:"providerErrorClass,omitempty"`
+	Evidence                *ComputeClaimEvidence `json:"evidence,omitempty"`
 }
 
 type ComputeAllocation struct {
