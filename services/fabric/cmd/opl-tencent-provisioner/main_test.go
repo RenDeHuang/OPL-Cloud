@@ -240,6 +240,11 @@ func (client *fakeTencentClient) ClaimComputeMachine(request Request, _ map[stri
 	return Response{Ok: true, Status: "claimed", InstanceId: request.Allocation.InstanceId}
 }
 
+func (client *fakeTencentClient) DiscoverStorageVolume(request Request, _ map[string]string) Response {
+	client.storageRequest = request
+	return Response{Ok: true, Status: "absent", StorageState: "storage_not_started"}
+}
+
 func (client *fakeTencentClient) CreateStorageVolume(request Request, _ map[string]string) Response {
 	client.storageRequest = request
 	return Response{Ok: true, StorageVolumeId: "disk-test", Status: "provider_ready"}
@@ -2482,6 +2487,267 @@ type fakeNativeCbsAPI struct {
 	err                             error
 }
 
+type pagedNativeCbsAPI struct {
+	*fakeNativeCbsAPI
+	pages           [][]*cbs2017.Disk
+	total           uint64
+	namePages       [][]*cbs2017.Disk
+	nameTotal       uint64
+	describeErr     error
+	nameDescribeErr error
+}
+
+func cbsUint64Value(value *uint64) uint64 {
+	if value == nil {
+		return 0
+	}
+	return *value
+}
+
+func (api *pagedNativeCbsAPI) DescribeDisks(request *cbs2017.DescribeDisksRequest) (*cbs2017.DescribeDisksResponse, error) {
+	if len(request.DiskIds) > 0 {
+		return api.fakeNativeCbsAPI.DescribeDisks(request)
+	}
+	api.describeDisksRequests = append(api.describeDisksRequests, request)
+	pages, total, describeErr := api.pages, api.total, api.describeErr
+	if len(request.Filters) == 1 && stringValue(request.Filters[0].Name) == "disk-name" {
+		if api.namePages != nil {
+			pages, total = api.namePages, api.nameTotal
+		}
+		if api.nameDescribeErr != nil {
+			describeErr = api.nameDescribeErr
+		}
+	}
+	if describeErr != nil {
+		return nil, describeErr
+	}
+	page := int(cbsUint64Value(request.Offset) / 100)
+	disks := []*cbs2017.Disk{}
+	if page < len(pages) {
+		disks = pages[page]
+	}
+	if total == 0 {
+		for _, values := range pages {
+			total += uint64(len(values))
+		}
+	}
+	return &cbs2017.DescribeDisksResponse{Response: &cbs2017.DescribeDisksResponseParams{
+		DiskSet: disks, TotalCount: common.Uint64Ptr(total), RequestId: common.StringPtr(fmt.Sprintf("req-discover-cbs-%d", page+1)),
+	}}, nil
+}
+
+func exactRecoveryDisk(id string) *cbs2017.Disk {
+	tags := map[string]string{
+		"opl_account_id": "acct-alpha", "opl_workspace_id": "ws-alpha", "opl_resource_id": "storage-alpha", "opl_operation_id": "op-storage-alpha",
+	}
+	diskTags := make([]*cbs2017.Tag, 0, len(tags))
+	for key, value := range tags {
+		diskTags = append(diskTags, &cbs2017.Tag{Key: common.StringPtr(key), Value: common.StringPtr(value)})
+	}
+	return &cbs2017.Disk{
+		DiskId: common.StringPtr(id), DiskName: common.StringPtr("storage-alpha"), DiskUsage: common.StringPtr("DATA_DISK"),
+		DiskState: common.StringPtr("UNATTACHED"), DiskType: common.StringPtr("CLOUD_BSSD"), DiskChargeType: common.StringPtr("PREPAID"),
+		RenewFlag: common.StringPtr("NOTIFY_AND_MANUAL_RENEW"), DiskSize: common.Uint64Ptr(10),
+		Placement: &cbs2017.Placement{Zone: common.StringPtr("ap-guangzhou-3")}, CreateTime: common.StringPtr("2026-07-16T00:00:00Z"),
+		DeadlineTime: common.StringPtr("2026-08-16T00:00:00Z"), Tags: diskTags,
+	}
+}
+
+func recoveryStorageRequest() Request {
+	return Request{
+		Action: "discover_storage_volume", AccountId: "acct-alpha",
+		Tags: map[string]string{
+			"opl_account_id": "acct-alpha", "opl_workspace_id": "ws-alpha", "opl_resource_id": "storage-alpha", "opl_operation_id": "op-storage-alpha",
+		},
+		Storage: StorageInput{Id: "storage-alpha", SizeGB: 10, Zone: "ap-guangzhou-3", DiskType: "CLOUD_BSSD"},
+	}
+}
+
+func assertRecoveryCBSFilters(t *testing.T, request *cbs2017.DescribeDisksRequest, offset uint64) {
+	t.Helper()
+	if request == nil || len(request.DiskIds) != 0 || cbsUint64Value(request.Limit) != 100 || cbsUint64Value(request.Offset) != offset || len(request.Filters) != 4 {
+		t.Fatalf("DescribeDisks request=%#v", request)
+	}
+	want := recoveryStorageRequest().Tags
+	seen := map[string]string{}
+	for _, filter := range request.Filters {
+		if filter == nil || len(filter.Values) != 1 {
+			t.Fatalf("DescribeDisks filter=%#v", filter)
+		}
+		seen[strings.TrimPrefix(stringValue(filter.Name), "tag:")] = stringValue(filter.Values[0])
+	}
+	if !reflect.DeepEqual(seen, want) {
+		t.Fatalf("DescribeDisks filters=%#v want=%#v", seen, want)
+	}
+}
+
+func assertRecoveryCBSNameFilter(t *testing.T, request *cbs2017.DescribeDisksRequest, offset uint64) {
+	t.Helper()
+	if request == nil || len(request.DiskIds) != 0 || cbsUint64Value(request.Limit) != 100 || cbsUint64Value(request.Offset) != offset || len(request.Filters) != 1 ||
+		stringValue(request.Filters[0].Name) != "disk-name" || len(request.Filters[0].Values) != 1 || stringValue(request.Filters[0].Values[0]) != "storage-alpha" {
+		t.Fatalf("DescribeDisks name fallback request=%#v", request)
+	}
+}
+
+func TestTencentSDKDiscoversExactRecoveryCBSWithoutMutation(t *testing.T) {
+	disk := exactRecoveryDisk("disk-existing-alpha")
+	api := &pagedNativeCbsAPI{fakeNativeCbsAPI: &fakeNativeCbsAPI{}, pages: [][]*cbs2017.Disk{{disk}}, namePages: [][]*cbs2017.Disk{{disk}}}
+	response := (&tencentSDKClient{nativeCbsClient: api}).DiscoverStorageVolume(recoveryStorageRequest(), map[string]string{})
+
+	if !response.Ok || response.StorageState != "storage_existing_exact" || response.StorageVolumeId != "disk-existing-alpha" || response.MutationCount != 0 {
+		t.Fatalf("discovery response=%#v", response)
+	}
+	if len(api.createDisksRequests) != 0 || len(api.describeDisksRequests) != 2 {
+		t.Fatalf("discovery calls: DescribeDisks=%d CreateDisks=%d", len(api.describeDisksRequests), len(api.createDisksRequests))
+	}
+	assertRecoveryCBSFilters(t, api.describeDisksRequests[0], 0)
+	assertRecoveryCBSNameFilter(t, api.describeDisksRequests[1], 0)
+}
+
+func TestTencentSDKRecoveryCBSDiscoveryReadsEveryPageAndRejectsMultipleCandidates(t *testing.T) {
+	first := make([]*cbs2017.Disk, 100)
+	for index := range first {
+		first[index] = exactRecoveryDisk(fmt.Sprintf("disk-page-one-%03d", index))
+	}
+	api := &pagedNativeCbsAPI{fakeNativeCbsAPI: &fakeNativeCbsAPI{}, pages: [][]*cbs2017.Disk{first, {exactRecoveryDisk("disk-page-two")}}}
+	response := (&tencentSDKClient{nativeCbsClient: api}).DiscoverStorageVolume(recoveryStorageRequest(), map[string]string{})
+
+	if response.Ok || response.StorageState != "unknown" || response.ErrorCode != "tencent_cbs_multiple_candidate" || response.MutationCount != 0 {
+		t.Fatalf("paginated discovery response=%#v", response)
+	}
+	if len(api.describeDisksRequests) != 2 || len(api.createDisksRequests) != 0 {
+		t.Fatalf("paginated discovery calls: DescribeDisks=%d CreateDisks=%d", len(api.describeDisksRequests), len(api.createDisksRequests))
+	}
+	assertRecoveryCBSFilters(t, api.describeDisksRequests[0], 0)
+	assertRecoveryCBSFilters(t, api.describeDisksRequests[1], 100)
+}
+
+func TestTencentSDKRecoveryCBSDiscoveryFailsClosedOnDescribeAndIdentityDrift(t *testing.T) {
+	tests := []struct {
+		name string
+		api  *pagedNativeCbsAPI
+	}{
+		{name: "describe error", api: &pagedNativeCbsAPI{fakeNativeCbsAPI: &fakeNativeCbsAPI{}, describeErr: errors.New("describe unavailable")}},
+		{name: "tag drift", api: &pagedNativeCbsAPI{fakeNativeCbsAPI: &fakeNativeCbsAPI{}, namePages: [][]*cbs2017.Disk{{func() *cbs2017.Disk {
+			disk := exactRecoveryDisk("disk-drift")
+			disk.Tags[0].Value = common.StringPtr("other")
+			return disk
+		}()}}}},
+		{name: "zone drift", api: &pagedNativeCbsAPI{fakeNativeCbsAPI: &fakeNativeCbsAPI{}, pages: [][]*cbs2017.Disk{{func() *cbs2017.Disk {
+			disk := exactRecoveryDisk("disk-drift")
+			disk.Placement.Zone = common.StringPtr("ap-guangzhou-4")
+			return disk
+		}()}}}},
+		{name: "capacity drift", api: &pagedNativeCbsAPI{fakeNativeCbsAPI: &fakeNativeCbsAPI{}, pages: [][]*cbs2017.Disk{{func() *cbs2017.Disk {
+			disk := exactRecoveryDisk("disk-drift")
+			disk.DiskSize = common.Uint64Ptr(20)
+			return disk
+		}()}}}},
+		{name: "billing drift", api: &pagedNativeCbsAPI{fakeNativeCbsAPI: &fakeNativeCbsAPI{}, pages: [][]*cbs2017.Disk{{func() *cbs2017.Disk {
+			disk := exactRecoveryDisk("disk-drift")
+			disk.DiskChargeType = common.StringPtr("POSTPAID_BY_HOUR")
+			return disk
+		}()}}}},
+		{name: "period drift", api: &pagedNativeCbsAPI{fakeNativeCbsAPI: &fakeNativeCbsAPI{}, pages: [][]*cbs2017.Disk{{func() *cbs2017.Disk {
+			disk := exactRecoveryDisk("disk-drift")
+			disk.DeadlineTime = common.StringPtr("2026-09-16T00:00:00Z")
+			return disk
+		}()}}}},
+		{name: "deadline missing", api: &pagedNativeCbsAPI{fakeNativeCbsAPI: &fakeNativeCbsAPI{}, pages: [][]*cbs2017.Disk{{func() *cbs2017.Disk { disk := exactRecoveryDisk("disk-drift"); disk.DeadlineTime = nil; return disk }()}}}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			response := (&tencentSDKClient{nativeCbsClient: test.api}).DiscoverStorageVolume(recoveryStorageRequest(), map[string]string{})
+			if response.Ok || response.StorageState != "unknown" || response.MutationCount != 0 || len(test.api.createDisksRequests) != 0 {
+				t.Fatalf("drift response=%#v CreateDisks=%d", response, len(test.api.createDisksRequests))
+			}
+		})
+	}
+}
+
+func TestTencentSDKRecoveryStorageCreatesOnceOrReusesApprovedExactDisk(t *testing.T) {
+	t.Run("zero candidate creates once", func(t *testing.T) {
+		base := &fakeNativeCbsAPI{diskID: "disk-created-alpha", tags: recoveryStorageRequest().Tags}
+		api := &pagedNativeCbsAPI{fakeNativeCbsAPI: base, pages: [][]*cbs2017.Disk{{}}}
+		request := recoveryStorageRequest()
+		request.Action = "create_storage_volume"
+		request.Storage.ExpectedState = "storage_not_started"
+		response := (&tencentSDKClient{nativeCbsClient: api}).CreateStorageVolume(request, map[string]string{})
+		if !response.Ok || response.StorageVolumeId != "disk-created-alpha" || len(api.createDisksRequests) != 1 {
+			t.Fatalf("create response=%#v CreateDisks=%d", response, len(api.createDisksRequests))
+		}
+	})
+
+	t.Run("one exact candidate is reused", func(t *testing.T) {
+		api := &pagedNativeCbsAPI{fakeNativeCbsAPI: &fakeNativeCbsAPI{}, pages: [][]*cbs2017.Disk{{exactRecoveryDisk("disk-existing-alpha")}}}
+		request := recoveryStorageRequest()
+		request.Action = "create_storage_volume"
+		request.Storage.ExpectedState = "storage_existing_exact"
+		request.Storage.ExpectedProviderResourceId = "disk-existing-alpha"
+		response := (&tencentSDKClient{nativeCbsClient: api}).CreateStorageVolume(request, map[string]string{})
+		if !response.Ok || response.StorageState != "storage_existing_exact" || response.StorageVolumeId != "disk-existing-alpha" || len(api.createDisksRequests) != 0 {
+			t.Fatalf("reuse response=%#v CreateDisks=%d", response, len(api.createDisksRequests))
+		}
+	})
+}
+
+func TestTencentSDKRecoveryStorageRejectsApprovalDriftBeforeCreateDisks(t *testing.T) {
+	tests := []struct {
+		name           string
+		expectedState  string
+		expectedDiskID string
+		providerDisks  []*cbs2017.Disk
+	}{
+		{name: "approved absent became present", expectedState: "storage_not_started", providerDisks: []*cbs2017.Disk{exactRecoveryDisk("disk-existing-alpha")}},
+		{name: "approved disk disappeared", expectedState: "storage_existing_exact", expectedDiskID: "disk-existing-alpha"},
+		{name: "approved disk changed", expectedState: "storage_existing_exact", expectedDiskID: "disk-approved-alpha", providerDisks: []*cbs2017.Disk{exactRecoveryDisk("disk-other-alpha")}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			api := &pagedNativeCbsAPI{fakeNativeCbsAPI: &fakeNativeCbsAPI{}, pages: [][]*cbs2017.Disk{test.providerDisks}}
+			request := recoveryStorageRequest()
+			request.Action = "create_storage_volume"
+			request.Storage.ExpectedState = test.expectedState
+			request.Storage.ExpectedProviderResourceId = test.expectedDiskID
+			response := (&tencentSDKClient{nativeCbsClient: api}).CreateStorageVolume(request, map[string]string{})
+			if response.Ok || response.StorageState != "unknown" || len(api.createDisksRequests) != 0 {
+				t.Fatalf("approval drift response=%#v CreateDisks=%d", response, len(api.createDisksRequests))
+			}
+		})
+	}
+}
+
+func TestTencentSDKRecoveryStorageReplayNeverCreatesSecondCBS(t *testing.T) {
+	t.Run("reuses exact disk from reserved attempt", func(t *testing.T) {
+		disk := exactRecoveryDisk("disk-created-before-restart")
+		api := &pagedNativeCbsAPI{fakeNativeCbsAPI: &fakeNativeCbsAPI{}, pages: [][]*cbs2017.Disk{{disk}}, namePages: [][]*cbs2017.Disk{{disk}}}
+		request := recoveryStorageRequest()
+		request.Action = "create_storage_volume"
+		request.Storage.ExpectedState = "storage_not_started"
+		request.Storage.AllowExistingExactReplay = true
+
+		response := (&tencentSDKClient{nativeCbsClient: api}).CreateStorageVolume(request, map[string]string{})
+
+		if !response.Ok || response.StorageVolumeId != "disk-created-before-restart" || response.MutationCount != 0 || len(api.createDisksRequests) != 0 {
+			t.Fatalf("restart reuse response=%#v CreateDisks=%d", response, len(api.createDisksRequests))
+		}
+	})
+
+	t.Run("unconfirmed replay stops without creating", func(t *testing.T) {
+		api := &pagedNativeCbsAPI{fakeNativeCbsAPI: &fakeNativeCbsAPI{}, pages: [][]*cbs2017.Disk{{}}}
+		request := recoveryStorageRequest()
+		request.Action = "create_storage_volume"
+		request.Storage.ExpectedState = "storage_not_started"
+		request.Storage.AllowExistingExactReplay = true
+
+		response := (&tencentSDKClient{nativeCbsClient: api}).CreateStorageVolume(request, map[string]string{})
+
+		if response.Ok || response.StorageState != "unknown" || response.ErrorCode != "tencent_cbs_replay_unconfirmed" || response.MutationCount != 0 || len(api.createDisksRequests) != 0 {
+			t.Fatalf("unconfirmed restart response=%#v CreateDisks=%d", response, len(api.createDisksRequests))
+		}
+	})
+}
+
 func (api *fakeNativeCbsAPI) CreateDisks(request *cbs2017.CreateDisksRequest) (*cbs2017.CreateDisksResponse, error) {
 	api.createDisksRequests = append(api.createDisksRequests, request)
 	return &cbs2017.CreateDisksResponse{Response: &cbs2017.CreateDisksResponseParams{
@@ -2497,6 +2763,11 @@ func (api *fakeNativeCbsAPI) RenewDisk(request *cbs2017.RenewDiskRequest) (*cbs2
 
 func (api *fakeNativeCbsAPI) DescribeDisks(request *cbs2017.DescribeDisksRequest) (*cbs2017.DescribeDisksResponse, error) {
 	api.describeDisksRequests = append(api.describeDisksRequests, request)
+	if len(request.DiskIds) == 0 {
+		return &cbs2017.DescribeDisksResponse{Response: &cbs2017.DescribeDisksResponseParams{
+			DiskSet: []*cbs2017.Disk{}, TotalCount: common.Uint64Ptr(0), RequestId: common.StringPtr("req-discover-cbs"),
+		}}, nil
+	}
 	if api.err != nil {
 		return nil, api.err
 	}
@@ -2626,7 +2897,8 @@ func TestTencentSDKCreateStorageVolumeUsesOneMonthPrepaidCBSAndStableToken(t *te
 	if tags["opl_account_id"] != "acct-alpha" || tags["opl_workspace_id"] != "ws-alpha" || tags["opl_resource_id"] != "storage-alpha" || tags["opl_operation_id"] != "op-storage-alpha" {
 		t.Fatalf("CBS request missing ownership tags: %#v", tags)
 	}
-	if len(api.describeDisksRequests) != 2 || len(api.describeDisksRequests[0].DiskIds) != 1 || stringValue(api.describeDisksRequests[0].DiskIds[0]) != "disk-storage-alpha" {
+	if len(api.describeDisksRequests) != 6 || len(api.describeDisksRequests[2].DiskIds) != 1 || stringValue(api.describeDisksRequests[2].DiskIds[0]) != "disk-storage-alpha" ||
+		len(api.describeDisksRequests[5].DiskIds) != 1 || stringValue(api.describeDisksRequests[5].DiskIds[0]) != "disk-storage-alpha" {
 		t.Fatalf("create must read back the exact CBS disk: %#v", api.describeDisksRequests)
 	}
 }

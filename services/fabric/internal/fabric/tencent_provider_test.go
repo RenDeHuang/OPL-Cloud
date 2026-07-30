@@ -656,6 +656,35 @@ func computeClaimProviderFixture() (ComputeAllocation, ComputeAllocationPreparat
 	return allocation, plan, ownership
 }
 
+func TestTencentProviderDiscoversStorageRecoveryThroughProvisionerWithoutMutation(t *testing.T) {
+	provider := NewTencentProvider()
+	input := StorageVolumeInput{
+		ID: "storage-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", ComputeID: "compute-alpha",
+		Zone: "ap-guangzhou-3", SizeGB: 10, IdempotencyKey: "launch-alpha:storage", OperationID: "op-storage-alpha",
+	}
+	provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
+		if request.Action != "discover_storage_volume" || request.AccountID != input.AccountID || request.Storage.ID != input.ID ||
+			request.Storage.Zone != input.Zone || request.Storage.SizeGB != uint64(input.SizeGB) || request.Storage.DiskType != "CLOUD_BSSD" ||
+			!reflect.DeepEqual(request.Tags, oplCostTags(input.AccountID, input.WorkspaceID, input.ID, input.OperationID)) {
+			t.Fatalf("storage recovery discovery request=%#v", request)
+		}
+		return provisionerResponse{
+			OK: true, StorageState: "storage_existing_exact", StorageVolumeID: "disk-existing-alpha", ProviderRequestID: "req-discover-alpha", MutationCount: 0,
+		}, nil
+	}
+	provider.kubectl = func(context.Context, []string, []byte) ([]byte, error) {
+		t.Fatal("storage recovery discovery must not call kubectl")
+		return nil, nil
+	}
+
+	discovery, err := provider.DiscoverStorageRecovery(context.Background(), input)
+
+	if err != nil || discovery.State != "storage_existing_exact" || discovery.ProviderResourceID != "disk-existing-alpha" ||
+		discovery.ProviderRequestID != "req-discover-alpha" || discovery.MutationCount != 0 || discovery.Reason != "" {
+		t.Fatalf("storage recovery discovery=%#v err=%v", discovery, err)
+	}
+}
+
 func TestTencentProviderComputeClaimRecoveryProofCombinesTencentAndNodeReadOnlyTruth(t *testing.T) {
 	setProtectedResourceEnv(t)
 	allocation, plan, ownership := computeClaimProviderFixture()
@@ -2705,6 +2734,56 @@ func TestTencentProviderCreatesStaticRetainedCBSVolumeInComputeZone(t *testing.T
 	}
 	if pvc["kind"] != "PersistentVolumeClaim" || nested(pvc, "spec", "storageClassName") != "" || nested(pvc, "spec", "volumeName") != nested(pv, "metadata", "name") {
 		t.Fatalf("static PVC must prebind the retained PV: pv=%#v pvc=%#v", pv, pvc)
+	}
+}
+
+func TestTencentProviderReusesApprovedExactCBSWithOriginalStorageIdentity(t *testing.T) {
+	provider := NewTencentProvider()
+	var provisioned provisionerRequest
+	provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
+		provisioned = request
+		return provisionerResponse{
+			OK: true, StorageState: "storage_existing_exact", StorageVolumeID: "disk-existing-alpha", CBSStatus: "UNATTACHED",
+			Status: "provider_ready", ProviderRequestID: "req-discover-cbs", MutationCount: 0,
+			ProviderData: map[string]string{
+				"diskChargeType": "PREPAID", "diskType": "CLOUD_BSSD", "renewFlag": "NOTIFY_AND_MANUAL_RENEW",
+				"deadline": "2026-08-16T00:00:00Z", "zone": "ap-guangzhou-3", "sizeGb": "10", "periodMonths": "1",
+			},
+		}, nil
+	}
+	var applied []byte
+	provider.kubectl = func(_ context.Context, args []string, stdin []byte) ([]byte, error) {
+		if !slices.Equal(args, []string{"apply", "-f", "-"}) {
+			t.Fatalf("kubectl args=%#v", args)
+		}
+		applied = append([]byte(nil), stdin...)
+		return nil, nil
+	}
+	input := StorageVolumeInput{
+		ID: "storage-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", ComputeID: "compute-alpha",
+		Zone: "ap-guangzhou-3", SizeGB: 10, IdempotencyKey: "launch-alpha:storage", OperationID: "op-storage-alpha",
+		ExpectedRecoveryState: "storage_existing_exact", ExpectedProviderResourceID: "disk-existing-alpha",
+	}
+
+	volume, err := provider.CreateStorageVolume(context.Background(), input)
+
+	if err != nil || volume.ID != input.ID || volume.OperationID != input.IdempotencyKey || volume.ProviderResourceID != input.ExpectedProviderResourceID ||
+		volume.CostTags["opl_operation_id"] != input.OperationID || volume.ProviderRequestID != "req-discover-cbs" {
+		t.Fatalf("reused volume=%#v err=%v", volume, err)
+	}
+	if provisioned.Action != "create_storage_volume" || provisioned.Storage.ExpectedState != input.ExpectedRecoveryState ||
+		provisioned.Storage.ExpectedProviderResourceID != input.ExpectedProviderResourceID || provisioned.Storage.ID != input.ID ||
+		!reflect.DeepEqual(provisioned.Tags, oplCostTags(input.AccountID, input.WorkspaceID, input.ID, input.OperationID)) {
+		t.Fatalf("recovery storage request=%#v", provisioned)
+	}
+	var manifest map[string]any
+	if json.Unmarshal(applied, &manifest) != nil {
+		t.Fatalf("static binding manifest=%s", applied)
+	}
+	items := manifest["items"].([]any)
+	if len(items) != 2 || nested(items[0].(map[string]any), "spec", "csi", "volumeHandle") != input.ExpectedProviderResourceID ||
+		nested(items[1].(map[string]any), "spec", "volumeName") != nested(items[0].(map[string]any), "metadata", "name") {
+		t.Fatalf("reused static binding=%#v", manifest)
 	}
 }
 

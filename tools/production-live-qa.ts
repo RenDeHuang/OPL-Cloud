@@ -667,15 +667,6 @@ const COMPUTE_CLAIM_TARGET_KEYS = [
   "launchOperationId", "accountId", "workspaceId", "computeAllocationId", "storageId", "packageId", "poolId", "nodePoolId",
   "machineName", "nodeName", "cvmInstanceId", "privateIp", "instanceType", "zone", "chargeType", "periodMonths", "renewFlag", "deadline"
 ];
-const COMPUTE_CLAIM_RECOVERY_ALLOWED_WRITES = Object.freeze([
-  "claim_existing_cvm_node",
-  "create_original_cbs",
-  "create_original_pv_pvc_attachment",
-  "upsert_original_gateway_secret",
-  "create_original_workspace_runtime",
-  "activate_original_workspace",
-  "record_original_purchase_receipt"
-]);
 const COMPUTE_CLAIM_RECOVERY_FORBIDDEN_WRITES = Object.freeze([
   "create_launch", "debit", "recharge", "refund", "scale", "create_cvm", "create_second_cbs", "delete", "replace"
 ]);
@@ -808,12 +799,32 @@ function computeClaimStableSuffix(...parts) {
   return createHash("sha256").update(parts.join(":"), "utf8").digest("hex");
 }
 
-function computeClaimExpectedRecoveryResources(target, workspaceApiKeyId) {
+function computeClaimStorageBindingValid(storageState, storageProviderResourceId) {
+  return storageState === "storage_not_started" && storageProviderResourceId === "" ||
+    storageState === "storage_existing_exact" && /^disk-[a-z0-9-]{1,80}$/.test(storageProviderResourceId);
+}
+
+function computeClaimRecoveryAllowedWrites(storageState) {
+  const storageWrite = storageState === "storage_existing_exact" ? "reuse_original_cbs" : "create_original_cbs";
+  return [
+    "claim_existing_cvm_node",
+    storageWrite,
+    "create_original_pv_pvc_attachment",
+    "upsert_original_gateway_secret",
+    "create_original_workspace_runtime",
+    "activate_original_workspace",
+    "record_original_purchase_receipt"
+  ];
+}
+
+function computeClaimExpectedRecoveryResources(target, workspaceApiKeyId, storageState, storageProviderResourceId) {
   const attachmentOperationId = `${target.launchOperationId}:attachment`;
   const runtimeOperationId = `${target.launchOperationId}:workspace:runtime`;
   return {
     computeOperationId: `${target.launchOperationId}:compute`,
     storageOperationId: `${target.launchOperationId}:storage`,
+    storageState,
+    storageProviderResourceId,
     attachmentId: `att_${computeClaimStableSuffix(attachmentOperationId).slice(0, 18)}`,
     attachmentOperationId,
     workspaceApiKeyId,
@@ -841,11 +852,13 @@ function computeClaimProofProjection(value) {
   };
   const failureStage = String(value?.failureStage || "");
   const providerErrorClass = String(value?.providerErrorClass || "");
+  const storageProviderResourceId = String(value?.storageProviderResourceId || "");
   return {
     schemaVersion: Number(value?.schemaVersion || 0),
     eligible: value?.eligible === true,
     reason: COMPUTE_CLAIM_REASONS.has(String(value?.reason || "")) ? String(value.reason) : "provider_describe",
-    storageState: new Set(["storage_not_started", "unknown"]).has(String(value?.storageState || "")) ? String(value.storageState) : "unknown",
+    storageState: new Set(["storage_not_started", "storage_existing_exact", "unknown"]).has(String(value?.storageState || "")) ? String(value.storageState) : "unknown",
+    storageProviderResourceId: /^disk-[a-z0-9-]{1,80}$/.test(storageProviderResourceId) ? storageProviderResourceId : "",
     launchOperationId: String(value?.launchOperationId || ""),
     accountId: String(value?.accountId || ""),
     workspaceId: String(value?.workspaceId || ""),
@@ -900,8 +913,10 @@ function computeClaimProofBaseMatches(proof, target) {
 	proof.sub2apiMutationCount === 0 && computeClaimEvidenceMatches(proof, false);
 }
 
-function computeClaimProofMatchesTarget(proof, target, claimed = false) {
-  return computeClaimProofBaseMatches(proof, target) && proof.eligible && proof.reason === "none" && proof.storageState === "storage_not_started" &&
+function computeClaimProofMatchesTarget(proof, target, claimed = false, expectedStorage = null) {
+  const storageMatches = computeClaimStorageBindingValid(proof.storageState, proof.storageProviderResourceId) &&
+    (!expectedStorage || proof.storageState === expectedStorage.storageState && proof.storageProviderResourceId === expectedStorage.storageProviderResourceId);
+  return computeClaimProofBaseMatches(proof, target) && proof.eligible && proof.reason === "none" && storageMatches &&
     proof.machineName === target.machineName && proof.nodeName === target.nodeName && proof.cvmInstanceId === target.cvmInstanceId &&
     proof.privateIp === target.privateIp && proof.instanceType === target.instanceType && proof.zone === target.zone &&
     proof.chargeType === target.chargeType && proof.periodMonths === target.periodMonths && proof.renewFlag === target.renewFlag && proof.deadline === target.deadline &&
@@ -1022,7 +1037,10 @@ function computeClaimRecoveryApproval(value, expected, now) {
     !/(?:api-?key|bearer|credential|password|secret|token)/.test(String(value));
   const customerEmail = String(approval?.customer?.email || "").trim().toLowerCase();
   const workspaceApiKeyId = String(approval?.resources?.workspaceApiKeyId || "");
-  const expectedResources = computeClaimExpectedRecoveryResources(approvedTarget, workspaceApiKeyId);
+  const storageState = String(approval?.resources?.storageState || "");
+  const storageProviderResourceId = String(approval?.resources?.storageProviderResourceId || "");
+  const expectedResources = computeClaimExpectedRecoveryResources(approvedTarget, workspaceApiKeyId, storageState, storageProviderResourceId);
+  const expectedAllowedWrites = computeClaimRecoveryAllowedWrites(storageState);
   if (!exactObjectKeys(approval, keys) || approval.schemaVersion !== 2 || approval.approvalId !== expected.approvalId ||
     !validOpaque(approval.approvalId) || !validOpaque(approval.idempotencyKey) || !validOpaque(approval.recoveryKey) ||
     !Number.isFinite(Date.parse(approval.expiresAt)) ||
@@ -1031,11 +1049,12 @@ function computeClaimRecoveryApproval(value, expected, now) {
     JSON.stringify(approvedTarget) !== JSON.stringify(expected.target) || !exactObjectKeys(approval.customer, ["email", "accountId"]) ||
     customerEmail !== approval.customer.email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(customerEmail) || approval.customer.accountId !== approvedTarget.accountId ||
     !exactObjectKeys(approval.resources, Object.keys(expectedResources)) || !/^[1-9][0-9]*$/.test(workspaceApiKeyId) ||
+    !computeClaimStorageBindingValid(storageState, storageProviderResourceId) ||
     JSON.stringify(approval.resources) !== JSON.stringify(expectedResources) ||
     !exactObjectKeys(approval.attemptLimits, Object.keys(COMPUTE_CLAIM_RECOVERY_STAGE_LIMITS)) ||
     !exactObjectKeys(approval.attemptLimits.claim, Object.keys(COMPUTE_CLAIM_RECOVERY_STAGE_LIMITS.claim)) ||
     JSON.stringify(approval.attemptLimits) !== JSON.stringify(COMPUTE_CLAIM_RECOVERY_STAGE_LIMITS) ||
-    JSON.stringify(approval.allowedWrites) !== JSON.stringify(COMPUTE_CLAIM_RECOVERY_ALLOWED_WRITES) ||
+    JSON.stringify(approval.allowedWrites) !== JSON.stringify(expectedAllowedWrites) ||
     JSON.stringify(approval.forbiddenWrites) !== JSON.stringify(COMPUTE_CLAIM_RECOVERY_FORBIDDEN_WRITES)) {
     throw new Error("compute_claim_recovery_approval_invalid");
   }
@@ -1137,8 +1156,8 @@ export async function recoverComputeClaim({
     }
   });
   const claimed = computeClaimProofProjection(claimResponse.payload);
-  const eligible = claimResponse.statusCode === 200 && computeClaimProofMatchesTarget(claimed, target, true);
-  const errorCode = eligible ? "none" : computeClaimProofBaseMatches(claimed, target) ? claimed.reason : "identity_mismatch";
+  const eligible = claimResponse.statusCode === 200 && computeClaimProofMatchesTarget(claimed, target, true, approval.resources);
+  const errorCode = eligible ? "none" : computeClaimProofBaseMatches(claimed, target) && claimed.reason !== "none" ? claimed.reason : "identity_mismatch";
   return computeClaimArtifact(COMPUTE_CLAIM_RECOVER_MODE, target, release, claimed, eligible, errorCode, approval);
 }
 

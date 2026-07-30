@@ -35,16 +35,6 @@ const (
 
 var workspaceLaunchContinuationStages = []string{"storage", "attachment", "secret", "runtime", "activation", "receipt"}
 
-var workspaceComputeClaimAllowedWrites = []string{
-	"claim_existing_cvm_node",
-	"create_original_cbs",
-	"create_original_pv_pvc_attachment",
-	"upsert_original_gateway_secret",
-	"create_original_workspace_runtime",
-	"activate_original_workspace",
-	"record_original_purchase_receipt",
-}
-
 var workspaceComputeClaimForbiddenWrites = []string{
 	"create_launch", "debit", "recharge", "refund", "scale", "create_cvm", "create_second_cbs", "delete", "replace",
 }
@@ -161,16 +151,18 @@ type workspaceComputeClaimApprovalTarget struct {
 }
 
 type workspaceComputeClaimApprovalResources struct {
-	ComputeOperationID    string `json:"computeOperationId"`
-	StorageOperationID    string `json:"storageOperationId"`
-	AttachmentID          string `json:"attachmentId"`
-	AttachmentOperationID string `json:"attachmentOperationId"`
-	WorkspaceAPIKeyID     string `json:"workspaceApiKeyId"`
-	GatewaySecretRef      string `json:"gatewaySecretRef"`
-	SecretOperationID     string `json:"secretOperationId"`
-	RuntimeID             string `json:"runtimeId"`
-	RuntimeOperationID    string `json:"runtimeOperationId"`
-	ReceiptOperationID    string `json:"receiptOperationId"`
+	ComputeOperationID        string `json:"computeOperationId"`
+	StorageOperationID        string `json:"storageOperationId"`
+	StorageState              string `json:"storageState"`
+	StorageProviderResourceID string `json:"storageProviderResourceId"`
+	AttachmentID              string `json:"attachmentId"`
+	AttachmentOperationID     string `json:"attachmentOperationId"`
+	WorkspaceAPIKeyID         string `json:"workspaceApiKeyId"`
+	GatewaySecretRef          string `json:"gatewaySecretRef"`
+	SecretOperationID         string `json:"secretOperationId"`
+	RuntimeID                 string `json:"runtimeId"`
+	RuntimeOperationID        string `json:"runtimeOperationId"`
+	ReceiptOperationID        string `json:"receiptOperationId"`
 }
 
 type workspaceComputeClaimProviderAttemptLimits struct {
@@ -806,10 +798,15 @@ func (app *controlPlaneServer) fulfillWorkspaceLaunchResource(ctx context.Contex
 				if err := app.reserveWorkspaceLaunchStageAttempt(ctx, operation, resourceType); err != nil {
 					return "", err
 				}
-				prepared, prepareErr = service.PrepareMonthlyStorage(ctx, clients.StorageVolumeInput{
+				storageInput := clients.StorageVolumeInput{
 					ID: operation.StorageID, AccountID: operation.AccountID, WorkspaceID: operation.WorkspaceID, ComputeID: operation.ComputeID,
 					Zone: stringValue(row["zone"]), SizeGB: operation.StorageGB,
-				}, operation.ID+":storage")
+				}
+				if operation.ComputeClaimApproval != nil {
+					storageInput.ExpectedRecoveryState = operation.ComputeClaimApproval.Resources.StorageState
+					storageInput.ExpectedProviderResourceID = operation.ComputeClaimApproval.Resources.StorageProviderResourceID
+				}
+				prepared, prepareErr = service.PrepareMonthlyStorage(ctx, storageInput, operation.ID+":storage")
 			} else {
 				prepared, prepareErr = service.ReadMonthlyStorage(ctx, operation.StorageID)
 			}
@@ -1258,15 +1255,38 @@ func workspaceComputeClaimStableSuffix(parts ...string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func workspaceComputeClaimExpectedResources(operation workspaceLaunchOperation) workspaceComputeClaimApprovalResources {
+func workspaceComputeClaimExpectedResources(operation workspaceLaunchOperation, storageState, storageProviderResourceID string) workspaceComputeClaimApprovalResources {
 	runtimeOperationID := operation.WorkspaceOperationID + ":runtime"
 	return workspaceComputeClaimApprovalResources{
 		ComputeOperationID: operation.ID + ":compute", StorageOperationID: operation.ID + ":storage",
+		StorageState: storageState, StorageProviderResourceID: storageProviderResourceID,
 		AttachmentID: "att_" + workspaceComputeClaimStableSuffix(operation.AttachmentOperationID)[:18], AttachmentOperationID: operation.AttachmentOperationID,
 		WorkspaceAPIKeyID: strconv.FormatInt(operation.WorkspaceAPIKeyID, 10), GatewaySecretRef: workspaceGatewaySecretReference(operation.WorkspaceID),
 		SecretOperationID: operation.WorkspaceOperationID + ":secret:gateway-secret",
 		RuntimeID:         "rt_" + workspaceComputeClaimStableSuffix(operation.WorkspaceID, runtimeOperationID)[:18], RuntimeOperationID: runtimeOperationID,
 		ReceiptOperationID: operation.ID + ":purchase-receipt",
+	}
+}
+
+func workspaceComputeClaimStorageBindingValid(state, providerResourceID string) bool {
+	switch state {
+	case "storage_not_started":
+		return providerResourceID == ""
+	case "storage_existing_exact":
+		return strings.HasPrefix(providerResourceID, "disk-")
+	default:
+		return false
+	}
+}
+
+func workspaceComputeClaimAllowedWritesForStorage(state string) []string {
+	storageWrite := "create_original_cbs"
+	if state == "storage_existing_exact" {
+		storageWrite = "reuse_original_cbs"
+	}
+	return []string{
+		"claim_existing_cvm_node", storageWrite, "create_original_pv_pvc_attachment", "upsert_original_gateway_secret",
+		"create_original_workspace_runtime", "activate_original_workspace", "record_original_purchase_receipt",
 	}
 }
 
@@ -1315,7 +1335,7 @@ func (app *controlPlaneServer) workspaceComputeClaimApprovalBinding(ctx context.
 	expiresAt, expiresErr := time.Parse(time.RFC3339, input.ExpiresAt)
 	account, accountFound, accountErr := app.tables.GetAccount(ctx, operation.AccountID)
 	owner, ownerFound, ownerErr := app.tables.GetUser(ctx, operation.OwnerUserID)
-	resources := workspaceComputeClaimExpectedResources(operation)
+	resources := workspaceComputeClaimExpectedResources(operation, input.Resources.StorageState, input.Resources.StorageProviderResourceID)
 	target := workspaceComputeClaimApprovalTargetFromOperation(operation)
 	binding := workspaceComputeClaimApprovalBinding{
 		SchemaVersion: 2, ApprovalID: input.ApprovalID, ApprovalDigest: input.ApprovalDigest, ExpiresAt: input.ExpiresAt,
@@ -1328,8 +1348,9 @@ func (app *controlPlaneServer) workspaceComputeClaimApprovalBinding(ctx context.
 	if expiresErr != nil || !expiresAt.After(time.Now().UTC()) || accountErr != nil || ownerErr != nil || !accountFound || !ownerFound ||
 		!ownsActiveAccount(account, owner) || stringValue(owner["id"]) != operation.OwnerUserID || stringValue(owner["role"]) != "owner" ||
 		normalizeEmail(stringValue(owner["email"])) != input.CustomerEmail || input.AccountID != operation.AccountID ||
-		!workspaceComputeClaimWorkspaceImageDigestMatches(operation, input) || input.Resources != resources || !workspaceComputeClaimAttemptLimitsExact(input.AttemptLimits) ||
-		!equalWorkspaceComputeClaimStrings(input.AllowedWrites, workspaceComputeClaimAllowedWrites) || !equalWorkspaceComputeClaimStrings(input.ForbiddenWrites, workspaceComputeClaimForbiddenWrites) ||
+		!workspaceComputeClaimWorkspaceImageDigestMatches(operation, input) || !workspaceComputeClaimStorageBindingValid(input.Resources.StorageState, input.Resources.StorageProviderResourceID) ||
+		input.Resources != resources || !workspaceComputeClaimAttemptLimitsExact(input.AttemptLimits) ||
+		!equalWorkspaceComputeClaimStrings(input.AllowedWrites, workspaceComputeClaimAllowedWritesForStorage(input.Resources.StorageState)) || !equalWorkspaceComputeClaimStrings(input.ForbiddenWrites, workspaceComputeClaimForbiddenWrites) ||
 		input.PoolID != target.PoolID || input.MachineName != target.MachineName || input.NodeName != target.NodeName || input.CVMInstanceID != target.CVMInstanceID ||
 		input.PrivateIP != target.PrivateIP || input.InstanceType != target.InstanceType || input.Zone != target.Zone ||
 		workspaceComputeClaimApprovalDigest(binding) != input.ApprovalDigest {
@@ -1437,7 +1458,9 @@ func workspaceComputeClaimProofBaseMatches(operation workspaceLaunchOperation, i
 
 func workspaceComputeClaimProofEligible(operation workspaceLaunchOperation, input workspaceComputeClaimRecoveryRequest, proof clients.ComputeClaimRecoveryProof, claimed bool) bool {
 	deadline, deadlineErr := time.Parse(time.RFC3339, proof.Deadline)
-	if !workspaceComputeClaimProofBaseMatches(operation, input, proof) || !proof.Eligible || proof.Reason != "none" || proof.StorageState != "storage_not_started" ||
+	storageMatchesApproval := input.Resources.StorageState == "" || proof.StorageState == input.Resources.StorageState && proof.StorageProviderResourceID == input.Resources.StorageProviderResourceID
+	if !workspaceComputeClaimProofBaseMatches(operation, input, proof) || !proof.Eligible || proof.Reason != "none" ||
+		!workspaceComputeClaimStorageBindingValid(proof.StorageState, proof.StorageProviderResourceID) || !storageMatchesApproval ||
 		proof.MachineName != input.MachineName || proof.NodeName != input.NodeName || proof.CVMInstanceID != input.CVMInstanceID || proof.PrivateIP != input.PrivateIP ||
 		proof.InstanceType != input.InstanceType || proof.Zone != input.Zone || proof.ChargeType != "PREPAID" || proof.PeriodMonths != 1 ||
 		proof.RenewFlag != "NOTIFY_AND_MANUAL_RENEW" || deadlineErr != nil || deadline.IsZero() ||

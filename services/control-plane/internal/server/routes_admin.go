@@ -360,7 +360,8 @@ func workspaceComputeClaimRecoveryRequestFromMap(operationID string, input map[s
 			!computeClaimCloudDigestPattern.MatchString(request.CloudImageDigest) || !computeClaimCloudDigestPattern.MatchString(request.WorkspaceImageDigest) ||
 			expiresErr != nil || !expiresAt.After(time.Now().UTC()) || emailErr != nil || customerEmail != request.CustomerEmail ||
 			request.Confirmation != "RECOVER_PROVEN_COMPUTE_AND_CONTINUE_ORIGINAL_LAUNCH" || !resourcesOK || !limitsOK || !allowedOK || !forbiddenOK ||
-			!workspaceComputeClaimAttemptLimitsExact(limits) || !equalWorkspaceComputeClaimStrings(allowedWrites, workspaceComputeClaimAllowedWrites) ||
+			!workspaceComputeClaimStorageBindingValid(resources.StorageState, resources.StorageProviderResourceID) ||
+			!workspaceComputeClaimAttemptLimitsExact(limits) || !equalWorkspaceComputeClaimStrings(allowedWrites, workspaceComputeClaimAllowedWritesForStorage(resources.StorageState)) ||
 			!equalWorkspaceComputeClaimStrings(forbiddenWrites, workspaceComputeClaimForbiddenWrites) {
 			return workspaceComputeClaimRecoveryRequest{}, false
 		}
@@ -384,14 +385,14 @@ func exactWorkspaceComputeClaimKeys(input map[string]any, want []string) bool {
 
 func workspaceComputeClaimApprovalResourcesFromMap(value any) (workspaceComputeClaimApprovalResources, bool) {
 	raw, ok := value.(map[string]any)
-	want := []string{"computeOperationId", "storageOperationId", "attachmentId", "attachmentOperationId", "workspaceApiKeyId", "gatewaySecretRef", "secretOperationId", "runtimeId", "runtimeOperationId", "receiptOperationId"}
+	want := []string{"computeOperationId", "storageOperationId", "storageState", "storageProviderResourceId", "attachmentId", "attachmentOperationId", "workspaceApiKeyId", "gatewaySecretRef", "secretOperationId", "runtimeId", "runtimeOperationId", "receiptOperationId"}
 	if !ok || !exactWorkspaceComputeClaimKeys(raw, want) {
 		return workspaceComputeClaimApprovalResources{}, false
 	}
 	values := make(map[string]string, len(want))
 	for _, field := range want {
 		item, ok := raw[field].(string)
-		if !ok || item == "" || item != strings.TrimSpace(item) {
+		if !ok || field != "storageProviderResourceId" && item == "" || item != strings.TrimSpace(item) {
 			return workspaceComputeClaimApprovalResources{}, false
 		}
 		values[field] = item
@@ -402,6 +403,7 @@ func workspaceComputeClaimApprovalResourcesFromMap(value any) (workspaceComputeC
 	}
 	return workspaceComputeClaimApprovalResources{
 		ComputeOperationID: values["computeOperationId"], StorageOperationID: values["storageOperationId"],
+		StorageState: values["storageState"], StorageProviderResourceID: values["storageProviderResourceId"],
 		AttachmentID: values["attachmentId"], AttachmentOperationID: values["attachmentOperationId"], WorkspaceAPIKeyID: values["workspaceApiKeyId"],
 		GatewaySecretRef: values["gatewaySecretRef"], SecretOperationID: values["secretOperationId"], RuntimeID: values["runtimeId"],
 		RuntimeOperationID: values["runtimeOperationId"], ReceiptOperationID: values["receiptOperationId"],

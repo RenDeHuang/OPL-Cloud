@@ -516,11 +516,14 @@ type provisionerAllocation struct {
 }
 
 type provisionerStorage struct {
-	ID       string `json:"id,omitempty"`
-	SizeGB   uint64 `json:"sizeGb,omitempty"`
-	Zone     string `json:"zone,omitempty"`
-	DiskType string `json:"diskType,omitempty"`
-	Deadline string `json:"deadline,omitempty"`
+	ID                         string `json:"id,omitempty"`
+	SizeGB                     uint64 `json:"sizeGb,omitempty"`
+	Zone                       string `json:"zone,omitempty"`
+	DiskType                   string `json:"diskType,omitempty"`
+	Deadline                   string `json:"deadline,omitempty"`
+	ExpectedState              string `json:"expectedState,omitempty"`
+	ExpectedProviderResourceID string `json:"expectedProviderResourceId,omitempty"`
+	AllowExistingExactReplay   bool   `json:"allowExistingExactReplay,omitempty"`
 }
 
 type provisionerResponse struct {
@@ -535,6 +538,7 @@ type provisionerResponse struct {
 	MachinePresent     *bool                         `json:"machinePresent,omitempty"`
 	StoragePresent     *bool                         `json:"storagePresent,omitempty"`
 	StorageVolumeID    string                        `json:"storageVolumeId,omitempty"`
+	StorageState       string                        `json:"storageState,omitempty"`
 	CBSStatus          string                        `json:"cbsStatus,omitempty"`
 	CVMStatus          string                        `json:"cvmStatus,omitempty"`
 	TKEStatus          string                        `json:"tkeStatus,omitempty"`
@@ -1299,13 +1303,17 @@ func (p *TencentProvider) CreateStorageVolume(ctx context.Context, input Storage
 	tags := oplCostTags(input.AccountID, input.WorkspaceID, id, input.OperationID)
 	diskType := firstNonEmpty(os.Getenv("TENCENT_CBS_DISK_TYPE"), "CLOUD_BSSD")
 	volume := StorageVolume{
-		ID: id, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, Status: "pending", Provider: "tencent-tke",
+		ID: id, OperationID: input.IdempotencyKey, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, Status: "pending", Provider: "tencent-tke",
 		SizeGB: input.SizeGB, DiskType: diskType, Zone: input.Zone, CostTags: tags, CreatedAt: now,
 		ProviderData: map[string]string{"pvName": name + "-pv", "pvcName": name + "-data"},
 	}
 	response, err := p.provision(ctx, provisionerRequest{
 		Action: "create_storage_volume", AccountID: input.AccountID, Tags: tags,
-		Storage: provisionerStorage{ID: id, SizeGB: uint64(input.SizeGB), Zone: input.Zone, DiskType: diskType},
+		Storage: provisionerStorage{
+			ID: id, SizeGB: uint64(input.SizeGB), Zone: input.Zone, DiskType: diskType,
+			ExpectedState: input.ExpectedRecoveryState, ExpectedProviderResourceID: input.ExpectedProviderResourceID,
+			AllowExistingExactReplay: input.AllowExistingExactReplay,
+		},
 	})
 	if err != nil {
 		return volume, err
@@ -1325,6 +1333,63 @@ func (p *TencentProvider) CreateStorageVolume(ctx context.Context, input Storage
 		return volume, err
 	}
 	return volume, nil
+}
+
+func (p *TencentProvider) DiscoverStorageRecovery(ctx context.Context, input StorageVolumeInput) (StorageRecoveryDiscovery, error) {
+	discovery := StorageRecoveryDiscovery{State: "unknown"}
+	if input.ID == "" || input.AccountID == "" || input.WorkspaceID == "" || input.OperationID == "" || input.Zone == "" || input.SizeGB <= 0 {
+		discovery.Reason = "identity_mismatch"
+		return discovery, fmt.Errorf("storage_recovery_identity_mismatch")
+	}
+	diskType := firstNonEmpty(os.Getenv("TENCENT_CBS_DISK_TYPE"), "CLOUD_BSSD")
+	response, err := p.provision(ctx, provisionerRequest{
+		Action: "discover_storage_volume", AccountID: input.AccountID,
+		Tags:    oplCostTags(input.AccountID, input.WorkspaceID, input.ID, input.OperationID),
+		Storage: provisionerStorage{ID: input.ID, SizeGB: uint64(input.SizeGB), Zone: input.Zone, DiskType: diskType},
+	})
+	discovery.ProviderRequestID = response.ProviderRequestID
+	discovery.MutationCount = response.MutationCount
+	if err != nil {
+		discovery.Reason = "provider_describe"
+		return discovery, fmt.Errorf("storage_recovery_provider_describe")
+	}
+	if response.MutationCount != 0 {
+		discovery.Reason = "identity_mismatch"
+		return discovery, fmt.Errorf("storage_recovery_identity_mismatch")
+	}
+	if !response.OK {
+		discovery.Reason = storageRecoveryReason(response.ErrorCode)
+		return discovery, fmt.Errorf("storage_recovery_%s", discovery.Reason)
+	}
+	discovery.State = response.StorageState
+	discovery.ProviderResourceID = response.StorageVolumeID
+	switch discovery.State {
+	case "storage_not_started":
+		if discovery.ProviderResourceID != "" {
+			discovery.State, discovery.Reason = "unknown", "identity_mismatch"
+			return discovery, fmt.Errorf("storage_recovery_identity_mismatch")
+		}
+	case "storage_existing_exact":
+		if !strings.HasPrefix(discovery.ProviderResourceID, "disk-") {
+			discovery.State, discovery.Reason = "unknown", "identity_mismatch"
+			return discovery, fmt.Errorf("storage_recovery_identity_mismatch")
+		}
+	default:
+		discovery.State, discovery.Reason = "unknown", "identity_mismatch"
+		return discovery, fmt.Errorf("storage_recovery_identity_mismatch")
+	}
+	return discovery, nil
+}
+
+func storageRecoveryReason(errorCode string) string {
+	switch errorCode {
+	case "tencent_cbs_multiple_candidate":
+		return "multiple_candidate"
+	case "tencent_cbs_identity_mismatch", "tencent_cbs_input_invalid", "tencent_cbs_approval_drift", "tencent_cbs_approval_invalid":
+		return "identity_mismatch"
+	default:
+		return "provider_describe"
+	}
 }
 
 func (p *TencentProvider) SyncStorageVolume(ctx context.Context, volume StorageVolume) (StorageVolume, error) {

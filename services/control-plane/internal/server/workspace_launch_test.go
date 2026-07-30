@@ -1741,8 +1741,12 @@ func workspaceLaunchComputeClaimPendingFixture(t *testing.T, packageID string) (
 }
 
 func computeClaimRecoveryProofForLaunch(operation workspaceLaunchOperation, nodeOwnershipState string) clients.ComputeClaimRecoveryProof {
+	return computeClaimRecoveryProofForLaunchStorage(operation, nodeOwnershipState, "storage_not_started", "")
+}
+
+func computeClaimRecoveryProofForLaunchStorage(operation workspaceLaunchOperation, nodeOwnershipState, storageState, storageProviderResourceID string) clients.ComputeClaimRecoveryProof {
 	return clients.ComputeClaimRecoveryProof{
-		SchemaVersion: 1, Eligible: true, Reason: "none", StorageState: "storage_not_started",
+		SchemaVersion: 1, Eligible: true, Reason: "none", StorageState: storageState, StorageProviderResourceID: storageProviderResourceID,
 		LaunchOperationID: operation.ID, AccountID: operation.AccountID, WorkspaceID: operation.WorkspaceID,
 		ComputeAllocationID: operation.ComputeID, StorageVolumeID: operation.StorageID, PackageID: operation.PackageID,
 		PoolID: operation.ComputePoolID, NodePoolID: operation.ComputeNodePoolID, MachineName: operation.ComputeMachineName,
@@ -1758,23 +1762,29 @@ func computeClaimTestStableSuffix(parts ...string) string {
 	return fmt.Sprintf("%x", sum)
 }
 
-func computeClaimRecoveryApprovalResources(operation workspaceLaunchOperation) map[string]any {
+func computeClaimRecoveryApprovalResources(operation workspaceLaunchOperation, storageState, storageProviderResourceID string) map[string]any {
 	runtimeOperationID := operation.WorkspaceOperationID + ":runtime"
 	return map[string]any{
-		"computeOperationId":    operation.ID + ":compute",
-		"storageOperationId":    operation.ID + ":storage",
-		"attachmentId":          "att_" + computeClaimTestStableSuffix(operation.AttachmentOperationID)[:18],
-		"attachmentOperationId": operation.AttachmentOperationID,
-		"workspaceApiKeyId":     fmt.Sprintf("%d", operation.WorkspaceAPIKeyID),
-		"gatewaySecretRef":      "opl-gateway-" + computeClaimTestStableSuffix(operation.WorkspaceID)[:16],
-		"secretOperationId":     operation.WorkspaceOperationID + ":secret:gateway-secret",
-		"runtimeId":             "rt_" + computeClaimTestStableSuffix(operation.WorkspaceID, runtimeOperationID)[:18],
-		"runtimeOperationId":    runtimeOperationID,
-		"receiptOperationId":    operation.ID + ":purchase-receipt",
+		"computeOperationId":        operation.ID + ":compute",
+		"storageOperationId":        operation.ID + ":storage",
+		"storageState":              storageState,
+		"storageProviderResourceId": storageProviderResourceID,
+		"attachmentId":              "att_" + computeClaimTestStableSuffix(operation.AttachmentOperationID)[:18],
+		"attachmentOperationId":     operation.AttachmentOperationID,
+		"workspaceApiKeyId":         fmt.Sprintf("%d", operation.WorkspaceAPIKeyID),
+		"gatewaySecretRef":          "opl-gateway-" + computeClaimTestStableSuffix(operation.WorkspaceID)[:16],
+		"secretOperationId":         operation.WorkspaceOperationID + ":secret:gateway-secret",
+		"runtimeId":                 "rt_" + computeClaimTestStableSuffix(operation.WorkspaceID, runtimeOperationID)[:18],
+		"runtimeOperationId":        runtimeOperationID,
+		"receiptOperationId":        operation.ID + ":purchase-receipt",
 	}
 }
 
 func computeClaimRecoveryRequestBody(t *testing.T, operation workspaceLaunchOperation, approved bool, idempotencyKey string) string {
+	return computeClaimRecoveryRequestBodyForStorage(t, operation, approved, idempotencyKey, "storage_not_started", "")
+}
+
+func computeClaimRecoveryRequestBodyForStorage(t *testing.T, operation workspaceLaunchOperation, approved bool, idempotencyKey, storageState, storageProviderResourceID string) string {
 	t.Helper()
 	body := map[string]any{
 		"accountId": operation.AccountID, "workspaceId": operation.WorkspaceID, "computeAllocationId": operation.ComputeID,
@@ -1784,13 +1794,17 @@ func computeClaimRecoveryRequestBody(t *testing.T, operation workspaceLaunchOper
 		"instanceType": operation.ComputeInstanceType, "zone": operation.ComputeZone,
 	}
 	if approved {
-		resources := computeClaimRecoveryApprovalResources(operation)
+		resources := computeClaimRecoveryApprovalResources(operation, storageState, storageProviderResourceID)
 		attemptLimits := map[string]any{
 			"claim":   map[string]any{"sub2api": 0, "tencent": 5, "kubernetes": 1},
 			"storage": 1, "attachment": 1, "secret": 1, "runtime": 1, "activation": 1, "receipt": 1,
 		}
+		storageWrite := "create_original_cbs"
+		if storageState == "storage_existing_exact" {
+			storageWrite = "reuse_original_cbs"
+		}
 		allowedWrites := []string{
-			"claim_existing_cvm_node", "create_original_cbs", "create_original_pv_pvc_attachment", "upsert_original_gateway_secret",
+			"claim_existing_cvm_node", storageWrite, "create_original_pv_pvc_attachment", "upsert_original_gateway_secret",
 			"create_original_workspace_runtime", "activate_original_workspace", "record_original_purchase_receipt",
 		}
 		forbiddenWrites := []string{"create_launch", "debit", "recharge", "refund", "scale", "create_cvm", "create_second_cbs", "delete", "replace"}
@@ -2043,14 +2057,27 @@ func TestWorkspaceComputeClaimRejectsInvalidApprovalAndTargetBeforeFabric(t *tes
 }
 
 func TestWorkspaceComputeClaimApprovalResumesOriginalStorageOnce(t *testing.T) {
-	for _, packageID := range []string{"basic", "pro"} {
-		t.Run(packageID, func(t *testing.T) {
-			fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, packageID)
-			fixture.fabric.computeClaimProof = computeClaimRecoveryProofForLaunch(operation, "target_owned")
+	for _, test := range []struct {
+		name                      string
+		packageID                 string
+		storageState              string
+		storageProviderResourceID string
+	}{
+		{name: "basic_absent", packageID: "basic", storageState: "storage_not_started"},
+		{name: "pro_absent", packageID: "pro", storageState: "storage_not_started"},
+		{name: "basic_existing_exact", packageID: "basic", storageState: "storage_existing_exact", storageProviderResourceID: "disk-existing-fixture"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, test.packageID)
+			fixture.fabric.computeClaimProof = computeClaimRecoveryProofForLaunchStorage(operation, "target_owned", test.storageState, test.storageProviderResourceID)
 			configureWorkspaceLaunchFulfillment(t, fixture)
+			if test.storageProviderResourceID != "" {
+				fixture.fabric.mutateStorage = func(volume *clients.StorageVolume) { volume.ProviderResourceID = test.storageProviderResourceID }
+				fixture.fabric.storageSync.ProviderResourceID = test.storageProviderResourceID
+			}
 			configureWorkspaceComputeClaimReadback(fixture, operation)
 			path := "/api/operator/workspace-launches/" + operation.ID + "/compute-claim-recovery/claim"
-			body := computeClaimRecoveryRequestBody(t, operation, true, "compute-claim-fixture")
+			body := computeClaimRecoveryRequestBodyForStorage(t, operation, true, "compute-claim-fixture", test.storageState, test.storageProviderResourceID)
 
 			first := requestComputeClaimWithCapabilityForTest(t, fixture.server, fixture.operator, path, body, "compute-claim-fixture")
 			second := requestComputeClaimWithCapabilityForTest(t, fixture.server, fixture.operator, path, body, "compute-claim-fixture")
@@ -2081,11 +2108,27 @@ func TestWorkspaceComputeClaimApprovalResumesOriginalStorageOnce(t *testing.T) {
 			completed := fixture.operation(t)
 			if completed.Status != "succeeded" || len(fixture.fabric.storageIDs) != 1 || fixture.fabric.storageIDs[0] != operation.StorageID ||
 				len(fixture.fabric.storageCreateKeys) != 1 || fixture.fabric.storageCreateKeys[0] != operation.ID+":storage" ||
+				len(fixture.fabric.storageInputs) != 1 || fixture.fabric.storageInputs[0].ExpectedRecoveryState != test.storageState ||
+				fixture.fabric.storageInputs[0].ExpectedProviderResourceID != test.storageProviderResourceID ||
 				len(fixture.fabric.computeIDs) != 1 || len(fixture.sub2API.charges) != 1 || len(fixture.sub2API.refunds) != 0 {
 				t.Fatalf("recovered launch duplicated fulfillment: operation=%#v compute=%#v storage=%#v keys=%#v charges=%#v refunds=%#v", completed, fixture.fabric.computeIDs, fixture.fabric.storageIDs, fixture.fabric.storageCreateKeys, fixture.sub2API.charges, fixture.sub2API.refunds)
 			}
 			assertWorkspaceLaunchRuntimeIdentity(t, fixture.fabric.runtimeInputs, completed)
 		})
+	}
+}
+
+func TestWorkspaceComputeClaimRejectsStorageIdentityDriftBeforeClaimOrStorageMutation(t *testing.T) {
+	fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, "basic")
+	fixture.fabric.computeClaimProof = computeClaimRecoveryProofForLaunchStorage(operation, "target_owned", "storage_existing_exact", "disk-drifted-fixture")
+	path := "/api/operator/workspace-launches/" + operation.ID + "/compute-claim-recovery/claim"
+	body := computeClaimRecoveryRequestBodyForStorage(t, operation, true, "compute-claim-storage-drift", "storage_existing_exact", "disk-approved-fixture")
+
+	response := requestComputeClaimWithCapabilityForTest(t, fixture.server, fixture.operator, path, body, "compute-claim-storage-drift")
+	current := fixture.operation(t)
+	if response.Code != http.StatusConflict || current.Status != "manual_review" || len(fixture.fabric.computeClaimInputs) != 1 ||
+		len(fixture.fabric.computeClaimCalls) != 0 || len(fixture.fabric.storageIDs) != 0 || len(fixture.sub2API.refunds) != 0 {
+		t.Fatalf("storage identity drift crossed recovery gate: status=%d body=%s operation=%#v proofs=%#v claims=%#v storage=%#v", response.Code, response.Body.String(), current, fixture.fabric.computeClaimInputs, fixture.fabric.computeClaimCalls, fixture.fabric.storageInputs)
 	}
 }
 
