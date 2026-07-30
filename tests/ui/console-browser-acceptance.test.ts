@@ -53,22 +53,55 @@ test("Console browser covers customer and operator truth states at desktop and m
   assert.equal(result.operatorRouteLazyReads, true);
   assert.equal(result.externalRequests, 0);
   assert.deepEqual(result.consoleErrors, []);
-  await stat(join(screenshotDir, "fixture-console-overview-desktop.png"));
-  await stat(join(screenshotDir, "fixture-console-overview-mobile.png"));
+  const primaryScreens = [
+    "console-overview",
+    "workspace-list",
+    "api-overview",
+    "billing",
+    "announcements",
+    "admin-overview",
+    "admin-accounts",
+    "admin-balance-operation",
+    "admin-reconciliation",
+    "admin-resources",
+    "admin-system"
+  ];
+  await Promise.all(primaryScreens.flatMap((screen) => ["desktop", "mobile"].map((viewport) => (
+    stat(join(screenshotDir, `fixture-${screen}-${viewport}.png`))
+  ))));
 });
 
 test("Home Login Logo unchanged browser contract stays pinned", async () => {
-  const app = await readFile("apps/console-ui/src/App.vue", "utf8");
-  assert.match(app, /<h1>OPL Cloud<\/h1>/);
-  assert.match(app, /面向已开通用户的 Workspace 与 API 服务。/);
-  assert.match(app, /<span>Console 登录<\/span>/);
-  assert.match(app, /src="\/opl-app-icon\.png" alt="OPL Cloud"/);
+  const pages = await readFile("apps/console-ui/src/pages/PublicPages.tsx", "utf8");
+  assert.match(pages, /OPL Cloud/);
+  assert.match(pages, /工作区、API 服务与账单/);
+  assert.match(pages, /Console 登录/);
+  assert.match(pages, /alt="OPL Cloud" src="\/opl-app-icon\.png"/);
 });
 
 test("operator provisioning delegates every non-empty password to Sub2API", async () => {
-  const app = await readFile("apps/console-ui/src/App.vue", "utf8");
-  assert.match(app, /v-model="adminUserForm\.password" type="password" required/);
-  assert.doesNotMatch(app, /minlength="12"/);
+  const pages = await readFile("apps/console-ui/src/pages/AdminPages.tsx", "utf8");
+  assert.match(pages, /label="初始密码"[\s\S]+required type="password"/);
+  assert.doesNotMatch(pages, /minLength=\{?12\}?/);
+});
+
+test("Console browser confirms the target Account ID before a wallet adjustment", async () => {
+  const browserQa = await readFile("tools/console-browser-qa.ts", "utf8");
+  assert.match(browserQa, /getByLabel\("再次确认 Account ID"\)\.pressSequentially\("acct-1"\)/);
+  assert.match(browserQa, /getByLabel\("金额（USD）"\)\.pressSequentially\("5"\)/);
+  assert.match(browserQa, /getByLabel\("业务原因"\)\.pressSequentially\("browser retry"\)/);
+});
+
+test("Console browser uses the visible mobile account card instead of the hidden desktop row", async () => {
+  const browserQa = await readFile("tools/console-browser-qa.ts", "utf8");
+  assert.match(browserQa, /operator-account-mobile-card/);
+  assert.match(browserQa, /name === "mobile"/);
+  assert.match(browserQa, /querySelectorAll\("\.table-wrap"\)[\s\S]+scrollLeft = 0/);
+});
+
+test("Console browser text waits ignore hidden duplicate navigation labels", async () => {
+  const browserQa = await readFile("tools/console-browser-qa.ts", "utf8");
+  assert.match(browserQa, /getByText\(text, \{ exact: false \}\)\.filter\(\{ visible: true \}\)\.first\(\)/);
 });
 
 test("Console browser rejects non-fake network before starting a server or browser", async () => {

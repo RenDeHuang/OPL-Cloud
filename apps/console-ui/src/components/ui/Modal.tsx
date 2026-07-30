@@ -19,6 +19,8 @@ const focusableSelector = "button:not([disabled]), [href], input:not([disabled])
 export function Modal({ children, className = "", description, footer, onClose, open, title }: ModalProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const returnFocusRef = useRef<HTMLElement | null>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
 
   useEffect(() => {
     if (!open) return;
@@ -30,7 +32,7 @@ export function Modal({ children, className = "", description, footer, onClose, 
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
-        onClose();
+        onCloseRef.current();
         return;
       }
       if (event.key !== "Tab" || !rootRef.current) return;
@@ -53,7 +55,7 @@ export function Modal({ children, className = "", description, footer, onClose, 
       document.body.style.overflow = previousOverflow;
       returnFocusRef.current?.focus();
     };
-  }, [onClose, open]);
+  }, [open]);
 
   if (!open) return null;
 

@@ -13,175 +13,133 @@ afterEach(() => {
   globalThis.fetch = originalFetch;
 });
 
-test("Home Login Logo unchanged", async () => {
-  const app = await source("apps/console-ui/src/App.vue");
-
-  assert.match(app, /<nav class="public-nav"><a href="\/" class="brand" @click\.prevent="navigate\('\/'\)"><img src="\/opl-app-icon\.png" alt="" \/><strong>OPL Cloud<\/strong><\/a><button class="button secondary" type="button" @click="navigate\('\/login'\)">登录<\/button><\/nav>/);
-  assert.match(app, /<p class="kicker">One Person Lab<\/p><h1>OPL Cloud<\/h1><p>面向已开通用户的 Workspace 与 API 服务。<\/p>/);
-  assert.match(app, /<section class="login-panel"><div class="login-brand"><img src="\/opl-app-icon\.png" alt="" \/><div><strong>OPL Cloud<\/strong><span>Console 登录<\/span><\/div><\/div><form @submit\.prevent="submitLogin">/);
-  assert.match(app, /<button class="back-button" type="button" @click="navigate\('\/'\)">返回<\/button>/);
+test("public entry and Login preserve the OPL Cloud identity", async () => {
+  const pages = await source("apps/console-ui/src/pages/PublicPages.tsx");
+  assert.match(pages, /src="\/opl-app-icon\.png"/);
+  assert.match(pages, /alt="OPL Cloud"/);
+  assert.match(pages, /Console 登录/);
+  assert.match(pages, /管理员预配置账户/);
+  assert.match(pages, /公开注册、在线充值和浏览器端业务推导不属于当前产品边界/);
+  assert.match(pages, /autoComplete="email"/);
+  assert.match(pages, /autoComplete="current-password"/);
 });
 
-test("Workspace access answers URL username password and corresponding Workspace Key", async () => {
-  const app = await source("apps/console-ui/src/App.vue");
-  const workspaceView = app.slice(app.indexOf("workspaceRoute === 'detail'"), app.indexOf("<section v-else-if=\"apiRoute\""));
-
-  for (const label of ["Workspace URL", "用户名", "密码", "Workspace Key"]) {
-    assert.match(workspaceView, new RegExp(label));
-  }
-  assert.match(app, /workspace\.value\?\.workspaceApiKeyId/);
-  assert.match(app, /revealGatewayKey\(workspaceKeyId\.value, session\.value\?\.csrfToken \|\| ""\)/);
-  assert.match(workspaceView, /@click="copyWorkspacePassword"/);
-  assert.match(workspaceView, /@click="copyWorkspaceKey"/);
-  assert.doesNotMatch(app, /keys\.value\.find\(\(item\) => item\.name === "opl-workspace"\)/);
+test("Workspace access exposes the exact URL, username, password, and Workspace Key", async () => {
+  const [pages, controller] = await Promise.all([
+    source("apps/console-ui/src/pages/CustomerPages.tsx"),
+    source("apps/console-ui/src/app/use-console-controller.ts")
+  ]);
+  for (const label of ["Workspace URL", "用户名", "密码", "Workspace Key"]) assert.match(pages, new RegExp(label));
+  assert.match(controller, /workspace\.workspaceApiKeyId/);
+  assert.match(controller, /revealGatewayKey\(workspace\.workspaceApiKeyId, session\.csrfToken\)/);
+  assert.match(pages, /Workspace 密码已复制/);
+  assert.match(pages, /Workspace Key 已复制/);
+  assert.doesNotMatch(`${pages}\n${controller}`, /name === ["']opl-workspace["']/);
 });
 
-test("Workspace list links each subscription to an independent refreshable detail route", async () => {
-  const app = await source("apps/console-ui/src/App.vue");
-  const listStart = app.indexOf("workspaceRoute === 'list'");
-  const listEnd = app.indexOf("workspaceRoute === 'new'", listStart);
-  const listView = app.slice(listStart, listEnd);
-
-  assert.match(listView, /v-for="item in workspaceRows"/);
-  assert.match(listView, /openWorkspaceDetail\(item\.id\)/);
-  assert.match(listView, /workspaceSource\.data\.total/);
-  assert.match(listView, /changeWorkspacePage\(workspacePageNumber - 1\)/);
-  assert.match(listView, /navigate\('\/console\/workspaces\/new'\)/);
-  assert.match(app, /const currentWorkspaceId = computed\(\(\) => workspaceIdFromPath\(path\.value\)\)/);
-  assert.match(app, /findWorkspaceInPages\(workspaceId\)/);
-  assert.match(app, /getWorkspaceRuntimeStatus\(workspaceId\)/);
-  assert.match(app, /<UiRadioGroup[^>]+:options="workspacePlanOptions"/);
-  assert.doesNotMatch(app, /selectedWorkspaceId|changeWorkspaceSelection|selectWorkspace\(/);
-  assert.doesNotMatch(app, /items\.length !== 1/);
-  assert.doesNotMatch(app, /账号存在多个 Workspace，暂不可用/);
+test("Workspace list, launch, and detail remain independent routes", async () => {
+  const [pages, controller, model] = await Promise.all([
+    source("apps/console-ui/src/pages/CustomerPages.tsx"),
+    source("apps/console-ui/src/app/use-console-controller.ts"),
+    source("apps/console-ui/src/console-model.ts")
+  ]);
+  assert.match(pages, /WorkspaceListPage/);
+  assert.match(pages, /WorkspaceLaunchPage/);
+  assert.match(pages, /WorkspaceDetailPage/);
+  assert.match(pages, /changeWorkspacePage/);
+  assert.match(pages, /\/console\/workspaces\/new/);
+  assert.match(controller, /findWorkspaceInPages\(workspaceId\)/);
+  assert.match(controller, /getWorkspaceRuntimeStatus\(workspaceId\)/);
+  assert.match(model, /workspaceIdFromPath/);
+  assert.doesNotMatch(`${pages}\n${controller}`, /selectedWorkspaceId|账号存在多个 Workspace，暂不可用/);
 });
 
-test("Workspace adapter exposes paged list and exact lookup without an eager all-pages aggregate", () => {
+test("Workspace adapter exposes paging and exact lookup without an eager all-pages aggregate", () => {
   assert.equal(typeof workspaceApi.getWorkspaces, "function");
   assert.equal(typeof workspaceApi.findWorkspaceInPages, "function");
   assert.equal("getAllWorkspaces" in workspaceApi, false);
 });
 
-test("Workspace and Overview render only server-owned package runtime and billing facts", async () => {
-  const app = await source("apps/console-ui/src/App.vue");
-  const workspaceView = app.slice(app.indexOf("workspaceRoute === 'detail'"), app.indexOf("<section v-else-if=\"apiRoute\""));
-  const overviewStart = app.indexOf("<section v-if=\"isOverviewRoute\" class=\"overview-page\"");
-  const overviewEnd = app.indexOf("workspaceRoute === 'list'", overviewStart);
-  const overview = app.slice(overviewStart, overviewEnd);
-
-  assert.match(app, /const mountCheck = computed\(\(\) => runtime\.value\?\.checks\.find\(\(check\) => check\.name === "ready_pod_uses_retained_pvc"\) \|\| null\)/);
-  assert.match(workspaceView, /<dt>创建时间<\/dt><dd>\{\{ formatDate\(workspace\.createdAt, true\) \}\}<\/dd>/);
-  assert.match(workspaceView, /<dt>续费状态<\/dt><dd>\{\{ workspace\.renewalStatus \|\| "暂不可用" \}\}<\/dd>/);
-  assert.match(workspaceView, /<dt>月度条款<\/dt>[\s\S]+workspace\.totalUsdMicros/);
-  assert.match(workspaceView, /<dt>存储容量<\/dt>[\s\S]+workspace\.storageGb/);
-  assert.match(workspaceView, /<dt>挂载状态<\/dt>[\s\S]+mountCheck\.ok/);
-  assert.match(workspaceView, /<dt>服务健康<\/dt>[\s\S]+runtime\.ready/);
-
-  assert.match(overview, /Workspace 总数[\s\S]+workspaceSource\.data\.total/);
-  assert.match(overview, /本月 API 费用[\s\S]+stats\.totalActualCostUsdMicros/);
-  assert.doesNotMatch(overview, /Ledger/);
-  assert.doesNotMatch(overview, /Workspace 月费|计费周期|常用入口/);
-  assert.doesNotMatch(overview, /previews|selectedPlanPrice|totalChargeUsdMicros/);
-  assert.doesNotMatch(workspaceView, /workspacePlan|catalog\.value\?\.packages/);
+test("Workspace and Overview render server-owned lifecycle, runtime, and billing facts", async () => {
+  const pages = await source("apps/console-ui/src/pages/CustomerPages.tsx");
+  for (const value of [
+    "生命周期状态", "运行状态", "创建时间", "续费状态", "Workspace 月度总价",
+    "持久存储", "挂载检查", "服务健康", "本月实际费用", "当前账户总数"
+  ]) assert.match(pages, new RegExp(value));
+  assert.match(pages, /detail\.totalUsdMicros/);
+  assert.match(pages, /detail\.storageGb/);
+  assert.match(pages, /runtimeData\.checks/);
+  assert.match(pages, /CPU \/ 内存未由当前 Workspace DTO 投影，因此不按套餐 ID 推导/);
+  assert.doesNotMatch(pages, /workspace\.packageId === ["']basic["'].*(?:cpu|memory)/s);
+  assert.doesNotMatch(pages, /\|\| "opl"/);
 });
 
-test("Customer Console general Key path supports create read reveal toggle and delete", async () => {
+test("Workspace unavailable states offer retry instead of creation", async () => {
+  const pages = await source("apps/console-ui/src/pages/CustomerPages.tsx");
+  const overview = pages.slice(pages.indexOf("function OverviewPage"), pages.indexOf("function WorkspaceSummaryRow"));
+  const list = pages.slice(pages.indexOf("function WorkspaceListPage"), pages.indexOf("function WorkspaceLaunchPage"));
+  assert.match(overview, /workspacesUnavailable/);
+  assert.match(overview, /workspacesUnavailable \? "重试读取 Workspace"/);
+  assert.match(overview, /workspacesUnavailable \? void controller\.refreshCurrentPage\(\)/);
+  assert.match(list, /workspacesUnavailable/);
+  assert.match(list, /workspacesUnavailable \? void controller\.refreshCurrentPage\(\)/);
+  assert.match(list, /workspacesUnavailable \? "重试读取"/);
+});
+
+test("general API Key path supports create, readback, reveal, update, and delete", async () => {
   for (const name of ["getGatewayKey", "createGatewayKey", "updateGatewayKey", "deleteGatewayKey", "revealGatewayKey"] as const) {
     assert.equal(typeof readApi[name], "function", `${name} adapter is required`);
   }
-
-  const app = await source("apps/console-ui/src/components/keys/KeysPanel.vue");
-  for (const call of ["getGatewayKey", "createGatewayKey", "updateGatewayKey", "deleteGatewayKey"]) {
-    assert.match(app, new RegExp(`${call}\\(`));
+  const panel = await source("apps/console-ui/src/components/keys/KeysPanel.tsx");
+  for (const call of ["getGatewayKey", "createGatewayKey", "updateGatewayKey", "deleteGatewayKey", "revealGatewayKey"]) {
+    assert.match(panel, new RegExp(`${call}\\(`));
   }
-  assert.match(app, /expiresInDays/);
-  assert.match(app, /key\.expiresAt/);
-  assert.match(app, /revealGatewayKey\(key\.id,/);
-  assert.match(app, /enabled:\s*key\.status !== "active"/);
-  assert.doesNotMatch(app, /createGatewayKey\([\s\S]{0,500}updateGatewayKey\(/);
+  assert.match(panel, /expiresInDays/);
+  assert.match(panel, /key\.expiresAt/);
+  assert.match(panel, /enabled: key\.status !== "active"/);
+  assert.match(panel, /isProtectedWorkspaceKey/);
 });
 
-test("API Key kind and Workspace receipt types use customer-facing labels", async () => {
-  const app = await source("apps/console-ui/src/App.vue");
-  const keysView = await source("apps/console-ui/src/components/keys/KeysPanel.vue");
-  const labelStart = app.indexOf("function receiptLabel(type: string)");
-  const labelEnd = app.indexOf("\n}", labelStart) + 2;
-  const receiptLabel = new Function(`${app.slice(labelStart, labelEnd).replace("type: string", "type")}\nreturn receiptLabel;`) as () => (type: string) => string;
-
-  assert.equal(receiptLabel()("billing.workspace_purchased.v1"), "Workspace 开通");
-  assert.equal(receiptLabel()("billing.workspace_expired.v1"), "Workspace 到期");
-  assert.equal(receiptLabel()("billing.internal_future.v9"), "账单记录");
-  assert.match(keysView, /<th>名称<\/th>/);
-  assert.match(keysView, /key\.kind === "workspace" \? "系统 Key" : "普通 Key"/);
-  assert.match(keysView, /revealed\?\.id === key\.id[\s\S]+:colspan="columnCount"/);
-});
-
-test("API Key surface shows the configured endpoint without frontend environment fallbacks", async () => {
-  const [app, keysPanel] = await Promise.all([
-    source("apps/console-ui/src/App.vue"),
-    source("apps/console-ui/src/components/keys/KeysPanel.vue")
+test("API Key and Workspace receipt types use customer-facing labels", async () => {
+  const [pages, panel] = await Promise.all([
+    source("apps/console-ui/src/pages/CustomerPages.tsx"),
+    source("apps/console-ui/src/components/keys/KeysPanel.tsx")
   ]);
+  assert.match(pages, /billing\.workspace_purchased\.v1[\s\S]+Workspace 开通/);
+  assert.match(pages, /billing\.workspace_expired\.v1[\s\S]+Workspace 到期/);
+  assert.match(pages, /return type \? "账单记录" : "暂不可用"/);
+  assert.match(panel, /isProtectedWorkspaceKey\(key\) \? "Workspace 系统 Key" : "普通 Key"/);
+  assert.match(panel, /mobile-key-list/);
+});
 
-  for (const call of [
-    "getGatewayKeyUsage", "getGatewayKeyUsageSummary", "getGatewayAccountUsageSummary"
-  ]) assert.match(app, new RegExp(`${call}\\(`));
-  assert.doesNotMatch(app, /\bgetGatewayUsage\(/);
-  assert.doesNotMatch(app, /\bgetGatewayUsageStats\(/);
+test("API Key surface uses the configured endpoint without browser environment fallbacks", async () => {
+  const [pages, panel] = await Promise.all([
+    source("apps/console-ui/src/pages/CustomerPages.tsx"),
+    source("apps/console-ui/src/components/keys/KeysPanel.tsx")
+  ]);
   assert.equal(typeof readApi.getGatewayEndpoint, "function");
   assert.equal(typeof readApi.getGatewayGroups, "function");
-  assert.match(keysPanel, /getGatewayEndpoint\(/);
-  assert.match(keysPanel, /getGatewayGroups\(/);
-  const header = keysPanel.slice(keysPanel.indexOf('<header class="keys-header">'), keysPanel.indexOf("</header>", keysPanel.indexOf('<header class="keys-header">')));
-  const usageInstructions = keysPanel.slice(keysPanel.indexOf('<div v-else class="use-body">'));
-  assert.match(header, /endpoint-line[\s\S]+API Endpoint[\s\S]+UiCopyButton/);
-  assert.match(usageInstructions, /API Endpoint/);
-  assert.doesNotMatch(keysPanel, /OPL_SUB2API_BASE_URL|gflabtoken\.cn|<iframe|window\.__ENV|import\.meta\.env|window\.open\(/);
+  assert.match(panel, /getGatewayEndpoint\(\)/);
+  assert.match(panel, /getGatewayGroups\(\)/);
+  assert.match(panel, /API Endpoint/);
+  assert.match(pages, /getGatewayKeyUsage|UsagePage/);
+  assert.doesNotMatch(`${pages}\n${panel}`, /OPL_SUB2API_BASE_URL|gflabtoken\.cn|<iframe|window\.__ENV|import\.meta\.env/);
 });
 
-test("Overview and API overview keep independent wallet states while Billing omits wallet data", async () => {
-  const app = await source("apps/console-ui/src/App.vue");
-  const overviewStart = app.indexOf("<section v-if=\"isOverviewRoute\" class=\"overview-page\"");
-  const overviewEnd = app.indexOf("workspaceRoute === 'list'", overviewStart);
-  const apiStart = app.indexOf("<div v-if=\"activeApiPage === 'overview'\" class=\"api-overview\"");
-  const apiEnd = app.indexOf("<section v-else-if=\"activeApiPage === 'usage'\"", apiStart);
-  const billingStart = app.indexOf("class=\"billing-page\"");
-  const billingEnd = app.indexOf('<div v-if="modal"', billingStart);
-
-  for (const [name, view] of [
-    ["Overview", app.slice(overviewStart, overviewEnd)],
-    ["API overview", app.slice(apiStart, apiEnd)]
-  ]) {
-    assert.match(view, /loading\.wallet/, `${name} wallet loading`);
-    assert.match(view, /errors\.wallet[\s\S]+@click="loadWallet"/, `${name} wallet error retry`);
-  }
-  assert.doesNotMatch(app.slice(billingStart, billingEnd), /loading\.wallet|errors\.wallet|walletSource|可用余额/);
-});
-
-test("API overview owns balance history and Billing stays focused on terms and receipts", async () => {
-  const app = await source("apps/console-ui/src/App.vue");
-  const apiStart = app.indexOf("<div v-if=\"activeApiPage === 'overview'\" class=\"api-overview\"");
-  const apiEnd = app.indexOf("<section v-else-if=\"activeApiPage === 'usage'\"", apiStart);
-  const billingStart = app.indexOf("class=\"billing-page\"");
-  const billingEnd = app.indexOf('<div v-if="modal"', billingStart);
-  const apiOverview = app.slice(apiStart, apiEnd);
-  const billing = app.slice(billingStart, billingEnd);
-
-  assert.match(apiOverview, /<h2>余额记录<\/h2>/);
-  assert.match(apiOverview, /loading\.history[\s\S]+正在读取余额记录/);
-  assert.match(apiOverview, /errors\.history[\s\S]+@click="loadHistory"/);
-  assert.match(apiOverview, /balanceHistorySource\?\.status === 'unavailable'[\s\S]+@click="loadHistory"/);
-  assert.match(apiOverview, /balanceHistorySource\?\.status === 'empty'[\s\S]+暂无余额记录/);
-  assert.match(apiOverview, /v-else class="table-wrap"[\s\S]+v-for="item in history"/);
-  assert.match(apiOverview, /changeBalanceHistoryPage\(balanceHistoryPage - 1\)[\s\S]+上一页/);
-  assert.match(apiOverview, /第 \{\{ balanceHistoryPage \}\} \/ \{\{ balanceHistoryPages \}\} 页/);
-  assert.match(apiOverview, /changeBalanceHistoryPage\(balanceHistoryPage \+ 1\)[\s\S]+下一页/);
+test("Overview and API overview own wallet facts while Billing stays focused on terms and receipts", async () => {
+  const pages = await source("apps/console-ui/src/pages/CustomerPages.tsx");
+  const overview = pages.slice(pages.indexOf("function OverviewPage"), pages.indexOf("function WorkspaceSummaryRow"));
+  const api = pages.slice(pages.indexOf("function ApiOverview"), pages.indexOf("function RequestRows"));
+  const billing = pages.slice(pages.indexOf("function BillingPage"), pages.indexOf("function AnnouncementRows"));
+  assert.match(overview, /sources\.wallet/);
+  assert.match(api, /sources\.wallet/);
+  assert.match(api, /余额历史/);
   assert.match(billing, /Workspace 条款/);
   assert.match(billing, /账单收据/);
-  assert.doesNotMatch(billing, /Ledger/);
-  assert.doesNotMatch(billing, /余额记录|balanceHistorySource|loadHistory/);
+  assert.doesNotMatch(billing, /sources\.wallet|sources\.accountUsage|余额历史/);
 });
 
-test("balance history uses the explicit paged DTO without a legacy alias", async () => {
+test("balance history uses the explicit paged DTO", async () => {
   const [dto, api] = await Promise.all([
     source("apps/console-ui/src/api/dtos.ts"),
     source("apps/console-ui/src/api/console-read-api.ts")
@@ -189,136 +147,82 @@ test("balance history uses the explicit paged DTO without a legacy alias", async
   assert.match(dto, /export interface GatewayBalanceHistoryPageDTO \{[\s\S]+page: number;[\s\S]+pageSize: number;[\s\S]+pages: number;/);
   assert.doesNotMatch(dto, /interface BalanceHistoryData|type GatewayBalanceHistoryPageDTO = BalanceHistoryData/);
   assert.match(api, /getGatewayBalanceHistory\(page = 1, pageSize = 20/);
-  assert.match(api, /new URLSearchParams\(\{ page: String\(page\), pageSize: String\(pageSize\) \}\)/);
 });
 
-test("Billing receipt rows open a customer-safe detail view", async () => {
+test("Billing receipt rows open a customer-safe detail with authoritative components", async () => {
   assert.equal(typeof readApi.getBillingReceipt, "function");
-  const app = await source("apps/console-ui/src/App.vue");
-  const billingStart = app.indexOf("class=\"billing-page\"");
-  const billingEnd = app.indexOf('<div v-if="modal"', billingStart);
-  const billing = app.slice(billingStart, billingEnd);
-  const detailStart = billing.indexOf("class=\"panel receipt-detail\"");
-  const detailEnd = billing.indexOf("</section>", detailStart) + "</section>".length;
-  const detail = billing.slice(detailStart, detailEnd);
-
-  assert.match(billing, /v-for="item in workspaceRows"/);
-  assert.match(billing, /Workspace 条款/);
-  assert.doesNotMatch(billing, /wallet|accountUsageSource|stats|balanceHistorySource|余额记录|AI 用量/);
-  assert.match(billing, /@click="loadReceiptDetail\(receipt\.receiptId\)"/);
-  assert.match(detail, /<h2>收据详情<\/h2>/);
-  assert.match(detail, /loading\.receiptDetail[\s\S]+正在读取收据详情/);
-  assert.match(detail, /errors\.receiptDetail[\s\S]+loadReceiptDetail\(selectedReceiptId\)/);
-  assert.match(detail, /receiptDetailSource\?\.status === 'unavailable'[\s\S]+loadReceiptDetail\(selectedReceiptId\)/);
-  assert.match(detail, /@click="clearReceiptDetail"/);
-  assert.match(detail, /receiptLabel\(receiptDetail\.type\)/);
-  for (const field of ["status", "createdAt", "workspaceId", "priceVersion", "periodStart", "paidThrough"]) {
-    assert.match(detail, new RegExp(`receiptDetail\\.${field}`));
+  const pages = await source("apps/console-ui/src/pages/CustomerPages.tsx");
+  const detail = pages.slice(pages.indexOf("function ReceiptDetail"), pages.indexOf("function AnnouncementRows"));
+  for (const label of ["收据详情", "Receipt ID", "Workspace ID", "计算组成金额", "存储组成金额", "扣款引用"]) {
+    assert.match(detail, new RegExp(label));
   }
-  assert.match(detail, /receiptDetail\.(?:refundUsdMicros|chargeUsdMicros|totalUsdMicros)/);
-  assert.doesNotMatch(detail, /\{\{\s*receiptDetail\.type\s*\}\}/);
-  assert.doesNotMatch(detail, /chargeReference|components|fulfillment|resourceType|resourceId|sourceUpdatedAt|fetchedAt|source-note/);
+  for (const field of ["receiptId", "status", "createdAt", "workspaceId", "priceVersion", "periodStart", "paidThrough", "components", "chargeReference"]) {
+    assert.match(detail, new RegExp(field));
+  }
+  assert.doesNotMatch(detail, /履约资源引用|fulfillment|computeAllocationId|storageId|attachmentId|workspaceApiKeyId|runtimeId|providerId|rawResponse|secretRef/);
 });
 
-test("Customer Console announcements keep actionable states without exposing envelope metadata", async () => {
+test("announcements preserve available, empty, unavailable, retry, and mark-read states", async () => {
   assert.equal(typeof readApi.getAnnouncements, "function");
   assert.equal(typeof readApi.markAnnouncementRead, "function");
-
-  const app = await source("apps/console-ui/src/App.vue");
-  const announcementsStart = app.indexOf("<section v-else-if=\"path.startsWith('/console/announcements')\"");
-  const announcementsEnd = app.indexOf("<section v-else-if=\"path === '/console/billing'\"", announcementsStart);
-  const announcementsView = app.slice(announcementsStart, announcementsEnd);
-  assert.match(app, /getAnnouncements\(/);
-  assert.match(app, /markAnnouncementRead\([^,]+,[^,]+,[^)]+\)/);
-  for (const field of ["source", "status", "available", "fetchedAt", "sourceUpdatedAt"]) {
-    assert.doesNotMatch(announcementsView, new RegExp(`announcementsSource\\?\\.${field}`));
-  }
-  assert.doesNotMatch(announcementsView, /source-note/);
-  assert.match(announcementsView, /loading\.announcements[\s\S]+正在读取公告/);
-  assert.match(announcementsView, /errors\.announcements[\s\S]+@click="loadAnnouncements"/);
-  assert.match(announcementsView, /announcementsUnavailable[\s\S]+@click="loadAnnouncements"/);
-  assert.match(announcementsView, /announcementsEmpty[\s\S]+暂无公告/);
-  assert.match(announcementsView, /v-else class="announcement-list"[\s\S]+announcement\.title[\s\S]+announcement\.body/);
-  assert.match(announcementsView, /formatDate\(announcement\.publishedAt \|\| announcement\.startsAt, true\)/);
-  assert.match(announcementsView, /announcement\.read[\s\S]+@click="readAnnouncement\(announcement\.id\)"/);
+  const [pages, controller] = await Promise.all([
+    source("apps/console-ui/src/pages/CustomerPages.tsx"),
+    source("apps/console-ui/src/app/use-console-controller.ts")
+  ]);
+  assert.match(pages, /暂无公告/);
+  assert.match(pages, /标记已读/);
+  assert.match(pages, /refreshCurrentPage/);
+  assert.match(controller, /markAnnouncementRead\(announcementId, session\.csrfToken/);
+  assert.match(controller, /unavailableSource\("control-plane"\)/);
 });
 
-test("authenticated Overview shows actionable announcements in every source state", async () => {
-  const app = await source("apps/console-ui/src/App.vue");
-  const overviewStart = app.indexOf("<section v-if=\"isOverviewRoute\" class=\"overview-page\"");
-  const overviewEnd = app.indexOf("workspaceRoute === 'list'", overviewStart);
-  const overview = app.slice(overviewStart, overviewEnd);
-
-  assert.notEqual(overviewStart, -1);
-  assert.notEqual(overviewEnd, -1);
-  assert.match(overview, /class="panel overview-announcements"[\s\S]+<h2>公告<\/h2>/);
-  assert.match(overview, /loading\.announcements[\s\S]+正在读取公告/);
-  assert.match(overview, /errors\.announcements[\s\S]+@click="loadAnnouncements\(3\)"/);
-  assert.match(overview, /announcementsUnavailable[\s\S]+@click="loadAnnouncements\(3\)"/);
-  assert.match(overview, /announcementsEmpty[\s\S]+暂无公告/);
-  assert.match(overview, /v-else class="compact-announcement-list"[\s\S]+announcement\.title[\s\S]+announcement\.body/);
-  assert.match(overview, /formatDate\(announcement\.publishedAt \|\| announcement\.startsAt, true\)/);
-  assert.match(overview, /announcement\.read[\s\S]+@click="readAnnouncement\(announcement\.id\)"/);
-  assert.doesNotMatch(overview, /announcementsSource\?\.(?:source|status|available|fetchedAt|sourceUpdatedAt)/);
-});
-
-test("Customer Console secrets stay in component memory and expire", async () => {
-  const [app, authApi, readApiSource, workspaceApiSource] = await Promise.all([
-    source("apps/console-ui/src/App.vue"),
+test("customer secrets stay in memory and expire after sixty seconds", async () => {
+  const sources = await Promise.all([
+    source("apps/console-ui/src/app/use-console-controller.ts"),
+    source("apps/console-ui/src/components/keys/KeysPanel.tsx"),
     source("apps/console-ui/src/api/auth-api.ts"),
     source("apps/console-ui/src/api/console-read-api.ts"),
     source("apps/console-ui/src/api/workspaces-api.ts")
   ]);
-  const browserCode = [app, authApi, readApiSource, workspaceApiSource].join("\n");
-
+  const browserCode = sources.join("\n");
   assert.doesNotMatch(browserCode, /localStorage|sessionStorage|indexedDB|IndexedDB/);
-  assert.match(app, /const secretLifetimeMs = 60_000/);
-  assert.match(app, /function armSecretTimeout\(\)/);
-  assert.match(app, /window\.setTimeout\(clearSecrets, secretLifetimeMs\)/);
-  assert.match(app, /function clearSecrets\(\)[\s\S]*window\.clearTimeout\(secretTimer\)/);
-  assert.match(app, /onBeforeUnmount\(\(\) => \{\s*clearSecrets\(\)/);
+  assert.match(browserCode, /secretLifetimeMs\s*=\s*60_000/);
+  assert.match(browserCode, /window\.setTimeout\(clearSecrets?, secretLifetimeMs\)|window\.setTimeout\(clearSecret, secretLifetimeMs\)/);
+  assert.match(browserCode, /secretRequestGeneration\.current \+= 1/);
 });
 
-test("Customer Console does not render the paused Runtime file facts", async () => {
+test("Customer Console does not render paused Runtime file facts", async () => {
   assert.equal("getWorkspaceFiles" in workspaceApi, false);
   assert.equal("getWorkspaceFilesystemUsage" in workspaceApi, false);
-
-  const [app, workspaceApiSource, dtos] = await Promise.all([
-    source("apps/console-ui/src/App.vue"),
-    source("apps/console-ui/src/api/workspaces-api.ts"),
-    source("apps/console-ui/src/api/dtos.ts")
+  const [pages, workspaceSource] = await Promise.all([
+    source("apps/console-ui/src/pages/CustomerPages.tsx"),
+    source("apps/console-ui/src/api/workspaces-api.ts")
   ]);
-  assert.doesNotMatch(app, /文件与目录|实际空间用量|filesSource|filesystemSource|WorkspaceFilePageDTO|WorkspaceFilesystemUsageDTO/);
-  assert.doesNotMatch(app, /getWorkspaceFiles|getWorkspaceFilesystemUsage|loadWorkspaceFiles|loadWorkspaceFilesystemUsage|loading\.files|loading\.filesystem|errors\.files|errors\.filesystem/);
-  assert.doesNotMatch(workspaceApiSource, /\/files\?|\/filesystem-usage/);
-  assert.match(dtos, /export interface WorkspaceFilePageDTO/);
-  assert.match(dtos, /export interface WorkspaceFilesystemUsageDTO/);
+  assert.doesNotMatch(pages, /文件与目录|实际空间用量|WorkspaceFilePageDTO|WorkspaceFilesystemUsageDTO/);
+  assert.doesNotMatch(workspaceSource, /\/files\?|\/filesystem-usage/);
 });
 
-test("Customer Console source blocks fail independently and remain retryable", async () => {
-  const app = await source("apps/console-ui/src/App.vue");
-  for (const [key, sourceName, retry] of [
-    ["runtime", "workspaceStatusSource", "loadWorkspaceStatus"],
-    ["keys", "keySource", "loadKeys"],
-    ["usage", "usageSource", "loadUsage"],
-    ["accountStats", "accountUsageSource", "loadAccountUsage"],
-    ["receipts", "receiptsSource", "loadReceipts"],
-    ["announcements", "announcementsSource", "loadAnnouncements"]
-  ]) {
-    assert.match(app, new RegExp(`loading\\.${key}`));
-    assert.match(app, new RegExp(`errors\\.${key}`));
-    if (key === "announcements") assert.match(app, /announcementsUnavailable/);
-    else assert.match(app, new RegExp(`${sourceName}\\?\\.status === 'unavailable'`));
-    assert.match(app, new RegExp(`@click="${retry}(?:\\(\\))?"`));
+test("Customer source blocks remain independently retryable", async () => {
+  const [pages, controller, sourceState] = await Promise.all([
+    source("apps/console-ui/src/pages/CustomerPages.tsx"),
+    source("apps/console-ui/src/app/use-console-controller.ts"),
+    source("apps/console-ui/src/components/source/SourceState.tsx")
+  ]);
+  for (const key of ["runtime", "usage", "usageSummary", "accountUsage", "receipts", "announcements"]) {
+    assert.match(controller, new RegExp(`(?:beginSource|failSource)\\(\"${key}\"`));
   }
+  assert.match(sourceState, /onRetry/);
+  assert.match(sourceState, /source\?\.status === "unavailable"/);
+  assert.match(pages, /refreshCurrentPage/);
+  const usagePage = pages.slice(pages.indexOf("function UsagePage"), pages.indexOf("function ApiPage"));
+  assert.match(usagePage, /sources\.usageSummary/);
+  assert.match(usagePage, /sources\.usage/);
+  assert.ok((usagePage.match(/<SourceState/g) || []).length >= 3);
 });
 
-test("Customer Console auto renewal stays disabled with an owner reason", async () => {
-  const app = await source("apps/console-ui/src/App.vue");
-  const workspaceView = app.slice(app.indexOf("workspaceRoute === 'detail'"), app.indexOf("<section v-else-if=\"apiRoute\""));
-
-  assert.match(workspaceView, /自动续费/);
-  assert.match(workspaceView, /disabled[^>]*aria-describedby="auto-renew-reason"/);
-  assert.match(workspaceView, /id="auto-renew-reason"[^>]*>真实续费验证完成前不可启用/);
-  assert.doesNotMatch(app, /updateWorkspaceRenewal\([^)]*autoRenew:\s*true/);
+test("Customer Console keeps automatic renewal closed without inventing an enable path", async () => {
+  const pages = await source("apps/console-ui/src/pages/CustomerPages.tsx");
+  assert.match(pages, /自动续费/);
+  assert.match(pages, /自动续费启用路径未开放/);
+  assert.doesNotMatch(pages, /updateWorkspaceRenewal|setAutoRenew|onChange=.*autoRenew/);
 });

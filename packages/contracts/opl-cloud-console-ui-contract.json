@@ -1,7 +1,13 @@
 {
   "schemaVersion": 1,
   "owner": "OPL Console",
+  "purpose": "Frozen React presentation contract for the customer and operator Console surfaces.",
   "state": "current",
+  "machineBoundary": "Console framework, component foundation, primary pages, slides, source-state presentation, secret handling, and browser API boundary.",
+  "lifecycle": {
+    "type": "long_term_contract",
+    "removalCondition": "Replace only with a newer approved Console UI contract and matching display, implementation, and runtime evidence."
+  },
   "surface": "standalone_console",
   "framework": "react",
   "componentFoundation": "@openai/apps-sdk-ui",

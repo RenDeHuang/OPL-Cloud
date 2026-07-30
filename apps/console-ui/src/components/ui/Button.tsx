@@ -7,11 +7,12 @@ export interface ButtonProps extends Omit<AppsButtonProps, "children" | "color" 
   color?: AppsButtonProps["color"];
 }
 
-export function Button({ busy = false, children, color = "secondary", disabled, ...props }: ButtonProps) {
+export function Button({ busy = false, children, className, color = "secondary", disabled, ...props }: ButtonProps) {
   return (
     <AppsButton
       {...props}
       aria-busy={busy || undefined}
+      className={["ui-button", className].filter(Boolean).join(" ")}
       color={color}
       disabled={disabled || busy}
       loading={busy}

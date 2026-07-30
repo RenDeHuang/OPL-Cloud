@@ -23,15 +23,17 @@ test("Console UI foundation uses real Apps SDK UI exports", async () => {
 });
 
 test("Console primitives expose accessible busy, invalid and modal states", async () => {
-  const [button, field, select, checkbox, segmented, modal] = await Promise.all([
+  const [button, field, select, checkbox, segmented, modal, styles] = await Promise.all([
     source("apps/console-ui/src/components/ui/Button.tsx"),
     source("apps/console-ui/src/components/ui/Field.tsx"),
     source("apps/console-ui/src/components/ui/Select.tsx"),
     source("apps/console-ui/src/components/ui/Checkbox.tsx"),
     source("apps/console-ui/src/components/ui/SegmentedControl.tsx"),
-    source("apps/console-ui/src/components/ui/Modal.tsx")
+    source("apps/console-ui/src/components/ui/Modal.tsx"),
+    source("apps/console-ui/src/styles.css")
   ]);
   assert.match(button, /aria-busy/);
+  assert.match(button, /className=\{\["ui-button", className\]\.filter\(Boolean\)\.join\(" "\)\}/);
   assert.match(field, /aria-invalid/);
   assert.match(select, /aria-invalid/);
   assert.match(checkbox, /type="checkbox"/);
@@ -39,4 +41,15 @@ test("Console primitives expose accessible busy, invalid and modal states", asyn
   assert.match(modal, /role="dialog"/);
   assert.match(modal, /Escape/);
   assert.match(modal, /focus/);
+  assert.match(styles, /\.console-modal-backdrop\s*\{[\s\S]+position:\s*fixed;[\s\S]+z-index:/);
+  assert.match(styles, /\.console-modal\s*\{[\s\S]+max-height:[\s\S]+overflow:/);
+  assert.match(styles, /\.console-modal__body\s*\{[\s\S]+overflow-y:\s*auto/);
+});
+
+test("Apps SDK fields are not restyled by the legacy global input border", async () => {
+  const styles = await source("apps/console-ui/src/styles.css");
+  assert.doesNotMatch(styles, /(?:^|\n)input,\s*\nselect\s*\{[^}]*\bborder:/);
+  assert.doesNotMatch(styles, /(?:^|\n)input:focus,\s*\nselect:focus\s*\{/);
+  assert.match(styles, /\.native-control\s*\{/);
+  assert.match(styles, /@media \(max-width:\s*520px\)[\s\S]+\.console-modal__footer > \*\s*\{[\s\S]+flex:\s*1 1 0;/);
 });

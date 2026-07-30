@@ -1,6 +1,6 @@
 # OPL Cloud React Console UI Design
 
-状态：`selected-design-awaiting-written-spec-review`
+状态：`implemented-and-verified`
 
 选定方向：B，独立 React Console。
 
@@ -104,28 +104,23 @@ Account Settings、Support、购买确认、进度、收据详情、资源详情
 
 | 路径 | 职责 |
 | --- | --- |
-| `src/main.tsx` | React 挂载、全局样式入口 |
-| `src/App.tsx` | 顶层路由分派、Session 门禁、全局 toast/modal/secret 清理 |
-| `src/app/console-router.ts` | history、popstate、已知路由和权限判断 |
-| `src/app/use-console-session.ts` | Session 恢复、登录、退出、账号切换清理 |
-| `src/app/use-secret-lifetime.ts` | reveal generation、60 秒 timer 和敏感路由清理 |
-| `src/layout/ConsoleShell.tsx` | 桌面侧栏、顶部账号区、移动导航和页级状态 |
+| `src/main.tsx` | React 挂载、Apps SDK UI Provider 和全局样式入口 |
+| `src/App.tsx` | 顶层路由分派和 Session 门禁 |
+| `src/app/console-router.ts` | history、popstate、已知路由和敏感路由判断 |
+| `src/app/use-console-controller.ts` | 单一页面主控；Session、请求 generation、命令、幂等 intent、toast、全局 slide 和 Secret 生命周期 |
+| `src/layout/ConsoleShell.tsx` | 桌面侧栏、顶部账号区、移动导航、G-ACC-01 和 G-SUP-01 |
+| `src/pages/CustomerPages.tsx` | C-OV-01、C-WS-01 至 C-WS-05、C-API-01 至 C-API-02、C-BIL-01 至 C-BIL-03、C-ANN-01 |
+| `src/components/keys/KeysPanel.tsx` | C-API-03 至 C-API-05 |
+| `src/pages/AdminPages.tsx` | A-OV-01 至 A-OV-02、A-ACC-01 至 A-ACC-03、A-REC-01 至 A-REC-02、A-RES-01 至 A-RES-02、A-SYS-01 |
+| `src/pages/PublicPages.tsx` | 公开边界页、登录、Session 恢复、403 和 404 |
 | `src/components/source/SourceState.tsx` | available/empty/unavailable/loading/error 的统一表达 |
 | `src/components/ui/*` | Apps SDK UI 薄适配层和 Console 专用基础控件 |
-| `src/features/overview/*` | C-OV-01 |
-| `src/features/workspaces/*` | C-WS-01 至 C-WS-05 |
-| `src/features/api/*` | C-API-01 至 C-API-05 |
-| `src/features/billing/*` | C-BIL-01 至 C-BIL-03 |
-| `src/features/announcements/*` | C-ANN-01 |
-| `src/features/admin/overview/*` | A-OV-01、A-OV-02 |
-| `src/features/admin/accounts/*` | A-ACC-01 至 A-ACC-03 |
-| `src/features/admin/billing/*` | A-REC-01、A-REC-02 |
-| `src/features/admin/resources/*` | A-RES-01、A-RES-02 |
-| `src/features/admin/system/*` | A-SYS-01 |
 | `src/api/*` | 保留现有请求、DTO decode 和身份边界 |
-| `src/console-model.ts` | 保留纯格式化、导航和状态映射函数 |
+| `src/console-model.ts` | 纯格式化、导航和状态映射函数 |
 
-不引入 Redux、MobX 或第二套路由框架。状态保持在页面级 hooks 中；跨页面只共享 Session、路径、toast、modal 和 Secret 生命周期。
+不引入 Redux、MobX 或第二套路由框架。当前规模使用一个 `useConsoleController` 主控，页面组件只消费经过 DTO 和 SourceEnvelope 约束的状态与命令；若未来拆分 hook，必须保持同一 Session、generation、幂等和 Secret 清理语义。
+
+冻结的 27 个 slide 分组为：全局 2 个、客户 15 个、Admin 10 个。目录组织不改变 [`console-display-contract-v1.md`](../../product/console-display-contract-v1.md) 中的 slide ID、问题或动作合同。
 
 ### 5.3 数据流
 

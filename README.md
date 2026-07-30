@@ -8,7 +8,8 @@ deployment.
 
 ## Runtime Boundaries
 
-- **Console** is the Vue browser UI. It calls only Control Plane product APIs.
+- **Console** is the React browser UI, built on `@openai/apps-sdk-ui`. It calls
+  only Control Plane product APIs.
 - **Control Plane** owns local sessions, the account-to-Sub2API mapping,
   Workspace lifecycle, monthly operations, and customer-safe projections. It
   does not own customer passwords or a second identity system.
@@ -28,6 +29,13 @@ Console -> Control Plane -> Sub2API balance/charge
 
 Control Plane exposes product commands only. It has no generic Fabric, Ledger,
 or Sub2API proxy routes.
+
+The frozen Console display surface contains 10 primary pages: five customer
+pages and five additional Admin pages. Together with the global account and
+support views, these pages expose 27 slides defined by
+[`docs/product/console-display-contract-v1.md`](./docs/product/console-display-contract-v1.md).
+That display contract fixes what the UI presents; it does not change business
+readiness or make the browser an authority for product facts.
 
 ## Operator-Provisioned Pilot
 
@@ -110,7 +118,7 @@ readback can be `production-proven`.
 
 ## Repository Layout
 
-- `apps/console-ui`: Vue Console.
+- `apps/console-ui`: React Console built on `@openai/apps-sdk-ui`.
 - `services/control-plane`: Console API and product orchestration.
 - `services/fabric`: cloud resource and runtime owner.
 - `services/ledger`: evidence owner.

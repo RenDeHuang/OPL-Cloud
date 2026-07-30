@@ -8,13 +8,18 @@ and OPL Workspace Pilot.
 The deployment owns:
 
 - separate Control Plane, Fabric, and Ledger Kubernetes Deployments.
-- Vue Console assets served by Control Plane.
+- React Console assets built on `@openai/apps-sdk-ui` and served by Control Plane.
 - ComputePool and ComputeAllocation handoff to TKE.
 - TCR image references.
 - Kubernetes Service and Ingress routing.
 - Persistent workspace storage through PVC/CBS.
 - one-person-lab-app runtime scheduling onto user-owned CVM nodes.
 - separate Control Plane, Fabric, and Ledger PostgreSQL schemas.
+
+The deployed Console follows the frozen 10-primary-page, 27-slide surface in
+`docs/product/console-display-contract-v1.md`. Its browser code calls only
+Control Plane product APIs; Fabric, Ledger, Sub2API, and Tencent remain
+server-side boundaries.
 
 ## Manifest Rules
 

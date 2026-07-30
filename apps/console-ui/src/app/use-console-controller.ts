@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { currentSession, login as loginRequest, logoutLocalFirst } from "../api/auth-api.ts";
 import {
+  createSupportTicketMapping,
   createOperatorAnnouncement,
   createWalletAdjustment,
   disableOperatorAccount as disableOperatorAccountCommand,
@@ -23,6 +24,7 @@ import {
   getOperatorWorkspace,
   getOperatorWorkspaces,
   getPricingCatalog,
+  getSupportTickets,
   getWalletAdjustment,
   markAnnouncementRead,
   previewPricing,
@@ -39,6 +41,9 @@ import type {
   AnnouncementScheduleRequest,
   AuthSession,
   BillingReviewResolutionRequest,
+  CreateSupportTicketMappingRequest,
+  OperatorAccountDTO,
+  OperatorAccountCommandDTO,
   OperatorReconciliationItemDTO,
   PlanId,
   ProvisionAccountRequest,
@@ -152,6 +157,8 @@ export function useConsoleController() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [workspacePageNumber, setWorkspacePageNumber] = useState(1);
   const [balanceHistoryPage, setBalanceHistoryPage] = useState(1);
+  const [receiptCursor, setReceiptCursor] = useState("");
+  const [receiptCursorStack, setReceiptCursorStack] = useState<string[]>([]);
   const [operatorAccountPage, setOperatorAccountPage] = useState(1);
   const [operatorWorkspacePage, setOperatorWorkspacePage] = useState(1);
   const [selectedOperatorWorkspaceId, setSelectedOperatorWorkspaceId] = useState("");
@@ -173,13 +180,21 @@ export function useConsoleController() {
   const [commandBusy, setCommandBusy] = useState(false);
   const [announcementBusy, setAnnouncementBusy] = useState("");
   const [walletAdjustmentOperation, setWalletAdjustmentOperation] = useState<Awaited<ReturnType<typeof getWalletAdjustment>> | null>(null);
+  const [operatorProvisionOperation, setOperatorProvisionOperation] = useState<OperatorAccountCommandDTO | null>(null);
+  const [supportTickets, setSupportTickets] = useState<Awaited<ReturnType<typeof getSupportTickets>> | null>(null);
+  const [supportLoading, setSupportLoading] = useState(false);
+  const [supportError, setSupportError] = useState("");
 
   const requestGeneration = useRef(0);
   const sessionGeneration = useRef(0);
   const secretRequestGeneration = useRef(0);
   const sessionRef = useRef<AuthSession | null>(null);
   const selectedReceiptIdRef = useRef("");
+  const receiptCursorRef = useRef("");
+  const receiptRequestGeneration = useRef(0);
+  const receiptDetailRequestGeneration = useRef(0);
   const selectedUsageKeyIdRef = useRef("");
+  const usageRequestGeneration = useRef(0);
   const selectedOperatorWorkspaceIdRef = useRef("");
   const secretTimer = useRef<number | undefined>(undefined);
   const toastTimer = useRef<number | undefined>(undefined);
@@ -188,6 +203,7 @@ export function useConsoleController() {
   const walletAdjustmentIntent = useRef<{ accountId: string; input: WalletAdjustmentRequest; idempotencyKey: string } | null>(null);
   const walletAdjustmentRecoveryIntent = useRef<{ operationId: string; input: WalletAdjustmentRecoveryRequest; idempotencyKey: string } | null>(null);
   const operatorProvisionIntent = useRef<{ input: ProvisionAccountRequest; idempotencyKey: string } | null>(null);
+  const supportCreateIntent = useRef<{ input: CreateSupportTicketMappingRequest; idempotencyKey: string } | null>(null);
   const operatorDisableIntents = useRef(new Map<string, string>());
   const billingReviewIntent = useRef<{ resourceType: string; resourceId: string; input: BillingReviewResolutionRequest; idempotencyKey: string } | null>(null);
   const workspaceLaunchRecoveryIntent = useRef<{ operationId: string; input: WorkspaceLaunchRecoveryRequest; idempotencyKey: string } | null>(null);
@@ -223,6 +239,13 @@ export function useConsoleController() {
     secretTimer.current = window.setTimeout(clearSecrets, secretLifetimeMs);
   };
 
+  const clearReceiptDetail = () => {
+    receiptDetailRequestGeneration.current += 1;
+    selectedReceiptIdRef.current = "";
+    setSelectedReceiptId("");
+    updateSource("receiptDetail", { value: null, loading: false, error: "" });
+  };
+
   const resetConsoleState = () => {
     clearSecrets();
     setSources(initialSources());
@@ -234,12 +257,16 @@ export function useConsoleController() {
     setLaunchName("");
     setLaunchPlan("basic");
     setPreviews({});
+    usageRequestGeneration.current += 1;
     setSelectedUsageKeyId("");
     selectedUsageKeyIdRef.current = "";
     setUsagePage(1);
     setBillingView("terms");
-    setSelectedReceiptId("");
-    selectedReceiptIdRef.current = "";
+    clearReceiptDetail();
+    setReceiptCursor("");
+    receiptCursorRef.current = "";
+    setReceiptCursorStack([]);
+    receiptRequestGeneration.current += 1;
     setWorkspacePageNumber(1);
     setBalanceHistoryPage(1);
     setOperatorAccountPage(1);
@@ -247,11 +274,18 @@ export function useConsoleController() {
     setSelectedOperatorWorkspaceId("");
     selectedOperatorWorkspaceIdRef.current = "";
     setWalletAdjustmentOperation(null);
+    setOperatorProvisionOperation(null);
+    setSupportTickets(null);
+    setSupportLoading(false);
+    setSupportError("");
+    setCommandBusy(false);
+    setAnnouncementBusy("");
     workspaceLaunchIntent.current = null;
     runtimeRotationIntent.current = null;
     walletAdjustmentIntent.current = null;
     walletAdjustmentRecoveryIntent.current = null;
     operatorProvisionIntent.current = null;
+    supportCreateIntent.current = null;
     billingReviewIntent.current = null;
     workspaceLaunchRecoveryIntent.current = null;
     announcementCreateIntent.current = null;
@@ -270,6 +304,12 @@ export function useConsoleController() {
 
   const isRequestCurrent = (generation: number, userId?: string) => generation === requestGeneration.current
     && (!userId || sessionRef.current?.user.id === userId);
+
+  const currentMutationRequest = () => {
+    const generation = sessionGeneration.current;
+    const userId = sessionRef.current?.user.id;
+    return () => generation === sessionGeneration.current && userId === sessionRef.current?.user.id;
+  };
 
   const loadWorkspaces = async (generation: number, activeSession: AuthSession, page = workspacePageNumber, pageSize = 10) => {
     beginSource("workspaces");
@@ -316,13 +356,19 @@ export function useConsoleController() {
     }
   };
 
-  const loadReceipts = async (generation: number, activeSession: AuthSession, limit = 20) => {
+  const loadReceipts = async (generation: number, activeSession: AuthSession, limit = 20, cursor = receiptCursorRef.current) => {
+    const receiptGeneration = ++receiptRequestGeneration.current;
+    clearReceiptDetail();
     beginSource("receipts");
     try {
-      const result = await getBillingReceipts("", limit);
-      if (isRequestCurrent(generation, activeSession.user.id)) updateSource("receipts", { value: result, loading: false, error: "" });
+      const result = await getBillingReceipts(cursor, limit);
+      if (isRequestCurrent(generation, activeSession.user.id) && receiptGeneration === receiptRequestGeneration.current && cursor === receiptCursorRef.current) {
+        updateSource("receipts", { value: result, loading: false, error: "" });
+      }
     } catch (error) {
-      if (isRequestCurrent(generation, activeSession.user.id)) failSource("receipts", error, unavailableSource("ledger"));
+      if (isRequestCurrent(generation, activeSession.user.id) && receiptGeneration === receiptRequestGeneration.current && cursor === receiptCursorRef.current) {
+        failSource("receipts", error, unavailableSource("ledger"));
+      }
     }
   };
 
@@ -369,35 +415,41 @@ export function useConsoleController() {
         updateSource("runtime", { value: unavailableSource("fabric"), loading: false, error: "" });
         return;
       }
+    } catch (error) {
+      if (!isRequestCurrent(generation, activeSession.user.id) || workspaceIdFromPath(window.location.pathname) !== workspaceId) return;
+      failSource("workspaceDetail", error, unavailableSource("control-plane"));
+      updateSource("runtime", { value: unavailableSource("fabric"), loading: false, error: "" });
+      return;
+    }
+    try {
       const runtime = await getWorkspaceRuntimeStatus(workspaceId);
       if (!isRequestCurrent(generation, activeSession.user.id) || workspaceIdFromPath(window.location.pathname) !== workspaceId) return;
       updateSource("runtime", { value: runtime, loading: false, error: "" });
     } catch (error) {
-      if (!isRequestCurrent(generation, activeSession.user.id)) return;
-      failSource("workspaceDetail", error, unavailableSource("control-plane"));
+      if (!isRequestCurrent(generation, activeSession.user.id) || workspaceIdFromPath(window.location.pathname) !== workspaceId) return;
       failSource("runtime", error, unavailableSource("fabric"));
     }
   };
 
   const loadUsage = async (generation: number, activeSession: AuthSession, keyId: string, page = 1, period = usagePeriod) => {
     if (!keyId) return;
+    const usageGeneration = ++usageRequestGeneration.current;
     beginSource("usage");
     beginSource("usageSummary");
-    try {
-      const [usage, summary] = await Promise.all([
-        getGatewayKeyUsage(keyId, page, 20),
-        getGatewayKeyUsageSummary(keyId, period)
-      ]);
-      if (!isRequestCurrent(generation, activeSession.user.id) || selectedUsageKeyIdRef.current !== keyId) return;
-      updateSource("usage", { value: usage, loading: false, error: "" });
-      updateSource("usageSummary", { value: summary, loading: false, error: "" });
+    const [usageResult, summaryResult] = await Promise.allSettled([
+      getGatewayKeyUsage(keyId, page, 20),
+      getGatewayKeyUsageSummary(keyId, period)
+    ]);
+    if (!isRequestCurrent(generation, activeSession.user.id)
+      || usageGeneration !== usageRequestGeneration.current
+      || selectedUsageKeyIdRef.current !== keyId) return;
+    if (usageResult.status === "fulfilled") {
+      updateSource("usage", { value: usageResult.value, loading: false, error: "" });
       setUsagePage(page);
-    } catch (error) {
-      if (isRequestCurrent(generation, activeSession.user.id)) {
-        failSource("usage", error, unavailableSource("sub2api"));
-        failSource("usageSummary", error, unavailableSource("sub2api"));
-      }
-    }
+    } else failSource("usage", usageResult.reason, unavailableSource("sub2api"));
+    if (summaryResult.status === "fulfilled") {
+      updateSource("usageSummary", { value: summaryResult.value, loading: false, error: "" });
+    } else failSource("usageSummary", summaryResult.reason, unavailableSource("sub2api"));
   };
 
   const loadUsageKeys = async (generation: number, activeSession: AuthSession) => {
@@ -406,7 +458,16 @@ export function useConsoleController() {
       const keys = await getGatewayKeys({ page: 1, pageSize: 20 });
       if (!isRequestCurrent(generation, activeSession.user.id)) return;
       updateSource("usageKeys", { value: keys, loading: false, error: "" });
-      if (!keys.available || keys.data.items.length === 0) return;
+      if (keys.available && keys.data.items.length === 0) {
+        usageRequestGeneration.current += 1;
+        selectedUsageKeyIdRef.current = "";
+        setSelectedUsageKeyId("");
+        setUsagePage(1);
+        updateSource("usage", { value: null, loading: false, error: "" });
+        updateSource("usageSummary", { value: null, loading: false, error: "" });
+        return;
+      }
+      if (!keys.available) return;
       const keyId = keys.data.items.some((key) => key.id === selectedUsageKeyIdRef.current) ? selectedUsageKeyIdRef.current : keys.data.items[0].id;
       selectedUsageKeyIdRef.current = keyId;
       setSelectedUsageKeyId(keyId);
@@ -500,6 +561,29 @@ export function useConsoleController() {
     }
   };
 
+  const findOperatorAccountByEmail = async (email: string, accountId: string, requestStillCurrent: () => boolean) => {
+    const normalizedEmail = email.trim().toLowerCase();
+    for (let page = 1; ; page += 1) {
+      const result = await getOperatorAccountsPage(page, 50);
+      if (!requestStillCurrent()) return null;
+      if (!result.available) return null;
+      if (result.data.page !== page || result.data.pageSize !== 50) throw new Error("operator_account_page_mismatch");
+      const authoritativeAccount = result.data.items.find((account) => account.accountId === accountId
+        && account.email.trim().toLowerCase() === normalizedEmail
+        && Boolean(account.consoleUserId)
+        && account.gatewayIdentity.available
+        && account.gatewayIdentity.data.userId === account.sub2apiUserId
+        && account.gatewayIdentity.data.email.trim().toLowerCase() === normalizedEmail);
+      if (authoritativeAccount) {
+        updateSource("operatorAccounts", { value: result, loading: false, error: "" });
+        setOperatorAccountPage(page);
+        return authoritativeAccount;
+      }
+      const pages = Math.max(1, Math.ceil(result.data.total / result.data.pageSize));
+      if (page >= pages) return null;
+    }
+  };
+
   const loadOperatorWorkspaces = async (generation: number, activeSession: AuthSession, page = operatorWorkspacePage) => {
     beginSource("operatorWorkspaces");
     try {
@@ -545,7 +629,10 @@ export function useConsoleController() {
 
   const loadRoute = async (generation: number, activeSession: AuthSession, routePath: string) => {
     if (routePath === "/console" || routePath === "/console/overview") {
-      await Promise.all([loadWorkspaces(generation, activeSession, 1, 1), loadWallet(generation, activeSession), loadAccountUsage(generation, activeSession), loadReceipts(generation, activeSession, 3), loadAnnouncements(generation, activeSession, 3)]);
+      receiptCursorRef.current = "";
+      setReceiptCursor("");
+      setReceiptCursorStack([]);
+      await Promise.all([loadWorkspaces(generation, activeSession, 1, 1), loadWallet(generation, activeSession), loadAccountUsage(generation, activeSession), loadReceipts(generation, activeSession, 3, ""), loadAnnouncements(generation, activeSession, 3)]);
       return;
     }
     if (routePath === "/console/workspaces") {
@@ -569,7 +656,7 @@ export function useConsoleController() {
       return;
     }
     if (routePath === "/console/billing") {
-      await Promise.all([loadWorkspaces(generation, activeSession, 1, 10), loadReceipts(generation, activeSession)]);
+      await Promise.all([loadWorkspaces(generation, activeSession, 1, 10), loadReceipts(generation, activeSession, 20, receiptCursorRef.current)]);
       return;
     }
     if (routePath === "/console/announcements") {
@@ -695,6 +782,7 @@ export function useConsoleController() {
 
   const submitWorkspaceLaunch = async () => {
     if (!session || commandBusy || launchStep !== "confirm" || !launchConfirmed || !selectedPlan || selectedPrice === null || balanceSufficient !== true || !launchName.trim()) return;
+    const requestStillCurrent = currentMutationRequest();
     const input: WorkspaceLaunchRequest = { name: launchName.trim(), packageId: selectedPlan.id, sizeGb: selectedPlan.id === "basic" ? 10 : 100, autoRenew: false };
     if (!workspaceLaunchIntent.current || !sameLaunchRequest(workspaceLaunchIntent.current.input, input)) {
       workspaceLaunchIntent.current = { input, idempotencyKey: workspaceLaunchIdempotencyKey() };
@@ -702,6 +790,7 @@ export function useConsoleController() {
     setCommandBusy(true);
     try {
       const operation = await launchWorkspace(input, session.csrfToken, workspaceLaunchIntent.current.idempotencyKey);
+      if (!requestStillCurrent()) return;
       workspaceLaunchIntent.current = null;
       setLaunchOperation(operation);
       if (operation.status === "succeeded" && operation.workspaceId) {
@@ -713,12 +802,13 @@ export function useConsoleController() {
         void pollWorkspaceLaunch(operation.operationId, requestGeneration.current, session);
       }
     } catch (error) {
+      if (!requestStillCurrent()) return;
       const payload = error && typeof error === "object" && "payload" in error ? (error as { payload?: unknown }).payload : null;
       const unknown = Boolean(payload && typeof payload === "object" && (payload as { status?: string }).status === "unknown");
       if (!unknown) workspaceLaunchIntent.current = null;
       flash(friendlyError(error), "danger");
     } finally {
-      setCommandBusy(false);
+      if (requestStillCurrent()) setCommandBusy(false);
     }
   };
 
@@ -762,6 +852,7 @@ export function useConsoleController() {
   const rotateWorkspacePassword = async () => {
     const workspace = sources.workspaceDetail.value?.available ? sources.workspaceDetail.value.data : null;
     if (!session || !workspace || workspaceSecretBusy) return;
+    const requestStillCurrent = currentMutationRequest();
     if (!runtimeRotationIntent.current || runtimeRotationIntent.current.workspaceId !== workspace.id) {
       runtimeRotationIntent.current = { workspaceId: workspace.id, idempotencyKey: `runtime-credential:${crypto.randomUUID()}` };
     }
@@ -770,6 +861,7 @@ export function useConsoleController() {
     setWorkspaceSecretBusy(true);
     try {
       const response = await rotateWorkspaceCredentials(workspace.id, session.csrfToken, runtimeRotationIntent.current.idempotencyKey);
+      if (!requestStillCurrent()) return;
       runtimeRotationIntent.current = null;
       if (activeGeneration !== secretRequestGeneration.current || workspace.id !== workspaceIdFromPath(window.location.pathname)) return;
       setSecrets({ apiKey: null, workspace: response.access });
@@ -777,9 +869,10 @@ export function useConsoleController() {
       flash("Workspace 凭证已轮换");
       await loadWorkspaceDetail(requestGeneration.current, session, workspace.id);
     } catch (error) {
+      if (!requestStillCurrent()) return;
       flash(mutationError(error), "danger");
     } finally {
-      if (activeGeneration === secretRequestGeneration.current) setWorkspaceSecretBusy(false);
+      if (requestStillCurrent() && activeGeneration === secretRequestGeneration.current) setWorkspaceSecretBusy(false);
     }
   };
 
@@ -793,30 +886,108 @@ export function useConsoleController() {
     }
   };
 
+  const loadSupportTickets = async () => {
+    if (!session) return;
+    const generation = requestGeneration.current;
+    const userId = session.user.id;
+    setSupportLoading(true);
+    setSupportError("");
+    try {
+      const result = await getSupportTickets();
+      if (!isRequestCurrent(generation, userId)) return;
+      setSupportTickets(result);
+    } catch (error) {
+      if (!isRequestCurrent(generation, userId)) return;
+      setSupportTickets(null);
+      setSupportError(friendlyError(error));
+    } finally {
+      if (isRequestCurrent(generation, userId)) setSupportLoading(false);
+    }
+  };
+
+  const createSupportMapping = async (input: Omit<CreateSupportTicketMappingRequest, "accountId">) => {
+    if (!session || commandBusy) return false;
+    const requestStillCurrent = currentMutationRequest();
+    const request: CreateSupportTicketMappingRequest = { ...input, accountId: session.user.accountId };
+    if (!supportCreateIntent.current || JSON.stringify(supportCreateIntent.current.input) !== JSON.stringify(request)) {
+      supportCreateIntent.current = { input: request, idempotencyKey: `support-map:${crypto.randomUUID()}` };
+    }
+    setCommandBusy(true);
+    try {
+      await createSupportTicketMapping(supportCreateIntent.current.input, session.csrfToken, supportCreateIntent.current.idempotencyKey);
+      if (!requestStillCurrent()) return false;
+      supportCreateIntent.current = null;
+      await loadSupportTickets();
+      if (!requestStillCurrent()) return false;
+      flash("外部工单映射已保存");
+      return true;
+    } catch (error) {
+      if (!requestStillCurrent()) return false;
+      flash(mutationError(error), "danger");
+      return false;
+    } finally {
+      if (requestStillCurrent()) setCommandBusy(false);
+    }
+  };
+
   const selectReceipt = async (receiptId: string) => {
     if (!session) return;
+    clearReceiptDetail();
+    const detailGeneration = ++receiptDetailRequestGeneration.current;
+    const generation = requestGeneration.current;
+    const userId = session.user.id;
     selectedReceiptIdRef.current = receiptId;
     setSelectedReceiptId(receiptId);
     beginSource("receiptDetail");
     try {
       const result = await getBillingReceipt(receiptId);
-      if (selectedReceiptIdRef.current !== receiptId) return;
+      if (!isRequestCurrent(generation, userId)
+        || detailGeneration !== receiptDetailRequestGeneration.current
+        || selectedReceiptIdRef.current !== receiptId) return;
+      if (result.available && result.data.receiptId !== receiptId) throw new Error("billing_receipt_identity_mismatch");
       updateSource("receiptDetail", { value: result, loading: false, error: "" });
     } catch (error) {
-      if (selectedReceiptIdRef.current === receiptId) failSource("receiptDetail", error, unavailableSource("ledger"));
+      if (isRequestCurrent(generation, userId)
+        && detailGeneration === receiptDetailRequestGeneration.current
+        && selectedReceiptIdRef.current === receiptId) {
+        failSource("receiptDetail", error, unavailableSource("ledger"));
+      }
     }
+  };
+
+  const nextReceiptPage = async () => {
+    const page = sources.receipts.value?.available ? sources.receipts.value.data : null;
+    if (!session || !page?.hasMore || !page.nextCursor) return;
+    const nextCursor = page.nextCursor;
+    setReceiptCursorStack((current) => [...current, receiptCursorRef.current]);
+    receiptCursorRef.current = nextCursor;
+    setReceiptCursor(nextCursor);
+    await loadReceipts(requestGeneration.current, session, 20, nextCursor);
+  };
+
+  const previousReceiptPage = async () => {
+    if (!session || receiptCursorStack.length === 0) return;
+    const previousCursor = receiptCursorStack[receiptCursorStack.length - 1] || "";
+    setReceiptCursorStack((current) => current.slice(0, -1));
+    receiptCursorRef.current = previousCursor;
+    setReceiptCursor(previousCursor);
+    await loadReceipts(requestGeneration.current, session, 20, previousCursor);
   };
 
   const markRead = async (announcementId: string) => {
     if (!session || announcementBusy) return;
+    const requestStillCurrent = currentMutationRequest();
     setAnnouncementBusy(announcementId);
     try {
       await markAnnouncementRead(announcementId, session.csrfToken, `announcement-read:${crypto.randomUUID()}`);
+      if (!requestStillCurrent()) return;
       await loadAnnouncements(requestGeneration.current, session, path === "/console/overview" ? 3 : 20);
+      if (!requestStillCurrent()) return;
     } catch (error) {
+      if (!requestStillCurrent()) return;
       flash(friendlyError(error), "danger");
     } finally {
-      setAnnouncementBusy("");
+      if (requestStillCurrent()) setAnnouncementBusy("");
     }
   };
 
@@ -870,14 +1041,18 @@ export function useConsoleController() {
 
   const disableOperatorAccount = async (accountId: string) => {
     if (!session || !window.confirm("确认停用该客户？账号会立即停用；历史账单、收据和审计记录会保留。")) return;
+    const requestStillCurrent = currentMutationRequest();
     const idempotencyKey = operatorDisableIntents.current.get(accountId) || `account-disable:${accountId}:${crypto.randomUUID()}`;
     operatorDisableIntents.current.set(accountId, idempotencyKey);
     try {
       await disableOperatorAccountCommand(accountId, "operator_requested", session.csrfToken, idempotencyKey);
+      if (!requestStillCurrent()) return;
       operatorDisableIntents.current.delete(accountId);
       flash("客户已停用");
       await loadOperatorAccounts(requestGeneration.current, session, operatorAccountPage);
+      if (!requestStillCurrent()) return;
     } catch (error) {
+      if (!requestStillCurrent()) return;
       flash(mutationError(error), "danger");
     }
   };
@@ -885,12 +1060,14 @@ export function useConsoleController() {
   const submitWalletAdjustment = async (accountId: string, input: WalletAdjustmentRequest) => {
     if (!session || commandBusy || input.confirmationAccountId !== accountId || !input.amountUsd || !input.reason.trim()) return;
     if (!window.confirm("请再次确认这笔余额操作：提交后会写入客户账户并保留操作记录。")) return;
+    const requestStillCurrent = currentMutationRequest();
     if (!walletAdjustmentIntent.current || walletAdjustmentIntent.current.accountId !== accountId || JSON.stringify(walletAdjustmentIntent.current.input) !== JSON.stringify(input)) {
       walletAdjustmentIntent.current = { accountId, input, idempotencyKey: `wallet-adjustment:${crypto.randomUUID()}` };
     }
     setCommandBusy(true);
     try {
       const result = await createWalletAdjustment(accountId, walletAdjustmentIntent.current.input, session.csrfToken, walletAdjustmentIntent.current.idempotencyKey);
+      if (!requestStillCurrent()) return null;
       setWalletAdjustmentOperation(result);
       if (result.status === "manual_review") flash("结果待确认，已进入人工复核", "danger");
       else {
@@ -898,23 +1075,29 @@ export function useConsoleController() {
         flash("余额操作已提交");
       }
       await loadOperatorAccounts(requestGeneration.current, session, operatorAccountPage);
+      if (!requestStillCurrent()) return null;
       return result;
     } catch (error) {
+      if (!requestStillCurrent()) return null;
       flash(mutationError(error), "danger");
       return null;
     } finally {
-      setCommandBusy(false);
+      if (requestStillCurrent()) setCommandBusy(false);
     }
   };
 
   const refreshWalletOperation = async () => {
     if (!session || !walletAdjustmentOperation?.operationId) return;
+    const requestStillCurrent = currentMutationRequest();
     try {
       const result = await getWalletAdjustment(walletAdjustmentOperation.operationId);
+      if (!requestStillCurrent()) return;
       setWalletAdjustmentOperation(result);
       if (result.status === "succeeded") walletAdjustmentIntent.current = null;
       await loadOperatorAccounts(requestGeneration.current, session, operatorAccountPage);
+      if (!requestStillCurrent()) return;
     } catch (error) {
+      if (!requestStillCurrent()) return;
       flash(friendlyError(error), "danger");
     }
   };
@@ -922,6 +1105,7 @@ export function useConsoleController() {
   const recoverWalletOperation = async () => {
     const operation = walletAdjustmentOperation;
     if (!session || !operation || operation.status !== "manual_review" || !operation.allowedActions?.includes("recover_wallet_adjustment")) return;
+    const requestStillCurrent = currentMutationRequest();
     if (!walletAdjustmentRecoveryIntent.current || walletAdjustmentRecoveryIntent.current.operationId !== operation.operationId) {
       const evidenceRef = (window.prompt("请输入 case-YYYYMMDD-xxx 证据引用") || "").trim();
       if (!evidenceRef) return;
@@ -934,6 +1118,7 @@ export function useConsoleController() {
     setCommandBusy(true);
     try {
       const result = await recoverWalletAdjustment(operation.operationId, walletAdjustmentRecoveryIntent.current.input, session.csrfToken, walletAdjustmentRecoveryIntent.current.idempotencyKey);
+      if (!requestStillCurrent()) return;
       setWalletAdjustmentOperation(result);
       if (result.status === "succeeded") {
         walletAdjustmentRecoveryIntent.current = null;
@@ -941,35 +1126,48 @@ export function useConsoleController() {
         flash("余额操作已确认");
       } else flash("恢复结果仍待人工确认", "danger");
       await loadOperatorAccounts(requestGeneration.current, session, operatorAccountPage);
+      if (!requestStillCurrent()) return;
     } catch (error) {
+      if (!requestStillCurrent()) return;
       flash(mutationError(error), "danger");
     } finally {
-      setCommandBusy(false);
+      if (requestStillCurrent()) setCommandBusy(false);
     }
   };
 
   const provisionAccount = async (input: ProvisionAccountRequest) => {
     if (!session || commandBusy) return false;
+    const requestStillCurrent = currentMutationRequest();
     if (!operatorProvisionIntent.current || JSON.stringify(operatorProvisionIntent.current.input) !== JSON.stringify(input)) {
       operatorProvisionIntent.current = { input, idempotencyKey: `account-provision:${crypto.randomUUID()}` };
     }
     setCommandBusy(true);
     try {
-      await provisionOperatorAccount(operatorProvisionIntent.current.input, session.csrfToken, operatorProvisionIntent.current.idempotencyKey);
+      const result = await provisionOperatorAccount(operatorProvisionIntent.current.input, session.csrfToken, operatorProvisionIntent.current.idempotencyKey);
+      if (!requestStillCurrent()) return null;
+      setOperatorProvisionOperation(result);
+      const authoritativeAccount = await findOperatorAccountByEmail(input.email, result.accountId, requestStillCurrent);
+      if (!requestStillCurrent()) return null;
+      if (!authoritativeAccount) {
+        flash("开户命令已返回，但账户映射读回暂不可用，请重试", "danger");
+        return { operation: result, account: null as OperatorAccountDTO | null };
+      }
       operatorProvisionIntent.current = null;
-      await loadOperatorAccounts(requestGeneration.current, session, operatorAccountPage);
       flash("用户已开通");
-      return true;
+      return { operation: result, account: authoritativeAccount };
     } catch (error) {
+      if (!requestStillCurrent()) return null;
       flash(mutationError(error), "danger");
-      return false;
+      return null;
     } finally {
-      setCommandBusy(false);
+      if (requestStillCurrent()) setCommandBusy(false);
     }
   };
 
   const resolveReview = async (review: OperatorReconciliationItemDTO) => {
     if (!session) return;
+    if (!review.allowedActions.includes("recover_workspace_launch") && !review.allowedActions.includes("resolve_billing_review")) return;
+    const requestStillCurrent = currentMutationRequest();
     const evidenceRef = (window.prompt("请输入 case-YYYYMMDD-xxx 证据引用") || "").trim();
     if (!evidenceRef) return;
     try {
@@ -979,34 +1177,42 @@ export function useConsoleController() {
           workspaceLaunchRecoveryIntent.current = { operationId: review.billingOperationId, input, idempotencyKey: `recover-${crypto.randomUUID()}` };
         }
         await recoverOperatorWorkspaceLaunch(review.billingOperationId, workspaceLaunchRecoveryIntent.current.input, session.csrfToken, workspaceLaunchRecoveryIntent.current.idempotencyKey);
+        if (!requestStillCurrent()) return;
         workspaceLaunchRecoveryIntent.current = null;
-      } else {
+      } else if (review.allowedActions.includes("resolve_billing_review")) {
         const input: BillingReviewResolutionRequest = { accountId: review.accountId, billingOperationId: review.billingOperationId, decision: "activate_charged_resource", evidenceRef };
         if (!billingReviewIntent.current || billingReviewIntent.current.resourceType !== review.resourceType || billingReviewIntent.current.resourceId !== review.id || JSON.stringify(billingReviewIntent.current.input) !== JSON.stringify(input)) {
           billingReviewIntent.current = { resourceType: review.resourceType, resourceId: review.id, input, idempotencyKey: `billing-review:${review.resourceType}:${review.id}:${crypto.randomUUID()}` };
         }
         await resolveBillingReview(review.resourceType, review.id, billingReviewIntent.current.input, session.csrfToken, billingReviewIntent.current.idempotencyKey);
+        if (!requestStillCurrent()) return;
         billingReviewIntent.current = null;
       }
       flash("复核命令已提交");
       await loadOperatorReconciliation(requestGeneration.current, session);
+      if (!requestStillCurrent()) return;
     } catch (error) {
+      if (!requestStillCurrent()) return;
       flash(mutationError(error), "danger");
     }
   };
 
   const createAnnouncement = async (input: AnnouncementDraftRequest) => {
     if (!session) return false;
+    const requestStillCurrent = currentMutationRequest();
     if (!announcementCreateIntent.current || JSON.stringify(announcementCreateIntent.current.input) !== JSON.stringify(input)) {
       announcementCreateIntent.current = { input, idempotencyKey: `announcement-create:${crypto.randomUUID()}` };
     }
     try {
       await createOperatorAnnouncement(announcementCreateIntent.current.input, session.csrfToken, announcementCreateIntent.current.idempotencyKey);
+      if (!requestStillCurrent()) return false;
       announcementCreateIntent.current = null;
       flash("公告草稿已创建");
       await loadOperatorAnnouncements(requestGeneration.current, session);
+      if (!requestStillCurrent()) return false;
       return true;
     } catch (error) {
+      if (!requestStillCurrent()) return false;
       flash(mutationError(error), "danger");
       return false;
     }
@@ -1014,6 +1220,7 @@ export function useConsoleController() {
 
   const publishAnnouncement = async (announcementId: string) => {
     if (!session || !window.confirm("确认发布公告？")) return;
+    const requestStillCurrent = currentMutationRequest();
     const announcement = sources.operatorAnnouncements.value?.available
       ? sources.operatorAnnouncements.value.data.items.find((item) => item.id === announcementId)
       : null;
@@ -1025,24 +1232,31 @@ export function useConsoleController() {
     }
     try {
       await publishOperatorAnnouncement(announcementId, intent.input, session.csrfToken, intent.idempotencyKey);
+      if (!requestStillCurrent()) return;
       announcementPublishIntents.current.delete(announcementId);
       flash("公告已发布");
       await loadOperatorAnnouncements(requestGeneration.current, session);
+      if (!requestStillCurrent()) return;
     } catch (error) {
+      if (!requestStillCurrent()) return;
       flash(mutationError(error), "danger");
     }
   };
 
   const withdrawAnnouncement = async (announcementId: string) => {
     if (!session || !window.confirm("确认撤下公告？")) return;
+    const requestStillCurrent = currentMutationRequest();
     const idempotencyKey = announcementWithdrawIntents.current.get(announcementId) || `announcement-withdraw:${announcementId}:${crypto.randomUUID()}`;
     announcementWithdrawIntents.current.set(announcementId, idempotencyKey);
     try {
       await withdrawOperatorAnnouncement(announcementId, session.csrfToken, idempotencyKey);
+      if (!requestStillCurrent()) return;
       announcementWithdrawIntents.current.delete(announcementId);
       flash("公告已撤下");
       await loadOperatorAnnouncements(requestGeneration.current, session);
+      if (!requestStillCurrent()) return;
     } catch (error) {
+      if (!requestStillCurrent()) return;
       flash(mutationError(error), "danger");
     }
   };
@@ -1090,7 +1304,10 @@ export function useConsoleController() {
     sidebarOpen,
     setSidebarOpen,
     globalSlide,
-    setGlobalSlide,
+    setGlobalSlide: (slide: GlobalSlide) => {
+      setGlobalSlide(slide);
+      if (slide === "support") void loadSupportTickets();
+    },
     submitLogin,
     signOut,
     refreshCurrentPage,
@@ -1115,6 +1332,11 @@ export function useConsoleController() {
     reviewWorkspaceLaunch,
     submitWorkspaceLaunch,
     commandBusy,
+    supportTickets,
+    supportLoading,
+    supportError,
+    loadSupportTickets,
+    createSupportMapping,
     secrets,
     clearSecrets,
     workspaceSecretBusy,
@@ -1127,7 +1349,12 @@ export function useConsoleController() {
     setBillingView,
     selectedReceiptId,
     setSelectedReceiptId,
+    clearReceiptDetail,
     selectReceipt,
+    receiptCursor,
+    receiptCursorStack,
+    nextReceiptPage,
+    previousReceiptPage,
     markRead,
     announcementBusy,
     selectedUsageKeyId,
@@ -1153,6 +1380,8 @@ export function useConsoleController() {
     submitWalletAdjustment,
     refreshWalletOperation,
     recoverWalletOperation,
+    operatorProvisionOperation,
+    setOperatorProvisionOperation,
     provisionAccount,
     resolveReview,
     createAnnouncement,
