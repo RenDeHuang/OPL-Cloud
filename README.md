@@ -156,6 +156,22 @@ For the UI:
 npm run dev
 ```
 
+For a clickable localhost-only demo with in-memory fixture data:
+
+```bash
+npm run demo
+```
+
+Demo credentials:
+
+- Customer: `fixture@example.com` / `fixture-password`
+- Admin: `operator@example.com` / `operator-password`
+
+The command also prints the URL and credentials at startup. It binds only to
+`127.0.0.1`, calls no external service, and cannot perform real billing,
+Sub2API, Fabric, Ledger, Tencent, or Kubernetes mutations. This is a development
+preview, not a public test mode or production readiness claim.
+
 ## Production
 
 Production uses Tencent TKE and the three Go service binaries in one OPL Cloud

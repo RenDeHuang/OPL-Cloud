@@ -5,6 +5,7 @@
   "description": "OPL Cloud implementation workspace for OPL Console and OPL Workspace control plane.",
   "type": "module",
   "scripts": {
+    "demo": "node tools/start-console-demo.ts",
     "dev": "vite --host 127.0.0.1",
     "staging:local": "node tools/start-staging-local-api.ts",
     "staging:ui": "node tools/start-staging-local-ui.ts",

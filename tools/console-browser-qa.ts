@@ -4,6 +4,10 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const NOW = "2026-07-19T12:00:00Z";
+export const CONSOLE_DEMO_CREDENTIALS = Object.freeze({
+  customer: Object.freeze({ email: "fixture@example.com", password: "fixture-password" }),
+  admin: Object.freeze({ email: "operator@example.com", password: "operator-password" })
+});
 const WORKSPACE_PASSWORDS = Object.freeze({
   "ws-1": "fixture-workspace-password",
   "ws-2": "fixture-second-workspace-password"
@@ -40,6 +44,37 @@ const CUSTOMER_ROUTES = Object.freeze([
   "/console/announcements"
 ]);
 
+function fixtureIdentity(role = "customer") {
+  const operator = role === "operator";
+  return {
+    authenticated: true,
+    role,
+    accountId: operator ? "acct-operator" : "acct-1",
+    consoleUserId: operator ? "user-operator" : "user-customer",
+    sub2apiUserId: operator ? "10" : "9",
+    email: operator ? CONSOLE_DEMO_CREDENTIALS.admin.email : CONSOLE_DEMO_CREDENTIALS.customer.email
+  };
+}
+
+export function createConsoleFixtureSession() {
+  return {
+    authenticated: false,
+    role: "customer",
+    accountId: "",
+    consoleUserId: "",
+    sub2apiUserId: "",
+    email: ""
+  };
+}
+
+function authenticateFixtureSession(session, role) {
+  Object.assign(session, fixtureIdentity(role));
+}
+
+function clearFixtureSession(session) {
+  Object.assign(session, createConsoleFixtureSession());
+}
+
 function source(data, name = "control-plane", status = "available") {
   return { source: name, status, available: true, fetchedAt: NOW, data };
 }
@@ -48,17 +83,39 @@ function unavailable(name) {
   return { source: name, status: "unavailable", available: false, fetchedAt: NOW };
 }
 
-function gatewayKey(id = "11", name = "General fixture key", input = {}) {
+function gatewayKey(id = "11", name = "General fixture key", input = {}, identity = {}) {
+  const kind = identity.kind || (Object.hasOwn(WORKSPACE_KEYS, id) ? "workspace" : "general");
   return {
-    id, name, kind: Object.hasOwn(WORKSPACE_KEYS, id) ? "workspace" : "general", status: "active",
+    id, name, kind, status: "active",
     groupId: input.groupId || "101", ipWhitelist: input.ipWhitelist || [], ipBlacklist: input.ipBlacklist || [],
     quotaUsdMicros: input.quotaUsdMicros ?? 10_000_000, quotaUsedUsdMicros: 250_000,
     rateLimit5hUsdMicros: input.rateLimit5hUsdMicros || 0, rateLimit1dUsdMicros: input.rateLimit1dUsdMicros || 0,
     rateLimit7dUsdMicros: input.rateLimit7dUsdMicros || 0,
     usage5hUsdMicros: 0, usage1dUsdMicros: 10_000, usage7dUsdMicros: 25_000, currentConcurrency: 0,
     expiresAt: "2026-08-18T12:00:00Z", lastUsedAt: NOW, lastUsedIp: "127.0.0.1", createdAt: NOW, updatedAt: NOW,
-    manageable: !Object.hasOwn(WORKSPACE_KEYS, id), deletable: !Object.hasOwn(WORKSPACE_KEYS, id)
+    manageable: kind === "general", deletable: kind === "general",
+    ownerAccountId: identity.ownerAccountId || "acct-1",
+    secret: identity.secret || WORKSPACE_KEYS[id] || GENERAL_KEY
   };
+}
+
+function gatewayKeyView(key) {
+  return Object.fromEntries(Object.entries(key).filter(([field]) => !["ownerAccountId", "secret"].includes(field)));
+}
+
+function allGatewayKeys(state) {
+  return [...state.keys, ...state.workspaceKeys];
+}
+
+function findGatewayKey(state, keyId, accountId) {
+  return allGatewayKeys(state).find((key) => key.id === keyId && key.ownerAccountId === accountId);
+}
+
+function allocateGatewayKeyId(state) {
+  while (allGatewayKeys(state).some((key) => key.id === String(state.nextKeyId))) state.nextKeyId += 1;
+  const keyId = String(state.nextKeyId);
+  state.nextKeyId += 1;
+  return keyId;
 }
 
 function workspace(id = "ws-1") {
@@ -100,12 +157,12 @@ function pendingWorkspaceLaunch() {
   };
 }
 
-function operatorAccount(accountId, status) {
+function operatorAccount(accountId, status, overrides = {}) {
   const disabled = status === "disabled";
-  const userId = disabled ? "11" : "9";
-  const email = disabled ? "stopped@example.com" : "pilot@example.com";
+  const userId = overrides.sub2apiUserId || (disabled ? "11" : "9");
+  const email = overrides.email || (disabled ? "stopped@example.com" : "pilot@example.com");
   return {
-    accountId, consoleUserId: disabled ? "user-stopped" : "user-customer", role: "owner", sub2apiUserId: userId, email, status,
+    accountId, consoleUserId: overrides.consoleUserId || (disabled ? "user-stopped" : "user-customer"), role: "owner", sub2apiUserId: userId, email, status,
     gatewayIdentity: source({ userId, email, status }, "sub2api"),
     wallet: source({ userId, currency: "USD", usdMicros: disabled ? "0" : "50000000", status: "active" }, "sub2api"),
     keyCount: source(disabled ? 0 : 2, "sub2api"),
@@ -140,6 +197,50 @@ function sourceForState(state, data, name) {
   return source(data, name);
 }
 
+function demoAnnouncement(id = "announcement-demo-1") {
+  return {
+    id,
+    title: "OPL Cloud 演示环境已就绪",
+    body: "这是 localhost 内存数据，用于查看公告、已读状态和 Console 信息层级。",
+    status: "published",
+    startsAt: NOW,
+    publishedAt: NOW,
+    createdAt: NOW,
+    updatedAt: NOW,
+    read: false
+  };
+}
+
+export function createConsoleFixtureState({ faultInjection = true, seedDemoData = false } = {}) {
+  return {
+    ...createConsoleFixtureSession(),
+    sourceState: "available",
+    keys: seedDemoData ? [gatewayKey()] : [],
+    workspaceKeys: [
+      gatewayKey("9", "Workspace Key", {}, { kind: "workspace", ownerAccountId: "acct-1", secret: WORKSPACE_KEYS["9"] }),
+      gatewayKey("19", "Workspace Key", {}, { kind: "workspace", ownerAccountId: "acct-1", secret: WORKSPACE_KEYS["19"] })
+    ],
+    nextKeyId: 12,
+    gatewayWriteResults: new Map(),
+    launches: [],
+    workspaces: [workspace(), workspace("ws-2")],
+    workspacePasswords: new Map(Object.entries(WORKSPACE_PASSWORDS)),
+    workspaceCredentialVersions: new Map(Object.keys(WORKSPACE_PASSWORDS).map((workspaceId) => [workspaceId, 1])),
+    announcements: seedDemoData ? [demoAnnouncement()] : [],
+    supportTickets: [],
+    basicPlanAvailable: true,
+    faultInjection,
+    operatorAccounts: [operatorAccount("acct-1", "active"), operatorAccount("acct-2", "disabled")],
+    gatewayWrites: new Set(), walletWrites: new Set(), lostGatewayResponses: new Set(), lostWalletResponses: new Set(),
+    operatorDisableWrites: new Set(),
+    gatewayMutationWrites: new Set(), gatewayActions: [], revealCalls: new Map(), emptyGatewayReadbacks: 0,
+    runtimeReads: new Map(), workspaceSecretReads: new Map(), workspacePageReads: [],
+    customerRoutes: new Set(), loginSubmissions: 0,
+    operatorPageReads: [], operatorAccountViewports: new Set(), unavailablePlanKeyboardViewports: new Set(),
+    unexpectedApi: [], externalRequests: 0, pageErrors: [], consoleErrors: [], expectedNetworkConsoleErrors: [], expectedConsole404s: new Set(), dialogMessages: [], screenshots: []
+  };
+}
+
 async function defaultServerFactory() {
   const { createServer } = await import("vite");
   const server = await createServer({
@@ -168,7 +269,7 @@ async function fulfillJson(route, payload, status = 200, headers = {}) {
   });
 }
 
-async function apiFixture(route, state) {
+export async function apiFixture(route, state, session = state) {
   const request = route.request();
   const url = new URL(request.url());
   const path = url.pathname;
@@ -178,59 +279,150 @@ async function apiFixture(route, state) {
 
   if (path === "/api/auth/login" && method === "POST") {
     const input = request.postDataJSON();
-    if (input.email !== "fixture@example.com" || input.password !== "fixture-password") {
+    const role = input.email === CONSOLE_DEMO_CREDENTIALS.customer.email && input.password === CONSOLE_DEMO_CREDENTIALS.customer.password
+      ? "customer"
+      : input.email === CONSOLE_DEMO_CREDENTIALS.admin.email && input.password === CONSOLE_DEMO_CREDENTIALS.admin.password
+        ? "operator"
+        : "";
+    if (!role) {
       return fulfillJson(route, { error: "invalid_credentials" }, 401);
     }
+    authenticateFixtureSession(session, role);
     state.loginSubmissions += 1;
+    const operator = role === "operator";
     return fulfillJson(route, {
       user: {
-        id: "user-customer", accountId: "acct-1", email: input.email,
-        role: "owner", status: "active"
+        id: operator ? "user-operator" : "user-customer",
+        accountId: operator ? "acct-operator" : "acct-1",
+        email: input.email,
+        role: operator ? "admin" : "owner",
+        status: "active"
       },
-      isOperator: false,
+      isOperator: operator,
       csrfToken: "csrf-fixture"
     }, 200, { "x-opl-csrf-token": "csrf-fixture" });
   }
 
   if (path === "/api/auth/me") {
-    const operator = state.role === "operator";
+    if (!session.authenticated) return fulfillJson(route, { error: "not_authenticated" }, 401);
+    const operator = session.role === "operator";
     return fulfillJson(route, source({
-      consoleUserId: operator ? "user-operator" : "user-customer",
-      accountId: operator ? "acct-operator" : "acct-1",
+      consoleUserId: session.consoleUserId,
+      accountId: session.accountId,
       role: operator ? "admin" : "owner",
-      sub2apiUserId: operator ? "10" : "9",
-      email: operator ? "operator@example.com" : "pilot@example.com",
+      sub2apiUserId: session.sub2apiUserId,
+      email: session.email,
       status: "active"
     }, "control-plane"), 200, { "x-opl-csrf-token": "csrf-fixture" });
+  }
+
+  if (path === "/api/auth/logout" && method === "POST") {
+    clearFixtureSession(session);
+    return fulfillJson(route, { ok: true });
+  }
+
+  if (!session.authenticated) return fulfillJson(route, { error: "not_authenticated" }, 401);
+  if (path.startsWith("/api/operator/") && session.role !== "operator") {
+    return fulfillJson(route, { error: "operator_required" }, 403);
   }
 
   if (path === "/api/workspaces" && method === "GET") {
     const page = Number(url.searchParams.get("page"));
     const pageSize = Number(url.searchParams.get("pageSize"));
-    const allWorkspaces = [workspace(), workspace("ws-2")];
+    const allWorkspaces = state.workspaces.filter((item) => item.ownerAccountId === session.accountId);
     const start = (page - 1) * pageSize;
     state.workspacePageReads.push({ page, pageSize });
     return fulfillJson(route, source({ items: allWorkspaces.slice(start, start + pageSize), total: allWorkspaces.length, page, pageSize }));
   }
-  if (path === "/api/workspace-launches" && method === "GET") return fulfillJson(route, state.launches);
-  if (path === "/api/workspace-launches/launch-fixture-pending" && method === "GET") return fulfillJson(route, pendingWorkspaceLaunch());
-  const runtimeMatch = path.match(/^\/api\/workspaces\/(ws-[12])\/runtime-status$/);
+  if (path === "/api/workspace-launches" && method === "GET") {
+    return fulfillJson(route, state.launches.filter((item) => item.accountId === session.accountId));
+  }
+  if (path === "/api/workspace-launches" && method === "POST") {
+    const input = request.postDataJSON();
+    const workspaceId = `ws-demo-${state.workspaces.length + 1}`;
+    const plan = input.packageId === "pro" ? "pro" : "basic";
+    const workspaceKeyId = allocateGatewayKeyId(state);
+    state.workspaceKeys.push(gatewayKey(workspaceKeyId, "Workspace Key", {}, {
+      kind: "workspace",
+      ownerAccountId: session.accountId,
+      secret: `sk-fixture-workspace-${workspaceId}-${workspaceKeyId}`
+    }));
+    const created = {
+      id: workspaceId, ownerAccountId: session.accountId, ownerUserId: session.consoleUserId, state: "running",
+      createdAt: NOW, updatedAt: NOW, name: input.name,
+      url: `https://workspace.example.invalid/w/${workspaceId}/`, packageId: plan,
+      storageGb: plan === "pro" ? 100 : 10, autoRenew: false,
+      priceVersion: "pilot-usd-2026-07-v1", currency: "USD",
+      totalUsdMicros: plan === "pro" ? 240_080_000 : 52_580_000,
+      periodStart: NOW, paidThrough: "2026-08-19T12:00:00Z", renewalStatus: "manual",
+      workspaceApiKeyId: workspaceKeyId
+    };
+    state.workspaces.push(created);
+    state.workspacePasswords.set(workspaceId, `fixture-${workspaceId}-workspace-password-v1`);
+    state.workspaceCredentialVersions.set(workspaceId, 1);
+    const operation = {
+      operationId: `launch-${workspaceId}`, status: "succeeded", phase: "completed",
+      accountId: session.accountId, workspaceId, name: created.name, packageId: plan,
+      sizeGb: created.storageGb, autoRenew: false, priceVersion: created.priceVersion,
+      currency: "USD", totalChargeUsdMicros: created.totalUsdMicros,
+      url: created.url, receiptId: `receipt-${workspaceId}`, createdAt: NOW, updatedAt: NOW
+    };
+    state.launches = [
+      ...state.launches.filter((item) => item.accountId !== session.accountId || item.operationId !== operation.operationId),
+      operation
+    ];
+    return fulfillJson(route, operation);
+  }
+  const launchMatch = path.match(/^\/api\/workspace-launches\/([^/]+)$/);
+  if (launchMatch && method === "GET") {
+    const launch = state.launches.find((item) => item.operationId === launchMatch[1] && item.accountId === session.accountId);
+    return launch ? fulfillJson(route, launch) : fulfillJson(route, { error: "workspace_launch_not_found" }, 404);
+  }
+  const runtimeMatch = path.match(/^\/api\/workspaces\/([^/]+)\/runtime-status$/);
   if (runtimeMatch) {
     const workspaceId = runtimeMatch[1];
+    const currentWorkspace = state.workspaces.find((item) => item.id === workspaceId && item.ownerAccountId === session.accountId);
+    if (!currentWorkspace) return fulfillJson(route, { error: "workspace_not_found" }, 404);
     state.runtimeReads.set(workspaceId, (state.runtimeReads.get(workspaceId) || 0) + 1);
     return fulfillJson(route, source({
     workspaceId, status: "running", ready: true, runtimeId: `runtime-${workspaceId}`,
-    url: workspace(workspaceId).url, serviceName: `runtime-${workspaceId}`, checks: [{ name: "ready_pod_uses_retained_pvc", ok: true }],
-    access: { username: "opl", credentialStatus: "configured", credentialVersion: "1" }
+    url: currentWorkspace.url, serviceName: `runtime-${workspaceId}`, checks: [{ name: "ready_pod_uses_retained_pvc", ok: true }],
+    access: {
+      username: "opl", credentialStatus: "configured",
+      credentialVersion: String(state.workspaceCredentialVersions.get(workspaceId) || 1)
+    }
     }, "fabric"));
   }
-  const credentialMatch = path.match(/^\/api\/workspaces\/(ws-[12])\/runtime-credentials\/reveal$/);
+  const credentialMatch = path.match(/^\/api\/workspaces\/([^/]+)\/runtime-credentials\/reveal$/);
   if (credentialMatch && method === "POST") {
     const workspaceId = credentialMatch[1];
+    if (!state.workspaces.some((item) => item.id === workspaceId && item.ownerAccountId === session.accountId)) return fulfillJson(route, { error: "workspace_not_found" }, 404);
+    const password = state.workspacePasswords.get(workspaceId);
+    if (!password) return fulfillJson(route, { error: "runtime_credentials_unavailable" }, 503);
     state.workspaceSecretReads.set(workspaceId, (state.workspaceSecretReads.get(workspaceId) || 0) + 1);
     return fulfillJson(route, {
       workspaceId,
-      access: { account: "acct-1", username: "opl", password: WORKSPACE_PASSWORDS[workspaceId], credentialStatus: "configured", credentialVersion: "1" }
+      access: {
+        account: session.accountId, username: "opl", password, credentialStatus: "configured",
+        credentialVersion: String(state.workspaceCredentialVersions.get(workspaceId) || 1)
+      }
+    });
+  }
+  const credentialRotationMatch = path.match(/^\/api\/workspaces\/([^/]+)\/runtime-credentials\/rotate$/);
+  if (credentialRotationMatch && method === "POST") {
+    const workspaceId = credentialRotationMatch[1];
+    if (!state.workspaces.some((item) => item.id === workspaceId && item.ownerAccountId === session.accountId)) return fulfillJson(route, { error: "workspace_not_found" }, 404);
+    const credentialVersion = (state.workspaceCredentialVersions.get(workspaceId) || 1) + 1;
+    const password = `fixture-${workspaceId}-workspace-password-v${credentialVersion}`;
+    state.workspacePasswords.set(workspaceId, password);
+    state.workspaceCredentialVersions.set(workspaceId, credentialVersion);
+    return fulfillJson(route, {
+      workspaceId,
+      access: {
+        account: session.accountId, username: "opl", password, credentialStatus: "configured",
+        credentialVersion: String(credentialVersion)
+      },
+      receiptId: `receipt-rotation-${workspaceId}`
     });
   }
   if (path === "/api/pricing/catalog") return fulfillJson(route, {
@@ -248,10 +440,41 @@ async function apiFixture(route, state) {
       displayCurrency: "USD", billingUnit: "month", totalChargeUsdMicros: packageId === "pro" ? 240_080_000 : 52_580_000
     });
   }
-  if (path === "/api/billing/receipts") return fulfillJson(route, source({ receipts: [billingReceipt()], nextCursor: "", hasMore: false }, "ledger"));
-  if (path === "/api/billing/receipts/receipt-fixture") return fulfillJson(route, source(billingReceipt(), "ledger"));
-  if (path === "/api/announcements") return fulfillJson(route, source(emptyPage, "control-plane", "empty"));
-  if (path === "/api/gateway/wallet") return fulfillJson(route, source({ userId: "9", currency: "USD", usdMicros: "500000000", status: "active" }, "sub2api"));
+  if (path === "/api/billing/receipts") {
+    const receipts = state.workspaces.some((item) => item.id === "ws-1" && item.ownerAccountId === session.accountId) ? [billingReceipt()] : [];
+    return fulfillJson(route, source({ receipts, nextCursor: "", hasMore: false }, "ledger", receipts.length ? "available" : "empty"));
+  }
+  if (path === "/api/billing/receipts/receipt-fixture") {
+    return state.workspaces.some((item) => item.id === "ws-1" && item.ownerAccountId === session.accountId)
+      ? fulfillJson(route, source(billingReceipt(), "ledger"))
+      : fulfillJson(route, { error: "receipt_not_found" }, 404);
+  }
+  if (path === "/api/support/tickets" && method === "GET") return fulfillJson(route, { tickets: state.supportTickets.filter((item) => item.accountId === session.accountId) });
+  if (path === "/api/support/tickets" && method === "POST") {
+    const input = request.postDataJSON();
+    const ticket = {
+      id: `support-${state.supportTickets.length + 1}`, externalSystem: input.externalSystem || "support",
+      externalTicketId: input.externalTicketId, externalUrl: input.externalUrl || "", accountId: session.accountId,
+      ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}), resourceIds: input.resourceIds || [],
+      ...(input.operationId ? { operationId: input.operationId } : {}), title: input.title,
+      category: "support", priority: "normal", status: "open", createdAt: NOW, updatedAt: NOW,
+      messages: input.description ? [{ author: "demo", text: input.description, createdAt: NOW }] : []
+    };
+    state.supportTickets.push(ticket);
+    return fulfillJson(route, ticket);
+  }
+  if (path === "/api/announcements" && method === "GET") {
+    const data = { items: state.announcements, total: state.announcements.length, page: 1, pageSize: 20 };
+    return fulfillJson(route, source(data, "control-plane", state.announcements.length ? "available" : "empty"));
+  }
+  const announcementReadMatch = path.match(/^\/api\/announcements\/([^/]+)\/read$/);
+  if (announcementReadMatch && method === "POST") {
+    const announcement = state.announcements.find((item) => item.id === announcementReadMatch[1]);
+    if (!announcement) return fulfillJson(route, { error: "announcement_not_found" }, 404);
+    announcement.read = true;
+    return fulfillJson(route, { announcementId: announcement.id, readAt: NOW });
+  }
+  if (path === "/api/gateway/wallet") return fulfillJson(route, source({ userId: session.sub2apiUserId, currency: "USD", usdMicros: "500000000", status: "active" }, "sub2api"));
   if (path === "/api/gateway/usage-summary") return fulfillJson(route, source({ totalRequests: 1, totalInputTokens: 10, totalOutputTokens: 2, totalTokens: 12, totalActualCostUsdMicros: 25_000 }, "sub2api"));
   if (path === "/api/gateway/balance-history") {
     const page = Number(url.searchParams.get("page"));
@@ -269,6 +492,7 @@ async function apiFixture(route, state) {
 
   const keyUsageMatch = path.match(/^\/api\/gateway\/keys\/(\d+)\/usage$/);
   if (keyUsageMatch && method === "GET") {
+    if (!findGatewayKey(state, keyUsageMatch[1], session.accountId)) return fulfillJson(route, { error: "gateway_key_not_found" }, 404);
     const page = Number(url.searchParams.get("page"));
     const pageSize = Number(url.searchParams.get("pageSize"));
     const item = {
@@ -280,6 +504,7 @@ async function apiFixture(route, state) {
   }
   const keyUsageSummaryMatch = path.match(/^\/api\/gateway\/keys\/(\d+)\/usage-summary$/);
   if (keyUsageSummaryMatch && method === "GET") {
+    if (!findGatewayKey(state, keyUsageSummaryMatch[1], session.accountId)) return fulfillJson(route, { error: "gateway_key_not_found" }, 404);
     return fulfillJson(route, source({
       totalRequests: 1, totalInputTokens: 120, totalOutputTokens: 36, totalTokens: 188,
       totalActualCostUsdMicros: 25_000
@@ -288,7 +513,9 @@ async function apiFixture(route, state) {
 
   if (path === "/api/gateway/keys" && method === "GET") {
     if (state.sourceState === "error") return fulfillJson(route, { error: "upstream_unavailable" }, 503);
-    const keys = state.sourceState === "available" ? state.keys : [];
+    const keys = state.sourceState === "available"
+      ? state.keys.filter((item) => item.ownerAccountId === session.accountId).map(gatewayKeyView)
+      : [];
     if (state.sourceState === "available" && keys.length === 0) state.emptyGatewayReadbacks += 1;
     const data = { items: keys, total: keys.length, page: 1, pageSize: 20, pages: keys.length ? 1 : 0 };
     return fulfillJson(route, state.sourceState === "available" && keys.length === 0
@@ -300,17 +527,25 @@ async function apiFixture(route, state) {
     if (!operation) return fulfillJson(route, { error: "idempotency_key_required" }, 400);
     const input = request.postDataJSON();
     state.gatewayWrites.add(operation);
-    if (!state.keys.some((item) => item.id === "12")) state.keys.push(gatewayKey("12", input.name, input));
-    if (!state.lostGatewayResponses.has(operation)) {
+    const writeIdentity = `${session.accountId}:${operation}`;
+    let key = state.keys.find((item) => item.id === state.gatewayWriteResults.get(writeIdentity) && item.ownerAccountId === session.accountId);
+    if (!key) {
+      const keyId = allocateGatewayKeyId(state);
+      const secret = state.keys.some((item) => item.secret === GENERAL_KEY) ? `${GENERAL_KEY}-${keyId}` : GENERAL_KEY;
+      key = gatewayKey(keyId, input.name, input, { ownerAccountId: session.accountId, secret });
+      state.keys.push(key);
+      state.gatewayWriteResults.set(writeIdentity, keyId);
+    }
+    if (state.faultInjection && !state.lostGatewayResponses.has(operation)) {
       state.lostGatewayResponses.add(operation);
       return route.abort("failed");
     }
-    return fulfillJson(route, source(state.keys.find((item) => item.id === "12"), "sub2api"));
+    return fulfillJson(route, source(gatewayKeyView(key), "sub2api"));
   }
   const keyMatch = path.match(/^\/api\/gateway\/keys\/(\d+)$/);
   if (keyMatch && method === "GET") {
-    const key = state.keys.find((item) => item.id === keyMatch[1]);
-    if (key) return fulfillJson(route, source(key, "sub2api"));
+    const key = state.keys.find((item) => item.id === keyMatch[1] && item.ownerAccountId === session.accountId);
+    if (key) return fulfillJson(route, source(gatewayKeyView(key), "sub2api"));
     if (keyMatch[1] === "12" && state.gatewayActions.at(-1) === "delete") {
       state.expectedConsole404s.add(path);
     }
@@ -318,7 +553,7 @@ async function apiFixture(route, state) {
   }
   if (keyMatch && method === "PATCH") {
     const operation = request.headers()["idempotency-key"] || "";
-    const key = state.keys.find((item) => item.id === keyMatch[1]);
+    const key = state.keys.find((item) => item.id === keyMatch[1] && item.ownerAccountId === session.accountId);
     if (!operation) return fulfillJson(route, { error: "idempotency_key_required" }, 400);
     if (!key) return fulfillJson(route, { error: "gateway_key_not_found" }, 404);
     const input = request.postDataJSON();
@@ -331,12 +566,12 @@ async function apiFixture(route, state) {
     key.updatedAt = NOW;
     state.gatewayMutationWrites.add(operation);
     state.gatewayActions.push(input.resetQuota ? "quota-reset" : input.resetRateLimitUsage ? "rate-reset" : input.enabled === false ? "disable" : input.enabled === true ? "enable" : input.groupId && !input.name ? "group" : "edit");
-    return fulfillJson(route, source(key, "sub2api"));
+    return fulfillJson(route, source(gatewayKeyView(key), "sub2api"));
   }
   if (keyMatch && method === "DELETE") {
     const operation = request.headers()["idempotency-key"] || "";
     if (!operation) return fulfillJson(route, { error: "idempotency_key_required" }, 400);
-    const index = state.keys.findIndex((item) => item.id === keyMatch[1]);
+    const index = state.keys.findIndex((item) => item.id === keyMatch[1] && item.ownerAccountId === session.accountId);
     if (index < 0) return fulfillJson(route, { error: "gateway_key_not_found" }, 404);
     state.keys.splice(index, 1);
     state.gatewayMutationWrites.add(operation);
@@ -345,13 +580,11 @@ async function apiFixture(route, state) {
   }
   const revealMatch = path.match(/^\/api\/gateway\/keys\/(\d+)\/reveal$/);
   if (revealMatch && method === "POST") {
-    const key = Object.hasOwn(WORKSPACE_KEYS, revealMatch[1])
-      ? gatewayKey(revealMatch[1], "Workspace Key")
-      : state.keys.find((item) => item.id === revealMatch[1]);
+    const key = findGatewayKey(state, revealMatch[1], session.accountId);
     if (!key) return fulfillJson(route, { error: "gateway_key_not_found" }, 404);
     state.revealCalls.set(key.id, (state.revealCalls.get(key.id) || 0) + 1);
     return fulfillJson(route, source({
-      id: key.id, name: key.name, status: key.status, value: WORKSPACE_KEYS[key.id] || GENERAL_KEY
+      id: key.id, name: key.name, status: key.status, value: key.secret
     }, "sub2api"), 200, { "cache-control": "private, no-store" });
   }
 
@@ -364,9 +597,26 @@ async function apiFixture(route, state) {
       health: source({ controlPlane: ready, gateway: ready, fabric: ready, runtime: ready, ledger: ready })
     }));
   }
-  if (path === "/api/operator/accounts") return fulfillJson(route, source({
-    items: state.operatorAccounts, total: state.operatorAccounts.length, page: 1, pageSize: 20
-  }));
+  if (path === "/api/operator/accounts" && method === "GET") {
+    const page = Number(url.searchParams.get("page") || 1);
+    const pageSize = Number(url.searchParams.get("pageSize") || 20);
+    const start = (page - 1) * pageSize;
+    return fulfillJson(route, source({
+      items: state.operatorAccounts.slice(start, start + pageSize), total: state.operatorAccounts.length, page, pageSize
+    }));
+  }
+  if (path === "/api/operator/accounts" && method === "POST") {
+    const input = request.postDataJSON();
+    const accountId = `acct-${state.operatorAccounts.length + 1}`;
+    const userId = String(20 + state.operatorAccounts.length);
+    const account = operatorAccount(accountId, "active", {
+      email: String(input.email || "").trim().toLowerCase(),
+      consoleUserId: `user-${state.operatorAccounts.length + 1}`,
+      sub2apiUserId: userId
+    });
+    state.operatorAccounts.push(account);
+    return fulfillJson(route, { operationId: `account-provision-${accountId}`, accountId, status: "succeeded", phase: "completed", createdAt: NOW, updatedAt: NOW });
+  }
   if (path === "/api/operator/workspaces") {
     if (state.sourceState === "error") return fulfillJson(route, { error: "upstream_unavailable" }, 503);
     const items = state.sourceState === "available" ? [operatorWorkspace()] : [];
@@ -374,7 +624,40 @@ async function apiFixture(route, state) {
   }
   if (path === "/api/operator/workspaces/ws-1") return fulfillJson(route, source(operatorWorkspace(), "control-plane+fabric+ledger+sub2api"));
   if (path === "/api/operator/reconciliation") return fulfillJson(route, source(emptyPage, "control-plane", "empty"));
-  if (path === "/api/operator/announcements") return fulfillJson(route, source(emptyPage, "control-plane", "empty"));
+  if (path === "/api/operator/announcements" && method === "GET") {
+    const data = { items: state.announcements, total: state.announcements.length, page: 1, pageSize: 20 };
+    return fulfillJson(route, source(data, "control-plane", state.announcements.length ? "available" : "empty"));
+  }
+  if (path === "/api/operator/announcements" && method === "POST") {
+    const input = request.postDataJSON();
+    const announcement = {
+      id: `announcement-${state.announcements.length + 1}`, title: input.title, body: input.body,
+      status: "draft", ...(input.startsAt ? { startsAt: input.startsAt } : {}), ...(input.endsAt ? { endsAt: input.endsAt } : {}),
+      createdAt: NOW, updatedAt: NOW, read: false
+    };
+    state.announcements.push(announcement);
+    return fulfillJson(route, announcement);
+  }
+  const announcementPublishMatch = path.match(/^\/api\/operator\/announcements\/([^/]+)\/publish$/);
+  if (announcementPublishMatch && method === "POST") {
+    const input = request.postDataJSON();
+    const announcement = state.announcements.find((item) => item.id === announcementPublishMatch[1]);
+    if (!announcement) return fulfillJson(route, { error: "announcement_not_found" }, 404);
+    announcement.status = "published";
+    announcement.startsAt = input.startsAt || NOW;
+    announcement.endsAt = input.endsAt || announcement.endsAt;
+    announcement.publishedAt = NOW;
+    announcement.updatedAt = NOW;
+    return fulfillJson(route, announcement);
+  }
+  const announcementWithdrawMatch = path.match(/^\/api\/operator\/announcements\/([^/]+)\/withdraw$/);
+  if (announcementWithdrawMatch && method === "POST") {
+    const announcement = state.announcements.find((item) => item.id === announcementWithdrawMatch[1]);
+    if (!announcement) return fulfillJson(route, { error: "announcement_not_found" }, 404);
+    announcement.status = "withdrawn";
+    announcement.updatedAt = NOW;
+    return fulfillJson(route, announcement);
+  }
   if (path === "/api/operator/health") {
     const ready = source({ ready: true }, "control-plane");
     return fulfillJson(route, source({ controlPlane: ready, gateway: ready, fabric: ready, runtime: ready, ledger: ready }));
@@ -398,7 +681,7 @@ async function apiFixture(route, state) {
     const operation = request.headers()["idempotency-key"] || "";
     if (!operation) return fulfillJson(route, { error: "idempotency_key_required" }, 400);
     state.walletWrites.add(operation);
-    if (!state.lostWalletResponses.has(operation)) {
+    if (state.faultInjection && !state.lostWalletResponses.has(operation)) {
       state.lostWalletResponses.add(operation);
       return route.abort("failed");
     }
@@ -615,18 +898,7 @@ export async function runConsoleBrowserQa({
 
   const server = await serverFactory();
   let browser;
-  const state = {
-    role: "customer", sourceState: "available", keys: [], launches: [],
-    basicPlanAvailable: true,
-    operatorAccounts: [operatorAccount("acct-1", "active"), operatorAccount("acct-2", "disabled")],
-    gatewayWrites: new Set(), walletWrites: new Set(), lostGatewayResponses: new Set(), lostWalletResponses: new Set(),
-    operatorDisableWrites: new Set(),
-    gatewayMutationWrites: new Set(), gatewayActions: [], revealCalls: new Map(), emptyGatewayReadbacks: 0,
-    runtimeReads: new Map(), workspaceSecretReads: new Map(), workspacePageReads: [],
-    customerRoutes: new Set(), loginSubmissions: 0,
-    operatorPageReads: [], operatorAccountViewports: new Set(), unavailablePlanKeyboardViewports: new Set(),
-    unexpectedApi: [], externalRequests: 0, pageErrors: [], consoleErrors: [], expectedNetworkConsoleErrors: [], expectedConsole404s: new Set(), dialogMessages: [], screenshots: []
-  };
+  const state = createConsoleFixtureState();
   try {
     browser = await browserFactory();
     for (const [name, viewport] of Object.entries(VIEWPORTS)) {
@@ -664,6 +936,7 @@ export async function runConsoleBrowserQa({
       });
 
       state.role = "customer";
+      authenticateFixtureSession(state, "customer");
       state.sourceState = "available";
       await page.goto(`${server.origin}/`, { waitUntil: "networkidle" });
       await waitForText(page, "管理员预配置账户后登录");
@@ -673,8 +946,8 @@ export async function runConsoleBrowserQa({
       await page.goto(`${server.origin}/login`, { waitUntil: "networkidle" });
       await waitForText(page, "Console 登录");
       state.customerRoutes.add("/login");
-      await page.getByLabel("邮箱").fill("fixture@example.com");
-      await page.getByLabel("密码").fill("fixture-password");
+      await page.getByLabel("邮箱").fill(CONSOLE_DEMO_CREDENTIALS.customer.email);
+      await page.getByLabel("密码").fill(CONSOLE_DEMO_CREDENTIALS.customer.password);
       await page.getByRole("button", { name: "登录", exact: true }).click();
       await page.waitForURL(/\/console\/overview$/);
       await waitForText(page, "当前账户总数");
@@ -843,6 +1116,7 @@ export async function runConsoleBrowserQa({
       }
 
       state.role = "operator";
+      authenticateFixtureSession(state, "operator");
       state.sourceState = "available";
       let operatorReadStart = state.operatorPageReads.length;
       await page.goto(`${server.origin}/admin/overview?viewport=${name}`, { waitUntil: "networkidle" });

@@ -44,7 +44,8 @@ Accepted visual deviations from the direction board are intentional: the impleme
 ## Verification Evidence
 
 - Browser acceptance: `10/10` passing against `/tmp/opl-console-react-qa-final-v3`.
-- Full Node suite: `384/384` passing, with `0` failures and `0` skips.
+- Full Node suite: `395/395` passing, with `0` failures and `0` skips.
+- Local demo acceptance: `11/11` passing, covering anonymous `401`, isolated customer/Admin Sessions, login Session rotation, unique owner-scoped General and Workspace Keys, persistent per-Workspace Runtime credentials, owner-scoped launch history, cross-account Secret denial, API proxy fail-closed, bounded shutdown, logout, and real browser navigation through customer and Admin pages.
 - Typecheck and unused-code lint: passing.
 - Production Vite build: passing; the existing manual chunk split emits a non-blocking circular-chunk warning and no build error.
 - Vue retirement scan: no tracked `.vue` files remain.
