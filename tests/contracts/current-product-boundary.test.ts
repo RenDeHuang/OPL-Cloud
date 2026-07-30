@@ -396,7 +396,33 @@ test("Current Fabric contracts require dedicated package NodePools without weake
     output: "redacted_evidence_only",
     currentState: "implemented_and_fake_tested_not_executed"
   });
-  assert.equal(deployment.schemaVersion, 23);
+  assert.equal(deployment.schemaVersion, 24);
+  assert.deepEqual(deployment.productionWorkspaceLaunchReadbackRecovery, {
+    workflow: ".github/workflows/production-basic-customer-operation.yml",
+    modes: {
+      diagnose: {
+        input: "operation_mode=workspace_launch_readback_diagnose",
+        route: "GET /api/operator/workspace-launches/{operationId}/readback-recovery-proof",
+        persistence: "none",
+        mutationApproval: false,
+        mutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
+      },
+      recover: {
+        input: "operation_mode=workspace_launch_readback_recover",
+        route: "POST /api/operator/workspace-launches/{operationId}/recover",
+        confirmation: "RECOVER_UNKNOWN_WORKSPACE_LAUNCH_STAGE_FROM_AUTHORITATIVE_READBACK",
+        approvalBinding: ["merged_main_sha", "cloud_image_digest", "workspace_image_digest", "expiry", "customer", "launch", "workspace", "compute", "storage", "attachment", "secret", "runtime", "activation", "receipt", "stage", "attempt_budget", "recovery_key"],
+        allowedWrites: "confirm_unknown_stage_from_authoritative_readback_then_remaining_original_launch_writes",
+        forbiddenWrites: ["create_launch", "debit", "recharge", "refund", "scale", "create_cvm", "create_second_cbs", "delete", "replace", "retry_unknown_stage_write"],
+        runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
+        backgroundMutationCountsState: "unknown"
+      }
+    },
+    targetSource: "protected_input_full_compute_target_projected_to_exact_launch_account_workspace",
+    continuation: "existing_compute_claim_continue_get_only_same_original_launch",
+    artifact: "redacted_proof_recovery_and_existing_continuation",
+    currentState: "code_complete_local_focused_and_postgresql_verified_not_merged_released_deployed_or_executed"
+  });
   assert.deepEqual(deployment.productionComputeClaimRecovery, {
     workflow: ".github/workflows/production-basic-customer-operation.yml",
     execution: "manual_release_owner_only_not_ci_release_rollout_or_e2e",
@@ -715,7 +741,7 @@ test("Current contracts hard cut operator resources, wallet adjustments, and ann
     absentRequires: "both_local_identities_and_exact_provider_describe_absence",
     forbiddenSideEffects: ["sync", "tag", "kubectl_apply", "delete", "label", "purchase", "renew", "destroy"]
   });
-  assert.equal(boundary.schemaVersion, 17);
+  assert.equal(boundary.schemaVersion, 18);
   assert.deepEqual(boundary.services.controlPlane.workspaceContinuationAttemptBudget, {
     owner: "original_workspace.launch.v2_operation",
     stages: ["storage", "attachment", "secret", "runtime", "activation", "receipt"],
@@ -724,6 +750,21 @@ test("Current contracts hard cut operator resources, wallet adjustments, and ann
     reserve: "postgresql_cas_before_external_write",
     restart: "persisted_budget_never_resets",
     terminalFailure: "unknown_or_exhausted_enters_manual_review_and_active_worker_excludes_it"
+  });
+  assert.deepEqual(boundary.services.controlPlane.workspaceLaunchAuthoritativeReadbackRecovery, {
+    proofRoute: "GET /api/operator/workspace-launches/{operationId}/readback-recovery-proof",
+    recoveryRoute: "POST /api/operator/workspace-launches/{operationId}/recover",
+    stages: ["storage", "attachment", "secret", "runtime", "activation", "receipt"],
+    inputBudget: { attempted: 1, confirmed: 0, unknown: 1, max: 1 },
+    convergedBudget: { attempted: 1, confirmed: 1, unknown: 0, max: 1 },
+    proofAuthorities: ["monthly_provider_truth", "fabric_operation_store", "workspace_runtime_status", "workspace_activation_truth", "ledger_receipt"],
+    proofPersistence: "none",
+    convergence: "postgresql_original_launch_cas_only_after_unique_exact_authoritative_readback",
+    winner: "one_concurrent_recovery_cas",
+    replay: "zero_external_write_same_original_or_later_stage",
+    failure: "absent_multiple_drift_or_read_error_remains_manual_review",
+    sharedOrchestrator: "fulfillWorkspaceLaunch_basic_pro_and_compute_claim_recovery",
+    mutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
   });
   assert.deepEqual(boundary.services.controlPlane.recoveredWorkspaceE2EAttempt, {
     reserveRoute: "POST /api/workspaces/{workspaceId}/recovered-e2e-attempt",

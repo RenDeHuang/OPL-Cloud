@@ -198,6 +198,15 @@ func registerAdminRoutes(mux *http.ServeMux, app *controlPlaneServer, service *c
 			writeError(w, http.StatusBadRequest, errInvalidBillingReview.Error())
 			return
 		}
+		var approval *workspaceLaunchReadbackRecoveryApproval
+		if raw, ok := input["approval"]; ok {
+			parsed, valid := workspaceLaunchReadbackRecoveryApprovalFromMap(raw, key)
+			if !valid || !app.computeClaimCapabilityValid(r) {
+				writeError(w, http.StatusBadRequest, errInvalidBillingReview.Error())
+				return
+			}
+			approval = &parsed
+		}
 		evidenceRef := stringValue(input["evidenceRef"])
 		if !validBillingReviewEvidenceRef(evidenceRef) {
 			writeError(w, http.StatusBadRequest, "invalid_evidence_ref")
@@ -205,7 +214,7 @@ func registerAdminRoutes(mux *http.ServeMux, app *controlPlaneServer, service *c
 		}
 		resolution := billingReviewResolutionInput{
 			ResourceType: "workspace_launch", ResourceID: operationID, AccountID: stringValue(input["accountId"]), BillingOperationID: operationID,
-			EvidenceRef: evidenceRef, IdempotencyKey: key, Reviewer: app.sessionUserID(r),
+			EvidenceRef: evidenceRef, IdempotencyKey: key, Reviewer: app.sessionUserID(r), ReadbackApproval: approval,
 		}
 		result, err := app.recoverWorkspaceLaunchReview(r.Context(), service, resolution)
 		if err != nil {
@@ -219,6 +228,19 @@ func registerAdminRoutes(mux *http.ServeMux, app *controlPlaneServer, service *c
 			return
 		}
 		writeJSON(w, http.StatusOK, result)
+	}))
+	mux.HandleFunc("GET /api/operator/workspace-launches/{operationId}/readback-recovery-proof", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
+		operationID := strings.TrimSpace(r.PathValue("operationId"))
+		if operationID == "" {
+			writeError(w, http.StatusBadRequest, errInvalidBillingReview.Error())
+			return
+		}
+		proof, err := app.diagnoseWorkspaceLaunchReadbackRecovery(r.Context(), service, operationID)
+		if err != nil {
+			writeError(w, http.StatusConflict, "workspace_launch_readback_unconfirmed")
+			return
+		}
+		writeJSON(w, http.StatusOK, proof)
 	}))
 	mux.HandleFunc("POST /api/operator/workspace-launches/{operationId}/compute-claim-recovery/proof", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
 		operationID := strings.TrimSpace(r.PathValue("operationId"))
@@ -304,15 +326,19 @@ func registerAdminRoutes(mux *http.ServeMux, app *controlPlaneServer, service *c
 
 func (app *controlPlaneServer) computeClaimCapabilityProtected(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		expected := os.Getenv("OPL_INTERNAL_SERVICE_TOKEN")
-		want := sha256.Sum256([]byte(expected))
-		got := sha256.Sum256([]byte(r.Header.Get("x-opl-compute-claim-capability")))
-		if expected == "" || subtle.ConstantTimeCompare(got[:], want[:]) != 1 {
+		if !app.computeClaimCapabilityValid(r) {
 			writeError(w, http.StatusForbidden, "workspace_compute_claim_capability_invalid")
 			return
 		}
 		next(w, r)
 	}
+}
+
+func (app *controlPlaneServer) computeClaimCapabilityValid(r *http.Request) bool {
+	expected := os.Getenv("OPL_INTERNAL_SERVICE_TOKEN")
+	want := sha256.Sum256([]byte(expected))
+	got := sha256.Sum256([]byte(r.Header.Get("x-opl-compute-claim-capability")))
+	return expected != "" && subtle.ConstantTimeCompare(got[:], want[:]) == 1
 }
 
 func workspaceComputeClaimRecoveryRequestFromMap(operationID string, input map[string]any, approved bool) (workspaceComputeClaimRecoveryRequest, bool) {
@@ -459,6 +485,77 @@ func workspaceComputeClaimStringList(value any) ([]string, bool) {
 		items[index] = item
 	}
 	return items, true
+}
+
+func workspaceLaunchReadbackRecoveryApprovalFromMap(value any, key string) (workspaceLaunchReadbackRecoveryApproval, bool) {
+	raw, ok := value.(map[string]any)
+	want := []string{
+		"schemaVersion", "approvalId", "approvalDigest", "expiresAt", "mergedMainSha", "cloudImageDigest", "workspaceImageDigest",
+		"confirmation", "idempotencyKey", "recoveryKey", "stage", "customer", "target", "resources", "operationIds", "attemptBudget",
+		"allowedWrites", "forbiddenWrites",
+	}
+	if !ok || !exactWorkspaceComputeClaimKeys(raw, want) || numberField(raw, "schemaVersion", 0) != 1 {
+		return workspaceLaunchReadbackRecoveryApproval{}, false
+	}
+	for _, field := range []string{"approvalId", "approvalDigest", "expiresAt", "mergedMainSha", "cloudImageDigest", "workspaceImageDigest", "confirmation", "idempotencyKey", "recoveryKey", "stage"} {
+		item, ok := raw[field].(string)
+		if !ok || item == "" || item != strings.TrimSpace(item) {
+			return workspaceLaunchReadbackRecoveryApproval{}, false
+		}
+	}
+	nestedKeys := map[string][]string{
+		"customer":      {"email", "accountId", "ownerUserId"},
+		"target":        {"launchOperationId", "workspaceId", "packageId"},
+		"resources":     {"computeAllocationId", "computeProviderResourceId", "storageVolumeId", "storageProviderResourceId", "attachmentId", "gatewaySecretRef", "gatewaySecretFingerprint", "runtimeId", "receiptId"},
+		"operationIds":  {"compute", "storage", "attachment", "secret", "runtime", "activation", "receipt"},
+		"attemptBudget": {"attempted", "confirmed", "unknown", "max"},
+	}
+	for field, keys := range nestedKeys {
+		item, ok := raw[field].(map[string]any)
+		if !ok || !exactWorkspaceComputeClaimKeys(item, keys) {
+			return workspaceLaunchReadbackRecoveryApproval{}, false
+		}
+	}
+	for _, field := range []string{"customer", "target", "operationIds"} {
+		for _, value := range raw[field].(map[string]any) {
+			item, ok := value.(string)
+			if !ok || item == "" || item != strings.TrimSpace(item) {
+				return workspaceLaunchReadbackRecoveryApproval{}, false
+			}
+		}
+	}
+	for field, value := range raw["resources"].(map[string]any) {
+		item, ok := value.(string)
+		if !ok || item != strings.TrimSpace(item) || (field == "computeAllocationId" || field == "computeProviderResourceId" || field == "storageVolumeId" || field == "storageProviderResourceId" || field == "gatewaySecretRef") && item == "" {
+			return workspaceLaunchReadbackRecoveryApproval{}, false
+		}
+	}
+	budget := raw["attemptBudget"].(map[string]any)
+	if numberField(budget, "attempted", -1) != 1 || numberField(budget, "confirmed", -1) != 0 || numberField(budget, "unknown", -1) != 1 || numberField(budget, "max", -1) != 1 {
+		return workspaceLaunchReadbackRecoveryApproval{}, false
+	}
+	allowedWrites, allowedOK := workspaceComputeClaimStringList(raw["allowedWrites"])
+	forbiddenWrites, forbiddenOK := workspaceComputeClaimStringList(raw["forbiddenWrites"])
+	var approval workspaceLaunchReadbackRecoveryApproval
+	if !allowedOK || !forbiddenOK || jsonRoundTrip(raw, &approval) != nil {
+		return workspaceLaunchReadbackRecoveryApproval{}, false
+	}
+	expiresAt, expiresErr := time.Parse(time.RFC3339, approval.ExpiresAt)
+	email, emailErr := canonicalEmail(approval.Customer.Email)
+	if approval.SchemaVersion != 1 || !validBillingReviewOpaqueID(approval.ApprovalID) || !validBillingReviewOpaqueID(approval.RecoveryKey) ||
+		!computeClaimApprovalDigestPattern.MatchString(approval.ApprovalDigest) || !computeClaimMergedSHAPattern.MatchString(approval.MergedMainSHA) ||
+		!computeClaimCloudDigestPattern.MatchString(approval.CloudImageDigest) || !computeClaimCloudDigestPattern.MatchString(approval.WorkspaceImageDigest) ||
+		expiresErr != nil || !expiresAt.After(time.Now().UTC()) || emailErr != nil || email != approval.Customer.Email || approval.IdempotencyKey != key ||
+		approval.Confirmation != workspaceLaunchReadbackRecoveryConfirmation || !workspaceLaunchReadbackRecoveryStageValid(approval.Stage) ||
+		!strings.HasPrefix(approval.Resources.ComputeProviderResourceID, "ins-") || !strings.HasPrefix(approval.Resources.StorageProviderResourceID, "disk-") ||
+		!equalWorkspaceComputeClaimStrings(allowedWrites, workspaceLaunchReadbackRecoveryAllowedWrites(approval.Stage)) ||
+		!equalWorkspaceComputeClaimStrings(forbiddenWrites, workspaceLaunchReadbackRecoveryForbiddenWrites) ||
+		workspaceLaunchReadbackRecoveryApprovalDigest(approval) != approval.ApprovalDigest {
+		return workspaceLaunchReadbackRecoveryApproval{}, false
+	}
+	approval.AllowedWrites = allowedWrites
+	approval.ForbiddenWrites = forbiddenWrites
+	return approval, true
 }
 
 func workspaceComputeClaimSafeFailure(proof clients.ComputeClaimRecoveryProof) bool {
@@ -1256,12 +1353,17 @@ func billingReviewRequestShapeValid(input map[string]any) bool {
 }
 
 func workspaceLaunchRecoveryShapeValid(input map[string]any) bool {
-	if len(input) != 3 {
+	if len(input) != 3 && len(input) != 4 {
 		return false
 	}
 	for _, key := range []string{"accountId", "billingOperationId", "evidenceRef"} {
 		value, ok := input[key].(string)
 		if !ok || value == "" || value != strings.TrimSpace(value) {
+			return false
+		}
+	}
+	if len(input) == 4 {
+		if _, ok := input["approval"].(map[string]any); !ok {
 			return false
 		}
 	}

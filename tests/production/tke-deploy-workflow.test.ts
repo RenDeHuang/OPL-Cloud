@@ -82,6 +82,7 @@ async function runWorkflowArtifactGate(step, filename, artifact, env = {}) {
       env: {
         ...process.env,
         OPL_COMPUTE_CLAIM_ARTIFACT_DIR: root,
+        OPL_WORKSPACE_LAUNCH_READBACK_ARTIFACT_DIR: root,
         ...env
       }
     });
@@ -838,6 +839,8 @@ test("manual-review diagnose is isolated to the VPC runner and statically contai
     "manual_review_diagnose",
     "compute_claim_diagnose",
     "compute_claim_recover",
+    "workspace_launch_readback_diagnose",
+    "workspace_launch_readback_recover",
     "recovered_workspace_e2e"
   ]);
   assert.equal(inputs.diagnose_target_json.required, false);
@@ -1217,6 +1220,207 @@ test("compute claim workflow executes the recovery and continuation artifact gat
   assert.notEqual(blockedContinuation.status, 0, "continuation gate accepted a runner blocked artifact");
 });
 
+test("unknown Workspace launch readback recovery is isolated behind a read-only proof and independent approval", async () => {
+  const workflow = await readWorkflow(".github/workflows/production-basic-customer-operation.yml");
+  const inputs = workflow.on.workflow_dispatch.inputs;
+  const diagnose = workflowJob(workflow, "workspace-launch-readback-diagnose");
+  const recover = workflowJob(workflow, "workspace-launch-readback-recover");
+  const diagnoseRuns = serializedRuns(diagnose);
+  const recoverRuns = serializedRuns(recover);
+
+  assert.equal(inputs.workspace_launch_target_json.required, false);
+  assert.equal(inputs.workspace_launch_cloud_digest.required, false);
+  assert.equal(inputs.confirm_workspace_launch_readback_recovery.type, "boolean");
+  assert.equal(inputs.confirm_workspace_launch_readback_recovery.default, false);
+  assert.ok(inputs.operation_mode.options.includes("workspace_launch_readback_diagnose"));
+  assert.ok(inputs.operation_mode.options.includes("workspace_launch_readback_recover"));
+  for (const [name, job] of Object.entries(workflow.jobs)) {
+    if (name === "workspace-launch-readback-recover") continue;
+    assert.match(String(job.if), /!inputs\.confirm_workspace_launch_readback_recovery/, `${name} accepts the readback recovery approval`);
+  }
+
+  for (const job of [diagnose, recover]) {
+    assert.deepEqual(job["runs-on"], ["self-hosted", "tencent-cloud", "opl-cloud", "tke-vpc"]);
+    assert.equal(job.environment, "production");
+    assert.match(String(job.if), /github\.ref == 'refs\/heads\/main'/);
+    assert.match(String(job.if), /github\.sha == inputs\.merged_sha/);
+    for (const confirmation of ["account_provision", "wallet_recharge", "workspace_purchase", "single_model_request", "compute_claim_recovery"]) {
+      assert.match(String(job.if), new RegExp(`!inputs\\.confirm_${confirmation}`));
+    }
+  }
+  assert.match(String(diagnose.if), /inputs\.operation_mode == 'workspace_launch_readback_diagnose'/);
+  assert.match(String(diagnose.if), /!inputs\.confirm_workspace_launch_readback_recovery/);
+  assert.equal(diagnose.env.OPL_WORKSPACE_LAUNCH_READBACK_APPROVAL_JSON, undefined);
+  assert.equal(diagnose.env.OPL_INTERNAL_SERVICE_TOKEN, undefined);
+  assert.match(diagnoseRuns, /production-live-qa\.ts --workspace-launch-readback-diagnose/);
+  assert.doesNotMatch(diagnoseRuns, /--workspace-launch-readback-recover|\/recover|Idempotency-Key|create_storage|CreateDisks|debit|refund|scale/i);
+
+  assert.match(String(recover.if), /inputs\.operation_mode == 'workspace_launch_readback_recover'/);
+  assert.match(String(recover.if), /inputs\.confirm_workspace_launch_readback_recovery/);
+  assert.equal(recover.env.OPL_WORKSPACE_LAUNCH_READBACK_APPROVAL_JSON, "${{ secrets.OPL_WORKSPACE_LAUNCH_READBACK_APPROVAL_JSON }}");
+  assert.equal(recover.env.OPL_COMPUTE_CLAIM_TARGET_JSON, "${{ inputs.workspace_launch_target_json }}");
+  assert.match(recoverRuns, /production-live-qa\.ts --workspace-launch-readback-recover/);
+  assert.match(recoverRuns, /--approval-id "\$OPL_WORKSPACE_LAUNCH_READBACK_APPROVAL_ID"/);
+  assert.match(recoverRuns, /get secret opl-cloud-internal-service/);
+  assert.match(recoverRuns, /production-live-qa\.ts --compute-claim-continue/);
+  assert.match(recoverRuns, /--compute-claim-target-json "\$OPL_COMPUTE_CLAIM_TARGET_JSON"/);
+  assert.match(recoverRuns, /workspace-launch-readback-recovery\.json/);
+  assert.match(recoverRuns, /workspace-launch-continuation\.json/);
+  assert.match(recoverRuns, /backgroundMutationCountsState !== "unknown"/);
+  assert.doesNotMatch(recoverRuns, /--basic-customer-canary|allow-workspace-purchase|allow-wallet-recharge|allow-account-provision|allow-model-write|CreateDisks|create_storage_volume|debit|refund|scale/i);
+  assert.match(JSON.stringify(diagnose.steps), /actions\/upload-artifact@v4/);
+  assert.match(JSON.stringify(recover.steps), /actions\/upload-artifact@v4/);
+});
+
+test("Workspace launch readback workflow gates bind every approved identity and budget", async () => {
+  const workflow = await readWorkflow(".github/workflows/production-basic-customer-operation.yml");
+  const diagnoseGate = stepsByName(workflowJob(workflow, "workspace-launch-readback-diagnose")).get("Require complete zero-mutation Workspace launch proof");
+  const recoverGate = stepsByName(workflowJob(workflow, "workspace-launch-readback-recover")).get("Require approved unknown-stage CAS convergence");
+  assert.ok(diagnoseGate?.run);
+  assert.ok(recoverGate?.run);
+
+  const target = {
+    launchOperationId: "workspace-launch-readback-fixture",
+    accountId: "acct-readback-fixture",
+    workspaceId: "ws-readback-fixture",
+    computeAllocationId: "ca_readback_fixture",
+    storageId: "vol_readback_fixture",
+    packageId: "basic",
+    poolId: "pool-basic-2c4g",
+    nodePoolId: "np-workspace-basic",
+    machineName: "np-workspace-basic-machine-fixture",
+    nodeName: "10.20.30.41",
+    cvmInstanceId: "ins-readback-fixture",
+    privateIp: "10.20.30.42",
+    instanceType: "SA5.MEDIUM4",
+    zone: "na-siliconvalley-1",
+    chargeType: "PREPAID",
+    periodMonths: 1,
+    renewFlag: "NOTIFY_AND_MANUAL_RENEW",
+    deadline: "2099-08-28T00:00:00Z"
+  };
+  const proof = {
+    schemaVersion: 1,
+    eligible: true,
+    reason: "none",
+    stage: "secret",
+    customer: { email: "readback-owner@example.test", accountId: target.accountId, ownerUserId: "usr-readback-fixture" },
+    target: { launchOperationId: target.launchOperationId, workspaceId: target.workspaceId, packageId: target.packageId },
+    resources: {
+      computeAllocationId: target.computeAllocationId,
+      computeProviderResourceId: target.cvmInstanceId,
+      storageVolumeId: target.storageId,
+      storageProviderResourceId: "disk-readback-fixture",
+      attachmentId: "attachment-readback-fixture",
+      gatewaySecretRef: "opl-gateway-0123456789abcdef",
+      gatewaySecretFingerprint: `sha256:${"c".repeat(64)}`,
+      runtimeId: "",
+      receiptId: ""
+    },
+    operationIds: {
+      compute: `${target.launchOperationId}:compute`,
+      storage: `${target.launchOperationId}:storage`,
+      attachment: `${target.launchOperationId}:attachment`,
+      secret: `${target.launchOperationId}:workspace:secret:gateway-secret`,
+      runtime: `${target.launchOperationId}:workspace:runtime`,
+      activation: `${target.launchOperationId}:activation`,
+      receipt: `${target.launchOperationId}:purchase-receipt`
+    },
+    workspaceImageDigest: workspaceDigest,
+    attemptBudget: { attempted: 1, confirmed: 0, unknown: 1, max: 1 },
+    allowedWrites: [
+      "confirm_original_secret_from_authoritative_readback", "create_original_workspace_runtime",
+      "activate_original_workspace", "record_original_purchase_receipt"
+    ],
+    forbiddenWrites: [
+      "create_launch", "debit", "recharge", "refund", "scale", "create_cvm", "create_second_cbs", "delete", "replace", "retry_unknown_stage_write"
+    ],
+    sub2apiMutationCount: 0,
+    tencentMutationCount: 0,
+    kubernetesMutationCount: 0
+  };
+  const approval = {
+    schemaVersion: 1,
+    approvalId: "approval-readback-fixture",
+    expiresAt: "2099-08-28T00:00:00Z",
+    mergedMainSha: cloudCandidateSha,
+    cloudImageDigest: digestA,
+    workspaceImageDigest: workspaceDigest,
+    confirmation: "RECOVER_UNKNOWN_WORKSPACE_LAUNCH_STAGE_FROM_AUTHORITATIVE_READBACK",
+    idempotencyKey: "workspace-readback-http-fixture",
+    recoveryKey: "workspace-readback-recovery-fixture",
+    stage: proof.stage,
+    customer: proof.customer,
+    target: proof.target,
+    resources: proof.resources,
+    operationIds: proof.operationIds,
+    attemptBudget: proof.attemptBudget,
+    allowedWrites: proof.allowedWrites,
+    forbiddenWrites: proof.forbiddenWrites
+  };
+  const exactTarget = { launchOperationId: target.launchOperationId, accountId: target.accountId, workspaceId: target.workspaceId };
+  const diagnosis = {
+    schemaVersion: 1,
+    operationMode: "workspace_launch_readback_diagnose",
+    status: "proven",
+    recoveryEligible: true,
+    errorCode: "none",
+    release: { mergedSha: cloudCandidateSha, cloudImageDigest: digestA },
+    target: exactTarget,
+    proof,
+    runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
+  };
+  const env = {
+    OPL_MERGED_SHA: cloudCandidateSha,
+    OPL_WORKSPACE_LAUNCH_READBACK_TARGET_JSON: JSON.stringify(target),
+    OPL_WORKSPACE_LAUNCH_READBACK_CLOUD_DIGEST: digestA,
+    OPL_WORKSPACE_LAUNCH_READBACK_CUSTOMER_EMAIL: proof.customer.email
+  };
+  assert.equal((await runWorkflowArtifactGate(diagnoseGate, "workspace-launch-readback-diagnosis.json", diagnosis, env)).status, 0);
+
+  const approvalDigest = createHash("sha256").update(canonicalJson(approval)).digest("hex");
+  const recovery = {
+    schemaVersion: 1,
+    operationMode: "workspace_launch_readback_recover",
+    status: "converged",
+    recoveryEligible: true,
+    errorCode: "none",
+    release: { mergedSha: cloudCandidateSha, cloudImageDigest: digestA },
+    target: exactTarget,
+    stage: proof.stage,
+    proof,
+    approval: { approvalId: approval.approvalId, approvalDigest },
+    operation: {
+      operationId: target.launchOperationId,
+      accountId: target.accountId,
+      workspaceId: target.workspaceId,
+      status: "preparing",
+      phase: "runtime_starting",
+      attemptBudget: { attempted: 1, confirmed: 1, unknown: 0, max: 1 }
+    },
+    runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
+    backgroundMutationCountsState: "unknown"
+  };
+  const recoveryEnv = {
+    ...env,
+    OPL_WORKSPACE_LAUNCH_READBACK_APPROVAL_ID: approval.approvalId,
+    OPL_WORKSPACE_LAUNCH_READBACK_APPROVAL_JSON: JSON.stringify(approval)
+  };
+  assert.equal((await runWorkflowArtifactGate(recoverGate, "workspace-launch-readback-recovery.json", recovery, recoveryEnv)).status, 0);
+
+  for (const [name, mutate] of [
+    ["provider identity drift", (artifact) => { artifact.proof.resources.storageProviderResourceId = "disk-drifted-fixture"; }],
+    ["operation identity drift", (artifact) => { artifact.proof.operationIds.runtime = "workspace-launch-other:workspace:runtime"; }],
+    ["budget drift", (artifact) => { artifact.proof.attemptBudget.unknown = 0; }],
+    ["release drift", (artifact) => { artifact.release.cloudImageDigest = digestB; }]
+  ]) {
+    const artifact = JSON.parse(JSON.stringify(recovery));
+    mutate(artifact);
+    const result = await runWorkflowArtifactGate(recoverGate, "workspace-launch-readback-recovery.json", artifact, recoveryEnv);
+    assert.notEqual(result.status, 0, `recovery gate accepted ${name}`);
+  }
+});
+
 test("recovered Workspace E2E is a separate hosted mode with no resource mutation capability or hard-coded customer", async () => {
   const workflow = await readWorkflow(".github/workflows/production-basic-customer-operation.yml");
   const inputs = workflow.on.workflow_dispatch.inputs;
@@ -1225,6 +1429,8 @@ test("recovered Workspace E2E is a separate hosted mode with no resource mutatio
     "manual_review_diagnose",
     "compute_claim_diagnose",
     "compute_claim_recover",
+    "workspace_launch_readback_diagnose",
+    "workspace_launch_readback_recover",
     "recovered_workspace_e2e"
   ]);
   assert.equal(inputs.customer_email.required, false);
@@ -1236,6 +1442,9 @@ test("recovered Workspace E2E is a separate hosted mode with no resource mutatio
   assert.equal(job.environment, "production");
   assert.match(String(job.if), /inputs\.operation_mode == 'recovered_workspace_e2e'/);
   assert.match(String(job.if), /inputs\.confirm_single_model_request/);
+  assert.match(String(job.if), /inputs\.workspace_launch_target_json == ''/);
+  assert.match(String(job.if), /inputs\.workspace_launch_cloud_digest == ''/);
+  assert.match(String(job.if), /!inputs\.confirm_workspace_launch_readback_recovery/);
   for (const confirmation of ["account_provision", "wallet_recharge", "workspace_purchase", "compute_claim_recovery"]) {
     assert.match(String(job.if), new RegExp(`!inputs\\.confirm_${confirmation}`));
   }

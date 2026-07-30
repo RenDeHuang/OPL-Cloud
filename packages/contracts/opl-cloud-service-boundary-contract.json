@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 17,
+  "schemaVersion": 18,
   "owner": "OPL Platform Architecture",
   "purpose": "Current ownership contract for Console UI, Control Plane, Ledger, Fabric, and external Sub2API.",
   "state": "current",
@@ -109,6 +109,21 @@
         "reserve": "postgresql_cas_before_external_write",
         "restart": "persisted_budget_never_resets",
         "terminalFailure": "unknown_or_exhausted_enters_manual_review_and_active_worker_excludes_it"
+      },
+      "workspaceLaunchAuthoritativeReadbackRecovery": {
+        "proofRoute": "GET /api/operator/workspace-launches/{operationId}/readback-recovery-proof",
+        "recoveryRoute": "POST /api/operator/workspace-launches/{operationId}/recover",
+        "stages": ["storage", "attachment", "secret", "runtime", "activation", "receipt"],
+        "inputBudget": {"attempted": 1, "confirmed": 0, "unknown": 1, "max": 1},
+        "convergedBudget": {"attempted": 1, "confirmed": 1, "unknown": 0, "max": 1},
+        "proofAuthorities": ["monthly_provider_truth", "fabric_operation_store", "workspace_runtime_status", "workspace_activation_truth", "ledger_receipt"],
+        "proofPersistence": "none",
+        "convergence": "postgresql_original_launch_cas_only_after_unique_exact_authoritative_readback",
+        "winner": "one_concurrent_recovery_cas",
+        "replay": "zero_external_write_same_original_or_later_stage",
+        "failure": "absent_multiple_drift_or_read_error_remains_manual_review",
+        "sharedOrchestrator": "fulfillWorkspaceLaunch_basic_pro_and_compute_claim_recovery",
+        "mutationCounts": {"sub2api": 0, "tencent": 0, "kubernetes": 0}
       },
       "recoveredWorkspaceE2EAttempt": {
         "reserveRoute": "POST /api/workspaces/{workspaceId}/recovered-e2e-attempt",

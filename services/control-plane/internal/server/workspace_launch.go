@@ -39,82 +39,116 @@ var workspaceComputeClaimForbiddenWrites = []string{
 	"create_launch", "debit", "recharge", "refund", "scale", "create_cvm", "create_second_cbs", "delete", "replace",
 }
 
+const workspaceLaunchReadbackRecoveryConfirmation = "RECOVER_UNKNOWN_WORKSPACE_LAUNCH_STAGE_FROM_AUTHORITATIVE_READBACK"
+
+var workspaceLaunchReadbackRecoveryForbiddenWrites = []string{
+	"create_launch", "debit", "recharge", "refund", "scale", "create_cvm", "create_second_cbs", "delete", "replace", "retry_unknown_stage_write",
+}
+
+func workspaceLaunchReadbackRecoveryAllowedWrites(stage string) []string {
+	remaining := map[string][]string{
+		"storage":    {"create_original_pv_pvc_attachment", "upsert_original_gateway_secret", "create_original_workspace_runtime", "activate_original_workspace", "record_original_purchase_receipt"},
+		"attachment": {"upsert_original_gateway_secret", "create_original_workspace_runtime", "activate_original_workspace", "record_original_purchase_receipt"},
+		"secret":     {"create_original_workspace_runtime", "activate_original_workspace", "record_original_purchase_receipt"},
+		"runtime":    {"activate_original_workspace", "record_original_purchase_receipt"},
+		"activation": {"record_original_purchase_receipt"},
+		"receipt":    {},
+	}
+	writes, ok := remaining[stage]
+	if !ok {
+		return nil
+	}
+	return append([]string{"confirm_original_" + stage + "_from_authoritative_readback"}, writes...)
+}
+
+func workspaceLaunchReadbackRecoveryStageValid(stage string) bool {
+	return workspaceLaunchReadbackRecoveryAllowedWrites(stage) != nil
+}
+
+func workspaceLaunchReadbackRecoveryPhase(stage string) string {
+	return map[string]string{
+		"storage": "storage_fulfilling", "attachment": "attaching", "secret": "secret_writing",
+		"runtime": "runtime_starting", "activation": "activating", "receipt": "receipt_pending",
+	}[stage]
+}
+
 func isWorkspaceLaunchAction(action string) bool {
 	return action == workspaceLaunchAction || action == "workspace.launch"
 }
 
 type workspaceLaunchOperation struct {
-	ID                         string                                `json:"-"`
-	Status                     string                                `json:"-"`
-	CreatedAt                  string                                `json:"-"`
-	PersistedResult            string                                `json:"-"`
-	SchemaVersion              int                                   `json:"schemaVersion"`
-	RequestHash                string                                `json:"requestHash"`
-	Phase                      string                                `json:"phase"`
-	AccountID                  string                                `json:"accountId"`
-	OwnerUserID                string                                `json:"ownerUserId"`
-	WorkspaceID                string                                `json:"workspaceId"`
-	Name                       string                                `json:"name"`
-	PackageID                  string                                `json:"packageId"`
-	StorageGB                  int                                   `json:"sizeGb"`
-	AutoRenew                  bool                                  `json:"autoRenew"`
-	PriceVersion               string                                `json:"priceVersion"`
-	TotalChargeUSDMicros       int64                                 `json:"totalChargeUsdMicros"`
-	PeriodStart                string                                `json:"periodStart,omitempty"`
-	PaidThrough                string                                `json:"paidThrough,omitempty"`
-	BillingAnchorDay           int                                   `json:"billingAnchorDay,omitempty"`
-	ComputeID                  string                                `json:"computeAllocationId"`
-	ComputePoolID              string                                `json:"computePoolId,omitempty"`
-	ComputeNodePoolID          string                                `json:"computeNodePoolId"`
-	ComputeMachineName         string                                `json:"computeMachineName,omitempty"`
-	ComputeNodeName            string                                `json:"computeNodeName,omitempty"`
-	ComputeCVMInstanceID       string                                `json:"computeCvmInstanceId,omitempty"`
-	ComputeInstanceType        string                                `json:"computeInstanceType,omitempty"`
-	ComputeZone                string                                `json:"computeZone,omitempty"`
-	ComputePrivateIP           string                                `json:"computePrivateIp,omitempty"`
-	ComputeChargeType          string                                `json:"computeChargeType,omitempty"`
-	ComputeRenewFlag           string                                `json:"computeRenewFlag,omitempty"`
-	ComputeDeadline            string                                `json:"computeDeadline,omitempty"`
-	ComputeClaimRequestHash    string                                `json:"computeClaimRequestHash,omitempty"`
-	ComputeClaimApprovalID     string                                `json:"computeClaimApprovalId,omitempty"`
-	ComputeClaimMergedMainSHA  string                                `json:"computeClaimMergedMainSha,omitempty"`
-	ComputeClaimCloudDigest    string                                `json:"computeClaimCloudImageDigest,omitempty"`
-	ComputeClaimApproval       *workspaceComputeClaimApprovalBinding `json:"computeClaimApproval,omitempty"`
-	WorkspaceImageDigest       string                                `json:"workspaceImageDigest,omitempty"`
-	ComputeClaimPrivateIP      string                                `json:"computeClaimPrivateIp,omitempty"`
-	ComputeClaimProof          *clients.ComputeClaimRecoveryProof    `json:"computeClaimProof,omitempty"`
-	StorageID                  string                                `json:"storageId"`
-	AttachmentID               string                                `json:"attachmentId,omitempty"`
-	AttachmentOperationID      string                                `json:"attachmentOperationId"`
-	WorkspaceOperationID       string                                `json:"workspaceOperationId"`
-	WorkspaceAPIKeyID          int64                                 `json:"workspaceApiKeyId"`
-	RedeemCode                 string                                `json:"sub2apiRedeemCode"`
-	RefundCode                 string                                `json:"sub2apiRefundCode,omitempty"`
-	ChargeAttempted            bool                                  `json:"chargeAttempted,omitempty"`
-	ChargeConfirmation         map[string]any                        `json:"chargeConfirmation,omitempty"`
-	PreChargeBalanceUSDMicros  int64                                 `json:"preChargeBalanceUsdMicros,omitempty"`
-	PostChargeBalanceUSDMicros int64                                 `json:"postChargeBalanceUsdMicros,omitempty"`
-	PostChargeBalanceKnown     bool                                  `json:"postChargeBalanceKnown,omitempty"`
-	RefundAttempted            bool                                  `json:"refundAttempted,omitempty"`
-	RefundConfirmation         map[string]any                        `json:"refundConfirmation,omitempty"`
-	RefundReason               string                                `json:"refundReason,omitempty"`
-	RefundReceiptID            string                                `json:"refundReceiptId,omitempty"`
-	LeaseToken                 string                                `json:"leaseToken,omitempty"`
-	LeaseExpiresAt             string                                `json:"leaseExpiresAt,omitempty"`
-	GatewaySecretRef           string                                `json:"gatewaySecretRef,omitempty"`
-	WorkspaceKeyStatus         string                                `json:"workspaceKeyStatus,omitempty"`
-	WorkspaceKeyFingerprint    string                                `json:"workspaceKeyFingerprint,omitempty"`
-	RuntimeID                  string                                `json:"runtimeId,omitempty"`
-	RuntimeReady               bool                                  `json:"runtimeReady,omitempty"`
-	RuntimeServiceName         string                                `json:"runtimeServiceName,omitempty"`
-	RuntimeUsername            string                                `json:"runtimeUsername,omitempty"`
-	CredentialStatus           string                                `json:"credentialStatus,omitempty"`
-	CredentialVersion          string                                `json:"credentialVersion,omitempty"`
-	CredentialSecretRef        string                                `json:"credentialSecretRef,omitempty"`
-	URL                        string                                `json:"url,omitempty"`
-	ReceiptID                  string                                `json:"receiptId,omitempty"`
-	ContinuationAttemptBudgets map[string]workspaceLaunchStageBudget `json:"continuationAttemptBudgets"`
-	ErrorCode                  string                                `json:"errorCode,omitempty"`
+	ID                         string                                   `json:"-"`
+	Status                     string                                   `json:"-"`
+	CreatedAt                  string                                   `json:"-"`
+	PersistedResult            string                                   `json:"-"`
+	SchemaVersion              int                                      `json:"schemaVersion"`
+	RequestHash                string                                   `json:"requestHash"`
+	Phase                      string                                   `json:"phase"`
+	AccountID                  string                                   `json:"accountId"`
+	OwnerUserID                string                                   `json:"ownerUserId"`
+	WorkspaceID                string                                   `json:"workspaceId"`
+	Name                       string                                   `json:"name"`
+	PackageID                  string                                   `json:"packageId"`
+	StorageGB                  int                                      `json:"sizeGb"`
+	AutoRenew                  bool                                     `json:"autoRenew"`
+	PriceVersion               string                                   `json:"priceVersion"`
+	TotalChargeUSDMicros       int64                                    `json:"totalChargeUsdMicros"`
+	PeriodStart                string                                   `json:"periodStart,omitempty"`
+	PaidThrough                string                                   `json:"paidThrough,omitempty"`
+	BillingAnchorDay           int                                      `json:"billingAnchorDay,omitempty"`
+	ComputeID                  string                                   `json:"computeAllocationId"`
+	ComputePoolID              string                                   `json:"computePoolId,omitempty"`
+	ComputeNodePoolID          string                                   `json:"computeNodePoolId"`
+	ComputeMachineName         string                                   `json:"computeMachineName,omitempty"`
+	ComputeNodeName            string                                   `json:"computeNodeName,omitempty"`
+	ComputeCVMInstanceID       string                                   `json:"computeCvmInstanceId,omitempty"`
+	ComputeInstanceType        string                                   `json:"computeInstanceType,omitempty"`
+	ComputeZone                string                                   `json:"computeZone,omitempty"`
+	ComputePrivateIP           string                                   `json:"computePrivateIp,omitempty"`
+	ComputeChargeType          string                                   `json:"computeChargeType,omitempty"`
+	ComputeRenewFlag           string                                   `json:"computeRenewFlag,omitempty"`
+	ComputeDeadline            string                                   `json:"computeDeadline,omitempty"`
+	ComputeClaimRequestHash    string                                   `json:"computeClaimRequestHash,omitempty"`
+	ComputeClaimApprovalID     string                                   `json:"computeClaimApprovalId,omitempty"`
+	ComputeClaimMergedMainSHA  string                                   `json:"computeClaimMergedMainSha,omitempty"`
+	ComputeClaimCloudDigest    string                                   `json:"computeClaimCloudImageDigest,omitempty"`
+	ComputeClaimApproval       *workspaceComputeClaimApprovalBinding    `json:"computeClaimApproval,omitempty"`
+	ReadbackRecoveryApproval   *workspaceLaunchReadbackRecoveryApproval `json:"readbackRecoveryApproval,omitempty"`
+	WorkspaceImageDigest       string                                   `json:"workspaceImageDigest,omitempty"`
+	ComputeClaimPrivateIP      string                                   `json:"computeClaimPrivateIp,omitempty"`
+	ComputeClaimProof          *clients.ComputeClaimRecoveryProof       `json:"computeClaimProof,omitempty"`
+	StorageID                  string                                   `json:"storageId"`
+	AttachmentID               string                                   `json:"attachmentId,omitempty"`
+	AttachmentOperationID      string                                   `json:"attachmentOperationId"`
+	WorkspaceOperationID       string                                   `json:"workspaceOperationId"`
+	WorkspaceAPIKeyID          int64                                    `json:"workspaceApiKeyId"`
+	RedeemCode                 string                                   `json:"sub2apiRedeemCode"`
+	RefundCode                 string                                   `json:"sub2apiRefundCode,omitempty"`
+	ChargeAttempted            bool                                     `json:"chargeAttempted,omitempty"`
+	ChargeConfirmation         map[string]any                           `json:"chargeConfirmation,omitempty"`
+	PreChargeBalanceUSDMicros  int64                                    `json:"preChargeBalanceUsdMicros,omitempty"`
+	PostChargeBalanceUSDMicros int64                                    `json:"postChargeBalanceUsdMicros,omitempty"`
+	PostChargeBalanceKnown     bool                                     `json:"postChargeBalanceKnown,omitempty"`
+	RefundAttempted            bool                                     `json:"refundAttempted,omitempty"`
+	RefundConfirmation         map[string]any                           `json:"refundConfirmation,omitempty"`
+	RefundReason               string                                   `json:"refundReason,omitempty"`
+	RefundReceiptID            string                                   `json:"refundReceiptId,omitempty"`
+	LeaseToken                 string                                   `json:"leaseToken,omitempty"`
+	LeaseExpiresAt             string                                   `json:"leaseExpiresAt,omitempty"`
+	GatewaySecretRef           string                                   `json:"gatewaySecretRef,omitempty"`
+	WorkspaceKeyStatus         string                                   `json:"workspaceKeyStatus,omitempty"`
+	WorkspaceKeyFingerprint    string                                   `json:"workspaceKeyFingerprint,omitempty"`
+	RuntimeID                  string                                   `json:"runtimeId,omitempty"`
+	RuntimeReady               bool                                     `json:"runtimeReady,omitempty"`
+	RuntimeServiceName         string                                   `json:"runtimeServiceName,omitempty"`
+	RuntimeUsername            string                                   `json:"runtimeUsername,omitempty"`
+	CredentialStatus           string                                   `json:"credentialStatus,omitempty"`
+	CredentialVersion          string                                   `json:"credentialVersion,omitempty"`
+	CredentialSecretRef        string                                   `json:"credentialSecretRef,omitempty"`
+	URL                        string                                   `json:"url,omitempty"`
+	ReceiptID                  string                                   `json:"receiptId,omitempty"`
+	ContinuationAttemptBudgets map[string]workspaceLaunchStageBudget    `json:"continuationAttemptBudgets"`
+	ErrorCode                  string                                   `json:"errorCode,omitempty"`
 }
 
 type workspaceLaunchStageBudget struct {
@@ -122,6 +156,79 @@ type workspaceLaunchStageBudget struct {
 	Confirmed int `json:"confirmed"`
 	Unknown   int `json:"unknown"`
 	Max       int `json:"max"`
+}
+
+type workspaceLaunchReadbackRecoveryCustomer struct {
+	Email       string `json:"email"`
+	AccountID   string `json:"accountId"`
+	OwnerUserID string `json:"ownerUserId"`
+}
+
+type workspaceLaunchReadbackRecoveryTarget struct {
+	LaunchOperationID string `json:"launchOperationId"`
+	WorkspaceID       string `json:"workspaceId"`
+	PackageID         string `json:"packageId"`
+}
+
+type workspaceLaunchReadbackRecoveryResources struct {
+	ComputeAllocationID       string `json:"computeAllocationId"`
+	ComputeProviderResourceID string `json:"computeProviderResourceId"`
+	StorageVolumeID           string `json:"storageVolumeId"`
+	StorageProviderResourceID string `json:"storageProviderResourceId"`
+	AttachmentID              string `json:"attachmentId"`
+	GatewaySecretRef          string `json:"gatewaySecretRef"`
+	GatewaySecretFingerprint  string `json:"gatewaySecretFingerprint"`
+	RuntimeID                 string `json:"runtimeId"`
+	ReceiptID                 string `json:"receiptId"`
+}
+
+type workspaceLaunchReadbackRecoveryOperationIDs struct {
+	Compute    string `json:"compute"`
+	Storage    string `json:"storage"`
+	Attachment string `json:"attachment"`
+	Secret     string `json:"secret"`
+	Runtime    string `json:"runtime"`
+	Activation string `json:"activation"`
+	Receipt    string `json:"receipt"`
+}
+
+type workspaceLaunchReadbackRecoveryApproval struct {
+	SchemaVersion        int                                         `json:"schemaVersion"`
+	ApprovalID           string                                      `json:"approvalId"`
+	ApprovalDigest       string                                      `json:"approvalDigest"`
+	ExpiresAt            string                                      `json:"expiresAt"`
+	MergedMainSHA        string                                      `json:"mergedMainSha"`
+	CloudImageDigest     string                                      `json:"cloudImageDigest"`
+	WorkspaceImageDigest string                                      `json:"workspaceImageDigest"`
+	Confirmation         string                                      `json:"confirmation"`
+	IdempotencyKey       string                                      `json:"idempotencyKey"`
+	RecoveryKey          string                                      `json:"recoveryKey"`
+	Stage                string                                      `json:"stage"`
+	Customer             workspaceLaunchReadbackRecoveryCustomer     `json:"customer"`
+	Target               workspaceLaunchReadbackRecoveryTarget       `json:"target"`
+	Resources            workspaceLaunchReadbackRecoveryResources    `json:"resources"`
+	OperationIDs         workspaceLaunchReadbackRecoveryOperationIDs `json:"operationIds"`
+	AttemptBudget        workspaceLaunchStageBudget                  `json:"attemptBudget"`
+	AllowedWrites        []string                                    `json:"allowedWrites"`
+	ForbiddenWrites      []string                                    `json:"forbiddenWrites"`
+}
+
+type workspaceLaunchReadbackRecoveryProof struct {
+	SchemaVersion           int                                         `json:"schemaVersion"`
+	Eligible                bool                                        `json:"eligible"`
+	Reason                  string                                      `json:"reason"`
+	Stage                   string                                      `json:"stage"`
+	Customer                workspaceLaunchReadbackRecoveryCustomer     `json:"customer"`
+	Target                  workspaceLaunchReadbackRecoveryTarget       `json:"target"`
+	Resources               workspaceLaunchReadbackRecoveryResources    `json:"resources"`
+	OperationIDs            workspaceLaunchReadbackRecoveryOperationIDs `json:"operationIds"`
+	WorkspaceImageDigest    string                                      `json:"workspaceImageDigest"`
+	AttemptBudget           workspaceLaunchStageBudget                  `json:"attemptBudget"`
+	AllowedWrites           []string                                    `json:"allowedWrites"`
+	ForbiddenWrites         []string                                    `json:"forbiddenWrites"`
+	Sub2APIMutationCount    int                                         `json:"sub2apiMutationCount"`
+	TencentMutationCount    int                                         `json:"tencentMutationCount"`
+	KubernetesMutationCount int                                         `json:"kubernetesMutationCount"`
 }
 
 type workspaceComputeClaimApprovalCustomer struct {
@@ -1250,6 +1357,46 @@ func equalWorkspaceComputeClaimStrings(got, want []string) bool {
 	return true
 }
 
+func workspaceLaunchReadbackRecoveryApprovalDigest(approval workspaceLaunchReadbackRecoveryApproval) string {
+	payload := map[string]any{
+		"schemaVersion": approval.SchemaVersion, "approvalId": approval.ApprovalID, "expiresAt": approval.ExpiresAt,
+		"mergedMainSha": approval.MergedMainSHA, "cloudImageDigest": approval.CloudImageDigest, "workspaceImageDigest": approval.WorkspaceImageDigest,
+		"confirmation": approval.Confirmation, "idempotencyKey": approval.IdempotencyKey, "recoveryKey": approval.RecoveryKey, "stage": approval.Stage,
+		"customer": structToMap(approval.Customer), "target": structToMap(approval.Target), "resources": structToMap(approval.Resources),
+		"operationIds": structToMap(approval.OperationIDs), "attemptBudget": structToMap(approval.AttemptBudget),
+		"allowedWrites": approval.AllowedWrites, "forbiddenWrites": approval.ForbiddenWrites,
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return ""
+	}
+	digest := sha256.Sum256(encoded)
+	return hex.EncodeToString(digest[:])
+}
+
+func workspaceLaunchReadbackRecoveryApprovalMatches(got, want workspaceLaunchReadbackRecoveryApproval) bool {
+	gotJSON, gotErr := json.Marshal(got)
+	wantJSON, wantErr := json.Marshal(want)
+	return gotErr == nil && wantErr == nil && bytes.Equal(gotJSON, wantJSON)
+}
+
+func workspaceLaunchReadbackRecoveryExpectedOperationIDs(operation workspaceLaunchOperation) workspaceLaunchReadbackRecoveryOperationIDs {
+	return workspaceLaunchReadbackRecoveryOperationIDs{
+		Compute: operation.ID + ":compute", Storage: operation.ID + ":storage", Attachment: operation.AttachmentOperationID,
+		Secret: operation.WorkspaceOperationID + ":secret:gateway-secret", Runtime: operation.WorkspaceOperationID + ":runtime",
+		Activation: operation.ID + ":activation", Receipt: operation.ID + ":purchase-receipt",
+	}
+}
+
+func workspaceLaunchReadbackRecoveryExpectedResources(operation workspaceLaunchOperation, compute, storage map[string]any) workspaceLaunchReadbackRecoveryResources {
+	return workspaceLaunchReadbackRecoveryResources{
+		ComputeAllocationID: operation.ComputeID, ComputeProviderResourceID: stringValue(compute["providerResourceId"]),
+		StorageVolumeID: operation.StorageID, StorageProviderResourceID: stringValue(storage["providerResourceId"]),
+		AttachmentID: operation.AttachmentID, GatewaySecretRef: workspaceGatewaySecretReference(operation.WorkspaceID),
+		GatewaySecretFingerprint: operation.WorkspaceKeyFingerprint, RuntimeID: operation.RuntimeID, ReceiptID: operation.ReceiptID,
+	}
+}
+
 func workspaceComputeClaimStableSuffix(parts ...string) string {
 	sum := sha256.Sum256([]byte(strings.Join(parts, ":")))
 	return hex.EncodeToString(sum[:])
@@ -1724,6 +1871,187 @@ func workspaceComputeClaimFailureProof(operation workspaceLaunchOperation, reaso
 	}
 }
 
+func workspaceLaunchReadbackUnknownStage(operation workspaceLaunchOperation) (string, bool) {
+	stage := ""
+	for _, candidate := range workspaceLaunchContinuationStages {
+		if operation.ContinuationAttemptBudgets[candidate].Unknown == 0 {
+			continue
+		}
+		if stage != "" {
+			return "", true
+		}
+		stage = candidate
+	}
+	return stage, stage != ""
+}
+
+func (app *controlPlaneServer) workspaceLaunchReadbackRecoveryCustomer(ctx context.Context, operation workspaceLaunchOperation) (workspaceLaunchReadbackRecoveryCustomer, error) {
+	account, accountFound, accountErr := app.tables.GetAccount(ctx, operation.AccountID)
+	owner, ownerFound, ownerErr := app.tables.GetUser(ctx, operation.OwnerUserID)
+	if accountErr != nil || ownerErr != nil || !accountFound || !ownerFound || !ownsActiveAccount(account, owner) ||
+		stringValue(owner["id"]) != operation.OwnerUserID || stringValue(owner["role"]) != "owner" || normalizeEmail(stringValue(owner["email"])) == "" {
+		return workspaceLaunchReadbackRecoveryCustomer{}, errBillingReviewIdentity
+	}
+	if workspace, ok := app.getWorkspace(operation.WorkspaceID); ok && !workspaceMatchesLaunch(workspace, operation) {
+		return workspaceLaunchReadbackRecoveryCustomer{}, errBillingReviewIdentity
+	}
+	return workspaceLaunchReadbackRecoveryCustomer{
+		Email: normalizeEmail(stringValue(owner["email"])), AccountID: operation.AccountID, OwnerUserID: operation.OwnerUserID,
+	}, nil
+}
+
+func (app *controlPlaneServer) workspaceLaunchReadbackRecoveryProviderTruth(ctx context.Context, service *controlplane.Service, operation workspaceLaunchOperation) (clients.MonthlyProviderTruth, error) {
+	truth, err := service.MonthlyProviderTruth(ctx, operation.ComputeID, operation.StorageID)
+	if err != nil {
+		return clients.MonthlyProviderTruth{}, errBillingReviewProviderFact
+	}
+	computeState, computeErr := app.workspaceLaunchRecoveryResourceState(ctx, operation, "compute", truth.ComputeState, structToMap(truth.Compute))
+	storageState, storageErr := app.workspaceLaunchRecoveryResourceState(ctx, operation, "storage", truth.StorageState, structToMap(truth.Storage))
+	if computeErr != nil || storageErr != nil {
+		return clients.MonthlyProviderTruth{}, errors.Join(computeErr, storageErr)
+	}
+	if computeState != "ready" || storageState != "ready" {
+		return clients.MonthlyProviderTruth{}, errBillingReviewProviderFact
+	}
+	return truth, nil
+}
+
+func (app *controlPlaneServer) readWorkspaceLaunchUnknownStage(ctx context.Context, service *controlplane.Service, operation *workspaceLaunchOperation, stage string) (*clients.StorageAttachment, error) {
+	switch stage {
+	case "storage":
+		return nil, nil
+	case "attachment":
+		attachment, err := app.workspaceLaunchAttachmentFromFabricOperation(ctx, service, *operation)
+		if err != nil {
+			return nil, err
+		}
+		operation.AttachmentID = attachment.ID
+		return &attachment, nil
+	case "secret":
+		secret, err := app.workspaceLaunchSecretFromFabricOperation(ctx, service, *operation)
+		if err != nil {
+			return nil, err
+		}
+		operation.GatewaySecretRef, operation.WorkspaceKeyStatus, operation.WorkspaceKeyFingerprint = secret.SecretRef, "configured", secret.Fingerprint
+		return nil, nil
+	case "runtime":
+		workspace, err := app.readWorkspaceLaunchRuntime(ctx, service, *operation)
+		if err != nil || !workspaceProjectionMatchesLaunch(workspace, *operation) || !workspaceRuntimeAttemptMatches(workspace, *operation) {
+			return nil, controlplane.ErrWorkspaceRuntimeReadbackInvalid
+		}
+		operation.RuntimeID, operation.RuntimeReady = workspace.RuntimeID, workspace.RuntimeReady
+		operation.RuntimeServiceName, operation.RuntimeUsername = workspace.RuntimeServiceName, workspace.RuntimeUsername
+		operation.CredentialStatus, operation.CredentialVersion, operation.CredentialSecretRef = workspace.CredentialStatus, workspace.CredentialVersion, workspace.CredentialSecretRef
+		operation.URL = workspace.URL
+		return nil, nil
+	case "activation":
+		if err := app.verifyWorkspaceLaunchActivationTruth(ctx, service, operation); err != nil {
+			return nil, err
+		}
+		workspace, ok := app.getWorkspace(operation.WorkspaceID)
+		billingState, reviewCode := app.workspaceLaunchBillingState(ctx, *operation)
+		if !ok || reviewCode != "" || !workspaceMatchesLaunch(workspace, *operation) || !workspaceBillingStateMatchesLaunch(workspace, billingState) || stringValue(workspace["runtimeId"]) != operation.RuntimeID {
+			return nil, errors.New("workspace_launch_activation_readback_invalid")
+		}
+		return nil, nil
+	case "receipt":
+		input, err := app.workspaceLaunchPurchaseReceiptReadbackInput(ctx, *operation)
+		if err != nil {
+			return nil, err
+		}
+		receipt, found, err := workspaceLaunchPurchaseReceiptFromLedger(ctx, service, input)
+		if err != nil || !found || receipt.ReceiptID == "" {
+			return nil, errors.Join(err, errors.New("workspace_launch_receipt_readback_invalid"))
+		}
+		operation.ReceiptID = receipt.ReceiptID
+		return nil, nil
+	default:
+		return nil, errInvalidBillingReview
+	}
+}
+
+func (app *controlPlaneServer) workspaceLaunchReadbackRecoveryProofForOperation(ctx context.Context, service *controlplane.Service, operation workspaceLaunchOperation) (workspaceLaunchOperation, workspaceLaunchReadbackRecoveryProof, error) {
+	stage, hasUnknown := workspaceLaunchReadbackUnknownStage(operation)
+	budget := operation.ContinuationAttemptBudgets[stage]
+	if !hasUnknown || stage == "" || operation.Status != "manual_review" || operation.Phase != workspaceLaunchReadbackRecoveryPhase(stage) ||
+		budget != (workspaceLaunchStageBudget{Attempted: 1, Unknown: 1, Max: workspaceLaunchStageMax}) ||
+		!computeClaimCloudDigestPattern.MatchString(operation.WorkspaceImageDigest) {
+		return operation, workspaceLaunchReadbackRecoveryProof{}, errInvalidBillingReview
+	}
+	customer, err := app.workspaceLaunchReadbackRecoveryCustomer(ctx, operation)
+	if err != nil {
+		return operation, workspaceLaunchReadbackRecoveryProof{}, err
+	}
+	userID, err := app.sub2APIUserID(ctx, operation.AccountID)
+	if err != nil || !workspaceLaunchChargeConfirmed(operation, userID) {
+		return operation, workspaceLaunchReadbackRecoveryProof{}, errBillingReviewChargeFact
+	}
+	truth, err := app.workspaceLaunchReadbackRecoveryProviderTruth(ctx, service, operation)
+	if err != nil {
+		return operation, workspaceLaunchReadbackRecoveryProof{}, err
+	}
+	if _, err := app.readWorkspaceLaunchUnknownStage(ctx, service, &operation, stage); err != nil {
+		return operation, workspaceLaunchReadbackRecoveryProof{}, errBillingReviewProviderFact
+	}
+	proof := workspaceLaunchReadbackRecoveryProof{
+		SchemaVersion: 1, Eligible: true, Reason: "none", Stage: stage, Customer: customer,
+		Target:       workspaceLaunchReadbackRecoveryTarget{LaunchOperationID: operation.ID, WorkspaceID: operation.WorkspaceID, PackageID: operation.PackageID},
+		Resources:    workspaceLaunchReadbackRecoveryExpectedResources(operation, structToMap(truth.Compute), structToMap(truth.Storage)),
+		OperationIDs: workspaceLaunchReadbackRecoveryExpectedOperationIDs(operation), WorkspaceImageDigest: operation.WorkspaceImageDigest,
+		AttemptBudget: budget, AllowedWrites: workspaceLaunchReadbackRecoveryAllowedWrites(stage),
+		ForbiddenWrites: append([]string(nil), workspaceLaunchReadbackRecoveryForbiddenWrites...),
+	}
+	return operation, proof, nil
+}
+
+func (app *controlPlaneServer) diagnoseWorkspaceLaunchReadbackRecovery(ctx context.Context, service *controlplane.Service, operationID string) (workspaceLaunchReadbackRecoveryProof, error) {
+	operation, ok, err := app.workspaceLaunchOperation(ctx, operationID)
+	if err != nil || !ok {
+		if err == nil {
+			err = errBillingReviewNotFound
+		}
+		return workspaceLaunchReadbackRecoveryProof{}, err
+	}
+	unlock := app.lockResource("workspace-launch", operation.AccountID)
+	defer unlock()
+	operation, ok, err = app.workspaceLaunchOperation(ctx, operationID)
+	if err != nil || !ok {
+		if err == nil {
+			err = errBillingReviewNotFound
+		}
+		return workspaceLaunchReadbackRecoveryProof{}, err
+	}
+	_, proof, err := app.workspaceLaunchReadbackRecoveryProofForOperation(ctx, service, operation)
+	return proof, err
+}
+
+func (app *controlPlaneServer) convergeWorkspaceLaunchUnknownStage(ctx context.Context, service *controlplane.Service, operation *workspaceLaunchOperation, approval workspaceLaunchReadbackRecoveryApproval) (bool, error) {
+	recovered, proof, err := app.workspaceLaunchReadbackRecoveryProofForOperation(ctx, service, *operation)
+	if err != nil {
+		return false, err
+	}
+	expected := approval
+	expected.Customer, expected.Target, expected.Resources = proof.Customer, proof.Target, proof.Resources
+	expected.OperationIDs, expected.WorkspaceImageDigest, expected.Stage = proof.OperationIDs, proof.WorkspaceImageDigest, proof.Stage
+	expected.AttemptBudget, expected.AllowedWrites, expected.ForbiddenWrites = proof.AttemptBudget, proof.AllowedWrites, proof.ForbiddenWrites
+	if !workspaceLaunchReadbackRecoveryApprovalMatches(approval, expected) || workspaceLaunchReadbackRecoveryApprovalDigest(expected) != approval.ApprovalDigest {
+		return false, errBillingReviewIdentity
+	}
+	*operation = recovered
+	budget := operation.ContinuationAttemptBudgets[approval.Stage]
+	budget.Confirmed, budget.Unknown = 1, 0
+	operation.ContinuationAttemptBudgets[approval.Stage] = budget
+	operation.ReadbackRecoveryApproval = &approval
+	operation.Status, operation.ErrorCode = "preparing", ""
+	releaseWorkspaceLaunchLease(operation)
+	if err := app.persistWorkspaceLaunch(ctx, operation); errors.Is(err, errWorkspaceLaunchCASConflict) {
+		return false, nil
+	} else if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 func (app *controlPlaneServer) recoverWorkspaceLaunchReview(ctx context.Context, service *controlplane.Service, input billingReviewResolutionInput) (map[string]any, error) {
 	if input.ResourceType != "workspace_launch" || input.ResourceID == "" || input.ResourceID != input.BillingOperationID || input.AccountID == "" || input.IdempotencyKey == "" || input.Reviewer == "" {
 		return nil, errInvalidBillingReview
@@ -1760,6 +2088,25 @@ func (app *controlPlaneServer) recoverWorkspaceLaunchReview(ctx context.Context,
 
 	unlockAccount := app.lockResource("account", operation.AccountID)
 	defer unlockAccount()
+	if stage, hasUnknown := workspaceLaunchReadbackUnknownStage(operation); hasUnknown {
+		if stage == "" || input.ReadbackApproval == nil || input.ReadbackApproval.Stage != stage {
+			return nil, errInvalidBillingReview
+		}
+		won, convergeErr := app.convergeWorkspaceLaunchUnknownStage(ctx, service, &operation, *input.ReadbackApproval)
+		if errors.Is(convergeErr, errBillingReviewProviderFact) {
+			return app.keepWorkspaceLaunchReview(ctx, &operation, "workspace_launch_"+stage+"_readback_unconfirmed")
+		}
+		if convergeErr != nil {
+			return nil, convergeErr
+		}
+		if won {
+			_ = app.fulfillWorkspaceLaunch(ctx, service, &operation)
+		}
+		return app.currentWorkspaceLaunchRecoveryResponse(ctx, operation.ID)
+	}
+	if input.ReadbackApproval != nil {
+		return nil, errInvalidBillingReview
+	}
 	if operation.Phase == "receipt_pending" {
 		_ = app.recordWorkspaceLaunchPurchaseReceipt(ctx, service, &operation)
 		return app.currentWorkspaceLaunchRecoveryResponse(ctx, operation.ID)
@@ -2142,20 +2489,8 @@ func (app *controlPlaneServer) recordWorkspaceLaunchRefundReceipt(ctx context.Co
 	return app.persistWorkspaceLaunch(ctx, operation)
 }
 
-func (app *controlPlaneServer) recordWorkspaceLaunchPurchaseReceipt(ctx context.Context, service *controlplane.Service, operation *workspaceLaunchOperation) error {
-	workspace, ok := app.getWorkspace(operation.WorkspaceID)
-	if !ok || !workspaceMatchesLaunch(workspace, *operation) || stringValue(workspace["runtimeId"]) != operation.RuntimeID {
-		return app.retryWorkspaceLaunchFulfillment(ctx, operation, "workspace_launch_projection_unavailable", errors.New("Workspace projection unavailable"))
-	}
-	userID, err := app.sub2APIUserID(ctx, operation.AccountID)
-	if err != nil {
-		return app.retryWorkspaceLaunchFulfillment(ctx, operation, errMonthlyAccountUnmapped.Error(), err)
-	}
-	components, _, _, err := workspaceLaunchComponents(*operation)
-	if err != nil {
-		return app.manualReviewWorkspaceLaunchFulfillment(ctx, operation, "workspace_launch_receipt_price_invalid")
-	}
-	input := clients.ReceiptInput{
+func workspaceLaunchPurchaseReceiptInput(operation workspaceLaunchOperation, userID int64, components map[string]any) clients.ReceiptInput {
+	return clients.ReceiptInput{
 		Type: "billing.workspace_purchased.v1", Status: "completed", Surface: "control_plane", AccountID: operation.AccountID,
 		WorkspaceID: operation.WorkspaceID, RequestID: operation.ID,
 		Execution: map[string]any{
@@ -2171,6 +2506,38 @@ func (app *controlPlaneServer) recordWorkspaceLaunchPurchaseReceipt(ctx context.
 		},
 		Owner: map[string]any{"accountId": operation.AccountID, "workspaceId": operation.WorkspaceID, "ownerUserId": operation.OwnerUserID},
 	}
+}
+
+func (app *controlPlaneServer) workspaceLaunchPurchaseReceiptReadbackInput(ctx context.Context, operation workspaceLaunchOperation) (clients.ReceiptInput, error) {
+	workspace, ok := app.getWorkspace(operation.WorkspaceID)
+	if !ok || !workspaceMatchesLaunch(workspace, operation) || stringValue(workspace["runtimeId"]) != operation.RuntimeID {
+		return clients.ReceiptInput{}, errors.New("workspace_launch_projection_unavailable")
+	}
+	userID, err := app.sub2APIUserID(ctx, operation.AccountID)
+	if err != nil {
+		return clients.ReceiptInput{}, err
+	}
+	components, _, _, err := workspaceLaunchComponents(operation)
+	if err != nil {
+		return clients.ReceiptInput{}, err
+	}
+	return workspaceLaunchPurchaseReceiptInput(operation, userID, components), nil
+}
+
+func (app *controlPlaneServer) recordWorkspaceLaunchPurchaseReceipt(ctx context.Context, service *controlplane.Service, operation *workspaceLaunchOperation) error {
+	workspace, ok := app.getWorkspace(operation.WorkspaceID)
+	if !ok || !workspaceMatchesLaunch(workspace, *operation) || stringValue(workspace["runtimeId"]) != operation.RuntimeID {
+		return app.retryWorkspaceLaunchFulfillment(ctx, operation, "workspace_launch_projection_unavailable", errors.New("Workspace projection unavailable"))
+	}
+	userID, err := app.sub2APIUserID(ctx, operation.AccountID)
+	if err != nil {
+		return app.retryWorkspaceLaunchFulfillment(ctx, operation, errMonthlyAccountUnmapped.Error(), err)
+	}
+	components, _, _, err := workspaceLaunchComponents(*operation)
+	if err != nil {
+		return app.manualReviewWorkspaceLaunchFulfillment(ctx, operation, "workspace_launch_receipt_price_invalid")
+	}
+	input := workspaceLaunchPurchaseReceiptInput(*operation, userID, components)
 	budget := operation.ContinuationAttemptBudgets["receipt"]
 	receipt, found, err := workspaceLaunchPurchaseReceiptFromLedger(ctx, service, input)
 	if err != nil {

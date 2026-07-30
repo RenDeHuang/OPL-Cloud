@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 23,
+  "schemaVersion": 24,
   "owner": "OPL Fabric",
   "purpose": "Deployment workflow, immutable Cloud and Workspace images, TKE handoff, read-only diagnostics, and production-verification safety.",
   "state": "current",
@@ -554,6 +554,32 @@
     },
     "artifactGate": ["exact_target_owned_readback", "proof_storage_state_and_provider_resource_id_match_approval", "proof_sub2api_zero", "proof_tencent_zero_to_five", "proof_kubernetes_zero_to_one", "attempted_equals_count", "confirmed_equals_attempted", "unknown_zero", "missing_empty"],
     "claimForbidden": ["debit", "refund", "recharge", "scale", "create_compute", "create_storage", "delete", "replace"],
+    "currentState": "code_complete_local_focused_and_postgresql_verified_not_merged_released_deployed_or_executed"
+  },
+  "productionWorkspaceLaunchReadbackRecovery": {
+    "workflow": ".github/workflows/production-basic-customer-operation.yml",
+    "modes": {
+      "diagnose": {
+        "input": "operation_mode=workspace_launch_readback_diagnose",
+        "route": "GET /api/operator/workspace-launches/{operationId}/readback-recovery-proof",
+        "persistence": "none",
+        "mutationApproval": false,
+        "mutationCounts": {"sub2api": 0, "tencent": 0, "kubernetes": 0}
+      },
+      "recover": {
+        "input": "operation_mode=workspace_launch_readback_recover",
+        "route": "POST /api/operator/workspace-launches/{operationId}/recover",
+        "confirmation": "RECOVER_UNKNOWN_WORKSPACE_LAUNCH_STAGE_FROM_AUTHORITATIVE_READBACK",
+        "approvalBinding": ["merged_main_sha", "cloud_image_digest", "workspace_image_digest", "expiry", "customer", "launch", "workspace", "compute", "storage", "attachment", "secret", "runtime", "activation", "receipt", "stage", "attempt_budget", "recovery_key"],
+        "allowedWrites": "confirm_unknown_stage_from_authoritative_readback_then_remaining_original_launch_writes",
+        "forbiddenWrites": ["create_launch", "debit", "recharge", "refund", "scale", "create_cvm", "create_second_cbs", "delete", "replace", "retry_unknown_stage_write"],
+        "runnerDirectMutationCounts": {"sub2api": 0, "tencent": 0, "kubernetes": 0},
+        "backgroundMutationCountsState": "unknown"
+      }
+    },
+    "targetSource": "protected_input_full_compute_target_projected_to_exact_launch_account_workspace",
+    "continuation": "existing_compute_claim_continue_get_only_same_original_launch",
+    "artifact": "redacted_proof_recovery_and_existing_continuation",
     "currentState": "code_complete_local_focused_and_postgresql_verified_not_merged_released_deployed_or_executed"
   },
   "productionRecoveredWorkspaceE2E": {

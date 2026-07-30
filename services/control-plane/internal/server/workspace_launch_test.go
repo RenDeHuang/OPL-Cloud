@@ -2066,6 +2066,7 @@ func TestWorkspaceComputeClaimApprovalResumesOriginalStorageOnce(t *testing.T) {
 		{name: "basic_absent", packageID: "basic", storageState: "storage_not_started"},
 		{name: "pro_absent", packageID: "pro", storageState: "storage_not_started"},
 		{name: "basic_existing_exact", packageID: "basic", storageState: "storage_existing_exact", storageProviderResourceID: "disk-existing-fixture"},
+		{name: "pro_existing_exact", packageID: "pro", storageState: "storage_existing_exact", storageProviderResourceID: "disk-existing-fixture"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, test.packageID)
@@ -3125,25 +3126,25 @@ func TestWorkspaceLaunchRecoveryRejectsUnconfirmedChargeBeforeProviderTruth(t *t
 
 func TestWorkspaceLaunchRecoveryRetriesOnlyReceiptAfterLedgerFailure(t *testing.T) {
 	t.Run("purchase", func(t *testing.T) {
-		fixture := newWorkspaceLaunchWorkerFixture(t, []int64{1_000_000_000, 1_000_000_000, 947_420_000}, nil, nil)
-		configureWorkspaceLaunchFulfillment(t, fixture)
-		fixture.ledger.receiptErrors = []error{errors.New("Ledger unavailable"), nil}
-		if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err != nil {
+		t.Setenv("OPL_INTERNAL_SERVICE_TOKEN", "workspace-launch-readback-capability")
+		scenario := newWorkspaceLaunchReadbackRecoveryScenario(t, "receipt", "basic")
+		fixture := scenario.fixture
+		fixture.service = controlplane.NewService(fixture.ledger, scenario.readback, fixture.sub2API)
+		server, err := NewPersistentServer(fixture.service, fixture.store)
+		if err != nil {
 			t.Fatal(err)
 		}
-		if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err == nil {
-			t.Fatal("first purchase receipt failure was not returned")
-		}
-		operation := fixture.operation(t)
-		operation.Status = "manual_review"
-		mustStore(t, fixture.store.memoryTableStore.SaveRuntimeOperation(context.Background(), workspaceLaunchOperationRow(operation)))
+		fixture.server, fixture.operator = server, reservedOperatorSessionForTest(t, server)
 		beforeEvents := append([]string(nil), (*fixture.events)...)
 		beforeCharges := len(fixture.sub2API.charges)
 
-		response := recoverWorkspaceLaunchForTest(t, fixture, "launch-recovery-purchase-receipt")
+		key := "launch-recovery-purchase-receipt"
+		approval := testWorkspaceLaunchReadbackApproval(t, scenario.approvalOperation, "receipt", key, structToMap(fixture.fabric.computeSync), structToMap(fixture.fabric.storageSync))
+		response := requestWorkspaceLaunchReadbackRecovery(t, fixture, approval, key)
 		current := fixture.operation(t)
-		if response.Code != http.StatusOK || current.Status != "manual_review" || current.Phase != "receipt_pending" ||
-			current.ErrorCode != "workspace_launch_receipt_attempt_unknown" || len(fixture.ledger.receiptInputs) != 1 || len(fixture.sub2API.charges) != beforeCharges {
+		if response.Code != http.StatusOK || current.Status != "succeeded" || current.Phase != "succeeded" || current.ReceiptID == "" ||
+			len(fixture.ledger.receiptInputs) != scenario.beforeCurrentWrites || len(fixture.sub2API.charges) != beforeCharges ||
+			countStrings(*fixture.events, "fabric.monthly-provider-truth") != countStrings(beforeEvents, "fabric.monthly-provider-truth")+1 {
 			t.Fatalf("purchase receipt recovery status=%d body=%s operation=%#v charges=%#v receipts=%#v", response.Code, response.Body.String(), current, fixture.sub2API.charges, fixture.ledger.receiptInputs)
 		}
 		assertNoWorkspaceLaunchRecoveryFabricWrites(t, beforeEvents, *fixture.events)
@@ -3180,7 +3181,7 @@ func TestWorkspaceLaunchRecoveryRetriesOnlyReceiptAfterLedgerFailure(t *testing.
 
 func assertNoWorkspaceLaunchRecoveryFabricWrites(t *testing.T, before, after []string) {
 	t.Helper()
-	for _, event := range []string{"fabric.monthly-provider-truth", "fabric.compute.prepare", "fabric.compute.sync", "fabric.storage.prepare", "fabric.storage.sync", "fabric.attachment", "fabric.gateway-secret", "fabric.runtime"} {
+	for _, event := range []string{"fabric.compute.prepare", "fabric.compute.sync", "fabric.storage.prepare", "fabric.storage.sync", "fabric.attachment", "fabric.gateway-secret", "fabric.runtime"} {
 		if countStrings(after, event) != countStrings(before, event) {
 			t.Fatalf("receipt-only recovery repeated %s: before=%#v after=%#v", event, before, after)
 		}

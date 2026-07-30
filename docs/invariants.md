@@ -534,6 +534,35 @@ contract or select the SKU for a customer launch.
   password login, WebSocket, exactly one model response, exactly one Usage, and
   the matching balance delta are proved. This E2E cannot modify or block the
   resource-delivery state machine.
+- An original `workspace.launch.v2` that entered `manual_review` with exactly
+  one continuation stage persisted as
+  `attempted=1, confirmed=0, unknown=1, max=1` may be recovered only through
+  the existing operator recovery route and the shared `fulfillWorkspaceLaunch`
+  orchestrator used by normal Basic, normal Pro, and compute-claim continuation.
+  Its GET proof persists nothing and performs zero Sub2API, Tencent, or
+  Kubernetes mutation. It revalidates the customer, original launch and
+  Workspace, compute and storage through `MonthlyProviderTruth`, the exact
+  Fabric operation identity, and the stage-specific authority: storage,
+  attachment, Gateway Secret, Runtime, `WorkspaceActivationTruth`, or Ledger
+  Receipt. Only one unique and identity-exact readback may CAS the original
+  PostgreSQL operation to `attempted=1, confirmed=1, unknown=0, max=1`; the
+  external stage write is never reissued. A concurrent loser, absent or multiple
+  candidate, identity drift, or any read error leaves the launch in
+  `manual_review` with zero external write.
+- `workspace_launch_readback_diagnose` and
+  `workspace_launch_readback_recover` are isolated modes in the existing
+  production customer-operation workflow. Diagnosis is approval-free and
+  GET-only. Recovery requires
+  `RECOVER_UNKNOWN_WORKSPACE_LAUNCH_STAGE_FROM_AUTHORITATIVE_READBACK`, bound to
+  the exact merged main SHA, Cloud and Workspace digests, expiry, protected
+  customer identity, launch/Workspace and all resource and original operation
+  identities, unknown stage, original attempt budget, recovery key, and the
+  stage-specific remaining write set. It explicitly forbids a new launch,
+  debit, recharge, refund, scale, CVM, second CBS, deletion, replacement, or
+  retry of the unknown external write. Runner-direct Sub2API, Tencent, and
+  Kubernetes mutation counts remain zero; the existing launch worker's bounded
+  background mutations are reported separately as unknown until terminal
+  authoritative readback proves Receipt and URL.
 
 ## Launch Stages
 

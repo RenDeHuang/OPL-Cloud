@@ -21,6 +21,8 @@ on:
           - manual_review_diagnose
           - compute_claim_diagnose
           - compute_claim_recover
+          - workspace_launch_readback_diagnose
+          - workspace_launch_readback_recover
           - recovered_workspace_e2e
       funding_mode:
         description: operator_precharge performs the approved provision and recharge; operator_precharge_recovery reads one approved completed precharge before the purchase.
@@ -80,8 +82,23 @@ on:
         required: false
         default: ""
         type: string
+      workspace_launch_target_json:
+        description: Non-secret exact original launch and compute identity JSON for unknown-stage readback diagnosis or recovery.
+        required: false
+        default: ""
+        type: string
+      workspace_launch_cloud_digest:
+        description: Exact immutable deployed Cloud sha256 digest for unknown-stage readback modes.
+        required: false
+        default: ""
+        type: string
       confirm_compute_claim_recovery:
         description: Approve the proved CVM/Node claim and continue the original launch through its bounded CBS, PV/PVC, Gateway Secret, Runtime, activation, and Receipt writes. Must be false for diagnosis.
+        required: true
+        default: false
+        type: boolean
+      confirm_workspace_launch_readback_recovery:
+        description: Approve authoritative readback convergence of one unknown launch stage and the already-authorized remaining original launch writes. Must be false for diagnosis.
         required: true
         default: false
         type: boolean
@@ -97,7 +114,7 @@ concurrency:
 jobs:
   prepare-basic-customer-operation:
     name: Prepare one approved Basic customer operation in TKE VPC
-    if: ${{ github.ref == 'refs/heads/main' && github.sha == inputs.merged_sha && inputs.operation_mode == 'customer_operation' && inputs.confirm_workspace_purchase && inputs.confirm_single_model_request && ((inputs.funding_mode == 'operator_precharge' && inputs.confirm_account_provision && inputs.confirm_wallet_recharge) || (inputs.funding_mode == 'operator_precharge_recovery' && !inputs.confirm_account_provision && !inputs.confirm_wallet_recharge)) }}
+    if: ${{ github.ref == 'refs/heads/main' && github.sha == inputs.merged_sha && inputs.operation_mode == 'customer_operation' && inputs.confirm_workspace_purchase && inputs.confirm_single_model_request && !inputs.confirm_workspace_launch_readback_recovery && ((inputs.funding_mode == 'operator_precharge' && inputs.confirm_account_provision && inputs.confirm_wallet_recharge) || (inputs.funding_mode == 'operator_precharge_recovery' && !inputs.confirm_account_provision && !inputs.confirm_wallet_recharge)) }}
     runs-on: [self-hosted, tencent-cloud, opl-cloud, tke-vpc]
     timeout-minutes: 40
     environment: production
@@ -338,7 +355,7 @@ jobs:
   complete-basic-customer-operation:
     name: Complete one approved Basic customer browser and model check
     needs: prepare-basic-customer-operation
-    if: ${{ always() && needs.prepare-basic-customer-operation.result == 'success' && github.ref == 'refs/heads/main' && github.sha == inputs.merged_sha && inputs.operation_mode == 'customer_operation' && inputs.confirm_workspace_purchase && inputs.confirm_single_model_request && ((inputs.funding_mode == 'operator_precharge' && inputs.confirm_account_provision && inputs.confirm_wallet_recharge) || (inputs.funding_mode == 'operator_precharge_recovery' && !inputs.confirm_account_provision && !inputs.confirm_wallet_recharge)) }}
+    if: ${{ always() && needs.prepare-basic-customer-operation.result == 'success' && github.ref == 'refs/heads/main' && github.sha == inputs.merged_sha && inputs.operation_mode == 'customer_operation' && inputs.confirm_workspace_purchase && inputs.confirm_single_model_request && !inputs.confirm_workspace_launch_readback_recovery && ((inputs.funding_mode == 'operator_precharge' && inputs.confirm_account_provision && inputs.confirm_wallet_recharge) || (inputs.funding_mode == 'operator_precharge_recovery' && !inputs.confirm_account_provision && !inputs.confirm_wallet_recharge)) }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: production
@@ -467,7 +484,7 @@ jobs:
 
   manual-review-diagnose:
     name: Diagnose one existing Basic launch manual review in TKE VPC
-    if: ${{ github.ref == 'refs/heads/main' && github.sha == inputs.merged_sha && inputs.operation_mode == 'manual_review_diagnose' && inputs.resume_run_id == '' && !inputs.confirm_account_provision && !inputs.confirm_wallet_recharge && !inputs.confirm_workspace_purchase && !inputs.confirm_single_model_request }}
+    if: ${{ github.ref == 'refs/heads/main' && github.sha == inputs.merged_sha && inputs.operation_mode == 'manual_review_diagnose' && inputs.resume_run_id == '' && !inputs.confirm_account_provision && !inputs.confirm_wallet_recharge && !inputs.confirm_workspace_purchase && !inputs.confirm_single_model_request && !inputs.confirm_workspace_launch_readback_recovery }}
     runs-on: [self-hosted, tencent-cloud, opl-cloud, tke-vpc]
     timeout-minutes: 15
     environment: production
@@ -612,9 +629,329 @@ jobs:
           echo "Manual-review diagnosis stopped; inspect the redacted diagnosis artifact." >&2
           exit 1
 
+  workspace-launch-readback-diagnose:
+    name: Prove one unknown Workspace launch stage by authoritative readback
+    if: ${{ github.ref == 'refs/heads/main' && github.sha == inputs.merged_sha && inputs.operation_mode == 'workspace_launch_readback_diagnose' && inputs.workspace_launch_target_json != '' && inputs.workspace_launch_cloud_digest != '' && inputs.customer_email != '' && inputs.resume_run_id == '' && inputs.diagnose_target_json == '' && inputs.compute_claim_target_json == '' && inputs.compute_claim_cloud_digest == '' && !inputs.confirm_account_provision && !inputs.confirm_wallet_recharge && !inputs.confirm_workspace_purchase && !inputs.confirm_single_model_request && !inputs.confirm_compute_claim_recovery && !inputs.confirm_workspace_launch_readback_recovery }}
+    runs-on: [self-hosted, tencent-cloud, opl-cloud, tke-vpc]
+    timeout-minutes: 15
+    environment: production
+    env:
+      OPL_MERGED_SHA: ${{ inputs.merged_sha }}
+      OPL_WORKSPACE_LAUNCH_READBACK_TARGET_JSON: ${{ inputs.workspace_launch_target_json }}
+      OPL_WORKSPACE_LAUNCH_READBACK_CLOUD_DIGEST: ${{ inputs.workspace_launch_cloud_digest }}
+      OPL_WORKSPACE_LAUNCH_READBACK_CUSTOMER_EMAIL: ${{ inputs.customer_email }}
+      OPL_CONSOLE_ORIGIN: ${{ vars.OPL_CONSOLE_ORIGIN || 'https://cloud.medopl.cn' }}
+      OPL_SUB2API_ADMIN_EMAIL: ${{ secrets.OPL_SUB2API_ADMIN_EMAIL }}
+      OPL_SUB2API_ADMIN_PASSWORD: ${{ secrets.OPL_SUB2API_ADMIN_PASSWORD }}
+      OPL_K8S_NAMESPACE: ${{ vars.OPL_K8S_NAMESPACE || 'opl-cloud' }}
+      OPL_VERIFY_REQUEST_TIMEOUT_MS: ${{ vars.OPL_VERIFY_REQUEST_TIMEOUT_MS || '30000' }}
+      KUBECONFIG: ${{ vars.TENCENT_DEPLOY_KUBECONFIG_PATH || '/home/actions/.secrets/medopl/v22/kubeconfig-package-d-deploy' }}
+
+    steps:
+      - name: Checkout exact merged main
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.merged_sha }}
+          fetch-depth: 0
+
+      - name: Verify exact readback diagnosis source
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! [[ "$OPL_MERGED_SHA" =~ ^[0-9a-f]{40}$ ]] || ! [[ "$OPL_WORKSPACE_LAUNCH_READBACK_CLOUD_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "A full merged main SHA and immutable Cloud digest are required." >&2
+            exit 1
+          fi
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          if [ "$(git rev-parse HEAD)" != "$OPL_MERGED_SHA" ] || [ "$(git rev-parse refs/remotes/origin/main)" != "$OPL_MERGED_SHA" ]; then
+            echo "Workspace launch readback diagnosis is not the exact current origin/main revision." >&2
+            exit 1
+          fi
+
+      - name: Validate read-only Workspace launch inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "$OPL_WORKSPACE_LAUNCH_READBACK_TARGET_JSON" ] || [ -z "$OPL_WORKSPACE_LAUNCH_READBACK_CUSTOMER_EMAIL" ] || [ ! -r "$KUBECONFIG" ]; then
+            echo "Workspace launch diagnosis requires the exact target, protected customer identity, and release-owned runner kubeconfig." >&2
+            exit 1
+          fi
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Prepare redacted Workspace launch proof artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          artifact_dir="$RUNNER_TEMP/production-workspace-launch-readback-diagnosis"
+          mkdir -p "$artifact_dir"
+          chmod 700 "$artifact_dir"
+          echo "OPL_WORKSPACE_LAUNCH_READBACK_ARTIFACT_DIR=$artifact_dir" >> "$GITHUB_ENV"
+
+      - name: Run Workspace launch readback diagnosis
+        id: diagnose
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          node tools/production-live-qa.ts --workspace-launch-readback-diagnose \
+            --workspace-launch-target-json "$OPL_WORKSPACE_LAUNCH_READBACK_TARGET_JSON" \
+            > "$OPL_WORKSPACE_LAUNCH_READBACK_ARTIFACT_DIR/workspace-launch-readback-diagnosis.json"
+
+      - name: Upload redacted Workspace launch diagnosis
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-workspace-launch-readback-diagnosis
+          path: ${{ runner.temp }}/production-workspace-launch-readback-diagnosis
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 30
+
+      - name: Require complete zero-mutation Workspace launch proof
+        if: ${{ steps.diagnose.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const fs = require("node:fs");
+          const result = JSON.parse(fs.readFileSync(`${process.env.OPL_WORKSPACE_LAUNCH_READBACK_ARTIFACT_DIR}/workspace-launch-readback-diagnosis.json`, "utf8"));
+          const target = JSON.parse(process.env.OPL_WORKSPACE_LAUNCH_READBACK_TARGET_JSON);
+          const exactTarget = { launchOperationId: target.launchOperationId, accountId: target.accountId, workspaceId: target.workspaceId };
+          const proof = result?.proof;
+          const exactBudget = proof?.attemptBudget?.attempted === 1 && proof?.attemptBudget?.confirmed === 0 &&
+            proof?.attemptBudget?.unknown === 1 && proof?.attemptBudget?.max === 1;
+          if (result?.schemaVersion !== 1 || result?.operationMode !== "workspace_launch_readback_diagnose" || result?.status !== "proven" ||
+            result?.recoveryEligible !== true || result?.errorCode !== "none" || result?.release?.mergedSha !== process.env.OPL_MERGED_SHA ||
+            result?.release?.cloudImageDigest !== process.env.OPL_WORKSPACE_LAUNCH_READBACK_CLOUD_DIGEST || JSON.stringify(result?.target) !== JSON.stringify(exactTarget) ||
+            proof?.schemaVersion !== 1 || proof?.eligible !== true || proof?.reason !== "none" || !exactBudget ||
+            proof?.customer?.email !== process.env.OPL_WORKSPACE_LAUNCH_READBACK_CUSTOMER_EMAIL || proof?.customer?.accountId !== exactTarget.accountId ||
+            proof?.target?.launchOperationId !== exactTarget.launchOperationId || proof?.target?.workspaceId !== exactTarget.workspaceId ||
+            proof?.sub2apiMutationCount !== 0 || proof?.tencentMutationCount !== 0 || proof?.kubernetesMutationCount !== 0 ||
+            result?.runnerDirectMutationCounts?.sub2api !== 0 || result?.runnerDirectMutationCounts?.tencent !== 0 ||
+            result?.runnerDirectMutationCounts?.kubernetes !== 0) {
+            console.error(`Workspace launch readback diagnosis blocked: ${String(result?.errorCode || "diagnosis_artifact_invalid")}`);
+            process.exit(1);
+          }
+          NODE
+
+      - name: Require Workspace launch diagnosis success
+        if: ${{ steps.diagnose.outcome != 'success' }}
+        shell: bash
+        run: |
+          echo "Workspace launch readback diagnosis stopped; inspect the redacted artifact." >&2
+          exit 1
+
+  workspace-launch-readback-recover:
+    name: Converge one approved unknown Workspace launch stage
+    if: ${{ github.ref == 'refs/heads/main' && github.sha == inputs.merged_sha && inputs.operation_mode == 'workspace_launch_readback_recover' && inputs.workspace_launch_target_json != '' && inputs.workspace_launch_cloud_digest != '' && inputs.customer_email != '' && inputs.resume_run_id == '' && inputs.diagnose_target_json == '' && inputs.compute_claim_target_json == '' && inputs.compute_claim_cloud_digest == '' && !inputs.confirm_account_provision && !inputs.confirm_wallet_recharge && !inputs.confirm_workspace_purchase && !inputs.confirm_single_model_request && !inputs.confirm_compute_claim_recovery && inputs.confirm_workspace_launch_readback_recovery }}
+    runs-on: [self-hosted, tencent-cloud, opl-cloud, tke-vpc]
+    timeout-minutes: 40
+    environment: production
+    env:
+      OPL_MERGED_SHA: ${{ inputs.merged_sha }}
+      OPL_WORKSPACE_LAUNCH_READBACK_APPROVAL_ID: ${{ inputs.approval_id }}
+      OPL_WORKSPACE_LAUNCH_READBACK_APPROVAL_JSON: ${{ secrets.OPL_WORKSPACE_LAUNCH_READBACK_APPROVAL_JSON }}
+      OPL_WORKSPACE_LAUNCH_READBACK_TARGET_JSON: ${{ inputs.workspace_launch_target_json }}
+      OPL_WORKSPACE_LAUNCH_READBACK_CLOUD_DIGEST: ${{ inputs.workspace_launch_cloud_digest }}
+      OPL_COMPUTE_CLAIM_TARGET_JSON: ${{ inputs.workspace_launch_target_json }}
+      OPL_COMPUTE_CLAIM_CLOUD_DIGEST: ${{ inputs.workspace_launch_cloud_digest }}
+      OPL_WORKSPACE_LAUNCH_READBACK_CUSTOMER_EMAIL: ${{ inputs.customer_email }}
+      OPL_BASIC_CANARY_CUSTOMER_EMAIL: ${{ inputs.customer_email }}
+      OPL_BASIC_CANARY_CUSTOMER_PASSWORD: ${{ secrets.OPL_BASIC_CANARY_CUSTOMER_PASSWORD }}
+      OPL_CONSOLE_ORIGIN: ${{ vars.OPL_CONSOLE_ORIGIN || 'https://cloud.medopl.cn' }}
+      OPL_SUB2API_ADMIN_EMAIL: ${{ secrets.OPL_SUB2API_ADMIN_EMAIL }}
+      OPL_SUB2API_ADMIN_PASSWORD: ${{ secrets.OPL_SUB2API_ADMIN_PASSWORD }}
+      OPL_K8S_NAMESPACE: ${{ vars.OPL_K8S_NAMESPACE || 'opl-cloud' }}
+      OPL_VERIFY_REQUEST_TIMEOUT_MS: ${{ vars.OPL_VERIFY_REQUEST_TIMEOUT_MS || '30000' }}
+      OPL_VERIFY_LAUNCH_POLL_ATTEMPTS: ${{ vars.OPL_VERIFY_LAUNCH_POLL_ATTEMPTS || '180' }}
+      OPL_VERIFY_LAUNCH_POLL_DELAY_MS: ${{ vars.OPL_VERIFY_LAUNCH_POLL_DELAY_MS || '10000' }}
+      KUBECONFIG: ${{ vars.TENCENT_DEPLOY_KUBECONFIG_PATH || '/home/actions/.secrets/medopl/v22/kubeconfig-package-d-deploy' }}
+
+    steps:
+      - name: Checkout exact merged main
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.merged_sha }}
+          fetch-depth: 0
+
+      - name: Verify exact approved readback source
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! [[ "$OPL_MERGED_SHA" =~ ^[0-9a-f]{40}$ ]] || ! [[ "$OPL_WORKSPACE_LAUNCH_READBACK_CLOUD_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "A full merged main SHA and immutable Cloud digest are required." >&2
+            exit 1
+          fi
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          if [ "$(git rev-parse HEAD)" != "$OPL_MERGED_SHA" ] || [ "$(git rev-parse refs/remotes/origin/main)" != "$OPL_MERGED_SHA" ]; then
+            echo "Workspace launch readback recovery is not the exact current origin/main revision." >&2
+            exit 1
+          fi
+
+      - name: Validate approved Workspace launch readback inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "$OPL_WORKSPACE_LAUNCH_READBACK_TARGET_JSON" ] || [ -z "$OPL_WORKSPACE_LAUNCH_READBACK_CUSTOMER_EMAIL" ] ||
+            [ -z "$OPL_WORKSPACE_LAUNCH_READBACK_APPROVAL_ID" ] || [ -z "$OPL_WORKSPACE_LAUNCH_READBACK_APPROVAL_JSON" ] || [ ! -r "$KUBECONFIG" ]; then
+            echo "Workspace launch recovery requires its exact target, independent approval, customer identity, and release-owned runner kubeconfig." >&2
+            exit 1
+          fi
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Prepare redacted Workspace launch recovery artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          artifact_dir="$RUNNER_TEMP/production-basic-compute-claim-evidence"
+          mkdir -p "$artifact_dir"
+          chmod 700 "$artifact_dir"
+          echo "OPL_WORKSPACE_LAUNCH_READBACK_ARTIFACT_DIR=$artifact_dir" >> "$GITHUB_ENV"
+
+      - name: Run approved Workspace launch readback recovery
+        id: recover
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          token_b64="$(kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" get secret opl-cloud-internal-service -o jsonpath='{.data.OPL_INTERNAL_SERVICE_TOKEN}')"
+          if [ -z "$token_b64" ]; then
+            echo "Current internal service capability is unavailable." >&2
+            exit 1
+          fi
+          OPL_INTERNAL_SERVICE_TOKEN="$(printf '%s' "$token_b64" | base64 -d)"
+          unset token_b64
+          if [ -z "$OPL_INTERNAL_SERVICE_TOKEN" ]; then
+            echo "Current internal service capability is empty." >&2
+            exit 1
+          fi
+          echo "::add-mask::$OPL_INTERNAL_SERVICE_TOKEN"
+          export OPL_INTERNAL_SERVICE_TOKEN
+          node tools/production-live-qa.ts --workspace-launch-readback-recover \
+            --workspace-launch-target-json "$OPL_WORKSPACE_LAUNCH_READBACK_TARGET_JSON" \
+            --approval-id "$OPL_WORKSPACE_LAUNCH_READBACK_APPROVAL_ID" \
+            > "$OPL_WORKSPACE_LAUNCH_READBACK_ARTIFACT_DIR/workspace-launch-readback-recovery.json"
+
+      - name: Require approved unknown-stage CAS convergence
+        id: readback_convergence
+        if: ${{ steps.recover.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const { createHash } = require("node:crypto");
+          const fs = require("node:fs");
+          const result = JSON.parse(fs.readFileSync(`${process.env.OPL_WORKSPACE_LAUNCH_READBACK_ARTIFACT_DIR}/workspace-launch-readback-recovery.json`, "utf8"));
+          const approval = JSON.parse(process.env.OPL_WORKSPACE_LAUNCH_READBACK_APPROVAL_JSON);
+          const target = JSON.parse(process.env.OPL_WORKSPACE_LAUNCH_READBACK_TARGET_JSON);
+          const exactTarget = { launchOperationId: target.launchOperationId, accountId: target.accountId, workspaceId: target.workspaceId };
+          const canonicalJson = (value) => Array.isArray(value)
+            ? `[${value.map(canonicalJson).join(",")}]`
+            : !value || typeof value !== "object"
+              ? JSON.stringify(value)
+              : `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(",")}}`;
+          const approvalDigest = createHash("sha256").update(canonicalJson(approval)).digest("hex");
+          const proof = result?.proof;
+          const confirmed = { attempted: 1, confirmed: 1, unknown: 0, max: 1 };
+          const unknown = { attempted: 1, confirmed: 0, unknown: 1, max: 1 };
+          if (result?.schemaVersion !== 1 || result?.operationMode !== "workspace_launch_readback_recover" || result?.status !== "converged" ||
+            result?.recoveryEligible !== true || result?.errorCode !== "none" || JSON.stringify(result?.target) !== JSON.stringify(exactTarget) ||
+            result?.release?.mergedSha !== process.env.OPL_MERGED_SHA || result?.release?.mergedSha !== approval.mergedMainSha ||
+            result?.release?.cloudImageDigest !== process.env.OPL_WORKSPACE_LAUNCH_READBACK_CLOUD_DIGEST || result?.release?.cloudImageDigest !== approval.cloudImageDigest ||
+            result?.approval?.approvalId !== approval.approvalId || approval.approvalId !== process.env.OPL_WORKSPACE_LAUNCH_READBACK_APPROVAL_ID ||
+            result?.approval?.approvalDigest !== approvalDigest || result?.stage !== approval.stage || proof?.stage !== approval.stage ||
+            approval?.schemaVersion !== 1 || approval?.confirmation !== "RECOVER_UNKNOWN_WORKSPACE_LAUNCH_STAGE_FROM_AUTHORITATIVE_READBACK" ||
+            approval?.customer?.email !== process.env.OPL_WORKSPACE_LAUNCH_READBACK_CUSTOMER_EMAIL || approval?.customer?.accountId !== exactTarget.accountId ||
+            approval?.target?.launchOperationId !== exactTarget.launchOperationId || approval?.target?.workspaceId !== exactTarget.workspaceId ||
+            JSON.stringify(proof?.customer) !== JSON.stringify(approval.customer) || JSON.stringify(proof?.target) !== JSON.stringify(approval.target) ||
+            JSON.stringify(proof?.resources) !== JSON.stringify(approval.resources) || JSON.stringify(proof?.operationIds) !== JSON.stringify(approval.operationIds) ||
+            JSON.stringify(approval?.attemptBudget) !== JSON.stringify(unknown) || JSON.stringify(proof?.attemptBudget) !== JSON.stringify(approval.attemptBudget) ||
+            JSON.stringify(proof?.allowedWrites) !== JSON.stringify(approval.allowedWrites) ||
+            JSON.stringify(proof?.forbiddenWrites) !== JSON.stringify(approval.forbiddenWrites) || JSON.stringify(result?.operation?.attemptBudget) !== JSON.stringify(confirmed) ||
+            proof?.sub2apiMutationCount !== 0 || proof?.tencentMutationCount !== 0 || proof?.kubernetesMutationCount !== 0 ||
+            result?.runnerDirectMutationCounts?.sub2api !== 0 || result?.runnerDirectMutationCounts?.tencent !== 0 ||
+            result?.runnerDirectMutationCounts?.kubernetes !== 0 || result?.backgroundMutationCountsState !== "unknown") {
+            console.error(`Workspace launch readback recovery blocked: ${String(result?.errorCode || "recovery_artifact_invalid")}`);
+            process.exit(1);
+          }
+          NODE
+
+      - name: Continue original launch with GET-only readback
+        id: continue
+        if: ${{ steps.recover.outcome == 'success' && steps.readback_convergence.outcome == 'success' }}
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          node tools/production-live-qa.ts --compute-claim-continue \
+            --compute-claim-target-json "$OPL_COMPUTE_CLAIM_TARGET_JSON" \
+            --launch-poll-attempts "$OPL_VERIFY_LAUNCH_POLL_ATTEMPTS" \
+            --launch-poll-delay-ms "$OPL_VERIFY_LAUNCH_POLL_DELAY_MS" \
+            > "$OPL_WORKSPACE_LAUNCH_READBACK_ARTIFACT_DIR/workspace-launch-continuation.json"
+
+      - name: Upload redacted Workspace launch recovery
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-basic-compute-claim-evidence
+          path: ${{ runner.temp }}/production-basic-compute-claim-evidence
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 30
+
+      - name: Require original launch URL and Receipt
+        if: ${{ steps.continue.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const fs = require("node:fs");
+          const result = JSON.parse(fs.readFileSync(`${process.env.OPL_WORKSPACE_LAUNCH_READBACK_ARTIFACT_DIR}/workspace-launch-continuation.json`, "utf8"));
+          const target = JSON.parse(process.env.OPL_COMPUTE_CLAIM_TARGET_JSON);
+          const expectedWorkspaceUrl = `https://workspace.medopl.cn/w/${target.workspaceId}/`;
+          const launch = result?.launch;
+          const runtime = result?.runtime;
+          if (result?.schemaVersion !== 2 || result?.operationMode !== "compute_claim_recover_continuation" || result?.status !== "succeeded" ||
+            result?.recoveryEligible !== true || result?.errorCode !== "none" || launch?.operationId !== target.launchOperationId ||
+            launch?.accountId !== target.accountId || launch?.workspaceId !== target.workspaceId || launch?.computeAllocationId !== target.computeAllocationId ||
+            launch?.storageId !== target.storageId || launch?.status !== "succeeded" || launch?.phase !== "succeeded" || !launch?.attachmentId ||
+            !launch?.receiptId || launch?.url !== expectedWorkspaceUrl || runtime?.workspaceId !== target.workspaceId || runtime?.status !== "running" ||
+            runtime?.ready !== true || runtime?.url !== expectedWorkspaceUrl || result?.receipt?.receiptId !== launch.receiptId ||
+            result?.receipt?.type !== "billing.workspace_purchased.v1" || result?.receipt?.status !== "completed" ||
+            result?.receipt?.workspaceId !== target.workspaceId || result?.receipt?.components?.storage?.resourceId !== target.storageId ||
+            result?.receipt?.fulfillment?.attachmentId !== launch.attachmentId || result?.receipt?.fulfillment?.runtimeId !== runtime.runtimeId ||
+            result?.runnerDirectMutationCounts?.sub2api !== 0 || result?.runnerDirectMutationCounts?.tencent !== 0 ||
+            result?.runnerDirectMutationCounts?.kubernetes !== 0 || result?.backgroundMutationCountsState !== "unknown") {
+            console.error(`Original launch continuation blocked: ${String(result?.errorCode || "continuation_artifact_invalid")}`);
+            process.exit(1);
+          }
+          NODE
+
+      - name: Require Workspace launch readback recovery success
+        if: ${{ steps.recover.outcome != 'success' }}
+        shell: bash
+        run: |
+          echo "Workspace launch readback recovery stopped; inspect the redacted artifact." >&2
+          exit 1
+
+      - name: Require Workspace launch continuation success
+        if: ${{ steps.continue.outcome != 'success' }}
+        shell: bash
+        run: |
+          echo "Original launch continuation stopped; inspect the redacted artifact." >&2
+          exit 1
+
   compute-claim-diagnose:
     name: Prove one partial Workspace compute claim in TKE VPC
-    if: ${{ github.ref == 'refs/heads/main' && github.sha == inputs.merged_sha && inputs.operation_mode == 'compute_claim_diagnose' && inputs.resume_run_id == '' && inputs.diagnose_target_json == '' && !inputs.confirm_account_provision && !inputs.confirm_wallet_recharge && !inputs.confirm_workspace_purchase && !inputs.confirm_single_model_request && !inputs.confirm_compute_claim_recovery }}
+    if: ${{ github.ref == 'refs/heads/main' && github.sha == inputs.merged_sha && inputs.operation_mode == 'compute_claim_diagnose' && inputs.resume_run_id == '' && inputs.diagnose_target_json == '' && !inputs.confirm_account_provision && !inputs.confirm_wallet_recharge && !inputs.confirm_workspace_purchase && !inputs.confirm_single_model_request && !inputs.confirm_compute_claim_recovery && !inputs.confirm_workspace_launch_readback_recovery }}
     runs-on: [self-hosted, tencent-cloud, opl-cloud, tke-vpc]
     timeout-minutes: 15
     environment: production
@@ -728,7 +1065,7 @@ jobs:
 
   compute-claim-recover:
     name: Converge one separately approved partial Workspace compute claim
-    if: ${{ github.ref == 'refs/heads/main' && github.sha == inputs.merged_sha && inputs.operation_mode == 'compute_claim_recover' && inputs.customer_email != '' && inputs.resume_run_id == '' && inputs.diagnose_target_json == '' && !inputs.confirm_account_provision && !inputs.confirm_wallet_recharge && !inputs.confirm_workspace_purchase && !inputs.confirm_single_model_request && inputs.confirm_compute_claim_recovery }}
+    if: ${{ github.ref == 'refs/heads/main' && github.sha == inputs.merged_sha && inputs.operation_mode == 'compute_claim_recover' && inputs.customer_email != '' && inputs.resume_run_id == '' && inputs.diagnose_target_json == '' && !inputs.confirm_account_provision && !inputs.confirm_wallet_recharge && !inputs.confirm_workspace_purchase && !inputs.confirm_single_model_request && inputs.confirm_compute_claim_recovery && !inputs.confirm_workspace_launch_readback_recovery }}
     runs-on: [self-hosted, tencent-cloud, opl-cloud, tke-vpc]
     timeout-minutes: 40
     environment: production
@@ -951,7 +1288,7 @@ jobs:
 
   recovered-workspace-e2e:
     name: Verify one recovered Workspace request on a hosted runner
-    if: ${{ github.ref == 'refs/heads/main' && github.sha == inputs.merged_sha && inputs.operation_mode == 'recovered_workspace_e2e' && inputs.resource_closure_run_id != '' && inputs.customer_email != '' && inputs.resume_run_id == '' && inputs.diagnose_target_json == '' && inputs.compute_claim_target_json == '' && inputs.compute_claim_cloud_digest == '' && !inputs.confirm_account_provision && !inputs.confirm_wallet_recharge && !inputs.confirm_workspace_purchase && inputs.confirm_single_model_request && !inputs.confirm_compute_claim_recovery }}
+    if: ${{ github.ref == 'refs/heads/main' && github.sha == inputs.merged_sha && inputs.operation_mode == 'recovered_workspace_e2e' && inputs.resource_closure_run_id != '' && inputs.customer_email != '' && inputs.resume_run_id == '' && inputs.diagnose_target_json == '' && inputs.compute_claim_target_json == '' && inputs.compute_claim_cloud_digest == '' && inputs.workspace_launch_target_json == '' && inputs.workspace_launch_cloud_digest == '' && !inputs.confirm_account_provision && !inputs.confirm_wallet_recharge && !inputs.confirm_workspace_purchase && inputs.confirm_single_model_request && !inputs.confirm_compute_claim_recovery && !inputs.confirm_workspace_launch_readback_recovery }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: production
