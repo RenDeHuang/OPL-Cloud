@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 15,
+  "schemaVersion": 16,
   "owner": "OPL Platform Architecture",
   "purpose": "Current ownership contract for Console UI, Control Plane, Ledger, Fabric, and external Sub2API.",
   "state": "current",
@@ -101,6 +101,25 @@
         "additionalLockService": false,
         "multiReplicaPolicy": "forbidden_until_approved_distributed_serialization"
       },
+      "workspaceContinuationAttemptBudget": {
+        "owner": "original_workspace.launch.v2_operation",
+        "stages": ["storage", "attachment", "secret", "runtime", "activation", "receipt"],
+        "fields": ["attempted", "confirmed", "unknown", "max"],
+        "maxPerStage": 1,
+        "reserve": "postgresql_cas_before_external_write",
+        "restart": "persisted_budget_never_resets",
+        "terminalFailure": "unknown_or_exhausted_enters_manual_review_and_active_worker_excludes_it"
+      },
+      "recoveredWorkspaceE2EAttempt": {
+        "reserveRoute": "POST /api/workspaces/{workspaceId}/recovered-e2e-attempt",
+        "completeRoute": "POST /api/workspaces/{workspaceId}/recovered-e2e-attempt/complete",
+        "persistence": "production_e2e_record_create_only_bound_to_original_launch_and_workspace",
+        "states": ["attempted", "passed"],
+        "replay": "any_existing_marker_returns_model_result_unknown",
+        "completion": "same_binding_attempted_to_passed_cas",
+        "retention": "recovered_workspace_marker_not_deleted",
+        "resourceMutationCount": 0
+      },
       "forbiddenPersistence": ["gatewayCredentials", "apiKeys", "apiUsage", "walletBalances", "runtimeFileMetadata"]
     },
     "ledger": {
@@ -188,6 +207,16 @@
         "unknownPolicy": "remain_manual_review_never_absent_never_refund",
         "absentRequires": "both_local_identities_and_exact_provider_describe_absence",
         "forbiddenSideEffects": ["sync", "tag", "kubectl_apply", "delete", "label", "purchase", "renew", "destroy"]
+      },
+      "workspaceActivationTruth": {
+        "endpoint": "POST /fabric/workspace-activation-truth",
+        "semantic": "read_only_proof_post_mutation_count_zero",
+        "authority": ["tencent_describe", "kubernetes_get"],
+        "consumers": ["control_plane_activation", "control_plane_workspace_gateway"],
+        "cardinality": "every_target_resource_exactly_one",
+        "kubernetesErrors": "classified_and_propagated",
+        "forbiddenCalls": ["sync", "apply", "patch", "delete"],
+        "mutationCounts": {"sub2api": 0, "tencent": 0, "kubernetes": 0}
       },
       "workspaceComputeClaimRecovery": {
         "proofEndpoint": "POST /fabric/compute-claim-recovery/proof",

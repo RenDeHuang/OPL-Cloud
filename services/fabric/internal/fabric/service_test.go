@@ -1015,7 +1015,12 @@ func TestResourceMutationsAppendFabricOperationFacts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("attach storage: %v", err)
 	}
-	runtime, err := service.CreateWorkspaceRuntime(ctx, WorkspaceRuntimeInput{WorkspaceID: "ws-alpha", ComputeID: compute.ID, VolumeID: volume.ID, ImageID: "one-person-lab-app", GatewaySecretRef: gatewaySecretName("ws-alpha"), IdempotencyKey: "ops-runtime"})
+	runtime, err := service.CreateWorkspaceRuntime(ctx, WorkspaceRuntimeInput{
+		WorkspaceID: "ws-alpha", ComputeID: compute.ID, VolumeID: volume.ID,
+		AttachmentID: attachment.ID, AttachmentOperationID: attachment.OperationID,
+		RuntimeOperationID: "ops-runtime", ImageID: "one-person-lab-app",
+		GatewaySecretRef: gatewaySecretName("ws-alpha"), IdempotencyKey: "ops-runtime",
+	})
 	if err != nil {
 		t.Fatalf("create runtime: %v", err)
 	}
@@ -1111,7 +1116,15 @@ func TestWorkspaceRuntimeCreationDoesNotReturnCredential(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create storage: %v", err)
 	}
-	runtime, err := service.CreateWorkspaceRuntime(ctx, WorkspaceRuntimeInput{WorkspaceID: "ws-alpha", ComputeID: compute.ID, VolumeID: volume.ID, ImageID: "one-person-lab-app", GatewaySecretRef: gatewaySecretName("ws-alpha"), IdempotencyKey: "access-runtime"})
+	attachment, err := service.CreateStorageAttachment(ctx, StorageAttachmentInput{WorkspaceID: "ws-alpha", ComputeID: compute.ID, VolumeID: volume.ID, IdempotencyKey: "access-attachment"})
+	if err != nil {
+		t.Fatalf("create attachment: %v", err)
+	}
+	runtime, err := service.CreateWorkspaceRuntime(ctx, WorkspaceRuntimeInput{
+		WorkspaceID: "ws-alpha", ComputeID: compute.ID, VolumeID: volume.ID, AttachmentID: attachment.ID,
+		AttachmentOperationID: "access-attachment", RuntimeOperationID: "access-runtime",
+		ImageID: "one-person-lab-app", GatewaySecretRef: gatewaySecretName("ws-alpha"), IdempotencyKey: "access-runtime",
+	})
 	if err != nil {
 		t.Fatalf("create runtime: %v", err)
 	}
@@ -1251,7 +1264,7 @@ func TestProviderFactsBatchBoundsWorkersAndSharesOneDeadline(t *testing.T) {
 	}
 }
 
-func TestWorkspaceRuntimeStatusBackfillsLatestCreatedIdentityWithoutListOrder(t *testing.T) {
+func TestWorkspaceRuntimeStatusRejectsMultipleCreatedIdentityCandidates(t *testing.T) {
 	provider := liveRuntimeWithoutIDProvider{runtimeIDs: map[string]string{"runtime-status-old": "runtime-old", "runtime-status-new": "runtime-new"}}
 	store := NewMemoryOperationStore()
 	service := runtimeTestService(provider, store)
@@ -1267,8 +1280,8 @@ func TestWorkspaceRuntimeStatusBackfillsLatestCreatedIdentityWithoutListOrder(t 
 	store.operation[0], store.operation[1] = store.operation[1], store.operation[0]
 
 	live, err := service.WorkspaceRuntimeStatus(context.Background(), "workspace-alpha")
-	if err != nil || live.ID != "runtime-new" {
-		t.Fatalf("live runtime=%#v err=%v", live, err)
+	if err == nil || live.ID != "" {
+		t.Fatalf("multiple Runtime candidates were accepted: live=%#v err=%v", live, err)
 	}
 }
 
@@ -1294,10 +1307,13 @@ func TestWorkspaceRuntimeRequiresOwnedGatewaySecretReference(t *testing.T) {
 	service := NewServiceWithOperationStore(provider, NewMemoryOperationStore())
 	service.computes["compute-alpha"] = ComputeAllocation{ID: "compute-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", Status: "running"}
 	service.volumes["storage-alpha"] = StorageVolume{ID: "storage-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", Status: "ready"}
+	service.attachments["attachment-alpha"] = StorageAttachment{ID: "attachment-alpha", OperationID: "workspace-launch-alpha:attachment", WorkspaceID: "ws-alpha", ComputeID: "compute-alpha", VolumeID: "storage-alpha", Status: "attached"}
 	for _, ref := range []string{"", gatewaySecretName("ws-other")} {
+		key := "runtime-ref-" + stableSuffix(ref)[:8]
 		_, err := service.CreateWorkspaceRuntime(context.Background(), WorkspaceRuntimeInput{
-			WorkspaceID: "ws-alpha", ComputeID: "compute-alpha", VolumeID: "storage-alpha", ImageID: "one-person-lab-app",
-			GatewaySecretRef: ref, IdempotencyKey: "runtime-ref-" + stableSuffix(ref)[:8],
+			WorkspaceID: "ws-alpha", ComputeID: "compute-alpha", VolumeID: "storage-alpha", AttachmentID: "attachment-alpha",
+			AttachmentOperationID: "workspace-launch-alpha:attachment", RuntimeOperationID: key, ImageID: "one-person-lab-app",
+			GatewaySecretRef: ref, IdempotencyKey: key,
 		})
 		if err == nil {
 			t.Fatalf("runtime must reject Gateway Secret ref %q", ref)
@@ -1307,7 +1323,8 @@ func TestWorkspaceRuntimeRequiresOwnedGatewaySecretReference(t *testing.T) {
 		t.Fatalf("invalid Gateway Secret refs reached provider %d times", provider.calls.Load())
 	}
 	valid, err := service.CreateWorkspaceRuntime(context.Background(), WorkspaceRuntimeInput{
-		WorkspaceID: "ws-alpha", ComputeID: "compute-alpha", VolumeID: "storage-alpha", ImageID: "one-person-lab-app",
+		WorkspaceID: "ws-alpha", ComputeID: "compute-alpha", VolumeID: "storage-alpha", AttachmentID: "attachment-alpha",
+		AttachmentOperationID: "workspace-launch-alpha:attachment", RuntimeOperationID: "runtime-ref-valid", ImageID: "one-person-lab-app",
 		GatewaySecretRef: gatewaySecretName("ws-alpha"), IdempotencyKey: "runtime-ref-valid",
 	})
 	if err != nil || !valid.Ready || provider.calls.Load() != 1 {
@@ -1778,14 +1795,115 @@ func TestAttachmentAndRuntimeRequireExactWorkspaceOwnership(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			compute := ComputeAllocation{ID: "compute-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", Status: "running"}
 			volume := StorageVolume{ID: "storage-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", Status: "ready"}
+			attachment := StorageAttachment{ID: "attachment-alpha", OperationID: "workspace-launch-alpha:attachment", WorkspaceID: "ws-alpha", ComputeID: "compute-alpha", VolumeID: "storage-alpha", Status: "attached"}
 			tc.configure(&compute, &volume)
 			if err := validateAttachmentInput(StorageAttachmentInput{WorkspaceID: "ws-alpha"}, compute, volume); err == nil || errorCode(err) != "resource_workspace_mismatch" {
 				t.Fatalf("attachment workspace isolation error=%v", err)
 			}
-			if err := validateRuntimeInput(WorkspaceRuntimeInput{WorkspaceID: "ws-alpha", GatewaySecretRef: gatewaySecretName("ws-alpha")}, compute, volume); err == nil || errorCode(err) != "resource_workspace_mismatch" {
+			if err := validateRuntimeInput(WorkspaceRuntimeInput{
+				WorkspaceID: "ws-alpha", ComputeID: "compute-alpha", VolumeID: "storage-alpha", AttachmentID: "attachment-alpha",
+				AttachmentOperationID: "workspace-launch-alpha:attachment", RuntimeOperationID: "workspace-launch-alpha:workspace:runtime",
+				IdempotencyKey: "workspace-launch-alpha:workspace:runtime", GatewaySecretRef: gatewaySecretName("ws-alpha"),
+			}, compute, volume, attachment, false); err == nil || errorCode(err) != "resource_workspace_mismatch" {
 				t.Fatalf("runtime workspace isolation error=%v", err)
 			}
 		})
+	}
+}
+
+func TestWorkspaceRuntimeRequiresExactPersistedAttachmentIdentity(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate func(*WorkspaceRuntimeInput)
+	}{
+		{name: "missing attachment", mutate: func(input *WorkspaceRuntimeInput) { input.AttachmentID = "att-missing" }},
+		{name: "attachment operation drift", mutate: func(input *WorkspaceRuntimeInput) { input.AttachmentOperationID = "workspace-launch-other:attachment" }},
+		{name: "runtime operation drift", mutate: func(input *WorkspaceRuntimeInput) {
+			input.RuntimeOperationID = "workspace-launch-other:workspace:runtime"
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			provider := &countingRuntimeProvider{}
+			service := runtimeTestService(provider, NewMemoryOperationStore())
+			input := runtimeTestInput("workspace-launch-alpha:workspace:runtime")
+			tc.mutate(&input)
+
+			if _, err := service.CreateWorkspaceRuntime(context.Background(), input); err == nil {
+				t.Fatal("drifted attachment identity reached runtime provider")
+			}
+			if calls := provider.calls.Load(); calls != 0 {
+				t.Fatalf("provider calls=%d, want 0", calls)
+			}
+		})
+	}
+}
+
+func TestWorkspaceRuntimePersistsStableAttachmentAndRuntimeOperationIdentity(t *testing.T) {
+	provider := &countingRuntimeProvider{}
+	service := runtimeTestService(provider, NewMemoryOperationStore())
+	input := runtimeTestInput("workspace-launch-alpha:workspace:runtime")
+
+	runtime, err := service.CreateWorkspaceRuntime(context.Background(), input)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if provider.input.AttachmentID != input.AttachmentID || provider.input.AttachmentOperationID != input.AttachmentOperationID ||
+		provider.input.RuntimeOperationID != input.RuntimeOperationID {
+		t.Fatalf("provider input=%#v", provider.input)
+	}
+	if runtime.OperationID != input.RuntimeOperationID {
+		t.Fatalf("runtime operationId=%q want %q", runtime.OperationID, input.RuntimeOperationID)
+	}
+	attachment := service.attachments[input.AttachmentID]
+	if attachment.OperationID != input.AttachmentOperationID {
+		t.Fatalf("attachment operationId=%q want %q", attachment.OperationID, input.AttachmentOperationID)
+	}
+}
+
+func TestWorkspaceRuntimeCredentialUpdateKeepsSingleCreateIdentity(t *testing.T) {
+	provider := &countingRuntimeProvider{}
+	service := runtimeTestService(provider, NewMemoryOperationStore())
+	input := runtimeTestInput("workspace-launch-alpha:workspace:runtime")
+
+	created, err := service.CreateWorkspaceRuntime(context.Background(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	update := input
+	update.IdempotencyKey = "runtime-credential-rotate:workspace-alpha:rotate-alpha:runtime"
+	updated, err := service.CreateWorkspaceRuntime(context.Background(), update)
+	if err != nil {
+		t.Fatalf("credential update: %v", err)
+	}
+	if created.ID != updated.ID || updated.OperationID != input.RuntimeOperationID {
+		t.Fatalf("runtime identity changed: created=%#v updated=%#v", created, updated)
+	}
+	if _, err := service.CreateWorkspaceRuntime(context.Background(), update); err != nil {
+		t.Fatalf("credential update replay: %v", err)
+	}
+	if calls := provider.calls.Load(); calls != 2 {
+		t.Fatalf("provider calls=%d, want initial create plus one update", calls)
+	}
+
+	operations, err := service.ListOperations(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	createCount, updateCount := 0, 0
+	for _, operation := range operations {
+		if operation.ResourceKind != "workspace_runtime" || operation.WorkspaceID != input.WorkspaceID || operation.Status != "succeeded" {
+			continue
+		}
+		switch operation.Action {
+		case "create_workspace_runtime":
+			createCount++
+		case "update_workspace_runtime":
+			updateCount++
+		}
+	}
+	if createCount != 1 || updateCount != 1 {
+		t.Fatalf("runtime operation cardinality create=%d update=%d operations=%#v", createCount, updateCount, operations)
 	}
 }
 
@@ -1813,7 +1931,12 @@ func TestServiceReplaysResourceStateFromOperationStore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("attach after replay: %v", err)
 	}
-	runtime, err := replayed.CreateWorkspaceRuntime(ctx, WorkspaceRuntimeInput{WorkspaceID: "ws-alpha", ComputeID: compute.ID, VolumeID: volume.ID, ImageID: "one-person-lab-app", GatewaySecretRef: gatewaySecretName("ws-alpha"), IdempotencyKey: "replay-runtime"})
+	runtime, err := replayed.CreateWorkspaceRuntime(ctx, WorkspaceRuntimeInput{
+		WorkspaceID: "ws-alpha", ComputeID: compute.ID, VolumeID: volume.ID,
+		AttachmentID: attachment.ID, AttachmentOperationID: attachment.OperationID,
+		RuntimeOperationID: "replay-runtime", ImageID: "one-person-lab-app",
+		GatewaySecretRef: gatewaySecretName("ws-alpha"), IdempotencyKey: "replay-runtime",
+	})
 	if err != nil {
 		t.Fatalf("runtime after replay: %v", err)
 	}
@@ -1991,11 +2114,9 @@ func TestCreateStorageAttachmentDoesNotReapplyUnsafePersistedOperation(t *testin
 
 func TestCreateWorkspaceRuntimeReplaysIdempotentlyBeforeProvider(t *testing.T) {
 	provider := &countingRuntimeProvider{}
-	service := NewServiceWithOperationStore(provider, NewMemoryOperationStore())
-	service.computes["compute-alpha"] = ComputeAllocation{ID: "compute-alpha", AccountID: "acct-alpha", WorkspaceID: "workspace-alpha", Status: "running", ServiceName: "opl-compute-alpha"}
-	service.volumes["storage-alpha"] = StorageVolume{ID: "storage-alpha", AccountID: "acct-alpha", WorkspaceID: "workspace-alpha", Status: "ready", ProviderResourceID: "pvc/storage-alpha"}
+	service := runtimeTestService(provider, NewMemoryOperationStore())
 	service.volumes["storage-other"] = StorageVolume{ID: "storage-other", AccountID: "acct-alpha", WorkspaceID: "workspace-alpha", Status: "ready", ProviderResourceID: "pvc/storage-other"}
-	input := WorkspaceRuntimeInput{WorkspaceID: "workspace-alpha", ComputeID: "compute-alpha", VolumeID: "storage-alpha", ImageID: "one-person-lab-app", GatewaySecretRef: gatewaySecretName("workspace-alpha"), IdempotencyKey: "runtime-once"}
+	input := runtimeTestInput("runtime-once")
 	first, err := service.CreateWorkspaceRuntime(context.Background(), input)
 	if err != nil {
 		t.Fatalf("create runtime: %v", err)
@@ -2182,11 +2303,19 @@ func runtimeTestService(provider Provider, store OperationStore) *Service {
 	service := NewServiceWithOperationStore(provider, store)
 	service.computes["compute-alpha"] = ComputeAllocation{ID: "compute-alpha", AccountID: "acct-alpha", WorkspaceID: "workspace-alpha", Status: "running", ServiceName: "opl-compute-alpha"}
 	service.volumes["storage-alpha"] = StorageVolume{ID: "storage-alpha", AccountID: "acct-alpha", WorkspaceID: "workspace-alpha", Status: "ready", ProviderResourceID: "pvc/storage-alpha"}
+	service.attachments["attachment-alpha"] = StorageAttachment{
+		ID: "attachment-alpha", OperationID: "workspace-launch-alpha:attachment", WorkspaceID: "workspace-alpha",
+		ComputeID: "compute-alpha", VolumeID: "storage-alpha", Status: "attached",
+	}
 	return service
 }
 
 func runtimeTestInput(key string) WorkspaceRuntimeInput {
-	return WorkspaceRuntimeInput{WorkspaceID: "workspace-alpha", ComputeID: "compute-alpha", VolumeID: "storage-alpha", ImageID: "one-person-lab-app", GatewaySecretRef: gatewaySecretName("workspace-alpha"), IdempotencyKey: key}
+	return WorkspaceRuntimeInput{
+		WorkspaceID: "workspace-alpha", ComputeID: "compute-alpha", VolumeID: "storage-alpha",
+		AttachmentID: "attachment-alpha", AttachmentOperationID: "workspace-launch-alpha:attachment", RuntimeOperationID: key,
+		ImageID: "one-person-lab-app", GatewaySecretRef: gatewaySecretName("workspace-alpha"), IdempotencyKey: key,
+	}
 }
 
 func attachmentTestService(provider Provider, store OperationStore) *Service {
@@ -2332,6 +2461,7 @@ type countingRuntimeProvider struct {
 	testProvider
 	calls        atomic.Int32
 	destroyCalls atomic.Int32
+	input        WorkspaceRuntimeInput
 }
 
 type failOnceDestroyProvider struct {
@@ -2348,6 +2478,7 @@ func (p *failOnceDestroyProvider) DestroyWorkspaceRuntime(_ context.Context, wor
 
 func (p *countingRuntimeProvider) CreateWorkspaceRuntime(_ context.Context, input WorkspaceRuntimeInput, _ ComputeAllocation, _ StorageVolume) (WorkspaceRuntime, error) {
 	p.calls.Add(1)
+	p.input = input
 	return WorkspaceRuntime{ID: "runtime-alpha", WorkspaceID: input.WorkspaceID, Status: "running", Ready: true, ServiceName: "opl-compute-alpha", ProviderRequestID: providerRequestID("runtime", input.IdempotencyKey)}, nil
 }
 

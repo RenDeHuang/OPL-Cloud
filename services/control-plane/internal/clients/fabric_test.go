@@ -109,6 +109,71 @@ func TestFabricHTTPClientReadsMonthlyProviderTruthWithoutMutation(t *testing.T) 
 	}
 }
 
+func TestFabricHTTPClientReadsStorageVolumeWithoutMutation(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.EscapedPath() != "/fabric/storage-volumes/storage%20alpha" || r.Header.Get("Authorization") != "Bearer internal-secret" {
+			t.Fatalf("unexpected request: %s %s auth=%q", r.Method, r.URL.EscapedPath(), r.Header.Get("Authorization"))
+		}
+		if _, ok := r.Header["Idempotency-Key"]; ok {
+			t.Fatalf("read-only storage GET sent Idempotency-Key: %#v", r.Header.Values("Idempotency-Key"))
+		}
+		_ = json.NewEncoder(w).Encode(StorageVolume{ID: "storage alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", Status: "ready", ProviderResourceID: "disk-alpha"})
+	}))
+	defer upstream.Close()
+
+	client := NewFabricHTTPClient(upstream.URL, "internal-secret", upstream.Client())
+	volume, err := client.GetStorageVolume(context.Background(), "storage alpha")
+	if err != nil || volume.ID != "storage alpha" || volume.Status != "ready" || volume.ProviderResourceID != "disk-alpha" {
+		t.Fatalf("storage volume = %#v err=%v", volume, err)
+	}
+}
+
+func TestFabricHTTPClientReadsWorkspaceActivationTruthWithoutMutation(t *testing.T) {
+	input := WorkspaceActivationTruthInput{
+		LaunchOperationID: "workspace-launch-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha",
+		ComputeAllocationID: "ca-alpha", ComputeOperationID: "workspace-launch-alpha:compute",
+		StorageVolumeID: "vol-alpha", StorageOperationID: "workspace-launch-alpha:storage",
+		AttachmentID: "attachment-alpha", AttachmentOperationID: "workspace-launch-alpha:attachment",
+		RuntimeID: "runtime-alpha", RuntimeOperationID: "workspace-launch-alpha:workspace:runtime",
+		ServiceName: "opl-compute-alpha", WorkspaceImageDigest: "sha256:" + strings.Repeat("a", 64),
+		GatewaySecretRef: "opl-gateway-ws-alpha", WorkspaceAPIKeyID: 19,
+		GatewaySecretFingerprint: "sha256:" + strings.Repeat("b", 64),
+	}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/fabric/workspace-activation-truth" || r.Header.Get("Authorization") != "Bearer internal-secret" {
+			t.Fatalf("unexpected request: %s %s auth=%q", r.Method, r.URL.Path, r.Header.Get("Authorization"))
+		}
+		if _, ok := r.Header["Idempotency-Key"]; ok {
+			t.Fatalf("read-only activation truth sent Idempotency-Key: %#v", r.Header.Values("Idempotency-Key"))
+		}
+		var actual WorkspaceActivationTruthInput
+		if err := json.NewDecoder(r.Body).Decode(&actual); err != nil {
+			t.Fatal(err)
+		}
+		if actual != input {
+			t.Fatalf("activation truth input = %#v, want %#v", actual, input)
+		}
+		_ = json.NewEncoder(w).Encode(WorkspaceActivationTruth{
+			SchemaVersion: 1, Ready: true, Reason: "none", ComputeState: "ready", StorageState: "ready",
+			Compute:    ComputeAllocation{ID: input.ComputeAllocationID, OperationID: input.ComputeOperationID},
+			Storage:    StorageVolume{ID: input.StorageVolumeID, OperationID: input.StorageOperationID},
+			Attachment: StorageAttachment{ID: input.AttachmentID, OperationID: input.AttachmentOperationID},
+			Runtime:    WorkspaceActivationRuntimeTruth{ID: input.RuntimeID, OperationID: input.RuntimeOperationID, ServiceName: input.ServiceName},
+			Checks:     []any{map[string]any{"name": "runtime_ready", "ok": true}},
+		})
+	}))
+	defer upstream.Close()
+
+	client, ok := NewFabricHTTPClient(upstream.URL, "internal-secret", upstream.Client()).(FabricWorkspaceActivationTruthClient)
+	if !ok {
+		t.Fatal("Fabric HTTP client must implement Workspace activation truth capability")
+	}
+	truth, err := client.WorkspaceActivationTruth(context.Background(), input)
+	if err != nil || !truth.Ready || truth.Runtime.ID != input.RuntimeID || truth.Attachment.OperationID != input.AttachmentOperationID {
+		t.Fatalf("activation truth = %#v err=%v", truth, err)
+	}
+}
+
 func TestFabricHTTPClientSeparatesComputeClaimProofAndMutation(t *testing.T) {
 	requests := 0
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

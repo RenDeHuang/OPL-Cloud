@@ -12,7 +12,7 @@ on:
         required: true
         type: string
       operation_mode:
-        description: Select the customer operation, a read-only diagnosis, or the separately approved compute claim convergence.
+        description: Select the customer operation, a read-only diagnosis, the separately approved compute claim convergence, or the isolated recovered Workspace E2E.
         required: true
         default: customer_operation
         type: choice
@@ -21,6 +21,7 @@ on:
           - manual_review_diagnose
           - compute_claim_diagnose
           - compute_claim_recover
+          - recovered_workspace_e2e
       funding_mode:
         description: operator_precharge performs the approved provision and recharge; operator_precharge_recovery reads one approved completed precharge before the purchase.
         required: true
@@ -54,6 +55,16 @@ on:
         required: false
         default: ""
         type: string
+      customer_email:
+        description: Protected exact customer email for compute_claim_recover account identity readback and recovered_workspace_e2e verification.
+        required: false
+        default: ""
+        type: string
+      resource_closure_run_id:
+        description: Prior successful compute_claim_recover run containing the redacted succeeded continuation artifact.
+        required: false
+        default: ""
+        type: string
       diagnose_target_json:
         description: Non-secret manual-review diagnostic target identity JSON. Required only for manual_review_diagnose.
         required: false
@@ -70,7 +81,7 @@ on:
         default: ""
         type: string
       confirm_compute_claim_recovery:
-        description: Approve claim-only convergence after a separately reviewed compute claim proof. Must be false for diagnosis.
+        description: Approve the proved CVM/Node claim and continue the original launch through its bounded CBS, PV/PVC, Gateway Secret, Runtime, activation, and Receipt writes. Must be false for diagnosis.
         required: true
         default: false
         type: boolean
@@ -715,7 +726,7 @@ jobs:
 
   compute-claim-recover:
     name: Converge one separately approved partial Workspace compute claim
-    if: ${{ github.ref == 'refs/heads/main' && github.sha == inputs.merged_sha && inputs.operation_mode == 'compute_claim_recover' && inputs.resume_run_id == '' && inputs.diagnose_target_json == '' && !inputs.confirm_account_provision && !inputs.confirm_wallet_recharge && !inputs.confirm_workspace_purchase && !inputs.confirm_single_model_request && inputs.confirm_compute_claim_recovery }}
+    if: ${{ github.ref == 'refs/heads/main' && github.sha == inputs.merged_sha && inputs.operation_mode == 'compute_claim_recover' && inputs.customer_email != '' && inputs.resume_run_id == '' && inputs.diagnose_target_json == '' && !inputs.confirm_account_provision && !inputs.confirm_wallet_recharge && !inputs.confirm_workspace_purchase && !inputs.confirm_single_model_request && inputs.confirm_compute_claim_recovery }}
     runs-on: [self-hosted, tencent-cloud, opl-cloud, tke-vpc]
     timeout-minutes: 40
     environment: production
@@ -728,7 +739,7 @@ jobs:
       OPL_CONSOLE_ORIGIN: ${{ vars.OPL_CONSOLE_ORIGIN || 'https://cloud.medopl.cn' }}
       OPL_SUB2API_ADMIN_EMAIL: ${{ secrets.OPL_SUB2API_ADMIN_EMAIL }}
       OPL_SUB2API_ADMIN_PASSWORD: ${{ secrets.OPL_SUB2API_ADMIN_PASSWORD }}
-      OPL_BASIC_CANARY_CUSTOMER_EMAIL: huangrende@fenggaolab.org
+      OPL_BASIC_CANARY_CUSTOMER_EMAIL: ${{ inputs.customer_email }}
       OPL_BASIC_CANARY_CUSTOMER_PASSWORD: ${{ secrets.OPL_BASIC_CANARY_CUSTOMER_PASSWORD }}
       OPL_K8S_NAMESPACE: ${{ vars.OPL_K8S_NAMESPACE || 'opl-cloud' }}
       OPL_VERIFY_REQUEST_TIMEOUT_MS: ${{ vars.OPL_VERIFY_REQUEST_TIMEOUT_MS || '30000' }}
@@ -874,17 +885,30 @@ jobs:
         run: |
           set -euo pipefail
           node <<'NODE'
+          const { createHash } = require("node:crypto");
           const fs = require("node:fs");
           const path = `${process.env.OPL_COMPUTE_CLAIM_ARTIFACT_DIR}/workspace-launch-continuation.json`;
           const result = JSON.parse(fs.readFileSync(path, "utf8"));
           const target = JSON.parse(process.env.OPL_COMPUTE_CLAIM_TARGET_JSON);
+          const approval = JSON.parse(process.env.OPL_COMPUTE_CLAIM_RECOVERY_APPROVAL_JSON);
+          const canonicalJson = (value) => Array.isArray(value)
+            ? `[${value.map(canonicalJson).join(",")}]`
+            : !value || typeof value !== "object"
+              ? JSON.stringify(value)
+              : `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(",")}}`;
+          const approvalDigest = createHash("sha256").update(canonicalJson(approval)).digest("hex");
           const launch = result?.launch;
           const runtime = result?.runtime;
+          const recovery = result?.recovery;
           const expectedWorkspaceUrl = `https://workspace.medopl.cn/w/${target.workspaceId}/`;
           if (result?.schemaVersion !== 2 || result?.operationMode !== "compute_claim_recover_continuation" ||
             result?.status !== "succeeded" || result?.recoveryEligible !== true || result?.errorCode !== "none" ||
+            result?.release?.mergedSha !== approval.mergedMainSha || result?.release?.cloudImageDigest !== approval.cloudImageDigest ||
             result?.runnerDirectMutationCounts?.sub2api !== 0 || result?.runnerDirectMutationCounts?.tencent !== 0 ||
             result?.runnerDirectMutationCounts?.kubernetes !== 0 || result?.backgroundMutationCountsState !== "unknown" ||
+            !recovery || Object.keys(recovery).sort().join(",") !== "approvalDigest,approvalId,recoveryKey,workspaceImageDigest" ||
+            recovery.approvalId !== approval.approvalId || recovery.approvalDigest !== approvalDigest ||
+            recovery.recoveryKey !== approval.recoveryKey || recovery.workspaceImageDigest !== approval.workspaceImageDigest ||
             launch?.operationId !== target.launchOperationId || launch?.accountId !== target.accountId ||
             launch?.workspaceId !== target.workspaceId || launch?.computeAllocationId !== target.computeAllocationId ||
             launch?.storageId !== target.storageId || launch?.status !== "succeeded" || launch?.phase !== "succeeded" ||
@@ -912,3 +936,87 @@ jobs:
         run: |
           echo "Original launch continuation stopped; inspect the redacted recovery artifact." >&2
           exit 1
+
+  recovered-workspace-e2e:
+    name: Verify one recovered Workspace request on a hosted runner
+    if: ${{ github.ref == 'refs/heads/main' && github.sha == inputs.merged_sha && inputs.operation_mode == 'recovered_workspace_e2e' && inputs.resource_closure_run_id != '' && inputs.customer_email != '' && inputs.resume_run_id == '' && inputs.diagnose_target_json == '' && inputs.compute_claim_target_json == '' && inputs.compute_claim_cloud_digest == '' && !inputs.confirm_account_provision && !inputs.confirm_wallet_recharge && !inputs.confirm_workspace_purchase && inputs.confirm_single_model_request && !inputs.confirm_compute_claim_recovery }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    env:
+      OPL_MERGED_SHA: ${{ inputs.merged_sha }}
+      OPL_RECOVERED_WORKSPACE_E2E_APPROVAL_ID: ${{ inputs.approval_id }}
+      OPL_RECOVERED_WORKSPACE_CUSTOMER_EMAIL: ${{ inputs.customer_email }}
+      OPL_RECOVERED_WORKSPACE_CUSTOMER_PASSWORD: ${{ secrets.OPL_BASIC_CANARY_CUSTOMER_PASSWORD }}
+      OPL_RECOVERED_WORKSPACE_E2E_APPROVAL_JSON: ${{ secrets.OPL_RECOVERED_WORKSPACE_E2E_APPROVAL_JSON }}
+      OPL_RECOVERED_WORKSPACE_E2E_CONFIRMATION: CONFIRM_SINGLE_MODEL_REQUEST_FOR_RECOVERED_WORKSPACE
+      OPL_CONSOLE_ORIGIN: ${{ vars.OPL_CONSOLE_ORIGIN || 'https://cloud.medopl.cn' }}
+      OPL_VERIFY_REQUEST_TIMEOUT_MS: ${{ vars.OPL_VERIFY_REQUEST_TIMEOUT_MS || '30000' }}
+      OPL_VERIFY_USAGE_ATTEMPTS: ${{ vars.OPL_VERIFY_USAGE_ATTEMPTS || '24' }}
+      OPL_VERIFY_USAGE_RETRY_DELAY_MS: ${{ vars.OPL_VERIFY_USAGE_RETRY_DELAY_MS || '5000' }}
+      OPL_VERIFY_BROWSER_TIMEOUT_MS: ${{ vars.OPL_VERIFY_BROWSER_TIMEOUT_MS || '45000' }}
+      OPL_VERIFY_MODEL_TIMEOUT_MS: ${{ vars.OPL_VERIFY_MODEL_TIMEOUT_MS || '180000' }}
+
+    steps:
+      - name: Checkout exact merged main
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.merged_sha }}
+          fetch-depth: 0
+
+      - name: Verify exact origin main
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! [[ "$OPL_MERGED_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "A full merged main SHA is required." >&2
+            exit 1
+          fi
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          if [ "$(git rev-parse HEAD)" != "$OPL_MERGED_SHA" ] || [ "$(git rev-parse refs/remotes/origin/main)" != "$OPL_MERGED_SHA" ]; then
+            echo "Recovered Workspace E2E source is not the exact current origin/main revision." >&2
+            exit 1
+          fi
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install E2E dependencies
+        run: npm ci
+
+      - name: Install E2E browser and system dependencies
+        run: npx playwright install --with-deps chromium
+
+      - name: Download succeeded resource closure evidence
+        uses: actions/download-artifact@v4
+        with:
+          name: production-basic-compute-claim-evidence
+          path: ${{ runner.temp }}/recovered-workspace-e2e-handoff
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.resource_closure_run_id }}
+
+      - name: Run independently approved recovered Workspace E2E
+        shell: bash
+        run: |
+          set -euo pipefail
+          artifact_dir="$RUNNER_TEMP/recovered-workspace-e2e-evidence"
+          mkdir -p "$artifact_dir"
+          chmod 700 "$artifact_dir"
+          node tools/production-live-qa.ts --recovered-workspace-e2e \
+            --allow-model-write \
+            --approval-id "$OPL_RECOVERED_WORKSPACE_E2E_APPROVAL_ID" \
+            --continuation-evidence "$RUNNER_TEMP/recovered-workspace-e2e-handoff/workspace-launch-continuation.json" \
+            > "$artifact_dir/recovered-workspace-e2e.json"
+
+      - name: Upload redacted recovered Workspace E2E evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-recovered-workspace-e2e-evidence
+          path: ${{ runner.temp }}/recovered-workspace-e2e-evidence
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 30

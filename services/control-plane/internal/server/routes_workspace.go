@@ -13,6 +13,10 @@ import (
 )
 
 func registerWorkspaceRoutes(mux *http.ServeMux, app *controlPlaneServer, service *controlplane.Service) {
+	mux.HandleFunc("POST /api/workspaces/{workspaceId}/recovered-e2e-attempt", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
+		app.reserveRecoveredWorkspaceE2EAttempt(service, w, r)
+	}))
+	mux.HandleFunc("POST /api/workspaces/{workspaceId}/recovered-e2e-attempt/complete", app.protected(false, app.completeRecoveredWorkspaceE2EAttempt))
 	mux.HandleFunc("GET /api/workspaces", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
 		page, pageSize, ok := operatorPagination(w, r)
 		if !ok {
@@ -147,6 +151,11 @@ func registerWorkspaceRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 			writeError(w, http.StatusConflict, "workspace_not_running")
 			return
 		}
+		launch, err := app.succeededWorkspaceLaunchForAccess(r.Context(), workspace)
+		if err != nil {
+			writeError(w, http.StatusConflict, "workspace_runtime_truth_unavailable")
+			return
+		}
 		accountID := firstNonEmpty(stringValue(workspace["accountId"]), stringValue(workspace["ownerAccountId"]))
 		gatewaySecretRef, err := app.currentWorkspaceGatewaySecretRef(r.Context(), workspace)
 		if err != nil {
@@ -156,8 +165,9 @@ func registerWorkspaceRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 		runtime, receipt, err := service.RotateWorkspaceCredential(r.Context(), controlplane.RotateWorkspaceCredentialInput{
 			WorkspaceID: workspaceID, AccountID: accountID, GatewaySecretRef: gatewaySecretRef,
 			OwnerID:   firstNonEmpty(stringValue(workspace["ownerUserId"]), stringValue(workspace["ownerId"])),
-			ComputeID: firstNonEmpty(stringValue(workspace["currentComputeAllocationId"]), stringValue(workspace["computeAllocationId"])),
-			VolumeID:  stringValue(workspace["storageId"]),
+			ComputeID: launch.ComputeID, VolumeID: launch.StorageID, AttachmentID: launch.AttachmentID,
+			AttachmentOperationID: launch.AttachmentOperationID, RuntimeID: launch.RuntimeID,
+			RuntimeOperationID: launch.WorkspaceOperationID + ":runtime",
 		}, key)
 		if err != nil {
 			writeUpstreamError(w, err)

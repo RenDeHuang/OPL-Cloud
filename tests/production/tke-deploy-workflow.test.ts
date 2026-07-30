@@ -833,7 +833,13 @@ test("manual-review diagnose is isolated to the VPC runner and statically contai
 
   assert.equal(inputs.operation_mode.type, "choice");
   assert.equal(inputs.operation_mode.default, "customer_operation");
-  assert.deepEqual(inputs.operation_mode.options, ["customer_operation", "manual_review_diagnose", "compute_claim_diagnose", "compute_claim_recover"]);
+  assert.deepEqual(inputs.operation_mode.options, [
+    "customer_operation",
+    "manual_review_diagnose",
+    "compute_claim_diagnose",
+    "compute_claim_recover",
+    "recovered_workspace_e2e"
+  ]);
   assert.equal(inputs.diagnose_target_json.required, false);
   assert.match(String(diagnose.if), /inputs\.operation_mode == 'manual_review_diagnose'/);
   assert.match(String(diagnose.if), /inputs\.resume_run_id == ''/);
@@ -897,6 +903,11 @@ test("compute claim diagnosis and recovery are isolated VPC modes with separate 
   assert.equal(inputs.compute_claim_cloud_digest.required, false);
   assert.equal(inputs.confirm_compute_claim_recovery.type, "boolean");
   assert.equal(inputs.confirm_compute_claim_recovery.default, false);
+  assert.doesNotMatch(String(inputs.confirm_compute_claim_recovery.description), /claim-only/i);
+  assert.match(String(inputs.confirm_compute_claim_recovery.description), /continue the original launch/i);
+  assert.match(String(inputs.confirm_compute_claim_recovery.description), /CBS, PV\/PVC, Gateway Secret, Runtime, activation, and Receipt/i);
+  assert.match(String(inputs.customer_email.description), /compute_claim_recover/);
+  assert.match(String(inputs.customer_email.description), /recovered_workspace_e2e/);
   for (const job of [diagnose, recover]) {
     assert.deepEqual(job["runs-on"], ["self-hosted", "tencent-cloud", "opl-cloud", "tke-vpc"]);
     assert.match(String(job.if), /github\.ref == 'refs\/heads\/main'/);
@@ -917,12 +928,13 @@ test("compute claim diagnosis and recovery are isolated VPC modes with separate 
 
   assert.match(String(recover.if), /inputs\.operation_mode == 'compute_claim_recover'/);
   assert.match(String(recover.if), /inputs\.confirm_compute_claim_recovery/);
+  assert.match(String(recover.if), /inputs\.customer_email != ''/);
   assert.equal(recover.environment, "production");
   assert.equal(recover.env.OPL_COMPUTE_CLAIM_RECOVERY_APPROVAL_JSON, "${{ secrets.OPL_COMPUTE_CLAIM_RECOVERY_APPROVAL_JSON }}");
   assert.equal(recover.env.OPL_SUB2API_ADMIN_EMAIL, "${{ secrets.OPL_SUB2API_ADMIN_EMAIL }}");
   assert.equal(recover.env.OPL_SUB2API_ADMIN_PASSWORD, "${{ secrets.OPL_SUB2API_ADMIN_PASSWORD }}");
   assert.equal(recover.env.OPL_BASIC_CANARY_CUSTOMER_PASSWORD, "${{ secrets.OPL_BASIC_CANARY_CUSTOMER_PASSWORD }}");
-  assert.equal(recover.env.OPL_BASIC_CANARY_CUSTOMER_EMAIL, "huangrende@fenggaolab.org");
+  assert.equal(recover.env.OPL_BASIC_CANARY_CUSTOMER_EMAIL, "${{ inputs.customer_email }}");
   assert.match(recoverRuns, /production-live-qa\.ts --compute-claim-recover/);
   assert.match(recoverRuns, /--approval-id "\$OPL_COMPUTE_CLAIM_RECOVERY_APPROVAL_ID"/);
   assert.match(recoverRuns, /get secret opl-cloud-internal-service/);
@@ -1008,8 +1020,10 @@ test("compute claim workflow executes the recovery and continuation artifact gat
     expiresAt: "2099-08-28T00:00:00Z",
     mergedMainSha: cloudCandidateSha,
     cloudImageDigest: digestA,
+    workspaceImageDigest: workspaceDigest,
     confirmation: "CLAIM_PROVEN_COMPUTE_RESOURCE",
     idempotencyKey: "compute-claim-recovery-fixture",
+    recoveryKey: "compute-claim-recovery-fixture",
     target
   };
   const approvalDigest = createHash("sha256").update(canonicalJson(approval)).digest("hex");
@@ -1097,11 +1111,20 @@ test("compute claim workflow executes the recovery and continuation artifact gat
         runtimeId: "runtime-compute-claim-fixture"
       }
     },
+    recovery: {
+      approvalId: approval.approvalId,
+      approvalDigest,
+      recoveryKey: approval.recoveryKey,
+      workspaceImageDigest: workspaceDigest
+    },
     runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
     backgroundMutationCountsState: "unknown",
     verifiedAt: "2026-08-28T00:00:00.000Z"
   };
-  const continuationEnv = { OPL_COMPUTE_CLAIM_TARGET_JSON: JSON.stringify(target) };
+  const continuationEnv = {
+    OPL_COMPUTE_CLAIM_TARGET_JSON: JSON.stringify(target),
+    OPL_COMPUTE_CLAIM_RECOVERY_APPROVAL_JSON: JSON.stringify(approval)
+  };
   const validContinuation = await runWorkflowArtifactGate(
     continuationGate,
     "workspace-launch-continuation.json",
@@ -1116,6 +1139,10 @@ test("compute claim workflow executes the recovery and continuation artifact gat
       artifact.runtime.url = artifact.launch.url;
     }],
     ["receipt Workspace drift", (artifact) => { artifact.receipt.workspaceId = "ws-other"; }],
+    ["missing recovery binding", (artifact) => { delete artifact.recovery; }],
+    ["recovery approval drift", (artifact) => { artifact.recovery.approvalDigest = "f".repeat(64); }],
+    ["recovery key drift", (artifact) => { artifact.recovery.recoveryKey = "compute-claim-recovery-other"; }],
+    ["Workspace image drift", (artifact) => { artifact.recovery.workspaceImageDigest = digestB; }],
     ["claimed background mutation count", (artifact) => { artifact.backgroundMutationCountsState = "zero"; }]
   ]) {
     const artifact = JSON.parse(JSON.stringify(continuationArtifact));
@@ -1138,6 +1165,41 @@ test("compute claim workflow executes the recovery and continuation artifact gat
     backgroundMutationCountsState: "unknown"
   }, continuationEnv);
   assert.notEqual(blockedContinuation.status, 0, "continuation gate accepted a runner blocked artifact");
+});
+
+test("recovered Workspace E2E is a separate hosted mode with no resource mutation capability or hard-coded customer", async () => {
+  const workflow = await readWorkflow(".github/workflows/production-basic-customer-operation.yml");
+  const inputs = workflow.on.workflow_dispatch.inputs;
+  assert.deepEqual(inputs.operation_mode.options, [
+    "customer_operation",
+    "manual_review_diagnose",
+    "compute_claim_diagnose",
+    "compute_claim_recover",
+    "recovered_workspace_e2e"
+  ]);
+  assert.equal(inputs.customer_email.required, false);
+  assert.equal(inputs.resource_closure_run_id.required, false);
+
+  const job = workflowJob(workflow, "recovered-workspace-e2e");
+  const runs = serializedRuns(job);
+  assert.equal(job["runs-on"], "ubuntu-latest");
+  assert.equal(job.environment, "production");
+  assert.match(String(job.if), /inputs\.operation_mode == 'recovered_workspace_e2e'/);
+  assert.match(String(job.if), /inputs\.confirm_single_model_request/);
+  for (const confirmation of ["account_provision", "wallet_recharge", "workspace_purchase", "compute_claim_recovery"]) {
+    assert.match(String(job.if), new RegExp(`!inputs\\.confirm_${confirmation}`));
+  }
+  assert.equal(job.env.OPL_RECOVERED_WORKSPACE_CUSTOMER_EMAIL, "${{ inputs.customer_email }}");
+  assert.equal(job.env.OPL_RECOVERED_WORKSPACE_E2E_APPROVAL_JSON, "${{ secrets.OPL_RECOVERED_WORKSPACE_E2E_APPROVAL_JSON }}");
+  assert.match(JSON.stringify(job.steps), /actions\/download-artifact@v4/);
+  assert.match(runs, /production-live-qa\.ts --recovered-workspace-e2e/);
+  assert.match(runs, /--approval-id "\$OPL_RECOVERED_WORKSPACE_E2E_APPROVAL_ID"/);
+  assert.match(runs, /workspace-launch-continuation\.json/);
+  assert.doesNotMatch(JSON.stringify(job), /KUBECONFIG|TENCENT_|OPL_INTERNAL_SERVICE_TOKEN|kubectl|port-forward/);
+  assert.doesNotMatch(runs, /--basic-customer-canary|--compute-claim-recover|allow-workspace-purchase|allow-wallet-recharge|allow-account-provision|create_storage_volume|CreateComputeAllocation|scale|debit|refund/i);
+
+  const source = await readFile(repoFile(".github/workflows/production-basic-customer-operation.yml"), "utf8");
+  assert.doesNotMatch(source, /huangrende@fenggaolab\.org/i);
 });
 
 test("manual cleanup workflows invoke the shared four-identity protected-resource guard", async () => {

@@ -141,9 +141,9 @@ func currentGatewayKeyAPI(method, path string) bool {
 	return method == http.MethodPost && segments[1] == "reveal" || method == http.MethodGet && (segments[1] == "usage" || segments[1] == "usage-summary")
 }
 
-func (app *controlPlaneServer) consoleStatic(w http.ResponseWriter, r *http.Request) {
+func (app *controlPlaneServer) consoleStatic(w http.ResponseWriter, r *http.Request, service *controlplane.Service) {
 	if isWorkspaceRequest(r) {
-		app.proxyWorkspaceRoot(w, r)
+		app.proxyWorkspaceRoot(w, r, service)
 		return
 	}
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {

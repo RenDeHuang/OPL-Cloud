@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -86,6 +87,14 @@ func TestWorkspaceLaunchResponseAllowsOnlyCustomerSafeFields(t *testing.T) {
 		ComputeID: "ca-alpha", StorageID: "vol-alpha",
 		AttachmentID: "attachment-alpha", AttachmentOperationID: "attachment-operation-private", WorkspaceOperationID: "workspace-operation-private",
 		WorkspaceAPIKeyID: 19, RedeemCode: "opl:launch-alpha",
+		ComputeClaimApproval: &workspaceComputeClaimApprovalBinding{
+			ApprovalID:           "approval-alpha",
+			ApprovalDigest:       strings.Repeat("a", 64),
+			RecoveryKey:          "recovery-alpha",
+			WorkspaceImageDigest: "sha256:" + strings.Repeat("b", 64),
+			Customer:             workspaceComputeClaimApprovalCustomer{Email: "private-owner@example.com", AccountID: "acct-alpha"},
+			Resources:            workspaceComputeClaimApprovalResources{GatewaySecretRef: "private-secret-ref"},
+		},
 		ErrorCode: "upstream_unavailable",
 	}
 	row := workspaceLaunchOperationRow(operation)
@@ -115,6 +124,11 @@ func TestWorkspaceLaunchResponseAllowsOnlyCustomerSafeFields(t *testing.T) {
 	if response["workspaceApiKeyId"] != "19" {
 		t.Fatalf("workspace launch Key ID must be a decimal string: %#v", response)
 	}
+	recovery, ok := response["recovery"].(map[string]any)
+	if !ok || recovery["approvalId"] != "approval-alpha" || recovery["approvalDigest"] != strings.Repeat("a", 64) ||
+		recovery["recoveryKey"] != "recovery-alpha" || recovery["workspaceImageDigest"] != "sha256:"+strings.Repeat("b", 64) || len(recovery) != 4 {
+		t.Fatalf("workspace launch recovery projection = %#v", response["recovery"])
+	}
 	for _, forbidden := range []string{"pricingVersion", "totalMonthlyPriceCnyCents"} {
 		if _, ok := response[forbidden]; ok {
 			t.Fatalf("workspace launch response exposed %s: %#v", forbidden, response)
@@ -124,7 +138,7 @@ func TestWorkspaceLaunchResponseAllowsOnlyCustomerSafeFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, forbidden := range []string{"usr-private", "attachment-operation-private", "workspace-operation-private", "private upstream detail", "private-password", "private row detail"} {
+	for _, forbidden := range []string{"usr-private", "attachment-operation-private", "workspace-operation-private", "private upstream detail", "private-password", "private row detail", "private-owner@example.com", "private-secret-ref"} {
 		if strings.Contains(string(responseJSON), forbidden) {
 			t.Fatalf("workspace launch response leaked %q: %s", forbidden, responseJSON)
 		}
@@ -669,6 +683,9 @@ type recordingWorkspaceLaunchStore struct {
 	workspaceLaunchClaimed     chan struct{}
 	workspaceLaunchClaimSignal sync.Once
 	workspaceLaunchPersistErr  error
+	activationErr              error
+	activationPersistBeforeErr bool
+	activationCalls            int
 }
 
 func (s *recordingWorkspaceLaunchStore) ApplyUserLifecycle(ctx context.Context, user map[string]any) error {
@@ -695,12 +712,28 @@ func (s *recordingWorkspaceLaunchStore) PersistWorkspaceLaunch(ctx context.Conte
 	return s.memoryTableStore.PersistWorkspaceLaunch(ctx, update)
 }
 
+func (s *recordingWorkspaceLaunchStore) ActivateWorkspace(ctx context.Context, row map[string]any) (map[string]any, error) {
+	s.activationCalls++
+	if s.activationErr != nil && !s.activationPersistBeforeErr {
+		return nil, s.activationErr
+	}
+	activated, err := s.memoryTableStore.ActivateWorkspace(ctx, row)
+	if err != nil {
+		return nil, err
+	}
+	if s.activationErr != nil {
+		return activated, s.activationErr
+	}
+	return activated, nil
+}
+
 type workspaceLaunchLedger struct {
 	fakeLedgerClient
 	events                *[]string
 	receipts              map[string]clients.Receipt
 	receiptInputs         []clients.ReceiptInput
 	receiptErrors         []error
+	persistReceiptOnError bool
 	workspaceReceiptCalls int
 }
 
@@ -710,19 +743,32 @@ func (l *workspaceLaunchLedger) RecordReceipt(_ context.Context, input clients.R
 		*l.events = append(*l.events, "ledger.workspace.receipt")
 		l.workspaceReceiptCalls++
 	}
+	receipt := clients.Receipt{ReceiptInput: input, ReceiptID: "receipt-" + stableID(key)[:12]}
 	if len(l.receiptErrors) > 0 {
 		err := l.receiptErrors[0]
 		l.receiptErrors = l.receiptErrors[1:]
 		if err != nil {
+			if l.persistReceiptOnError {
+				l.receipts[key] = receipt
+			}
 			return clients.Receipt{}, err
 		}
 	}
 	if receipt, ok := l.receipts[key]; ok {
 		return receipt, nil
 	}
-	receipt := clients.Receipt{ReceiptInput: input, ReceiptID: "receipt-" + stableID(key)[:12]}
 	l.receipts[key] = receipt
 	return receipt, nil
+}
+
+func (l *workspaceLaunchLedger) ListReceipts(_ context.Context, query clients.ReceiptQuery) (clients.ReceiptPage, error) {
+	receipts := make([]clients.Receipt, 0, len(l.receipts))
+	for _, receipt := range l.receipts {
+		if receipt.AccountID == query.AccountID {
+			receipts = append(receipts, receipt)
+		}
+	}
+	return clients.ReceiptPage{Receipts: receipts}, nil
 }
 
 type workspaceLaunchSub2API struct {
@@ -927,6 +973,9 @@ func newWorkspaceLaunchWorkerFixture(t *testing.T, balances []int64, chargeError
 
 func newWorkspaceLaunchWorkerFixtureForPlan(t *testing.T, balances []int64, chargeErrors []error, runtimeErr error, packageID string, storageGB int, autoRenew bool) workspaceLaunchWorkerFixture {
 	t.Helper()
+	if currentWorkspaceImageDigest() == "" {
+		t.Setenv("OPL_WORKSPACE_IMAGE", "registry.example/one-person-lab-app@sha256:"+strings.Repeat("f", 64))
+	}
 	t.Setenv("OPL_MONTHLY_BILLING_WORKER_ENABLED", "false")
 	t.Setenv("OPL_PROVIDER_RECONCILE_WORKER_ENABLED", "false")
 	t.Setenv("OPL_ARCHIVE_RETENTION_WORKER_ENABLED", "false")
@@ -1071,27 +1120,67 @@ func TestWorkspaceLaunchWorkerRejectsChangedDiscoveredNodePoolBeforeFirstCharge(
 }
 
 func TestWorkspaceLaunchActivationReadsProviderTruthAgain(t *testing.T) {
+	workspaceImageDigest := "sha256:" + strings.Repeat("a", 64)
+	t.Setenv("OPL_WORKSPACE_IMAGE", "registry.example/one-person-lab-app@"+workspaceImageDigest)
 	fixture := newWorkspaceLaunchWorkerFixture(t, []int64{1_000_000_000, 1_000_000_000, 947_420_000}, nil, nil)
-	configureWorkspaceLaunchFulfillment(t, fixture)
+	operation := configureWorkspaceLaunchFulfillment(t, fixture)
 	if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err != nil {
 		t.Fatal(err)
 	}
 	if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err != nil {
 		t.Fatal(err)
 	}
-	if countStrings(*fixture.events, "fabric.compute.sync") < 2 || countStrings(*fixture.events, "fabric.storage.sync") < 2 {
-		t.Fatalf("activation did not perform authoritative provider readback: events=%#v", *fixture.events)
+	if countStrings(*fixture.events, "fabric.workspace-activation-truth") != 1 || countStrings(*fixture.events, "fabric.compute.sync") != 1 ||
+		countStrings(*fixture.events, "fabric.storage.get") != 1 || countStrings(*fixture.events, "fabric.storage.sync") != 0 {
+		t.Fatalf("activation did not use the single read-only truth gate: events=%#v", *fixture.events)
+	}
+	if len(fixture.fabric.activationTruthInputs) != 1 {
+		t.Fatalf("activation truth inputs=%#v", fixture.fabric.activationTruthInputs)
+	}
+	input := fixture.fabric.activationTruthInputs[0]
+	if input.LaunchOperationID != operation.ID || input.AccountID != operation.AccountID || input.WorkspaceID != operation.WorkspaceID ||
+		input.ComputeAllocationID != operation.ComputeID || input.ComputeOperationID != operation.ID+":compute" ||
+		input.StorageVolumeID != operation.StorageID || input.StorageOperationID != operation.ID+":storage" ||
+		input.AttachmentID == "" || input.AttachmentOperationID != operation.AttachmentOperationID ||
+		input.RuntimeID == "" || input.RuntimeOperationID != operation.WorkspaceOperationID+":runtime" ||
+		input.ServiceName == "" || input.WorkspaceImageDigest != workspaceImageDigest ||
+		input.GatewaySecretRef == "" || input.WorkspaceAPIKeyID != operation.WorkspaceAPIKeyID || input.GatewaySecretFingerprint == "" {
+		t.Fatalf("activation truth identity=%#v operation=%#v", input, operation)
+	}
+}
+
+func TestWorkspaceLaunchActivationTruthFailureStopsBeforeWorkspaceAndReceipt(t *testing.T) {
+	t.Setenv("OPL_WORKSPACE_IMAGE", "registry.example/one-person-lab-app@sha256:"+strings.Repeat("b", 64))
+	fixture := newWorkspaceLaunchWorkerFixture(t, []int64{1_000_000_000, 1_000_000_000, 947_420_000}, nil, nil)
+	operation := configureWorkspaceLaunchFulfillment(t, fixture)
+	fixture.fabric.activationTruth = &clients.WorkspaceActivationTruth{
+		SchemaVersion: 1, Ready: false, Reason: "identity_mismatch", ErrorClass: "readback_mismatch",
+		ComputeState: "ready", StorageState: "ready", Checks: []any{},
+	}
+	fixture.fabric.activationTruthErr = errors.New("workspace activation truth unavailable")
+	for range 2 {
+		_ = fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service)
+	}
+	current := fixture.operation(t)
+	workspaces, _ := fixture.store.ListWorkspaces(context.Background(), operation.AccountID)
+	if current.Status != "manual_review" || current.Phase != "activating" || current.ErrorCode != "workspace_launch_activation_truth_identity_mismatch" ||
+		len(workspaces) != 0 || len(fixture.ledger.receiptInputs) != 0 || countStrings(*fixture.events, "fabric.workspace-activation-truth") != 1 {
+		t.Fatalf("activation truth failure crossed gate: operation=%#v workspaces=%#v receipts=%#v events=%#v", current, workspaces, fixture.ledger.receiptInputs, *fixture.events)
 	}
 }
 
 func configureWorkspaceLaunchFulfillment(t *testing.T, fixture workspaceLaunchWorkerFixture) workspaceLaunchOperation {
 	t.Helper()
 	operation := fixture.operation(t)
+	instanceType := "S5.MEDIUM4"
+	if operation.PackageID == "pro" {
+		instanceType = "SA5.2XLARGE16"
+	}
 	fixture.fabric.computeSync = clients.ComputeAllocation{
 		ID: operation.ComputeID, AccountID: operation.AccountID, WorkspaceID: operation.WorkspaceID, PackageID: operation.PackageID,
 		Status: "running", Provider: "tencent-tke", ProviderResourceID: "ins-" + operation.ComputeID, ProviderRequestID: "req-" + operation.ComputeID,
-		InstanceID: "ins-" + operation.ComputeID, InstanceType: "S5.MEDIUM4", Zone: "ap-shanghai-2", ChargeType: "PREPAID",
-		RenewFlag: "NOTIFY_AND_MANUAL_RENEW", Deadline: "2099-01-01T00:00:00Z", ProviderData: map[string]string{"zone": "ap-shanghai-2", "instanceType": "S5.MEDIUM4"},
+		InstanceID: "ins-" + operation.ComputeID, InstanceType: instanceType, Zone: "ap-shanghai-2", ChargeType: "PREPAID",
+		RenewFlag: "NOTIFY_AND_MANUAL_RENEW", Deadline: "2099-01-01T00:00:00Z", ProviderData: map[string]string{"zone": "ap-shanghai-2", "instanceType": instanceType},
 	}
 	fixture.fabric.storageSync = clients.StorageVolume{
 		ID: operation.StorageID, AccountID: operation.AccountID, WorkspaceID: operation.WorkspaceID, Status: "available",
@@ -1103,38 +1192,461 @@ func configureWorkspaceLaunchFulfillment(t *testing.T, fixture workspaceLaunchWo
 }
 
 func TestWorkspaceLaunchFulfillmentOnly(t *testing.T) {
+	for _, test := range []struct {
+		packageID string
+		storageGB int
+		total     int64
+	}{
+		{packageID: "basic", storageGB: 10, total: 52_580_000},
+		{packageID: "pro", storageGB: 100, total: 240_080_000},
+	} {
+		t.Run(test.packageID, func(t *testing.T) {
+			fixture := newWorkspaceLaunchWorkerFixtureForPlan(t, []int64{1_000_000_000, 1_000_000_000, 1_000_000_000 - test.total}, nil, nil, test.packageID, test.storageGB, false)
+			configureWorkspaceLaunchFulfillment(t, fixture)
+			if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err != nil {
+				t.Fatal(err)
+			}
+			if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err != nil {
+				t.Fatal(err)
+			}
+
+			operation := fixture.operation(t)
+			if operation.Status != "succeeded" || operation.Phase != "succeeded" || operation.AttachmentID == "" || operation.RuntimeServiceName == "" || operation.URL == "" {
+				t.Fatalf("fulfilled launch=%#v", operation)
+			}
+			if len(fixture.sub2API.charges) != 1 || fixture.sub2API.charges[0].ChargeUSDMicros != test.total || len(fixture.sub2API.refunds) != 0 {
+				t.Fatalf("Workspace billing calls: charges=%#v refunds=%#v", fixture.sub2API.charges, fixture.sub2API.refunds)
+			}
+			if len(fixture.fabric.computeIDs) != 1 || len(fixture.fabric.storageIDs) != 1 || countStrings(*fixture.events, "fabric.compute.sync") != 1 ||
+				countStrings(*fixture.events, "fabric.storage.get") != 1 || countStrings(*fixture.events, "fabric.storage.sync") != 0 ||
+				countStrings(*fixture.events, "fabric.attachment") != 1 || countStrings(*fixture.events, "fabric.gateway-secret") != 1 || countStrings(*fixture.events, "fabric.runtime") != 1 ||
+				countStrings(*fixture.events, "fabric.workspace-activation-truth") != 1 {
+				t.Fatalf("fulfillment events=%#v", *fixture.events)
+			}
+			assertWorkspaceLaunchRuntimeIdentity(t, fixture.fabric.runtimeInputs, operation)
+			computes, _ := fixture.store.ListComputes(context.Background(), operation.AccountID)
+			storages, _ := fixture.store.ListStorages(context.Background(), operation.AccountID)
+			if len(computes) != 1 || len(storages) != 1 {
+				t.Fatalf("fulfilled resources: computes=%#v storages=%#v", computes, storages)
+			}
+			for _, row := range []map[string]any{computes[0], storages[0]} {
+				for _, forbidden := range []string{"billingOperationId", "sub2apiRedeemCode", "chargeUsdMicros", "priceVersion"} {
+					if _, ok := row[forbidden]; ok {
+						t.Fatalf("resource retained customer billing field %s: %#v", forbidden, row)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestWorkspaceLaunchContinuationAttemptBudgetsArePersistedAndConfirmed(t *testing.T) {
+	fixture := newWorkspaceLaunchWorkerFixture(t, []int64{1_000_000_000, 1_000_000_000, 947_420_000}, nil, nil)
+	configureWorkspaceLaunchFulfillment(t, fixture)
+	for range 2 {
+		if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	operation := fixture.operation(t)
+	for _, stage := range []string{"storage", "attachment", "secret", "runtime", "activation", "receipt"} {
+		budget := persistedWorkspaceLaunchStageBudget(t, operation, stage)
+		if budget["attempted"] != float64(1) || budget["confirmed"] != float64(1) || budget["unknown"] != float64(0) || budget["max"] != float64(1) {
+			t.Fatalf("%s budget=%#v operation=%#v", stage, budget, operation)
+		}
+	}
+}
+
+func TestWorkspaceLaunchUnknownStageAttemptSurvivesRestartWithoutSecondWrite(t *testing.T) {
+	fixture := newWorkspaceLaunchWorkerFixture(t, []int64{1_000_000_000, 1_000_000_000, 947_420_000}, nil, nil)
+	configureWorkspaceLaunchFulfillment(t, fixture)
+	fixture.fabric.gatewaySecretErr = errors.New("gateway secret response unknown")
+	if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err == nil {
+		t.Fatal("unknown Secret outcome was not returned")
+	}
+
+	first := fixture.operation(t)
+	if first.Status != "manual_review" || first.Phase != "secret_writing" || first.ErrorCode != "workspace_launch_secret_attempt_unknown" {
+		t.Fatalf("unknown Secret outcome=%#v", first)
+	}
+	budget := persistedWorkspaceLaunchStageBudget(t, first, "secret")
+	if budget["attempted"] != float64(1) || budget["confirmed"] != float64(0) || budget["unknown"] != float64(1) || budget["max"] != float64(1) {
+		t.Fatalf("unknown Secret budget=%#v", budget)
+	}
+	beforeWrites := countStrings(*fixture.events, "fabric.gateway-secret")
+
+	restarted, err := newControlPlaneAppWithStore(fixture.store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := restarted.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err != nil {
+		t.Fatal(err)
+	}
+	after := fixture.operation(t)
+	if countStrings(*fixture.events, "fabric.gateway-secret") != beforeWrites || after.Status != "manual_review" || persistedWorkspaceLaunchStageBudget(t, after, "secret")["unknown"] != float64(1) {
+		t.Fatalf("restart repeated unknown Secret write: before=%d events=%#v operation=%#v", beforeWrites, *fixture.events, after)
+	}
+}
+
+func TestPostgresWorkspaceLaunchUnknownStageAttemptSurvivesStoreReopenWithoutSecondWrite(t *testing.T) {
+	t.Setenv("OPL_MONTHLY_BILLING_WORKER_ENABLED", "false")
+	t.Setenv("OPL_PROVIDER_RECONCILE_WORKER_ENABLED", "false")
+	t.Setenv("OPL_ARCHIVE_RETENTION_WORKER_ENABLED", "false")
+	t.Setenv("OPL_WORKSPACE_IMAGE", "registry.example/one-person-lab-app@sha256:"+strings.Repeat("f", 64))
+
+	admin := openControlPlaneTestPostgres(t)
+	schema := fmt.Sprintf("control_plane_workspace_launch_budget_%d", time.Now().UnixNano())
+	if _, err := admin.Exec(`CREATE SCHEMA ` + schema); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = admin.Exec(`DROP SCHEMA ` + schema + ` CASCADE`)
+		_ = admin.Close()
+	})
+	databaseURL := controlPlaneTestPostgresURL(t, "postgres", schema)
+
+	stateStore, err := newTestPostgresEntStateStore(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstStore := stateStore.(*postgresEntStateStore)
+	seedTenantMember(t, firstStore, "acct-alpha", "org-alpha", "usr-alpha", "alpha@example.com")
+
+	operation := newWorkspaceLaunchOperation("acct-alpha", "usr-alpha", "Alpha", "basic", 10, false, pilotPriceVersion, 52_580_000, "launch-postgres-secret-unknown")
+	operation.Status, operation.Phase = "preparing", "secret_writing"
+	operation.WorkspaceAPIKeyID = 19
+	operation.AttachmentID = "attachment-alpha"
+	operation.ContinuationAttemptBudgets["storage"] = workspaceLaunchStageBudget{Attempted: 1, Confirmed: 1, Max: workspaceLaunchStageMax}
+	operation.ContinuationAttemptBudgets["attachment"] = workspaceLaunchStageBudget{Attempted: 1, Confirmed: 1, Max: workspaceLaunchStageMax}
+	if err := firstStore.SaveRuntimeOperation(context.Background(), workspaceLaunchOperationRow(operation)); err != nil {
+		t.Fatal(err)
+	}
+
+	events := []string{}
+	sub2API := &workspaceLaunchSub2API{
+		monthlySub2API: &monthlySub2API{events: &events},
+		keys: map[int64]clients.Sub2APIWorkspaceKey{
+			19: {ID: 19, UserID: 41, Name: workspaceReservedKeyName(operation.WorkspaceID), Key: "workspace-key-secret", Status: "active"},
+		},
+	}
+	fabric := &monthlyFabric{
+		fakeFabricClient: fakeFabricClient{calls: &events, gatewaySecretErr: errors.New("gateway secret response unknown")},
+		events:           &events,
+	}
+	service := controlplane.NewService(fakeLedgerClient{}, fabric, sub2API)
+	firstApp, err := newControlPlaneAppWithStore(firstStore)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := firstApp.runWorkspaceLaunchesOnce(context.Background(), service); err == nil {
+		t.Fatal("unknown Secret outcome was not returned")
+	}
+	row, found, err := firstStore.GetRuntimeOperation(context.Background(), operation.ID)
+	if err != nil || !found {
+		t.Fatalf("first operation found=%t err=%v", found, err)
+	}
+	first, err := decodeWorkspaceLaunchOperation(row)
+	if err != nil {
+		t.Fatal(err)
+	}
+	budget := first.ContinuationAttemptBudgets["secret"]
+	if first.Status != "manual_review" || first.ErrorCode != "workspace_launch_secret_attempt_unknown" ||
+		budget != (workspaceLaunchStageBudget{Attempted: 1, Unknown: 1, Max: workspaceLaunchStageMax}) || countStrings(events, "fabric.gateway-secret") != 1 {
+		t.Fatalf("first unknown Secret outcome=%#v budget=%#v events=%#v", first, budget, events)
+	}
+	if err := firstStore.client.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	restartedState, err := newTestPostgresEntStateStore(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restartedStore := restartedState.(*postgresEntStateStore)
+	t.Cleanup(func() { _ = restartedStore.client.Close() })
+	restartedApp, err := newControlPlaneAppWithStore(restartedStore)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := restartedApp.runWorkspaceLaunchesOnce(context.Background(), service); err != nil {
+		t.Fatal(err)
+	}
+	restartedRow, found, err := restartedStore.GetRuntimeOperation(context.Background(), operation.ID)
+	if err != nil || !found {
+		t.Fatalf("restarted operation found=%t err=%v", found, err)
+	}
+	restarted, err := decodeWorkspaceLaunchOperation(restartedRow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restarted.Status != "manual_review" || restarted.ContinuationAttemptBudgets["secret"] != budget || countStrings(events, "fabric.gateway-secret") != 1 {
+		t.Fatalf("store reopen repeated unknown Secret write: operation=%#v events=%#v", restarted, events)
+	}
+}
+
+func TestWorkspaceLaunchStorageUnknownAttemptSurvivesRestartWithoutSecondWrite(t *testing.T) {
 	fixture := newWorkspaceLaunchWorkerFixture(t, []int64{1_000_000_000, 1_000_000_000, 947_420_000}, nil, nil)
 	configureWorkspaceLaunchFulfillment(t, fixture)
 	if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err != nil {
 		t.Fatal(err)
 	}
+	fixture.fabric.storageCreateErr = errors.New("storage response unknown")
+	fixture.fabric.storageSyncErr = errors.New("storage readback unavailable")
+	if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err == nil {
+		t.Fatal("unknown Storage outcome was not returned")
+	}
+
+	first := fixture.operation(t)
+	if first.Status != "manual_review" || first.Phase != "storage_fulfilling" || first.ErrorCode != "workspace_launch_storage_attempt_unknown" {
+		t.Fatalf("unknown Storage outcome=%#v", first)
+	}
+	budget := persistedWorkspaceLaunchStageBudget(t, first, "storage")
+	if budget["attempted"] != float64(1) || budget["confirmed"] != float64(0) || budget["unknown"] != float64(1) || budget["max"] != float64(1) {
+		t.Fatalf("unknown Storage budget=%#v", budget)
+	}
+	beforeWrites := len(fixture.fabric.storageIDs)
+
+	restarted, err := newControlPlaneAppWithStore(fixture.store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := restarted.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err != nil {
+		t.Fatal(err)
+	}
+	after := fixture.operation(t)
+	if len(fixture.fabric.storageIDs) != beforeWrites || after.Status != "manual_review" || persistedWorkspaceLaunchStageBudget(t, after, "storage")["unknown"] != float64(1) {
+		t.Fatalf("restart repeated unknown Storage write: before=%d after=%d operation=%#v", beforeWrites, len(fixture.fabric.storageIDs), after)
+	}
+}
+
+func TestWorkspaceLaunchConfirmedStorageAttemptResumesByReadbackWithoutSecondWrite(t *testing.T) {
+	fixture := newWorkspaceLaunchWorkerFixture(t, []int64{1_000_000_000, 1_000_000_000, 947_420_000}, nil, nil)
+	configureWorkspaceLaunchFulfillment(t, fixture)
 	if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err != nil {
 		t.Fatal(err)
 	}
 
 	operation := fixture.operation(t)
-	if operation.Status != "succeeded" || operation.Phase != "succeeded" || operation.AttachmentID == "" || operation.RuntimeServiceName == "" || operation.URL == "" {
-		t.Fatalf("fulfilled launch=%#v", operation)
+	operation.Status, operation.Phase, operation.ErrorCode = "preparing", "compute_fulfilling", ""
+	if outcome, err := fixture.app.fulfillWorkspaceLaunchResource(context.Background(), fixture.service, &operation, "compute"); err != nil || outcome != "ready" {
+		t.Fatalf("compute setup outcome=%q err=%v", outcome, err)
 	}
-	if len(fixture.sub2API.charges) != 1 || fixture.sub2API.charges[0].ChargeUSDMicros != 52_580_000 || len(fixture.sub2API.refunds) != 0 {
-		t.Fatalf("Workspace billing calls: charges=%#v refunds=%#v", fixture.sub2API.charges, fixture.sub2API.refunds)
+	operation.Phase = "storage_fulfilling"
+	if err := fixture.app.persistWorkspaceLaunch(context.Background(), &operation); err != nil {
+		t.Fatal(err)
 	}
-	if len(fixture.fabric.computeIDs) != 1 || len(fixture.fabric.storageIDs) != 1 || countStrings(*fixture.events, "fabric.compute.sync") != 2 || countStrings(*fixture.events, "fabric.storage.sync") != 2 ||
-		countStrings(*fixture.events, "fabric.attachment") != 1 || countStrings(*fixture.events, "fabric.gateway-secret") != 1 || countStrings(*fixture.events, "fabric.runtime") != 1 {
-		t.Fatalf("fulfillment events=%#v", *fixture.events)
+	if outcome, err := fixture.app.fulfillWorkspaceLaunchResource(context.Background(), fixture.service, &operation, "storage"); err != nil || outcome != "ready" {
+		t.Fatalf("storage setup outcome=%q err=%v", outcome, err)
 	}
-	computes, _ := fixture.store.ListComputes(context.Background(), operation.AccountID)
-	storages, _ := fixture.store.ListStorages(context.Background(), operation.AccountID)
-	if len(computes) != 1 || len(storages) != 1 {
-		t.Fatalf("fulfilled resources: computes=%#v storages=%#v", computes, storages)
+	beforeWrites := len(fixture.fabric.storageIDs)
+	beforePrepareEvents := countStrings(*fixture.events, "fabric.storage.prepare")
+	beforeReadEvents := countStrings(*fixture.events, "fabric.storage.get")
+
+	restarted, err := newControlPlaneAppWithStore(fixture.store)
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, row := range []map[string]any{computes[0], storages[0]} {
-		for _, forbidden := range []string{"billingOperationId", "sub2apiRedeemCode", "chargeUsdMicros", "priceVersion"} {
-			if _, ok := row[forbidden]; ok {
-				t.Fatalf("resource retained customer billing field %s: %#v", forbidden, row)
-			}
-		}
+	if err := restarted.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err != nil {
+		t.Fatal(err)
 	}
+
+	completed := fixture.operation(t)
+	if completed.Status != "succeeded" || completed.Phase != "succeeded" || len(fixture.fabric.storageIDs) != beforeWrites ||
+		countStrings(*fixture.events, "fabric.storage.get") != beforeReadEvents+1 || countStrings(*fixture.events, "fabric.storage.prepare") != beforePrepareEvents {
+		t.Fatalf("confirmed Storage restart did not resume by readback: operation=%#v storageWrites=%#v events=%#v", completed, fixture.fabric.storageIDs, *fixture.events)
+	}
+}
+
+func TestWorkspaceLaunchAttachmentUnknownAttemptSurvivesRestartWithoutSecondWrite(t *testing.T) {
+	fixture := newWorkspaceLaunchWorkerFixture(t, []int64{1_000_000_000, 1_000_000_000, 947_420_000}, nil, nil)
+	configureWorkspaceLaunchFulfillment(t, fixture)
+	fixture.fabric.attachmentErr = errors.New("attachment response unknown")
+	if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err == nil {
+		t.Fatal("unknown Attachment outcome was not returned")
+	}
+
+	first := fixture.operation(t)
+	if first.Status != "manual_review" || first.Phase != "attaching" || first.ErrorCode != "workspace_launch_attachment_attempt_unknown" {
+		t.Fatalf("unknown Attachment outcome=%#v", first)
+	}
+	budget := persistedWorkspaceLaunchStageBudget(t, first, "attachment")
+	if budget["attempted"] != float64(1) || budget["confirmed"] != float64(0) || budget["unknown"] != float64(1) || budget["max"] != float64(1) {
+		t.Fatalf("unknown Attachment budget=%#v", budget)
+	}
+	beforeWrites := countStrings(*fixture.events, "fabric.attachment")
+
+	restarted, err := newControlPlaneAppWithStore(fixture.store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := restarted.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err != nil {
+		t.Fatal(err)
+	}
+	after := fixture.operation(t)
+	if countStrings(*fixture.events, "fabric.attachment") != beforeWrites || after.Status != "manual_review" || persistedWorkspaceLaunchStageBudget(t, after, "attachment")["unknown"] != float64(1) {
+		t.Fatalf("restart repeated unknown Attachment write: before=%d events=%#v operation=%#v", beforeWrites, *fixture.events, after)
+	}
+}
+
+func TestWorkspaceLaunchRuntimeUnknownAttemptSurvivesRestartWithoutSecondWrite(t *testing.T) {
+	fixture := newWorkspaceLaunchWorkerFixture(t, []int64{1_000_000_000, 1_000_000_000, 947_420_000}, nil, errors.New("runtime response unknown"))
+	configureWorkspaceLaunchFulfillment(t, fixture)
+	fixture.fabric.runtimeStatusErr = errors.New("runtime readback unavailable")
+	if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err == nil {
+		t.Fatal("unknown Runtime outcome was not returned")
+	}
+
+	first := fixture.operation(t)
+	if first.Status != "manual_review" || first.Phase != "runtime_starting" || first.ErrorCode != "workspace_launch_runtime_attempt_unknown" {
+		t.Fatalf("unknown Runtime outcome=%#v", first)
+	}
+	budget := persistedWorkspaceLaunchStageBudget(t, first, "runtime")
+	if budget["attempted"] != float64(1) || budget["confirmed"] != float64(0) || budget["unknown"] != float64(1) || budget["max"] != float64(1) {
+		t.Fatalf("unknown Runtime budget=%#v", budget)
+	}
+	beforeWrites := countStrings(*fixture.events, "fabric.runtime")
+
+	restarted, err := newControlPlaneAppWithStore(fixture.store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := restarted.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err != nil {
+		t.Fatal(err)
+	}
+	after := fixture.operation(t)
+	if countStrings(*fixture.events, "fabric.runtime") != beforeWrites || after.Status != "manual_review" || persistedWorkspaceLaunchStageBudget(t, after, "runtime")["unknown"] != float64(1) {
+		t.Fatalf("restart repeated unknown Runtime write: before=%d events=%#v operation=%#v", beforeWrites, *fixture.events, after)
+	}
+}
+
+func TestWorkspaceLaunchActivationUnknownAttemptSurvivesRestartWithoutSecondWrite(t *testing.T) {
+	fixture := newWorkspaceLaunchWorkerFixture(t, []int64{1_000_000_000, 1_000_000_000, 947_420_000}, nil, nil)
+	configureWorkspaceLaunchFulfillment(t, fixture)
+	fixture.store.activationErr = errors.New("activation response unknown")
+	if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err == nil {
+		t.Fatal("unknown activation outcome was not returned")
+	}
+
+	first := fixture.operation(t)
+	if first.Status != "manual_review" || first.Phase != "activating" || first.ErrorCode != "workspace_launch_activation_attempt_unknown" {
+		t.Fatalf("unknown activation outcome=%#v", first)
+	}
+	budget := persistedWorkspaceLaunchStageBudget(t, first, "activation")
+	if budget["attempted"] != float64(1) || budget["confirmed"] != float64(0) || budget["unknown"] != float64(1) || budget["max"] != float64(1) {
+		t.Fatalf("unknown activation budget=%#v", budget)
+	}
+	beforeWrites := fixture.store.activationCalls
+
+	restarted, err := newControlPlaneAppWithStore(fixture.store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := restarted.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err != nil {
+		t.Fatal(err)
+	}
+	after := fixture.operation(t)
+	if fixture.store.activationCalls != beforeWrites || after.Status != "manual_review" || persistedWorkspaceLaunchStageBudget(t, after, "activation")["unknown"] != float64(1) {
+		t.Fatalf("restart repeated unknown activation write: before=%d after=%d operation=%#v", beforeWrites, fixture.store.activationCalls, after)
+	}
+}
+
+func TestWorkspaceLaunchReceiptUnknownAttemptSurvivesRestartWithoutSecondWrite(t *testing.T) {
+	fixture := newWorkspaceLaunchWorkerFixture(t, []int64{1_000_000_000, 1_000_000_000, 947_420_000}, nil, nil)
+	configureWorkspaceLaunchFulfillment(t, fixture)
+	fixture.ledger.receiptErrors = []error{errors.New("receipt response unknown")}
+	if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err == nil {
+		t.Fatal("unknown Receipt outcome was not returned")
+	}
+
+	first := fixture.operation(t)
+	if first.Status != "manual_review" || first.Phase != "receipt_pending" || first.ErrorCode != "workspace_launch_receipt_attempt_unknown" {
+		t.Fatalf("unknown Receipt outcome=%#v", first)
+	}
+	budget := persistedWorkspaceLaunchStageBudget(t, first, "receipt")
+	if budget["attempted"] != float64(1) || budget["confirmed"] != float64(0) || budget["unknown"] != float64(1) || budget["max"] != float64(1) {
+		t.Fatalf("unknown Receipt budget=%#v", budget)
+	}
+	beforeWrites := len(fixture.ledger.receiptInputs)
+
+	restarted, err := newControlPlaneAppWithStore(fixture.store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := restarted.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err != nil {
+		t.Fatal(err)
+	}
+	after := fixture.operation(t)
+	if len(fixture.ledger.receiptInputs) != beforeWrites || after.Status != "manual_review" || persistedWorkspaceLaunchStageBudget(t, after, "receipt")["unknown"] != float64(1) {
+		t.Fatalf("restart repeated unknown Receipt write: before=%d after=%d operation=%#v", beforeWrites, len(fixture.ledger.receiptInputs), after)
+	}
+}
+
+func TestWorkspaceLaunchExhaustedStageReservationStopsBeforeWrite(t *testing.T) {
+	fixture := newWorkspaceLaunchWorkerFixture(t, []int64{1_000_000_000}, nil, nil)
+	operation := fixture.operation(t)
+	operation.Status, operation.Phase, operation.ErrorCode = "preparing", "secret_writing", ""
+	releaseWorkspaceLaunchLease(&operation)
+	row := workspaceLaunchOperationRow(operation)
+	var result map[string]any
+	if err := json.Unmarshal([]byte(stringValue(row["result"])), &result); err != nil {
+		t.Fatal(err)
+	}
+	result["continuationAttemptBudgets"] = map[string]any{
+		"storage":    map[string]any{"attempted": 1, "confirmed": 1, "unknown": 0, "max": 1},
+		"attachment": map[string]any{"attempted": 1, "confirmed": 1, "unknown": 0, "max": 1},
+		"secret":     map[string]any{"attempted": 1, "confirmed": 0, "unknown": 0, "max": 1},
+		"runtime":    map[string]any{"attempted": 0, "confirmed": 0, "unknown": 0, "max": 1},
+		"activation": map[string]any{"attempted": 0, "confirmed": 0, "unknown": 0, "max": 1},
+		"receipt":    map[string]any{"attempted": 0, "confirmed": 0, "unknown": 0, "max": 1},
+	}
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	row["result"] = string(encoded)
+	mustStore(t, fixture.store.memoryTableStore.SaveRuntimeOperation(context.Background(), row))
+
+	if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err == nil {
+		t.Fatal("exhausted Secret reservation was not rejected")
+	}
+	current := fixture.operation(t)
+	if current.Status != "manual_review" || current.ErrorCode != "workspace_launch_secret_attempt_unknown" || countStrings(*fixture.events, "fabric.gateway-secret") != 0 {
+		t.Fatalf("exhausted Secret reservation crossed write gate: operation=%#v events=%#v", current, *fixture.events)
+	}
+	budget := persistedWorkspaceLaunchStageBudget(t, current, "secret")
+	if budget["attempted"] != float64(1) || budget["unknown"] != float64(1) || budget["max"] != float64(1) {
+		t.Fatalf("exhausted Secret budget=%#v", budget)
+	}
+}
+
+func persistedWorkspaceLaunchStageBudget(t *testing.T, operation workspaceLaunchOperation, stage string) map[string]any {
+	t.Helper()
+	var result map[string]any
+	if err := json.Unmarshal([]byte(operation.PersistedResult), &result); err != nil {
+		t.Fatal(err)
+	}
+	budgets, _ := result["continuationAttemptBudgets"].(map[string]any)
+	budget, _ := budgets[stage].(map[string]any)
+	if budget == nil {
+		t.Fatalf("missing %s budget in result=%#v", stage, result)
+	}
+	return budget
 }
 
 func TestWorkspaceLaunchFulfillmentUsesPersistedNodePool(t *testing.T) {
@@ -1241,7 +1753,28 @@ func computeClaimRecoveryProofForLaunch(operation workspaceLaunchOperation, node
 	}
 }
 
-func computeClaimRecoveryRequestBody(t *testing.T, operation workspaceLaunchOperation, approved bool) string {
+func computeClaimTestStableSuffix(parts ...string) string {
+	sum := sha256.Sum256([]byte(strings.Join(parts, ":")))
+	return fmt.Sprintf("%x", sum)
+}
+
+func computeClaimRecoveryApprovalResources(operation workspaceLaunchOperation) map[string]any {
+	runtimeOperationID := operation.WorkspaceOperationID + ":runtime"
+	return map[string]any{
+		"computeOperationId":    operation.ID + ":compute",
+		"storageOperationId":    operation.ID + ":storage",
+		"attachmentId":          "att_" + computeClaimTestStableSuffix(operation.AttachmentOperationID)[:18],
+		"attachmentOperationId": operation.AttachmentOperationID,
+		"workspaceApiKeyId":     fmt.Sprintf("%d", operation.WorkspaceAPIKeyID),
+		"gatewaySecretRef":      "opl-gateway-" + computeClaimTestStableSuffix(operation.WorkspaceID)[:16],
+		"secretOperationId":     operation.WorkspaceOperationID + ":secret:gateway-secret",
+		"runtimeId":             "rt_" + computeClaimTestStableSuffix(operation.WorkspaceID, runtimeOperationID)[:18],
+		"runtimeOperationId":    runtimeOperationID,
+		"receiptOperationId":    operation.ID + ":purchase-receipt",
+	}
+}
+
+func computeClaimRecoveryRequestBody(t *testing.T, operation workspaceLaunchOperation, approved bool, idempotencyKey string) string {
 	t.Helper()
 	body := map[string]any{
 		"accountId": operation.AccountID, "workspaceId": operation.WorkspaceID, "computeAllocationId": operation.ComputeID,
@@ -1251,10 +1784,55 @@ func computeClaimRecoveryRequestBody(t *testing.T, operation workspaceLaunchOper
 		"instanceType": operation.ComputeInstanceType, "zone": operation.ComputeZone,
 	}
 	if approved {
-		body["approvalId"] = "approval-compute-claim-fixture"
-		body["mergedMainSha"] = strings.Repeat("a", 40)
-		body["cloudImageDigest"] = "sha256:" + strings.Repeat("b", 64)
-		body["confirm"] = "CLAIM_PROVEN_COMPUTE_RESOURCE"
+		resources := computeClaimRecoveryApprovalResources(operation)
+		attemptLimits := map[string]any{
+			"claim":   map[string]any{"sub2api": 0, "tencent": 5, "kubernetes": 1},
+			"storage": 1, "attachment": 1, "secret": 1, "runtime": 1, "activation": 1, "receipt": 1,
+		}
+		allowedWrites := []string{
+			"claim_existing_cvm_node", "create_original_cbs", "create_original_pv_pvc_attachment", "upsert_original_gateway_secret",
+			"create_original_workspace_runtime", "activate_original_workspace", "record_original_purchase_receipt",
+		}
+		forbiddenWrites := []string{"create_launch", "debit", "recharge", "refund", "scale", "create_cvm", "create_second_cbs", "delete", "replace"}
+		approval := map[string]any{
+			"schemaVersion":        2,
+			"approvalId":           "approval-compute-claim-fixture",
+			"expiresAt":            "2099-08-28T00:00:00Z",
+			"mergedMainSha":        strings.Repeat("a", 40),
+			"cloudImageDigest":     "sha256:" + strings.Repeat("b", 64),
+			"workspaceImageDigest": operation.WorkspaceImageDigest,
+			"confirmation":         "RECOVER_PROVEN_COMPUTE_AND_CONTINUE_ORIGINAL_LAUNCH",
+			"idempotencyKey":       idempotencyKey,
+			"recoveryKey":          "compute-claim-recovery-fixture",
+			"customer":             map[string]any{"email": "alpha@example.com", "accountId": operation.AccountID},
+			"target": map[string]any{
+				"launchOperationId": operation.ID, "accountId": operation.AccountID, "workspaceId": operation.WorkspaceID,
+				"computeAllocationId": operation.ComputeID, "storageId": operation.StorageID, "packageId": operation.PackageID,
+				"poolId": operation.ComputePoolID, "nodePoolId": operation.ComputeNodePoolID, "machineName": operation.ComputeMachineName,
+				"nodeName": operation.ComputeNodeName, "cvmInstanceId": operation.ComputeCVMInstanceID, "privateIp": operation.ComputePrivateIP,
+				"instanceType": operation.ComputeInstanceType, "zone": operation.ComputeZone, "chargeType": operation.ComputeChargeType,
+				"periodMonths": 1, "renewFlag": operation.ComputeRenewFlag, "deadline": operation.ComputeDeadline,
+			},
+			"resources": resources, "attemptLimits": attemptLimits, "allowedWrites": allowedWrites, "forbiddenWrites": forbiddenWrites,
+		}
+		approvalJSON, err := json.Marshal(approval)
+		if err != nil {
+			t.Fatal(err)
+		}
+		approvalDigest := sha256.Sum256(approvalJSON)
+		body["approvalId"] = approval["approvalId"]
+		body["approvalDigest"] = fmt.Sprintf("%x", approvalDigest)
+		body["expiresAt"] = approval["expiresAt"]
+		body["mergedMainSha"] = approval["mergedMainSha"]
+		body["cloudImageDigest"] = approval["cloudImageDigest"]
+		body["workspaceImageDigest"] = approval["workspaceImageDigest"]
+		body["customerEmail"] = "alpha@example.com"
+		body["recoveryKey"] = approval["recoveryKey"]
+		body["resources"] = resources
+		body["attemptLimits"] = attemptLimits
+		body["allowedWrites"] = allowedWrites
+		body["forbiddenWrites"] = forbiddenWrites
+		body["confirm"] = approval["confirmation"]
 	}
 	encoded, err := json.Marshal(body)
 	if err != nil {
@@ -1293,7 +1871,7 @@ func TestWorkspaceComputeClaimDiagnosisIsReadOnlyAndExact(t *testing.T) {
 	fixture.fabric.computeClaimProof = computeClaimRecoveryProofForLaunch(operation, "unallocated")
 	path := "/api/operator/workspace-launches/" + operation.ID + "/compute-claim-recovery/proof"
 
-	response := requestWithSession(t, fixture.server, fixture.operator, http.MethodPost, path, computeClaimRecoveryRequestBody(t, operation, false))
+	response := requestWithSession(t, fixture.server, fixture.operator, http.MethodPost, path, computeClaimRecoveryRequestBody(t, operation, false, ""))
 	if response.Code != http.StatusOK {
 		t.Fatalf("compute claim diagnosis status=%d body=%s", response.Code, response.Body.String())
 	}
@@ -1310,7 +1888,7 @@ func TestWorkspaceComputeClaimDiagnosisIsReadOnlyAndExact(t *testing.T) {
 
 	mismatch := operation
 	mismatch.ComputeMachineName = "machine-other-fixture"
-	response = requestWithSession(t, fixture.server, fixture.operator, http.MethodPost, path, computeClaimRecoveryRequestBody(t, mismatch, false))
+	response = requestWithSession(t, fixture.server, fixture.operator, http.MethodPost, path, computeClaimRecoveryRequestBody(t, mismatch, false, ""))
 	if response.Code != http.StatusConflict || len(fixture.fabric.computeClaimInputs) != 1 || len(fixture.fabric.computeClaimCalls) != 0 {
 		t.Fatalf("mismatched diagnosis crossed identity gate: status=%d body=%s inputs=%#v claims=%#v", response.Code, response.Body.String(), fixture.fabric.computeClaimInputs, fixture.fabric.computeClaimCalls)
 	}
@@ -1323,7 +1901,7 @@ func TestWorkspaceComputeClaimDiagnosisAcceptsLegacyPhaseWithoutMutation(t *test
 			fixture.fabric.computeClaimProof = computeClaimRecoveryProofForLaunch(operation, "unallocated")
 			path := "/api/operator/workspace-launches/" + operation.ID + "/compute-claim-recovery/proof"
 
-			response := requestWithSession(t, fixture.server, fixture.operator, http.MethodPost, path, computeClaimRecoveryRequestBody(t, operation, false))
+			response := requestWithSession(t, fixture.server, fixture.operator, http.MethodPost, path, computeClaimRecoveryRequestBody(t, operation, false, ""))
 			current := fixture.operation(t)
 			if response.Code != http.StatusOK || current.Status != "manual_review" || current.Phase != "compute_fulfilling" ||
 				len(fixture.fabric.computeClaimInputs) != 1 || len(fixture.fabric.computeClaimCalls) != 0 || len(fixture.fabric.storageIDs) != 0 ||
@@ -1341,7 +1919,7 @@ func TestWorkspaceComputeClaimLegacyPhaseRejectsPartialPersistedIdentityBeforeFa
 	mustStore(t, fixture.store.SaveRuntimeOperation(context.Background(), workspaceLaunchOperationRow(legacy)))
 	path := "/api/operator/workspace-launches/" + target.ID + "/compute-claim-recovery/proof"
 
-	response := requestWithSession(t, fixture.server, fixture.operator, http.MethodPost, path, computeClaimRecoveryRequestBody(t, target, false))
+	response := requestWithSession(t, fixture.server, fixture.operator, http.MethodPost, path, computeClaimRecoveryRequestBody(t, target, false, ""))
 	if response.Code != http.StatusConflict || len(fixture.fabric.computeClaimInputs) != 0 || len(fixture.fabric.computeClaimCalls) != 0 ||
 		len(fixture.fabric.storageIDs) != 0 || len(fixture.sub2API.refunds) != 0 {
 		t.Fatalf("partial legacy identity crossed Fabric gate: status=%d body=%s proofs=%#v claims=%#v", response.Code, response.Body.String(), fixture.fabric.computeClaimInputs, fixture.fabric.computeClaimCalls)
@@ -1353,6 +1931,8 @@ func TestWorkspaceComputeClaimLegacyPhaseNormalizesOnlyAfterProof(t *testing.T) 
 	fixture.fabric.computeClaimProof = computeClaimRecoveryProofForLaunch(operation, "unallocated")
 	claimed := computeClaimRecoveryProofForLaunch(operation, "target_owned")
 	fixture.fabric.computeClaimResult = &claimed
+	configureWorkspaceLaunchFulfillment(t, fixture)
+	configureWorkspaceComputeClaimReadback(fixture, operation)
 	fixture.fabric.beforeComputeClaim = func() {
 		current := fixture.operation(t)
 		if current.Status != "compute_claim_pending" || current.Phase != "compute_claim_pending" {
@@ -1361,10 +1941,10 @@ func TestWorkspaceComputeClaimLegacyPhaseNormalizesOnlyAfterProof(t *testing.T) 
 	}
 	path := "/api/operator/workspace-launches/" + operation.ID + "/compute-claim-recovery/claim"
 
-	response := requestComputeClaimWithCapabilityForTest(t, fixture.server, fixture.operator, path, computeClaimRecoveryRequestBody(t, operation, true), "compute-claim-legacy")
+	response := requestComputeClaimWithCapabilityForTest(t, fixture.server, fixture.operator, path, computeClaimRecoveryRequestBody(t, operation, true, "compute-claim-legacy"), "compute-claim-legacy")
 	current := fixture.operation(t)
 	if response.Code != http.StatusOK || current.Status != "preparing" || current.Phase != "storage_fulfilling" ||
-		len(fixture.fabric.computeClaimInputs) != 1 || len(fixture.fabric.computeClaimCalls) != 1 || len(fixture.fabric.storageIDs) != 0 ||
+		len(fixture.fabric.computeClaimInputs) != 1 || len(fixture.fabric.computeClaimCalls) != 1 || countStrings(*fixture.events, "fabric.compute.get") != 1 || len(fixture.fabric.storageIDs) != 0 ||
 		len(fixture.sub2API.charges) != 1 || len(fixture.sub2API.refunds) != 0 {
 		t.Fatalf("legacy claim did not normalize and resume original launch: status=%d body=%s operation=%#v proofs=%#v claims=%#v", response.Code, response.Body.String(), current, fixture.fabric.computeClaimInputs, fixture.fabric.computeClaimCalls)
 	}
@@ -1378,7 +1958,7 @@ func TestWorkspaceComputeClaimLegacyPhaseProofFailureDoesNotNormalize(t *testing
 	fixture.fabric.computeClaimProofErr = errors.New("legacy proof rejected")
 	path := "/api/operator/workspace-launches/" + operation.ID + "/compute-claim-recovery/claim"
 
-	response := requestComputeClaimWithCapabilityForTest(t, fixture.server, fixture.operator, path, computeClaimRecoveryRequestBody(t, operation, true), "compute-claim-legacy-proof-failure")
+	response := requestComputeClaimWithCapabilityForTest(t, fixture.server, fixture.operator, path, computeClaimRecoveryRequestBody(t, operation, true, "compute-claim-legacy-proof-failure"), "compute-claim-legacy-proof-failure")
 	current := fixture.operation(t)
 	if response.Code != http.StatusConflict || current.Status != "manual_review" || current.Phase != "compute_fulfilling" ||
 		len(fixture.fabric.computeClaimInputs) != 1 || len(fixture.fabric.computeClaimCalls) != 0 || len(fixture.fabric.storageIDs) != 0 ||
@@ -1393,7 +1973,7 @@ func TestWorkspaceComputeClaimLegacyPhaseCASConflictStopsBeforeFabricClaim(t *te
 	fixture.store.workspaceLaunchPersistErr = errWorkspaceLaunchCASConflict
 	path := "/api/operator/workspace-launches/" + operation.ID + "/compute-claim-recovery/claim"
 
-	response := requestComputeClaimWithCapabilityForTest(t, fixture.server, fixture.operator, path, computeClaimRecoveryRequestBody(t, operation, true), "compute-claim-legacy-cas-conflict")
+	response := requestComputeClaimWithCapabilityForTest(t, fixture.server, fixture.operator, path, computeClaimRecoveryRequestBody(t, operation, true, "compute-claim-legacy-cas-conflict"), "compute-claim-legacy-cas-conflict")
 	current := fixture.operation(t)
 	if response.Code != http.StatusConflict || current.Status != "manual_review" || current.Phase != "compute_fulfilling" ||
 		len(fixture.fabric.computeClaimInputs) != 1 || len(fixture.fabric.computeClaimCalls) != 0 || len(fixture.fabric.storageIDs) != 0 ||
@@ -1408,7 +1988,7 @@ func TestWorkspaceComputeClaimRequiresServerCapabilityBeforeFabric(t *testing.T)
 			fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, "basic")
 			t.Setenv("OPL_INTERNAL_SERVICE_TOKEN", "compute-claim-internal-capability")
 			path := "/api/operator/workspace-launches/" + operation.ID + "/compute-claim-recovery/claim"
-			req := httptest.NewRequest(http.MethodPost, path, bytes.NewBufferString(computeClaimRecoveryRequestBody(t, operation, true)))
+			req := httptest.NewRequest(http.MethodPost, path, bytes.NewBufferString(computeClaimRecoveryRequestBody(t, operation, true, "compute-claim-capability-gate")))
 			req.Header.Set("Content-Type", "application/json")
 			req.Header.Set("Idempotency-Key", "compute-claim-capability-gate")
 			if capability != "" {
@@ -1446,7 +2026,7 @@ func TestWorkspaceComputeClaimRejectsInvalidApprovalAndTargetBeforeFabric(t *tes
 			fixture.fabric.computeClaimProof = computeClaimRecoveryProofForLaunch(operation, "target_owned")
 			path := "/api/operator/workspace-launches/" + operation.ID + "/compute-claim-recovery/claim"
 			var body map[string]any
-			if err := json.Unmarshal([]byte(computeClaimRecoveryRequestBody(t, operation, true)), &body); err != nil {
+			if err := json.Unmarshal([]byte(computeClaimRecoveryRequestBody(t, operation, true, "compute-claim-invalid")), &body); err != nil {
 				t.Fatal(err)
 			}
 			tc.mutate(body)
@@ -1468,10 +2048,9 @@ func TestWorkspaceComputeClaimApprovalResumesOriginalStorageOnce(t *testing.T) {
 			fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, packageID)
 			fixture.fabric.computeClaimProof = computeClaimRecoveryProofForLaunch(operation, "target_owned")
 			configureWorkspaceLaunchFulfillment(t, fixture)
-			fixture.fabric.computeSync.InstanceType = operation.ComputeInstanceType
-			fixture.fabric.computeSync.ProviderData["instanceType"] = operation.ComputeInstanceType
+			configureWorkspaceComputeClaimReadback(fixture, operation)
 			path := "/api/operator/workspace-launches/" + operation.ID + "/compute-claim-recovery/claim"
-			body := computeClaimRecoveryRequestBody(t, operation, true)
+			body := computeClaimRecoveryRequestBody(t, operation, true, "compute-claim-fixture")
 
 			first := requestComputeClaimWithCapabilityForTest(t, fixture.server, fixture.operator, path, body, "compute-claim-fixture")
 			second := requestComputeClaimWithCapabilityForTest(t, fixture.server, fixture.operator, path, body, "compute-claim-fixture")
@@ -1490,6 +2069,7 @@ func TestWorkspaceComputeClaimApprovalResumesOriginalStorageOnce(t *testing.T) {
 			if first.Code != http.StatusOK || second.Code != http.StatusOK || driftedIP.Code != http.StatusConflict || changedKey.Code != http.StatusConflict ||
 				claimed.Status != "preparing" || claimed.Phase != "storage_fulfilling" || claimed.ComputeClaimProof == nil || claimed.ComputeClaimProof.PrivateIP != operation.ComputePrivateIP ||
 				len(fixture.fabric.computeClaimCalls) != 1 || len(fixture.fabric.computeClaimKeys) != 1 || fixture.fabric.computeClaimKeys[0] != "compute-claim-fixture" ||
+				countStrings(*fixture.events, "fabric.compute.get") != 1 ||
 				len(fixture.fabric.storageIDs) != 0 || len(fixture.fabric.computeIDs) != 1 || len(fixture.sub2API.charges) != 1 || len(fixture.sub2API.refunds) != 0 {
 				t.Fatalf("claim did not bind replay identity or stop at original storage phase: first=%d second=%d driftedIP=%d changedKey=%d operation=%#v calls=%#v keys=%#v compute=%#v storage=%#v", first.Code, second.Code, driftedIP.Code, changedKey.Code, claimed, fixture.fabric.computeClaimCalls, fixture.fabric.computeClaimKeys, fixture.fabric.computeIDs, fixture.fabric.storageIDs)
 			}
@@ -1504,7 +2084,114 @@ func TestWorkspaceComputeClaimApprovalResumesOriginalStorageOnce(t *testing.T) {
 				len(fixture.fabric.computeIDs) != 1 || len(fixture.sub2API.charges) != 1 || len(fixture.sub2API.refunds) != 0 {
 				t.Fatalf("recovered launch duplicated fulfillment: operation=%#v compute=%#v storage=%#v keys=%#v charges=%#v refunds=%#v", completed, fixture.fabric.computeIDs, fixture.fabric.storageIDs, fixture.fabric.storageCreateKeys, fixture.sub2API.charges, fixture.sub2API.refunds)
 			}
+			assertWorkspaceLaunchRuntimeIdentity(t, fixture.fabric.runtimeInputs, completed)
 		})
+	}
+}
+
+func TestWorkspaceComputeClaimApprovalBindsMissingHistoricalWorkspaceImageDigestBeforeFabric(t *testing.T) {
+	fixture, approvedOperation := workspaceLaunchComputeClaimPendingFixture(t, "basic")
+	if approvedOperation.WorkspaceImageDigest == "" {
+		t.Fatal("fixture must carry the immutable Workspace image digest used by the approval")
+	}
+	historicalOperation := approvedOperation
+	historicalOperation.WorkspaceImageDigest = ""
+	mustStore(t, fixture.store.SaveRuntimeOperation(context.Background(), workspaceLaunchOperationRow(historicalOperation)))
+
+	fixture.fabric.computeClaimProof = computeClaimRecoveryProofForLaunch(approvedOperation, "target_owned")
+	configureWorkspaceLaunchFulfillment(t, fixture)
+	configureWorkspaceComputeClaimReadback(fixture, approvedOperation)
+	fixture.fabric.beforeComputeClaimProof = func() {
+		persisted := fixture.operation(t)
+		if persisted.WorkspaceImageDigest != approvedOperation.WorkspaceImageDigest || persisted.ComputeClaimApproval == nil ||
+			persisted.ComputeClaimApproval.WorkspaceImageDigest != approvedOperation.WorkspaceImageDigest {
+			t.Fatalf("historical Workspace image digest and approval were not bound before Fabric proof: %#v", persisted)
+		}
+	}
+
+	path := "/api/operator/workspace-launches/" + approvedOperation.ID + "/compute-claim-recovery/claim"
+	response := requestComputeClaimWithCapabilityForTest(
+		t,
+		fixture.server,
+		fixture.operator,
+		path,
+		computeClaimRecoveryRequestBody(t, approvedOperation, true, "compute-claim-historical-workspace-image"),
+		"compute-claim-historical-workspace-image",
+	)
+	persisted := fixture.operation(t)
+	if response.Code != http.StatusOK || persisted.WorkspaceImageDigest != approvedOperation.WorkspaceImageDigest ||
+		persisted.ComputeClaimApproval == nil || persisted.Status != "preparing" || persisted.Phase != "storage_fulfilling" ||
+		len(fixture.fabric.computeClaimInputs) != 1 || len(fixture.fabric.computeClaimCalls) != 1 || len(fixture.fabric.storageIDs) != 0 {
+		t.Fatalf("historical Workspace image digest did not bind and resume safely: status=%d body=%s operation=%#v proofs=%#v claims=%#v storage=%#v", response.Code, response.Body.String(), persisted, fixture.fabric.computeClaimInputs, fixture.fabric.computeClaimCalls, fixture.fabric.storageIDs)
+	}
+}
+
+func TestWorkspaceComputeClaimReadbackReplayNeverClaimsOrCreatesStorageTwice(t *testing.T) {
+	fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, "basic")
+	fixture.fabric.computeClaimProof = computeClaimRecoveryProofForLaunch(operation, "target_owned")
+	configureWorkspaceLaunchFulfillment(t, fixture)
+	ready := configureWorkspaceComputeClaimReadback(fixture, operation)
+	fixture.fabric.computeReadResults = []clients.ComputeAllocation{{ID: operation.ComputeID}, ready}
+	fixture.fabric.computeReadErrors = []error{errors.New("compute GET unavailable"), nil}
+	path := "/api/operator/workspace-launches/" + operation.ID + "/compute-claim-recovery/claim"
+	body := computeClaimRecoveryRequestBody(t, operation, true, "compute-claim-readback-replay")
+
+	first := requestComputeClaimWithCapabilityForTest(t, fixture.server, fixture.operator, path, body, "compute-claim-readback-replay")
+	blocked := fixture.operation(t)
+	if first.Code != http.StatusBadGateway || blocked.Status != "manual_review" || blocked.Phase != "compute_claim_pending" ||
+		blocked.ErrorCode != "workspace_compute_claim_readback_unavailable" || blocked.ComputeClaimProof == nil ||
+		len(fixture.fabric.computeClaimCalls) != 1 || countStrings(*fixture.events, "fabric.compute.get") != 1 || len(fixture.fabric.storageIDs) != 0 {
+		t.Fatalf("failed compute readback crossed continuation gate: status=%d body=%s operation=%#v claims=%#v storage=%#v events=%#v", first.Code, first.Body.String(), blocked, fixture.fabric.computeClaimCalls, fixture.fabric.storageIDs, *fixture.events)
+	}
+
+	second := requestComputeClaimWithCapabilityForTest(t, fixture.server, fixture.operator, path, body, "compute-claim-readback-replay")
+	resumed := fixture.operation(t)
+	if second.Code != http.StatusOK || resumed.Status != "preparing" || resumed.Phase != "storage_fulfilling" || resumed.ErrorCode != "" ||
+		len(fixture.fabric.computeClaimCalls) != 1 || countStrings(*fixture.events, "fabric.compute.get") != 2 || len(fixture.fabric.storageIDs) != 0 {
+		t.Fatalf("readback replay repeated claim or crossed storage gate: status=%d body=%s operation=%#v claims=%#v storage=%#v events=%#v", second.Code, second.Body.String(), resumed, fixture.fabric.computeClaimCalls, fixture.fabric.storageIDs, *fixture.events)
+	}
+}
+
+func configureWorkspaceComputeClaimReadback(fixture workspaceLaunchWorkerFixture, operation workspaceLaunchOperation) clients.ComputeAllocation {
+	readback := fixture.fabric.computeSync
+	readback.OperationID = operation.ID + ":compute"
+	readback.PoolID = operation.ComputePoolID
+	readback.NodePoolID = operation.ComputeNodePoolID
+	readback.MachineName = operation.ComputeMachineName
+	readback.NodeName = operation.ComputeNodeName
+	readback.InstanceID = operation.ComputeCVMInstanceID
+	readback.CVMInstanceID = operation.ComputeCVMInstanceID
+	readback.ProviderResourceID = operation.ComputeCVMInstanceID
+	readback.PrivateIP = operation.ComputePrivateIP
+	readback.InstanceType = operation.ComputeInstanceType
+	readback.Zone = operation.ComputeZone
+	readback.ChargeType = operation.ComputeChargeType
+	readback.RenewFlag = operation.ComputeRenewFlag
+	readback.Deadline = operation.ComputeDeadline
+	readback.ProviderData["instanceType"] = operation.ComputeInstanceType
+	readback.ProviderData["zone"] = operation.ComputeZone
+	readback.ProviderData["chargeType"] = operation.ComputeChargeType
+	readback.ProviderData["renewFlag"] = operation.ComputeRenewFlag
+	readback.ProviderData["deadline"] = operation.ComputeDeadline
+	readback.ProviderData["machineName"] = operation.ComputeMachineName
+	readback.CostTags = map[string]string{
+		"opl_account_id": operation.AccountID, "opl_workspace_id": operation.WorkspaceID,
+		"opl_resource_id": operation.ComputeID, "opl_operation_id": "owner-claim-fixture",
+	}
+	fixture.fabric.computeSync = readback
+	return readback
+}
+
+func assertWorkspaceLaunchRuntimeIdentity(t *testing.T, inputs []clients.WorkspaceRuntimeInput, operation workspaceLaunchOperation) {
+	t.Helper()
+	if len(inputs) != 1 {
+		t.Fatalf("runtime inputs=%#v", inputs)
+	}
+	input := inputs[0]
+	if input.WorkspaceID != operation.WorkspaceID || input.ComputeID != operation.ComputeID || input.VolumeID != operation.StorageID ||
+		input.AttachmentID != operation.AttachmentID || input.AttachmentOperationID != operation.AttachmentOperationID ||
+		input.RuntimeOperationID != operation.WorkspaceOperationID+":runtime" {
+		t.Fatalf("runtime identity=%#v operation=%#v", input, operation)
 	}
 }
 
@@ -1530,7 +2217,7 @@ func TestWorkspaceComputeClaimPrivateIPProofAndReadbackDriftStopBeforeStorage(t 
 				fixture.fabric.computeClaimProof = proof
 			}
 			path := "/api/operator/workspace-launches/" + operation.ID + "/compute-claim-recovery/claim"
-			response := requestComputeClaimWithCapabilityForTest(t, fixture.server, fixture.operator, path, computeClaimRecoveryRequestBody(t, operation, true), "compute-claim-private-ip-drift")
+			response := requestComputeClaimWithCapabilityForTest(t, fixture.server, fixture.operator, path, computeClaimRecoveryRequestBody(t, operation, true, "compute-claim-private-ip-drift"), "compute-claim-private-ip-drift")
 			current := fixture.operation(t)
 			if response.Code != http.StatusConflict || current.Status != "manual_review" || current.Phase != "compute_claim_pending" ||
 				len(fixture.fabric.computeClaimCalls) != tc.wantClaims || len(fixture.fabric.storageIDs) != 0 || len(fixture.fabric.computeIDs) != 1 ||
@@ -1556,7 +2243,7 @@ func TestWorkspaceComputeClaimPartialMutationFailurePreservesCountsAndStops(t *t
 	fixture.fabric.computeClaimErr = errors.New("classified claim readback failure")
 	path := "/api/operator/workspace-launches/" + operation.ID + "/compute-claim-recovery/claim"
 
-	response := requestComputeClaimWithCapabilityForTest(t, fixture.server, fixture.operator, path, computeClaimRecoveryRequestBody(t, operation, true), "compute-claim-partial")
+	response := requestComputeClaimWithCapabilityForTest(t, fixture.server, fixture.operator, path, computeClaimRecoveryRequestBody(t, operation, true, "compute-claim-partial"), "compute-claim-partial")
 	var result clients.ComputeClaimRecoveryProof
 	if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
 		t.Fatal(err)
@@ -1591,7 +2278,7 @@ func TestWorkspaceComputeClaimRejectsMutationCountsAboveHardBoundsBeforeStorage(
 			fixture.fabric.computeClaimResult = &claimed
 			path := "/api/operator/workspace-launches/" + operation.ID + "/compute-claim-recovery/claim"
 
-			response := requestComputeClaimWithCapabilityForTest(t, fixture.server, fixture.operator, path, computeClaimRecoveryRequestBody(t, operation, true), "compute-claim-over-bound")
+			response := requestComputeClaimWithCapabilityForTest(t, fixture.server, fixture.operator, path, computeClaimRecoveryRequestBody(t, operation, true, "compute-claim-over-bound"), "compute-claim-over-bound")
 			current := fixture.operation(t)
 			if response.Code != http.StatusConflict || current.Status != "manual_review" || current.Phase != "compute_claim_pending" ||
 				len(fixture.fabric.computeClaimCalls) != 1 || len(fixture.fabric.storageIDs) != 0 || len(fixture.fabric.computeIDs) != 1 ||
@@ -1629,7 +2316,7 @@ func TestWorkspaceComputeClaimRejectsUnknownOrMissingMutationEvidenceBeforeStora
 			fixture.fabric.computeClaimResult = &claimed
 			path := "/api/operator/workspace-launches/" + operation.ID + "/compute-claim-recovery/claim"
 
-			response := requestComputeClaimWithCapabilityForTest(t, fixture.server, fixture.operator, path, computeClaimRecoveryRequestBody(t, operation, true), "compute-claim-evidence")
+			response := requestComputeClaimWithCapabilityForTest(t, fixture.server, fixture.operator, path, computeClaimRecoveryRequestBody(t, operation, true, "compute-claim-evidence"), "compute-claim-evidence")
 			current := fixture.operation(t)
 			if response.Code != http.StatusConflict || current.Status != "manual_review" || current.Phase != "compute_claim_pending" ||
 				len(fixture.fabric.computeClaimCalls) != 1 || len(fixture.fabric.storageIDs) != 0 || len(fixture.fabric.computeIDs) != 1 ||
@@ -1652,7 +2339,7 @@ func TestWorkspaceComputeClaimRejectsAndRedactsUnallowlistedMutationEvidence(t *
 	fixture.fabric.computeClaimResult = &claimed
 	path := "/api/operator/workspace-launches/" + operation.ID + "/compute-claim-recovery/claim"
 
-	response := requestComputeClaimWithCapabilityForTest(t, fixture.server, fixture.operator, path, computeClaimRecoveryRequestBody(t, operation, true), "compute-claim-unallowlisted-evidence")
+	response := requestComputeClaimWithCapabilityForTest(t, fixture.server, fixture.operator, path, computeClaimRecoveryRequestBody(t, operation, true, "compute-claim-unallowlisted-evidence"), "compute-claim-unallowlisted-evidence")
 	current := fixture.operation(t)
 
 	if response.Code != http.StatusConflict || current.Status != "manual_review" || current.Phase != "compute_claim_pending" ||
@@ -1683,7 +2370,7 @@ func TestWorkspaceComputeClaimFailureStopsInManualReviewWithSafeReason(t *testin
 			fixture.fabric.computeClaimProofErr = errors.New("classified compute claim failure")
 			path := "/api/operator/workspace-launches/" + operation.ID + "/compute-claim-recovery/claim"
 
-			response := requestComputeClaimWithCapabilityForTest(t, fixture.server, fixture.operator, path, computeClaimRecoveryRequestBody(t, operation, true), "compute-claim-failure")
+			response := requestComputeClaimWithCapabilityForTest(t, fixture.server, fixture.operator, path, computeClaimRecoveryRequestBody(t, operation, true, "compute-claim-failure"), "compute-claim-failure")
 			if response.Code != http.StatusConflict {
 				t.Fatalf("classified claim status=%d body=%s", response.Code, response.Body.String())
 			}
@@ -1750,8 +2437,8 @@ func TestWorkspaceLaunchRuntimeReadinessWaits(t *testing.T) {
 	fixture := newWorkspaceLaunchWorkerFixture(t, []int64{1_000_000_000, 1_000_000_000, 947_420_000}, nil, nil)
 	operation := configureWorkspaceLaunchFulfillment(t, fixture)
 	runtime := clients.WorkspaceRuntime{
-		ID: "runtime-from-fabric", WorkspaceID: operation.WorkspaceID, URL: "https://workspace.medopl.cn/w/" + operation.WorkspaceID + "/",
-		Status: "starting", ServiceName: "opl-compute-from-fabric",
+		ID: "runtime-from-fabric", OperationID: operation.WorkspaceOperationID + ":runtime", WorkspaceID: operation.WorkspaceID, URL: "https://workspace.medopl.cn/w/" + operation.WorkspaceID + "/",
+		Status: "unready", ServiceName: "opl-compute-from-fabric",
 		Access: clients.WorkspaceRuntimeAccess{Username: "admin", CredentialStatus: "configured", CredentialVersion: "v1", SecretRef: "opl-compute-from-fabric-env"},
 	}
 	ready := runtime
@@ -1774,7 +2461,7 @@ func TestWorkspaceLaunchRuntimeReadinessWaits(t *testing.T) {
 		t.Fatal(err)
 	}
 	completed := fixture.operation(t)
-	if completed.Status != "succeeded" || completed.Phase != "succeeded" || len(fixture.fabric.runtimeInputs) != 2 || countStrings(*fixture.events, "fabric.runtime-status") != 2 || len(fixture.ledger.receiptInputs) != 1 {
+	if completed.Status != "succeeded" || completed.Phase != "succeeded" || len(fixture.fabric.runtimeInputs) != 1 || countStrings(*fixture.events, "fabric.runtime-status") != 2 || len(fixture.ledger.receiptInputs) != 1 {
 		t.Fatalf("ready runtime launch=%#v runtime calls=%#v receipts=%#v", completed, fixture.fabric.runtimeInputs, fixture.ledger.receiptInputs)
 	}
 	for _, event := range []string{"fabric.compute.prepare", "fabric.storage.prepare", "fabric.attachment", "fabric.gateway-secret"} {
@@ -1783,9 +2470,12 @@ func TestWorkspaceLaunchRuntimeReadinessWaits(t *testing.T) {
 		}
 	}
 	for _, event := range []string{"fabric.compute.sync", "fabric.storage.sync"} {
-		if countStrings(*fixture.events, event) != countStrings(beforeEvents, event)+1 {
-			t.Fatalf("activation did not read %s once: before=%#v after=%#v", event, beforeEvents, *fixture.events)
+		if countStrings(*fixture.events, event) != countStrings(beforeEvents, event) {
+			t.Fatalf("activation repeated mutating Sync %s: before=%#v after=%#v", event, beforeEvents, *fixture.events)
 		}
+	}
+	if countStrings(*fixture.events, "fabric.workspace-activation-truth") != countStrings(beforeEvents, "fabric.workspace-activation-truth")+1 {
+		t.Fatalf("activation did not read fresh truth once: before=%#v after=%#v", beforeEvents, *fixture.events)
 	}
 }
 
@@ -1793,8 +2483,8 @@ func TestWorkspaceLaunchActivationRejectsProviderZoneDrift(t *testing.T) {
 	fixture := newWorkspaceLaunchWorkerFixture(t, []int64{1_000_000_000, 1_000_000_000, 947_420_000}, nil, nil)
 	operation := configureWorkspaceLaunchFulfillment(t, fixture)
 	runtime := clients.WorkspaceRuntime{
-		ID: "runtime-from-fabric", WorkspaceID: operation.WorkspaceID, URL: "https://workspace.medopl.cn/w/" + operation.WorkspaceID + "/",
-		Status: "starting", ServiceName: "opl-compute-from-fabric",
+		ID: "runtime-from-fabric", OperationID: operation.WorkspaceOperationID + ":runtime", WorkspaceID: operation.WorkspaceID, URL: "https://workspace.medopl.cn/w/" + operation.WorkspaceID + "/",
+		Status: "unready", ServiceName: "opl-compute-from-fabric",
 		Access: clients.WorkspaceRuntimeAccess{Username: "admin", CredentialStatus: "configured", CredentialVersion: "v1", SecretRef: "opl-compute-from-fabric-env"},
 	}
 	ready := runtime
@@ -1806,14 +2496,17 @@ func TestWorkspaceLaunchActivationRejectsProviderZoneDrift(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	fixture.fabric.computeSync.Zone = "ap-shanghai-3"
-	fixture.fabric.computeSync.ProviderData["zone"] = "ap-shanghai-3"
+	fixture.fabric.activationTruth = &clients.WorkspaceActivationTruth{
+		SchemaVersion: 1, Ready: false, Reason: "identity_mismatch", ErrorClass: "readback_mismatch",
+		ComputeState: "unknown", StorageState: "ready", Checks: []any{},
+	}
+	fixture.fabric.activationTruthErr = errors.New("provider Zone drift")
 	if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err == nil {
 		t.Fatal("provider Zone drift was accepted before activation")
 	}
 	current := fixture.operation(t)
 	workspaces, _ := fixture.store.ListWorkspaces(context.Background(), operation.AccountID)
-	if current.Status != "manual_review" || current.ErrorCode != "workspace_launch_provider_readback_invalid" || len(workspaces) != 0 || len(fixture.ledger.receiptInputs) != 0 {
+	if current.Status != "manual_review" || current.ErrorCode != "workspace_launch_activation_truth_identity_mismatch" || len(workspaces) != 0 || len(fixture.ledger.receiptInputs) != 0 {
 		t.Fatalf("Zone drift activation=%#v workspaces=%#v receipts=%#v", current, workspaces, fixture.ledger.receiptInputs)
 	}
 }
@@ -1833,7 +2526,8 @@ func TestWorkspaceLaunchRuntimeReadbackDoesNotBackfillAuthority(t *testing.T) {
 
 	current := fixture.operation(t)
 	workspaces, _ := fixture.store.ListWorkspaces(context.Background(), operation.AccountID)
-	if current.Status != "manual_review" || current.ErrorCode != "workspace_launch_runtime_readback_invalid" || len(workspaces) != 0 || len(fixture.ledger.receiptInputs) != 0 {
+	if current.Status != "manual_review" || current.ErrorCode != "workspace_launch_runtime_attempt_unknown" ||
+		persistedWorkspaceLaunchStageBudget(t, current, "runtime")["unknown"] != float64(1) || len(workspaces) != 0 || len(fixture.ledger.receiptInputs) != 0 {
 		t.Fatalf("partial Runtime readback launch=%#v workspaces=%#v receipts=%#v", current, workspaces, fixture.ledger.receiptInputs)
 	}
 }
@@ -1878,7 +2572,8 @@ func TestWorkspaceLaunchRefundWhenNoResources(t *testing.T) {
 	if refunded.Status != "refunded" || refunded.Phase != "refunded" || len(fixture.sub2API.refunds) != 1 || fixture.sub2API.refunds[0].RefundUSDMicros != 52_580_000 {
 		t.Fatalf("refunded launch=%#v refunds=%#v", refunded, fixture.sub2API.refunds)
 	}
-	if len(fixture.fabric.storageIDs) != 0 || countStrings(*fixture.events, "fabric.storage.sync") != 1 || countStrings(*fixture.events, "fabric.attachment") != 0 || countStrings(*fixture.events, "fabric.runtime") != 0 {
+	if len(fixture.fabric.storageIDs) != 0 || countStrings(*fixture.events, "fabric.storage.get") != 1 || countStrings(*fixture.events, "fabric.storage.sync") != 0 ||
+		countStrings(*fixture.events, "fabric.attachment") != 0 || countStrings(*fixture.events, "fabric.runtime") != 0 {
 		t.Fatalf("absent compute crossed fulfillment: events=%#v", *fixture.events)
 	}
 	if len(fixture.ledger.receiptInputs) != 1 || fixture.ledger.receiptInputs[0].Type != "billing.workspace_refunded.v1" {
@@ -1916,7 +2611,8 @@ func TestWorkspaceLaunchComputeAbsentRequiresAuthoritativeStorageAbsenceBeforeRe
 			}
 
 			current := fixture.operation(t)
-			if current.Status != "manual_review" || current.ErrorCode != tc.wantCode || len(fixture.sub2API.refunds) != 0 || countStrings(*fixture.events, "fabric.storage.sync") != 1 {
+			if current.Status != "manual_review" || current.ErrorCode != tc.wantCode || len(fixture.sub2API.refunds) != 0 ||
+				countStrings(*fixture.events, "fabric.storage.get") != 1 || countStrings(*fixture.events, "fabric.storage.sync") != 0 {
 				t.Fatalf("storage recovery=%#v refunds=%#v events=%#v", current, fixture.sub2API.refunds, *fixture.events)
 			}
 		})
@@ -1943,7 +2639,7 @@ func TestWorkspaceLaunchPartialResourceManualReview(t *testing.T) {
 	}
 }
 
-func TestWorkspaceLaunchReceiptRetry(t *testing.T) {
+func TestWorkspaceLaunchReceiptUnknownDoesNotRetry(t *testing.T) {
 	fixture := newWorkspaceLaunchWorkerFixture(t, []int64{1_000_000_000, 1_000_000_000, 947_420_000}, nil, nil)
 	configureWorkspaceLaunchFulfillment(t, fixture)
 	fixture.ledger.receiptErrors = []error{errors.New("Ledger unavailable"), nil}
@@ -1955,7 +2651,9 @@ func TestWorkspaceLaunchReceiptRetry(t *testing.T) {
 	}
 	pending := fixture.operation(t)
 	workspaces, _ := fixture.store.ListWorkspaces(context.Background(), pending.AccountID)
-	if pending.Phase != "receipt_pending" || pending.Status != "retryable" || len(workspaces) != 1 || stringValue(workspaces[0]["runtimeId"]) == "" || len(fixture.ledger.receiptInputs) != 1 {
+	if pending.Phase != "receipt_pending" || pending.Status != "manual_review" || pending.ErrorCode != "workspace_launch_receipt_attempt_unknown" ||
+		persistedWorkspaceLaunchStageBudget(t, pending, "receipt")["unknown"] != float64(1) || len(workspaces) != 1 ||
+		stringValue(workspaces[0]["runtimeId"]) == "" || len(fixture.ledger.receiptInputs) != 1 {
 		t.Fatalf("receipt pending launch=%#v workspaces=%#v receipts=%#v", pending, workspaces, fixture.ledger.receiptInputs)
 	}
 	beforeEvents := append([]string(nil), (*fixture.events)...)
@@ -1963,9 +2661,10 @@ func TestWorkspaceLaunchReceiptRetry(t *testing.T) {
 	if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err != nil {
 		t.Fatal(err)
 	}
-	completed := fixture.operation(t)
-	if completed.Status != "succeeded" || completed.Phase != "succeeded" || len(fixture.ledger.receiptInputs) != 2 || len(fixture.sub2API.charges) != beforeCharges {
-		t.Fatalf("receipt retry launch=%#v charges=%#v receipts=%#v", completed, fixture.sub2API.charges, fixture.ledger.receiptInputs)
+	stopped := fixture.operation(t)
+	if stopped.Status != "manual_review" || stopped.Phase != "receipt_pending" || stopped.ErrorCode != "workspace_launch_receipt_attempt_unknown" ||
+		len(fixture.ledger.receiptInputs) != 1 || len(fixture.sub2API.charges) != beforeCharges {
+		t.Fatalf("receipt retry launch=%#v charges=%#v receipts=%#v", stopped, fixture.sub2API.charges, fixture.ledger.receiptInputs)
 	}
 	for _, event := range []string{"fabric.compute.prepare", "fabric.compute.sync", "fabric.storage.prepare", "fabric.storage.sync", "fabric.attachment", "fabric.gateway-secret", "fabric.runtime"} {
 		if countStrings(*fixture.events, event) != countStrings(beforeEvents, event) {
@@ -2077,7 +2776,8 @@ func TestPostgresWorkspaceLaunchRestartAfterDebitRefundsProviderFailureExactlyOn
 	}
 	if len(sub2API.charges) != 1 || len(sub2API.refunds) != 1 || sub2API.refunds[0].RefundUSDMicros != 52_580_000 ||
 		len(fabric.computeIDs) != 1 || len(fabric.storageIDs) != 0 || countStrings(events, "fabric.compute.prepare") != 1 ||
-		countStrings(events, "fabric.storage.sync") != 1 || len(ledger.receiptInputs) != 1 || ledger.receiptInputs[0].Type != "billing.workspace_refunded.v1" {
+		countStrings(events, "fabric.storage.get") != 1 || countStrings(events, "fabric.storage.sync") != 0 ||
+		len(ledger.receiptInputs) != 1 || ledger.receiptInputs[0].Type != "billing.workspace_refunded.v1" {
 		t.Fatalf("recovery charges=%#v refunds=%#v compute=%#v storage=%#v receipts=%#v events=%#v", sub2API.charges, sub2API.refunds, fabric.computeIDs, fabric.storageIDs, ledger.receiptInputs, events)
 	}
 }
@@ -2399,7 +3099,8 @@ func TestWorkspaceLaunchRecoveryRetriesOnlyReceiptAfterLedgerFailure(t *testing.
 
 		response := recoverWorkspaceLaunchForTest(t, fixture, "launch-recovery-purchase-receipt")
 		current := fixture.operation(t)
-		if response.Code != http.StatusOK || current.Status != "succeeded" || current.Phase != "succeeded" || len(fixture.ledger.receiptInputs) != 2 || len(fixture.sub2API.charges) != beforeCharges {
+		if response.Code != http.StatusOK || current.Status != "manual_review" || current.Phase != "receipt_pending" ||
+			current.ErrorCode != "workspace_launch_receipt_attempt_unknown" || len(fixture.ledger.receiptInputs) != 1 || len(fixture.sub2API.charges) != beforeCharges {
 			t.Fatalf("purchase receipt recovery status=%d body=%s operation=%#v charges=%#v receipts=%#v", response.Code, response.Body.String(), current, fixture.sub2API.charges, fixture.ledger.receiptInputs)
 		}
 		assertNoWorkspaceLaunchRecoveryFabricWrites(t, beforeEvents, *fixture.events)

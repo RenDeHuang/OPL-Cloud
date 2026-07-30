@@ -163,10 +163,13 @@ func (f *providerAcceptanceFabric) WriteGatewaySecret(_ context.Context, input c
 func (f *providerAcceptanceFabric) CreateWorkspaceRuntime(_ context.Context, input clients.WorkspaceRuntimeInput, key string) (clients.WorkspaceRuntime, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if input.AttachmentOperationID == "" || input.RuntimeOperationID != key {
+		return clients.WorkspaceRuntime{}, errors.New("provider acceptance runtime identity missing")
+	}
 	f.runtimeCreates++
 	f.mutationKeys = append(f.mutationKeys, key)
 	runtime := clients.WorkspaceRuntime{
-		ID: "rt-verification-slot-01", WorkspaceID: input.WorkspaceID, URL: "https://workspace.medopl.cn/w/" + input.WorkspaceID + "/",
+		ID: "rt-verification-slot-01", OperationID: input.RuntimeOperationID, WorkspaceID: input.WorkspaceID, URL: "https://workspace.medopl.cn/w/" + input.WorkspaceID + "/",
 		Status: "running", ServiceName: "opl-verification-slot-01", Ready: true,
 		Access: clients.WorkspaceRuntimeAccess{Username: "opl", Password: "must-not-leak", CredentialStatus: "configured", CredentialVersion: "v1", SecretRef: "runtime-secret-ref"},
 	}

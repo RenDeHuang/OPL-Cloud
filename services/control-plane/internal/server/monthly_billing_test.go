@@ -215,50 +215,60 @@ func (s *monthlySub2API) FinancialBalanceHistoryByCodes(context.Context, int64, 
 
 type monthlyFabric struct {
 	fakeFabricClient
-	events                *[]string
-	createErr             error
-	cleanupErr            error
-	cleanupStatus         string
-	computeCleanupStatus  string
-	computeCleanupSync    clients.ComputeAllocation
-	computeCleanupSyncErr error
-	computeCleanupStarted bool
-	computeDestroyed      bool
-	syncErr               error
-	preflightResult       *clients.MonthlyPreflight
-	preflightResults      []clients.MonthlyPreflight
-	preflightErr          error
-	preflightInputs       []clients.MonthlyPreflightInput
-	providerTruth         *clients.MonthlyProviderTruth
-	providerTruthErr      error
-	computeClaimProof     clients.ComputeClaimRecoveryProof
-	computeClaimProofErr  error
-	computeClaimResult    *clients.ComputeClaimRecoveryProof
-	computeClaimErr       error
-	computeClaimInputs    []clients.ComputeClaimRecoveryInput
-	computeClaimCalls     []clients.ComputeClaimRecoveryClaimInput
-	computeClaimKeys      []string
-	beforeComputeClaim    func()
-	mutateCompute         func(*clients.ComputeAllocation)
-	mutateStorage         func(*clients.StorageVolume)
-	computeIDs            []string
-	computeInputs         []clients.ComputeAllocationInput
-	storageIDs            []string
-	storageCreateKeys     []string
-	storageInputs         []clients.StorageVolumeInput
-	computeSync           clients.ComputeAllocation
-	storageSync           clients.StorageVolume
-	storageSyncErr        error
-	computeRenew          clients.ComputeAllocation
-	storageRenew          clients.StorageVolume
-	computeRenewErr       error
-	storageRenewErr       error
-	computeRenewKeys      []string
-	storageRenewKeys      []string
-	afterRuntime          func()
+	events                  *[]string
+	createErr               error
+	cleanupErr              error
+	cleanupStatus           string
+	computeCleanupStatus    string
+	computeCleanupSync      clients.ComputeAllocation
+	computeCleanupSyncErr   error
+	computeCleanupStarted   bool
+	computeDestroyed        bool
+	syncErr                 error
+	computeReadResults      []clients.ComputeAllocation
+	computeReadErrors       []error
+	preflightResult         *clients.MonthlyPreflight
+	preflightResults        []clients.MonthlyPreflight
+	preflightErr            error
+	preflightInputs         []clients.MonthlyPreflightInput
+	providerTruth           *clients.MonthlyProviderTruth
+	providerTruthErr        error
+	activationTruth         *clients.WorkspaceActivationTruth
+	activationTruthErr      error
+	activationTruthInputs   []clients.WorkspaceActivationTruthInput
+	computeClaimProof       clients.ComputeClaimRecoveryProof
+	computeClaimProofErr    error
+	computeClaimResult      *clients.ComputeClaimRecoveryProof
+	computeClaimErr         error
+	computeClaimInputs      []clients.ComputeClaimRecoveryInput
+	computeClaimCalls       []clients.ComputeClaimRecoveryClaimInput
+	computeClaimKeys        []string
+	beforeComputeClaimProof func()
+	beforeComputeClaim      func()
+	mutateCompute           func(*clients.ComputeAllocation)
+	mutateStorage           func(*clients.StorageVolume)
+	computeIDs              []string
+	computeInputs           []clients.ComputeAllocationInput
+	storageIDs              []string
+	storageCreateKeys       []string
+	storageInputs           []clients.StorageVolumeInput
+	storageCreateErr        error
+	computeSync             clients.ComputeAllocation
+	storageSync             clients.StorageVolume
+	storageSyncErr          error
+	computeRenew            clients.ComputeAllocation
+	storageRenew            clients.StorageVolume
+	computeRenewErr         error
+	storageRenewErr         error
+	computeRenewKeys        []string
+	storageRenewKeys        []string
+	afterRuntime            func()
 }
 
 func (f *monthlyFabric) ComputeClaimRecoveryProof(_ context.Context, input clients.ComputeClaimRecoveryInput) (clients.ComputeClaimRecoveryProof, error) {
+	if f.beforeComputeClaimProof != nil {
+		f.beforeComputeClaimProof()
+	}
 	*f.events = append(*f.events, "fabric.compute-claim.proof")
 	f.computeClaimInputs = append(f.computeClaimInputs, input)
 	return f.computeClaimProof, f.computeClaimProofErr
@@ -342,6 +352,22 @@ func (f *monthlyFabric) MonthlyProviderTruth(_ context.Context, _, _ string) (cl
 	return *f.providerTruth, f.providerTruthErr
 }
 
+func (f *monthlyFabric) WorkspaceActivationTruth(_ context.Context, input clients.WorkspaceActivationTruthInput) (clients.WorkspaceActivationTruth, error) {
+	*f.events = append(*f.events, "fabric.workspace-activation-truth")
+	f.activationTruthInputs = append(f.activationTruthInputs, input)
+	if f.activationTruth != nil {
+		return *f.activationTruth, f.activationTruthErr
+	}
+	return clients.WorkspaceActivationTruth{
+		SchemaVersion: 1, Ready: true, Reason: "none", ComputeState: "ready", StorageState: "ready",
+		Compute:    clients.ComputeAllocation{ID: input.ComputeAllocationID, OperationID: input.ComputeOperationID},
+		Storage:    clients.StorageVolume{ID: input.StorageVolumeID, OperationID: input.StorageOperationID},
+		Attachment: clients.StorageAttachment{ID: input.AttachmentID, OperationID: input.AttachmentOperationID},
+		Runtime:    clients.WorkspaceActivationRuntimeTruth{ID: input.RuntimeID, OperationID: input.RuntimeOperationID, ServiceName: input.ServiceName},
+		Checks:     []any{map[string]any{"name": "workspace_runtime_ready", "ok": true}},
+	}, f.activationTruthErr
+}
+
 func (f *monthlyFabric) CreateComputeAllocation(_ context.Context, input clients.ComputeAllocationInput, _ string) (clients.ComputeAllocation, error) {
 	*f.events = append(*f.events, "fabric.compute.prepare")
 	f.computeIDs = append(f.computeIDs, input.ID)
@@ -365,6 +391,9 @@ func (f *monthlyFabric) CreateStorageVolume(_ context.Context, input clients.Sto
 	f.storageIDs = append(f.storageIDs, input.ID)
 	f.storageCreateKeys = append(f.storageCreateKeys, key)
 	f.storageInputs = append(f.storageInputs, input)
+	if f.storageCreateErr != nil {
+		return clients.StorageVolume{ID: input.ID}, f.storageCreateErr
+	}
 	if f.createErr != nil {
 		return clients.StorageVolume{ID: input.ID}, f.createErr
 	}
@@ -401,6 +430,24 @@ func (f *monthlyFabric) SyncComputeAllocation(_ context.Context, id string) (cli
 	return result, f.syncErr
 }
 
+func (f *monthlyFabric) GetComputeAllocation(_ context.Context, id string) (clients.ComputeAllocation, error) {
+	*f.events = append(*f.events, "fabric.compute.get")
+	result := f.computeSync
+	if len(f.computeReadResults) > 0 {
+		result = f.computeReadResults[0]
+		f.computeReadResults = f.computeReadResults[1:]
+	}
+	if result.ID == "" {
+		result.ID = id
+	}
+	if len(f.computeReadErrors) > 0 {
+		err := f.computeReadErrors[0]
+		f.computeReadErrors = f.computeReadErrors[1:]
+		return result, err
+	}
+	return result, f.syncErr
+}
+
 func (f *monthlyFabric) SyncStorageVolume(_ context.Context, id string) (clients.StorageVolume, error) {
 	*f.events = append(*f.events, "fabric.storage.sync")
 	result := f.storageSync
@@ -411,6 +458,30 @@ func (f *monthlyFabric) SyncStorageVolume(_ context.Context, id string) (clients
 		return result, f.storageSyncErr
 	}
 	return result, f.syncErr
+}
+
+func (f *monthlyFabric) GetStorageVolume(_ context.Context, id string) (clients.StorageVolume, error) {
+	*f.events = append(*f.events, "fabric.storage.get")
+	result := f.storageSync
+	if result.ID == "" {
+		result.ID = id
+	}
+	if f.storageSyncErr != nil {
+		return result, f.storageSyncErr
+	}
+	return result, f.syncErr
+}
+
+func TestReadMonthlyStorageRequiresDedicatedReadCapability(t *testing.T) {
+	calls := []string{}
+	service := controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{calls: &calls}, &testSub2APIClient{})
+	_, err := service.ReadMonthlyStorage(context.Background(), "storage-alpha")
+	if err == nil || err.Error() != "fabric_storage_volume_read_unavailable" {
+		t.Fatalf("missing storage reader err=%v", err)
+	}
+	if len(calls) != 0 {
+		t.Fatalf("missing storage reader fell back to Fabric mutation-capable call: %#v", calls)
+	}
 }
 
 func (f *monthlyFabric) RenewComputeAllocation(_ context.Context, id, key string) (clients.ComputeAllocation, error) {
