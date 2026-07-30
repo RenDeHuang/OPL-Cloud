@@ -13,16 +13,19 @@ import (
 
 type fakeComputeClaimRecoveryProvider struct {
 	testProvider
-	proof        ComputeClaimProviderProof
-	proofErr     error
-	claim        ComputeClaimProviderClaim
-	claimErr     error
-	proofCalls   int
-	claimCalls   int
-	claimHook    func()
-	tagCalls     int
-	scaleCalls   int
-	storageCalls int
+	proof               ComputeClaimProviderProof
+	proofErr            error
+	claim               ComputeClaimProviderClaim
+	claimErr            error
+	storageDiscovery    StorageRecoveryDiscovery
+	storageDiscoveryErr error
+	proofCalls          int
+	claimCalls          int
+	storageDiscoveries  []StorageVolumeInput
+	claimHook           func()
+	tagCalls            int
+	scaleCalls          int
+	storageCalls        int
 }
 
 type failOnceComputeClaimActivationStore struct {
@@ -49,6 +52,11 @@ func (p *fakeComputeClaimRecoveryProvider) ClaimComputeRecovery(_ context.Contex
 		p.claimHook()
 	}
 	return p.claim, p.claimErr
+}
+
+func (p *fakeComputeClaimRecoveryProvider) DiscoverStorageRecovery(_ context.Context, input StorageVolumeInput) (StorageRecoveryDiscovery, error) {
+	p.storageDiscoveries = append(p.storageDiscoveries, input)
+	return p.storageDiscovery, p.storageDiscoveryErr
 }
 
 func (p *fakeComputeClaimRecoveryProvider) TagComputeMachine(_ context.Context, _ ProviderMachine, _ MachineOwnership) error {
@@ -128,6 +136,7 @@ func seedComputeClaimRecoveryWithPeriod(t *testing.T, packageID, periodMonths st
 		CVMInstanceID: allocation.InstanceID, PrivateIP: allocation.PrivateIP, InstanceType: instanceType, Zone: allocation.Zone,
 		ChargeType: "PREPAID", PeriodMonths: 1, RenewFlag: "NOTIFY_AND_MANUAL_RENEW", Deadline: allocation.Deadline,
 	}}
+	provider.storageDiscovery = StorageRecoveryDiscovery{State: "storage_not_started", ProviderRequestID: "req-storage-discovery"}
 	provider.claim = ComputeClaimProviderClaim{Proof: provider.proof}
 	provider.claim.Proof.NodeOwnershipState = "target_owned"
 	provider.claim.Proof.CVMOwnershipState = "target_owned"
@@ -197,8 +206,59 @@ func TestComputeClaimRecoveryProofSupportsBasicAndProWithoutMutation(t *testing.
 				proof.Sub2APIMutationCount != 0 || proof.TencentMutationCount != 0 || proof.KubernetesMutationCount != 0 {
 				t.Fatalf("proof=%#v", proof)
 			}
-			if provider.proofCalls != 1 || provider.claimCalls != 0 || provider.tagCalls != 0 || provider.scaleCalls != 0 || provider.storageCalls != 0 {
+			if provider.proofCalls != 1 || len(provider.storageDiscoveries) != 1 || provider.claimCalls != 0 || provider.tagCalls != 0 || provider.scaleCalls != 0 || provider.storageCalls != 0 {
 				t.Fatalf("provider calls=%#v", provider)
+			}
+			storage := provider.storageDiscoveries[0]
+			wantSize := 10
+			if packageID == "pro" {
+				wantSize = 100
+			}
+			wantOperationID := newOperation("create_storage_volume", "storage_volume", input.StorageVolumeID, input.AccountID, input.WorkspaceID, input.LaunchOperationID+":storage", "", time.Time{}).OperationID
+			if storage.ID != input.StorageVolumeID || storage.AccountID != input.AccountID || storage.WorkspaceID != input.WorkspaceID ||
+				storage.ComputeID != input.ComputeAllocationID || storage.Zone != proof.Zone || storage.SizeGB != wantSize || storage.IdempotencyKey != input.LaunchOperationID+":storage" ||
+				storage.OperationID != wantOperationID {
+				t.Fatalf("storage discovery input=%#v wantOperationID=%q", storage, wantOperationID)
+			}
+		})
+	}
+}
+
+func TestComputeClaimRecoveryProofBindsOneExactExistingCBS(t *testing.T) {
+	service, _, provider, input := seedComputeClaimRecovery(t, "basic")
+	provider.storageDiscovery = StorageRecoveryDiscovery{
+		State: "storage_existing_exact", ProviderResourceID: "disk-existing-fixture", ProviderRequestID: "req-existing-cbs",
+	}
+
+	proof, err := service.ComputeClaimRecoveryProof(context.Background(), input)
+
+	if err != nil || !proof.Eligible || proof.Reason != "none" || proof.StorageState != "storage_existing_exact" ||
+		proof.StorageProviderResourceID != "disk-existing-fixture" || proof.TencentMutationCount != 0 || proof.KubernetesMutationCount != 0 ||
+		provider.proofCalls != 1 || len(provider.storageDiscoveries) != 1 || provider.storageCalls != 0 {
+		t.Fatalf("proof=%#v err=%v provider=%#v", proof, err, provider)
+	}
+}
+
+func TestComputeClaimRecoveryProofFailsClosedOnUnknownCBSDiscovery(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		discovery StorageRecoveryDiscovery
+		err       error
+		want      string
+	}{
+		{name: "multiple", discovery: StorageRecoveryDiscovery{State: "unknown", Reason: "multiple_candidate"}, err: errors.New("multiple candidate"), want: "multiple_candidate"},
+		{name: "identity drift", discovery: StorageRecoveryDiscovery{State: "unknown", Reason: "identity_mismatch"}, err: errors.New("identity mismatch"), want: "identity_mismatch"},
+		{name: "describe error", discovery: StorageRecoveryDiscovery{State: "unknown", Reason: "provider_describe"}, err: errors.New("describe unavailable"), want: "provider_describe"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			service, _, provider, input := seedComputeClaimRecovery(t, "basic")
+			provider.storageDiscovery, provider.storageDiscoveryErr = test.discovery, test.err
+
+			proof, err := service.ComputeClaimRecoveryProof(context.Background(), input)
+
+			if err == nil || proof.Eligible || proof.StorageState != "unknown" || proof.StorageProviderResourceID != "" || proof.Reason != test.want ||
+				proof.TencentMutationCount != 0 || proof.KubernetesMutationCount != 0 || provider.proofCalls != 1 || len(provider.storageDiscoveries) != 1 || provider.storageCalls != 0 {
+				t.Fatalf("proof=%#v err=%v provider=%#v", proof, err, provider)
 			}
 		})
 	}

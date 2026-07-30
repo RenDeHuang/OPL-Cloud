@@ -988,11 +988,34 @@ test("compute claim diagnosis and recovery are isolated VPC modes with separate 
 
 test("compute claim workflow executes the recovery and continuation artifact gates", async () => {
   const workflow = await readWorkflow(".github/workflows/production-basic-customer-operation.yml");
+  const diagnoseGate = stepsByName(workflowJob(workflow, "compute-claim-diagnose")).get("Require complete zero-mutation compute proof");
   const steps = stepsByName(workflowJob(workflow, "compute-claim-recover"));
   const claimGate = steps.get("Require approved claim readback");
   const continuationGate = steps.get("Require original launch continuation success");
   assert.ok(claimGate?.run);
   assert.ok(continuationGate?.run);
+
+  const diagnosisArtifact = {
+    schemaVersion: 2,
+    operationMode: "compute_claim_diagnose",
+    status: "proven",
+    recoveryEligible: true,
+    errorCode: "none",
+    proof: {
+      storageState: "storage_existing_exact",
+      storageProviderResourceId: "disk-existing-fixture",
+      sub2apiMutationCount: 0,
+      tencentMutationCount: 0,
+      kubernetesMutationCount: 0,
+      evidence: {
+        cvm: { attempted: 0, confirmed: 0, unknown: 0, missing: [] },
+        node: { attempted: 0, confirmed: 0, unknown: 0, missing: [] }
+      }
+    },
+    runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
+  };
+  const validDiagnosis = await runWorkflowArtifactGate(diagnoseGate, "compute-claim-diagnosis.json", diagnosisArtifact);
+  assert.equal(validDiagnosis.status, 0, validDiagnosis.stderr || validDiagnosis.stdout);
 
   const target = {
     launchOperationId: "workspace-launch-compute-claim-fixture",
@@ -1015,16 +1038,24 @@ test("compute claim workflow executes the recovery and continuation artifact gat
     deadline: "2099-08-28T00:00:00Z"
   };
   const approval = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     approvalId: "approval-compute-claim-fixture",
     expiresAt: "2099-08-28T00:00:00Z",
     mergedMainSha: cloudCandidateSha,
     cloudImageDigest: digestA,
     workspaceImageDigest: workspaceDigest,
-    confirmation: "CLAIM_PROVEN_COMPUTE_RESOURCE",
+    confirmation: "RECOVER_PROVEN_COMPUTE_AND_CONTINUE_ORIGINAL_LAUNCH",
     idempotencyKey: "compute-claim-recovery-fixture",
     recoveryKey: "compute-claim-recovery-fixture",
-    target
+    target,
+    resources: {
+      storageState: "storage_existing_exact",
+      storageProviderResourceId: "disk-existing-fixture"
+    },
+    allowedWrites: [
+      "claim_existing_cvm_node", "reuse_original_cbs", "create_original_pv_pvc_attachment", "upsert_original_gateway_secret",
+      "create_original_workspace_runtime", "activate_original_workspace", "record_original_purchase_receipt"
+    ]
   };
   const approvalDigest = createHash("sha256").update(canonicalJson(approval)).digest("hex");
   const claimArtifact = {
@@ -1036,6 +1067,8 @@ test("compute claim workflow executes the recovery and continuation artifact gat
     release: { mergedSha: cloudCandidateSha, cloudImageDigest: digestA },
     target,
     proof: {
+      storageState: "storage_existing_exact",
+      storageProviderResourceId: "disk-existing-fixture",
       nodeOwnershipState: "target_owned",
       cvmOwnershipState: "target_owned",
       sub2apiMutationCount: 0,
@@ -1055,6 +1088,23 @@ test("compute claim workflow executes the recovery and continuation artifact gat
   };
   const validClaim = await runWorkflowArtifactGate(claimGate, "compute-claim-recovery.json", claimArtifact, claimEnv);
   assert.equal(validClaim.status, 0, validClaim.stderr || validClaim.stdout);
+
+  const driftedClaim = JSON.parse(JSON.stringify(claimArtifact));
+  driftedClaim.proof.storageProviderResourceId = "disk-drifted-fixture";
+  const mismatchedStorage = await runWorkflowArtifactGate(claimGate, "compute-claim-recovery.json", driftedClaim, claimEnv);
+  assert.notEqual(mismatchedStorage.status, 0, "claim gate accepted a proof for a different CBS");
+
+  const createApproved = {
+    ...approval,
+    allowedWrites: approval.allowedWrites.map((write) => write === "reuse_original_cbs" ? "create_original_cbs" : write)
+  };
+  const createApprovedArtifact = JSON.parse(JSON.stringify(claimArtifact));
+  createApprovedArtifact.approval.approvalDigest = createHash("sha256").update(canonicalJson(createApproved)).digest("hex");
+  const invalidExistingWrite = await runWorkflowArtifactGate(claimGate, "compute-claim-recovery.json", createApprovedArtifact, {
+    ...claimEnv,
+    OPL_COMPUTE_CLAIM_RECOVERY_APPROVAL_JSON: JSON.stringify(createApproved)
+  });
+  assert.notEqual(invalidExistingWrite.status, 0, "claim gate accepted CreateDisks for an existing exact CBS");
 
   const changedApproval = { ...approval, idempotencyKey: "compute-claim-recovery-other" };
   const mismatchedApproval = await runWorkflowArtifactGate(claimGate, "compute-claim-recovery.json", claimArtifact, {

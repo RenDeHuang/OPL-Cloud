@@ -191,7 +191,7 @@ func TestFabricHTTPClientSeparatesComputeClaimProofAndMutation(t *testing.T) {
 			t.Fatalf("identity input=%#v", input)
 		}
 		response := ComputeClaimRecoveryProof{
-			SchemaVersion: 1, Eligible: true, Reason: "none", StorageState: "storage_not_started",
+			SchemaVersion: 1, Eligible: true, Reason: "none", StorageState: "storage_existing_exact", StorageProviderResourceID: "disk-existing-fixture",
 			LaunchOperationID: input.LaunchOperationID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID,
 			ComputeAllocationID: input.ComputeAllocationID, StorageVolumeID: input.StorageVolumeID, PackageID: input.PackageID,
 			PoolID: input.PoolID, NodePoolID: input.NodePoolID, MachineName: "machine-fixture", NodeName: "10.0.0.18",
@@ -235,7 +235,7 @@ func TestFabricHTTPClientSeparatesComputeClaimProofAndMutation(t *testing.T) {
 		PoolID: "pool-pro-8c16g", NodePoolID: "np-workspace-pro",
 	}
 	proof, err := client.ComputeClaimRecoveryProof(context.Background(), input)
-	if err != nil || !proof.Eligible || proof.StorageState != "storage_not_started" || proof.TencentMutationCount != 0 || proof.KubernetesMutationCount != 0 {
+	if err != nil || !proof.Eligible || proof.StorageState != "storage_existing_exact" || proof.StorageProviderResourceID != "disk-existing-fixture" || proof.TencentMutationCount != 0 || proof.KubernetesMutationCount != 0 {
 		t.Fatalf("proof=%#v err=%v", proof, err)
 	}
 	claim, err := client.ClaimComputeRecovery(context.Background(), ComputeClaimRecoveryClaimInput{
@@ -303,7 +303,7 @@ func TestFabricHTTPClientCreatesZonedPrepaidStorage(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 			t.Fatal(err)
 		}
-		if input["computeId"] != "compute-alpha" || input["zone"] != "ap-shanghai-2" {
+		if input["computeId"] != "compute-alpha" || input["zone"] != "ap-shanghai-2" || input["expectedRecoveryState"] != "storage_existing_exact" || input["expectedProviderResourceId"] != "disk-existing-alpha" {
 			t.Fatalf("storage placement input = %#v", input)
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -315,7 +315,10 @@ func TestFabricHTTPClientCreatesZonedPrepaidStorage(t *testing.T) {
 	defer upstream.Close()
 
 	client := NewFabricHTTPClient(upstream.URL, "internal-secret", upstream.Client())
-	volume, err := client.CreateStorageVolume(context.Background(), StorageVolumeInput{ID: "storage-alpha", AccountID: "acct-alpha", ComputeID: "compute-alpha", Zone: "ap-shanghai-2", SizeGB: 10}, "storage-once")
+	volume, err := client.CreateStorageVolume(context.Background(), StorageVolumeInput{
+		ID: "storage-alpha", AccountID: "acct-alpha", ComputeID: "compute-alpha", Zone: "ap-shanghai-2", SizeGB: 10,
+		ExpectedRecoveryState: "storage_existing_exact", ExpectedProviderResourceID: "disk-existing-alpha",
+	}, "storage-once")
 	if err != nil || volume.Zone != "ap-shanghai-2" || volume.DiskType != "CLOUD_PREMIUM" || volume.RenewFlag != "NOTIFY_AND_MANUAL_RENEW" || volume.Deadline != "2026-08-16T00:00:00Z" || volume.CBSStatus != "UNATTACHED" || volume.ProviderData["chargeType"] != "PREPAID" {
 		t.Fatalf("storage readback = %#v err=%v", volume, err)
 	}

@@ -520,6 +520,10 @@ func (p *computeClaimHTTPProvider) ClaimComputeRecovery(_ context.Context, _ fab
 	return p.claim, nil
 }
 
+func (p *computeClaimHTTPProvider) DiscoverStorageRecovery(_ context.Context, _ fabric.StorageVolumeInput) (fabric.StorageRecoveryDiscovery, error) {
+	return fabric.StorageRecoveryDiscovery{State: "storage_not_started", ProviderRequestID: "req-storage-discovery"}, nil
+}
+
 func computeClaimHTTPFixture(t *testing.T) (*fabric.Service, *fabric.MemoryOperationStore, *computeClaimHTTPProvider, fabric.ComputeClaimRecoveryInput) {
 	t.Helper()
 	input := fabric.ComputeClaimRecoveryInput{

@@ -179,7 +179,7 @@ func newRecoveredWorkspaceE2EHTTPFixture(t *testing.T) recoveredWorkspaceE2EHTTP
 	operation.ComputeChargeType, operation.ComputeRenewFlag, operation.ComputeDeadline = "PREPAID", "NOTIFY_AND_MANUAL_RENEW", "2099-08-28T00:00:00Z"
 	operation.WorkspaceImageDigest = "sha256:" + strings.Repeat("c", 64)
 	operation.WorkspaceAPIKeyID, operation.WorkspaceKeyFingerprint = 42, "sha256:"+strings.Repeat("d", 64)
-	expectedResources := workspaceComputeClaimExpectedResources(operation)
+	expectedResources := workspaceComputeClaimExpectedResources(operation, "storage_not_started", "")
 	operation.AttachmentID, operation.GatewaySecretRef = expectedResources.AttachmentID, expectedResources.GatewaySecretRef
 	operation.RuntimeID, operation.RuntimeServiceName = expectedResources.RuntimeID, "workspace-service-recovered-e2e"
 	operation.RuntimeReady = true
@@ -192,7 +192,7 @@ func newRecoveredWorkspaceE2EHTTPFixture(t *testing.T) recoveredWorkspaceE2EHTTP
 		Customer: workspaceComputeClaimApprovalCustomer{Email: "alpha@example.com", AccountID: operation.AccountID},
 		Target:   workspaceComputeClaimApprovalTargetFromOperation(operation), Resources: expectedResources,
 		AttemptLimits: workspaceComputeClaimAttemptLimits{Claim: workspaceComputeClaimProviderAttemptLimits{Tencent: 5, Kubernetes: 1}, Storage: 1, Attachment: 1, Secret: 1, Runtime: 1, Activation: 1, Receipt: 1},
-		AllowedWrites: append([]string(nil), workspaceComputeClaimAllowedWrites...), ForbiddenWrites: append([]string(nil), workspaceComputeClaimForbiddenWrites...),
+		AllowedWrites: workspaceComputeClaimAllowedWritesForStorage(expectedResources.StorageState), ForbiddenWrites: append([]string(nil), workspaceComputeClaimForbiddenWrites...),
 	}
 	recovery.ApprovalDigest = workspaceComputeClaimApprovalDigest(recovery)
 	operation.ComputeClaimApproval = &recovery

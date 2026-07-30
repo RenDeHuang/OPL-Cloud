@@ -706,8 +706,10 @@ jobs:
             evidence.confirmed >= 0 && evidence.confirmed <= evidence.attempted && Number.isInteger(evidence.unknown) &&
             evidence.unknown >= 0 && evidence.unknown <= evidence.attempted && evidence.confirmed + evidence.unknown <= evidence.attempted &&
             evidence.confirmed === evidence.attempted && evidence.unknown === 0 && Array.isArray(evidence.missing) && evidence.missing.length === 0;
+          const exactStorage = proof?.storageState === "storage_not_started" && !proof?.storageProviderResourceId ||
+            proof?.storageState === "storage_existing_exact" && /^disk-[a-z0-9-]{1,80}$/.test(proof?.storageProviderResourceId);
           if (result?.schemaVersion !== 2 || result?.operationMode !== "compute_claim_diagnose" || result?.status !== "proven" ||
-            result?.recoveryEligible !== true || result?.errorCode !== "none" || result?.proof?.storageState !== "storage_not_started" ||
+            result?.recoveryEligible !== true || result?.errorCode !== "none" || !exactStorage ||
             result?.runnerDirectMutationCounts?.sub2api !== 0 || result?.runnerDirectMutationCounts?.tencent !== 0 ||
             result?.runnerDirectMutationCounts?.kubernetes !== 0 || proof?.sub2apiMutationCount !== 0 || proof?.tencentMutationCount !== 0 ||
             proof?.kubernetesMutationCount !== 0 || !completeEvidence(proof?.evidence?.cvm, proof?.tencentMutationCount, 5) ||
@@ -842,11 +844,21 @@ jobs:
             evidence.confirmed >= 0 && evidence.confirmed <= evidence.attempted && Number.isInteger(evidence.unknown) &&
             evidence.unknown >= 0 && evidence.unknown <= evidence.attempted && evidence.confirmed + evidence.unknown <= evidence.attempted &&
             evidence.confirmed === evidence.attempted && evidence.unknown === 0 && Array.isArray(evidence.missing) && evidence.missing.length === 0;
+          const expectedStorageWrite = approval?.resources?.storageState === "storage_existing_exact" ? "reuse_original_cbs" : "create_original_cbs";
+          const exactStorage = approval?.resources?.storageState === "storage_not_started" && approval?.resources?.storageProviderResourceId === "" ||
+            approval?.resources?.storageState === "storage_existing_exact" && /^disk-[a-z0-9-]{1,80}$/.test(approval?.resources?.storageProviderResourceId);
+          const expectedAllowedWrites = [
+            "claim_existing_cvm_node", expectedStorageWrite, "create_original_pv_pvc_attachment", "upsert_original_gateway_secret",
+            "create_original_workspace_runtime", "activate_original_workspace", "record_original_purchase_receipt"
+          ];
           if (result?.schemaVersion !== 2 || result?.operationMode !== "compute_claim_recover" || result?.status !== "claimed" ||
             result?.recoveryEligible !== true || result?.errorCode !== "none" || result?.proof?.nodeOwnershipState !== "target_owned" ||
             result?.proof?.cvmOwnershipState !== "target_owned" || result?.runnerDirectMutationCounts?.sub2api !== 0 ||
             result?.approval?.approvalId !== approval.approvalId || approval.approvalId !== process.env.OPL_COMPUTE_CLAIM_RECOVERY_APPROVAL_ID ||
             result?.approval?.approvalDigest !== approvalDigest ||
+            !exactStorage || proof?.storageState !== approval?.resources?.storageState ||
+            proof?.storageProviderResourceId !== approval?.resources?.storageProviderResourceId ||
+            JSON.stringify(approval?.allowedWrites) !== JSON.stringify(expectedAllowedWrites) ||
             result?.runnerDirectMutationCounts?.tencent !== 0 || result?.runnerDirectMutationCounts?.kubernetes !== 0 ||
             proof?.sub2apiMutationCount !== 0 || !Number.isInteger(proof?.tencentMutationCount) || proof.tencentMutationCount < 0 || proof.tencentMutationCount > 5 ||
             !Number.isInteger(proof?.kubernetesMutationCount) || proof.kubernetesMutationCount < 0 || proof.kubernetesMutationCount > 1 ||

@@ -87,11 +87,14 @@ type ComputeAllocationInput struct {
 }
 
 type StorageInput struct {
-	Id       string `json:"id,omitempty"`
-	SizeGB   uint64 `json:"sizeGb,omitempty"`
-	Zone     string `json:"zone,omitempty"`
-	DiskType string `json:"diskType,omitempty"`
-	Deadline string `json:"deadline,omitempty"`
+	Id                         string `json:"id,omitempty"`
+	SizeGB                     uint64 `json:"sizeGb,omitempty"`
+	Zone                       string `json:"zone,omitempty"`
+	DiskType                   string `json:"diskType,omitempty"`
+	Deadline                   string `json:"deadline,omitempty"`
+	ExpectedState              string `json:"expectedState,omitempty"`
+	ExpectedProviderResourceId string `json:"expectedProviderResourceId,omitempty"`
+	AllowExistingExactReplay   bool   `json:"allowExistingExactReplay,omitempty"`
 }
 
 type Response struct {
@@ -108,6 +111,7 @@ type Response struct {
 	TKEStatus                string                    `json:"tkeStatus,omitempty"`
 	CBSStatus                string                    `json:"cbsStatus,omitempty"`
 	StorageVolumeId          string                    `json:"storageVolumeId,omitempty"`
+	StorageState             string                    `json:"storageState,omitempty"`
 	PublicIp                 string                    `json:"publicIp,omitempty"`
 	Status                   string                    `json:"status,omitempty"`
 	ProviderRequestId        string                    `json:"providerRequestId,omitempty"`
@@ -256,6 +260,7 @@ type TencentClient interface {
 	SyncComputeAllocation(request Request, env map[string]string) Response
 	DestroyComputeAllocation(request Request, env map[string]string) Response
 	RenewComputeAllocation(request Request, env map[string]string) Response
+	DiscoverStorageVolume(request Request, env map[string]string) Response
 	CreateStorageVolume(request Request, env map[string]string) Response
 	SyncStorageVolume(request Request, env map[string]string) Response
 	RenewStorageVolume(request Request, env map[string]string) Response
@@ -419,6 +424,10 @@ func (unimplementedTencentClient) SyncComputeAllocation(_ Request, _ map[string]
 
 func (unimplementedTencentClient) CreateStorageVolume(_ Request, _ map[string]string) Response {
 	return Response{Ok: false, ErrorCode: "tencent_live_not_implemented", Message: "Tencent live CBS creation is not implemented in this build.", Retryable: false}
+}
+
+func (unimplementedTencentClient) DiscoverStorageVolume(_ Request, _ map[string]string) Response {
+	return Response{Ok: false, StorageState: "unknown", ErrorCode: "tencent_live_not_implemented", Message: "Tencent live CBS discovery is not implemented in this build.", Retryable: false}
 }
 
 func (unimplementedTencentClient) SyncStorageVolume(_ Request, _ map[string]string) Response {
@@ -1326,6 +1335,42 @@ func (client *tencentSDKClient) CreateStorageVolume(request Request, env map[str
 		!validCBSOwnershipTags(request.Tags) || request.Tags["opl_account_id"] != request.AccountId || request.Tags["opl_resource_id"] != storage.Id {
 		return Response{Ok: false, ErrorCode: "tencent_cbs_input_invalid", Message: "Exact CBS account, resource, size, compute Zone, and ownership tags are required.", Retryable: false}
 	}
+	discoveryRequest := request
+	discoveryRequest.Storage = storage
+	discovery := client.DiscoverStorageVolume(discoveryRequest, env)
+	if !discovery.Ok {
+		return discovery
+	}
+	switch storage.ExpectedState {
+	case "":
+		if discovery.StorageState == "storage_existing_exact" {
+			return discovery
+		}
+		if storage.AllowExistingExactReplay {
+			return Response{Ok: false, StorageState: "unknown", ErrorCode: "tencent_cbs_replay_unconfirmed", Message: "A reserved CBS create attempt cannot be repeated without exact disk readback.", ProviderRequestId: discovery.ProviderRequestId, Retryable: false}
+		}
+	case "storage_not_started":
+		if storage.ExpectedProviderResourceId != "" {
+			return Response{Ok: false, StorageState: "unknown", ErrorCode: "tencent_cbs_approval_invalid", Message: "Approved absent CBS state cannot bind a disk identity.", ProviderRequestId: discovery.ProviderRequestId, Retryable: false}
+		}
+		if storage.AllowExistingExactReplay {
+			if discovery.StorageState == "storage_existing_exact" {
+				return discovery
+			}
+			return Response{Ok: false, StorageState: "unknown", ErrorCode: "tencent_cbs_replay_unconfirmed", Message: "A reserved CBS create attempt cannot be repeated without exact disk readback.", ProviderRequestId: discovery.ProviderRequestId, Retryable: false}
+		}
+		if discovery.StorageState != "storage_not_started" {
+			return Response{Ok: false, StorageState: "unknown", ErrorCode: "tencent_cbs_approval_drift", Message: "Tencent CBS state changed after approval.", ProviderRequestId: discovery.ProviderRequestId, Retryable: false}
+		}
+	case "storage_existing_exact":
+		if discovery.StorageState != "storage_existing_exact" || !strings.HasPrefix(storage.ExpectedProviderResourceId, "disk-") ||
+			discovery.StorageVolumeId != storage.ExpectedProviderResourceId {
+			return Response{Ok: false, StorageState: "unknown", ErrorCode: "tencent_cbs_approval_drift", Message: "Tencent CBS identity changed after approval.", ProviderRequestId: discovery.ProviderRequestId, Retryable: false}
+		}
+		return discovery
+	default:
+		return Response{Ok: false, StorageState: "unknown", ErrorCode: "tencent_cbs_approval_invalid", Message: "Approved CBS state is invalid.", Retryable: false}
+	}
 	create := cbs2017.NewCreateDisksRequest()
 	create.Placement = &cbs2017.Placement{Zone: common.StringPtr(storage.Zone)}
 	create.DiskChargeType = common.StringPtr("PREPAID")
@@ -1338,21 +1383,133 @@ func (client *tencentSDKClient) CreateStorageVolume(request Request, env map[str
 	create.DiskChargePrepaid = &cbs2017.DiskChargePrepaid{Period: common.Uint64Ptr(1), RenewFlag: common.StringPtr("NOTIFY_AND_MANUAL_RENEW")}
 	created, err := client.nativeCbsClient.CreateDisks(create)
 	if err != nil {
-		return sdkErrorResponse("tencent_create_cbs_failed", err)
+		response := sdkErrorResponse("tencent_create_cbs_failed", err)
+		response.StorageState = "unknown"
+		response.MutationCount = 1
+		return response
 	}
 	if created == nil || created.Response == nil || len(created.Response.DiskIdSet) != 1 || !strings.HasPrefix(stringValue(created.Response.DiskIdSet[0]), "disk-") {
-		return Response{Ok: false, ErrorCode: "tencent_create_cbs_identity_missing", Message: "Tencent CBS did not return exactly one disk identity.", Retryable: true}
+		return Response{Ok: false, StorageState: "unknown", ErrorCode: "tencent_create_cbs_identity_missing", Message: "Tencent CBS did not return exactly one disk identity.", Retryable: true, MutationCount: 1}
 	}
 	storage.Id = stringValue(created.Response.DiskIdSet[0])
 	request.Storage = storage
 	response := client.storageVolumeReadback(request, false)
 	response.StorageVolumeId = storage.Id
+	response.StorageState = "storage_existing_exact"
 	if response.ProviderData == nil {
 		response.ProviderData = map[string]string{}
 	}
 	response.ProviderData["createCbsRequestId"] = stringValue(created.Response.RequestId)
 	response.ProviderRequestId = firstNonEmpty(stringValue(created.Response.RequestId), response.ProviderRequestId)
+	response.MutationCount = 1
 	return response
+}
+
+func (client *tencentSDKClient) DiscoverStorageVolume(request Request, _ map[string]string) Response {
+	if client == nil || client.nativeCbsClient == nil {
+		return Response{Ok: false, StorageState: "unknown", ErrorCode: "tencent_sdk_client_missing", Message: "Tencent CBS SDK client is missing.", Retryable: false}
+	}
+	storage := request.Storage
+	storage.DiskType = firstNonEmpty(storage.DiskType, "CLOUD_BSSD")
+	if strings.TrimSpace(request.AccountId) == "" || storage.Id == "" || storage.SizeGB == 0 || storage.Zone == "" ||
+		!validCBSOwnershipTags(request.Tags) || request.Tags["opl_account_id"] != request.AccountId || request.Tags["opl_resource_id"] != storage.Id {
+		return Response{Ok: false, StorageState: "unknown", ErrorCode: "tencent_cbs_input_invalid", Message: "Exact CBS account, resource, size, compute Zone, and ownership tags are required.", Retryable: false}
+	}
+	filters := make([]*cbs2017.Filter, 0, len(cbsOwnershipTagKeys))
+	for _, key := range cbsOwnershipTagKeys {
+		filters = append(filters, &cbs2017.Filter{Name: common.StringPtr("tag:" + key), Values: []*string{common.StringPtr(request.Tags[key])}})
+	}
+	exactDisks, exactRequestID, failure := client.describeRecoveryDisks(filters)
+	if failure != nil {
+		return *failure
+	}
+	if len(exactDisks) > 1 {
+		return Response{Ok: false, StorageState: "unknown", ErrorCode: "tencent_cbs_multiple_candidate", Message: "Tencent CBS discovery must return at most one exact disk.", ProviderRequestId: exactRequestID, Retryable: false}
+	}
+	nameDisks, nameRequestID, failure := client.describeRecoveryDisks([]*cbs2017.Filter{{Name: common.StringPtr("disk-name"), Values: []*string{common.StringPtr(storage.Id)}}})
+	if failure != nil {
+		return *failure
+	}
+	requestID := firstNonEmpty(nameRequestID, exactRequestID)
+	if len(exactDisks) == 0 && len(nameDisks) == 0 {
+		return Response{Ok: true, StorageState: "storage_not_started", Status: "absent", ProviderRequestId: requestID, MutationCount: 0}
+	}
+	if len(nameDisks) > 1 {
+		return Response{Ok: false, StorageState: "unknown", ErrorCode: "tencent_cbs_multiple_candidate", Message: "Tencent CBS discovery must return at most one logical disk.", ProviderRequestId: requestID, Retryable: false}
+	}
+	if len(exactDisks) != 1 || exactDisks[0] == nil || len(nameDisks) != 1 || nameDisks[0] == nil ||
+		stringValue(exactDisks[0].DiskId) != stringValue(nameDisks[0].DiskId) {
+		return Response{Ok: false, StorageState: "unknown", ErrorCode: "tencent_cbs_identity_mismatch", Message: "Tencent CBS name and ownership tags do not identify the same unique disk.", ProviderRequestId: requestID, Retryable: false}
+	}
+	disk := nameDisks[0]
+	diskID := stringValue(disk.DiskId)
+	exactStorage := storage
+	exactStorage.Id = diskID
+	facts, err := validateCBSVolume(disk, exactStorage, request.Tags)
+	if err != nil || !oneMonthCBSPeriod(stringValue(disk.CreateTime), stringValue(disk.DeadlineTime)) {
+		return Response{Ok: false, StorageState: "unknown", ErrorCode: "tencent_cbs_identity_mismatch", Message: "Tencent CBS billing or identity facts do not match the original launch.", ProviderRequestId: requestID, Retryable: false}
+	}
+	facts["periodMonths"] = "1"
+	facts["describeCbsRequestId"] = requestID
+	status := "pending"
+	if state := strings.ToUpper(strings.TrimSpace(stringValue(disk.DiskState))); state == "UNATTACHED" || state == "ATTACHED" {
+		status = "provider_ready"
+	}
+	return Response{
+		Ok: true, StorageState: "storage_existing_exact", StorageVolumeId: diskID, CBSStatus: stringValue(disk.DiskState), Status: status,
+		ProviderRequestId: requestID, ProviderData: facts, MutationCount: 0,
+	}
+}
+
+func (client *tencentSDKClient) describeRecoveryDisks(filters []*cbs2017.Filter) ([]*cbs2017.Disk, string, *Response) {
+	const pageLimit uint64 = 100
+	disks := []*cbs2017.Disk{}
+	requestID := ""
+	totalCount := uint64(0)
+	for offset := uint64(0); ; {
+		describe := cbs2017.NewDescribeDisksRequest()
+		describe.Filters = filters
+		describe.Limit = common.Uint64Ptr(pageLimit)
+		describe.Offset = common.Uint64Ptr(offset)
+		result, err := client.nativeCbsClient.DescribeDisks(describe)
+		if err != nil {
+			response := sdkErrorResponse("tencent_describe_cbs_failed", err)
+			response.StorageState = "unknown"
+			response.MutationCount = 0
+			return nil, requestID, &response
+		}
+		if result == nil || result.Response == nil || result.Response.TotalCount == nil || len(result.Response.DiskSet) > int(pageLimit) {
+			response := Response{Ok: false, StorageState: "unknown", ErrorCode: "tencent_cbs_describe_incomplete", Message: "Tencent CBS DescribeDisks response is missing or incomplete.", ProviderRequestId: requestID, Retryable: true}
+			return nil, requestID, &response
+		}
+		requestID = firstNonEmpty(stringValue(result.Response.RequestId), requestID)
+		if offset == 0 {
+			totalCount = *result.Response.TotalCount
+		} else if *result.Response.TotalCount != totalCount {
+			response := Response{Ok: false, StorageState: "unknown", ErrorCode: "tencent_cbs_describe_incomplete", Message: "Tencent CBS DescribeDisks total changed during pagination.", ProviderRequestId: requestID, Retryable: true}
+			return nil, requestID, &response
+		}
+		disks = append(disks, result.Response.DiskSet...)
+		if uint64(len(disks)) >= totalCount {
+			break
+		}
+		if len(result.Response.DiskSet) == 0 {
+			response := Response{Ok: false, StorageState: "unknown", ErrorCode: "tencent_cbs_describe_incomplete", Message: "Tencent CBS DescribeDisks pagination ended early.", ProviderRequestId: requestID, Retryable: true}
+			return nil, requestID, &response
+		}
+		offset += uint64(len(result.Response.DiskSet))
+	}
+	if uint64(len(disks)) != totalCount {
+		response := Response{Ok: false, StorageState: "unknown", ErrorCode: "tencent_cbs_describe_incomplete", Message: "Tencent CBS DescribeDisks result count is inconsistent.", ProviderRequestId: requestID, Retryable: true}
+		return nil, requestID, &response
+	}
+	return disks, requestID, nil
+}
+
+func oneMonthCBSPeriod(created, deadline string) bool {
+	createdAt, createdErr := time.Parse(time.RFC3339Nano, strings.TrimSpace(created))
+	deadlineAt, deadlineErr := time.Parse(time.RFC3339Nano, strings.TrimSpace(deadline))
+	return createdErr == nil && deadlineErr == nil && deadlineAt.Equal(createdAt.AddDate(0, 1, 0))
 }
 
 func (client *tencentSDKClient) SyncStorageVolume(request Request, _ map[string]string) Response {
@@ -4152,6 +4309,8 @@ func handleWithClient(request Request, env map[string]string, client TencentClie
 		return client.ProviderTruth(request, env)
 	case "compute_claim_truth":
 		return client.ComputeClaimTruth(request, env)
+	case "discover_storage_volume":
+		return client.DiscoverStorageVolume(request, env)
 	case "claim_compute_machine":
 		return client.ClaimComputeMachine(request, env)
 	case "prepare_compute_allocation":

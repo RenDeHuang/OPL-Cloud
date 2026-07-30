@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 22,
+  "schemaVersion": 23,
   "owner": "OPL Fabric",
   "purpose": "Deployment workflow, immutable Cloud and Workspace images, TKE handoff, read-only diagnostics, and production-verification safety.",
   "state": "current",
@@ -503,9 +503,13 @@
           "handling": "step_memory_only_immediate_mask"
         },
         "confirmation": "RECOVER_PROVEN_COMPUTE_AND_CONTINUE_ORIGINAL_LAUNCH",
-        "approvalBinding": ["merged_main_sha", "cloud_image_digest", "workspace_image_digest", "expiry", "customer", "launch", "compute", "storage", "attachment", "runtime", "recovery_key"],
-        "allowedWrites": ["claim_existing_cvm_node", "create_original_cbs", "create_original_pv_pvc_attachment", "upsert_original_gateway_secret", "create_original_workspace_runtime", "activate_original_workspace", "record_original_purchase_receipt"],
+        "approvalBinding": ["merged_main_sha", "cloud_image_digest", "workspace_image_digest", "expiry", "customer", "launch", "compute", "storage", "storage_state", "storage_provider_resource_id", "attachment", "runtime", "recovery_key"],
+        "allowedWritesByStorageState": {
+          "storage_not_started": ["claim_existing_cvm_node", "create_original_cbs", "create_original_pv_pvc_attachment", "upsert_original_gateway_secret", "create_original_workspace_runtime", "activate_original_workspace", "record_original_purchase_receipt"],
+          "storage_existing_exact": ["claim_existing_cvm_node", "reuse_original_cbs", "create_original_pv_pvc_attachment", "upsert_original_gateway_secret", "create_original_workspace_runtime", "activate_original_workspace", "record_original_purchase_receipt"]
+        },
         "attemptLimits": {"claim": {"sub2api": 0, "tencent": 5, "kubernetes": 1}, "storage": 1, "attachment": 1, "secret": 1, "runtime": 1, "activation": 1, "receipt": 1},
+        "createDisksLimitsByStorageState": {"storage_not_started": 1, "storage_existing_exact": 0, "unknown": 0},
         "forbiddenWrites": ["create_launch", "debit", "recharge", "refund", "scale", "create_cvm", "create_second_cbs", "delete", "replace"],
         "continuation": {
           "mode": "GET_only_same_launch_after_claim",
@@ -524,6 +528,10 @@
       "manualReviewSchemaVersion": 1,
       "runnerDirectMutationCounts": {"sub2api": 0, "tencent": 0, "kubernetes": 0},
       "providerMutationAuthority": ["proof.sub2apiMutationCount", "proof.tencentMutationCount", "proof.kubernetesMutationCount", "proof.evidence"],
+      "storageBinding": {
+        "proofFields": ["storageState", "storageProviderResourceId"],
+        "approvalDigestIncludes": ["resources.storageState", "resources.storageProviderResourceId"]
+      },
       "failure": "non_empty_redacted_blocked_json_with_allowlisted_error_code",
       "successApprovalFields": ["approvalId", "approvalDigest"],
       "blockedArtifactFieldsByMode": {
@@ -533,7 +541,7 @@
       }
     },
     "releaseBinding": ["exact_merged_origin_main_sha", "immutable_cloud_digest", "control_plane_fabric_ledger_ready_pod_image_id", "approval_id_and_idempotency_key"],
-    "targetBinding": ["launch", "account", "workspace", "compute", "machine", "node", "cvm", "pool", "node_pool", "sku", "zone", "private_ip", "billing_facts"],
+    "targetBinding": ["launch", "account", "workspace", "compute", "machine", "node", "cvm", "pool", "node_pool", "sku", "zone", "private_ip", "billing_facts", "storage_state", "storage_provider_resource_id"],
     "mutationBounds": {"sub2api": 0, "tencent": {"min": 0, "max": 5}, "kubernetes": {"min": 0, "max": 1}},
     "mutationLedger": {
       "persistence": "original_create_compute_allocation_operation_payload_cas_before_provider_call",
@@ -544,7 +552,7 @@
       "replayProofUnavailable": "return_persisted_mutation_evidence_zero_incremental_external_mutation",
       "observedSuccessReadbackMismatch": "fail_closed_identity_mismatch_claim_final_readback"
     },
-    "artifactGate": ["exact_target_owned_readback", "proof_sub2api_zero", "proof_tencent_zero_to_five", "proof_kubernetes_zero_to_one", "attempted_equals_count", "confirmed_equals_attempted", "unknown_zero", "missing_empty"],
+    "artifactGate": ["exact_target_owned_readback", "proof_storage_state_and_provider_resource_id_match_approval", "proof_sub2api_zero", "proof_tencent_zero_to_five", "proof_kubernetes_zero_to_one", "attempted_equals_count", "confirmed_equals_attempted", "unknown_zero", "missing_empty"],
     "claimForbidden": ["debit", "refund", "recharge", "scale", "create_compute", "create_storage", "delete", "replace"],
     "currentState": "code_complete_local_focused_and_postgresql_verified_not_merged_released_deployed_or_executed"
   },

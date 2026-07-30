@@ -176,7 +176,7 @@ func recoveredWorkspaceE2ERecoveryBindingMatches(approval recoveredWorkspaceE2EA
 		recovery.MergedMainSHA == approval.MergedMainSHA && recovery.CloudImageDigest == approval.CloudImageDigest &&
 		recovery.WorkspaceImageDigest == approval.WorkspaceImageDigest && recovery.Customer.Email == approval.Customer.Email &&
 		recovery.Customer.AccountID == approval.Customer.AccountID && recovery.Target == workspaceComputeClaimApprovalTargetFromOperation(operation) &&
-		recovery.Resources == workspaceComputeClaimExpectedResources(operation)
+		recovery.Resources == workspaceComputeClaimExpectedResources(operation, recovery.Resources.StorageState, recovery.Resources.StorageProviderResourceID)
 }
 
 func (app *controlPlaneServer) recoveredWorkspaceE2EAttemptClaim(ctx context.Context, r *http.Request, workspaceID string, request recoveredWorkspaceE2EAttemptRequest) (productionE2EAttemptClaim, workspaceLaunchOperation, string, error) {

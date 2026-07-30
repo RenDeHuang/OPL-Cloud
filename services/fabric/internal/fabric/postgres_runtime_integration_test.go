@@ -809,15 +809,33 @@ func TestPostgresComputeClaimRecoveryOwnershipCASRejectsNonRecoverableStatus(t *
 type postgresComputeClaimRecoveryProvider struct {
 	fakeComputeClaimRecoveryProvider
 	storageCreates atomic.Int32
+	storageReplays atomic.Int32
 }
 
 func (p *postgresComputeClaimRecoveryProvider) CreateStorageVolume(_ context.Context, input StorageVolumeInput) (StorageVolume, error) {
-	p.storageCreates.Add(1)
+	if input.AllowExistingExactReplay {
+		p.storageReplays.Add(1)
+	} else {
+		p.storageCreates.Add(1)
+	}
 	return StorageVolume{
 		ID: input.ID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, Status: "ready", Provider: "tencent-tke",
 		ProviderResourceID: "disk-postgres-fixture", ProviderRequestID: providerRequestID("storage", input.IdempotencyKey),
 		Zone: input.Zone, SizeGB: input.SizeGB,
 	}, nil
+}
+
+type failOnceStorageTerminalAppendStore struct {
+	OperationStore
+	failed bool
+}
+
+func (s *failOnceStorageTerminalAppendStore) Append(ctx context.Context, operation FabricOperation) error {
+	if !s.failed && operation.Action == "create_storage_volume" && operation.Status == "succeeded" {
+		s.failed = true
+		return errors.New("storage terminal append failed")
+	}
+	return s.OperationStore.Append(ctx, operation)
 }
 
 func TestPostgresComputeClaimRecoveryRestartAfterActiveOwnershipSkipsProviderMutation(t *testing.T) {
@@ -1068,6 +1086,42 @@ func TestPostgresComputeClaimRecoveryStorageIdentityCreatesCBSOnceAcrossRestart(
 	}
 	if started != 1 || succeeded != 1 {
 		t.Fatalf("storage transitions started=%d succeeded=%d operations=%#v", started, succeeded, operations)
+	}
+}
+
+func TestPostgresStorageRecoveryReusesCreatedCBSAfterTerminalWriteFailureAndRestart(t *testing.T) {
+	databaseURL := fabricTestDatabaseURL(t)
+	firstStore, err := newTestPostgresOperationStore(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider, input, claimInput := seedPostgresActiveComputeClaimRecovery(t, firstStore, "basic")
+	if result, err := NewServiceWithOperationStore(provider, firstStore).ClaimComputeRecovery(context.Background(), claimInput); err != nil || !result.Eligible {
+		t.Fatalf("claim recovery result=%#v err=%v", result, err)
+	}
+	service := NewServiceWithOperationStore(provider, &failOnceStorageTerminalAppendStore{OperationStore: firstStore})
+	storageInput := StorageVolumeInput{
+		ID: input.StorageVolumeID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID,
+		ComputeID: input.ComputeAllocationID, Zone: claimInput.Zone, SizeGB: 10,
+		ExpectedRecoveryState: "storage_not_started", IdempotencyKey: input.LaunchOperationID + ":storage",
+	}
+
+	first, firstErr := service.CreateStorageVolume(context.Background(), storageInput)
+	if firstErr == nil || first.ProviderResourceID != "disk-postgres-fixture" || provider.storageCreates.Load() != 1 {
+		t.Fatalf("first storage=%#v err=%v providerCreates=%d", first, firstErr, provider.storageCreates.Load())
+	}
+	if err := firstStore.client.Close(); err != nil {
+		t.Fatal(err)
+	}
+	secondStore, err := newTestPostgresOperationStore(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer secondStore.client.Close()
+
+	replayed, replayErr := NewServiceWithOperationStore(provider, secondStore).CreateStorageVolume(context.Background(), storageInput)
+	if replayErr != nil || replayed.ProviderResourceID != "disk-postgres-fixture" || provider.storageCreates.Load() != 1 || provider.storageReplays.Load() != 1 {
+		t.Fatalf("replayed storage=%#v err=%v providerCreates=%d providerReplays=%d", replayed, replayErr, provider.storageCreates.Load(), provider.storageReplays.Load())
 	}
 }
 

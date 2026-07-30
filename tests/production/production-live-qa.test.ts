@@ -950,6 +950,15 @@ const COMPUTE_CLAIM_ALLOWED_WRITES = Object.freeze([
   "activate_original_workspace",
   "record_original_purchase_receipt"
 ]);
+const COMPUTE_CLAIM_EXISTING_STORAGE_ALLOWED_WRITES = Object.freeze([
+  "claim_existing_cvm_node",
+  "reuse_original_cbs",
+  "create_original_pv_pvc_attachment",
+  "upsert_original_gateway_secret",
+  "create_original_workspace_runtime",
+  "activate_original_workspace",
+  "record_original_purchase_receipt"
+]);
 const COMPUTE_CLAIM_FORBIDDEN_WRITES = Object.freeze([
   "create_launch", "debit", "recharge", "refund", "scale", "create_cvm", "create_second_cbs", "delete", "replace"
 ]);
@@ -958,12 +967,14 @@ function computeClaimStableSuffix(...parts) {
   return createHash("sha256").update(parts.join(":"), "utf8").digest("hex");
 }
 
-function computeClaimRecoveryResources(target = COMPUTE_CLAIM_TARGET) {
+function computeClaimRecoveryResources(target = COMPUTE_CLAIM_TARGET, storageState = "storage_not_started", storageProviderResourceId = "") {
   const attachmentOperationId = `${target.launchOperationId}:attachment`;
   const runtimeOperationId = `${target.launchOperationId}:workspace:runtime`;
   return {
     computeOperationId: `${target.launchOperationId}:compute`,
     storageOperationId: `${target.launchOperationId}:storage`,
+    storageState,
+    storageProviderResourceId,
     attachmentId: `att_${computeClaimStableSuffix(attachmentOperationId).slice(0, 18)}`,
     attachmentOperationId,
     workspaceApiKeyId: "42",
@@ -990,6 +1001,7 @@ function computeClaimProof(overrides = {}) {
     eligible: true,
     reason: "none",
     storageState: "storage_not_started",
+    storageProviderResourceId: "",
     launchOperationId: COMPUTE_CLAIM_TARGET.launchOperationId,
     accountId: COMPUTE_CLAIM_TARGET.accountId,
     workspaceId: COMPUTE_CLAIM_TARGET.workspaceId,
@@ -1733,6 +1745,78 @@ test("compute-claim diagnosis proves the exact compute identity through the curr
   assert.match(execCalls[0].args.join(" "), /compute-claim-recovery\/proof/);
   assert.doesNotMatch(execCalls[0].args.join(" "), /compute-claim-recovery\/claim|internal-service-token/);
   assert.doesNotMatch(JSON.stringify(result), /providerRequestId|requestId|token|secret|password|raw/i);
+});
+
+test("compute-claim diagnosis binds one exact existing CBS without mutation", async () => {
+  const result = await productionLiveQa.diagnoseComputeClaimRecovery({
+    target: COMPUTE_CLAIM_TARGET,
+    mergedSha: BASIC_CANARY_MERGED_SHA,
+    cloudImageDigest: BASIC_CANARY_CLOUD_DIGEST,
+    kubeconfigPath: "/run/secrets/kubeconfig",
+    namespace: "opl-cloud",
+    cloudRevisionEvidenceReader: async () => computeClaimCloudRevisionEvidence(),
+    execFileImpl: async () => ({ stdout: JSON.stringify({
+      statusCode: 200,
+      payload: computeClaimProof({ storageState: "storage_existing_exact", storageProviderResourceId: "disk-existing-fixture" }),
+      errorCode: "none"
+    }) })
+  });
+
+  assert.equal(result.status, "proven");
+  assert.equal(result.recoveryEligible, true);
+  assert.equal(result.proof.storageState, "storage_existing_exact");
+  assert.equal(result.proof.storageProviderResourceId, "disk-existing-fixture");
+  assert.deepEqual(result.runnerDirectMutationCounts, { sub2api: 0, tencent: 0, kubernetes: 0 });
+});
+
+test("compute-claim recovery binds exact existing CBS and forbids CreateDisks approval", async () => {
+  const resources = computeClaimRecoveryResources(COMPUTE_CLAIM_TARGET, "storage_existing_exact", "disk-existing-fixture");
+  const approvalJson = computeClaimApprovalJson({
+    resources,
+    allowedWrites: [...COMPUTE_CLAIM_EXISTING_STORAGE_ALLOWED_WRITES]
+  });
+  const calls = [];
+  const result = await productionLiveQa.recoverComputeClaim({
+    target: COMPUTE_CLAIM_TARGET,
+    approvalJson,
+    approvalId: "approval-compute-claim-fixture",
+    mergedSha: BASIC_CANARY_MERGED_SHA,
+    cloudImageDigest: BASIC_CANARY_CLOUD_DIGEST,
+    origin: "https://cloud.medopl.cn",
+    adminEmail: ADMIN_EMAIL,
+    adminPassword: ADMIN_PASSWORD,
+    internalServiceToken: "compute-claim-runner-capability",
+    kubeconfigPath: "/run/secrets/kubeconfig",
+    namespace: "opl-cloud",
+    cloudRevisionEvidenceReader: async () => computeClaimCloudRevisionEvidence(),
+    fetchImpl: async (input, init = {}) => {
+      const url = new URL(String(input));
+      const body = init.body ? JSON.parse(String(init.body)) : null;
+      calls.push({ path: url.pathname, body });
+      if (url.pathname === "/api/auth/login") {
+        return json({ user: { accountId: "acct-admin", role: "admin" } }, 200, {
+          "set-cookie": "opl_session=session-fixture; Path=/; HttpOnly",
+          "x-opl-csrf-token": "csrf-compute-claim"
+        });
+      }
+      if (url.pathname === "/api/operator/accounts") return computeClaimAccountAuthority();
+      return json(computeClaimProof({
+        storageState: "storage_existing_exact",
+        storageProviderResourceId: "disk-existing-fixture",
+        nodeOwnershipState: "target_owned",
+        cvmOwnershipState: "target_owned"
+      }));
+    },
+    now: new Date("2026-08-28T00:00:00Z")
+  });
+
+  const claim = calls.find(({ path }) => path.endsWith("/compute-claim-recovery/claim"));
+  assert.equal(result.status, "claimed");
+  assert.equal(result.proof.storageState, "storage_existing_exact");
+  assert.equal(result.proof.storageProviderResourceId, "disk-existing-fixture");
+  assert.deepEqual(claim.body.resources, resources);
+  assert.deepEqual(claim.body.allowedWrites, COMPUTE_CLAIM_EXISTING_STORAGE_ALLOWED_WRITES);
+  assert.equal(claim.body.allowedWrites.includes("create_original_cbs"), false);
 });
 
 test("compute-claim diagnosis preserves classified failure and zero mutation", async () => {

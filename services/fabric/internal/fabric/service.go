@@ -65,6 +65,10 @@ type computeClaimRecoveryClaimProvider interface {
 	ClaimComputeRecovery(context.Context, ComputeAllocation, ComputeAllocationPreparation, MachineOwnership) (ComputeClaimProviderClaim, error)
 }
 
+type storageRecoveryDiscoveryProvider interface {
+	DiscoverStorageRecovery(context.Context, StorageVolumeInput) (StorageRecoveryDiscovery, error)
+}
+
 type runtimeGatewaySecretProvider interface {
 	BindWorkspaceRuntimeGatewaySecret(context.Context, WorkspaceRuntimeGatewaySecretInput) (WorkspaceRuntimeGatewaySecretBinding, error)
 	WorkspaceRuntimeGatewaySecret(context.Context, string) (WorkspaceRuntimeGatewaySecretBinding, error)
@@ -281,12 +285,50 @@ func (s *Service) ComputeClaimRecoveryProof(ctx context.Context, input ComputeCl
 		proof.Reason = safeComputeClaimRecoveryReason(providerProof.Reason, "identity_mismatch")
 		return proof, fmt.Errorf("%w: %s", ErrComputeClaimRecoveryUnavailable, proof.Reason)
 	}
-	proof.Eligible, proof.Reason, proof.StorageState = true, "none", "storage_not_started"
+	storageProvider, ok := s.provider.(storageRecoveryDiscoveryProvider)
+	if !ok {
+		proof.Reason = "provider_describe"
+		return proof, fmt.Errorf("%w: provider_describe", ErrComputeClaimRecoveryUnavailable)
+	}
+	storageInput := StorageVolumeInput{
+		ID: input.StorageVolumeID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, ComputeID: input.ComputeAllocationID,
+		Zone: allocation.Zone, SizeGB: packagePlan(input.PackageID).DiskGB, IdempotencyKey: input.LaunchOperationID + ":storage",
+	}
+	storageOperation := newOperation(
+		"create_storage_volume", "storage_volume", storageInput.ID, storageInput.AccountID, storageInput.WorkspaceID,
+		storageInput.IdempotencyKey, hashInput(storageInput), s.now(),
+	)
+	storageInput.OperationID = storageOperation.OperationID
+	storageDiscovery, err := storageProvider.DiscoverStorageRecovery(ctx, storageInput)
+	if err != nil {
+		proof.Reason = safeComputeClaimRecoveryReason(storageDiscovery.Reason, "provider_describe")
+		return proof, fmt.Errorf("%w: %s", ErrComputeClaimRecoveryUnavailable, proof.Reason)
+	}
+	if !validStorageRecoveryDiscovery(storageDiscovery) {
+		proof.Reason = safeComputeClaimRecoveryReason(storageDiscovery.Reason, "identity_mismatch")
+		return proof, fmt.Errorf("%w: %s", ErrComputeClaimRecoveryUnavailable, proof.Reason)
+	}
+	proof.Eligible, proof.Reason, proof.StorageState = true, "none", storageDiscovery.State
+	proof.StorageProviderResourceID = storageDiscovery.ProviderResourceID
 	proof.MachineName, proof.NodeName, proof.CVMInstanceID = providerProof.MachineName, providerProof.NodeName, providerProof.CVMInstanceID
 	proof.PrivateIP, proof.InstanceType, proof.Zone = providerProof.PrivateIP, providerProof.InstanceType, providerProof.Zone
 	proof.ChargeType, proof.PeriodMonths, proof.RenewFlag, proof.Deadline = providerProof.ChargeType, providerProof.PeriodMonths, providerProof.RenewFlag, providerProof.Deadline
 	proof.NodeOwnershipState, proof.CVMOwnershipState = providerProof.NodeOwnershipState, providerProof.CVMOwnershipState
 	return proof, nil
+}
+
+func validStorageRecoveryDiscovery(discovery StorageRecoveryDiscovery) bool {
+	if discovery.MutationCount != 0 || strings.TrimSpace(discovery.ProviderRequestID) == "" {
+		return false
+	}
+	switch discovery.State {
+	case "storage_not_started":
+		return discovery.ProviderResourceID == "" && discovery.Reason == ""
+	case "storage_existing_exact":
+		return strings.HasPrefix(discovery.ProviderResourceID, "disk-") && discovery.Reason == ""
+	default:
+		return false
+	}
 }
 
 func newComputeClaimRecoveryProof(input ComputeClaimRecoveryInput) ComputeClaimRecoveryProof {
@@ -1564,8 +1606,12 @@ func (s *Service) cancelPendingComputeCreation(ctx context.Context, allocationID
 }
 
 func (s *Service) CreateStorageVolume(ctx context.Context, input StorageVolumeInput) (StorageVolume, error) {
+	input.AllowExistingExactReplay = false
 	if input.SizeGB < 10 || input.SizeGB%10 != 0 {
 		return StorageVolume{}, ErrInvalidStorageSize
+	}
+	if !validStorageRecoveryExpectation(input.ExpectedRecoveryState, input.ExpectedProviderResourceID) {
+		return StorageVolume{}, fmt.Errorf("storage_recovery_expectation_invalid")
 	}
 	if input.ID == "" {
 		if strings.TrimSpace(input.IdempotencyKey) == "" {
@@ -1603,15 +1649,17 @@ func (s *Service) CreateStorageVolume(ctx context.Context, input StorageVolumeIn
 			if candidate.Status == "succeeded" && decodeOperationResource(candidate, &volume) {
 				return nil
 			}
+			input.AllowExistingExactReplay = true
 			break
 		}
 		operation := newOperation("create_storage_volume", "storage_volume", input.ID, input.AccountID, input.WorkspaceID, input.IdempotencyKey, requestHash, s.now())
 		input.OperationID = operation.OperationID
-		if err := s.recordOperation(lockCtx, operation, "started", StorageVolume{ID: input.ID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, Provider: "tencent-tke", ProviderRequestID: providerRequestID("storage", input.IdempotencyKey)}, nil); err != nil {
+		if err := s.recordOperation(lockCtx, operation, "started", StorageVolume{ID: input.ID, OperationID: input.IdempotencyKey, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, Provider: "tencent-tke", ProviderRequestID: providerRequestID("storage", input.IdempotencyKey)}, nil); err != nil {
 			return err
 		}
 		volume, err = s.provider.CreateStorageVolume(lockCtx, input)
 		volume.ID = input.ID
+		volume.OperationID = input.IdempotencyKey
 		volume.AccountID = firstNonEmpty(volume.AccountID, input.AccountID)
 		volume.WorkspaceID = firstNonEmpty(volume.WorkspaceID, input.WorkspaceID)
 		volume.Provider = firstNonEmpty(volume.Provider, "tencent-tke")
@@ -1643,6 +1691,19 @@ func (s *Service) CreateStorageVolume(ctx context.Context, input StorageVolumeIn
 		return nil
 	})
 	return volume, err
+}
+
+func validStorageRecoveryExpectation(state, providerResourceID string) bool {
+	switch state {
+	case "":
+		return providerResourceID == ""
+	case "storage_not_started":
+		return providerResourceID == ""
+	case "storage_existing_exact":
+		return strings.HasPrefix(providerResourceID, "disk-")
+	default:
+		return false
+	}
 }
 
 func (s *Service) GetStorageVolume(_ context.Context, volumeID string) (StorageVolume, bool) {

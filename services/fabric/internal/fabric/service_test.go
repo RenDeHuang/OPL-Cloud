@@ -678,6 +678,68 @@ func TestStorageCreationWithoutIDReplaysStableIdentity(t *testing.T) {
 	}
 }
 
+func TestStorageRecoveryExpectationUsesStableFabricOperationIdentity(t *testing.T) {
+	provider := &resourceBoundaryProvider{}
+	store := NewMemoryOperationStore()
+	service := NewServiceWithOperationStore(provider, store)
+	service.computes["compute-alpha"] = ComputeAllocation{
+		ID: "compute-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", Status: "ready",
+		ProviderData: map[string]string{"zone": "ap-guangzhou-3"},
+	}
+	input := StorageVolumeInput{
+		ID: "storage-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", ComputeID: "compute-alpha", Zone: "ap-guangzhou-3", SizeGB: 10,
+		IdempotencyKey: "launch-alpha:storage", ExpectedRecoveryState: "storage_existing_exact", ExpectedProviderResourceID: "disk-existing-alpha",
+	}
+
+	first, err := service.CreateStorageVolume(context.Background(), input)
+	second, replayErr := service.CreateStorageVolume(context.Background(), input)
+
+	if err != nil || replayErr != nil || provider.storageCalls != 1 || len(provider.storageInputs) != 1 ||
+		provider.storageInputs[0].ExpectedRecoveryState != input.ExpectedRecoveryState || provider.storageInputs[0].ExpectedProviderResourceID != input.ExpectedProviderResourceID ||
+		!strings.HasPrefix(provider.storageInputs[0].OperationID, "op_create_storage_volume_") || first.OperationID != input.IdempotencyKey || second.OperationID != input.IdempotencyKey {
+		t.Fatalf("first=%#v second=%#v err=%v replayErr=%v inputs=%#v calls=%d", first, second, err, replayErr, provider.storageInputs, provider.storageCalls)
+	}
+	for _, invalid := range []StorageVolumeInput{
+		{ID: "storage-invalid-absent", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", ComputeID: "compute-alpha", Zone: "ap-guangzhou-3", SizeGB: 10, IdempotencyKey: "invalid-absent", ExpectedRecoveryState: "storage_not_started", ExpectedProviderResourceID: "disk-unexpected"},
+		{ID: "storage-invalid-existing", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", ComputeID: "compute-alpha", Zone: "ap-guangzhou-3", SizeGB: 10, IdempotencyKey: "invalid-existing", ExpectedRecoveryState: "storage_existing_exact"},
+	} {
+		if _, err := service.CreateStorageVolume(context.Background(), invalid); err == nil || err.Error() != "storage_recovery_expectation_invalid" {
+			t.Fatalf("invalid recovery expectation=%#v err=%v", invalid, err)
+		}
+	}
+	if provider.storageCalls != 1 {
+		t.Fatalf("invalid recovery expectation reached provider: calls=%d", provider.storageCalls)
+	}
+}
+
+func TestStorageCreateReplayFlagComesOnlyFromPersistedFabricAttempt(t *testing.T) {
+	provider := &resourceBoundaryProvider{}
+	store := NewMemoryOperationStore()
+	input := StorageVolumeInput{
+		ID: "storage-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", ComputeID: "compute-alpha", Zone: "ap-guangzhou-3", SizeGB: 10,
+		IdempotencyKey: "launch-alpha:storage", ExpectedRecoveryState: "storage_not_started",
+	}
+	operation := newOperation("create_storage_volume", "storage_volume", input.ID, input.AccountID, input.WorkspaceID, input.IdempotencyKey, hashInput(input), time.Now().UTC())
+	if err := (&Service{operations: store, now: func() time.Time { return time.Now().UTC() }}).recordOperation(
+		context.Background(), operation, "started",
+		StorageVolume{ID: input.ID, OperationID: input.IdempotencyKey, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, Provider: "tencent-tke"}, nil,
+	); err != nil {
+		t.Fatal(err)
+	}
+	service := NewServiceWithOperationStore(provider, store)
+	service.computes["compute-alpha"] = ComputeAllocation{
+		ID: "compute-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", Status: "ready", ProviderData: map[string]string{"zone": "ap-guangzhou-3"},
+	}
+
+	if _, err := service.CreateStorageVolume(context.Background(), input); err != nil {
+		t.Fatal(err)
+	}
+	if provider.storageCalls != 1 || len(provider.storageInputs) != 1 || !provider.storageInputs[0].AllowExistingExactReplay ||
+		provider.storageInputs[0].OperationID != operation.OperationID {
+		t.Fatalf("persisted attempt did not bind replay: inputs=%#v calls=%d operation=%#v", provider.storageInputs, provider.storageCalls, operation)
+	}
+}
+
 type partialStorageProvider struct{ testProvider }
 
 func (*partialStorageProvider) CreateStorageVolume(_ context.Context, input StorageVolumeInput) (StorageVolume, error) {

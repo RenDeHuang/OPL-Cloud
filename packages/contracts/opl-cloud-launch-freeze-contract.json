@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 18,
+  "schemaVersion": 19,
   "owner": "OPL Platform Architecture",
   "purpose": "Freeze the approved Pilot products, delegated Gateway key lifecycle, one charge per Workspace period, prepaid Tencent fulfillment, Runtime facts, operator workflows, announcements, and evidence levels without claiming unfinished implementation or runtime evidence.",
   "state": "current",
@@ -186,18 +186,22 @@
       "implementation": "integrated_local_fake_verified"
     },
     "computeClaimRecovery": {
-      "trigger": "debit_confirmed_unique_compute_created_claim_interrupted_storage_not_started",
+      "trigger": "debit_confirmed_unique_compute_created_claim_interrupted_before_local_storage_operation",
       "pendingState": "compute_claim_pending",
       "proofRoute": "POST /api/operator/workspace-launches/{operationId}/compute-claim-recovery/proof",
       "claimRoute": "POST /api/operator/workspace-launches/{operationId}/compute-claim-recovery/claim",
       "proofContract": "opl-cloud-service-boundary-contract.json#services.fabric.workspaceComputeClaimRecovery",
       "identitySource": ["workspace.launch.v2", "create_compute_allocation", "allocation_plan", "machine_ownership"],
       "legacyCandidates": [{"status": "manual_review", "phase": "compute_fulfilling"}],
-      "legacyNormalization": "after_debit_identity_storage_zero_and_compute_proof_postgresql_cas_to_compute_claim_pending",
+      "legacyNormalization": "after_debit_identity_local_storage_zero_and_compute_plus_exact_cbs_proof_postgresql_cas_to_compute_claim_pending",
       "normalizationMutationCounts": {"sub2api": 0, "tencent": 0, "kubernetes": 0},
       "claimAuthorization": "operator_session_plus_internal_runner_capability_and_exact_release_owner_approval",
       "fabricIdempotencyBinding": ["launch_operation_id", "idempotency_key", "target_hash", "request_hash"],
       "claimMutationBounds": {"sub2api": 0, "tencent": {"min": 0, "max": 5}, "kubernetes": {"min": 0, "max": 1}},
+      "storageProof": "DescribeDisks_only_four_ownership_tags_complete_pagination_exact_facts_mutation_zero",
+      "storageApprovalBinding": ["storageState", "storageProviderResourceId"],
+      "storageCreateBounds": {"storage_not_started": 1, "storage_existing_exact": 0, "unknown": 0},
+      "storageReplay": "persisted_original_operation_identity_fresh_discovery_reuses_exact_disk_after_restart",
       "normalRetry": "same_operation_claim_only_never_prepare_or_scale_again",
       "successTransition": "same_launch_storage_fulfilling_with_original_storage_identity",
       "failureTransition": "manual_review_without_refund_or_replacement",
@@ -205,7 +209,7 @@
       "currentImplementation": "code_complete_local_focused_and_postgresql_verified_not_merged_released_deployed_or_executed"
     },
     "persistence": "control_plane_runtime_operations with action=workspace.launch.v2 and result.schemaVersion=2",
-    "legacyNonTerminalPolicy": "manual_review_compute_fulfilling_is_read_only_candidate_normalized_only_after_debit_identity_storage_zero_and_compute_proof_via_postgresql_cas",
+    "legacyNonTerminalPolicy": "manual_review_compute_fulfilling_is_read_only_candidate_normalized_only_after_debit_identity_local_storage_zero_and_compute_plus_exact_cbs_proof_via_postgresql_cas",
     "submissionOrder": ["workspace_quote", "compute_read_only_preflight", "storage_read_only_preflight", "workspace_key_preflight", "sub2api_total_balance_preflight", "persist_launch"],
     "providerPreflightRecovery": {
       "timing": "before_first_charge_attempt",

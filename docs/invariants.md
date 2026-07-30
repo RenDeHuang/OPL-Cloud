@@ -102,14 +102,21 @@ The four implementation owner lanes are Console/Control Plane, Fabric, Gateway i
   VPC, and Subnet identities all match. Zero, multiple, incomplete, or
   inconsistent results fail closed.
 - If the unique new NativeCVM was created but ownership claim was interrupted
-  before any storage operation started, Fabric exposes a separate compute-only,
-  Describe/get-only proof. It derives identity from the original launch,
+  before any local storage operation started, Fabric exposes a separate zero-
+  mutation Describe/get-only proof. It derives identity from the original launch,
   compute allocation, persisted allocation plan, and MachineOwnership; requires
   the unique Ready/Running Machine in `after - before`; verifies the exact
   NodePool/Machine/Node/private-IP/CVM/SKU/Zone and PREPAID one-month manual-renew
-  facts; and accepts only an unallocated Node or the exact target ownership.
-  Success explicitly reports `storage_not_started` and zero Sub2API, Tencent,
-  and Kubernetes mutations. The strict compute-plus-storage
+  facts; and accepts only an unallocated Node or the exact target ownership. A
+  zero local storage-operation count is not proof that CBS is absent: the same
+  proof pages through Tencent `DescribeDisks` using the four `opl_*` ownership
+  tags and an exact DiskName fallback. It validates DiskName, Zone, size, data-
+  disk usage, PREPAID one-month billing, DiskType, manual-renew flag, and
+  deadline. Zero candidates reports `storage_not_started`; one exact candidate
+  reports `storage_existing_exact` and its `disk-*`; multiple candidates,
+  provider failure, or any tag/property drift reports unknown and remains
+  manual review. All proof paths report zero Sub2API, Tencent, and Kubernetes
+  mutations. The strict compute-plus-storage
   `MonthlyProviderTruth` contract remains unchanged.
 - Compute claim convergence may run only after that complete proof and may only
   converge the same CVM name and four ownership tags, one exact Node
@@ -490,8 +497,9 @@ contract or select the SKU for a customer launch.
   `RECOVER_PROVEN_COMPUTE_AND_CONTINUE_ORIGINAL_LAUNCH` approval bound to the
   exact merged main SHA, Cloud and Workspace image digests, expiry, customer,
   launch/account/Workspace/compute/Machine/Node/CVM/Pool/SKU facts, original
-  storage/attachment/runtime operation identities, Workspace Key, recovery key,
-  and per-stage attempt limits. It approves only convergence of the existing
+  storage/attachment/runtime operation identities, approved storage state and
+  exact provider disk identity when present, Workspace Key, recovery key, and
+  per-stage attempt limits. It approves only convergence of the existing
   CVM/Node followed by the original launch's one CBS, PV/PVC attachment, Gateway
   Secret, Runtime, activation, and purchase Receipt. It forbids a new launch,
   debit, recharge, refund, scale, new CVM, second CBS, delete, or replacement;
@@ -500,8 +508,9 @@ contract or select the SKU for a customer launch.
   deployed Kubernetes Secret, so an ordinary operator session cannot authorize
   claim by self-supplying approval fields. The approval ID and HTTP mutation
   idempotency key are part of the persisted replay identity. The recovery
-  artifact carries a canonical SHA-256 digest of the complete approval, and the
-  workflow independently recomputes it before continuation. The original launch
+  artifact carries `proof.storageState` and `proof.storageProviderResourceId`
+  plus a canonical SHA-256 digest of the complete approval, and the workflow
+  independently recomputes it before continuation. The original launch
   GET response projects only the persisted approval ID, approval digest,
   recovery key, and Workspace image digest; the continuation artifact carries
   that exact readback for the later E2E handoff. Customer email, the full
