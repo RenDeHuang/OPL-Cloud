@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "owner": "OPL Console",
+  "state": "current",
+  "surface": "standalone_console",
+  "framework": "react",
+  "componentFoundation": "@openai/apps-sdk-ui",
+  "displayContract": "docs/product/console-display-contract-v1.md",
+  "sourceTruthContract": "packages/contracts/opl-cloud-console-source-truth-contract.json",
+  "launchFreezeContract": "packages/contracts/opl-cloud-launch-freeze-contract.json",
+  "browserApiBoundary": "control_plane_product_apis_only",
+  "primaryPages": {
+    "customer": ["overview", "workspaces", "api", "billing", "announcements"],
+    "admin": ["operations_overview", "accounts", "billing_review", "resources", "system"]
+  },
+  "sourceStates": ["available", "empty", "unavailable"],
+  "secretPolicy": {
+    "default": "hidden",
+    "reveal": "explicit_owner_action_only",
+    "browserPersistence": "forbidden",
+    "clearAfterMilliseconds": 60000,
+    "clearOn": ["sensitive_route_leave", "account_change", "logout"]
+  },
+  "designAssistOnly": ["gpt-5.6-sol", "gpt-image-2", "computer-use"],
+  "forbidden": [
+    "vue_runtime",
+    "vue_sfc",
+    "vite_vue_plugin",
+    "browser_business_truth",
+    "runtime_gpt_dependency",
+    "second_wallet",
+    "second_gateway"
+  ]
+}
