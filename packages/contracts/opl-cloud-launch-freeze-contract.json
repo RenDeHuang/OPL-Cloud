@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 17,
+  "schemaVersion": 18,
   "owner": "OPL Platform Architecture",
   "purpose": "Freeze the approved Pilot products, delegated Gateway key lifecycle, one charge per Workspace period, prepaid Tencent fulfillment, Runtime facts, operator workflows, announcements, and evidence levels without claiming unfinished implementation or runtime evidence.",
   "state": "current",
@@ -162,6 +162,11 @@
       "currentBranchImplementation": "deferred_control_plane_ui_and_monthly_worker_outside_fabric_nodepool_hard_cut"
     },
     "customerResponsePricingFields": ["priceVersion", "currency", "totalChargeUsdMicros"],
+    "computeClaimRecoveryCustomerProjection": {
+      "source": "persisted_workspace_launch_compute_claim_approval",
+      "fields": ["approvalId", "approvalDigest", "recoveryKey", "workspaceImageDigest"],
+      "forbidden": ["customer_email", "full_approval", "gateway_secret_ref", "credential", "capability"]
+    },
     "manualReviewRecovery": {
       "route": "POST /api/operator/workspace-launches/{operationId}/recover",
       "requestFields": ["accountId", "billingOperationId", "evidenceRef"],
@@ -223,6 +228,15 @@
     "totalBalanceSemantics": "read_only_preflight_not_hold_or_reservation",
     "customerDebitCardinality": 1,
     "fulfillmentResources": ["compute", "storage", "attachment", "gateway_secret", "runtime"],
+    "continuationAttemptBudgets": {
+      "persistence": "original_workspace.launch.v2_operation_result",
+      "stages": ["storage", "attachment", "secret", "runtime", "activation", "receipt"],
+      "fields": ["attempted", "confirmed", "unknown", "max"],
+      "maxPerStage": 1,
+      "reservation": "postgresql_cas_before_external_write",
+      "restart": "remaining_budget_loaded_from_persisted_launch",
+      "unknownOrExhausted": "manual_review_worker_stops"
+    },
     "backgroundProgression": "non_review_and_manual_review_recovery_integrated_local_fake_verified",
     "currentImplementation": "Exact fixed-USD quote composition, one-submit V2 persistence, CAS/lease recovery, strict one-debit balance proof, pure Fabric fulfillment, attachment, Gateway Secret, Runtime readiness, activation, confirmed-absence refund, dedicated workspace.launch.v2 manual-review recovery, reconciliation fields, and receipt-only retry have integrated local fake evidence; no real environment evidence is claimed."
   },
@@ -330,11 +344,11 @@
     },
     "claimReadback": ["provider resource ID", "charge type", "period or deadline", "renew flag", "zone", "size or SKU", "ownership tags"],
     "activationReadback": {
-      "apis": ["SyncMonthlyCompute", "SyncMonthlyStorage"],
-      "timing": "immediately_before_workspace_activation",
-      "sharedRequiredFacts": ["resource_identity", "account_identity", "workspace_identity", "zone", "chargeType=PREPAID", "renewFlag=NOTIFY_AND_MANUAL_RENEW", "deadline"],
-      "computeRequiredFacts": ["sku"],
-      "storageRequiredFacts": ["capacity"],
+      "api": "POST /fabric/workspace-activation-truth",
+      "semantic": "describe_get_only_mutation_zero_proof",
+      "consumers": ["workspace_activation", "workspace_url_gateway"],
+      "requiredFacts": ["compute_ownership", "unique_cbs_pv_pvc", "attachment_identity", "gateway_secret_identity", "unique_runtime", "ready_pod_on_claimed_node", "service_endpoints_identity", "workspace_network_policy"],
+      "mutationCounts": {"sub2api": 0, "tencent": 0, "kubernetes": 0},
       "mismatch": "manual_review_without_activation"
     },
     "workspaceRenewal": {

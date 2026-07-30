@@ -21,6 +21,8 @@ var ErrMonthlyProviderTruthUnavailable = errors.New("monthly_provider_truth_unav
 var ErrInvalidComputeClaimRecovery = errors.New("invalid_compute_claim_recovery")
 var ErrComputeClaimRecoveryUnavailable = errors.New("compute_claim_recovery_unavailable")
 var ErrComputeClaimRecoveryIdempotencyConflict = errors.New("compute_claim_recovery_idempotency_conflict")
+var ErrInvalidWorkspaceActivationTruth = errors.New("invalid_workspace_activation_truth")
+var ErrWorkspaceActivationTruthUnavailable = errors.New("workspace_activation_truth_unavailable")
 var ErrRuntimeHealthSummaryUnavailable = errors.New("runtime_health_summary_unavailable")
 var ErrComputeIdempotencyConflict = errors.New("compute_idempotency_conflict")
 var ErrComputeOperationFailed = errors.New("compute_operation_failed")
@@ -237,6 +239,7 @@ type ComputeAllocationInput struct {
 
 type ComputeAllocation struct {
 	ID                 string            `json:"id"`
+	OperationID        string            `json:"operationId,omitempty"`
 	AccountID          string            `json:"accountId"`
 	WorkspaceID        string            `json:"workspaceId"`
 	PackageID          string            `json:"packageId"`
@@ -326,6 +329,7 @@ type StorageVolumeInput struct {
 
 type StorageVolume struct {
 	ID                 string            `json:"id"`
+	OperationID        string            `json:"operationId,omitempty"`
 	AccountID          string            `json:"accountId,omitempty"`
 	WorkspaceID        string            `json:"workspaceId"`
 	Status             string            `json:"status"`
@@ -385,6 +389,7 @@ type StorageAttachmentInput struct {
 
 type StorageAttachment struct {
 	ID                   string            `json:"id"`
+	OperationID          string            `json:"operationId"`
 	WorkspaceID          string            `json:"workspaceId"`
 	ComputeID            string            `json:"computeId,omitempty"`
 	VolumeID             string            `json:"volumeId"`
@@ -397,17 +402,21 @@ type StorageAttachment struct {
 }
 
 type WorkspaceRuntimeInput struct {
-	WorkspaceID      string `json:"workspaceId"`
-	ComputeID        string `json:"computeId"`
-	VolumeID         string `json:"volumeId"`
-	ImageID          string `json:"imageId"`
-	GatewaySecretRef string `json:"gatewaySecretRef"`
-	IdempotencyKey   string `json:"-"`
-	OperationID      string `json:"-"`
+	WorkspaceID           string `json:"workspaceId"`
+	ComputeID             string `json:"computeId"`
+	VolumeID              string `json:"volumeId"`
+	AttachmentID          string `json:"attachmentId"`
+	AttachmentOperationID string `json:"attachmentOperationId"`
+	RuntimeOperationID    string `json:"runtimeOperationId"`
+	ImageID               string `json:"imageId"`
+	GatewaySecretRef      string `json:"gatewaySecretRef"`
+	IdempotencyKey        string `json:"-"`
+	OperationID           string `json:"-"`
 }
 
 type WorkspaceRuntime struct {
 	ID                string            `json:"id"`
+	OperationID       string            `json:"operationId,omitempty"`
 	WorkspaceID       string            `json:"workspaceId"`
 	URL               string            `json:"url"`
 	Status            string            `json:"status"`
@@ -418,6 +427,59 @@ type WorkspaceRuntime struct {
 	Checks            []Check           `json:"checks,omitempty"`
 	CostTags          map[string]string `json:"costTags,omitempty"`
 	CreatedAt         time.Time         `json:"createdAt"`
+}
+
+type WorkspaceActivationTruthInput struct {
+	LaunchOperationID        string `json:"launchOperationId"`
+	AccountID                string `json:"accountId"`
+	WorkspaceID              string `json:"workspaceId"`
+	ComputeAllocationID      string `json:"computeAllocationId"`
+	ComputeOperationID       string `json:"computeOperationId"`
+	StorageVolumeID          string `json:"storageVolumeId"`
+	StorageOperationID       string `json:"storageOperationId"`
+	AttachmentID             string `json:"attachmentId"`
+	AttachmentOperationID    string `json:"attachmentOperationId"`
+	RuntimeID                string `json:"runtimeId"`
+	RuntimeOperationID       string `json:"runtimeOperationId"`
+	ServiceName              string `json:"serviceName"`
+	WorkspaceImageDigest     string `json:"workspaceImageDigest"`
+	GatewaySecretRef         string `json:"gatewaySecretRef"`
+	WorkspaceAPIKeyID        int64  `json:"workspaceApiKeyId"`
+	GatewaySecretFingerprint string `json:"gatewaySecretFingerprint"`
+}
+
+type WorkspaceActivationRuntimeTruth struct {
+	ID                   string   `json:"id"`
+	OperationID          string   `json:"operationId"`
+	ServiceName          string   `json:"serviceName"`
+	DeploymentName       string   `json:"deploymentName"`
+	RuntimeSecretRef     string   `json:"runtimeSecretRef"`
+	GatewaySecretRef     string   `json:"gatewaySecretRef"`
+	PVName               string   `json:"pvName"`
+	PVCName              string   `json:"pvcName"`
+	VolumeAttachmentName string   `json:"volumeAttachmentName"`
+	PodName              string   `json:"podName"`
+	PodIP                string   `json:"podIp"`
+	NodeName             string   `json:"nodeName"`
+	ImageID              string   `json:"imageId"`
+	EndpointIPs          []string `json:"endpointIps"`
+}
+
+type WorkspaceActivationTruth struct {
+	SchemaVersion           int                             `json:"schemaVersion"`
+	Ready                   bool                            `json:"ready"`
+	Reason                  string                          `json:"reason"`
+	ErrorClass              string                          `json:"errorClass,omitempty"`
+	ComputeState            string                          `json:"computeState"`
+	StorageState            string                          `json:"storageState"`
+	Compute                 ComputeAllocation               `json:"compute"`
+	Storage                 StorageVolume                   `json:"storage"`
+	Attachment              StorageAttachment               `json:"attachment"`
+	Runtime                 WorkspaceActivationRuntimeTruth `json:"runtime"`
+	Checks                  []Check                         `json:"checks"`
+	Sub2APIMutationCount    int                             `json:"sub2apiMutationCount"`
+	TencentMutationCount    int                             `json:"tencentMutationCount"`
+	KubernetesMutationCount int                             `json:"kubernetesMutationCount"`
 }
 
 type RuntimeAccess struct {

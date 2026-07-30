@@ -22,6 +22,19 @@ var errMembershipExists = errors.New("membership_already_exists")
 var errAccountIdentityConflict = errors.New("account_identity_conflict")
 var errAnnouncementStateConflict = errors.New("announcement_state_conflict")
 var errAnnouncementNotActive = errors.New("announcement_not_active")
+var errProductionE2EAttemptAlreadyExists = errors.New("production_e2e_attempt_already_exists")
+var errProductionE2EAttemptBindingMismatch = errors.New("production_e2e_attempt_binding_mismatch")
+var errProductionE2EAttemptNotFound = errors.New("production_e2e_attempt_not_found")
+
+const recoveredWorkspaceE2EAttemptReason = "recovered_workspace_e2e_model_request"
+
+type productionE2EAttemptClaim struct {
+	ID          string
+	AccountID   string
+	WorkspaceID string
+	URL         string
+	Binding     string
+}
 
 type workspaceCreateOperationResult struct {
 	RequestHash          string                     `json:"requestHash"`
@@ -271,6 +284,9 @@ type controlPlaneTableStore interface {
 	GetRuntimeOperation(ctx context.Context, id string) (map[string]any, bool, error)
 	PageRuntimeOperations(ctx context.Context, query runtimeOperationQuery) (tablePage, error)
 	SaveRuntimeOperation(ctx context.Context, row map[string]any) error
+	ReserveProductionE2EAttempt(ctx context.Context, claim productionE2EAttemptClaim) (map[string]any, error)
+	GetProductionE2EAttempt(ctx context.Context, id string) (map[string]any, bool, error)
+	CompleteProductionE2EAttempt(ctx context.Context, id, binding string) (map[string]any, error)
 	BillingReconciliation(ctx context.Context) (map[string]any, bool, error)
 	SaveBillingReconciliation(ctx context.Context, row map[string]any) error
 }

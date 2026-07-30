@@ -202,7 +202,7 @@ test("current truth hard-cuts invitation and stage vocabulary", async () => {
     "services/control-plane",
     (path) => path.endsWith(".go") && !path.endsWith("_test.go") && !path.startsWith("services/control-plane/migrations/")
   );
-  const retiredStageVocabulary = new RegExp("\\bS(?:7|9)\\b|Stage\\s?B");
+  const retiredStageVocabulary = new RegExp("\\bS(?:7|9)\\b|\\bStage\\s?B\\b");
   const documents = await Promise.all([...currentDocs, ...currentContracts, ...currentUI, ...activeCode].map(async (path) => [path, await text(path)]));
   for (const [path, raw] of documents) {
     let content = raw;

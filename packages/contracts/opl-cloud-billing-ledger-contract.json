@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 10,
+  "schemaVersion": 11,
   "owner": "OPL Control Plane",
   "purpose": "One-charge Workspace purchase and renewal, fulfillment, entitlement, receipt, wallet-adjustment reference, and reconciliation ownership contract.",
   "state": "current",
@@ -54,11 +54,11 @@
     "partialOrUnknownResource": "manual_review_without_refund",
     "ledgerFailureAfterActivation": "retry_receipt_only",
     "activationReadback": {
-      "apis": ["SyncMonthlyCompute", "SyncMonthlyStorage"],
-      "timing": "immediately_before_workspace_activation",
-      "sharedRequiredFacts": ["resource_identity", "account_identity", "workspace_identity", "zone", "chargeType=PREPAID", "renewFlag=NOTIFY_AND_MANUAL_RENEW", "deadline"],
-      "computeRequiredFacts": ["sku"],
-      "storageRequiredFacts": ["capacity"],
+      "api": "POST /fabric/workspace-activation-truth",
+      "semantic": "describe_get_only_mutation_zero_proof",
+      "consumers": ["workspace_activation", "workspace_url_gateway"],
+      "requiredFacts": ["compute_ownership", "unique_cbs_pv_pvc", "attachment_identity", "gateway_secret_identity", "unique_runtime", "ready_pod_on_claimed_node", "service_endpoints_identity", "workspace_network_policy"],
+      "mutationCounts": {"sub2api": 0, "tencent": 0, "kubernetes": 0},
       "mismatch": "manual_review_without_activation"
     },
     "manualReviewRecoveryContract": "opl-cloud-launch-freeze-contract.json#workspaceLaunch.manualReviewRecovery",

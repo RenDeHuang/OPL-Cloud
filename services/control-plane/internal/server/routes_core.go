@@ -7,9 +7,9 @@ import (
 )
 
 func registerCoreRoutes(mux *http.ServeMux, app *controlPlaneServer, service *controlplane.Service) {
-	mux.HandleFunc("/w/", app.proxyWorkspace)
-	mux.HandleFunc("/api/", app.proxyWorkspaceRoot)
-	mux.HandleFunc("/ws", app.proxyWorkspaceRoot)
+	mux.HandleFunc("/w/", func(w http.ResponseWriter, r *http.Request) { app.proxyWorkspace(w, r, service) })
+	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) { app.proxyWorkspaceRoot(w, r, service) })
+	mux.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) { app.proxyWorkspaceRoot(w, r, service) })
 	mux.HandleFunc("GET /api/healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
@@ -35,5 +35,5 @@ func registerCoreRoutes(mux *http.ServeMux, app *controlPlaneServer, service *co
 			"cloudImagesReady": cloudImagesReady, "workspaceImagesReady": workspaceImagesReady, "immutableImagesReady": immutableImagesReady, "checks": []any{},
 		})
 	})
-	mux.HandleFunc("/", app.consoleStatic)
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) { app.consoleStatic(w, r, service) })
 }

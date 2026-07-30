@@ -26,6 +26,7 @@ test("root agent instructions require the launch invariants", async () => {
 test("launch freeze fixes the V2 products, owner lanes, settlement, and verification slot", async () => {
   const freeze = await json("packages/contracts/opl-cloud-launch-freeze-contract.json");
 
+  assert.equal(freeze.schemaVersion, 18);
   assert.equal(freeze.architectureAuthority.repository, "https://github.com/gaofeng21cn/one-person-lab-cloud");
   assert.equal(freeze.architectureAuthority.reviewedRevision, "c349a41d860e706ed43a4090b9e75abb0b130971");
   assert.deepEqual(Object.keys(freeze.productSurfaces), ["gateway", "workspace", "serve", "console", "fabric", "ledger"]);
@@ -249,11 +250,11 @@ test("launch freeze fixes the V2 products, owner lanes, settlement, and verifica
     failure: "reject_before_provider_client_or_kubectl_mutation"
   });
   assert.deepEqual(freeze.providerProcurement.activationReadback, {
-    apis: ["SyncMonthlyCompute", "SyncMonthlyStorage"],
-    timing: "immediately_before_workspace_activation",
-    sharedRequiredFacts: ["resource_identity", "account_identity", "workspace_identity", "zone", "chargeType=PREPAID", "renewFlag=NOTIFY_AND_MANUAL_RENEW", "deadline"],
-    computeRequiredFacts: ["sku"],
-    storageRequiredFacts: ["capacity"],
+    api: "POST /fabric/workspace-activation-truth",
+    semantic: "describe_get_only_mutation_zero_proof",
+    consumers: ["workspace_activation", "workspace_url_gateway"],
+    requiredFacts: ["compute_ownership", "unique_cbs_pv_pvc", "attachment_identity", "gateway_secret_identity", "unique_runtime", "ready_pod_on_claimed_node", "service_endpoints_identity", "workspace_network_policy"],
+    mutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
     mismatch: "manual_review_without_activation"
   });
   assert.deepEqual(freeze.providerProcurement.unpaidExpiry, {
@@ -492,7 +493,8 @@ test("human invariants reject paid per-run resource verification", async () => {
   assert.match(invariants, /lockResource\("sub2api-wallet", accountId\)/);
   assert.match(invariants, /preBalanceUsdMicros > totalChargeUsdMicros/);
   assert.match(invariants, /ChargeAttempted.*ChargeConfirmation.*skip/is);
-  assert.match(invariants, /SyncMonthlyCompute.*SyncMonthlyStorage.*activation/is);
+  assert.match(invariants, /POST \/fabric\/workspace-activation-truth.*Describe.*GET.*mutation.*0/is);
+  assert.match(invariants, /runnerDirectMutationCounts.*0.*does not mean.*background.*0/is);
   assert.match(invariants, /GET \/fabric\/monthly-provider-truth\?computeAllocationId=<id>&storageVolumeId=<id>/);
   assert.match(invariants, /provider_truth.*Describe-only/is);
   assert.match(invariants, /local\s+identit.*unknown.*absent.*refund/is);

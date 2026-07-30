@@ -706,17 +706,17 @@ func (app *controlPlaneServer) workspaceKeyRotationConverged(ctx context.Context
 		workspaceRuntimeGatewaySecretMatches(binding, operation, workspaceID)
 }
 
-func (app *controlPlaneServer) proxyWorkspace(w http.ResponseWriter, r *http.Request) {
+func (app *controlPlaneServer) proxyWorkspace(w http.ResponseWriter, r *http.Request, service *controlplane.Service) {
 	workspaceID := workspaceIDFromPath(r.URL.Path)
 	if workspaceID == "" {
 		http.NotFound(w, r)
 		return
 	}
 	suffix := strings.TrimPrefix(r.URL.Path, "/w/"+workspaceID)
-	app.proxyWorkspaceTo(w, r, workspaceID, suffix)
+	app.proxyWorkspaceTo(w, r, service, workspaceID, suffix)
 }
 
-func (app *controlPlaneServer) proxyWorkspaceRoot(w http.ResponseWriter, r *http.Request) {
+func (app *controlPlaneServer) proxyWorkspaceRoot(w http.ResponseWriter, r *http.Request, service *controlplane.Service) {
 	if !isWorkspaceRequest(r) {
 		http.NotFound(w, r)
 		return
@@ -726,10 +726,10 @@ func (app *controlPlaneServer) proxyWorkspaceRoot(w http.ResponseWriter, r *http
 		http.NotFound(w, r)
 		return
 	}
-	app.proxyWorkspaceTo(w, r, workspaceID, r.URL.Path)
+	app.proxyWorkspaceTo(w, r, service, workspaceID, r.URL.Path)
 }
 
-func (app *controlPlaneServer) proxyWorkspaceTo(w http.ResponseWriter, r *http.Request, workspaceID string, proxyPath string) {
+func (app *controlPlaneServer) proxyWorkspaceTo(w http.ResponseWriter, r *http.Request, service *controlplane.Service, workspaceID string, proxyPath string) {
 	workspace, ok := app.getWorkspace(workspaceID)
 	if !ok {
 		http.NotFound(w, r)
@@ -752,7 +752,18 @@ func (app *controlPlaneServer) proxyWorkspaceTo(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusConflict, "workspace_runtime_not_ready")
 		return
 	}
-	serviceName := stringValue(nested(workspace, "runtime", "serviceName"))
+	operation, err := app.succeededWorkspaceLaunchForAccess(r.Context(), workspace)
+	if err != nil || service == nil {
+		writeError(w, http.StatusConflict, "workspace_runtime_truth_unavailable")
+		return
+	}
+	input := workspaceActivationTruthInputFromLaunch(operation)
+	truth, truthErr := service.WorkspaceActivationTruth(r.Context(), input)
+	if truthErr != nil || !workspaceActivationTruthMatchesLaunch(truth, input) {
+		writeError(w, http.StatusConflict, workspaceRuntimeTruthErrorCode(truth))
+		return
+	}
+	serviceName := truth.Runtime.ServiceName
 	if serviceName == "" {
 		http.NotFound(w, r)
 		return
@@ -780,4 +791,31 @@ func (app *controlPlaneServer) proxyWorkspaceTo(w http.ResponseWriter, r *http.R
 		writeUpstreamError(w)
 	}
 	proxy.ServeHTTP(w, r)
+}
+
+func (app *controlPlaneServer) succeededWorkspaceLaunchForAccess(ctx context.Context, workspace map[string]any) (workspaceLaunchOperation, error) {
+	workspaceID := stringValue(workspace["id"])
+	accountID := firstNonEmpty(stringValue(workspace["accountId"]), stringValue(workspace["ownerAccountId"]))
+	rows, err := queryRuntimeOperations(ctx, app.tables, runtimeOperationQuery{
+		AccountID: accountID, WorkspaceID: workspaceID, Action: workspaceLaunchAction, Statuses: []string{"succeeded"},
+	})
+	if err != nil || len(rows) != 1 {
+		return workspaceLaunchOperation{}, errors.New("workspace_runtime_truth_unavailable")
+	}
+	operation, err := decodeWorkspaceLaunchOperation(rows[0])
+	if err != nil || operation.Status != "succeeded" || operation.Phase != "succeeded" || operation.ReceiptID == "" || !operation.RuntimeReady ||
+		!workspaceMatchesLaunch(workspace, operation) || stringValue(workspace["runtimeId"]) != operation.RuntimeID ||
+		stringValue(nested(workspace, "runtime", "serviceName")) != operation.RuntimeServiceName {
+		return workspaceLaunchOperation{}, errors.New("workspace_runtime_truth_unavailable")
+	}
+	return operation, nil
+}
+
+func workspaceRuntimeTruthErrorCode(truth clients.WorkspaceActivationTruth) string {
+	switch truth.Reason {
+	case "identity_mismatch", "multiple_candidate", "absent", "provider_unavailable":
+		return "workspace_runtime_truth_" + truth.Reason
+	default:
+		return "workspace_runtime_truth_unavailable"
+	}
 }

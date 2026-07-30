@@ -23,27 +23,33 @@ var (
 )
 
 type CreateWorkspaceInput struct {
-	WorkspaceID         string `json:"workspaceId"`
-	AccountID           string `json:"accountId"`
-	Sub2APIUserID       int64  `json:"-"`
-	WorkspaceAPIKeyID   int64  `json:"workspaceApiKeyId"`
-	WorkspaceAPIKeyName string `json:"-"`
-	OwnerID             string `json:"ownerId"`
-	Name                string `json:"name"`
-	PackageID           string `json:"packageId"`
-	AttachmentID        string `json:"attachmentId"`
-	ComputeID           string `json:"computeAllocationId"`
-	VolumeID            string `json:"storageId"`
-	GatewaySecretRef    string `json:"-"`
+	WorkspaceID           string `json:"workspaceId"`
+	AccountID             string `json:"accountId"`
+	Sub2APIUserID         int64  `json:"-"`
+	WorkspaceAPIKeyID     int64  `json:"workspaceApiKeyId"`
+	WorkspaceAPIKeyName   string `json:"-"`
+	OwnerID               string `json:"ownerId"`
+	Name                  string `json:"name"`
+	PackageID             string `json:"packageId"`
+	AttachmentID          string `json:"attachmentId"`
+	AttachmentOperationID string `json:"attachmentOperationId"`
+	RuntimeOperationID    string `json:"runtimeOperationId"`
+	ComputeID             string `json:"computeAllocationId"`
+	VolumeID              string `json:"storageId"`
+	GatewaySecretRef      string `json:"-"`
 }
 
 type RotateWorkspaceCredentialInput struct {
-	WorkspaceID      string
-	AccountID        string
-	OwnerID          string
-	ComputeID        string
-	VolumeID         string
-	GatewaySecretRef string
+	WorkspaceID           string
+	AccountID             string
+	OwnerID               string
+	ComputeID             string
+	VolumeID              string
+	AttachmentID          string
+	AttachmentOperationID string
+	RuntimeID             string
+	RuntimeOperationID    string
+	GatewaySecretRef      string
 }
 
 type ReconciliationInput struct {
@@ -369,7 +375,8 @@ func (s *Service) DetachStorageAttachment(ctx context.Context, id string, idempo
 }
 
 func (s *Service) PrepareWorkspace(ctx context.Context, input CreateWorkspaceInput, idempotencyKey string) (domain.WorkspaceProjection, error) {
-	if input.WorkspaceID == "" || input.ComputeID == "" || input.VolumeID == "" || input.AttachmentID == "" {
+	if input.WorkspaceID == "" || input.ComputeID == "" || input.VolumeID == "" || input.AttachmentID == "" ||
+		input.AttachmentOperationID == "" || input.RuntimeOperationID == "" || input.RuntimeOperationID != idempotencyKey+":runtime" {
 		return domain.WorkspaceProjection{}, fmt.Errorf("attached_compute_storage_required")
 	}
 	workspaceID := input.WorkspaceID
@@ -385,13 +392,23 @@ func (s *Service) PrepareWorkspace(ctx context.Context, input CreateWorkspaceInp
 			return domain.WorkspaceProjection{}, err
 		}
 	}
-	runtime, err := s.fabric.CreateWorkspaceRuntime(ctx, clients.WorkspaceRuntimeInput{WorkspaceID: workspaceID, ComputeID: input.ComputeID, VolumeID: input.VolumeID, ImageID: "one-person-lab-app", GatewaySecretRef: gatewaySecretRef}, idempotencyKey+":runtime")
+	runtime, err := s.fabric.CreateWorkspaceRuntime(ctx, clients.WorkspaceRuntimeInput{
+		WorkspaceID: workspaceID, ComputeID: input.ComputeID, VolumeID: input.VolumeID,
+		AttachmentID: input.AttachmentID, AttachmentOperationID: input.AttachmentOperationID, RuntimeOperationID: input.RuntimeOperationID,
+		ImageID: "one-person-lab-app", GatewaySecretRef: gatewaySecretRef,
+	}, input.RuntimeOperationID)
 	if err != nil {
 		return domain.WorkspaceProjection{}, err
+	}
+	if runtime.OperationID != "" && runtime.OperationID != input.RuntimeOperationID {
+		return domain.WorkspaceProjection{}, ErrWorkspaceRuntimeIdentityMismatch
 	}
 	readback, err := s.fabric.WorkspaceRuntimeStatus(ctx, workspaceID)
 	if err != nil {
 		return domain.WorkspaceProjection{}, err
+	}
+	if readback.OperationID != input.RuntimeOperationID {
+		return domain.WorkspaceProjection{}, ErrWorkspaceRuntimeIdentityMismatch
 	}
 	runtime, err = mergeWorkspaceRuntimeReadback(runtime, readback, workspaceID)
 	if err != nil {
@@ -579,26 +596,29 @@ func (s *Service) RecordWorkspaceGatewayKeyRotation(ctx context.Context, account
 }
 
 func (s *Service) RotateWorkspaceCredential(ctx context.Context, input RotateWorkspaceCredentialInput, idempotencyKey string) (clients.WorkspaceRuntime, clients.Receipt, error) {
-	if input.WorkspaceID == "" || input.AccountID == "" || input.OwnerID == "" || input.ComputeID == "" || input.VolumeID == "" || input.GatewaySecretRef == "" || idempotencyKey == "" {
+	if input.WorkspaceID == "" || input.AccountID == "" || input.OwnerID == "" || input.ComputeID == "" || input.VolumeID == "" ||
+		input.AttachmentID == "" || input.AttachmentOperationID == "" || input.RuntimeID == "" || input.RuntimeOperationID == "" ||
+		input.GatewaySecretRef == "" || idempotencyKey == "" {
 		return clients.WorkspaceRuntime{}, clients.Receipt{}, errors.New("runtime_credential_rotation_input_required")
 	}
 	operationKey := "runtime-credential-rotate:" + input.WorkspaceID + ":" + idempotencyKey
 	applied, err := s.fabric.CreateWorkspaceRuntime(ctx, clients.WorkspaceRuntimeInput{
 		WorkspaceID: input.WorkspaceID, ComputeID: input.ComputeID, VolumeID: input.VolumeID,
+		AttachmentID: input.AttachmentID, AttachmentOperationID: input.AttachmentOperationID, RuntimeOperationID: input.RuntimeOperationID,
 		ImageID: "one-person-lab-app", GatewaySecretRef: input.GatewaySecretRef,
 	}, operationKey+":runtime")
 	if err != nil {
 		return clients.WorkspaceRuntime{}, clients.Receipt{}, err
 	}
+	if applied.ID != input.RuntimeID || applied.OperationID != input.RuntimeOperationID || applied.WorkspaceID != input.WorkspaceID {
+		return clients.WorkspaceRuntime{}, clients.Receipt{}, ErrWorkspaceRuntimeIdentityMismatch
+	}
 	runtime, err := s.fabric.WorkspaceRuntimeStatus(ctx, input.WorkspaceID)
 	if err != nil {
 		return clients.WorkspaceRuntime{}, clients.Receipt{}, err
 	}
-	if runtime.ID == "" {
-		runtime.ID = applied.ID
-	}
-	if runtime.WorkspaceID == "" {
-		runtime.WorkspaceID = input.WorkspaceID
+	if runtime.ID != input.RuntimeID || runtime.OperationID != input.RuntimeOperationID || runtime.WorkspaceID != input.WorkspaceID {
+		return clients.WorkspaceRuntime{}, clients.Receipt{}, ErrWorkspaceRuntimeIdentityMismatch
 	}
 	if runtime.ServiceName == "" {
 		runtime.ServiceName = applied.ServiceName

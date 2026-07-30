@@ -259,6 +259,7 @@ type rotatingCredentialFabricClient struct {
 	runtimes       map[string]clients.WorkspaceRuntime
 	gatewayKeys    []string
 	runtimeKeys    []string
+	runtimeInputs  []clients.WorkspaceRuntimeInput
 	runtimeApplies int
 }
 
@@ -271,12 +272,13 @@ func (f *rotatingCredentialFabricClient) WriteGatewaySecret(_ context.Context, i
 func (f *rotatingCredentialFabricClient) CreateWorkspaceRuntime(_ context.Context, input clients.WorkspaceRuntimeInput, key string) (clients.WorkspaceRuntime, error) {
 	f.record("fabric.runtime")
 	f.runtimeKeys = append(f.runtimeKeys, key)
+	f.runtimeInputs = append(f.runtimeInputs, input)
 	runtime, ok := f.runtimes[key]
 	if !ok {
 		f.runtimeApplies++
 		revision := stableID("runtime-credential", key)[:12]
 		runtime = clients.WorkspaceRuntime{
-			ID: "runtime-alpha", WorkspaceID: input.WorkspaceID, Status: "running", Ready: true,
+			ID: "runtime-alpha", OperationID: input.RuntimeOperationID, WorkspaceID: input.WorkspaceID, Status: "running", Ready: true,
 			ServiceName: "opl-compute-alpha", Access: clients.WorkspaceRuntimeAccess{
 				Username: "opl", Password: "runtime-password-" + revision,
 				CredentialStatus: "configured", CredentialVersion: "v-" + revision, SecretRef: "opl-compute-alpha-env",
@@ -326,7 +328,7 @@ func TestRuntimeCredentialRotateOwnerIdempotentAndNoLeak(t *testing.T) {
 	fabric := &rotatingCredentialFabricClient{
 		fakeFabricClient: fakeFabricClient{calls: &calls},
 		current: clients.WorkspaceRuntime{
-			ID: "runtime-alpha", WorkspaceID: "ws-alpha", Status: "running", Ready: true,
+			ID: "runtime-alpha", OperationID: "workspace-launch-alpha:workspace:runtime", WorkspaceID: "ws-alpha", Status: "running", Ready: true,
 			ServiceName: "opl-compute-alpha", Access: clients.WorkspaceRuntimeAccess{
 				Username: "opl", Password: "runtime-password-before", CredentialStatus: "configured",
 				CredentialVersion: "v-before", SecretRef: "opl-compute-alpha-env",
@@ -356,8 +358,11 @@ func TestRuntimeCredentialRotateOwnerIdempotentAndNoLeak(t *testing.T) {
 		SchemaVersion: workspaceLaunchSchemaVersion, RequestHash: "workspace-launch-alpha-request", Phase: "succeeded",
 		AccountID: "acct-alpha", OwnerUserID: ownerID, WorkspaceID: "ws-alpha", Name: "Workspace Alpha", PackageID: "basic",
 		StorageGB: 10, PriceVersion: "pilot-usd-2026-07-v1", TotalChargeUSDMicros: 52_580_000,
-		ComputeID: "compute-alpha", StorageID: "storage-alpha", WorkspaceAPIKeyID: 9, RedeemCode: "opl:workspace-launch-alpha",
-		GatewaySecretRef: "opl-gateway-ws-alpha",
+		ComputeID: "compute-alpha", StorageID: "storage-alpha", AttachmentID: "attachment-alpha",
+		AttachmentOperationID: "workspace-launch-alpha:attachment", WorkspaceOperationID: "workspace-launch-alpha:workspace",
+		WorkspaceAPIKeyID: 9, RedeemCode: "opl:workspace-launch-alpha", GatewaySecretRef: "opl-gateway-ws-alpha",
+		RuntimeID: "runtime-alpha", RuntimeReady: true, RuntimeServiceName: "opl-compute-alpha",
+		URL: "https://workspace.medopl.cn/w/ws-alpha/", ReceiptID: "receipt-alpha",
 	})))
 
 	unauthorized := requestWithMutationKeyForTest(t, server, operator, http.MethodPost, "/api/workspaces/ws-alpha/runtime-credentials/rotate", `{}`, "rotate-operator")
@@ -402,6 +407,12 @@ func TestRuntimeCredentialRotateOwnerIdempotentAndNoLeak(t *testing.T) {
 	firstOperationKey := "runtime-credential-rotate:ws-alpha:rotate-20260716-1"
 	if len(fabric.gatewayKeys) != 0 || fabric.runtimeKeys[0] != firstOperationKey+":runtime" || ledger.keys[0] != firstOperationKey {
 		t.Fatalf("unstable child keys: gateway=%#v runtime=%#v ledger=%#v", fabric.gatewayKeys, fabric.runtimeKeys, ledger.keys)
+	}
+	for _, input := range fabric.runtimeInputs {
+		if input.AttachmentID != "attachment-alpha" || input.AttachmentOperationID != "workspace-launch-alpha:attachment" ||
+			input.RuntimeOperationID != "workspace-launch-alpha:workspace:runtime" {
+			t.Fatalf("credential rotation lost original launch identity: %#v", input)
+		}
 	}
 	for _, input := range ledger.inputs {
 		raw := string(mustJSON(input))
