@@ -1,5 +1,10 @@
 # OPL Console Workspace Product V2
 
+The frozen customer and operator page/slide inventory is defined in
+[`console-display-contract-v1.md`](console-display-contract-v1.md). This product
+document defines the business boundary; the display contract defines what each
+Console page must show and which source owns each fact.
+
 ## User Job
 
 ```text
