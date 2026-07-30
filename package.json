@@ -12,25 +12,29 @@
     "staging:e2e": "node tools/staging-local-verifier.ts",
     "start": "cd services/control-plane && go run ./cmd/control-plane",
     "test": "node --test \"tests/**/*.test.ts\"",
-    "typecheck": "vue-tsc -p apps/console-ui/tsconfig.json --noEmit",
-    "lint": "vue-tsc -p apps/console-ui/tsconfig.json --noEmit --noUnusedLocals --noUnusedParameters",
+    "typecheck": "tsc -p apps/console-ui/tsconfig.json --noEmit",
+    "lint": "tsc -p apps/console-ui/tsconfig.json --noEmit --noUnusedLocals --noUnusedParameters",
     "build": "vite build",
     "verify:production": "node tools/production-verifier.ts",
     "validate:production-manifest": "node tools/validate-production-manifest.ts"
   },
   "dependencies": {
-    "@lucide/vue": "^1.24.0",
-    "@vitejs/plugin-vue": "^6.0.0",
+    "@openai/apps-sdk-ui": "^0.2.2",
+    "@vitejs/plugin-react": "^4.7.0",
+    "lucide-react": "^0.468.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "tailwindcss": "^4.3.3",
     "typescript": "^5.7.2",
-    "vite": "^6.0.7",
-    "vue": "^3.5.18"
+    "vite": "^6.0.7"
   },
   "overrides": {
     "path-to-regexp": "^8.4.0"
   },
   "devDependencies": {
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
     "playwright": "^1.61.1",
-    "vue-tsc": "^3.0.4",
     "yaml": "^2.9.0"
   }
 }
