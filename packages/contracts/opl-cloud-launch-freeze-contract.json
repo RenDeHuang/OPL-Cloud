@@ -122,11 +122,13 @@
     "partialOrUnknownProviderResult": "manual_review_without_refund",
     "ledgerFailureAfterActivation": "retry_receipt_only",
     "walletMutationSerializationContract": "opl-cloud-service-boundary-contract.json#services.controlPlane.walletMutationSerialization",
-    "exactBalanceEvidence": {
-      "precondition": "preBalanceUsdMicros > totalChargeUsdMicros",
-      "postcondition": "postBalanceUsdMicros == preBalanceUsdMicros - totalChargeUsdMicros",
-      "mismatchStatus": "manual_review",
-      "fabricWriteCountOnMismatch": 0
+    "chargeConfirmationEvidence": {
+      "authority": "exactly_one_matching_redeem_code_history_entry",
+      "balanceSnapshots": "preflight_and_projection_only",
+      "exactBalanceDeltaRequired": false,
+      "concurrentUsage": "allowed",
+      "balanceDeltaMismatchAlone": "not_manual_review",
+      "monthlyDebitMaximum": 1
     },
     "retryRule": "Debit, refund, provider mutation, claim, activation, renewal, Secret write, and receipt use stable operation-scoped idempotency identities.",
     "doubleDebitForbidden": true,
@@ -162,6 +164,36 @@
       "currentBranchImplementation": "deferred_control_plane_ui_and_monthly_worker_outside_fabric_nodepool_hard_cut"
     },
     "customerResponsePricingFields": ["priceVersion", "currency", "totalChargeUsdMicros"],
+    "normalLaunchSafety": {
+      "entry": "one_authenticated_POST_/api/workspace-launches",
+      "sharedOrchestrator": "workspace.launch.v2_from_debit_through_receipt_and_url",
+      "packages": ["basic", "pro"],
+      "keyPendingReplay": {
+        "exactIdentity": ["accountId", "ownerUserId", "packageId", "requestHash"],
+        "sameIdentity": "resume_original_launch_and_reserved_workspace_key",
+        "originalIdempotencyKey": "preserved",
+        "drift": "409_idempotency_conflict",
+        "secondLaunchOrKey": 0,
+        "rawCredentialPersistence": false
+      },
+      "workspaceImagePreflight": {
+        "required": "immutable_repository_at_sha256_digest",
+        "timing": "before_launch_persistence_debit_or_any_provider_write",
+        "invalidOrDrift": "fail_closed",
+        "mutationCounts": {"database": 0, "sub2api": 0, "tencent": 0, "kubernetes": 0}
+      },
+      "debitConfirmation": {
+        "authority": "unique_matching_Sub2API_Redeem_Code_history",
+        "balanceSnapshots": "preflight_and_projection_only",
+        "concurrentUsage": "allowed_without_exact_balance_delta",
+        "monthlyDebitMaximum": 1
+      },
+      "billingPeriod": {
+        "freezeAt": "first_authoritative_debit_confirmation",
+        "fields": ["periodStart", "paidThrough", "billingAnchorDay"],
+        "replay": "reuse_persisted_values_never_recalculate"
+      }
+    },
     "computeClaimRecoveryCustomerProjection": {
       "source": "persisted_workspace_launch_compute_claim_approval",
       "fields": ["approvalId", "approvalDigest", "recoveryKey", "workspaceImageDigest"],

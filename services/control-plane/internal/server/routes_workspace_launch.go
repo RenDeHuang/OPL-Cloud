@@ -55,6 +55,10 @@ func registerWorkspaceLaunchRoutes(mux *http.ServeMux, app *controlPlaneServer, 
 			writeError(w, http.StatusBadRequest, "client_pricing_forbidden")
 			return
 		}
+		if !computeClaimCloudDigestPattern.MatchString(currentWorkspaceImageDigest()) {
+			writeError(w, http.StatusConflict, "workspace_image_digest_invalid")
+			return
+		}
 		computePools, ok := fabricComputePools(w, r, service)
 		if !ok {
 			return
@@ -132,6 +136,38 @@ func registerWorkspaceLaunchRoutes(mux *http.ServeMux, app *controlPlaneServer, 
 				return
 			}
 			if len(active) > 0 {
+				for _, candidate := range active {
+					persisted, decodeErr := decodeWorkspaceLaunchOperation(candidate)
+					if decodeErr != nil || persisted.RequestHash != operation.RequestHash || persisted.Phase != "key_pending" {
+						continue
+					}
+					unlockAccount := app.lockResource("account", accountID)
+					defer unlockAccount()
+					credentialUser, sub2APIUserID, credential, ok := app.gatewayUserContext(w, r)
+					if !ok {
+						return
+					}
+					if stringValue(credentialUser["accountId"]) != accountID {
+						writeError(w, http.StatusForbidden, "account_scope_forbidden")
+						return
+					}
+					if err := app.convergeAndPersistWorkspaceLaunchKey(r.Context(), service, credential, sub2APIUserID, &persisted); err != nil {
+						writeGatewayKeyError(w, err)
+						return
+					}
+					row, found, err := app.tables.GetRuntimeOperation(r.Context(), persisted.ID)
+					if err != nil || !found {
+						writeError(w, http.StatusInternalServerError, "state_read_failed")
+						return
+					}
+					body, err := workspaceLaunchResponse(row)
+					if err != nil {
+						writeError(w, http.StatusInternalServerError, "state_read_failed")
+						return
+					}
+					writeJSON(w, http.StatusAccepted, body)
+					return
+				}
 				writeError(w, http.StatusConflict, errWorkspaceLaunchInProgress.Error())
 				return
 			}

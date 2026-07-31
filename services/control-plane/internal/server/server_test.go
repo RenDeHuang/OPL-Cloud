@@ -27,6 +27,9 @@ func TestMain(m *testing.M) {
 	_ = os.Setenv("OPL_TENCENT_ZONE", "ap-shanghai-2")
 	_ = os.Setenv("OPL_BASIC_COMPUTE_INSTANCE_TYPE", "S5.MEDIUM4")
 	_ = os.Setenv("OPL_PRO_COMPUTE_INSTANCE_TYPE", "SA5.2XLARGE16")
+	if os.Getenv("OPL_WORKSPACE_IMAGE") == "" {
+		_ = os.Setenv("OPL_WORKSPACE_IMAGE", "registry.example/one-person-lab-app@sha256:"+strings.Repeat("f", 64))
+	}
 	os.Exit(m.Run())
 }
 

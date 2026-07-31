@@ -423,6 +423,52 @@ func TestWorkspaceLaunchGatewayKeyPreflightFailsBeforeBalanceAndSideEffects(t *t
 	}
 }
 
+func TestWorkspaceLaunchKeyPendingDifferentRequestKeyRecoversOriginalLaunch(t *testing.T) {
+	for _, plan := range []struct {
+		packageID string
+		sizeGB    int
+	}{
+		{packageID: "basic", sizeGB: 10},
+		{packageID: "pro", sizeGB: 100},
+	} {
+		t.Run(plan.packageID, func(t *testing.T) {
+			fixture := newWorkspaceLaunchHTTPFixture(t, 1_000_000_000)
+			fixture.sub2API.userKeysErr = clients.ErrSub2APIWorkspaceKeyMissing
+			body := fmt.Sprintf(`{"name":"Alpha","packageId":%q,"sizeGb":%d,"autoRenew":false}`, plan.packageID, plan.sizeGB)
+
+			first := fixture.launch(t, body, "launch-key-pending-first")
+			if first.Code != http.StatusConflict || !strings.Contains(first.Body.String(), "gateway_key_missing") {
+				t.Fatalf("first key-pending POST status=%d body=%s", first.Code, first.Body.String())
+			}
+			fixture.sub2API.userKeysErr = nil
+			fixture.sub2API.keys = map[int64]clients.Sub2APIWorkspaceKey{}
+			second := fixture.launch(t, body, "launch-key-pending-retry")
+			if second.Code != http.StatusAccepted {
+				t.Fatalf("same request with a new key must recover original launch: status=%d body=%s", second.Code, second.Body.String())
+			}
+			var secondBody map[string]any
+			operations, err := fixture.store.ListRuntimeOperations(context.Background())
+			if err != nil || len(operations) != 1 {
+				t.Fatalf("first key-pending operations=%#v err=%v", operations, err)
+			}
+			original, err := decodeWorkspaceLaunchOperation(operations[0])
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := json.Unmarshal(second.Body.Bytes(), &secondBody); err != nil {
+				t.Fatal(err)
+			}
+			if original.ID != stringValue(secondBody["operationId"]) {
+				t.Fatalf("same key-pending request created a second launch: original=%#v second=%#v", original, secondBody)
+			}
+			operations, err = fixture.store.ListRuntimeOperations(context.Background())
+			if err != nil || len(operations) != 1 || fixture.sub2API.createCalls != 1 || strings.Contains(string(mustJSON(operations)), "created-workspace-key-secret") {
+				t.Fatalf("key-pending recovery operations=%#v createCalls=%d err=%v", operations, fixture.sub2API.createCalls, err)
+			}
+		})
+	}
+}
+
 func TestWorkspaceKeyConvergenceCreatesBeforeBalanceAndPersistsID(t *testing.T) {
 	fixture := newWorkspaceLaunchHTTPFixture(t, 1_000_000_000)
 	client := fixture.sub2API
@@ -1145,13 +1191,117 @@ func TestWorkspaceLaunchRejectsEqualBalanceBeforeCharge(t *testing.T) {
 	}
 }
 
-func TestWorkspaceLaunchPostChargeBalanceMustMatchExactDelta(t *testing.T) {
-	fixture := newWorkspaceLaunchWorkerFixture(t, []int64{100_000_000, 100_000_000, 40_000_000}, nil, nil)
-	err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service)
+func TestWorkspaceLaunchConcurrentUsageDoesNotInvalidateUniqueRedeemHistory(t *testing.T) {
+	for _, plan := range []struct {
+		packageID string
+		sizeGB    int
+		charge    int64
+	}{
+		{packageID: "basic", sizeGB: 10, charge: 52_580_000},
+		{packageID: "pro", sizeGB: 100, charge: 240_080_000},
+	} {
+		t.Run(plan.packageID, func(t *testing.T) {
+			preBalance := plan.charge + 100_000_000
+			fixture := newWorkspaceLaunchWorkerFixtureForPlan(t, []int64{preBalance, preBalance, 40_000_000}, nil, nil, plan.packageID, plan.sizeGB, false)
+			if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err != nil {
+				t.Fatalf("unique redeem history should authorize monthly charge despite concurrent Usage: %v", err)
+			}
+			operation := fixture.operation(t)
+			if operation.Status != "debited" || operation.Phase != "debited" || len(fixture.sub2API.charges) != 1 || fixture.sub2API.charges[0].ChargeUSDMicros != plan.charge || operation.ErrorCode != "" {
+				t.Fatalf("concurrent Usage incorrectly blocked launch: operation=%#v charges=%#v", operation, fixture.sub2API.charges)
+			}
+		})
+	}
+}
+
+func TestWorkspaceLaunchUniqueRedeemHistoryDoesNotDependOnPostBalanceRead(t *testing.T) {
+	fixture := newWorkspaceLaunchWorkerFixture(t, []int64{100_000_000, 100_000_000}, nil, nil)
+	fixture.sub2API.balanceErrors = []error{nil, errors.New("post charge balance unavailable")}
+	if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err != nil {
+		t.Fatalf("unique redeem history must remain the charge authority: %v", err)
+	}
 	operation := fixture.operation(t)
-	if err == nil || operation.Status != "manual_review" || operation.ErrorCode != "post_charge_balance_invalid" ||
-		len(fixture.sub2API.charges) != 1 || len(fixture.fabric.computeIDs) != 0 || len(fixture.fabric.storageIDs) != 0 {
-		t.Fatalf("inexact post balance was accepted: err=%v operation=%#v charges=%#v compute=%#v storage=%#v", err, operation, fixture.sub2API.charges, fixture.fabric.computeIDs, fixture.fabric.storageIDs)
+	if operation.Status != "debited" || operation.Phase != "debited" || len(fixture.sub2API.charges) != 1 || operation.ErrorCode != "" ||
+		operation.PostChargeBalanceKnown || !workspaceLaunchChargeConfirmed(operation, 41) || operation.BillingPeriodState != "frozen" {
+		t.Fatalf("post balance read incorrectly blocked authoritative charge: operation=%#v charges=%#v", operation, fixture.sub2API.charges)
+	}
+	_ = fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service)
+	continued := fixture.operation(t)
+	if continued.ErrorCode == "post_charge_balance_unavailable" || continued.ErrorCode == "post_charge_balance_invalid" || len(fixture.sub2API.charges) != 1 {
+		t.Fatalf("post-balance projection failure blocked fulfillment: operation=%#v charges=%#v", continued, fixture.sub2API.charges)
+	}
+	operation.Status, operation.Phase = "manual_review", "compute_fulfilling"
+	mustStore(t, fixture.store.memoryTableStore.SaveRuntimeOperation(context.Background(), workspaceLaunchOperationRow(operation)))
+	restarted, err := newControlPlaneAppWithStore(fixture.store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replayed := fixture.operation(t)
+	if !workspaceLaunchChargeConfirmed(replayed, 41) || replayed.PeriodStart != operation.PeriodStart || replayed.PaidThrough != operation.PaidThrough || len(fixture.sub2API.charges) != 1 {
+		t.Fatalf("restart lost authoritative charge/period: replayed=%#v charges=%#v", replayed, fixture.sub2API.charges)
+	}
+	_ = restarted
+}
+
+func TestWorkspaceLaunchInvalidImageDigestStopsBeforeAnyExternalCall(t *testing.T) {
+	for name, image := range map[string]string{
+		"missing":  "",
+		"tag-only": "registry.example/one-person-lab-app:latest",
+		"invalid":  "registry.example/one-person-lab-app@sha256:not-a-digest",
+	} {
+		t.Run(name, func(t *testing.T) {
+			fixture := newWorkspaceLaunchHTTPFixture(t, 1_000_000_000)
+			t.Setenv("OPL_WORKSPACE_IMAGE", image)
+			response := fixture.launch(t, `{"name":"Alpha","packageId":"basic","sizeGb":10,"autoRenew":false}`, "launch-invalid-image")
+			if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), "workspace_image_digest_invalid") {
+				t.Fatalf("invalid image digest status=%d body=%s", response.Code, response.Body.String())
+			}
+			operations, err := fixture.store.ListRuntimeOperations(context.Background())
+			if err != nil || len(operations) != 0 || len(*fixture.events) != 0 || len(fixture.sub2API.charges) != 0 || fixture.sub2API.createCalls != 0 || len(fixture.fabric.computeIDs) != 0 || len(fixture.fabric.storageIDs) != 0 {
+				t.Fatalf("invalid image digest crossed mutation gate: operations=%#v events=%#v charges=%#v keys=%d compute=%#v storage=%#v", operations, *fixture.events, fixture.sub2API.charges, fixture.sub2API.createCalls, fixture.fabric.computeIDs, fixture.fabric.storageIDs)
+			}
+		})
+	}
+}
+
+func TestWorkspaceLaunchImageDigestDriftStopsBeforeChargeAndProviderWrite(t *testing.T) {
+	fixture := newWorkspaceLaunchWorkerFixture(t, []int64{1_000_000_000}, nil, nil)
+	operation := fixture.operation(t)
+	t.Setenv("OPL_WORKSPACE_IMAGE", "registry.example/one-person-lab-app@sha256:"+strings.Repeat("e", 64))
+	err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service)
+	after := fixture.operation(t)
+	if err == nil || after.Status != "unknown" || after.ErrorCode != "workspace_image_digest_drift" || after.WorkspaceImageDigest != operation.WorkspaceImageDigest ||
+		len(fixture.sub2API.charges) != 0 || len(fixture.fabric.computeIDs) != 0 || len(fixture.fabric.storageIDs) != 0 {
+		t.Fatalf("image drift crossed charge/provider gate: err=%v operation=%#v charges=%#v compute=%#v storage=%#v", err, after, fixture.sub2API.charges, fixture.fabric.computeIDs, fixture.fabric.storageIDs)
+	}
+}
+
+func TestWorkspaceLaunchPeriodFreezeSurvivesWorkerRestart(t *testing.T) {
+	fixture := newWorkspaceLaunchWorkerFixture(t, []int64{1_000_000_000, 1_000_000_000, 947_420_000}, nil, nil)
+	before := fixture.operation(t)
+	if before.PeriodStart != "" || before.PaidThrough != "" || before.BillingAnchorDay != 0 {
+		t.Fatalf("billing period froze before authoritative charge confirmation: %#v", before)
+	}
+	if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err != nil {
+		t.Fatal(err)
+	}
+	charged := fixture.operation(t)
+	periodStart, startErr := time.Parse(time.RFC3339, charged.PeriodStart)
+	paidThrough, paidErr := time.Parse(time.RFC3339, charged.PaidThrough)
+	wantPeriodStart := time.Date(2026, 7, 19, 12, 0, 0, 0, time.UTC)
+	if charged.Status != "debited" || startErr != nil || paidErr != nil || !periodStart.Equal(wantPeriodStart) || !paidThrough.Equal(nextBillingMonth(periodStart, periodStart.Day())) || charged.BillingAnchorDay != periodStart.Day() {
+		t.Fatalf("authoritative charge did not freeze one billing period: before=%#v after=%#v startErr=%v paidErr=%v", before, charged, startErr, paidErr)
+	}
+	charged.Status, charged.Phase = "manual_review", "compute_fulfilling"
+	mustStore(t, fixture.store.memoryTableStore.SaveRuntimeOperation(context.Background(), workspaceLaunchOperationRow(charged)))
+	restarted, err := newControlPlaneAppWithStore(fixture.store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = restarted
+	after := fixture.operation(t)
+	if after.PeriodStart != charged.PeriodStart || after.PaidThrough != charged.PaidThrough || after.BillingAnchorDay != charged.BillingAnchorDay {
+		t.Fatalf("worker restart recomputed billing period: charged=%#v after=%#v", charged, after)
 	}
 }
 

@@ -172,6 +172,17 @@ The four implementation owner lanes are Console/Control Plane, Fabric, Gateway i
   must register the same value. Mutation also requires the exact confirmation
   `CREATE_MISSING_WORKSPACE_NODEPOOLS` and exact merged `origin/main` SHA.
 - Fabric creates CBS with a stable `ClientToken`, reads back CVM/CBS identity and billing facts, then binds CBS through a static PV/PVC in the compute Zone.
+- Normal compute fulfillment persists separate `compute_create` and
+  `compute_claim` reservations before their Tencent/Kubernetes writes. Normal
+  storage fulfillment likewise persists separate `cbs_create` and
+  `static_binding_apply` reservations. Each stage permits at most one external
+  write; after a reserved or unknown outcome, restart uses authoritative
+  Describe/GET readback only and ambiguity enters manual review.
+- Once the original CBS identity is confirmed, `CreateDisks` is permanently
+  forbidden for that launch. Only the original static PV/PVC identity may be
+  applied or read back. A paid active launch with pending storage is never
+  timed out into PV/PVC deletion, retained replacement state, or a replacement
+  CBS; it converges the original identity or enters manual review.
 - Static CBS uses `com.tencent.cloud.csi.cbs`, `volumeHandle=disk-*`, RWO, empty `storageClassName`, Zone affinity, and `persistentVolumeReclaimPolicy=Retain`.
 - `UNATTACHED` or `ATTACHED` is provider-ready; PVC `Bound` is required before Workspace deployment.
 - Fabric owns provider facts and never changes Sub2API balance or Control Plane entitlement state.
@@ -257,14 +268,28 @@ validate account and quote
   `workspace.launch.v2` RuntimeOperation. Current V2 recovery resumes the stable
   total-debit, pure Fabric fulfillment, activation, and receipt sub-operations
   after browser close or process restart through `succeeded` or `refunded`.
+- Normal Basic and Pro launch use that same single POST and one shared
+  `workspace.launch.v2` orchestrator. A replay with the same account, owner,
+  package, and request hash resumes the original `key_pending` operation and
+  reserved Workspace Key while preserving its original idempotency key; any identity drift returns conflict
+  before a second launch or Key. Raw credentials are never persisted.
+- The Workspace image is an immutable `repository@sha256:<64 lowercase hex>`
+  value. Missing, tag-only, malformed, or changed image identity fails closed
+  before launch persistence, debit, or any provider write, with all mutation
+  counts zero.
 - Provider capacity and price preflight runs before the first charge attempt only.
   Recovery with either `ChargeAttempted` or `ChargeConfirmation` skips a new
   preflight and reconciles the stable charge identity first.
 - The submission-time Sub2API total-balance read is a read-only preflight, not a hold or reservation. One
   Workspace operation performs one deterministic total debit; compute and storage are fulfillment-only phases.
-- Financial proof requires `preBalanceUsdMicros > totalChargeUsdMicros` and
-  `postBalanceUsdMicros == preBalanceUsdMicros - totalChargeUsdMicros`. Any
-  mismatch enters `manual_review` with zero Fabric writes.
+- The unique matching Redeem Code history entry is the authority that confirms
+  the monthly debit. Balance snapshots remain preflight/projection facts;
+  concurrent legitimate Usage may change the balance and must not turn a
+  confirmed debit into manual review solely because an exact balance delta is
+  unavailable. The monthly debit still has cardinality one.
+- At the first authoritative debit confirmation, Control Plane freezes
+  `periodStart`, `paidThrough`, and `billingAnchorDay` in the launch operation.
+  Replays reuse those persisted values and never recalculate them.
 - Debit failure forbids every Tencent resource write.
 - A confirmed provider result showing no billable resource exists permits exactly one idempotent refund.
 - A partial or unknown provider result enters `manual_review` without refund or a second purchase.

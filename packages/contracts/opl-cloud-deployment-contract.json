@@ -55,6 +55,12 @@
     "tke-vpc"
   ],
   "environment": "production",
+  "normalWorkspaceLaunchImageGate": {
+    "source": "OPL_WORKSPACE_IMAGE",
+    "requiredFormat": "repository@sha256:<64-lowercase-hex>",
+    "timing": "before_control_plane_launch_persistence_debit_and_fabric_write",
+    "missingTagOrDriftMutationCounts": {"database": 0, "sub2api": 0, "tencent": 0, "kubernetes": 0}
+  },
   "deployWorkflow": {
     "file": ".github/workflows/deploy-tke-production.yml",
     "job": "deploy",

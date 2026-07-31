@@ -362,27 +362,16 @@ func (p *pendingStorageProvider) DestroyStorageVolume(_ context.Context, volume 
 	return volume, nil
 }
 
-func TestSyncStorageVolumeCleansUpTimedOutPVCBeforeFailing(t *testing.T) {
+func TestSyncStorageVolumePreservesTimedOutPendingStorage(t *testing.T) {
 	now := time.Date(2026, 7, 12, 12, 0, 0, 0, time.UTC)
-	for _, tc := range []struct {
-		name       string
-		deleteErr  error
-		wantStatus string
-	}{
-		{name: "released", wantStatus: "released"},
-		{name: "delete unconfirmed", deleteErr: errors.New("pvc delete failed"), wantStatus: "quarantined"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			provider := &pendingStorageProvider{deleteErr: tc.deleteErr}
-			service := NewServiceWithOperationStore(provider, NewMemoryOperationStore())
-			service.now = func() time.Time { return now }
-			service.volumes["storage-alpha"] = StorageVolume{ID: "storage-alpha", AccountID: "acct-alpha", Status: "pending", ProviderResourceID: "pvc/storage-alpha-data", CreatedAt: now.Add(-11 * time.Minute)}
+	provider := &pendingStorageProvider{deleteErr: errors.New("delete must not be called")}
+	service := NewServiceWithOperationStore(provider, NewMemoryOperationStore())
+	service.now = func() time.Time { return now }
+	service.volumes["storage-alpha"] = StorageVolume{ID: "storage-alpha", AccountID: "acct-alpha", Status: "pending", ProviderResourceID: "pvc/storage-alpha-data", CreatedAt: now.Add(-11 * time.Minute)}
 
-			volume, err := service.SyncStorageVolume(context.Background(), "storage-alpha")
-			if err != nil || volume.Status != tc.wantStatus || provider.deleteCalls != 1 {
-				t.Fatalf("timed out storage = %#v err=%v deleteCalls=%d", volume, err, provider.deleteCalls)
-			}
-		})
+	volume, err := service.SyncStorageVolume(context.Background(), "storage-alpha")
+	if err != nil || volume.Status != "pending" || provider.deleteCalls != 0 {
+		t.Fatalf("timed out storage = %#v err=%v deleteCalls=%d", volume, err, provider.deleteCalls)
 	}
 }
 
