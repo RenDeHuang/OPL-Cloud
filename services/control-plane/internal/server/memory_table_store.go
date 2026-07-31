@@ -28,6 +28,7 @@ type memoryTableStore struct {
 	announcementReads     controlPlaneRecordSet
 	support               controlPlaneRecordSet
 	runtimeOps            []map[string]any
+	productionE2E         controlPlaneRecordSet
 	reconciliation        map[string]any
 }
 
@@ -49,6 +50,7 @@ func newMemoryTableStore() *memoryTableStore {
 		announcements:         controlPlaneRecordSet{},
 		announcementReads:     controlPlaneRecordSet{},
 		support:               controlPlaneRecordSet{},
+		productionE2E:         controlPlaneRecordSet{},
 	}
 }
 
@@ -990,6 +992,52 @@ func (s *memoryTableStore) SaveRuntimeOperation(_ context.Context, row map[strin
 	defer s.mu.Unlock()
 	s.runtimeOps = upsertProjectionByID(s.runtimeOps, cloneMap(row))
 	return nil
+}
+
+func (s *memoryTableStore) ReserveProductionE2EAttempt(_ context.Context, claim productionE2EAttemptClaim) (map[string]any, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.productionE2E[claim.ID] != nil {
+		return nil, errProductionE2EAttemptAlreadyExists
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	row := map[string]any{
+		"id": claim.ID, "accountId": claim.AccountID, "workspaceId": claim.WorkspaceID,
+		"status": "attempted", "result": claim.Binding, "reason": recoveredWorkspaceE2EAttemptReason,
+		"url": claim.URL, "createdAt": now, "updatedAt": now,
+	}
+	s.productionE2E[claim.ID] = row
+	return cloneMap(row), nil
+}
+
+func (s *memoryTableStore) GetProductionE2EAttempt(_ context.Context, id string) (map[string]any, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	row := s.productionE2E[id]
+	return cloneMap(row), row != nil, nil
+}
+
+func (s *memoryTableStore) CompleteProductionE2EAttempt(_ context.Context, id, binding string) (map[string]any, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	row := s.productionE2E[id]
+	if row == nil {
+		return nil, errProductionE2EAttemptNotFound
+	}
+	if stringValue(row["reason"]) != recoveredWorkspaceE2EAttemptReason || stringValue(row["result"]) != binding {
+		return nil, errProductionE2EAttemptBindingMismatch
+	}
+	switch stringValue(row["status"]) {
+	case "attempted":
+		row = cloneMap(row)
+		row["status"] = "passed"
+		row["updatedAt"] = time.Now().UTC().Format(time.RFC3339Nano)
+		s.productionE2E[id] = row
+	case "passed":
+	default:
+		return nil, errProductionE2EAttemptBindingMismatch
+	}
+	return cloneMap(row), nil
 }
 
 func (s *memoryTableStore) BillingReconciliation(_ context.Context) (map[string]any, bool, error) {

@@ -102,14 +102,21 @@ The four implementation owner lanes are Console/Control Plane, Fabric, Gateway i
   VPC, and Subnet identities all match. Zero, multiple, incomplete, or
   inconsistent results fail closed.
 - If the unique new NativeCVM was created but ownership claim was interrupted
-  before any storage operation started, Fabric exposes a separate compute-only,
-  Describe/get-only proof. It derives identity from the original launch,
+  before any local storage operation started, Fabric exposes a separate zero-
+  mutation Describe/get-only proof. It derives identity from the original launch,
   compute allocation, persisted allocation plan, and MachineOwnership; requires
   the unique Ready/Running Machine in `after - before`; verifies the exact
   NodePool/Machine/Node/private-IP/CVM/SKU/Zone and PREPAID one-month manual-renew
-  facts; and accepts only an unallocated Node or the exact target ownership.
-  Success explicitly reports `storage_not_started` and zero Sub2API, Tencent,
-  and Kubernetes mutations. The strict compute-plus-storage
+  facts; and accepts only an unallocated Node or the exact target ownership. A
+  zero local storage-operation count is not proof that CBS is absent: the same
+  proof pages through Tencent `DescribeDisks` using the four `opl_*` ownership
+  tags and an exact DiskName fallback. It validates DiskName, Zone, size, data-
+  disk usage, PREPAID one-month billing, DiskType, manual-renew flag, and
+  deadline. Zero candidates reports `storage_not_started`; one exact candidate
+  reports `storage_existing_exact` and its `disk-*`; multiple candidates,
+  provider failure, or any tag/property drift reports unknown and remains
+  manual review. All proof paths report zero Sub2API, Tencent, and Kubernetes
+  mutations. The strict compute-plus-storage
   `MonthlyProviderTruth` contract remains unchanged.
 - Compute claim convergence may run only after that complete proof and may only
   converge the same CVM name and four ownership tags, one exact Node
@@ -124,16 +131,20 @@ The four implementation owner lanes are Console/Control Plane, Fabric, Gateway i
   operation fails closed before mutation and remains manual review.
 - Compute-claim diagnosis, recovery, and continuation artifacts alone use
   schema version 2; the separate manual-review diagnosis remains schema version
-  1 with its existing `mutationCounts`. Runner-direct counts are always zero.
+  1 with its existing `mutationCounts`. `runnerDirectMutationCounts=0` does not mean
+  background mutation=0: it means the runner performs no direct Sub2API,
+  Tencent, or Kubernetes write. After an approved claim, the original launch
+  worker may still perform the separately approved bounded CBS, PV/PVC,
+  Gateway Secret, Runtime, activation, and Receipt writes. Continuation reports
+  those background mutation counts as unknown and proves their terminal
+  identities by authoritative readback instead of claiming zero.
   Provider attempts come only from the proof counts and per-CVM/per-Node
   `attempted`, `confirmed`, `unknown`, and `missing` evidence. Success requires
   the evidence count to equal `attempted`, every attempt to be confirmed, zero
   unknowns, and no missing fields. A Go response may omit an empty `missing`
   array only for that fully confirmed shape. CVM `missing` accepts only
   `instance`, `instance_name`, and the four `opl_*` ownership tags; Node
-  `missing` accepts only `node_ownership`. Continuation reports background
-  mutation counts as unknown and proves completion from the same launch,
-  storage, attachment, Runtime, and Receipt identities instead.
+  `missing` accepts only `node_ownership`.
 - The system NodePool `np-6l4nkdto`, Machine `np-6l4nkdto-2cdtm`, and Node
   `10.66.0.42` must each resolve uniquely and are protected from every
   Tencent/Kubernetes mutation and cleanup path. Its actual NodePool MachineType
@@ -272,10 +283,15 @@ validate account and quote
   successful compute-only proof permit a PostgreSQL CAS that persists the proof
   identity and enters `compute_claim_pending`; that normalization performs zero
   Sub2API, Tencent, and Kubernetes mutations.
-- Immediately before activation, `SyncMonthlyCompute` and `SyncMonthlyStorage`
-  must revalidate resource/account/Workspace identity, Zone, compute SKU, storage
-  capacity, `PREPAID`, `NOTIFY_AND_MANUAL_RENEW`, and deadline. A mismatch remains
-  in `manual_review` without activation.
+- Immediately before activation, and again before opening the Workspace URL,
+  Control Plane calls `POST /fabric/workspace-activation-truth`. Despite using
+  POST for a structured proof request, the endpoint is Describe/GET-only and its
+  Sub2API, Tencent, and Kubernetes mutation counts are all 0. It freshly proves
+  compute ownership, the unique CBS/PV/PVC and original Attachment identity,
+  Gateway Secret identity, exactly one Runtime, one Ready Pod on the claimed
+  Node, exact Service/Endpoints routing, and the Workspace NetworkPolicy.
+  Zero or multiple candidates, identity drift, or classified Kubernetes read
+  errors fail closed; activation enters `manual_review`, and URL access is denied.
 - Dedicated `workspace.launch.v2` review recovery uses
   `POST /api/operator/workspace-launches/{operationId}/recover`. Reconciliation
   items require `accountId`, `billingOperationId`, `phase`, `errorCode`, and
@@ -288,14 +304,20 @@ validate account and quote
   identity is missing, or provider identity, SKU, Zone, ownership, `PREPAID`,
   manual-renew, or deadline cannot be verified exactly, the result is `unknown`;
   it is never `absent` and never permits refund. The GET does not run Sync, Tag,
-  kubectl apply, delete, label, purchase, renew, or destroy. It does not replace
-  activation readback; activation still uses `SyncMonthlyCompute` and
-  `SyncMonthlyStorage`.
+  kubectl apply, delete, label, purchase, renew, or destroy. It is distinct from
+  the fresh Workspace ActivationTruth used by activation and URL access.
   The recovery matrix resumes missing storage or attachment with the original
   identities, refunds exactly once only when both resources are confirmed absent,
   retries receipt-only phases, and leaves unsafe or unknown provider states in
   review.
 - A Ledger failure after activation leaves the entitlement active and retries only its receipt.
+- The original `workspace.launch.v2` operation persists one attempt budget for
+  each of `storage`, `attachment`, `secret`, `runtime`, `activation`, and
+  `receipt`. Each stage has `max=1` and records `attempted`, `confirmed`, and
+  `unknown`. A PostgreSQL CAS reserves the attempt before the external write;
+  restart reloads the remaining budget from the same launch result. Unknown or
+  exhausted outcomes enter `manual_review`, and the active worker never writes
+  that stage again.
 - Replays never create a second debit, refund, purchase, renewal, Secret, or receipt.
 - The non-review V2 path has local focused evidence from debit through pure Fabric
   fulfillment, activation, confirmed-absence refund, and receipt-only retry.
@@ -476,22 +498,47 @@ contract or select the SKU for a customer launch.
   production customer-operation workflow and run only on the self-hosted
   `tke-vpc` runner. After an ordinary rollout, release handling may dispatch one
   read-only diagnosis bound to the exact merged Cloud SHA and immutable digest.
-  Claim mutation additionally requires a separate release-owner approval bound
-  to the exact launch/account/Workspace/compute/Machine/Node/CVM/Pool/SKU facts;
+  Claim mutation and continuation additionally require one explicit
+  `RECOVER_PROVEN_COMPUTE_AND_CONTINUE_ORIGINAL_LAUNCH` approval bound to the
+  exact merged main SHA, Cloud and Workspace image digests, expiry, customer,
+  launch/account/Workspace/compute/Machine/Node/CVM/Pool/SKU facts, original
+  storage/attachment/runtime operation identities, approved storage state and
+  exact provider disk identity when present, Workspace Key, recovery key, and
+  per-stage attempt limits. It approves only convergence of the existing
+  CVM/Node followed by the original launch's one CBS, PV/PVC attachment, Gateway
+  Secret, Runtime, activation, and purchase Receipt. It forbids a new launch,
+  debit, recharge, refund, scale, new CVM, second CBS, delete, or replacement;
   `nodeName` and private IP remain independently supplied and verified. The
   Control Plane also requires the current internal-runner capability from the
   deployed Kubernetes Secret, so an ordinary operator session cannot authorize
   claim by self-supplying approval fields. The approval ID and HTTP mutation
   idempotency key are part of the persisted replay identity. The recovery
-  artifact carries a canonical SHA-256 digest of the complete approval, and the
-  workflow independently recomputes it before continuation. A successful
-  diagnosis never authorizes claim by itself.
+  artifact carries `proof.storageState` and `proof.storageProviderResourceId`
+  plus a canonical SHA-256 digest of the complete approval, and the workflow
+  independently recomputes it before continuation. The original launch
+  GET response projects only the persisted approval ID, approval digest,
+  recovery key, and Workspace image digest; the continuation artifact carries
+  that exact readback for the later E2E handoff. Customer email, the full
+  approval, Gateway Secret references, credentials, and runner capabilities are
+  never included. A successful diagnosis never authorizes claim by itself.
   Before the claim provider can write, Fabric CAS-reserves the bounded Tencent
   and Kubernetes mutation budget in the original compute operation. A legacy
   binding without this ledger may reserve once after the same exact read-only
   proof; once reserved, every same-key retry is readback-only. A missing provider
   outcome remains conservatively unknown at the full bound and never authorizes
   another external write.
+- `recovered_workspace_e2e` is a separate hosted job in the same workflow and
+  has a one-way dependency on a succeeded continuation artifact. It has no
+  kubeconfig, Tencent credentials, or internal service capability, and cannot
+  launch, debit, recharge, refund, scale, or mutate Fabric resources. A separate
+  `confirm_single_model_request` approval binds the exact release, customer,
+  launch, Workspace, compute, storage, attachment, Runtime, Receipt, Workspace
+  Key, model, and request key. Before sending, Control Plane persists a
+  create-only `attempted` marker; any existing marker or unknown result forbids
+  resending forever. Only the same binding may CAS the marker to `passed` after
+  password login, WebSocket, exactly one model response, exactly one Usage, and
+  the matching balance delta are proved. This E2E cannot modify or block the
+  resource-delivery state machine.
 
 ## Launch Stages
 

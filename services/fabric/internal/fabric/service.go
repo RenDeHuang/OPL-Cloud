@@ -65,6 +65,10 @@ type computeClaimRecoveryClaimProvider interface {
 	ClaimComputeRecovery(context.Context, ComputeAllocation, ComputeAllocationPreparation, MachineOwnership) (ComputeClaimProviderClaim, error)
 }
 
+type storageRecoveryDiscoveryProvider interface {
+	DiscoverStorageRecovery(context.Context, StorageVolumeInput) (StorageRecoveryDiscovery, error)
+}
+
 type runtimeGatewaySecretProvider interface {
 	BindWorkspaceRuntimeGatewaySecret(context.Context, WorkspaceRuntimeGatewaySecretInput) (WorkspaceRuntimeGatewaySecretBinding, error)
 	WorkspaceRuntimeGatewaySecret(context.Context, string) (WorkspaceRuntimeGatewaySecretBinding, error)
@@ -74,6 +78,10 @@ type providerFactsReader interface {
 	ReadComputeAllocation(context.Context, ComputeAllocation) (ComputeAllocation, error)
 	ReadStorageVolume(context.Context, StorageVolume) (StorageVolume, error)
 	ReadStorageAttachment(context.Context, StorageAttachment, ComputeAllocation, StorageVolume) (StorageAttachment, error)
+}
+
+type storageVolumeStatusReader interface {
+	ReadStorageVolumeStatus(context.Context, StorageVolume) (StorageVolume, error)
 }
 
 type runtimeHealthSummaryProvider interface {
@@ -108,7 +116,7 @@ func (s *Service) claimRuntimeOperation(ctx context.Context, operation FabricOpe
 		return stored, claimed, err
 	}
 	switch stored.Action {
-	case "create_storage_attachment", "create_workspace_runtime", "upsert_gateway_secret":
+	case "create_storage_attachment", "create_workspace_runtime", "update_workspace_runtime", "upsert_gateway_secret":
 		return s.operations.ReclaimRuntime(ctx, stored.ID, stored.StartedAt, operation.StartedAt)
 	default:
 		return stored, false, nil
@@ -277,12 +285,50 @@ func (s *Service) ComputeClaimRecoveryProof(ctx context.Context, input ComputeCl
 		proof.Reason = safeComputeClaimRecoveryReason(providerProof.Reason, "identity_mismatch")
 		return proof, fmt.Errorf("%w: %s", ErrComputeClaimRecoveryUnavailable, proof.Reason)
 	}
-	proof.Eligible, proof.Reason, proof.StorageState = true, "none", "storage_not_started"
+	storageProvider, ok := s.provider.(storageRecoveryDiscoveryProvider)
+	if !ok {
+		proof.Reason = "provider_describe"
+		return proof, fmt.Errorf("%w: provider_describe", ErrComputeClaimRecoveryUnavailable)
+	}
+	storageInput := StorageVolumeInput{
+		ID: input.StorageVolumeID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, ComputeID: input.ComputeAllocationID,
+		Zone: allocation.Zone, SizeGB: packagePlan(input.PackageID).DiskGB, IdempotencyKey: input.LaunchOperationID + ":storage",
+	}
+	storageOperation := newOperation(
+		"create_storage_volume", "storage_volume", storageInput.ID, storageInput.AccountID, storageInput.WorkspaceID,
+		storageInput.IdempotencyKey, hashInput(storageInput), s.now(),
+	)
+	storageInput.OperationID = storageOperation.OperationID
+	storageDiscovery, err := storageProvider.DiscoverStorageRecovery(ctx, storageInput)
+	if err != nil {
+		proof.Reason = safeComputeClaimRecoveryReason(storageDiscovery.Reason, "provider_describe")
+		return proof, fmt.Errorf("%w: %s", ErrComputeClaimRecoveryUnavailable, proof.Reason)
+	}
+	if !validStorageRecoveryDiscovery(storageDiscovery) {
+		proof.Reason = safeComputeClaimRecoveryReason(storageDiscovery.Reason, "identity_mismatch")
+		return proof, fmt.Errorf("%w: %s", ErrComputeClaimRecoveryUnavailable, proof.Reason)
+	}
+	proof.Eligible, proof.Reason, proof.StorageState = true, "none", storageDiscovery.State
+	proof.StorageProviderResourceID = storageDiscovery.ProviderResourceID
 	proof.MachineName, proof.NodeName, proof.CVMInstanceID = providerProof.MachineName, providerProof.NodeName, providerProof.CVMInstanceID
 	proof.PrivateIP, proof.InstanceType, proof.Zone = providerProof.PrivateIP, providerProof.InstanceType, providerProof.Zone
 	proof.ChargeType, proof.PeriodMonths, proof.RenewFlag, proof.Deadline = providerProof.ChargeType, providerProof.PeriodMonths, providerProof.RenewFlag, providerProof.Deadline
 	proof.NodeOwnershipState, proof.CVMOwnershipState = providerProof.NodeOwnershipState, providerProof.CVMOwnershipState
 	return proof, nil
+}
+
+func validStorageRecoveryDiscovery(discovery StorageRecoveryDiscovery) bool {
+	if discovery.MutationCount != 0 || strings.TrimSpace(discovery.ProviderRequestID) == "" {
+		return false
+	}
+	switch discovery.State {
+	case "storage_not_started":
+		return discovery.ProviderResourceID == "" && discovery.Reason == ""
+	case "storage_existing_exact":
+		return strings.HasPrefix(discovery.ProviderResourceID, "disk-") && discovery.Reason == ""
+	default:
+		return false
+	}
 }
 
 func newComputeClaimRecoveryProof(input ComputeClaimRecoveryInput) ComputeClaimRecoveryProof {
@@ -1560,8 +1606,12 @@ func (s *Service) cancelPendingComputeCreation(ctx context.Context, allocationID
 }
 
 func (s *Service) CreateStorageVolume(ctx context.Context, input StorageVolumeInput) (StorageVolume, error) {
+	input.AllowExistingExactReplay = false
 	if input.SizeGB < 10 || input.SizeGB%10 != 0 {
 		return StorageVolume{}, ErrInvalidStorageSize
+	}
+	if !validStorageRecoveryExpectation(input.ExpectedRecoveryState, input.ExpectedProviderResourceID) {
+		return StorageVolume{}, fmt.Errorf("storage_recovery_expectation_invalid")
 	}
 	if input.ID == "" {
 		if strings.TrimSpace(input.IdempotencyKey) == "" {
@@ -1599,15 +1649,17 @@ func (s *Service) CreateStorageVolume(ctx context.Context, input StorageVolumeIn
 			if candidate.Status == "succeeded" && decodeOperationResource(candidate, &volume) {
 				return nil
 			}
+			input.AllowExistingExactReplay = true
 			break
 		}
 		operation := newOperation("create_storage_volume", "storage_volume", input.ID, input.AccountID, input.WorkspaceID, input.IdempotencyKey, requestHash, s.now())
 		input.OperationID = operation.OperationID
-		if err := s.recordOperation(lockCtx, operation, "started", StorageVolume{ID: input.ID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, Provider: "tencent-tke", ProviderRequestID: providerRequestID("storage", input.IdempotencyKey)}, nil); err != nil {
+		if err := s.recordOperation(lockCtx, operation, "started", StorageVolume{ID: input.ID, OperationID: input.IdempotencyKey, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, Provider: "tencent-tke", ProviderRequestID: providerRequestID("storage", input.IdempotencyKey)}, nil); err != nil {
 			return err
 		}
 		volume, err = s.provider.CreateStorageVolume(lockCtx, input)
 		volume.ID = input.ID
+		volume.OperationID = input.IdempotencyKey
 		volume.AccountID = firstNonEmpty(volume.AccountID, input.AccountID)
 		volume.WorkspaceID = firstNonEmpty(volume.WorkspaceID, input.WorkspaceID)
 		volume.Provider = firstNonEmpty(volume.Provider, "tencent-tke")
@@ -1641,11 +1693,57 @@ func (s *Service) CreateStorageVolume(ctx context.Context, input StorageVolumeIn
 	return volume, err
 }
 
+func validStorageRecoveryExpectation(state, providerResourceID string) bool {
+	switch state {
+	case "":
+		return providerResourceID == ""
+	case "storage_not_started":
+		return providerResourceID == ""
+	case "storage_existing_exact":
+		return strings.HasPrefix(providerResourceID, "disk-")
+	default:
+		return false
+	}
+}
+
 func (s *Service) GetStorageVolume(_ context.Context, volumeID string) (StorageVolume, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	volume, ok := s.volumes[volumeID]
 	return volume, ok
+}
+
+func (s *Service) ReadStorageVolume(ctx context.Context, volumeID string) (StorageVolume, error) {
+	s.mu.Lock()
+	existing := cloneStorageVolume(s.volumes[volumeID])
+	s.mu.Unlock()
+	if existing.ID == "" {
+		return StorageVolume{}, fmt.Errorf("storage_volume_not_found")
+	}
+	reader, ok := s.provider.(storageVolumeStatusReader)
+	if !ok {
+		return existing, nil
+	}
+	volume, err := reader.ReadStorageVolumeStatus(ctx, existing)
+	if volume.ID == "" {
+		volume.ID = existing.ID
+	}
+	if volume.AccountID == "" {
+		volume.AccountID = existing.AccountID
+	}
+	if volume.WorkspaceID == "" {
+		volume.WorkspaceID = existing.WorkspaceID
+	}
+	if volume.Provider == "" {
+		volume.Provider = existing.Provider
+	}
+	if volume.ProviderResourceID == "" {
+		volume.ProviderResourceID = existing.ProviderResourceID
+	}
+	if volume.ProviderRequestID == "" {
+		volume.ProviderRequestID = existing.ProviderRequestID
+	}
+	return volume, err
 }
 
 func (s *Service) CreateStorageSnapshot(ctx context.Context, input StorageSnapshotInput) (StorageSnapshot, error) {
@@ -1960,8 +2058,8 @@ func (s *Service) CreateStorageAttachment(ctx context.Context, input StorageAtta
 	operation.ID = "fop_attachment_claim_" + stableSuffix("create_storage_attachment", input.IdempotencyKey)
 	operation.Status = "started"
 	operation.CreatedAt = now
-	fillOperationResource(&operation, StorageAttachment{ID: operation.ResourceID, WorkspaceID: input.WorkspaceID, ComputeID: input.ComputeID, VolumeID: input.VolumeID, Provider: "tencent-tke", ProviderRequestID: providerRequestID("storage-attach", input.IdempotencyKey)})
-	input.OperationID = operation.OperationID
+	fillOperationResource(&operation, StorageAttachment{ID: operation.ResourceID, OperationID: input.IdempotencyKey, WorkspaceID: input.WorkspaceID, ComputeID: input.ComputeID, VolumeID: input.VolumeID, Provider: "tencent-tke", ProviderRequestID: providerRequestID("storage-attach", input.IdempotencyKey)})
+	input.OperationID = input.IdempotencyKey
 	stored, claimed, err := s.claimRuntimeOperation(ctx, operation)
 	if err != nil {
 		return StorageAttachment{}, err
@@ -1970,6 +2068,7 @@ func (s *Service) CreateStorageAttachment(ctx context.Context, input StorageAtta
 		return replayStorageAttachmentOperation(stored, requestHash)
 	}
 	attachment, err := s.provider.CreateStorageAttachment(ctx, input, compute, volume)
+	attachment.OperationID = input.IdempotencyKey
 	if err != nil {
 		_ = s.saveStorageAttachmentOperation(ctx, stored, "failed", attachment, err)
 		return attachment, err
@@ -2042,18 +2141,29 @@ func (s *Service) CreateWorkspaceRuntime(ctx context.Context, input WorkspaceRun
 	if strings.TrimSpace(input.IdempotencyKey) == "" {
 		return WorkspaceRuntime{}, fmt.Errorf("runtime_idempotency_key_required")
 	}
-	requestHash := hashInput(input)
 	s.mu.Lock()
 	compute := s.computes[input.ComputeID]
 	volume := s.volumes[input.VolumeID]
+	attachment := s.attachments[input.AttachmentID]
 	s.mu.Unlock()
+	action := "create_workspace_runtime"
+	var original WorkspaceRuntime
+	if input.RuntimeOperationID != input.IdempotencyKey {
+		var err error
+		original, err = s.workspaceRuntimeForUpdate(ctx, input, compute)
+		if err != nil {
+			return WorkspaceRuntime{}, err
+		}
+		action = "update_workspace_runtime"
+	}
+	requestHash := hashInput(input)
 	now := s.now()
-	operation := newOperation("create_workspace_runtime", "workspace_runtime", input.WorkspaceID, compute.AccountID, input.WorkspaceID, input.IdempotencyKey, requestHash, now)
-	operation.ID = "fop_runtime_claim_" + stableSuffix("create_workspace_runtime", input.IdempotencyKey)
+	operation := newOperation(action, "workspace_runtime", input.WorkspaceID, compute.AccountID, input.WorkspaceID, input.IdempotencyKey, requestHash, now)
+	operation.ID = "fop_runtime_claim_" + stableSuffix(action, input.IdempotencyKey)
 	operation.Status = "started"
 	operation.CreatedAt = now
-	fillOperationResource(&operation, WorkspaceRuntime{WorkspaceID: input.WorkspaceID, ProviderRequestID: providerRequestID("runtime", input.IdempotencyKey)})
-	input.OperationID = operation.OperationID
+	fillOperationResource(&operation, WorkspaceRuntime{ID: original.ID, OperationID: input.RuntimeOperationID, WorkspaceID: input.WorkspaceID, ProviderRequestID: providerRequestID("runtime", input.IdempotencyKey)})
+	input.OperationID = input.IdempotencyKey
 	stored, claimed, err := s.claimRuntimeOperation(ctx, operation)
 	if err != nil {
 		return WorkspaceRuntime{}, err
@@ -2061,12 +2171,16 @@ func (s *Service) CreateWorkspaceRuntime(ctx context.Context, input WorkspaceRun
 	if !claimed {
 		return replayRuntimeOperation(stored, requestHash)
 	}
-	if err := validateRuntimeInput(input, compute, volume); err != nil {
+	if err := validateRuntimeInput(input, compute, volume, attachment, action == "update_workspace_runtime"); err != nil {
 		_ = s.saveRuntimeOperation(ctx, stored, "failed", WorkspaceRuntime{WorkspaceID: input.WorkspaceID, ProviderRequestID: stored.ProviderRequestID}, err)
 		return WorkspaceRuntime{}, err
 	}
 	runtime, err := s.provider.CreateWorkspaceRuntime(ctx, input, compute, volume)
+	runtime.OperationID = input.RuntimeOperationID
 	runtime.Access.Password = ""
+	if err == nil && action == "update_workspace_runtime" && (runtime.ID != original.ID || runtime.WorkspaceID != original.WorkspaceID) {
+		err = fmt.Errorf("workspace_runtime_identity_mismatch")
+	}
 	if err != nil {
 		_ = s.saveRuntimeOperation(ctx, stored, "failed", runtime, err)
 		return runtime, err
@@ -2075,6 +2189,33 @@ func (s *Service) CreateWorkspaceRuntime(ctx context.Context, input WorkspaceRun
 		return runtime, err
 	}
 	return runtime, nil
+}
+
+func (s *Service) workspaceRuntimeForUpdate(ctx context.Context, input WorkspaceRuntimeInput, compute ComputeAllocation) (WorkspaceRuntime, error) {
+	if strings.TrimSpace(input.RuntimeOperationID) == "" || strings.TrimSpace(input.WorkspaceID) == "" || compute.ID == "" {
+		return WorkspaceRuntime{}, fmt.Errorf("runtime_operation_identity_mismatch")
+	}
+	operations, err := s.operations.List(ctx)
+	if err != nil {
+		return WorkspaceRuntime{}, err
+	}
+	matches := make([]WorkspaceRuntime, 0, 1)
+	for _, operation := range operations {
+		if operation.Action != "create_workspace_runtime" || operation.ResourceKind != "workspace_runtime" || operation.Status != "succeeded" ||
+			operation.ResourceID != input.WorkspaceID || operation.AccountID != compute.AccountID || operation.WorkspaceID != input.WorkspaceID ||
+			operation.IdempotencyKey != input.RuntimeOperationID {
+			continue
+		}
+		var runtime WorkspaceRuntime
+		if !decodeOperationResource(operation, &runtime) || runtime.ID == "" || runtime.WorkspaceID != input.WorkspaceID || runtime.OperationID != input.RuntimeOperationID {
+			return WorkspaceRuntime{}, fmt.Errorf("runtime_operation_identity_mismatch")
+		}
+		matches = append(matches, runtime)
+	}
+	if len(matches) != 1 {
+		return WorkspaceRuntime{}, fmt.Errorf("runtime_operation_identity_mismatch")
+	}
+	return matches[0], nil
 }
 
 func (s *Service) DestroyWorkspaceRuntime(ctx context.Context, workspaceID, idempotencyKey string) (WorkspaceRuntime, error) {
@@ -2141,28 +2282,27 @@ func (s *Service) WorkspaceRuntimeStatus(ctx context.Context, workspaceID string
 	if err != nil {
 		return runtime, err
 	}
-	if runtime.ID != "" || (runtime.Status != "running" && runtime.Status != "unready") {
+	if runtime.Status != "running" && runtime.Status != "unready" {
 		return runtime, nil
 	}
 	operations, err := s.operations.List(ctx)
 	if err != nil {
 		return runtime, err
 	}
-	var latest FabricOperation
-	found := false
+	matches := make([]FabricOperation, 0, 1)
 	for _, operation := range operations {
 		if operation.Action != "create_workspace_runtime" || operation.ResourceKind != "workspace_runtime" || operation.Status != "succeeded" || operation.WorkspaceID != workspaceID || operation.ResourceID != workspaceID {
 			continue
 		}
-		if !found || operation.CreatedAt.After(latest.CreatedAt) || (operation.CreatedAt.Equal(latest.CreatedAt) && operation.ID > latest.ID) {
-			latest, found = operation, true
-		}
+		matches = append(matches, operation)
 	}
 	var created WorkspaceRuntime
-	if runtime.WorkspaceID != workspaceID || !found || latest.ID == "" || latest.CreatedAt.IsZero() || !decodeOperationResource(latest, &created) || created.WorkspaceID != workspaceID || strings.TrimSpace(created.ID) == "" {
+	if runtime.WorkspaceID != workspaceID || len(matches) != 1 || matches[0].ID == "" || matches[0].CreatedAt.IsZero() || !decodeOperationResource(matches[0], &created) ||
+		created.WorkspaceID != workspaceID || strings.TrimSpace(created.ID) == "" || strings.TrimSpace(created.OperationID) == "" ||
+		runtime.ID != "" && runtime.ID != created.ID || runtime.OperationID != "" && runtime.OperationID != created.OperationID {
 		return runtime, fmt.Errorf("workspace_runtime_identity_unavailable")
 	}
-	runtime.ID = created.ID
+	runtime.ID, runtime.OperationID = created.ID, created.OperationID
 	return runtime, nil
 }
 
@@ -2912,7 +3052,7 @@ func renewalDeadlineIncreased(previous, current string) bool {
 	return previousErr == nil && currentErr == nil && currentTime.After(previousTime)
 }
 
-func validateRuntimeInput(input WorkspaceRuntimeInput, compute ComputeAllocation, volume StorageVolume) error {
+func validateRuntimeInput(input WorkspaceRuntimeInput, compute ComputeAllocation, volume StorageVolume, attachment StorageAttachment, update bool) error {
 	if compute.ID == "" {
 		return fmt.Errorf("compute_allocation_not_found")
 	}
@@ -2924,6 +3064,16 @@ func validateRuntimeInput(input WorkspaceRuntimeInput, compute ComputeAllocation
 	}
 	if strings.TrimSpace(input.WorkspaceID) == "" || input.WorkspaceID != compute.WorkspaceID || input.WorkspaceID != volume.WorkspaceID {
 		return fmt.Errorf("resource_workspace_mismatch")
+	}
+	if attachment.ID == "" {
+		return fmt.Errorf("storage_attachment_not_found")
+	}
+	if input.AttachmentID != attachment.ID || input.AttachmentOperationID == "" || input.AttachmentOperationID != attachment.OperationID ||
+		attachment.WorkspaceID != input.WorkspaceID || attachment.ComputeID != input.ComputeID || attachment.VolumeID != input.VolumeID || attachment.Status != "attached" {
+		return fmt.Errorf("storage_attachment_identity_mismatch")
+	}
+	if input.RuntimeOperationID == "" || update == (input.RuntimeOperationID == input.IdempotencyKey) {
+		return fmt.Errorf("runtime_operation_identity_mismatch")
 	}
 	if !isReadyResourceStatus(compute.Status) || volume.Status != "ready" {
 		return fmt.Errorf("resource_status_invalid")

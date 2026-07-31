@@ -656,6 +656,35 @@ func computeClaimProviderFixture() (ComputeAllocation, ComputeAllocationPreparat
 	return allocation, plan, ownership
 }
 
+func TestTencentProviderDiscoversStorageRecoveryThroughProvisionerWithoutMutation(t *testing.T) {
+	provider := NewTencentProvider()
+	input := StorageVolumeInput{
+		ID: "storage-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", ComputeID: "compute-alpha",
+		Zone: "ap-guangzhou-3", SizeGB: 10, IdempotencyKey: "launch-alpha:storage", OperationID: "op-storage-alpha",
+	}
+	provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
+		if request.Action != "discover_storage_volume" || request.AccountID != input.AccountID || request.Storage.ID != input.ID ||
+			request.Storage.Zone != input.Zone || request.Storage.SizeGB != uint64(input.SizeGB) || request.Storage.DiskType != "CLOUD_BSSD" ||
+			!reflect.DeepEqual(request.Tags, oplCostTags(input.AccountID, input.WorkspaceID, input.ID, input.OperationID)) {
+			t.Fatalf("storage recovery discovery request=%#v", request)
+		}
+		return provisionerResponse{
+			OK: true, StorageState: "storage_existing_exact", StorageVolumeID: "disk-existing-alpha", ProviderRequestID: "req-discover-alpha", MutationCount: 0,
+		}, nil
+	}
+	provider.kubectl = func(context.Context, []string, []byte) ([]byte, error) {
+		t.Fatal("storage recovery discovery must not call kubectl")
+		return nil, nil
+	}
+
+	discovery, err := provider.DiscoverStorageRecovery(context.Background(), input)
+
+	if err != nil || discovery.State != "storage_existing_exact" || discovery.ProviderResourceID != "disk-existing-alpha" ||
+		discovery.ProviderRequestID != "req-discover-alpha" || discovery.MutationCount != 0 || discovery.Reason != "" {
+		t.Fatalf("storage recovery discovery=%#v err=%v", discovery, err)
+	}
+}
+
 func TestTencentProviderComputeClaimRecoveryProofCombinesTencentAndNodeReadOnlyTruth(t *testing.T) {
 	setProtectedResourceEnv(t)
 	allocation, plan, ownership := computeClaimProviderFixture()
@@ -1368,7 +1397,9 @@ func TestWorkspaceManifestIsolatesTenantRuntime(t *testing.T) {
 	storage := StorageVolume{ProviderResourceID: "disk-storage-alpha", ProviderData: map[string]string{"pvcName": "opl-storage-alpha-data"}}
 	tags := map[string]string{"opl_account_id": "acct-alpha", "opl_workspace_id": "ws-alpha", "opl_resource_id": "compute-alpha", "opl_operation_id": "op-alpha"}
 	var manifest map[string]any
-	if err := json.Unmarshal(workspaceManifest("ws-alpha", "Alpha", "token", "opl-compute-alpha", compute, storage, "opl-gateway-acct-alpha", tags), &manifest); err != nil {
+	input := WorkspaceRuntimeInput{WorkspaceID: "ws-alpha", ComputeID: compute.ID, VolumeID: storage.ID, AttachmentID: "att-alpha", AttachmentOperationID: "workspace-launch-alpha:attachment", RuntimeOperationID: "workspace-launch-alpha:workspace:runtime", GatewaySecretRef: "opl-gateway-acct-alpha"}
+	runtimeID := "rt_" + stableSuffix(input.WorkspaceID, input.RuntimeOperationID)[:18]
+	if err := json.Unmarshal(workspaceManifest(input, "Alpha", "token", runtimeID, "opl-compute-alpha", compute, storage, tags), &manifest); err != nil {
 		t.Fatalf("decode workspace manifest: %v", err)
 	}
 	var deployment map[string]any
@@ -1535,6 +1566,46 @@ func TestWorkspaceManifestIsolatesTenantRuntime(t *testing.T) {
 	}
 }
 
+func TestWorkspaceManifestBindsAttachmentAndRuntimeIdentity(t *testing.T) {
+	t.Setenv("OPL_WORKSPACE_IMAGE", "registry.example/one-person-lab-app@sha256:"+strings.Repeat("a", 64))
+	t.Setenv("OPL_AIONUI_ADMIN_PASSWORD_SEED", "workspace-secret-2026-very-long")
+	compute := ComputeAllocation{ID: "compute-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", PackageID: "basic", NodeSelector: map[string]any{"kubernetes.io/hostname": "node-alpha"}}
+	storage := StorageVolume{ID: "storage-alpha", WorkspaceID: "ws-alpha", ProviderResourceID: "disk-storage-alpha", ProviderData: map[string]string{"pvcName": "opl-storage-alpha-data"}}
+	input := WorkspaceRuntimeInput{
+		WorkspaceID: "ws-alpha", ComputeID: compute.ID, VolumeID: storage.ID,
+		AttachmentID: "att-alpha", AttachmentOperationID: "workspace-launch-alpha:attachment",
+		RuntimeOperationID: "workspace-launch-alpha:workspace:runtime", GatewaySecretRef: "opl-gateway-ws-alpha",
+	}
+	runtimeID := "rt_" + stableSuffix(input.WorkspaceID, input.RuntimeOperationID)[:18]
+	var manifest map[string]any
+	if err := json.Unmarshal(workspaceManifest(input, "Alpha", "token", runtimeID, "opl-compute-alpha", compute, storage, map[string]string{
+		"opl_account_id": compute.AccountID, "opl_workspace_id": input.WorkspaceID, "opl_resource_id": runtimeID, "opl_operation_id": input.RuntimeOperationID,
+	}), &manifest); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{
+		"oplcloud.cn/account-id": compute.AccountID, "oplcloud.cn/workspace-id": input.WorkspaceID,
+		"oplcloud.cn/compute-allocation-id": compute.ID, "oplcloud.cn/storage-id": storage.ID,
+		"oplcloud.cn/attachment-id": input.AttachmentID, "oplcloud.cn/attachment-operation-id": input.AttachmentOperationID,
+		"oplcloud.cn/runtime-id": runtimeID, "oplcloud.cn/runtime-operation-id": input.RuntimeOperationID,
+	}
+	for _, raw := range manifest["items"].([]any) {
+		resource := raw.(map[string]any)
+		for key, value := range want {
+			if nested(resource, "metadata", "labels", key) != value {
+				t.Fatalf("%s missing %s=%s: %#v", resource["kind"], key, value, nested(resource, "metadata", "labels"))
+			}
+		}
+		if resource["kind"] == "Deployment" {
+			for key, value := range want {
+				if nested(resource, "spec", "template", "metadata", "labels", key) != value {
+					t.Fatalf("pod template missing %s=%s: %#v", key, value, nested(resource, "spec", "template", "metadata", "labels"))
+				}
+			}
+		}
+	}
+}
+
 func workspaceEgressFixture() []any {
 	return []any{
 		map[string]any{
@@ -1567,7 +1638,9 @@ func TestWorkspaceCredentialRevisionRollsRuntime(t *testing.T) {
 
 	manifest := func(seed string) ([]byte, map[string]any, map[string]any) {
 		t.Helper()
-		raw := workspaceManifest("ws-alpha", "Alpha", seed, "opl-compute-alpha", compute, storage, "opl-gateway-acct-alpha", tags)
+		input := WorkspaceRuntimeInput{WorkspaceID: "ws-alpha", ComputeID: compute.ID, VolumeID: storage.ID, AttachmentID: "att-alpha", AttachmentOperationID: "workspace-launch-alpha:attachment", RuntimeOperationID: "workspace-launch-alpha:workspace:runtime", GatewaySecretRef: "opl-gateway-acct-alpha"}
+		runtimeID := "rt_" + stableSuffix(input.WorkspaceID, input.RuntimeOperationID)[:18]
+		raw := workspaceManifest(input, "Alpha", seed, runtimeID, "opl-compute-alpha", compute, storage, tags)
 		var list map[string]any
 		if err := json.Unmarshal(raw, &list); err != nil {
 			t.Fatalf("decode manifest: %v", err)
@@ -1872,7 +1945,9 @@ func TestWorkspaceManifestSkipsGatewaySecretWhenCodexKeyMissing(t *testing.T) {
 	compute := ComputeAllocation{ID: "compute-alpha", AccountID: "acct-alpha", PackageID: "basic", NodeSelector: map[string]any{"cloud.tencent.com/node-instance-id": "np-basic-2"}}
 	storage := StorageVolume{ProviderResourceID: "pvc/opl-storage-alpha-data"}
 	var manifest map[string]any
-	if err := json.Unmarshal(workspaceManifest("ws-alpha", "Alpha", "token", "opl-compute-alpha", compute, storage, "", nil), &manifest); err != nil {
+	input := WorkspaceRuntimeInput{WorkspaceID: "ws-alpha", ComputeID: compute.ID, VolumeID: storage.ID, AttachmentID: "att-alpha", AttachmentOperationID: "workspace-launch-alpha:attachment", RuntimeOperationID: "workspace-launch-alpha:workspace:runtime"}
+	runtimeID := "rt_" + stableSuffix(input.WorkspaceID, input.RuntimeOperationID)[:18]
+	if err := json.Unmarshal(workspaceManifest(input, "Alpha", "token", runtimeID, "opl-compute-alpha", compute, storage, nil), &manifest); err != nil {
 		t.Fatalf("decode workspace manifest: %v", err)
 	}
 	var deployment map[string]any
@@ -1903,23 +1978,65 @@ func TestTencentRuntimeCreationIsDeterministicAndUsesActualReadinessAfterApply(t
 	t.Setenv("OPL_AIONUI_ADMIN_PASSWORD_SEED", "workspace-secret-2026-very-long")
 	provider := NewTencentProvider()
 	var calls [][]string
-	provider.kubectl = func(_ context.Context, args []string, _ []byte) ([]byte, error) {
+	var deployment map[string]any
+	var service map[string]any
+	var networkPolicy map[string]any
+	var secret map[string]any
+	provider.kubectl = func(_ context.Context, args []string, stdin []byte) ([]byte, error) {
 		calls = append(calls, append([]string(nil), args...))
 		if slices.Equal(args, []string{"apply", "-f", "-"}) {
+			var manifest map[string]any
+			if err := json.Unmarshal(stdin, &manifest); err != nil {
+				t.Fatalf("decode applied runtime manifest: %v", err)
+			}
+			for _, raw := range manifest["items"].([]any) {
+				resource := raw.(map[string]any)
+				switch resource["kind"] {
+				case "Deployment":
+					deployment = resource
+				case "Service":
+					service = resource
+				case "NetworkPolicy":
+					networkPolicy = resource
+				case "Secret":
+					secret = resource
+				}
+			}
 			return nil, nil
 		}
 		if slices.Equal(args, []string{"get", "deployment,service,networkpolicy", "-l", "oplcloud.cn/workspace-id=ws-alpha", "-o", "json"}) {
+			return mustJSON(map[string]any{"kind": "List", "items": []any{deployment, service, networkPolicy}}), nil
+		}
+		if slices.Equal(args, []string{"get", "deployment/opl-compute-alpha", "pvc/opl-storage-alpha-data", "service/opl-compute-alpha", "ingress/opl-cloud", "endpoints/opl-compute-alpha", "secret/opl-compute-alpha-env", "--ignore-not-found", "-o", "json"}) {
+			return mustJSON(map[string]any{"kind": "List", "items": []any{
+				deployment,
+				map[string]any{"kind": "PersistentVolumeClaim", "metadata": map[string]any{"name": "opl-storage-alpha-data"}, "status": map[string]any{"phase": "Pending"}},
+				service,
+				map[string]any{"kind": "Ingress", "metadata": map[string]any{"name": "opl-cloud"}},
+				map[string]any{"kind": "Endpoints", "metadata": map[string]any{"name": "opl-compute-alpha"}},
+				secret,
+			}}), nil
+		}
+		if slices.Equal(args, []string{"get", "networkpolicy", "-o", "json"}) {
+			return mustJSON(map[string]any{"kind": "List", "items": []any{networkPolicy}}), nil
+		}
+		if slices.Equal(args, []string{"get", "pod", "-l", "oplcloud.cn/workspace-id=ws-alpha", "-o", "json"}) {
 			return mustJSON(map[string]any{"kind": "List", "items": []any{}}), nil
 		}
 		t.Fatalf("unexpected kubectl args: %#v", args)
 		return nil, nil
 	}
-	runtime, err := provider.CreateWorkspaceRuntime(context.Background(), WorkspaceRuntimeInput{WorkspaceID: "ws-alpha", GatewaySecretRef: "opl-gateway-acct-alpha", IdempotencyKey: "runtime-unready"}, ComputeAllocation{ID: "compute-alpha", AccountID: "acct-alpha", ServiceName: "opl-compute-alpha"}, StorageVolume{ID: "storage-alpha", ProviderResourceID: "pvc/opl-storage-alpha-data"})
+	input := WorkspaceRuntimeInput{
+		WorkspaceID: "ws-alpha", ComputeID: "compute-alpha", VolumeID: "storage-alpha",
+		AttachmentID: "att-alpha", AttachmentOperationID: "workspace-launch-alpha:attachment",
+		RuntimeOperationID: "runtime-unready", GatewaySecretRef: "opl-gateway-acct-alpha", IdempotencyKey: "runtime-unready",
+	}
+	runtime, err := provider.CreateWorkspaceRuntime(context.Background(), input, ComputeAllocation{ID: "compute-alpha", AccountID: "acct-alpha", ServiceName: "opl-compute-alpha"}, StorageVolume{ID: "storage-alpha", ProviderResourceID: "pvc/opl-storage-alpha-data"})
 	if err != nil {
 		t.Fatalf("create runtime: %v", err)
 	}
-	replayed, replayErr := provider.CreateWorkspaceRuntime(context.Background(), WorkspaceRuntimeInput{WorkspaceID: "ws-alpha", GatewaySecretRef: "opl-gateway-acct-alpha", IdempotencyKey: "runtime-unready"}, ComputeAllocation{ID: "compute-alpha", AccountID: "acct-alpha", ServiceName: "opl-compute-alpha"}, StorageVolume{ID: "storage-alpha", ProviderResourceID: "pvc/opl-storage-alpha-data"})
-	if runtime.Ready || runtime.Status != "not_found" || runtime.Access.CredentialStatus == "configured" || replayErr != nil || replayed.ID != runtime.ID || len(calls) != 4 {
+	replayed, replayErr := provider.CreateWorkspaceRuntime(context.Background(), input, ComputeAllocation{ID: "compute-alpha", AccountID: "acct-alpha", ServiceName: "opl-compute-alpha"}, StorageVolume{ID: "storage-alpha", ProviderResourceID: "pvc/opl-storage-alpha-data"})
+	if runtime.Ready || runtime.Status != "unready" || replayErr != nil || replayed.ID != runtime.ID || replayed.Status != "unready" || len(calls) != 10 {
 		t.Fatalf("apply must be deterministic and followed by actual readiness: runtime=%#v replayed=%#v replayErr=%v calls=%#v", runtime, replayed, replayErr, calls)
 	}
 }
@@ -2090,7 +2207,7 @@ func TestRuntimeStatusVerifiesFinalMountAfterPreRuntimeAttachment(t *testing.T) 
 	pods := []any{pod}
 	provider.kubectl = func(_ context.Context, args []string, _ []byte) ([]byte, error) {
 		if len(args) == 6 && args[0] == "get" && args[1] == "deployment,service,networkpolicy" && args[2] == "-l" && args[3] == "oplcloud.cn/workspace-id=ws-alpha" {
-			return mustJSON(map[string]any{"kind": "List", "items": []any{deployment, service}}), nil
+			return mustJSON(map[string]any{"kind": "List", "items": []any{deployment, service, networkPolicy}}), nil
 		}
 		if slices.Equal(args, []string{"get", "networkpolicy", "-o", "json"}) {
 			return mustJSON(map[string]any{"kind": "List", "items": networkPolicies}), nil
@@ -2249,6 +2366,66 @@ func TestRuntimeStatusVerifiesFinalMountAfterPreRuntimeAttachment(t *testing.T) 
 	}
 }
 
+func TestWorkspaceRuntimeStatusFailsClosedOnAmbiguousOrUnreadableResources(t *testing.T) {
+	workspaceID := "ws-alpha"
+	labels := map[string]any{"oplcloud.cn/workspace-id": workspaceID}
+	deployment := map[string]any{
+		"kind": "Deployment", "metadata": map[string]any{"name": "opl-compute-alpha", "labels": labels},
+		"spec": map[string]any{"template": map[string]any{"spec": map[string]any{"volumes": []any{map[string]any{"persistentVolumeClaim": map[string]any{"claimName": "opl-storage-alpha-data"}}}}}},
+	}
+	service := map[string]any{"kind": "Service", "metadata": map[string]any{"name": "opl-compute-alpha", "labels": labels}}
+	policy := map[string]any{"kind": "NetworkPolicy", "metadata": map[string]any{"name": "opl-compute-alpha", "labels": labels}}
+
+	for _, tc := range []struct {
+		name      string
+		discovery func() ([]byte, error)
+		want      string
+	}{
+		{
+			name: "multiple deployment candidates",
+			discovery: func() ([]byte, error) {
+				duplicate := cloneJSONMap(deployment)
+				duplicate["metadata"].(map[string]any)["name"] = "opl-compute-alpha-duplicate"
+				return mustJSON(map[string]any{"kind": "List", "items": []any{deployment, duplicate, service, policy}}), nil
+			},
+			want: "workspace_runtime_status_ownership_conflict",
+		},
+		{
+			name: "kubernetes forbidden",
+			discovery: func() ([]byte, error) {
+				return nil, errors.New("Error from server (Forbidden): deployments is forbidden")
+			},
+			want: "workspace_runtime_status_iam_rbac",
+		},
+		{
+			name: "malformed kubernetes response",
+			discovery: func() ([]byte, error) {
+				return []byte(`{"kind":"List","items":`), nil
+			},
+			want: "workspace_runtime_status_provider_error",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			provider := NewTencentProvider()
+			provider.kubectl = func(_ context.Context, args []string, _ []byte) ([]byte, error) {
+				if len(args) >= 2 && args[0] == "get" && args[1] == "deployment,service,networkpolicy" {
+					return tc.discovery()
+				}
+				return mustJSON(map[string]any{"kind": "List", "items": []any{}}), nil
+			}
+
+			status, err := provider.WorkspaceRuntimeStatus(context.Background(), workspaceID)
+
+			if err == nil || err.Error() != tc.want || status.Ready {
+				t.Fatalf("runtime status=%#v err=%v want=%s", status, err, tc.want)
+			}
+			if strings.Contains(strings.ToLower(err.Error()), "forbidden") || strings.Contains(strings.ToLower(err.Error()), "deployments is forbidden") {
+				t.Fatalf("raw kubernetes error leaked: %v", err)
+			}
+		})
+	}
+}
+
 func workspaceDataMounts() []any {
 	return []any{
 		map[string]any{"name": "workspace-data", "mountPath": "/data", "subPath": "data"},
@@ -2394,10 +2571,15 @@ func TestTencentProviderPublishesWorkspaceContentAtomically(t *testing.T) {
 	provider.kubectl = func(_ context.Context, args []string, stdin []byte) ([]byte, error) {
 		calls = append(calls, append([]string(nil), args...))
 		if args[0] == "get" {
-			return mustJSON(map[string]any{"items": []any{map[string]any{
-				"kind": "Deployment", "metadata": map[string]any{"name": "opl-workspace-alpha", "labels": map[string]any{"oplcloud.cn/workspace-id": "workspace-alpha"}},
-				"spec": map[string]any{"template": map[string]any{"spec": map[string]any{"volumes": []any{map[string]any{"name": "workspace-data", "persistentVolumeClaim": map[string]any{"claimName": "pvc-alpha"}}}}}},
-			}}}), nil
+			labels := map[string]any{"oplcloud.cn/workspace-id": "workspace-alpha"}
+			return mustJSON(map[string]any{"kind": "List", "items": []any{
+				map[string]any{
+					"kind": "Deployment", "metadata": map[string]any{"name": "opl-workspace-alpha", "labels": labels},
+					"spec": map[string]any{"template": map[string]any{"spec": map[string]any{"volumes": []any{map[string]any{"name": "workspace-data", "persistentVolumeClaim": map[string]any{"claimName": "pvc-alpha"}}}}}},
+				},
+				map[string]any{"kind": "Service", "metadata": map[string]any{"name": "opl-workspace-alpha", "labels": labels}},
+				map[string]any{"kind": "NetworkPolicy", "metadata": map[string]any{"name": "opl-workspace-alpha", "labels": labels}},
+			}}), nil
 		}
 		if stdin != nil {
 			stdinBytes += len(stdin)
@@ -2431,9 +2613,15 @@ func TestTencentProviderReportsWorkspaceContentMismatchWithoutBody(t *testing.T)
 	actualDigest := fmt.Sprintf("%x", sha256.Sum256([]byte("different-secret-body")))
 	provider.kubectl = func(_ context.Context, args []string, _ []byte) ([]byte, error) {
 		if args[0] == "get" {
-			return mustJSON(map[string]any{"items": []any{map[string]any{
-				"kind": "Deployment", "metadata": map[string]any{"name": "opl-workspace-alpha", "labels": map[string]any{"oplcloud.cn/workspace-id": "workspace-alpha"}},
-			}}}), nil
+			labels := map[string]any{"oplcloud.cn/workspace-id": "workspace-alpha"}
+			return mustJSON(map[string]any{"kind": "List", "items": []any{
+				map[string]any{
+					"kind": "Deployment", "metadata": map[string]any{"name": "opl-workspace-alpha", "labels": labels},
+					"spec": map[string]any{"template": map[string]any{"spec": map[string]any{"volumes": []any{map[string]any{"persistentVolumeClaim": map[string]any{"claimName": "pvc-alpha"}}}}}},
+				},
+				map[string]any{"kind": "Service", "metadata": map[string]any{"name": "opl-workspace-alpha", "labels": labels}},
+				map[string]any{"kind": "NetworkPolicy", "metadata": map[string]any{"name": "opl-workspace-alpha", "labels": labels}},
+			}}), nil
 		}
 		if len(args) > 3 && args[3] == "sha256sum" {
 			return []byte(actualDigest + "  /projects/inputs/paper.txt\n"), nil
@@ -2452,9 +2640,15 @@ func TestTencentProviderReportsWorkspaceContentDigestCommandFailure(t *testing.T
 	provider := NewTencentProvider()
 	provider.kubectl = func(_ context.Context, args []string, _ []byte) ([]byte, error) {
 		if args[0] == "get" {
-			return mustJSON(map[string]any{"items": []any{map[string]any{
-				"kind": "Deployment", "metadata": map[string]any{"name": "opl-workspace-alpha", "labels": map[string]any{"oplcloud.cn/workspace-id": "workspace-alpha"}},
-			}}}), nil
+			labels := map[string]any{"oplcloud.cn/workspace-id": "workspace-alpha"}
+			return mustJSON(map[string]any{"kind": "List", "items": []any{
+				map[string]any{
+					"kind": "Deployment", "metadata": map[string]any{"name": "opl-workspace-alpha", "labels": labels},
+					"spec": map[string]any{"template": map[string]any{"spec": map[string]any{"volumes": []any{map[string]any{"persistentVolumeClaim": map[string]any{"claimName": "pvc-alpha"}}}}}},
+				},
+				map[string]any{"kind": "Service", "metadata": map[string]any{"name": "opl-workspace-alpha", "labels": labels}},
+				map[string]any{"kind": "NetworkPolicy", "metadata": map[string]any{"name": "opl-workspace-alpha", "labels": labels}},
+			}}), nil
 		}
 		if len(args) > 3 && args[3] == "sha256sum" {
 			return nil, fmt.Errorf("exit status 1: forbidden")
@@ -2471,9 +2665,15 @@ func TestTencentProviderRejectsInvalidWorkspaceContentDigestOutput(t *testing.T)
 	provider := NewTencentProvider()
 	provider.kubectl = func(_ context.Context, args []string, _ []byte) ([]byte, error) {
 		if args[0] == "get" {
-			return mustJSON(map[string]any{"items": []any{map[string]any{
-				"kind": "Deployment", "metadata": map[string]any{"name": "opl-workspace-alpha", "labels": map[string]any{"oplcloud.cn/workspace-id": "workspace-alpha"}},
-			}}}), nil
+			labels := map[string]any{"oplcloud.cn/workspace-id": "workspace-alpha"}
+			return mustJSON(map[string]any{"kind": "List", "items": []any{
+				map[string]any{
+					"kind": "Deployment", "metadata": map[string]any{"name": "opl-workspace-alpha", "labels": labels},
+					"spec": map[string]any{"template": map[string]any{"spec": map[string]any{"volumes": []any{map[string]any{"persistentVolumeClaim": map[string]any{"claimName": "pvc-alpha"}}}}}},
+				},
+				map[string]any{"kind": "Service", "metadata": map[string]any{"name": "opl-workspace-alpha", "labels": labels}},
+				map[string]any{"kind": "NetworkPolicy", "metadata": map[string]any{"name": "opl-workspace-alpha", "labels": labels}},
+			}}), nil
 		}
 		if len(args) > 3 && args[3] == "sha256sum" {
 			return []byte("not-a-digest\n"), nil
@@ -2537,6 +2737,82 @@ func TestTencentProviderCreatesStaticRetainedCBSVolumeInComputeZone(t *testing.T
 	}
 }
 
+func TestTencentProviderReusesApprovedExactCBSWithOriginalStorageIdentity(t *testing.T) {
+	provider := NewTencentProvider()
+	var provisioned provisionerRequest
+	provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
+		provisioned = request
+		return provisionerResponse{
+			OK: true, StorageState: "storage_existing_exact", StorageVolumeID: "disk-existing-alpha", CBSStatus: "UNATTACHED",
+			Status: "provider_ready", ProviderRequestID: "req-discover-cbs", MutationCount: 0,
+			ProviderData: map[string]string{
+				"diskChargeType": "PREPAID", "diskType": "CLOUD_BSSD", "renewFlag": "NOTIFY_AND_MANUAL_RENEW",
+				"deadline": "2026-08-16T00:00:00Z", "zone": "ap-guangzhou-3", "sizeGb": "10", "periodMonths": "1",
+			},
+		}, nil
+	}
+	var applied []byte
+	provider.kubectl = func(_ context.Context, args []string, stdin []byte) ([]byte, error) {
+		if !slices.Equal(args, []string{"apply", "-f", "-"}) {
+			t.Fatalf("kubectl args=%#v", args)
+		}
+		applied = append([]byte(nil), stdin...)
+		return nil, nil
+	}
+	input := StorageVolumeInput{
+		ID: "storage-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", ComputeID: "compute-alpha",
+		Zone: "ap-guangzhou-3", SizeGB: 10, IdempotencyKey: "launch-alpha:storage", OperationID: "op-storage-alpha",
+		ExpectedRecoveryState: "storage_existing_exact", ExpectedProviderResourceID: "disk-existing-alpha",
+	}
+
+	volume, err := provider.CreateStorageVolume(context.Background(), input)
+
+	if err != nil || volume.ID != input.ID || volume.OperationID != input.IdempotencyKey || volume.ProviderResourceID != input.ExpectedProviderResourceID ||
+		volume.CostTags["opl_operation_id"] != input.OperationID || volume.ProviderRequestID != "req-discover-cbs" {
+		t.Fatalf("reused volume=%#v err=%v", volume, err)
+	}
+	if provisioned.Action != "create_storage_volume" || provisioned.Storage.ExpectedState != input.ExpectedRecoveryState ||
+		provisioned.Storage.ExpectedProviderResourceID != input.ExpectedProviderResourceID || provisioned.Storage.ID != input.ID ||
+		!reflect.DeepEqual(provisioned.Tags, oplCostTags(input.AccountID, input.WorkspaceID, input.ID, input.OperationID)) {
+		t.Fatalf("recovery storage request=%#v", provisioned)
+	}
+	var manifest map[string]any
+	if json.Unmarshal(applied, &manifest) != nil {
+		t.Fatalf("static binding manifest=%s", applied)
+	}
+	items := manifest["items"].([]any)
+	if len(items) != 2 || nested(items[0].(map[string]any), "spec", "csi", "volumeHandle") != input.ExpectedProviderResourceID ||
+		nested(items[1].(map[string]any), "spec", "volumeName") != nested(items[0].(map[string]any), "metadata", "name") {
+		t.Fatalf("reused static binding=%#v", manifest)
+	}
+}
+
+func TestTencentProviderCreatesStaticBindingWhileCBSIsStillConverging(t *testing.T) {
+	provider := NewTencentProvider()
+	provider.provision = func(context.Context, provisionerRequest) (provisionerResponse, error) {
+		return provisionerResponse{
+			OK: true, StorageVolumeID: "disk-storage-alpha", CBSStatus: "CREATING", Status: "pending", ProviderRequestID: "req-create-cbs",
+			ProviderData: map[string]string{"diskChargeType": "PREPAID", "diskType": "CLOUD_BSSD", "renewFlag": "NOTIFY_AND_MANUAL_RENEW", "deadline": "2026-08-16T00:00:00Z", "zone": "ap-guangzhou-3", "sizeGb": "10"},
+		}, nil
+	}
+	applies := 0
+	provider.kubectl = func(_ context.Context, args []string, _ []byte) ([]byte, error) {
+		if slices.Equal(args, []string{"apply", "-f", "-"}) {
+			applies++
+		}
+		return nil, nil
+	}
+
+	volume, err := provider.CreateStorageVolume(context.Background(), StorageVolumeInput{
+		ID: "storage-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", ComputeID: "compute-alpha", Zone: "ap-guangzhou-3", SizeGB: 10,
+		IdempotencyKey: "storage-once", OperationID: "op-storage-alpha",
+	})
+
+	if err != nil || volume.ProviderResourceID != "disk-storage-alpha" || volume.Status != "pending" || applies != 1 {
+		t.Fatalf("converging CBS must create one static binding: volume=%#v applies=%d err=%v", volume, applies, err)
+	}
+}
+
 func TestTencentProviderPreservesCBSFactsWhenStaticBindingFails(t *testing.T) {
 	provider := NewTencentProvider()
 	provider.provision = func(context.Context, provisionerRequest) (provisionerResponse, error) {
@@ -2589,7 +2865,7 @@ func TestTencentProviderStorageReadinessRequiresCBSAndBoundPVC(t *testing.T) {
 			}
 			provider.kubectl = func(_ context.Context, args []string, _ []byte) ([]byte, error) {
 				if args[0] == "apply" {
-					return nil, nil
+					t.Fatal("storage Sync must be read-only")
 				}
 				return mustJSON(map[string]any{"kind": "PersistentVolumeClaim", "metadata": map[string]any{"name": "opl-storage-alpha-data"}, "status": map[string]any{"phase": tc.pvcPhase}}), nil
 			}

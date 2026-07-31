@@ -18,7 +18,8 @@ import {
 
 export const LIVE_QA_CONFIRMATION = "I_UNDERSTAND_THIS_SENDS_ONE_REAL_MODEL_REQUEST";
 export const BASIC_CUSTOMER_CANARY_CONFIRMATION = "I_UNDERSTAND_THIS_PROVISIONS_ONE_REAL_BASIC_WORKSPACE_AND_SENDS_ONE_MODEL_REQUEST";
-export const COMPUTE_CLAIM_RECOVERY_CONFIRMATION = "CLAIM_PROVEN_COMPUTE_RESOURCE";
+export const COMPUTE_CLAIM_RECOVERY_CONFIRMATION = "RECOVER_PROVEN_COMPUTE_AND_CONTINUE_ORIGINAL_LAUNCH";
+export const RECOVERED_WORKSPACE_E2E_CONFIRMATION = "CONFIRM_SINGLE_MODEL_REQUEST_FOR_RECOVERED_WORKSPACE";
 
 const DEFAULT_USAGE_ATTEMPTS = 24;
 const DEFAULT_USAGE_RETRY_DELAY_MS = 5_000;
@@ -666,6 +667,26 @@ const COMPUTE_CLAIM_TARGET_KEYS = [
   "launchOperationId", "accountId", "workspaceId", "computeAllocationId", "storageId", "packageId", "poolId", "nodePoolId",
   "machineName", "nodeName", "cvmInstanceId", "privateIp", "instanceType", "zone", "chargeType", "periodMonths", "renewFlag", "deadline"
 ];
+const COMPUTE_CLAIM_RECOVERY_FORBIDDEN_WRITES = Object.freeze([
+  "create_launch", "debit", "recharge", "refund", "scale", "create_cvm", "create_second_cbs", "delete", "replace"
+]);
+const COMPUTE_CLAIM_RECOVERY_STAGE_LIMITS = Object.freeze({
+  claim: Object.freeze({ sub2api: 0, tencent: 5, kubernetes: 1 }),
+  storage: 1,
+  attachment: 1,
+  secret: 1,
+  runtime: 1,
+  activation: 1,
+  receipt: 1
+});
+const RECOVERED_WORKSPACE_E2E_ALLOWED_WRITES = Object.freeze([
+  "control_plane_e2e_attempt_reservation",
+  "single_workspace_model_request",
+  "control_plane_e2e_attempt_completion"
+]);
+const RECOVERED_WORKSPACE_E2E_FORBIDDEN_WRITES = Object.freeze([
+  "launch", "debit", "recharge", "refund", "scale", "create_cvm", "create_cbs", "tencent", "kubernetes"
+]);
 const COMPUTE_CLAIM_FABRIC_POD_PROOF_SCRIPT = String.raw`
 const http = require("node:http");
 const path = process.argv[1];
@@ -774,6 +795,47 @@ function computeClaimControlPlaneRequest(target) {
   };
 }
 
+function computeClaimStableSuffix(...parts) {
+  return createHash("sha256").update(parts.join(":"), "utf8").digest("hex");
+}
+
+function computeClaimStorageBindingValid(storageState, storageProviderResourceId) {
+  return storageState === "storage_not_started" && storageProviderResourceId === "" ||
+    storageState === "storage_existing_exact" && /^disk-[a-z0-9-]{1,80}$/.test(storageProviderResourceId);
+}
+
+function computeClaimRecoveryAllowedWrites(storageState) {
+  const storageWrite = storageState === "storage_existing_exact" ? "reuse_original_cbs" : "create_original_cbs";
+  return [
+    "claim_existing_cvm_node",
+    storageWrite,
+    "create_original_pv_pvc_attachment",
+    "upsert_original_gateway_secret",
+    "create_original_workspace_runtime",
+    "activate_original_workspace",
+    "record_original_purchase_receipt"
+  ];
+}
+
+function computeClaimExpectedRecoveryResources(target, workspaceApiKeyId, storageState, storageProviderResourceId) {
+  const attachmentOperationId = `${target.launchOperationId}:attachment`;
+  const runtimeOperationId = `${target.launchOperationId}:workspace:runtime`;
+  return {
+    computeOperationId: `${target.launchOperationId}:compute`,
+    storageOperationId: `${target.launchOperationId}:storage`,
+    storageState,
+    storageProviderResourceId,
+    attachmentId: `att_${computeClaimStableSuffix(attachmentOperationId).slice(0, 18)}`,
+    attachmentOperationId,
+    workspaceApiKeyId,
+    gatewaySecretRef: `opl-gateway-${computeClaimStableSuffix(target.workspaceId).slice(0, 16)}`,
+    secretOperationId: `${target.launchOperationId}:workspace:secret:gateway-secret`,
+    runtimeId: `rt_${computeClaimStableSuffix(target.workspaceId, runtimeOperationId).slice(0, 18)}`,
+    runtimeOperationId,
+    receiptOperationId: `${target.launchOperationId}:purchase-receipt`
+  };
+}
+
 function computeClaimProofProjection(value) {
   const integer = (field) => Number.isInteger(value?.[field]) && value[field] >= 0 ? value[field] : -1;
   const mutationEvidence = (source, missingFields) => {
@@ -790,11 +852,13 @@ function computeClaimProofProjection(value) {
   };
   const failureStage = String(value?.failureStage || "");
   const providerErrorClass = String(value?.providerErrorClass || "");
+  const storageProviderResourceId = String(value?.storageProviderResourceId || "");
   return {
     schemaVersion: Number(value?.schemaVersion || 0),
     eligible: value?.eligible === true,
     reason: COMPUTE_CLAIM_REASONS.has(String(value?.reason || "")) ? String(value.reason) : "provider_describe",
-    storageState: new Set(["storage_not_started", "unknown"]).has(String(value?.storageState || "")) ? String(value.storageState) : "unknown",
+    storageState: new Set(["storage_not_started", "storage_existing_exact", "unknown"]).has(String(value?.storageState || "")) ? String(value.storageState) : "unknown",
+    storageProviderResourceId: /^disk-[a-z0-9-]{1,80}$/.test(storageProviderResourceId) ? storageProviderResourceId : "",
     launchOperationId: String(value?.launchOperationId || ""),
     accountId: String(value?.accountId || ""),
     workspaceId: String(value?.workspaceId || ""),
@@ -849,8 +913,10 @@ function computeClaimProofBaseMatches(proof, target) {
 	proof.sub2apiMutationCount === 0 && computeClaimEvidenceMatches(proof, false);
 }
 
-function computeClaimProofMatchesTarget(proof, target, claimed = false) {
-  return computeClaimProofBaseMatches(proof, target) && proof.eligible && proof.reason === "none" && proof.storageState === "storage_not_started" &&
+function computeClaimProofMatchesTarget(proof, target, claimed = false, expectedStorage = null) {
+  const storageMatches = computeClaimStorageBindingValid(proof.storageState, proof.storageProviderResourceId) &&
+    (!expectedStorage || proof.storageState === expectedStorage.storageState && proof.storageProviderResourceId === expectedStorage.storageProviderResourceId);
+  return computeClaimProofBaseMatches(proof, target) && proof.eligible && proof.reason === "none" && storageMatches &&
     proof.machineName === target.machineName && proof.nodeName === target.nodeName && proof.cvmInstanceId === target.cvmInstanceId &&
     proof.privateIp === target.privateIp && proof.instanceType === target.instanceType && proof.zone === target.zone &&
     proof.chargeType === target.chargeType && proof.periodMonths === target.periodMonths && proof.renewFlag === target.renewFlag && proof.deadline === target.deadline &&
@@ -957,7 +1023,10 @@ function computeClaimRecoveryApproval(value, expected, now) {
   } catch {
     throw new Error("compute_claim_recovery_approval_invalid");
   }
-  const keys = ["schemaVersion", "approvalId", "expiresAt", "mergedMainSha", "cloudImageDigest", "confirmation", "idempotencyKey", "target"];
+  const keys = [
+    "schemaVersion", "approvalId", "expiresAt", "mergedMainSha", "cloudImageDigest", "workspaceImageDigest", "confirmation",
+    "idempotencyKey", "recoveryKey", "customer", "target", "resources", "attemptLimits", "allowedWrites", "forbiddenWrites"
+  ];
   let approvedTarget;
   try {
     approvedTarget = computeClaimTarget(approval?.target);
@@ -966,13 +1035,30 @@ function computeClaimRecoveryApproval(value, expected, now) {
   }
   const validOpaque = (value) => /^[a-z0-9][a-z0-9-]{2,47}$/.test(String(value || "")) &&
     !/(?:api-?key|bearer|credential|password|secret|token)/.test(String(value));
-  if (!exactObjectKeys(approval, keys) || approval.schemaVersion !== 1 || approval.approvalId !== expected.approvalId ||
-    !validOpaque(approval.approvalId) || !validOpaque(approval.idempotencyKey) || !Number.isFinite(Date.parse(approval.expiresAt)) ||
+  const customerEmail = String(approval?.customer?.email || "").trim().toLowerCase();
+  const workspaceApiKeyId = String(approval?.resources?.workspaceApiKeyId || "");
+  const storageState = String(approval?.resources?.storageState || "");
+  const storageProviderResourceId = String(approval?.resources?.storageProviderResourceId || "");
+  const expectedResources = computeClaimExpectedRecoveryResources(approvedTarget, workspaceApiKeyId, storageState, storageProviderResourceId);
+  const expectedAllowedWrites = computeClaimRecoveryAllowedWrites(storageState);
+  if (!exactObjectKeys(approval, keys) || approval.schemaVersion !== 2 || approval.approvalId !== expected.approvalId ||
+    !validOpaque(approval.approvalId) || !validOpaque(approval.idempotencyKey) || !validOpaque(approval.recoveryKey) ||
+    !Number.isFinite(Date.parse(approval.expiresAt)) ||
     Date.parse(approval.expiresAt) <= now.getTime() || approval.mergedMainSha !== expected.mergedSha || approval.cloudImageDigest !== expected.cloudImageDigest ||
-    approval.confirmation !== COMPUTE_CLAIM_RECOVERY_CONFIRMATION || JSON.stringify(approvedTarget) !== JSON.stringify(expected.target)) {
+    !/^sha256:[a-f0-9]{64}$/.test(String(approval.workspaceImageDigest || "")) || approval.confirmation !== COMPUTE_CLAIM_RECOVERY_CONFIRMATION ||
+    JSON.stringify(approvedTarget) !== JSON.stringify(expected.target) || !exactObjectKeys(approval.customer, ["email", "accountId"]) ||
+    customerEmail !== approval.customer.email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(customerEmail) || approval.customer.accountId !== approvedTarget.accountId ||
+    !exactObjectKeys(approval.resources, Object.keys(expectedResources)) || !/^[1-9][0-9]*$/.test(workspaceApiKeyId) ||
+    !computeClaimStorageBindingValid(storageState, storageProviderResourceId) ||
+    JSON.stringify(approval.resources) !== JSON.stringify(expectedResources) ||
+    !exactObjectKeys(approval.attemptLimits, Object.keys(COMPUTE_CLAIM_RECOVERY_STAGE_LIMITS)) ||
+    !exactObjectKeys(approval.attemptLimits.claim, Object.keys(COMPUTE_CLAIM_RECOVERY_STAGE_LIMITS.claim)) ||
+    JSON.stringify(approval.attemptLimits) !== JSON.stringify(COMPUTE_CLAIM_RECOVERY_STAGE_LIMITS) ||
+    JSON.stringify(approval.allowedWrites) !== JSON.stringify(expectedAllowedWrites) ||
+    JSON.stringify(approval.forbiddenWrites) !== JSON.stringify(COMPUTE_CLAIM_RECOVERY_FORBIDDEN_WRITES)) {
     throw new Error("compute_claim_recovery_approval_invalid");
   }
-  return { ...approval, target: approvedTarget };
+  return { ...approval, customer: { ...approval.customer, email: customerEmail }, target: approvedTarget };
 }
 
 async function computeClaimControlPlanePost({ fetchImpl, origin, auth, path, body, idempotencyKey, capability, requestTimeoutMs }) {
@@ -1033,8 +1119,17 @@ export async function recoverComputeClaim({
   if (auth.user?.accountId !== PRODUCTION_ADMIN.accountId || auth.user?.role !== PRODUCTION_ADMIN.role || !auth.csrfToken) {
     throw new Error("compute_claim_recovery_admin_login_failed");
   }
+  try {
+    const accountAuthority = await readBasicCanaryAccountAuthority(
+      { fetchImpl, origin: normalizedOrigin, timeoutMs: requestTimeoutMs }, auth, approval, target.accountId
+    );
+    if (!accountAuthority.found) throw new Error("account_not_found");
+  } catch {
+    throw new Error("compute_claim_recovery_customer_identity_mismatch");
+  }
   const path = `/api/operator/workspace-launches/${encodeURIComponent(target.launchOperationId)}/compute-claim-recovery`;
   const requestBody = computeClaimControlPlaneRequest(target);
+  const approvalDigest = createHash("sha256").update(canonicalJson(approval)).digest("hex");
   const claimResponse = await computeClaimControlPlanePost({
     fetchImpl,
     origin: normalizedOrigin,
@@ -1046,14 +1141,23 @@ export async function recoverComputeClaim({
     body: {
       ...requestBody,
       approvalId: approval.approvalId,
+      approvalDigest,
+      expiresAt: approval.expiresAt,
       mergedMainSha: approval.mergedMainSha,
       cloudImageDigest: approval.cloudImageDigest,
+      workspaceImageDigest: approval.workspaceImageDigest,
+      customerEmail: approval.customer.email,
+      recoveryKey: approval.recoveryKey,
+      resources: approval.resources,
+      attemptLimits: approval.attemptLimits,
+      allowedWrites: approval.allowedWrites,
+      forbiddenWrites: approval.forbiddenWrites,
       confirm: approval.confirmation
     }
   });
   const claimed = computeClaimProofProjection(claimResponse.payload);
-  const eligible = claimResponse.statusCode === 200 && computeClaimProofMatchesTarget(claimed, target, true);
-  const errorCode = eligible ? "none" : computeClaimProofBaseMatches(claimed, target) ? claimed.reason : "identity_mismatch";
+  const eligible = claimResponse.statusCode === 200 && computeClaimProofMatchesTarget(claimed, target, true, approval.resources);
+  const errorCode = eligible ? "none" : computeClaimProofBaseMatches(claimed, target) && claimed.reason !== "none" ? claimed.reason : "identity_mismatch";
   return computeClaimArtifact(COMPUTE_CLAIM_RECOVER_MODE, target, release, claimed, eligible, errorCode, approval);
 }
 
@@ -1121,6 +1225,22 @@ function computeClaimContinuationLaunch(value, target) {
   }
   if (launch.status === "succeeded") launch.url = computeClaimWorkspaceUrl(launch.url, target.workspaceId);
   return launch;
+}
+
+function computeClaimContinuationRecovery(value) {
+  const source = value?.recovery;
+  const recovery = {
+    approvalId: String(source?.approvalId || ""),
+    approvalDigest: String(source?.approvalDigest || ""),
+    recoveryKey: String(source?.recoveryKey || ""),
+    workspaceImageDigest: String(source?.workspaceImageDigest || "")
+  };
+  if (!exactObjectKeys(source, ["approvalId", "approvalDigest", "recoveryKey", "workspaceImageDigest"]) ||
+    !/^[a-z0-9][a-z0-9-]{2,47}$/.test(recovery.approvalId) || !/^[a-f0-9]{64}$/.test(recovery.approvalDigest) ||
+    !/^[a-z0-9][a-z0-9-]{2,47}$/.test(recovery.recoveryKey) || !/^sha256:[a-f0-9]{64}$/.test(recovery.workspaceImageDigest)) {
+    throw new Error("compute_claim_continuation_recovery_binding_invalid");
+  }
+  return recovery;
 }
 
 function computeClaimContinuationRuntime(value, target, launch) {
@@ -1206,11 +1326,13 @@ export async function continueComputeClaimWorkspace({
 
   const launchPath = `/api/workspace-launches/${encodeURIComponent(target.launchOperationId)}`;
   let launch;
+  let recovery;
   for (let attempt = 1; attempt <= launchPollAttempts; attempt += 1) {
     if (attempt > 1 && launch?.status !== "succeeded") await sleep(launchPollDelayMs);
     const authority = await authoritativeGet({ ...requestOptions, auth: customerAuth, path: launchPath });
     if (!authority.found) throw new Error("compute_claim_continuation_launch_readback_failed");
     launch = computeClaimContinuationLaunch(authority.payload, target);
+    recovery = computeClaimContinuationRecovery(authority.payload);
     if (launch.status === "succeeded" && launch.phase === "succeeded") break;
     if (attempt === launchPollAttempts) throw new Error("compute_claim_continuation_timeout");
   }
@@ -1237,8 +1359,261 @@ export async function continueComputeClaimWorkspace({
     launch,
     runtime,
     receipt,
+    recovery,
     runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
     backgroundMutationCountsState: "unknown",
+    verifiedAt: now.toISOString()
+  };
+}
+
+function recoveredWorkspaceE2EApproval(value, expected, now) {
+  let approval;
+  try {
+    approval = typeof value === "string" ? JSON.parse(value) : value;
+  } catch {
+    throw new Error("recovered_workspace_e2e_approval_invalid");
+  }
+  const keys = [
+    "schemaVersion", "approvalId", "expiresAt", "confirmation", "mergedMainSha", "cloudImageDigest", "workspaceImageDigest",
+    "recoveryApprovalId", "recoveryApprovalDigest", "recoveryKey", "customer", "launchOperationId", "workspaceId", "resources",
+    "expectedModel", "modelRequestKey", "allowedWrites", "forbiddenWrites"
+  ];
+  const resourceKeys = [
+    "computeAllocationId", "storageId", "attachmentId", "runtimeId", "receiptId", "workspaceApiKeyId", "runtimeServiceName", "workspaceUrl"
+  ];
+  const validOpaque = (item) => /^[a-z0-9][a-z0-9._:-]{2,127}$/.test(String(item || "")) &&
+    !/(?:api-?key|bearer|credential|password|secret|token)/.test(String(item));
+  const email = String(approval?.customer?.email || "").trim().toLowerCase();
+  if (!exactObjectKeys(approval, keys) || approval.schemaVersion !== 1 || approval.approvalId !== expected.approvalId ||
+    !validOpaque(approval.approvalId) || !validOpaque(approval.recoveryApprovalId) || !validOpaque(approval.recoveryKey) ||
+    !validOpaque(approval.modelRequestKey) || !Number.isFinite(Date.parse(approval.expiresAt)) || Date.parse(approval.expiresAt) <= now.getTime() ||
+    approval.confirmation !== RECOVERED_WORKSPACE_E2E_CONFIRMATION || approval.confirmation !== expected.confirmation ||
+    !/^[a-f0-9]{40}$/.test(String(expected.mergedSha || "")) || approval.mergedMainSha !== expected.mergedSha ||
+    !/^sha256:[a-f0-9]{64}$/.test(String(approval.cloudImageDigest || "")) ||
+    !/^sha256:[a-f0-9]{64}$/.test(String(approval.workspaceImageDigest || "")) || !/^[a-f0-9]{64}$/.test(String(approval.recoveryApprovalDigest || "")) ||
+    !exactObjectKeys(approval.customer, ["email", "accountId"]) || approval.customer.email !== email ||
+    !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) || approval.customer.email !== expected.customerEmail ||
+    !exactObjectKeys(approval.resources, resourceKeys) || !/^[1-9][0-9]*$/.test(String(approval.resources.workspaceApiKeyId || "")) ||
+    !validOpaque(approval.expectedModel) || JSON.stringify(approval.allowedWrites) !== JSON.stringify(RECOVERED_WORKSPACE_E2E_ALLOWED_WRITES) ||
+    JSON.stringify(approval.forbiddenWrites) !== JSON.stringify(RECOVERED_WORKSPACE_E2E_FORBIDDEN_WRITES)) {
+    throw new Error("recovered_workspace_e2e_approval_invalid");
+  }
+  return { ...approval, customer: { ...approval.customer, email } };
+}
+
+function recoveredWorkspaceE2EContinuation(value, approval) {
+  const target = value?.target;
+  const launch = value?.launch;
+  const runtime = value?.runtime;
+  const receipt = value?.receipt;
+  const recovery = value?.recovery;
+  const expectedResources = {
+    computeAllocationId: target?.computeAllocationId,
+    storageId: target?.storageId,
+    attachmentId: launch?.attachmentId,
+    runtimeId: runtime?.runtimeId,
+    receiptId: launch?.receiptId,
+    workspaceApiKeyId: String(launch?.workspaceApiKeyId || ""),
+    runtimeServiceName: runtime?.serviceName,
+    workspaceUrl: runtime?.url
+  };
+  if (value?.schemaVersion !== 2 || value?.operationMode !== COMPUTE_CLAIM_CONTINUATION_MODE || value?.status !== "succeeded" ||
+    value?.recoveryEligible !== true || value?.errorCode !== "none" || value?.release?.mergedSha !== approval.mergedMainSha ||
+    value?.release?.cloudImageDigest !== approval.cloudImageDigest || launch?.status !== "succeeded" || launch?.phase !== "succeeded" ||
+    target?.accountId !== approval.customer.accountId || target?.workspaceId !== approval.workspaceId || target?.launchOperationId !== approval.launchOperationId ||
+    runtime?.workspaceId !== approval.workspaceId || runtime?.status !== "running" || runtime?.ready !== true || receipt?.workspaceId !== approval.workspaceId ||
+    recovery?.approvalId !== approval.recoveryApprovalId || recovery?.approvalDigest !== approval.recoveryApprovalDigest ||
+    recovery?.recoveryKey !== approval.recoveryKey || recovery?.workspaceImageDigest !== approval.workspaceImageDigest ||
+    JSON.stringify(expectedResources) !== JSON.stringify(approval.resources) ||
+    value?.runnerDirectMutationCounts?.sub2api !== 0 || value?.runnerDirectMutationCounts?.tencent !== 0 ||
+    value?.runnerDirectMutationCounts?.kubernetes !== 0 || value?.backgroundMutationCountsState !== "unknown") {
+    throw new Error("recovered_workspace_e2e_resource_closure_required");
+  }
+  return { target, launch, runtime, receipt, recovery };
+}
+
+function recoveredWorkspaceE2EKey(snapshot, approval) {
+  const ids = snapshot.items.map((key) => key.id);
+  const matches = snapshot.items.filter((key) => key.id === approval.resources.workspaceApiKeyId);
+  const key = matches[0];
+  if (new Set(ids).size !== ids.length || matches.length !== 1 || key.kind !== "workspace" || key.status !== "active" ||
+    key.name !== canonicalWorkspaceKeyName(approval.workspaceId)) {
+    throw new Error("recovered_workspace_e2e_workspace_key_invalid");
+  }
+  return key;
+}
+
+function recoveredWorkspaceE2EAttemptBody(approval) {
+  return {
+    approval,
+    approvalDigest: createHash("sha256").update(canonicalJson(approval)).digest("hex")
+  };
+}
+
+function recoveredWorkspaceE2EAttemptResponse(result, expectedStatus, expectedDigest) {
+  if (result.response.headers.get("cache-control") !== "private, no-store" || result.payload?.status !== expectedStatus ||
+    result.payload?.approvalDigest !== expectedDigest || !/^[a-z0-9][a-z0-9._:-]{2,127}$/.test(String(result.payload?.attemptId || ""))) {
+    throw new Error("recovered_workspace_e2e_attempt_response_invalid");
+  }
+  return { attemptId: result.payload.attemptId, status: result.payload.status };
+}
+
+export async function verifyRecoveredWorkspaceE2E({
+  origin,
+  mergedSha,
+  customerEmail,
+  customerPassword,
+  approvalJson,
+  approvalId,
+  confirmation,
+  continuationEvidence,
+  usageAttempts = DEFAULT_USAGE_ATTEMPTS,
+  usageRetryDelayMs = DEFAULT_USAGE_RETRY_DELAY_MS,
+  browserTimeoutMs = DEFAULT_BROWSER_TIMEOUT_MS,
+  modelTimeoutMs = DEFAULT_MODEL_TIMEOUT_MS,
+  requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
+  fetchImpl = globalThis.fetch,
+  browserFactory,
+  signal,
+  now = new Date()
+} = {}) {
+  const normalizedEmail = String(customerEmail || "").trim().toLowerCase();
+  const approval = recoveredWorkspaceE2EApproval(approvalJson, { approvalId, confirmation, customerEmail: normalizedEmail, mergedSha }, now);
+  const continuation = recoveredWorkspaceE2EContinuation(continuationEvidence, approval);
+  if (!String(customerPassword || "") || !Number.isInteger(usageAttempts) || usageAttempts < 1 || usageAttempts > 1000 ||
+    !Number.isFinite(usageRetryDelayMs) || usageRetryDelayMs < 0 || usageRetryDelayMs > 300_000 ||
+    !Number.isInteger(browserTimeoutMs) || browserTimeoutMs < 1 || browserTimeoutMs > 300_000 ||
+    !Number.isInteger(modelTimeoutMs) || modelTimeoutMs < 1 || modelTimeoutMs > 300_000 ||
+    !Number.isInteger(requestTimeoutMs) || requestTimeoutMs < 1 || requestTimeoutMs > 300_000) {
+    throw new Error("recovered_workspace_e2e_config_invalid");
+  }
+  const normalizedOrigin = assertPublicHttpsUrl(origin, "public_console_origin_required", { hostname: "cloud.medopl.cn" }).origin;
+  const requestOptions = { fetchImpl, origin: normalizedOrigin, signal, timeoutMs: requestTimeoutMs };
+  const auth = await login({ ...requestOptions, email: normalizedEmail, password: String(customerPassword) });
+  if (auth.user?.accountId !== approval.customer.accountId || auth.user?.role !== "owner" || !auth.csrfToken) {
+    throw new Error("recovered_workspace_e2e_customer_login_failed");
+  }
+  const identity = sourceEnvelope(await requestJson({ ...requestOptions, auth, path: "/api/auth/me" }), "sub2api").data;
+  if (identity?.accountId !== approval.customer.accountId || String(identity?.email || "").trim().toLowerCase() !== normalizedEmail ||
+    identity?.role !== "owner" || identity?.status !== "active" || !/^[1-9][0-9]*$/.test(String(identity?.sub2apiUserId || ""))) {
+    throw new Error("recovered_workspace_e2e_customer_identity_mismatch");
+  }
+
+  const runtime = sourceEnvelope(await requestJson({
+    ...requestOptions,
+    auth,
+    path: `/api/workspaces/${encodeURIComponent(approval.workspaceId)}/runtime-status`
+  }), "fabric").data;
+  if (runtime?.workspaceId !== approval.workspaceId || runtime?.runtimeId !== approval.resources.runtimeId ||
+    runtime?.serviceName !== approval.resources.runtimeServiceName || runtime?.status !== "running" || runtime?.ready !== true ||
+    runtime?.url !== approval.resources.workspaceUrl || runtime?.access?.credentialStatus !== "configured" || !runtime?.access?.username ||
+    Object.hasOwn(runtime?.access || {}, "password") || Object.hasOwn(runtime?.access || {}, "secretRef")) {
+    throw new Error("recovered_workspace_e2e_runtime_invalid");
+  }
+  const revealed = await requestJson({
+    ...requestOptions,
+    auth,
+    path: `/api/workspaces/${encodeURIComponent(approval.workspaceId)}/runtime-credentials/reveal`,
+    method: "POST",
+    body: {}
+  });
+  if (revealed.response.headers.get("cache-control") !== "private, no-store" || revealed.payload?.workspaceId !== approval.workspaceId ||
+    revealed.payload?.access?.credentialStatus !== "configured" || revealed.payload?.access?.username !== runtime.access.username ||
+    !revealed.payload?.access?.password) {
+    throw new Error("recovered_workspace_e2e_runtime_credentials_invalid");
+  }
+
+  const keySnapshot = await readGatewayCanaryKeySnapshot(requestOptions, auth);
+  const key = recoveredWorkspaceE2EKey(keySnapshot, approval);
+  const walletBefore = walletFact(sourceEnvelope(await requestJson({ ...requestOptions, auth, path: "/api/gateway/wallet" }), "sub2api"), identity.sub2apiUserId);
+  const usageBefore = await gatewayUsageSnapshot(requestOptions, auth, key.id);
+  const statsBefore = await gatewayUsageStats(requestOptions, auth, key.id);
+  const attemptBody = recoveredWorkspaceE2EAttemptBody(approval);
+  const attemptPath = `/api/workspaces/${encodeURIComponent(approval.workspaceId)}/recovered-e2e-attempt`;
+  let reserved;
+
+  const workspace = await verifyWorkspaceBrowserQa({
+    url: runtime.url,
+    username: revealed.payload.access.username,
+    password: revealed.payload.access.password,
+    runId: approval.modelRequestKey,
+    browserTimeoutMs,
+    modelTimeoutMs,
+    browserFactory,
+    beforeModelRequest: async () => {
+      reserved = recoveredWorkspaceE2EAttemptResponse(await requestJson({
+        ...requestOptions,
+        auth,
+        path: attemptPath,
+        method: "POST",
+        body: attemptBody
+      }), "attempted", attemptBody.approvalDigest);
+    }
+  });
+  if (!reserved) throw new Error("recovered_workspace_e2e_attempt_response_invalid");
+  let usageAfter;
+  let requestUsage;
+  let statsAfter;
+  let walletAfter;
+  let usageReadAttempts = 0;
+  let statsMismatch = false;
+  let balanceMismatch = false;
+  for (let attempt = 1; attempt <= usageAttempts; attempt += 1) {
+    usageReadAttempts = attempt;
+    recoveredWorkspaceE2EKey(await readGatewayCanaryKeySnapshot(requestOptions, auth), approval);
+    usageAfter = await gatewayUsageSnapshot(requestOptions, auth, key.id);
+    requestUsage = exactUsageRecord(usageBefore, usageAfter, approval.expectedModel, key.id);
+    if (requestUsage) {
+      statsAfter = await gatewayUsageStats(requestOptions, auth, key.id);
+      walletAfter = walletFact(sourceEnvelope(await requestJson({ ...requestOptions, auth, path: "/api/gateway/wallet" }), "sub2api"), identity.sub2apiUserId);
+      const statsMatch = statsMatchRequest(statsBefore, statsAfter, requestUsage);
+      const balanceMatch = walletDebitMatches(walletBefore, walletAfter, requestUsage.actualCostUsdMicros);
+      if (statsMatch && balanceMatch) break;
+      statsMismatch ||= !statsMatch;
+      balanceMismatch ||= !balanceMatch;
+    }
+    if (attempt < usageAttempts) await sleep(usageRetryDelayMs);
+  }
+  if (!requestUsage) throw new Error("exact_gateway_request_not_found");
+  if (!statsAfter || !statsMatchRequest(statsBefore, statsAfter, requestUsage)) {
+    throw new Error(statsMismatch ? "gateway_usage_stats_mismatch" : "gateway_usage_stats_invalid");
+  }
+  if (!walletAfter || !walletDebitMatches(walletBefore, walletAfter, requestUsage.actualCostUsdMicros)) {
+    throw new Error(balanceMismatch ? "gateway_balance_delta_mismatch" : "gateway_wallet_invalid");
+  }
+  const completed = recoveredWorkspaceE2EAttemptResponse(await requestJson({
+    ...requestOptions,
+    auth,
+    path: `${attemptPath}/complete`,
+    method: "POST",
+    body: attemptBody
+  }), "passed", attemptBody.approvalDigest);
+
+  return {
+    schemaVersion: 1,
+    operationMode: "recovered_workspace_e2e",
+    ok: true,
+    status: "passed",
+    approval: { approvalId: approval.approvalId, approvalDigest: attemptBody.approvalDigest },
+    release: { mergedSha: approval.mergedMainSha, cloudImageDigest: approval.cloudImageDigest, workspaceImageDigest: approval.workspaceImageDigest },
+    customer: { accountId: approval.customer.accountId },
+    launch: { operationId: approval.launchOperationId, workspaceId: approval.workspaceId },
+    resources: { ...approval.resources },
+    marker: { attemptId: reserved.attemptId, reserved: reserved.status, completed: completed.status },
+    workspace,
+    balance: { before: walletBefore, after: walletAfter },
+    usage: { request: requestUsage, stats: { before: statsBefore, after: statsAfter, delta: statsDelta(statsBefore, statsAfter) }, readAttempts: usageReadAttempts },
+    continuation: { verifiedAt: continuationEvidence.verifiedAt, receiptId: continuation.receipt.receiptId },
+    writeCounts: {
+      controlPlaneE2EAttemptReservations: 1,
+      modelRequests: 1,
+      controlPlaneE2EAttemptCompletions: 1,
+      workspaceLaunches: 0,
+      workspacePurchaseDebits: 0,
+      walletAdjustments: 0,
+      tencentMutations: 0,
+      kubernetesMutations: 0
+    },
     verifiedAt: now.toISOString()
   };
 }
@@ -2628,7 +3003,8 @@ export async function verifyWorkspaceBrowserQa({
   runId,
   browserTimeoutMs = DEFAULT_BROWSER_TIMEOUT_MS,
   modelTimeoutMs = DEFAULT_MODEL_TIMEOUT_MS,
-  browserFactory
+  browserFactory,
+  beforeModelRequest
 }) {
   const parsed = assertPublicHttpsUrl(url, "public_workspace_url_required", { hostname: "workspace.medopl.cn" });
   if (!username || !password) throw new Error("workspace_login_credentials_required");
@@ -2688,6 +3064,7 @@ export async function verifyWorkspaceBrowserQa({
     const input = page.locator("[data-testid='guid-input']");
     await input.waitFor({ state: "visible", timeout: browserTimeoutMs });
     await input.fill(`Reply with exactly ${token} and nothing else.`);
+    if (beforeModelRequest) await beforeModelRequest();
     await page.locator("[data-testid='guid-send-btn']").click();
     await page.waitForURL(/(?:#\/|\/)conversation\//, { timeout: modelTimeoutMs });
     const response = page
@@ -2921,7 +3298,7 @@ export async function runProductionLiveQaCli({
   now = new Date()
 } = {}) {
   if (argv.includes("--help") || argv.includes("-h")) {
-    stdout.write("Usage: node tools/production-live-qa.ts --read-only\nCompute claim modes use --compute-claim-diagnose, --compute-claim-recover, or --compute-claim-continue with a non-secret target JSON. A manual-review diagnosis requires --manual-review-diagnose and a non-secret target JSON. A fixed-slot model request requires --allow-gateway-write --allow-model-write. A real customer canary requires --basic-customer-canary, an exact funding mode, and its explicit approvals.\n");
+    stdout.write("Usage: node tools/production-live-qa.ts --read-only\nCompute claim modes use --compute-claim-diagnose, --compute-claim-recover, or --compute-claim-continue with a non-secret target JSON. A recovered Workspace E2E requires --recovered-workspace-e2e --allow-model-write, an independent approval, and an absolute continuation artifact path. A manual-review diagnosis requires --manual-review-diagnose and a non-secret target JSON. A fixed-slot model request requires --allow-gateway-write --allow-model-write. A real customer canary requires --basic-customer-canary, an exact funding mode, and its explicit approvals.\n");
     return 0;
   }
   const computeClaimMode = computeClaimCliMode(argv);
@@ -3035,6 +3412,50 @@ export async function runProductionLiveQaCli({
       });
       stdout.write(`${JSON.stringify(result, null, 2)}\n`);
       return result.status === "succeeded" ? 0 : 1;
+    }
+    if (args["recovered-workspace-e2e"] === "true") {
+      const conflictingArgs = [
+        "read-only", "manual-review-diagnose", "compute-claim-diagnose", "compute-claim-recover", "compute-claim-continue",
+        "basic-customer-canary", "allow-account-provision", "allow-wallet-recharge", "allow-workspace-purchase",
+        "allow-gateway-write", "allow-existing-precharge-recovery", "funding-mode", "phase"
+      ];
+      const forbiddenEnv = [
+        "KUBECONFIG", "TENCENT_DEPLOY_KUBECONFIG_PATH", "TENCENT_DEPLOY_KUBECONFIG_B64", "TENCENT_DEPLOY_KUBECONFIG",
+        "TENCENTCLOUD_SECRET_ID", "TENCENTCLOUD_SECRET_KEY", "OPL_INTERNAL_SERVICE_TOKEN",
+        "OPL_SUB2API_ADMIN_EMAIL", "OPL_SUB2API_ADMIN_PASSWORD"
+      ];
+      if (args["allow-model-write"] !== "true" || !args["approval-id"] || conflictingArgs.some((name) => args[name]) ||
+        forbiddenEnv.some((name) => String(env[name] || ""))) {
+        throw new Error("recovered_workspace_e2e_cli_conflict");
+      }
+      const continuationPath = String(args["continuation-evidence"] || "");
+      if (!continuationPath.startsWith("/")) throw new Error("recovered_workspace_e2e_cli_continuation_evidence_invalid");
+      let continuationEvidence;
+      try {
+        continuationEvidence = JSON.parse(await readFile(continuationPath, "utf8"));
+      } catch {
+        throw new Error("recovered_workspace_e2e_cli_continuation_evidence_invalid");
+      }
+      const result = await verifyRecoveredWorkspaceE2E({
+        origin: args.origin || env.OPL_CONSOLE_ORIGIN,
+        mergedSha: env.OPL_MERGED_SHA,
+        customerEmail: env.OPL_RECOVERED_WORKSPACE_CUSTOMER_EMAIL,
+        customerPassword: env.OPL_RECOVERED_WORKSPACE_CUSTOMER_PASSWORD,
+        approvalJson: env.OPL_RECOVERED_WORKSPACE_E2E_APPROVAL_JSON,
+        approvalId: args["approval-id"],
+        confirmation: env.OPL_RECOVERED_WORKSPACE_E2E_CONFIRMATION,
+        continuationEvidence,
+        usageAttempts: Number(env.OPL_VERIFY_USAGE_ATTEMPTS || DEFAULT_USAGE_ATTEMPTS),
+        usageRetryDelayMs: Number(env.OPL_VERIFY_USAGE_RETRY_DELAY_MS || DEFAULT_USAGE_RETRY_DELAY_MS),
+        browserTimeoutMs: Number(env.OPL_VERIFY_BROWSER_TIMEOUT_MS || DEFAULT_BROWSER_TIMEOUT_MS),
+        modelTimeoutMs: Number(env.OPL_VERIFY_MODEL_TIMEOUT_MS || DEFAULT_MODEL_TIMEOUT_MS),
+        requestTimeoutMs: Number(env.OPL_VERIFY_REQUEST_TIMEOUT_MS || DEFAULT_REQUEST_TIMEOUT_MS),
+        fetchImpl,
+        browserFactory,
+        now
+      });
+      stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+      return 0;
     }
     if (args["basic-customer-canary"] === "true") {
       const fundingMode = args["funding-mode"] || BASIC_CANARY_OPERATOR_PRECHARGE_MODE;

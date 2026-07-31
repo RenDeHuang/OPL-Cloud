@@ -274,7 +274,7 @@ func TestConsoleStaticDelivery(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/assets/hash.js", nil)
 		req.URL.Path = "/assets/../index.html"
 		rec := httptest.NewRecorder()
-		new(controlPlaneServer).consoleStatic(rec, req)
+		new(controlPlaneServer).consoleStatic(rec, req, nil)
 		if rec.Code != http.StatusNotFound {
 			t.Fatalf("status = %d, want 404: %s", rec.Code, rec.Body.String())
 		}
@@ -810,6 +810,10 @@ func TestBillingReconciliationAppendsAuditEvent(t *testing.T) {
 
 type fakeLedgerClient struct{}
 
+func (fakeLedgerClient) ListReceipts(context.Context, clients.ReceiptQuery) (clients.ReceiptPage, error) {
+	return clients.ReceiptPage{Receipts: []clients.Receipt{}}, nil
+}
+
 type testSub2APIClient struct {
 	mu                  sync.Mutex
 	balance             int64
@@ -1051,8 +1055,10 @@ type fakeFabricClient struct {
 	attachment           clients.StorageAttachment
 	runtimeStatus        clients.WorkspaceRuntime
 	runtimeStatusResults []clients.WorkspaceRuntime
+	runtimeStatusErr     error
 	gatewaySecret        clients.GatewaySecretWriteResult
 	gatewaySecretErr     error
+	attachmentErr        error
 	storageDestroyStatus string
 	gatewaySecretInputs  []clients.GatewaySecretWriteInput
 	runtimeInputs        []clients.WorkspaceRuntimeInput
@@ -1194,6 +1200,9 @@ func (f *fakeFabricClient) DestroyStorageVolume(_ context.Context, id string, _ 
 
 func (f *fakeFabricClient) CreateStorageAttachment(_ context.Context, input clients.StorageAttachmentInput, _ string) (clients.StorageAttachment, error) {
 	f.record("fabric.attachment")
+	if f.attachmentErr != nil {
+		return clients.StorageAttachment{}, f.attachmentErr
+	}
 	if f.attachment.ID != "" {
 		return f.attachment, nil
 	}
@@ -1231,7 +1240,7 @@ func (f *fakeFabricClient) CreateWorkspaceRuntime(_ context.Context, input clien
 	if f.runtime.ID != "" {
 		return f.runtime, nil
 	}
-	return clients.WorkspaceRuntime{ID: "runtime-from-fabric", WorkspaceID: input.WorkspaceID, URL: "https://workspace.medopl.cn/w/ws-from-fabric/", Status: "running", ServiceName: "opl-compute-from-fabric", Access: clients.WorkspaceRuntimeAccess{Username: "admin", Password: "runtime-password-alpha", CredentialStatus: "configured", CredentialVersion: "v1", SecretRef: "opl-compute-from-fabric-env"}, Ready: true}, nil
+	return clients.WorkspaceRuntime{ID: "runtime-from-fabric", OperationID: input.RuntimeOperationID, WorkspaceID: input.WorkspaceID, URL: "https://workspace.medopl.cn/w/ws-from-fabric/", Status: "running", ServiceName: "opl-compute-from-fabric", Access: clients.WorkspaceRuntimeAccess{Username: "admin", Password: "runtime-password-alpha", CredentialStatus: "configured", CredentialVersion: "v1", SecretRef: "opl-compute-from-fabric-env"}, Ready: true}, nil
 }
 
 func (f *fakeFabricClient) DestroyWorkspaceRuntime(_ context.Context, workspaceID, _ string) (clients.WorkspaceRuntime, error) {
@@ -1241,6 +1250,9 @@ func (f *fakeFabricClient) DestroyWorkspaceRuntime(_ context.Context, workspaceI
 
 func (f *fakeFabricClient) WorkspaceRuntimeStatus(_ context.Context, workspaceID string) (clients.WorkspaceRuntime, error) {
 	f.record("fabric.runtime-status")
+	if f.runtimeStatusErr != nil {
+		return clients.WorkspaceRuntime{WorkspaceID: workspaceID}, f.runtimeStatusErr
+	}
 	if len(f.runtimeStatusResults) > 0 {
 		result := f.runtimeStatusResults[0]
 		f.runtimeStatusResults = f.runtimeStatusResults[1:]
@@ -1262,7 +1274,7 @@ func (f *fakeFabricClient) WorkspaceRuntimeStatus(_ context.Context, workspaceID
 	}
 	if len(f.runtimeInputs) > 0 {
 		input := f.runtimeInputs[len(f.runtimeInputs)-1]
-		return clients.WorkspaceRuntime{ID: "runtime-from-fabric", WorkspaceID: input.WorkspaceID, URL: "https://workspace.medopl.cn/w/ws-from-fabric/", Status: "running", ServiceName: "opl-compute-from-fabric", Access: clients.WorkspaceRuntimeAccess{Username: "admin", Password: "runtime-password-alpha", CredentialStatus: "configured", CredentialVersion: "v1", SecretRef: "opl-compute-from-fabric-env"}, Ready: true, Checks: []any{map[string]any{"name": "deployment_ready", "ok": true}, map[string]any{"name": "service_endpoints_ready", "ok": true}}}, nil
+		return clients.WorkspaceRuntime{ID: "runtime-from-fabric", OperationID: input.RuntimeOperationID, WorkspaceID: input.WorkspaceID, URL: "https://workspace.medopl.cn/w/ws-from-fabric/", Status: "running", ServiceName: "opl-compute-from-fabric", Access: clients.WorkspaceRuntimeAccess{Username: "admin", Password: "runtime-password-alpha", CredentialStatus: "configured", CredentialVersion: "v1", SecretRef: "opl-compute-from-fabric-env"}, Ready: true, Checks: []any{map[string]any{"name": "deployment_ready", "ok": true}, map[string]any{"name": "service_endpoints_ready", "ok": true}}}, nil
 	}
 	return clients.WorkspaceRuntime{
 		ID:          "runtime-from-fabric",
@@ -1890,6 +1902,30 @@ func workspaceGatewayTestRow(row map[string]any) map[string]any {
 	return billing
 }
 
+func seedSucceededWorkspaceGatewayLaunch(t *testing.T, app *controlPlaneServer, serviceName string, fabricClient *monthlyFabric) (workspaceLaunchOperation, *controlplane.Service) {
+	t.Helper()
+	operation := newWorkspaceLaunchOperation("acct-alpha", "usr-alpha", "Alpha", "basic", 10, false, pilotPriceVersion, 52_580_000, "gateway-alpha")
+	operation.ID = "workspace-launch-alpha"
+	operation.Status, operation.Phase = "succeeded", "succeeded"
+	operation.RequestHash = stableID("workspace-gateway-alpha")
+	operation.WorkspaceID, operation.ComputeID, operation.StorageID = "ws-alpha", "compute-alpha", "storage-alpha"
+	operation.AttachmentOperationID, operation.WorkspaceOperationID = operation.ID+":attachment", operation.ID+":workspace"
+	operation.WorkspaceImageDigest = "sha256:" + strings.Repeat("a", 64)
+	operation.WorkspaceAPIKeyID = 42
+	operation.WorkspaceKeyFingerprint = "sha256:" + strings.Repeat("b", 64)
+	operation.AttachmentID = "attachment-alpha"
+	operation.RuntimeID, operation.RuntimeServiceName = "runtime-alpha", serviceName
+	operation.GatewaySecretRef = "opl-gateway-alpha"
+	operation.URL = "https://workspace.medopl.cn/w/ws-alpha/"
+	operation.RuntimeReady, operation.ReceiptID = true, "receipt-alpha"
+	mustStore(t, app.tables.SaveRuntimeOperation(context.Background(), workspaceLaunchOperationRow(operation)))
+	if fabricClient == nil {
+		events := []string{}
+		fabricClient = &monthlyFabric{fakeFabricClient: fakeFabricClient{calls: &events}, events: &events}
+	}
+	return operation, newTestService(fakeLedgerClient{}, fabricClient)
+}
+
 func TestWorkspaceGatewayRoutesRootRuntimeApiByReferer(t *testing.T) {
 	t.Setenv("OPL_WORKSPACE_DOMAIN", "workspace.medopl.cn")
 	var gotPath string
@@ -1899,6 +1935,7 @@ func TestWorkspaceGatewayRoutesRootRuntimeApiByReferer(t *testing.T) {
 	}))
 	defer backend.Close()
 	app := newControlPlaneApp()
+	operation, service := seedSucceededWorkspaceGatewayLaunch(t, app, strings.TrimPrefix(backend.URL, "http://"), nil)
 	mustStore(t, app.tables.SaveCompute(context.Background(), map[string]any{"id": "compute-alpha", "accountId": "acct-alpha", "workspaceId": "ws-alpha", "status": "running", "billingStatus": "active", "paidThrough": "2099-01-01T00:00:00Z"}))
 	mustStore(t, app.tables.SaveStorage(context.Background(), map[string]any{"id": "storage-alpha", "accountId": "acct-alpha", "workspaceId": "ws-alpha", "status": "available", "billingStatus": "active", "paidThrough": "2099-01-01T00:00:00Z"}))
 	mustStore(t, app.tables.SaveAttachment(context.Background(), map[string]any{"id": "attachment-alpha", "accountId": "acct-alpha", "workspaceId": "ws-alpha", "computeAllocationId": "compute-alpha", "storageId": "storage-alpha", "status": "attached"}))
@@ -1909,13 +1946,15 @@ func TestWorkspaceGatewayRoutesRootRuntimeApiByReferer(t *testing.T) {
 		"storageId":                  "storage-alpha",
 		"attachmentId":               "attachment-alpha",
 		"currentAttachmentId":        "attachment-alpha",
+		"workspaceApiKeyId":          operation.WorkspaceAPIKeyID,
+		"runtimeId":                  operation.RuntimeID,
 		"runtime":                    map[string]any{"serviceName": strings.TrimPrefix(backend.URL, "http://")},
 	})))
 	req := httptest.NewRequest(http.MethodPost, "https://workspace.medopl.cn/login", bytes.NewBufferString(`{"username":"admin"}`))
 	req.Header.Set("Referer", "https://workspace.medopl.cn/w/ws-alpha/")
 	rec := httptest.NewRecorder()
 
-	app.proxyWorkspaceRoot(rec, req)
+	app.proxyWorkspaceRoot(rec, req, service)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
@@ -1934,6 +1973,7 @@ func TestWorkspaceGatewaySetsRoutingCookieForRootRuntimeApi(t *testing.T) {
 	}))
 	defer backend.Close()
 	app := newControlPlaneApp()
+	operation, service := seedSucceededWorkspaceGatewayLaunch(t, app, strings.TrimPrefix(backend.URL, "http://"), nil)
 	mustStore(t, app.tables.SaveCompute(context.Background(), map[string]any{"id": "compute-alpha", "accountId": "acct-alpha", "workspaceId": "ws-alpha", "status": "running", "billingStatus": "active", "paidThrough": "2099-01-01T00:00:00Z"}))
 	mustStore(t, app.tables.SaveStorage(context.Background(), map[string]any{"id": "storage-alpha", "accountId": "acct-alpha", "workspaceId": "ws-alpha", "status": "available", "billingStatus": "active", "paidThrough": "2099-01-01T00:00:00Z"}))
 	mustStore(t, app.tables.SaveAttachment(context.Background(), map[string]any{"id": "attachment-alpha", "accountId": "acct-alpha", "workspaceId": "ws-alpha", "computeAllocationId": "compute-alpha", "storageId": "storage-alpha", "status": "attached"}))
@@ -1944,12 +1984,14 @@ func TestWorkspaceGatewaySetsRoutingCookieForRootRuntimeApi(t *testing.T) {
 		"storageId":                  "storage-alpha",
 		"attachmentId":               "attachment-alpha",
 		"currentAttachmentId":        "attachment-alpha",
+		"workspaceApiKeyId":          operation.WorkspaceAPIKeyID,
+		"runtimeId":                  operation.RuntimeID,
 		"runtime":                    map[string]any{"serviceName": strings.TrimPrefix(backend.URL, "http://")},
 	})))
 	entryReq := httptest.NewRequest(http.MethodGet, "https://workspace.medopl.cn/w/ws-alpha/", nil)
 	entryRec := httptest.NewRecorder()
 
-	app.proxyWorkspace(entryRec, entryReq)
+	app.proxyWorkspace(entryRec, entryReq, service)
 
 	if entryRec.Code != http.StatusOK {
 		t.Fatalf("entry status = %d, want %d: %s", entryRec.Code, http.StatusOK, entryRec.Body.String())
@@ -1971,7 +2013,7 @@ func TestWorkspaceGatewaySetsRoutingCookieForRootRuntimeApi(t *testing.T) {
 	}
 	apiRec := httptest.NewRecorder()
 
-	app.proxyWorkspaceRoot(apiRec, apiReq)
+	app.proxyWorkspaceRoot(apiRec, apiReq, service)
 
 	if apiRec.Code != http.StatusOK {
 		t.Fatalf("api status = %d, want %d: %s", apiRec.Code, http.StatusOK, apiRec.Body.String())
@@ -1989,6 +2031,7 @@ func TestWorkspaceAccessUsesCanonicalBillingWithoutChildBilling(t *testing.T) {
 	}))
 	defer backend.Close()
 	app := newControlPlaneApp()
+	operation, service := seedSucceededWorkspaceGatewayLaunch(t, app, strings.TrimPrefix(backend.URL, "http://"), nil)
 	mustStore(t, app.tables.SaveCompute(context.Background(), map[string]any{"id": "compute-alpha", "accountId": "acct-alpha", "workspaceId": "ws-alpha", "status": "running"}))
 	mustStore(t, app.tables.SaveStorage(context.Background(), map[string]any{"id": "storage-alpha", "accountId": "acct-alpha", "workspaceId": "ws-alpha", "status": "available"}))
 	mustStore(t, app.tables.SaveAttachment(context.Background(), map[string]any{
@@ -1997,12 +2040,71 @@ func TestWorkspaceAccessUsesCanonicalBillingWithoutChildBilling(t *testing.T) {
 	mustStore(t, app.tables.SaveWorkspace(context.Background(), workspaceGatewayTestRow(map[string]any{
 		"id": "ws-alpha", "accountId": "acct-alpha", "state": "running", "currentComputeAllocationId": "compute-alpha",
 		"storageId": "storage-alpha", "attachmentId": "attachment-alpha", "currentAttachmentId": "attachment-alpha",
+		"workspaceApiKeyId": operation.WorkspaceAPIKeyID, "runtimeId": operation.RuntimeID,
 		"runtime": map[string]any{"serviceName": strings.TrimPrefix(backend.URL, "http://"), "ready": true},
 	})))
 	rec := httptest.NewRecorder()
-	app.proxyWorkspace(rec, httptest.NewRequest(http.MethodGet, "/w/ws-alpha/", nil))
+	app.proxyWorkspace(rec, httptest.NewRequest(http.MethodGet, "/w/ws-alpha/", nil), service)
 	if rec.Code != http.StatusOK || !proxied {
 		t.Fatalf("canonical access status=%d body=%s proxied=%v", rec.Code, rec.Body.String(), proxied)
+	}
+}
+
+func TestWorkspaceGatewayRejectsStaleProjectionWhenFreshFabricTruthFails(t *testing.T) {
+	proxied := false
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		proxied = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer backend.Close()
+
+	events := []string{}
+	fabricClient := &monthlyFabric{
+		fakeFabricClient: fakeFabricClient{calls: &events},
+		events:           &events,
+		activationTruth: &clients.WorkspaceActivationTruth{
+			SchemaVersion: 1, Ready: false, Reason: "identity_mismatch", ErrorClass: "readback_mismatch",
+			ComputeState: "ready", StorageState: "ready", Checks: []any{},
+		},
+		activationTruthErr: errors.New("workspace activation truth unavailable"),
+	}
+	service := newTestService(fakeLedgerClient{}, fabricClient)
+	handler, err := NewPersistentServer(service, newMemoryTableStore())
+	if err != nil {
+		t.Fatal(err)
+	}
+	app := handler.(*controlPlaneHTTPHandler).app
+	operation := newWorkspaceLaunchOperation("acct-alpha", "usr-alpha", "Alpha", "basic", 10, false, pilotPriceVersion, 52_580_000, "launch-alpha")
+	operation.Status, operation.Phase = "succeeded", "succeeded"
+	operation.WorkspaceImageDigest = "sha256:" + strings.Repeat("a", 64)
+	operation.WorkspaceAPIKeyID = 42
+	operation.WorkspaceKeyFingerprint = "sha256:" + strings.Repeat("b", 64)
+	operation.AttachmentID = "attachment-alpha"
+	operation.RuntimeID = "runtime-alpha"
+	operation.RuntimeServiceName = strings.TrimPrefix(backend.URL, "http://")
+	operation.GatewaySecretRef = "opl-gateway-alpha"
+	operation.URL = "https://workspace.medopl.cn/w/" + operation.WorkspaceID + "/"
+	operation.RuntimeReady, operation.ReceiptID = true, "receipt-alpha"
+	mustStore(t, app.tables.SaveRuntimeOperation(context.Background(), workspaceLaunchOperationRow(operation)))
+	mustStore(t, app.tables.SaveCompute(context.Background(), map[string]any{"id": operation.ComputeID, "accountId": operation.AccountID, "workspaceId": operation.WorkspaceID, "status": "running"}))
+	mustStore(t, app.tables.SaveStorage(context.Background(), map[string]any{"id": operation.StorageID, "accountId": operation.AccountID, "workspaceId": operation.WorkspaceID, "status": "available"}))
+	mustStore(t, app.tables.SaveAttachment(context.Background(), map[string]any{
+		"id": operation.AttachmentID, "accountId": operation.AccountID, "workspaceId": operation.WorkspaceID,
+		"computeAllocationId": operation.ComputeID, "storageId": operation.StorageID, "status": "attached",
+	}))
+	mustStore(t, app.tables.SaveWorkspace(context.Background(), workspaceGatewayTestRow(map[string]any{
+		"id": operation.WorkspaceID, "accountId": operation.AccountID, "ownerAccountId": operation.AccountID, "ownerUserId": operation.OwnerUserID,
+		"packageId": operation.PackageID, "state": "running", "status": "running", "currentComputeAllocationId": operation.ComputeID,
+		"computeAllocationId": operation.ComputeID, "storageId": operation.StorageID, "attachmentId": operation.AttachmentID,
+		"currentAttachmentId": operation.AttachmentID, "workspaceApiKeyId": operation.WorkspaceAPIKeyID, "runtimeId": operation.RuntimeID,
+		"runtime": map[string]any{"serviceName": operation.RuntimeServiceName, "ready": true},
+	})))
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/w/"+operation.WorkspaceID+"/", nil))
+
+	if rec.Code != http.StatusConflict || proxied || len(fabricClient.activationTruthInputs) != 1 || !strings.Contains(rec.Body.String(), "workspace_runtime_truth_identity_mismatch") {
+		t.Fatalf("gateway status=%d body=%s proxied=%v truthInputs=%#v", rec.Code, rec.Body.String(), proxied, fabricClient.activationTruthInputs)
 	}
 }
 
@@ -2064,7 +2166,7 @@ func TestWorkspaceAccessRejectsInvalidCanonicalOrProviderFacts(t *testing.T) {
 			mustStore(t, app.tables.SaveAttachment(context.Background(), attachment))
 			mustStore(t, app.tables.SaveWorkspace(context.Background(), workspace))
 			rec := httptest.NewRecorder()
-			app.proxyWorkspace(rec, httptest.NewRequest(http.MethodGet, "/w/ws-alpha/", nil))
+			app.proxyWorkspace(rec, httptest.NewRequest(http.MethodGet, "/w/ws-alpha/", nil), nil)
 			if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), `"error":"`+tc.reason+`"`) || proxied {
 				t.Fatalf("access status=%d body=%s proxied=%v want=%s", rec.Code, rec.Body.String(), proxied, tc.reason)
 			}
@@ -2091,7 +2193,7 @@ func TestWorkspaceGatewayBlocksInactiveWorkspace(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, "https://workspace.medopl.cn/w/ws-alpha/", nil)
 			rec := httptest.NewRecorder()
 
-			app.proxyWorkspace(rec, req)
+			app.proxyWorkspace(rec, req, nil)
 
 			if rec.Code != tc.want {
 				t.Fatalf("status = %d, want %d: %s", rec.Code, tc.want, rec.Body.String())
@@ -2106,7 +2208,7 @@ func TestWorkspaceGatewayReturnsNotFoundWithoutRoutingCookieForUnknownWorkspace(
 	req := httptest.NewRequest(http.MethodGet, "https://workspace.medopl.cn/w/ws-unknown/", nil)
 	rec := httptest.NewRecorder()
 
-	app.proxyWorkspace(rec, req)
+	app.proxyWorkspace(rec, req, nil)
 
 	if rec.Code != http.StatusNotFound || len(rec.Result().Cookies()) != 0 {
 		t.Fatalf("unknown workspace status=%d cookies=%#v", rec.Code, rec.Result().Cookies())

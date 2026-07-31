@@ -83,6 +83,15 @@ func NewServer(service *fabric.Service, token string) http.Handler {
 		}
 		writeJSON(w, http.StatusOK, result)
 	})
+	mux.HandleFunc("POST /fabric/workspace-activation-truth", func(w http.ResponseWriter, r *http.Request) {
+		var input fabric.WorkspaceActivationTruthInput
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid JSON body")
+			return
+		}
+		truth, err := service.WorkspaceActivationTruth(r.Context(), input)
+		writeWorkspaceActivationTruthResult(w, truth, err)
+	})
 	mux.HandleFunc("POST /fabric/compute-claim-recovery/proof", func(w http.ResponseWriter, r *http.Request) {
 		var input fabric.ComputeClaimRecoveryInput
 		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
@@ -297,6 +306,18 @@ func NewServer(service *fabric.Service, token string) http.Handler {
 		volume, err := service.CreateStorageVolume(r.Context(), input)
 		writeResult(w, volume, err)
 	})
+	mux.HandleFunc("GET /fabric/storage-volumes/{id}", func(w http.ResponseWriter, r *http.Request) {
+		volume, err := service.ReadStorageVolume(r.Context(), strings.TrimSpace(r.PathValue("id")))
+		if err != nil && volume.ID == "" {
+			writeError(w, http.StatusNotFound, "storage_volume_not_found")
+			return
+		}
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, volume)
+	})
 	mux.HandleFunc("POST /fabric/storage-volumes/{id}/renew", func(w http.ResponseWriter, r *http.Request) {
 		key := r.Header.Get("Idempotency-Key")
 		if key == "" {
@@ -476,6 +497,18 @@ func writeComputeClaimRecoveryResult(w http.ResponseWriter, successStatus int, p
 		status = http.StatusServiceUnavailable
 	}
 	writeJSON(w, status, proof)
+}
+
+func writeWorkspaceActivationTruthResult(w http.ResponseWriter, truth fabric.WorkspaceActivationTruth, err error) {
+	if err == nil {
+		writeJSON(w, http.StatusOK, truth)
+		return
+	}
+	status := http.StatusServiceUnavailable
+	if errors.Is(err, fabric.ErrInvalidWorkspaceActivationTruth) {
+		status = http.StatusBadRequest
+	}
+	writeJSON(w, status, truth)
 }
 
 func writeJobResult(w http.ResponseWriter, status int, body fabric.Job, err error) {

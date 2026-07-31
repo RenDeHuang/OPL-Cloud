@@ -22,6 +22,7 @@ import (
 var billingReviewEvidenceRefPattern = regexp.MustCompile(`^case-[0-9]{8}-[a-z0-9]{3,16}$`)
 var computeClaimMergedSHAPattern = regexp.MustCompile(`^[a-f0-9]{40}$`)
 var computeClaimCloudDigestPattern = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
+var computeClaimApprovalDigestPattern = regexp.MustCompile(`^[a-f0-9]{64}$`)
 
 const (
 	operatorPageReadTimeout      = 5 * time.Second
@@ -317,13 +318,18 @@ func (app *controlPlaneServer) computeClaimCapabilityProtected(next http.Handler
 func workspaceComputeClaimRecoveryRequestFromMap(operationID string, input map[string]any, approved bool) (workspaceComputeClaimRecoveryRequest, bool) {
 	want := []string{"accountId", "workspaceId", "computeAllocationId", "storageId", "packageId", "poolId", "nodePoolId", "machineName", "nodeName", "cvmInstanceId", "privateIp", "instanceType", "zone"}
 	if approved {
-		want = append(want, "approvalId", "mergedMainSha", "cloudImageDigest", "confirm")
+		want = append(want, "approvalId", "approvalDigest", "expiresAt", "mergedMainSha", "cloudImageDigest", "workspaceImageDigest", "customerEmail", "recoveryKey", "resources", "attemptLimits", "allowedWrites", "forbiddenWrites", "confirm")
 	}
-	if operationID == "" || len(input) != len(want) {
+	if operationID == "" || !exactWorkspaceComputeClaimKeys(input, want) {
 		return workspaceComputeClaimRecoveryRequest{}, false
 	}
-	values := make(map[string]string, len(want))
-	for _, field := range want {
+	stringFields := append([]string(nil), want...)
+	if approved {
+		stringFields = append([]string(nil), want[:21]...)
+		stringFields = append(stringFields, "confirm")
+	}
+	values := make(map[string]string, len(stringFields))
+	for _, field := range stringFields {
 		value, ok := input[field].(string)
 		if !ok || value == "" || value != strings.TrimSpace(value) {
 			return workspaceComputeClaimRecoveryRequest{}, false
@@ -335,16 +341,124 @@ func workspaceComputeClaimRecoveryRequestFromMap(operationID string, input map[s
 		ComputeID: values["computeAllocationId"], StorageID: values["storageId"], PackageID: values["packageId"],
 		PoolID: values["poolId"], NodePoolID: values["nodePoolId"], MachineName: values["machineName"], NodeName: values["nodeName"],
 		CVMInstanceID: values["cvmInstanceId"], PrivateIP: values["privateIp"], InstanceType: values["instanceType"], Zone: values["zone"],
-		ApprovalID: values["approvalId"], MergedMainSHA: values["mergedMainSha"], CloudImageDigest: values["cloudImageDigest"], Confirmation: values["confirm"],
+		ApprovalID: values["approvalId"], ApprovalDigest: values["approvalDigest"], ExpiresAt: values["expiresAt"],
+		MergedMainSHA: values["mergedMainSha"], CloudImageDigest: values["cloudImageDigest"], WorkspaceImageDigest: values["workspaceImageDigest"],
+		CustomerEmail: values["customerEmail"], RecoveryKey: values["recoveryKey"], Confirmation: values["confirm"],
 	}
 	if request.PackageID != "basic" && request.PackageID != "pro" || !strings.HasPrefix(request.CVMInstanceID, "ins-") {
 		return workspaceComputeClaimRecoveryRequest{}, false
 	}
-	if approved && (!validBillingReviewOpaqueID(request.ApprovalID) || !computeClaimMergedSHAPattern.MatchString(request.MergedMainSHA) ||
-		!computeClaimCloudDigestPattern.MatchString(request.CloudImageDigest) || request.Confirmation != "CLAIM_PROVEN_COMPUTE_RESOURCE") {
-		return workspaceComputeClaimRecoveryRequest{}, false
+	if approved {
+		expiresAt, expiresErr := time.Parse(time.RFC3339, request.ExpiresAt)
+		customerEmail, emailErr := canonicalEmail(request.CustomerEmail)
+		resources, resourcesOK := workspaceComputeClaimApprovalResourcesFromMap(input["resources"])
+		limits, limitsOK := workspaceComputeClaimAttemptLimitsFromMap(input["attemptLimits"])
+		allowedWrites, allowedOK := workspaceComputeClaimStringList(input["allowedWrites"])
+		forbiddenWrites, forbiddenOK := workspaceComputeClaimStringList(input["forbiddenWrites"])
+		if !validBillingReviewOpaqueID(request.ApprovalID) || !validBillingReviewOpaqueID(request.RecoveryKey) ||
+			!computeClaimApprovalDigestPattern.MatchString(request.ApprovalDigest) || !computeClaimMergedSHAPattern.MatchString(request.MergedMainSHA) ||
+			!computeClaimCloudDigestPattern.MatchString(request.CloudImageDigest) || !computeClaimCloudDigestPattern.MatchString(request.WorkspaceImageDigest) ||
+			expiresErr != nil || !expiresAt.After(time.Now().UTC()) || emailErr != nil || customerEmail != request.CustomerEmail ||
+			request.Confirmation != "RECOVER_PROVEN_COMPUTE_AND_CONTINUE_ORIGINAL_LAUNCH" || !resourcesOK || !limitsOK || !allowedOK || !forbiddenOK ||
+			!workspaceComputeClaimStorageBindingValid(resources.StorageState, resources.StorageProviderResourceID) ||
+			!workspaceComputeClaimAttemptLimitsExact(limits) || !equalWorkspaceComputeClaimStrings(allowedWrites, workspaceComputeClaimAllowedWritesForStorage(resources.StorageState)) ||
+			!equalWorkspaceComputeClaimStrings(forbiddenWrites, workspaceComputeClaimForbiddenWrites) {
+			return workspaceComputeClaimRecoveryRequest{}, false
+		}
+		request.Resources, request.AttemptLimits = resources, limits
+		request.AllowedWrites, request.ForbiddenWrites = allowedWrites, forbiddenWrites
 	}
 	return request, true
+}
+
+func exactWorkspaceComputeClaimKeys(input map[string]any, want []string) bool {
+	if len(input) != len(want) {
+		return false
+	}
+	for _, key := range want {
+		if _, ok := input[key]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func workspaceComputeClaimApprovalResourcesFromMap(value any) (workspaceComputeClaimApprovalResources, bool) {
+	raw, ok := value.(map[string]any)
+	want := []string{"computeOperationId", "storageOperationId", "storageState", "storageProviderResourceId", "attachmentId", "attachmentOperationId", "workspaceApiKeyId", "gatewaySecretRef", "secretOperationId", "runtimeId", "runtimeOperationId", "receiptOperationId"}
+	if !ok || !exactWorkspaceComputeClaimKeys(raw, want) {
+		return workspaceComputeClaimApprovalResources{}, false
+	}
+	values := make(map[string]string, len(want))
+	for _, field := range want {
+		item, ok := raw[field].(string)
+		if !ok || field != "storageProviderResourceId" && item == "" || item != strings.TrimSpace(item) {
+			return workspaceComputeClaimApprovalResources{}, false
+		}
+		values[field] = item
+	}
+	workspaceAPIKeyID, err := strconv.ParseInt(values["workspaceApiKeyId"], 10, 64)
+	if err != nil || workspaceAPIKeyID <= 0 || strings.HasPrefix(values["workspaceApiKeyId"], "0") {
+		return workspaceComputeClaimApprovalResources{}, false
+	}
+	return workspaceComputeClaimApprovalResources{
+		ComputeOperationID: values["computeOperationId"], StorageOperationID: values["storageOperationId"],
+		StorageState: values["storageState"], StorageProviderResourceID: values["storageProviderResourceId"],
+		AttachmentID: values["attachmentId"], AttachmentOperationID: values["attachmentOperationId"], WorkspaceAPIKeyID: values["workspaceApiKeyId"],
+		GatewaySecretRef: values["gatewaySecretRef"], SecretOperationID: values["secretOperationId"], RuntimeID: values["runtimeId"],
+		RuntimeOperationID: values["runtimeOperationId"], ReceiptOperationID: values["receiptOperationId"],
+	}, true
+}
+
+func workspaceComputeClaimAttemptLimitsFromMap(value any) (workspaceComputeClaimAttemptLimits, bool) {
+	raw, ok := value.(map[string]any)
+	want := []string{"claim", "storage", "attachment", "secret", "runtime", "activation", "receipt"}
+	if !ok || !exactWorkspaceComputeClaimKeys(raw, want) {
+		return workspaceComputeClaimAttemptLimits{}, false
+	}
+	claim, ok := raw["claim"].(map[string]any)
+	if !ok || !exactWorkspaceComputeClaimKeys(claim, []string{"sub2api", "tencent", "kubernetes"}) {
+		return workspaceComputeClaimAttemptLimits{}, false
+	}
+	integer := func(source map[string]any, field string) (int, bool) {
+		value, ok := source[field].(float64)
+		if !ok || value < 0 || value != float64(int(value)) {
+			return 0, false
+		}
+		return int(value), true
+	}
+	sub2API, sub2APIOK := integer(claim, "sub2api")
+	tencent, tencentOK := integer(claim, "tencent")
+	kubernetes, kubernetesOK := integer(claim, "kubernetes")
+	storage, storageOK := integer(raw, "storage")
+	attachment, attachmentOK := integer(raw, "attachment")
+	secret, secretOK := integer(raw, "secret")
+	runtime, runtimeOK := integer(raw, "runtime")
+	activation, activationOK := integer(raw, "activation")
+	receipt, receiptOK := integer(raw, "receipt")
+	if !sub2APIOK || !tencentOK || !kubernetesOK || !storageOK || !attachmentOK || !secretOK || !runtimeOK || !activationOK || !receiptOK {
+		return workspaceComputeClaimAttemptLimits{}, false
+	}
+	return workspaceComputeClaimAttemptLimits{
+		Claim:   workspaceComputeClaimProviderAttemptLimits{Sub2API: sub2API, Tencent: tencent, Kubernetes: kubernetes},
+		Storage: storage, Attachment: attachment, Secret: secret, Runtime: runtime, Activation: activation, Receipt: receipt,
+	}, true
+}
+
+func workspaceComputeClaimStringList(value any) ([]string, bool) {
+	raw, ok := value.([]any)
+	if !ok {
+		return nil, false
+	}
+	items := make([]string, len(raw))
+	for index, value := range raw {
+		item, ok := value.(string)
+		if !ok || item == "" || item != strings.TrimSpace(item) {
+			return nil, false
+		}
+		items[index] = item
+	}
+	return items, true
 }
 
 func workspaceComputeClaimSafeFailure(proof clients.ComputeClaimRecoveryProof) bool {

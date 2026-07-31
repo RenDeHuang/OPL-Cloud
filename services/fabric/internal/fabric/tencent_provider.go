@@ -516,11 +516,14 @@ type provisionerAllocation struct {
 }
 
 type provisionerStorage struct {
-	ID       string `json:"id,omitempty"`
-	SizeGB   uint64 `json:"sizeGb,omitempty"`
-	Zone     string `json:"zone,omitempty"`
-	DiskType string `json:"diskType,omitempty"`
-	Deadline string `json:"deadline,omitempty"`
+	ID                         string `json:"id,omitempty"`
+	SizeGB                     uint64 `json:"sizeGb,omitempty"`
+	Zone                       string `json:"zone,omitempty"`
+	DiskType                   string `json:"diskType,omitempty"`
+	Deadline                   string `json:"deadline,omitempty"`
+	ExpectedState              string `json:"expectedState,omitempty"`
+	ExpectedProviderResourceID string `json:"expectedProviderResourceId,omitempty"`
+	AllowExistingExactReplay   bool   `json:"allowExistingExactReplay,omitempty"`
 }
 
 type provisionerResponse struct {
@@ -535,6 +538,7 @@ type provisionerResponse struct {
 	MachinePresent     *bool                         `json:"machinePresent,omitempty"`
 	StoragePresent     *bool                         `json:"storagePresent,omitempty"`
 	StorageVolumeID    string                        `json:"storageVolumeId,omitempty"`
+	StorageState       string                        `json:"storageState,omitempty"`
 	CBSStatus          string                        `json:"cbsStatus,omitempty"`
 	CVMStatus          string                        `json:"cvmStatus,omitempty"`
 	TKEStatus          string                        `json:"tkeStatus,omitempty"`
@@ -1299,13 +1303,17 @@ func (p *TencentProvider) CreateStorageVolume(ctx context.Context, input Storage
 	tags := oplCostTags(input.AccountID, input.WorkspaceID, id, input.OperationID)
 	diskType := firstNonEmpty(os.Getenv("TENCENT_CBS_DISK_TYPE"), "CLOUD_BSSD")
 	volume := StorageVolume{
-		ID: id, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, Status: "pending", Provider: "tencent-tke",
+		ID: id, OperationID: input.IdempotencyKey, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, Status: "pending", Provider: "tencent-tke",
 		SizeGB: input.SizeGB, DiskType: diskType, Zone: input.Zone, CostTags: tags, CreatedAt: now,
 		ProviderData: map[string]string{"pvName": name + "-pv", "pvcName": name + "-data"},
 	}
 	response, err := p.provision(ctx, provisionerRequest{
 		Action: "create_storage_volume", AccountID: input.AccountID, Tags: tags,
-		Storage: provisionerStorage{ID: id, SizeGB: uint64(input.SizeGB), Zone: input.Zone, DiskType: diskType},
+		Storage: provisionerStorage{
+			ID: id, SizeGB: uint64(input.SizeGB), Zone: input.Zone, DiskType: diskType,
+			ExpectedState: input.ExpectedRecoveryState, ExpectedProviderResourceID: input.ExpectedProviderResourceID,
+			AllowExistingExactReplay: input.AllowExistingExactReplay,
+		},
 	})
 	if err != nil {
 		return volume, err
@@ -1321,20 +1329,76 @@ func (p *TencentProvider) CreateStorageVolume(ctx context.Context, input Storage
 	if volume.ProviderResourceID == "" {
 		return volume, fmt.Errorf("storage_cbs_identity_required")
 	}
-	if isCBSProviderReady(volume.CBSStatus) {
-		if _, err := p.callKubectl(ctx, []string{"apply", "-f", "-"}, staticCBSManifest(volume), protectedresource.Target{}); err != nil {
-			return volume, err
-		}
+	if _, err := p.callKubectl(ctx, []string{"apply", "-f", "-"}, staticCBSManifest(volume), protectedresource.Target{}); err != nil {
+		return volume, err
 	}
 	return volume, nil
 }
 
+func (p *TencentProvider) DiscoverStorageRecovery(ctx context.Context, input StorageVolumeInput) (StorageRecoveryDiscovery, error) {
+	discovery := StorageRecoveryDiscovery{State: "unknown"}
+	if input.ID == "" || input.AccountID == "" || input.WorkspaceID == "" || input.OperationID == "" || input.Zone == "" || input.SizeGB <= 0 {
+		discovery.Reason = "identity_mismatch"
+		return discovery, fmt.Errorf("storage_recovery_identity_mismatch")
+	}
+	diskType := firstNonEmpty(os.Getenv("TENCENT_CBS_DISK_TYPE"), "CLOUD_BSSD")
+	response, err := p.provision(ctx, provisionerRequest{
+		Action: "discover_storage_volume", AccountID: input.AccountID,
+		Tags:    oplCostTags(input.AccountID, input.WorkspaceID, input.ID, input.OperationID),
+		Storage: provisionerStorage{ID: input.ID, SizeGB: uint64(input.SizeGB), Zone: input.Zone, DiskType: diskType},
+	})
+	discovery.ProviderRequestID = response.ProviderRequestID
+	discovery.MutationCount = response.MutationCount
+	if err != nil {
+		discovery.Reason = "provider_describe"
+		return discovery, fmt.Errorf("storage_recovery_provider_describe")
+	}
+	if response.MutationCount != 0 {
+		discovery.Reason = "identity_mismatch"
+		return discovery, fmt.Errorf("storage_recovery_identity_mismatch")
+	}
+	if !response.OK {
+		discovery.Reason = storageRecoveryReason(response.ErrorCode)
+		return discovery, fmt.Errorf("storage_recovery_%s", discovery.Reason)
+	}
+	discovery.State = response.StorageState
+	discovery.ProviderResourceID = response.StorageVolumeID
+	switch discovery.State {
+	case "storage_not_started":
+		if discovery.ProviderResourceID != "" {
+			discovery.State, discovery.Reason = "unknown", "identity_mismatch"
+			return discovery, fmt.Errorf("storage_recovery_identity_mismatch")
+		}
+	case "storage_existing_exact":
+		if !strings.HasPrefix(discovery.ProviderResourceID, "disk-") {
+			discovery.State, discovery.Reason = "unknown", "identity_mismatch"
+			return discovery, fmt.Errorf("storage_recovery_identity_mismatch")
+		}
+	default:
+		discovery.State, discovery.Reason = "unknown", "identity_mismatch"
+		return discovery, fmt.Errorf("storage_recovery_identity_mismatch")
+	}
+	return discovery, nil
+}
+
+func storageRecoveryReason(errorCode string) string {
+	switch errorCode {
+	case "tencent_cbs_multiple_candidate":
+		return "multiple_candidate"
+	case "tencent_cbs_identity_mismatch", "tencent_cbs_input_invalid", "tencent_cbs_approval_drift", "tencent_cbs_approval_invalid":
+		return "identity_mismatch"
+	default:
+		return "provider_describe"
+	}
+}
+
 func (p *TencentProvider) SyncStorageVolume(ctx context.Context, volume StorageVolume) (StorageVolume, error) {
+	return p.ReadStorageVolumeStatus(ctx, volume)
+}
+
+func (p *TencentProvider) ReadStorageVolumeStatus(ctx context.Context, volume StorageVolume) (StorageVolume, error) {
 	volume, err := p.ReadStorageVolume(ctx, volume)
 	if err != nil || volume.Status == "external_deleted" || volume.Status == "pending" {
-		return volume, err
-	}
-	if _, err := p.callKubectl(ctx, []string{"apply", "-f", "-"}, staticCBSManifest(volume), protectedresource.Target{}); err != nil {
 		return volume, err
 	}
 	pvc := storagePVCName(volume)
@@ -1586,6 +1650,7 @@ func (p *TencentProvider) CreateStorageAttachment(ctx context.Context, input Sto
 	tags := oplCostTags(compute.AccountID, input.WorkspaceID, id, input.OperationID)
 	return StorageAttachment{
 		ID:                   id,
+		OperationID:          input.OperationID,
 		WorkspaceID:          input.WorkspaceID,
 		ComputeID:            input.ComputeID,
 		VolumeID:             input.VolumeID,
@@ -1623,16 +1688,19 @@ func (p *TencentProvider) CreateWorkspaceRuntime(ctx context.Context, input Work
 	now := time.Now().UTC()
 	serviceName := firstNonEmpty(compute.ServiceName, k8sName(compute.ID))
 	credentialSeed := stableID(input.WorkspaceID, input.IdempotencyKey)[:24]
-	tags := oplCostTags(compute.AccountID, input.WorkspaceID, input.WorkspaceID, input.OperationID)
+	runtimeOperationID := firstNonEmpty(input.RuntimeOperationID, input.IdempotencyKey)
+	runtimeID := "rt_" + stableSuffix(input.WorkspaceID, runtimeOperationID)[:18]
+	tags := oplCostTags(compute.AccountID, input.WorkspaceID, runtimeID, runtimeOperationID)
 	runtimeTarget := protectedresource.Target{PackageID: compute.PackageID, NodePoolID: compute.NodePoolID, MachineID: compute.MachineName, NodeName: compute.NodeName, CVMID: firstNonEmpty(compute.InstanceID, compute.CVMInstanceID)}
-	if _, err := p.callKubectl(ctx, []string{"apply", "-f", "-"}, workspaceManifest(input.WorkspaceID, input.WorkspaceID, credentialSeed, serviceName, compute, volume, input.GatewaySecretRef, tags), runtimeTarget); err != nil {
+	if _, err := p.callKubectl(ctx, []string{"apply", "-f", "-"}, workspaceManifest(input, input.WorkspaceID, credentialSeed, runtimeID, serviceName, compute, volume, tags), runtimeTarget); err != nil {
 		return WorkspaceRuntime{}, err
 	}
 	runtime, err := p.WorkspaceRuntimeStatus(ctx, input.WorkspaceID)
 	if err != nil {
 		return WorkspaceRuntime{}, err
 	}
-	runtime.ID = "rt_" + stableSuffix(input.WorkspaceID, input.IdempotencyKey)[:18]
+	runtime.ID = runtimeID
+	runtime.OperationID = runtimeOperationID
 	runtime.WorkspaceID = input.WorkspaceID
 	runtime.URL = firstNonEmpty(runtime.URL, fmt.Sprintf("https://%s/w/%s/", workspaceDomain(), input.WorkspaceID))
 	runtime.ServiceName = firstNonEmpty(runtime.ServiceName, serviceName)
@@ -1643,7 +1711,7 @@ func (p *TencentProvider) CreateWorkspaceRuntime(ctx context.Context, input Work
 }
 
 func (p *TencentProvider) DestroyWorkspaceRuntime(ctx context.Context, workspaceID string) (WorkspaceRuntime, error) {
-	serviceName, _, err := p.workspaceRuntimeResourcesStrict(ctx, workspaceID, true)
+	serviceName, err := p.workspaceRuntimeResourceNameForDestroy(ctx, workspaceID)
 	if err != nil {
 		return WorkspaceRuntime{}, err
 	}
@@ -1655,30 +1723,92 @@ func (p *TencentProvider) DestroyWorkspaceRuntime(ctx context.Context, workspace
 	return WorkspaceRuntime{WorkspaceID: workspaceID, Status: "destroyed", ServiceName: serviceName}, nil
 }
 
+func (p *TencentProvider) workspaceRuntimeResourceNameForDestroy(ctx context.Context, workspaceID string) (string, error) {
+	if strings.TrimSpace(workspaceID) == "" {
+		return "", nil
+	}
+	raw, err := p.callKubectl(ctx, []string{"get", "deployment,service,networkpolicy,secret", "-l", "oplcloud.cn/workspace-id=" + workspaceID, "-o", "json"}, nil, protectedresource.Target{})
+	if err != nil {
+		return "", err
+	}
+	names := map[string]bool{}
+	for _, item := range kubectlItems(raw) {
+		resource, ok := item.(map[string]any)
+		if !ok || stringValue(nested(resource, "metadata", "labels", "oplcloud.cn/workspace-id")) != workspaceID {
+			continue
+		}
+		name := stringValue(nested(resource, "metadata", "name"))
+		if stringValue(resource["kind"]) == "Secret" && strings.HasSuffix(name, "-env") {
+			name = strings.TrimSuffix(name, "-env")
+		}
+		if name != "" {
+			names[name] = true
+		}
+	}
+	if len(names) > 1 {
+		return "", workspaceRuntimeStatusError("ownership_conflict")
+	}
+	for name := range names {
+		return name, nil
+	}
+	return "", nil
+}
+
 func (p *TencentProvider) WorkspaceRuntimeStatus(ctx context.Context, workspaceID string) (WorkspaceRuntime, error) {
-	serviceName, pvcName := p.workspaceRuntimeResources(ctx, workspaceID)
+	serviceName, pvcName, err := p.workspaceRuntimeResourcesStrict(ctx, workspaceID, false)
+	if err != nil {
+		return WorkspaceRuntime{WorkspaceID: workspaceID}, err
+	}
 	if serviceName == "" || pvcName == "" {
-		return WorkspaceRuntime{WorkspaceID: workspaceID, Status: "not_found", Ready: false, Checks: []Check{{Name: "workspace_resources_found", OK: false}}}, nil
+		return WorkspaceRuntime{WorkspaceID: workspaceID}, workspaceRuntimeStatusError("readback_mismatch")
 	}
 	secretRef := serviceName + "-env"
 	raw, err := p.callKubectl(ctx, []string{"get", "deployment/" + serviceName, "pvc/" + pvcName, "service/" + serviceName, "ingress/opl-cloud", "endpoints/" + serviceName, "secret/" + secretRef, "--ignore-not-found", "-o", "json"}, nil, protectedresource.Target{})
 	if err != nil {
-		return WorkspaceRuntime{WorkspaceID: workspaceID, Status: "unready", ServiceName: serviceName, Ready: false, Checks: []Check{{Name: "kubectl_get", OK: false}}}, nil
+		return WorkspaceRuntime{WorkspaceID: workspaceID, ServiceName: serviceName}, workspaceRuntimeStatusError(computeClaimKubectlErrorClass(err))
 	}
 	policyRaw, err := p.callKubectl(ctx, []string{"get", "networkpolicy", "-o", "json"}, nil, protectedresource.Target{})
 	if err != nil {
-		return WorkspaceRuntime{WorkspaceID: workspaceID, Status: "unready", ServiceName: serviceName, Ready: false, Checks: []Check{{Name: "kubectl_get", OK: false}}}, nil
+		return WorkspaceRuntime{WorkspaceID: workspaceID, ServiceName: serviceName}, workspaceRuntimeStatusError(computeClaimKubectlErrorClass(err))
 	}
-	items := kubectlItems(raw)
-	networkPolicies := kubectlItems(policyRaw)
-	deployment := findK8s(items, "Deployment", serviceName)
-	pvc := findK8s(items, "PersistentVolumeClaim", pvcName)
-	service := findK8s(items, "Service", serviceName)
-	ingress := findK8s(items, "Ingress", "opl-cloud")
-	endpoints := findK8s(items, "Endpoints", serviceName)
-	access, credentialCheck := runtimeAccessFromSecret(findK8s(items, "Secret", secretRef), secretRef)
+	items, err := strictKubectlItems(raw)
+	if err != nil {
+		return WorkspaceRuntime{WorkspaceID: workspaceID, ServiceName: serviceName}, workspaceRuntimeStatusError("provider_error")
+	}
+	networkPolicies, err := strictKubectlItems(policyRaw)
+	if err != nil {
+		return WorkspaceRuntime{WorkspaceID: workspaceID, ServiceName: serviceName}, workspaceRuntimeStatusError("provider_error")
+	}
+	deployment, err := exactWorkspaceRuntimeStatusResource(items, "Deployment", serviceName)
+	if err != nil {
+		return WorkspaceRuntime{WorkspaceID: workspaceID, ServiceName: serviceName}, err
+	}
+	pvc, err := exactWorkspaceRuntimeStatusResource(items, "PersistentVolumeClaim", pvcName)
+	if err != nil {
+		return WorkspaceRuntime{WorkspaceID: workspaceID, ServiceName: serviceName}, err
+	}
+	service, err := exactWorkspaceRuntimeStatusResource(items, "Service", serviceName)
+	if err != nil {
+		return WorkspaceRuntime{WorkspaceID: workspaceID, ServiceName: serviceName}, err
+	}
+	ingress, err := exactWorkspaceRuntimeStatusResource(items, "Ingress", "opl-cloud")
+	if err != nil {
+		return WorkspaceRuntime{WorkspaceID: workspaceID, ServiceName: serviceName}, err
+	}
+	endpoints, err := exactWorkspaceRuntimeStatusResource(items, "Endpoints", serviceName)
+	if err != nil {
+		return WorkspaceRuntime{WorkspaceID: workspaceID, ServiceName: serviceName}, err
+	}
+	secret, err := exactWorkspaceRuntimeStatusResource(items, "Secret", secretRef)
+	if err != nil {
+		return WorkspaceRuntime{WorkspaceID: workspaceID, ServiceName: serviceName}, err
+	}
+	access, credentialCheck := runtimeAccessFromSecret(secret, secretRef)
 	access.CredentialVersion = firstNonEmpty(stringValue(nested(deployment, "spec", "template", "metadata", "annotations", "opl.medopl.cn/credential-revision")), access.CredentialVersion)
-	pods := p.workspacePods(ctx, workspaceID)
+	pods, err := p.workspacePods(ctx, workspaceID)
+	if err != nil {
+		return WorkspaceRuntime{WorkspaceID: workspaceID, ServiceName: serviceName}, workspaceRuntimeStatusError(computeClaimKubectlErrorClass(err))
+	}
 	podDetails := podRuntimeDetails(pods)
 	readyPodUsesPVC := false
 	for _, item := range pods {
@@ -1795,12 +1925,12 @@ func runtimeAccessFromSecret(secret map[string]any, secretRef string) (RuntimeAc
 	return access, Check{Name: "workspace_credentials_configured", OK: access.CredentialStatus == "configured"}
 }
 
-func (p *TencentProvider) workspacePods(ctx context.Context, workspaceID string) []any {
+func (p *TencentProvider) workspacePods(ctx context.Context, workspaceID string) ([]any, error) {
 	raw, err := p.callKubectl(ctx, []string{"get", "pod", "-l", "oplcloud.cn/workspace-id=" + workspaceID, "-o", "json"}, nil, protectedresource.Target{})
 	if err != nil {
-		return nil
+		return nil, err
 	}
-	return kubectlItems(raw)
+	return strictKubectlItems(raw)
 }
 
 func (p *TencentProvider) RuntimeHealthSummary(ctx context.Context) (RuntimeHealthSummary, error) {
@@ -1974,18 +2104,95 @@ func (p *TencentProvider) workspaceRuntimeResourcesStrict(ctx context.Context, w
 	}
 	raw, err := p.callKubectl(ctx, []string{"get", resourceKinds, "-l", "oplcloud.cn/workspace-id=" + workspaceID, "-o", "json"}, nil, protectedresource.Target{})
 	if err != nil {
+		return "", "", workspaceRuntimeStatusError(computeClaimKubectlErrorClass(err))
+	}
+	items, err := strictKubectlItems(raw)
+	if err != nil {
+		return "", "", workspaceRuntimeStatusError("provider_error")
+	}
+	if len(items) == 0 {
+		return "", "", nil
+	}
+	deployment, err := exactWorkspaceRuntimeDiscoveryResource(items, "Deployment", workspaceID)
+	if err != nil {
 		return "", "", err
 	}
-	items := kubectlItems(raw)
-	deployment := findK8sByLabel(items, "Deployment", "oplcloud.cn/workspace-id", workspaceID)
-	service := findK8sByLabel(items, "Service", "oplcloud.cn/workspace-id", workspaceID)
-	networkPolicy := findK8sByLabel(items, "NetworkPolicy", "oplcloud.cn/workspace-id", workspaceID)
-	serviceName := firstNonEmpty(stringValue(nested(deployment, "metadata", "name")), stringValue(nested(service, "metadata", "name")), stringValue(nested(networkPolicy, "metadata", "name")))
-	secretName := stringValue(nested(findK8sByLabel(items, "Secret", "oplcloud.cn/workspace-id", workspaceID), "metadata", "name"))
-	if serviceName == "" && strings.HasSuffix(secretName, "-env") {
-		serviceName = strings.TrimSuffix(secretName, "-env")
+	service, err := exactWorkspaceRuntimeDiscoveryResource(items, "Service", workspaceID)
+	if err != nil {
+		return "", "", err
 	}
-	return serviceName, firstPVCClaimName(deployment), nil
+	networkPolicy, err := exactWorkspaceRuntimeDiscoveryResource(items, "NetworkPolicy", workspaceID)
+	if err != nil {
+		return "", "", err
+	}
+	serviceName := stringValue(nested(deployment, "metadata", "name"))
+	if serviceName == "" || stringValue(nested(service, "metadata", "name")) != serviceName || stringValue(nested(networkPolicy, "metadata", "name")) != serviceName {
+		return "", "", workspaceRuntimeStatusError("readback_mismatch")
+	}
+	if includeSecret {
+		secret, secretErr := exactWorkspaceRuntimeDiscoveryResource(items, "Secret", workspaceID)
+		if secretErr != nil {
+			return "", "", secretErr
+		}
+		if stringValue(nested(secret, "metadata", "name")) != serviceName+"-env" {
+			return "", "", workspaceRuntimeStatusError("readback_mismatch")
+		}
+	}
+	pvcName, ok := singleWorkspaceRuntimePVCClaimName(deployment)
+	if !ok {
+		return "", "", workspaceRuntimeStatusError("readback_mismatch")
+	}
+	return serviceName, pvcName, nil
+}
+
+func exactWorkspaceRuntimeDiscoveryResource(items []any, kind, workspaceID string) (map[string]any, error) {
+	matches := []map[string]any{}
+	for _, item := range items {
+		resource, ok := item.(map[string]any)
+		if ok && stringValue(resource["kind"]) == kind && stringValue(nested(resource, "metadata", "labels", "oplcloud.cn/workspace-id")) == workspaceID {
+			matches = append(matches, resource)
+		}
+	}
+	if len(matches) > 1 {
+		return nil, workspaceRuntimeStatusError("ownership_conflict")
+	}
+	if len(matches) != 1 {
+		return nil, workspaceRuntimeStatusError("readback_mismatch")
+	}
+	return matches[0], nil
+}
+
+func exactWorkspaceRuntimeStatusResource(items []any, kind, name string) (map[string]any, error) {
+	resource, state := exactActivationResource(items, kind, name)
+	switch state {
+	case "one":
+		return resource, nil
+	case "multiple":
+		return nil, workspaceRuntimeStatusError("ownership_conflict")
+	default:
+		return nil, workspaceRuntimeStatusError("readback_mismatch")
+	}
+}
+
+func singleWorkspaceRuntimePVCClaimName(deployment map[string]any) (string, bool) {
+	volumes, _ := nested(deployment, "spec", "template", "spec", "volumes").([]any)
+	claims := []string{}
+	for _, volume := range volumes {
+		asMap, _ := volume.(map[string]any)
+		if claim := stringValue(nested(asMap, "persistentVolumeClaim", "claimName")); claim != "" {
+			claims = append(claims, claim)
+		}
+	}
+	return firstNonEmpty(claims...), len(claims) == 1
+}
+
+func workspaceRuntimeStatusError(class string) error {
+	switch class {
+	case "ownership_conflict", "iam_rbac", "timeout", "provider_error", "readback_mismatch":
+	default:
+		class = "provider_error"
+	}
+	return fmt.Errorf("workspace_runtime_status_%s", class)
 }
 
 func (p *TencentProvider) PublishWorkspaceContent(ctx context.Context, workspaceID, targetPath string, body []byte) error {
@@ -2114,9 +2321,21 @@ func restoredPVCManifest(name, storageID, accountID string, sizeGB int, snapshot
 	})
 }
 
-func workspaceManifest(workspaceID string, workspaceName string, credentialSeed string, serviceName string, compute ComputeAllocation, storage StorageVolume, gatewaySecretRef string, tags map[string]string) []byte {
+func workspaceManifest(input WorkspaceRuntimeInput, workspaceName string, credentialSeed string, runtimeID string, serviceName string, compute ComputeAllocation, storage StorageVolume, tags map[string]string) []byte {
+	workspaceID := input.WorkspaceID
+	gatewaySecretRef := input.GatewaySecretRef
 	selectorLabels := stringAnyMap(runtimeSelectorLabels(serviceName, compute))
-	labels := stringAnyMap(mergeStringMaps(runtimeSelectorLabels(serviceName, compute), map[string]string{"oplcloud.cn/account-id": compute.AccountID, "oplcloud.cn/workspace-id": workspaceID}, k8sCostLabels(tags)))
+	identityLabels := map[string]string{
+		"oplcloud.cn/account-id":              compute.AccountID,
+		"oplcloud.cn/workspace-id":            workspaceID,
+		"oplcloud.cn/compute-allocation-id":   compute.ID,
+		"oplcloud.cn/storage-id":              storage.ID,
+		"oplcloud.cn/attachment-id":           input.AttachmentID,
+		"oplcloud.cn/attachment-operation-id": input.AttachmentOperationID,
+		"oplcloud.cn/runtime-id":              runtimeID,
+		"oplcloud.cn/runtime-operation-id":    input.RuntimeOperationID,
+	}
+	labels := stringAnyMap(mergeStringMaps(runtimeSelectorLabels(serviceName, compute), identityLabels, k8sCostLabels(tags)))
 	pvcName := storagePVCName(storage)
 	plan := packagePlan(compute.PackageID)
 	password := deriveAionUIAdminPassword(os.Getenv("OPL_AIONUI_ADMIN_PASSWORD_SEED"), workspaceID, credentialSeed)
@@ -2149,7 +2368,7 @@ func workspaceManifest(workspaceID string, workspaceName string, credentialSeed 
 		workspaceEnv = append(workspaceEnv, map[string]any{"name": "OPL_GATEWAY_API_KEY_FILE", "value": "/run/secrets/opl_gateway_api_key"})
 	}
 	workspaceContainer := map[string]any{"name": "workspace", "image": os.Getenv("OPL_WORKSPACE_IMAGE"), "imagePullPolicy": "IfNotPresent", "ports": []any{map[string]any{"name": "http", "containerPort": 3000}}, "env": workspaceEnv, "volumeMounts": []any{map[string]any{"name": "workspace-data", "mountPath": "/data", "subPath": "data"}, map[string]any{"name": "workspace-data", "mountPath": "/projects", "subPath": "projects"}, map[string]any{"name": "workspace-secrets", "mountPath": "/run/secrets", "readOnly": true}}, "resources": workspaceResources(plan), "readinessProbe": map[string]any{"httpGet": map[string]any{"path": "/healthz", "port": 3000}, "initialDelaySeconds": 10, "periodSeconds": 10}, "securityContext": map[string]any{"allowPrivilegeEscalation": false, "capabilities": map[string]any{"drop": []any{"ALL"}}}}
-	secretLabels := stringAnyMap(mergeStringMaps(map[string]string{"app.kubernetes.io/name": "opl-workspace-entry", "app.kubernetes.io/instance": serviceName, "oplcloud.cn/workspace-id": workspaceID}, k8sCostLabels(tags)))
+	secretLabels := stringAnyMap(mergeStringMaps(map[string]string{"app.kubernetes.io/name": "opl-workspace-entry", "app.kubernetes.io/instance": serviceName}, identityLabels, k8sCostLabels(tags)))
 	secret := map[string]any{"apiVersion": "v1", "kind": "Secret", "metadata": map[string]any{"name": serviceName + "-env", "labels": secretLabels, "annotations": tags}, "type": "Opaque", "data": secretData}
 	secretSources := []any{map[string]any{"secret": map[string]any{"name": serviceName + "-env", "items": secretItems}}}
 	if gatewaySecretRef != "" {
@@ -2455,6 +2674,24 @@ func kubectlItems(raw []byte) []any {
 		return items
 	}
 	return []any{list}
+}
+
+func strictKubectlItems(raw []byte) ([]any, error) {
+	var list map[string]any
+	if err := json.Unmarshal(raw, &list); err != nil || len(list) == 0 {
+		return nil, fmt.Errorf("kubernetes_response_invalid")
+	}
+	if stringValue(list["kind"]) == "List" {
+		items, ok := list["items"].([]any)
+		if !ok {
+			return nil, fmt.Errorf("kubernetes_response_invalid")
+		}
+		return items, nil
+	}
+	if stringValue(list["kind"]) == "" {
+		return nil, fmt.Errorf("kubernetes_response_invalid")
+	}
+	return []any{list}, nil
 }
 
 func findK8s(items []any, kind string, name string) map[string]any {

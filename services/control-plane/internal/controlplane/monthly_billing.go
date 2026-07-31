@@ -45,6 +45,14 @@ func (s *Service) MonthlyProviderTruth(ctx context.Context, computeID, storageID
 	return client.MonthlyProviderTruth(ctx, computeID, storageID)
 }
 
+func (s *Service) WorkspaceActivationTruth(ctx context.Context, input clients.WorkspaceActivationTruthInput) (clients.WorkspaceActivationTruth, error) {
+	client, ok := s.fabric.(clients.FabricWorkspaceActivationTruthClient)
+	if !ok {
+		return clients.WorkspaceActivationTruth{Reason: "provider_unavailable", ErrorClass: "client_unavailable"}, errors.New("fabric_workspace_activation_truth_unavailable")
+	}
+	return client.WorkspaceActivationTruth(ctx, input)
+}
+
 func (s *Service) ComputeClaimRecoveryProof(ctx context.Context, input clients.ComputeClaimRecoveryInput) (clients.ComputeClaimRecoveryProof, error) {
 	client, ok := s.fabric.(clients.FabricComputeClaimRecoveryClient)
 	if !ok {
@@ -63,6 +71,10 @@ func (s *Service) ClaimComputeRecovery(ctx context.Context, input clients.Comput
 
 func (s *Service) PrepareMonthlyCompute(ctx context.Context, input clients.ComputeAllocationInput, key string) (clients.ComputeAllocation, error) {
 	return s.fabric.CreateComputeAllocation(ctx, input, key)
+}
+
+func (s *Service) ReadMonthlyCompute(ctx context.Context, id string) (clients.ComputeAllocation, error) {
+	return s.fabric.GetComputeAllocation(ctx, id)
 }
 
 func (s *Service) SyncMonthlyCompute(ctx context.Context, id string) (clients.ComputeAllocation, error) {
@@ -87,6 +99,14 @@ func (s *Service) CleanupWorkspaceRuntime(ctx context.Context, workspaceID, key 
 
 func (s *Service) PrepareMonthlyStorage(ctx context.Context, input clients.StorageVolumeInput, key string) (clients.StorageVolume, error) {
 	return s.fabric.CreateStorageVolume(ctx, input, key)
+}
+
+func (s *Service) ReadMonthlyStorage(ctx context.Context, id string) (clients.StorageVolume, error) {
+	reader, ok := s.fabric.(clients.FabricStorageVolumeReader)
+	if !ok {
+		return clients.StorageVolume{}, errors.New("fabric_storage_volume_read_unavailable")
+	}
+	return reader.GetStorageVolume(ctx, id)
 }
 
 func (s *Service) SyncMonthlyStorage(ctx context.Context, id string) (clients.StorageVolume, error) {

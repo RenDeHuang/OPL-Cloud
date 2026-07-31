@@ -84,13 +84,29 @@ test("Current contracts hard cut Workspace purchase, access, and Runtime facts",
     json("packages/contracts/opl-cloud-console-source-truth-contract.json")
   ]);
 
+  assert.equal(freeze.schemaVersion, 19);
+  assert.equal(billing.schemaVersion, 11);
   assert.equal(freeze.workspaceLaunch.customerDebitCardinality, 1);
   assert.equal(freeze.workspaceLaunch.persistence, "control_plane_runtime_operations with action=workspace.launch.v2 and result.schemaVersion=2");
   assert.equal(freeze.workspaceLaunch.codeCompleteThroughPhase, undefined);
-  assert.equal(freeze.workspaceLaunch.legacyNonTerminalPolicy, "manual_review_compute_fulfilling_is_read_only_candidate_normalized_only_after_debit_identity_storage_zero_and_compute_proof_via_postgresql_cas");
+  assert.equal(freeze.workspaceLaunch.legacyNonTerminalPolicy, "manual_review_compute_fulfilling_is_read_only_candidate_normalized_only_after_debit_identity_local_storage_zero_and_compute_plus_exact_cbs_proof_via_postgresql_cas");
   assert.equal(freeze.workspaceLaunch.backgroundProgression, "non_review_and_manual_review_recovery_integrated_local_fake_verified");
   assert.equal(freeze.workspaceLaunch.nextBlockedStage, undefined);
   assert.deepEqual(freeze.workspaceLaunch.fulfillmentResources, ["compute", "storage", "attachment", "gateway_secret", "runtime"]);
+  assert.deepEqual(freeze.workspaceLaunch.computeClaimRecoveryCustomerProjection, {
+    source: "persisted_workspace_launch_compute_claim_approval",
+    fields: ["approvalId", "approvalDigest", "recoveryKey", "workspaceImageDigest"],
+    forbidden: ["customer_email", "full_approval", "gateway_secret_ref", "credential", "capability"]
+  });
+  assert.deepEqual(freeze.workspaceLaunch.continuationAttemptBudgets, {
+    persistence: "original_workspace.launch.v2_operation_result",
+    stages: ["storage", "attachment", "secret", "runtime", "activation", "receipt"],
+    fields: ["attempted", "confirmed", "unknown", "max"],
+    maxPerStage: 1,
+    reservation: "postgresql_cas_before_external_write",
+    restart: "remaining_budget_loaded_from_persisted_launch",
+    unknownOrExhausted: "manual_review_worker_stops"
+  });
   assert.deepEqual(freeze.gateway.workspaceKeyLifecycle, {
     scopeIdentity: ["workspaceId", "workspaceApiKeyId"],
     launchConvergence: "one_reserved_key_per_workspace",
@@ -124,11 +140,11 @@ test("Current contracts hard cut Workspace purchase, access, and Runtime facts",
   assert.equal(billing.workspaceLaunchFulfillment.resourcePurchasePath, "fabric_create_and_sync_without_customer_debit");
   assert.equal(billing.workspaceLaunchFulfillment.successReceiptType, "billing.workspace_purchased.v1");
   assert.deepEqual(billing.workspaceLaunchFulfillment.activationReadback, {
-    apis: ["SyncMonthlyCompute", "SyncMonthlyStorage"],
-    timing: "immediately_before_workspace_activation",
-    sharedRequiredFacts: ["resource_identity", "account_identity", "workspace_identity", "zone", "chargeType=PREPAID", "renewFlag=NOTIFY_AND_MANUAL_RENEW", "deadline"],
-    computeRequiredFacts: ["sku"],
-    storageRequiredFacts: ["capacity"],
+    api: "POST /fabric/workspace-activation-truth",
+    semantic: "describe_get_only_mutation_zero_proof",
+    consumers: ["workspace_activation", "workspace_url_gateway"],
+    requiredFacts: ["compute_ownership", "unique_cbs_pv_pvc", "attachment_identity", "gateway_secret_identity", "unique_runtime", "ready_pod_on_claimed_node", "service_endpoints_identity", "workspace_network_policy"],
+    mutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
     mismatch: "manual_review_without_activation"
   });
   assert.equal(billing.workspaceLaunchFulfillment.manualReviewRecoveryContract, "opl-cloud-launch-freeze-contract.json#workspaceLaunch.manualReviewRecovery");
@@ -380,7 +396,7 @@ test("Current Fabric contracts require dedicated package NodePools without weake
     output: "redacted_evidence_only",
     currentState: "implemented_and_fake_tested_not_executed"
   });
-  assert.equal(deployment.schemaVersion, 21);
+  assert.equal(deployment.schemaVersion, 23);
   assert.deepEqual(deployment.productionComputeClaimRecovery, {
     workflow: ".github/workflows/production-basic-customer-operation.yml",
     execution: "manual_release_owner_only_not_ci_release_rollout_or_e2e",
@@ -409,18 +425,27 @@ test("Current Fabric contracts require dedicated package NodePools without weake
         approvalSecret: "OPL_COMPUTE_CLAIM_RECOVERY_APPROVAL_JSON",
         adminSecrets: ["OPL_SUB2API_ADMIN_EMAIL", "OPL_SUB2API_ADMIN_PASSWORD"],
         customerReadOnlyPasswordSecret: "OPL_BASIC_CANARY_CUSTOMER_PASSWORD",
-        customerEmailSource: "existing_account_workflow_value",
+        customerEmailSource: "protected_customer_email_input_with_authoritative_account_readback",
         serverCapability: {
           source: "current_kubernetes_secret_opl-cloud-internal-service",
           header: "x-opl-compute-claim-capability",
           ordinaryOperatorSessionAccepted: false,
           handling: "step_memory_only_immediate_mask"
         },
-        confirmation: "CLAIM_PROVEN_COMPUTE_RESOURCE",
+        confirmation: "RECOVER_PROVEN_COMPUTE_AND_CONTINUE_ORIGINAL_LAUNCH",
+        approvalBinding: ["merged_main_sha", "cloud_image_digest", "workspace_image_digest", "expiry", "customer", "launch", "compute", "storage", "storage_state", "storage_provider_resource_id", "attachment", "runtime", "recovery_key"],
+        allowedWritesByStorageState: {
+          storage_not_started: ["claim_existing_cvm_node", "create_original_cbs", "create_original_pv_pvc_attachment", "upsert_original_gateway_secret", "create_original_workspace_runtime", "activate_original_workspace", "record_original_purchase_receipt"],
+          storage_existing_exact: ["claim_existing_cvm_node", "reuse_original_cbs", "create_original_pv_pvc_attachment", "upsert_original_gateway_secret", "create_original_workspace_runtime", "activate_original_workspace", "record_original_purchase_receipt"]
+        },
+        attemptLimits: { claim: { sub2api: 0, tencent: 5, kubernetes: 1 }, storage: 1, attachment: 1, secret: 1, runtime: 1, activation: 1, receipt: 1 },
+        createDisksLimitsByStorageState: { storage_not_started: 1, storage_existing_exact: 0, unknown: 0 },
+        forbiddenWrites: ["create_launch", "debit", "recharge", "refund", "scale", "create_cvm", "create_second_cbs", "delete", "replace"],
         continuation: {
           mode: "GET_only_same_launch_after_claim",
           launchRoute: "GET /api/workspace-launches/{operationId}",
           runtimeRoute: "GET /api/workspaces/{workspaceId}/runtime-status",
+          recoveryBindingFields: ["approvalId", "approvalDigest", "recoveryKey", "workspaceImageDigest"],
           terminal: ["status=succeeded", "phase=succeeded", "attachmentId", "receiptId", "launch.url=https://workspace.medopl.cn/w/{workspaceId}/", "receipt.workspaceId=workspaceId", "receipt.type=billing.workspace_purchased.v1", "receipt.storage.resourceId=storageId", "receipt.storage.sizeGb=10", "receipt.fulfillment.attachmentId=attachmentId", "receipt.fulfillment.runtimeId=runtimeId", "runtime.ready=true", "runtime.status=running", "runtime.url=launch.url"],
           forbiddenWrites: ["second_launch", "second_claim", "debit", "recharge", "scale", "create_compute", "create_storage", "delete", "replace"],
           runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
@@ -433,6 +458,10 @@ test("Current Fabric contracts require dedicated package NodePools without weake
       manualReviewSchemaVersion: 1,
       runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
       providerMutationAuthority: ["proof.sub2apiMutationCount", "proof.tencentMutationCount", "proof.kubernetesMutationCount", "proof.evidence"],
+      storageBinding: {
+        proofFields: ["storageState", "storageProviderResourceId"],
+        approvalDigestIncludes: ["resources.storageState", "resources.storageProviderResourceId"]
+      },
       failure: "non_empty_redacted_blocked_json_with_allowlisted_error_code",
       successApprovalFields: ["approvalId", "approvalDigest"],
       blockedArtifactFieldsByMode: {
@@ -442,7 +471,7 @@ test("Current Fabric contracts require dedicated package NodePools without weake
       }
     },
     releaseBinding: ["exact_merged_origin_main_sha", "immutable_cloud_digest", "control_plane_fabric_ledger_ready_pod_image_id", "approval_id_and_idempotency_key"],
-    targetBinding: ["launch", "account", "workspace", "compute", "machine", "node", "cvm", "pool", "node_pool", "sku", "zone", "private_ip", "billing_facts"],
+    targetBinding: ["launch", "account", "workspace", "compute", "machine", "node", "cvm", "pool", "node_pool", "sku", "zone", "private_ip", "billing_facts", "storage_state", "storage_provider_resource_id"],
     mutationBounds: { sub2api: 0, tencent: { min: 0, max: 5 }, kubernetes: { min: 0, max: 1 } },
     mutationLedger: {
       persistence: "original_create_compute_allocation_operation_payload_cas_before_provider_call",
@@ -453,9 +482,22 @@ test("Current Fabric contracts require dedicated package NodePools without weake
       replayProofUnavailable: "return_persisted_mutation_evidence_zero_incremental_external_mutation",
       observedSuccessReadbackMismatch: "fail_closed_identity_mismatch_claim_final_readback"
     },
-    artifactGate: ["exact_target_owned_readback", "proof_sub2api_zero", "proof_tencent_zero_to_five", "proof_kubernetes_zero_to_one", "attempted_equals_count", "confirmed_equals_attempted", "unknown_zero", "missing_empty"],
+    artifactGate: ["exact_target_owned_readback", "proof_storage_state_and_provider_resource_id_match_approval", "proof_sub2api_zero", "proof_tencent_zero_to_five", "proof_kubernetes_zero_to_one", "attempted_equals_count", "confirmed_equals_attempted", "unknown_zero", "missing_empty"],
     claimForbidden: ["debit", "refund", "recharge", "scale", "create_compute", "create_storage", "delete", "replace"],
     currentState: "code_complete_local_focused_and_postgresql_verified_not_merged_released_deployed_or_executed"
+  });
+  assert.deepEqual(deployment.productionRecoveredWorkspaceE2E, {
+    workflow: ".github/workflows/production-basic-customer-operation.yml",
+    input: "operation_mode=recovered_workspace_e2e",
+    runner: "ubuntu-latest",
+    prerequisite: "downloaded_succeeded_compute_claim_continuation_artifact",
+    approval: "independent_confirm_single_model_request",
+    approvalBinding: ["merged_main_sha", "cloud_image_digest", "workspace_image_digest", "recovery_approval", "recovery_key", "customer", "launch", "workspace", "compute", "storage", "attachment", "runtime", "receipt", "workspace_api_key", "model_request_key", "expiry"],
+    allowedWrites: ["control_plane_e2e_attempt_reservation", "single_workspace_model_request", "control_plane_e2e_attempt_completion"],
+    forbiddenCapabilities: ["kubeconfig", "tencent_credentials", "internal_service_token", "launch", "debit", "recharge", "refund", "scale", "create_cvm", "create_cbs", "kubernetes"],
+    resultUnknown: "persistent_attempted_marker_never_resend",
+    resourceDeliveryDependency: "one_way_resource_closure_to_e2e_no_reverse_dependency",
+    currentState: "code_complete_local_focused_and_postgresql_verified_not_executed"
   });
   assert.doesNotMatch(await text("tools/production-live-qa.ts"), /SA5\.MEDIUM4/);
   assert.equal(freeze.providerProcurement.workspaceRenewal.tencentRenewFlag, "NOTIFY_AND_MANUAL_RENEW");
@@ -673,14 +715,64 @@ test("Current contracts hard cut operator resources, wallet adjustments, and ann
     absentRequires: "both_local_identities_and_exact_provider_describe_absence",
     forbiddenSideEffects: ["sync", "tag", "kubectl_apply", "delete", "label", "purchase", "renew", "destroy"]
   });
-  assert.equal(boundary.schemaVersion, 15);
+  assert.equal(boundary.schemaVersion, 17);
+  assert.deepEqual(boundary.services.controlPlane.workspaceContinuationAttemptBudget, {
+    owner: "original_workspace.launch.v2_operation",
+    stages: ["storage", "attachment", "secret", "runtime", "activation", "receipt"],
+    fields: ["attempted", "confirmed", "unknown", "max"],
+    maxPerStage: 1,
+    reserve: "postgresql_cas_before_external_write",
+    restart: "persisted_budget_never_resets",
+    terminalFailure: "unknown_or_exhausted_enters_manual_review_and_active_worker_excludes_it"
+  });
+  assert.deepEqual(boundary.services.controlPlane.recoveredWorkspaceE2EAttempt, {
+    reserveRoute: "POST /api/workspaces/{workspaceId}/recovered-e2e-attempt",
+    completeRoute: "POST /api/workspaces/{workspaceId}/recovered-e2e-attempt/complete",
+    persistence: "production_e2e_record_create_only_bound_to_original_launch_and_workspace",
+    states: ["attempted", "passed"],
+    replay: "any_existing_marker_returns_model_result_unknown",
+    completion: "same_binding_attempted_to_passed_cas",
+    retention: "recovered_workspace_marker_not_deleted",
+    resourceMutationCount: 0
+  });
+  assert.deepEqual(boundary.services.fabric.workspaceActivationTruth, {
+    endpoint: "POST /fabric/workspace-activation-truth",
+    semantic: "read_only_proof_post_mutation_count_zero",
+    authority: ["tencent_describe", "kubernetes_get"],
+    consumers: ["control_plane_activation", "control_plane_workspace_gateway"],
+    cardinality: "every_target_resource_exactly_one",
+    kubernetesErrors: "classified_and_propagated",
+    forbiddenCalls: ["sync", "apply", "patch", "delete"],
+    mutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
+  });
   assert.deepEqual(boundary.services.fabric.workspaceComputeClaimRecovery, {
     proofEndpoint: "POST /fabric/compute-claim-recovery/proof",
     claimEndpoint: "POST /fabric/compute-claim-recovery/claim",
     scope: "workspace.launch.v2_compute_claim_pending_before_storage_create",
-    proofAuthority: ["launch_operation", "compute_allocation", "allocation_plan", "machine_ownership", "tencent_describe", "kubernetes_get"],
+    proofAuthority: ["launch_operation", "compute_allocation", "allocation_plan", "machine_ownership", "tencent_describe", "tencent_describe_disks", "kubernetes_get"],
     packages: ["basic", "pro"],
-    storageGate: "zero_create_storage_volume_operations_returns_storage_not_started",
+    storageGate: "zero_local_create_storage_volume_operations_requires_exact_tencent_cbs_discovery",
+    storageDiscovery: {
+      operation: "DescribeDisks_only",
+      ownershipTags: ["opl_account_id", "opl_workspace_id", "opl_resource_id", "opl_operation_id"],
+      pagination: "complete_stable_total_count",
+      logicalIdentityFallback: "exact_DiskName_query_detects_tag_drift",
+      exactFacts: ["DiskName", "Zone", "SizeGB", "DATA_DISK", "PREPAID", "DiskType", "Period=1", "NOTIFY_AND_MANUAL_RENEW", "deadline"],
+      mutationCount: 0
+    },
+    storageStates: {
+      zero: "storage_not_started",
+      oneExact: "storage_existing_exact_with_storageProviderResourceId",
+      multipleDescribeErrorOrDrift: "unknown_manual_review"
+    },
+    storageApprovalBinding: ["storageState", "storageProviderResourceId"],
+    storageContinuation: {
+      storage_not_started: "fresh_zero_then_CreateDisks_at_most_once",
+      storage_existing_exact: "fresh_same_disk_reuse_CreateDisks_zero",
+      driftMultipleOrReadError: "manual_review_CreateDisks_zero",
+      restartAfterUnknownCreateOutcome: "fresh_exact_discovery_reuse_same_disk_CreateDisks_zero"
+    },
+    createDisksLimits: { storage_not_started: 1, storage_existing_exact: 0, unknown: 0 },
     uniqueComputeRule: "one_ready_or_running_machine_in_after_minus_before",
     exactIdentity: ["account", "workspace", "compute_operation", "pool", "node_pool", "machine", "node", "private_ip", "cvm", "sku", "zone"],
     billingFacts: { chargeType: "PREPAID", periodMonths: 1, renewFlag: "NOTIFY_AND_MANUAL_RENEW", deadline: "exact" },

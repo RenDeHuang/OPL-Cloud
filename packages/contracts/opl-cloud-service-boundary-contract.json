@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 15,
+  "schemaVersion": 17,
   "owner": "OPL Platform Architecture",
   "purpose": "Current ownership contract for Console UI, Control Plane, Ledger, Fabric, and external Sub2API.",
   "state": "current",
@@ -106,6 +106,25 @@
         "additionalLockService": false,
         "multiReplicaPolicy": "forbidden_until_approved_distributed_serialization"
       },
+      "workspaceContinuationAttemptBudget": {
+        "owner": "original_workspace.launch.v2_operation",
+        "stages": ["storage", "attachment", "secret", "runtime", "activation", "receipt"],
+        "fields": ["attempted", "confirmed", "unknown", "max"],
+        "maxPerStage": 1,
+        "reserve": "postgresql_cas_before_external_write",
+        "restart": "persisted_budget_never_resets",
+        "terminalFailure": "unknown_or_exhausted_enters_manual_review_and_active_worker_excludes_it"
+      },
+      "recoveredWorkspaceE2EAttempt": {
+        "reserveRoute": "POST /api/workspaces/{workspaceId}/recovered-e2e-attempt",
+        "completeRoute": "POST /api/workspaces/{workspaceId}/recovered-e2e-attempt/complete",
+        "persistence": "production_e2e_record_create_only_bound_to_original_launch_and_workspace",
+        "states": ["attempted", "passed"],
+        "replay": "any_existing_marker_returns_model_result_unknown",
+        "completion": "same_binding_attempted_to_passed_cas",
+        "retention": "recovered_workspace_marker_not_deleted",
+        "resourceMutationCount": 0
+      },
       "forbiddenPersistence": ["gatewayCredentials", "apiKeys", "apiUsage", "walletBalances", "runtimeFileMetadata"]
     },
     "ledger": {
@@ -194,13 +213,44 @@
         "absentRequires": "both_local_identities_and_exact_provider_describe_absence",
         "forbiddenSideEffects": ["sync", "tag", "kubectl_apply", "delete", "label", "purchase", "renew", "destroy"]
       },
+      "workspaceActivationTruth": {
+        "endpoint": "POST /fabric/workspace-activation-truth",
+        "semantic": "read_only_proof_post_mutation_count_zero",
+        "authority": ["tencent_describe", "kubernetes_get"],
+        "consumers": ["control_plane_activation", "control_plane_workspace_gateway"],
+        "cardinality": "every_target_resource_exactly_one",
+        "kubernetesErrors": "classified_and_propagated",
+        "forbiddenCalls": ["sync", "apply", "patch", "delete"],
+        "mutationCounts": {"sub2api": 0, "tencent": 0, "kubernetes": 0}
+      },
       "workspaceComputeClaimRecovery": {
         "proofEndpoint": "POST /fabric/compute-claim-recovery/proof",
         "claimEndpoint": "POST /fabric/compute-claim-recovery/claim",
         "scope": "workspace.launch.v2_compute_claim_pending_before_storage_create",
-        "proofAuthority": ["launch_operation", "compute_allocation", "allocation_plan", "machine_ownership", "tencent_describe", "kubernetes_get"],
+        "proofAuthority": ["launch_operation", "compute_allocation", "allocation_plan", "machine_ownership", "tencent_describe", "tencent_describe_disks", "kubernetes_get"],
         "packages": ["basic", "pro"],
-        "storageGate": "zero_create_storage_volume_operations_returns_storage_not_started",
+        "storageGate": "zero_local_create_storage_volume_operations_requires_exact_tencent_cbs_discovery",
+        "storageDiscovery": {
+          "operation": "DescribeDisks_only",
+          "ownershipTags": ["opl_account_id", "opl_workspace_id", "opl_resource_id", "opl_operation_id"],
+          "pagination": "complete_stable_total_count",
+          "logicalIdentityFallback": "exact_DiskName_query_detects_tag_drift",
+          "exactFacts": ["DiskName", "Zone", "SizeGB", "DATA_DISK", "PREPAID", "DiskType", "Period=1", "NOTIFY_AND_MANUAL_RENEW", "deadline"],
+          "mutationCount": 0
+        },
+        "storageStates": {
+          "zero": "storage_not_started",
+          "oneExact": "storage_existing_exact_with_storageProviderResourceId",
+          "multipleDescribeErrorOrDrift": "unknown_manual_review"
+        },
+        "storageApprovalBinding": ["storageState", "storageProviderResourceId"],
+        "storageContinuation": {
+          "storage_not_started": "fresh_zero_then_CreateDisks_at_most_once",
+          "storage_existing_exact": "fresh_same_disk_reuse_CreateDisks_zero",
+          "driftMultipleOrReadError": "manual_review_CreateDisks_zero",
+          "restartAfterUnknownCreateOutcome": "fresh_exact_discovery_reuse_same_disk_CreateDisks_zero"
+        },
+        "createDisksLimits": {"storage_not_started": 1, "storage_existing_exact": 0, "unknown": 0},
         "uniqueComputeRule": "one_ready_or_running_machine_in_after_minus_before",
         "exactIdentity": ["account", "workspace", "compute_operation", "pool", "node_pool", "machine", "node", "private_ip", "cvm", "sku", "zone"],
         "billingFacts": {"chargeType": "PREPAID", "periodMonths": 1, "renewFlag": "NOTIFY_AND_MANUAL_RENEW", "deadline": "exact"},

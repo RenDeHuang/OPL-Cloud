@@ -575,7 +575,9 @@ func (app *controlPlaneServer) advanceProviderAcceptance(ctx context.Context, se
 	if stringValue(workspace["runtimeId"]) == "" {
 		prepared, prepareErr := service.PrepareWorkspace(ctx, controlplane.CreateWorkspaceInput{
 			WorkspaceID: workspaceID, AccountID: slot.AccountID, Sub2APIUserID: sub2APIUserID, OwnerID: ownerID,
-			Name: slot.ID, PackageID: slot.PackageID, AttachmentID: stringValue(attachment["id"]), ComputeID: computeID, VolumeID: storageID,
+			Name: slot.ID, PackageID: slot.PackageID, AttachmentID: stringValue(attachment["id"]),
+			AttachmentOperationID: slot.Key + ":attachment", RuntimeOperationID: slot.Key + ":workspace:runtime",
+			ComputeID: computeID, VolumeID: storageID,
 		}, slot.Key+":workspace")
 		if prepareErr != nil {
 			return "", "provider_acceptance_runtime_result_unknown", nil

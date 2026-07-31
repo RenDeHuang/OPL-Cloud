@@ -26,6 +26,7 @@ test("root agent instructions require the launch invariants", async () => {
 test("launch freeze fixes the V2 products, owner lanes, settlement, and verification slot", async () => {
   const freeze = await json("packages/contracts/opl-cloud-launch-freeze-contract.json");
 
+  assert.equal(freeze.schemaVersion, 19);
   assert.equal(freeze.architectureAuthority.repository, "https://github.com/gaofeng21cn/one-person-lab-cloud");
   assert.equal(freeze.architectureAuthority.reviewedRevision, "c349a41d860e706ed43a4090b9e75abb0b130971");
   assert.deepEqual(Object.keys(freeze.productSurfaces), ["gateway", "workspace", "serve", "console", "fabric", "ledger"]);
@@ -104,18 +105,22 @@ test("launch freeze fixes the V2 products, owner lanes, settlement, and verifica
     implementation: "integrated_local_fake_verified"
   });
   assert.deepEqual(freeze.workspaceLaunch.computeClaimRecovery, {
-    trigger: "debit_confirmed_unique_compute_created_claim_interrupted_storage_not_started",
+    trigger: "debit_confirmed_unique_compute_created_claim_interrupted_before_local_storage_operation",
     pendingState: "compute_claim_pending",
     proofRoute: "POST /api/operator/workspace-launches/{operationId}/compute-claim-recovery/proof",
     claimRoute: "POST /api/operator/workspace-launches/{operationId}/compute-claim-recovery/claim",
     proofContract: "opl-cloud-service-boundary-contract.json#services.fabric.workspaceComputeClaimRecovery",
     identitySource: ["workspace.launch.v2", "create_compute_allocation", "allocation_plan", "machine_ownership"],
     legacyCandidates: [{ status: "manual_review", phase: "compute_fulfilling" }],
-    legacyNormalization: "after_debit_identity_storage_zero_and_compute_proof_postgresql_cas_to_compute_claim_pending",
+    legacyNormalization: "after_debit_identity_local_storage_zero_and_compute_plus_exact_cbs_proof_postgresql_cas_to_compute_claim_pending",
     normalizationMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
     claimAuthorization: "operator_session_plus_internal_runner_capability_and_exact_release_owner_approval",
     fabricIdempotencyBinding: ["launch_operation_id", "idempotency_key", "target_hash", "request_hash"],
     claimMutationBounds: { sub2api: 0, tencent: { min: 0, max: 5 }, kubernetes: { min: 0, max: 1 } },
+    storageProof: "DescribeDisks_only_four_ownership_tags_complete_pagination_exact_facts_mutation_zero",
+    storageApprovalBinding: ["storageState", "storageProviderResourceId"],
+    storageCreateBounds: { storage_not_started: 1, storage_existing_exact: 0, unknown: 0 },
+    storageReplay: "persisted_original_operation_identity_fresh_discovery_reuses_exact_disk_after_restart",
     normalRetry: "same_operation_claim_only_never_prepare_or_scale_again",
     successTransition: "same_launch_storage_fulfilling_with_original_storage_identity",
     failureTransition: "manual_review_without_refund_or_replacement",
@@ -249,11 +254,11 @@ test("launch freeze fixes the V2 products, owner lanes, settlement, and verifica
     failure: "reject_before_provider_client_or_kubectl_mutation"
   });
   assert.deepEqual(freeze.providerProcurement.activationReadback, {
-    apis: ["SyncMonthlyCompute", "SyncMonthlyStorage"],
-    timing: "immediately_before_workspace_activation",
-    sharedRequiredFacts: ["resource_identity", "account_identity", "workspace_identity", "zone", "chargeType=PREPAID", "renewFlag=NOTIFY_AND_MANUAL_RENEW", "deadline"],
-    computeRequiredFacts: ["sku"],
-    storageRequiredFacts: ["capacity"],
+    api: "POST /fabric/workspace-activation-truth",
+    semantic: "describe_get_only_mutation_zero_proof",
+    consumers: ["workspace_activation", "workspace_url_gateway"],
+    requiredFacts: ["compute_ownership", "unique_cbs_pv_pvc", "attachment_identity", "gateway_secret_identity", "unique_runtime", "ready_pod_on_claimed_node", "service_endpoints_identity", "workspace_network_policy"],
+    mutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
     mismatch: "manual_review_without_activation"
   });
   assert.deepEqual(freeze.providerProcurement.unpaidExpiry, {
@@ -497,7 +502,8 @@ test("human invariants reject paid per-run resource verification", async () => {
   assert.match(invariants, /lockResource\("sub2api-wallet", accountId\)/);
   assert.match(invariants, /preBalanceUsdMicros > totalChargeUsdMicros/);
   assert.match(invariants, /ChargeAttempted.*ChargeConfirmation.*skip/is);
-  assert.match(invariants, /SyncMonthlyCompute.*SyncMonthlyStorage.*activation/is);
+  assert.match(invariants, /POST \/fabric\/workspace-activation-truth.*Describe.*GET.*mutation.*0/is);
+  assert.match(invariants, /runnerDirectMutationCounts.*0.*does not mean.*background.*0/is);
   assert.match(invariants, /GET \/fabric\/monthly-provider-truth\?computeAllocationId=<id>&storageVolumeId=<id>/);
   assert.match(invariants, /provider_truth.*Describe-only/is);
   assert.match(invariants, /local\s+identit.*unknown.*absent.*refund/is);

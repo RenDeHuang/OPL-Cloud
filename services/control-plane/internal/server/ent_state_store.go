@@ -2485,6 +2485,69 @@ func (s *postgresEntStateStore) SaveRuntimeOperation(ctx context.Context, row ma
 	)
 }
 
+func (s *postgresEntStateStore) ReserveProductionE2EAttempt(ctx context.Context, claim productionE2EAttemptClaim) (map[string]any, error) {
+	now := time.Now().UTC()
+	err := s.client.ProductionE2ERecord.Create().
+		SetID(claim.ID).
+		SetAccountID(claim.AccountID).
+		SetWorkspaceID(claim.WorkspaceID).
+		SetStatus("attempted").
+		SetResult(claim.Binding).
+		SetReason(recoveredWorkspaceE2EAttemptReason).
+		SetURL(claim.URL).
+		SetCreatedAt(now).
+		SetUpdatedAt(now).
+		Exec(ctx)
+	if controlplaneent.IsConstraintError(err) {
+		return nil, errProductionE2EAttemptAlreadyExists
+	}
+	if err != nil {
+		return nil, err
+	}
+	record, found, err := s.GetProductionE2EAttempt(ctx, claim.ID)
+	if err != nil || !found {
+		return nil, err
+	}
+	return record, nil
+}
+
+func (s *postgresEntStateStore) GetProductionE2EAttempt(ctx context.Context, id string) (map[string]any, bool, error) {
+	entity, err := s.client.ProductionE2ERecord.Get(ctx, id)
+	if controlplaneent.IsNotFound(err) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return recordFromEnt(entity, productionE2EEntFields), true, nil
+}
+
+func (s *postgresEntStateStore) CompleteProductionE2EAttempt(ctx context.Context, id, binding string) (map[string]any, error) {
+	updated, err := s.client.ProductionE2ERecord.Update().Where(
+		productione2erecord.IDEQ(id),
+		productione2erecord.ReasonEQ(recoveredWorkspaceE2EAttemptReason),
+		productione2erecord.ResultEQ(binding),
+		productione2erecord.StatusEQ("attempted"),
+	).SetStatus("passed").SetUpdatedAt(time.Now().UTC()).Save(ctx)
+	if err != nil {
+		return nil, err
+	}
+	record, found, err := s.GetProductionE2EAttempt(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, errProductionE2EAttemptNotFound
+	}
+	if stringValue(record["reason"]) != recoveredWorkspaceE2EAttemptReason || stringValue(record["result"]) != binding {
+		return nil, errProductionE2EAttemptBindingMismatch
+	}
+	if updated == 0 && stringValue(record["status"]) != "passed" {
+		return nil, errProductionE2EAttemptBindingMismatch
+	}
+	return record, nil
+}
+
 func (s *postgresEntStateStore) BillingReconciliation(ctx context.Context) (map[string]any, bool, error) {
 	row, err := s.client.BillingReconciliation.Query().Order(controlplaneent.Desc(billingreconciliation.FieldCreatedAt, billingreconciliation.FieldID)).First(ctx)
 	if controlplaneent.IsNotFound(err) {
@@ -2680,7 +2743,10 @@ func (s *postgresEntStateStore) ApplyRetention(ctx context.Context, policy reten
 		result["supportDeleted"] = deleted
 	}
 	if cutoff := policy.cutoff(policy.ProductionE2EDays); !cutoff.IsZero() {
-		deleted, err := tx.ProductionE2ERecord.Delete().Where(productione2erecord.CreatedAtLT(cutoff)).Exec(ctx)
+		deleted, err := tx.ProductionE2ERecord.Delete().Where(
+			productione2erecord.CreatedAtLT(cutoff),
+			productione2erecord.ReasonNEQ(recoveredWorkspaceE2EAttemptReason),
+		).Exec(ctx)
 		if err != nil {
 			return nil, err
 		}
