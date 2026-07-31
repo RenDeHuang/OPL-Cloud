@@ -521,6 +521,198 @@ func TestWorkspaceLaunchUnknownStageConvergesFromAuthoritativeReadbackAfterResta
 	}
 }
 
+func TestWorkspaceLaunchRecoveredStorageAuthorizesAttachmentRecoveryAfterRestart(t *testing.T) {
+	t.Setenv("OPL_INTERNAL_SERVICE_TOKEN", "workspace-launch-readback-capability")
+	scenario := newWorkspaceLaunchReadbackRecoveryScenario(t, "storage", "basic")
+	fixture := scenario.fixture
+	fixture.service = controlplane.NewService(fixture.ledger, scenario.readback, fixture.sub2API)
+	server, err := NewPersistentServer(fixture.service, fixture.store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture.server, fixture.operator = server, reservedOperatorSessionForTest(t, server)
+
+	fixture.fabric.attachmentErr = errors.New("attachment response lost after write")
+	storageKey := "recover-storage-before-attachment"
+	storageApproval := testWorkspaceLaunchReadbackApproval(t, scenario.approvalOperation, "storage", storageKey, scenario.readback)
+	storageResponse := requestWorkspaceLaunchReadbackRecovery(t, fixture, storageApproval, storageKey)
+	if storageResponse.Code != http.StatusOK {
+		t.Fatalf("storage recovery status=%d body=%s", storageResponse.Code, storageResponse.Body.String())
+	}
+	attachmentUnknown := fixture.operation(t)
+	if attachmentUnknown.Status != "manual_review" || attachmentUnknown.Phase != workspaceLaunchReadbackRecoveryPhase("attachment") ||
+		attachmentUnknown.ContinuationAttemptBudgets["storage"] != (workspaceLaunchStageBudget{Attempted: 1, Confirmed: 1, Max: 1}) ||
+		attachmentUnknown.ContinuationAttemptBudgets["attachment"] != (workspaceLaunchStageBudget{Attempted: 1, Unknown: 1, Max: 1}) ||
+		attachmentUnknown.ReadbackRecoveryApproval == nil || attachmentUnknown.ReadbackRecoveryApproval.Stage != "storage" ||
+		attachmentUnknown.ReadbackRecoveryProof == nil || attachmentUnknown.ReadbackRecoveryProof.Stage != "storage" {
+		t.Fatalf("sequential recovery state=%#v", attachmentUnknown)
+	}
+	if scenario.readback.operations[1].Status != "failed" || len(fixture.fabric.storageIDs) != 1 || countStrings(*fixture.events, "fabric.attachment") != 1 {
+		t.Fatalf("storage recovery changed Fabric operation or repeated a write: operations=%#v events=%#v", scenario.readback.operations, *fixture.events)
+	}
+
+	fixture.fabric.attachmentErr = nil
+	fixture.fabric.gatewaySecretErr = errors.New("gateway Secret response lost after write")
+	attachment := fixture.fabric.attachment
+	scenario.readback.operations = append(scenario.readback.operations, fabricHTTPSerializedOperation(t, clients.FabricOperation{
+		ID:          "fop_attachment_claim_" + workspaceComputeClaimStableSuffix("create_storage_attachment", attachmentUnknown.AttachmentOperationID)[:16],
+		OperationID: workspaceLaunchStorageAttachmentFabricOperationID(attachmentUnknown), Action: "create_storage_attachment",
+		ResourceKind: "storage_attachment", ResourceID: attachment.ID, AccountID: attachmentUnknown.AccountID, WorkspaceID: attachmentUnknown.WorkspaceID,
+		IdempotencyKey: attachmentUnknown.AttachmentOperationID, RequestHash: workspaceLaunchStorageAttachmentRequestHash(attachmentUnknown), Status: "started",
+		RedactedProviderPayload: map[string]any{"resource": attachment},
+	}))
+
+	restarted, err := NewPersistentServer(fixture.service, fixture.store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture.server, fixture.operator = restarted, reservedOperatorSessionForTest(t, restarted)
+	for _, test := range []struct {
+		name   string
+		mutate func(*workspaceLaunchOperation)
+	}{
+		{name: "missing persisted storage recovery", mutate: func(operation *workspaceLaunchOperation) {
+			operation.ReadbackRecoveryApproval, operation.ReadbackRecoveryProof = nil, nil
+		}},
+		{name: "storage budget not confirmed", mutate: func(operation *workspaceLaunchOperation) {
+			operation.ContinuationAttemptBudgets["storage"] = workspaceLaunchStageBudget{Attempted: 1, Max: 1}
+		}},
+		{name: "storage operation identity drift", mutate: func(operation *workspaceLaunchOperation) {
+			operation.ReadbackRecoveryApproval.OperationIDs.Storage.RequestHash = strings.Repeat("d", 64)
+			operation.ReadbackRecoveryProof.OperationIDs.Storage.RequestHash = strings.Repeat("d", 64)
+			operation.ReadbackRecoveryApproval.ApprovalDigest = workspaceLaunchReadbackRecoveryApprovalDigest(*operation.ReadbackRecoveryApproval)
+		}},
+		{name: "storage resource identity drift", mutate: func(operation *workspaceLaunchOperation) {
+			operation.ReadbackRecoveryApproval.Resources.StorageProviderResourceID += "-other"
+			operation.ReadbackRecoveryProof.Resources.StorageProviderResourceID += "-other"
+			operation.ReadbackRecoveryApproval.ApprovalDigest = workspaceLaunchReadbackRecoveryApprovalDigest(*operation.ReadbackRecoveryApproval)
+		}},
+		{name: "storage approval binding drift", mutate: func(operation *workspaceLaunchOperation) {
+			operation.ReadbackRecoveryApproval.ApprovalDigest = strings.Repeat("0", 64)
+		}},
+	} {
+		t.Run("fails closed/"+test.name, func(t *testing.T) {
+			mutated := attachmentUnknown
+			mutated.ContinuationAttemptBudgets = make(map[string]workspaceLaunchStageBudget, len(attachmentUnknown.ContinuationAttemptBudgets))
+			for stage, budget := range attachmentUnknown.ContinuationAttemptBudgets {
+				mutated.ContinuationAttemptBudgets[stage] = budget
+			}
+			approval := *mutated.ReadbackRecoveryApproval
+			proof := *mutated.ReadbackRecoveryProof
+			mutated.ReadbackRecoveryApproval, mutated.ReadbackRecoveryProof = &approval, &proof
+			test.mutate(&mutated)
+			mustStore(t, fixture.store.memoryTableStore.SaveRuntimeOperation(context.Background(), workspaceLaunchOperationRow(mutated)))
+			response := requestWorkspaceLaunchReadbackProof(t, fixture)
+			if response.Code != http.StatusConflict {
+				t.Fatalf("diagnosis status=%d body=%s", response.Code, response.Body.String())
+			}
+		})
+	}
+	mustStore(t, fixture.store.memoryTableStore.SaveRuntimeOperation(context.Background(), workspaceLaunchOperationRow(attachmentUnknown)))
+	scenario.readback.operations[1].Status = "started"
+	if response := requestWorkspaceLaunchReadbackProof(t, fixture); response.Code != http.StatusOK {
+		t.Fatalf("attachment diagnosis after recovered started storage status=%d body=%s", response.Code, response.Body.String())
+	}
+	scenario.readback.operations[1].Status = "failed"
+	proofResponse := requestWorkspaceLaunchReadbackProof(t, fixture)
+	if proofResponse.Code != http.StatusOK {
+		t.Fatalf("attachment diagnosis after recovered storage status=%d body=%s", proofResponse.Code, proofResponse.Body.String())
+	}
+
+	attachmentKey := "recover-attachment-after-storage"
+	attachmentApprovalOperation := attachmentUnknown
+	attachmentApprovalOperation.AttachmentID = attachment.ID
+	attachmentApproval := testWorkspaceLaunchReadbackApproval(t, attachmentApprovalOperation, "attachment", attachmentKey, scenario.readback)
+	attachmentResponse := requestWorkspaceLaunchReadbackRecovery(t, fixture, attachmentApproval, attachmentKey)
+	if attachmentResponse.Code != http.StatusOK {
+		t.Fatalf("attachment recovery status=%d body=%s", attachmentResponse.Code, attachmentResponse.Body.String())
+	}
+	secretUnknown := fixture.operation(t)
+	if secretUnknown.Status != "manual_review" || secretUnknown.Phase != workspaceLaunchReadbackRecoveryPhase("secret") ||
+		secretUnknown.ContinuationAttemptBudgets["attachment"] != (workspaceLaunchStageBudget{Attempted: 1, Confirmed: 1, Max: 1}) ||
+		secretUnknown.ContinuationAttemptBudgets["secret"] != (workspaceLaunchStageBudget{Attempted: 1, Unknown: 1, Max: 1}) ||
+		secretUnknown.ReadbackRecoveryApproval == nil || secretUnknown.ReadbackRecoveryApproval.Stage != "attachment" ||
+		secretUnknown.ReadbackRecoveryProof == nil || secretUnknown.ReadbackRecoveryProof.Stage != "attachment" ||
+		len(fixture.fabric.gatewaySecretInputs) != 1 {
+		t.Fatalf("attachment recovery did not preserve the next unknown stage: operation=%#v gatewayInputs=%#v", secretUnknown, fixture.fabric.gatewaySecretInputs)
+	}
+	fingerprint := fixture.fabric.gatewaySecretInputs[0].Fingerprint
+	scenario.readback.operations = append(scenario.readback.operations, clients.FabricOperation{
+		ID: "fop-gateway-readback", OperationID: "op-upsert-secret-" + stableID(secretUnknown.ID)[:10], Action: "upsert_gateway_secret",
+		ResourceKind: "gateway_secret", ResourceID: workspaceGatewaySecretReference(secretUnknown.WorkspaceID), AccountID: secretUnknown.AccountID,
+		WorkspaceID: secretUnknown.WorkspaceID, IdempotencyKey: secretUnknown.WorkspaceOperationID + ":secret:gateway-secret",
+		RequestHash: stableID("secret", secretUnknown.ID), Status: "started", RedactedProviderPayload: map[string]any{"resource": clients.GatewaySecretWriteResult{
+			SecretRef: workspaceGatewaySecretReference(secretUnknown.WorkspaceID), Version: "v1", Fingerprint: fingerprint,
+		}},
+	})
+	fixture.fabric.gatewaySecretErr = nil
+	restarted, err = NewPersistentServer(fixture.service, fixture.store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture.server, fixture.operator = restarted, reservedOperatorSessionForTest(t, restarted)
+	for _, test := range []struct {
+		name   string
+		mutate func(*workspaceLaunchOperation)
+	}{
+		{name: "latest recovered stage budget not confirmed", mutate: func(operation *workspaceLaunchOperation) {
+			operation.ContinuationAttemptBudgets["attachment"] = workspaceLaunchStageBudget{Attempted: 1, Max: 1}
+		}},
+		{name: "latest recovery binding missing", mutate: func(operation *workspaceLaunchOperation) {
+			operation.ReadbackRecoveryApproval.OperationIDs.Attachment.ReadbackBindingDigest = ""
+			operation.ReadbackRecoveryProof.OperationIDs.Attachment.ReadbackBindingDigest = ""
+			operation.ReadbackRecoveryApproval.ApprovalDigest = workspaceLaunchReadbackRecoveryApprovalDigest(*operation.ReadbackRecoveryApproval)
+		}},
+		{name: "latest recovery proof drift", mutate: func(operation *workspaceLaunchOperation) {
+			operation.ReadbackRecoveryProof.OperationIDs.Storage.RequestHash = strings.Repeat("e", 64)
+		}},
+	} {
+		t.Run("fails closed after later recovery/"+test.name, func(t *testing.T) {
+			mutated := secretUnknown
+			mutated.ContinuationAttemptBudgets = make(map[string]workspaceLaunchStageBudget, len(secretUnknown.ContinuationAttemptBudgets))
+			for stage, budget := range secretUnknown.ContinuationAttemptBudgets {
+				mutated.ContinuationAttemptBudgets[stage] = budget
+			}
+			approval := *mutated.ReadbackRecoveryApproval
+			proof := *mutated.ReadbackRecoveryProof
+			mutated.ReadbackRecoveryApproval, mutated.ReadbackRecoveryProof = &approval, &proof
+			test.mutate(&mutated)
+			mustStore(t, fixture.store.memoryTableStore.SaveRuntimeOperation(context.Background(), workspaceLaunchOperationRow(mutated)))
+			response := requestWorkspaceLaunchReadbackProof(t, fixture)
+			if response.Code != http.StatusConflict {
+				t.Fatalf("diagnosis status=%d body=%s", response.Code, response.Body.String())
+			}
+		})
+	}
+	mustStore(t, fixture.store.memoryTableStore.SaveRuntimeOperation(context.Background(), workspaceLaunchOperationRow(secretUnknown)))
+	originalStorageProviderID := scenario.readback.providerTruth.Storage.ProviderResourceID
+	scenario.readback.providerTruth.Storage.ProviderResourceID = originalStorageProviderID + "-other"
+	if response := requestWorkspaceLaunchReadbackProof(t, fixture); response.Code != http.StatusConflict {
+		t.Fatalf("provider identity drift diagnosis status=%d body=%s", response.Code, response.Body.String())
+	}
+	scenario.readback.providerTruth.Storage.ProviderResourceID = originalStorageProviderID
+	proofResponse = requestWorkspaceLaunchReadbackProof(t, fixture)
+	if proofResponse.Code != http.StatusOK {
+		t.Fatalf("secret diagnosis after storage and attachment recovery status=%d body=%s", proofResponse.Code, proofResponse.Body.String())
+	}
+
+	secretKey := "recover-stage-" + stableID("storage", "attachment", "secret")[:12]
+	secretApprovalOperation := secretUnknown
+	secretApprovalOperation.WorkspaceKeyFingerprint = fingerprint
+	secretApproval := testWorkspaceLaunchReadbackApproval(t, secretApprovalOperation, "secret", secretKey, scenario.readback)
+	secretResponse := requestWorkspaceLaunchReadbackRecovery(t, fixture, secretApproval, secretKey)
+	if secretResponse.Code != http.StatusOK {
+		t.Fatalf("secret recovery status=%d body=%s", secretResponse.Code, secretResponse.Body.String())
+	}
+	recovered := fixture.operation(t)
+	if recovered.Status != "succeeded" || recovered.Phase != "succeeded" || recovered.URL == "" || recovered.ReceiptID == "" ||
+		recovered.ContinuationAttemptBudgets["secret"] != (workspaceLaunchStageBudget{Attempted: 1, Confirmed: 1, Max: 1}) ||
+		len(fixture.fabric.storageIDs) != 1 || countStrings(*fixture.events, "fabric.attachment") != 1 ||
+		countStrings(*fixture.events, "fabric.gateway-secret") != 1 || scenario.readback.operations[1].Status != "failed" {
+		t.Fatalf("sequential recovery crossed bounds: operation=%#v operations=%#v events=%#v", recovered, scenario.readback.operations, *fixture.events)
+	}
+}
+
 func TestWorkspaceLaunchAttachmentSecretRuntimeUseDedicatedFabricProofAndCAS(t *testing.T) {
 	t.Setenv("OPL_INTERNAL_SERVICE_TOKEN", "workspace-launch-readback-capability")
 	for _, packageID := range []string{"basic", "pro"} {

@@ -1665,6 +1665,52 @@ func workspaceLaunchStageConvergenceMatches(input clients.WorkspaceLaunchStageRe
 		proof.Operation.IdempotencyKey == input.IdempotencyKey && proof.Operation.RequestHash == input.RequestHash && proof.Operation.Status == "succeeded"
 }
 
+func workspaceLaunchRecoveredStorageEvidenceMatches(operation workspaceLaunchOperation, currentStage string, truth clients.MonthlyProviderTruth, candidate clients.FabricOperation) bool {
+	approval, proof := operation.ReadbackRecoveryApproval, operation.ReadbackRecoveryProof
+	unknownBudget := workspaceLaunchStageBudget{Attempted: 1, Unknown: 1, Max: workspaceLaunchStageMax}
+	confirmedBudget := workspaceLaunchStageBudget{Attempted: 1, Confirmed: 1, Max: workspaceLaunchStageMax}
+	storageIndex, currentIndex := workspaceLaunchReadbackStageIndex("storage"), workspaceLaunchReadbackStageIndex(currentStage)
+	recoveryStage, recoveryIndex := "", len(workspaceLaunchContinuationStages)+1
+	expiresAtValue := ""
+	if approval != nil {
+		recoveryStage, expiresAtValue = approval.Stage, approval.ExpiresAt
+		recoveryIndex = workspaceLaunchReadbackStageIndex(recoveryStage)
+	}
+	priorStagesConfirmed := workspaceLaunchReadbackRecoveryStageValid(currentStage) && workspaceLaunchReadbackRecoveryStageValid(recoveryStage) &&
+		currentIndex > storageIndex && recoveryIndex >= storageIndex && recoveryIndex < currentIndex
+	for index := storageIndex; priorStagesConfirmed && index < currentIndex; index++ {
+		priorStagesConfirmed = operation.ContinuationAttemptBudgets[workspaceLaunchContinuationStages[index]] == confirmedBudget
+	}
+	expiresAt, expiresErr := time.Parse(time.RFC3339, expiresAtValue)
+	if !priorStagesConfirmed || approval == nil || proof == nil || approval.SchemaVersion != 1 ||
+		approval.ApprovalID == "" || approval.IdempotencyKey == "" || approval.RecoveryKey == "" || approval.Confirmation != workspaceLaunchReadbackRecoveryConfirmation ||
+		approval.ApprovalDigest == "" || workspaceLaunchReadbackRecoveryApprovalDigest(*approval) != approval.ApprovalDigest || expiresErr != nil || expiresAt.IsZero() ||
+		!computeClaimMergedSHAPattern.MatchString(approval.MergedMainSHA) || !computeClaimCloudDigestPattern.MatchString(approval.CloudImageDigest) ||
+		approval.WorkspaceImageDigest != operation.WorkspaceImageDigest || approval.Customer.AccountID != operation.AccountID || approval.Customer.OwnerUserID != operation.OwnerUserID ||
+		approval.AttemptBudget != unknownBudget || !workspaceLaunchReadbackRecoveryOperationPlanMatches(approval.OperationIDs, operation) ||
+		approval.OperationIDs.Storage.ReadbackBindingDigest != "" || !workspaceLaunchReadbackRecoveryStageBindingMatches(approval.OperationIDs, recoveryStage) ||
+		!equalWorkspaceComputeClaimStrings(approval.AllowedWrites, workspaceLaunchReadbackRecoveryAllowedWrites(recoveryStage)) ||
+		!equalWorkspaceComputeClaimStrings(approval.ForbiddenWrites, workspaceLaunchReadbackRecoveryForbiddenWrites) ||
+		proof.SchemaVersion != 1 || !proof.Eligible || proof.Reason != "none" || proof.Stage != recoveryStage || proof.Customer != approval.Customer ||
+		proof.Target != approval.Target || proof.Resources != approval.Resources || proof.OperationIDs != approval.OperationIDs ||
+		proof.WorkspaceImageDigest != approval.WorkspaceImageDigest || proof.AttemptBudget != approval.AttemptBudget ||
+		!equalWorkspaceComputeClaimStrings(proof.AllowedWrites, approval.AllowedWrites) || !equalWorkspaceComputeClaimStrings(proof.ForbiddenWrites, approval.ForbiddenWrites) ||
+		proof.Sub2APIMutationCount != 0 || proof.TencentMutationCount != 0 || proof.KubernetesMutationCount != 0 {
+		return false
+	}
+
+	providerOperationID, tagsOK := workspaceLaunchReadbackProviderOperationID(truth.Storage.CostTags, operation.AccountID, operation.WorkspaceID, operation.StorageID)
+	storageIdentity := workspaceLaunchReadbackOperationIdentity(candidate, truth.Storage.OperationID, providerOperationID)
+	expectedTarget, targetErr := workspaceLaunchReadbackRecoveryExpectedTarget(operation, truth)
+	resources := approval.Resources
+	return tagsOK && truth.Storage.OperationID == candidate.IdempotencyKey && approval.OperationIDs.Storage == storageIdentity && targetErr == nil && approval.Target == expectedTarget &&
+		resources.ComputeAllocationID == operation.ComputeID && resources.ComputeProviderResourceID == truth.Compute.ProviderResourceID &&
+		resources.StorageVolumeID == operation.StorageID && resources.StorageProviderResourceID == truth.Storage.ProviderResourceID &&
+		resources.StorageZone == truth.Storage.Zone && resources.StorageSizeGB == truth.Storage.SizeGB && resources.StorageChargeType == truth.Storage.ProviderData["chargeType"] &&
+		resources.StorageRenewFlag == truth.Storage.RenewFlag && resources.StorageDeadline == truth.Storage.Deadline &&
+		resources.GatewaySecretRef == workspaceGatewaySecretReference(operation.WorkspaceID) && resources.WorkspaceAPIKeyID == operation.WorkspaceAPIKeyID
+}
+
 func workspaceLaunchReadbackRecoveryAuthorityForOperation(operation workspaceLaunchOperation, stage string, truth clients.MonthlyProviderTruth, ownership clients.MachineOwnership, operations []clients.FabricOperation) (workspaceLaunchReadbackRecoveryAuthority, error) {
 	compute := truth.Compute
 	instanceID := firstNonEmpty(compute.CVMInstanceID, compute.InstanceID)
@@ -1688,7 +1734,8 @@ func workspaceLaunchReadbackRecoveryAuthorityForOperation(operation workspaceLau
 		}
 		identity := workspaceLaunchReadbackRecoveryFabricOperationIdentity{IdempotencyKey: spec.IdempotencyKey}
 		if found {
-			if spec.Stage != stage && candidate.Status != "succeeded" {
+			if spec.Stage != stage && candidate.Status != "succeeded" &&
+				(spec.Stage != "storage" || !workspaceLaunchRecoveredStorageEvidenceMatches(operation, stage, truth, candidate)) {
 				return workspaceLaunchReadbackRecoveryAuthority{}, errBillingReviewProviderFact
 			}
 			switch spec.Stage {
