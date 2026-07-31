@@ -812,18 +812,18 @@ Workspace 已激活但 Receipt 缺失
 → 只重试 Receipt
 ```
 
-## 7. 当前实现差距
+## 7. 当前实现状态与权威限制
 
-本合同是目标展示 SSOT，不代表下列差距已完成：
+当前 React Console 已在隔离 worktree 中达到 `code-complete`，并由合同测试、单元测试和本地 fake-only Browser QA 验证以下展示合同：
 
-- Workspace 购买确认当前缺少 CPU/内存、计算/存储组成、价格版本和明确权益期。
-- Workspace 详情当前缺少 CPU/内存、价格版本和 `periodStart`。
-- 收据详情当前缺少 Receipt ID、计算/存储组成和 charge reference。
-- 客户与计费账户当前缺少完整账户详情 readback 和开户 operation readback。
-- 计费复核当前列表信息不足，缺少按来源组织的证据详情。
-- 运维概览当前没有可用的全局 Sub2API 余额、Key 和 Usage 聚合，不得把不可用值包装成运营指标。
-- 系统状态当前仅有基础健康表，缺少客户影响说明。
-- 移动端公告当前未进入底部导航，需要提供明确可达入口。
-- Account Settings 和 Support 当前没有 Console 页面；它们应作为全局次级 slide 实现，不新增一级导航。
+- Workspace 购买确认展示 CPU/内存、计算/存储组成、价格版本、月度总额和明确权益期；字段来自产品合同与服务端价格预览。
+- Workspace 详情展示价格版本和 `periodStart`。CPU/内存仅在权威详情源提供时展示，否则明确显示“暂不可用”，不得根据套餐在浏览器中反推。
+- 收据详情展示 Receipt ID、计算/存储组成和 charge reference，并隐藏履约资源与 provider 内部字段。
+- 客户与计费账户提供完整账户详情、开户 operation 结果和账户列表权威读回。
+- 计费复核按 Gateway、Fabric、Ledger 来源组织证据；恢复动作只按服务端 `allowedActions` 展示。
+- 运维概览消费 Control Plane 返回的全局 Sub2API 余额、Key 和 Usage 聚合；来源不可用时保留“暂不可用”，不得包装成运营指标。
+- 系统状态已提供“客户影响范围”列；健康源未提供影响事实时显示“暂不可用”，不得由前端推断。
+- 移动端公告通过客户概览中的“全部”入口明确可达，不增加冻结合同以外的一级底部导航。
+- Account Settings 和 Support 已作为全局次级 slide 实现，不新增一级导航。
 
-这些差距必须通过匹配代码、测试和运行时证据逐项关闭，不能仅通过修改本文件宣称完成。
+上述证据只证明本地实现与 fake 数据链路，不代表真实认证后运行、生产数据完整性或生产部署已经验证。

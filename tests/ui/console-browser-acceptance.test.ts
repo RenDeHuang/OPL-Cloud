@@ -25,6 +25,18 @@ test("Console browser covers customer and operator truth states at desktop and m
   assert.deepEqual(result.roles, ["customer", "operator"]);
   assert.deepEqual(result.sourceStates, ["available", "empty", "unavailable", "error"]);
   assert.deepEqual(result.repeatedWrites, { gatewayKey: 1, walletAdjustment: 1 });
+  assert.deepEqual(result.highRiskWrites, {
+    workspaceLaunch: 1,
+    operatorProvision: 1,
+    announcementCreate: 1,
+    announcementPublish: 1,
+    announcementWithdraw: 1,
+    supportMapping: 1
+  });
+  assert.equal(result.workspaceLaunchAuthoritativeReadback, true);
+  assert.equal(result.operatorProvisionAuthoritativeReadback, true);
+  assert.equal(result.announcementLifecycle, true);
+  assert.equal(result.supportMappingReadback, true);
   assert.equal(result.operatorAccountDisableWrites, 1);
   assert.deepEqual(result.operatorAccountStatuses, { "acct-1": "disabled", "acct-2": "disabled" });
   assert.deepEqual(result.operatorAccountViewports, ["desktop", "mobile"]);

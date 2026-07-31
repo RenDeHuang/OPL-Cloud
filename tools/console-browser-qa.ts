@@ -222,6 +222,12 @@ export function createConsoleFixtureState({ faultInjection = true, seedDemoData 
     ],
     nextKeyId: 12,
     gatewayWriteResults: new Map(),
+    workspaceLaunchWriteResults: new Map(),
+    operatorProvisionWriteResults: new Map(),
+    announcementCreateWriteResults: new Map(),
+    announcementPublishWriteResults: new Map(),
+    announcementWithdrawWriteResults: new Map(),
+    supportWriteResults: new Map(),
     launches: [],
     workspaces: [workspace(), workspace("ws-2")],
     workspacePasswords: new Map(Object.entries(WORKSPACE_PASSWORDS)),
@@ -232,6 +238,13 @@ export function createConsoleFixtureState({ faultInjection = true, seedDemoData 
     faultInjection,
     operatorAccounts: [operatorAccount("acct-1", "active"), operatorAccount("acct-2", "disabled")],
     gatewayWrites: new Set(), walletWrites: new Set(), lostGatewayResponses: new Set(), lostWalletResponses: new Set(),
+    workspaceLaunchWrites: new Set(), operatorProvisionWrites: new Set(), announcementCreateWrites: new Set(),
+    announcementPublishWrites: new Set(), announcementWithdrawWrites: new Set(), supportWrites: new Set(),
+    workspaceLaunchAttempts: new Map(), operatorProvisionAttempts: new Map(), announcementCreateAttempts: new Map(),
+    announcementPublishAttempts: new Map(), announcementWithdrawAttempts: new Map(), supportAttempts: new Map(),
+    lostWorkspaceLaunchResponses: new Set(), lostOperatorProvisionResponses: new Set(), lostAnnouncementCreateResponses: new Set(),
+    lostAnnouncementPublishResponses: new Set(), lostAnnouncementWithdrawResponses: new Set(), lostSupportResponses: new Set(),
+    workspaceLaunchReadbacks: new Set(), operatorProvisionReadbacks: new Set(), announcementReadbackStatuses: new Map(), supportReadbacks: new Set(),
     operatorDisableWrites: new Set(),
     gatewayMutationWrites: new Set(), gatewayActions: [], revealCalls: new Map(), emptyGatewayReadbacks: 0,
     runtimeReads: new Map(), workspaceSecretReads: new Map(), workspacePageReads: [],
@@ -267,6 +280,11 @@ async function fulfillJson(route, payload, status = 200, headers = {}) {
     headers,
     body: JSON.stringify(payload)
   });
+}
+
+function recordWriteAttempt(writes, attempts, identity) {
+  writes.add(identity);
+  attempts.set(identity, (attempts.get(identity) || 0) + 1);
 }
 
 export async function apiFixture(route, state, session = state) {
@@ -331,46 +349,62 @@ export async function apiFixture(route, state, session = state) {
     const pageSize = Number(url.searchParams.get("pageSize"));
     const allWorkspaces = state.workspaces.filter((item) => item.ownerAccountId === session.accountId);
     const start = (page - 1) * pageSize;
+    const items = allWorkspaces.slice(start, start + pageSize);
     state.workspacePageReads.push({ page, pageSize });
-    return fulfillJson(route, source({ items: allWorkspaces.slice(start, start + pageSize), total: allWorkspaces.length, page, pageSize }));
+    for (const operation of state.workspaceLaunchWriteResults.values()) {
+      if (items.some((item) => item.id === operation.workspaceId)) state.workspaceLaunchReadbacks.add(operation.workspaceId);
+    }
+    return fulfillJson(route, source({ items, total: allWorkspaces.length, page, pageSize }));
   }
   if (path === "/api/workspace-launches" && method === "GET") {
     return fulfillJson(route, state.launches.filter((item) => item.accountId === session.accountId));
   }
   if (path === "/api/workspace-launches" && method === "POST") {
+    const idempotencyKey = request.headers()["idempotency-key"] || "";
+    if (!idempotencyKey) return fulfillJson(route, { error: "idempotency_key_required" }, 400);
     const input = request.postDataJSON();
-    const workspaceId = `ws-demo-${state.workspaces.length + 1}`;
-    const plan = input.packageId === "pro" ? "pro" : "basic";
-    const workspaceKeyId = allocateGatewayKeyId(state);
-    state.workspaceKeys.push(gatewayKey(workspaceKeyId, "Workspace Key", {}, {
-      kind: "workspace",
-      ownerAccountId: session.accountId,
-      secret: `sk-fixture-workspace-${workspaceId}-${workspaceKeyId}`
-    }));
-    const created = {
-      id: workspaceId, ownerAccountId: session.accountId, ownerUserId: session.consoleUserId, state: "running",
-      createdAt: NOW, updatedAt: NOW, name: input.name,
-      url: `https://workspace.example.invalid/w/${workspaceId}/`, packageId: plan,
-      storageGb: plan === "pro" ? 100 : 10, autoRenew: false,
-      priceVersion: "pilot-usd-2026-07-v1", currency: "USD",
-      totalUsdMicros: plan === "pro" ? 240_080_000 : 52_580_000,
-      periodStart: NOW, paidThrough: "2026-08-19T12:00:00Z", renewalStatus: "manual",
-      workspaceApiKeyId: workspaceKeyId
-    };
-    state.workspaces.push(created);
-    state.workspacePasswords.set(workspaceId, `fixture-${workspaceId}-workspace-password-v1`);
-    state.workspaceCredentialVersions.set(workspaceId, 1);
-    const operation = {
-      operationId: `launch-${workspaceId}`, status: "succeeded", phase: "completed",
-      accountId: session.accountId, workspaceId, name: created.name, packageId: plan,
-      sizeGb: created.storageGb, autoRenew: false, priceVersion: created.priceVersion,
-      currency: "USD", totalChargeUsdMicros: created.totalUsdMicros,
-      url: created.url, receiptId: `receipt-${workspaceId}`, createdAt: NOW, updatedAt: NOW
-    };
-    state.launches = [
-      ...state.launches.filter((item) => item.accountId !== session.accountId || item.operationId !== operation.operationId),
-      operation
-    ];
+    const writeIdentity = `${session.accountId}:${idempotencyKey}`;
+    recordWriteAttempt(state.workspaceLaunchWrites, state.workspaceLaunchAttempts, writeIdentity);
+    let operation = state.workspaceLaunchWriteResults.get(writeIdentity);
+    if (!operation) {
+      const workspaceId = `ws-demo-${state.workspaces.length + 1}`;
+      const plan = input.packageId === "pro" ? "pro" : "basic";
+      const workspaceKeyId = allocateGatewayKeyId(state);
+      state.workspaceKeys.push(gatewayKey(workspaceKeyId, "Workspace Key", {}, {
+        kind: "workspace",
+        ownerAccountId: session.accountId,
+        secret: `sk-fixture-workspace-${workspaceId}-${workspaceKeyId}`
+      }));
+      const created = {
+        id: workspaceId, ownerAccountId: session.accountId, ownerUserId: session.consoleUserId, state: "running",
+        createdAt: NOW, updatedAt: NOW, name: input.name,
+        url: `https://workspace.example.invalid/w/${workspaceId}/`, packageId: plan,
+        storageGb: plan === "pro" ? 100 : 10, autoRenew: false,
+        priceVersion: "pilot-usd-2026-07-v1", currency: "USD",
+        totalUsdMicros: plan === "pro" ? 240_080_000 : 52_580_000,
+        periodStart: NOW, paidThrough: "2026-08-19T12:00:00Z", renewalStatus: "manual",
+        workspaceApiKeyId: workspaceKeyId
+      };
+      state.workspaces.push(created);
+      state.workspacePasswords.set(workspaceId, `fixture-${workspaceId}-workspace-password-v1`);
+      state.workspaceCredentialVersions.set(workspaceId, 1);
+      operation = {
+        operationId: `launch-${workspaceId}`, status: "succeeded", phase: "completed",
+        accountId: session.accountId, workspaceId, name: created.name, packageId: plan,
+        sizeGb: created.storageGb, autoRenew: false, priceVersion: created.priceVersion,
+        currency: "USD", totalChargeUsdMicros: created.totalUsdMicros,
+        url: created.url, receiptId: `receipt-${workspaceId}`, createdAt: NOW, updatedAt: NOW
+      };
+      state.workspaceLaunchWriteResults.set(writeIdentity, operation);
+      state.launches = [
+        ...state.launches.filter((item) => item.accountId !== session.accountId || item.operationId !== operation.operationId),
+        operation
+      ];
+    }
+    if (state.faultInjection && !state.lostWorkspaceLaunchResponses.has(writeIdentity)) {
+      state.lostWorkspaceLaunchResponses.add(writeIdentity);
+      return route.abort("failed");
+    }
     return fulfillJson(route, operation);
   }
   const launchMatch = path.match(/^\/api\/workspace-launches\/([^/]+)$/);
@@ -461,18 +495,36 @@ export async function apiFixture(route, state, session = state) {
       ? fulfillJson(route, source(billingReceipt(), "ledger"))
       : fulfillJson(route, { error: "receipt_not_found" }, 404);
   }
-  if (path === "/api/support/tickets" && method === "GET") return fulfillJson(route, { tickets: state.supportTickets.filter((item) => item.accountId === session.accountId) });
+  if (path === "/api/support/tickets" && method === "GET") {
+    const tickets = state.supportTickets.filter((item) => item.accountId === session.accountId);
+    for (const ticketId of state.supportWriteResults.values()) {
+      if (tickets.some((ticket) => ticket.id === ticketId)) state.supportReadbacks.add(ticketId);
+    }
+    return fulfillJson(route, { tickets });
+  }
   if (path === "/api/support/tickets" && method === "POST") {
+    const idempotencyKey = request.headers()["idempotency-key"] || "";
+    if (!idempotencyKey) return fulfillJson(route, { error: "idempotency_key_required" }, 400);
     const input = request.postDataJSON();
-    const ticket = {
-      id: `support-${state.supportTickets.length + 1}`, externalSystem: input.externalSystem || "support",
-      externalTicketId: input.externalTicketId, externalUrl: input.externalUrl || "", accountId: session.accountId,
-      ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}), resourceIds: input.resourceIds || [],
-      ...(input.operationId ? { operationId: input.operationId } : {}), title: input.title,
-      category: "support", priority: "normal", status: "open", createdAt: NOW, updatedAt: NOW,
-      messages: input.description ? [{ author: "demo", text: input.description, createdAt: NOW }] : []
-    };
-    state.supportTickets.push(ticket);
+    const writeIdentity = `${session.accountId}:${idempotencyKey}`;
+    recordWriteAttempt(state.supportWrites, state.supportAttempts, writeIdentity);
+    let ticket = state.supportTickets.find((item) => item.id === state.supportWriteResults.get(writeIdentity));
+    if (!ticket) {
+      ticket = {
+        id: `support-${state.supportTickets.length + 1}`, externalSystem: input.externalSystem || "support",
+        externalTicketId: input.externalTicketId, externalUrl: input.externalUrl || "", accountId: session.accountId,
+        ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}), resourceIds: input.resourceIds || [],
+        ...(input.operationId ? { operationId: input.operationId } : {}), title: input.title,
+        category: "support", priority: "normal", status: "open", createdAt: NOW, updatedAt: NOW,
+        messages: input.description ? [{ author: "demo", text: input.description, createdAt: NOW }] : []
+      };
+      state.supportTickets.push(ticket);
+      state.supportWriteResults.set(writeIdentity, ticket.id);
+    }
+    if (state.faultInjection && !state.lostSupportResponses.has(writeIdentity)) {
+      state.lostSupportResponses.add(writeIdentity);
+      return route.abort("failed");
+    }
     return fulfillJson(route, ticket);
   }
   if (path === "/api/announcements" && method === "GET") {
@@ -619,21 +671,38 @@ export async function apiFixture(route, state, session = state) {
     const page = Number(url.searchParams.get("page") || 1);
     const pageSize = Number(url.searchParams.get("pageSize") || 20);
     const start = (page - 1) * pageSize;
+    const items = state.operatorAccounts.slice(start, start + pageSize);
+    for (const operation of state.operatorProvisionWriteResults.values()) {
+      if (items.some((account) => account.accountId === operation.accountId)) state.operatorProvisionReadbacks.add(operation.accountId);
+    }
     return fulfillJson(route, source({
-      items: state.operatorAccounts.slice(start, start + pageSize), total: state.operatorAccounts.length, page, pageSize
+      items, total: state.operatorAccounts.length, page, pageSize
     }));
   }
   if (path === "/api/operator/accounts" && method === "POST") {
+    const idempotencyKey = request.headers()["idempotency-key"] || "";
+    if (!idempotencyKey) return fulfillJson(route, { error: "idempotency_key_required" }, 400);
     const input = request.postDataJSON();
-    const accountId = `acct-${state.operatorAccounts.length + 1}`;
-    const userId = String(20 + state.operatorAccounts.length);
-    const account = operatorAccount(accountId, "active", {
-      email: String(input.email || "").trim().toLowerCase(),
-      consoleUserId: `user-${state.operatorAccounts.length + 1}`,
-      sub2apiUserId: userId
-    });
-    state.operatorAccounts.push(account);
-    return fulfillJson(route, { operationId: `account-provision-${accountId}`, accountId, status: "succeeded", phase: "completed", createdAt: NOW, updatedAt: NOW });
+    const writeIdentity = `${session.accountId}:${idempotencyKey}`;
+    recordWriteAttempt(state.operatorProvisionWrites, state.operatorProvisionAttempts, writeIdentity);
+    let operation = state.operatorProvisionWriteResults.get(writeIdentity);
+    if (!operation) {
+      const accountId = `acct-${state.operatorAccounts.length + 1}`;
+      const userId = String(20 + state.operatorAccounts.length);
+      const account = operatorAccount(accountId, "active", {
+        email: String(input.email || "").trim().toLowerCase(),
+        consoleUserId: `user-${state.operatorAccounts.length + 1}`,
+        sub2apiUserId: userId
+      });
+      state.operatorAccounts.push(account);
+      operation = { operationId: `account-provision-${accountId}`, accountId, status: "succeeded", phase: "completed", createdAt: NOW, updatedAt: NOW };
+      state.operatorProvisionWriteResults.set(writeIdentity, operation);
+    }
+    if (state.faultInjection && !state.lostOperatorProvisionResponses.has(writeIdentity)) {
+      state.lostOperatorProvisionResponses.add(writeIdentity);
+      return route.abort("failed");
+    }
+    return fulfillJson(route, operation);
   }
   if (path === "/api/operator/workspaces") {
     if (state.sourceState === "error") return fulfillJson(route, { error: "upstream_unavailable" }, 503);
@@ -644,37 +713,82 @@ export async function apiFixture(route, state, session = state) {
   if (path === "/api/operator/reconciliation") return fulfillJson(route, source(emptyPage, "control-plane", "empty"));
   if (path === "/api/operator/announcements" && method === "GET") {
     const data = { items: state.announcements, total: state.announcements.length, page: 1, pageSize: 20 };
+    for (const announcementId of state.announcementCreateWriteResults.values()) {
+      const announcement = state.announcements.find((item) => item.id === announcementId);
+      if (!announcement) continue;
+      const statuses = state.announcementReadbackStatuses.get(announcementId) || new Set();
+      statuses.add(announcement.status);
+      state.announcementReadbackStatuses.set(announcementId, statuses);
+    }
     return fulfillJson(route, source(data, "control-plane", state.announcements.length ? "available" : "empty"));
   }
   if (path === "/api/operator/announcements" && method === "POST") {
+    const idempotencyKey = request.headers()["idempotency-key"] || "";
+    if (!idempotencyKey) return fulfillJson(route, { error: "idempotency_key_required" }, 400);
     const input = request.postDataJSON();
-    const announcement = {
-      id: `announcement-${state.announcements.length + 1}`, title: input.title, body: input.body,
-      status: "draft", ...(input.startsAt ? { startsAt: input.startsAt } : {}), ...(input.endsAt ? { endsAt: input.endsAt } : {}),
-      createdAt: NOW, updatedAt: NOW, read: false
-    };
-    state.announcements.push(announcement);
+    const writeIdentity = `${session.accountId}:${idempotencyKey}`;
+    recordWriteAttempt(state.announcementCreateWrites, state.announcementCreateAttempts, writeIdentity);
+    let announcement = state.announcements.find((item) => item.id === state.announcementCreateWriteResults.get(writeIdentity));
+    if (!announcement) {
+      announcement = {
+        id: `announcement-${state.announcements.length + 1}`, title: input.title, body: input.body,
+        status: "draft", ...(input.startsAt ? { startsAt: input.startsAt } : {}), ...(input.endsAt ? { endsAt: input.endsAt } : {}),
+        createdAt: NOW, updatedAt: NOW, read: false
+      };
+      state.announcements.push(announcement);
+      state.announcementCreateWriteResults.set(writeIdentity, announcement.id);
+    }
+    if (state.faultInjection && !state.lostAnnouncementCreateResponses.has(writeIdentity)) {
+      state.lostAnnouncementCreateResponses.add(writeIdentity);
+      return route.abort("failed");
+    }
     return fulfillJson(route, announcement);
   }
   const announcementPublishMatch = path.match(/^\/api\/operator\/announcements\/([^/]+)\/publish$/);
   if (announcementPublishMatch && method === "POST") {
+    const idempotencyKey = request.headers()["idempotency-key"] || "";
+    if (!idempotencyKey) return fulfillJson(route, { error: "idempotency_key_required" }, 400);
     const input = request.postDataJSON();
     const announcement = state.announcements.find((item) => item.id === announcementPublishMatch[1]);
     if (!announcement) return fulfillJson(route, { error: "announcement_not_found" }, 404);
-    announcement.status = "published";
-    announcement.startsAt = input.startsAt || NOW;
-    announcement.endsAt = input.endsAt || announcement.endsAt;
-    announcement.publishedAt = NOW;
-    announcement.updatedAt = NOW;
-    return fulfillJson(route, announcement);
+    const writeIdentity = `${session.accountId}:${idempotencyKey}`;
+    recordWriteAttempt(state.announcementPublishWrites, state.announcementPublishAttempts, writeIdentity);
+    let result = state.announcementPublishWriteResults.get(writeIdentity);
+    if (!result) {
+      announcement.status = "published";
+      announcement.startsAt = input.startsAt || NOW;
+      announcement.endsAt = input.endsAt || announcement.endsAt;
+      announcement.publishedAt = NOW;
+      announcement.updatedAt = NOW;
+      result = { ...announcement };
+      state.announcementPublishWriteResults.set(writeIdentity, result);
+    }
+    if (state.faultInjection && !state.lostAnnouncementPublishResponses.has(writeIdentity)) {
+      state.lostAnnouncementPublishResponses.add(writeIdentity);
+      return route.abort("failed");
+    }
+    return fulfillJson(route, result);
   }
   const announcementWithdrawMatch = path.match(/^\/api\/operator\/announcements\/([^/]+)\/withdraw$/);
   if (announcementWithdrawMatch && method === "POST") {
+    const idempotencyKey = request.headers()["idempotency-key"] || "";
+    if (!idempotencyKey) return fulfillJson(route, { error: "idempotency_key_required" }, 400);
     const announcement = state.announcements.find((item) => item.id === announcementWithdrawMatch[1]);
     if (!announcement) return fulfillJson(route, { error: "announcement_not_found" }, 404);
-    announcement.status = "withdrawn";
-    announcement.updatedAt = NOW;
-    return fulfillJson(route, announcement);
+    const writeIdentity = `${session.accountId}:${idempotencyKey}`;
+    recordWriteAttempt(state.announcementWithdrawWrites, state.announcementWithdrawAttempts, writeIdentity);
+    let result = state.announcementWithdrawWriteResults.get(writeIdentity);
+    if (!result) {
+      announcement.status = "withdrawn";
+      announcement.updatedAt = NOW;
+      result = { ...announcement };
+      state.announcementWithdrawWriteResults.set(writeIdentity, result);
+    }
+    if (state.faultInjection && !state.lostAnnouncementWithdrawResponses.has(writeIdentity)) {
+      state.lostAnnouncementWithdrawResponses.add(writeIdentity);
+      return route.abort("failed");
+    }
+    return fulfillJson(route, result);
   }
   if (path === "/api/operator/health") {
     const ready = source({ ready: true }, "control-plane");
@@ -712,6 +826,39 @@ export async function apiFixture(route, state, session = state) {
 
   state.unexpectedApi.push(`${method} ${path}`);
   return fulfillJson(route, { error: "unexpected_browser_fixture_request" }, 500);
+}
+
+async function installFixturePage(page, state, serverOrigin) {
+  const fixturePort = new URL(serverOrigin).port;
+  page.on("pageerror", (error) => state.pageErrors.push(error.stack || error.message));
+  page.on("console", (message) => {
+    if (message.type() !== "error") return;
+    const text = message.text();
+    const location = message.location().url;
+    const diagnosticText = location ? `${text} @ ${location}` : text;
+    const locationPath = location ? new URL(location).pathname : "";
+    const expected404 = /^Failed to load resource: the server responded with a status of 404/.test(text)
+      && state.expectedConsole404s.delete(locationPath);
+    if (/^Failed to load resource: (?:net::ERR_FAILED|the server responded with a status of 503)/.test(text) || expected404) {
+      state.expectedNetworkConsoleErrors.push(diagnosticText);
+    } else {
+      state.consoleErrors.push(diagnosticText);
+    }
+  });
+  page.on("dialog", (dialog) => {
+    state.dialogMessages.push(dialog.message());
+    void dialog.accept();
+  });
+  await page.route("**/*", async (route) => {
+    const url = new URL(route.request().url());
+    const local = url.hostname === "127.0.0.1" && url.port === fixturePort;
+    if (!local) {
+      state.externalRequests += 1;
+      return route.abort("blockedbyclient");
+    }
+    if (url.pathname.startsWith("/api/")) return apiFixture(route, state);
+    return route.continue();
+  });
 }
 
 async function waitForText(page, text) {
@@ -977,6 +1124,143 @@ async function assertUsageRecordFields(page, viewportName) {
   }
 }
 
+async function exerciseHighRiskWriteFlows(browser, serverOrigin) {
+  const state = createConsoleFixtureState();
+  const context = await browser.newContext({ viewport: VIEWPORTS.desktop, permissions: ["clipboard-read", "clipboard-write"] });
+  const page = await context.newPage();
+  await installFixturePage(page, state, serverOrigin);
+  const unknownWriteMessage = "结果待确认，请刷新操作状态，不要重复提交";
+
+  try {
+    authenticateFixtureSession(state, "customer");
+    await page.goto(`${serverOrigin}/console/workspaces/new`, { waitUntil: "networkidle" });
+    await waitForText(page, "核对开通信息");
+    await waitForText(page, "$52.58");
+    await page.getByLabel("Workspace 名称").fill("Browser retry Workspace");
+    await page.getByRole("button", { name: "核对开通信息", exact: true }).click();
+    await page.getByRole("heading", { name: "确认开通信息", exact: true }).waitFor({ state: "visible" });
+    await page.getByRole("checkbox", { name: "我确认一次性预付 Workspace 月度总额并开通", exact: true }).click();
+    const launchButton = page.getByRole("button", { name: "确认预付并开通", exact: true });
+    await launchButton.click();
+    await waitForText(page, "请求失败，请重试");
+    await launchButton.click();
+    await page.waitForURL(/\/console\/workspaces\/ws-demo-\d+$/);
+    const workspaceOperation = [...state.workspaceLaunchWriteResults.values()][0];
+    if (!workspaceOperation?.workspaceId) throw new Error("console_browser_workspace_launch_result_missing");
+    await waitForText(page, "Browser retry Workspace");
+    await waitForText(page, `https://workspace.example.invalid/w/${workspaceOperation.workspaceId}/`);
+
+    authenticateFixtureSession(state, "operator");
+    await page.goto(`${serverOrigin}/admin/accounts`, { waitUntil: "networkidle" });
+    await waitForText(page, "客户与计费账户");
+    await page.getByRole("button", { name: "开通用户", exact: true }).first().click();
+    const provisionDialog = page.getByRole("dialog", { name: "开通用户" });
+    await provisionDialog.getByLabel("登录邮箱").fill("browser-provision@example.com");
+    await provisionDialog.getByLabel("初始密码").fill("browser-provision-password");
+    await provisionDialog.getByLabel("姓名").fill("Browser Provision");
+    const provisionButton = provisionDialog.getByRole("button", { name: "开通用户", exact: true });
+    await provisionButton.click();
+    await waitForText(page, unknownWriteMessage);
+    await provisionButton.click();
+    await waitForText(provisionDialog, "账户映射已完成权威读回");
+    await waitForText(provisionDialog, "browser-provision@example.com");
+
+    await page.goto(`${serverOrigin}/admin/announcements`, { waitUntil: "networkidle" });
+    await waitForText(page, "公告管理");
+    await page.getByRole("button", { name: "新建草稿", exact: true }).click();
+    const announcementDialog = page.getByRole("dialog", { name: "新建公告草稿" });
+    await announcementDialog.getByLabel("标题").fill("Browser lifecycle announcement");
+    await announcementDialog.getByLabel("正文").fill("Create, publish, and withdraw through the operator UI.");
+    const saveAnnouncementButton = announcementDialog.getByRole("button", { name: "保存草稿", exact: true });
+    await saveAnnouncementButton.click();
+    await waitForText(page, unknownWriteMessage);
+    await saveAnnouncementButton.click();
+    const announcement = page.locator(".announcement-item").filter({ hasText: "Browser lifecycle announcement" });
+    await announcement.getByText("草稿", { exact: true }).waitFor({ state: "visible" });
+    const publishButton = announcement.getByRole("button", { name: "发布", exact: true });
+    await publishButton.click();
+    await waitForText(page, unknownWriteMessage);
+    await publishButton.click();
+    await announcement.getByText("已发布", { exact: true }).waitFor({ state: "visible" });
+    const withdrawButton = announcement.getByRole("button", { name: "撤下", exact: true });
+    await withdrawButton.click();
+    await waitForText(page, unknownWriteMessage);
+    await withdrawButton.click();
+    await announcement.getByText("已撤下", { exact: true }).waitFor({ state: "visible" });
+
+    await page.getByRole("button", { name: "Support", exact: true }).click();
+    const supportSlide = page.getByRole("complementary", { name: "Support" });
+    await waitForText(supportSlide, "暂无外部工单映射");
+    await supportSlide.getByRole("button", { name: "新增映射", exact: true }).click();
+    await supportSlide.getByLabel("外部工单号").fill("SUP-2026-001");
+    await supportSlide.getByLabel("标题").fill("Browser support mapping");
+    const saveSupportButton = supportSlide.getByRole("button", { name: "保存外部映射", exact: true });
+    await saveSupportButton.click();
+    await waitForText(page, unknownWriteMessage);
+    await saveSupportButton.click();
+    await waitForText(supportSlide, "Browser support mapping");
+    await waitForText(supportSlide, "SUP-2026-001");
+  } finally {
+    await context.close();
+  }
+
+  return state;
+}
+
+function highRiskWriteEvidence(state) {
+  const writeContracts = [
+    ["workspace_launch", state.workspaceLaunchWrites, state.workspaceLaunchAttempts, state.workspaceLaunchWriteResults, state.lostWorkspaceLaunchResponses],
+    ["operator_provision", state.operatorProvisionWrites, state.operatorProvisionAttempts, state.operatorProvisionWriteResults, state.lostOperatorProvisionResponses],
+    ["announcement_create", state.announcementCreateWrites, state.announcementCreateAttempts, state.announcementCreateWriteResults, state.lostAnnouncementCreateResponses],
+    ["announcement_publish", state.announcementPublishWrites, state.announcementPublishAttempts, state.announcementPublishWriteResults, state.lostAnnouncementPublishResponses],
+    ["announcement_withdraw", state.announcementWithdrawWrites, state.announcementWithdrawAttempts, state.announcementWithdrawWriteResults, state.lostAnnouncementWithdrawResponses],
+    ["support_mapping", state.supportWrites, state.supportAttempts, state.supportWriteResults, state.lostSupportResponses]
+  ];
+  for (const [name, writes, attempts, results, lostResponses] of writeContracts) {
+    const identity = [...writes][0] || "";
+    const idempotencyKey = identity.slice(identity.indexOf(":") + 1);
+    if (writes.size !== 1 || attempts.size !== 1 || [...attempts.values()][0] !== 2 || results.size !== 1 || lostResponses.size !== 1 || !idempotencyKey) {
+      throw new Error(`console_browser_high_risk_idempotency_failed:${name}`);
+    }
+  }
+  if (state.unexpectedApi.length) throw new Error(`console_browser_high_risk_unexpected_api:${state.unexpectedApi.join(",")}`);
+  if (state.pageErrors.length) throw new Error(`console_browser_high_risk_page_error:${state.pageErrors.join(",")}`);
+  if (state.consoleErrors.length) throw new Error(`console_browser_high_risk_console_error:${state.consoleErrors.join(",")}`);
+  if (state.externalRequests !== 0) throw new Error(`console_browser_high_risk_external_request:${state.externalRequests}`);
+
+  const workspaceOperation = [...state.workspaceLaunchWriteResults.values()][0];
+  const operatorOperation = [...state.operatorProvisionWriteResults.values()][0];
+  const announcementId = [...state.announcementCreateWriteResults.values()][0];
+  const supportTicketId = [...state.supportWriteResults.values()][0];
+  const announcementStatuses = state.announcementReadbackStatuses.get(announcementId) || new Set();
+  const workspaceLaunchAuthoritativeReadback = Boolean(workspaceOperation?.workspaceId
+    && state.workspaceLaunchReadbacks.has(workspaceOperation.workspaceId)
+    && state.runtimeReads.has(workspaceOperation.workspaceId));
+  const operatorProvisionAuthoritativeReadback = Boolean(operatorOperation?.accountId
+    && state.operatorProvisionReadbacks.has(operatorOperation.accountId));
+  const announcementLifecycle = ["draft", "published", "withdrawn"].every((status) => announcementStatuses.has(status))
+    && state.announcements.find((item) => item.id === announcementId)?.status === "withdrawn";
+  const supportMappingReadback = Boolean(supportTicketId && state.supportReadbacks.has(supportTicketId));
+  if (!workspaceLaunchAuthoritativeReadback || !operatorProvisionAuthoritativeReadback || !announcementLifecycle || !supportMappingReadback) {
+    throw new Error("console_browser_high_risk_authoritative_readback_failed");
+  }
+
+  return {
+    highRiskWrites: {
+      workspaceLaunch: state.workspaceLaunchWrites.size,
+      operatorProvision: state.operatorProvisionWrites.size,
+      announcementCreate: state.announcementCreateWrites.size,
+      announcementPublish: state.announcementPublishWrites.size,
+      announcementWithdraw: state.announcementWithdrawWrites.size,
+      supportMapping: state.supportWrites.size
+    },
+    workspaceLaunchAuthoritativeReadback,
+    operatorProvisionAuthoritativeReadback,
+    announcementLifecycle,
+    supportMappingReadback
+  };
+}
+
 export async function runConsoleBrowserQa({
   network,
   serverFactory = defaultServerFactory,
@@ -994,35 +1278,7 @@ export async function runConsoleBrowserQa({
       state.basicPlanAvailable = name !== "mobile";
       const context = await browser.newContext({ viewport, permissions: ["clipboard-read", "clipboard-write"] });
       const page = await context.newPage();
-      page.on("pageerror", (error) => state.pageErrors.push(error.stack || error.message));
-      page.on("console", (message) => {
-        if (message.type() !== "error") return;
-        const text = message.text();
-        const location = message.location().url;
-        const diagnosticText = location ? `${text} @ ${location}` : text;
-        const locationPath = location ? new URL(location).pathname : "";
-        const expected404 = /^Failed to load resource: the server responded with a status of 404/.test(text)
-          && state.expectedConsole404s.delete(locationPath);
-        if (/^Failed to load resource: (?:net::ERR_FAILED|the server responded with a status of 503)/.test(text) || expected404) {
-          state.expectedNetworkConsoleErrors.push(diagnosticText);
-        } else {
-          state.consoleErrors.push(diagnosticText);
-        }
-      });
-      page.on("dialog", (dialog) => {
-        state.dialogMessages.push(dialog.message());
-        void dialog.accept();
-      });
-      await page.route("**/*", async (route) => {
-        const url = new URL(route.request().url());
-        const local = url.hostname === "127.0.0.1" && url.port === new URL(server.origin).port;
-        if (!local) {
-          state.externalRequests += 1;
-          return route.abort("blockedbyclient");
-        }
-        if (url.pathname.startsWith("/api/")) return apiFixture(route, state);
-        return route.continue();
-      });
+      await installFixturePage(page, state, server.origin);
 
       state.role = "customer";
       authenticateFixtureSession(state, "customer");
@@ -1314,6 +1570,8 @@ export async function runConsoleBrowserQa({
       await context.close();
     }
 
+    const highRiskEvidence = highRiskWriteEvidence(await exerciseHighRiskWriteFlows(browser, server.origin));
+
     if (state.unexpectedApi.length) throw new Error(`console_browser_unexpected_api:${state.unexpectedApi.join(",")}`);
     if (state.pageErrors.length) throw new Error(`console_browser_page_error:${state.pageErrors.join(",")}`);
     if (state.consoleErrors.length) throw new Error(`console_browser_console_error:${state.consoleErrors.join(",")}`);
@@ -1337,6 +1595,7 @@ export async function runConsoleBrowserQa({
       roles: ["customer", "operator"],
       sourceStates: ["available", "empty", "unavailable", "error"],
       repeatedWrites: { gatewayKey: state.gatewayWrites.size, walletAdjustment: state.walletWrites.size },
+      ...highRiskEvidence,
       operatorAccountDisableWrites: state.operatorDisableWrites.size,
       operatorAccountStatuses: Object.fromEntries(state.operatorAccounts.map((account) => [account.accountId, account.status])),
       operatorAccountViewports: [...state.operatorAccountViewports],

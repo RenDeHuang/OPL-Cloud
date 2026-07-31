@@ -94,9 +94,10 @@ No actionable P0, P1 or P2 findings remain.
 ## Verification Evidence
 
 - Fake-only browser QA: passed for desktop and mobile, customer and operator roles, all primary pages, source-state recovery, six-field request records, seven-column Admin accounts, key lifecycle, secret cleanup and zero external requests.
+- High-risk command replay: Workspace launch, operator account provisioning, announcement create, publish and withdraw, and Support mapping each drop the first response after the fake write is applied. The second UI action reuses the same `Idempotency-Key`; Browser QA proves two HTTP attempts produce one stable business mutation and then confirms the result through the corresponding authoritative GET readback.
 - Browser console errors: `0`; page errors: `0`; external requests: `0`.
-- Full repository test: `npm test` passed `407/407`, with `0` failures, `0` cancelled and `0` skipped.
-- Control Plane test: PostgreSQL-backed `go test ./... -count=1` passed with `OPL_POSTGRES_TESTS=1` and `OPL_CAPACITY_TESTS=1`; the longest `internal/server` package completed in `364.621s`.
+- Full repository test: `npm test` passed `420/420`, with `0` failures, `0` cancelled and `0` skipped.
+- Control Plane test: PostgreSQL-backed `go test ./... -count=1` passed with `OPL_POSTGRES_TESTS=1` and `OPL_CAPACITY_TESTS=1`; the longest `internal/server` package completed in `417.487s`.
 - TypeScript gate: `npm run typecheck` passed with no diagnostics.
 - Unused-code lint gate: `npm run lint` passed with no diagnostics.
 - Production build: `npm run build` passed after transforming `2526` modules. Vite reported the existing `vendor -> react-ui -> vendor` manual-chunk cycle warning; production assets were still emitted successfully.

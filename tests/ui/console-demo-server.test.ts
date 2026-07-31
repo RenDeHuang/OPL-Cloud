@@ -37,6 +37,10 @@ class DemoClient {
       body: JSON.stringify(body)
     });
   }
+
+  postCommandJson(path: string, body: unknown, idempotencyKey: string) {
+    return this.postJson(path, body, { "idempotency-key": idempotencyKey });
+  }
 }
 
 async function listen(server: ReturnType<typeof createHttpServer>) {
@@ -171,8 +175,16 @@ test("Console demo assigns unique owner-scoped Workspace Keys", async () => {
     assert.equal((await customerClient.postJson("/api/auth/login", CONSOLE_DEMO_CREDENTIALS.customer)).status, 200);
     assert.equal((await adminClient.postJson("/api/auth/login", CONSOLE_DEMO_CREDENTIALS.admin)).status, 200);
 
-    const customerLaunch = await customerClient.postJson("/api/workspace-launches", { name: "Customer Workspace", packageId: "basic" });
-    const adminLaunch = await adminClient.postJson("/api/workspace-launches", { name: "Admin Workspace", packageId: "basic" });
+    const customerLaunch = await customerClient.postCommandJson(
+      "/api/workspace-launches",
+      { name: "Customer Workspace", packageId: "basic" },
+      "customer-workspace-key-launch"
+    );
+    const adminLaunch = await adminClient.postCommandJson(
+      "/api/workspace-launches",
+      { name: "Admin Workspace", packageId: "basic" },
+      "admin-workspace-key-launch"
+    );
     assert.equal(customerLaunch.status, 200);
     assert.equal(adminLaunch.status, 200);
     const customerWorkspaceId = (await customerLaunch.json()).workspaceId;
@@ -201,13 +213,15 @@ test("Console demo keeps a unique persistent Runtime credential per Workspace", 
     assert.equal((await customerClient.postJson("/api/auth/login", CONSOLE_DEMO_CREDENTIALS.customer)).status, 200);
     assert.equal((await adminClient.postJson("/api/auth/login", CONSOLE_DEMO_CREDENTIALS.admin)).status, 200);
 
-    const customerWorkspaceId = (await (await customerClient.postJson(
+    const customerWorkspaceId = (await (await customerClient.postCommandJson(
       "/api/workspace-launches",
-      { name: "Customer Runtime", packageId: "basic" }
+      { name: "Customer Runtime", packageId: "basic" },
+      "customer-runtime-launch"
     )).json()).workspaceId;
-    const adminWorkspaceId = (await (await adminClient.postJson(
+    const adminWorkspaceId = (await (await adminClient.postCommandJson(
       "/api/workspace-launches",
-      { name: "Admin Runtime", packageId: "basic" }
+      { name: "Admin Runtime", packageId: "basic" },
+      "admin-runtime-launch"
     )).json()).workspaceId;
 
     assert.equal((await customerClient.postJson(`/api/workspaces/${adminWorkspaceId}/runtime-credentials/reveal`, {})).status, 404);
@@ -241,13 +255,15 @@ test("Console demo preserves owner-scoped launch records across accounts", async
     assert.equal((await customerClient.postJson("/api/auth/login", CONSOLE_DEMO_CREDENTIALS.customer)).status, 200);
     assert.equal((await adminClient.postJson("/api/auth/login", CONSOLE_DEMO_CREDENTIALS.admin)).status, 200);
 
-    const customerLaunch = await (await customerClient.postJson(
+    const customerLaunch = await (await customerClient.postCommandJson(
       "/api/workspace-launches",
-      { name: "Customer Launch", packageId: "basic" }
+      { name: "Customer Launch", packageId: "basic" },
+      "customer-record-launch"
     )).json();
-    const adminLaunch = await (await adminClient.postJson(
+    const adminLaunch = await (await adminClient.postCommandJson(
       "/api/workspace-launches",
-      { name: "Admin Launch", packageId: "pro" }
+      { name: "Admin Launch", packageId: "pro" },
+      "admin-record-launch"
     )).json();
     const customerLaunches = await (await customerClient.request("/api/workspace-launches")).json();
     const adminLaunches = await (await adminClient.request("/api/workspace-launches")).json();

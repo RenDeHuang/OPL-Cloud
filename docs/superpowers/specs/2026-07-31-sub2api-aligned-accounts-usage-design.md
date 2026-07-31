@@ -3,7 +3,7 @@
 ## Status
 
 - Date: 2026-07-31
-- State: approved design brief, implementation pending
+- State: implemented and locally verified; production evidence not claimed
 - Worktree: `codex/uiux-display-contract`
 - Integration rule: remain isolated from `main`
 
