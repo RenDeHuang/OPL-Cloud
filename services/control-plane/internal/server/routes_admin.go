@@ -504,10 +504,21 @@ func workspaceLaunchReadbackRecoveryApprovalFromMap(value any, key string) (work
 		}
 	}
 	nestedKeys := map[string][]string{
-		"customer":      {"email", "accountId", "ownerUserId"},
-		"target":        {"launchOperationId", "workspaceId", "packageId"},
-		"resources":     {"computeAllocationId", "computeProviderResourceId", "storageVolumeId", "storageProviderResourceId", "attachmentId", "gatewaySecretRef", "gatewaySecretFingerprint", "runtimeId", "receiptId"},
-		"operationIds":  {"compute", "storage", "attachment", "secret", "runtime", "activation", "receipt"},
+		"customer": {"email", "accountId", "ownerUserId"},
+		"target": {
+			"launchOperationId", "accountId", "workspaceId", "computeAllocationId", "storageId", "packageId", "poolId", "nodePoolId",
+			"machineName", "nodeName", "cvmInstanceId", "privateIp", "instanceType", "zone", "chargeType", "periodMonths", "renewFlag",
+			"deadline", "storageGb", "autoRenew", "priceVersion", "totalChargeUsdMicros", "periodStart", "paidThrough", "billingAnchorDay",
+		},
+		"resources": {
+			"computeAllocationId", "computeProviderResourceId", "storageVolumeId", "storageProviderResourceId", "storageZone", "storageSizeGb",
+			"storageChargeType", "storageRenewFlag", "storageDeadline", "attachmentId", "attachmentProviderId", "gatewaySecretRef",
+			"gatewaySecretFingerprint", "workspaceApiKeyId", "runtimeId", "runtimeServiceName", "receiptId",
+		},
+		"operationIds": {
+			"launchOperationId", "launchRequestHash", "machineOwnershipId", "compute", "storage", "attachment", "secret", "runtime",
+			"activationOperationId", "receiptOperationId",
+		},
 		"attemptBudget": {"attempted", "confirmed", "unknown", "max"},
 	}
 	for field, keys := range nestedKeys {
@@ -516,7 +527,7 @@ func workspaceLaunchReadbackRecoveryApprovalFromMap(value any, key string) (work
 			return workspaceLaunchReadbackRecoveryApproval{}, false
 		}
 	}
-	for _, field := range []string{"customer", "target", "operationIds"} {
+	for _, field := range []string{"customer"} {
 		for _, value := range raw[field].(map[string]any) {
 			item, ok := value.(string)
 			if !ok || item == "" || item != strings.TrimSpace(item) {
@@ -524,10 +535,18 @@ func workspaceLaunchReadbackRecoveryApprovalFromMap(value any, key string) (work
 			}
 		}
 	}
-	for field, value := range raw["resources"].(map[string]any) {
-		item, ok := value.(string)
-		if !ok || item != strings.TrimSpace(item) || (field == "computeAllocationId" || field == "computeProviderResourceId" || field == "storageVolumeId" || field == "storageProviderResourceId" || field == "gatewaySecretRef") && item == "" {
+	operationFields := []string{"compute", "storage", "attachment", "secret", "runtime"}
+	operationIdentityKeys := []string{"idempotencyKey", "fabricRecordId", "fabricOperationId", "requestHash", "resourceOperationId", "providerOperationId"}
+	for _, field := range operationFields {
+		item, ok := raw["operationIds"].(map[string]any)[field].(map[string]any)
+		if !ok || !exactWorkspaceComputeClaimKeys(item, operationIdentityKeys) {
 			return workspaceLaunchReadbackRecoveryApproval{}, false
+		}
+		for _, value := range item {
+			text, ok := value.(string)
+			if !ok || text != strings.TrimSpace(text) {
+				return workspaceLaunchReadbackRecoveryApproval{}, false
+			}
 		}
 	}
 	budget := raw["attemptBudget"].(map[string]any)
@@ -547,7 +566,15 @@ func workspaceLaunchReadbackRecoveryApprovalFromMap(value any, key string) (work
 		!computeClaimCloudDigestPattern.MatchString(approval.CloudImageDigest) || !computeClaimCloudDigestPattern.MatchString(approval.WorkspaceImageDigest) ||
 		expiresErr != nil || !expiresAt.After(time.Now().UTC()) || emailErr != nil || email != approval.Customer.Email || approval.IdempotencyKey != key ||
 		approval.Confirmation != workspaceLaunchReadbackRecoveryConfirmation || !workspaceLaunchReadbackRecoveryStageValid(approval.Stage) ||
+		approval.Target.LaunchOperationID == "" || approval.Target.AccountID == "" || approval.Target.WorkspaceID == "" || approval.Target.ComputeAllocationID == "" ||
+		approval.Target.StorageID == "" || approval.Target.PoolID == "" || approval.Target.NodePoolID == "" || approval.Target.MachineName == "" ||
+		approval.Target.NodeName == "" || approval.Target.CVMInstanceID == "" || approval.Target.PrivateIP == "" || approval.Target.InstanceType == "" ||
+		approval.Target.Zone == "" || approval.Target.ChargeType != "PREPAID" || approval.Target.PeriodMonths != 1 ||
+		approval.Target.RenewFlag != "NOTIFY_AND_MANUAL_RENEW" || approval.Target.StorageGB <= 0 || approval.Target.PriceVersion == "" ||
+		approval.Target.TotalChargeUSDMicros <= 0 || approval.Target.BillingAnchorDay < 1 || approval.Target.BillingAnchorDay > 31 ||
 		!strings.HasPrefix(approval.Resources.ComputeProviderResourceID, "ins-") || !strings.HasPrefix(approval.Resources.StorageProviderResourceID, "disk-") ||
+		approval.Resources.StorageZone == "" || approval.Resources.StorageSizeGB <= 0 || approval.Resources.StorageChargeType != "PREPAID" ||
+		approval.Resources.StorageRenewFlag != "NOTIFY_AND_MANUAL_RENEW" || approval.Resources.WorkspaceAPIKeyID <= 0 ||
 		!equalWorkspaceComputeClaimStrings(allowedWrites, workspaceLaunchReadbackRecoveryAllowedWrites(approval.Stage)) ||
 		!equalWorkspaceComputeClaimStrings(forbiddenWrites, workspaceLaunchReadbackRecoveryForbiddenWrites) ||
 		workspaceLaunchReadbackRecoveryApprovalDigest(approval) != approval.ApprovalDigest {

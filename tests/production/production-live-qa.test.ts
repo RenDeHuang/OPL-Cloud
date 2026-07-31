@@ -1102,37 +1102,63 @@ const WORKSPACE_LAUNCH_READBACK_FORBIDDEN_WRITES = Object.freeze([
 ]);
 
 function workspaceLaunchReadbackProof(overrides = {}) {
-  return {
+	const target = {
+		...COMPUTE_CLAIM_TARGET,
+		storageGb: 10,
+		autoRenew: false,
+		priceVersion: "pilot-usd-2026-07-v1",
+		totalChargeUsdMicros: 52580000,
+		periodStart: "2099-07-28T00:00:00Z",
+		paidThrough: "2099-08-27T00:00:00Z",
+		billingAnchorDay: 28
+	};
+	const operationIdentity = (idempotencyKey, suffix, providerOperationId, present = true) => ({
+		idempotencyKey,
+		fabricRecordId: present ? `fop-${suffix}-fixture` : "",
+		fabricOperationId: present ? `op-${suffix}-fixture` : "",
+		requestHash: present ? computeClaimStableSuffix("request", suffix) : "",
+		resourceOperationId: present ? idempotencyKey : "",
+		providerOperationId: present ? providerOperationId : ""
+	});
+	const ownershipId = "owner-compute-claim-fixture";
+	return {
     schemaVersion: 1,
     eligible: true,
     reason: "none",
     stage: "secret",
     customer: { email: COMPUTE_CLAIM_CUSTOMER_EMAIL, accountId: COMPUTE_CLAIM_TARGET.accountId, ownerUserId: "usr-compute-claim-fixture" },
-    target: {
-      launchOperationId: COMPUTE_CLAIM_TARGET.launchOperationId,
-      workspaceId: COMPUTE_CLAIM_TARGET.workspaceId,
-      packageId: COMPUTE_CLAIM_TARGET.packageId
-    },
-    resources: {
+		target,
+		resources: {
       computeAllocationId: COMPUTE_CLAIM_TARGET.computeAllocationId,
       computeProviderResourceId: COMPUTE_CLAIM_TARGET.cvmInstanceId,
-      storageVolumeId: COMPUTE_CLAIM_TARGET.storageId,
-      storageProviderResourceId: "disk-existing-fixture",
-      attachmentId: "attachment-compute-claim-fixture",
-      gatewaySecretRef: `opl-gateway-${computeClaimStableSuffix(COMPUTE_CLAIM_TARGET.workspaceId).slice(0, 16)}`,
-      gatewaySecretFingerprint: `sha256:${"c".repeat(64)}`,
-      runtimeId: "",
-      receiptId: ""
-    },
-    operationIds: {
-      compute: `${COMPUTE_CLAIM_TARGET.launchOperationId}:compute`,
-      storage: `${COMPUTE_CLAIM_TARGET.launchOperationId}:storage`,
-      attachment: `${COMPUTE_CLAIM_TARGET.launchOperationId}:attachment`,
-      secret: `${COMPUTE_CLAIM_TARGET.launchOperationId}:workspace:secret:gateway-secret`,
-      runtime: `${COMPUTE_CLAIM_TARGET.launchOperationId}:workspace:runtime`,
-      activation: `${COMPUTE_CLAIM_TARGET.launchOperationId}:activation`,
-      receipt: `${COMPUTE_CLAIM_TARGET.launchOperationId}:purchase-receipt`
-    },
+			storageVolumeId: COMPUTE_CLAIM_TARGET.storageId,
+			storageProviderResourceId: "disk-existing-fixture",
+			storageZone: COMPUTE_CLAIM_TARGET.zone,
+			storageSizeGb: 10,
+			storageChargeType: "PREPAID",
+			storageRenewFlag: "NOTIFY_AND_MANUAL_RENEW",
+			storageDeadline: COMPUTE_CLAIM_TARGET.deadline,
+			attachmentId: "attachment-compute-claim-fixture",
+			attachmentProviderId: "pv/volume-fixture:pvc/volume-fixture-data",
+			gatewaySecretRef: `opl-gateway-${computeClaimStableSuffix(COMPUTE_CLAIM_TARGET.workspaceId).slice(0, 16)}`,
+			gatewaySecretFingerprint: `sha256:${"c".repeat(64)}`,
+			workspaceApiKeyId: 42,
+			runtimeId: "",
+			runtimeServiceName: "",
+			receiptId: ""
+		},
+		operationIds: {
+			launchOperationId: COMPUTE_CLAIM_TARGET.launchOperationId,
+			launchRequestHash: computeClaimStableSuffix("launch", COMPUTE_CLAIM_TARGET.launchOperationId),
+			machineOwnershipId: ownershipId,
+			compute: operationIdentity(`${COMPUTE_CLAIM_TARGET.launchOperationId}:compute`, "compute", ownershipId),
+			storage: operationIdentity(`${COMPUTE_CLAIM_TARGET.launchOperationId}:storage`, "storage", "op-storage-provider-fixture"),
+			attachment: operationIdentity(`${COMPUTE_CLAIM_TARGET.launchOperationId}:attachment`, "attachment", `${COMPUTE_CLAIM_TARGET.launchOperationId}:attachment`),
+			secret: operationIdentity(`${COMPUTE_CLAIM_TARGET.launchOperationId}:workspace:secret:gateway-secret`, "secret", ""),
+			runtime: operationIdentity(`${COMPUTE_CLAIM_TARGET.launchOperationId}:workspace:runtime`, "runtime", "", false),
+			activationOperationId: `${COMPUTE_CLAIM_TARGET.launchOperationId}:activation`,
+			receiptOperationId: `${COMPUTE_CLAIM_TARGET.launchOperationId}:purchase-receipt`
+		},
     workspaceImageDigest: COMPUTE_CLAIM_WORKSPACE_DIGEST,
     attemptBudget: { attempted: 1, confirmed: 0, unknown: 1, max: 1 },
     allowedWrites: [...WORKSPACE_LAUNCH_READBACK_ALLOWED_WRITES],
@@ -1172,11 +1198,7 @@ test("workspace launch readback diagnosis is GET-only and binds the exact unknow
   const calls = [];
   const proof = workspaceLaunchReadbackProof();
   const result = await productionLiveQa.diagnoseWorkspaceLaunchReadbackRecovery({
-    target: {
-      launchOperationId: COMPUTE_CLAIM_TARGET.launchOperationId,
-      accountId: COMPUTE_CLAIM_TARGET.accountId,
-      workspaceId: COMPUTE_CLAIM_TARGET.workspaceId
-    },
+    target: COMPUTE_CLAIM_TARGET,
     mergedSha: BASIC_CANARY_MERGED_SHA,
     cloudImageDigest: BASIC_CANARY_CLOUD_DIGEST,
     origin: "https://cloud.medopl.cn",
@@ -1199,11 +1221,71 @@ test("workspace launch readback diagnosis is GET-only and binds the exact unknow
   assert.equal(result.operationMode, "workspace_launch_readback_diagnose");
   assert.equal(result.status, "proven");
   assert.deepEqual(result.proof, proof);
+  assert.deepEqual(result.target, COMPUTE_CLAIM_TARGET);
   assert.deepEqual(result.runnerDirectMutationCounts, { sub2api: 0, tencent: 0, kubernetes: 0 });
   assert.deepEqual(calls, [
     { method: "POST", path: "/api/auth/login" },
     { method: "GET", path: `/api/operator/workspace-launches/${COMPUTE_CLAIM_TARGET.launchOperationId}/readback-recovery-proof` }
   ]);
+});
+
+test("workspace launch readback rejects a three-field target before network access", async () => {
+  let calls = 0;
+  await assert.rejects(() => productionLiveQa.diagnoseWorkspaceLaunchReadbackRecovery({
+    target: {
+      launchOperationId: COMPUTE_CLAIM_TARGET.launchOperationId,
+      accountId: COMPUTE_CLAIM_TARGET.accountId,
+      workspaceId: COMPUTE_CLAIM_TARGET.workspaceId
+    },
+    mergedSha: BASIC_CANARY_MERGED_SHA,
+    cloudImageDigest: BASIC_CANARY_CLOUD_DIGEST,
+    origin: "https://cloud.medopl.cn",
+    adminEmail: ADMIN_EMAIL,
+    adminPassword: ADMIN_PASSWORD,
+    customerEmail: COMPUTE_CLAIM_CUSTOMER_EMAIL,
+    kubeconfigPath: "/run/secrets/kubeconfig",
+    namespace: "opl-cloud",
+    cloudRevisionEvidenceReader: async () => { calls += 1; return computeClaimCloudRevisionEvidence(); },
+    fetchImpl: async () => { calls += 1; return json({}); }
+  }), /workspace_launch_readback_target_invalid/);
+  assert.equal(calls, 0);
+});
+
+test("workspace launch readback recovery rejects approval release customer and target drift before network access", async () => {
+  const proof = workspaceLaunchReadbackProof();
+  const cases = [
+    ["main SHA", { mergedMainSha: "f".repeat(40) }],
+    ["Cloud digest", { cloudImageDigest: `sha256:${"f".repeat(64)}` }],
+    ["customer", { customer: { ...proof.customer, email: "other-owner@example.test" } }],
+    ["target", { target: { ...proof.target, cvmInstanceId: "ins-other-fixture" } }]
+  ];
+  for (const [name, approvalOverrides] of cases) {
+    let externalCalls = 0;
+    await assert.rejects(() => productionLiveQa.recoverWorkspaceLaunchReadbackRecovery({
+      target: COMPUTE_CLAIM_TARGET,
+      approvalJson: workspaceLaunchReadbackApprovalJson(proof, approvalOverrides),
+      approvalId: "approval-readback-fixture",
+      mergedSha: BASIC_CANARY_MERGED_SHA,
+      cloudImageDigest: BASIC_CANARY_CLOUD_DIGEST,
+      origin: "https://cloud.medopl.cn",
+      adminEmail: ADMIN_EMAIL,
+      adminPassword: ADMIN_PASSWORD,
+      customerEmail: COMPUTE_CLAIM_CUSTOMER_EMAIL,
+      internalServiceToken: "workspace-readback-capability",
+      kubeconfigPath: "/run/secrets/kubeconfig",
+      namespace: "opl-cloud",
+      cloudRevisionEvidenceReader: async () => {
+        externalCalls += 1;
+        throw new Error("unexpected_cloud_revision_access");
+      },
+      fetchImpl: async () => {
+        externalCalls += 1;
+        throw new Error("unexpected_network_access");
+      },
+      now: new Date("2026-08-28T00:00:00Z")
+    }), /workspace_launch_readback_(?:approval_invalid|proof_drift|customer_identity_mismatch)/, name);
+    assert.equal(externalCalls, 0, `${name} drift crossed an external boundary`);
+  }
 });
 
 test("workspace launch readback recovery rechecks proof then performs one CAS convergence POST", async () => {
@@ -1212,11 +1294,7 @@ test("workspace launch readback recovery rechecks proof then performs one CAS co
   const approvalJson = workspaceLaunchReadbackApprovalJson(proof);
   const calls = [];
   const result = await productionLiveQa.recoverWorkspaceLaunchReadbackRecovery({
-    target: {
-      launchOperationId: COMPUTE_CLAIM_TARGET.launchOperationId,
-      accountId: COMPUTE_CLAIM_TARGET.accountId,
-      workspaceId: COMPUTE_CLAIM_TARGET.workspaceId
-    },
+    target: COMPUTE_CLAIM_TARGET,
     approvalJson,
     approvalId: "approval-readback-fixture",
     mergedSha: BASIC_CANARY_MERGED_SHA,
@@ -1265,7 +1343,7 @@ test("workspace launch readback recovery rechecks proof then performs one CAS co
   const driftedProof = workspaceLaunchReadbackProof({ resources: { ...proof.resources, storageProviderResourceId: "disk-drifted-fixture" } });
   let driftPosts = 0;
   await assert.rejects(() => productionLiveQa.recoverWorkspaceLaunchReadbackRecovery({
-    target: { launchOperationId: COMPUTE_CLAIM_TARGET.launchOperationId, accountId: COMPUTE_CLAIM_TARGET.accountId, workspaceId: COMPUTE_CLAIM_TARGET.workspaceId },
+    target: COMPUTE_CLAIM_TARGET,
     approvalJson,
     approvalId: "approval-readback-fixture",
     mergedSha: BASIC_CANARY_MERGED_SHA,
@@ -1404,11 +1482,7 @@ test("workspace launch readback diagnosis CLI projects a full compute target for
   });
 
   assert.equal(code, 0);
-  assert.deepEqual(JSON.parse(stdout).target, {
-    launchOperationId: COMPUTE_CLAIM_TARGET.launchOperationId,
-    accountId: COMPUTE_CLAIM_TARGET.accountId,
-    workspaceId: COMPUTE_CLAIM_TARGET.workspaceId
-  });
+	assert.deepEqual(JSON.parse(stdout).target, COMPUTE_CLAIM_TARGET);
 });
 
 test("recovered Workspace E2E requires an independent single-model approval and succeeded continuation before network access", async () => {
@@ -2520,6 +2594,57 @@ test("compute-claim continuation polls the same launch and runtime with no busin
   ]);
   assert.equal(calls.filter(({ method, path }) => method === "POST" && /launch|claim|debit|wallet|storage/i.test(path)).length, 0);
   assert.doesNotMatch(JSON.stringify(result), /password|secret|token|cookie|providerRequestId/i);
+});
+
+test("workspace readback continuation accepts Pro product truth without changing the shared state machine", async () => {
+  const target = COMPUTE_CLAIM_PRO_TARGET;
+  const total = 240080000;
+  const fetchImpl = async (input) => {
+    const url = new URL(String(input));
+    if (url.pathname === "/api/auth/login") {
+      return json({ user: { accountId: target.accountId, role: "owner" } }, 200, {
+        "set-cookie": "opl_session=customer-fixture; Path=/; HttpOnly",
+        "x-opl-csrf-token": "csrf-customer"
+      });
+    }
+    if (url.pathname === "/api/auth/me") return source({
+      accountId: target.accountId,
+      email: COMPUTE_CLAIM_CUSTOMER_EMAIL,
+      role: "owner",
+      status: "active"
+    }, "sub2api");
+    if (url.pathname === `/api/workspace-launches/${target.launchOperationId}`) return json(computeClaimContinuationLaunch({
+      phase: "succeeded",
+      status: "succeeded",
+      overrides: { packageId: "pro", sizeGb: 100, totalChargeUsdMicros: total }
+    }));
+    if (url.pathname === `/api/workspaces/${target.workspaceId}/runtime-status`) return computeClaimRuntimeStatus();
+    if (url.pathname === "/api/billing/receipts/receipt-compute-claim-fixture") return computeClaimContinuationReceipt({
+      totalUsdMicros: total,
+      components: {
+        compute: { resourceType: "compute", resourceId: target.computeAllocationId, chargeUsdMicros: 230000000 },
+        storage: { resourceType: "storage", resourceId: target.storageId, sizeGb: 100, chargeUsdMicros: 10080000 }
+      }
+    });
+    return json({ error: "not_found" }, 404);
+  };
+  const result = await productionLiveQa.continueComputeClaimWorkspace({
+    target,
+    mergedSha: BASIC_CANARY_MERGED_SHA,
+    cloudImageDigest: BASIC_CANARY_CLOUD_DIGEST,
+    origin: "https://cloud.medopl.cn",
+    customerEmail: COMPUTE_CLAIM_CUSTOMER_EMAIL,
+    customerPassword: "customer-password-fixture",
+    kubeconfigPath: "/run/secrets/kubeconfig",
+    namespace: "opl-cloud",
+    launchPollAttempts: 1,
+    launchPollDelayMs: 0,
+    cloudRevisionEvidenceReader: async () => computeClaimCloudRevisionEvidence(),
+    fetchImpl
+  });
+  assert.equal(result.launch.packageId, "pro");
+  assert.equal(result.launch.sizeGb, 100);
+  assert.equal(result.receipt.components.storage.sizeGb, 100);
 });
 
 test("compute-claim continuation rejects non-public or noncanonical Workspace URLs", async () => {

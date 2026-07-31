@@ -3139,7 +3139,7 @@ func TestWorkspaceLaunchRecoveryRetriesOnlyReceiptAfterLedgerFailure(t *testing.
 		beforeCharges := len(fixture.sub2API.charges)
 
 		key := "launch-recovery-purchase-receipt"
-		approval := testWorkspaceLaunchReadbackApproval(t, scenario.approvalOperation, "receipt", key, structToMap(fixture.fabric.computeSync), structToMap(fixture.fabric.storageSync))
+		approval := testWorkspaceLaunchReadbackApproval(t, scenario.approvalOperation, "receipt", key, scenario.readback)
 		response := requestWorkspaceLaunchReadbackRecovery(t, fixture, approval, key)
 		current := fixture.operation(t)
 		if response.Code != http.StatusOK || current.Status != "succeeded" || current.Phase != "succeeded" || current.ReceiptID == "" ||

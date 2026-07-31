@@ -539,10 +539,13 @@ contract or select the SKU for a customer launch.
   `attempted=1, confirmed=0, unknown=1, max=1` may be recovered only through
   the existing operator recovery route and the shared `fulfillWorkspaceLaunch`
   orchestrator used by normal Basic, normal Pro, and compute-claim continuation.
-  Its GET proof persists nothing and performs zero Sub2API, Tencent, or
-  Kubernetes mutation. It revalidates the customer, original launch and
-  Workspace, compute and storage through `MonthlyProviderTruth`, the exact
-  Fabric operation identity, and the stage-specific authority: storage,
+  Its GET proof persists nothing, performs zero PostgreSQL writes, and performs
+  zero Sub2API, Tencent, or Kubernetes mutation. It revalidates the customer,
+  original launch and Workspace, full Basic/Pro product truth, compute and
+  storage through `MonthlyProviderTruth`, the exact active MachineOwnership,
+  and distinct launch idempotency, Fabric internal operation, provider
+  `opl_operation_id`, and stage resource operation identities. It also requires
+  the stage-specific authority: storage,
   attachment, Gateway Secret, Runtime, `WorkspaceActivationTruth`, or Ledger
   Receipt. Only one unique and identity-exact readback may CAS the original
   PostgreSQL operation to `attempted=1, confirmed=1, unknown=0, max=1`; the
@@ -555,7 +558,8 @@ contract or select the SKU for a customer launch.
   GET-only. Recovery requires
   `RECOVER_UNKNOWN_WORKSPACE_LAUNCH_STAGE_FROM_AUTHORITATIVE_READBACK`, bound to
   the exact merged main SHA, Cloud and Workspace digests, expiry, protected
-  customer identity, launch/Workspace and all resource and original operation
+  customer identity, the complete protected product/CVM/Node target without
+  projection, launch/Workspace and all resource and original operation
   identities, unknown stage, original attempt budget, recovery key, and the
   stage-specific remaining write set. It explicitly forbids a new launch,
   debit, recharge, refund, scale, CVM, second CBS, deletion, replacement, or

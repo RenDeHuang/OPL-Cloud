@@ -114,6 +114,7 @@ type workspaceLaunchOperation struct {
 	ComputeClaimCloudDigest    string                                   `json:"computeClaimCloudImageDigest,omitempty"`
 	ComputeClaimApproval       *workspaceComputeClaimApprovalBinding    `json:"computeClaimApproval,omitempty"`
 	ReadbackRecoveryApproval   *workspaceLaunchReadbackRecoveryApproval `json:"readbackRecoveryApproval,omitempty"`
+	ReadbackRecoveryProof      *workspaceLaunchReadbackRecoveryProof    `json:"readbackRecoveryProof,omitempty"`
 	WorkspaceImageDigest       string                                   `json:"workspaceImageDigest,omitempty"`
 	ComputeClaimPrivateIP      string                                   `json:"computeClaimPrivateIp,omitempty"`
 	ComputeClaimProof          *clients.ComputeClaimRecoveryProof       `json:"computeClaimProof,omitempty"`
@@ -165,9 +166,31 @@ type workspaceLaunchReadbackRecoveryCustomer struct {
 }
 
 type workspaceLaunchReadbackRecoveryTarget struct {
-	LaunchOperationID string `json:"launchOperationId"`
-	WorkspaceID       string `json:"workspaceId"`
-	PackageID         string `json:"packageId"`
+	LaunchOperationID    string `json:"launchOperationId"`
+	AccountID            string `json:"accountId"`
+	WorkspaceID          string `json:"workspaceId"`
+	ComputeAllocationID  string `json:"computeAllocationId"`
+	StorageID            string `json:"storageId"`
+	PackageID            string `json:"packageId"`
+	PoolID               string `json:"poolId"`
+	NodePoolID           string `json:"nodePoolId"`
+	MachineName          string `json:"machineName"`
+	NodeName             string `json:"nodeName"`
+	CVMInstanceID        string `json:"cvmInstanceId"`
+	PrivateIP            string `json:"privateIp"`
+	InstanceType         string `json:"instanceType"`
+	Zone                 string `json:"zone"`
+	ChargeType           string `json:"chargeType"`
+	PeriodMonths         int    `json:"periodMonths"`
+	RenewFlag            string `json:"renewFlag"`
+	Deadline             string `json:"deadline"`
+	StorageGB            int    `json:"storageGb"`
+	AutoRenew            bool   `json:"autoRenew"`
+	PriceVersion         string `json:"priceVersion"`
+	TotalChargeUSDMicros int64  `json:"totalChargeUsdMicros"`
+	PeriodStart          string `json:"periodStart"`
+	PaidThrough          string `json:"paidThrough"`
+	BillingAnchorDay     int    `json:"billingAnchorDay"`
 }
 
 type workspaceLaunchReadbackRecoveryResources struct {
@@ -175,21 +198,41 @@ type workspaceLaunchReadbackRecoveryResources struct {
 	ComputeProviderResourceID string `json:"computeProviderResourceId"`
 	StorageVolumeID           string `json:"storageVolumeId"`
 	StorageProviderResourceID string `json:"storageProviderResourceId"`
+	StorageZone               string `json:"storageZone"`
+	StorageSizeGB             int    `json:"storageSizeGb"`
+	StorageChargeType         string `json:"storageChargeType"`
+	StorageRenewFlag          string `json:"storageRenewFlag"`
+	StorageDeadline           string `json:"storageDeadline"`
 	AttachmentID              string `json:"attachmentId"`
+	AttachmentProviderID      string `json:"attachmentProviderId"`
 	GatewaySecretRef          string `json:"gatewaySecretRef"`
 	GatewaySecretFingerprint  string `json:"gatewaySecretFingerprint"`
+	WorkspaceAPIKeyID         int64  `json:"workspaceApiKeyId"`
 	RuntimeID                 string `json:"runtimeId"`
+	RuntimeServiceName        string `json:"runtimeServiceName"`
 	ReceiptID                 string `json:"receiptId"`
 }
 
+type workspaceLaunchReadbackRecoveryFabricOperationIdentity struct {
+	IdempotencyKey      string `json:"idempotencyKey"`
+	FabricRecordID      string `json:"fabricRecordId"`
+	FabricOperationID   string `json:"fabricOperationId"`
+	RequestHash         string `json:"requestHash"`
+	ResourceOperationID string `json:"resourceOperationId"`
+	ProviderOperationID string `json:"providerOperationId"`
+}
+
 type workspaceLaunchReadbackRecoveryOperationIDs struct {
-	Compute    string `json:"compute"`
-	Storage    string `json:"storage"`
-	Attachment string `json:"attachment"`
-	Secret     string `json:"secret"`
-	Runtime    string `json:"runtime"`
-	Activation string `json:"activation"`
-	Receipt    string `json:"receipt"`
+	LaunchOperationID     string                                                 `json:"launchOperationId"`
+	LaunchRequestHash     string                                                 `json:"launchRequestHash"`
+	MachineOwnershipID    string                                                 `json:"machineOwnershipId"`
+	Compute               workspaceLaunchReadbackRecoveryFabricOperationIdentity `json:"compute"`
+	Storage               workspaceLaunchReadbackRecoveryFabricOperationIdentity `json:"storage"`
+	Attachment            workspaceLaunchReadbackRecoveryFabricOperationIdentity `json:"attachment"`
+	Secret                workspaceLaunchReadbackRecoveryFabricOperationIdentity `json:"secret"`
+	Runtime               workspaceLaunchReadbackRecoveryFabricOperationIdentity `json:"runtime"`
+	ActivationOperationID string                                                 `json:"activationOperationId"`
+	ReceiptOperationID    string                                                 `json:"receiptOperationId"`
 }
 
 type workspaceLaunchReadbackRecoveryApproval struct {
@@ -533,11 +576,19 @@ func workspaceLaunchResponse(row map[string]any) (map[string]any, error) {
 		"continuationAttemptBudgets": operation.ContinuationAttemptBudgets,
 		"errorCode":                  operation.ErrorCode, "createdAt": row["createdAt"], "updatedAt": row["updatedAt"],
 	}
-	if approval := operation.ComputeClaimApproval; approval != nil {
+	if approval := operation.ReadbackRecoveryApproval; approval != nil {
 		response["recovery"] = map[string]any{
 			"approvalId": approval.ApprovalID, "approvalDigest": approval.ApprovalDigest,
 			"recoveryKey": approval.RecoveryKey, "workspaceImageDigest": approval.WorkspaceImageDigest,
 		}
+	} else if approval := operation.ComputeClaimApproval; approval != nil {
+		response["recovery"] = map[string]any{
+			"approvalId": approval.ApprovalID, "approvalDigest": approval.ApprovalDigest,
+			"recoveryKey": approval.RecoveryKey, "workspaceImageDigest": approval.WorkspaceImageDigest,
+		}
+	}
+	if operation.ReadbackRecoveryProof != nil {
+		response["readbackRecoveryProof"] = operation.ReadbackRecoveryProof
 	}
 	return response, nil
 }
@@ -1380,20 +1431,219 @@ func workspaceLaunchReadbackRecoveryApprovalMatches(got, want workspaceLaunchRea
 	return gotErr == nil && wantErr == nil && bytes.Equal(gotJSON, wantJSON)
 }
 
-func workspaceLaunchReadbackRecoveryExpectedOperationIDs(operation workspaceLaunchOperation) workspaceLaunchReadbackRecoveryOperationIDs {
-	return workspaceLaunchReadbackRecoveryOperationIDs{
-		Compute: operation.ID + ":compute", Storage: operation.ID + ":storage", Attachment: operation.AttachmentOperationID,
-		Secret: operation.WorkspaceOperationID + ":secret:gateway-secret", Runtime: operation.WorkspaceOperationID + ":runtime",
-		Activation: operation.ID + ":activation", Receipt: operation.ID + ":purchase-receipt",
+type workspaceLaunchReadbackRecoveryAuthority struct {
+	OperationIDs workspaceLaunchReadbackRecoveryOperationIDs
+	Attachment   clients.StorageAttachment
+	Secret       clients.GatewaySecretWriteResult
+	Runtime      clients.WorkspaceRuntime
+}
+
+type workspaceLaunchReadbackFabricOperationSpec struct {
+	Stage, Action, ResourceKind, ResourceID, IdempotencyKey string
+}
+
+func workspaceLaunchReadbackFabricOperationSpecs(operation workspaceLaunchOperation) []workspaceLaunchReadbackFabricOperationSpec {
+	return []workspaceLaunchReadbackFabricOperationSpec{
+		{Stage: "compute", Action: "create_compute_allocation", ResourceKind: "compute_allocation", ResourceID: operation.ComputeID, IdempotencyKey: operation.ID + ":compute"},
+		{Stage: "storage", Action: "create_storage_volume", ResourceKind: "storage_volume", ResourceID: operation.StorageID, IdempotencyKey: operation.ID + ":storage"},
+		{Stage: "attachment", Action: "create_storage_attachment", ResourceKind: "storage_attachment", ResourceID: operation.AttachmentOperationID, IdempotencyKey: operation.AttachmentOperationID},
+		{Stage: "secret", Action: "upsert_gateway_secret", ResourceKind: "gateway_secret", ResourceID: workspaceGatewaySecretReference(operation.WorkspaceID), IdempotencyKey: operation.WorkspaceOperationID + ":secret:gateway-secret"},
+		{Stage: "runtime", Action: "create_workspace_runtime", ResourceKind: "workspace_runtime", ResourceID: operation.WorkspaceID, IdempotencyKey: operation.WorkspaceOperationID + ":runtime"},
 	}
 }
 
-func workspaceLaunchReadbackRecoveryExpectedResources(operation workspaceLaunchOperation, compute, storage map[string]any) workspaceLaunchReadbackRecoveryResources {
+func workspaceLaunchReadbackStageIndex(stage string) int {
+	for index, candidate := range workspaceLaunchContinuationStages {
+		if candidate == stage {
+			return index
+		}
+	}
+	if stage == "compute" {
+		return -1
+	}
+	return len(workspaceLaunchContinuationStages) + 1
+}
+
+func workspaceLaunchReadbackFabricOperation(operations []clients.FabricOperation, operation workspaceLaunchOperation, spec workspaceLaunchReadbackFabricOperationSpec, required bool) (clients.FabricOperation, bool, error) {
+	groups := map[string][]clients.FabricOperation{}
+	for _, candidate := range operations {
+		related := candidate.Action == spec.Action && (candidate.IdempotencyKey == spec.IdempotencyKey ||
+			candidate.AccountID == operation.AccountID && candidate.WorkspaceID == operation.WorkspaceID && candidate.ResourceID == spec.ResourceID)
+		if !related {
+			continue
+		}
+		if candidate.ResourceKind != spec.ResourceKind || candidate.ResourceID != spec.ResourceID || candidate.AccountID != operation.AccountID ||
+			candidate.WorkspaceID != operation.WorkspaceID || candidate.IdempotencyKey != spec.IdempotencyKey || candidate.ID == "" ||
+			candidate.OperationID == "" || candidate.RequestHash == "" ||
+			(candidate.Status != "started" && candidate.Status != "failed" && candidate.Status != "succeeded") {
+			return clients.FabricOperation{}, false, errBillingReviewIdentity
+		}
+		groups[candidate.OperationID] = append(groups[candidate.OperationID], candidate)
+	}
+	if len(groups) == 0 {
+		if required {
+			return clients.FabricOperation{}, false, errBillingReviewProviderFact
+		}
+		return clients.FabricOperation{}, false, nil
+	}
+	if !required || len(groups) != 1 {
+		return clients.FabricOperation{}, false, errBillingReviewIdentity
+	}
+	var history []clients.FabricOperation
+	for _, candidates := range groups {
+		history = candidates
+	}
+	requestHash := history[0].RequestHash
+	bestRank, bestIndex := 0, -1
+	for index, candidate := range history {
+		if candidate.RequestHash != requestHash {
+			return clients.FabricOperation{}, false, errBillingReviewIdentity
+		}
+		rank := map[string]int{"started": 1, "failed": 2, "succeeded": 3}[candidate.Status]
+		if rank == bestRank {
+			return clients.FabricOperation{}, false, errBillingReviewIdentity
+		}
+		if rank > bestRank {
+			bestRank, bestIndex = rank, index
+		}
+	}
+	return history[bestIndex], true, nil
+}
+
+func workspaceLaunchReadbackProviderOperationID(tags map[string]string, accountID, workspaceID, resourceID string) (string, bool) {
+	operationID := strings.TrimSpace(tags["opl_operation_id"])
+	return operationID, tags["opl_account_id"] == accountID && tags["opl_workspace_id"] == workspaceID && tags["opl_resource_id"] == resourceID && operationID != ""
+}
+
+func workspaceLaunchReadbackOperationIdentity(candidate clients.FabricOperation, resourceOperationID, providerOperationID string) workspaceLaunchReadbackRecoveryFabricOperationIdentity {
+	return workspaceLaunchReadbackRecoveryFabricOperationIdentity{
+		IdempotencyKey: candidate.IdempotencyKey, FabricRecordID: candidate.ID, FabricOperationID: candidate.OperationID,
+		RequestHash: candidate.RequestHash, ResourceOperationID: resourceOperationID, ProviderOperationID: providerOperationID,
+	}
+}
+
+func workspaceLaunchReadbackRecoveryAuthorityForOperation(operation workspaceLaunchOperation, stage string, truth clients.MonthlyProviderTruth, ownership clients.MachineOwnership, operations []clients.FabricOperation) (workspaceLaunchReadbackRecoveryAuthority, error) {
+	compute := truth.Compute
+	instanceID := firstNonEmpty(compute.CVMInstanceID, compute.InstanceID)
+	computeProviderOperationID, computeTagsOK := workspaceLaunchReadbackProviderOperationID(compute.CostTags, operation.AccountID, operation.WorkspaceID, operation.ComputeID)
+	if ownership.ID == "" || ownership.ResourceID != operation.ComputeID || ownership.AccountID != operation.AccountID || ownership.WorkspaceID != operation.WorkspaceID ||
+		ownership.PackageID != operation.PackageID || ownership.NodePoolID != compute.NodePoolID || ownership.MachineID != compute.MachineName ||
+		ownership.InstanceID != instanceID || ownership.NodeName != compute.NodeName || ownership.Status != "active" || !computeTagsOK || computeProviderOperationID != ownership.ID {
+		return workspaceLaunchReadbackRecoveryAuthority{}, errBillingReviewIdentity
+	}
+
+	authority := workspaceLaunchReadbackRecoveryAuthority{OperationIDs: workspaceLaunchReadbackRecoveryOperationIDs{
+		LaunchOperationID: operation.ID, LaunchRequestHash: operation.RequestHash, MachineOwnershipID: ownership.ID,
+		ActivationOperationID: operation.ID + ":activation", ReceiptOperationID: operation.ID + ":purchase-receipt",
+	}}
+	currentIndex := workspaceLaunchReadbackStageIndex(stage)
+	for _, spec := range workspaceLaunchReadbackFabricOperationSpecs(operation) {
+		required := spec.Stage == "compute" || workspaceLaunchReadbackStageIndex(spec.Stage) <= currentIndex
+		candidate, found, err := workspaceLaunchReadbackFabricOperation(operations, operation, spec, required)
+		if err != nil {
+			return workspaceLaunchReadbackRecoveryAuthority{}, err
+		}
+		identity := workspaceLaunchReadbackRecoveryFabricOperationIdentity{IdempotencyKey: spec.IdempotencyKey}
+		if found {
+			if spec.Stage != stage && candidate.Status != "succeeded" {
+				return workspaceLaunchReadbackRecoveryAuthority{}, errBillingReviewProviderFact
+			}
+			switch spec.Stage {
+			case "compute":
+				identity = workspaceLaunchReadbackOperationIdentity(candidate, candidate.IdempotencyKey, computeProviderOperationID)
+			case "storage":
+				providerOperationID, ok := workspaceLaunchReadbackProviderOperationID(truth.Storage.CostTags, operation.AccountID, operation.WorkspaceID, operation.StorageID)
+				if !ok || truth.Storage.OperationID != candidate.IdempotencyKey {
+					return workspaceLaunchReadbackRecoveryAuthority{}, errBillingReviewIdentity
+				}
+				identity = workspaceLaunchReadbackOperationIdentity(candidate, truth.Storage.OperationID, providerOperationID)
+			case "attachment":
+				resource, ok := candidate.RedactedProviderPayload["resource"]
+				if !ok || jsonRoundTrip(resource, &authority.Attachment) != nil || authority.Attachment.ID == "" || authority.Attachment.OperationID != candidate.IdempotencyKey ||
+					authority.Attachment.WorkspaceID != operation.WorkspaceID || authority.Attachment.ComputeID != operation.ComputeID || authority.Attachment.VolumeID != operation.StorageID ||
+					authority.Attachment.Status != "attached" || operation.AttachmentID != "" && operation.AttachmentID != authority.Attachment.ID {
+					return workspaceLaunchReadbackRecoveryAuthority{}, errBillingReviewIdentity
+				}
+				providerOperationID, ok := workspaceLaunchReadbackProviderOperationID(authority.Attachment.CostTags, operation.AccountID, operation.WorkspaceID, authority.Attachment.ID)
+				if !ok {
+					return workspaceLaunchReadbackRecoveryAuthority{}, errBillingReviewIdentity
+				}
+				identity = workspaceLaunchReadbackOperationIdentity(candidate, authority.Attachment.OperationID, providerOperationID)
+			case "secret":
+				resource, ok := candidate.RedactedProviderPayload["resource"]
+				if !ok || jsonRoundTrip(resource, &authority.Secret) != nil || authority.Secret.SecretRef != spec.ResourceID || authority.Secret.Version == "" ||
+					authority.Secret.Fingerprint == "" || operation.WorkspaceKeyFingerprint != "" && operation.WorkspaceKeyFingerprint != authority.Secret.Fingerprint {
+					return workspaceLaunchReadbackRecoveryAuthority{}, errBillingReviewIdentity
+				}
+				identity = workspaceLaunchReadbackOperationIdentity(candidate, candidate.IdempotencyKey, "")
+			case "runtime":
+				resource, ok := candidate.RedactedProviderPayload["resource"]
+				if !ok || jsonRoundTrip(resource, &authority.Runtime) != nil || authority.Runtime.ID == "" || authority.Runtime.OperationID != candidate.IdempotencyKey ||
+					authority.Runtime.WorkspaceID != operation.WorkspaceID || authority.Runtime.ServiceName == "" || operation.RuntimeID != "" && operation.RuntimeID != authority.Runtime.ID {
+					return workspaceLaunchReadbackRecoveryAuthority{}, errBillingReviewIdentity
+				}
+				providerOperationID, ok := workspaceLaunchReadbackProviderOperationID(authority.Runtime.CostTags, operation.AccountID, operation.WorkspaceID, authority.Runtime.ID)
+				if !ok {
+					return workspaceLaunchReadbackRecoveryAuthority{}, errBillingReviewIdentity
+				}
+				identity = workspaceLaunchReadbackOperationIdentity(candidate, authority.Runtime.OperationID, providerOperationID)
+			}
+		}
+		switch spec.Stage {
+		case "compute":
+			authority.OperationIDs.Compute = identity
+		case "storage":
+			authority.OperationIDs.Storage = identity
+		case "attachment":
+			authority.OperationIDs.Attachment = identity
+		case "secret":
+			authority.OperationIDs.Secret = identity
+		case "runtime":
+			authority.OperationIDs.Runtime = identity
+		}
+	}
+	if operation.RequestHash == "" {
+		return workspaceLaunchReadbackRecoveryAuthority{}, errBillingReviewIdentity
+	}
+	return authority, nil
+}
+
+func workspaceLaunchReadbackRecoveryExpectedTarget(operation workspaceLaunchOperation, truth clients.MonthlyProviderTruth) (workspaceLaunchReadbackRecoveryTarget, error) {
+	compute, storage := truth.Compute, truth.Storage
+	instanceID := firstNonEmpty(compute.CVMInstanceID, compute.InstanceID)
+	periodStart, startErr := time.Parse(time.RFC3339, operation.PeriodStart)
+	paidThrough, paidErr := time.Parse(time.RFC3339, operation.PaidThrough)
+	computeDeadline, computeDeadlineErr := time.Parse(time.RFC3339, compute.Deadline)
+	storageDeadline, storageDeadlineErr := time.Parse(time.RFC3339, storage.Deadline)
+	if compute.ID != operation.ComputeID || compute.AccountID != operation.AccountID || compute.WorkspaceID != operation.WorkspaceID || compute.PackageID != operation.PackageID ||
+		compute.PoolID == "" || compute.NodePoolID != operation.ComputeNodePoolID || compute.MachineName == "" || compute.NodeName == "" || instanceID == "" || compute.PrivateIP == "" ||
+		compute.InstanceType == "" || compute.Zone == "" || compute.ChargeType != "PREPAID" || compute.RenewFlag != "NOTIFY_AND_MANUAL_RENEW" ||
+		storage.ID != operation.StorageID || storage.AccountID != operation.AccountID || storage.WorkspaceID != operation.WorkspaceID || storage.SizeGB != operation.StorageGB ||
+		storage.Zone != compute.Zone || storage.RenewFlag != compute.RenewFlag || storage.ProviderData["chargeType"] != compute.ChargeType ||
+		operation.PriceVersion == "" || operation.TotalChargeUSDMicros <= 0 || operation.BillingAnchorDay < 1 || operation.BillingAnchorDay > 31 ||
+		startErr != nil || paidErr != nil || !paidThrough.After(periodStart) || computeDeadlineErr != nil || storageDeadlineErr != nil ||
+		computeDeadline.Before(paidThrough) || storageDeadline.Before(paidThrough) {
+		return workspaceLaunchReadbackRecoveryTarget{}, errBillingReviewIdentity
+	}
+	return workspaceLaunchReadbackRecoveryTarget{
+		LaunchOperationID: operation.ID, AccountID: operation.AccountID, WorkspaceID: operation.WorkspaceID, ComputeAllocationID: operation.ComputeID,
+		StorageID: operation.StorageID, PackageID: operation.PackageID, PoolID: compute.PoolID, NodePoolID: compute.NodePoolID,
+		MachineName: compute.MachineName, NodeName: compute.NodeName, CVMInstanceID: instanceID, PrivateIP: compute.PrivateIP,
+		InstanceType: compute.InstanceType, Zone: compute.Zone, ChargeType: compute.ChargeType, PeriodMonths: 1, RenewFlag: compute.RenewFlag,
+		Deadline: compute.Deadline, StorageGB: operation.StorageGB, AutoRenew: operation.AutoRenew, PriceVersion: operation.PriceVersion,
+		TotalChargeUSDMicros: operation.TotalChargeUSDMicros, PeriodStart: operation.PeriodStart, PaidThrough: operation.PaidThrough, BillingAnchorDay: operation.BillingAnchorDay,
+	}, nil
+}
+
+func workspaceLaunchReadbackRecoveryExpectedResources(operation workspaceLaunchOperation, truth clients.MonthlyProviderTruth, authority workspaceLaunchReadbackRecoveryAuthority) workspaceLaunchReadbackRecoveryResources {
+	chargeType := truth.Storage.ProviderData["chargeType"]
 	return workspaceLaunchReadbackRecoveryResources{
-		ComputeAllocationID: operation.ComputeID, ComputeProviderResourceID: stringValue(compute["providerResourceId"]),
-		StorageVolumeID: operation.StorageID, StorageProviderResourceID: stringValue(storage["providerResourceId"]),
-		AttachmentID: operation.AttachmentID, GatewaySecretRef: workspaceGatewaySecretReference(operation.WorkspaceID),
-		GatewaySecretFingerprint: operation.WorkspaceKeyFingerprint, RuntimeID: operation.RuntimeID, ReceiptID: operation.ReceiptID,
+		ComputeAllocationID: operation.ComputeID, ComputeProviderResourceID: truth.Compute.ProviderResourceID,
+		StorageVolumeID: operation.StorageID, StorageProviderResourceID: truth.Storage.ProviderResourceID, StorageZone: truth.Storage.Zone,
+		StorageSizeGB: truth.Storage.SizeGB, StorageChargeType: chargeType, StorageRenewFlag: truth.Storage.RenewFlag, StorageDeadline: truth.Storage.Deadline,
+		AttachmentID: operation.AttachmentID, AttachmentProviderID: authority.Attachment.ProviderAttachmentID,
+		GatewaySecretRef: workspaceGatewaySecretReference(operation.WorkspaceID), GatewaySecretFingerprint: operation.WorkspaceKeyFingerprint,
+		WorkspaceAPIKeyID: operation.WorkspaceAPIKeyID, RuntimeID: operation.RuntimeID, RuntimeServiceName: operation.RuntimeServiceName, ReceiptID: operation.ReceiptID,
 	}
 }
 
@@ -1905,30 +2155,27 @@ func (app *controlPlaneServer) workspaceLaunchReadbackRecoveryProviderTruth(ctx 
 	if err != nil {
 		return clients.MonthlyProviderTruth{}, errBillingReviewProviderFact
 	}
-	computeState, computeErr := app.workspaceLaunchRecoveryResourceState(ctx, operation, "compute", truth.ComputeState, structToMap(truth.Compute))
-	storageState, storageErr := app.workspaceLaunchRecoveryResourceState(ctx, operation, "storage", truth.StorageState, structToMap(truth.Storage))
-	if computeErr != nil || storageErr != nil {
-		return clients.MonthlyProviderTruth{}, errors.Join(computeErr, storageErr)
-	}
+	computeState := workspaceLaunchRecoveryResourceStateReadOnly(operation, "compute", truth.ComputeState, structToMap(truth.Compute))
+	storageState := workspaceLaunchRecoveryResourceStateReadOnly(operation, "storage", truth.StorageState, structToMap(truth.Storage))
 	if computeState != "ready" || storageState != "ready" {
 		return clients.MonthlyProviderTruth{}, errBillingReviewProviderFact
 	}
 	return truth, nil
 }
 
-func (app *controlPlaneServer) readWorkspaceLaunchUnknownStage(ctx context.Context, service *controlplane.Service, operation *workspaceLaunchOperation, stage string) (*clients.StorageAttachment, error) {
+func (app *controlPlaneServer) readWorkspaceLaunchUnknownStage(ctx context.Context, service *controlplane.Service, operation *workspaceLaunchOperation, stage string, operations []clients.FabricOperation) (*clients.StorageAttachment, error) {
 	switch stage {
 	case "storage":
 		return nil, nil
 	case "attachment":
-		attachment, err := app.workspaceLaunchAttachmentFromFabricOperation(ctx, service, *operation)
+		attachment, err := workspaceLaunchAttachmentFromFabricOperations(operations, *operation)
 		if err != nil {
 			return nil, err
 		}
 		operation.AttachmentID = attachment.ID
 		return &attachment, nil
 	case "secret":
-		secret, err := app.workspaceLaunchSecretFromFabricOperation(ctx, service, *operation)
+		secret, err := workspaceLaunchSecretFromFabricOperations(operations, *operation)
 		if err != nil {
 			return nil, err
 		}
@@ -1990,14 +2237,29 @@ func (app *controlPlaneServer) workspaceLaunchReadbackRecoveryProofForOperation(
 	if err != nil {
 		return operation, workspaceLaunchReadbackRecoveryProof{}, err
 	}
-	if _, err := app.readWorkspaceLaunchUnknownStage(ctx, service, &operation, stage); err != nil {
+	operations, err := service.FabricOperations(ctx)
+	if err != nil {
 		return operation, workspaceLaunchReadbackRecoveryProof{}, errBillingReviewProviderFact
+	}
+	ownership, err := service.MachineOwnership(ctx, operation.ComputeID)
+	if err != nil {
+		return operation, workspaceLaunchReadbackRecoveryProof{}, errBillingReviewProviderFact
+	}
+	if _, err := app.readWorkspaceLaunchUnknownStage(ctx, service, &operation, stage, operations); err != nil {
+		return operation, workspaceLaunchReadbackRecoveryProof{}, errBillingReviewProviderFact
+	}
+	authority, err := workspaceLaunchReadbackRecoveryAuthorityForOperation(operation, stage, truth, ownership, operations)
+	if err != nil {
+		return operation, workspaceLaunchReadbackRecoveryProof{}, err
+	}
+	target, err := workspaceLaunchReadbackRecoveryExpectedTarget(operation, truth)
+	if err != nil {
+		return operation, workspaceLaunchReadbackRecoveryProof{}, err
 	}
 	proof := workspaceLaunchReadbackRecoveryProof{
 		SchemaVersion: 1, Eligible: true, Reason: "none", Stage: stage, Customer: customer,
-		Target:       workspaceLaunchReadbackRecoveryTarget{LaunchOperationID: operation.ID, WorkspaceID: operation.WorkspaceID, PackageID: operation.PackageID},
-		Resources:    workspaceLaunchReadbackRecoveryExpectedResources(operation, structToMap(truth.Compute), structToMap(truth.Storage)),
-		OperationIDs: workspaceLaunchReadbackRecoveryExpectedOperationIDs(operation), WorkspaceImageDigest: operation.WorkspaceImageDigest,
+		Target: target, Resources: workspaceLaunchReadbackRecoveryExpectedResources(operation, truth, authority),
+		OperationIDs: authority.OperationIDs, WorkspaceImageDigest: operation.WorkspaceImageDigest,
 		AttemptBudget: budget, AllowedWrites: workspaceLaunchReadbackRecoveryAllowedWrites(stage),
 		ForbiddenWrites: append([]string(nil), workspaceLaunchReadbackRecoveryForbiddenWrites...),
 	}
@@ -2042,6 +2304,7 @@ func (app *controlPlaneServer) convergeWorkspaceLaunchUnknownStage(ctx context.C
 	budget.Confirmed, budget.Unknown = 1, 0
 	operation.ContinuationAttemptBudgets[approval.Stage] = budget
 	operation.ReadbackRecoveryApproval = &approval
+	operation.ReadbackRecoveryProof = &proof
 	operation.Status, operation.ErrorCode = "preparing", ""
 	releaseWorkspaceLaunchLease(operation)
 	if err := app.persistWorkspaceLaunch(ctx, operation); errors.Is(err, errWorkspaceLaunchCASConflict) {
@@ -2080,6 +2343,13 @@ func (app *controlPlaneServer) recoverWorkspaceLaunchReview(ctx context.Context,
 		return nil, errBillingReviewIdentity
 	}
 	if terminalWorkspaceLaunchStatus(operation.Status) {
+		if input.ReadbackApproval == nil && operation.ReadbackRecoveryApproval == nil && operation.ReadbackRecoveryProof == nil {
+			return workspaceLaunchRecoveryResponse(operation)
+		}
+		if input.ReadbackApproval == nil || operation.ReadbackRecoveryApproval == nil || operation.ReadbackRecoveryProof == nil ||
+			!workspaceLaunchReadbackRecoveryApprovalMatches(*input.ReadbackApproval, *operation.ReadbackRecoveryApproval) {
+			return nil, errBillingReviewIdentity
+		}
 		return workspaceLaunchRecoveryResponse(operation)
 	}
 	if operation.Status != "manual_review" {
@@ -2092,17 +2362,28 @@ func (app *controlPlaneServer) recoverWorkspaceLaunchReview(ctx context.Context,
 		if stage == "" || input.ReadbackApproval == nil || input.ReadbackApproval.Stage != stage {
 			return nil, errInvalidBillingReview
 		}
-		won, convergeErr := app.convergeWorkspaceLaunchUnknownStage(ctx, service, &operation, *input.ReadbackApproval)
-		if errors.Is(convergeErr, errBillingReviewProviderFact) {
-			return app.keepWorkspaceLaunchReview(ctx, &operation, "workspace_launch_"+stage+"_readback_unconfirmed")
+		if err := app.validateWorkspaceLaunchReadbackRecoveryApproval(ctx, operation, *input.ReadbackApproval, input.IdempotencyKey); err != nil {
+			return nil, err
 		}
+		won, convergeErr := app.convergeWorkspaceLaunchUnknownStage(ctx, service, &operation, *input.ReadbackApproval)
 		if convergeErr != nil {
 			return nil, convergeErr
 		}
 		if won {
 			_ = app.fulfillWorkspaceLaunch(ctx, service, &operation)
 		}
-		return app.currentWorkspaceLaunchRecoveryResponse(ctx, operation.ID)
+		current, ok, err := app.workspaceLaunchOperation(ctx, operation.ID)
+		if err != nil || !ok {
+			if err == nil {
+				err = errBillingReviewNotFound
+			}
+			return nil, err
+		}
+		if current.ReadbackRecoveryApproval == nil || current.ReadbackRecoveryProof == nil ||
+			!workspaceLaunchReadbackRecoveryApprovalMatches(*input.ReadbackApproval, *current.ReadbackRecoveryApproval) {
+			return nil, errBillingReviewIdentity
+		}
+		return workspaceLaunchRecoveryResponse(current)
 	}
 	if input.ReadbackApproval != nil {
 		return nil, errInvalidBillingReview
@@ -2170,10 +2451,9 @@ func (app *controlPlaneServer) workspaceLaunchRecoveryResourceStates(ctx context
 }
 
 func (app *controlPlaneServer) workspaceLaunchRecoveryResourceState(ctx context.Context, operation workspaceLaunchOperation, resourceType, state string, facts map[string]any) (string, error) {
-	if (state != "ready" && state != "absent") || !workspaceLaunchResourceIdentityMatches(resourceType, facts, operation) ||
-		(state == "ready" && !monthlyPurchaseReadbackConfirmed(resourceType, workspaceLaunchProviderExpectation(operation, resourceType), facts)) ||
-		(state == "absent" && !monthlyResourceConfirmedAbsent(resourceType, facts)) {
-		return "unknown", nil
+	state = workspaceLaunchRecoveryResourceStateReadOnly(operation, resourceType, state, facts)
+	if state == "unknown" {
+		return state, nil
 	}
 	row := mergeMaps(workspaceLaunchResourceRow(operation, resourceType), facts)
 	stripWorkspaceLaunchResourceBilling(row)
@@ -2185,6 +2465,47 @@ func (app *controlPlaneServer) workspaceLaunchRecoveryResourceState(ctx context.
 		return "", err
 	}
 	return state, nil
+}
+
+func workspaceLaunchRecoveryResourceStateReadOnly(operation workspaceLaunchOperation, resourceType, state string, facts map[string]any) string {
+	if (state != "ready" && state != "absent") || !workspaceLaunchResourceIdentityMatches(resourceType, facts, operation) ||
+		(state == "ready" && !monthlyPurchaseReadbackConfirmed(resourceType, workspaceLaunchProviderExpectation(operation, resourceType), facts)) ||
+		(state == "absent" && !monthlyResourceConfirmedAbsent(resourceType, facts)) {
+		return "unknown"
+	}
+	return state
+}
+
+func workspaceLaunchReadbackRecoveryOperationPlanMatches(operationIDs workspaceLaunchReadbackRecoveryOperationIDs, operation workspaceLaunchOperation) bool {
+	return operationIDs.LaunchOperationID == operation.ID && operationIDs.LaunchRequestHash == operation.RequestHash && operationIDs.MachineOwnershipID != "" &&
+		operationIDs.Compute.IdempotencyKey == operation.ID+":compute" && operationIDs.Storage.IdempotencyKey == operation.ID+":storage" &&
+		operationIDs.Attachment.IdempotencyKey == operation.AttachmentOperationID &&
+		operationIDs.Secret.IdempotencyKey == operation.WorkspaceOperationID+":secret:gateway-secret" &&
+		operationIDs.Runtime.IdempotencyKey == operation.WorkspaceOperationID+":runtime" &&
+		operationIDs.ActivationOperationID == operation.ID+":activation" && operationIDs.ReceiptOperationID == operation.ID+":purchase-receipt"
+}
+
+func (app *controlPlaneServer) validateWorkspaceLaunchReadbackRecoveryApproval(ctx context.Context, operation workspaceLaunchOperation, approval workspaceLaunchReadbackRecoveryApproval, key string) error {
+	expiresAt, expiresErr := time.Parse(time.RFC3339, approval.ExpiresAt)
+	customer, customerErr := app.workspaceLaunchReadbackRecoveryCustomer(ctx, operation)
+	if approval.SchemaVersion != 1 || approval.IdempotencyKey != key || approval.Confirmation != workspaceLaunchReadbackRecoveryConfirmation ||
+		approval.ApprovalDigest == "" || workspaceLaunchReadbackRecoveryApprovalDigest(approval) != approval.ApprovalDigest || expiresErr != nil || !expiresAt.After(time.Now().UTC()) ||
+		!computeClaimMergedSHAPattern.MatchString(approval.MergedMainSHA) || !computeClaimCloudDigestPattern.MatchString(approval.CloudImageDigest) ||
+		approval.WorkspaceImageDigest != operation.WorkspaceImageDigest || approval.Stage == "" || customerErr != nil || approval.Customer != customer ||
+		approval.Target.LaunchOperationID != operation.ID || approval.Target.AccountID != operation.AccountID || approval.Target.WorkspaceID != operation.WorkspaceID ||
+		approval.Target.ComputeAllocationID != operation.ComputeID || approval.Target.StorageID != operation.StorageID || approval.Target.PackageID != operation.PackageID ||
+		approval.Target.NodePoolID != operation.ComputeNodePoolID || approval.Target.StorageGB != operation.StorageGB || approval.Target.AutoRenew != operation.AutoRenew ||
+		approval.Target.PriceVersion != operation.PriceVersion || approval.Target.TotalChargeUSDMicros != operation.TotalChargeUSDMicros ||
+		approval.Target.PeriodStart != operation.PeriodStart || approval.Target.PaidThrough != operation.PaidThrough || approval.Target.BillingAnchorDay != operation.BillingAnchorDay ||
+		approval.Resources.ComputeAllocationID != operation.ComputeID ||
+		approval.Resources.StorageVolumeID != operation.StorageID || approval.Resources.GatewaySecretRef != workspaceGatewaySecretReference(operation.WorkspaceID) ||
+		approval.Resources.StorageSizeGB != operation.StorageGB || approval.Resources.WorkspaceAPIKeyID != operation.WorkspaceAPIKeyID ||
+		!workspaceLaunchReadbackRecoveryOperationPlanMatches(approval.OperationIDs, operation) || approval.AttemptBudget != operation.ContinuationAttemptBudgets[approval.Stage] ||
+		!equalWorkspaceComputeClaimStrings(approval.AllowedWrites, workspaceLaunchReadbackRecoveryAllowedWrites(approval.Stage)) ||
+		!equalWorkspaceComputeClaimStrings(approval.ForbiddenWrites, workspaceLaunchReadbackRecoveryForbiddenWrites) {
+		return errBillingReviewIdentity
+	}
+	return nil
 }
 
 func (app *controlPlaneServer) keepWorkspaceLaunchReview(ctx context.Context, operation *workspaceLaunchOperation, code string) (map[string]any, error) {
@@ -2651,6 +2972,10 @@ func (app *controlPlaneServer) workspaceLaunchAttachmentFromFabricOperation(ctx 
 	if err != nil {
 		return clients.StorageAttachment{}, err
 	}
+	return workspaceLaunchAttachmentFromFabricOperations(operations, operation)
+}
+
+func workspaceLaunchAttachmentFromFabricOperations(operations []clients.FabricOperation, operation workspaceLaunchOperation) (clients.StorageAttachment, error) {
 	var matches []clients.StorageAttachment
 	for _, candidate := range operations {
 		if candidate.Action != "create_storage_attachment" || candidate.ResourceKind != "storage_attachment" || candidate.Status != "succeeded" ||
@@ -2699,6 +3024,10 @@ func (app *controlPlaneServer) workspaceLaunchSecretFromFabricOperation(ctx cont
 	if err != nil {
 		return clients.GatewaySecretWriteResult{}, err
 	}
+	return workspaceLaunchSecretFromFabricOperations(operations, operation)
+}
+
+func workspaceLaunchSecretFromFabricOperations(operations []clients.FabricOperation, operation workspaceLaunchOperation) (clients.GatewaySecretWriteResult, error) {
 	wantKey := operation.WorkspaceOperationID + ":secret:gateway-secret"
 	var matches []clients.GatewaySecretWriteResult
 	for _, candidate := range operations {

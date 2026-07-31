@@ -45,6 +45,14 @@ func (s *Service) MonthlyProviderTruth(ctx context.Context, computeID, storageID
 	return client.MonthlyProviderTruth(ctx, computeID, storageID)
 }
 
+func (s *Service) MachineOwnership(ctx context.Context, resourceID string) (clients.MachineOwnership, error) {
+	client, ok := s.fabric.(clients.FabricMachineOwnershipClient)
+	if !ok {
+		return clients.MachineOwnership{}, errors.New("fabric_machine_ownership_unavailable")
+	}
+	return client.MachineOwnership(ctx, resourceID)
+}
+
 func (s *Service) WorkspaceActivationTruth(ctx context.Context, input clients.WorkspaceActivationTruthInput) (clients.WorkspaceActivationTruth, error) {
 	client, ok := s.fabric.(clients.FabricWorkspaceActivationTruthClient)
 	if !ok {

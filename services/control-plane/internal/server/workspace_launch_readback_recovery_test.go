@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -29,11 +30,21 @@ type workspaceLaunchReadbackRecoveryFabric struct {
 	*monthlyFabric
 	operations    []clients.FabricOperation
 	operationsErr error
+	ownership     clients.MachineOwnership
+	ownershipErr  error
 }
 
 func (f *workspaceLaunchReadbackRecoveryFabric) ListOperations(_ context.Context) ([]clients.FabricOperation, error) {
 	f.record("fabric.operations")
 	return append([]clients.FabricOperation(nil), f.operations...), f.operationsErr
+}
+
+func (f *workspaceLaunchReadbackRecoveryFabric) MachineOwnership(_ context.Context, resourceID string) (clients.MachineOwnership, error) {
+	f.record("fabric.machine-ownership")
+	if f.ownership.ResourceID != resourceID {
+		return clients.MachineOwnership{}, errors.New("machine ownership not found")
+	}
+	return f.ownership, f.ownershipErr
 }
 
 func testWorkspaceLaunchReadbackAllowedWrites(stage string) []string {
@@ -48,8 +59,19 @@ func testWorkspaceLaunchReadbackAllowedWrites(stage string) []string {
 	return append([]string{"confirm_original_" + stage + "_from_authoritative_readback"}, remaining[stage]...)
 }
 
-func testWorkspaceLaunchReadbackApproval(t *testing.T, operation workspaceLaunchOperation, stage, key string, compute, storage map[string]any) map[string]any {
+func testWorkspaceLaunchReadbackApproval(t *testing.T, operation workspaceLaunchOperation, stage, key string, readback *workspaceLaunchReadbackRecoveryFabric) map[string]any {
 	t.Helper()
+	if readback.providerTruth == nil {
+		t.Fatal("provider truth fixture unavailable")
+	}
+	target, err := workspaceLaunchReadbackRecoveryExpectedTarget(operation, *readback.providerTruth)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authority, err := workspaceLaunchReadbackRecoveryAuthorityForOperation(operation, stage, *readback.providerTruth, readback.ownership, readback.operations)
+	if err != nil {
+		t.Fatal(err)
+	}
 	approval := map[string]any{
 		"schemaVersion":        1,
 		"approvalId":           "approval-readback-" + stableID(stage)[:8],
@@ -64,26 +86,9 @@ func testWorkspaceLaunchReadbackApproval(t *testing.T, operation workspaceLaunch
 		"customer": map[string]any{
 			"email": "alpha@example.com", "accountId": operation.AccountID, "ownerUserId": operation.OwnerUserID,
 		},
-		"target": map[string]any{
-			"launchOperationId": operation.ID, "workspaceId": operation.WorkspaceID, "packageId": operation.PackageID,
-		},
-		"resources": map[string]any{
-			"computeAllocationId":       operation.ComputeID,
-			"computeProviderResourceId": stringValue(compute["providerResourceId"]),
-			"storageVolumeId":           operation.StorageID,
-			"storageProviderResourceId": stringValue(storage["providerResourceId"]),
-			"attachmentId":              operation.AttachmentID,
-			"gatewaySecretRef":          workspaceGatewaySecretReference(operation.WorkspaceID),
-			"gatewaySecretFingerprint":  operation.WorkspaceKeyFingerprint,
-			"runtimeId":                 operation.RuntimeID,
-			"receiptId":                 operation.ReceiptID,
-		},
-		"operationIds": map[string]any{
-			"compute": operation.ID + ":compute", "storage": operation.ID + ":storage",
-			"attachment": operation.AttachmentOperationID, "secret": operation.WorkspaceOperationID + ":secret:gateway-secret",
-			"runtime": operation.WorkspaceOperationID + ":runtime", "activation": operation.ID + ":activation",
-			"receipt": operation.ID + ":purchase-receipt",
-		},
+		"target":          structToMap(target),
+		"resources":       structToMap(workspaceLaunchReadbackRecoveryExpectedResources(operation, *readback.providerTruth, authority)),
+		"operationIds":    structToMap(authority.OperationIDs),
 		"attemptBudget":   map[string]any{"attempted": 1, "confirmed": 0, "unknown": 1, "max": 1},
 		"allowedWrites":   testWorkspaceLaunchReadbackAllowedWrites(stage),
 		"forbiddenWrites": append([]string(nil), testWorkspaceLaunchReadbackRecoveryForbiddenWrites...),
@@ -95,6 +100,17 @@ func testWorkspaceLaunchReadbackApproval(t *testing.T, operation workspaceLaunch
 	digest := sha256.Sum256(payload)
 	approval["approvalDigest"] = hex.EncodeToString(digest[:])
 	return approval
+}
+
+func refreshWorkspaceLaunchReadbackApprovalDigest(t *testing.T, approval map[string]any) {
+	t.Helper()
+	delete(approval, "approvalDigest")
+	payload, err := json.Marshal(approval)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256(payload)
+	approval["approvalDigest"] = hex.EncodeToString(digest[:])
 }
 
 func requestWorkspaceLaunchReadbackRecovery(t *testing.T, fixture workspaceLaunchWorkerFixture, approval map[string]any, key string) *httptest.ResponseRecorder {
@@ -153,7 +169,24 @@ func newWorkspaceLaunchReadbackRecoveryScenario(t *testing.T, stage, packageID s
 		storageGB, charge = 100, 240_080_000
 	}
 	fixture := newWorkspaceLaunchWorkerFixtureForPlan(t, []int64{1_000_000_000, 1_000_000_000, 1_000_000_000 - charge}, nil, nil, packageID, storageGB, false)
-	configureWorkspaceLaunchFulfillment(t, fixture)
+	launch := configureWorkspaceLaunchFulfillment(t, fixture)
+	computeOperationID := "op-create-compute-" + stableID(launch.ID)[:10]
+	storageOperationID := "op-create-storage-" + stableID(launch.ID)[:10]
+	ownershipID := "owner-" + stableID(launch.ComputeID)[:12]
+	fixture.fabric.computeSync.OperationID = launch.ID + ":compute"
+	fixture.fabric.computeSync.PoolID = "pool-" + packageID
+	fixture.fabric.computeSync.NodePoolID = launch.ComputeNodePoolID
+	fixture.fabric.computeSync.MachineName = "machine-" + stableID(launch.ComputeID)[:10]
+	fixture.fabric.computeSync.NodeName = "node-" + stableID(launch.ComputeID)[:10]
+	fixture.fabric.computeSync.PrivateIP = "10.20.30.41"
+	fixture.fabric.computeSync.CVMInstanceID = fixture.fabric.computeSync.InstanceID
+	fixture.fabric.computeSync.CostTags = map[string]string{
+		"opl_account_id": launch.AccountID, "opl_workspace_id": launch.WorkspaceID, "opl_resource_id": launch.ComputeID, "opl_operation_id": ownershipID,
+	}
+	fixture.fabric.storageSync.OperationID = launch.ID + ":storage"
+	fixture.fabric.storageSync.CostTags = map[string]string{
+		"opl_account_id": launch.AccountID, "opl_workspace_id": launch.WorkspaceID, "opl_resource_id": launch.StorageID, "opl_operation_id": storageOperationID,
+	}
 	if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err != nil {
 		t.Fatal(err)
 	}
@@ -193,7 +226,70 @@ func newWorkspaceLaunchReadbackRecoveryScenario(t *testing.T, stage, packageID s
 		ComputeState: "ready", StorageState: "ready", Compute: fixture.fabric.computeSync, Storage: fixture.fabric.storageSync,
 	}
 	approvalOperation := unknown
-	readback := &workspaceLaunchReadbackRecoveryFabric{monthlyFabric: fixture.fabric}
+	readback := &workspaceLaunchReadbackRecoveryFabric{
+		monthlyFabric: fixture.fabric,
+		ownership: clients.MachineOwnership{
+			ID: ownershipID, ResourceID: unknown.ComputeID, AccountID: unknown.AccountID, WorkspaceID: unknown.WorkspaceID,
+			PackageID: unknown.PackageID, NodePoolID: fixture.fabric.computeSync.NodePoolID, MachineID: fixture.fabric.computeSync.MachineName,
+			InstanceID: fixture.fabric.computeSync.CVMInstanceID, NodeName: fixture.fabric.computeSync.NodeName, Status: "active",
+		},
+		operations: []clients.FabricOperation{
+			{
+				ID: "fop-compute-readback", OperationID: computeOperationID, Action: "create_compute_allocation", ResourceKind: "compute_allocation",
+				ResourceID: unknown.ComputeID, AccountID: unknown.AccountID, WorkspaceID: unknown.WorkspaceID, IdempotencyKey: unknown.ID + ":compute",
+				RequestHash: stableID("compute", unknown.ID), Status: "succeeded", RedactedProviderPayload: map[string]any{"resource": fixture.fabric.computeSync},
+			},
+			{
+				ID: "fop-storage-readback", OperationID: storageOperationID, Action: "create_storage_volume", ResourceKind: "storage_volume",
+				ResourceID: unknown.StorageID, AccountID: unknown.AccountID, WorkspaceID: unknown.WorkspaceID, IdempotencyKey: unknown.ID + ":storage",
+				RequestHash: stableID("storage", unknown.ID), Status: map[bool]string{true: "failed", false: "succeeded"}[stage == "storage"],
+				RedactedProviderPayload: map[string]any{"resource": fixture.fabric.storageSync},
+			},
+		},
+	}
+	attachmentOperation := func() clients.FabricOperation {
+		attachment := clients.StorageAttachment{
+			ID: approvalOperation.AttachmentID, OperationID: unknown.AttachmentOperationID, WorkspaceID: unknown.WorkspaceID,
+			ComputeID: unknown.ComputeID, VolumeID: unknown.StorageID, Status: "attached", Provider: "tencent-tke",
+			ProviderAttachmentID: "pv/" + unknown.StorageID + ":pvc/" + unknown.StorageID + "-data",
+			CostTags: map[string]string{
+				"opl_account_id": unknown.AccountID, "opl_workspace_id": unknown.WorkspaceID, "opl_resource_id": approvalOperation.AttachmentID,
+				"opl_operation_id": unknown.AttachmentOperationID,
+			},
+		}
+		return clients.FabricOperation{
+			ID: "fop-attachment-readback", OperationID: "op-create-attachment-" + stableID(unknown.ID)[:10], Action: "create_storage_attachment",
+			ResourceKind: "storage_attachment", ResourceID: unknown.AttachmentOperationID, AccountID: unknown.AccountID, WorkspaceID: unknown.WorkspaceID,
+			IdempotencyKey: unknown.AttachmentOperationID, RequestHash: stableID("attachment", unknown.ID), Status: "succeeded",
+			RedactedProviderPayload: map[string]any{"resource": attachment},
+		}
+	}
+	secretOperation := func() clients.FabricOperation {
+		return clients.FabricOperation{
+			ID: "fop-gateway-readback", OperationID: "op-upsert-secret-" + stableID(unknown.ID)[:10], Action: "upsert_gateway_secret",
+			ResourceKind: "gateway_secret", ResourceID: workspaceGatewaySecretReference(unknown.WorkspaceID), AccountID: unknown.AccountID,
+			WorkspaceID: unknown.WorkspaceID, IdempotencyKey: unknown.WorkspaceOperationID + ":secret:gateway-secret",
+			RequestHash: stableID("secret", unknown.ID), Status: "succeeded", RedactedProviderPayload: map[string]any{"resource": clients.GatewaySecretWriteResult{
+				SecretRef: workspaceGatewaySecretReference(unknown.WorkspaceID), Version: "v1", Fingerprint: approvalOperation.WorkspaceKeyFingerprint,
+			}},
+		}
+	}
+	runtimeOperation := func() clients.FabricOperation {
+		runtime := clients.WorkspaceRuntime{
+			ID: approvalOperation.RuntimeID, OperationID: unknown.WorkspaceOperationID + ":runtime", WorkspaceID: unknown.WorkspaceID,
+			URL: approvalOperation.URL, Status: "running", ServiceName: approvalOperation.RuntimeServiceName, Ready: true,
+			CostTags: map[string]string{
+				"opl_account_id": unknown.AccountID, "opl_workspace_id": unknown.WorkspaceID, "opl_resource_id": approvalOperation.RuntimeID,
+				"opl_operation_id": unknown.WorkspaceOperationID + ":runtime",
+			},
+		}
+		return clients.FabricOperation{
+			ID: "fop-runtime-readback", OperationID: "op-create-runtime-" + stableID(unknown.ID)[:10], Action: "create_workspace_runtime",
+			ResourceKind: "workspace_runtime", ResourceID: unknown.WorkspaceID, AccountID: unknown.AccountID, WorkspaceID: unknown.WorkspaceID,
+			IdempotencyKey: unknown.WorkspaceOperationID + ":runtime", RequestHash: stableID("runtime", unknown.ID), Status: "succeeded",
+			RedactedProviderPayload: map[string]any{"resource": runtime},
+		}
+	}
 	switch stage {
 	case "attachment":
 		attachment := clients.StorageAttachment{
@@ -201,28 +297,19 @@ func newWorkspaceLaunchReadbackRecoveryScenario(t *testing.T, stage, packageID s
 			ComputeID: unknown.ComputeID, VolumeID: unknown.StorageID, Status: "attached", Provider: "tencent-tke",
 		}
 		approvalOperation.AttachmentID = attachment.ID
-		readback.operations = []clients.FabricOperation{{
-			ID: "fop-attachment-readback", Action: "create_storage_attachment", ResourceKind: "storage_attachment", ResourceID: attachment.ID,
-			AccountID: unknown.AccountID, WorkspaceID: unknown.WorkspaceID, IdempotencyKey: unknown.AttachmentOperationID, Status: "succeeded",
-			RedactedProviderPayload: map[string]any{"resource": attachment},
-		}}
 	case "secret":
 		fingerprint := "sha256:" + strings.Repeat("c", 64)
 		approvalOperation.WorkspaceKeyFingerprint = fingerprint
-		readback.operations = []clients.FabricOperation{{
-			ID: "fop-gateway-readback", Action: "upsert_gateway_secret", ResourceKind: "gateway_secret", ResourceID: workspaceGatewaySecretReference(unknown.WorkspaceID),
-			AccountID: unknown.AccountID, WorkspaceID: unknown.WorkspaceID, IdempotencyKey: unknown.WorkspaceOperationID + ":secret:gateway-secret", Status: "succeeded",
-			RedactedProviderPayload: map[string]any{"resource": clients.GatewaySecretWriteResult{
-				SecretRef: workspaceGatewaySecretReference(unknown.WorkspaceID), Version: "v1", Fingerprint: fingerprint,
-			}},
-		}}
 	case "runtime":
 		runtime := clients.WorkspaceRuntime{
 			ID: "runtime-authoritative", OperationID: unknown.WorkspaceOperationID + ":runtime", WorkspaceID: unknown.WorkspaceID,
 			URL: "https://workspace.medopl.cn/w/" + unknown.WorkspaceID + "/", Status: "running", ServiceName: "opl-compute-authoritative", Ready: true,
 			Access: clients.WorkspaceRuntimeAccess{Username: "admin", CredentialStatus: "configured", CredentialVersion: "v1", SecretRef: "opl-compute-authoritative-env"},
 		}
-		approvalOperation.RuntimeID = runtime.ID
+		approvalOperation.RuntimeID, approvalOperation.RuntimeReady = runtime.ID, runtime.Ready
+		approvalOperation.RuntimeServiceName, approvalOperation.RuntimeUsername = runtime.ServiceName, runtime.Access.Username
+		approvalOperation.CredentialStatus, approvalOperation.CredentialVersion = runtime.Access.CredentialStatus, runtime.Access.CredentialVersion
+		approvalOperation.CredentialSecretRef, approvalOperation.URL = runtime.Access.SecretRef, runtime.URL
 		fixture.fabric.runtimeStatus = runtime
 	case "activation":
 		billingState, reviewCode := fixture.app.workspaceLaunchBillingState(context.Background(), unknown)
@@ -245,6 +332,15 @@ func newWorkspaceLaunchReadbackRecoveryScenario(t *testing.T, stage, packageID s
 		fixture.ledger.receipts[unknown.ID+":purchase-receipt"] = receipt
 		approvalOperation.ReceiptID = receipt.ReceiptID
 	}
+	if workspaceLaunchReadbackStageIndex(stage) >= workspaceLaunchReadbackStageIndex("attachment") {
+		readback.operations = append(readback.operations, attachmentOperation())
+	}
+	if workspaceLaunchReadbackStageIndex(stage) >= workspaceLaunchReadbackStageIndex("secret") {
+		readback.operations = append(readback.operations, secretOperation())
+	}
+	if workspaceLaunchReadbackStageIndex(stage) >= workspaceLaunchReadbackStageIndex("runtime") {
+		readback.operations = append(readback.operations, runtimeOperation())
+	}
 	return workspaceLaunchReadbackRecoveryScenario{
 		fixture: fixture, unknown: unknown, approvalOperation: approvalOperation, readback: readback, beforeCurrentWrites: beforeCurrentWrites,
 	}
@@ -252,34 +348,36 @@ func newWorkspaceLaunchReadbackRecoveryScenario(t *testing.T, stage, packageID s
 
 func TestWorkspaceLaunchUnknownStageConvergesFromAuthoritativeReadbackAfterRestartWithoutSecondWrite(t *testing.T) {
 	t.Setenv("OPL_INTERNAL_SERVICE_TOKEN", "workspace-launch-readback-capability")
-	for _, stage := range workspaceLaunchContinuationStages {
-		t.Run(stage, func(t *testing.T) {
-			scenario := newWorkspaceLaunchReadbackRecoveryScenario(t, stage, "basic")
-			fixture := scenario.fixture
-			fixture.service = controlplane.NewService(fixture.ledger, scenario.readback, fixture.sub2API)
-			server, err := NewPersistentServer(fixture.service, fixture.store)
-			if err != nil {
-				t.Fatal(err)
-			}
-			fixture.server, fixture.operator = server, reservedOperatorSessionForTest(t, server)
-			key := "recover-readback-" + stableID(stage)[:8]
-			approval := testWorkspaceLaunchReadbackApproval(t, scenario.approvalOperation, stage, key, structToMap(fixture.fabric.computeSync), structToMap(fixture.fabric.storageSync))
-			response := requestWorkspaceLaunchReadbackRecovery(t, fixture, approval, key)
-			if response.Code != http.StatusOK {
-				t.Fatalf("%s readback recovery status=%d body=%s", stage, response.Code, response.Body.String())
-			}
-			recovered := fixture.operation(t)
-			if recovered.Status != "succeeded" || recovered.Phase != "succeeded" || recovered.URL == "" || recovered.ReceiptID == "" ||
-				recovered.ContinuationAttemptBudgets[stage] != (workspaceLaunchStageBudget{Attempted: 1, Confirmed: 1, Max: 1}) ||
-				recovered.ReadbackRecoveryApproval == nil || recovered.ReadbackRecoveryApproval.Stage != stage {
-				t.Fatalf("recovered %s launch=%#v", stage, recovered)
-			}
-			if workspaceLaunchStageWriteCount(fixture, stage) != scenario.beforeCurrentWrites || len(fixture.sub2API.charges) != 1 || len(fixture.sub2API.refunds) != 0 ||
-				len(fixture.fabric.computeIDs) != 1 || len(fixture.fabric.storageIDs) != 1 || countStrings(*fixture.events, "fabric.attachment") != 1 ||
-				countStrings(*fixture.events, "fabric.gateway-secret") != 1 || countStrings(*fixture.events, "fabric.runtime") != 1 || fixture.store.activationCalls != 1 || len(fixture.ledger.receiptInputs) != 1 {
-				t.Fatalf("%s recovery repeated or crossed writes: events=%#v compute=%d storage=%d activation=%d receipts=%d charges=%d refunds=%d", stage, *fixture.events, len(fixture.fabric.computeIDs), len(fixture.fabric.storageIDs), fixture.store.activationCalls, len(fixture.ledger.receiptInputs), len(fixture.sub2API.charges), len(fixture.sub2API.refunds))
-			}
-		})
+	for _, packageID := range []string{"basic", "pro"} {
+		for _, stage := range workspaceLaunchContinuationStages {
+			t.Run(packageID+"/"+stage, func(t *testing.T) {
+				scenario := newWorkspaceLaunchReadbackRecoveryScenario(t, stage, packageID)
+				fixture := scenario.fixture
+				fixture.service = controlplane.NewService(fixture.ledger, scenario.readback, fixture.sub2API)
+				server, err := NewPersistentServer(fixture.service, fixture.store)
+				if err != nil {
+					t.Fatal(err)
+				}
+				fixture.server, fixture.operator = server, reservedOperatorSessionForTest(t, server)
+				key := "recover-readback-" + stableID(stage)[:8]
+				approval := testWorkspaceLaunchReadbackApproval(t, scenario.approvalOperation, stage, key, scenario.readback)
+				response := requestWorkspaceLaunchReadbackRecovery(t, fixture, approval, key)
+				if response.Code != http.StatusOK {
+					t.Fatalf("%s readback recovery status=%d body=%s", stage, response.Code, response.Body.String())
+				}
+				recovered := fixture.operation(t)
+				if recovered.Status != "succeeded" || recovered.Phase != "succeeded" || recovered.URL == "" || recovered.ReceiptID == "" ||
+					recovered.ContinuationAttemptBudgets[stage] != (workspaceLaunchStageBudget{Attempted: 1, Confirmed: 1, Max: 1}) ||
+					recovered.ReadbackRecoveryApproval == nil || recovered.ReadbackRecoveryApproval.Stage != stage {
+					t.Fatalf("recovered %s launch=%#v", stage, recovered)
+				}
+				if workspaceLaunchStageWriteCount(fixture, stage) != scenario.beforeCurrentWrites || len(fixture.sub2API.charges) != 1 || len(fixture.sub2API.refunds) != 0 ||
+					len(fixture.fabric.computeIDs) != 1 || len(fixture.fabric.storageIDs) != 1 || countStrings(*fixture.events, "fabric.attachment") != 1 ||
+					countStrings(*fixture.events, "fabric.gateway-secret") != 1 || countStrings(*fixture.events, "fabric.runtime") != 1 || fixture.store.activationCalls != 1 || len(fixture.ledger.receiptInputs) != 1 {
+					t.Fatalf("%s recovery repeated or crossed writes: events=%#v compute=%d storage=%d activation=%d receipts=%d charges=%d refunds=%d", stage, *fixture.events, len(fixture.fabric.computeIDs), len(fixture.fabric.storageIDs), fixture.store.activationCalls, len(fixture.ledger.receiptInputs), len(fixture.sub2API.charges), len(fixture.sub2API.refunds))
+				}
+			})
+		}
 	}
 }
 
@@ -305,15 +403,17 @@ func TestWorkspaceLaunchReadbackProofIsAuthoritativeAndReadOnly(t *testing.T) {
 			if err := json.Unmarshal(response.Body.Bytes(), &proof); err != nil {
 				t.Fatal(err)
 			}
-			expectedResources := workspaceLaunchReadbackRecoveryExpectedResources(
-				scenario.approvalOperation,
-				structToMap(fixture.fabric.computeSync),
-				structToMap(fixture.fabric.storageSync),
+			expectedTarget, targetErr := workspaceLaunchReadbackRecoveryExpectedTarget(scenario.approvalOperation, *scenario.readback.providerTruth)
+			expectedAuthority, authorityErr := workspaceLaunchReadbackRecoveryAuthorityForOperation(
+				scenario.approvalOperation, stage, *scenario.readback.providerTruth, scenario.readback.ownership, scenario.readback.operations,
 			)
+			if targetErr != nil || authorityErr != nil {
+				t.Fatalf("expected authority targetErr=%v authorityErr=%v", targetErr, authorityErr)
+			}
+			expectedResources := workspaceLaunchReadbackRecoveryExpectedResources(scenario.approvalOperation, *scenario.readback.providerTruth, expectedAuthority)
 			if proof.SchemaVersion != 1 || !proof.Eligible || proof.Reason != "none" || proof.Stage != stage ||
 				proof.Customer != (workspaceLaunchReadbackRecoveryCustomer{Email: "alpha@example.com", AccountID: before.AccountID, OwnerUserID: before.OwnerUserID}) ||
-				proof.Target != (workspaceLaunchReadbackRecoveryTarget{LaunchOperationID: before.ID, WorkspaceID: before.WorkspaceID, PackageID: before.PackageID}) ||
-				proof.Resources != expectedResources || proof.OperationIDs != workspaceLaunchReadbackRecoveryExpectedOperationIDs(before) ||
+				proof.Target != expectedTarget || proof.Resources != expectedResources || proof.OperationIDs != expectedAuthority.OperationIDs ||
 				proof.WorkspaceImageDigest != before.WorkspaceImageDigest || proof.AttemptBudget != (workspaceLaunchStageBudget{Attempted: 1, Unknown: 1, Max: 1}) ||
 				!equalWorkspaceComputeClaimStrings(proof.AllowedWrites, workspaceLaunchReadbackRecoveryAllowedWrites(stage)) ||
 				!equalWorkspaceComputeClaimStrings(proof.ForbiddenWrites, workspaceLaunchReadbackRecoveryForbiddenWrites) ||
@@ -325,6 +425,82 @@ func TestWorkspaceLaunchReadbackProofIsAuthoritativeAndReadOnly(t *testing.T) {
 				t.Fatalf("%s proof mutated launch: before=%#v after=%#v events=%#v", stage, before, after, *fixture.events)
 			}
 		})
+	}
+}
+
+func postgresSchemaSnapshot(t *testing.T, db *sql.DB, schema string) string {
+	t.Helper()
+	rows, err := db.Query(`SELECT table_name FROM information_schema.tables WHERE table_schema = $1 AND table_type = 'BASE TABLE' ORDER BY table_name`, schema)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	tables := []string{}
+	for rows.Next() {
+		var table string
+		if err := rows.Scan(&table); err != nil {
+			t.Fatal(err)
+		}
+		tables = append(tables, table)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	snapshot := make(map[string]json.RawMessage, len(tables))
+	quote := func(value string) string { return `"` + strings.ReplaceAll(value, `"`, `""`) + `"` }
+	for _, table := range tables {
+		query := fmt.Sprintf(`SELECT COALESCE(jsonb_agg(to_jsonb(row_data) ORDER BY to_jsonb(row_data)::text), '[]'::jsonb)::text FROM %s.%s AS row_data`, quote(schema), quote(table))
+		var encoded string
+		if err := db.QueryRow(query).Scan(&encoded); err != nil {
+			t.Fatalf("snapshot %s: %v", table, err)
+		}
+		snapshot[table] = json.RawMessage(encoded)
+	}
+	encoded, err := json.Marshal(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(encoded)
+}
+
+func TestPostgresWorkspaceLaunchReadbackProofLeavesEntireSchemaUnchanged(t *testing.T) {
+	t.Setenv("OPL_MONTHLY_BILLING_WORKER_ENABLED", "false")
+	t.Setenv("OPL_PROVIDER_RECONCILE_WORKER_ENABLED", "false")
+	t.Setenv("OPL_ARCHIVE_RETENTION_WORKER_ENABLED", "false")
+	scenario := newWorkspaceLaunchReadbackRecoveryScenario(t, "secret", "basic")
+	admin := openControlPlaneTestPostgres(t)
+	t.Cleanup(func() { _ = admin.Close() })
+	schema := fmt.Sprintf("control_plane_readback_snapshot_%d", time.Now().UnixNano())
+	if _, err := admin.Exec(`CREATE SCHEMA ` + schema); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = admin.Exec(`DROP SCHEMA ` + schema + ` CASCADE`) })
+
+	state, err := newTestPostgresEntStateStore(controlPlaneTestPostgresURL(t, "postgres", schema))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := state.(*postgresEntStateStore)
+	t.Cleanup(func() { _ = store.client.Close() })
+	seedTenantMember(t, store, scenario.unknown.AccountID, "org-alpha", scenario.unknown.OwnerUserID, "alpha@example.com")
+	if err := store.SaveRuntimeOperation(context.Background(), workspaceLaunchOperationRow(scenario.unknown)); err != nil {
+		t.Fatal(err)
+	}
+	service := controlplane.NewService(scenario.fixture.ledger, scenario.readback, scenario.fixture.sub2API)
+	server, err := NewPersistentServer(service, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture := scenario.fixture
+	fixture.server, fixture.operator = server, reservedOperatorSessionForTest(t, server)
+	before := postgresSchemaSnapshot(t, admin, schema)
+	response := requestWorkspaceLaunchReadbackProof(t, fixture)
+	if response.Code != http.StatusOK {
+		t.Fatalf("proof status=%d body=%s", response.Code, response.Body.String())
+	}
+	after := postgresSchemaSnapshot(t, admin, schema)
+	if after != before {
+		t.Fatalf("GET readback proof mutated PostgreSQL schema\nbefore=%s\nafter=%s", before, after)
 	}
 }
 
@@ -349,34 +525,8 @@ func workspaceLaunchStageWriteCount(fixture workspaceLaunchWorkerFixture, stage 
 
 func newUnknownSecretReadbackFixture(t *testing.T) (workspaceLaunchWorkerFixture, workspaceLaunchOperation, workspaceLaunchOperation, *workspaceLaunchReadbackRecoveryFabric) {
 	t.Helper()
-	fixture := newWorkspaceLaunchWorkerFixture(t, []int64{1_000_000_000, 1_000_000_000, 947_420_000}, nil, nil)
-	configureWorkspaceLaunchFulfillment(t, fixture)
-	if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err != nil {
-		t.Fatal(err)
-	}
-	fixture.fabric.gatewaySecretErr = errors.New("gateway Secret response lost after write")
-	if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err == nil {
-		t.Fatal("lost Secret response did not enter manual review")
-	}
-	fixture.fabric.gatewaySecretErr = nil
-	fixture.fabric.providerTruth = &clients.MonthlyProviderTruth{
-		ComputeState: "ready", StorageState: "ready", Compute: fixture.fabric.computeSync, Storage: fixture.fabric.storageSync,
-	}
-	unknown := fixture.operation(t)
-	approvalOperation := unknown
-	fingerprint := "sha256:" + strings.Repeat("c", 64)
-	approvalOperation.WorkspaceKeyFingerprint = fingerprint
-	readback := &workspaceLaunchReadbackRecoveryFabric{
-		monthlyFabric: fixture.fabric,
-		operations: []clients.FabricOperation{{
-			ID: "fop-gateway-readback", Action: "upsert_gateway_secret", ResourceKind: "gateway_secret", ResourceID: workspaceGatewaySecretReference(unknown.WorkspaceID),
-			AccountID: unknown.AccountID, WorkspaceID: unknown.WorkspaceID, IdempotencyKey: unknown.WorkspaceOperationID + ":secret:gateway-secret", Status: "succeeded",
-			RedactedProviderPayload: map[string]any{"resource": clients.GatewaySecretWriteResult{
-				SecretRef: workspaceGatewaySecretReference(unknown.WorkspaceID), Version: "v1", Fingerprint: fingerprint,
-			}},
-		}},
-	}
-	return fixture, unknown, approvalOperation, readback
+	scenario := newWorkspaceLaunchReadbackRecoveryScenario(t, "secret", "basic")
+	return scenario.fixture, scenario.unknown, scenario.approvalOperation, scenario.readback
 }
 
 func TestWorkspaceLaunchReadbackRecoveryFailsClosedWithoutUniqueExactAuthority(t *testing.T) {
@@ -388,6 +538,22 @@ func TestWorkspaceLaunchReadbackRecoveryFailsClosedWithoutUniqueExactAuthority(t
 		{name: "missing", mutate: func(f *workspaceLaunchReadbackRecoveryFabric) { f.operations = nil }},
 		{name: "multiple", mutate: func(f *workspaceLaunchReadbackRecoveryFabric) { f.operations = append(f.operations, f.operations[0]) }},
 		{name: "identity drift", mutate: func(f *workspaceLaunchReadbackRecoveryFabric) { f.operations[0].WorkspaceID = "ws-other" }},
+		{name: "machine ownership drift", mutate: func(f *workspaceLaunchReadbackRecoveryFabric) { f.ownership.InstanceID = "ins-other" }},
+		{name: "machine ownership read error", mutate: func(f *workspaceLaunchReadbackRecoveryFabric) {
+			f.ownershipErr = errors.New("MachineOwnership unavailable")
+		}},
+		{name: "storage provider operation drift", mutate: func(f *workspaceLaunchReadbackRecoveryFabric) {
+			f.providerTruth.Storage.CostTags["opl_operation_id"] = "op-storage-other"
+		}},
+		{name: "attachment provider identity drift", mutate: func(f *workspaceLaunchReadbackRecoveryFabric) {
+			for index := range f.operations {
+				if f.operations[index].Action == "create_storage_attachment" {
+					resource := f.operations[index].RedactedProviderPayload["resource"].(clients.StorageAttachment)
+					resource.CostTags["opl_operation_id"] = "attachment-operation-other"
+					f.operations[index].RedactedProviderPayload["resource"] = resource
+				}
+			}
+		}},
 		{name: "operation read error", mutate: func(f *workspaceLaunchReadbackRecoveryFabric) {
 			f.operationsErr = errors.New("Fabric operation read unavailable")
 		}},
@@ -397,6 +563,8 @@ func TestWorkspaceLaunchReadbackRecoveryFailsClosedWithoutUniqueExactAuthority(t
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			fixture, unknown, approvalOperation, readback := newUnknownSecretReadbackFixture(t)
+			key := "recover-negative-" + stableID(test.name)[:8]
+			approval := testWorkspaceLaunchReadbackApproval(t, approvalOperation, "secret", key, readback)
 			test.mutate(readback)
 			fixture.service = controlplane.NewService(fixture.ledger, readback, fixture.sub2API)
 			server, err := NewPersistentServer(fixture.service, fixture.store)
@@ -404,20 +572,127 @@ func TestWorkspaceLaunchReadbackRecoveryFailsClosedWithoutUniqueExactAuthority(t
 				t.Fatal(err)
 			}
 			fixture.server, fixture.operator = server, reservedOperatorSessionForTest(t, server)
-			key := "recover-negative-" + stableID(test.name)[:8]
-			approval := testWorkspaceLaunchReadbackApproval(t, approvalOperation, "secret", key, structToMap(fixture.fabric.computeSync), structToMap(fixture.fabric.storageSync))
 			beforeWrites := workspaceLaunchStageWriteCount(fixture, "secret")
 			response := requestWorkspaceLaunchReadbackRecovery(t, fixture, approval, key)
-			if response.Code != http.StatusOK {
+			if response.Code != http.StatusConflict {
 				t.Fatalf("fail-closed recovery status=%d body=%s", response.Code, response.Body.String())
 			}
 			current := fixture.operation(t)
-			if current.Status != "manual_review" || current.Phase != unknown.Phase || current.ErrorCode != "workspace_launch_secret_readback_unconfirmed" ||
+			if current.PersistedResult != unknown.PersistedResult || current.Status != "manual_review" || current.Phase != unknown.Phase || current.ErrorCode != unknown.ErrorCode ||
 				current.ContinuationAttemptBudgets["secret"] != (workspaceLaunchStageBudget{Attempted: 1, Unknown: 1, Max: 1}) ||
 				workspaceLaunchStageWriteCount(fixture, "secret") != beforeWrites || countStrings(*fixture.events, "fabric.runtime") != 0 || fixture.store.activationCalls != 0 || len(fixture.ledger.receiptInputs) != 0 {
 				t.Fatalf("fail-closed %s crossed recovery gate: operation=%#v events=%#v", test.name, current, *fixture.events)
 			}
 		})
+	}
+}
+
+func TestWorkspaceLaunchReadbackApprovalDriftStopsBeforeProviderOrDatabaseMutation(t *testing.T) {
+	t.Setenv("OPL_INTERNAL_SERVICE_TOKEN", "workspace-launch-readback-capability")
+	for _, test := range []struct {
+		name   string
+		mutate func(map[string]any)
+	}{
+		{name: "customer", mutate: func(value map[string]any) { value["customer"].(map[string]any)["email"] = "other@example.com" }},
+		{name: "launch target", mutate: func(value map[string]any) {
+			value["target"].(map[string]any)["launchOperationId"] = "workspace-launch-other"
+		}},
+		{name: "compute resource", mutate: func(value map[string]any) { value["resources"].(map[string]any)["computeAllocationId"] = "ca_other" }},
+		{name: "operation identity", mutate: func(value map[string]any) {
+			value["operationIds"].(map[string]any)["compute"].(map[string]any)["idempotencyKey"] = "workspace-launch-other:compute"
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			scenario := newWorkspaceLaunchReadbackRecoveryScenario(t, "secret", "basic")
+			fixture := scenario.fixture
+			fixture.service = controlplane.NewService(fixture.ledger, scenario.readback, fixture.sub2API)
+			server, err := NewPersistentServer(fixture.service, fixture.store)
+			if err != nil {
+				t.Fatal(err)
+			}
+			fixture.server, fixture.operator = server, reservedOperatorSessionForTest(t, server)
+			key := "recover-approval-" + stableID(test.name)[:8]
+			approval := testWorkspaceLaunchReadbackApproval(t, scenario.approvalOperation, "secret", key, scenario.readback)
+			test.mutate(approval)
+			refreshWorkspaceLaunchReadbackApprovalDigest(t, approval)
+			before := fixture.operation(t)
+			beforeEvents := append([]string(nil), (*fixture.events)...)
+			response := requestWorkspaceLaunchReadbackRecovery(t, fixture, approval, key)
+			current := fixture.operation(t)
+			if response.Code != http.StatusConflict || current.PersistedResult != before.PersistedResult || !equalStringSlices(*fixture.events, beforeEvents) {
+				t.Fatalf("approval drift crossed preflight: status=%d body=%s before=%#v current=%#v events=%#v", response.Code, response.Body.String(), before, current, *fixture.events)
+			}
+		})
+	}
+}
+
+func TestWorkspaceLaunchTerminalReadbackRecoveryReplaysOnlyPersistedApprovalAndProof(t *testing.T) {
+	t.Setenv("OPL_INTERNAL_SERVICE_TOKEN", "workspace-launch-readback-capability")
+	scenario := newWorkspaceLaunchReadbackRecoveryScenario(t, "secret", "basic")
+	fixture := scenario.fixture
+	fixture.service = controlplane.NewService(fixture.ledger, scenario.readback, fixture.sub2API)
+	server, err := NewPersistentServer(fixture.service, fixture.store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture.server, fixture.operator = server, reservedOperatorSessionForTest(t, server)
+	key := "recover-terminal-readback"
+	approval := testWorkspaceLaunchReadbackApproval(t, scenario.approvalOperation, "secret", key, scenario.readback)
+	first := requestWorkspaceLaunchReadbackRecovery(t, fixture, approval, key)
+	if first.Code != http.StatusOK {
+		t.Fatalf("first recovery status=%d body=%s", first.Code, first.Body.String())
+	}
+	beforeWrites := append([]string(nil), (*fixture.events)...)
+	replay := requestWorkspaceLaunchReadbackRecovery(t, fixture, approval, key)
+	if replay.Code != http.StatusOK || replay.Body.String() != first.Body.String() {
+		t.Fatalf("terminal replay status=%d first=%s replay=%s", replay.Code, first.Body.String(), replay.Body.String())
+	}
+	var payload map[string]any
+	if json.Unmarshal(replay.Body.Bytes(), &payload) != nil || payload["readbackRecoveryProof"] == nil {
+		t.Fatalf("terminal replay did not reconstruct persisted proof: %s", replay.Body.String())
+	}
+	if !equalStringSlices(*fixture.events, beforeWrites) {
+		t.Fatalf("terminal replay repeated provider writes: before=%#v after=%#v", beforeWrites, *fixture.events)
+	}
+
+	otherKey := "recover-terminal-other"
+	drifted := testWorkspaceLaunchReadbackApproval(t, scenario.approvalOperation, "secret", otherKey, scenario.readback)
+	conflict := requestWorkspaceLaunchReadbackRecovery(t, fixture, drifted, otherKey)
+	if conflict.Code != http.StatusConflict || !equalStringSlices(*fixture.events, beforeWrites) {
+		t.Fatalf("different terminal approval status=%d body=%s events=%#v", conflict.Code, conflict.Body.String(), *fixture.events)
+	}
+}
+
+func equalStringSlices(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
+}
+
+func TestWorkspaceLaunchResponseProjectsLatestReadbackApproval(t *testing.T) {
+	scenario := newWorkspaceLaunchReadbackRecoveryScenario(t, "secret", "basic")
+	operation := scenario.unknown
+	operation.ComputeClaimApproval = &workspaceComputeClaimApprovalBinding{
+		ApprovalID: "approval-old-compute", ApprovalDigest: strings.Repeat("a", 64), RecoveryKey: "recovery-old-compute",
+		WorkspaceImageDigest: operation.WorkspaceImageDigest,
+	}
+	key := "recover-latest-readback"
+	approval := parsedWorkspaceLaunchReadbackApproval(t, testWorkspaceLaunchReadbackApproval(t, scenario.approvalOperation, "secret", key, scenario.readback), key)
+	operation.ReadbackRecoveryApproval = &approval
+	response, err := workspaceLaunchResponse(workspaceLaunchOperationRow(operation))
+	if err != nil {
+		t.Fatal(err)
+	}
+	recovery := mapField(response, "recovery")
+	if stringValue(recovery["approvalId"]) != approval.ApprovalID || stringValue(recovery["approvalDigest"]) != approval.ApprovalDigest ||
+		stringValue(recovery["recoveryKey"]) != approval.RecoveryKey || stringValue(recovery["workspaceImageDigest"]) != approval.WorkspaceImageDigest {
+		t.Fatalf("response projected stale compute approval: %#v", response)
 	}
 }
 
@@ -456,7 +731,7 @@ func TestWorkspaceLaunchConcurrentReadbackRecoveryHasOneCASWinner(t *testing.T) 
 		t.Fatal(err)
 	}
 	key := "recover-concurrent-readback"
-	rawApproval := testWorkspaceLaunchReadbackApproval(t, approvalOperation, "secret", key, structToMap(fixture.fabric.computeSync), structToMap(fixture.fabric.storageSync))
+	rawApproval := testWorkspaceLaunchReadbackApproval(t, approvalOperation, "secret", key, readback)
 	encoded, err := json.Marshal(rawApproval)
 	if err != nil {
 		t.Fatal(err)
@@ -547,6 +822,24 @@ func TestPostgresWorkspaceLaunchUnknownStagesConvergeAfterStoreReopen(t *testing
 			if err := first.SaveRuntimeOperation(context.Background(), workspaceLaunchOperationRow(scenario.unknown)); err != nil {
 				t.Fatal(err)
 			}
+			computes, err := scenario.fixture.store.ListComputes(context.Background(), scenario.unknown.AccountID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, compute := range computes {
+				if err := first.SaveCompute(context.Background(), compute); err != nil {
+					t.Fatal(err)
+				}
+			}
+			storages, err := scenario.fixture.store.ListStorages(context.Background(), scenario.unknown.AccountID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, storage := range storages {
+				if err := first.SaveStorage(context.Background(), storage); err != nil {
+					t.Fatal(err)
+				}
+			}
 			workspaces, err := scenario.fixture.store.ListWorkspaces(context.Background(), scenario.unknown.AccountID)
 			if err != nil {
 				t.Fatal(err)
@@ -581,9 +874,7 @@ func TestPostgresWorkspaceLaunchUnknownStagesConvergeAfterStoreReopen(t *testing
 			}
 			service := controlplane.NewService(scenario.fixture.ledger, scenario.readback, scenario.fixture.sub2API)
 			key := "recover-postgres-" + stableID(stage)[:8]
-			approval := parsedWorkspaceLaunchReadbackApproval(t, testWorkspaceLaunchReadbackApproval(
-				t, scenario.approvalOperation, stage, key, structToMap(scenario.fixture.fabric.computeSync), structToMap(scenario.fixture.fabric.storageSync),
-			), key)
+			approval := parsedWorkspaceLaunchReadbackApproval(t, testWorkspaceLaunchReadbackApproval(t, scenario.approvalOperation, stage, key, scenario.readback), key)
 			input := billingReviewResolutionInput{
 				ResourceType: "workspace_launch", ResourceID: scenario.unknown.ID, AccountID: scenario.unknown.AccountID,
 				BillingOperationID: scenario.unknown.ID, EvidenceRef: "case-20260731-readback", IdempotencyKey: key, Reviewer: "usr-admin", ReadbackApproval: &approval,

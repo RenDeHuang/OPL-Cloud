@@ -109,6 +109,29 @@ func TestFabricHTTPClientReadsMonthlyProviderTruthWithoutMutation(t *testing.T) 
 	}
 }
 
+func TestFabricHTTPClientReadsExactMachineOwnershipWithoutMutation(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.EscapedPath() != "/fabric/machine-ownerships/compute%20alpha" || r.Header.Get("Authorization") != "Bearer internal-secret" {
+			t.Fatalf("unexpected request: %s %s auth=%q", r.Method, r.URL.EscapedPath(), r.Header.Get("Authorization"))
+		}
+		if _, ok := r.Header["Idempotency-Key"]; ok {
+			t.Fatalf("read-only ownership GET sent Idempotency-Key: %#v", r.Header.Values("Idempotency-Key"))
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id": "owner-alpha", "resourceId": "compute alpha", "accountId": "acct-alpha", "workspaceId": "ws-alpha",
+			"packageId": "basic", "nodePoolId": "np-alpha", "machineId": "machine-alpha", "instanceId": "ins-alpha",
+			"nodeName": "node-alpha", "status": "active", "providerRequestId": "req-alpha",
+		})
+	}))
+	defer upstream.Close()
+
+	client := NewFabricHTTPClient(upstream.URL, "internal-secret", upstream.Client()).(FabricMachineOwnershipClient)
+	ownership, err := client.MachineOwnership(context.Background(), "compute alpha")
+	if err != nil || ownership.ID != "owner-alpha" || ownership.ResourceID != "compute alpha" || ownership.Status != "active" || ownership.InstanceID != "ins-alpha" {
+		t.Fatalf("machine ownership = %#v err=%v", ownership, err)
+	}
+}
+
 func TestFabricHTTPClientReadsStorageVolumeWithoutMutation(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet || r.URL.EscapedPath() != "/fabric/storage-volumes/storage%20alpha" || r.Header.Get("Authorization") != "Bearer internal-secret" {

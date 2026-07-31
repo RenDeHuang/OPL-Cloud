@@ -1299,32 +1299,62 @@ test("Workspace launch readback workflow gates bind every approved identity and 
     renewFlag: "NOTIFY_AND_MANUAL_RENEW",
     deadline: "2099-08-28T00:00:00Z"
   };
+  const proofTarget = {
+    ...target,
+    storageGb: 10,
+    autoRenew: false,
+    priceVersion: "pilot-usd-2026-07-v1",
+    totalChargeUsdMicros: 52_580_000,
+    periodStart: "2099-07-28T00:00:00Z",
+    paidThrough: "2099-08-27T00:00:00Z",
+    billingAnchorDay: 28
+  };
+  const operationIdentity = (idempotencyKey, suffix, providerOperationId, present = true) => ({
+    idempotencyKey,
+    fabricRecordId: present ? `fop-${suffix}-readback` : "",
+    fabricOperationId: present ? `op-${suffix}-readback` : "",
+    requestHash: present ? `${suffix}-request-hash` : "",
+    resourceOperationId: present ? idempotencyKey : "",
+    providerOperationId: present ? providerOperationId : ""
+  });
+  const machineOwnershipId = "owner-readback-fixture";
   const proof = {
     schemaVersion: 1,
     eligible: true,
     reason: "none",
     stage: "secret",
     customer: { email: "readback-owner@example.test", accountId: target.accountId, ownerUserId: "usr-readback-fixture" },
-    target: { launchOperationId: target.launchOperationId, workspaceId: target.workspaceId, packageId: target.packageId },
+    target: proofTarget,
     resources: {
       computeAllocationId: target.computeAllocationId,
       computeProviderResourceId: target.cvmInstanceId,
       storageVolumeId: target.storageId,
       storageProviderResourceId: "disk-readback-fixture",
+      storageZone: target.zone,
+      storageSizeGb: 10,
+      storageChargeType: "PREPAID",
+      storageRenewFlag: "NOTIFY_AND_MANUAL_RENEW",
+      storageDeadline: target.deadline,
       attachmentId: "attachment-readback-fixture",
+      attachmentProviderId: "pv/volume-readback:pvc/volume-readback-data",
       gatewaySecretRef: "opl-gateway-0123456789abcdef",
       gatewaySecretFingerprint: `sha256:${"c".repeat(64)}`,
+      workspaceApiKeyId: 42,
       runtimeId: "",
+      runtimeServiceName: "",
       receiptId: ""
     },
     operationIds: {
-      compute: `${target.launchOperationId}:compute`,
-      storage: `${target.launchOperationId}:storage`,
-      attachment: `${target.launchOperationId}:attachment`,
-      secret: `${target.launchOperationId}:workspace:secret:gateway-secret`,
-      runtime: `${target.launchOperationId}:workspace:runtime`,
-      activation: `${target.launchOperationId}:activation`,
-      receipt: `${target.launchOperationId}:purchase-receipt`
+      launchOperationId: target.launchOperationId,
+      launchRequestHash: "launch-request-hash",
+      machineOwnershipId,
+      compute: operationIdentity(`${target.launchOperationId}:compute`, "compute", machineOwnershipId),
+      storage: operationIdentity(`${target.launchOperationId}:storage`, "storage", "provider-storage-readback"),
+      attachment: operationIdentity(`${target.launchOperationId}:attachment`, "attachment", `${target.launchOperationId}:attachment`),
+      secret: operationIdentity(`${target.launchOperationId}:workspace:secret:gateway-secret`, "secret", ""),
+      runtime: operationIdentity(`${target.launchOperationId}:workspace:runtime`, "runtime", "", false),
+      activationOperationId: `${target.launchOperationId}:activation`,
+      receiptOperationId: `${target.launchOperationId}:purchase-receipt`
     },
     workspaceImageDigest: workspaceDigest,
     attemptBudget: { attempted: 1, confirmed: 0, unknown: 1, max: 1 },
@@ -1358,7 +1388,6 @@ test("Workspace launch readback workflow gates bind every approved identity and 
     allowedWrites: proof.allowedWrites,
     forbiddenWrites: proof.forbiddenWrites
   };
-  const exactTarget = { launchOperationId: target.launchOperationId, accountId: target.accountId, workspaceId: target.workspaceId };
   const diagnosis = {
     schemaVersion: 1,
     operationMode: "workspace_launch_readback_diagnose",
@@ -1366,7 +1395,7 @@ test("Workspace launch readback workflow gates bind every approved identity and 
     recoveryEligible: true,
     errorCode: "none",
     release: { mergedSha: cloudCandidateSha, cloudImageDigest: digestA },
-    target: exactTarget,
+    target,
     proof,
     runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
   };
@@ -1386,7 +1415,7 @@ test("Workspace launch readback workflow gates bind every approved identity and 
     recoveryEligible: true,
     errorCode: "none",
     release: { mergedSha: cloudCandidateSha, cloudImageDigest: digestA },
-    target: exactTarget,
+    target,
     stage: proof.stage,
     proof,
     approval: { approvalId: approval.approvalId, approvalDigest },
@@ -1410,7 +1439,11 @@ test("Workspace launch readback workflow gates bind every approved identity and 
 
   for (const [name, mutate] of [
     ["provider identity drift", (artifact) => { artifact.proof.resources.storageProviderResourceId = "disk-drifted-fixture"; }],
-    ["operation identity drift", (artifact) => { artifact.proof.operationIds.runtime = "workspace-launch-other:workspace:runtime"; }],
+    ["MachineOwnership drift", (artifact) => { artifact.proof.operationIds.machineOwnershipId = "owner-drifted-fixture"; }],
+    ["provider operation drift", (artifact) => { artifact.proof.operationIds.storage.providerOperationId = "provider-storage-drifted"; }],
+    ["operation identity drift", (artifact) => { artifact.proof.operationIds.runtime.idempotencyKey = "workspace-launch-other:workspace:runtime"; }],
+    ["CBS attribute drift", (artifact) => { artifact.proof.resources.storageSizeGb = 100; }],
+    ["full target drift", (artifact) => { artifact.target.cvmInstanceId = "ins-drifted-fixture"; }],
     ["budget drift", (artifact) => { artifact.proof.attemptBudget.unknown = 0; }],
     ["release drift", (artifact) => { artifact.release.cloudImageDigest = digestB; }]
   ]) {

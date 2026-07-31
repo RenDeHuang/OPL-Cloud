@@ -404,6 +404,7 @@ test("Current Fabric contracts require dedicated package NodePools without weake
         input: "operation_mode=workspace_launch_readback_diagnose",
         route: "GET /api/operator/workspace-launches/{operationId}/readback-recovery-proof",
         persistence: "none",
+        databaseMutationCount: 0,
         mutationApproval: false,
         mutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
       },
@@ -411,14 +412,15 @@ test("Current Fabric contracts require dedicated package NodePools without weake
         input: "operation_mode=workspace_launch_readback_recover",
         route: "POST /api/operator/workspace-launches/{operationId}/recover",
         confirmation: "RECOVER_UNKNOWN_WORKSPACE_LAUNCH_STAGE_FROM_AUTHORITATIVE_READBACK",
-        approvalBinding: ["merged_main_sha", "cloud_image_digest", "workspace_image_digest", "expiry", "customer", "launch", "workspace", "compute", "storage", "attachment", "secret", "runtime", "activation", "receipt", "stage", "attempt_budget", "recovery_key"],
+        approvalBinding: ["merged_main_sha", "cloud_image_digest", "workspace_image_digest", "expiry", "customer", "launch", "workspace", "product_truth", "compute", "storage", "attachment", "secret", "runtime", "activation", "receipt", "machine_ownership", "fabric_operation_identity", "provider_operation_identity", "stage", "attempt_budget", "recovery_key"],
         allowedWrites: "confirm_unknown_stage_from_authoritative_readback_then_remaining_original_launch_writes",
         forbiddenWrites: ["create_launch", "debit", "recharge", "refund", "scale", "create_cvm", "create_second_cbs", "delete", "replace", "retry_unknown_stage_write"],
         runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
         backgroundMutationCountsState: "unknown"
       }
     },
-    targetSource: "protected_input_full_compute_target_projected_to_exact_launch_account_workspace",
+    targetSource: "protected_input_full_compute_target_preserved_without_projection",
+    operationIdentity: "launch_idempotency_key_fabric_internal_operation_machine_ownership_provider_opl_operation_and_stage_resource_operations",
     continuation: "existing_compute_claim_continue_get_only_same_original_launch",
     artifact: "redacted_proof_recovery_and_existing_continuation",
     currentState: "code_complete_local_focused_and_postgresql_verified_not_merged_released_deployed_or_executed"
@@ -757,8 +759,10 @@ test("Current contracts hard cut operator resources, wallet adjustments, and ann
     stages: ["storage", "attachment", "secret", "runtime", "activation", "receipt"],
     inputBudget: { attempted: 1, confirmed: 0, unknown: 1, max: 1 },
     convergedBudget: { attempted: 1, confirmed: 1, unknown: 0, max: 1 },
-    proofAuthorities: ["monthly_provider_truth", "fabric_operation_store", "workspace_runtime_status", "workspace_activation_truth", "ledger_receipt"],
+    proofAuthorities: ["monthly_provider_truth", "machine_ownership", "fabric_operation_store", "workspace_runtime_status", "workspace_activation_truth", "ledger_receipt"],
     proofPersistence: "none",
+    proofDatabaseMutationCount: 0,
+    identityBinding: "full_product_compute_node_cbs_attachment_secret_runtime_and_layered_operation_identity",
     convergence: "postgresql_original_launch_cas_only_after_unique_exact_authoritative_readback",
     winner: "one_concurrent_recovery_cas",
     replay: "zero_external_write_same_original_or_later_stage",

@@ -720,16 +720,19 @@ jobs:
           const fs = require("node:fs");
           const result = JSON.parse(fs.readFileSync(`${process.env.OPL_WORKSPACE_LAUNCH_READBACK_ARTIFACT_DIR}/workspace-launch-readback-diagnosis.json`, "utf8"));
           const target = JSON.parse(process.env.OPL_WORKSPACE_LAUNCH_READBACK_TARGET_JSON);
-          const exactTarget = { launchOperationId: target.launchOperationId, accountId: target.accountId, workspaceId: target.workspaceId };
+          const exactTarget = target;
           const proof = result?.proof;
+          const targetMatches = (candidate) => candidate && Object.entries(exactTarget).every(([key, value]) => candidate[key] === value);
           const exactBudget = proof?.attemptBudget?.attempted === 1 && proof?.attemptBudget?.confirmed === 0 &&
             proof?.attemptBudget?.unknown === 1 && proof?.attemptBudget?.max === 1;
           if (result?.schemaVersion !== 1 || result?.operationMode !== "workspace_launch_readback_diagnose" || result?.status !== "proven" ||
             result?.recoveryEligible !== true || result?.errorCode !== "none" || result?.release?.mergedSha !== process.env.OPL_MERGED_SHA ||
             result?.release?.cloudImageDigest !== process.env.OPL_WORKSPACE_LAUNCH_READBACK_CLOUD_DIGEST || JSON.stringify(result?.target) !== JSON.stringify(exactTarget) ||
             proof?.schemaVersion !== 1 || proof?.eligible !== true || proof?.reason !== "none" || !exactBudget ||
-            proof?.customer?.email !== process.env.OPL_WORKSPACE_LAUNCH_READBACK_CUSTOMER_EMAIL || proof?.customer?.accountId !== exactTarget.accountId ||
-            proof?.target?.launchOperationId !== exactTarget.launchOperationId || proof?.target?.workspaceId !== exactTarget.workspaceId ||
+            proof?.customer?.email !== process.env.OPL_WORKSPACE_LAUNCH_READBACK_CUSTOMER_EMAIL || proof?.customer?.accountId !== exactTarget.accountId || !targetMatches(proof?.target) ||
+            proof?.resources?.computeAllocationId !== exactTarget.computeAllocationId || proof?.resources?.computeProviderResourceId !== exactTarget.cvmInstanceId ||
+            proof?.resources?.storageVolumeId !== exactTarget.storageId || proof?.resources?.storageZone !== exactTarget.zone ||
+            proof?.operationIds?.launchOperationId !== exactTarget.launchOperationId || proof?.operationIds?.compute?.providerOperationId !== proof?.operationIds?.machineOwnershipId ||
             proof?.sub2apiMutationCount !== 0 || proof?.tencentMutationCount !== 0 || proof?.kubernetesMutationCount !== 0 ||
             result?.runnerDirectMutationCounts?.sub2api !== 0 || result?.runnerDirectMutationCounts?.tencent !== 0 ||
             result?.runnerDirectMutationCounts?.kubernetes !== 0) {
@@ -852,7 +855,8 @@ jobs:
           const result = JSON.parse(fs.readFileSync(`${process.env.OPL_WORKSPACE_LAUNCH_READBACK_ARTIFACT_DIR}/workspace-launch-readback-recovery.json`, "utf8"));
           const approval = JSON.parse(process.env.OPL_WORKSPACE_LAUNCH_READBACK_APPROVAL_JSON);
           const target = JSON.parse(process.env.OPL_WORKSPACE_LAUNCH_READBACK_TARGET_JSON);
-          const exactTarget = { launchOperationId: target.launchOperationId, accountId: target.accountId, workspaceId: target.workspaceId };
+          const exactTarget = target;
+          const targetMatches = (candidate) => candidate && Object.entries(exactTarget).every(([key, value]) => candidate[key] === value);
           const canonicalJson = (value) => Array.isArray(value)
             ? `[${value.map(canonicalJson).join(",")}]`
             : !value || typeof value !== "object"
@@ -870,7 +874,10 @@ jobs:
             result?.approval?.approvalDigest !== approvalDigest || result?.stage !== approval.stage || proof?.stage !== approval.stage ||
             approval?.schemaVersion !== 1 || approval?.confirmation !== "RECOVER_UNKNOWN_WORKSPACE_LAUNCH_STAGE_FROM_AUTHORITATIVE_READBACK" ||
             approval?.customer?.email !== process.env.OPL_WORKSPACE_LAUNCH_READBACK_CUSTOMER_EMAIL || approval?.customer?.accountId !== exactTarget.accountId ||
-            approval?.target?.launchOperationId !== exactTarget.launchOperationId || approval?.target?.workspaceId !== exactTarget.workspaceId ||
+            !targetMatches(approval?.target) || !targetMatches(proof?.target) || proof?.resources?.computeAllocationId !== exactTarget.computeAllocationId ||
+            proof?.resources?.computeProviderResourceId !== exactTarget.cvmInstanceId || proof?.resources?.storageVolumeId !== exactTarget.storageId ||
+            proof?.resources?.storageZone !== exactTarget.zone || proof?.operationIds?.launchOperationId !== exactTarget.launchOperationId ||
+            proof?.operationIds?.compute?.providerOperationId !== proof?.operationIds?.machineOwnershipId ||
             JSON.stringify(proof?.customer) !== JSON.stringify(approval.customer) || JSON.stringify(proof?.target) !== JSON.stringify(approval.target) ||
             JSON.stringify(proof?.resources) !== JSON.stringify(approval.resources) || JSON.stringify(proof?.operationIds) !== JSON.stringify(approval.operationIds) ||
             JSON.stringify(approval?.attemptBudget) !== JSON.stringify(unknown) || JSON.stringify(proof?.attemptBudget) !== JSON.stringify(approval.attemptBudget) ||
