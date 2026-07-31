@@ -91,7 +91,20 @@ Account Settings 和 Support 保留为全局账号/帮助菜单下的次级 slid
 - reveal 响应使用 private/no-store，并在离开敏感页面、切换账号、退出登录或 60 秒后清除。
 - 页面、日志、Receipt、审计和错误信息不得保存原始密码、API Key 或 provider Secret。
 
-### 2.5 全局壳层
+### 2.5 视觉呈现冻结
+
+当前固定视觉方向为方案 1 `Quiet Ledger`。不可变参考图为 `output/imagegen/opl-console-option-1-quiet-ledger-1440x1024.png`，SHA-256 为 `9b75ba8b01cda552fcb7d44bc774797f22697f5fd4a0c067e885bc4895b738b5`；该文件不得修改、重新生成或覆盖。
+
+视觉合同固定：
+
+- 桌面使用 `240px` 浅色左侧导航、白色全宽内容画布和轻量分隔线。
+- 深绿只承担主要动作和健康状态；不用深蓝 Hero、渐变、装饰光斑或卡片堆叠。
+- 概览使用开放式指标带，Workspace 为主要内容，账单和公告为次级内容。
+- 内部 Slide ID 只保留为机器可验收的 `data-slide`，不得作为客户或管理员可见文案。
+- UI 不展示解释实现边界的教学句；来源、可用性和读回时间使用对应数据块的状态组件表达。
+- 参考图不覆盖权威来源合同。Control Plane Workspace 总数不得写成 Fabric Runtime 运行数；没有权威时间序列 DTO 时不得绘制 API 趋势。
+
+### 2.6 全局壳层
 
 所有登录后页面固定展示：
 
@@ -106,7 +119,7 @@ Account Settings 和 Support 保留为全局账号/帮助菜单下的次级 slid
 
 不展示：公开注册、支付订单、在线充值、第二个钱包、Sub2API 管理入口、云厂商控制台入口、备份恢复、文件浏览、文件系统用量、协作和 GPU/HA 能力。
 
-### 2.6 全局次级 slide
+### 2.7 全局次级 slide
 
 #### G-ACC-01 Account Settings
 
@@ -212,6 +225,8 @@ Workspace 摘要展示：
 
 来源分别失败时独立展示“暂不可用”和重试，不得阻塞整个概览。
 
+概览不展示七日趋势或折线图，直到 Control Plane 提供来自 Sub2API、范围和时间窗明确的权威时间序列 DTO。当前账号级汇总只能展示余额、本月实际费用、本月请求数和 Workspace 总数。
+
 ### 4.2 Workspace
 
 #### C-WS-01 Workspace 列表
@@ -230,6 +245,8 @@ Workspace 摘要展示：
 空态为“暂无 Workspace”，主动作是“新建 Workspace”。`unavailable` 时只允许重试，不能展示空态。
 
 #### C-WS-02 新建配置
+
+采用方案 1 `Split Decision`：左侧只承载名称和套餐决策，右侧使用固定宽度订单摘要集中展示价格、余额、周期和主动作。桌面摘要随页面滚动保持可见；窄屏改为单列并放在配置之后。三步条只表示“配置 / 核对 / 开通状态”的页面导航位置，不表示后端阶段完成情况。
 
 必须展示：
 
@@ -259,9 +276,22 @@ Workspace 摘要展示：
 - 提示联系管理员处理余额。
 - 不提供在线支付或充值入口。
 
-浏览器中的余额充足提示只用于交互反馈；提交后仍由服务端重新读取余额并按合同校验，客户端判断不能授权扣款。
+浏览器中的余额充足提示只用于交互反馈：只有 `wallet.data.usdMicros` 严格大于 `preview.totalChargeUsdMicros` 才允许进入核对和提交，余额等于总额仍视为不足。提交后服务端必须重新读取余额并按同一合同校验，客户端判断不能授权扣款。
+
+字段审计固定如下：
+
+| 展示内容 | Control Plane 产品 API | 使用字段 | 规则 |
+| --- | --- | --- | --- |
+| 套餐、可售性、CPU、内存、存储 | `GET /api/pricing/catalog` | `packages[].id/name/available/cpu/memoryGb/diskGb` | 不可售即禁用，不把 catalog 可售解释成腾讯容量 |
+| 计算组成、存储组成、总价、价格版本、币种、周期 | `POST /api/pricing/preview` | `compute.chargeUsdMicros`、`storage.chargeUsdMicros`、`totalChargeUsdMicros`、`priceVersion`、`currency`、`billingUnit` | 只格式化，不在浏览器相加或定价 |
+| 可用余额 | `GET /api/gateway/wallet` | `data.usdMicros`、`data.currency` 及 SourceEnvelope 状态 | 不可用时显示“暂不可用”，不回退为 `0`；提交提示使用余额严格大于总额 |
+| 名称、套餐、容量、续费意图 | `POST /api/workspace-launches` 请求 | `name`、`packageId`、`sizeGb`、`autoRenew` | 它们是用户输入；配置态不是服务端既成事实 |
+
+区域、即时容量、预计耗时和扣款后余额没有当前客户 API 字段，因此不得展示。
 
 #### C-WS-03 购买确认
+
+保持与配置态相同的左右分栏和订单摘要，左侧从编辑转为只读核对。确认页不得引入新的业务字段；名称和续费来自待提交表单，套餐规格来自 catalog，金额、周期和价格版本来自 preview，余额来自 wallet。
 
 用户提交前必须完整展示：
 
@@ -293,20 +323,9 @@ Workspace 摘要展示：
 - `errorCode`，但不展示 raw provider 响应。
 - 当前允许的动作。
 
-阶段顺序按事实展示，不使用虚假百分比：
+operation 区域只读取 `GET /api/workspace-launches/{operationId}`。`operationId/status/phase/name/packageId/priceVersion/currency/totalChargeUsdMicros/autoRenew/createdAt/updatedAt/errorCode` 均直接来自该响应；中文阶段名只是 `phase` 稳定码的展示映射，不是新事实。
 
-```text
-校验报价与余额
-→ 确认单次扣款
-→ 准备 Workspace Key
-→ 准备计算资源
-→ 准备存储资源
-→ 挂载存储
-→ 写入访问 Secret
-→ 启动 Runtime
-→ 激活 Workspace
-→ 写入 Receipt
-```
+只突出当前 `phase`，不得依据阶段顺序把此前节点推导为“已完成”，也不展示逐节点完成态、虚假百分比、区域、容量或预计耗时。服务端返回下一次状态前，页面保持当前权威 readback，并允许刷新同一 operation，禁止重复购买。
 
 终态及动作：
 
@@ -392,15 +411,16 @@ API 服务固定为三个页内 Tab：概览、使用记录、API Key。
 - 汇总实际金额。
 - 分页请求记录。
 
-每条请求只展示五个客户可用字段：
+每条请求固定按以下顺序展示：
 
+- 模型与入站 Endpoint。
+- Token：输入、输出、缓存读取、缓存写入。
+- 费用：仅展示 `actualCostUsdMicros` 对应的实际金额。
+- 延迟：首字 `firstTokenMs` 和总耗时 `durationMs`。
 - 时间。
-- 模型。
-- 入站 Endpoint。
-- 实际金额。
-- 请求编号。
+- 请求 ID。
 
-当前版本不展示 prompt、response、原始请求指纹、单请求 input/output/cache Token 构成或 provider 凭据。汇总 Token 来自 Sub2API，不由当前页相加。
+Token、费用、延迟和时间均来自 Sub2API 请求记录，不能由当前页汇总、估算或反推。缺失的延迟显示 `-`，不得显示 `0 ms`。当前版本不展示 prompt、response、原始请求指纹或 provider 凭据；汇总 Token 仍来自 Sub2API 聚合接口，不由当前页相加。
 
 #### C-API-03 API Key 列表
 
@@ -580,22 +600,19 @@ Admin 页面只供 operator 使用。Admin 可以进入客户侧页面查看自�
 
 #### A-ACC-01 账户列表
 
-每行展示：
+桌面使用单个密集表格，固定为七列：
 
-- 登录邮箱。
-- Account ID。
-- Console User ID。
-- 角色。
-- Control Plane 记录的 Sub2API User ID。
-- Sub2API 实时身份映射读回。
-- 可用余额和钱包状态。
-- Key 数。
-- 今日/累计 API 实际费用。
-- Workspace 数。
-- 账户状态。
-- 每个嵌套来源的可用性和读回时间。
+- 用户：登录邮箱和角色。
+- 账户映射：OPL Account ID、Console User ID、Sub2API User ID。
+- 余额：可用余额和钱包状态。
+- API 费用：今日和累计实际费用。
+- 资源：Key 数和 Workspace 数。
+- 状态：账户状态。
+- 操作：查看账户、余额操作和停用普通客户。
 
-列表先按 Control Plane 稳定分页，再只对当前页做 Sub2API/Fabric 聚合。当前合同不要求浏览器全量搜索；不得为了筛选下载 1000 个账户。
+移动端使用紧凑账户卡，并保持相同的信息顺序。嵌套来源的可用性和读回时间不占用默认列表列，统一进入账户详情。
+
+列表先按 Control Plane 稳定分页，再只对当前页做 Sub2API/Fabric 聚合。当前 API 没有搜索或排序合同，因此页面不展示搜索或排序控件，也不得为了筛选下载 1000 个账户。
 
 允许动作：查看账户、余额操作、停用普通客户。保留管理员账户只读，不允许自停用。
 
@@ -619,6 +636,7 @@ Admin 页面只供 operator 使用。Admin 可以进入客户侧页面查看自�
 - 邮箱、角色和状态。
 - Sub2API 钱包余额与状态。
 - Key、Usage 和 Workspace 汇总。
+- 每个嵌套来源的状态和读回时间。
 - 关联的 Support 工单映射。
 - 相关来源状态和读回时间。
 
@@ -799,7 +817,6 @@ Workspace 已激活但 Receipt 缺失
 本合同是目标展示 SSOT，不代表下列差距已完成：
 
 - Workspace 购买确认当前缺少 CPU/内存、计算/存储组成、价格版本和明确权益期。
-- 概览当前将 Control Plane 状态简写为“运行中”，需要明确为生命周期状态。
 - Workspace 详情当前缺少 CPU/内存、价格版本和 `periodStart`。
 - 收据详情当前缺少 Receipt ID、计算/存储组成和 charge reference。
 - 客户与计费账户当前缺少完整账户详情 readback 和开户 operation readback。

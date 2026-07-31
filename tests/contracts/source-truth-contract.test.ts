@@ -116,8 +116,10 @@ test("Console source truth contract fixes strict envelopes and live Gateway proj
   assert.equal(gateway.keys.revealSecretBoundary, "dedicated_response_only");
   assert.deepEqual(gateway.usage.itemFields, [
     "apiKeyId", "requestId", "createdAt", "model", "inboundEndpoint", "requestType",
-    "inputTokens", "outputTokens", "cacheCreationTokens", "cacheReadTokens", "actualCostUsdMicros"
+    "inputTokens", "outputTokens", "cacheCreationTokens", "cacheReadTokens", "actualCostUsdMicros",
+    "durationMs", "firstTokenMs"
   ]);
+  assert.equal(gateway.usage.latencyEncoding, "nullable_non_negative_integer_ms");
   assert.equal(gateway.usage.apiKeyIdFormat, "positive_decimal_string");
   assert.deepEqual(gateway.usage.emptyUpstreamPagination, gateway.keys.emptyUpstreamPagination);
   assert.deepEqual(gateway.usageStats.dataFields, [

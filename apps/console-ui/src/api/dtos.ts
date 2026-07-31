@@ -462,6 +462,8 @@ export interface GatewayUsageItem {
   cacheCreationTokens: number;
   cacheReadTokens: number;
   actualCostUsdMicros: number;
+  durationMs: number | null;
+  firstTokenMs: number | null;
 }
 
 export interface GatewayKeyUsagePageDTO {

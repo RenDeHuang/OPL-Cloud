@@ -231,7 +231,7 @@ function OverviewPage({ controller }: { controller: ConsoleController }) {
   return (
     <section className="admin-dashboard" data-slide="A-OV-01 A-OV-02">
       <section className="account-band">
-        <div className="account-band-copy"><p className="eyebrow">A-OV-01</p><h2>运营总览</h2><p>只展示服务端范围明确的运营聚合；来源不可用时不回退为零。</p></div>
+        <div className="account-band-copy"><h2>运营总览</h2></div>
         <div className="band-metrics operator-metrics">
           <Metric label="计费账户" note={overview?.accounts.available ? `正常 ${formatCount(overview.accounts.data.active)} · 停用 ${formatCount(overview.accounts.data.disabled)}` : "来源暂不可用"} value={overview?.accounts.available ? formatCount(overview.accounts.data.total) : "暂不可用"} />
           <Metric label="Workspace" note="Control Plane" value={overview?.workspaces.available ? formatCount(overview.workspaces.data.total) : "暂不可用"} />
@@ -255,11 +255,11 @@ function OverviewPage({ controller }: { controller: ConsoleController }) {
               {reconciliationCount && reconciliationCount > 0 ? <div className="inline-notice"><span>{formatCount(reconciliationCount)} 个项目等待计费复核。</span><Button onClick={() => controller.navigate("/admin/billing")} size="sm" variant="ghost">查看</Button></div> : null}
               {health.label !== "正常" ? <div className="inline-notice"><span>系统健康状态：{health.label}。</span><Button onClick={() => controller.navigate("/admin/system")} size="sm" variant="ghost">查看</Button></div> : null}
               {rows.some(({ source }) => source.status === "unavailable") ? <div className="inline-notice"><span>存在权威来源暂不可用，相关值未显示为零。</span></div> : null}
-              {!attentionPath && !rows.some(({ source }) => source.status === "unavailable") ? <div className="empty-panel">当前没有服务端投影的待处理事项。</div> : null}
+              {!attentionPath && !rows.some(({ source }) => source.status === "unavailable") ? <div className="empty-panel">当前没有待处理事项。</div> : null}
             </section>
 
             <section className="panel">
-              <div className="panel-title"><h2>来源状态</h2><span>available / empty / unavailable</span></div>
+              <div className="panel-title"><h2>来源状态</h2></div>
               <SourceTable rows={rows} />
             </section>
           </>
@@ -267,7 +267,7 @@ function OverviewPage({ controller }: { controller: ConsoleController }) {
       </SourceState>
 
       <section className="panel" data-slide="A-OV-02">
-        <div className="panel-title"><div><p className="eyebrow">A-OV-02</p><h2>公告管理</h2></div><Button color="primary" onClick={() => setDraftOpen(true)} size="sm"><Plus aria-hidden size={16} />新建草稿</Button></div>
+        <div className="panel-title"><div><h2>公告管理</h2></div><Button color="primary" onClick={() => setDraftOpen(true)} size="sm"><Plus aria-hidden size={16} />新建草稿</Button></div>
         <SourceState empty={announcements.length === 0} emptyTitle="暂无公告" error={controller.sources.operatorAnnouncements.error} loading={controller.sources.operatorAnnouncements.loading} onRetry={() => void controller.refreshCurrentPage()} source={controller.sources.operatorAnnouncements.value} unavailableTitle="公告暂不可用">
           {() => <AnnouncementList announcements={announcements} busy={announcementBusy} controller={controller} onBusy={setAnnouncementBusy} />}
         </SourceState>
@@ -280,8 +280,19 @@ function OverviewPage({ controller }: { controller: ConsoleController }) {
 type AccountDialog = "detail" | "provision" | "wallet" | "";
 
 function AccountSourceSummary({ account }: { account: OperatorAccountDTO }) {
-  const sources = [account.gatewayIdentity, account.wallet, account.keyCount, account.usage, account.workspaceCount];
-  return <span className="account-source-summary">{sources.map((source, index) => <SourceBadge key={`${source.source}-${index}`} source={source} />)}</span>;
+  const sources = [
+    { label: "身份", source: account.gatewayIdentity },
+    { label: "余额", source: account.wallet },
+    { label: "Key", source: account.keyCount },
+    { label: "API", source: account.usage },
+    { label: "Workspace", source: account.workspaceCount }
+  ];
+  return <div className="account-source-summary">{sources.map(({ label, source }) => <div className="account-source-summary__item" key={label}><span>{label}</span><SourceBadge source={source} /><small>{source.source} · {formatDate(source.fetchedAt, true)}</small></div>)}</div>;
+}
+
+function AccountFact<T>({ source, children }: { source: SourceEnvelope<T>; children: (data: T) => ReactNode }) {
+  if (!source.available) return <span className="account-fact-unavailable">暂不可用</span>;
+  return children(source.data);
 }
 
 function AccountActions({ account, controller, openAccount }: {
@@ -289,13 +300,16 @@ function AccountActions({ account, controller, openAccount }: {
   controller: ConsoleController;
   openAccount: (account: OperatorAccountDTO, next: AccountDialog) => void;
 }) {
+  const reservedAdmin = account.accountId === "acct-admin" || account.role === "admin";
   return (
     <div className="operator-card-actions">
       <Button onClick={() => openAccount(account, "detail")} size="sm" variant="ghost">查看账户</Button>
       <Button onClick={() => openAccount(account, "wallet")} size="sm" variant="outline"><WalletCards aria-hidden size={15} />余额操作</Button>
-      {account.status === "active" && account.accountId !== "acct-admin" && account.role !== "admin"
-        ? <Button color="danger" onClick={() => void controller.disableOperatorAccount(account.accountId)} size="sm" variant="ghost"><Ban aria-hidden size={15} />停用</Button>
-        : <span className="account-read-only">保留管理员账户仅查看</span>}
+      {reservedAdmin
+        ? <span className="account-read-only">保留管理员账户仅查看</span>
+        : account.status === "active"
+          ? <Button color="danger" onClick={() => void controller.disableOperatorAccount(account.accountId)} size="sm" variant="ghost"><Ban aria-hidden size={15} />停用</Button>
+          : <span className="account-read-only">账户已停用</span>}
     </div>
   );
 }
@@ -308,17 +322,14 @@ function OperatorAccountMobileCard({ account, controller, openAccount }: {
   return (
     <article className="operator-object-card operator-account-mobile-card">
       <header className="operator-object-card__header">
-        <span><strong>{account.email}</strong><small>{account.accountId} · {account.consoleUserId}</small></span>
-        <Badge color={statusTone(account.status)}>{statusLabel(account.status)}</Badge>
+        <span><strong>{account.email}</strong><small>{account.role === "admin" ? "管理员" : account.role}</small></span>
       </header>
-      <dl className="operator-object-card__facts">
-        <div><dt>角色</dt><dd>{account.role === "admin" ? "管理员" : account.role}</dd></div>
-        <div><dt>Sub2API 映射</dt><dd><SourceValue source={account.gatewayIdentity}>{(identity) => `${identity.userId} · ${identity.email}`}</SourceValue></dd></div>
-        <div><dt>余额 / 钱包状态</dt><dd><SourceValue source={account.wallet}>{(wallet) => `${formatUsdMicros(wallet.usdMicros)} · ${wallet.status}`}</SourceValue></dd></div>
-        <div><dt>Key</dt><dd><SourceValue source={account.keyCount}>{formatCount}</SourceValue></dd></div>
-        <div className="operator-object-card__wide"><dt>今日 / 累计 API 费用</dt><dd><SourceValue source={account.usage}>{(usage) => `${formatUsdMicros(usage.todayActualCostUsdMicros)} / ${formatUsdMicros(usage.totalActualCostUsdMicros)}`}</SourceValue></dd></div>
-        <div><dt>Workspace</dt><dd><SourceValue source={account.workspaceCount}>{formatCount}</SourceValue></dd></div>
-        <div><dt>嵌套来源</dt><dd><AccountSourceSummary account={account} /></dd></div>
+      <dl className="operator-object-card__facts operator-account-mobile-facts">
+        <div className="operator-object-card__wide"><dt>账户映射</dt><dd><span className="account-mapping-stack"><span><small>OPL Account</small><code>{account.accountId}</code></span><span><small>Console User</small><code>{account.consoleUserId}</code></span><span><small>Sub2API User</small><code>{account.sub2apiUserId}</code></span></span></dd></div>
+        <div><dt>余额</dt><dd><AccountFact source={account.wallet}>{(wallet) => <span className="account-balance-stack"><strong>{formatUsdMicros(wallet.usdMicros)}</strong><small>{statusLabel(wallet.status)}</small></span>}</AccountFact></dd></div>
+        <div><dt>API 费用</dt><dd><AccountFact source={account.usage}>{(usage) => <span className="account-cost-stack"><span><small>今日</small><strong>{formatUsdMicros(usage.todayActualCostUsdMicros)}</strong></span><span><small>累计</small><strong>{formatUsdMicros(usage.totalActualCostUsdMicros)}</strong></span></span>}</AccountFact></dd></div>
+        <div><dt>资源</dt><dd><span className="account-resource-stack"><span><small>Key</small><strong><AccountFact source={account.keyCount}>{formatCount}</AccountFact></strong></span><span><small>Workspace</small><strong><AccountFact source={account.workspaceCount}>{formatCount}</AccountFact></strong></span></span></dd></div>
+        <div><dt>状态</dt><dd><Badge color={statusTone(account.status)}>{statusLabel(account.status)}</Badge></dd></div>
       </dl>
       <AccountActions account={account} controller={controller} openAccount={openAccount} />
     </article>
@@ -407,6 +418,7 @@ function AccountDetailModal({ account, onClose }: { account: OperatorAccountDTO 
             <div><dt>Workspace 汇总</dt><dd><SourceValue source={account.workspaceCount}>{formatCount}</SourceValue></dd></div>
             <div><dt>Support 工单映射</dt><dd>暂不可用</dd></div>
           </dl></section>
+          <section className="data-section account-source-detail"><h2>来源状态与读回时间</h2><AccountSourceSummary account={account} /></section>
         </div>
       ) : null}
     </Modal>
@@ -499,11 +511,10 @@ function AccountsPage({ controller }: { controller: ConsoleController }) {
   };
   return (
     <section className="panel" data-slide="A-ACC-01 A-ACC-02 A-ACC-03">
-      <div className="panel-title operator-accounts-panel-title"><div className="operator-accounts-title"><p className="eyebrow">A-ACC-01</p><h2>客户与计费账户</h2></div><Button color="primary" onClick={() => setDialog("provision")}><Plus aria-hidden size={16} />开通用户</Button></div>
-      <p className="source-note">Control Plane 先稳定分页；Gateway 与 Fabric 只聚合当前页，不在浏览器扫描全部账户。</p>
+      <div className="panel-title operator-accounts-panel-title"><div className="operator-accounts-title"><h2>客户与计费账户</h2></div><Button color="primary" onClick={() => setDialog("provision")}><Plus aria-hidden size={16} />开通用户</Button></div>
       <SourceState empty={accounts.length === 0} emptyTitle="暂无用户" error={controller.sources.operatorAccounts.error} loading={controller.sources.operatorAccounts.loading} onRetry={() => void controller.refreshCurrentPage()} source={controller.sources.operatorAccounts.value} unavailableTitle="账户数据暂不可用">
         {(data) => <>
-          <div className="table-wrap operator-account-table"><table><thead><tr><th>邮箱 / 角色</th><th>Account / Console User</th><th>Sub2API 映射</th><th>余额 / 钱包状态</th><th>Key</th><th>今日 / 累计 API 费用</th><th>Workspace</th><th>账户状态</th><th>嵌套来源</th><th>操作</th></tr></thead><tbody>{data.items.map((account) => (
+          <div className="table-wrap operator-account-table"><table><thead><tr><th>用户</th><th>账户映射</th><th>余额</th><th>API 费用</th><th>资源</th><th>状态</th><th>操作</th></tr></thead><tbody>{data.items.map((account) => (
             <tr key={account.accountId}>
               <td>
                 <span className="operator-account-identity">
@@ -511,14 +522,11 @@ function AccountsPage({ controller }: { controller: ConsoleController }) {
                   <small>{account.role === "admin" ? "管理员" : account.role}</small>
                 </span>
               </td>
-              <td><strong>{account.accountId}</strong><small>{account.consoleUserId}</small></td>
-              <td><SourceValue source={account.gatewayIdentity}>{(identity) => `${identity.userId} · ${identity.email}`}</SourceValue></td>
-              <td><SourceValue source={account.wallet}>{(wallet) => `${formatUsdMicros(wallet.usdMicros)} · ${wallet.status}`}</SourceValue></td>
-              <td><SourceValue source={account.keyCount}>{formatCount}</SourceValue></td>
-              <td><SourceValue source={account.usage}>{(usage) => `${formatUsdMicros(usage.todayActualCostUsdMicros)} / ${formatUsdMicros(usage.totalActualCostUsdMicros)}`}</SourceValue></td>
-              <td><SourceValue source={account.workspaceCount}>{formatCount}</SourceValue></td>
+              <td><span className="account-mapping-stack"><span><small>OPL Account</small><code>{account.accountId}</code></span><span><small>Console User</small><code>{account.consoleUserId}</code></span><span><small>Sub2API User</small><code>{account.sub2apiUserId}</code></span></span></td>
+              <td><AccountFact source={account.wallet}>{(wallet) => <span className="account-balance-stack"><strong>{formatUsdMicros(wallet.usdMicros)}</strong><small>{statusLabel(wallet.status)}</small></span>}</AccountFact></td>
+              <td><AccountFact source={account.usage}>{(usage) => <span className="account-cost-stack"><span><small>今日</small><strong>{formatUsdMicros(usage.todayActualCostUsdMicros)}</strong></span><span><small>累计</small><strong>{formatUsdMicros(usage.totalActualCostUsdMicros)}</strong></span></span>}</AccountFact></td>
+              <td><span className="account-resource-stack"><span><small>Key</small><strong><AccountFact source={account.keyCount}>{formatCount}</AccountFact></strong></span><span><small>Workspace</small><strong><AccountFact source={account.workspaceCount}>{formatCount}</AccountFact></strong></span></span></td>
               <td><Badge color={statusTone(account.status)}>{statusLabel(account.status)}</Badge></td>
-              <td><AccountSourceSummary account={account} /></td>
               <td className="table-actions"><AccountActions account={account} controller={controller} openAccount={openAccount} /></td>
             </tr>
           ))}</tbody></table></div>
@@ -567,7 +575,7 @@ function ReviewModal({ controller, onClose, review }: { controller: ConsoleContr
   return (
     <Modal
       className="modal"
-      description="只显示当前 projection；缺失事实不会从其他来源猜测。"
+      description="核对扣款、资源和收据状态后，再执行当前允许的恢复动作。"
       footer={<><Button onClick={close} variant="outline">关闭</Button>{action ? <Button color="primary" disabled={!confirmed} onClick={() => void submit()}>{action === "recover_workspace_launch" ? "输入证据并恢复 Launch" : "输入证据并提交复核"}</Button> : null}</>}
       onClose={close}
       open={Boolean(review)}
@@ -583,8 +591,7 @@ function ReconciliationPage({ controller }: { controller: ConsoleController }) {
   const reviews = sourceData(controller.sources.operatorReconciliation.value)?.items || [];
   return (
     <section className="panel" data-slide="A-REC-01 A-REC-02">
-      <div className="panel-title"><div><p className="eyebrow">A-REC-01</p><h2>计费复核</h2></div><span>服务端队列</span></div>
-      <p className="source-note">当前控制器未提供状态、资源类型和 Account 查询参数；页面不下载其他分页模拟筛选。</p>
+      <div className="panel-title"><div><h2>计费复核</h2></div><span>服务端队列</span></div>
       <SourceState empty={reviews.length === 0} emptyTitle="暂无待复核项目" error={controller.sources.operatorReconciliation.error} loading={controller.sources.operatorReconciliation.loading} onRetry={() => void controller.refreshCurrentPage()} source={controller.sources.operatorReconciliation.value} unavailableTitle="复核数据暂不可用">
         {(data) => <div className="table-wrap"><table><thead><tr><th>Account</th><th>资源类型</th><th>状态</th><th>billing operation</th><th>phase</th><th>errorCode</th><th>operation reference</th><th>Receipt reference</th><th>allowedActions</th><th>操作</th></tr></thead><tbody>{data.items.map((review) => {
           const actionable = review.allowedActions.includes("recover_workspace_launch") || review.allowedActions.includes("resolve_billing_review");
@@ -643,10 +650,10 @@ function OperatorResourceMobileCard({ resource }: { resource: OperatorResourceDT
 
 function ResourceDetail({ controller }: { controller: ConsoleController }) {
   const selected = controller.selectedOperatorWorkspaceId;
-  if (!selected) return <section className="panel" data-slide="A-RES-02"><div className="panel-title"><div><p className="eyebrow">A-RES-02</p><h2>资源详情</h2></div></div><div className="empty-panel">请选择 Workspace 查看资源详情。</div></section>;
+  if (!selected) return <section className="panel" data-slide="A-RES-02"><div className="panel-title"><div><h2>资源详情</h2></div></div><div className="empty-panel">请选择 Workspace 查看资源详情。</div></section>;
   return (
     <section className="panel" data-slide="A-RES-02">
-      <div className="panel-title"><div><p className="eyebrow">A-RES-02</p><h2>资源详情</h2></div><span>{selected}</span></div>
+      <div className="panel-title"><div><h2>资源详情</h2></div><span>{selected}</span></div>
       <SourceState error={controller.sources.operatorWorkspaceDetail.error} loading={controller.sources.operatorWorkspaceDetail.loading} onRetry={() => void controller.openOperatorWorkspace(selected)} source={controller.sources.operatorWorkspaceDetail.value} unavailableTitle="资源详情暂不可用">
         {(detail) => <>
           <dl className="data-list">
@@ -699,7 +706,7 @@ function ResourcesPage({ controller }: { controller: ConsoleController }) {
   return (
     <section className="admin-dashboard" data-slide="A-RES-01 A-RES-02">
       <section className="panel">
-        <div className="panel-title"><div><p className="eyebrow">A-RES-01</p><h2>Workspace 资源列表</h2></div><span>Control Plane 分页后聚合当前页</span></div>
+        <div className="panel-title"><div><h2>Workspace 资源列表</h2></div><span>当前页资源状态</span></div>
         <SourceState empty={workspaces.length === 0} emptyTitle="暂无 Workspace" error={controller.sources.operatorWorkspaces.error} loading={controller.sources.operatorWorkspaces.loading} onRetry={() => void controller.refreshCurrentPage()} source={controller.sources.operatorWorkspaces.value} unavailableTitle="Workspace 资源暂不可用">
           {(data) => <>
             <div className="table-wrap operator-workspace-table"><table><thead><tr><th>Workspace</th><th>owner Account</th><th>owner User</th><th>套餐 / 月度总价</th><th>创建时间</th><th>paidThrough</th><th>续费状态</th><th>生命周期状态</th><th>URL</th><th>Receipt ID</th><th>Key 累计实际费用</th><th>操作</th></tr></thead><tbody>{data.items.map((item, index) => {
@@ -741,7 +748,7 @@ function OperatorHealthMobileCard({ controller, name, service, icon: Icon }: {
       <dl className="operator-object-card__facts">
         <div><dt>readiness 生成时间</dt><dd>{service.available ? formatDate(service.data.generatedAt || service.data.updatedAt, true) : "暂不可用"}</dd></div>
         <div><dt>Console 读回时间</dt><dd>{service.fetchedAt ? formatDate(service.fetchedAt, true) : "暂不可用"}</dd></div>
-        <div className="operator-object-card__wide"><dt>客户影响范围</dt><dd>暂不可用（当前健康 DTO 未投影）</dd></div>
+        <div className="operator-object-card__wide"><dt>客户影响范围</dt><dd>暂不可用</dd></div>
       </dl>
       <div className="operator-card-actions"><Button aria-label={`刷新 ${name}`} onClick={() => void controller.refreshCurrentPage()} size="sm" variant="outline"><RefreshCw aria-hidden size={15} />刷新</Button></div>
     </article>
@@ -754,8 +761,8 @@ function SystemPage({ controller }: { controller: ConsoleController }) {
   return (
     <section className="admin-dashboard" data-slide="A-SYS-01">
       <section className="account-band">
-        <div className="account-band-copy"><p className="eyebrow">A-SYS-01</p><h2>系统状态</h2><p>服务健康不推导 code-complete、pilot-ready 或 production-proven 等发布证据等级。</p></div>
-        <div className="band-metrics"><Metric label="总体状态" note="按最差真实状态" value={summary.label} /><Metric label="服务域" note="固定展示" value="5" /><Metric label="Console 读回" note="Control Plane 投影" value={healthSource?.fetchedAt ? formatDate(healthSource.fetchedAt, true) : "暂不可用"} /></div>
+        <div className="account-band-copy"><h2>系统状态</h2></div>
+        <div className="band-metrics"><Metric label="总体状态" note="按最差真实状态" value={summary.label} /><Metric label="服务域" note="固定展示" value="5" /><Metric label="Console 读回" note="最近读取" value={healthSource?.fetchedAt ? formatDate(healthSource.fetchedAt, true) : "暂不可用"} /></div>
       </section>
       <section className="panel">
         <div className="panel-title"><div><h2>服务健康</h2><Badge color={summary.tone}>{summary.label}</Badge></div><Button onClick={() => void controller.refreshCurrentPage()} size="sm" variant="outline"><RefreshCw aria-hidden size={16} />刷新</Button></div>
@@ -764,7 +771,7 @@ function SystemPage({ controller }: { controller: ConsoleController }) {
             <div className="table-wrap operator-health-table"><table><thead><tr><th>服务</th><th>状态</th><th>readiness 生成时间</th><th>Console 读回时间</th><th>客户影响范围</th><th>操作</th></tr></thead><tbody>{healthServices.map(({ key, name, icon: Icon }) => {
               const service = health[key];
               const state = healthStatus(service);
-              return <tr key={key}><td><span className="resource-type"><Icon aria-hidden size={16} />{name}</span></td><td><Badge color={state.tone}>{state.label}</Badge></td><td>{service.available ? formatDate(service.data.generatedAt || service.data.updatedAt, true) : "暂不可用"}</td><td>{service.fetchedAt ? formatDate(service.fetchedAt, true) : "暂不可用"}</td><td>暂不可用（当前健康 DTO 未投影）</td><td><Button aria-label={`刷新 ${name}`} onClick={() => void controller.refreshCurrentPage()} size="sm" uniform variant="ghost"><RefreshCw aria-hidden size={15} /></Button></td></tr>;
+              return <tr key={key}><td><span className="resource-type"><Icon aria-hidden size={16} />{name}</span></td><td><Badge color={state.tone}>{state.label}</Badge></td><td>{service.available ? formatDate(service.data.generatedAt || service.data.updatedAt, true) : "暂不可用"}</td><td>{service.fetchedAt ? formatDate(service.fetchedAt, true) : "暂不可用"}</td><td>暂不可用</td><td><Button aria-label={`刷新 ${name}`} onClick={() => void controller.refreshCurrentPage()} size="sm" uniform variant="ghost"><RefreshCw aria-hidden size={15} /></Button></td></tr>;
             })}</tbody></table></div>
             <div className="operator-health-mobile-list">{healthServices.map(({ key, name, icon }) => <OperatorHealthMobileCard controller={controller} icon={icon} key={key} name={name} service={health[key]} />)}</div>
           </>}

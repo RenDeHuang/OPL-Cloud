@@ -32,7 +32,7 @@ test("Console browser covers customer and operator truth states at desktop and m
   assert.equal(result.workspaceNavigation, true);
   assert.equal(result.workspacePagination, true);
   assert.equal(result.directDetailRefresh, true);
-  assert.deepEqual(result.requestRecordFields, ["time", "model", "endpoint", "actualAmount", "requestId"]);
+  assert.deepEqual(result.requestRecordFields, ["modelEndpoint", "tokens", "actualCost", "latency", "time", "requestId"]);
   assert.equal(result.billingViews, true);
   assert.equal(result.loginSubmissions, 2);
   assert.deepEqual(result.customerRoutes, [
@@ -57,6 +57,7 @@ test("Console browser covers customer and operator truth states at desktop and m
     "console-overview",
     "workspace-list",
     "api-overview",
+    "api-usage",
     "billing",
     "announcements",
     "admin-overview",
@@ -92,10 +93,11 @@ test("Console browser confirms the target Account ID before a wallet adjustment"
   assert.match(browserQa, /getByLabel\("业务原因"\)\.pressSequentially\("browser retry"\)/);
 });
 
-test("Console browser uses the visible mobile account card instead of the hidden desktop row", async () => {
+test("Console browser uses the visible account surface for each viewport", async () => {
   const browserQa = await readFile("tools/console-browser-qa.ts", "utf8");
   assert.match(browserQa, /operator-account-mobile-card/);
-  assert.match(browserQa, /name === "mobile"/);
+  assert.match(browserQa, /operator-account-table tbody tr:visible/);
+  assert.match(browserQa, /name === "desktop"/);
   assert.match(browserQa, /querySelectorAll\("\.table-wrap"\)[\s\S]+scrollLeft = 0/);
 });
 

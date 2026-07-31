@@ -66,7 +66,7 @@ import {
   rotateWorkspaceCredentials,
   workspaceLaunchIdempotencyKey
 } from "../api/workspaces-api.ts";
-import { defaultAuthenticatedRoute, needsSession, workspaceIdFromPath, workspacePage } from "../console-model.ts";
+import { defaultAuthenticatedRoute, hasSufficientWorkspaceLaunchBalance, needsSession, workspaceIdFromPath, workspacePage } from "../console-model.ts";
 import { isKnownConsoleRoute, isSensitiveConsoleRoute, useConsoleRouter } from "./console-router.ts";
 import type { BillingView, ConsoleSecrets, ConsoleSources, GlobalSlide, RemoteState, WorkspaceLaunchStep } from "./console-controller-types.ts";
 
@@ -389,6 +389,10 @@ export function useConsoleController() {
       const catalog = await getPricingCatalog();
       if (!isRequestCurrent(generation, activeSession.user.id)) return;
       updateSource("catalog", { value: catalog, loading: false, error: "" });
+      if (!catalog.packages.some((plan) => plan.id === launchPlan && plan.available)) {
+        const firstAvailablePlan = catalog.packages.find((plan) => plan.available);
+        if (firstAvailablePlan) setLaunchPlan(firstAvailablePlan.id);
+      }
       const entries = await Promise.all(catalog.packages.filter((plan) => plan.available).map(async (plan) => {
         const preview = await previewPricing({ resourceType: "workspace", packageId: plan.id, sizeGb: plan.diskGb }, activeSession.csrfToken);
         return [plan.id, preview] as const;
@@ -1264,8 +1268,8 @@ export function useConsoleController() {
   const selectedPlan = sources.catalog.value?.packages.find((plan) => plan.id === launchPlan && plan.available) || null;
   const selectedPrice = selectedPlan ? previews[selectedPlan.id]?.totalChargeUsdMicros ?? null : null;
   const wallet = sources.wallet.value?.available ? sources.wallet.value.data : null;
-  const balanceSufficient = wallet && selectedPrice !== null && /^\d+$/.test(wallet.usdMicros)
-    ? BigInt(wallet.usdMicros) >= BigInt(selectedPrice)
+  const balanceSufficient = wallet && selectedPrice !== null
+    ? hasSufficientWorkspaceLaunchBalance(wallet.usdMicros, selectedPrice)
     : wallet ? false : null;
   const workspaceRows = sources.workspaces.value?.available ? sources.workspaces.value.data.items : [];
   const workspacePages = sources.workspaces.value?.available ? Math.ceil(sources.workspaces.value.data.total / sources.workspaces.value.data.pageSize) : 0;

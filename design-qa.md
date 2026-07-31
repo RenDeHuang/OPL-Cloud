@@ -1,63 +1,108 @@
 # OPL Cloud React Console Design QA
 
-## Comparison Target
+## Comparison Targets
 
-- Source visual truth: `/tmp/opl-uiux-v3-directions-live.png` and the selected Fresh Focus crop `/tmp/v3-direction-v2-1.png`.
-- Implementation screenshots: `/tmp/opl-console-react-qa-final-v3`.
-- Full-view comparison evidence:
-  - `/tmp/opl-design-qa-desktop-comparison.png`
-  - `/tmp/opl-design-qa-mobile-comparison.png`
-  - `/tmp/opl-design-qa-primary-desktop.png`
-  - `/tmp/opl-design-qa-primary-mobile.png`
-- Focused region comparison evidence: `/tmp/opl-design-qa-focused-comparison.png`.
-- Viewports: desktop `1440x1024`; mobile `390x844`.
-- State: authenticated customer and operator fixtures, authoritative sources available unless the captured page intentionally demonstrates empty state; wallet modal filled but not submitted on mobile.
+### Console visual system
 
-The selected direction is a visual system target rather than a pixel-complete screen specification. It fixes the quiet left rail, flat grouped bands, thin separators, restrained cobalt/green accents, compact typography, and scan-first density. The Chinese copy, source metadata, additional Admin facts, and exact 10-page/27-slide content come from the frozen display contract and are intentional product constraints. The source board has no separate mobile mock, so mobile is evaluated as a responsive translation of the same hierarchy and tokens.
+- Source visual truth: `output/imagegen/opl-console-option-1-quiet-ledger-1440x1024.png`
+- Source SHA-256: `9b75ba8b01cda552fcb7d44bc774797f22697f5fd4a0c067e885bc4895b738b5`
+- Desktop implementation: `output/browser-qa/quiet-ledger/fixture-console-overview-desktop.png`
+- Mobile implementation: `output/browser-qa/quiet-ledger/fixture-console-overview-mobile.png`
+- Full comparison: `output/browser-qa/quiet-ledger/quiet-ledger-overview-comparison.png`
+- Focused comparison: `output/browser-qa/quiet-ledger/quiet-ledger-overview-focus-comparison.png`
+
+### Workspace Split Decision
+
+- Source visual truth: `output/imagegen/opl-workspace-launch-option-1-split-decision-1440x1024.png`
+- Source SHA-256: `897f657539d2ccd8e10df365e5108094bee3a68ffd1c349190f692501657b4b6`
+- Desktop implementation states:
+  - `output/browser-qa/split-decision/fixture-workspace-new-ready-desktop.png`
+  - `output/browser-qa/split-decision/fixture-workspace-confirm-desktop.png`
+  - `output/browser-qa/split-decision/fixture-workspace-operation-desktop.png`
+- Mobile implementation states:
+  - `output/browser-qa/split-decision/fixture-workspace-new-ready-mobile.png`
+  - `output/browser-qa/split-decision/fixture-workspace-confirm-mobile.png`
+  - `output/browser-qa/split-decision/fixture-workspace-operation-mobile.png`
+- Viewports: desktop `1440x1024`; mobile `390x844`
+- State: authenticated customer fixture; catalog, pricing preview and wallet available; configuration filled and actionable; confirmation checked; operation `preparing/runtime_starting`
+- Full-view comparison: `output/browser-qa/split-decision/split-decision-configure-full-comparison.png`
+- Focused region comparison: `output/browser-qa/split-decision/split-decision-configure-focus-comparison.png`
+- Three-state evidence: `output/browser-qa/split-decision/split-decision-desktop-flow.png` and `output/browser-qa/split-decision/split-decision-mobile-flow.png`
+
+The source and rendered implementation were opened together in the full and focused comparison artifacts. The focused comparison removes the shared shell and keeps the steps, decision surface, plan rows and order summary readable. The flow artifacts compare configuration, confirmation and operation states together.
+
+### Sub2API-aligned accounts and usage
+
+- Customer usage desktop: `output/browser-qa/sub2api-alignment/fixture-api-usage-desktop.png`
+- Customer usage mobile: `output/browser-qa/sub2api-alignment/fixture-api-usage-mobile.png`
+- Admin accounts desktop: `output/browser-qa/sub2api-alignment/fixture-admin-accounts-desktop.png`
+- Admin accounts mobile: `output/browser-qa/sub2api-alignment/fixture-admin-accounts-mobile.png`
+- Viewports: desktop `1440x1024`; mobile `390x844`
+- Usage hierarchy: model/endpoint, Token, actual cost, latency, time and request ID.
+- Account hierarchy: user, account mapping, balance, API cost, resources, status and actions.
+
+The four captures were inspected at original resolution. Desktop tables remain scan-first without clipped identifiers or actions. Mobile cards preserve the same fact order, wrap identifiers within the content width and keep controls clear of the fixed navigation.
 
 ## Findings
 
-No actionable P0, P1, or P2 findings remain.
+No actionable P0, P1 or P2 findings remain.
 
-- Fonts and typography: the implementation uses the repository system sans and mono stacks, compact 11-16px operational text, tabular numeric emphasis, zero letter spacing, and stable wrapping/truncation. Headings remain proportional to dense Console surfaces rather than becoming marketing-scale display text.
-- Spacing and layout rhythm: desktop preserves the selected direction's fixed rail, broad content canvas, grouped horizontal bands, and light separators. Mobile converts wide tables into stable object cards, keeps the five primary destinations reachable, and has no viewport overflow at `390x844`.
-- Colors and visual tokens: neutral surfaces carry most grouping; cobalt is limited to navigation and primary actions, green to healthy/available state, navy to authoritative overview bands, and red to destructive/error state. There are no gradients, decorative blobs, or one-note purple/beige styling.
-- Image quality and asset fidelity: the product uses the existing real OPL bitmap mark and `lucide-react` icons. The selected Console direction contains no required product photography or illustration, so adding generated raster art would reduce fidelity and scanning density. No visible target asset was replaced with CSS art, text glyphs, emoji, or handcrafted SVG.
-- Copy and content: all 10 primary pages and 27 frozen slides use the approved Chinese product vocabulary. Authority labels distinguish Control Plane, Sub2API, Fabric, and Ledger; `available`, `empty`, and `unavailable` remain distinct; technical `paidThrough` copy is replaced by `权益截止`.
-- Icons and controls: navigation, refresh, settings, support, reveal/copy, status, and command actions use one icon family. Apps SDK UI buttons and fields retain accessible focus, disabled, busy, invalid, and modal states through the local thin adapters.
-- Responsiveness and accessibility: Browser QA covers desktop/mobile navigation, keyboard selection, modal focus behavior, source states, secret cleanup, and horizontal overflow. The `390x844` wallet modal footer keeps both actions inside the footer and gives them equal available width.
+### Required fidelity surfaces
 
-Accepted visual deviations from the direction board are intentional: the implementation adds the frozen source-truth metadata and Admin operational density, and uses a navy authority band on overview/system summary surfaces. These preserve the Fresh Focus hierarchy while making authority boundaries and operational state unambiguous.
+- Fonts and typography: both directions use compact sans-serif UI typography, tabular money, zero letter spacing and a clear title/label/value hierarchy. Long names, price versions and operation IDs wrap without resizing controls.
+- Spacing and layout rhythm: desktop preserves the 240px rail, open canvas, left decision surface and 320px sticky summary. Confirmation keeps the same split instead of becoming another stacked page. Mobile uses one column, keeps the summary after the decision content and has no horizontal overflow.
+- Colors and tokens: neutral surfaces carry the layout; deep green is limited to selection, primary actions and healthy state. Disabled, unavailable, warning and error states keep semantic contrast. No gradient, decorative blob or dark hero is present.
+- Image quality and asset fidelity: both immutable ImageGen PNGs retain their recorded hashes. The selected Workspace target contains no separate photographic or illustrative assets. The implementation uses the existing OPL bitmap mark and the established icon library; no target asset is replaced by handwritten SVG, emoji or placeholder art.
+- Copy and content: the UI uses customer-facing product language and omits source-boundary teaching copy. The three steps describe browser navigation only. Operation content names only the returned status and current phase.
+- Icons and controls: Apps SDK UI supplies the plan RadioGroup, name Field and confirmation Checkbox. The checked state is visibly stable before capture. Buttons, refresh, navigation and status actions retain accessible names, focus and disabled states.
+- States and responsiveness: desktop and mobile evidence covers available, unavailable, selected, checked, disabled and active-operation states. The selected plan remains visually explicit, an unavailable plan cannot remain selected, confirmation returns to the top, and the operation page contains no inferred progress rail.
+- Usage controls and records: the API Key selector and period control use full-width Apps SDK-compatible block layout. Desktop exposes the frozen six-column table; mobile exposes the same facts in compact cards. Missing latency is `-`, never an invented zero, while authoritative zero remains `0 ms`.
+- Admin accounts: desktop exposes the frozen seven-column hierarchy and keeps all actions readable in a stable table cell. Mobile keeps the same hierarchy and command set without browser-side search or sort semantics.
 
-## Patches Made
+### API truth audit
 
-- Replaced mobile Admin account, resource, resource-detail, and system wide tables with object cards while retaining every required fact and action.
-- Restored business-first Workspace labels and removed the raw `paidThrough` presentation.
-- Separated source value, authority, availability, and readback time into scannable layers.
-- Added complete empty-state spacing and hierarchy.
-- Removed the legacy global input border from Apps SDK fields and fixed the wallet amount input's double border.
-- Preserved caller classes in the Apps SDK Button adapter so Console sizing, color, radius, and focus styles apply to real library buttons.
-- Added mobile API Key cards with the same reveal, copy, lifecycle, quota, usage, and action protections as desktop.
-- Fixed the `<=520px` modal footer to keep both actions on one row with equal flexible width.
-- Extended fake-only Browser QA to capture the wallet modal on both viewports and fail when any footer action crosses its container boundary.
+- `GET /api/pricing/catalog` owns package identity, availability, CPU, memory and storage shape.
+- `POST /api/pricing/preview` owns compute charge, storage charge, total, price version, currency and `calendar_month` billing unit.
+- `GET /api/gateway/wallet` owns the spendable balance and source availability. The browser guard requires balance strictly greater than the preview total; it remains advisory and the server rechecks.
+- `POST /api/workspace-launches` accepts only the reviewed name, package, size and `autoRenew=false`; browser pricing fields are not submitted.
+- `GET /api/workspace-launches/{operationId}` owns operation ID, status, current phase, pricing readback, timestamps and error code.
+- `GET /api/gateway/keys/{keyId}/usage` owns each request's model, endpoint, Token breakdown, actual cost, nullable first-token/total latency, time and request ID. The browser does not derive latency or cost.
+- `GET /api/gateway/keys/{keyId}/usage-summary` owns the selected Key aggregate; `GET /api/gateway/usage-summary` owns account-wide aggregate values. Neither summary is calculated from the visible page.
+- `GET /api/operator/accounts` owns the Admin account projection. Control Plane owns account/user/role/status/workspace mappings; Sub2API readback owns gateway identity, wallet, Key count and today/cumulative API usage.
+- Region, provider capacity, ETA, inferred completed phases and post-debit balance have no customer API fields and are absent.
+
+## Patches Made Since Previous QA
+
+- Replaced the crowded launch form with the selected Split Decision composition and responsive one-column translation.
+- Replaced custom plan selection with Apps SDK UI RadioGroup and retained Apps SDK UI Field and Checkbox adapters.
+- Fixed the confirmation checkbox width collapse that caused per-character wrapping, then captured its settled checked state.
+- Fixed mobile confirmation scroll position, unavailable-plan selection and radio visibility/shape.
+- Removed the old inferred phase progression; only authoritative `status` and current `phase` remain.
+- Corrected browser fixtures to the real preview DTO: `billingUnit=calendar_month` with separate compute and storage components.
+- Aligned the browser balance guard with the backend invariant: equal balance is insufficient; only a strictly greater balance enables submission.
+- Aligned customer usage with Sub2API request records: Token input/output/cache details, actual cost, first-token/total latency, time and request ID now appear in the same scan path.
+- Aligned Admin accounts with the Sub2API account-table hierarchy while preserving the existing Control Plane API boundary and account commands.
+- Fixed the Apps SDK selector widths and the Admin action-cell layout so desktop and mobile controls no longer compress or clip.
+
+## Accepted Deviations
+
+- The ImageGen target specifies the configuration state only. Confirmation and operation use the same visual system plus the frozen display and API contracts.
+- Fixture names differ from the mock's sample copy; layout and state are matched.
+- The established Console places the return action above the flow instead of duplicating it inside the sticky summary.
+- No mobile source mock exists; mobile is evaluated as the responsive translation of the selected desktop direction.
 
 ## Verification Evidence
 
-- Browser acceptance: `10/10` passing against `/tmp/opl-console-react-qa-final-v3`.
-- Full Node suite: `395/395` passing, with `0` failures and `0` skips.
-- Local demo acceptance: `11/11` passing, covering anonymous `401`, isolated customer/Admin Sessions, login Session rotation, unique owner-scoped General and Workspace Keys, persistent per-Workspace Runtime credentials, owner-scoped launch history, cross-account Secret denial, API proxy fail-closed, bounded shutdown, logout, and real browser navigation through customer and Admin pages.
-- Typecheck and unused-code lint: passing.
-- Production Vite build: passing; the existing manual chunk split emits a non-blocking circular-chunk warning and no build error.
-- Vue retirement scan: no tracked `.vue` files remain.
-- CodeGraph: synchronized after the final React changes.
-- Browser network: `fake-only`; external requests `0`.
-- Browser errors: no page errors and no unexpected Console errors.
-- Idempotency: Gateway Key write `1`; wallet adjustment write `1`.
-- Primary page evidence: all 10 primary pages captured at both required viewports.
-- Focused evidence: mobile account, resource, system, API Key, and wallet modal states compared together with the selected direction.
+- Fake-only browser QA: passed for desktop and mobile, customer and operator roles, all primary pages, source-state recovery, six-field request records, seven-column Admin accounts, key lifecycle, secret cleanup and zero external requests.
+- Browser console errors: `0`; page errors: `0`; external requests: `0`.
+- Full repository test: `npm test` passed `407/407`, with `0` failures, `0` cancelled and `0` skipped.
+- Control Plane test: PostgreSQL-backed `go test ./... -count=1` passed with `OPL_POSTGRES_TESTS=1` and `OPL_CAPACITY_TESTS=1`; the longest `internal/server` package completed in `364.621s`.
+- TypeScript gate: `npm run typecheck` passed with no diagnostics.
+- Unused-code lint gate: `npm run lint` passed with no diagnostics.
+- Production build: `npm run build` passed after transforming `2526` modules. Vite reported the existing `vendor -> react-ui -> vendor` manual-chunk cycle warning; production assets were still emitted successfully.
 
 ## Follow-up Polish
 
-No P3 item is required for acceptance. Future visual refinement should remain within the frozen Fresh Focus direction and must not add decorative media or hide source-truth metadata.
+No P3 item is required for this handoff. Later visual changes must preserve both immutable reference images and the API field audit above.
 
 final result: passed

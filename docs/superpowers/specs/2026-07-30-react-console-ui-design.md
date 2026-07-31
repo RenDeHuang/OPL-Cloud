@@ -2,7 +2,9 @@
 
 状态：`implemented-and-verified`
 
-选定方向：B，独立 React Console。
+选定方向：方案 1，`Quiet Ledger` 独立 React Console。
+
+不可变视觉基准：`output/imagegen/opl-console-option-1-quiet-ledger-1440x1024.png`，SHA-256 `9b75ba8b01cda552fcb7d44bc774797f22697f5fd4a0c067e885bc4895b738b5`。该文件只允许读取、比较和纳入版本控制，不得修改、重新生成或覆盖。
 
 本设计固定 OPL Console 从 Vue 迁移到 React 的实现边界。业务展示内容仍由 [`docs/product/console-display-contract-v1.md`](../../product/console-display-contract-v1.md) 唯一定义；本文件只固定前端运行时、设计系统、组件边界、交互模式、测试策略和迁移完成条件。
 
@@ -56,9 +58,22 @@ Account Settings、Support、购买确认、进度、收据详情、资源详情
 
 ## 4. 视觉与交互方向
 
-### 4.1 壳层
+### 4.1 固定视觉基准
 
-选定的 B 方向使用安静、高密度、面向重复操作的云控制台壳层：
+方案 1 `Quiet Ledger` 是当前唯一实现目标，不再与旧的 B 方向或旧浏览器截图共同解释：
+
+- 桌面基准 viewport 为 `1440x1024`。
+- 左侧导航宽度 `240px`，使用浅色表面和轻量分隔线。
+- 主画布为白色，不使用深蓝 Hero、渐变、装饰光斑或卡片堆叠。
+- 深绿用于唯一主动作和健康状态；危险、警告和不可用仍使用各自语义色。
+- 概览指标为开放式横向信息带，Workspace 是主要内容，最近账单和公告降低层级。
+- 参考图中的现有 OPL Logo 和线性图标由仓库现有资产与图标库承载，不重新生成图片。
+
+视觉基准不覆盖业务合同。参考图中的“运行中的 Workspace”在当前概览必须显示为 Control Plane 的 Workspace 总数或生命周期语义，不能暗示 Fabric Runtime 实时检查；参考图中的七日趋势在没有权威时间序列 DTO 时不得实现为假折线。
+
+### 4.2 壳层
+
+`Quiet Ledger` 使用安静、高密度、面向重复操作的云控制台壳层：
 
 - 桌面端使用固定左侧导航和顶部账号区，内容区宽度充分用于表格和横向比较。
 - 客户导航与 Admin 导航分组显示；非管理员完全看不到 Admin 入口。
@@ -67,7 +82,7 @@ Account Settings、Support、购买确认、进度、收据详情、资源详情
 - 页面 section 默认不做浮动卡片；卡片只用于独立对象、模态框和真正需要边界的工具面板。
 - 表格使用紧凑行高、轻量分隔线和稳定列宽，移动端切换为可扫描的行列表。
 
-### 4.2 视觉原则
+### 4.3 视觉原则
 
 吸收 OpenAI UI Guidelines 的通用原则：
 
@@ -78,7 +93,7 @@ Account Settings、Support、购买确认、进度、收据详情、资源详情
 - 每个 slide 只突出一个主动作；次要动作使用 outline、ghost、菜单或图标按钮。
 - 保持 WCAG AA 对比度、键盘焦点、可读错误、可缩放文本和 reduced-motion 支持。
 
-### 4.3 Apps SDK UI 的角色
+### 4.4 Apps SDK UI 的角色
 
 `@openai/apps-sdk-ui` 是 React 基础组件来源，不是 Console 架构：
 
@@ -87,6 +102,15 @@ Account Settings、Support、购买确认、进度、收据详情、资源详情
 - 表格、分页、SourceEnvelope 状态、Workspace 进度、Secret reveal、Admin 复核和资源详情属于 Console 专用组件，由本仓库实现。
 - 若组件库缺少某个 Console 控件，使用原生语义元素和现有 tokens 补齐，不复制组件库内部代码。
 - 图标迁移到 `lucide-react`，所有非显而易见图标按钮提供 tooltip 或 `aria-label`。
+
+### 4.5 Workspace 开通视觉基准
+
+Workspace 配置、核对和 operation 采用方案 1 `Split Decision`。不可变参考图为 `output/imagegen/opl-workspace-launch-option-1-split-decision-1440x1024.png`，SHA-256 `897f657539d2ccd8e10df365e5108094bee3a68ffd1c349190f692501657b4b6`；该文件只允许读取、比较和纳入版本控制，不得修改、重新生成或覆盖。
+
+- 桌面为左侧决策面加右侧 `320px` sticky 订单摘要；小屏转为单列。
+- 配置态编辑名称和套餐，核对态只读复核，operation 态只突出权威 `status` 和当前 `phase`。
+- 三步条是页面导航状态，不是后端进度；禁止根据 phase 顺序推导此前节点已经完成。
+- 价格目录、报价、余额和 operation 分别读取既有 Control Plane 产品 API；缺少 API 字段的区域、容量、ETA 和扣款后余额不展示。
 
 ## 5. React 架构
 
@@ -144,11 +168,12 @@ route/session
 ### 6.1 Workspace 购买
 
 - 配置 slide 读取实时 catalog、preview 和 wallet。
+- 配置和核对使用左决策、右订单摘要的 Split Decision 结构；右侧集中展示组成金额、总价、余额、自然月和续费意图。
 - Basic/Pro 不可售时禁用并显示原因。
 - 余额判断只控制交互提示；提交后由服务端重新校验。
 - 确认 slide 完整展示套餐、规格、组成、总价、priceVersion、权益期和自动续费关闭。
 - 用户确认后才允许提交；相同 intent 复用相同 Idempotency-Key。
-- operation slide 展示真实 phase，不显示虚假百分比，并提供服务端允许的恢复动作。
+- operation slide 只展示真实 status 和当前 phase，不推导逐阶段完成态，不显示虚假百分比，并提供服务端允许的动作。
 
 ### 6.2 API Key
 
@@ -196,7 +221,7 @@ route/session
 - 新增 React 构建合同：React 入口、Vite React plugin、Apps SDK UI、无 Vue 依赖和无 `.vue` 文件。
 - 新增组件行为测试：按钮 busy/disabled、表单错误、SourceState 三态、modal focus、segmented/select/checkbox 交互。
 - 将客户/Admin flow 测试改为读取稳定的 feature boundaries 或运行浏览器行为，不再扫描一个巨型模板。
-- 浏览器验收至少覆盖登录、客户五页、Admin 五页、Workspace 配置/确认、API Key reveal 清理、来源 unavailable 与移动导航。
+- 浏览器验收至少覆盖登录、客户五页、Admin 五页、Workspace 配置/确认/operation 的桌面双栏与移动单栏、无推导式进度、API Key reveal 清理、来源 unavailable 与移动导航。
 
 ### 8.3 TDD 顺序
 
@@ -233,6 +258,15 @@ route/session
 
 ## 11. ImageGen 与视觉验证
 
-用户要求使用 ImageGen 辅助设计。当前会话没有提供内置 `image_gen` 能力，因此不得静默切换到 CLI。若用户明确授权 CLI fallback 且本机存在 `OPENAI_API_KEY`，生成三张 `1440x1024` 的独立 UI mockup，用于进一步校准信息密度、导航和详情布局；生成结果只作为设计参考，不进入浏览器运行时。
+本轮已使用经用户授权的 ImageGen 设计辅助生成三套方向，用户选择方案 1 `Quiet Ledger`。选定文件固定为：
 
-在未获得 CLI fallback 授权时，选定的 B 方案浏览器 mockup和本文件的视觉规则共同构成实现目标。
+```text
+output/imagegen/opl-console-option-1-quiet-ledger-1440x1024.png
+sha256: 9b75ba8b01cda552fcb7d44bc774797f22697f5fd4a0c067e885bc4895b738b5
+```
+
+从选定时刻起，ImageGen 不再参与本轮实现；禁止重生成、编辑或覆盖该 PNG。实现只读取它作为视觉基准，并在每次 Design QA 前后复核 SHA-256。
+
+浏览器验证必须在 `1440x1024` 同 viewport、已登录客户概览状态下，将该源图与实现截图放入同一比较输入。移动端另以 `390x844` 验证导航可达、无横向溢出、主动作和对象列表可操作。`design-qa.md` 只有在所有 P0/P1/P2 已关闭且写入 `final result: passed` 后才允许交付。
+
+GPT、ImageGen、Computer Use 和 Product Design 仅为设计与开发辅助，不进入 Console 浏览器运行时，也不成为业务事实来源。

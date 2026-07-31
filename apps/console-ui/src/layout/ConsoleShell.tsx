@@ -1,6 +1,7 @@
 import {
   Activity,
   ChevronDown,
+  CircleHelp,
   CircleDollarSign,
   Database,
   KeyRound,
@@ -124,7 +125,7 @@ export function ConsoleShell({ children, controller }: { children: ReactNode; co
   const mobileItems = adminSurface ? adminMenu : customerMenu;
 
   return (
-    <div className="app-shell">
+    <div className="app-shell" data-visual-direction="quiet-ledger">
       {controller.sidebarOpen ? <button aria-label="关闭导航" className="sidebar-scrim" onClick={() => controller.setSidebarOpen(false)} /> : null}
       <aside className={`sidebar ${controller.sidebarOpen ? "open" : ""}`} aria-label="产品导航">
         <div className="sidebar-head">
@@ -179,7 +180,7 @@ export function ConsoleShell({ children, controller }: { children: ReactNode; co
       </aside>
 
       <div className="main-column">
-        <header className="topbar">
+        <header className={`topbar ${controller.path === "/console/overview" ? "topbar-overview" : ""}`}>
           <div className="topbar-title">
             <button aria-label="打开导航" className="mobile-menu" onClick={() => controller.setSidebarOpen(true)}><Menu aria-hidden size={19} /></button>
             <div>
@@ -193,10 +194,16 @@ export function ConsoleShell({ children, controller }: { children: ReactNode; co
                 <RefreshCw aria-hidden size={17} />
               </Button>
             </Tooltip>
-            <Button onClick={() => controller.setGlobalSlide("account")} size="sm" variant="outline">
-              <Settings aria-hidden size={16} />Account Settings
-            </Button>
-            <Button onClick={() => controller.setGlobalSlide("support")} size="sm" variant="outline">Support</Button>
+            <Tooltip content="Account Settings">
+              <Button aria-label="Account Settings" onClick={() => controller.setGlobalSlide("account")} size="sm" uniform variant="ghost">
+                <Settings aria-hidden size={17} />
+              </Button>
+            </Tooltip>
+            <Tooltip content="Support">
+              <Button aria-label="Support" onClick={() => controller.setGlobalSlide("support")} size="sm" uniform variant="ghost">
+                <CircleHelp aria-hidden size={17} />
+              </Button>
+            </Tooltip>
             <Tooltip content="退出登录">
               <Button aria-label="退出登录" onClick={() => void controller.signOut()} size="sm" uniform variant="ghost"><LogOut aria-hidden size={17} /></Button>
             </Tooltip>
@@ -217,11 +224,10 @@ export function ConsoleShell({ children, controller }: { children: ReactNode; co
         })}
       </nav>
 
-      {controller.globalSlide ? (
-        <div className="account-band global-slide" role="complementary" aria-label={controller.globalSlide === "account" ? "Account Settings" : "Support"}>
-          <div className="account-band-copy">
-            <span className="section-label">{controller.globalSlide === "account" ? "G-ACC-01" : "G-SUP-01"}</span>
-            <h2>{controller.globalSlide === "account" ? "Account Settings" : "Support"}</h2>
+        {controller.globalSlide ? (
+          <div className="account-band global-slide" role="complementary" aria-label={controller.globalSlide === "account" ? "Account Settings" : "Support"}>
+            <div className="account-band-copy">
+              <h2>{controller.globalSlide === "account" ? "Account Settings" : "Support"}</h2>
             {controller.globalSlide === "account" ? (
               <dl className="data-list">
                 <div><dt>邮箱</dt><dd>{controller.session?.user.email || "-"}</dd></div>

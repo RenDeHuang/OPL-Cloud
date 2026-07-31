@@ -19,7 +19,7 @@ export interface SourceStateProps<T> {
 export function SourceState<T>({
   children,
   empty,
-  emptyDescription = "权威来源已成功读取，当前没有记录。",
+  emptyDescription = "当前没有记录。",
   emptyTitle = "暂无数据",
   error,
   loading,
@@ -34,7 +34,7 @@ export function SourceState<T>({
   }
 
   if (source?.status === "unavailable") {
-    return <Alert color="warning" indicator={<AlertCircle size={18} />} title={unavailableTitle} description="无法确认权威事实，未使用 0 或空列表代替。" actions={onRetry ? <Button onClick={onRetry} size="sm" variant="outline"><RefreshCw size={14} />重试</Button> : undefined} />;
+    return <Alert color="warning" indicator={<AlertCircle size={18} />} title={unavailableTitle} description="请稍后重试。" actions={onRetry ? <Button onClick={onRetry} size="sm" variant="outline"><RefreshCw size={14} />重试</Button> : undefined} />;
   }
 
   if (!source) return <div className="source-loading" aria-live="polite"><span className="spinner" />等待读取</div>;

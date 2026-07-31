@@ -124,9 +124,35 @@ test("operator accounts expose active and disabled states through the disable co
   assert.match(controller, /确认停用该客户/);
   assert.match(controller, /disableOperatorAccountCommand\(accountId, "operator_requested"/);
   assert.match(controller, /客户已停用/);
-  assert.match(pages, /account\.accountId !== "acct-admin"/);
+  assert.match(pages, /const reservedAdmin = account\.accountId === "acct-admin" \|\| account\.role === "admin"/);
+  assert.match(pages, /reservedAdmin[\s\S]+保留管理员账户仅查看/);
+  assert.match(pages, /account\.status === "active"[\s\S]+disableOperatorAccount\(account\.accountId\)/);
+  assert.match(pages, /账户已停用/);
   assert.match(api, /\/api\/operator\/accounts\/\$\{encodeURIComponent\(accountId\)\}\/disable/);
   assert.doesNotMatch(`${pages}\n${controller}\n${api}`, /删除客户|客户已删除|删除账号|deleteAccount|\/api\/operator\/accounts\/[^"']+\/delete/);
+});
+
+test("operator accounts use the frozen seven-column scan hierarchy", async () => {
+  const pages = await source("apps/console-ui/src/pages/AdminPages.tsx");
+  const accountDetail = pages.slice(pages.indexOf("function AccountDetailModal"), pages.indexOf("function WalletOperationReadback"));
+  const accountsPage = pages.slice(pages.indexOf("function AccountsPage"), pages.indexOf("function ReviewDetails"));
+  const mobileCard = pages.slice(pages.indexOf("function OperatorAccountMobileCard"), pages.indexOf("function ProvisionAccountModal"));
+
+  assert.match(accountsPage, /<th>用户<\/th><th>账户映射<\/th><th>余额<\/th><th>API 费用<\/th><th>资源<\/th><th>状态<\/th><th>操作<\/th>/);
+  for (const label of ["OPL Account", "Console User", "Sub2API User", "今日", "累计", "Key", "Workspace"]) {
+    assert.match(pages, new RegExp(label));
+  }
+  assert.match(accountsPage, /className="account-mapping-stack"/);
+  assert.match(accountsPage, /className="account-resource-stack"/);
+  assert.doesNotMatch(accountsPage, /<AccountSourceSummary/);
+  assert.match(accountDetail, /<AccountSourceSummary/);
+  assert.match(mobileCard, /账户映射[\s\S]+余额[\s\S]+API 费用[\s\S]+资源/);
+  assert.doesNotMatch(accountsPage, /搜索|排序|search|sort/i);
+});
+
+test("operator pages do not expose DTO, projection, or browser paging implementation notes", async () => {
+  const pages = await source("apps/console-ui/src/pages/AdminPages.tsx");
+  assert.doesNotMatch(pages, /["'`][^"'`\n]*(?:DTO|projection|投影|页面不下载其他分页|当前控制器未提供)[^"'`\n]*["'`]/);
 });
 
 test("operator accounts and workspaces expose server-side pagination", async () => {

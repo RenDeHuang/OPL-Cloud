@@ -13,23 +13,25 @@ import {
   Server,
   WalletCards
 } from "lucide-react";
-import type { ReactNode } from "react";
+import { RadioGroup } from "@openai/apps-sdk-ui/components/RadioGroup";
+import { useEffect, useRef, type ReactNode } from "react";
 
 import type { ConsoleController } from "../app/use-console-controller.ts";
 import type {
   AnnouncementDTO,
   BillingReceipt,
   GatewayUsageItem,
+  PlanId,
   PricingPlan,
   SourceEnvelope,
   WorkspaceDTO
 } from "../api/dtos.ts";
 import { KeysPanel } from "../components/keys/KeysPanel.tsx";
 import { SourceState } from "../components/source/SourceState.tsx";
-import { Badge, Button, Checkbox, SegmentedControl, Select } from "../components/ui/index.ts";
+import { Badge, Button, Checkbox, Field, SegmentedControl, Select } from "../components/ui/index.ts";
 import { apiMenu, apiPage, formatCount, formatDate, formatUsdMicros, workspacePage, workspaceStatusLabel } from "../console-model.ts";
 
-const launchPhases = [
+const launchPhaseLabels = [
   ["validate", "校验报价与余额"],
   ["debit", "确认单次扣款"],
   ["workspace_key", "准备 Workspace Key"],
@@ -42,8 +44,21 @@ const launchPhases = [
   ["receipt", "写入 Receipt"]
 ] as const;
 
+function launchPhaseLabel(phase?: string) {
+  return launchPhaseLabels.find(([code]) => phase?.includes(code))?.[1] || "等待服务端更新";
+}
+
+function billingUnitLabel(billingUnit?: string) {
+  if (billingUnit === "calendar_month") return "按自然月计费";
+  return "暂不可用";
+}
+
 function sourceData<T>(source: SourceEnvelope<T> | null | undefined): T | null {
   return source?.available ? source.data : null;
+}
+
+function formatLatency(value: number | null) {
+  return value === null ? "-" : `${formatCount(value)} ms`;
 }
 
 function statusLabel(status?: string) {
@@ -123,26 +138,23 @@ function OverviewPage({ controller }: { controller: ConsoleController }) {
 
   return (
     <section className="overview-page" data-slide="C-OV-01">
-      <section className="account-band">
-        <div className="account-band-copy">
-          <p className="eyebrow">C-OV-01</p>
-          <h2>账户概览</h2>
-          <p>余额、API 实际费用和 Workspace 生命周期分别来自各自权威来源。</p>
-          <Button color="primary" disabled={workspacesPending && !workspacesUnavailable} onClick={() => workspacesUnavailable ? void controller.refreshCurrentPage() : controller.navigate(primaryPath)}>
-            {workspacesUnavailable ? "重试读取 Workspace" : primaryWorkspace ? "查看 Workspace" : workspacesPending ? "正在读取 Workspace" : "新建 Workspace"}
-            {workspacesUnavailable ? <RefreshCw aria-hidden size={16} /> : <ArrowRight aria-hidden size={16} />}
-          </Button>
-        </div>
-        <div className="overview-metrics">
-          <Metric emphasis label="可用余额" note="API 服务余额" value={wallet ? formatUsdMicros(wallet.usdMicros) : "暂不可用"} />
-          <Metric label="本月实际费用" note="API 请求实际消费" value={usage ? formatUsdMicros(usage.totalActualCostUsdMicros) : "暂不可用"} />
-          <Metric label="Workspace" note="当前账户总数" value={workspaces ? formatCount(workspaces.total) : "暂不可用"} />
-        </div>
+      <section className="overview-summary" aria-label="账户关键指标">
+        <Metric emphasis label="可用余额" note="API 服务余额" value={wallet ? formatUsdMicros(wallet.usdMicros) : "暂不可用"} />
+        <Metric label="本月 API 实际费用" note="请求实际消费" value={usage ? formatUsdMicros(usage.totalActualCostUsdMicros) : "暂不可用"} />
+        <Metric label="本月请求次数" note="账号级汇总" value={usage ? formatCount(usage.totalRequests) : "暂不可用"} />
+        <Metric label="Workspace" note="当前账户总数" value={workspaces ? formatCount(workspaces.total) : "暂不可用"} />
       </section>
+
+      <div className="overview-primary-action">
+        <Button color="primary" disabled={workspacesPending && !workspacesUnavailable} onClick={() => workspacesUnavailable ? void controller.refreshCurrentPage() : controller.navigate(primaryPath)}>
+          {workspacesUnavailable ? "重试读取 Workspace" : primaryWorkspace ? "查看 Workspace" : workspacesPending ? "正在读取 Workspace" : "新建 Workspace"}
+          {workspacesUnavailable ? <RefreshCw aria-hidden size={16} /> : <ArrowRight aria-hidden size={16} />}
+        </Button>
+      </div>
 
       <div className="overview-grid">
         <section className="panel overview-workspaces">
-          <div className="panel-title"><h2>Workspace 摘要</h2><Button onClick={() => controller.navigate("/console/workspaces")} size="sm" variant="ghost">全部</Button></div>
+          <div className="panel-title"><h2>Workspace</h2><Button onClick={() => controller.navigate("/console/workspaces")} size="sm" variant="ghost">全部</Button></div>
           <SourceState
             emptyTitle="暂无 Workspace"
             error={controller.sources.workspaces.error}
@@ -239,74 +251,146 @@ function WorkspaceListPage({ controller }: { controller: ConsoleController }) {
 
 function PlanOption({ controller, plan }: { controller: ConsoleController; plan: PricingPlan }) {
   const preview = controller.previews[plan.id];
+  const selected = controller.launchPlan === plan.id && plan.available;
+  const unavailablePrice = plan.available ? "报价读取中" : "暂不可用";
   return (
-    <label className={`plan-option ${plan.available ? "" : "unavailable"}`}>
-      <input checked={controller.launchPlan === plan.id} disabled={!plan.available} name="workspace-plan" onChange={() => controller.setLaunchPlan(plan.id)} type="radio" />
-      <span className="plan-name"><strong>{plan.name}</strong><Badge color={plan.available ? "success" : "secondary"}>{plan.available ? "可售" : "暂不可用"}</Badge></span>
-      <span>{plan.cpu} vCPU / {plan.memoryGb} GB</span>
-      <span>{plan.diskGb} GB 持久存储</span>
-      <strong>{!plan.available ? "价格暂不可用" : preview ? formatUsdMicros(preview.totalChargeUsdMicros) : "报价读取中"}{plan.available ? <small> / 自然月</small> : null}</strong>
-    </label>
+    <RadioGroup.Item block className={`workspace-plan-option ${selected ? "selected" : ""} ${plan.available ? "" : "unavailable"}`} disabled={!plan.available} value={plan.id}>
+      <span className="workspace-plan-option__identity"><span><strong>{plan.name}</strong><Badge color={plan.available ? "success" : "secondary"}>{plan.available ? "可售" : "暂不可用"}</Badge></span></span>
+      <span className="workspace-plan-option__fact"><strong>{plan.cpu} vCPU / {plan.memoryGb} GB</strong><small>计算规格</small></span>
+      <span className="workspace-plan-option__fact"><strong>{plan.diskGb} GB 持久存储</strong><small>存储</small></span>
+      <span className="workspace-plan-option__fact workspace-plan-option__component"><strong>{preview?.compute ? formatUsdMicros(preview.compute.chargeUsdMicros) : unavailablePrice}</strong><small>计算</small></span>
+      <span className="workspace-plan-option__fact workspace-plan-option__component"><strong>{preview?.storage ? formatUsdMicros(preview.storage.chargeUsdMicros) : unavailablePrice}</strong><small>存储</small></span>
+      <span className="workspace-plan-option__fact workspace-plan-option__total"><strong>{preview ? formatUsdMicros(preview.totalChargeUsdMicros) : unavailablePrice}</strong><small>{preview ? billingUnitLabel(preview.billingUnit) : "月度总额"}</small></span>
+    </RadioGroup.Item>
+  );
+}
+
+function WorkspaceLaunchSteps({ current }: { current: "configure" | "confirm" | "operation" }) {
+  const steps = [
+    ["configure", "配置"],
+    ["confirm", "核对"],
+    ["operation", "开通状态"]
+  ] as const;
+  return (
+    <ol aria-label="Workspace 开通步骤" className="workspace-launch-steps">
+      {steps.map(([step, label], index) => (
+        <li aria-current={current === step ? "step" : undefined} className={current === step ? "active" : ""} key={step}>
+          <span>{index + 1}</span><strong>{label}</strong>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+function WorkspaceOrderSummary({
+  action,
+  controller,
+  mode = "quote"
+}: {
+  action?: ReactNode;
+  controller: ConsoleController;
+  mode?: "quote" | "operation";
+}) {
+  const operation = mode === "operation" ? controller.launchOperation : null;
+  const planId = operation?.packageId || controller.selectedPlan?.id;
+  const plan = planId ? controller.sources.catalog.value?.packages.find((item) => item.id === planId) : null;
+  const preview = planId ? controller.previews[planId] : undefined;
+  const wallet = sourceData(controller.sources.wallet.value);
+  const total = operation?.totalChargeUsdMicros ?? preview?.totalChargeUsdMicros;
+  const billingCycle = preview?.billingUnit === "calendar_month" ? "按自然月计费" : "暂不可用";
+
+  return (
+    <aside className="workspace-order-summary">
+      <header><span>{mode === "operation" ? "开通摘要" : "订单摘要"}</span><strong>{plan?.name || operation?.packageId?.toUpperCase() || "暂未选择"}</strong></header>
+      {mode === "quote" ? (
+        <>
+          <section className="workspace-order-summary__prices">
+            <h3>价格明细</h3>
+            <dl>
+              <div><dt>计算</dt><dd>{preview?.compute ? formatUsdMicros(preview.compute.chargeUsdMicros) : "暂不可用"}</dd></div>
+              <div><dt>存储</dt><dd>{preview?.storage ? formatUsdMicros(preview.storage.chargeUsdMicros) : "暂不可用"}</dd></div>
+              <div className="workspace-order-summary__total"><dt>Workspace 月度总额</dt><dd>{total !== undefined ? formatUsdMicros(total) : "暂不可用"}</dd></div>
+            </dl>
+          </section>
+          <dl className="workspace-order-summary__facts">
+            <div><dt>可用余额</dt><dd>{wallet ? formatUsdMicros(wallet.usdMicros) : "暂不可用"}</dd></div>
+            <div><dt>计费周期</dt><dd>{billingCycle}</dd></div>
+            <div><dt>续费</dt><dd>自动续费关闭</dd></div>
+          </dl>
+          {controller.balanceSufficient === false ? <p className="workspace-order-summary__warning">余额不足，请联系管理员处理。</p> : null}
+        </>
+      ) : (
+        <dl className="workspace-order-summary__facts">
+          <div><dt>Workspace</dt><dd>{operation?.name || "暂不可用"}</dd></div>
+          <div><dt>月度总额</dt><dd>{total !== undefined ? formatUsdMicros(total) : "暂不可用"}</dd></div>
+          <div><dt>价格版本</dt><dd>{operation?.priceVersion || "暂不可用"}</dd></div>
+          <div><dt>续费</dt><dd>{operation?.autoRenew ? "自动续费开启" : "自动续费关闭"}</dd></div>
+        </dl>
+      )}
+      {action ? <div className="workspace-order-summary__action">{action}</div> : null}
+    </aside>
   );
 }
 
 function WorkspaceLaunchPage({ controller }: { controller: ConsoleController }) {
   const catalog = controller.sources.catalog.value;
-  const wallet = sourceData(controller.sources.wallet.value);
   if (controller.launchOperation && !["succeeded", "failed", "refunded"].includes(controller.launchOperation.status)) {
-    return <section className="workspace-launch-page" data-slide="C-WS-04"><Button onClick={() => controller.navigate("/console/workspaces")} size="sm" variant="ghost"><ChevronLeft aria-hidden size={16} />Workspace 列表</Button><LaunchOperation controller={controller} /></section>;
+    return <section className="workspace-launch-page" data-slide="C-WS-04"><Button className="workspace-launch-back" onClick={() => controller.navigate("/console/workspaces")} size="sm" variant="ghost"><ChevronLeft aria-hidden size={16} />返回 Workspace 列表</Button><LaunchOperation controller={controller} /></section>;
   }
 
   return (
     <section className="workspace-launch-page" data-slide={controller.launchStep === "confirm" ? "C-WS-03" : "C-WS-02"}>
-      <Button onClick={() => controller.navigate("/console/workspaces")} size="sm" variant="ghost"><ChevronLeft aria-hidden size={16} />Workspace 列表</Button>
-      <section className="panel launch-panel">
-        {controller.launchStep === "configure" ? (
-          <form className="workspace-launch-form" onSubmit={(event) => { event.preventDefault(); controller.reviewWorkspaceLaunch(); }}>
-            <div className="panel-title"><h2>新建 Workspace</h2><span>一个自然月，自动续费关闭</span></div>
-            <label>Workspace 名称<input className="native-control" maxLength={80} onChange={(event) => controller.setLaunchName(event.currentTarget.value)} placeholder="例如：产品研发" required value={controller.launchName} /></label>
-            <fieldset><legend>套餐</legend>
+      <Button className="workspace-launch-back" onClick={() => controller.navigate("/console/workspaces")} size="sm" variant="ghost"><ChevronLeft aria-hidden size={16} />返回 Workspace 列表</Button>
+      <WorkspaceLaunchSteps current={controller.launchStep} />
+      {controller.launchStep === "configure" ? (
+        <form className="workspace-launch-layout" onSubmit={(event) => { event.preventDefault(); controller.reviewWorkspaceLaunch(); }}>
+          <section className="workspace-launch-config">
+            <header><h2>新建 Workspace</h2></header>
+            <Field label="Workspace 名称" maxLength={80} onChange={(event) => controller.setLaunchName(event.currentTarget.value)} placeholder="例如：产品研发" required value={controller.launchName} />
+            <fieldset><legend>选择套餐</legend>
               {controller.sources.catalog.loading && !catalog ? <div className="source-loading"><span className="spinner" />正在读取计划与价格</div> : null}
               {controller.sources.catalog.error ? <div className="inline-error"><AlertCircle aria-hidden size={16} />计划与价格暂不可用<Button onClick={() => void controller.refreshCurrentPage()} size="sm" variant="ghost">重试</Button></div> : null}
-              {catalog ? <div className="plan-grid">{catalog.packages.filter((plan) => plan.id === "basic" || plan.id === "pro").map((plan) => <PlanOption controller={controller} key={plan.id} plan={plan} />)}</div> : null}
+              {catalog ? <RadioGroup<PlanId> aria-label="Workspace 套餐" className="workspace-plan-list" direction="col" name="workspace-plan" onChange={controller.setLaunchPlan} value={controller.launchPlan}>{catalog.packages.filter((plan) => plan.id === "basic" || plan.id === "pro").map((plan) => <PlanOption controller={controller} key={plan.id} plan={plan} />)}</RadioGroup> : null}
             </fieldset>
-            <dl className="workspace-launch-balance">
-              <div><dt>当前可用余额</dt><dd>{wallet ? formatUsdMicros(wallet.usdMicros) : "暂不可用"}</dd></div>
-              <div><dt>Workspace 月度总额</dt><dd>{controller.selectedPrice !== null ? formatUsdMicros(controller.selectedPrice) : "暂不可用"}</dd></div>
-            </dl>
-            {controller.balanceSufficient === false ? <p className="launch-balance-warning">余额不足，请联系管理员处理余额。Console 不提供在线充值入口。</p> : null}
-            <p className="source-note">计算月费、存储月费和 Workspace 月度总额均来自服务端报价；浏览器不会自行计算扣款或扣款后余额。</p>
-            <footer><Button color="primary" disabled={!controller.launchName.trim() || !controller.selectedPlan || controller.selectedPrice === null || controller.balanceSufficient !== true} type="submit">下一步：确认<ArrowRight aria-hidden size={16} /></Button></footer>
-          </form>
-        ) : <WorkspaceLaunchConfirm controller={controller} />}
-      </section>
+          </section>
+          <WorkspaceOrderSummary
+            action={<Button color="primary" disabled={!controller.launchName.trim() || !controller.selectedPlan || controller.selectedPrice === null || controller.balanceSufficient !== true} type="submit">核对开通信息<ArrowRight aria-hidden size={16} /></Button>}
+            controller={controller}
+          />
+        </form>
+      ) : <WorkspaceLaunchConfirm controller={controller} />}
     </section>
   );
 }
 
 function WorkspaceLaunchConfirm({ controller }: { controller: ConsoleController }) {
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  useEffect(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+    headingRef.current?.focus({ preventScroll: true });
+  }, []);
   const plan = controller.selectedPlan;
   const preview = plan ? controller.previews[plan.id] : undefined;
-  const wallet = sourceData(controller.sources.wallet.value);
   if (!plan || !preview) return <div className="empty-panel">计划与价格暂不可用</div>;
   return (
-    <div className="workspace-launch-confirm">
-      <header><p className="eyebrow">C-WS-03</p><h2 tabIndex={-1}>确认开通信息</h2><p>本次只扣除一次 Workspace 月度总额，计算和存储均包含在内。</p></header>
-      <dl className="launch-confirm-list">
-        <div><dt>Workspace 名称</dt><dd>{controller.launchName.trim()}</dd></div>
-        <div><dt>套餐</dt><dd>{plan.name}</dd></div>
-        <div><dt>计算规格</dt><dd>{plan.cpu} vCPU / {plan.memoryGb} GB</dd></div>
-        <div><dt>持久存储</dt><dd>{plan.diskGb} GB</dd></div>
-        <div><dt>计算组成金额</dt><dd>{preview.compute ? formatUsdMicros(preview.compute.chargeUsdMicros) : "暂不可用"}</dd></div>
-        <div><dt>存储组成金额</dt><dd>{preview.storage ? formatUsdMicros(preview.storage.chargeUsdMicros) : "暂不可用"}</dd></div>
-        <div><dt>服务端权威总价</dt><dd className="confirm-price">{formatUsdMicros(preview.totalChargeUsdMicros)}</dd></div>
-        <div><dt>当前可用余额</dt><dd>{wallet ? formatUsdMicros(wallet.usdMicros) : "暂不可用"}</dd></div>
-        <div><dt>价格版本</dt><dd>{preview.priceVersion}</dd></div>
-        <div><dt>权益期</dt><dd>一个自然月</dd></div>
-        <div><dt>自动续费</dt><dd>关闭</dd></div>
-      </dl>
-      <div className="launch-confirm-check"><Checkbox checked={controller.launchConfirmed} label="我确认一次性预付 Workspace 月度总额并开通" onChange={controller.setLaunchConfirmed} /></div>
-      <footer><Button onClick={() => { controller.setLaunchStep("configure"); controller.setLaunchConfirmed(false); }} variant="outline">返回修改</Button><Button busy={controller.commandBusy} color="primary" disabled={!controller.launchConfirmed || controller.balanceSufficient !== true} onClick={() => void controller.submitWorkspaceLaunch()}>确认预付并开通</Button></footer>
+    <div className="workspace-launch-layout">
+      <section className="workspace-launch-review">
+        <header><h2 ref={headingRef} tabIndex={-1}>确认开通信息</h2></header>
+        <dl className="launch-confirm-list">
+          <div><dt>Workspace 名称</dt><dd>{controller.launchName.trim()}</dd></div>
+          <div><dt>套餐</dt><dd>{plan.name}</dd></div>
+          <div><dt>计算规格</dt><dd>{plan.cpu} vCPU / {plan.memoryGb} GB</dd></div>
+          <div><dt>持久存储</dt><dd>{plan.diskGb} GB</dd></div>
+          <div><dt>价格版本</dt><dd>{preview.priceVersion}</dd></div>
+          <div><dt>计费周期</dt><dd>{billingUnitLabel(preview.billingUnit)}</dd></div>
+        </dl>
+        <div className="launch-confirm-check"><Checkbox checked={controller.launchConfirmed} label="我确认一次性预付 Workspace 月度总额并开通" onChange={controller.setLaunchConfirmed} /></div>
+        <footer><Button onClick={() => { controller.setLaunchStep("configure"); controller.setLaunchConfirmed(false); }} variant="outline">返回修改</Button></footer>
+      </section>
+      <WorkspaceOrderSummary
+        action={<Button busy={controller.commandBusy} color="primary" disabled={!controller.launchConfirmed || controller.balanceSufficient !== true} onClick={() => void controller.submitWorkspaceLaunch()}>确认预付并开通</Button>}
+        controller={controller}
+      />
     </div>
   );
 }
@@ -314,25 +398,36 @@ function WorkspaceLaunchConfirm({ controller }: { controller: ConsoleController 
 function LaunchOperation({ compact, controller }: { compact?: boolean; controller: ConsoleController }) {
   const operation = controller.launchOperation;
   if (!operation) return null;
-  const phaseIndex = launchPhases.findIndex(([code]) => operation.phase?.includes(code));
-  return (
-    <section className="panel launch-operation" data-slide="C-WS-04">
-      <div className="launch-operation-head"><div><p className="eyebrow">C-WS-04</p><h2>开通进度与结果</h2><p>{statusLabel(operation.status)} · {operation.status}</p></div><Badge color={operation.status === "succeeded" ? "success" : operation.status === "manual_review" ? "warning" : "secondary"}>{statusLabel(operation.status)}</Badge></div>
-      <dl className="operation-readback">
-        <div><dt>operation ID</dt><dd><code>{operation.operationId}</code></dd></div>
-        <div><dt>Workspace</dt><dd>{operation.name}</dd></div>
-        <div><dt>套餐</dt><dd>{operation.packageId?.toUpperCase()}</dd></div>
-        <div><dt>当前 phase</dt><dd>{operation.phase || "暂不可用"}</dd></div>
-        {!compact ? <><div><dt>创建时间</dt><dd>{formatDate(operation.createdAt, true)}</dd></div><div><dt>最后更新</dt><dd>{formatDate(operation.updatedAt, true)}</dd></div><div><dt>errorCode</dt><dd>{operation.errorCode || "暂不可用"}</dd></div></> : null}
-      </dl>
-      {!compact ? <ol className="workspace-progress">{launchPhases.map(([code, label], index) => <li className={phaseIndex >= index || operation.status === "succeeded" ? "complete" : ""} key={code}><span>{label}</span><small>{phaseIndex === index ? "当前阶段" : phaseIndex > index || operation.status === "succeeded" ? "已完成" : "等待"}</small></li>)}</ol> : null}
+  const currentPhase = launchPhaseLabel(operation.phase);
+  const content = (
+    <section className={`launch-operation ${compact ? "launch-operation--compact" : ""}`} data-slide="C-WS-04">
+      <div className="launch-operation-head"><div><h2>{compact ? "Workspace 正在开通" : "开通状态"}</h2><p><span>{statusLabel(operation.status)}</span><code>{operation.status}</code></p></div><Badge color={operation.status === "succeeded" ? "success" : operation.status === "manual_review" ? "warning" : "secondary"}>{statusLabel(operation.status)}</Badge></div>
+      <div className="launch-current-phase"><span>当前处理阶段</span><strong>{currentPhase}</strong><code>{operation.phase || "暂不可用"}</code></div>
+      {!compact ? (
+        <dl className="operation-readback">
+          <div><dt>operation ID</dt><dd><code>{operation.operationId}</code></dd></div>
+          <div><dt>创建时间</dt><dd>{formatDate(operation.createdAt, true)}</dd></div>
+          <div><dt>最后更新</dt><dd>{formatDate(operation.updatedAt, true)}</dd></div>
+          <div><dt>errorCode</dt><dd>{operation.errorCode || "暂不可用"}</dd></div>
+        </dl>
+      ) : null}
       {controller.launchPollIssue ? <p className="inline-error">结果待确认。请刷新同一 operation，禁止重复购买。</p> : null}
       <div className="launch-operation-actions">
         {operation.status === "succeeded" && operation.workspaceId ? <Button color="primary" onClick={() => controller.navigate(`/console/workspaces/${encodeURIComponent(operation.workspaceId!)}`)}>查看 Workspace</Button> : null}
-        <Button onClick={() => void controller.refreshCurrentPage()} variant="outline"><RefreshCw aria-hidden size={16} />刷新 operation</Button>
+        <Button onClick={() => void controller.refreshCurrentPage()} variant="outline"><RefreshCw aria-hidden size={16} />刷新状态</Button>
         {["failed", "refunded"].includes(operation.status) ? <Button onClick={() => controller.navigate("/console/workspaces")} variant="outline">返回列表</Button> : null}
       </div>
     </section>
+  );
+  if (compact) return content;
+  return (
+    <>
+      <WorkspaceLaunchSteps current="operation" />
+      <div className="workspace-launch-layout workspace-launch-layout--operation">
+        {content}
+        <WorkspaceOrderSummary controller={controller} mode="operation" />
+      </div>
+    </>
   );
 }
 
@@ -349,7 +444,7 @@ function WorkspaceDetailPage({ controller }: { controller: ConsoleController }) 
       <Button onClick={() => controller.navigate("/console/workspaces")} size="sm" variant="ghost"><ChevronLeft aria-hidden size={16} />Workspace 列表</Button>
       <SourceState error={controller.sources.workspaceDetail.error} loading={controller.sources.workspaceDetail.loading} onRetry={() => void controller.refreshCurrentPage()} source={workspaceSource} unavailableTitle="Workspace 详情暂不可用">
         {(detail) => detail ? <>
-          <section className="panel workspace-identity-panel"><div className="workspace-heading"><div><p className="eyebrow">C-WS-05</p><h2>{detail.name || detail.id}</h2><span>{detail.id}</span></div><Button onClick={() => void controller.refreshCurrentPage()} variant="outline"><RefreshCw aria-hidden size={16} />刷新</Button></div><dl className="data-list"><div><dt>生命周期状态</dt><dd>{workspaceLifecycleLabel(detail.state)}</dd></div><div><dt>运行状态</dt><dd>{runtime ? workspaceStatusLabel(runtime) : "暂不可用"}</dd></div></dl></section>
+          <section className="panel workspace-identity-panel"><div className="workspace-heading"><div><h2>{detail.name || detail.id}</h2><span>{detail.id}</span></div><Button onClick={() => void controller.refreshCurrentPage()} variant="outline"><RefreshCw aria-hidden size={16} />刷新</Button></div><dl className="data-list"><div><dt>生命周期状态</dt><dd>{workspaceLifecycleLabel(detail.state)}</dd></div><div><dt>运行状态</dt><dd>{runtime ? workspaceStatusLabel(runtime) : "暂不可用"}</dd></div></dl></section>
           <section className="panel workspace-access-panel"><div className="panel-title"><h2>访问与凭据</h2><span>Secret 60 秒后自动隐藏</span></div>
             <SourceState error={controller.sources.runtime.error} loading={controller.sources.runtime.loading} onRetry={() => void controller.refreshCurrentPage()} source={controller.sources.runtime.value} unavailableTitle="Runtime 状态暂不可用">
               {(runtimeData) => {
@@ -364,7 +459,7 @@ function WorkspaceDetailPage({ controller }: { controller: ConsoleController }) 
               }}
             </SourceState>
           </section>
-          <section className="panel workspace-facts-panel"><div className="panel-title"><h2>套餐与条款</h2></div><dl className="data-list"><div><dt>套餐</dt><dd>{detail.packageId?.toUpperCase() || "暂不可用"}</dd></div><div><dt>CPU / 内存规格</dt><dd>暂不可用</dd></div><div><dt>持久存储</dt><dd>{detail.storageGb ? `${detail.storageGb} GB` : "暂不可用"}</dd></div><div><dt>Workspace 月度总价</dt><dd>{formatUsdMicros(detail.totalUsdMicros)}</dd></div><div><dt>价格版本</dt><dd>{detail.priceVersion || "暂不可用"}</dd></div><div><dt>创建时间</dt><dd>{formatDate(detail.createdAt, true)}</dd></div><div><dt>权益期</dt><dd>{detail.periodStart && detail.paidThrough ? `${formatDate(detail.periodStart)} 至 ${formatDate(detail.paidThrough)}` : "暂不可用"}</dd></div><div><dt>续费状态</dt><dd>{detail.renewalStatus || "暂不可用"}</dd></div><div><dt>自动续费</dt><dd>{detail.autoRenew ? "开启" : "关闭"}</dd></div></dl><p className="source-note">CPU / 内存未由当前 Workspace DTO 投影，因此不按套餐 ID 推导；自动续费启用路径未开放。</p></section>
+          <section className="panel workspace-facts-panel"><div className="panel-title"><h2>套餐与条款</h2></div><dl className="data-list"><div><dt>套餐</dt><dd>{detail.packageId?.toUpperCase() || "暂不可用"}</dd></div><div><dt>CPU / 内存规格</dt><dd>暂不可用</dd></div><div><dt>持久存储</dt><dd>{detail.storageGb ? `${detail.storageGb} GB` : "暂不可用"}</dd></div><div><dt>Workspace 月度总价</dt><dd>{formatUsdMicros(detail.totalUsdMicros)}</dd></div><div><dt>价格版本</dt><dd>{detail.priceVersion || "暂不可用"}</dd></div><div><dt>创建时间</dt><dd>{formatDate(detail.createdAt, true)}</dd></div><div><dt>权益期</dt><dd>{detail.periodStart && detail.paidThrough ? `${formatDate(detail.periodStart)} 至 ${formatDate(detail.paidThrough)}` : "暂不可用"}</dd></div><div><dt>续费状态</dt><dd>{detail.renewalStatus || "暂不可用"}</dd></div><div><dt>自动续费</dt><dd>{detail.autoRenew ? "开启" : "关闭"}</dd></div></dl></section>
         </> : null}
       </SourceState>
     </section>
@@ -378,18 +473,55 @@ function ApiTabs({ controller }: { controller: ConsoleController }) {
 function ApiOverview({ controller }: { controller: ConsoleController }) {
   const wallet = sourceData(controller.sources.wallet.value);
   const usage = sourceData(controller.sources.accountUsage.value);
-  const endpoint = sourceData(controller.sources.endpoint.value);
+  const endpointSource = controller.sources.endpoint.value;
   return <div className="api-overview" data-slide="C-API-01">
     <section className="spend-strip"><div><WalletCards aria-hidden size={19} /><span>可用余额</span><strong>{wallet ? formatUsdMicros(wallet.usdMicros) : "暂不可用"}</strong></div><div><CircleDollarSign aria-hidden size={19} /><span>本月实际费用</span><strong>{usage ? formatUsdMicros(usage.totalActualCostUsdMicros) : "暂不可用"}</strong></div><div><Server aria-hidden size={19} /><span>本月请求次数</span><strong>{usage ? formatCount(usage.totalRequests) : "暂不可用"}</strong></div></section>
-    <section className="panel gateway-detail"><div className="panel-title"><h2>API 服务</h2><span>{endpoint?.baseUrl || "Endpoint 暂不可用"}</span></div><p className="source-note">这里展示 API 服务钱包与真实请求消费，不展示 Workspace Receipt，也不提供充值按钮。</p></section>
+    <section className="panel gateway-detail">
+      <div className="panel-title"><h2>API 端点</h2></div>
+      <SourceState emptyTitle="API 端点暂不可用" error={controller.sources.endpoint.error} loading={controller.sources.endpoint.loading} onRetry={() => void controller.refreshCurrentPage()} source={endpointSource} unavailableTitle="API 端点暂不可用">
+        {(endpoint) => <div className="api-endpoint-row"><div><span>OpenAI 兼容地址</span><code>{endpoint.baseUrl}</code></div><Button aria-label="复制 API 端点" disabled={!endpoint.baseUrl} onClick={() => void controller.copyText(endpoint.baseUrl, "API 端点已复制")} size="sm" title="复制 API 端点" uniform variant="outline"><Copy aria-hidden size={16} /></Button></div>}
+      </SourceState>
+    </section>
     <section className="panel"><div className="panel-title"><h2>余额历史</h2></div><SourceState emptyTitle="暂无余额历史" error={controller.sources.balanceHistory.error} loading={controller.sources.balanceHistory.loading} onRetry={() => void controller.refreshCurrentPage()} source={controller.sources.balanceHistory.value} unavailableTitle="余额历史暂不可用">{(data) => <><div className="table-wrap"><table><thead><tr><th>时间</th><th>类型</th><th>金额</th><th>状态</th></tr></thead><tbody>{data.items.map((item, index) => <tr key={`${item.createdAt}-${index}`}><td>{formatDate(item.usedAt || item.createdAt, true)}</td><td>{item.type}</td><td>{formatUsdMicros(item.valueUsdMicros)}</td><td>{statusLabel(item.status)}</td></tr>)}</tbody></table></div><Pagination current={data.page} label="余额历史分页" onChange={(page) => void controller.changeBalancePage(page)} pages={data.pages} /></>}</SourceState></section>
   </div>;
 }
 
-function RequestRows({ items }: { items: GatewayUsageItem[] }) {
+function UsageTokenFacts({ item }: { item: GatewayUsageItem }) {
+  return <span className="usage-fact-stack usage-token-stack">
+    <span><small>输入</small><strong>{formatCount(item.inputTokens)}</strong></span>
+    <span><small>输出</small><strong>{formatCount(item.outputTokens)}</strong></span>
+    {item.cacheReadTokens > 0 ? <span><small>缓存读取</small><strong>{formatCount(item.cacheReadTokens)}</strong></span> : null}
+    {item.cacheCreationTokens > 0 ? <span><small>缓存写入</small><strong>{formatCount(item.cacheCreationTokens)}</strong></span> : null}
+  </span>;
+}
+
+function UsageLatencyFacts({ item }: { item: GatewayUsageItem }) {
+  return <span className="usage-fact-stack usage-latency-stack">
+    <span><small>首字</small><strong>{formatLatency(item.firstTokenMs)}</strong></span>
+    <span><small>总耗时</small><strong>{formatLatency(item.durationMs)}</strong></span>
+  </span>;
+}
+
+function RequestRows({ items, onCopyRequestId }: { items: GatewayUsageItem[]; onCopyRequestId: (requestId: string) => void }) {
   return <>
-    <div className="table-wrap request-table-desktop"><table className="gateway-usage-table"><thead><tr><th>时间</th><th>模型</th><th>端点</th><th>实际金额</th><th>请求编号</th></tr></thead><tbody>{items.map((item) => <tr key={item.requestId}><td>{formatDate(item.createdAt, true)}</td><td>{item.model}</td><td><code>{item.inboundEndpoint}</code></td><td>{formatUsdMicros(item.actualCostUsdMicros)}</td><td><code>{item.requestId}</code></td></tr>)}</tbody></table></div>
-    <div className="request-list-mobile" role="list">{items.map((item) => <article key={item.requestId} role="listitem"><span><strong>{item.model}</strong><small>{formatDate(item.createdAt, true)}</small></span><span><strong>{formatUsdMicros(item.actualCostUsdMicros)}</strong><small>{item.inboundEndpoint}</small></span><code>{item.requestId}</code></article>)}</div>
+    <div className="table-wrap request-table-desktop"><table className="gateway-usage-table"><thead><tr><th>模型 / 端点</th><th>Token</th><th>费用</th><th>延迟</th><th>时间</th><th>请求 ID</th></tr></thead><tbody>{items.map((item) => <tr key={item.requestId}>
+      <td><span className="usage-request-context"><strong>{item.model}</strong><code>{item.inboundEndpoint || "-"}</code></span></td>
+      <td><UsageTokenFacts item={item} /></td>
+      <td><strong className="usage-cost">{formatUsdMicros(item.actualCostUsdMicros)}</strong></td>
+      <td><UsageLatencyFacts item={item} /></td>
+      <td><time dateTime={item.createdAt}>{formatDate(item.createdAt, true)}</time></td>
+      <td><span className="usage-request-id"><code>{item.requestId}</code><Button aria-label="复制请求 ID" onClick={() => onCopyRequestId(item.requestId)} size="sm" title="复制请求 ID" uniform variant="ghost"><Copy aria-hidden size={14} /></Button></span></td>
+    </tr>)}</tbody></table></div>
+    <div className="request-list-mobile" role="list">{items.map((item) => <article className="request-mobile-card" key={item.requestId} role="listitem">
+      <header className="request-mobile-heading"><strong>{item.model}</strong><code>{item.inboundEndpoint || "-"}</code></header>
+      <dl className="request-mobile-facts">
+        <div><dt>Token</dt><dd><UsageTokenFacts item={item} /></dd></div>
+        <div><dt>费用</dt><dd><strong className="usage-cost">{formatUsdMicros(item.actualCostUsdMicros)}</strong></dd></div>
+        <div><dt>延迟</dt><dd><UsageLatencyFacts item={item} /></dd></div>
+        <div><dt>时间</dt><dd><time dateTime={item.createdAt}>{formatDate(item.createdAt, true)}</time></dd></div>
+      </dl>
+      <footer className="request-mobile-id"><span>请求 ID</span><code>{item.requestId}</code><Button aria-label="复制请求 ID" onClick={() => onCopyRequestId(item.requestId)} size="sm" title="复制请求 ID" uniform variant="ghost"><Copy aria-hidden size={14} /></Button></footer>
+    </article>)}</div>
   </>;
 }
 
@@ -397,12 +529,12 @@ function UsagePage({ controller }: { controller: ConsoleController }) {
   const keys = sourceData(controller.sources.usageKeys.value)?.items || [];
   const usage = sourceData(controller.sources.usage.value);
   return <section className="panel" data-slide="C-API-02"><div className="panel-title"><h2>使用记录</h2><span>请求级事实来自 API 服务</span></div><div className="gateway-usage-toolbar">
-    <Select label="API Key" onChange={(value) => void controller.chooseUsageKey(value)} options={keys.map((key) => ({ label: `${key.name} · ${key.id}`, value: key.id }))} placeholder="选择 API Key" value={controller.selectedUsageKeyId} />
-    <SegmentedControl ariaLabel="统计周期" onChange={(value) => void controller.chooseUsagePeriod(value)} options={[{ value: "day", label: "今日" }, { value: "week", label: "本周" }, { value: "month", label: "本月" }]} value={controller.usagePeriod as "day" | "week" | "month"} />
+    <Select block label="API Key" onChange={(value) => void controller.chooseUsageKey(value)} options={keys.map((key) => ({ label: `${key.name} · ${key.id}`, value: key.id }))} placeholder="选择 API Key" value={controller.selectedUsageKeyId} />
+    <SegmentedControl ariaLabel="统计周期" block onChange={(value) => void controller.chooseUsagePeriod(value)} options={[{ value: "day", label: "今日" }, { value: "week", label: "本周" }, { value: "month", label: "本月" }]} value={controller.usagePeriod as "day" | "week" | "month"} />
   </div>
     <SourceState empty={keys.length === 0} emptyTitle="暂无 API Key" error={controller.sources.usageKeys.error} loading={controller.sources.usageKeys.loading} onRetry={() => void controller.refreshCurrentPage()} source={controller.sources.usageKeys.value} unavailableTitle="API Key 暂不可用">{() => <>
       <SourceState error={controller.sources.usageSummary.error} loading={controller.sources.usageSummary.loading} onRetry={() => void controller.refreshCurrentPage()} source={controller.sources.usageSummary.value} unavailableTitle="使用汇总暂不可用">{(summary) => <dl className="usage-summary-strip"><div><dt>汇总请求次数</dt><dd>{formatCount(summary.totalRequests)}</dd></div><div><dt>汇总总 Token</dt><dd>{formatCount(summary.totalTokens)}</dd></div><div><dt>汇总实际金额</dt><dd>{formatUsdMicros(summary.totalActualCostUsdMicros)}</dd></div></dl>}</SourceState>
-      <SourceState empty={Boolean(usage && usage.items.length === 0)} emptyTitle="暂无请求记录" error={controller.sources.usage.error} loading={controller.sources.usage.loading} onRetry={() => void controller.refreshCurrentPage()} source={controller.sources.usage.value} unavailableTitle="使用记录暂不可用">{(data) => <><RequestRows items={data.items} /><Pagination current={data.page} label="请求记录分页" onChange={(page) => void controller.changeUsagePage(page)} pages={data.pages} /></>}</SourceState>
+      <SourceState empty={Boolean(usage && usage.items.length === 0)} emptyTitle="暂无请求记录" error={controller.sources.usage.error} loading={controller.sources.usage.loading} onRetry={() => void controller.refreshCurrentPage()} source={controller.sources.usage.value} unavailableTitle="使用记录暂不可用">{(data) => <><RequestRows items={data.items} onCopyRequestId={(requestId) => void controller.copyText(requestId, "请求 ID 已复制")} /><Pagination current={data.page} label="请求记录分页" onChange={(page) => void controller.changeUsagePage(page)} pages={data.pages} /></>}</SourceState>
     </>}</SourceState>
   </section>;
 }
@@ -441,7 +573,7 @@ function AnnouncementRows({ announcements, compact, controller }: { announcement
 
 function AnnouncementsPage({ controller }: { controller: ConsoleController }) {
   const announcements = sourceData(controller.sources.announcements.value)?.items || [];
-  return <section className="announcements-page" data-slide="C-ANN-01"><div className="page-toolbar"><p>只展示当前有效发布时间窗内的已发布公告。</p><Button onClick={() => void controller.refreshCurrentPage()} variant="outline"><RefreshCw aria-hidden size={16} />刷新</Button></div><section className="panel"><div className="panel-title"><h2>公告列表</h2><span>{announcements.length ? `${announcements.length} 条` : ""}</span></div><SourceState empty={announcements.length === 0} emptyTitle="暂无公告" error={controller.sources.announcements.error} loading={controller.sources.announcements.loading} onRetry={() => void controller.refreshCurrentPage()} source={controller.sources.announcements.value} unavailableTitle="公告暂不可用">{() => <AnnouncementRows announcements={announcements} controller={controller} />}</SourceState></section></section>;
+  return <section className="announcements-page" data-slide="C-ANN-01"><section className="panel"><div className="panel-title"><div><h2>公告列表</h2><span>{announcements.length ? `${announcements.length} 条` : ""}</span></div><Button onClick={() => void controller.refreshCurrentPage()} variant="outline"><RefreshCw aria-hidden size={16} />刷新</Button></div><SourceState empty={announcements.length === 0} emptyTitle="暂无公告" error={controller.sources.announcements.error} loading={controller.sources.announcements.loading} onRetry={() => void controller.refreshCurrentPage()} source={controller.sources.announcements.value} unavailableTitle="公告暂不可用">{() => <AnnouncementRows announcements={announcements} controller={controller} />}</SourceState></section></section>;
 }
 
 export function CustomerPages({ controller }: { controller: ConsoleController }) {

@@ -1456,7 +1456,7 @@ func TestSub2APIUsageListIsScopedAndDropsAdminFields(t *testing.T) {
 			if r.Method != http.MethodGet || r.Header.Get("Authorization") != "Bearer access" || query.Get("user_id") != "41" || query.Get("api_key_id") != "9" || query.Get("page") != "1" || query.Get("page_size") != "50" || query.Get("sort_by") != "created_at" || query.Get("sort_order") != "desc" {
 				t.Fatalf("usage request = %s %s auth=%q", r.Method, r.URL.String(), r.Header.Get("Authorization"))
 			}
-			writeSub2APISuccess(t, w, json.RawMessage(`{"items":[{"user_id":41,"api_key_id":9,"request_id":"req-1","created_at":"2026-07-16T00:00:00Z","model":"gpt-5","inbound_endpoint":"/v1/responses","request_type":"sync","input_tokens":10,"output_tokens":20,"cache_creation_tokens":0,"cache_read_tokens":5,"actual_cost":0.001234,"user":{"email":"private@example.test"},"api_key":{"key":"key-secret"},"ip_address":"198.51.100.1","user_agent":"secret-agent","prompt":"prompt-secret","response":"response-secret"}],"total":1,"page":1,"page_size":50,"pages":1}`))
+			writeSub2APISuccess(t, w, json.RawMessage(`{"items":[{"user_id":41,"api_key_id":9,"request_id":"req-1","created_at":"2026-07-16T00:00:00Z","model":"gpt-5","inbound_endpoint":"/v1/responses","request_type":"sync","input_tokens":10,"output_tokens":20,"cache_creation_tokens":0,"cache_read_tokens":5,"actual_cost":0.001234,"duration_ms":987,"first_token_ms":123,"user":{"email":"private@example.test"},"api_key":{"key":"key-secret"},"ip_address":"198.51.100.1","user_agent":"secret-agent","prompt":"prompt-secret","response":"response-secret"}],"total":1,"page":1,"page_size":50,"pages":1}`))
 		default:
 			t.Fatalf("unexpected Sub2API route %s %s", r.Method, r.URL.Path)
 		}
@@ -1470,11 +1470,53 @@ func TestSub2APIUsageListIsScopedAndDropsAdminFields(t *testing.T) {
 	if row.UserID != 41 || row.APIKeyID != 9 || row.RequestID != "req-1" || row.Model != "gpt-5" || row.InboundEndpoint != "/v1/responses" || row.RequestType != "sync" || row.InputTokens != 10 || row.OutputTokens != 20 || row.CacheCreationTokens != 0 || row.CacheReadTokens != 5 || row.ActualCostUSDMicros != 1234 || row.CreatedAt.Format(time.RFC3339) != "2026-07-16T00:00:00Z" {
 		t.Fatalf("usage row = %#v", row)
 	}
+	if row.DurationMS == nil || *row.DurationMS != 987 || row.FirstTokenMS == nil || *row.FirstTokenMS != 123 {
+		t.Fatalf("usage latency = duration:%v first-token:%v", row.DurationMS, row.FirstTokenMS)
+	}
 	encoded, _ := json.Marshal(row)
 	for _, forbidden := range []string{"private@example.test", "key-secret", "198.51.100.1", "secret-agent", "prompt-secret", "response-secret"} {
 		if strings.Contains(string(encoded), forbidden) {
 			t.Fatalf("usage row leaked %q: %s", forbidden, encoded)
 		}
+	}
+}
+
+func TestSub2APIUsageListValidatesNullableLatency(t *testing.T) {
+	for _, tc := range []struct {
+		name, latency string
+		wantErr       bool
+	}{
+		{name: "missing", latency: ""},
+		{name: "null", latency: `"duration_ms":null,"first_token_ms":null,`},
+		{name: "negative duration", latency: `"duration_ms":-1,"first_token_ms":1,`, wantErr: true},
+		{name: "negative first token", latency: `"duration_ms":1,"first_token_ms":-1,`, wantErr: true},
+		{name: "fractional duration", latency: `"duration_ms":1.5,"first_token_ms":1,`, wantErr: true},
+		{name: "fractional first token", latency: `"duration_ms":1,"first_token_ms":1.5,`, wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client := newSub2APITestClient(t, func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/v1/auth/login":
+					writeSub2APISuccess(t, w, map[string]any{"access_token": "access", "refresh_token": "refresh"})
+				case "/api/v1/admin/usage":
+					row := fmt.Sprintf(`{"user_id":41,"api_key_id":9,"request_id":"req-1","created_at":"2026-07-16T00:00:00Z","model":"gpt-5","inbound_endpoint":"/v1/responses","request_type":"sync",%s"input_tokens":1,"output_tokens":2,"cache_creation_tokens":0,"cache_read_tokens":0,"actual_cost":0.000001}`, tc.latency)
+					writeSub2APISuccess(t, w, json.RawMessage(fmt.Sprintf(`{"items":[%s],"total":1,"page":1,"page_size":50,"pages":1}`, row)))
+				default:
+					t.Fatalf("unexpected route %s", r.URL.Path)
+				}
+			}, time.Second)
+
+			page, err := client.Usage(context.Background(), Sub2APIUsageQuery{UserID: 41, APIKeyID: 9, Page: 1, PageSize: 50})
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("usage latency accepted: %#v", page)
+				}
+				return
+			}
+			if err != nil || len(page.Items) != 1 || page.Items[0].DurationMS != nil || page.Items[0].FirstTokenMS != nil {
+				t.Fatalf("nullable usage latency = %#v err=%v", page, err)
+			}
+		})
 	}
 }
 

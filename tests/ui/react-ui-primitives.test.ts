@@ -36,7 +36,8 @@ test("Console primitives expose accessible busy, invalid and modal states", asyn
   assert.match(button, /className=\{\["ui-button", className\]\.filter\(Boolean\)\.join\(" "\)\}/);
   assert.match(field, /aria-invalid/);
   assert.match(select, /aria-invalid/);
-  assert.match(checkbox, /type="checkbox"/);
+  assert.match(checkbox, /<AppsCheckbox/);
+  assert.doesNotMatch(checkbox, /console-checkbox__native/);
   assert.match(segmented, /role="radiogroup"/);
   assert.match(modal, /role="dialog"/);
   assert.match(modal, /Escape/);

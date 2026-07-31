@@ -426,7 +426,7 @@ export async function apiFixture(route, state, session = state) {
     });
   }
   if (path === "/api/pricing/catalog") return fulfillJson(route, {
-    priceVersion: "pilot-usd-2026-07-v1", billingUnit: "month", displayCurrency: "USD", walletCurrency: "USD", currency: "USD",
+    priceVersion: "pilot-usd-2026-07-v1", billingUnit: "calendar_month", displayCurrency: "USD", walletCurrency: "USD", currency: "USD",
     packages: [
       { id: "basic", name: "Basic", available: state.basicPlanAvailable, cpu: 2, memoryGb: 4, diskGb: 10, server: "2c4g", price: { priceVersion: "pilot-usd-2026-07-v1", currency: "USD", chargeUsdMicros: 52_580_000 } },
       { id: "pro", name: "Pro", available: true, cpu: 8, memoryGb: 16, diskGb: 100, server: "8c16g", price: { priceVersion: "pilot-usd-2026-07-v1", currency: "USD", chargeUsdMicros: 240_080_000 } }
@@ -435,9 +435,21 @@ export async function apiFixture(route, state, session = state) {
   if (path === "/api/pricing/preview" && method === "POST") {
     const previewRequest = route.request().postDataJSON();
     const packageId = previewRequest?.packageId === "pro" ? "pro" : "basic";
+    const computeChargeUsdMicros = packageId === "pro" ? 214_280_000 : 50_000_000;
+    const storageChargeUsdMicros = packageId === "pro" ? 25_800_000 : 2_580_000;
+    const sizeGb = packageId === "pro" ? 100 : 10;
     return fulfillJson(route, {
       resourceType: "workspace", packageId, priceVersion: "pilot-usd-2026-07-v1", currency: "USD",
-      displayCurrency: "USD", billingUnit: "month", totalChargeUsdMicros: packageId === "pro" ? 240_080_000 : 52_580_000
+      displayCurrency: "USD", billingUnit: "calendar_month",
+      compute: {
+        resourceType: "compute", packageId, priceVersion: "pilot-usd-2026-07-v1", currency: "USD",
+        displayCurrency: "USD", billingUnit: "calendar_month", chargeUsdMicros: computeChargeUsdMicros
+      },
+      storage: {
+        resourceType: "storage", packageId, priceVersion: "pilot-usd-2026-07-v1", currency: "USD",
+        displayCurrency: "USD", billingUnit: "calendar_month", chargeUsdMicros: storageChargeUsdMicros, sizeGb
+      },
+      totalChargeUsdMicros: computeChargeUsdMicros + storageChargeUsdMicros
     });
   }
   if (path === "/api/billing/receipts") {
@@ -495,19 +507,25 @@ export async function apiFixture(route, state, session = state) {
     if (!findGatewayKey(state, keyUsageMatch[1], session.accountId)) return fulfillJson(route, { error: "gateway_key_not_found" }, 404);
     const page = Number(url.searchParams.get("page"));
     const pageSize = Number(url.searchParams.get("pageSize"));
-    const item = {
+    const items = [{
       apiKeyId: keyUsageMatch[1], requestId: "request-fixture", createdAt: NOW,
-      model: "gpt-5-mini", inboundEndpoint: "/v1/responses",
-      actualCostUsdMicros: 25_000
-    };
-    return fulfillJson(route, source({ items: page === 1 ? [item] : [], total: 1, page, pageSize, pages: 1 }, "sub2api"));
+      model: "gpt-5-mini", inboundEndpoint: "/v1/responses", requestType: "sync",
+      inputTokens: 120, outputTokens: 36, cacheCreationTokens: 24, cacheReadTokens: 8,
+      actualCostUsdMicros: 25_000, durationMs: 860, firstTokenMs: 140
+    }, {
+      apiKeyId: keyUsageMatch[1], requestId: "request-null-latency", createdAt: "2026-07-29T22:00:00Z",
+      model: "gpt-5-mini", inboundEndpoint: "/v1/responses", requestType: "sync",
+      inputTokens: 48, outputTokens: 12, cacheCreationTokens: 0, cacheReadTokens: 0,
+      actualCostUsdMicros: 9_000, durationMs: null, firstTokenMs: null
+    }];
+    return fulfillJson(route, source({ items: page === 1 ? items : [], total: 2, page, pageSize, pages: 1 }, "sub2api"));
   }
   const keyUsageSummaryMatch = path.match(/^\/api\/gateway\/keys\/(\d+)\/usage-summary$/);
   if (keyUsageSummaryMatch && method === "GET") {
     if (!findGatewayKey(state, keyUsageSummaryMatch[1], session.accountId)) return fulfillJson(route, { error: "gateway_key_not_found" }, 404);
     return fulfillJson(route, source({
-      totalRequests: 1, totalInputTokens: 120, totalOutputTokens: 36, totalTokens: 188,
-      totalActualCostUsdMicros: 25_000
+      totalRequests: 2, totalInputTokens: 168, totalOutputTokens: 48, totalTokens: 248,
+      totalActualCostUsdMicros: 34_000
     }, "sub2api"));
   }
 
@@ -747,6 +765,55 @@ async function assertNoViewportOverflow(page) {
   }
 }
 
+async function assertWorkspaceLaunchLayout(page, viewportName) {
+  const layout = await page.locator(".workspace-launch-layout").evaluate((element) => {
+    const summary = element.querySelector(".workspace-order-summary");
+    const style = getComputedStyle(element);
+    return {
+      columns: style.gridTemplateColumns.split(" ").filter(Boolean).length,
+      summaryPosition: summary ? getComputedStyle(summary).position : "missing"
+    };
+  });
+  const expectedColumns = viewportName === "desktop" ? 2 : 1;
+  const expectedSummaryPosition = viewportName === "desktop" ? "sticky" : "static";
+  if (layout.columns !== expectedColumns || layout.summaryPosition !== expectedSummaryPosition) {
+    throw new Error(`console_browser_workspace_launch_layout:${JSON.stringify({ viewportName, expectedColumns, expectedSummaryPosition, ...layout })}`);
+  }
+}
+
+async function assertWorkspacePlanRadios(page) {
+  const radios = await page.locator(".workspace-plan-option [role='radio']").evaluateAll((elements) => elements.map((element) => {
+    const rect = element.getBoundingClientRect();
+    const style = getComputedStyle(element);
+    return { width: Math.round(rect.width), height: Math.round(rect.height), borderRadius: Math.round(Number.parseFloat(style.borderRadius)), opacity: style.opacity, visibility: style.visibility };
+  }));
+  if (radios.length !== 2 || radios.some((radio) => radio.width < 16 || radio.height < 16 || radio.borderRadius < 8 || radio.opacity === "0" || radio.visibility !== "visible")) {
+    throw new Error(`console_browser_workspace_plan_radio_missing:${JSON.stringify(radios)}`);
+  }
+}
+
+async function assertWorkspaceLaunchConfirmation(page, viewportName) {
+  await page.waitForFunction(() => window.scrollY === 0);
+  const diagnostic = await page.locator(".launch-confirm-check").evaluate((element) => {
+    const checkbox = element.querySelector(".console-checkbox");
+    const control = checkbox?.querySelector(":scope > div");
+    const label = control?.querySelector("label");
+    const elementRect = element.getBoundingClientRect();
+    const controlRect = control?.getBoundingClientRect();
+    const labelRect = label?.getBoundingClientRect();
+    return {
+      containerWidth: Math.round(elementRect.width),
+      controlWidth: Math.round(controlRect?.width || 0),
+      labelHeight: Math.round(labelRect?.height || 0),
+      labelWidth: Math.round(labelRect?.width || 0)
+    };
+  });
+  const minimumLabelWidth = viewportName === "desktop" ? 300 : 220;
+  if (diagnostic.controlWidth < diagnostic.containerWidth - 34 || diagnostic.labelWidth < minimumLabelWidth || diagnostic.labelHeight > 44) {
+    throw new Error(`console_browser_workspace_confirmation_layout:${JSON.stringify({ viewportName, minimumLabelWidth, ...diagnostic })}`);
+  }
+}
+
 async function captureFixtureScreenshot(page, state, screenshotDir, screen, viewportName) {
   if (!screenshotDir) return;
   await mkdir(screenshotDir, { recursive: true });
@@ -823,9 +890,9 @@ async function exerciseGatewayKeyLifecycle(page, state) {
 }
 
 async function exerciseWalletAdjustment(page, state, screenshotDir, viewportName, { submit = false } = {}) {
-  const accountSurface = viewportName === "mobile"
-    ? page.locator(".operator-account-mobile-card").filter({ hasText: "pilot@example.com" })
-    : page.getByRole("row").filter({ hasText: "pilot@example.com" });
+  const accountSurface = (viewportName === "desktop"
+    ? page.locator(".operator-account-table tbody tr:visible")
+    : page.locator(".operator-account-mobile-card:visible")).filter({ hasText: "pilot@example.com" });
   await accountSurface.getByRole("button", { name: "余额操作" }).click();
   const dialog = page.getByRole("dialog", { name: "余额操作" });
   await dialog.getByLabel("再次确认 Account ID").pressSequentially("acct-1");
@@ -864,26 +931,48 @@ async function openWorkspaceFromList(page, workspaceName) {
 }
 
 async function assertUsageRecordFields(page, viewportName) {
-  const expectedHeaders = ["时间", "模型", "端点", "实际金额", "请求编号"];
+  const expectedHeaders = ["模型 / 端点", "Token", "费用", "延迟", "时间", "请求 ID"];
+  const surface = viewportName === "desktop"
+    ? page.locator(".request-table-desktop")
+    : page.locator(".request-list-mobile");
   if (viewportName === "desktop") {
-    const table = page.locator(".request-table-desktop");
-    await table.getByText("request-fixture", { exact: true }).waitFor({ state: "visible" });
-    const headers = (await table.locator("th").allTextContents()).map((label) => label.trim());
+    await surface.getByText("request-fixture", { exact: true }).waitFor({ state: "visible" });
+    const headers = (await surface.locator("th").allTextContents()).map((label) => label.trim());
     if (JSON.stringify(headers) !== JSON.stringify(expectedHeaders)) {
       throw new Error(`console_browser_request_fields:${JSON.stringify(headers)}`);
     }
   } else {
-    const row = page.locator(".request-list-mobile").getByRole("listitem").filter({ hasText: "request-fixture" });
-    await row.getByText("gpt-5-mini", { exact: true }).waitFor({ state: "visible" });
-    await row.getByText("/v1/responses", { exact: true }).waitFor({ state: "visible" });
-    await row.getByText("$0.03", { exact: true }).waitFor({ state: "visible" });
-    if (await row.locator("small").count() !== 2 || await row.locator("code").count() !== 1) {
-      throw new Error("console_browser_mobile_request_fields");
+    const row = surface.getByRole("listitem").filter({ hasText: "request-fixture" });
+    const labels = (await row.locator("dt").allTextContents()).map((label) => label.trim());
+    if (JSON.stringify(labels) !== JSON.stringify(["Token", "费用", "延迟", "时间"])) {
+      throw new Error(`console_browser_mobile_request_fields:${JSON.stringify(labels)}`);
     }
   }
-  for (const label of ["输入 Token", "输出 Token", "缓存写入 Token", "缓存读取 Token", "请求详情", "查看详情"]) {
-    if (await page.getByText(label, { exact: true }).count()) {
-      throw new Error(`console_browser_request_extra_field:${label}`);
+
+  const completeRow = viewportName === "desktop"
+    ? surface.locator("tbody tr").filter({ hasText: "request-fixture" })
+    : surface.getByRole("listitem").filter({ hasText: "request-fixture" });
+  for (const label of ["输入", "输出", "缓存读取", "缓存写入", "首字", "总耗时"]) {
+    await completeRow.getByText(label, { exact: true }).waitFor({ state: "visible" });
+  }
+  for (const value of ["120", "36", "8", "24", "140 ms", "860 ms", "$0.03"]) {
+    await completeRow.getByText(value, { exact: true }).waitFor({ state: "visible" });
+  }
+  if (await completeRow.locator("time").count() !== 1 || await completeRow.getByRole("button", { name: "复制请求 ID" }).count() !== 1) {
+    throw new Error("console_browser_request_time_or_copy_missing");
+  }
+
+  const nullLatencyRow = viewportName === "desktop"
+    ? surface.locator("tbody tr").filter({ hasText: "request-null-latency" })
+    : surface.getByRole("listitem").filter({ hasText: "request-null-latency" });
+  await nullLatencyRow.waitFor({ state: "visible" });
+  const nullLatencyValues = (await nullLatencyRow.locator(".usage-latency-stack strong").allTextContents()).map((value) => value.trim());
+  if (JSON.stringify(nullLatencyValues) !== JSON.stringify(["-", "-"]) || await nullLatencyRow.getByText("0 ms", { exact: true }).count()) {
+    throw new Error(`console_browser_null_latency:${JSON.stringify(nullLatencyValues)}`);
+  }
+  for (const label of ["缓存读取", "缓存写入"]) {
+    if (await nullLatencyRow.getByText(label, { exact: true }).count()) {
+      throw new Error(`console_browser_zero_cache_visible:${label}`);
     }
   }
 }
@@ -963,11 +1052,13 @@ export async function runConsoleBrowserQa({
       await captureFixtureScreenshot(page, state, screenshotDir, "workspace-list", name);
       await page.getByRole("button", { name: "新建 Workspace", exact: true }).click();
       await page.waitForURL(/\/console\/workspaces\/new$/);
-      await waitForText(page, "下一步：确认");
-      await waitForText(page, name === "mobile" ? "价格暂不可用" : "$52.58");
+      await waitForText(page, "核对开通信息");
+      await waitForText(page, name === "mobile" ? "暂不可用" : "$52.58");
       await waitForText(page, "$240.08");
-      await waitForText(page, "自然月");
+      await waitForText(page, "按自然月计费");
       state.customerRoutes.add("/console/workspaces/new");
+      await assertWorkspaceLaunchLayout(page, name);
+      await assertWorkspacePlanRadios(page);
       await assertNoViewportOverflow(page);
       await captureFixtureScreenshot(page, state, screenshotDir, "workspace-new", name);
       const workspaceName = page.getByLabel("Workspace 名称");
@@ -987,14 +1078,25 @@ export async function runConsoleBrowserQa({
         }
         state.unavailablePlanKeyboardViewports.add(name);
       }
-      await page.getByRole("button", { name: "下一步：确认", exact: true }).click();
+      await captureFixtureScreenshot(page, state, screenshotDir, "workspace-new-ready", name);
+      await page.getByRole("button", { name: "核对开通信息", exact: true }).click();
       await page.getByRole("heading", { name: "确认开通信息", exact: true }).waitFor({ state: "visible" });
+      await assertWorkspaceLaunchLayout(page, name);
+      await assertWorkspaceLaunchConfirmation(page, name);
+      const launchConfirmation = page.getByRole("checkbox", { name: "我确认一次性预付 Workspace 月度总额并开通", exact: true });
+      await launchConfirmation.click();
+      if (await launchConfirmation.getAttribute("data-state") !== "checked") throw new Error("console_browser_workspace_confirmation_not_checked");
+      if (!await page.getByRole("button", { name: "确认预付并开通", exact: true }).isEnabled()) throw new Error("console_browser_workspace_confirmation_submit_disabled");
+      await page.waitForTimeout(250);
       await captureFixtureScreenshot(page, state, screenshotDir, "workspace-confirm", name);
       state.launches = [pendingWorkspaceLaunch()];
       await page.goto(`${server.origin}/console/workspaces/new?progress=${name}`, { waitUntil: "networkidle" });
+      await waitForText(page, "当前处理阶段");
       await waitForText(page, "runtime_starting");
+      if (await page.locator(".workspace-progress").count()) throw new Error("console_browser_inferred_workspace_progress_present");
+      await assertWorkspaceLaunchLayout(page, name);
       await assertNoViewportOverflow(page);
-      await captureFixtureScreenshot(page, state, screenshotDir, "workspace-progress", name);
+      await captureFixtureScreenshot(page, state, screenshotDir, "workspace-operation", name);
       state.launches = [];
       await page.goto(`${server.origin}/console/workspaces?after-progress=${name}`, { waitUntil: "networkidle" });
       await openWorkspaceFromList(page, "Pilot Workspace");
@@ -1163,11 +1265,20 @@ export async function runConsoleBrowserQa({
       operatorReadStart = state.operatorPageReads.length;
       await page.goto(`${server.origin}/admin/accounts?viewport=${name}`, { waitUntil: "networkidle" });
       assertOperatorPageReads(state, operatorReadStart, ["/api/operator/accounts"]);
-      const accountSurface = name === "mobile" ? page.locator(".operator-account-mobile-card") : page.getByRole("row");
+      const accountSurface = name === "desktop"
+        ? page.locator(".operator-account-table tbody tr:visible")
+        : page.locator(".operator-account-mobile-card:visible");
       const activeAccountRow = accountSurface.filter({ hasText: "pilot@example.com" });
       const disabledAccountRow = accountSurface.filter({ hasText: "stopped@example.com" });
-      await activeAccountRow.getByText("正常", { exact: true }).waitFor({ state: "visible" });
-      await disabledAccountRow.getByText("已停用", { exact: true }).waitFor({ state: "visible" });
+      if (name === "desktop") {
+        const accountHeaders = (await page.locator(".operator-account-table th").allTextContents()).map((label) => label.trim());
+        const expectedAccountHeaders = ["用户", "账户映射", "余额", "API 费用", "资源", "状态", "操作"];
+        if (JSON.stringify(accountHeaders) !== JSON.stringify(expectedAccountHeaders)) {
+          throw new Error(`console_browser_account_fields:${JSON.stringify(accountHeaders)}`);
+        }
+      }
+      await activeAccountRow.getByText("正常", { exact: true }).last().waitFor({ state: "visible" });
+      await disabledAccountRow.getByText("已停用", { exact: true }).last().waitFor({ state: "visible" });
       if (await page.getByText("归档", { exact: false }).count() || await page.getByRole("radio", { name: "已归档", exact: true }).count()) {
         throw new Error("console_browser_archive_semantics_present");
       }
@@ -1179,8 +1290,8 @@ export async function runConsoleBrowserQa({
         await activeAccountRow.getByRole("button", { name: "停用", exact: true }).click();
         await waitForText(page, "客户已停用");
         assertOperatorPageReads(state, operatorReadStart, ["/api/operator/accounts"]);
-        const refreshedAccountRow = page.getByRole("row").filter({ hasText: "pilot@example.com" });
-        await refreshedAccountRow.getByText("已停用", { exact: true }).waitFor({ state: "visible" });
+        const refreshedAccountRow = page.locator(".operator-account-table tbody tr:visible").filter({ hasText: "pilot@example.com" });
+        await refreshedAccountRow.getByText("已停用", { exact: true }).last().waitFor({ state: "visible" });
         if (!state.dialogMessages.includes("确认停用该客户？账号会立即停用；历史账单、收据和审计记录会保留。")) {
           throw new Error(`console_browser_disable_confirmation_missing:${JSON.stringify(state.dialogMessages)}`);
         }
@@ -1234,7 +1345,7 @@ export async function runConsoleBrowserQa({
       workspacePagination: state.workspacePageReads.some(({ page, pageSize }) => page === 1 && pageSize === 10)
         && state.workspacePageReads.some(({ page, pageSize }) => page === 1 && pageSize === 1),
       directDetailRefresh: (state.runtimeReads.get("ws-1") || 0) > 1,
-      requestRecordFields: ["time", "model", "endpoint", "actualAmount", "requestId"],
+      requestRecordFields: ["modelEndpoint", "tokens", "actualCost", "latency", "time", "requestId"],
       billingViews: true,
       loginSubmissions: state.loginSubmissions,
       customerRoutes: CUSTOMER_ROUTES.filter((route) => state.customerRoutes.has(route)),

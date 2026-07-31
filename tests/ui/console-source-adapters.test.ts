@@ -123,12 +123,15 @@ test("Workspace detail is found before runtime status and renders authoritative 
   assert.match(pages, /Workspace 不存在/);
 });
 
-test("API request records expose only the approved five fields", async () => {
+test("API request records expose the approved six-column facts", async () => {
   const pages = await source("apps/console-ui/src/pages/CustomerPages.tsx");
-  const usageView = pages.slice(pages.indexOf("function RequestRows"), pages.indexOf("function ApiPage"));
+  const usageView = pages.slice(pages.indexOf("function UsageTokenFacts"), pages.indexOf("function ApiPage"));
 
-  for (const label of ["时间", "模型", "端点", "实际金额", "请求编号"]) assert.match(usageView, new RegExp(label));
-  assert.doesNotMatch(usageView, /输入 Token|输出 Token|缓存写入 Token|缓存读取 Token|请求类型|查看详情/);
+  for (const label of ["模型 / 端点", "Token", "费用", "延迟", "时间", "请求 ID", "输入", "输出", "缓存读取", "缓存写入", "首字", "总耗时"]) {
+    assert.match(usageView, new RegExp(label));
+  }
+  for (const field of ["actualCostUsdMicros", "firstTokenMs", "durationMs"]) assert.match(usageView, new RegExp(field));
+  assert.doesNotMatch(usageView, /请求类型|查看详情|standardCost|accountCost|costMultiplier/);
 });
 
 test("customer UI has one launch entry and no internal service or resource vocabulary", async () => {

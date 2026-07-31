@@ -16,17 +16,15 @@ export function Checkbox({ checked, description, invalid, label, onChange, ...pr
   const id = useId();
   return (
     <div className="console-checkbox" data-invalid={Boolean(invalid)}>
-      <input
+      <AppsCheckbox
         checked={checked}
-        className="console-checkbox__native"
         disabled={props.disabled}
         id={id}
+        label={<span>{label}</span>}
         name={props.name}
-        onChange={(event) => onChange(event.currentTarget.checked)}
-        type="checkbox"
+        onCheckedChange={onChange}
         value={props.value}
       />
-      <AppsCheckbox checked={checked} disabled={props.disabled} label={<span>{label}</span>} onCheckedChange={onChange} />
       {description ? <span className="console-checkbox__description">{description}</span> : null}
     </div>
   );

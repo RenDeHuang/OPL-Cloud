@@ -54,6 +54,37 @@ test("Workspace list, launch, and detail remain independent routes", async () =>
   assert.doesNotMatch(`${pages}\n${controller}`, /selectedWorkspaceId|账号存在多个 Workspace，暂不可用/);
 });
 
+test("Workspace launch uses the selected split-decision flow with API-backed facts", async () => {
+  const pages = await source("apps/console-ui/src/pages/CustomerPages.tsx");
+  const launch = pages.slice(pages.indexOf("function PlanOption"), pages.indexOf("function SecretRow"));
+
+  assert.match(launch, /function WorkspaceLaunchSteps/);
+  assert.match(launch, /function WorkspaceOrderSummary/);
+  assert.match(launch, /<RadioGroup<PlanId>/);
+  assert.match(launch, /<RadioGroup\.Item/);
+  assert.match(launch, /className="workspace-launch-layout"/);
+  assert.match(launch, /className="workspace-launch-config"/);
+  assert.match(launch, /className="workspace-order-summary"/);
+  assert.match(launch, /<Field[\s\S]*label="Workspace 名称"/);
+  for (const label of ["配置", "核对", "开通状态", "订单摘要", "价格明细", "可用余额", "按自然月计费", "自动续费关闭"]) {
+    assert.match(launch, new RegExp(label));
+  }
+  for (const fact of ["plan.cpu", "plan.memoryGb", "plan.diskGb", "preview.compute", "preview.storage", "preview.totalChargeUsdMicros", "wallet.usdMicros", "preview.billingUnit"]) {
+    assert.match(launch, new RegExp(fact.replaceAll(".", "\\.")));
+  }
+  assert.doesNotMatch(launch, /分别来自各自权威来源|浏览器不会自行计算|服务端权威总价/);
+});
+
+test("Workspace launch status shows only the authoritative current phase", async () => {
+  const pages = await source("apps/console-ui/src/pages/CustomerPages.tsx");
+  const operation = pages.slice(pages.indexOf("function LaunchOperation"), pages.indexOf("function SecretRow"));
+
+  assert.match(operation, /当前处理阶段/);
+  assert.match(operation, /operation\.phase/);
+  assert.match(operation, /operation\.status/);
+  assert.doesNotMatch(operation, /phaseIndex|workspace-progress|className=.*complete|当前阶段.*已完成|已完成.*等待/);
+});
+
 test("Workspace adapter exposes paging and exact lookup without an eager all-pages aggregate", () => {
   assert.equal(typeof workspaceApi.getWorkspaces, "function");
   assert.equal(typeof workspaceApi.findWorkspaceInPages, "function");
@@ -69,7 +100,8 @@ test("Workspace and Overview render server-owned lifecycle, runtime, and billing
   assert.match(pages, /detail\.totalUsdMicros/);
   assert.match(pages, /detail\.storageGb/);
   assert.match(pages, /runtimeData\.checks/);
-  assert.match(pages, /CPU \/ 内存未由当前 Workspace DTO 投影，因此不按套餐 ID 推导/);
+  assert.match(pages, /<dt>CPU \/ 内存规格<\/dt><dd>暂不可用<\/dd>/);
+  assert.doesNotMatch(pages, /Workspace DTO|套餐 ID 推导/);
   assert.doesNotMatch(pages, /workspace\.packageId === ["']basic["'].*(?:cpu|memory)/s);
   assert.doesNotMatch(pages, /\|\| "opl"/);
 });
@@ -220,9 +252,33 @@ test("Customer source blocks remain independently retryable", async () => {
   assert.ok((usagePage.match(/<SourceState/g) || []).length >= 3);
 });
 
-test("Customer Console keeps automatic renewal closed without inventing an enable path", async () => {
+test("Customer usage records expose authoritative Token, cost, latency, and time facts", async () => {
+  const [pages, dtos] = await Promise.all([
+    source("apps/console-ui/src/pages/CustomerPages.tsx"),
+    source("apps/console-ui/src/api/dtos.ts")
+  ]);
+  const requestRows = pages.slice(pages.indexOf("function RequestRows"), pages.indexOf("function UsagePage"));
+
+  assert.match(dtos, /durationMs:\s*number \| null;/);
+  assert.match(dtos, /firstTokenMs:\s*number \| null;/);
+  assert.match(requestRows, /<th>模型 \/ 端点<\/th><th>Token<\/th><th>费用<\/th><th>延迟<\/th><th>时间<\/th><th>请求 ID<\/th>/);
+  for (const label of ["输入", "输出", "缓存读取", "缓存写入", "首字", "总耗时"]) {
+    assert.match(pages, new RegExp(label));
+  }
+  assert.match(pages, /item\.cacheReadTokens > 0/);
+  assert.match(pages, /item\.cacheCreationTokens > 0/);
+  assert.match(requestRows, /<dt>Token<\/dt>/);
+  assert.match(requestRows, /<dt>费用<\/dt>/);
+  assert.match(requestRows, /<dt>延迟<\/dt>/);
+  assert.match(requestRows, /<dt>时间<\/dt>/);
+  assert.match(pages, /function formatLatency\(value: number \| null\)/);
+  assert.match(pages, /value === null \? "-" : `\$\{formatCount\(value\)\} ms`/);
+  assert.doesNotMatch(requestRows, /firstTokenMs \|\||durationMs \|\|/);
+});
+
+test("Customer Console renders automatic-renewal state without inventing an enable path", async () => {
   const pages = await source("apps/console-ui/src/pages/CustomerPages.tsx");
   assert.match(pages, /自动续费/);
-  assert.match(pages, /自动续费启用路径未开放/);
-  assert.doesNotMatch(pages, /updateWorkspaceRenewal|setAutoRenew|onChange=.*autoRenew/);
+  assert.match(pages, /detail\.autoRenew \? "开启" : "关闭"/);
+  assert.doesNotMatch(pages, /自动续费启用路径未开放|updateWorkspaceRenewal|setAutoRenew|onChange=.*autoRenew/);
 });
