@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { readFile, stat } from "node:fs/promises";
+import { readFile, readdir, stat } from "node:fs/promises";
 import { createServer } from "node:http";
 import { extname, relative, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -12,6 +12,7 @@ const execFileAsync = promisify(execFile);
 const root = resolve(import.meta.dirname, "../..");
 const dist = resolve(root, "dist");
 const reactHomeHeading = "工作区、API 服务与账单，在一个权威控制面里。";
+const productionContentSecurityPolicy = "default-src 'self'; base-uri 'none'; frame-ancestors 'none'; object-src 'none'; form-action 'self'";
 const viewports = [
   { name: "desktop", width: 1440, height: 900 },
   { name: "mobile", width: 390, height: 844 }
@@ -53,7 +54,10 @@ async function startDistServer() {
         }
         filePath = resolve(dist, "index.html");
       }
-      response.writeHead(200, { "content-type": contentTypes[extname(filePath)] || "application/octet-stream" });
+      response.writeHead(200, {
+        "content-security-policy": productionContentSecurityPolicy,
+        "content-type": contentTypes[extname(filePath)] || "application/octet-stream"
+      });
       response.end(await readFile(filePath));
     } catch {
       response.writeHead(500).end();
@@ -77,8 +81,16 @@ async function startDistServer() {
   };
 }
 
-test("production dist boots the React Console at desktop and mobile", { timeout: 120_000 }, async () => {
+async function readProductionStyles() {
+  const assets = await readdir(resolve(dist, "assets"));
+  const styles = assets.filter((asset) => asset.endsWith(".css"));
+  assert.ok(styles.length > 0, "production dist must contain CSS assets");
+  return (await Promise.all(styles.map((asset) => readFile(resolve(dist, "assets", asset), "utf8")))).join("\n");
+}
+
+test("production dist boots the React Console under the production CSP at desktop and mobile", { timeout: 120_000 }, async () => {
   const buildOutput = await buildProductionDist();
+  const productionStyles = await readProductionStyles();
   const server = await startDistServer();
   const browser = await chromium.launch({ headless: true });
   const evidence = [];
@@ -89,14 +101,18 @@ test("production dist boots the React Console at desktop and mobile", { timeout:
       const pageErrors: string[] = [];
       const consoleErrors: string[] = [];
       const assetFailures: string[] = [];
+      const externalRequests: string[] = [];
       page.on("pageerror", (error) => pageErrors.push(error.message));
       page.on("console", (message) => {
         if (message.type() === "error") consoleErrors.push(message.text());
       });
       page.on("requestfailed", (request) => {
-        if (["script", "stylesheet"].includes(request.resourceType())) {
+        if (["script", "stylesheet", "font"].includes(request.resourceType())) {
           assetFailures.push(`${request.url()}: ${request.failure()?.errorText || "request_failed"}`);
         }
+      });
+      page.on("request", (request) => {
+        if (new URL(request.url()).origin !== server.origin) externalRequests.push(request.url());
       });
       page.on("response", (response) => {
         if (["script", "stylesheet"].includes(response.request().resourceType()) && !response.ok()) {
@@ -104,7 +120,8 @@ test("production dist boots the React Console at desktop and mobile", { timeout:
         }
       });
 
-      await page.goto(server.origin, { waitUntil: "load" });
+      const documentResponse = await page.goto(server.origin, { waitUntil: "load" });
+      assert.equal(documentResponse?.headers()["content-security-policy"], productionContentSecurityPolicy);
       const heading = page.getByRole("heading", { name: reactHomeHeading, exact: true });
       const reactPageVisible = await heading.waitFor({ state: "visible", timeout: 5_000 }).then(() => true, () => false);
       const visibleText = (await page.locator("body").innerText()).trim();
@@ -114,7 +131,8 @@ test("production dist boots the React Console at desktop and mobile", { timeout:
         visibleTextLength: visibleText.length,
         pageErrors,
         consoleErrors,
-        assetFailures
+        assetFailures,
+        externalRequests
       });
       await context.close();
     }
@@ -130,6 +148,8 @@ test("production dist boots the React Console at desktop and mobile", { timeout:
     assert.deepEqual(item.pageErrors, [], message);
     assert.deepEqual(item.consoleErrors, [], message);
     assert.deepEqual(item.assetFailures, [], message);
+    assert.deepEqual(item.externalRequests, [], message);
   }
+  assert.doesNotMatch(productionStyles, /cdn\.openai\.com\/common\/fonts\/katex|font-family:\s*["']?KaTeX_/i);
   assert.doesNotMatch(buildOutput, /Circular chunk:/, buildOutput);
 });
