@@ -16,12 +16,27 @@ Workspace is not the only resource body. It is the access entry.
 
 ## Runtime Modes
 
-OPL Console has two supported operator modes:
+OPL Console has two service-connected operator modes and one fake-only local
+preview:
 
-- `local-to-staging`: local Console API/UI connected to staging PostgreSQL and staging TKE; can create real Tencent resources after explicit operator confirmation.
+- `local-demo`: localhost-only React Console backed by in-memory fixture data;
+  it cannot reach external services or mutate real billing or resources.
+- `local-to-staging`: local Console API/UI connected to staging PostgreSQL and
+  staging TKE; ordinary use is read-only, and any real mutation requires its
+  separately approved operator workflow.
 - `cloud-staging`: deployed Console in TKE using the same staging PostgreSQL and resource pool; validates rollout, ingress, TLS, image, and secret wiring.
 
 The code path is shared. The difference is environment and ingress. `local-to-staging` and `cloud-staging` use the same durable service databases and Sub2API account mapping so accounts, monthly entitlements, resources, receipt references, and Workspace URLs describe one system.
+
+## Local Demo
+
+```bash
+npm run demo
+```
+
+The command prints the localhost URL and customer/Admin fixture credentials. It
+binds only to `127.0.0.1`, stores state in memory, and makes zero external
+requests. It is an interaction preview, not staging or production evidence.
 
 ## Local To Staging
 
@@ -34,48 +49,31 @@ npm run staging:ui
 
 `staging:local` loads the ignored `.env.staging.local`, builds the Go Tencent provisioner, requires `OPL_RUNTIME_PROVIDER=tencent-tke`, and uses staging PostgreSQL. It does not reset state or seed demo users.
 
-Run real local-to-staging E2E only after readiness passes and you intend to create billable Tencent Cloud resources:
+The former paid staging verifier is retired and intentionally exits non-zero:
 
 ```bash
-OPL_CONFIRM_REAL_CLOUD_E2E=1 npm run staging:e2e
+npm run staging:e2e
 ```
 
-This verifier may use a local Console origin such as `http://127.0.0.1:8787`, but the Workspace URL still must be a public HTTPS staging URL.
+Do not use local-to-staging as a purchase, cleanup, or release-evidence path.
+Provider, billing, and customer-resource writes require their separately
+approved manual workflows.
 
-## Cloud Staging E2E
+## Cloud Staging Verification
 
-After rollout, run the public verifier against the deployed Console. Both Console and Workspace URLs must be public HTTPS URLs.
-
-Expected chain:
-
-1. Login.
-2. Read the mapped user's live Sub2API USD balance.
-3. Purchase Basic compute and verify the exact `50000000` USD-micro charge.
-4. Purchase 10 GB storage and verify the exact `2571429` USD-micro charge.
-5. Verify both monthly entitlements and Ledger receipts.
-6. Attach storage to compute.
-7. Create the Workspace URL and poll runtime readiness.
-8. Open the public Workspace URL and receive HTTP 200 from one-person-lab-app.
-9. Verify the exact total balance delta, stable redeem codes, and provider facts.
-10. Detach and destroy only the resources created by the run; verify exact cleanup.
-
-Run after staging is configured:
+Without a new release-owner approval, only read-only verification is authorized:
 
 ```bash
-npm run validate:production-manifest
-OPL_CONSOLE_ORIGIN=https://<console-domain> npm run verify:production
+npm run validate:production-manifest -- \
+  --manifest deploy/production-manifest.example.json
+node tools/production-verifier.ts --read-only
+node tools/production-live-qa.ts --read-only
+node tools/provider-acceptance.ts --read-only
 ```
 
-Rollout confidence gate:
-
-```text
-unit/contract tests pass
-+ local-to-staging readiness pass
-+ local-to-staging real E2E pass
-+ cloud-staging readiness pass
-+ cloud-staging public E2E pass
-= ready to consider public launch
-```
+These commands do not buy, renew, or delete Tencent resources and do not charge
+a customer. The separately approved Basic customer canary is not an ordinary
+CI, rollout, E2E, or local-development command.
 
 ## Required Env Vars
 
@@ -99,7 +97,7 @@ unit/contract tests pass
 
 ## Route Registry Rules
 
-- `apps/console-ui/src/routes/opl-routes.ts` contains only current runtime routes.
+- `apps/console-ui/src/app/console-router.ts` contains only current runtime routes.
 - Speculative routes do not belong in the runtime registry.
 - Every enabled UI route must have a stable route id and routeTo path.
 - Lab Owner routes do not expose operator/Fabric/Ledger raw evidence.
@@ -114,25 +112,31 @@ unit/contract tests pass
   authoritative Sub2API and Fabric readback.
 - Renewal extends from `paidThrough` with the original Workspace price snapshot
   and stable redeem code.
-- Expired compute is stopped. Expired storage is retained and inaccessible until
-  explicitly reactivated.
+- Unpaid expiry denies Workspace access, disables auto-renew, and writes
+  evidence. It performs no Fabric or Tencent stop, renew, destroy, or delete
+  mutation; Tencent expiry policy owns eventual provider reclamation.
 - Fabric owns provider state, Control Plane owns Workspace orchestration,
   Sub2API owns balance/Key/Usage, and Ledger stores append-only evidence.
 
 ## Pre-Commit Checklist
 
 ```bash
-node --test tests/domain/resource-provisioning.test.ts
-cd services/fabric && go test ./...
-node --test tests/ui/commercial-console-routes.test.ts tests/ui/commercial-console-surface.test.ts tests/ui/console-clickability-contract.test.ts
+npm test
+npm run typecheck
+npm run lint
 npm run build
+(cd services/control-plane && go test ./...)
+(cd services/fabric && go test ./...)
+(cd services/ledger && go test ./...)
 git diff --check
 ```
 
 ## Common Failures
 
 - Image pull denied: make `OPL_WORKSPACE_IMAGE` pullable and verify `OPL_IMAGE_PULL_SECRET_NAME`.
-- Localhost Workspace URL: staging e2e must use a public `OPL_WORKSPACE_DOMAIN`.
+- Localhost Workspace URL: any approved real Workspace verification requires a
+  public `OPL_WORKSPACE_DOMAIN`; the local demo does not prove it.
 - Missing storage class: set `OPL_WORKSPACE_STORAGE_CLASS` to an available class.
 - Ingress path not routing: check shared Ingress class and `/w/<workspaceId>` path.
-- Leftover cloud resources: detach storage, destroy compute allocation, then destroy storage.
+- Unexpected provider resources: stop and reconcile through the approved
+  operator path; verification code must not delete customer CVM/CBS resources.
