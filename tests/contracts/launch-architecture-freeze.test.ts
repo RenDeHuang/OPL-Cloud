@@ -350,6 +350,11 @@ test("launch freeze fixes the V2 products, owner lanes, settlement, and verifica
   assert.equal(freeze.gateway.workspaceKeyLifecycle.oldKeyRetirementGate, "only_after_runtime_authoritative_readback_and_atomic_workspace_commit");
   assert.equal(freeze.gateway.workspaceKeyLifecycle.runtimeCredentialInvariant, "key_rotation_does_not_change_username_password_or_credential_version");
   assert.deepEqual(freeze.gateway.usageScope, ["user_id", "api_key_id"]);
+  assert.deepEqual(freeze.gateway.usageListFields, [
+    "user_id", "api_key_id", "request_id", "created_at", "model", "inbound_endpoint", "request_type",
+    "input_tokens", "output_tokens", "cache_creation_tokens", "cache_read_tokens", "actual_cost",
+    "duration_ms", "first_token_ms"
+  ]);
   assert.equal(freeze.gateway.usageMoneySource, "actual_cost");
   assert.equal(freeze.gateway.usageMoneyRepresentation, "integer_usd_micros");
   assert.deepEqual(freeze.gateway.liveBalanceProjection, {

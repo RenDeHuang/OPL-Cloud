@@ -128,6 +128,7 @@ func assertUnavailableSourceEnvelope(t *testing.T, response *httptest.ResponseRe
 func TestGatewaySourceTruthRoutesUseSessionIdentityAndStrictEnvelopes(t *testing.T) {
 	createdAt := time.Date(2026, 7, 18, 1, 2, 3, 0, time.UTC)
 	lastUsedAt := createdAt.Add(-time.Hour)
+	durationMS := int64(987)
 	base := &customerFactsSub2API{
 		testSub2APIClient: &testSub2APIClient{
 			balance: 0, charges: map[string]int64{},
@@ -138,6 +139,7 @@ func TestGatewaySourceTruthRoutesUseSessionIdentityAndStrictEnvelopes(t *testing
 				UserID: 41, APIKeyID: 9, RequestID: "request-1", CreatedAt: createdAt, Model: "gpt-5",
 				InboundEndpoint: "/v1/responses", RequestType: "sync", InputTokens: 1, OutputTokens: 2,
 				CacheCreationTokens: 3, CacheReadTokens: 4, ActualCostUSDMicros: 5,
+				DurationMS: &durationMS, FirstTokenMS: nil,
 			}},
 			Total: 1, Page: 1, PageSize: 50, Pages: 1,
 		},
@@ -191,8 +193,14 @@ func TestGatewaySourceTruthRoutesUseSessionIdentityAndStrictEnvelopes(t *testing
 	}
 	usageEnvelope := decodeSourceEnvelope(t, usage)
 	usageItems, _ := mapField(usageEnvelope, "data")["items"].([]any)
-	if len(usageItems) != 1 || usageItems[0].(map[string]any)["apiKeyId"] != "9" {
+	usageItem := usageItems[0].(map[string]any)
+	if len(usageItems) != 1 || len(usageItem) != 13 || usageItem["apiKeyId"] != "9" || usageItem["durationMs"] != float64(987) || usageItem["firstTokenMs"] != nil {
 		t.Fatalf("usage envelope = %#v", usageEnvelope)
+	}
+	for _, forbidden := range []string{"duration_ms", "first_token_ms", "prompt", "response"} {
+		if _, exists := usageItem[forbidden]; exists {
+			t.Fatalf("usage item exposed %q: %#v", forbidden, usageItem)
+		}
 	}
 
 	stats := requestWithSession(t, server, session, http.MethodGet, "/api/gateway/keys/9/usage-summary"+spoofed+"&period=month", "")

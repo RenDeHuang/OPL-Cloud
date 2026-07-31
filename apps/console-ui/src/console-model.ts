@@ -81,6 +81,13 @@ export function formatAvailableBalance(balance: Partial<GatewayWallet> & { avail
   return balance.available === false ? "暂不可用" : formatUsdMicros(balance.usdMicros);
 }
 
+export function hasSufficientWorkspaceLaunchBalance(balanceUsdMicros: string, quoteUsdMicros: number): boolean {
+  return /^\d+$/.test(balanceUsdMicros)
+    && Number.isSafeInteger(quoteUsdMicros)
+    && quoteUsdMicros >= 0
+    && BigInt(balanceUsdMicros) > BigInt(quoteUsdMicros);
+}
+
 export function formatDate(value: unknown, includeTime = false): string {
   if (!value) return "-";
   const date = new Date(String(value));

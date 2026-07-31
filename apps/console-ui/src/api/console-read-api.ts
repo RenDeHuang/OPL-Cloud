@@ -40,6 +40,9 @@ import type {
   PricingPreviewResponse,
   ReadinessFact,
   SourceEnvelope,
+  CreateSupportTicketMappingRequest,
+  SupportTicketMappingDTO,
+  SupportTicketPageDTO,
   UpdateGatewayKeyRequest,
   WorkspaceLaunchRecoveryRequest
 } from "./dtos.ts";
@@ -91,6 +94,14 @@ function sourceDelete<T>(path: string, csrfToken: string, idempotencyKey: string
 
 export function getConsoleState(): Promise<unknown> {
   return getJson<unknown>("/api/state");
+}
+
+export function getSupportTickets(signal?: AbortSignal): Promise<SupportTicketPageDTO> {
+  return getJson<unknown>("/api/support/tickets", { signal }).then(decodeDto<SupportTicketPageDTO>);
+}
+
+export function createSupportTicketMapping(input: CreateSupportTicketMappingRequest, csrfToken: string, idempotencyKey: string): Promise<SupportTicketMappingDTO> {
+  return postJson<unknown>("/api/support/tickets", input, csrfToken, idempotencyKey).then(decodeDto<SupportTicketMappingDTO>);
 }
 
 export function getGatewayWallet(signal?: AbortSignal): Promise<SourceEnvelope<GatewayWallet>> {

@@ -331,6 +331,8 @@ type Sub2APIUsageRecord struct {
 	CacheCreationTokens int64     `json:"cache_creation_tokens"`
 	CacheReadTokens     int64     `json:"cache_read_tokens"`
 	ActualCostUSDMicros int64     `json:"actual_cost_usd_micros"`
+	DurationMS          *int64    `json:"duration_ms"`
+	FirstTokenMS        *int64    `json:"first_token_ms"`
 }
 
 type Sub2APIUsagePage struct {
@@ -1549,6 +1551,8 @@ func (c *Sub2APIHTTPClient) Usage(ctx context.Context, query Sub2APIUsageQuery) 
 		CacheCreationTokens *int64       `json:"cache_creation_tokens"`
 		CacheReadTokens     *int64       `json:"cache_read_tokens"`
 		ActualCost          *json.Number `json:"actual_cost"`
+		DurationMS          *int64       `json:"duration_ms"`
+		FirstTokenMS        *int64       `json:"first_token_ms"`
 	}
 	var data struct {
 		Items    []usageRow `json:"items"`
@@ -1580,7 +1584,7 @@ func (c *Sub2APIHTTPClient) Usage(ctx context.Context, query Sub2APIUsageQuery) 
 		if item.UserID != query.UserID || item.APIKeyID != query.APIKeyID {
 			return Sub2APIUsagePage{}, errors.New("sub2api usage identity mismatch")
 		}
-		if item.CreatedAt == nil || item.CreatedAt.IsZero() || item.RequestID == "" || item.Model == "" || item.RequestType == "" || !validUsageCounts(item.InputTokens, item.OutputTokens, item.CacheCreationTokens, item.CacheReadTokens) || item.ActualCost == nil {
+		if item.CreatedAt == nil || item.CreatedAt.IsZero() || item.RequestID == "" || item.Model == "" || item.RequestType == "" || !validUsageCounts(item.InputTokens, item.OutputTokens, item.CacheCreationTokens, item.CacheReadTokens) || item.ActualCost == nil || item.DurationMS != nil && *item.DurationMS < 0 || item.FirstTokenMS != nil && *item.FirstTokenMS < 0 {
 			return Sub2APIUsagePage{}, errors.New("invalid sub2api usage record")
 		}
 		actualCost, err := decimalUSDMicros(*item.ActualCost)
@@ -1595,7 +1599,7 @@ func (c *Sub2APIHTTPClient) Usage(ctx context.Context, query Sub2APIUsageQuery) 
 			UserID: item.UserID, APIKeyID: item.APIKeyID, RequestID: item.RequestID, CreatedAt: *item.CreatedAt,
 			Model: item.Model, InboundEndpoint: inboundEndpoint, RequestType: item.RequestType,
 			InputTokens: *item.InputTokens, OutputTokens: *item.OutputTokens, CacheCreationTokens: *item.CacheCreationTokens,
-			CacheReadTokens: *item.CacheReadTokens, ActualCostUSDMicros: actualCost,
+			CacheReadTokens: *item.CacheReadTokens, ActualCostUSDMicros: actualCost, DurationMS: item.DurationMS, FirstTokenMS: item.FirstTokenMS,
 		})
 	}
 	return Sub2APIUsagePage{Items: items, Total: data.Total, Page: data.Page, PageSize: data.PageSize, Pages: data.Pages}, nil

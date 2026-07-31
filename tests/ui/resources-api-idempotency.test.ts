@@ -5,7 +5,7 @@ import { afterEach, test } from "node:test";
 import * as workspaceApi from "../../apps/console-ui/src/api/workspaces-api.ts";
 
 const originalFetch = globalThis.fetch;
-const appSource = () => readFile(new URL("../../apps/console-ui/src/App.vue", import.meta.url), "utf8");
+const controllerSource = () => readFile(new URL("../../apps/console-ui/src/app/use-console-controller.ts", import.meta.url), "utf8");
 
 afterEach(() => { globalThis.fetch = originalFetch; });
 
@@ -88,20 +88,21 @@ test("Workspace launch recovery lists the current account operations", async () 
 });
 
 test("Workspace launch keeps one submission intent and exposes bounded polling recovery", async () => {
-  const app = await appSource();
-  assert.match(app, /let workspaceLaunchIntent:/);
-  assert.match(app, /launchWorkspace\(input,[^,]+, workspaceLaunchIntent\.idempotencyKey\)/);
-  assert.match(app, /getWorkspaceLaunches\(\)/);
-  assert.match(app, /const workspaceLaunchPollIntervalMs = 10_000/);
-  assert.match(app, /const workspaceLaunchPollAttempts = 30/);
-  assert.match(app, /retryWorkspaceLaunchPoll/);
+  const controller = await controllerSource();
+  assert.match(controller, /const workspaceLaunchIntent = useRef</);
+  assert.match(controller, /launchWorkspace\(input, session\.csrfToken, workspaceLaunchIntent\.current\.idempotencyKey\)/);
+  assert.match(controller, /getWorkspaceLaunches\(\)/);
+  assert.match(controller, /const workspaceLaunchPollIntervalMs = 10_000/);
+  assert.match(controller, /const workspaceLaunchPollAttempts = 30/);
+  assert.match(controller, /pollWorkspaceLaunch/);
+  assert.match(controller, /if \(!unknown\) workspaceLaunchIntent\.current = null/);
 });
 
 test("Workspace credential rotation reuses its intent key until a confirmed success", async () => {
-  const app = await appSource();
-  assert.match(app, /let runtimeRotationIntent:/);
-  assert.match(app, /rotateWorkspaceCredentials\([^,]+,[^,]+, runtimeRotationIntent\.idempotencyKey\)/);
-  assert.match(app, /runtimeRotationIntent = null;\s*if \(!secretResponseStillCurrent/);
+  const controller = await controllerSource();
+  assert.match(controller, /const runtimeRotationIntent = useRef</);
+  assert.match(controller, /rotateWorkspaceCredentials\(workspace\.id, session\.csrfToken, runtimeRotationIntent\.current\.idempotencyKey\)/);
+  assert.match(controller, /runtimeRotationIntent\.current = null;[\s\S]+activeGeneration !== secretRequestGeneration\.current/);
 });
 
 test("Workspace credential and renewal commands use explicit routes and mutation keys", async () => {

@@ -1,5 +1,10 @@
 # OPL Console Workspace Product V2
 
+The frozen customer and operator page/slide inventory is defined in
+[`console-display-contract-v1.md`](console-display-contract-v1.md). This product
+document defines the business boundary; the display contract defines what each
+Console page must show and which source owns each fact.
+
 ## User Job
 
 ```text
@@ -37,11 +42,11 @@ Fabric/Ledger APIs, or Sub2API admin operations.
 
 Operations sees account mappings, roles, wallet recharge/debit/business refund,
 receipt and review evidence, reconciliation reports, readiness, announcements,
-and explicit cleanup operations. Resource rows show owner account/user,
-Workspace, resource type, package/spec, provider ID, Zone, status, created and
-expiry times, last readback, and operation/Receipt references. A missing owner
-source displays unavailable; Fabric or Ledger facts are not copied into a new
-Control Plane truth table.
+and only server-authorized reconciliation or recovery actions. Resource rows
+show owner account/user, Workspace, resource type, package/spec, provider ID,
+Zone, status, created and expiry times, last readback, and operation/Receipt
+references. A missing owner source displays unavailable; Fabric or Ledger facts
+are not copied into a new Control Plane truth table.
 
 ## Purchase Confirmation
 
@@ -49,17 +54,18 @@ Workspace confirmation shows the selected package/spec, exact total USD charge,
 current balance, entitlement period, and the compute/storage fulfillment included
 in that total.
 
-The operation is resumable. Provider preparation failure makes no charge.
-Insufficient balance cleans the prepared resource. Ambiguous external results
-enter manual review. Confirmed single charge activates the Workspace after
-fulfillment and emits one purchase Receipt. Compute and storage never debit the
-customer independently.
+The operation is resumable. Read-only provider preflight failure or insufficient
+balance stops before debit and before every Fabric write. Ambiguous external
+results enter manual review.
+Confirmed single charge activates the Workspace after fulfillment and emits one
+purchase Receipt. Compute and storage never debit the customer independently.
 
 ## Workspace And Storage
 
-A Workspace is a stable URL backed by one StorageVolume and the current runtime
-pointer. Compute can be replaced without changing the Workspace URL or deleting
-storage. Storage deletion is explicit and irreversible.
+A Workspace is a stable URL backed by one independently owned StorageVolume and
+the current runtime pointer. The Pilot Console does not expose customer backup,
+recovery, transfer, provider-resource replacement, or storage deletion. Unpaid
+expiry denies access and performs zero Fabric or Tencent resource mutation.
 
 ## Evidence Levels
 

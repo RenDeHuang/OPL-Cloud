@@ -25,23 +25,25 @@ function throwApiError(payload: unknown): never {
   throw error;
 }
 
-async function writeJson<T>(method: "POST" | "PUT" | "PATCH" | "DELETE", path: string, body: unknown, csrfToken: string, idempotencyKey: string, timeoutMs: number): Promise<T> {
+async function writeJson<T>(method: "POST" | "PUT" | "PATCH" | "DELETE", path: string, body: unknown, csrfToken: string, idempotencyKey: string, timeoutMs: number, signal?: AbortSignal): Promise<T> {
   const headers: Record<string, string> = { "content-type": "application/json" };
   if (csrfToken) headers["x-opl-csrf"] = csrfToken;
   if (idempotencyKey) headers["Idempotency-Key"] = idempotencyKey;
+  const timeout = AbortSignal.timeout(timeoutMs);
+  const requestSignal = signal ? AbortSignal.any([signal, timeout]) : timeout;
   const response = await fetch(path, {
     method,
     headers,
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(timeoutMs)
+    signal: requestSignal
   });
   const payload = await responsePayload(response);
   if (!response.ok || asObject(payload).ok === false) throwApiError(payload);
   return payload as T;
 }
 
-export function postJson<T>(path: string, body: unknown = {}, csrfToken = "", idempotencyKey = "", timeoutMs = 10_000): Promise<T> {
-  return writeJson<T>("POST", path, body, csrfToken, idempotencyKey, timeoutMs);
+export function postJson<T>(path: string, body: unknown = {}, csrfToken = "", idempotencyKey = "", timeoutMs = 10_000, signal?: AbortSignal): Promise<T> {
+  return writeJson<T>("POST", path, body, csrfToken, idempotencyKey, timeoutMs, signal);
 }
 
 export function patchJson<T>(path: string, body: unknown, csrfToken = "", idempotencyKey = ""): Promise<T> {

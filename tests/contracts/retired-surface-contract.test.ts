@@ -6,10 +6,10 @@ const root = new URL("../../", import.meta.url);
 const source = (path: string) => readFile(new URL(path, root), "utf8");
 
 test("current Console adapters do not consume retired V2 routes or fallbacks", async () => {
-  const [readApi, workspaceApi, app] = await Promise.all([
+  const [readApi, workspaceApi, controller] = await Promise.all([
     source("apps/console-ui/src/api/console-read-api.ts"),
     source("apps/console-ui/src/api/workspaces-api.ts"),
-    source("apps/console-ui/src/App.vue")
+    source("apps/console-ui/src/app/use-console-controller.ts")
   ]);
   assert.doesNotMatch(readApi, /getGatewayUsage|getGatewayUsageStats|getOperatorSummary|createUser/);
   assert.doesNotMatch(readApi, /api\/gateway\/keys\/opl-workspace\/reveal/);
@@ -17,14 +17,15 @@ test("current Console adapters do not consume retired V2 routes or fallbacks", a
   assert.match(readApi, /getGatewayKeyUsage/);
   assert.doesNotMatch(workspaceApi, /postJson<unknown>\("\/api\/workspaces\/runtime-status"/);
   assert.match(workspaceApi, /getWorkspaceRuntimeStatus[\s\S]*getJson<unknown>[\s\S]*runtime-status/);
-  assert.doesNotMatch(app, /getGatewayUsage\(|getGatewayUsageStats\(|getOperatorSummary\(|createUser\(/);
+  assert.doesNotMatch(controller, /getGatewayUsage\(|getGatewayUsageStats\(|getOperatorSummary\(|createUser\(/);
 });
 
 test("current source has no legacy route strings outside explicit retired tests", async () => {
   const files = [
     "apps/console-ui/src/api/console-read-api.ts",
     "apps/console-ui/src/api/workspaces-api.ts",
-    "apps/console-ui/src/App.vue",
+    "apps/console-ui/src/App.tsx",
+    "apps/console-ui/src/app/use-console-controller.ts",
     "services/control-plane/internal/server/routes_gateway.go",
     "services/control-plane/internal/server/routes_workspace.go",
     "services/control-plane/internal/server/routes_state.go",

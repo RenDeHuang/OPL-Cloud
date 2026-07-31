@@ -908,6 +908,7 @@ func writeGatewayUsagePage(w http.ResponseWriter, usage clients.Sub2APIUsagePage
 			"model": item.Model, "inboundEndpoint": item.InboundEndpoint, "requestType": item.RequestType,
 			"inputTokens": item.InputTokens, "outputTokens": item.OutputTokens, "cacheCreationTokens": item.CacheCreationTokens,
 			"cacheReadTokens": item.CacheReadTokens, "actualCostUsdMicros": item.ActualCostUSDMicros,
+			"durationMs": item.DurationMS, "firstTokenMs": item.FirstTokenMS,
 		})
 	}
 	status := "available"

@@ -201,6 +201,11 @@ The four implementation owner lanes are Console/Control Plane, Fabric, Gateway i
   response is valid only as `total=0,page=1,pages=1,items=[]`; every other empty
   pagination shape fails closed.
 - Request charges use Sub2API `actual_cost`, converted once to integer USD micros. Control Plane returns an explicit unavailable state for a missing capability or upstream failure and never substitutes zero.
+- Request latency uses live Sub2API `first_token_ms` and `duration_ms` only. Both
+  values are nullable non-negative integers, are never persisted by OPL, and
+  render as `-` rather than `0 ms` when the upstream value is absent; Console
+  never derives latency from browser timing, timestamps, Token counts, or
+  response arrival.
 - Control Plane decodes a strict customer-safe DTO allowlist. Raw Sub2API admin responses, nested raw Keys, upstream account internals, prompts, and response content never reach Console, OPL PostgreSQL, Ledger, logs, or caches.
 - Key DTO fields `quota_used`, `usage_5h`, `usage_1d`, `usage_7d`, and `last_used_at` remain quota and recent-window signals; they do not replace request-level usage and aggregate stats.
 - General Key management may project and mutate Sub2API's group, quota, IP allow/deny lists, expiration, 5h/1d/7d limits, and supported reset commands. Control Plane persists none of those facts. Operator Key counts are live, bounded-concurrency reads for only the current account page and are never stored.
