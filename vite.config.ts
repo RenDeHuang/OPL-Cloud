@@ -10,10 +10,8 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks(id) {
-          if (!id.includes("node_modules")) return undefined;
-          if (id.includes("react") || id.includes("@openai/apps-sdk-ui")) return "react-ui";
-          if (id.includes("lucide-react")) return "icons";
-          return "vendor";
+          if (id.includes("node_modules")) return "vendor";
+          return undefined;
         }
       }
     }
