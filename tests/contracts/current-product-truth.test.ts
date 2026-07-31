@@ -33,7 +33,7 @@ test("current docs describe only the operator-provisioned paid Pilot", async () 
     text("docs/runtime/tke-production-deployment.md")
   ]);
 
-  assert.match(readme, /Vue Console/);
+  assert.match(readme, /React Console/);
   assert.match(readme, /Basic[^\n]*USD 50\.00[^\n]*USD 2\.58[^\n]*USD 52\.58/i);
   assert.match(readme, /Pro[^\n]*USD 214\.28[^\n]*USD 25\.80[^\n]*USD 240\.08/i);
   assert.match(invariants, /administrator-provisioned customer accounts/i);
@@ -49,7 +49,6 @@ test("current docs describe only the operator-provisioned paid Pilot", async () 
   assert.doesNotMatch(runbook, /safe-update\.sh|\/home\/ubuntu\/sub2api/);
 
   for (const [name, document] of Object.entries({ readme, architecture, packages, invariants, status })) {
-    assert.doesNotMatch(document, /\bReact\b/, `${name} React`);
     assert.doesNotMatch(document, /\bCNY\b|1 USD\s*=|exchange rate/i, `${name} customer CNY`);
     assert.doesNotMatch(document, /verification-slot-01\b/, `${name} single slot`);
     assert.doesNotMatch(document, /\b2-5\b/, `${name} capped cohort`);

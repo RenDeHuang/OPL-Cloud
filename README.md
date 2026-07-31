@@ -8,7 +8,8 @@ deployment.
 
 ## Runtime Boundaries
 
-- **Console** is the Vue browser UI. It calls only Control Plane product APIs.
+- **Console** is the React browser UI, built on `@openai/apps-sdk-ui`. It calls
+  only Control Plane product APIs.
 - **Control Plane** owns local sessions, the account-to-Sub2API mapping,
   Workspace lifecycle, monthly operations, and customer-safe projections. It
   does not own customer passwords or a second identity system.
@@ -28,6 +29,13 @@ Console -> Control Plane -> Sub2API balance/charge
 
 Control Plane exposes product commands only. It has no generic Fabric, Ledger,
 or Sub2API proxy routes.
+
+The frozen Console display surface contains 10 primary pages: five customer
+pages and five additional Admin pages. Together with the global account and
+support views, these pages expose 27 slides defined by
+[`docs/product/console-display-contract-v1.md`](./docs/product/console-display-contract-v1.md).
+That display contract fixes what the UI presents; it does not change business
+readiness or make the browser an authority for product facts.
 
 ## Operator-Provisioned Pilot
 
@@ -104,13 +112,15 @@ text only: Console never links or redirects to Sub2API, embeds it, or calls its
 management API from the browser. `OPL_SUB2API_BASE_URL` remains server-only,
 and Cloud does not inject a second Gateway base URL into Runtime.
 
-Pilot V2 remains `code-complete` until separately approved real evidence meets
-the `pilot-ready` gate. Only the same immutable deployed revision with production
-readback can be `production-proven`.
+The React Console refactor in this branch has local `code-complete` evidence
+only. Overall Pilot V2 delivery remains `codeComplete=false`,
+`pilotReady=false`, and `productionProven=false` until the complete release
+gates and separately approved real evidence pass. Only the same immutable
+deployed revision with production readback can be `production-proven`.
 
 ## Repository Layout
 
-- `apps/console-ui`: Vue Console.
+- `apps/console-ui`: React Console built on `@openai/apps-sdk-ui`.
 - `services/control-plane`: Console API and product orchestration.
 - `services/fabric`: cloud resource and runtime owner.
 - `services/ledger`: evidence owner.
@@ -147,6 +157,22 @@ For the UI:
 ```bash
 npm run dev
 ```
+
+For a clickable localhost-only demo with in-memory fixture data:
+
+```bash
+npm run demo
+```
+
+Demo credentials:
+
+- Customer: `fixture@example.com` / `fixture-password`
+- Admin: `operator@example.com` / `operator-password`
+
+The command also prints the URL and credentials at startup. It binds only to
+`127.0.0.1`, calls no external service, and cannot perform real billing,
+Sub2API, Fabric, Ledger, Tencent, or Kubernetes mutations. This is a development
+preview, not a public test mode or production readiness claim.
 
 ## Production
 

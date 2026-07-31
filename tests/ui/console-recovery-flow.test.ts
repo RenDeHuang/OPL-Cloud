@@ -37,11 +37,31 @@ test("session bootstrap treats only HTTP 401 as signed out and sends a timeout s
   globalThis.fetch = async () => jsonResponse({ error: "auth_backend_unavailable" }, 503);
   await assert.rejects(currentSession(), /auth_backend_unavailable/);
 
+  globalThis.fetch = async () => jsonResponse({ error: "authentication_unavailable" }, 401);
+  await assert.rejects(currentSession(), /authentication_unavailable/);
+
+  globalThis.fetch = async () => jsonResponse({ error: "reauthentication_required" }, 401);
+  assert.equal(await currentSession(), null);
+
   globalThis.fetch = async () => jsonResponse({}, 200);
   await assert.rejects(currentSession(), /session_check_failed/);
 
   globalThis.fetch = async () => new Response("not-json", { status: 200 });
   await assert.rejects(currentSession(), /session_check_failed/);
+});
+
+test("login forwards an abort signal to the request", async () => {
+  const controller = new AbortController();
+  let receivedSignal;
+  globalThis.fetch = async (_url, init) => {
+    receivedSignal = init?.signal;
+    return jsonResponse({ user: { id: "usr", accountId: "acct", email: "u@example.com", role: "owner", status: "active" }, csrfToken: "csrf" }, 200);
+  };
+
+  await import("../../apps/console-ui/src/api/auth-api.ts").then(({ login }) => login({ email: "u@example.com", password: "pw" }, controller.signal));
+  assert.ok(receivedSignal instanceof AbortSignal);
+  controller.abort();
+  assert.equal(receivedSignal.aborted, true);
 });
 
 test("only Workspace readiness errors use the Docker distribution message", () => {

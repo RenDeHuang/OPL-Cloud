@@ -64,6 +64,47 @@ export interface AuthMeData {
 export type SessionDTO = AuthSession;
 export type CurrentAccountDTO = AuthMeData;
 
+export interface SupportTicketMessageDTO {
+  author: string;
+  text: string;
+  createdAt: string;
+}
+
+export interface SupportTicketMappingDTO {
+  id: string;
+  externalSystem: string;
+  externalTicketId: string;
+  externalUrl: string;
+  accountId: string;
+  userId?: string;
+  workspaceId?: string;
+  resourceIds: string[];
+  operationId?: string;
+  title: string;
+  category: string;
+  priority: string;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+  messages: SupportTicketMessageDTO[];
+}
+
+export interface SupportTicketPageDTO {
+  tickets: SupportTicketMappingDTO[];
+}
+
+export interface CreateSupportTicketMappingRequest {
+  accountId: string;
+  externalTicketId: string;
+  title: string;
+  externalUrl?: string;
+  description?: string;
+  externalSystem?: string;
+  workspaceId?: string;
+  resourceIds?: string[];
+  operationId?: string;
+}
+
 export interface LoginRequest {
   email: string;
   password: string;
@@ -260,7 +301,20 @@ export interface WorkspacePricePreview {
   currency: "USD";
   displayCurrency: "USD";
   billingUnit: string;
+  compute: PricingComponentPreview;
+  storage: PricingComponentPreview & { sizeGb?: number };
   totalChargeUsdMicros: number;
+}
+
+export interface PricingComponentPreview {
+  resourceType: "compute" | "storage";
+  packageId: PlanId;
+  priceVersion: string;
+  currency: "USD";
+  displayCurrency: "USD";
+  billingUnit: string;
+  chargeUsdMicros: number;
+  sizeGb?: number;
 }
 
 export interface PricingPreviewRequest {
@@ -278,6 +332,8 @@ export interface PricingPreviewResponse {
   totalChargeUsdMicros?: number;
   displayCurrency?: "USD";
   billingUnit?: string;
+  compute?: PricingComponentPreview;
+  storage?: PricingComponentPreview & { sizeGb?: number };
 }
 
 export interface GatewayWallet {
@@ -406,6 +462,8 @@ export interface GatewayUsageItem {
   cacheCreationTokens: number;
   cacheReadTokens: number;
   actualCostUsdMicros: number;
+  durationMs: number | null;
+  firstTokenMs: number | null;
 }
 
 export interface GatewayKeyUsagePageDTO {
@@ -457,6 +515,18 @@ export interface BillingReceipt {
   chargeUsdMicros?: number;
   totalUsdMicros?: number;
   refundUsdMicros?: number;
+  chargeReference?: string;
+  components?: {
+    compute: { resourceType: "compute"; resourceId: string; chargeUsdMicros: number };
+    storage: { resourceType: "storage"; resourceId: string; sizeGb: number; chargeUsdMicros: number };
+  };
+  fulfillment?: {
+    computeAllocationId: string;
+    storageId: string;
+    attachmentId?: string;
+    workspaceApiKeyId?: string;
+    runtimeId?: string;
+  };
 }
 
 export interface BillingReceiptPage {

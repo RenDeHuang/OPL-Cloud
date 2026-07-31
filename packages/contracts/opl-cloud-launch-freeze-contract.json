@@ -500,7 +500,7 @@
     "requiredCapabilities": ["mapped_user_identity", "mapped_user_balance", "mapped_user_key_list", "available_user_groups", "delegated_user_key_lifecycle", "key_quota_ip_expiry_rate_limit_and_reset", "request_usage_list", "aggregate_usage_stats", "batch_user_and_key_usage", "mapped_user_balance_history", "deterministic_idempotent_balance_adjustment"],
     "compatibilityEvidence": ["contract_tests", "read_only_production_probe"],
     "usageScope": ["user_id", "api_key_id"],
-    "usageListFields": ["user_id", "api_key_id", "request_id", "created_at", "model", "inbound_endpoint", "request_type", "input_tokens", "output_tokens", "cache_creation_tokens", "cache_read_tokens", "actual_cost"],
+    "usageListFields": ["user_id", "api_key_id", "request_id", "created_at", "model", "inbound_endpoint", "request_type", "input_tokens", "output_tokens", "cache_creation_tokens", "cache_read_tokens", "actual_cost", "duration_ms", "first_token_ms"],
     "usageStatsFields": ["total_requests", "total_input_tokens", "total_output_tokens", "total_tokens", "total_actual_cost"],
     "usageMoneySource": "actual_cost",
     "usageMoneyRepresentation": "integer_usd_micros",

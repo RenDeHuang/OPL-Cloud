@@ -112,8 +112,9 @@
         "authority": "live_sub2api_readback",
         "identity": "session_account_to_control_plane_sub2api_user_mapping",
         "ignoredIdentityInputs": ["accountId", "user_id", "api_key_id", "sub2apiUserId"],
-        "itemFields": ["apiKeyId", "requestId", "createdAt", "model", "inboundEndpoint", "requestType", "inputTokens", "outputTokens", "cacheCreationTokens", "cacheReadTokens", "actualCostUsdMicros"],
+        "itemFields": ["apiKeyId", "requestId", "createdAt", "model", "inboundEndpoint", "requestType", "inputTokens", "outputTokens", "cacheCreationTokens", "cacheReadTokens", "actualCostUsdMicros", "durationMs", "firstTokenMs"],
         "apiKeyIdFormat": "positive_decimal_string",
+        "latencyEncoding": "nullable_non_negative_integer_ms",
         "emptyUpstreamPagination": { "total": 0, "page": 1, "pages": 1, "items": [], "otherShapes": "reject" },
         "fetchedAt": "control_plane_response_fetch_completion_time",
         "sourceUpdatedAt": "omit_unless_sub2api_returns_source_timestamp"

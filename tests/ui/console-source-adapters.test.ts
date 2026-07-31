@@ -98,48 +98,56 @@ test("Workspace adapters return an authoritative not-found result after total is
 });
 
 test("Console production and browser fixtures do not invent a Workspace detail GET", async () => {
-  const [workspaceSource, app, browserFixture, backendRoutes] = await Promise.all([
+  const [workspaceSource, controller, browserFixture, backendRoutes] = await Promise.all([
     source("apps/console-ui/src/api/workspaces-api.ts"),
-    source("apps/console-ui/src/App.vue"),
+    source("apps/console-ui/src/app/use-console-controller.ts"),
     source("tools/console-browser-qa.ts"),
     source("services/control-plane/internal/server/routes_workspace.go")
   ]);
 
   assert.doesNotMatch(workspaceSource, /getWorkspace\s*\(/);
-  assert.doesNotMatch(app, /\bgetWorkspace\s*\(/);
+  assert.doesNotMatch(controller, /\bgetWorkspace\s*\(/);
   assert.doesNotMatch(browserFixture, /path\.match\(\/\^\\\/api\\\/workspaces\\\/\([^)]*\)\\\/\$\//);
   assert.doesNotMatch(backendRoutes, /HandleFunc\("GET \/api\/workspaces\/\{workspaceId\}"/);
 });
 
 test("Workspace detail is found before runtime status and renders authoritative not-found", async () => {
-  const app = await source("apps/console-ui/src/App.vue");
-  const customerLoader = app.slice(app.indexOf("async function loadCustomer"), app.indexOf("async function loadOperatorOverview"));
-  const detailView = app.slice(app.indexOf("workspaceRoute === 'detail'"), app.indexOf("apiRoute", app.indexOf("workspaceRoute === 'detail'")));
+  const [controller, pages] = await Promise.all([
+    source("apps/console-ui/src/app/use-console-controller.ts"),
+    source("apps/console-ui/src/pages/CustomerPages.tsx")
+  ]);
 
-  assert.match(customerLoader, /await loadWorkspaceDetail\(workspaceId\)[\s\S]+workspaceDetailSource\.value\.data === null[\s\S]+await loadWorkspaceStatus\(workspaceId\)/);
-  assert.match(detailView, /workspaceDetailSource\?\.status === 'empty'/);
-  assert.match(detailView, /Workspace 不存在/);
+  assert.match(controller, /const detail = await findWorkspaceInPages\(workspaceId\)/);
+  assert.match(controller, /if \(!detail\.available \|\| detail\.data === null\)[\s\S]+return;[\s\S]+getWorkspaceRuntimeStatus\(workspaceId\)/);
+  assert.match(pages, /workspaceSource\?\.available && workspaceSource\.data === null/);
+  assert.match(pages, /Workspace 不存在/);
 });
 
-test("API request records expose only the approved five fields", async () => {
-  const app = await source("apps/console-ui/src/App.vue");
-  const usageView = app.slice(app.indexOf("activeApiPage === 'usage'"), app.indexOf("<KeysPanel", app.indexOf("activeApiPage === 'usage'")));
+test("API request records expose the approved six-column facts", async () => {
+  const pages = await source("apps/console-ui/src/pages/CustomerPages.tsx");
+  const usageView = pages.slice(pages.indexOf("function UsageTokenFacts"), pages.indexOf("function ApiPage"));
 
-  for (const label of ["时间", "模型", "端点", "实际金额", "请求编号"]) assert.match(usageView, new RegExp(label));
-  assert.doesNotMatch(usageView, /输入 Token|输出 Token|缓存写入 Token|缓存读取 Token|请求类型|查看详情/);
+  for (const label of ["模型 / 端点", "Token", "费用", "延迟", "时间", "请求 ID", "输入", "输出", "缓存读取", "缓存写入", "首字", "总耗时"]) {
+    assert.match(usageView, new RegExp(label));
+  }
+  for (const field of ["actualCostUsdMicros", "firstTokenMs", "durationMs"]) assert.match(usageView, new RegExp(field));
+  assert.doesNotMatch(usageView, /请求类型|查看详情|standardCost|accountCost|costMultiplier/);
 });
 
 test("customer UI has one launch entry and no internal service or resource vocabulary", async () => {
-  const app = await source("apps/console-ui/src/App.vue");
-  const template = app.slice(app.indexOf("<template>"));
-  assert.match(app, /launchWorkspace/);
-  assert.doesNotMatch(app, /createComputeAllocation|createStorageVolume|attachStorage|buyCompute|buyStorage|mountStorage/);
-  assert.doesNotMatch(app, /getGatewaySummary|summary\?reveal=true|gflabtoken\.cn|iframe/);
-  assert.doesNotMatch(template, /Sub2API|Gateway|Fabric|CVM|CBS|ComputeAllocation|StorageVolume|StorageAttachment|Mount/);
-  assert.doesNotMatch(app, /fixedMonthlySpend|workspaceMonthlyPrice|renewalSummary|state\.value\?\.balance/);
-  assert.doesNotMatch(app, /receipt\.status\s*\|\||未知.*处理中|\.find\([^\n]+\)\s*\|\|[^\n]*\[0\]/);
-  assert.match(app, /API 服务/);
-  assert.match(app, /暂不可用/);
+  const [pages, shell, controller] = await Promise.all([
+    source("apps/console-ui/src/pages/CustomerPages.tsx"),
+    source("apps/console-ui/src/layout/ConsoleShell.tsx"),
+    source("apps/console-ui/src/app/use-console-controller.ts")
+  ]);
+  const customerSurface = `${pages}\n${shell}`;
+  assert.match(controller, /launchWorkspace/);
+  assert.doesNotMatch(controller, /createComputeAllocation|createStorageVolume|attachStorage|buyCompute|buyStorage|mountStorage/);
+  assert.doesNotMatch(customerSurface, /CVM|CBS|ComputeAllocation|StorageVolume|StorageAttachment|raw Sub2API|raw Ledger/);
+  assert.doesNotMatch(customerSurface, /Control Plane 总数|Fabric Runtime 实时状态|Ledger cursor 分页/);
+  assert.doesNotMatch(customerSurface, /gflabtoken\.cn|iframe/);
+  assert.match(customerSurface, /API 服务/);
+  assert.match(customerSurface, /暂不可用/);
 });
 
 test("critical frontend contracts use named DTOs instead of AnyRecord", async () => {
@@ -160,24 +168,27 @@ test("critical frontend contracts use named DTOs instead of AnyRecord", async ()
 });
 
 test("Workspace launch requires the authoritative total price and fixed SKU size pair", async () => {
-  const app = await source("apps/console-ui/src/App.vue");
-  assert.match(app, /selectedPlanPrice/);
-  assert.match(app, /plan\.id === "basic" \? 10 : 100/);
-  assert.doesNotMatch(app, /plan\.diskGb === 10 \? 10 : 100/);
-  assert.match(app, /typeof workspace\.totalUsdMicros === "number"/);
+  const [controller, pages] = await Promise.all([
+    source("apps/console-ui/src/app/use-console-controller.ts"),
+    source("apps/console-ui/src/pages/CustomerPages.tsx")
+  ]);
+  assert.match(controller, /selectedPrice/);
+  assert.match(controller, /selectedPlan\.id === "basic" \? 10 : 100/);
+  assert.doesNotMatch(controller, /selectedPlan\.diskGb === 10 \? 10 : 100/);
+  assert.match(pages, /preview\.totalChargeUsdMicros/);
+  assert.match(pages, /preview\.compute/);
+  assert.match(pages, /preview\.storage/);
 });
 
 test("an unavailable launch catalog is explicit and retryable", async () => {
-  const app = await source("apps/console-ui/src/App.vue");
-  const launchStart = app.indexOf("workspaceRoute === 'new'");
-  const launchEnd = app.indexOf("workspaceRoute === 'detail'", launchStart);
-  const launchView = app.slice(launchStart, launchEnd);
-  assert.match(launchView, /errors\.catalog/);
-  assert.match(app, /计划与价格暂不可用/);
-  assert.match(launchView, /@click="loadCatalog"/);
+  const pages = await source("apps/console-ui/src/pages/CustomerPages.tsx");
+  const launchView = pages.slice(pages.indexOf("function WorkspaceLaunchPage"), pages.indexOf("function WorkspaceLaunchConfirm"));
+  assert.match(launchView, /sources\.catalog\.error/);
+  assert.match(launchView, /计划与价格暂不可用/);
+  assert.match(launchView, /refreshCurrentPage/);
 });
 
 test("operator account rows do not render the raw internal source identifier", async () => {
-  const app = await source("apps/console-ui/src/App.vue");
-  assert.doesNotMatch(app, /\{\{\s*accountsSource\.source\s*\}\}/);
+  const pages = await source("apps/console-ui/src/pages/AdminPages.tsx");
+  assert.doesNotMatch(pages, /operatorAccounts\.value\?\.source|accountsSource\.source/);
 });

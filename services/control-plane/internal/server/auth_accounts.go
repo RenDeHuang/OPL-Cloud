@@ -279,10 +279,13 @@ func (app *controlPlaneServer) createSession(user map[string]any, bearer string)
 
 type sessionAuthenticationState uint8
 
+type authenticatedSessionContextKey struct{}
+
 const (
 	sessionNotAuthenticated sessionAuthenticationState = iota
 	sessionAuthenticated
 	sessionReauthenticationRequired
+	sessionAuthenticationUnavailable
 )
 
 func (app *controlPlaneServer) session(r *http.Request) (map[string]any, sessionAuthenticationState) {
@@ -293,7 +296,7 @@ func (app *controlPlaneServer) session(r *http.Request) (map[string]any, session
 	sessionKey := sessionLookupKey(cookie.Value)
 	session, found, err := app.tables.GetSession(r.Context(), sessionKey)
 	if err != nil {
-		return nil, sessionNotAuthenticated
+		return nil, sessionAuthenticationUnavailable
 	}
 	expiresAt, parseErr := time.Parse(time.RFC3339, stringValue(session["expiresAt"]))
 	if !found || parseErr != nil || !expiresAt.After(time.Now().UTC()) {
@@ -306,7 +309,7 @@ func (app *controlPlaneServer) session(r *http.Request) (map[string]any, session
 	}
 	user, err := app.findUserByID(r.Context(), stringValue(session["userId"]))
 	if err != nil {
-		return nil, sessionNotAuthenticated
+		return nil, sessionAuthenticationUnavailable
 	}
 	if user == nil || stringValue(user["status"]) != "active" || !validRole(stringValue(user["role"])) {
 		app.invalidateSession(r.Context(), sessionKey)
@@ -315,7 +318,7 @@ func (app *controlPlaneServer) session(r *http.Request) (map[string]any, session
 	if !isOperatorUser(user) {
 		active, err := app.hasActiveCustomerMembership(r.Context(), user)
 		if err != nil {
-			return nil, sessionNotAuthenticated
+			return nil, sessionAuthenticationUnavailable
 		}
 		if !active {
 			app.invalidateSession(r.Context(), sessionKey)
@@ -382,6 +385,10 @@ func (app *controlPlaneServer) sessionUserID(r *http.Request) string {
 }
 
 func (app *controlPlaneServer) sessionUserContext(r *http.Request) (map[string]any, bool) {
+	if payload, ok := r.Context().Value(authenticatedSessionContextKey{}).(map[string]any); ok {
+		user, _ := payload["user"].(map[string]any)
+		return user, user != nil
+	}
 	payload, state := app.session(r)
 	if state != sessionAuthenticated {
 		return nil, false

@@ -12,7 +12,12 @@
     "consoleUi": {
       "path": "apps/console-ui",
       "language": "typescript",
-      "framework": "vue",
+      "framework": "react",
+      "componentFoundation": "@openai/apps-sdk-ui",
+      "uiContract": "opl-cloud-console-ui-contract.json",
+      "displayContract": "docs/product/console-display-contract-v1.md",
+      "primaryPageCount": 10,
+      "slideCount": 27,
       "persistence": "none",
       "calls": {
         "controlPlane": "http"
