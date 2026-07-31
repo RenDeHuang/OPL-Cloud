@@ -1053,7 +1053,8 @@ function workspaceLaunchReadbackProofTarget(value, expected) {
     !Number.isSafeInteger(storageGb) || storageGb <= 0 || !Number.isSafeInteger(totalChargeUsdMicros) || totalChargeUsdMicros <= 0 ||
     !Number.isInteger(billingAnchorDay) || billingAnchorDay < 1 || billingAnchorDay > 31 || typeof value.autoRenew !== "boolean" ||
     !/^[A-Za-z0-9._-]{3,80}$/.test(String(value.priceVersion || "")) || !Number.isFinite(Date.parse(value.periodStart)) ||
-    !Number.isFinite(Date.parse(value.paidThrough)) || Date.parse(value.paidThrough) <= Date.parse(value.periodStart)) {
+    !Number.isFinite(Date.parse(value.paidThrough)) || Date.parse(value.paidThrough) <= Date.parse(value.periodStart) ||
+    Date.parse(value.deadline) < Date.parse(value.paidThrough)) {
     throw new Error("workspace_launch_readback_proof_invalid");
   }
   return value;
@@ -1102,7 +1103,8 @@ function workspaceLaunchReadbackProof(value, target) {
     !resourceID("storageProviderResourceId", /^disk-[A-Za-z0-9-]+$/) || resources.computeAllocationId !== target.computeAllocationId ||
     resources.computeProviderResourceId !== target.cvmInstanceId || resources.storageVolumeId !== target.storageId || resources.storageZone !== target.zone ||
     resources.storageSizeGb !== value?.target?.storageGb || resources.storageChargeType !== target.chargeType || resources.storageRenewFlag !== target.renewFlag ||
-    resources.storageDeadline !== target.deadline || !resourceID("attachmentId", /^[A-Za-z0-9_-]{3,128}$/, stage === "storage") ||
+    !Number.isFinite(Date.parse(resources.storageDeadline)) || Date.parse(resources.storageDeadline) < Date.parse(value?.target?.paidThrough) ||
+    !resourceID("attachmentId", /^[A-Za-z0-9_-]{3,128}$/, stage === "storage") ||
     !resourceID("attachmentProviderId", /^[A-Za-z0-9_./:-]{3,256}$/, stage === "storage") ||
     !resourceID("gatewaySecretRef", /^opl-gateway-[a-f0-9]{16}$/) || !resourceID("gatewaySecretFingerprint", /^sha256:[a-f0-9]{64}$/, new Set(["storage", "attachment"]).has(stage)) ||
     !Number.isSafeInteger(resources.workspaceApiKeyId) || resources.workspaceApiKeyId <= 0 ||
@@ -1195,6 +1197,10 @@ function workspaceLaunchReadbackStaticApproval(value, expected, now) {
     throw new Error("workspace_launch_readback_approval_invalid");
   }
   workspaceLaunchReadbackProofTarget(approval.target, expected.target);
+  if (!Number.isFinite(Date.parse(approval.resources?.storageDeadline)) ||
+    Date.parse(approval.resources.storageDeadline) < Date.parse(approval.target.paidThrough)) {
+    throw new Error("workspace_launch_readback_approval_invalid");
+  }
   return approval;
 }
 

@@ -549,9 +549,11 @@ contract or select the SKU for a customer launch.
   attachment, Gateway Secret, Runtime, `WorkspaceActivationTruth`, or Ledger
   Receipt. Only one unique and identity-exact readback may CAS the original
   PostgreSQL operation to `attempted=1, confirmed=1, unknown=0, max=1`; the
-  external stage write is never reissued. A concurrent loser, absent or multiple
-  candidate, identity drift, or any read error leaves the launch in
-  `manual_review` with zero external write.
+  unknown stage's external write is never reissued. A concurrent loser, absent
+  or multiple candidate, identity drift, or any read error leaves the launch in
+  `manual_review` with zero additional external write. After successful CAS
+  convergence, later original launch stages still reserve and consume their own
+  persisted `max=1` budgets through the shared orchestrator.
 - `workspace_launch_readback_diagnose` and
   `workspace_launch_readback_recover` are isolated modes in the existing
   production customer-operation workflow. Diagnosis is approval-free and
@@ -563,10 +565,11 @@ contract or select the SKU for a customer launch.
   identities, unknown stage, original attempt budget, recovery key, and the
   stage-specific remaining write set. It explicitly forbids a new launch,
   debit, recharge, refund, scale, CVM, second CBS, deletion, replacement, or
-  retry of the unknown external write. Runner-direct Sub2API, Tencent, and
-  Kubernetes mutation counts remain zero; the existing launch worker's bounded
-  background mutations are reported separately as unknown until terminal
-  authoritative readback proves Receipt and URL.
+  retry of the unknown external write. The GET proof's and runner-direct
+  Sub2API, Tencent, and Kubernetes mutation counts are each zero. These scoped
+  counts do not describe the whole recovery: the existing launch worker's
+  bounded background mutation counts are reported separately as `unknown` until
+  terminal authoritative readback proves Receipt and URL.
 
 ## Launch Stages
 

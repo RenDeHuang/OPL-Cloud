@@ -587,9 +587,6 @@ func workspaceLaunchResponse(row map[string]any) (map[string]any, error) {
 			"recoveryKey": approval.RecoveryKey, "workspaceImageDigest": approval.WorkspaceImageDigest,
 		}
 	}
-	if operation.ReadbackRecoveryProof != nil {
-		response["readbackRecoveryProof"] = operation.ReadbackRecoveryProof
-	}
 	return response, nil
 }
 
@@ -1446,10 +1443,33 @@ func workspaceLaunchReadbackFabricOperationSpecs(operation workspaceLaunchOperat
 	return []workspaceLaunchReadbackFabricOperationSpec{
 		{Stage: "compute", Action: "create_compute_allocation", ResourceKind: "compute_allocation", ResourceID: operation.ComputeID, IdempotencyKey: operation.ID + ":compute"},
 		{Stage: "storage", Action: "create_storage_volume", ResourceKind: "storage_volume", ResourceID: operation.StorageID, IdempotencyKey: operation.ID + ":storage"},
-		{Stage: "attachment", Action: "create_storage_attachment", ResourceKind: "storage_attachment", ResourceID: operation.AttachmentOperationID, IdempotencyKey: operation.AttachmentOperationID},
+		{Stage: "attachment", Action: "create_storage_attachment", ResourceKind: "storage_attachment", ResourceID: operation.AttachmentID, IdempotencyKey: operation.AttachmentOperationID},
 		{Stage: "secret", Action: "upsert_gateway_secret", ResourceKind: "gateway_secret", ResourceID: workspaceGatewaySecretReference(operation.WorkspaceID), IdempotencyKey: operation.WorkspaceOperationID + ":secret:gateway-secret"},
 		{Stage: "runtime", Action: "create_workspace_runtime", ResourceKind: "workspace_runtime", ResourceID: operation.WorkspaceID, IdempotencyKey: operation.WorkspaceOperationID + ":runtime"},
 	}
+}
+
+func workspaceLaunchStorageAttachmentID(operation workspaceLaunchOperation) string {
+	return "att_" + workspaceComputeClaimStableSuffix(operation.AttachmentOperationID)[:18]
+}
+
+func workspaceLaunchStorageAttachmentFabricOperationID(operation workspaceLaunchOperation) string {
+	return "op_create_storage_attachment_" + workspaceComputeClaimStableSuffix(
+		operation.AttachmentOperationID, "storage_attachment", "create_storage_attachment",
+	)[:12]
+}
+
+func workspaceLaunchStorageAttachmentRequestHash(operation workspaceLaunchOperation) string {
+	payload, err := json.Marshal(clients.StorageAttachmentInput{
+		WorkspaceID: operation.WorkspaceID,
+		ComputeID:   operation.ComputeID,
+		VolumeID:    operation.StorageID,
+	})
+	if err != nil {
+		return ""
+	}
+	digest := sha256.Sum256(payload)
+	return hex.EncodeToString(digest[:])
 }
 
 func workspaceLaunchReadbackStageIndex(stage string) int {
@@ -1559,7 +1579,9 @@ func workspaceLaunchReadbackRecoveryAuthorityForOperation(operation workspaceLau
 				identity = workspaceLaunchReadbackOperationIdentity(candidate, truth.Storage.OperationID, providerOperationID)
 			case "attachment":
 				resource, ok := candidate.RedactedProviderPayload["resource"]
-				if !ok || jsonRoundTrip(resource, &authority.Attachment) != nil || authority.Attachment.ID == "" || authority.Attachment.OperationID != candidate.IdempotencyKey ||
+				if !ok || jsonRoundTrip(resource, &authority.Attachment) != nil || authority.Attachment.ID != workspaceLaunchStorageAttachmentID(operation) ||
+					candidate.ResourceID != authority.Attachment.ID || candidate.OperationID != workspaceLaunchStorageAttachmentFabricOperationID(operation) ||
+					candidate.RequestHash != workspaceLaunchStorageAttachmentRequestHash(operation) || authority.Attachment.OperationID != candidate.IdempotencyKey ||
 					authority.Attachment.WorkspaceID != operation.WorkspaceID || authority.Attachment.ComputeID != operation.ComputeID || authority.Attachment.VolumeID != operation.StorageID ||
 					authority.Attachment.Status != "attached" || operation.AttachmentID != "" && operation.AttachmentID != authority.Attachment.ID {
 					return workspaceLaunchReadbackRecoveryAuthority{}, errBillingReviewIdentity
@@ -2533,6 +2555,9 @@ func workspaceLaunchRecoveryResponse(operation workspaceLaunchOperation) (map[st
 	if err != nil {
 		return nil, err
 	}
+	if operation.ReadbackRecoveryProof != nil {
+		result["readbackRecoveryProof"] = operation.ReadbackRecoveryProof
+	}
 	result["resourceType"], result["billingOperationId"] = "workspace", operation.ID
 	result["allowedActions"] = []string{}
 	if operation.Status == "manual_review" {
@@ -2977,22 +3002,37 @@ func (app *controlPlaneServer) workspaceLaunchAttachmentFromFabricOperation(ctx 
 
 func workspaceLaunchAttachmentFromFabricOperations(operations []clients.FabricOperation, operation workspaceLaunchOperation) (clients.StorageAttachment, error) {
 	var matches []clients.StorageAttachment
+	expectedAttachmentID := workspaceLaunchStorageAttachmentID(operation)
+	expectedFabricOperationID := workspaceLaunchStorageAttachmentFabricOperationID(operation)
+	expectedRequestHash := workspaceLaunchStorageAttachmentRequestHash(operation)
 	for _, candidate := range operations {
-		if candidate.Action != "create_storage_attachment" || candidate.ResourceKind != "storage_attachment" || candidate.Status != "succeeded" ||
-			candidate.IdempotencyKey != operation.AttachmentOperationID || candidate.AccountID != operation.AccountID || candidate.WorkspaceID != operation.WorkspaceID {
+		if candidate.Action != "create_storage_attachment" ||
+			(candidate.IdempotencyKey != operation.AttachmentOperationID && candidate.ResourceID != expectedAttachmentID) {
 			continue
+		}
+		if candidate.ResourceKind != "storage_attachment" || candidate.Status != "succeeded" || candidate.ResourceID != expectedAttachmentID ||
+			candidate.OperationID != expectedFabricOperationID || candidate.IdempotencyKey != operation.AttachmentOperationID || candidate.RequestHash != expectedRequestHash ||
+			candidate.AccountID != operation.AccountID || candidate.WorkspaceID != operation.WorkspaceID {
+			return clients.StorageAttachment{}, errors.New("workspace_launch_attachment_readback_invalid")
 		}
 		var attachment clients.StorageAttachment
 		resource, ok := candidate.RedactedProviderPayload["resource"]
-		if !ok || jsonRoundTrip(resource, &attachment) != nil || attachment.ID == "" {
-			continue
+		if !ok || jsonRoundTrip(resource, &attachment) != nil || attachment.ID != expectedAttachmentID {
+			return clients.StorageAttachment{}, errors.New("workspace_launch_attachment_readback_invalid")
 		}
 		if attachment.OperationID == "" {
 			attachment.OperationID = operation.AttachmentOperationID
 		}
 		if attachment.OperationID != operation.AttachmentOperationID || attachment.WorkspaceID != operation.WorkspaceID ||
-			attachment.ComputeID != operation.ComputeID || attachment.VolumeID != operation.StorageID || attachment.Status != "attached" {
-			continue
+			attachment.ComputeID != operation.ComputeID || attachment.VolumeID != operation.StorageID || attachment.Status != "attached" ||
+			operation.AttachmentID != "" && operation.AttachmentID != attachment.ID {
+			return clients.StorageAttachment{}, errors.New("workspace_launch_attachment_readback_invalid")
+		}
+		providerOperationID, tagsOK := workspaceLaunchReadbackProviderOperationID(
+			attachment.CostTags, operation.AccountID, operation.WorkspaceID, attachment.ID,
+		)
+		if !tagsOK || providerOperationID != operation.AttachmentOperationID {
+			return clients.StorageAttachment{}, errors.New("workspace_launch_attachment_readback_invalid")
 		}
 		matches = append(matches, attachment)
 	}

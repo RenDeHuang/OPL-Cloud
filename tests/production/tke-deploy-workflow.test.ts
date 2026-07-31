@@ -1334,7 +1334,7 @@ test("Workspace launch readback workflow gates bind every approved identity and 
       storageSizeGb: 10,
       storageChargeType: "PREPAID",
       storageRenewFlag: "NOTIFY_AND_MANUAL_RENEW",
-      storageDeadline: target.deadline,
+      storageDeadline: "2099-08-29T00:00:00Z",
       attachmentId: "attachment-readback-fixture",
       attachmentProviderId: "pv/volume-readback:pvc/volume-readback-data",
       gatewaySecretRef: "opl-gateway-0123456789abcdef",
@@ -1407,6 +1407,19 @@ test("Workspace launch readback workflow gates bind every approved identity and 
   };
   assert.equal((await runWorkflowArtifactGate(diagnoseGate, "workspace-launch-readback-diagnosis.json", diagnosis, env)).status, 0);
 
+  for (const [name, mutate, targetOverride] of [
+    ["compute deadline before paidThrough", (artifact) => { artifact.proof.target.deadline = "2099-08-26T00:00:00Z"; }, { ...target, deadline: "2099-08-26T00:00:00Z" }],
+    ["storage deadline before paidThrough", (artifact) => { artifact.proof.resources.storageDeadline = "2099-08-26T00:00:00Z"; }, target]
+  ]) {
+    const artifact = JSON.parse(JSON.stringify(diagnosis));
+    artifact.target = targetOverride;
+    mutate(artifact);
+    const result = await runWorkflowArtifactGate(diagnoseGate, "workspace-launch-readback-diagnosis.json", artifact, {
+      ...env, OPL_WORKSPACE_LAUNCH_READBACK_TARGET_JSON: JSON.stringify(targetOverride)
+    });
+    assert.notEqual(result.status, 0, `diagnosis gate accepted ${name}`);
+  }
+
   const approvalDigest = createHash("sha256").update(canonicalJson(approval)).digest("hex");
   const recovery = {
     schemaVersion: 1,
@@ -1443,6 +1456,7 @@ test("Workspace launch readback workflow gates bind every approved identity and 
     ["provider operation drift", (artifact) => { artifact.proof.operationIds.storage.providerOperationId = "provider-storage-drifted"; }],
     ["operation identity drift", (artifact) => { artifact.proof.operationIds.runtime.idempotencyKey = "workspace-launch-other:workspace:runtime"; }],
     ["CBS attribute drift", (artifact) => { artifact.proof.resources.storageSizeGb = 100; }],
+    ["CBS deadline before paidThrough", (artifact) => { artifact.proof.resources.storageDeadline = "2099-08-26T00:00:00Z"; }],
     ["full target drift", (artifact) => { artifact.target.cvmInstanceId = "ins-drifted-fixture"; }],
     ["budget drift", (artifact) => { artifact.proof.attemptBudget.unknown = 0; }],
     ["release drift", (artifact) => { artifact.release.cloudImageDigest = digestB; }]
@@ -1452,6 +1466,20 @@ test("Workspace launch readback workflow gates bind every approved identity and 
     const result = await runWorkflowArtifactGate(recoverGate, "workspace-launch-readback-recovery.json", artifact, recoveryEnv);
     assert.notEqual(result.status, 0, `recovery gate accepted ${name}`);
   }
+
+  const unsafeTarget = { ...target, deadline: "2099-08-26T00:00:00Z" };
+  const unsafeApproval = JSON.parse(JSON.stringify(approval));
+  unsafeApproval.target.deadline = unsafeTarget.deadline;
+  const unsafeRecovery = JSON.parse(JSON.stringify(recovery));
+  unsafeRecovery.target = unsafeTarget;
+  unsafeRecovery.proof.target.deadline = unsafeTarget.deadline;
+  unsafeRecovery.approval.approvalDigest = createHash("sha256").update(canonicalJson(unsafeApproval)).digest("hex");
+  const unsafeRecoveryResult = await runWorkflowArtifactGate(recoverGate, "workspace-launch-readback-recovery.json", unsafeRecovery, {
+    ...recoveryEnv,
+    OPL_WORKSPACE_LAUNCH_READBACK_TARGET_JSON: JSON.stringify(unsafeTarget),
+    OPL_WORKSPACE_LAUNCH_READBACK_APPROVAL_JSON: JSON.stringify(unsafeApproval)
+  });
+  assert.notEqual(unsafeRecoveryResult.status, 0, "recovery gate accepted compute deadline before paidThrough");
 });
 
 test("recovered Workspace E2E is a separate hosted mode with no resource mutation capability or hard-coded customer", async () => {

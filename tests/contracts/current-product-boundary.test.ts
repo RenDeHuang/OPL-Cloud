@@ -396,7 +396,7 @@ test("Current Fabric contracts require dedicated package NodePools without weake
     output: "redacted_evidence_only",
     currentState: "implemented_and_fake_tested_not_executed"
   });
-  assert.equal(deployment.schemaVersion, 24);
+  assert.equal(deployment.schemaVersion, 25);
   assert.deepEqual(deployment.productionWorkspaceLaunchReadbackRecovery, {
     workflow: ".github/workflows/production-basic-customer-operation.yml",
     modes: {
@@ -406,7 +406,8 @@ test("Current Fabric contracts require dedicated package NodePools without weake
         persistence: "none",
         databaseMutationCount: 0,
         mutationApproval: false,
-        mutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
+        proofMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
+        runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
       },
       recover: {
         input: "operation_mode=workspace_launch_readback_recover",
@@ -415,8 +416,11 @@ test("Current Fabric contracts require dedicated package NodePools without weake
         approvalBinding: ["merged_main_sha", "cloud_image_digest", "workspace_image_digest", "expiry", "customer", "launch", "workspace", "product_truth", "compute", "storage", "attachment", "secret", "runtime", "activation", "receipt", "machine_ownership", "fabric_operation_identity", "provider_operation_identity", "stage", "attempt_budget", "recovery_key"],
         allowedWrites: "confirm_unknown_stage_from_authoritative_readback_then_remaining_original_launch_writes",
         forbiddenWrites: ["create_launch", "debit", "recharge", "refund", "scale", "create_cvm", "create_second_cbs", "delete", "replace", "retry_unknown_stage_write"],
+        proofMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
         runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
-        backgroundMutationCountsState: "unknown"
+        backgroundMutationCountsState: "unknown",
+        unknownStageExternalWriteReplayCount: 0,
+        remainingStageMutationBudget: "original_launch_persisted_per_stage_max_1"
       }
     },
     targetSource: "protected_input_full_compute_target_preserved_without_projection",
@@ -743,7 +747,7 @@ test("Current contracts hard cut operator resources, wallet adjustments, and ann
     absentRequires: "both_local_identities_and_exact_provider_describe_absence",
     forbiddenSideEffects: ["sync", "tag", "kubectl_apply", "delete", "label", "purchase", "renew", "destroy"]
   });
-  assert.equal(boundary.schemaVersion, 18);
+  assert.equal(boundary.schemaVersion, 19);
   assert.deepEqual(boundary.services.controlPlane.workspaceContinuationAttemptBudget, {
     owner: "original_workspace.launch.v2_operation",
     stages: ["storage", "attachment", "secret", "runtime", "activation", "receipt"],
@@ -765,10 +769,14 @@ test("Current contracts hard cut operator resources, wallet adjustments, and ann
     identityBinding: "full_product_compute_node_cbs_attachment_secret_runtime_and_layered_operation_identity",
     convergence: "postgresql_original_launch_cas_only_after_unique_exact_authoritative_readback",
     winner: "one_concurrent_recovery_cas",
-    replay: "zero_external_write_same_original_or_later_stage",
+    replay: "unknown_stage_external_write_never_reissued_later_stages_use_own_persisted_budget",
     failure: "absent_multiple_drift_or_read_error_remains_manual_review",
     sharedOrchestrator: "fulfillWorkspaceLaunch_basic_pro_and_compute_claim_recovery",
-    mutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
+    proofMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
+    runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
+    backgroundMutationCountsState: "unknown",
+    unknownStageExternalWriteReplayCount: 0,
+    remainingStageMutationBudget: "original_launch_persisted_per_stage_max_1"
   });
   assert.deepEqual(boundary.services.controlPlane.recoveredWorkspaceE2EAttempt, {
     reserveRoute: "POST /api/workspaces/{workspaceId}/recovered-e2e-attempt",

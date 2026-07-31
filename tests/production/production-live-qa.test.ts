@@ -1137,7 +1137,7 @@ function workspaceLaunchReadbackProof(overrides = {}) {
 			storageSizeGb: 10,
 			storageChargeType: "PREPAID",
 			storageRenewFlag: "NOTIFY_AND_MANUAL_RENEW",
-			storageDeadline: COMPUTE_CLAIM_TARGET.deadline,
+			storageDeadline: "2099-08-29T00:00:00Z",
 			attachmentId: "attachment-compute-claim-fixture",
 			attachmentProviderId: "pv/volume-fixture:pvc/volume-fixture-data",
 			gatewaySecretRef: `opl-gateway-${computeClaimStableSuffix(COMPUTE_CLAIM_TARGET.workspaceId).slice(0, 16)}`,
@@ -1227,6 +1227,63 @@ test("workspace launch readback diagnosis is GET-only and binds the exact unknow
     { method: "POST", path: "/api/auth/login" },
     { method: "GET", path: `/api/operator/workspace-launches/${COMPUTE_CLAIM_TARGET.launchOperationId}/readback-recovery-proof` }
   ]);
+});
+
+test("workspace launch readback rejects either provider deadline before paidThrough", async () => {
+  for (const [name, target, mutateProof] of [
+    ["compute", { ...COMPUTE_CLAIM_TARGET, deadline: "2099-08-26T00:00:00Z" }, (proof) => {
+      proof.target.deadline = "2099-08-26T00:00:00Z";
+    }],
+    ["storage", COMPUTE_CLAIM_TARGET, (proof) => {
+      proof.resources.storageDeadline = "2099-08-26T00:00:00Z";
+    }]
+  ]) {
+    const proof = workspaceLaunchReadbackProof();
+    mutateProof(proof);
+    let recoveryCalls = 0;
+    await assert.rejects(() => productionLiveQa.recoverWorkspaceLaunchReadbackRecovery({
+      target,
+      approvalJson: workspaceLaunchReadbackApprovalJson(proof),
+      approvalId: "approval-readback-fixture",
+      mergedSha: BASIC_CANARY_MERGED_SHA,
+      cloudImageDigest: BASIC_CANARY_CLOUD_DIGEST,
+      origin: "https://cloud.medopl.cn",
+      adminEmail: ADMIN_EMAIL,
+      adminPassword: ADMIN_PASSWORD,
+      customerEmail: COMPUTE_CLAIM_CUSTOMER_EMAIL,
+      internalServiceToken: "workspace-readback-capability",
+      kubeconfigPath: "/run/secrets/kubeconfig",
+      namespace: "opl-cloud",
+      cloudRevisionEvidenceReader: async () => { recoveryCalls += 1; return computeClaimCloudRevisionEvidence(); },
+      fetchImpl: async () => { recoveryCalls += 1; return json(proof); },
+      now: new Date("2026-08-28T00:00:00Z")
+    }), /workspace_launch_readback_(?:approval_invalid|proof_invalid)/, name);
+    assert.equal(recoveryCalls, 0, `${name} deadline crossed recovery preflight`);
+
+    let diagnosisCalls = 0;
+    await assert.rejects(() => productionLiveQa.diagnoseWorkspaceLaunchReadbackRecovery({
+      target,
+      mergedSha: BASIC_CANARY_MERGED_SHA,
+      cloudImageDigest: BASIC_CANARY_CLOUD_DIGEST,
+      origin: "https://cloud.medopl.cn",
+      adminEmail: ADMIN_EMAIL,
+      adminPassword: ADMIN_PASSWORD,
+      customerEmail: COMPUTE_CLAIM_CUSTOMER_EMAIL,
+      kubeconfigPath: "/run/secrets/kubeconfig",
+      namespace: "opl-cloud",
+      cloudRevisionEvidenceReader: async () => computeClaimCloudRevisionEvidence(),
+      fetchImpl: async (input) => {
+        diagnosisCalls += 1;
+        if (new URL(String(input)).pathname === "/api/auth/login") {
+          return json({ user: { accountId: "acct-admin", role: "admin" } }, 200, {
+            "set-cookie": "opl_session=session-fixture; Path=/; HttpOnly", "x-opl-csrf-token": "csrf-readback"
+          });
+        }
+        return json(proof);
+      }
+    }), /workspace_launch_readback_proof_invalid/, name);
+    assert.equal(diagnosisCalls, 2, `${name} diagnosis did not stop at proof validation`);
+  }
 });
 
 test("workspace launch readback rejects a three-field target before network access", async () => {

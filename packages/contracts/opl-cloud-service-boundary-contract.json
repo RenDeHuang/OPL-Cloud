@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 18,
+  "schemaVersion": 19,
   "owner": "OPL Platform Architecture",
   "purpose": "Current ownership contract for Console UI, Control Plane, Ledger, Fabric, and external Sub2API.",
   "state": "current",
@@ -122,10 +122,14 @@
         "identityBinding": "full_product_compute_node_cbs_attachment_secret_runtime_and_layered_operation_identity",
         "convergence": "postgresql_original_launch_cas_only_after_unique_exact_authoritative_readback",
         "winner": "one_concurrent_recovery_cas",
-        "replay": "zero_external_write_same_original_or_later_stage",
+        "replay": "unknown_stage_external_write_never_reissued_later_stages_use_own_persisted_budget",
         "failure": "absent_multiple_drift_or_read_error_remains_manual_review",
         "sharedOrchestrator": "fulfillWorkspaceLaunch_basic_pro_and_compute_claim_recovery",
-        "mutationCounts": {"sub2api": 0, "tencent": 0, "kubernetes": 0}
+        "proofMutationCounts": {"sub2api": 0, "tencent": 0, "kubernetes": 0},
+        "runnerDirectMutationCounts": {"sub2api": 0, "tencent": 0, "kubernetes": 0},
+        "backgroundMutationCountsState": "unknown",
+        "unknownStageExternalWriteReplayCount": 0,
+        "remainingStageMutationBudget": "original_launch_persisted_per_stage_max_1"
       },
       "recoveredWorkspaceE2EAttempt": {
         "reserveRoute": "POST /api/workspaces/{workspaceId}/recovered-e2e-attempt",

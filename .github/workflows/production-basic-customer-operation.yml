@@ -723,6 +723,11 @@ jobs:
           const exactTarget = target;
           const proof = result?.proof;
           const targetMatches = (candidate) => candidate && Object.entries(exactTarget).every(([key, value]) => candidate[key] === value);
+          const deadlineCovers = (deadline, paidThrough) => {
+            const deadlineMs = Date.parse(String(deadline || ""));
+            const paidThroughMs = Date.parse(String(paidThrough || ""));
+            return Number.isFinite(deadlineMs) && Number.isFinite(paidThroughMs) && deadlineMs >= paidThroughMs;
+          };
           const exactBudget = proof?.attemptBudget?.attempted === 1 && proof?.attemptBudget?.confirmed === 0 &&
             proof?.attemptBudget?.unknown === 1 && proof?.attemptBudget?.max === 1;
           if (result?.schemaVersion !== 1 || result?.operationMode !== "workspace_launch_readback_diagnose" || result?.status !== "proven" ||
@@ -730,6 +735,7 @@ jobs:
             result?.release?.cloudImageDigest !== process.env.OPL_WORKSPACE_LAUNCH_READBACK_CLOUD_DIGEST || JSON.stringify(result?.target) !== JSON.stringify(exactTarget) ||
             proof?.schemaVersion !== 1 || proof?.eligible !== true || proof?.reason !== "none" || !exactBudget ||
             proof?.customer?.email !== process.env.OPL_WORKSPACE_LAUNCH_READBACK_CUSTOMER_EMAIL || proof?.customer?.accountId !== exactTarget.accountId || !targetMatches(proof?.target) ||
+            !deadlineCovers(proof?.target?.deadline, proof?.target?.paidThrough) || !deadlineCovers(proof?.resources?.storageDeadline, proof?.target?.paidThrough) ||
             proof?.resources?.computeAllocationId !== exactTarget.computeAllocationId || proof?.resources?.computeProviderResourceId !== exactTarget.cvmInstanceId ||
             proof?.resources?.storageVolumeId !== exactTarget.storageId || proof?.resources?.storageZone !== exactTarget.zone ||
             proof?.operationIds?.launchOperationId !== exactTarget.launchOperationId || proof?.operationIds?.compute?.providerOperationId !== proof?.operationIds?.machineOwnershipId ||
@@ -857,6 +863,11 @@ jobs:
           const target = JSON.parse(process.env.OPL_WORKSPACE_LAUNCH_READBACK_TARGET_JSON);
           const exactTarget = target;
           const targetMatches = (candidate) => candidate && Object.entries(exactTarget).every(([key, value]) => candidate[key] === value);
+          const deadlineCovers = (deadline, paidThrough) => {
+            const deadlineMs = Date.parse(String(deadline || ""));
+            const paidThroughMs = Date.parse(String(paidThrough || ""));
+            return Number.isFinite(deadlineMs) && Number.isFinite(paidThroughMs) && deadlineMs >= paidThroughMs;
+          };
           const canonicalJson = (value) => Array.isArray(value)
             ? `[${value.map(canonicalJson).join(",")}]`
             : !value || typeof value !== "object"
@@ -875,6 +886,7 @@ jobs:
             approval?.schemaVersion !== 1 || approval?.confirmation !== "RECOVER_UNKNOWN_WORKSPACE_LAUNCH_STAGE_FROM_AUTHORITATIVE_READBACK" ||
             approval?.customer?.email !== process.env.OPL_WORKSPACE_LAUNCH_READBACK_CUSTOMER_EMAIL || approval?.customer?.accountId !== exactTarget.accountId ||
             !targetMatches(approval?.target) || !targetMatches(proof?.target) || proof?.resources?.computeAllocationId !== exactTarget.computeAllocationId ||
+            !deadlineCovers(proof?.target?.deadline, proof?.target?.paidThrough) || !deadlineCovers(proof?.resources?.storageDeadline, proof?.target?.paidThrough) ||
             proof?.resources?.computeProviderResourceId !== exactTarget.cvmInstanceId || proof?.resources?.storageVolumeId !== exactTarget.storageId ||
             proof?.resources?.storageZone !== exactTarget.zone || proof?.operationIds?.launchOperationId !== exactTarget.launchOperationId ||
             proof?.operationIds?.compute?.providerOperationId !== proof?.operationIds?.machineOwnershipId ||

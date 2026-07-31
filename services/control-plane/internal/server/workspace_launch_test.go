@@ -95,7 +95,8 @@ func TestWorkspaceLaunchResponseAllowsOnlyCustomerSafeFields(t *testing.T) {
 			Customer:             workspaceComputeClaimApprovalCustomer{Email: "private-owner@example.com", AccountID: "acct-alpha"},
 			Resources:            workspaceComputeClaimApprovalResources{GatewaySecretRef: "private-secret-ref"},
 		},
-		ErrorCode: "upstream_unavailable",
+		ReadbackRecoveryProof: customerSensitiveWorkspaceLaunchReadbackProof(),
+		ErrorCode:             "upstream_unavailable",
 	}
 	row := workspaceLaunchOperationRow(operation)
 	var persisted map[string]any
@@ -129,7 +130,7 @@ func TestWorkspaceLaunchResponseAllowsOnlyCustomerSafeFields(t *testing.T) {
 		recovery["recoveryKey"] != "recovery-alpha" || recovery["workspaceImageDigest"] != "sha256:"+strings.Repeat("b", 64) || len(recovery) != 4 {
 		t.Fatalf("workspace launch recovery projection = %#v", response["recovery"])
 	}
-	for _, forbidden := range []string{"pricingVersion", "totalMonthlyPriceCnyCents"} {
+	for _, forbidden := range []string{"pricingVersion", "totalMonthlyPriceCnyCents", "readbackRecoveryProof"} {
 		if _, ok := response[forbidden]; ok {
 			t.Fatalf("workspace launch response exposed %s: %#v", forbidden, response)
 		}
@@ -138,11 +139,84 @@ func TestWorkspaceLaunchResponseAllowsOnlyCustomerSafeFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, forbidden := range []string{"usr-private", "attachment-operation-private", "workspace-operation-private", "private upstream detail", "private-password", "private row detail", "private-owner@example.com", "private-secret-ref"} {
+	for _, forbidden := range []string{
+		"usr-private", "attachment-operation-private", "workspace-operation-private", "private upstream detail", "private-password", "private row detail",
+		"private-owner@example.com", "private-secret-ref", "10.20.30.99", "machine-private", "ins-private", "node-private",
+		"fop-private", "fabric-operation-private", "provider-operation-private",
+	} {
 		if strings.Contains(string(responseJSON), forbidden) {
 			t.Fatalf("workspace launch response leaked %q: %s", forbidden, responseJSON)
 		}
 	}
+}
+
+func customerSensitiveWorkspaceLaunchReadbackProof() *workspaceLaunchReadbackRecoveryProof {
+	identity := workspaceLaunchReadbackRecoveryFabricOperationIdentity{
+		IdempotencyKey: "workspace-launch-private:compute", FabricRecordID: "fop-private",
+		FabricOperationID: "fabric-operation-private", RequestHash: "request-hash-private",
+		ResourceOperationID: "resource-operation-private", ProviderOperationID: "provider-operation-private",
+	}
+	return &workspaceLaunchReadbackRecoveryProof{
+		SchemaVersion: 1, Eligible: true, Reason: "none", Stage: "runtime",
+		Customer: workspaceLaunchReadbackRecoveryCustomer{Email: "readback-private@example.com", AccountID: "acct-alpha", OwnerUserID: "usr-private"},
+		Target: workspaceLaunchReadbackRecoveryTarget{
+			LaunchOperationID: "workspace-launch-private", AccountID: "acct-alpha", WorkspaceID: "ws-alpha",
+			MachineName: "machine-private", NodeName: "node-private", CVMInstanceID: "ins-private", PrivateIP: "10.20.30.99",
+		},
+		Resources: workspaceLaunchReadbackRecoveryResources{
+			ComputeProviderResourceID: "ins-private", StorageProviderResourceID: "disk-private", AttachmentProviderID: "pv/private:pvc/private",
+		},
+		OperationIDs: workspaceLaunchReadbackRecoveryOperationIDs{
+			LaunchOperationID: "workspace-launch-private", LaunchRequestHash: "launch-request-private", MachineOwnershipID: "ownership-private",
+			Compute: identity, Storage: identity, Attachment: identity, Secret: identity, Runtime: identity,
+			ActivationOperationID: "activation-operation-private", ReceiptOperationID: "receipt-operation-private",
+		},
+		WorkspaceImageDigest: "sha256:" + strings.Repeat("d", 64), AttemptBudget: workspaceLaunchStageBudget{Attempted: 1, Unknown: 1, Max: 1},
+	}
+}
+
+func assertCustomerWorkspaceLaunchResponseSafe(t *testing.T, response *httptest.ResponseRecorder) {
+	t.Helper()
+	if response.Code < http.StatusOK || response.Code >= http.StatusMultipleChoices {
+		t.Fatalf("customer response status=%d body=%s", response.Code, response.Body.String())
+	}
+	for _, forbidden := range []string{
+		"readbackRecoveryProof", "readback-private@example.com", "10.20.30.99", "machine-private", "ins-private", "node-private",
+		"fop-private", "fabric-operation-private", "provider-operation-private", "resource-operation-private", "ownership-private",
+	} {
+		if strings.Contains(response.Body.String(), forbidden) {
+			t.Fatalf("customer response leaked %q: %s", forbidden, response.Body.String())
+		}
+	}
+}
+
+func TestWorkspaceLaunchCustomerEndpointsNeverExposeReadbackRecoveryProof(t *testing.T) {
+	fixture := newWorkspaceLaunchHTTPFixture(t, 1_000_000_000)
+	body := `{"name":"Alpha","packageId":"basic","sizeGb":10,"autoRenew":false}`
+	created := fixture.launch(t, body, "launch-customer-safe")
+	assertCustomerWorkspaceLaunchResponseSafe(t, created)
+	var createdBody map[string]any
+	if err := json.Unmarshal(created.Body.Bytes(), &createdBody); err != nil {
+		t.Fatal(err)
+	}
+	operationID := stringValue(createdBody["operationId"])
+	row, found, err := fixture.store.GetRuntimeOperation(context.Background(), operationID)
+	if err != nil || !found {
+		t.Fatalf("launch operation read found=%t err=%v", found, err)
+	}
+	operation, err := decodeWorkspaceLaunchOperation(row)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation.ReadbackRecoveryProof = customerSensitiveWorkspaceLaunchReadbackProof()
+	mustStore(t, fixture.store.SaveRuntimeOperation(context.Background(), workspaceLaunchOperationRow(operation)))
+
+	replayed := fixture.launch(t, body, "launch-customer-safe")
+	assertCustomerWorkspaceLaunchResponseSafe(t, replayed)
+	listed := requestWithSession(t, fixture.server, fixture.session, http.MethodGet, "/api/workspace-launches", "")
+	assertCustomerWorkspaceLaunchResponseSafe(t, listed)
+	detail := requestWithSession(t, fixture.server, fixture.session, http.MethodGet, "/api/workspace-launches/"+operationID, "")
+	assertCustomerWorkspaceLaunchResponseSafe(t, detail)
 }
 
 type workspaceLaunchHTTPFixture struct {

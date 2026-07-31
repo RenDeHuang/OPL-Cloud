@@ -1118,6 +1118,67 @@ func TestResourceMutationsAppendFabricOperationFacts(t *testing.T) {
 	}
 }
 
+type providerAttachmentIdentityProvider struct{ testProvider }
+
+func (providerAttachmentIdentityProvider) CreateStorageAttachment(_ context.Context, input StorageAttachmentInput, _ ComputeAllocation, _ StorageVolume) (StorageAttachment, error) {
+	id := "att_" + stableSuffix(input.OperationID)[:18]
+	return StorageAttachment{
+		ID: id, OperationID: input.OperationID, WorkspaceID: input.WorkspaceID, ComputeID: input.ComputeID, VolumeID: input.VolumeID,
+		Status: "attached", Provider: "tencent-tke", ProviderAttachmentID: "pv/volume-alpha:pvc/volume-alpha-data",
+		ProviderRequestID: providerRequestID("storage-attach", input.IdempotencyKey),
+		CostTags: map[string]string{
+			"opl_account_id": "acct-alpha", "opl_workspace_id": input.WorkspaceID, "opl_resource_id": id, "opl_operation_id": input.OperationID,
+		},
+	}, nil
+}
+
+func TestCreateStorageAttachmentOperationPersistsProviderResourceIdentity(t *testing.T) {
+	service := NewServiceWithOperationStore(providerAttachmentIdentityProvider{}, NewMemoryOperationStore())
+	ctx := context.Background()
+	compute, err := service.CreateComputeAllocation(ctx, ComputeAllocationInput{
+		AccountID: "acct-alpha", WorkspaceID: "ws-alpha", PackageID: "basic", NodePoolID: "np-basic", IdempotencyKey: "workspace-launch-alpha:compute",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForOperation(t, service, "create_compute_allocation", "compute_allocation", compute.ID, "succeeded")
+	volume, err := service.CreateStorageVolume(ctx, StorageVolumeInput{
+		AccountID: "acct-alpha", WorkspaceID: "ws-alpha", ComputeID: compute.ID, Zone: "ap-guangzhou-3", SizeGB: 10,
+		IdempotencyKey: "workspace-launch-alpha:storage",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	attachment, err := service.CreateStorageAttachment(ctx, StorageAttachmentInput{
+		WorkspaceID: "ws-alpha", ComputeID: compute.ID, VolumeID: volume.ID, IdempotencyKey: "workspace-launch-alpha:attachment",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	operations, err := service.ListOperations(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stored FabricOperation
+	for _, operation := range operations {
+		if operation.Action == "create_storage_attachment" {
+			stored = operation
+		}
+	}
+	var storedAttachment StorageAttachment
+	expectedOperationID := "op_create_storage_attachment_" + stableSuffix(
+		"workspace-launch-alpha:attachment", "storage_attachment", "create_storage_attachment",
+	)[:12]
+	expectedRequestHash := hashInput(StorageAttachmentInput{
+		WorkspaceID: "ws-alpha", ComputeID: compute.ID, VolumeID: volume.ID,
+	})
+	if stored.ID == "" || stored.Status != "succeeded" || stored.ResourceID != attachment.ID || !strings.HasPrefix(stored.ResourceID, "att_") ||
+		stored.IdempotencyKey != "workspace-launch-alpha:attachment" || stored.OperationID != expectedOperationID || stored.RequestHash != expectedRequestHash ||
+		!decodeOperationResource(stored, &storedAttachment) || storedAttachment.ID != attachment.ID || storedAttachment.OperationID != stored.IdempotencyKey {
+		t.Fatalf("attachment=%#v operation=%#v storedAttachment=%#v", attachment, stored, storedAttachment)
+	}
+}
+
 func TestStorageSnapshotRestorePersistsAndKeepsSourceVolume(t *testing.T) {
 	ctx := context.Background()
 	store := NewMemoryOperationStore()

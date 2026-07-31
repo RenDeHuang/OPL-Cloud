@@ -154,6 +154,26 @@ func requestWorkspaceLaunchReadbackProof(t *testing.T, fixture workspaceLaunchWo
 	return recorder
 }
 
+func fabricHTTPSerializedOperation(t *testing.T, operation clients.FabricOperation) clients.FabricOperation {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodGet || request.URL.Path != "/fabric/operations" {
+			http.NotFound(response, request)
+			return
+		}
+		response.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(response).Encode([]clients.FabricOperation{operation}); err != nil {
+			t.Fatal(err)
+		}
+	}))
+	t.Cleanup(server.Close)
+	operations, err := clients.NewFabricHTTPClient(server.URL, "test-fabric-token", server.Client()).ListOperations(context.Background())
+	if err != nil || len(operations) != 1 {
+		t.Fatalf("Fabric operation HTTP round trip: operations=%#v err=%v", operations, err)
+	}
+	return operations[0]
+}
+
 type workspaceLaunchReadbackRecoveryScenario struct {
 	fixture             workspaceLaunchWorkerFixture
 	unknown             workspaceLaunchOperation
@@ -187,6 +207,16 @@ func newWorkspaceLaunchReadbackRecoveryScenario(t *testing.T, stage, packageID s
 	fixture.fabric.storageSync.CostTags = map[string]string{
 		"opl_account_id": launch.AccountID, "opl_workspace_id": launch.WorkspaceID, "opl_resource_id": launch.StorageID, "opl_operation_id": storageOperationID,
 	}
+	attachmentID := "att_" + workspaceComputeClaimStableSuffix(launch.ID + ":attachment")[:18]
+	fixture.fabric.attachment = clients.StorageAttachment{
+		ID: attachmentID, OperationID: launch.ID + ":attachment", WorkspaceID: launch.WorkspaceID,
+		ComputeID: launch.ComputeID, VolumeID: launch.StorageID, Status: "attached", Provider: "tencent-tke",
+		ProviderAttachmentID: "pv/" + launch.StorageID + ":pvc/" + launch.StorageID + "-data",
+		CostTags: map[string]string{
+			"opl_account_id": launch.AccountID, "opl_workspace_id": launch.WorkspaceID, "opl_resource_id": attachmentID,
+			"opl_operation_id": launch.ID + ":attachment",
+		},
+	}
 	if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err != nil {
 		t.Fatal(err)
 	}
@@ -216,6 +246,12 @@ func newWorkspaceLaunchReadbackRecoveryScenario(t *testing.T, stage, packageID s
 		unknown.ContinuationAttemptBudgets[stage] != (workspaceLaunchStageBudget{Attempted: 1, Unknown: 1, Max: 1}) {
 		t.Fatalf("unknown %s state=%#v budget=%#v", stage, unknown, unknown.ContinuationAttemptBudgets[stage])
 	}
+	paidThrough, err := time.Parse(time.RFC3339, unknown.PaidThrough)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture.fabric.computeSync.Deadline = paidThrough.Add(24 * time.Hour).Format(time.RFC3339)
+	fixture.fabric.storageSync.Deadline = paidThrough.Add(48 * time.Hour).Format(time.RFC3339)
 	beforeCurrentWrites := workspaceLaunchStageWriteCount(fixture, stage)
 	fixture.fabric.storageCreateErr, fixture.fabric.storageSyncErr = nil, nil
 	fixture.fabric.attachmentErr, fixture.fabric.gatewaySecretErr = nil, nil
@@ -257,12 +293,14 @@ func newWorkspaceLaunchReadbackRecoveryScenario(t *testing.T, stage, packageID s
 				"opl_operation_id": unknown.AttachmentOperationID,
 			},
 		}
-		return clients.FabricOperation{
-			ID: "fop-attachment-readback", OperationID: "op-create-attachment-" + stableID(unknown.ID)[:10], Action: "create_storage_attachment",
-			ResourceKind: "storage_attachment", ResourceID: unknown.AttachmentOperationID, AccountID: unknown.AccountID, WorkspaceID: unknown.WorkspaceID,
-			IdempotencyKey: unknown.AttachmentOperationID, RequestHash: stableID("attachment", unknown.ID), Status: "succeeded",
+		operation := clients.FabricOperation{
+			ID:          "fop_attachment_claim_" + workspaceComputeClaimStableSuffix("create_storage_attachment", unknown.AttachmentOperationID)[:16],
+			OperationID: "op_create_storage_attachment_" + workspaceComputeClaimStableSuffix(unknown.AttachmentOperationID, "storage_attachment", "create_storage_attachment")[:12], Action: "create_storage_attachment",
+			ResourceKind: "storage_attachment", ResourceID: attachment.ID, AccountID: unknown.AccountID, WorkspaceID: unknown.WorkspaceID,
+			IdempotencyKey: unknown.AttachmentOperationID, RequestHash: workspaceLaunchStorageAttachmentRequestHash(unknown), Status: "succeeded",
 			RedactedProviderPayload: map[string]any{"resource": attachment},
 		}
+		return fabricHTTPSerializedOperation(t, operation)
 	}
 	secretOperation := func() clients.FabricOperation {
 		return clients.FabricOperation{
@@ -293,7 +331,7 @@ func newWorkspaceLaunchReadbackRecoveryScenario(t *testing.T, stage, packageID s
 	switch stage {
 	case "attachment":
 		attachment := clients.StorageAttachment{
-			ID: "attachment-authoritative", OperationID: unknown.AttachmentOperationID, WorkspaceID: unknown.WorkspaceID,
+			ID: attachmentID, OperationID: unknown.AttachmentOperationID, WorkspaceID: unknown.WorkspaceID,
 			ComputeID: unknown.ComputeID, VolumeID: unknown.StorageID, Status: "attached", Provider: "tencent-tke",
 		}
 		approvalOperation.AttachmentID = attachment.ID
@@ -545,11 +583,57 @@ func TestWorkspaceLaunchReadbackRecoveryFailsClosedWithoutUniqueExactAuthority(t
 		{name: "storage provider operation drift", mutate: func(f *workspaceLaunchReadbackRecoveryFabric) {
 			f.providerTruth.Storage.CostTags["opl_operation_id"] = "op-storage-other"
 		}},
+		{name: "attachment missing", mutate: func(f *workspaceLaunchReadbackRecoveryFabric) {
+			filtered := f.operations[:0]
+			for _, operation := range f.operations {
+				if operation.Action != "create_storage_attachment" {
+					filtered = append(filtered, operation)
+				}
+			}
+			f.operations = filtered
+		}},
+		{name: "attachment multiple", mutate: func(f *workspaceLaunchReadbackRecoveryFabric) {
+			for _, operation := range f.operations {
+				if operation.Action == "create_storage_attachment" {
+					duplicate := operation
+					duplicate.ID += "-duplicate"
+					duplicate.OperationID += "-duplicate"
+					f.operations = append(f.operations, duplicate)
+					return
+				}
+			}
+		}},
+		{name: "attachment resource id drift", mutate: func(f *workspaceLaunchReadbackRecoveryFabric) {
+			for index := range f.operations {
+				if f.operations[index].Action == "create_storage_attachment" {
+					wrongID := "att_" + strings.Repeat("f", 18)
+					resource := f.operations[index].RedactedProviderPayload["resource"].(map[string]any)
+					resource["id"] = wrongID
+					resource["costTags"].(map[string]any)["opl_resource_id"] = wrongID
+					f.operations[index].ResourceID = wrongID
+					f.operations[index].RedactedProviderPayload["resource"] = resource
+				}
+			}
+		}},
+		{name: "attachment request hash drift", mutate: func(f *workspaceLaunchReadbackRecoveryFabric) {
+			for index := range f.operations {
+				if f.operations[index].Action == "create_storage_attachment" {
+					f.operations[index].RequestHash = strings.Repeat("f", 64)
+				}
+			}
+		}},
+		{name: "attachment Fabric operation drift", mutate: func(f *workspaceLaunchReadbackRecoveryFabric) {
+			for index := range f.operations {
+				if f.operations[index].Action == "create_storage_attachment" {
+					f.operations[index].OperationID = "op_create_storage_attachment_other"
+				}
+			}
+		}},
 		{name: "attachment provider identity drift", mutate: func(f *workspaceLaunchReadbackRecoveryFabric) {
 			for index := range f.operations {
 				if f.operations[index].Action == "create_storage_attachment" {
-					resource := f.operations[index].RedactedProviderPayload["resource"].(clients.StorageAttachment)
-					resource.CostTags["opl_operation_id"] = "attachment-operation-other"
+					resource := f.operations[index].RedactedProviderPayload["resource"].(map[string]any)
+					resource["costTags"].(map[string]any)["opl_operation_id"] = "attachment-operation-other"
 					f.operations[index].RedactedProviderPayload["resource"] = resource
 				}
 			}
@@ -559,6 +643,12 @@ func TestWorkspaceLaunchReadbackRecoveryFailsClosedWithoutUniqueExactAuthority(t
 		}},
 		{name: "provider truth read error", mutate: func(f *workspaceLaunchReadbackRecoveryFabric) {
 			f.providerTruthErr = errors.New("provider truth unavailable")
+		}},
+		{name: "compute deadline before paidThrough", mutate: func(f *workspaceLaunchReadbackRecoveryFabric) {
+			f.providerTruth.Compute.Deadline = "2000-01-01T00:00:00Z"
+		}},
+		{name: "storage deadline before paidThrough", mutate: func(f *workspaceLaunchReadbackRecoveryFabric) {
+			f.providerTruth.Storage.Deadline = "2000-01-01T00:00:00Z"
 		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
