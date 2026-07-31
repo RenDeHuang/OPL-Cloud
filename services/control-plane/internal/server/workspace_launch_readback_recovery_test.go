@@ -125,9 +125,6 @@ func requestWorkspaceLaunchReadbackRecovery(t *testing.T, fixture workspaceLaunc
 	if json.Unmarshal(approvalJSON, &decodedApproval) != nil || jsonRoundTrip(decodedApproval, &typedApproval) != nil {
 		t.Fatal("readback approval fixture is not JSON round-trippable")
 	}
-	if _, ok := workspaceLaunchReadbackRecoveryApprovalFromMap(decodedApproval, key); !ok {
-		t.Fatalf("readback approval fixture rejected: digest=%s computed=%s approval=%s", typedApproval.ApprovalDigest, workspaceLaunchReadbackRecoveryApprovalDigest(typedApproval), approvalJSON)
-	}
 	body, err := json.Marshal(map[string]any{
 		"accountId": operation.AccountID, "billingOperationId": operation.ID, "evidenceRef": "case-20260731-readback", "approval": approval,
 	})
@@ -142,6 +139,47 @@ func requestWorkspaceLaunchReadbackRecovery(t *testing.T, fixture workspaceLaunc
 	recorder := httptest.NewRecorder()
 	fixture.server.ServeHTTP(recorder, req)
 	return recorder
+}
+
+func persistedWorkspaceLaunchReadbackReplayFixture(t *testing.T, status string, expired bool) (workspaceLaunchWorkerFixture, map[string]any, string) {
+	t.Helper()
+	t.Setenv("OPL_INTERNAL_SERVICE_TOKEN", "workspace-launch-readback-capability")
+	scenario := newWorkspaceLaunchReadbackRecoveryScenario(t, "secret", "basic")
+	fixture := scenario.fixture
+	fixture.service = controlplane.NewService(fixture.ledger, scenario.readback, fixture.sub2API)
+	key := "recover-persisted-" + status
+	approvalMap := testWorkspaceLaunchReadbackApproval(t, scenario.approvalOperation, "secret", key, scenario.readback)
+	if expired {
+		approvalMap["expiresAt"] = time.Now().UTC().Add(-time.Hour).Format(time.RFC3339)
+		refreshWorkspaceLaunchReadbackApprovalDigest(t, approvalMap)
+	}
+	var approval workspaceLaunchReadbackRecoveryApproval
+	if jsonRoundTrip(approvalMap, &approval) != nil {
+		t.Fatal("persisted replay approval is not JSON round-trippable")
+	}
+	recovered, proof, err := fixture.app.workspaceLaunchReadbackRecoveryProofForOperation(context.Background(), fixture.service, scenario.unknown)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recovered.Status = status
+	recovered.ReadbackRecoveryApproval = &approval
+	recovered.ReadbackRecoveryProof = &proof
+	recovered.ContinuationAttemptBudgets["secret"] = workspaceLaunchStageBudget{Attempted: 1, Confirmed: 1, Max: 1}
+	if status == "succeeded" {
+		recovered.Phase = "succeeded"
+		recovered.ReceiptID = "receipt-persisted"
+		recovered.URL = "https://workspace.medopl.cn/w/" + recovered.WorkspaceID + "/"
+	}
+	if err := fixture.store.memoryTableStore.SaveRuntimeOperation(context.Background(), workspaceLaunchOperationRow(recovered)); err != nil {
+		t.Fatal(err)
+	}
+	scenario.readback.operationsErr = errors.New("fresh readback must not run during persisted replay")
+	server, err := NewPersistentServer(fixture.service, fixture.store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture.server, fixture.operator = server, reservedOperatorSessionForTest(t, server)
+	return fixture, approvalMap, key
 }
 
 func requestWorkspaceLaunchReadbackProof(t *testing.T, fixture workspaceLaunchWorkerFixture) *httptest.ResponseRecorder {
@@ -542,6 +580,90 @@ func TestPostgresWorkspaceLaunchReadbackProofLeavesEntireSchemaUnchanged(t *test
 	}
 }
 
+func TestPostgresWorkspaceLaunchPersistedReadbackReplaySurvivesReopenAndLeavesEntireSchemaUnchanged(t *testing.T) {
+	t.Setenv("OPL_MONTHLY_BILLING_WORKER_ENABLED", "false")
+	t.Setenv("OPL_PROVIDER_RECONCILE_WORKER_ENABLED", "false")
+	t.Setenv("OPL_ARCHIVE_RETENTION_WORKER_ENABLED", "false")
+	t.Setenv("OPL_INTERNAL_SERVICE_TOKEN", "workspace-launch-readback-capability")
+	scenario := newWorkspaceLaunchReadbackRecoveryScenario(t, "secret", "basic")
+	key := "recover-postgres-persisted-replay"
+	approvalMap := testWorkspaceLaunchReadbackApproval(t, scenario.approvalOperation, "secret", key, scenario.readback)
+	approvalMap["expiresAt"] = time.Now().UTC().Add(-time.Hour).Format(time.RFC3339)
+	refreshWorkspaceLaunchReadbackApprovalDigest(t, approvalMap)
+	approval := parsedWorkspaceLaunchReadbackApproval(t, approvalMap, key)
+	service := controlplane.NewService(scenario.fixture.ledger, scenario.readback, scenario.fixture.sub2API)
+	recovered, proof, err := scenario.fixture.app.workspaceLaunchReadbackRecoveryProofForOperation(context.Background(), service, scenario.unknown)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recovered.Status = "waiting"
+	recovered.ReadbackRecoveryApproval = &approval
+	recovered.ReadbackRecoveryProof = &proof
+	recovered.ContinuationAttemptBudgets["secret"] = workspaceLaunchStageBudget{Attempted: 1, Confirmed: 1, Max: 1}
+
+	admin := openControlPlaneTestPostgres(t)
+	t.Cleanup(func() { _ = admin.Close() })
+	schema := fmt.Sprintf("control_plane_readback_replay_%d", time.Now().UnixNano())
+	if _, err := admin.Exec(`CREATE SCHEMA ` + schema); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = admin.Exec(`DROP SCHEMA ` + schema + ` CASCADE`) })
+	databaseURL := controlPlaneTestPostgresURL(t, "postgres", schema)
+	state, err := newTestPostgresEntStateStore(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := state.(*postgresEntStateStore)
+	seedTenantMember(t, first, recovered.AccountID, "org-alpha", recovered.OwnerUserID, "alpha@example.com")
+	if err := first.SaveRuntimeOperation(context.Background(), workspaceLaunchOperationRow(recovered)); err != nil {
+		t.Fatal(err)
+	}
+	if err := first.client.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	reopenedState, err := newTestPostgresEntStateStore(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reopened := reopenedState.(*postgresEntStateStore)
+	t.Cleanup(func() { _ = reopened.client.Close() })
+	server, err := NewPersistentServer(service, reopened)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operator := reservedOperatorSessionForTest(t, server)
+	scenario.readback.operationsErr = errors.New("fresh readback must not run during persisted replay")
+	beforeEvents := append([]string(nil), (*scenario.fixture.events)...)
+	before := postgresSchemaSnapshot(t, admin, schema)
+
+	body, err := json.Marshal(map[string]any{
+		"accountId": recovered.AccountID, "billingOperationId": recovered.ID,
+		"evidenceRef": "case-20260731-readback", "approval": approvalMap,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/operator/workspace-launches/"+recovered.ID+"/recover", bytes.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Idempotency-Key", key)
+	request.Header.Set("x-opl-compute-claim-capability", "workspace-launch-readback-capability")
+	addAuth(request, operator)
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("persisted PostgreSQL replay status=%d body=%s", response.Code, response.Body.String())
+	}
+	var payload map[string]any
+	if json.Unmarshal(response.Body.Bytes(), &payload) != nil || stringValue(payload["status"]) != "waiting" || payload["readbackRecoveryProof"] == nil {
+		t.Fatalf("persisted PostgreSQL replay response=%s", response.Body.String())
+	}
+	after := postgresSchemaSnapshot(t, admin, schema)
+	if after != before || !equalStringSlices(*scenario.fixture.events, beforeEvents) {
+		t.Fatalf("persisted PostgreSQL replay mutated state\nbefore=%s\nafter=%s\nevents=%#v/%#v", before, after, beforeEvents, *scenario.fixture.events)
+	}
+}
+
 func workspaceLaunchStageWriteCount(fixture workspaceLaunchWorkerFixture, stage string) int {
 	switch stage {
 	case "storage":
@@ -750,6 +872,96 @@ func TestWorkspaceLaunchTerminalReadbackRecoveryReplaysOnlyPersistedApprovalAndP
 	conflict := requestWorkspaceLaunchReadbackRecovery(t, fixture, drifted, otherKey)
 	if conflict.Code != http.StatusConflict || !equalStringSlices(*fixture.events, beforeWrites) {
 		t.Fatalf("different terminal approval status=%d body=%s events=%#v", conflict.Code, conflict.Body.String(), *fixture.events)
+	}
+}
+
+func TestWorkspaceLaunchPersistedReadbackRecoveryReplayIsZeroWriteAfterExpiry(t *testing.T) {
+	for _, status := range []string{"preparing", "waiting", "succeeded"} {
+		t.Run(status, func(t *testing.T) {
+			fixture, approval, key := persistedWorkspaceLaunchReadbackReplayFixture(t, status, true)
+			beforeOperation := fixture.operation(t).PersistedResult
+			beforeEvents := append([]string(nil), (*fixture.events)...)
+			beforeAudits, err := fixture.store.ListAuditEvents(context.Background(), "acct-alpha")
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			response := requestWorkspaceLaunchReadbackRecovery(t, fixture, approval, key)
+			if response.Code != http.StatusOK {
+				t.Fatalf("persisted %s replay status=%d body=%s", status, response.Code, response.Body.String())
+			}
+			var payload map[string]any
+			if json.Unmarshal(response.Body.Bytes(), &payload) != nil || payload["readbackRecoveryProof"] == nil || stringValue(payload["status"]) != status {
+				t.Fatalf("persisted %s replay response=%s", status, response.Body.String())
+			}
+			afterAudits, err := fixture.store.ListAuditEvents(context.Background(), "acct-alpha")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if fixture.operation(t).PersistedResult != beforeOperation || !equalStringSlices(*fixture.events, beforeEvents) || string(mustJSON(afterAudits)) != string(mustJSON(beforeAudits)) {
+				t.Fatalf("persisted %s replay mutated state: events=%#v/%#v audits=%#v/%#v", status, beforeEvents, *fixture.events, beforeAudits, afterAudits)
+			}
+		})
+	}
+}
+
+func TestWorkspaceLaunchPersistedReadbackRecoveryReplayRejectsIdentityDriftWithConflict(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		mutate    func(map[string]any)
+		headerKey func(string) string
+	}{
+		{name: "idempotency key", headerKey: func(string) string { return "recover-persisted-other" }},
+		{name: "approval digest", mutate: func(approval map[string]any) { approval["approvalDigest"] = strings.Repeat("d", 64) }},
+		{name: "target", mutate: func(approval map[string]any) {
+			approval["target"].(map[string]any)["workspaceId"] = "ws-other"
+			refreshWorkspaceLaunchReadbackApprovalDigest(t, approval)
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fixture, approval, key := persistedWorkspaceLaunchReadbackReplayFixture(t, "waiting", false)
+			if test.mutate != nil {
+				test.mutate(approval)
+			}
+			if test.headerKey != nil {
+				key = test.headerKey(key)
+			}
+			beforeOperation := fixture.operation(t).PersistedResult
+			beforeEvents := append([]string(nil), (*fixture.events)...)
+			beforeAudits, _ := fixture.store.ListAuditEvents(context.Background(), "acct-alpha")
+			response := requestWorkspaceLaunchReadbackRecovery(t, fixture, approval, key)
+			afterAudits, _ := fixture.store.ListAuditEvents(context.Background(), "acct-alpha")
+			if response.Code != http.StatusConflict || fixture.operation(t).PersistedResult != beforeOperation ||
+				!equalStringSlices(*fixture.events, beforeEvents) || string(mustJSON(afterAudits)) != string(mustJSON(beforeAudits)) {
+				t.Fatalf("%s drift status=%d body=%s events=%#v/%#v audits=%#v/%#v", test.name, response.Code, response.Body.String(), beforeEvents, *fixture.events, beforeAudits, afterAudits)
+			}
+		})
+	}
+}
+
+func TestWorkspaceLaunchUnpersistedExpiredReadbackApprovalIsRejectedWithoutMutation(t *testing.T) {
+	t.Setenv("OPL_INTERNAL_SERVICE_TOKEN", "workspace-launch-readback-capability")
+	scenario := newWorkspaceLaunchReadbackRecoveryScenario(t, "secret", "basic")
+	fixture := scenario.fixture
+	fixture.service = controlplane.NewService(fixture.ledger, scenario.readback, fixture.sub2API)
+	server, err := NewPersistentServer(fixture.service, fixture.store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture.server, fixture.operator = server, reservedOperatorSessionForTest(t, server)
+	key := "recover-unpersisted-expired"
+	approval := testWorkspaceLaunchReadbackApproval(t, scenario.approvalOperation, "secret", key, scenario.readback)
+	approval["expiresAt"] = time.Now().UTC().Add(-time.Hour).Format(time.RFC3339)
+	refreshWorkspaceLaunchReadbackApprovalDigest(t, approval)
+	beforeOperation := fixture.operation(t).PersistedResult
+	beforeEvents := append([]string(nil), (*fixture.events)...)
+	beforeAudits, _ := fixture.store.ListAuditEvents(context.Background(), "acct-alpha")
+
+	response := requestWorkspaceLaunchReadbackRecovery(t, fixture, approval, key)
+	afterAudits, _ := fixture.store.ListAuditEvents(context.Background(), "acct-alpha")
+	if response.Code != http.StatusConflict || fixture.operation(t).PersistedResult != beforeOperation ||
+		!equalStringSlices(*fixture.events, beforeEvents) || string(mustJSON(afterAudits)) != string(mustJSON(beforeAudits)) {
+		t.Fatalf("unpersisted expired approval status=%d body=%s events=%#v/%#v audits=%#v/%#v", response.Code, response.Body.String(), beforeEvents, *fixture.events, beforeAudits, afterAudits)
 	}
 }
 

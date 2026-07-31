@@ -2337,6 +2337,24 @@ func (app *controlPlaneServer) convergeWorkspaceLaunchUnknownStage(ctx context.C
 	return true, nil
 }
 
+func (app *controlPlaneServer) recoverWorkspaceLaunchReviewWithReplay(ctx context.Context, service *controlplane.Service, input billingReviewResolutionInput) (map[string]any, bool, error) {
+	operation, ok, err := app.workspaceLaunchOperation(ctx, input.ResourceID)
+	if err != nil {
+		return nil, false, err
+	}
+	if ok && operation.AccountID == input.AccountID && operation.ReadbackRecoveryApproval != nil && operation.ReadbackRecoveryProof != nil &&
+		(operation.Status == "preparing" || operation.Status == "waiting" || terminalWorkspaceLaunchStatus(operation.Status)) {
+		if input.ReadbackApproval == nil || input.IdempotencyKey != operation.ReadbackRecoveryApproval.IdempotencyKey ||
+			!workspaceLaunchReadbackRecoveryApprovalMatches(*input.ReadbackApproval, *operation.ReadbackRecoveryApproval) {
+			return nil, true, errBillingReviewIdentity
+		}
+		result, responseErr := workspaceLaunchRecoveryResponse(operation)
+		return result, true, responseErr
+	}
+	result, err := app.recoverWorkspaceLaunchReview(ctx, service, input)
+	return result, false, err
+}
+
 func (app *controlPlaneServer) recoverWorkspaceLaunchReview(ctx context.Context, service *controlplane.Service, input billingReviewResolutionInput) (map[string]any, error) {
 	if input.ResourceType != "workspace_launch" || input.ResourceID == "" || input.ResourceID != input.BillingOperationID || input.AccountID == "" || input.IdempotencyKey == "" || input.Reviewer == "" {
 		return nil, errInvalidBillingReview

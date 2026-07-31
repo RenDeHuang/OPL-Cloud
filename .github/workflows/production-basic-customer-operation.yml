@@ -687,9 +687,11 @@ jobs:
         run: |
           set -euo pipefail
           artifact_dir="$RUNNER_TEMP/production-workspace-launch-readback-diagnosis"
-          mkdir -p "$artifact_dir"
-          chmod 700 "$artifact_dir"
+          raw_dir="$RUNNER_TEMP/production-workspace-launch-readback-diagnosis-raw"
+          mkdir -p "$artifact_dir" "$raw_dir"
+          chmod 700 "$artifact_dir" "$raw_dir"
           echo "OPL_WORKSPACE_LAUNCH_READBACK_ARTIFACT_DIR=$artifact_dir" >> "$GITHUB_ENV"
+          echo "OPL_WORKSPACE_LAUNCH_READBACK_RAW_RESULT_PATH=$raw_dir/workspace-launch-readback-diagnosis.raw.json" >> "$GITHUB_ENV"
 
       - name: Run Workspace launch readback diagnosis
         id: diagnose
@@ -698,18 +700,7 @@ jobs:
         run: |
           set -euo pipefail
           node tools/production-live-qa.ts --workspace-launch-readback-diagnose \
-            --workspace-launch-target-json "$OPL_WORKSPACE_LAUNCH_READBACK_TARGET_JSON" \
-            > "$OPL_WORKSPACE_LAUNCH_READBACK_ARTIFACT_DIR/workspace-launch-readback-diagnosis.json"
-
-      - name: Upload redacted Workspace launch diagnosis
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: production-workspace-launch-readback-diagnosis
-          path: ${{ runner.temp }}/production-workspace-launch-readback-diagnosis
-          if-no-files-found: error
-          overwrite: true
-          retention-days: 30
+            --workspace-launch-target-json "$OPL_WORKSPACE_LAUNCH_READBACK_TARGET_JSON"
 
       - name: Require complete zero-mutation Workspace launch proof
         if: ${{ steps.diagnose.outcome == 'success' }}
@@ -718,7 +709,7 @@ jobs:
           set -euo pipefail
           node <<'NODE'
           const fs = require("node:fs");
-          const result = JSON.parse(fs.readFileSync(`${process.env.OPL_WORKSPACE_LAUNCH_READBACK_ARTIFACT_DIR}/workspace-launch-readback-diagnosis.json`, "utf8"));
+          const result = JSON.parse(fs.readFileSync(process.env.OPL_WORKSPACE_LAUNCH_READBACK_RAW_RESULT_PATH, "utf8"));
           const target = JSON.parse(process.env.OPL_WORKSPACE_LAUNCH_READBACK_TARGET_JSON);
           const exactTarget = target;
           const proof = result?.proof;
@@ -746,6 +737,41 @@ jobs:
             process.exit(1);
           }
           NODE
+
+      - name: Generate safe Workspace launch diagnosis artifact
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { readFile, writeFile } from "node:fs/promises";
+          import { workspaceLaunchReadbackArtifact } from "./tools/production-live-qa.ts";
+          let raw;
+          try {
+            raw = JSON.parse(await readFile(process.env.OPL_WORKSPACE_LAUNCH_READBACK_RAW_RESULT_PATH, "utf8"));
+          } catch {
+            raw = {
+              schemaVersion: 2,
+              operationMode: "workspace_launch_readback_diagnose",
+              status: "blocked",
+              recoveryEligible: false,
+              errorCode: "workspace_launch_readback_diagnosis_failed",
+              runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
+            };
+          }
+          const artifact = workspaceLaunchReadbackArtifact(raw);
+          await writeFile(`${process.env.OPL_WORKSPACE_LAUNCH_READBACK_ARTIFACT_DIR}/workspace-launch-readback-diagnosis.json`, `${JSON.stringify(artifact, null, 2)}\n`, { mode: 0o600 });
+          NODE
+
+      - name: Upload redacted Workspace launch diagnosis
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-workspace-launch-readback-diagnosis
+          path: ${{ runner.temp }}/production-workspace-launch-readback-diagnosis
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 30
 
       - name: Require Workspace launch diagnosis success
         if: ${{ steps.diagnose.outcome != 'success' }}
@@ -821,9 +847,12 @@ jobs:
         run: |
           set -euo pipefail
           artifact_dir="$RUNNER_TEMP/production-basic-compute-claim-evidence"
-          mkdir -p "$artifact_dir"
-          chmod 700 "$artifact_dir"
+          raw_dir="$RUNNER_TEMP/production-workspace-launch-readback-recovery-raw"
+          mkdir -p "$artifact_dir" "$raw_dir"
+          chmod 700 "$artifact_dir" "$raw_dir"
           echo "OPL_WORKSPACE_LAUNCH_READBACK_ARTIFACT_DIR=$artifact_dir" >> "$GITHUB_ENV"
+          echo "OPL_WORKSPACE_LAUNCH_READBACK_RAW_RESULT_PATH=$raw_dir/workspace-launch-readback-recovery.raw.json" >> "$GITHUB_ENV"
+          echo "OPL_WORKSPACE_LAUNCH_CONTINUATION_RAW_RESULT_PATH=$raw_dir/workspace-launch-continuation.raw.json" >> "$GITHUB_ENV"
 
       - name: Run approved Workspace launch readback recovery
         id: recover
@@ -846,8 +875,7 @@ jobs:
           export OPL_INTERNAL_SERVICE_TOKEN
           node tools/production-live-qa.ts --workspace-launch-readback-recover \
             --workspace-launch-target-json "$OPL_WORKSPACE_LAUNCH_READBACK_TARGET_JSON" \
-            --approval-id "$OPL_WORKSPACE_LAUNCH_READBACK_APPROVAL_ID" \
-            > "$OPL_WORKSPACE_LAUNCH_READBACK_ARTIFACT_DIR/workspace-launch-readback-recovery.json"
+            --approval-id "$OPL_WORKSPACE_LAUNCH_READBACK_APPROVAL_ID"
 
       - name: Require approved unknown-stage CAS convergence
         id: readback_convergence
@@ -858,7 +886,7 @@ jobs:
           node <<'NODE'
           const { createHash } = require("node:crypto");
           const fs = require("node:fs");
-          const result = JSON.parse(fs.readFileSync(`${process.env.OPL_WORKSPACE_LAUNCH_READBACK_ARTIFACT_DIR}/workspace-launch-readback-recovery.json`, "utf8"));
+          const result = JSON.parse(fs.readFileSync(process.env.OPL_WORKSPACE_LAUNCH_READBACK_RAW_RESULT_PATH, "utf8"));
           const approval = JSON.parse(process.env.OPL_WORKSPACE_LAUNCH_READBACK_APPROVAL_JSON);
           const target = JSON.parse(process.env.OPL_WORKSPACE_LAUNCH_READBACK_TARGET_JSON);
           const exactTarget = target;
@@ -903,6 +931,32 @@ jobs:
           }
           NODE
 
+      - name: Generate safe Workspace launch recovery artifact
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { readFile, writeFile } from "node:fs/promises";
+          import { workspaceLaunchReadbackArtifact } from "./tools/production-live-qa.ts";
+          let raw;
+          try {
+            raw = JSON.parse(await readFile(process.env.OPL_WORKSPACE_LAUNCH_READBACK_RAW_RESULT_PATH, "utf8"));
+          } catch {
+            raw = {
+              schemaVersion: 2,
+              operationMode: "workspace_launch_readback_recover",
+              status: "blocked",
+              recoveryEligible: false,
+              errorCode: "workspace_launch_readback_recovery_failed",
+              runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
+              backgroundMutationCountsState: "unknown"
+            };
+          }
+          const artifact = workspaceLaunchReadbackArtifact(raw);
+          await writeFile(`${process.env.OPL_WORKSPACE_LAUNCH_READBACK_ARTIFACT_DIR}/workspace-launch-readback-recovery.json`, `${JSON.stringify(artifact, null, 2)}\n`, { mode: 0o600 });
+          NODE
+
       - name: Continue original launch with GET-only readback
         id: continue
         if: ${{ steps.recover.outcome == 'success' && steps.readback_convergence.outcome == 'success' }}
@@ -914,17 +968,7 @@ jobs:
             --compute-claim-target-json "$OPL_COMPUTE_CLAIM_TARGET_JSON" \
             --launch-poll-attempts "$OPL_VERIFY_LAUNCH_POLL_ATTEMPTS" \
             --launch-poll-delay-ms "$OPL_VERIFY_LAUNCH_POLL_DELAY_MS" \
-            > "$OPL_WORKSPACE_LAUNCH_READBACK_ARTIFACT_DIR/workspace-launch-continuation.json"
-
-      - name: Upload redacted Workspace launch recovery
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: production-basic-compute-claim-evidence
-          path: ${{ runner.temp }}/production-basic-compute-claim-evidence
-          if-no-files-found: error
-          overwrite: true
-          retention-days: 30
+            > "$OPL_WORKSPACE_LAUNCH_CONTINUATION_RAW_RESULT_PATH"
 
       - name: Require original launch URL and Receipt
         if: ${{ steps.continue.outcome == 'success' }}
@@ -933,7 +977,7 @@ jobs:
           set -euo pipefail
           node <<'NODE'
           const fs = require("node:fs");
-          const result = JSON.parse(fs.readFileSync(`${process.env.OPL_WORKSPACE_LAUNCH_READBACK_ARTIFACT_DIR}/workspace-launch-continuation.json`, "utf8"));
+          const result = JSON.parse(fs.readFileSync(process.env.OPL_WORKSPACE_LAUNCH_CONTINUATION_RAW_RESULT_PATH, "utf8"));
           const target = JSON.parse(process.env.OPL_COMPUTE_CLAIM_TARGET_JSON);
           const expectedWorkspaceUrl = `https://workspace.medopl.cn/w/${target.workspaceId}/`;
           const launch = result?.launch;
@@ -953,6 +997,35 @@ jobs:
             process.exit(1);
           }
           NODE
+
+      - name: Generate safe recovered Workspace handoff
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { readFile, writeFile } from "node:fs/promises";
+          import { workspaceLaunchContinuationHandoff } from "./tools/production-live-qa.ts";
+          let raw;
+          try {
+            raw = JSON.parse(await readFile(process.env.OPL_WORKSPACE_LAUNCH_CONTINUATION_RAW_RESULT_PATH, "utf8"));
+          } catch {
+            process.exit(0);
+          }
+          const recovery = JSON.parse(await readFile(`${process.env.OPL_WORKSPACE_LAUNCH_READBACK_ARTIFACT_DIR}/workspace-launch-readback-recovery.json`, "utf8"));
+          const artifact = workspaceLaunchContinuationHandoff(raw, recovery);
+          await writeFile(`${process.env.OPL_WORKSPACE_LAUNCH_READBACK_ARTIFACT_DIR}/workspace-launch-continuation.json`, `${JSON.stringify(artifact, null, 2)}\n`, { mode: 0o600 });
+          NODE
+
+      - name: Upload redacted Workspace launch recovery
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-basic-compute-claim-evidence
+          path: ${{ runner.temp }}/production-basic-compute-claim-evidence
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 30
 
       - name: Require Workspace launch readback recovery success
         if: ${{ steps.recover.outcome != 'success' }}

@@ -75,14 +75,17 @@ function serializedRuns(currentJob) {
 async function runWorkflowArtifactGate(step, filename, artifact, env = {}) {
   const root = await mkdtemp(join(tmpdir(), "opl-workflow-artifact-gate-"));
   try {
-    await writeFile(join(root, filename), `${JSON.stringify(artifact)}\n`);
-    return spawnSync("bash", ["-c", step.run], {
+		const artifactPath = join(root, filename);
+		await writeFile(artifactPath, `${JSON.stringify(artifact)}\n`);
+		return spawnSync("bash", ["-c", step.run], {
       cwd: fileURLToPath(repoFile(".")),
       encoding: "utf8",
       env: {
         ...process.env,
-        OPL_COMPUTE_CLAIM_ARTIFACT_DIR: root,
-        OPL_WORKSPACE_LAUNCH_READBACK_ARTIFACT_DIR: root,
+			OPL_COMPUTE_CLAIM_ARTIFACT_DIR: root,
+			OPL_WORKSPACE_LAUNCH_READBACK_ARTIFACT_DIR: root,
+			OPL_WORKSPACE_LAUNCH_READBACK_RAW_RESULT_PATH: artifactPath,
+			OPL_WORKSPACE_LAUNCH_CONTINUATION_RAW_RESULT_PATH: artifactPath,
         ...env
       }
     });
@@ -1270,6 +1273,31 @@ test("unknown Workspace launch readback recovery is isolated behind a read-only 
   assert.doesNotMatch(recoverRuns, /--basic-customer-canary|allow-workspace-purchase|allow-wallet-recharge|allow-account-provision|allow-model-write|CreateDisks|create_storage_volume|debit|refund|scale/i);
   assert.match(JSON.stringify(diagnose.steps), /actions\/upload-artifact@v4/);
   assert.match(JSON.stringify(recover.steps), /actions\/upload-artifact@v4/);
+});
+
+test("Workspace launch readback uploads only allowlisted artifacts after raw proof validation", async () => {
+  const workflow = await readWorkflow(".github/workflows/production-basic-customer-operation.yml");
+  for (const [jobName, gateName, safeName] of [
+    ["workspace-launch-readback-diagnose", "Require complete zero-mutation Workspace launch proof", "Generate safe Workspace launch diagnosis artifact"],
+    ["workspace-launch-readback-recover", "Require approved unknown-stage CAS convergence", "Generate safe Workspace launch recovery artifact"]
+  ]) {
+    const job = workflowJob(workflow, jobName);
+    const names = (job.steps || []).map((step) => step.name);
+    const gateIndex = names.indexOf(gateName);
+    const safeIndex = names.indexOf(safeName);
+    const uploadIndex = (job.steps || []).findIndex((step) => step.uses === "actions/upload-artifact@v4");
+    assert.ok(gateIndex >= 0 && safeIndex > gateIndex && uploadIndex > safeIndex, `${jobName} upload order=${names.join(" -> ")}`);
+    const upload = job.steps[uploadIndex];
+    assert.doesNotMatch(String(upload.with?.path || ""), /raw|proof|protected/i);
+    assert.match(serializedRuns(job), /OPL_WORKSPACE_LAUNCH_READBACK_RAW_RESULT_PATH/);
+  }
+
+  const recovery = workflowJob(workflow, "workspace-launch-readback-recover");
+  const names = recovery.steps.map((step) => step.name);
+  const continuationGate = names.indexOf("Require original launch URL and Receipt");
+  const handoff = names.indexOf("Generate safe recovered Workspace handoff");
+  const upload = recovery.steps.findIndex((step) => step.uses === "actions/upload-artifact@v4");
+  assert.ok(continuationGate >= 0 && handoff > continuationGate && upload > handoff, names.join(" -> "));
 });
 
 test("Workspace launch readback workflow gates bind every approved identity and budget", async () => {

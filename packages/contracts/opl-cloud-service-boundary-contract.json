@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 19,
+  "schemaVersion": 20,
   "owner": "OPL Platform Architecture",
   "purpose": "Current ownership contract for Console UI, Control Plane, Ledger, Fabric, and external Sub2API.",
   "state": "current",
@@ -129,7 +129,23 @@
         "runnerDirectMutationCounts": {"sub2api": 0, "tencent": 0, "kubernetes": 0},
         "backgroundMutationCountsState": "unknown",
         "unknownStageExternalWriteReplayCount": 0,
-        "remainingStageMutationBudget": "original_launch_persisted_per_stage_max_1"
+        "remainingStageMutationBudget": "original_launch_persisted_per_stage_max_1",
+        "persistedReplay": {
+          "states": ["preparing", "waiting", "terminal"],
+          "identity": ["approval_id", "approval_digest", "idempotency_key", "full_target"],
+          "expiry": "exact_persisted_identity_replays_after_expiry_unpersisted_expired_rejected",
+          "response": "reconstructed_from_persisted_approval_and_proof_without_fresh_manual_review_proof",
+          "drift": "409_conflict",
+          "mutationCounts": {"database": 0, "fabric": 0, "sub2api": 0, "tencent": 0, "kubernetes": 0}
+        },
+        "artifactBoundary": {
+          "schemaVersion": 2,
+          "projection": "explicit_allowlist_dto_for_success_and_failure",
+          "rawProof": "protected_runner_temp_0600_never_uploaded",
+          "uploadOrder": "validate_then_project_then_upload",
+          "binding": ["approval_digest", "stable_full_binding_digest"],
+          "continuation": "minimal_safe_recovered_workspace_e2e_handoff"
+        }
       },
       "recoveredWorkspaceE2EAttempt": {
         "reserveRoute": "POST /api/workspaces/{workspaceId}/recovered-e2e-attempt",

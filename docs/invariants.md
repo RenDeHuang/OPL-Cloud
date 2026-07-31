@@ -570,6 +570,23 @@ contract or select the SKU for a customer launch.
   counts do not describe the whole recovery: the existing launch worker's
   bounded background mutation counts are reported separately as `unknown` until
   terminal authoritative readback proves Receipt and URL.
+- A readback recovery POST that already persisted the exact approval, approval
+  digest, idempotency key, full target, and proof may be replayed from
+  `preparing`, `waiting`, or terminal state even after that approval expires.
+  This replay reconstructs the operator response exclusively from persisted
+  state, does not require the former manual-review proof to remain available,
+  and performs zero database, Fabric, Sub2API, Tencent, or Kubernetes writes.
+  An expired approval that was never persisted is rejected, and any key,
+  digest, or target drift returns conflict without mutation.
+- Workspace readback diagnosis, recovery, blocked, and continuation artifacts
+  use schema version 2 explicit allowlist DTOs. Complete proof and approval
+  data remain in a mode-0600 protected runner-temporary directory outside the
+  upload tree and are never uploaded. The workflow first validates the complete
+  raw result, then projects the safe DTO, and only then uploads it. Recovery and
+  the minimal recovered-Workspace E2E handoff are bound by the approval digest
+  and a stable digest of the complete resource and operation identity, without
+  exposing customer email, private IP, Secret facts, credentials, capabilities,
+  provider request IDs, or complete operation identities.
 
 ## Launch Stages
 

@@ -396,7 +396,7 @@ test("Current Fabric contracts require dedicated package NodePools without weake
     output: "redacted_evidence_only",
     currentState: "implemented_and_fake_tested_not_executed"
   });
-  assert.equal(deployment.schemaVersion, 25);
+  assert.equal(deployment.schemaVersion, 26);
   assert.deepEqual(deployment.productionWorkspaceLaunchReadbackRecovery, {
     workflow: ".github/workflows/production-basic-customer-operation.yml",
     modes: {
@@ -420,13 +420,29 @@ test("Current Fabric contracts require dedicated package NodePools without weake
         runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
         backgroundMutationCountsState: "unknown",
         unknownStageExternalWriteReplayCount: 0,
-        remainingStageMutationBudget: "original_launch_persisted_per_stage_max_1"
+        remainingStageMutationBudget: "original_launch_persisted_per_stage_max_1",
+        persistedReplay: {
+          states: ["preparing", "waiting", "terminal"],
+          identity: ["approval_id", "approval_digest", "idempotency_key", "full_target"],
+          expiry: "exact_persisted_identity_replays_after_expiry_unpersisted_expired_rejected",
+          response: "reconstructed_from_persisted_approval_and_proof_without_fresh_manual_review_proof",
+          drift: "409_conflict",
+          mutationCounts: { database: 0, fabric: 0, sub2api: 0, tencent: 0, kubernetes: 0 }
+        }
       }
     },
     targetSource: "protected_input_full_compute_target_preserved_without_projection",
     operationIdentity: "launch_idempotency_key_fabric_internal_operation_machine_ownership_provider_opl_operation_and_stage_resource_operations",
     continuation: "existing_compute_claim_continue_get_only_same_original_launch",
-    artifact: "redacted_proof_recovery_and_existing_continuation",
+    artifact: {
+      schemaVersion: 2,
+      projection: "explicit_allowlist_dto_for_success_and_failure",
+      rawProof: { path: "protected_runner_temp_outside_upload_tree", mode: "0600", uploaded: false },
+      order: ["validate_complete_raw_result", "project_safe_allowlist_dto", "upload_safe_artifact"],
+      binding: ["approval_digest", "stable_full_binding_digest"],
+      continuation: "minimal_safe_recovered_workspace_e2e_handoff",
+      forbiddenFields: ["email", "private_ip", "complete_target", "complete_proof", "complete_approval", "gateway_secret_ref", "gateway_secret_fingerprint", "credential", "capability", "provider_request_id", "complete_operation_identity"]
+    },
     currentState: "code_complete_local_focused_and_postgresql_verified_not_merged_released_deployed_or_executed"
   });
   assert.deepEqual(deployment.productionComputeClaimRecovery, {
@@ -747,7 +763,7 @@ test("Current contracts hard cut operator resources, wallet adjustments, and ann
     absentRequires: "both_local_identities_and_exact_provider_describe_absence",
     forbiddenSideEffects: ["sync", "tag", "kubectl_apply", "delete", "label", "purchase", "renew", "destroy"]
   });
-  assert.equal(boundary.schemaVersion, 19);
+  assert.equal(boundary.schemaVersion, 20);
   assert.deepEqual(boundary.services.controlPlane.workspaceContinuationAttemptBudget, {
     owner: "original_workspace.launch.v2_operation",
     stages: ["storage", "attachment", "secret", "runtime", "activation", "receipt"],
@@ -776,7 +792,23 @@ test("Current contracts hard cut operator resources, wallet adjustments, and ann
     runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
     backgroundMutationCountsState: "unknown",
     unknownStageExternalWriteReplayCount: 0,
-    remainingStageMutationBudget: "original_launch_persisted_per_stage_max_1"
+    remainingStageMutationBudget: "original_launch_persisted_per_stage_max_1",
+    persistedReplay: {
+      states: ["preparing", "waiting", "terminal"],
+      identity: ["approval_id", "approval_digest", "idempotency_key", "full_target"],
+      expiry: "exact_persisted_identity_replays_after_expiry_unpersisted_expired_rejected",
+      response: "reconstructed_from_persisted_approval_and_proof_without_fresh_manual_review_proof",
+      drift: "409_conflict",
+      mutationCounts: { database: 0, fabric: 0, sub2api: 0, tencent: 0, kubernetes: 0 }
+    },
+    artifactBoundary: {
+      schemaVersion: 2,
+      projection: "explicit_allowlist_dto_for_success_and_failure",
+      rawProof: "protected_runner_temp_0600_never_uploaded",
+      uploadOrder: "validate_then_project_then_upload",
+      binding: ["approval_digest", "stable_full_binding_digest"],
+      continuation: "minimal_safe_recovered_workspace_e2e_handoff"
+    }
   });
   assert.deepEqual(boundary.services.controlPlane.recoveredWorkspaceE2EAttempt, {
     reserveRoute: "POST /api/workspaces/{workspaceId}/recovered-e2e-attempt",

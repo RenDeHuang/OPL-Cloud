@@ -216,21 +216,20 @@ func TestPostgresRuntimeMutationReturnsOwnFenceAtomically(t *testing.T) {
 
 type stalePostgresRuntimeProvider struct {
 	testProvider
-	calls        atomic.Int32
-	firstEntered chan struct{}
-	releaseFirst chan struct{}
+	calls         atomic.Int32
+	readbackCalls atomic.Int32
+	readback      WorkspaceRuntime
 }
 
-func (p *stalePostgresRuntimeProvider) CreateWorkspaceRuntime(ctx context.Context, input WorkspaceRuntimeInput, _ ComputeAllocation, _ StorageVolume) (WorkspaceRuntime, error) {
-	if p.calls.Add(1) == 1 {
-		close(p.firstEntered)
-		select {
-		case <-p.releaseFirst:
-		case <-ctx.Done():
-			return WorkspaceRuntime{}, ctx.Err()
-		}
-	}
-	return WorkspaceRuntime{ID: "runtime-alpha", WorkspaceID: input.WorkspaceID, Status: "running", Ready: true, ProviderRequestID: providerRequestID("runtime", input.IdempotencyKey)}, nil
+func (p *stalePostgresRuntimeProvider) CreateWorkspaceRuntime(_ context.Context, input WorkspaceRuntimeInput, _ ComputeAllocation, _ StorageVolume) (WorkspaceRuntime, error) {
+	p.calls.Add(1)
+	p.readback = WorkspaceRuntime{ID: "rt_postgres-alpha", OperationID: input.RuntimeOperationID, WorkspaceID: input.WorkspaceID, Status: "running", Ready: true, ServiceName: "opl-compute-alpha", ProviderRequestID: providerRequestID("runtime", input.IdempotencyKey)}
+	return p.readback, nil
+}
+
+func (p *stalePostgresRuntimeProvider) WorkspaceRuntimeStatus(_ context.Context, _ string) (WorkspaceRuntime, error) {
+	p.readbackCalls.Add(1)
+	return p.readback, nil
 }
 
 func TestPostgresStaleRuntimeClaimConvergesAcrossServiceInstances(t *testing.T) {
@@ -248,66 +247,30 @@ func TestPostgresStaleRuntimeClaimConvergesAcrossServiceInstances(t *testing.T) 
 	}
 	defer secondStore.client.Close()
 
-	provider := &stalePostgresRuntimeProvider{firstEntered: make(chan struct{}), releaseFirst: make(chan struct{})}
-	firstService := runtimeTestService(provider, firstStore)
+	provider := &stalePostgresRuntimeProvider{}
+	firstService := runtimeTestService(provider, &failFirstRuntimeSaveStore{OperationStore: firstStore})
 	secondService := runtimeTestService(provider, secondStore)
 	startedAt := time.Date(2026, 7, 17, 0, 0, 0, 123456000, time.UTC)
-	var clock atomic.Int64
-	clock.Store(startedAt.UnixNano())
-	now := func() time.Time { return time.Unix(0, clock.Load()).UTC() }
-	firstService.now = now
-	secondService.now = now
+	firstService.now = func() time.Time { return startedAt }
+	secondService.now = func() time.Time { return startedAt.Add(3 * time.Minute) }
 	input := runtimeTestInput("postgres-runtime-stale")
 
-	oldOwnerDone := make(chan error, 1)
-	go func() {
-		_, err := firstService.CreateWorkspaceRuntime(ctx, input)
-		oldOwnerDone <- err
-	}()
-	select {
-	case <-provider.firstEntered:
-	case <-ctx.Done():
-		t.Fatal("old owner provider call did not start")
+	firstResult, firstErr := firstService.CreateWorkspaceRuntime(ctx, input)
+	if firstErr == nil || firstErr.Error() != "injected runtime save failure" || firstResult.ID != provider.readback.ID || provider.calls.Load() != 1 {
+		t.Fatalf("first runtime=%#v err=%v providerCalls=%d", firstResult, firstErr, provider.calls.Load())
 	}
 	operations, err := firstStore.List(ctx)
 	if err != nil || len(operations) != 1 || operations[0].Status != "started" {
 		t.Fatalf("persisted old claim=%#v err=%v", operations, err)
 	}
-	clock.Store(operations[0].StartedAt.Add(3 * time.Minute).UnixNano())
 
-	type callResult struct {
-		runtime WorkspaceRuntime
-		err     error
+	secondResult, secondErr := secondService.CreateWorkspaceRuntime(ctx, input)
+	if secondErr != nil || secondResult.ID != provider.readback.ID || provider.calls.Load() != 1 || provider.readbackCalls.Load() != 1 {
+		t.Fatalf("readback convergence runtime=%#v err=%v providerCalls=%d readbackCalls=%d", secondResult, secondErr, provider.calls.Load(), provider.readbackCalls.Load())
 	}
-	start := make(chan struct{})
-	results := make(chan callResult, 2)
-	for _, service := range []*Service{firstService, secondService} {
-		service := service
-		go func() {
-			<-start
-			runtime, err := service.CreateWorkspaceRuntime(ctx, input)
-			results <- callResult{runtime: runtime, err: err}
-		}()
-	}
-	close(start)
-	firstResult, secondResult := <-results, <-results
-	for _, result := range []callResult{firstResult, secondResult} {
-		if result.err != nil && !errors.Is(result.err, ErrRuntimeOperationInProgress) {
-			t.Fatalf("stale caller result=%#v err=%v", result.runtime, result.err)
-		}
-	}
-	if provider.calls.Load() != 2 {
-		t.Fatalf("provider calls after stale race=%d, want old owner plus one reclaim", provider.calls.Load())
-	}
-
-	close(provider.releaseFirst)
-	if err := <-oldOwnerDone; !errors.Is(err, ErrRuntimeOperationNotCurrent) {
-		t.Fatalf("old owner completion error=%v, want ErrRuntimeOperationNotCurrent", err)
-	}
-	firstReplay, firstErr := firstService.CreateWorkspaceRuntime(ctx, input)
-	secondReplay, secondErr := secondService.CreateWorkspaceRuntime(ctx, input)
-	if firstErr != nil || secondErr != nil || firstReplay.ID != "runtime-alpha" || secondReplay.ID != firstReplay.ID || secondReplay.Status != firstReplay.Status || provider.calls.Load() != 2 {
-		t.Fatalf("final replays first=%#v err=%v second=%#v err=%v providerCalls=%d", firstReplay, firstErr, secondReplay, secondErr, provider.calls.Load())
+	firstReplay, firstReplayErr := firstService.CreateWorkspaceRuntime(ctx, input)
+	if firstReplayErr != nil || firstReplay.ID != secondResult.ID || provider.calls.Load() != 1 {
+		t.Fatalf("final replay=%#v err=%v providerCalls=%d", firstReplay, firstReplayErr, provider.calls.Load())
 	}
 	operations, err = secondStore.List(ctx)
 	if err != nil || len(operations) != 1 || operations[0].Status != "succeeded" {

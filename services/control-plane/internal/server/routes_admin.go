@@ -200,7 +200,11 @@ func registerAdminRoutes(mux *http.ServeMux, app *controlPlaneServer, service *c
 		}
 		var approval *workspaceLaunchReadbackRecoveryApproval
 		if raw, ok := input["approval"]; ok {
-			parsed, valid := workspaceLaunchReadbackRecoveryApprovalFromMap(raw, key)
+			approvalKey := key
+			if approvalMap, ok := raw.(map[string]any); ok {
+				approvalKey = stringValue(approvalMap["idempotencyKey"])
+			}
+			parsed, valid := workspaceLaunchReadbackRecoveryApprovalFromMap(raw, approvalKey)
 			if !valid || !app.computeClaimCapabilityValid(r) {
 				writeError(w, http.StatusBadRequest, errInvalidBillingReview.Error())
 				return
@@ -216,16 +220,18 @@ func registerAdminRoutes(mux *http.ServeMux, app *controlPlaneServer, service *c
 			ResourceType: "workspace_launch", ResourceID: operationID, AccountID: stringValue(input["accountId"]), BillingOperationID: operationID,
 			EvidenceRef: evidenceRef, IdempotencyKey: key, Reviewer: app.sessionUserID(r), ReadbackApproval: approval,
 		}
-		result, err := app.recoverWorkspaceLaunchReview(r.Context(), service, resolution)
+		result, replayed, err := app.recoverWorkspaceLaunchReviewWithReplay(r.Context(), service, resolution)
 		if err != nil {
 			writeBillingReviewResolutionError(w, err)
 			return
 		}
-		audit := app.auditEvent(r, "workspace.launch.recover", "workspace", stringValue(result["workspaceId"]), resolution.AccountID, nil, mergeMaps(result, map[string]any{"evidenceRef": evidenceRef}), stringValue(result["status"]))
-		audit["id"] = "audit-" + stableID("workspace.launch.recover", operationID, key)[:12]
-		if err := app.tables.SaveAuditEvent(r.Context(), audit); err != nil {
-			writeError(w, http.StatusInternalServerError, "state_persist_failed")
-			return
+		if !replayed {
+			audit := app.auditEvent(r, "workspace.launch.recover", "workspace", stringValue(result["workspaceId"]), resolution.AccountID, nil, mergeMaps(result, map[string]any{"evidenceRef": evidenceRef}), stringValue(result["status"]))
+			audit["id"] = "audit-" + stableID("workspace.launch.recover", operationID, key)[:12]
+			if err := app.tables.SaveAuditEvent(r.Context(), audit); err != nil {
+				writeError(w, http.StatusInternalServerError, "state_persist_failed")
+				return
+			}
 		}
 		writeJSON(w, http.StatusOK, result)
 	}))
@@ -559,12 +565,12 @@ func workspaceLaunchReadbackRecoveryApprovalFromMap(value any, key string) (work
 	if !allowedOK || !forbiddenOK || jsonRoundTrip(raw, &approval) != nil {
 		return workspaceLaunchReadbackRecoveryApproval{}, false
 	}
-	expiresAt, expiresErr := time.Parse(time.RFC3339, approval.ExpiresAt)
+	_, expiresErr := time.Parse(time.RFC3339, approval.ExpiresAt)
 	email, emailErr := canonicalEmail(approval.Customer.Email)
 	if approval.SchemaVersion != 1 || !validBillingReviewOpaqueID(approval.ApprovalID) || !validBillingReviewOpaqueID(approval.RecoveryKey) ||
 		!computeClaimApprovalDigestPattern.MatchString(approval.ApprovalDigest) || !computeClaimMergedSHAPattern.MatchString(approval.MergedMainSHA) ||
 		!computeClaimCloudDigestPattern.MatchString(approval.CloudImageDigest) || !computeClaimCloudDigestPattern.MatchString(approval.WorkspaceImageDigest) ||
-		expiresErr != nil || !expiresAt.After(time.Now().UTC()) || emailErr != nil || email != approval.Customer.Email || approval.IdempotencyKey != key ||
+		expiresErr != nil || emailErr != nil || email != approval.Customer.Email || approval.IdempotencyKey != key ||
 		approval.Confirmation != workspaceLaunchReadbackRecoveryConfirmation || !workspaceLaunchReadbackRecoveryStageValid(approval.Stage) ||
 		approval.Target.LaunchOperationID == "" || approval.Target.AccountID == "" || approval.Target.WorkspaceID == "" || approval.Target.ComputeAllocationID == "" ||
 		approval.Target.StorageID == "" || approval.Target.PoolID == "" || approval.Target.NodePoolID == "" || approval.Target.MachineName == "" ||
@@ -576,8 +582,7 @@ func workspaceLaunchReadbackRecoveryApprovalFromMap(value any, key string) (work
 		approval.Resources.StorageZone == "" || approval.Resources.StorageSizeGB <= 0 || approval.Resources.StorageChargeType != "PREPAID" ||
 		approval.Resources.StorageRenewFlag != "NOTIFY_AND_MANUAL_RENEW" || approval.Resources.WorkspaceAPIKeyID <= 0 ||
 		!equalWorkspaceComputeClaimStrings(allowedWrites, workspaceLaunchReadbackRecoveryAllowedWrites(approval.Stage)) ||
-		!equalWorkspaceComputeClaimStrings(forbiddenWrites, workspaceLaunchReadbackRecoveryForbiddenWrites) ||
-		workspaceLaunchReadbackRecoveryApprovalDigest(approval) != approval.ApprovalDigest {
+		!equalWorkspaceComputeClaimStrings(forbiddenWrites, workspaceLaunchReadbackRecoveryForbiddenWrites) {
 		return workspaceLaunchReadbackRecoveryApproval{}, false
 	}
 	approval.AllowedWrites = allowedWrites
