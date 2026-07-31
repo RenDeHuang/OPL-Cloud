@@ -28,13 +28,18 @@ var testWorkspaceLaunchReadbackRecoveryForbiddenWrites = []string{
 
 type workspaceLaunchReadbackRecoveryFabric struct {
 	*monthlyFabric
-	operations    []clients.FabricOperation
-	operationsErr error
-	ownership     clients.MachineOwnership
-	ownershipErr  error
+	mu                 sync.Mutex
+	operations         []clients.FabricOperation
+	operationsErr      error
+	ownership          clients.MachineOwnership
+	ownershipErr       error
+	stageProofCalls    int
+	stageConvergeCalls int
 }
 
 func (f *workspaceLaunchReadbackRecoveryFabric) ListOperations(_ context.Context) ([]clients.FabricOperation, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.record("fabric.operations")
 	return append([]clients.FabricOperation(nil), f.operations...), f.operationsErr
 }
@@ -45,6 +50,51 @@ func (f *workspaceLaunchReadbackRecoveryFabric) MachineOwnership(_ context.Conte
 		return clients.MachineOwnership{}, errors.New("machine ownership not found")
 	}
 	return f.ownership, f.ownershipErr
+}
+
+func (f *workspaceLaunchReadbackRecoveryFabric) WorkspaceLaunchStageReadbackProof(_ context.Context, input clients.WorkspaceLaunchStageReadbackInput) (clients.WorkspaceLaunchStageReadbackProof, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.record("fabric.workspace-launch-stage-proof")
+	f.stageProofCalls++
+	for _, operation := range f.operations {
+		if operation.ID == input.FabricRecordID && operation.OperationID == input.FabricOperationID && operation.IdempotencyKey == input.IdempotencyKey && operation.RequestHash == input.RequestHash {
+			priorStatus := operation.Status
+			operation.Status = "succeeded"
+			return clients.WorkspaceLaunchStageReadbackProof{
+				SchemaVersion: 1, Eligible: true, Reason: "none", Stage: input.Stage, PriorStatus: priorStatus,
+				BindingDigest: workspaceComputeClaimStableSuffix("fabric-stage-binding", input.Stage, input.FabricRecordID), Operation: operation,
+			}, nil
+		}
+	}
+	return clients.WorkspaceLaunchStageReadbackProof{}, errors.New("workspace_launch_stage_readback_invalid")
+}
+
+func (f *workspaceLaunchReadbackRecoveryFabric) ConvergeWorkspaceLaunchStageReadback(_ context.Context, input clients.WorkspaceLaunchStageReadbackInput) (clients.WorkspaceLaunchStageReadbackProof, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.record("fabric.workspace-launch-stage-converge")
+	f.stageConvergeCalls++
+	for index := range f.operations {
+		operation := f.operations[index]
+		if operation.ID == input.FabricRecordID && operation.OperationID == input.FabricOperationID && operation.IdempotencyKey == input.IdempotencyKey && operation.RequestHash == input.RequestHash {
+			binding := workspaceComputeClaimStableSuffix("fabric-stage-binding", input.Stage, input.FabricRecordID)
+			if input.ExpectedBindingDigest == "" || input.ExpectedBindingDigest != binding {
+				return clients.WorkspaceLaunchStageReadbackProof{}, errors.New("workspace_launch_stage_readback_invalid")
+			}
+			priorStatus, mutationCount := operation.Status, 0
+			if operation.Status != "succeeded" {
+				operation.Status = "succeeded"
+				f.operations[index] = operation
+				mutationCount = 1
+			}
+			return clients.WorkspaceLaunchStageReadbackProof{
+				SchemaVersion: 1, Eligible: true, Reason: "none", Stage: input.Stage, PriorStatus: priorStatus,
+				BindingDigest: binding, Operation: operation, FabricOperationMutationCount: mutationCount,
+			}, nil
+		}
+	}
+	return clients.WorkspaceLaunchStageReadbackProof{}, errors.New("workspace_launch_stage_readback_invalid")
 }
 
 func testWorkspaceLaunchReadbackAllowedWrites(stage string) []string {
@@ -71,6 +121,11 @@ func testWorkspaceLaunchReadbackApproval(t *testing.T, operation workspaceLaunch
 	authority, err := workspaceLaunchReadbackRecoveryAuthorityForOperation(operation, stage, *readback.providerTruth, readback.ownership, readback.operations)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if identity, specialized := workspaceLaunchReadbackStageOperationIdentity(authority.OperationIDs, stage); specialized {
+		if !setWorkspaceLaunchReadbackStageBinding(&authority.OperationIDs, stage, workspaceComputeClaimStableSuffix("fabric-stage-binding", stage, identity.FabricRecordID)) {
+			t.Fatal("failed to bind Fabric stage proof")
+		}
 	}
 	approval := map[string]any{
 		"schemaVersion":        1,
@@ -417,6 +472,15 @@ func newWorkspaceLaunchReadbackRecoveryScenario(t *testing.T, stage, packageID s
 	if workspaceLaunchReadbackStageIndex(stage) >= workspaceLaunchReadbackStageIndex("runtime") {
 		readback.operations = append(readback.operations, runtimeOperation())
 	}
+	if stage == "attachment" || stage == "secret" || stage == "runtime" {
+		for index := range readback.operations {
+			if readback.operations[index].Action == map[string]string{
+				"attachment": "create_storage_attachment", "secret": "upsert_gateway_secret", "runtime": "create_workspace_runtime",
+			}[stage] {
+				readback.operations[index].Status = "started"
+			}
+		}
+	}
 	return workspaceLaunchReadbackRecoveryScenario{
 		fixture: fixture, unknown: unknown, approvalOperation: approvalOperation, readback: readback, beforeCurrentWrites: beforeCurrentWrites,
 	}
@@ -457,6 +521,38 @@ func TestWorkspaceLaunchUnknownStageConvergesFromAuthoritativeReadbackAfterResta
 	}
 }
 
+func TestWorkspaceLaunchAttachmentSecretRuntimeUseDedicatedFabricProofAndCAS(t *testing.T) {
+	t.Setenv("OPL_INTERNAL_SERVICE_TOKEN", "workspace-launch-readback-capability")
+	for _, packageID := range []string{"basic", "pro"} {
+		for _, stage := range []string{"attachment", "secret", "runtime"} {
+			t.Run(packageID+"/"+stage, func(t *testing.T) {
+				scenario := newWorkspaceLaunchReadbackRecoveryScenario(t, stage, packageID)
+				fixture := scenario.fixture
+				fixture.service = controlplane.NewService(fixture.ledger, scenario.readback, fixture.sub2API)
+				server, err := NewPersistentServer(fixture.service, fixture.store)
+				if err != nil {
+					t.Fatal(err)
+				}
+				fixture.server, fixture.operator = server, reservedOperatorSessionForTest(t, server)
+				proofResponse := requestWorkspaceLaunchReadbackProof(t, fixture)
+				if proofResponse.Code != http.StatusOK || scenario.readback.stageProofCalls != 1 || scenario.readback.stageConvergeCalls != 0 {
+					t.Fatalf("diagnosis status=%d proofCalls=%d convergeCalls=%d body=%s", proofResponse.Code, scenario.readback.stageProofCalls, scenario.readback.stageConvergeCalls, proofResponse.Body.String())
+				}
+				key := "recover-dedicated-" + stableID(packageID, stage)[:8]
+				approval := testWorkspaceLaunchReadbackApproval(t, scenario.approvalOperation, stage, key, scenario.readback)
+				response := requestWorkspaceLaunchReadbackRecovery(t, fixture, approval, key)
+				if response.Code != http.StatusOK || scenario.readback.stageConvergeCalls != 1 {
+					t.Fatalf("recovery status=%d proofCalls=%d convergeCalls=%d body=%s", response.Code, scenario.readback.stageProofCalls, scenario.readback.stageConvergeCalls, response.Body.String())
+				}
+				recovered := fixture.operation(t)
+				if recovered.Status != "succeeded" || recovered.URL == "" || recovered.ReceiptID == "" {
+					t.Fatalf("recovered launch=%#v", recovered)
+				}
+			})
+		}
+	}
+}
+
 func TestWorkspaceLaunchReadbackProofIsAuthoritativeAndReadOnly(t *testing.T) {
 	for _, stage := range workspaceLaunchContinuationStages {
 		t.Run(stage, func(t *testing.T) {
@@ -485,6 +581,11 @@ func TestWorkspaceLaunchReadbackProofIsAuthoritativeAndReadOnly(t *testing.T) {
 			)
 			if targetErr != nil || authorityErr != nil {
 				t.Fatalf("expected authority targetErr=%v authorityErr=%v", targetErr, authorityErr)
+			}
+			if identity, specialized := workspaceLaunchReadbackStageOperationIdentity(expectedAuthority.OperationIDs, stage); specialized {
+				if !setWorkspaceLaunchReadbackStageBinding(&expectedAuthority.OperationIDs, stage, workspaceComputeClaimStableSuffix("fabric-stage-binding", stage, identity.FabricRecordID)) {
+					t.Fatal("expected authority binding failed")
+				}
 			}
 			expectedResources := workspaceLaunchReadbackRecoveryExpectedResources(scenario.approvalOperation, *scenario.readback.providerTruth, expectedAuthority)
 			if proof.SchemaVersion != 1 || !proof.Eligible || proof.Reason != "none" || proof.Stage != stage ||

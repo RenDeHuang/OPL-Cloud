@@ -1112,13 +1112,14 @@ function workspaceLaunchReadbackProof(overrides = {}) {
 		paidThrough: "2099-08-27T00:00:00Z",
 		billingAnchorDay: 28
 	};
-	const operationIdentity = (idempotencyKey, suffix, providerOperationId, present = true) => ({
+	const operationIdentity = (idempotencyKey, suffix, providerOperationId, present = true, readbackBindingDigest = "") => ({
 		idempotencyKey,
 		fabricRecordId: present ? `fop-${suffix}-fixture` : "",
 		fabricOperationId: present ? `op-${suffix}-fixture` : "",
 		requestHash: present ? computeClaimStableSuffix("request", suffix) : "",
 		resourceOperationId: present ? idempotencyKey : "",
-		providerOperationId: present ? providerOperationId : ""
+		providerOperationId: present ? providerOperationId : "",
+		readbackBindingDigest
 	});
 	const ownershipId = "owner-compute-claim-fixture";
 	return {
@@ -1154,7 +1155,7 @@ function workspaceLaunchReadbackProof(overrides = {}) {
 			compute: operationIdentity(`${COMPUTE_CLAIM_TARGET.launchOperationId}:compute`, "compute", ownershipId),
 			storage: operationIdentity(`${COMPUTE_CLAIM_TARGET.launchOperationId}:storage`, "storage", "op-storage-provider-fixture"),
 			attachment: operationIdentity(`${COMPUTE_CLAIM_TARGET.launchOperationId}:attachment`, "attachment", `${COMPUTE_CLAIM_TARGET.launchOperationId}:attachment`),
-			secret: operationIdentity(`${COMPUTE_CLAIM_TARGET.launchOperationId}:workspace:secret:gateway-secret`, "secret", ""),
+			secret: operationIdentity(`${COMPUTE_CLAIM_TARGET.launchOperationId}:workspace:secret:gateway-secret`, "secret", "", true, "d".repeat(64)),
 			runtime: operationIdentity(`${COMPUTE_CLAIM_TARGET.launchOperationId}:workspace:runtime`, "runtime", "", false),
 			activationOperationId: `${COMPUTE_CLAIM_TARGET.launchOperationId}:activation`,
 			receiptOperationId: `${COMPUTE_CLAIM_TARGET.launchOperationId}:purchase-receipt`
@@ -1209,7 +1210,7 @@ function assertWorkspaceLaunchArtifactSafe(artifact, sensitiveValues = []) {
   const forbiddenKeys = new Set([
     "email", "privateIp", "machineName", "nodeName", "cvmInstanceId", "target", "proof", "approval",
     "gatewaySecretRef", "gatewaySecretFingerprint", "credential", "capability", "providerRequestId",
-    "operationIds", "fabricRecordId", "fabricOperationId", "providerOperationId", "requestHash", "resourceOperationId"
+    "operationIds", "fabricRecordId", "fabricOperationId", "providerOperationId", "requestHash", "resourceOperationId", "readbackBindingDigest"
   ]);
   const visit = (value) => {
     if (Array.isArray(value)) {
@@ -1293,6 +1294,13 @@ test("Workspace launch readback artifacts and continuation handoff use explicit 
   assert.match(diagnosis.bindingDigest, /^[a-f0-9]{64}$/);
   assert.equal(recovery.approvalBinding.approvalDigest, approvalDigest);
   assert.equal(recovery.approvalBinding.bindingDigest, diagnosis.bindingDigest);
+
+  const missingStageBinding = structuredClone(rawDiagnosis);
+  missingStageBinding.proof.operationIds.secret.readbackBindingDigest = "";
+  assert.throws(() => productionLiveQa.workspaceLaunchReadbackArtifact(missingStageBinding), /workspace_launch_readback_proof_invalid/);
+  const wrongStageBinding = structuredClone(rawDiagnosis);
+  wrongStageBinding.proof.operationIds.attachment.readbackBindingDigest = "e".repeat(64);
+  assert.throws(() => productionLiveQa.workspaceLaunchReadbackArtifact(wrongStageBinding), /workspace_launch_readback_proof_invalid/);
 
   const launch = computeClaimContinuationLaunch({ phase: "succeeded", status: "succeeded" });
   const runtime = {

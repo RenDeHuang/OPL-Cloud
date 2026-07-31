@@ -552,10 +552,16 @@ contract or select the SKU for a customer launch.
   `opl_operation_id`, and stage resource operation identities. It also requires
   the stage-specific authority: storage,
   attachment, Gateway Secret, Runtime, `WorkspaceActivationTruth`, or Ledger
-  Receipt. Only one unique and identity-exact readback may CAS the original
-  PostgreSQL operation to `attempted=1, confirmed=1, unknown=0, max=1`; the
-  unknown stage's external write is never reissued. A concurrent loser, absent
-  or multiple candidate, identity drift, or any read error leaves the launch in
+  Receipt. For Attachment, Gateway Secret, and Runtime, the authenticated Fabric
+  proof POST is a structured GET/Describe-only operation with zero Fabric
+  operation, PostgreSQL, Sub2API, Tencent, or Kubernetes mutation. One unique
+  and identity-exact proof may first CAS the matching Fabric operation from
+  `started/failed` to `succeeded`, then CAS the original Control Plane launch to
+  `attempted=1, confirmed=1, unknown=0, max=1`. Each CAS has a maximum of one
+  winner. Storage, activation, and Receipt use their existing authoritative
+  readback followed by only the original launch CAS. The unknown stage's
+  external write is never reissued. A concurrent loser, absent or multiple
+  candidate, identity drift, or any read error leaves the launch in
   `manual_review` with zero additional external write. After successful CAS
   convergence, later original launch stages still reserve and consume their own
   persisted `max=1` budgets through the shared orchestrator.

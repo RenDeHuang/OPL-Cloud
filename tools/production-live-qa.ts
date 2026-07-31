@@ -1036,7 +1036,7 @@ const WORKSPACE_LAUNCH_READBACK_OPERATION_KEYS = Object.freeze([
   "activationOperationId", "receiptOperationId"
 ]);
 const WORKSPACE_LAUNCH_READBACK_OPERATION_IDENTITY_KEYS = Object.freeze([
-  "idempotencyKey", "fabricRecordId", "fabricOperationId", "requestHash", "resourceOperationId", "providerOperationId"
+  "idempotencyKey", "fabricRecordId", "fabricOperationId", "requestHash", "resourceOperationId", "providerOperationId", "readbackBindingDigest"
 ]);
 
 function workspaceLaunchReadbackProofTarget(value, expected) {
@@ -1060,7 +1060,7 @@ function workspaceLaunchReadbackProofTarget(value, expected) {
   return value;
 }
 
-function workspaceLaunchReadbackOperationIdentity(value, idempotencyKey, required, providerRequired) {
+function workspaceLaunchReadbackOperationIdentity(value, idempotencyKey, required, providerRequired, readbackRequired) {
   const text = (key) => String(value?.[key] || "");
   if (!exactObjectKeys(value, WORKSPACE_LAUNCH_READBACK_OPERATION_IDENTITY_KEYS) || text("idempotencyKey") !== idempotencyKey) {
     throw new Error("workspace_launch_readback_proof_invalid");
@@ -1071,6 +1071,9 @@ function workspaceLaunchReadbackOperationIdentity(value, idempotencyKey, require
       throw new Error("workspace_launch_readback_proof_invalid");
     }
   } else if (authority.some((key) => text(key) !== "") || text("providerOperationId") !== "") {
+    throw new Error("workspace_launch_readback_proof_invalid");
+  }
+  if (readbackRequired ? !/^[a-f0-9]{64}$/.test(text("readbackBindingDigest")) : text("readbackBindingDigest") !== "") {
     throw new Error("workspace_launch_readback_proof_invalid");
   }
   return value;
@@ -1129,7 +1132,8 @@ function workspaceLaunchReadbackProof(value, target) {
     ["runtime", `${target.launchOperationId}:workspace:runtime`, currentIndex >= 3, true]
   ];
   for (const [name, idempotencyKey, required, providerRequired] of identities) {
-    workspaceLaunchReadbackOperationIdentity(operations[name], idempotencyKey, required, providerRequired);
+    const readbackRequired = name === stage && new Set(["attachment", "secret", "runtime"]).has(stage);
+    workspaceLaunchReadbackOperationIdentity(operations[name], idempotencyKey, required, providerRequired, readbackRequired);
   }
   if (operations.compute.providerOperationId !== operations.machineOwnershipId) throw new Error("workspace_launch_readback_proof_invalid");
   return JSON.parse(JSON.stringify(value));

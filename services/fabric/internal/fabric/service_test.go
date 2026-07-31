@@ -1918,8 +1918,8 @@ func TestFabricRejectsIllegalResourceMutationsWithOperationFacts(t *testing.T) {
 		t.Fatalf("list operations: %v", err)
 	}
 	assertOperationFact(t, operations, "destroy_compute_allocation", "compute_allocation", "missing-compute", "rejected")
-	assertOperationFact(t, operations, "create_storage_attachment", "storage_attachment", "reject-missing-attach", "rejected")
-	assertOperationFact(t, operations, "create_storage_attachment", "storage_attachment", "reject-cross-account-attach", "rejected")
+	assertOperationFact(t, operations, "create_storage_attachment", "storage_attachment", "att_"+stableSuffix("reject-missing-attach")[:18], "rejected")
+	assertOperationFact(t, operations, "create_storage_attachment", "storage_attachment", "att_"+stableSuffix("reject-cross-account-attach")[:18], "rejected")
 }
 
 func TestStorageAttachmentRequiresReadyComputeAndVolume(t *testing.T) {

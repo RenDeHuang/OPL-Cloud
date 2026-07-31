@@ -1337,13 +1337,14 @@ test("Workspace launch readback workflow gates bind every approved identity and 
     paidThrough: "2099-08-27T00:00:00Z",
     billingAnchorDay: 28
   };
-  const operationIdentity = (idempotencyKey, suffix, providerOperationId, present = true) => ({
+  const operationIdentity = (idempotencyKey, suffix, providerOperationId, present = true, readbackBindingDigest = "") => ({
     idempotencyKey,
     fabricRecordId: present ? `fop-${suffix}-readback` : "",
     fabricOperationId: present ? `op-${suffix}-readback` : "",
     requestHash: present ? `${suffix}-request-hash` : "",
     resourceOperationId: present ? idempotencyKey : "",
-    providerOperationId: present ? providerOperationId : ""
+    providerOperationId: present ? providerOperationId : "",
+    readbackBindingDigest
   });
   const machineOwnershipId = "owner-readback-fixture";
   const proof = {
@@ -1379,7 +1380,7 @@ test("Workspace launch readback workflow gates bind every approved identity and 
       compute: operationIdentity(`${target.launchOperationId}:compute`, "compute", machineOwnershipId),
       storage: operationIdentity(`${target.launchOperationId}:storage`, "storage", "provider-storage-readback"),
       attachment: operationIdentity(`${target.launchOperationId}:attachment`, "attachment", `${target.launchOperationId}:attachment`),
-      secret: operationIdentity(`${target.launchOperationId}:workspace:secret:gateway-secret`, "secret", ""),
+      secret: operationIdentity(`${target.launchOperationId}:workspace:secret:gateway-secret`, "secret", "", true, "d".repeat(64)),
       runtime: operationIdentity(`${target.launchOperationId}:workspace:runtime`, "runtime", "", false),
       activationOperationId: `${target.launchOperationId}:activation`,
       receiptOperationId: `${target.launchOperationId}:purchase-receipt`

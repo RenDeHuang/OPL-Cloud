@@ -396,7 +396,7 @@ test("Current Fabric contracts require dedicated package NodePools without weake
     output: "redacted_evidence_only",
     currentState: "implemented_and_fake_tested_not_executed"
   });
-  assert.equal(deployment.schemaVersion, 26);
+  assert.equal(deployment.schemaVersion, 27);
   assert.deepEqual(deployment.productionWorkspaceLaunchReadbackRecovery, {
     workflow: ".github/workflows/production-basic-customer-operation.yml",
     modes: {
@@ -405,6 +405,7 @@ test("Current Fabric contracts require dedicated package NodePools without weake
         route: "GET /api/operator/workspace-launches/{operationId}/readback-recovery-proof",
         persistence: "none",
         databaseMutationCount: 0,
+        fabricOperationMutationCount: 0,
         mutationApproval: false,
         proofMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
         runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
@@ -419,6 +420,7 @@ test("Current Fabric contracts require dedicated package NodePools without weake
         proofMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
         runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
         backgroundMutationCountsState: "unknown",
+        convergenceWrites: { attachmentSecretRuntimeFabricOperationCasMax: 1, originalLaunchCasMax: 1, unknownStageProviderWriteReplay: 0 },
         unknownStageExternalWriteReplayCount: 0,
         remainingStageMutationBudget: "original_launch_persisted_per_stage_max_1",
         persistedReplay: {
@@ -763,7 +765,7 @@ test("Current contracts hard cut operator resources, wallet adjustments, and ann
     absentRequires: "both_local_identities_and_exact_provider_describe_absence",
     forbiddenSideEffects: ["sync", "tag", "kubectl_apply", "delete", "label", "purchase", "renew", "destroy"]
   });
-  assert.equal(boundary.schemaVersion, 20);
+  assert.equal(boundary.schemaVersion, 21);
   assert.deepEqual(boundary.services.controlPlane.workspaceContinuationAttemptBudget, {
     owner: "original_workspace.launch.v2_operation",
     stages: ["storage", "attachment", "secret", "runtime", "activation", "receipt"],
@@ -776,14 +778,19 @@ test("Current contracts hard cut operator resources, wallet adjustments, and ann
   assert.deepEqual(boundary.services.controlPlane.workspaceLaunchAuthoritativeReadbackRecovery, {
     proofRoute: "GET /api/operator/workspace-launches/{operationId}/readback-recovery-proof",
     recoveryRoute: "POST /api/operator/workspace-launches/{operationId}/recover",
+    fabricProofRoute: "POST /fabric/workspace-launch-stage-readback/proof",
+    fabricConvergenceRoute: "POST /fabric/workspace-launch-stage-readback/converge",
+    fabricProofSemantics: "authenticated_structured_post_get_describe_only",
     stages: ["storage", "attachment", "secret", "runtime", "activation", "receipt"],
     inputBudget: { attempted: 1, confirmed: 0, unknown: 1, max: 1 },
     convergedBudget: { attempted: 1, confirmed: 1, unknown: 0, max: 1 },
     proofAuthorities: ["monthly_provider_truth", "machine_ownership", "fabric_operation_store", "workspace_runtime_status", "workspace_activation_truth", "ledger_receipt"],
     proofPersistence: "none",
     proofDatabaseMutationCount: 0,
+    proofFabricOperationMutationCount: 0,
     identityBinding: "full_product_compute_node_cbs_attachment_secret_runtime_and_layered_operation_identity",
-    convergence: "postgresql_original_launch_cas_only_after_unique_exact_authoritative_readback",
+    convergence: "attachment_secret_runtime_fabric_operation_cas_then_postgresql_original_launch_cas_other_stages_original_launch_cas",
+    convergenceMutationMaximums: { fabricOperationCas: 1, originalLaunchCas: 1, unknownStageProviderWriteReplay: 0 },
     winner: "one_concurrent_recovery_cas",
     replay: "unknown_stage_external_write_never_reissued_later_stages_use_own_persisted_budget",
     failure: "absent_multiple_drift_or_read_error_remains_manual_review",

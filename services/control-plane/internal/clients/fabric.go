@@ -70,6 +70,11 @@ type FabricWorkspaceActivationTruthClient interface {
 	WorkspaceActivationTruth(context.Context, WorkspaceActivationTruthInput) (WorkspaceActivationTruth, error)
 }
 
+type FabricWorkspaceLaunchStageReadbackClient interface {
+	WorkspaceLaunchStageReadbackProof(context.Context, WorkspaceLaunchStageReadbackInput) (WorkspaceLaunchStageReadbackProof, error)
+	ConvergeWorkspaceLaunchStageReadback(context.Context, WorkspaceLaunchStageReadbackInput) (WorkspaceLaunchStageReadbackProof, error)
+}
+
 type FabricComputeClaimRecoveryClient interface {
 	ComputeClaimRecoveryProof(context.Context, ComputeClaimRecoveryInput) (ComputeClaimRecoveryProof, error)
 	ClaimComputeRecovery(context.Context, ComputeClaimRecoveryClaimInput, string) (ComputeClaimRecoveryProof, error)
@@ -493,6 +498,41 @@ type FabricOperation struct {
 	CreatedAt               string         `json:"createdAt"`
 }
 
+type WorkspaceLaunchStageReadbackInput struct {
+	Stage                    string `json:"stage"`
+	FabricRecordID           string `json:"fabricRecordId"`
+	FabricOperationID        string `json:"fabricOperationId"`
+	AccountID                string `json:"accountId"`
+	WorkspaceID              string `json:"workspaceId"`
+	IdempotencyKey           string `json:"idempotencyKey"`
+	RequestHash              string `json:"requestHash"`
+	ComputeID                string `json:"computeId,omitempty"`
+	StorageID                string `json:"storageId,omitempty"`
+	AttachmentID             string `json:"attachmentId,omitempty"`
+	AttachmentOperationID    string `json:"attachmentOperationId,omitempty"`
+	RuntimeID                string `json:"runtimeId,omitempty"`
+	RuntimeOperationID       string `json:"runtimeOperationId,omitempty"`
+	ImageID                  string `json:"imageId,omitempty"`
+	GatewaySecretRef         string `json:"gatewaySecretRef,omitempty"`
+	GatewaySecretFingerprint string `json:"gatewaySecretFingerprint,omitempty"`
+	WorkspaceAPIKeyID        int64  `json:"workspaceApiKeyId,omitempty"`
+	ExpectedBindingDigest    string `json:"expectedBindingDigest,omitempty"`
+}
+
+type WorkspaceLaunchStageReadbackProof struct {
+	SchemaVersion                int             `json:"schemaVersion"`
+	Eligible                     bool            `json:"eligible"`
+	Reason                       string          `json:"reason"`
+	Stage                        string          `json:"stage"`
+	PriorStatus                  string          `json:"priorStatus"`
+	BindingDigest                string          `json:"bindingDigest"`
+	Operation                    FabricOperation `json:"operation"`
+	Sub2APIMutationCount         int             `json:"sub2apiMutationCount"`
+	TencentMutationCount         int             `json:"tencentMutationCount"`
+	KubernetesMutationCount      int             `json:"kubernetesMutationCount"`
+	FabricOperationMutationCount int             `json:"fabricOperationMutationCount"`
+}
+
 type fabricHTTPClient struct {
 	baseURL string
 	token   string
@@ -541,6 +581,18 @@ func (c *fabricHTTPClient) WorkspaceActivationTruth(ctx context.Context, input W
 	if errors.As(err, &httpErr) {
 		_ = json.Unmarshal([]byte(httpErr.Body), &result)
 	}
+	return result, err
+}
+
+func (c *fabricHTTPClient) WorkspaceLaunchStageReadbackProof(ctx context.Context, input WorkspaceLaunchStageReadbackInput) (WorkspaceLaunchStageReadbackProof, error) {
+	var result WorkspaceLaunchStageReadbackProof
+	err := c.post(ctx, "/fabric/workspace-launch-stage-readback/proof", input, "", &result)
+	return result, err
+}
+
+func (c *fabricHTTPClient) ConvergeWorkspaceLaunchStageReadback(ctx context.Context, input WorkspaceLaunchStageReadbackInput) (WorkspaceLaunchStageReadbackProof, error) {
+	var result WorkspaceLaunchStageReadbackProof
+	err := c.post(ctx, "/fabric/workspace-launch-stage-readback/converge", input, "", &result)
 	return result, err
 }
 

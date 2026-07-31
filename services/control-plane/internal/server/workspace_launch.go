@@ -214,12 +214,13 @@ type workspaceLaunchReadbackRecoveryResources struct {
 }
 
 type workspaceLaunchReadbackRecoveryFabricOperationIdentity struct {
-	IdempotencyKey      string `json:"idempotencyKey"`
-	FabricRecordID      string `json:"fabricRecordId"`
-	FabricOperationID   string `json:"fabricOperationId"`
-	RequestHash         string `json:"requestHash"`
-	ResourceOperationID string `json:"resourceOperationId"`
-	ProviderOperationID string `json:"providerOperationId"`
+	IdempotencyKey        string `json:"idempotencyKey"`
+	FabricRecordID        string `json:"fabricRecordId"`
+	FabricOperationID     string `json:"fabricOperationId"`
+	RequestHash           string `json:"requestHash"`
+	ResourceOperationID   string `json:"resourceOperationId"`
+	ProviderOperationID   string `json:"providerOperationId"`
+	ReadbackBindingDigest string `json:"readbackBindingDigest"`
 }
 
 type workspaceLaunchReadbackRecoveryOperationIDs struct {
@@ -1443,7 +1444,7 @@ func workspaceLaunchReadbackFabricOperationSpecs(operation workspaceLaunchOperat
 	return []workspaceLaunchReadbackFabricOperationSpec{
 		{Stage: "compute", Action: "create_compute_allocation", ResourceKind: "compute_allocation", ResourceID: operation.ComputeID, IdempotencyKey: operation.ID + ":compute"},
 		{Stage: "storage", Action: "create_storage_volume", ResourceKind: "storage_volume", ResourceID: operation.StorageID, IdempotencyKey: operation.ID + ":storage"},
-		{Stage: "attachment", Action: "create_storage_attachment", ResourceKind: "storage_attachment", ResourceID: operation.AttachmentID, IdempotencyKey: operation.AttachmentOperationID},
+		{Stage: "attachment", Action: "create_storage_attachment", ResourceKind: "storage_attachment", ResourceID: firstNonEmpty(operation.AttachmentID, workspaceLaunchStorageAttachmentID(operation)), IdempotencyKey: operation.AttachmentOperationID},
 		{Stage: "secret", Action: "upsert_gateway_secret", ResourceKind: "gateway_secret", ResourceID: workspaceGatewaySecretReference(operation.WorkspaceID), IdempotencyKey: operation.WorkspaceOperationID + ":secret:gateway-secret"},
 		{Stage: "runtime", Action: "create_workspace_runtime", ResourceKind: "workspace_runtime", ResourceID: operation.WorkspaceID, IdempotencyKey: operation.WorkspaceOperationID + ":runtime"},
 	}
@@ -1540,6 +1541,128 @@ func workspaceLaunchReadbackOperationIdentity(candidate clients.FabricOperation,
 		IdempotencyKey: candidate.IdempotencyKey, FabricRecordID: candidate.ID, FabricOperationID: candidate.OperationID,
 		RequestHash: candidate.RequestHash, ResourceOperationID: resourceOperationID, ProviderOperationID: providerOperationID,
 	}
+}
+
+func workspaceLaunchReadbackStageOperationIdentity(operationIDs workspaceLaunchReadbackRecoveryOperationIDs, stage string) (workspaceLaunchReadbackRecoveryFabricOperationIdentity, bool) {
+	switch stage {
+	case "attachment":
+		return operationIDs.Attachment, true
+	case "secret":
+		return operationIDs.Secret, true
+	case "runtime":
+		return operationIDs.Runtime, true
+	default:
+		return workspaceLaunchReadbackRecoveryFabricOperationIdentity{}, false
+	}
+}
+
+func setWorkspaceLaunchReadbackStageBinding(operationIDs *workspaceLaunchReadbackRecoveryOperationIDs, stage, digest string) bool {
+	if operationIDs == nil || !computeClaimApprovalDigestPattern.MatchString(digest) {
+		return false
+	}
+	switch stage {
+	case "attachment":
+		operationIDs.Attachment.ReadbackBindingDigest = digest
+	case "secret":
+		operationIDs.Secret.ReadbackBindingDigest = digest
+	case "runtime":
+		operationIDs.Runtime.ReadbackBindingDigest = digest
+	default:
+		return false
+	}
+	return true
+}
+
+func workspaceLaunchReadbackFabricSpec(operation workspaceLaunchOperation, stage string) (workspaceLaunchReadbackFabricOperationSpec, bool) {
+	for _, spec := range workspaceLaunchReadbackFabricOperationSpecs(operation) {
+		if spec.Stage == stage {
+			return spec, true
+		}
+	}
+	return workspaceLaunchReadbackFabricOperationSpec{}, false
+}
+
+func workspaceLaunchStageReadbackInput(operation workspaceLaunchOperation, stage string, identity workspaceLaunchReadbackRecoveryFabricOperationIdentity, expectedBindingDigest string) (clients.WorkspaceLaunchStageReadbackInput, error) {
+	if _, ok := workspaceLaunchReadbackFabricSpec(operation, stage); !ok || identity.FabricRecordID == "" || identity.FabricOperationID == "" || identity.IdempotencyKey == "" || identity.RequestHash == "" {
+		return clients.WorkspaceLaunchStageReadbackInput{}, errBillingReviewIdentity
+	}
+	runtimeOperationID := operation.WorkspaceOperationID + ":runtime"
+	input := clients.WorkspaceLaunchStageReadbackInput{
+		Stage: stage, FabricRecordID: identity.FabricRecordID, FabricOperationID: identity.FabricOperationID,
+		AccountID: operation.AccountID, WorkspaceID: operation.WorkspaceID, IdempotencyKey: identity.IdempotencyKey,
+		RequestHash: identity.RequestHash, ComputeID: operation.ComputeID, StorageID: operation.StorageID,
+		AttachmentID: firstNonEmpty(operation.AttachmentID, workspaceLaunchStorageAttachmentID(operation)), AttachmentOperationID: operation.AttachmentOperationID,
+		RuntimeID:          firstNonEmpty(operation.RuntimeID, "rt_"+workspaceComputeClaimStableSuffix(operation.WorkspaceID, runtimeOperationID)[:18]),
+		RuntimeOperationID: runtimeOperationID, ImageID: "one-person-lab-app",
+		GatewaySecretRef:         firstNonEmpty(operation.GatewaySecretRef, workspaceGatewaySecretReference(operation.WorkspaceID)),
+		GatewaySecretFingerprint: operation.WorkspaceKeyFingerprint, WorkspaceAPIKeyID: operation.WorkspaceAPIKeyID,
+		ExpectedBindingDigest: expectedBindingDigest,
+	}
+	return input, nil
+}
+
+func workspaceLaunchStageReadbackOperation(operations []clients.FabricOperation, operation workspaceLaunchOperation, stage string) (clients.FabricOperation, error) {
+	spec, ok := workspaceLaunchReadbackFabricSpec(operation, stage)
+	if !ok {
+		return clients.FabricOperation{}, errInvalidBillingReview
+	}
+	candidate, found, err := workspaceLaunchReadbackFabricOperation(operations, operation, spec, true)
+	if err != nil || !found {
+		return clients.FabricOperation{}, errors.Join(err, errBillingReviewProviderFact)
+	}
+	return candidate, nil
+}
+
+func workspaceLaunchOperationsWithStageProof(operations []clients.FabricOperation, candidate clients.FabricOperation, proof clients.WorkspaceLaunchStageReadbackProof) ([]clients.FabricOperation, error) {
+	if proof.SchemaVersion != 1 || !proof.Eligible || proof.Reason != "none" || proof.Stage == "" || !computeClaimApprovalDigestPattern.MatchString(proof.BindingDigest) ||
+		proof.Sub2APIMutationCount != 0 || proof.TencentMutationCount != 0 || proof.KubernetesMutationCount != 0 || proof.FabricOperationMutationCount != 0 ||
+		proof.Operation.ID != candidate.ID || proof.Operation.OperationID != candidate.OperationID || proof.Operation.Action != candidate.Action ||
+		proof.Operation.ResourceKind != candidate.ResourceKind || proof.Operation.ResourceID != candidate.ResourceID || proof.Operation.AccountID != candidate.AccountID ||
+		proof.Operation.WorkspaceID != candidate.WorkspaceID || proof.Operation.IdempotencyKey != candidate.IdempotencyKey || proof.Operation.RequestHash != candidate.RequestHash ||
+		proof.Operation.Status != "succeeded" {
+		return nil, errBillingReviewProviderFact
+	}
+	result := append([]clients.FabricOperation(nil), operations...)
+	matches := 0
+	for index := range result {
+		if result[index].ID == candidate.ID {
+			result[index] = proof.Operation
+			matches++
+		}
+	}
+	if matches != 1 {
+		return nil, errBillingReviewProviderFact
+	}
+	return result, nil
+}
+
+func applyWorkspaceLaunchStageReadback(operation *workspaceLaunchOperation, stage string, authority workspaceLaunchReadbackRecoveryAuthority) error {
+	if operation == nil {
+		return errBillingReviewIdentity
+	}
+	switch stage {
+	case "attachment":
+		operation.AttachmentID = authority.Attachment.ID
+	case "secret":
+		operation.GatewaySecretRef, operation.WorkspaceKeyStatus = authority.Secret.SecretRef, "configured"
+		operation.WorkspaceKeyFingerprint = authority.Secret.Fingerprint
+	case "runtime":
+		operation.RuntimeID, operation.RuntimeReady = authority.Runtime.ID, authority.Runtime.Ready
+		operation.RuntimeServiceName, operation.RuntimeUsername = authority.Runtime.ServiceName, authority.Runtime.Access.Username
+		operation.CredentialStatus, operation.CredentialVersion = authority.Runtime.Access.CredentialStatus, authority.Runtime.Access.CredentialVersion
+		operation.CredentialSecretRef, operation.URL = authority.Runtime.Access.SecretRef, authority.Runtime.URL
+	default:
+		return errInvalidBillingReview
+	}
+	return nil
+}
+
+func workspaceLaunchStageConvergenceMatches(input clients.WorkspaceLaunchStageReadbackInput, proof clients.WorkspaceLaunchStageReadbackProof) bool {
+	return proof.SchemaVersion == 1 && proof.Eligible && proof.Reason == "none" && proof.Stage == input.Stage &&
+		proof.BindingDigest == input.ExpectedBindingDigest && proof.Sub2APIMutationCount == 0 && proof.TencentMutationCount == 0 && proof.KubernetesMutationCount == 0 &&
+		(proof.FabricOperationMutationCount == 0 || proof.FabricOperationMutationCount == 1) &&
+		proof.Operation.ID == input.FabricRecordID && proof.Operation.OperationID == input.FabricOperationID &&
+		proof.Operation.IdempotencyKey == input.IdempotencyKey && proof.Operation.RequestHash == input.RequestHash && proof.Operation.Status == "succeeded"
 }
 
 func workspaceLaunchReadbackRecoveryAuthorityForOperation(operation workspaceLaunchOperation, stage string, truth clients.MonthlyProviderTruth, ownership clients.MachineOwnership, operations []clients.FabricOperation) (workspaceLaunchReadbackRecoveryAuthority, error) {
@@ -2239,7 +2362,7 @@ func (app *controlPlaneServer) readWorkspaceLaunchUnknownStage(ctx context.Conte
 	}
 }
 
-func (app *controlPlaneServer) workspaceLaunchReadbackRecoveryProofForOperation(ctx context.Context, service *controlplane.Service, operation workspaceLaunchOperation) (workspaceLaunchOperation, workspaceLaunchReadbackRecoveryProof, error) {
+func (app *controlPlaneServer) workspaceLaunchReadbackRecoveryProofForOperation(ctx context.Context, service *controlplane.Service, operation workspaceLaunchOperation, expectedBindings ...string) (workspaceLaunchOperation, workspaceLaunchReadbackRecoveryProof, error) {
 	stage, hasUnknown := workspaceLaunchReadbackUnknownStage(operation)
 	budget := operation.ContinuationAttemptBudgets[stage]
 	if !hasUnknown || stage == "" || operation.Status != "manual_review" || operation.Phase != workspaceLaunchReadbackRecoveryPhase(stage) ||
@@ -2267,12 +2390,47 @@ func (app *controlPlaneServer) workspaceLaunchReadbackRecoveryProofForOperation(
 	if err != nil {
 		return operation, workspaceLaunchReadbackRecoveryProof{}, errBillingReviewProviderFact
 	}
-	if _, err := app.readWorkspaceLaunchUnknownStage(ctx, service, &operation, stage, operations); err != nil {
+	expectedBinding := ""
+	if len(expectedBindings) > 0 {
+		expectedBinding = expectedBindings[0]
+	}
+	specializedStage := stage == "attachment" || stage == "secret" || stage == "runtime"
+	stageBinding := ""
+	if specializedStage {
+		if stage == "attachment" {
+			operation.AttachmentID = firstNonEmpty(operation.AttachmentID, workspaceLaunchStorageAttachmentID(operation))
+		}
+		candidate, candidateErr := workspaceLaunchStageReadbackOperation(operations, operation, stage)
+		if candidateErr != nil || candidate.Status == "succeeded" && expectedBinding == "" ||
+			(candidate.Status != "started" && candidate.Status != "failed" && candidate.Status != "succeeded") {
+			return operation, workspaceLaunchReadbackRecoveryProof{}, errBillingReviewProviderFact
+		}
+		identity := workspaceLaunchReadbackOperationIdentity(candidate, "", "")
+		input, inputErr := workspaceLaunchStageReadbackInput(operation, stage, identity, expectedBinding)
+		if inputErr != nil {
+			return operation, workspaceLaunchReadbackRecoveryProof{}, inputErr
+		}
+		stageProof, proofErr := service.WorkspaceLaunchStageReadbackProof(ctx, input)
+		if proofErr != nil || stageProof.Stage != stage || stageProof.PriorStatus != candidate.Status ||
+			expectedBinding != "" && stageProof.BindingDigest != expectedBinding {
+			return operation, workspaceLaunchReadbackRecoveryProof{}, errBillingReviewProviderFact
+		}
+		operations, err = workspaceLaunchOperationsWithStageProof(operations, candidate, stageProof)
+		if err != nil {
+			return operation, workspaceLaunchReadbackRecoveryProof{}, err
+		}
+		stageBinding = stageProof.BindingDigest
+	} else if _, err := app.readWorkspaceLaunchUnknownStage(ctx, service, &operation, stage, operations); err != nil {
 		return operation, workspaceLaunchReadbackRecoveryProof{}, errBillingReviewProviderFact
 	}
 	authority, err := workspaceLaunchReadbackRecoveryAuthorityForOperation(operation, stage, truth, ownership, operations)
 	if err != nil {
 		return operation, workspaceLaunchReadbackRecoveryProof{}, err
+	}
+	if specializedStage {
+		if !setWorkspaceLaunchReadbackStageBinding(&authority.OperationIDs, stage, stageBinding) || applyWorkspaceLaunchStageReadback(&operation, stage, authority) != nil {
+			return operation, workspaceLaunchReadbackRecoveryProof{}, errBillingReviewIdentity
+		}
 	}
 	target, err := workspaceLaunchReadbackRecoveryExpectedTarget(operation, truth)
 	if err != nil {
@@ -2310,7 +2468,12 @@ func (app *controlPlaneServer) diagnoseWorkspaceLaunchReadbackRecovery(ctx conte
 }
 
 func (app *controlPlaneServer) convergeWorkspaceLaunchUnknownStage(ctx context.Context, service *controlplane.Service, operation *workspaceLaunchOperation, approval workspaceLaunchReadbackRecoveryApproval) (bool, error) {
-	recovered, proof, err := app.workspaceLaunchReadbackRecoveryProofForOperation(ctx, service, *operation)
+	stageIdentity, specializedStage := workspaceLaunchReadbackStageOperationIdentity(approval.OperationIDs, approval.Stage)
+	expectedBinding := ""
+	if specializedStage {
+		expectedBinding = stageIdentity.ReadbackBindingDigest
+	}
+	recovered, proof, err := app.workspaceLaunchReadbackRecoveryProofForOperation(ctx, service, *operation, expectedBinding)
 	if err != nil {
 		return false, err
 	}
@@ -2320,6 +2483,16 @@ func (app *controlPlaneServer) convergeWorkspaceLaunchUnknownStage(ctx context.C
 	expected.AttemptBudget, expected.AllowedWrites, expected.ForbiddenWrites = proof.AttemptBudget, proof.AllowedWrites, proof.ForbiddenWrites
 	if !workspaceLaunchReadbackRecoveryApprovalMatches(approval, expected) || workspaceLaunchReadbackRecoveryApprovalDigest(expected) != approval.ApprovalDigest {
 		return false, errBillingReviewIdentity
+	}
+	if specializedStage {
+		input, inputErr := workspaceLaunchStageReadbackInput(recovered, approval.Stage, stageIdentity, expectedBinding)
+		if inputErr != nil {
+			return false, inputErr
+		}
+		converged, convergeErr := service.ConvergeWorkspaceLaunchStageReadback(ctx, input)
+		if convergeErr != nil || !workspaceLaunchStageConvergenceMatches(input, converged) {
+			return false, errBillingReviewProviderFact
+		}
 	}
 	*operation = recovered
 	budget := operation.ContinuationAttemptBudgets[approval.Stage]
@@ -2525,6 +2698,11 @@ func workspaceLaunchReadbackRecoveryOperationPlanMatches(operationIDs workspaceL
 		operationIDs.ActivationOperationID == operation.ID+":activation" && operationIDs.ReceiptOperationID == operation.ID+":purchase-receipt"
 }
 
+func workspaceLaunchReadbackRecoveryStageBindingMatches(operationIDs workspaceLaunchReadbackRecoveryOperationIDs, stage string) bool {
+	identity, specialized := workspaceLaunchReadbackStageOperationIdentity(operationIDs, stage)
+	return !specialized || computeClaimApprovalDigestPattern.MatchString(identity.ReadbackBindingDigest)
+}
+
 func (app *controlPlaneServer) validateWorkspaceLaunchReadbackRecoveryApproval(ctx context.Context, operation workspaceLaunchOperation, approval workspaceLaunchReadbackRecoveryApproval, key string) error {
 	expiresAt, expiresErr := time.Parse(time.RFC3339, approval.ExpiresAt)
 	customer, customerErr := app.workspaceLaunchReadbackRecoveryCustomer(ctx, operation)
@@ -2540,7 +2718,8 @@ func (app *controlPlaneServer) validateWorkspaceLaunchReadbackRecoveryApproval(c
 		approval.Resources.ComputeAllocationID != operation.ComputeID ||
 		approval.Resources.StorageVolumeID != operation.StorageID || approval.Resources.GatewaySecretRef != workspaceGatewaySecretReference(operation.WorkspaceID) ||
 		approval.Resources.StorageSizeGB != operation.StorageGB || approval.Resources.WorkspaceAPIKeyID != operation.WorkspaceAPIKeyID ||
-		!workspaceLaunchReadbackRecoveryOperationPlanMatches(approval.OperationIDs, operation) || approval.AttemptBudget != operation.ContinuationAttemptBudgets[approval.Stage] ||
+		!workspaceLaunchReadbackRecoveryOperationPlanMatches(approval.OperationIDs, operation) || !workspaceLaunchReadbackRecoveryStageBindingMatches(approval.OperationIDs, approval.Stage) ||
+		approval.AttemptBudget != operation.ContinuationAttemptBudgets[approval.Stage] ||
 		!equalWorkspaceComputeClaimStrings(approval.AllowedWrites, workspaceLaunchReadbackRecoveryAllowedWrites(approval.Stage)) ||
 		!equalWorkspaceComputeClaimStrings(approval.ForbiddenWrites, workspaceLaunchReadbackRecoveryForbiddenWrites) {
 		return errBillingReviewIdentity

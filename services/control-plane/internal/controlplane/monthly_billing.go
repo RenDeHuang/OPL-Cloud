@@ -61,6 +61,22 @@ func (s *Service) WorkspaceActivationTruth(ctx context.Context, input clients.Wo
 	return client.WorkspaceActivationTruth(ctx, input)
 }
 
+func (s *Service) WorkspaceLaunchStageReadbackProof(ctx context.Context, input clients.WorkspaceLaunchStageReadbackInput) (clients.WorkspaceLaunchStageReadbackProof, error) {
+	client, ok := s.fabric.(clients.FabricWorkspaceLaunchStageReadbackClient)
+	if !ok {
+		return clients.WorkspaceLaunchStageReadbackProof{}, errors.New("fabric_workspace_launch_stage_readback_unavailable")
+	}
+	return client.WorkspaceLaunchStageReadbackProof(ctx, input)
+}
+
+func (s *Service) ConvergeWorkspaceLaunchStageReadback(ctx context.Context, input clients.WorkspaceLaunchStageReadbackInput) (clients.WorkspaceLaunchStageReadbackProof, error) {
+	client, ok := s.fabric.(clients.FabricWorkspaceLaunchStageReadbackClient)
+	if !ok {
+		return clients.WorkspaceLaunchStageReadbackProof{}, errors.New("fabric_workspace_launch_stage_readback_unavailable")
+	}
+	return client.ConvergeWorkspaceLaunchStageReadback(ctx, input)
+}
+
 func (s *Service) ComputeClaimRecoveryProof(ctx context.Context, input clients.ComputeClaimRecoveryInput) (clients.ComputeClaimRecoveryProof, error) {
 	client, ok := s.fabric.(clients.FabricComputeClaimRecoveryClient)
 	if !ok {

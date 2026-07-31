@@ -92,6 +92,24 @@ func NewServer(service *fabric.Service, token string) http.Handler {
 		truth, err := service.WorkspaceActivationTruth(r.Context(), input)
 		writeWorkspaceActivationTruthResult(w, truth, err)
 	})
+	mux.HandleFunc("POST /fabric/workspace-launch-stage-readback/proof", func(w http.ResponseWriter, r *http.Request) {
+		var input fabric.WorkspaceLaunchStageReadbackInput
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid JSON body")
+			return
+		}
+		proof, err := service.WorkspaceLaunchStageReadbackProof(r.Context(), input)
+		writeWorkspaceLaunchStageReadbackResult(w, proof, err)
+	})
+	mux.HandleFunc("POST /fabric/workspace-launch-stage-readback/converge", func(w http.ResponseWriter, r *http.Request) {
+		var input fabric.WorkspaceLaunchStageReadbackInput
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid JSON body")
+			return
+		}
+		proof, err := service.ConvergeWorkspaceLaunchStageReadback(r.Context(), input)
+		writeWorkspaceLaunchStageReadbackResult(w, proof, err)
+	})
 	mux.HandleFunc("POST /fabric/compute-claim-recovery/proof", func(w http.ResponseWriter, r *http.Request) {
 		var input fabric.ComputeClaimRecoveryInput
 		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
@@ -509,6 +527,20 @@ func writeWorkspaceActivationTruthResult(w http.ResponseWriter, truth fabric.Wor
 		status = http.StatusBadRequest
 	}
 	writeJSON(w, status, truth)
+}
+
+func writeWorkspaceLaunchStageReadbackResult(w http.ResponseWriter, proof fabric.WorkspaceLaunchStageReadbackProof, err error) {
+	if err == nil {
+		writeJSON(w, http.StatusOK, proof)
+		return
+	}
+	status := http.StatusServiceUnavailable
+	if errors.Is(err, fabric.ErrWorkspaceLaunchStageReadbackInvalid) {
+		status = http.StatusBadRequest
+	} else if errors.Is(err, fabric.ErrRuntimeOperationNotCurrent) {
+		status = http.StatusConflict
+	}
+	writeJSON(w, status, proof)
 }
 
 func writeJobResult(w http.ResponseWriter, status int, body fabric.Job, err error) {

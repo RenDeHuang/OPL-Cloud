@@ -2105,7 +2105,8 @@ func (s *Service) CreateStorageAttachment(ctx context.Context, input StorageAtta
 	volume := s.volumes[input.VolumeID]
 	s.mu.Unlock()
 	now := s.now()
-	operation := newOperation("create_storage_attachment", "storage_attachment", input.IdempotencyKey, compute.AccountID, input.WorkspaceID, input.IdempotencyKey, requestHash, now)
+	attachmentID := "att_" + stableSuffix(input.IdempotencyKey)[:18]
+	operation := newOperation("create_storage_attachment", "storage_attachment", attachmentID, compute.AccountID, input.WorkspaceID, input.IdempotencyKey, requestHash, now)
 	if err := validateAttachmentInput(input, compute, volume); err != nil {
 		operation.ProviderRequestID = providerRequestID("storage-attach", input.IdempotencyKey)
 		_ = s.recordOperation(ctx, operation, "rejected", StorageAttachment{ID: operation.ResourceID, WorkspaceID: input.WorkspaceID, ComputeID: input.ComputeID, VolumeID: input.VolumeID, ProviderRequestID: operation.ProviderRequestID}, err)
@@ -2114,7 +2115,7 @@ func (s *Service) CreateStorageAttachment(ctx context.Context, input StorageAtta
 	operation.ID = "fop_attachment_claim_" + stableSuffix("create_storage_attachment", input.IdempotencyKey)
 	operation.Status = "started"
 	operation.CreatedAt = now
-	fillOperationResource(&operation, StorageAttachment{ID: operation.ResourceID, OperationID: input.IdempotencyKey, WorkspaceID: input.WorkspaceID, ComputeID: input.ComputeID, VolumeID: input.VolumeID, Provider: "tencent-tke", ProviderRequestID: providerRequestID("storage-attach", input.IdempotencyKey)})
+	fillOperationResource(&operation, StorageAttachment{ID: attachmentID, OperationID: input.IdempotencyKey, WorkspaceID: input.WorkspaceID, ComputeID: input.ComputeID, VolumeID: input.VolumeID, Provider: "tencent-tke", ProviderRequestID: providerRequestID("storage-attach", input.IdempotencyKey)})
 	input.OperationID = input.IdempotencyKey
 	stored, claimed, err := s.claimRuntimeOperation(ctx, operation)
 	if err != nil {

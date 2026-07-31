@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 26,
+  "schemaVersion": 27,
   "owner": "OPL Fabric",
   "purpose": "Deployment workflow, immutable Cloud and Workspace images, TKE handoff, read-only diagnostics, and production-verification safety.",
   "state": "current",
@@ -564,6 +564,7 @@
         "route": "GET /api/operator/workspace-launches/{operationId}/readback-recovery-proof",
         "persistence": "none",
         "databaseMutationCount": 0,
+        "fabricOperationMutationCount": 0,
         "mutationApproval": false,
         "proofMutationCounts": {"sub2api": 0, "tencent": 0, "kubernetes": 0},
         "runnerDirectMutationCounts": {"sub2api": 0, "tencent": 0, "kubernetes": 0}
@@ -578,6 +579,7 @@
         "proofMutationCounts": {"sub2api": 0, "tencent": 0, "kubernetes": 0},
         "runnerDirectMutationCounts": {"sub2api": 0, "tencent": 0, "kubernetes": 0},
         "backgroundMutationCountsState": "unknown",
+        "convergenceWrites": {"attachmentSecretRuntimeFabricOperationCasMax": 1, "originalLaunchCasMax": 1, "unknownStageProviderWriteReplay": 0},
         "unknownStageExternalWriteReplayCount": 0,
         "remainingStageMutationBudget": "original_launch_persisted_per_stage_max_1",
         "persistedReplay": {

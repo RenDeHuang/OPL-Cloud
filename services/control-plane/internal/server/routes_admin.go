@@ -542,7 +542,7 @@ func workspaceLaunchReadbackRecoveryApprovalFromMap(value any, key string) (work
 		}
 	}
 	operationFields := []string{"compute", "storage", "attachment", "secret", "runtime"}
-	operationIdentityKeys := []string{"idempotencyKey", "fabricRecordId", "fabricOperationId", "requestHash", "resourceOperationId", "providerOperationId"}
+	operationIdentityKeys := []string{"idempotencyKey", "fabricRecordId", "fabricOperationId", "requestHash", "resourceOperationId", "providerOperationId", "readbackBindingDigest"}
 	for _, field := range operationFields {
 		item, ok := raw["operationIds"].(map[string]any)[field].(map[string]any)
 		if !ok || !exactWorkspaceComputeClaimKeys(item, operationIdentityKeys) {

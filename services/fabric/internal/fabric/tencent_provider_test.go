@@ -2157,8 +2157,18 @@ func TestRuntimeStatusVerifiesFinalMountAfterPreRuntimeAttachment(t *testing.T) 
 	provider := NewTencentProvider()
 	runtimeSelector := map[string]any{"app.kubernetes.io/name": "opl-compute-allocation", "app.kubernetes.io/instance": "opl-compute-alpha", "oplcloud.cn/compute-allocation-id": "compute-alpha"}
 	deployment := map[string]any{
-		"kind":     "Deployment",
-		"metadata": map[string]any{"name": "opl-compute-alpha", "generation": 2, "labels": map[string]any{"app.kubernetes.io/name": "opl-compute-allocation", "app.kubernetes.io/instance": "opl-compute-alpha", "oplcloud.cn/compute-allocation-id": "compute-alpha", "oplcloud.cn/workspace-id": "ws-alpha", "oplcloud.cn/runtime-id": "rt-alpha", "oplcloud.cn/runtime-operation-id": "workspace-launch-alpha:workspace:runtime"}},
+		"kind": "Deployment",
+		"metadata": map[string]any{
+			"name":       "opl-compute-alpha",
+			"generation": 2,
+			"labels":     map[string]any{"app.kubernetes.io/name": "opl-compute-allocation", "app.kubernetes.io/instance": "opl-compute-alpha", "oplcloud.cn/compute-allocation-id": "compute-alpha", "oplcloud.cn/workspace-id": "ws-alpha", "oplcloud.cn/runtime-id": "rt-alpha", "oplcloud.cn/runtime-operation-id": "workspace-launch-alpha:workspace:runtime"},
+			"annotations": map[string]any{
+				"opl_account_id":   "acct-alpha",
+				"opl_workspace_id": "ws-alpha",
+				"opl_resource_id":  "rt-alpha",
+				"opl_operation_id": "workspace-launch-alpha:workspace:runtime",
+			},
+		},
 		"spec": map[string]any{"replicas": 1, "selector": map[string]any{"matchLabels": runtimeSelector}, "template": map[string]any{"metadata": map[string]any{"labels": runtimeSelector, "annotations": map[string]any{"opl.medopl.cn/credential-revision": "revision-alpha"}}, "spec": map[string]any{
 			"automountServiceAccountToken": false, "dnsPolicy": "ClusterFirst", "securityContext": map[string]any{"runAsNonRoot": true, "runAsUser": 10001, "runAsGroup": 10001, "fsGroup": 10001, "seccompProfile": map[string]any{"type": "RuntimeDefault"}},
 			"containers": []any{map[string]any{"name": "workspace", "image": "workspace-image:test", "securityContext": map[string]any{"allowPrivilegeEscalation": false, "capabilities": map[string]any{"drop": []any{"ALL"}}}, "volumeMounts": workspaceDataMounts()}},

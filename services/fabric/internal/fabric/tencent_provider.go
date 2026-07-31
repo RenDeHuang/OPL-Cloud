@@ -440,10 +440,21 @@ func (p *TencentProvider) UpsertGatewaySecret(ctx context.Context, input Gateway
 
 func (p *TencentProvider) ReadGatewaySecret(ctx context.Context, input GatewaySecretInput) (GatewaySecret, error) {
 	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(input.GatewayAPIKey)))
-	expected := GatewaySecret{SecretRef: gatewaySecretName(input.WorkspaceID), Version: digest[:16], Fingerprint: "sha256:" + digest}
-	if input.AccountID == "" || input.WorkspaceID == "" || input.WorkspaceAPIKeyID <= 0 || input.Fingerprint != expected.Fingerprint {
+	if input.Fingerprint != "sha256:"+digest {
 		return GatewaySecret{}, fmt.Errorf("gateway_secret_readback_mismatch")
 	}
+	return p.ReadGatewaySecretByDigest(ctx, GatewaySecretReadbackInput{
+		AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, WorkspaceAPIKeyID: input.WorkspaceAPIKeyID,
+		SecretRef: gatewaySecretName(input.WorkspaceID), Fingerprint: input.Fingerprint, KeyDigest: digest,
+	})
+}
+
+func (p *TencentProvider) ReadGatewaySecretByDigest(ctx context.Context, input GatewaySecretReadbackInput) (GatewaySecret, error) {
+	if input.AccountID == "" || input.WorkspaceID == "" || input.WorkspaceAPIKeyID <= 0 || len(input.KeyDigest) != 64 ||
+		input.SecretRef != gatewaySecretName(input.WorkspaceID) || input.Fingerprint != "sha256:"+input.KeyDigest {
+		return GatewaySecret{}, fmt.Errorf("gateway_secret_readback_mismatch")
+	}
+	expected := GatewaySecret{SecretRef: input.SecretRef, Version: input.KeyDigest[:16], Fingerprint: input.Fingerprint}
 	readback, err := p.callKubectl(ctx, []string{"get", "secret/" + expected.SecretRef, "-o", "json"}, nil, protectedresource.Target{})
 	if err != nil {
 		return GatewaySecret{}, err
@@ -1888,10 +1899,16 @@ func (p *TencentProvider) WorkspaceRuntimeStatus(ctx context.Context, workspaceI
 	}
 	runtimeID := stringValue(nested(deployment, "metadata", "labels", "oplcloud.cn/runtime-id"))
 	runtimeOperationID := stringValue(nested(deployment, "metadata", "labels", "oplcloud.cn/runtime-operation-id"))
-	if runtimeID == "" || runtimeOperationID == "" {
+	costTags := map[string]string{
+		"opl_account_id":   stringValue(nested(deployment, "metadata", "annotations", "opl_account_id")),
+		"opl_workspace_id": stringValue(nested(deployment, "metadata", "annotations", "opl_workspace_id")),
+		"opl_resource_id":  stringValue(nested(deployment, "metadata", "annotations", "opl_resource_id")),
+		"opl_operation_id": stringValue(nested(deployment, "metadata", "annotations", "opl_operation_id")),
+	}
+	if runtimeID == "" || runtimeOperationID == "" || costTags["opl_workspace_id"] != workspaceID || costTags["opl_resource_id"] != runtimeID || costTags["opl_operation_id"] != runtimeOperationID || costTags["opl_account_id"] == "" {
 		return WorkspaceRuntime{WorkspaceID: workspaceID, ServiceName: serviceName}, workspaceRuntimeStatusError("readback_mismatch")
 	}
-	return WorkspaceRuntime{ID: runtimeID, OperationID: runtimeOperationID, WorkspaceID: workspaceID, URL: fmt.Sprintf("https://%s/w/%s/", workspaceDomain(), workspaceID), Status: status, ServiceName: serviceName, Access: access, Ready: ready, Checks: checks}, nil
+	return WorkspaceRuntime{ID: runtimeID, OperationID: runtimeOperationID, WorkspaceID: workspaceID, URL: fmt.Sprintf("https://%s/w/%s/", workspaceDomain(), workspaceID), Status: status, ServiceName: serviceName, Access: access, Ready: ready, Checks: checks, CostTags: costTags}, nil
 }
 
 func (p *TencentProvider) BindWorkspaceRuntimeGatewaySecret(ctx context.Context, input WorkspaceRuntimeGatewaySecretInput) (WorkspaceRuntimeGatewaySecretBinding, error) {
