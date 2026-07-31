@@ -58,7 +58,7 @@ export interface ConsoleSources {
   operatorAnnouncements: RemoteState<SourceEnvelope<OperatorAnnouncementPageDTO>>;
 }
 
-export type AuthStatus = "public" | "checking" | "ready" | "error";
+export type AuthStatus = "public" | "checking" | "ready" | "error" | "logout_pending" | "logout_unconfirmed";
 export type BillingView = "terms" | "receipts";
 export type WorkspaceLaunchStep = "configure" | "confirm";
 export type GlobalSlide = "account" | "support" | "";

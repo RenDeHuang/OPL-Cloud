@@ -256,6 +256,10 @@ func (app *controlPlaneServer) protected(requiresAdmin bool, next http.HandlerFu
 	return func(w http.ResponseWriter, r *http.Request) {
 		payload, state := app.session(r)
 		if state != sessionAuthenticated {
+			if state == sessionAuthenticationUnavailable {
+				writeError(w, http.StatusServiceUnavailable, "authentication_unavailable")
+				return
+			}
 			if state == sessionReauthenticationRequired {
 				http.SetCookie(w, sessionCookie("", -1))
 				writeError(w, http.StatusUnauthorized, "reauthentication_required")
@@ -281,10 +285,10 @@ func (app *controlPlaneServer) protected(requiresAdmin bool, next http.HandlerFu
 			writeError(w, http.StatusForbidden, "admin_required")
 			return
 		}
-		if !requiresAdmin {
+		if !requiresAdmin && isOperatorUser(user) {
 			active, err := app.hasActiveCustomerMembership(r.Context(), user)
 			if err != nil {
-				writeError(w, http.StatusInternalServerError, "state_read_failed")
+				writeError(w, http.StatusServiceUnavailable, "authentication_unavailable")
 				return
 			}
 			if !active {
@@ -292,6 +296,7 @@ func (app *controlPlaneServer) protected(requiresAdmin bool, next http.HandlerFu
 				return
 			}
 		}
+		r = r.WithContext(context.WithValue(r.Context(), authenticatedSessionContextKey{}, payload))
 		next(w, r)
 	}
 }

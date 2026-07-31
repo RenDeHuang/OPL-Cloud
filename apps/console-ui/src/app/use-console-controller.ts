@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { currentSession, login as loginRequest, logoutLocalFirst } from "../api/auth-api.ts";
+import { currentSession, login as loginRequest, logoutAndConfirm } from "../api/auth-api.ts";
 import {
   createSupportTicketMapping,
   createOperatorAnnouncement,
@@ -68,7 +68,7 @@ import {
 } from "../api/workspaces-api.ts";
 import { defaultAuthenticatedRoute, hasSufficientWorkspaceLaunchBalance, needsSession, workspaceIdFromPath, workspacePage } from "../console-model.ts";
 import { isKnownConsoleRoute, isSensitiveConsoleRoute, useConsoleRouter } from "./console-router.ts";
-import type { BillingView, ConsoleSecrets, ConsoleSources, GlobalSlide, RemoteState, WorkspaceLaunchStep } from "./console-controller-types.ts";
+import type { AuthStatus, BillingView, ConsoleSecrets, ConsoleSources, GlobalSlide, RemoteState, WorkspaceLaunchStep } from "./console-controller-types.ts";
 
 const secretLifetimeMs = 60_000;
 const workspaceLaunchPollIntervalMs = 10_000;
@@ -149,7 +149,7 @@ function walletRecoveryIdempotencyKey(operationId: string) {
 export function useConsoleController() {
   const { path, navigate } = useConsoleRouter();
   const [session, setSession] = useState<AuthSession | null>(null);
-  const [authStatus, setAuthStatus] = useState<"public" | "checking" | "ready" | "error">(needsSession(path) ? "checking" : "public");
+  const [authStatus, setAuthStatus] = useState<AuthStatus>(needsSession(path) ? "checking" : "public");
   const [authError, setAuthError] = useState("");
   const [sources, setSources] = useState<ConsoleSources>(initialSources);
   const [toast, setToast] = useState<{ text: string; tone: "good" | "danger" }>({ text: "", tone: "good" });
@@ -188,6 +188,11 @@ export function useConsoleController() {
   const requestGeneration = useRef(0);
   const sessionGeneration = useRef(0);
   const secretRequestGeneration = useRef(0);
+  const loginAttemptGeneration = useRef(0);
+  const loginAbortController = useRef<AbortController | null>(null);
+  const logoutAttemptGeneration = useRef(0);
+  const logoutInFlight = useRef(false);
+  const logoutState = useRef<"idle" | "pending" | "unconfirmed">("idle");
   const sessionRef = useRef<AuthSession | null>(null);
   const selectedReceiptIdRef = useRef("");
   const receiptCursorRef = useRef("");
@@ -294,7 +299,17 @@ export function useConsoleController() {
     announcementWithdrawIntents.current.clear();
   };
 
+  const invalidateLoginAttempt = () => {
+    loginAttemptGeneration.current += 1;
+    loginAbortController.current?.abort();
+    loginAbortController.current = null;
+  };
+
   const replaceSession = (next: AuthSession | null) => {
+    invalidateLoginAttempt();
+    logoutAttemptGeneration.current += 1;
+    logoutInFlight.current = false;
+    logoutState.current = "idle";
     sessionGeneration.current += 1;
     requestGeneration.current += 1;
     resetConsoleState();
@@ -691,10 +706,12 @@ export function useConsoleController() {
   };
 
   useEffect(() => {
+    if (path !== "/login") invalidateLoginAttempt();
     const generation = ++requestGeneration.current;
     clearSecrets();
     setSidebarOpen(false);
     setGlobalSlide("");
+    if (logoutState.current !== "idle") return;
     if (!needsSession(path)) {
       setAuthStatus("public");
       setAuthError("");
@@ -729,9 +746,15 @@ export function useConsoleController() {
       }
     };
     void run();
+    return () => {
+      if (path === "/login") invalidateLoginAttempt();
+    };
   }, [path]);
 
   useEffect(() => () => {
+    invalidateLoginAttempt();
+    logoutAttemptGeneration.current += 1;
+    logoutInFlight.current = false;
     requestGeneration.current += 1;
     sessionGeneration.current += 1;
     clearSecrets();
@@ -739,29 +762,61 @@ export function useConsoleController() {
   }, []);
 
   const submitLogin = async (email: string, password: string) => {
+    invalidateLoginAttempt();
+    const attempt = loginAttemptGeneration.current;
+    const abortController = new AbortController();
+    loginAbortController.current = abortController;
     setAuthError("");
     setAuthStatus("checking");
     try {
-      const next = await loginRequest({ email, password });
+      const next = await loginRequest({ email, password }, abortController.signal);
+      if (attempt !== loginAttemptGeneration.current || abortController.signal.aborted || logoutState.current !== "idle" || path !== "/login") return;
       replaceSession(next);
       setAuthStatus("ready");
       const requested = new URLSearchParams(window.location.search).get("redirect");
       const allowed = requested?.startsWith("/console") || (next.isOperator && requested?.startsWith("/admin"));
       navigate(allowed && requested ? requested : defaultAuthenticatedRoute(next.isOperator));
     } catch (error) {
+      if (attempt !== loginAttemptGeneration.current || abortController.signal.aborted) return;
       setAuthStatus("public");
       setAuthError(friendlyError(error));
+    } finally {
+      if (attempt === loginAttemptGeneration.current) loginAbortController.current = null;
     }
   };
 
   const signOut = async () => {
-    const csrfToken = session?.csrfToken || "";
-    clearSecrets();
-    try {
-      await logoutLocalFirst(csrfToken, () => replaceSession(null), () => navigate("/"));
-    } catch {
-      // Local state and navigation are already cleared before the remote request.
+    const activeSession = sessionRef.current;
+    if (!activeSession || logoutInFlight.current) return;
+    invalidateLoginAttempt();
+    logoutInFlight.current = true;
+    const attempt = ++logoutAttemptGeneration.current;
+    logoutState.current = "pending";
+    requestGeneration.current += 1;
+    sessionGeneration.current += 1;
+    resetConsoleState();
+    setAuthError("");
+    setAuthStatus("logout_pending");
+
+    const result = await logoutAndConfirm(activeSession.csrfToken);
+    if (attempt !== logoutAttemptGeneration.current) return;
+    logoutInFlight.current = false;
+    if (result.state === "confirmed") {
+      replaceSession(null);
+      setAuthStatus("public");
+      navigate("/", true);
+      return;
     }
+
+    logoutState.current = "unconfirmed";
+    if (result.session) {
+      sessionRef.current = result.session;
+      setSession(result.session);
+    }
+    setAuthError(result.reason === "session_still_active"
+      ? "服务器仍报告 Session 有效。受保护内容已隐藏，请重试退出。"
+      : "无法确认服务器 Session 是否已撤销。受保护内容已隐藏，请重试退出。");
+    setAuthStatus("logout_unconfirmed");
   };
 
   const refreshCurrentPage = async () => {

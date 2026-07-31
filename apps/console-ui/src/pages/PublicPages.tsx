@@ -1,4 +1,4 @@
-import { AlertCircle, ArrowLeft, Cloud, LockKeyhole } from "lucide-react";
+import { AlertCircle, ArrowLeft, Cloud, LockKeyhole, RefreshCw } from "lucide-react";
 import { useState, type FormEvent } from "react";
 
 import type { ConsoleController } from "../app/use-console-controller.ts";
@@ -57,6 +57,18 @@ export function SessionRecovery({ controller }: { controller: ConsoleController 
       <h1>{failed ? "无法恢复登录" : "正在恢复登录"}</h1>
       <p>{failed ? controller.authError || "身份服务暂不可用。" : "正在从 Control Plane 读取当前 Session。"}</p>
       {failed ? <Button onClick={() => controller.navigate("/login")} variant="outline">重新登录</Button> : null}
+    </main>
+  );
+}
+
+export function LogoutRecovery({ controller }: { controller: ConsoleController }) {
+  const unconfirmed = controller.authStatus === "logout_unconfirmed";
+  return (
+    <main className="message-page" data-auth-state={controller.authStatus}>
+      {unconfirmed ? <AlertCircle aria-hidden size={28} /> : <span className="spinner" />}
+      <h1>{unconfirmed ? "退出未确认" : "正在安全退出"}</h1>
+      <p>{unconfirmed ? controller.authError : "正在确认服务器 Session 已撤销。"}</p>
+      {unconfirmed ? <Button onClick={() => void controller.signOut()} variant="outline"><RefreshCw aria-hidden size={16} />重试退出</Button> : null}
     </main>
   );
 }

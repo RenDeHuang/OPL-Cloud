@@ -22,6 +22,174 @@ func (store *failingSessionSaveStore) SaveSession(context.Context, map[string]an
 	return errors.New("session save failed")
 }
 
+type failingSessionAuthorityReadStore struct {
+	*memoryTableStore
+	failure string
+}
+
+type failOnSecondSessionReadStore struct {
+	*memoryTableStore
+	sessionReads int
+}
+
+type failOnSecondMembershipReadStore struct {
+	*memoryTableStore
+	membershipReads int
+	failOnSecond    bool
+}
+
+func (store *failOnSecondSessionReadStore) GetSession(ctx context.Context, id string) (map[string]any, bool, error) {
+	store.sessionReads++
+	if store.sessionReads == 2 {
+		return nil, false, errors.New("second session read failed")
+	}
+	return store.memoryTableStore.GetSession(ctx, id)
+}
+
+func (store *failOnSecondMembershipReadStore) GetMembershipByAccount(ctx context.Context, accountID string) (map[string]any, bool, error) {
+	store.membershipReads++
+	if store.failOnSecond && store.membershipReads == 2 {
+		return nil, false, errors.New("second membership read failed")
+	}
+	return store.memoryTableStore.GetMembershipByAccount(ctx, accountID)
+}
+
+func (store *failingSessionAuthorityReadStore) GetSession(ctx context.Context, id string) (map[string]any, bool, error) {
+	if store.failure == "session" {
+		return nil, false, errors.New("session read failed")
+	}
+	return store.memoryTableStore.GetSession(ctx, id)
+}
+
+func (store *failingSessionAuthorityReadStore) GetUser(ctx context.Context, id string) (map[string]any, bool, error) {
+	if store.failure == "user" {
+		return nil, false, errors.New("user read failed")
+	}
+	return store.memoryTableStore.GetUser(ctx, id)
+}
+
+func (store *failingSessionAuthorityReadStore) GetAccount(ctx context.Context, id string) (map[string]any, bool, error) {
+	if store.failure == "account" {
+		return nil, false, errors.New("account read failed")
+	}
+	return store.memoryTableStore.GetAccount(ctx, id)
+}
+
+func (store *failingSessionAuthorityReadStore) GetOrganizationByAccount(ctx context.Context, accountID string) (map[string]any, bool, error) {
+	if store.failure == "organization" {
+		return nil, false, errors.New("organization read failed")
+	}
+	return store.memoryTableStore.GetOrganizationByAccount(ctx, accountID)
+}
+
+func (store *failingSessionAuthorityReadStore) GetMembershipByAccount(ctx context.Context, accountID string) (map[string]any, bool, error) {
+	if store.failure == "membership" {
+		return nil, false, errors.New("membership read failed")
+	}
+	return store.memoryTableStore.GetMembershipByAccount(ctx, accountID)
+}
+
+func TestAuthMeReportsAuthenticationUnavailableWithoutRevokingSessionOnAuthorityReadFailure(t *testing.T) {
+	for _, failure := range []string{"session", "user", "account", "organization", "membership"} {
+		t.Run(failure, func(t *testing.T) {
+			store := &failingSessionAuthorityReadStore{memoryTableStore: newMemoryTableStore()}
+			server, err := NewPersistentServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}), store)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := createIdentityUser(server, map[string]any{
+				"email": "authority-read-" + failure + "@example.com", "accountId": "acct-authority-read-" + failure,
+				"password": "CorrectHorseBatteryStaple!",
+			}); err != nil {
+				t.Fatal(err)
+			}
+			login := loginForTest(t, server, "authority-read-"+failure+"@example.com", "CorrectHorseBatteryStaple!")
+
+			store.failure = failure
+			unavailable := requestWithSession(t, server, login, http.MethodGet, "/api/auth/me", "")
+			if unavailable.Code != http.StatusServiceUnavailable || !strings.Contains(unavailable.Body.String(), "authentication_unavailable") {
+				t.Fatalf("authority failure status=%d body=%s", unavailable.Code, unavailable.Body.String())
+			}
+			if cookie := unavailable.Header().Get("Set-Cookie"); cookie != "" {
+				t.Fatalf("authority failure cleared Session cookie: %q", cookie)
+			}
+
+			store.failure = ""
+			recovered := requestWithSession(t, server, login, http.MethodGet, "/api/auth/me", "")
+			if recovered.Code != http.StatusOK {
+				t.Fatalf("authority recovery status=%d body=%s", recovered.Code, recovered.Body.String())
+			}
+		})
+	}
+}
+
+func TestAuthMeReusesProtectedAuthenticationPayload(t *testing.T) {
+	store := &failOnSecondSessionReadStore{memoryTableStore: newMemoryTableStore()}
+	server, err := NewPersistentServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}), store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := createIdentityUser(server, map[string]any{
+		"email": "auth-me-one-shot@example.com", "accountId": "acct-auth-me-one-shot",
+		"password": "CorrectHorseBatteryStaple!",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	login := loginForTest(t, server, "auth-me-one-shot@example.com", "CorrectHorseBatteryStaple!")
+	if len(login.Result().Cookies()) != 1 {
+		t.Fatalf("login cookie count = %d", len(login.Result().Cookies()))
+	}
+	store.sessionReads = 0
+	response := requestWithSession(t, server, login, http.MethodGet, "/api/auth/me", "")
+	if response.Code != http.StatusOK {
+		t.Fatalf("auth/me status=%d body=%s sessionReads=%d", response.Code, response.Body.String(), store.sessionReads)
+	}
+	if store.sessionReads != 1 {
+		t.Fatalf("expected one authoritative Session read, got %d", store.sessionReads)
+	}
+}
+
+func TestProtectedCustomerAuthenticationReadsMembershipOnce(t *testing.T) {
+	store := &failOnSecondMembershipReadStore{memoryTableStore: newMemoryTableStore()}
+	server, err := NewPersistentServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}), store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := createIdentityUser(server, map[string]any{
+		"email": "membership-one-shot@example.com", "accountId": "acct-membership-one-shot",
+		"password": "CorrectHorseBatteryStaple!",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	login := loginForTest(t, server, "membership-one-shot@example.com", "CorrectHorseBatteryStaple!")
+	store.membershipReads = 0
+	store.failOnSecond = true
+	response := requestWithSession(t, server, login, http.MethodGet, "/api/auth/me", "")
+	if response.Code != http.StatusOK {
+		t.Fatalf("auth/me status=%d body=%s membershipReads=%d", response.Code, response.Body.String(), store.membershipReads)
+	}
+	if store.membershipReads != 1 {
+		t.Fatalf("expected one authoritative Membership read, got %d", store.membershipReads)
+	}
+}
+
+func TestOperatorCustomerSurfaceReportsMembershipReadFailureAsAuthenticationUnavailable(t *testing.T) {
+	store := &failingSessionAuthorityReadStore{memoryTableStore: newMemoryTableStore()}
+	server, err := NewPersistentServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}), store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	login := reservedOperatorSessionForTest(t, server)
+	store.failure = "membership"
+	response := requestWithSession(t, server, login, http.MethodGet, "/api/auth/me", "")
+	if response.Code != http.StatusServiceUnavailable || !strings.Contains(response.Body.String(), "authentication_unavailable") {
+		t.Fatalf("auth/me status=%d body=%s", response.Code, response.Body.String())
+	}
+	if cookie := response.Header().Get("Set-Cookie"); cookie != "" {
+		t.Fatalf("membership read failure cleared Session cookie")
+	}
+}
+
 func TestSessionCredentialVaultUsesHashedKeysAndExpiresCredentials(t *testing.T) {
 	now := time.Date(2026, 7, 19, 12, 0, 0, 0, time.UTC)
 	vault := newSessionCredentialVault(func() time.Time { return now })

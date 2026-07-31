@@ -15,20 +15,165 @@ afterEach(() => {
   globalThis.fetch = originalFetch;
 });
 
-test("logout clears the local session before the remote request settles", async () => {
-  let settle: (response: Response) => void = () => {};
-  const remote = new Promise<Response>((resolve) => { settle = resolve; });
-  globalThis.fetch = async () => remote;
-  const events: string[] = [];
+function activeSessionResponse(csrfToken = "csrf-readback") {
+  return new Response(JSON.stringify({
+    source: "sub2api",
+    status: "available",
+    available: true,
+    fetchedAt: "2026-07-31T00:00:00Z",
+    data: {
+      consoleUserId: "usr-alpha",
+      accountId: "acct-alpha",
+      role: "owner",
+      sub2apiUserId: "41",
+      email: "owner@example.com",
+      status: "active"
+    }
+  }), {
+    status: 200,
+    headers: { "content-type": "application/json", "x-opl-csrf-token": csrfToken }
+  });
+}
 
-  const pending = authApi.logoutLocalFirst(
-    "csrf-alpha",
-    () => events.push("local-cleared"),
-    () => events.push("navigated")
-  );
-  assert.deepEqual(events, ["local-cleared", "navigated"]);
-  settle(new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "content-type": "application/json" } }));
-  await pending;
+test("logout confirms immediately only after the server accepts revocation", async () => {
+  const requests: Array<{ url: string; init?: RequestInit }> = [];
+  globalThis.fetch = async (input, init) => {
+    requests.push({ url: String(input), init });
+    return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "content-type": "application/json" } });
+  };
+
+  assert.deepEqual(await authApi.logoutAndConfirm("csrf-alpha"), { state: "confirmed", via: "logout" });
+  assert.deepEqual(requests.map(({ url }) => url), ["/api/auth/logout"]);
+  assert.equal(new Headers(requests[0]?.init?.headers).get("x-opl-csrf"), "csrf-alpha");
+});
+
+test("logout closes an already invalid Session only after auth me returns 401", async () => {
+  const requests: string[] = [];
+  globalThis.fetch = async (input) => {
+    requests.push(String(input));
+    return new Response(JSON.stringify({ error: "not_authenticated" }), {
+      status: 401,
+      headers: { "content-type": "application/json" }
+    });
+  };
+
+  assert.deepEqual(await authApi.logoutAndConfirm("csrf-expired"), { state: "confirmed", via: "session_readback" });
+  assert.deepEqual(requests, ["/api/auth/logout", "/api/auth/me"]);
+});
+
+test("logout does not accept an ambiguous auth me 401 as Session revocation proof", async () => {
+  let requestCount = 0;
+  globalThis.fetch = async () => {
+    requestCount += 1;
+    return new Response(JSON.stringify({ error: requestCount === 1 ? "state_persist_failed" : "authentication_unavailable" }), {
+      status: requestCount === 1 ? 500 : 401,
+      headers: { "content-type": "application/json" }
+    });
+  };
+
+  assert.deepEqual(await authApi.logoutAndConfirm("csrf-alpha"), {
+    state: "unconfirmed",
+    reason: "readback_unavailable",
+    session: null
+  });
+  assert.equal(requestCount, 2);
+});
+
+test("network failure and timeout remain unconfirmed while auth me still sees the Session", async (t) => {
+  for (const [name, failure] of [
+    ["network", new TypeError("fetch failed")],
+    ["timeout", new DOMException("timed out", "TimeoutError")]
+  ] as const) {
+    await t.test(name, async () => {
+      let requestCount = 0;
+      globalThis.fetch = async () => {
+        requestCount += 1;
+        if (requestCount === 1) throw failure;
+        return activeSessionResponse();
+      };
+
+      const result = await authApi.logoutAndConfirm("csrf-alpha");
+      assert.equal(result.state, "unconfirmed");
+      assert.equal(result.reason, "session_still_active");
+      assert.equal(result.session.user.accountId, "acct-alpha");
+      assert.equal(requestCount, 2);
+    });
+  }
+});
+
+test("5xx and CSRF failures remain unconfirmed while the server Session survives", async (t) => {
+  for (const [name, status, error] of [
+    ["server", 503, "state_persist_failed"],
+    ["csrf", 403, "csrf_invalid"]
+  ] as const) {
+    await t.test(name, async () => {
+      let requestCount = 0;
+      globalThis.fetch = async () => {
+        requestCount += 1;
+        if (requestCount === 1) {
+          return new Response(JSON.stringify({ error }), {
+            status,
+            headers: { "content-type": "application/json" }
+          });
+        }
+        return activeSessionResponse();
+      };
+
+      const result = await authApi.logoutAndConfirm("csrf-alpha");
+      assert.equal(result.state, "unconfirmed");
+      assert.equal(result.reason, "session_still_active");
+      assert.equal(requestCount, 2);
+    });
+  }
+});
+
+test("a lost logout response closes successfully when auth me proves the Session is gone", async () => {
+  let requestCount = 0;
+  globalThis.fetch = async () => {
+    requestCount += 1;
+    if (requestCount === 1) throw new TypeError("response lost");
+    return new Response(JSON.stringify({ error: "not_authenticated" }), {
+      status: 401,
+      headers: { "content-type": "application/json" }
+    });
+  };
+
+  assert.deepEqual(await authApi.logoutAndConfirm("csrf-alpha"), { state: "confirmed", via: "session_readback" });
+  assert.equal(requestCount, 2);
+});
+
+test("logout never reports success when the authoritative readback still has a Session", async () => {
+  let requestCount = 0;
+  globalThis.fetch = async () => {
+    requestCount += 1;
+    if (requestCount === 1) {
+      return new Response(JSON.stringify({ error: "state_persist_failed" }), {
+        status: 500,
+        headers: { "content-type": "application/json" }
+      });
+    }
+    return activeSessionResponse("csrf-refreshed");
+  };
+
+  const result = await authApi.logoutAndConfirm("csrf-alpha");
+  assert.equal(result.state, "unconfirmed");
+  assert.equal(result.reason, "session_still_active");
+  assert.equal(result.session.csrfToken, "csrf-refreshed");
+});
+
+test("logout remains unconfirmed when both revocation and authoritative readback are unavailable", async () => {
+  let requestCount = 0;
+  globalThis.fetch = async () => {
+    requestCount += 1;
+    throw new TypeError(requestCount === 1 ? "logout network failed" : "auth readback network failed");
+  };
+
+  assert.deepEqual(await authApi.logoutAndConfirm("csrf-alpha"), {
+    state: "unconfirmed",
+    reason: "readback_unavailable",
+    session: null
+  });
+  assert.equal(requestCount, 2);
 });
 
 test("API Key cleanup removes the raw value", () => {
@@ -96,6 +241,26 @@ test("session replacement invalidates late reads and clears route state", async 
   assert.match(panel, /sessionGeneration\.current \+= 1/);
   assert.match(panel, /listGeneration\.current \+= 1/);
   assert.match(panel, /requestIsCurrent\(session, token\)/);
+});
+
+test("logout enters a protected hidden state before awaiting authority", async () => {
+  const [controller, app, publicPages] = await Promise.all([
+    source("apps/console-ui/src/app/use-console-controller.ts"),
+    source("apps/console-ui/src/App.tsx"),
+    source("apps/console-ui/src/pages/PublicPages.tsx")
+  ]);
+  const signOut = controller.slice(controller.indexOf("const signOut"), controller.indexOf("const refreshCurrentPage"));
+  assert.match(controller, /logoutAndConfirm/);
+  assert.doesNotMatch(controller, /logoutLocalFirst/);
+  assert.match(signOut, /requestGeneration\.current \+= 1/);
+  assert.match(signOut, /sessionGeneration\.current \+= 1/);
+  assert.match(signOut, /resetConsoleState\(\)/);
+  assert.match(signOut, /setAuthStatus\("logout_pending"\)/);
+  assert.match(signOut, /setAuthStatus\("logout_unconfirmed"\)/);
+  assert.ok(signOut.indexOf('setAuthStatus("logout_pending")') < signOut.indexOf("await logoutAndConfirm"));
+  assert.match(app, /logout_pending[\s\S]+LogoutRecovery|LogoutRecovery[\s\S]+logout_pending/);
+  assert.match(publicPages, /退出未确认/);
+  assert.match(publicPages, /重试退出/);
 });
 
 test("Workspace detail and Runtime reads reject stale route readback", async () => {

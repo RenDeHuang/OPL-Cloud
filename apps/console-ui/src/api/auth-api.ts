@@ -46,8 +46,12 @@ function sessionFromAuthMe(value: unknown, csrfToken: string): AuthSession {
 
 export async function currentSession(): Promise<AuthSession | null> {
   const response = await fetch("/api/auth/me", { signal: AbortSignal.timeout(3_000) });
-  if (response.status === 401) return null;
   const payload = await response.json().catch(() => null);
+  if (response.status === 401) {
+    const errorCode = payload && typeof payload === "object" ? String((payload as Record<string, unknown>).error || "") : "";
+    if (errorCode === "not_authenticated" || errorCode === "reauthentication_required") return null;
+    throw new Error(errorCode || "session_check_failed");
+  }
   if (!response.ok) throw new Error(String((payload as Record<string, unknown> | null)?.error || "session_check_failed"));
   try {
     return sessionFromAuthMe(payload, response.headers.get("x-opl-csrf-token") || "");
@@ -57,20 +61,31 @@ export async function currentSession(): Promise<AuthSession | null> {
   }
 }
 
-export function login(credentials: LoginRequest): Promise<AuthSession> {
-  return postJson<unknown>("/api/auth/login", credentials).then(sessionFromLogin);
+export function login(credentials: LoginRequest, signal?: AbortSignal): Promise<AuthSession> {
+  return postJson<unknown>("/api/auth/login", credentials, "", "", 10_000, signal).then(sessionFromLogin);
 }
 
 export function logout(csrfToken: string): Promise<unknown> {
   return postJson("/api/auth/logout", {}, csrfToken);
 }
 
-export async function logoutLocalFirst(
-  csrfToken: string,
-  clearLocalSession: () => void,
-  redirect: () => void
-): Promise<void> {
-  clearLocalSession();
-  redirect();
-  await logout(csrfToken);
+export type LogoutConfirmation =
+  | { state: "confirmed"; via: "logout" | "session_readback" }
+  | { state: "unconfirmed"; reason: "session_still_active"; session: AuthSession }
+  | { state: "unconfirmed"; reason: "readback_unavailable"; session: null };
+
+export async function logoutAndConfirm(csrfToken: string): Promise<LogoutConfirmation> {
+  try {
+    await logout(csrfToken);
+    return { state: "confirmed", via: "logout" };
+  } catch {
+    try {
+      const session = await currentSession();
+      return session
+        ? { state: "unconfirmed", reason: "session_still_active", session }
+        : { state: "confirmed", via: "session_readback" };
+    } catch {
+      return { state: "unconfirmed", reason: "readback_unavailable", session: null };
+    }
+  }
 }
