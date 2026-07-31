@@ -113,8 +113,8 @@ management API from the browser. `OPL_SUB2API_BASE_URL` remains server-only,
 and Cloud does not inject a second Gateway base URL into Runtime.
 
 The React Console refactor in this branch has local `code-complete` evidence
-only. Overall Pilot V2 delivery remains `code-complete=false`,
-`pilot-ready=false`, and `production-proven=false` until the complete release
+only. Overall Pilot V2 delivery remains `codeComplete=false`,
+`pilotReady=false`, and `productionProven=false` until the complete release
 gates and separately approved real evidence pass. Only the same immutable
 deployed revision with production readback can be `production-proven`.
 

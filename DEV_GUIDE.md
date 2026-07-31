@@ -66,14 +66,19 @@ Without a new release-owner approval, only read-only verification is authorized:
 ```bash
 npm run validate:production-manifest -- \
   --manifest deploy/production-manifest.example.json
-node tools/production-verifier.ts --read-only
-node tools/production-live-qa.ts --read-only
+OPL_VERIFY_SLOT_DESCRIPTOR_JSON='<approved-fixed-slot-descriptor>' \
+  npm run verify:production -- --read-only \
+  --origin https://<console-domain> \
+  --account <reserved-account-id>
+OPL_CONSOLE_ORIGIN=https://<console-domain> \
+  node tools/production-live-qa.ts --read-only
 node tools/provider-acceptance.ts --read-only
 ```
 
 These commands do not buy, renew, or delete Tencent resources and do not charge
-a customer. The separately approved Basic customer canary is not an ordinary
-CI, rollout, E2E, or local-development command.
+a customer. The production verifiers also require the secret-backed credentials
+listed below; placeholder values are not evidence. The separately approved Basic
+customer canary is not an ordinary CI, rollout, E2E, or local-development command.
 
 ## Required Env Vars
 
