@@ -31,6 +31,7 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 const MAX_USAGE_ITEMS = 10_000;
 const MAX_USAGE_PAGES = 100;
 const MAX_CANARY_KEY_ITEMS = 10_000;
+const MAX_WORKSPACE_IDENTITY_ACCOUNTS = 1_000;
 const PRODUCTION_ADMIN = Object.freeze({ email: "admin@medopl.cn", consoleUserId: "usr-admin", accountId: "acct-admin", role: "admin" });
 const READ_ONLY_VIEWPORTS = Object.freeze({
   desktop: Object.freeze({ width: 1440, height: 900 }),
@@ -2678,6 +2679,36 @@ function canonicalWorkspaceKeyName(workspaceId) {
   return `opl-workspace-${stableCanaryId(workspaceId).slice(0, 12)}`;
 }
 
+async function readWorkspaceIdentityAccount(requestOptions, adminAuth, accountId, customerEmail) {
+  const pageSize = 50;
+  let total = null;
+  const matches = [];
+  for (let page = 1; ; page += 1) {
+    if (page > Math.ceil(MAX_WORKSPACE_IDENTITY_ACCOUNTS / pageSize)) throw new Error("workspace_identity_operator_binding_mismatch");
+    const envelope = sourceEnvelope(await requestJson({
+      ...requestOptions,
+      auth: adminAuth,
+      path: `/api/operator/accounts?page=${page}&pageSize=${pageSize}`
+    }), "control-plane+sub2api", true);
+    const data = envelope.data;
+    if (!Array.isArray(data?.items) || !Number.isSafeInteger(data?.total) || data.total < 0 || data.total > MAX_WORKSPACE_IDENTITY_ACCOUNTS ||
+      data.page !== page || data.pageSize !== pageSize ||
+      data.items.length > pageSize || total !== null && data.total !== total) {
+      throw new Error("workspace_identity_operator_binding_mismatch");
+    }
+    total ??= data.total;
+    const pages = Math.max(1, Math.ceil(total / pageSize));
+    const expectedItems = page < pages ? pageSize : total - (page - 1) * pageSize;
+    if (data.items.length !== Math.max(0, expectedItems)) throw new Error("workspace_identity_operator_binding_mismatch");
+    for (const item of data.items) {
+      if (item?.accountId === accountId || String(item?.email || "").trim().toLowerCase() === customerEmail) matches.push(item);
+    }
+    if (page >= pages) break;
+  }
+  if (matches.length !== 1) throw new Error("workspace_identity_operator_binding_mismatch");
+  return matches[0];
+}
+
 export async function diagnoseWorkspaceIdentity({
   origin,
   adminEmail,
@@ -2705,19 +2736,13 @@ export async function diagnoseWorkspaceIdentity({
     throw new Error("workspace_identity_admin_login_failed");
   }
 
-  const detail = sourceEnvelope(await requestJson({
-    ...requestOptions,
-    auth: adminAuth,
-    path: `/api/operator/workspaces/${encodeURIComponent(normalizedWorkspaceId)}`
-  }), "control-plane+fabric+ledger").data;
-  const ownerAccount = readOnlyNestedSource(detail?.ownerAccount, "control-plane");
-  const ownerUser = readOnlyNestedSource(detail?.ownerUser, "control-plane");
-  const workspace = readOnlyNestedSource(detail?.workspace, "control-plane");
-  const ownerUserId = String(ownerUser?.id || "");
-  const workspaceApiKeyId = String(workspace?.workspaceApiKeyId || "");
-  if (ownerAccount?.id !== normalizedAccountId || ownerUser?.email !== normalizedCustomerEmail || !/^usr-[A-Za-z0-9-]+$/.test(ownerUserId) ||
-    workspace?.id !== normalizedWorkspaceId || workspace?.ownerAccountId !== normalizedAccountId || workspace?.ownerUserId !== ownerUserId ||
-    !/^[1-9][0-9]*$/.test(workspaceApiKeyId) || !Number.isSafeInteger(Number(workspaceApiKeyId))) {
+  const account = await readWorkspaceIdentityAccount(requestOptions, adminAuth, normalizedAccountId, normalizedCustomerEmail);
+  const ownerUserId = String(account?.consoleUserId || "");
+  const operatorSub2apiUserId = String(account?.sub2apiUserId || "");
+  if (account?.accountId !== normalizedAccountId || String(account?.email || "").trim().toLowerCase() !== normalizedCustomerEmail ||
+    account?.role !== "owner" || account?.status !== "active" ||
+    !/^usr-[A-Za-z0-9-]+$/.test(ownerUserId) || !/^[1-9][0-9]*$/.test(operatorSub2apiUserId) ||
+    !Number.isSafeInteger(Number(operatorSub2apiUserId))) {
     throw new Error("workspace_identity_operator_binding_mismatch");
   }
 
@@ -2729,16 +2754,28 @@ export async function diagnoseWorkspaceIdentity({
   const sub2apiUserId = String(identity?.sub2apiUserId || "");
   if (identity?.accountId !== normalizedAccountId || identity?.consoleUserId !== ownerUserId || identity?.role !== "owner" || identity?.status !== "active" ||
     String(identity?.email || "").trim().toLowerCase() !== normalizedCustomerEmail || !/^[1-9][0-9]*$/.test(sub2apiUserId) ||
-    !Number.isSafeInteger(Number(sub2apiUserId))) {
+    !Number.isSafeInteger(Number(sub2apiUserId)) || sub2apiUserId !== operatorSub2apiUserId) {
     throw new Error("workspace_identity_customer_binding_mismatch");
+  }
+
+  const launches = (await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/workspace-launches" })).payload;
+  const launchMatches = Array.isArray(launches) ? launches.filter((launch) => launch?.workspaceId === normalizedWorkspaceId) : [];
+  const launch = launchMatches[0];
+  const workspaceApiKeyId = String(launch?.workspaceApiKeyId || "");
+  if (launchMatches.length !== 1 || launch?.accountId !== normalizedAccountId || launch?.status !== "compute_claim_pending" ||
+    launch?.phase !== "compute_claim_pending" ||
+    !/^workspace-launch-[a-f0-9]{18}$/.test(String(launch?.operationId || "")) ||
+    !/^[1-9][0-9]*$/.test(workspaceApiKeyId) || !Number.isSafeInteger(Number(workspaceApiKeyId))) {
+    throw new Error("workspace_identity_launch_binding_mismatch");
   }
 
   const keySnapshot = await readGatewayCanaryKeySnapshot(requestOptions, customerAuth);
   const expectedName = canonicalWorkspaceKeyName(normalizedWorkspaceId);
   const matches = keySnapshot.workspaceKeys.filter((key) => key.id === workspaceApiKeyId || key.name === expectedName);
-  if (matches.length !== 1 || matches[0].name !== expectedName || matches[0].status !== "active") {
+  if (matches.length !== 1 || matches[0].id !== workspaceApiKeyId || matches[0].name !== expectedName || matches[0].status !== "active") {
     throw new Error("workspace_identity_workspace_key_mismatch");
   }
+  const workspaceKey = matches[0];
   return {
     schemaVersion: 1,
     operationMode: WORKSPACE_IDENTITY_DIAGNOSE_MODE,
@@ -2750,7 +2787,7 @@ export async function diagnoseWorkspaceIdentity({
       workspaceApiKeyId,
       sub2apiUserId,
       customerEmailSha256: createHash("sha256").update(normalizedCustomerEmail).digest("hex"),
-      workspaceKey: matches[0]
+      workspaceKey: { id: workspaceKey.id, kind: workspaceKey.kind, name: workspaceKey.name, status: workspaceKey.status }
     },
     runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
     verifiedAt: now.toISOString()
