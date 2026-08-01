@@ -3663,6 +3663,102 @@ test("compute-claim recovery CLI forwards the internal runner capability", async
 	assert.equal(calls[2].headers.get("x-opl-compute-claim-capability"), "compute-claim-runner-capability");
 });
 
+test("compute-claim recovery CLI classifies pre-claim failures without exposing raw errors", async () => {
+  const marker = "raw-private-provider-marker";
+  const argv = [
+    "--compute-claim-recover",
+    "--compute-claim-target-json", JSON.stringify(COMPUTE_CLAIM_TARGET),
+    "--approval-id", "approval-compute-claim-fixture"
+  ];
+  const env = {
+    OPL_MERGED_SHA: BASIC_CANARY_MERGED_SHA,
+    OPL_COMPUTE_CLAIM_CLOUD_DIGEST: BASIC_CANARY_CLOUD_DIGEST,
+    OPL_COMPUTE_CLAIM_RECOVERY_APPROVAL_JSON: computeClaimApprovalJson(),
+    OPL_INTERNAL_SERVICE_TOKEN: "compute-claim-runner-capability",
+    OPL_CONSOLE_ORIGIN: "https://cloud.medopl.cn",
+    OPL_SUB2API_ADMIN_EMAIL: ADMIN_EMAIL,
+    OPL_SUB2API_ADMIN_PASSWORD: ADMIN_PASSWORD,
+    OPL_K8S_NAMESPACE: "opl-cloud",
+    KUBECONFIG: "/run/secrets/kubeconfig"
+  };
+  const adminLogin = () => json({ user: { accountId: "acct-admin", role: "admin" } }, 200, {
+    "set-cookie": "opl_session=session-fixture; Path=/; HttpOnly",
+    "x-opl-csrf-token": "csrf-compute-claim"
+  });
+  const cases = [
+    {
+      name: "release readback",
+      errorCode: "compute_claim_recovery_release_readback_failed",
+      cloudRevisionEvidenceReader: async () => { throw new Error(marker); },
+      fetchImpl: async () => { throw new Error("network_not_expected"); }
+    },
+    {
+      name: "admin login",
+      errorCode: "compute_claim_recovery_admin_login_failed",
+      cloudRevisionEvidenceReader: async () => computeClaimCloudRevisionEvidence(),
+      fetchImpl: async () => { throw new Error(marker); }
+    },
+    {
+      name: "customer authority",
+      errorCode: "compute_claim_recovery_customer_identity_mismatch",
+      cloudRevisionEvidenceReader: async () => computeClaimCloudRevisionEvidence(),
+      fetchImpl: async (input) => {
+        const url = new URL(String(input));
+        if (url.pathname === "/api/auth/login") return adminLogin();
+        if (url.pathname === "/api/operator/accounts") return computeClaimAccountAuthority({ email: "other@example.test" });
+        throw new Error("claim_not_expected");
+      }
+    },
+    {
+      name: "claim transport",
+      errorCode: "compute_claim_recovery_claim_transport_failed",
+      cloudRevisionEvidenceReader: async () => computeClaimCloudRevisionEvidence(),
+      fetchImpl: async (input) => {
+        const url = new URL(String(input));
+        if (url.pathname === "/api/auth/login") return adminLogin();
+        if (url.pathname === "/api/operator/accounts") return computeClaimAccountAuthority();
+        throw new Error(marker);
+      }
+    },
+    {
+      name: "claim response",
+      errorCode: "compute_claim_recovery_control_plane_response_invalid",
+      cloudRevisionEvidenceReader: async () => computeClaimCloudRevisionEvidence(),
+      fetchImpl: async (input) => {
+        const url = new URL(String(input));
+        if (url.pathname === "/api/auth/login") return adminLogin();
+        if (url.pathname === "/api/operator/accounts") return computeClaimAccountAuthority();
+        return new Response(marker, { status: 502 });
+      }
+    }
+  ];
+
+  for (const testCase of cases) {
+    let stdout = "";
+    let stderr = "";
+    const code = await runProductionLiveQaCli({
+      argv,
+      env,
+      stdout: { write: (chunk) => { stdout += chunk; } },
+      stderr: { write: (chunk) => { stderr += chunk; } },
+      cloudRevisionEvidenceReader: testCase.cloudRevisionEvidenceReader,
+      fetchImpl: testCase.fetchImpl,
+      now: new Date("2026-08-28T00:00:00Z")
+    });
+    assert.equal(code, 1, testCase.name);
+    assert.deepEqual(JSON.parse(stdout), {
+      schemaVersion: 2,
+      operationMode: "compute_claim_recover",
+      status: "blocked",
+      recoveryEligible: false,
+      errorCode: testCase.errorCode,
+      runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
+    }, testCase.name);
+    assert.match(stderr, new RegExp(testCase.errorCode), testCase.name);
+    assert.doesNotMatch(`${stdout}\n${stderr}`, new RegExp(`${marker}|${COMPUTE_CLAIM_CUSTOMER_EMAIL}|compute-claim-runner-capability|password|secret|token`, "i"), testCase.name);
+  }
+});
+
 test("compute-claim recovery CLI rejects missing explicit approval before access", async () => {
   let stdout = "";
   let stderr = "";

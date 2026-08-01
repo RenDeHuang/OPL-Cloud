@@ -651,7 +651,17 @@ const COMPUTE_CLAIM_REASONS = new Set([
   "none", "local_identity", "provider_describe", "iam_rbac", "multiple_candidate",
   "identity_mismatch", "node_ownership_conflict", "storage_already_started"
 ]);
-const COMPUTE_CLAIM_BLOCKED_ERROR_CODES = new Set([...COMPUTE_CLAIM_REASONS, "identity_mismatch"]);
+const COMPUTE_CLAIM_RECOVERY_STAGE_ERROR_CODES = new Set([
+  "compute_claim_recovery_release_readback_failed",
+  "compute_claim_recovery_admin_login_failed",
+  "compute_claim_recovery_customer_identity_mismatch",
+  "compute_claim_recovery_claim_transport_failed",
+  "compute_claim_recovery_control_plane_response_invalid"
+]);
+const COMPUTE_CLAIM_BLOCKED_ERROR_CODES = new Set([
+  ...COMPUTE_CLAIM_REASONS,
+  ...COMPUTE_CLAIM_RECOVERY_STAGE_ERROR_CODES
+]);
 const COMPUTE_CLAIM_FAILURE_STAGES = new Set([
   "", "cvm_pre_read", "cvm_conflict_check", "cvm_mutation_precondition", "cvm_rename_readback", "cvm_tag_readback", "cvm_final_readback",
   "cvm_provisioner_transport", "cvm_mutation_evidence", "node_pre_cvm_read", "node_pre_read", "node_conflict_check", "node_patch_build",
@@ -1596,8 +1606,18 @@ export async function recoverComputeClaim({
     !Number.isInteger(requestTimeoutMs) || requestTimeoutMs < 1 || requestTimeoutMs > 300_000) {
     throw new Error("compute_claim_recovery_config_invalid");
   }
-  const release = await currentComputeClaimCloudRevision({ mergedSha, cloudImageDigest, kubeconfigPath, namespace, cloudRevisionEvidenceReader, execFileImpl });
-  const auth = await login({ fetchImpl, origin: normalizedOrigin, ...credentials, timeoutMs: requestTimeoutMs });
+  let release;
+  try {
+    release = await currentComputeClaimCloudRevision({ mergedSha, cloudImageDigest, kubeconfigPath, namespace, cloudRevisionEvidenceReader, execFileImpl });
+  } catch {
+    throw new Error("compute_claim_recovery_release_readback_failed");
+  }
+  let auth;
+  try {
+    auth = await login({ fetchImpl, origin: normalizedOrigin, ...credentials, timeoutMs: requestTimeoutMs });
+  } catch {
+    throw new Error("compute_claim_recovery_admin_login_failed");
+  }
   if (auth.user?.accountId !== PRODUCTION_ADMIN.accountId || auth.user?.role !== PRODUCTION_ADMIN.role || !auth.csrfToken) {
     throw new Error("compute_claim_recovery_admin_login_failed");
   }
@@ -1612,31 +1632,37 @@ export async function recoverComputeClaim({
   const path = `/api/operator/workspace-launches/${encodeURIComponent(target.launchOperationId)}/compute-claim-recovery`;
   const requestBody = computeClaimControlPlaneRequest(target);
   const approvalDigest = createHash("sha256").update(canonicalJson(approval)).digest("hex");
-  const claimResponse = await computeClaimControlPlanePost({
-    fetchImpl,
-    origin: normalizedOrigin,
-    auth,
-    path: `${path}/claim`,
-    idempotencyKey: approval.idempotencyKey,
-    capability: internalServiceToken,
-    requestTimeoutMs,
-    body: {
-      ...requestBody,
-      approvalId: approval.approvalId,
-      approvalDigest,
-      expiresAt: approval.expiresAt,
-      mergedMainSha: approval.mergedMainSha,
-      cloudImageDigest: approval.cloudImageDigest,
-      workspaceImageDigest: approval.workspaceImageDigest,
-      customerEmail: approval.customer.email,
-      recoveryKey: approval.recoveryKey,
-      resources: approval.resources,
-      attemptLimits: approval.attemptLimits,
-      allowedWrites: approval.allowedWrites,
-      forbiddenWrites: approval.forbiddenWrites,
-      confirm: approval.confirmation
-    }
-  });
+  let claimResponse;
+  try {
+    claimResponse = await computeClaimControlPlanePost({
+      fetchImpl,
+      origin: normalizedOrigin,
+      auth,
+      path: `${path}/claim`,
+      idempotencyKey: approval.idempotencyKey,
+      capability: internalServiceToken,
+      requestTimeoutMs,
+      body: {
+        ...requestBody,
+        approvalId: approval.approvalId,
+        approvalDigest,
+        expiresAt: approval.expiresAt,
+        mergedMainSha: approval.mergedMainSha,
+        cloudImageDigest: approval.cloudImageDigest,
+        workspaceImageDigest: approval.workspaceImageDigest,
+        customerEmail: approval.customer.email,
+        recoveryKey: approval.recoveryKey,
+        resources: approval.resources,
+        attemptLimits: approval.attemptLimits,
+        allowedWrites: approval.allowedWrites,
+        forbiddenWrites: approval.forbiddenWrites,
+        confirm: approval.confirmation
+      }
+    });
+  } catch (error) {
+    if (error?.message === "compute_claim_recovery_control_plane_response_invalid") throw error;
+    throw new Error("compute_claim_recovery_claim_transport_failed");
+  }
   const claimed = computeClaimProofProjection(claimResponse.payload);
   const eligible = claimResponse.statusCode === 200 && computeClaimProofMatchesTarget(claimed, target, true, approval.resources);
   const errorCode = eligible ? "none" : computeClaimProofBaseMatches(claimed, target) && claimed.reason !== "none" ? claimed.reason : "identity_mismatch";
@@ -4432,7 +4458,7 @@ export async function runProductionLiveQaCli({
       return 1;
     }
     if (computeClaimMode) {
-      const artifact = blockedComputeClaimArtifact(computeClaimMode);
+      const artifact = blockedComputeClaimArtifact(computeClaimMode, error?.message);
       stdout.write(`${JSON.stringify(artifact, null, 2)}\n`);
       stderr.write(`${JSON.stringify({ ok: false, errorCode: artifact.errorCode }, null, 2)}\n`);
       return 1;
