@@ -21,6 +21,8 @@ const workspaceShellSha = "b".repeat(40);
 const workspaceFrameworkSha = "e".repeat(40);
 const workspaceImageTag = `${workspaceAppSha.slice(0, 12)}-${workspaceShellSha.slice(0, 12)}-${workspaceFrameworkSha.slice(0, 12)}`;
 const workspaceDigest = `sha256:${"d".repeat(64)}`;
+const isolatedSourceCheckoutPath = ".opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}";
+const isolatedSourceCheckoutDirectory = "${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}";
 const basicSlotDescriptor = {
   id: "verification-slot-basic-01",
   customerProduct: false,
@@ -559,6 +561,103 @@ test("TKE deploy workflow matches the current deployment contract", async () => 
     existingWorkspaceDeployments: "preserved_without_restart"
   });
   assert.doesNotMatch(JSON.stringify(contract), /paid_confirmation|OPL_VERIFY_PAID_CONFIRMATION|OPL_VERIFY_MODEL_ACCESS_KEY/);
+});
+
+test("production self-hosted jobs use one run-and-job isolated source checkout", async () => {
+  const workflowJobs = new Map([
+    [".github/workflows/deploy-tke-production.yml", [
+      "deploy",
+      "promote-workspace-image",
+      "verify-rollout-cluster",
+      "capture-rollout-failure",
+      "rollback-live-qa"
+    ]],
+    [".github/workflows/production-basic-customer-operation.yml", [
+      "prepare-basic-customer-operation",
+      "manual-review-diagnose",
+      "workspace-launch-readback-diagnose",
+      "workspace-launch-readback-recover",
+      "compute-claim-diagnose",
+      "compute-claim-recover"
+    ]]
+  ]);
+
+  for (const [path, expectedJobs] of workflowJobs) {
+    const workflow = await readWorkflow(path);
+    const actualJobs = Object.entries(workflow.jobs || {})
+      .filter(([, currentJob]) => JSON.stringify(currentJob["runs-on"]).includes("self-hosted"))
+      .filter(([, currentJob]) => (currentJob.steps || []).some((step) => step.uses === "actions/checkout@v4"))
+      .map(([name]) => name);
+    assert.deepEqual(actualJobs, expectedJobs, `${path} isolated checkout coverage drifted`);
+
+    for (const name of expectedJobs) {
+      const currentJob = workflowJob(workflow, name);
+      const steps = currentJob.steps || [];
+      const checkoutIndex = steps.findIndex((step) => step.uses === "actions/checkout@v4");
+      const checkout = steps[checkoutIndex];
+      const prepare = steps[checkoutIndex - 1];
+      const branchAuthority = steps[checkoutIndex + 1];
+      const cleanup = steps.at(-1);
+
+      assert.ok(checkoutIndex > 0, `${path}:${name} checkout must follow isolated-directory preparation`);
+      assert.equal(checkout.with?.path, isolatedSourceCheckoutPath, `${path}:${name} checkout path`);
+      assert.equal(prepare?.name, "Prepare isolated source checkout", `${path}:${name} prepare step`);
+      assert.equal(prepare?.id, "prepare_source", `${path}:${name} prepare step id`);
+      assert.equal(prepare?.env?.OPL_SOURCE_CHECKOUT, isolatedSourceCheckoutDirectory, `${path}:${name} prepare directory`);
+      assert.match(serializedStep(prepare), /expected="\$GITHUB_WORKSPACE\/\.opl-checkouts\/\$GITHUB_RUN_ID-\$GITHUB_RUN_ATTEMPT-\$GITHUB_JOB"/);
+      assert.match(serializedStep(prepare), /mkdir -p "\$GITHUB_WORKSPACE\/\.opl-checkouts"/);
+      assert.match(serializedStep(prepare), /mkdir "\$OPL_SOURCE_CHECKOUT"/);
+      assert.doesNotMatch(serializedStep(prepare), /\brm\b|find .* -delete|\*/);
+
+      assert.equal(branchAuthority?.name, "Verify remote branch authority", `${path}:${name} branch authority step`);
+      assert.match(serializedStep(branchAuthority), /git ls-remote --heads origin/);
+      assert.match(serializedStep(branchAuthority), /refs\/heads\/main/);
+      assert.match(serializedStep(branchAuthority), /"\$\{#remote_heads\[@\]\}" -ne 1/);
+      assert.match(serializedStep(branchAuthority), /"\$GITHUB_REF" != "refs\/heads\/main"/);
+      assert.match(serializedStep(branchAuthority), /head_sha="\$\(git rev-parse HEAD\)"/);
+      assert.match(serializedStep(branchAuthority), /"\$GITHUB_SHA" != "\$head_sha"/);
+      assert.match(serializedStep(branchAuthority), /"\$remote_main_sha" != "\$head_sha"/);
+      assert.doesNotMatch(serializedStep(branchAuthority), /git (?:push|update-ref|branch -D|remote remove)|--delete/);
+
+      assert.equal(cleanup?.name, "Remove isolated source checkout", `${path}:${name} cleanup step`);
+      assert.equal(String(cleanup?.if), "always() && steps.prepare_source.outcome == 'success'", `${path}:${name} cleanup condition`);
+      assert.equal(cleanup?.env?.OPL_SOURCE_CHECKOUT, isolatedSourceCheckoutDirectory, `${path}:${name} cleanup directory`);
+      assert.match(serializedStep(cleanup), /source_dir="\$\{OPL_SOURCE_CHECKOUT:-\}"/);
+      assert.match(serializedStep(cleanup), /expected="\$GITHUB_WORKSPACE\/\.opl-checkouts\/\$GITHUB_RUN_ID-\$GITHUB_RUN_ATTEMPT-\$GITHUB_JOB"/);
+      assert.match(serializedStep(cleanup), /find "\$source_dir" -mindepth 1 -delete/);
+      assert.match(serializedStep(cleanup), /rmdir "\$source_dir"/);
+      assert.doesNotMatch(serializedStep(cleanup), /\brm\b|\.worktrees|find "\$GITHUB_WORKSPACE"|find "\$RUNNER_TEMP"|\*/);
+
+      for (const step of steps.slice(checkoutIndex + 1, -1)) {
+        if (step.run) {
+          assert.equal(step["working-directory"], isolatedSourceCheckoutDirectory, `${path}:${name}:${step.name} working directory`);
+        }
+        if (["actions/upload-artifact@v4", "actions/download-artifact@v4"].includes(step.uses)) {
+          assert.match(String(step.with?.path || ""), /^\$\{\{ (?:runner\.temp|env\.[A-Z0-9_]+) \}\}/, `${path}:${name}:${step.name} artifact path`);
+        }
+      }
+    }
+  }
+
+  const contract = await readJson(deploymentContractPath);
+  assert.deepEqual(contract.selfHostedSourceCheckoutIsolation, {
+    workflows: Object.fromEntries(workflowJobs),
+    relativePath: isolatedSourceCheckoutPath,
+    absolutePath: isolatedSourceCheckoutDirectory,
+    reuseDefaultWorkspaceRepository: false,
+    prepare: "create_exact_empty_current_run_attempt_job_directory_fail_if_present_and_record_success",
+    runSteps: "execute_from_exact_isolated_source_directory",
+    cleanup: "only_after_prepare_success_delete_contents_and_rmdir_exact_current_run_attempt_job_directory",
+    persistentRunnerState: "preserved",
+    remoteBranchAuthority: {
+      command: "git_ls_remote_heads_origin",
+      acceptedHeads: ["refs/heads/main"],
+      workflowRef: "refs/heads/main",
+      sourceBinding: "github_sha_equals_checkout_head_equals_remote_main_sha",
+      additionalHeads: "fail_closed",
+      remoteMutation: 0
+    }
+  });
 });
 
 test("Workspace image promotion is an explicit main-only ConfigMap CAS with rollback", async () => {

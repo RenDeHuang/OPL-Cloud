@@ -399,7 +399,7 @@ test("Current Fabric contracts require dedicated package NodePools without weake
     output: "redacted_evidence_only",
     currentState: "implemented_and_fake_tested_not_executed"
   });
-  assert.equal(deployment.schemaVersion, 30);
+  assert.equal(deployment.schemaVersion, 31);
   assert.deepEqual(deployment.productionWorkspaceLaunchReadbackRecovery, {
     workflow: ".github/workflows/production-basic-customer-operation.yml",
     modes: {

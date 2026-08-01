@@ -405,6 +405,13 @@ validate account and quote
   `latest` and tag-only production references are forbidden. The immutable TCR digest
   and Ready Pod `imageID` remain unavailable until their respective publication and
   deployment readbacks succeed; placeholders and local timestamps are not evidence.
+- Every self-hosted checkout in the production rollout and Basic customer-operation
+  workflows uses a fresh `run_id/run_attempt/job` source directory, runs repository
+  commands only from that directory, and removes it only when this job created it.
+  Before any production write in those flows, the job requires
+  `GITHUB_REF=refs/heads/main` and proves `GITHUB_SHA`, checkout HEAD, and the only
+  remote head `refs/heads/main` are the same commit. The workflows never delete
+  branches or repair persistent runner state.
 - Ordinary Cloud deploy updates the immutable Workspace image default for new
   Fabric operations but does not restart or wait for existing Workspace
   Deployments while Runtime rollout is paused. A separate explicit

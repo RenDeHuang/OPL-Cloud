@@ -138,14 +138,51 @@ jobs:
       TENCENT_DEPLOY_KUBECONFIG: ${{ secrets.TENCENT_DEPLOY_KUBECONFIG }}
 
     steps:
+      - name: Prepare isolated source checkout
+        id: prepare_source
+        shell: bash
+        env:
+          OPL_SOURCE_CHECKOUT: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          expected="$GITHUB_WORKSPACE/.opl-checkouts/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
+          if [ "$OPL_SOURCE_CHECKOUT" != "$expected" ]; then
+            echo "Isolated source checkout path mismatch." >&2
+            exit 1
+          fi
+          mkdir -p "$GITHUB_WORKSPACE/.opl-checkouts"
+          mkdir "$OPL_SOURCE_CHECKOUT"
+
       - name: Checkout exact merged main
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.merged_sha }}
           fetch-depth: 0
 
+          path: .opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+
+      - name: Verify remote branch authority
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          mapfile -t remote_heads < <(git ls-remote --heads origin)
+          if [ "${#remote_heads[@]}" -ne 1 ]; then
+            printf 'Production source authority requires exactly one remote head; observed: %s\n' "${remote_heads[*]:-none}" >&2
+            exit 1
+          fi
+          read -r remote_main_sha remote_main_ref <<< "${remote_heads[0]}"
+          head_sha="$(git rev-parse HEAD)"
+          if [ "$remote_main_ref" != "refs/heads/main" ] || [ "$GITHUB_REF" != "refs/heads/main" ] ||
+             [ "$GITHUB_SHA" != "$head_sha" ] || [ "$remote_main_sha" != "$head_sha" ]; then
+            printf 'Production source must be current main: ref=%s github_sha=%s checkout=%s remote_main=%s\n' \
+              "$GITHUB_REF" "$GITHUB_SHA" "$head_sha" "$remote_main_sha" >&2
+            exit 1
+          fi
+
       - name: Verify exact origin main
         shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           set -euo pipefail
           if ! [[ "$OPL_MERGED_SHA" =~ ^[0-9a-f]{40}$ ]]; then
@@ -162,6 +199,7 @@ jobs:
 
       - name: Reject recovered-precharge checkpoint resume
         shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           set -euo pipefail
           case "$OPL_BASIC_CANARY_FUNDING_MODE" in
@@ -186,6 +224,7 @@ jobs:
 
       - name: Prepare redacted checkpoint and kubeconfig
         shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           set -euo pipefail
           secret_dir="$(mktemp -d)"
@@ -223,6 +262,7 @@ jobs:
         id: canary
         continue-on-error: true
         shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           set -euo pipefail
           port_forward_pid=""
@@ -337,6 +377,7 @@ jobs:
       - name: Remove customer operation secrets
         if: always()
         shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           set -euo pipefail
           secret_dir="${OPL_BASIC_CANARY_SECRET_DIR:-}"
@@ -348,9 +389,28 @@ jobs:
       - name: Require customer preparation success
         if: ${{ steps.canary.outcome != 'success' }}
         shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           echo "Basic customer preparation stopped; inspect the redacted checkpoint and evidence artifact." >&2
           exit 1
+
+      - name: Remove isolated source checkout
+        if: always() && steps.prepare_source.outcome == 'success'
+        shell: bash
+        env:
+          OPL_SOURCE_CHECKOUT: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          source_dir="${OPL_SOURCE_CHECKOUT:-}"
+          expected="$GITHUB_WORKSPACE/.opl-checkouts/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
+          if [ -z "$source_dir" ] || [ "$source_dir" != "$expected" ]; then
+            echo "Refusing to remove unexpected source checkout path." >&2
+            exit 1
+          fi
+          if [ -d "$source_dir" ]; then
+            find "$source_dir" -mindepth 1 -delete
+            rmdir "$source_dir"
+          fi
 
   complete-basic-customer-operation:
     name: Complete one approved Basic customer browser and model check
@@ -496,14 +556,51 @@ jobs:
       KUBECONFIG: ${{ vars.TENCENT_DEPLOY_KUBECONFIG_PATH || '/home/actions/.secrets/medopl/v22/kubeconfig-package-d-deploy' }}
 
     steps:
+      - name: Prepare isolated source checkout
+        id: prepare_source
+        shell: bash
+        env:
+          OPL_SOURCE_CHECKOUT: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          expected="$GITHUB_WORKSPACE/.opl-checkouts/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
+          if [ "$OPL_SOURCE_CHECKOUT" != "$expected" ]; then
+            echo "Isolated source checkout path mismatch." >&2
+            exit 1
+          fi
+          mkdir -p "$GITHUB_WORKSPACE/.opl-checkouts"
+          mkdir "$OPL_SOURCE_CHECKOUT"
+
       - name: Checkout exact merged main
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.merged_sha }}
           fetch-depth: 0
 
+          path: .opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+
+      - name: Verify remote branch authority
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          mapfile -t remote_heads < <(git ls-remote --heads origin)
+          if [ "${#remote_heads[@]}" -ne 1 ]; then
+            printf 'Production source authority requires exactly one remote head; observed: %s\n' "${remote_heads[*]:-none}" >&2
+            exit 1
+          fi
+          read -r remote_main_sha remote_main_ref <<< "${remote_heads[0]}"
+          head_sha="$(git rev-parse HEAD)"
+          if [ "$remote_main_ref" != "refs/heads/main" ] || [ "$GITHUB_REF" != "refs/heads/main" ] ||
+             [ "$GITHUB_SHA" != "$head_sha" ] || [ "$remote_main_sha" != "$head_sha" ]; then
+            printf 'Production source must be current main: ref=%s github_sha=%s checkout=%s remote_main=%s\n' \
+              "$GITHUB_REF" "$GITHUB_SHA" "$head_sha" "$remote_main_sha" >&2
+            exit 1
+          fi
+
       - name: Verify exact origin main
         shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           set -euo pipefail
           if ! [[ "$OPL_MERGED_SHA" =~ ^[0-9a-f]{40}$ ]]; then
@@ -520,6 +617,7 @@ jobs:
 
       - name: Validate read-only diagnostic inputs
         shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           set -euo pipefail
           if [ -n "$OPL_BASIC_CANARY_RESUME_RUN_ID" ] || [ -z "$OPL_BASIC_CANARY_DIAGNOSE_TARGET_JSON" ]; then
@@ -534,6 +632,7 @@ jobs:
 
       - name: Validate runner diagnose kubeconfig
         shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           set -euo pipefail
           if [ ! -r "$KUBECONFIG" ]; then
@@ -543,6 +642,7 @@ jobs:
 
       - name: Prepare redacted manual-review artifact
         shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           set -euo pipefail
           artifact_dir="$RUNNER_TEMP/production-basic-manual-review-diagnose"
@@ -554,6 +654,7 @@ jobs:
         id: diagnose
         continue-on-error: true
         shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           set -euo pipefail
           fabric_pod="$(node <<'NODE'
@@ -608,6 +709,7 @@ jobs:
       - name: Require recovery-eligible diagnosis
         if: ${{ steps.diagnose.outcome == 'success' }}
         shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           set -euo pipefail
           node <<'NODE'
@@ -625,9 +727,28 @@ jobs:
       - name: Require manual-review diagnosis success
         if: ${{ steps.diagnose.outcome != 'success' }}
         shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           echo "Manual-review diagnosis stopped; inspect the redacted diagnosis artifact." >&2
           exit 1
+
+      - name: Remove isolated source checkout
+        if: always() && steps.prepare_source.outcome == 'success'
+        shell: bash
+        env:
+          OPL_SOURCE_CHECKOUT: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          source_dir="${OPL_SOURCE_CHECKOUT:-}"
+          expected="$GITHUB_WORKSPACE/.opl-checkouts/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
+          if [ -z "$source_dir" ] || [ "$source_dir" != "$expected" ]; then
+            echo "Refusing to remove unexpected source checkout path." >&2
+            exit 1
+          fi
+          if [ -d "$source_dir" ]; then
+            find "$source_dir" -mindepth 1 -delete
+            rmdir "$source_dir"
+          fi
 
   workspace-launch-readback-diagnose:
     name: Prove one unknown Workspace launch stage by authoritative readback
@@ -648,14 +769,51 @@ jobs:
       KUBECONFIG: ${{ vars.TENCENT_DEPLOY_KUBECONFIG_PATH || '/home/actions/.secrets/medopl/v22/kubeconfig-package-d-deploy' }}
 
     steps:
+      - name: Prepare isolated source checkout
+        id: prepare_source
+        shell: bash
+        env:
+          OPL_SOURCE_CHECKOUT: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          expected="$GITHUB_WORKSPACE/.opl-checkouts/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
+          if [ "$OPL_SOURCE_CHECKOUT" != "$expected" ]; then
+            echo "Isolated source checkout path mismatch." >&2
+            exit 1
+          fi
+          mkdir -p "$GITHUB_WORKSPACE/.opl-checkouts"
+          mkdir "$OPL_SOURCE_CHECKOUT"
+
       - name: Checkout exact merged main
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.merged_sha }}
           fetch-depth: 0
 
+          path: .opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+
+      - name: Verify remote branch authority
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          mapfile -t remote_heads < <(git ls-remote --heads origin)
+          if [ "${#remote_heads[@]}" -ne 1 ]; then
+            printf 'Production source authority requires exactly one remote head; observed: %s\n' "${remote_heads[*]:-none}" >&2
+            exit 1
+          fi
+          read -r remote_main_sha remote_main_ref <<< "${remote_heads[0]}"
+          head_sha="$(git rev-parse HEAD)"
+          if [ "$remote_main_ref" != "refs/heads/main" ] || [ "$GITHUB_REF" != "refs/heads/main" ] ||
+             [ "$GITHUB_SHA" != "$head_sha" ] || [ "$remote_main_sha" != "$head_sha" ]; then
+            printf 'Production source must be current main: ref=%s github_sha=%s checkout=%s remote_main=%s\n' \
+              "$GITHUB_REF" "$GITHUB_SHA" "$head_sha" "$remote_main_sha" >&2
+            exit 1
+          fi
+
       - name: Verify exact readback diagnosis source
         shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           set -euo pipefail
           if ! [[ "$OPL_MERGED_SHA" =~ ^[0-9a-f]{40}$ ]] || ! [[ "$OPL_WORKSPACE_LAUNCH_READBACK_CLOUD_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
@@ -670,6 +828,7 @@ jobs:
 
       - name: Validate read-only Workspace launch inputs
         shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           set -euo pipefail
           if [ -z "$OPL_WORKSPACE_LAUNCH_READBACK_TARGET_JSON" ] || [ -z "$OPL_WORKSPACE_LAUNCH_READBACK_CUSTOMER_EMAIL" ] || [ ! -r "$KUBECONFIG" ]; then
@@ -684,6 +843,7 @@ jobs:
 
       - name: Prepare redacted Workspace launch proof artifact
         shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           set -euo pipefail
           artifact_dir="$RUNNER_TEMP/production-workspace-launch-readback-diagnosis"
@@ -697,6 +857,7 @@ jobs:
         id: diagnose
         continue-on-error: true
         shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           set -euo pipefail
           node tools/production-live-qa.ts --workspace-launch-readback-diagnose \
@@ -705,6 +866,7 @@ jobs:
       - name: Require complete zero-mutation Workspace launch proof
         if: ${{ steps.diagnose.outcome == 'success' }}
         shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           set -euo pipefail
           node <<'NODE'
@@ -741,6 +903,7 @@ jobs:
       - name: Generate safe Workspace launch diagnosis artifact
         if: always()
         shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           set -euo pipefail
           node --input-type=module <<'NODE'
@@ -776,9 +939,28 @@ jobs:
       - name: Require Workspace launch diagnosis success
         if: ${{ steps.diagnose.outcome != 'success' }}
         shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           echo "Workspace launch readback diagnosis stopped; inspect the redacted artifact." >&2
           exit 1
+
+      - name: Remove isolated source checkout
+        if: always() && steps.prepare_source.outcome == 'success'
+        shell: bash
+        env:
+          OPL_SOURCE_CHECKOUT: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          source_dir="${OPL_SOURCE_CHECKOUT:-}"
+          expected="$GITHUB_WORKSPACE/.opl-checkouts/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
+          if [ -z "$source_dir" ] || [ "$source_dir" != "$expected" ]; then
+            echo "Refusing to remove unexpected source checkout path." >&2
+            exit 1
+          fi
+          if [ -d "$source_dir" ]; then
+            find "$source_dir" -mindepth 1 -delete
+            rmdir "$source_dir"
+          fi
 
   workspace-launch-readback-recover:
     name: Converge one approved unknown Workspace launch stage
@@ -807,14 +989,51 @@ jobs:
       KUBECONFIG: ${{ vars.TENCENT_DEPLOY_KUBECONFIG_PATH || '/home/actions/.secrets/medopl/v22/kubeconfig-package-d-deploy' }}
 
     steps:
+      - name: Prepare isolated source checkout
+        id: prepare_source
+        shell: bash
+        env:
+          OPL_SOURCE_CHECKOUT: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          expected="$GITHUB_WORKSPACE/.opl-checkouts/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
+          if [ "$OPL_SOURCE_CHECKOUT" != "$expected" ]; then
+            echo "Isolated source checkout path mismatch." >&2
+            exit 1
+          fi
+          mkdir -p "$GITHUB_WORKSPACE/.opl-checkouts"
+          mkdir "$OPL_SOURCE_CHECKOUT"
+
       - name: Checkout exact merged main
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.merged_sha }}
           fetch-depth: 0
 
+          path: .opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+
+      - name: Verify remote branch authority
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          mapfile -t remote_heads < <(git ls-remote --heads origin)
+          if [ "${#remote_heads[@]}" -ne 1 ]; then
+            printf 'Production source authority requires exactly one remote head; observed: %s\n' "${remote_heads[*]:-none}" >&2
+            exit 1
+          fi
+          read -r remote_main_sha remote_main_ref <<< "${remote_heads[0]}"
+          head_sha="$(git rev-parse HEAD)"
+          if [ "$remote_main_ref" != "refs/heads/main" ] || [ "$GITHUB_REF" != "refs/heads/main" ] ||
+             [ "$GITHUB_SHA" != "$head_sha" ] || [ "$remote_main_sha" != "$head_sha" ]; then
+            printf 'Production source must be current main: ref=%s github_sha=%s checkout=%s remote_main=%s\n' \
+              "$GITHUB_REF" "$GITHUB_SHA" "$head_sha" "$remote_main_sha" >&2
+            exit 1
+          fi
+
       - name: Verify exact approved readback source
         shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           set -euo pipefail
           if ! [[ "$OPL_MERGED_SHA" =~ ^[0-9a-f]{40}$ ]] || ! [[ "$OPL_WORKSPACE_LAUNCH_READBACK_CLOUD_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
@@ -829,6 +1048,7 @@ jobs:
 
       - name: Validate approved Workspace launch readback inputs
         shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           set -euo pipefail
           if [ -z "$OPL_WORKSPACE_LAUNCH_READBACK_TARGET_JSON" ] || [ -z "$OPL_WORKSPACE_LAUNCH_READBACK_CUSTOMER_EMAIL" ] ||
@@ -844,6 +1064,7 @@ jobs:
 
       - name: Prepare redacted Workspace launch recovery artifact
         shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           set -euo pipefail
           artifact_dir="$RUNNER_TEMP/production-basic-compute-claim-evidence"
@@ -858,6 +1079,7 @@ jobs:
         id: recover
         continue-on-error: true
         shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           set -euo pipefail
           token_b64="$(kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" get secret opl-cloud-internal-service -o jsonpath='{.data.OPL_INTERNAL_SERVICE_TOKEN}')"
@@ -881,6 +1103,7 @@ jobs:
         id: readback_convergence
         if: ${{ steps.recover.outcome == 'success' }}
         shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           set -euo pipefail
           node <<'NODE'
@@ -934,6 +1157,7 @@ jobs:
       - name: Generate safe Workspace launch recovery artifact
         if: always()
         shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           set -euo pipefail
           node --input-type=module <<'NODE'
@@ -962,6 +1186,7 @@ jobs:
         if: ${{ steps.recover.outcome == 'success' && steps.readback_convergence.outcome == 'success' }}
         continue-on-error: true
         shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           set -euo pipefail
           node tools/production-live-qa.ts --compute-claim-continue \
@@ -973,6 +1198,7 @@ jobs:
       - name: Require original launch URL and Receipt
         if: ${{ steps.continue.outcome == 'success' }}
         shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           set -euo pipefail
           node <<'NODE'
@@ -1001,6 +1227,7 @@ jobs:
       - name: Generate safe recovered Workspace handoff
         if: always()
         shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           set -euo pipefail
           node --input-type=module <<'NODE'
@@ -1030,6 +1257,7 @@ jobs:
       - name: Require Workspace launch readback recovery success
         if: ${{ steps.recover.outcome != 'success' }}
         shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           echo "Workspace launch readback recovery stopped; inspect the redacted artifact." >&2
           exit 1
@@ -1037,9 +1265,28 @@ jobs:
       - name: Require Workspace launch continuation success
         if: ${{ steps.continue.outcome != 'success' }}
         shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           echo "Original launch continuation stopped; inspect the redacted artifact." >&2
           exit 1
+
+      - name: Remove isolated source checkout
+        if: always() && steps.prepare_source.outcome == 'success'
+        shell: bash
+        env:
+          OPL_SOURCE_CHECKOUT: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          source_dir="${OPL_SOURCE_CHECKOUT:-}"
+          expected="$GITHUB_WORKSPACE/.opl-checkouts/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
+          if [ -z "$source_dir" ] || [ "$source_dir" != "$expected" ]; then
+            echo "Refusing to remove unexpected source checkout path." >&2
+            exit 1
+          fi
+          if [ -d "$source_dir" ]; then
+            find "$source_dir" -mindepth 1 -delete
+            rmdir "$source_dir"
+          fi
 
   compute-claim-diagnose:
     name: Prove one partial Workspace compute claim in TKE VPC
@@ -1055,14 +1302,51 @@ jobs:
       KUBECONFIG: ${{ vars.TENCENT_DEPLOY_KUBECONFIG_PATH || '/home/actions/.secrets/medopl/v22/kubeconfig-package-d-deploy' }}
 
     steps:
+      - name: Prepare isolated source checkout
+        id: prepare_source
+        shell: bash
+        env:
+          OPL_SOURCE_CHECKOUT: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          expected="$GITHUB_WORKSPACE/.opl-checkouts/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
+          if [ "$OPL_SOURCE_CHECKOUT" != "$expected" ]; then
+            echo "Isolated source checkout path mismatch." >&2
+            exit 1
+          fi
+          mkdir -p "$GITHUB_WORKSPACE/.opl-checkouts"
+          mkdir "$OPL_SOURCE_CHECKOUT"
+
       - name: Checkout exact merged main
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.merged_sha }}
           fetch-depth: 0
 
+          path: .opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+
+      - name: Verify remote branch authority
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          mapfile -t remote_heads < <(git ls-remote --heads origin)
+          if [ "${#remote_heads[@]}" -ne 1 ]; then
+            printf 'Production source authority requires exactly one remote head; observed: %s\n' "${remote_heads[*]:-none}" >&2
+            exit 1
+          fi
+          read -r remote_main_sha remote_main_ref <<< "${remote_heads[0]}"
+          head_sha="$(git rev-parse HEAD)"
+          if [ "$remote_main_ref" != "refs/heads/main" ] || [ "$GITHUB_REF" != "refs/heads/main" ] ||
+             [ "$GITHUB_SHA" != "$head_sha" ] || [ "$remote_main_sha" != "$head_sha" ]; then
+            printf 'Production source must be current main: ref=%s github_sha=%s checkout=%s remote_main=%s\n' \
+              "$GITHUB_REF" "$GITHUB_SHA" "$head_sha" "$remote_main_sha" >&2
+            exit 1
+          fi
+
       - name: Verify exact origin main
         shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           set -euo pipefail
           if ! [[ "$OPL_MERGED_SHA" =~ ^[0-9a-f]{40}$ ]] || ! [[ "$OPL_COMPUTE_CLAIM_CLOUD_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
@@ -1079,6 +1363,7 @@ jobs:
 
       - name: Validate read-only compute claim inputs
         shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           set -euo pipefail
           if [ -z "$OPL_COMPUTE_CLAIM_TARGET_JSON" ] || [ ! -r "$KUBECONFIG" ]; then
@@ -1093,6 +1378,7 @@ jobs:
 
       - name: Prepare redacted compute claim proof artifact
         shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           set -euo pipefail
           artifact_dir="$RUNNER_TEMP/production-compute-claim-diagnosis"
@@ -1104,6 +1390,7 @@ jobs:
         id: diagnose
         continue-on-error: true
         shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           set -euo pipefail
           node tools/production-live-qa.ts --compute-claim-diagnose \
@@ -1123,6 +1410,7 @@ jobs:
       - name: Require complete zero-mutation compute proof
         if: ${{ steps.diagnose.outcome == 'success' }}
         shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           set -euo pipefail
           node <<'NODE'
@@ -1151,9 +1439,28 @@ jobs:
       - name: Require compute claim diagnosis success
         if: ${{ steps.diagnose.outcome != 'success' }}
         shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           echo "Compute claim diagnosis stopped; inspect the redacted diagnosis artifact." >&2
           exit 1
+
+      - name: Remove isolated source checkout
+        if: always() && steps.prepare_source.outcome == 'success'
+        shell: bash
+        env:
+          OPL_SOURCE_CHECKOUT: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          source_dir="${OPL_SOURCE_CHECKOUT:-}"
+          expected="$GITHUB_WORKSPACE/.opl-checkouts/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
+          if [ -z "$source_dir" ] || [ "$source_dir" != "$expected" ]; then
+            echo "Refusing to remove unexpected source checkout path." >&2
+            exit 1
+          fi
+          if [ -d "$source_dir" ]; then
+            find "$source_dir" -mindepth 1 -delete
+            rmdir "$source_dir"
+          fi
 
   compute-claim-recover:
     name: Converge one separately approved partial Workspace compute claim
@@ -1179,14 +1486,51 @@ jobs:
       KUBECONFIG: ${{ vars.TENCENT_DEPLOY_KUBECONFIG_PATH || '/home/actions/.secrets/medopl/v22/kubeconfig-package-d-deploy' }}
 
     steps:
+      - name: Prepare isolated source checkout
+        id: prepare_source
+        shell: bash
+        env:
+          OPL_SOURCE_CHECKOUT: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          expected="$GITHUB_WORKSPACE/.opl-checkouts/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
+          if [ "$OPL_SOURCE_CHECKOUT" != "$expected" ]; then
+            echo "Isolated source checkout path mismatch." >&2
+            exit 1
+          fi
+          mkdir -p "$GITHUB_WORKSPACE/.opl-checkouts"
+          mkdir "$OPL_SOURCE_CHECKOUT"
+
       - name: Checkout exact merged main
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.merged_sha }}
           fetch-depth: 0
 
+          path: .opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+
+      - name: Verify remote branch authority
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          mapfile -t remote_heads < <(git ls-remote --heads origin)
+          if [ "${#remote_heads[@]}" -ne 1 ]; then
+            printf 'Production source authority requires exactly one remote head; observed: %s\n' "${remote_heads[*]:-none}" >&2
+            exit 1
+          fi
+          read -r remote_main_sha remote_main_ref <<< "${remote_heads[0]}"
+          head_sha="$(git rev-parse HEAD)"
+          if [ "$remote_main_ref" != "refs/heads/main" ] || [ "$GITHUB_REF" != "refs/heads/main" ] ||
+             [ "$GITHUB_SHA" != "$head_sha" ] || [ "$remote_main_sha" != "$head_sha" ]; then
+            printf 'Production source must be current main: ref=%s github_sha=%s checkout=%s remote_main=%s\n' \
+              "$GITHUB_REF" "$GITHUB_SHA" "$head_sha" "$remote_main_sha" >&2
+            exit 1
+          fi
+
       - name: Verify exact approved source
         shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           set -euo pipefail
           if ! [[ "$OPL_MERGED_SHA" =~ ^[0-9a-f]{40}$ ]] || ! [[ "$OPL_COMPUTE_CLAIM_CLOUD_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
@@ -1203,6 +1547,7 @@ jobs:
 
       - name: Validate approved compute claim inputs
         shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           set -euo pipefail
           if [ -z "$OPL_COMPUTE_CLAIM_TARGET_JSON" ] || [ -z "$OPL_COMPUTE_CLAIM_RECOVERY_APPROVAL_ID" ] ||
@@ -1218,6 +1563,7 @@ jobs:
 
       - name: Prepare redacted compute claim recovery artifact
         shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           set -euo pipefail
           artifact_dir="$RUNNER_TEMP/production-basic-compute-claim-evidence"
@@ -1229,6 +1575,7 @@ jobs:
         id: recover
         continue-on-error: true
         shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           set -euo pipefail
           token_b64="$(kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" get secret opl-cloud-internal-service -o jsonpath='{.data.OPL_INTERNAL_SERVICE_TOKEN}')"
@@ -1253,6 +1600,7 @@ jobs:
         id: claim_readback
         if: ${{ steps.recover.outcome == 'success' }}
         shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           set -euo pipefail
           node <<'NODE'
@@ -1302,6 +1650,7 @@ jobs:
         if: ${{ steps.recover.outcome == 'success' && steps.claim_readback.outcome == 'success' }}
         continue-on-error: true
         shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           set -euo pipefail
           node tools/production-live-qa.ts --compute-claim-continue \
@@ -1323,6 +1672,7 @@ jobs:
       - name: Require original launch continuation success
         if: ${{ steps.continue.outcome == 'success' }}
         shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           set -euo pipefail
           node <<'NODE'
@@ -1367,6 +1717,7 @@ jobs:
       - name: Require compute claim recovery success
         if: ${{ steps.recover.outcome != 'success' }}
         shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           echo "Compute claim recovery stopped; inspect the redacted recovery artifact." >&2
           exit 1
@@ -1374,9 +1725,28 @@ jobs:
       - name: Require compute claim continuation success
         if: ${{ steps.continue.outcome != 'success' }}
         shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           echo "Original launch continuation stopped; inspect the redacted recovery artifact." >&2
           exit 1
+
+      - name: Remove isolated source checkout
+        if: always() && steps.prepare_source.outcome == 'success'
+        shell: bash
+        env:
+          OPL_SOURCE_CHECKOUT: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          source_dir="${OPL_SOURCE_CHECKOUT:-}"
+          expected="$GITHUB_WORKSPACE/.opl-checkouts/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
+          if [ -z "$source_dir" ] || [ "$source_dir" != "$expected" ]; then
+            echo "Refusing to remove unexpected source checkout path." >&2
+            exit 1
+          fi
+          if [ -d "$source_dir" ]; then
+            find "$source_dir" -mindepth 1 -delete
+            rmdir "$source_dir"
+          fi
 
   recovered-workspace-e2e:
     name: Verify one recovered Workspace request on a hosted runner

@@ -188,8 +188,44 @@ jobs:
       OPL_WORKSPACE_TLS_CERT_ID: ${{ secrets.OPL_WORKSPACE_TLS_CERT_ID || vars.OPL_WORKSPACE_TLS_CERT_ID || '' }}
 
     steps:
+      - name: Prepare isolated source checkout
+        id: prepare_source
+        shell: bash
+        env:
+          OPL_SOURCE_CHECKOUT: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          expected="$GITHUB_WORKSPACE/.opl-checkouts/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
+          if [ "$OPL_SOURCE_CHECKOUT" != "$expected" ]; then
+            echo "Isolated source checkout path mismatch." >&2
+            exit 1
+          fi
+          mkdir -p "$GITHUB_WORKSPACE/.opl-checkouts"
+          mkdir "$OPL_SOURCE_CHECKOUT"
+
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          path: .opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+
+      - name: Verify remote branch authority
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          mapfile -t remote_heads < <(git ls-remote --heads origin)
+          if [ "${#remote_heads[@]}" -ne 1 ]; then
+            printf 'Production source authority requires exactly one remote head; observed: %s\n' "${remote_heads[*]:-none}" >&2
+            exit 1
+          fi
+          read -r remote_main_sha remote_main_ref <<< "${remote_heads[0]}"
+          head_sha="$(git rev-parse HEAD)"
+          if [ "$remote_main_ref" != "refs/heads/main" ] || [ "$GITHUB_REF" != "refs/heads/main" ] ||
+             [ "$GITHUB_SHA" != "$head_sha" ] || [ "$remote_main_sha" != "$head_sha" ]; then
+            printf 'Production source must be current main: ref=%s github_sha=%s checkout=%s remote_main=%s\n' \
+              "$GITHUB_REF" "$GITHUB_SHA" "$head_sha" "$remote_main_sha" >&2
+            exit 1
+          fi
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -198,6 +234,7 @@ jobs:
 
       - name: Prepare kubeconfig
         shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           set -euo pipefail
           secret_dir="$(mktemp -d)"
@@ -220,6 +257,7 @@ jobs:
       - name: Check deployment inputs
         id: deployment_inputs
         shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           set -euo pipefail
           required=(
@@ -317,6 +355,7 @@ jobs:
 
       - name: Verify TKE access
         shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           set -euo pipefail
           kubectl --kubeconfig "$KUBECONFIG" get ns
@@ -324,6 +363,7 @@ jobs:
 
       - name: Preflight rollout node storage
         shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           set -euo pipefail
           source tools/tke-image-rollout.sh
@@ -331,6 +371,7 @@ jobs:
 
       - name: Check TLS certificate inputs
         shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           set -euo pipefail
           if [ -n "${OPL_TLS_CERT_ID:-}" ]; then
@@ -351,6 +392,7 @@ jobs:
 
       - name: Install Kubernetes secrets
         shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           set -euo pipefail
           secret_dir="$OPL_DEPLOY_SECRET_DIR"
@@ -413,6 +455,7 @@ jobs:
 
       - name: Install and verify TLS secret
         shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           set -euo pipefail
           secret_dir="$OPL_DEPLOY_SECRET_DIR"
@@ -486,6 +529,7 @@ jobs:
 
       - name: Capture rollback image set
         shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           set -euo pipefail
           rollback_dir="$OPL_DEPLOY_SECRET_DIR/previous-images"
@@ -519,6 +563,7 @@ jobs:
 
       - name: Render and apply manifest
         shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           set -euo pipefail
           rollback_dir="$OPL_DEPLOY_SECRET_DIR/previous-images"
@@ -544,6 +589,7 @@ jobs:
 
       - name: Show ingress target
         shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           set -euo pipefail
           kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" get ingress opl-cloud -o wide
@@ -552,6 +598,7 @@ jobs:
       - name: Remove deployment secrets
         if: always()
         shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           set -euo pipefail
           secret_dir="${OPL_DEPLOY_SECRET_DIR:-}"
@@ -565,6 +612,24 @@ jobs:
           if [ -d "$secret_dir" ]; then
             find "$secret_dir" -mindepth 1 -delete
             rmdir "$secret_dir"
+          fi
+
+      - name: Remove isolated source checkout
+        if: always() && steps.prepare_source.outcome == 'success'
+        shell: bash
+        env:
+          OPL_SOURCE_CHECKOUT: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          source_dir="${OPL_SOURCE_CHECKOUT:-}"
+          expected="$GITHUB_WORKSPACE/.opl-checkouts/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
+          if [ -z "$source_dir" ] || [ "$source_dir" != "$expected" ]; then
+            echo "Refusing to remove unexpected source checkout path." >&2
+            exit 1
+          fi
+          if [ -d "$source_dir" ]; then
+            find "$source_dir" -mindepth 1 -delete
+            rmdir "$source_dir"
           fi
 
   promote-workspace-image:
@@ -587,13 +652,49 @@ jobs:
       TENCENT_DEPLOY_KUBECONFIG: ${{ secrets.TENCENT_DEPLOY_KUBECONFIG }}
 
     steps:
+      - name: Prepare isolated source checkout
+        id: prepare_source
+        shell: bash
+        env:
+          OPL_SOURCE_CHECKOUT: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          expected="$GITHUB_WORKSPACE/.opl-checkouts/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
+          if [ "$OPL_SOURCE_CHECKOUT" != "$expected" ]; then
+            echo "Isolated source checkout path mismatch." >&2
+            exit 1
+          fi
+          mkdir -p "$GITHUB_WORKSPACE/.opl-checkouts"
+          mkdir "$OPL_SOURCE_CHECKOUT"
+
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          path: .opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+
+      - name: Verify remote branch authority
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          mapfile -t remote_heads < <(git ls-remote --heads origin)
+          if [ "${#remote_heads[@]}" -ne 1 ]; then
+            printf 'Production source authority requires exactly one remote head; observed: %s\n' "${remote_heads[*]:-none}" >&2
+            exit 1
+          fi
+          read -r remote_main_sha remote_main_ref <<< "${remote_heads[0]}"
+          head_sha="$(git rev-parse HEAD)"
+          if [ "$remote_main_ref" != "refs/heads/main" ] || [ "$GITHUB_REF" != "refs/heads/main" ] ||
+             [ "$GITHUB_SHA" != "$head_sha" ] || [ "$remote_main_sha" != "$head_sha" ]; then
+            printf 'Production source must be current main: ref=%s github_sha=%s checkout=%s remote_main=%s\n' \
+              "$GITHUB_REF" "$GITHUB_SHA" "$head_sha" "$remote_main_sha" >&2
+            exit 1
+          fi
 
       - name: Prepare promotion kubeconfig
         shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           set -euo pipefail
           secret_dir="$(mktemp -d)"
@@ -615,6 +716,7 @@ jobs:
 
       - name: Verify Workspace image promotion authority
         shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           set -euo pipefail
           if [ "$GITHUB_REF" != "refs/heads/main" ]; then
@@ -649,6 +751,7 @@ jobs:
 
       - name: Snapshot current Workspace image ConfigMap
         shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           set -euo pipefail
           promotion_dir="$RUNNER_TEMP/workspace-image-promotion"
@@ -675,6 +778,7 @@ jobs:
       - name: Promote Workspace image default
         id: promote
         shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           set -euo pipefail
           promotion_dir="$RUNNER_TEMP/workspace-image-promotion"
@@ -699,12 +803,31 @@ jobs:
       - name: Remove promotion kubeconfig
         if: always()
         shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           set -euo pipefail
           secret_dir="${OPL_PROMOTION_SECRET_DIR:-}"
           [ -n "$secret_dir" ] || exit 0
           case "$secret_dir" in "$RUNNER_TEMP"/*|/tmp/*) ;; *) echo "Refusing to remove unexpected promotion path." >&2; exit 1 ;; esac
           if [ -d "$secret_dir" ]; then find "$secret_dir" -mindepth 1 -delete; rmdir "$secret_dir"; fi
+
+      - name: Remove isolated source checkout
+        if: always() && steps.prepare_source.outcome == 'success'
+        shell: bash
+        env:
+          OPL_SOURCE_CHECKOUT: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          source_dir="${OPL_SOURCE_CHECKOUT:-}"
+          expected="$GITHUB_WORKSPACE/.opl-checkouts/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
+          if [ -z "$source_dir" ] || [ "$source_dir" != "$expected" ]; then
+            echo "Refusing to remove unexpected source checkout path." >&2
+            exit 1
+          fi
+          if [ -d "$source_dir" ]; then
+            find "$source_dir" -mindepth 1 -delete
+            rmdir "$source_dir"
+          fi
 
   rollback-workspace-image-promotion:
     name: Roll back failed Workspace image promotion
@@ -826,8 +949,44 @@ jobs:
       TENCENT_DEPLOY_KUBECONFIG: ${{ secrets.TENCENT_DEPLOY_KUBECONFIG }}
 
     steps:
+      - name: Prepare isolated source checkout
+        id: prepare_source
+        shell: bash
+        env:
+          OPL_SOURCE_CHECKOUT: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          expected="$GITHUB_WORKSPACE/.opl-checkouts/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
+          if [ "$OPL_SOURCE_CHECKOUT" != "$expected" ]; then
+            echo "Isolated source checkout path mismatch." >&2
+            exit 1
+          fi
+          mkdir -p "$GITHUB_WORKSPACE/.opl-checkouts"
+          mkdir "$OPL_SOURCE_CHECKOUT"
+
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          path: .opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+
+      - name: Verify remote branch authority
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          mapfile -t remote_heads < <(git ls-remote --heads origin)
+          if [ "${#remote_heads[@]}" -ne 1 ]; then
+            printf 'Production source authority requires exactly one remote head; observed: %s\n' "${remote_heads[*]:-none}" >&2
+            exit 1
+          fi
+          read -r remote_main_sha remote_main_ref <<< "${remote_heads[0]}"
+          head_sha="$(git rev-parse HEAD)"
+          if [ "$remote_main_ref" != "refs/heads/main" ] || [ "$GITHUB_REF" != "refs/heads/main" ] ||
+             [ "$GITHUB_SHA" != "$head_sha" ] || [ "$remote_main_sha" != "$head_sha" ]; then
+            printf 'Production source must be current main: ref=%s github_sha=%s checkout=%s remote_main=%s\n' \
+              "$GITHUB_REF" "$GITHUB_SHA" "$head_sha" "$remote_main_sha" >&2
+            exit 1
+          fi
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -836,6 +995,7 @@ jobs:
 
       - name: Prepare cluster verifier kubeconfig
         shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           set -euo pipefail
           secret_dir="$(mktemp -d)"
@@ -857,6 +1017,7 @@ jobs:
 
       - name: Verify Cloud image IDs and Workspace digest
         shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           set -euo pipefail
           expected_digest="${OPL_CLOUD_IMAGE#*@}"
@@ -944,6 +1105,7 @@ jobs:
       - name: Remove cluster verifier kubeconfig
         if: always()
         shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           set -euo pipefail
           secret_dir="${OPL_CLUSTER_VERIFY_SECRET_DIR:-}"
@@ -957,6 +1119,24 @@ jobs:
           if [ -d "$secret_dir" ]; then
             find "$secret_dir" -mindepth 1 -delete
             rmdir "$secret_dir"
+          fi
+
+      - name: Remove isolated source checkout
+        if: always() && steps.prepare_source.outcome == 'success'
+        shell: bash
+        env:
+          OPL_SOURCE_CHECKOUT: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          source_dir="${OPL_SOURCE_CHECKOUT:-}"
+          expected="$GITHUB_WORKSPACE/.opl-checkouts/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
+          if [ -z "$source_dir" ] || [ "$source_dir" != "$expected" ]; then
+            echo "Refusing to remove unexpected source checkout path." >&2
+            exit 1
+          fi
+          if [ -d "$source_dir" ]; then
+            find "$source_dir" -mindepth 1 -delete
+            rmdir "$source_dir"
           fi
 
   verify-rollout-public-read-only:
@@ -1035,8 +1215,44 @@ jobs:
       TENCENT_DEPLOY_KUBECONFIG: ${{ secrets.TENCENT_DEPLOY_KUBECONFIG }}
 
     steps:
+      - name: Prepare isolated source checkout
+        id: prepare_source
+        shell: bash
+        env:
+          OPL_SOURCE_CHECKOUT: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          expected="$GITHUB_WORKSPACE/.opl-checkouts/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
+          if [ "$OPL_SOURCE_CHECKOUT" != "$expected" ]; then
+            echo "Isolated source checkout path mismatch." >&2
+            exit 1
+          fi
+          mkdir -p "$GITHUB_WORKSPACE/.opl-checkouts"
+          mkdir "$OPL_SOURCE_CHECKOUT"
+
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          path: .opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+
+      - name: Verify remote branch authority
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          mapfile -t remote_heads < <(git ls-remote --heads origin)
+          if [ "${#remote_heads[@]}" -ne 1 ]; then
+            printf 'Production source authority requires exactly one remote head; observed: %s\n' "${remote_heads[*]:-none}" >&2
+            exit 1
+          fi
+          read -r remote_main_sha remote_main_ref <<< "${remote_heads[0]}"
+          head_sha="$(git rev-parse HEAD)"
+          if [ "$remote_main_ref" != "refs/heads/main" ] || [ "$GITHUB_REF" != "refs/heads/main" ] ||
+             [ "$GITHUB_SHA" != "$head_sha" ] || [ "$remote_main_sha" != "$head_sha" ]; then
+            printf 'Production source must be current main: ref=%s github_sha=%s checkout=%s remote_main=%s\n' \
+              "$GITHUB_REF" "$GITHUB_SHA" "$head_sha" "$remote_main_sha" >&2
+            exit 1
+          fi
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -1045,6 +1261,7 @@ jobs:
 
       - name: Prepare failure diagnostics kubeconfig
         shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           set -euo pipefail
           secret_dir="$(mktemp -d)"
@@ -1066,6 +1283,7 @@ jobs:
 
       - name: Capture failed rollout diagnostics
         shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           set -euo pipefail
           diagnostics_dir="$RUNNER_TEMP/production-rollout-diagnostics"
@@ -1083,6 +1301,7 @@ jobs:
       - name: Remove failure diagnostics kubeconfig
         if: always()
         shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           set -euo pipefail
           secret_dir="${OPL_FAILURE_DIAGNOSTICS_SECRET_DIR:-}"
@@ -1096,6 +1315,24 @@ jobs:
           if [ -d "$secret_dir" ]; then
             find "$secret_dir" -mindepth 1 -delete
             rmdir "$secret_dir"
+          fi
+
+      - name: Remove isolated source checkout
+        if: always() && steps.prepare_source.outcome == 'success'
+        shell: bash
+        env:
+          OPL_SOURCE_CHECKOUT: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          source_dir="${OPL_SOURCE_CHECKOUT:-}"
+          expected="$GITHUB_WORKSPACE/.opl-checkouts/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
+          if [ -z "$source_dir" ] || [ "$source_dir" != "$expected" ]; then
+            echo "Refusing to remove unexpected source checkout path." >&2
+            exit 1
+          fi
+          if [ -d "$source_dir" ]; then
+            find "$source_dir" -mindepth 1 -delete
+            rmdir "$source_dir"
           fi
 
   rollback-live-qa:
@@ -1112,8 +1349,44 @@ jobs:
       TENCENT_DEPLOY_KUBECONFIG: ${{ secrets.TENCENT_DEPLOY_KUBECONFIG }}
 
     steps:
+      - name: Prepare isolated source checkout
+        id: prepare_source
+        shell: bash
+        env:
+          OPL_SOURCE_CHECKOUT: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          expected="$GITHUB_WORKSPACE/.opl-checkouts/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
+          if [ "$OPL_SOURCE_CHECKOUT" != "$expected" ]; then
+            echo "Isolated source checkout path mismatch." >&2
+            exit 1
+          fi
+          mkdir -p "$GITHUB_WORKSPACE/.opl-checkouts"
+          mkdir "$OPL_SOURCE_CHECKOUT"
+
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          path: .opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+
+      - name: Verify remote branch authority
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          mapfile -t remote_heads < <(git ls-remote --heads origin)
+          if [ "${#remote_heads[@]}" -ne 1 ]; then
+            printf 'Production source authority requires exactly one remote head; observed: %s\n' "${remote_heads[*]:-none}" >&2
+            exit 1
+          fi
+          read -r remote_main_sha remote_main_ref <<< "${remote_heads[0]}"
+          head_sha="$(git rev-parse HEAD)"
+          if [ "$remote_main_ref" != "refs/heads/main" ] || [ "$GITHUB_REF" != "refs/heads/main" ] ||
+             [ "$GITHUB_SHA" != "$head_sha" ] || [ "$remote_main_sha" != "$head_sha" ]; then
+            printf 'Production source must be current main: ref=%s github_sha=%s checkout=%s remote_main=%s\n' \
+              "$GITHUB_REF" "$GITHUB_SHA" "$head_sha" "$remote_main_sha" >&2
+            exit 1
+          fi
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -1122,6 +1395,7 @@ jobs:
 
       - name: Prepare rollback kubeconfig
         shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           set -euo pipefail
           secret_dir="$(mktemp -d)"
@@ -1149,6 +1423,7 @@ jobs:
 
       - name: Restore previous Cloud images and ConfigMap
         shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           set -euo pipefail
           rollback_dir="$RUNNER_TEMP/production-rollback-images"
@@ -1169,6 +1444,7 @@ jobs:
       - name: Remove rollback kubeconfig
         if: always()
         shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           set -euo pipefail
           secret_dir="${OPL_ROLLBACK_SECRET_DIR:-}"
@@ -1182,4 +1458,22 @@ jobs:
           if [ -d "$secret_dir" ]; then
             find "$secret_dir" -mindepth 1 -delete
             rmdir "$secret_dir"
+          fi
+
+      - name: Remove isolated source checkout
+        if: always() && steps.prepare_source.outcome == 'success'
+        shell: bash
+        env:
+          OPL_SOURCE_CHECKOUT: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          source_dir="${OPL_SOURCE_CHECKOUT:-}"
+          expected="$GITHUB_WORKSPACE/.opl-checkouts/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
+          if [ -z "$source_dir" ] || [ "$source_dir" != "$expected" ]; then
+            echo "Refusing to remove unexpected source checkout path." >&2
+            exit 1
+          fi
+          if [ -d "$source_dir" ]; then
+            find "$source_dir" -mindepth 1 -delete
+            rmdir "$source_dir"
           fi

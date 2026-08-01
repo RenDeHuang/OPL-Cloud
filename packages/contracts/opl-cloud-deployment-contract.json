@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 30,
+  "schemaVersion": 31,
   "owner": "OPL Fabric",
   "purpose": "Deployment workflow, immutable Cloud and Workspace images, TKE handoff, read-only diagnostics, and production-verification safety.",
   "state": "current",
@@ -55,6 +55,40 @@
     "tke-vpc"
   ],
   "environment": "production",
+  "selfHostedSourceCheckoutIsolation": {
+    "workflows": {
+      ".github/workflows/deploy-tke-production.yml": [
+        "deploy",
+        "promote-workspace-image",
+        "verify-rollout-cluster",
+        "capture-rollout-failure",
+        "rollback-live-qa"
+      ],
+      ".github/workflows/production-basic-customer-operation.yml": [
+        "prepare-basic-customer-operation",
+        "manual-review-diagnose",
+        "workspace-launch-readback-diagnose",
+        "workspace-launch-readback-recover",
+        "compute-claim-diagnose",
+        "compute-claim-recover"
+      ]
+    },
+    "relativePath": ".opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}",
+    "absolutePath": "${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}",
+    "reuseDefaultWorkspaceRepository": false,
+    "prepare": "create_exact_empty_current_run_attempt_job_directory_fail_if_present_and_record_success",
+    "runSteps": "execute_from_exact_isolated_source_directory",
+    "cleanup": "only_after_prepare_success_delete_contents_and_rmdir_exact_current_run_attempt_job_directory",
+    "persistentRunnerState": "preserved",
+    "remoteBranchAuthority": {
+      "command": "git_ls_remote_heads_origin",
+      "acceptedHeads": ["refs/heads/main"],
+      "workflowRef": "refs/heads/main",
+      "sourceBinding": "github_sha_equals_checkout_head_equals_remote_main_sha",
+      "additionalHeads": "fail_closed",
+      "remoteMutation": 0
+    }
+  },
   "normalWorkspaceLaunchImageGate": {
     "source": "OPL_WORKSPACE_IMAGE",
     "requiredFormat": "repository@sha256:<64-lowercase-hex>",
@@ -155,7 +189,9 @@
       "codeDefault": null
     },
     "steps": [
+      "Prepare isolated source checkout",
       "Checkout",
+      "Verify remote branch authority",
       "Set up Node",
       "Prepare kubeconfig",
       "Check deployment inputs",
@@ -168,7 +204,8 @@
       "Upload rollback image set",
       "Render and apply manifest",
       "Show ingress target",
-      "Remove deployment secrets"
+      "Remove deployment secrets",
+      "Remove isolated source checkout"
     ],
     "orderedSteps": [
       [
@@ -957,11 +994,14 @@
       "TENCENT_DEPLOY_KUBECONFIG"
     ],
     "steps": [
+      "Prepare isolated source checkout",
       "Checkout",
+      "Verify remote branch authority",
       "Set up Node",
       "Prepare cluster verifier kubeconfig",
       "Verify Cloud image IDs and Workspace digest",
-      "Remove cluster verifier kubeconfig"
+      "Remove cluster verifier kubeconfig",
+      "Remove isolated source checkout"
     ],
     "requiredCommandsByStep": {
       "Set up Node": [
@@ -1071,12 +1111,15 @@
       "TENCENT_DEPLOY_KUBECONFIG"
     ],
     "steps": [
+      "Prepare isolated source checkout",
       "Checkout",
+      "Verify remote branch authority",
       "Set up Node",
       "Prepare failure diagnostics kubeconfig",
       "Capture failed rollout diagnostics",
       "Upload failed rollout diagnostics",
-      "Remove failure diagnostics kubeconfig"
+      "Remove failure diagnostics kubeconfig",
+      "Remove isolated source checkout"
     ],
     "requiredCommandsByStep": {
       "Set up Node": [
@@ -1129,12 +1172,15 @@
       "TENCENT_DEPLOY_KUBECONFIG"
     ],
     "steps": [
+      "Prepare isolated source checkout",
       "Checkout",
+      "Verify remote branch authority",
       "Set up Node",
       "Prepare rollback kubeconfig",
       "Download rollback image set",
       "Restore previous Cloud images and ConfigMap",
-      "Remove rollback kubeconfig"
+      "Remove rollback kubeconfig",
+      "Remove isolated source checkout"
     ],
     "requiredCommandsByStep": {
       "Set up Node": [
