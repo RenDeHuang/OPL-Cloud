@@ -718,6 +718,47 @@ func (p *TencentProvider) CreateComputeAllocation(ctx context.Context, input Com
 	return allocation, nil
 }
 
+func (p *TencentProvider) DiscoverComputeAllocation(ctx context.Context, allocation ComputeAllocation, prepared ComputeAllocationPreparation) (ComputeAllocation, error) {
+	packagePlan := packagePlan(prepared.PackageID)
+	response, err := p.provision(ctx, provisionerRequest{
+		Action: "read_compute_allocation", AccountID: allocation.AccountID, PackageID: allocation.PackageID,
+		Pool: provisionerPool{
+			ID: prepared.PoolID, PackageID: prepared.PackageID, InstanceType: prepared.InstanceType, NodePoolID: prepared.NodePoolID,
+			CPU: uint64(packagePlan.CPU), MemoryGB: uint64(packagePlan.MemoryGB), MaxReplicas: prepared.MaxReplicas,
+			BaselineReplicas: prepared.BaselineReplicas, TargetReplicas: prepared.TargetReplicas,
+			BeforeMachineNames: append([]string(nil), prepared.BeforeMachineNames...),
+		},
+		Allocation: provisionerAllocation{ID: allocation.ID},
+	})
+	if err != nil {
+		return allocation, err
+	}
+	allocation.ProviderRequestID = firstNonEmpty(response.ProviderRequestID, allocation.ProviderRequestID)
+	allocation.PoolID = prepared.PoolID
+	allocation.NodePoolID = prepared.NodePoolID
+	allocation.InstanceType = prepared.InstanceType
+	allocation.Status = firstNonEmpty(response.Status, allocation.Status)
+	allocation.InstanceID = response.InstanceID
+	allocation.CVMInstanceID = response.InstanceID
+	allocation.MachineName = response.ProviderData["machineName"]
+	allocation.NodeName = response.NodeName
+	allocation.PrivateIP = response.PrivateIP
+	allocation.PublicIP = response.PublicIP
+	allocation.Zone = response.ProviderData["zone"]
+	allocation.ChargeType = response.ProviderData["chargeType"]
+	allocation.RenewFlag = response.ProviderData["renewFlag"]
+	allocation.Deadline = response.ProviderData["deadline"]
+	allocation.ProviderData = maps.Clone(response.ProviderData)
+	allocation.ProviderResourceID = firstNonEmpty(response.InstanceID, allocation.ProviderResourceID)
+	if !response.OK {
+		if response.Retryable {
+			return allocation, ErrComputeAllocationPending
+		}
+		return allocation, provisionerError(response)
+	}
+	return allocation, nil
+}
+
 func (p *TencentProvider) ProveComputeClaimRecovery(ctx context.Context, allocation ComputeAllocation, prepared ComputeAllocationPreparation, ownership MachineOwnership) (ComputeClaimProviderProof, error) {
 	proof := ComputeClaimProviderProof{Reason: "identity_mismatch"}
 	plan := packagePlan(allocation.PackageID)
@@ -1145,6 +1186,17 @@ func computeClaimNodeOwnershipState(raw []byte, allocation ComputeAllocation, ow
 }
 
 func (p *TencentProvider) TagComputeMachine(ctx context.Context, machine ProviderMachine, ownership MachineOwnership) error {
+	if err := p.TagComputeMachineCVM(ctx, machine, ownership); err != nil {
+		return err
+	}
+	return p.ClaimComputeNode(ctx, ComputeAllocation{
+		ID: ownership.ResourceID, AccountID: ownership.AccountID, WorkspaceID: ownership.WorkspaceID,
+		PackageID: ownership.PackageID, NodePoolID: ownership.NodePoolID, MachineName: machine.MachineID,
+		InstanceID: machine.InstanceID, CVMInstanceID: machine.InstanceID, NodeName: machine.NodeName, PrivateIP: machine.PrivateIP,
+	}, ownership)
+}
+
+func (p *TencentProvider) TagComputeMachineCVM(ctx context.Context, machine ProviderMachine, ownership MachineOwnership) error {
 	if machine.InstanceID == "" || machine.NodeName == "" {
 		return fmt.Errorf("compute_machine_identity_required")
 	}
@@ -1169,12 +1221,12 @@ func (p *TencentProvider) TagComputeMachine(ctx context.Context, machine Provide
 	if !response.OK || !validConfirmedComputeClaimMutation(response.MutationEvidence, response.MutationCount, 5) {
 		return provisionerError(response)
 	}
-	target := protectedresource.Target{PackageID: ownership.PackageID, NodePoolID: ownership.NodePoolID, MachineID: machine.MachineID, NodeName: machine.NodeName, CVMID: machine.InstanceID}
-	_, nodeErr := p.convergeComputeClaimNode(ctx, ComputeAllocation{
-		ID: ownership.ResourceID, AccountID: ownership.AccountID, WorkspaceID: ownership.WorkspaceID,
-		PackageID: ownership.PackageID, NodePoolID: ownership.NodePoolID, MachineName: machine.MachineID,
-		InstanceID: machine.InstanceID, CVMInstanceID: machine.InstanceID, NodeName: machine.NodeName, PrivateIP: machine.PrivateIP,
-	}, ownership, target)
+	return nil
+}
+
+func (p *TencentProvider) ClaimComputeNode(ctx context.Context, allocation ComputeAllocation, ownership MachineOwnership) error {
+	target := protectedresource.Target{PackageID: ownership.PackageID, NodePoolID: ownership.NodePoolID, MachineID: allocation.MachineName, NodeName: allocation.NodeName, CVMID: firstNonEmpty(allocation.InstanceID, allocation.CVMInstanceID)}
+	_, nodeErr := p.convergeComputeClaimNode(ctx, allocation, ownership, target)
 	if nodeErr != nil {
 		return fmt.Errorf("compute_machine_node_claim_%s", safeComputeClaimRecoveryReason(nodeErr.Reason, "provider_describe"))
 	}
@@ -1447,9 +1499,19 @@ func (p *TencentProvider) ReadCBSVolume(ctx context.Context, input StorageVolume
 	if len(persisted.CostTags) == 0 {
 		persisted.CostTags = oplCostTags(input.AccountID, input.WorkspaceID, input.ID, input.OperationID)
 	}
-	if persisted.ID == "" || persisted.AccountID != input.AccountID || persisted.WorkspaceID != input.WorkspaceID ||
-		!strings.HasPrefix(persisted.ProviderResourceID, "disk-") || persisted.SizeGB != input.SizeGB || persisted.Zone != input.Zone {
+	if persisted.ID == "" || persisted.AccountID != input.AccountID || persisted.WorkspaceID != input.WorkspaceID || persisted.SizeGB != input.SizeGB || persisted.Zone != input.Zone {
 		return persisted, fmt.Errorf("storage_cbs_readback_identity_required")
+	}
+	if !strings.HasPrefix(persisted.ProviderResourceID, "disk-") {
+		discovery, discoverErr := p.DiscoverStorageRecovery(ctx, input)
+		if discoverErr != nil || discovery.State != "storage_existing_exact" || !strings.HasPrefix(discovery.ProviderResourceID, "disk-") {
+			if discoverErr != nil {
+				return persisted, discoverErr
+			}
+			return persisted, fmt.Errorf("storage_cbs_readback_identity_required")
+		}
+		persisted.ProviderResourceID = discovery.ProviderResourceID
+		persisted.ProviderRequestID = firstNonEmpty(discovery.ProviderRequestID, persisted.ProviderRequestID)
 	}
 	readback, err := p.ReadStorageVolume(ctx, persisted)
 	if err != nil {

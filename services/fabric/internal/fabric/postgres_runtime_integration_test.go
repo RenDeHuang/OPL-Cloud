@@ -464,6 +464,217 @@ func TestPostgresWorkspaceLaunchStageReadbackProofAndCASAcrossRestart(t *testing
 	}
 }
 
+func TestPostgresNormalWorkspaceComputeStagesConvergeAcrossProcessRestart(t *testing.T) {
+	for _, packageID := range []string{"basic", "pro"} {
+		for _, interruptedStage := range []string{"compute_create", "compute_claim_cvm", "compute_claim_node"} {
+			t.Run(packageID+"/"+interruptedStage, func(t *testing.T) {
+				databaseURL := fabricTestDatabaseURL(t)
+				firstStore, err := newTestPostgresOperationStore(databaseURL)
+				if err != nil {
+					t.Fatal(err)
+				}
+				gate := newNormalLaunchProviderWriteGate()
+				provider := &normalLaunchComputeProvider{createResultErr: ErrComputeAllocationPending}
+				switch interruptedStage {
+				case "compute_create":
+					provider.createGate = gate
+				case "compute_claim_cvm":
+					provider.cvmClaimGate = gate
+					provider.cvmClaimResponseLost = true
+				case "compute_claim_node":
+					provider.nodeClaimGate = gate
+					provider.nodeClaimResponseLost = true
+				}
+				input := ComputeAllocationInput{
+					AccountID:   "acct-" + packageID + "-" + interruptedStage,
+					WorkspaceID: "workspace-" + packageID + "-" + interruptedStage,
+					PackageID:   packageID, NodePoolID: "np-" + packageID,
+					IdempotencyKey: "workspace-launch-" + packageID + "-" + interruptedStage + ":compute",
+				}
+				first := NewServiceWithOperationStore(provider, firstStore)
+				configureFastComputeAllocationPolling(first, 250*time.Millisecond)
+				first.computeAllocationAttemptTimeout = time.Second
+				first.computeAllocationFinalizeTimeout = 2 * time.Second
+				allocation, err := first.CreateComputeAllocation(context.Background(), input)
+				if err != nil {
+					t.Fatal(err)
+				}
+				select {
+				case <-gate.entered:
+				case <-time.After(5 * time.Second):
+					t.Fatalf("%s provider write was not reached", interruptedStage)
+				}
+				assertNormalLaunchStageBudget(t, firstStore, "create_compute_allocation", interruptedStage, 1, 0, 1)
+				if err := firstStore.client.Close(); err != nil {
+					t.Fatal(err)
+				}
+				close(gate.release)
+				waitForComputeReconcileIdle(t, first, allocation.ID)
+
+				provider.mu.Lock()
+				provider.createGate, provider.cvmClaimGate, provider.nodeClaimGate = nil, nil, nil
+				provider.cvmClaimResponseLost, provider.nodeClaimResponseLost = false, false
+				provider.mu.Unlock()
+				reopenedStore, err := newTestPostgresOperationStore(databaseURL)
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { _ = reopenedStore.client.Close() })
+				waitForPostgresComputeLeaseExpiry(t, reopenedStore, allocation.ID)
+				restarted := NewServiceWithOperationStore(provider, reopenedStore)
+				configureFastComputeAllocationPolling(restarted, 2*time.Second)
+				restarted.computeAllocationAttemptTimeout = 2 * time.Second
+				restarted.computeAllocationFinalizeTimeout = 2 * time.Second
+				if replayed, err := restarted.CreateComputeAllocation(context.Background(), input); err != nil || replayed.ID != allocation.ID {
+					t.Fatalf("replay=%#v err=%v", replayed, err)
+				}
+				waitForPostgresNormalComputeSucceeded(t, restarted, reopenedStore, provider, allocation.ID)
+
+				createCalls, readbackCalls, discoveryCalls, cvmClaimCalls, nodeClaimCalls, legacyClaimCalls := provider.counts()
+				if createCalls != 1 || readbackCalls != 0 || discoveryCalls == 0 || cvmClaimCalls != 1 || nodeClaimCalls != 1 || legacyClaimCalls != 0 {
+					t.Fatalf("provider calls create=%d read=%d discover=%d cvm=%d node=%d legacy=%d", createCalls, readbackCalls, discoveryCalls, cvmClaimCalls, nodeClaimCalls, legacyClaimCalls)
+				}
+				for _, stage := range []string{"compute_create", "compute_claim_cvm", "compute_claim_node"} {
+					assertNormalLaunchStageBudget(t, reopenedStore, "create_compute_allocation", stage, 1, 1, 0)
+				}
+			})
+		}
+	}
+}
+
+func waitForPostgresComputeLeaseExpiry(t *testing.T, store *PostgresOperationStore, resourceID string) {
+	t.Helper()
+	var remainingMilliseconds int64
+	if err := store.db.QueryRowContext(context.Background(), `
+		SELECT COALESCE(CEIL(EXTRACT(EPOCH FROM GREATEST(
+			compute_pool_lease_expires_at - clock_timestamp(), interval '0 seconds'
+		)) * 1000), 0)::bigint
+		FROM fabric_operations
+		WHERE action = 'create_compute_allocation' AND resource_id = $1`, resourceID).Scan(&remainingMilliseconds); err != nil {
+		t.Fatal(err)
+	}
+	if remainingMilliseconds > 0 {
+		timer := time.NewTimer(time.Duration(remainingMilliseconds+10) * time.Millisecond)
+		defer timer.Stop()
+		<-timer.C
+	}
+}
+
+func waitForPostgresNormalComputeSucceeded(t *testing.T, service *Service, store *PostgresOperationStore, provider *normalLaunchComputeProvider, resourceID string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		operations, err := store.List(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, operation := range operations {
+			if operation.Action == "create_compute_allocation" && operation.ResourceID == resourceID && operation.Status == "succeeded" {
+				return
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	operations, operationsErr := store.List(context.Background())
+	ownership, ownershipErr := store.MachineOwnership(context.Background(), resourceID)
+	create, readback, discovery, cvm, node, legacy := provider.counts()
+	service.mu.Lock()
+	reconciling := service.reconciling[resourceID]
+	service.mu.Unlock()
+	t.Fatalf("compute did not converge: operations=%#v operationsErr=%v ownership=%#v ownershipErr=%v calls=create:%d read:%d discover:%d cvm:%d node:%d legacy:%d reconciling=%v", operations, operationsErr, ownership, ownershipErr, create, readback, discovery, cvm, node, legacy, reconciling)
+}
+
+func TestPostgresNormalWorkspaceCBSResponseLossConvergesAcrossProcessRestart(t *testing.T) {
+	for _, test := range []struct {
+		packageID string
+		sizeGB    int
+	}{
+		{packageID: "basic", sizeGB: 10},
+		{packageID: "pro", sizeGB: 100},
+	} {
+		t.Run(test.packageID, func(t *testing.T) {
+			databaseURL := fabricTestDatabaseURL(t)
+			firstStore, err := newTestPostgresOperationStore(databaseURL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			gate := newNormalLaunchProviderWriteGate()
+			provider := &normalLaunchStorageProvider{cbsCreateGate: gate}
+			first := NewServiceWithOperationStore(provider, firstStore)
+			computeInput := ComputeAllocationInput{
+				AccountID: "acct-" + test.packageID, WorkspaceID: "workspace-" + test.packageID,
+				PackageID: test.packageID, NodePoolID: "np-" + test.packageID,
+				IdempotencyKey: "workspace-launch-" + test.packageID + ":compute",
+			}
+			compute, err := first.CreateComputeAllocation(context.Background(), computeInput)
+			if err != nil {
+				t.Fatal(err)
+			}
+			waitForOperation(t, first, "create_compute_allocation", "compute_allocation", compute.ID, "succeeded")
+			input := StorageVolumeInput{
+				ID: "storage-" + test.packageID, AccountID: computeInput.AccountID, WorkspaceID: computeInput.WorkspaceID,
+				ComputeID: compute.ID, Zone: "ap-guangzhou-3", SizeGB: test.sizeGB,
+				IdempotencyKey: "workspace-launch-" + test.packageID + ":storage",
+			}
+			type storageResult struct {
+				volume StorageVolume
+				err    error
+			}
+			result := make(chan storageResult, 1)
+			go func() {
+				volume, createErr := first.CreateStorageVolume(context.Background(), input)
+				result <- storageResult{volume: volume, err: createErr}
+			}()
+			select {
+			case <-gate.entered:
+			case <-time.After(time.Second):
+				t.Fatal("CreateDisks-equivalent provider write was not reached")
+			}
+			assertNormalLaunchStageBudget(t, firstStore, "cbs_create", "cbs_create", 1, 0, 1)
+			operations, err := firstStore.List(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, operation := range operations {
+				if operation.Action != "cbs_create" {
+					continue
+				}
+				var persisted StorageVolume
+				if !decodeOperationResource(operation, &persisted) || persisted.ID != input.ID || persisted.ProviderResourceID != "" {
+					t.Fatalf("pre-restart CBS identity=%#v operation=%#v", persisted, operation)
+				}
+			}
+			if err := firstStore.client.Close(); err != nil {
+				t.Fatal(err)
+			}
+			close(gate.release)
+			if firstResult := <-result; firstResult.err == nil {
+				t.Fatalf("closed store unexpectedly persisted CBS result=%#v", firstResult.volume)
+			}
+
+			provider.mu.Lock()
+			provider.cbsCreateGate = nil
+			provider.mu.Unlock()
+			reopenedStore, err := newTestPostgresOperationStore(databaseURL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = reopenedStore.client.Close() })
+			restarted := NewServiceWithOperationStore(provider, reopenedStore)
+			volume, err := restarted.CreateStorageVolume(context.Background(), input)
+			if err != nil || volume.Status != "ready" || !strings.HasPrefix(volume.ProviderResourceID, "disk-") {
+				t.Fatalf("CBS replay=%#v err=%v", volume, err)
+			}
+			cbsCreate, cbsReadback, bindingApply, bindingReadback := provider.storageCounts()
+			if cbsCreate != 1 || cbsReadback != 1 || bindingApply != 1 || bindingReadback != 0 {
+				t.Fatalf("provider calls CreateCBS=%d ReadCBS=%d ApplyBinding=%d ReadBinding=%d", cbsCreate, cbsReadback, bindingApply, bindingReadback)
+			}
+			assertNormalLaunchStageOperation(t, reopenedStore, "cbs_create", input, volume, "succeeded")
+			assertNormalLaunchStageOperation(t, reopenedStore, "static_binding_apply", input, volume, "succeeded")
+		})
+	}
+}
+
 func interruptedWorkspaceLaunchReadbackFixture(t *testing.T, stage string) (*workspaceLaunchReadbackBoundaryProvider, *MemoryOperationStore, WorkspaceLaunchStageReadbackInput) {
 	t.Helper()
 	ctx := context.Background()

@@ -400,6 +400,10 @@ func (unimplementedTencentClient) CreateComputeAllocation(_ Request, _ map[strin
 	}
 }
 
+func (unimplementedTencentClient) ReadComputeAllocation(_ Request, _ map[string]string) Response {
+	return Response{Ok: false, ErrorCode: "tencent_live_not_implemented", Message: "Tencent live compute allocation readback is not implemented in this build.", Retryable: false}
+}
+
 func (unimplementedTencentClient) TagComputeMachine(_ Request, _ map[string]string) Response {
 	return Response{Ok: false, ErrorCode: "tencent_live_not_implemented", Message: "Tencent live compute machine tagging is not implemented in this build.", Retryable: false}
 }
@@ -1810,6 +1814,14 @@ func (client *tencentSDKClient) PrepareComputeAllocation(request Request, _ map[
 }
 
 func (client *tencentSDKClient) CreateComputeAllocation(request Request, _ map[string]string) Response {
+	return client.resolveComputeAllocation(request, true)
+}
+
+func (client *tencentSDKClient) ReadComputeAllocation(request Request, _ map[string]string) Response {
+	return client.resolveComputeAllocation(request, false)
+}
+
+func (client *tencentSDKClient) resolveComputeAllocation(request Request, allowScale bool) Response {
 	if client == nil || client.nativeTkeClient == nil || client.nativeCvmClient == nil || client.nativeVpcClient == nil {
 		return Response{Ok: false, ErrorCode: "tencent_sdk_client_missing", Message: "Tencent TKE, CVM, and VPC SDK clients are required.", Retryable: false}
 	}
@@ -1830,6 +1842,9 @@ func (client *tencentSDKClient) CreateComputeAllocation(request Request, _ map[s
 	}
 	scaleRequestId := ""
 	if currentReplicas == request.Pool.BaselineReplicas {
+		if !allowScale {
+			return Response{Ok: false, ErrorCode: "compute_allocation_pending", Message: "The persisted absolute target has not been reached.", ProviderRequestId: describeRequestId, Retryable: true}
+		}
 		scaleRequest := tke2022.NewScaleNodePoolRequest()
 		scaleRequest.ClusterId = common.StringPtr(client.clusterId)
 		scaleRequest.NodePoolId = common.StringPtr(nodePoolId)
@@ -4331,6 +4346,14 @@ func handleWithClient(request Request, env map[string]string, client TencentClie
 			return dryRunCreateComputeAllocation(request, env)
 		}
 		return client.CreateComputeAllocation(request, env)
+	case "read_compute_allocation":
+		reader, ok := client.(interface {
+			ReadComputeAllocation(Request, map[string]string) Response
+		})
+		if !ok {
+			return Response{Ok: false, ErrorCode: "tencent_live_not_implemented", Message: "Tencent live compute allocation readback is not implemented in this build.", Retryable: false}
+		}
+		return reader.ReadComputeAllocation(request, env)
 	case "tag_compute_machine":
 		if request.DryRun {
 			return Response{Ok: true, InstanceId: request.Allocation.InstanceId, Status: "tagged", ProviderRequestId: "dryrun-tag-" + request.Allocation.InstanceId}

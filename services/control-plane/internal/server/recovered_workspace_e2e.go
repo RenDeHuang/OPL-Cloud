@@ -132,7 +132,7 @@ func recoveredWorkspaceE2EApprovalBindingValid(approval recoveredWorkspaceE2EApp
 		validRecoveredWorkspaceE2EOpaque(approval.RecoveryKey) && validRecoveredWorkspaceE2EOpaque(approval.ModelRequestKey) &&
 		recoveredWorkspaceE2EOpaquePattern.MatchString(approval.ExpectedModel) && approval.Confirmation == recoveredWorkspaceE2EConfirmation &&
 		computeClaimMergedSHAPattern.MatchString(approval.MergedMainSHA) && computeClaimCloudDigestPattern.MatchString(approval.CloudImageDigest) &&
-		computeClaimCloudDigestPattern.MatchString(approval.WorkspaceImageDigest) && computeClaimApprovalDigestPattern.MatchString(approval.RecoveryApprovalDigest) &&
+		validWorkspaceImageIdentity(approval.WorkspaceImageDigest) && computeClaimApprovalDigestPattern.MatchString(approval.RecoveryApprovalDigest) &&
 		computeClaimApprovalDigestPattern.MatchString(digest) && recoveredWorkspaceE2EApprovalDigest(approval) == digest &&
 		approval.Customer.Email == normalizeEmail(approval.Customer.Email) && approval.Customer.Email != "" && approval.Customer.AccountID != "" &&
 		approval.LaunchOperationID != "" && approval.WorkspaceID != "" &&

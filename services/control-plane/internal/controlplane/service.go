@@ -37,6 +37,7 @@ type CreateWorkspaceInput struct {
 	ComputeID             string `json:"computeAllocationId"`
 	VolumeID              string `json:"storageId"`
 	GatewaySecretRef      string `json:"-"`
+	WorkspaceImageID      string `json:"-"`
 }
 
 type RotateWorkspaceCredentialInput struct {
@@ -392,10 +393,14 @@ func (s *Service) PrepareWorkspace(ctx context.Context, input CreateWorkspaceInp
 			return domain.WorkspaceProjection{}, err
 		}
 	}
+	imageID := input.WorkspaceImageID
+	if imageID == "" {
+		imageID = "one-person-lab-app"
+	}
 	runtime, err := s.fabric.CreateWorkspaceRuntime(ctx, clients.WorkspaceRuntimeInput{
 		WorkspaceID: workspaceID, ComputeID: input.ComputeID, VolumeID: input.VolumeID,
 		AttachmentID: input.AttachmentID, AttachmentOperationID: input.AttachmentOperationID, RuntimeOperationID: input.RuntimeOperationID,
-		ImageID: "one-person-lab-app", GatewaySecretRef: gatewaySecretRef,
+		ImageID: imageID, GatewaySecretRef: gatewaySecretRef,
 	}, input.RuntimeOperationID)
 	if err != nil {
 		return domain.WorkspaceProjection{}, err

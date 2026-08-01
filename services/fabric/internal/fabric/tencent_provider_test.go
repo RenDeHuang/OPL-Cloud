@@ -2820,6 +2820,48 @@ func TestTencentProviderStagedStorageSeparatesCBSCreateAndStaticBinding(t *testi
 	}
 }
 
+func TestTencentProviderCBSResponseLossDiscoversExactDiskWithoutPersistedProviderID(t *testing.T) {
+	provider := NewTencentProvider()
+	var actions []string
+	provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
+		actions = append(actions, request.Action)
+		switch request.Action {
+		case "discover_storage_volume":
+			return provisionerResponse{
+				OK: true, StorageState: "storage_existing_exact", StorageVolumeID: "disk-response-loss", Status: "provider_ready",
+				ProviderRequestID: "req-discover", ProviderData: map[string]string{"diskType": "CLOUD_BSSD", "diskChargeType": "PREPAID", "renewFlag": "NOTIFY_AND_MANUAL_RENEW", "deadline": "2026-09-01T00:00:00Z", "zone": "ap-guangzhou-3", "sizeGb": "10"},
+			}, nil
+		case "sync_storage_volume":
+			if request.Storage.ID != "disk-response-loss" {
+				t.Fatalf("sync disk=%q", request.Storage.ID)
+			}
+			return provisionerResponse{
+				OK: true, StorageVolumeID: "disk-response-loss", Status: "provider_ready", CBSStatus: "UNATTACHED",
+				ProviderRequestID: "req-sync", ProviderData: map[string]string{"diskType": "CLOUD_BSSD", "diskChargeType": "PREPAID", "renewFlag": "NOTIFY_AND_MANUAL_RENEW", "deadline": "2026-09-01T00:00:00Z", "zone": "ap-guangzhou-3", "sizeGb": "10"},
+			}, nil
+		default:
+			return provisionerResponse{}, fmt.Errorf("unexpected action %q", request.Action)
+		}
+	}
+	input := StorageVolumeInput{
+		ID: "storage-response-loss", AccountID: "acct-alpha", WorkspaceID: "workspace-alpha", ComputeID: "compute-alpha",
+		Zone: "ap-guangzhou-3", SizeGB: 10, IdempotencyKey: "workspace-launch:storage", OperationID: "op_create_storage_volume_fixture",
+	}
+	persisted := StorageVolume{
+		ID: input.ID, OperationID: input.IdempotencyKey, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID,
+		Provider: "tencent-tke", Status: "pending", SizeGB: input.SizeGB, Zone: input.Zone,
+		CostTags: oplCostTags(input.AccountID, input.WorkspaceID, input.ID, input.OperationID),
+	}
+
+	readback, err := provider.ReadCBSVolume(context.Background(), input, persisted)
+	if err != nil || readback.ProviderResourceID != "disk-response-loss" || readback.Status != "ready" {
+		t.Fatalf("readback=%#v err=%v", readback, err)
+	}
+	if !slices.Equal(actions, []string{"discover_storage_volume", "sync_storage_volume"}) {
+		t.Fatalf("actions=%v", actions)
+	}
+}
+
 func TestTencentProviderStagedStorageRejectsCBSZoneDrift(t *testing.T) {
 	provider := NewTencentProvider()
 	provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {

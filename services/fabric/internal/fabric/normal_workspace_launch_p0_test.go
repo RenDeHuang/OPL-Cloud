@@ -11,12 +11,40 @@ import (
 
 type normalLaunchComputeProvider struct {
 	testProvider
-	mu              sync.Mutex
-	createCalls     int
-	readbackCalls   int
-	claimCalls      int
-	created         ComputeAllocation
-	createResultErr error
+	mu                    sync.Mutex
+	createCalls           int
+	readbackCalls         int
+	discoveryCalls        int
+	cvmClaimCalls         int
+	nodeClaimCalls        int
+	legacyClaimCalls      int
+	created               ComputeAllocation
+	createResultErr       error
+	cvmClaimResponseLost  bool
+	nodeClaimResponseLost bool
+	cvmOwned              bool
+	nodeOwned             bool
+	createGate            *normalLaunchProviderWriteGate
+	cvmClaimGate          *normalLaunchProviderWriteGate
+	nodeClaimGate         *normalLaunchProviderWriteGate
+}
+
+type normalLaunchProviderWriteGate struct {
+	entered chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func newNormalLaunchProviderWriteGate() *normalLaunchProviderWriteGate {
+	return &normalLaunchProviderWriteGate{entered: make(chan struct{}), release: make(chan struct{})}
+}
+
+func (g *normalLaunchProviderWriteGate) afterWrite() {
+	if g == nil {
+		return
+	}
+	g.once.Do(func() { close(g.entered) })
+	<-g.release
 }
 
 func (p *normalLaunchComputeProvider) CreateComputeAllocation(_ context.Context, input ComputeAllocationExecution) (ComputeAllocation, error) {
@@ -24,6 +52,10 @@ func (p *normalLaunchComputeProvider) CreateComputeAllocation(_ context.Context,
 	defer p.mu.Unlock()
 	p.createCalls++
 	p.created = readyComputeAllocationFor(input, "machine-normal-launch")
+	gate := p.createGate
+	p.mu.Unlock()
+	gate.afterWrite()
+	p.mu.Lock()
 	// Simulate Tencent accepting the scale while the response is lost.
 	return ComputeAllocation{Status: "provisioning", ProviderRequestID: "req-scale-response-lost"}, p.createResultErr
 }
@@ -32,20 +64,80 @@ func (p *normalLaunchComputeProvider) ReadComputeAllocation(_ context.Context, _
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.readbackCalls++
+	return ComputeAllocation{}, errors.New("identity-based sync cannot recover a lost scale response")
+}
+
+func (p *normalLaunchComputeProvider) DiscoverComputeAllocation(_ context.Context, allocation ComputeAllocation, plan ComputeAllocationPreparation) (ComputeAllocation, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.discoveryCalls++
+	if plan.NodePoolID == "" || plan.TargetReplicas != plan.BaselineReplicas+1 || len(plan.BeforeMachineNames) != int(plan.BaselineReplicas) {
+		return allocation, errors.New("persisted allocation plan required")
+	}
 	return p.created, nil
+
 }
 
 func (p *normalLaunchComputeProvider) TagComputeMachine(_ context.Context, _ ProviderMachine, _ MachineOwnership) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.claimCalls++
+	p.legacyClaimCalls++
+	return errors.New("normal launch must use split claim stages")
+}
+
+func (p *normalLaunchComputeProvider) TagComputeMachineCVM(_ context.Context, _ ProviderMachine, _ MachineOwnership) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.cvmClaimCalls++
+	p.cvmOwned = true
+	gate := p.cvmClaimGate
+	p.mu.Unlock()
+	gate.afterWrite()
+	p.mu.Lock()
+	if p.cvmClaimResponseLost {
+		return errors.New("CVM ownership response lost")
+	}
 	return nil
 }
 
-func (p *normalLaunchComputeProvider) counts() (int, int, int) {
+func (p *normalLaunchComputeProvider) ClaimComputeNode(_ context.Context, _ ComputeAllocation, _ MachineOwnership) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return p.createCalls, p.readbackCalls, p.claimCalls
+	p.nodeClaimCalls++
+	p.nodeOwned = true
+	gate := p.nodeClaimGate
+	p.mu.Unlock()
+	gate.afterWrite()
+	p.mu.Lock()
+	if p.nodeClaimResponseLost {
+		return errors.New("Node patch response lost")
+	}
+	return nil
+}
+
+func (p *normalLaunchComputeProvider) ProveComputeClaimRecovery(_ context.Context, allocation ComputeAllocation, _ ComputeAllocationPreparation, _ MachineOwnership) (ComputeClaimProviderProof, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	proof := ComputeClaimProviderProof{
+		Status: "proven", MachineName: allocation.MachineName, NodeName: allocation.NodeName,
+		CVMInstanceID: firstNonEmpty(allocation.InstanceID, allocation.CVMInstanceID), PrivateIP: allocation.PrivateIP,
+		InstanceType: allocation.InstanceType, Zone: allocation.Zone, ChargeType: allocation.ChargeType,
+		PeriodMonths: 1, RenewFlag: allocation.RenewFlag, Deadline: allocation.Deadline,
+		CVMOwnershipState: "recoverable", NodeOwnershipState: "unallocated",
+	}
+	if p.cvmOwned {
+		proof.CVMOwnershipState = "target_owned"
+	}
+	if p.nodeOwned {
+		proof.NodeOwnershipState = "target_owned"
+	}
+	return proof, nil
+}
+
+func (p *normalLaunchComputeProvider) counts() (create, readback, discovery, cvmClaim, nodeClaim, legacyClaim int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.createCalls, p.readbackCalls, p.discoveryCalls, p.cvmClaimCalls, p.nodeClaimCalls, p.legacyClaimCalls
 }
 
 func TestNormalWorkspaceComputeCreateResponseLossUsesReadbackAfterRestart(t *testing.T) {
@@ -65,13 +157,13 @@ func TestNormalWorkspaceComputeCreateResponseLossUsesReadbackAfterRestart(t *tes
 			}
 			deadline := time.Now().Add(time.Second)
 			for time.Now().Before(deadline) {
-				createCalls, _, _ := provider.counts()
+				createCalls, _, _, _, _, _ := provider.counts()
 				if createCalls == 1 {
 					break
 				}
 				time.Sleep(time.Millisecond)
 			}
-			if createCalls, _, _ := provider.counts(); createCalls != 1 {
+			if createCalls, _, _, _, _, _ := provider.counts(); createCalls != 1 {
 				t.Fatalf("initial provider create calls=%d, want 1", createCalls)
 			}
 			waitForComputeReconcileIdle(t, first, allocation.ID)
@@ -82,12 +174,51 @@ func TestNormalWorkspaceComputeCreateResponseLossUsesReadbackAfterRestart(t *tes
 				t.Fatal(err)
 			}
 			waitForOperation(t, restarted, "create_compute_allocation", "compute_allocation", allocation.ID, "succeeded")
-			createCalls, readbackCalls, claimCalls := provider.counts()
-			if createCalls != 1 || readbackCalls == 0 || claimCalls != 1 {
-				t.Fatalf("provider calls create=%d readback=%d claim=%d, want 1/>0/1", createCalls, readbackCalls, claimCalls)
+			createCalls, readbackCalls, discoveryCalls, cvmClaimCalls, nodeClaimCalls, legacyClaimCalls := provider.counts()
+			if createCalls != 1 || readbackCalls != 0 || discoveryCalls == 0 || cvmClaimCalls != 1 || nodeClaimCalls != 1 || legacyClaimCalls != 0 {
+				t.Fatalf("provider calls create=%d readback=%d discovery=%d cvmClaim=%d nodeClaim=%d legacyClaim=%d, want 1/0/>0/1/1/0", createCalls, readbackCalls, discoveryCalls, cvmClaimCalls, nodeClaimCalls, legacyClaimCalls)
 			}
 			assertNormalLaunchStageBudget(t, store, "create_compute_allocation", "compute_create", 1, 1, 0)
-			assertNormalLaunchStageBudget(t, store, "create_compute_allocation", "compute_claim", 1, 1, 0)
+			assertNormalLaunchStageBudget(t, store, "create_compute_allocation", "compute_claim_cvm", 1, 1, 0)
+			assertNormalLaunchStageBudget(t, store, "create_compute_allocation", "compute_claim_node", 1, 1, 0)
+		})
+	}
+}
+
+func TestNormalWorkspaceClaimStagesConvergeLostResponsesWithoutRepeatingWrites(t *testing.T) {
+	for _, lostStage := range []string{"cvm", "node"} {
+		t.Run(lostStage, func(t *testing.T) {
+			store := NewMemoryOperationStore()
+			provider := &normalLaunchComputeProvider{createResultErr: ErrComputeAllocationPending}
+			provider.cvmClaimResponseLost = lostStage == "cvm"
+			provider.nodeClaimResponseLost = lostStage == "node"
+			input := ComputeAllocationInput{
+				AccountID: "acct-" + lostStage, WorkspaceID: "workspace-" + lostStage, PackageID: "basic",
+				NodePoolID: "np-basic", IdempotencyKey: "workspace-launch-" + lostStage + ":compute",
+			}
+			first := NewServiceWithOperationStore(provider, store)
+			configureFastComputeAllocationPolling(first, time.Millisecond)
+			allocation, err := first.CreateComputeAllocation(context.Background(), input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			waitForComputeReconcileIdle(t, first, allocation.ID)
+
+			provider.cvmClaimResponseLost = false
+			provider.nodeClaimResponseLost = false
+			restarted := NewServiceWithOperationStore(provider, store)
+			configureFastComputeAllocationPolling(restarted, time.Millisecond)
+			if _, err := restarted.CreateComputeAllocation(context.Background(), input); err != nil {
+				t.Fatal(err)
+			}
+			waitForOperation(t, restarted, "create_compute_allocation", "compute_allocation", allocation.ID, "succeeded")
+
+			_, _, _, cvmCalls, nodeCalls, legacyCalls := provider.counts()
+			if cvmCalls != 1 || nodeCalls != 1 || legacyCalls != 0 {
+				t.Fatalf("claim writes cvm=%d node=%d legacy=%d, want 1/1/0", cvmCalls, nodeCalls, legacyCalls)
+			}
+			assertNormalLaunchStageBudget(t, store, "create_compute_allocation", "compute_claim_cvm", 1, 1, 0)
+			assertNormalLaunchStageBudget(t, store, "create_compute_allocation", "compute_claim_node", 1, 1, 0)
 		})
 	}
 }
@@ -102,6 +233,7 @@ type normalLaunchStorageProvider struct {
 	created              StorageVolume
 	bindingApplied       bool
 	failBindingResponse  bool
+	cbsCreateGate        *normalLaunchProviderWriteGate
 }
 
 func (p *normalLaunchStorageProvider) CreateCBSVolume(_ context.Context, input StorageVolumeInput) (StorageVolume, error) {
@@ -109,6 +241,10 @@ func (p *normalLaunchStorageProvider) CreateCBSVolume(_ context.Context, input S
 	defer p.mu.Unlock()
 	p.cbsCreateCalls++
 	p.created = normalLaunchStorageVolume(input)
+	gate := p.cbsCreateGate
+	p.mu.Unlock()
+	gate.afterWrite()
+	p.mu.Lock()
 	return p.created, nil
 }
 

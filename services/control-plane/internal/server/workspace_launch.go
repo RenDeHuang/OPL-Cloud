@@ -31,6 +31,7 @@ const (
 	workspaceLaunchAction        = "workspace.launch.v2"
 	workspaceLaunchSchemaVersion = 2
 	workspaceLaunchStageMax      = 1
+	workspaceImageRepository     = "uswccr.ccs.tencentyun.com/oplcloud/one-person-lab-app"
 )
 
 var workspaceLaunchContinuationStages = []string{"storage", "attachment", "secret", "runtime", "activation", "receipt"}
@@ -472,13 +473,19 @@ func completedWorkspaceLaunchStages(phase string) []string {
 
 func currentWorkspaceImageDigest() string {
 	value := strings.TrimSpace(os.Getenv("OPL_WORKSPACE_IMAGE"))
-	if repository, digest, ok := strings.Cut(value, "@"); ok && repository != "" {
-		value = digest
-	}
-	if computeClaimCloudDigestPattern.MatchString(value) {
+	digest, ok := strings.CutPrefix(value, workspaceImageRepository+"@")
+	if ok && computeClaimCloudDigestPattern.MatchString(digest) {
 		return value
 	}
 	return ""
+}
+
+func validWorkspaceImageIdentity(value string) bool {
+	if computeClaimCloudDigestPattern.MatchString(value) {
+		return true
+	}
+	digest, ok := strings.CutPrefix(value, workspaceImageRepository+"@")
+	return ok && computeClaimCloudDigestPattern.MatchString(digest)
 }
 
 func decodeWorkspaceLaunchOperation(row map[string]any) (workspaceLaunchOperation, error) {
@@ -673,7 +680,7 @@ func (app *controlPlaneServer) runWorkspaceLaunch(ctx context.Context, service *
 		if !ownerActive {
 			return app.manualReviewWorkspaceLaunchDebit(ctx, &operation, "workspace_launch_owner_identity_mismatch")
 		}
-		if currentWorkspaceImageDigest() != operation.WorkspaceImageDigest || !computeClaimCloudDigestPattern.MatchString(operation.WorkspaceImageDigest) {
+		if currentWorkspaceImageDigest() != operation.WorkspaceImageDigest || !validWorkspaceImageIdentity(operation.WorkspaceImageDigest) {
 			return app.retryWorkspaceLaunchDebit(ctx, &operation, "workspace_image_digest_drift", errors.New("workspace_image_digest_drift"))
 		}
 		if !operation.ChargeAttempted && operation.ChargeConfirmation == nil {
@@ -834,6 +841,7 @@ func (app *controlPlaneServer) fulfillWorkspaceLaunch(ctx context.Context, servi
 				OwnerID: operation.OwnerUserID, Name: operation.Name, PackageID: operation.PackageID, AttachmentID: operation.AttachmentID,
 				AttachmentOperationID: operation.AttachmentOperationID, RuntimeOperationID: operation.WorkspaceOperationID + ":runtime",
 				ComputeID: operation.ComputeID, VolumeID: operation.StorageID, GatewaySecretRef: operation.GatewaySecretRef,
+				WorkspaceImageID: operation.WorkspaceImageDigest,
 			}
 			budget := operation.ContinuationAttemptBudgets["runtime"]
 			var workspace domain.WorkspaceProjection
@@ -1108,7 +1116,7 @@ func workspaceLaunchProviderExpectation(operation workspaceLaunchOperation, reso
 }
 
 func verifyWorkspaceLaunchPreflight(ctx context.Context, service *controlplane.Service, operation workspaceLaunchOperation) (string, error) {
-	if currentWorkspaceImageDigest() != operation.WorkspaceImageDigest || !computeClaimCloudDigestPattern.MatchString(operation.WorkspaceImageDigest) {
+	if currentWorkspaceImageDigest() != operation.WorkspaceImageDigest || !validWorkspaceImageIdentity(operation.WorkspaceImageDigest) {
 		return "workspace_image_digest_drift", errors.New("workspace_image_digest_drift")
 	}
 	zone := monthlyComputeLaunchZone()
@@ -1131,7 +1139,7 @@ func verifyWorkspaceLaunchPreflight(ctx context.Context, service *controlplane.S
 
 func (app *controlPlaneServer) verifyWorkspaceLaunchActivationTruth(ctx context.Context, service *controlplane.Service, operation *workspaceLaunchOperation) error {
 	input := workspaceActivationTruthInputFromLaunch(*operation)
-	if !computeClaimCloudDigestPattern.MatchString(input.WorkspaceImageDigest) {
+	if !validWorkspaceImageIdentity(input.WorkspaceImageDigest) {
 		return errors.New("workspace_launch_activation_truth_identity_mismatch")
 	}
 	truth, err := service.WorkspaceActivationTruth(ctx, input)
@@ -2426,7 +2434,7 @@ func (app *controlPlaneServer) workspaceLaunchReadbackRecoveryProofForOperation(
 	budget := operation.ContinuationAttemptBudgets[stage]
 	if !hasUnknown || stage == "" || operation.Status != "manual_review" || operation.Phase != workspaceLaunchReadbackRecoveryPhase(stage) ||
 		budget != (workspaceLaunchStageBudget{Attempted: 1, Unknown: 1, Max: workspaceLaunchStageMax}) ||
-		!computeClaimCloudDigestPattern.MatchString(operation.WorkspaceImageDigest) {
+		!validWorkspaceImageIdentity(operation.WorkspaceImageDigest) {
 		return operation, workspaceLaunchReadbackRecoveryProof{}, errInvalidBillingReview
 	}
 	customer, err := app.workspaceLaunchReadbackRecoveryCustomer(ctx, operation)

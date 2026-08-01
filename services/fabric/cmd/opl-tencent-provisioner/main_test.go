@@ -2165,6 +2165,94 @@ func TestCreateComputeAllocationReusesPersistedAbsoluteTargetAfterLostScaleRespo
 	}
 }
 
+func TestReadComputeAllocationUsesPersistedPlanWithoutScaling(t *testing.T) {
+	tkeAPI := &fakeNativeTkeAPI{
+		nodePoolId: "np-basic", replicas: 2, maxReplicas: 20, labelInstanceType: "SA5.MEDIUM4",
+		instanceTypes: []string{"SA5.MEDIUM4"}, machineInstanceType: "SA5.MEDIUM4",
+	}
+	client := newFakeTencentSDKClient(tkeAPI)
+	client.nativeCvmClient = &fakeNativeCvmAPI{instanceType: "SA5.MEDIUM4", expiredTime: "2026-08-25T00:00:00Z"}
+	response := handleWithClient(Request{
+		Action: "read_compute_allocation", AccountId: "acct-alpha", PackageId: "basic",
+		Pool: ComputePoolInput{
+			Id: "pool-basic-2c4g", InstanceType: "SA5.MEDIUM4", CPU: 2, MemoryGB: 4, NodePoolId: "np-basic", MaxReplicas: 20,
+			BaselineReplicas: 1, TargetReplicas: 2, BeforeMachineNames: []string{"node-basic-1"},
+		},
+		Allocation: ComputeAllocationInput{Id: "compute-alpha"},
+	}, protectedResourceEnv(), client)
+
+	if !response.Ok || response.InstanceId != "ins-basic-2" || response.ProviderData["machineName"] != "node-basic-2" {
+		t.Fatalf("readback response=%#v", response)
+	}
+	if len(tkeAPI.scaleNodePoolRequests) != 0 {
+		t.Fatalf("Describe-only readback scaled NodePool: %#v", tkeAPI.scaleNodePoolRequests)
+	}
+}
+
+func TestReadComputeAllocationFailsClosedWithoutScaling(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		configure func(*fakeNativeTkeAPI)
+		wantCode  string
+	}{
+		{
+			name: "zero new candidate",
+			configure: func(api *fakeNativeTkeAPI) {
+				machineReplicas := int64(1)
+				api.machineReplicas = &machineReplicas
+			},
+			wantCode: "compute_allocation_pending",
+		},
+		{
+			name: "multiple new candidates",
+			configure: func(api *fakeNativeTkeAPI) {
+				machineReplicas := int64(3)
+				api.machineReplicas = &machineReplicas
+			},
+			wantCode: "compute_allocation_machine_difference_ambiguous",
+		},
+		{
+			name: "machine identity drift",
+			configure: func(api *fakeNativeTkeAPI) {
+				api.machineInstanceType = "SA5.LARGE8"
+			},
+			wantCode: "compute_allocation_machine_identity_mismatch",
+		},
+		{
+			name: "describe error",
+			configure: func(api *fakeNativeTkeAPI) {
+				api.describeMachineErr = errors.New("describe unavailable")
+			},
+			wantCode: "tencent_describe_cluster_machines_failed",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			tkeAPI := &fakeNativeTkeAPI{
+				nodePoolId: "np-basic", replicas: 2, maxReplicas: 20, labelInstanceType: "SA5.MEDIUM4",
+				instanceTypes: []string{"SA5.MEDIUM4"}, machineInstanceType: "SA5.MEDIUM4",
+			}
+			test.configure(tkeAPI)
+			client := newFakeTencentSDKClient(tkeAPI)
+			client.nativeCvmClient = &fakeNativeCvmAPI{instanceType: "SA5.MEDIUM4", expiredTime: "2026-08-25T00:00:00Z"}
+			response := handleWithClient(Request{
+				Action: "read_compute_allocation", AccountId: "acct-alpha", PackageId: "basic",
+				Pool: ComputePoolInput{
+					Id: "pool-basic-2c4g", InstanceType: "SA5.MEDIUM4", CPU: 2, MemoryGB: 4, NodePoolId: "np-basic", MaxReplicas: 20,
+					BaselineReplicas: 1, TargetReplicas: 2, BeforeMachineNames: []string{"node-basic-1"},
+				},
+				Allocation: ComputeAllocationInput{Id: "compute-alpha"},
+			}, protectedResourceEnv(), client)
+
+			if response.Ok || response.ErrorCode != test.wantCode || response.MutationCount != 0 {
+				t.Fatalf("readback response=%#v", response)
+			}
+			if len(tkeAPI.scaleNodePoolRequests) != 0 {
+				t.Fatalf("failed readback scaled NodePool: %#v", tkeAPI.scaleNodePoolRequests)
+			}
+		})
+	}
+}
+
 func TestCreateComputeAllocationReplayAtMaxReplicasUsesPersistedTarget(t *testing.T) {
 	tkeAPI := &fakeNativeTkeAPI{
 		nodePoolId: "np-basic", replicas: 2, maxReplicas: 2, labelInstanceType: "SA5.MEDIUM4",
