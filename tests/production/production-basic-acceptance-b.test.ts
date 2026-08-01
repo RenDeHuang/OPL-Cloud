@@ -1,0 +1,284 @@
+import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import test from "node:test";
+
+import {
+  PRODUCTION_BASIC_ACCEPTANCE_B_ALLOWED_WRITES,
+  PRODUCTION_BASIC_ACCEPTANCE_B_CONFIRMATION,
+  PRODUCTION_BASIC_ACCEPTANCE_B_FORBIDDEN_WRITES,
+  PRODUCTION_BASIC_ACCEPTANCE_B_OPERATION,
+  parseProductionBasicAcceptanceBApproval,
+  productionBasicAcceptanceBApprovalDigest,
+  validateProductionBasicAcceptanceBReadback,
+  validateProductionBasicAcceptanceBWriteCounts
+} from "../../tools/production-basic-acceptance-b.ts";
+
+const APPROVAL_ID = "approval-production-basic-acceptance-b";
+const ACCOUNT_ID = "acct-acceptance-b-01";
+const LAUNCH_KEY = "workspace-launch:acceptance-b-20260802-01";
+const MERGED_MAIN_SHA = "a".repeat(40);
+const CLOUD_IMAGE_DIGEST = `sha256:${"b".repeat(64)}`;
+const WORKSPACE_IMAGE_DIGEST = `sha256:${"c".repeat(64)}`;
+
+function stableId(...parts) {
+  const hash = createHash("sha1");
+  for (const part of parts) {
+    hash.update(String(part));
+    hash.update(Buffer.from([0]));
+  }
+  return hash.digest("hex");
+}
+
+function expectedIdentities() {
+  const operationId = `workspace-launch-${stableId(ACCOUNT_ID, LAUNCH_KEY).slice(0, 18)}`;
+  return {
+    operationId,
+    workspaceId: `ws-${stableId("workspace-launch-v2", ACCOUNT_ID, operationId).slice(0, 18)}`
+  };
+}
+
+function approvalFixture(overrides = {}) {
+  const identities = expectedIdentities();
+  return {
+    schemaVersion: 1,
+    operationMode: "acceptance_b_fresh_order",
+    approvalId: APPROVAL_ID,
+    expiresAt: "2099-08-02T00:00:00Z",
+    confirmation: PRODUCTION_BASIC_ACCEPTANCE_B_CONFIRMATION,
+    release: {
+      mergedMainSha: MERGED_MAIN_SHA,
+      cloudImageDigest: CLOUD_IMAGE_DIGEST,
+      workspaceImageDigest: WORKSPACE_IMAGE_DIGEST
+    },
+    customer: { email: "acceptance-b@example.com", accountId: ACCOUNT_ID },
+    launch: {
+      idempotencyKey: LAUNCH_KEY,
+      operationId: identities.operationId,
+      workspaceId: identities.workspaceId,
+      name: "Acceptance B Basic Workspace",
+      packageId: "basic",
+      sizeGb: 10,
+      autoRenew: false
+    },
+    expected: { nodePoolId: "np-basic-acceptance-b", resolvedInstanceType: "SA5.MEDIUM4" },
+    allowedWrites: [...PRODUCTION_BASIC_ACCEPTANCE_B_ALLOWED_WRITES],
+    forbiddenWrites: [...PRODUCTION_BASIC_ACCEPTANCE_B_FORBIDDEN_WRITES],
+    ...overrides
+  };
+}
+
+function exactWriteCounts(overrides = {}) {
+  return {
+    workspaceLaunchPosts: 1,
+    sub2apiDebits: 1,
+    tencentCvmCreates: 1,
+    kubernetesNodeClaims: 1,
+    tencentCbsCreates: 1,
+    runtimeCreates: 1,
+    receiptCreates: 1,
+    accountProvisionPosts: 0,
+    walletAdjustmentPosts: 0,
+    modelRequests: 0,
+    refunds: 0,
+    renewals: 0,
+    deletes: 0,
+    replacements: 0,
+    ...overrides
+  };
+}
+
+function readbackFixture(approval, overrides = {}) {
+  const url = `https://workspace.medopl.cn/w/${approval.launch.workspaceId}/`;
+  const totalChargeUsdMicros = 52_580_000;
+  const value = {
+    schemaVersion: 1,
+    operationMode: PRODUCTION_BASIC_ACCEPTANCE_B_OPERATION.operationMode,
+    status: "succeeded",
+    approvalId: approval.approvalId,
+    approvalDigest: productionBasicAcceptanceBApprovalDigest(approval),
+    release: { ...approval.release },
+    baseline: { workspaceCount: 0, workspaceLaunchCount: 0, workspaceKeyCount: 0, workspaceReceiptCount: 0 },
+    quote: { packageId: "basic", sizeGb: 10, priceVersion: "pilot-usd-2026-07-v1", currency: "USD", totalChargeUsdMicros },
+    debit: { operationId: `${approval.launch.operationId}:charge`, count: 1, amountUsdMicros: totalChargeUsdMicros },
+    launch: {
+      operationId: approval.launch.operationId,
+      accountId: approval.customer.accountId,
+      workspaceId: approval.launch.workspaceId,
+      name: approval.launch.name,
+      packageId: "basic",
+      sizeGb: 10,
+      autoRenew: false,
+      priceVersion: "pilot-usd-2026-07-v1",
+      currency: "USD",
+      totalChargeUsdMicros,
+      status: "succeeded",
+      phase: "succeeded",
+      computeAllocationId: "ca_acceptance_b_01",
+      storageId: "vol_acceptance_b_01",
+      attachmentId: "att_acceptance_b_01",
+      runtimeId: "runtime_acceptance_b_01",
+      receiptId: "receipt_acceptance_b_01",
+      url
+    },
+    compute: {
+      allocationId: "ca_acceptance_b_01",
+      nodePoolId: approval.expected.nodePoolId,
+      instanceType: approval.expected.resolvedInstanceType,
+      cvmInstanceId: "ins-acceptanceb01",
+      nodeName: "10.66.1.88",
+      chargeType: "PREPAID",
+      periodMonths: 1,
+      renewFlag: "NOTIFY_AND_MANUAL_RENEW"
+    },
+    storage: {
+      id: "vol_acceptance_b_01",
+      providerResourceId: "disk-acceptanceb01",
+      sizeGb: 10,
+      chargeType: "PREPAID",
+      periodMonths: 1,
+      renewFlag: "NOTIFY_AND_MANUAL_RENEW"
+    },
+    attachment: { id: "att_acceptance_b_01", status: "attached" },
+    runtime: {
+      id: "runtime_acceptance_b_01",
+      status: "running",
+      ready: true,
+      url,
+      podImageId: `containerd://workspace@${approval.release.workspaceImageDigest}`
+    },
+    receipt: {
+      id: "receipt_acceptance_b_01",
+      type: "billing.workspace_purchased.v1",
+      status: "completed",
+      workspaceId: approval.launch.workspaceId,
+      computeAllocationId: "ca_acceptance_b_01",
+      storageId: "vol_acceptance_b_01",
+      runtimeId: "runtime_acceptance_b_01",
+      totalChargeUsdMicros
+    },
+    workspaceUrl: { url, statusCode: 200 },
+    writeCounts: exactWriteCounts()
+  };
+  return { ...value, ...overrides };
+}
+
+test("Acceptance B exposes one dedicated fresh-order operation and parses its exact approval", () => {
+  assert.deepEqual(PRODUCTION_BASIC_ACCEPTANCE_B_OPERATION, {
+    schemaVersion: 1,
+    operationMode: "acceptance_b_fresh_order",
+    confirmation: "RUN_ONE_INDEPENDENT_FRESH_BASIC_ORDER_FOR_ACCEPTANCE_B",
+    packageId: "basic",
+    sizeGb: 10,
+    autoRenew: false,
+    workspaceLaunchPostCount: 1,
+    exactWrites: { sub2apiDebit: 1, cvmCreate: 1, nodeClaim: 1, cbsCreate: 1, runtimeCreate: 1, receiptCreate: 1 },
+    terminalEvidence: [
+      "launch_succeeded",
+      "runtime_ready",
+      "receipt_completed",
+      "pod_image_id_equals_approved_workspace_image_digest",
+      "workspace_url_http_200"
+    ]
+  });
+  const raw = approvalFixture();
+  const parsed = parseProductionBasicAcceptanceBApproval(JSON.stringify(raw), {
+    approvalId: APPROVAL_ID,
+    now: new Date("2026-08-02T00:00:00Z")
+  });
+  assert.deepEqual(parsed, raw);
+  assert.match(productionBasicAcceptanceBApprovalDigest(parsed), /^[0-9a-f]{64}$/);
+});
+
+test("Acceptance B approval rejects expiry, identity drift, extra fields, and broader write authority", () => {
+  const identities = expectedIdentities();
+  const cases = [
+    approvalFixture({ expiresAt: "2026-08-01T00:00:00Z" }),
+    approvalFixture({ launch: { ...approvalFixture().launch, operationId: `${identities.operationId}-drift` } }),
+    approvalFixture({ extra: true }),
+    approvalFixture({ allowedWrites: [...PRODUCTION_BASIC_ACCEPTANCE_B_ALLOWED_WRITES, "send_model_request"] })
+  ];
+  for (const value of cases) {
+    assert.throws(() => parseProductionBasicAcceptanceBApproval(value, {
+      approvalId: APPROVAL_ID,
+      now: new Date("2026-08-02T00:00:00Z")
+    }), /production_basic_acceptance_b_approval_invalid/);
+  }
+});
+
+test("Acceptance B write accounting accepts only the frozen one-order cardinalities", () => {
+  assert.deepEqual(validateProductionBasicAcceptanceBWriteCounts(exactWriteCounts()), exactWriteCounts());
+  for (const value of [
+    exactWriteCounts({ workspaceLaunchPosts: 2 }),
+    exactWriteCounts({ kubernetesNodeClaims: 0 }),
+    exactWriteCounts({ modelRequests: 1 }),
+    { ...exactWriteCounts(), unexpected: 0 }
+  ]) {
+    assert.throws(() => validateProductionBasicAcceptanceBWriteCounts(value), /production_basic_acceptance_b_write_counts_invalid/);
+  }
+});
+
+test("Acceptance B readback proves the exact fresh Basic resource chain and terminal URL", () => {
+  const approval = parseProductionBasicAcceptanceBApproval(approvalFixture(), {
+    approvalId: APPROVAL_ID,
+    now: new Date("2026-08-02T00:00:00Z")
+  });
+  const readback = readbackFixture(approval);
+  assert.deepEqual(validateProductionBasicAcceptanceBReadback(readback, approval), readback);
+});
+
+test("Acceptance B readback fails closed on non-fresh baseline, count, image, receipt, or URL drift", () => {
+  const approval = parseProductionBasicAcceptanceBApproval(approvalFixture(), {
+    approvalId: APPROVAL_ID,
+    now: new Date("2026-08-02T00:00:00Z")
+  });
+  const base = readbackFixture(approval);
+  const cases = [
+    { ...base, baseline: { ...base.baseline, workspaceCount: 1 } },
+    { ...base, writeCounts: exactWriteCounts({ receiptCreates: 0 }) },
+    { ...base, runtime: { ...base.runtime, podImageId: `containerd://workspace@sha256:${"d".repeat(64)}` } },
+    { ...base, receipt: { ...base.receipt, workspaceId: "ws-drift" } },
+    { ...base, workspaceUrl: { ...base.workspaceUrl, statusCode: 503 } }
+  ];
+  for (const value of cases) {
+    assert.throws(() => validateProductionBasicAcceptanceBReadback(value, approval), /production_basic_acceptance_b_readback_invalid/);
+  }
+});
+
+test("deployment machine contract registers the local-only Acceptance B integration boundary", async () => {
+  const deployment = JSON.parse(await readFile(new URL("../../packages/contracts/opl-cloud-deployment-contract.json", import.meta.url), "utf8"));
+  assert.deepEqual(deployment.productionBasicAcceptanceB, {
+    tool: "tools/production-basic-acceptance-b.ts",
+    operationMode: "acceptance_b_fresh_order",
+    execution: "local_contract_and_validation_only_until_shared_workflow_integration",
+    productionNetwork: "github_actions_production_environment_authorized_runner_only",
+    workflowIntegration: {
+      file: ".github/workflows/production-basic-customer-operation.yml",
+      ownership: "deferred_until_acceptance_a_identity_lane_is_on_main",
+      resourceClosureRunner: ["self-hosted", "tencent-cloud", "opl-cloud", "tke-vpc"],
+      modelRequest: "forbidden_not_part_of_acceptance_b"
+    },
+    operationContract: PRODUCTION_BASIC_ACCEPTANCE_B_OPERATION,
+    approvalSchema: {
+      schemaVersion: 1,
+      exactTopLevelFields: ["schemaVersion", "operationMode", "approvalId", "expiresAt", "confirmation", "release", "customer", "launch", "expected", "allowedWrites", "forbiddenWrites"],
+      releaseFields: ["mergedMainSha", "cloudImageDigest", "workspaceImageDigest"],
+      customerFields: ["email", "accountId"],
+      launchFields: ["idempotencyKey", "operationId", "workspaceId", "name", "packageId", "sizeGb", "autoRenew"],
+      expectedFields: ["nodePoolId", "resolvedInstanceType"],
+      allowedWrites: PRODUCTION_BASIC_ACCEPTANCE_B_ALLOWED_WRITES,
+      forbiddenWrites: PRODUCTION_BASIC_ACCEPTANCE_B_FORBIDDEN_WRITES
+    },
+    writeAccounting: {
+      authority: "authoritative_service_readback_not_http_attempts",
+      exactCountFields: ["workspaceLaunchPosts", "sub2apiDebits", "tencentCvmCreates", "kubernetesNodeClaims", "tencentCbsCreates", "runtimeCreates", "receiptCreates"],
+      zeroCountFields: ["accountProvisionPosts", "walletAdjustmentPosts", "modelRequests", "refunds", "renewals", "deletes", "replacements"]
+    },
+    readback: {
+      baseline: "zero_workspace_launch_workspace_key_and_workspace_receipt_for_approved_account",
+      authorities: ["control_plane_launch", "sub2api_debit_history", "fabric_operations_and_provider_truth", "runtime_ready_pod", "ledger_purchase_receipt", "workspace_url_http"],
+      terminalEvidence: PRODUCTION_BASIC_ACCEPTANCE_B_OPERATION.terminalEvidence,
+      forbiddenFields: ["password", "token", "secret", "redeem_code", "provider_request_id", "model_prompt", "model_response"]
+    }
+  });
+});
