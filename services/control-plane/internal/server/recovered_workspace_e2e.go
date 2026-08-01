@@ -56,6 +56,7 @@ type recoveredWorkspaceE2EApproval struct {
 	WorkspaceImageDigest   string                                 `json:"workspaceImageDigest"`
 	RecoveryApprovalID     string                                 `json:"recoveryApprovalId"`
 	RecoveryApprovalDigest string                                 `json:"recoveryApprovalDigest"`
+	RecoveryBindingDigest  string                                 `json:"recoveryBindingDigest"`
 	RecoveryKey            string                                 `json:"recoveryKey"`
 	Customer               recoveredWorkspaceE2EApprovalCustomer  `json:"customer"`
 	LaunchOperationID      string                                 `json:"launchOperationId"`
@@ -133,6 +134,7 @@ func recoveredWorkspaceE2EApprovalBindingValid(approval recoveredWorkspaceE2EApp
 		recoveredWorkspaceE2EOpaquePattern.MatchString(approval.ExpectedModel) && approval.Confirmation == recoveredWorkspaceE2EConfirmation &&
 		computeClaimMergedSHAPattern.MatchString(approval.MergedMainSHA) && computeClaimCloudDigestPattern.MatchString(approval.CloudImageDigest) &&
 		validWorkspaceImageIdentity(approval.WorkspaceImageDigest) && computeClaimApprovalDigestPattern.MatchString(approval.RecoveryApprovalDigest) &&
+		computeClaimApprovalDigestPattern.MatchString(approval.RecoveryBindingDigest) &&
 		computeClaimApprovalDigestPattern.MatchString(digest) && recoveredWorkspaceE2EApprovalDigest(approval) == digest &&
 		approval.Customer.Email == normalizeEmail(approval.Customer.Email) && approval.Customer.Email != "" && approval.Customer.AccountID != "" &&
 		approval.LaunchOperationID != "" && approval.WorkspaceID != "" &&
