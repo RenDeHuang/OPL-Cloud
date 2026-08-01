@@ -1566,6 +1566,36 @@ func TestWorkspaceManifestIsolatesTenantRuntime(t *testing.T) {
 	}
 }
 
+func TestWorkspaceManifestUsesLaunchPinnedImageWhenFabricEnvironmentDrifts(t *testing.T) {
+	pinnedImage := "uswccr.ccs.tencentyun.com/oplcloud/one-person-lab-app@sha256:" + strings.Repeat("a", 64)
+	t.Setenv("OPL_WORKSPACE_IMAGE", "uswccr.ccs.tencentyun.com/oplcloud/one-person-lab-app@sha256:"+strings.Repeat("b", 64))
+	t.Setenv("OPL_AIONUI_ADMIN_PASSWORD_SEED", "workspace-secret-2026-very-long")
+	compute := ComputeAllocation{ID: "compute-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", PackageID: "basic", NodeSelector: map[string]any{"kubernetes.io/hostname": "node-alpha"}}
+	storage := StorageVolume{ID: "storage-alpha", WorkspaceID: "ws-alpha", ProviderResourceID: "disk-storage-alpha", ProviderData: map[string]string{"pvcName": "opl-storage-alpha-data"}}
+	input := WorkspaceRuntimeInput{
+		WorkspaceID: "ws-alpha", ComputeID: compute.ID, VolumeID: storage.ID,
+		AttachmentID: "att-alpha", AttachmentOperationID: "workspace-launch-alpha:attachment",
+		RuntimeOperationID: "workspace-launch-alpha:workspace:runtime", ImageID: pinnedImage,
+		GatewaySecretRef: "opl-gateway-ws-alpha",
+	}
+	runtimeID := "rt_" + stableSuffix(input.WorkspaceID, input.RuntimeOperationID)[:18]
+	var manifest map[string]any
+	if err := json.Unmarshal(workspaceManifest(input, "Alpha", "token", runtimeID, "opl-compute-alpha", compute, storage, nil), &manifest); err != nil {
+		t.Fatal(err)
+	}
+	for _, raw := range manifest["items"].([]any) {
+		resource := raw.(map[string]any)
+		if resource["kind"] != "Deployment" {
+			continue
+		}
+		if image := stringValue(firstContainerField(resource, "image")); image != pinnedImage {
+			t.Fatalf("workspace image=%q, want launch-pinned %q", image, pinnedImage)
+		}
+		return
+	}
+	t.Fatal("workspace Deployment missing")
+}
+
 func TestWorkspaceManifestBindsAttachmentAndRuntimeIdentity(t *testing.T) {
 	t.Setenv("OPL_WORKSPACE_IMAGE", "registry.example/one-person-lab-app@sha256:"+strings.Repeat("a", 64))
 	t.Setenv("OPL_AIONUI_ADMIN_PASSWORD_SEED", "workspace-secret-2026-very-long")
@@ -1976,6 +2006,7 @@ func TestWorkspaceManifestSkipsGatewaySecretWhenCodexKeyMissing(t *testing.T) {
 
 func TestTencentRuntimeCreationIsDeterministicAndUsesActualReadinessAfterApply(t *testing.T) {
 	t.Setenv("OPL_AIONUI_ADMIN_PASSWORD_SEED", "workspace-secret-2026-very-long")
+	workspaceImage := workspaceImageRepository + "@sha256:" + strings.Repeat("a", 64)
 	provider := NewTencentProvider()
 	var calls [][]string
 	var deployment map[string]any
@@ -2029,7 +2060,7 @@ func TestTencentRuntimeCreationIsDeterministicAndUsesActualReadinessAfterApply(t
 	input := WorkspaceRuntimeInput{
 		WorkspaceID: "ws-alpha", ComputeID: "compute-alpha", VolumeID: "storage-alpha",
 		AttachmentID: "att-alpha", AttachmentOperationID: "workspace-launch-alpha:attachment",
-		RuntimeOperationID: "runtime-unready", GatewaySecretRef: "opl-gateway-acct-alpha", IdempotencyKey: "runtime-unready",
+		RuntimeOperationID: "runtime-unready", ImageID: workspaceImage, GatewaySecretRef: "opl-gateway-acct-alpha", IdempotencyKey: "runtime-unready",
 	}
 	runtime, err := provider.CreateWorkspaceRuntime(context.Background(), input, ComputeAllocation{ID: "compute-alpha", AccountID: "acct-alpha", ServiceName: "opl-compute-alpha"}, StorageVolume{ID: "storage-alpha", ProviderResourceID: "pvc/opl-storage-alpha-data"})
 	if err != nil {
@@ -2153,7 +2184,8 @@ func TestTencentStorageAttachmentVerifiesBoundStaticVolumeBeforeRuntime(t *testi
 }
 
 func TestRuntimeStatusVerifiesFinalMountAfterPreRuntimeAttachment(t *testing.T) {
-	t.Setenv("OPL_WORKSPACE_IMAGE", "workspace-image:test")
+	workspaceImage := workspaceImageRepository + "@sha256:" + strings.Repeat("a", 64)
+	t.Setenv("OPL_WORKSPACE_IMAGE", workspaceImage)
 	provider := NewTencentProvider()
 	runtimeSelector := map[string]any{"app.kubernetes.io/name": "opl-compute-allocation", "app.kubernetes.io/instance": "opl-compute-alpha", "oplcloud.cn/compute-allocation-id": "compute-alpha"}
 	deployment := map[string]any{
@@ -2171,7 +2203,7 @@ func TestRuntimeStatusVerifiesFinalMountAfterPreRuntimeAttachment(t *testing.T) 
 		},
 		"spec": map[string]any{"replicas": 1, "selector": map[string]any{"matchLabels": runtimeSelector}, "template": map[string]any{"metadata": map[string]any{"labels": runtimeSelector, "annotations": map[string]any{"opl.medopl.cn/credential-revision": "revision-alpha"}}, "spec": map[string]any{
 			"automountServiceAccountToken": false, "dnsPolicy": "ClusterFirst", "securityContext": map[string]any{"runAsNonRoot": true, "runAsUser": 10001, "runAsGroup": 10001, "fsGroup": 10001, "seccompProfile": map[string]any{"type": "RuntimeDefault"}},
-			"containers": []any{map[string]any{"name": "workspace", "image": "workspace-image:test", "securityContext": map[string]any{"allowPrivilegeEscalation": false, "capabilities": map[string]any{"drop": []any{"ALL"}}}, "volumeMounts": workspaceDataMounts()}},
+			"containers": []any{map[string]any{"name": "workspace", "image": workspaceImage, "securityContext": map[string]any{"allowPrivilegeEscalation": false, "capabilities": map[string]any{"drop": []any{"ALL"}}}, "volumeMounts": workspaceDataMounts()}},
 			"volumes":    []any{map[string]any{"name": "workspace-data", "persistentVolumeClaim": map[string]any{"claimName": "opl-storage-alpha-data"}}},
 		}}},
 		"status": map[string]any{"observedGeneration": 2, "updatedReplicas": 1, "readyReplicas": 1, "availableReplicas": 1},
@@ -2202,7 +2234,7 @@ func TestRuntimeStatusVerifiesFinalMountAfterPreRuntimeAttachment(t *testing.T) 
 		}},
 		"spec": map[string]any{
 			"nodeName": "10.0.0.8", "automountServiceAccountToken": false, "dnsPolicy": "ClusterFirst", "securityContext": map[string]any{"runAsNonRoot": true, "runAsUser": 10001, "runAsGroup": 10001, "fsGroup": 10001, "seccompProfile": map[string]any{"type": "RuntimeDefault"}},
-			"containers": []any{map[string]any{"name": "workspace", "image": "workspace-image:test", "securityContext": map[string]any{"allowPrivilegeEscalation": false, "capabilities": map[string]any{"drop": []any{"ALL"}}}, "volumeMounts": workspaceDataMounts()}},
+			"containers": []any{map[string]any{"name": "workspace", "image": workspaceImage, "securityContext": map[string]any{"allowPrivilegeEscalation": false, "capabilities": map[string]any{"drop": []any{"ALL"}}}, "volumeMounts": workspaceDataMounts()}},
 			"volumes":    []any{map[string]any{"name": "workspace-data", "persistentVolumeClaim": map[string]any{"claimName": "opl-storage-alpha-data"}}},
 		},
 		"status": map[string]any{

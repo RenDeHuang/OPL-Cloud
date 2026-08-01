@@ -326,7 +326,7 @@ func (p *workspaceLaunchReadbackPostgresProvider) CreateWorkspaceRuntime(_ conte
 	runtimeID := "rt_" + stableSuffix(input.WorkspaceID, input.RuntimeOperationID)[:18]
 	p.runtime = WorkspaceRuntime{
 		ID: runtimeID, OperationID: input.RuntimeOperationID, WorkspaceID: input.WorkspaceID,
-		URL: "https://workspace.medopl.cn/w/" + input.WorkspaceID + "/", Status: "running", ServiceName: "opl-compute-alpha", Ready: true,
+		URL: "https://workspace.medopl.cn/w/" + input.WorkspaceID + "/", Status: "running", ServiceName: "opl-compute-alpha", ImageID: input.ImageID, Ready: true,
 		ProviderRequestID: providerRequestID("runtime", input.IdempotencyKey),
 		Access:            RuntimeAccess{Username: "admin", CredentialStatus: "configured", CredentialVersion: "version-alpha", SecretRef: "opl-compute-alpha-env"},
 		CostTags:          oplCostTags("acct-alpha", input.WorkspaceID, runtimeID, input.RuntimeOperationID),
@@ -811,7 +811,7 @@ func (p *stalePostgresRuntimeProvider) CreateWorkspaceRuntime(_ context.Context,
 	p.calls.Add(1)
 	p.readback = WorkspaceRuntime{
 		ID: "rt_postgres-alpha", OperationID: input.RuntimeOperationID, WorkspaceID: input.WorkspaceID,
-		Status: "running", Ready: true, ServiceName: "opl-compute-alpha",
+		Status: "running", Ready: true, ServiceName: "opl-compute-alpha", ImageID: input.ImageID,
 		ProviderRequestID: providerRequestID("runtime", input.IdempotencyKey),
 		CostTags:          oplCostTags("acct-alpha", input.WorkspaceID, "rt_postgres-alpha", input.RuntimeOperationID),
 	}
@@ -1012,6 +1012,8 @@ func TestPostgresComputePoolHeadSerializesDifferentWorkspacesAcrossServiceInstan
 	secondService := NewServiceWithOperationStore(provider, secondStore)
 	configureFastComputeAllocationPolling(firstService, 15*time.Millisecond)
 	configureFastComputeAllocationPolling(secondService, 100*time.Millisecond)
+	firstService.computeAllocationFinalizeTimeout = 2 * time.Second
+	secondService.computeAllocationFinalizeTimeout = 2 * time.Second
 	firstInput := ComputeAllocationInput{AccountID: "acct-alpha", WorkspaceID: "workspace-alpha", PackageID: "basic", NodePoolID: "np-basic", IdempotencyKey: "postgres-compute-alpha"}
 	secondInput := ComputeAllocationInput{AccountID: "acct-beta", WorkspaceID: "workspace-beta", PackageID: "basic", NodePoolID: "np-basic", IdempotencyKey: "postgres-compute-beta"}
 
@@ -1041,13 +1043,52 @@ func TestPostgresComputePoolHeadSerializesDifferentWorkspacesAcrossServiceInstan
 	if _, err := secondService.CreateComputeAllocation(ctx, firstInput); err != nil {
 		t.Fatal(err)
 	}
-	waitForOperation(t, secondService, "create_compute_allocation", "compute_allocation", first.ID, "succeeded")
+	waitForPostgresComputeOperationSucceeded(t, ctx, secondService, secondStore, provider, first.ID, firstInput.WorkspaceID)
 	if _, err := firstService.CreateComputeAllocation(ctx, secondInput); err != nil {
 		t.Fatal(err)
 	}
-	waitForOperation(t, firstService, "create_compute_allocation", "compute_allocation", second.ID, "succeeded")
+	waitForPostgresComputeOperationSucceeded(t, ctx, firstService, firstStore, provider, second.ID, secondInput.WorkspaceID)
 	if targets, ambiguous := provider.allocationEvidence("np-basic"); !reflect.DeepEqual(targets, []int64{1, 2}) || ambiguous != 0 {
 		t.Fatalf("PostgreSQL scale targets=%v ambiguous=%d", targets, ambiguous)
+	}
+}
+
+func waitForPostgresComputeOperationSucceeded(t *testing.T, ctx context.Context, service *Service, store *PostgresOperationStore, provider *serializedPoolProvider, resourceID, workspaceID string) {
+	t.Helper()
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	var latest FabricOperation
+	for {
+		operations, err := store.List(ctx)
+		if err != nil {
+			t.Fatalf("list PostgreSQL compute operations: %v", err)
+		}
+		for _, operation := range operations {
+			if operation.Action != "create_compute_allocation" || operation.ResourceKind != "compute_allocation" || operation.ResourceID != resourceID {
+				continue
+			}
+			latest = operation
+			switch operation.Status {
+			case "succeeded":
+				if operation.OperationID == "" || operation.ProviderRequestID == "" || operation.RequestHash == "" || operation.StartedAt.IsZero() || operation.FinishedAt.IsZero() {
+					t.Fatalf("PostgreSQL compute operation missing audit fields: %#v", operation)
+				}
+				return
+			case "failed", "claim_pending":
+				t.Fatalf("PostgreSQL compute operation reached %s: %#v", operation.Status, operation)
+			}
+		}
+		select {
+		case <-ctx.Done():
+			service.mu.Lock()
+			reconciling := service.reconciling[resourceID]
+			service.mu.Unlock()
+			targets, ambiguous := provider.allocationEvidence("np-basic")
+			t.Fatalf("PostgreSQL compute operation did not succeed: resource=%s operation=%#v leaseOwner=%q leaseExpires=%v providerCalls=%d prepareCalls=%d targets=%v ambiguous=%d reconciling=%v context=%v",
+				resourceID, latest, latest.ComputePoolLeaseOwner, latest.ComputePoolLeaseExpires,
+				provider.workspaceCalls(workspaceID), provider.workspacePrepareCalls(workspaceID), targets, ambiguous, reconciling, ctx.Err())
+		case <-ticker.C:
+		}
 	}
 }
 

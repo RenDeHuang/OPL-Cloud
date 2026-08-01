@@ -1975,6 +1975,9 @@ func (p *TencentProvider) CreateWorkspaceRuntime(ctx context.Context, input Work
 	if compute.ID == "" || volume.ID == "" {
 		return WorkspaceRuntime{}, fmt.Errorf("workspace_runtime_resources_required")
 	}
+	if !validWorkspaceRuntimeImageIdentity(input.ImageID) {
+		return WorkspaceRuntime{}, fmt.Errorf("workspace_image_identity_invalid")
+	}
 	now := time.Now().UTC()
 	serviceName := firstNonEmpty(compute.ServiceName, k8sName(compute.ID))
 	credentialSeed := stableID(input.WorkspaceID, input.IdempotencyKey)[:24]
@@ -2114,7 +2117,7 @@ func (p *TencentProvider) WorkspaceRuntimeStatus(ctx context.Context, workspaceI
 	readyAddresses := endpointReadyAddresses(endpoints)
 	checks := []Check{
 		{Name: "deployment_ready", OK: readyReplicas > 0 && availableReplicas > 0, Details: mergeDetails(map[string]any{"readyReplicas": readyReplicas, "availableReplicas": availableReplicas}, podDetails)},
-		{Name: "workspace_image_pulled", OK: image == os.Getenv("OPL_WORKSPACE_IMAGE")},
+		{Name: "workspace_image_pulled", OK: validWorkspaceRuntimeImageIdentity(image), Details: map[string]any{"imageId": image}},
 		{Name: "pvc_bound", OK: stringValue(nested(pvc, "status", "phase")) == "Bound"},
 		{Name: "deployment_uses_retained_pvc", OK: workloadUsesPVC(deployment, pvcName)},
 		{Name: "ready_pod_uses_retained_pvc", OK: readyPodUsesPVC, Details: podDetails},
@@ -2146,7 +2149,7 @@ func (p *TencentProvider) WorkspaceRuntimeStatus(ctx context.Context, workspaceI
 	if runtimeID == "" || runtimeOperationID == "" || costTags["opl_workspace_id"] != workspaceID || costTags["opl_resource_id"] != runtimeID || costTags["opl_operation_id"] != runtimeOperationID || costTags["opl_account_id"] == "" {
 		return WorkspaceRuntime{WorkspaceID: workspaceID, ServiceName: serviceName}, workspaceRuntimeStatusError("readback_mismatch")
 	}
-	return WorkspaceRuntime{ID: runtimeID, OperationID: runtimeOperationID, WorkspaceID: workspaceID, URL: fmt.Sprintf("https://%s/w/%s/", workspaceDomain(), workspaceID), Status: status, ServiceName: serviceName, Access: access, Ready: ready, Checks: checks, CostTags: costTags}, nil
+	return WorkspaceRuntime{ID: runtimeID, OperationID: runtimeOperationID, WorkspaceID: workspaceID, URL: fmt.Sprintf("https://%s/w/%s/", workspaceDomain(), workspaceID), Status: status, ServiceName: serviceName, ImageID: image, Access: access, Ready: ready, Checks: checks, CostTags: costTags}, nil
 }
 
 func (p *TencentProvider) BindWorkspaceRuntimeGatewaySecret(ctx context.Context, input WorkspaceRuntimeGatewaySecretInput) (WorkspaceRuntimeGatewaySecretBinding, error) {
@@ -2668,7 +2671,7 @@ func workspaceManifest(input WorkspaceRuntimeInput, workspaceName string, creden
 	if gatewaySecretRef != "" {
 		workspaceEnv = append(workspaceEnv, map[string]any{"name": "OPL_GATEWAY_API_KEY_FILE", "value": "/run/secrets/opl_gateway_api_key"})
 	}
-	workspaceContainer := map[string]any{"name": "workspace", "image": os.Getenv("OPL_WORKSPACE_IMAGE"), "imagePullPolicy": "IfNotPresent", "ports": []any{map[string]any{"name": "http", "containerPort": 3000}}, "env": workspaceEnv, "volumeMounts": []any{map[string]any{"name": "workspace-data", "mountPath": "/data", "subPath": "data"}, map[string]any{"name": "workspace-data", "mountPath": "/projects", "subPath": "projects"}, map[string]any{"name": "workspace-secrets", "mountPath": "/run/secrets", "readOnly": true}}, "resources": workspaceResources(plan), "readinessProbe": map[string]any{"httpGet": map[string]any{"path": "/healthz", "port": 3000}, "initialDelaySeconds": 10, "periodSeconds": 10}, "securityContext": map[string]any{"allowPrivilegeEscalation": false, "capabilities": map[string]any{"drop": []any{"ALL"}}}}
+	workspaceContainer := map[string]any{"name": "workspace", "image": input.ImageID, "imagePullPolicy": "IfNotPresent", "ports": []any{map[string]any{"name": "http", "containerPort": 3000}}, "env": workspaceEnv, "volumeMounts": []any{map[string]any{"name": "workspace-data", "mountPath": "/data", "subPath": "data"}, map[string]any{"name": "workspace-data", "mountPath": "/projects", "subPath": "projects"}, map[string]any{"name": "workspace-secrets", "mountPath": "/run/secrets", "readOnly": true}}, "resources": workspaceResources(plan), "readinessProbe": map[string]any{"httpGet": map[string]any{"path": "/healthz", "port": 3000}, "initialDelaySeconds": 10, "periodSeconds": 10}, "securityContext": map[string]any{"allowPrivilegeEscalation": false, "capabilities": map[string]any{"drop": []any{"ALL"}}}}
 	secretLabels := stringAnyMap(mergeStringMaps(map[string]string{"app.kubernetes.io/name": "opl-workspace-entry", "app.kubernetes.io/instance": serviceName}, identityLabels, k8sCostLabels(tags)))
 	secret := map[string]any{"apiVersion": "v1", "kind": "Secret", "metadata": map[string]any{"name": serviceName + "-env", "labels": secretLabels, "annotations": tags}, "type": "Opaque", "data": secretData}
 	secretSources := []any{map[string]any{"secret": map[string]any{"name": serviceName + "-env", "items": secretItems}}}

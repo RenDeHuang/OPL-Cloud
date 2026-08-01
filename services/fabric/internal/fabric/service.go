@@ -26,6 +26,7 @@ const (
 	providerFactsBatchTimeout        = 5 * time.Second
 	providerFactsBatchWorkerCount    = 8
 	runtimeHealthSummaryTimeout      = 5 * time.Second
+	workspaceImageRepository         = "uswccr.ccs.tencentyun.com/oplcloud/one-person-lab-app"
 )
 
 type Provider interface {
@@ -262,7 +263,8 @@ func attachmentReadbackMatches(result StorageAttachment, input StorageAttachment
 
 func runtimeReadbackMatches(result WorkspaceRuntime, input WorkspaceRuntimeInput) bool {
 	return strings.HasPrefix(result.ID, "rt_") && result.OperationID == input.RuntimeOperationID &&
-		result.WorkspaceID == input.WorkspaceID && (result.Status == "running" || result.Status == "unready") && result.ServiceName != ""
+		result.WorkspaceID == input.WorkspaceID && (result.Status == "running" || result.Status == "unready") && result.ServiceName != "" &&
+		result.ImageID == input.ImageID
 }
 
 func gatewaySecretReadbackMatches(result GatewaySecret, input GatewaySecretInput) bool {
@@ -2975,6 +2977,9 @@ func (s *Service) CreateWorkspaceRuntime(ctx context.Context, input WorkspaceRun
 	runtime, err := s.provider.CreateWorkspaceRuntime(ctx, input, compute, volume)
 	runtime.OperationID = input.RuntimeOperationID
 	runtime.Access.Password = ""
+	if err == nil && runtime.ImageID != input.ImageID {
+		err = fmt.Errorf("workspace_runtime_image_mismatch")
+	}
 	if err == nil && action == "update_workspace_runtime" && (runtime.ID != original.ID || runtime.WorkspaceID != original.WorkspaceID) {
 		err = fmt.Errorf("workspace_runtime_identity_mismatch")
 	}
@@ -3902,10 +3907,23 @@ func validateRuntimeInput(input WorkspaceRuntimeInput, compute ComputeAllocation
 	if !isReadyResourceStatus(compute.Status) || volume.Status != "ready" {
 		return fmt.Errorf("resource_status_invalid")
 	}
+	if !validWorkspaceRuntimeImageIdentity(input.ImageID) {
+		return fmt.Errorf("workspace_image_identity_invalid")
+	}
 	if strings.TrimSpace(input.GatewaySecretRef) == "" || input.GatewaySecretRef != gatewaySecretName(input.WorkspaceID) {
 		return fmt.Errorf("gateway_secret_ref_mismatch")
 	}
 	return nil
+}
+
+func validWorkspaceRuntimeImageIdentity(value string) bool {
+	value = strings.TrimSpace(value)
+	prefix := workspaceImageRepository + "@sha256:"
+	if !strings.HasPrefix(value, prefix) || len(value) != len(prefix)+sha256.Size*2 {
+		return false
+	}
+	digest := strings.TrimPrefix(value, prefix)
+	return digest == strings.ToLower(digest) && validDigest(digest)
 }
 
 func isReadyResourceStatus(status string) bool {

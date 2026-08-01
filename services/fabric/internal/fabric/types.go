@@ -433,6 +433,7 @@ type WorkspaceRuntime struct {
 	URL               string            `json:"url"`
 	Status            string            `json:"status"`
 	ServiceName       string            `json:"serviceName,omitempty"`
+	ImageID           string            `json:"imageId,omitempty"`
 	ProviderRequestID string            `json:"providerRequestId"`
 	Access            RuntimeAccess     `json:"access,omitempty"`
 	Ready             bool              `json:"ready,omitempty"`
