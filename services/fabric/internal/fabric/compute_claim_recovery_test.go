@@ -33,6 +33,39 @@ type failOnceComputeClaimActivationStore struct {
 	fail bool
 }
 
+type failAfterComputeClaimNodeReservationStore struct {
+	OperationStore
+	failed bool
+}
+
+type failBeforeComputeClaimObservedSaveStore struct {
+	OperationStore
+	failed bool
+}
+
+func (s *failAfterComputeClaimNodeReservationStore) SaveComputeClaimRecovery(ctx context.Context, expected, next FabricOperation) error {
+	if err := s.OperationStore.SaveComputeClaimRecovery(ctx, expected, next); err != nil {
+		return err
+	}
+	ledger, present, valid := decodeComputeClaimRecoveryMutation(next)
+	if !s.failed && present && valid && ledger.State == "node_reserved" {
+		s.failed = true
+		return errors.New("simulated interruption after compute claim node reservation")
+	}
+	return nil
+}
+
+func (s *failBeforeComputeClaimObservedSaveStore) SaveComputeClaimRecovery(ctx context.Context, expected, next FabricOperation) error {
+	currentLedger, currentPresent, currentValid := decodeComputeClaimRecoveryMutation(expected)
+	nextLedger, nextPresent, nextValid := decodeComputeClaimRecoveryMutation(next)
+	if !s.failed && currentPresent && currentValid && nextPresent && nextValid &&
+		currentLedger.State == "node_reserved" && nextLedger.State == "observed" {
+		s.failed = true
+		return errors.New("simulated interruption before compute claim observed save")
+	}
+	return s.OperationStore.SaveComputeClaimRecovery(ctx, expected, next)
+}
+
 func (s *failOnceComputeClaimActivationStore) ActivateComputeClaimRecoveryOwnership(ctx context.Context, ownership MachineOwnership) error {
 	if s.fail {
 		s.fail = false
@@ -433,6 +466,135 @@ func TestClaimComputeRecoveryRestartAfterActiveOwnershipSkipsProviderMutation(t 
 	assertRecoveredComputeOperation(t, operations, input, "succeeded")
 }
 
+func TestClaimComputeRecoveryNodeReservedTargetOwnedReadbackDoesNotRepeatNodeClaim(t *testing.T) {
+	service, store, provider, input := seedComputeClaimRecovery(t, "basic")
+	provider.claim.Proof.Reason = "provider_describe"
+	provider.claim.Proof.NodeOwnershipState = "unallocated"
+	provider.claim.Proof.CVMOwnershipState = "recoverable"
+	provider.claim.TencentMutationCount = 1
+	provider.claim.KubernetesMutationCount = 0
+	provider.claim.FailureStage = "cvm_tag_readback"
+	provider.claim.ProviderErrorClass = "provider_error"
+	provider.claim.Evidence = &ComputeClaimEvidence{CVM: ComputeClaimMutationEvidence{Attempted: 1, Missing: []string{"opl_account_id"}}}
+	provider.claimErr = errors.New("provider tag readback failed")
+	claimInput := ComputeClaimRecoveryClaimInput{
+		ComputeClaimRecoveryInput: input, MachineName: "machine-after", NodeName: "10.0.0.18", CVMInstanceID: "ins-fixture",
+		PrivateIP: provider.proof.PrivateIP, InstanceType: provider.proof.InstanceType, Zone: provider.proof.Zone,
+		IdempotencyKey: input.LaunchOperationID + ":compute-claim",
+	}
+	if _, err := service.ClaimComputeRecovery(context.Background(), claimInput); err == nil {
+		t.Fatal("first claim unexpectedly succeeded")
+	}
+
+	claimInput.IdempotencyKey = input.LaunchOperationID + ":approved-recovery"
+	claimInput.ApprovedBindingTakeover = true
+	provider.proof.CVMOwnershipState = "target_owned"
+	provider.proof.NodeOwnershipState = "unallocated"
+	provider.claim = ComputeClaimProviderClaim{
+		Proof: ComputeClaimProviderProof{
+			Status: "proven", Reason: "none", MachineName: provider.proof.MachineName, NodeName: provider.proof.NodeName,
+			CVMInstanceID: provider.proof.CVMInstanceID, PrivateIP: provider.proof.PrivateIP, InstanceType: provider.proof.InstanceType,
+			Zone: provider.proof.Zone, ChargeType: provider.proof.ChargeType, PeriodMonths: provider.proof.PeriodMonths,
+			RenewFlag: provider.proof.RenewFlag, Deadline: provider.proof.Deadline, CVMOwnershipState: "target_owned", NodeOwnershipState: "target_owned",
+		},
+		KubernetesMutationCount: 1,
+		Evidence:                &ComputeClaimEvidence{Node: ComputeClaimMutationEvidence{Attempted: 1, Confirmed: 1}},
+	}
+	provider.claimErr = nil
+	interruptingStore := &failBeforeComputeClaimObservedSaveStore{OperationStore: store}
+
+	interrupted, interruptedErr := NewServiceWithOperationStore(provider, interruptingStore).ClaimComputeRecovery(context.Background(), claimInput)
+	if interruptedErr == nil || interrupted.Eligible || provider.claimCalls != 2 {
+		t.Fatalf("interrupted=%#v interruptedErr=%v provider=%#v", interrupted, interruptedErr, provider)
+	}
+	provider.proof.NodeOwnershipState = "target_owned"
+	recovered, recoveredErr := NewServiceWithOperationStore(provider, store).ClaimComputeRecovery(context.Background(), claimInput)
+	ownership, ownershipErr := store.MachineOwnership(context.Background(), input.ComputeAllocationID)
+	operations, operationsErr := store.List(context.Background())
+	ledger, ledgerPresent, ledgerValid := decodeComputeClaimRecoveryMutation(operations[0])
+	if recoveredErr != nil || !recovered.Eligible || recovered.TencentMutationCount != 0 || recovered.KubernetesMutationCount != 0 ||
+		ownershipErr != nil || ownership.Status != "active" || operationsErr != nil || provider.claimCalls != 2 || !ledgerPresent || !ledgerValid ||
+		ledger.State != "observed" || ledger.Reason != "none" || ledger.TencentMutationCount != 1 || ledger.KubernetesMutationCount != 1 ||
+		ledger.Evidence.CVM.Attempted != 1 || ledger.Evidence.CVM.Confirmed != 1 || ledger.Evidence.Node.Attempted != 1 || ledger.Evidence.Node.Confirmed != 1 {
+		t.Fatalf("recovered=%#v recoveredErr=%v ownership=%#v ownershipErr=%v operationsErr=%v ledger=%#v present=%v valid=%v provider=%#v", recovered, recoveredErr, ownership, ownershipErr, operationsErr, ledger, ledgerPresent, ledgerValid, provider)
+	}
+	replayed, replayErr := NewServiceWithOperationStore(provider, store).ClaimComputeRecovery(context.Background(), claimInput)
+	if replayErr != nil || !replayed.Eligible || replayed.TencentMutationCount != 0 || replayed.KubernetesMutationCount != 0 || provider.claimCalls != 2 {
+		t.Fatalf("approved success replay=%#v err=%v provider=%#v", replayed, replayErr, provider)
+	}
+}
+
+func TestClaimComputeRecoveryNodeReservedRejectsIdentityTargetRequestAndApprovalDrift(t *testing.T) {
+	service, store, provider, input := seedComputeClaimRecovery(t, "basic")
+	provider.claim.Proof.Reason = "provider_describe"
+	provider.claim.Proof.NodeOwnershipState = "unallocated"
+	provider.claim.Proof.CVMOwnershipState = "recoverable"
+	provider.claim.TencentMutationCount = 1
+	provider.claim.KubernetesMutationCount = 0
+	provider.claim.FailureStage = "cvm_tag_readback"
+	provider.claim.ProviderErrorClass = "provider_error"
+	provider.claim.Evidence = &ComputeClaimEvidence{CVM: ComputeClaimMutationEvidence{Attempted: 1, Missing: []string{"opl_account_id"}}}
+	provider.claimErr = errors.New("provider tag readback failed")
+	claimInput := ComputeClaimRecoveryClaimInput{
+		ComputeClaimRecoveryInput: input, MachineName: "machine-after", NodeName: "10.0.0.18", CVMInstanceID: "ins-fixture",
+		PrivateIP: provider.proof.PrivateIP, InstanceType: provider.proof.InstanceType, Zone: provider.proof.Zone,
+		IdempotencyKey: input.LaunchOperationID + ":compute-claim",
+	}
+	if _, err := service.ClaimComputeRecovery(context.Background(), claimInput); err == nil {
+		t.Fatal("first claim unexpectedly succeeded")
+	}
+	claimInput.IdempotencyKey = input.LaunchOperationID + ":approved-recovery"
+	claimInput.ApprovedBindingTakeover = true
+	provider.proof.CVMOwnershipState = "target_owned"
+	provider.claim = ComputeClaimProviderClaim{
+		Proof: ComputeClaimProviderProof{
+			Status: "proven", Reason: "none", MachineName: provider.proof.MachineName, NodeName: provider.proof.NodeName,
+			CVMInstanceID: provider.proof.CVMInstanceID, PrivateIP: provider.proof.PrivateIP, InstanceType: provider.proof.InstanceType,
+			Zone: provider.proof.Zone, ChargeType: provider.proof.ChargeType, PeriodMonths: provider.proof.PeriodMonths,
+			RenewFlag: provider.proof.RenewFlag, Deadline: provider.proof.Deadline, CVMOwnershipState: "target_owned", NodeOwnershipState: "target_owned",
+		},
+		KubernetesMutationCount: 1,
+		Evidence:                &ComputeClaimEvidence{Node: ComputeClaimMutationEvidence{Attempted: 1, Confirmed: 1}},
+	}
+	provider.claimErr = nil
+	if _, err := NewServiceWithOperationStore(provider, &failAfterComputeClaimNodeReservationStore{OperationStore: store}).ClaimComputeRecovery(context.Background(), claimInput); err == nil {
+		t.Fatal("node reservation interruption unexpectedly succeeded")
+	}
+	claimCalls := provider.claimCalls
+
+	tests := map[string]func(ComputeClaimRecoveryClaimInput) ComputeClaimRecoveryClaimInput{
+		"identity": func(value ComputeClaimRecoveryClaimInput) ComputeClaimRecoveryClaimInput {
+			value.AccountID = "acct-other"
+			return value
+		},
+		"target": func(value ComputeClaimRecoveryClaimInput) ComputeClaimRecoveryClaimInput {
+			value.PrivateIP = "10.0.0.99"
+			return value
+		},
+		"request": func(value ComputeClaimRecoveryClaimInput) ComputeClaimRecoveryClaimInput {
+			value.StorageVolumeID = "vol_other"
+			return value
+		},
+		"approval": func(value ComputeClaimRecoveryClaimInput) ComputeClaimRecoveryClaimInput {
+			value.ApprovedBindingTakeover = false
+			return value
+		},
+	}
+	for name, drift := range tests {
+		t.Run(name, func(t *testing.T) {
+			result, err := NewServiceWithOperationStore(provider, store).ClaimComputeRecovery(context.Background(), drift(claimInput))
+			if err == nil || result.Eligible || provider.claimCalls != claimCalls {
+				t.Fatalf("result=%#v err=%v provider=%#v", result, err, provider)
+			}
+		})
+	}
+	operations, err := store.List(context.Background())
+	ledger, present, valid := decodeComputeClaimRecoveryMutation(operations[0])
+	if err != nil || len(operations) != 1 || !present || !valid || ledger.State != "node_reserved" || provider.claimCalls != claimCalls {
+		t.Fatalf("operations=%#v err=%v ledger=%#v present=%v valid=%v provider=%#v", operations, err, ledger, present, valid, provider)
+	}
+}
+
 func TestClaimComputeRecoveryRejectsBindingTakeoverWithoutApproval(t *testing.T) {
 	service, store, provider, input := seedComputeClaimRecovery(t, "basic")
 	provider.claim.Proof.Reason = "provider_describe"
@@ -487,9 +649,12 @@ func TestClaimComputeRecoveryRejectsSameBindingRepairWithoutApproval(t *testing.
 	}
 	provider.proof.CVMOwnershipState = "target_owned"
 	provider.proof.NodeOwnershipState = "unallocated"
-	result, err := NewServiceWithOperationStore(provider, store).ClaimComputeRecovery(context.Background(), claimInput)
-	if err == nil || result.Eligible || provider.claimCalls != 1 {
-		t.Fatalf("result=%#v err=%v provider=%#v", result, err, provider)
+	for _, approved := range []bool{false, true} {
+		claimInput.ApprovedBindingTakeover = approved
+		result, err := NewServiceWithOperationStore(provider, store).ClaimComputeRecovery(context.Background(), claimInput)
+		if err == nil || result.Eligible || provider.claimCalls != 1 {
+			t.Fatalf("approved=%v result=%#v err=%v provider=%#v", approved, result, err, provider)
+		}
 	}
 }
 
@@ -523,6 +688,11 @@ func TestClaimComputeRecoveryRestartAfterTargetOwnedReadbackConvergesLocalStateO
 		t.Fatalf("restart result=%#v err=%v ownership=%#v ownershipErr=%v operationsErr=%v provider=%#v", result, err, ownership, ownershipErr, operationsErr, provider)
 	}
 	assertRecoveredComputeOperation(t, operations, input, "succeeded")
+	provider.proof.NodeOwnershipState = "target_owned"
+	replayed, replayErr := NewServiceWithOperationStore(provider, store).ClaimComputeRecovery(context.Background(), claimInput)
+	if replayErr != nil || !replayed.Eligible || replayed.TencentMutationCount != 0 || replayed.KubernetesMutationCount != 0 || provider.claimCalls != 0 {
+		t.Fatalf("replayed=%#v replayErr=%v provider=%#v", replayed, replayErr, provider)
+	}
 }
 
 func TestClaimComputeRecoveryRejectsMalformedPersistedBindingWithoutMutationOrOverwrite(t *testing.T) {
@@ -641,6 +811,66 @@ func TestMemoryComputeClaimRecoveryCASRejectsReservedLedgerCompletion(t *testing
 	stored, err := store.List(context.Background())
 	if err != nil || len(stored) != 1 || stored[0].Status != "claim_pending" || !reflect.DeepEqual(stored[0].RedactedProviderPayload, reserved.RedactedProviderPayload) {
 		t.Fatalf("reserved completion changed operation: stored=%#v err=%v", stored, err)
+	}
+}
+
+func TestMemoryComputeClaimRecoveryNodeTakeoverCASHasSingleWinnerAndKeepsOriginalBinding(t *testing.T) {
+	_, store, provider, input := seedComputeClaimRecovery(t, "basic")
+	claimInput := ComputeClaimRecoveryClaimInput{
+		ComputeClaimRecoveryInput: input, MachineName: "machine-after", NodeName: "10.0.0.18", CVMInstanceID: "ins-fixture",
+		PrivateIP: provider.proof.PrivateIP, InstanceType: provider.proof.InstanceType, Zone: provider.proof.Zone,
+		IdempotencyKey: input.LaunchOperationID + ":compute-claim",
+	}
+	operations, err := store.List(context.Background())
+	if err != nil || len(operations) != 1 {
+		t.Fatalf("seed operations=%#v err=%v", operations, err)
+	}
+	pending := operations[0]
+	pending.Status, pending.ErrorCode, pending.FinishedAt = "claim_pending", "", time.Time{}
+	pending.RedactedProviderPayload = withComputeClaimRecoveryBinding(pending.RedactedProviderPayload, newComputeClaimRecoveryBinding(claimInput))
+	observed := observedComputeClaimRecoveryMutation(ComputeClaimRecoveryProof{
+		Reason: "provider_describe", TencentMutationCount: 1, KubernetesMutationCount: 0,
+		FailureStage: "cvm_tag_readback", ProviderErrorClass: "provider_error",
+		Evidence: &ComputeClaimEvidence{CVM: ComputeClaimMutationEvidence{Attempted: 1, Missing: []string{"opl_account_id"}}},
+	})
+	pending.RedactedProviderPayload = withComputeClaimRecoveryMutation(pending.RedactedProviderPayload, observed)
+	store.mu.Lock()
+	store.operation[0] = pending
+	store.mu.Unlock()
+	storedObserved, err := store.List(context.Background())
+	if err != nil || len(storedObserved) != 1 {
+		t.Fatal(err)
+	}
+	observedOperation := storedObserved[0]
+	nodeReserved := observedOperation
+	nodeReserved.RedactedProviderPayload = withComputeClaimRecoveryMutation(nodeReserved.RedactedProviderPayload, nodeReservedComputeClaimRecoveryMutation(observed))
+
+	start := make(chan struct{})
+	results := make(chan error, 2)
+	for range 2 {
+		go func() {
+			<-start
+			results <- store.SaveComputeClaimRecovery(context.Background(), observedOperation, nodeReserved)
+		}()
+	}
+	close(start)
+	winners := 0
+	for range 2 {
+		err := <-results
+		if err == nil {
+			winners++
+			continue
+		}
+		if !errors.Is(err, ErrRuntimeOperationNotCurrent) {
+			t.Fatalf("node takeover CAS error=%v", err)
+		}
+	}
+	stored, err := store.List(context.Background())
+	binding, bindingPresent, bindingValid := decodeComputeClaimRecoveryBinding(stored[0])
+	ledger, ledgerPresent, ledgerValid := decodeComputeClaimRecoveryMutation(stored[0])
+	if winners != 1 || err != nil || len(stored) != 1 || !bindingPresent || !bindingValid || binding != newComputeClaimRecoveryBinding(claimInput) ||
+		!ledgerPresent || !ledgerValid || ledger.State != "node_reserved" {
+		t.Fatalf("winners=%d stored=%#v err=%v binding=%#v present=%v valid=%v ledger=%#v ledgerPresent=%v ledgerValid=%v", winners, stored, err, binding, bindingPresent, bindingValid, ledger, ledgerPresent, ledgerValid)
 	}
 }
 
@@ -782,10 +1012,79 @@ func TestClaimComputeRecoveryResumesNodeOnlyAfterObservedCVMTagReadbackRepair(t 
 	recoveredBinding, recoveredBindingPresent, recoveredBindingValid := decodeComputeClaimRecoveryBinding(operations[0])
 	if recoverErr != nil || ownershipErr != nil || operationsErr != nil || !recovered.Eligible || recovered.TencentMutationCount != 0 ||
 		recovered.KubernetesMutationCount != 1 || ownership.Status != "active" || provider.claimCalls != 2 ||
-		!recoveredBindingPresent || !recoveredBindingValid || recoveredBinding.IdempotencyKey != claimInput.IdempotencyKey {
+		!recoveredBindingPresent || !recoveredBindingValid || recoveredBinding.IdempotencyKey != input.LaunchOperationID+":compute-claim" {
 		t.Fatalf("recovered=%#v recoverErr=%v ownership=%#v ownershipErr=%v operationsErr=%v provider=%#v", recovered, recoverErr, ownership, ownershipErr, operationsErr, provider)
 	}
 	assertRecoveredComputeOperation(t, operations, input, "succeeded")
+}
+
+func TestClaimComputeRecoveryRestartsAfterNodeReservationBeforeNodeClaim(t *testing.T) {
+	service, store, provider, input := seedComputeClaimRecovery(t, "basic")
+	provider.claim.Proof.Reason = "provider_describe"
+	provider.claim.Proof.NodeOwnershipState = "unallocated"
+	provider.claim.Proof.CVMOwnershipState = "recoverable"
+	provider.claim.TencentMutationCount = 1
+	provider.claim.KubernetesMutationCount = 0
+	provider.claim.FailureStage = "cvm_tag_readback"
+	provider.claim.ProviderErrorClass = "provider_error"
+	provider.claim.Evidence = &ComputeClaimEvidence{
+		CVM: ComputeClaimMutationEvidence{Attempted: 1, Missing: []string{"opl_account_id"}},
+	}
+	provider.claimErr = errors.New("provider tag readback failed")
+	claimInput := ComputeClaimRecoveryClaimInput{
+		ComputeClaimRecoveryInput: input, MachineName: "machine-after", NodeName: "10.0.0.18", CVMInstanceID: "ins-fixture",
+		PrivateIP: provider.proof.PrivateIP, InstanceType: provider.proof.InstanceType, Zone: provider.proof.Zone,
+		IdempotencyKey: input.LaunchOperationID + ":compute-claim",
+	}
+	if _, err := service.ClaimComputeRecovery(context.Background(), claimInput); err == nil {
+		t.Fatal("first claim unexpectedly succeeded")
+	}
+
+	claimInput.IdempotencyKey = input.LaunchOperationID + ":approved-recovery"
+	claimInput.ApprovedBindingTakeover = true
+	provider.proof.CVMOwnershipState = "target_owned"
+	provider.proof.NodeOwnershipState = "unallocated"
+	provider.claim = ComputeClaimProviderClaim{
+		Proof: ComputeClaimProviderProof{
+			Status: "proven", Reason: "none", MachineName: provider.proof.MachineName, NodeName: provider.proof.NodeName,
+			CVMInstanceID: provider.proof.CVMInstanceID, PrivateIP: provider.proof.PrivateIP, InstanceType: provider.proof.InstanceType,
+			Zone: provider.proof.Zone, ChargeType: provider.proof.ChargeType, PeriodMonths: provider.proof.PeriodMonths,
+			RenewFlag: provider.proof.RenewFlag, Deadline: provider.proof.Deadline, CVMOwnershipState: "target_owned", NodeOwnershipState: "target_owned",
+		},
+		KubernetesMutationCount: 1,
+		Evidence:                &ComputeClaimEvidence{Node: ComputeClaimMutationEvidence{Attempted: 1, Confirmed: 1}},
+	}
+	provider.claimErr = nil
+	interruptingStore := &failAfterComputeClaimNodeReservationStore{OperationStore: store}
+
+	interrupted, interruptedErr := NewServiceWithOperationStore(provider, interruptingStore).ClaimComputeRecovery(context.Background(), claimInput)
+	interruptedOperations, listErr := store.List(context.Background())
+	if interruptedErr == nil || interrupted.Eligible || listErr != nil || provider.claimCalls != 1 || len(interruptedOperations) != 1 {
+		t.Fatalf("interrupted=%#v err=%v operations=%#v listErr=%v provider=%#v", interrupted, interruptedErr, interruptedOperations, listErr, provider)
+	}
+	reservedLedger, reservedPresent, reservedValid := decodeComputeClaimRecoveryMutation(interruptedOperations[0])
+	reservedBinding, bindingPresent, bindingValid := decodeComputeClaimRecoveryBinding(interruptedOperations[0])
+	if !reservedPresent || !reservedValid || reservedLedger.State != "node_reserved" || reservedLedger.TencentMutationCount != 1 ||
+		reservedLedger.KubernetesMutationCount != 1 || reservedLedger.Evidence.CVM.Attempted != 1 || reservedLedger.Evidence.CVM.Confirmed != 1 ||
+		reservedLedger.Evidence.CVM.Unknown != 0 || len(reservedLedger.Evidence.CVM.Missing) != 0 || reservedLedger.Evidence.Node.Attempted != 1 ||
+		reservedLedger.Evidence.Node.Confirmed != 0 || reservedLedger.Evidence.Node.Unknown != 1 || !reflect.DeepEqual(reservedLedger.Evidence.Node.Missing, []string{"node_ownership"}) ||
+		!bindingPresent || !bindingValid || reservedBinding.IdempotencyKey != input.LaunchOperationID+":compute-claim" {
+		t.Fatalf("node-only reservation changed the original binding: ledger=%#v binding=%#v present=%v valid=%v", reservedLedger, reservedBinding, bindingPresent, bindingValid)
+	}
+
+	recovered, recoverErr := NewServiceWithOperationStore(provider, store).ClaimComputeRecovery(context.Background(), claimInput)
+	ownership, ownershipErr := store.MachineOwnership(context.Background(), input.ComputeAllocationID)
+	operations, operationsErr := store.List(context.Background())
+	finalLedger, finalPresent, finalValid := decodeComputeClaimRecoveryMutation(operations[0])
+	if recoverErr == nil || recovered.Eligible || recovered.Reason != "provider_describe" || recovered.TencentMutationCount != 1 ||
+		recovered.KubernetesMutationCount != 1 || ownershipErr != nil || ownership.Status != "quarantined" || operationsErr != nil || provider.claimCalls != 1 ||
+		!finalPresent || !finalValid || finalLedger.State != "node_reserved" || finalLedger.Reason != "provider_describe" ||
+		finalLedger.TencentMutationCount != 1 || finalLedger.KubernetesMutationCount != 1 || finalLedger.Evidence.CVM.Attempted != 1 ||
+		finalLedger.Evidence.CVM.Confirmed != 1 || finalLedger.Evidence.Node.Attempted != 1 || finalLedger.Evidence.Node.Confirmed != 0 ||
+		finalLedger.Evidence.Node.Unknown != 1 || !reflect.DeepEqual(finalLedger.Evidence.Node.Missing, []string{"node_ownership"}) {
+		t.Fatalf("restart after node reservation=%#v recoverErr=%v ownership=%#v ownershipErr=%v operationsErr=%v ledger=%#v present=%v valid=%v provider=%#v", recovered, recoverErr, ownership, ownershipErr, operationsErr, finalLedger, finalPresent, finalValid, provider)
+	}
+	assertRecoveredComputeOperation(t, operations, input, "claim_pending")
 }
 
 func TestClaimComputeRecoveryDoesNotResumeObservedUnknownCVMOutcome(t *testing.T) {

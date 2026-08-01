@@ -6,7 +6,6 @@ import (
 	"embed"
 	"encoding/json"
 	"fmt"
-	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -1279,15 +1278,7 @@ func validComputeClaimRecoveryBindingTransition(current, next FabricOperation) b
 		return false
 	}
 	if currentPresent {
-		if currentValid && currentBinding == nextBinding {
-			return true
-		}
-		currentMutation, currentMutationPresent, currentMutationValid := decodeComputeClaimRecoveryMutation(current)
-		nextMutation, nextMutationPresent, nextMutationValid := decodeComputeClaimRecoveryMutation(next)
-		return currentValid && sameComputeClaimRecoveryBindingTarget(currentBinding, nextBinding) &&
-			currentMutationPresent && currentMutationValid && recoverableObservedComputeClaimRecoveryMutation(currentMutation) &&
-			nextMutationPresent && nextMutationValid && reflect.DeepEqual(nextMutation, reservedComputeClaimRecoveryMutation()) &&
-			next.Status == "claim_pending"
+		return currentValid && currentBinding == nextBinding
 	}
 	return next.Status == "claim_pending"
 }
