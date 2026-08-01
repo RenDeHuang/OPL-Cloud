@@ -517,8 +517,18 @@ test("Current Fabric contracts require dedicated package NodePools without weake
       },
       failure: "non_empty_redacted_blocked_json_with_allowlisted_error_code",
       successApprovalFields: ["approvalId", "approvalDigest"],
+      approvalValidation: {
+        mode: "compute_claim_validate",
+        route: "POST /api/operator/workspace-launches/{operationId}/compute-claim-recovery/validate",
+        authority: "same_strict_approval_binding_as_claim_without_persistence_or_claim",
+        customerEmailSource: "protected_customer_email_input_exactly_matches_approval_and_account_authority",
+        legacyIdentity: "zero_mutation_proof_projected_in_memory_only",
+        runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
+        forbiddenCalls: ["ClaimComputeRecovery", "create_storage_volume", "debit", "refund", "recharge", "delete", "replace"]
+      },
       blockedArtifactFieldsByMode: {
         compute_claim_diagnose: ["schemaVersion", "operationMode", "status", "recoveryEligible", "errorCode", "runnerDirectMutationCounts"],
+        compute_claim_validate: ["schemaVersion", "operationMode", "status", "recoveryEligible", "errorCode", "runnerDirectMutationCounts"],
         compute_claim_recover: ["schemaVersion", "operationMode", "status", "recoveryEligible", "errorCode", "runnerDirectMutationCounts"],
         compute_claim_recover_continuation: ["schemaVersion", "operationMode", "status", "recoveryEligible", "errorCode", "runnerDirectMutationCounts", "backgroundMutationCountsState"]
       }

@@ -266,6 +266,44 @@ func registerAdminRoutes(mux *http.ServeMux, app *controlPlaneServer, service *c
 		}
 		writeWorkspaceComputeClaimError(w, err)
 	}))
+	mux.HandleFunc("POST /api/operator/workspace-launches/{operationId}/compute-claim-recovery/validate", app.protected(true, app.computeClaimCapabilityProtected(func(w http.ResponseWriter, r *http.Request) {
+		key, ok := requiredMutationKey(w, r)
+		if !ok {
+			return
+		}
+		operationID := strings.TrimSpace(r.PathValue("operationId"))
+		input, ok := workspaceComputeClaimRecoveryRequestFromMap(operationID, decodeJSON(r), true)
+		if !ok || !validBillingReviewOpaqueID(key) {
+			writeError(w, http.StatusBadRequest, errWorkspaceComputeClaimInvalid.Error())
+			return
+		}
+		operation, err := app.loadWorkspaceComputeClaimOperation(r.Context(), operationID, input, true)
+		if err != nil {
+			writeWorkspaceComputeClaimError(w, err)
+			return
+		}
+		if workspaceComputeClaimLegacyCandidate(operation) {
+			proof, proofErr := service.ComputeClaimRecoveryProof(r.Context(), workspaceComputeClaimRecoveryInput(operation, input))
+			if proofErr != nil || !workspaceComputeClaimProofEligible(operation, input, proof, false) || !persistWorkspaceComputeClaimIdentityFromProof(&operation, proof) {
+				writeWorkspaceComputeClaimError(w, errWorkspaceComputeClaimIdentity)
+				return
+			}
+		}
+		binding, err := app.workspaceComputeClaimApprovalBinding(r.Context(), operation, input, key, operation.ComputeClaimApproval != nil)
+		if err != nil {
+			writeWorkspaceComputeClaimError(w, err)
+			return
+		}
+		if operation.ComputeClaimApproval != nil && !workspaceComputeClaimApprovalBindingMatches(*operation.ComputeClaimApproval, binding) {
+			writeWorkspaceComputeClaimError(w, errWorkspaceComputeClaimIdentity)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"schemaVersion": 2, "status": "proven", "approvalId": binding.ApprovalID, "approvalDigest": binding.ApprovalDigest,
+			"launchOperationId": operation.ID, "accountId": operation.AccountID, "workspaceId": operation.WorkspaceID,
+			"runnerDirectMutationCounts": map[string]any{"sub2api": 0, "tencent": 0, "kubernetes": 0},
+		})
+	})))
 	mux.HandleFunc("POST /api/operator/workspace-launches/{operationId}/compute-claim-recovery/claim", app.protected(true, app.computeClaimCapabilityProtected(func(w http.ResponseWriter, r *http.Request) {
 		key, ok := requiredMutationKey(w, r)
 		if !ok {
