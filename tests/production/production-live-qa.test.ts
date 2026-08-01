@@ -54,9 +54,12 @@ test("Workspace identity diagnosis binds operator, customer, and the unique rese
   const accountId = "acct-f947b18f844e42b3c0";
   const ownerUserId = "usr-huangrende";
   const workspaceId = "ws-4357c2c5b3ea1a344c";
+  const launchOperationId = "workspace-launch-f0375970d7678d0a3e";
   const workspaceApiKeyId = "132";
   const customerEmail = "customer@example.com";
   const calls = [];
+  let launchWorkspaceApiKeyId = workspaceApiKeyId;
+  let duplicateLaunch = false;
   const fetchImpl = async (input, init = {}) => {
     const url = new URL(String(input));
     const method = String(init.method || "GET").toUpperCase();
@@ -79,6 +82,35 @@ test("Workspace identity diagnosis binds operator, customer, and the unique rese
     if (url.pathname === "/api/auth/me") {
       return source({ consoleUserId: ownerUserId, accountId, sub2apiUserId: 10, email: customerEmail, role: "owner", status: "active" });
     }
+    if (url.pathname === "/api/operator/accounts") {
+      const page = Number(url.searchParams.get("page"));
+      const pageSize = Number(url.searchParams.get("pageSize"));
+      const filler = Array.from({ length: 50 }, (_, index) => ({
+        accountId: `acct-filler-${index + 1}`,
+        consoleUserId: `usr-filler-${index + 1}`,
+        sub2apiUserId: String(index + 100),
+        email: `filler-${index + 1}@example.com`,
+        role: "owner",
+        status: "active"
+      }));
+      return source({
+        items: page === 1 ? filler : [{ accountId, consoleUserId: ownerUserId, sub2apiUserId: "10", email: customerEmail, role: "owner", status: "active" }],
+        total: 51,
+        page,
+        pageSize
+      }, "control-plane+sub2api");
+    }
+    if (url.pathname === "/api/workspace-launches") {
+      const launch = {
+        operationId: launchOperationId,
+        accountId,
+        workspaceId,
+        status: "compute_claim_pending",
+        phase: "compute_claim_pending",
+        workspaceApiKeyId: launchWorkspaceApiKeyId
+      };
+      return json(duplicateLaunch ? [launch, { ...launch, operationId: "workspace-launch-a0375970d7678d0a3e" }] : [launch]);
+    }
     if (url.pathname === "/api/gateway/keys") {
       const page = Number(url.searchParams.get("page"));
       const pageSize = Number(url.searchParams.get("pageSize"));
@@ -90,24 +122,6 @@ test("Workspace identity diagnosis binds operator, customer, and the unique rese
     return json({ error: "not_found" }, 404);
   };
 
-  const operatorDetail = {
-    ownerAccount: { source: "control-plane", status: "available", available: true, fetchedAt: "2026-08-01T00:00:00Z", data: { id: accountId } },
-    ownerUser: { source: "control-plane", status: "available", available: true, fetchedAt: "2026-08-01T00:00:00Z", data: { id: ownerUserId, email: customerEmail } },
-    workspace: { source: "control-plane", status: "available", available: true, fetchedAt: "2026-08-01T00:00:00Z", data: { id: workspaceId, ownerAccountId: accountId, ownerUserId, workspaceApiKeyId } },
-    receipt: { source: "ledger", status: "unavailable", available: false, fetchedAt: "2026-08-01T00:00:00Z", data: null },
-    workspaceKeyUsage: { source: "sub2api", status: "unavailable", available: false, fetchedAt: "2026-08-01T00:00:00Z", data: null },
-    resources: []
-  };
-  const baseFetch = fetchImpl;
-  const identityFetch = async (input, init) => {
-    const url = new URL(String(input));
-    if (url.pathname === `/api/operator/workspaces/${workspaceId}`) {
-      calls.push([String(init?.method || "GET").toUpperCase(), url.pathname, url.search]);
-      return source(operatorDetail, "control-plane+fabric+ledger");
-    }
-    return baseFetch(input, init);
-  };
-
   const result = await productionLiveQa.diagnoseWorkspaceIdentity({
     origin: "https://cloud.medopl.cn",
     adminEmail: ADMIN_EMAIL,
@@ -116,7 +130,7 @@ test("Workspace identity diagnosis binds operator, customer, and the unique rese
     customerPassword: "customer-password",
     accountId,
     workspaceId,
-    fetchImpl: identityFetch,
+    fetchImpl,
     now: new Date("2026-08-01T01:02:03Z")
   });
 
@@ -138,15 +152,42 @@ test("Workspace identity diagnosis binds operator, customer, and the unique rese
   });
   assert.deepEqual(calls, [
     ["POST", "/api/auth/login", ""],
-    ["GET", `/api/operator/workspaces/${workspaceId}`, ""],
+    ["GET", "/api/operator/accounts", "?page=1&pageSize=50"],
+    ["GET", "/api/operator/accounts", "?page=2&pageSize=50"],
     ["POST", "/api/auth/login", ""],
     ["GET", "/api/auth/me", ""],
+    ["GET", "/api/workspace-launches", ""],
     ["GET", "/api/gateway/keys", "?page=1&pageSize=20"],
     ["GET", "/api/gateway/keys", "?page=2&pageSize=20"]
   ]);
   assert.doesNotMatch(JSON.stringify(result), /customer@example\.com|password|csrf|cookie|token|maskedValue|\"value\"/i);
   assert.equal(calls.every(([method]) => ["GET", "POST"].includes(method)), true);
   assert.equal(calls.filter(([method, path]) => method === "POST" && path !== "/api/auth/login").length, 0);
+
+  launchWorkspaceApiKeyId = "133";
+  await assert.rejects(productionLiveQa.diagnoseWorkspaceIdentity({
+    origin: "https://cloud.medopl.cn",
+    adminEmail: ADMIN_EMAIL,
+    adminPassword: ADMIN_PASSWORD,
+    customerEmail,
+    customerPassword: "customer-password",
+    accountId,
+    workspaceId,
+    fetchImpl
+  }), /workspace_identity_workspace_key_mismatch/);
+
+  launchWorkspaceApiKeyId = workspaceApiKeyId;
+  duplicateLaunch = true;
+  await assert.rejects(productionLiveQa.diagnoseWorkspaceIdentity({
+    origin: "https://cloud.medopl.cn",
+    adminEmail: ADMIN_EMAIL,
+    adminPassword: ADMIN_PASSWORD,
+    customerEmail,
+    customerPassword: "customer-password",
+    accountId,
+    workspaceId,
+    fetchImpl
+  }), /workspace_identity_launch_binding_mismatch/);
 });
 
 test("Workspace identity CLI rejects write-capable flags before network access", async () => {
