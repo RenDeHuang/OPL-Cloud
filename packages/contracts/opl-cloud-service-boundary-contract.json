@@ -115,6 +115,15 @@
         "restart": "persisted_budget_never_resets",
         "terminalFailure": "unknown_or_exhausted_enters_manual_review_and_active_worker_excludes_it"
       },
+      "normalWorkspaceLaunch": {
+        "entryPostMaximum": 1,
+        "keyPendingReplay": "same_owner_package_and_request_hash_resumes_original_launch_with_original_idempotency_key",
+        "keyPendingDrift": "409_before_new_launch_or_key",
+        "chargeAuthority": "one_exact_redeem_history_entry",
+        "concurrentUsageBalanceDeltaRequired": false,
+        "periodFreeze": "first_authoritative_charge_confirmation_persisted_once",
+        "providerMutationBeforeValidWorkspaceDigest": 0
+      },
       "workspaceLaunchAuthoritativeReadbackRecovery": {
         "proofRoute": "GET /api/operator/workspace-launches/{operationId}/readback-recovery-proof",
         "recoveryRoute": "POST /api/operator/workspace-launches/{operationId}/recover",
@@ -377,6 +386,17 @@
         "existingMachineAllocation": false,
         "nodePoolDiscoveryFallback": false,
         "customerLaunchCreateNodePool": false
+      },
+      "normalWorkspaceLaunch": {
+        "computeStages": ["compute_create", "compute_claim"],
+        "storageStages": ["cbs_create", "static_binding_apply"],
+        "reservation": "fabric_postgresql_cas_before_each_external_write",
+        "restartAfterReservedOrUnknown": "authoritative_describe_get_only",
+        "externalWriteMaximumPerStage": 1,
+        "unknown": "manual_review_without_replay",
+        "storageIdentityConfirmed": "CreateDisks_permanently_zero_then_original_PV_PVC_apply_or_readback",
+        "activePaidPendingStorage": "converge_original_identity_or_manual_review",
+        "forbiddenPendingStorageActions": ["delete_pv", "delete_pvc", "retained", "replacement_cbs"]
       },
       "workspaceRenewal": {
         "primitives": ["RenewComputeAllocation", "RenewStorageVolume"],

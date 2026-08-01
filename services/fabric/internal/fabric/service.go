@@ -26,6 +26,7 @@ const (
 	providerFactsBatchTimeout        = 5 * time.Second
 	providerFactsBatchWorkerCount    = 8
 	runtimeHealthSummaryTimeout      = 5 * time.Second
+	workspaceImageRepository         = "uswccr.ccs.tencentyun.com/oplcloud/one-person-lab-app"
 )
 
 type Provider interface {
@@ -92,6 +93,97 @@ type storageAttachmentReadbackProvider interface {
 
 type storageVolumeStatusReader interface {
 	ReadStorageVolumeStatus(context.Context, StorageVolume) (StorageVolume, error)
+}
+
+type computeAllocationReadbackProvider interface {
+	ReadComputeAllocation(context.Context, ComputeAllocation) (ComputeAllocation, error)
+}
+
+type computeAllocationDiscoveryProvider interface {
+	DiscoverComputeAllocation(context.Context, ComputeAllocation, ComputeAllocationPreparation) (ComputeAllocation, error)
+}
+
+type normalComputeClaimStageProvider interface {
+	TagComputeMachineCVM(context.Context, ProviderMachine, MachineOwnership) error
+	ClaimComputeNode(context.Context, ComputeAllocation, MachineOwnership) error
+}
+
+type stagedStorageProvider interface {
+	CreateCBSVolume(context.Context, StorageVolumeInput) (StorageVolume, error)
+	ReadCBSVolume(context.Context, StorageVolumeInput, StorageVolume) (StorageVolume, error)
+	ApplyStaticStorageBinding(context.Context, StorageVolume) (StorageVolume, error)
+	ReadStaticStorageBinding(context.Context, StorageVolume) (StorageVolume, error)
+}
+
+type normalLaunchMutationBudget struct {
+	Attempted int `json:"attempted"`
+	Confirmed int `json:"confirmed"`
+	Unknown   int `json:"unknown"`
+	Max       int `json:"max"`
+}
+
+func reservedNormalLaunchMutationBudget() normalLaunchMutationBudget {
+	return normalLaunchMutationBudget{Attempted: 1, Confirmed: 0, Unknown: 1, Max: 1}
+}
+
+func confirmedNormalLaunchMutationBudget() normalLaunchMutationBudget {
+	return normalLaunchMutationBudget{Attempted: 1, Confirmed: 1, Unknown: 0, Max: 1}
+}
+
+func validNormalLaunchMutationBudget(value normalLaunchMutationBudget) bool {
+	return value.Max == 1 && value.Attempted == 1 && value.Confirmed >= 0 && value.Confirmed <= value.Attempted &&
+		value.Unknown >= 0 && value.Unknown <= value.Attempted && value.Confirmed+value.Unknown == value.Attempted
+}
+
+func normalLaunchStageBudget(payload map[string]any, stage string) (normalLaunchMutationBudget, bool, bool) {
+	if payload == nil {
+		return normalLaunchMutationBudget{}, false, true
+	}
+	budgets, present := payload["normalLaunchMutationBudget"]
+	if !present {
+		return normalLaunchMutationBudget{}, false, true
+	}
+	body, err := json.Marshal(budgets)
+	if err != nil {
+		return normalLaunchMutationBudget{}, false, false
+	}
+	decoded := map[string]normalLaunchMutationBudget{}
+	if json.Unmarshal(body, &decoded) != nil {
+		return normalLaunchMutationBudget{}, false, false
+	}
+	value, present := decoded[stage]
+	if !present {
+		return normalLaunchMutationBudget{}, false, true
+	}
+	return value, true, validNormalLaunchMutationBudget(value)
+}
+
+func withNormalLaunchStageBudget(payload map[string]any, stage string, budget normalLaunchMutationBudget) map[string]any {
+	next := maps.Clone(payload)
+	if next == nil {
+		next = map[string]any{}
+	}
+	budgets := map[string]any{}
+	if current, ok := next["normalLaunchMutationBudget"]; ok {
+		if body, err := json.Marshal(current); err == nil {
+			_ = json.Unmarshal(body, &budgets)
+		}
+	}
+	budgets[stage] = map[string]any{
+		"attempted": budget.Attempted,
+		"confirmed": budget.Confirmed,
+		"unknown":   budget.Unknown,
+		"max":       budget.Max,
+	}
+	next["normalLaunchMutationBudget"] = budgets
+	return next
+}
+
+func preserveNormalLaunchMutationBudget(next, current map[string]any) map[string]any {
+	if value, ok := current["normalLaunchMutationBudget"]; ok {
+		next["normalLaunchMutationBudget"] = value
+	}
+	return next
 }
 
 type runtimeHealthSummaryProvider interface {
@@ -171,7 +263,8 @@ func attachmentReadbackMatches(result StorageAttachment, input StorageAttachment
 
 func runtimeReadbackMatches(result WorkspaceRuntime, input WorkspaceRuntimeInput) bool {
 	return strings.HasPrefix(result.ID, "rt_") && result.OperationID == input.RuntimeOperationID &&
-		result.WorkspaceID == input.WorkspaceID && (result.Status == "running" || result.Status == "unready") && result.ServiceName != ""
+		result.WorkspaceID == input.WorkspaceID && (result.Status == "running" || result.Status == "unready") && result.ServiceName != "" &&
+		result.ImageID == input.ImageID
 }
 
 func gatewaySecretReadbackMatches(result GatewaySecret, input GatewaySecretInput) bool {
@@ -1060,6 +1153,370 @@ func (s *Service) startComputeAllocation(operation FabricOperation, allocation C
 }
 
 func (s *Service) finishCreateComputeAllocation(operation FabricOperation, allocation ComputeAllocation, dryRun bool) {
+	if !normalWorkspaceComputeBudgetEnabled(operation, s.provider) {
+		s.finishCreateComputeAllocationLegacy(operation, allocation, dryRun)
+		return
+	}
+	plan := packagePlan(allocation.PackageID)
+	poolKey := allocation.NodePoolID
+	leaseOwner, err := newLeaseToken()
+	if err != nil {
+		return
+	}
+	claimLease := func(duration time.Duration) bool {
+		now := s.now()
+		current, claimed, claimErr := s.operations.TryClaimComputePoolHead(context.Background(), operation.ID, poolKey, leaseOwner, now, now.Add(duration))
+		if claimErr != nil || !claimed {
+			return false
+		}
+		operation = current
+		return true
+	}
+	pollLease := s.computeAllocationAttemptTimeout + 2*s.computeAllocationPollInterval
+	if !claimLease(pollLease) {
+		return
+	}
+	terminal := false
+	defer func() {
+		if !terminal {
+			_ = s.operations.ReleaseComputePoolHead(context.Background(), operation.ID, poolKey, leaseOwner)
+		}
+	}()
+
+	prepared, hasPlan := decodeComputeAllocationPlan(operation)
+	if !hasPlan {
+		prepareCtx, cancel := context.WithTimeout(context.Background(), s.computeAllocationAttemptTimeout)
+		prepared, err = s.provider.PrepareComputeAllocation(prepareCtx, ComputeAllocationInput{
+			ID: allocation.ID, AccountID: allocation.AccountID, WorkspaceID: allocation.WorkspaceID,
+			PackageID: allocation.PackageID, NodePoolID: allocation.NodePoolID, DryRun: dryRun,
+		})
+		cancel()
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+			return
+		}
+		if err != nil {
+			terminal = true
+			_ = computeAllocationFailure(context.Background(), s, operation, allocation, prepared, err)
+			return
+		}
+		if err := validateComputeAllocationPreparation(prepared, allocation, plan); err != nil {
+			terminal = true
+			_ = computeAllocationFailure(context.Background(), s, operation, allocation, prepared, err)
+			return
+		}
+		operation.RedactedProviderPayload = computeAllocationOperationPayload(allocation, prepared)
+		if err := s.operations.SaveRuntime(context.Background(), operation); err != nil {
+			return
+		}
+	}
+
+	// The create reservation is durable and consumes the only external compute
+	// write. Once it exists, every replay uses Describe/readback; a second
+	// CreateComputeAllocation call is never safe after a lost response.
+	createBudget, createBudgetPresent, createBudgetValid := normalLaunchStageBudget(operation.RedactedProviderPayload, "compute_create")
+	if !createBudgetValid {
+		terminal = true
+		_ = computeAllocationFailure(context.Background(), s, operation, allocation, prepared, fmt.Errorf("compute_create_budget_invalid"))
+		return
+	}
+	freshCreateReservation := !createBudgetPresent
+	if freshCreateReservation {
+		createBudget = reservedNormalLaunchMutationBudget()
+		operation.RedactedProviderPayload = withNormalLaunchStageBudget(computeAllocationOperationPayload(allocation, prepared), "compute_create", createBudget)
+		if err := s.operations.SaveRuntime(context.Background(), operation); err != nil {
+			return
+		}
+		createBudgetPresent = true
+	}
+
+	var result ComputeAllocation
+	if createBudget.Confirmed == 1 {
+		if !decodeOperationResource(operation, &result) {
+			result = allocation
+		}
+		result = mergeComputeAllocation(result, allocation, prepared)
+	} else {
+		if !createBudgetPresent || createBudget.Attempted == 0 {
+			// Defensive branch: the reservation above should make this unreachable.
+			return
+		}
+		if createBudget.Unknown == 1 && createBudget.Confirmed == 0 && operation.RedactedProviderPayload != nil {
+			// Only the first owner of a fresh reservation may issue the create.
+			// A replay sees the same budget and jumps directly to readback below.
+			if freshCreateReservation {
+				if allocation.MachineName == "" && allocation.InstanceID == "" && allocation.NodeName == "" {
+					attemptCtx, cancel := context.WithTimeout(context.Background(), s.computeAllocationAttemptTimeout)
+					result, err = s.provider.CreateComputeAllocation(attemptCtx, ComputeAllocationExecution{Allocation: allocation, Plan: prepared, DryRun: dryRun})
+					cancel()
+					result = mergeComputeAllocation(result, allocation, prepared)
+					operation.ProviderRequestID = firstNonEmpty(result.ProviderRequestID, operation.ProviderRequestID)
+					operation.RedactedProviderPayload = preserveNormalLaunchMutationBudget(computeAllocationOperationPayload(result, prepared), operation.RedactedProviderPayload)
+					if err == nil && validateNewComputeAllocation(result, prepared) == nil {
+						createBudget = confirmedNormalLaunchMutationBudget()
+						operation.RedactedProviderPayload = withNormalLaunchStageBudget(operation.RedactedProviderPayload, "compute_create", createBudget)
+						if saveErr := s.operations.SaveRuntime(context.Background(), operation); saveErr != nil {
+							return
+						}
+					} else if saveErr := s.operations.SaveRuntime(context.Background(), operation); saveErr != nil {
+						return
+					}
+				}
+			}
+		}
+	}
+
+	if createBudget.Confirmed != 1 {
+		pollDeadline := time.Now().Add(s.computeAllocationPollWindow)
+		for {
+			if !claimLease(pollLease) {
+				return
+			}
+			readCtx, cancel := context.WithTimeout(context.Background(), s.computeAllocationAttemptTimeout)
+			readback, readErr := s.readComputeAllocationAfterReservation(readCtx, allocation, prepared, dryRun)
+			cancel()
+			readback = mergeComputeAllocation(readback, allocation, prepared)
+			if readErr == nil && validateNewComputeAllocation(readback, prepared) == nil && isReadyResourceStatus(readback.Status) {
+				result = readback
+				createBudget = confirmedNormalLaunchMutationBudget()
+				operation.ProviderRequestID = firstNonEmpty(result.ProviderRequestID, operation.ProviderRequestID)
+				operation.RedactedProviderPayload = withNormalLaunchStageBudget(preserveNormalLaunchMutationBudget(computeAllocationOperationPayload(result, prepared), operation.RedactedProviderPayload), "compute_create", createBudget)
+				if saveErr := s.operations.SaveRuntime(context.Background(), operation); saveErr != nil {
+					return
+				}
+				break
+			}
+			if time.Now().After(pollDeadline) {
+				terminal = true
+				_ = computeAllocationFailure(context.Background(), s, operation, result, prepared, ErrComputeAllocationPending)
+				return
+			}
+			wait := min(s.computeAllocationPollInterval, time.Until(pollDeadline))
+			if wait <= 0 {
+				return
+			}
+			timer := time.NewTimer(wait)
+			<-timer.C
+		}
+	}
+	if result.ID == "" {
+		if !decodeOperationResource(operation, &result) {
+			result = allocation
+		}
+		result = mergeComputeAllocation(result, allocation, prepared)
+	}
+
+	if !claimLease(s.computeAllocationFinalizeTimeout + s.computeAllocationPollInterval) {
+		return
+	}
+	finalizeCtx, cancel := context.WithTimeout(context.Background(), s.computeAllocationFinalizeTimeout)
+	defer cancel()
+	if err := validateNewComputeAllocation(result, prepared); err != nil {
+		terminal = true
+		_ = computeAllocationFailure(context.Background(), s, operation, result, prepared, err)
+		return
+	}
+	machine := ProviderMachine{
+		MachineID: result.MachineName, InstanceID: firstNonEmpty(result.InstanceID, result.CVMInstanceID), NodeName: result.NodeName,
+		PrivateIP: result.PrivateIP, PublicIP: result.PublicIP, InstanceType: result.InstanceType, Zone: result.Zone,
+		ChargeType: result.ChargeType, RenewFlag: result.RenewFlag, Deadline: result.Deadline, Ready: true,
+	}
+	ownership := MachineOwnership{
+		ID: "owner_" + stableSuffix(result.ID, result.MachineName)[:16], ResourceID: result.ID, AccountID: result.AccountID,
+		WorkspaceID: result.WorkspaceID, PackageID: result.PackageID, NodePoolID: result.NodePoolID, MachineID: result.MachineName,
+		InstanceID: firstNonEmpty(result.InstanceID, result.CVMInstanceID), NodeName: result.NodeName, Status: "claimed",
+		ProviderRequestID: result.ProviderRequestID, ClaimedAt: s.now(),
+	}
+	claimed, _, claimErr := s.operations.ClaimMachine(finalizeCtx, ownership)
+	if claimErr != nil {
+		terminal = true
+		_ = computeAllocationFailure(context.Background(), s, operation, result, prepared, claimErr)
+		return
+	}
+	result.CostTags = oplCostTags(result.AccountID, result.WorkspaceID, result.ID, claimed.ID)
+	if split, ok := s.provider.(normalComputeClaimStageProvider); ok {
+		if claimErr := s.convergeNormalComputeClaimStages(finalizeCtx, &operation, result, prepared, machine, claimed, split); claimErr != nil {
+			claimed.Status = "quarantined"
+			_ = s.operations.SaveMachineOwnership(context.Background(), claimed)
+			terminal = true
+			_ = computeAllocationClaimPending(context.Background(), s, operation, result, prepared, claimErr)
+			return
+		}
+	} else {
+		claimBudget, claimBudgetPresent, claimBudgetValid := normalLaunchStageBudget(operation.RedactedProviderPayload, "compute_claim")
+		if !claimBudgetValid {
+			claimed.Status = "quarantined"
+			_ = s.operations.SaveMachineOwnership(context.Background(), claimed)
+			terminal = true
+			_ = computeAllocationClaimPending(context.Background(), s, operation, result, prepared, fmt.Errorf("compute_claim_budget_invalid"))
+			return
+		}
+		freshClaimReservation := !claimBudgetPresent
+		if freshClaimReservation {
+			claimBudget = reservedNormalLaunchMutationBudget()
+			operation.RedactedProviderPayload = withNormalLaunchStageBudget(preserveNormalLaunchMutationBudget(computeAllocationOperationPayload(result, prepared), operation.RedactedProviderPayload), "compute_claim", claimBudget)
+			if err := s.operations.SaveRuntime(finalizeCtx, operation); err != nil {
+				return
+			}
+		}
+		claimConfirmed := claimBudget.Confirmed == 1
+		var tagErr error
+		if freshClaimReservation {
+			tagErr = s.provider.TagComputeMachine(finalizeCtx, machine, claimed)
+			if tagErr == nil {
+				claimBudget = confirmedNormalLaunchMutationBudget()
+				operation.RedactedProviderPayload = withNormalLaunchStageBudget(preserveNormalLaunchMutationBudget(computeAllocationOperationPayload(result, prepared), operation.RedactedProviderPayload), "compute_claim", claimBudget)
+				if saveErr := s.operations.SaveRuntime(finalizeCtx, operation); saveErr != nil {
+					return
+				}
+				claimConfirmed = true
+			} else {
+				claimed.Status = "quarantined"
+				_ = s.operations.SaveMachineOwnership(context.Background(), claimed)
+				operation.RedactedProviderPayload = withNormalLaunchStageBudget(preserveNormalLaunchMutationBudget(computeAllocationOperationPayload(result, prepared), operation.RedactedProviderPayload), "compute_claim", claimBudget)
+				if saveErr := s.operations.SaveRuntime(context.Background(), operation); saveErr != nil {
+					return
+				}
+			}
+		}
+		if !claimConfirmed {
+			reader, ok := s.provider.(computeClaimRecoveryProvider)
+			if !ok {
+				if tagErr == nil {
+					tagErr = fmt.Errorf("compute_claim_readback_unavailable")
+				}
+				terminal = true
+				_ = computeAllocationClaimPending(context.Background(), s, operation, result, prepared, tagErr)
+				return
+			}
+			readback, readErr := reader.ProveComputeClaimRecovery(finalizeCtx, result, prepared, claimed)
+			if readErr != nil || !validComputeClaimProviderProof(readback, result, prepared) || readback.CVMOwnershipState != "target_owned" || readback.NodeOwnershipState != "target_owned" {
+				claimed.Status = "quarantined"
+				_ = s.operations.SaveMachineOwnership(context.Background(), claimed)
+				terminal = true
+				if readErr == nil {
+					readErr = fmt.Errorf("compute_claim_readback_mismatch")
+				}
+				_ = computeAllocationClaimPending(context.Background(), s, operation, result, prepared, readErr)
+				return
+			}
+			claimBudget = confirmedNormalLaunchMutationBudget()
+			operation.RedactedProviderPayload = withNormalLaunchStageBudget(preserveNormalLaunchMutationBudget(computeAllocationOperationPayload(result, prepared), operation.RedactedProviderPayload), "compute_claim", claimBudget)
+			if saveErr := s.operations.SaveRuntime(finalizeCtx, operation); saveErr != nil {
+				return
+			}
+		}
+	}
+	verified, verifyErr := s.provider.SyncComputeAllocation(finalizeCtx, result)
+	verified = mergeComputeAllocation(verified, result, prepared)
+	if verifyErr != nil || validateNewComputeAllocation(verified, prepared) != nil || !isReadyResourceStatus(verified.Status) {
+		claimed.Status = "quarantined"
+		_ = s.operations.SaveMachineOwnership(context.Background(), claimed)
+		if verifyErr == nil {
+			verifyErr = fmt.Errorf("compute_provider_readback_mismatch")
+		}
+		terminal = true
+		_ = computeAllocationClaimPending(context.Background(), s, operation, verified, prepared, verifyErr)
+		return
+	}
+	claimed.Status = "active"
+	if err := s.operations.SaveMachineOwnership(finalizeCtx, claimed); err != nil {
+		terminal = true
+		_ = computeAllocationFailure(context.Background(), s, operation, verified, prepared, err)
+		return
+	}
+	operation.Status = "succeeded"
+	operation.FinishedAt = s.now()
+	operation.ProviderRequestID = firstNonEmpty(verified.ProviderRequestID, operation.ProviderRequestID)
+	operation.RedactedProviderPayload = preserveNormalLaunchMutationBudget(computeAllocationOperationPayload(verified, prepared), operation.RedactedProviderPayload)
+	if err := s.operations.SaveRuntime(finalizeCtx, operation); err != nil {
+		return
+	}
+	terminal = true
+	s.mu.Lock()
+	s.computes[verified.ID] = verified
+	s.mu.Unlock()
+}
+
+func normalWorkspaceComputeBudgetEnabled(operation FabricOperation, provider Provider) bool {
+	if !strings.HasSuffix(strings.TrimSpace(operation.IdempotencyKey), ":compute") {
+		return false
+	}
+	_, ok := provider.(computeAllocationReadbackProvider)
+	return ok
+}
+
+func (s *Service) convergeNormalComputeClaimStages(ctx context.Context, operation *FabricOperation, allocation ComputeAllocation, prepared ComputeAllocationPreparation, machine ProviderMachine, ownership MachineOwnership, provider normalComputeClaimStageProvider) error {
+	reader, ok := s.provider.(computeClaimRecoveryProvider)
+	if !ok {
+		return fmt.Errorf("compute_claim_readback_unavailable")
+	}
+	type claimStage struct {
+		name   string
+		mutate func() error
+		proved func(ComputeClaimProviderProof) bool
+	}
+	stages := []claimStage{
+		{
+			name: "compute_claim_cvm",
+			mutate: func() error {
+				return provider.TagComputeMachineCVM(ctx, machine, ownership)
+			},
+			proved: func(proof ComputeClaimProviderProof) bool { return proof.CVMOwnershipState == "target_owned" },
+		},
+		{
+			name: "compute_claim_node",
+			mutate: func() error {
+				return provider.ClaimComputeNode(ctx, allocation, ownership)
+			},
+			proved: func(proof ComputeClaimProviderProof) bool {
+				return proof.CVMOwnershipState == "target_owned" && proof.NodeOwnershipState == "target_owned"
+			},
+		},
+	}
+	for _, stage := range stages {
+		budget, present, valid := normalLaunchStageBudget(operation.RedactedProviderPayload, stage.name)
+		if !valid {
+			return fmt.Errorf("%s_budget_invalid", stage.name)
+		}
+		fresh := !present
+		if fresh {
+			budget = reservedNormalLaunchMutationBudget()
+			operation.RedactedProviderPayload = withNormalLaunchStageBudget(preserveNormalLaunchMutationBudget(computeAllocationOperationPayload(allocation, prepared), operation.RedactedProviderPayload), stage.name, budget)
+			if err := s.operations.SaveRuntime(ctx, *operation); err != nil {
+				return err
+			}
+		}
+		if budget.Confirmed == 1 {
+			continue
+		}
+		var mutationErr error
+		if fresh {
+			mutationErr = stage.mutate()
+		}
+		proof, readErr := reader.ProveComputeClaimRecovery(ctx, allocation, prepared, ownership)
+		if readErr != nil || !validComputeClaimProviderProof(proof, allocation, prepared) || !stage.proved(proof) {
+			if readErr != nil {
+				return readErr
+			}
+			if mutationErr != nil {
+				return mutationErr
+			}
+			return fmt.Errorf("%s_readback_mismatch", stage.name)
+		}
+		budget = confirmedNormalLaunchMutationBudget()
+		operation.RedactedProviderPayload = withNormalLaunchStageBudget(preserveNormalLaunchMutationBudget(computeAllocationOperationPayload(allocation, prepared), operation.RedactedProviderPayload), stage.name, budget)
+		if err := s.operations.SaveRuntime(ctx, *operation); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// finishCreateComputeAllocationLegacy preserves the established compute
+// contract for callers outside the normal Workspace launch. The durable
+// reservation/readback budget above is intentionally a narrow launch boundary;
+// unrelated compute operations retain their existing retry semantics.
+func (s *Service) finishCreateComputeAllocationLegacy(operation FabricOperation, allocation ComputeAllocation, dryRun bool) {
 	plan := packagePlan(allocation.PackageID)
 	poolKey := allocation.NodePoolID
 	leaseOwner, err := newLeaseToken()
@@ -1251,6 +1708,21 @@ func validateNewComputeAllocation(allocation ComputeAllocation, prepared Compute
 	return nil
 }
 
+func (s *Service) readComputeAllocationAfterReservation(ctx context.Context, allocation ComputeAllocation, prepared ComputeAllocationPreparation, dryRun bool) (ComputeAllocation, error) {
+	if reader, ok := s.provider.(computeAllocationDiscoveryProvider); ok {
+		return reader.DiscoverComputeAllocation(ctx, allocation, prepared)
+	}
+	if reader, ok := s.provider.(computeAllocationReadbackProvider); ok {
+		return reader.ReadComputeAllocation(ctx, allocation)
+	}
+	// Legacy providers can only read back after they have returned a complete
+	// identity. They must never be asked to create/scale as a replay fallback.
+	if allocation.MachineName == "" || firstNonEmpty(allocation.InstanceID, allocation.CVMInstanceID) == "" || allocation.NodeName == "" {
+		return allocation, ErrComputeAllocationPending
+	}
+	return s.provider.SyncComputeAllocation(ctx, allocation)
+}
+
 func mergeComputeAllocation(current, fallback ComputeAllocation, prepared ComputeAllocationPreparation) ComputeAllocation {
 	current.ID = firstNonEmpty(current.ID, fallback.ID)
 	current.AccountID = firstNonEmpty(current.AccountID, fallback.AccountID)
@@ -1288,7 +1760,7 @@ func computeAllocationFailure(ctx context.Context, s *Service, operation FabricO
 	operation.ErrorCode = errorCode(cause)
 	operation.FinishedAt = s.now()
 	operation.ProviderRequestID = firstNonEmpty(allocation.ProviderRequestID, operation.ProviderRequestID)
-	operation.RedactedProviderPayload = computeAllocationOperationPayload(allocation, prepared)
+	operation.RedactedProviderPayload = preserveNormalLaunchMutationBudget(computeAllocationOperationPayload(allocation, prepared), operation.RedactedProviderPayload)
 	if saveErr := s.operations.SaveRuntime(ctx, operation); saveErr != nil {
 		return saveErr
 	}
@@ -1311,7 +1783,7 @@ func computeAllocationClaimPending(ctx context.Context, s *Service, operation Fa
 	operation.ErrorCode = errorCode(cause)
 	operation.FinishedAt = time.Time{}
 	operation.ProviderRequestID = firstNonEmpty(allocation.ProviderRequestID, operation.ProviderRequestID)
-	operation.RedactedProviderPayload = computeAllocationOperationPayload(allocation, prepared)
+	operation.RedactedProviderPayload = preserveNormalLaunchMutationBudget(computeAllocationOperationPayload(allocation, prepared), operation.RedactedProviderPayload)
 	if saveErr := s.operations.SaveRuntime(ctx, operation); saveErr != nil {
 		return saveErr
 	}
@@ -1669,6 +2141,12 @@ func (s *Service) CreateStorageVolume(ctx context.Context, input StorageVolumeIn
 	if !validStorageRecoveryExpectation(input.ExpectedRecoveryState, input.ExpectedProviderResourceID) {
 		return StorageVolume{}, fmt.Errorf("storage_recovery_expectation_invalid")
 	}
+	// The staged boundary belongs to the Workspace launch orchestrator. Keep
+	// other monthly storage callers on their established provider contract until
+	// they explicitly carry the launch storage identity.
+	if staged, ok := s.provider.(stagedStorageProvider); ok && strings.HasSuffix(strings.TrimSpace(input.IdempotencyKey), ":storage") {
+		return s.createStorageVolumeStaged(ctx, input, staged)
+	}
 	if input.ID == "" {
 		if strings.TrimSpace(input.IdempotencyKey) == "" {
 			return StorageVolume{}, fmt.Errorf("storage_idempotency_key_required")
@@ -1747,6 +2225,236 @@ func (s *Service) CreateStorageVolume(ctx context.Context, input StorageVolumeIn
 		return nil
 	})
 	return volume, err
+}
+
+func (s *Service) createStorageVolumeStaged(ctx context.Context, input StorageVolumeInput, provider stagedStorageProvider) (StorageVolume, error) {
+	if input.ID == "" {
+		input.ID = "vol_" + stableSuffix("create_storage_volume", input.IdempotencyKey)[:16]
+	}
+	s.mu.Lock()
+	compute := s.computes[input.ComputeID]
+	s.mu.Unlock()
+	computeZone := strings.TrimSpace(compute.ProviderData["zone"])
+	if compute.ID == "" || compute.AccountID != input.AccountID || compute.WorkspaceID != input.WorkspaceID ||
+		!isReadyResourceStatus(compute.Status) || computeZone == "" || strings.TrimSpace(input.Zone) != computeZone {
+		return StorageVolume{}, fmt.Errorf("storage_compute_zone_mismatch")
+	}
+	requestHash := hashInput(input)
+	now := s.now()
+	parent := newOperation("create_storage_volume", "storage_volume", input.ID, input.AccountID, input.WorkspaceID, input.IdempotencyKey, requestHash, now)
+	parent.ID = "fop_storage_create_" + stableSuffix(input.IdempotencyKey)[:18]
+	parent.Status = "started"
+	parent.CreatedAt = now
+	parentResource := StorageVolume{ID: input.ID, OperationID: input.IdempotencyKey, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, Provider: "tencent-tke", SizeGB: input.SizeGB, Zone: input.Zone, CreatedAt: now}
+	fillOperationResource(&parent, parentResource)
+	storedParent, claimedParent, err := s.operations.ClaimRuntime(ctx, parent)
+	if err != nil {
+		return StorageVolume{}, err
+	}
+	if storedParent.RequestHash != requestHash {
+		return StorageVolume{}, fmt.Errorf("storage_create_idempotency_conflict")
+	}
+	if !claimedParent && storedParent.Status == "succeeded" {
+		var replayed StorageVolume
+		if decodeOperationResource(storedParent, &replayed) {
+			return replayed, nil
+		}
+		return StorageVolume{}, fmt.Errorf("storage_operation_corrupt")
+	}
+	parent = storedParent
+	input.OperationID = parent.OperationID
+
+	volume, err := s.runStorageCBSStage(ctx, input, parent, provider)
+	if err != nil {
+		return volume, err
+	}
+	volume, err = s.runStorageStaticBindingStage(ctx, input, parent, volume, provider)
+	if err != nil {
+		return volume, err
+	}
+	parent.Status = "succeeded"
+	parent.FinishedAt = s.now()
+	fillOperationResource(&parent, volume)
+	parent.RedactedProviderPayload = withNormalLaunchStageBudget(parent.RedactedProviderPayload, "cbs_create", confirmedNormalLaunchMutationBudget())
+	parent.RedactedProviderPayload = withNormalLaunchStageBudget(parent.RedactedProviderPayload, "static_binding_apply", confirmedNormalLaunchMutationBudget())
+	if err := s.operations.SaveRuntime(ctx, parent); err != nil {
+		return volume, err
+	}
+	s.mu.Lock()
+	s.volumes[volume.ID] = volume
+	s.mu.Unlock()
+	return volume, nil
+}
+
+func (s *Service) runStorageCBSStage(ctx context.Context, input StorageVolumeInput, parent FabricOperation, provider stagedStorageProvider) (StorageVolume, error) {
+	stageKey := input.IdempotencyKey + ":cbs_create"
+	stageHash := hashInput(map[string]any{"input": input, "stage": "cbs_create", "parentOperationId": parent.OperationID})
+	now := s.now()
+	stage := newOperation("cbs_create", "storage_volume", input.ID, input.AccountID, input.WorkspaceID, stageKey, stageHash, now)
+	stage.ID = "fop_cbs_create_" + stableSuffix(stageKey)[:18]
+	stage.Status = "started"
+	stage.CreatedAt = now
+	initial := StorageVolume{ID: input.ID, OperationID: input.IdempotencyKey, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, Provider: "tencent-tke", Status: "pending", SizeGB: input.SizeGB, Zone: input.Zone, CostTags: oplCostTags(input.AccountID, input.WorkspaceID, input.ID, parent.OperationID), CreatedAt: now}
+	fillOperationResource(&stage, initial)
+	budget, present, valid := normalLaunchStageBudget(stage.RedactedProviderPayload, "cbs_create")
+	if !present {
+		budget = reservedNormalLaunchMutationBudget()
+		stage.RedactedProviderPayload = withNormalLaunchStageBudget(stage.RedactedProviderPayload, "cbs_create", budget)
+	}
+	if !valid {
+		return initial, fmt.Errorf("cbs_create_budget_invalid")
+	}
+	stored, claimed, err := s.operations.ClaimRuntime(ctx, stage)
+	if err != nil {
+		return initial, err
+	}
+	if stored.RequestHash != stageHash {
+		return initial, fmt.Errorf("cbs_create_idempotency_conflict")
+	}
+	if !claimed {
+		var persisted StorageVolume
+		_ = decodeOperationResource(stored, &persisted)
+		if stored.Status == "succeeded" && validStorageStageVolume(persisted, input) {
+			return persisted, nil
+		}
+		readback, readErr := provider.ReadCBSVolume(ctx, input, persisted)
+		readback = normalizeStorageStageVolume(readback, input, parent.OperationID)
+		if readErr != nil || !validStorageStageVolume(readback, input) {
+			if readErr == nil {
+				readErr = fmt.Errorf("cbs_create_readback_mismatch")
+			}
+			return readback, readErr
+		}
+		budget = confirmedNormalLaunchMutationBudget()
+		if _, convergeErr := s.convergeRuntimeOperationReadback(ctx, stored, readback, map[string]any{"normalLaunchMutationBudget": map[string]any{"cbs_create": map[string]any{"attempted": budget.Attempted, "confirmed": budget.Confirmed, "unknown": budget.Unknown, "max": budget.Max}}}); convergeErr != nil {
+			return readback, convergeErr
+		}
+		return readback, nil
+	}
+	// Reservation is saved by ClaimRuntime before the provider call.
+	created, providerErr := provider.CreateCBSVolume(ctx, input)
+	created = normalizeStorageStageVolume(created, input, parent.OperationID)
+	if providerErr != nil {
+		stored.Status = "failed"
+		stored.FinishedAt = s.now()
+		stored.ErrorCode = errorCode(providerErr)
+		fillOperationResource(&stored, created)
+		stored.RedactedProviderPayload = withNormalLaunchStageBudget(stored.RedactedProviderPayload, "cbs_create", budget)
+		_ = s.operations.SaveRuntime(ctx, stored)
+		return created, providerErr
+	}
+	if !validStorageStageVolume(created, input) {
+		providerErr = fmt.Errorf("cbs_create_readback_mismatch")
+		stored.Status = "failed"
+		stored.FinishedAt = s.now()
+		stored.ErrorCode = errorCode(providerErr)
+		fillOperationResource(&stored, created)
+		stored.RedactedProviderPayload = withNormalLaunchStageBudget(stored.RedactedProviderPayload, "cbs_create", budget)
+		_ = s.operations.SaveRuntime(ctx, stored)
+		return created, providerErr
+	}
+	budget = confirmedNormalLaunchMutationBudget()
+	stored.Status = "succeeded"
+	stored.FinishedAt = s.now()
+	fillOperationResource(&stored, created)
+	stored.RedactedProviderPayload = withNormalLaunchStageBudget(stored.RedactedProviderPayload, "cbs_create", budget)
+	if err := s.operations.SaveRuntime(ctx, stored); err != nil {
+		return created, err
+	}
+	return created, nil
+}
+
+func (s *Service) runStorageStaticBindingStage(ctx context.Context, input StorageVolumeInput, parent FabricOperation, volume StorageVolume, provider stagedStorageProvider) (StorageVolume, error) {
+	stageKey := input.IdempotencyKey + ":static_binding_apply"
+	stageHash := hashInput(map[string]any{"input": input, "stage": "static_binding_apply", "parentOperationId": parent.OperationID, "providerResourceId": volume.ProviderResourceID})
+	now := s.now()
+	stage := newOperation("static_binding_apply", "storage_volume", input.ID, input.AccountID, input.WorkspaceID, stageKey, stageHash, now)
+	stage.ID = "fop_static_binding_" + stableSuffix(stageKey)[:18]
+	stage.Status = "started"
+	stage.CreatedAt = now
+	fillOperationResource(&stage, volume)
+	budget := reservedNormalLaunchMutationBudget()
+	stage.RedactedProviderPayload = withNormalLaunchStageBudget(stage.RedactedProviderPayload, "static_binding_apply", budget)
+	stored, claimed, err := s.operations.ClaimRuntime(ctx, stage)
+	if err != nil {
+		return volume, err
+	}
+	if stored.RequestHash != stageHash {
+		return volume, fmt.Errorf("static_binding_apply_idempotency_conflict")
+	}
+	if !claimed {
+		var persisted StorageVolume
+		_ = decodeOperationResource(stored, &persisted)
+		if persisted.ProviderResourceID != volume.ProviderResourceID || !validStorageStageVolume(persisted, input) {
+			return volume, fmt.Errorf("static_binding_apply_identity_mismatch")
+		}
+		readback, readErr := provider.ReadStaticStorageBinding(ctx, persisted)
+		readback = normalizeStorageStageVolume(readback, input, parent.OperationID)
+		if readErr != nil || !validStorageStageVolume(readback, input) || readback.Status != "ready" {
+			if readErr == nil {
+				readErr = fmt.Errorf("static_binding_apply_readback_mismatch")
+			}
+			return readback, readErr
+		}
+		budget = confirmedNormalLaunchMutationBudget()
+		if _, convergeErr := s.convergeRuntimeOperationReadback(ctx, stored, readback, map[string]any{"normalLaunchMutationBudget": map[string]any{"static_binding_apply": map[string]any{"attempted": budget.Attempted, "confirmed": budget.Confirmed, "unknown": budget.Unknown, "max": budget.Max}}}); convergeErr != nil {
+			return readback, convergeErr
+		}
+		return readback, nil
+	}
+	bound, providerErr := provider.ApplyStaticStorageBinding(ctx, volume)
+	bound = normalizeStorageStageVolume(bound, input, parent.OperationID)
+	if providerErr != nil || !validStorageStageVolume(bound, input) || bound.Status != "ready" {
+		if providerErr == nil {
+			providerErr = fmt.Errorf("static_binding_apply_readback_mismatch")
+		}
+		stored.Status = "failed"
+		stored.FinishedAt = s.now()
+		stored.ErrorCode = errorCode(providerErr)
+		fillOperationResource(&stored, bound)
+		stored.RedactedProviderPayload = withNormalLaunchStageBudget(stored.RedactedProviderPayload, "static_binding_apply", budget)
+		_ = s.operations.SaveRuntime(ctx, stored)
+		return bound, providerErr
+	}
+	budget = confirmedNormalLaunchMutationBudget()
+	stored.Status = "succeeded"
+	stored.FinishedAt = s.now()
+	fillOperationResource(&stored, bound)
+	stored.RedactedProviderPayload = withNormalLaunchStageBudget(stored.RedactedProviderPayload, "static_binding_apply", budget)
+	if err := s.operations.SaveRuntime(ctx, stored); err != nil {
+		return bound, err
+	}
+	return bound, nil
+}
+
+func normalizeStorageStageVolume(volume StorageVolume, input StorageVolumeInput, operationID string) StorageVolume {
+	volume.ID = firstNonEmpty(volume.ID, input.ID)
+	volume.OperationID = firstNonEmpty(volume.OperationID, input.IdempotencyKey)
+	volume.AccountID = firstNonEmpty(volume.AccountID, input.AccountID)
+	volume.WorkspaceID = firstNonEmpty(volume.WorkspaceID, input.WorkspaceID)
+	volume.Provider = firstNonEmpty(volume.Provider, "tencent-tke")
+	volume.SizeGB = firstInt(volume.SizeGB, input.SizeGB)
+	volume.Zone = firstNonEmpty(volume.Zone, input.Zone)
+	volume.CostTags = firstStringMap(volume.CostTags, oplCostTags(input.AccountID, input.WorkspaceID, input.ID, operationID))
+	return volume
+}
+
+func validStorageStageVolume(volume StorageVolume, input StorageVolumeInput) bool {
+	return volume.ID == input.ID && volume.AccountID == input.AccountID && volume.WorkspaceID == input.WorkspaceID && volume.SizeGB == input.SizeGB && volume.Zone == input.Zone && strings.HasPrefix(volume.ProviderResourceID, "disk-") && volume.Provider == "tencent-tke" && volume.RenewFlag == "NOTIFY_AND_MANUAL_RENEW" && volume.DiskType != "" && volume.Deadline != ""
+}
+
+func firstInt(value, fallback int) int {
+	if value != 0 {
+		return value
+	}
+	return fallback
+}
+
+func firstStringMap(value, fallback map[string]string) map[string]string {
+	if len(value) != 0 {
+		return value
+	}
+	return fallback
 }
 
 func validStorageRecoveryExpectation(state, providerResourceID string) bool {
@@ -2010,20 +2718,10 @@ func (s *Service) SyncStorageVolume(ctx context.Context, volumeID string) (Stora
 		_ = s.recordOperation(ctx, operation, "failed", volume, err)
 		return volume, err
 	}
-	if volume.Status == "pending" && !existing.CreatedAt.IsZero() && s.now().Sub(existing.CreatedAt) >= storageProvisionTimeout {
-		cleaned, cleanupErr := s.provider.DestroyStorageVolume(ctx, volume)
-		if cleanupErr != nil {
-			volume.Status = "quarantined"
-			if recordErr := s.recordOperation(ctx, operation, "failed", volume, cleanupErr); recordErr != nil {
-				return volume, recordErr
-			}
-			s.mu.Lock()
-			s.volumes[volumeID] = volume
-			s.mu.Unlock()
-			return volume, nil
-		}
-		volume = cleaned
-	}
+	// A paid launch owns the original storage identity for its full recovery
+	// window. A pending readback must never turn a timeout into a destructive
+	// cleanup or a replacement resource; the caller's durable stage budget
+	// decides whether to retry or move to manual review.
 	if err := s.recordOperation(ctx, operation, "succeeded", volume, nil); err != nil {
 		return volume, err
 	}
@@ -2279,6 +2977,9 @@ func (s *Service) CreateWorkspaceRuntime(ctx context.Context, input WorkspaceRun
 	runtime, err := s.provider.CreateWorkspaceRuntime(ctx, input, compute, volume)
 	runtime.OperationID = input.RuntimeOperationID
 	runtime.Access.Password = ""
+	if err == nil && runtime.ImageID != input.ImageID {
+		err = fmt.Errorf("workspace_runtime_image_mismatch")
+	}
 	if err == nil && action == "update_workspace_runtime" && (runtime.ID != original.ID || runtime.WorkspaceID != original.WorkspaceID) {
 		err = fmt.Errorf("workspace_runtime_identity_mismatch")
 	}
@@ -3206,10 +3907,23 @@ func validateRuntimeInput(input WorkspaceRuntimeInput, compute ComputeAllocation
 	if !isReadyResourceStatus(compute.Status) || volume.Status != "ready" {
 		return fmt.Errorf("resource_status_invalid")
 	}
+	if !validWorkspaceRuntimeImageIdentity(input.ImageID) {
+		return fmt.Errorf("workspace_image_identity_invalid")
+	}
 	if strings.TrimSpace(input.GatewaySecretRef) == "" || input.GatewaySecretRef != gatewaySecretName(input.WorkspaceID) {
 		return fmt.Errorf("gateway_secret_ref_mismatch")
 	}
 	return nil
+}
+
+func validWorkspaceRuntimeImageIdentity(value string) bool {
+	value = strings.TrimSpace(value)
+	prefix := workspaceImageRepository + "@sha256:"
+	if !strings.HasPrefix(value, prefix) || len(value) != len(prefix)+sha256.Size*2 {
+		return false
+	}
+	digest := strings.TrimPrefix(value, prefix)
+	return digest == strings.ToLower(digest) && validDigest(digest)
 }
 
 func isReadyResourceStatus(status string) bool {

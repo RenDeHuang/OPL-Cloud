@@ -28,11 +28,13 @@
     "writeType": "negative_redeem_code",
     "idempotencyIdentity": "opl:<environment>:<billing-operation-id>:charge:v1",
     "walletMutationSerializationContract": "opl-cloud-service-boundary-contract.json#services.controlPlane.walletMutationSerialization",
-    "exactBalanceEvidence": {
-      "precondition": "preBalanceUsdMicros > totalChargeUsdMicros",
-      "postcondition": "postBalanceUsdMicros == preBalanceUsdMicros - totalChargeUsdMicros",
-      "mismatchStatus": "manual_review",
-      "fabricWriteCountOnMismatch": 0
+    "chargeConfirmationEvidence": {
+      "authority": "exactly_one_matching_redeem_code_history_entry",
+      "balanceSnapshots": "preflight_and_projection_only",
+      "exactBalanceDeltaRequired": false,
+      "concurrentUsage": "allowed",
+      "balanceDeltaMismatchAlone": "not_manual_review",
+      "monthlyDebitMaximum": 1
     },
     "providerPreflight": {
       "timing": "before_first_charge_attempt",

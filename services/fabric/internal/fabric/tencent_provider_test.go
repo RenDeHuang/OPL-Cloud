@@ -1566,6 +1566,36 @@ func TestWorkspaceManifestIsolatesTenantRuntime(t *testing.T) {
 	}
 }
 
+func TestWorkspaceManifestUsesLaunchPinnedImageWhenFabricEnvironmentDrifts(t *testing.T) {
+	pinnedImage := "uswccr.ccs.tencentyun.com/oplcloud/one-person-lab-app@sha256:" + strings.Repeat("a", 64)
+	t.Setenv("OPL_WORKSPACE_IMAGE", "uswccr.ccs.tencentyun.com/oplcloud/one-person-lab-app@sha256:"+strings.Repeat("b", 64))
+	t.Setenv("OPL_AIONUI_ADMIN_PASSWORD_SEED", "workspace-secret-2026-very-long")
+	compute := ComputeAllocation{ID: "compute-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", PackageID: "basic", NodeSelector: map[string]any{"kubernetes.io/hostname": "node-alpha"}}
+	storage := StorageVolume{ID: "storage-alpha", WorkspaceID: "ws-alpha", ProviderResourceID: "disk-storage-alpha", ProviderData: map[string]string{"pvcName": "opl-storage-alpha-data"}}
+	input := WorkspaceRuntimeInput{
+		WorkspaceID: "ws-alpha", ComputeID: compute.ID, VolumeID: storage.ID,
+		AttachmentID: "att-alpha", AttachmentOperationID: "workspace-launch-alpha:attachment",
+		RuntimeOperationID: "workspace-launch-alpha:workspace:runtime", ImageID: pinnedImage,
+		GatewaySecretRef: "opl-gateway-ws-alpha",
+	}
+	runtimeID := "rt_" + stableSuffix(input.WorkspaceID, input.RuntimeOperationID)[:18]
+	var manifest map[string]any
+	if err := json.Unmarshal(workspaceManifest(input, "Alpha", "token", runtimeID, "opl-compute-alpha", compute, storage, nil), &manifest); err != nil {
+		t.Fatal(err)
+	}
+	for _, raw := range manifest["items"].([]any) {
+		resource := raw.(map[string]any)
+		if resource["kind"] != "Deployment" {
+			continue
+		}
+		if image := stringValue(firstContainerField(resource, "image")); image != pinnedImage {
+			t.Fatalf("workspace image=%q, want launch-pinned %q", image, pinnedImage)
+		}
+		return
+	}
+	t.Fatal("workspace Deployment missing")
+}
+
 func TestWorkspaceManifestBindsAttachmentAndRuntimeIdentity(t *testing.T) {
 	t.Setenv("OPL_WORKSPACE_IMAGE", "registry.example/one-person-lab-app@sha256:"+strings.Repeat("a", 64))
 	t.Setenv("OPL_AIONUI_ADMIN_PASSWORD_SEED", "workspace-secret-2026-very-long")
@@ -1976,6 +2006,7 @@ func TestWorkspaceManifestSkipsGatewaySecretWhenCodexKeyMissing(t *testing.T) {
 
 func TestTencentRuntimeCreationIsDeterministicAndUsesActualReadinessAfterApply(t *testing.T) {
 	t.Setenv("OPL_AIONUI_ADMIN_PASSWORD_SEED", "workspace-secret-2026-very-long")
+	workspaceImage := workspaceImageRepository + "@sha256:" + strings.Repeat("a", 64)
 	provider := NewTencentProvider()
 	var calls [][]string
 	var deployment map[string]any
@@ -2029,7 +2060,7 @@ func TestTencentRuntimeCreationIsDeterministicAndUsesActualReadinessAfterApply(t
 	input := WorkspaceRuntimeInput{
 		WorkspaceID: "ws-alpha", ComputeID: "compute-alpha", VolumeID: "storage-alpha",
 		AttachmentID: "att-alpha", AttachmentOperationID: "workspace-launch-alpha:attachment",
-		RuntimeOperationID: "runtime-unready", GatewaySecretRef: "opl-gateway-acct-alpha", IdempotencyKey: "runtime-unready",
+		RuntimeOperationID: "runtime-unready", ImageID: workspaceImage, GatewaySecretRef: "opl-gateway-acct-alpha", IdempotencyKey: "runtime-unready",
 	}
 	runtime, err := provider.CreateWorkspaceRuntime(context.Background(), input, ComputeAllocation{ID: "compute-alpha", AccountID: "acct-alpha", ServiceName: "opl-compute-alpha"}, StorageVolume{ID: "storage-alpha", ProviderResourceID: "pvc/opl-storage-alpha-data"})
 	if err != nil {
@@ -2153,7 +2184,8 @@ func TestTencentStorageAttachmentVerifiesBoundStaticVolumeBeforeRuntime(t *testi
 }
 
 func TestRuntimeStatusVerifiesFinalMountAfterPreRuntimeAttachment(t *testing.T) {
-	t.Setenv("OPL_WORKSPACE_IMAGE", "workspace-image:test")
+	workspaceImage := workspaceImageRepository + "@sha256:" + strings.Repeat("a", 64)
+	t.Setenv("OPL_WORKSPACE_IMAGE", workspaceImage)
 	provider := NewTencentProvider()
 	runtimeSelector := map[string]any{"app.kubernetes.io/name": "opl-compute-allocation", "app.kubernetes.io/instance": "opl-compute-alpha", "oplcloud.cn/compute-allocation-id": "compute-alpha"}
 	deployment := map[string]any{
@@ -2171,7 +2203,7 @@ func TestRuntimeStatusVerifiesFinalMountAfterPreRuntimeAttachment(t *testing.T) 
 		},
 		"spec": map[string]any{"replicas": 1, "selector": map[string]any{"matchLabels": runtimeSelector}, "template": map[string]any{"metadata": map[string]any{"labels": runtimeSelector, "annotations": map[string]any{"opl.medopl.cn/credential-revision": "revision-alpha"}}, "spec": map[string]any{
 			"automountServiceAccountToken": false, "dnsPolicy": "ClusterFirst", "securityContext": map[string]any{"runAsNonRoot": true, "runAsUser": 10001, "runAsGroup": 10001, "fsGroup": 10001, "seccompProfile": map[string]any{"type": "RuntimeDefault"}},
-			"containers": []any{map[string]any{"name": "workspace", "image": "workspace-image:test", "securityContext": map[string]any{"allowPrivilegeEscalation": false, "capabilities": map[string]any{"drop": []any{"ALL"}}}, "volumeMounts": workspaceDataMounts()}},
+			"containers": []any{map[string]any{"name": "workspace", "image": workspaceImage, "securityContext": map[string]any{"allowPrivilegeEscalation": false, "capabilities": map[string]any{"drop": []any{"ALL"}}}, "volumeMounts": workspaceDataMounts()}},
 			"volumes":    []any{map[string]any{"name": "workspace-data", "persistentVolumeClaim": map[string]any{"claimName": "opl-storage-alpha-data"}}},
 		}}},
 		"status": map[string]any{"observedGeneration": 2, "updatedReplicas": 1, "readyReplicas": 1, "availableReplicas": 1},
@@ -2202,7 +2234,7 @@ func TestRuntimeStatusVerifiesFinalMountAfterPreRuntimeAttachment(t *testing.T) 
 		}},
 		"spec": map[string]any{
 			"nodeName": "10.0.0.8", "automountServiceAccountToken": false, "dnsPolicy": "ClusterFirst", "securityContext": map[string]any{"runAsNonRoot": true, "runAsUser": 10001, "runAsGroup": 10001, "fsGroup": 10001, "seccompProfile": map[string]any{"type": "RuntimeDefault"}},
-			"containers": []any{map[string]any{"name": "workspace", "image": "workspace-image:test", "securityContext": map[string]any{"allowPrivilegeEscalation": false, "capabilities": map[string]any{"drop": []any{"ALL"}}}, "volumeMounts": workspaceDataMounts()}},
+			"containers": []any{map[string]any{"name": "workspace", "image": workspaceImage, "securityContext": map[string]any{"allowPrivilegeEscalation": false, "capabilities": map[string]any{"drop": []any{"ALL"}}}, "volumeMounts": workspaceDataMounts()}},
 			"volumes":    []any{map[string]any{"name": "workspace-data", "persistentVolumeClaim": map[string]any{"claimName": "opl-storage-alpha-data"}}},
 		},
 		"status": map[string]any{
@@ -2744,6 +2776,170 @@ func TestTencentProviderCreatesStaticRetainedCBSVolumeInComputeZone(t *testing.T
 	}
 	if pvc["kind"] != "PersistentVolumeClaim" || nested(pvc, "spec", "storageClassName") != "" || nested(pvc, "spec", "volumeName") != nested(pv, "metadata", "name") {
 		t.Fatalf("static PVC must prebind the retained PV: pv=%#v pvc=%#v", pv, pvc)
+	}
+}
+
+func TestTencentProviderStagedStorageSeparatesCBSCreateAndStaticBinding(t *testing.T) {
+	provider := NewTencentProvider()
+	var actions []string
+	provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
+		actions = append(actions, request.Action)
+		if request.Action != "create_storage_volume" && request.Action != "sync_storage_volume" {
+			return provisionerResponse{}, fmt.Errorf("unexpected staged action %q", request.Action)
+		}
+		return provisionerResponse{
+			OK: true, StorageVolumeID: "disk-staged-alpha", CBSStatus: "UNATTACHED", Status: "provider_ready", ProviderRequestID: "req-staged-cbs",
+			ProviderData: map[string]string{"diskType": "CLOUD_BSSD", "renewFlag": "NOTIFY_AND_MANUAL_RENEW", "deadline": "2026-08-16T00:00:00Z", "zone": "ap-guangzhou-3", "sizeGb": "10", "diskChargeType": "PREPAID"},
+		}, nil
+	}
+	volume := StorageVolume{
+		ID: "storage-staged-alpha", OperationID: "launch-staged:storage", AccountID: "acct-staged", WorkspaceID: "workspace-staged", Status: "provider_ready",
+		Provider: "tencent-tke", ProviderResourceID: "disk-staged-alpha", SizeGB: 10, DiskType: "CLOUD_BSSD", Zone: "ap-guangzhou-3",
+		RenewFlag: "NOTIFY_AND_MANUAL_RENEW", Deadline: "2026-08-16T00:00:00Z", CostTags: oplCostTags("acct-staged", "workspace-staged", "storage-staged-alpha", "launch-staged:storage"),
+		ProviderData: map[string]string{"pvName": "opl-storage-staged-alpha-pv", "pvcName": "opl-storage-staged-alpha-data"},
+	}
+	input := StorageVolumeInput{
+		ID: volume.ID, AccountID: volume.AccountID, WorkspaceID: volume.WorkspaceID, ComputeID: "compute-staged-alpha", Zone: volume.Zone, SizeGB: volume.SizeGB,
+		IdempotencyKey: volume.OperationID, OperationID: volume.OperationID,
+	}
+
+	// RED: normal launch must expose the staged provider boundary rather than
+	// coupling CBS creation to Kubernetes binding.
+	staged, ok := any(provider).(stagedStorageProvider)
+	if !ok {
+		t.Fatal("TencentProvider must implement stagedStorageProvider")
+	}
+	created, err := staged.CreateCBSVolume(context.Background(), input)
+	if err != nil || created.ProviderResourceID != "disk-staged-alpha" {
+		t.Fatalf("CBS create=%#v err=%v", created, err)
+	}
+	if len(actions) != 1 || actions[0] != "create_storage_volume" {
+		t.Fatalf("CBS stage actions=%v", actions)
+	}
+
+	read, err := staged.ReadCBSVolume(context.Background(), input, created)
+	if err != nil || read.ProviderResourceID != created.ProviderResourceID || len(actions) != 2 || actions[1] != "sync_storage_volume" {
+		t.Fatalf("CBS readback=%#v err=%v actions=%v", read, err, actions)
+	}
+
+	manifest := map[string]any{}
+	if err := json.Unmarshal(staticCBSManifest(volume), &manifest); err != nil {
+		t.Fatal(err)
+	}
+	items := manifest["items"].([]any)
+	pvc := items[1].(map[string]any)
+	pvc["status"] = map[string]any{"phase": "Bound"}
+	var applyCalls, getCalls int
+	provider.kubectl = func(_ context.Context, args []string, _ []byte) ([]byte, error) {
+		switch {
+		case slices.Equal(args, []string{"apply", "-f", "-"}):
+			applyCalls++
+			return nil, nil
+		case len(args) > 0 && args[0] == "get":
+			getCalls++
+			return mustJSON(manifest), nil
+		default:
+			return nil, fmt.Errorf("unexpected kubectl action %#v", args)
+		}
+	}
+	bound, err := staged.ApplyStaticStorageBinding(context.Background(), read)
+	if err != nil || bound.Status != "ready" || applyCalls != 1 {
+		t.Fatalf("static binding=%#v err=%v applyCalls=%d getCalls=%d", bound, err, applyCalls, getCalls)
+	}
+	readBound, err := staged.ReadStaticStorageBinding(context.Background(), bound)
+	if err != nil || readBound.Status != "ready" || applyCalls != 1 || getCalls == 0 {
+		t.Fatalf("static readback=%#v err=%v applyCalls=%d getCalls=%d", readBound, err, applyCalls, getCalls)
+	}
+}
+
+func TestTencentProviderCBSResponseLossDiscoversExactDiskWithoutPersistedProviderID(t *testing.T) {
+	provider := NewTencentProvider()
+	var actions []string
+	provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
+		actions = append(actions, request.Action)
+		switch request.Action {
+		case "discover_storage_volume":
+			return provisionerResponse{
+				OK: true, StorageState: "storage_existing_exact", StorageVolumeID: "disk-response-loss", Status: "provider_ready",
+				ProviderRequestID: "req-discover", ProviderData: map[string]string{"diskType": "CLOUD_BSSD", "diskChargeType": "PREPAID", "renewFlag": "NOTIFY_AND_MANUAL_RENEW", "deadline": "2026-09-01T00:00:00Z", "zone": "ap-guangzhou-3", "sizeGb": "10"},
+			}, nil
+		case "sync_storage_volume":
+			if request.Storage.ID != "disk-response-loss" {
+				t.Fatalf("sync disk=%q", request.Storage.ID)
+			}
+			return provisionerResponse{
+				OK: true, StorageVolumeID: "disk-response-loss", Status: "provider_ready", CBSStatus: "UNATTACHED",
+				ProviderRequestID: "req-sync", ProviderData: map[string]string{"diskType": "CLOUD_BSSD", "diskChargeType": "PREPAID", "renewFlag": "NOTIFY_AND_MANUAL_RENEW", "deadline": "2026-09-01T00:00:00Z", "zone": "ap-guangzhou-3", "sizeGb": "10"},
+			}, nil
+		default:
+			return provisionerResponse{}, fmt.Errorf("unexpected action %q", request.Action)
+		}
+	}
+	input := StorageVolumeInput{
+		ID: "storage-response-loss", AccountID: "acct-alpha", WorkspaceID: "workspace-alpha", ComputeID: "compute-alpha",
+		Zone: "ap-guangzhou-3", SizeGB: 10, IdempotencyKey: "workspace-launch:storage", OperationID: "op_create_storage_volume_fixture",
+	}
+	persisted := StorageVolume{
+		ID: input.ID, OperationID: input.IdempotencyKey, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID,
+		Provider: "tencent-tke", Status: "pending", SizeGB: input.SizeGB, Zone: input.Zone,
+		CostTags: oplCostTags(input.AccountID, input.WorkspaceID, input.ID, input.OperationID),
+	}
+
+	readback, err := provider.ReadCBSVolume(context.Background(), input, persisted)
+	if err != nil || readback.ProviderResourceID != "disk-response-loss" || readback.Status != "ready" {
+		t.Fatalf("readback=%#v err=%v", readback, err)
+	}
+	if !slices.Equal(actions, []string{"discover_storage_volume", "sync_storage_volume"}) {
+		t.Fatalf("actions=%v", actions)
+	}
+}
+
+func TestTencentProviderStagedStorageRejectsCBSZoneDrift(t *testing.T) {
+	provider := NewTencentProvider()
+	provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
+		if request.Action != "sync_storage_volume" {
+			t.Fatalf("unexpected provider action=%q", request.Action)
+		}
+		return provisionerResponse{
+			OK: true, StorageVolumeID: "disk-staged-drift", CBSStatus: "UNATTACHED", Status: "provider_ready", ProviderRequestID: "req-readback",
+			ProviderData: map[string]string{"diskType": "CLOUD_BSSD", "renewFlag": "NOTIFY_AND_MANUAL_RENEW", "deadline": "2026-08-16T00:00:00Z", "zone": "ap-guangzhou-4", "sizeGb": "10", "diskChargeType": "PREPAID"},
+		}, nil
+	}
+	input := StorageVolumeInput{ID: "storage-staged-drift", AccountID: "acct-staged", WorkspaceID: "workspace-staged", Zone: "ap-guangzhou-3", SizeGB: 10, OperationID: "launch-staged:storage"}
+	persisted := StorageVolume{ID: input.ID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, Provider: "tencent-tke", ProviderResourceID: "disk-staged-drift", SizeGB: input.SizeGB, Zone: input.Zone, DiskType: "CLOUD_BSSD", CostTags: oplCostTags(input.AccountID, input.WorkspaceID, input.ID, input.OperationID)}
+	readback, err := provider.ReadCBSVolume(context.Background(), input, persisted)
+	if err == nil || readback.Zone != "ap-guangzhou-4" {
+		t.Fatalf("zone drift must fail closed: readback=%#v err=%v", readback, err)
+	}
+}
+
+func TestTencentProviderStagedStorageRejectsStaticBindingLabelDriftWithoutApply(t *testing.T) {
+	provider := NewTencentProvider()
+	volume := StorageVolume{
+		ID: "storage-label-drift", AccountID: "acct-staged", WorkspaceID: "workspace-staged", Provider: "tencent-tke", ProviderResourceID: "disk-label-drift", SizeGB: 10, Zone: "ap-guangzhou-3",
+		CostTags: oplCostTags("acct-staged", "workspace-staged", "storage-label-drift", "launch-staged:storage"), ProviderData: map[string]string{"pvName": "opl-storage-label-drift-pv", "pvcName": "opl-storage-label-drift-data"},
+	}
+	manifest := map[string]any{}
+	if err := json.Unmarshal(staticCBSManifest(volume), &manifest); err != nil {
+		t.Fatal(err)
+	}
+	items := manifest["items"].([]any)
+	for _, item := range items {
+		resource := item.(map[string]any)
+		resource["metadata"].(map[string]any)["labels"].(map[string]any)["oplcloud.cn/workspace-id"] = "workspace-other"
+	}
+	items[1].(map[string]any)["status"] = map[string]any{"phase": "Bound"}
+	applyCalls := 0
+	provider.kubectl = func(_ context.Context, args []string, _ []byte) ([]byte, error) {
+		if slices.Equal(args, []string{"apply", "-f", "-"}) {
+			applyCalls++
+			return nil, nil
+		}
+		return mustJSON(manifest), nil
+	}
+	readback, err := provider.ReadStaticStorageBinding(context.Background(), volume)
+	if err == nil || readback.Status == "ready" || applyCalls != 0 {
+		t.Fatalf("label drift must fail closed without apply: readback=%#v err=%v applyCalls=%d", readback, err, applyCalls)
 	}
 }
 

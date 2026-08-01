@@ -718,6 +718,47 @@ func (p *TencentProvider) CreateComputeAllocation(ctx context.Context, input Com
 	return allocation, nil
 }
 
+func (p *TencentProvider) DiscoverComputeAllocation(ctx context.Context, allocation ComputeAllocation, prepared ComputeAllocationPreparation) (ComputeAllocation, error) {
+	packagePlan := packagePlan(prepared.PackageID)
+	response, err := p.provision(ctx, provisionerRequest{
+		Action: "read_compute_allocation", AccountID: allocation.AccountID, PackageID: allocation.PackageID,
+		Pool: provisionerPool{
+			ID: prepared.PoolID, PackageID: prepared.PackageID, InstanceType: prepared.InstanceType, NodePoolID: prepared.NodePoolID,
+			CPU: uint64(packagePlan.CPU), MemoryGB: uint64(packagePlan.MemoryGB), MaxReplicas: prepared.MaxReplicas,
+			BaselineReplicas: prepared.BaselineReplicas, TargetReplicas: prepared.TargetReplicas,
+			BeforeMachineNames: append([]string(nil), prepared.BeforeMachineNames...),
+		},
+		Allocation: provisionerAllocation{ID: allocation.ID},
+	})
+	if err != nil {
+		return allocation, err
+	}
+	allocation.ProviderRequestID = firstNonEmpty(response.ProviderRequestID, allocation.ProviderRequestID)
+	allocation.PoolID = prepared.PoolID
+	allocation.NodePoolID = prepared.NodePoolID
+	allocation.InstanceType = prepared.InstanceType
+	allocation.Status = firstNonEmpty(response.Status, allocation.Status)
+	allocation.InstanceID = response.InstanceID
+	allocation.CVMInstanceID = response.InstanceID
+	allocation.MachineName = response.ProviderData["machineName"]
+	allocation.NodeName = response.NodeName
+	allocation.PrivateIP = response.PrivateIP
+	allocation.PublicIP = response.PublicIP
+	allocation.Zone = response.ProviderData["zone"]
+	allocation.ChargeType = response.ProviderData["chargeType"]
+	allocation.RenewFlag = response.ProviderData["renewFlag"]
+	allocation.Deadline = response.ProviderData["deadline"]
+	allocation.ProviderData = maps.Clone(response.ProviderData)
+	allocation.ProviderResourceID = firstNonEmpty(response.InstanceID, allocation.ProviderResourceID)
+	if !response.OK {
+		if response.Retryable {
+			return allocation, ErrComputeAllocationPending
+		}
+		return allocation, provisionerError(response)
+	}
+	return allocation, nil
+}
+
 func (p *TencentProvider) ProveComputeClaimRecovery(ctx context.Context, allocation ComputeAllocation, prepared ComputeAllocationPreparation, ownership MachineOwnership) (ComputeClaimProviderProof, error) {
 	proof := ComputeClaimProviderProof{Reason: "identity_mismatch"}
 	plan := packagePlan(allocation.PackageID)
@@ -1145,6 +1186,17 @@ func computeClaimNodeOwnershipState(raw []byte, allocation ComputeAllocation, ow
 }
 
 func (p *TencentProvider) TagComputeMachine(ctx context.Context, machine ProviderMachine, ownership MachineOwnership) error {
+	if err := p.TagComputeMachineCVM(ctx, machine, ownership); err != nil {
+		return err
+	}
+	return p.ClaimComputeNode(ctx, ComputeAllocation{
+		ID: ownership.ResourceID, AccountID: ownership.AccountID, WorkspaceID: ownership.WorkspaceID,
+		PackageID: ownership.PackageID, NodePoolID: ownership.NodePoolID, MachineName: machine.MachineID,
+		InstanceID: machine.InstanceID, CVMInstanceID: machine.InstanceID, NodeName: machine.NodeName, PrivateIP: machine.PrivateIP,
+	}, ownership)
+}
+
+func (p *TencentProvider) TagComputeMachineCVM(ctx context.Context, machine ProviderMachine, ownership MachineOwnership) error {
 	if machine.InstanceID == "" || machine.NodeName == "" {
 		return fmt.Errorf("compute_machine_identity_required")
 	}
@@ -1169,12 +1221,12 @@ func (p *TencentProvider) TagComputeMachine(ctx context.Context, machine Provide
 	if !response.OK || !validConfirmedComputeClaimMutation(response.MutationEvidence, response.MutationCount, 5) {
 		return provisionerError(response)
 	}
-	target := protectedresource.Target{PackageID: ownership.PackageID, NodePoolID: ownership.NodePoolID, MachineID: machine.MachineID, NodeName: machine.NodeName, CVMID: machine.InstanceID}
-	_, nodeErr := p.convergeComputeClaimNode(ctx, ComputeAllocation{
-		ID: ownership.ResourceID, AccountID: ownership.AccountID, WorkspaceID: ownership.WorkspaceID,
-		PackageID: ownership.PackageID, NodePoolID: ownership.NodePoolID, MachineName: machine.MachineID,
-		InstanceID: machine.InstanceID, CVMInstanceID: machine.InstanceID, NodeName: machine.NodeName, PrivateIP: machine.PrivateIP,
-	}, ownership, target)
+	return nil
+}
+
+func (p *TencentProvider) ClaimComputeNode(ctx context.Context, allocation ComputeAllocation, ownership MachineOwnership) error {
+	target := protectedresource.Target{PackageID: ownership.PackageID, NodePoolID: ownership.NodePoolID, MachineID: allocation.MachineName, NodeName: allocation.NodeName, CVMID: firstNonEmpty(allocation.InstanceID, allocation.CVMInstanceID)}
+	_, nodeErr := p.convergeComputeClaimNode(ctx, allocation, ownership, target)
 	if nodeErr != nil {
 		return fmt.Errorf("compute_machine_node_claim_%s", safeComputeClaimRecoveryReason(nodeErr.Reason, "provider_describe"))
 	}
@@ -1382,6 +1434,192 @@ func (p *TencentProvider) CreateStorageVolume(ctx context.Context, input Storage
 		return volume, err
 	}
 	return volume, nil
+}
+
+// CreateCBSVolume is the first normal-launch storage stage. It deliberately
+// stops after the provider has returned a disk identity; Kubernetes binding is
+// handled by ApplyStaticStorageBinding so a lost response can be recovered by
+// a Describe-only readback without reapplying either side.
+func (p *TencentProvider) CreateCBSVolume(ctx context.Context, input StorageVolumeInput) (StorageVolume, error) {
+	now := time.Now().UTC()
+	id := firstNonEmpty(input.ID, fabricID("vol", input.WorkspaceID, now))
+	diskType := firstNonEmpty(os.Getenv("TENCENT_CBS_DISK_TYPE"), "CLOUD_BSSD")
+	tags := oplCostTags(input.AccountID, input.WorkspaceID, id, input.OperationID)
+	volume := StorageVolume{
+		ID: id, OperationID: input.IdempotencyKey, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, Status: "pending", Provider: "tencent-tke",
+		SizeGB: input.SizeGB, DiskType: diskType, Zone: input.Zone, CostTags: tags, CreatedAt: now,
+		ProviderData: map[string]string{"pvName": k8sName(id) + "-pv", "pvcName": k8sName(id) + "-data"},
+	}
+	response, err := p.provision(ctx, provisionerRequest{
+		Action: "create_storage_volume", AccountID: input.AccountID, Tags: tags,
+		Storage: provisionerStorage{
+			ID: id, SizeGB: uint64(input.SizeGB), Zone: input.Zone, DiskType: diskType,
+			ExpectedState: input.ExpectedRecoveryState, ExpectedProviderResourceID: input.ExpectedProviderResourceID,
+			AllowExistingExactReplay: input.AllowExistingExactReplay,
+		},
+	})
+	if err != nil {
+		return volume, err
+	}
+	volume.ProviderRequestID = response.ProviderRequestID
+	if strings.HasPrefix(response.StorageVolumeID, "disk-") {
+		volume.ProviderResourceID = response.StorageVolumeID
+	}
+	applyStorageReadback(&volume, response)
+	if !response.OK {
+		return volume, provisionerError(response)
+	}
+	if volume.ProviderResourceID == "" {
+		return volume, fmt.Errorf("storage_cbs_identity_required")
+	}
+	return volume, nil
+}
+
+// ReadCBSVolume is intentionally Describe-only. The persisted disk identity
+// is authoritative; a response naming another disk is an identity failure.
+func (p *TencentProvider) ReadCBSVolume(ctx context.Context, input StorageVolumeInput, persisted StorageVolume) (StorageVolume, error) {
+	if persisted.ID == "" {
+		persisted.ID = input.ID
+	}
+	if persisted.AccountID == "" {
+		persisted.AccountID = input.AccountID
+	}
+	if persisted.WorkspaceID == "" {
+		persisted.WorkspaceID = input.WorkspaceID
+	}
+	if persisted.SizeGB == 0 {
+		persisted.SizeGB = input.SizeGB
+	}
+	if persisted.Zone == "" {
+		persisted.Zone = input.Zone
+	}
+	if persisted.Provider == "" {
+		persisted.Provider = "tencent-tke"
+	}
+	if len(persisted.CostTags) == 0 {
+		persisted.CostTags = oplCostTags(input.AccountID, input.WorkspaceID, input.ID, input.OperationID)
+	}
+	if persisted.ID == "" || persisted.AccountID != input.AccountID || persisted.WorkspaceID != input.WorkspaceID || persisted.SizeGB != input.SizeGB || persisted.Zone != input.Zone {
+		return persisted, fmt.Errorf("storage_cbs_readback_identity_required")
+	}
+	if !strings.HasPrefix(persisted.ProviderResourceID, "disk-") {
+		discovery, discoverErr := p.DiscoverStorageRecovery(ctx, input)
+		if discoverErr != nil || discovery.State != "storage_existing_exact" || !strings.HasPrefix(discovery.ProviderResourceID, "disk-") {
+			if discoverErr != nil {
+				return persisted, discoverErr
+			}
+			return persisted, fmt.Errorf("storage_cbs_readback_identity_required")
+		}
+		persisted.ProviderResourceID = discovery.ProviderResourceID
+		persisted.ProviderRequestID = firstNonEmpty(discovery.ProviderRequestID, persisted.ProviderRequestID)
+	}
+	readback, err := p.ReadStorageVolume(ctx, persisted)
+	if err != nil {
+		return readback, err
+	}
+	if readback.ProviderResourceID != persisted.ProviderResourceID ||
+		readback.ID != persisted.ID || readback.AccountID != persisted.AccountID || readback.WorkspaceID != persisted.WorkspaceID ||
+		readback.SizeGB != persisted.SizeGB || readback.Zone != persisted.Zone ||
+		(persisted.DiskType != "" && readback.DiskType != persisted.DiskType) ||
+		(persisted.RenewFlag != "" && readback.RenewFlag != persisted.RenewFlag) ||
+		(persisted.Deadline != "" && readback.Deadline != persisted.Deadline) ||
+		(readback.ProviderData["zone"] != "" && readback.ProviderData["zone"] != persisted.Zone) {
+		return readback, fmt.Errorf("storage_cbs_readback_identity_mismatch")
+	}
+	return readback, nil
+}
+
+// ApplyStaticStorageBinding is the sole Kubernetes write in the staged
+// storage path. It always follows the apply with the same strict GET proof.
+func (p *TencentProvider) ApplyStaticStorageBinding(ctx context.Context, volume StorageVolume) (StorageVolume, error) {
+	if err := validateStaticStorageBindingInput(volume); err != nil {
+		return volume, err
+	}
+	if _, err := p.callKubectl(ctx, []string{"apply", "-f", "-"}, staticCBSManifest(volume), protectedresource.Target{}); err != nil {
+		return volume, err
+	}
+	return p.ReadStaticStorageBinding(ctx, volume)
+}
+
+// ReadStaticStorageBinding performs only Kubernetes GETs and verifies the
+// original PV/PVC/CBS identity. Missing, duplicate, or drifted objects fail
+// closed; a not-yet-Bound PVC is returned as pending for later readback.
+func (p *TencentProvider) ReadStaticStorageBinding(ctx context.Context, volume StorageVolume) (StorageVolume, error) {
+	if err := validateStaticStorageBindingInput(volume); err != nil {
+		return volume, err
+	}
+	pvName, pvcName := storageBindingNames(volume)
+	raw, err := p.callKubectl(ctx, []string{"get", "pv/" + pvName, "pvc/" + pvcName, "--ignore-not-found", "-o", "json"}, nil, protectedresource.Target{})
+	if err != nil {
+		return volume, err
+	}
+	items, err := strictKubectlItems(raw)
+	if err != nil {
+		return volume, err
+	}
+	var pv, pvc map[string]any
+	pvMatches, pvcMatches := 0, 0
+	for _, item := range items {
+		resource, ok := item.(map[string]any)
+		if !ok {
+			return volume, fmt.Errorf("storage_static_binding_response_invalid")
+		}
+		switch {
+		case stringValue(resource["kind"]) == "PersistentVolume" && stringValue(nested(resource, "metadata", "name")) == pvName:
+			pv, pvMatches = resource, pvMatches+1
+		case stringValue(resource["kind"]) == "PersistentVolumeClaim" && stringValue(nested(resource, "metadata", "name")) == pvcName:
+			pvc, pvcMatches = resource, pvcMatches+1
+		}
+	}
+	if pvMatches != 1 || pvcMatches != 1 {
+		return volume, fmt.Errorf("storage_static_binding_unverified")
+	}
+	expectedTags := volume.CostTags
+	if len(expectedTags) == 0 {
+		expectedTags = oplCostTags(volume.AccountID, volume.WorkspaceID, volume.ID, volume.OperationID)
+	}
+	for _, resource := range []map[string]any{pv, pvc} {
+		for key, expected := range k8sCostLabels(expectedTags) {
+			if expected != "" && stringValue(nested(resource, "metadata", "labels", key)) != expected {
+				return volume, fmt.Errorf("storage_static_binding_identity_mismatch")
+			}
+		}
+	}
+	pvSpec, _ := pv["spec"].(map[string]any)
+	pvcSpec, _ := pvc["spec"].(map[string]any)
+	expectedCapacity := fmt.Sprintf("%dGi", volume.SizeGB)
+	expectedNodeAffinity := map[string]any{"required": map[string]any{"nodeSelectorTerms": []any{map[string]any{"matchExpressions": []any{map[string]any{"key": "topology.kubernetes.io/zone", "operator": "In", "values": []any{volume.Zone}}}}}}}
+	pvAccessModes, _ := pvSpec["accessModes"].([]any)
+	pvcAccessModes, _ := pvcSpec["accessModes"].([]any)
+	if stringValue(nested(pv, "spec", "csi", "driver")) != "com.tencent.cloud.csi.cbs" ||
+		stringValue(nested(pv, "spec", "csi", "volumeHandle")) != volume.ProviderResourceID ||
+		stringValue(pvSpec["persistentVolumeReclaimPolicy"]) != "Retain" || stringValue(pvSpec["storageClassName"]) != "" ||
+		stringValue(pvcSpec["storageClassName"]) != "" || stringValue(pvcSpec["volumeName"]) != pvName ||
+		len(pvAccessModes) != 1 || stringValue(pvAccessModes[0]) != "ReadWriteOnce" || len(pvcAccessModes) != 1 || stringValue(pvcAccessModes[0]) != "ReadWriteOnce" ||
+		stringValue(nested(pv, "spec", "capacity", "storage")) != expectedCapacity || stringValue(nested(pvc, "spec", "resources", "requests", "storage")) != expectedCapacity ||
+		!reflect.DeepEqual(pvSpec["nodeAffinity"], expectedNodeAffinity) {
+		return volume, fmt.Errorf("storage_static_binding_identity_mismatch")
+	}
+	volume.ProviderData = firstStringMap(volume.ProviderData, map[string]string{})
+	volume.ProviderData["pvName"], volume.ProviderData["pvcName"] = pvName, pvcName
+	if stringValue(nested(pvc, "status", "phase")) == "Bound" {
+		volume.Status = "ready"
+	} else {
+		volume.Status = "pending"
+	}
+	return volume, nil
+}
+
+func validateStaticStorageBindingInput(volume StorageVolume) error {
+	if volume.ID == "" || volume.AccountID == "" || volume.WorkspaceID == "" || !strings.HasPrefix(volume.ProviderResourceID, "disk-") ||
+		volume.SizeGB <= 0 || strings.TrimSpace(volume.Zone) == "" {
+		return fmt.Errorf("storage_static_binding_identity_required")
+	}
+	pvName, pvcName := storageBindingNames(volume)
+	if pvName == "" || pvcName == "" {
+		return fmt.Errorf("storage_static_binding_names_required")
+	}
+	return nil
 }
 
 func (p *TencentProvider) DiscoverStorageRecovery(ctx context.Context, input StorageVolumeInput) (StorageRecoveryDiscovery, error) {
@@ -1737,6 +1975,9 @@ func (p *TencentProvider) CreateWorkspaceRuntime(ctx context.Context, input Work
 	if compute.ID == "" || volume.ID == "" {
 		return WorkspaceRuntime{}, fmt.Errorf("workspace_runtime_resources_required")
 	}
+	if !validWorkspaceRuntimeImageIdentity(input.ImageID) {
+		return WorkspaceRuntime{}, fmt.Errorf("workspace_image_identity_invalid")
+	}
 	now := time.Now().UTC()
 	serviceName := firstNonEmpty(compute.ServiceName, k8sName(compute.ID))
 	credentialSeed := stableID(input.WorkspaceID, input.IdempotencyKey)[:24]
@@ -1876,7 +2117,7 @@ func (p *TencentProvider) WorkspaceRuntimeStatus(ctx context.Context, workspaceI
 	readyAddresses := endpointReadyAddresses(endpoints)
 	checks := []Check{
 		{Name: "deployment_ready", OK: readyReplicas > 0 && availableReplicas > 0, Details: mergeDetails(map[string]any{"readyReplicas": readyReplicas, "availableReplicas": availableReplicas}, podDetails)},
-		{Name: "workspace_image_pulled", OK: image == os.Getenv("OPL_WORKSPACE_IMAGE")},
+		{Name: "workspace_image_pulled", OK: validWorkspaceRuntimeImageIdentity(image), Details: map[string]any{"imageId": image}},
 		{Name: "pvc_bound", OK: stringValue(nested(pvc, "status", "phase")) == "Bound"},
 		{Name: "deployment_uses_retained_pvc", OK: workloadUsesPVC(deployment, pvcName)},
 		{Name: "ready_pod_uses_retained_pvc", OK: readyPodUsesPVC, Details: podDetails},
@@ -1908,7 +2149,7 @@ func (p *TencentProvider) WorkspaceRuntimeStatus(ctx context.Context, workspaceI
 	if runtimeID == "" || runtimeOperationID == "" || costTags["opl_workspace_id"] != workspaceID || costTags["opl_resource_id"] != runtimeID || costTags["opl_operation_id"] != runtimeOperationID || costTags["opl_account_id"] == "" {
 		return WorkspaceRuntime{WorkspaceID: workspaceID, ServiceName: serviceName}, workspaceRuntimeStatusError("readback_mismatch")
 	}
-	return WorkspaceRuntime{ID: runtimeID, OperationID: runtimeOperationID, WorkspaceID: workspaceID, URL: fmt.Sprintf("https://%s/w/%s/", workspaceDomain(), workspaceID), Status: status, ServiceName: serviceName, Access: access, Ready: ready, Checks: checks, CostTags: costTags}, nil
+	return WorkspaceRuntime{ID: runtimeID, OperationID: runtimeOperationID, WorkspaceID: workspaceID, URL: fmt.Sprintf("https://%s/w/%s/", workspaceDomain(), workspaceID), Status: status, ServiceName: serviceName, ImageID: image, Access: access, Ready: ready, Checks: checks, CostTags: costTags}, nil
 }
 
 func (p *TencentProvider) BindWorkspaceRuntimeGatewaySecret(ctx context.Context, input WorkspaceRuntimeGatewaySecretInput) (WorkspaceRuntimeGatewaySecretBinding, error) {
@@ -2430,7 +2671,7 @@ func workspaceManifest(input WorkspaceRuntimeInput, workspaceName string, creden
 	if gatewaySecretRef != "" {
 		workspaceEnv = append(workspaceEnv, map[string]any{"name": "OPL_GATEWAY_API_KEY_FILE", "value": "/run/secrets/opl_gateway_api_key"})
 	}
-	workspaceContainer := map[string]any{"name": "workspace", "image": os.Getenv("OPL_WORKSPACE_IMAGE"), "imagePullPolicy": "IfNotPresent", "ports": []any{map[string]any{"name": "http", "containerPort": 3000}}, "env": workspaceEnv, "volumeMounts": []any{map[string]any{"name": "workspace-data", "mountPath": "/data", "subPath": "data"}, map[string]any{"name": "workspace-data", "mountPath": "/projects", "subPath": "projects"}, map[string]any{"name": "workspace-secrets", "mountPath": "/run/secrets", "readOnly": true}}, "resources": workspaceResources(plan), "readinessProbe": map[string]any{"httpGet": map[string]any{"path": "/healthz", "port": 3000}, "initialDelaySeconds": 10, "periodSeconds": 10}, "securityContext": map[string]any{"allowPrivilegeEscalation": false, "capabilities": map[string]any{"drop": []any{"ALL"}}}}
+	workspaceContainer := map[string]any{"name": "workspace", "image": input.ImageID, "imagePullPolicy": "IfNotPresent", "ports": []any{map[string]any{"name": "http", "containerPort": 3000}}, "env": workspaceEnv, "volumeMounts": []any{map[string]any{"name": "workspace-data", "mountPath": "/data", "subPath": "data"}, map[string]any{"name": "workspace-data", "mountPath": "/projects", "subPath": "projects"}, map[string]any{"name": "workspace-secrets", "mountPath": "/run/secrets", "readOnly": true}}, "resources": workspaceResources(plan), "readinessProbe": map[string]any{"httpGet": map[string]any{"path": "/healthz", "port": 3000}, "initialDelaySeconds": 10, "periodSeconds": 10}, "securityContext": map[string]any{"allowPrivilegeEscalation": false, "capabilities": map[string]any{"drop": []any{"ALL"}}}}
 	secretLabels := stringAnyMap(mergeStringMaps(map[string]string{"app.kubernetes.io/name": "opl-workspace-entry", "app.kubernetes.io/instance": serviceName}, identityLabels, k8sCostLabels(tags)))
 	secret := map[string]any{"apiVersion": "v1", "kind": "Secret", "metadata": map[string]any{"name": serviceName + "-env", "labels": secretLabels, "annotations": tags}, "type": "Opaque", "data": secretData}
 	secretSources := []any{map[string]any{"secret": map[string]any{"name": serviceName + "-env", "items": secretItems}}}

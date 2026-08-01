@@ -131,11 +131,14 @@ test("launch freeze fixes the V2 products, owner lanes, settlement, and verifica
   assert.deepEqual(freeze.monthlySettlement.protocol, ["debit", "fabric_fulfillment", "claim", "activate", "record_workspace_receipt"]);
   assert.equal(freeze.monthlySettlement.confirmedNoResourceAfterDebit, "idempotent_refund");
   assert.equal(freeze.monthlySettlement.partialOrUnknownProviderResult, "manual_review_without_refund");
-  assert.deepEqual(freeze.monthlySettlement.exactBalanceEvidence, {
-    precondition: "preBalanceUsdMicros > totalChargeUsdMicros",
-    postcondition: "postBalanceUsdMicros == preBalanceUsdMicros - totalChargeUsdMicros",
-    mismatchStatus: "manual_review",
-    fabricWriteCountOnMismatch: 0
+  assert.equal(freeze.monthlySettlement.exactBalanceEvidence, undefined);
+  assert.deepEqual(freeze.monthlySettlement.chargeConfirmationEvidence, {
+    authority: "exactly_one_matching_redeem_code_history_entry",
+    balanceSnapshots: "preflight_and_projection_only",
+    exactBalanceDeltaRequired: false,
+    concurrentUsage: "allowed",
+    balanceDeltaMismatchAlone: "not_manual_review",
+    monthlyDebitMaximum: 1
   });
   assert.deepEqual(freeze.workspaceLaunch.providerPreflightRecovery, {
     timing: "before_first_charge_attempt",
@@ -500,7 +503,8 @@ test("human invariants reject paid per-run resource verification", async () => {
   assert.doesNotMatch(invariants, /Fabric prepares before charge/);
   assert.match(invariants, /POST \/api\/operator\/accounts.*ProvisionAccountRequest/is);
   assert.match(invariants, /lockResource\("sub2api-wallet", accountId\)/);
-  assert.match(invariants, /preBalanceUsdMicros > totalChargeUsdMicros/);
+  assert.doesNotMatch(invariants, /postBalanceUsdMicros == preBalanceUsdMicros - totalChargeUsdMicros/);
+  assert.match(invariants, /unique matching Redeem Code history entry is the authority/);
   assert.match(invariants, /ChargeAttempted.*ChargeConfirmation.*skip/is);
   assert.match(invariants, /POST \/fabric\/workspace-activation-truth.*Describe.*GET.*mutation.*0/is);
   assert.match(invariants, /runnerDirectMutationCounts.*0.*does not mean.*background.*0/is);

@@ -31,6 +31,7 @@ const (
 	workspaceLaunchAction        = "workspace.launch.v2"
 	workspaceLaunchSchemaVersion = 2
 	workspaceLaunchStageMax      = 1
+	workspaceImageRepository     = "uswccr.ccs.tencentyun.com/oplcloud/one-person-lab-app"
 )
 
 var workspaceLaunchContinuationStages = []string{"storage", "attachment", "secret", "runtime", "activation", "receipt"}
@@ -96,6 +97,7 @@ type workspaceLaunchOperation struct {
 	PeriodStart                string                                   `json:"periodStart,omitempty"`
 	PaidThrough                string                                   `json:"paidThrough,omitempty"`
 	BillingAnchorDay           int                                      `json:"billingAnchorDay,omitempty"`
+	BillingPeriodState         string                                   `json:"billingPeriodState,omitempty"`
 	ComputeID                  string                                   `json:"computeAllocationId"`
 	ComputePoolID              string                                   `json:"computePoolId,omitempty"`
 	ComputeNodePoolID          string                                   `json:"computeNodePoolId"`
@@ -408,8 +410,8 @@ func newWorkspaceLaunchOperation(accountID, ownerUserID, name, packageID string,
 		RequestHash: stableID("workspace-launch-v2", accountID, ownerUserID, name, packageID, strconv.Itoa(storageGB), strconv.FormatBool(autoRenew), priceVersion, workspaceImageDigest),
 		AccountID:   accountID, OwnerUserID: ownerUserID, WorkspaceID: workspaceID, Name: name, PackageID: packageID,
 		StorageGB: storageGB, AutoRenew: autoRenew, PriceVersion: priceVersion, TotalChargeUSDMicros: totalChargeUSDMicros,
-		WorkspaceImageDigest: workspaceImageDigest,
-		PeriodStart:          now.Format(time.RFC3339Nano), PaidThrough: nextBillingMonth(now, now.Day()).Format(time.RFC3339Nano), BillingAnchorDay: now.Day(),
+		WorkspaceImageDigest:  workspaceImageDigest,
+		BillingPeriodState:    "pending",
 		ComputeID:             resourceIDForMutation("ca", accountID, operationID+":compute"),
 		StorageID:             resourceIDForMutation("vol", accountID, operationID+":storage"),
 		AttachmentOperationID: operationID + ":attachment", WorkspaceOperationID: operationID + ":workspace",
@@ -471,13 +473,19 @@ func completedWorkspaceLaunchStages(phase string) []string {
 
 func currentWorkspaceImageDigest() string {
 	value := strings.TrimSpace(os.Getenv("OPL_WORKSPACE_IMAGE"))
-	if repository, digest, ok := strings.Cut(value, "@"); ok && repository != "" {
-		value = digest
-	}
-	if computeClaimCloudDigestPattern.MatchString(value) {
+	digest, ok := strings.CutPrefix(value, workspaceImageRepository+"@")
+	if ok && computeClaimCloudDigestPattern.MatchString(digest) {
 		return value
 	}
 	return ""
+}
+
+func validWorkspaceImageIdentity(value string) bool {
+	if computeClaimCloudDigestPattern.MatchString(value) {
+		return true
+	}
+	digest, ok := strings.CutPrefix(value, workspaceImageRepository+"@")
+	return ok && computeClaimCloudDigestPattern.MatchString(digest)
 }
 
 func decodeWorkspaceLaunchOperation(row map[string]any) (workspaceLaunchOperation, error) {
@@ -491,16 +499,21 @@ func decodeWorkspaceLaunchOperation(row map[string]any) (workspaceLaunchOperatio
 	if operation.RefundCode == "" {
 		operation.RefundCode = monthlyRefundCode(monthlyEnvironment(), operation.ID)
 	}
-	if operation.PeriodStart == "" {
-		operation.PeriodStart = operation.CreatedAt
-	}
-	if start, err := time.Parse(time.RFC3339, operation.PeriodStart); err == nil {
-		if operation.BillingAnchorDay == 0 {
-			operation.BillingAnchorDay = start.Day()
+	if operation.BillingPeriodState == "" {
+		if operation.PeriodStart == "" {
+			operation.PeriodStart = operation.CreatedAt
 		}
-		if operation.PaidThrough == "" {
-			operation.PaidThrough = nextBillingMonth(start, operation.BillingAnchorDay).Format(time.RFC3339Nano)
+		if start, err := time.Parse(time.RFC3339, operation.PeriodStart); err == nil {
+			if operation.BillingAnchorDay == 0 {
+				operation.BillingAnchorDay = start.Day()
+			}
+			if operation.PaidThrough == "" {
+				operation.PaidThrough = nextBillingMonth(start, operation.BillingAnchorDay).Format(time.RFC3339Nano)
+			}
 		}
+		operation.BillingPeriodState = "frozen"
+	} else if operation.BillingPeriodState == "pending" && (operation.PeriodStart != "" || operation.PaidThrough != "" || operation.BillingAnchorDay != 0) {
+		return workspaceLaunchOperation{}, errInvalidWorkspaceLaunchOperation
 	}
 	if !normalizeWorkspaceLaunchContinuationAttemptBudgets(&operation) {
 		return workspaceLaunchOperation{}, errInvalidWorkspaceLaunchOperation
@@ -667,6 +680,9 @@ func (app *controlPlaneServer) runWorkspaceLaunch(ctx context.Context, service *
 		if !ownerActive {
 			return app.manualReviewWorkspaceLaunchDebit(ctx, &operation, "workspace_launch_owner_identity_mismatch")
 		}
+		if currentWorkspaceImageDigest() != operation.WorkspaceImageDigest || !validWorkspaceImageIdentity(operation.WorkspaceImageDigest) {
+			return app.retryWorkspaceLaunchDebit(ctx, &operation, "workspace_image_digest_drift", errors.New("workspace_image_digest_drift"))
+		}
 		if !operation.ChargeAttempted && operation.ChargeConfirmation == nil {
 			if code, preflightErr := verifyWorkspaceLaunchPreflight(ctx, service, operation); preflightErr != nil {
 				return app.retryWorkspaceLaunchDebit(ctx, &operation, code, preflightErr)
@@ -825,6 +841,7 @@ func (app *controlPlaneServer) fulfillWorkspaceLaunch(ctx context.Context, servi
 				OwnerID: operation.OwnerUserID, Name: operation.Name, PackageID: operation.PackageID, AttachmentID: operation.AttachmentID,
 				AttachmentOperationID: operation.AttachmentOperationID, RuntimeOperationID: operation.WorkspaceOperationID + ":runtime",
 				ComputeID: operation.ComputeID, VolumeID: operation.StorageID, GatewaySecretRef: operation.GatewaySecretRef,
+				WorkspaceImageID: operation.WorkspaceImageDigest,
 			}
 			budget := operation.ContinuationAttemptBudgets["runtime"]
 			var workspace domain.WorkspaceProjection
@@ -1099,6 +1116,9 @@ func workspaceLaunchProviderExpectation(operation workspaceLaunchOperation, reso
 }
 
 func verifyWorkspaceLaunchPreflight(ctx context.Context, service *controlplane.Service, operation workspaceLaunchOperation) (string, error) {
+	if currentWorkspaceImageDigest() != operation.WorkspaceImageDigest || !validWorkspaceImageIdentity(operation.WorkspaceImageDigest) {
+		return "workspace_image_digest_drift", errors.New("workspace_image_digest_drift")
+	}
 	zone := monthlyComputeLaunchZone()
 	inputs := []clients.MonthlyPreflightInput{
 		{ResourceType: "compute", PackageID: operation.PackageID, Zone: zone},
@@ -1119,7 +1139,7 @@ func verifyWorkspaceLaunchPreflight(ctx context.Context, service *controlplane.S
 
 func (app *controlPlaneServer) verifyWorkspaceLaunchActivationTruth(ctx context.Context, service *controlplane.Service, operation *workspaceLaunchOperation) error {
 	input := workspaceActivationTruthInputFromLaunch(*operation)
-	if !computeClaimCloudDigestPattern.MatchString(input.WorkspaceImageDigest) {
+	if !validWorkspaceImageIdentity(input.WorkspaceImageDigest) {
 		return errors.New("workspace_launch_activation_truth_identity_mismatch")
 	}
 	truth, err := service.WorkspaceActivationTruth(ctx, input)
@@ -2414,7 +2434,7 @@ func (app *controlPlaneServer) workspaceLaunchReadbackRecoveryProofForOperation(
 	budget := operation.ContinuationAttemptBudgets[stage]
 	if !hasUnknown || stage == "" || operation.Status != "manual_review" || operation.Phase != workspaceLaunchReadbackRecoveryPhase(stage) ||
 		budget != (workspaceLaunchStageBudget{Attempted: 1, Unknown: 1, Max: workspaceLaunchStageMax}) ||
-		!computeClaimCloudDigestPattern.MatchString(operation.WorkspaceImageDigest) {
+		!validWorkspaceImageIdentity(operation.WorkspaceImageDigest) {
 		return operation, workspaceLaunchReadbackRecoveryProof{}, errInvalidBillingReview
 	}
 	customer, err := app.workspaceLaunchReadbackRecoveryCustomer(ctx, operation)
@@ -2692,8 +2712,7 @@ func (app *controlPlaneServer) recoverWorkspaceLaunchReview(ctx context.Context,
 }
 
 func workspaceLaunchChargeConfirmed(operation workspaceLaunchOperation, userID int64) bool {
-	return operation.ChargeAttempted && operation.PostChargeBalanceKnown && operation.PreChargeBalanceUSDMicros > operation.TotalChargeUSDMicros &&
-		operation.PostChargeBalanceUSDMicros == operation.PreChargeBalanceUSDMicros-operation.TotalChargeUSDMicros &&
+	return operation.ChargeAttempted && (!operation.PostChargeBalanceKnown || operation.PostChargeBalanceUSDMicros >= 0) &&
 		monthlyChargeConfirmationMatches(operation.ChargeConfirmation, operation.RedeemCode, userID, operation.TotalChargeUSDMicros)
 }
 
@@ -2964,13 +2983,28 @@ func (app *controlPlaneServer) debitWorkspaceLaunch(ctx context.Context, service
 	if code := sub2APIReconciliationCode(row, userID, history); code != "" {
 		return app.manualReviewWorkspaceLaunchDebit(ctx, operation, code)
 	}
-	postCharge, err := service.Sub2APIBalance(ctx, userID)
-	if err != nil {
-		return app.retryWorkspaceLaunchDebit(ctx, operation, "post_charge_balance_unavailable", err)
+	if operation.BillingPeriodState == "pending" {
+		chargeHistory := history[operation.RedeemCode]
+		if chargeHistory.UsedAt == nil || chargeHistory.UsedAt.IsZero() {
+			return app.manualReviewWorkspaceLaunchDebit(ctx, operation, "workspace_launch_billing_period_invalid")
+		}
+		periodStart := chargeHistory.UsedAt.UTC()
+		operation.PeriodStart = periodStart.Format(time.RFC3339Nano)
+		operation.BillingAnchorDay = periodStart.Day()
+		operation.PaidThrough = nextBillingMonth(periodStart, operation.BillingAnchorDay).Format(time.RFC3339Nano)
+		operation.BillingPeriodState = "frozen"
+		if err := app.persistWorkspaceLaunch(ctx, operation); err != nil {
+			return err
+		}
+	} else if operation.BillingPeriodState != "frozen" {
+		return app.manualReviewWorkspaceLaunchDebit(ctx, operation, "workspace_launch_billing_period_invalid")
 	}
-	operation.PostChargeBalanceKnown, operation.PostChargeBalanceUSDMicros = true, postCharge.USDMicros
-	if operation.PreChargeBalanceUSDMicros <= operation.TotalChargeUSDMicros || postCharge.USDMicros < 0 || postCharge.USDMicros != operation.PreChargeBalanceUSDMicros-operation.TotalChargeUSDMicros {
-		return app.manualReviewWorkspaceLaunchDebit(ctx, operation, "post_charge_balance_invalid")
+	postCharge, err := service.Sub2APIBalance(ctx, userID)
+	if err == nil {
+		operation.PostChargeBalanceKnown, operation.PostChargeBalanceUSDMicros = true, postCharge.USDMicros
+		if postCharge.USDMicros < 0 {
+			return app.manualReviewWorkspaceLaunchDebit(ctx, operation, "post_charge_balance_invalid")
+		}
 	}
 	operation.Status, operation.Phase, operation.ErrorCode = "debited", "debited", ""
 	releaseWorkspaceLaunchLease(operation)

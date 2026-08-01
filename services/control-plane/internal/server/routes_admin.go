@@ -389,7 +389,7 @@ func workspaceComputeClaimRecoveryRequestFromMap(operationID string, input map[s
 		forbiddenWrites, forbiddenOK := workspaceComputeClaimStringList(input["forbiddenWrites"])
 		if !validBillingReviewOpaqueID(request.ApprovalID) || !validBillingReviewOpaqueID(request.RecoveryKey) ||
 			!computeClaimApprovalDigestPattern.MatchString(request.ApprovalDigest) || !computeClaimMergedSHAPattern.MatchString(request.MergedMainSHA) ||
-			!computeClaimCloudDigestPattern.MatchString(request.CloudImageDigest) || !computeClaimCloudDigestPattern.MatchString(request.WorkspaceImageDigest) ||
+			!computeClaimCloudDigestPattern.MatchString(request.CloudImageDigest) || !validWorkspaceImageIdentity(request.WorkspaceImageDigest) ||
 			expiresErr != nil || !expiresAt.After(time.Now().UTC()) || emailErr != nil || customerEmail != request.CustomerEmail ||
 			request.Confirmation != "RECOVER_PROVEN_COMPUTE_AND_CONTINUE_ORIGINAL_LAUNCH" || !resourcesOK || !limitsOK || !allowedOK || !forbiddenOK ||
 			!workspaceComputeClaimStorageBindingValid(resources.StorageState, resources.StorageProviderResourceID) ||
@@ -569,7 +569,7 @@ func workspaceLaunchReadbackRecoveryApprovalFromMap(value any, key string) (work
 	email, emailErr := canonicalEmail(approval.Customer.Email)
 	if approval.SchemaVersion != 1 || !validBillingReviewOpaqueID(approval.ApprovalID) || !validBillingReviewOpaqueID(approval.RecoveryKey) ||
 		!computeClaimApprovalDigestPattern.MatchString(approval.ApprovalDigest) || !computeClaimMergedSHAPattern.MatchString(approval.MergedMainSHA) ||
-		!computeClaimCloudDigestPattern.MatchString(approval.CloudImageDigest) || !computeClaimCloudDigestPattern.MatchString(approval.WorkspaceImageDigest) ||
+		!computeClaimCloudDigestPattern.MatchString(approval.CloudImageDigest) || !validWorkspaceImageIdentity(approval.WorkspaceImageDigest) ||
 		expiresErr != nil || emailErr != nil || email != approval.Customer.Email || approval.IdempotencyKey != key ||
 		approval.Confirmation != workspaceLaunchReadbackRecoveryConfirmation || !workspaceLaunchReadbackRecoveryStageValid(approval.Stage) ||
 		approval.Target.LaunchOperationID == "" || approval.Target.AccountID == "" || approval.Target.WorkspaceID == "" || approval.Target.ComputeAllocationID == "" ||

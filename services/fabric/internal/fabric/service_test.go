@@ -362,27 +362,16 @@ func (p *pendingStorageProvider) DestroyStorageVolume(_ context.Context, volume 
 	return volume, nil
 }
 
-func TestSyncStorageVolumeCleansUpTimedOutPVCBeforeFailing(t *testing.T) {
+func TestSyncStorageVolumePreservesTimedOutPendingStorage(t *testing.T) {
 	now := time.Date(2026, 7, 12, 12, 0, 0, 0, time.UTC)
-	for _, tc := range []struct {
-		name       string
-		deleteErr  error
-		wantStatus string
-	}{
-		{name: "released", wantStatus: "released"},
-		{name: "delete unconfirmed", deleteErr: errors.New("pvc delete failed"), wantStatus: "quarantined"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			provider := &pendingStorageProvider{deleteErr: tc.deleteErr}
-			service := NewServiceWithOperationStore(provider, NewMemoryOperationStore())
-			service.now = func() time.Time { return now }
-			service.volumes["storage-alpha"] = StorageVolume{ID: "storage-alpha", AccountID: "acct-alpha", Status: "pending", ProviderResourceID: "pvc/storage-alpha-data", CreatedAt: now.Add(-11 * time.Minute)}
+	provider := &pendingStorageProvider{deleteErr: errors.New("delete must not be called")}
+	service := NewServiceWithOperationStore(provider, NewMemoryOperationStore())
+	service.now = func() time.Time { return now }
+	service.volumes["storage-alpha"] = StorageVolume{ID: "storage-alpha", AccountID: "acct-alpha", Status: "pending", ProviderResourceID: "pvc/storage-alpha-data", CreatedAt: now.Add(-11 * time.Minute)}
 
-			volume, err := service.SyncStorageVolume(context.Background(), "storage-alpha")
-			if err != nil || volume.Status != tc.wantStatus || provider.deleteCalls != 1 {
-				t.Fatalf("timed out storage = %#v err=%v deleteCalls=%d", volume, err, provider.deleteCalls)
-			}
-		})
+	volume, err := service.SyncStorageVolume(context.Background(), "storage-alpha")
+	if err != nil || volume.Status != "pending" || provider.deleteCalls != 0 {
+		t.Fatalf("timed out storage = %#v err=%v deleteCalls=%d", volume, err, provider.deleteCalls)
 	}
 }
 
@@ -1080,7 +1069,7 @@ func TestResourceMutationsAppendFabricOperationFacts(t *testing.T) {
 	runtime, err := service.CreateWorkspaceRuntime(ctx, WorkspaceRuntimeInput{
 		WorkspaceID: "ws-alpha", ComputeID: compute.ID, VolumeID: volume.ID,
 		AttachmentID: attachment.ID, AttachmentOperationID: attachment.OperationID,
-		RuntimeOperationID: "ops-runtime", ImageID: "one-person-lab-app",
+		RuntimeOperationID: "ops-runtime", ImageID: testWorkspaceRuntimeImageID(),
 		GatewaySecretRef: gatewaySecretName("ws-alpha"), IdempotencyKey: "ops-runtime",
 	})
 	if err != nil {
@@ -1246,7 +1235,7 @@ func TestWorkspaceRuntimeCreationDoesNotReturnCredential(t *testing.T) {
 	runtime, err := service.CreateWorkspaceRuntime(ctx, WorkspaceRuntimeInput{
 		WorkspaceID: "ws-alpha", ComputeID: compute.ID, VolumeID: volume.ID, AttachmentID: attachment.ID,
 		AttachmentOperationID: "access-attachment", RuntimeOperationID: "access-runtime",
-		ImageID: "one-person-lab-app", GatewaySecretRef: gatewaySecretName("ws-alpha"), IdempotencyKey: "access-runtime",
+		ImageID: testWorkspaceRuntimeImageID(), GatewaySecretRef: gatewaySecretName("ws-alpha"), IdempotencyKey: "access-runtime",
 	})
 	if err != nil {
 		t.Fatalf("create runtime: %v", err)
@@ -1435,7 +1424,7 @@ func TestWorkspaceRuntimeRequiresOwnedGatewaySecretReference(t *testing.T) {
 		key := "runtime-ref-" + stableSuffix(ref)[:8]
 		_, err := service.CreateWorkspaceRuntime(context.Background(), WorkspaceRuntimeInput{
 			WorkspaceID: "ws-alpha", ComputeID: "compute-alpha", VolumeID: "storage-alpha", AttachmentID: "attachment-alpha",
-			AttachmentOperationID: "workspace-launch-alpha:attachment", RuntimeOperationID: key, ImageID: "one-person-lab-app",
+			AttachmentOperationID: "workspace-launch-alpha:attachment", RuntimeOperationID: key, ImageID: testWorkspaceRuntimeImageID(),
 			GatewaySecretRef: ref, IdempotencyKey: key,
 		})
 		if err == nil {
@@ -1447,7 +1436,7 @@ func TestWorkspaceRuntimeRequiresOwnedGatewaySecretReference(t *testing.T) {
 	}
 	valid, err := service.CreateWorkspaceRuntime(context.Background(), WorkspaceRuntimeInput{
 		WorkspaceID: "ws-alpha", ComputeID: "compute-alpha", VolumeID: "storage-alpha", AttachmentID: "attachment-alpha",
-		AttachmentOperationID: "workspace-launch-alpha:attachment", RuntimeOperationID: "runtime-ref-valid", ImageID: "one-person-lab-app",
+		AttachmentOperationID: "workspace-launch-alpha:attachment", RuntimeOperationID: "runtime-ref-valid", ImageID: testWorkspaceRuntimeImageID(),
 		GatewaySecretRef: gatewaySecretName("ws-alpha"), IdempotencyKey: "runtime-ref-valid",
 	})
 	if err != nil || !valid.Ready || provider.calls.Load() != 1 {
@@ -1998,6 +1987,34 @@ func TestWorkspaceRuntimeRequiresExactPersistedAttachmentIdentity(t *testing.T) 
 	}
 }
 
+func TestWorkspaceRuntimeRejectsNonImmutableImageBeforeProvider(t *testing.T) {
+	provider := &countingRuntimeProvider{}
+	service := runtimeTestService(provider, NewMemoryOperationStore())
+	input := runtimeTestInput("workspace-launch-alpha:workspace:runtime")
+	input.ImageID = "one-person-lab-app:latest"
+
+	if _, err := service.CreateWorkspaceRuntime(context.Background(), input); err == nil || errorCode(err) != "workspace_image_identity_invalid" {
+		t.Fatalf("invalid Workspace image error=%v", err)
+	}
+	if calls := provider.calls.Load(); calls != 0 {
+		t.Fatalf("invalid Workspace image reached provider %d times", calls)
+	}
+}
+
+func TestWorkspaceRuntimeRejectsProviderResultWithDifferentImage(t *testing.T) {
+	input := runtimeTestInput("workspace-launch-alpha:workspace:runtime")
+	provider := &convergingRuntimeProvider{readback: WorkspaceRuntime{
+		ID: "rt_wrong-image", OperationID: input.RuntimeOperationID, WorkspaceID: input.WorkspaceID,
+		Status: "running", Ready: true, ServiceName: "opl-compute-alpha",
+		ImageID:           "uswccr.ccs.tencentyun.com/oplcloud/one-person-lab-app@sha256:" + strings.Repeat("b", 64),
+		ProviderRequestID: providerRequestID("runtime", input.IdempotencyKey),
+	}}
+
+	if _, err := runtimeTestService(provider, NewMemoryOperationStore()).CreateWorkspaceRuntime(context.Background(), input); err == nil || errorCode(err) != "workspace_runtime_image_mismatch" {
+		t.Fatalf("different Workspace image result error=%v", err)
+	}
+}
+
 func TestWorkspaceRuntimePersistsStableAttachmentAndRuntimeOperationIdentity(t *testing.T) {
 	provider := &countingRuntimeProvider{}
 	service := runtimeTestService(provider, NewMemoryOperationStore())
@@ -2094,7 +2111,7 @@ func TestServiceReplaysResourceStateFromOperationStore(t *testing.T) {
 	runtime, err := replayed.CreateWorkspaceRuntime(ctx, WorkspaceRuntimeInput{
 		WorkspaceID: "ws-alpha", ComputeID: compute.ID, VolumeID: volume.ID,
 		AttachmentID: attachment.ID, AttachmentOperationID: attachment.OperationID,
-		RuntimeOperationID: "replay-runtime", ImageID: "one-person-lab-app",
+		RuntimeOperationID: "replay-runtime", ImageID: testWorkspaceRuntimeImageID(),
 		GatewaySecretRef: gatewaySecretName("ws-alpha"), IdempotencyKey: "replay-runtime",
 	})
 	if err != nil {
@@ -2540,6 +2557,27 @@ func TestRuntimeStageReadbackFailureNeverRepeatsProviderWrite(t *testing.T) {
 	}
 }
 
+func TestRuntimeStageReadbackRejectsDifferentWorkspaceImage(t *testing.T) {
+	input := runtimeTestInput("runtime-image-drift")
+	readback := WorkspaceRuntime{
+		ID: "rt_image-drift", OperationID: input.RuntimeOperationID, WorkspaceID: input.WorkspaceID,
+		Status: "running", Ready: true, ServiceName: "opl-compute-alpha",
+		ImageID:           workspaceImageRepository + "@sha256:" + strings.Repeat("b", 64),
+		ProviderRequestID: providerRequestID("runtime", input.IdempotencyKey),
+	}
+	provider := &convergingRuntimeProvider{readback: readback, writeErr: errors.New("provider response lost")}
+	store := NewMemoryOperationStore()
+	if _, err := runtimeTestService(provider, store).CreateWorkspaceRuntime(context.Background(), input); err == nil {
+		t.Fatal("first runtime unexpectedly succeeded")
+	}
+	if _, err := runtimeTestService(provider, store).CreateWorkspaceRuntime(context.Background(), input); !errors.Is(err, ErrRuntimeOperationFailed) {
+		t.Fatalf("different Workspace image readback error=%v", err)
+	}
+	if provider.calls.Load() != 1 || provider.readbackCalls.Load() != 1 {
+		t.Fatalf("writes=%d reads=%d, want 1/1", provider.calls.Load(), provider.readbackCalls.Load())
+	}
+}
+
 func TestCreateWorkspaceRuntimeDoesNotReapplyFailedOperation(t *testing.T) {
 	provider := &countingRuntimeProvider{}
 	store := NewMemoryOperationStore()
@@ -2579,8 +2617,12 @@ func runtimeTestInput(key string) WorkspaceRuntimeInput {
 	return WorkspaceRuntimeInput{
 		WorkspaceID: "workspace-alpha", ComputeID: "compute-alpha", VolumeID: "storage-alpha",
 		AttachmentID: "attachment-alpha", AttachmentOperationID: "workspace-launch-alpha:attachment", RuntimeOperationID: key,
-		ImageID: "one-person-lab-app", GatewaySecretRef: gatewaySecretName("workspace-alpha"), IdempotencyKey: key,
+		ImageID: testWorkspaceRuntimeImageID(), GatewaySecretRef: gatewaySecretName("workspace-alpha"), IdempotencyKey: key,
 	}
+}
+
+func testWorkspaceRuntimeImageID() string {
+	return workspaceImageRepository + "@sha256:" + strings.Repeat("a", 64)
 }
 
 func attachmentTestService(provider Provider, store OperationStore) *Service {
@@ -2715,7 +2757,7 @@ func (failingListOperationStore) List(context.Context) ([]FabricOperation, error
 }
 
 func (p liveRuntimeWithoutIDProvider) CreateWorkspaceRuntime(_ context.Context, input WorkspaceRuntimeInput, _ ComputeAllocation, _ StorageVolume) (WorkspaceRuntime, error) {
-	return WorkspaceRuntime{ID: p.runtimeIDs[input.IdempotencyKey], WorkspaceID: input.WorkspaceID, URL: "https://stale.invalid", Status: "unready", ServiceName: "runtime-created", Checks: []Check{{Name: "deployment_ready", OK: false}}}, nil
+	return WorkspaceRuntime{ID: p.runtimeIDs[input.IdempotencyKey], WorkspaceID: input.WorkspaceID, URL: "https://stale.invalid", Status: "unready", ServiceName: "runtime-created", ImageID: input.ImageID, Checks: []Check{{Name: "deployment_ready", OK: false}}}, nil
 }
 
 func (liveRuntimeWithoutIDProvider) WorkspaceRuntimeStatus(_ context.Context, workspaceID string) (WorkspaceRuntime, error) {
@@ -2734,14 +2776,18 @@ type convergingRuntimeProvider struct {
 	readback      WorkspaceRuntime
 	readbackErr   error
 	writeErr      error
+	imageID       string
 	readbackCalls atomic.Int32
 }
 
 func (p *convergingRuntimeProvider) CreateWorkspaceRuntime(_ context.Context, input WorkspaceRuntimeInput, _ ComputeAllocation, _ StorageVolume) (WorkspaceRuntime, error) {
 	p.calls.Add(1)
+	p.imageID = input.ImageID
 	result := p.readback
 	if result.ID == "" {
-		result = WorkspaceRuntime{ID: "rt_authoritative-alpha", OperationID: input.RuntimeOperationID, WorkspaceID: input.WorkspaceID, Status: "running", Ready: true, ServiceName: "opl-compute-alpha", ProviderRequestID: providerRequestID("runtime", input.IdempotencyKey)}
+		result = WorkspaceRuntime{ID: "rt_authoritative-alpha", OperationID: input.RuntimeOperationID, WorkspaceID: input.WorkspaceID, Status: "running", Ready: true, ServiceName: "opl-compute-alpha", ImageID: input.ImageID, ProviderRequestID: providerRequestID("runtime", input.IdempotencyKey)}
+	} else if result.ImageID == "" {
+		result.ImageID = input.ImageID
 	}
 	return result, p.writeErr
 }
@@ -2751,7 +2797,11 @@ func (p *convergingRuntimeProvider) WorkspaceRuntimeStatus(_ context.Context, _ 
 	if p.readbackErr != nil {
 		return WorkspaceRuntime{}, p.readbackErr
 	}
-	return p.readback, nil
+	result := p.readback
+	if result.ImageID == "" {
+		result.ImageID = p.imageID
+	}
+	return result, nil
 }
 
 type failOnceDestroyProvider struct {
@@ -2769,7 +2819,7 @@ func (p *failOnceDestroyProvider) DestroyWorkspaceRuntime(_ context.Context, wor
 func (p *countingRuntimeProvider) CreateWorkspaceRuntime(_ context.Context, input WorkspaceRuntimeInput, _ ComputeAllocation, _ StorageVolume) (WorkspaceRuntime, error) {
 	p.calls.Add(1)
 	p.input = input
-	return WorkspaceRuntime{ID: "runtime-alpha", WorkspaceID: input.WorkspaceID, Status: "running", Ready: true, ServiceName: "opl-compute-alpha", ProviderRequestID: providerRequestID("runtime", input.IdempotencyKey)}, nil
+	return WorkspaceRuntime{ID: "runtime-alpha", WorkspaceID: input.WorkspaceID, Status: "running", Ready: true, ServiceName: "opl-compute-alpha", ImageID: input.ImageID, ProviderRequestID: providerRequestID("runtime", input.IdempotencyKey)}, nil
 }
 
 func (p *countingRuntimeProvider) DestroyWorkspaceRuntime(_ context.Context, workspaceID string) (WorkspaceRuntime, error) {
@@ -2790,7 +2840,7 @@ func (p *blockingRuntimeProvider) CreateWorkspaceRuntime(ctx context.Context, in
 	}
 	select {
 	case <-p.release:
-		return WorkspaceRuntime{ID: "runtime-alpha", WorkspaceID: input.WorkspaceID, Status: "running", Ready: true, ProviderRequestID: providerRequestID("runtime", input.IdempotencyKey)}, nil
+		return WorkspaceRuntime{ID: "runtime-alpha", WorkspaceID: input.WorkspaceID, Status: "running", Ready: true, ImageID: input.ImageID, ProviderRequestID: providerRequestID("runtime", input.IdempotencyKey)}, nil
 	case <-ctx.Done():
 		return WorkspaceRuntime{}, ctx.Err()
 	}
@@ -2910,7 +2960,7 @@ func (testProvider) DetachStorageAttachment(_ context.Context, attachment Storag
 }
 
 func (testProvider) CreateWorkspaceRuntime(_ context.Context, input WorkspaceRuntimeInput, _ ComputeAllocation, _ StorageVolume) (WorkspaceRuntime, error) {
-	return WorkspaceRuntime{ID: "rt-test", WorkspaceID: input.WorkspaceID, Status: "running", ServiceName: "opl-ca-test", ProviderRequestID: providerRequestID("runtime", input.IdempotencyKey), Access: RuntimeAccess{Username: "admin", Password: "runtime-password-alpha", CredentialStatus: "configured", CredentialVersion: "v1", SecretRef: "opl-ca-test-env"}}, nil
+	return WorkspaceRuntime{ID: "rt-test", WorkspaceID: input.WorkspaceID, Status: "running", ServiceName: "opl-ca-test", ImageID: input.ImageID, ProviderRequestID: providerRequestID("runtime", input.IdempotencyKey), Access: RuntimeAccess{Username: "admin", Password: "runtime-password-alpha", CredentialStatus: "configured", CredentialVersion: "v1", SecretRef: "opl-ca-test-env"}}, nil
 }
 
 func (testProvider) DestroyWorkspaceRuntime(_ context.Context, workspaceID string) (WorkspaceRuntime, error) {

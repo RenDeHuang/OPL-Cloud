@@ -124,11 +124,14 @@ test("Current contracts hard cut Workspace purchase, access, and Runtime facts",
   assert.equal(billing.chargePolicy.debitCardinalityPerPeriod, 1);
   assert.equal(billing.chargePolicy.launchOperationAction, "workspace.launch.v2");
   assert.equal(billing.chargePolicy.launchOperationSchemaVersion, 2);
-  assert.deepEqual(billing.chargePolicy.exactBalanceEvidence, {
-    precondition: "preBalanceUsdMicros > totalChargeUsdMicros",
-    postcondition: "postBalanceUsdMicros == preBalanceUsdMicros - totalChargeUsdMicros",
-    mismatchStatus: "manual_review",
-    fabricWriteCountOnMismatch: 0
+  assert.equal(billing.chargePolicy.exactBalanceEvidence, undefined);
+  assert.deepEqual(billing.chargePolicy.chargeConfirmationEvidence, {
+    authority: "exactly_one_matching_redeem_code_history_entry",
+    balanceSnapshots: "preflight_and_projection_only",
+    exactBalanceDeltaRequired: false,
+    concurrentUsage: "allowed",
+    balanceDeltaMismatchAlone: "not_manual_review",
+    monthlyDebitMaximum: 1
   });
   assert.deepEqual(billing.chargePolicy.providerPreflight, {
     timing: "before_first_charge_attempt",
