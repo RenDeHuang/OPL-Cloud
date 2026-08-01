@@ -287,8 +287,9 @@ type tagNativeAPI interface {
 }
 
 type tencentTagClient struct {
-	client *common.Client
-	region string
+	client         *common.Client
+	identityClient *common.Client
+	region         string
 }
 
 type tagResourceRequest struct {
@@ -308,11 +309,74 @@ type tagResourceResponse struct {
 	} `json:"Response"`
 }
 
+type getCallerIdentityRequest struct {
+	*tchttp.BaseRequest
+}
+
+type getCallerIdentityResponse struct {
+	*tchttp.BaseResponse
+	Response *struct {
+		AccountId *string `json:"AccountId,omitempty" name:"AccountId"`
+		RequestId *string `json:"RequestId,omitempty" name:"RequestId"`
+	} `json:"Response"`
+}
+
+type createAndBindTag struct {
+	TagKey   *string `json:"TagKey,omitempty" name:"TagKey"`
+	TagValue *string `json:"TagValue,omitempty" name:"TagValue"`
+}
+
+type createAndBindTagRequest struct {
+	*tchttp.BaseRequest
+	ResourceList []*string           `json:"ResourceList,omitempty" name:"ResourceList"`
+	Tags         []*createAndBindTag `json:"Tags,omitempty" name:"Tags"`
+}
+
+type createAndBindTagResponse struct {
+	*tchttp.BaseResponse
+	Response *struct {
+		RequestId *string `json:"RequestId,omitempty" name:"RequestId"`
+	} `json:"Response"`
+}
+
 func (client *tencentTagClient) SetCVMTag(instanceID, key, value string, attached bool) (string, error) {
-	action := "AttachResourcesTag"
-	if attached {
-		action = "ModifyResourcesTagValue"
+	if !attached {
+		identityClient := client.identityClient
+		if identityClient == nil {
+			identityClient = client.client
+		}
+		identityRequest := &getCallerIdentityRequest{BaseRequest: &tchttp.BaseRequest{}}
+		identityRequest.Init().WithApiInfo("sts", "2018-08-13", "GetCallerIdentity")
+		identityResponse := &getCallerIdentityResponse{BaseResponse: &tchttp.BaseResponse{}}
+		if err := identityClient.Send(identityRequest, identityResponse); err != nil {
+			return "", err
+		}
+		accountID := ""
+		if identityResponse.Response != nil {
+			accountID = strings.TrimSpace(stringValue(identityResponse.Response.AccountId))
+		}
+		if accountID == "" {
+			return "", fmt.Errorf("Tencent STS GetCallerIdentity response is missing")
+		}
+		resource := fmt.Sprintf("qcs::cvm:%s:uin/%s:instance/%s", client.region, accountID, instanceID)
+		request := &createAndBindTagRequest{
+			BaseRequest:  &tchttp.BaseRequest{},
+			ResourceList: []*string{common.StringPtr(resource)},
+			Tags: []*createAndBindTag{{
+				TagKey: common.StringPtr(key), TagValue: common.StringPtr(value),
+			}},
+		}
+		request.Init().WithApiInfo("tag", "2018-08-13", "TagResources")
+		response := &createAndBindTagResponse{BaseResponse: &tchttp.BaseResponse{}}
+		if err := client.client.Send(request, response); err != nil {
+			return "", err
+		}
+		if response.Response == nil || strings.TrimSpace(stringValue(response.Response.RequestId)) == "" {
+			return "", fmt.Errorf("Tencent Tag TagResources response is missing")
+		}
+		return stringValue(response.Response.RequestId), nil
 	}
+	action := "ModifyResourcesTagValue"
 	request := &tagResourceRequest{
 		BaseRequest: &tchttp.BaseRequest{}, ServiceType: common.StringPtr("cvm"), ResourceIds: []*string{common.StringPtr(instanceID)},
 		TagKey: common.StringPtr(key), TagValue: common.StringPtr(value), ResourceRegion: common.StringPtr(client.region), ResourcePrefix: common.StringPtr("instance"),
@@ -507,6 +571,10 @@ func newTencentSDKClient(env map[string]string) (*tencentSDKClient, *Response) {
 	tagProfile.HttpProfile.Endpoint = "tag.tencentcloudapi.com"
 	tagClient := &common.Client{}
 	tagClient.Init(env["TENCENTCLOUD_REGION"]).WithCredential(credential).WithProfile(tagProfile)
+	stsProfile := profile.NewClientProfile()
+	stsProfile.HttpProfile.Endpoint = "sts.tencentcloudapi.com"
+	stsClient := &common.Client{}
+	stsClient.Init(env["TENCENTCLOUD_REGION"]).WithCredential(credential).WithProfile(stsProfile)
 
 	return &tencentSDKClient{
 		region:                env["TENCENTCLOUD_REGION"],
@@ -516,23 +584,41 @@ func newTencentSDKClient(env map[string]string) (*tencentSDKClient, *Response) {
 		nativeCvmClient:       cvmClient,
 		nativeCbsClient:       cbsClient,
 		nativeVpcClient:       vpcClient,
-		nativeTagClient:       &tencentTagClient{client: tagClient, region: env["TENCENTCLOUD_REGION"]},
+		nativeTagClient:       &tencentTagClient{client: tagClient, identityClient: stsClient, region: env["TENCENTCLOUD_REGION"]},
 		convergenceContext:    context.Background(),
 		convergenceWait:       boundedConvergenceWait,
 	}, nil
 }
 
 func boundedConvergenceWait(ctx context.Context, attempt int) error {
-	if attempt <= 0 {
+	delay := cvmOwnershipReadbackDelay(attempt)
+	if delay <= 0 {
 		return nil
 	}
-	timer := time.NewTimer(time.Duration(attempt) * 200 * time.Millisecond)
+	timer := time.NewTimer(delay)
 	defer timer.Stop()
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-timer.C:
 		return nil
+	}
+}
+
+func cvmOwnershipReadbackDelay(attempt int) time.Duration {
+	switch attempt {
+	case 1:
+		return 500 * time.Millisecond
+	case 2:
+		return time.Second
+	case 3:
+		return 2 * time.Second
+	case 4:
+		return 4 * time.Second
+	case 5:
+		return 8 * time.Second
+	default:
+		return 0
 	}
 }
 
@@ -2257,7 +2343,7 @@ func (client *tencentSDKClient) readCVMOwnershipField(target cvmOwnershipTarget,
 	var lastErr error
 	var lastStates map[string]string
 	var lastTags map[string]string
-	for attempt := 0; attempt < 3; attempt++ {
+	for attempt := 0; attempt < 6; attempt++ {
 		if attempt > 0 && client.convergenceWait != nil {
 			if err := client.convergenceWait(ctx, attempt); err != nil {
 				return "unknown", nil, nil, requestID, err
