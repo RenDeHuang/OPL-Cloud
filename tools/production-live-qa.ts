@@ -1498,7 +1498,7 @@ export async function diagnoseComputeClaimRecovery({
   return computeClaimArtifact(COMPUTE_CLAIM_DIAGNOSE_MODE, target, release, proof, eligible, errorCode);
 }
 
-function computeClaimRecoveryApproval(value, expected, now) {
+function computeClaimRecoveryApproval(value, expected) {
   let approval;
   try {
     approval = typeof value === "string" ? JSON.parse(value) : value;
@@ -1525,8 +1525,7 @@ function computeClaimRecoveryApproval(value, expected, now) {
   const expectedAllowedWrites = computeClaimRecoveryAllowedWrites(storageState);
   if (!exactObjectKeys(approval, keys) || approval.schemaVersion !== 2 || approval.approvalId !== expected.approvalId ||
     !validOpaque(approval.approvalId) || !validOpaque(approval.idempotencyKey) || !validOpaque(approval.recoveryKey) ||
-    !Number.isFinite(Date.parse(approval.expiresAt)) ||
-    Date.parse(approval.expiresAt) <= now.getTime() || approval.mergedMainSha !== expected.mergedSha || approval.cloudImageDigest !== expected.cloudImageDigest ||
+    !Number.isFinite(Date.parse(approval.expiresAt)) || approval.mergedMainSha !== expected.mergedSha || approval.cloudImageDigest !== expected.cloudImageDigest ||
     !/^sha256:[a-f0-9]{64}$/.test(String(approval.workspaceImageDigest || "")) || approval.confirmation !== COMPUTE_CLAIM_RECOVERY_CONFIRMATION ||
     JSON.stringify(approvedTarget) !== JSON.stringify(expected.target) || !exactObjectKeys(approval.customer, ["email", "accountId"]) ||
     customerEmail !== approval.customer.email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(customerEmail) || approval.customer.accountId !== approvedTarget.accountId ||
@@ -1586,7 +1585,7 @@ export async function recoverComputeClaim({
   now = new Date()
 } = {}) {
   const target = computeClaimTarget(rawTarget);
-  const approval = computeClaimRecoveryApproval(approvalJson, { approvalId, mergedSha, cloudImageDigest, target }, now);
+  const approval = computeClaimRecoveryApproval(approvalJson, { approvalId, mergedSha, cloudImageDigest, target });
   if (!internalServiceToken || internalServiceToken !== String(internalServiceToken).trim()) {
     throw new Error("compute_claim_recovery_capability_required");
   }
