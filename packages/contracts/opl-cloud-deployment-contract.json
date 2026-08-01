@@ -66,6 +66,7 @@
       ],
       ".github/workflows/production-basic-customer-operation.yml": [
         "prepare-basic-customer-operation",
+        "workspace-identity-diagnose",
         "manual-review-diagnose",
         "workspace-launch-readback-diagnose",
         "workspace-launch-readback-recover",
@@ -556,6 +557,50 @@
     },
     "evidenceSubstitution": "forbidden_both_A_and_B_required",
     "implementationState": "contract_frozen_implementation_rollout_and_production_evidence_pending"
+  },
+  "productionBasicAcceptanceB": {
+    "tool": "tools/production-basic-acceptance-b.ts",
+    "operationMode": "acceptance_b_fresh_order",
+    "execution": "local_contract_and_validation_only_until_shared_workflow_integration",
+    "productionNetwork": "github_actions_production_environment_authorized_runner_only",
+    "workflowIntegration": {
+      "file": ".github/workflows/production-basic-customer-operation.yml",
+      "ownership": "deferred_until_acceptance_a_identity_lane_is_on_main",
+      "resourceClosureRunner": ["self-hosted", "tencent-cloud", "opl-cloud", "tke-vpc"],
+      "modelRequest": "forbidden_not_part_of_acceptance_b"
+    },
+    "operationContract": {
+      "schemaVersion": 1,
+      "operationMode": "acceptance_b_fresh_order",
+      "confirmation": "RUN_ONE_INDEPENDENT_FRESH_BASIC_ORDER_FOR_ACCEPTANCE_B",
+      "packageId": "basic",
+      "sizeGb": 10,
+      "autoRenew": false,
+      "workspaceLaunchPostCount": 1,
+      "exactWrites": {"sub2apiDebit": 1, "cvmCreate": 1, "nodeClaim": 1, "cbsCreate": 1, "runtimeCreate": 1, "receiptCreate": 1},
+      "terminalEvidence": ["launch_succeeded", "runtime_ready", "receipt_completed", "pod_image_id_equals_approved_workspace_image_digest", "workspace_url_http_200"]
+    },
+    "approvalSchema": {
+      "schemaVersion": 1,
+      "exactTopLevelFields": ["schemaVersion", "operationMode", "approvalId", "expiresAt", "confirmation", "release", "customer", "launch", "expected", "allowedWrites", "forbiddenWrites"],
+      "releaseFields": ["mergedMainSha", "cloudImageDigest", "workspaceImageDigest"],
+      "customerFields": ["email", "accountId"],
+      "launchFields": ["idempotencyKey", "operationId", "workspaceId", "name", "packageId", "sizeGb", "autoRenew"],
+      "expectedFields": ["nodePoolId", "resolvedInstanceType"],
+      "allowedWrites": ["submit_one_workspace_launch", "debit_one_basic_month", "create_one_workspace_key", "create_one_cvm", "claim_one_node", "create_one_cbs", "create_one_attachment", "upsert_one_gateway_secret", "create_one_runtime", "activate_one_workspace", "record_one_purchase_receipt"],
+      "forbiddenWrites": ["provision_account", "adjust_wallet", "submit_second_workspace_launch", "create_second_cvm", "create_second_cbs", "refund", "renew", "delete", "replace", "send_model_request"]
+    },
+    "writeAccounting": {
+      "authority": "authoritative_service_readback_not_http_attempts",
+      "exactCountFields": ["workspaceLaunchPosts", "sub2apiDebits", "tencentCvmCreates", "kubernetesNodeClaims", "tencentCbsCreates", "runtimeCreates", "receiptCreates"],
+      "zeroCountFields": ["accountProvisionPosts", "walletAdjustmentPosts", "modelRequests", "refunds", "renewals", "deletes", "replacements"]
+    },
+    "readback": {
+      "baseline": "zero_workspace_launch_workspace_key_and_workspace_receipt_for_approved_account",
+      "authorities": ["control_plane_launch", "sub2api_debit_history", "fabric_operations_and_provider_truth", "runtime_ready_pod", "ledger_purchase_receipt", "workspace_url_http"],
+      "terminalEvidence": ["launch_succeeded", "runtime_ready", "receipt_completed", "pod_image_id_equals_approved_workspace_image_digest", "workspace_url_http_200"],
+      "forbiddenFields": ["password", "token", "secret", "redeem_code", "provider_request_id", "model_prompt", "model_response"]
+    }
   },
   "productionComputeClaimRecovery": {
     "workflow": ".github/workflows/production-basic-customer-operation.yml",
