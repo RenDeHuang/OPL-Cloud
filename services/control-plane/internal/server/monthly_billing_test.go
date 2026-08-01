@@ -249,6 +249,7 @@ type monthlyFabric struct {
 	mutateStorage           func(*clients.StorageVolume)
 	computeIDs              []string
 	computeInputs           []clients.ComputeAllocationInput
+	computeCreateKeys       []string
 	storageIDs              []string
 	storageCreateKeys       []string
 	storageInputs           []clients.StorageVolumeInput
@@ -368,10 +369,11 @@ func (f *monthlyFabric) WorkspaceActivationTruth(_ context.Context, input client
 	}, f.activationTruthErr
 }
 
-func (f *monthlyFabric) CreateComputeAllocation(_ context.Context, input clients.ComputeAllocationInput, _ string) (clients.ComputeAllocation, error) {
+func (f *monthlyFabric) CreateComputeAllocation(_ context.Context, input clients.ComputeAllocationInput, key string) (clients.ComputeAllocation, error) {
 	*f.events = append(*f.events, "fabric.compute.prepare")
 	f.computeIDs = append(f.computeIDs, input.ID)
 	f.computeInputs = append(f.computeInputs, input)
+	f.computeCreateKeys = append(f.computeCreateKeys, key)
 	if f.createErr != nil {
 		return clients.ComputeAllocation{ID: input.ID}, f.createErr
 	}
