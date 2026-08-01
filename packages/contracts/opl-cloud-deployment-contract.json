@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 29,
+  "schemaVersion": 30,
   "owner": "OPL Fabric",
   "purpose": "Deployment workflow, immutable Cloud and Workspace images, TKE handoff, read-only diagnostics, and production-verification safety.",
   "state": "current",
@@ -598,7 +598,7 @@
     "mutationBounds": {"sub2api": 0, "tencent": {"min": 0, "max": 5}, "kubernetes": {"min": 0, "max": 1}},
     "mutationLedger": {
       "persistence": "original_create_compute_allocation_operation_payload_cas_before_provider_call",
-      "states": ["reserved", "observed"],
+      "states": ["reserved", "node_reserved", "observed"],
       "legacyBindingUpgrade": "binding_without_mutation_ledger_may_reserve_once_after_exact_read_only_proof",
       "replayAfterReservation": "authoritative_readback_only_zero_incremental_external_mutation",
       "missingOutcome": "conservative_unknown_at_full_bound",

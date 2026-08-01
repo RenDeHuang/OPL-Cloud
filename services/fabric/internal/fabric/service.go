@@ -625,12 +625,7 @@ func (s *Service) ClaimComputeRecovery(ctx context.Context, input ComputeClaimRe
 		binding := newComputeClaimRecoveryBinding(input)
 		persistedBinding, bindingPresent, bindingValid := decodeComputeClaimRecoveryBinding(operation)
 		mutationLedger, mutationPresent, mutationValid := decodeComputeClaimRecoveryMutation(operation)
-		approvedReplay := bindingPresent && bindingValid && persistedBinding != binding && input.ApprovedBindingTakeover &&
-			mutationPresent && mutationValid &&
-			(recoverableObservedComputeClaimRecoveryMutation(mutationLedger) || validNodeReservedComputeClaimRecoveryMutation(mutationLedger) ||
-				successfulNodeClaimRecoveryMutation(mutationLedger)) &&
-			computeClaimRecoveryBindingMatchesPersistedIdentity(input, persistedBinding)
-		if bindingPresent && (!bindingValid || persistedBinding != binding && !approvedReplay) {
+		if bindingPresent && (!bindingValid || persistedBinding != binding) {
 			result.Eligible, result.Reason = false, "identity_mismatch"
 			return ErrComputeClaimRecoveryIdempotencyConflict
 		}
@@ -671,19 +666,13 @@ func (s *Service) ClaimComputeRecovery(ctx context.Context, input ComputeClaimRe
 			applyComputeClaimRecoveryMutation(&result, mutationLedger)
 			return fmt.Errorf("%w: %s", ErrComputeClaimRecoveryUnavailable, result.Reason)
 		}
-		resumeObservedNodeClaim := approvedReplay && mutationPresent &&
+		resumeObservedNodeClaim := mutationPresent &&
 			recoverableObservedComputeClaimRecoveryMutation(mutationLedger) &&
 			proof.CVMOwnershipState == "target_owned" && proof.NodeOwnershipState == "unallocated"
-		resumeReservedNodeReadback := approvedReplay && mutationPresent && validNodeReservedComputeClaimRecoveryMutation(mutationLedger) &&
+		resumeReservedNodeReadback := mutationPresent && validNodeReservedComputeClaimRecoveryMutation(mutationLedger) &&
 			proof.CVMOwnershipState == "target_owned" && proof.NodeOwnershipState == "target_owned"
-		reservedNodeOutcomeUnknown := approvedReplay && mutationPresent && validNodeReservedComputeClaimRecoveryMutation(mutationLedger) &&
+		reservedNodeOutcomeUnknown := mutationPresent && validNodeReservedComputeClaimRecoveryMutation(mutationLedger) &&
 			proof.CVMOwnershipState == "target_owned" && proof.NodeOwnershipState == "unallocated"
-		approvedSuccessReplay := approvedReplay && mutationPresent && successfulNodeClaimRecoveryMutation(mutationLedger) &&
-			proof.CVMOwnershipState == "target_owned" && proof.NodeOwnershipState == "target_owned"
-		if approvedReplay && !resumeObservedNodeClaim && !resumeReservedNodeReadback && !reservedNodeOutcomeUnknown && !approvedSuccessReplay {
-			result.Eligible, result.Reason = false, "identity_mismatch"
-			return ErrComputeClaimRecoveryIdempotencyConflict
-		}
 		if reservedNodeOutcomeUnknown {
 			applyComputeClaimRecoveryMutation(&result, mutationLedger)
 			return fmt.Errorf("%w: %s", ErrComputeClaimRecoveryUnavailable, result.Reason)
@@ -788,11 +777,7 @@ func (s *Service) ClaimComputeRecovery(ctx context.Context, input ComputeClaimRe
 		if operation.Status != "succeeded" {
 			recovered := operation
 			recovered.Status, recovered.ErrorCode, recovered.FinishedAt = "succeeded", "", s.now()
-			finalBinding := binding
-			if approvedReplay {
-				finalBinding = persistedBinding
-			}
-			recovered.RedactedProviderPayload = withComputeClaimRecoveryBinding(computeAllocationOperationPayload(allocation, plan), finalBinding)
+			recovered.RedactedProviderPayload = withComputeClaimRecoveryBinding(computeAllocationOperationPayload(allocation, plan), binding)
 			if mutationPresent {
 				recovered.RedactedProviderPayload = withComputeClaimRecoveryMutation(recovered.RedactedProviderPayload, mutationLedger)
 			}
@@ -818,7 +803,7 @@ func validComputeClaimRecoveryClaimInput(input ComputeClaimRecoveryClaimInput) b
 			return false
 		}
 	}
-	return strings.HasPrefix(input.CVMInstanceID, "ins-")
+	return strings.HasPrefix(input.CVMInstanceID, "ins-") && input.IdempotencyKey == input.LaunchOperationID+":compute"
 }
 
 type computeClaimRecoveryBinding struct {
@@ -1077,8 +1062,6 @@ func validComputeClaimRecoveryMutationTransition(current, next FabricOperation) 
 }
 
 func newComputeClaimRecoveryBinding(input ComputeClaimRecoveryClaimInput) computeClaimRecoveryBinding {
-	canonicalInput := input
-	canonicalInput.ApprovedBindingTakeover = false
 	target := struct {
 		MachineName   string `json:"machineName"`
 		NodeName      string `json:"nodeName"`
@@ -1091,15 +1074,8 @@ func newComputeClaimRecoveryBinding(input ComputeClaimRecoveryClaimInput) comput
 		LaunchOperationID: input.LaunchOperationID,
 		IdempotencyKey:    input.IdempotencyKey,
 		TargetHash:        hashInput(target),
-		RequestHash:       hashInput(canonicalInput),
+		RequestHash:       hashInput(input),
 	}
-}
-
-func computeClaimRecoveryBindingMatchesPersistedIdentity(input ComputeClaimRecoveryClaimInput, persisted computeClaimRecoveryBinding) bool {
-	canonical := input
-	canonical.IdempotencyKey = persisted.IdempotencyKey
-	canonical.ApprovedBindingTakeover = false
-	return newComputeClaimRecoveryBinding(canonical) == persisted
 }
 
 func decodeComputeClaimRecoveryBinding(operation FabricOperation) (computeClaimRecoveryBinding, bool, bool) {

@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 22,
+  "schemaVersion": 23,
   "owner": "OPL Platform Architecture",
   "purpose": "Current ownership contract for Console UI, Control Plane, Ledger, Fabric, and external Sub2API.",
   "state": "current",
@@ -330,7 +330,7 @@
         "malformedOrDriftedBinding": "fail_closed_conflict_zero_provider_mutation",
         "mutationLedger": {
           "persistence": "original_create_compute_allocation_operation_payload_cas_before_provider_call",
-          "states": ["reserved", "observed"],
+          "states": ["reserved", "node_reserved", "observed"],
           "legacyBindingUpgrade": "binding_without_mutation_ledger_may_reserve_once_after_exact_read_only_proof",
           "replayAfterReservation": "authoritative_readback_only_zero_incremental_external_mutation",
           "missingOutcome": "conservative_unknown_at_full_bound",

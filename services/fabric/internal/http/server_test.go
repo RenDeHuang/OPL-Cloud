@@ -713,7 +713,7 @@ func TestComputeClaimRecoveryHTTPSeparatesReadOnlyProofAndIdempotentClaim(t *tes
 	}
 
 	claimRequest := testRequest(http.MethodPost, "/fabric/compute-claim-recovery/claim", bytes.NewReader(claimBody))
-	claimRequest.Header.Set("Idempotency-Key", "launch-fixture:compute-claim")
+	claimRequest.Header.Set("Idempotency-Key", "launch-fixture:compute")
 	claimRecorder := httptest.NewRecorder()
 	server.ServeHTTP(claimRecorder, claimRequest)
 	claimPayload := append([]byte(nil), claimRecorder.Body.Bytes()...)
@@ -737,14 +737,14 @@ func TestComputeClaimRecoveryHTTPSeparatesReadOnlyProofAndIdempotentClaim(t *tes
 	operations, _ = store.List(context.Background())
 	binding, _ := operations[0].RedactedProviderPayload["computeClaimRecovery"].(map[string]any)
 	if len(operations) != 1 || binding["launchOperationId"] != input.LaunchOperationID ||
-		binding["idempotencyKey"] != "launch-fixture:compute-claim" || binding["targetHash"] == "" || binding["requestHash"] == "" {
+		binding["idempotencyKey"] != "launch-fixture:compute" || binding["targetHash"] == "" || binding["requestHash"] == "" {
 		t.Fatalf("claim binding was not persisted on original operation: operations=%#v binding=%#v", operations, binding)
 	}
 
 	provider.proof.NodeOwnershipState = "target_owned"
 	provider.proof.CVMOwnershipState = "target_owned"
 	replayRequest := testRequest(http.MethodPost, "/fabric/compute-claim-recovery/claim", bytes.NewReader(claimBody))
-	replayRequest.Header.Set("Idempotency-Key", "launch-fixture:compute-claim")
+	replayRequest.Header.Set("Idempotency-Key", "launch-fixture:compute")
 	replayRecorder := httptest.NewRecorder()
 	server.ServeHTTP(replayRecorder, replayRequest)
 	var replayed fabric.ComputeClaimRecoveryProof
@@ -754,10 +754,12 @@ func TestComputeClaimRecoveryHTTPSeparatesReadOnlyProofAndIdempotentClaim(t *tes
 	}
 
 	conflictRequest := testRequest(http.MethodPost, "/fabric/compute-claim-recovery/claim", bytes.NewReader(claimBody))
-	conflictRequest.Header.Set("Idempotency-Key", "launch-fixture:compute-claim-other")
+	conflictRequest.Header.Set("Idempotency-Key", "launch-fixture:recovery-key")
 	conflictRecorder := httptest.NewRecorder()
+	proofCallsBeforeConflict := provider.proofCalls
+	claimCallsBeforeConflict := provider.claimCalls
 	server.ServeHTTP(conflictRecorder, conflictRequest)
-	if conflictRecorder.Code != http.StatusConflict || provider.claimCalls != 1 {
+	if conflictRecorder.Code != http.StatusBadRequest || provider.proofCalls != proofCallsBeforeConflict || provider.claimCalls != claimCallsBeforeConflict {
 		t.Fatalf("different claim key status=%d calls=%d/%d body=%s", conflictRecorder.Code, provider.proofCalls, provider.claimCalls, conflictRecorder.Body.String())
 	}
 
@@ -765,7 +767,7 @@ func TestComputeClaimRecoveryHTTPSeparatesReadOnlyProofAndIdempotentClaim(t *tes
 	driftedInput.PrivateIP = "10.0.0.99"
 	driftedBody, _ := json.Marshal(driftedInput)
 	driftedRequest := testRequest(http.MethodPost, "/fabric/compute-claim-recovery/claim", bytes.NewReader(driftedBody))
-	driftedRequest.Header.Set("Idempotency-Key", "launch-fixture:compute-claim")
+	driftedRequest.Header.Set("Idempotency-Key", "launch-fixture:compute")
 	driftedRecorder := httptest.NewRecorder()
 	server.ServeHTTP(driftedRecorder, driftedRequest)
 	if driftedRecorder.Code != http.StatusConflict || provider.claimCalls != 1 {
@@ -795,7 +797,7 @@ func TestComputeClaimRecoveryHTTPNeverReturnsUnallowlistedMutationEvidence(t *te
 		t.Fatal(err)
 	}
 	request := testRequest(http.MethodPost, "/fabric/compute-claim-recovery/claim", bytes.NewReader(body))
-	request.Header.Set("Idempotency-Key", "launch-fixture:compute-claim")
+	request.Header.Set("Idempotency-Key", "launch-fixture:compute")
 	recorder := httptest.NewRecorder()
 
 	NewServer(service, "internal-secret").ServeHTTP(recorder, request)
