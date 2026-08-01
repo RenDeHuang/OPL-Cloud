@@ -1109,12 +1109,18 @@ test("Acceptance B fresh order is a separately approved exact-count production c
   assert.equal(job.env.OPL_MERGED_SHA, "${{ inputs.merged_sha }}");
   assert.equal(job.env.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_APPROVAL_ID, "${{ inputs.approval_id }}");
   assert.equal(job.env.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_APPROVAL_JSON, "${{ secrets.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_APPROVAL_JSON }}");
+  assert.equal(job.env.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_ARTIFACT_PATH, undefined);
   assert.equal(job.env.OPL_SUB2API_ADMIN_EMAIL, "${{ secrets.OPL_SUB2API_ADMIN_EMAIL }}");
   assert.equal(job.env.OPL_SUB2API_ADMIN_PASSWORD, "${{ secrets.OPL_SUB2API_ADMIN_PASSWORD }}");
   assert.equal(job.env.OPL_BASIC_CANARY_CUSTOMER_PASSWORD, "${{ secrets.OPL_BASIC_CANARY_CUSTOMER_PASSWORD }}");
   assert.equal(job.env.OPL_INTERNAL_SERVICE_TOKEN, undefined);
   assert.equal(job.env.TENCENT_DEPLOY_KUBECONFIG_B64, "${{ secrets.TENCENT_DEPLOY_KUBECONFIG_B64 }}");
   assert.equal(job.env.TENCENT_DEPLOY_KUBECONFIG, "${{ secrets.TENCENT_DEPLOY_KUBECONFIG }}");
+  const acceptanceStep = stepsByName(job).get("Run one fresh Basic order with authoritative readback");
+  const validationStep = stepsByName(job).get("Validate redacted Acceptance B evidence and exact counts");
+  for (const step of [acceptanceStep, validationStep]) {
+    assert.equal(step?.env?.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_ARTIFACT_PATH, "${{ runner.temp }}/production-basic-acceptance-b/evidence.json");
+  }
   assert.match(runs, /git ls-remote --heads origin/);
   assert.match(runs, /node tools\/production-basic-acceptance-b\.ts --run/);
   assert.match(runs, /validateProductionBasicAcceptanceBReadback/);
