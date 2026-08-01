@@ -390,9 +390,11 @@ func TestTencentProviderMonthlyComputePreflightFailsClosedOnNodePatchRBAC(t *tes
 		name             string
 		outputs          [][]byte
 		errors           []error
+		nilKubectl       bool
 		wantKubectlCalls int
 		wantProvisioner  int
 	}{
+		{name: "pre nil kubectl", nilKubectl: true},
 		{name: "pre no", outputs: [][]byte{[]byte("no\n")}, wantKubectlCalls: 1},
 		{name: "pre empty", outputs: [][]byte{[]byte("")}, wantKubectlCalls: 1},
 		{name: "pre error", errors: []error{errors.New("forbidden")}, wantKubectlCalls: 1},
@@ -405,21 +407,25 @@ func TestTencentProviderMonthlyComputePreflightFailsClosedOnNodePatchRBAC(t *tes
 		t.Run(tc.name, func(t *testing.T) {
 			provider := NewTencentProvider()
 			kubectlCalls, provisionerCalls := 0, 0
-			provider.kubectl = func(_ context.Context, args []string, stdin []byte) ([]byte, error) {
-				if !slices.Equal(args, []string{"auth", "can-i", "patch", "nodes"}) || stdin != nil {
-					t.Fatalf("kubectl args=%#v stdin=%q", args, stdin)
+			if tc.nilKubectl {
+				provider.kubectl = nil
+			} else {
+				provider.kubectl = func(_ context.Context, args []string, stdin []byte) ([]byte, error) {
+					if !slices.Equal(args, []string{"auth", "can-i", "patch", "nodes"}) || stdin != nil {
+						t.Fatalf("kubectl args=%#v stdin=%q", args, stdin)
+					}
+					index := kubectlCalls
+					kubectlCalls++
+					var output []byte
+					if index < len(tc.outputs) {
+						output = tc.outputs[index]
+					}
+					var err error
+					if index < len(tc.errors) {
+						err = tc.errors[index]
+					}
+					return output, err
 				}
-				index := kubectlCalls
-				kubectlCalls++
-				var output []byte
-				if index < len(tc.outputs) {
-					output = tc.outputs[index]
-				}
-				var err error
-				if index < len(tc.errors) {
-					err = tc.errors[index]
-				}
-				return output, err
 			}
 			provider.provision = func(context.Context, provisionerRequest) (provisionerResponse, error) {
 				provisionerCalls++
@@ -436,6 +442,31 @@ func TestTencentProviderMonthlyComputePreflightFailsClosedOnNodePatchRBAC(t *tes
 				t.Fatalf("err=%v kubectl calls=%d provisioner calls=%d", err, kubectlCalls, provisionerCalls)
 			}
 		})
+	}
+}
+
+func TestTencentProviderMonthlyComputePreflightChecksNodePatchRBACAfterProvisionerFailure(t *testing.T) {
+	t.Setenv("RUN_TENCENT_CREATE_RELEASE_EXECUTION", "1")
+	t.Setenv("OPL_BASIC_COMPUTE_NODE_POOL_MAX_REPLICAS", "40")
+	provider := NewTencentProvider()
+	events := []string{}
+	provider.kubectl = func(_ context.Context, args []string, stdin []byte) ([]byte, error) {
+		events = append(events, "kubectl")
+		if !slices.Equal(args, []string{"auth", "can-i", "patch", "nodes"}) || stdin != nil {
+			t.Fatalf("kubectl args=%#v stdin=%q", args, stdin)
+		}
+		return []byte("yes\n"), nil
+	}
+	providerErr := errors.New("provider unavailable")
+	provider.provision = func(context.Context, provisionerRequest) (provisionerResponse, error) {
+		events = append(events, "provisioner")
+		return provisionerResponse{}, providerErr
+	}
+
+	_, err := provider.MonthlyPreflight(context.Background(), MonthlyPreflightInput{ResourceType: "compute", PackageID: "basic", Zone: "na-siliconvalley-1"})
+
+	if !errors.Is(err, providerErr) || !reflect.DeepEqual(events, []string{"kubectl", "provisioner", "kubectl"}) {
+		t.Fatalf("err=%v events=%#v", err, events)
 	}
 }
 
@@ -1120,13 +1151,13 @@ func TestTencentProviderClaimComputeRecoveryReadsNodeAfterPatchTimeout(t *testin
 	}
 }
 
-func TestTencentProviderClaimComputeRecoveryUsesThirdNodeReadbackWithoutRepeatingPatch(t *testing.T) {
+func TestTencentProviderClaimComputeRecoveryUsesSixthNodeReadbackWithoutRepeatingPatch(t *testing.T) {
 	setProtectedResourceEnv(t)
 	allocation, plan, ownership := computeClaimProviderFixture()
 	provider := NewTencentProvider()
-	waitCalls := 0
-	provider.convergenceWait = func(context.Context, int) error {
-		waitCalls++
+	waitAttempts := []int{}
+	provider.convergenceWait = func(_ context.Context, attempt int) error {
+		waitAttempts = append(waitAttempts, attempt)
 		return nil
 	}
 	provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
@@ -1147,7 +1178,7 @@ func TestTencentProviderClaimComputeRecoveryUsesThirdNodeReadbackWithoutRepeatin
 				return []byte(`{"metadata":{"name":"10.0.0.8","resourceVersion":"7","labels":{}},"spec":{"taints":[{"key":"oplcloud.cn/workspace-id","value":"unallocated","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`), nil
 			}
 			postPatchGetCalls++
-			if postPatchGetCalls < 3 {
+			if postPatchGetCalls < 6 {
 				return []byte(`{"metadata":{"name":"10.0.0.8","resourceVersion":"7","labels":{}},"spec":{"taints":[{"key":"oplcloud.cn/workspace-id","value":"unallocated","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`), nil
 			}
 			return []byte(`{"metadata":{"name":"10.0.0.8","resourceVersion":"8","labels":{"medopl.cn/workload":"workspace","oplcloud.cn/resource-id":"compute-alpha","oplcloud.cn/account-id":"acct-alpha","oplcloud.cn/workspace-id":"ws-alpha"}},"spec":{"taints":[{"key":"oplcloud.cn/workspace-id","value":"ws-alpha","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`), nil
@@ -1161,8 +1192,9 @@ func TestTencentProviderClaimComputeRecoveryUsesThirdNodeReadbackWithoutRepeatin
 	}
 
 	claim, err := provider.ClaimComputeRecovery(context.Background(), allocation, plan, ownership)
-	if err != nil || claim.Proof.NodeOwnershipState != "target_owned" || claim.KubernetesMutationCount != 1 || claim.Evidence == nil || claim.Evidence.Node.Attempted != 1 || claim.Evidence.Node.Confirmed != 1 || getCalls != 6 || postPatchGetCalls != 4 || waitCalls != 2 || patchCalls != 1 {
-		t.Fatalf("claim=%#v err=%v getCalls=%d postPatchGetCalls=%d waitCalls=%d patchCalls=%d", claim, err, getCalls, postPatchGetCalls, waitCalls, patchCalls)
+	if err != nil || claim.Proof.NodeOwnershipState != "target_owned" || claim.KubernetesMutationCount != 1 || claim.Evidence == nil || claim.Evidence.Node.Attempted != 1 || claim.Evidence.Node.Confirmed != 1 ||
+		getCalls != 9 || postPatchGetCalls != 7 || !slices.Equal(waitAttempts, []int{1, 2, 3, 4, 5}) || patchCalls != 1 {
+		t.Fatalf("claim=%#v err=%v getCalls=%d postPatchGetCalls=%d waitAttempts=%#v patchCalls=%d", claim, err, getCalls, postPatchGetCalls, waitAttempts, patchCalls)
 	}
 }
 
@@ -1170,9 +1202,9 @@ func TestTencentProviderClaimComputeRecoveryFailsClosedAfterPersistentOldNodeRea
 	setProtectedResourceEnv(t)
 	allocation, plan, ownership := computeClaimProviderFixture()
 	provider := NewTencentProvider()
-	waitCalls := 0
-	provider.convergenceWait = func(context.Context, int) error {
-		waitCalls++
+	waitAttempts := []int{}
+	provider.convergenceWait = func(_ context.Context, attempt int) error {
+		waitAttempts = append(waitAttempts, attempt)
 		return nil
 	}
 	provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
@@ -1199,8 +1231,9 @@ func TestTencentProviderClaimComputeRecoveryFailsClosedAfterPersistentOldNodeRea
 	}
 
 	claim, err := provider.ClaimComputeRecovery(context.Background(), allocation, plan, ownership)
-	if err == nil || claim.Proof.NodeOwnershipState == "target_owned" || claim.KubernetesMutationCount != 1 || claim.Evidence == nil || claim.Evidence.Node.Attempted != 1 || claim.Evidence.Node.Confirmed != 0 || getCalls != 5 || waitCalls != 2 || patchCalls != 1 {
-		t.Fatalf("claim=%#v err=%v getCalls=%d waitCalls=%d patchCalls=%d", claim, err, getCalls, waitCalls, patchCalls)
+	if err == nil || claim.Proof.NodeOwnershipState == "target_owned" || claim.KubernetesMutationCount != 1 || claim.Evidence == nil || claim.Evidence.Node.Attempted != 1 || claim.Evidence.Node.Confirmed != 0 ||
+		getCalls != 8 || !slices.Equal(waitAttempts, []int{1, 2, 3, 4, 5}) || patchCalls != 1 {
+		t.Fatalf("claim=%#v err=%v getCalls=%d waitAttempts=%#v patchCalls=%d", claim, err, getCalls, waitAttempts, patchCalls)
 	}
 }
 
@@ -1208,9 +1241,9 @@ func TestTencentProviderClaimComputeRecoveryFailsClosedAfterUnreadableNodeReadba
 	setProtectedResourceEnv(t)
 	allocation, plan, ownership := computeClaimProviderFixture()
 	provider := NewTencentProvider()
-	waitCalls := 0
-	provider.convergenceWait = func(context.Context, int) error {
-		waitCalls++
+	waitAttempts := []int{}
+	provider.convergenceWait = func(_ context.Context, attempt int) error {
+		waitAttempts = append(waitAttempts, attempt)
 		return nil
 	}
 	provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
@@ -1240,8 +1273,9 @@ func TestTencentProviderClaimComputeRecoveryFailsClosedAfterUnreadableNodeReadba
 	}
 
 	claim, err := provider.ClaimComputeRecovery(context.Background(), allocation, plan, ownership)
-	if err == nil || claim.KubernetesMutationCount != 1 || claim.Evidence == nil || claim.Evidence.Node.Attempted != 1 || claim.Evidence.Node.Confirmed != 0 || claim.Evidence.Node.Unknown != 1 || getCalls != 5 || waitCalls != 2 || patchCalls != 1 {
-		t.Fatalf("claim=%#v err=%v getCalls=%d waitCalls=%d patchCalls=%d", claim, err, getCalls, waitCalls, patchCalls)
+	if err == nil || claim.KubernetesMutationCount != 1 || claim.Evidence == nil || claim.Evidence.Node.Attempted != 1 || claim.Evidence.Node.Confirmed != 0 || claim.Evidence.Node.Unknown != 1 ||
+		getCalls != 8 || !slices.Equal(waitAttempts, []int{1, 2, 3, 4, 5}) || patchCalls != 1 {
+		t.Fatalf("claim=%#v err=%v getCalls=%d waitAttempts=%#v patchCalls=%d", claim, err, getCalls, waitAttempts, patchCalls)
 	}
 }
 

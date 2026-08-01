@@ -72,7 +72,11 @@ func boundedClaimReadbackWait(ctx context.Context, attempt int) error {
 	if attempt <= 0 {
 		return nil
 	}
-	timer := time.NewTimer(time.Duration(attempt) * 100 * time.Millisecond)
+	delays := [...]time.Duration{0, 500 * time.Millisecond, time.Second, 2 * time.Second, 4 * time.Second, 8 * time.Second}
+	if attempt >= len(delays) {
+		attempt = len(delays) - 1
+	}
+	timer := time.NewTimer(delays[attempt])
 	defer timer.Stop()
 	select {
 	case <-ctx.Done():
@@ -113,8 +117,19 @@ func (p *TencentProvider) evaluateMonthlyPreflight(ctx context.Context, input Mo
 		request.Storage = provisionerStorage{SizeGB: uint64(input.SizeGB), Zone: input.Zone, DiskType: firstNonEmpty(os.Getenv("TENCENT_CBS_DISK_TYPE"), "CLOUD_BSSD")}
 		expectedStages = []string{"cbs_prepaid_quota", "cbs_price"}
 	}
+	if input.ResourceType == "compute" {
+		if err := p.requireNodePatchRBAC(ctx); err != nil {
+			return monthlyPreflightEvaluation{Err: err}
+		}
+	}
 	response, err := p.provision(ctx, request)
 	evaluation := monthlyPreflightEvaluation{Stages: reportStages(response, err, expectedStages)}
+	if input.ResourceType == "compute" {
+		if rbacErr := p.requireNodePatchRBAC(ctx); rbacErr != nil {
+			evaluation.Err = rbacErr
+			return evaluation
+		}
+	}
 	if err != nil {
 		evaluation.Err = err
 		return evaluation
@@ -143,6 +158,17 @@ func (p *TencentProvider) evaluateMonthlyPreflight(ctx context.Context, input Mo
 		ProviderPriceCNY: response.ProviderPriceCNY, ProviderRequestIDs: response.ProviderRequestIDs,
 	}
 	return evaluation
+}
+
+func (p *TencentProvider) requireNodePatchRBAC(ctx context.Context) error {
+	if p.kubectl == nil {
+		return errors.New("kubernetes_node_patch_rbac_unavailable")
+	}
+	output, err := p.kubectl(ctx, []string{"auth", "can-i", "patch", "nodes"}, nil)
+	if err != nil || strings.TrimSpace(string(output)) != "yes" {
+		return errors.New("kubernetes_node_patch_rbac_unavailable")
+	}
+	return nil
 }
 
 func (p *TencentProvider) MonthlyPreflightReport(ctx context.Context, input MonthlyPreflightReportInput) (MonthlyPreflightReport, error) {
@@ -996,7 +1022,7 @@ func (p *TencentProvider) convergeComputeClaimNode(ctx context.Context, allocati
 // success proof, while an explicit ownership conflict stops immediately.
 func (p *TencentProvider) readNodeOwnershipAfterMutation(ctx context.Context, allocation ComputeAllocation, ownership MachineOwnership) (string, bool, error, string) {
 	var lastErr error
-	for attempt := 0; attempt < 3; attempt++ {
+	for attempt := 0; attempt < 6; attempt++ {
 		if attempt > 0 && p.convergenceWait != nil {
 			if err := p.convergenceWait(ctx, attempt); err != nil {
 				return "unknown", false, err, computeClaimKubectlErrorClass(err)
