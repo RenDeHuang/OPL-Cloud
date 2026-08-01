@@ -9,6 +9,7 @@ Before changing billing, Fabric, Workspace, Gateway, Ledger, deployment, or E2E:
 
 Hard prohibitions:
 
+- The local WSL development machine cannot access the production private network. Never attempt local direct access to production-internal endpoints, clusters, databases, or services. All production deployment and private-network verification must run through the repository's GitHub Actions workflows using the `production` environment and its authorized runner; local work is limited to code changes, workflow dispatch, and reading back GitHub evidence.
 - Do not add a second wallet or Gateway service; Sub2API is the Gateway backend and spendable-balance owner.
 - Do not introduce `POSTPAID_BY_HOUR` for customer or verification CVM/CBS resources.
 - Do not buy or delete Tencent CVM/CBS resources during an ordinary CI, release, or E2E run.
