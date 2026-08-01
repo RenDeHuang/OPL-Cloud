@@ -1268,6 +1268,8 @@ test("compute claim approval validation is a zero-mutation production mode befor
   assert.equal(validate.env.OPL_BASIC_CANARY_CUSTOMER_EMAIL, "${{ inputs.customer_email }}");
   assert.match(runs, /production-live-qa\.ts --compute-claim-validate/);
   assert.match(runs, /compute-claim-recovery\/validate/);
+  assert.match(runs, /grep -Fq 'compute-claim-recovery\/validate'/);
+  assert.doesNotMatch(runs, /\brg -q 'compute-claim-recovery\/validate'/);
   assert.match(runs, /get secret opl-cloud-internal-service/);
   assert.match(runs, /runnerDirectMutationCounts/);
   assert.doesNotMatch(runs, /compute-claim-recovery\/claim|--compute-claim-recover|ClaimComputeRecovery|create_original_cbs|reuse_original_cbs/i);

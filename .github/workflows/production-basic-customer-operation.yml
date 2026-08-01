@@ -1917,7 +1917,7 @@ jobs:
             echo "Compute claim validation requires its exact target, approval, protected customer identity, Cloud digest, and release-owned runner kubeconfig." >&2
             exit 1
           fi
-          if ! rg -q 'compute-claim-recovery/validate' tools/production-live-qa.ts; then
+          if ! grep -Fq 'compute-claim-recovery/validate' tools/production-live-qa.ts; then
             echo "Compute claim validation source is unavailable." >&2
             exit 1
           fi
