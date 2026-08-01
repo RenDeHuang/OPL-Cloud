@@ -84,7 +84,7 @@ test("Current contracts hard cut Workspace purchase, access, and Runtime facts",
     json("packages/contracts/opl-cloud-console-source-truth-contract.json")
   ]);
 
-  assert.equal(freeze.schemaVersion, 19);
+  assert.equal(freeze.schemaVersion, 20);
   assert.equal(billing.schemaVersion, 11);
   assert.equal(freeze.workspaceLaunch.customerDebitCardinality, 1);
   assert.equal(freeze.workspaceLaunch.persistence, "control_plane_runtime_operations with action=workspace.launch.v2 and result.schemaVersion=2");
@@ -399,7 +399,7 @@ test("Current Fabric contracts require dedicated package NodePools without weake
     output: "redacted_evidence_only",
     currentState: "implemented_and_fake_tested_not_executed"
   });
-  assert.equal(deployment.schemaVersion, 28);
+  assert.equal(deployment.schemaVersion, 29);
   assert.deepEqual(deployment.productionWorkspaceLaunchReadbackRecovery, {
     workflow: ".github/workflows/production-basic-customer-operation.yml",
     modes: {
@@ -533,6 +533,8 @@ test("Current Fabric contracts require dedicated package NodePools without weake
       replayAfterReservation: "authoritative_readback_only_zero_incremental_external_mutation",
       missingOutcome: "conservative_unknown_at_full_bound",
       replayProofUnavailable: "return_persisted_mutation_evidence_zero_incremental_external_mutation",
+      observedCvmTagRepairContinuation: "only_cvm_tag_readback_zero_unknown_zero_kubernetes_then_fresh_exact_cvm_target_owned_node_unallocated_proof_may_reconcile_original_claim_identity_and_attempt_one_node_patch_without_binding_takeover",
+      persistedApprovalExpiryReplay: "new_approval_must_be_unexpired_exact_persisted_approval_identity_may_replay_after_expiry",
       observedSuccessReadbackMismatch: "fail_closed_identity_mismatch_claim_final_readback"
     },
     artifactGate: ["exact_target_owned_readback", "proof_storage_state_and_provider_resource_id_match_approval", "proof_sub2api_zero", "proof_tencent_zero_to_five", "proof_kubernetes_zero_to_one", "attempted_equals_count", "confirmed_equals_attempted", "unknown_zero", "missing_empty"],
@@ -768,7 +770,7 @@ test("Current contracts hard cut operator resources, wallet adjustments, and ann
     absentRequires: "both_local_identities_and_exact_provider_describe_absence",
     forbiddenSideEffects: ["sync", "tag", "kubectl_apply", "delete", "label", "purchase", "renew", "destroy"]
   });
-  assert.equal(boundary.schemaVersion, 21);
+  assert.equal(boundary.schemaVersion, 22);
   assert.deepEqual(boundary.services.controlPlane.workspaceContinuationAttemptBudget, {
     owner: "original_workspace.launch.v2_operation",
     stages: ["storage", "attachment", "secret", "runtime", "activation", "receipt"],
@@ -884,6 +886,8 @@ test("Current contracts hard cut operator resources, wallet adjustments, and ann
       replayAfterReservation: "authoritative_readback_only_zero_incremental_external_mutation",
       missingOutcome: "conservative_unknown_at_full_bound",
       replayProofUnavailable: "return_persisted_mutation_evidence_zero_incremental_external_mutation",
+      observedCvmTagRepairContinuation: "only_cvm_tag_readback_zero_unknown_zero_kubernetes_then_fresh_exact_cvm_target_owned_node_unallocated_proof_may_reconcile_original_claim_identity_and_attempt_one_node_patch_without_binding_takeover",
+      persistedApprovalExpiryReplay: "new_approval_must_be_unexpired_exact_persisted_approval_identity_may_replay_after_expiry",
       observedSuccessReadbackMismatch: "fail_closed_identity_mismatch_claim_final_readback"
     },
     replay: "same_key_and_target_returns_same_proof_zero_incremental_external_mutation",
@@ -938,6 +942,102 @@ test("Current contracts hard cut operator resources, wallet adjustments, and ann
   const announcement = business.objectKinds.find((entry: { kind: string }) => entry.kind === "Announcement");
   assert.equal(Boolean(announcement), true);
   assert.equal(announcement.implementation, "code_complete_local_focused_tests");
+});
+
+test("Current contracts keep compute-claim continuation automatic while preserving the original Fabric identity", async () => {
+  const [freeze, deployment, boundary, sourceTruth] = await Promise.all([
+    json("packages/contracts/opl-cloud-launch-freeze-contract.json"),
+    json("packages/contracts/opl-cloud-deployment-contract.json"),
+    json("packages/contracts/opl-cloud-service-boundary-contract.json"),
+    json("packages/contracts/opl-cloud-console-source-truth-contract.json")
+  ]);
+
+  assert.deepEqual(freeze.workspaceLaunch.computeClaimAutomaticContinuation, {
+    owner: "original_workspace.launch.v2_worker",
+    eligibleState: "compute_claim_pending",
+    manualReviewPolicy: "excluded_operator_recovery_only",
+    fabricClaimIdentity: "original_operationId:compute",
+    approvalDependency: "none",
+    freshReadback: ["tencent_cvm_describe", "kubernetes_node_get"],
+    preflight: {
+      kubernetes: "kubectl_auth_can_i_patch_nodes",
+      tencentIdentity: "sts_get_caller_identity",
+      requiredTencentActions: ["tag:TagResources", "tag:ModifyResourcesTagValue"],
+      tencentTagWriteCalls: 0
+    },
+    singleWinner: "postgresql_cas_before_node_patch",
+    allowedWrites: { tencent: 0, kubernetesNodePatchMax: 1 },
+    nodeReadback: { attemptsMax: 6, writes: 0 },
+    forbiddenRepeats: ["monthly_preflight", "sub2api_debit", "nodepool_scale", "cvm_create", "cvm_rename", "cvm_tag_write"],
+    success: "continue_same_launch_storage_runtime_activation_receipt",
+    failure: "manual_review"
+  });
+
+  assert.deepEqual(boundary.services.controlPlane.workspaceComputeClaimAutomaticContinuation, {
+    owner: "original_workspace.launch.v2_worker",
+    selection: "compute_claim_pending_only_manual_review_excluded",
+    claimIdentity: "original_operationId:compute",
+    authorization: "internal_service_capability_without_operator_approval",
+    reservation: "postgresql_cas_single_winner",
+    continuation: "shared_fulfillWorkspaceLaunch_after_target_owned_readback",
+    terminalFailure: "manual_review_worker_stops"
+  });
+  assert.deepEqual(boundary.services.fabric.workspaceComputeClaimIdentity, {
+    claimIdentity: "original_operationId:compute",
+    recoveryApprovalRole: "control_plane_authorization_and_audit_only",
+    recoveryKeyAsFabricIdentity: false,
+    bindingTakeover: false,
+    manualRecoveryInvocation: "control_plane_calls_fabric_with_original_claim_identity",
+    drift: "identity_mismatch_zero_provider_mutation"
+  });
+
+  assert.deepEqual(deployment.productionWorkspaceLaunchClaimClosure, {
+    productionNetwork: "github_actions_production_environment_authorized_runner_only",
+    rolloutGate: ["merged_origin_main_sha", "immutable_cloud_image_digest", "ready_control_plane_and_fabric_pod_image_ids"],
+    preflight: {
+      kubernetes: "kubectl_auth_can_i_patch_nodes",
+      tencentIdentity: "sts_get_caller_identity",
+      requiredTencentActions: ["tag:TagResources", "tag:ModifyResourcesTagValue"],
+      actualTencentTagWriteCalls: 0
+    },
+    acceptanceAExistingLaunch: {
+      scope: "one_exact_existing_launch_only",
+      incrementalWrites: {
+        sub2apiDebit: 0,
+        cvmCreate: 0,
+        tencentTagWrite: 0,
+        kubernetesNodePatchMax: 1,
+        cbsCreateByStorageState: { storage_not_started: 1, storage_existing_exact: 0 }
+      },
+      terminalEvidence: ["launch_succeeded", "runtime_ready", "receipt_completed", "pod_image_id_equals_approved_workspace_image_digest", "workspace_url_http_200"]
+    },
+    acceptanceBFreshOrderCanary: {
+      scope: "independent_new_basic_order",
+      workspaceLaunchPostCount: 1,
+      exactWrites: { sub2apiDebit: 1, cvmCreate: 1, nodeClaim: 1, cbsCreate: 1, runtimeCreate: 1, receiptCreate: 1 },
+      terminalEvidence: ["launch_succeeded", "runtime_ready", "receipt_completed", "pod_image_id_equals_approved_workspace_image_digest", "workspace_url_http_200"]
+    },
+    evidenceSubstitution: "forbidden_both_A_and_B_required",
+    implementationState: "contract_frozen_implementation_rollout_and_production_evidence_pending"
+  });
+
+  assert.equal(sourceTruth.schemaVersion, 11);
+  assert.deepEqual(sourceTruth.sources.operator.workspaceLaunchProgression, {
+    route: "GET /api/operator/reconciliation",
+    requiredItemFields: ["accountId", "billingOperationId", "phase", "errorCode", "progressionOwner", "allowedActions"],
+    states: {
+      compute_claim_pending: {
+        progressionOwner: "original_workspace.launch.v2_worker",
+        allowedActions: [],
+        completionEvidence: ["target_owned", "launch_succeeded", "runtime_ready", "receipt_completed", "workspace_url"]
+      },
+      manual_review: {
+        progressionOwner: "operator_recovery",
+        allowedActions: ["recover_workspace_launch"]
+      }
+    },
+    unavailableBehavior: "source_unavailable_never_completed_or_zero"
+  });
 });
 
 test("Current Console binds delegated Gateway credentials to process-local Console sessions", async () => {

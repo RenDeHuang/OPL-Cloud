@@ -523,6 +523,20 @@ contract or select the SKU for a customer launch.
   unknown historical HTTP attempts remain null, and an attempted or otherwise
   unprovable model result is never sent again.
 - Paused verification code and fake tests are not production evidence.
+- An ordinary `workspace.launch.v2` in `compute_claim_pending` is owned by the
+  original active launch worker. It reuses only the original
+  `operationId:compute` Fabric claim identity and does not require an operator
+  approval or recovery key. `manual_review` is excluded from this worker and
+  remains operator-recovery-only. Before any continuation, the worker performs
+  fresh authoritative CVM and Node readback, verifies `kubectl auth can-i patch
+  nodes`, reads the Tencent STS identity, and proves the deployed role has
+  `tag:TagResources` and `tag:ModifyResourcesTagValue`; these preflights perform
+  zero Tencent Tag writes. A PostgreSQL CAS selects one winner. The winner may
+  perform zero Tencent writes and at most one exact Node patch, followed by at
+  most six read-only Node observations. It never reruns monthly preflight,
+  Sub2API debit, NodePool scale, CVM creation, rename, or tag writes. Exact
+  target-owned readback continues the same launch through storage, Runtime,
+  activation, and Receipt; unprovable state enters `manual_review`.
 - Compute-claim diagnosis and mutation are separate manual modes in the existing
   production customer-operation workflow and run only on the self-hosted
   `tke-vpc` runner. After an ordinary rollout, release handling may dispatch one
@@ -555,7 +569,27 @@ contract or select the SKU for a customer launch.
   binding without this ledger may reserve once after the same exact read-only
   proof; once reserved, every same-key retry is readback-only. A missing provider
   outcome remains conservatively unknown at the full bound and never authorizes
-  another external write.
+  another external write. One narrower repair continuation is allowed only when
+  the observed failure is a CVM ownership-tag readback with zero unknown writes
+  and zero Kubernetes attempts, and a fresh authoritative proof shows that exact
+  CVM is now target-owned while the exact Node remains unallocated. Fabric keeps
+  the original `operationId:compute` claim identity, reconciles the old ledger
+  without any binding takeover, and allows the one remaining Node patch. The
+  recovery approval and recovery key remain Control Plane authorization and audit
+  facts only; Control Plane calls Fabric with the original claim identity. Every
+  other observed failure or identity drift remains readback-only. A newly
+  submitted approval must be unexpired, while a byte-exact approval already
+  persisted on the launch may replay after expiry.
+- Production closure requires two independent evidence sets and neither may
+  substitute for the other. Acceptance A restores the one exact existing Launch
+  with zero additional debit, CVM creation, or Tencent Tag write, at most one Node
+  patch, and CBS creation only when storage is authoritatively not started; it
+  must end with Launch succeeded, Runtime Ready, completed Receipt, the approved
+  Workspace Pod image digest, and Workspace URL HTTP 200. Acceptance B submits
+  one independent fresh Basic order exactly once and proves exactly one debit,
+  CVM, Node claim, CBS, Runtime, and Receipt plus the same terminal URL and image
+  evidence. Deployment and every private-network readback run only through the
+  repository GitHub Actions `production` environment and its authorized runner.
 - `recovered_workspace_e2e` is a separate hosted job in the same workflow and
   has a one-way dependency on a succeeded continuation artifact. It has no
   kubeconfig, Tencent credentials, or internal service capability, and cannot

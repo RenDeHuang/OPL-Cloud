@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 28,
+  "schemaVersion": 29,
   "owner": "OPL Fabric",
   "purpose": "Deployment workflow, immutable Cloud and Workspace images, TKE handoff, read-only diagnostics, and production-verification safety.",
   "state": "current",
@@ -491,6 +491,35 @@
     },
     "currentState": "implemented_and_fake_tested_not_executed"
   },
+  "productionWorkspaceLaunchClaimClosure": {
+    "productionNetwork": "github_actions_production_environment_authorized_runner_only",
+    "rolloutGate": ["merged_origin_main_sha", "immutable_cloud_image_digest", "ready_control_plane_and_fabric_pod_image_ids"],
+    "preflight": {
+      "kubernetes": "kubectl_auth_can_i_patch_nodes",
+      "tencentIdentity": "sts_get_caller_identity",
+      "requiredTencentActions": ["tag:TagResources", "tag:ModifyResourcesTagValue"],
+      "actualTencentTagWriteCalls": 0
+    },
+    "acceptanceAExistingLaunch": {
+      "scope": "one_exact_existing_launch_only",
+      "incrementalWrites": {
+        "sub2apiDebit": 0,
+        "cvmCreate": 0,
+        "tencentTagWrite": 0,
+        "kubernetesNodePatchMax": 1,
+        "cbsCreateByStorageState": {"storage_not_started": 1, "storage_existing_exact": 0}
+      },
+      "terminalEvidence": ["launch_succeeded", "runtime_ready", "receipt_completed", "pod_image_id_equals_approved_workspace_image_digest", "workspace_url_http_200"]
+    },
+    "acceptanceBFreshOrderCanary": {
+      "scope": "independent_new_basic_order",
+      "workspaceLaunchPostCount": 1,
+      "exactWrites": {"sub2apiDebit": 1, "cvmCreate": 1, "nodeClaim": 1, "cbsCreate": 1, "runtimeCreate": 1, "receiptCreate": 1},
+      "terminalEvidence": ["launch_succeeded", "runtime_ready", "receipt_completed", "pod_image_id_equals_approved_workspace_image_digest", "workspace_url_http_200"]
+    },
+    "evidenceSubstitution": "forbidden_both_A_and_B_required",
+    "implementationState": "contract_frozen_implementation_rollout_and_production_evidence_pending"
+  },
   "productionComputeClaimRecovery": {
     "workflow": ".github/workflows/production-basic-customer-operation.yml",
     "execution": "manual_release_owner_only_not_ci_release_rollout_or_e2e",
@@ -574,6 +603,8 @@
       "replayAfterReservation": "authoritative_readback_only_zero_incremental_external_mutation",
       "missingOutcome": "conservative_unknown_at_full_bound",
       "replayProofUnavailable": "return_persisted_mutation_evidence_zero_incremental_external_mutation",
+      "observedCvmTagRepairContinuation": "only_cvm_tag_readback_zero_unknown_zero_kubernetes_then_fresh_exact_cvm_target_owned_node_unallocated_proof_may_reconcile_original_claim_identity_and_attempt_one_node_patch_without_binding_takeover",
+      "persistedApprovalExpiryReplay": "new_approval_must_be_unexpired_exact_persisted_approval_identity_may_replay_after_expiry",
       "observedSuccessReadbackMismatch": "fail_closed_identity_mismatch_claim_final_readback"
     },
     "artifactGate": ["exact_target_owned_readback", "proof_storage_state_and_provider_resource_id_match_approval", "proof_sub2api_zero", "proof_tencent_zero_to_five", "proof_kubernetes_zero_to_one", "attempted_equals_count", "confirmed_equals_attempted", "unknown_zero", "missing_empty"],
