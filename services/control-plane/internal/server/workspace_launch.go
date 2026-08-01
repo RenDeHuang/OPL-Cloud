@@ -639,7 +639,7 @@ func (app *controlPlaneServer) runWorkspaceLaunch(ctx context.Context, service *
 	if err != nil || !ok || terminalWorkspaceLaunchStatus(operation.Status) || operation.Status == "manual_review" {
 		return err
 	}
-	if operation.Phase == "key_pending" || operation.Phase == "compute_claim_pending" {
+	if operation.Phase == "key_pending" || operation.Phase == "compute_claim_pending" && operation.Status != "compute_claim_pending" {
 		return nil
 	}
 	unlockAccount := app.lockResource("account", operation.AccountID)
@@ -701,7 +701,7 @@ func (app *controlPlaneServer) fulfillWorkspaceLaunch(ctx context.Context, servi
 			if err := app.persistWorkspaceLaunch(ctx, operation); err != nil {
 				return err
 			}
-		case "compute_fulfilling", "storage_fulfilling":
+		case "compute_fulfilling", "storage_fulfilling", "compute_claim_pending":
 			resourceType := "compute"
 			if operation.Phase == "storage_fulfilling" {
 				resourceType = "storage"
@@ -947,8 +947,6 @@ func (app *controlPlaneServer) fulfillWorkspaceLaunch(ctx context.Context, servi
 			return app.recordWorkspaceLaunchPurchaseReceipt(ctx, service, operation)
 		case "refund_pending":
 			return app.refundWorkspaceLaunch(ctx, service, operation, operation.RefundReason)
-		case "compute_claim_pending":
-			return nil
 		case "succeeded", "refunded":
 			return nil
 		default:

@@ -2691,6 +2691,46 @@ test("compute-claim recovery requires an exact release approval and calls only t
   assert.equal(calls.some(({ path }) => /wallet|refund|compute-allocations|storage-volumes/.test(path)), false);
 });
 
+test("compute-claim recovery lets the server decide an expired exact persisted replay", async () => {
+  const expiresAt = "2026-08-27T00:00:00Z";
+  const calls = [];
+  const result = await productionLiveQa.recoverComputeClaim({
+    target: COMPUTE_CLAIM_TARGET,
+    approvalJson: computeClaimApprovalJson({ expiresAt }),
+    approvalId: "approval-compute-claim-fixture",
+    mergedSha: BASIC_CANARY_MERGED_SHA,
+    cloudImageDigest: BASIC_CANARY_CLOUD_DIGEST,
+    origin: "https://cloud.medopl.cn",
+    adminEmail: ADMIN_EMAIL,
+    adminPassword: ADMIN_PASSWORD,
+    internalServiceToken: "compute-claim-runner-capability",
+    kubeconfigPath: "/run/secrets/kubeconfig",
+    namespace: "opl-cloud",
+    cloudRevisionEvidenceReader: async () => computeClaimCloudRevisionEvidence(),
+    fetchImpl: async (input, init = {}) => {
+      const url = new URL(String(input));
+      calls.push({ method: init.method || "GET", path: url.pathname, body: init.body ? JSON.parse(String(init.body)) : null });
+      if (url.pathname === "/api/auth/login") {
+        return json({ user: { accountId: "acct-admin", role: "admin" } }, 200, {
+          "set-cookie": "opl_session=session-fixture; Path=/; HttpOnly",
+          "x-opl-csrf-token": "csrf-compute-claim"
+        });
+      }
+      if (url.pathname === "/api/operator/accounts") return computeClaimAccountAuthority();
+      return json(computeClaimProof({ nodeOwnershipState: "target_owned", cvmOwnershipState: "target_owned" }));
+    },
+    now: new Date("2026-08-28T00:00:00Z")
+  });
+
+  assert.equal(result.status, "claimed");
+  assert.deepEqual(calls.map(({ method, path }) => [method, path]), [
+    ["POST", "/api/auth/login"],
+    ["GET", "/api/operator/accounts"],
+    ["POST", `/api/operator/workspace-launches/${COMPUTE_CLAIM_TARGET.launchOperationId}/compute-claim-recovery/claim`]
+  ]);
+  assert.equal(calls[2].body.expiresAt, expiresAt);
+});
+
 test("compute-claim recovery never follows a claim redirect with the internal capability", async () => {
   const calls = [];
   const fetchImpl = async (input, init = {}) => {

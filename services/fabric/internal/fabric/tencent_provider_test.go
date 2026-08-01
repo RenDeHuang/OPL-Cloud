@@ -316,13 +316,20 @@ func TestTencentProviderMonthlyPreflightUsesExactConfiguredPackagePool(t *testin
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("RUN_TENCENT_CREATE_RELEASE_EXECUTION", "1")
 			provider := NewTencentProvider()
+			kubectlCalls := 0
 			provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
 				tc.check(t, request)
 				return tc.reply, nil
 			}
-			provider.kubectl = func(context.Context, []string, []byte) ([]byte, error) {
-				t.Fatal("monthly preflight must not call kubectl")
-				return nil, nil
+			provider.kubectl = func(_ context.Context, args []string, stdin []byte) ([]byte, error) {
+				kubectlCalls++
+				if tc.input.ResourceType == "storage" {
+					t.Fatal("storage monthly preflight must not call kubectl")
+				}
+				if !slices.Equal(args, []string{"auth", "can-i", "patch", "nodes"}) || stdin != nil {
+					t.Fatalf("compute preflight kubectl args=%#v stdin=%q", args, stdin)
+				}
+				return []byte("yes\n"), nil
 			}
 			result, err := provider.MonthlyPreflight(context.Background(), tc.input)
 			resultJSON, marshalErr := json.Marshal(result)
@@ -333,7 +340,156 @@ func TestTencentProviderMonthlyPreflightUsesExactConfiguredPackagePool(t *testin
 			if err != nil || result.ResourceType != tc.input.ResourceType || result.PackageID != tc.input.PackageID || result.SizeGB != tc.input.SizeGB || result.Zone != tc.input.Zone || !result.Available || result.ChargeType != "PREPAID" || result.PeriodMonths != 1 || result.RenewFlag != "NOTIFY_AND_MANUAL_RENEW" || result.ProviderPriceCNY != tc.reply.ProviderPriceCNY || len(result.ProviderRequestIDs) == 0 || (tc.input.ResourceType == "compute" && resultFields["nodePoolId"] != tc.reply.NodePoolID) {
 				t.Fatalf("monthly preflight = %#v, err=%v", result, err)
 			}
+			wantKubectlCalls := 0
+			if tc.input.ResourceType == "compute" {
+				wantKubectlCalls = 2
+			}
+			if kubectlCalls != wantKubectlCalls {
+				t.Fatalf("kubectl calls=%d want=%d", kubectlCalls, wantKubectlCalls)
+			}
 		})
+	}
+}
+
+func TestTencentProviderMonthlyComputePreflightChecksNodePatchRBACBeforeAndAfterProvisioner(t *testing.T) {
+	t.Setenv("RUN_TENCENT_CREATE_RELEASE_EXECUTION", "1")
+	t.Setenv("OPL_BASIC_COMPUTE_NODE_POOL_MAX_REPLICAS", "40")
+	t.Setenv("OPL_SYSTEM_COMPUTE_MACHINE_ID", "")
+	provider := NewTencentProvider()
+	events := []string{}
+	provider.kubectl = func(_ context.Context, args []string, stdin []byte) ([]byte, error) {
+		events = append(events, "kubectl")
+		if !slices.Equal(args, []string{"auth", "can-i", "patch", "nodes"}) || stdin != nil {
+			t.Fatalf("kubectl args=%#v stdin=%q", args, stdin)
+		}
+		return []byte("yes\n"), nil
+	}
+	provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
+		events = append(events, "provisioner")
+		return provisionerResponse{
+			OK: true, Status: "ready", NodePoolID: "np-basic", InstanceType: "SA5.MEDIUM4", InstanceAvailable: true, Zones: []string{"na-siliconvalley-1"},
+			ProviderPriceCNY: 142.91, RemainingQuota: 8, ProviderRequestIDs: map[string]string{"nodePool": "req-pool", "subnets": "req-subnets", "availability": "req-capacity", "quota": "req-quota"},
+			ProviderData: map[string]string{"chargeType": "PREPAID", "periodMonths": "1", "renewFlag": "NOTIFY_AND_MANUAL_RENEW", "zone": "na-siliconvalley-1"},
+		}, nil
+	}
+
+	result, err := provider.MonthlyPreflight(context.Background(), MonthlyPreflightInput{ResourceType: "compute", PackageID: "basic", Zone: "na-siliconvalley-1"})
+
+	if err != nil || !result.Available {
+		t.Fatalf("preflight=%#v err=%v", result, err)
+	}
+	if !reflect.DeepEqual(events, []string{"kubectl", "provisioner", "kubectl"}) {
+		t.Fatalf("events=%#v", events)
+	}
+}
+
+func TestTencentProviderMonthlyComputePreflightFailsClosedOnNodePatchRBAC(t *testing.T) {
+	t.Setenv("RUN_TENCENT_CREATE_RELEASE_EXECUTION", "1")
+	t.Setenv("OPL_BASIC_COMPUTE_NODE_POOL_MAX_REPLICAS", "40")
+	for _, tc := range []struct {
+		name             string
+		outputs          [][]byte
+		errors           []error
+		nilKubectl       bool
+		wantKubectlCalls int
+		wantProvisioner  int
+	}{
+		{name: "pre nil kubectl", nilKubectl: true},
+		{name: "pre no", outputs: [][]byte{[]byte("no\n")}, wantKubectlCalls: 1},
+		{name: "pre empty", outputs: [][]byte{[]byte("")}, wantKubectlCalls: 1},
+		{name: "pre error", errors: []error{errors.New("forbidden")}, wantKubectlCalls: 1},
+		{name: "pre abnormal", outputs: [][]byte{[]byte("yes unexpected\n")}, wantKubectlCalls: 1},
+		{name: "post no", outputs: [][]byte{[]byte("yes\n"), []byte("no\n")}, wantKubectlCalls: 2, wantProvisioner: 1},
+		{name: "post empty", outputs: [][]byte{[]byte("yes\n"), []byte("")}, wantKubectlCalls: 2, wantProvisioner: 1},
+		{name: "post error", outputs: [][]byte{[]byte("yes\n")}, errors: []error{nil, errors.New("forbidden")}, wantKubectlCalls: 2, wantProvisioner: 1},
+		{name: "post abnormal", outputs: [][]byte{[]byte("yes\n"), []byte("allowed\n")}, wantKubectlCalls: 2, wantProvisioner: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			provider := NewTencentProvider()
+			kubectlCalls, provisionerCalls := 0, 0
+			if tc.nilKubectl {
+				provider.kubectl = nil
+			} else {
+				provider.kubectl = func(_ context.Context, args []string, stdin []byte) ([]byte, error) {
+					if !slices.Equal(args, []string{"auth", "can-i", "patch", "nodes"}) || stdin != nil {
+						t.Fatalf("kubectl args=%#v stdin=%q", args, stdin)
+					}
+					index := kubectlCalls
+					kubectlCalls++
+					var output []byte
+					if index < len(tc.outputs) {
+						output = tc.outputs[index]
+					}
+					var err error
+					if index < len(tc.errors) {
+						err = tc.errors[index]
+					}
+					return output, err
+				}
+			}
+			provider.provision = func(context.Context, provisionerRequest) (provisionerResponse, error) {
+				provisionerCalls++
+				return provisionerResponse{
+					OK: true, Status: "ready", NodePoolID: "np-basic", InstanceType: "SA5.MEDIUM4", InstanceAvailable: true, Zones: []string{"na-siliconvalley-1"},
+					ProviderPriceCNY: 142.91, RemainingQuota: 8, ProviderRequestIDs: map[string]string{"nodePool": "req-pool", "subnets": "req-subnets", "availability": "req-capacity", "quota": "req-quota"},
+					ProviderData: map[string]string{"chargeType": "PREPAID", "periodMonths": "1", "renewFlag": "NOTIFY_AND_MANUAL_RENEW", "zone": "na-siliconvalley-1"},
+				}, nil
+			}
+
+			_, err := provider.MonthlyPreflight(context.Background(), MonthlyPreflightInput{ResourceType: "compute", PackageID: "basic", Zone: "na-siliconvalley-1"})
+
+			if err == nil || err.Error() != "kubernetes_node_patch_rbac_unavailable" || kubectlCalls != tc.wantKubectlCalls || provisionerCalls != tc.wantProvisioner {
+				t.Fatalf("err=%v kubectl calls=%d provisioner calls=%d", err, kubectlCalls, provisionerCalls)
+			}
+		})
+	}
+}
+
+func TestTencentProviderMonthlyComputePreflightChecksNodePatchRBACAfterProvisionerFailure(t *testing.T) {
+	t.Setenv("RUN_TENCENT_CREATE_RELEASE_EXECUTION", "1")
+	t.Setenv("OPL_BASIC_COMPUTE_NODE_POOL_MAX_REPLICAS", "40")
+	provider := NewTencentProvider()
+	events := []string{}
+	provider.kubectl = func(_ context.Context, args []string, stdin []byte) ([]byte, error) {
+		events = append(events, "kubectl")
+		if !slices.Equal(args, []string{"auth", "can-i", "patch", "nodes"}) || stdin != nil {
+			t.Fatalf("kubectl args=%#v stdin=%q", args, stdin)
+		}
+		return []byte("yes\n"), nil
+	}
+	providerErr := errors.New("provider unavailable")
+	provider.provision = func(context.Context, provisionerRequest) (provisionerResponse, error) {
+		events = append(events, "provisioner")
+		return provisionerResponse{}, providerErr
+	}
+
+	_, err := provider.MonthlyPreflight(context.Background(), MonthlyPreflightInput{ResourceType: "compute", PackageID: "basic", Zone: "na-siliconvalley-1"})
+
+	if !errors.Is(err, providerErr) || !reflect.DeepEqual(events, []string{"kubectl", "provisioner", "kubectl"}) {
+		t.Fatalf("err=%v events=%#v", err, events)
+	}
+}
+
+func TestTencentProviderMonthlyStoragePreflightNeverChecksNodePatchRBAC(t *testing.T) {
+	t.Setenv("RUN_TENCENT_CREATE_RELEASE_EXECUTION", "1")
+	provider := NewTencentProvider()
+	provider.kubectl = func(context.Context, []string, []byte) ([]byte, error) {
+		t.Fatal("storage preflight reached kubectl")
+		return nil, nil
+	}
+	provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
+		if request.Action != "storage_preflight" {
+			t.Fatalf("request=%#v", request)
+		}
+		return provisionerResponse{
+			OK: true, Status: "ready", ProviderPriceCNY: 7.5, ProviderRequestIDs: map[string]string{"quota": "req-quota", "price": "req-price"},
+			ProviderData: map[string]string{"chargeType": "PREPAID", "periodMonths": "1", "renewFlag": "NOTIFY_AND_MANUAL_RENEW", "zone": "na-siliconvalley-1", "diskType": "CLOUD_BSSD", "sizeGb": "10"},
+		}, nil
+	}
+
+	result, err := provider.MonthlyPreflight(context.Background(), MonthlyPreflightInput{ResourceType: "storage", PackageID: "basic", SizeGB: 10, Zone: "na-siliconvalley-1"})
+	if err != nil || !result.Available {
+		t.Fatalf("preflight=%#v err=%v", result, err)
 	}
 }
 
@@ -417,6 +573,14 @@ func TestTencentProviderMonthlyPreflightReportEvaluatesBasicAndPro(t *testing.T)
 	t.Setenv("OPL_PRO_COMPUTE_NODE_POOL_MAX_REPLICAS", "20")
 	provider := NewTencentProvider()
 	calls := []string{}
+	kubectlCalls := 0
+	provider.kubectl = func(_ context.Context, args []string, stdin []byte) ([]byte, error) {
+		kubectlCalls++
+		if !slices.Equal(args, []string{"auth", "can-i", "patch", "nodes"}) || stdin != nil {
+			t.Fatalf("kubectl args=%#v stdin=%q", args, stdin)
+		}
+		return []byte("yes\n"), nil
+	}
 	provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
 		calls = append(calls, request.PackageID+":"+request.Action)
 		switch request.Action {
@@ -478,6 +642,9 @@ func TestTencentProviderMonthlyPreflightReportEvaluatesBasicAndPro(t *testing.T)
 	wantCalls := []string{"basic:capacity_preflight", "basic:storage_preflight", "pro:capacity_preflight", "pro:storage_preflight"}
 	if !reflect.DeepEqual(calls, wantCalls) {
 		t.Fatalf("calls=%#v want=%#v", calls, wantCalls)
+	}
+	if kubectlCalls != 4 {
+		t.Fatalf("kubectl calls=%d want=4", kubectlCalls)
 	}
 	encoded := string(mustJSON(report))
 	for _, forbidden := range []string{"configured", "cls-production", "providerRequestId", "providerRequestIds", "rawResponse", "wallet", "userData"} {
@@ -984,13 +1151,13 @@ func TestTencentProviderClaimComputeRecoveryReadsNodeAfterPatchTimeout(t *testin
 	}
 }
 
-func TestTencentProviderClaimComputeRecoveryUsesThirdNodeReadbackWithoutRepeatingPatch(t *testing.T) {
+func TestTencentProviderClaimComputeRecoveryUsesSixthNodeReadbackWithoutRepeatingPatch(t *testing.T) {
 	setProtectedResourceEnv(t)
 	allocation, plan, ownership := computeClaimProviderFixture()
 	provider := NewTencentProvider()
-	waitCalls := 0
-	provider.convergenceWait = func(context.Context, int) error {
-		waitCalls++
+	waitAttempts := []int{}
+	provider.convergenceWait = func(_ context.Context, attempt int) error {
+		waitAttempts = append(waitAttempts, attempt)
 		return nil
 	}
 	provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
@@ -1011,7 +1178,7 @@ func TestTencentProviderClaimComputeRecoveryUsesThirdNodeReadbackWithoutRepeatin
 				return []byte(`{"metadata":{"name":"10.0.0.8","resourceVersion":"7","labels":{}},"spec":{"taints":[{"key":"oplcloud.cn/workspace-id","value":"unallocated","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`), nil
 			}
 			postPatchGetCalls++
-			if postPatchGetCalls < 3 {
+			if postPatchGetCalls < 6 {
 				return []byte(`{"metadata":{"name":"10.0.0.8","resourceVersion":"7","labels":{}},"spec":{"taints":[{"key":"oplcloud.cn/workspace-id","value":"unallocated","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`), nil
 			}
 			return []byte(`{"metadata":{"name":"10.0.0.8","resourceVersion":"8","labels":{"medopl.cn/workload":"workspace","oplcloud.cn/resource-id":"compute-alpha","oplcloud.cn/account-id":"acct-alpha","oplcloud.cn/workspace-id":"ws-alpha"}},"spec":{"taints":[{"key":"oplcloud.cn/workspace-id","value":"ws-alpha","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`), nil
@@ -1025,8 +1192,9 @@ func TestTencentProviderClaimComputeRecoveryUsesThirdNodeReadbackWithoutRepeatin
 	}
 
 	claim, err := provider.ClaimComputeRecovery(context.Background(), allocation, plan, ownership)
-	if err != nil || claim.Proof.NodeOwnershipState != "target_owned" || claim.KubernetesMutationCount != 1 || claim.Evidence == nil || claim.Evidence.Node.Attempted != 1 || claim.Evidence.Node.Confirmed != 1 || getCalls != 6 || postPatchGetCalls != 4 || waitCalls != 2 || patchCalls != 1 {
-		t.Fatalf("claim=%#v err=%v getCalls=%d postPatchGetCalls=%d waitCalls=%d patchCalls=%d", claim, err, getCalls, postPatchGetCalls, waitCalls, patchCalls)
+	if err != nil || claim.Proof.NodeOwnershipState != "target_owned" || claim.KubernetesMutationCount != 1 || claim.Evidence == nil || claim.Evidence.Node.Attempted != 1 || claim.Evidence.Node.Confirmed != 1 ||
+		getCalls != 9 || postPatchGetCalls != 7 || !slices.Equal(waitAttempts, []int{1, 2, 3, 4, 5}) || patchCalls != 1 {
+		t.Fatalf("claim=%#v err=%v getCalls=%d postPatchGetCalls=%d waitAttempts=%#v patchCalls=%d", claim, err, getCalls, postPatchGetCalls, waitAttempts, patchCalls)
 	}
 }
 
@@ -1034,9 +1202,9 @@ func TestTencentProviderClaimComputeRecoveryFailsClosedAfterPersistentOldNodeRea
 	setProtectedResourceEnv(t)
 	allocation, plan, ownership := computeClaimProviderFixture()
 	provider := NewTencentProvider()
-	waitCalls := 0
-	provider.convergenceWait = func(context.Context, int) error {
-		waitCalls++
+	waitAttempts := []int{}
+	provider.convergenceWait = func(_ context.Context, attempt int) error {
+		waitAttempts = append(waitAttempts, attempt)
 		return nil
 	}
 	provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
@@ -1063,8 +1231,9 @@ func TestTencentProviderClaimComputeRecoveryFailsClosedAfterPersistentOldNodeRea
 	}
 
 	claim, err := provider.ClaimComputeRecovery(context.Background(), allocation, plan, ownership)
-	if err == nil || claim.Proof.NodeOwnershipState == "target_owned" || claim.KubernetesMutationCount != 1 || claim.Evidence == nil || claim.Evidence.Node.Attempted != 1 || claim.Evidence.Node.Confirmed != 0 || getCalls != 5 || waitCalls != 2 || patchCalls != 1 {
-		t.Fatalf("claim=%#v err=%v getCalls=%d waitCalls=%d patchCalls=%d", claim, err, getCalls, waitCalls, patchCalls)
+	if err == nil || claim.Proof.NodeOwnershipState == "target_owned" || claim.KubernetesMutationCount != 1 || claim.Evidence == nil || claim.Evidence.Node.Attempted != 1 || claim.Evidence.Node.Confirmed != 0 ||
+		getCalls != 8 || !slices.Equal(waitAttempts, []int{1, 2, 3, 4, 5}) || patchCalls != 1 {
+		t.Fatalf("claim=%#v err=%v getCalls=%d waitAttempts=%#v patchCalls=%d", claim, err, getCalls, waitAttempts, patchCalls)
 	}
 }
 
@@ -1072,9 +1241,9 @@ func TestTencentProviderClaimComputeRecoveryFailsClosedAfterUnreadableNodeReadba
 	setProtectedResourceEnv(t)
 	allocation, plan, ownership := computeClaimProviderFixture()
 	provider := NewTencentProvider()
-	waitCalls := 0
-	provider.convergenceWait = func(context.Context, int) error {
-		waitCalls++
+	waitAttempts := []int{}
+	provider.convergenceWait = func(_ context.Context, attempt int) error {
+		waitAttempts = append(waitAttempts, attempt)
 		return nil
 	}
 	provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
@@ -1104,8 +1273,9 @@ func TestTencentProviderClaimComputeRecoveryFailsClosedAfterUnreadableNodeReadba
 	}
 
 	claim, err := provider.ClaimComputeRecovery(context.Background(), allocation, plan, ownership)
-	if err == nil || claim.KubernetesMutationCount != 1 || claim.Evidence == nil || claim.Evidence.Node.Attempted != 1 || claim.Evidence.Node.Confirmed != 0 || claim.Evidence.Node.Unknown != 1 || getCalls != 5 || waitCalls != 2 || patchCalls != 1 {
-		t.Fatalf("claim=%#v err=%v getCalls=%d waitCalls=%d patchCalls=%d", claim, err, getCalls, waitCalls, patchCalls)
+	if err == nil || claim.KubernetesMutationCount != 1 || claim.Evidence == nil || claim.Evidence.Node.Attempted != 1 || claim.Evidence.Node.Confirmed != 0 || claim.Evidence.Node.Unknown != 1 ||
+		getCalls != 8 || !slices.Equal(waitAttempts, []int{1, 2, 3, 4, 5}) || patchCalls != 1 {
+		t.Fatalf("claim=%#v err=%v getCalls=%d waitAttempts=%#v patchCalls=%d", claim, err, getCalls, waitAttempts, patchCalls)
 	}
 }
 
@@ -2601,6 +2771,26 @@ printf '{"kind":"List","items":[]}\n'
 	}
 	if !json.Valid(raw) {
 		t.Fatalf("kubectl output must stay valid JSON, got %q", string(raw))
+	}
+}
+
+func TestExecuteKubectlNodePatchRBACUsesConfiguredKubeconfig(t *testing.T) {
+	binDir := t.TempDir()
+	kubectl := filepath.Join(binDir, "kubectl")
+	if err := os.WriteFile(kubectl, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\"\n"), 0o700); err != nil {
+		t.Fatalf("write fake kubectl: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("TENCENT_DEPLOY_KUBECONFIG_REF", "/run/secrets/tencent-kubeconfig")
+	t.Setenv("OPL_K8S_NAMESPACE", "opl-cloud")
+
+	raw, err := executeKubectl(context.Background(), []string{"auth", "can-i", "patch", "nodes"}, nil)
+
+	if err != nil {
+		t.Fatalf("execute kubectl: %v", err)
+	}
+	if got, want := strings.Fields(string(raw)), []string{"--kubeconfig", "/run/secrets/tencent-kubeconfig", "--namespace", "opl-cloud", "auth", "can-i", "patch", "nodes"}; !slices.Equal(got, want) {
+		t.Fatalf("kubectl args=%#v want=%#v", got, want)
 	}
 }
 

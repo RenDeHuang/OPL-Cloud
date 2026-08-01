@@ -5,15 +5,21 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"maps"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"slices"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	cbs2017 "github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/cbs/v20170312"
 	"github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common"
 	tcerrors "github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common/errors"
+	"github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common/profile"
 	cvm2017 "github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/cvm/v20170312"
 	tke2018 "github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/tke/v20180525"
 	tke2022 "github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/tke/v20220501"
@@ -593,6 +599,9 @@ func TestTencentSDKTagComputeMachineRequiresAllOwnershipFieldsInOneFinalSnapshot
 			{instanceName: "compute-alpha", tags: map[string]string{"opl_account_id": wantTags["opl_account_id"]}},
 			{instanceName: "compute-alpha", tags: map[string]string{"opl_workspace_id": wantTags["opl_workspace_id"]}},
 			{instanceName: "compute-alpha", tags: map[string]string{"opl_operation_id": wantTags["opl_operation_id"]}},
+			{instanceName: "compute-alpha", tags: map[string]string{"opl_account_id": wantTags["opl_account_id"]}},
+			{instanceName: "compute-alpha", tags: map[string]string{"opl_workspace_id": wantTags["opl_workspace_id"]}},
+			{instanceName: "compute-alpha", tags: map[string]string{"opl_operation_id": wantTags["opl_operation_id"]}},
 		},
 	}
 	tagAPI := &fakeNativeTagAPI{cvm: cvmAPI}
@@ -604,7 +613,7 @@ func TestTencentSDKTagComputeMachineRequiresAllOwnershipFieldsInOneFinalSnapshot
 		response.ProviderErrorClass != "readback_mismatch" || response.MutationCount != 5 || response.MutationEvidence == nil ||
 		response.MutationEvidence.Attempted != 5 || response.MutationEvidence.Confirmed != 5 || response.MutationEvidence.Unknown != 0 ||
 		!reflect.DeepEqual(response.MutationEvidence.Missing, []string{"opl_account_id", "opl_workspace_id", "opl_resource_id"}) ||
-		len(cvmAPI.describeInstancesRequest) != 9 || len(cvmAPI.modifyInstancesRequest) != 1 || len(tagAPI.calls) != 4 {
+		len(cvmAPI.describeInstancesRequest) != 12 || len(cvmAPI.modifyInstancesRequest) != 1 || len(tagAPI.calls) != 4 {
 		t.Fatalf("response=%#v describe=%d modify=%d tagCalls=%#v", response, len(cvmAPI.describeInstancesRequest), len(cvmAPI.modifyInstancesRequest), tagAPI.calls)
 	}
 }
@@ -615,6 +624,9 @@ func TestTencentSDKTagComputeMachineFinalReadbackUnavailableWithoutMutationKeeps
 		instanceName: "compute-alpha", tags: wantTags, returnedInstanceID: "ins-alpha",
 		describeSnapshots: []fakeCVMOwnershipSnapshot{
 			{instanceName: "compute-alpha", tags: wantTags},
+			{err: errors.New("final readback unavailable")},
+			{err: errors.New("final readback unavailable")},
+			{err: errors.New("final readback unavailable")},
 			{err: errors.New("final readback unavailable")},
 			{err: errors.New("final readback unavailable")},
 			{err: errors.New("final readback unavailable")},
@@ -658,10 +670,13 @@ func TestTencentSDKTagComputeMachineUsesThirdReadbackAfterTimeoutWithoutRepeatin
 	}
 }
 
-func TestTencentSDKTagComputeMachineFailsClosedAfterThreePersistentOldReadbacks(t *testing.T) {
+func TestTencentSDKTagComputeMachineFailsClosedAfterSixPersistentOldReadbacks(t *testing.T) {
 	cvmAPI := &fakeNativeCvmAPI{
 		instanceName: "machine-before", tags: map[string]string{}, returnedInstanceID: "ins-alpha",
 		describeSnapshots: []fakeCVMOwnershipSnapshot{
+			{instanceName: "machine-before", tags: map[string]string{}},
+			{instanceName: "machine-before", tags: map[string]string{}},
+			{instanceName: "machine-before", tags: map[string]string{}},
 			{instanceName: "machine-before", tags: map[string]string{}},
 			{instanceName: "machine-before", tags: map[string]string{}},
 			{instanceName: "machine-before", tags: map[string]string{}},
@@ -675,16 +690,19 @@ func TestTencentSDKTagComputeMachineFailsClosedAfterThreePersistentOldReadbacks(
 
 	if response.Ok || response.MutationCount != 1 || response.MutationEvidence == nil || response.MutationEvidence.Attempted != 1 || response.MutationEvidence.Confirmed != 0 ||
 		response.MutationEvidence.Unknown != 0 || !reflect.DeepEqual(response.MutationEvidence.Missing, []string{"instance_name"}) ||
-		len(cvmAPI.describeInstancesRequest) != 4 || len(cvmAPI.modifyInstancesRequest) != 1 || len(tagAPI.calls) != 0 {
+		len(cvmAPI.describeInstancesRequest) != 7 || len(cvmAPI.modifyInstancesRequest) != 1 || len(tagAPI.calls) != 0 {
 		t.Fatalf("response=%#v describe=%d modify=%d tagCalls=%#v", response, len(cvmAPI.describeInstancesRequest), len(cvmAPI.modifyInstancesRequest), tagAPI.calls)
 	}
 }
 
-func TestTencentSDKTagComputeMachineFailsClosedAfterThreeUnreadableReadbacks(t *testing.T) {
+func TestTencentSDKTagComputeMachineFailsClosedAfterSixUnreadableReadbacks(t *testing.T) {
 	cvmAPI := &fakeNativeCvmAPI{
 		instanceName: "machine-before", tags: map[string]string{}, returnedInstanceID: "ins-alpha",
 		describeSnapshots: []fakeCVMOwnershipSnapshot{
 			{instanceName: "machine-before", tags: map[string]string{}},
+			{err: errors.New("readback unavailable")},
+			{err: errors.New("readback unavailable")},
+			{err: errors.New("readback unavailable")},
 			{err: errors.New("readback unavailable")},
 			{err: errors.New("readback unavailable")},
 			{err: errors.New("readback unavailable")},
@@ -697,7 +715,7 @@ func TestTencentSDKTagComputeMachineFailsClosedAfterThreeUnreadableReadbacks(t *
 
 	if response.Ok || response.MutationCount != 1 || response.MutationEvidence == nil || response.MutationEvidence.Attempted != 1 || response.MutationEvidence.Confirmed != 0 ||
 		response.MutationEvidence.Unknown != 1 || !reflect.DeepEqual(response.MutationEvidence.Missing, []string{"instance_name"}) ||
-		len(cvmAPI.describeInstancesRequest) != 4 || len(cvmAPI.modifyInstancesRequest) != 1 || len(tagAPI.calls) != 0 {
+		len(cvmAPI.describeInstancesRequest) != 7 || len(cvmAPI.modifyInstancesRequest) != 1 || len(tagAPI.calls) != 0 {
 		t.Fatalf("response=%#v describe=%d modify=%d tagCalls=%#v", response, len(cvmAPI.describeInstancesRequest), len(cvmAPI.modifyInstancesRequest), tagAPI.calls)
 	}
 }
@@ -742,6 +760,130 @@ func TestTencentSDKTagComputeMachineOnlyFillsMissingOwnershipFields(t *testing.T
 
 	if !response.Ok || len(cvmAPI.modifyInstancesRequest) != 0 || !reflect.DeepEqual(tagAPI.calls, []string{"opl_workspace_id=ws-alpha", "opl_operation_id=owner-alpha"}) {
 		t.Fatalf("partial ownership should only fill missing fields: response=%#v modify=%#v tagCalls=%#v", response, cvmAPI.modifyInstancesRequest, tagAPI.calls)
+	}
+}
+
+func TestTencentTagClientCreatesAndBindsMissingTagWithFullCVMQCS(t *testing.T) {
+	type capturedRequest struct {
+		action string
+		body   string
+	}
+	requests := []capturedRequest{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		action := r.Header.Get("X-TC-Action")
+		requests = append(requests, capturedRequest{action: action, body: string(body)})
+		w.Header().Set("Content-Type", "application/json")
+		switch action {
+		case "GetCallerIdentity":
+			_, _ = io.WriteString(w, `{"Response":{"AccountId":"100000000001","RequestId":"req-sts"}}`)
+		case "TagResources":
+			_, _ = io.WriteString(w, `{"Response":{"RequestId":"req-tag"}}`)
+		default:
+			_, _ = io.WriteString(w, `{"Response":{"RequestId":"req-unexpected"}}`)
+		}
+	}))
+	defer server.Close()
+
+	newClient := func() *common.Client {
+		clientProfile := profile.NewClientProfile()
+		clientProfile.HttpProfile.Scheme = "http"
+		clientProfile.HttpProfile.Endpoint = strings.TrimPrefix(server.URL, "http://")
+		return common.NewCommonClient(common.NewCredential("sid", "skey"), "ap-guangzhou", clientProfile)
+	}
+	client := &tencentTagClient{client: newClient(), region: "ap-guangzhou"}
+
+	requestID, err := client.SetCVMTag("ins-alpha", "opl_account_id", "acct-alpha", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if requestID != "req-tag" || len(requests) != 2 || requests[0].action != "GetCallerIdentity" || requests[1].action != "TagResources" ||
+		!strings.Contains(requests[1].body, `"ResourceList":["qcs::cvm:ap-guangzhou:uin/100000000001:instance/ins-alpha"]`) ||
+		!strings.Contains(requests[1].body, `"Tags":[{"TagKey":"opl_account_id","TagValue":"acct-alpha"}]`) {
+		t.Fatalf("requestID=%q requests=%#v", requestID, requests)
+	}
+}
+
+func TestTencentTagClientModifiesExistingTagWithoutCallerIdentityLookup(t *testing.T) {
+	actions := []string{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		action := r.Header.Get("X-TC-Action")
+		actions = append(actions, action)
+		w.Header().Set("Content-Type", "application/json")
+		if action != "ModifyResourcesTagValue" {
+			_, _ = io.WriteString(w, `{"Response":{"Error":{"Code":"UnexpectedAction","Message":"unexpected action"},"RequestId":"req-unexpected"}}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"Response":{"RequestId":"req-modify"}}`)
+	}))
+	defer server.Close()
+
+	clientProfile := profile.NewClientProfile()
+	clientProfile.HttpProfile.Scheme = "http"
+	clientProfile.HttpProfile.Endpoint = strings.TrimPrefix(server.URL, "http://")
+	client := &tencentTagClient{
+		client: common.NewCommonClient(common.NewCredential("sid", "skey"), "ap-guangzhou", clientProfile),
+		region: "ap-guangzhou",
+	}
+
+	requestID, err := client.SetCVMTag("ins-alpha", "opl_account_id", "acct-alpha", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if requestID != "req-modify" || !reflect.DeepEqual(actions, []string{"ModifyResourcesTagValue"}) {
+		t.Fatalf("requestID=%q actions=%#v", requestID, actions)
+	}
+}
+
+func TestTencentSDKTagComputeMachineWaitsThroughBoundedSixthReadbackWithoutRepeatingTagWrite(t *testing.T) {
+	wantTags := computeOwnershipTags()
+	initialTags := map[string]string{
+		"opl_workspace_id": wantTags["opl_workspace_id"],
+		"opl_resource_id":  wantTags["opl_resource_id"],
+		"opl_operation_id": wantTags["opl_operation_id"],
+	}
+	cvmAPI := &fakeNativeCvmAPI{
+		instanceName: "compute-alpha", tags: initialTags, returnedInstanceID: "ins-alpha",
+		describeSnapshots: []fakeCVMOwnershipSnapshot{
+			{instanceName: "compute-alpha", tags: maps.Clone(initialTags)},
+			{instanceName: "compute-alpha", tags: maps.Clone(initialTags)},
+			{instanceName: "compute-alpha", tags: maps.Clone(initialTags)},
+			{instanceName: "compute-alpha", tags: maps.Clone(initialTags)},
+			{instanceName: "compute-alpha", tags: maps.Clone(initialTags)},
+			{instanceName: "compute-alpha", tags: maps.Clone(initialTags)},
+			{instanceName: "compute-alpha", tags: wantTags},
+			{instanceName: "compute-alpha", tags: wantTags},
+		},
+	}
+	tagAPI := &fakeNativeTagAPI{cvm: cvmAPI}
+	waits := []int{}
+	client := &tencentSDKClient{
+		nativeCvmClient: cvmAPI,
+		nativeTagClient: tagAPI,
+		convergenceWait: func(_ context.Context, attempt int) error {
+			waits = append(waits, attempt)
+			return nil
+		},
+	}
+
+	response := client.TagComputeMachine(Request{Tags: wantTags, Allocation: ComputeAllocationInput{InstanceId: "ins-alpha"}}, nil)
+	if !response.Ok || response.MutationCount != 1 || !reflect.DeepEqual(tagAPI.calls, []string{"opl_account_id=acct-alpha"}) ||
+		!reflect.DeepEqual(waits, []int{1, 2, 3, 4, 5}) || len(cvmAPI.describeInstancesRequest) != 8 {
+		t.Fatalf("response=%#v tagCalls=%#v waits=%#v describes=%d", response, tagAPI.calls, waits, len(cvmAPI.describeInstancesRequest))
+	}
+}
+
+func TestCVMOwnershipReadbackDelaySchedule(t *testing.T) {
+	want := []time.Duration{0, 500 * time.Millisecond, time.Second, 2 * time.Second, 4 * time.Second, 8 * time.Second}
+	got := make([]time.Duration, len(want))
+	for attempt := range got {
+		got[attempt] = cvmOwnershipReadbackDelay(attempt)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("readback delays=%#v want=%#v", got, want)
 	}
 }
 

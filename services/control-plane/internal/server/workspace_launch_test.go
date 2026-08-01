@@ -1970,7 +1970,7 @@ func TestWorkspaceLaunchFulfillmentUsesPersistedNodePool(t *testing.T) {
 	}
 }
 
-func TestWorkspaceLaunchPersistsComputeClaimPendingAndWorkerStops(t *testing.T) {
+func TestWorkspaceLaunchComputeClaimPendingWorkerReplaysOriginalComputeOperationAndContinues(t *testing.T) {
 	for _, packageID := range []string{"basic", "pro"} {
 		t.Run(packageID, func(t *testing.T) {
 			storageGB := 10
@@ -2005,11 +2005,77 @@ func TestWorkspaceLaunchPersistsComputeClaimPendingAndWorkerStops(t *testing.T) 
 				persisted.ComputeCVMInstanceID != pending.CVMInstanceID || persisted.ComputeInstanceType != pending.InstanceType || persisted.ComputeZone != pending.Zone {
 				t.Fatalf("compute claim pending identity not persisted: %#v", persisted)
 			}
-			if len(fixture.fabric.computeIDs) != 1 || len(fixture.fabric.storageIDs) != 0 || len(fixture.sub2API.charges) != 1 || len(fixture.sub2API.refunds) != 0 ||
-				countStrings(*fixture.events, "fabric.attachment") != 0 || countStrings(*fixture.events, "fabric.compute-claim.proof") != 0 || countStrings(*fixture.events, "fabric.compute-claim.claim") != 0 {
-				t.Fatalf("pending replay crossed recovery gate: events=%#v compute=%#v storage=%#v charges=%#v refunds=%#v", *fixture.events, fixture.fabric.computeIDs, fixture.fabric.storageIDs, fixture.sub2API.charges, fixture.sub2API.refunds)
+
+			beforePreflight := countStrings(*fixture.events, "fabric.monthly.preflight")
+			beforeCharges := len(fixture.sub2API.charges)
+			beforeComputeCalls := len(fixture.fabric.computeIDs)
+			fixture.fabric.mutateCompute = nil
+			ready := pending
+			ready.Status = "running"
+			ready.ProviderResourceID = ready.CVMInstanceID
+			ready.ProviderRequestID = "req-claim-resume"
+			ready.ProviderData = map[string]string{"zone": ready.Zone, "instanceType": ready.InstanceType}
+			fixture.fabric.computeSync = ready
+			fixture.fabric.storageSync = clients.StorageVolume{
+				ID: operation.StorageID, AccountID: operation.AccountID, WorkspaceID: operation.WorkspaceID, Status: "available",
+				Provider: "tencent-tke", ProviderResourceID: "disk-" + operation.StorageID, ProviderRequestID: "req-" + operation.StorageID,
+				SizeGB: operation.StorageGB, CBSStatus: "UNATTACHED", DiskType: "CLOUD_PREMIUM", RenewFlag: "NOTIFY_AND_MANUAL_RENEW",
+				Deadline: "2099-01-01T00:00:00Z", Zone: "ap-shanghai-2", ProviderData: map[string]string{"chargeType": "PREPAID"},
+			}
+
+			if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err != nil {
+				t.Fatal(err)
+			}
+			continued := fixture.operation(t)
+			if continued.Status != "succeeded" || continued.Phase != "succeeded" || continued.URL == "" || len(fixture.fabric.computeIDs) != beforeComputeCalls+1 ||
+				fixture.fabric.computeCreateKeys[len(fixture.fabric.computeCreateKeys)-1] != operation.ID+":compute" || len(fixture.fabric.storageIDs) != 1 {
+				t.Fatalf("pending worker did not resume original compute operation: operation=%#v compute=%#v keys=%#v storage=%#v events=%#v", continued, fixture.fabric.computeIDs, fixture.fabric.computeCreateKeys, fixture.fabric.storageIDs, *fixture.events)
+			}
+			if countStrings(*fixture.events, "fabric.monthly.preflight") != beforePreflight || len(fixture.sub2API.charges) != beforeCharges || len(fixture.sub2API.refunds) != 0 ||
+				countStrings(*fixture.events, "fabric.compute-claim.proof") != 0 || countStrings(*fixture.events, "fabric.compute-claim.claim") != 0 {
+				t.Fatalf("pending worker repeated guarded side effects: events=%#v charges=%#v refunds=%#v", *fixture.events, fixture.sub2API.charges, fixture.sub2API.refunds)
 			}
 		})
+	}
+}
+
+func TestWorkspaceLaunchManualReviewNeverAutoResumesComputeClaim(t *testing.T) {
+	fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, "basic")
+	operation.Status, operation.Phase, operation.ErrorCode = "manual_review", "compute_claim_pending", "operator_review_required"
+	releaseWorkspaceLaunchLease(&operation)
+	mustStore(t, fixture.store.memoryTableStore.SaveRuntimeOperation(context.Background(), workspaceLaunchOperationRow(operation)))
+	beforeEvents := append([]string(nil), (*fixture.events)...)
+	beforeComputeCalls := len(fixture.fabric.computeIDs)
+	beforeCharges := len(fixture.sub2API.charges)
+
+	if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err != nil {
+		t.Fatal(err)
+	}
+
+	current := fixture.operation(t)
+	if current.Status != "manual_review" || current.Phase != "compute_claim_pending" || current.ErrorCode != "operator_review_required" ||
+		len(fixture.fabric.computeIDs) != beforeComputeCalls || len(fixture.sub2API.charges) != beforeCharges || !reflect.DeepEqual(*fixture.events, beforeEvents) {
+		t.Fatalf("manual review auto-resumed: operation=%#v compute=%#v charges=%#v events=%#v", current, fixture.fabric.computeIDs, fixture.sub2API.charges, *fixture.events)
+	}
+}
+
+func TestWorkspaceLaunchNonPendingStatusNeverAutoResumesComputeClaim(t *testing.T) {
+	fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, "basic")
+	operation.Status, operation.Phase, operation.ErrorCode = "preparing", "compute_claim_pending", ""
+	releaseWorkspaceLaunchLease(&operation)
+	mustStore(t, fixture.store.memoryTableStore.SaveRuntimeOperation(context.Background(), workspaceLaunchOperationRow(operation)))
+	beforeEvents := append([]string(nil), (*fixture.events)...)
+	beforeComputeCalls := len(fixture.fabric.computeIDs)
+	beforeCharges := len(fixture.sub2API.charges)
+
+	if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err != nil {
+		t.Fatal(err)
+	}
+
+	current := fixture.operation(t)
+	if current.Status != "preparing" || current.Phase != "compute_claim_pending" || len(fixture.fabric.computeIDs) != beforeComputeCalls ||
+		len(fixture.sub2API.charges) != beforeCharges || !reflect.DeepEqual(*fixture.events, beforeEvents) {
+		t.Fatalf("non-pending status auto-resumed: operation=%#v compute=%#v charges=%#v events=%#v", current, fixture.fabric.computeIDs, fixture.sub2API.charges, *fixture.events)
 	}
 }
 
