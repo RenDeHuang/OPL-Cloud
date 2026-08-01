@@ -2059,6 +2059,26 @@ func TestWorkspaceLaunchManualReviewNeverAutoResumesComputeClaim(t *testing.T) {
 	}
 }
 
+func TestWorkspaceLaunchNonPendingStatusNeverAutoResumesComputeClaim(t *testing.T) {
+	fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, "basic")
+	operation.Status, operation.Phase, operation.ErrorCode = "preparing", "compute_claim_pending", ""
+	releaseWorkspaceLaunchLease(&operation)
+	mustStore(t, fixture.store.memoryTableStore.SaveRuntimeOperation(context.Background(), workspaceLaunchOperationRow(operation)))
+	beforeEvents := append([]string(nil), (*fixture.events)...)
+	beforeComputeCalls := len(fixture.fabric.computeIDs)
+	beforeCharges := len(fixture.sub2API.charges)
+
+	if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err != nil {
+		t.Fatal(err)
+	}
+
+	current := fixture.operation(t)
+	if current.Status != "preparing" || current.Phase != "compute_claim_pending" || len(fixture.fabric.computeIDs) != beforeComputeCalls ||
+		len(fixture.sub2API.charges) != beforeCharges || !reflect.DeepEqual(*fixture.events, beforeEvents) {
+		t.Fatalf("non-pending status auto-resumed: operation=%#v compute=%#v charges=%#v events=%#v", current, fixture.fabric.computeIDs, fixture.sub2API.charges, *fixture.events)
+	}
+}
+
 func workspaceLaunchComputeClaimPendingFixture(t *testing.T, packageID string) (workspaceLaunchWorkerFixture, workspaceLaunchOperation) {
 	t.Helper()
 	storageGB := 10

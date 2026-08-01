@@ -639,7 +639,7 @@ func (app *controlPlaneServer) runWorkspaceLaunch(ctx context.Context, service *
 	if err != nil || !ok || terminalWorkspaceLaunchStatus(operation.Status) || operation.Status == "manual_review" {
 		return err
 	}
-	if operation.Phase == "key_pending" {
+	if operation.Phase == "key_pending" || operation.Phase == "compute_claim_pending" && operation.Status != "compute_claim_pending" {
 		return nil
 	}
 	unlockAccount := app.lockResource("account", operation.AccountID)
