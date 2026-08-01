@@ -3601,6 +3601,119 @@ test("compute-claim diagnosis CLI emits the same zero-mutation artifact", async 
   assert.deepEqual(result.runnerDirectMutationCounts, { sub2api: 0, tencent: 0, kubernetes: 0 });
 });
 
+test("compute-claim approval validation CLI proves the server binding without claim mutation", async () => {
+  let stdout = "";
+  let stderr = "";
+  const calls = [];
+  const approval = JSON.parse(computeClaimApprovalJson());
+  const approvalDigest = createHash("sha256").update(canonicalJsonForTest(approval)).digest("hex");
+  const code = await runProductionLiveQaCli({
+    argv: [
+      "--compute-claim-validate",
+      "--compute-claim-target-json", JSON.stringify(COMPUTE_CLAIM_TARGET),
+      "--approval-id", approval.approvalId
+    ],
+    env: {
+      OPL_MERGED_SHA: BASIC_CANARY_MERGED_SHA,
+      OPL_COMPUTE_CLAIM_CLOUD_DIGEST: BASIC_CANARY_CLOUD_DIGEST,
+      OPL_COMPUTE_CLAIM_RECOVERY_APPROVAL_JSON: JSON.stringify(approval),
+      OPL_INTERNAL_SERVICE_TOKEN: "compute-claim-runner-capability",
+      OPL_CONSOLE_ORIGIN: "https://cloud.medopl.cn",
+      OPL_SUB2API_ADMIN_EMAIL: ADMIN_EMAIL,
+      OPL_SUB2API_ADMIN_PASSWORD: ADMIN_PASSWORD,
+      OPL_BASIC_CANARY_CUSTOMER_EMAIL: COMPUTE_CLAIM_CUSTOMER_EMAIL,
+      OPL_K8S_NAMESPACE: "opl-cloud",
+      KUBECONFIG: "/run/secrets/kubeconfig"
+    },
+    stdout: { write: (chunk) => { stdout += chunk; } },
+    stderr: { write: (chunk) => { stderr += chunk; } },
+    cloudRevisionEvidenceReader: async () => computeClaimCloudRevisionEvidence(),
+    fetchImpl: async (input, init = {}) => {
+      const url = new URL(String(input));
+      const headers = new Headers(init.headers);
+      calls.push({ path: url.pathname, method: String(init.method || "GET"), headers });
+      if (url.pathname === "/api/auth/login") {
+        return json({ user: { accountId: "acct-admin", role: "admin" } }, 200, {
+          "set-cookie": "opl_session=session-fixture; Path=/; HttpOnly",
+          "x-opl-csrf-token": "csrf-compute-claim"
+        });
+      }
+      if (url.pathname === "/api/operator/accounts") return computeClaimAccountAuthority();
+      return json({
+        schemaVersion: 2,
+        status: "proven",
+        approvalId: approval.approvalId,
+        approvalDigest,
+        launchOperationId: COMPUTE_CLAIM_TARGET.launchOperationId,
+        accountId: COMPUTE_CLAIM_TARGET.accountId,
+        workspaceId: COMPUTE_CLAIM_TARGET.workspaceId,
+        runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
+      });
+    },
+    now: new Date("2026-08-28T00:00:00Z")
+  });
+
+  assert.equal(code, 0, stderr);
+  assert.deepEqual(JSON.parse(stdout), {
+    schemaVersion: 2,
+    operationMode: "compute_claim_validate",
+    status: "proven",
+    recoveryEligible: true,
+    errorCode: "none",
+    release: {
+      mergedSha: BASIC_CANARY_MERGED_SHA,
+      cloudImageDigest: BASIC_CANARY_CLOUD_DIGEST,
+      revisions: { controlPlane: "1", fabric: "1", ledger: "1" }
+    },
+    target: COMPUTE_CLAIM_TARGET,
+    approval: { approvalId: approval.approvalId, approvalDigest },
+    runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
+  });
+  assert.deepEqual(calls.map(({ path }) => path), [
+    "/api/auth/login",
+    "/api/operator/accounts",
+    `/api/operator/workspace-launches/${COMPUTE_CLAIM_TARGET.launchOperationId}/compute-claim-recovery/validate`
+  ]);
+  assert.equal(calls[2].method, "POST");
+  assert.equal(calls[2].headers.get("x-opl-compute-claim-capability"), "compute-claim-runner-capability");
+  assert.doesNotMatch(`${stdout}\n${stderr}`, /password|secret|token|cookie|customer@example\.com|compute-claim-runner-capability/i);
+});
+
+test("compute-claim approval validation rejects workflow customer drift before release or network access", async () => {
+  let stdout = "";
+  let releaseReads = 0;
+  let fetchCalls = 0;
+  const approval = JSON.parse(computeClaimApprovalJson());
+  const code = await runProductionLiveQaCli({
+    argv: [
+      "--compute-claim-validate",
+      "--compute-claim-target-json", JSON.stringify(COMPUTE_CLAIM_TARGET),
+      "--approval-id", approval.approvalId
+    ],
+    env: {
+      OPL_MERGED_SHA: BASIC_CANARY_MERGED_SHA,
+      OPL_COMPUTE_CLAIM_CLOUD_DIGEST: BASIC_CANARY_CLOUD_DIGEST,
+      OPL_COMPUTE_CLAIM_RECOVERY_APPROVAL_JSON: JSON.stringify(approval),
+      OPL_INTERNAL_SERVICE_TOKEN: "compute-claim-runner-capability",
+      OPL_CONSOLE_ORIGIN: "https://cloud.medopl.cn",
+      OPL_SUB2API_ADMIN_EMAIL: ADMIN_EMAIL,
+      OPL_SUB2API_ADMIN_PASSWORD: ADMIN_PASSWORD,
+      OPL_BASIC_CANARY_CUSTOMER_EMAIL: "other@example.com",
+      OPL_K8S_NAMESPACE: "opl-cloud",
+      KUBECONFIG: "/run/secrets/kubeconfig"
+    },
+    stdout: { write: (chunk) => { stdout += chunk; } },
+    stderr: { write: () => {} },
+    cloudRevisionEvidenceReader: async () => { releaseReads += 1; return computeClaimCloudRevisionEvidence(); },
+    fetchImpl: async () => { fetchCalls += 1; return json({}); }
+  });
+
+  assert.equal(code, 1);
+  assert.equal(JSON.parse(stdout).errorCode, "compute_claim_validation_customer_identity_mismatch");
+  assert.equal(releaseReads, 0);
+  assert.equal(fetchCalls, 0);
+});
+
 test("compute-claim recovery CLI forwards the internal runner capability", async () => {
 	let stdout = "";
 	let stderr = "";
@@ -3797,6 +3910,7 @@ test("all compute-claim CLI modes emit a non-empty redacted blocked artifact on 
   const contract = JSON.parse(await readFile(new URL("../../packages/contracts/opl-cloud-deployment-contract.json", import.meta.url), "utf8"));
   for (const [flag, operationMode, errorCode] of [
     ["--compute-claim-diagnose", "compute_claim_diagnose", "compute_claim_diagnosis_failed"],
+    ["--compute-claim-validate", "compute_claim_validate", "compute_claim_validation_failed"],
     ["--compute-claim-recover", "compute_claim_recover", "compute_claim_recovery_failed"],
     ["--compute-claim-continue", "compute_claim_recover_continuation", "compute_claim_continuation_failed"]
   ]) {

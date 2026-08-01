@@ -22,6 +22,7 @@ on:
           - workspace_identity_diagnose
           - acceptance_b_fresh_order
           - compute_claim_diagnose
+          - compute_claim_validate
           - compute_claim_recover
           - workspace_launch_readback_diagnose
           - workspace_launch_readback_recover
@@ -60,7 +61,7 @@ on:
         default: ""
         type: string
       customer_email:
-        description: Protected exact customer email for compute_claim_recover account identity readback and recovered_workspace_e2e verification.
+        description: Protected exact customer email for compute_claim_validate, compute_claim_recover account identity readback, and recovered_workspace_e2e verification.
         required: false
         default: ""
         type: string
@@ -1823,6 +1824,189 @@ jobs:
         working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           echo "Compute claim diagnosis stopped; inspect the redacted diagnosis artifact." >&2
+          exit 1
+
+      - name: Remove isolated source checkout
+        if: always() && steps.prepare_source.outcome == 'success'
+        shell: bash
+        env:
+          OPL_SOURCE_CHECKOUT: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          source_dir="${OPL_SOURCE_CHECKOUT:-}"
+          expected="$GITHUB_WORKSPACE/.opl-checkouts/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
+          if [ -z "$source_dir" ] || [ "$source_dir" != "$expected" ]; then
+            echo "Refusing to remove unexpected source checkout path." >&2
+            exit 1
+          fi
+          if [ -d "$source_dir" ]; then
+            find "$source_dir" -mindepth 1 -delete
+            rmdir "$source_dir"
+          fi
+
+  compute-claim-validate:
+    name: Validate one Compute Claim approval binding without mutation
+    if: ${{ github.ref == 'refs/heads/main' && github.sha == inputs.merged_sha && inputs.operation_mode == 'compute_claim_validate' && inputs.customer_email != '' && inputs.compute_claim_target_json != '' && inputs.compute_claim_cloud_digest != '' && inputs.resume_run_id == '' && inputs.resource_closure_run_id == '' && inputs.diagnose_target_json == '' && inputs.workspace_launch_target_json == '' && inputs.workspace_launch_cloud_digest == '' && !inputs.confirm_account_provision && !inputs.confirm_wallet_recharge && !inputs.confirm_workspace_purchase && !inputs.confirm_single_model_request && !inputs.confirm_compute_claim_recovery && !inputs.confirm_workspace_launch_readback_recovery }}
+    runs-on: [self-hosted, tencent-cloud, opl-cloud, tke-vpc]
+    timeout-minutes: 15
+    environment: production
+    env:
+      OPL_MERGED_SHA: ${{ inputs.merged_sha }}
+      OPL_COMPUTE_CLAIM_RECOVERY_APPROVAL_ID: ${{ inputs.approval_id }}
+      OPL_COMPUTE_CLAIM_RECOVERY_APPROVAL_JSON: ${{ secrets.OPL_COMPUTE_CLAIM_RECOVERY_APPROVAL_JSON }}
+      OPL_COMPUTE_CLAIM_TARGET_JSON: ${{ inputs.compute_claim_target_json }}
+      OPL_COMPUTE_CLAIM_CLOUD_DIGEST: ${{ inputs.compute_claim_cloud_digest }}
+      OPL_CONSOLE_ORIGIN: ${{ vars.OPL_CONSOLE_ORIGIN || 'https://cloud.medopl.cn' }}
+      OPL_SUB2API_ADMIN_EMAIL: ${{ secrets.OPL_SUB2API_ADMIN_EMAIL }}
+      OPL_SUB2API_ADMIN_PASSWORD: ${{ secrets.OPL_SUB2API_ADMIN_PASSWORD }}
+      OPL_BASIC_CANARY_CUSTOMER_EMAIL: ${{ inputs.customer_email }}
+      OPL_K8S_NAMESPACE: ${{ vars.OPL_K8S_NAMESPACE || 'opl-cloud' }}
+      OPL_VERIFY_REQUEST_TIMEOUT_MS: ${{ vars.OPL_VERIFY_REQUEST_TIMEOUT_MS || '30000' }}
+      KUBECONFIG: ${{ vars.TENCENT_DEPLOY_KUBECONFIG_PATH || '/home/actions/.secrets/medopl/v22/kubeconfig-package-d-deploy' }}
+
+    steps:
+      - name: Prepare isolated source checkout
+        id: prepare_source
+        shell: bash
+        env:
+          OPL_SOURCE_CHECKOUT: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          expected="$GITHUB_WORKSPACE/.opl-checkouts/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
+          if [ "$OPL_SOURCE_CHECKOUT" != "$expected" ]; then
+            echo "Isolated source checkout path mismatch." >&2
+            exit 1
+          fi
+          mkdir -p "$GITHUB_WORKSPACE/.opl-checkouts"
+          mkdir "$OPL_SOURCE_CHECKOUT"
+
+      - name: Checkout exact merged main
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.merged_sha }}
+          fetch-depth: 0
+          path: .opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+
+      - name: Verify remote branch authority
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          mapfile -t remote_heads < <(git ls-remote --heads origin)
+          if [ "${#remote_heads[@]}" -ne 1 ]; then
+            printf 'Production source authority requires exactly one remote head; observed: %s\n' "${remote_heads[*]:-none}" >&2
+            exit 1
+          fi
+          read -r remote_main_sha remote_main_ref <<< "${remote_heads[0]}"
+          head_sha="$(git rev-parse HEAD)"
+          if [ "$remote_main_ref" != "refs/heads/main" ] || [ "$GITHUB_REF" != "refs/heads/main" ] ||
+             [ "$GITHUB_SHA" != "$head_sha" ] || [ "$remote_main_sha" != "$head_sha" ]; then
+            printf 'Production source must be current main: ref=%s github_sha=%s checkout=%s remote_main=%s\n' \
+              "$GITHUB_REF" "$GITHUB_SHA" "$head_sha" "$remote_main_sha" >&2
+            exit 1
+          fi
+
+      - name: Verify exact validation source and inputs
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$OPL_MERGED_SHA" =~ ^[0-9a-f]{40}$ ]] || ! [[ "$OPL_COMPUTE_CLAIM_CLOUD_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] ||
+             [ -z "$OPL_COMPUTE_CLAIM_TARGET_JSON" ] || [ -z "$OPL_COMPUTE_CLAIM_RECOVERY_APPROVAL_ID" ] ||
+             [ -z "$OPL_COMPUTE_CLAIM_RECOVERY_APPROVAL_JSON" ] || [ -z "$OPL_BASIC_CANARY_CUSTOMER_EMAIL" ] || [ ! -r "$KUBECONFIG" ]; then
+            echo "Compute claim validation requires its exact target, approval, protected customer identity, Cloud digest, and release-owned runner kubeconfig." >&2
+            exit 1
+          fi
+          if ! rg -q 'compute-claim-recovery/validate' tools/production-live-qa.ts; then
+            echo "Compute claim validation source is unavailable." >&2
+            exit 1
+          fi
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Prepare redacted approval validation artifact
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          artifact_dir="$RUNNER_TEMP/production-compute-claim-validation"
+          mkdir -p "$artifact_dir"
+          chmod 700 "$artifact_dir"
+          echo "OPL_COMPUTE_CLAIM_ARTIFACT_DIR=$artifact_dir" >> "$GITHUB_ENV"
+
+      - name: Run zero-mutation Compute Claim approval validation
+        id: validate
+        continue-on-error: true
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          token_b64="$(kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" get secret opl-cloud-internal-service -o jsonpath='{.data.OPL_INTERNAL_SERVICE_TOKEN}')"
+          if [ -z "$token_b64" ]; then
+            echo "Current internal service capability is unavailable." >&2
+            exit 1
+          fi
+          OPL_INTERNAL_SERVICE_TOKEN="$(printf '%s' "$token_b64" | base64 -d)"
+          unset token_b64
+          if [ -z "$OPL_INTERNAL_SERVICE_TOKEN" ]; then
+            echo "Current internal service capability is empty." >&2
+            exit 1
+          fi
+          echo "::add-mask::$OPL_INTERNAL_SERVICE_TOKEN"
+          export OPL_INTERNAL_SERVICE_TOKEN
+          node tools/production-live-qa.ts --compute-claim-validate \
+            --compute-claim-target-json "$OPL_COMPUTE_CLAIM_TARGET_JSON" \
+            --approval-id "$OPL_COMPUTE_CLAIM_RECOVERY_APPROVAL_ID" \
+            > "$OPL_COMPUTE_CLAIM_ARTIFACT_DIR/compute-claim-validation.json"
+
+      - name: Require exact zero-mutation approval binding
+        if: ${{ steps.validate.outcome == 'success' }}
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const { createHash } = require("node:crypto");
+          const fs = require("node:fs");
+          const result = JSON.parse(fs.readFileSync(`${process.env.OPL_COMPUTE_CLAIM_ARTIFACT_DIR}/compute-claim-validation.json`, "utf8"));
+          const approval = JSON.parse(process.env.OPL_COMPUTE_CLAIM_RECOVERY_APPROVAL_JSON);
+          const target = JSON.parse(process.env.OPL_COMPUTE_CLAIM_TARGET_JSON);
+          const canonicalJson = (value) => Array.isArray(value)
+            ? `[${value.map(canonicalJson).join(",")}]`
+            : !value || typeof value !== "object"
+              ? JSON.stringify(value)
+              : `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(",")}}`;
+          const approvalDigest = createHash("sha256").update(canonicalJson(approval)).digest("hex");
+          if (result?.schemaVersion !== 2 || result?.operationMode !== "compute_claim_validate" || result?.status !== "proven" ||
+            result?.recoveryEligible !== true || result?.errorCode !== "none" || result?.release?.mergedSha !== process.env.OPL_MERGED_SHA ||
+            result?.release?.cloudImageDigest !== process.env.OPL_COMPUTE_CLAIM_CLOUD_DIGEST || canonicalJson(result?.target) !== canonicalJson(target) ||
+            result?.approval?.approvalId !== process.env.OPL_COMPUTE_CLAIM_RECOVERY_APPROVAL_ID || result?.approval?.approvalDigest !== approvalDigest ||
+            result?.runnerDirectMutationCounts?.sub2api !== 0 || result?.runnerDirectMutationCounts?.tencent !== 0 ||
+            result?.runnerDirectMutationCounts?.kubernetes !== 0 || /@|password|secret|token|cookie|maskedValue/i.test(JSON.stringify(result))) {
+            console.error(`Compute claim validation blocked: ${String(result?.errorCode || "validation_artifact_invalid")}`);
+            process.exit(1);
+          }
+          NODE
+
+      - name: Upload redacted Compute Claim approval validation
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-compute-claim-validation
+          path: ${{ runner.temp }}/production-compute-claim-validation
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 30
+
+      - name: Require Compute Claim approval validation success
+        if: ${{ steps.validate.outcome != 'success' }}
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          echo "Compute claim approval validation stopped; inspect the redacted validation artifact." >&2
           exit 1
 
       - name: Remove isolated source checkout

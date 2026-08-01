@@ -581,6 +581,7 @@ test("production self-hosted jobs use one run-and-job isolated source checkout",
       "workspace-launch-readback-diagnose",
       "workspace-launch-readback-recover",
       "compute-claim-diagnose",
+      "compute-claim-validate",
       "compute-claim-recover"
     ]]
   ]);
@@ -999,6 +1000,7 @@ test("manual-review diagnose is isolated to the VPC runner and statically contai
     "workspace_identity_diagnose",
     "acceptance_b_fresh_order",
     "compute_claim_diagnose",
+    "compute_claim_validate",
     "compute_claim_recover",
     "workspace_launch_readback_diagnose",
     "workspace_launch_readback_recover",
@@ -1248,6 +1250,27 @@ test("compute claim diagnosis and recovery are isolated VPC modes with separate 
     const source = await readFile(repoFile(other), "utf8");
     assert.doesNotMatch(source, /compute_claim_recover|--compute-claim-recover/);
   }
+});
+
+test("compute claim approval validation is a zero-mutation production mode before recovery", async () => {
+  const workflow = await readWorkflow(".github/workflows/production-basic-customer-operation.yml");
+  const inputs = workflow.on.workflow_dispatch.inputs;
+  const validate = workflowJob(workflow, "compute-claim-validate");
+  const runs = serializedRuns(validate);
+
+  assert.ok(inputs.operation_mode.options.includes("compute_claim_validate"));
+  assert.match(String(validate.if), /inputs\.operation_mode == 'compute_claim_validate'/);
+  assert.match(String(validate.if), /!inputs\.confirm_compute_claim_recovery/);
+  assert.match(String(validate.if), /inputs\.customer_email != ''/);
+  assert.deepEqual(validate["runs-on"], ["self-hosted", "tencent-cloud", "opl-cloud", "tke-vpc"]);
+  assert.equal(validate.environment, "production");
+  assert.equal(validate.env.OPL_COMPUTE_CLAIM_RECOVERY_APPROVAL_JSON, "${{ secrets.OPL_COMPUTE_CLAIM_RECOVERY_APPROVAL_JSON }}");
+  assert.equal(validate.env.OPL_BASIC_CANARY_CUSTOMER_EMAIL, "${{ inputs.customer_email }}");
+  assert.match(runs, /production-live-qa\.ts --compute-claim-validate/);
+  assert.match(runs, /compute-claim-recovery\/validate/);
+  assert.match(runs, /get secret opl-cloud-internal-service/);
+  assert.match(runs, /runnerDirectMutationCounts/);
+  assert.doesNotMatch(runs, /compute-claim-recovery\/claim|--compute-claim-recover|ClaimComputeRecovery|create_original_cbs|reuse_original_cbs/i);
 });
 
 test("compute claim workflow executes the recovery and continuation artifact gates", async () => {
@@ -1782,6 +1805,7 @@ test("recovered Workspace E2E is a separate hosted mode with no resource mutatio
     "workspace_identity_diagnose",
     "acceptance_b_fresh_order",
     "compute_claim_diagnose",
+    "compute_claim_validate",
     "compute_claim_recover",
     "workspace_launch_readback_diagnose",
     "workspace_launch_readback_recover",

@@ -646,6 +646,7 @@ export async function diagnoseManualReviewRecovery({
 }
 
 const COMPUTE_CLAIM_DIAGNOSE_MODE = "compute_claim_diagnose";
+const COMPUTE_CLAIM_VALIDATE_MODE = "compute_claim_validate";
 const COMPUTE_CLAIM_RECOVER_MODE = "compute_claim_recover";
 const COMPUTE_CLAIM_REASONS = new Set([
   "none", "local_identity", "provider_describe", "iam_rbac", "multiple_candidate",
@@ -658,9 +659,18 @@ const COMPUTE_CLAIM_RECOVERY_STAGE_ERROR_CODES = new Set([
   "compute_claim_recovery_claim_transport_failed",
   "compute_claim_recovery_control_plane_response_invalid"
 ]);
+const COMPUTE_CLAIM_VALIDATION_ERROR_CODES = new Set([
+  "compute_claim_validation_request_invalid",
+  "compute_claim_validation_capability_invalid",
+  "compute_claim_validation_launch_not_found",
+  "compute_claim_validation_customer_identity_mismatch",
+  "compute_claim_validation_binding_mismatch",
+  "compute_claim_validation_response_invalid"
+]);
 const COMPUTE_CLAIM_BLOCKED_ERROR_CODES = new Set([
   ...COMPUTE_CLAIM_REASONS,
-  ...COMPUTE_CLAIM_RECOVERY_STAGE_ERROR_CODES
+  ...COMPUTE_CLAIM_RECOVERY_STAGE_ERROR_CODES,
+  ...COMPUTE_CLAIM_VALIDATION_ERROR_CODES
 ]);
 const COMPUTE_CLAIM_FAILURE_STAGES = new Set([
   "", "cvm_pre_read", "cvm_conflict_check", "cvm_mutation_precondition", "cvm_rename_readback", "cvm_tag_readback", "cvm_final_readback",
@@ -1577,6 +1587,97 @@ async function computeClaimControlPlanePost({ fetchImpl, origin, auth, path, bod
   return { statusCode: response.status, payload };
 }
 
+function computeClaimApprovedRequest(target, approval) {
+  const approvalDigest = createHash("sha256").update(canonicalJson(approval)).digest("hex");
+  return {
+    approvalDigest,
+    body: {
+      ...computeClaimControlPlaneRequest(target),
+      approvalId: approval.approvalId,
+      approvalDigest,
+      expiresAt: approval.expiresAt,
+      mergedMainSha: approval.mergedMainSha,
+      cloudImageDigest: approval.cloudImageDigest,
+      workspaceImageDigest: approval.workspaceImageDigest,
+      customerEmail: approval.customer.email,
+      recoveryKey: approval.recoveryKey,
+      resources: approval.resources,
+      attemptLimits: approval.attemptLimits,
+      allowedWrites: approval.allowedWrites,
+      forbiddenWrites: approval.forbiddenWrites,
+      confirm: approval.confirmation
+    }
+  };
+}
+
+export async function validateComputeClaimApproval(options = {}) {
+  const {
+    target: rawTarget, approvalJson, approvalId, mergedSha, cloudImageDigest, customerEmail, origin, adminEmail, adminPassword,
+    internalServiceToken, kubeconfigPath, namespace, requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
+    cloudRevisionEvidenceReader, execFileImpl = defaultExecFile, fetchImpl = globalThis.fetch
+  } = options;
+  const target = computeClaimTarget(rawTarget);
+  const approval = computeClaimRecoveryApproval(approvalJson, { approvalId, mergedSha, cloudImageDigest, target });
+  const normalizedCustomerEmail = String(customerEmail || "").trim().toLowerCase();
+  if (normalizedCustomerEmail !== customerEmail || normalizedCustomerEmail !== approval.customer.email) {
+    throw new Error("compute_claim_validation_customer_identity_mismatch");
+  }
+  if (!internalServiceToken || internalServiceToken !== String(internalServiceToken).trim()) {
+    throw new Error("compute_claim_recovery_capability_required");
+  }
+  const credentials = existingAdminCredentials(adminEmail, adminPassword);
+  const normalizedOrigin = assertPublicHttpsUrl(origin, "public_console_origin_required", { hostname: "cloud.medopl.cn" }).origin;
+  if (!String(kubeconfigPath || "").startsWith("/") || !/^[a-z0-9][a-z0-9-]{0,62}$/.test(String(namespace || "")) ||
+    !Number.isInteger(requestTimeoutMs) || requestTimeoutMs < 1 || requestTimeoutMs > 300_000) {
+    throw new Error("compute_claim_recovery_config_invalid");
+  }
+  const release = await currentComputeClaimCloudRevision({ mergedSha, cloudImageDigest, kubeconfigPath, namespace, cloudRevisionEvidenceReader, execFileImpl });
+  const auth = await login({ fetchImpl, origin: normalizedOrigin, ...credentials, timeoutMs: requestTimeoutMs });
+  if (auth.user?.accountId !== PRODUCTION_ADMIN.accountId || auth.user?.role !== PRODUCTION_ADMIN.role || !auth.csrfToken) {
+    throw new Error("compute_claim_recovery_admin_login_failed");
+  }
+  const accountAuthority = await readBasicCanaryAccountAuthority(
+    { fetchImpl, origin: normalizedOrigin, timeoutMs: requestTimeoutMs }, auth, approval, target.accountId
+  );
+  if (!accountAuthority.found) {
+    throw new Error("compute_claim_validation_customer_identity_mismatch");
+  }
+  const request = computeClaimApprovedRequest(target, approval);
+  const response = await computeClaimControlPlanePost({
+    fetchImpl, origin: normalizedOrigin, auth,
+    path: `/api/operator/workspace-launches/${encodeURIComponent(target.launchOperationId)}/compute-claim-recovery/validate`,
+    idempotencyKey: approval.idempotencyKey, capability: internalServiceToken, requestTimeoutMs, body: request.body
+  });
+  if (response.statusCode !== 200) {
+    const errorCode = response.statusCode === 400 ? "compute_claim_validation_request_invalid"
+      : response.statusCode === 403 ? "compute_claim_validation_capability_invalid"
+        : response.statusCode === 404 ? "compute_claim_validation_launch_not_found"
+          : response.statusCode === 409 ? "compute_claim_validation_binding_mismatch"
+            : "compute_claim_validation_response_invalid";
+    throw new Error(errorCode);
+  }
+  const payload = response.payload;
+  if (!exactObjectKeys(payload, [
+    "schemaVersion", "status", "approvalId", "approvalDigest", "launchOperationId", "accountId", "workspaceId", "runnerDirectMutationCounts"
+  ]) || payload.schemaVersion !== 2 || payload.status !== "proven" || payload.approvalId !== approval.approvalId ||
+    payload.approvalDigest !== request.approvalDigest || payload.launchOperationId !== target.launchOperationId ||
+    payload.accountId !== target.accountId || payload.workspaceId !== target.workspaceId ||
+    JSON.stringify(payload.runnerDirectMutationCounts) !== JSON.stringify({ sub2api: 0, tencent: 0, kubernetes: 0 })) {
+    throw new Error("compute_claim_validation_response_invalid");
+  }
+  return {
+    schemaVersion: 2,
+    operationMode: COMPUTE_CLAIM_VALIDATE_MODE,
+    status: "proven",
+    recoveryEligible: true,
+    errorCode: "none",
+    release: computeClaimReleaseEvidence(release),
+    target: { ...target },
+    approval: { approvalId: approval.approvalId, approvalDigest: request.approvalDigest },
+    runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
+  };
+}
+
 export async function recoverComputeClaim({
   target: rawTarget,
   approvalJson,
@@ -1630,8 +1731,7 @@ export async function recoverComputeClaim({
     throw new Error("compute_claim_recovery_customer_identity_mismatch");
   }
   const path = `/api/operator/workspace-launches/${encodeURIComponent(target.launchOperationId)}/compute-claim-recovery`;
-  const requestBody = computeClaimControlPlaneRequest(target);
-  const approvalDigest = createHash("sha256").update(canonicalJson(approval)).digest("hex");
+  const request = computeClaimApprovedRequest(target, approval);
   let claimResponse;
   try {
     claimResponse = await computeClaimControlPlanePost({
@@ -1642,22 +1742,7 @@ export async function recoverComputeClaim({
       idempotencyKey: approval.idempotencyKey,
       capability: internalServiceToken,
       requestTimeoutMs,
-      body: {
-        ...requestBody,
-        approvalId: approval.approvalId,
-        approvalDigest,
-        expiresAt: approval.expiresAt,
-        mergedMainSha: approval.mergedMainSha,
-        cloudImageDigest: approval.cloudImageDigest,
-        workspaceImageDigest: approval.workspaceImageDigest,
-        customerEmail: approval.customer.email,
-        recoveryKey: approval.recoveryKey,
-        resources: approval.resources,
-        attemptLimits: approval.attemptLimits,
-        allowedWrites: approval.allowedWrites,
-        forbiddenWrites: approval.forbiddenWrites,
-        confirm: approval.confirmation
-      }
+      body: request.body
     });
   } catch (error) {
     if (error?.message === "compute_claim_recovery_control_plane_response_invalid") throw error;
@@ -4036,6 +4121,7 @@ function cliArgs(argv) {
 
 function computeClaimCliMode(argv) {
   if (argv.includes("--compute-claim-diagnose")) return COMPUTE_CLAIM_DIAGNOSE_MODE;
+  if (argv.includes("--compute-claim-validate")) return COMPUTE_CLAIM_VALIDATE_MODE;
   if (argv.includes("--compute-claim-recover")) return COMPUTE_CLAIM_RECOVER_MODE;
   if (argv.includes("--compute-claim-continue")) return COMPUTE_CLAIM_CONTINUATION_MODE;
   return "";
@@ -4050,6 +4136,8 @@ function workspaceLaunchReadbackCliMode(argv) {
 function blockedComputeClaimArtifact(operationMode, rawErrorCode = "") {
   const fallbackErrorCode = operationMode === COMPUTE_CLAIM_DIAGNOSE_MODE
     ? "compute_claim_diagnosis_failed"
+    : operationMode === COMPUTE_CLAIM_VALIDATE_MODE
+      ? "compute_claim_validation_failed"
     : operationMode === COMPUTE_CLAIM_RECOVER_MODE
       ? "compute_claim_recovery_failed"
       : "compute_claim_continuation_failed";
@@ -4105,7 +4193,7 @@ export async function runProductionLiveQaCli({
   now = new Date()
 } = {}) {
   if (argv.includes("--help") || argv.includes("-h")) {
-    stdout.write("Usage: node tools/production-live-qa.ts --read-only\nA Workspace identity receipt uses --workspace-identity-diagnose with protected customer credentials and exact account/workspace IDs. Compute claim modes use --compute-claim-diagnose, --compute-claim-recover, or --compute-claim-continue with a non-secret target JSON. A recovered Workspace E2E requires --recovered-workspace-e2e --allow-model-write, an independent approval, and an absolute continuation artifact path. A manual-review diagnosis requires --manual-review-diagnose and a non-secret target JSON. A fixed-slot model request requires --allow-gateway-write --allow-model-write. A real customer canary requires --basic-customer-canary, an exact funding mode, and its explicit approvals.\n");
+    stdout.write("Usage: node tools/production-live-qa.ts --read-only\nA Workspace identity receipt uses --workspace-identity-diagnose with protected customer credentials and exact account/workspace IDs. Compute claim modes use --compute-claim-diagnose, --compute-claim-validate, --compute-claim-recover, or --compute-claim-continue with a non-secret target JSON. A recovered Workspace E2E requires --recovered-workspace-e2e --allow-model-write, an independent approval, and an absolute continuation artifact path. A manual-review diagnosis requires --manual-review-diagnose and a non-secret target JSON. A fixed-slot model request requires --allow-gateway-write --allow-model-write. A real customer canary requires --basic-customer-canary, an exact funding mode, and its explicit approvals.\n");
     return 0;
   }
   const computeClaimMode = computeClaimCliMode(argv);
@@ -4116,7 +4204,7 @@ export async function runProductionLiveQaCli({
     if (args["workspace-identity-diagnose"] === "true") {
       const conflicts = [
         "read-only", "manual-review-diagnose", "workspace-launch-readback-diagnose", "workspace-launch-readback-recover",
-        "compute-claim-diagnose", "compute-claim-recover", "compute-claim-continue", "recovered-workspace-e2e", "basic-customer-canary",
+        "compute-claim-diagnose", "compute-claim-validate", "compute-claim-recover", "compute-claim-continue", "recovered-workspace-e2e", "basic-customer-canary",
         "allow-account-provision", "allow-wallet-recharge", "allow-workspace-purchase", "allow-model-write", "allow-gateway-write",
         "allow-existing-precharge-recovery", "approval-id", "funding-mode", "phase"
       ];
@@ -4140,7 +4228,7 @@ export async function runProductionLiveQaCli({
       throw new Error("workspace_launch_readback_mode_conflict");
     }
     if (args["read-only"] === "true") {
-      if (args["compute-claim-continue"] || args["basic-customer-canary"] || args["allow-gateway-write"] || args["allow-model-write"] || args["approval-id"]) throw new Error("production_live_qa_read_only_conflict");
+      if (args["compute-claim-validate"] || args["compute-claim-continue"] || args["basic-customer-canary"] || args["allow-gateway-write"] || args["allow-model-write"] || args["approval-id"]) throw new Error("production_live_qa_read_only_conflict");
       const result = await verifyProductionReadOnlyRollout({
         origin: args.origin || env.OPL_CONSOLE_ORIGIN,
         adminEmail: env.OPL_SUB2API_ADMIN_EMAIL,
@@ -4154,7 +4242,7 @@ export async function runProductionLiveQaCli({
 		  return 0;
     }
     if (args["manual-review-diagnose"] === "true") {
-      if (args["compute-claim-continue"] || args["basic-customer-canary"] || args["read-only"] || args["allow-account-provision"] || args["allow-wallet-recharge"] ||
+      if (args["compute-claim-validate"] || args["compute-claim-continue"] || args["basic-customer-canary"] || args["read-only"] || args["allow-account-provision"] || args["allow-wallet-recharge"] ||
         args["allow-workspace-purchase"] || args["allow-model-write"] || args["allow-gateway-write"] || args["approval-id"] || args["funding-mode"] || args.phase) {
         throw new Error("manual_review_diagnose_conflict");
       }
@@ -4171,7 +4259,7 @@ export async function runProductionLiveQaCli({
       return 0;
     }
     if (args["workspace-launch-readback-diagnose"] === "true") {
-      if (args["workspace-launch-readback-recover"] || args["compute-claim-diagnose"] || args["compute-claim-recover"] || args["compute-claim-continue"] ||
+      if (args["workspace-launch-readback-recover"] || args["compute-claim-diagnose"] || args["compute-claim-validate"] || args["compute-claim-recover"] || args["compute-claim-continue"] ||
         args["manual-review-diagnose"] || args["basic-customer-canary"] || args["recovered-workspace-e2e"] || args["read-only"] || args["approval-id"] ||
         args["allow-account-provision"] || args["allow-wallet-recharge"] || args["allow-workspace-purchase"] || args["allow-model-write"] || args["allow-gateway-write"]) {
         throw new Error("workspace_launch_readback_diagnose_conflict");
@@ -4196,7 +4284,7 @@ export async function runProductionLiveQaCli({
       return 0;
     }
     if (args["workspace-launch-readback-recover"] === "true") {
-      if (!args["approval-id"] || args["workspace-launch-readback-diagnose"] || args["compute-claim-diagnose"] || args["compute-claim-recover"] ||
+      if (!args["approval-id"] || args["workspace-launch-readback-diagnose"] || args["compute-claim-diagnose"] || args["compute-claim-validate"] || args["compute-claim-recover"] ||
         args["compute-claim-continue"] || args["manual-review-diagnose"] || args["basic-customer-canary"] || args["recovered-workspace-e2e"] || args["read-only"] ||
         args["allow-account-provision"] || args["allow-wallet-recharge"] || args["allow-workspace-purchase"] || args["allow-model-write"] || args["allow-gateway-write"]) {
         throw new Error("workspace_launch_readback_recovery_approval_required");
@@ -4224,7 +4312,7 @@ export async function runProductionLiveQaCli({
 		  return result.status === "converged" ? 0 : 1;
     }
     if (args["compute-claim-diagnose"] === "true") {
-      if (args["compute-claim-recover"] || args["compute-claim-continue"] || args["manual-review-diagnose"] || args["basic-customer-canary"] || args["read-only"] ||
+      if (args["compute-claim-validate"] || args["compute-claim-recover"] || args["compute-claim-continue"] || args["manual-review-diagnose"] || args["basic-customer-canary"] || args["read-only"] ||
         args["allow-account-provision"] || args["allow-wallet-recharge"] || args["allow-workspace-purchase"] || args["allow-model-write"] ||
         args["allow-gateway-write"] || args["approval-id"] || args["funding-mode"] || args.phase) {
         throw new Error("compute_claim_diagnose_conflict");
@@ -4243,8 +4331,36 @@ export async function runProductionLiveQaCli({
       stdout.write(`${JSON.stringify(result, null, 2)}\n`);
       return 0;
     }
+    if (args["compute-claim-validate"] === "true") {
+      if (!args["approval-id"] || args["compute-claim-diagnose"] || args["compute-claim-recover"] || args["compute-claim-continue"] ||
+        args["manual-review-diagnose"] || args["basic-customer-canary"] || args["read-only"] || args["allow-account-provision"] ||
+        args["allow-wallet-recharge"] || args["allow-workspace-purchase"] || args["allow-model-write"] || args["allow-gateway-write"] ||
+        args["funding-mode"] || args.phase) {
+        throw new Error("compute_claim_validation_approval_required");
+      }
+      const result = await validateComputeClaimApproval({
+        target: args["compute-claim-target-json"] || env.OPL_COMPUTE_CLAIM_TARGET_JSON,
+        approvalJson: env.OPL_COMPUTE_CLAIM_RECOVERY_APPROVAL_JSON,
+        approvalId: args["approval-id"],
+        mergedSha: env.OPL_MERGED_SHA,
+        cloudImageDigest: env.OPL_COMPUTE_CLAIM_CLOUD_DIGEST,
+        customerEmail: env.OPL_BASIC_CANARY_CUSTOMER_EMAIL,
+        origin: args.origin || env.OPL_CONSOLE_ORIGIN,
+        adminEmail: env.OPL_SUB2API_ADMIN_EMAIL,
+        adminPassword: env.OPL_SUB2API_ADMIN_PASSWORD,
+        internalServiceToken: env.OPL_INTERNAL_SERVICE_TOKEN,
+        kubeconfigPath: env.KUBECONFIG || env.TENCENT_DEPLOY_KUBECONFIG_PATH,
+        namespace: env.OPL_K8S_NAMESPACE || "opl-cloud",
+        requestTimeoutMs: Number(args["request-timeout-ms"] || env.OPL_VERIFY_REQUEST_TIMEOUT_MS || DEFAULT_REQUEST_TIMEOUT_MS),
+        cloudRevisionEvidenceReader,
+        execFileImpl,
+        fetchImpl
+      });
+      stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+      return 0;
+    }
     if (args["compute-claim-recover"] === "true") {
-      if (!args["approval-id"] || args["compute-claim-diagnose"] || args["compute-claim-continue"] || args["manual-review-diagnose"] || args["basic-customer-canary"] || args["read-only"] ||
+      if (!args["approval-id"] || args["compute-claim-diagnose"] || args["compute-claim-validate"] || args["compute-claim-continue"] || args["manual-review-diagnose"] || args["basic-customer-canary"] || args["read-only"] ||
         args["allow-account-provision"] || args["allow-wallet-recharge"] || args["allow-workspace-purchase"] || args["allow-model-write"] ||
         args["allow-gateway-write"] || args["funding-mode"] || args.phase) {
         throw new Error("compute_claim_recovery_approval_required");
@@ -4273,7 +4389,7 @@ export async function runProductionLiveQaCli({
       return result.status === "claimed" ? 0 : 1;
     }
     if (args["compute-claim-continue"] === "true") {
-      if (args["compute-claim-recover"] || args["compute-claim-diagnose"] || args["manual-review-diagnose"] || args["basic-customer-canary"] || args["read-only"] ||
+      if (args["compute-claim-validate"] || args["compute-claim-recover"] || args["compute-claim-diagnose"] || args["manual-review-diagnose"] || args["basic-customer-canary"] || args["read-only"] ||
         args["allow-account-provision"] || args["allow-wallet-recharge"] || args["allow-workspace-purchase"] || args["allow-model-write"] ||
         args["allow-gateway-write"] || args["approval-id"] || args["funding-mode"] || args.phase) {
         throw new Error("compute_claim_continuation_conflict");
@@ -4302,7 +4418,7 @@ export async function runProductionLiveQaCli({
     }
     if (args["recovered-workspace-e2e"] === "true") {
       const conflictingArgs = [
-        "read-only", "manual-review-diagnose", "compute-claim-diagnose", "compute-claim-recover", "compute-claim-continue",
+        "read-only", "manual-review-diagnose", "compute-claim-diagnose", "compute-claim-validate", "compute-claim-recover", "compute-claim-continue",
         "basic-customer-canary", "allow-account-provision", "allow-wallet-recharge", "allow-workspace-purchase",
         "allow-gateway-write", "allow-existing-precharge-recovery", "funding-mode", "phase"
       ];
