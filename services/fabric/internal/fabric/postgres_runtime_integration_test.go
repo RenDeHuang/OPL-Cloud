@@ -1389,6 +1389,84 @@ func TestPostgresComputeClaimRecoveryOperationCASHasSingleConcurrentWinner(t *te
 	}
 }
 
+func TestPostgresComputeClaimRecoveryNodeTakeoverCASHasSingleWinnerAndKeepsOriginalBinding(t *testing.T) {
+	databaseURL := fabricTestDatabaseURL(t)
+	firstStore, err := newTestPostgresOperationStore(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer firstStore.client.Close()
+	secondStore, err := newTestPostgresOperationStore(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer secondStore.client.Close()
+
+	operation := postgresComputeClaimOperation("node-takeover", "claim_pending")
+	observed := observedComputeClaimRecoveryMutation(ComputeClaimRecoveryProof{
+		Reason: "provider_describe", TencentMutationCount: 1, KubernetesMutationCount: 0,
+		FailureStage: "cvm_tag_readback", ProviderErrorClass: "provider_error",
+		Evidence: &ComputeClaimEvidence{CVM: ComputeClaimMutationEvidence{Attempted: 1, Missing: []string{"opl_account_id"}}},
+	})
+	operation.RedactedProviderPayload = withComputeClaimRecoveryMutation(operation.RedactedProviderPayload, observed)
+	if err := firstStore.Append(context.Background(), operation); err != nil {
+		t.Fatal(err)
+	}
+	nodeReserved := operation
+	nodeReserved.RedactedProviderPayload = withComputeClaimRecoveryMutation(nodeReserved.RedactedProviderPayload, nodeReservedComputeClaimRecoveryMutation(observed))
+
+	for name, drift := range map[string]func(*computeClaimRecoveryBinding){
+		"launch":      func(binding *computeClaimRecoveryBinding) { binding.LaunchOperationID = "launch-postgres-other" },
+		"idempotency": func(binding *computeClaimRecoveryBinding) { binding.IdempotencyKey += "-other" },
+		"target":      func(binding *computeClaimRecoveryBinding) { binding.TargetHash = "different-target-hash" },
+		"request":     func(binding *computeClaimRecoveryBinding) { binding.RequestHash = "different-request-hash" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			binding, present, valid := decodeComputeClaimRecoveryBinding(nodeReserved)
+			if !present || !valid {
+				t.Fatalf("node takeover binding=%#v present=%v valid=%v", binding, present, valid)
+			}
+			drift(&binding)
+			drifted := nodeReserved
+			drifted.RedactedProviderPayload = withComputeClaimRecoveryBinding(drifted.RedactedProviderPayload, binding)
+			if err := firstStore.SaveComputeClaimRecovery(context.Background(), operation, drifted); !errors.Is(err, ErrRuntimeOperationNotCurrent) {
+				t.Fatalf("node takeover binding drift error=%v, want ErrRuntimeOperationNotCurrent", err)
+			}
+		})
+	}
+
+	start := make(chan struct{})
+	results := make(chan error, 2)
+	for _, store := range []*PostgresOperationStore{firstStore, secondStore} {
+		store := store
+		go func() {
+			<-start
+			results <- store.SaveComputeClaimRecovery(context.Background(), operation, nodeReserved)
+		}()
+	}
+	close(start)
+	winners := 0
+	for range 2 {
+		err := <-results
+		if err == nil {
+			winners++
+			continue
+		}
+		if !errors.Is(err, ErrRuntimeOperationNotCurrent) {
+			t.Fatalf("node takeover concurrent CAS error=%v", err)
+		}
+	}
+	stored, err := firstStore.List(context.Background())
+	binding, bindingPresent, bindingValid := decodeComputeClaimRecoveryBinding(stored[0])
+	ledger, ledgerPresent, ledgerValid := decodeComputeClaimRecoveryMutation(stored[0])
+	if winners != 1 || err != nil || len(stored) != 1 || !bindingPresent || !bindingValid ||
+		binding != postgresComputeClaimRecoveryBinding("node-takeover") || !ledgerPresent || !ledgerValid || ledger.State != "node_reserved" ||
+		ledger.TencentMutationCount != 1 || ledger.KubernetesMutationCount != 1 || ledger.Evidence.CVM.Attempted != 1 ||
+		ledger.Evidence.CVM.Confirmed != 1 || ledger.Evidence.Node.Attempted != 1 || ledger.Evidence.Node.Unknown != 1 {
+		t.Fatalf("winners=%d stored=%#v err=%v binding=%#v present=%v valid=%v ledger=%#v ledgerPresent=%v ledgerValid=%v", winners, stored, err, binding, bindingPresent, bindingValid, ledger, ledgerPresent, ledgerValid)
+	}
+}
+
 func TestPostgresComputeClaimRecoveryOwnershipCASActivatesOnlySameTarget(t *testing.T) {
 	databaseURL := fabricTestDatabaseURL(t)
 	store, err := newTestPostgresOperationStore(databaseURL)
@@ -1667,6 +1745,132 @@ func TestPostgresComputeClaimRecoveryObservedSuccessReadbackRegressionFailsClose
 		second.ProviderErrorClass != "readback_mismatch" || second.TencentMutationCount != 1 || second.KubernetesMutationCount != 1 ||
 		ownershipErr != nil || ownership.Status != "quarantined" || provider.proofCalls != 2 || provider.claimCalls != 1 {
 		t.Fatalf("first=%#v firstErr=%v second=%#v secondErr=%v ownership=%#v ownershipErr=%v provider=%#v", first, firstErr, second, secondErr, ownership, ownershipErr, provider)
+	}
+}
+
+func TestPostgresComputeClaimRecoveryNodeReservationCrashFailsClosedWithoutSecondPatch(t *testing.T) {
+	databaseURL := fabricTestDatabaseURL(t)
+	firstStore, err := newTestPostgresOperationStore(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider, input, claimInput := seedPostgresComputeClaimRecovery(t, firstStore, "basic", false)
+	provider.proof.NodeOwnershipState = "unallocated"
+	provider.proof.CVMOwnershipState = "recoverable"
+	provider.claim.Proof = provider.proof
+	provider.claim.Proof.Reason = "provider_describe"
+	provider.claim.TencentMutationCount = 1
+	provider.claim.KubernetesMutationCount = 0
+	provider.claim.FailureStage = "cvm_tag_readback"
+	provider.claim.ProviderErrorClass = "provider_error"
+	provider.claim.Evidence = &ComputeClaimEvidence{CVM: ComputeClaimMutationEvidence{Attempted: 1, Missing: []string{"opl_account_id"}}}
+	provider.claimErr = errors.New("provider tag readback failed")
+	if _, err := NewServiceWithOperationStore(provider, firstStore).ClaimComputeRecovery(context.Background(), claimInput); err == nil {
+		t.Fatal("first claim unexpectedly succeeded")
+	}
+	claimInput.IdempotencyKey = input.LaunchOperationID + ":approved-recovery"
+	claimInput.ApprovedBindingTakeover = true
+	provider.proof.CVMOwnershipState = "target_owned"
+	provider.proof.NodeOwnershipState = "unallocated"
+	provider.claim = ComputeClaimProviderClaim{
+		Proof: ComputeClaimProviderProof{
+			Status: "proven", Reason: "none", MachineName: provider.proof.MachineName, NodeName: provider.proof.NodeName,
+			CVMInstanceID: provider.proof.CVMInstanceID, PrivateIP: provider.proof.PrivateIP, InstanceType: provider.proof.InstanceType,
+			Zone: provider.proof.Zone, ChargeType: provider.proof.ChargeType, PeriodMonths: provider.proof.PeriodMonths,
+			RenewFlag: provider.proof.RenewFlag, Deadline: provider.proof.Deadline, CVMOwnershipState: "target_owned", NodeOwnershipState: "target_owned",
+		},
+		KubernetesMutationCount: 1,
+		Evidence:                &ComputeClaimEvidence{Node: ComputeClaimMutationEvidence{Attempted: 1, Confirmed: 1}},
+	}
+	provider.claimErr = nil
+	interrupted, interruptedErr := NewServiceWithOperationStore(provider, &failAfterComputeClaimNodeReservationStore{OperationStore: firstStore}).ClaimComputeRecovery(context.Background(), claimInput)
+	if interruptedErr == nil || interrupted.Eligible || provider.claimCalls != 1 {
+		t.Fatalf("interrupted=%#v err=%v provider=%#v", interrupted, interruptedErr, provider)
+	}
+	if err := firstStore.client.Close(); err != nil {
+		t.Fatal(err)
+	}
+	secondStore, err := newTestPostgresOperationStore(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer secondStore.client.Close()
+
+	restarted, restartErr := NewServiceWithOperationStore(provider, secondStore).ClaimComputeRecovery(context.Background(), claimInput)
+	ownership, ownershipErr := secondStore.MachineOwnership(context.Background(), input.ComputeAllocationID)
+	operations, operationsErr := secondStore.List(context.Background())
+	ledger, ledgerPresent, ledgerValid := decodeComputeClaimRecoveryMutation(operations[0])
+	binding, bindingPresent, bindingValid := decodeComputeClaimRecoveryBinding(operations[0])
+	if restartErr == nil || restarted.Eligible || restarted.Reason != "provider_describe" || restarted.TencentMutationCount != 1 ||
+		restarted.KubernetesMutationCount != 1 || ownershipErr != nil || ownership.Status != "quarantined" || operationsErr != nil ||
+		provider.claimCalls != 1 || !ledgerPresent || !ledgerValid || ledger.State != "node_reserved" || ledger.Evidence.CVM.Confirmed != 1 ||
+		ledger.Evidence.Node.Attempted != 1 || ledger.Evidence.Node.Unknown != 1 || !bindingPresent || !bindingValid ||
+		binding.IdempotencyKey != input.LaunchOperationID+":compute-claim" {
+		t.Fatalf("restarted=%#v err=%v ownership=%#v ownershipErr=%v operationsErr=%v ledger=%#v present=%v valid=%v binding=%#v bindingPresent=%v bindingValid=%v provider=%#v", restarted, restartErr, ownership, ownershipErr, operationsErr, ledger, ledgerPresent, ledgerValid, binding, bindingPresent, bindingValid, provider)
+	}
+}
+
+func TestPostgresComputeClaimRecoveryNodePatchCrashConvergesByReadbackAndReplaysZeroMutation(t *testing.T) {
+	databaseURL := fabricTestDatabaseURL(t)
+	firstStore, err := newTestPostgresOperationStore(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider, input, claimInput := seedPostgresComputeClaimRecovery(t, firstStore, "basic", false)
+	provider.proof.NodeOwnershipState = "unallocated"
+	provider.proof.CVMOwnershipState = "recoverable"
+	provider.claim.Proof = provider.proof
+	provider.claim.Proof.Reason = "provider_describe"
+	provider.claim.TencentMutationCount = 1
+	provider.claim.KubernetesMutationCount = 0
+	provider.claim.FailureStage = "cvm_tag_readback"
+	provider.claim.ProviderErrorClass = "provider_error"
+	provider.claim.Evidence = &ComputeClaimEvidence{CVM: ComputeClaimMutationEvidence{Attempted: 1, Missing: []string{"opl_account_id"}}}
+	provider.claimErr = errors.New("provider tag readback failed")
+	if _, err := NewServiceWithOperationStore(provider, firstStore).ClaimComputeRecovery(context.Background(), claimInput); err == nil {
+		t.Fatal("first claim unexpectedly succeeded")
+	}
+	claimInput.IdempotencyKey = input.LaunchOperationID + ":approved-recovery"
+	claimInput.ApprovedBindingTakeover = true
+	provider.proof.CVMOwnershipState = "target_owned"
+	provider.proof.NodeOwnershipState = "unallocated"
+	provider.claim = ComputeClaimProviderClaim{
+		Proof: ComputeClaimProviderProof{
+			Status: "proven", Reason: "none", MachineName: provider.proof.MachineName, NodeName: provider.proof.NodeName,
+			CVMInstanceID: provider.proof.CVMInstanceID, PrivateIP: provider.proof.PrivateIP, InstanceType: provider.proof.InstanceType,
+			Zone: provider.proof.Zone, ChargeType: provider.proof.ChargeType, PeriodMonths: provider.proof.PeriodMonths,
+			RenewFlag: provider.proof.RenewFlag, Deadline: provider.proof.Deadline, CVMOwnershipState: "target_owned", NodeOwnershipState: "target_owned",
+		},
+		KubernetesMutationCount: 1,
+		Evidence:                &ComputeClaimEvidence{Node: ComputeClaimMutationEvidence{Attempted: 1, Confirmed: 1}},
+	}
+	provider.claimErr = nil
+	interrupted, interruptedErr := NewServiceWithOperationStore(provider, &failBeforeComputeClaimObservedSaveStore{OperationStore: firstStore}).ClaimComputeRecovery(context.Background(), claimInput)
+	if interruptedErr == nil || interrupted.Eligible || provider.claimCalls != 2 {
+		t.Fatalf("interrupted=%#v err=%v provider=%#v", interrupted, interruptedErr, provider)
+	}
+	if err := firstStore.client.Close(); err != nil {
+		t.Fatal(err)
+	}
+	secondStore, err := newTestPostgresOperationStore(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer secondStore.client.Close()
+	provider.proof.NodeOwnershipState = "target_owned"
+
+	recovered, recoverErr := NewServiceWithOperationStore(provider, secondStore).ClaimComputeRecovery(context.Background(), claimInput)
+	replayed, replayErr := NewServiceWithOperationStore(provider, secondStore).ClaimComputeRecovery(context.Background(), claimInput)
+	ownership, ownershipErr := secondStore.MachineOwnership(context.Background(), input.ComputeAllocationID)
+	operations, operationsErr := secondStore.List(context.Background())
+	ledger, ledgerPresent, ledgerValid := decodeComputeClaimRecoveryMutation(operations[0])
+	binding, bindingPresent, bindingValid := decodeComputeClaimRecoveryBinding(operations[0])
+	if recoverErr != nil || replayErr != nil || !recovered.Eligible || !replayed.Eligible || recovered.TencentMutationCount != 0 ||
+		recovered.KubernetesMutationCount != 0 || replayed.TencentMutationCount != 0 || replayed.KubernetesMutationCount != 0 ||
+		ownershipErr != nil || ownership.Status != "active" || operationsErr != nil || provider.claimCalls != 2 ||
+		!ledgerPresent || !ledgerValid || !successfulNodeClaimRecoveryMutation(ledger) || ledger.Evidence.CVM.Confirmed != 1 ||
+		ledger.Evidence.Node.Confirmed != 1 || !bindingPresent || !bindingValid || binding.IdempotencyKey != input.LaunchOperationID+":compute-claim" {
+		t.Fatalf("recovered=%#v recoverErr=%v replayed=%#v replayErr=%v ownership=%#v ownershipErr=%v operationsErr=%v ledger=%#v present=%v valid=%v binding=%#v bindingPresent=%v bindingValid=%v provider=%#v", recovered, recoverErr, replayed, replayErr, ownership, ownershipErr, operationsErr, ledger, ledgerPresent, ledgerValid, binding, bindingPresent, bindingValid, provider)
 	}
 }
 
