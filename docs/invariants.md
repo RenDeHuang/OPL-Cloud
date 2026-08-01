@@ -407,8 +407,12 @@ validate account and quote
   deployment readbacks succeed; placeholders and local timestamps are not evidence.
 - Ordinary Cloud deploy updates the immutable Workspace image default for new
   Fabric operations but does not restart or wait for existing Workspace
-  Deployments while Runtime rollout is paused. Cloud rollback restores all
-  prior ConfigMap data before restoring the three Cloud images.
+  Deployments while Runtime rollout is paused. A separate explicit
+  `PROMOTE_WORKSPACE_IMAGE` main-only workflow may CAS-promote that ConfigMap
+  default from an exact old digest to an immutable TCR digest, with a rollback
+  snapshot and no Cloud rollout, Workspace restart, or Tencent/provider write.
+  Cloud rollback restores all prior ConfigMap data before restoring the three
+  Cloud images.
 - The current production PostgreSQL endpoint is internal and does not offer TLS,
   so the TKE ConfigMap sets `PGSSLMODE=disable`. A TLS-capable database migration
   must change this contract and its deployment evidence together. Application

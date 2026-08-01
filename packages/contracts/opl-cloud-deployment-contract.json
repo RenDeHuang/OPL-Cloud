@@ -1,9 +1,9 @@
 {
-  "schemaVersion": 27,
+  "schemaVersion": 28,
   "owner": "OPL Fabric",
   "purpose": "Deployment workflow, immutable Cloud and Workspace images, TKE handoff, read-only diagnostics, and production-verification safety.",
   "state": "current",
-  "machineBoundary": "GitHub workflow structure, cluster/public verifier runner isolation, deploy-time env sources, secret handling, immutable image release, node-storage preflight, single-revision Cloud rollout, diagnostics-before-rollback, real read-only ordinary-rollout verification, existing Workspace preservation, and paused standalone verification.",
+  "machineBoundary": "GitHub workflow structure, cluster/public verifier runner isolation, deploy-time env sources, secret handling, immutable image release, explicit Workspace digest promotion, node-storage preflight, single-revision Cloud rollout, diagnostics-before-rollback, real read-only ordinary-rollout verification, existing Workspace preservation, and paused standalone verification.",
   "lifecycle": {
     "type": "long_term_contract",
     "removalCondition": "Replace only with a newer current contract for the same boundary."
@@ -67,6 +67,9 @@
     "inputs": [
       "cloud_image",
       "workspace_image",
+      "workspace_image_current",
+      "promote_workspace_image",
+      "workspace_promotion_confirmation",
       "bootstrap_mode",
       "diagnostics_only"
     ],
@@ -319,6 +322,21 @@
       "--from-literal=OPL_OPERATOR_SUMMARY_TOKEN",
       "--docker-password"
     ]
+  },
+  "workspaceImagePromotion": {
+    "file": ".github/workflows/deploy-tke-production.yml",
+    "job": "promote-workspace-image",
+    "rollbackJob": "rollback-workspace-image-promotion",
+    "confirmation": "PROMOTE_WORKSPACE_IMAGE",
+    "trigger": "main_only_explicit_promotion_not_bootstrap_or_diagnostics",
+    "mutation": "ConfigMap_OPL_WORKSPACE_IMAGE_only",
+    "concurrency": "production-resource-verification",
+    "existingWorkspaceDeployments": "preserved_without_restart",
+    "providerMutationCount": 0,
+    "cloudRollout": false,
+    "requestedImage": "immutable_tcr_repository_digest",
+    "currentValueGate": "CAS_test_current_ConfigMap_value",
+    "rollback": "snapshot_and_restore_previous_ConfigMap_data"
   },
   "productionDiagnosticsJob": {
     "file": ".github/workflows/deploy-tke-production.yml",

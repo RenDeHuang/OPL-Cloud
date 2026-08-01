@@ -561,6 +561,60 @@ test("TKE deploy workflow matches the current deployment contract", async () => 
   assert.doesNotMatch(JSON.stringify(contract), /paid_confirmation|OPL_VERIFY_PAID_CONFIRMATION|OPL_VERIFY_MODEL_ACCESS_KEY/);
 });
 
+test("Workspace image promotion is an explicit main-only ConfigMap CAS with rollback", async () => {
+  const [workflow, contract] = await Promise.all([
+    readWorkflow(".github/workflows/deploy-tke-production.yml"),
+    readJson(deploymentContractPath)
+  ]);
+  const inputs = workflow.on.workflow_dispatch.inputs;
+  assert.equal(inputs.promote_workspace_image?.type, "boolean");
+  assert.equal(inputs.promote_workspace_image?.default, false);
+  assert.equal(inputs.workspace_promotion_confirmation?.type, "string");
+  assert.equal(inputs.workspace_promotion_confirmation?.default, "");
+  const promote = workflowJob(workflow, "promote-workspace-image");
+  const rollback = workflowJob(workflow, "rollback-workspace-image-promotion");
+  assert.match(String(promote.if), /inputs\.promote_workspace_image/);
+  assert.match(String(promote.if), /!inputs\.diagnostics_only/);
+  assert.match(String(promote.if), /!inputs\.bootstrap_mode/);
+  assert.deepEqual(promote["runs-on"], ["self-hosted", "tencent-cloud", "opl-cloud", "tke-vpc"]);
+  assert.equal(promote.environment, "production");
+  const promoteText = serializedRuns(promote);
+  for (const token of [
+    "refs/heads/main",
+    "git ls-remote origin refs/heads/main",
+    "PROMOTE_WORKSPACE_IMAGE",
+    "repository@sha256",
+    "get configmap opl-cloud-config",
+    "rollback",
+    "replace -f",
+    "OPL_WORKSPACE_IMAGE",
+    "Workspace image promotion"
+  ]) assert.match(promoteText, new RegExp(token.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\$&")), token);
+  assert.doesNotMatch(promoteText, /set image|rollout restart|apply -f .*rendered|tencentcloud|CreateCvm|CreateDisks|POST/);
+  assert.deepEqual(rollback.needs, ["promote-workspace-image"]);
+  assert.match(String(rollback.if), /always\(\)/);
+  assert.match(String(rollback.if), /needs\.promote-workspace-image\.result != 'success'/);
+  assert.equal(stepsByName(rollback).get("Download Workspace image promotion rollback snapshot")?.uses, "actions/download-artifact@v4");
+  const rollbackText = serializedRuns(rollback);
+  assert.match(rollbackText, /restore|replace -f "\$restore"/);
+  assert.doesNotMatch(rollbackText, /set image|rollout restart|CreateCvm|CreateDisks/);
+  assert.deepEqual(contract.workspaceImagePromotion, {
+    file: ".github/workflows/deploy-tke-production.yml",
+    job: "promote-workspace-image",
+    rollbackJob: "rollback-workspace-image-promotion",
+    confirmation: "PROMOTE_WORKSPACE_IMAGE",
+    trigger: "main_only_explicit_promotion_not_bootstrap_or_diagnostics",
+    mutation: "ConfigMap_OPL_WORKSPACE_IMAGE_only",
+    concurrency: "production-resource-verification",
+    existingWorkspaceDeployments: "preserved_without_restart",
+    providerMutationCount: 0,
+    cloudRollout: false,
+    requestedImage: "immutable_tcr_repository_digest",
+    currentValueGate: "CAS_test_current_ConfigMap_value",
+    rollback: "snapshot_and_restore_previous_ConfigMap_data"
+  });
+});
+
 test("Fabric MonthlyPreflight diagnostics runs inside the Ready Pod and is read only", async () => {
   const contract = await readJson(deploymentContractPath);
   const diagnostics = contract.fabricMonthlyPreflightDiagnosticsWorkflow;
@@ -1632,9 +1686,10 @@ test("TKE diagnostics are read only and mutually exclusive with deploy", async (
 
   assert.equal(input.type, "boolean");
   assert.equal(input.default, false);
-  assert.equal(deploy.if, "${{ !inputs.diagnostics_only }}");
+  assert.equal(deploy.if, "${{ !inputs.diagnostics_only && !inputs.promote_workspace_image }}");
   assert.equal(diagnose.if, "${{ inputs.diagnostics_only }}");
   assert.match(String(releaseGate.if), /!inputs\.diagnostics_only/);
+  assert.match(String(releaseGate.if), /!inputs\.promote_workspace_image/);
   assert.deepEqual(diagnose["runs-on"], ["self-hosted", "tencent-cloud", "opl-cloud", "tke-vpc"]);
   assert.equal(diagnose.environment, "production");
   assert.match(runs, /get nodes -o wide/);
@@ -1759,7 +1814,7 @@ test("TKE bootstrap deploy is approved, read only, and cannot complete a release
   assert.doesNotMatch(bootstrapRun, /production-live-qa|provider-acceptance|purchase|delete|renew|POST/i);
 
   assert.deepEqual(releaseGate.needs, ["deploy", "bootstrap-readiness", "verify-rollout-cluster", "verify-rollout-public-read-only", "rollback-live-qa"]);
-  assert.equal(releaseGate.if, "${{ always() && !inputs.diagnostics_only }}");
+  assert.equal(releaseGate.if, "${{ always() && !inputs.diagnostics_only && !inputs.promote_workspace_image }}");
   assert.match(releaseRun, /release incomplete/i);
   assert.match(releaseRun, /releaseComplete.*false/s);
   assert.match(releaseRun, /exit 1/);
