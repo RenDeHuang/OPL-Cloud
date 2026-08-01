@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 21,
+  "schemaVersion": 22,
   "owner": "OPL Platform Architecture",
   "purpose": "Current ownership contract for Console UI, Control Plane, Ledger, Fabric, and external Sub2API.",
   "state": "current",
@@ -114,6 +114,15 @@
         "reserve": "postgresql_cas_before_external_write",
         "restart": "persisted_budget_never_resets",
         "terminalFailure": "unknown_or_exhausted_enters_manual_review_and_active_worker_excludes_it"
+      },
+      "workspaceComputeClaimAutomaticContinuation": {
+        "owner": "original_workspace.launch.v2_worker",
+        "selection": "compute_claim_pending_only_manual_review_excluded",
+        "claimIdentity": "original_operationId:compute",
+        "authorization": "internal_service_capability_without_operator_approval",
+        "reservation": "postgresql_cas_single_winner",
+        "continuation": "shared_fulfillWorkspaceLaunch_after_target_owned_readback",
+        "terminalFailure": "manual_review_worker_stops"
       },
       "normalWorkspaceLaunch": {
         "entryPostMaximum": 1,
@@ -274,6 +283,14 @@
         "forbiddenCalls": ["sync", "apply", "patch", "delete"],
         "mutationCounts": {"sub2api": 0, "tencent": 0, "kubernetes": 0}
       },
+      "workspaceComputeClaimIdentity": {
+        "claimIdentity": "original_operationId:compute",
+        "recoveryApprovalRole": "control_plane_authorization_and_audit_only",
+        "recoveryKeyAsFabricIdentity": false,
+        "bindingTakeover": false,
+        "manualRecoveryInvocation": "control_plane_calls_fabric_with_original_claim_identity",
+        "drift": "identity_mismatch_zero_provider_mutation"
+      },
       "workspaceComputeClaimRecovery": {
         "proofEndpoint": "POST /fabric/compute-claim-recovery/proof",
         "claimEndpoint": "POST /fabric/compute-claim-recovery/claim",
@@ -318,6 +335,8 @@
           "replayAfterReservation": "authoritative_readback_only_zero_incremental_external_mutation",
           "missingOutcome": "conservative_unknown_at_full_bound",
           "replayProofUnavailable": "return_persisted_mutation_evidence_zero_incremental_external_mutation",
+          "observedCvmTagRepairContinuation": "only_cvm_tag_readback_zero_unknown_zero_kubernetes_then_fresh_exact_cvm_target_owned_node_unallocated_proof_may_reconcile_original_claim_identity_and_attempt_one_node_patch_without_binding_takeover",
+          "persistedApprovalExpiryReplay": "new_approval_must_be_unexpired_exact_persisted_approval_identity_may_replay_after_expiry",
           "observedSuccessReadbackMismatch": "fail_closed_identity_mismatch_claim_final_readback"
         },
         "replay": "same_key_and_target_returns_same_proof_zero_incremental_external_mutation",
