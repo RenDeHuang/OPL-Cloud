@@ -2241,8 +2241,8 @@ func (app *controlPlaneServer) claimWorkspaceCompute(ctx context.Context, servic
 	claimed, claimErr := service.ClaimComputeRecovery(ctx, clients.ComputeClaimRecoveryClaimInput{
 		ComputeClaimRecoveryInput: workspaceComputeClaimRecoveryInput(operation, input), MachineName: operation.ComputeMachineName,
 		NodeName: operation.ComputeNodeName, CVMInstanceID: operation.ComputeCVMInstanceID, PrivateIP: operation.ComputePrivateIP,
-		InstanceType: operation.ComputeInstanceType, Zone: operation.ComputeZone, ApprovedBindingTakeover: operation.ComputeClaimApproval != nil,
-	}, key)
+		InstanceType: operation.ComputeInstanceType, Zone: operation.ComputeZone,
+	}, operation.ID+":compute")
 	if claimErr != nil || !workspaceComputeClaimProofEligible(operation, input, claimed, true) {
 		if !workspaceComputeClaimSafeFailureForOperation(operation, input, claimed) {
 			claimed = workspaceComputeClaimFailureProof(operation, "identity_mismatch")

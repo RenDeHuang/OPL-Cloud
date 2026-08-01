@@ -2439,10 +2439,10 @@ func TestWorkspaceComputeClaimApprovalResumesOriginalStorageOnce(t *testing.T) {
 			claimed := fixture.operation(t)
 			if first.Code != http.StatusOK || second.Code != http.StatusOK || driftedIP.Code != http.StatusConflict || changedKey.Code != http.StatusConflict ||
 				claimed.Status != "preparing" || claimed.Phase != "storage_fulfilling" || claimed.ComputeClaimProof == nil || claimed.ComputeClaimProof.PrivateIP != operation.ComputePrivateIP ||
-				len(fixture.fabric.computeClaimCalls) != 1 || len(fixture.fabric.computeClaimKeys) != 1 || fixture.fabric.computeClaimKeys[0] != "compute-claim-fixture" ||
+				len(fixture.fabric.computeClaimCalls) != 1 || len(fixture.fabric.computeClaimKeys) != 1 || fixture.fabric.computeClaimKeys[0] != operation.ID+":compute" ||
 				countStrings(*fixture.events, "fabric.compute.get") != 1 ||
 				len(fixture.fabric.storageIDs) != 0 || len(fixture.fabric.computeIDs) != 1 || len(fixture.sub2API.charges) != 1 || len(fixture.sub2API.refunds) != 0 {
-				t.Fatalf("claim did not bind replay identity or stop at original storage phase: first=%d second=%d driftedIP=%d changedKey=%d operation=%#v calls=%#v keys=%#v compute=%#v storage=%#v", first.Code, second.Code, driftedIP.Code, changedKey.Code, claimed, fixture.fabric.computeClaimCalls, fixture.fabric.computeClaimKeys, fixture.fabric.computeIDs, fixture.fabric.storageIDs)
+				t.Fatalf("claim did not bind replay identity or stop at original storage phase: first=%d second=%d driftedIP=%d changedKey=%d operation=%#v calls=%#v keys=%#v compute=%#v storage=%#v events=%#v", first.Code, second.Code, driftedIP.Code, changedKey.Code, claimed, fixture.fabric.computeClaimCalls, fixture.fabric.computeClaimKeys, fixture.fabric.computeIDs, fixture.fabric.storageIDs, *fixture.events)
 			}
 			for range 2 {
 				if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err != nil {
@@ -2500,8 +2500,25 @@ func TestWorkspaceComputeClaimReplaysExactPersistedApprovalAfterExpiry(t *testin
 	response := requestComputeClaimWithCapabilityForTest(t, fixture.server, fixture.operator, path, body, key)
 	persisted := fixture.operation(t)
 	if response.Code != http.StatusOK || persisted.Status != "preparing" || persisted.Phase != "storage_fulfilling" ||
-		len(fixture.fabric.computeClaimCalls) != 1 || !fixture.fabric.computeClaimCalls[0].ApprovedBindingTakeover {
+		len(fixture.fabric.computeClaimCalls) != 1 || fixture.fabric.computeClaimKeys[0] != operation.ID+":compute" {
 		t.Fatalf("exact expired approval did not replay: status=%d body=%s operation=%#v claims=%#v", response.Code, response.Body.String(), persisted, fixture.fabric.computeClaimCalls)
+	}
+}
+
+func TestWorkspaceComputeClaimKeepsOriginalFabricIdentityAcrossRecoveryKey(t *testing.T) {
+	fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, "basic")
+	fixture.fabric.computeClaimProof = computeClaimRecoveryProofForLaunch(operation, "target_owned")
+	configureWorkspaceLaunchFulfillment(t, fixture)
+	configureWorkspaceComputeClaimReadback(fixture, operation)
+	recoveryKey := "compute-claim-recovery-new-key"
+	path := "/api/operator/workspace-launches/" + operation.ID + "/compute-claim-recovery/claim"
+
+	response := requestComputeClaimWithCapabilityForTest(t, fixture.server, fixture.operator, path, computeClaimRecoveryRequestBody(t, operation, true, recoveryKey), recoveryKey)
+	if response.Code != http.StatusOK || len(fixture.fabric.computeClaimCalls) != 1 || len(fixture.fabric.computeClaimKeys) != 1 {
+		t.Fatalf("recovery claim did not reach Fabric: status=%d body=%s calls=%#v keys=%#v", response.Code, response.Body.String(), fixture.fabric.computeClaimCalls, fixture.fabric.computeClaimKeys)
+	}
+	if fixture.fabric.computeClaimKeys[0] != operation.ID+":compute" {
+		t.Fatalf("Fabric identity changed to recovery key: got=%q want=%q", fixture.fabric.computeClaimKeys[0], operation.ID+":compute")
 	}
 }
 

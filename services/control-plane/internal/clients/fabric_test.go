@@ -282,9 +282,9 @@ func TestFabricHTTPClientSeparatesComputeClaimProofAndMutation(t *testing.T) {
 				t.Fatalf("read-only proof sent Idempotency-Key: %#v", r.Header.Values("Idempotency-Key"))
 			}
 		case "/fabric/compute-claim-recovery/claim":
-			if r.Header.Get("Idempotency-Key") != "launch-fixture:compute-claim" || input.MachineName != response.MachineName ||
+			if r.Header.Get("Idempotency-Key") != "launch-fixture:compute" || input.MachineName != response.MachineName ||
 				input.NodeName != response.NodeName || input.CVMInstanceID != response.CVMInstanceID || input.PrivateIP != response.PrivateIP ||
-				input.InstanceType != response.InstanceType || input.Zone != response.Zone || !input.ApprovedBindingTakeover {
+				input.InstanceType != response.InstanceType || input.Zone != response.Zone {
 				t.Fatalf("claim input=%#v key=%q", input, r.Header.Get("Idempotency-Key"))
 			}
 			response.NodeOwnershipState = "target_owned"
@@ -317,8 +317,8 @@ func TestFabricHTTPClientSeparatesComputeClaimProofAndMutation(t *testing.T) {
 	}
 	claim, err := client.ClaimComputeRecovery(context.Background(), ComputeClaimRecoveryClaimInput{
 		ComputeClaimRecoveryInput: input, MachineName: proof.MachineName, NodeName: proof.NodeName, CVMInstanceID: proof.CVMInstanceID,
-		PrivateIP: proof.PrivateIP, InstanceType: proof.InstanceType, Zone: proof.Zone, ApprovedBindingTakeover: true,
-	}, "launch-fixture:compute-claim")
+		PrivateIP: proof.PrivateIP, InstanceType: proof.InstanceType, Zone: proof.Zone,
+	}, "launch-fixture:compute")
 	if err != nil || !claim.Eligible || claim.NodeOwnershipState != "target_owned" || claim.CVMOwnershipState != "target_owned" || claim.TencentMutationCount != 1 || claim.KubernetesMutationCount != 1 || requests != 2 {
 		t.Fatalf("claim=%#v err=%v requests=%d", claim, err, requests)
 	}

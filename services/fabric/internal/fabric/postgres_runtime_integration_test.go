@@ -1297,7 +1297,7 @@ func TestPostgresComputeClaimRecoveryOperationCASRejectsBindingDrift(t *testing.
 	drifts := map[string]func(*computeClaimRecoveryBinding){
 		"launch": func(binding *computeClaimRecoveryBinding) { binding.LaunchOperationID = "launch-postgres-other" },
 		"idempotency": func(binding *computeClaimRecoveryBinding) {
-			binding.IdempotencyKey = "launch-postgres-binding:compute-claim-other"
+			binding.IdempotencyKey = "launch-postgres-binding:compute-other"
 		},
 		"target":  func(binding *computeClaimRecoveryBinding) { binding.TargetHash = "different-target-hash" },
 		"request": func(binding *computeClaimRecoveryBinding) { binding.RequestHash = "different-request-hash" },
@@ -1389,7 +1389,7 @@ func TestPostgresComputeClaimRecoveryOperationCASHasSingleConcurrentWinner(t *te
 	}
 }
 
-func TestPostgresComputeClaimRecoveryNodeTakeoverCASHasSingleWinnerAndKeepsOriginalBinding(t *testing.T) {
+func TestPostgresComputeClaimRecoveryNodeReservationCASHasSingleWinnerAndKeepsOriginalBinding(t *testing.T) {
 	databaseURL := fabricTestDatabaseURL(t)
 	firstStore, err := newTestPostgresOperationStore(databaseURL)
 	if err != nil {
@@ -1402,7 +1402,7 @@ func TestPostgresComputeClaimRecoveryNodeTakeoverCASHasSingleWinnerAndKeepsOrigi
 	}
 	defer secondStore.client.Close()
 
-	operation := postgresComputeClaimOperation("node-takeover", "claim_pending")
+	operation := postgresComputeClaimOperation("node-reservation", "claim_pending")
 	observed := observedComputeClaimRecoveryMutation(ComputeClaimRecoveryProof{
 		Reason: "provider_describe", TencentMutationCount: 1, KubernetesMutationCount: 0,
 		FailureStage: "cvm_tag_readback", ProviderErrorClass: "provider_error",
@@ -1424,13 +1424,13 @@ func TestPostgresComputeClaimRecoveryNodeTakeoverCASHasSingleWinnerAndKeepsOrigi
 		t.Run(name, func(t *testing.T) {
 			binding, present, valid := decodeComputeClaimRecoveryBinding(nodeReserved)
 			if !present || !valid {
-				t.Fatalf("node takeover binding=%#v present=%v valid=%v", binding, present, valid)
+				t.Fatalf("node reservation binding=%#v present=%v valid=%v", binding, present, valid)
 			}
 			drift(&binding)
 			drifted := nodeReserved
 			drifted.RedactedProviderPayload = withComputeClaimRecoveryBinding(drifted.RedactedProviderPayload, binding)
 			if err := firstStore.SaveComputeClaimRecovery(context.Background(), operation, drifted); !errors.Is(err, ErrRuntimeOperationNotCurrent) {
-				t.Fatalf("node takeover binding drift error=%v, want ErrRuntimeOperationNotCurrent", err)
+				t.Fatalf("node reservation binding drift error=%v, want ErrRuntimeOperationNotCurrent", err)
 			}
 		})
 	}
@@ -1453,14 +1453,14 @@ func TestPostgresComputeClaimRecoveryNodeTakeoverCASHasSingleWinnerAndKeepsOrigi
 			continue
 		}
 		if !errors.Is(err, ErrRuntimeOperationNotCurrent) {
-			t.Fatalf("node takeover concurrent CAS error=%v", err)
+			t.Fatalf("node reservation concurrent CAS error=%v", err)
 		}
 	}
 	stored, err := firstStore.List(context.Background())
 	binding, bindingPresent, bindingValid := decodeComputeClaimRecoveryBinding(stored[0])
 	ledger, ledgerPresent, ledgerValid := decodeComputeClaimRecoveryMutation(stored[0])
 	if winners != 1 || err != nil || len(stored) != 1 || !bindingPresent || !bindingValid ||
-		binding != postgresComputeClaimRecoveryBinding("node-takeover") || !ledgerPresent || !ledgerValid || ledger.State != "node_reserved" ||
+		binding != postgresComputeClaimRecoveryBinding("node-reservation") || !ledgerPresent || !ledgerValid || ledger.State != "node_reserved" ||
 		ledger.TencentMutationCount != 1 || ledger.KubernetesMutationCount != 1 || ledger.Evidence.CVM.Attempted != 1 ||
 		ledger.Evidence.CVM.Confirmed != 1 || ledger.Evidence.Node.Attempted != 1 || ledger.Evidence.Node.Unknown != 1 {
 		t.Fatalf("winners=%d stored=%#v err=%v binding=%#v present=%v valid=%v ledger=%#v ledgerPresent=%v ledgerValid=%v", winners, stored, err, binding, bindingPresent, bindingValid, ledger, ledgerPresent, ledgerValid)
@@ -1768,8 +1768,6 @@ func TestPostgresComputeClaimRecoveryNodeReservationCrashFailsClosedWithoutSecon
 	if _, err := NewServiceWithOperationStore(provider, firstStore).ClaimComputeRecovery(context.Background(), claimInput); err == nil {
 		t.Fatal("first claim unexpectedly succeeded")
 	}
-	claimInput.IdempotencyKey = input.LaunchOperationID + ":approved-recovery"
-	claimInput.ApprovedBindingTakeover = true
 	provider.proof.CVMOwnershipState = "target_owned"
 	provider.proof.NodeOwnershipState = "unallocated"
 	provider.claim = ComputeClaimProviderClaim{
@@ -1805,7 +1803,7 @@ func TestPostgresComputeClaimRecoveryNodeReservationCrashFailsClosedWithoutSecon
 		restarted.KubernetesMutationCount != 1 || ownershipErr != nil || ownership.Status != "quarantined" || operationsErr != nil ||
 		provider.claimCalls != 1 || !ledgerPresent || !ledgerValid || ledger.State != "node_reserved" || ledger.Evidence.CVM.Confirmed != 1 ||
 		ledger.Evidence.Node.Attempted != 1 || ledger.Evidence.Node.Unknown != 1 || !bindingPresent || !bindingValid ||
-		binding.IdempotencyKey != input.LaunchOperationID+":compute-claim" {
+		binding.IdempotencyKey != input.LaunchOperationID+":compute" {
 		t.Fatalf("restarted=%#v err=%v ownership=%#v ownershipErr=%v operationsErr=%v ledger=%#v present=%v valid=%v binding=%#v bindingPresent=%v bindingValid=%v provider=%#v", restarted, restartErr, ownership, ownershipErr, operationsErr, ledger, ledgerPresent, ledgerValid, binding, bindingPresent, bindingValid, provider)
 	}
 }
@@ -1830,8 +1828,6 @@ func TestPostgresComputeClaimRecoveryNodePatchCrashConvergesByReadbackAndReplays
 	if _, err := NewServiceWithOperationStore(provider, firstStore).ClaimComputeRecovery(context.Background(), claimInput); err == nil {
 		t.Fatal("first claim unexpectedly succeeded")
 	}
-	claimInput.IdempotencyKey = input.LaunchOperationID + ":approved-recovery"
-	claimInput.ApprovedBindingTakeover = true
 	provider.proof.CVMOwnershipState = "target_owned"
 	provider.proof.NodeOwnershipState = "unallocated"
 	provider.claim = ComputeClaimProviderClaim{
@@ -1869,7 +1865,7 @@ func TestPostgresComputeClaimRecoveryNodePatchCrashConvergesByReadbackAndReplays
 		recovered.KubernetesMutationCount != 0 || replayed.TencentMutationCount != 0 || replayed.KubernetesMutationCount != 0 ||
 		ownershipErr != nil || ownership.Status != "active" || operationsErr != nil || provider.claimCalls != 2 ||
 		!ledgerPresent || !ledgerValid || !successfulNodeClaimRecoveryMutation(ledger) || ledger.Evidence.CVM.Confirmed != 1 ||
-		ledger.Evidence.Node.Confirmed != 1 || !bindingPresent || !bindingValid || binding.IdempotencyKey != input.LaunchOperationID+":compute-claim" {
+		ledger.Evidence.Node.Confirmed != 1 || !bindingPresent || !bindingValid || binding.IdempotencyKey != input.LaunchOperationID+":compute" {
 		t.Fatalf("recovered=%#v recoverErr=%v replayed=%#v replayErr=%v ownership=%#v ownershipErr=%v operationsErr=%v ledger=%#v present=%v valid=%v binding=%#v bindingPresent=%v bindingValid=%v provider=%#v", recovered, recoverErr, replayed, replayErr, ownership, ownershipErr, operationsErr, ledger, ledgerPresent, ledgerValid, binding, bindingPresent, bindingValid, provider)
 	}
 }
@@ -2010,7 +2006,7 @@ func seedPostgresComputeClaimRecovery(t *testing.T, store *PostgresOperationStor
 		ComputeClaimRecoveryInput: input, MachineName: provider.proof.MachineName, NodeName: provider.proof.NodeName,
 		CVMInstanceID: provider.proof.CVMInstanceID, PrivateIP: provider.proof.PrivateIP,
 		InstanceType: provider.proof.InstanceType, Zone: provider.proof.Zone,
-		IdempotencyKey: input.LaunchOperationID + ":compute-claim",
+		IdempotencyKey: input.LaunchOperationID + ":compute",
 	}
 	pending := operation
 	pending.Status, pending.ErrorCode, pending.FinishedAt = "claim_pending", "", time.Time{}
@@ -2060,7 +2056,7 @@ func postgresComputeClaimOperation(suffix, status string) FabricOperation {
 func postgresComputeClaimRecoveryBinding(suffix string) computeClaimRecoveryBinding {
 	return computeClaimRecoveryBinding{
 		LaunchOperationID: "launch-postgres-" + suffix,
-		IdempotencyKey:    "launch-postgres-" + suffix + ":compute-claim",
+		IdempotencyKey:    "launch-postgres-" + suffix + ":compute",
 		TargetHash:        "target-hash-" + suffix,
 		RequestHash:       "claim-request-hash-" + suffix,
 	}

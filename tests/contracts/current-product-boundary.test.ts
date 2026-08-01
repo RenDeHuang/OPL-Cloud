@@ -399,7 +399,7 @@ test("Current Fabric contracts require dedicated package NodePools without weake
     output: "redacted_evidence_only",
     currentState: "implemented_and_fake_tested_not_executed"
   });
-  assert.equal(deployment.schemaVersion, 29);
+  assert.equal(deployment.schemaVersion, 30);
   assert.deepEqual(deployment.productionWorkspaceLaunchReadbackRecovery, {
     workflow: ".github/workflows/production-basic-customer-operation.yml",
     modes: {
@@ -528,7 +528,7 @@ test("Current Fabric contracts require dedicated package NodePools without weake
     mutationBounds: { sub2api: 0, tencent: { min: 0, max: 5 }, kubernetes: { min: 0, max: 1 } },
     mutationLedger: {
       persistence: "original_create_compute_allocation_operation_payload_cas_before_provider_call",
-      states: ["reserved", "observed"],
+      states: ["reserved", "node_reserved", "observed"],
       legacyBindingUpgrade: "binding_without_mutation_ledger_may_reserve_once_after_exact_read_only_proof",
       replayAfterReservation: "authoritative_readback_only_zero_incremental_external_mutation",
       missingOutcome: "conservative_unknown_at_full_bound",
@@ -770,7 +770,7 @@ test("Current contracts hard cut operator resources, wallet adjustments, and ann
     absentRequires: "both_local_identities_and_exact_provider_describe_absence",
     forbiddenSideEffects: ["sync", "tag", "kubectl_apply", "delete", "label", "purchase", "renew", "destroy"]
   });
-  assert.equal(boundary.schemaVersion, 22);
+  assert.equal(boundary.schemaVersion, 23);
   assert.deepEqual(boundary.services.controlPlane.workspaceContinuationAttemptBudget, {
     owner: "original_workspace.launch.v2_operation",
     stages: ["storage", "attachment", "secret", "runtime", "activation", "receipt"],
@@ -881,7 +881,7 @@ test("Current contracts hard cut operator resources, wallet adjustments, and ann
     malformedOrDriftedBinding: "fail_closed_conflict_zero_provider_mutation",
     mutationLedger: {
       persistence: "original_create_compute_allocation_operation_payload_cas_before_provider_call",
-      states: ["reserved", "observed"],
+      states: ["reserved", "node_reserved", "observed"],
       legacyBindingUpgrade: "binding_without_mutation_ledger_may_reserve_once_after_exact_read_only_proof",
       replayAfterReservation: "authoritative_readback_only_zero_incremental_external_mutation",
       missingOutcome: "conservative_unknown_at_full_bound",
