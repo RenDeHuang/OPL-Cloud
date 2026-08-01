@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 16,
+  "schemaVersion": 17,
   "owner": "OPL Console",
   "purpose": "Console customer identity, strict owner graph, Sub2API authentication authority, lifecycle, and management API contract.",
   "state": "current",
@@ -197,6 +197,8 @@
     "userAndBalanceRead": "current_page_exact_id_bounded_concurrency_max_4",
     "userReadConcurrencyMax": 4,
     "usageRead": "current_page_user_ids_batch_required",
+    "balanceProjection": "floor_non_negative_raw_decimal_usd_to_integer_micros",
+    "batchPartialFailure": "missing_or_malformed_requested_item_unavailable_extra_unrequested_id_fails_closed",
     "workspaceCountRead": "single_control_plane_group_by_for_current_page",
     "keyCountRead": "current_page_exact_user_id_page_1_size_1_total_only_bounded_concurrency_max_4",
     "keyCountDecodedItemsMax": 1,

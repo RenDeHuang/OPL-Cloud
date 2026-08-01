@@ -25,6 +25,7 @@ const (
 	sub2APIWorkspaceKeySearchLimit = 30
 	maxSub2APIUsagePage            = 1_000_000
 	maxSub2APIBatchIDs             = 50
+	sub2APIUsageTimezone           = "Asia/Shanghai"
 )
 
 var (
@@ -316,6 +317,7 @@ type Sub2APIUsageQuery struct {
 	APIKeyID int64
 	Page     int
 	PageSize int
+	Period   string
 }
 
 type Sub2APIUsageRecord struct {
@@ -677,7 +679,7 @@ func (c *Sub2APIHTTPClient) AdminUser(ctx context.Context, userID int64) (Sub2AP
 		return Sub2APIUser{}, err
 	}
 	email := normalizeSub2APIEmail(data.Email)
-	balance, balanceErr := decimalUSDMicros(data.Balance)
+	balance, balanceErr := floorUSDDecimalToSpendableMicros(data.Balance)
 	if data.ID != userID || email == "" || data.Status != "active" && data.Status != "disabled" || data.CreatedAt.IsZero() || data.UpdatedAt.IsZero() || data.UpdatedAt.Before(data.CreatedAt) {
 		return Sub2APIUser{}, ErrSub2APIIdentityConflict
 	}
@@ -737,7 +739,7 @@ func (c *Sub2APIHTTPClient) AdminUsers(ctx context.Context, query Sub2APIUserPag
 	seen := make(map[int64]struct{}, len(data.Items))
 	for _, item := range data.Items {
 		email := normalizeSub2APIEmail(item.Email)
-		balance, balanceErr := decimalUSDMicros(item.Balance)
+		balance, balanceErr := floorUSDDecimalToSpendableMicros(item.Balance)
 		_, duplicate := seen[item.ID]
 		if item.ID <= 0 || email == "" || (item.Status != "active" && item.Status != "disabled") ||
 			item.CreatedAt.IsZero() || item.UpdatedAt.IsZero() || item.UpdatedAt.Before(item.CreatedAt) || duplicate {
@@ -771,7 +773,31 @@ func (c *Sub2APIHTTPClient) BatchUsersUsage(ctx context.Context, userIDs []int64
 		return nil, err
 	}
 	var data struct {
-		Stats map[string]struct {
+		Stats map[string]json.RawMessage `json:"stats"`
+	}
+	if err := decodeSub2APIEnvelope(body, &data); err != nil || data.Stats == nil {
+		return nil, errors.New("invalid sub2api batch user usage")
+	}
+	requested := make(map[int64]struct{}, len(ids))
+	for _, id := range ids {
+		requested[id] = struct{}{}
+	}
+	for rawID := range data.Stats {
+		id, parseErr := strconv.ParseInt(rawID, 10, 64)
+		if parseErr != nil || rawID != strconv.FormatInt(id, 10) {
+			return nil, errors.New("invalid sub2api batch user usage")
+		}
+		if _, ok := requested[id]; !ok {
+			return nil, errors.New("unexpected sub2api batch user usage")
+		}
+	}
+	result := make(map[int64]Sub2APIBatchUserUsage, len(ids))
+	for _, id := range ids {
+		rawItem, ok := data.Stats[strconv.FormatInt(id, 10)]
+		if !ok {
+			continue
+		}
+		var item struct {
 			UserID          int64       `json:"user_id"`
 			TodayActualCost json.Number `json:"today_actual_cost"`
 			TotalActualCost json.Number `json:"total_actual_cost"`
@@ -780,31 +806,31 @@ func (c *Sub2APIHTTPClient) BatchUsersUsage(ctx context.Context, userIDs []int64
 				TodayActualCost json.Number `json:"today_actual_cost"`
 				TotalActualCost json.Number `json:"total_actual_cost"`
 			} `json:"by_platform"`
-		} `json:"stats"`
-	}
-	if err := decodeSub2APIEnvelope(body, &data); err != nil || len(data.Stats) != len(ids) {
-		return nil, errors.New("invalid sub2api batch user usage")
-	}
-	result := make(map[int64]Sub2APIBatchUserUsage, len(ids))
-	for _, id := range ids {
-		item, ok := data.Stats[strconv.FormatInt(id, 10)]
+		}
+		if json.Unmarshal(rawItem, &item) != nil {
+			continue
+		}
 		today, total, costsErr := sub2APIUsageCosts(item.TodayActualCost, item.TotalActualCost)
-		if !ok || item.UserID != id || costsErr != nil {
-			return nil, errors.New("invalid sub2api batch user usage")
+		if item.UserID != id || costsErr != nil {
+			continue
 		}
 		usage := Sub2APIBatchUserUsage{UserID: id, TodayActualCostUSDMicros: today, TotalActualCostUSDMicros: total, ByPlatform: make([]Sub2APIPlatformUsage, 0, len(item.ByPlatform))}
 		platforms := make(map[string]struct{}, len(item.ByPlatform))
+		valid := true
 		for _, raw := range item.ByPlatform {
 			platform := strings.TrimSpace(raw.Platform)
 			platformToday, platformTotal, platformErr := sub2APIUsageCosts(raw.TodayActualCost, raw.TotalActualCost)
 			_, duplicate := platforms[platform]
 			if platform == "" || platformErr != nil || duplicate {
-				return nil, errors.New("invalid sub2api batch user usage")
+				valid = false
+				break
 			}
 			platforms[platform] = struct{}{}
 			usage.ByPlatform = append(usage.ByPlatform, Sub2APIPlatformUsage{Platform: platform, TodayActualCostUSDMicros: platformToday, TotalActualCostUSDMicros: platformTotal})
 		}
-		result[id] = usage
+		if valid {
+			result[id] = usage
+		}
 	}
 	return result, nil
 }
@@ -819,21 +845,41 @@ func (c *Sub2APIHTTPClient) BatchKeysUsage(ctx context.Context, apiKeyIDs []int6
 		return nil, err
 	}
 	var data struct {
-		Stats map[string]struct {
-			APIKeyID        int64       `json:"api_key_id"`
-			TodayActualCost json.Number `json:"today_actual_cost"`
-			TotalActualCost json.Number `json:"total_actual_cost"`
-		} `json:"stats"`
+		Stats map[string]json.RawMessage `json:"stats"`
 	}
-	if err := decodeSub2APIEnvelope(body, &data); err != nil || len(data.Stats) != len(ids) {
+	if err := decodeSub2APIEnvelope(body, &data); err != nil || data.Stats == nil {
 		return nil, errors.New("invalid sub2api batch key usage")
+	}
+	requested := make(map[int64]struct{}, len(ids))
+	for _, id := range ids {
+		requested[id] = struct{}{}
+	}
+	for rawID := range data.Stats {
+		id, parseErr := strconv.ParseInt(rawID, 10, 64)
+		if parseErr != nil || rawID != strconv.FormatInt(id, 10) {
+			return nil, errors.New("invalid sub2api batch key usage")
+		}
+		if _, ok := requested[id]; !ok {
+			return nil, errors.New("unexpected sub2api batch key usage")
+		}
 	}
 	result := make(map[int64]Sub2APIBatchKeyUsage, len(ids))
 	for _, id := range ids {
-		item, ok := data.Stats[strconv.FormatInt(id, 10)]
+		rawItem, ok := data.Stats[strconv.FormatInt(id, 10)]
+		if !ok {
+			continue
+		}
+		var item struct {
+			APIKeyID        int64       `json:"api_key_id"`
+			TodayActualCost json.Number `json:"today_actual_cost"`
+			TotalActualCost json.Number `json:"total_actual_cost"`
+		}
+		if json.Unmarshal(rawItem, &item) != nil {
+			continue
+		}
 		today, total, costsErr := sub2APIUsageCosts(item.TodayActualCost, item.TotalActualCost)
-		if !ok || item.APIKeyID != id || costsErr != nil {
-			return nil, errors.New("invalid sub2api batch key usage")
+		if item.APIKeyID != id || costsErr != nil {
+			continue
 		}
 		result[id] = Sub2APIBatchKeyUsage{APIKeyID: id, TodayActualCostUSDMicros: today, TotalActualCostUSDMicros: total}
 	}
@@ -861,11 +907,11 @@ func normalizeSub2APIBatchIDs(input []int64) ([]int64, error) {
 }
 
 func sub2APIUsageCosts(todayRaw, totalRaw json.Number) (int64, int64, error) {
-	today, err := decimalUSDMicros(todayRaw)
+	today, err := floorNonNegativeUSDDecimalMicros(todayRaw)
 	if err != nil || today < 0 {
 		return 0, 0, errors.New("invalid sub2api usage cost")
 	}
-	total, err := decimalUSDMicros(totalRaw)
+	total, err := floorNonNegativeUSDDecimalMicros(totalRaw)
 	if err != nil || total < 0 {
 		return 0, 0, errors.New("invalid sub2api usage cost")
 	}
@@ -1523,15 +1569,23 @@ func (c *Sub2APIHTTPClient) WorkspaceKey(ctx context.Context, userID int64) (Sub
 }
 
 func (c *Sub2APIHTTPClient) Usage(ctx context.Context, query Sub2APIUsageQuery) (Sub2APIUsagePage, error) {
-	if query.UserID <= 0 || query.APIKeyID <= 0 || query.Page <= 0 || query.Page > maxSub2APIUsagePage || query.PageSize <= 0 || query.PageSize > 100 {
+	period := strings.TrimSpace(query.Period)
+	if period == "" {
+		period = "month"
+	}
+	startDate, endDate, ok := sub2APIUsageDateRange(period, time.Now())
+	if query.UserID <= 0 || query.APIKeyID <= 0 || query.Page <= 0 || query.Page > maxSub2APIUsagePage || query.PageSize <= 0 || query.PageSize > 100 || !ok {
 		return Sub2APIUsagePage{}, errors.New("invalid sub2api usage query")
 	}
 	values := url.Values{
 		"api_key_id": {strconv.FormatInt(query.APIKeyID, 10)},
+		"end_date":   {endDate},
 		"page":       {strconv.Itoa(query.Page)},
 		"page_size":  {strconv.Itoa(query.PageSize)},
 		"sort_by":    {"created_at"},
 		"sort_order": {"desc"},
+		"start_date": {startDate},
+		"timezone":   {sub2APIUsageTimezone},
 		"user_id":    {strconv.FormatInt(query.UserID, 10)},
 	}
 	body, err := c.doAuthenticated(ctx, http.MethodGet, "/api/v1/admin/usage?"+values.Encode(), nil, "")
@@ -1587,7 +1641,7 @@ func (c *Sub2APIHTTPClient) Usage(ctx context.Context, query Sub2APIUsageQuery) 
 		if item.CreatedAt == nil || item.CreatedAt.IsZero() || item.RequestID == "" || item.Model == "" || item.RequestType == "" || !validUsageCounts(item.InputTokens, item.OutputTokens, item.CacheCreationTokens, item.CacheReadTokens) || item.ActualCost == nil || item.DurationMS != nil && *item.DurationMS < 0 || item.FirstTokenMS != nil && *item.FirstTokenMS < 0 {
 			return Sub2APIUsagePage{}, errors.New("invalid sub2api usage record")
 		}
-		actualCost, err := decimalUSDMicros(*item.ActualCost)
+		actualCost, err := floorNonNegativeUSDDecimalMicros(*item.ActualCost)
 		if err != nil || actualCost < 0 {
 			return Sub2APIUsagePage{}, errors.New("invalid sub2api usage actual cost")
 		}
@@ -1613,9 +1667,15 @@ func (c *Sub2APIHTTPClient) UsageStats(ctx context.Context, query Sub2APIUsageSt
 	if query.UserID <= 0 || query.APIKeyID < 0 || (period != "today" && period != "week" && period != "month") {
 		return Sub2APIUsageStats{}, errors.New("invalid sub2api usage stats query")
 	}
+	startDate, endDate, ok := sub2APIUsageDateRange(period, time.Now())
+	if !ok {
+		return Sub2APIUsageStats{}, errors.New("invalid sub2api usage stats query")
+	}
 	values := url.Values{
-		"period":  {period},
-		"user_id": {strconv.FormatInt(query.UserID, 10)},
+		"end_date":   {endDate},
+		"start_date": {startDate},
+		"timezone":   {sub2APIUsageTimezone},
+		"user_id":    {strconv.FormatInt(query.UserID, 10)},
 	}
 	if query.APIKeyID > 0 {
 		values.Set("api_key_id", strconv.FormatInt(query.APIKeyID, 10))
@@ -1637,7 +1697,7 @@ func (c *Sub2APIHTTPClient) UsageStats(ctx context.Context, query Sub2APIUsageSt
 	if !validUsageCounts(data.TotalRequests, data.TotalInputTokens, data.TotalOutputTokens, data.TotalTokens) || data.TotalActualCost == nil {
 		return Sub2APIUsageStats{}, errors.New("invalid sub2api usage stats")
 	}
-	actualCost, err := decimalUSDMicros(*data.TotalActualCost)
+	actualCost, err := floorNonNegativeUSDDecimalMicros(*data.TotalActualCost)
 	if err != nil || actualCost < 0 {
 		return Sub2APIUsageStats{}, errors.New("invalid sub2api usage stats actual cost")
 	}
@@ -2043,12 +2103,16 @@ func decimalUSDMicros(value json.Number) (int64, error) {
 }
 
 func floorUSDDecimalToSpendableMicros(value json.Number) (int64, error) {
+	return floorNonNegativeUSDDecimalMicros(value)
+}
+
+func floorNonNegativeUSDDecimalMicros(value json.Number) (int64, error) {
 	rational, ok := new(big.Rat).SetString(value.String())
 	if !ok {
 		return 0, errors.New("invalid decimal")
 	}
 	if rational.Sign() < 0 {
-		return 0, errors.New("spendable balance must not be negative")
+		return 0, errors.New("USD amount must not be negative")
 	}
 	rational.Mul(rational, big.NewRat(1_000_000, 1))
 	micros := new(big.Int).Quo(rational.Num(), rational.Denom())
@@ -2056,6 +2120,22 @@ func floorUSDDecimalToSpendableMicros(value json.Number) (int64, error) {
 		return 0, errors.New("spendable balance overflows USD micros")
 	}
 	return micros.Int64(), nil
+}
+
+func sub2APIUsageDateRange(period string, now time.Time) (string, string, bool) {
+	location := time.FixedZone(sub2APIUsageTimezone, 8*60*60)
+	today := now.In(location)
+	start := time.Date(today.Year(), today.Month(), today.Day(), 0, 0, 0, 0, location)
+	switch period {
+	case "today":
+	case "week":
+		start = start.AddDate(0, 0, -(int(today.Weekday())+6)%7)
+	case "month":
+		start = time.Date(today.Year(), today.Month(), 1, 0, 0, 0, 0, location)
+	default:
+		return "", "", false
+	}
+	return start.Format("2006-01-02"), today.Format("2006-01-02"), true
 }
 
 func ParseUSDDecimalMicros(value string) (int64, error) {

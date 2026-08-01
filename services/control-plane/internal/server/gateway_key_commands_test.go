@@ -409,12 +409,12 @@ func TestCloudAdminCanRevealOnlyOwnGatewayKey(t *testing.T) {
 
 func TestGatewayPerKeyUsage(t *testing.T) {
 	server, client, _, session := newGatewayKeyCommandFixture(t)
-	response := requestWithSession(t, server, session, http.MethodGet, "/api/gateway/keys/17/usage?page=1&pageSize=20&user_id=42&api_key_id=18", "")
+	response := requestWithSession(t, server, session, http.MethodGet, "/api/gateway/keys/17/usage?page=1&pageSize=20&period=month&user_id=42&api_key_id=18", "")
 	if response.Code != http.StatusOK {
 		t.Fatalf("usage status = %d: %s", response.Code, response.Body.String())
 	}
 	items := mapField(decodeSourceEnvelope(t, response), "data")["items"].([]any)
-	if len(items) != 1 || items[0].(map[string]any)["apiKeyId"] != "17" || client.usageQuery != (clients.Sub2APIUsageQuery{UserID: 41, APIKeyID: 17, Page: 1, PageSize: 20}) {
+	if len(items) != 1 || items[0].(map[string]any)["apiKeyId"] != "17" || client.usageQuery != (clients.Sub2APIUsageQuery{UserID: 41, APIKeyID: 17, Page: 1, PageSize: 20, Period: "month"}) {
 		t.Fatalf("usage items=%#v query=%#v", items, client.usageQuery)
 	}
 
