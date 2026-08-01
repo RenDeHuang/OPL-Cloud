@@ -2016,12 +2016,18 @@ func TestWorkspaceLaunchComputeClaimPendingWorkerReplaysOriginalComputeOperation
 			ready.ProviderRequestID = "req-claim-resume"
 			ready.ProviderData = map[string]string{"zone": ready.Zone, "instanceType": ready.InstanceType}
 			fixture.fabric.computeSync = ready
+			fixture.fabric.storageSync = clients.StorageVolume{
+				ID: operation.StorageID, AccountID: operation.AccountID, WorkspaceID: operation.WorkspaceID, Status: "available",
+				Provider: "tencent-tke", ProviderResourceID: "disk-" + operation.StorageID, ProviderRequestID: "req-" + operation.StorageID,
+				SizeGB: operation.StorageGB, CBSStatus: "UNATTACHED", DiskType: "CLOUD_PREMIUM", RenewFlag: "NOTIFY_AND_MANUAL_RENEW",
+				Deadline: "2099-01-01T00:00:00Z", Zone: "ap-shanghai-2", ProviderData: map[string]string{"chargeType": "PREPAID"},
+			}
 
 			if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err != nil {
 				t.Fatal(err)
 			}
 			continued := fixture.operation(t)
-			if continued.Status == "compute_claim_pending" || continued.Phase == "compute_claim_pending" || len(fixture.fabric.computeIDs) != beforeComputeCalls+1 ||
+			if continued.Status != "succeeded" || continued.Phase != "succeeded" || continued.URL == "" || len(fixture.fabric.computeIDs) != beforeComputeCalls+1 ||
 				fixture.fabric.computeCreateKeys[len(fixture.fabric.computeCreateKeys)-1] != operation.ID+":compute" || len(fixture.fabric.storageIDs) != 1 {
 				t.Fatalf("pending worker did not resume original compute operation: operation=%#v compute=%#v keys=%#v storage=%#v events=%#v", continued, fixture.fabric.computeIDs, fixture.fabric.computeCreateKeys, fixture.fabric.storageIDs, *fixture.events)
 			}
