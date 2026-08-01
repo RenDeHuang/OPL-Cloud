@@ -1940,7 +1940,7 @@ func workspaceComputeClaimWorkspaceImageDigestMatches(operation workspaceLaunchO
 		operation.ComputeClaimApproval == nil && operation.ComputeClaimProof == nil
 }
 
-func (app *controlPlaneServer) workspaceComputeClaimApprovalBinding(ctx context.Context, operation workspaceLaunchOperation, input workspaceComputeClaimRecoveryRequest, key string) (workspaceComputeClaimApprovalBinding, error) {
+func (app *controlPlaneServer) workspaceComputeClaimApprovalBinding(ctx context.Context, operation workspaceLaunchOperation, input workspaceComputeClaimRecoveryRequest, key string, allowExpiredExactReplay bool) (workspaceComputeClaimApprovalBinding, error) {
 	expiresAt, expiresErr := time.Parse(time.RFC3339, input.ExpiresAt)
 	account, accountFound, accountErr := app.tables.GetAccount(ctx, operation.AccountID)
 	owner, ownerFound, ownerErr := app.tables.GetUser(ctx, operation.OwnerUserID)
@@ -1954,7 +1954,7 @@ func (app *controlPlaneServer) workspaceComputeClaimApprovalBinding(ctx context.
 		Resources: resources, AttemptLimits: input.AttemptLimits,
 		AllowedWrites: append([]string(nil), input.AllowedWrites...), ForbiddenWrites: append([]string(nil), input.ForbiddenWrites...),
 	}
-	if expiresErr != nil || !expiresAt.After(time.Now().UTC()) || accountErr != nil || ownerErr != nil || !accountFound || !ownerFound ||
+	if expiresErr != nil || (!allowExpiredExactReplay && !expiresAt.After(time.Now().UTC())) || accountErr != nil || ownerErr != nil || !accountFound || !ownerFound ||
 		!ownsActiveAccount(account, owner) || stringValue(owner["id"]) != operation.OwnerUserID || stringValue(owner["role"]) != "owner" ||
 		normalizeEmail(stringValue(owner["email"])) != input.CustomerEmail || input.AccountID != operation.AccountID ||
 		!workspaceComputeClaimWorkspaceImageDigestMatches(operation, input) || !workspaceComputeClaimStorageBindingValid(input.Resources.StorageState, input.Resources.StorageProviderResourceID) ||
@@ -1969,7 +1969,7 @@ func (app *controlPlaneServer) workspaceComputeClaimApprovalBinding(ctx context.
 }
 
 func (app *controlPlaneServer) bindWorkspaceComputeClaimApproval(ctx context.Context, operation *workspaceLaunchOperation, input workspaceComputeClaimRecoveryRequest, key string, persist bool) error {
-	binding, err := app.workspaceComputeClaimApprovalBinding(ctx, *operation, input, key)
+	binding, err := app.workspaceComputeClaimApprovalBinding(ctx, *operation, input, key, operation.ComputeClaimApproval != nil)
 	if err != nil {
 		return err
 	}
@@ -2241,7 +2241,7 @@ func (app *controlPlaneServer) claimWorkspaceCompute(ctx context.Context, servic
 	claimed, claimErr := service.ClaimComputeRecovery(ctx, clients.ComputeClaimRecoveryClaimInput{
 		ComputeClaimRecoveryInput: workspaceComputeClaimRecoveryInput(operation, input), MachineName: operation.ComputeMachineName,
 		NodeName: operation.ComputeNodeName, CVMInstanceID: operation.ComputeCVMInstanceID, PrivateIP: operation.ComputePrivateIP,
-		InstanceType: operation.ComputeInstanceType, Zone: operation.ComputeZone,
+		InstanceType: operation.ComputeInstanceType, Zone: operation.ComputeZone, ApprovedBindingTakeover: operation.ComputeClaimApproval != nil,
 	}, key)
 	if claimErr != nil || !workspaceComputeClaimProofEligible(operation, input, claimed, true) {
 		if !workspaceComputeClaimSafeFailureForOperation(operation, input, claimed) {

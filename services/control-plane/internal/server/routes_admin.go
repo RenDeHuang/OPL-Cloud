@@ -272,9 +272,24 @@ func registerAdminRoutes(mux *http.ServeMux, app *controlPlaneServer, service *c
 			return
 		}
 		operationID := strings.TrimSpace(r.PathValue("operationId"))
-		input, ok := workspaceComputeClaimRecoveryRequestFromMap(operationID, decodeJSON(r), true)
+		rawInput := decodeJSON(r)
+		input, ok := workspaceComputeClaimRecoveryRequestFromMap(operationID, rawInput, true)
 		if !ok || !validBillingReviewOpaqueID(key) {
 			writeError(w, http.StatusBadRequest, errWorkspaceComputeClaimInvalid.Error())
+			return
+		}
+		operation, operationFound, operationErr := app.workspaceLaunchOperation(r.Context(), operationID)
+		if operationErr != nil {
+			writeWorkspaceComputeClaimError(w, operationErr)
+			return
+		}
+		if !operationFound {
+			writeWorkspaceComputeClaimError(w, errBillingReviewNotFound)
+			return
+		}
+		expiresAt, expiresErr := time.Parse(time.RFC3339, input.ExpiresAt)
+		if expiresErr != nil || (!expiresAt.After(time.Now().UTC()) && operation.ComputeClaimApproval == nil) {
+			writeError(w, http.StatusConflict, errWorkspaceComputeClaimIdentity.Error())
 			return
 		}
 		proof, err := app.claimWorkspaceCompute(r.Context(), service, input, key)
@@ -381,7 +396,7 @@ func workspaceComputeClaimRecoveryRequestFromMap(operationID string, input map[s
 		return workspaceComputeClaimRecoveryRequest{}, false
 	}
 	if approved {
-		expiresAt, expiresErr := time.Parse(time.RFC3339, request.ExpiresAt)
+		_, expiresErr := time.Parse(time.RFC3339, request.ExpiresAt)
 		customerEmail, emailErr := canonicalEmail(request.CustomerEmail)
 		resources, resourcesOK := workspaceComputeClaimApprovalResourcesFromMap(input["resources"])
 		limits, limitsOK := workspaceComputeClaimAttemptLimitsFromMap(input["attemptLimits"])
@@ -390,7 +405,7 @@ func workspaceComputeClaimRecoveryRequestFromMap(operationID string, input map[s
 		if !validBillingReviewOpaqueID(request.ApprovalID) || !validBillingReviewOpaqueID(request.RecoveryKey) ||
 			!computeClaimApprovalDigestPattern.MatchString(request.ApprovalDigest) || !computeClaimMergedSHAPattern.MatchString(request.MergedMainSHA) ||
 			!computeClaimCloudDigestPattern.MatchString(request.CloudImageDigest) || !validWorkspaceImageIdentity(request.WorkspaceImageDigest) ||
-			expiresErr != nil || !expiresAt.After(time.Now().UTC()) || emailErr != nil || customerEmail != request.CustomerEmail ||
+			expiresErr != nil || emailErr != nil || customerEmail != request.CustomerEmail ||
 			request.Confirmation != "RECOVER_PROVEN_COMPUTE_AND_CONTINUE_ORIGINAL_LAUNCH" || !resourcesOK || !limitsOK || !allowedOK || !forbiddenOK ||
 			!workspaceComputeClaimStorageBindingValid(resources.StorageState, resources.StorageProviderResourceID) ||
 			!workspaceComputeClaimAttemptLimitsExact(limits) || !equalWorkspaceComputeClaimStrings(allowedWrites, workspaceComputeClaimAllowedWritesForStorage(resources.StorageState)) ||

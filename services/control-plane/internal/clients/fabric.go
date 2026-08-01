@@ -187,12 +187,13 @@ type ComputeClaimRecoveryInput struct {
 
 type ComputeClaimRecoveryClaimInput struct {
 	ComputeClaimRecoveryInput
-	MachineName   string `json:"machineName"`
-	NodeName      string `json:"nodeName"`
-	CVMInstanceID string `json:"cvmInstanceId"`
-	PrivateIP     string `json:"privateIp"`
-	InstanceType  string `json:"instanceType"`
-	Zone          string `json:"zone"`
+	MachineName             string `json:"machineName"`
+	NodeName                string `json:"nodeName"`
+	CVMInstanceID           string `json:"cvmInstanceId"`
+	PrivateIP               string `json:"privateIp"`
+	InstanceType            string `json:"instanceType"`
+	Zone                    string `json:"zone"`
+	ApprovedBindingTakeover bool   `json:"approvedBindingTakeover,omitempty"`
 }
 
 type ComputeClaimMutationEvidence struct {

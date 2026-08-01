@@ -2162,6 +2162,42 @@ func computeClaimRecoveryRequestBodyForStorage(t *testing.T, operation workspace
 	return string(encoded)
 }
 
+func expireComputeClaimRecoveryRequestBody(t *testing.T, operation workspaceLaunchOperation, body string, idempotencyKey string) string {
+	t.Helper()
+	var request map[string]any
+	if err := json.Unmarshal([]byte(body), &request); err != nil {
+		t.Fatal(err)
+	}
+	request["expiresAt"] = "2020-08-28T00:00:00Z"
+	approval := map[string]any{
+		"schemaVersion": 2, "approvalId": request["approvalId"], "expiresAt": request["expiresAt"],
+		"mergedMainSha": request["mergedMainSha"], "cloudImageDigest": request["cloudImageDigest"], "workspaceImageDigest": request["workspaceImageDigest"],
+		"confirmation": request["confirm"], "idempotencyKey": idempotencyKey, "recoveryKey": request["recoveryKey"],
+		"customer": map[string]any{"email": request["customerEmail"], "accountId": operation.AccountID},
+		"target": map[string]any{
+			"launchOperationId": operation.ID, "accountId": operation.AccountID, "workspaceId": operation.WorkspaceID,
+			"computeAllocationId": operation.ComputeID, "storageId": operation.StorageID, "packageId": operation.PackageID,
+			"poolId": operation.ComputePoolID, "nodePoolId": operation.ComputeNodePoolID, "machineName": operation.ComputeMachineName,
+			"nodeName": operation.ComputeNodeName, "cvmInstanceId": operation.ComputeCVMInstanceID, "privateIp": operation.ComputePrivateIP,
+			"instanceType": operation.ComputeInstanceType, "zone": operation.ComputeZone, "chargeType": operation.ComputeChargeType,
+			"periodMonths": 1, "renewFlag": operation.ComputeRenewFlag, "deadline": operation.ComputeDeadline,
+		},
+		"resources": request["resources"], "attemptLimits": request["attemptLimits"],
+		"allowedWrites": request["allowedWrites"], "forbiddenWrites": request["forbiddenWrites"],
+	}
+	payload, err := json.Marshal(approval)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256(payload)
+	request["approvalDigest"] = fmt.Sprintf("%x", digest)
+	encoded, err := json.Marshal(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(encoded)
+}
+
 func requestComputeClaimWithCapabilityForTest(t *testing.T, server http.Handler, session *httptest.ResponseRecorder, path, body, key string) *httptest.ResponseRecorder {
 	t.Helper()
 	t.Setenv("OPL_INTERNAL_SERVICE_TOKEN", "compute-claim-internal-capability")
@@ -2423,6 +2459,49 @@ func TestWorkspaceComputeClaimApprovalResumesOriginalStorageOnce(t *testing.T) {
 			}
 			assertWorkspaceLaunchRuntimeIdentity(t, fixture.fabric.runtimeInputs, completed)
 		})
+	}
+}
+
+func TestWorkspaceComputeClaimRejectsUnpersistedExpiredApprovalBeforeFabric(t *testing.T) {
+	fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, "basic")
+	key := "compute-claim-expired-unpersisted"
+	body := expireComputeClaimRecoveryRequestBody(t, operation, computeClaimRecoveryRequestBody(t, operation, true, key), key)
+	path := "/api/operator/workspace-launches/" + operation.ID + "/compute-claim-recovery/claim"
+
+	response := requestComputeClaimWithCapabilityForTest(t, fixture.server, fixture.operator, path, body, key)
+	if response.Code != http.StatusConflict || len(fixture.fabric.computeClaimInputs) != 0 || len(fixture.fabric.computeClaimCalls) != 0 {
+		t.Fatalf("unpersisted expired approval crossed Fabric gate: status=%d body=%s proofs=%#v claims=%#v", response.Code, response.Body.String(), fixture.fabric.computeClaimInputs, fixture.fabric.computeClaimCalls)
+	}
+}
+
+func TestWorkspaceComputeClaimReplaysExactPersistedApprovalAfterExpiry(t *testing.T) {
+	fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, "basic")
+	key := "compute-claim-expired-persisted"
+	body := expireComputeClaimRecoveryRequestBody(t, operation, computeClaimRecoveryRequestBody(t, operation, true, key), key)
+	var raw map[string]any
+	if err := json.Unmarshal([]byte(body), &raw); err != nil {
+		t.Fatal(err)
+	}
+	request, ok := workspaceComputeClaimRecoveryRequestFromMap(operation.ID, raw, true)
+	if !ok {
+		t.Fatal("expired approval request must remain structurally valid")
+	}
+	binding, err := fixture.app.workspaceComputeClaimApprovalBinding(context.Background(), operation, request, key, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation.ComputeClaimApproval = &binding
+	mustStore(t, fixture.store.SaveRuntimeOperation(context.Background(), workspaceLaunchOperationRow(operation)))
+	fixture.fabric.computeClaimProof = computeClaimRecoveryProofForLaunch(operation, "target_owned")
+	configureWorkspaceLaunchFulfillment(t, fixture)
+	configureWorkspaceComputeClaimReadback(fixture, operation)
+	path := "/api/operator/workspace-launches/" + operation.ID + "/compute-claim-recovery/claim"
+
+	response := requestComputeClaimWithCapabilityForTest(t, fixture.server, fixture.operator, path, body, key)
+	persisted := fixture.operation(t)
+	if response.Code != http.StatusOK || persisted.Status != "preparing" || persisted.Phase != "storage_fulfilling" ||
+		len(fixture.fabric.computeClaimCalls) != 1 || !fixture.fabric.computeClaimCalls[0].ApprovedBindingTakeover {
+		t.Fatalf("exact expired approval did not replay: status=%d body=%s operation=%#v claims=%#v", response.Code, response.Body.String(), persisted, fixture.fabric.computeClaimCalls)
 	}
 }
 
