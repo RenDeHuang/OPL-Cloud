@@ -576,6 +576,7 @@ test("production self-hosted jobs use one run-and-job isolated source checkout",
     [".github/workflows/production-basic-customer-operation.yml", [
       "prepare-basic-customer-operation",
       "workspace-identity-diagnose",
+      "acceptance-b-fresh-order",
       "manual-review-diagnose",
       "workspace-launch-readback-diagnose",
       "workspace-launch-readback-recover",
@@ -996,6 +997,7 @@ test("manual-review diagnose is isolated to the VPC runner and statically contai
     "customer_operation",
     "manual_review_diagnose",
     "workspace_identity_diagnose",
+    "acceptance_b_fresh_order",
     "compute_claim_diagnose",
     "compute_claim_recover",
     "workspace_launch_readback_diagnose",
@@ -1080,6 +1082,68 @@ test("Workspace identity diagnosis is a main-only production runner readback wit
   assert.match(JSON.stringify(job.steps), /actions\/upload-artifact@v4/);
   assert.doesNotMatch(JSON.stringify(job), /KUBECONFIG|TENCENT_|OPL_INTERNAL_SERVICE_TOKEN/);
   assert.doesNotMatch(runs, /kubectl|--basic-customer-canary|--compute-claim-recover|allow-workspace-purchase|allow-wallet-recharge|allow-account-provision|allow-model-write|create_storage_volume|CreateComputeAllocation|scale|debit|refund/i);
+});
+
+test("Acceptance B fresh order is a separately approved exact-count production closure", async () => {
+  const workflow = await readWorkflow(".github/workflows/production-basic-customer-operation.yml");
+  const inputs = workflow.on.workflow_dispatch.inputs;
+  assert.ok(inputs.operation_mode.options.includes("acceptance_b_fresh_order"));
+  assert.equal(inputs.confirm_workspace_purchase.type, "boolean");
+  assert.equal(inputs.confirm_single_model_request.type, "boolean");
+
+  const job = workflowJob(workflow, "acceptance-b-fresh-order");
+  const runs = serializedRuns(job);
+  assert.deepEqual(job["runs-on"], ["self-hosted", "tencent-cloud", "opl-cloud", "tke-vpc"]);
+  assert.equal(job.environment, "production");
+  assert.match(String(job.if), /github\.ref == 'refs\/heads\/main'/);
+  assert.match(String(job.if), /github\.sha == inputs\.merged_sha/);
+  assert.match(String(job.if), /inputs\.operation_mode == 'acceptance_b_fresh_order'/);
+  assert.match(String(job.if), /inputs\.confirm_workspace_purchase/);
+  assert.match(String(job.if), /!inputs\.confirm_single_model_request/);
+  assert.match(String(job.if), /!inputs\.confirm_account_provision/);
+  assert.match(String(job.if), /!inputs\.confirm_wallet_recharge/);
+  assert.match(String(job.if), /!inputs\.confirm_compute_claim_recovery/);
+  assert.match(String(job.if), /!inputs\.confirm_workspace_launch_readback_recovery/);
+  assert.match(String(job.if), /inputs\.resume_run_id == ''/);
+
+  assert.equal(job.env.OPL_MERGED_SHA, "${{ inputs.merged_sha }}");
+  assert.equal(job.env.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_APPROVAL_ID, "${{ inputs.approval_id }}");
+  assert.equal(job.env.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_APPROVAL_JSON, "${{ secrets.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_APPROVAL_JSON }}");
+  assert.equal(job.env.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_ARTIFACT_PATH, undefined);
+  assert.equal(job.env.OPL_SUB2API_ADMIN_EMAIL, "${{ secrets.OPL_SUB2API_ADMIN_EMAIL }}");
+  assert.equal(job.env.OPL_SUB2API_ADMIN_PASSWORD, "${{ secrets.OPL_SUB2API_ADMIN_PASSWORD }}");
+  assert.equal(job.env.OPL_BASIC_CANARY_CUSTOMER_PASSWORD, "${{ secrets.OPL_BASIC_CANARY_CUSTOMER_PASSWORD }}");
+  assert.equal(job.env.OPL_INTERNAL_SERVICE_TOKEN, undefined);
+  assert.equal(job.env.TENCENT_DEPLOY_KUBECONFIG_B64, "${{ secrets.TENCENT_DEPLOY_KUBECONFIG_B64 }}");
+  assert.equal(job.env.TENCENT_DEPLOY_KUBECONFIG, "${{ secrets.TENCENT_DEPLOY_KUBECONFIG }}");
+  const acceptanceStep = stepsByName(job).get("Run one fresh Basic order with authoritative readback");
+  const validationStep = stepsByName(job).get("Validate redacted Acceptance B evidence and exact counts");
+  for (const step of [acceptanceStep, validationStep]) {
+    assert.equal(step?.env?.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_ARTIFACT_PATH, "${{ runner.temp }}/production-basic-acceptance-b/evidence.json");
+  }
+  assert.match(runs, /git ls-remote --heads origin/);
+  assert.match(runs, /node tools\/production-basic-acceptance-b\.ts --run/);
+  assert.match(runs, /validateProductionBasicAcceptanceBReadback/);
+  for (const count of [
+    "workspaceLaunchPosts", "sub2apiDebits", "tencentCvmCreates", "kubernetesNodeClaims", "tencentCbsCreates", "runtimeCreates", "receiptCreates",
+    "accountProvisionPosts", "walletAdjustmentPosts", "modelRequests", "refunds", "renewals", "deletes", "replacements"
+  ]) assert.match(runs, new RegExp(count));
+  assert.match(runs, /podImageId/);
+  assert.match(runs, /statusCode.*200|statusCode === 200/);
+  assert.match(JSON.stringify(job.steps), /actions\/upload-artifact@v4/);
+  assert.match(runs, /redacted|forbiddenFields|password|token|secret/);
+  for (const forbidden of [
+    /--basic-customer-canary/,
+    /--allow-model-write/,
+    /--allow-account-provision/,
+    /--allow-wallet-recharge/,
+    /wallet-adjustments/,
+    /send_model_request/
+  ]) assert.doesNotMatch(runs, forbidden);
+  const acceptanceTool = await readFile(repoFile("tools/production-basic-acceptance-b.ts"), "utf8");
+  for (const forbiddenWrite of ["provision_account", "adjust_wallet", "refund", "renew", "delete", "replace", "send_model_request"]) {
+    assert.match(acceptanceTool, new RegExp(forbiddenWrite));
+  }
 });
 
 test("compute claim diagnosis and recovery are isolated VPC modes with separate approval authority", async () => {
@@ -1716,6 +1780,7 @@ test("recovered Workspace E2E is a separate hosted mode with no resource mutatio
     "customer_operation",
     "manual_review_diagnose",
     "workspace_identity_diagnose",
+    "acceptance_b_fresh_order",
     "compute_claim_diagnose",
     "compute_claim_recover",
     "workspace_launch_readback_diagnose",
