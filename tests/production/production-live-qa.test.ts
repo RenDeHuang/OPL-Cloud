@@ -50,6 +50,123 @@ test("customer Basic canary orchestration stays inside production-live-qa", () =
   assert.equal(typeof productionLiveQa.verifyProductionBasicCustomerCanary, "function");
 });
 
+test("Workspace identity diagnosis binds operator, customer, and the unique reserved Key without exposing secrets", async () => {
+  const accountId = "acct-f947b18f844e42b3c0";
+  const ownerUserId = "usr-huangrende";
+  const workspaceId = "ws-4357c2c5b3ea1a344c";
+  const workspaceApiKeyId = "132";
+  const customerEmail = "customer@example.com";
+  const calls = [];
+  const fetchImpl = async (input, init = {}) => {
+    const url = new URL(String(input));
+    const method = String(init.method || "GET").toUpperCase();
+    calls.push([method, url.pathname, url.search]);
+    if (url.pathname === "/api/auth/login") {
+      const body = JSON.parse(String(init.body || "{}"));
+      if (body.email === ADMIN_EMAIL) {
+        return json({ user: { accountId: ADMIN_ACCOUNT_ID, role: "admin" } }, 200, {
+          "set-cookie": "opl_session=admin; Path=/; HttpOnly",
+          "x-opl-csrf-token": "admin-csrf"
+        });
+      }
+      if (body.email === customerEmail) {
+        return json({ user: { accountId, role: "owner" } }, 200, {
+          "set-cookie": "opl_session=customer; Path=/; HttpOnly",
+          "x-opl-csrf-token": "customer-csrf"
+        });
+      }
+    }
+    if (url.pathname === "/api/auth/me") {
+      return source({ consoleUserId: ownerUserId, accountId, sub2apiUserId: 10, email: customerEmail, role: "owner", status: "active" });
+    }
+    if (url.pathname === "/api/gateway/keys") {
+      const page = Number(url.searchParams.get("page"));
+      const pageSize = Number(url.searchParams.get("pageSize"));
+      const items = page === 1
+        ? Array.from({ length: 20 }, (_, index) => ({ id: String(index + 1), kind: "general", name: `general-${index + 1}`, status: "active" }))
+        : [{ id: workspaceApiKeyId, kind: "workspace", name: "opl-workspace-cad539244292", status: "active" }];
+      return source({ items, total: 21, page, pageSize, pages: 2 });
+    }
+    return json({ error: "not_found" }, 404);
+  };
+
+  const operatorDetail = {
+    ownerAccount: { source: "control-plane", status: "available", available: true, fetchedAt: "2026-08-01T00:00:00Z", data: { id: accountId } },
+    ownerUser: { source: "control-plane", status: "available", available: true, fetchedAt: "2026-08-01T00:00:00Z", data: { id: ownerUserId, email: customerEmail } },
+    workspace: { source: "control-plane", status: "available", available: true, fetchedAt: "2026-08-01T00:00:00Z", data: { id: workspaceId, ownerAccountId: accountId, ownerUserId, workspaceApiKeyId } },
+    receipt: { source: "ledger", status: "unavailable", available: false, fetchedAt: "2026-08-01T00:00:00Z", data: null },
+    workspaceKeyUsage: { source: "sub2api", status: "unavailable", available: false, fetchedAt: "2026-08-01T00:00:00Z", data: null },
+    resources: []
+  };
+  const baseFetch = fetchImpl;
+  const identityFetch = async (input, init) => {
+    const url = new URL(String(input));
+    if (url.pathname === `/api/operator/workspaces/${workspaceId}`) {
+      calls.push([String(init?.method || "GET").toUpperCase(), url.pathname, url.search]);
+      return source(operatorDetail, "control-plane+fabric+ledger");
+    }
+    return baseFetch(input, init);
+  };
+
+  const result = await productionLiveQa.diagnoseWorkspaceIdentity({
+    origin: "https://cloud.medopl.cn",
+    adminEmail: ADMIN_EMAIL,
+    adminPassword: ADMIN_PASSWORD,
+    customerEmail,
+    customerPassword: "customer-password",
+    accountId,
+    workspaceId,
+    fetchImpl: identityFetch,
+    now: new Date("2026-08-01T01:02:03Z")
+  });
+
+  assert.deepEqual(result, {
+    schemaVersion: 1,
+    operationMode: "workspace_identity_diagnose",
+    status: "proven",
+    identity: {
+      accountId,
+      ownerUserId,
+      workspaceId,
+      workspaceApiKeyId,
+      sub2apiUserId: "10",
+      customerEmailSha256: createHash("sha256").update(customerEmail).digest("hex"),
+      workspaceKey: { id: workspaceApiKeyId, kind: "workspace", name: "opl-workspace-cad539244292", status: "active" }
+    },
+    runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
+    verifiedAt: "2026-08-01T01:02:03.000Z"
+  });
+  assert.deepEqual(calls, [
+    ["POST", "/api/auth/login", ""],
+    ["GET", `/api/operator/workspaces/${workspaceId}`, ""],
+    ["POST", "/api/auth/login", ""],
+    ["GET", "/api/auth/me", ""],
+    ["GET", "/api/gateway/keys", "?page=1&pageSize=20"],
+    ["GET", "/api/gateway/keys", "?page=2&pageSize=20"]
+  ]);
+  assert.doesNotMatch(JSON.stringify(result), /customer@example\.com|password|csrf|cookie|token|maskedValue|\"value\"/i);
+  assert.equal(calls.every(([method]) => ["GET", "POST"].includes(method)), true);
+  assert.equal(calls.filter(([method, path]) => method === "POST" && path !== "/api/auth/login").length, 0);
+});
+
+test("Workspace identity CLI rejects write-capable flags before network access", async () => {
+  let fetchCalls = 0;
+  let stderr = "";
+  const code = await runProductionLiveQaCli({
+    argv: ["--workspace-identity-diagnose", "--allow-model-write"],
+    env: {},
+    fetchImpl: async () => {
+      fetchCalls += 1;
+      throw new Error("network_not_expected");
+    },
+    stdout: { write() {} },
+    stderr: { write(value) { stderr += value; } }
+  });
+  assert.equal(code, 1);
+  assert.equal(fetchCalls, 0);
+  assert.match(stderr, /workspace_identity_diagnose_conflict/);
+});
+
 test("customer Basic canary Pod evidence uses one read-only kubectl get", async () => {
   assert.equal(typeof productionLiveQa.readBasicCanaryRuntimePodEvidence, "function");
   const calls = [];
@@ -1332,6 +1449,10 @@ test("Workspace launch readback artifacts and continuation handoff use explicit 
       recoveryKey: "workspace-readback-recovery-fixture",
       workspaceImageDigest: proof.workspaceImageDigest
     },
+    terminalEvidence: {
+      workspacePodImageID: `containerd://${proof.workspaceImageDigest}`,
+      workspaceUrlHttpStatus: 200
+    },
     runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
     backgroundMutationCountsState: "unknown",
     verifiedAt: "2026-08-28T00:00:00.000Z"
@@ -1342,6 +1463,10 @@ test("Workspace launch readback artifacts and continuation handoff use explicit 
   ]);
   assert.equal(continuation.handoff.recoveryApprovalDigest, approvalDigest);
   assert.equal(continuation.handoff.recoveryBindingDigest, diagnosis.bindingDigest);
+  assert.deepEqual(continuation.handoff.terminalEvidence, {
+    workspacePodImageID: `containerd://${proof.workspaceImageDigest}`,
+    workspaceUrlHttpStatus: 200
+  });
   for (const artifact of [diagnosis, recovery, blocked, continuation]) {
     assertWorkspaceLaunchArtifactSafe(artifact, [
       proof.customer.email,
@@ -1355,6 +1480,79 @@ test("Workspace launch readback artifacts and continuation handoff use explicit 
       proof.operationIds.storage.providerOperationId
     ]);
   }
+});
+
+test("compute claim continuation handoff binds the recovery artifact digest", () => {
+  const release = { mergedSha: BASIC_CANARY_MERGED_SHA, cloudImageDigest: BASIC_CANARY_CLOUD_DIGEST };
+  const approvalDigest = computeClaimApprovalDigestForTest(computeClaimApprovalJson());
+  const recoveryArtifact = {
+    schemaVersion: 2,
+    operationMode: "compute_claim_recover",
+    status: "claimed",
+    recoveryEligible: true,
+    errorCode: "none",
+    release,
+    target: { ...COMPUTE_CLAIM_TARGET },
+    proof: computeClaimProof({
+      nodeOwnershipState: "target_owned",
+      cvmOwnershipState: "target_owned",
+      evidence: {
+        cvm: { attempted: 0, confirmed: 0, unknown: 0, missing: [] },
+        node: { attempted: 0, confirmed: 0, unknown: 0, missing: [] }
+      }
+    }),
+    approval: { approvalId: "approval-compute-claim-fixture", approvalDigest },
+    runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
+  };
+  const launch = computeClaimContinuationLaunch({ phase: "succeeded", status: "succeeded" });
+  const runtime = {
+    workspaceId: COMPUTE_CLAIM_TARGET.workspaceId,
+    runtimeId: computeClaimRecoveryResources().runtimeId,
+    serviceName: "workspace-service-compute-claim-fixture",
+    status: "running",
+    ready: true,
+    url: `https://workspace.medopl.cn/w/${COMPUTE_CLAIM_TARGET.workspaceId}/`
+  };
+  const raw = {
+    schemaVersion: 2,
+    operationMode: "compute_claim_recover_continuation",
+    status: "succeeded",
+    recoveryEligible: true,
+    errorCode: "none",
+    release,
+    target: { ...COMPUTE_CLAIM_TARGET },
+    launch,
+    runtime,
+    receipt: { receiptId: launch.receiptId, workspaceId: COMPUTE_CLAIM_TARGET.workspaceId, status: "completed" },
+    recovery: {
+      approvalId: "approval-compute-claim-fixture",
+      approvalDigest,
+      recoveryKey: "compute-claim-recovery-fixture",
+      workspaceImageDigest: COMPUTE_CLAIM_WORKSPACE_DIGEST
+    },
+    terminalEvidence: {
+      workspacePodImageID: `containerd://${COMPUTE_CLAIM_WORKSPACE_DIGEST}`,
+      workspaceUrlHttpStatus: 200
+    },
+    runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
+    backgroundMutationCountsState: "unknown",
+    verifiedAt: "2026-08-28T00:00:00.000Z"
+  };
+
+  const handoff = productionLiveQa.workspaceLaunchContinuationHandoff(raw, recoveryArtifact);
+  assert.equal(handoff.handoff.recoveryBindingDigest,
+    createHash("sha256").update(canonicalJsonForTest(recoveryArtifact)).digest("hex"));
+  assert.equal(handoff.handoff.recoveryApprovalDigest, approvalDigest);
+  assert.deepEqual(handoff.handoff.terminalEvidence, raw.terminalEvidence);
+  assert.equal(Object.hasOwn(handoff, "target"), false);
+  assert.equal(Object.hasOwn(handoff, "launch"), false);
+  assert.equal(Object.hasOwn(handoff, "runtime"), false);
+  assert.equal(Object.hasOwn(handoff, "receipt"), false);
+  assert.equal(Object.hasOwn(handoff, "recovery"), false);
+
+  const drifted = structuredClone(recoveryArtifact);
+  drifted.unexpected = true;
+  assert.throws(() => productionLiveQa.workspaceLaunchContinuationHandoff(raw, drifted), /workspace_launch_continuation_artifact_invalid/);
 });
 
 test("workspace launch readback diagnosis is GET-only and binds the exact unknown stage", async () => {
@@ -1919,7 +2117,11 @@ function recoveredWorkspaceE2EContinuationFixture(overrides = {}) {
 		recoveryApprovalDigest: approval.recoveryApprovalDigest,
 		recoveryKey: approval.recoveryKey,
 		recoveryBindingDigest: approval.recoveryBindingDigest,
-		resources: { ...approval.resources }
+		resources: { ...approval.resources },
+		terminalEvidence: {
+		  workspacePodImageID: `containerd://${COMPUTE_CLAIM_WORKSPACE_DIGEST}`,
+		  workspaceUrlHttpStatus: 200
+		}
 	  },
     runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
     backgroundMutationCountsState: "unknown",
@@ -2862,6 +3064,8 @@ test("compute-claim continuation polls the same launch and runtime with no busin
     launchPollAttempts: 8,
     launchPollDelayMs: 0,
     cloudRevisionEvidenceReader: async () => computeClaimCloudRevisionEvidence(),
+    runtimePodEvidenceReader: async () => ({ imageID: `containerd://${COMPUTE_CLAIM_WORKSPACE_DIGEST}` }),
+    workspaceUrlStatusReader: async () => 200,
     fetchImpl,
     now: new Date("2026-08-28T00:00:00Z")
   });
@@ -2885,6 +3089,10 @@ test("compute-claim continuation polls the same launch and runtime with no busin
   assert.equal(result.runtime.ready, true);
   assert.equal(result.runtime.status, "running");
   assert.equal(result.runtime.url, result.launch.url);
+  assert.deepEqual(result.terminalEvidence, {
+    workspacePodImageID: `containerd://${COMPUTE_CLAIM_WORKSPACE_DIGEST}`,
+    workspaceUrlHttpStatus: 200
+  });
   assert.deepEqual(result.recovery, {
     approvalId: "approval-compute-claim-fixture",
     approvalDigest: computeClaimApprovalDigestForTest(computeClaimApprovalJson()),
@@ -2948,6 +3156,13 @@ test("workspace readback continuation accepts Pro product truth without changing
     launchPollAttempts: 1,
     launchPollDelayMs: 0,
     cloudRevisionEvidenceReader: async () => computeClaimCloudRevisionEvidence(),
+    runtimePodEvidenceReader: async (options) => {
+      assert.equal(options.expectedCpu, 8);
+      assert.equal(options.expectedMemoryGb, 16);
+      assert.equal(options.expectedNodeName, target.nodeName);
+      return { imageID: `containerd://${COMPUTE_CLAIM_WORKSPACE_DIGEST}` };
+    },
+    workspaceUrlStatusReader: async () => 200,
     fetchImpl
   });
   assert.equal(result.launch.packageId, "pro");
@@ -3177,8 +3392,43 @@ test("compute-claim continuation CLI reads only the customer password environmen
     stdout: { write: (chunk) => { stdout += chunk; } },
     stderr: { write: (chunk) => { stderr += chunk; } },
     cloudRevisionEvidenceReader: async () => computeClaimCloudRevisionEvidence(),
+    execFileImpl: async (command, args) => {
+      if (command === "kubectl" && args.includes("get") && args.includes("pods")) {
+        return { stdout: JSON.stringify({
+          kind: "List",
+          items: [{
+            metadata: {
+              name: "runtime-compute-claim-fixture",
+              labels: { "oplcloud.cn/workspace-id": COMPUTE_CLAIM_TARGET.workspaceId },
+              ownerReferences: [{
+                apiVersion: "apps/v1",
+                kind: "ReplicaSet",
+                name: "runtime-compute-claim-fixture-rs",
+                uid: "runtime-compute-claim-fixture-rs-uid",
+                controller: true
+              }]
+            },
+            spec: {
+              nodeName: COMPUTE_CLAIM_TARGET.nodeName,
+              containers: [{ name: "workspace", resources: { limits: { cpu: "2", memory: "4Gi" } } }]
+            },
+            status: {
+              phase: "Running",
+              conditions: [{ type: "Ready", status: "True" }],
+              containerStatuses: [{
+                name: "workspace",
+                ready: true,
+                imageID: `containerd://${COMPUTE_CLAIM_WORKSPACE_DIGEST}`
+              }]
+            }
+          }]
+        }) };
+      }
+      throw new Error(`unexpected_command:${command}:${args.join(" ")}`);
+    },
     fetchImpl: async (input, init = {}) => {
       const url = new URL(String(input));
+      if (url.hostname === "workspace.medopl.cn") return new Response("workspace ready", { status: 200 });
       const method = init.method || "GET";
       calls.push({ method, path: url.pathname });
       if (url.pathname === "/api/auth/login") {

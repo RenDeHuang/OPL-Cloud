@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -220,7 +221,8 @@ func newRecoveredWorkspaceE2EHTTPFixture(t *testing.T) recoveredWorkspaceE2EHTTP
 		SchemaVersion: 1, ApprovalID: "approval-recovered-e2e", ExpiresAt: "2099-08-28T00:00:00Z",
 		Confirmation: recoveredWorkspaceE2EConfirmation, MergedMainSHA: recovery.MergedMainSHA,
 		CloudImageDigest: recovery.CloudImageDigest, WorkspaceImageDigest: recovery.WorkspaceImageDigest,
-		RecoveryApprovalID: recovery.ApprovalID, RecoveryApprovalDigest: recovery.ApprovalDigest, RecoveryKey: recovery.RecoveryKey,
+		RecoveryApprovalID: recovery.ApprovalID, RecoveryApprovalDigest: recovery.ApprovalDigest,
+		RecoveryBindingDigest: strings.Repeat("e", 64), RecoveryKey: recovery.RecoveryKey,
 		Customer:          recoveredWorkspaceE2EApprovalCustomer{Email: "alpha@example.com", AccountID: operation.AccountID},
 		LaunchOperationID: operation.ID, WorkspaceID: operation.WorkspaceID,
 		Resources: recoveredWorkspaceE2EApprovalResources{
@@ -244,6 +246,83 @@ func (f recoveredWorkspaceE2EHTTPFixture) request(t *testing.T, suffix string, a
 		t.Fatal(err)
 	}
 	return requestWithSession(t, f.server, f.session, http.MethodPost, "/api/workspaces/"+f.operation.WorkspaceID+suffix, string(body))
+}
+
+func (f recoveredWorkspaceE2EHTTPFixture) requestApprovalPayload(t *testing.T, suffix string, approval map[string]any) *httptest.ResponseRecorder {
+	t.Helper()
+	payload, err := json.Marshal(approval)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(payload)
+	body, err := json.Marshal(map[string]any{"approval": approval, "approvalDigest": fmt.Sprintf("%x", sum)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return requestWithSession(t, f.server, f.session, http.MethodPost, "/api/workspaces/"+f.operation.WorkspaceID+suffix, string(body))
+}
+
+func TestRecoveredWorkspaceE2EApprovalBindsRecoveryArtifactDigest(t *testing.T) {
+	t.Run("exact schema is persisted and completed with the same binding", func(t *testing.T) {
+		fixture := newRecoveredWorkspaceE2EHTTPFixture(t)
+		approval := structToMap(fixture.approval)
+		approval["recoveryBindingDigest"] = strings.Repeat("e", 64)
+
+		reserve := fixture.requestApprovalPayload(t, "/recovered-e2e-attempt", approval)
+		if reserve.Code != http.StatusCreated {
+			t.Fatalf("reserve status=%d body=%s", reserve.Code, reserve.Body.String())
+		}
+		var reserved map[string]any
+		if err := json.NewDecoder(reserve.Body).Decode(&reserved); err != nil {
+			t.Fatal(err)
+		}
+		record, found, err := fixture.store.GetProductionE2EAttempt(context.Background(), stringValue(reserved["attemptId"]))
+		if err != nil || !found {
+			t.Fatalf("marker found=%t err=%v", found, err)
+		}
+		var binding map[string]any
+		if err := json.Unmarshal([]byte(stringValue(record["result"])), &binding); err != nil {
+			t.Fatal(err)
+		}
+		boundApproval, ok := binding["approval"].(map[string]any)
+		if !ok || boundApproval["recoveryBindingDigest"] != strings.Repeat("e", 64) || binding["approvalDigest"] != reserved["approvalDigest"] {
+			t.Fatalf("marker binding=%#v reserve=%#v", binding, reserved)
+		}
+
+		complete := fixture.requestApprovalPayload(t, "/recovered-e2e-attempt/complete", approval)
+		if complete.Code != http.StatusOK || !strings.Contains(complete.Body.String(), `"status":"passed"`) {
+			t.Fatalf("complete status=%d body=%s", complete.Code, complete.Body.String())
+		}
+	})
+
+	t.Run("legacy approval without recovery binding digest fails closed", func(t *testing.T) {
+		fixture := newRecoveredWorkspaceE2EHTTPFixture(t)
+		approval := structToMap(fixture.approval)
+		delete(approval, "recoveryBindingDigest")
+
+		response := fixture.requestApprovalPayload(t, "/recovered-e2e-attempt", approval)
+		if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "recovered_workspace_e2e_approval_invalid") {
+			t.Fatalf("missing binding digest status=%d body=%s", response.Code, response.Body.String())
+		}
+		assertNoRecoveredWorkspaceE2EMarker(t, fixture.store)
+	})
+
+	t.Run("completion rejects recovery binding digest drift", func(t *testing.T) {
+		fixture := newRecoveredWorkspaceE2EHTTPFixture(t)
+		approval := structToMap(fixture.approval)
+		approval["recoveryBindingDigest"] = strings.Repeat("e", 64)
+		reserve := fixture.requestApprovalPayload(t, "/recovered-e2e-attempt", approval)
+		if reserve.Code != http.StatusCreated {
+			t.Fatalf("reserve status=%d body=%s", reserve.Code, reserve.Body.String())
+		}
+
+		drifted := cloneMap(approval)
+		drifted["recoveryBindingDigest"] = strings.Repeat("f", 64)
+		complete := fixture.requestApprovalPayload(t, "/recovered-e2e-attempt/complete", drifted)
+		if complete.Code != http.StatusConflict || !strings.Contains(complete.Body.String(), "model_result_unknown") {
+			t.Fatalf("drifted completion status=%d body=%s", complete.Code, complete.Body.String())
+		}
+	})
 }
 
 func TestRecoveredWorkspaceE2EAttemptAPIIsOwnerScopedSingleUse(t *testing.T) {

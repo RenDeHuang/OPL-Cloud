@@ -88,6 +88,7 @@ async function runWorkflowArtifactGate(step, filename, artifact, env = {}) {
 			OPL_WORKSPACE_LAUNCH_READBACK_ARTIFACT_DIR: root,
 			OPL_WORKSPACE_LAUNCH_READBACK_RAW_RESULT_PATH: artifactPath,
 			OPL_WORKSPACE_LAUNCH_CONTINUATION_RAW_RESULT_PATH: artifactPath,
+			OPL_COMPUTE_CLAIM_CONTINUATION_RAW_RESULT_PATH: artifactPath,
         ...env
       }
     });
@@ -574,6 +575,7 @@ test("production self-hosted jobs use one run-and-job isolated source checkout",
     ]],
     [".github/workflows/production-basic-customer-operation.yml", [
       "prepare-basic-customer-operation",
+      "workspace-identity-diagnose",
       "manual-review-diagnose",
       "workspace-launch-readback-diagnose",
       "workspace-launch-readback-recover",
@@ -993,6 +995,7 @@ test("manual-review diagnose is isolated to the VPC runner and statically contai
   assert.deepEqual(inputs.operation_mode.options, [
     "customer_operation",
     "manual_review_diagnose",
+    "workspace_identity_diagnose",
     "compute_claim_diagnose",
     "compute_claim_recover",
     "workspace_launch_readback_diagnose",
@@ -1047,6 +1050,36 @@ test("manual-review diagnose is isolated to the VPC runner and statically contai
   const artifactPreparation = serializedStep(steps.get("Prepare redacted manual-review artifact"));
   assert.match(artifactPreparation, /OPL_BASIC_CANARY_DIAGNOSE_ARTIFACT_DIR/);
   assert.doesNotMatch(runs, /OPL_BASIC_CANARY_DIAGNOSE_SECRET_DIR/);
+});
+
+test("Workspace identity diagnosis is a main-only production runner readback with no mutation capability", async () => {
+  const workflow = await readWorkflow(".github/workflows/production-basic-customer-operation.yml");
+  const inputs = workflow.on.workflow_dispatch.inputs;
+  assert.ok(inputs.operation_mode.options.includes("workspace_identity_diagnose"));
+  assert.equal(inputs.workspace_identity_account_id.required, false);
+  assert.equal(inputs.workspace_identity_workspace_id.required, false);
+
+  const job = workflowJob(workflow, "workspace-identity-diagnose");
+  const runs = serializedRuns(job);
+  assert.deepEqual(job["runs-on"], ["self-hosted", "tencent-cloud", "opl-cloud", "tke-vpc"]);
+  assert.equal(job.environment, "production");
+  assert.match(String(job.if), /github\.ref == 'refs\/heads\/main'/);
+  assert.match(String(job.if), /github\.sha == inputs\.merged_sha/);
+  assert.match(String(job.if), /inputs\.operation_mode == 'workspace_identity_diagnose'/);
+  assert.match(String(job.if), /inputs\.workspace_identity_account_id != ''/);
+  assert.match(String(job.if), /inputs\.workspace_identity_workspace_id != ''/);
+  for (const confirmation of ["account_provision", "wallet_recharge", "workspace_purchase", "single_model_request", "compute_claim_recovery", "workspace_launch_readback_recovery"]) {
+    assert.match(String(job.if), new RegExp(`!inputs\\.confirm_${confirmation}`));
+  }
+  assert.equal(job.env.OPL_WORKSPACE_IDENTITY_ACCOUNT_ID, "${{ inputs.workspace_identity_account_id }}");
+  assert.equal(job.env.OPL_WORKSPACE_IDENTITY_WORKSPACE_ID, "${{ inputs.workspace_identity_workspace_id }}");
+  assert.equal(job.env.OPL_WORKSPACE_IDENTITY_CUSTOMER_EMAIL, "${{ inputs.customer_email }}");
+  assert.equal(job.env.OPL_WORKSPACE_IDENTITY_CUSTOMER_PASSWORD, "${{ secrets.OPL_BASIC_CANARY_CUSTOMER_PASSWORD }}");
+  assert.match(runs, /production-live-qa\.ts --workspace-identity-diagnose/);
+  assert.match(runs, /workspace-identity-diagnosis\.json/);
+  assert.match(JSON.stringify(job.steps), /actions\/upload-artifact@v4/);
+  assert.doesNotMatch(JSON.stringify(job), /KUBECONFIG|TENCENT_|OPL_INTERNAL_SERVICE_TOKEN/);
+  assert.doesNotMatch(runs, /kubectl|--basic-customer-canary|--compute-claim-recover|allow-workspace-purchase|allow-wallet-recharge|allow-account-provision|allow-model-write|create_storage_volume|CreateComputeAllocation|scale|debit|refund/i);
 });
 
 test("compute claim diagnosis and recovery are isolated VPC modes with separate approval authority", async () => {
@@ -1122,6 +1155,14 @@ test("compute claim diagnosis and recovery are isolated VPC modes with separate 
   assert.match(JSON.stringify(recover), /OPL_BASIC_CANARY_CUSTOMER_EMAIL/);
   assert.match(JSON.stringify(recover), /OPL_BASIC_CANARY_CUSTOMER_PASSWORD/);
   assert.match(recoverRuns, /workspace-launch-continuation\.json/);
+  assert.match(recoverRuns, /OPL_COMPUTE_CLAIM_CONTINUATION_RAW_RESULT_PATH/);
+  assert.match(recoverRuns, /workspaceLaunchContinuationHandoff/);
+  const recoverStepNames = recover.steps.map((step) => step.name);
+  const continueIndex = recoverStepNames.indexOf("Continue original launch with GET-only readback");
+  const rawGateIndex = recoverStepNames.indexOf("Require original launch continuation success");
+  const handoffIndex = recoverStepNames.indexOf("Generate safe recovered Workspace handoff");
+  const uploadIndex = recoverStepNames.indexOf("Upload redacted compute claim recovery");
+  assert.ok(continueIndex >= 0 && continueIndex < rawGateIndex && rawGateIndex < handoffIndex && handoffIndex < uploadIndex);
   assert.match(recoverRuns, /result\?\.status !== "succeeded"/);
   assert.match(recoverRuns, /backgroundMutationCountsState !== "unknown"/);
   assert.match(recoverRuns, /const expectedWorkspaceUrl = `https:\/\/workspace\.medopl\.cn\/w\/\$\{target\.workspaceId\}\//);
@@ -1325,6 +1366,10 @@ test("compute claim workflow executes the recovery and continuation artifact gat
       approvalDigest,
       recoveryKey: approval.recoveryKey,
       workspaceImageDigest: workspaceDigest
+    },
+    terminalEvidence: {
+      workspacePodImageID: `containerd://${workspaceDigest}`,
+      workspaceUrlHttpStatus: 200
     },
     runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
     backgroundMutationCountsState: "unknown",
@@ -1670,6 +1715,7 @@ test("recovered Workspace E2E is a separate hosted mode with no resource mutatio
   assert.deepEqual(inputs.operation_mode.options, [
     "customer_operation",
     "manual_review_diagnose",
+    "workspace_identity_diagnose",
     "compute_claim_diagnose",
     "compute_claim_recover",
     "workspace_launch_readback_diagnose",
