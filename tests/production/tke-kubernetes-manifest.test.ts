@@ -77,7 +77,10 @@ test("OPL Cloud TKE manifest declares three decoupled services and monthly Sub2A
 
   const ledger = deployments.find((item) => item.metadata.name === "opl-cloud-ledger");
   assert.equal(ledger.spec.template.spec.initContainers, undefined);
-  assert.equal(ledger.spec.template.spec.containers[0].command[0], "/usr/local/bin/opl-ledger");
+  const ledgerContainer = ledger.spec.template.spec.containers[0];
+  assert.equal(ledgerContainer.command[0], "/usr/local/bin/opl-ledger");
+  assert.equal(ledgerContainer.readinessProbe.httpGet.path, "/readyz");
+  assert.equal(ledgerContainer.livenessProbe.httpGet.path, "/healthz");
 
   const fabric = deployments.find((item) => item.metadata.name === "opl-cloud-fabric");
   assert.equal(fabric.spec.template.spec.containers[0].command[0], "/usr/local/bin/opl-fabric");

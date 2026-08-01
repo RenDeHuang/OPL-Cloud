@@ -19,6 +19,7 @@ test("Console source truth exposes Sub2API Keys parity without a second authorit
     "create", "reveal", "update", "enable", "disable", "delete", "change_group", "reset_quota", "reset_rate_limit_usage"
   ]);
   assert.equal(contract.sources.identity.operatorAccounts.fieldAuthority.keyCount, "sub2api_current_page_bounded_concurrent_readback");
+  assert.equal(contract.sources.operator.projection.ledgerCalls, "detail_receipt_readback_and_public_readyz_postgresql_ping");
 });
 
 test("Console source truth contract fixes strict envelopes and live Gateway projections", async () => {
@@ -297,7 +298,7 @@ test("Console source truth contract fixes strict envelopes and live Gateway proj
       workspaceFulfillmentReceiptTypes: ["billing.workspace_purchased.v1", "billing.workspace_renewed.v1"],
       workspaceFulfillmentFields: ["computeAllocationId", "storageId", "attachmentId", "workspaceApiKeyId", "runtimeId"],
       rawProviderReadback: false,
-      nonBillingRows: "ignore_without_projection",
+      nonBillingRows: "type_prefix_violation_fail_closed_unavailable",
       tenantMismatch: "whole_source_unavailable",
       malformedBillingReceipt: "whole_source_unavailable",
       legacyCnyFallback: false,

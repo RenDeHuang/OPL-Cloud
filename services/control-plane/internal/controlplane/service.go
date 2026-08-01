@@ -324,6 +324,14 @@ func (s *Service) BillingReceipts(ctx context.Context, query clients.ReceiptQuer
 	return client.ListReceipts(ctx, query)
 }
 
+func (s *Service) LedgerReadiness(ctx context.Context) error {
+	client, ok := s.ledger.(clients.LedgerReadinessClient)
+	if !ok {
+		return errors.New("ledger_readiness_unavailable")
+	}
+	return client.Ready(ctx)
+}
+
 func (s *Service) RecordReconciliation(ctx context.Context, input ReconciliationInput, idempotencyKey string) (clients.ReconciliationResult, error) {
 	return s.ledger.RecordReconciliation(ctx, clients.ReconciliationInput{Report: input.Report}, idempotencyKey)
 }

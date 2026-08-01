@@ -130,6 +130,7 @@ type ReceiptQuery struct {
 	TaskID         string
 	JobID          string
 	Type           string
+	TypePrefix     string
 	Status         string
 	Cursor         string
 	Limit          int
@@ -151,6 +152,9 @@ func normalizeReceiptQuery(query ReceiptQuery) (ReceiptQuery, receiptCursor, err
 		query.Limit = DefaultReceiptPageSize
 	}
 	if query.Limit < 1 || query.Limit > MaxReceiptPageSize {
+		return ReceiptQuery{}, receiptCursor{}, ErrInvalidReceiptQuery
+	}
+	if query.Type != "" && query.TypePrefix != "" {
 		return ReceiptQuery{}, receiptCursor{}, ErrInvalidReceiptQuery
 	}
 	if query.Cursor == "" {
@@ -555,7 +559,7 @@ func validateReceiptInput(input ReceiptInput) error {
 		case "billing.reconciliation.v1":
 			billingCostValid = validBillingCost(input.Cost)
 		case "billing.workspace_purchased.v1", "billing.workspace_renewed.v1", "billing.workspace_expired.v1", "billing.workspace_refunded.v1":
-			billingCostValid = validWorkspaceBillingCost(input.Cost, input.Type) && input.Cost["resourceId"] == input.WorkspaceID
+			billingCostValid = input.Status == "completed" && validWorkspaceBillingCost(input.Cost, input.Type) && input.Cost["resourceId"] == input.WorkspaceID
 		default:
 			billingCostValid = false
 		}

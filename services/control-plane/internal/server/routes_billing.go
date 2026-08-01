@@ -29,7 +29,7 @@ func registerBillingRoutes(mux *http.ServeMux, app *controlPlaneServer, service 
 			}
 			limit = parsed
 		}
-		page, err := service.BillingReceipts(r.Context(), clients.ReceiptQuery{AccountID: accountID, Cursor: r.URL.Query().Get("cursor"), Limit: limit})
+		page, err := service.BillingReceipts(r.Context(), clients.ReceiptQuery{AccountID: accountID, TypePrefix: "billing.", Cursor: r.URL.Query().Get("cursor"), Limit: limit})
 		if err != nil {
 			writeSourceEnvelope(w, http.StatusBadGateway, "ledger", "unavailable", nil)
 			return
@@ -41,7 +41,8 @@ func registerBillingRoutes(mux *http.ServeMux, app *controlPlaneServer, service 
 				return
 			}
 			if !strings.HasPrefix(receipt.Type, "billing.") {
-				continue
+				writeSourceEnvelope(w, http.StatusBadGateway, "ledger", "unavailable", nil)
+				return
 			}
 			projected, ok := projectCustomerBillingReceipt(receipt)
 			if !ok {
@@ -168,6 +169,9 @@ func projectCustomerBillingReceipt(receipt clients.Receipt) (map[string]any, boo
 	}
 	switch receipt.Type {
 	case "billing.workspace_purchased.v1", "billing.workspace_renewed.v1", "billing.workspace_expired.v1", "billing.workspace_refunded.v1":
+		if receipt.Status != "completed" {
+			return nil, false
+		}
 		total, ok := requiredPositiveInteger(receipt.Cost, "totalUsdMicros")
 		components, validComponents := receipt.Cost["components"].(map[string]any)
 		compute, validCompute := components["compute"].(map[string]any)

@@ -49,8 +49,17 @@ test("Ledger general receipt uses the shared execution identity and states", asy
   assert.deepEqual(ledger.generalReceiptV1.query, {
     endpoint: "GET /ledger/receipts",
     exactFilters: ["organizationId", "workspaceId", "projectId", "taskId", "jobId", "type", "status"],
+    prefixFilters: ["typePrefix"],
+    mutuallyExclusiveFilters: [["type", "typePrefix"]],
     order: ["createdAt desc", "receiptId desc"],
-    pagination: { cursor: "opaque_createdAt_receiptId", defaultLimit: 50, maxLimit: 100 }
+    pagination: { cursor: "opaque_createdAt_receiptId", defaultLimit: 50, maxLimit: 100, filtersAppliedBeforePagination: true }
+  });
+  assert.deepEqual(ledger.readiness, {
+    endpoint: "GET /readyz",
+    publicProbe: true,
+    backingStoreCheck: "PostgreSQL PingContext",
+    readyStatus: 200,
+    unavailableStatus: 503
   });
   assert.ok(ledger.generalReceiptV1.forbiddenContent.includes("rawCredential"));
   assert.ok(ledger.generalReceiptV1.forbiddenContent.includes("password"));

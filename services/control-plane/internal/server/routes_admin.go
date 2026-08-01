@@ -1412,18 +1412,8 @@ func (app *controlPlaneServer) operatorHealth(ctx context.Context, service *cont
 			"immutableImagesReady": readiness["immutableImagesReady"] == true,
 		}, "")
 	}
-	if workspaces, err := app.tables.PageWorkspaces(ctx, "", tablePageQuery{Limit: 1}); err == nil {
-		for _, workspace := range workspaces.Items {
-			receiptID := stringValue(workspace["purchaseReceiptId"])
-			if receiptID == "" {
-				continue
-			}
-			receipt, err := service.BillingReceipt(ctx, receiptID)
-			if err == nil && receipt.ReceiptID == receiptID && receipt.WorkspaceID == stringValue(workspace["id"]) {
-				result["ledger"] = sourceEnvelope("ledger", "available", map[string]any{"ready": true, "receiptId": receiptID}, authoritativeSourceTimestamp(receipt.CreatedAt))
-			}
-			break
-		}
+	if err := service.LedgerReadiness(ctx); err == nil {
+		result["ledger"] = sourceEnvelope("ledger", "available", map[string]any{"ready": true}, "")
 	}
 	return result
 }
