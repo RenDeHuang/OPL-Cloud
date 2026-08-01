@@ -250,11 +250,12 @@ test("deployment machine contract registers the local-only Acceptance B integrat
   assert.deepEqual(deployment.productionBasicAcceptanceB, {
     tool: "tools/production-basic-acceptance-b.ts",
     operationMode: "acceptance_b_fresh_order",
-    execution: "local_contract_and_validation_only_until_shared_workflow_integration",
+    execution: "github_actions_production_environment_authoritative_readback_workflow",
     productionNetwork: "github_actions_production_environment_authorized_runner_only",
     workflowIntegration: {
       file: ".github/workflows/production-basic-customer-operation.yml",
-      ownership: "deferred_until_acceptance_a_identity_lane_is_on_main",
+      job: "acceptance-b-fresh-order",
+      ownership: "integrated_after_acceptance_a_identity_lane_on_main",
       resourceClosureRunner: ["self-hosted", "tencent-cloud", "opl-cloud", "tke-vpc"],
       modelRequest: "forbidden_not_part_of_acceptance_b"
     },
