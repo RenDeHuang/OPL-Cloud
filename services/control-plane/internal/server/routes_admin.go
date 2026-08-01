@@ -294,7 +294,8 @@ func registerAdminRoutes(mux *http.ServeMux, app *controlPlaneServer, service *c
 			writeWorkspaceComputeClaimError(w, err)
 			return
 		}
-		if operation.ComputeClaimApproval != nil && !workspaceComputeClaimApprovalBindingMatches(*operation.ComputeClaimApproval, binding) {
+		if operation.ComputeClaimApproval != nil && !workspaceComputeClaimApprovalBindingMatches(*operation.ComputeClaimApproval, binding) &&
+			!workspaceComputeClaimApprovalMayBeSuperseded(operation, *operation.ComputeClaimApproval, binding) {
 			writeWorkspaceComputeClaimError(w, errWorkspaceComputeClaimIdentity)
 			return
 		}
