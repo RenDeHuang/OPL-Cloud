@@ -21,6 +21,7 @@ export const BASIC_CUSTOMER_CANARY_CONFIRMATION = "I_UNDERSTAND_THIS_PROVISIONS_
 export const COMPUTE_CLAIM_RECOVERY_CONFIRMATION = "RECOVER_PROVEN_COMPUTE_AND_CONTINUE_ORIGINAL_LAUNCH";
 export const WORKSPACE_LAUNCH_READBACK_RECOVERY_CONFIRMATION = "RECOVER_UNKNOWN_WORKSPACE_LAUNCH_STAGE_FROM_AUTHORITATIVE_READBACK";
 export const RECOVERED_WORKSPACE_E2E_CONFIRMATION = "CONFIRM_SINGLE_MODEL_REQUEST_FOR_RECOVERED_WORKSPACE";
+const WORKSPACE_IDENTITY_DIAGNOSE_MODE = "workspace_identity_diagnose";
 
 const DEFAULT_USAGE_ATTEMPTS = 24;
 const DEFAULT_USAGE_RETRY_DELAY_MS = 5_000;
@@ -1773,6 +1774,8 @@ export async function continueComputeClaimWorkspace({
   launchPollDelayMs = 10_000,
   requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
   cloudRevisionEvidenceReader,
+  runtimePodEvidenceReader = readBasicCanaryRuntimePodEvidence,
+  workspaceUrlStatusReader = readWorkspaceUrlStatus,
   fetchImpl = globalThis.fetch,
   execFileImpl = defaultExecFile,
   signal,
@@ -1831,6 +1834,26 @@ export async function continueComputeClaimWorkspace({
     auth: customerAuth,
     path: `/api/billing/receipts/${encodeURIComponent(launch.receiptId)}`
   }), target, launch, runtime);
+  const runtimeResources = target.packageId === "pro" ? { cpu: 8, memoryGb: 16 } : { cpu: 2, memoryGb: 4 };
+  const pod = await runtimePodEvidenceReader({
+    workspaceId: target.workspaceId,
+    expectedDigest: recovery.workspaceImageDigest,
+    expectedNodeName: target.nodeName,
+    expectedCpu: runtimeResources.cpu,
+    expectedMemoryGb: runtimeResources.memoryGb,
+    kubeconfigPath,
+    namespace,
+    execFileImpl
+  });
+  const workspaceUrlHttpStatus = await workspaceUrlStatusReader({
+    url: runtime.url,
+    fetchImpl,
+    signal,
+    requestTimeoutMs
+  });
+  if (immutableDigestFromImageId(pod?.imageID) !== recovery.workspaceImageDigest || workspaceUrlHttpStatus !== 200) {
+    throw new Error("compute_claim_continuation_terminal_evidence_invalid");
+  }
   return {
     schemaVersion: 2,
     operationMode: COMPUTE_CLAIM_CONTINUATION_MODE,
@@ -1843,10 +1866,75 @@ export async function continueComputeClaimWorkspace({
     runtime,
     receipt,
     recovery,
+    terminalEvidence: {
+      workspacePodImageID: String(pod.imageID),
+      workspaceUrlHttpStatus
+    },
     runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
     backgroundMutationCountsState: "unknown",
     verifiedAt: now.toISOString()
   };
+}
+
+async function readWorkspaceUrlStatus({ url, fetchImpl, signal, requestTimeoutMs }) {
+  const parsed = assertPublicHttpsUrl(url, "public_workspace_url_required", { hostname: "workspace.medopl.cn" });
+  const response = await fetchImpl(parsed.toString(), {
+    method: "GET",
+    redirect: "manual",
+    signal: readOnlyRequestSignal(signal, requestTimeoutMs)
+  });
+  const body = response.status === 200 ? await response.text() : "";
+  if (response.status !== 200 || !body.trim()) throw new Error("compute_claim_continuation_workspace_url_invalid");
+  return response.status;
+}
+
+function computeClaimRecoveryArtifactBinding(result, artifact) {
+  const expectedKeys = [
+    "schemaVersion", "operationMode", "status", "recoveryEligible", "errorCode", "release", "target", "proof", "approval",
+    "runnerDirectMutationCounts"
+  ];
+  let target;
+  let proof;
+  try {
+    target = computeClaimTarget(artifact?.target, new Set(["basic", "pro"]));
+    proof = computeClaimProofProjection(artifact?.proof);
+  } catch {
+    throw new Error("workspace_launch_continuation_artifact_invalid");
+  }
+  const approval = artifact?.approval;
+  if (!exactObjectKeys(artifact, expectedKeys) || artifact?.schemaVersion !== 2 || artifact?.operationMode !== COMPUTE_CLAIM_RECOVER_MODE ||
+    artifact?.status !== "claimed" || artifact?.recoveryEligible !== true || artifact?.errorCode !== "none" ||
+    !exactObjectKeys(artifact?.release, ["mergedSha", "cloudImageDigest"]) ||
+    !exactObjectKeys(artifact?.proof, Object.keys(proof)) || !exactObjectKeys(artifact?.proof?.evidence, ["cvm", "node"]) ||
+    !exactObjectKeys(artifact?.proof?.evidence?.cvm, ["attempted", "confirmed", "unknown", "missing"]) ||
+    !exactObjectKeys(artifact?.proof?.evidence?.node, ["attempted", "confirmed", "unknown", "missing"]) ||
+    !exactObjectKeys(approval, ["approvalId", "approvalDigest"]) ||
+    !/^[a-z0-9][a-z0-9-]{2,47}$/.test(String(approval?.approvalId || "")) ||
+    !/^[a-f0-9]{64}$/.test(String(approval?.approvalDigest || "")) ||
+    JSON.stringify(target) !== JSON.stringify(result?.target) || artifact.release.mergedSha !== result?.release?.mergedSha ||
+    artifact.release.cloudImageDigest !== result?.release?.cloudImageDigest || !computeClaimProofMatchesTarget(proof, target, true) ||
+    artifact?.runnerDirectMutationCounts?.sub2api !== 0 || artifact?.runnerDirectMutationCounts?.tencent !== 0 ||
+    artifact?.runnerDirectMutationCounts?.kubernetes !== 0 || result?.recovery?.approvalId !== approval.approvalId ||
+    result?.recovery?.approvalDigest !== approval.approvalDigest) {
+    throw new Error("workspace_launch_continuation_artifact_invalid");
+  }
+  return {
+    approvalId: approval.approvalId,
+    approvalDigest: approval.approvalDigest,
+    bindingDigest: createHash("sha256").update(canonicalJson(artifact)).digest("hex")
+  };
+}
+
+function workspaceLaunchTerminalEvidence(value, expectedDigest) {
+  const evidence = {
+    workspacePodImageID: String(value?.workspacePodImageID || ""),
+    workspaceUrlHttpStatus: Number(value?.workspaceUrlHttpStatus || 0)
+  };
+  if (!exactObjectKeys(value, Object.keys(evidence)) || immutableDigestFromImageId(evidence.workspacePodImageID) !== expectedDigest ||
+    evidence.workspaceUrlHttpStatus !== 200) {
+    throw new Error("workspace_launch_continuation_artifact_invalid");
+  }
+  return evidence;
 }
 
 export function workspaceLaunchContinuationHandoff(result, recoveryArtifact) {
@@ -1870,7 +1958,10 @@ export function workspaceLaunchContinuationHandoff(result, recoveryArtifact) {
   const runtime = result?.runtime;
   const receipt = result?.receipt;
   const recovery = result?.recovery;
-  const approvalBinding = recoveryArtifact?.approvalBinding;
+  let approvalBinding = recoveryArtifact?.approvalBinding;
+  if (recoveryArtifact?.operationMode === COMPUTE_CLAIM_RECOVER_MODE) {
+    approvalBinding = computeClaimRecoveryArtifactBinding(result, recoveryArtifact);
+  }
   const resources = {
     computeAllocationId: target?.computeAllocationId,
     storageId: target?.storageId,
@@ -1881,9 +1972,11 @@ export function workspaceLaunchContinuationHandoff(result, recoveryArtifact) {
     runtimeServiceName: runtime?.serviceName,
     workspaceUrl: runtime?.url
   };
+  const terminalEvidence = workspaceLaunchTerminalEvidence(result?.terminalEvidence, recovery?.workspaceImageDigest);
   if (result?.schemaVersion !== 2 || result?.operationMode !== COMPUTE_CLAIM_CONTINUATION_MODE || result?.status !== "succeeded" ||
     result?.recoveryEligible !== true || result?.errorCode !== "none" || recoveryArtifact?.schemaVersion !== 2 ||
-    recoveryArtifact?.operationMode !== WORKSPACE_LAUNCH_READBACK_RECOVER_MODE || recoveryArtifact?.status !== "converged" ||
+    !new Set([WORKSPACE_LAUNCH_READBACK_RECOVER_MODE, COMPUTE_CLAIM_RECOVER_MODE]).has(recoveryArtifact?.operationMode) ||
+    recoveryArtifact?.operationMode === WORKSPACE_LAUNCH_READBACK_RECOVER_MODE && recoveryArtifact?.status !== "converged" ||
     !/^[a-f0-9]{64}$/.test(String(approvalBinding?.approvalDigest || "")) || !/^[a-f0-9]{64}$/.test(String(approvalBinding?.bindingDigest || "")) ||
     recovery?.approvalId !== approvalBinding?.approvalId || recovery?.approvalDigest !== approvalBinding?.approvalDigest ||
     launch?.operationId !== target?.launchOperationId || launch?.accountId !== target?.accountId || launch?.workspaceId !== target?.workspaceId ||
@@ -1910,7 +2003,8 @@ export function workspaceLaunchContinuationHandoff(result, recoveryArtifact) {
       recoveryApprovalDigest: recovery.approvalDigest,
       recoveryKey: recovery.recoveryKey,
       recoveryBindingDigest: approvalBinding.bindingDigest,
-      resources
+      resources,
+      terminalEvidence
     },
     runnerDirectMutationCounts: workspaceLaunchReadbackZeroCounts(result.runnerDirectMutationCounts),
     backgroundMutationCountsState: "unknown",
@@ -1961,13 +2055,14 @@ function recoveredWorkspaceE2EContinuation(value, approval) {
 	];
 	const handoffKeys = [
 	  "launchOperationId", "accountId", "workspaceId", "workspaceImageDigest", "recoveryApprovalId", "recoveryApprovalDigest",
-	  "recoveryKey", "recoveryBindingDigest", "resources"
+	  "recoveryKey", "recoveryBindingDigest", "resources", "terminalEvidence"
 	];
 	const resourceKeys = [
 	  "computeAllocationId", "storageId", "attachmentId", "runtimeId", "receiptId", "workspaceApiKeyId", "runtimeServiceName", "workspaceUrl"
 	];
 	const handoff = value?.handoff;
 	const resources = handoff?.resources;
+	const terminalEvidence = workspaceLaunchTerminalEvidence(handoff?.terminalEvidence, approval.workspaceImageDigest);
 	if (value?.schemaVersion !== 2 || value?.operationMode !== COMPUTE_CLAIM_CONTINUATION_MODE || value?.status !== "succeeded" ||
 	  value?.recoveryEligible !== true || value?.errorCode !== "none" || !exactObjectKeys(value, keys) || !exactObjectKeys(handoff, handoffKeys) ||
 	  !exactObjectKeys(resources, resourceKeys) || value?.release?.mergedSha !== approval.mergedMainSha ||
@@ -1992,7 +2087,8 @@ function recoveredWorkspaceE2EContinuation(value, approval) {
 		recoveryKey: handoff.recoveryKey,
 		workspaceImageDigest: handoff.workspaceImageDigest,
 		bindingDigest: handoff.recoveryBindingDigest
-	  }
+	  },
+	  terminalEvidence
 	};
 }
 
@@ -2167,7 +2263,11 @@ export async function verifyRecoveredWorkspaceE2E({
     workspace,
     balance: { before: walletBefore, after: walletAfter },
     usage: { request: requestUsage, stats: { before: statsBefore, after: statsAfter, delta: statsDelta(statsBefore, statsAfter) }, readAttempts: usageReadAttempts },
-    continuation: { verifiedAt: continuationEvidence.verifiedAt, receiptId: continuation.receipt.receiptId },
+    continuation: {
+      verifiedAt: continuationEvidence.verifiedAt,
+      receiptId: continuation.receipt.receiptId,
+      terminalEvidence: continuation.terminalEvidence
+    },
     writeCounts: {
       controlPlaneE2EAttemptReservations: 1,
       modelRequests: 1,
@@ -2320,11 +2420,16 @@ export async function readBasicCanaryCloudRevisionEvidence({
 export async function readBasicCanaryRuntimePodEvidence({
   workspaceId,
   expectedDigest,
+  expectedNodeName = "",
+  expectedCpu = 2,
+  expectedMemoryGb = 4,
   kubeconfigPath,
   namespace,
   execFileImpl = defaultExecFile
 }) {
   if (!/^[A-Za-z0-9][A-Za-z0-9-]{1,99}$/.test(String(workspaceId || "")) || !/^sha256:[a-f0-9]{64}$/.test(String(expectedDigest || "")) ||
+    expectedNodeName && !validIPv4(expectedNodeName) || !Number.isInteger(expectedCpu) || expectedCpu < 1 ||
+    !Number.isInteger(expectedMemoryGb) || expectedMemoryGb < 1 ||
     !String(kubeconfigPath || "").startsWith("/") || !/^[a-z0-9][a-z0-9-]{0,62}$/.test(String(namespace || ""))) {
     throw new Error("production_basic_canary_runtime_pod_config_invalid");
   }
@@ -2351,9 +2456,11 @@ export async function readBasicCanaryRuntimePodEvidence({
     const containers = (pod?.status?.containerStatuses || []).filter((container) => container?.name === "workspace" && container?.ready === true &&
       String(container?.imageID || "").endsWith(expectedDigest));
     const specs = (pod?.spec?.containers || []).filter((container) => container?.name === "workspace" &&
-      String(container?.resources?.limits?.cpu || "") === "2" && String(container?.resources?.limits?.memory || "") === "4Gi");
+      String(container?.resources?.limits?.cpu || "") === String(expectedCpu) &&
+      String(container?.resources?.limits?.memory || "") === `${expectedMemoryGb}Gi`);
     if (pod?.metadata?.deletionTimestamp || labels?.["oplcloud.cn/workspace-id"] !== workspaceId || pod?.status?.phase !== "Running" ||
-      !ready || owners.length !== 1 || containers.length !== 1 || specs.length !== 1 || !pod?.metadata?.name || !nodeName) {
+      !ready || owners.length !== 1 || containers.length !== 1 || specs.length !== 1 || !pod?.metadata?.name || !nodeName ||
+      expectedNodeName && nodeName !== expectedNodeName) {
       return [];
     }
     return [{
@@ -2362,7 +2469,7 @@ export async function readBasicCanaryRuntimePodEvidence({
       containerName: "workspace",
       ready: true,
       imageID: containers[0].imageID,
-      resources: { cpu: 2, memoryGb: 4 },
+      resources: { cpu: expectedCpu, memoryGb: expectedMemoryGb },
       ownerReference: { kind: "ReplicaSet", name: owners[0].name, uid: owners[0].uid }
     }];
   });
@@ -2458,6 +2565,85 @@ async function readGatewayCanaryKeySnapshot(requestOptions, customerAuth) {
 
 function canonicalWorkspaceKeyName(workspaceId) {
   return `opl-workspace-${stableCanaryId(workspaceId).slice(0, 12)}`;
+}
+
+export async function diagnoseWorkspaceIdentity({
+  origin,
+  adminEmail,
+  adminPassword,
+  customerEmail,
+  customerPassword,
+  accountId,
+  workspaceId,
+  requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
+  fetchImpl = globalThis.fetch,
+  now = new Date()
+} = {}) {
+  const normalizedAccountId = String(accountId || "").trim();
+  const normalizedWorkspaceId = String(workspaceId || "").trim();
+  const normalizedCustomerEmail = String(customerEmail || "").trim().toLowerCase();
+  if (!/^acct-[A-Za-z0-9-]+$/.test(normalizedAccountId) || !/^ws-[A-Za-z0-9-]+$/.test(normalizedWorkspaceId) ||
+    !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(normalizedCustomerEmail) || !customerPassword ||
+    !Number.isInteger(requestTimeoutMs) || requestTimeoutMs < 1 || requestTimeoutMs > 300_000) {
+    throw new Error("workspace_identity_config_invalid");
+  }
+  const normalizedOrigin = assertPublicHttpsUrl(origin, "public_console_origin_required", { hostname: "cloud.medopl.cn" }).origin;
+  const requestOptions = { fetchImpl, origin: normalizedOrigin, timeoutMs: requestTimeoutMs };
+  const adminAuth = await login({ ...requestOptions, ...existingAdminCredentials(adminEmail, adminPassword) });
+  if (adminAuth.user?.accountId !== PRODUCTION_ADMIN.accountId || adminAuth.user?.role !== PRODUCTION_ADMIN.role || !adminAuth.csrfToken) {
+    throw new Error("workspace_identity_admin_login_failed");
+  }
+
+  const detail = sourceEnvelope(await requestJson({
+    ...requestOptions,
+    auth: adminAuth,
+    path: `/api/operator/workspaces/${encodeURIComponent(normalizedWorkspaceId)}`
+  }), "control-plane+fabric+ledger").data;
+  const ownerAccount = readOnlyNestedSource(detail?.ownerAccount, "control-plane");
+  const ownerUser = readOnlyNestedSource(detail?.ownerUser, "control-plane");
+  const workspace = readOnlyNestedSource(detail?.workspace, "control-plane");
+  const ownerUserId = String(ownerUser?.id || "");
+  const workspaceApiKeyId = String(workspace?.workspaceApiKeyId || "");
+  if (ownerAccount?.id !== normalizedAccountId || ownerUser?.email !== normalizedCustomerEmail || !/^usr-[A-Za-z0-9-]+$/.test(ownerUserId) ||
+    workspace?.id !== normalizedWorkspaceId || workspace?.ownerAccountId !== normalizedAccountId || workspace?.ownerUserId !== ownerUserId ||
+    !/^[1-9][0-9]*$/.test(workspaceApiKeyId) || !Number.isSafeInteger(Number(workspaceApiKeyId))) {
+    throw new Error("workspace_identity_operator_binding_mismatch");
+  }
+
+  const customerAuth = await login({ ...requestOptions, email: normalizedCustomerEmail, password: customerPassword });
+  if (customerAuth.user?.accountId !== normalizedAccountId || customerAuth.user?.role !== "owner" || !customerAuth.csrfToken) {
+    throw new Error("workspace_identity_customer_login_failed");
+  }
+  const identity = sourceEnvelope(await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/auth/me" }), "sub2api").data;
+  const sub2apiUserId = String(identity?.sub2apiUserId || "");
+  if (identity?.accountId !== normalizedAccountId || identity?.consoleUserId !== ownerUserId || identity?.role !== "owner" || identity?.status !== "active" ||
+    String(identity?.email || "").trim().toLowerCase() !== normalizedCustomerEmail || !/^[1-9][0-9]*$/.test(sub2apiUserId) ||
+    !Number.isSafeInteger(Number(sub2apiUserId))) {
+    throw new Error("workspace_identity_customer_binding_mismatch");
+  }
+
+  const keySnapshot = await readGatewayCanaryKeySnapshot(requestOptions, customerAuth);
+  const expectedName = canonicalWorkspaceKeyName(normalizedWorkspaceId);
+  const matches = keySnapshot.workspaceKeys.filter((key) => key.id === workspaceApiKeyId || key.name === expectedName);
+  if (matches.length !== 1 || matches[0].name !== expectedName || matches[0].status !== "active") {
+    throw new Error("workspace_identity_workspace_key_mismatch");
+  }
+  return {
+    schemaVersion: 1,
+    operationMode: WORKSPACE_IDENTITY_DIAGNOSE_MODE,
+    status: "proven",
+    identity: {
+      accountId: normalizedAccountId,
+      ownerUserId,
+      workspaceId: normalizedWorkspaceId,
+      workspaceApiKeyId,
+      sub2apiUserId,
+      customerEmailSha256: createHash("sha256").update(normalizedCustomerEmail).digest("hex"),
+      workspaceKey: matches[0]
+    },
+    runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
+    verifiedAt: now.toISOString()
+  };
 }
 
 function basicCanaryKeyEvidence(snapshot, baseline, workspaceId, workspaceApiKeyId) {
@@ -3893,7 +4079,7 @@ export async function runProductionLiveQaCli({
   now = new Date()
 } = {}) {
   if (argv.includes("--help") || argv.includes("-h")) {
-    stdout.write("Usage: node tools/production-live-qa.ts --read-only\nCompute claim modes use --compute-claim-diagnose, --compute-claim-recover, or --compute-claim-continue with a non-secret target JSON. A recovered Workspace E2E requires --recovered-workspace-e2e --allow-model-write, an independent approval, and an absolute continuation artifact path. A manual-review diagnosis requires --manual-review-diagnose and a non-secret target JSON. A fixed-slot model request requires --allow-gateway-write --allow-model-write. A real customer canary requires --basic-customer-canary, an exact funding mode, and its explicit approvals.\n");
+    stdout.write("Usage: node tools/production-live-qa.ts --read-only\nA Workspace identity receipt uses --workspace-identity-diagnose with protected customer credentials and exact account/workspace IDs. Compute claim modes use --compute-claim-diagnose, --compute-claim-recover, or --compute-claim-continue with a non-secret target JSON. A recovered Workspace E2E requires --recovered-workspace-e2e --allow-model-write, an independent approval, and an absolute continuation artifact path. A manual-review diagnosis requires --manual-review-diagnose and a non-secret target JSON. A fixed-slot model request requires --allow-gateway-write --allow-model-write. A real customer canary requires --basic-customer-canary, an exact funding mode, and its explicit approvals.\n");
     return 0;
   }
   const computeClaimMode = computeClaimCliMode(argv);
@@ -3901,6 +4087,29 @@ export async function runProductionLiveQaCli({
   try {
     if (env.OPL_VERIFY_MODEL_ACCESS_KEY) throw new Error("production_live_qa_raw_key_forbidden");
     const args = cliArgs(argv);
+    if (args["workspace-identity-diagnose"] === "true") {
+      const conflicts = [
+        "read-only", "manual-review-diagnose", "workspace-launch-readback-diagnose", "workspace-launch-readback-recover",
+        "compute-claim-diagnose", "compute-claim-recover", "compute-claim-continue", "recovered-workspace-e2e", "basic-customer-canary",
+        "allow-account-provision", "allow-wallet-recharge", "allow-workspace-purchase", "allow-model-write", "allow-gateway-write",
+        "allow-existing-precharge-recovery", "approval-id", "funding-mode", "phase"
+      ];
+      if (conflicts.some((name) => args[name])) throw new Error("workspace_identity_diagnose_conflict");
+      const result = await diagnoseWorkspaceIdentity({
+        origin: args.origin || env.OPL_CONSOLE_ORIGIN,
+        adminEmail: env.OPL_SUB2API_ADMIN_EMAIL,
+        adminPassword: env.OPL_SUB2API_ADMIN_PASSWORD,
+        customerEmail: env.OPL_WORKSPACE_IDENTITY_CUSTOMER_EMAIL,
+        customerPassword: env.OPL_WORKSPACE_IDENTITY_CUSTOMER_PASSWORD,
+        accountId: env.OPL_WORKSPACE_IDENTITY_ACCOUNT_ID,
+        workspaceId: env.OPL_WORKSPACE_IDENTITY_WORKSPACE_ID,
+        requestTimeoutMs: Number(args["request-timeout-ms"] || env.OPL_VERIFY_REQUEST_TIMEOUT_MS || DEFAULT_REQUEST_TIMEOUT_MS),
+        fetchImpl,
+        now
+      });
+      stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+      return 0;
+    }
     if (workspaceLaunchReadbackMode && (args["read-only"] === "true" || args["manual-review-diagnose"] === "true")) {
       throw new Error("workspace_launch_readback_mode_conflict");
     }
