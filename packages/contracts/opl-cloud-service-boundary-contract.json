@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 17,
+  "schemaVersion": 21,
   "owner": "OPL Platform Architecture",
   "purpose": "Current ownership contract for Console UI, Control Plane, Ledger, Fabric, and external Sub2API.",
   "state": "current",
@@ -114,6 +114,48 @@
         "reserve": "postgresql_cas_before_external_write",
         "restart": "persisted_budget_never_resets",
         "terminalFailure": "unknown_or_exhausted_enters_manual_review_and_active_worker_excludes_it"
+      },
+      "workspaceLaunchAuthoritativeReadbackRecovery": {
+        "proofRoute": "GET /api/operator/workspace-launches/{operationId}/readback-recovery-proof",
+        "recoveryRoute": "POST /api/operator/workspace-launches/{operationId}/recover",
+        "fabricProofRoute": "POST /fabric/workspace-launch-stage-readback/proof",
+        "fabricConvergenceRoute": "POST /fabric/workspace-launch-stage-readback/converge",
+        "fabricProofSemantics": "authenticated_structured_post_get_describe_only",
+        "stages": ["storage", "attachment", "secret", "runtime", "activation", "receipt"],
+        "inputBudget": {"attempted": 1, "confirmed": 0, "unknown": 1, "max": 1},
+        "convergedBudget": {"attempted": 1, "confirmed": 1, "unknown": 0, "max": 1},
+        "proofAuthorities": ["monthly_provider_truth", "machine_ownership", "fabric_operation_store", "workspace_runtime_status", "workspace_activation_truth", "ledger_receipt"],
+        "proofPersistence": "none",
+        "proofDatabaseMutationCount": 0,
+        "proofFabricOperationMutationCount": 0,
+        "identityBinding": "full_product_compute_node_cbs_attachment_secret_runtime_and_layered_operation_identity",
+        "convergence": "attachment_secret_runtime_fabric_operation_cas_then_postgresql_original_launch_cas_other_stages_original_launch_cas",
+        "convergenceMutationMaximums": {"fabricOperationCas": 1, "originalLaunchCas": 1, "unknownStageProviderWriteReplay": 0},
+        "winner": "one_concurrent_recovery_cas",
+        "replay": "unknown_stage_external_write_never_reissued_later_stages_use_own_persisted_budget",
+        "failure": "absent_multiple_drift_or_read_error_remains_manual_review",
+        "sharedOrchestrator": "fulfillWorkspaceLaunch_basic_pro_and_compute_claim_recovery",
+        "proofMutationCounts": {"sub2api": 0, "tencent": 0, "kubernetes": 0},
+        "runnerDirectMutationCounts": {"sub2api": 0, "tencent": 0, "kubernetes": 0},
+        "backgroundMutationCountsState": "unknown",
+        "unknownStageExternalWriteReplayCount": 0,
+        "remainingStageMutationBudget": "original_launch_persisted_per_stage_max_1",
+        "persistedReplay": {
+          "states": ["preparing", "waiting", "terminal"],
+          "identity": ["approval_id", "approval_digest", "idempotency_key", "full_target"],
+          "expiry": "exact_persisted_identity_replays_after_expiry_unpersisted_expired_rejected",
+          "response": "reconstructed_from_persisted_approval_and_proof_without_fresh_manual_review_proof",
+          "drift": "409_conflict",
+          "mutationCounts": {"database": 0, "fabric": 0, "sub2api": 0, "tencent": 0, "kubernetes": 0}
+        },
+        "artifactBoundary": {
+          "schemaVersion": 2,
+          "projection": "explicit_allowlist_dto_for_success_and_failure",
+          "rawProof": "protected_runner_temp_0600_never_uploaded",
+          "uploadOrder": "validate_then_project_then_upload",
+          "binding": ["approval_digest", "stable_full_binding_digest"],
+          "continuation": "minimal_safe_recovered_workspace_e2e_handoff"
+        }
       },
       "recoveredWorkspaceE2EAttempt": {
         "reserveRoute": "POST /api/workspaces/{workspaceId}/recovered-e2e-attempt",

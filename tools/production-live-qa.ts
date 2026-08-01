@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 
 import {
@@ -19,6 +19,7 @@ import {
 export const LIVE_QA_CONFIRMATION = "I_UNDERSTAND_THIS_SENDS_ONE_REAL_MODEL_REQUEST";
 export const BASIC_CUSTOMER_CANARY_CONFIRMATION = "I_UNDERSTAND_THIS_PROVISIONS_ONE_REAL_BASIC_WORKSPACE_AND_SENDS_ONE_MODEL_REQUEST";
 export const COMPUTE_CLAIM_RECOVERY_CONFIRMATION = "RECOVER_PROVEN_COMPUTE_AND_CONTINUE_ORIGINAL_LAUNCH";
+export const WORKSPACE_LAUNCH_READBACK_RECOVERY_CONFIRMATION = "RECOVER_UNKNOWN_WORKSPACE_LAUNCH_STAGE_FROM_AUTHORITATIVE_READBACK";
 export const RECOVERED_WORKSPACE_E2E_CONFIRMATION = "CONFIRM_SINGLE_MODEL_REQUEST_FOR_RECOVERED_WORKSPACE";
 
 const DEFAULT_USAGE_ATTEMPTS = 24;
@@ -679,6 +680,30 @@ const COMPUTE_CLAIM_RECOVERY_STAGE_LIMITS = Object.freeze({
   activation: 1,
   receipt: 1
 });
+const WORKSPACE_LAUNCH_READBACK_DIAGNOSE_MODE = "workspace_launch_readback_diagnose";
+const WORKSPACE_LAUNCH_READBACK_RECOVER_MODE = "workspace_launch_readback_recover";
+const WORKSPACE_LAUNCH_READBACK_STAGES = Object.freeze([
+  "storage", "attachment", "secret", "runtime", "activation", "receipt"
+]);
+const WORKSPACE_LAUNCH_READBACK_PHASES = Object.freeze({
+  storage: "storage_fulfilling",
+  attachment: "attaching",
+  secret: "secret_writing",
+  runtime: "runtime_starting",
+  activation: "activating",
+  receipt: "receipt_pending"
+});
+const WORKSPACE_LAUNCH_READBACK_REMAINING_WRITES = Object.freeze({
+  storage: Object.freeze(["create_original_pv_pvc_attachment", "upsert_original_gateway_secret", "create_original_workspace_runtime", "activate_original_workspace", "record_original_purchase_receipt"]),
+  attachment: Object.freeze(["upsert_original_gateway_secret", "create_original_workspace_runtime", "activate_original_workspace", "record_original_purchase_receipt"]),
+  secret: Object.freeze(["create_original_workspace_runtime", "activate_original_workspace", "record_original_purchase_receipt"]),
+  runtime: Object.freeze(["activate_original_workspace", "record_original_purchase_receipt"]),
+  activation: Object.freeze(["record_original_purchase_receipt"]),
+  receipt: Object.freeze([])
+});
+const WORKSPACE_LAUNCH_READBACK_FORBIDDEN_WRITES = Object.freeze([
+  "create_launch", "debit", "recharge", "refund", "scale", "create_cvm", "create_second_cbs", "delete", "replace", "retry_unknown_stage_write"
+]);
 const RECOVERED_WORKSPACE_E2E_ALLOWED_WRITES = Object.freeze([
   "control_plane_e2e_attempt_reservation",
   "single_workspace_model_request",
@@ -737,7 +762,7 @@ function validIPv4(value) {
   return parts.length === 4 && parts.every((part) => /^(?:0|[1-9][0-9]{0,2})$/.test(part) && Number(part) <= 255);
 }
 
-function computeClaimTarget(value) {
+function computeClaimTarget(value, allowedPackages = new Set(["basic"])) {
   let target;
   try {
     target = typeof value === "string" ? JSON.parse(value) : value;
@@ -750,7 +775,7 @@ function computeClaimTarget(value) {
     !/^ws-[A-Za-z0-9-]+$/.test(String(target.workspaceId || "")) ||
     !/^ca_[A-Za-z0-9_\-]+$/.test(String(target.computeAllocationId || "")) ||
     !/^vol_[A-Za-z0-9_\-]+$/.test(String(target.storageId || "")) ||
-    target.packageId !== "basic" ||
+    !allowedPackages.has(target.packageId) ||
     !/^pool-[A-Za-z0-9-]+$/.test(String(target.poolId || "")) ||
     !/^np-[A-Za-z0-9-]+$/.test(String(target.nodePoolId || "")) ||
     !/^[A-Za-z0-9][A-Za-z0-9.-]{1,127}$/.test(String(target.machineName || "")) ||
@@ -984,6 +1009,463 @@ function computeClaimArtifact(mode, target, release, proof, eligible, errorCode,
   return artifact;
 }
 
+function workspaceLaunchReadbackTarget(value) {
+	try {
+		return computeClaimTarget(value, new Set(["basic", "pro"]));
+	} catch {
+		throw new Error("workspace_launch_readback_target_invalid");
+	}
+}
+
+function workspaceLaunchReadbackAllowedWrites(stage) {
+  const remaining = WORKSPACE_LAUNCH_READBACK_REMAINING_WRITES[stage];
+  return remaining ? [`confirm_original_${stage}_from_authoritative_readback`, ...remaining] : [];
+}
+
+const WORKSPACE_LAUNCH_READBACK_PROOF_TARGET_KEYS = Object.freeze([
+  ...COMPUTE_CLAIM_TARGET_KEYS, "storageGb", "autoRenew", "priceVersion", "totalChargeUsdMicros",
+  "periodStart", "paidThrough", "billingAnchorDay"
+]);
+const WORKSPACE_LAUNCH_READBACK_RESOURCE_KEYS = Object.freeze([
+  "computeAllocationId", "computeProviderResourceId", "storageVolumeId", "storageProviderResourceId", "storageZone",
+  "storageSizeGb", "storageChargeType", "storageRenewFlag", "storageDeadline", "attachmentId", "attachmentProviderId",
+  "gatewaySecretRef", "gatewaySecretFingerprint", "workspaceApiKeyId", "runtimeId", "runtimeServiceName", "receiptId"
+]);
+const WORKSPACE_LAUNCH_READBACK_OPERATION_KEYS = Object.freeze([
+  "launchOperationId", "launchRequestHash", "machineOwnershipId", "compute", "storage", "attachment", "secret", "runtime",
+  "activationOperationId", "receiptOperationId"
+]);
+const WORKSPACE_LAUNCH_READBACK_OPERATION_IDENTITY_KEYS = Object.freeze([
+  "idempotencyKey", "fabricRecordId", "fabricOperationId", "requestHash", "resourceOperationId", "providerOperationId", "readbackBindingDigest"
+]);
+
+function workspaceLaunchReadbackProofTarget(value, expected) {
+  const storageGb = Number(value?.storageGb);
+  const totalChargeUsdMicros = Number(value?.totalChargeUsdMicros);
+  const billingAnchorDay = Number(value?.billingAnchorDay);
+  let baseTarget;
+  try {
+    baseTarget = computeClaimTarget(Object.fromEntries(COMPUTE_CLAIM_TARGET_KEYS.map((key) => [key, value?.[key]])), new Set(["basic", "pro"]));
+  } catch {
+    throw new Error("workspace_launch_readback_proof_invalid");
+  }
+  if (!exactObjectKeys(value, WORKSPACE_LAUNCH_READBACK_PROOF_TARGET_KEYS) || JSON.stringify(baseTarget) !== JSON.stringify(expected) ||
+    !Number.isSafeInteger(storageGb) || storageGb <= 0 || !Number.isSafeInteger(totalChargeUsdMicros) || totalChargeUsdMicros <= 0 ||
+    !Number.isInteger(billingAnchorDay) || billingAnchorDay < 1 || billingAnchorDay > 31 || typeof value.autoRenew !== "boolean" ||
+    !/^[A-Za-z0-9._-]{3,80}$/.test(String(value.priceVersion || "")) || !Number.isFinite(Date.parse(value.periodStart)) ||
+    !Number.isFinite(Date.parse(value.paidThrough)) || Date.parse(value.paidThrough) <= Date.parse(value.periodStart) ||
+    Date.parse(value.deadline) < Date.parse(value.paidThrough)) {
+    throw new Error("workspace_launch_readback_proof_invalid");
+  }
+  return value;
+}
+
+function workspaceLaunchReadbackOperationIdentity(value, idempotencyKey, required, providerRequired, readbackRequired) {
+  const text = (key) => String(value?.[key] || "");
+  if (!exactObjectKeys(value, WORKSPACE_LAUNCH_READBACK_OPERATION_IDENTITY_KEYS) || text("idempotencyKey") !== idempotencyKey) {
+    throw new Error("workspace_launch_readback_proof_invalid");
+  }
+  const authority = ["fabricRecordId", "fabricOperationId", "requestHash", "resourceOperationId"];
+  if (required) {
+    if (authority.some((key) => !text(key)) || (providerRequired && !text("providerOperationId"))) {
+      throw new Error("workspace_launch_readback_proof_invalid");
+    }
+  } else if (authority.some((key) => text(key) !== "") || text("providerOperationId") !== "") {
+    throw new Error("workspace_launch_readback_proof_invalid");
+  }
+  if (readbackRequired ? !/^[a-f0-9]{64}$/.test(text("readbackBindingDigest")) : text("readbackBindingDigest") !== "") {
+    throw new Error("workspace_launch_readback_proof_invalid");
+  }
+  return value;
+}
+
+function workspaceLaunchReadbackProof(value, target) {
+  const customerKeys = ["email", "accountId", "ownerUserId"];
+  const budgetKeys = ["attempted", "confirmed", "unknown", "max"];
+  const keys = [
+    "schemaVersion", "eligible", "reason", "stage", "customer", "target", "resources", "operationIds", "workspaceImageDigest",
+    "attemptBudget", "allowedWrites", "forbiddenWrites", "sub2apiMutationCount", "tencentMutationCount", "kubernetesMutationCount"
+  ];
+  const stage = String(value?.stage || "");
+  const customerEmail = String(value?.customer?.email || "").trim().toLowerCase();
+  const expectedAllowedWrites = workspaceLaunchReadbackAllowedWrites(stage);
+  const resources = value?.resources;
+  const operations = value?.operationIds;
+  const currentIndex = WORKSPACE_LAUNCH_READBACK_STAGES.indexOf(stage);
+  const resourceID = (name, pattern, optional = false) => {
+    const item = String(resources?.[name] || "");
+    return (optional && item === "") || pattern.test(item);
+  };
+  if (!exactObjectKeys(value, keys) || value.schemaVersion !== 1 || value.eligible !== true || value.reason !== "none" ||
+    !WORKSPACE_LAUNCH_READBACK_STAGES.includes(stage) || !exactObjectKeys(value.customer, customerKeys) ||
+    !exactObjectKeys(resources, WORKSPACE_LAUNCH_READBACK_RESOURCE_KEYS) || !exactObjectKeys(operations, WORKSPACE_LAUNCH_READBACK_OPERATION_KEYS) ||
+    !exactObjectKeys(value.attemptBudget, budgetKeys) || customerEmail !== value.customer.email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(customerEmail) ||
+    value.customer.accountId !== target.accountId || !/^usr-[A-Za-z0-9-]+$/.test(String(value.customer.ownerUserId || "")) ||
+    !resourceID("computeAllocationId", /^ca_[A-Za-z0-9_-]+$/) ||
+    !resourceID("computeProviderResourceId", /^ins-[A-Za-z0-9-]+$/) || !resourceID("storageVolumeId", /^vol_[A-Za-z0-9_-]+$/) ||
+    !resourceID("storageProviderResourceId", /^disk-[A-Za-z0-9-]+$/) || resources.computeAllocationId !== target.computeAllocationId ||
+    resources.computeProviderResourceId !== target.cvmInstanceId || resources.storageVolumeId !== target.storageId || resources.storageZone !== target.zone ||
+    resources.storageSizeGb !== value?.target?.storageGb || resources.storageChargeType !== target.chargeType || resources.storageRenewFlag !== target.renewFlag ||
+    !Number.isFinite(Date.parse(resources.storageDeadline)) || Date.parse(resources.storageDeadline) < Date.parse(value?.target?.paidThrough) ||
+    !resourceID("attachmentId", /^[A-Za-z0-9_-]{3,128}$/, stage === "storage") ||
+    !resourceID("attachmentProviderId", /^[A-Za-z0-9_./:-]{3,256}$/, stage === "storage") ||
+    !resourceID("gatewaySecretRef", /^opl-gateway-[a-f0-9]{16}$/) || !resourceID("gatewaySecretFingerprint", /^sha256:[a-f0-9]{64}$/, new Set(["storage", "attachment"]).has(stage)) ||
+    !Number.isSafeInteger(resources.workspaceApiKeyId) || resources.workspaceApiKeyId <= 0 ||
+    !resourceID("runtimeId", /^[A-Za-z0-9_-]{3,128}$/, new Set(["storage", "attachment", "secret"]).has(stage)) ||
+    !resourceID("runtimeServiceName", /^[A-Za-z0-9-]{3,128}$/, new Set(["storage", "attachment", "secret"]).has(stage)) ||
+    !resourceID("receiptId", /^[A-Za-z0-9_-]{3,128}$/, stage !== "receipt") ||
+    operations.launchOperationId !== target.launchOperationId || !operations.launchRequestHash || !operations.machineOwnershipId ||
+    operations.activationOperationId !== `${target.launchOperationId}:activation` || operations.receiptOperationId !== `${target.launchOperationId}:purchase-receipt` ||
+    !/^sha256:[a-f0-9]{64}$/.test(String(value.workspaceImageDigest || "")) ||
+    JSON.stringify(value.attemptBudget) !== JSON.stringify({ attempted: 1, confirmed: 0, unknown: 1, max: 1 }) ||
+    JSON.stringify(value.allowedWrites) !== JSON.stringify(expectedAllowedWrites) ||
+    JSON.stringify(value.forbiddenWrites) !== JSON.stringify(WORKSPACE_LAUNCH_READBACK_FORBIDDEN_WRITES) ||
+    value.sub2apiMutationCount !== 0 || value.tencentMutationCount !== 0 || value.kubernetesMutationCount !== 0) {
+    throw new Error("workspace_launch_readback_proof_invalid");
+  }
+  workspaceLaunchReadbackProofTarget(value.target, target);
+  const identities = [
+    ["compute", `${target.launchOperationId}:compute`, true, true],
+    ["storage", `${target.launchOperationId}:storage`, true, true],
+    ["attachment", `${target.launchOperationId}:attachment`, currentIndex >= 1, true],
+    ["secret", `${target.launchOperationId}:workspace:secret:gateway-secret`, currentIndex >= 2, false],
+    ["runtime", `${target.launchOperationId}:workspace:runtime`, currentIndex >= 3, true]
+  ];
+  for (const [name, idempotencyKey, required, providerRequired] of identities) {
+    const readbackRequired = name === stage && new Set(["attachment", "secret", "runtime"]).has(stage);
+    workspaceLaunchReadbackOperationIdentity(operations[name], idempotencyKey, required, providerRequired, readbackRequired);
+  }
+  if (operations.compute.providerOperationId !== operations.machineOwnershipId) throw new Error("workspace_launch_readback_proof_invalid");
+  return JSON.parse(JSON.stringify(value));
+}
+
+function workspaceLaunchReadbackApproval(value, expected) {
+  let approval;
+  try {
+    approval = typeof value === "string" ? JSON.parse(value) : value;
+  } catch {
+    throw new Error("workspace_launch_readback_approval_invalid");
+  }
+  const proof = expected.proof;
+  const keys = [
+    "schemaVersion", "approvalId", "expiresAt", "mergedMainSha", "cloudImageDigest", "workspaceImageDigest", "confirmation",
+    "idempotencyKey", "recoveryKey", "stage", "customer", "target", "resources", "operationIds", "attemptBudget", "allowedWrites", "forbiddenWrites"
+  ];
+  const opaque = (item) => /^[a-z0-9][a-z0-9-]{2,47}$/.test(String(item || "")) &&
+    !/(?:api-?key|bearer|credential|password|secret|token)/.test(String(item));
+  const binding = {
+    customer: proof.customer,
+    target: proof.target,
+    resources: proof.resources,
+    operationIds: proof.operationIds,
+    attemptBudget: proof.attemptBudget,
+    allowedWrites: proof.allowedWrites,
+    forbiddenWrites: proof.forbiddenWrites
+  };
+  if (!exactObjectKeys(approval, keys) || approval.schemaVersion !== 1 || approval.approvalId !== expected.approvalId ||
+    !opaque(approval.approvalId) || !opaque(approval.idempotencyKey) || !opaque(approval.recoveryKey) ||
+		!Number.isFinite(Date.parse(approval.expiresAt)) ||
+    approval.mergedMainSha !== expected.mergedSha || approval.cloudImageDigest !== expected.cloudImageDigest ||
+    approval.confirmation !== WORKSPACE_LAUNCH_READBACK_RECOVERY_CONFIRMATION) {
+    throw new Error("workspace_launch_readback_approval_invalid");
+  }
+  if (approval.workspaceImageDigest !== proof.workspaceImageDigest || approval.stage !== proof.stage ||
+    Object.entries(binding).some(([key, item]) => JSON.stringify(approval[key]) !== JSON.stringify(item))) {
+    throw new Error("workspace_launch_readback_proof_drift");
+  }
+  return JSON.parse(JSON.stringify(approval));
+}
+
+function workspaceLaunchReadbackStaticApproval(value, expected) {
+  let approval;
+  try {
+    approval = typeof value === "string" ? JSON.parse(value) : value;
+  } catch {
+    throw new Error("workspace_launch_readback_approval_invalid");
+  }
+  const keys = [
+    "schemaVersion", "approvalId", "expiresAt", "mergedMainSha", "cloudImageDigest", "workspaceImageDigest", "confirmation",
+    "idempotencyKey", "recoveryKey", "stage", "customer", "target", "resources", "operationIds", "attemptBudget", "allowedWrites", "forbiddenWrites"
+  ];
+  if (!exactObjectKeys(approval, keys) || approval.schemaVersion !== 1 || approval.approvalId !== expected.approvalId ||
+    approval.mergedMainSha !== expected.mergedSha || approval.cloudImageDigest !== expected.cloudImageDigest ||
+    approval.confirmation !== WORKSPACE_LAUNCH_READBACK_RECOVERY_CONFIRMATION || !WORKSPACE_LAUNCH_READBACK_STAGES.includes(approval.stage) ||
+		!Number.isFinite(Date.parse(approval.expiresAt)) ||
+    !exactObjectKeys(approval.customer, ["email", "accountId", "ownerUserId"]) ||
+    String(approval.customer.email || "").trim().toLowerCase() !== String(expected.customerEmail || "").trim().toLowerCase() ||
+    approval.customer.accountId !== expected.target.accountId || JSON.stringify(approval.target) !== JSON.stringify({ ...expected.target,
+      storageGb: approval.target?.storageGb, autoRenew: approval.target?.autoRenew, priceVersion: approval.target?.priceVersion,
+      totalChargeUsdMicros: approval.target?.totalChargeUsdMicros, periodStart: approval.target?.periodStart,
+      paidThrough: approval.target?.paidThrough, billingAnchorDay: approval.target?.billingAnchorDay
+    })) {
+    throw new Error("workspace_launch_readback_approval_invalid");
+  }
+  workspaceLaunchReadbackProofTarget(approval.target, expected.target);
+  if (!Number.isFinite(Date.parse(approval.resources?.storageDeadline)) ||
+    Date.parse(approval.resources.storageDeadline) < Date.parse(approval.target.paidThrough)) {
+    throw new Error("workspace_launch_readback_approval_invalid");
+  }
+  return approval;
+}
+
+async function workspaceLaunchReadbackSession({ fetchImpl, origin, adminEmail, adminPassword, requestTimeoutMs }) {
+  const credentials = existingAdminCredentials(adminEmail, adminPassword);
+  const normalizedOrigin = assertPublicHttpsUrl(origin, "public_console_origin_required", { hostname: "cloud.medopl.cn" }).origin;
+  const auth = await login({ fetchImpl, origin: normalizedOrigin, ...credentials, timeoutMs: requestTimeoutMs });
+  if (auth.user?.accountId !== PRODUCTION_ADMIN.accountId || auth.user?.role !== PRODUCTION_ADMIN.role || !auth.csrfToken) {
+    throw new Error("workspace_launch_readback_admin_login_failed");
+  }
+  return { auth, normalizedOrigin };
+}
+
+async function readWorkspaceLaunchReadbackProof({ fetchImpl, origin, auth, target, requestTimeoutMs }) {
+  const response = await requestJson({
+    fetchImpl,
+    origin,
+    auth,
+    path: `/api/operator/workspace-launches/${encodeURIComponent(target.launchOperationId)}/readback-recovery-proof`,
+    timeoutMs: requestTimeoutMs
+  });
+  return workspaceLaunchReadbackProof(response.payload, target);
+}
+
+export async function diagnoseWorkspaceLaunchReadbackRecovery({
+  target: rawTarget,
+  mergedSha,
+  cloudImageDigest,
+  origin,
+  adminEmail,
+  adminPassword,
+  customerEmail,
+  kubeconfigPath,
+  namespace,
+  requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
+  cloudRevisionEvidenceReader,
+  execFileImpl = defaultExecFile,
+  fetchImpl = globalThis.fetch,
+  now = new Date()
+} = {}) {
+  const target = workspaceLaunchReadbackTarget(rawTarget);
+  if (!String(kubeconfigPath || "").startsWith("/") || !/^[a-z0-9][a-z0-9-]{0,62}$/.test(String(namespace || "")) ||
+    !Number.isInteger(requestTimeoutMs) || requestTimeoutMs < 1 || requestTimeoutMs > 300_000) {
+    throw new Error("workspace_launch_readback_config_invalid");
+  }
+  const release = await currentComputeClaimCloudRevision({ mergedSha, cloudImageDigest, kubeconfigPath, namespace, cloudRevisionEvidenceReader, execFileImpl });
+  const { auth, normalizedOrigin } = await workspaceLaunchReadbackSession({ fetchImpl, origin, adminEmail, adminPassword, requestTimeoutMs });
+  const proof = await readWorkspaceLaunchReadbackProof({ fetchImpl, origin: normalizedOrigin, auth, target, requestTimeoutMs });
+  if (String(customerEmail || "").trim().toLowerCase() !== proof.customer.email) throw new Error("workspace_launch_readback_customer_identity_mismatch");
+  return {
+    schemaVersion: 1,
+    operationMode: WORKSPACE_LAUNCH_READBACK_DIAGNOSE_MODE,
+    status: "proven",
+    recoveryEligible: true,
+    errorCode: "none",
+    release: computeClaimReleaseEvidence(release),
+    target,
+    proof,
+    runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
+    verifiedAt: now.toISOString()
+  };
+}
+
+export async function recoverWorkspaceLaunchReadbackRecovery({
+  target: rawTarget,
+  approvalJson,
+  approvalId,
+  mergedSha,
+  cloudImageDigest,
+  origin,
+  adminEmail,
+  adminPassword,
+  customerEmail,
+  internalServiceToken,
+  kubeconfigPath,
+  namespace,
+  requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
+  cloudRevisionEvidenceReader,
+  execFileImpl = defaultExecFile,
+  fetchImpl = globalThis.fetch,
+  now = new Date()
+} = {}) {
+  const target = workspaceLaunchReadbackTarget(rawTarget);
+  if (!internalServiceToken || internalServiceToken !== String(internalServiceToken).trim()) throw new Error("workspace_launch_readback_capability_required");
+  if (!String(kubeconfigPath || "").startsWith("/") || !/^[a-z0-9][a-z0-9-]{0,62}$/.test(String(namespace || "")) ||
+    !Number.isInteger(requestTimeoutMs) || requestTimeoutMs < 1 || requestTimeoutMs > 300_000) {
+    throw new Error("workspace_launch_readback_config_invalid");
+  }
+	const staticApproval = workspaceLaunchReadbackStaticApproval(approvalJson, { approvalId, mergedSha, cloudImageDigest, customerEmail, target });
+	const release = await currentComputeClaimCloudRevision({ mergedSha, cloudImageDigest, kubeconfigPath, namespace, cloudRevisionEvidenceReader, execFileImpl });
+	const { auth, normalizedOrigin } = await workspaceLaunchReadbackSession({ fetchImpl, origin, adminEmail, adminPassword, requestTimeoutMs });
+	const approvalDigest = createHash("sha256").update(canonicalJson(staticApproval)).digest("hex");
+	const request = {
+		fetchImpl,
+		origin: normalizedOrigin,
+		auth,
+		path: `/api/operator/workspace-launches/${encodeURIComponent(target.launchOperationId)}/recover`,
+		idempotencyKey: staticApproval.idempotencyKey,
+		capability: internalServiceToken,
+		requestTimeoutMs,
+		body: {
+			accountId: target.accountId,
+			billingOperationId: target.launchOperationId,
+			evidenceRef: `readback-${staticApproval.recoveryKey}`,
+			approval: { ...staticApproval, approvalDigest }
+		}
+	};
+	let response;
+	try {
+		response = await computeClaimControlPlanePost(request);
+	} catch {
+		response = await computeClaimControlPlanePost(request);
+	}
+	const operation = response.payload;
+	if (response.statusCode !== 200) throw new Error("workspace_launch_readback_recovery_unconfirmed");
+	const proof = workspaceLaunchReadbackProof(operation?.readbackRecoveryProof, target);
+	if (String(customerEmail || "").trim().toLowerCase() !== proof.customer.email) throw new Error("workspace_launch_readback_customer_identity_mismatch");
+	const approval = workspaceLaunchReadbackApproval(staticApproval, { approvalId, mergedSha, cloudImageDigest, proof });
+	const budget = operation?.continuationAttemptBudgets?.[proof.stage];
+	if (operation?.operationId !== target.launchOperationId || operation?.accountId !== target.accountId ||
+		operation?.workspaceId !== target.workspaceId || !new Set(["preparing", "waiting", "succeeded"]).has(operation?.status) ||
+    JSON.stringify(budget) !== JSON.stringify({ attempted: 1, confirmed: 1, unknown: 0, max: 1 })) {
+    throw new Error("workspace_launch_readback_recovery_unconfirmed");
+  }
+  return {
+    schemaVersion: 1,
+    operationMode: WORKSPACE_LAUNCH_READBACK_RECOVER_MODE,
+    status: "converged",
+    recoveryEligible: true,
+    errorCode: "none",
+    release: computeClaimReleaseEvidence(release),
+    target,
+    stage: proof.stage,
+    proof,
+    approval: { approvalId: approval.approvalId, approvalDigest },
+    operation: {
+      operationId: operation.operationId,
+      accountId: operation.accountId,
+      workspaceId: operation.workspaceId,
+      status: String(operation.status || ""),
+      phase: String(operation.phase || ""),
+      attemptBudget: budget
+    },
+    runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
+    backgroundMutationCountsState: "unknown",
+    verifiedAt: now.toISOString()
+  };
+}
+
+function workspaceLaunchReadbackBindingDigest(proof) {
+  const binding = {
+    schemaVersion: proof.schemaVersion,
+    stage: proof.stage,
+    customer: proof.customer,
+    target: proof.target,
+    resources: proof.resources,
+    operationIds: proof.operationIds,
+    workspaceImageDigest: proof.workspaceImageDigest,
+    attemptBudget: proof.attemptBudget,
+    allowedWrites: proof.allowedWrites,
+    forbiddenWrites: proof.forbiddenWrites
+  };
+  return createHash("sha256").update(canonicalJson(binding)).digest("hex");
+}
+
+function workspaceLaunchReadbackSafeRelease(value) {
+  const mergedSha = String(value?.mergedSha || "");
+  const cloudImageDigest = String(value?.cloudImageDigest || "");
+  if (!/^[a-f0-9]{40}$/.test(mergedSha) || !/^sha256:[a-f0-9]{64}$/.test(cloudImageDigest)) {
+    throw new Error("workspace_launch_readback_artifact_invalid");
+  }
+  return { mergedSha, cloudImageDigest };
+}
+
+function workspaceLaunchReadbackZeroCounts(value) {
+  const expected = { sub2api: 0, tencent: 0, kubernetes: 0 };
+  if (!exactObjectKeys(value, Object.keys(expected)) || JSON.stringify(value) !== JSON.stringify(expected)) {
+    throw new Error("workspace_launch_readback_artifact_invalid");
+  }
+  return expected;
+}
+
+export function workspaceLaunchReadbackArtifact(result) {
+  if (result?.status === "blocked") {
+    const expectedKeys = ["schemaVersion", "operationMode", "status", "recoveryEligible", "errorCode", "runnerDirectMutationCounts"];
+    if (result.operationMode === WORKSPACE_LAUNCH_READBACK_RECOVER_MODE) expectedKeys.push("backgroundMutationCountsState");
+    if (!exactObjectKeys(result, expectedKeys) || result.schemaVersion !== 2 || result.recoveryEligible !== false ||
+      !new Set([WORKSPACE_LAUNCH_READBACK_DIAGNOSE_MODE, WORKSPACE_LAUNCH_READBACK_RECOVER_MODE]).has(result.operationMode) ||
+      result.errorCode !== (result.operationMode === WORKSPACE_LAUNCH_READBACK_DIAGNOSE_MODE
+        ? "workspace_launch_readback_diagnosis_failed"
+        : "workspace_launch_readback_recovery_failed") ||
+      (result.operationMode === WORKSPACE_LAUNCH_READBACK_RECOVER_MODE && result.backgroundMutationCountsState !== "unknown")) {
+      throw new Error("workspace_launch_readback_artifact_invalid");
+    }
+    return {
+      schemaVersion: 2,
+      operationMode: result.operationMode,
+      status: "blocked",
+      recoveryEligible: false,
+      errorCode: result.errorCode,
+      runnerDirectMutationCounts: workspaceLaunchReadbackZeroCounts(result.runnerDirectMutationCounts),
+      ...(result.operationMode === WORKSPACE_LAUNCH_READBACK_RECOVER_MODE ? { backgroundMutationCountsState: "unknown" } : {})
+    };
+  }
+
+  const proof = workspaceLaunchReadbackProof(result?.proof, result?.target);
+  const bindingDigest = workspaceLaunchReadbackBindingDigest(proof);
+  const verifiedAt = String(result?.verifiedAt || "");
+  if (!Number.isFinite(Date.parse(verifiedAt)) || result?.schemaVersion !== 1 || result?.recoveryEligible !== true || result?.errorCode !== "none" ||
+    result?.stage && result.stage !== proof.stage) {
+    throw new Error("workspace_launch_readback_artifact_invalid");
+  }
+  const base = {
+    schemaVersion: 2,
+    operationMode: result.operationMode,
+    status: result.status,
+    recoveryEligible: true,
+    errorCode: "none",
+    release: workspaceLaunchReadbackSafeRelease(result.release),
+    stage: proof.stage
+  };
+  if (result.operationMode === WORKSPACE_LAUNCH_READBACK_DIAGNOSE_MODE) {
+    if (result.status !== "proven" || JSON.stringify(proof.attemptBudget) !== JSON.stringify({ attempted: 1, confirmed: 0, unknown: 1, max: 1 })) {
+      throw new Error("workspace_launch_readback_artifact_invalid");
+    }
+    return {
+      ...base,
+      bindingDigest,
+      attemptBudget: { ...proof.attemptBudget },
+      runnerDirectMutationCounts: workspaceLaunchReadbackZeroCounts(result.runnerDirectMutationCounts),
+      verifiedAt
+    };
+  }
+  const operation = result?.operation;
+  if (result.operationMode !== WORKSPACE_LAUNCH_READBACK_RECOVER_MODE || result.status !== "converged" ||
+    !exactObjectKeys(result.approval, ["approvalId", "approvalDigest"]) || !/^[a-z0-9][a-z0-9-]{2,47}$/.test(String(result.approval.approvalId || "")) ||
+    !/^[a-f0-9]{64}$/.test(String(result.approval.approvalDigest || "")) ||
+    operation?.operationId !== proof.target.launchOperationId || operation?.accountId !== proof.target.accountId || operation?.workspaceId !== proof.target.workspaceId ||
+    !new Set(["preparing", "waiting", "succeeded"]).has(operation?.status) ||
+    JSON.stringify(operation?.attemptBudget) !== JSON.stringify({ attempted: 1, confirmed: 1, unknown: 0, max: 1 }) ||
+    result.backgroundMutationCountsState !== "unknown") {
+    throw new Error("workspace_launch_readback_artifact_invalid");
+  }
+  return {
+    ...base,
+    approvalBinding: {
+      approvalId: result.approval.approvalId,
+      approvalDigest: result.approval.approvalDigest,
+      bindingDigest
+    },
+    operation: {
+      status: operation.status,
+      phase: String(operation.phase || ""),
+      attemptBudget: { ...operation.attemptBudget }
+    },
+    runnerDirectMutationCounts: workspaceLaunchReadbackZeroCounts(result.runnerDirectMutationCounts),
+    backgroundMutationCountsState: "unknown",
+    verifiedAt
+  };
+}
+
 export async function diagnoseComputeClaimRecovery({
   target: rawTarget,
   mergedSha,
@@ -1184,6 +1666,7 @@ function computeClaimWorkspaceUrl(value, workspaceId) {
 }
 
 function computeClaimContinuationLaunch(value, target) {
+	const expectedStorageGb = target.packageId === "basic" ? 10 : target.packageId === "pro" ? 100 : 0;
   const launch = {
     operationId: String(value?.operationId || ""),
     accountId: String(value?.accountId || ""),
@@ -1214,8 +1697,8 @@ function computeClaimContinuationLaunch(value, target) {
   } else if (!COMPUTE_CLAIM_CONTINUATION_PHASES.has(launch.phase)) {
     throw new Error("compute_claim_continuation_phase_invalid");
   }
-  if (launch.operationId !== target.launchOperationId || launch.accountId !== target.accountId || launch.workspaceId !== target.workspaceId ||
-    launch.packageId !== target.packageId || launch.sizeGb !== 10 || launch.autoRenew !== false || launch.currency !== "USD" ||
+	if (launch.operationId !== target.launchOperationId || launch.accountId !== target.accountId || launch.workspaceId !== target.workspaceId ||
+		launch.packageId !== target.packageId || launch.sizeGb !== expectedStorageGb || typeof launch.autoRenew !== "boolean" || launch.currency !== "USD" ||
     !launch.priceVersion || !Number.isSafeInteger(launch.totalChargeUsdMicros) || launch.totalChargeUsdMicros <= 0 ||
     launch.computeAllocationId !== target.computeAllocationId || launch.storageId !== target.storageId) {
     throw new Error("compute_claim_continuation_identity_mismatch");
@@ -1266,10 +1749,11 @@ function computeClaimContinuationReceipt(value, target, launch, runtime) {
       workspaceId: target.workspaceId,
       computeAllocationId: target.computeAllocationId,
       storageId: target.storageId,
-      attachmentId: launch.attachmentId,
-      runtimeId: runtime.runtimeId,
-      workspaceApiKeyId: launch.workspaceApiKeyId,
-      totalUsdMicros: launch.totalChargeUsdMicros
+		attachmentId: launch.attachmentId,
+		runtimeId: runtime.runtimeId,
+		workspaceApiKeyId: launch.workspaceApiKeyId,
+		totalUsdMicros: launch.totalChargeUsdMicros,
+		storageSizeGb: launch.sizeGb
     });
     return { ...receipt, workspaceId: target.workspaceId };
   } catch {
@@ -1295,7 +1779,7 @@ export async function continueComputeClaimWorkspace({
   signal,
   now = new Date()
 } = {}) {
-  const target = computeClaimTarget(rawTarget);
+	const target = computeClaimTarget(rawTarget, new Set(["basic", "pro"]));
   if (!/^[a-f0-9]{40}$/.test(String(mergedSha || "")) || !/^sha256:[a-f0-9]{64}$/.test(String(cloudImageDigest || "")) ||
     !String(kubeconfigPath || "").startsWith("/") || !/^[a-z0-9][a-z0-9-]{0,62}$/.test(String(namespace || "")) ||
     !Number.isInteger(launchPollAttempts) || launchPollAttempts < 1 || launchPollAttempts > 1000 ||
@@ -1366,6 +1850,75 @@ export async function continueComputeClaimWorkspace({
   };
 }
 
+export function workspaceLaunchContinuationHandoff(result, recoveryArtifact) {
+  if (result?.status === "blocked") {
+    if (result.schemaVersion !== 2 || result.operationMode !== COMPUTE_CLAIM_CONTINUATION_MODE || result.recoveryEligible !== false ||
+      result.errorCode !== "compute_claim_continuation_failed" || result.backgroundMutationCountsState !== "unknown") {
+      throw new Error("workspace_launch_continuation_artifact_invalid");
+    }
+    return {
+      schemaVersion: 2,
+      operationMode: COMPUTE_CLAIM_CONTINUATION_MODE,
+      status: "blocked",
+      recoveryEligible: false,
+      errorCode: "compute_claim_continuation_failed",
+      runnerDirectMutationCounts: workspaceLaunchReadbackZeroCounts(result.runnerDirectMutationCounts),
+      backgroundMutationCountsState: "unknown"
+    };
+  }
+  const target = result?.target;
+  const launch = result?.launch;
+  const runtime = result?.runtime;
+  const receipt = result?.receipt;
+  const recovery = result?.recovery;
+  const approvalBinding = recoveryArtifact?.approvalBinding;
+  const resources = {
+    computeAllocationId: target?.computeAllocationId,
+    storageId: target?.storageId,
+    attachmentId: launch?.attachmentId,
+    runtimeId: runtime?.runtimeId,
+    receiptId: launch?.receiptId,
+    workspaceApiKeyId: String(launch?.workspaceApiKeyId || ""),
+    runtimeServiceName: runtime?.serviceName,
+    workspaceUrl: runtime?.url
+  };
+  if (result?.schemaVersion !== 2 || result?.operationMode !== COMPUTE_CLAIM_CONTINUATION_MODE || result?.status !== "succeeded" ||
+    result?.recoveryEligible !== true || result?.errorCode !== "none" || recoveryArtifact?.schemaVersion !== 2 ||
+    recoveryArtifact?.operationMode !== WORKSPACE_LAUNCH_READBACK_RECOVER_MODE || recoveryArtifact?.status !== "converged" ||
+    !/^[a-f0-9]{64}$/.test(String(approvalBinding?.approvalDigest || "")) || !/^[a-f0-9]{64}$/.test(String(approvalBinding?.bindingDigest || "")) ||
+    recovery?.approvalId !== approvalBinding?.approvalId || recovery?.approvalDigest !== approvalBinding?.approvalDigest ||
+    launch?.operationId !== target?.launchOperationId || launch?.accountId !== target?.accountId || launch?.workspaceId !== target?.workspaceId ||
+    launch?.status !== "succeeded" || launch?.phase !== "succeeded" || runtime?.workspaceId !== target?.workspaceId || runtime?.status !== "running" ||
+    runtime?.ready !== true || receipt?.workspaceId !== target?.workspaceId || receipt?.receiptId !== launch?.receiptId ||
+    result?.release?.mergedSha !== recoveryArtifact?.release?.mergedSha || result?.release?.cloudImageDigest !== recoveryArtifact?.release?.cloudImageDigest ||
+    result?.backgroundMutationCountsState !== "unknown" || !/^sha256:[a-f0-9]{64}$/.test(String(recovery?.workspaceImageDigest || "")) ||
+    !String(recovery?.recoveryKey || "") || Object.values(resources).some((value) => !String(value || ""))) {
+    throw new Error("workspace_launch_continuation_artifact_invalid");
+  }
+  return {
+    schemaVersion: 2,
+    operationMode: COMPUTE_CLAIM_CONTINUATION_MODE,
+    status: "succeeded",
+    recoveryEligible: true,
+    errorCode: "none",
+    release: workspaceLaunchReadbackSafeRelease(result.release),
+    handoff: {
+      launchOperationId: target.launchOperationId,
+      accountId: target.accountId,
+      workspaceId: target.workspaceId,
+      workspaceImageDigest: recovery.workspaceImageDigest,
+      recoveryApprovalId: recovery.approvalId,
+      recoveryApprovalDigest: recovery.approvalDigest,
+      recoveryKey: recovery.recoveryKey,
+      recoveryBindingDigest: approvalBinding.bindingDigest,
+      resources
+    },
+    runnerDirectMutationCounts: workspaceLaunchReadbackZeroCounts(result.runnerDirectMutationCounts),
+    backgroundMutationCountsState: "unknown",
+    verifiedAt: String(result.verifiedAt || "")
+  };
+}
+
 function recoveredWorkspaceE2EApproval(value, expected, now) {
   let approval;
   try {
@@ -1373,9 +1926,9 @@ function recoveredWorkspaceE2EApproval(value, expected, now) {
   } catch {
     throw new Error("recovered_workspace_e2e_approval_invalid");
   }
-  const keys = [
-    "schemaVersion", "approvalId", "expiresAt", "confirmation", "mergedMainSha", "cloudImageDigest", "workspaceImageDigest",
-    "recoveryApprovalId", "recoveryApprovalDigest", "recoveryKey", "customer", "launchOperationId", "workspaceId", "resources",
+	const keys = [
+	  "schemaVersion", "approvalId", "expiresAt", "confirmation", "mergedMainSha", "cloudImageDigest", "workspaceImageDigest",
+	  "recoveryApprovalId", "recoveryApprovalDigest", "recoveryBindingDigest", "recoveryKey", "customer", "launchOperationId", "workspaceId", "resources",
     "expectedModel", "modelRequestKey", "allowedWrites", "forbiddenWrites"
   ];
   const resourceKeys = [
@@ -1390,7 +1943,8 @@ function recoveredWorkspaceE2EApproval(value, expected, now) {
     approval.confirmation !== RECOVERED_WORKSPACE_E2E_CONFIRMATION || approval.confirmation !== expected.confirmation ||
     !/^[a-f0-9]{40}$/.test(String(expected.mergedSha || "")) || approval.mergedMainSha !== expected.mergedSha ||
     !/^sha256:[a-f0-9]{64}$/.test(String(approval.cloudImageDigest || "")) ||
-    !/^sha256:[a-f0-9]{64}$/.test(String(approval.workspaceImageDigest || "")) || !/^[a-f0-9]{64}$/.test(String(approval.recoveryApprovalDigest || "")) ||
+	  !/^sha256:[a-f0-9]{64}$/.test(String(approval.workspaceImageDigest || "")) || !/^[a-f0-9]{64}$/.test(String(approval.recoveryApprovalDigest || "")) ||
+	  !/^[a-f0-9]{64}$/.test(String(approval.recoveryBindingDigest || "")) ||
     !exactObjectKeys(approval.customer, ["email", "accountId"]) || approval.customer.email !== email ||
     !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) || approval.customer.email !== expected.customerEmail ||
     !exactObjectKeys(approval.resources, resourceKeys) || !/^[1-9][0-9]*$/.test(String(approval.resources.workspaceApiKeyId || "")) ||
@@ -1402,34 +1956,45 @@ function recoveredWorkspaceE2EApproval(value, expected, now) {
 }
 
 function recoveredWorkspaceE2EContinuation(value, approval) {
-  const target = value?.target;
-  const launch = value?.launch;
-  const runtime = value?.runtime;
-  const receipt = value?.receipt;
-  const recovery = value?.recovery;
-  const expectedResources = {
-    computeAllocationId: target?.computeAllocationId,
-    storageId: target?.storageId,
-    attachmentId: launch?.attachmentId,
-    runtimeId: runtime?.runtimeId,
-    receiptId: launch?.receiptId,
-    workspaceApiKeyId: String(launch?.workspaceApiKeyId || ""),
-    runtimeServiceName: runtime?.serviceName,
-    workspaceUrl: runtime?.url
-  };
-  if (value?.schemaVersion !== 2 || value?.operationMode !== COMPUTE_CLAIM_CONTINUATION_MODE || value?.status !== "succeeded" ||
-    value?.recoveryEligible !== true || value?.errorCode !== "none" || value?.release?.mergedSha !== approval.mergedMainSha ||
-    value?.release?.cloudImageDigest !== approval.cloudImageDigest || launch?.status !== "succeeded" || launch?.phase !== "succeeded" ||
-    target?.accountId !== approval.customer.accountId || target?.workspaceId !== approval.workspaceId || target?.launchOperationId !== approval.launchOperationId ||
-    runtime?.workspaceId !== approval.workspaceId || runtime?.status !== "running" || runtime?.ready !== true || receipt?.workspaceId !== approval.workspaceId ||
-    recovery?.approvalId !== approval.recoveryApprovalId || recovery?.approvalDigest !== approval.recoveryApprovalDigest ||
-    recovery?.recoveryKey !== approval.recoveryKey || recovery?.workspaceImageDigest !== approval.workspaceImageDigest ||
-    JSON.stringify(expectedResources) !== JSON.stringify(approval.resources) ||
-    value?.runnerDirectMutationCounts?.sub2api !== 0 || value?.runnerDirectMutationCounts?.tencent !== 0 ||
-    value?.runnerDirectMutationCounts?.kubernetes !== 0 || value?.backgroundMutationCountsState !== "unknown") {
-    throw new Error("recovered_workspace_e2e_resource_closure_required");
-  }
-  return { target, launch, runtime, receipt, recovery };
+	const keys = [
+	  "schemaVersion", "operationMode", "status", "recoveryEligible", "errorCode", "release", "handoff",
+	  "runnerDirectMutationCounts", "backgroundMutationCountsState", "verifiedAt"
+	];
+	const handoffKeys = [
+	  "launchOperationId", "accountId", "workspaceId", "workspaceImageDigest", "recoveryApprovalId", "recoveryApprovalDigest",
+	  "recoveryKey", "recoveryBindingDigest", "resources"
+	];
+	const resourceKeys = [
+	  "computeAllocationId", "storageId", "attachmentId", "runtimeId", "receiptId", "workspaceApiKeyId", "runtimeServiceName", "workspaceUrl"
+	];
+	const handoff = value?.handoff;
+	const resources = handoff?.resources;
+	if (value?.schemaVersion !== 2 || value?.operationMode !== COMPUTE_CLAIM_CONTINUATION_MODE || value?.status !== "succeeded" ||
+	  value?.recoveryEligible !== true || value?.errorCode !== "none" || !exactObjectKeys(value, keys) || !exactObjectKeys(handoff, handoffKeys) ||
+	  !exactObjectKeys(resources, resourceKeys) || value?.release?.mergedSha !== approval.mergedMainSha ||
+	  value?.release?.cloudImageDigest !== approval.cloudImageDigest || handoff?.accountId !== approval.customer.accountId ||
+	  handoff?.workspaceId !== approval.workspaceId || handoff?.launchOperationId !== approval.launchOperationId ||
+	  handoff?.recoveryApprovalId !== approval.recoveryApprovalId || handoff?.recoveryApprovalDigest !== approval.recoveryApprovalDigest ||
+	  handoff?.recoveryBindingDigest !== approval.recoveryBindingDigest || handoff?.recoveryKey !== approval.recoveryKey ||
+	  handoff?.workspaceImageDigest !== approval.workspaceImageDigest || JSON.stringify(resources) !== JSON.stringify(approval.resources) ||
+	  value?.runnerDirectMutationCounts?.sub2api !== 0 || value?.runnerDirectMutationCounts?.tencent !== 0 ||
+	  value?.runnerDirectMutationCounts?.kubernetes !== 0 || value?.backgroundMutationCountsState !== "unknown" ||
+	  !Number.isFinite(Date.parse(value?.verifiedAt))) {
+	  throw new Error("recovered_workspace_e2e_resource_closure_required");
+	}
+	return {
+	  target: { accountId: handoff.accountId, workspaceId: handoff.workspaceId, launchOperationId: handoff.launchOperationId },
+	  launch: { operationId: handoff.launchOperationId, workspaceId: handoff.workspaceId, receiptId: resources.receiptId },
+	  runtime: { workspaceId: handoff.workspaceId, runtimeId: resources.runtimeId, serviceName: resources.runtimeServiceName, url: resources.workspaceUrl },
+	  receipt: { receiptId: resources.receiptId, workspaceId: handoff.workspaceId },
+	  recovery: {
+		approvalId: handoff.recoveryApprovalId,
+		approvalDigest: handoff.recoveryApprovalDigest,
+		recoveryKey: handoff.recoveryKey,
+		workspaceImageDigest: handoff.workspaceImageDigest,
+		bindingDigest: handoff.recoveryBindingDigest
+	  }
+	};
 }
 
 function recoveredWorkspaceE2EKey(snapshot, approval) {
@@ -1943,7 +2508,7 @@ function canaryReceipt(result, expected) {
     receipt?.workspaceId !== expected.workspaceId || !receiptAmountsAreSafe || receipt?.totalUsdMicros !== expected.totalUsdMicros ||
     BigInt(compute.chargeUsdMicros) + BigInt(storage.chargeUsdMicros) !== BigInt(receipt.totalUsdMicros) ||
     compute?.resourceType !== "compute" || compute?.resourceId !== expected.computeAllocationId ||
-    storage?.resourceType !== "storage" || storage?.resourceId !== expected.storageId || storage?.sizeGb !== 10 ||
+		storage?.resourceType !== "storage" || storage?.resourceId !== expected.storageId || storage?.sizeGb !== expected.storageSizeGb ||
     fulfillment?.computeAllocationId !== expected.computeAllocationId || fulfillment?.storageId !== expected.storageId ||
     fulfillment?.attachmentId !== expected.attachmentId || fulfillment?.runtimeId !== expected.runtimeId || fulfillment?.workspaceApiKeyId !== expected.workspaceApiKeyId) {
     throw new Error("production_basic_canary_receipt_invalid");
@@ -2660,11 +3225,12 @@ export async function verifyProductionBasicCustomerCanary(options = {}) {
     workspaceId: launch.workspaceId,
     computeAllocationId: launch.computeAllocationId,
     storageId: launch.storageId,
-    attachmentId: launch.attachmentId,
-    runtimeId,
-    workspaceApiKeyId: launch.workspaceApiKeyId,
-    totalUsdMicros: quote.totalChargeUsdMicros
-  });
+		attachmentId: launch.attachmentId,
+		runtimeId,
+		workspaceApiKeyId: launch.workspaceApiKeyId,
+		totalUsdMicros: quote.totalChargeUsdMicros,
+		storageSizeGb: 10
+	});
 
   const detail = sourceEnvelope(await requestJson({
     ...requestOptions,
@@ -3264,6 +3830,12 @@ function computeClaimCliMode(argv) {
   return "";
 }
 
+function workspaceLaunchReadbackCliMode(argv) {
+  if (argv.includes("--workspace-launch-readback-diagnose")) return WORKSPACE_LAUNCH_READBACK_DIAGNOSE_MODE;
+  if (argv.includes("--workspace-launch-readback-recover")) return WORKSPACE_LAUNCH_READBACK_RECOVER_MODE;
+  return "";
+}
+
 function blockedComputeClaimArtifact(operationMode, rawErrorCode = "") {
   const fallbackErrorCode = operationMode === COMPUTE_CLAIM_DIAGNOSE_MODE
     ? "compute_claim_diagnosis_failed"
@@ -3284,6 +3856,30 @@ function blockedComputeClaimArtifact(operationMode, rawErrorCode = "") {
   };
 }
 
+function blockedWorkspaceLaunchReadbackArtifact(operationMode) {
+  return {
+		schemaVersion: 2,
+    operationMode,
+    status: "blocked",
+    recoveryEligible: false,
+    errorCode: operationMode === WORKSPACE_LAUNCH_READBACK_DIAGNOSE_MODE
+      ? "workspace_launch_readback_diagnosis_failed"
+      : "workspace_launch_readback_recovery_failed",
+    runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
+    ...(operationMode === WORKSPACE_LAUNCH_READBACK_RECOVER_MODE ? { backgroundMutationCountsState: "unknown" } : {})
+  };
+}
+
+async function emitWorkspaceLaunchReadbackResult(result, env, stdout) {
+  const rawPath = String(env.OPL_WORKSPACE_LAUNCH_READBACK_RAW_RESULT_PATH || "");
+  if (rawPath) {
+    if (!rawPath.startsWith("/")) throw new Error("workspace_launch_readback_raw_result_path_invalid");
+    await writeFile(rawPath, `${JSON.stringify(result, null, 2)}\n`, { mode: 0o600 });
+    return;
+  }
+  stdout.write(`${JSON.stringify(workspaceLaunchReadbackArtifact(result), null, 2)}\n`);
+}
+
 export async function runProductionLiveQaCli({
   argv = process.argv.slice(2),
   env = process.env,
@@ -3302,9 +3898,13 @@ export async function runProductionLiveQaCli({
     return 0;
   }
   const computeClaimMode = computeClaimCliMode(argv);
+  const workspaceLaunchReadbackMode = workspaceLaunchReadbackCliMode(argv);
   try {
     if (env.OPL_VERIFY_MODEL_ACCESS_KEY) throw new Error("production_live_qa_raw_key_forbidden");
     const args = cliArgs(argv);
+    if (workspaceLaunchReadbackMode && (args["read-only"] === "true" || args["manual-review-diagnose"] === "true")) {
+      throw new Error("workspace_launch_readback_mode_conflict");
+    }
     if (args["read-only"] === "true") {
       if (args["compute-claim-continue"] || args["basic-customer-canary"] || args["allow-gateway-write"] || args["allow-model-write"] || args["approval-id"]) throw new Error("production_live_qa_read_only_conflict");
       const result = await verifyProductionReadOnlyRollout({
@@ -3316,15 +3916,15 @@ export async function runProductionLiveQaCli({
         browserFactory,
         fetchImpl
       });
-      stdout.write(`${JSON.stringify(result, null, 2)}\n`);
-      return 0;
+		  stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+		  return 0;
     }
     if (args["manual-review-diagnose"] === "true") {
       if (args["compute-claim-continue"] || args["basic-customer-canary"] || args["read-only"] || args["allow-account-provision"] || args["allow-wallet-recharge"] ||
         args["allow-workspace-purchase"] || args["allow-model-write"] || args["allow-gateway-write"] || args["approval-id"] || args["funding-mode"] || args.phase) {
         throw new Error("manual_review_diagnose_conflict");
       }
-      const result = await diagnoseManualReviewRecovery({
+		const result = await diagnoseManualReviewRecovery({
         fabricOrigin: env.OPL_FABRIC_INTERNAL_ORIGIN,
         fabricPod: args["fabric-pod"],
         fabricNamespace: args["fabric-namespace"],
@@ -3333,8 +3933,61 @@ export async function runProductionLiveQaCli({
         fetchImpl: fabricFetchImpl,
         execFileImpl
       });
-      stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+		  stdout.write(`${JSON.stringify(result, null, 2)}\n`);
       return 0;
+    }
+    if (args["workspace-launch-readback-diagnose"] === "true") {
+      if (args["workspace-launch-readback-recover"] || args["compute-claim-diagnose"] || args["compute-claim-recover"] || args["compute-claim-continue"] ||
+        args["manual-review-diagnose"] || args["basic-customer-canary"] || args["recovered-workspace-e2e"] || args["read-only"] || args["approval-id"] ||
+        args["allow-account-provision"] || args["allow-wallet-recharge"] || args["allow-workspace-purchase"] || args["allow-model-write"] || args["allow-gateway-write"]) {
+        throw new Error("workspace_launch_readback_diagnose_conflict");
+      }
+		const result = await diagnoseWorkspaceLaunchReadbackRecovery({
+        target: args["workspace-launch-target-json"] || env.OPL_WORKSPACE_LAUNCH_READBACK_TARGET_JSON,
+        mergedSha: env.OPL_MERGED_SHA,
+        cloudImageDigest: env.OPL_WORKSPACE_LAUNCH_READBACK_CLOUD_DIGEST,
+        origin: args.origin || env.OPL_CONSOLE_ORIGIN,
+        adminEmail: env.OPL_SUB2API_ADMIN_EMAIL,
+        adminPassword: env.OPL_SUB2API_ADMIN_PASSWORD,
+        customerEmail: env.OPL_WORKSPACE_LAUNCH_READBACK_CUSTOMER_EMAIL,
+        kubeconfigPath: env.KUBECONFIG || env.TENCENT_DEPLOY_KUBECONFIG_PATH,
+        namespace: env.OPL_K8S_NAMESPACE || "opl-cloud",
+        requestTimeoutMs: Number(args["request-timeout-ms"] || env.OPL_VERIFY_REQUEST_TIMEOUT_MS || DEFAULT_REQUEST_TIMEOUT_MS),
+        cloudRevisionEvidenceReader,
+        execFileImpl,
+        fetchImpl,
+        now
+      });
+		  await emitWorkspaceLaunchReadbackResult(result, env, stdout);
+      return 0;
+    }
+    if (args["workspace-launch-readback-recover"] === "true") {
+      if (!args["approval-id"] || args["workspace-launch-readback-diagnose"] || args["compute-claim-diagnose"] || args["compute-claim-recover"] ||
+        args["compute-claim-continue"] || args["manual-review-diagnose"] || args["basic-customer-canary"] || args["recovered-workspace-e2e"] || args["read-only"] ||
+        args["allow-account-provision"] || args["allow-wallet-recharge"] || args["allow-workspace-purchase"] || args["allow-model-write"] || args["allow-gateway-write"]) {
+        throw new Error("workspace_launch_readback_recovery_approval_required");
+      }
+      const result = await recoverWorkspaceLaunchReadbackRecovery({
+        target: args["workspace-launch-target-json"] || env.OPL_WORKSPACE_LAUNCH_READBACK_TARGET_JSON,
+        approvalJson: env.OPL_WORKSPACE_LAUNCH_READBACK_APPROVAL_JSON,
+        approvalId: args["approval-id"],
+        mergedSha: env.OPL_MERGED_SHA,
+        cloudImageDigest: env.OPL_WORKSPACE_LAUNCH_READBACK_CLOUD_DIGEST,
+        origin: args.origin || env.OPL_CONSOLE_ORIGIN,
+        adminEmail: env.OPL_SUB2API_ADMIN_EMAIL,
+        adminPassword: env.OPL_SUB2API_ADMIN_PASSWORD,
+        customerEmail: env.OPL_WORKSPACE_LAUNCH_READBACK_CUSTOMER_EMAIL,
+        internalServiceToken: env.OPL_INTERNAL_SERVICE_TOKEN,
+        kubeconfigPath: env.KUBECONFIG || env.TENCENT_DEPLOY_KUBECONFIG_PATH,
+        namespace: env.OPL_K8S_NAMESPACE || "opl-cloud",
+        requestTimeoutMs: Number(args["request-timeout-ms"] || env.OPL_VERIFY_REQUEST_TIMEOUT_MS || DEFAULT_REQUEST_TIMEOUT_MS),
+        cloudRevisionEvidenceReader,
+        execFileImpl,
+        fetchImpl,
+        now
+      });
+		  await emitWorkspaceLaunchReadbackResult(result, env, stdout);
+		  return result.status === "converged" ? 0 : 1;
     }
     if (args["compute-claim-diagnose"] === "true") {
       if (args["compute-claim-recover"] || args["compute-claim-continue"] || args["manual-review-diagnose"] || args["basic-customer-canary"] || args["read-only"] ||
@@ -3563,7 +4216,13 @@ export async function runProductionLiveQaCli({
     });
     stdout.write(`${JSON.stringify(result, null, 2)}\n`);
     return 0;
-  } catch (error) {
+	} catch (error) {
+		if (workspaceLaunchReadbackMode) {
+		  const artifact = blockedWorkspaceLaunchReadbackArtifact(workspaceLaunchReadbackMode);
+		  await emitWorkspaceLaunchReadbackResult(artifact, env, stdout);
+      stderr.write(`${JSON.stringify({ ok: false, errorCode: artifact.errorCode }, null, 2)}\n`);
+      return 1;
+    }
     if (computeClaimMode) {
       const artifact = blockedComputeClaimArtifact(computeClaimMode);
       stdout.write(`${JSON.stringify(artifact, null, 2)}\n`);

@@ -95,7 +95,8 @@ func TestWorkspaceLaunchResponseAllowsOnlyCustomerSafeFields(t *testing.T) {
 			Customer:             workspaceComputeClaimApprovalCustomer{Email: "private-owner@example.com", AccountID: "acct-alpha"},
 			Resources:            workspaceComputeClaimApprovalResources{GatewaySecretRef: "private-secret-ref"},
 		},
-		ErrorCode: "upstream_unavailable",
+		ReadbackRecoveryProof: customerSensitiveWorkspaceLaunchReadbackProof(),
+		ErrorCode:             "upstream_unavailable",
 	}
 	row := workspaceLaunchOperationRow(operation)
 	var persisted map[string]any
@@ -129,7 +130,7 @@ func TestWorkspaceLaunchResponseAllowsOnlyCustomerSafeFields(t *testing.T) {
 		recovery["recoveryKey"] != "recovery-alpha" || recovery["workspaceImageDigest"] != "sha256:"+strings.Repeat("b", 64) || len(recovery) != 4 {
 		t.Fatalf("workspace launch recovery projection = %#v", response["recovery"])
 	}
-	for _, forbidden := range []string{"pricingVersion", "totalMonthlyPriceCnyCents"} {
+	for _, forbidden := range []string{"pricingVersion", "totalMonthlyPriceCnyCents", "readbackRecoveryProof"} {
 		if _, ok := response[forbidden]; ok {
 			t.Fatalf("workspace launch response exposed %s: %#v", forbidden, response)
 		}
@@ -138,11 +139,84 @@ func TestWorkspaceLaunchResponseAllowsOnlyCustomerSafeFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, forbidden := range []string{"usr-private", "attachment-operation-private", "workspace-operation-private", "private upstream detail", "private-password", "private row detail", "private-owner@example.com", "private-secret-ref"} {
+	for _, forbidden := range []string{
+		"usr-private", "attachment-operation-private", "workspace-operation-private", "private upstream detail", "private-password", "private row detail",
+		"private-owner@example.com", "private-secret-ref", "10.20.30.99", "machine-private", "ins-private", "node-private",
+		"fop-private", "fabric-operation-private", "provider-operation-private",
+	} {
 		if strings.Contains(string(responseJSON), forbidden) {
 			t.Fatalf("workspace launch response leaked %q: %s", forbidden, responseJSON)
 		}
 	}
+}
+
+func customerSensitiveWorkspaceLaunchReadbackProof() *workspaceLaunchReadbackRecoveryProof {
+	identity := workspaceLaunchReadbackRecoveryFabricOperationIdentity{
+		IdempotencyKey: "workspace-launch-private:compute", FabricRecordID: "fop-private",
+		FabricOperationID: "fabric-operation-private", RequestHash: "request-hash-private",
+		ResourceOperationID: "resource-operation-private", ProviderOperationID: "provider-operation-private",
+	}
+	return &workspaceLaunchReadbackRecoveryProof{
+		SchemaVersion: 1, Eligible: true, Reason: "none", Stage: "runtime",
+		Customer: workspaceLaunchReadbackRecoveryCustomer{Email: "readback-private@example.com", AccountID: "acct-alpha", OwnerUserID: "usr-private"},
+		Target: workspaceLaunchReadbackRecoveryTarget{
+			LaunchOperationID: "workspace-launch-private", AccountID: "acct-alpha", WorkspaceID: "ws-alpha",
+			MachineName: "machine-private", NodeName: "node-private", CVMInstanceID: "ins-private", PrivateIP: "10.20.30.99",
+		},
+		Resources: workspaceLaunchReadbackRecoveryResources{
+			ComputeProviderResourceID: "ins-private", StorageProviderResourceID: "disk-private", AttachmentProviderID: "pv/private:pvc/private",
+		},
+		OperationIDs: workspaceLaunchReadbackRecoveryOperationIDs{
+			LaunchOperationID: "workspace-launch-private", LaunchRequestHash: "launch-request-private", MachineOwnershipID: "ownership-private",
+			Compute: identity, Storage: identity, Attachment: identity, Secret: identity, Runtime: identity,
+			ActivationOperationID: "activation-operation-private", ReceiptOperationID: "receipt-operation-private",
+		},
+		WorkspaceImageDigest: "sha256:" + strings.Repeat("d", 64), AttemptBudget: workspaceLaunchStageBudget{Attempted: 1, Unknown: 1, Max: 1},
+	}
+}
+
+func assertCustomerWorkspaceLaunchResponseSafe(t *testing.T, response *httptest.ResponseRecorder) {
+	t.Helper()
+	if response.Code < http.StatusOK || response.Code >= http.StatusMultipleChoices {
+		t.Fatalf("customer response status=%d body=%s", response.Code, response.Body.String())
+	}
+	for _, forbidden := range []string{
+		"readbackRecoveryProof", "readback-private@example.com", "10.20.30.99", "machine-private", "ins-private", "node-private",
+		"fop-private", "fabric-operation-private", "provider-operation-private", "resource-operation-private", "ownership-private",
+	} {
+		if strings.Contains(response.Body.String(), forbidden) {
+			t.Fatalf("customer response leaked %q: %s", forbidden, response.Body.String())
+		}
+	}
+}
+
+func TestWorkspaceLaunchCustomerEndpointsNeverExposeReadbackRecoveryProof(t *testing.T) {
+	fixture := newWorkspaceLaunchHTTPFixture(t, 1_000_000_000)
+	body := `{"name":"Alpha","packageId":"basic","sizeGb":10,"autoRenew":false}`
+	created := fixture.launch(t, body, "launch-customer-safe")
+	assertCustomerWorkspaceLaunchResponseSafe(t, created)
+	var createdBody map[string]any
+	if err := json.Unmarshal(created.Body.Bytes(), &createdBody); err != nil {
+		t.Fatal(err)
+	}
+	operationID := stringValue(createdBody["operationId"])
+	row, found, err := fixture.store.GetRuntimeOperation(context.Background(), operationID)
+	if err != nil || !found {
+		t.Fatalf("launch operation read found=%t err=%v", found, err)
+	}
+	operation, err := decodeWorkspaceLaunchOperation(row)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation.ReadbackRecoveryProof = customerSensitiveWorkspaceLaunchReadbackProof()
+	mustStore(t, fixture.store.SaveRuntimeOperation(context.Background(), workspaceLaunchOperationRow(operation)))
+
+	replayed := fixture.launch(t, body, "launch-customer-safe")
+	assertCustomerWorkspaceLaunchResponseSafe(t, replayed)
+	listed := requestWithSession(t, fixture.server, fixture.session, http.MethodGet, "/api/workspace-launches", "")
+	assertCustomerWorkspaceLaunchResponseSafe(t, listed)
+	detail := requestWithSession(t, fixture.server, fixture.session, http.MethodGet, "/api/workspace-launches/"+operationID, "")
+	assertCustomerWorkspaceLaunchResponseSafe(t, detail)
 }
 
 type workspaceLaunchHTTPFixture struct {
@@ -2066,6 +2140,7 @@ func TestWorkspaceComputeClaimApprovalResumesOriginalStorageOnce(t *testing.T) {
 		{name: "basic_absent", packageID: "basic", storageState: "storage_not_started"},
 		{name: "pro_absent", packageID: "pro", storageState: "storage_not_started"},
 		{name: "basic_existing_exact", packageID: "basic", storageState: "storage_existing_exact", storageProviderResourceID: "disk-existing-fixture"},
+		{name: "pro_existing_exact", packageID: "pro", storageState: "storage_existing_exact", storageProviderResourceID: "disk-existing-fixture"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, test.packageID)
@@ -3125,25 +3200,25 @@ func TestWorkspaceLaunchRecoveryRejectsUnconfirmedChargeBeforeProviderTruth(t *t
 
 func TestWorkspaceLaunchRecoveryRetriesOnlyReceiptAfterLedgerFailure(t *testing.T) {
 	t.Run("purchase", func(t *testing.T) {
-		fixture := newWorkspaceLaunchWorkerFixture(t, []int64{1_000_000_000, 1_000_000_000, 947_420_000}, nil, nil)
-		configureWorkspaceLaunchFulfillment(t, fixture)
-		fixture.ledger.receiptErrors = []error{errors.New("Ledger unavailable"), nil}
-		if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err != nil {
+		t.Setenv("OPL_INTERNAL_SERVICE_TOKEN", "workspace-launch-readback-capability")
+		scenario := newWorkspaceLaunchReadbackRecoveryScenario(t, "receipt", "basic")
+		fixture := scenario.fixture
+		fixture.service = controlplane.NewService(fixture.ledger, scenario.readback, fixture.sub2API)
+		server, err := NewPersistentServer(fixture.service, fixture.store)
+		if err != nil {
 			t.Fatal(err)
 		}
-		if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err == nil {
-			t.Fatal("first purchase receipt failure was not returned")
-		}
-		operation := fixture.operation(t)
-		operation.Status = "manual_review"
-		mustStore(t, fixture.store.memoryTableStore.SaveRuntimeOperation(context.Background(), workspaceLaunchOperationRow(operation)))
+		fixture.server, fixture.operator = server, reservedOperatorSessionForTest(t, server)
 		beforeEvents := append([]string(nil), (*fixture.events)...)
 		beforeCharges := len(fixture.sub2API.charges)
 
-		response := recoverWorkspaceLaunchForTest(t, fixture, "launch-recovery-purchase-receipt")
+		key := "launch-recovery-purchase-receipt"
+		approval := testWorkspaceLaunchReadbackApproval(t, scenario.approvalOperation, "receipt", key, scenario.readback)
+		response := requestWorkspaceLaunchReadbackRecovery(t, fixture, approval, key)
 		current := fixture.operation(t)
-		if response.Code != http.StatusOK || current.Status != "manual_review" || current.Phase != "receipt_pending" ||
-			current.ErrorCode != "workspace_launch_receipt_attempt_unknown" || len(fixture.ledger.receiptInputs) != 1 || len(fixture.sub2API.charges) != beforeCharges {
+		if response.Code != http.StatusOK || current.Status != "succeeded" || current.Phase != "succeeded" || current.ReceiptID == "" ||
+			len(fixture.ledger.receiptInputs) != scenario.beforeCurrentWrites || len(fixture.sub2API.charges) != beforeCharges ||
+			countStrings(*fixture.events, "fabric.monthly-provider-truth") != countStrings(beforeEvents, "fabric.monthly-provider-truth")+1 {
 			t.Fatalf("purchase receipt recovery status=%d body=%s operation=%#v charges=%#v receipts=%#v", response.Code, response.Body.String(), current, fixture.sub2API.charges, fixture.ledger.receiptInputs)
 		}
 		assertNoWorkspaceLaunchRecoveryFabricWrites(t, beforeEvents, *fixture.events)
@@ -3180,7 +3255,7 @@ func TestWorkspaceLaunchRecoveryRetriesOnlyReceiptAfterLedgerFailure(t *testing.
 
 func assertNoWorkspaceLaunchRecoveryFabricWrites(t *testing.T, before, after []string) {
 	t.Helper()
-	for _, event := range []string{"fabric.monthly-provider-truth", "fabric.compute.prepare", "fabric.compute.sync", "fabric.storage.prepare", "fabric.storage.sync", "fabric.attachment", "fabric.gateway-secret", "fabric.runtime"} {
+	for _, event := range []string{"fabric.compute.prepare", "fabric.compute.sync", "fabric.storage.prepare", "fabric.storage.sync", "fabric.attachment", "fabric.gateway-secret", "fabric.runtime"} {
 		if countStrings(after, event) != countStrings(before, event) {
 			t.Fatalf("receipt-only recovery repeated %s: before=%#v after=%#v", event, before, after)
 		}

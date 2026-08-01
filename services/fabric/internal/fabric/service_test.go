@@ -1118,6 +1118,67 @@ func TestResourceMutationsAppendFabricOperationFacts(t *testing.T) {
 	}
 }
 
+type providerAttachmentIdentityProvider struct{ testProvider }
+
+func (providerAttachmentIdentityProvider) CreateStorageAttachment(_ context.Context, input StorageAttachmentInput, _ ComputeAllocation, _ StorageVolume) (StorageAttachment, error) {
+	id := "att_" + stableSuffix(input.OperationID)[:18]
+	return StorageAttachment{
+		ID: id, OperationID: input.OperationID, WorkspaceID: input.WorkspaceID, ComputeID: input.ComputeID, VolumeID: input.VolumeID,
+		Status: "attached", Provider: "tencent-tke", ProviderAttachmentID: "pv/volume-alpha:pvc/volume-alpha-data",
+		ProviderRequestID: providerRequestID("storage-attach", input.IdempotencyKey),
+		CostTags: map[string]string{
+			"opl_account_id": "acct-alpha", "opl_workspace_id": input.WorkspaceID, "opl_resource_id": id, "opl_operation_id": input.OperationID,
+		},
+	}, nil
+}
+
+func TestCreateStorageAttachmentOperationPersistsProviderResourceIdentity(t *testing.T) {
+	service := NewServiceWithOperationStore(providerAttachmentIdentityProvider{}, NewMemoryOperationStore())
+	ctx := context.Background()
+	compute, err := service.CreateComputeAllocation(ctx, ComputeAllocationInput{
+		AccountID: "acct-alpha", WorkspaceID: "ws-alpha", PackageID: "basic", NodePoolID: "np-basic", IdempotencyKey: "workspace-launch-alpha:compute",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForOperation(t, service, "create_compute_allocation", "compute_allocation", compute.ID, "succeeded")
+	volume, err := service.CreateStorageVolume(ctx, StorageVolumeInput{
+		AccountID: "acct-alpha", WorkspaceID: "ws-alpha", ComputeID: compute.ID, Zone: "ap-guangzhou-3", SizeGB: 10,
+		IdempotencyKey: "workspace-launch-alpha:storage",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	attachment, err := service.CreateStorageAttachment(ctx, StorageAttachmentInput{
+		WorkspaceID: "ws-alpha", ComputeID: compute.ID, VolumeID: volume.ID, IdempotencyKey: "workspace-launch-alpha:attachment",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	operations, err := service.ListOperations(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stored FabricOperation
+	for _, operation := range operations {
+		if operation.Action == "create_storage_attachment" {
+			stored = operation
+		}
+	}
+	var storedAttachment StorageAttachment
+	expectedOperationID := "op_create_storage_attachment_" + stableSuffix(
+		"workspace-launch-alpha:attachment", "storage_attachment", "create_storage_attachment",
+	)[:12]
+	expectedRequestHash := hashInput(StorageAttachmentInput{
+		WorkspaceID: "ws-alpha", ComputeID: compute.ID, VolumeID: volume.ID,
+	})
+	if stored.ID == "" || stored.Status != "succeeded" || stored.ResourceID != attachment.ID || !strings.HasPrefix(stored.ResourceID, "att_") ||
+		stored.IdempotencyKey != "workspace-launch-alpha:attachment" || stored.OperationID != expectedOperationID || stored.RequestHash != expectedRequestHash ||
+		!decodeOperationResource(stored, &storedAttachment) || storedAttachment.ID != attachment.ID || storedAttachment.OperationID != stored.IdempotencyKey {
+		t.Fatalf("attachment=%#v operation=%#v storedAttachment=%#v", attachment, stored, storedAttachment)
+	}
+}
+
 func TestStorageSnapshotRestorePersistsAndKeepsSourceVolume(t *testing.T) {
 	ctx := context.Background()
 	store := NewMemoryOperationStore()
@@ -1411,9 +1472,42 @@ func (s *failFirstRuntimeSaveStore) SaveRuntime(ctx context.Context, operation F
 	return s.OperationStore.SaveRuntime(ctx, operation)
 }
 
+func (s *failFirstRuntimeSaveStore) ConvergeRuntimeReadback(ctx context.Context, expected, next FabricOperation) error {
+	converger, ok := s.OperationStore.(runtimeReadbackConverger)
+	if !ok {
+		return ErrRuntimeOperationNotCurrent
+	}
+	return converger.ConvergeRuntimeReadback(ctx, expected, next)
+}
+
 func (p *countingGatewayProvider) UpsertGatewaySecret(ctx context.Context, input GatewaySecretInput) (GatewaySecret, error) {
 	p.calls.Add(1)
 	return p.testProvider.UpsertGatewaySecret(ctx, input)
+}
+
+type convergingGatewayProvider struct {
+	countingGatewayProvider
+	readback      GatewaySecret
+	readbackErr   error
+	writeErr      error
+	readbackCalls atomic.Int32
+}
+
+func (p *convergingGatewayProvider) UpsertGatewaySecret(ctx context.Context, input GatewaySecretInput) (GatewaySecret, error) {
+	p.calls.Add(1)
+	secret, err := p.testProvider.UpsertGatewaySecret(ctx, input)
+	if err != nil {
+		return secret, err
+	}
+	return secret, p.writeErr
+}
+
+func (p *convergingGatewayProvider) ReadGatewaySecret(_ context.Context, _ GatewaySecretInput) (GatewaySecret, error) {
+	p.readbackCalls.Add(1)
+	if p.readbackErr != nil {
+		return GatewaySecret{}, p.readbackErr
+	}
+	return p.readback, nil
 }
 
 func TestGatewaySecretWriteReplaysOneRedactedOperation(t *testing.T) {
@@ -1453,9 +1547,13 @@ func TestGatewaySecretWriteReplaysOneRedactedOperation(t *testing.T) {
 }
 
 func TestUpsertGatewaySecretReclaimsStaleOperationAfterSaveFailure(t *testing.T) {
-	provider := &countingGatewayProvider{}
-	store := &failFirstRuntimeSaveStore{OperationStore: NewMemoryOperationStore()}
 	input := GatewaySecretInput{AccountID: "acct-alpha", WorkspaceID: "ws-alpha", WorkspaceAPIKeyID: 19, Fingerprint: "sha256:12982dcaf26b60cde5b6b68b01556e591badb2768ac9b71525619cb4ebc646f0", GatewayAPIKey: "raw-gateway-key", IdempotencyKey: "gateway-stale"}
+	readback, err := (testProvider{}).UpsertGatewaySecret(context.Background(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider := &convergingGatewayProvider{readback: readback}
+	store := &failFirstRuntimeSaveStore{OperationStore: NewMemoryOperationStore()}
 	startedAt := time.Date(2026, 7, 17, 0, 0, 0, 0, time.UTC)
 
 	first := NewServiceWithOperationStore(provider, store)
@@ -1482,11 +1580,11 @@ func TestUpsertGatewaySecretReclaimsStaleOperationAfterSaveFailure(t *testing.T)
 	}
 
 	secret, err := stale.UpsertGatewaySecret(context.Background(), input)
-	if err != nil || secret.SecretRef != gatewaySecretName(input.WorkspaceID) || provider.calls.Load() != 2 {
+	if err != nil || secret != readback || provider.calls.Load() != 1 || provider.readbackCalls.Load() != 1 {
 		t.Fatalf("stale Gateway Secret=%#v err=%v providerCalls=%d", secret, err, provider.calls.Load())
 	}
 	replayed, err := NewServiceWithOperationStore(provider, store).UpsertGatewaySecret(context.Background(), input)
-	if err != nil || replayed != secret || provider.calls.Load() != 2 {
+	if err != nil || replayed != secret || provider.calls.Load() != 1 {
 		t.Fatalf("converged Gateway Secret replay=%#v err=%v providerCalls=%d", replayed, err, provider.calls.Load())
 	}
 	operations, err := store.List(context.Background())
@@ -1820,8 +1918,8 @@ func TestFabricRejectsIllegalResourceMutationsWithOperationFacts(t *testing.T) {
 		t.Fatalf("list operations: %v", err)
 	}
 	assertOperationFact(t, operations, "destroy_compute_allocation", "compute_allocation", "missing-compute", "rejected")
-	assertOperationFact(t, operations, "create_storage_attachment", "storage_attachment", "reject-missing-attach", "rejected")
-	assertOperationFact(t, operations, "create_storage_attachment", "storage_attachment", "reject-cross-account-attach", "rejected")
+	assertOperationFact(t, operations, "create_storage_attachment", "storage_attachment", "att_"+stableSuffix("reject-missing-attach")[:18], "rejected")
+	assertOperationFact(t, operations, "create_storage_attachment", "storage_attachment", "att_"+stableSuffix("reject-cross-account-attach")[:18], "rejected")
 }
 
 func TestStorageAttachmentRequiresReadyComputeAndVolume(t *testing.T) {
@@ -2018,6 +2116,31 @@ type countingAttachmentProvider struct {
 	calls atomic.Int32
 }
 
+type convergingAttachmentProvider struct {
+	countingAttachmentProvider
+	readback      StorageAttachment
+	readbackErr   error
+	writeErr      error
+	readbackCalls atomic.Int32
+}
+
+func (p *convergingAttachmentProvider) CreateStorageAttachment(_ context.Context, input StorageAttachmentInput, _ ComputeAllocation, _ StorageVolume) (StorageAttachment, error) {
+	p.calls.Add(1)
+	result := p.readback
+	if result.ID == "" {
+		result = StorageAttachment{ID: "att_authoritative-alpha", OperationID: input.IdempotencyKey, WorkspaceID: input.WorkspaceID, ComputeID: input.ComputeID, VolumeID: input.VolumeID, Status: "attached", Provider: "tencent-tke", ProviderAttachmentID: "pv/workspace-alpha-pv:pvc/workspace-alpha-data", ProviderRequestID: providerRequestID("storage-attach", input.IdempotencyKey)}
+	}
+	return result, p.writeErr
+}
+
+func (p *convergingAttachmentProvider) ReadStorageAttachment(_ context.Context, _ StorageAttachment, _ ComputeAllocation, _ StorageVolume) (StorageAttachment, error) {
+	p.readbackCalls.Add(1)
+	if p.readbackErr != nil {
+		return StorageAttachment{}, p.readbackErr
+	}
+	return p.readback, nil
+}
+
 type blockingAttachmentProvider struct {
 	testProvider
 	calls   atomic.Int32
@@ -2097,15 +2220,16 @@ func TestCreateStorageAttachmentClaimsAcrossServiceInstances(t *testing.T) {
 }
 
 func TestCreateStorageAttachmentReclaimsStaleOperationAfterSaveFailure(t *testing.T) {
-	provider := &countingAttachmentProvider{}
-	store := &failFirstRuntimeSaveStore{OperationStore: NewMemoryOperationStore()}
 	input := attachmentTestInput("attachment-stale")
+	readback := StorageAttachment{ID: "att_authoritative-alpha", OperationID: input.IdempotencyKey, WorkspaceID: input.WorkspaceID, ComputeID: input.ComputeID, VolumeID: input.VolumeID, Status: "attached", Provider: "tencent-tke", ProviderAttachmentID: "pv/workspace-alpha-pv:pvc/workspace-alpha-data", ProviderRequestID: providerRequestID("storage-attach", input.IdempotencyKey)}
+	provider := &convergingAttachmentProvider{readback: readback}
+	store := &failFirstRuntimeSaveStore{OperationStore: NewMemoryOperationStore()}
 	startedAt := time.Date(2026, 7, 17, 0, 0, 0, 0, time.UTC)
 
 	first := attachmentTestService(provider, store)
 	first.now = func() time.Time { return startedAt }
 	firstResult, err := first.CreateStorageAttachment(context.Background(), input)
-	if err == nil || err.Error() != "injected runtime save failure" || firstResult.ID != "attachment-alpha" || provider.calls.Load() != 1 {
+	if err == nil || err.Error() != "injected runtime save failure" || firstResult.ID != readback.ID || provider.calls.Load() != 1 {
 		t.Fatalf("first attachment=%#v err=%v providerCalls=%d", firstResult, err, provider.calls.Load())
 	}
 	fresh := attachmentTestService(provider, store)
@@ -2122,11 +2246,11 @@ func TestCreateStorageAttachmentReclaimsStaleOperationAfterSaveFailure(t *testin
 		t.Fatalf("changed stale attachment replay error=%v", err)
 	}
 	recovered, err := stale.CreateStorageAttachment(context.Background(), input)
-	if err != nil || recovered.ID != firstResult.ID || provider.calls.Load() != 2 {
+	if err != nil || recovered.ID != readback.ID || recovered.OperationID != input.IdempotencyKey || provider.calls.Load() != 1 || provider.readbackCalls.Load() != 1 {
 		t.Fatalf("stale attachment=%#v err=%v providerCalls=%d", recovered, err, provider.calls.Load())
 	}
 	replayed, err := attachmentTestService(provider, store).CreateStorageAttachment(context.Background(), input)
-	if err != nil || replayed.ID != recovered.ID || provider.calls.Load() != 2 {
+	if err != nil || replayed.ID != recovered.ID || provider.calls.Load() != 1 {
 		t.Fatalf("converged attachment replay=%#v err=%v providerCalls=%d", replayed, err, provider.calls.Load())
 	}
 	operations, err := store.List(context.Background())
@@ -2299,15 +2423,16 @@ func TestCreateWorkspaceRuntimeClaimsAcrossServiceInstances(t *testing.T) {
 }
 
 func TestCreateWorkspaceRuntimeReclaimsStaleOperationAfterSaveFailure(t *testing.T) {
-	provider := &countingRuntimeProvider{}
-	store := &failFirstRuntimeSaveStore{OperationStore: NewMemoryOperationStore()}
 	input := runtimeTestInput("runtime-stale")
+	readback := WorkspaceRuntime{ID: "rt_authoritative-alpha", OperationID: input.RuntimeOperationID, WorkspaceID: input.WorkspaceID, Status: "running", Ready: true, ServiceName: "opl-compute-alpha", ProviderRequestID: providerRequestID("runtime", input.IdempotencyKey)}
+	provider := &convergingRuntimeProvider{readback: readback}
+	store := &failFirstRuntimeSaveStore{OperationStore: NewMemoryOperationStore()}
 	startedAt := time.Date(2026, 7, 17, 0, 0, 0, 0, time.UTC)
 
 	first := runtimeTestService(provider, store)
 	first.now = func() time.Time { return startedAt }
 	firstResult, err := first.CreateWorkspaceRuntime(context.Background(), input)
-	if err == nil || err.Error() != "injected runtime save failure" || firstResult.ID != "runtime-alpha" || provider.calls.Load() != 1 {
+	if err == nil || err.Error() != "injected runtime save failure" || firstResult.ID != readback.ID || provider.calls.Load() != 1 {
 		t.Fatalf("first runtime=%#v err=%v providerCalls=%d", firstResult, err, provider.calls.Load())
 	}
 	fresh := runtimeTestService(provider, store)
@@ -2324,16 +2449,94 @@ func TestCreateWorkspaceRuntimeReclaimsStaleOperationAfterSaveFailure(t *testing
 		t.Fatalf("changed stale runtime replay error=%v", err)
 	}
 	recovered, err := stale.CreateWorkspaceRuntime(context.Background(), input)
-	if err != nil || recovered.ID != firstResult.ID || provider.calls.Load() != 2 {
+	if err != nil || recovered.ID != readback.ID || recovered.OperationID != input.RuntimeOperationID || provider.calls.Load() != 1 || provider.readbackCalls.Load() != 1 {
 		t.Fatalf("stale runtime=%#v err=%v providerCalls=%d", recovered, err, provider.calls.Load())
 	}
 	replayed, err := NewServiceWithOperationStore(provider, store).CreateWorkspaceRuntime(context.Background(), input)
-	if err != nil || replayed.ID != recovered.ID || provider.calls.Load() != 2 {
+	if err != nil || replayed.ID != recovered.ID || provider.calls.Load() != 1 {
 		t.Fatalf("converged runtime replay=%#v err=%v providerCalls=%d", replayed, err, provider.calls.Load())
 	}
 	operations, err := store.List(context.Background())
 	if err != nil || len(operations) != 1 || operations[0].Status != "succeeded" {
 		t.Fatalf("converged runtime operations=%#v err=%v", operations, err)
+	}
+}
+
+func TestRuntimeStageFailedOperationsConvergeByReadbackWithoutSecondWrite(t *testing.T) {
+	t.Run("attachment", func(t *testing.T) {
+		input := attachmentTestInput("attachment-failed-readback")
+		readback := StorageAttachment{ID: "att_failed-readback", OperationID: input.IdempotencyKey, WorkspaceID: input.WorkspaceID, ComputeID: input.ComputeID, VolumeID: input.VolumeID, Status: "attached", Provider: "tencent-tke", ProviderAttachmentID: "pv/workspace-alpha-pv:pvc/workspace-alpha-data", ProviderRequestID: providerRequestID("storage-attach", input.IdempotencyKey)}
+		provider := &convergingAttachmentProvider{readback: readback, writeErr: errors.New("provider response lost")}
+		store := NewMemoryOperationStore()
+		if result, err := attachmentTestService(provider, store).CreateStorageAttachment(context.Background(), input); err == nil || result.ID != readback.ID {
+			t.Fatalf("first attachment=%#v err=%v", result, err)
+		}
+		result, err := attachmentTestService(provider, store).CreateStorageAttachment(context.Background(), input)
+		if err != nil || result.ID != readback.ID || result.OperationID != readback.OperationID || result.ProviderAttachmentID != readback.ProviderAttachmentID || provider.calls.Load() != 1 || provider.readbackCalls.Load() != 1 {
+			t.Fatalf("attachment readback=%#v err=%v writes=%d reads=%d", result, err, provider.calls.Load(), provider.readbackCalls.Load())
+		}
+	})
+
+	t.Run("gateway secret", func(t *testing.T) {
+		input := GatewaySecretInput{AccountID: "acct-alpha", WorkspaceID: "ws-alpha", WorkspaceAPIKeyID: 19, Fingerprint: "sha256:12982dcaf26b60cde5b6b68b01556e591badb2768ac9b71525619cb4ebc646f0", GatewayAPIKey: "raw-gateway-key", IdempotencyKey: "gateway-failed-readback"}
+		readback, err := (testProvider{}).UpsertGatewaySecret(context.Background(), input)
+		if err != nil {
+			t.Fatal(err)
+		}
+		provider := &convergingGatewayProvider{readback: readback, writeErr: errors.New("provider response lost")}
+		store := NewMemoryOperationStore()
+		if result, err := NewServiceWithOperationStore(provider, store).UpsertGatewaySecret(context.Background(), input); err == nil || result != readback {
+			t.Fatalf("first Gateway Secret=%#v err=%v", result, err)
+		}
+		result, err := NewServiceWithOperationStore(provider, store).UpsertGatewaySecret(context.Background(), input)
+		if err != nil || result != readback || provider.calls.Load() != 1 || provider.readbackCalls.Load() != 1 {
+			t.Fatalf("Gateway Secret readback=%#v err=%v writes=%d reads=%d", result, err, provider.calls.Load(), provider.readbackCalls.Load())
+		}
+	})
+
+	t.Run("runtime", func(t *testing.T) {
+		input := runtimeTestInput("runtime-failed-readback")
+		readback := WorkspaceRuntime{ID: "rt_failed-readback", OperationID: input.RuntimeOperationID, WorkspaceID: input.WorkspaceID, Status: "running", Ready: true, ServiceName: "opl-compute-alpha", ProviderRequestID: providerRequestID("runtime", input.IdempotencyKey)}
+		provider := &convergingRuntimeProvider{readback: readback, writeErr: errors.New("provider response lost")}
+		store := NewMemoryOperationStore()
+		if result, err := runtimeTestService(provider, store).CreateWorkspaceRuntime(context.Background(), input); err == nil || result.ID != readback.ID {
+			t.Fatalf("first runtime=%#v err=%v", result, err)
+		}
+		result, err := runtimeTestService(provider, store).CreateWorkspaceRuntime(context.Background(), input)
+		if err != nil || result.ID != readback.ID || result.OperationID != input.RuntimeOperationID || provider.calls.Load() != 1 || provider.readbackCalls.Load() != 1 {
+			t.Fatalf("runtime readback=%#v err=%v writes=%d reads=%d", result, err, provider.calls.Load(), provider.readbackCalls.Load())
+		}
+	})
+}
+
+func TestRuntimeStageReadbackFailureNeverRepeatsProviderWrite(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		result WorkspaceRuntime
+		err    error
+	}{
+		{name: "absent"},
+		{name: "identity drift", result: WorkspaceRuntime{ID: "rt_other", OperationID: "runtime-other", WorkspaceID: "workspace-alpha", Status: "running", ServiceName: "opl-compute-alpha"}},
+		{name: "multiple candidates", err: errors.New("workspace_runtime_status_ownership_conflict")},
+		{name: "read error", err: errors.New("workspace_runtime_status_iam_rbac")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			input := runtimeTestInput("runtime-fail-closed-" + strings.ReplaceAll(tc.name, " ", "-"))
+			initial := WorkspaceRuntime{ID: "rt_initial", OperationID: input.RuntimeOperationID, WorkspaceID: input.WorkspaceID, Status: "running", Ready: true, ServiceName: "opl-compute-alpha", ProviderRequestID: providerRequestID("runtime", input.IdempotencyKey)}
+			provider := &convergingRuntimeProvider{readback: initial, writeErr: errors.New("provider response lost")}
+			store := NewMemoryOperationStore()
+			if _, err := runtimeTestService(provider, store).CreateWorkspaceRuntime(context.Background(), input); err == nil {
+				t.Fatal("first runtime unexpectedly succeeded")
+			}
+			provider.readback, provider.readbackErr = tc.result, tc.err
+			if _, err := runtimeTestService(provider, store).CreateWorkspaceRuntime(context.Background(), input); !errors.Is(err, ErrRuntimeOperationFailed) {
+				t.Fatalf("readback error=%v", err)
+			}
+			operations, err := store.List(context.Background())
+			if err != nil || len(operations) != 1 || operations[0].Status != "failed" || provider.calls.Load() != 1 || provider.readbackCalls.Load() != 1 {
+				t.Fatalf("operations=%#v err=%v writes=%d reads=%d", operations, err, provider.calls.Load(), provider.readbackCalls.Load())
+			}
+		})
 	}
 }
 
@@ -2524,6 +2727,31 @@ type countingRuntimeProvider struct {
 	calls        atomic.Int32
 	destroyCalls atomic.Int32
 	input        WorkspaceRuntimeInput
+}
+
+type convergingRuntimeProvider struct {
+	countingRuntimeProvider
+	readback      WorkspaceRuntime
+	readbackErr   error
+	writeErr      error
+	readbackCalls atomic.Int32
+}
+
+func (p *convergingRuntimeProvider) CreateWorkspaceRuntime(_ context.Context, input WorkspaceRuntimeInput, _ ComputeAllocation, _ StorageVolume) (WorkspaceRuntime, error) {
+	p.calls.Add(1)
+	result := p.readback
+	if result.ID == "" {
+		result = WorkspaceRuntime{ID: "rt_authoritative-alpha", OperationID: input.RuntimeOperationID, WorkspaceID: input.WorkspaceID, Status: "running", Ready: true, ServiceName: "opl-compute-alpha", ProviderRequestID: providerRequestID("runtime", input.IdempotencyKey)}
+	}
+	return result, p.writeErr
+}
+
+func (p *convergingRuntimeProvider) WorkspaceRuntimeStatus(_ context.Context, _ string) (WorkspaceRuntime, error) {
+	p.readbackCalls.Add(1)
+	if p.readbackErr != nil {
+		return WorkspaceRuntime{}, p.readbackErr
+	}
+	return p.readback, nil
 }
 
 type failOnceDestroyProvider struct {

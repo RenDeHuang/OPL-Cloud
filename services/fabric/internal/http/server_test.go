@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -32,6 +33,101 @@ func TestMain(m *testing.M) {
 type runtimeHealthSummaryHTTPProvider struct {
 	testProvider
 	calls int
+}
+
+type workspaceLaunchStageReadbackHTTPProvider struct {
+	testProvider
+	secret fabric.GatewaySecret
+	reads  int
+}
+
+func (p *workspaceLaunchStageReadbackHTTPProvider) UpsertGatewaySecret(_ context.Context, input fabric.GatewaySecretInput) (fabric.GatewaySecret, error) {
+	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(input.GatewayAPIKey)))
+	p.secret = fabric.GatewaySecret{Version: digest[:16], Fingerprint: "sha256:" + digest}
+	return p.secret, nil
+}
+
+func (p *workspaceLaunchStageReadbackHTTPProvider) ReadGatewaySecretByDigest(_ context.Context, input fabric.GatewaySecretReadbackInput) (fabric.GatewaySecret, error) {
+	p.reads++
+	if input.SecretRef != p.secret.SecretRef || input.Fingerprint != p.secret.Fingerprint || "sha256:"+input.KeyDigest != p.secret.Fingerprint {
+		return fabric.GatewaySecret{}, errors.New("gateway_secret_readback_mismatch")
+	}
+	return p.secret, nil
+}
+
+type failWorkspaceLaunchStageHTTPStore struct {
+	fabric.OperationStore
+	failed bool
+}
+
+func (s *failWorkspaceLaunchStageHTTPStore) SaveRuntime(ctx context.Context, operation fabric.FabricOperation) error {
+	if !s.failed {
+		s.failed = true
+		return errors.New("injected runtime save failure")
+	}
+	return s.OperationStore.SaveRuntime(ctx, operation)
+}
+
+func (s *failWorkspaceLaunchStageHTTPStore) ConvergeRuntimeReadback(ctx context.Context, expected, next fabric.FabricOperation) error {
+	converger, ok := s.OperationStore.(interface {
+		ConvergeRuntimeReadback(context.Context, fabric.FabricOperation, fabric.FabricOperation) error
+	})
+	if !ok {
+		return errors.New("runtime readback convergence unavailable")
+	}
+	return converger.ConvergeRuntimeReadback(ctx, expected, next)
+}
+
+func TestWorkspaceLaunchStageReadbackHTTPSeparatesProofAndCAS(t *testing.T) {
+	provider := &workspaceLaunchStageReadbackHTTPProvider{}
+	store := fabric.NewMemoryOperationStore()
+	service := fabric.NewServiceWithOperationStore(provider, &failWorkspaceLaunchStageHTTPStore{OperationStore: store})
+	key := "gateway-key-http"
+	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(key)))
+	input := fabric.GatewaySecretInput{AccountID: "acct-alpha", WorkspaceID: "ws-alpha", WorkspaceAPIKeyID: 19, Fingerprint: "sha256:" + digest, GatewayAPIKey: key, IdempotencyKey: "launch-alpha:secret:gateway-secret"}
+	if _, err := service.UpsertGatewaySecret(context.Background(), input); err == nil {
+		t.Fatal("injected final SaveRuntime failure was not observed")
+	}
+	operations, err := store.List(context.Background())
+	if err != nil || len(operations) != 1 || operations[0].Status != "started" {
+		t.Fatalf("interrupted operation=%#v err=%v", operations, err)
+	}
+	provider.secret.SecretRef = operations[0].ResourceID
+	request := fabric.WorkspaceLaunchStageReadbackInput{
+		Stage: "secret", FabricRecordID: operations[0].ID, FabricOperationID: operations[0].OperationID,
+		AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, IdempotencyKey: input.IdempotencyKey,
+		RequestHash: operations[0].RequestHash, GatewaySecretRef: provider.secret.SecretRef,
+		GatewaySecretFingerprint: provider.secret.Fingerprint, WorkspaceAPIKeyID: input.WorkspaceAPIKeyID,
+	}
+	server := NewServer(service, "internal-secret")
+	proofBody, _ := json.Marshal(request)
+	proofResponse := httptest.NewRecorder()
+	server.ServeHTTP(proofResponse, testRequest(http.MethodPost, "/fabric/workspace-launch-stage-readback/proof", bytes.NewReader(proofBody)))
+	if proofResponse.Code != http.StatusOK {
+		t.Fatalf("proof status=%d body=%s", proofResponse.Code, proofResponse.Body.String())
+	}
+	var proof fabric.WorkspaceLaunchStageReadbackProof
+	if json.Unmarshal(proofResponse.Body.Bytes(), &proof) != nil || !proof.Eligible || proof.BindingDigest == "" || proof.FabricOperationMutationCount != 0 || provider.reads != 1 {
+		t.Fatalf("proof=%#v reads=%d", proof, provider.reads)
+	}
+	if strings.Contains(proofResponse.Body.String(), key) || strings.Contains(proofResponse.Body.String(), "keyDigest") {
+		t.Fatalf("proof leaked Secret material: %s", proofResponse.Body.String())
+	}
+	afterProof, _ := store.List(context.Background())
+	if !reflect.DeepEqual(afterProof, operations) {
+		t.Fatalf("proof mutated operation: before=%#v after=%#v", operations, afterProof)
+	}
+	request.ExpectedBindingDigest = proof.BindingDigest
+	convergeBody, _ := json.Marshal(request)
+	convergeResponse := httptest.NewRecorder()
+	server.ServeHTTP(convergeResponse, testRequest(http.MethodPost, "/fabric/workspace-launch-stage-readback/converge", bytes.NewReader(convergeBody)))
+	if convergeResponse.Code != http.StatusOK {
+		t.Fatalf("converge status=%d body=%s", convergeResponse.Code, convergeResponse.Body.String())
+	}
+	var converged fabric.WorkspaceLaunchStageReadbackProof
+	if json.Unmarshal(convergeResponse.Body.Bytes(), &converged) != nil || converged.FabricOperationMutationCount != 1 || provider.reads != 2 {
+		t.Fatalf("converged=%#v reads=%d", converged, provider.reads)
+	}
 }
 
 func (p *runtimeHealthSummaryHTTPProvider) RuntimeHealthSummary(context.Context) (fabric.RuntimeHealthSummary, error) {

@@ -396,7 +396,57 @@ test("Current Fabric contracts require dedicated package NodePools without weake
     output: "redacted_evidence_only",
     currentState: "implemented_and_fake_tested_not_executed"
   });
-  assert.equal(deployment.schemaVersion, 23);
+  assert.equal(deployment.schemaVersion, 27);
+  assert.deepEqual(deployment.productionWorkspaceLaunchReadbackRecovery, {
+    workflow: ".github/workflows/production-basic-customer-operation.yml",
+    modes: {
+      diagnose: {
+        input: "operation_mode=workspace_launch_readback_diagnose",
+        route: "GET /api/operator/workspace-launches/{operationId}/readback-recovery-proof",
+        persistence: "none",
+        databaseMutationCount: 0,
+        fabricOperationMutationCount: 0,
+        mutationApproval: false,
+        proofMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
+        runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
+      },
+      recover: {
+        input: "operation_mode=workspace_launch_readback_recover",
+        route: "POST /api/operator/workspace-launches/{operationId}/recover",
+        confirmation: "RECOVER_UNKNOWN_WORKSPACE_LAUNCH_STAGE_FROM_AUTHORITATIVE_READBACK",
+        approvalBinding: ["merged_main_sha", "cloud_image_digest", "workspace_image_digest", "expiry", "customer", "launch", "workspace", "product_truth", "compute", "storage", "attachment", "secret", "runtime", "activation", "receipt", "machine_ownership", "fabric_operation_identity", "provider_operation_identity", "stage", "attempt_budget", "recovery_key"],
+        allowedWrites: "confirm_unknown_stage_from_authoritative_readback_then_remaining_original_launch_writes",
+        forbiddenWrites: ["create_launch", "debit", "recharge", "refund", "scale", "create_cvm", "create_second_cbs", "delete", "replace", "retry_unknown_stage_write"],
+        proofMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
+        runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
+        backgroundMutationCountsState: "unknown",
+        convergenceWrites: { attachmentSecretRuntimeFabricOperationCasMax: 1, originalLaunchCasMax: 1, unknownStageProviderWriteReplay: 0 },
+        unknownStageExternalWriteReplayCount: 0,
+        remainingStageMutationBudget: "original_launch_persisted_per_stage_max_1",
+        persistedReplay: {
+          states: ["preparing", "waiting", "terminal"],
+          identity: ["approval_id", "approval_digest", "idempotency_key", "full_target"],
+          expiry: "exact_persisted_identity_replays_after_expiry_unpersisted_expired_rejected",
+          response: "reconstructed_from_persisted_approval_and_proof_without_fresh_manual_review_proof",
+          drift: "409_conflict",
+          mutationCounts: { database: 0, fabric: 0, sub2api: 0, tencent: 0, kubernetes: 0 }
+        }
+      }
+    },
+    targetSource: "protected_input_full_compute_target_preserved_without_projection",
+    operationIdentity: "launch_idempotency_key_fabric_internal_operation_machine_ownership_provider_opl_operation_and_stage_resource_operations",
+    continuation: "existing_compute_claim_continue_get_only_same_original_launch",
+    artifact: {
+      schemaVersion: 2,
+      projection: "explicit_allowlist_dto_for_success_and_failure",
+      rawProof: { path: "protected_runner_temp_outside_upload_tree", mode: "0600", uploaded: false },
+      order: ["validate_complete_raw_result", "project_safe_allowlist_dto", "upload_safe_artifact"],
+      binding: ["approval_digest", "stable_full_binding_digest"],
+      continuation: "minimal_safe_recovered_workspace_e2e_handoff",
+      forbiddenFields: ["email", "private_ip", "complete_target", "complete_proof", "complete_approval", "gateway_secret_ref", "gateway_secret_fingerprint", "credential", "capability", "provider_request_id", "complete_operation_identity"]
+    },
+    currentState: "code_complete_local_focused_and_postgresql_verified_not_merged_released_deployed_or_executed"
+  });
   assert.deepEqual(deployment.productionComputeClaimRecovery, {
     workflow: ".github/workflows/production-basic-customer-operation.yml",
     execution: "manual_release_owner_only_not_ci_release_rollout_or_e2e",
@@ -715,7 +765,7 @@ test("Current contracts hard cut operator resources, wallet adjustments, and ann
     absentRequires: "both_local_identities_and_exact_provider_describe_absence",
     forbiddenSideEffects: ["sync", "tag", "kubectl_apply", "delete", "label", "purchase", "renew", "destroy"]
   });
-  assert.equal(boundary.schemaVersion, 17);
+  assert.equal(boundary.schemaVersion, 21);
   assert.deepEqual(boundary.services.controlPlane.workspaceContinuationAttemptBudget, {
     owner: "original_workspace.launch.v2_operation",
     stages: ["storage", "attachment", "secret", "runtime", "activation", "receipt"],
@@ -724,6 +774,48 @@ test("Current contracts hard cut operator resources, wallet adjustments, and ann
     reserve: "postgresql_cas_before_external_write",
     restart: "persisted_budget_never_resets",
     terminalFailure: "unknown_or_exhausted_enters_manual_review_and_active_worker_excludes_it"
+  });
+  assert.deepEqual(boundary.services.controlPlane.workspaceLaunchAuthoritativeReadbackRecovery, {
+    proofRoute: "GET /api/operator/workspace-launches/{operationId}/readback-recovery-proof",
+    recoveryRoute: "POST /api/operator/workspace-launches/{operationId}/recover",
+    fabricProofRoute: "POST /fabric/workspace-launch-stage-readback/proof",
+    fabricConvergenceRoute: "POST /fabric/workspace-launch-stage-readback/converge",
+    fabricProofSemantics: "authenticated_structured_post_get_describe_only",
+    stages: ["storage", "attachment", "secret", "runtime", "activation", "receipt"],
+    inputBudget: { attempted: 1, confirmed: 0, unknown: 1, max: 1 },
+    convergedBudget: { attempted: 1, confirmed: 1, unknown: 0, max: 1 },
+    proofAuthorities: ["monthly_provider_truth", "machine_ownership", "fabric_operation_store", "workspace_runtime_status", "workspace_activation_truth", "ledger_receipt"],
+    proofPersistence: "none",
+    proofDatabaseMutationCount: 0,
+    proofFabricOperationMutationCount: 0,
+    identityBinding: "full_product_compute_node_cbs_attachment_secret_runtime_and_layered_operation_identity",
+    convergence: "attachment_secret_runtime_fabric_operation_cas_then_postgresql_original_launch_cas_other_stages_original_launch_cas",
+    convergenceMutationMaximums: { fabricOperationCas: 1, originalLaunchCas: 1, unknownStageProviderWriteReplay: 0 },
+    winner: "one_concurrent_recovery_cas",
+    replay: "unknown_stage_external_write_never_reissued_later_stages_use_own_persisted_budget",
+    failure: "absent_multiple_drift_or_read_error_remains_manual_review",
+    sharedOrchestrator: "fulfillWorkspaceLaunch_basic_pro_and_compute_claim_recovery",
+    proofMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
+    runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
+    backgroundMutationCountsState: "unknown",
+    unknownStageExternalWriteReplayCount: 0,
+    remainingStageMutationBudget: "original_launch_persisted_per_stage_max_1",
+    persistedReplay: {
+      states: ["preparing", "waiting", "terminal"],
+      identity: ["approval_id", "approval_digest", "idempotency_key", "full_target"],
+      expiry: "exact_persisted_identity_replays_after_expiry_unpersisted_expired_rejected",
+      response: "reconstructed_from_persisted_approval_and_proof_without_fresh_manual_review_proof",
+      drift: "409_conflict",
+      mutationCounts: { database: 0, fabric: 0, sub2api: 0, tencent: 0, kubernetes: 0 }
+    },
+    artifactBoundary: {
+      schemaVersion: 2,
+      projection: "explicit_allowlist_dto_for_success_and_failure",
+      rawProof: "protected_runner_temp_0600_never_uploaded",
+      uploadOrder: "validate_then_project_then_upload",
+      binding: ["approval_digest", "stable_full_binding_digest"],
+      continuation: "minimal_safe_recovered_workspace_e2e_handoff"
+    }
   });
   assert.deepEqual(boundary.services.controlPlane.recoveredWorkspaceE2EAttempt, {
     reserveRoute: "POST /api/workspaces/{workspaceId}/recovered-e2e-attempt",

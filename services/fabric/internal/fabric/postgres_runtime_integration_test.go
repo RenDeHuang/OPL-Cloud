@@ -1,13 +1,16 @@
 package fabric
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
 	"database/sql/driver"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/url"
 	"os"
 	"reflect"
@@ -216,21 +219,397 @@ func TestPostgresRuntimeMutationReturnsOwnFenceAtomically(t *testing.T) {
 
 type stalePostgresRuntimeProvider struct {
 	testProvider
-	calls        atomic.Int32
-	firstEntered chan struct{}
-	releaseFirst chan struct{}
+	calls         atomic.Int32
+	readbackCalls atomic.Int32
+	readback      WorkspaceRuntime
 }
 
-func (p *stalePostgresRuntimeProvider) CreateWorkspaceRuntime(ctx context.Context, input WorkspaceRuntimeInput, _ ComputeAllocation, _ StorageVolume) (WorkspaceRuntime, error) {
-	if p.calls.Add(1) == 1 {
-		close(p.firstEntered)
-		select {
-		case <-p.releaseFirst:
-		case <-ctx.Done():
-			return WorkspaceRuntime{}, ctx.Err()
+type workspaceLaunchReadbackPostgresProvider struct {
+	testProvider
+	attachmentWrites atomic.Int32
+	attachmentReads  atomic.Int32
+	secretWrites     atomic.Int32
+	secretReads      atomic.Int32
+	runtimeWrites    atomic.Int32
+	runtimeReads     atomic.Int32
+	attachment       StorageAttachment
+	secret           GatewaySecret
+	runtime          WorkspaceRuntime
+}
+
+type workspaceLaunchReadbackBoundaryProvider struct {
+	*workspaceLaunchReadbackPostgresProvider
+	readErrorStage string
+}
+
+func (p *workspaceLaunchReadbackBoundaryProvider) ReadStorageAttachment(ctx context.Context, attachment StorageAttachment, compute ComputeAllocation, volume StorageVolume) (StorageAttachment, error) {
+	if p.readErrorStage == "attachment" {
+		p.attachmentReads.Add(1)
+		return StorageAttachment{}, errors.New("injected attachment read error")
+	}
+	return p.workspaceLaunchReadbackPostgresProvider.ReadStorageAttachment(ctx, attachment, compute, volume)
+}
+
+func (p *workspaceLaunchReadbackBoundaryProvider) ReadGatewaySecretByDigest(ctx context.Context, input GatewaySecretReadbackInput) (GatewaySecret, error) {
+	if p.readErrorStage == "secret" {
+		p.secretReads.Add(1)
+		return GatewaySecret{}, errors.New("injected secret read error")
+	}
+	return p.workspaceLaunchReadbackPostgresProvider.ReadGatewaySecretByDigest(ctx, input)
+}
+
+func (p *workspaceLaunchReadbackBoundaryProvider) WorkspaceRuntimeStatus(ctx context.Context, workspaceID string) (WorkspaceRuntime, error) {
+	if p.readErrorStage == "runtime" {
+		p.runtimeReads.Add(1)
+		return WorkspaceRuntime{}, errors.New("injected runtime read error")
+	}
+	return p.workspaceLaunchReadbackPostgresProvider.WorkspaceRuntimeStatus(ctx, workspaceID)
+}
+
+type workspaceLaunchReadbackBoundaryStore struct {
+	OperationStore
+	listOverride  func([]FabricOperation) ([]FabricOperation, error)
+	convergeCalls atomic.Int32
+}
+
+func (s *workspaceLaunchReadbackBoundaryStore) List(ctx context.Context) ([]FabricOperation, error) {
+	operations, err := s.OperationStore.List(ctx)
+	if err != nil || s.listOverride == nil {
+		return operations, err
+	}
+	return s.listOverride(operations)
+}
+
+func (s *workspaceLaunchReadbackBoundaryStore) ConvergeRuntimeReadback(ctx context.Context, expected, next FabricOperation) error {
+	s.convergeCalls.Add(1)
+	converger, ok := s.OperationStore.(runtimeReadbackConverger)
+	if !ok {
+		return ErrRuntimeOperationNotCurrent
+	}
+	return converger.ConvergeRuntimeReadback(ctx, expected, next)
+}
+
+func (p *workspaceLaunchReadbackPostgresProvider) CreateStorageAttachment(_ context.Context, input StorageAttachmentInput, _ ComputeAllocation, _ StorageVolume) (StorageAttachment, error) {
+	p.attachmentWrites.Add(1)
+	p.attachment = StorageAttachment{
+		ID: "att_" + stableSuffix(input.IdempotencyKey)[:18], OperationID: input.IdempotencyKey,
+		WorkspaceID: input.WorkspaceID, ComputeID: input.ComputeID, VolumeID: input.VolumeID,
+		Status: "attached", Provider: "tencent-tke", ProviderAttachmentID: "pv/storage-alpha-pv:pvc/storage-alpha-data",
+		ProviderRequestID: providerRequestID("storage-attach", input.IdempotencyKey),
+		CostTags:          oplCostTags("acct-alpha", input.WorkspaceID, "att_"+stableSuffix(input.IdempotencyKey)[:18], input.IdempotencyKey),
+	}
+	return p.attachment, nil
+}
+
+func (p *workspaceLaunchReadbackPostgresProvider) ReadStorageAttachment(_ context.Context, _ StorageAttachment, _ ComputeAllocation, _ StorageVolume) (StorageAttachment, error) {
+	p.attachmentReads.Add(1)
+	return p.attachment, nil
+}
+
+func (p *workspaceLaunchReadbackPostgresProvider) UpsertGatewaySecret(_ context.Context, input GatewaySecretInput) (GatewaySecret, error) {
+	p.secretWrites.Add(1)
+	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(input.GatewayAPIKey)))
+	p.secret = GatewaySecret{SecretRef: gatewaySecretName(input.WorkspaceID), Version: digest[:16], Fingerprint: "sha256:" + digest}
+	return p.secret, nil
+}
+
+func (p *workspaceLaunchReadbackPostgresProvider) ReadGatewaySecretByDigest(_ context.Context, input GatewaySecretReadbackInput) (GatewaySecret, error) {
+	p.secretReads.Add(1)
+	if input.SecretRef != p.secret.SecretRef || input.Fingerprint != p.secret.Fingerprint || input.KeyDigest != strings.TrimPrefix(p.secret.Fingerprint, "sha256:") {
+		return GatewaySecret{}, errors.New("gateway_secret_readback_mismatch")
+	}
+	return p.secret, nil
+}
+
+func (p *workspaceLaunchReadbackPostgresProvider) CreateWorkspaceRuntime(_ context.Context, input WorkspaceRuntimeInput, _ ComputeAllocation, _ StorageVolume) (WorkspaceRuntime, error) {
+	p.runtimeWrites.Add(1)
+	runtimeID := "rt_" + stableSuffix(input.WorkspaceID, input.RuntimeOperationID)[:18]
+	p.runtime = WorkspaceRuntime{
+		ID: runtimeID, OperationID: input.RuntimeOperationID, WorkspaceID: input.WorkspaceID,
+		URL: "https://workspace.medopl.cn/w/" + input.WorkspaceID + "/", Status: "running", ServiceName: "opl-compute-alpha", Ready: true,
+		ProviderRequestID: providerRequestID("runtime", input.IdempotencyKey),
+		Access:            RuntimeAccess{Username: "admin", CredentialStatus: "configured", CredentialVersion: "version-alpha", SecretRef: "opl-compute-alpha-env"},
+		CostTags:          oplCostTags("acct-alpha", input.WorkspaceID, runtimeID, input.RuntimeOperationID),
+	}
+	return p.runtime, nil
+}
+
+func (p *workspaceLaunchReadbackPostgresProvider) WorkspaceRuntimeStatus(_ context.Context, _ string) (WorkspaceRuntime, error) {
+	p.runtimeReads.Add(1)
+	return p.runtime, nil
+}
+
+type failWorkspaceLaunchReadbackSaveStore struct {
+	OperationStore
+	persistFailed bool
+	failed        atomic.Bool
+}
+
+func (s *failWorkspaceLaunchReadbackSaveStore) SaveRuntime(ctx context.Context, operation FabricOperation) error {
+	if !s.failed.CompareAndSwap(false, true) {
+		return s.OperationStore.SaveRuntime(ctx, operation)
+	}
+	if s.persistFailed {
+		failed := operation
+		failed.Status = "failed"
+		failed.ErrorCode = "injected_runtime_save_failure"
+		if err := s.OperationStore.SaveRuntime(ctx, failed); err != nil {
+			return err
 		}
 	}
-	return WorkspaceRuntime{ID: "runtime-alpha", WorkspaceID: input.WorkspaceID, Status: "running", Ready: true, ProviderRequestID: providerRequestID("runtime", input.IdempotencyKey)}, nil
+	return errors.New("injected runtime save failure")
+}
+
+func (s *failWorkspaceLaunchReadbackSaveStore) ConvergeRuntimeReadback(ctx context.Context, expected, next FabricOperation) error {
+	converger, ok := s.OperationStore.(runtimeReadbackConverger)
+	if !ok {
+		return ErrRuntimeOperationNotCurrent
+	}
+	return converger.ConvergeRuntimeReadback(ctx, expected, next)
+}
+
+func TestPostgresWorkspaceLaunchStageReadbackProofAndCASAcrossRestart(t *testing.T) {
+	for _, stage := range []string{"attachment", "secret", "runtime"} {
+		for _, priorStatus := range []string{"started", "failed"} {
+			t.Run(stage+"/"+priorStatus, func(t *testing.T) {
+				databaseURL := fabricTestDatabaseURL(t)
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				firstStore, err := newTestPostgresOperationStore(databaseURL)
+				if err != nil {
+					t.Fatal(err)
+				}
+				provider := &workspaceLaunchReadbackPostgresProvider{}
+				startedAt := time.Date(2026, 7, 31, 2, 0, 0, 123456000, time.UTC)
+				failingStore := &failWorkspaceLaunchReadbackSaveStore{OperationStore: firstStore, persistFailed: priorStatus == "failed"}
+				var proofInput WorkspaceLaunchStageReadbackInput
+				switch stage {
+				case "attachment":
+					service := attachmentTestService(provider, failingStore)
+					service.now = func() time.Time { return startedAt }
+					input := attachmentTestInput("workspace-launch-readback:attachment")
+					result, writeErr := service.CreateStorageAttachment(ctx, input)
+					if writeErr == nil || result.ID == "" {
+						t.Fatalf("attachment write=%#v err=%v", result, writeErr)
+					}
+					proofInput = WorkspaceLaunchStageReadbackInput{Stage: stage, AccountID: "acct-alpha", WorkspaceID: input.WorkspaceID, IdempotencyKey: input.IdempotencyKey, ComputeID: input.ComputeID, StorageID: input.VolumeID, AttachmentID: result.ID, AttachmentOperationID: input.IdempotencyKey}
+				case "secret":
+					service := NewServiceWithOperationStore(provider, failingStore)
+					service.now = func() time.Time { return startedAt }
+					key := "gateway-key-alpha"
+					digest := fmt.Sprintf("%x", sha256.Sum256([]byte(key)))
+					input := GatewaySecretInput{AccountID: "acct-alpha", WorkspaceID: "workspace-alpha", WorkspaceAPIKeyID: 41, Fingerprint: "sha256:" + digest, GatewayAPIKey: key, IdempotencyKey: "workspace-launch-readback:secret"}
+					result, writeErr := service.UpsertGatewaySecret(ctx, input)
+					if writeErr == nil {
+						t.Fatalf("secret write=%#v err=%v", result, writeErr)
+					}
+					proofInput = WorkspaceLaunchStageReadbackInput{Stage: stage, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, IdempotencyKey: input.IdempotencyKey, GatewaySecretRef: gatewaySecretName(input.WorkspaceID), GatewaySecretFingerprint: input.Fingerprint, WorkspaceAPIKeyID: input.WorkspaceAPIKeyID}
+				case "runtime":
+					service := runtimeTestService(provider, failingStore)
+					service.now = func() time.Time { return startedAt }
+					input := runtimeTestInput("workspace-launch-readback:runtime-stage")
+					result, writeErr := service.CreateWorkspaceRuntime(ctx, input)
+					if writeErr == nil || result.ID == "" {
+						t.Fatalf("runtime write=%#v err=%v", result, writeErr)
+					}
+					proofInput = WorkspaceLaunchStageReadbackInput{Stage: stage, AccountID: "acct-alpha", WorkspaceID: input.WorkspaceID, IdempotencyKey: input.IdempotencyKey, ComputeID: input.ComputeID, StorageID: input.VolumeID, AttachmentID: input.AttachmentID, AttachmentOperationID: input.AttachmentOperationID, RuntimeID: result.ID, RuntimeOperationID: input.RuntimeOperationID, ImageID: input.ImageID, GatewaySecretRef: input.GatewaySecretRef}
+				}
+				beforeRestart, err := firstStore.List(ctx)
+				if err != nil || len(beforeRestart) != 1 || beforeRestart[0].Status != priorStatus {
+					t.Fatalf("persisted %s operation=%#v err=%v", priorStatus, beforeRestart, err)
+				}
+				proofInput.FabricRecordID, proofInput.FabricOperationID = beforeRestart[0].ID, beforeRestart[0].OperationID
+				proofInput.RequestHash = beforeRestart[0].RequestHash
+				if err := firstStore.client.Close(); err != nil {
+					t.Fatal(err)
+				}
+
+				reopenedStore, err := newTestPostgresOperationStore(databaseURL)
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { _ = reopenedStore.client.Close() })
+				var reopenedService *Service
+				switch stage {
+				case "attachment":
+					reopenedService = attachmentTestService(provider, reopenedStore)
+				case "runtime":
+					reopenedService = runtimeTestService(provider, reopenedStore)
+				default:
+					reopenedService = NewServiceWithOperationStore(provider, reopenedStore)
+				}
+				reopenedService.now = func() time.Time { return startedAt.Add(3 * time.Minute) }
+				proof, err := reopenedService.WorkspaceLaunchStageReadbackProof(ctx, proofInput)
+				if err != nil || !proof.Eligible || proof.PriorStatus != priorStatus || proof.Operation.Status != "succeeded" || proof.BindingDigest == "" {
+					t.Fatalf("%s proof=%#v err=%v", stage, proof, err)
+				}
+				if encoded, err := json.Marshal(proof); err != nil || bytes.Contains(encoded, []byte("keyDigest")) || bytes.Contains(encoded, []byte("gateway-key-alpha")) {
+					t.Fatalf("unsafe proof payload=%s err=%v", encoded, err)
+				}
+				afterProof, err := reopenedStore.List(ctx)
+				if err != nil || !reflect.DeepEqual(afterProof, beforeRestart) {
+					t.Fatalf("proof mutated PostgreSQL: before=%#v after=%#v err=%v", beforeRestart, afterProof, err)
+				}
+				proofInput.ExpectedBindingDigest = proof.BindingDigest
+				converged, err := reopenedService.ConvergeWorkspaceLaunchStageReadback(ctx, proofInput)
+				if err != nil || converged.Operation.Status != "succeeded" || converged.FabricOperationMutationCount != 1 {
+					t.Fatalf("%s convergence=%#v err=%v", stage, converged, err)
+				}
+				if provider.attachmentWrites.Load()+provider.secretWrites.Load()+provider.runtimeWrites.Load() != 1 ||
+					provider.attachmentReads.Load()+provider.secretReads.Load()+provider.runtimeReads.Load() != 2 {
+					t.Fatalf("%s provider writes=%d/%d/%d reads=%d/%d/%d", stage, provider.attachmentWrites.Load(), provider.secretWrites.Load(), provider.runtimeWrites.Load(), provider.attachmentReads.Load(), provider.secretReads.Load(), provider.runtimeReads.Load())
+				}
+			})
+		}
+	}
+}
+
+func interruptedWorkspaceLaunchReadbackFixture(t *testing.T, stage string) (*workspaceLaunchReadbackBoundaryProvider, *MemoryOperationStore, WorkspaceLaunchStageReadbackInput) {
+	t.Helper()
+	ctx := context.Background()
+	provider := &workspaceLaunchReadbackBoundaryProvider{workspaceLaunchReadbackPostgresProvider: &workspaceLaunchReadbackPostgresProvider{}}
+	store := NewMemoryOperationStore()
+	failingStore := &failWorkspaceLaunchReadbackSaveStore{OperationStore: store}
+	var input WorkspaceLaunchStageReadbackInput
+	switch stage {
+	case "attachment":
+		service := attachmentTestService(provider, failingStore)
+		writeInput := attachmentTestInput("workspace-launch-boundary:attachment")
+		result, err := service.CreateStorageAttachment(ctx, writeInput)
+		if err == nil || result.ID == "" {
+			t.Fatalf("attachment write=%#v err=%v", result, err)
+		}
+		input = WorkspaceLaunchStageReadbackInput{
+			Stage: stage, AccountID: "acct-alpha", WorkspaceID: writeInput.WorkspaceID, IdempotencyKey: writeInput.IdempotencyKey,
+			ComputeID: writeInput.ComputeID, StorageID: writeInput.VolumeID, AttachmentID: result.ID, AttachmentOperationID: writeInput.IdempotencyKey,
+		}
+	case "secret":
+		service := NewServiceWithOperationStore(provider, failingStore)
+		key := "gateway-key-boundary"
+		digest := fmt.Sprintf("%x", sha256.Sum256([]byte(key)))
+		writeInput := GatewaySecretInput{
+			AccountID: "acct-alpha", WorkspaceID: "workspace-alpha", WorkspaceAPIKeyID: 41,
+			Fingerprint: "sha256:" + digest, GatewayAPIKey: key, IdempotencyKey: "workspace-launch-boundary:secret",
+		}
+		if result, err := service.UpsertGatewaySecret(ctx, writeInput); err == nil {
+			t.Fatalf("secret write=%#v err=%v", result, err)
+		}
+		input = WorkspaceLaunchStageReadbackInput{
+			Stage: stage, AccountID: writeInput.AccountID, WorkspaceID: writeInput.WorkspaceID, IdempotencyKey: writeInput.IdempotencyKey,
+			GatewaySecretRef: gatewaySecretName(writeInput.WorkspaceID), GatewaySecretFingerprint: writeInput.Fingerprint, WorkspaceAPIKeyID: writeInput.WorkspaceAPIKeyID,
+		}
+	case "runtime":
+		service := runtimeTestService(provider, failingStore)
+		writeInput := runtimeTestInput("workspace-launch-boundary:runtime")
+		result, err := service.CreateWorkspaceRuntime(ctx, writeInput)
+		if err == nil || result.ID == "" {
+			t.Fatalf("runtime write=%#v err=%v", result, err)
+		}
+		input = WorkspaceLaunchStageReadbackInput{
+			Stage: stage, AccountID: "acct-alpha", WorkspaceID: writeInput.WorkspaceID, IdempotencyKey: writeInput.IdempotencyKey,
+			ComputeID: writeInput.ComputeID, StorageID: writeInput.VolumeID, AttachmentID: writeInput.AttachmentID,
+			AttachmentOperationID: writeInput.AttachmentOperationID, RuntimeID: result.ID, RuntimeOperationID: writeInput.RuntimeOperationID,
+			ImageID: writeInput.ImageID, GatewaySecretRef: writeInput.GatewaySecretRef,
+		}
+	default:
+		t.Fatalf("unsupported stage %q", stage)
+	}
+	operations, err := store.List(ctx)
+	if err != nil || len(operations) != 1 || operations[0].Status != "started" {
+		t.Fatalf("interrupted %s operation=%#v err=%v", stage, operations, err)
+	}
+	input.FabricRecordID = operations[0].ID
+	input.FabricOperationID = operations[0].OperationID
+	input.RequestHash = operations[0].RequestHash
+	return provider, store, input
+}
+
+func workspaceLaunchReadbackProviderWrites(provider *workspaceLaunchReadbackBoundaryProvider) int32 {
+	return provider.attachmentWrites.Load() + provider.secretWrites.Load() + provider.runtimeWrites.Load()
+}
+
+func TestWorkspaceLaunchStageReadbackBoundaryFailsClosedWithoutExactAuthority(t *testing.T) {
+	tests := []struct {
+		name           string
+		stage          string
+		mutateInput    func(*WorkspaceLaunchStageReadbackInput)
+		mutateProvider func(*workspaceLaunchReadbackBoundaryProvider)
+		listOverride   func([]FabricOperation) ([]FabricOperation, error)
+	}{
+		{name: "operation missing", stage: "attachment", listOverride: func([]FabricOperation) ([]FabricOperation, error) { return nil, nil }},
+		{name: "operation multiple", stage: "attachment", listOverride: func(operations []FabricOperation) ([]FabricOperation, error) {
+			return append(operations, operations[0]), nil
+		}},
+		{name: "operation store read error", stage: "attachment", listOverride: func([]FabricOperation) ([]FabricOperation, error) {
+			return nil, errors.New("injected operation store read error")
+		}},
+		{name: "request hash drift", stage: "runtime", mutateInput: func(input *WorkspaceLaunchStageReadbackInput) { input.RequestHash = strings.Repeat("f", 64) }},
+		{name: "idempotency key drift", stage: "secret", mutateInput: func(input *WorkspaceLaunchStageReadbackInput) { input.IdempotencyKey += "-other" }},
+		{name: "attachment identity drift", stage: "attachment", mutateProvider: func(provider *workspaceLaunchReadbackBoundaryProvider) {
+			provider.attachment.CostTags["opl_operation_id"] = "attachment-operation-other"
+		}},
+		{name: "secret identity drift", stage: "secret", mutateProvider: func(provider *workspaceLaunchReadbackBoundaryProvider) {
+			provider.secret.Fingerprint = "sha256:" + strings.Repeat("f", 64)
+		}},
+		{name: "runtime identity drift", stage: "runtime", mutateProvider: func(provider *workspaceLaunchReadbackBoundaryProvider) {
+			provider.runtime.CostTags["opl_resource_id"] = "rt_other"
+		}},
+		{name: "attachment read error", stage: "attachment", mutateProvider: func(provider *workspaceLaunchReadbackBoundaryProvider) { provider.readErrorStage = "attachment" }},
+		{name: "secret read error", stage: "secret", mutateProvider: func(provider *workspaceLaunchReadbackBoundaryProvider) { provider.readErrorStage = "secret" }},
+		{name: "runtime read error", stage: "runtime", mutateProvider: func(provider *workspaceLaunchReadbackBoundaryProvider) { provider.readErrorStage = "runtime" }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			provider, operationStore, input := interruptedWorkspaceLaunchReadbackFixture(t, test.stage)
+			before, err := operationStore.List(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if test.mutateInput != nil {
+				test.mutateInput(&input)
+			}
+			if test.mutateProvider != nil {
+				test.mutateProvider(provider)
+			}
+			store := &workspaceLaunchReadbackBoundaryStore{OperationStore: operationStore, listOverride: test.listOverride}
+			var service *Service
+			switch test.stage {
+			case "attachment":
+				service = attachmentTestService(provider, store)
+			case "runtime":
+				service = runtimeTestService(provider, store)
+			default:
+				service = NewServiceWithOperationStore(provider, store)
+			}
+			if proof, proofErr := service.WorkspaceLaunchStageReadbackProof(context.Background(), input); proofErr == nil || proof.Eligible {
+				t.Fatalf("proof=%#v err=%v, want fail closed", proof, proofErr)
+			}
+			input.ExpectedBindingDigest = strings.Repeat("a", 64)
+			if proof, convergeErr := service.ConvergeWorkspaceLaunchStageReadback(context.Background(), input); convergeErr == nil || proof.Eligible {
+				t.Fatalf("convergence=%#v err=%v, want fail closed", proof, convergeErr)
+			}
+			after, err := operationStore.List(context.Background())
+			if err != nil || !reflect.DeepEqual(before, after) || store.convergeCalls.Load() != 0 || workspaceLaunchReadbackProviderWrites(provider) != 1 {
+				t.Fatalf("crossed fail-closed boundary: before=%#v after=%#v CAS=%d writes=%d err=%v", before, after, store.convergeCalls.Load(), workspaceLaunchReadbackProviderWrites(provider), err)
+			}
+		})
+	}
+}
+
+func (p *stalePostgresRuntimeProvider) CreateWorkspaceRuntime(_ context.Context, input WorkspaceRuntimeInput, _ ComputeAllocation, _ StorageVolume) (WorkspaceRuntime, error) {
+	p.calls.Add(1)
+	p.readback = WorkspaceRuntime{
+		ID: "rt_postgres-alpha", OperationID: input.RuntimeOperationID, WorkspaceID: input.WorkspaceID,
+		Status: "running", Ready: true, ServiceName: "opl-compute-alpha",
+		ProviderRequestID: providerRequestID("runtime", input.IdempotencyKey),
+		CostTags:          oplCostTags("acct-alpha", input.WorkspaceID, "rt_postgres-alpha", input.RuntimeOperationID),
+	}
+	return p.readback, nil
+}
+
+func (p *stalePostgresRuntimeProvider) WorkspaceRuntimeStatus(_ context.Context, _ string) (WorkspaceRuntime, error) {
+	p.readbackCalls.Add(1)
+	return p.readback, nil
 }
 
 func TestPostgresStaleRuntimeClaimConvergesAcrossServiceInstances(t *testing.T) {
@@ -248,70 +627,98 @@ func TestPostgresStaleRuntimeClaimConvergesAcrossServiceInstances(t *testing.T) 
 	}
 	defer secondStore.client.Close()
 
-	provider := &stalePostgresRuntimeProvider{firstEntered: make(chan struct{}), releaseFirst: make(chan struct{})}
-	firstService := runtimeTestService(provider, firstStore)
+	provider := &stalePostgresRuntimeProvider{}
+	firstService := runtimeTestService(provider, &failFirstRuntimeSaveStore{OperationStore: firstStore})
 	secondService := runtimeTestService(provider, secondStore)
 	startedAt := time.Date(2026, 7, 17, 0, 0, 0, 123456000, time.UTC)
-	var clock atomic.Int64
-	clock.Store(startedAt.UnixNano())
-	now := func() time.Time { return time.Unix(0, clock.Load()).UTC() }
-	firstService.now = now
-	secondService.now = now
+	firstService.now = func() time.Time { return startedAt }
+	secondService.now = func() time.Time { return startedAt.Add(3 * time.Minute) }
 	input := runtimeTestInput("postgres-runtime-stale")
 
-	oldOwnerDone := make(chan error, 1)
-	go func() {
-		_, err := firstService.CreateWorkspaceRuntime(ctx, input)
-		oldOwnerDone <- err
-	}()
-	select {
-	case <-provider.firstEntered:
-	case <-ctx.Done():
-		t.Fatal("old owner provider call did not start")
+	firstResult, firstErr := firstService.CreateWorkspaceRuntime(ctx, input)
+	if firstErr == nil || firstErr.Error() != "injected runtime save failure" || firstResult.ID != provider.readback.ID || provider.calls.Load() != 1 {
+		t.Fatalf("first runtime=%#v err=%v providerCalls=%d", firstResult, firstErr, provider.calls.Load())
 	}
 	operations, err := firstStore.List(ctx)
 	if err != nil || len(operations) != 1 || operations[0].Status != "started" {
 		t.Fatalf("persisted old claim=%#v err=%v", operations, err)
 	}
-	clock.Store(operations[0].StartedAt.Add(3 * time.Minute).UnixNano())
 
-	type callResult struct {
-		runtime WorkspaceRuntime
-		err     error
+	secondResult, secondErr := secondService.CreateWorkspaceRuntime(ctx, input)
+	if secondErr != nil || secondResult.ID != provider.readback.ID || provider.calls.Load() != 1 || provider.readbackCalls.Load() != 1 {
+		t.Fatalf("readback convergence runtime=%#v err=%v providerCalls=%d readbackCalls=%d", secondResult, secondErr, provider.calls.Load(), provider.readbackCalls.Load())
 	}
-	start := make(chan struct{})
-	results := make(chan callResult, 2)
-	for _, service := range []*Service{firstService, secondService} {
-		service := service
-		go func() {
-			<-start
-			runtime, err := service.CreateWorkspaceRuntime(ctx, input)
-			results <- callResult{runtime: runtime, err: err}
-		}()
-	}
-	close(start)
-	firstResult, secondResult := <-results, <-results
-	for _, result := range []callResult{firstResult, secondResult} {
-		if result.err != nil && !errors.Is(result.err, ErrRuntimeOperationInProgress) {
-			t.Fatalf("stale caller result=%#v err=%v", result.runtime, result.err)
-		}
-	}
-	if provider.calls.Load() != 2 {
-		t.Fatalf("provider calls after stale race=%d, want old owner plus one reclaim", provider.calls.Load())
-	}
-
-	close(provider.releaseFirst)
-	if err := <-oldOwnerDone; !errors.Is(err, ErrRuntimeOperationNotCurrent) {
-		t.Fatalf("old owner completion error=%v, want ErrRuntimeOperationNotCurrent", err)
-	}
-	firstReplay, firstErr := firstService.CreateWorkspaceRuntime(ctx, input)
-	secondReplay, secondErr := secondService.CreateWorkspaceRuntime(ctx, input)
-	if firstErr != nil || secondErr != nil || firstReplay.ID != "runtime-alpha" || secondReplay.ID != firstReplay.ID || secondReplay.Status != firstReplay.Status || provider.calls.Load() != 2 {
-		t.Fatalf("final replays first=%#v err=%v second=%#v err=%v providerCalls=%d", firstReplay, firstErr, secondReplay, secondErr, provider.calls.Load())
+	firstReplay, firstReplayErr := firstService.CreateWorkspaceRuntime(ctx, input)
+	if firstReplayErr != nil || firstReplay.ID != secondResult.ID || provider.calls.Load() != 1 {
+		t.Fatalf("final replay=%#v err=%v providerCalls=%d", firstReplay, firstReplayErr, provider.calls.Load())
 	}
 	operations, err = secondStore.List(ctx)
 	if err != nil || len(operations) != 1 || operations[0].Status != "succeeded" {
 		t.Fatalf("final operations=%#v err=%v", operations, err)
+	}
+}
+
+func TestPostgresWorkspaceLaunchRuntimeReadbackProofAndCASAcrossRestart(t *testing.T) {
+	databaseURL := fabricTestDatabaseURL(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	firstStore, err := newTestPostgresOperationStore(databaseURL)
+	if err != nil {
+		t.Fatalf("open first operation store: %v", err)
+	}
+
+	provider := &stalePostgresRuntimeProvider{}
+	startedAt := time.Date(2026, 7, 31, 1, 0, 0, 123456000, time.UTC)
+	firstService := runtimeTestService(provider, &failFirstRuntimeSaveStore{OperationStore: firstStore})
+	firstService.now = func() time.Time { return startedAt }
+	input := runtimeTestInput("workspace-launch-readback:runtime")
+	result, writeErr := firstService.CreateWorkspaceRuntime(ctx, input)
+	if writeErr == nil || writeErr.Error() != "injected runtime save failure" || result.ID == "" || provider.calls.Load() != 1 {
+		t.Fatalf("first runtime=%#v err=%v providerWrites=%d", result, writeErr, provider.calls.Load())
+	}
+	beforeRestart, err := firstStore.List(ctx)
+	if err != nil || len(beforeRestart) != 1 || beforeRestart[0].Status != "started" {
+		t.Fatalf("persisted interrupted operation=%#v err=%v", beforeRestart, err)
+	}
+	if err := firstStore.client.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	reopenedStore, err := newTestPostgresOperationStore(databaseURL)
+	if err != nil {
+		t.Fatalf("reopen operation store: %v", err)
+	}
+	t.Cleanup(func() { _ = reopenedStore.client.Close() })
+	reopenedService := runtimeTestService(provider, reopenedStore)
+	reopenedService.now = func() time.Time { return startedAt.Add(3 * time.Minute) }
+	interrupted := beforeRestart[0]
+	proofInput := WorkspaceLaunchStageReadbackInput{
+		Stage: "runtime", FabricRecordID: interrupted.ID, FabricOperationID: interrupted.OperationID,
+		AccountID: interrupted.AccountID, WorkspaceID: input.WorkspaceID, IdempotencyKey: input.IdempotencyKey,
+		RequestHash: interrupted.RequestHash, ComputeID: input.ComputeID, StorageID: input.VolumeID,
+		AttachmentID: input.AttachmentID, AttachmentOperationID: input.AttachmentOperationID,
+		RuntimeID: result.ID, RuntimeOperationID: input.RuntimeOperationID, ImageID: input.ImageID,
+		GatewaySecretRef: input.GatewaySecretRef,
+	}
+
+	proof, err := reopenedService.WorkspaceLaunchStageReadbackProof(ctx, proofInput)
+	if err != nil || !proof.Eligible || proof.Stage != "runtime" || proof.PriorStatus != "started" || proof.BindingDigest == "" ||
+		proof.Operation.Status != "succeeded" || proof.Operation.ResourceID != input.WorkspaceID || provider.calls.Load() != 1 || provider.readbackCalls.Load() != 1 {
+		t.Fatalf("runtime proof=%#v err=%v providerWrites=%d providerReads=%d", proof, err, provider.calls.Load(), provider.readbackCalls.Load())
+	}
+	afterProof, err := reopenedStore.List(ctx)
+	if err != nil || !reflect.DeepEqual(afterProof, beforeRestart) {
+		t.Fatalf("read-only proof mutated PostgreSQL: before=%#v after=%#v err=%v", beforeRestart, afterProof, err)
+	}
+
+	proofInput.ExpectedBindingDigest = proof.BindingDigest
+	converged, err := reopenedService.ConvergeWorkspaceLaunchStageReadback(ctx, proofInput)
+	if err != nil || !converged.Eligible || converged.Operation.Status != "succeeded" || provider.calls.Load() != 1 || provider.readbackCalls.Load() != 2 {
+		t.Fatalf("runtime convergence=%#v err=%v providerWrites=%d providerReads=%d", converged, err, provider.calls.Load(), provider.readbackCalls.Load())
+	}
+	afterConvergence, err := reopenedStore.List(ctx)
+	if err != nil || len(afterConvergence) != 1 || afterConvergence[0].Status != "succeeded" {
+		t.Fatalf("converged operation=%#v err=%v", afterConvergence, err)
 	}
 }
 

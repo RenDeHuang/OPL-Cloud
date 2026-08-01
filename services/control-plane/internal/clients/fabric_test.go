@@ -109,6 +109,29 @@ func TestFabricHTTPClientReadsMonthlyProviderTruthWithoutMutation(t *testing.T) 
 	}
 }
 
+func TestFabricHTTPClientReadsExactMachineOwnershipWithoutMutation(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.EscapedPath() != "/fabric/machine-ownerships/compute%20alpha" || r.Header.Get("Authorization") != "Bearer internal-secret" {
+			t.Fatalf("unexpected request: %s %s auth=%q", r.Method, r.URL.EscapedPath(), r.Header.Get("Authorization"))
+		}
+		if _, ok := r.Header["Idempotency-Key"]; ok {
+			t.Fatalf("read-only ownership GET sent Idempotency-Key: %#v", r.Header.Values("Idempotency-Key"))
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id": "owner-alpha", "resourceId": "compute alpha", "accountId": "acct-alpha", "workspaceId": "ws-alpha",
+			"packageId": "basic", "nodePoolId": "np-alpha", "machineId": "machine-alpha", "instanceId": "ins-alpha",
+			"nodeName": "node-alpha", "status": "active", "providerRequestId": "req-alpha",
+		})
+	}))
+	defer upstream.Close()
+
+	client := NewFabricHTTPClient(upstream.URL, "internal-secret", upstream.Client()).(FabricMachineOwnershipClient)
+	ownership, err := client.MachineOwnership(context.Background(), "compute alpha")
+	if err != nil || ownership.ID != "owner-alpha" || ownership.ResourceID != "compute alpha" || ownership.Status != "active" || ownership.InstanceID != "ins-alpha" {
+		t.Fatalf("machine ownership = %#v err=%v", ownership, err)
+	}
+}
+
 func TestFabricHTTPClientReadsStorageVolumeWithoutMutation(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet || r.URL.EscapedPath() != "/fabric/storage-volumes/storage%20alpha" || r.Header.Get("Authorization") != "Bearer internal-secret" {
@@ -171,6 +194,60 @@ func TestFabricHTTPClientReadsWorkspaceActivationTruthWithoutMutation(t *testing
 	truth, err := client.WorkspaceActivationTruth(context.Background(), input)
 	if err != nil || !truth.Ready || truth.Runtime.ID != input.RuntimeID || truth.Attachment.OperationID != input.AttachmentOperationID {
 		t.Fatalf("activation truth = %#v err=%v", truth, err)
+	}
+}
+
+func TestFabricHTTPClientSeparatesWorkspaceLaunchStageProofAndCAS(t *testing.T) {
+	input := WorkspaceLaunchStageReadbackInput{
+		Stage: "runtime", FabricRecordID: "fop-runtime", FabricOperationID: "op-runtime",
+		AccountID: "acct-alpha", WorkspaceID: "ws-alpha", IdempotencyKey: "launch-alpha:runtime",
+		RequestHash: strings.Repeat("a", 64), ComputeID: "compute-alpha", StorageID: "storage-alpha",
+		AttachmentID: "att_alpha", AttachmentOperationID: "launch-alpha:attachment",
+		RuntimeID: "rt_alpha", RuntimeOperationID: "launch-alpha:runtime", ImageID: "sha256:workspace",
+		GatewaySecretRef: "opl-gateway-alpha",
+	}
+	requests := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.Method != http.MethodPost || r.Header.Get("Authorization") != "Bearer internal-secret" || r.Header.Get("Idempotency-Key") != "" {
+			t.Fatalf("unexpected request: %s %s headers=%#v", r.Method, r.URL.Path, r.Header)
+		}
+		var actual WorkspaceLaunchStageReadbackInput
+		if err := json.NewDecoder(r.Body).Decode(&actual); err != nil || actual.Stage != input.Stage || actual.FabricRecordID != input.FabricRecordID {
+			t.Fatalf("input=%#v err=%v", actual, err)
+		}
+		wantPath := "/fabric/workspace-launch-stage-readback/proof"
+		mutationCount := 0
+		if requests == 2 {
+			wantPath = "/fabric/workspace-launch-stage-readback/converge"
+			mutationCount = 1
+			if actual.ExpectedBindingDigest != strings.Repeat("b", 64) {
+				t.Fatalf("convergence binding=%q", actual.ExpectedBindingDigest)
+			}
+		}
+		if r.URL.Path != wantPath {
+			t.Fatalf("path=%s want=%s", r.URL.Path, wantPath)
+		}
+		_ = json.NewEncoder(w).Encode(WorkspaceLaunchStageReadbackProof{
+			SchemaVersion: 1, Eligible: true, Reason: "none", Stage: input.Stage, PriorStatus: "started",
+			BindingDigest: strings.Repeat("b", 64), FabricOperationMutationCount: mutationCount,
+			Operation: FabricOperation{ID: input.FabricRecordID, OperationID: input.FabricOperationID, Status: "succeeded"},
+		})
+	}))
+	defer upstream.Close()
+
+	client, ok := NewFabricHTTPClient(upstream.URL, "internal-secret", upstream.Client()).(FabricWorkspaceLaunchStageReadbackClient)
+	if !ok {
+		t.Fatal("Fabric client lacks Workspace launch stage readback boundary")
+	}
+	proof, err := client.WorkspaceLaunchStageReadbackProof(context.Background(), input)
+	if err != nil || !proof.Eligible || proof.FabricOperationMutationCount != 0 {
+		t.Fatalf("proof=%#v err=%v", proof, err)
+	}
+	input.ExpectedBindingDigest = proof.BindingDigest
+	converged, err := client.ConvergeWorkspaceLaunchStageReadback(context.Background(), input)
+	if err != nil || converged.FabricOperationMutationCount != 1 || requests != 2 {
+		t.Fatalf("converged=%#v requests=%d err=%v", converged, requests, err)
 	}
 }
 

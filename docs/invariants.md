@@ -539,6 +539,65 @@ contract or select the SKU for a customer launch.
   password login, WebSocket, exactly one model response, exactly one Usage, and
   the matching balance delta are proved. This E2E cannot modify or block the
   resource-delivery state machine.
+- An original `workspace.launch.v2` that entered `manual_review` with exactly
+  one continuation stage persisted as
+  `attempted=1, confirmed=0, unknown=1, max=1` may be recovered only through
+  the existing operator recovery route and the shared `fulfillWorkspaceLaunch`
+  orchestrator used by normal Basic, normal Pro, and compute-claim continuation.
+  Its GET proof persists nothing, performs zero PostgreSQL writes, and performs
+  zero Sub2API, Tencent, or Kubernetes mutation. It revalidates the customer,
+  original launch and Workspace, full Basic/Pro product truth, compute and
+  storage through `MonthlyProviderTruth`, the exact active MachineOwnership,
+  and distinct launch idempotency, Fabric internal operation, provider
+  `opl_operation_id`, and stage resource operation identities. It also requires
+  the stage-specific authority: storage,
+  attachment, Gateway Secret, Runtime, `WorkspaceActivationTruth`, or Ledger
+  Receipt. For Attachment, Gateway Secret, and Runtime, the authenticated Fabric
+  proof POST is a structured GET/Describe-only operation with zero Fabric
+  operation, PostgreSQL, Sub2API, Tencent, or Kubernetes mutation. One unique
+  and identity-exact proof may first CAS the matching Fabric operation from
+  `started/failed` to `succeeded`, then CAS the original Control Plane launch to
+  `attempted=1, confirmed=1, unknown=0, max=1`. Each CAS has a maximum of one
+  winner. Storage, activation, and Receipt use their existing authoritative
+  readback followed by only the original launch CAS. The unknown stage's
+  external write is never reissued. A concurrent loser, absent or multiple
+  candidate, identity drift, or any read error leaves the launch in
+  `manual_review` with zero additional external write. After successful CAS
+  convergence, later original launch stages still reserve and consume their own
+  persisted `max=1` budgets through the shared orchestrator.
+- `workspace_launch_readback_diagnose` and
+  `workspace_launch_readback_recover` are isolated modes in the existing
+  production customer-operation workflow. Diagnosis is approval-free and
+  GET-only. Recovery requires
+  `RECOVER_UNKNOWN_WORKSPACE_LAUNCH_STAGE_FROM_AUTHORITATIVE_READBACK`, bound to
+  the exact merged main SHA, Cloud and Workspace digests, expiry, protected
+  customer identity, the complete protected product/CVM/Node target without
+  projection, launch/Workspace and all resource and original operation
+  identities, unknown stage, original attempt budget, recovery key, and the
+  stage-specific remaining write set. It explicitly forbids a new launch,
+  debit, recharge, refund, scale, CVM, second CBS, deletion, replacement, or
+  retry of the unknown external write. The GET proof's and runner-direct
+  Sub2API, Tencent, and Kubernetes mutation counts are each zero. These scoped
+  counts do not describe the whole recovery: the existing launch worker's
+  bounded background mutation counts are reported separately as `unknown` until
+  terminal authoritative readback proves Receipt and URL.
+- A readback recovery POST that already persisted the exact approval, approval
+  digest, idempotency key, full target, and proof may be replayed from
+  `preparing`, `waiting`, or terminal state even after that approval expires.
+  This replay reconstructs the operator response exclusively from persisted
+  state, does not require the former manual-review proof to remain available,
+  and performs zero database, Fabric, Sub2API, Tencent, or Kubernetes writes.
+  An expired approval that was never persisted is rejected, and any key,
+  digest, or target drift returns conflict without mutation.
+- Workspace readback diagnosis, recovery, blocked, and continuation artifacts
+  use schema version 2 explicit allowlist DTOs. Complete proof and approval
+  data remain in a mode-0600 protected runner-temporary directory outside the
+  upload tree and are never uploaded. The workflow first validates the complete
+  raw result, then projects the safe DTO, and only then uploads it. Recovery and
+  the minimal recovered-Workspace E2E handoff are bound by the approval digest
+  and a stable digest of the complete resource and operation identity, without
+  exposing customer email, private IP, Secret facts, credentials, capabilities,
+  provider request IDs, or complete operation identities.
 
 ## Launch Stages
 

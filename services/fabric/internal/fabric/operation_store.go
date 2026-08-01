@@ -40,6 +40,13 @@ type OperationStore interface {
 	WithPoolLock(ctx context.Context, poolKey string, fn func(context.Context) error) error
 }
 
+// runtimeReadbackConverger is deliberately optional.  It is a separate CAS
+// path so a provider readback can confirm an already attempted write without
+// weakening SaveRuntime's owner lease semantics or re-running an apply.
+type runtimeReadbackConverger interface {
+	ConvergeRuntimeReadback(ctx context.Context, expected, next FabricOperation) error
+}
+
 type MemoryOperationStore struct {
 	mu                sync.Mutex
 	operation         []FabricOperation
@@ -285,6 +292,26 @@ func sameRuntimeOperationRequest(existing, requested FabricOperation) bool {
 		existing.RequestHash == requested.RequestHash
 }
 
+func sameRuntimeReadbackIdentity(current, expected FabricOperation) bool {
+	return current.ID == expected.ID && current.OperationID == expected.OperationID &&
+		current.CallerService == expected.CallerService && current.Action == expected.Action &&
+		current.ResourceKind == expected.ResourceKind && current.ResourceID == expected.ResourceID &&
+		current.AccountID == expected.AccountID && current.WorkspaceID == expected.WorkspaceID &&
+		current.Provider == expected.Provider && current.ProviderRequestID == expected.ProviderRequestID &&
+		current.IdempotencyKey == expected.IdempotencyKey && current.RequestHash == expected.RequestHash &&
+		current.Status == expected.Status && current.StartedAt.Equal(expected.StartedAt)
+}
+
+func validRuntimeReadbackConvergence(expected, next FabricOperation) bool {
+	return expected.ID != "" && (expected.Status == "started" || expected.Status == "failed") && next.ID == expected.ID &&
+		next.Status == "succeeded" && !next.FinishedAt.IsZero() &&
+		next.OperationID == expected.OperationID && next.CallerService == expected.CallerService &&
+		next.Action == expected.Action && next.ResourceKind == expected.ResourceKind &&
+		next.AccountID == expected.AccountID && next.WorkspaceID == expected.WorkspaceID &&
+		next.IdempotencyKey == expected.IdempotencyKey && next.RequestHash == expected.RequestHash &&
+		next.StartedAt.Equal(expected.StartedAt)
+}
+
 func (s *MemoryOperationStore) SaveRuntime(_ context.Context, operation FabricOperation) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -303,6 +330,30 @@ func (s *MemoryOperationStore) SaveRuntime(_ context.Context, operation FabricOp
 		}
 	}
 	return fmt.Errorf("runtime_operation_not_found")
+}
+
+func (s *MemoryOperationStore) ConvergeRuntimeReadback(_ context.Context, expected, next FabricOperation) error {
+	if !validRuntimeReadbackConvergence(expected, next) {
+		return ErrRuntimeOperationNotCurrent
+	}
+	expectedPayload, err := operationPayloadJSON(expected)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for index := range s.operation {
+		current := s.operation[index]
+		currentPayload, payloadErr := operationPayloadJSON(current)
+		if payloadErr != nil {
+			return payloadErr
+		}
+		if current.ID == expected.ID && sameRuntimeReadbackIdentity(current, expected) && currentPayload == expectedPayload {
+			s.operation[index] = next
+			return nil
+		}
+	}
+	return ErrRuntimeOperationNotCurrent
 }
 
 func (s *MemoryOperationStore) SaveComputeClaimRecovery(_ context.Context, expected, next FabricOperation) error {
@@ -1160,6 +1211,45 @@ func (s *PostgresOperationStore) SaveComputeClaimRecovery(ctx context.Context, e
 		update.SetFinishedAt(next.FinishedAt)
 	}
 	updated, err := update.Save(ctx)
+	if err != nil {
+		return err
+	}
+	if updated != 1 {
+		return ErrRuntimeOperationNotCurrent
+	}
+	return nil
+}
+
+func (s *PostgresOperationStore) ConvergeRuntimeReadback(ctx context.Context, expected, next FabricOperation) error {
+	if !validRuntimeReadbackConvergence(expected, next) {
+		return ErrRuntimeOperationNotCurrent
+	}
+	expectedPayload, err := operationPayloadJSON(expected)
+	if err != nil {
+		return err
+	}
+	nextPayload, err := operationPayloadJSON(next)
+	if err != nil {
+		return err
+	}
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE fabric_operations
+		SET resource_id = $1, workspace_id = $2, provider = $3, provider_request_id = $4,
+			redacted_provider_payload = $5::jsonb, status = $6, error_code = $7,
+			retryable = false, finished_at = $8
+		WHERE id = $9 AND operation_id = $10 AND caller_service = $11 AND action = $12 AND
+			resource_kind = $13 AND resource_id = $14 AND account_id = $15 AND workspace_id = $16 AND
+			provider = $17 AND provider_request_id = $18 AND idempotency_key = $19 AND request_hash = $20 AND
+			status = $21 AND started_at = $22 AND redacted_provider_payload::jsonb = $23::jsonb`,
+		next.ResourceID, next.WorkspaceID, next.Provider, next.ProviderRequestID, nextPayload,
+		next.Status, next.ErrorCode, next.FinishedAt, expected.ID, expected.OperationID, expected.CallerService,
+		expected.Action, expected.ResourceKind, expected.ResourceID, expected.AccountID, expected.WorkspaceID,
+		expected.Provider, expected.ProviderRequestID, expected.IdempotencyKey, expected.RequestHash, expected.Status,
+		expected.StartedAt, expectedPayload)
+	if err != nil {
+		return err
+	}
+	updated, err := result.RowsAffected()
 	if err != nil {
 		return err
 	}

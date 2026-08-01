@@ -45,12 +45,36 @@ func (s *Service) MonthlyProviderTruth(ctx context.Context, computeID, storageID
 	return client.MonthlyProviderTruth(ctx, computeID, storageID)
 }
 
+func (s *Service) MachineOwnership(ctx context.Context, resourceID string) (clients.MachineOwnership, error) {
+	client, ok := s.fabric.(clients.FabricMachineOwnershipClient)
+	if !ok {
+		return clients.MachineOwnership{}, errors.New("fabric_machine_ownership_unavailable")
+	}
+	return client.MachineOwnership(ctx, resourceID)
+}
+
 func (s *Service) WorkspaceActivationTruth(ctx context.Context, input clients.WorkspaceActivationTruthInput) (clients.WorkspaceActivationTruth, error) {
 	client, ok := s.fabric.(clients.FabricWorkspaceActivationTruthClient)
 	if !ok {
 		return clients.WorkspaceActivationTruth{Reason: "provider_unavailable", ErrorClass: "client_unavailable"}, errors.New("fabric_workspace_activation_truth_unavailable")
 	}
 	return client.WorkspaceActivationTruth(ctx, input)
+}
+
+func (s *Service) WorkspaceLaunchStageReadbackProof(ctx context.Context, input clients.WorkspaceLaunchStageReadbackInput) (clients.WorkspaceLaunchStageReadbackProof, error) {
+	client, ok := s.fabric.(clients.FabricWorkspaceLaunchStageReadbackClient)
+	if !ok {
+		return clients.WorkspaceLaunchStageReadbackProof{}, errors.New("fabric_workspace_launch_stage_readback_unavailable")
+	}
+	return client.WorkspaceLaunchStageReadbackProof(ctx, input)
+}
+
+func (s *Service) ConvergeWorkspaceLaunchStageReadback(ctx context.Context, input clients.WorkspaceLaunchStageReadbackInput) (clients.WorkspaceLaunchStageReadbackProof, error) {
+	client, ok := s.fabric.(clients.FabricWorkspaceLaunchStageReadbackClient)
+	if !ok {
+		return clients.WorkspaceLaunchStageReadbackProof{}, errors.New("fabric_workspace_launch_stage_readback_unavailable")
+	}
+	return client.ConvergeWorkspaceLaunchStageReadback(ctx, input)
 }
 
 func (s *Service) ComputeClaimRecoveryProof(ctx context.Context, input clients.ComputeClaimRecoveryInput) (clients.ComputeClaimRecoveryProof, error) {

@@ -62,8 +62,17 @@ type FabricMonthlyProviderTruthClient interface {
 	MonthlyProviderTruth(context.Context, string, string) (MonthlyProviderTruth, error)
 }
 
+type FabricMachineOwnershipClient interface {
+	MachineOwnership(context.Context, string) (MachineOwnership, error)
+}
+
 type FabricWorkspaceActivationTruthClient interface {
 	WorkspaceActivationTruth(context.Context, WorkspaceActivationTruthInput) (WorkspaceActivationTruth, error)
+}
+
+type FabricWorkspaceLaunchStageReadbackClient interface {
+	WorkspaceLaunchStageReadbackProof(context.Context, WorkspaceLaunchStageReadbackInput) (WorkspaceLaunchStageReadbackProof, error)
+	ConvergeWorkspaceLaunchStageReadback(context.Context, WorkspaceLaunchStageReadbackInput) (WorkspaceLaunchStageReadbackProof, error)
 }
 
 type FabricComputeClaimRecoveryClient interface {
@@ -149,6 +158,20 @@ type MonthlyProviderTruth struct {
 	Storage           StorageVolume     `json:"storage"`
 	ProviderRequestID string            `json:"providerRequestId,omitempty"`
 	ErrorCode         string            `json:"errorCode,omitempty"`
+}
+
+type MachineOwnership struct {
+	ID                string `json:"id"`
+	ResourceID        string `json:"resourceId"`
+	AccountID         string `json:"accountId"`
+	WorkspaceID       string `json:"workspaceId,omitempty"`
+	PackageID         string `json:"packageId"`
+	NodePoolID        string `json:"nodePoolId"`
+	MachineID         string `json:"machineId"`
+	InstanceID        string `json:"instanceId,omitempty"`
+	NodeName          string `json:"nodeName,omitempty"`
+	Status            string `json:"status"`
+	ProviderRequestID string `json:"providerRequestId,omitempty"`
 }
 
 type ComputeClaimRecoveryInput struct {
@@ -284,16 +307,17 @@ type StorageAttachmentInput struct {
 }
 
 type StorageAttachment struct {
-	ID                   string `json:"id"`
-	OperationID          string `json:"operationId,omitempty"`
-	WorkspaceID          string `json:"workspaceId"`
-	ComputeID            string `json:"computeId,omitempty"`
-	VolumeID             string `json:"volumeId"`
-	Status               string `json:"status"`
-	Provider             string `json:"provider,omitempty"`
-	ProviderAttachmentID string `json:"providerAttachmentId,omitempty"`
-	ProviderRequestID    string `json:"providerRequestId"`
-	MountPath            string `json:"mountPath,omitempty"`
+	ID                   string            `json:"id"`
+	OperationID          string            `json:"operationId,omitempty"`
+	WorkspaceID          string            `json:"workspaceId"`
+	ComputeID            string            `json:"computeId,omitempty"`
+	VolumeID             string            `json:"volumeId"`
+	Status               string            `json:"status"`
+	Provider             string            `json:"provider,omitempty"`
+	ProviderAttachmentID string            `json:"providerAttachmentId,omitempty"`
+	ProviderRequestID    string            `json:"providerRequestId"`
+	MountPath            string            `json:"mountPath,omitempty"`
+	CostTags             map[string]string `json:"costTags,omitempty"`
 }
 
 type WorkspaceRuntimeInput struct {
@@ -431,15 +455,17 @@ type WorkspaceActivationTruth struct {
 }
 
 type WorkspaceRuntime struct {
-	ID          string                 `json:"id"`
-	OperationID string                 `json:"operationId,omitempty"`
-	WorkspaceID string                 `json:"workspaceId"`
-	URL         string                 `json:"url"`
-	Status      string                 `json:"status"`
-	ServiceName string                 `json:"serviceName"`
-	Access      WorkspaceRuntimeAccess `json:"access,omitempty"`
-	Ready       bool                   `json:"ready"`
-	Checks      []any                  `json:"checks"`
+	ID                string                 `json:"id"`
+	OperationID       string                 `json:"operationId,omitempty"`
+	WorkspaceID       string                 `json:"workspaceId"`
+	URL               string                 `json:"url"`
+	Status            string                 `json:"status"`
+	ServiceName       string                 `json:"serviceName"`
+	ProviderRequestID string                 `json:"providerRequestId,omitempty"`
+	Access            WorkspaceRuntimeAccess `json:"access,omitempty"`
+	Ready             bool                   `json:"ready"`
+	Checks            []any                  `json:"checks"`
+	CostTags          map[string]string      `json:"costTags,omitempty"`
 }
 
 type WorkspaceRuntimeAccess struct {
@@ -470,6 +496,41 @@ type FabricOperation struct {
 	StartedAt               string         `json:"startedAt"`
 	FinishedAt              string         `json:"finishedAt,omitempty"`
 	CreatedAt               string         `json:"createdAt"`
+}
+
+type WorkspaceLaunchStageReadbackInput struct {
+	Stage                    string `json:"stage"`
+	FabricRecordID           string `json:"fabricRecordId"`
+	FabricOperationID        string `json:"fabricOperationId"`
+	AccountID                string `json:"accountId"`
+	WorkspaceID              string `json:"workspaceId"`
+	IdempotencyKey           string `json:"idempotencyKey"`
+	RequestHash              string `json:"requestHash"`
+	ComputeID                string `json:"computeId,omitempty"`
+	StorageID                string `json:"storageId,omitempty"`
+	AttachmentID             string `json:"attachmentId,omitempty"`
+	AttachmentOperationID    string `json:"attachmentOperationId,omitempty"`
+	RuntimeID                string `json:"runtimeId,omitempty"`
+	RuntimeOperationID       string `json:"runtimeOperationId,omitempty"`
+	ImageID                  string `json:"imageId,omitempty"`
+	GatewaySecretRef         string `json:"gatewaySecretRef,omitempty"`
+	GatewaySecretFingerprint string `json:"gatewaySecretFingerprint,omitempty"`
+	WorkspaceAPIKeyID        int64  `json:"workspaceApiKeyId,omitempty"`
+	ExpectedBindingDigest    string `json:"expectedBindingDigest,omitempty"`
+}
+
+type WorkspaceLaunchStageReadbackProof struct {
+	SchemaVersion                int             `json:"schemaVersion"`
+	Eligible                     bool            `json:"eligible"`
+	Reason                       string          `json:"reason"`
+	Stage                        string          `json:"stage"`
+	PriorStatus                  string          `json:"priorStatus"`
+	BindingDigest                string          `json:"bindingDigest"`
+	Operation                    FabricOperation `json:"operation"`
+	Sub2APIMutationCount         int             `json:"sub2apiMutationCount"`
+	TencentMutationCount         int             `json:"tencentMutationCount"`
+	KubernetesMutationCount      int             `json:"kubernetesMutationCount"`
+	FabricOperationMutationCount int             `json:"fabricOperationMutationCount"`
 }
 
 type fabricHTTPClient struct {
@@ -507,6 +568,12 @@ func (c *fabricHTTPClient) MonthlyProviderTruth(ctx context.Context, computeID, 
 	return result, err
 }
 
+func (c *fabricHTTPClient) MachineOwnership(ctx context.Context, resourceID string) (MachineOwnership, error) {
+	var result MachineOwnership
+	err := c.get(ctx, "/fabric/machine-ownerships/"+url.PathEscape(resourceID), &result)
+	return result, err
+}
+
 func (c *fabricHTTPClient) WorkspaceActivationTruth(ctx context.Context, input WorkspaceActivationTruthInput) (WorkspaceActivationTruth, error) {
 	var result WorkspaceActivationTruth
 	err := c.post(ctx, "/fabric/workspace-activation-truth", input, "", &result)
@@ -514,6 +581,18 @@ func (c *fabricHTTPClient) WorkspaceActivationTruth(ctx context.Context, input W
 	if errors.As(err, &httpErr) {
 		_ = json.Unmarshal([]byte(httpErr.Body), &result)
 	}
+	return result, err
+}
+
+func (c *fabricHTTPClient) WorkspaceLaunchStageReadbackProof(ctx context.Context, input WorkspaceLaunchStageReadbackInput) (WorkspaceLaunchStageReadbackProof, error) {
+	var result WorkspaceLaunchStageReadbackProof
+	err := c.post(ctx, "/fabric/workspace-launch-stage-readback/proof", input, "", &result)
+	return result, err
+}
+
+func (c *fabricHTTPClient) ConvergeWorkspaceLaunchStageReadback(ctx context.Context, input WorkspaceLaunchStageReadbackInput) (WorkspaceLaunchStageReadbackProof, error) {
+	var result WorkspaceLaunchStageReadbackProof
+	err := c.post(ctx, "/fabric/workspace-launch-stage-readback/converge", input, "", &result)
 	return result, err
 }
 

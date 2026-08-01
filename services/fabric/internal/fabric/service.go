@@ -74,9 +74,19 @@ type runtimeGatewaySecretProvider interface {
 	WorkspaceRuntimeGatewaySecret(context.Context, string) (WorkspaceRuntimeGatewaySecretBinding, error)
 }
 
+// gatewaySecretReadbackProvider is optional so older test/providers can still
+// implement the write surface while production Tencent uses a direct GET.
+type gatewaySecretReadbackProvider interface {
+	ReadGatewaySecret(context.Context, GatewaySecretInput) (GatewaySecret, error)
+}
+
 type providerFactsReader interface {
 	ReadComputeAllocation(context.Context, ComputeAllocation) (ComputeAllocation, error)
 	ReadStorageVolume(context.Context, StorageVolume) (StorageVolume, error)
+	ReadStorageAttachment(context.Context, StorageAttachment, ComputeAllocation, StorageVolume) (StorageAttachment, error)
+}
+
+type storageAttachmentReadbackProvider interface {
 	ReadStorageAttachment(context.Context, StorageAttachment, ComputeAllocation, StorageVolume) (StorageAttachment, error)
 }
 
@@ -111,16 +121,62 @@ const runtimeClaimStaleAfter = 2 * time.Minute
 
 func (s *Service) claimRuntimeOperation(ctx context.Context, operation FabricOperation) (FabricOperation, bool, error) {
 	stored, claimed, err := s.operations.ClaimRuntime(ctx, operation)
-	if err != nil || claimed || stored.RequestHash != operation.RequestHash || stored.Status != "started" ||
-		operation.StartedAt.Sub(stored.StartedAt) < runtimeClaimStaleAfter {
-		return stored, claimed, err
+	// A stale runtime operation is never reclaimed into a new provider lease.
+	// The caller must first prove the already-attempted resource by readback and
+	// use the dedicated CAS path below.  This is what keeps a lost response from
+	// becoming a second apply/patch.
+	return stored, claimed, err
+}
+
+func runtimeOperationNeedsReadback(operation FabricOperation, now time.Time) bool {
+	if operation.Status == "failed" {
+		return true
 	}
-	switch stored.Action {
-	case "create_storage_attachment", "create_workspace_runtime", "update_workspace_runtime", "upsert_gateway_secret":
-		return s.operations.ReclaimRuntime(ctx, stored.ID, stored.StartedAt, operation.StartedAt)
-	default:
-		return stored, false, nil
+	return operation.Status == "started" && !operation.StartedAt.IsZero() && !now.Before(operation.StartedAt.Add(runtimeClaimStaleAfter))
+}
+
+func (s *Service) convergeRuntimeOperationReadback(ctx context.Context, expected FabricOperation, resource any, extra map[string]any) (FabricOperation, error) {
+	converger, ok := s.operations.(runtimeReadbackConverger)
+	if !ok {
+		return FabricOperation{}, ErrRuntimeOperationNotCurrent
 	}
+	next := expected
+	next.Status = "succeeded"
+	next.FinishedAt = s.now()
+	next.ErrorCode = ""
+	next.Retryable = false
+	fillOperationResource(&next, resource)
+	if len(extra) > 0 {
+		payload := maps.Clone(next.RedactedProviderPayload)
+		if payload == nil {
+			payload = map[string]any{}
+		}
+		for key, value := range extra {
+			payload[key] = value
+		}
+		next.RedactedProviderPayload = payload
+	}
+	if err := converger.ConvergeRuntimeReadback(ctx, expected, next); err != nil {
+		return FabricOperation{}, err
+	}
+	return next, nil
+}
+
+func attachmentReadbackMatches(result StorageAttachment, input StorageAttachmentInput, compute ComputeAllocation, volume StorageVolume) bool {
+	return strings.HasPrefix(result.ID, "att_") && result.OperationID == input.IdempotencyKey &&
+		result.WorkspaceID == input.WorkspaceID && result.ComputeID == input.ComputeID && result.VolumeID == input.VolumeID &&
+		result.Status == "attached" && result.ProviderAttachmentID != "" && result.ProviderRequestID != "" &&
+		compute.AccountID != "" && compute.WorkspaceID == input.WorkspaceID && volume.AccountID == compute.AccountID && volume.WorkspaceID == input.WorkspaceID
+}
+
+func runtimeReadbackMatches(result WorkspaceRuntime, input WorkspaceRuntimeInput) bool {
+	return strings.HasPrefix(result.ID, "rt_") && result.OperationID == input.RuntimeOperationID &&
+		result.WorkspaceID == input.WorkspaceID && (result.Status == "running" || result.Status == "unready") && result.ServiceName != ""
+}
+
+func gatewaySecretReadbackMatches(result GatewaySecret, input GatewaySecretInput) bool {
+	return result.SecretRef == gatewaySecretName(input.WorkspaceID) && result.Fingerprint == input.Fingerprint &&
+		result.Version != "" && strings.TrimSpace(result.Version) == result.Version
 }
 
 func NewService(provider Provider) *Service {
@@ -2049,7 +2105,8 @@ func (s *Service) CreateStorageAttachment(ctx context.Context, input StorageAtta
 	volume := s.volumes[input.VolumeID]
 	s.mu.Unlock()
 	now := s.now()
-	operation := newOperation("create_storage_attachment", "storage_attachment", input.IdempotencyKey, compute.AccountID, input.WorkspaceID, input.IdempotencyKey, requestHash, now)
+	attachmentID := "att_" + stableSuffix(input.IdempotencyKey)[:18]
+	operation := newOperation("create_storage_attachment", "storage_attachment", attachmentID, compute.AccountID, input.WorkspaceID, input.IdempotencyKey, requestHash, now)
 	if err := validateAttachmentInput(input, compute, volume); err != nil {
 		operation.ProviderRequestID = providerRequestID("storage-attach", input.IdempotencyKey)
 		_ = s.recordOperation(ctx, operation, "rejected", StorageAttachment{ID: operation.ResourceID, WorkspaceID: input.WorkspaceID, ComputeID: input.ComputeID, VolumeID: input.VolumeID, ProviderRequestID: operation.ProviderRequestID}, err)
@@ -2058,13 +2115,37 @@ func (s *Service) CreateStorageAttachment(ctx context.Context, input StorageAtta
 	operation.ID = "fop_attachment_claim_" + stableSuffix("create_storage_attachment", input.IdempotencyKey)
 	operation.Status = "started"
 	operation.CreatedAt = now
-	fillOperationResource(&operation, StorageAttachment{ID: operation.ResourceID, OperationID: input.IdempotencyKey, WorkspaceID: input.WorkspaceID, ComputeID: input.ComputeID, VolumeID: input.VolumeID, Provider: "tencent-tke", ProviderRequestID: providerRequestID("storage-attach", input.IdempotencyKey)})
+	fillOperationResource(&operation, StorageAttachment{ID: attachmentID, OperationID: input.IdempotencyKey, WorkspaceID: input.WorkspaceID, ComputeID: input.ComputeID, VolumeID: input.VolumeID, Provider: "tencent-tke", ProviderRequestID: providerRequestID("storage-attach", input.IdempotencyKey)})
 	input.OperationID = input.IdempotencyKey
 	stored, claimed, err := s.claimRuntimeOperation(ctx, operation)
 	if err != nil {
 		return StorageAttachment{}, err
 	}
 	if !claimed {
+		if stored.RequestHash != requestHash {
+			return StorageAttachment{}, ErrStorageAttachmentIdempotencyConflict
+		}
+		if runtimeOperationNeedsReadback(stored, now) {
+			reader, ok := s.provider.(storageAttachmentReadbackProvider)
+			if !ok {
+				return StorageAttachment{}, ErrStorageAttachmentOperationFailed
+			}
+			candidate := StorageAttachment{ID: stored.ResourceID, OperationID: input.IdempotencyKey, WorkspaceID: input.WorkspaceID, ComputeID: input.ComputeID, VolumeID: input.VolumeID}
+			_ = decodeOperationResource(stored, &candidate)
+			candidate.OperationID, candidate.WorkspaceID = input.IdempotencyKey, input.WorkspaceID
+			candidate.ComputeID, candidate.VolumeID = input.ComputeID, input.VolumeID
+			readback, readErr := reader.ReadStorageAttachment(ctx, candidate, compute, volume)
+			if readErr != nil || !attachmentReadbackMatches(readback, input, compute, volume) {
+				return StorageAttachment{}, ErrStorageAttachmentOperationFailed
+			}
+			if _, convergeErr := s.convergeRuntimeOperationReadback(ctx, stored, readback, nil); convergeErr != nil {
+				return StorageAttachment{}, convergeErr
+			}
+			s.mu.Lock()
+			s.attachments[readback.ID] = readback
+			s.mu.Unlock()
+			return readback, nil
+		}
 		return replayStorageAttachmentOperation(stored, requestHash)
 	}
 	attachment, err := s.provider.CreateStorageAttachment(ctx, input, compute, volume)
@@ -2169,6 +2250,26 @@ func (s *Service) CreateWorkspaceRuntime(ctx context.Context, input WorkspaceRun
 		return WorkspaceRuntime{}, err
 	}
 	if !claimed {
+		if stored.RequestHash != requestHash {
+			return WorkspaceRuntime{}, ErrRuntimeIdempotencyConflict
+		}
+		if runtimeOperationNeedsReadback(stored, now) {
+			if err := validateRuntimeInput(input, compute, volume, attachment, action == "update_workspace_runtime"); err != nil {
+				return WorkspaceRuntime{}, ErrRuntimeOperationFailed
+			}
+			readback, readErr := s.provider.WorkspaceRuntimeStatus(ctx, input.WorkspaceID)
+			readback.Access.Password = ""
+			if readErr != nil || !runtimeReadbackMatches(readback, input) {
+				return WorkspaceRuntime{}, ErrRuntimeOperationFailed
+			}
+			if action == "update_workspace_runtime" && (readback.ID != original.ID || readback.WorkspaceID != original.WorkspaceID) {
+				return WorkspaceRuntime{}, ErrRuntimeOperationFailed
+			}
+			if _, convergeErr := s.convergeRuntimeOperationReadback(ctx, stored, readback, nil); convergeErr != nil {
+				return WorkspaceRuntime{}, convergeErr
+			}
+			return readback, nil
+		}
 		return replayRuntimeOperation(stored, requestHash)
 	}
 	if err := validateRuntimeInput(input, compute, volume, attachment, action == "update_workspace_runtime"); err != nil {
@@ -2330,6 +2431,30 @@ func (s *Service) UpsertGatewaySecret(ctx context.Context, input GatewaySecretIn
 	if !claimed {
 		if stored.RequestHash != requestHash {
 			return GatewaySecret{}, ErrGatewaySecretIdempotencyConflict
+		}
+		if runtimeOperationNeedsReadback(stored, now) {
+			var readback GatewaySecret
+			var readErr error
+			switch provider := s.provider.(type) {
+			case gatewaySecretReadbackProvider:
+				readback, readErr = provider.ReadGatewaySecret(ctx, input)
+			case runtimeGatewaySecretProvider:
+				var binding WorkspaceRuntimeGatewaySecretBinding
+				binding, readErr = provider.WorkspaceRuntimeGatewaySecret(ctx, input.WorkspaceID)
+				if readErr == nil && (binding.WorkspaceID != input.WorkspaceID || binding.WorkspaceAPIKeyID != input.WorkspaceAPIKeyID || !binding.Bound) {
+					readErr = fmt.Errorf("gateway_secret_readback_mismatch")
+				}
+				readback = GatewaySecret{SecretRef: binding.SecretRef, Version: keyDigest[:16], Fingerprint: binding.Fingerprint}
+			default:
+				readErr = fmt.Errorf("gateway_secret_readback_unavailable")
+			}
+			if readErr != nil || !gatewaySecretReadbackMatches(readback, input) {
+				return GatewaySecret{}, fmt.Errorf("gateway_secret_operation_%s", stored.Status)
+			}
+			if _, convergeErr := s.convergeRuntimeOperationReadback(ctx, stored, readback, map[string]any{"keyDigest": keyDigest}); convergeErr != nil {
+				return GatewaySecret{}, convergeErr
+			}
+			return readback, nil
 		}
 		if stored.Status == "succeeded" {
 			var replayed GatewaySecret
@@ -2968,6 +3093,9 @@ func fillOperationResource(operation *FabricOperation, resource any) {
 		operation.WorkspaceID = firstNonEmpty(value.WorkspaceID, operation.WorkspaceID)
 		operation.ProviderRequestID = firstNonEmpty(value.ProviderRequestID, operation.ProviderRequestID)
 		operation.RedactedProviderPayload = map[string]any{"resource": redacted, "serviceName": value.ServiceName, "ready": value.Ready, "credentialConfigured": credentialConfigured, "credentialVersion": value.Access.CredentialVersion, "secretRef": value.Access.SecretRef, "costTags": value.CostTags}
+	case GatewaySecret:
+		operation.ResourceID = firstNonEmpty(value.SecretRef, operation.ResourceID)
+		operation.RedactedProviderPayload = map[string]any{"resource": value}
 	case Job:
 		redacted := value
 		redacted.LeaseToken = ""
