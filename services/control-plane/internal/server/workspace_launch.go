@@ -1930,6 +1930,33 @@ func workspaceComputeClaimApprovalBindingMatches(got, want workspaceComputeClaim
 	return gotErr == nil && wantErr == nil && bytes.Equal(gotPayload, wantPayload)
 }
 
+func workspaceComputeClaimApprovalScopeMatches(got, want workspaceComputeClaimApprovalBinding) bool {
+	got.ApprovalID, got.ApprovalDigest, got.ExpiresAt = "", "", ""
+	got.MergedMainSHA, got.CloudImageDigest, got.IdempotencyKey, got.RecoveryKey = "", "", "", ""
+	want.ApprovalID, want.ApprovalDigest, want.ExpiresAt = "", "", ""
+	want.MergedMainSHA, want.CloudImageDigest, want.IdempotencyKey, want.RecoveryKey = "", "", "", ""
+	return workspaceComputeClaimApprovalBindingMatches(got, want)
+}
+
+func workspaceComputeClaimApprovalMayBeSuperseded(operation workspaceLaunchOperation, got, want workspaceComputeClaimApprovalBinding) bool {
+	wantExpiresAt, wantExpiresErr := time.Parse(time.RFC3339, want.ExpiresAt)
+	if operation.Status != "manual_review" || operation.Phase != "compute_claim_pending" ||
+		operation.ErrorCode != "workspace_compute_claim_identity_mismatch" || operation.ComputeClaimProof != nil ||
+		operation.ComputeClaimRequestHash != "" || operation.ComputeClaimApprovalID != "" || operation.ComputeClaimMergedMainSHA != "" ||
+		operation.ComputeClaimCloudDigest != "" || operation.ComputeClaimPrivateIP != "" || operation.AttachmentID != "" ||
+		operation.GatewaySecretRef != "" || operation.RuntimeID != "" || operation.ReceiptID != "" ||
+		wantExpiresErr != nil || !wantExpiresAt.After(time.Now().UTC()) ||
+		got.ApprovalDigest == "" || got.ApprovalDigest != workspaceComputeClaimApprovalDigest(got) {
+		return false
+	}
+	for _, budget := range operation.ContinuationAttemptBudgets {
+		if budget.Attempted != 0 || budget.Confirmed != 0 || budget.Unknown != 0 {
+			return false
+		}
+	}
+	return workspaceComputeClaimApprovalScopeMatches(got, want)
+}
+
 func workspaceComputeClaimWorkspaceImageDigestMatches(operation workspaceLaunchOperation, input workspaceComputeClaimRecoveryRequest) bool {
 	if operation.WorkspaceImageDigest == input.WorkspaceImageDigest {
 		return true
@@ -1973,7 +2000,11 @@ func (app *controlPlaneServer) bindWorkspaceComputeClaimApproval(ctx context.Con
 	}
 	if operation.ComputeClaimApproval != nil {
 		if !workspaceComputeClaimApprovalBindingMatches(*operation.ComputeClaimApproval, binding) {
-			return errWorkspaceComputeClaimIdentity
+			if !persist || !workspaceComputeClaimApprovalMayBeSuperseded(*operation, *operation.ComputeClaimApproval, binding) {
+				return errWorkspaceComputeClaimIdentity
+			}
+			operation.ComputeClaimApproval = &binding
+			return app.persistWorkspaceLaunch(ctx, operation)
 		}
 		return nil
 	}

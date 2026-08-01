@@ -2264,6 +2264,46 @@ func expireComputeClaimRecoveryRequestBody(t *testing.T, operation workspaceLaun
 	return string(encoded)
 }
 
+func supersedeComputeClaimRecoveryRequestBody(t *testing.T, operation workspaceLaunchOperation, body, idempotencyKey string) string {
+	t.Helper()
+	var request map[string]any
+	if err := json.Unmarshal([]byte(body), &request); err != nil {
+		t.Fatal(err)
+	}
+	request["approvalId"] = "approval-compute-claim-successor"
+	request["expiresAt"] = "2099-08-29T00:00:00Z"
+	request["mergedMainSha"] = strings.Repeat("c", 40)
+	request["cloudImageDigest"] = "sha256:" + strings.Repeat("d", 64)
+	request["recoveryKey"] = "compute-claim-recovery-successor"
+	approval := map[string]any{
+		"schemaVersion": 2, "approvalId": request["approvalId"], "expiresAt": request["expiresAt"],
+		"mergedMainSha": request["mergedMainSha"], "cloudImageDigest": request["cloudImageDigest"], "workspaceImageDigest": request["workspaceImageDigest"],
+		"confirmation": request["confirm"], "idempotencyKey": idempotencyKey, "recoveryKey": request["recoveryKey"],
+		"customer": map[string]any{"email": request["customerEmail"], "accountId": operation.AccountID},
+		"target": map[string]any{
+			"launchOperationId": operation.ID, "accountId": operation.AccountID, "workspaceId": operation.WorkspaceID,
+			"computeAllocationId": operation.ComputeID, "storageId": operation.StorageID, "packageId": operation.PackageID,
+			"poolId": operation.ComputePoolID, "nodePoolId": operation.ComputeNodePoolID, "machineName": operation.ComputeMachineName,
+			"nodeName": operation.ComputeNodeName, "cvmInstanceId": operation.ComputeCVMInstanceID, "privateIp": operation.ComputePrivateIP,
+			"instanceType": operation.ComputeInstanceType, "zone": operation.ComputeZone, "chargeType": operation.ComputeChargeType,
+			"periodMonths": 1, "renewFlag": operation.ComputeRenewFlag, "deadline": operation.ComputeDeadline,
+		},
+		"resources": request["resources"], "attemptLimits": request["attemptLimits"],
+		"allowedWrites": request["allowedWrites"], "forbiddenWrites": request["forbiddenWrites"],
+	}
+	payload, err := json.Marshal(approval)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256(payload)
+	request["approvalDigest"] = fmt.Sprintf("%x", digest)
+	encoded, err := json.Marshal(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(encoded)
+}
+
 func requestComputeClaimWithCapabilityForTest(t *testing.T, server http.Handler, session *httptest.ResponseRecorder, path, body, key string) *httptest.ResponseRecorder {
 	t.Helper()
 	t.Setenv("OPL_INTERNAL_SERVICE_TOKEN", "compute-claim-internal-capability")
@@ -2379,6 +2419,136 @@ func TestWorkspaceComputeClaimApprovalValidationRejectsPersistedBindingDrift(t *
 	response := requestComputeClaimWithCapabilityForTest(t, fixture.server, fixture.operator, path, computeClaimRecoveryRequestBody(t, operation, true, driftedKey), driftedKey)
 	if response.Code != http.StatusConflict || len(fixture.fabric.computeClaimInputs) != 0 || len(fixture.fabric.computeClaimCalls) != 0 {
 		t.Fatalf("persisted approval binding drift crossed validation boundary: status=%d body=%s proofs=%#v claims=%#v", response.Code, response.Body.String(), fixture.fabric.computeClaimInputs, fixture.fabric.computeClaimCalls)
+	}
+}
+
+func TestWorkspaceComputeClaimApprovalSupersedesFailedUnclaimedReleaseBinding(t *testing.T) {
+	fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, "basic")
+	originalKey := "compute-claim-failed-release"
+	originalBody := computeClaimRecoveryRequestBody(t, operation, true, originalKey)
+	var raw map[string]any
+	if err := json.Unmarshal([]byte(originalBody), &raw); err != nil {
+		t.Fatal(err)
+	}
+	request, ok := workspaceComputeClaimRecoveryRequestFromMap(operation.ID, raw, true)
+	if !ok {
+		t.Fatal("original approval request must remain structurally valid")
+	}
+	binding, err := fixture.app.workspaceComputeClaimApprovalBinding(context.Background(), operation, request, originalKey, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation.ComputeClaimApproval = &binding
+	operation.Status, operation.Phase, operation.ErrorCode = "manual_review", "compute_claim_pending", "workspace_compute_claim_identity_mismatch"
+	mustStore(t, fixture.store.SaveRuntimeOperation(context.Background(), workspaceLaunchOperationRow(operation)))
+
+	successorKey := "compute-claim-successor-release"
+	successorBody := supersedeComputeClaimRecoveryRequestBody(t, operation, originalBody, successorKey)
+	validatePath := "/api/operator/workspace-launches/" + operation.ID + "/compute-claim-recovery/validate"
+	validated := requestComputeClaimWithCapabilityForTest(t, fixture.server, fixture.operator, validatePath, successorBody, successorKey)
+	afterValidation := fixture.operation(t)
+	if validated.Code != http.StatusOK || afterValidation.ComputeClaimApproval == nil || afterValidation.ComputeClaimApproval.ApprovalID != binding.ApprovalID ||
+		afterValidation.Status != "manual_review" || afterValidation.Phase != "compute_claim_pending" || len(fixture.fabric.computeClaimInputs) != 0 ||
+		len(fixture.fabric.computeClaimCalls) != 0 || len(fixture.fabric.storageIDs) != 0 {
+		t.Fatalf("successor validation mutated or rejected the failed binding: status=%d body=%s operation=%#v proofs=%#v claims=%#v", validated.Code, validated.Body.String(), afterValidation, fixture.fabric.computeClaimInputs, fixture.fabric.computeClaimCalls)
+	}
+
+	fixture.fabric.computeClaimProof = computeClaimRecoveryProofForLaunch(operation, "target_owned")
+	configureWorkspaceLaunchFulfillment(t, fixture)
+	configureWorkspaceComputeClaimReadback(fixture, operation)
+	claimPath := "/api/operator/workspace-launches/" + operation.ID + "/compute-claim-recovery/claim"
+	claimed := requestComputeClaimWithCapabilityForTest(t, fixture.server, fixture.operator, claimPath, successorBody, successorKey)
+	persisted := fixture.operation(t)
+	if claimed.Code != http.StatusOK || persisted.ComputeClaimApproval == nil || persisted.ComputeClaimApproval.ApprovalID != "approval-compute-claim-successor" ||
+		persisted.ComputeClaimApproval.MergedMainSHA != strings.Repeat("c", 40) || persisted.Status != "preparing" || persisted.Phase != "storage_fulfilling" ||
+		len(fixture.fabric.computeClaimInputs) != 1 || len(fixture.fabric.computeClaimCalls) != 1 || len(fixture.fabric.storageIDs) != 0 {
+		t.Fatalf("successor approval did not replace the failed release binding: status=%d body=%s operation=%#v proofs=%#v claims=%#v storage=%#v", claimed.Code, claimed.Body.String(), persisted, fixture.fabric.computeClaimInputs, fixture.fabric.computeClaimCalls, fixture.fabric.storageIDs)
+	}
+}
+
+func TestWorkspaceComputeClaimApprovalSupersessionRejectsUnsafeSuccessors(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func(*workspaceLaunchOperation, map[string]any)
+	}{
+		{name: "expired successor", mutate: func(_ *workspaceLaunchOperation, body map[string]any) {
+			body["expiresAt"] = "2020-08-29T00:00:00Z"
+		}},
+		{name: "business target drift", mutate: func(_ *workspaceLaunchOperation, body map[string]any) {
+			body["resources"].(map[string]any)["storageState"] = "storage_existing_exact"
+			body["resources"].(map[string]any)["storageProviderResourceId"] = "disk-drifted-fixture"
+			body["allowedWrites"].([]any)[1] = "reuse_original_cbs"
+		}},
+		{name: "claim already attempted", mutate: func(operation *workspaceLaunchOperation, _ map[string]any) {
+			operation.ComputeClaimRequestHash = strings.Repeat("e", 64)
+		}},
+		{name: "continuation already attempted", mutate: func(operation *workspaceLaunchOperation, _ map[string]any) {
+			budget := operation.ContinuationAttemptBudgets["storage"]
+			budget.Attempted = 1
+			operation.ContinuationAttemptBudgets["storage"] = budget
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, "basic")
+			originalKey := "compute-claim-unsafe-original"
+			originalBody := computeClaimRecoveryRequestBody(t, operation, true, originalKey)
+			var originalRaw map[string]any
+			if err := json.Unmarshal([]byte(originalBody), &originalRaw); err != nil {
+				t.Fatal(err)
+			}
+			request, ok := workspaceComputeClaimRecoveryRequestFromMap(operation.ID, originalRaw, true)
+			if !ok {
+				t.Fatal("original approval request must remain structurally valid")
+			}
+			binding, err := fixture.app.workspaceComputeClaimApprovalBinding(context.Background(), operation, request, originalKey, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			operation.ComputeClaimApproval = &binding
+			operation.Status, operation.Phase, operation.ErrorCode = "manual_review", "compute_claim_pending", "workspace_compute_claim_identity_mismatch"
+
+			successorKey := "compute-claim-unsafe-successor"
+			var successor map[string]any
+			if err := json.Unmarshal([]byte(supersedeComputeClaimRecoveryRequestBody(t, operation, originalBody, successorKey)), &successor); err != nil {
+				t.Fatal(err)
+			}
+			test.mutate(&operation, successor)
+			approval := map[string]any{
+				"schemaVersion": 2, "approvalId": successor["approvalId"], "expiresAt": successor["expiresAt"],
+				"mergedMainSha": successor["mergedMainSha"], "cloudImageDigest": successor["cloudImageDigest"], "workspaceImageDigest": successor["workspaceImageDigest"],
+				"confirmation": successor["confirm"], "idempotencyKey": successorKey, "recoveryKey": successor["recoveryKey"],
+				"customer": map[string]any{"email": successor["customerEmail"], "accountId": operation.AccountID},
+				"target": map[string]any{
+					"launchOperationId": operation.ID, "accountId": operation.AccountID, "workspaceId": operation.WorkspaceID,
+					"computeAllocationId": operation.ComputeID, "storageId": operation.StorageID, "packageId": operation.PackageID,
+					"poolId": operation.ComputePoolID, "nodePoolId": operation.ComputeNodePoolID, "machineName": operation.ComputeMachineName,
+					"nodeName": operation.ComputeNodeName, "cvmInstanceId": operation.ComputeCVMInstanceID, "privateIp": operation.ComputePrivateIP,
+					"instanceType": operation.ComputeInstanceType, "zone": operation.ComputeZone, "chargeType": operation.ComputeChargeType,
+					"periodMonths": 1, "renewFlag": operation.ComputeRenewFlag, "deadline": operation.ComputeDeadline,
+				},
+				"resources": successor["resources"], "attemptLimits": successor["attemptLimits"],
+				"allowedWrites": successor["allowedWrites"], "forbiddenWrites": successor["forbiddenWrites"],
+			}
+			payload, err := json.Marshal(approval)
+			if err != nil {
+				t.Fatal(err)
+			}
+			digest := sha256.Sum256(payload)
+			successor["approvalDigest"] = fmt.Sprintf("%x", digest)
+			encoded, err := json.Marshal(successor)
+			if err != nil {
+				t.Fatal(err)
+			}
+			mustStore(t, fixture.store.SaveRuntimeOperation(context.Background(), workspaceLaunchOperationRow(operation)))
+
+			path := "/api/operator/workspace-launches/" + operation.ID + "/compute-claim-recovery/validate"
+			response := requestComputeClaimWithCapabilityForTest(t, fixture.server, fixture.operator, path, string(encoded), successorKey)
+			current := fixture.operation(t)
+			if response.Code != http.StatusConflict || current.ComputeClaimApproval == nil || current.ComputeClaimApproval.ApprovalID != binding.ApprovalID ||
+				len(fixture.fabric.computeClaimInputs) != 0 || len(fixture.fabric.computeClaimCalls) != 0 || len(fixture.fabric.storageIDs) != 0 {
+				t.Fatalf("unsafe successor crossed validation boundary: status=%d body=%s operation=%#v", response.Code, response.Body.String(), current)
+			}
+		})
 	}
 }
 
