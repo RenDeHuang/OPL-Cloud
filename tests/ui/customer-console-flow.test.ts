@@ -100,7 +100,7 @@ test("Workspace and Overview render server-owned lifecycle, runtime, and billing
   assert.match(pages, /detail\.totalUsdMicros/);
   assert.match(pages, /detail\.storageGb/);
   assert.match(pages, /runtimeData\.checks/);
-  assert.match(pages, /<dt>CPU \/ 内存规格<\/dt><dd>暂不可用<\/dd>/);
+  assert.match(pages, /<dt>CPU \/ 内存规格<\/dt><dd>-<\/dd>/);
   assert.doesNotMatch(pages, /Workspace DTO|套餐 ID 推导/);
   assert.doesNotMatch(pages, /workspace\.packageId === ["']basic["'].*(?:cpu|memory)/s);
   assert.doesNotMatch(pages, /\|\| "opl"/);
@@ -142,6 +142,72 @@ test("API Key and Workspace receipt types use customer-facing labels", async () 
   assert.match(pages, /return type \? "账单记录" : "暂不可用"/);
   assert.match(panel, /isProtectedWorkspaceKey\(key\) \? "Workspace 系统 Key" : "普通 Key"/);
   assert.match(panel, /mobile-key-list/);
+});
+
+test("Console source states expose reason codes and keep empty distinct from unavailable", async () => {
+  const [dto, controller, sourceState] = await Promise.all([
+    source("apps/console-ui/src/api/dtos.ts"),
+    source("apps/console-ui/src/app/use-console-controller.ts"),
+    source("apps/console-ui/src/components/source/SourceState.tsx")
+  ]);
+
+  assert.match(dto, /export type GatewayUsagePeriod = "today" \| "week" \| "month";/);
+  assert.match(dto, /reasonCode: string;/);
+  assert.match(dto, /typeof dto\.reasonCode !== "string"/);
+  assert.match(controller, /replace\(\/\[\^a-z0-9\]\+\/g, "_"\)/);
+  assert.match(controller, /getGatewayKeyUsage\(keyId, page, 20, period\)/);
+  assert.match(sourceState, /source\.reasonCode/);
+  assert.doesNotMatch(sourceState, /description="请稍后重试。"/);
+  assert.match(sourceState, /source\.status === "empty"/);
+  assert.ok(sourceState.indexOf('source?.status === "unavailable"') < sourceState.indexOf("if (error)"));
+});
+
+test("Customer usage controls expose only canonical periods", async () => {
+  const pages = await source("apps/console-ui/src/pages/CustomerPages.tsx");
+  const usagePage = pages.slice(pages.indexOf("function UsagePage"), pages.indexOf("function ApiPage"));
+
+  assert.match(usagePage, /value: "today", label: "今日"/);
+  assert.match(usagePage, /value: "week", label: "本周"/);
+  assert.match(usagePage, /value: "month", label: "本月"/);
+  assert.doesNotMatch(usagePage, /value: "day"/);
+});
+
+test("Customer and Key list empty states trust the source envelope", async () => {
+  const [pages, panel] = await Promise.all([
+    source("apps/console-ui/src/pages/CustomerPages.tsx"),
+    source("apps/console-ui/src/components/keys/KeysPanel.tsx")
+  ]);
+
+  assert.doesNotMatch(`${pages}\n${panel}`, /empty=\{[^}]*\.length === 0[^}]*\}/);
+  assert.match(pages, /empty=\{controller\.sources\.usageKeys\.value\?\.status === "empty"\}/);
+  assert.match(pages, /empty=\{controller\.sources\.usage\.value\?\.status === "empty"\}/);
+  assert.match(panel, /empty=\{source\?\.status === "empty"\}/);
+});
+
+test("API Key protection trusts backend kind instead of a name prefix", async () => {
+  const panel = await source("apps/console-ui/src/components/keys/KeysPanel.tsx");
+  assert.match(panel, /function isProtectedWorkspaceKey\(key: GatewayKeySummaryDTO\) \{\s*return key\.kind === "workspace";\s*\}/);
+  assert.doesNotMatch(panel, /reservedWorkspaceKeyPrefix|name\.trim\(\)\.toLowerCase\(\)\.startsWith/);
+});
+
+test("API Key sources keep network failures independent with stable reason codes", async () => {
+  const panel = await source("apps/console-ui/src/components/keys/KeysPanel.tsx");
+  assert.match(panel, /import \{ unavailableSource \} from "\.\.\/\.\.\/app\/use-console-controller\.ts";/);
+  assert.match(panel, /setSource\(unavailableSource\("sub2api"\)\)/);
+  assert.match(panel, /groupResult\.status === "fulfilled" \? groupResult\.value : unavailableSource\("sub2api"\)/);
+  assert.match(panel, /endpointResult\.status === "fulfilled" \? endpointResult\.value : unavailableSource\("sub2api"\)/);
+  assert.match(panel, /groupsSource\.reasonCode/);
+  assert.match(panel, /endpointSource\.reasonCode/);
+});
+
+test("Billing, Receipt, and Workspace facts do not label missing optional fields as unavailable", async () => {
+  const pages = await source("apps/console-ui/src/pages/CustomerPages.tsx");
+  const workspaceDetail = pages.slice(pages.indexOf("function WorkspaceDetailPage"), pages.indexOf("function ApiOverview"));
+  const billing = pages.slice(pages.indexOf("function BillingPage"), pages.indexOf("function AnnouncementRows"));
+
+  assert.match(billing, /source=\{controller\.sources\.workspaces\.value\}[\s\S]+empty=\{controller\.sources\.workspaces\.value\?\.status === "empty"\}/);
+  assert.match(billing, /source=\{controller\.sources\.receipts\.value\}[\s\S]+empty=\{controller\.sources\.receipts\.value\?\.status === "empty"\}/);
+  assert.doesNotMatch(`${workspaceDetail}\n${billing}`, /\|\| "暂不可用"|: "暂不可用"/);
 });
 
 test("API Key surface uses the configured endpoint without browser environment fallbacks", async () => {
@@ -279,6 +345,6 @@ test("Customer usage records expose authoritative Token, cost, latency, and time
 test("Customer Console renders automatic-renewal state without inventing an enable path", async () => {
   const pages = await source("apps/console-ui/src/pages/CustomerPages.tsx");
   assert.match(pages, /自动续费/);
-  assert.match(pages, /detail\.autoRenew \? "开启" : "关闭"/);
+  assert.match(pages, /detail\.autoRenew === true \? "开启" : detail\.autoRenew === false \? "关闭" : "-"/);
   assert.doesNotMatch(pages, /自动续费启用路径未开放|updateWorkspaceRenewal|setAutoRenew|onChange=.*autoRenew/);
 });

@@ -29,12 +29,12 @@ export function SourceState<T>({
 }: SourceStateProps<T>) {
   if (loading && !source) return <div className="source-loading" aria-live="polite"><span className="spinner" />正在读取</div>;
 
-  if (error) {
-    return <Alert color="danger" title="服务暂不可用" description={error} actions={onRetry ? <Button onClick={onRetry} size="sm" variant="outline"><RefreshCw size={14} />重试</Button> : undefined} />;
+  if (source?.status === "unavailable") {
+    return <Alert color="warning" indicator={<AlertCircle size={18} />} title={unavailableTitle} description={source.reasonCode ? `原因代码：${source.reasonCode}` : "来源未返回原因代码。"} actions={onRetry ? <Button onClick={onRetry} size="sm" variant="outline"><RefreshCw size={14} />重试</Button> : undefined} />;
   }
 
-  if (source?.status === "unavailable") {
-    return <Alert color="warning" indicator={<AlertCircle size={18} />} title={unavailableTitle} description="请稍后重试。" actions={onRetry ? <Button onClick={onRetry} size="sm" variant="outline"><RefreshCw size={14} />重试</Button> : undefined} />;
+  if (error) {
+    return <Alert color="danger" title="服务暂不可用" description={error} actions={onRetry ? <Button onClick={onRetry} size="sm" variant="outline"><RefreshCw size={14} />重试</Button> : undefined} />;
   }
 
   if (!source) return <div className="source-loading" aria-live="polite"><span className="spinner" />等待读取</div>;

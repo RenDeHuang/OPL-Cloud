@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 
+import { unavailableSource } from "../../app/use-console-controller.ts";
 import {
   createGatewayKey,
   deleteGatewayKey,
@@ -64,7 +65,6 @@ interface KeyForm {
 }
 
 const secretLifetimeMs = 60_000;
-const reservedWorkspaceKeyPrefix = "opl-workspace";
 const initialQuery: KeyQuery = {
   page: 1,
   pageSize: 20,
@@ -125,7 +125,7 @@ function sameStrings(left: string[], right: string[]) {
 }
 
 function isProtectedWorkspaceKey(key: GatewayKeySummaryDTO) {
-  return key.kind === "workspace" || key.name.trim().toLowerCase().startsWith(reservedWorkspaceKeyPrefix);
+  return key.kind === "workspace";
 }
 
 function canManage(key: GatewayKeySummaryDTO) {
@@ -239,8 +239,8 @@ export function KeysPanel({ csrfToken }: KeysPanelProps) {
       setSource(result);
     } catch (value) {
       if (request !== listGeneration.current || !requestIsCurrent(session, token)) return;
-      setSource(null);
-      setError(friendlyError(value));
+      setSource(unavailableSource("sub2api"));
+      setError("");
     } finally {
       if (request === listGeneration.current && requestIsCurrent(session, token)) setLoading(false);
     }
@@ -253,8 +253,8 @@ export function KeysPanel({ csrfToken }: KeysPanelProps) {
     setReferenceError("");
     const [groupResult, endpointResult] = await Promise.allSettled([getGatewayGroups(), getGatewayEndpoint()]);
     if (!requestIsCurrent(session, token)) return;
-    setGroupsSource(groupResult.status === "fulfilled" ? groupResult.value : null);
-    setEndpointSource(endpointResult.status === "fulfilled" ? endpointResult.value : null);
+    setGroupsSource(groupResult.status === "fulfilled" ? groupResult.value : unavailableSource("sub2api"));
+    setEndpointSource(endpointResult.status === "fulfilled" ? endpointResult.value : unavailableSource("sub2api"));
     if (groupResult.status === "rejected" || endpointResult.status === "rejected") {
       setReferenceError("部分 API 配置暂不可用，可刷新后重试");
     }
@@ -650,8 +650,8 @@ export function KeysPanel({ csrfToken }: KeysPanelProps) {
       </form>
 
       {referenceError ? <Alert actions={<Button onClick={() => void loadReferenceData()} size="sm" variant="ghost">重试</Button>} color="warning" description={referenceError} title="参考配置部分不可用" /> : null}
-      {groupsSource?.status === "unavailable" ? <Alert color="warning" description="无法确认可用分组，已暂停创建和换组。" title="分组暂不可用" /> : null}
-      {endpointSource?.status === "unavailable" ? <Alert color="warning" description="无法确认公共模型 Endpoint，未展示推测值。" title="Endpoint 暂不可用" /> : null}
+      {groupsSource?.status === "unavailable" ? <Alert color="warning" description={`无法确认可用分组，已暂停创建和换组。原因代码：${groupsSource.reasonCode}`} title="分组暂不可用" /> : null}
+      {endpointSource?.status === "unavailable" ? <Alert color="warning" description={`无法确认公共模型 Endpoint，未展示推测值。原因代码：${endpointSource.reasonCode}`} title="Endpoint 暂不可用" /> : null}
       {notice ? <Alert color="success" description={notice} title="操作完成" /> : null}
       {error ? <Alert actions={<Button onClick={() => void refreshAll()} size="sm" variant="ghost">刷新确认</Button>} color="danger" description={error} title="操作未确认" /> : null}
 
@@ -670,7 +670,7 @@ export function KeysPanel({ csrfToken }: KeysPanelProps) {
       ) : null}
 
       <SourceState
-        empty={source?.available && source.data.items.length === 0}
+        empty={source?.status === "empty"}
         emptyDescription="创建普通 Key 后即可设置分组、额度与访问限制。"
         error={error && !source ? error : ""}
         loading={loading}

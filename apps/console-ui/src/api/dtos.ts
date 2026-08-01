@@ -16,6 +16,7 @@ export interface UnavailableSource {
   available: false;
   fetchedAt: string;
   sourceUpdatedAt?: string;
+  reasonCode: string;
 }
 
 export type SourceEnvelope<T> = AvailableSource<T> | UnavailableSource;
@@ -466,6 +467,8 @@ export interface GatewayUsageItem {
   firstTokenMs: number | null;
 }
 
+export type GatewayUsagePeriod = "today" | "week" | "month";
+
 export interface GatewayKeyUsagePageDTO {
   items: GatewayUsageItem[];
   total: number;
@@ -808,23 +811,34 @@ export function decodeDto<T>(value: unknown): T {
 
 export function decodeSource<T>(value: unknown): SourceEnvelope<T> {
   const dto = decodeDto<Record<string, unknown>>(value);
-  if (dto.status === "unavailable" || dto.available === false) {
+  if (typeof dto.source !== "string" || !dto.source.trim()
+    || typeof dto.fetchedAt !== "string" || !dto.fetchedAt.trim()
+    || dto.sourceUpdatedAt !== undefined && typeof dto.sourceUpdatedAt !== "string") {
+    throw new Error("invalid_source_envelope");
+  }
+  const sourceUpdatedAt = typeof dto.sourceUpdatedAt === "string" ? dto.sourceUpdatedAt : undefined;
+  if (dto.status === "unavailable") {
+    if (dto.available !== false || "data" in dto || typeof dto.reasonCode !== "string" || !dto.reasonCode.trim()) {
+      throw new Error("invalid_source_envelope");
+    }
     return {
-      source: String(dto.source || "unknown"),
+      source: dto.source,
       status: "unavailable",
       available: false,
-      fetchedAt: String(dto.fetchedAt || "")
+      fetchedAt: dto.fetchedAt,
+      ...(sourceUpdatedAt !== undefined ? { sourceUpdatedAt } : {}),
+      reasonCode: dto.reasonCode
     };
   }
-  if (dto.status !== "available" && dto.status !== "empty" || dto.available !== true || !("data" in dto)) {
+  if ((dto.status !== "available" && dto.status !== "empty") || dto.available !== true || !("data" in dto)) {
     throw new Error("invalid_source_envelope");
   }
   return {
-    source: String(dto.source || "unknown"),
+    source: dto.source,
     status: dto.status,
     available: true,
-    fetchedAt: String(dto.fetchedAt || ""),
-    ...(typeof dto.sourceUpdatedAt === "string" ? { sourceUpdatedAt: dto.sourceUpdatedAt } : {}),
+    fetchedAt: dto.fetchedAt,
+    ...(sourceUpdatedAt !== undefined ? { sourceUpdatedAt } : {}),
     data: dto.data as T
   };
 }

@@ -10,6 +10,7 @@ import type {
   GatewayBalanceHistoryPageDTO,
   GatewayEndpointDTO,
   GatewayGroupPageDTO,
+  GatewayUsagePeriod,
   GatewayKeyListQuery,
   GatewayKeyPageDTO,
   GatewayKeySecretDTO,
@@ -48,14 +49,26 @@ import type {
 } from "./dtos.ts";
 import { deleteJson, getJson, patchJson, postJson, putJson, type ApiError } from "./console-api.ts";
 
+function decodeConsoleSource<T>(value: unknown): SourceEnvelope<T> {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    const dto = value as Record<string, unknown>;
+    if (dto.status === "unavailable" && dto.available === false && !("data" in dto)
+      && dto.reasonCode === undefined && typeof dto.source === "string" && dto.source.trim()) {
+      const source = dto.source.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "unknown";
+      return decodeSource<T>({ ...dto, reasonCode: `${source}_unavailable` });
+    }
+  }
+  return decodeSource<T>(value);
+}
+
 async function sourceGet<T>(path: string, signal?: AbortSignal): Promise<SourceEnvelope<T>> {
   try {
-    return decodeSource<T>(await getJson<unknown>(path, { signal }));
+    return decodeConsoleSource<T>(await getJson<unknown>(path, { signal }));
   } catch (error) {
     const payload = (error as ApiError).payload;
     if (payload !== undefined) {
       try {
-        return decodeSource<T>(payload);
+        return decodeConsoleSource<T>(payload);
       } catch {
         // Preserve the transport error when the server did not return a source envelope.
       }
@@ -66,12 +79,12 @@ async function sourceGet<T>(path: string, signal?: AbortSignal): Promise<SourceE
 
 async function sourceWrite<T>(request: () => Promise<unknown>): Promise<SourceEnvelope<T>> {
   try {
-    return decodeSource<T>(await request());
+    return decodeConsoleSource<T>(await request());
   } catch (error) {
     const payload = (error as ApiError).payload;
     if (payload !== undefined) {
       try {
-        return decodeSource<T>(payload);
+        return decodeConsoleSource<T>(payload);
       } catch {
         // Preserve the transport error when the server did not return a source envelope.
       }
@@ -150,16 +163,16 @@ export function revealGatewayKey(keyId: string, csrfToken: string): Promise<Sour
   return sourcePost<GatewayKeySecretDTO>(`/api/gateway/keys/${encodeURIComponent(keyId)}/reveal`, {}, csrfToken);
 }
 
-export function getGatewayKeyUsage(keyId: string, page = 1, pageSize = 20, signal?: AbortSignal): Promise<SourceEnvelope<GatewayKeyUsagePageDTO>> {
-  const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
+export function getGatewayKeyUsage(keyId: string, page = 1, pageSize = 20, period: GatewayUsagePeriod = "month", signal?: AbortSignal): Promise<SourceEnvelope<GatewayKeyUsagePageDTO>> {
+  const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize), period });
   return sourceGet<GatewayKeyUsagePageDTO>(`/api/gateway/keys/${encodeURIComponent(keyId)}/usage?${params}`, signal);
 }
 
-export function getGatewayKeyUsageSummary(keyId: string, period = "month", signal?: AbortSignal): Promise<SourceEnvelope<GatewayUsageSummaryDTO>> {
+export function getGatewayKeyUsageSummary(keyId: string, period: GatewayUsagePeriod = "month", signal?: AbortSignal): Promise<SourceEnvelope<GatewayUsageSummaryDTO>> {
   return sourceGet<GatewayUsageSummaryDTO>(`/api/gateway/keys/${encodeURIComponent(keyId)}/usage-summary?${new URLSearchParams({ period })}`, signal);
 }
 
-export function getGatewayAccountUsageSummary(period = "month", signal?: AbortSignal): Promise<SourceEnvelope<GatewayAccountUsageSummaryDTO>> {
+export function getGatewayAccountUsageSummary(period: GatewayUsagePeriod = "month", signal?: AbortSignal): Promise<SourceEnvelope<GatewayAccountUsageSummaryDTO>> {
   return sourceGet<GatewayAccountUsageSummaryDTO>(`/api/gateway/usage-summary?${new URLSearchParams({ period })}`, signal);
 }
 
