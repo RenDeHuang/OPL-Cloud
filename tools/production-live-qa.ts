@@ -2762,8 +2762,9 @@ export async function diagnoseWorkspaceIdentity({
   const launchMatches = Array.isArray(launches) ? launches.filter((launch) => launch?.workspaceId === normalizedWorkspaceId) : [];
   const launch = launchMatches[0];
   const workspaceApiKeyId = String(launch?.workspaceApiKeyId || "");
-  if (launchMatches.length !== 1 || launch?.accountId !== normalizedAccountId || launch?.status !== "compute_claim_pending" ||
-    launch?.phase !== "compute_claim_pending" ||
+  const canonicalComputeClaimStatus = launch?.status === "compute_claim_pending" ||
+    launch?.status === "manual_review" && launch?.errorCode === "workspace_compute_claim_identity_mismatch";
+  if (launchMatches.length !== 1 || launch?.accountId !== normalizedAccountId || !canonicalComputeClaimStatus || launch?.phase !== "compute_claim_pending" ||
     !/^workspace-launch-[a-f0-9]{18}$/.test(String(launch?.operationId || "")) ||
     !/^[1-9][0-9]*$/.test(workspaceApiKeyId) || !Number.isSafeInteger(Number(workspaceApiKeyId))) {
     throw new Error("workspace_identity_launch_binding_mismatch");

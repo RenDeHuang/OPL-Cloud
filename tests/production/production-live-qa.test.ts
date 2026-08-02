@@ -59,6 +59,8 @@ test("Workspace identity diagnosis binds operator, customer, and the unique rese
   const customerEmail = "customer@example.com";
   const calls = [];
   let launchWorkspaceApiKeyId = workspaceApiKeyId;
+  let launchStatus = "compute_claim_pending";
+  let launchErrorCode = "";
   let duplicateLaunch = false;
   const fetchImpl = async (input, init = {}) => {
     const url = new URL(String(input));
@@ -105,8 +107,9 @@ test("Workspace identity diagnosis binds operator, customer, and the unique rese
         operationId: launchOperationId,
         accountId,
         workspaceId,
-        status: "compute_claim_pending",
+        status: launchStatus,
         phase: "compute_claim_pending",
+        errorCode: launchErrorCode,
         workspaceApiKeyId: launchWorkspaceApiKeyId
       };
       return json(duplicateLaunch ? [launch, { ...launch, operationId: "workspace-launch-a0375970d7678d0a3e" }] : [launch]);
@@ -164,6 +167,21 @@ test("Workspace identity diagnosis binds operator, customer, and the unique rese
   assert.equal(calls.every(([method]) => ["GET", "POST"].includes(method)), true);
   assert.equal(calls.filter(([method, path]) => method === "POST" && path !== "/api/auth/login").length, 0);
 
+  launchStatus = "manual_review";
+  launchErrorCode = "workspace_compute_claim_identity_mismatch";
+  const manualReviewResult = await productionLiveQa.diagnoseWorkspaceIdentity({
+    origin: "https://cloud.medopl.cn",
+    adminEmail: ADMIN_EMAIL,
+    adminPassword: ADMIN_PASSWORD,
+    customerEmail,
+    customerPassword: "customer-password",
+    accountId,
+    workspaceId,
+    fetchImpl
+  });
+  assert.equal(manualReviewResult.status, "proven");
+  assert.equal(manualReviewResult.identity.workspaceApiKeyId, workspaceApiKeyId);
+
   launchWorkspaceApiKeyId = "133";
   await assert.rejects(productionLiveQa.diagnoseWorkspaceIdentity({
     origin: "https://cloud.medopl.cn",
@@ -177,6 +195,21 @@ test("Workspace identity diagnosis binds operator, customer, and the unique rese
   }), /workspace_identity_workspace_key_mismatch/);
 
   launchWorkspaceApiKeyId = workspaceApiKeyId;
+  launchStatus = "preparing";
+  launchErrorCode = "";
+  await assert.rejects(productionLiveQa.diagnoseWorkspaceIdentity({
+    origin: "https://cloud.medopl.cn",
+    adminEmail: ADMIN_EMAIL,
+    adminPassword: ADMIN_PASSWORD,
+    customerEmail,
+    customerPassword: "customer-password",
+    accountId,
+    workspaceId,
+    fetchImpl
+  }), /workspace_identity_launch_binding_mismatch/);
+
+  launchStatus = "manual_review";
+  launchErrorCode = "workspace_compute_claim_identity_mismatch";
   duplicateLaunch = true;
   await assert.rejects(productionLiveQa.diagnoseWorkspaceIdentity({
     origin: "https://cloud.medopl.cn",
