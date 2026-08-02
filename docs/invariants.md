@@ -207,11 +207,11 @@ The four implementation owner lanes are Console/Control Plane, Fabric, Gateway i
   Keys. Every new Workspace converges exactly one reserved Key whose stable name
   is derived from `workspaceId`; the legacy `opl-workspace` name remains bound
   only to an existing legacy Workspace and is never reused for a new Workspace.
-- Required read capabilities are mapped-user balance, available groups, the mapped user's paginated/filterable/sortable Key list, paginated request usage, and aggregate usage stats. Key creation requires a live Sub2API group. Request usage and stats are scoped by both `user_id` and the selected `api_key_id`; every returned identity is validated again by Control Plane.
+- Required read capabilities are mapped-user balance, available groups, the mapped user's paginated/filterable/sortable Key list, paginated request usage, and aggregate usage stats. Key creation requires a live Sub2API group. Request usage and stats are scoped by both `user_id` and the selected `api_key_id`; every returned identity is validated again by Control Plane. Request-list `today`, `week`, and `month` are real `Asia/Shanghai` calendar ranges sent upstream as `start_date`, `end_date`, and `timezone`; week starts on Monday and month starts on the first calendar day.
 - For Keys, UserKeys, Usage, and BalanceHistory, a zero-row Sub2API v0.1.162
   response is valid only as `total=0,page=1,pages=1,items=[]`; every other empty
   pagination shape fails closed.
-- Request charges use Sub2API `actual_cost`, converted once to integer USD micros. Control Plane returns an explicit unavailable state for a missing capability or upstream failure and never substitutes zero.
+- Spendable balance and non-negative request `actual_cost` values are converted once with `floor(rawDecimalUSD * 1_000_000)` to conservative integer USD micros; malformed, negative, non-finite, or overflowing values are unavailable rather than fabricated. Batch user and Key usage preserves every valid requested item, leaves a missing or malformed requested item unavailable, and fails the whole batch on any extra unrequested identity. Every unavailable source envelope includes a stable source-derived `reasonCode` and never exposes raw upstream errors.
 - Request latency uses live Sub2API `first_token_ms` and `duration_ms` only. Both
   values are nullable non-negative integers, are never persisted by OPL, and
   render as `-` rather than `0 ms` when the upstream value is absent; Console

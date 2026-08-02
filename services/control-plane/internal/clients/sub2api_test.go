@@ -158,8 +158,32 @@ func TestSub2APIAdminUserKeepsIdentityWhenBalanceIsSubMicro(t *testing.T) {
 	}, time.Second)
 
 	user, err := client.AdminUser(context.Background(), 42)
-	if err != nil || user.ID != 42 || user.Email != "pilot@example.com" || user.Status != "disabled" || !user.BalanceUnavailable {
+	if err != nil || user.ID != 42 || user.Email != "pilot@example.com" || user.Status != "disabled" || user.BalanceUSDMicros != 0 || user.BalanceUnavailable {
 		t.Fatalf("sub-micro admin user = %#v err=%v", user, err)
+	}
+}
+
+func TestSub2APIAdminUsersFloorSubMicroBalance(t *testing.T) {
+	client := newSub2APITestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/auth/login":
+			writeSub2APISuccess(t, w, map[string]any{"access_token": "admin-access", "refresh_token": "admin-refresh"})
+		case "/api/v1/admin/users":
+			writeSub2APISuccess(t, w, map[string]any{
+				"items": []any{map[string]any{
+					"id": 42, "email": "pilot@example.com", "balance": json.RawMessage("0.00000001"), "status": "active",
+					"created_at": "2026-07-18T01:02:03Z", "updated_at": "2026-07-19T04:05:06Z",
+				}},
+				"total": 1, "page": 1, "page_size": 1, "pages": 1,
+			})
+		default:
+			t.Fatalf("unexpected route %s", r.URL.Path)
+		}
+	}, time.Second)
+
+	page, err := client.AdminUsers(context.Background(), Sub2APIUserPageQuery{Page: 1, PageSize: 1, SortBy: "id", SortOrder: "asc"})
+	if err != nil || len(page.Items) != 1 || page.Items[0].BalanceUSDMicros != 0 || page.Items[0].BalanceUnavailable {
+		t.Fatalf("sub-micro admin users page = %#v err=%v", page, err)
 	}
 }
 
@@ -280,6 +304,102 @@ func TestSub2APIBatchKeysUsage(t *testing.T) {
 	stats, err := client.BatchKeysUsage(context.Background(), []int64{9, 7, 9})
 	if err != nil || len(stats) != 2 || stats[7].TodayActualCostUSDMicros != 125_000 || stats[7].TotalActualCostUSDMicros != 4_500_000 || stats[9].TotalActualCostUSDMicros != 0 {
 		t.Fatalf("batch keys usage = %#v err=%v", stats, err)
+	}
+}
+
+func TestSub2APIBatchUsersUsagePreservesValidRequestedItems(t *testing.T) {
+	client := newSub2APITestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/auth/login":
+			writeSub2APISuccess(t, w, map[string]any{"access_token": "admin-access", "refresh_token": "admin-refresh"})
+		case "/api/v1/admin/dashboard/users-usage":
+			writeSub2APISuccess(t, w, map[string]any{"stats": map[string]any{
+				"41": map[string]any{"user_id": 41, "today_actual_cost": json.RawMessage("0.00000001"), "total_actual_cost": 1.25, "by_platform": []any{}},
+				"42": map[string]any{"user_id": 42, "today_actual_cost": "malformed", "total_actual_cost": 2.5, "by_platform": []any{}},
+			}})
+		default:
+			t.Fatalf("unexpected route %s", r.URL.Path)
+		}
+	}, time.Second)
+
+	stats, err := client.BatchUsersUsage(context.Background(), []int64{41, 42, 43})
+	if err != nil || len(stats) != 1 || stats[41].TodayActualCostUSDMicros != 0 || stats[41].TotalActualCostUSDMicros != 1_250_000 {
+		t.Fatalf("partially valid batch user usage = %#v err=%v", stats, err)
+	}
+	if _, exists := stats[42]; exists {
+		t.Fatalf("malformed requested user usage was retained: %#v", stats)
+	}
+	if _, exists := stats[43]; exists {
+		t.Fatalf("missing requested user usage was fabricated: %#v", stats)
+	}
+}
+
+func TestSub2APIBatchKeysUsagePreservesValidRequestedItems(t *testing.T) {
+	client := newSub2APITestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/auth/login":
+			writeSub2APISuccess(t, w, map[string]any{"access_token": "admin-access", "refresh_token": "admin-refresh"})
+		case "/api/v1/admin/dashboard/api-keys-usage":
+			writeSub2APISuccess(t, w, map[string]any{"stats": map[string]any{
+				"7": map[string]any{"api_key_id": 7, "today_actual_cost": json.RawMessage("0.00000001"), "total_actual_cost": 4.5},
+				"9": map[string]any{"api_key_id": 9, "today_actual_cost": 0, "total_actual_cost": "malformed"},
+			}})
+		default:
+			t.Fatalf("unexpected route %s", r.URL.Path)
+		}
+	}, time.Second)
+
+	stats, err := client.BatchKeysUsage(context.Background(), []int64{7, 8, 9})
+	if err != nil || len(stats) != 1 || stats[7].TodayActualCostUSDMicros != 0 || stats[7].TotalActualCostUSDMicros != 4_500_000 {
+		t.Fatalf("partially valid batch key usage = %#v err=%v", stats, err)
+	}
+	if _, exists := stats[8]; exists {
+		t.Fatalf("missing requested key usage was fabricated: %#v", stats)
+	}
+	if _, exists := stats[9]; exists {
+		t.Fatalf("malformed requested key usage was retained: %#v", stats)
+	}
+}
+
+func TestSub2APIBatchUsageRejectsUnrequestedItems(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		path string
+		data map[string]any
+		call func(*Sub2APIHTTPClient) error
+	}{
+		{
+			name: "user", path: "/api/v1/admin/dashboard/users-usage",
+			data: map[string]any{"stats": map[string]any{"99": map[string]any{"user_id": 99, "today_actual_cost": 0, "total_actual_cost": 0}}},
+			call: func(client *Sub2APIHTTPClient) error {
+				_, err := client.BatchUsersUsage(context.Background(), []int64{41})
+				return err
+			},
+		},
+		{
+			name: "key", path: "/api/v1/admin/dashboard/api-keys-usage",
+			data: map[string]any{"stats": map[string]any{"99": map[string]any{"api_key_id": 99, "today_actual_cost": 0, "total_actual_cost": 0}}},
+			call: func(client *Sub2APIHTTPClient) error {
+				_, err := client.BatchKeysUsage(context.Background(), []int64{7})
+				return err
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client := newSub2APITestClient(t, func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/v1/auth/login":
+					writeSub2APISuccess(t, w, map[string]any{"access_token": "admin-access", "refresh_token": "admin-refresh"})
+				case tc.path:
+					writeSub2APISuccess(t, w, tc.data)
+				default:
+					t.Fatalf("unexpected route %s", r.URL.Path)
+				}
+			}, time.Second)
+			if err := tc.call(client); err == nil || !strings.Contains(err.Error(), "unexpected sub2api batch") {
+				t.Fatalf("unrequested %s usage error = %v", tc.name, err)
+			}
+		})
 	}
 }
 
@@ -489,6 +609,11 @@ func TestUserKeyDelete(t *testing.T) {
 
 func TestUserKeyUsage(t *testing.T) {
 	requests := 0
+	location, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().In(location)
 	client := newSub2APITestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		requests++
 		switch r.URL.Path {
@@ -500,7 +625,10 @@ func TestUserKeyUsage(t *testing.T) {
 			}
 			writeSub2APISuccess(t, w, userKeyFixture(17, "active"))
 		case "/api/v1/admin/usage/stats":
-			if r.URL.Query().Get("user_id") != "41" || r.URL.Query().Has("api_key_id") || r.URL.Query().Get("period") != "month" {
+			query := r.URL.Query()
+			if query.Get("user_id") != "41" || query.Has("api_key_id") || query.Has("period") ||
+				query.Get("start_date") != time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, location).Format("2006-01-02") ||
+				query.Get("end_date") != now.Format("2006-01-02") || query.Get("timezone") != "Asia/Shanghai" {
 				t.Fatalf("account usage query = %q", r.URL.RawQuery)
 			}
 			writeSub2APISuccess(t, w, map[string]any{"total_requests": 2, "total_input_tokens": 3, "total_output_tokens": 4, "total_tokens": 7, "total_actual_cost": 0.000005})
@@ -1481,6 +1609,71 @@ func TestSub2APIUsageListIsScopedAndDropsAdminFields(t *testing.T) {
 	}
 }
 
+func TestSub2APIUsageListAppliesCalendarMonthDateRange(t *testing.T) {
+	location, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().In(location)
+	client := newSub2APITestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/auth/login":
+			writeSub2APISuccess(t, w, map[string]any{"access_token": "access", "refresh_token": "refresh"})
+		case "/api/v1/admin/usage":
+			query := r.URL.Query()
+			if query.Get("start_date") != time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, location).Format("2006-01-02") ||
+				query.Get("end_date") != now.Format("2006-01-02") || query.Get("timezone") != "Asia/Shanghai" {
+				t.Fatalf("usage period query = %q", r.URL.RawQuery)
+			}
+			writeSub2APISuccess(t, w, map[string]any{"items": []any{}, "total": 0, "page": 1, "page_size": 50, "pages": 1})
+		default:
+			t.Fatalf("unexpected route %s", r.URL.Path)
+		}
+	}, time.Second)
+
+	if _, err := client.Usage(context.Background(), Sub2APIUsageQuery{UserID: 41, APIKeyID: 9, Page: 1, PageSize: 50, Period: "month"}); err != nil {
+		t.Fatalf("usage month range: %v", err)
+	}
+}
+
+func TestSub2APIUsageDateRangeUsesShanghaiCalendarBoundaries(t *testing.T) {
+	now := time.Date(2026, time.August, 2, 16, 30, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		period    string
+		wantStart string
+		wantEnd   string
+		wantOK    bool
+	}{
+		{period: "today", wantStart: "2026-08-03", wantEnd: "2026-08-03", wantOK: true},
+		{period: "week", wantStart: "2026-08-03", wantEnd: "2026-08-03", wantOK: true},
+		{period: "month", wantStart: "2026-08-01", wantEnd: "2026-08-03", wantOK: true},
+		{period: "quarter"},
+	} {
+		start, end, ok := sub2APIUsageDateRange(tc.period, now)
+		if start != tc.wantStart || end != tc.wantEnd || ok != tc.wantOK {
+			t.Fatalf("period %q range = %q..%q ok=%t, want %q..%q ok=%t", tc.period, start, end, ok, tc.wantStart, tc.wantEnd, tc.wantOK)
+		}
+	}
+}
+
+func TestSub2APIUsageListFloorsSubMicroActualCost(t *testing.T) {
+	client := newSub2APITestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/auth/login":
+			writeSub2APISuccess(t, w, map[string]any{"access_token": "access", "refresh_token": "refresh"})
+		case "/api/v1/admin/usage":
+			writeSub2APISuccess(t, w, json.RawMessage(`{"items":[{"user_id":41,"api_key_id":9,"request_id":"req-sub-micro","created_at":"2026-07-16T00:00:00Z","model":"gpt-5","request_type":"sync","input_tokens":1,"output_tokens":1,"cache_creation_tokens":0,"cache_read_tokens":0,"actual_cost":0.00000001}],"total":1,"page":1,"page_size":50,"pages":1}`))
+		default:
+			t.Fatalf("unexpected route %s", r.URL.Path)
+		}
+	}, time.Second)
+
+	page, err := client.Usage(context.Background(), Sub2APIUsageQuery{UserID: 41, APIKeyID: 9, Page: 1, PageSize: 50})
+	if err != nil || len(page.Items) != 1 || page.Items[0].ActualCostUSDMicros != 0 {
+		t.Fatalf("sub-micro usage actual cost = %#v err=%v", page, err)
+	}
+}
+
 func TestSub2APIUsageListValidatesNullableLatency(t *testing.T) {
 	for _, tc := range []struct {
 		name, latency string
@@ -1591,8 +1784,13 @@ func TestSub2APIUsageListRequiresCoherentPagination(t *testing.T) {
 	}
 }
 
-func TestSub2APIUsageStatsConvertsExactActualCost(t *testing.T) {
-	for raw, want := range map[string]int64{"0": 0, "0.000001": 1, "12.345678": 12_345_678} {
+func TestSub2APIUsageStatsConvertsActualCostToConservativeMicros(t *testing.T) {
+	location, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().In(location)
+	for raw, want := range map[string]int64{"0": 0, "0.0000001": 0, "0.000001": 1, "12.345678": 12_345_678} {
 		t.Run(raw, func(t *testing.T) {
 			client := newSub2APITestClient(t, func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
@@ -1600,7 +1798,9 @@ func TestSub2APIUsageStatsConvertsExactActualCost(t *testing.T) {
 					writeSub2APISuccess(t, w, map[string]any{"access_token": "access", "refresh_token": "refresh"})
 				case "/api/v1/admin/usage/stats":
 					query := r.URL.Query()
-					if query.Get("user_id") != "41" || query.Get("api_key_id") != "9" || query.Get("period") != "month" {
+					if query.Get("user_id") != "41" || query.Get("api_key_id") != "9" || query.Has("period") ||
+						query.Get("start_date") != time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, location).Format("2006-01-02") ||
+						query.Get("end_date") != now.Format("2006-01-02") || query.Get("timezone") != "Asia/Shanghai" {
 						t.Fatalf("stats query = %s", r.URL.RawQuery)
 					}
 					writeSub2APISuccess(t, w, json.RawMessage(fmt.Sprintf(`{"total_requests":3,"total_input_tokens":10,"total_output_tokens":20,"total_tokens":35,"total_actual_cost":%s,"user":{"email":"private@example.test"},"endpoints":[{"endpoint":"private"}]}`, raw)))
@@ -1623,10 +1823,10 @@ func TestSub2APIUsageStatsConvertsExactActualCost(t *testing.T) {
 
 func TestSub2APIUsageStatsRejectsInvalidFacts(t *testing.T) {
 	for name, data := range map[string]string{
-		"negative tokens":   `{"total_requests":1,"total_input_tokens":-1,"total_output_tokens":0,"total_tokens":0,"total_actual_cost":0}`,
-		"missing cost":      `{"total_requests":1,"total_input_tokens":1,"total_output_tokens":0,"total_tokens":1}`,
-		"fractional micros": `{"total_requests":1,"total_input_tokens":1,"total_output_tokens":0,"total_tokens":1,"total_actual_cost":0.0000001}`,
-		"overflow":          `{"total_requests":1,"total_input_tokens":1,"total_output_tokens":0,"total_tokens":1,"total_actual_cost":9223372036854.775808}`,
+		"negative tokens": `{"total_requests":1,"total_input_tokens":-1,"total_output_tokens":0,"total_tokens":0,"total_actual_cost":0}`,
+		"missing cost":    `{"total_requests":1,"total_input_tokens":1,"total_output_tokens":0,"total_tokens":1}`,
+		"negative cost":   `{"total_requests":1,"total_input_tokens":1,"total_output_tokens":0,"total_tokens":1,"total_actual_cost":-0.0000001}`,
+		"overflow":        `{"total_requests":1,"total_input_tokens":1,"total_output_tokens":0,"total_tokens":1,"total_actual_cost":9223372036854.775808}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			client := newSub2APITestClient(t, func(w http.ResponseWriter, r *http.Request) {

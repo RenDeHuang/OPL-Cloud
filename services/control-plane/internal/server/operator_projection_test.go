@@ -740,11 +740,8 @@ func TestOperatorAccountsKeepsIdentityWhenMappedWalletHasSubMicroBalance(t *test
 		t.Fatalf("operator account sources status=%s items=%#v", status, items)
 	}
 	wallet := mapField(beta, "wallet")
-	if wallet["status"] != "unavailable" || wallet["available"] != false {
+	if wallet["status"] != "available" || wallet["available"] != true || mapField(wallet, "data")["usdMicros"] != "0" {
 		t.Fatalf("sub-micro wallet source = %#v", wallet)
-	}
-	if _, exists := wallet["data"]; exists {
-		t.Fatalf("sub-micro wallet exposed fallback data = %#v", wallet)
 	}
 }
 

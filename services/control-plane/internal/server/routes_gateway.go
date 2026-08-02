@@ -589,7 +589,11 @@ func (app *controlPlaneServer) gatewayKeyUsage(w http.ResponseWriter, r *http.Re
 	if !ok {
 		return
 	}
-	usage, err := service.GatewayKeyUsage(r.Context(), credential, userID, keyID, page, pageSize)
+	period, ok := gatewayUsagePeriod(w, r)
+	if !ok {
+		return
+	}
+	usage, err := service.GatewayKeyUsage(r.Context(), credential, userID, keyID, page, pageSize, period)
 	if err != nil {
 		writeGatewayUserKeyError(w, err)
 		return

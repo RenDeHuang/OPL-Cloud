@@ -252,7 +252,7 @@ func (s *Service) Sub2APIAdminIdentity(ctx context.Context) (clients.Sub2APIIden
 	return client.AdminIdentity(ctx)
 }
 
-func (s *Service) GatewayKeyUsage(ctx context.Context, credential clients.SessionDelegatedCredential, userID, keyID int64, page, pageSize int) (clients.Sub2APIUsagePage, error) {
+func (s *Service) GatewayKeyUsage(ctx context.Context, credential clients.SessionDelegatedCredential, userID, keyID int64, page, pageSize int, period string) (clients.Sub2APIUsagePage, error) {
 	if _, err := s.GatewayUserKey(ctx, credential, userID, keyID); err != nil {
 		return clients.Sub2APIUsagePage{}, err
 	}
@@ -260,7 +260,7 @@ func (s *Service) GatewayKeyUsage(ctx context.Context, credential clients.Sessio
 	if !ok {
 		return clients.Sub2APIUsagePage{}, errors.New("sub2api_usage_unavailable")
 	}
-	return client.Usage(ctx, clients.Sub2APIUsageQuery{UserID: userID, APIKeyID: keyID, Page: page, PageSize: pageSize})
+	return client.Usage(ctx, clients.Sub2APIUsageQuery{UserID: userID, APIKeyID: keyID, Page: page, PageSize: pageSize, Period: period})
 }
 
 func (s *Service) GatewayKeyUsageStats(ctx context.Context, credential clients.SessionDelegatedCredential, userID, keyID int64, period string) (clients.Sub2APIUsageStats, error) {

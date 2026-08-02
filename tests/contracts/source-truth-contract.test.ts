@@ -27,6 +27,7 @@ test("Console source truth contract fixes strict envelopes and live Gateway proj
   assert.equal(contract.state, "current");
   assert.deepEqual(contract.envelope.requiredFields, ["source", "status", "available", "fetchedAt"]);
   assert.deepEqual(contract.envelope.statuses, ["available", "empty", "unavailable"]);
+  assert.equal(contract.envelope.reasonCode, "required_stable_source_code_when_unavailable");
   assert.deepEqual(contract.envelope.states, {
     available: { available: true, data: "required" },
     empty: { available: true, data: "required_real_zero_rows" },
@@ -121,13 +122,30 @@ test("Console source truth contract fixes strict envelopes and live Gateway proj
   ]);
   assert.equal(gateway.usage.latencyEncoding, "nullable_non_negative_integer_ms");
   assert.equal(gateway.usage.apiKeyIdFormat, "positive_decimal_string");
+  assert.deepEqual(gateway.usage.actualCostProjection, {
+    meaning: "conservative_non_negative_lower_bound",
+    conversion: "floor(rawDecimalUSD * 1000000)",
+    unavailableWhen: ["non_numeric", "negative", "non_finite", "int64_overflow"]
+  });
   assert.deepEqual(gateway.usage.emptyUpstreamPagination, gateway.keys.emptyUpstreamPagination);
+  assert.deepEqual(gateway.usage.periods, {
+    accepted: ["today", "week", "month"],
+    timezone: "Asia/Shanghai",
+    upstreamQuery: ["start_date", "end_date", "timezone"],
+    ranges: {
+      today: "current_calendar_day",
+      week: "current_calendar_week_monday_through_today",
+      month: "current_calendar_month_first_day_through_today"
+    }
+  });
   assert.deepEqual(gateway.usageStats.dataFields, [
     "totalRequests", "totalInputTokens", "totalOutputTokens", "totalTokens", "totalActualCostUsdMicros"
   ]);
+  assert.equal(gateway.usageStats.periodContract, "same_explicit_asia_shanghai_calendar_range_as_gateway_usage_list");
   assert.equal(gateway.usageStats.zeroAggregate, "available");
   assert.deepEqual(gateway.accountUsageStats.dataFields, gateway.usageStats.dataFields);
   assert.equal(gateway.accountUsageStats.aggregation, "upstream_only_never_current_page_sum");
+  assert.equal(gateway.accountUsageStats.periodContract, "same_explicit_asia_shanghai_calendar_range_as_gateway_usage_list");
   assert.deepEqual(gateway.balanceHistory.itemFields, ["type", "valueUsdMicros", "status", "usedAt", "createdAt"]);
   assert.deepEqual(gateway.balanceHistory.dataFields, ["items", "total", "page", "pageSize", "pages"]);
   assert.deepEqual(gateway.balanceHistory.pagination, {
@@ -193,6 +211,8 @@ test("Console source truth contract fixes strict envelopes and live Gateway proj
     scaleInvariant: "same_page_size_request_count_equal_for_100_and_1000_accounts",
     userAndBalanceRead: "current_page_exact_id_bounded_concurrency_max_4",
     usageRead: "current_page_user_ids_batch_required",
+    balanceProjection: "floor_non_negative_raw_decimal_usd_to_integer_micros",
+    batchPartialFailure: "missing_or_malformed_requested_item_unavailable_extra_unrequested_id_fails_closed",
     workspaceCountRead: "single_control_plane_group_by_for_current_page",
     userReadConcurrencyMax: 4,
     keyCountRead: "current_page_exact_user_id_page_1_size_1_total_only_bounded_concurrency_max_4",

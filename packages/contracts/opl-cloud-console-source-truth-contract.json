@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 11,
+  "schemaVersion": 12,
   "owner": "OPL Console Control Plane",
   "purpose": "Strict source envelopes and customer-safe live projections for Console source-of-truth APIs.",
   "state": "current",
@@ -13,6 +13,7 @@
     "serverWriter": "writeSourceEnvelope",
     "requiredFields": ["source", "status", "available", "fetchedAt"],
     "statuses": ["available", "empty", "unavailable"],
+    "reasonCode": "required_stable_source_code_when_unavailable",
     "states": {
       "available": { "available": true, "data": "required" },
       "empty": { "available": true, "data": "required_real_zero_rows" },
@@ -115,7 +116,22 @@
         "itemFields": ["apiKeyId", "requestId", "createdAt", "model", "inboundEndpoint", "requestType", "inputTokens", "outputTokens", "cacheCreationTokens", "cacheReadTokens", "actualCostUsdMicros", "durationMs", "firstTokenMs"],
         "apiKeyIdFormat": "positive_decimal_string",
         "latencyEncoding": "nullable_non_negative_integer_ms",
+        "actualCostProjection": {
+          "meaning": "conservative_non_negative_lower_bound",
+          "conversion": "floor(rawDecimalUSD * 1000000)",
+          "unavailableWhen": ["non_numeric", "negative", "non_finite", "int64_overflow"]
+        },
         "emptyUpstreamPagination": { "total": 0, "page": 1, "pages": 1, "items": [], "otherShapes": "reject" },
+        "periods": {
+          "accepted": ["today", "week", "month"],
+          "timezone": "Asia/Shanghai",
+          "upstreamQuery": ["start_date", "end_date", "timezone"],
+          "ranges": {
+            "today": "current_calendar_day",
+            "week": "current_calendar_week_monday_through_today",
+            "month": "current_calendar_month_first_day_through_today"
+          }
+        },
         "fetchedAt": "control_plane_response_fetch_completion_time",
         "sourceUpdatedAt": "omit_unless_sub2api_returns_source_timestamp"
       },
@@ -126,6 +142,7 @@
         "identity": "session_account_to_control_plane_sub2api_user_mapping",
         "ignoredIdentityInputs": ["accountId", "user_id", "api_key_id", "sub2apiUserId"],
         "dataFields": ["totalRequests", "totalInputTokens", "totalOutputTokens", "totalTokens", "totalActualCostUsdMicros"],
+        "periodContract": "same_explicit_asia_shanghai_calendar_range_as_gateway_usage_list",
         "zeroAggregate": "available",
         "fetchedAt": "control_plane_response_fetch_completion_time",
         "sourceUpdatedAt": "omit_unless_sub2api_returns_source_timestamp"
@@ -137,6 +154,7 @@
         "identity": "session_account_to_control_plane_sub2api_user_mapping",
         "ignoredIdentityInputs": ["accountId", "user_id", "api_key_id", "sub2apiUserId"],
         "aggregation": "upstream_only_never_current_page_sum",
+        "periodContract": "same_explicit_asia_shanghai_calendar_range_as_gateway_usage_list",
         "dataFields": ["totalRequests", "totalInputTokens", "totalOutputTokens", "totalTokens", "totalActualCostUsdMicros"],
         "zeroAggregate": "available",
         "fetchedAt": "control_plane_response_fetch_completion_time",
@@ -218,6 +236,8 @@
         "scaleInvariant": "same_page_size_request_count_equal_for_100_and_1000_accounts",
         "userAndBalanceRead": "current_page_exact_id_bounded_concurrency_max_4",
         "usageRead": "current_page_user_ids_batch_required",
+        "balanceProjection": "floor_non_negative_raw_decimal_usd_to_integer_micros",
+        "batchPartialFailure": "missing_or_malformed_requested_item_unavailable_extra_unrequested_id_fails_closed",
         "workspaceCountRead": "single_control_plane_group_by_for_current_page",
         "userReadConcurrencyMax": 4,
         "keyCountRead": "current_page_exact_user_id_page_1_size_1_total_only_bounded_concurrency_max_4",

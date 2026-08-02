@@ -203,7 +203,14 @@ func assertUnavailableIdentityEnvelope(t *testing.T, response *httptest.Response
 	if err := json.NewDecoder(response.Body).Decode(&envelope); err != nil {
 		t.Fatal(err)
 	}
-	if len(envelope) != 4 || envelope["source"] != source || envelope["status"] != "unavailable" || envelope["available"] != false || envelope["data"] != nil {
+	if len(envelope) != 5 || envelope["source"] != source || envelope["status"] != "unavailable" || envelope["available"] != false || envelope["reasonCode"] != unavailableSourceReasonCode(source) || envelope["data"] != nil {
 		t.Fatalf("unavailable identity envelope = %#v", envelope)
+	}
+}
+
+func TestUnavailableSourceReasonCodeNormalizesCompositeAuthority(t *testing.T) {
+	envelope := sourceEnvelope("control-plane+fabric+sub2api", "unavailable", nil, "")
+	if envelope["reasonCode"] != "control_plane_fabric_sub2api_unavailable" {
+		t.Fatalf("composite reasonCode = %#v", envelope)
 	}
 }

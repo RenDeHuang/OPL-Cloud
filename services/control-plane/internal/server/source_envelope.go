@@ -2,7 +2,9 @@ package server
 
 import (
 	"net/http"
+	"strings"
 	"time"
+	"unicode"
 )
 
 func writeSourceEnvelope(w http.ResponseWriter, httpStatus int, source, status string, data any, sourceUpdatedAt ...string) {
@@ -22,8 +24,31 @@ func sourceEnvelope(source, status string, data any, sourceUpdatedAt string) map
 	if sourceUpdatedAt != "" {
 		body["sourceUpdatedAt"] = sourceUpdatedAt
 	}
+	if status == "unavailable" {
+		body["reasonCode"] = unavailableSourceReasonCode(source)
+	}
 	if status != "unavailable" {
 		body["data"] = data
 	}
 	return body
+}
+
+func unavailableSourceReasonCode(source string) string {
+	var code strings.Builder
+	separator := false
+	for _, character := range strings.ToLower(strings.TrimSpace(source)) {
+		if unicode.IsLetter(character) || unicode.IsDigit(character) {
+			if separator && code.Len() > 0 {
+				code.WriteByte('_')
+			}
+			code.WriteRune(character)
+			separator = false
+		} else {
+			separator = true
+		}
+	}
+	if code.Len() == 0 {
+		return "source_unavailable"
+	}
+	return code.String() + "_unavailable"
 }

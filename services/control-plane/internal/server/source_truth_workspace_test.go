@@ -260,7 +260,7 @@ func assertUnavailableWorkspaceEnvelope(t *testing.T, response *httptest.Respons
 	if err := json.NewDecoder(response.Body).Decode(&envelope); err != nil {
 		t.Fatal(err)
 	}
-	if len(envelope) != 4 || envelope["source"] != source || envelope["status"] != "unavailable" || envelope["available"] != false || envelope["data"] != nil {
+	if len(envelope) != 5 || envelope["source"] != source || envelope["status"] != "unavailable" || envelope["available"] != false || envelope["reasonCode"] != unavailableSourceReasonCode(source) || envelope["data"] != nil {
 		t.Fatalf("unavailable workspace envelope = %#v", envelope)
 	}
 	if got := response.Header().Get("Cache-Control"); got != "private, no-store" {

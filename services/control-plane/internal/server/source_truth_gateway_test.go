@@ -120,7 +120,7 @@ func assertUnavailableSourceEnvelope(t *testing.T, response *httptest.ResponseRe
 	if err := json.NewDecoder(response.Body).Decode(&envelope); err != nil {
 		t.Fatal(err)
 	}
-	if len(envelope) != 4 || envelope["source"] != "sub2api" || envelope["status"] != "unavailable" || envelope["available"] != false || envelope["data"] != nil {
+	if len(envelope) != 5 || envelope["source"] != "sub2api" || envelope["status"] != "unavailable" || envelope["available"] != false || envelope["reasonCode"] != "sub2api_unavailable" || envelope["data"] != nil {
 		t.Fatalf("unavailable envelope = %#v", envelope)
 	}
 }
@@ -187,7 +187,7 @@ func TestGatewaySourceTruthRoutesUseSessionIdentityAndStrictEnvelopes(t *testing
 		t.Fatalf("active key = %#v", activeKey)
 	}
 
-	usage := requestWithSession(t, server, session, http.MethodGet, "/api/gateway/keys/9/usage"+spoofed+"&page=1&pageSize=50", "")
+	usage := requestWithSession(t, server, session, http.MethodGet, "/api/gateway/keys/9/usage"+spoofed+"&page=1&pageSize=50&period=week", "")
 	if usage.Code != http.StatusOK {
 		t.Fatalf("usage = %d: %s", usage.Code, usage.Body.String())
 	}
@@ -223,7 +223,7 @@ func TestGatewaySourceTruthRoutesUseSessionIdentityAndStrictEnvelopes(t *testing
 		t.Fatalf("history envelope = %#v", historyEnvelope)
 	}
 
-	if len(client.keyUserIDs) != 2 || client.keyUserIDs[0] != 41 || client.keyUserIDs[1] != 41 || base.usageQuery.UserID != 41 || base.usageQuery.APIKeyID != 9 || base.statsQuery.UserID != 41 || base.statsQuery.APIKeyID != 9 || len(base.historyIDs) != 1 || base.historyIDs[0] != 41 || !reflect.DeepEqual(base.historyPageQueries, []clients.Sub2APIBalanceHistoryPageQuery{{Page: 1, PageSize: 20}}) {
+	if len(client.keyUserIDs) != 2 || client.keyUserIDs[0] != 41 || client.keyUserIDs[1] != 41 || base.usageQuery != (clients.Sub2APIUsageQuery{UserID: 41, APIKeyID: 9, Page: 1, PageSize: 50, Period: "week"}) || base.statsQuery.UserID != 41 || base.statsQuery.APIKeyID != 9 || len(base.historyIDs) != 1 || base.historyIDs[0] != 41 || !reflect.DeepEqual(base.historyPageQueries, []clients.Sub2APIBalanceHistoryPageQuery{{Page: 1, PageSize: 20}}) {
 		t.Fatalf("session identity was not authoritative: keys=%#v usage=%#v stats=%#v history=%#v", client.keyUserIDs, base.usageQuery, base.statsQuery, base.historyIDs)
 	}
 }
@@ -346,7 +346,7 @@ func TestGatewaySourceTruthEmptyAndUnavailableAreNotFabricated(t *testing.T) {
 			if err := json.NewDecoder(response.Body).Decode(&envelope); err != nil {
 				t.Fatal(err)
 			}
-			if len(envelope) != 4 || envelope["source"] != "sub2api" || envelope["status"] != "unavailable" || envelope["available"] != false || envelope["data"] != nil {
+			if len(envelope) != 5 || envelope["source"] != "sub2api" || envelope["status"] != "unavailable" || envelope["available"] != false || envelope["reasonCode"] != "sub2api_unavailable" || envelope["data"] != nil {
 				t.Fatalf("unavailable envelope = %#v", envelope)
 			}
 			if _, err := time.Parse(time.RFC3339Nano, stringValue(envelope["fetchedAt"])); err != nil {

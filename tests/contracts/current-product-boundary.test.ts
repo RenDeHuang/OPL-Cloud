@@ -37,11 +37,13 @@ test("Current contracts hard cut Gateway keys and source envelopes", async () =>
   assert.equal(sourceTruth.envelope.typeName, "SourceEnvelope<T>");
   assert.equal(sourceTruth.envelope.serverWriter, "writeSourceEnvelope");
   assert.equal(sourceTruth.envelope.fetchedAtMaySubstituteSourceUpdatedAt, false);
+  assert.equal(sourceTruth.envelope.reasonCode, "required_stable_source_code_when_unavailable");
   assert.equal(sourceTruth.sources.gateway.endpoint.authority, "existing_sub2api_base_url_plus_v1");
   assert.equal(sourceTruth.sources.gateway.groups.authority, "live_sub2api_readback");
   assert.equal(sourceTruth.sources.gateway.keys.createRequest.expiryField, "expiresInDays");
   assert.equal(sourceTruth.sources.gateway.keys.revealRoute, "POST /api/gateway/keys/{keyId}/reveal");
   assert.equal(sourceTruth.sources.gateway.usage.route, "GET /api/gateway/keys/{keyId}/usage");
+  assert.deepEqual(sourceTruth.sources.gateway.usage.periods.accepted, ["today", "week", "month"]);
   assert.equal(sourceTruth.sources.gateway.usageStats.route, "GET /api/gateway/keys/{keyId}/usage-summary");
   assert.equal(sourceTruth.sources.gateway.accountUsageStats.route, "GET /api/gateway/usage-summary");
 
@@ -602,6 +604,7 @@ test("Current contracts hard cut operator resources, wallet adjustments, and ann
     disable: "POST /api/operator/accounts/{accountId}/disable",
     delete: false
   });
+  assert.equal(management.schemaVersion, 17);
   assert.equal(management.identityProvisioning.requestType, "ProvisionAccountRequest");
   assert.deepEqual(management.identityProvisioning.semantics, {
     command: "provision",
@@ -629,6 +632,8 @@ test("Current contracts hard cut operator resources, wallet adjustments, and ann
   assert.equal(management.operatorProjection.userAndBalanceRead, "current_page_exact_id_bounded_concurrency_max_4");
   assert.equal(management.operatorProjection.userReadConcurrencyMax, 4);
   assert.equal(management.operatorProjection.usageRead, "current_page_user_ids_batch_required");
+  assert.equal(management.operatorProjection.balanceProjection, "floor_non_negative_raw_decimal_usd_to_integer_micros");
+  assert.equal(management.operatorProjection.batchPartialFailure, "missing_or_malformed_requested_item_unavailable_extra_unrequested_id_fails_closed");
   assert.equal(management.operatorProjection.workspaceCountRead, "single_control_plane_group_by_for_current_page");
   assert.equal(management.operatorProjection.usersPagination, "control_plane_order_limit_offset_count_then_current_page_sub2api_reads");
   assert.equal(management.operatorProjection.remoteReadScope, "current_control_plane_page_only");
@@ -1040,7 +1045,7 @@ test("Current contracts keep compute-claim continuation automatic while preservi
     implementationState: "contract_frozen_implementation_rollout_and_production_evidence_pending"
   });
 
-  assert.equal(sourceTruth.schemaVersion, 11);
+  assert.equal(sourceTruth.schemaVersion, 12);
   assert.deepEqual(sourceTruth.sources.operator.workspaceLaunchProgression, {
     route: "GET /api/operator/reconciliation",
     requiredItemFields: ["accountId", "billingOperationId", "phase", "errorCode", "progressionOwner", "allowedActions"],
