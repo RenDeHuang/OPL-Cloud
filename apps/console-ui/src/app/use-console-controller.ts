@@ -42,6 +42,7 @@ import type {
   AuthSession,
   BillingReviewResolutionRequest,
   CreateSupportTicketMappingRequest,
+  GatewayUsagePeriod,
   OperatorAccountDTO,
   OperatorAccountCommandDTO,
   OperatorReconciliationItemDTO,
@@ -104,7 +105,14 @@ function initialSources(): ConsoleSources {
 }
 
 export function unavailableSource<T>(source: string): SourceEnvelope<T> {
-  return { source, status: "unavailable", available: false, fetchedAt: "" };
+  const normalizedSource = source.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "unknown";
+  return {
+    source,
+    status: "unavailable",
+    available: false,
+    fetchedAt: new Date().toISOString(),
+    reasonCode: `${normalizedSource}_unavailable`
+  };
 }
 
 function friendlyError(error: unknown) {
@@ -165,7 +173,7 @@ export function useConsoleController() {
   const [billingView, setBillingView] = useState<BillingView>("terms");
   const [selectedReceiptId, setSelectedReceiptId] = useState("");
   const [selectedUsageKeyId, setSelectedUsageKeyId] = useState("");
-  const [usagePeriod, setUsagePeriod] = useState("month");
+  const [usagePeriod, setUsagePeriod] = useState<GatewayUsagePeriod>("month");
   const [usagePage, setUsagePage] = useState(1);
   const [launchName, setLaunchName] = useState("");
   const [launchPlan, setLaunchPlan] = useState<PlanId>("basic");
@@ -450,13 +458,13 @@ export function useConsoleController() {
     }
   };
 
-  const loadUsage = async (generation: number, activeSession: AuthSession, keyId: string, page = 1, period = usagePeriod) => {
+  const loadUsage = async (generation: number, activeSession: AuthSession, keyId: string, page = 1, period: GatewayUsagePeriod = usagePeriod) => {
     if (!keyId) return;
     const usageGeneration = ++usageRequestGeneration.current;
     beginSource("usage");
     beginSource("usageSummary");
     const [usageResult, summaryResult] = await Promise.allSettled([
-      getGatewayKeyUsage(keyId, page, 20),
+      getGatewayKeyUsage(keyId, page, 20, period),
       getGatewayKeyUsageSummary(keyId, period)
     ]);
     if (!isRequestCurrent(generation, activeSession.user.id)
@@ -1058,7 +1066,7 @@ export function useConsoleController() {
     await loadUsage(requestGeneration.current, session, keyId, 1, usagePeriod);
   };
 
-  const chooseUsagePeriod = async (period: string) => {
+  const chooseUsagePeriod = async (period: GatewayUsagePeriod) => {
     if (!session || !selectedUsageKeyId) return;
     setUsagePeriod(period);
     await loadUsage(requestGeneration.current, session, selectedUsageKeyId, 1, period);

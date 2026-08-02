@@ -3,6 +3,8 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import * as readApi from "../../apps/console-ui/src/api/console-read-api.ts";
+import { decodeSource } from "../../apps/console-ui/src/api/dtos.ts";
+import { unavailableSource } from "../../apps/console-ui/src/app/use-console-controller.ts";
 import * as workspaceApi from "../../apps/console-ui/src/api/workspaces-api.ts";
 
 const root = new URL("../../", import.meta.url);
@@ -30,6 +32,128 @@ test("Console exposes typed source adapters for the customer truth surfaces", as
   assert.equal(typeof workspaceApi.revealWorkspaceCredentials, "function");
   assert.equal(typeof workspaceApi.rotateWorkspaceCredentials, "function");
   assert.equal(typeof workspaceApi.updateWorkspaceRenewal, "function");
+});
+
+test("unavailable source adapters preserve the authoritative reason code", () => {
+  const source = decodeSource({
+    source: "sub2api",
+    status: "unavailable",
+    available: false,
+    fetchedAt: "2026-08-02T00:00:00Z",
+    sourceUpdatedAt: "2026-08-01T23:59:59Z",
+    reasonCode: "sub2api_unavailable"
+  });
+
+  assert.deepEqual(source, {
+    source: "sub2api",
+    status: "unavailable",
+    available: false,
+    fetchedAt: "2026-08-02T00:00:00Z",
+    sourceUpdatedAt: "2026-08-01T23:59:59Z",
+    reasonCode: "sub2api_unavailable"
+  });
+});
+
+test("unavailable source adapters reject a missing reason code", () => {
+  assert.throws(() => decodeSource({
+    source: "sub2api",
+    status: "unavailable",
+    available: false,
+    fetchedAt: "2026-08-02T00:00:00Z"
+  }), /invalid_source_envelope/);
+});
+
+test("source adapters reject contradictory availability states", () => {
+  assert.throws(() => decodeSource({
+    source: "sub2api",
+    status: "available",
+    available: false,
+    fetchedAt: "2026-08-02T00:00:00Z",
+    reasonCode: "sub2api_unavailable"
+  }), /invalid_source_envelope/);
+  assert.throws(() => decodeSource({
+    source: "sub2api",
+    status: "unavailable",
+    available: true,
+    fetchedAt: "2026-08-02T00:00:00Z",
+    reasonCode: "sub2api_unavailable"
+  }), /invalid_source_envelope/);
+});
+
+test("unavailable source adapters reject data disguised as an unavailable source", () => {
+  assert.throws(() => decodeSource({
+    source: "sub2api",
+    status: "unavailable",
+    available: false,
+    fetchedAt: "2026-08-02T00:00:00Z",
+    reasonCode: "sub2api_unavailable",
+    data: { total: 0, items: [] }
+  }), /invalid_source_envelope/);
+});
+
+test("source adapters require non-empty source and fetchedAt fields", () => {
+  for (const input of [
+    { source: "", status: "empty", available: true, fetchedAt: "2026-08-02T00:00:00Z", data: [] },
+    { source: "sub2api", status: "empty", available: true, fetchedAt: "", data: [] }
+  ]) {
+    assert.throws(() => decodeSource(input), /invalid_source_envelope/);
+  }
+});
+
+test("local unavailable fallbacks keep a stable reason code and a real fetch timestamp", () => {
+  const fallback = unavailableSource("Control Plane + Ledger");
+  assert.equal(fallback.status, "unavailable");
+  assert.equal(fallback.reasonCode, "control_plane_ledger_unavailable");
+  assert.ok(fallback.fetchedAt);
+  assert.ok(Number.isFinite(Date.parse(fallback.fetchedAt)));
+});
+
+test("Console read adapters normalize a legacy unavailable envelope with a stable reason code", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => new Response(JSON.stringify({
+    source: "control-plane+fabric+ledger",
+    status: "unavailable",
+    available: false,
+    fetchedAt: "2026-08-02T00:00:00Z"
+  }), { status: 502, headers: { "content-type": "application/json" } })) as typeof fetch;
+
+  try {
+    assert.deepEqual(await readApi.getBillingReceipts(), {
+      source: "control-plane+fabric+ledger",
+      status: "unavailable",
+      available: false,
+      fetchedAt: "2026-08-02T00:00:00Z",
+      reasonCode: "control_plane_fabric_ledger_unavailable"
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("per-Key usage list and summary send the same canonical period", async () => {
+  const requested: string[] = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    requested.push(String(input));
+    return new Response(JSON.stringify({
+      source: "sub2api",
+      status: "empty",
+      available: true,
+      fetchedAt: "2026-08-02T00:00:00Z",
+      data: { items: [], total: 0, page: 1, pageSize: 20, pages: 1 }
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  }) as typeof fetch;
+
+  try {
+    await readApi.getGatewayKeyUsage("key / 1", 1, 20, "today");
+    await readApi.getGatewayKeyUsageSummary("key / 1", "today");
+    assert.deepEqual(requested, [
+      "/api/gateway/keys/key%20%2F%201/usage?page=1&pageSize=20&period=today",
+      "/api/gateway/keys/key%20%2F%201/usage-summary?period=today"
+    ]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test("Workspace adapters find an exact ID through real server pagination and stop when found", async () => {
