@@ -3920,7 +3920,120 @@ test("compute-claim approval validation keeps a non-JSON success response fail-c
   });
 
   assert.equal(code, 1);
-  assert.equal(JSON.parse(stdout).errorCode, "compute_claim_validation_response_invalid");
+  assert.deepEqual(JSON.parse(stdout), {
+    schemaVersion: 2,
+    operationMode: "compute_claim_validate",
+    status: "blocked",
+    recoveryEligible: false,
+    errorCode: "compute_claim_validation_response_invalid",
+    responseMetadata: {
+      statusCode: 200,
+      contentType: "text/plain",
+      topLevelKeys: []
+    },
+    runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
+  });
+});
+
+test("compute-claim approval validation reports only allowlisted keys for a drifted JSON success response", async () => {
+  let stdout = "";
+  const approval = JSON.parse(computeClaimApprovalJson());
+  const code = await runProductionLiveQaCli({
+    argv: [
+      "--compute-claim-validate",
+      "--compute-claim-target-json", JSON.stringify(COMPUTE_CLAIM_TARGET),
+      "--approval-id", approval.approvalId
+    ],
+    env: {
+      OPL_MERGED_SHA: BASIC_CANARY_MERGED_SHA,
+      OPL_COMPUTE_CLAIM_CLOUD_DIGEST: BASIC_CANARY_CLOUD_DIGEST,
+      OPL_COMPUTE_CLAIM_RECOVERY_APPROVAL_JSON: JSON.stringify(approval),
+      OPL_INTERNAL_SERVICE_TOKEN: "compute-claim-runner-capability",
+      OPL_CONSOLE_ORIGIN: "https://cloud.medopl.cn",
+      OPL_SUB2API_ADMIN_EMAIL: ADMIN_EMAIL,
+      OPL_SUB2API_ADMIN_PASSWORD: ADMIN_PASSWORD,
+      OPL_BASIC_CANARY_CUSTOMER_EMAIL: COMPUTE_CLAIM_CUSTOMER_EMAIL,
+      OPL_K8S_NAMESPACE: "opl-cloud",
+      KUBECONFIG: "/run/secrets/kubeconfig"
+    },
+    stdout: { write: (chunk) => { stdout += chunk; } },
+    stderr: { write: () => {} },
+    cloudRevisionEvidenceReader: async () => computeClaimCloudRevisionEvidence(),
+    fetchImpl: async (input) => {
+      const url = new URL(String(input));
+      if (url.pathname === "/api/auth/login") {
+        return json({ user: { accountId: "acct-admin", role: "admin" } }, 200, {
+          "set-cookie": "opl_session=session-fixture; Path=/; HttpOnly",
+          "x-opl-csrf-token": "csrf-compute-claim"
+        });
+      }
+      if (url.pathname === "/api/operator/accounts") return computeClaimAccountAuthority();
+      return json({
+        schemaVersion: 2,
+        status: "proven",
+        approvalId: approval.approvalId,
+        unsafeDetail: "must-not-leak"
+      });
+    }
+  });
+
+  assert.equal(code, 1);
+  const artifact = JSON.parse(stdout);
+  assert.equal(artifact.errorCode, "compute_claim_validation_response_invalid");
+  assert.deepEqual(artifact.responseMetadata, {
+    statusCode: 200,
+    contentType: "application/json",
+    topLevelKeys: ["approvalId", "schemaVersion", "status"]
+  });
+  assert.doesNotMatch(stdout, /unsafeDetail|must-not-leak/);
+});
+
+test("compute-claim approval validation retains safe metadata for an unexpected HTTP status", async () => {
+  let stdout = "";
+  const approval = JSON.parse(computeClaimApprovalJson());
+  const code = await runProductionLiveQaCli({
+    argv: [
+      "--compute-claim-validate",
+      "--compute-claim-target-json", JSON.stringify(COMPUTE_CLAIM_TARGET),
+      "--approval-id", approval.approvalId
+    ],
+    env: {
+      OPL_MERGED_SHA: BASIC_CANARY_MERGED_SHA,
+      OPL_COMPUTE_CLAIM_CLOUD_DIGEST: BASIC_CANARY_CLOUD_DIGEST,
+      OPL_COMPUTE_CLAIM_RECOVERY_APPROVAL_JSON: JSON.stringify(approval),
+      OPL_INTERNAL_SERVICE_TOKEN: "compute-claim-runner-capability",
+      OPL_CONSOLE_ORIGIN: "https://cloud.medopl.cn",
+      OPL_SUB2API_ADMIN_EMAIL: ADMIN_EMAIL,
+      OPL_SUB2API_ADMIN_PASSWORD: ADMIN_PASSWORD,
+      OPL_BASIC_CANARY_CUSTOMER_EMAIL: COMPUTE_CLAIM_CUSTOMER_EMAIL,
+      OPL_K8S_NAMESPACE: "opl-cloud",
+      KUBECONFIG: "/run/secrets/kubeconfig"
+    },
+    stdout: { write: (chunk) => { stdout += chunk; } },
+    stderr: { write: () => {} },
+    cloudRevisionEvidenceReader: async () => computeClaimCloudRevisionEvidence(),
+    fetchImpl: async (input) => {
+      const url = new URL(String(input));
+      if (url.pathname === "/api/auth/login") {
+        return json({ user: { accountId: "acct-admin", role: "admin" } }, 200, {
+          "set-cookie": "opl_session=session-fixture; Path=/; HttpOnly",
+          "x-opl-csrf-token": "csrf-compute-claim"
+        });
+      }
+      if (url.pathname === "/api/operator/accounts") return computeClaimAccountAuthority();
+      return json({ error: "must-not-leak" }, 401);
+    }
+  });
+
+  assert.equal(code, 1);
+  const artifact = JSON.parse(stdout);
+  assert.equal(artifact.errorCode, "compute_claim_validation_response_invalid");
+  assert.deepEqual(artifact.responseMetadata, {
+    statusCode: 401,
+    contentType: "application/json",
+    topLevelKeys: []
+  });
+  assert.doesNotMatch(stdout, /must-not-leak|"error":/);
 });
 
 test("compute-claim recovery CLI forwards the internal runner capability", async () => {
