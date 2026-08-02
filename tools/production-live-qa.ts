@@ -669,6 +669,9 @@ const COMPUTE_CLAIM_VALIDATION_ERROR_CODES = new Set([
   "compute_claim_validation_state_read_unavailable",
   "compute_claim_validation_response_invalid"
 ]);
+const COMPUTE_CLAIM_VALIDATION_RESPONSE_KEYS = Object.freeze([
+  "schemaVersion", "status", "approvalId", "approvalDigest", "launchOperationId", "accountId", "workspaceId", "runnerDirectMutationCounts"
+]);
 const COMPUTE_CLAIM_BLOCKED_ERROR_CODES = new Set([
   ...COMPUTE_CLAIM_REASONS,
   ...COMPUTE_CLAIM_RECOVERY_STAGE_ERROR_CODES,
@@ -1580,15 +1583,21 @@ async function computeClaimControlPlanePost({ fetchImpl, origin, auth, path, bod
     signal: readOnlyRequestSignal(undefined, requestTimeoutMs)
   });
   const text = await response.text();
+  const contentType = String(response.headers.get("content-type") || "").split(";", 1)[0].trim().toLowerCase() || "missing";
+  const responseMetadata = { statusCode: response.status, contentType, topLevelKeys: [] };
   let payload;
   try {
     payload = text ? JSON.parse(text) : {};
   } catch {
     const error = new Error("compute_claim_recovery_control_plane_response_invalid");
     error.statusCode = response.status;
+    error.responseMetadata = responseMetadata;
     throw error;
   }
-  return { statusCode: response.status, payload };
+  responseMetadata.topLevelKeys = payload && typeof payload === "object" && !Array.isArray(payload)
+    ? COMPUTE_CLAIM_VALIDATION_RESPONSE_KEYS.filter((key) => Object.hasOwn(payload, key)).sort()
+    : [];
+  return { statusCode: response.status, payload, responseMetadata };
 }
 
 function computeClaimApprovedRequest(target, approval) {
@@ -1658,7 +1667,9 @@ export async function validateComputeClaimApproval(options = {}) {
     if (Number.isInteger(error?.statusCode) && error.statusCode >= 500 && error.statusCode <= 599) {
       throw new Error("compute_claim_validation_state_read_unavailable");
     }
-    throw new Error("compute_claim_validation_response_invalid");
+    const invalid = new Error("compute_claim_validation_response_invalid");
+    invalid.responseMetadata = error?.responseMetadata;
+    throw invalid;
   }
   if (response.statusCode !== 200) {
     const errorCode = response.statusCode === 400 ? "compute_claim_validation_request_invalid"
@@ -1668,16 +1679,18 @@ export async function validateComputeClaimApproval(options = {}) {
             : response.statusCode >= 500 && response.statusCode <= 599
               ? "compute_claim_validation_state_read_unavailable"
             : "compute_claim_validation_response_invalid";
-    throw new Error(errorCode);
+    const failure = new Error(errorCode);
+    if (errorCode === "compute_claim_validation_response_invalid") failure.responseMetadata = response.responseMetadata;
+    throw failure;
   }
   const payload = response.payload;
-  if (!exactObjectKeys(payload, [
-    "schemaVersion", "status", "approvalId", "approvalDigest", "launchOperationId", "accountId", "workspaceId", "runnerDirectMutationCounts"
-  ]) || payload.schemaVersion !== 2 || payload.status !== "proven" || payload.approvalId !== approval.approvalId ||
+  if (!exactObjectKeys(payload, COMPUTE_CLAIM_VALIDATION_RESPONSE_KEYS) || payload.schemaVersion !== 2 || payload.status !== "proven" || payload.approvalId !== approval.approvalId ||
     payload.approvalDigest !== request.approvalDigest || payload.launchOperationId !== target.launchOperationId ||
     payload.accountId !== target.accountId || payload.workspaceId !== target.workspaceId ||
     JSON.stringify(payload.runnerDirectMutationCounts) !== JSON.stringify({ sub2api: 0, tencent: 0, kubernetes: 0 })) {
-    throw new Error("compute_claim_validation_response_invalid");
+    const invalid = new Error("compute_claim_validation_response_invalid");
+    invalid.responseMetadata = response.responseMetadata;
+    throw invalid;
   }
   return {
     schemaVersion: 2,
@@ -4184,7 +4197,7 @@ function workspaceLaunchReadbackCliMode(argv) {
   return "";
 }
 
-function blockedComputeClaimArtifact(operationMode, rawErrorCode = "") {
+function blockedComputeClaimArtifact(operationMode, rawErrorCode = "", responseMetadata = null) {
   const fallbackErrorCode = operationMode === COMPUTE_CLAIM_DIAGNOSE_MODE
     ? "compute_claim_diagnosis_failed"
     : operationMode === COMPUTE_CLAIM_VALIDATE_MODE
@@ -4195,7 +4208,7 @@ function blockedComputeClaimArtifact(operationMode, rawErrorCode = "") {
   const errorCode = rawErrorCode !== "none" && COMPUTE_CLAIM_BLOCKED_ERROR_CODES.has(rawErrorCode)
     ? rawErrorCode
     : fallbackErrorCode;
-  return {
+  const artifact = {
     schemaVersion: 2,
     operationMode,
     status: "blocked",
@@ -4204,6 +4217,17 @@ function blockedComputeClaimArtifact(operationMode, rawErrorCode = "") {
     runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
     ...(operationMode === COMPUTE_CLAIM_CONTINUATION_MODE ? { backgroundMutationCountsState: "unknown" } : {})
   };
+  if (operationMode === COMPUTE_CLAIM_VALIDATE_MODE && errorCode === "compute_claim_validation_response_invalid" &&
+    Number.isInteger(responseMetadata?.statusCode) && responseMetadata.statusCode >= 100 && responseMetadata.statusCode <= 599 &&
+    /^(?:missing|[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+)$/.test(String(responseMetadata?.contentType || "")) &&
+    Array.isArray(responseMetadata?.topLevelKeys) && responseMetadata.topLevelKeys.every((key) => COMPUTE_CLAIM_VALIDATION_RESPONSE_KEYS.includes(key))) {
+    artifact.responseMetadata = {
+      statusCode: responseMetadata.statusCode,
+      contentType: responseMetadata.contentType,
+      topLevelKeys: [...new Set(responseMetadata.topLevelKeys)].sort()
+    };
+  }
+  return artifact;
 }
 
 function blockedWorkspaceLaunchReadbackArtifact(operationMode) {
@@ -4625,7 +4649,7 @@ export async function runProductionLiveQaCli({
       return 1;
     }
     if (computeClaimMode) {
-      const artifact = blockedComputeClaimArtifact(computeClaimMode, error?.message);
+      const artifact = blockedComputeClaimArtifact(computeClaimMode, error?.message, error?.responseMetadata);
       stdout.write(`${JSON.stringify(artifact, null, 2)}\n`);
       stderr.write(`${JSON.stringify({ ok: false, errorCode: artifact.errorCode }, null, 2)}\n`);
       return 1;

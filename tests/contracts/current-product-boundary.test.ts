@@ -524,6 +524,12 @@ test("Current Fabric contracts require dedicated package NodePools without weake
         customerEmailSource: "protected_customer_email_input_exactly_matches_approval_and_account_authority",
         legacyIdentity: "zero_mutation_proof_projected_in_memory_only",
         runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
+        invalidResponseMetadata: {
+          appliesOnlyTo: "compute_claim_validation_response_invalid",
+          fields: ["statusCode", "contentType", "topLevelKeys"],
+          topLevelKeyAllowlist: ["schemaVersion", "status", "approvalId", "approvalDigest", "launchOperationId", "accountId", "workspaceId", "runnerDirectMutationCounts"],
+          forbidden: ["responseBody", "headers", "credentials", "customerIdentity"]
+        },
         forbiddenCalls: ["ClaimComputeRecovery", "create_storage_volume", "debit", "refund", "recharge", "delete", "replace"]
       },
       blockedArtifactFieldsByMode: {
