@@ -1274,7 +1274,8 @@ export function useConsoleController() {
     setCommandBusy(true);
     try {
       const result = await validateWorkspaceLaunchRecoveryPlan(operationId, input, session.csrfToken);
-      return requestStillCurrent() ? result : null;
+      if (!requestStillCurrent()) return null;
+      return result;
     } catch (error) {
       if (requestStillCurrent()) flash(mutationError(error), "danger");
       return null;
