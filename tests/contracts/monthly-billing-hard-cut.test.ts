@@ -53,7 +53,7 @@ test("current contracts name Sub2API as the only spendable balance", async () =>
 test("management contract hard-cuts customer identity to Sub2API and one atomic owner graph", async () => {
   const management = await readJson("opl-cloud-management-contract.json");
 
-  assert.equal(management.schemaVersion, 16);
+  assert.equal(management.schemaVersion, 17);
   assert.deepEqual(management.entities.account.requiredFields, ["id", "ownerUserId", "status", "sub2apiUserId", "createdAt", "updatedAt"]);
   assert.deepEqual(management.entities.user, {
     requiredFields: ["id", "email", "accountId", "role", "status", "createdAt", "updatedAt"],
@@ -220,7 +220,7 @@ test("receipt contract exposes monthly product behavior only", async () => {
 	assert.deepEqual(evidence.reconciliationReportV1.exceptions.resourceTypes, ["compute", "storage", "workspace"]);
 	assert.deepEqual(evidence.reconciliationReportV1.workspaceRenewalAuthority, billing.reconciliationPolicy.workspaceRenewalAuthority);
 	const management = await readJson("opl-cloud-management-contract.json");
-	assert.equal(management.schemaVersion, 16);
+	assert.equal(management.schemaVersion, 17);
 	assert.deepEqual(management.operatorBillingReviewProjection.included, [
 		"workspace.launch.v2_manual_review",
 		"workspace.renewal_manual_review",
