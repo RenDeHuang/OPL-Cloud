@@ -777,6 +777,49 @@ export interface OperatorReconciliationPageDTO {
   pageSize: number;
 }
 
+export interface WorkspaceLaunchRecoveryPlanStageDTO {
+  stage: string;
+  status: string;
+  phase?: string;
+  errorCode?: string;
+}
+
+export interface WorkspaceLaunchRecoveryPlanMismatchDTO {
+  field: string;
+  expected?: string;
+  actual?: string;
+  expectedDigest?: string;
+  actualDigest?: string;
+}
+
+export interface WorkspaceLaunchRecoveryPlanDTO {
+  planId: string;
+  planDigest: string;
+  status: string;
+  operationId?: string;
+  stages: WorkspaceLaunchRecoveryPlanStageDTO[];
+  mismatches: WorkspaceLaunchRecoveryPlanMismatchDTO[];
+  executionId?: string;
+  runId?: string;
+  url?: string;
+  receiptId?: string;
+  errorCode?: string;
+}
+
+export interface DiagnoseWorkspaceLaunchRecoveryPlanRequest {
+  accountId: string;
+}
+
+export interface ValidateWorkspaceLaunchRecoveryPlanRequest {
+  planId: string;
+  planDigest: string;
+}
+
+export interface ExecuteWorkspaceLaunchRecoveryPlanRequest extends ValidateWorkspaceLaunchRecoveryPlanRequest {
+  decision: "continue";
+  confirmation: string;
+}
+
 export interface BillingReviewResolutionRequest {
   accountId: string;
   billingOperationId: string;
