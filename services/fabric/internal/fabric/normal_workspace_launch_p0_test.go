@@ -269,6 +269,45 @@ func TestNormalWorkspacePersistedClaimPendingReplayConvergesTargetOwnedNodeWitho
 	}
 }
 
+func TestNormalWorkspacePersistedClaimPendingReplayAfterOwnershipActivationConvergesByReadbackOnly(t *testing.T) {
+	store := NewMemoryOperationStore()
+	provider := &normalLaunchComputeProvider{nodeOwned: true}
+	input, allocation := seedNormalWorkspaceComputeClaimPending(t, store, provider, "automatic-active-ownership-crash")
+	ownership, err := store.MachineOwnership(context.Background(), allocation.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ownership.Status, ownership.ReleasedAt = "active", nil
+	if err := store.ActivateComputeClaimRecoveryOwnership(context.Background(), ownership); err != nil {
+		t.Fatal(err)
+	}
+	operations, err := store.List(context.Background())
+	if err != nil || len(operations) != 1 || operations[0].Status != "claim_pending" {
+		t.Fatalf("crash-window operations=%#v err=%v", operations, err)
+	}
+	operationID := operations[0].ID
+
+	service := NewServiceWithOperationStore(provider, store)
+	if _, err := service.CreateComputeAllocation(context.Background(), input); err != nil {
+		t.Fatal(err)
+	}
+	waitForOperation(t, service, "create_compute_allocation", "compute_allocation", allocation.ID, "succeeded")
+	prepare, create, proof, cvmClaim, nodeClaim := provider.automaticContinuationCounts()
+	if prepare != 0 || create != 0 || proof != 1 || cvmClaim != 0 || nodeClaim != 0 {
+		t.Fatalf("active ownership continuation calls prepare=%d create=%d proof=%d cvmClaim=%d nodeClaim=%d, want 0/0/1/0/0", prepare, create, proof, cvmClaim, nodeClaim)
+	}
+	operations, err = store.List(context.Background())
+	var persisted ComputeAllocation
+	if err != nil || len(operations) != 1 || operations[0].ID != operationID || operations[0].Status != "succeeded" ||
+		!decodeOperationResource(operations[0], &persisted) || persisted.Status != "running" {
+		t.Fatalf("active ownership operations=%#v persisted=%#v err=%v", operations, persisted, err)
+	}
+	ownership, err = store.MachineOwnership(context.Background(), allocation.ID)
+	if err != nil || ownership.Status != "active" {
+		t.Fatalf("active ownership=%#v err=%v", ownership, err)
+	}
+}
+
 func TestNormalWorkspacePersistedClaimPendingConcurrentReplayHasOneNodePatchWinner(t *testing.T) {
 	store := NewMemoryOperationStore()
 	provider := &normalLaunchComputeProvider{nodeClaimGate: newNormalLaunchProviderWriteGate()}
