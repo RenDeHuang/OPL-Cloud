@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 12,
+  "schemaVersion": 13,
   "owner": "OPL Console Control Plane",
   "purpose": "Strict source envelopes and customer-safe live projections for Console source-of-truth APIs.",
   "state": "current",
@@ -29,7 +29,7 @@
   },
   "implementationEvidence": {
     "generalKeys": "code_complete_local_focused_tests",
-    "operatorProjection": "base_projection_local_tests_workspace_launch_recovery_fields_pending_integration",
+    "operatorProjection": "base_projection_and_server_authoritative_workspace_recovery_plan_local_focused_tests",
     "workspaceBillingReceipts": "purchased_components_and_fulfillment_projection_code_complete_local_tests",
     "browserAndProduction": "pending"
   },
@@ -307,12 +307,19 @@
         "requiredItemFields": ["accountId", "billingOperationId", "phase", "errorCode", "allowedActions"],
         "billingOperationIdentity": "billingOperationId_equals_workspace_launch_operation_id",
         "allowedActions": {
-          "manual_review": ["recover_workspace_launch"],
+          "manual_review": ["diagnose_workspace_recovery_plan"],
           "allOtherStatuses": []
         },
-        "recoveryRoute": "POST /api/operator/workspace-launches/{operationId}/recover",
-        "recoveryRequestFields": ["accountId", "billingOperationId", "evidenceRef"],
-        "implementation": "integrated_local_fake_verified"
+        "recoveryPlanRoutes": {
+          "diagnose": "POST /api/operator/workspace-launches/{operationId}/recovery-plan/diagnose",
+          "read": "GET /api/operator/workspace-launches/{operationId}/recovery-plan",
+          "validate": "POST /api/operator/workspace-launches/{operationId}/recovery-plan/validate",
+          "execute": "POST /api/operator/workspace-launches/{operationId}/recovery-plan/execute"
+        },
+        "operatorInputFields": ["accountId", "launchOperationId", "decision"],
+        "executeRequestFields": ["planId", "planDigest", "decision", "confirmation"],
+        "resourceIdentityInput": "forbidden_server_authoritative_readback_only",
+        "implementation": "server_authoritative_plan_local_focused_verified_not_merged_deployed_or_production_verified"
       },
       "workspaceLaunchProgression": {
         "route": "GET /api/operator/reconciliation",
@@ -324,8 +331,8 @@
             "completionEvidence": ["target_owned", "launch_succeeded", "runtime_ready", "receipt_completed", "workspace_url"]
           },
           "manual_review": {
-            "progressionOwner": "operator_recovery",
-            "allowedActions": ["recover_workspace_launch"]
+            "progressionOwner": "control_plane_recovery_plan",
+            "allowedActions": ["diagnose_workspace_recovery_plan"]
           }
         },
         "unavailableBehavior": "source_unavailable_never_completed_or_zero"
@@ -343,7 +350,7 @@
         "included": ["workspace.launch.v2_manual_review", "workspace.renewal_manual_review", "compute_billingStatus_manual_review", "storage_billingStatus_manual_review", "BillingReconciliation_mismatch"],
         "excluded": ["gateway.key", "account.provision", "runtime.resume", "ordinary_started", "ordinary_succeeded"],
         "recoveryActions": {
-          "workspace.launch.v2_manual_review": "recover_workspace_launch",
+          "workspace.launch.v2_manual_review": "diagnose_workspace_recovery_plan",
           "workspace.renewal_or_resource_manual_review": "resolve_billing_review",
           "BillingReconciliation_mismatch": "none"
         }

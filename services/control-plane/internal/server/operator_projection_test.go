@@ -946,7 +946,8 @@ func TestOperatorReconciliationProjectsLaunchRecoveryIdentity(t *testing.T) {
 	item := items[0].(map[string]any)
 	actions, ok := item["allowedActions"].([]any)
 	if item["id"] != operation.ID || item["accountId"] != operation.AccountID || item["billingOperationId"] != operation.ID ||
-		item["phase"] != operation.Phase || item["errorCode"] != operation.ErrorCode || !ok || len(actions) != 1 || actions[0] != "recover_workspace_launch" {
+		item["phase"] != operation.Phase || item["errorCode"] != operation.ErrorCode || item["progressionOwner"] != "control_plane_recovery_plan" ||
+		!ok || len(actions) != 1 || actions[0] != "diagnose_workspace_recovery_plan" {
 		t.Fatalf("launch reconciliation item=%#v", item)
 	}
 }

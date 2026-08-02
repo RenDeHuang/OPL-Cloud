@@ -9,9 +9,7 @@ import (
 	"io"
 	"net/http"
 	"regexp"
-	"strconv"
 	"strings"
-	"time"
 
 	"opl-cloud/services/control-plane/internal/controlplane"
 )
@@ -30,51 +28,20 @@ var recoveredWorkspaceE2EForbiddenWrites = []string{
 
 var recoveredWorkspaceE2EOpaquePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._:-]{2,127}$`)
 
-type recoveredWorkspaceE2EApprovalCustomer struct {
-	Email     string `json:"email"`
-	AccountID string `json:"accountId"`
-}
-
-type recoveredWorkspaceE2EApprovalResources struct {
-	ComputeAllocationID string `json:"computeAllocationId"`
-	StorageID           string `json:"storageId"`
-	AttachmentID        string `json:"attachmentId"`
-	RuntimeID           string `json:"runtimeId"`
-	ReceiptID           string `json:"receiptId"`
-	WorkspaceAPIKeyID   string `json:"workspaceApiKeyId"`
-	RuntimeServiceName  string `json:"runtimeServiceName"`
-	WorkspaceURL        string `json:"workspaceUrl"`
-}
-
-type recoveredWorkspaceE2EApproval struct {
-	SchemaVersion          int                                    `json:"schemaVersion"`
-	ApprovalID             string                                 `json:"approvalId"`
-	ExpiresAt              string                                 `json:"expiresAt"`
-	Confirmation           string                                 `json:"confirmation"`
-	MergedMainSHA          string                                 `json:"mergedMainSha"`
-	CloudImageDigest       string                                 `json:"cloudImageDigest"`
-	WorkspaceImageDigest   string                                 `json:"workspaceImageDigest"`
-	RecoveryApprovalID     string                                 `json:"recoveryApprovalId"`
-	RecoveryApprovalDigest string                                 `json:"recoveryApprovalDigest"`
-	RecoveryBindingDigest  string                                 `json:"recoveryBindingDigest"`
-	RecoveryKey            string                                 `json:"recoveryKey"`
-	Customer               recoveredWorkspaceE2EApprovalCustomer  `json:"customer"`
-	LaunchOperationID      string                                 `json:"launchOperationId"`
-	WorkspaceID            string                                 `json:"workspaceId"`
-	Resources              recoveredWorkspaceE2EApprovalResources `json:"resources"`
-	ExpectedModel          string                                 `json:"expectedModel"`
-	ModelRequestKey        string                                 `json:"modelRequestKey"`
-	AllowedWrites          []string                               `json:"allowedWrites"`
-	ForbiddenWrites        []string                               `json:"forbiddenWrites"`
-}
-
 type recoveredWorkspaceE2EAttemptRequest struct {
-	Approval       recoveredWorkspaceE2EApproval `json:"approval"`
-	ApprovalDigest string                        `json:"approvalDigest"`
+	SchemaVersion     int    `json:"schemaVersion"`
+	ApprovalID        string `json:"approvalId"`
+	LaunchOperationID string `json:"launchOperationId"`
+	PlanID            string `json:"planId"`
+	PlanDigest        string `json:"planDigest"`
+	Decision          string `json:"decision"`
+	Confirmation      string `json:"confirmation"`
+	ExpectedModel     string `json:"expectedModel"`
+	ModelRequestKey   string `json:"modelRequestKey"`
 }
 
-func recoveredWorkspaceE2EApprovalDigest(approval recoveredWorkspaceE2EApproval) string {
-	payload, err := json.Marshal(structToMap(approval))
+func recoveredWorkspaceE2ERequestDigest(request recoveredWorkspaceE2EAttemptRequest) string {
+	payload, err := json.Marshal(structToMap(request))
 	if err != nil {
 		return ""
 	}
@@ -82,10 +49,10 @@ func recoveredWorkspaceE2EApprovalDigest(approval recoveredWorkspaceE2EApproval)
 	return hex.EncodeToString(sum[:])
 }
 
-func recoveredWorkspaceE2EAttemptBinding(approval recoveredWorkspaceE2EApproval, approvalDigest string) string {
+func recoveredWorkspaceE2EAttemptBinding(request recoveredWorkspaceE2EAttemptRequest, requestDigest string) string {
 	payload, err := json.Marshal(map[string]any{
-		"approval":       structToMap(approval),
-		"approvalDigest": approvalDigest,
+		"request":       structToMap(request),
+		"requestDigest": requestDigest,
 	})
 	if err != nil {
 		return ""
@@ -121,41 +88,19 @@ func validRecoveredWorkspaceE2EOpaque(value string) bool {
 		!strings.Contains(value, "token") && !strings.Contains(value, "credential")
 }
 
-func recoveredWorkspaceE2EApprovalShapeValid(approval recoveredWorkspaceE2EApproval, digest string, now time.Time) bool {
-	expiresAt, err := time.Parse(time.RFC3339, approval.ExpiresAt)
-	return err == nil && expiresAt.After(now.UTC()) && recoveredWorkspaceE2EApprovalBindingValid(approval, digest)
+func recoveredWorkspaceE2ERequestValid(request recoveredWorkspaceE2EAttemptRequest) bool {
+	return request.SchemaVersion == 2 && validRecoveredWorkspaceE2EOpaque(request.ApprovalID) &&
+		validRecoveredWorkspaceE2EOpaque(request.LaunchOperationID) && validRecoveredWorkspaceE2EOpaque(request.PlanID) &&
+		computeClaimApprovalDigestPattern.MatchString(request.PlanDigest) && request.Decision == "continue" &&
+		request.Confirmation == recoveredWorkspaceE2EConfirmation && recoveredWorkspaceE2EOpaquePattern.MatchString(request.ExpectedModel) &&
+		validRecoveredWorkspaceE2EOpaque(request.ModelRequestKey)
 }
 
-func recoveredWorkspaceE2EApprovalBindingValid(approval recoveredWorkspaceE2EApproval, digest string) bool {
-	_, err := time.Parse(time.RFC3339, approval.ExpiresAt)
-	return err == nil && approval.SchemaVersion == 1 &&
-		validRecoveredWorkspaceE2EOpaque(approval.ApprovalID) && validRecoveredWorkspaceE2EOpaque(approval.RecoveryApprovalID) &&
-		validRecoveredWorkspaceE2EOpaque(approval.RecoveryKey) && validRecoveredWorkspaceE2EOpaque(approval.ModelRequestKey) &&
-		recoveredWorkspaceE2EOpaquePattern.MatchString(approval.ExpectedModel) && approval.Confirmation == recoveredWorkspaceE2EConfirmation &&
-		computeClaimMergedSHAPattern.MatchString(approval.MergedMainSHA) && computeClaimCloudDigestPattern.MatchString(approval.CloudImageDigest) &&
-		validWorkspaceImageIdentity(approval.WorkspaceImageDigest) && computeClaimApprovalDigestPattern.MatchString(approval.RecoveryApprovalDigest) &&
-		computeClaimApprovalDigestPattern.MatchString(approval.RecoveryBindingDigest) &&
-		computeClaimApprovalDigestPattern.MatchString(digest) && recoveredWorkspaceE2EApprovalDigest(approval) == digest &&
-		approval.Customer.Email == normalizeEmail(approval.Customer.Email) && approval.Customer.Email != "" && approval.Customer.AccountID != "" &&
-		approval.LaunchOperationID != "" && approval.WorkspaceID != "" &&
-		equalWorkspaceComputeClaimStrings(approval.AllowedWrites, recoveredWorkspaceE2EAllowedWrites) &&
-		equalWorkspaceComputeClaimStrings(approval.ForbiddenWrites, recoveredWorkspaceE2EForbiddenWrites)
-}
-
-func recoveredWorkspaceE2EResourcesMatch(approval recoveredWorkspaceE2EApproval, operation workspaceLaunchOperation, workspace map[string]any) bool {
-	keyID, keyOK := positiveIntegerField(workspace, "workspaceApiKeyId")
+func recoveredWorkspaceE2EResourcesMatch(operation workspaceLaunchOperation, workspace map[string]any) bool {
+	_, keyOK := positiveIntegerField(workspace, "workspaceApiKeyId")
 	expectedURL := "https://" + workspaceDomain() + "/w/" + operation.WorkspaceID + "/"
-	return keyOK && strconv.FormatInt(keyID, 10) == approval.Resources.WorkspaceAPIKeyID &&
-		approval.Resources == (recoveredWorkspaceE2EApprovalResources{
-			ComputeAllocationID: operation.ComputeID,
-			StorageID:           operation.StorageID,
-			AttachmentID:        operation.AttachmentID,
-			RuntimeID:           operation.RuntimeID,
-			ReceiptID:           operation.ReceiptID,
-			WorkspaceAPIKeyID:   strconv.FormatInt(operation.WorkspaceAPIKeyID, 10),
-			RuntimeServiceName:  operation.RuntimeServiceName,
-			WorkspaceURL:        operation.URL,
-		}) && operation.URL == expectedURL &&
+	return keyOK && operation.ComputeID != "" && operation.StorageID != "" && operation.AttachmentID != "" && operation.RuntimeID != "" &&
+		operation.ReceiptID != "" && operation.WorkspaceAPIKeyID > 0 && operation.RuntimeServiceName != "" && operation.URL == expectedURL &&
 		firstNonEmpty(stringValue(workspace["accountId"]), stringValue(workspace["ownerAccountId"])) == operation.AccountID &&
 		stringValue(workspace["ownerUserId"]) == operation.OwnerUserID &&
 		stringValue(workspace["id"]) == operation.WorkspaceID &&
@@ -168,17 +113,13 @@ func recoveredWorkspaceE2EResourcesMatch(approval recoveredWorkspaceE2EApproval,
 		firstNonEmpty(stringValue(workspace["purchaseReceiptId"]), stringValue(workspace["receiptId"])) == operation.ReceiptID
 }
 
-func recoveredWorkspaceE2ERecoveryBindingMatches(approval recoveredWorkspaceE2EApproval, operation workspaceLaunchOperation) bool {
-	recovery := operation.ComputeClaimApproval
-	if recovery == nil || recovery.ApprovalDigest == "" || recovery.ApprovalDigest != workspaceComputeClaimApprovalDigest(*recovery) {
-		return false
-	}
-	return recovery.SchemaVersion == 2 && recovery.ApprovalID == approval.RecoveryApprovalID &&
-		recovery.ApprovalDigest == approval.RecoveryApprovalDigest && recovery.RecoveryKey == approval.RecoveryKey &&
-		recovery.MergedMainSHA == approval.MergedMainSHA && recovery.CloudImageDigest == approval.CloudImageDigest &&
-		recovery.WorkspaceImageDigest == approval.WorkspaceImageDigest && recovery.Customer.Email == approval.Customer.Email &&
-		recovery.Customer.AccountID == approval.Customer.AccountID && recovery.Target == workspaceComputeClaimApprovalTargetFromOperation(operation) &&
-		recovery.Resources == workspaceComputeClaimExpectedResources(operation, recovery.Resources.StorageState, recovery.Resources.StorageProviderResourceID)
+func recoveredWorkspaceE2EPlanExecutionMatches(request recoveredWorkspaceE2EAttemptRequest, operation workspaceLaunchOperation) bool {
+	plan, execution := operation.RecoveryPlan, operation.RecoveryExecution
+	return plan != nil && execution != nil && plan.PlanID == request.PlanID && plan.PlanDigest == request.PlanDigest &&
+		plan.Status == "completed" && plan.OperationID == operation.ID && plan.URL == operation.URL && plan.ReceiptID == operation.ReceiptID &&
+		execution.PlanID == request.PlanID && execution.PlanDigest == request.PlanDigest && execution.Decision == request.Decision &&
+		execution.Status == "completed" && execution.ExecutionID != "" && execution.RunIdentity != "" && execution.ApprovalDigest != "" &&
+		execution.CompletedAt != "" && execution.LeaseToken == "" && execution.LeaseExpiresAt == ""
 }
 
 func (app *controlPlaneServer) recoveredWorkspaceE2EAttemptClaim(ctx context.Context, r *http.Request, workspaceID string, request recoveredWorkspaceE2EAttemptRequest) (productionE2EAttemptClaim, workspaceLaunchOperation, string, error) {
@@ -195,12 +136,10 @@ func (app *controlPlaneServer) recoveredWorkspaceE2EAttemptClaim(ctx context.Con
 		firstNonEmpty(stringValue(workspace["ownerUserId"]), stringValue(workspace["ownerId"])) != ownerID {
 		return productionE2EAttemptClaim{}, workspaceLaunchOperation{}, "workspace_owner_required", errors.New("workspace_owner_required")
 	}
-	approval := request.Approval
-	if !recoveredWorkspaceE2EApprovalShapeValid(approval, request.ApprovalDigest, time.Now().UTC()) ||
-		approval.Customer.AccountID != accountID || approval.Customer.Email != normalizeEmail(stringValue(user["email"])) || approval.WorkspaceID != workspaceID {
+	if !recoveredWorkspaceE2ERequestValid(request) {
 		return productionE2EAttemptClaim{}, workspaceLaunchOperation{}, "recovered_workspace_e2e_approval_invalid", errors.New("recovered_workspace_e2e_approval_invalid")
 	}
-	row, found, err := app.tables.GetRuntimeOperation(ctx, approval.LaunchOperationID)
+	row, found, err := app.tables.GetRuntimeOperation(ctx, request.LaunchOperationID)
 	if err != nil {
 		return productionE2EAttemptClaim{}, workspaceLaunchOperation{}, "state_read_failed", err
 	}
@@ -212,17 +151,18 @@ func (app *controlPlaneServer) recoveredWorkspaceE2EAttemptClaim(ctx context.Con
 		operation.OwnerUserID != ownerID || operation.WorkspaceID != workspaceID || app.workspaceResponse(cloneMap(workspace))["openable"] != true {
 		return productionE2EAttemptClaim{}, workspaceLaunchOperation{}, "recovered_workspace_e2e_resource_closure_required", errors.New("recovered_workspace_e2e_resource_closure_required")
 	}
-	if !recoveredWorkspaceE2ERecoveryBindingMatches(approval, operation) || !recoveredWorkspaceE2EResourcesMatch(approval, operation, workspace) {
+	if !recoveredWorkspaceE2EPlanExecutionMatches(request, operation) || !recoveredWorkspaceE2EResourcesMatch(operation, workspace) {
 		return productionE2EAttemptClaim{}, workspaceLaunchOperation{}, "recovered_workspace_e2e_binding_mismatch", errors.New("recovered_workspace_e2e_binding_mismatch")
 	}
-	binding := recoveredWorkspaceE2EAttemptBinding(approval, request.ApprovalDigest)
+	digest := recoveredWorkspaceE2ERequestDigest(request)
+	binding := recoveredWorkspaceE2EAttemptBinding(request, digest)
 	if binding == "" {
 		return productionE2EAttemptClaim{}, workspaceLaunchOperation{}, "recovered_workspace_e2e_approval_invalid", errors.New("recovered_workspace_e2e_approval_invalid")
 	}
 	return productionE2EAttemptClaim{
 		ID: recoveredWorkspaceE2EAttemptID(operation), AccountID: accountID, WorkspaceID: workspaceID,
 		URL: operation.URL, Binding: binding,
-	}, operation, request.ApprovalDigest, nil
+	}, operation, digest, nil
 }
 
 func writeRecoveredWorkspaceE2EAttemptError(w http.ResponseWriter, code string) {
@@ -269,7 +209,10 @@ func (app *controlPlaneServer) reserveRecoveredWorkspaceE2EAttempt(service *cont
 		return
 	}
 	w.Header().Set("Cache-Control", "private, no-store")
-	writeJSON(w, http.StatusCreated, map[string]any{"attemptId": claim.ID, "status": "attempted", "approvalDigest": digest})
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"attemptId": claim.ID, "status": "attempted", "approvalDigest": digest,
+		"executionId": operation.RecoveryExecution.ExecutionID, "runId": operation.RecoveryExecution.RunIdentity,
+	})
 }
 
 func (app *controlPlaneServer) completeRecoveredWorkspaceE2EAttempt(w http.ResponseWriter, r *http.Request) {
@@ -283,17 +226,15 @@ func (app *controlPlaneServer) completeRecoveredWorkspaceE2EAttempt(w http.Respo
 		writeRecoveredWorkspaceE2EAttemptError(w, "not_authenticated")
 		return
 	}
-	approval := request.Approval
-	digest := request.ApprovalDigest
+	digest := recoveredWorkspaceE2ERequestDigest(request)
 	workspaceID := strings.TrimSpace(r.PathValue("workspaceId"))
 	accountID := stringValue(user["accountId"])
-	if !recoveredWorkspaceE2EApprovalBindingValid(approval, digest) || approval.WorkspaceID != workspaceID ||
-		approval.Customer.AccountID != accountID || approval.Customer.Email != normalizeEmail(stringValue(user["email"])) {
+	if !recoveredWorkspaceE2ERequestValid(request) || accountID == "" {
 		writeRecoveredWorkspaceE2EAttemptError(w, "recovered_workspace_e2e_approval_invalid")
 		return
 	}
-	binding := recoveredWorkspaceE2EAttemptBinding(approval, digest)
-	id := recoveredWorkspaceE2EAttemptIDFor(approval.LaunchOperationID, approval.WorkspaceID)
+	binding := recoveredWorkspaceE2EAttemptBinding(request, digest)
+	id := recoveredWorkspaceE2EAttemptIDFor(request.LaunchOperationID, workspaceID)
 	record, found, err := app.tables.GetProductionE2EAttempt(r.Context(), id)
 	if err != nil {
 		writeRecoveredWorkspaceE2EAttemptError(w, "state_persist_failed")

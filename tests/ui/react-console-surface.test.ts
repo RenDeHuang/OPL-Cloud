@@ -311,7 +311,7 @@ test("React controller preserves source truth, idempotency and secret lifetime",
   assert.match(controller, /unavailableSource/);
   assert.match(
     controller,
-    /if \(!review\.allowedActions\.includes\("recover_workspace_launch"\) && !review\.allowedActions\.includes\("resolve_billing_review"\)\) return;/
+    /if \(!session \|\| !review\.allowedActions\.includes\("diagnose_workspace_recovery_plan"\)\) return null;/
   );
   assert.doesNotMatch(controller, /localStorage|sessionStorage/);
 });

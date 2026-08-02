@@ -765,7 +765,8 @@ export interface OperatorReconciliationItemDTO {
   billingOperationId: string;
   phase: string;
   errorCode: string;
-  allowedActions: Array<"recover_workspace_launch" | "resolve_billing_review">;
+  progressionOwner: "control_plane_recovery_plan" | "operator_recovery" | "none";
+  allowedActions: Array<"diagnose_workspace_recovery_plan" | "resolve_billing_review">;
   operationRef?: string;
   receiptRef?: string;
 }
@@ -799,6 +800,7 @@ export interface WorkspaceLaunchRecoveryPlanDTO {
   operationId?: string;
   stages: WorkspaceLaunchRecoveryPlanStageDTO[];
   mismatches: WorkspaceLaunchRecoveryPlanMismatchDTO[];
+  mutationCounts?: { sub2api: number; tencent: number; kubernetes: number };
   executionId?: string;
   runId?: string;
   url?: string;
@@ -824,12 +826,6 @@ export interface BillingReviewResolutionRequest {
   accountId: string;
   billingOperationId: string;
   decision: "activate_charged_resource" | "terminate_uncharged_absent" | "refund_charged_absent";
-  evidenceRef: string;
-}
-
-export interface WorkspaceLaunchRecoveryRequest {
-  accountId: string;
-  billingOperationId: string;
   evidenceRef: string;
 }
 

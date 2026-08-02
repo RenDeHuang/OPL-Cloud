@@ -1,7 +1,6 @@
 package server
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -180,19 +179,18 @@ func requestWorkspaceLaunchReadbackRecovery(t *testing.T, fixture workspaceLaunc
 	if json.Unmarshal(approvalJSON, &decodedApproval) != nil || jsonRoundTrip(decodedApproval, &typedApproval) != nil {
 		t.Fatal("readback approval fixture is not JSON round-trippable")
 	}
-	body, err := json.Marshal(map[string]any{
-		"accountId": operation.AccountID, "billingOperationId": operation.ID, "evidenceRef": "case-20260731-readback", "approval": approval,
+	recorder := httptest.NewRecorder()
+	handler := fixture.server.(*controlPlaneHTTPHandler)
+	result, _, err := handler.app.recoverWorkspaceLaunchReviewWithReplay(context.Background(), handler.service, billingReviewResolutionInput{
+		ResourceType: "workspace_launch", ResourceID: operation.ID, AccountID: operation.AccountID,
+		BillingOperationID: operation.ID, EvidenceRef: "internal-state-machine-test", IdempotencyKey: key,
+		Reviewer: sessionUserIDForTest(t, fixture.server, fixture.operator), ReadbackApproval: &typedApproval,
 	})
 	if err != nil {
-		t.Fatal(err)
+		writeBillingReviewResolutionError(recorder, err)
+		return recorder
 	}
-	req := httptest.NewRequest(http.MethodPost, "/api/operator/workspace-launches/"+operation.ID+"/recover", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Idempotency-Key", key)
-	req.Header.Set("x-opl-compute-claim-capability", "workspace-launch-readback-capability")
-	addAuth(req, fixture.operator)
-	recorder := httptest.NewRecorder()
-	fixture.server.ServeHTTP(recorder, req)
+	writeJSON(recorder, http.StatusOK, result)
 	return recorder
 }
 
@@ -240,10 +238,14 @@ func persistedWorkspaceLaunchReadbackReplayFixture(t *testing.T, status string, 
 func requestWorkspaceLaunchReadbackProof(t *testing.T, fixture workspaceLaunchWorkerFixture) *httptest.ResponseRecorder {
 	t.Helper()
 	operation := fixture.operation(t)
-	req := httptest.NewRequest(http.MethodGet, "/api/operator/workspace-launches/"+operation.ID+"/readback-recovery-proof", nil)
-	addAuth(req, fixture.operator)
 	recorder := httptest.NewRecorder()
-	fixture.server.ServeHTTP(recorder, req)
+	handler := fixture.server.(*controlPlaneHTTPHandler)
+	proof, err := handler.app.diagnoseWorkspaceLaunchReadbackRecovery(context.Background(), handler.service, operation.ID)
+	if err != nil {
+		writeError(recorder, http.StatusConflict, err.Error())
+		return recorder
+	}
+	writeJSON(recorder, http.StatusOK, proof)
 	return recorder
 }
 
@@ -929,21 +931,9 @@ func TestPostgresWorkspaceLaunchPersistedReadbackReplaySurvivesReopenAndLeavesEn
 	scenario.readback.operationsErr = errors.New("fresh readback must not run during persisted replay")
 	beforeEvents := append([]string(nil), (*scenario.fixture.events)...)
 	before := postgresSchemaSnapshot(t, admin, schema)
-
-	body, err := json.Marshal(map[string]any{
-		"accountId": recovered.AccountID, "billingOperationId": recovered.ID,
-		"evidenceRef": "case-20260731-readback", "approval": approvalMap,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	request := httptest.NewRequest(http.MethodPost, "/api/operator/workspace-launches/"+recovered.ID+"/recover", bytes.NewReader(body))
-	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("Idempotency-Key", key)
-	request.Header.Set("x-opl-compute-claim-capability", "workspace-launch-readback-capability")
-	addAuth(request, operator)
-	response := httptest.NewRecorder()
-	server.ServeHTTP(response, request)
+	fixture := scenario.fixture
+	fixture.server, fixture.service, fixture.operator = server, service, operator
+	response := requestWorkspaceLaunchReadbackRecovery(t, fixture, approvalMap, key)
 	if response.Code != http.StatusOK {
 		t.Fatalf("persisted PostgreSQL replay status=%d body=%s", response.Code, response.Body.String())
 	}

@@ -180,6 +180,8 @@ test("operator billing recovery diagnoses, reads the persisted plan, and continu
   assert.equal(typeof readApi.getWorkspaceLaunchRecoveryPlan, "function");
   assert.equal(typeof readApi.validateWorkspaceLaunchRecoveryPlan, "function");
   assert.equal(typeof readApi.executeWorkspaceLaunchRecoveryPlan, "function");
+  assert.doesNotMatch(api, /\brecoverWorkspaceLaunch\b/);
+  assert.doesNotMatch(dtos, /\bWorkspaceLaunchRecoveryRequest\b/);
   assert.match(api, /\/api\/operator\/workspace-launches\/.*\/recovery-plan\/diagnose/);
   assert.match(api, /\/api\/operator\/workspace-launches\/.*\/recovery-plan/);
   assert.match(api, /\/recovery-plan\/validate/);

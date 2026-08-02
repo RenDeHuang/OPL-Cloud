@@ -402,171 +402,51 @@ test("Current Fabric contracts require dedicated package NodePools without weake
     currentState: "implemented_and_fake_tested_not_executed"
   });
   assert.equal(deployment.schemaVersion, 31);
-  assert.deepEqual(deployment.productionWorkspaceLaunchReadbackRecovery, {
+  assert.deepEqual(deployment.productionWorkspaceRecoveryPlan, {
+    authority: "control_plane_only",
     workflow: ".github/workflows/production-basic-customer-operation.yml",
-    modes: {
-      diagnose: {
-        input: "operation_mode=workspace_launch_readback_diagnose",
-        route: "GET /api/operator/workspace-launches/{operationId}/readback-recovery-proof",
-        persistence: "none",
-        databaseMutationCount: 0,
-        fabricOperationMutationCount: 0,
-        mutationApproval: false,
-        proofMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
-        runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
-      },
-      recover: {
-        input: "operation_mode=workspace_launch_readback_recover",
-        route: "POST /api/operator/workspace-launches/{operationId}/recover",
-        confirmation: "RECOVER_UNKNOWN_WORKSPACE_LAUNCH_STAGE_FROM_AUTHORITATIVE_READBACK",
-        approvalBinding: ["merged_main_sha", "cloud_image_digest", "workspace_image_digest", "expiry", "customer", "launch", "workspace", "product_truth", "compute", "storage", "attachment", "secret", "runtime", "activation", "receipt", "machine_ownership", "fabric_operation_identity", "provider_operation_identity", "stage", "attempt_budget", "recovery_key"],
-        allowedWrites: "confirm_unknown_stage_from_authoritative_readback_then_remaining_original_launch_writes",
-        forbiddenWrites: ["create_launch", "debit", "recharge", "refund", "scale", "create_cvm", "create_second_cbs", "delete", "replace", "retry_unknown_stage_write"],
-        proofMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
-        runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
-        backgroundMutationCountsState: "unknown",
-        convergenceWrites: { attachmentSecretRuntimeFabricOperationCasMax: 1, originalLaunchCasMax: 1, unknownStageProviderWriteReplay: 0 },
-        unknownStageExternalWriteReplayCount: 0,
-        remainingStageMutationBudget: "original_launch_persisted_per_stage_max_1",
-        persistedReplay: {
-          states: ["preparing", "waiting", "terminal"],
-          identity: ["approval_id", "approval_digest", "idempotency_key", "full_target"],
-          expiry: "exact_persisted_identity_replays_after_expiry_unpersisted_expired_rejected",
-          response: "reconstructed_from_persisted_approval_and_proof_without_fresh_manual_review_proof",
-          drift: "409_conflict",
-          mutationCounts: { database: 0, fabric: 0, sub2api: 0, tencent: 0, kubernetes: 0 }
-        }
-      }
+    workflowMode: "compute_claim_validate",
+    workflowRole: "read_persisted_plan_then_zero_external_mutation_validate_and_upload_redacted_evidence_only",
+    workflowInputs: ["merged_sha", "recovery_plan_launch_operation_id", "recovery_plan_id", "recovery_plan_digest"],
+    forbiddenWorkflowInputs: ["target_json", "approval_json", "cvm", "node", "machine", "workspace", "cloud_digest", "workspace_digest", "recovery_confirmation"],
+    routes: {
+      read: "GET /api/operator/workspace-launches/{operationId}/recovery-plan",
+      validate: "POST /api/operator/workspace-launches/{operationId}/recovery-plan/validate"
     },
-    targetSource: "protected_input_full_compute_target_preserved_without_projection",
-    operationIdentity: "launch_idempotency_key_fabric_internal_operation_machine_ownership_provider_opl_operation_and_stage_resource_operations",
-    continuation: "existing_compute_claim_continue_get_only_same_original_launch",
-    artifact: {
-      schemaVersion: 2,
-      projection: "explicit_allowlist_dto_for_success_and_failure",
-      rawProof: { path: "protected_runner_temp_outside_upload_tree", mode: "0600", uploaded: false },
-      order: ["validate_complete_raw_result", "project_safe_allowlist_dto", "upload_safe_artifact"],
-      binding: ["approval_digest", "stable_full_binding_digest"],
-      continuation: "minimal_safe_recovered_workspace_e2e_handoff",
-      forbiddenFields: ["email", "private_ip", "complete_target", "complete_proof", "complete_approval", "gateway_secret_ref", "gateway_secret_fingerprint", "credential", "capability", "provider_request_id", "complete_operation_identity"]
-    },
-    currentState: "code_complete_local_focused_and_postgresql_verified_not_merged_released_deployed_or_executed"
-  });
-  assert.deepEqual(deployment.productionComputeClaimRecovery, {
-    workflow: ".github/workflows/production-basic-customer-operation.yml",
-    execution: "manual_release_owner_only_not_ci_release_rollout_or_e2e",
-    sharedConcurrency: "production-resource-verification",
+    executeRouteInWorkflow: false,
     runner: ["self-hosted", "tencent-cloud", "opl-cloud", "tke-vpc"],
-    modes: {
-      diagnose: {
-        input: "operation_mode=compute_claim_diagnose",
-        environment: "production",
-        route: "POST /fabric/compute-claim-recovery/proof",
-        credentials: "current_ready_fabric_pod_process_only",
-        mutationApproval: false,
-        requiredProofMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
-      },
-      recover: {
-        input: "operation_mode=compute_claim_recover",
-        environment: "production",
-        packageId: "basic",
-        route: "POST /api/operator/workspace-launches/{operationId}/compute-claim-recovery/claim",
-        claimTransport: {
-          redirect: "manual",
-          acceptedStatusCode: 200,
-          redirectStatusCodes: "all_3xx_blocked",
-          crossOriginCapabilityForwarding: false
-        },
-        approvalSecret: "OPL_COMPUTE_CLAIM_RECOVERY_APPROVAL_JSON",
-        adminSecrets: ["OPL_SUB2API_ADMIN_EMAIL", "OPL_SUB2API_ADMIN_PASSWORD"],
-        customerReadOnlyPasswordSecret: "OPL_BASIC_CANARY_CUSTOMER_PASSWORD",
-        customerEmailSource: "protected_customer_email_input_with_authoritative_account_readback",
-        serverCapability: {
-          source: "current_kubernetes_secret_opl-cloud-internal-service",
-          header: "x-opl-compute-claim-capability",
-          ordinaryOperatorSessionAccepted: false,
-          handling: "step_memory_only_immediate_mask"
-        },
-        confirmation: "RECOVER_PROVEN_COMPUTE_AND_CONTINUE_ORIGINAL_LAUNCH",
-        approvalBinding: ["merged_main_sha", "cloud_image_digest", "workspace_image_digest", "expiry", "customer", "launch", "compute", "storage", "storage_state", "storage_provider_resource_id", "attachment", "runtime", "recovery_key"],
-        allowedWritesByStorageState: {
-          storage_not_started: ["claim_existing_cvm_node", "create_original_cbs", "create_original_pv_pvc_attachment", "upsert_original_gateway_secret", "create_original_workspace_runtime", "activate_original_workspace", "record_original_purchase_receipt"],
-          storage_existing_exact: ["claim_existing_cvm_node", "reuse_original_cbs", "create_original_pv_pvc_attachment", "upsert_original_gateway_secret", "create_original_workspace_runtime", "activate_original_workspace", "record_original_purchase_receipt"]
-        },
-        attemptLimits: { claim: { sub2api: 0, tencent: 5, kubernetes: 1 }, storage: 1, attachment: 1, secret: 1, runtime: 1, activation: 1, receipt: 1 },
-        createDisksLimitsByStorageState: { storage_not_started: 1, storage_existing_exact: 0, unknown: 0 },
-        forbiddenWrites: ["create_launch", "debit", "recharge", "refund", "scale", "create_cvm", "create_second_cbs", "delete", "replace"],
-        continuation: {
-          mode: "GET_only_same_launch_after_claim",
-          launchRoute: "GET /api/workspace-launches/{operationId}",
-          runtimeRoute: "GET /api/workspaces/{workspaceId}/runtime-status",
-          recoveryBindingFields: ["approvalId", "approvalDigest", "recoveryKey", "workspaceImageDigest"],
-          terminal: ["status=succeeded", "phase=succeeded", "attachmentId", "receiptId", "launch.url=https://workspace.medopl.cn/w/{workspaceId}/", "receipt.workspaceId=workspaceId", "receipt.type=billing.workspace_purchased.v1", "receipt.storage.resourceId=storageId", "receipt.storage.sizeGb=10", "receipt.fulfillment.attachmentId=attachmentId", "receipt.fulfillment.runtimeId=runtimeId", "runtime.ready=true", "runtime.status=running", "runtime.url=launch.url"],
-          forbiddenWrites: ["second_launch", "second_claim", "debit", "recharge", "scale", "create_compute", "create_storage", "delete", "replace"],
-          runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
-          backgroundMutationCountsState: "unknown"
-        }
-      }
-    },
     artifact: {
-      schemaVersion: 2,
-      manualReviewSchemaVersion: 1,
-      runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
-      providerMutationAuthority: ["proof.sub2apiMutationCount", "proof.tencentMutationCount", "proof.kubernetesMutationCount", "proof.evidence"],
-      storageBinding: {
-        proofFields: ["storageState", "storageProviderResourceId"],
-        approvalDigestIncludes: ["resources.storageState", "resources.storageProviderResourceId"]
-      },
-      failure: "non_empty_redacted_blocked_json_with_allowlisted_error_code",
-      successApprovalFields: ["approvalId", "approvalDigest"],
-      approvalValidation: {
-        mode: "compute_claim_validate",
-        route: "POST /api/operator/workspace-launches/{operationId}/compute-claim-recovery/validate",
-        authority: "same_strict_approval_binding_as_claim_without_persistence_or_claim",
-        customerEmailSource: "protected_customer_email_input_exactly_matches_approval_and_account_authority",
-        legacyIdentity: "zero_mutation_proof_projected_in_memory_only",
-        identityEvidence: "control_plane_and_fabric_allowlisted_field_checks_with_raw_ids_and_second_digest_hashes",
-        runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
-        invalidResponseMetadata: {
-          appliesOnlyTo: "compute_claim_validation_response_invalid",
-          fields: ["statusCode", "contentType", "topLevelKeys"],
-          topLevelKeyAllowlist: ["schemaVersion", "status", "errorCode", "approvalId", "approvalDigest", "launchOperationId", "accountId", "workspaceId", "identityEvidence", "runnerDirectMutationCounts"],
-          forbidden: ["responseBody", "headers", "credentials", "customerIdentity"]
-        },
-        forbiddenCalls: ["ClaimComputeRecovery", "create_storage_volume", "debit", "refund", "recharge", "delete", "replace"]
-      },
-      blockedArtifactFieldsByMode: {
-        compute_claim_diagnose: ["schemaVersion", "operationMode", "status", "recoveryEligible", "errorCode", "runnerDirectMutationCounts"],
-        compute_claim_validate: ["schemaVersion", "operationMode", "status", "recoveryEligible", "errorCode", "runnerDirectMutationCounts"],
-        compute_claim_recover: ["schemaVersion", "operationMode", "status", "recoveryEligible", "errorCode", "runnerDirectMutationCounts"],
-        compute_claim_recover_continuation: ["schemaVersion", "operationMode", "status", "recoveryEligible", "errorCode", "runnerDirectMutationCounts", "backgroundMutationCountsState"]
-      }
+      schemaVersion: 1,
+      fields: ["operationMode", "status", "recoveryEligible", "errorCode", "planId", "planDigest", "stages", "mismatches", "runnerDirectMutationCounts", "verifiedAt"],
+      mismatchValues: "allowlisted_safe_value_or_sha256_digest",
+      forbidden: ["complete_plan", "complete_approval", "resource_target", "customer_email", "private_ip", "credential", "capability"]
     },
-    releaseBinding: ["exact_merged_origin_main_sha", "immutable_cloud_digest", "control_plane_fabric_ledger_ready_pod_image_id", "approval_id_and_idempotency_key"],
-    targetBinding: ["launch", "account", "workspace", "compute", "machine", "node", "cvm", "pool", "node_pool", "sku", "zone", "private_ip", "billing_facts", "storage_state", "storage_provider_resource_id"],
-    mutationBounds: { sub2api: 0, tencent: { min: 0, max: 5 }, kubernetes: { min: 0, max: 1 } },
-    mutationLedger: {
-      persistence: "original_create_compute_allocation_operation_payload_cas_before_provider_call",
-      states: ["reserved", "node_reserved", "observed"],
-      legacyBindingUpgrade: "binding_without_mutation_ledger_may_reserve_once_after_exact_read_only_proof",
-      replayAfterReservation: "authoritative_readback_only_zero_incremental_external_mutation",
-      missingOutcome: "conservative_unknown_at_full_bound",
-      replayProofUnavailable: "return_persisted_mutation_evidence_zero_incremental_external_mutation",
-      observedCvmTagRepairContinuation: "only_cvm_tag_readback_zero_unknown_zero_kubernetes_then_fresh_exact_cvm_target_owned_node_unallocated_proof_may_reconcile_original_claim_identity_and_attempt_one_node_patch_without_binding_takeover",
-      persistedApprovalExpiryReplay: "new_approval_must_be_unexpired_exact_persisted_approval_identity_may_replay_after_expiry",
-      observedSuccessReadbackMismatch: "fail_closed_identity_mismatch_claim_final_readback"
+    requiredMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
+    consoleExecution: {
+      authorization: "reserved_operator_session_plus_csrf",
+      request: ["planId", "planDigest", "decision", "confirmation"],
+      authority: "same_persisted_control_plane_plan_approval_execution_run_and_lease",
+      singleWinner: "postgresql_cas_and_byte_exact_lease_token_fencing",
+      githubRunRequired: false
     },
-    artifactGate: ["exact_target_owned_readback", "proof_storage_state_and_provider_resource_id_match_approval", "proof_sub2api_zero", "proof_tencent_zero_to_five", "proof_kubernetes_zero_to_one", "attempted_equals_count", "confirmed_equals_attempted", "unknown_zero", "missing_empty"],
-    claimForbidden: ["debit", "refund", "recharge", "scale", "create_compute", "create_storage", "delete", "replace"],
-    currentState: "code_complete_local_focused_and_postgresql_verified_not_merged_released_deployed_or_executed"
+    legacyMutationJobs: ["manual-review-diagnose", "workspace-launch-readback-diagnose", "workspace-launch-readback-recover", "compute-claim-diagnose", "compute-claim-recover"],
+    legacyMutationJobState: "source_removed"
   });
+  assert.equal(deployment.productionComputeClaimRecovery, undefined);
+  assert.equal(deployment.productionWorkspaceLaunchReadbackRecovery, undefined);
+  assert.equal(deployment.retiredProductionComputeClaimRecovery, undefined);
+  assert.equal(deployment.retiredProductionWorkspaceLaunchReadbackRecovery, undefined);
   assert.deepEqual(deployment.productionRecoveredWorkspaceE2E, {
     workflow: ".github/workflows/production-basic-customer-operation.yml",
     input: "operation_mode=recovered_workspace_e2e",
     runner: "ubuntu-latest",
-    prerequisite: "downloaded_succeeded_compute_claim_continuation_artifact",
+    workflowInputs: ["merged_sha", "approval_id", "customer_email", "recovery_plan_launch_operation_id", "recovery_plan_id", "recovery_plan_digest", "confirm_single_model_request"],
+    planReferenceAuthority: "persisted_control_plane_recovery_plan_projection_on_original_launch",
+    resourceClosureArtifactDependency: false,
+    forbiddenInputs: ["resource_closure_run_id", "continuation_evidence", "recovery_approval_json", "resource_identity"],
+    prerequisite: "persisted_completed_control_plane_recovery_execution_and_authoritative_workspace_receipt_readback",
     approval: "independent_confirm_single_model_request",
-    approvalBinding: ["merged_main_sha", "cloud_image_digest", "workspace_image_digest", "recovery_approval", "recovery_key", "customer", "launch", "workspace", "compute", "storage", "attachment", "runtime", "receipt", "workspace_api_key", "model_request_key", "expiry"],
+    approvalBinding: ["merged_main_sha", "launch_operation_id", "persisted_plan_id", "persisted_plan_digest", "customer_session_account", "expected_model", "model_request_key", "current_control_plane_execution_and_resource_readback"],
     allowedWrites: ["control_plane_e2e_attempt_reservation", "single_workspace_model_request", "control_plane_e2e_attempt_completion"],
     forbiddenCapabilities: ["kubeconfig", "tencent_credentials", "internal_service_token", "launch", "debit", "recharge", "refund", "scale", "create_cvm", "create_cbs", "kubernetes"],
     resultUnknown: "persistent_attempted_marker_never_resend",
@@ -802,48 +682,28 @@ test("Current contracts hard cut operator resources, wallet adjustments, and ann
     restart: "persisted_budget_never_resets",
     terminalFailure: "unknown_or_exhausted_enters_manual_review_and_active_worker_excludes_it"
   });
-  assert.deepEqual(boundary.services.controlPlane.workspaceLaunchAuthoritativeReadbackRecovery, {
-    proofRoute: "GET /api/operator/workspace-launches/{operationId}/readback-recovery-proof",
-    recoveryRoute: "POST /api/operator/workspace-launches/{operationId}/recover",
-    fabricProofRoute: "POST /fabric/workspace-launch-stage-readback/proof",
-    fabricConvergenceRoute: "POST /fabric/workspace-launch-stage-readback/converge",
-    fabricProofSemantics: "authenticated_structured_post_get_describe_only",
-    stages: ["storage", "attachment", "secret", "runtime", "activation", "receipt"],
-    inputBudget: { attempted: 1, confirmed: 0, unknown: 1, max: 1 },
-    convergedBudget: { attempted: 1, confirmed: 1, unknown: 0, max: 1 },
-    proofAuthorities: ["monthly_provider_truth", "machine_ownership", "fabric_operation_store", "workspace_runtime_status", "workspace_activation_truth", "ledger_receipt"],
-    proofPersistence: "none",
-    proofDatabaseMutationCount: 0,
-    proofFabricOperationMutationCount: 0,
-    identityBinding: "full_product_compute_node_cbs_attachment_secret_runtime_and_layered_operation_identity",
-    convergence: "attachment_secret_runtime_fabric_operation_cas_then_postgresql_original_launch_cas_other_stages_original_launch_cas",
-    convergenceMutationMaximums: { fabricOperationCas: 1, originalLaunchCas: 1, unknownStageProviderWriteReplay: 0 },
-    winner: "one_concurrent_recovery_cas",
-    replay: "unknown_stage_external_write_never_reissued_later_stages_use_own_persisted_budget",
-    failure: "absent_multiple_drift_or_read_error_remains_manual_review",
-    sharedOrchestrator: "fulfillWorkspaceLaunch_basic_pro_and_compute_claim_recovery",
-    proofMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
-    runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
-    backgroundMutationCountsState: "unknown",
-    unknownStageExternalWriteReplayCount: 0,
-    remainingStageMutationBudget: "original_launch_persisted_per_stage_max_1",
-    persistedReplay: {
-      states: ["preparing", "waiting", "terminal"],
-      identity: ["approval_id", "approval_digest", "idempotency_key", "full_target"],
-      expiry: "exact_persisted_identity_replays_after_expiry_unpersisted_expired_rejected",
-      response: "reconstructed_from_persisted_approval_and_proof_without_fresh_manual_review_proof",
-      drift: "409_conflict",
-      mutationCounts: { database: 0, fabric: 0, sub2api: 0, tencent: 0, kubernetes: 0 }
-    },
-    artifactBoundary: {
-      schemaVersion: 2,
-      projection: "explicit_allowlist_dto_for_success_and_failure",
-      rawProof: "protected_runner_temp_0600_never_uploaded",
-      uploadOrder: "validate_then_project_then_upload",
-      binding: ["approval_digest", "stable_full_binding_digest"],
-      continuation: "minimal_safe_recovered_workspace_e2e_handoff"
-    }
+  const recoveryPlan = boundary.services.controlPlane.workspaceLaunchAuthoritativeReadbackRecovery;
+  assert.equal(recoveryPlan.authority, "control_plane_persisted_recovery_plan");
+  assert.deepEqual(recoveryPlan.routes, {
+    diagnose: "POST /api/operator/workspace-launches/{operationId}/recovery-plan/diagnose",
+    read: "GET /api/operator/workspace-launches/{operationId}/recovery-plan",
+    validate: "POST /api/operator/workspace-launches/{operationId}/recovery-plan/validate",
+    execute: "POST /api/operator/workspace-launches/{operationId}/recovery-plan/execute"
   });
+  assert.equal(recoveryPlan.authorization, "reserved_operator_session_plus_csrf");
+  assert.deepEqual(recoveryPlan.operatorInput, ["accountId", "launchOperationId", "decision"]);
+  assert.deepEqual(recoveryPlan.executeRequest, ["planId", "planDigest", "decision", "confirmation"]);
+  assert.equal(recoveryPlan.resourceIdentityInput, "forbidden");
+  assert.equal(recoveryPlan.legacyPublicRouteStatus, "404_retired");
+  assert.equal(recoveryPlan.planBinding.targetSource, "authoritative_control_plane_fabric_provider_and_ledger_readback");
+  assert.deepEqual(recoveryPlan.executionLease.identity, ["plan_id", "plan_digest", "approval_digest", "execution_id", "run_id", "decision"]);
+  assert.equal(recoveryPlan.executionLease.fencing, "byte_exact_current_lease_token_required_to_finalize");
+  assert.equal(recoveryPlan.executionLease.unknownResult, "reconcile_same_execution_identity_without_second_provider_entry");
+  assert.equal(recoveryPlan.proofMutationCounts.sub2api, 0);
+  assert.equal(recoveryPlan.proofMutationCounts.tencent, 0);
+  assert.equal(recoveryPlan.proofMutationCounts.kubernetes, 0);
+  assert.equal("proofRoute" in recoveryPlan, false);
+  assert.equal("recoveryRoute" in recoveryPlan, false);
   assert.deepEqual(boundary.services.controlPlane.recoveredWorkspaceE2EAttempt, {
     reserveRoute: "POST /api/workspaces/{workspaceId}/recovered-e2e-attempt",
     completeRoute: "POST /api/workspaces/{workspaceId}/recovered-e2e-attempt/complete",
@@ -955,12 +815,19 @@ test("Current contracts hard cut operator resources, wallet adjustments, and ann
     requiredItemFields: ["accountId", "billingOperationId", "phase", "errorCode", "allowedActions"],
     billingOperationIdentity: "billingOperationId_equals_workspace_launch_operation_id",
     allowedActions: {
-      manual_review: ["recover_workspace_launch"],
+      manual_review: ["diagnose_workspace_recovery_plan"],
       allOtherStatuses: []
     },
-    recoveryRoute: "POST /api/operator/workspace-launches/{operationId}/recover",
-    recoveryRequestFields: ["accountId", "billingOperationId", "evidenceRef"],
-    implementation: "integrated_local_fake_verified"
+    recoveryPlanRoutes: {
+      diagnose: "POST /api/operator/workspace-launches/{operationId}/recovery-plan/diagnose",
+      read: "GET /api/operator/workspace-launches/{operationId}/recovery-plan",
+      validate: "POST /api/operator/workspace-launches/{operationId}/recovery-plan/validate",
+      execute: "POST /api/operator/workspace-launches/{operationId}/recovery-plan/execute"
+    },
+    operatorInputFields: ["accountId", "launchOperationId", "decision"],
+    executeRequestFields: ["planId", "planDigest", "decision", "confirmation"],
+    resourceIdentityInput: "forbidden_server_authoritative_readback_only",
+    implementation: "server_authoritative_plan_local_focused_verified_not_merged_deployed_or_production_verified"
   });
   assert.equal(boundary.externalServices.gateway.currentImplementation, "exact_id_current_page_users_batch_usage_bounded_key_counts_and_full_delegated_key_parity_code_complete_local_only");
   const announcement = business.objectKinds.find((entry: { kind: string }) => entry.kind === "Announcement");
@@ -1045,7 +912,7 @@ test("Current contracts keep compute-claim continuation automatic while preservi
     implementationState: "contract_frozen_implementation_rollout_and_production_evidence_pending"
   });
 
-  assert.equal(sourceTruth.schemaVersion, 12);
+  assert.equal(sourceTruth.schemaVersion, 13);
   assert.deepEqual(sourceTruth.sources.operator.workspaceLaunchProgression, {
     route: "GET /api/operator/reconciliation",
     requiredItemFields: ["accountId", "billingOperationId", "phase", "errorCode", "progressionOwner", "allowedActions"],
@@ -1056,8 +923,8 @@ test("Current contracts keep compute-claim continuation automatic while preservi
         completionEvidence: ["target_owned", "launch_succeeded", "runtime_ready", "receipt_completed", "workspace_url"]
       },
       manual_review: {
-        progressionOwner: "operator_recovery",
-        allowedActions: ["recover_workspace_launch"]
+        progressionOwner: "control_plane_recovery_plan",
+        allowedActions: ["diagnose_workspace_recovery_plan"]
       }
     },
     unavailableBehavior: "source_unavailable_never_completed_or_zero"
@@ -1113,7 +980,8 @@ test("Current human truth preserves public entry points and evidence levels", as
   }
   assert.match(consoleProduct, /Home.*Login.*Logo/is);
   assert.match(consoleProduct, /URL.*用户名.*密码.*Workspace Key/is);
-  assert.match(invariants, /Dedicated `workspace\.launch\.v2` review recovery[\s\S]{0,800}integrated local fake evidence/i);
+  assert.match(invariants, /Dedicated `workspace\.launch\.v2` review recovery uses the Console flow[\s\S]{0,400}`diagnose -> view persisted Recovery Plan -> validate -> confirm continue`/i);
+  assert.match(invariants, /Server-authoritative Recovery Plan handling has local focused evidence only/i);
   assert.doesNotMatch(invariants, /pending integrated verification/i);
   assert.doesNotMatch(invariants, /stops at\s+`debited`[\s\S]{0,300}S8/i);
   assert.doesNotMatch(invariants, /durable `workspace\.launch` RuntimeOperation/);

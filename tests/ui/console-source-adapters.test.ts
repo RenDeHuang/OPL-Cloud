@@ -35,6 +35,7 @@ test("Console exposes typed source adapters for the customer truth surfaces", as
 });
 
 test("Recovery Plan adapters retain the server-owned operation binding and exact command shapes", async () => {
+  assert.equal(Reflect.has(readApi, "recoverWorkspaceLaunch"), false);
   const requested: Array<{ path: string; body: unknown }> = [];
   const originalFetch = globalThis.fetch;
   globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {

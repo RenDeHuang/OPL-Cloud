@@ -724,7 +724,7 @@ export async function apiFixture(route, state, session = state) {
   if (path === "/api/operator/reconciliation") return fulfillJson(route, source({ items: [{
     id: "review-recovery-fixture", resourceType: "workspace", status: "manual_review", accountId: "acct-operator",
     billingOperationId: "launch-recovery-fixture", phase: "manual_review", errorCode: "provider_unknown",
-    allowedActions: ["recover_workspace_launch"], operationRef: "launch-recovery-fixture", receiptRef: "receipt-recovery-fixture"
+    progressionOwner: "control_plane_recovery_plan", allowedActions: ["diagnose_workspace_recovery_plan"], operationRef: "launch-recovery-fixture", receiptRef: "receipt-recovery-fixture"
   }], total: 1, page: 1, pageSize: 20 }, "control-plane"));
   const recoveryPlanMatch = path.match(/^\/api\/operator\/workspace-launches\/([^/]+)\/recovery-plan(?:\/(diagnose|validate|execute))?$/);
   if (recoveryPlanMatch && recoveryPlanMatch[1] === "launch-recovery-fixture") {

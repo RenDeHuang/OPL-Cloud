@@ -1234,7 +1234,7 @@ export function useConsoleController() {
   };
 
   const diagnoseRecoveryPlan = async (review: OperatorReconciliationItemDTO) => {
-    if (!session || !review.allowedActions.includes("recover_workspace_launch")) return null;
+    if (!session || !review.allowedActions.includes("diagnose_workspace_recovery_plan")) return null;
     const requestStillCurrent = currentMutationRequest();
     const input: DiagnoseWorkspaceLaunchRecoveryPlanRequest = { accountId: review.accountId };
     setCommandBusy(true);

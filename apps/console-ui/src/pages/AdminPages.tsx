@@ -580,7 +580,7 @@ function RecoveryPlanDetails({ plan }: { plan: WorkspaceLaunchRecoveryPlanDTO })
 function ReviewModal({ controller, onClose, review }: { controller: ConsoleController; onClose: () => void; review: OperatorReconciliationItemDTO | null }) {
   const [confirmed, setConfirmed] = useState(false);
   const [plan, setPlan] = useState<WorkspaceLaunchRecoveryPlanDTO | null>(null);
-  const recoverable = Boolean(review?.allowedActions.includes("recover_workspace_launch"));
+  const recoverable = Boolean(review?.allowedActions.includes("diagnose_workspace_recovery_plan"));
   const close = () => { setConfirmed(false); setPlan(null); onClose(); };
   const diagnose = async () => {
     if (!review) return;
@@ -620,7 +620,7 @@ function ReconciliationPage({ controller }: { controller: ConsoleController }) {
       <div className="panel-title"><div><h2>计费复核</h2></div><span>服务端队列</span></div>
       <SourceState empty={reviews.length === 0} emptyTitle="暂无待复核项目" error={controller.sources.operatorReconciliation.error} loading={controller.sources.operatorReconciliation.loading} onRetry={() => void controller.refreshCurrentPage()} source={controller.sources.operatorReconciliation.value} unavailableTitle="复核数据暂不可用">
         {(data) => <div className="table-wrap"><table><thead><tr><th>Account</th><th>资源类型</th><th>状态</th><th>billing operation</th><th>phase</th><th>errorCode</th><th>operation reference</th><th>Receipt reference</th><th>allowedActions</th><th>操作</th></tr></thead><tbody>{data.items.map((review) => {
-          const actionable = review.allowedActions.includes("recover_workspace_launch");
+          const actionable = review.allowedActions.includes("diagnose_workspace_recovery_plan");
           return <tr key={review.id}><td>{review.accountId || "暂不可用"}</td><td>{review.resourceType}</td><td><Badge color={statusTone(review.status)}>{statusLabel(review.status)}</Badge></td><td>{review.billingOperationId || "暂不可用"}</td><td>{review.phase || "暂不可用"}</td><td>{review.errorCode || "暂不可用"}</td><td>{review.operationRef || "暂不可用"}</td><td>{review.receiptRef || "暂不可用"}</td><td>{review.allowedActions.length ? review.allowedActions.join(", ") : "无"}</td><td><Button onClick={() => setSelectedReview(review)} size="sm" variant={actionable ? "outline" : "ghost"}>{actionable ? "查看恢复计划" : "查看证据"}</Button></td></tr>;
         })}</tbody></table></div>}
       </SourceState>

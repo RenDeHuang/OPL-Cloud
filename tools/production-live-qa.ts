@@ -649,6 +649,7 @@ export async function diagnoseManualReviewRecovery({
 const COMPUTE_CLAIM_DIAGNOSE_MODE = "compute_claim_diagnose";
 const COMPUTE_CLAIM_VALIDATE_MODE = "compute_claim_validate";
 const COMPUTE_CLAIM_RECOVER_MODE = "compute_claim_recover";
+const RECOVERY_PLAN_VALIDATE_MODE = "recovery_plan_validate";
 const COMPUTE_CLAIM_REASONS = new Set([
   "none", "local_identity", "provider_describe", "iam_rbac", "multiple_candidate",
   "identity_mismatch", "node_ownership_conflict", "storage_already_started"
@@ -1590,7 +1591,7 @@ async function computeClaimControlPlanePost({ fetchImpl, origin, auth, path, bod
       "content-type": "application/json",
       cookie: auth.cookie,
       "x-opl-csrf": auth.csrfToken,
-      "x-opl-compute-claim-capability": capability,
+      ...(capability ? { "x-opl-compute-claim-capability": capability } : {}),
       ...(idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {})
     },
     body: JSON.stringify(body),
@@ -1613,6 +1614,103 @@ async function computeClaimControlPlanePost({ fetchImpl, origin, auth, path, bod
     ? COMPUTE_CLAIM_VALIDATION_RESPONSE_KEYS.filter((key) => Object.hasOwn(payload, key)).sort()
     : [];
   return { statusCode: response.status, payload, responseMetadata };
+}
+
+async function workspaceRecoveryPlanGet({ fetchImpl, origin, auth, path, requestTimeoutMs }) {
+  const response = await fetchImpl(`${origin}${path}`, {
+    method: "GET",
+    headers: { cookie: auth.cookie },
+    redirect: "manual",
+    signal: readOnlyRequestSignal(undefined, requestTimeoutMs)
+  });
+  const text = await response.text();
+  let payload;
+  try {
+    payload = text ? JSON.parse(text) : {};
+  } catch {
+    throw new Error("workspace_recovery_plan_read_response_invalid");
+  }
+  return { statusCode: response.status, payload };
+}
+
+function workspaceRecoveryPlanValidationResponse(value, operationId) {
+  const mutationCounts = value?.mutationCounts;
+  if (!value || typeof value !== "object" || Array.isArray(value) ||
+    !/^recovery-plan-[a-f0-9]{20}$/.test(String(value.planId || "")) ||
+    !/^[a-f0-9]{64}$/.test(String(value.planDigest || "")) ||
+    value.operationId !== operationId ||
+    !new Set(["diagnosed", "validated", "blocked"]).has(String(value.status || "")) ||
+    !Array.isArray(value.stages) || !Array.isArray(value.mismatches) ||
+    !computeClaimRunnerDirectMutationCountsAreZero(mutationCounts)) {
+    throw new Error("workspace_recovery_plan_validation_response_invalid");
+  }
+  return JSON.parse(JSON.stringify(value));
+}
+
+export async function validateWorkspaceRecoveryPlan({
+  launchOperationId,
+  planId,
+  planDigest,
+  origin,
+  adminEmail,
+  adminPassword,
+  requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
+  fetchImpl = globalThis.fetch,
+  now = new Date()
+} = {}) {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/.test(String(launchOperationId || "")) ||
+    !/^recovery-plan-[a-f0-9]{20}$/.test(String(planId || "")) ||
+    !/^[a-f0-9]{64}$/.test(String(planDigest || "")) ||
+    !Number.isInteger(requestTimeoutMs) || requestTimeoutMs < 1 || requestTimeoutMs > 300_000) {
+    throw new Error("workspace_recovery_plan_validation_request_invalid");
+  }
+  const { auth, normalizedOrigin } = await workspaceLaunchReadbackSession({
+    fetchImpl, origin, adminEmail, adminPassword, requestTimeoutMs
+  });
+  const path = `/api/operator/workspace-launches/${encodeURIComponent(launchOperationId)}/recovery-plan`;
+  const persistedResponse = await workspaceRecoveryPlanGet({
+    fetchImpl,
+    origin: normalizedOrigin,
+    auth,
+    path,
+    requestTimeoutMs
+  });
+  if (persistedResponse.statusCode !== 200) {
+    throw new Error("workspace_recovery_plan_read_failed");
+  }
+  const persisted = workspaceRecoveryPlanValidationResponse(persistedResponse.payload, launchOperationId);
+  if (persisted.planId !== planId || persisted.planDigest !== planDigest) {
+    throw new Error("workspace_recovery_plan_validation_identity_mismatch");
+  }
+  const validationResponse = await computeClaimControlPlanePost({
+    fetchImpl,
+    origin: normalizedOrigin,
+    auth,
+    path: `${path}/validate`,
+    body: { planId, planDigest },
+    requestTimeoutMs
+  });
+  if (validationResponse.statusCode !== 200) {
+    throw new Error("workspace_recovery_plan_validation_failed");
+  }
+  const validation = workspaceRecoveryPlanValidationResponse(validationResponse.payload, launchOperationId);
+  if (validation.planId !== planId || validation.planDigest !== planDigest) {
+    throw new Error("workspace_recovery_plan_validation_identity_mismatch");
+  }
+  const recoveryEligible = validation.status === "validated" && validation.mismatches.length === 0;
+  return {
+    schemaVersion: 1,
+    operationMode: RECOVERY_PLAN_VALIDATE_MODE,
+    status: recoveryEligible ? "proven" : "blocked",
+    recoveryEligible,
+    errorCode: recoveryEligible ? "none" : String(validation.errorCode || "identity_mismatch"),
+    planId: validation.planId,
+    planDigest: validation.planDigest,
+    stages: validation.stages,
+    mismatches: validation.mismatches,
+    runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
+    verifiedAt: now.toISOString()
+  };
 }
 
 function computeClaimApprovedRequest(target, approval) {
@@ -2238,83 +2336,61 @@ export function workspaceLaunchContinuationHandoff(result, recoveryArtifact) {
   };
 }
 
-function recoveredWorkspaceE2EApproval(value, expected, now) {
-  let approval;
-  try {
-    approval = typeof value === "string" ? JSON.parse(value) : value;
-  } catch {
-    throw new Error("recovered_workspace_e2e_approval_invalid");
-  }
-	const keys = [
-	  "schemaVersion", "approvalId", "expiresAt", "confirmation", "mergedMainSha", "cloudImageDigest", "workspaceImageDigest",
-	  "recoveryApprovalId", "recoveryApprovalDigest", "recoveryBindingDigest", "recoveryKey", "customer", "launchOperationId", "workspaceId", "resources",
-    "expectedModel", "modelRequestKey", "allowedWrites", "forbiddenWrites"
-  ];
-  const resourceKeys = [
-    "computeAllocationId", "storageId", "attachmentId", "runtimeId", "receiptId", "workspaceApiKeyId", "runtimeServiceName", "workspaceUrl"
-  ];
-  const validOpaque = (item) => /^[a-z0-9][a-z0-9._:-]{2,127}$/.test(String(item || "")) &&
-    !/(?:api-?key|bearer|credential|password|secret|token)/.test(String(item));
-  const email = String(approval?.customer?.email || "").trim().toLowerCase();
-  if (!exactObjectKeys(approval, keys) || approval.schemaVersion !== 1 || approval.approvalId !== expected.approvalId ||
-    !validOpaque(approval.approvalId) || !validOpaque(approval.recoveryApprovalId) || !validOpaque(approval.recoveryKey) ||
-    !validOpaque(approval.modelRequestKey) || !Number.isFinite(Date.parse(approval.expiresAt)) || Date.parse(approval.expiresAt) <= now.getTime() ||
-    approval.confirmation !== RECOVERED_WORKSPACE_E2E_CONFIRMATION || approval.confirmation !== expected.confirmation ||
-    !/^[a-f0-9]{40}$/.test(String(expected.mergedSha || "")) || approval.mergedMainSha !== expected.mergedSha ||
-    !/^sha256:[a-f0-9]{64}$/.test(String(approval.cloudImageDigest || "")) ||
-	  !/^sha256:[a-f0-9]{64}$/.test(String(approval.workspaceImageDigest || "")) || !/^[a-f0-9]{64}$/.test(String(approval.recoveryApprovalDigest || "")) ||
-	  !/^[a-f0-9]{64}$/.test(String(approval.recoveryBindingDigest || "")) ||
-    !exactObjectKeys(approval.customer, ["email", "accountId"]) || approval.customer.email !== email ||
-    !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) || approval.customer.email !== expected.customerEmail ||
-    !exactObjectKeys(approval.resources, resourceKeys) || !/^[1-9][0-9]*$/.test(String(approval.resources.workspaceApiKeyId || "")) ||
-    !validOpaque(approval.expectedModel) || JSON.stringify(approval.allowedWrites) !== JSON.stringify(RECOVERED_WORKSPACE_E2E_ALLOWED_WRITES) ||
-    JSON.stringify(approval.forbiddenWrites) !== JSON.stringify(RECOVERED_WORKSPACE_E2E_FORBIDDEN_WRITES)) {
-    throw new Error("recovered_workspace_e2e_approval_invalid");
-  }
-  return { ...approval, customer: { ...approval.customer, email } };
+function recoveredWorkspaceE2EPlanInput(value) {
+	const input = {
+		mergedSha: String(value?.mergedSha || ""),
+		approvalId: String(value?.approvalId || ""),
+		confirmation: String(value?.confirmation || ""),
+		launchOperationId: String(value?.launchOperationId || ""),
+		planId: String(value?.planId || ""),
+		planDigest: String(value?.planDigest || ""),
+		expectedModel: String(value?.expectedModel || "")
+	};
+	const validOpaque = (item) => /^[a-z0-9][a-z0-9._:-]{2,127}$/.test(item) &&
+		!/(?:api-?key|bearer|credential|password|secret|token)/.test(item);
+	if (!/^[a-f0-9]{40}$/.test(input.mergedSha) || !validOpaque(input.approvalId) ||
+		input.confirmation !== RECOVERED_WORKSPACE_E2E_CONFIRMATION || !validOpaque(input.launchOperationId) ||
+		!validOpaque(input.planId) || !/^[a-f0-9]{64}$/.test(input.planDigest) || !validOpaque(input.expectedModel)) {
+		throw new Error("recovered_workspace_e2e_plan_reference_invalid");
+	}
+	return input;
 }
 
-function recoveredWorkspaceE2EContinuation(value, approval) {
-	const keys = [
-	  "schemaVersion", "operationMode", "status", "recoveryEligible", "errorCode", "release", "handoff",
-	  "runnerDirectMutationCounts", "backgroundMutationCountsState", "verifiedAt"
-	];
-	const handoffKeys = [
-	  "launchOperationId", "accountId", "workspaceId", "workspaceImageDigest", "recoveryApprovalId", "recoveryApprovalDigest",
-	  "recoveryKey", "recoveryBindingDigest", "resources", "terminalEvidence"
-	];
-	const resourceKeys = [
-	  "computeAllocationId", "storageId", "attachmentId", "runtimeId", "receiptId", "workspaceApiKeyId", "runtimeServiceName", "workspaceUrl"
-	];
-	const handoff = value?.handoff;
-	const resources = handoff?.resources;
-	const terminalEvidence = workspaceLaunchTerminalEvidence(handoff?.terminalEvidence, approval.workspaceImageDigest);
-	if (value?.schemaVersion !== 2 || value?.operationMode !== COMPUTE_CLAIM_CONTINUATION_MODE || value?.status !== "succeeded" ||
-	  value?.recoveryEligible !== true || value?.errorCode !== "none" || !exactObjectKeys(value, keys) || !exactObjectKeys(handoff, handoffKeys) ||
-	  !exactObjectKeys(resources, resourceKeys) || value?.release?.mergedSha !== approval.mergedMainSha ||
-	  value?.release?.cloudImageDigest !== approval.cloudImageDigest || handoff?.accountId !== approval.customer.accountId ||
-	  handoff?.workspaceId !== approval.workspaceId || handoff?.launchOperationId !== approval.launchOperationId ||
-	  handoff?.recoveryApprovalId !== approval.recoveryApprovalId || handoff?.recoveryApprovalDigest !== approval.recoveryApprovalDigest ||
-	  handoff?.recoveryBindingDigest !== approval.recoveryBindingDigest || handoff?.recoveryKey !== approval.recoveryKey ||
-	  handoff?.workspaceImageDigest !== approval.workspaceImageDigest || JSON.stringify(resources) !== JSON.stringify(approval.resources) ||
-	  value?.runnerDirectMutationCounts?.sub2api !== 0 || value?.runnerDirectMutationCounts?.tencent !== 0 ||
-	  value?.runnerDirectMutationCounts?.kubernetes !== 0 || value?.backgroundMutationCountsState !== "unknown" ||
-	  !Number.isFinite(Date.parse(value?.verifiedAt))) {
-	  throw new Error("recovered_workspace_e2e_resource_closure_required");
+function recoveredWorkspaceE2EAuthority(value, input, identity, customerEmail) {
+	const plan = value?.recoveryPlan;
+	const resources = {
+		computeAllocationId: String(value?.computeAllocationId || ""),
+		storageId: String(value?.storageId || ""),
+		attachmentId: String(value?.attachmentId || ""),
+		runtimeId: String(value?.runtimeId || ""),
+		receiptId: String(value?.receiptId || ""),
+		workspaceApiKeyId: String(value?.workspaceApiKeyId || ""),
+		runtimeServiceName: String(value?.runtimeServiceName || ""),
+		workspaceUrl: String(value?.url || "")
+	};
+	if (value?.operationId !== input.launchOperationId || value?.status !== "succeeded" || value?.phase !== "succeeded" ||
+		value?.accountId !== identity.accountId || !String(value?.workspaceId || "") || Object.values(resources).some((item) => !item) ||
+		!/^[1-9][0-9]*$/.test(resources.workspaceApiKeyId) || plan?.planId !== input.planId || plan?.planDigest !== input.planDigest ||
+		plan?.status !== "completed" || plan?.operationId !== input.launchOperationId || !Array.isArray(plan?.stages) || plan.stages.length === 0 ||
+		plan.stages.some((stage) => stage?.status !== "completed") || !Array.isArray(plan?.mismatches) || plan.mismatches.length !== 0 ||
+		plan?.mutationCounts?.sub2api !== 0 || plan?.mutationCounts?.tencent !== 0 || plan?.mutationCounts?.kubernetes !== 0 ||
+		!String(plan?.executionId || "") || !String(plan?.runId || "") || plan?.url !== resources.workspaceUrl || plan?.receiptId !== resources.receiptId) {
+		throw new Error("recovered_workspace_e2e_resource_closure_required");
 	}
 	return {
-	  target: { accountId: handoff.accountId, workspaceId: handoff.workspaceId, launchOperationId: handoff.launchOperationId },
-	  launch: { operationId: handoff.launchOperationId, workspaceId: handoff.workspaceId, receiptId: resources.receiptId },
-	  runtime: { workspaceId: handoff.workspaceId, runtimeId: resources.runtimeId, serviceName: resources.runtimeServiceName, url: resources.workspaceUrl },
-	  receipt: { receiptId: resources.receiptId, workspaceId: handoff.workspaceId },
-	  recovery: {
-		approvalId: handoff.recoveryApprovalId,
-		approvalDigest: handoff.recoveryApprovalDigest,
-		recoveryKey: handoff.recoveryKey,
-		workspaceImageDigest: handoff.workspaceImageDigest,
-		bindingDigest: handoff.recoveryBindingDigest
-	  },
-	  terminalEvidence
+		approvalId: input.approvalId,
+		confirmation: input.confirmation,
+		expectedModel: input.expectedModel,
+		modelRequestKey: `recovered-workspace-e2e-${stableCanaryId(`${input.launchOperationId}:${input.approvalId}`).slice(0, 24)}`,
+		customer: { email: customerEmail, accountId: identity.accountId },
+		launchOperationId: input.launchOperationId,
+		workspaceId: String(value.workspaceId),
+		planId: input.planId,
+		planDigest: input.planDigest,
+		decision: "continue",
+		executionId: String(plan.executionId),
+		runId: String(plan.runId),
+		resources
 	};
 }
 
@@ -2329,11 +2405,18 @@ function recoveredWorkspaceE2EKey(snapshot, approval) {
   return key;
 }
 
-function recoveredWorkspaceE2EAttemptBody(approval) {
-  return {
-    approval,
-    approvalDigest: createHash("sha256").update(canonicalJson(approval)).digest("hex")
-  };
+function recoveredWorkspaceE2EAttemptBody(authority) {
+	return {
+		schemaVersion: 2,
+		approvalId: authority.approvalId,
+		launchOperationId: authority.launchOperationId,
+		planId: authority.planId,
+		planDigest: authority.planDigest,
+		decision: authority.decision,
+		confirmation: authority.confirmation,
+		expectedModel: authority.expectedModel,
+		modelRequestKey: authority.modelRequestKey
+	};
 }
 
 function recoveredWorkspaceE2EAttemptResponse(result, expectedStatus, expectedDigest) {
@@ -2341,18 +2424,25 @@ function recoveredWorkspaceE2EAttemptResponse(result, expectedStatus, expectedDi
     result.payload?.approvalDigest !== expectedDigest || !/^[a-z0-9][a-z0-9._:-]{2,127}$/.test(String(result.payload?.attemptId || ""))) {
     throw new Error("recovered_workspace_e2e_attempt_response_invalid");
   }
-  return { attemptId: result.payload.attemptId, status: result.payload.status };
+	return {
+		attemptId: result.payload.attemptId,
+		status: result.payload.status,
+		executionId: result.payload.executionId,
+		runId: result.payload.runId
+	};
 }
 
 export async function verifyRecoveredWorkspaceE2E({
   origin,
-  mergedSha,
-  customerEmail,
-  customerPassword,
-  approvalJson,
-  approvalId,
-  confirmation,
-  continuationEvidence,
+	mergedSha,
+	customerEmail,
+	customerPassword,
+	approvalId,
+	confirmation,
+	launchOperationId,
+	planId,
+	planDigest,
+	expectedModel,
   usageAttempts = DEFAULT_USAGE_ATTEMPTS,
   usageRetryDelayMs = DEFAULT_USAGE_RETRY_DELAY_MS,
   browserTimeoutMs = DEFAULT_BROWSER_TIMEOUT_MS,
@@ -2363,10 +2453,10 @@ export async function verifyRecoveredWorkspaceE2E({
   signal,
   now = new Date()
 } = {}) {
-  const normalizedEmail = String(customerEmail || "").trim().toLowerCase();
-  const approval = recoveredWorkspaceE2EApproval(approvalJson, { approvalId, confirmation, customerEmail: normalizedEmail, mergedSha }, now);
-  const continuation = recoveredWorkspaceE2EContinuation(continuationEvidence, approval);
-  if (!String(customerPassword || "") || !Number.isInteger(usageAttempts) || usageAttempts < 1 || usageAttempts > 1000 ||
+	const normalizedEmail = String(customerEmail || "").trim().toLowerCase();
+	const planInput = recoveredWorkspaceE2EPlanInput({ mergedSha, approvalId, confirmation, launchOperationId, planId, planDigest, expectedModel });
+	if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(normalizedEmail) || !String(customerPassword || "") ||
+		!Number.isInteger(usageAttempts) || usageAttempts < 1 || usageAttempts > 1000 ||
     !Number.isFinite(usageRetryDelayMs) || usageRetryDelayMs < 0 || usageRetryDelayMs > 300_000 ||
     !Number.isInteger(browserTimeoutMs) || browserTimeoutMs < 1 || browserTimeoutMs > 300_000 ||
     !Number.isInteger(modelTimeoutMs) || modelTimeoutMs < 1 || modelTimeoutMs > 300_000 ||
@@ -2374,18 +2464,25 @@ export async function verifyRecoveredWorkspaceE2E({
     throw new Error("recovered_workspace_e2e_config_invalid");
   }
   const normalizedOrigin = assertPublicHttpsUrl(origin, "public_console_origin_required", { hostname: "cloud.medopl.cn" }).origin;
-  const requestOptions = { fetchImpl, origin: normalizedOrigin, signal, timeoutMs: requestTimeoutMs };
-  const auth = await login({ ...requestOptions, email: normalizedEmail, password: String(customerPassword) });
-  if (auth.user?.accountId !== approval.customer.accountId || auth.user?.role !== "owner" || !auth.csrfToken) {
-    throw new Error("recovered_workspace_e2e_customer_login_failed");
-  }
-  const identity = sourceEnvelope(await requestJson({ ...requestOptions, auth, path: "/api/auth/me" }), "sub2api").data;
-  if (identity?.accountId !== approval.customer.accountId || String(identity?.email || "").trim().toLowerCase() !== normalizedEmail ||
-    identity?.role !== "owner" || identity?.status !== "active" || !/^[1-9][0-9]*$/.test(String(identity?.sub2apiUserId || ""))) {
-    throw new Error("recovered_workspace_e2e_customer_identity_mismatch");
-  }
+	const requestOptions = { fetchImpl, origin: normalizedOrigin, signal, timeoutMs: requestTimeoutMs };
+	const auth = await login({ ...requestOptions, email: normalizedEmail, password: String(customerPassword) });
+	if (!String(auth.user?.accountId || "") || auth.user?.role !== "owner" || !auth.csrfToken) {
+		throw new Error("recovered_workspace_e2e_customer_login_failed");
+	}
+	const identity = sourceEnvelope(await requestJson({ ...requestOptions, auth, path: "/api/auth/me" }), "sub2api").data;
+	if (identity?.accountId !== auth.user.accountId || String(identity?.email || "").trim().toLowerCase() !== normalizedEmail ||
+		identity?.role !== "owner" || identity?.status !== "active" || !/^[1-9][0-9]*$/.test(String(identity?.sub2apiUserId || ""))) {
+		throw new Error("recovered_workspace_e2e_customer_identity_mismatch");
+	}
+	const launchReadback = await authoritativeGet({
+		...requestOptions,
+		auth,
+		path: `/api/workspace-launches/${encodeURIComponent(planInput.launchOperationId)}`
+	});
+	if (!launchReadback.found) throw new Error("recovered_workspace_e2e_resource_closure_required");
+	const approval = recoveredWorkspaceE2EAuthority(launchReadback.payload, planInput, identity, normalizedEmail);
 
-  const runtime = sourceEnvelope(await requestJson({
+	const runtime = sourceEnvelope(await requestJson({
     ...requestOptions,
     auth,
     path: `/api/workspaces/${encodeURIComponent(approval.workspaceId)}/runtime-status`
@@ -2409,12 +2506,28 @@ export async function verifyRecoveredWorkspaceE2E({
     throw new Error("recovered_workspace_e2e_runtime_credentials_invalid");
   }
 
-  const keySnapshot = await readGatewayCanaryKeySnapshot(requestOptions, auth);
-  const key = recoveredWorkspaceE2EKey(keySnapshot, approval);
-  const walletBefore = walletFact(sourceEnvelope(await requestJson({ ...requestOptions, auth, path: "/api/gateway/wallet" }), "sub2api"), identity.sub2apiUserId);
+	const keySnapshot = await readGatewayCanaryKeySnapshot(requestOptions, auth);
+	const key = recoveredWorkspaceE2EKey(keySnapshot, approval);
+	const receipt = computeClaimContinuationReceipt(await requestJson({
+		...requestOptions,
+		auth,
+		path: `/api/billing/receipts/${encodeURIComponent(approval.resources.receiptId)}`
+	}), {
+		workspaceId: approval.workspaceId,
+		computeAllocationId: approval.resources.computeAllocationId,
+		storageId: approval.resources.storageId
+	}, {
+		receiptId: approval.resources.receiptId,
+		attachmentId: approval.resources.attachmentId,
+		workspaceApiKeyId: approval.resources.workspaceApiKeyId,
+		totalChargeUsdMicros: Number(launchReadback.payload?.totalChargeUsdMicros),
+		sizeGb: Number(launchReadback.payload?.sizeGb)
+	}, runtime);
+	const walletBefore = walletFact(sourceEnvelope(await requestJson({ ...requestOptions, auth, path: "/api/gateway/wallet" }), "sub2api"), identity.sub2apiUserId);
   const usageBefore = await gatewayUsageSnapshot(requestOptions, auth, key.id);
   const statsBefore = await gatewayUsageStats(requestOptions, auth, key.id);
-  const attemptBody = recoveredWorkspaceE2EAttemptBody(approval);
+	const attemptBody = recoveredWorkspaceE2EAttemptBody(approval);
+	const attemptDigest = createHash("sha256").update(canonicalJson(attemptBody)).digest("hex");
   const attemptPath = `/api/workspaces/${encodeURIComponent(approval.workspaceId)}/recovered-e2e-attempt`;
   let reserved;
 
@@ -2433,7 +2546,10 @@ export async function verifyRecoveredWorkspaceE2E({
         path: attemptPath,
         method: "POST",
         body: attemptBody
-      }), "attempted", attemptBody.approvalDigest);
+		}), "attempted", attemptDigest);
+		if (reserved && (String(reserved.executionId || "") !== approval.executionId || String(reserved.runId || "") !== approval.runId)) {
+			throw new Error("recovered_workspace_e2e_execution_identity_mismatch");
+		}
     }
   });
   if (!reserved) throw new Error("recovered_workspace_e2e_attempt_response_invalid");
@@ -2473,27 +2589,24 @@ export async function verifyRecoveredWorkspaceE2E({
     path: `${attemptPath}/complete`,
     method: "POST",
     body: attemptBody
-  }), "passed", attemptBody.approvalDigest);
+	}), "passed", attemptDigest);
 
   return {
     schemaVersion: 1,
     operationMode: "recovered_workspace_e2e",
     ok: true,
     status: "passed",
-    approval: { approvalId: approval.approvalId, approvalDigest: attemptBody.approvalDigest },
-    release: { mergedSha: approval.mergedMainSha, cloudImageDigest: approval.cloudImageDigest, workspaceImageDigest: approval.workspaceImageDigest },
-    customer: { accountId: approval.customer.accountId },
-    launch: { operationId: approval.launchOperationId, workspaceId: approval.workspaceId },
-    resources: { ...approval.resources },
+		approval: { approvalId: approval.approvalId, approvalDigest: attemptDigest },
+		release: { mergedSha: planInput.mergedSha },
+		customer: { accountId: approval.customer.accountId },
+		launch: { operationId: approval.launchOperationId, workspaceId: approval.workspaceId },
+		resources: { ...approval.resources },
+		recovery: { planId: approval.planId, planDigest: approval.planDigest, executionId: approval.executionId, runId: approval.runId },
+		receipt,
     marker: { attemptId: reserved.attemptId, reserved: reserved.status, completed: completed.status },
     workspace,
     balance: { before: walletBefore, after: walletAfter },
     usage: { request: requestUsage, stats: { before: statsBefore, after: statsAfter, delta: statsDelta(statsBefore, statsAfter) }, readAttempts: usageReadAttempts },
-    continuation: {
-      verifiedAt: continuationEvidence.verifiedAt,
-      receiptId: continuation.receipt.receiptId,
-      terminalEvidence: continuation.terminalEvidence
-    },
     writeCounts: {
       controlPlaneE2EAttemptReservations: 1,
       modelRequests: 1,
@@ -4356,14 +4469,37 @@ export async function runProductionLiveQaCli({
   now = new Date()
 } = {}) {
   if (argv.includes("--help") || argv.includes("-h")) {
-    stdout.write("Usage: node tools/production-live-qa.ts --read-only\nA Workspace identity receipt uses --workspace-identity-diagnose with protected customer credentials and exact account/workspace IDs. Compute claim modes use --compute-claim-diagnose, --compute-claim-validate, --compute-claim-recover, or --compute-claim-continue with a non-secret target JSON. A recovered Workspace E2E requires --recovered-workspace-e2e --allow-model-write, an independent approval, and an absolute continuation artifact path. A manual-review diagnosis requires --manual-review-diagnose and a non-secret target JSON. A fixed-slot model request requires --allow-gateway-write --allow-model-write. A real customer canary requires --basic-customer-canary, an exact funding mode, and its explicit approvals.\n");
+    stdout.write("Usage: node tools/production-live-qa.ts --read-only\nA Workspace identity receipt uses --workspace-identity-diagnose with protected customer credentials and exact account/workspace IDs. Recovery Plan evidence uses --recovery-plan-validate with only the account and original launch identity. A recovered Workspace E2E requires --recovered-workspace-e2e --allow-model-write, an independent approval, and the persisted Plan reference. A fixed-slot model request requires --allow-gateway-write --allow-model-write. A real customer canary requires --basic-customer-canary, an exact funding mode, and its explicit approvals.\n");
     return 0;
   }
   const computeClaimMode = computeClaimCliMode(argv);
   const workspaceLaunchReadbackMode = workspaceLaunchReadbackCliMode(argv);
+  const recoveryPlanValidateMode = argv.includes("--recovery-plan-validate");
   try {
     if (env.OPL_VERIFY_MODEL_ACCESS_KEY) throw new Error("production_live_qa_raw_key_forbidden");
     const args = cliArgs(argv);
+    if (args["recovery-plan-validate"] === "true") {
+      const conflicts = [
+        "read-only", "manual-review-diagnose", "workspace-launch-readback-diagnose", "workspace-launch-readback-recover",
+        "compute-claim-diagnose", "compute-claim-validate", "compute-claim-recover", "compute-claim-continue",
+        "recovered-workspace-e2e", "basic-customer-canary", "allow-account-provision", "allow-wallet-recharge",
+        "allow-workspace-purchase", "allow-model-write", "allow-gateway-write", "approval-id", "funding-mode", "phase"
+      ];
+      if (conflicts.some((name) => args[name])) throw new Error("workspace_recovery_plan_validation_conflict");
+      const result = await validateWorkspaceRecoveryPlan({
+        launchOperationId: args["launch-operation-id"] || env.OPL_RECOVERY_PLAN_LAUNCH_OPERATION_ID,
+        planId: args["plan-id"] || env.OPL_RECOVERY_PLAN_ID,
+        planDigest: args["plan-digest"] || env.OPL_RECOVERY_PLAN_DIGEST,
+        origin: args.origin || env.OPL_CONSOLE_ORIGIN,
+        adminEmail: env.OPL_SUB2API_ADMIN_EMAIL,
+        adminPassword: env.OPL_SUB2API_ADMIN_PASSWORD,
+        requestTimeoutMs: Number(args["request-timeout-ms"] || env.OPL_VERIFY_REQUEST_TIMEOUT_MS || DEFAULT_REQUEST_TIMEOUT_MS),
+        fetchImpl,
+        now
+      });
+      stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+      return result.status === "proven" ? 0 : 1;
+    }
     if (args["workspace-identity-diagnose"] === "true") {
       const conflicts = [
         "read-only", "manual-review-diagnose", "workspace-launch-readback-diagnose", "workspace-launch-readback-recover",
@@ -4583,34 +4719,28 @@ export async function runProductionLiveQaCli({
       const conflictingArgs = [
         "read-only", "manual-review-diagnose", "compute-claim-diagnose", "compute-claim-validate", "compute-claim-recover", "compute-claim-continue",
         "basic-customer-canary", "allow-account-provision", "allow-wallet-recharge", "allow-workspace-purchase",
-        "allow-gateway-write", "allow-existing-precharge-recovery", "funding-mode", "phase"
+        "allow-gateway-write", "allow-existing-precharge-recovery", "funding-mode", "phase", "continuation-evidence"
       ];
       const forbiddenEnv = [
         "KUBECONFIG", "TENCENT_DEPLOY_KUBECONFIG_PATH", "TENCENT_DEPLOY_KUBECONFIG_B64", "TENCENT_DEPLOY_KUBECONFIG",
         "TENCENTCLOUD_SECRET_ID", "TENCENTCLOUD_SECRET_KEY", "OPL_INTERNAL_SERVICE_TOKEN",
-        "OPL_SUB2API_ADMIN_EMAIL", "OPL_SUB2API_ADMIN_PASSWORD"
+        "OPL_SUB2API_ADMIN_EMAIL", "OPL_SUB2API_ADMIN_PASSWORD", "OPL_RECOVERED_WORKSPACE_E2E_APPROVAL_JSON"
       ];
       if (args["allow-model-write"] !== "true" || !args["approval-id"] || conflictingArgs.some((name) => args[name]) ||
         forbiddenEnv.some((name) => String(env[name] || ""))) {
         throw new Error("recovered_workspace_e2e_cli_conflict");
-      }
-      const continuationPath = String(args["continuation-evidence"] || "");
-      if (!continuationPath.startsWith("/")) throw new Error("recovered_workspace_e2e_cli_continuation_evidence_invalid");
-      let continuationEvidence;
-      try {
-        continuationEvidence = JSON.parse(await readFile(continuationPath, "utf8"));
-      } catch {
-        throw new Error("recovered_workspace_e2e_cli_continuation_evidence_invalid");
       }
       const result = await verifyRecoveredWorkspaceE2E({
         origin: args.origin || env.OPL_CONSOLE_ORIGIN,
         mergedSha: env.OPL_MERGED_SHA,
         customerEmail: env.OPL_RECOVERED_WORKSPACE_CUSTOMER_EMAIL,
         customerPassword: env.OPL_RECOVERED_WORKSPACE_CUSTOMER_PASSWORD,
-        approvalJson: env.OPL_RECOVERED_WORKSPACE_E2E_APPROVAL_JSON,
         approvalId: args["approval-id"],
         confirmation: env.OPL_RECOVERED_WORKSPACE_E2E_CONFIRMATION,
-        continuationEvidence,
+        launchOperationId: args["launch-operation-id"],
+        planId: args["recovery-plan-id"],
+        planDigest: args["recovery-plan-digest"],
+        expectedModel: env.OPL_RECOVERED_WORKSPACE_EXPECTED_MODEL,
         usageAttempts: Number(env.OPL_VERIFY_USAGE_ATTEMPTS || DEFAULT_USAGE_ATTEMPTS),
         usageRetryDelayMs: Number(env.OPL_VERIFY_USAGE_RETRY_DELAY_MS || DEFAULT_USAGE_RETRY_DELAY_MS),
         browserTimeoutMs: Number(env.OPL_VERIFY_BROWSER_TIMEOUT_MS || DEFAULT_BROWSER_TIMEOUT_MS),
@@ -4730,6 +4860,21 @@ export async function runProductionLiveQaCli({
     stdout.write(`${JSON.stringify(result, null, 2)}\n`);
     return 0;
 	} catch (error) {
+		if (recoveryPlanValidateMode) {
+		  const artifact = {
+		    schemaVersion: 1,
+		    operationMode: RECOVERY_PLAN_VALIDATE_MODE,
+		    status: "blocked",
+		    recoveryEligible: false,
+		    errorCode: /^workspace_recovery_plan_[a-z_]+$/.test(String(error?.message || ""))
+		      ? error.message
+		      : "workspace_recovery_plan_validation_failed",
+		    runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
+		  };
+		  stdout.write(`${JSON.stringify(artifact, null, 2)}\n`);
+		  stderr.write(`${JSON.stringify({ ok: false, errorCode: artifact.errorCode }, null, 2)}\n`);
+		  return 1;
+		}
 		if (workspaceLaunchReadbackMode) {
 		  const artifact = blockedWorkspaceLaunchReadbackArtifact(workspaceLaunchReadbackMode);
 		  await emitWorkspaceLaunchReadbackResult(artifact, env, stdout);
@@ -4747,6 +4892,24 @@ export async function runProductionLiveQaCli({
   }
 }
 
+const RETIRED_RECOVERY_CLI_FLAGS = new Set([
+  "--manual-review-diagnose",
+  "--workspace-launch-readback-diagnose",
+  "--workspace-launch-readback-recover",
+  "--compute-claim-diagnose",
+  "--compute-claim-validate",
+  "--compute-claim-recover",
+  "--compute-claim-continue"
+]);
+
+export async function runProductionLiveQaEntrypoint({ argv = process.argv.slice(2), stderr = process.stderr, ...options } = {}) {
+  if (argv.some((value) => RETIRED_RECOVERY_CLI_FLAGS.has(value))) {
+    stderr.write(`${JSON.stringify({ ok: false, errorCode: "production_live_qa_legacy_recovery_mode_retired" }, null, 2)}\n`);
+    return 1;
+  }
+  return runProductionLiveQaCli({ ...options, argv, stderr });
+}
+
 if (import.meta.url === pathToFileURL(process.argv[1] || "").href) {
-  runProductionLiveQaCli().then((code) => { process.exitCode = code; });
+  runProductionLiveQaEntrypoint().then((code) => { process.exitCode = code; });
 }

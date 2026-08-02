@@ -214,16 +214,42 @@
       "success": "continue_same_launch_storage_runtime_activation_receipt",
       "failure": "manual_review"
     },
+    "recoveryPlan": {
+      "authority": "control_plane_only",
+      "persistence": "original_workspace.launch.v2_runtime_operation",
+      "operatorFlow": ["console_diagnose", "console_view_persisted_plan", "zero_external_mutation_validate", "console_confirm_continue"],
+      "operatorInput": ["accountId", "launchOperationId", "decision"],
+      "consoleExecuteRequest": ["planId", "planDigest", "decision", "confirmation"],
+      "forbiddenOperatorResourceInput": ["cvm", "node", "machine", "workspace", "storage", "workspaceApiKey", "cloudDigest", "workspaceDigest", "approvalJson"],
+      "authoritativeSources": ["control_plane_original_launch", "fabric_operation_store", "tencent_describe", "kubernetes_get", "sub2api_debit_history", "ledger_receipt"],
+      "releaseBindingSource": ["OPL_RELEASE_SHA", "OPL_CLOUD_IMAGE", "OPL_WORKSPACE_IMAGE"],
+      "targetBindingSource": "authoritative_service_readback_only",
+      "mismatchEvidence": "field_name_plus_safe_expected_actual_or_digest_fail_closed",
+      "externalValidationMutationCounts": {"sub2api": 0, "tencent": 0, "kubernetes": 0},
+      "execution": {
+        "approvalDigest": "control_plane_generated_from_exact_release_target_and_allowed_write_binding",
+        "singleWinner": "persisted_postgresql_cas_lease",
+        "fencing": "current_byte_exact_lease_token_required_to_finalize",
+        "runIdentity": "stable_from_execution_id_and_approval_digest",
+        "unknownResult": "reconcile_same_persisted_execution_never_create_second_execution"
+      },
+      "githubActionsRole": "deploy_zero_mutation_validate_and_redacted_evidence_only_no_recovery_mutation_logic"
+    },
     "computeClaimRecoveryCustomerProjection": {
       "source": "persisted_workspace_launch_compute_claim_approval",
       "fields": ["approvalId", "approvalDigest", "recoveryKey", "workspaceImageDigest"],
       "forbidden": ["customer_email", "full_approval", "gateway_secret_ref", "credential", "capability"]
     },
     "manualReviewRecovery": {
-      "route": "POST /api/operator/workspace-launches/{operationId}/recover",
-      "requestFields": ["accountId", "billingOperationId", "evidenceRef"],
+      "entry": "console_diagnose_view_server_plan_confirm_continue",
+      "route": "POST /api/operator/workspace-launches/{operationId}/recovery-plan/execute",
+      "requestFields": ["planId", "planDigest", "decision", "confirmation"],
+      "operatorInputFields": ["accountId", "launchOperationId", "decision"],
+      "operatorAuthorization": "authenticated_reserved_operator_session_plus_csrf",
+      "authority": "control_plane_persisted_recovery_plan_approval_execution_and_lease",
+      "resourceIdentityInput": "forbidden_server_authoritative_readback_only",
       "eligibleStatus": "manual_review",
-      "allowedAction": "recover_workspace_launch",
+      "allowedAction": "continue_original_workspace_launch",
       "nonEligibleStatuses": "no_allowed_actions",
       "providerTruthContract": "opl-cloud-service-boundary-contract.json#services.fabric.workspaceLaunchManualReviewProviderTruth",
       "matrix": {
@@ -235,19 +261,44 @@
         "receiptPending": "retry_purchase_receipt_only",
         "refundConfirmedReceiptPending": "retry_refund_receipt_only"
       },
-      "implementation": "integrated_local_fake_verified"
+      "legacyPublicRoutes": [
+        "POST /api/operator/workspace-launches/{operationId}/recover",
+        "GET /api/operator/workspace-launches/{operationId}/readback-recovery-proof"
+      ],
+      "legacyPublicRouteStatus": "404_retired",
+      "implementation": "server_authoritative_plan_local_focused_verified_not_merged_deployed_or_production_verified"
     },
     "computeClaimRecovery": {
       "trigger": "debit_confirmed_unique_compute_created_claim_interrupted_before_local_storage_operation",
       "pendingState": "compute_claim_pending",
-      "proofRoute": "POST /api/operator/workspace-launches/{operationId}/compute-claim-recovery/proof",
-      "claimRoute": "POST /api/operator/workspace-launches/{operationId}/compute-claim-recovery/claim",
+      "publicRoutes": [],
+      "legacyPublicRoutes": [
+        "POST /api/operator/workspace-launches/{operationId}/compute-claim-recovery/proof",
+        "POST /api/operator/workspace-launches/{operationId}/compute-claim-recovery/validate",
+        "POST /api/operator/workspace-launches/{operationId}/compute-claim-recovery/claim"
+      ],
+      "legacyPublicRouteStatus": "404_retired",
+      "planRoutes": {
+        "diagnose": "POST /api/operator/workspace-launches/{operationId}/recovery-plan/diagnose",
+        "read": "GET /api/operator/workspace-launches/{operationId}/recovery-plan",
+        "validate": "POST /api/operator/workspace-launches/{operationId}/recovery-plan/validate",
+        "execute": "POST /api/operator/workspace-launches/{operationId}/recovery-plan/execute"
+      },
       "proofContract": "opl-cloud-service-boundary-contract.json#services.fabric.workspaceComputeClaimRecovery",
       "identitySource": ["workspace.launch.v2", "create_compute_allocation", "allocation_plan", "machine_ownership"],
       "legacyCandidates": [{"status": "manual_review", "phase": "compute_fulfilling"}],
       "legacyNormalization": "after_debit_identity_local_storage_zero_and_compute_plus_exact_cbs_proof_postgresql_cas_to_compute_claim_pending",
       "normalizationMutationCounts": {"sub2api": 0, "tencent": 0, "kubernetes": 0},
-      "claimAuthorization": "operator_session_plus_internal_runner_capability_and_exact_release_owner_approval",
+      "claimAuthorization": "reserved_operator_session_plus_csrf_then_control_plane_persisted_validated_plan_and_server_generated_approval_digest",
+      "consoleSubmittedFields": ["planId", "planDigest", "decision", "confirmation"],
+      "consoleSubmittedResourceFields": [],
+      "executionAuthority": {
+        "owner": "control_plane",
+        "singleWinner": "postgresql_cas_persisted_execution_lease",
+        "fencing": "byte_exact_current_lease_token_required_to_finalize",
+        "identity": ["planId", "planDigest", "approvalDigest", "executionId", "runId", "decision"],
+        "replay": "same_plan_digest_and_decision_returns_same_execution_and_run_identity"
+      },
       "fabricIdempotencyBinding": ["launch_operation_id", "idempotency_key", "target_hash", "request_hash"],
       "claimMutationBounds": {"sub2api": 0, "tencent": {"min": 0, "max": 5}, "kubernetes": {"min": 0, "max": 1}},
       "storageProof": "DescribeDisks_only_four_ownership_tags_complete_pagination_exact_facts_mutation_zero",

@@ -86,14 +86,14 @@ test("launch freeze fixes the V2 products, owner lanes, settlement, and verifica
   assert.equal(freeze.workspaceLaunch.autoRenew.tencentAutomaticRenewal, false);
   assert.equal(freeze.workspaceLaunch.autoRenew.currentBranchImplementation, "deferred_control_plane_ui_and_monthly_worker_outside_fabric_nodepool_hard_cut");
   assert.deepEqual(freeze.workspaceLaunch.customerResponsePricingFields, ["priceVersion", "currency", "totalChargeUsdMicros"]);
-  assert.deepEqual(freeze.workspaceLaunch.manualReviewRecovery, {
-    route: "POST /api/operator/workspace-launches/{operationId}/recover",
-    requestFields: ["accountId", "billingOperationId", "evidenceRef"],
-    eligibleStatus: "manual_review",
-    allowedAction: "recover_workspace_launch",
-    nonEligibleStatuses: "no_allowed_actions",
-    providerTruthContract: "opl-cloud-service-boundary-contract.json#services.fabric.workspaceLaunchManualReviewProviderTruth",
-    matrix: {
+  assert.equal(freeze.workspaceLaunch.recoveryPlan.authority, "control_plane_only");
+  assert.deepEqual(freeze.workspaceLaunch.recoveryPlan.operatorInput, ["accountId", "launchOperationId", "decision"]);
+  assert.deepEqual(freeze.workspaceLaunch.recoveryPlan.consoleExecuteRequest, ["planId", "planDigest", "decision", "confirmation"]);
+  assert.equal(freeze.workspaceLaunch.recoveryPlan.execution.fencing, "current_byte_exact_lease_token_required_to_finalize");
+  assert.equal(freeze.workspaceLaunch.manualReviewRecovery.route, "POST /api/operator/workspace-launches/{operationId}/recovery-plan/execute");
+  assert.equal(freeze.workspaceLaunch.manualReviewRecovery.operatorAuthorization, "authenticated_reserved_operator_session_plus_csrf");
+  assert.equal(freeze.workspaceLaunch.manualReviewRecovery.resourceIdentityInput, "forbidden_server_authoritative_readback_only");
+  assert.deepEqual(freeze.workspaceLaunch.manualReviewRecovery.matrix, {
       computeReadyStorageAbsent: "resume_storage_fulfilling_with_original_operation_identity",
       computeReadyStorageReady: "resume_attaching_with_original_operation_identity",
       computeAbsentStorageAbsent: "one_idempotent_workspace_refund",
@@ -101,20 +101,45 @@ test("launch freeze fixes the V2 products, owner lanes, settlement, and verifica
       providerUnknown: "remain_manual_review",
       receiptPending: "retry_purchase_receipt_only",
       refundConfirmedReceiptPending: "retry_refund_receipt_only"
-    },
-    implementation: "integrated_local_fake_verified"
   });
-  assert.deepEqual(freeze.workspaceLaunch.computeClaimRecovery, {
+  assert.deepEqual(freeze.workspaceLaunch.computeClaimRecovery.publicRoutes, []);
+  assert.equal(freeze.workspaceLaunch.computeClaimRecovery.legacyPublicRouteStatus, "404_retired");
+  assert.equal(freeze.workspaceLaunch.computeClaimRecovery.claimAuthorization, "reserved_operator_session_plus_csrf_then_control_plane_persisted_validated_plan_and_server_generated_approval_digest");
+  assert.deepEqual(freeze.workspaceLaunch.computeClaimRecovery.consoleSubmittedResourceFields, []);
+  assert.deepEqual(freeze.workspaceLaunch.computeClaimRecovery.executionAuthority, {
+    owner: "control_plane",
+    singleWinner: "postgresql_cas_persisted_execution_lease",
+    fencing: "byte_exact_current_lease_token_required_to_finalize",
+    identity: ["planId", "planDigest", "approvalDigest", "executionId", "runId", "decision"],
+    replay: "same_plan_digest_and_decision_returns_same_execution_and_run_identity"
+  });
+  assert.deepEqual({
+    trigger: freeze.workspaceLaunch.computeClaimRecovery.trigger,
+    pendingState: freeze.workspaceLaunch.computeClaimRecovery.pendingState,
+    proofContract: freeze.workspaceLaunch.computeClaimRecovery.proofContract,
+    identitySource: freeze.workspaceLaunch.computeClaimRecovery.identitySource,
+    legacyCandidates: freeze.workspaceLaunch.computeClaimRecovery.legacyCandidates,
+    legacyNormalization: freeze.workspaceLaunch.computeClaimRecovery.legacyNormalization,
+    normalizationMutationCounts: freeze.workspaceLaunch.computeClaimRecovery.normalizationMutationCounts,
+    fabricIdempotencyBinding: freeze.workspaceLaunch.computeClaimRecovery.fabricIdempotencyBinding,
+    claimMutationBounds: freeze.workspaceLaunch.computeClaimRecovery.claimMutationBounds,
+    storageProof: freeze.workspaceLaunch.computeClaimRecovery.storageProof,
+    storageApprovalBinding: freeze.workspaceLaunch.computeClaimRecovery.storageApprovalBinding,
+    storageCreateBounds: freeze.workspaceLaunch.computeClaimRecovery.storageCreateBounds,
+    storageReplay: freeze.workspaceLaunch.computeClaimRecovery.storageReplay,
+    normalRetry: freeze.workspaceLaunch.computeClaimRecovery.normalRetry,
+    successTransition: freeze.workspaceLaunch.computeClaimRecovery.successTransition,
+    failureTransition: freeze.workspaceLaunch.computeClaimRecovery.failureTransition,
+    forbidden: freeze.workspaceLaunch.computeClaimRecovery.forbidden,
+    currentImplementation: freeze.workspaceLaunch.computeClaimRecovery.currentImplementation
+  }, {
     trigger: "debit_confirmed_unique_compute_created_claim_interrupted_before_local_storage_operation",
     pendingState: "compute_claim_pending",
-    proofRoute: "POST /api/operator/workspace-launches/{operationId}/compute-claim-recovery/proof",
-    claimRoute: "POST /api/operator/workspace-launches/{operationId}/compute-claim-recovery/claim",
     proofContract: "opl-cloud-service-boundary-contract.json#services.fabric.workspaceComputeClaimRecovery",
     identitySource: ["workspace.launch.v2", "create_compute_allocation", "allocation_plan", "machine_ownership"],
     legacyCandidates: [{ status: "manual_review", phase: "compute_fulfilling" }],
     legacyNormalization: "after_debit_identity_local_storage_zero_and_compute_plus_exact_cbs_proof_postgresql_cas_to_compute_claim_pending",
     normalizationMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
-    claimAuthorization: "operator_session_plus_internal_runner_capability_and_exact_release_owner_approval",
     fabricIdempotencyBinding: ["launch_operation_id", "idempotency_key", "target_hash", "request_hash"],
     claimMutationBounds: { sub2api: 0, tencent: { min: 0, max: 5 }, kubernetes: { min: 0, max: 1 } },
     storageProof: "DescribeDisks_only_four_ownership_tags_complete_pagination_exact_facts_mutation_zero",
@@ -507,12 +532,12 @@ test("human invariants reject paid per-run resource verification", async () => {
   assert.match(invariants, /unique matching Redeem Code history entry is the authority/);
   assert.match(invariants, /ChargeAttempted.*ChargeConfirmation.*skip/is);
   assert.match(invariants, /POST \/fabric\/workspace-activation-truth.*Describe.*GET.*mutation.*0/is);
-  assert.match(invariants, /runnerDirectMutationCounts.*0.*does not mean.*background.*0/is);
+  assert.match(invariants, /runnerDirectMutationCounts=0.*runner performs no.*direct.*write.*later operator-confirmed.*separate Control Plane operation/is);
   assert.match(invariants, /GET \/fabric\/monthly-provider-truth\?computeAllocationId=<id>&storageVolumeId=<id>/);
   assert.match(invariants, /provider_truth.*Describe-only/is);
   assert.match(invariants, /local\s+identit.*unknown.*absent.*refund/is);
   assert.match(invariants, /does not run.*Sync.*Tag.*kubectl apply.*delete.*label.*purchase.*renew.*destroy/is);
-  assert.match(invariants, /recover_workspace_launch/);
+  assert.match(invariants, /Console flow.*diagnose.*view persisted Recovery Plan.*validate.*confirm continue/is);
   assert.doesNotMatch(invariants, /manual[- ]review[^.\n]{0,160}code-complete/i);
 });
 

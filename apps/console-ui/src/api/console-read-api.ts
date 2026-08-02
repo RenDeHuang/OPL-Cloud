@@ -45,7 +45,6 @@ import type {
   SupportTicketMappingDTO,
   SupportTicketPageDTO,
   UpdateGatewayKeyRequest,
-  WorkspaceLaunchRecoveryRequest,
   DiagnoseWorkspaceLaunchRecoveryPlanRequest,
   ExecuteWorkspaceLaunchRecoveryPlanRequest,
   ValidateWorkspaceLaunchRecoveryPlanRequest,
@@ -264,10 +263,6 @@ export function disableOperatorAccount(accountId: string, reason: string, csrfTo
 
 export function resolveBillingReview(resourceType: string, resourceId: string, input: BillingReviewResolutionRequest, csrfToken: string, idempotencyKey: string): Promise<OperationStatusDTO> {
   return postJson<unknown>(`/api/operator/billing-reviews/${encodeURIComponent(resourceType)}/${encodeURIComponent(resourceId)}/resolve`, input, csrfToken, idempotencyKey).then(decodeDto<OperationStatusDTO>);
-}
-
-export function recoverWorkspaceLaunch(operationId: string, input: WorkspaceLaunchRecoveryRequest, csrfToken: string, idempotencyKey: string): Promise<OperationStatusDTO> {
-  return postJson<unknown>(`/api/operator/workspace-launches/${encodeURIComponent(operationId)}/recover`, input, csrfToken, idempotencyKey).then(decodeDto<OperationStatusDTO>);
 }
 
 export function diagnoseWorkspaceLaunchRecoveryPlan(operationId: string, input: DiagnoseWorkspaceLaunchRecoveryPlanRequest, csrfToken: string): Promise<WorkspaceLaunchRecoveryPlanDTO> {
