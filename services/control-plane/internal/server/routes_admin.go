@@ -31,6 +31,72 @@ const (
 )
 
 func registerAdminRoutes(mux *http.ServeMux, app *controlPlaneServer, service *controlplane.Service) {
+	mux.HandleFunc("POST /api/operator/workspace-launches/{operationId}/recovery-plan/diagnose", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
+		input := decodeJSON(r)
+		accountID := stringValue(input["accountId"])
+		operationID := strings.TrimSpace(r.PathValue("operationId"))
+		if len(input) != 1 || accountID == "" || accountID != strings.TrimSpace(accountID) || operationID == "" {
+			writeError(w, http.StatusBadRequest, errInvalidBillingReview.Error())
+			return
+		}
+		plan, err := app.diagnoseWorkspaceRecoveryPlan(r.Context(), service, accountID, operationID)
+		if err != nil {
+			writeError(w, http.StatusConflict, "workspace_recovery_plan_unavailable")
+			return
+		}
+		writeJSON(w, http.StatusOK, workspaceRecoveryPlanHTTPProjection(plan))
+	}))
+	mux.HandleFunc("GET /api/operator/workspace-launches/{operationId}/recovery-plan", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
+		operationID := strings.TrimSpace(r.PathValue("operationId"))
+		if operationID == "" {
+			writeError(w, http.StatusBadRequest, errInvalidBillingReview.Error())
+			return
+		}
+		plan, err := app.getWorkspaceRecoveryPlan(r.Context(), operationID)
+		if err != nil {
+			writeBillingReviewResolutionError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, workspaceRecoveryPlanHTTPProjection(plan))
+	}))
+	mux.HandleFunc("POST /api/operator/workspace-launches/{operationId}/recovery-plan/validate", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
+		operationID := strings.TrimSpace(r.PathValue("operationId"))
+		input := decodeJSON(r)
+		planID, planDigest := stringValue(input["planId"]), stringValue(input["planDigest"])
+		if operationID == "" || !exactWorkspaceComputeClaimKeys(input, []string{"planId", "planDigest"}) ||
+			planID == "" || planID != strings.TrimSpace(planID) || !computeClaimApprovalDigestPattern.MatchString(planDigest) {
+			writeError(w, http.StatusBadRequest, errInvalidBillingReview.Error())
+			return
+		}
+		plan, err := app.validateWorkspaceRecoveryPlan(r.Context(), service, operationID, planID, planDigest)
+		if err != nil {
+			writeBillingReviewResolutionError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, workspaceRecoveryPlanHTTPProjection(plan))
+	}))
+	mux.HandleFunc("POST /api/operator/workspace-launches/{operationId}/recovery-plan/execute", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
+		key, ok := requiredMutationKey(w, r)
+		if !ok {
+			return
+		}
+		operationID := strings.TrimSpace(r.PathValue("operationId"))
+		input := decodeJSON(r)
+		planID, planDigest := stringValue(input["planId"]), stringValue(input["planDigest"])
+		decision, confirmation := stringValue(input["decision"]), stringValue(input["confirmation"])
+		if operationID == "" || !exactWorkspaceComputeClaimKeys(input, []string{"planId", "planDigest", "decision", "confirmation"}) ||
+			planID == "" || planID != strings.TrimSpace(planID) || !computeClaimApprovalDigestPattern.MatchString(planDigest) ||
+			decision != "continue" || confirmation != "CONTINUE_RECOVERY_PLAN" || key != "recovery-plan:"+planDigest {
+			writeError(w, http.StatusBadRequest, errInvalidBillingReview.Error())
+			return
+		}
+		plan, err := app.executeWorkspaceRecoveryPlan(r.Context(), service, operationID, planID, planDigest, decision, app.sessionUserID(r))
+		if err != nil {
+			writeBillingReviewResolutionError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, workspaceRecoveryPlanHTTPProjection(plan))
+	}))
 	mux.HandleFunc("POST /api/operator/accounts/{accountId}/wallet-adjustments", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
 		app.createWalletAdjustment(w, r, service)
 	}))
@@ -187,175 +253,6 @@ func registerAdminRoutes(mux *http.ServeMux, app *controlPlaneServer, service *c
 		}
 		writeJSON(w, http.StatusOK, result)
 	}))
-	mux.HandleFunc("POST /api/operator/workspace-launches/{operationId}/recover", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
-		key, ok := requiredMutationKey(w, r)
-		if !ok {
-			return
-		}
-		input := decodeJSON(r)
-		operationID := strings.TrimSpace(r.PathValue("operationId"))
-		if !workspaceLaunchRecoveryShapeValid(input) || operationID == "" || stringValue(input["billingOperationId"]) != operationID || !validBillingReviewOpaqueID(key) {
-			writeError(w, http.StatusBadRequest, errInvalidBillingReview.Error())
-			return
-		}
-		var approval *workspaceLaunchReadbackRecoveryApproval
-		if raw, ok := input["approval"]; ok {
-			approvalKey := key
-			if approvalMap, ok := raw.(map[string]any); ok {
-				approvalKey = stringValue(approvalMap["idempotencyKey"])
-			}
-			parsed, valid := workspaceLaunchReadbackRecoveryApprovalFromMap(raw, approvalKey)
-			if !valid || !app.computeClaimCapabilityValid(r) {
-				writeError(w, http.StatusBadRequest, errInvalidBillingReview.Error())
-				return
-			}
-			approval = &parsed
-		}
-		evidenceRef := stringValue(input["evidenceRef"])
-		if !validBillingReviewEvidenceRef(evidenceRef) {
-			writeError(w, http.StatusBadRequest, "invalid_evidence_ref")
-			return
-		}
-		resolution := billingReviewResolutionInput{
-			ResourceType: "workspace_launch", ResourceID: operationID, AccountID: stringValue(input["accountId"]), BillingOperationID: operationID,
-			EvidenceRef: evidenceRef, IdempotencyKey: key, Reviewer: app.sessionUserID(r), ReadbackApproval: approval,
-		}
-		result, replayed, err := app.recoverWorkspaceLaunchReviewWithReplay(r.Context(), service, resolution)
-		if err != nil {
-			writeBillingReviewResolutionError(w, err)
-			return
-		}
-		if !replayed {
-			audit := app.auditEvent(r, "workspace.launch.recover", "workspace", stringValue(result["workspaceId"]), resolution.AccountID, nil, mergeMaps(result, map[string]any{"evidenceRef": evidenceRef}), stringValue(result["status"]))
-			audit["id"] = "audit-" + stableID("workspace.launch.recover", operationID, key)[:12]
-			if err := app.tables.SaveAuditEvent(r.Context(), audit); err != nil {
-				writeError(w, http.StatusInternalServerError, "state_persist_failed")
-				return
-			}
-		}
-		writeJSON(w, http.StatusOK, result)
-	}))
-	mux.HandleFunc("GET /api/operator/workspace-launches/{operationId}/readback-recovery-proof", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
-		operationID := strings.TrimSpace(r.PathValue("operationId"))
-		if operationID == "" {
-			writeError(w, http.StatusBadRequest, errInvalidBillingReview.Error())
-			return
-		}
-		proof, err := app.diagnoseWorkspaceLaunchReadbackRecovery(r.Context(), service, operationID)
-		if err != nil {
-			writeError(w, http.StatusConflict, "workspace_launch_readback_unconfirmed")
-			return
-		}
-		writeJSON(w, http.StatusOK, proof)
-	}))
-	mux.HandleFunc("POST /api/operator/workspace-launches/{operationId}/compute-claim-recovery/proof", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
-		operationID := strings.TrimSpace(r.PathValue("operationId"))
-		input, ok := workspaceComputeClaimRecoveryRequestFromMap(operationID, decodeJSON(r), false)
-		if !ok {
-			writeError(w, http.StatusBadRequest, errWorkspaceComputeClaimInvalid.Error())
-			return
-		}
-		proof, err := app.diagnoseWorkspaceComputeClaim(r.Context(), service, input)
-		if err == nil {
-			writeJSON(w, http.StatusOK, proof)
-			return
-		}
-		if workspaceComputeClaimSafeFailure(proof) {
-			writeJSON(w, http.StatusConflict, proof)
-			return
-		}
-		writeWorkspaceComputeClaimError(w, err)
-	}))
-	mux.HandleFunc("POST /api/operator/workspace-launches/{operationId}/compute-claim-recovery/validate", app.protected(true, app.computeClaimCapabilityProtected(func(w http.ResponseWriter, r *http.Request) {
-		key, ok := requiredMutationKey(w, r)
-		if !ok {
-			return
-		}
-		operationID := strings.TrimSpace(r.PathValue("operationId"))
-		input, ok := workspaceComputeClaimRecoveryRequestFromMap(operationID, decodeJSON(r), true)
-		if !ok || !validBillingReviewOpaqueID(key) {
-			writeError(w, http.StatusBadRequest, errWorkspaceComputeClaimInvalid.Error())
-			return
-		}
-		operation, err := app.loadWorkspaceComputeClaimOperation(r.Context(), operationID, input, true)
-		if err != nil {
-			writeWorkspaceComputeClaimError(w, err)
-			return
-		}
-		if workspaceComputeClaimLegacyCandidate(operation) {
-			proof, proofErr := service.ComputeClaimRecoveryProof(r.Context(), workspaceComputeClaimRecoveryInput(operation, input))
-			if proofErr != nil || !workspaceComputeClaimProofEligible(operation, input, proof, false) || !persistWorkspaceComputeClaimIdentityFromProof(&operation, proof) {
-				writeWorkspaceComputeClaimError(w, errWorkspaceComputeClaimIdentity)
-				return
-			}
-		}
-		binding, bindingErr := app.workspaceComputeClaimApprovalBinding(r.Context(), operation, input, key, operation.ComputeClaimApproval != nil)
-		persistedBindingMatches := operation.ComputeClaimApproval == nil || workspaceComputeClaimApprovalBindingMatches(*operation.ComputeClaimApproval, binding) ||
-			workspaceComputeClaimApprovalMayBeSuperseded(operation, *operation.ComputeClaimApproval, binding)
-		identityEvidence, err := service.ComputeClaimRecoveryIdentityEvidence(r.Context(), clients.ComputeClaimRecoveryClaimInput{
-			ComputeClaimRecoveryInput: workspaceComputeClaimRecoveryInput(operation, input), MachineName: operation.ComputeMachineName,
-			NodeName: operation.ComputeNodeName, CVMInstanceID: operation.ComputeCVMInstanceID, PrivateIP: operation.ComputePrivateIP,
-			InstanceType: operation.ComputeInstanceType, Zone: operation.ComputeZone,
-		})
-		if err != nil {
-			writeWorkspaceComputeClaimError(w, errWorkspaceComputeClaimIdentity)
-			return
-		}
-		providerProof, providerProofErr := service.ComputeClaimRecoveryProof(r.Context(), workspaceComputeClaimRecoveryInput(operation, input))
-		identityEvidence.Checks = append(workspaceComputeClaimApprovalIdentityEvidence(operation, input, binding, key), identityEvidence.Checks...)
-		identityEvidence.Checks = append(identityEvidence.Checks, workspaceComputeClaimProviderIdentityEvidence(input, providerProof, providerProofErr)...)
-		statusCode, status, errorCode := http.StatusOK, "proven", "none"
-		allIdentityChecksMatch := true
-		for _, check := range identityEvidence.Checks {
-			allIdentityChecksMatch = allIdentityChecksMatch && check.Matches
-		}
-		if bindingErr != nil || !persistedBindingMatches || !allIdentityChecksMatch {
-			statusCode, status, errorCode = http.StatusConflict, "blocked", "identity_mismatch"
-		}
-		writeJSON(w, statusCode, map[string]any{
-			"schemaVersion": 2, "status": status, "errorCode": errorCode, "approvalId": binding.ApprovalID, "approvalDigest": binding.ApprovalDigest,
-			"launchOperationId": operation.ID, "accountId": operation.AccountID, "workspaceId": operation.WorkspaceID,
-			"identityEvidence":           identityEvidence,
-			"runnerDirectMutationCounts": map[string]any{"sub2api": 0, "tencent": 0, "kubernetes": 0},
-		})
-	})))
-	mux.HandleFunc("POST /api/operator/workspace-launches/{operationId}/compute-claim-recovery/claim", app.protected(true, app.computeClaimCapabilityProtected(func(w http.ResponseWriter, r *http.Request) {
-		key, ok := requiredMutationKey(w, r)
-		if !ok {
-			return
-		}
-		operationID := strings.TrimSpace(r.PathValue("operationId"))
-		rawInput := decodeJSON(r)
-		input, ok := workspaceComputeClaimRecoveryRequestFromMap(operationID, rawInput, true)
-		if !ok || !validBillingReviewOpaqueID(key) {
-			writeError(w, http.StatusBadRequest, errWorkspaceComputeClaimInvalid.Error())
-			return
-		}
-		operation, operationFound, operationErr := app.workspaceLaunchOperation(r.Context(), operationID)
-		if operationErr != nil {
-			writeWorkspaceComputeClaimError(w, operationErr)
-			return
-		}
-		if !operationFound {
-			writeWorkspaceComputeClaimError(w, errBillingReviewNotFound)
-			return
-		}
-		expiresAt, expiresErr := time.Parse(time.RFC3339, input.ExpiresAt)
-		if expiresErr != nil || (!expiresAt.After(time.Now().UTC()) && operation.ComputeClaimApproval == nil) {
-			writeError(w, http.StatusConflict, errWorkspaceComputeClaimIdentity.Error())
-			return
-		}
-		proof, err := app.claimWorkspaceCompute(r.Context(), service, input, key)
-		if err == nil {
-			writeJSON(w, http.StatusOK, proof)
-			return
-		}
-		if workspaceComputeClaimSafeFailure(proof) {
-			writeJSON(w, http.StatusConflict, proof)
-			return
-		}
-		writeWorkspaceComputeClaimError(w, err)
-	})))
 	mux.HandleFunc("POST /api/operator/billing-reviews/{resourceType}/{id}/resolve", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
 		input := decodeJSON(r)
 		if !billingReviewRequestShapeValid(input) {
@@ -1334,10 +1231,14 @@ func (app *controlPlaneServer) operatorReconciliationPage(ctx context.Context, p
 		if resourceID == "" || accountID == "" || operationID == "" {
 			return
 		}
+		progressionOwner := "operator_recovery"
+		if action == "diagnose_workspace_recovery_plan" {
+			progressionOwner = "control_plane_recovery_plan"
+		}
 		item := map[string]any{
 			"id": resourceID, "resourceType": resourceType, "status": "manual_review", "accountId": accountID,
 			"billingOperationId": operationID, "phase": phase, "errorCode": errorCode, "allowedActions": []string{action},
-			"operationRef": operationID,
+			"progressionOwner": progressionOwner, "operationRef": operationID,
 		}
 		if receiptID != "" {
 			item["receiptRef"] = receiptID
@@ -1353,7 +1254,7 @@ func (app *controlPlaneServer) operatorReconciliationPage(ctx context.Context, p
 			appendReview(
 				"workspace", operationID, firstNonEmpty(stringValue(operation["accountId"]), stringValue(details["accountId"])), operationID,
 				firstNonEmpty(stringValue(details["phase"]), "manual_review"), firstNonEmpty(stringValue(details["errorCode"]), stringValue(details["lastBillingError"])),
-				"recover_workspace_launch", firstNonEmpty(stringValue(operation["receiptId"]), stringValue(details["receiptId"])),
+				"diagnose_workspace_recovery_plan", firstNonEmpty(stringValue(operation["receiptId"]), stringValue(details["receiptId"])),
 			)
 		case "workspace.renewal":
 			appendReview(
@@ -1370,7 +1271,8 @@ func (app *controlPlaneServer) operatorReconciliationPage(ctx context.Context, p
 		items = append(items, map[string]any{
 			"id": stringValue(reconciliation["id"]), "resourceType": "workspace", "status": stringValue(reconciliation["status"]),
 			"accountId": "", "billingOperationId": stringValue(reconciliation["id"]), "phase": stringValue(reconciliation["status"]),
-			"errorCode": firstNonEmpty(stringValue(reconciliation["reason"]), stringValue(reconciliation["status"])), "allowedActions": []string{},
+			"errorCode":        firstNonEmpty(stringValue(reconciliation["reason"]), stringValue(reconciliation["status"])),
+			"progressionOwner": "none", "allowedActions": []string{},
 		})
 	}
 	sort.Slice(items, func(i, j int) bool {

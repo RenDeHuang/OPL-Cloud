@@ -41,6 +41,7 @@
         "OPL_PUBLIC_URL": "https://cloud.medopl.cn",
         "OPL_CONSOLE_DOMAIN": "cloud.medopl.cn",
         "OPL_WORKSPACE_DOMAIN": "workspace.medopl.cn",
+        "OPL_RELEASE_SHA": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "OPL_CLOUD_IMAGE": "registry.example.com/opl/opl-cloud@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "OPL_WORKSPACE_IMAGE": "registry.example.com/opl/one-person-lab-app@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
         "OPL_K8S_NAMESPACE": "opl-cloud",

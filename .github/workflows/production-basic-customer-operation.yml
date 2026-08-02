@@ -8,24 +8,20 @@ on:
         required: true
         type: string
       approval_id:
-        description: Exact release-owner approval ID encoded by the production approval document.
-        required: true
+        description: Exact approval ID for separately authorized customer or model operations; unused by Recovery Plan validation.
+        required: false
+        default: ""
         type: string
       operation_mode:
-        description: Select the customer operation, a read-only diagnosis, the separately approved compute claim convergence, or the isolated recovered Workspace E2E.
+        description: Select a customer operation, identity readback, fresh Acceptance, server-owned Recovery Plan validation, or the isolated recovered Workspace E2E.
         required: true
         default: customer_operation
         type: choice
         options:
           - customer_operation
-          - manual_review_diagnose
           - workspace_identity_diagnose
           - acceptance_b_fresh_order
-          - compute_claim_diagnose
           - compute_claim_validate
-          - compute_claim_recover
-          - workspace_launch_readback_diagnose
-          - workspace_launch_readback_recover
           - recovered_workspace_e2e
       funding_mode:
         description: operator_precharge performs the approved provision and recharge; operator_precharge_recovery reads one approved completed precharge before the purchase.
@@ -61,7 +57,7 @@ on:
         default: ""
         type: string
       customer_email:
-        description: Protected exact customer email for compute_claim_validate, compute_claim_recover account identity readback, and recovered_workspace_e2e verification.
+        description: Protected exact customer email for recovered_workspace_e2e verification.
         required: false
         default: ""
         type: string
@@ -75,46 +71,21 @@ on:
         required: false
         default: ""
         type: string
-      resource_closure_run_id:
-        description: Prior successful compute_claim_recover run containing the redacted succeeded continuation artifact.
+      recovery_plan_launch_operation_id:
+        description: Exact original Launch operation ID for persisted Recovery Plan validation or recovered Workspace E2E.
         required: false
         default: ""
         type: string
-      diagnose_target_json:
-        description: Non-secret manual-review diagnostic target identity JSON. Required only for manual_review_diagnose.
+      recovery_plan_id:
+        description: Exact persisted Recovery Plan ID for zero-mutation validation or recovered Workspace E2E readback.
         required: false
         default: ""
         type: string
-      compute_claim_target_json:
-        description: Non-secret exact launch and compute identity JSON. Required only for compute claim modes.
+      recovery_plan_digest:
+        description: Exact persisted Recovery Plan digest for zero-mutation validation or recovered Workspace E2E readback.
         required: false
         default: ""
         type: string
-      compute_claim_cloud_digest:
-        description: Exact immutable deployed Cloud sha256 digest. Required only for compute claim modes.
-        required: false
-        default: ""
-        type: string
-      workspace_launch_target_json:
-        description: Non-secret exact original launch and compute identity JSON for unknown-stage readback diagnosis or recovery.
-        required: false
-        default: ""
-        type: string
-      workspace_launch_cloud_digest:
-        description: Exact immutable deployed Cloud sha256 digest for unknown-stage readback modes.
-        required: false
-        default: ""
-        type: string
-      confirm_compute_claim_recovery:
-        description: Approve the proved CVM/Node claim and continue the original launch through its bounded CBS, PV/PVC, Gateway Secret, Runtime, activation, and Receipt writes. Must be false for diagnosis.
-        required: true
-        default: false
-        type: boolean
-      confirm_workspace_launch_readback_recovery:
-        description: Approve authoritative readback convergence of one unknown launch stage and the already-authorized remaining original launch writes. Must be false for diagnosis.
-        required: true
-        default: false
-        type: boolean
 
 permissions:
   actions: read
@@ -127,7 +98,7 @@ concurrency:
 jobs:
   prepare-basic-customer-operation:
     name: Prepare one approved Basic customer operation in TKE VPC
-    if: ${{ github.ref == 'refs/heads/main' && github.sha == inputs.merged_sha && inputs.operation_mode == 'customer_operation' && inputs.confirm_workspace_purchase && inputs.confirm_single_model_request && !inputs.confirm_workspace_launch_readback_recovery && ((inputs.funding_mode == 'operator_precharge' && inputs.confirm_account_provision && inputs.confirm_wallet_recharge) || (inputs.funding_mode == 'operator_precharge_recovery' && !inputs.confirm_account_provision && !inputs.confirm_wallet_recharge)) }}
+    if: ${{ github.ref == 'refs/heads/main' && github.sha == inputs.merged_sha && inputs.operation_mode == 'customer_operation' && inputs.confirm_workspace_purchase && inputs.confirm_single_model_request && ((inputs.funding_mode == 'operator_precharge' && inputs.confirm_account_provision && inputs.confirm_wallet_recharge) || (inputs.funding_mode == 'operator_precharge_recovery' && !inputs.confirm_account_provision && !inputs.confirm_wallet_recharge)) }}
     runs-on: [self-hosted, tencent-cloud, opl-cloud, tke-vpc]
     timeout-minutes: 40
     environment: production
@@ -428,7 +399,7 @@ jobs:
   complete-basic-customer-operation:
     name: Complete one approved Basic customer browser and model check
     needs: prepare-basic-customer-operation
-    if: ${{ always() && needs.prepare-basic-customer-operation.result == 'success' && github.ref == 'refs/heads/main' && github.sha == inputs.merged_sha && inputs.operation_mode == 'customer_operation' && inputs.confirm_workspace_purchase && inputs.confirm_single_model_request && !inputs.confirm_workspace_launch_readback_recovery && ((inputs.funding_mode == 'operator_precharge' && inputs.confirm_account_provision && inputs.confirm_wallet_recharge) || (inputs.funding_mode == 'operator_precharge_recovery' && !inputs.confirm_account_provision && !inputs.confirm_wallet_recharge)) }}
+    if: ${{ always() && needs.prepare-basic-customer-operation.result == 'success' && github.ref == 'refs/heads/main' && github.sha == inputs.merged_sha && inputs.operation_mode == 'customer_operation' && inputs.confirm_workspace_purchase && inputs.confirm_single_model_request && ((inputs.funding_mode == 'operator_precharge' && inputs.confirm_account_provision && inputs.confirm_wallet_recharge) || (inputs.funding_mode == 'operator_precharge_recovery' && !inputs.confirm_account_provision && !inputs.confirm_wallet_recharge)) }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: production
@@ -557,7 +528,7 @@ jobs:
 
   workspace-identity-diagnose:
     name: Prove one Workspace owner and reserved Key identity by read-only authority
-    if: ${{ github.ref == 'refs/heads/main' && github.sha == inputs.merged_sha && inputs.operation_mode == 'workspace_identity_diagnose' && inputs.workspace_identity_account_id != '' && inputs.workspace_identity_workspace_id != '' && inputs.customer_email != '' && inputs.resume_run_id == '' && inputs.resource_closure_run_id == '' && inputs.diagnose_target_json == '' && inputs.compute_claim_target_json == '' && inputs.compute_claim_cloud_digest == '' && inputs.workspace_launch_target_json == '' && inputs.workspace_launch_cloud_digest == '' && !inputs.confirm_account_provision && !inputs.confirm_wallet_recharge && !inputs.confirm_workspace_purchase && !inputs.confirm_single_model_request && !inputs.confirm_compute_claim_recovery && !inputs.confirm_workspace_launch_readback_recovery }}
+    if: ${{ github.ref == 'refs/heads/main' && github.sha == inputs.merged_sha && inputs.operation_mode == 'workspace_identity_diagnose' && inputs.workspace_identity_account_id != '' && inputs.workspace_identity_workspace_id != '' && inputs.customer_email != '' && inputs.resume_run_id == '' && !inputs.confirm_account_provision && !inputs.confirm_wallet_recharge && !inputs.confirm_workspace_purchase && !inputs.confirm_single_model_request }}
     runs-on: [self-hosted, tencent-cloud, opl-cloud, tke-vpc]
     timeout-minutes: 15
     environment: production
@@ -754,7 +725,7 @@ jobs:
 
   acceptance-b-fresh-order:
     name: Run one independently approved fresh Basic order in TKE VPC
-    if: ${{ github.ref == 'refs/heads/main' && github.sha == inputs.merged_sha && inputs.operation_mode == 'acceptance_b_fresh_order' && inputs.confirm_workspace_purchase && !inputs.confirm_single_model_request && !inputs.confirm_account_provision && !inputs.confirm_wallet_recharge && inputs.resume_run_id == '' && !inputs.confirm_compute_claim_recovery && !inputs.confirm_workspace_launch_readback_recovery }}
+    if: ${{ github.ref == 'refs/heads/main' && github.sha == inputs.merged_sha && inputs.operation_mode == 'acceptance_b_fresh_order' && inputs.confirm_workspace_purchase && !inputs.confirm_single_model_request && !inputs.confirm_account_provision && !inputs.confirm_wallet_recharge && inputs.resume_run_id == '' }}
     runs-on: [self-hosted, tencent-cloud, opl-cloud, tke-vpc]
     timeout-minutes: 40
     environment: production
@@ -924,945 +895,22 @@ jobs:
             rmdir "$source_dir"
           fi
 
-  manual-review-diagnose:
-    name: Diagnose one existing Basic launch manual review in TKE VPC
-    if: ${{ github.ref == 'refs/heads/main' && github.sha == inputs.merged_sha && inputs.operation_mode == 'manual_review_diagnose' && inputs.resume_run_id == '' && !inputs.confirm_account_provision && !inputs.confirm_wallet_recharge && !inputs.confirm_workspace_purchase && !inputs.confirm_single_model_request && !inputs.confirm_workspace_launch_readback_recovery }}
-    runs-on: [self-hosted, tencent-cloud, opl-cloud, tke-vpc]
-    timeout-minutes: 15
-    environment: production
-    env:
-      OPL_MERGED_SHA: ${{ inputs.merged_sha }}
-      OPL_BASIC_CANARY_RESUME_RUN_ID: ${{ inputs.resume_run_id }}
-      OPL_BASIC_CANARY_DIAGNOSE_TARGET_JSON: ${{ inputs.diagnose_target_json }}
-      OPL_K8S_NAMESPACE: ${{ vars.OPL_K8S_NAMESPACE || 'opl-cloud' }}
-      KUBECONFIG: ${{ vars.TENCENT_DEPLOY_KUBECONFIG_PATH || '/home/actions/.secrets/medopl/v22/kubeconfig-package-d-deploy' }}
-
-    steps:
-      - name: Prepare isolated source checkout
-        id: prepare_source
-        shell: bash
-        env:
-          OPL_SOURCE_CHECKOUT: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
-        run: |
-          set -euo pipefail
-          expected="$GITHUB_WORKSPACE/.opl-checkouts/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
-          if [ "$OPL_SOURCE_CHECKOUT" != "$expected" ]; then
-            echo "Isolated source checkout path mismatch." >&2
-            exit 1
-          fi
-          mkdir -p "$GITHUB_WORKSPACE/.opl-checkouts"
-          mkdir "$OPL_SOURCE_CHECKOUT"
-
-      - name: Checkout exact merged main
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.merged_sha }}
-          fetch-depth: 0
-
-          path: .opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
-
-      - name: Verify remote branch authority
-        shell: bash
-        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
-        run: |
-          set -euo pipefail
-          mapfile -t remote_heads < <(git ls-remote --heads origin)
-          if [ "${#remote_heads[@]}" -ne 1 ]; then
-            printf 'Production source authority requires exactly one remote head; observed: %s\n' "${remote_heads[*]:-none}" >&2
-            exit 1
-          fi
-          read -r remote_main_sha remote_main_ref <<< "${remote_heads[0]}"
-          head_sha="$(git rev-parse HEAD)"
-          if [ "$remote_main_ref" != "refs/heads/main" ] || [ "$GITHUB_REF" != "refs/heads/main" ] ||
-             [ "$GITHUB_SHA" != "$head_sha" ] || [ "$remote_main_sha" != "$head_sha" ]; then
-            printf 'Production source must be current main: ref=%s github_sha=%s checkout=%s remote_main=%s\n' \
-              "$GITHUB_REF" "$GITHUB_SHA" "$head_sha" "$remote_main_sha" >&2
-            exit 1
-          fi
-
-      - name: Verify exact origin main
-        shell: bash
-        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
-        run: |
-          set -euo pipefail
-          if ! [[ "$OPL_MERGED_SHA" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "A full merged main SHA is required." >&2
-            exit 1
-          fi
-          git fetch --no-tags origin main:refs/remotes/origin/main
-          head_sha="$(git rev-parse HEAD)"
-          main_sha="$(git rev-parse refs/remotes/origin/main)"
-          if [ "$head_sha" != "$OPL_MERGED_SHA" ] || [ "$main_sha" != "$OPL_MERGED_SHA" ]; then
-            echo "Manual-review diagnosis source is not the exact current origin/main revision." >&2
-            exit 1
-          fi
-
-      - name: Validate read-only diagnostic inputs
-        shell: bash
-        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
-        run: |
-          set -euo pipefail
-          if [ -n "$OPL_BASIC_CANARY_RESUME_RUN_ID" ] || [ -z "$OPL_BASIC_CANARY_DIAGNOSE_TARGET_JSON" ]; then
-            echo "Manual-review diagnosis requires an empty resume_run_id and a target identity." >&2
-            exit 1
-          fi
-
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-
-      - name: Validate runner diagnose kubeconfig
-        shell: bash
-        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
-        run: |
-          set -euo pipefail
-          if [ ! -r "$KUBECONFIG" ]; then
-            echo "The release-owned runner kubeconfig is unavailable." >&2
-            exit 1
-          fi
-
-      - name: Prepare redacted manual-review artifact
-        shell: bash
-        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
-        run: |
-          set -euo pipefail
-          artifact_dir="$RUNNER_TEMP/production-basic-manual-review-diagnose"
-          mkdir -p "$artifact_dir"
-          chmod 700 "$artifact_dir"
-          echo "OPL_BASIC_CANARY_DIAGNOSE_ARTIFACT_DIR=$artifact_dir" >> "$GITHUB_ENV"
-
-      - name: Run manual-review diagnosis
-        id: diagnose
-        continue-on-error: true
-        shell: bash
-        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
-        run: |
-          set -euo pipefail
-          fabric_pod="$(node <<'NODE'
-          const { execFileSync } = require("node:child_process");
-          const kubectl = (...args) => JSON.parse(execFileSync("kubectl", [
-            "--kubeconfig", process.env.KUBECONFIG, "-n", process.env.OPL_K8S_NAMESPACE, ...args
-          ], { encoding: "utf8", maxBuffer: 8 * 1024 * 1024 }));
-          const deployment = kubectl("get", "deployment/opl-cloud-fabric", "-o", "json");
-          const replicaSets = kubectl("get", "replicasets", "-o", "json").items || [];
-          const pods = kubectl("get", "pods", "-o", "json").items || [];
-          const revisionKey = "deployment.kubernetes.io/revision";
-          const revision = deployment.metadata?.annotations?.[revisionKey];
-          const deploymentUID = deployment.metadata?.uid;
-          const expectedImage = deployment.spec?.template?.spec?.containers?.find((item) => item.name === "fabric")?.image;
-          const ownedBy = (item, kind, name, uid) => Boolean(name && uid) && (item.metadata?.ownerReferences || []).some((owner) =>
-            owner.controller === true && owner.kind === kind && owner.name === name && owner.uid === uid);
-          const currentReplicaSets = replicaSets.filter((item) =>
-            ownedBy(item, "Deployment", deployment.metadata?.name, deploymentUID) &&
-            item.metadata?.annotations?.[revisionKey] === revision &&
-            item.spec?.template?.spec?.containers?.some((container) => container.name === "fabric" && container.image === expectedImage));
-          if (!deploymentUID || !revision || !expectedImage || currentReplicaSets.length !== 1) {
-            throw new Error(`current_fabric_replicaset_count:${currentReplicaSets.length}`);
-          }
-          const replicaSet = currentReplicaSets[0];
-          const readyPods = pods.filter((item) =>
-            !item.metadata?.deletionTimestamp && ownedBy(item, "ReplicaSet", replicaSet.metadata?.name, replicaSet.metadata?.uid) &&
-            item.status?.phase === "Running" && item.status?.conditions?.some((condition) => condition.type === "Ready" && condition.status === "True") &&
-            item.spec?.containers?.some((container) => container.name === "fabric" && container.image === expectedImage));
-          if (readyPods.length !== 1) throw new Error(`current_ready_fabric_pod_count:${readyPods.length}`);
-          process.stdout.write(readyPods[0].metadata.name);
-          NODE
-          )"
-          if [ -z "$fabric_pod" ]; then
-            echo "Current Ready Fabric Pod is unavailable." >&2
-            exit 1
-          fi
-          node tools/production-live-qa.ts --manual-review-diagnose \
-            --diagnose-target-json "$OPL_BASIC_CANARY_DIAGNOSE_TARGET_JSON" \
-            --fabric-pod "$fabric_pod" \
-            --fabric-namespace "$OPL_K8S_NAMESPACE" > "$OPL_BASIC_CANARY_DIAGNOSE_ARTIFACT_DIR/manual-review-diagnosis.json"
-
-      - name: Upload redacted manual-review diagnosis
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: production-basic-manual-review-diagnose
-          path: ${{ runner.temp }}/production-basic-manual-review-diagnose
-          if-no-files-found: error
-          overwrite: true
-          retention-days: 30
-
-      - name: Require recovery-eligible diagnosis
-        if: ${{ steps.diagnose.outcome == 'success' }}
-        shell: bash
-        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
-        run: |
-          set -euo pipefail
-          node <<'NODE'
-          const fs = require("node:fs");
-          const path = `${process.env.OPL_BASIC_CANARY_DIAGNOSE_ARTIFACT_DIR}/manual-review-diagnosis.json`;
-          const result = JSON.parse(fs.readFileSync(path, "utf8"));
-          if (result?.schemaVersion !== 1 || result?.operationMode !== "manual_review_diagnose" ||
-            result?.recoveryEligible !== true || result?.errorCode !== "none" ||
-            result?.mutationCounts?.sub2api !== 0 || result?.mutationCounts?.tencent !== 0 || result?.mutationCounts?.kubernetes !== 0) {
-            console.error(`Manual-review diagnosis blocked: ${String(result?.errorCode || "diagnosis_artifact_invalid")}`);
-            process.exit(1);
-          }
-          NODE
-
-      - name: Require manual-review diagnosis success
-        if: ${{ steps.diagnose.outcome != 'success' }}
-        shell: bash
-        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
-        run: |
-          echo "Manual-review diagnosis stopped; inspect the redacted diagnosis artifact." >&2
-          exit 1
-
-      - name: Remove isolated source checkout
-        if: always() && steps.prepare_source.outcome == 'success'
-        shell: bash
-        env:
-          OPL_SOURCE_CHECKOUT: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
-        run: |
-          set -euo pipefail
-          source_dir="${OPL_SOURCE_CHECKOUT:-}"
-          expected="$GITHUB_WORKSPACE/.opl-checkouts/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
-          if [ -z "$source_dir" ] || [ "$source_dir" != "$expected" ]; then
-            echo "Refusing to remove unexpected source checkout path." >&2
-            exit 1
-          fi
-          if [ -d "$source_dir" ]; then
-            find "$source_dir" -mindepth 1 -delete
-            rmdir "$source_dir"
-          fi
-
-  workspace-launch-readback-diagnose:
-    name: Prove one unknown Workspace launch stage by authoritative readback
-    if: ${{ github.ref == 'refs/heads/main' && github.sha == inputs.merged_sha && inputs.operation_mode == 'workspace_launch_readback_diagnose' && inputs.workspace_launch_target_json != '' && inputs.workspace_launch_cloud_digest != '' && inputs.customer_email != '' && inputs.resume_run_id == '' && inputs.diagnose_target_json == '' && inputs.compute_claim_target_json == '' && inputs.compute_claim_cloud_digest == '' && !inputs.confirm_account_provision && !inputs.confirm_wallet_recharge && !inputs.confirm_workspace_purchase && !inputs.confirm_single_model_request && !inputs.confirm_compute_claim_recovery && !inputs.confirm_workspace_launch_readback_recovery }}
-    runs-on: [self-hosted, tencent-cloud, opl-cloud, tke-vpc]
-    timeout-minutes: 15
-    environment: production
-    env:
-      OPL_MERGED_SHA: ${{ inputs.merged_sha }}
-      OPL_WORKSPACE_LAUNCH_READBACK_TARGET_JSON: ${{ inputs.workspace_launch_target_json }}
-      OPL_WORKSPACE_LAUNCH_READBACK_CLOUD_DIGEST: ${{ inputs.workspace_launch_cloud_digest }}
-      OPL_WORKSPACE_LAUNCH_READBACK_CUSTOMER_EMAIL: ${{ inputs.customer_email }}
-      OPL_CONSOLE_ORIGIN: ${{ vars.OPL_CONSOLE_ORIGIN || 'https://cloud.medopl.cn' }}
-      OPL_SUB2API_ADMIN_EMAIL: ${{ secrets.OPL_SUB2API_ADMIN_EMAIL }}
-      OPL_SUB2API_ADMIN_PASSWORD: ${{ secrets.OPL_SUB2API_ADMIN_PASSWORD }}
-      OPL_K8S_NAMESPACE: ${{ vars.OPL_K8S_NAMESPACE || 'opl-cloud' }}
-      OPL_VERIFY_REQUEST_TIMEOUT_MS: ${{ vars.OPL_VERIFY_REQUEST_TIMEOUT_MS || '30000' }}
-      KUBECONFIG: ${{ vars.TENCENT_DEPLOY_KUBECONFIG_PATH || '/home/actions/.secrets/medopl/v22/kubeconfig-package-d-deploy' }}
-
-    steps:
-      - name: Prepare isolated source checkout
-        id: prepare_source
-        shell: bash
-        env:
-          OPL_SOURCE_CHECKOUT: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
-        run: |
-          set -euo pipefail
-          expected="$GITHUB_WORKSPACE/.opl-checkouts/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
-          if [ "$OPL_SOURCE_CHECKOUT" != "$expected" ]; then
-            echo "Isolated source checkout path mismatch." >&2
-            exit 1
-          fi
-          mkdir -p "$GITHUB_WORKSPACE/.opl-checkouts"
-          mkdir "$OPL_SOURCE_CHECKOUT"
-
-      - name: Checkout exact merged main
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.merged_sha }}
-          fetch-depth: 0
-
-          path: .opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
-
-      - name: Verify remote branch authority
-        shell: bash
-        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
-        run: |
-          set -euo pipefail
-          mapfile -t remote_heads < <(git ls-remote --heads origin)
-          if [ "${#remote_heads[@]}" -ne 1 ]; then
-            printf 'Production source authority requires exactly one remote head; observed: %s\n' "${remote_heads[*]:-none}" >&2
-            exit 1
-          fi
-          read -r remote_main_sha remote_main_ref <<< "${remote_heads[0]}"
-          head_sha="$(git rev-parse HEAD)"
-          if [ "$remote_main_ref" != "refs/heads/main" ] || [ "$GITHUB_REF" != "refs/heads/main" ] ||
-             [ "$GITHUB_SHA" != "$head_sha" ] || [ "$remote_main_sha" != "$head_sha" ]; then
-            printf 'Production source must be current main: ref=%s github_sha=%s checkout=%s remote_main=%s\n' \
-              "$GITHUB_REF" "$GITHUB_SHA" "$head_sha" "$remote_main_sha" >&2
-            exit 1
-          fi
-
-      - name: Verify exact readback diagnosis source
-        shell: bash
-        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
-        run: |
-          set -euo pipefail
-          if ! [[ "$OPL_MERGED_SHA" =~ ^[0-9a-f]{40}$ ]] || ! [[ "$OPL_WORKSPACE_LAUNCH_READBACK_CLOUD_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-            echo "A full merged main SHA and immutable Cloud digest are required." >&2
-            exit 1
-          fi
-          git fetch --no-tags origin main:refs/remotes/origin/main
-          if [ "$(git rev-parse HEAD)" != "$OPL_MERGED_SHA" ] || [ "$(git rev-parse refs/remotes/origin/main)" != "$OPL_MERGED_SHA" ]; then
-            echo "Workspace launch readback diagnosis is not the exact current origin/main revision." >&2
-            exit 1
-          fi
-
-      - name: Validate read-only Workspace launch inputs
-        shell: bash
-        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
-        run: |
-          set -euo pipefail
-          if [ -z "$OPL_WORKSPACE_LAUNCH_READBACK_TARGET_JSON" ] || [ -z "$OPL_WORKSPACE_LAUNCH_READBACK_CUSTOMER_EMAIL" ] || [ ! -r "$KUBECONFIG" ]; then
-            echo "Workspace launch diagnosis requires the exact target, protected customer identity, and release-owned runner kubeconfig." >&2
-            exit 1
-          fi
-
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-
-      - name: Prepare redacted Workspace launch proof artifact
-        shell: bash
-        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
-        run: |
-          set -euo pipefail
-          artifact_dir="$RUNNER_TEMP/production-workspace-launch-readback-diagnosis"
-          raw_dir="$RUNNER_TEMP/production-workspace-launch-readback-diagnosis-raw"
-          mkdir -p "$artifact_dir" "$raw_dir"
-          chmod 700 "$artifact_dir" "$raw_dir"
-          echo "OPL_WORKSPACE_LAUNCH_READBACK_ARTIFACT_DIR=$artifact_dir" >> "$GITHUB_ENV"
-          echo "OPL_WORKSPACE_LAUNCH_READBACK_RAW_RESULT_PATH=$raw_dir/workspace-launch-readback-diagnosis.raw.json" >> "$GITHUB_ENV"
-
-      - name: Run Workspace launch readback diagnosis
-        id: diagnose
-        continue-on-error: true
-        shell: bash
-        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
-        run: |
-          set -euo pipefail
-          node tools/production-live-qa.ts --workspace-launch-readback-diagnose \
-            --workspace-launch-target-json "$OPL_WORKSPACE_LAUNCH_READBACK_TARGET_JSON"
-
-      - name: Require complete zero-mutation Workspace launch proof
-        if: ${{ steps.diagnose.outcome == 'success' }}
-        shell: bash
-        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
-        run: |
-          set -euo pipefail
-          node <<'NODE'
-          const fs = require("node:fs");
-          const result = JSON.parse(fs.readFileSync(process.env.OPL_WORKSPACE_LAUNCH_READBACK_RAW_RESULT_PATH, "utf8"));
-          const target = JSON.parse(process.env.OPL_WORKSPACE_LAUNCH_READBACK_TARGET_JSON);
-          const exactTarget = target;
-          const proof = result?.proof;
-          const targetMatches = (candidate) => candidate && Object.entries(exactTarget).every(([key, value]) => candidate[key] === value);
-          const deadlineCovers = (deadline, paidThrough) => {
-            const deadlineMs = Date.parse(String(deadline || ""));
-            const paidThroughMs = Date.parse(String(paidThrough || ""));
-            return Number.isFinite(deadlineMs) && Number.isFinite(paidThroughMs) && deadlineMs >= paidThroughMs;
-          };
-          const exactBudget = proof?.attemptBudget?.attempted === 1 && proof?.attemptBudget?.confirmed === 0 &&
-            proof?.attemptBudget?.unknown === 1 && proof?.attemptBudget?.max === 1;
-          if (result?.schemaVersion !== 1 || result?.operationMode !== "workspace_launch_readback_diagnose" || result?.status !== "proven" ||
-            result?.recoveryEligible !== true || result?.errorCode !== "none" || result?.release?.mergedSha !== process.env.OPL_MERGED_SHA ||
-            result?.release?.cloudImageDigest !== process.env.OPL_WORKSPACE_LAUNCH_READBACK_CLOUD_DIGEST || JSON.stringify(result?.target) !== JSON.stringify(exactTarget) ||
-            proof?.schemaVersion !== 1 || proof?.eligible !== true || proof?.reason !== "none" || !exactBudget ||
-            proof?.customer?.email !== process.env.OPL_WORKSPACE_LAUNCH_READBACK_CUSTOMER_EMAIL || proof?.customer?.accountId !== exactTarget.accountId || !targetMatches(proof?.target) ||
-            !deadlineCovers(proof?.target?.deadline, proof?.target?.paidThrough) || !deadlineCovers(proof?.resources?.storageDeadline, proof?.target?.paidThrough) ||
-            proof?.resources?.computeAllocationId !== exactTarget.computeAllocationId || proof?.resources?.computeProviderResourceId !== exactTarget.cvmInstanceId ||
-            proof?.resources?.storageVolumeId !== exactTarget.storageId || proof?.resources?.storageZone !== exactTarget.zone ||
-            proof?.operationIds?.launchOperationId !== exactTarget.launchOperationId || proof?.operationIds?.compute?.providerOperationId !== proof?.operationIds?.machineOwnershipId ||
-            proof?.sub2apiMutationCount !== 0 || proof?.tencentMutationCount !== 0 || proof?.kubernetesMutationCount !== 0 ||
-            result?.runnerDirectMutationCounts?.sub2api !== 0 || result?.runnerDirectMutationCounts?.tencent !== 0 ||
-            result?.runnerDirectMutationCounts?.kubernetes !== 0) {
-            console.error(`Workspace launch readback diagnosis blocked: ${String(result?.errorCode || "diagnosis_artifact_invalid")}`);
-            process.exit(1);
-          }
-          NODE
-
-      - name: Generate safe Workspace launch diagnosis artifact
-        if: always()
-        shell: bash
-        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
-        run: |
-          set -euo pipefail
-          node --input-type=module <<'NODE'
-          import { readFile, writeFile } from "node:fs/promises";
-          import { workspaceLaunchReadbackArtifact } from "./tools/production-live-qa.ts";
-          let raw;
-          try {
-            raw = JSON.parse(await readFile(process.env.OPL_WORKSPACE_LAUNCH_READBACK_RAW_RESULT_PATH, "utf8"));
-          } catch {
-            raw = {
-              schemaVersion: 2,
-              operationMode: "workspace_launch_readback_diagnose",
-              status: "blocked",
-              recoveryEligible: false,
-              errorCode: "workspace_launch_readback_diagnosis_failed",
-              runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
-            };
-          }
-          const artifact = workspaceLaunchReadbackArtifact(raw);
-          await writeFile(`${process.env.OPL_WORKSPACE_LAUNCH_READBACK_ARTIFACT_DIR}/workspace-launch-readback-diagnosis.json`, `${JSON.stringify(artifact, null, 2)}\n`, { mode: 0o600 });
-          NODE
-
-      - name: Upload redacted Workspace launch diagnosis
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: production-workspace-launch-readback-diagnosis
-          path: ${{ runner.temp }}/production-workspace-launch-readback-diagnosis
-          if-no-files-found: error
-          overwrite: true
-          retention-days: 30
-
-      - name: Require Workspace launch diagnosis success
-        if: ${{ steps.diagnose.outcome != 'success' }}
-        shell: bash
-        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
-        run: |
-          echo "Workspace launch readback diagnosis stopped; inspect the redacted artifact." >&2
-          exit 1
-
-      - name: Remove isolated source checkout
-        if: always() && steps.prepare_source.outcome == 'success'
-        shell: bash
-        env:
-          OPL_SOURCE_CHECKOUT: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
-        run: |
-          set -euo pipefail
-          source_dir="${OPL_SOURCE_CHECKOUT:-}"
-          expected="$GITHUB_WORKSPACE/.opl-checkouts/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
-          if [ -z "$source_dir" ] || [ "$source_dir" != "$expected" ]; then
-            echo "Refusing to remove unexpected source checkout path." >&2
-            exit 1
-          fi
-          if [ -d "$source_dir" ]; then
-            find "$source_dir" -mindepth 1 -delete
-            rmdir "$source_dir"
-          fi
-
-  workspace-launch-readback-recover:
-    name: Converge one approved unknown Workspace launch stage
-    if: ${{ github.ref == 'refs/heads/main' && github.sha == inputs.merged_sha && inputs.operation_mode == 'workspace_launch_readback_recover' && inputs.workspace_launch_target_json != '' && inputs.workspace_launch_cloud_digest != '' && inputs.customer_email != '' && inputs.resume_run_id == '' && inputs.diagnose_target_json == '' && inputs.compute_claim_target_json == '' && inputs.compute_claim_cloud_digest == '' && !inputs.confirm_account_provision && !inputs.confirm_wallet_recharge && !inputs.confirm_workspace_purchase && !inputs.confirm_single_model_request && !inputs.confirm_compute_claim_recovery && inputs.confirm_workspace_launch_readback_recovery }}
-    runs-on: [self-hosted, tencent-cloud, opl-cloud, tke-vpc]
-    timeout-minutes: 40
-    environment: production
-    env:
-      OPL_MERGED_SHA: ${{ inputs.merged_sha }}
-      OPL_WORKSPACE_LAUNCH_READBACK_APPROVAL_ID: ${{ inputs.approval_id }}
-      OPL_WORKSPACE_LAUNCH_READBACK_APPROVAL_JSON: ${{ secrets.OPL_WORKSPACE_LAUNCH_READBACK_APPROVAL_JSON }}
-      OPL_WORKSPACE_LAUNCH_READBACK_TARGET_JSON: ${{ inputs.workspace_launch_target_json }}
-      OPL_WORKSPACE_LAUNCH_READBACK_CLOUD_DIGEST: ${{ inputs.workspace_launch_cloud_digest }}
-      OPL_COMPUTE_CLAIM_TARGET_JSON: ${{ inputs.workspace_launch_target_json }}
-      OPL_COMPUTE_CLAIM_CLOUD_DIGEST: ${{ inputs.workspace_launch_cloud_digest }}
-      OPL_WORKSPACE_LAUNCH_READBACK_CUSTOMER_EMAIL: ${{ inputs.customer_email }}
-      OPL_BASIC_CANARY_CUSTOMER_EMAIL: ${{ inputs.customer_email }}
-      OPL_BASIC_CANARY_CUSTOMER_PASSWORD: ${{ secrets.OPL_BASIC_CANARY_CUSTOMER_PASSWORD }}
-      OPL_CONSOLE_ORIGIN: ${{ vars.OPL_CONSOLE_ORIGIN || 'https://cloud.medopl.cn' }}
-      OPL_SUB2API_ADMIN_EMAIL: ${{ secrets.OPL_SUB2API_ADMIN_EMAIL }}
-      OPL_SUB2API_ADMIN_PASSWORD: ${{ secrets.OPL_SUB2API_ADMIN_PASSWORD }}
-      OPL_K8S_NAMESPACE: ${{ vars.OPL_K8S_NAMESPACE || 'opl-cloud' }}
-      OPL_VERIFY_REQUEST_TIMEOUT_MS: ${{ vars.OPL_VERIFY_REQUEST_TIMEOUT_MS || '30000' }}
-      OPL_VERIFY_LAUNCH_POLL_ATTEMPTS: ${{ vars.OPL_VERIFY_LAUNCH_POLL_ATTEMPTS || '180' }}
-      OPL_VERIFY_LAUNCH_POLL_DELAY_MS: ${{ vars.OPL_VERIFY_LAUNCH_POLL_DELAY_MS || '10000' }}
-      KUBECONFIG: ${{ vars.TENCENT_DEPLOY_KUBECONFIG_PATH || '/home/actions/.secrets/medopl/v22/kubeconfig-package-d-deploy' }}
-
-    steps:
-      - name: Prepare isolated source checkout
-        id: prepare_source
-        shell: bash
-        env:
-          OPL_SOURCE_CHECKOUT: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
-        run: |
-          set -euo pipefail
-          expected="$GITHUB_WORKSPACE/.opl-checkouts/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
-          if [ "$OPL_SOURCE_CHECKOUT" != "$expected" ]; then
-            echo "Isolated source checkout path mismatch." >&2
-            exit 1
-          fi
-          mkdir -p "$GITHUB_WORKSPACE/.opl-checkouts"
-          mkdir "$OPL_SOURCE_CHECKOUT"
-
-      - name: Checkout exact merged main
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.merged_sha }}
-          fetch-depth: 0
-
-          path: .opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
-
-      - name: Verify remote branch authority
-        shell: bash
-        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
-        run: |
-          set -euo pipefail
-          mapfile -t remote_heads < <(git ls-remote --heads origin)
-          if [ "${#remote_heads[@]}" -ne 1 ]; then
-            printf 'Production source authority requires exactly one remote head; observed: %s\n' "${remote_heads[*]:-none}" >&2
-            exit 1
-          fi
-          read -r remote_main_sha remote_main_ref <<< "${remote_heads[0]}"
-          head_sha="$(git rev-parse HEAD)"
-          if [ "$remote_main_ref" != "refs/heads/main" ] || [ "$GITHUB_REF" != "refs/heads/main" ] ||
-             [ "$GITHUB_SHA" != "$head_sha" ] || [ "$remote_main_sha" != "$head_sha" ]; then
-            printf 'Production source must be current main: ref=%s github_sha=%s checkout=%s remote_main=%s\n' \
-              "$GITHUB_REF" "$GITHUB_SHA" "$head_sha" "$remote_main_sha" >&2
-            exit 1
-          fi
-
-      - name: Verify exact approved readback source
-        shell: bash
-        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
-        run: |
-          set -euo pipefail
-          if ! [[ "$OPL_MERGED_SHA" =~ ^[0-9a-f]{40}$ ]] || ! [[ "$OPL_WORKSPACE_LAUNCH_READBACK_CLOUD_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-            echo "A full merged main SHA and immutable Cloud digest are required." >&2
-            exit 1
-          fi
-          git fetch --no-tags origin main:refs/remotes/origin/main
-          if [ "$(git rev-parse HEAD)" != "$OPL_MERGED_SHA" ] || [ "$(git rev-parse refs/remotes/origin/main)" != "$OPL_MERGED_SHA" ]; then
-            echo "Workspace launch readback recovery is not the exact current origin/main revision." >&2
-            exit 1
-          fi
-
-      - name: Validate approved Workspace launch readback inputs
-        shell: bash
-        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
-        run: |
-          set -euo pipefail
-          if [ -z "$OPL_WORKSPACE_LAUNCH_READBACK_TARGET_JSON" ] || [ -z "$OPL_WORKSPACE_LAUNCH_READBACK_CUSTOMER_EMAIL" ] ||
-            [ -z "$OPL_WORKSPACE_LAUNCH_READBACK_APPROVAL_ID" ] || [ -z "$OPL_WORKSPACE_LAUNCH_READBACK_APPROVAL_JSON" ] || [ ! -r "$KUBECONFIG" ]; then
-            echo "Workspace launch recovery requires its exact target, independent approval, customer identity, and release-owned runner kubeconfig." >&2
-            exit 1
-          fi
-
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-
-      - name: Prepare redacted Workspace launch recovery artifact
-        shell: bash
-        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
-        run: |
-          set -euo pipefail
-          artifact_dir="$RUNNER_TEMP/production-basic-compute-claim-evidence"
-          raw_dir="$RUNNER_TEMP/production-workspace-launch-readback-recovery-raw"
-          mkdir -p "$artifact_dir" "$raw_dir"
-          chmod 700 "$artifact_dir" "$raw_dir"
-          echo "OPL_WORKSPACE_LAUNCH_READBACK_ARTIFACT_DIR=$artifact_dir" >> "$GITHUB_ENV"
-          echo "OPL_WORKSPACE_LAUNCH_READBACK_RAW_RESULT_PATH=$raw_dir/workspace-launch-readback-recovery.raw.json" >> "$GITHUB_ENV"
-          echo "OPL_WORKSPACE_LAUNCH_CONTINUATION_RAW_RESULT_PATH=$raw_dir/workspace-launch-continuation.raw.json" >> "$GITHUB_ENV"
-
-      - name: Run approved Workspace launch readback recovery
-        id: recover
-        continue-on-error: true
-        shell: bash
-        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
-        run: |
-          set -euo pipefail
-          token_b64="$(kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" get secret opl-cloud-internal-service -o jsonpath='{.data.OPL_INTERNAL_SERVICE_TOKEN}')"
-          if [ -z "$token_b64" ]; then
-            echo "Current internal service capability is unavailable." >&2
-            exit 1
-          fi
-          OPL_INTERNAL_SERVICE_TOKEN="$(printf '%s' "$token_b64" | base64 -d)"
-          unset token_b64
-          if [ -z "$OPL_INTERNAL_SERVICE_TOKEN" ]; then
-            echo "Current internal service capability is empty." >&2
-            exit 1
-          fi
-          echo "::add-mask::$OPL_INTERNAL_SERVICE_TOKEN"
-          export OPL_INTERNAL_SERVICE_TOKEN
-          node tools/production-live-qa.ts --workspace-launch-readback-recover \
-            --workspace-launch-target-json "$OPL_WORKSPACE_LAUNCH_READBACK_TARGET_JSON" \
-            --approval-id "$OPL_WORKSPACE_LAUNCH_READBACK_APPROVAL_ID"
-
-      - name: Require approved unknown-stage CAS convergence
-        id: readback_convergence
-        if: ${{ steps.recover.outcome == 'success' }}
-        shell: bash
-        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
-        run: |
-          set -euo pipefail
-          node <<'NODE'
-          const { createHash } = require("node:crypto");
-          const fs = require("node:fs");
-          const result = JSON.parse(fs.readFileSync(process.env.OPL_WORKSPACE_LAUNCH_READBACK_RAW_RESULT_PATH, "utf8"));
-          const approval = JSON.parse(process.env.OPL_WORKSPACE_LAUNCH_READBACK_APPROVAL_JSON);
-          const target = JSON.parse(process.env.OPL_WORKSPACE_LAUNCH_READBACK_TARGET_JSON);
-          const exactTarget = target;
-          const targetMatches = (candidate) => candidate && Object.entries(exactTarget).every(([key, value]) => candidate[key] === value);
-          const deadlineCovers = (deadline, paidThrough) => {
-            const deadlineMs = Date.parse(String(deadline || ""));
-            const paidThroughMs = Date.parse(String(paidThrough || ""));
-            return Number.isFinite(deadlineMs) && Number.isFinite(paidThroughMs) && deadlineMs >= paidThroughMs;
-          };
-          const canonicalJson = (value) => Array.isArray(value)
-            ? `[${value.map(canonicalJson).join(",")}]`
-            : !value || typeof value !== "object"
-              ? JSON.stringify(value)
-              : `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(",")}}`;
-          const approvalDigest = createHash("sha256").update(canonicalJson(approval)).digest("hex");
-          const proof = result?.proof;
-          const confirmed = { attempted: 1, confirmed: 1, unknown: 0, max: 1 };
-          const unknown = { attempted: 1, confirmed: 0, unknown: 1, max: 1 };
-          if (result?.schemaVersion !== 1 || result?.operationMode !== "workspace_launch_readback_recover" || result?.status !== "converged" ||
-            result?.recoveryEligible !== true || result?.errorCode !== "none" || JSON.stringify(result?.target) !== JSON.stringify(exactTarget) ||
-            result?.release?.mergedSha !== process.env.OPL_MERGED_SHA || result?.release?.mergedSha !== approval.mergedMainSha ||
-            result?.release?.cloudImageDigest !== process.env.OPL_WORKSPACE_LAUNCH_READBACK_CLOUD_DIGEST || result?.release?.cloudImageDigest !== approval.cloudImageDigest ||
-            result?.approval?.approvalId !== approval.approvalId || approval.approvalId !== process.env.OPL_WORKSPACE_LAUNCH_READBACK_APPROVAL_ID ||
-            result?.approval?.approvalDigest !== approvalDigest || result?.stage !== approval.stage || proof?.stage !== approval.stage ||
-            approval?.schemaVersion !== 1 || approval?.confirmation !== "RECOVER_UNKNOWN_WORKSPACE_LAUNCH_STAGE_FROM_AUTHORITATIVE_READBACK" ||
-            approval?.customer?.email !== process.env.OPL_WORKSPACE_LAUNCH_READBACK_CUSTOMER_EMAIL || approval?.customer?.accountId !== exactTarget.accountId ||
-            !targetMatches(approval?.target) || !targetMatches(proof?.target) || proof?.resources?.computeAllocationId !== exactTarget.computeAllocationId ||
-            !deadlineCovers(proof?.target?.deadline, proof?.target?.paidThrough) || !deadlineCovers(proof?.resources?.storageDeadline, proof?.target?.paidThrough) ||
-            proof?.resources?.computeProviderResourceId !== exactTarget.cvmInstanceId || proof?.resources?.storageVolumeId !== exactTarget.storageId ||
-            proof?.resources?.storageZone !== exactTarget.zone || proof?.operationIds?.launchOperationId !== exactTarget.launchOperationId ||
-            proof?.operationIds?.compute?.providerOperationId !== proof?.operationIds?.machineOwnershipId ||
-            JSON.stringify(proof?.customer) !== JSON.stringify(approval.customer) || JSON.stringify(proof?.target) !== JSON.stringify(approval.target) ||
-            JSON.stringify(proof?.resources) !== JSON.stringify(approval.resources) || JSON.stringify(proof?.operationIds) !== JSON.stringify(approval.operationIds) ||
-            JSON.stringify(approval?.attemptBudget) !== JSON.stringify(unknown) || JSON.stringify(proof?.attemptBudget) !== JSON.stringify(approval.attemptBudget) ||
-            JSON.stringify(proof?.allowedWrites) !== JSON.stringify(approval.allowedWrites) ||
-            JSON.stringify(proof?.forbiddenWrites) !== JSON.stringify(approval.forbiddenWrites) || JSON.stringify(result?.operation?.attemptBudget) !== JSON.stringify(confirmed) ||
-            proof?.sub2apiMutationCount !== 0 || proof?.tencentMutationCount !== 0 || proof?.kubernetesMutationCount !== 0 ||
-            result?.runnerDirectMutationCounts?.sub2api !== 0 || result?.runnerDirectMutationCounts?.tencent !== 0 ||
-            result?.runnerDirectMutationCounts?.kubernetes !== 0 || result?.backgroundMutationCountsState !== "unknown") {
-            console.error(`Workspace launch readback recovery blocked: ${String(result?.errorCode || "recovery_artifact_invalid")}`);
-            process.exit(1);
-          }
-          NODE
-
-      - name: Generate safe Workspace launch recovery artifact
-        if: always()
-        shell: bash
-        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
-        run: |
-          set -euo pipefail
-          node --input-type=module <<'NODE'
-          import { readFile, writeFile } from "node:fs/promises";
-          import { workspaceLaunchReadbackArtifact } from "./tools/production-live-qa.ts";
-          let raw;
-          try {
-            raw = JSON.parse(await readFile(process.env.OPL_WORKSPACE_LAUNCH_READBACK_RAW_RESULT_PATH, "utf8"));
-          } catch {
-            raw = {
-              schemaVersion: 2,
-              operationMode: "workspace_launch_readback_recover",
-              status: "blocked",
-              recoveryEligible: false,
-              errorCode: "workspace_launch_readback_recovery_failed",
-              runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
-              backgroundMutationCountsState: "unknown"
-            };
-          }
-          const artifact = workspaceLaunchReadbackArtifact(raw);
-          await writeFile(`${process.env.OPL_WORKSPACE_LAUNCH_READBACK_ARTIFACT_DIR}/workspace-launch-readback-recovery.json`, `${JSON.stringify(artifact, null, 2)}\n`, { mode: 0o600 });
-          NODE
-
-      - name: Continue original launch with GET-only readback
-        id: continue
-        if: ${{ steps.recover.outcome == 'success' && steps.readback_convergence.outcome == 'success' }}
-        continue-on-error: true
-        shell: bash
-        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
-        run: |
-          set -euo pipefail
-          node tools/production-live-qa.ts --compute-claim-continue \
-            --compute-claim-target-json "$OPL_COMPUTE_CLAIM_TARGET_JSON" \
-            --launch-poll-attempts "$OPL_VERIFY_LAUNCH_POLL_ATTEMPTS" \
-            --launch-poll-delay-ms "$OPL_VERIFY_LAUNCH_POLL_DELAY_MS" \
-            > "$OPL_WORKSPACE_LAUNCH_CONTINUATION_RAW_RESULT_PATH"
-
-      - name: Require original launch URL and Receipt
-        if: ${{ steps.continue.outcome == 'success' }}
-        shell: bash
-        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
-        run: |
-          set -euo pipefail
-          node <<'NODE'
-          const fs = require("node:fs");
-          const result = JSON.parse(fs.readFileSync(process.env.OPL_WORKSPACE_LAUNCH_CONTINUATION_RAW_RESULT_PATH, "utf8"));
-          const target = JSON.parse(process.env.OPL_COMPUTE_CLAIM_TARGET_JSON);
-          const expectedWorkspaceUrl = `https://workspace.medopl.cn/w/${target.workspaceId}/`;
-          const launch = result?.launch;
-          const runtime = result?.runtime;
-          if (result?.schemaVersion !== 2 || result?.operationMode !== "compute_claim_recover_continuation" || result?.status !== "succeeded" ||
-            result?.recoveryEligible !== true || result?.errorCode !== "none" || launch?.operationId !== target.launchOperationId ||
-            launch?.accountId !== target.accountId || launch?.workspaceId !== target.workspaceId || launch?.computeAllocationId !== target.computeAllocationId ||
-            launch?.storageId !== target.storageId || launch?.status !== "succeeded" || launch?.phase !== "succeeded" || !launch?.attachmentId ||
-            !launch?.receiptId || launch?.url !== expectedWorkspaceUrl || runtime?.workspaceId !== target.workspaceId || runtime?.status !== "running" ||
-            runtime?.ready !== true || runtime?.url !== expectedWorkspaceUrl || result?.receipt?.receiptId !== launch.receiptId ||
-            result?.receipt?.type !== "billing.workspace_purchased.v1" || result?.receipt?.status !== "completed" ||
-            result?.receipt?.workspaceId !== target.workspaceId || result?.receipt?.components?.storage?.resourceId !== target.storageId ||
-            result?.receipt?.fulfillment?.attachmentId !== launch.attachmentId || result?.receipt?.fulfillment?.runtimeId !== runtime.runtimeId ||
-            result?.runnerDirectMutationCounts?.sub2api !== 0 || result?.runnerDirectMutationCounts?.tencent !== 0 ||
-            result?.runnerDirectMutationCounts?.kubernetes !== 0 || result?.backgroundMutationCountsState !== "unknown") {
-            console.error(`Original launch continuation blocked: ${String(result?.errorCode || "continuation_artifact_invalid")}`);
-            process.exit(1);
-          }
-          NODE
-
-      - name: Generate safe recovered Workspace handoff
-        if: always()
-        shell: bash
-        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
-        run: |
-          set -euo pipefail
-          node --input-type=module <<'NODE'
-          import { readFile, writeFile } from "node:fs/promises";
-          import { workspaceLaunchContinuationHandoff } from "./tools/production-live-qa.ts";
-          let raw;
-          try {
-            raw = JSON.parse(await readFile(process.env.OPL_WORKSPACE_LAUNCH_CONTINUATION_RAW_RESULT_PATH, "utf8"));
-          } catch {
-            process.exit(0);
-          }
-          const recovery = JSON.parse(await readFile(`${process.env.OPL_WORKSPACE_LAUNCH_READBACK_ARTIFACT_DIR}/workspace-launch-readback-recovery.json`, "utf8"));
-          const artifact = workspaceLaunchContinuationHandoff(raw, recovery);
-          await writeFile(`${process.env.OPL_WORKSPACE_LAUNCH_READBACK_ARTIFACT_DIR}/workspace-launch-continuation.json`, `${JSON.stringify(artifact, null, 2)}\n`, { mode: 0o600 });
-          NODE
-
-      - name: Upload redacted Workspace launch recovery
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: production-basic-compute-claim-evidence
-          path: ${{ runner.temp }}/production-basic-compute-claim-evidence
-          if-no-files-found: error
-          overwrite: true
-          retention-days: 30
-
-      - name: Require Workspace launch readback recovery success
-        if: ${{ steps.recover.outcome != 'success' }}
-        shell: bash
-        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
-        run: |
-          echo "Workspace launch readback recovery stopped; inspect the redacted artifact." >&2
-          exit 1
-
-      - name: Require Workspace launch continuation success
-        if: ${{ steps.continue.outcome != 'success' }}
-        shell: bash
-        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
-        run: |
-          echo "Original launch continuation stopped; inspect the redacted artifact." >&2
-          exit 1
-
-      - name: Remove isolated source checkout
-        if: always() && steps.prepare_source.outcome == 'success'
-        shell: bash
-        env:
-          OPL_SOURCE_CHECKOUT: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
-        run: |
-          set -euo pipefail
-          source_dir="${OPL_SOURCE_CHECKOUT:-}"
-          expected="$GITHUB_WORKSPACE/.opl-checkouts/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
-          if [ -z "$source_dir" ] || [ "$source_dir" != "$expected" ]; then
-            echo "Refusing to remove unexpected source checkout path." >&2
-            exit 1
-          fi
-          if [ -d "$source_dir" ]; then
-            find "$source_dir" -mindepth 1 -delete
-            rmdir "$source_dir"
-          fi
-
-  compute-claim-diagnose:
-    name: Prove one partial Workspace compute claim in TKE VPC
-    if: ${{ github.ref == 'refs/heads/main' && github.sha == inputs.merged_sha && inputs.operation_mode == 'compute_claim_diagnose' && inputs.resume_run_id == '' && inputs.diagnose_target_json == '' && !inputs.confirm_account_provision && !inputs.confirm_wallet_recharge && !inputs.confirm_workspace_purchase && !inputs.confirm_single_model_request && !inputs.confirm_compute_claim_recovery && !inputs.confirm_workspace_launch_readback_recovery }}
-    runs-on: [self-hosted, tencent-cloud, opl-cloud, tke-vpc]
-    timeout-minutes: 15
-    environment: production
-    env:
-      OPL_MERGED_SHA: ${{ inputs.merged_sha }}
-      OPL_COMPUTE_CLAIM_TARGET_JSON: ${{ inputs.compute_claim_target_json }}
-      OPL_COMPUTE_CLAIM_CLOUD_DIGEST: ${{ inputs.compute_claim_cloud_digest }}
-      OPL_K8S_NAMESPACE: ${{ vars.OPL_K8S_NAMESPACE || 'opl-cloud' }}
-      KUBECONFIG: ${{ vars.TENCENT_DEPLOY_KUBECONFIG_PATH || '/home/actions/.secrets/medopl/v22/kubeconfig-package-d-deploy' }}
-
-    steps:
-      - name: Prepare isolated source checkout
-        id: prepare_source
-        shell: bash
-        env:
-          OPL_SOURCE_CHECKOUT: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
-        run: |
-          set -euo pipefail
-          expected="$GITHUB_WORKSPACE/.opl-checkouts/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
-          if [ "$OPL_SOURCE_CHECKOUT" != "$expected" ]; then
-            echo "Isolated source checkout path mismatch." >&2
-            exit 1
-          fi
-          mkdir -p "$GITHUB_WORKSPACE/.opl-checkouts"
-          mkdir "$OPL_SOURCE_CHECKOUT"
-
-      - name: Checkout exact merged main
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.merged_sha }}
-          fetch-depth: 0
-
-          path: .opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
-
-      - name: Verify remote branch authority
-        shell: bash
-        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
-        run: |
-          set -euo pipefail
-          mapfile -t remote_heads < <(git ls-remote --heads origin)
-          if [ "${#remote_heads[@]}" -ne 1 ]; then
-            printf 'Production source authority requires exactly one remote head; observed: %s\n' "${remote_heads[*]:-none}" >&2
-            exit 1
-          fi
-          read -r remote_main_sha remote_main_ref <<< "${remote_heads[0]}"
-          head_sha="$(git rev-parse HEAD)"
-          if [ "$remote_main_ref" != "refs/heads/main" ] || [ "$GITHUB_REF" != "refs/heads/main" ] ||
-             [ "$GITHUB_SHA" != "$head_sha" ] || [ "$remote_main_sha" != "$head_sha" ]; then
-            printf 'Production source must be current main: ref=%s github_sha=%s checkout=%s remote_main=%s\n' \
-              "$GITHUB_REF" "$GITHUB_SHA" "$head_sha" "$remote_main_sha" >&2
-            exit 1
-          fi
-
-      - name: Verify exact origin main
-        shell: bash
-        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
-        run: |
-          set -euo pipefail
-          if ! [[ "$OPL_MERGED_SHA" =~ ^[0-9a-f]{40}$ ]] || ! [[ "$OPL_COMPUTE_CLAIM_CLOUD_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-            echo "A full merged main SHA and immutable Cloud digest are required." >&2
-            exit 1
-          fi
-          git fetch --no-tags origin main:refs/remotes/origin/main
-          head_sha="$(git rev-parse HEAD)"
-          main_sha="$(git rev-parse refs/remotes/origin/main)"
-          if [ "$head_sha" != "$OPL_MERGED_SHA" ] || [ "$main_sha" != "$OPL_MERGED_SHA" ]; then
-            echo "Compute claim diagnosis source is not the exact current origin/main revision." >&2
-            exit 1
-          fi
-
-      - name: Validate read-only compute claim inputs
-        shell: bash
-        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
-        run: |
-          set -euo pipefail
-          if [ -z "$OPL_COMPUTE_CLAIM_TARGET_JSON" ] || [ ! -r "$KUBECONFIG" ]; then
-            echo "Compute claim diagnosis requires the exact target and release-owned runner kubeconfig." >&2
-            exit 1
-          fi
-
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-
-      - name: Prepare redacted compute claim proof artifact
-        shell: bash
-        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
-        run: |
-          set -euo pipefail
-          artifact_dir="$RUNNER_TEMP/production-compute-claim-diagnosis"
-          mkdir -p "$artifact_dir"
-          chmod 700 "$artifact_dir"
-          echo "OPL_COMPUTE_CLAIM_ARTIFACT_DIR=$artifact_dir" >> "$GITHUB_ENV"
-
-      - name: Run compute claim diagnosis
-        id: diagnose
-        continue-on-error: true
-        shell: bash
-        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
-        run: |
-          set -euo pipefail
-          node tools/production-live-qa.ts --compute-claim-diagnose \
-            --compute-claim-target-json "$OPL_COMPUTE_CLAIM_TARGET_JSON" \
-            > "$OPL_COMPUTE_CLAIM_ARTIFACT_DIR/compute-claim-diagnosis.json"
-
-      - name: Upload redacted compute claim diagnosis
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: production-compute-claim-diagnosis
-          path: ${{ runner.temp }}/production-compute-claim-diagnosis
-          if-no-files-found: error
-          overwrite: true
-          retention-days: 30
-
-      - name: Require complete zero-mutation compute proof
-        if: ${{ steps.diagnose.outcome == 'success' }}
-        shell: bash
-        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
-        run: |
-          set -euo pipefail
-          node <<'NODE'
-          const fs = require("node:fs");
-          const path = `${process.env.OPL_COMPUTE_CLAIM_ARTIFACT_DIR}/compute-claim-diagnosis.json`;
-          const result = JSON.parse(fs.readFileSync(path, "utf8"));
-          const proof = result?.proof;
-          const completeEvidence = (evidence, count, maximum) => Number.isInteger(count) && count >= 0 && count <= maximum &&
-            Number.isInteger(evidence?.attempted) && evidence.attempted === count && Number.isInteger(evidence.confirmed) &&
-            evidence.confirmed >= 0 && evidence.confirmed <= evidence.attempted && Number.isInteger(evidence.unknown) &&
-            evidence.unknown >= 0 && evidence.unknown <= evidence.attempted && evidence.confirmed + evidence.unknown <= evidence.attempted &&
-            evidence.confirmed === evidence.attempted && evidence.unknown === 0 && Array.isArray(evidence.missing) && evidence.missing.length === 0;
-          const exactStorage = proof?.storageState === "storage_not_started" && !proof?.storageProviderResourceId ||
-            proof?.storageState === "storage_existing_exact" && /^disk-[a-z0-9-]{1,80}$/.test(proof?.storageProviderResourceId);
-          if (result?.schemaVersion !== 2 || result?.operationMode !== "compute_claim_diagnose" || result?.status !== "proven" ||
-            result?.recoveryEligible !== true || result?.errorCode !== "none" || !exactStorage ||
-            result?.runnerDirectMutationCounts?.sub2api !== 0 || result?.runnerDirectMutationCounts?.tencent !== 0 ||
-            result?.runnerDirectMutationCounts?.kubernetes !== 0 || proof?.sub2apiMutationCount !== 0 || proof?.tencentMutationCount !== 0 ||
-            proof?.kubernetesMutationCount !== 0 || !completeEvidence(proof?.evidence?.cvm, proof?.tencentMutationCount, 5) ||
-            !completeEvidence(proof?.evidence?.node, proof?.kubernetesMutationCount, 1)) {
-            console.error(`Compute claim diagnosis blocked: ${String(result?.errorCode || "diagnosis_artifact_invalid")}`);
-            process.exit(1);
-          }
-          NODE
-
-      - name: Require compute claim diagnosis success
-        if: ${{ steps.diagnose.outcome != 'success' }}
-        shell: bash
-        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
-        run: |
-          echo "Compute claim diagnosis stopped; inspect the redacted diagnosis artifact." >&2
-          exit 1
-
-      - name: Remove isolated source checkout
-        if: always() && steps.prepare_source.outcome == 'success'
-        shell: bash
-        env:
-          OPL_SOURCE_CHECKOUT: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
-        run: |
-          set -euo pipefail
-          source_dir="${OPL_SOURCE_CHECKOUT:-}"
-          expected="$GITHUB_WORKSPACE/.opl-checkouts/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
-          if [ -z "$source_dir" ] || [ "$source_dir" != "$expected" ]; then
-            echo "Refusing to remove unexpected source checkout path." >&2
-            exit 1
-          fi
-          if [ -d "$source_dir" ]; then
-            find "$source_dir" -mindepth 1 -delete
-            rmdir "$source_dir"
-          fi
 
   compute-claim-validate:
-    name: Validate one Compute Claim approval binding without mutation
-    if: ${{ github.ref == 'refs/heads/main' && github.sha == inputs.merged_sha && inputs.operation_mode == 'compute_claim_validate' && inputs.customer_email != '' && inputs.compute_claim_target_json != '' && inputs.compute_claim_cloud_digest != '' && inputs.resume_run_id == '' && inputs.resource_closure_run_id == '' && inputs.diagnose_target_json == '' && inputs.workspace_launch_target_json == '' && inputs.workspace_launch_cloud_digest == '' && !inputs.confirm_account_provision && !inputs.confirm_wallet_recharge && !inputs.confirm_workspace_purchase && !inputs.confirm_single_model_request && !inputs.confirm_compute_claim_recovery && !inputs.confirm_workspace_launch_readback_recovery }}
+    name: Validate one persisted server-owned Recovery Plan without mutation
+    if: ${{ github.ref == 'refs/heads/main' && github.sha == inputs.merged_sha && inputs.operation_mode == 'compute_claim_validate' && inputs.recovery_plan_launch_operation_id != '' && inputs.recovery_plan_id != '' && inputs.recovery_plan_digest != '' && inputs.resume_run_id == '' && !inputs.confirm_account_provision && !inputs.confirm_wallet_recharge && !inputs.confirm_workspace_purchase && !inputs.confirm_single_model_request }}
     runs-on: [self-hosted, tencent-cloud, opl-cloud, tke-vpc]
     timeout-minutes: 15
     environment: production
     env:
       OPL_MERGED_SHA: ${{ inputs.merged_sha }}
-      OPL_COMPUTE_CLAIM_RECOVERY_APPROVAL_ID: ${{ inputs.approval_id }}
-      OPL_COMPUTE_CLAIM_RECOVERY_APPROVAL_JSON: ${{ secrets.OPL_COMPUTE_CLAIM_RECOVERY_APPROVAL_JSON }}
-      OPL_COMPUTE_CLAIM_TARGET_JSON: ${{ inputs.compute_claim_target_json }}
-      OPL_COMPUTE_CLAIM_CLOUD_DIGEST: ${{ inputs.compute_claim_cloud_digest }}
+      OPL_RECOVERY_PLAN_LAUNCH_OPERATION_ID: ${{ inputs.recovery_plan_launch_operation_id }}
+      OPL_RECOVERY_PLAN_ID: ${{ inputs.recovery_plan_id }}
+      OPL_RECOVERY_PLAN_DIGEST: ${{ inputs.recovery_plan_digest }}
       OPL_CONSOLE_ORIGIN: ${{ vars.OPL_CONSOLE_ORIGIN || 'https://cloud.medopl.cn' }}
       OPL_SUB2API_ADMIN_EMAIL: ${{ secrets.OPL_SUB2API_ADMIN_EMAIL }}
       OPL_SUB2API_ADMIN_PASSWORD: ${{ secrets.OPL_SUB2API_ADMIN_PASSWORD }}
-      OPL_BASIC_CANARY_CUSTOMER_EMAIL: ${{ inputs.customer_email }}
-      OPL_K8S_NAMESPACE: ${{ vars.OPL_K8S_NAMESPACE || 'opl-cloud' }}
       OPL_VERIFY_REQUEST_TIMEOUT_MS: ${{ vars.OPL_VERIFY_REQUEST_TIMEOUT_MS || '30000' }}
-      KUBECONFIG: ${{ vars.TENCENT_DEPLOY_KUBECONFIG_PATH || '/home/actions/.secrets/medopl/v22/kubeconfig-package-d-deploy' }}
 
     steps:
       - name: Prepare isolated source checkout
@@ -1911,14 +959,15 @@ jobs:
         working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           set -euo pipefail
-          if ! [[ "$OPL_MERGED_SHA" =~ ^[0-9a-f]{40}$ ]] || ! [[ "$OPL_COMPUTE_CLAIM_CLOUD_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] ||
-             [ -z "$OPL_COMPUTE_CLAIM_TARGET_JSON" ] || [ -z "$OPL_COMPUTE_CLAIM_RECOVERY_APPROVAL_ID" ] ||
-             [ -z "$OPL_COMPUTE_CLAIM_RECOVERY_APPROVAL_JSON" ] || [ -z "$OPL_BASIC_CANARY_CUSTOMER_EMAIL" ] || [ ! -r "$KUBECONFIG" ]; then
-            echo "Compute claim validation requires its exact target, approval, protected customer identity, Cloud digest, and release-owned runner kubeconfig." >&2
+          if ! [[ "$OPL_MERGED_SHA" =~ ^[0-9a-f]{40}$ ]] ||
+             ! [[ "$OPL_RECOVERY_PLAN_LAUNCH_OPERATION_ID" =~ ^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$ ]] ||
+             ! [[ "$OPL_RECOVERY_PLAN_ID" =~ ^recovery-plan-[a-f0-9]{20}$ ]] ||
+             ! [[ "$OPL_RECOVERY_PLAN_DIGEST" =~ ^[a-f0-9]{64}$ ]]; then
+            echo "Recovery Plan validation requires the exact persisted Plan and original Launch identities." >&2
             exit 1
           fi
-          if ! grep -Fq 'compute-claim-recovery/validate' tools/production-live-qa.ts; then
-            echo "Compute claim validation source is unavailable." >&2
+          if ! grep -Fq 'recovery-plan/validate' tools/production-live-qa.ts; then
+            echo "Server-owned Recovery Plan validation source is unavailable." >&2
             exit 1
           fi
 
@@ -1927,101 +976,68 @@ jobs:
         with:
           node-version: "22"
 
-      - name: Prepare redacted approval validation artifact
+      - name: Prepare redacted Recovery Plan validation artifact
         shell: bash
         working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           set -euo pipefail
-          artifact_dir="$RUNNER_TEMP/production-compute-claim-validation"
+          artifact_dir="$RUNNER_TEMP/production-recovery-plan-validation"
           mkdir -p "$artifact_dir"
           chmod 700 "$artifact_dir"
-          echo "OPL_COMPUTE_CLAIM_ARTIFACT_DIR=$artifact_dir" >> "$GITHUB_ENV"
+          echo "OPL_RECOVERY_PLAN_ARTIFACT_DIR=$artifact_dir" >> "$GITHUB_ENV"
 
-      - name: Run zero-mutation Compute Claim approval validation
+      - name: Run zero-mutation server-owned Recovery Plan validation
         id: validate
         continue-on-error: true
         shell: bash
         working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           set -euo pipefail
-          token_b64="$(kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" get secret opl-cloud-internal-service -o jsonpath='{.data.OPL_INTERNAL_SERVICE_TOKEN}')"
-          if [ -z "$token_b64" ]; then
-            echo "Current internal service capability is unavailable." >&2
-            exit 1
-          fi
-          OPL_INTERNAL_SERVICE_TOKEN="$(printf '%s' "$token_b64" | base64 -d)"
-          unset token_b64
-          if [ -z "$OPL_INTERNAL_SERVICE_TOKEN" ]; then
-            echo "Current internal service capability is empty." >&2
-            exit 1
-          fi
-          echo "::add-mask::$OPL_INTERNAL_SERVICE_TOKEN"
-          export OPL_INTERNAL_SERVICE_TOKEN
-          node tools/production-live-qa.ts --compute-claim-validate \
-            --compute-claim-target-json "$OPL_COMPUTE_CLAIM_TARGET_JSON" \
-            --approval-id "$OPL_COMPUTE_CLAIM_RECOVERY_APPROVAL_ID" \
-            > "$OPL_COMPUTE_CLAIM_ARTIFACT_DIR/compute-claim-validation.json"
+          node tools/production-live-qa.ts --recovery-plan-validate \
+            --launch-operation-id "$OPL_RECOVERY_PLAN_LAUNCH_OPERATION_ID" \
+            --plan-id "$OPL_RECOVERY_PLAN_ID" \
+            --plan-digest "$OPL_RECOVERY_PLAN_DIGEST" \
+            > "$OPL_RECOVERY_PLAN_ARTIFACT_DIR/recovery-plan-validation.json"
 
-      - name: Require exact zero-mutation approval binding
+
+      - name: Require exact zero-mutation persisted Recovery Plan
         if: ${{ steps.validate.outcome == 'success' }}
         shell: bash
         working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           set -euo pipefail
           node <<'NODE'
-          const { createHash } = require("node:crypto");
           const fs = require("node:fs");
-          const result = JSON.parse(fs.readFileSync(`${process.env.OPL_COMPUTE_CLAIM_ARTIFACT_DIR}/compute-claim-validation.json`, "utf8"));
-          const approval = JSON.parse(process.env.OPL_COMPUTE_CLAIM_RECOVERY_APPROVAL_JSON);
-          const target = JSON.parse(process.env.OPL_COMPUTE_CLAIM_TARGET_JSON);
-          const canonicalJson = (value) => Array.isArray(value)
-            ? `[${value.map(canonicalJson).join(",")}]`
-            : !value || typeof value !== "object"
-              ? JSON.stringify(value)
-              : `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(",")}}`;
-          const approvalDigest = createHash("sha256").update(canonicalJson(approval)).digest("hex");
-          const identityChecks = result?.identityEvidence?.checks;
-          const identityFields = new Set([
-            "controlPlane.launchOperationId", "controlPlane.accountId", "controlPlane.workspaceId", "controlPlane.computeAllocationId", "controlPlane.storageId",
-            "controlPlane.cvmInstanceId", "controlPlane.zone", "controlPlane.privateIp", "controlPlane.instanceType", "controlPlane.nodeName",
-            "controlPlane.machineName", "controlPlane.workspaceApiKeyId", "approval.approvalId", "approval.approvalDigest", "approval.persistedApprovalDigest",
-            "approval.idempotencyKey", "approval.persistedBinding", "release.mergedMainSha", "release.cloudImageDigest", "release.workspaceImageDigest",
-            "fabric.operationId", "fabric.operationIdempotencyKey", "fabric.operationRequestHash", "provider.readbackStatus", "provider.reason",
-            "provider.cvmInstanceId", "provider.zone", "provider.privateIp", "provider.instanceType", "provider.nodeName", "provider.machineName",
-            "provider.cvmOwnership", "provider.nodeOwnership", "binding.present", "binding.valid", "binding.compatibility", "binding.launchOperationId",
-            "binding.idempotencyKey", "binding.targetHash", "binding.requestHash"
-          ]);
-          if (result?.schemaVersion !== 2 || result?.operationMode !== "compute_claim_validate" || result?.status !== "proven" ||
-            result?.recoveryEligible !== true || result?.errorCode !== "none" || result?.release?.mergedSha !== process.env.OPL_MERGED_SHA ||
-            result?.release?.cloudImageDigest !== process.env.OPL_COMPUTE_CLAIM_CLOUD_DIGEST || canonicalJson(result?.target) !== canonicalJson(target) ||
-            result?.approval?.approvalId !== process.env.OPL_COMPUTE_CLAIM_RECOVERY_APPROVAL_ID || result?.approval?.approvalDigest !== approvalDigest ||
-            !Array.isArray(identityChecks) || identityChecks.length !== identityFields.size ||
-            new Set(identityChecks.map((check) => check?.field)).size !== identityFields.size ||
-            !identityChecks.every((check) => identityFields.has(check?.field) && check?.matches === true) ||
-            !["absent", "invalid", "reserved", "observed", "node_reserved", "succeeded"].includes(result?.identityEvidence?.mutationLedger) ||
+          const result = JSON.parse(fs.readFileSync(`${process.env.OPL_RECOVERY_PLAN_ARTIFACT_DIR}/recovery-plan-validation.json`, "utf8"));
+          if (result?.schemaVersion !== 1 || result?.operationMode !== "recovery_plan_validate" || result?.status !== "proven" ||
+            result?.recoveryEligible !== true || result?.errorCode !== "none" ||
+            !/^recovery-plan-[a-f0-9]{20}$/.test(String(result?.planId || "")) ||
+            !/^[a-f0-9]{64}$/.test(String(result?.planDigest || "")) || !Array.isArray(result?.stages) || result.stages.length === 0 ||
+            !Array.isArray(result?.mismatches) || result.mismatches.length !== 0 ||
             result?.runnerDirectMutationCounts?.sub2api !== 0 || result?.runnerDirectMutationCounts?.tencent !== 0 ||
-            result?.runnerDirectMutationCounts?.kubernetes !== 0 || /@|password|secret|token|cookie|maskedValue/i.test(JSON.stringify(result))) {
-            console.error(`Compute claim validation blocked: ${String(result?.errorCode || "validation_artifact_invalid")}`);
+            result?.runnerDirectMutationCounts?.kubernetes !== 0 ||
+            /password|secret|token|cookie|cvmInstanceId|nodeName|cloudImageDigest/i.test(JSON.stringify(result))) {
+            console.error(`Recovery Plan validation blocked: ${String(result?.errorCode || "validation_artifact_invalid")}`);
             process.exit(1);
           }
           NODE
 
-      - name: Upload redacted Compute Claim approval validation
+      - name: Upload redacted Recovery Plan validation
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: production-compute-claim-validation
-          path: ${{ runner.temp }}/production-compute-claim-validation
+          name: production-recovery-plan-validation
+          path: ${{ runner.temp }}/production-recovery-plan-validation
           if-no-files-found: error
           overwrite: true
           retention-days: 30
 
-      - name: Require Compute Claim approval validation success
+      - name: Require Recovery Plan validation success
         if: ${{ steps.validate.outcome != 'success' }}
         shell: bash
         working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
-          echo "Compute claim approval validation stopped; inspect the redacted validation artifact." >&2
+          echo "Recovery Plan validation stopped; inspect the redacted validation artifact." >&2
           exit 1
 
       - name: Remove isolated source checkout
@@ -2042,326 +1058,23 @@ jobs:
             rmdir "$source_dir"
           fi
 
-  compute-claim-recover:
-    name: Converge one separately approved partial Workspace compute claim
-    if: ${{ github.ref == 'refs/heads/main' && github.sha == inputs.merged_sha && inputs.operation_mode == 'compute_claim_recover' && inputs.customer_email != '' && inputs.resume_run_id == '' && inputs.diagnose_target_json == '' && !inputs.confirm_account_provision && !inputs.confirm_wallet_recharge && !inputs.confirm_workspace_purchase && !inputs.confirm_single_model_request && inputs.confirm_compute_claim_recovery && !inputs.confirm_workspace_launch_readback_recovery }}
-    runs-on: [self-hosted, tencent-cloud, opl-cloud, tke-vpc]
-    timeout-minutes: 40
-    environment: production
-    env:
-      OPL_MERGED_SHA: ${{ inputs.merged_sha }}
-      OPL_COMPUTE_CLAIM_RECOVERY_APPROVAL_ID: ${{ inputs.approval_id }}
-      OPL_COMPUTE_CLAIM_RECOVERY_APPROVAL_JSON: ${{ secrets.OPL_COMPUTE_CLAIM_RECOVERY_APPROVAL_JSON }}
-      OPL_COMPUTE_CLAIM_TARGET_JSON: ${{ inputs.compute_claim_target_json }}
-      OPL_COMPUTE_CLAIM_CLOUD_DIGEST: ${{ inputs.compute_claim_cloud_digest }}
-      OPL_CONSOLE_ORIGIN: ${{ vars.OPL_CONSOLE_ORIGIN || 'https://cloud.medopl.cn' }}
-      OPL_SUB2API_ADMIN_EMAIL: ${{ secrets.OPL_SUB2API_ADMIN_EMAIL }}
-      OPL_SUB2API_ADMIN_PASSWORD: ${{ secrets.OPL_SUB2API_ADMIN_PASSWORD }}
-      OPL_BASIC_CANARY_CUSTOMER_EMAIL: ${{ inputs.customer_email }}
-      OPL_BASIC_CANARY_CUSTOMER_PASSWORD: ${{ secrets.OPL_BASIC_CANARY_CUSTOMER_PASSWORD }}
-      OPL_K8S_NAMESPACE: ${{ vars.OPL_K8S_NAMESPACE || 'opl-cloud' }}
-      OPL_VERIFY_REQUEST_TIMEOUT_MS: ${{ vars.OPL_VERIFY_REQUEST_TIMEOUT_MS || '30000' }}
-      OPL_VERIFY_LAUNCH_POLL_ATTEMPTS: ${{ vars.OPL_VERIFY_LAUNCH_POLL_ATTEMPTS || '180' }}
-      OPL_VERIFY_LAUNCH_POLL_DELAY_MS: ${{ vars.OPL_VERIFY_LAUNCH_POLL_DELAY_MS || '10000' }}
-      KUBECONFIG: ${{ vars.TENCENT_DEPLOY_KUBECONFIG_PATH || '/home/actions/.secrets/medopl/v22/kubeconfig-package-d-deploy' }}
-
-    steps:
-      - name: Prepare isolated source checkout
-        id: prepare_source
-        shell: bash
-        env:
-          OPL_SOURCE_CHECKOUT: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
-        run: |
-          set -euo pipefail
-          expected="$GITHUB_WORKSPACE/.opl-checkouts/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
-          if [ "$OPL_SOURCE_CHECKOUT" != "$expected" ]; then
-            echo "Isolated source checkout path mismatch." >&2
-            exit 1
-          fi
-          mkdir -p "$GITHUB_WORKSPACE/.opl-checkouts"
-          mkdir "$OPL_SOURCE_CHECKOUT"
-
-      - name: Checkout exact merged main
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.merged_sha }}
-          fetch-depth: 0
-
-          path: .opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
-
-      - name: Verify remote branch authority
-        shell: bash
-        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
-        run: |
-          set -euo pipefail
-          mapfile -t remote_heads < <(git ls-remote --heads origin)
-          if [ "${#remote_heads[@]}" -ne 1 ]; then
-            printf 'Production source authority requires exactly one remote head; observed: %s\n' "${remote_heads[*]:-none}" >&2
-            exit 1
-          fi
-          read -r remote_main_sha remote_main_ref <<< "${remote_heads[0]}"
-          head_sha="$(git rev-parse HEAD)"
-          if [ "$remote_main_ref" != "refs/heads/main" ] || [ "$GITHUB_REF" != "refs/heads/main" ] ||
-             [ "$GITHUB_SHA" != "$head_sha" ] || [ "$remote_main_sha" != "$head_sha" ]; then
-            printf 'Production source must be current main: ref=%s github_sha=%s checkout=%s remote_main=%s\n' \
-              "$GITHUB_REF" "$GITHUB_SHA" "$head_sha" "$remote_main_sha" >&2
-            exit 1
-          fi
-
-      - name: Verify exact approved source
-        shell: bash
-        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
-        run: |
-          set -euo pipefail
-          if ! [[ "$OPL_MERGED_SHA" =~ ^[0-9a-f]{40}$ ]] || ! [[ "$OPL_COMPUTE_CLAIM_CLOUD_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-            echo "A full merged main SHA and immutable Cloud digest are required." >&2
-            exit 1
-          fi
-          git fetch --no-tags origin main:refs/remotes/origin/main
-          head_sha="$(git rev-parse HEAD)"
-          main_sha="$(git rev-parse refs/remotes/origin/main)"
-          if [ "$head_sha" != "$OPL_MERGED_SHA" ] || [ "$main_sha" != "$OPL_MERGED_SHA" ]; then
-            echo "Compute claim recovery source is not the exact current origin/main revision." >&2
-            exit 1
-          fi
-
-      - name: Validate approved compute claim inputs
-        shell: bash
-        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
-        run: |
-          set -euo pipefail
-          if [ -z "$OPL_COMPUTE_CLAIM_TARGET_JSON" ] || [ -z "$OPL_COMPUTE_CLAIM_RECOVERY_APPROVAL_ID" ] ||
-            [ -z "$OPL_COMPUTE_CLAIM_RECOVERY_APPROVAL_JSON" ] || [ ! -r "$KUBECONFIG" ]; then
-            echo "Compute claim recovery requires its exact target, independent approval, and release-owned runner kubeconfig." >&2
-            exit 1
-          fi
-
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-
-      - name: Prepare redacted compute claim recovery artifact
-        shell: bash
-        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
-        run: |
-          set -euo pipefail
-          artifact_dir="$RUNNER_TEMP/production-basic-compute-claim-evidence"
-          raw_dir="$RUNNER_TEMP/production-basic-compute-claim-evidence-raw"
-          mkdir -p "$artifact_dir" "$raw_dir"
-          chmod 700 "$artifact_dir" "$raw_dir"
-          echo "OPL_COMPUTE_CLAIM_ARTIFACT_DIR=$artifact_dir" >> "$GITHUB_ENV"
-          echo "OPL_COMPUTE_CLAIM_CONTINUATION_RAW_RESULT_PATH=$raw_dir/workspace-launch-continuation.raw.json" >> "$GITHUB_ENV"
-
-      - name: Run approved compute claim recovery
-        id: recover
-        continue-on-error: true
-        shell: bash
-        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
-        run: |
-          set -euo pipefail
-          token_b64="$(kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" get secret opl-cloud-internal-service -o jsonpath='{.data.OPL_INTERNAL_SERVICE_TOKEN}')"
-          if [ -z "$token_b64" ]; then
-            echo "Current internal service capability is unavailable." >&2
-            exit 1
-          fi
-          OPL_INTERNAL_SERVICE_TOKEN="$(printf '%s' "$token_b64" | base64 -d)"
-          unset token_b64
-          if [ -z "$OPL_INTERNAL_SERVICE_TOKEN" ]; then
-            echo "Current internal service capability is empty." >&2
-            exit 1
-          fi
-          echo "::add-mask::$OPL_INTERNAL_SERVICE_TOKEN"
-          export OPL_INTERNAL_SERVICE_TOKEN
-          node tools/production-live-qa.ts --compute-claim-recover \
-            --compute-claim-target-json "$OPL_COMPUTE_CLAIM_TARGET_JSON" \
-            --approval-id "$OPL_COMPUTE_CLAIM_RECOVERY_APPROVAL_ID" \
-            > "$OPL_COMPUTE_CLAIM_ARTIFACT_DIR/compute-claim-recovery.json"
-
-      - name: Require approved claim readback
-        id: claim_readback
-        if: ${{ steps.recover.outcome == 'success' }}
-        shell: bash
-        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
-        run: |
-          set -euo pipefail
-          node <<'NODE'
-          const { createHash } = require("node:crypto");
-          const fs = require("node:fs");
-          const path = `${process.env.OPL_COMPUTE_CLAIM_ARTIFACT_DIR}/compute-claim-recovery.json`;
-          const result = JSON.parse(fs.readFileSync(path, "utf8"));
-          const approval = JSON.parse(process.env.OPL_COMPUTE_CLAIM_RECOVERY_APPROVAL_JSON);
-          const canonicalJson = (value) => Array.isArray(value)
-            ? `[${value.map(canonicalJson).join(",")}]`
-            : !value || typeof value !== "object"
-              ? JSON.stringify(value)
-              : `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(",")}}`;
-          const approvalDigest = createHash("sha256").update(canonicalJson(approval)).digest("hex");
-          const proof = result?.proof;
-          const completeEvidence = (evidence, count, maximum) => Number.isInteger(count) && count >= 0 && count <= maximum &&
-            Number.isInteger(evidence?.attempted) && evidence.attempted === count && Number.isInteger(evidence.confirmed) &&
-            evidence.confirmed >= 0 && evidence.confirmed <= evidence.attempted && Number.isInteger(evidence.unknown) &&
-            evidence.unknown >= 0 && evidence.unknown <= evidence.attempted && evidence.confirmed + evidence.unknown <= evidence.attempted &&
-            evidence.confirmed === evidence.attempted && evidence.unknown === 0 && Array.isArray(evidence.missing) && evidence.missing.length === 0;
-          const expectedStorageWrite = approval?.resources?.storageState === "storage_existing_exact" ? "reuse_original_cbs" : "create_original_cbs";
-          const exactStorage = approval?.resources?.storageState === "storage_not_started" && approval?.resources?.storageProviderResourceId === "" ||
-            approval?.resources?.storageState === "storage_existing_exact" && /^disk-[a-z0-9-]{1,80}$/.test(approval?.resources?.storageProviderResourceId);
-          const expectedAllowedWrites = [
-            "claim_existing_cvm_node", expectedStorageWrite, "create_original_pv_pvc_attachment", "upsert_original_gateway_secret",
-            "create_original_workspace_runtime", "activate_original_workspace", "record_original_purchase_receipt"
-          ];
-          if (result?.schemaVersion !== 2 || result?.operationMode !== "compute_claim_recover" || result?.status !== "claimed" ||
-            result?.recoveryEligible !== true || result?.errorCode !== "none" || result?.proof?.nodeOwnershipState !== "target_owned" ||
-            result?.proof?.cvmOwnershipState !== "target_owned" || result?.runnerDirectMutationCounts?.sub2api !== 0 ||
-            result?.approval?.approvalId !== approval.approvalId || approval.approvalId !== process.env.OPL_COMPUTE_CLAIM_RECOVERY_APPROVAL_ID ||
-            result?.approval?.approvalDigest !== approvalDigest ||
-            !exactStorage || proof?.storageState !== approval?.resources?.storageState ||
-            proof?.storageProviderResourceId !== approval?.resources?.storageProviderResourceId ||
-            JSON.stringify(approval?.allowedWrites) !== JSON.stringify(expectedAllowedWrites) ||
-            result?.runnerDirectMutationCounts?.tencent !== 0 || result?.runnerDirectMutationCounts?.kubernetes !== 0 ||
-            proof?.sub2apiMutationCount !== 0 || !Number.isInteger(proof?.tencentMutationCount) || proof.tencentMutationCount < 0 || proof.tencentMutationCount > 5 ||
-            !Number.isInteger(proof?.kubernetesMutationCount) || proof.kubernetesMutationCount < 0 || proof.kubernetesMutationCount > 1 ||
-            !completeEvidence(proof?.evidence?.cvm, proof?.tencentMutationCount, 5) || !completeEvidence(proof?.evidence?.node, proof?.kubernetesMutationCount, 1)) {
-            console.error(`Compute claim recovery blocked: ${String(result?.errorCode || "recovery_artifact_invalid")}`);
-            process.exit(1);
-          }
-          NODE
-
-      - name: Continue original launch with GET-only readback
-        id: continue
-        if: ${{ steps.recover.outcome == 'success' && steps.claim_readback.outcome == 'success' }}
-        continue-on-error: true
-        shell: bash
-        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
-        run: |
-          set -euo pipefail
-          node tools/production-live-qa.ts --compute-claim-continue \
-            --compute-claim-target-json "$OPL_COMPUTE_CLAIM_TARGET_JSON" \
-            --launch-poll-attempts "$OPL_VERIFY_LAUNCH_POLL_ATTEMPTS" \
-            --launch-poll-delay-ms "$OPL_VERIFY_LAUNCH_POLL_DELAY_MS" \
-            > "$OPL_COMPUTE_CLAIM_CONTINUATION_RAW_RESULT_PATH"
-
-      - name: Require original launch continuation success
-        id: continuation_readback
-        if: ${{ steps.continue.outcome == 'success' }}
-        shell: bash
-        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
-        run: |
-          set -euo pipefail
-          node <<'NODE'
-          const { createHash } = require("node:crypto");
-          const fs = require("node:fs");
-          const path = process.env.OPL_COMPUTE_CLAIM_CONTINUATION_RAW_RESULT_PATH;
-          const result = JSON.parse(fs.readFileSync(path, "utf8"));
-          const target = JSON.parse(process.env.OPL_COMPUTE_CLAIM_TARGET_JSON);
-          const approval = JSON.parse(process.env.OPL_COMPUTE_CLAIM_RECOVERY_APPROVAL_JSON);
-          const canonicalJson = (value) => Array.isArray(value)
-            ? `[${value.map(canonicalJson).join(",")}]`
-            : !value || typeof value !== "object"
-              ? JSON.stringify(value)
-              : `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(",")}}`;
-          const approvalDigest = createHash("sha256").update(canonicalJson(approval)).digest("hex");
-          const launch = result?.launch;
-          const runtime = result?.runtime;
-          const recovery = result?.recovery;
-          const terminalEvidence = result?.terminalEvidence;
-          const expectedWorkspaceUrl = `https://workspace.medopl.cn/w/${target.workspaceId}/`;
-          if (result?.schemaVersion !== 2 || result?.operationMode !== "compute_claim_recover_continuation" ||
-            result?.status !== "succeeded" || result?.recoveryEligible !== true || result?.errorCode !== "none" ||
-            result?.release?.mergedSha !== approval.mergedMainSha || result?.release?.cloudImageDigest !== approval.cloudImageDigest ||
-            result?.runnerDirectMutationCounts?.sub2api !== 0 || result?.runnerDirectMutationCounts?.tencent !== 0 ||
-            result?.runnerDirectMutationCounts?.kubernetes !== 0 || result?.backgroundMutationCountsState !== "unknown" ||
-            !recovery || Object.keys(recovery).sort().join(",") !== "approvalDigest,approvalId,recoveryKey,workspaceImageDigest" ||
-            recovery.approvalId !== approval.approvalId || recovery.approvalDigest !== approvalDigest ||
-            recovery.recoveryKey !== approval.recoveryKey || recovery.workspaceImageDigest !== approval.workspaceImageDigest ||
-            launch?.operationId !== target.launchOperationId || launch?.accountId !== target.accountId ||
-            launch?.workspaceId !== target.workspaceId || launch?.computeAllocationId !== target.computeAllocationId ||
-            launch?.storageId !== target.storageId || launch?.status !== "succeeded" || launch?.phase !== "succeeded" ||
-            !launch?.attachmentId || !launch?.receiptId || launch?.url !== expectedWorkspaceUrl || runtime?.workspaceId !== target.workspaceId ||
-            runtime?.ready !== true || runtime?.status !== "running" || runtime?.url !== expectedWorkspaceUrl || runtime?.url !== launch.url ||
-            result?.receipt?.type !== "billing.workspace_purchased.v1" || result?.receipt?.status !== "completed" ||
-            result?.receipt?.workspaceId !== target.workspaceId || result?.receipt?.components?.storage?.resourceId !== target.storageId ||
-            result?.receipt?.components?.storage?.sizeGb !== 10 || result?.receipt?.fulfillment?.attachmentId !== launch.attachmentId ||
-            result?.receipt?.fulfillment?.runtimeId !== runtime.runtimeId ||
-            !String(terminalEvidence?.workspacePodImageID || "").endsWith(approval.workspaceImageDigest) ||
-            terminalEvidence?.workspaceUrlHttpStatus !== 200) {
-            console.error(`Original launch continuation blocked: ${String(result?.errorCode || "continuation_artifact_invalid")}`);
-            process.exit(1);
-          }
-          NODE
-
-      - name: Generate safe recovered Workspace handoff
-        if: ${{ steps.continue.outcome == 'success' && steps.continuation_readback.outcome == 'success' }}
-        shell: bash
-        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
-        run: |
-          set -euo pipefail
-          node --input-type=module <<'NODE'
-          import { readFile, writeFile } from "node:fs/promises";
-          import { workspaceLaunchContinuationHandoff } from "./tools/production-live-qa.ts";
-          const raw = JSON.parse(await readFile(process.env.OPL_COMPUTE_CLAIM_CONTINUATION_RAW_RESULT_PATH, "utf8"));
-          const recovery = JSON.parse(await readFile(`${process.env.OPL_COMPUTE_CLAIM_ARTIFACT_DIR}/compute-claim-recovery.json`, "utf8"));
-          const artifact = workspaceLaunchContinuationHandoff(raw, recovery);
-          await writeFile(`${process.env.OPL_COMPUTE_CLAIM_ARTIFACT_DIR}/workspace-launch-continuation.json`, `${JSON.stringify(artifact, null, 2)}\n`, { mode: 0o600 });
-          NODE
-
-      - name: Upload redacted compute claim recovery
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: production-basic-compute-claim-evidence
-          path: ${{ runner.temp }}/production-basic-compute-claim-evidence
-          if-no-files-found: error
-          overwrite: true
-          retention-days: 30
-
-      - name: Require compute claim recovery success
-        if: ${{ steps.recover.outcome != 'success' }}
-        shell: bash
-        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
-        run: |
-          echo "Compute claim recovery stopped; inspect the redacted recovery artifact." >&2
-          exit 1
-
-      - name: Require compute claim continuation success
-        if: ${{ steps.continue.outcome != 'success' }}
-        shell: bash
-        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
-        run: |
-          echo "Original launch continuation stopped; inspect the redacted recovery artifact." >&2
-          exit 1
-
-      - name: Remove isolated source checkout
-        if: always() && steps.prepare_source.outcome == 'success'
-        shell: bash
-        env:
-          OPL_SOURCE_CHECKOUT: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
-        run: |
-          set -euo pipefail
-          source_dir="${OPL_SOURCE_CHECKOUT:-}"
-          expected="$GITHUB_WORKSPACE/.opl-checkouts/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
-          if [ -z "$source_dir" ] || [ "$source_dir" != "$expected" ]; then
-            echo "Refusing to remove unexpected source checkout path." >&2
-            exit 1
-          fi
-          if [ -d "$source_dir" ]; then
-            find "$source_dir" -mindepth 1 -delete
-            rmdir "$source_dir"
-          fi
 
   recovered-workspace-e2e:
     name: Verify one recovered Workspace request on a hosted runner
-    if: ${{ github.ref == 'refs/heads/main' && github.sha == inputs.merged_sha && inputs.operation_mode == 'recovered_workspace_e2e' && inputs.resource_closure_run_id != '' && inputs.customer_email != '' && inputs.resume_run_id == '' && inputs.diagnose_target_json == '' && inputs.compute_claim_target_json == '' && inputs.compute_claim_cloud_digest == '' && inputs.workspace_launch_target_json == '' && inputs.workspace_launch_cloud_digest == '' && !inputs.confirm_account_provision && !inputs.confirm_wallet_recharge && !inputs.confirm_workspace_purchase && inputs.confirm_single_model_request && !inputs.confirm_compute_claim_recovery && !inputs.confirm_workspace_launch_readback_recovery }}
+    if: ${{ github.ref == 'refs/heads/main' && github.sha == inputs.merged_sha && inputs.operation_mode == 'recovered_workspace_e2e' && inputs.approval_id != '' && inputs.recovery_plan_launch_operation_id != '' && inputs.recovery_plan_id != '' && inputs.recovery_plan_digest != '' && inputs.customer_email != '' && inputs.resume_run_id == '' && !inputs.confirm_account_provision && !inputs.confirm_wallet_recharge && !inputs.confirm_workspace_purchase && inputs.confirm_single_model_request }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: production
     env:
       OPL_MERGED_SHA: ${{ inputs.merged_sha }}
       OPL_RECOVERED_WORKSPACE_E2E_APPROVAL_ID: ${{ inputs.approval_id }}
+      OPL_RECOVERY_PLAN_LAUNCH_OPERATION_ID: ${{ inputs.recovery_plan_launch_operation_id }}
+      OPL_RECOVERY_PLAN_ID: ${{ inputs.recovery_plan_id }}
+      OPL_RECOVERY_PLAN_DIGEST: ${{ inputs.recovery_plan_digest }}
       OPL_RECOVERED_WORKSPACE_CUSTOMER_EMAIL: ${{ inputs.customer_email }}
       OPL_RECOVERED_WORKSPACE_CUSTOMER_PASSWORD: ${{ secrets.OPL_BASIC_CANARY_CUSTOMER_PASSWORD }}
-      OPL_RECOVERED_WORKSPACE_E2E_APPROVAL_JSON: ${{ secrets.OPL_RECOVERED_WORKSPACE_E2E_APPROVAL_JSON }}
       OPL_RECOVERED_WORKSPACE_E2E_CONFIRMATION: CONFIRM_SINGLE_MODEL_REQUEST_FOR_RECOVERED_WORKSPACE
+      OPL_RECOVERED_WORKSPACE_EXPECTED_MODEL: ${{ vars.OPL_CODEX_MODEL || 'gpt-5.5' }}
       OPL_CONSOLE_ORIGIN: ${{ vars.OPL_CONSOLE_ORIGIN || 'https://cloud.medopl.cn' }}
       OPL_VERIFY_REQUEST_TIMEOUT_MS: ${{ vars.OPL_VERIFY_REQUEST_TIMEOUT_MS || '30000' }}
       OPL_VERIFY_USAGE_ATTEMPTS: ${{ vars.OPL_VERIFY_USAGE_ATTEMPTS || '24' }}
@@ -2401,15 +1114,6 @@ jobs:
       - name: Install E2E browser and system dependencies
         run: npx playwright install --with-deps chromium
 
-      - name: Download succeeded resource closure evidence
-        uses: actions/download-artifact@v4
-        with:
-          name: production-basic-compute-claim-evidence
-          path: ${{ runner.temp }}/recovered-workspace-e2e-handoff
-          github-token: ${{ github.token }}
-          repository: ${{ github.repository }}
-          run-id: ${{ inputs.resource_closure_run_id }}
-
       - name: Run independently approved recovered Workspace E2E
         shell: bash
         run: |
@@ -2420,7 +1124,9 @@ jobs:
           node tools/production-live-qa.ts --recovered-workspace-e2e \
             --allow-model-write \
             --approval-id "$OPL_RECOVERED_WORKSPACE_E2E_APPROVAL_ID" \
-            --continuation-evidence "$RUNNER_TEMP/recovered-workspace-e2e-handoff/workspace-launch-continuation.json" \
+            --launch-operation-id "$OPL_RECOVERY_PLAN_LAUNCH_OPERATION_ID" \
+            --recovery-plan-id "$OPL_RECOVERY_PLAN_ID" \
+            --recovery-plan-digest "$OPL_RECOVERY_PLAN_DIGEST" \
             > "$artifact_dir/recovered-workspace-e2e.json"
 
       - name: Upload redacted recovered Workspace E2E evidence

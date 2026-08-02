@@ -129,15 +129,14 @@ The four implementation owner lanes are Console/Control Plane, Fabric, Gateway i
   bounded to zero or one. Ambiguity,
   conflicting ownership, provider/IAM/RBAC failure, or any existing storage
   operation fails closed before mutation and remains manual review.
-- Compute-claim diagnosis, recovery, and continuation artifacts alone use
-  schema version 2; the separate manual-review diagnosis remains schema version
-  1 with its existing `mutationCounts`. `runnerDirectMutationCounts=0` does not mean
-  background mutation=0: it means the runner performs no direct Sub2API,
-  Tencent, or Kubernetes write. After an approved claim, the original launch
-  worker may still perform the separately approved bounded CBS, PV/PVC,
-  Gateway Secret, Runtime, activation, and Receipt writes. Continuation reports
-  those background mutation counts as unknown and proves their terminal
-  identities by authoritative readback instead of claiming zero.
+- Recovery Plan diagnosis and validation use one safe schema with field-level
+  mismatches represented by allowlisted values or SHA-256 digests. A validation
+  artifact's `runnerDirectMutationCounts=0` means the GitHub runner performs no
+  direct Sub2API, Tencent, or Kubernetes write. A later operator-confirmed
+  Console execution is a separate Control Plane operation: it may continue only
+  the original launch's persisted, bounded CBS, PV/PVC, Gateway Secret, Runtime,
+  activation, and Receipt stages and proves terminal identities by authoritative
+  readback instead of claiming those background writes are zero.
   Provider attempts come only from the proof counts and per-CVM/per-Node
   `attempted`, `confirmed`, `unknown`, and `missing` evidence. Success requires
   the evidence count to equal `attempted`, every attempt to be confirmed, zero
@@ -317,11 +316,15 @@ validate account and quote
   Node, exact Service/Endpoints routing, and the Workspace NetworkPolicy.
   Zero or multiple candidates, identity drift, or classified Kubernetes read
   errors fail closed; activation enters `manual_review`, and URL access is denied.
-- Dedicated `workspace.launch.v2` review recovery uses
-  `POST /api/operator/workspace-launches/{operationId}/recover`. Reconciliation
-  items require `accountId`, `billingOperationId`, `phase`, `errorCode`, and
-  `allowedActions`; only `manual_review` exposes `recover_workspace_launch`.
-  This dedicated recovery and DTO have integrated local fake evidence.
+- Dedicated `workspace.launch.v2` review recovery uses the Console flow
+  `diagnose -> view persisted Recovery Plan -> validate -> confirm continue`.
+  The operator supplies only `accountId`, the original launch operation ID, and
+  the decision; Console execution submits only `planId`, `planDigest`, decision,
+  and the fixed confirmation. Control Plane alone reads resource identities,
+  release SHA, Cloud and Workspace digests, generates the approval digest, and
+  persists the execution/run identity and fenced lease. The former `/recover`,
+  `/readback-recovery-proof`, and `/compute-claim-recovery/*` public routes are
+  404. Only `manual_review` is eligible for this operator flow.
   Provider reconciliation uses internal
   `GET /fabric/monthly-provider-truth?computeAllocationId=<id>&storageVolumeId=<id>`
   only for `workspace.launch.v2` manual-review recovery and reuses the existing
@@ -346,7 +349,7 @@ validate account and quote
 - Replays never create a second debit, refund, purchase, renewal, Secret, or receipt.
 - The non-review V2 path has local focused evidence from debit through pure Fabric
   fulfillment, activation, confirmed-absence refund, and receipt-only retry.
-  Dedicated manual-review recovery has integrated local fake evidence.
+  Server-authoritative Recovery Plan handling has local focused evidence only.
   No real Sub2API, Tencent, Runtime, browser, or production evidence is claimed.
 
 ## Products And Lifecycle
@@ -544,12 +547,11 @@ contract or select the SKU for a customer launch.
   Sub2API debit, NodePool scale, CVM creation, rename, or tag writes. Exact
   target-owned readback continues the same launch through storage, Runtime,
   activation, and Receipt; unprovable state enters `manual_review`.
-- Compute-claim diagnosis and mutation are separate manual modes in the existing
-  production customer-operation workflow and run only on the self-hosted
-  `tke-vpc` runner. After an ordinary rollout, release handling may dispatch one
-  read-only diagnosis bound to the exact merged Cloud SHA and immutable digest.
-  Claim mutation and continuation additionally require one explicit
-  `RECOVER_PROVEN_COMPUTE_AND_CONTINUE_ORIGINAL_LAUNCH` approval bound to the
+- The production customer-operation workflow may only ask Control Plane to
+  diagnose and zero-mutation validate its persisted Recovery Plan; it cannot
+  execute recovery or rebuild a plan from workflow inputs. The one real recovery
+  starts from an authenticated reserved operator's Console confirmation. Control
+  Plane then generates an approval digest bound to the
   exact merged main SHA, Cloud and Workspace image digests, expiry, customer,
   launch/account/Workspace/compute/Machine/Node/CVM/Pool/SKU facts, original
   storage/attachment/runtime operation identities, approved storage state and
@@ -557,15 +559,15 @@ contract or select the SKU for a customer launch.
   per-stage attempt limits. It approves only convergence of the existing
   CVM/Node followed by the original launch's one CBS, PV/PVC attachment, Gateway
   Secret, Runtime, activation, and purchase Receipt. It forbids a new launch,
-  debit, recharge, refund, scale, new CVM, second CBS, delete, or replacement;
-  `nodeName` and private IP remain independently supplied and verified. The
-  Control Plane also requires the current internal-runner capability from the
-  deployed Kubernetes Secret, so an ordinary operator session cannot authorize
-  claim by self-supplying approval fields. The approval ID and HTTP mutation
-  idempotency key are part of the persisted replay identity. The recovery
-  artifact carries `proof.storageState` and `proof.storageProviderResourceId`
-  plus a canonical SHA-256 digest of the complete approval, and the workflow
-  independently recomputes it before continuation. The original launch
+  debit, recharge, refund, scale, new CVM, second CBS, delete, or replacement.
+  Node name, private IP, provider resources, and release digests are read from
+  authorities and cannot be supplied by Console. The operator Session and CSRF
+  authorize confirmation; the validated persisted plan, server-generated
+  approval digest, execution ID, run ID, and byte-exact current lease token gate
+  the mutation. The approval ID and HTTP mutation idempotency key are part of
+  the persisted replay identity. The persisted plan carries
+  `proof.storageState` and `proof.storageProviderResourceId` through its binding
+  digest. The original launch
   GET response projects only the persisted approval ID, approval digest,
   recovery key, and Workspace image digest; the continuation artifact carries
   that exact readback for the later E2E handoff. Customer email, the full
@@ -586,7 +588,9 @@ contract or select the SKU for a customer launch.
   facts only; Control Plane calls Fabric with the original claim identity. Every
   other observed failure or identity drift remains readback-only. A newly
   submitted approval must be unexpired, while a byte-exact approval already
-  persisted on the launch may replay after expiry.
+  persisted on the launch may replay after expiry. Lease takeover keeps the same
+  execution/run identity, and a stale holder cannot finalize after its token has
+  been fenced out.
 - Production closure requires two independent evidence sets and neither may
   substitute for the other. Acceptance A restores the one exact existing Launch
   with zero additional debit, CVM creation, or Tencent Tag write, at most one Node
@@ -598,7 +602,8 @@ contract or select the SKU for a customer launch.
   evidence. Deployment and every private-network readback run only through the
   repository GitHub Actions `production` environment and its authorized runner.
 - `recovered_workspace_e2e` is a separate hosted job in the same workflow and
-  has a one-way dependency on a succeeded continuation artifact. It has no
+  has a one-way dependency on the persisted completed Recovery Plan execution
+  plus authoritative Workspace and Receipt readback. It has no
   kubeconfig, Tencent credentials, or internal service capability, and cannot
   launch, debit, recharge, refund, scale, or mutate Fabric resources. A separate
   `confirm_single_model_request` approval binds the exact release, customer,
@@ -612,8 +617,9 @@ contract or select the SKU for a customer launch.
 - An original `workspace.launch.v2` that entered `manual_review` with exactly
   one continuation stage persisted as
   `attempted=1, confirmed=0, unknown=1, max=1` may be recovered only through
-  the existing operator recovery route and the shared `fulfillWorkspaceLaunch`
-  orchestrator used by normal Basic, normal Pro, and compute-claim continuation.
+  the persisted Control Plane Recovery Plan after operator Console confirmation,
+  then through the shared `fulfillWorkspaceLaunch` orchestrator used by normal
+  Basic, normal Pro, and compute-claim continuation.
   Its GET proof persists nothing, performs zero PostgreSQL writes, and performs
   zero Sub2API, Tencent, or Kubernetes mutation. It revalidates the customer,
   original launch and Workspace, full Basic/Pro product truth, compute and
@@ -635,11 +641,10 @@ contract or select the SKU for a customer launch.
   `manual_review` with zero additional external write. After successful CAS
   convergence, later original launch stages still reserve and consume their own
   persisted `max=1` budgets through the shared orchestrator.
-- `workspace_launch_readback_diagnose` and
-  `workspace_launch_readback_recover` are isolated modes in the existing
-  production customer-operation workflow. Diagnosis is approval-free and
-  GET-only. Recovery requires
-  `RECOVER_UNKNOWN_WORKSPACE_LAUNCH_STAGE_FROM_AUTHORITATIVE_READBACK`, bound to
+- The legacy `workspace_launch_readback_diagnose` and
+  `workspace_launch_readback_recover` workflow modes are retired. Readback is an
+  internal Recovery Plan authority, and real continuation requires a persisted
+  server-generated approval bound to
   the exact merged main SHA, Cloud and Workspace digests, expiry, protected
   customer identity, the complete protected product/CVM/Node target without
   projection, launch/Workspace and all resource and original operation
@@ -651,7 +656,7 @@ contract or select the SKU for a customer launch.
   counts do not describe the whole recovery: the existing launch worker's
   bounded background mutation counts are reported separately as `unknown` until
   terminal authoritative readback proves Receipt and URL.
-- A readback recovery POST that already persisted the exact approval, approval
+- A Recovery Plan execution that already persisted the exact approval, approval
   digest, idempotency key, full target, and proof may be replayed from
   `preparing`, `waiting`, or terminal state even after that approval expires.
   This replay reconstructs the operator response exclusively from persisted
@@ -659,12 +664,11 @@ contract or select the SKU for a customer launch.
   and performs zero database, Fabric, Sub2API, Tencent, or Kubernetes writes.
   An expired approval that was never persisted is rejected, and any key,
   digest, or target drift returns conflict without mutation.
-- Workspace readback diagnosis, recovery, blocked, and continuation artifacts
-  use schema version 2 explicit allowlist DTOs. Complete proof and approval
-  data remain in a mode-0600 protected runner-temporary directory outside the
-  upload tree and are never uploaded. The workflow first validates the complete
-  raw result, then projects the safe DTO, and only then uploads it. Recovery and
-  the minimal recovered-Workspace E2E handoff are bound by the approval digest
+- Recovery Plan diagnosis, validation, blocked, and continuation projections
+  use explicit allowlist DTOs. Complete proof and approval data remain inside
+  Control Plane persistence and are never uploaded. The workflow only receives
+  the safe plan projection and may upload that projection after validation.
+  Recovery and the minimal recovered-Workspace E2E handoff are bound by the approval digest
   and a stable digest of the complete resource and operation identity, without
   exposing customer email, private IP, Secret facts, credentials, capabilities,
   provider request IDs, or complete operation identities.

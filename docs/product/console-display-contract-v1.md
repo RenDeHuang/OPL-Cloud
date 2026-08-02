@@ -698,7 +698,7 @@ Admin 页面只供 operator 使用。Admin 可以进入客户侧页面查看自�
 
 动作规则：
 
-- `workspace.launch.v2 + manual_review` 只显示 `recover_workspace_launch`。
+- `workspace.launch.v2 + manual_review` 只显示 `diagnose_workspace_recovery_plan`，该动作进入“诊断 -> 查看服务端 Recovery Plan -> zero-mutation Validate -> 确认继续”，不调用旧 `/recover`。
 - Workspace 续费或历史资源 `manual_review` 只显示 `resolve_billing_review`。
 - 全局 `BillingReconciliation_mismatch` 只展示阻断和证据，不提供自动修复。
 - 每次处理要求 `evidenceRef`、二次确认和审计。

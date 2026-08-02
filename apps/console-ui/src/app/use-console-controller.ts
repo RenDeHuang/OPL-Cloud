@@ -5,6 +5,7 @@ import {
   createSupportTicketMapping,
   createOperatorAnnouncement,
   createWalletAdjustment,
+  diagnoseWorkspaceLaunchRecoveryPlan,
   disableOperatorAccount as disableOperatorAccountCommand,
   getAnnouncements,
   getBillingReceipt,
@@ -26,21 +27,21 @@ import {
   getPricingCatalog,
   getSupportTickets,
   getWalletAdjustment,
+  getWorkspaceLaunchRecoveryPlan,
   markAnnouncementRead,
   previewPricing,
   provisionOperatorAccount,
   publishOperatorAnnouncement,
   recoverWalletAdjustment,
-  recoverWorkspaceLaunch as recoverOperatorWorkspaceLaunch,
-  resolveBillingReview,
+  executeWorkspaceLaunchRecoveryPlan,
   revealGatewayKey,
+  validateWorkspaceLaunchRecoveryPlan,
   withdrawOperatorAnnouncement
 } from "../api/console-read-api.ts";
 import type {
   AnnouncementDraftRequest,
   AnnouncementScheduleRequest,
   AuthSession,
-  BillingReviewResolutionRequest,
   CreateSupportTicketMappingRequest,
   GatewayUsagePeriod,
   OperatorAccountDTO,
@@ -51,7 +52,10 @@ import type {
   SourceEnvelope,
   WalletAdjustmentRecoveryRequest,
   WalletAdjustmentRequest,
-  WorkspaceLaunchRecoveryRequest,
+  DiagnoseWorkspaceLaunchRecoveryPlanRequest,
+  ExecuteWorkspaceLaunchRecoveryPlanRequest,
+  ValidateWorkspaceLaunchRecoveryPlanRequest,
+  WorkspaceLaunchRecoveryPlanDTO,
   WorkspaceLaunchRequest,
   WorkspacePricePreview
 } from "../api/dtos.ts";
@@ -218,8 +222,7 @@ export function useConsoleController() {
   const operatorProvisionIntent = useRef<{ input: ProvisionAccountRequest; idempotencyKey: string } | null>(null);
   const supportCreateIntent = useRef<{ input: CreateSupportTicketMappingRequest; idempotencyKey: string } | null>(null);
   const operatorDisableIntents = useRef(new Map<string, string>());
-  const billingReviewIntent = useRef<{ resourceType: string; resourceId: string; input: BillingReviewResolutionRequest; idempotencyKey: string } | null>(null);
-  const workspaceLaunchRecoveryIntent = useRef<{ operationId: string; input: WorkspaceLaunchRecoveryRequest; idempotencyKey: string } | null>(null);
+  const recoveryPlanExecuteIntent = useRef<{ operationId: string; planDigest: string; idempotencyKey: string } | null>(null);
   const announcementCreateIntent = useRef<{ input: AnnouncementDraftRequest; idempotencyKey: string } | null>(null);
   const announcementPublishIntents = useRef(new Map<string, { input: AnnouncementScheduleRequest; idempotencyKey: string }>());
   const announcementWithdrawIntents = useRef(new Map<string, string>());
@@ -299,8 +302,7 @@ export function useConsoleController() {
     walletAdjustmentRecoveryIntent.current = null;
     operatorProvisionIntent.current = null;
     supportCreateIntent.current = null;
-    billingReviewIntent.current = null;
-    workspaceLaunchRecoveryIntent.current = null;
+    recoveryPlanExecuteIntent.current = null;
     announcementCreateIntent.current = null;
     operatorDisableIntents.current.clear();
     announcementPublishIntents.current.clear();
@@ -1231,36 +1233,76 @@ export function useConsoleController() {
     }
   };
 
-  const resolveReview = async (review: OperatorReconciliationItemDTO) => {
-    if (!session) return;
-    if (!review.allowedActions.includes("recover_workspace_launch") && !review.allowedActions.includes("resolve_billing_review")) return;
+  const diagnoseRecoveryPlan = async (review: OperatorReconciliationItemDTO) => {
+    if (!session || !review.allowedActions.includes("diagnose_workspace_recovery_plan")) return null;
     const requestStillCurrent = currentMutationRequest();
-    const evidenceRef = (window.prompt("请输入 case-YYYYMMDD-xxx 证据引用") || "").trim();
-    if (!evidenceRef) return;
+    const input: DiagnoseWorkspaceLaunchRecoveryPlanRequest = { accountId: review.accountId };
+    setCommandBusy(true);
     try {
-      if (review.allowedActions.includes("recover_workspace_launch")) {
-        const input: WorkspaceLaunchRecoveryRequest = { accountId: review.accountId, billingOperationId: review.billingOperationId, evidenceRef };
-        if (!workspaceLaunchRecoveryIntent.current || workspaceLaunchRecoveryIntent.current.operationId !== review.billingOperationId || JSON.stringify(workspaceLaunchRecoveryIntent.current.input) !== JSON.stringify(input)) {
-          workspaceLaunchRecoveryIntent.current = { operationId: review.billingOperationId, input, idempotencyKey: `recover-${crypto.randomUUID()}` };
-        }
-        await recoverOperatorWorkspaceLaunch(review.billingOperationId, workspaceLaunchRecoveryIntent.current.input, session.csrfToken, workspaceLaunchRecoveryIntent.current.idempotencyKey);
-        if (!requestStillCurrent()) return;
-        workspaceLaunchRecoveryIntent.current = null;
-      } else if (review.allowedActions.includes("resolve_billing_review")) {
-        const input: BillingReviewResolutionRequest = { accountId: review.accountId, billingOperationId: review.billingOperationId, decision: "activate_charged_resource", evidenceRef };
-        if (!billingReviewIntent.current || billingReviewIntent.current.resourceType !== review.resourceType || billingReviewIntent.current.resourceId !== review.id || JSON.stringify(billingReviewIntent.current.input) !== JSON.stringify(input)) {
-          billingReviewIntent.current = { resourceType: review.resourceType, resourceId: review.id, input, idempotencyKey: `billing-review:${review.resourceType}:${review.id}:${crypto.randomUUID()}` };
-        }
-        await resolveBillingReview(review.resourceType, review.id, billingReviewIntent.current.input, session.csrfToken, billingReviewIntent.current.idempotencyKey);
-        if (!requestStillCurrent()) return;
-        billingReviewIntent.current = null;
-      }
-      flash("复核命令已提交");
-      await loadOperatorReconciliation(requestGeneration.current, session);
-      if (!requestStillCurrent()) return;
+      const result = await diagnoseWorkspaceLaunchRecoveryPlan(review.billingOperationId, input, session.csrfToken);
+      if (!requestStillCurrent()) return null;
+      flash("恢复计划已生成");
+      return result;
     } catch (error) {
-      if (!requestStillCurrent()) return;
+      if (!requestStillCurrent()) return null;
       flash(mutationError(error), "danger");
+      return null;
+    } finally {
+      if (requestStillCurrent()) setCommandBusy(false);
+    }
+  };
+
+  const readRecoveryPlan = async (operationId: string) => {
+    if (!session) return null;
+    const requestStillCurrent = currentMutationRequest();
+    setCommandBusy(true);
+    try {
+      const result = await getWorkspaceLaunchRecoveryPlan(operationId);
+      return requestStillCurrent() ? result : null;
+    } catch (error) {
+      if (requestStillCurrent()) flash(mutationError(error), "danger");
+      return null;
+    } finally {
+      if (requestStillCurrent()) setCommandBusy(false);
+    }
+  };
+
+  const validateRecoveryPlan = async (operationId: string, plan: WorkspaceLaunchRecoveryPlanDTO) => {
+    if (!session) return null;
+    const requestStillCurrent = currentMutationRequest();
+    const input: ValidateWorkspaceLaunchRecoveryPlanRequest = { planId: plan.planId, planDigest: plan.planDigest };
+    setCommandBusy(true);
+    try {
+      const result = await validateWorkspaceLaunchRecoveryPlan(operationId, input, session.csrfToken);
+      if (!requestStillCurrent()) return null;
+      return result;
+    } catch (error) {
+      if (requestStillCurrent()) flash(mutationError(error), "danger");
+      return null;
+    } finally {
+      if (requestStillCurrent()) setCommandBusy(false);
+    }
+  };
+
+  const executeRecoveryPlan = async (operationId: string, plan: WorkspaceLaunchRecoveryPlanDTO) => {
+    if (!session || commandBusy) return null;
+    const requestStillCurrent = currentMutationRequest();
+    const input: ExecuteWorkspaceLaunchRecoveryPlanRequest = { planId: plan.planId, planDigest: plan.planDigest, decision: "continue", confirmation: "CONTINUE_RECOVERY_PLAN" };
+    if (!recoveryPlanExecuteIntent.current || recoveryPlanExecuteIntent.current.operationId !== operationId || recoveryPlanExecuteIntent.current.planDigest !== plan.planDigest) {
+      recoveryPlanExecuteIntent.current = { operationId, planDigest: plan.planDigest, idempotencyKey: `recovery-plan:${plan.planDigest}` };
+    }
+    setCommandBusy(true);
+    try {
+      const result = await executeWorkspaceLaunchRecoveryPlan(operationId, input, session.csrfToken, recoveryPlanExecuteIntent.current.idempotencyKey);
+      if (!requestStillCurrent()) return null;
+      flash("恢复计划已继续执行");
+      return result;
+    } catch (error) {
+      if (requestStillCurrent()) flash(mutationError(error), "danger");
+      return null;
+    }
+    finally {
+      if (requestStillCurrent()) setCommandBusy(false);
     }
   };
 
@@ -1450,7 +1492,10 @@ export function useConsoleController() {
     operatorProvisionOperation,
     setOperatorProvisionOperation,
     provisionAccount,
-    resolveReview,
+    diagnoseRecoveryPlan,
+    readRecoveryPlan,
+    validateRecoveryPlan,
+    executeRecoveryPlan,
     createAnnouncement,
     publishAnnouncement,
     withdrawAnnouncement

@@ -134,8 +134,25 @@
         "providerMutationBeforeValidWorkspaceDigest": 0
       },
       "workspaceLaunchAuthoritativeReadbackRecovery": {
-        "proofRoute": "GET /api/operator/workspace-launches/{operationId}/readback-recovery-proof",
-        "recoveryRoute": "POST /api/operator/workspace-launches/{operationId}/recover",
+        "authority": "control_plane_persisted_recovery_plan",
+        "routes": {
+          "diagnose": "POST /api/operator/workspace-launches/{operationId}/recovery-plan/diagnose",
+          "read": "GET /api/operator/workspace-launches/{operationId}/recovery-plan",
+          "validate": "POST /api/operator/workspace-launches/{operationId}/recovery-plan/validate",
+          "execute": "POST /api/operator/workspace-launches/{operationId}/recovery-plan/execute"
+        },
+        "authorization": "reserved_operator_session_plus_csrf",
+        "operatorInput": ["accountId", "launchOperationId", "decision"],
+        "executeRequest": ["planId", "planDigest", "decision", "confirmation"],
+        "resourceIdentityInput": "forbidden",
+        "legacyPublicRoutes": [
+          "POST /api/operator/workspace-launches/{operationId}/recover",
+          "GET /api/operator/workspace-launches/{operationId}/readback-recovery-proof",
+          "POST /api/operator/workspace-launches/{operationId}/compute-claim-recovery/proof",
+          "POST /api/operator/workspace-launches/{operationId}/compute-claim-recovery/validate",
+          "POST /api/operator/workspace-launches/{operationId}/compute-claim-recovery/claim"
+        ],
+        "legacyPublicRouteStatus": "404_retired",
         "fabricProofRoute": "POST /fabric/workspace-launch-stage-readback/proof",
         "fabricConvergenceRoute": "POST /fabric/workspace-launch-stage-readback/converge",
         "fabricProofSemantics": "authenticated_structured_post_get_describe_only",
@@ -153,6 +170,19 @@
         "replay": "unknown_stage_external_write_never_reissued_later_stages_use_own_persisted_budget",
         "failure": "absent_multiple_drift_or_read_error_remains_manual_review",
         "sharedOrchestrator": "fulfillWorkspaceLaunch_basic_pro_and_compute_claim_recovery",
+        "planBinding": {
+          "releaseSource": ["OPL_RELEASE_SHA", "OPL_CLOUD_IMAGE", "OPL_WORKSPACE_IMAGE"],
+          "targetSource": "authoritative_control_plane_fabric_provider_and_ledger_readback",
+          "digest": "canonical_sha256_of_release_target_stage_and_write_budget",
+          "mismatchProjection": "field_name_with_safe_value_or_digest"
+        },
+        "executionLease": {
+          "persistence": "original_workspace.launch.v2_operation",
+          "identity": ["plan_id", "plan_digest", "approval_digest", "execution_id", "run_id", "decision"],
+          "singleWinner": "postgresql_cas",
+          "fencing": "byte_exact_current_lease_token_required_to_finalize",
+          "unknownResult": "reconcile_same_execution_identity_without_second_provider_entry"
+        },
         "proofMutationCounts": {"sub2api": 0, "tencent": 0, "kubernetes": 0},
         "runnerDirectMutationCounts": {"sub2api": 0, "tencent": 0, "kubernetes": 0},
         "backgroundMutationCountsState": "unknown",

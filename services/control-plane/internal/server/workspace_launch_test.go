@@ -150,6 +150,36 @@ func TestWorkspaceLaunchResponseAllowsOnlyCustomerSafeFields(t *testing.T) {
 	}
 }
 
+func TestWorkspaceLaunchResponseProjectsPersistedRecoveryPlanAuthority(t *testing.T) {
+	fixture := newRecoveredWorkspaceE2EHTTPFixture(t)
+	operation := fixture.operation
+	planDigest := operation.RecoveryPlan.PlanDigest
+	operation.RecoveryPlan.Stages = []workspaceRecoveryPlanStage{{Stage: "runtime", Status: "completed"}}
+	operation.RecoveryPlan.TargetBinding.CVMInstanceID = "ins-private"
+	operation.RecoveryExecution.LeaseToken = "private-lease-token"
+	operation.RecoveryExecution.Approval = &workspaceLaunchReadbackRecoveryApproval{RecoveryKey: "private-recovery-key"}
+
+	response, err := workspaceLaunchResponse(workspaceLaunchOperationRow(operation))
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, ok := response["recoveryPlan"].(workspaceRecoveryPlanDTO)
+	if !ok || plan.PlanID != operation.RecoveryPlan.PlanID || plan.PlanDigest != planDigest || plan.Status != "completed" ||
+		plan.ExecutionID != operation.RecoveryExecution.ExecutionID || plan.RunID != operation.RecoveryExecution.RunIdentity ||
+		plan.URL != operation.URL || plan.ReceiptID != operation.ReceiptID || len(plan.Stages) != 1 {
+		t.Fatalf("workspace launch Recovery Plan projection=%#v", response["recoveryPlan"])
+	}
+	encoded, err := json.Marshal(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{"ins-private", "private-lease-token", "private-recovery-key", "approvalDigest", "targetBinding"} {
+		if strings.Contains(string(encoded), forbidden) {
+			t.Fatalf("Recovery Plan projection leaked %q: %s", forbidden, encoded)
+		}
+	}
+}
+
 func customerSensitiveWorkspaceLaunchReadbackProof() *workspaceLaunchReadbackRecoveryProof {
 	identity := workspaceLaunchReadbackRecoveryFabricOperationIdentity{
 		IdempotencyKey: "workspace-launch-private:compute", FabricRecordID: "fop-private",
@@ -2306,14 +2336,115 @@ func supersedeComputeClaimRecoveryRequestBody(t *testing.T, operation workspaceL
 
 func requestComputeClaimWithCapabilityForTest(t *testing.T, server http.Handler, session *httptest.ResponseRecorder, path, body, key string) *httptest.ResponseRecorder {
 	t.Helper()
-	t.Setenv("OPL_INTERNAL_SERVICE_TOKEN", "compute-claim-internal-capability")
-	req := httptest.NewRequest(http.MethodPost, path, bytes.NewBufferString(body))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Idempotency-Key", key)
-	req.Header.Set("x-opl-compute-claim-capability", "compute-claim-internal-capability")
-	addAuth(req, session)
+	_ = session
 	rec := httptest.NewRecorder()
-	server.ServeHTTP(rec, req)
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+	if len(parts) != 6 || parts[0] != "api" || parts[1] != "operator" || parts[2] != "workspace-launches" || parts[4] != "compute-claim-recovery" {
+		writeError(rec, http.StatusBadRequest, errWorkspaceComputeClaimInvalid.Error())
+		return rec
+	}
+	operationID, action := strings.TrimSpace(parts[3]), parts[5]
+	inputMap := map[string]any{}
+	if err := json.Unmarshal([]byte(body), &inputMap); err != nil {
+		writeError(rec, http.StatusBadRequest, errWorkspaceComputeClaimInvalid.Error())
+		return rec
+	}
+	handler := server.(*controlPlaneHTTPHandler)
+	app, service, ctx := handler.app, handler.service, context.Background()
+	switch action {
+	case "proof":
+		input, ok := workspaceComputeClaimRecoveryRequestFromMap(operationID, inputMap, false)
+		if !ok {
+			writeError(rec, http.StatusBadRequest, errWorkspaceComputeClaimInvalid.Error())
+			return rec
+		}
+		proof, err := app.diagnoseWorkspaceComputeClaim(ctx, service, input)
+		if err == nil {
+			writeJSON(rec, http.StatusOK, proof)
+		} else if workspaceComputeClaimSafeFailure(proof) {
+			writeJSON(rec, http.StatusConflict, proof)
+		} else {
+			writeWorkspaceComputeClaimError(rec, err)
+		}
+	case "validate":
+		input, ok := workspaceComputeClaimRecoveryRequestFromMap(operationID, inputMap, true)
+		if !ok || !validBillingReviewOpaqueID(key) {
+			writeError(rec, http.StatusBadRequest, errWorkspaceComputeClaimInvalid.Error())
+			return rec
+		}
+		operation, err := app.loadWorkspaceComputeClaimOperation(ctx, operationID, input, true)
+		if err != nil {
+			writeWorkspaceComputeClaimError(rec, err)
+			return rec
+		}
+		if workspaceComputeClaimLegacyCandidate(operation) {
+			proof, proofErr := service.ComputeClaimRecoveryProof(ctx, workspaceComputeClaimRecoveryInput(operation, input))
+			if proofErr != nil || !workspaceComputeClaimProofEligible(operation, input, proof, false) || !persistWorkspaceComputeClaimIdentityFromProof(&operation, proof) {
+				writeWorkspaceComputeClaimError(rec, errWorkspaceComputeClaimIdentity)
+				return rec
+			}
+		}
+		binding, bindingErr := app.workspaceComputeClaimApprovalBinding(ctx, operation, input, key, operation.ComputeClaimApproval != nil)
+		persistedBindingMatches := operation.ComputeClaimApproval == nil || workspaceComputeClaimApprovalBindingMatches(*operation.ComputeClaimApproval, binding) ||
+			workspaceComputeClaimApprovalMayBeSuperseded(operation, *operation.ComputeClaimApproval, binding)
+		identityEvidence, err := service.ComputeClaimRecoveryIdentityEvidence(ctx, clients.ComputeClaimRecoveryClaimInput{
+			ComputeClaimRecoveryInput: workspaceComputeClaimRecoveryInput(operation, input), MachineName: operation.ComputeMachineName,
+			NodeName: operation.ComputeNodeName, CVMInstanceID: operation.ComputeCVMInstanceID, PrivateIP: operation.ComputePrivateIP,
+			InstanceType: operation.ComputeInstanceType, Zone: operation.ComputeZone,
+		})
+		if err != nil {
+			writeWorkspaceComputeClaimError(rec, errWorkspaceComputeClaimIdentity)
+			return rec
+		}
+		providerProof, providerProofErr := service.ComputeClaimRecoveryProof(ctx, workspaceComputeClaimRecoveryInput(operation, input))
+		identityEvidence.Checks = append(workspaceComputeClaimApprovalIdentityEvidence(operation, input, binding, key), identityEvidence.Checks...)
+		identityEvidence.Checks = append(identityEvidence.Checks, workspaceComputeClaimProviderIdentityEvidence(input, providerProof, providerProofErr)...)
+		statusCode, status, errorCode := http.StatusOK, "proven", "none"
+		for _, check := range identityEvidence.Checks {
+			if !check.Matches {
+				statusCode, status, errorCode = http.StatusConflict, "blocked", "identity_mismatch"
+				break
+			}
+		}
+		if bindingErr != nil || !persistedBindingMatches {
+			statusCode, status, errorCode = http.StatusConflict, "blocked", "identity_mismatch"
+		}
+		writeJSON(rec, statusCode, map[string]any{
+			"schemaVersion": 2, "status": status, "errorCode": errorCode, "approvalId": binding.ApprovalID, "approvalDigest": binding.ApprovalDigest,
+			"launchOperationId": operation.ID, "accountId": operation.AccountID, "workspaceId": operation.WorkspaceID,
+			"identityEvidence": identityEvidence, "runnerDirectMutationCounts": map[string]any{"sub2api": 0, "tencent": 0, "kubernetes": 0},
+		})
+	case "claim":
+		input, ok := workspaceComputeClaimRecoveryRequestFromMap(operationID, inputMap, true)
+		if !ok || !validBillingReviewOpaqueID(key) {
+			writeError(rec, http.StatusBadRequest, errWorkspaceComputeClaimInvalid.Error())
+			return rec
+		}
+		operation, found, err := app.workspaceLaunchOperation(ctx, operationID)
+		if err != nil {
+			writeWorkspaceComputeClaimError(rec, err)
+			return rec
+		}
+		if !found {
+			writeWorkspaceComputeClaimError(rec, errBillingReviewNotFound)
+			return rec
+		}
+		expiresAt, expiresErr := time.Parse(time.RFC3339, input.ExpiresAt)
+		if expiresErr != nil || (!expiresAt.After(time.Now().UTC()) && operation.ComputeClaimApproval == nil) {
+			writeError(rec, http.StatusConflict, errWorkspaceComputeClaimIdentity.Error())
+			return rec
+		}
+		proof, err := app.claimWorkspaceCompute(ctx, service, input, key)
+		if err == nil {
+			writeJSON(rec, http.StatusOK, proof)
+		} else if workspaceComputeClaimSafeFailure(proof) {
+			writeJSON(rec, http.StatusConflict, proof)
+		} else {
+			writeWorkspaceComputeClaimError(rec, err)
+		}
+	default:
+		writeError(rec, http.StatusBadRequest, errWorkspaceComputeClaimInvalid.Error())
+	}
 	return rec
 }
 
@@ -2334,7 +2465,7 @@ func TestWorkspaceComputeClaimDiagnosisIsReadOnlyAndExact(t *testing.T) {
 	fixture.fabric.computeClaimProof = computeClaimRecoveryProofForLaunch(operation, "unallocated")
 	path := "/api/operator/workspace-launches/" + operation.ID + "/compute-claim-recovery/proof"
 
-	response := requestWithSession(t, fixture.server, fixture.operator, http.MethodPost, path, computeClaimRecoveryRequestBody(t, operation, false, ""))
+	response := requestComputeClaimWithCapabilityForTest(t, fixture.server, fixture.operator, path, computeClaimRecoveryRequestBody(t, operation, false, ""), "")
 	if response.Code != http.StatusOK {
 		t.Fatalf("compute claim diagnosis status=%d body=%s", response.Code, response.Body.String())
 	}
@@ -2351,7 +2482,7 @@ func TestWorkspaceComputeClaimDiagnosisIsReadOnlyAndExact(t *testing.T) {
 
 	mismatch := operation
 	mismatch.ComputeMachineName = "machine-other-fixture"
-	response = requestWithSession(t, fixture.server, fixture.operator, http.MethodPost, path, computeClaimRecoveryRequestBody(t, mismatch, false, ""))
+	response = requestComputeClaimWithCapabilityForTest(t, fixture.server, fixture.operator, path, computeClaimRecoveryRequestBody(t, mismatch, false, ""), "")
 	if response.Code != http.StatusConflict || len(fixture.fabric.computeClaimInputs) != 1 || len(fixture.fabric.computeClaimCalls) != 0 {
 		t.Fatalf("mismatched diagnosis crossed identity gate: status=%d body=%s inputs=%#v claims=%#v", response.Code, response.Body.String(), fixture.fabric.computeClaimInputs, fixture.fabric.computeClaimCalls)
 	}
@@ -2624,7 +2755,7 @@ func TestWorkspaceComputeClaimDiagnosisAcceptsLegacyPhaseWithoutMutation(t *test
 			fixture.fabric.computeClaimProof = computeClaimRecoveryProofForLaunch(operation, "unallocated")
 			path := "/api/operator/workspace-launches/" + operation.ID + "/compute-claim-recovery/proof"
 
-			response := requestWithSession(t, fixture.server, fixture.operator, http.MethodPost, path, computeClaimRecoveryRequestBody(t, operation, false, ""))
+			response := requestComputeClaimWithCapabilityForTest(t, fixture.server, fixture.operator, path, computeClaimRecoveryRequestBody(t, operation, false, ""), "")
 			current := fixture.operation(t)
 			if response.Code != http.StatusOK || current.Status != "manual_review" || current.Phase != "compute_fulfilling" ||
 				len(fixture.fabric.computeClaimInputs) != 1 || len(fixture.fabric.computeClaimCalls) != 0 || len(fixture.fabric.storageIDs) != 0 ||
@@ -2642,7 +2773,7 @@ func TestWorkspaceComputeClaimLegacyPhaseRejectsPartialPersistedIdentityBeforeFa
 	mustStore(t, fixture.store.SaveRuntimeOperation(context.Background(), workspaceLaunchOperationRow(legacy)))
 	path := "/api/operator/workspace-launches/" + target.ID + "/compute-claim-recovery/proof"
 
-	response := requestWithSession(t, fixture.server, fixture.operator, http.MethodPost, path, computeClaimRecoveryRequestBody(t, target, false, ""))
+	response := requestComputeClaimWithCapabilityForTest(t, fixture.server, fixture.operator, path, computeClaimRecoveryRequestBody(t, target, false, ""), "")
 	if response.Code != http.StatusConflict || len(fixture.fabric.computeClaimInputs) != 0 || len(fixture.fabric.computeClaimCalls) != 0 ||
 		len(fixture.fabric.storageIDs) != 0 || len(fixture.sub2API.refunds) != 0 {
 		t.Fatalf("partial legacy identity crossed Fabric gate: status=%d body=%s proofs=%#v claims=%#v", response.Code, response.Body.String(), fixture.fabric.computeClaimInputs, fixture.fabric.computeClaimCalls)
@@ -2705,7 +2836,7 @@ func TestWorkspaceComputeClaimLegacyPhaseCASConflictStopsBeforeFabricClaim(t *te
 	}
 }
 
-func TestWorkspaceComputeClaimRequiresServerCapabilityBeforeFabric(t *testing.T) {
+func TestWorkspaceComputeClaimLegacyPublicClaimRouteIsRetiredBeforeFabric(t *testing.T) {
 	for _, capability := range []string{"", "wrong-capability"} {
 		t.Run(firstNonEmpty(capability, "missing"), func(t *testing.T) {
 			fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, "basic")
@@ -2721,7 +2852,7 @@ func TestWorkspaceComputeClaimRequiresServerCapabilityBeforeFabric(t *testing.T)
 			response := httptest.NewRecorder()
 			fixture.server.ServeHTTP(response, req)
 
-			if response.Code != http.StatusForbidden || len(fixture.fabric.computeClaimInputs) != 0 || len(fixture.fabric.computeClaimCalls) != 0 ||
+			if response.Code != http.StatusNotFound || len(fixture.fabric.computeClaimInputs) != 0 || len(fixture.fabric.computeClaimCalls) != 0 ||
 				len(fixture.fabric.storageIDs) != 0 || len(fixture.sub2API.refunds) != 0 {
 				t.Fatalf("invalid capability crossed Fabric gate: status=%d body=%s proofs=%#v claims=%#v", response.Code, response.Body.String(), fixture.fabric.computeClaimInputs, fixture.fabric.computeClaimCalls)
 			}
@@ -3797,8 +3928,19 @@ func chargedWorkspaceLaunchReview(t *testing.T, fixture workspaceLaunchWorkerFix
 func recoverWorkspaceLaunchForTest(t *testing.T, fixture workspaceLaunchWorkerFixture, key string) *httptest.ResponseRecorder {
 	t.Helper()
 	operation := fixture.operation(t)
-	body := fmt.Sprintf(`{"accountId":%q,"billingOperationId":%q,"evidenceRef":"case-20260720-cbs"}`, operation.AccountID, operation.ID)
-	return requestWithMutationKeyForTest(t, fixture.server, fixture.operator, http.MethodPost, "/api/operator/workspace-launches/"+operation.ID+"/recover", body, key)
+	handler := fixture.server.(*controlPlaneHTTPHandler)
+	result, _, err := handler.app.recoverWorkspaceLaunchReviewWithReplay(context.Background(), handler.service, billingReviewResolutionInput{
+		ResourceType: "workspace_launch", ResourceID: operation.ID, AccountID: operation.AccountID,
+		BillingOperationID: operation.ID, EvidenceRef: "internal-state-machine-test", IdempotencyKey: key,
+		Reviewer: sessionUserIDForTest(t, fixture.server, fixture.operator),
+	})
+	response := httptest.NewRecorder()
+	if err != nil {
+		writeBillingReviewResolutionError(response, err)
+		return response
+	}
+	writeJSON(response, http.StatusOK, result)
+	return response
 }
 
 func TestWorkspaceLaunchRecoveryRetriesAbsentStorageWithOriginalIdentity(t *testing.T) {

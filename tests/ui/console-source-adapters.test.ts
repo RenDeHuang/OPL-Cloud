@@ -34,6 +34,34 @@ test("Console exposes typed source adapters for the customer truth surfaces", as
   assert.equal(typeof workspaceApi.updateWorkspaceRenewal, "function");
 });
 
+test("Recovery Plan adapters retain the server-owned operation binding and exact command shapes", async () => {
+  assert.equal(Reflect.has(readApi, "recoverWorkspaceLaunch"), false);
+  const requested: Array<{ path: string; body: unknown }> = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    requested.push({ path: String(input), body: init?.body ? JSON.parse(String(init.body)) : null });
+    return new Response(JSON.stringify({
+      planId: "plan-1", planDigest: "sha256:plan-1", status: "ready", stages: [], mismatches: [],
+      executionId: "execution-1", runId: "run-1", receiptId: "receipt-1"
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  }) as typeof fetch;
+
+  try {
+    await readApi.diagnoseWorkspaceLaunchRecoveryPlan("launch / 1", { accountId: "acct-1" }, "csrf");
+    await readApi.getWorkspaceLaunchRecoveryPlan("launch / 1");
+    await readApi.validateWorkspaceLaunchRecoveryPlan("launch / 1", { planId: "plan-1", planDigest: "sha256:plan-1" }, "csrf");
+    await readApi.executeWorkspaceLaunchRecoveryPlan("launch / 1", { planId: "plan-1", planDigest: "sha256:plan-1", decision: "continue", confirmation: "CONTINUE_RECOVERY_PLAN" }, "csrf");
+    assert.deepEqual(requested, [
+      { path: "/api/operator/workspace-launches/launch%20%2F%201/recovery-plan/diagnose", body: { accountId: "acct-1" } },
+      { path: "/api/operator/workspace-launches/launch%20%2F%201/recovery-plan", body: null },
+      { path: "/api/operator/workspace-launches/launch%20%2F%201/recovery-plan/validate", body: { planId: "plan-1", planDigest: "sha256:plan-1" } },
+      { path: "/api/operator/workspace-launches/launch%20%2F%201/recovery-plan/execute", body: { planId: "plan-1", planDigest: "sha256:plan-1", decision: "continue", confirmation: "CONTINUE_RECOVERY_PLAN" } }
+    ]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("unavailable source adapters preserve the authoritative reason code", () => {
   const source = decodeSource({
     source: "sub2api",

@@ -126,6 +126,7 @@ jobs:
       OPL_PUBLIC_URL: ${{ vars.OPL_PUBLIC_URL || 'https://cloud.medopl.cn' }}
       OPL_CONSOLE_DOMAIN: ${{ vars.OPL_CONSOLE_DOMAIN || 'cloud.medopl.cn' }}
       OPL_WORKSPACE_DOMAIN: ${{ vars.OPL_WORKSPACE_DOMAIN || 'workspace.medopl.cn' }}
+      OPL_RELEASE_SHA: ${{ github.sha }}
       OPL_CLOUD_IMAGE: ${{ inputs.cloud_image }}
       OPL_WORKSPACE_IMAGE: ${{ inputs.workspace_image }}
       OPL_BOOTSTRAP_MODE: ${{ inputs.bootstrap_mode }}
@@ -261,6 +262,7 @@ jobs:
         run: |
           set -euo pipefail
           required=(
+            OPL_RELEASE_SHA
             OPL_CLOUD_IMAGE
             DATABASE_URL
             OPL_SUB2API_ADMIN_EMAIL
@@ -293,6 +295,10 @@ jobs:
           done
           if [ "${#missing[@]}" -gt 0 ]; then
             printf 'Missing required deploy inputs: %s\n' "${missing[*]}" >&2
+            exit 1
+          fi
+          if ! [[ "$OPL_RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "OPL_RELEASE_SHA must be the exact canonical main commit." >&2
             exit 1
           fi
           case "$OPL_SYSTEM_COMPUTE_MACHINE_TYPE" in

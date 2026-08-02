@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -151,7 +150,7 @@ type recoveredWorkspaceE2EHTTPFixture struct {
 	session   *httptest.ResponseRecorder
 	fabric    *monthlyFabric
 	operation workspaceLaunchOperation
-	approval  recoveredWorkspaceE2EApproval
+	request   recoveredWorkspaceE2EAttemptRequest
 }
 
 func newRecoveredWorkspaceE2EHTTPFixture(t *testing.T) recoveredWorkspaceE2EHTTPFixture {
@@ -186,18 +185,16 @@ func newRecoveredWorkspaceE2EHTTPFixture(t *testing.T) recoveredWorkspaceE2EHTTP
 	operation.RuntimeReady = true
 	operation.URL = "https://workspace.medopl.cn/w/" + operation.WorkspaceID + "/"
 	operation.ReceiptID = "receipt-recovered-e2e"
-	recovery := workspaceComputeClaimApprovalBinding{
-		SchemaVersion: 2, ApprovalID: "approval-recovery-e2e", ExpiresAt: "2099-08-28T00:00:00Z",
-		MergedMainSHA: strings.Repeat("a", 40), CloudImageDigest: "sha256:" + strings.Repeat("b", 64), WorkspaceImageDigest: operation.WorkspaceImageDigest,
-		Confirmation: "RECOVER_PROVEN_COMPUTE_AND_CONTINUE_ORIGINAL_LAUNCH", IdempotencyKey: "recovery-e2e-key", RecoveryKey: "recovery-e2e-key",
-		Customer: workspaceComputeClaimApprovalCustomer{Email: "alpha@example.com", AccountID: operation.AccountID},
-		Target:   workspaceComputeClaimApprovalTargetFromOperation(operation), Resources: expectedResources,
-		AttemptLimits: workspaceComputeClaimAttemptLimits{Claim: workspaceComputeClaimProviderAttemptLimits{Tencent: 5, Kubernetes: 1}, Storage: 1, Attachment: 1, Secret: 1, Runtime: 1, Activation: 1, Receipt: 1},
-		AllowedWrites: workspaceComputeClaimAllowedWritesForStorage(expectedResources.StorageState), ForbiddenWrites: append([]string(nil), workspaceComputeClaimForbiddenWrites...),
+	planDigest := strings.Repeat("f", 64)
+	operation.RecoveryPlan = &workspaceRecoveryPlan{
+		PlanID: "recovery-plan-" + planDigest[:20], PlanDigest: planDigest, Status: "completed",
+		OperationID: operation.ID, URL: operation.URL, ReceiptID: operation.ReceiptID,
 	}
-	recovery.ApprovalDigest = workspaceComputeClaimApprovalDigest(recovery)
-	operation.ComputeClaimApproval = &recovery
-	operation.ComputeClaimApprovalID, operation.ComputeClaimMergedMainSHA, operation.ComputeClaimCloudDigest = recovery.ApprovalID, recovery.MergedMainSHA, recovery.CloudImageDigest
+	operation.RecoveryExecution = &workspaceRecoveryExecution{
+		ExecutionID: "recovery-exec-plan-authority", RunIdentity: "control-plane-run-plan-authority",
+		PlanID: operation.RecoveryPlan.PlanID, PlanDigest: planDigest, ApprovalDigest: strings.Repeat("a", 64),
+		Decision: "continue", Status: "completed", StartedAt: "2026-08-28T00:00:00Z", CompletedAt: "2026-08-28T00:01:00Z",
+	}
 	mustStore(t, store.SaveRuntimeOperation(context.Background(), workspaceLaunchOperationRow(operation)))
 	mustStore(t, store.SaveCompute(context.Background(), map[string]any{
 		"id": operation.ComputeID, "accountId": operation.AccountID, "workspaceId": operation.WorkspaceID, "status": "running",
@@ -217,58 +214,85 @@ func newRecoveredWorkspaceE2EHTTPFixture(t *testing.T) recoveredWorkspaceE2EHTTP
 		"runtimeId": operation.RuntimeID, "runtimeServiceName": operation.RuntimeServiceName, "url": operation.URL,
 		"workspaceApiKeyId": operation.WorkspaceAPIKeyID, "purchaseReceiptId": operation.ReceiptID,
 	})))
-	approval := recoveredWorkspaceE2EApproval{
-		SchemaVersion: 1, ApprovalID: "approval-recovered-e2e", ExpiresAt: "2099-08-28T00:00:00Z",
-		Confirmation: recoveredWorkspaceE2EConfirmation, MergedMainSHA: recovery.MergedMainSHA,
-		CloudImageDigest: recovery.CloudImageDigest, WorkspaceImageDigest: recovery.WorkspaceImageDigest,
-		RecoveryApprovalID: recovery.ApprovalID, RecoveryApprovalDigest: recovery.ApprovalDigest,
-		RecoveryBindingDigest: strings.Repeat("e", 64), RecoveryKey: recovery.RecoveryKey,
-		Customer:          recoveredWorkspaceE2EApprovalCustomer{Email: "alpha@example.com", AccountID: operation.AccountID},
-		LaunchOperationID: operation.ID, WorkspaceID: operation.WorkspaceID,
-		Resources: recoveredWorkspaceE2EApprovalResources{
-			ComputeAllocationID: operation.ComputeID, StorageID: operation.StorageID, AttachmentID: operation.AttachmentID,
-			RuntimeID: operation.RuntimeID, ReceiptID: operation.ReceiptID, WorkspaceAPIKeyID: "42",
-			RuntimeServiceName: operation.RuntimeServiceName, WorkspaceURL: operation.URL,
-		},
-		ExpectedModel: "claude-sonnet-4-20250514", ModelRequestKey: "recovered-workspace-model-e2e",
-		AllowedWrites: append([]string(nil), recoveredWorkspaceE2EAllowedWrites...), ForbiddenWrites: append([]string(nil), recoveredWorkspaceE2EForbiddenWrites...),
+	request := recoveredWorkspaceE2EAttemptRequest{
+		SchemaVersion: 2, ApprovalID: "approval-recovered-e2e", LaunchOperationID: operation.ID,
+		PlanID: operation.RecoveryPlan.PlanID, PlanDigest: planDigest, Decision: "continue",
+		Confirmation: recoveredWorkspaceE2EConfirmation, ExpectedModel: "claude-sonnet-4-20250514",
+		ModelRequestKey: "recovered-workspace-model-e2e",
 	}
 	return recoveredWorkspaceE2EHTTPFixture{
 		server: server, store: store, session: loginForTest(t, server, "alpha@example.com", "CorrectHorseBatteryStaple!"), fabric: fabric,
-		operation: operation, approval: approval,
+		operation: operation, request: request,
 	}
 }
 
-func (f recoveredWorkspaceE2EHTTPFixture) request(t *testing.T, suffix string, approval recoveredWorkspaceE2EApproval) *httptest.ResponseRecorder {
+func (f recoveredWorkspaceE2EHTTPFixture) post(t *testing.T, suffix string, request recoveredWorkspaceE2EAttemptRequest) *httptest.ResponseRecorder {
 	t.Helper()
-	body, err := json.Marshal(map[string]any{"approval": approval, "approvalDigest": recoveredWorkspaceE2EApprovalDigest(approval)})
+	body, err := json.Marshal(request)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return requestWithSession(t, f.server, f.session, http.MethodPost, "/api/workspaces/"+f.operation.WorkspaceID+suffix, string(body))
 }
 
-func (f recoveredWorkspaceE2EHTTPFixture) requestApprovalPayload(t *testing.T, suffix string, approval map[string]any) *httptest.ResponseRecorder {
-	t.Helper()
-	payload, err := json.Marshal(approval)
+func TestRecoveredWorkspaceE2EAttemptUsesPersistedRecoveryPlanAuthority(t *testing.T) {
+	fixture := newRecoveredWorkspaceE2EHTTPFixture(t)
+	row, found, err := fixture.store.GetRuntimeOperation(context.Background(), fixture.operation.ID)
+	if err != nil || !found {
+		t.Fatalf("launch found=%t err=%v", found, err)
+	}
+	operation, err := decodeWorkspaceLaunchOperation(row)
 	if err != nil {
 		t.Fatal(err)
 	}
-	sum := sha256.Sum256(payload)
-	body, err := json.Marshal(map[string]any{"approval": approval, "approvalDigest": fmt.Sprintf("%x", sum)})
+	planDigest := strings.Repeat("f", 64)
+	operation.ComputeClaimApproval = nil
+	operation.RecoveryPlan = &workspaceRecoveryPlan{
+		PlanID: "recovery-plan-" + planDigest[:20], PlanDigest: planDigest, Status: "completed",
+		OperationID: operation.ID, URL: operation.URL, ReceiptID: operation.ReceiptID,
+	}
+	operation.RecoveryExecution = &workspaceRecoveryExecution{
+		ExecutionID: "recovery-exec-plan-authority", RunIdentity: "control-plane-run-plan-authority",
+		PlanID: operation.RecoveryPlan.PlanID, PlanDigest: planDigest, ApprovalDigest: strings.Repeat("a", 64),
+		Decision: "continue", Status: "completed", StartedAt: "2026-08-28T00:00:00Z", CompletedAt: "2026-08-28T00:01:00Z",
+	}
+	mustStore(t, fixture.store.SaveRuntimeOperation(context.Background(), workspaceLaunchOperationRow(operation)))
+
+	body, err := json.Marshal(map[string]any{
+		"schemaVersion":     2,
+		"approvalId":        "approval-recovered-e2e",
+		"launchOperationId": operation.ID,
+		"planId":            operation.RecoveryPlan.PlanID,
+		"planDigest":        operation.RecoveryPlan.PlanDigest,
+		"decision":          "continue",
+		"confirmation":      recoveredWorkspaceE2EConfirmation,
+		"expectedModel":     "claude-sonnet-4-20250514",
+		"modelRequestKey":   "recovered-workspace-model-e2e",
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return requestWithSession(t, f.server, f.session, http.MethodPost, "/api/workspaces/"+f.operation.WorkspaceID+suffix, string(body))
+	response := requestWithSession(t, fixture.server, fixture.session, http.MethodPost,
+		"/api/workspaces/"+operation.WorkspaceID+"/recovered-e2e-attempt", string(body))
+	if response.Code != http.StatusCreated {
+		t.Fatalf("reserve status=%d body=%s", response.Code, response.Body.String())
+	}
+
+	record, found, err := fixture.store.GetProductionE2EAttempt(context.Background(), recoveredWorkspaceE2EAttemptID(operation))
+	if err != nil || !found {
+		t.Fatalf("marker found=%t err=%v", found, err)
+	}
+	for _, forbidden := range []string{"resources", "cloudImageDigest", "workspaceImageDigest", "computeAllocationId", "storageId"} {
+		if strings.Contains(stringValue(record["result"]), forbidden) {
+			t.Fatalf("marker binding contains caller-supplied resource field %q: %s", forbidden, stringValue(record["result"]))
+		}
+	}
 }
 
-func TestRecoveredWorkspaceE2EApprovalBindsRecoveryArtifactDigest(t *testing.T) {
-	t.Run("exact schema is persisted and completed with the same binding", func(t *testing.T) {
+func TestRecoveredWorkspaceE2EAttemptBindsPersistedPlanDigest(t *testing.T) {
+	t.Run("exact plan reference is persisted and completed with the same binding", func(t *testing.T) {
 		fixture := newRecoveredWorkspaceE2EHTTPFixture(t)
-		approval := structToMap(fixture.approval)
-		approval["recoveryBindingDigest"] = strings.Repeat("e", 64)
-
-		reserve := fixture.requestApprovalPayload(t, "/recovered-e2e-attempt", approval)
+		reserve := fixture.post(t, "/recovered-e2e-attempt", fixture.request)
 		if reserve.Code != http.StatusCreated {
 			t.Fatalf("reserve status=%d body=%s", reserve.Code, reserve.Body.String())
 		}
@@ -284,41 +308,41 @@ func TestRecoveredWorkspaceE2EApprovalBindsRecoveryArtifactDigest(t *testing.T) 
 		if err := json.Unmarshal([]byte(stringValue(record["result"])), &binding); err != nil {
 			t.Fatal(err)
 		}
-		boundApproval, ok := binding["approval"].(map[string]any)
-		if !ok || boundApproval["recoveryBindingDigest"] != strings.Repeat("e", 64) || binding["approvalDigest"] != reserved["approvalDigest"] {
+		boundRequest, ok := binding["request"].(map[string]any)
+		if !ok || boundRequest["planId"] != fixture.request.PlanID || boundRequest["planDigest"] != fixture.request.PlanDigest ||
+			binding["requestDigest"] != reserved["approvalDigest"] {
 			t.Fatalf("marker binding=%#v reserve=%#v", binding, reserved)
 		}
+		if reserved["executionId"] != fixture.operation.RecoveryExecution.ExecutionID || reserved["runId"] != fixture.operation.RecoveryExecution.RunIdentity {
+			t.Fatalf("reserve does not expose persisted execution identity: %#v", reserved)
+		}
 
-		complete := fixture.requestApprovalPayload(t, "/recovered-e2e-attempt/complete", approval)
+		complete := fixture.post(t, "/recovered-e2e-attempt/complete", fixture.request)
 		if complete.Code != http.StatusOK || !strings.Contains(complete.Body.String(), `"status":"passed"`) {
 			t.Fatalf("complete status=%d body=%s", complete.Code, complete.Body.String())
 		}
 	})
 
-	t.Run("legacy approval without recovery binding digest fails closed", func(t *testing.T) {
+	t.Run("legacy caller-supplied resource approval fails closed", func(t *testing.T) {
 		fixture := newRecoveredWorkspaceE2EHTTPFixture(t)
-		approval := structToMap(fixture.approval)
-		delete(approval, "recoveryBindingDigest")
-
-		response := fixture.requestApprovalPayload(t, "/recovered-e2e-attempt", approval)
+		body := `{"approval":{"schemaVersion":1,"resources":{"computeAllocationId":"caller-value"}},"approvalDigest":"` + strings.Repeat("a", 64) + `"}`
+		response := requestWithSession(t, fixture.server, fixture.session, http.MethodPost,
+			"/api/workspaces/"+fixture.operation.WorkspaceID+"/recovered-e2e-attempt", body)
 		if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "recovered_workspace_e2e_approval_invalid") {
-			t.Fatalf("missing binding digest status=%d body=%s", response.Code, response.Body.String())
+			t.Fatalf("legacy approval status=%d body=%s", response.Code, response.Body.String())
 		}
 		assertNoRecoveredWorkspaceE2EMarker(t, fixture.store)
 	})
 
-	t.Run("completion rejects recovery binding digest drift", func(t *testing.T) {
+	t.Run("completion rejects plan digest drift", func(t *testing.T) {
 		fixture := newRecoveredWorkspaceE2EHTTPFixture(t)
-		approval := structToMap(fixture.approval)
-		approval["recoveryBindingDigest"] = strings.Repeat("e", 64)
-		reserve := fixture.requestApprovalPayload(t, "/recovered-e2e-attempt", approval)
+		reserve := fixture.post(t, "/recovered-e2e-attempt", fixture.request)
 		if reserve.Code != http.StatusCreated {
 			t.Fatalf("reserve status=%d body=%s", reserve.Code, reserve.Body.String())
 		}
-
-		drifted := cloneMap(approval)
-		drifted["recoveryBindingDigest"] = strings.Repeat("f", 64)
-		complete := fixture.requestApprovalPayload(t, "/recovered-e2e-attempt/complete", drifted)
+		drifted := fixture.request
+		drifted.PlanDigest = strings.Repeat("e", 64)
+		complete := fixture.post(t, "/recovered-e2e-attempt/complete", drifted)
 		if complete.Code != http.StatusConflict || !strings.Contains(complete.Body.String(), "model_result_unknown") {
 			t.Fatalf("drifted completion status=%d body=%s", complete.Code, complete.Body.String())
 		}
@@ -327,7 +351,7 @@ func TestRecoveredWorkspaceE2EApprovalBindsRecoveryArtifactDigest(t *testing.T) 
 
 func TestRecoveredWorkspaceE2EAttemptAPIIsOwnerScopedSingleUse(t *testing.T) {
 	fixture := newRecoveredWorkspaceE2EHTTPFixture(t)
-	reserve := fixture.request(t, "/recovered-e2e-attempt", fixture.approval)
+	reserve := fixture.post(t, "/recovered-e2e-attempt", fixture.request)
 	if reserve.Code != http.StatusCreated {
 		t.Fatalf("reserve status=%d body=%s", reserve.Code, reserve.Body.String())
 	}
@@ -341,11 +365,11 @@ func TestRecoveredWorkspaceE2EAttemptAPIIsOwnerScopedSingleUse(t *testing.T) {
 		stringValue(record["workspaceId"]) != fixture.operation.WorkspaceID || stringValue(record["reason"]) != recoveredWorkspaceE2EAttemptReason {
 		t.Fatalf("reserved marker found=%t err=%v record=%#v", found, err, record)
 	}
-	second := fixture.request(t, "/recovered-e2e-attempt", fixture.approval)
+	second := fixture.post(t, "/recovered-e2e-attempt", fixture.request)
 	if second.Code != http.StatusConflict || !strings.Contains(second.Body.String(), "model_result_unknown") {
 		t.Fatalf("second reserve status=%d body=%s", second.Code, second.Body.String())
 	}
-	complete := fixture.request(t, "/recovered-e2e-attempt/complete", fixture.approval)
+	complete := fixture.post(t, "/recovered-e2e-attempt/complete", fixture.request)
 	if complete.Code != http.StatusOK || !strings.Contains(complete.Body.String(), `"status":"passed"`) {
 		t.Fatalf("complete status=%d body=%s", complete.Code, complete.Body.String())
 	}
@@ -358,7 +382,7 @@ func TestRecoveredWorkspaceE2EAttemptAPIIsOwnerScopedSingleUse(t *testing.T) {
 
 func TestRecoveredWorkspaceE2EAttemptCompletionUsesReservedBindingAfterResourceDrift(t *testing.T) {
 	fixture := newRecoveredWorkspaceE2EHTTPFixture(t)
-	reserve := fixture.request(t, "/recovered-e2e-attempt", fixture.approval)
+	reserve := fixture.post(t, "/recovered-e2e-attempt", fixture.request)
 	if reserve.Code != http.StatusCreated {
 		t.Fatalf("reserve status=%d body=%s", reserve.Code, reserve.Body.String())
 	}
@@ -373,7 +397,7 @@ func TestRecoveredWorkspaceE2EAttemptCompletionUsesReservedBindingAfterResourceD
 	operation.Status, operation.Phase = "manual_review", "receipt_pending"
 	mustStore(t, fixture.store.SaveRuntimeOperation(context.Background(), workspaceLaunchOperationRow(operation)))
 
-	complete := fixture.request(t, "/recovered-e2e-attempt/complete", fixture.approval)
+	complete := fixture.post(t, "/recovered-e2e-attempt/complete", fixture.request)
 	if complete.Code != http.StatusOK || !strings.Contains(complete.Body.String(), `"status":"passed"`) {
 		t.Fatalf("complete status=%d body=%s", complete.Code, complete.Body.String())
 	}
@@ -389,7 +413,7 @@ func TestRecoveredWorkspaceE2EAttemptAPIRejectsBeforeMarkerWrite(t *testing.T) {
 		}
 		operation.Status, operation.Phase = "waiting", "receipt_pending"
 		mustStore(t, fixture.store.SaveRuntimeOperation(context.Background(), workspaceLaunchOperationRow(operation)))
-		response := fixture.request(t, "/recovered-e2e-attempt", fixture.approval)
+		response := fixture.post(t, "/recovered-e2e-attempt", fixture.request)
 		if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), "recovered_workspace_e2e_resource_closure_required") {
 			t.Fatalf("incomplete closure status=%d body=%s", response.Code, response.Body.String())
 		}
@@ -398,9 +422,9 @@ func TestRecoveredWorkspaceE2EAttemptAPIRejectsBeforeMarkerWrite(t *testing.T) {
 
 	t.Run("approval binding drift", func(t *testing.T) {
 		fixture := newRecoveredWorkspaceE2EHTTPFixture(t)
-		approval := fixture.approval
-		approval.Resources.AttachmentID = "attachment-drift"
-		response := fixture.request(t, "/recovered-e2e-attempt", approval)
+		request := fixture.request
+		request.PlanDigest = strings.Repeat("e", 64)
+		response := fixture.post(t, "/recovered-e2e-attempt", request)
 		if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), "recovered_workspace_e2e_binding_mismatch") {
 			t.Fatalf("binding drift status=%d body=%s", response.Code, response.Body.String())
 		}
@@ -414,7 +438,7 @@ func TestRecoveredWorkspaceE2EAttemptAPIRejectsBeforeMarkerWrite(t *testing.T) {
 			ComputeState: "unknown", StorageState: "unknown", Checks: []any{},
 		}
 		fixture.fabric.activationTruthErr = errors.New("workspace activation truth unavailable")
-		response := fixture.request(t, "/recovered-e2e-attempt", fixture.approval)
+		response := fixture.post(t, "/recovered-e2e-attempt", fixture.request)
 		if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), "recovered_workspace_e2e_resource_closure_required") ||
 			len(fixture.fabric.activationTruthInputs) != 1 {
 			t.Fatalf("stale truth status=%d body=%s truthInputs=%#v", response.Code, response.Body.String(), fixture.fabric.activationTruthInputs)
@@ -426,7 +450,7 @@ func TestRecoveredWorkspaceE2EAttemptAPIRejectsBeforeMarkerWrite(t *testing.T) {
 		fixture := newRecoveredWorkspaceE2EHTTPFixture(t)
 		seedTenantMember(t, fixture.store, "acct-beta", "org-beta", "usr-beta", "beta@example.com")
 		fixture.session = loginForTest(t, fixture.server, "beta@example.com", "CorrectHorseBatteryStaple!")
-		response := fixture.request(t, "/recovered-e2e-attempt", fixture.approval)
+		response := fixture.post(t, "/recovered-e2e-attempt", fixture.request)
 		if response.Code != http.StatusForbidden {
 			t.Fatalf("cross-account status=%d body=%s", response.Code, response.Body.String())
 		}

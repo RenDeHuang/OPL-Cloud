@@ -118,6 +118,8 @@ type workspaceLaunchOperation struct {
 	ComputeClaimApproval       *workspaceComputeClaimApprovalBinding    `json:"computeClaimApproval,omitempty"`
 	ReadbackRecoveryApproval   *workspaceLaunchReadbackRecoveryApproval `json:"readbackRecoveryApproval,omitempty"`
 	ReadbackRecoveryProof      *workspaceLaunchReadbackRecoveryProof    `json:"readbackRecoveryProof,omitempty"`
+	RecoveryPlan               *workspaceRecoveryPlan                   `json:"recoveryPlan,omitempty"`
+	RecoveryExecution          *workspaceRecoveryExecution              `json:"recoveryExecution,omitempty"`
 	WorkspaceImageDigest       string                                   `json:"workspaceImageDigest,omitempty"`
 	ComputeClaimPrivateIP      string                                   `json:"computeClaimPrivateIp,omitempty"`
 	ComputeClaimProof          *clients.ComputeClaimRecoveryProof       `json:"computeClaimProof,omitempty"`
@@ -590,6 +592,9 @@ func workspaceLaunchResponse(row map[string]any) (map[string]any, error) {
 		"runtimeServiceName": operation.RuntimeServiceName, "url": operation.URL, "receiptId": operation.ReceiptID,
 		"continuationAttemptBudgets": operation.ContinuationAttemptBudgets,
 		"errorCode":                  operation.ErrorCode, "createdAt": row["createdAt"], "updatedAt": row["updatedAt"],
+	}
+	if operation.RecoveryPlan != nil {
+		response["recoveryPlan"] = workspaceRecoveryPlanHTTPProjection(workspaceRecoveryPlanProjection(operation))
 	}
 	if approval := operation.ReadbackRecoveryApproval; approval != nil {
 		response["recovery"] = map[string]any{
@@ -2892,8 +2897,10 @@ func workspaceLaunchReadbackRecoveryStageBindingMatches(operationIDs workspaceLa
 func (app *controlPlaneServer) validateWorkspaceLaunchReadbackRecoveryApproval(ctx context.Context, operation workspaceLaunchOperation, approval workspaceLaunchReadbackRecoveryApproval, key string) error {
 	expiresAt, expiresErr := time.Parse(time.RFC3339, approval.ExpiresAt)
 	customer, customerErr := app.workspaceLaunchReadbackRecoveryCustomer(ctx, operation)
+	allowExpiredExactExecution := operation.RecoveryExecution != nil && operation.RecoveryExecution.Approval != nil &&
+		operation.RecoveryExecution.ExecutionID == key && workspaceLaunchReadbackRecoveryApprovalMatches(*operation.RecoveryExecution.Approval, approval)
 	if approval.SchemaVersion != 1 || approval.IdempotencyKey != key || approval.Confirmation != workspaceLaunchReadbackRecoveryConfirmation ||
-		approval.ApprovalDigest == "" || workspaceLaunchReadbackRecoveryApprovalDigest(approval) != approval.ApprovalDigest || expiresErr != nil || !expiresAt.After(time.Now().UTC()) ||
+		approval.ApprovalDigest == "" || workspaceLaunchReadbackRecoveryApprovalDigest(approval) != approval.ApprovalDigest || expiresErr != nil || (!expiresAt.After(time.Now().UTC()) && !allowExpiredExactExecution) ||
 		!computeClaimMergedSHAPattern.MatchString(approval.MergedMainSHA) || !computeClaimCloudDigestPattern.MatchString(approval.CloudImageDigest) ||
 		approval.WorkspaceImageDigest != operation.WorkspaceImageDigest || approval.Stage == "" || customerErr != nil || approval.Customer != customer ||
 		approval.Target.LaunchOperationID != operation.ID || approval.Target.AccountID != operation.AccountID || approval.Target.WorkspaceID != operation.WorkspaceID ||
@@ -2944,7 +2951,7 @@ func workspaceLaunchRecoveryResponse(operation workspaceLaunchOperation) (map[st
 	result["resourceType"], result["billingOperationId"] = "workspace", operation.ID
 	result["allowedActions"] = []string{}
 	if operation.Status == "manual_review" {
-		result["allowedActions"] = []string{"recover_workspace_launch"}
+		result["allowedActions"] = []string{"diagnose_workspace_recovery_plan"}
 	}
 	return result, nil
 }
