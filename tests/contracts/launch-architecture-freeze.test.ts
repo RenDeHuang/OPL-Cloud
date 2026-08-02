@@ -26,7 +26,7 @@ test("root agent instructions require the launch invariants", async () => {
 test("launch freeze fixes the V2 products, owner lanes, settlement, and verification slot", async () => {
   const freeze = await json("packages/contracts/opl-cloud-launch-freeze-contract.json");
 
-  assert.equal(freeze.schemaVersion, 20);
+  assert.equal(freeze.schemaVersion, 21);
   assert.equal(freeze.architectureAuthority.repository, "https://github.com/gaofeng21cn/one-person-lab-cloud");
   assert.equal(freeze.architectureAuthority.reviewedRevision, "c349a41d860e706ed43a4090b9e75abb0b130971");
   assert.deepEqual(Object.keys(freeze.productSurfaces), ["gateway", "workspace", "serve", "console", "fabric", "ledger"]);
@@ -93,6 +93,25 @@ test("launch freeze fixes the V2 products, owner lanes, settlement, and verifica
   assert.equal(freeze.workspaceLaunch.manualReviewRecovery.route, "POST /api/operator/workspace-launches/{operationId}/recovery-plan/execute");
   assert.equal(freeze.workspaceLaunch.manualReviewRecovery.operatorAuthorization, "authenticated_reserved_operator_session_plus_csrf");
   assert.equal(freeze.workspaceLaunch.manualReviewRecovery.resourceIdentityInput, "forbidden_server_authoritative_readback_only");
+  assert.deepEqual(freeze.workspaceLaunch.controlledBasicPilot, {
+    state: "code_complete_local_verified_production_default_disabled",
+    scope: "new_workspace.launch.v2_purchase_only",
+    packageIds: ["basic"],
+    autoRenew: false,
+    configuration: {
+      enabled: "OPL_CONTROLLED_BASIC_PILOT_ENABLED",
+      accountAllowlist: "OPL_CONTROLLED_BASIC_PILOT_ACCOUNT_IDS",
+      globalMaxInFlight: "OPL_CONTROLLED_BASIC_PILOT_MAX_IN_FLIGHT",
+      defaultEnabled: false,
+      defaultMaxInFlight: 1
+    },
+    admissionOrder: ["validate_request", "resume_exact_or_matching_active_operation", "controlled_pilot_gate", "fabric_catalog_and_preflight", "sub2api_balance", "global_launch_claim", "workspace_key_convergence"],
+    rejectionMutationCounts: { database: 0, sub2api: 0, fabric: 0, tencent: 0, kubernetes: 0 },
+    globalCapacity: "memory_mutex_or_postgresql_transaction_with_stable_account_row_lock_before_global_nonterminal_count_and_insert",
+    disableBehavior: "block_new_purchase_only_reads_and_original_operation_continuations_remain_available",
+    firstFailure: "operator_health_disableRequired_and_redacted_alert_then_set_enabled_0",
+    productionEvidence: "pending"
+  });
   assert.deepEqual(freeze.workspaceLaunch.manualReviewRecovery.matrix, {
       computeReadyStorageAbsent: "resume_storage_fulfilling_with_original_operation_identity",
       computeReadyStorageReady: "resume_attaching_with_original_operation_identity",

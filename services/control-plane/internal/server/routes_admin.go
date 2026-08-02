@@ -1317,6 +1317,12 @@ func (app *controlPlaneServer) operatorHealth(ctx context.Context, service *cont
 	if err := service.LedgerReadiness(ctx); err == nil {
 		result["ledger"] = sourceEnvelope("ledger", "available", map[string]any{"ready": true}, "")
 	}
+	if metrics, err := controlledBasicPilotMetrics(ctx, app.tables); err == nil {
+		app.observeControlledPilotAlerts(metrics)
+		result["controlledBasicPilot"] = sourceEnvelope("control-plane", "available", metrics, "")
+	} else {
+		result["controlledBasicPilot"] = sourceEnvelope("control-plane", "unavailable", nil, "")
+	}
 	return result
 }
 

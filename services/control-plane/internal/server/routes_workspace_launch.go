@@ -55,27 +55,10 @@ func registerWorkspaceLaunchRoutes(mux *http.ServeMux, app *controlPlaneServer, 
 			writeError(w, http.StatusBadRequest, "client_pricing_forbidden")
 			return
 		}
-		if currentWorkspaceImageDigest() == "" {
-			writeError(w, http.StatusConflict, "workspace_image_digest_invalid")
-			return
-		}
-		computePools, ok := fabricComputePools(w, r, service)
-		if !ok {
-			return
-		}
-		quote, err := app.pricingPreviewResponse(r.Context(), map[string]any{"resourceType": "workspace", "packageId": packageID, "sizeGb": storageGB}, computePools)
-		if err != nil {
-			writePricingError(w, err)
-			return
-		}
-		operation := newWorkspaceLaunchOperation(
-			accountID, stringValue(user["id"]), name, packageID, int(storageGB), autoRenew, stringValue(quote["priceVersion"]),
-			int64(numberField(quote, "totalChargeUsdMicros", 0)), key,
-		)
-
 		unlock := app.lockResource("workspace-launch", accountID)
 		defer unlock()
-		row, found, err := app.tables.GetRuntimeOperation(r.Context(), operation.ID)
+		ownerUserID := stringValue(user["id"])
+		row, found, err := app.tables.GetRuntimeOperation(r.Context(), workspaceLaunchOperationID(accountID, key))
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "state_read_failed")
 			return
@@ -90,41 +73,11 @@ func registerWorkspaceLaunchRoutes(mux *http.ServeMux, app *controlPlaneServer, 
 				writeError(w, http.StatusInternalServerError, "state_read_failed")
 				return
 			}
-			if persisted.AccountID != accountID || persisted.RequestHash != operation.RequestHash {
+			if !workspaceLaunchSubmissionMatches(persisted, accountID, ownerUserID, name, packageID, int(storageGB), autoRenew) {
 				writeError(w, http.StatusConflict, errIdempotencyConflict.Error())
 				return
 			}
-			if persisted.Phase == "key_pending" {
-				unlockAccount := app.lockResource("account", accountID)
-				defer unlockAccount()
-				credentialUser, sub2APIUserID, credential, ok := app.gatewayUserContext(w, r)
-				if !ok {
-					return
-				}
-				if stringValue(credentialUser["accountId"]) != accountID {
-					writeError(w, http.StatusForbidden, "account_scope_forbidden")
-					return
-				}
-				if err := app.convergeAndPersistWorkspaceLaunchKey(r.Context(), service, credential, sub2APIUserID, &persisted); err != nil {
-					writeGatewayKeyError(w, err)
-					return
-				}
-				row, found, err = app.tables.GetRuntimeOperation(r.Context(), operation.ID)
-				if err != nil || !found {
-					writeError(w, http.StatusInternalServerError, "state_read_failed")
-					return
-				}
-			}
-			body, err := workspaceLaunchResponse(row)
-			if err != nil {
-				writeError(w, http.StatusInternalServerError, "state_read_failed")
-				return
-			}
-			writeJSON(w, http.StatusAccepted, body)
-			return
-		}
-		if _, blocked := app.reconciliationBlocksNewWorkspaces(); blocked {
-			writeError(w, http.StatusConflict, "billing_reconciliation_blocked")
+			app.respondWorkspaceLaunchContinuation(w, r, service, persisted)
 			return
 		}
 		for _, action := range []string{workspaceLaunchAction, "workspace.launch"} {
@@ -136,42 +89,49 @@ func registerWorkspaceLaunchRoutes(mux *http.ServeMux, app *controlPlaneServer, 
 				return
 			}
 			if len(active) > 0 {
+				var matching workspaceLaunchOperation
+				matchingCount := 0
 				for _, candidate := range active {
 					persisted, decodeErr := decodeWorkspaceLaunchOperation(candidate)
-					if decodeErr != nil || persisted.RequestHash != operation.RequestHash || persisted.Phase != "key_pending" {
+					if decodeErr != nil || !workspaceLaunchSubmissionMatches(persisted, accountID, ownerUserID, name, packageID, int(storageGB), autoRenew) {
 						continue
 					}
-					unlockAccount := app.lockResource("account", accountID)
-					defer unlockAccount()
-					credentialUser, sub2APIUserID, credential, ok := app.gatewayUserContext(w, r)
-					if !ok {
-						return
-					}
-					if stringValue(credentialUser["accountId"]) != accountID {
-						writeError(w, http.StatusForbidden, "account_scope_forbidden")
-						return
-					}
-					if err := app.convergeAndPersistWorkspaceLaunchKey(r.Context(), service, credential, sub2APIUserID, &persisted); err != nil {
-						writeGatewayKeyError(w, err)
-						return
-					}
-					row, found, err := app.tables.GetRuntimeOperation(r.Context(), persisted.ID)
-					if err != nil || !found {
-						writeError(w, http.StatusInternalServerError, "state_read_failed")
-						return
-					}
-					body, err := workspaceLaunchResponse(row)
-					if err != nil {
-						writeError(w, http.StatusInternalServerError, "state_read_failed")
-						return
-					}
-					writeJSON(w, http.StatusAccepted, body)
+					matching, matchingCount = persisted, matchingCount+1
+				}
+				if matchingCount == 1 {
+					app.respondWorkspaceLaunchContinuation(w, r, service, matching)
 					return
 				}
 				writeError(w, http.StatusConflict, errWorkspaceLaunchInProgress.Error())
 				return
 			}
 		}
+		admission := controlledBasicPilotAdmissionFromEnv()
+		if code := admission.rejectNewLaunch(accountID, packageID, autoRenew); code != "" {
+			writeError(w, http.StatusConflict, code)
+			return
+		}
+		if _, blocked := app.reconciliationBlocksNewWorkspaces(); blocked {
+			writeError(w, http.StatusConflict, "billing_reconciliation_blocked")
+			return
+		}
+		if currentWorkspaceImageDigest() == "" {
+			writeError(w, http.StatusConflict, "workspace_image_digest_invalid")
+			return
+		}
+		computePools, ok := fabricComputePools(w, r, service)
+		if !ok {
+			return
+		}
+		quote, err := app.pricingPreviewResponse(r.Context(), map[string]any{"resourceType": "workspace", "packageId": packageID, "sizeGb": storageGB}, computePools)
+		if err != nil {
+			writePricingError(w, err)
+			return
+		}
+		operation := newWorkspaceLaunchOperation(
+			accountID, ownerUserID, name, packageID, int(storageGB), autoRenew, stringValue(quote["priceVersion"]),
+			int64(numberField(quote, "totalChargeUsdMicros", 0)), key,
+		)
 
 		zone := monthlyComputeLaunchZone()
 		for _, preflightInput := range []clients.MonthlyPreflightInput{
@@ -213,6 +173,10 @@ func registerWorkspaceLaunchRoutes(mux *http.ServeMux, app *controlPlaneServer, 
 		operation.Phase = "key_pending"
 		row = workspaceLaunchOperationRow(operation)
 		if err := app.tables.ClaimWorkspaceLaunch(r.Context(), workspaceLaunchClaimCAS{AccountID: accountID, DesiredOperation: row}); err != nil {
+			if errors.Is(err, errWorkspaceLaunchCapacityReached) {
+				writeError(w, http.StatusConflict, err.Error())
+				return
+			}
 			if errors.Is(err, errWorkspaceLaunchCASConflict) || errors.Is(err, errWorkspaceLaunchInProgress) {
 				existing, found, readErr := app.tables.GetRuntimeOperation(r.Context(), operation.ID)
 				if readErr == nil && found && stringValue(existing["action"]) == workspaceLaunchAction {
@@ -328,6 +292,36 @@ func registerWorkspaceLaunchRoutes(mux *http.ServeMux, app *controlPlaneServer, 
 		}
 		writeError(w, http.StatusNotFound, "workspace_launch_not_found")
 	}))
+}
+
+func (app *controlPlaneServer) respondWorkspaceLaunchContinuation(w http.ResponseWriter, r *http.Request, service *controlplane.Service, operation workspaceLaunchOperation) {
+	if operation.Phase == "key_pending" {
+		unlockAccount := app.lockResource("account", operation.AccountID)
+		defer unlockAccount()
+		credentialUser, sub2APIUserID, credential, ok := app.gatewayUserContext(w, r)
+		if !ok {
+			return
+		}
+		if stringValue(credentialUser["accountId"]) != operation.AccountID {
+			writeError(w, http.StatusForbidden, "account_scope_forbidden")
+			return
+		}
+		if err := app.convergeAndPersistWorkspaceLaunchKey(r.Context(), service, credential, sub2APIUserID, &operation); err != nil {
+			writeGatewayKeyError(w, err)
+			return
+		}
+	}
+	row, found, err := app.tables.GetRuntimeOperation(r.Context(), operation.ID)
+	if err != nil || !found {
+		writeError(w, http.StatusInternalServerError, "state_read_failed")
+		return
+	}
+	body, err := workspaceLaunchResponse(row)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "state_read_failed")
+		return
+	}
+	writeJSON(w, http.StatusAccepted, body)
 }
 
 func (app *controlPlaneServer) convergeAndPersistWorkspaceLaunchKey(ctx context.Context, service *controlplane.Service, credential clients.SessionDelegatedCredential, userID int64, operation *workspaceLaunchOperation) error {

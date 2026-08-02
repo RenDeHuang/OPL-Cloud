@@ -12,6 +12,34 @@ async function json(path: string) {
   return JSON.parse(await text(path));
 }
 
+test("Controlled Basic Pilot is closed by default, identifier-free, and continuation-safe", async () => {
+  const [freeze, boundary, deployment, observability, manifest, workflow, runbook] = await Promise.all([
+    json("packages/contracts/opl-cloud-launch-freeze-contract.json"),
+    json("packages/contracts/opl-cloud-service-boundary-contract.json"),
+    json("packages/contracts/opl-cloud-deployment-contract.json"),
+    json("packages/contracts/opl-cloud-observability-contract.json"),
+    json("deploy/tke/opl-cloud.k8s.json"),
+    text(".github/workflows/deploy-tke-production.yml"),
+    text("docs/runtime/production-runbook.md")
+  ]);
+  const config = manifest.items.find((item: { kind: string; metadata?: { name?: string } }) => item.kind === "ConfigMap" && item.metadata?.name === "opl-cloud-config").data;
+  assert.deepEqual(deployment.controlledBasicPilot.productionDefaults, { enabled: "0", accountAllowlist: "", maxInFlight: "1" });
+  assert.equal(config.OPL_CONTROLLED_BASIC_PILOT_ENABLED, "0");
+  assert.equal(config.OPL_CONTROLLED_BASIC_PILOT_ACCOUNT_IDS, "");
+  assert.equal(config.OPL_CONTROLLED_BASIC_PILOT_MAX_IN_FLIGHT, "1");
+  assert.match(workflow, /OPL_CONTROLLED_BASIC_PILOT_ENABLED:[^\n]*'0'/);
+  assert.deepEqual(freeze.workspaceLaunch.controlledBasicPilot.packageIds, ["basic"]);
+  assert.equal(freeze.workspaceLaunch.controlledBasicPilot.disableBehavior, "block_new_purchase_only_reads_and_original_operation_continuations_remain_available");
+  assert.equal(boundary.services.controlPlane.controlledBasicPilotAdmission.continuationPrecedence, "exact_idempotency_or_single_matching_active_operation_before_admission");
+  assert.deepEqual(observability.controlledBasicPilot.customerSupportPath, ["Diagnose", "Plan", "Validate", "Confirm"]);
+  assert.equal(observability.controlledBasicPilot.customerSuppliedResourceIds, false);
+  for (const field of ["accountId", "operationId", "workspaceId", "computeId", "storageId", "providerResourceId"]) {
+    assert.ok(observability.controlledBasicPilot.forbiddenFields.includes(field));
+  }
+  assert.match(runbook, /Diagnose -> Plan -> Validate -> Confirm/);
+  assert.match(runbook, /Never ask the customer to find or\s+paste an Account, Workspace, operation, compute, storage, or provider resource\s+ID/);
+});
+
 test("Current contracts hard cut Gateway keys and source envelopes", async () => {
   const [freeze, sourceTruth, boundary, dtos] = await Promise.all([
     json("packages/contracts/opl-cloud-launch-freeze-contract.json"),
@@ -86,7 +114,7 @@ test("Current contracts hard cut Workspace purchase, access, and Runtime facts",
     json("packages/contracts/opl-cloud-console-source-truth-contract.json")
   ]);
 
-  assert.equal(freeze.schemaVersion, 20);
+  assert.equal(freeze.schemaVersion, 21);
   assert.equal(billing.schemaVersion, 11);
   assert.equal(freeze.workspaceLaunch.customerDebitCardinality, 1);
   assert.equal(freeze.workspaceLaunch.persistence, "control_plane_runtime_operations with action=workspace.launch.v2 and result.schemaVersion=2");
@@ -401,7 +429,7 @@ test("Current Fabric contracts require dedicated package NodePools without weake
     output: "redacted_evidence_only",
     currentState: "implemented_and_fake_tested_not_executed"
   });
-  assert.equal(deployment.schemaVersion, 31);
+  assert.equal(deployment.schemaVersion, 32);
   assert.deepEqual(deployment.productionWorkspaceRecoveryPlan, {
     authority: "control_plane_only",
     workflow: ".github/workflows/production-basic-customer-operation.yml",
@@ -672,7 +700,7 @@ test("Current contracts hard cut operator resources, wallet adjustments, and ann
     absentRequires: "both_local_identities_and_exact_provider_describe_absence",
     forbiddenSideEffects: ["sync", "tag", "kubectl_apply", "delete", "label", "purchase", "renew", "destroy"]
   });
-  assert.equal(boundary.schemaVersion, 23);
+  assert.equal(boundary.schemaVersion, 24);
   assert.deepEqual(boundary.services.controlPlane.workspaceContinuationAttemptBudget, {
     owner: "original_workspace.launch.v2_operation",
     stages: ["storage", "attachment", "secret", "runtime", "activation", "receipt"],

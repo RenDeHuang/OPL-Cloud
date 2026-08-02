@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 20,
+  "schemaVersion": 21,
   "owner": "OPL Platform Architecture",
   "purpose": "Freeze the approved Pilot products, delegated Gateway key lifecycle, one charge per Workspace period, prepaid Tencent fulfillment, Runtime facts, operator workflows, announcements, and evidence levels without claiming unfinished implementation or runtime evidence.",
   "state": "current",
@@ -193,6 +193,25 @@
         "fields": ["periodStart", "paidThrough", "billingAnchorDay"],
         "replay": "reuse_persisted_values_never_recalculate"
       }
+    },
+    "controlledBasicPilot": {
+      "state": "code_complete_local_verified_production_default_disabled",
+      "scope": "new_workspace.launch.v2_purchase_only",
+      "packageIds": ["basic"],
+      "autoRenew": false,
+      "configuration": {
+        "enabled": "OPL_CONTROLLED_BASIC_PILOT_ENABLED",
+        "accountAllowlist": "OPL_CONTROLLED_BASIC_PILOT_ACCOUNT_IDS",
+        "globalMaxInFlight": "OPL_CONTROLLED_BASIC_PILOT_MAX_IN_FLIGHT",
+        "defaultEnabled": false,
+        "defaultMaxInFlight": 1
+      },
+      "admissionOrder": ["validate_request", "resume_exact_or_matching_active_operation", "controlled_pilot_gate", "fabric_catalog_and_preflight", "sub2api_balance", "global_launch_claim", "workspace_key_convergence"],
+      "rejectionMutationCounts": {"database": 0, "sub2api": 0, "fabric": 0, "tencent": 0, "kubernetes": 0},
+      "globalCapacity": "memory_mutex_or_postgresql_transaction_with_stable_account_row_lock_before_global_nonterminal_count_and_insert",
+      "disableBehavior": "block_new_purchase_only_reads_and_original_operation_continuations_remain_available",
+      "firstFailure": "operator_health_disableRequired_and_redacted_alert_then_set_enabled_0",
+      "productionEvidence": "pending"
     },
     "computeClaimAutomaticContinuation": {
       "owner": "original_workspace.launch.v2_worker",

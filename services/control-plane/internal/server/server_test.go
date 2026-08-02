@@ -367,7 +367,7 @@ func TestUnavailablePackageStopsPreviewAndLaunchBeforeExternalCalls(t *testing.T
 		t.Fatalf("Pro preview status=%d body=%s", preview.Code, preview.Body.String())
 	}
 	launch := requestWithMutationKeyForTest(t, server, session, http.MethodPost, "/api/workspace-launches", `{"name":"Pro","packageId":"pro","sizeGb":100,"autoRenew":false}`, "unavailable-pro")
-	if launch.Code != http.StatusConflict || !strings.Contains(launch.Body.String(), `"error":"package_unavailable"`) {
+	if launch.Code != http.StatusConflict || !strings.Contains(launch.Body.String(), `"error":"workspace_launch_basic_only"`) {
 		t.Fatalf("Pro launch status=%d body=%s", launch.Code, launch.Body.String())
 	}
 	for _, call := range calls {

@@ -1592,6 +1592,9 @@ test("deployment inputs contain monthly and Sub2API config without retired billi
     "OPL_MONTHLY_BILLING_INTERVAL_MS",
     "OPL_WORKSPACE_LAUNCH_WORKER_ENABLED",
     "OPL_WORKSPACE_LAUNCH_INTERVAL_MS",
+    "OPL_CONTROLLED_BASIC_PILOT_ENABLED",
+    "OPL_CONTROLLED_BASIC_PILOT_ACCOUNT_IDS",
+    "OPL_CONTROLLED_BASIC_PILOT_MAX_IN_FLIGHT",
     "OPL_SUB2API_BASE_URL",
     "OPL_SUB2API_REQUEST_TIMEOUT_MS",
     "OPL_TENCENT_ZONE"
@@ -1628,6 +1631,9 @@ test("TKE manifest renderer replaces current values and never renders secrets", 
   assert.equal(config.data.OPL_SUB2API_REQUEST_TIMEOUT_MS, "7000");
   assert.equal(config.data.OPL_TENCENT_ZONE, "ap-guangzhou-3");
   assert.equal(config.data.OPL_MONTHLY_BILLING_INTERVAL_MS, "60000");
+  assert.equal(config.data.OPL_CONTROLLED_BASIC_PILOT_ENABLED, "0");
+  assert.equal(config.data.OPL_CONTROLLED_BASIC_PILOT_ACCOUNT_IDS, "");
+  assert.equal(config.data.OPL_CONTROLLED_BASIC_PILOT_MAX_IN_FLIGHT, "1");
   assert.equal(config.data.OPL_OPERATOR_CIDRS, undefined);
   assert.equal(config.data.OPL_TRUSTED_PROXY_CIDRS, undefined);
   assert.doesNotMatch(source, /postgresql:\/\//i);
@@ -1648,6 +1654,29 @@ test("TKE manifest renderer rejects a whitespace-only launch zone before renderi
     () => renderTkeManifest({ manifest, values: { ...values, OPL_TENCENT_ZONE: "   " } }),
     /missing_tke_manifest_values:.*OPL_TENCENT_ZONE/
   );
+});
+
+test("TKE manifest renderer keeps the controlled Basic Pilot closed unless explicitly configured", async () => {
+  const { manifest, values } = await manifestFixture();
+  assert.throws(
+    () => renderTkeManifest({ manifest, values: { ...values, OPL_CONTROLLED_BASIC_PILOT_ENABLED: "true" } }),
+    /controlled_basic_pilot_enabled_invalid/
+  );
+  assert.throws(
+    () => renderTkeManifest({ manifest, values: { ...values, OPL_CONTROLLED_BASIC_PILOT_ENABLED: "1", OPL_CONTROLLED_BASIC_PILOT_ACCOUNT_IDS: "" } }),
+    /controlled_basic_pilot_account_ids_required/
+  );
+  assert.throws(
+    () => renderTkeManifest({ manifest, values: { ...values, OPL_CONTROLLED_BASIC_PILOT_MAX_IN_FLIGHT: "0" } }),
+    /controlled_basic_pilot_max_in_flight_invalid/
+  );
+  const enabled = renderTkeManifest({
+    manifest,
+    values: { ...values, OPL_CONTROLLED_BASIC_PILOT_ENABLED: "1", OPL_CONTROLLED_BASIC_PILOT_ACCOUNT_IDS: "acct-pilot" }
+  });
+  const config = enabled.items.find((item) => item.kind === "ConfigMap");
+  assert.equal(config.data.OPL_CONTROLLED_BASIC_PILOT_ENABLED, "1");
+  assert.equal(config.data.OPL_CONTROLLED_BASIC_PILOT_ACCOUNT_IDS, "acct-pilot");
 });
 
 test("TKE manifest renderer rejects Tencent region and zone mismatches in either direction", async () => {

@@ -146,6 +146,9 @@ jobs:
       OPL_MONTHLY_BILLING_INTERVAL_MS: ${{ vars.OPL_MONTHLY_BILLING_INTERVAL_MS || '3600000' }}
       OPL_WORKSPACE_LAUNCH_WORKER_ENABLED: ${{ inputs.bootstrap_mode && '0' || vars.OPL_WORKSPACE_LAUNCH_WORKER_ENABLED || '1' }}
       OPL_WORKSPACE_LAUNCH_INTERVAL_MS: ${{ vars.OPL_WORKSPACE_LAUNCH_INTERVAL_MS || '10000' }}
+      OPL_CONTROLLED_BASIC_PILOT_ENABLED: ${{ vars.OPL_CONTROLLED_BASIC_PILOT_ENABLED || '0' }}
+      OPL_CONTROLLED_BASIC_PILOT_ACCOUNT_IDS: ${{ vars.OPL_CONTROLLED_BASIC_PILOT_ACCOUNT_IDS || '' }}
+      OPL_CONTROLLED_BASIC_PILOT_MAX_IN_FLIGHT: ${{ vars.OPL_CONTROLLED_BASIC_PILOT_MAX_IN_FLIGHT || '1' }}
       OPL_BASIC_COMPUTE_INSTANCE_TYPE: ${{ vars.OPL_BASIC_COMPUTE_INSTANCE_TYPE }}
       OPL_PRO_COMPUTE_INSTANCE_TYPE: ${{ vars.OPL_PRO_COMPUTE_INSTANCE_TYPE }}
       OPL_SYSTEM_COMPUTE_NODE_POOL_ID: ${{ vars.OPL_SYSTEM_COMPUTE_NODE_POOL_ID || 'np-6l4nkdto' }}
@@ -299,6 +302,23 @@ jobs:
           fi
           if ! [[ "$OPL_RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
             echo "OPL_RELEASE_SHA must be the exact canonical main commit." >&2
+            exit 1
+          fi
+          case "$OPL_CONTROLLED_BASIC_PILOT_ENABLED" in
+            0) ;;
+            1)
+              if ! [[ "$OPL_CONTROLLED_BASIC_PILOT_ACCOUNT_IDS" =~ ^[a-z0-9]+(-[a-z0-9]+)*(,[a-z0-9]+(-[a-z0-9]+)*)*$ ]]; then
+                echo "Enabled controlled Basic Pilot requires a comma-separated lowercase account allowlist." >&2
+                exit 1
+              fi
+              ;;
+            *)
+              echo "OPL_CONTROLLED_BASIC_PILOT_ENABLED must be 0 or 1." >&2
+              exit 1
+              ;;
+          esac
+          if ! [[ "$OPL_CONTROLLED_BASIC_PILOT_MAX_IN_FLIGHT" =~ ^[1-9][0-9]*$ ]]; then
+            echo "OPL_CONTROLLED_BASIC_PILOT_MAX_IN_FLIGHT must be a positive integer." >&2
             exit 1
           fi
           case "$OPL_SYSTEM_COMPUTE_MACHINE_TYPE" in

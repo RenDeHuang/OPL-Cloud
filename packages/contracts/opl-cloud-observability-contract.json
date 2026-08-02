@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "owner": "OPL Control Plane",
+  "purpose": "Current identifier-free observability and stop conditions for the controlled Basic Pilot purchase gate.",
+  "state": "current",
+  "machineBoundary": "Control Plane aggregates launch state into operator health and emits stable redacted state transitions; it does not create a second wallet, provider truth, or mutable alert store.",
+  "lifecycle": {
+    "type": "long_term_contract",
+    "removalCondition": "Replace only with a newer current observability contract and matching code, tests, deployment configuration, and runbook."
+  },
+  "controlledBasicPilot": {
+    "route": "GET /api/operator/health",
+    "envelopeField": "controlledBasicPilot",
+    "source": "control_plane_runtime_operations",
+    "operationAction": "workspace.launch.v2",
+    "legacyActivePolicy": "counts_toward_capacity_as_legacy_operation_without_decode_failure",
+    "fields": ["enabled", "configured", "packageId", "accountAllowlistCount", "maxInFlight", "inFlight", "availableCapacity", "manualReview", "stages", "failures", "disableRequired", "alerts"],
+    "forbiddenFields": ["accountId", "userId", "operationId", "workspaceId", "computeId", "storageId", "providerResourceId", "redeemCode", "balance", "credential", "providerPayload", "providerError"],
+    "alerts": {
+      "controlled_pilot_config_invalid": {"severity": "error", "action": "disable_new_purchases"},
+      "controlled_pilot_first_failure": {"severity": "error", "action": "disable_new_purchases"},
+      "controlled_pilot_capacity_exhausted": {"severity": "warning", "action": "wait_for_authoritative_terminal_state"}
+    },
+    "firstFailureRule": "any_failure_code_or_manual_review_sets_disableRequired_true",
+    "logFormat": "event=opl_controlled_pilot_state code=<stable-code> state=<active|recovered>",
+    "logDeduplication": "one_active_and_one_recovered_transition_per_process_state_change",
+    "customerSupportPath": ["Diagnose", "Plan", "Validate", "Confirm"],
+    "customerSuppliedResourceIds": false,
+    "productionEvidence": "pending"
+  }
+}

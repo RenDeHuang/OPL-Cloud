@@ -662,6 +662,15 @@ func (s *memoryTableStore) ClaimWorkspaceLaunch(_ context.Context, claim workspa
 				return errWorkspaceLaunchInProgress
 			}
 		}
+		inFlight := 0
+		for _, row := range s.runtimeOps {
+			if isWorkspaceLaunchAction(stringValue(row["action"])) && !terminalWorkspaceLaunchStatus(stringValue(row["status"])) {
+				inFlight++
+			}
+		}
+		if inFlight >= controlledBasicPilotGlobalInFlightLimit() {
+			return errWorkspaceLaunchCapacityReached
+		}
 		s.runtimeOps = append(s.runtimeOps, cloneMap(claim.DesiredOperation))
 		return nil
 	}
