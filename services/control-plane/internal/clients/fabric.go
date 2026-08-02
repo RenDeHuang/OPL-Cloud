@@ -80,6 +80,10 @@ type FabricComputeClaimRecoveryClient interface {
 	ClaimComputeRecovery(context.Context, ComputeClaimRecoveryClaimInput, string) (ComputeClaimRecoveryProof, error)
 }
 
+type FabricComputeClaimRecoveryIdentityClient interface {
+	ComputeClaimRecoveryIdentityEvidence(context.Context, ComputeClaimRecoveryClaimInput) (*ComputeClaimIdentityEvidence, error)
+}
+
 type FabricHTTPError struct {
 	StatusCode int
 	Body       string
@@ -207,38 +211,53 @@ type ComputeClaimEvidence struct {
 	Node ComputeClaimMutationEvidence `json:"node"`
 }
 
+type ComputeClaimIdentityCheck struct {
+	Field          string `json:"field"`
+	Matches        bool   `json:"matches"`
+	Expected       string `json:"expected,omitempty"`
+	Actual         string `json:"actual,omitempty"`
+	ExpectedDigest string `json:"expectedDigest,omitempty"`
+	ActualDigest   string `json:"actualDigest,omitempty"`
+}
+
+type ComputeClaimIdentityEvidence struct {
+	Checks         []ComputeClaimIdentityCheck `json:"checks"`
+	MutationLedger string                      `json:"mutationLedger"`
+}
+
 type ComputeClaimRecoveryProof struct {
-	SchemaVersion             int                   `json:"schemaVersion"`
-	Eligible                  bool                  `json:"eligible"`
-	Reason                    string                `json:"reason"`
-	StorageState              string                `json:"storageState"`
-	StorageProviderResourceID string                `json:"storageProviderResourceId,omitempty"`
-	LaunchOperationID         string                `json:"launchOperationId"`
-	AccountID                 string                `json:"accountId"`
-	WorkspaceID               string                `json:"workspaceId"`
-	ComputeAllocationID       string                `json:"computeAllocationId"`
-	StorageVolumeID           string                `json:"storageVolumeId"`
-	PackageID                 string                `json:"packageId"`
-	PoolID                    string                `json:"poolId"`
-	NodePoolID                string                `json:"nodePoolId"`
-	MachineName               string                `json:"machineName,omitempty"`
-	NodeName                  string                `json:"nodeName,omitempty"`
-	CVMInstanceID             string                `json:"cvmInstanceId,omitempty"`
-	PrivateIP                 string                `json:"privateIp,omitempty"`
-	InstanceType              string                `json:"instanceType,omitempty"`
-	Zone                      string                `json:"zone,omitempty"`
-	ChargeType                string                `json:"chargeType,omitempty"`
-	PeriodMonths              int                   `json:"periodMonths,omitempty"`
-	RenewFlag                 string                `json:"renewFlag,omitempty"`
-	Deadline                  string                `json:"deadline,omitempty"`
-	NodeOwnershipState        string                `json:"nodeOwnershipState,omitempty"`
-	CVMOwnershipState         string                `json:"cvmOwnershipState,omitempty"`
-	Sub2APIMutationCount      int                   `json:"sub2apiMutationCount"`
-	TencentMutationCount      int                   `json:"tencentMutationCount"`
-	KubernetesMutationCount   int                   `json:"kubernetesMutationCount"`
-	FailureStage              string                `json:"failureStage,omitempty"`
-	ProviderErrorClass        string                `json:"providerErrorClass,omitempty"`
-	Evidence                  *ComputeClaimEvidence `json:"evidence,omitempty"`
+	SchemaVersion             int                           `json:"schemaVersion"`
+	Eligible                  bool                          `json:"eligible"`
+	Reason                    string                        `json:"reason"`
+	StorageState              string                        `json:"storageState"`
+	StorageProviderResourceID string                        `json:"storageProviderResourceId,omitempty"`
+	LaunchOperationID         string                        `json:"launchOperationId"`
+	AccountID                 string                        `json:"accountId"`
+	WorkspaceID               string                        `json:"workspaceId"`
+	ComputeAllocationID       string                        `json:"computeAllocationId"`
+	StorageVolumeID           string                        `json:"storageVolumeId"`
+	PackageID                 string                        `json:"packageId"`
+	PoolID                    string                        `json:"poolId"`
+	NodePoolID                string                        `json:"nodePoolId"`
+	MachineName               string                        `json:"machineName,omitempty"`
+	NodeName                  string                        `json:"nodeName,omitempty"`
+	CVMInstanceID             string                        `json:"cvmInstanceId,omitempty"`
+	PrivateIP                 string                        `json:"privateIp,omitempty"`
+	InstanceType              string                        `json:"instanceType,omitempty"`
+	Zone                      string                        `json:"zone,omitempty"`
+	ChargeType                string                        `json:"chargeType,omitempty"`
+	PeriodMonths              int                           `json:"periodMonths,omitempty"`
+	RenewFlag                 string                        `json:"renewFlag,omitempty"`
+	Deadline                  string                        `json:"deadline,omitempty"`
+	NodeOwnershipState        string                        `json:"nodeOwnershipState,omitempty"`
+	CVMOwnershipState         string                        `json:"cvmOwnershipState,omitempty"`
+	Sub2APIMutationCount      int                           `json:"sub2apiMutationCount"`
+	TencentMutationCount      int                           `json:"tencentMutationCount"`
+	KubernetesMutationCount   int                           `json:"kubernetesMutationCount"`
+	FailureStage              string                        `json:"failureStage,omitempty"`
+	ProviderErrorClass        string                        `json:"providerErrorClass,omitempty"`
+	Evidence                  *ComputeClaimEvidence         `json:"evidence,omitempty"`
+	IdentityEvidence          *ComputeClaimIdentityEvidence `json:"identityEvidence,omitempty"`
 }
 
 type ComputeAllocation struct {
@@ -601,6 +620,12 @@ func (c *fabricHTTPClient) ComputeClaimRecoveryProof(ctx context.Context, input 
 	err := c.post(ctx, "/fabric/compute-claim-recovery/proof", input, "", &result)
 	decodeComputeClaimRecoveryError(err, &result)
 	return result, err
+}
+
+func (c *fabricHTTPClient) ComputeClaimRecoveryIdentityEvidence(ctx context.Context, input ComputeClaimRecoveryClaimInput) (*ComputeClaimIdentityEvidence, error) {
+	var result ComputeClaimIdentityEvidence
+	err := c.post(ctx, "/fabric/compute-claim-recovery/identity-evidence", input, "", &result)
+	return &result, err
 }
 
 func (c *fabricHTTPClient) ClaimComputeRecovery(ctx context.Context, input ComputeClaimRecoveryClaimInput, idempotencyKey string) (ComputeClaimRecoveryProof, error) {

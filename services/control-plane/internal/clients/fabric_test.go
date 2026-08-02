@@ -295,6 +295,12 @@ func TestFabricHTTPClientSeparatesComputeClaimProofAndMutation(t *testing.T) {
 				CVM:  ComputeClaimMutationEvidence{Attempted: 1, Confirmed: 1},
 				Node: ComputeClaimMutationEvidence{Attempted: 1, Confirmed: 1},
 			}
+		case "/fabric/compute-claim-recovery/identity-evidence":
+			_ = json.NewEncoder(w).Encode(ComputeClaimIdentityEvidence{
+				Checks:         []ComputeClaimIdentityCheck{{Field: "binding.compatibility", Matches: true, Expected: "current_or_historical", Actual: "historical"}},
+				MutationLedger: "absent",
+			})
+			return
 		default:
 			t.Fatalf("unexpected path=%q", r.URL.Path)
 		}
@@ -315,11 +321,22 @@ func TestFabricHTTPClientSeparatesComputeClaimProofAndMutation(t *testing.T) {
 	if err != nil || !proof.Eligible || proof.StorageState != "storage_existing_exact" || proof.StorageProviderResourceID != "disk-existing-fixture" || proof.TencentMutationCount != 0 || proof.KubernetesMutationCount != 0 {
 		t.Fatalf("proof=%#v err=%v", proof, err)
 	}
+	identityClient, ok := NewFabricHTTPClient(upstream.URL, "internal-secret", upstream.Client()).(FabricComputeClaimRecoveryIdentityClient)
+	if !ok {
+		t.Fatal("Fabric HTTP client must implement compute claim identity evidence capability")
+	}
+	evidence, err := identityClient.ComputeClaimRecoveryIdentityEvidence(context.Background(), ComputeClaimRecoveryClaimInput{
+		ComputeClaimRecoveryInput: input, MachineName: proof.MachineName, NodeName: proof.NodeName, CVMInstanceID: proof.CVMInstanceID,
+		PrivateIP: proof.PrivateIP, InstanceType: proof.InstanceType, Zone: proof.Zone,
+	})
+	if err != nil || evidence == nil || evidence.MutationLedger != "absent" || len(evidence.Checks) != 1 || !evidence.Checks[0].Matches {
+		t.Fatalf("identity evidence=%#v err=%v", evidence, err)
+	}
 	claim, err := client.ClaimComputeRecovery(context.Background(), ComputeClaimRecoveryClaimInput{
 		ComputeClaimRecoveryInput: input, MachineName: proof.MachineName, NodeName: proof.NodeName, CVMInstanceID: proof.CVMInstanceID,
 		PrivateIP: proof.PrivateIP, InstanceType: proof.InstanceType, Zone: proof.Zone,
 	}, "launch-fixture:compute")
-	if err != nil || !claim.Eligible || claim.NodeOwnershipState != "target_owned" || claim.CVMOwnershipState != "target_owned" || claim.TencentMutationCount != 1 || claim.KubernetesMutationCount != 1 || requests != 2 {
+	if err != nil || !claim.Eligible || claim.NodeOwnershipState != "target_owned" || claim.CVMOwnershipState != "target_owned" || claim.TencentMutationCount != 1 || claim.KubernetesMutationCount != 1 || requests != 3 {
 		t.Fatalf("claim=%#v err=%v requests=%d", claim, err, requests)
 	}
 }

@@ -1255,6 +1255,65 @@ function computeClaimApprovalJson(overrides = {}) {
   });
 }
 
+function computeClaimIdentityEvidenceForTest(overrides = {}) {
+  const digest = (value) => createHash("sha256").update(value).digest("hex");
+  const plain = (field, value) => ({ field, matches: true, expected: value, actual: value, expectedDigest: "", actualDigest: "" });
+  const redacted = (field, value) => ({ field, matches: true, expected: "", actual: "", expectedDigest: digest(value), actualDigest: digest(value) });
+  return {
+    checks: [
+      plain("controlPlane.launchOperationId", COMPUTE_CLAIM_TARGET.launchOperationId),
+      plain("controlPlane.accountId", COMPUTE_CLAIM_TARGET.accountId),
+      plain("controlPlane.workspaceId", COMPUTE_CLAIM_TARGET.workspaceId),
+      plain("controlPlane.computeAllocationId", COMPUTE_CLAIM_TARGET.computeAllocationId),
+      plain("controlPlane.storageId", COMPUTE_CLAIM_TARGET.storageId),
+      plain("controlPlane.cvmInstanceId", COMPUTE_CLAIM_TARGET.cvmInstanceId),
+      plain("controlPlane.zone", COMPUTE_CLAIM_TARGET.zone),
+      plain("controlPlane.privateIp", COMPUTE_CLAIM_TARGET.privateIp),
+      plain("controlPlane.instanceType", COMPUTE_CLAIM_TARGET.instanceType),
+      plain("controlPlane.nodeName", COMPUTE_CLAIM_TARGET.nodeName),
+      plain("controlPlane.machineName", COMPUTE_CLAIM_TARGET.machineName),
+      plain("controlPlane.workspaceApiKeyId", "42"),
+      plain("approval.approvalId", "approval-compute-claim-fixture"),
+      redacted("approval.approvalDigest", "approval-digest-fixture"),
+      redacted("approval.persistedApprovalDigest", "persisted-approval-digest-fixture"),
+      plain("approval.idempotencyKey", "compute-claim-http-fixture"),
+      plain("approval.persistedBinding", "exact"),
+      redacted("release.mergedMainSha", BASIC_CANARY_MERGED_SHA),
+      redacted("release.cloudImageDigest", BASIC_CANARY_CLOUD_DIGEST),
+      redacted("release.workspaceImageDigest", COMPUTE_CLAIM_WORKSPACE_DIGEST),
+      plain("fabric.operationId", "op_create_compute_allocation_fixture"),
+      plain("fabric.operationIdempotencyKey", `${COMPUTE_CLAIM_TARGET.launchOperationId}:compute`),
+      redacted("fabric.operationRequestHash", "fabric-operation-request-hash-fixture"),
+      plain("provider.readbackStatus", "available"),
+      plain("provider.reason", "none"),
+      plain("provider.cvmInstanceId", COMPUTE_CLAIM_TARGET.cvmInstanceId),
+      plain("provider.zone", COMPUTE_CLAIM_TARGET.zone),
+      plain("provider.privateIp", COMPUTE_CLAIM_TARGET.privateIp),
+      plain("provider.instanceType", COMPUTE_CLAIM_TARGET.instanceType),
+      plain("provider.nodeName", COMPUTE_CLAIM_TARGET.nodeName),
+      plain("provider.machineName", COMPUTE_CLAIM_TARGET.machineName),
+      plain("provider.cvmOwnership", "recoverable"),
+      plain("provider.nodeOwnership", "unallocated"),
+      plain("binding.present", "present"),
+      plain("binding.valid", "valid"),
+      plain("binding.compatibility", "current"),
+      plain("binding.launchOperationId", COMPUTE_CLAIM_TARGET.launchOperationId),
+      plain("binding.idempotencyKey", `${COMPUTE_CLAIM_TARGET.launchOperationId}:compute`),
+      redacted("binding.targetHash", "binding-target-hash-fixture"),
+      redacted("binding.requestHash", "binding-request-hash-fixture")
+    ],
+    mutationLedger: "absent",
+    ...overrides
+  };
+}
+
+function computeClaimIdentityMismatchEvidenceForTest() {
+  const evidence = computeClaimIdentityEvidenceForTest();
+  const check = evidence.checks.find(({ field }) => field === "approval.idempotencyKey");
+  Object.assign(check, { matches: false, expected: "compute-claim-validation-drifted", actual: "compute-claim-validation-original" });
+  return evidence;
+}
+
 function computeClaimAccountAuthority(overrides = {}) {
   return source({
     items: [{
@@ -3716,11 +3775,13 @@ test("compute-claim approval validation CLI proves the server binding without cl
       return json({
         schemaVersion: 2,
         status: "proven",
+        errorCode: "none",
         approvalId: approval.approvalId,
         approvalDigest,
         launchOperationId: COMPUTE_CLAIM_TARGET.launchOperationId,
         accountId: COMPUTE_CLAIM_TARGET.accountId,
         workspaceId: COMPUTE_CLAIM_TARGET.workspaceId,
+        identityEvidence: computeClaimIdentityEvidenceForTest(),
         // Go's encoding/json sorts map keys, so production returns this order.
         runnerDirectMutationCounts: { kubernetes: 0, sub2api: 0, tencent: 0 }
       });
@@ -3742,6 +3803,7 @@ test("compute-claim approval validation CLI proves the server binding without cl
     },
     target: COMPUTE_CLAIM_TARGET,
     approval: { approvalId: approval.approvalId, approvalDigest },
+    identityEvidence: computeClaimIdentityEvidenceForTest(),
     runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
   });
   assert.deepEqual(calls.map(({ path }) => path), [
@@ -3797,6 +3859,7 @@ test("compute-claim approval validation rejects drifted direct mutation counts",
         return json({
           schemaVersion: 2,
           status: "proven",
+          errorCode: "none",
           approvalId: approval.approvalId,
           approvalDigest,
           launchOperationId: COMPUTE_CLAIM_TARGET.launchOperationId,
@@ -3809,6 +3872,121 @@ test("compute-claim approval validation rejects drifted direct mutation counts",
     assert.equal(code, 1);
     assert.equal(JSON.parse(stdout).errorCode, "compute_claim_validation_response_invalid");
   }
+});
+
+test("compute-claim approval validation rejects an incomplete proven identity field set", async () => {
+  let stdout = "";
+  const approval = JSON.parse(computeClaimApprovalJson());
+  const approvalDigest = createHash("sha256").update(canonicalJsonForTest(approval)).digest("hex");
+  const identityEvidence = computeClaimIdentityEvidenceForTest();
+  identityEvidence.checks = identityEvidence.checks.filter(({ field }) => field !== "release.workspaceImageDigest");
+  const code = await runProductionLiveQaCli({
+    argv: ["--compute-claim-validate", "--compute-claim-target-json", JSON.stringify(COMPUTE_CLAIM_TARGET), "--approval-id", approval.approvalId],
+    env: {
+      OPL_MERGED_SHA: BASIC_CANARY_MERGED_SHA,
+      OPL_COMPUTE_CLAIM_CLOUD_DIGEST: BASIC_CANARY_CLOUD_DIGEST,
+      OPL_COMPUTE_CLAIM_RECOVERY_APPROVAL_JSON: JSON.stringify(approval),
+      OPL_INTERNAL_SERVICE_TOKEN: "compute-claim-runner-capability",
+      OPL_CONSOLE_ORIGIN: "https://cloud.medopl.cn",
+      OPL_SUB2API_ADMIN_EMAIL: ADMIN_EMAIL,
+      OPL_SUB2API_ADMIN_PASSWORD: ADMIN_PASSWORD,
+      OPL_BASIC_CANARY_CUSTOMER_EMAIL: COMPUTE_CLAIM_CUSTOMER_EMAIL,
+      OPL_K8S_NAMESPACE: "opl-cloud",
+      KUBECONFIG: "/run/secrets/kubeconfig"
+    },
+    stdout: { write: (chunk) => { stdout += chunk; } },
+    stderr: { write: () => {} },
+    cloudRevisionEvidenceReader: async () => computeClaimCloudRevisionEvidence(),
+    fetchImpl: async (input) => {
+      const url = new URL(String(input));
+      if (url.pathname === "/api/auth/login") {
+        return json({ user: { accountId: "acct-admin", role: "admin" } }, 200, {
+          "set-cookie": "opl_session=session-fixture; Path=/; HttpOnly",
+          "x-opl-csrf-token": "csrf-compute-claim"
+        });
+      }
+      if (url.pathname === "/api/operator/accounts") return computeClaimAccountAuthority();
+      return json({
+        schemaVersion: 2, status: "proven", errorCode: "none", approvalId: approval.approvalId, approvalDigest,
+        launchOperationId: COMPUTE_CLAIM_TARGET.launchOperationId, accountId: COMPUTE_CLAIM_TARGET.accountId,
+        workspaceId: COMPUTE_CLAIM_TARGET.workspaceId, identityEvidence,
+        runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
+      });
+    }
+  });
+  assert.equal(code, 1);
+  assert.equal(JSON.parse(stdout).errorCode, "compute_claim_validation_response_invalid");
+});
+
+test("compute-claim approval validation preserves field-level identity mismatch evidence", async () => {
+  let stdout = "";
+  let stderr = "";
+  const approval = JSON.parse(computeClaimApprovalJson());
+  const approvalDigest = createHash("sha256").update(canonicalJsonForTest(approval)).digest("hex");
+  const identityEvidence = computeClaimIdentityMismatchEvidenceForTest();
+  const code = await runProductionLiveQaCli({
+    argv: [
+      "--compute-claim-validate",
+      "--compute-claim-target-json", JSON.stringify(COMPUTE_CLAIM_TARGET),
+      "--approval-id", approval.approvalId
+    ],
+    env: {
+      OPL_MERGED_SHA: BASIC_CANARY_MERGED_SHA,
+      OPL_COMPUTE_CLAIM_CLOUD_DIGEST: BASIC_CANARY_CLOUD_DIGEST,
+      OPL_COMPUTE_CLAIM_RECOVERY_APPROVAL_JSON: JSON.stringify(approval),
+      OPL_INTERNAL_SERVICE_TOKEN: "compute-claim-runner-capability",
+      OPL_CONSOLE_ORIGIN: "https://cloud.medopl.cn",
+      OPL_SUB2API_ADMIN_EMAIL: ADMIN_EMAIL,
+      OPL_SUB2API_ADMIN_PASSWORD: ADMIN_PASSWORD,
+      OPL_BASIC_CANARY_CUSTOMER_EMAIL: COMPUTE_CLAIM_CUSTOMER_EMAIL,
+      OPL_K8S_NAMESPACE: "opl-cloud",
+      KUBECONFIG: "/run/secrets/kubeconfig"
+    },
+    stdout: { write: (chunk) => { stdout += chunk; } },
+    stderr: { write: (chunk) => { stderr += chunk; } },
+    cloudRevisionEvidenceReader: async () => computeClaimCloudRevisionEvidence(),
+    fetchImpl: async (input) => {
+      const url = new URL(String(input));
+      if (url.pathname === "/api/auth/login") {
+        return json({ user: { accountId: "acct-admin", role: "admin" } }, 200, {
+          "set-cookie": "opl_session=session-fixture; Path=/; HttpOnly",
+          "x-opl-csrf-token": "csrf-compute-claim"
+        });
+      }
+      if (url.pathname === "/api/operator/accounts") return computeClaimAccountAuthority();
+      return json({
+        schemaVersion: 2,
+        status: "blocked",
+        errorCode: "identity_mismatch",
+        approvalId: approval.approvalId,
+        approvalDigest,
+        launchOperationId: COMPUTE_CLAIM_TARGET.launchOperationId,
+        accountId: COMPUTE_CLAIM_TARGET.accountId,
+        workspaceId: COMPUTE_CLAIM_TARGET.workspaceId,
+        identityEvidence,
+        runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
+      }, 409);
+    }
+  });
+
+  assert.equal(code, 0, stderr);
+  assert.deepEqual(JSON.parse(stdout), {
+    schemaVersion: 2,
+    operationMode: "compute_claim_validate",
+    status: "blocked",
+    recoveryEligible: false,
+    errorCode: "identity_mismatch",
+    release: {
+      mergedSha: BASIC_CANARY_MERGED_SHA,
+      cloudImageDigest: BASIC_CANARY_CLOUD_DIGEST,
+      revisions: { controlPlane: "1", fabric: "1", ledger: "1" }
+    },
+    target: COMPUTE_CLAIM_TARGET,
+    approval: { approvalId: approval.approvalId, approvalDigest },
+    identityEvidence,
+    runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
+  });
+  assert.doesNotMatch(`${stdout}\n${stderr}`, /password|secret|token|cookie|customer@example\.com|compute-claim-runner-capability/i);
 });
 
 test("compute-claim approval validation rejects workflow customer drift before release or network access", async () => {

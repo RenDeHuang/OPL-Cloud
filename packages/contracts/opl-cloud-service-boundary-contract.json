@@ -293,6 +293,7 @@
       },
       "workspaceComputeClaimRecovery": {
         "proofEndpoint": "POST /fabric/compute-claim-recovery/proof",
+        "identityEvidenceEndpoint": "POST /fabric/compute-claim-recovery/identity-evidence",
         "claimEndpoint": "POST /fabric/compute-claim-recovery/claim",
         "scope": "workspace.launch.v2_compute_claim_pending_before_storage_create",
         "proofAuthority": ["launch_operation", "compute_allocation", "allocation_plan", "machine_ownership", "tencent_describe", "tencent_describe_disks", "kubernetes_get"],
@@ -326,6 +327,7 @@
         "reasons": ["local_identity", "provider_describe", "iam_rbac", "multiple_candidate", "identity_mismatch", "node_ownership_conflict", "storage_already_started"],
         "proofMutationCounts": {"sub2api": 0, "tencent": 0, "kubernetes": 0},
         "idempotencyBinding": ["launch_operation_id", "idempotency_key", "target_hash", "request_hash"],
+        "identityEvidence": "zero_mutation_allowlisted_expected_actual_for_ids_and_second_digest_for_hashes",
         "bindingPersistence": "original_create_compute_allocation_operation_payload_cas",
         "malformedOrDriftedBinding": "fail_closed_conflict_zero_provider_mutation",
         "mutationLedger": {

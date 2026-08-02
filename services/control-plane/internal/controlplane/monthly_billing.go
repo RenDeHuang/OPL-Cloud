@@ -85,6 +85,14 @@ func (s *Service) ComputeClaimRecoveryProof(ctx context.Context, input clients.C
 	return client.ComputeClaimRecoveryProof(ctx, input)
 }
 
+func (s *Service) ComputeClaimRecoveryIdentityEvidence(ctx context.Context, input clients.ComputeClaimRecoveryClaimInput) (*clients.ComputeClaimIdentityEvidence, error) {
+	client, ok := s.fabric.(clients.FabricComputeClaimRecoveryIdentityClient)
+	if !ok {
+		return nil, errors.New("fabric_compute_claim_recovery_unavailable")
+	}
+	return client.ComputeClaimRecoveryIdentityEvidence(ctx, input)
+}
+
 func (s *Service) ClaimComputeRecovery(ctx context.Context, input clients.ComputeClaimRecoveryClaimInput, key string) (clients.ComputeClaimRecoveryProof, error) {
 	client, ok := s.fabric.(clients.FabricComputeClaimRecoveryClient)
 	if !ok {
