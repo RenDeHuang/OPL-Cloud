@@ -1243,6 +1243,8 @@ func (s *Service) CreateComputeAllocation(ctx context.Context, input ComputeAllo
 		replayed, err := replayComputeAllocationOperation(stored, requestHash)
 		if err == nil && stored.Status == "started" {
 			s.startComputeAllocation(stored, replayed, input.DryRun)
+		} else if err == nil && stored.Status == "claim_pending" {
+			s.startComputeClaimPendingContinuation(stored, replayed)
 		}
 		return replayed, err
 	}
@@ -1268,6 +1270,136 @@ func (s *Service) startComputeAllocation(operation FabricOperation, allocation C
 		}()
 		s.finishCreateComputeAllocation(operation, allocation, dryRun)
 	}()
+}
+
+func (s *Service) startComputeClaimPendingContinuation(operation FabricOperation, allocation ComputeAllocation) {
+	s.mu.Lock()
+	if s.reconciling[allocation.ID] {
+		s.mu.Unlock()
+		return
+	}
+	s.reconciling[allocation.ID] = true
+	s.computes[allocation.ID] = allocation
+	s.mu.Unlock()
+	go func() {
+		defer func() {
+			s.mu.Lock()
+			delete(s.reconciling, allocation.ID)
+			s.mu.Unlock()
+		}()
+		s.continueComputeClaimPending(operation, allocation)
+	}()
+}
+
+func (s *Service) continueComputeClaimPending(operation FabricOperation, allocation ComputeAllocation) {
+	provider, ok := s.provider.(normalComputeClaimStageProvider)
+	reader, readOK := s.provider.(computeClaimRecoveryProvider)
+	plan, hasPlan := decodeComputeAllocationPlan(operation)
+	if !hasPlan || validateComputeAllocationPreparation(plan, allocation, packagePlan(allocation.PackageID)) != nil ||
+		validateNewComputeAllocation(allocation, plan) != nil {
+		return
+	}
+	ownership, ownershipErr := s.operations.MachineOwnership(context.Background(), allocation.ID)
+	if !ok || !readOK || ownershipErr != nil || !validComputeClaimRecoveryOwnership(allocation, ownership) ||
+		operation.Status != "claim_pending" || !normalWorkspaceComputeBudgetEnabled(operation, s.provider) {
+		return
+	}
+	createBudget, createPresent, createValid := normalLaunchStageBudget(operation.RedactedProviderPayload, "compute_create")
+	cvmBudget, cvmPresent, cvmValid := normalLaunchStageBudget(operation.RedactedProviderPayload, "compute_claim_cvm")
+	nodeBudget, nodePresent, nodeValid := normalLaunchStageBudget(operation.RedactedProviderPayload, "compute_claim_node")
+	_, manualRecoveryPresent, _ := decodeComputeClaimRecoveryMutation(operation)
+	if !createPresent || !createValid || createBudget != confirmedNormalLaunchMutationBudget() || !cvmPresent || !cvmValid ||
+		cvmBudget.Attempted != 1 || nodePresent && !nodeValid || manualRecoveryPresent {
+		return
+	}
+	cvmWasConfirmed := cvmBudget.Confirmed == 1
+	nodeWasConfirmed := nodePresent && nodeBudget.Confirmed == 1
+	binding, bindingOK := automaticComputeClaimRecoveryBinding(operation, allocation, plan)
+	persistedBinding, bindingPresent, bindingValid := decodeComputeClaimRecoveryBinding(operation)
+	if !bindingOK || bindingPresent && (!bindingValid || persistedBinding != binding) {
+		return
+	}
+
+	proof, err := reader.ProveComputeClaimRecovery(context.Background(), allocation, plan, ownership)
+	if err != nil || !validComputeClaimProviderProof(proof, allocation, plan) || proof.CVMOwnershipState != "target_owned" {
+		return
+	}
+	cvmBudget = confirmedNormalLaunchMutationBudget()
+
+	switch proof.NodeOwnershipState {
+	case "target_owned":
+		nodeBudget = confirmedNormalLaunchMutationBudget()
+		if !bindingPresent || !cvmWasConfirmed || !nodeWasConfirmed {
+			confirmed := operation
+			confirmed.RedactedProviderPayload = withComputeClaimRecoveryBinding(operation.RedactedProviderPayload, binding)
+			confirmed.RedactedProviderPayload = withNormalLaunchStageBudget(confirmed.RedactedProviderPayload, "compute_claim_cvm", cvmBudget)
+			confirmed.RedactedProviderPayload = withNormalLaunchStageBudget(confirmed.RedactedProviderPayload, "compute_claim_node", nodeBudget)
+			if err := s.operations.SaveComputeClaimRecovery(context.Background(), operation, confirmed); err != nil {
+				return
+			}
+			operation = confirmed
+		}
+	case "unallocated":
+		if nodePresent {
+			return
+		}
+		nodeBudget = reservedNormalLaunchMutationBudget()
+		reserved := operation
+		reserved.RedactedProviderPayload = withComputeClaimRecoveryBinding(operation.RedactedProviderPayload, binding)
+		reserved.RedactedProviderPayload = withNormalLaunchStageBudget(reserved.RedactedProviderPayload, "compute_claim_cvm", cvmBudget)
+		reserved.RedactedProviderPayload = withNormalLaunchStageBudget(reserved.RedactedProviderPayload, "compute_claim_node", nodeBudget)
+		if err := s.operations.SaveComputeClaimRecovery(context.Background(), operation, reserved); err != nil {
+			return
+		}
+		operation = reserved
+		if err := provider.ClaimComputeNode(context.Background(), allocation, ownership); err != nil {
+			return
+		}
+		nodeBudget = confirmedNormalLaunchMutationBudget()
+	default:
+		return
+	}
+
+	allocation.Status = "running"
+	allocation.CostTags = oplCostTags(allocation.AccountID, allocation.WorkspaceID, allocation.ID, ownership.ID)
+	allocation.NodeSelector = tkeNodeSelector(allocation.ProviderData, allocation.NodeName)
+	ownership.Status, ownership.ReleasedAt = "active", nil
+	if err := s.operations.ActivateComputeClaimRecoveryOwnership(context.Background(), ownership); err != nil {
+		return
+	}
+	recovered := operation
+	recovered.Status, recovered.ErrorCode, recovered.FinishedAt = "succeeded", "", s.now()
+	recovered.RedactedProviderPayload = preserveNormalLaunchMutationBudget(computeAllocationOperationPayload(allocation, plan), operation.RedactedProviderPayload)
+	recovered.RedactedProviderPayload = withComputeClaimRecoveryBinding(recovered.RedactedProviderPayload, binding)
+	recovered.RedactedProviderPayload = withNormalLaunchStageBudget(recovered.RedactedProviderPayload, "compute_claim_cvm", cvmBudget)
+	recovered.RedactedProviderPayload = withNormalLaunchStageBudget(recovered.RedactedProviderPayload, "compute_claim_node", nodeBudget)
+	if err := s.operations.SaveComputeClaimRecovery(context.Background(), operation, recovered); err != nil {
+		return
+	}
+	s.mu.Lock()
+	s.computes[allocation.ID] = allocation
+	s.mu.Unlock()
+}
+
+func automaticComputeClaimRecoveryBinding(operation FabricOperation, allocation ComputeAllocation, plan ComputeAllocationPreparation) (computeClaimRecoveryBinding, bool) {
+	launchOperationID, ok := strings.CutSuffix(strings.TrimSpace(operation.IdempotencyKey), ":compute")
+	if !ok || launchOperationID == "" || allocation.ID != operation.ResourceID {
+		return computeClaimRecoveryBinding{}, false
+	}
+	claimInput := ComputeClaimRecoveryClaimInput{
+		ComputeClaimRecoveryInput: ComputeClaimRecoveryInput{
+			LaunchOperationID: launchOperationID, AccountID: allocation.AccountID, WorkspaceID: allocation.WorkspaceID,
+			ComputeAllocationID: allocation.ID, StorageVolumeID: "vol_" + stableID("vol", allocation.AccountID, launchOperationID+":storage")[:18],
+			PackageID: allocation.PackageID, PoolID: plan.PoolID, NodePoolID: plan.NodePoolID,
+		},
+		MachineName: allocation.MachineName, NodeName: allocation.NodeName,
+		CVMInstanceID: firstNonEmpty(allocation.InstanceID, allocation.CVMInstanceID), PrivateIP: allocation.PrivateIP,
+		InstanceType: plan.InstanceType, Zone: allocation.Zone, IdempotencyKey: operation.IdempotencyKey,
+	}
+	if !validComputeClaimRecoveryClaimInput(claimInput) {
+		return computeClaimRecoveryBinding{}, false
+	}
+	return newComputeClaimRecoveryBinding(claimInput), true
 }
 
 func (s *Service) finishCreateComputeAllocation(operation FabricOperation, allocation ComputeAllocation, dryRun bool) {
