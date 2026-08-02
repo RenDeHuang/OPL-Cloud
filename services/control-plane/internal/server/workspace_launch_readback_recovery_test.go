@@ -283,7 +283,7 @@ func newWorkspaceLaunchReadbackRecoveryScenario(t *testing.T, stage, packageID s
 	if packageID == "pro" {
 		storageGB, charge = 100, 240_080_000
 	}
-	fixture := newWorkspaceLaunchWorkerFixtureForPlan(t, []int64{1_000_000_000, 1_000_000_000, 1_000_000_000 - charge}, nil, nil, packageID, storageGB, false)
+	fixture := newExistingWorkspaceLaunchWorkerFixtureForPlan(t, []int64{1_000_000_000, 1_000_000_000, 1_000_000_000 - charge}, nil, nil, packageID, storageGB, false)
 	launch := configureWorkspaceLaunchFulfillment(t, fixture)
 	computeOperationID := "op-create-compute-" + stableID(launch.ID)[:10]
 	storageOperationID := "op-create-storage-" + stableID(launch.ID)[:10]

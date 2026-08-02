@@ -25,6 +25,7 @@ var errAnnouncementNotActive = errors.New("announcement_not_active")
 var errProductionE2EAttemptAlreadyExists = errors.New("production_e2e_attempt_already_exists")
 var errProductionE2EAttemptBindingMismatch = errors.New("production_e2e_attempt_binding_mismatch")
 var errProductionE2EAttemptNotFound = errors.New("production_e2e_attempt_not_found")
+var errWorkspaceLaunchCapacityReached = errors.New("workspace_launch_capacity_reached")
 
 const recoveredWorkspaceE2EAttemptReason = "recovered_workspace_e2e_model_request"
 

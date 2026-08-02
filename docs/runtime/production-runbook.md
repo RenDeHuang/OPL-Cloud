@@ -292,6 +292,46 @@ read-only `DescribeBaseMetrics`) to confirm the metric belongs to the selected
 PostgreSQL/TKE/CLB resource. Do not copy an unverified namespace or instance ID
 from documentation, and do not store notification credentials in this repository.
 
+## Controlled Basic Pilot
+
+Production is closed by default:
+
+```text
+OPL_CONTROLLED_BASIC_PILOT_ENABLED=0
+OPL_CONTROLLED_BASIC_PILOT_ACCOUNT_IDS=
+OPL_CONTROLLED_BASIC_PILOT_MAX_IN_FLIGHT=1
+```
+
+Enable only Basic purchases, only for an approved comma-separated Account
+allowlist, and only through an ordinary current-`main` production deploy. Keep
+`autoRenew=false`. Before enabling, `GET /api/operator/health` must report the
+`controlledBasicPilot` source as available, configured, with no failures or
+manual review, `disableRequired=false`, and capacity available. The endpoint and
+CLS events contain aggregate stable codes only; they must not be supplemented
+with raw Account, operation, Workspace, provider, compute, or storage IDs.
+
+The first `controlled_pilot_first_failure` or
+`controlled_pilot_config_invalid` active event is a stop condition. Set
+`OPL_CONTROLLED_BASIC_PILOT_ENABLED=0` in the GitHub `production` environment and
+run the ordinary current-`main` deploy. Do not turn off the Workspace launch
+worker: disabling admission blocks only new purchases, while reads and exact
+continuation of already-persisted operations must remain available. Do not
+refund, retry a debit, replace a resource, or delete customer resources as part
+of disabling the Pilot. A capacity alert is not a failure; wait for the
+authoritative terminal state and do not raise the limit during an active launch.
+
+For a whole-release rollback, keep the Pilot disabled and use the existing
+deployment rollback to restore the complete previous ConfigMap and Cloud images.
+Never patch only one ConfigMap key by hand. Re-enable only after the failure has
+an authoritative terminal state, the fix is on current `main`, and the same
+health checks are clean.
+
+Customer support must select the affected review item in Console and follow
+`Diagnose -> Plan -> Validate -> Confirm`. Never ask the customer to find or
+paste an Account, Workspace, operation, compute, storage, or provider resource
+ID, and never type a customer-supplied resource ID into a recovery workflow.
+Console and Control Plane own the selected operation identity and validation.
+
 ## Workspace Routing Verification
 
 Repository configuration declares one shared `qcloud` Ingress with `/` paths

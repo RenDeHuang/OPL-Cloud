@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 31,
+  "schemaVersion": 32,
   "owner": "OPL Fabric",
   "purpose": "Deployment workflow, immutable Cloud and Workspace images, TKE handoff, read-only diagnostics, and production-verification safety.",
   "state": "current",
@@ -25,6 +25,20 @@
     "persistence": "none",
     "restartBehavior": "reauthentication_required",
     "horizontalScaling": "blocked_pending_secure_shared_vault"
+  },
+  "controlledBasicPilot": {
+    "manifest": "deploy/tke/opl-cloud.k8s.json#ConfigMap/opl-cloud-config",
+    "workflow": ".github/workflows/deploy-tke-production.yml#deploy",
+    "enabledEnv": "OPL_CONTROLLED_BASIC_PILOT_ENABLED",
+    "accountAllowlistEnv": "OPL_CONTROLLED_BASIC_PILOT_ACCOUNT_IDS",
+    "maxInFlightEnv": "OPL_CONTROLLED_BASIC_PILOT_MAX_IN_FLIGHT",
+    "productionDefaults": {"enabled": "0", "accountAllowlist": "", "maxInFlight": "1"},
+    "enableGate": "explicit_production_variable_account_allowlist_and_ordinary_main_deploy",
+    "invalidConfiguration": "deployment_and_runtime_fail_closed",
+    "disable": "set_enabled_0_and_run_ordinary_main_deploy",
+    "disableEffect": "new_purchase_only_original_operations_continue",
+    "rollback": "keep_enabled_0_restore_full_previous_configmap_only_for_whole_release_rollback",
+    "productionEvidence": "pending"
   },
   "deferredControlPlaneSelectorMigration": {
     "deployment": "opl-cloud-control-plane",
@@ -134,6 +148,9 @@
       "OPL_MONTHLY_BILLING_INTERVAL_MS",
       "OPL_WORKSPACE_LAUNCH_WORKER_ENABLED",
       "OPL_WORKSPACE_LAUNCH_INTERVAL_MS",
+      "OPL_CONTROLLED_BASIC_PILOT_ENABLED",
+      "OPL_CONTROLLED_BASIC_PILOT_ACCOUNT_IDS",
+      "OPL_CONTROLLED_BASIC_PILOT_MAX_IN_FLIGHT",
       "OPL_TENCENT_ZONE",
       "OPL_BASIC_COMPUTE_INSTANCE_TYPE",
       "OPL_PRO_COMPUTE_INSTANCE_TYPE",
@@ -250,6 +267,9 @@
         "OPL_RELEASE_SHA",
         "OPL_CLOUD_IMAGE",
         "OPL_WORKSPACE_IMAGE",
+        "OPL_CONTROLLED_BASIC_PILOT_ENABLED",
+        "OPL_CONTROLLED_BASIC_PILOT_ACCOUNT_IDS",
+        "OPL_CONTROLLED_BASIC_PILOT_MAX_IN_FLIGHT",
         "get configmap opl-cloud-config",
         "current_workspace_image",
         "requested_workspace_image",

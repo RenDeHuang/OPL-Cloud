@@ -374,15 +374,19 @@ func TestWorkspaceLaunchRejectsAutoRenewBeforeExternalCalls(t *testing.T) {
 }
 
 func TestWorkspaceLaunchRejectsUnknownAndCrossPackageStorageBeforeExternalCalls(t *testing.T) {
-	for _, body := range []string{
-		`{"name":"Alpha","packageId":"basic","sizeGb":100,"autoRenew":false}`,
-		`{"name":"Alpha","packageId":"pro","sizeGb":10,"autoRenew":false}`,
-		`{"name":"Alpha","packageId":"enterprise","sizeGb":10,"autoRenew":false}`,
+	for _, test := range []struct {
+		body       string
+		wantStatus int
+		wantCode   string
+	}{
+		{body: `{"name":"Alpha","packageId":"basic","sizeGb":100,"autoRenew":false}`, wantStatus: http.StatusBadRequest, wantCode: "invalid_pricing_input"},
+		{body: `{"name":"Alpha","packageId":"pro","sizeGb":10,"autoRenew":false}`, wantStatus: http.StatusConflict, wantCode: "workspace_launch_basic_only"},
+		{body: `{"name":"Alpha","packageId":"enterprise","sizeGb":10,"autoRenew":false}`, wantStatus: http.StatusConflict, wantCode: "workspace_launch_basic_only"},
 	} {
 		fixture := newWorkspaceLaunchHTTPFixture(t, 1_000_000_000)
-		response := fixture.launch(t, body, "launch-alpha")
+		response := fixture.launch(t, test.body, "launch-alpha")
 		operations, _ := fixture.store.ListRuntimeOperations(context.Background())
-		if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "invalid_pricing_input") || len(*fixture.events) != 0 || len(operations) != 0 {
+		if response.Code != test.wantStatus || !strings.Contains(response.Body.String(), test.wantCode) || len(*fixture.events) != 0 || len(operations) != 0 {
 			t.Fatalf("invalid package/storage status=%d body=%s events=%#v operations=%#v", response.Code, response.Body.String(), *fixture.events, operations)
 		}
 	}
@@ -459,7 +463,6 @@ func TestWorkspaceLaunchKeyPendingDifferentRequestKeyRecoversOriginalLaunch(t *t
 		sizeGB    int
 	}{
 		{packageID: "basic", sizeGB: 10},
-		{packageID: "pro", sizeGB: 100},
 	} {
 		t.Run(plan.packageID, func(t *testing.T) {
 			fixture := newWorkspaceLaunchHTTPFixture(t, 1_000_000_000)
@@ -1200,6 +1203,14 @@ func newWorkspaceLaunchWorkerFixture(t *testing.T, balances []int64, chargeError
 }
 
 func newWorkspaceLaunchWorkerFixtureForPlan(t *testing.T, balances []int64, chargeErrors []error, runtimeErr error, packageID string, storageGB int, autoRenew bool) workspaceLaunchWorkerFixture {
+	return newWorkspaceLaunchWorkerFixtureForPlanMode(t, balances, chargeErrors, runtimeErr, packageID, storageGB, autoRenew, false)
+}
+
+func newExistingWorkspaceLaunchWorkerFixtureForPlan(t *testing.T, balances []int64, chargeErrors []error, runtimeErr error, packageID string, storageGB int, autoRenew bool) workspaceLaunchWorkerFixture {
+	return newWorkspaceLaunchWorkerFixtureForPlanMode(t, balances, chargeErrors, runtimeErr, packageID, storageGB, autoRenew, true)
+}
+
+func newWorkspaceLaunchWorkerFixtureForPlanMode(t *testing.T, balances []int64, chargeErrors []error, runtimeErr error, packageID string, storageGB int, autoRenew, existing bool) workspaceLaunchWorkerFixture {
 	t.Helper()
 	if currentWorkspaceImageDigest() == "" {
 		t.Setenv("OPL_WORKSPACE_IMAGE", workspaceImageRepository+"@sha256:"+strings.Repeat("f", 64))
@@ -1220,15 +1231,31 @@ func newWorkspaceLaunchWorkerFixtureForPlan(t *testing.T, balances []int64, char
 		t.Fatal(err)
 	}
 	session := loginForTest(t, server, "alpha@example.com", "CorrectHorseBatteryStaple!")
-	created := requestWithMutationKeyForTest(t, server, session, http.MethodPost, "/api/workspace-launches", fmt.Sprintf(`{"name":"Alpha","packageId":%q,"sizeGb":%d,"autoRenew":false}`, packageID, storageGB), "launch-alpha")
-	if created.Code != http.StatusAccepted {
-		t.Fatalf("launch status = %d: %s", created.Code, created.Body.String())
+	operationID := ""
+	if existing {
+		totalCharge := int64(52_580_000)
+		if packageID == "pro" {
+			totalCharge = 240_080_000
+		}
+		operation := newWorkspaceLaunchOperation("acct-alpha", "usr-alpha", "Alpha", packageID, storageGB, autoRenew, pricingCatalogVersion, totalCharge, "launch-alpha")
+		operation.Status, operation.Phase = "debit_pending", "debit_pending"
+		operation.ComputeNodePoolID = "np-" + packageID
+		operation.WorkspaceAPIKeyID = 19
+		key := clients.Sub2APIWorkspaceKey{ID: operation.WorkspaceAPIKeyID, UserID: 41, Name: workspaceReservedKeyName(operation.WorkspaceID), Key: "created-workspace-key-secret", Status: "active"}
+		sub2API.keys = map[int64]clients.Sub2APIWorkspaceKey{key.ID: key}
+		mustStore(t, store.SaveRuntimeOperation(context.Background(), workspaceLaunchOperationRow(operation)))
+		operationID = operation.ID
+	} else {
+		created := requestWithMutationKeyForTest(t, server, session, http.MethodPost, "/api/workspace-launches", fmt.Sprintf(`{"name":"Alpha","packageId":%q,"sizeGb":%d,"autoRenew":false}`, packageID, storageGB), "launch-alpha")
+		if created.Code != http.StatusAccepted {
+			t.Fatalf("launch status = %d: %s", created.Code, created.Body.String())
+		}
+		var response map[string]any
+		if err := json.NewDecoder(created.Body).Decode(&response); err != nil {
+			t.Fatal(err)
+		}
+		operationID = stringValue(response["operationId"])
 	}
-	var response map[string]any
-	if err := json.NewDecoder(created.Body).Decode(&response); err != nil {
-		t.Fatal(err)
-	}
-	operationID := stringValue(response["operationId"])
 	if autoRenew {
 		operations, err := store.ListRuntimeOperations(context.Background())
 		if err != nil {
@@ -1306,7 +1333,6 @@ func TestWorkspaceLaunchConcurrentUsageDoesNotInvalidateUniqueRedeemHistory(t *t
 		charge    int64
 	}{
 		{packageID: "basic", sizeGB: 10, charge: 52_580_000},
-		{packageID: "pro", sizeGB: 100, charge: 240_080_000},
 	} {
 		t.Run(plan.packageID, func(t *testing.T) {
 			preBalance := plan.charge + 100_000_000
@@ -1535,7 +1561,6 @@ func TestWorkspaceLaunchFulfillmentOnly(t *testing.T) {
 		total     int64
 	}{
 		{packageID: "basic", storageGB: 10, total: 52_580_000},
-		{packageID: "pro", storageGB: 100, total: 240_080_000},
 	} {
 		t.Run(test.packageID, func(t *testing.T) {
 			fixture := newWorkspaceLaunchWorkerFixtureForPlan(t, []int64{1_000_000_000, 1_000_000_000, 1_000_000_000 - test.total}, nil, nil, test.packageID, test.storageGB, false)
@@ -2011,7 +2036,7 @@ func TestWorkspaceLaunchComputeClaimPendingWorkerReplaysOriginalComputeOperation
 				instanceType = "SA5.2XLARGE16"
 				totalCharge = 240_080_000
 			}
-			fixture := newWorkspaceLaunchWorkerFixtureForPlan(t, []int64{1_000_000_000, 1_000_000_000, 1_000_000_000 - totalCharge}, nil, nil, packageID, storageGB, false)
+			fixture := newExistingWorkspaceLaunchWorkerFixtureForPlan(t, []int64{1_000_000_000, 1_000_000_000, 1_000_000_000 - totalCharge}, nil, nil, packageID, storageGB, false)
 			operation := fixture.operation(t)
 			pending := clients.ComputeAllocation{
 				ID: operation.ComputeID, AccountID: operation.AccountID, WorkspaceID: operation.WorkspaceID, PackageID: packageID,
@@ -2119,7 +2144,7 @@ func workspaceLaunchComputeClaimPendingFixture(t *testing.T, packageID string) (
 		totalCharge = 240_080_000
 		instanceType = "SA5.2XLARGE16"
 	}
-	fixture := newWorkspaceLaunchWorkerFixtureForPlan(t, []int64{1_000_000_000, 1_000_000_000, 1_000_000_000 - totalCharge}, nil, nil, packageID, storageGB, false)
+	fixture := newExistingWorkspaceLaunchWorkerFixtureForPlan(t, []int64{1_000_000_000, 1_000_000_000, 1_000_000_000 - totalCharge}, nil, nil, packageID, storageGB, false)
 	if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err != nil {
 		t.Fatal(err)
 	}

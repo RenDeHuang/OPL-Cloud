@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 23,
+  "schemaVersion": 24,
   "owner": "OPL Platform Architecture",
   "purpose": "Current ownership contract for Console UI, Control Plane, Ledger, Fabric, and external Sub2API.",
   "state": "current",
@@ -132,6 +132,20 @@
         "concurrentUsageBalanceDeltaRequired": false,
         "periodFreeze": "first_authoritative_charge_confirmation_persisted_once",
         "providerMutationBeforeValidWorkspaceDigest": 0
+      },
+      "controlledBasicPilotAdmission": {
+        "owner": "control_plane",
+        "scope": "new_workspace.launch.v2_purchase_only",
+        "configurationSource": "process_environment_from_opl-cloud-config",
+        "allowedPackage": "basic",
+        "accountAdmission": "explicit_allowlist",
+        "autoRenew": false,
+        "globalInFlightDefault": 1,
+        "globalClaimSerialization": "postgresql_transaction_stable_first_account_row_for_update_then_count_and_insert",
+        "continuationPrecedence": "exact_idempotency_or_single_matching_active_operation_before_admission",
+        "disabledContinuation": "read_and_original_operation_progress_allowed",
+        "rejectedExternalCalls": 0,
+        "observabilityContract": "opl-cloud-observability-contract.json#controlledBasicPilot"
       },
       "workspaceLaunchAuthoritativeReadbackRecovery": {
         "authority": "control_plane_persisted_recovery_plan",

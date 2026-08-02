@@ -1179,6 +1179,48 @@ func TestWorkspaceLaunchCASStoresFenceConcurrentClaimsAndStalePersists(t *testin
 	}
 }
 
+func TestPostgresWorkspaceLaunchClaimEnforcesGlobalInFlightCapacity(t *testing.T) {
+	if controlPlaneTestPostgresBaseURL() == "" {
+		t.Skip("local PostgreSQL unavailable: set CONTROL_PLANE_TEST_DATABASE_URL or OPL_POSTGRES_TESTS=1 with isolated PG settings")
+	}
+	t.Setenv("OPL_CONTROLLED_BASIC_PILOT_MAX_IN_FLIGHT", "1")
+	ctx := context.Background()
+	store := newPostgresWorkspaceRenewalStore(t)
+	seedTenantMember(t, store, "acct-alpha", "org-alpha", "usr-alpha", "alpha@example.com")
+	seedTenantMember(t, store, "acct-beta", "org-beta", "usr-beta", "beta@example.com")
+	claims := make([]workspaceLaunchClaimCAS, 0, 2)
+	for _, identity := range []struct{ accountID, userID, key string }{
+		{accountID: "acct-alpha", userID: "usr-alpha", key: "postgres-alpha-global-cap"},
+		{accountID: "acct-beta", userID: "usr-beta", key: "postgres-beta-global-cap"},
+	} {
+		operation := newWorkspaceLaunchOperation(identity.accountID, identity.userID, "Basic", "basic", 10, false, pricingCatalogVersion, 52_580_000, identity.key)
+		operation.Status, operation.Phase = "key_pending", "key_pending"
+		claims = append(claims, workspaceLaunchClaimCAS{AccountID: identity.accountID, DesiredOperation: workspaceLaunchOperationRow(operation)})
+	}
+	start, results := make(chan struct{}), make(chan error, len(claims))
+	for _, claim := range claims {
+		go func(claim workspaceLaunchClaimCAS) {
+			<-start
+			results <- store.ClaimWorkspaceLaunch(ctx, claim)
+		}(claim)
+	}
+	close(start)
+	won, capacity := 0, 0
+	for range claims {
+		if err := <-results; err == nil {
+			won++
+		} else if err.Error() == "workspace_launch_capacity_reached" {
+			capacity++
+		} else {
+			t.Fatalf("unexpected claim error: %v", err)
+		}
+	}
+	rows, err := store.ListRuntimeOperations(ctx)
+	if err != nil || won != 1 || capacity != 1 || len(rows) != 1 {
+		t.Fatalf("PostgreSQL global capacity won=%d capacity=%d rows=%#v err=%v", won, capacity, rows, err)
+	}
+}
+
 func TestPostgresWorkspaceComputeClaimLegacyNormalizationCASIsSingleWinner(t *testing.T) {
 	if controlPlaneTestPostgresBaseURL() == "" {
 		t.Skip("local PostgreSQL unavailable: set CONTROL_PLANE_TEST_DATABASE_URL or OPL_POSTGRES_TESTS=1 with isolated PG settings")

@@ -404,7 +404,7 @@ func encodeWorkspaceLaunchOperation(operation workspaceLaunchOperation) string {
 }
 
 func newWorkspaceLaunchOperation(accountID, ownerUserID, name, packageID string, storageGB int, autoRenew bool, priceVersion string, totalChargeUSDMicros int64, key string) workspaceLaunchOperation {
-	operationID := "workspace-launch-" + stableID(accountID, key)[:18]
+	operationID := workspaceLaunchOperationID(accountID, key)
 	workspaceID := "ws-" + stableID("workspace-launch-v2", accountID, operationID)[:18]
 	workspaceImageDigest := currentWorkspaceImageDigest()
 	now := time.Now().UTC()
@@ -421,6 +421,10 @@ func newWorkspaceLaunchOperation(accountID, ownerUserID, name, packageID string,
 		RedeemCode: monthlyRedeemCode(monthlyEnvironment(), operationID), RefundCode: monthlyRefundCode(monthlyEnvironment(), operationID),
 		ContinuationAttemptBudgets: newWorkspaceLaunchContinuationAttemptBudgets(),
 	}
+}
+
+func workspaceLaunchOperationID(accountID, key string) string {
+	return "workspace-launch-" + stableID(accountID, key)[:18]
 }
 
 func newWorkspaceLaunchContinuationAttemptBudgets() map[string]workspaceLaunchStageBudget {

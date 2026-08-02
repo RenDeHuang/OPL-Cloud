@@ -56,7 +56,6 @@ func TestPostgresNormalWorkspaceLaunchSurvivesEveryPersistedBoundaryFromOnePost(
 		total     int64
 	}{
 		{packageID: "basic", storageGB: 10, total: 52_580_000},
-		{packageID: "pro", storageGB: 100, total: 240_080_000},
 	} {
 		t.Run(plan.packageID, func(t *testing.T) {
 			admin := openControlPlaneTestPostgres(t)

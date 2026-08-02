@@ -1853,6 +1853,14 @@ func (s *postgresEntStateStore) ClaimWorkspaceLaunch(ctx context.Context, claim 
 	}
 	defer func() { _ = tx.Rollback() }()
 	client := tx.Client()
+	if claim.ExpectedOperationResult == "" {
+		if _, err := client.Account.Query().Where(lockRowForUpdate).Order(controlplaneent.Asc(account.FieldID)).First(ctx); err != nil {
+			if controlplaneent.IsNotFound(err) {
+				return errWorkspaceLaunchCASConflict
+			}
+			return err
+		}
+	}
 	if _, err := client.Account.Query().Where(account.IDEQ(claim.AccountID), lockRowForUpdate).Only(ctx); err != nil {
 		if controlplaneent.IsNotFound(err) {
 			return errWorkspaceLaunchCASConflict
@@ -1876,6 +1884,16 @@ func (s *postgresEntStateStore) ClaimWorkspaceLaunch(ctx context.Context, claim 
 	if claim.ExpectedOperationResult == "" {
 		if existing != nil {
 			return errWorkspaceLaunchCASConflict
+		}
+		inFlight, err := client.RuntimeOperation.Query().Where(
+			runtimeoperation.ActionIn(workspaceLaunchAction, "workspace.launch"),
+			runtimeoperation.StatusNotIn("succeeded", "refunded", "failed"),
+		).Count(ctx)
+		if err != nil {
+			return err
+		}
+		if inFlight >= controlledBasicPilotGlobalInFlightLimit() {
+			return errWorkspaceLaunchCapacityReached
 		}
 		if err := saveRecord(ctx, desired.ID, controlPlaneRecord(claim.DesiredOperation), client.RuntimeOperation.Create(), runtimeOpEntFields); err != nil {
 			if controlplaneent.IsConstraintError(err) {

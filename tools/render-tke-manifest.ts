@@ -19,6 +19,9 @@ const DEPLOY_VALUE_KEYS = [
   "OPL_MONTHLY_BILLING_INTERVAL_MS",
   "OPL_WORKSPACE_LAUNCH_WORKER_ENABLED",
   "OPL_WORKSPACE_LAUNCH_INTERVAL_MS",
+  "OPL_CONTROLLED_BASIC_PILOT_ENABLED",
+  "OPL_CONTROLLED_BASIC_PILOT_ACCOUNT_IDS",
+  "OPL_CONTROLLED_BASIC_PILOT_MAX_IN_FLIGHT",
   "OPL_SUB2API_BASE_URL",
   "OPL_SUB2API_REQUEST_TIMEOUT_MS",
   "OPL_TENCENT_ZONE",
@@ -51,8 +54,18 @@ const DEPLOY_VALUE_KEYS = [
   "TENCENT_DEPLOY_KUBECONFIG_REF"
 ];
 function requiredValues(values) {
-  const missing = DEPLOY_VALUE_KEYS.filter((key) => key !== "OPL_SYSTEM_COMPUTE_CVM_ID" && !String(values?.[key] ?? "").trim());
+  const optionalWhenEmpty = new Set(["OPL_SYSTEM_COMPUTE_CVM_ID", "OPL_CONTROLLED_BASIC_PILOT_ACCOUNT_IDS"]);
+  const missing = DEPLOY_VALUE_KEYS.filter((key) => !optionalWhenEmpty.has(key) && !String(values?.[key] ?? "").trim());
   if (missing.length) throw new Error(`missing_tke_manifest_values:${missing.join(",")}`);
+  const pilotEnabled = String(values.OPL_CONTROLLED_BASIC_PILOT_ENABLED || "").trim();
+  if (!new Set(["0", "1"]).has(pilotEnabled)) throw new Error("controlled_basic_pilot_enabled_invalid");
+  const pilotLimit = String(values.OPL_CONTROLLED_BASIC_PILOT_MAX_IN_FLIGHT || "").trim();
+  if (!/^[1-9][0-9]*$/.test(pilotLimit)) throw new Error("controlled_basic_pilot_max_in_flight_invalid");
+  const pilotAccounts = String(values.OPL_CONTROLLED_BASIC_PILOT_ACCOUNT_IDS || "").split(",").map((value) => value.trim()).filter(Boolean);
+  if (pilotEnabled === "1" && pilotAccounts.length === 0) throw new Error("controlled_basic_pilot_account_ids_required");
+  if (pilotAccounts.some((value) => value.length < 3 || value.length > 48 || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value))) {
+    throw new Error("controlled_basic_pilot_account_ids_invalid");
+  }
   const machineType = String(values.OPL_SYSTEM_COMPUTE_MACHINE_TYPE || "").trim();
   const cvmId = String(values.OPL_SYSTEM_COMPUTE_CVM_ID || "").trim();
   if (machineType === "NativeCVM") {
