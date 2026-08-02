@@ -1584,7 +1584,9 @@ async function computeClaimControlPlanePost({ fetchImpl, origin, auth, path, bod
   try {
     payload = text ? JSON.parse(text) : {};
   } catch {
-    throw new Error("compute_claim_recovery_control_plane_response_invalid");
+    const error = new Error("compute_claim_recovery_control_plane_response_invalid");
+    error.statusCode = response.status;
+    throw error;
   }
   return { statusCode: response.status, payload };
 }
@@ -1645,17 +1647,25 @@ export async function validateComputeClaimApproval(options = {}) {
     throw new Error("compute_claim_validation_customer_identity_mismatch");
   }
   const request = computeClaimApprovedRequest(target, approval);
-  const response = await computeClaimControlPlanePost({
-    fetchImpl, origin: normalizedOrigin, auth,
-    path: `/api/operator/workspace-launches/${encodeURIComponent(target.launchOperationId)}/compute-claim-recovery/validate`,
-    idempotencyKey: approval.idempotencyKey, capability: internalServiceToken, requestTimeoutMs, body: request.body
-  });
+  let response;
+  try {
+    response = await computeClaimControlPlanePost({
+      fetchImpl, origin: normalizedOrigin, auth,
+      path: `/api/operator/workspace-launches/${encodeURIComponent(target.launchOperationId)}/compute-claim-recovery/validate`,
+      idempotencyKey: approval.idempotencyKey, capability: internalServiceToken, requestTimeoutMs, body: request.body
+    });
+  } catch (error) {
+    if (Number.isInteger(error?.statusCode) && error.statusCode >= 500 && error.statusCode <= 599) {
+      throw new Error("compute_claim_validation_state_read_unavailable");
+    }
+    throw new Error("compute_claim_validation_response_invalid");
+  }
   if (response.statusCode !== 200) {
     const errorCode = response.statusCode === 400 ? "compute_claim_validation_request_invalid"
       : response.statusCode === 403 ? "compute_claim_validation_capability_invalid"
         : response.statusCode === 404 ? "compute_claim_validation_launch_not_found"
           : response.statusCode === 409 ? "compute_claim_validation_binding_mismatch"
-            : response.statusCode === 502 && response.payload?.error === "workspace_compute_claim_unavailable"
+            : response.statusCode >= 500 && response.statusCode <= 599
               ? "compute_claim_validation_state_read_unavailable"
             : "compute_claim_validation_response_invalid";
     throw new Error(errorCode);
