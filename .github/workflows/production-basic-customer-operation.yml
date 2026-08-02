@@ -22,6 +22,7 @@ on:
           - workspace_identity_diagnose
           - acceptance_b_fresh_order
           - compute_claim_validate
+          - controlled_pilot_closed_validate
           - recovered_workspace_e2e
       funding_mode:
         description: operator_precharge performs the approved provision and recharge; operator_precharge_recovery reads one approved completed precharge before the purchase.
@@ -894,7 +895,139 @@ jobs:
             find "$source_dir" -mindepth 1 -delete
             rmdir "$source_dir"
           fi
+  controlled-pilot-closed-validate:
+    name: Prove disabled controlled Basic Pilot fails closed without mutation
+    if: ${{ github.ref == 'refs/heads/main' && github.sha == inputs.merged_sha && inputs.operation_mode == 'controlled_pilot_closed_validate' && inputs.approval_id == '' && inputs.resume_run_id == '' && inputs.customer_email == '' && inputs.recovery_plan_launch_operation_id == '' && inputs.recovery_plan_id == '' && inputs.recovery_plan_digest == '' && !inputs.confirm_account_provision && !inputs.confirm_wallet_recharge && !inputs.confirm_workspace_purchase && !inputs.confirm_single_model_request }}
+    runs-on: [self-hosted, tencent-cloud, opl-cloud, tke-vpc]
+    timeout-minutes: 15
+    environment: production
+    env:
+      OPL_MERGED_SHA: ${{ inputs.merged_sha }}
+      OPL_CONSOLE_ORIGIN: ${{ vars.OPL_CONSOLE_ORIGIN || 'https://cloud.medopl.cn' }}
+      OPL_SUB2API_ADMIN_EMAIL: ${{ secrets.OPL_SUB2API_ADMIN_EMAIL }}
+      OPL_SUB2API_ADMIN_PASSWORD: ${{ secrets.OPL_SUB2API_ADMIN_PASSWORD }}
+      OPL_VERIFY_REQUEST_TIMEOUT_MS: ${{ vars.OPL_VERIFY_REQUEST_TIMEOUT_MS || '30000' }}
 
+    steps:
+      - name: Prepare isolated source checkout
+        id: prepare_source
+        shell: bash
+        env:
+          OPL_SOURCE_CHECKOUT: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          expected="$GITHUB_WORKSPACE/.opl-checkouts/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
+          if [ "$OPL_SOURCE_CHECKOUT" != "$expected" ]; then
+            echo "Isolated source checkout path mismatch." >&2
+            exit 1
+          fi
+          mkdir -p "$GITHUB_WORKSPACE/.opl-checkouts"
+          mkdir "$OPL_SOURCE_CHECKOUT"
+
+      - name: Checkout exact merged main
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.merged_sha }}
+          fetch-depth: 0
+          path: .opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+
+      - name: Verify remote branch authority
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          mapfile -t remote_heads < <(git ls-remote --heads origin)
+          if [ "${#remote_heads[@]}" -ne 1 ]; then
+            echo "Production source authority requires exactly one remote head." >&2
+            exit 1
+          fi
+          read -r remote_main_sha remote_main_ref <<< "${remote_heads[0]}"
+          head_sha="$(git rev-parse HEAD)"
+          if [ "$remote_main_ref" != "refs/heads/main" ] || [ "$GITHUB_REF" != "refs/heads/main" ] ||
+             [ "$GITHUB_SHA" != "$head_sha" ] || [ "$remote_main_sha" != "$head_sha" ] || [ "$OPL_MERGED_SHA" != "$head_sha" ]; then
+            echo "Production source must be the exact current origin/main revision." >&2
+            exit 1
+          fi
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Prove one disabled admission rejection
+        id: validate
+        continue-on-error: true
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          artifact_dir="$RUNNER_TEMP/controlled-pilot-closed-validation"
+          mkdir -p "$artifact_dir"
+          chmod 700 "$artifact_dir"
+          echo "OPL_CONTROLLED_PILOT_ARTIFACT_DIR=$artifact_dir" >> "$GITHUB_ENV"
+          node tools/production-live-qa.ts --controlled-pilot-closed-validate \
+            --run-identity "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" \
+            > "$artifact_dir/evidence.json"
+
+      - name: Require exact zero-mutation evidence
+        if: ${{ steps.validate.outcome == 'success' }}
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const fs = require("node:fs");
+          const evidence = JSON.parse(fs.readFileSync(`${process.env.OPL_CONTROLLED_PILOT_ARTIFACT_DIR}/evidence.json`, "utf8"));
+          const zero = { database: 0, sub2api: 0, fabric: 0, tencent: 0, kubernetes: 0 };
+          const digestNames = ["launches", "wallet", "keys", "workspaces", "receipts"];
+          if (evidence?.schemaVersion !== 1 || evidence?.operationMode !== "controlled_basic_pilot_closed_validate" ||
+            evidence?.status !== "proven" || evidence?.errorCode !== "none" ||
+            evidence?.rejection?.statusCode !== 409 || evidence?.rejection?.reasonCode !== "workspace_launch_admission_disabled" ||
+            evidence?.rejection?.attempts !== 1 || evidence?.pilot?.enabled !== false || evidence?.pilot?.configured !== true ||
+            evidence?.pilot?.accountAllowlistCount !== 0 || evidence?.pilot?.packageId !== "basic" || evidence?.pilot?.maxInFlight !== 1 ||
+            JSON.stringify(evidence?.mutationCounts) !== JSON.stringify(zero) ||
+            digestNames.some((name) => !/^[a-f0-9]{64}$/.test(String(evidence?.authorityDigests?.[name]?.before || "")) ||
+              evidence.authorityDigests[name].before !== evidence.authorityDigests[name].after || evidence.authorityDigests[name].match !== true) ||
+            /password|secret|token|cookie|csrf|accountId|workspaceId|operationId|balanceUsdMicros/i.test(JSON.stringify(evidence))) {
+            throw new Error("controlled Pilot closed validation evidence invalid");
+          }
+          NODE
+
+      - name: Upload redacted disabled Pilot evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-controlled-pilot-closed-validation
+          path: ${{ runner.temp }}/controlled-pilot-closed-validation
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 30
+
+      - name: Require disabled Pilot validation success
+        if: ${{ steps.validate.outcome != 'success' }}
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          echo "Controlled Pilot closed validation stopped; inspect the redacted artifact." >&2
+          exit 1
+
+      - name: Remove isolated source checkout
+        if: always() && steps.prepare_source.outcome == 'success'
+        shell: bash
+        env:
+          OPL_SOURCE_CHECKOUT: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          source_dir="${OPL_SOURCE_CHECKOUT:-}"
+          expected="$GITHUB_WORKSPACE/.opl-checkouts/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
+          if [ -z "$source_dir" ] || [ "$source_dir" != "$expected" ]; then
+            echo "Refusing to remove unexpected source checkout path." >&2
+            exit 1
+          fi
+          if [ -d "$source_dir" ]; then
+            find "$source_dir" -mindepth 1 -delete
+            rmdir "$source_dir"
+          fi
 
   compute-claim-validate:
     name: Validate one persisted server-owned Recovery Plan without mutation

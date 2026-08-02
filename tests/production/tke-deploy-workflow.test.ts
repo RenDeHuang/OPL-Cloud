@@ -578,6 +578,7 @@ test("production self-hosted jobs use one run-and-job isolated source checkout",
       "prepare-basic-customer-operation",
       "workspace-identity-diagnose",
       "acceptance-b-fresh-order",
+      "controlled-pilot-closed-validate",
       "compute-claim-validate"
     ]]
   ]);
@@ -1100,6 +1101,32 @@ test("server-owned Recovery Plan validation is a zero-mutation production mode",
   assert.doesNotMatch(runs, /recovery-plan\/diagnose|recovery_plan_account_id|--account-id/);
 });
 
+test("disabled controlled Basic Pilot has one production fail-closed proof with no provider capability", async () => {
+  const workflow = await readWorkflow(".github/workflows/production-basic-customer-operation.yml");
+  const deployment = await readJson(deploymentContractPath);
+  const inputs = workflow.on.workflow_dispatch.inputs;
+  const job = workflowJob(workflow, "controlled-pilot-closed-validate");
+  const runs = serializedRuns(job);
+  const boundary = deployment.productionControlledBasicPilotClosedValidation;
+
+  assert.ok(inputs.operation_mode.options.includes("controlled_pilot_closed_validate"));
+  assert.equal(boundary.workflowMode, "controlled_pilot_closed_validate");
+  assert.equal(boundary.expectedRejection, "workspace_launch_admission_disabled");
+  assert.deepEqual(boundary.requiredMutationCounts, { database: 0, sub2api: 0, fabric: 0, tencent: 0, kubernetes: 0 });
+  assert.deepEqual(boundary.authorityReadbacks, ["control_plane_launches", "sub2api_wallet", "sub2api_keys", "control_plane_workspaces", "ledger_receipts"]);
+  assert.match(String(job.if), /inputs\.operation_mode == 'controlled_pilot_closed_validate'/);
+  for (const confirmation of ["account_provision", "wallet_recharge", "workspace_purchase", "single_model_request"]) {
+    assert.match(String(job.if), new RegExp(`!inputs\\.confirm_${confirmation}`));
+  }
+  assert.deepEqual(job["runs-on"], ["self-hosted", "tencent-cloud", "opl-cloud", "tke-vpc"]);
+  assert.equal(job.environment, "production");
+  assert.match(runs, /production-live-qa\.ts --controlled-pilot-closed-validate/);
+  assert.match(runs, /workspace_launch_admission_disabled/);
+  assert.match(runs, /mutationCounts/);
+  assert.match(runs, /authorityDigests/);
+  assert.doesNotMatch(JSON.stringify(job), /KUBECONFIG|TENCENTCLOUD|OPL_INTERNAL_SERVICE_TOKEN|allow-workspace-purchase|basic-customer-canary/);
+});
+
 test("legacy target-based Recovery workflow surfaces are removed", async () => {
   const workflow = await readWorkflow(".github/workflows/production-basic-customer-operation.yml");
   const source = await readFile(repoFile(".github/workflows/production-basic-customer-operation.yml"), "utf8");
@@ -1132,6 +1159,7 @@ test("recovered Workspace E2E is a separate hosted mode with no resource mutatio
     "workspace_identity_diagnose",
     "acceptance_b_fresh_order",
     "compute_claim_validate",
+    "controlled_pilot_closed_validate",
     "recovered_workspace_e2e"
   ]);
   assert.equal(inputs.customer_email.required, false);

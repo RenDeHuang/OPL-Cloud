@@ -332,6 +332,17 @@ paste an Account, Workspace, operation, compute, storage, or provider resource
 ID, and never type a customer-supplied resource ID into a recovery workflow.
 Console and Control Plane own the selected operation identity and validation.
 
+Before any Pilot enablement, run the protected
+`operation_mode=controlled_pilot_closed_validate` production workflow once
+against exact current `main`. It first requires the live aggregate to report
+`enabled=false`, `configured=true`, an empty allowlist, and `maxInFlight=1`.
+It then submits one Basic request with no purchase approval and requires
+`workspace_launch_admission_disabled`; Launch, wallet, Key, Workspace, and
+Receipt authority digests must remain byte-equivalent. The job has no
+kubeconfig, Tencent credentials, internal service token, account provision,
+wallet recharge, or purchase approval. An unknown response or any changed
+digest is fail-closed and must not be retried.
+
 ## Workspace Routing Verification
 
 Repository configuration declares one shared `qcloud` Ingress with `/` paths

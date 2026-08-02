@@ -22,6 +22,7 @@ export const COMPUTE_CLAIM_RECOVERY_CONFIRMATION = "RECOVER_PROVEN_COMPUTE_AND_C
 export const WORKSPACE_LAUNCH_READBACK_RECOVERY_CONFIRMATION = "RECOVER_UNKNOWN_WORKSPACE_LAUNCH_STAGE_FROM_AUTHORITATIVE_READBACK";
 export const RECOVERED_WORKSPACE_E2E_CONFIRMATION = "CONFIRM_SINGLE_MODEL_REQUEST_FOR_RECOVERED_WORKSPACE";
 const WORKSPACE_IDENTITY_DIAGNOSE_MODE = "workspace_identity_diagnose";
+const CONTROLLED_PILOT_CLOSED_VALIDATE_MODE = "controlled_basic_pilot_closed_validate";
 
 const DEFAULT_USAGE_ATTEMPTS = 24;
 const DEFAULT_USAGE_RETRY_DELAY_MS = 5_000;
@@ -228,6 +229,125 @@ export async function verifyProductionReadOnlyRollout(options = {}) {
       viewports
     },
     viewports
+  };
+}
+
+function controlledPilotClosedMetrics(result) {
+  const health = sourceEnvelope(result, "control-plane").data;
+  const pilot = readOnlyNestedSource(health?.controlledBasicPilot, "control-plane");
+  const alertCodes = Array.isArray(pilot?.alerts)
+    ? [...new Set(pilot.alerts.map((alert) => String(alert?.code || "")))].sort()
+    : [];
+  if (pilot?.enabled !== false || pilot?.configured !== true || pilot?.packageId !== "basic" ||
+    pilot?.accountAllowlistCount !== 0 || pilot?.maxInFlight !== 1 ||
+    ![pilot?.inFlight, pilot?.availableCapacity, pilot?.manualReview].every((value) => Number.isSafeInteger(value) && value >= 0) ||
+    !alertCodes.every((code) => /^controlled_pilot_[a-z_]+$/.test(code))) {
+    throw new Error("controlled_basic_pilot_not_closed");
+  }
+  return {
+    raw: pilot,
+    artifact: {
+      enabled: false,
+      configured: true,
+      accountAllowlistCount: 0,
+      packageId: "basic",
+      maxInFlight: 1,
+      alertCodes
+    }
+  };
+}
+
+function controlledPilotAuthorityDigest(value) {
+  return createHash("sha256").update(canonicalJson(value)).digest("hex");
+}
+
+async function controlledPilotAuthoritySnapshot(requestOptions, auth) {
+  const launches = (await requestJson({ ...requestOptions, auth, path: "/api/workspace-launches" })).payload;
+  if (!Array.isArray(launches) || launches.some((launch) => !["succeeded", "failed", "refunded"].includes(String(launch?.status || "")))) {
+    throw new Error("controlled_basic_pilot_validation_account_busy");
+  }
+  const wallet = sourceEnvelope(await requestJson({ ...requestOptions, auth, path: "/api/gateway/wallet" }), "sub2api").data;
+  const keys = readOnlyPage(await requestJson({ ...requestOptions, auth, path: "/api/gateway/keys?page=1&pageSize=20" }), "sub2api", { pagesRequired: true });
+  if (keys.items.some((key) => ["key", "value", "token", "secret"].some((field) => Object.hasOwn(key || {}, field)))) {
+    throw new Error("controlled_basic_pilot_key_readback_invalid");
+  }
+  const workspaces = readOnlyPage(await requestJson({ ...requestOptions, auth, path: "/api/workspaces?page=1&pageSize=20" }), "control-plane");
+  const receipts = sourceEnvelope(await requestJson({ ...requestOptions, auth, path: "/api/billing/receipts?limit=20" }), "ledger", true).data;
+  if (!Array.isArray(receipts?.receipts) || typeof receipts?.hasMore !== "boolean") {
+    throw new Error("controlled_basic_pilot_receipt_readback_invalid");
+  }
+  return { launches, wallet, keys, workspaces, receipts };
+}
+
+export async function validateControlledBasicPilotClosed(options = {}) {
+  const {
+    origin,
+    adminEmail,
+    adminPassword,
+    runIdentity,
+    requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
+    fetchImpl = globalThis.fetch,
+    signal,
+    now = new Date()
+  } = options;
+  if (!/^[1-9][0-9]{5,19}-[1-9][0-9]{0,2}$/.test(String(runIdentity || ""))) {
+    throw new Error("controlled_basic_pilot_run_identity_invalid");
+  }
+  const credentials = existingAdminCredentials(adminEmail, adminPassword);
+  const normalizedOrigin = assertPublicHttpsUrl(origin, "public_console_origin_required", { hostname: "cloud.medopl.cn" }).origin;
+  const requestOptions = { fetchImpl, origin: normalizedOrigin, signal, timeoutMs: requestTimeoutMs };
+  const auth = await login({ ...requestOptions, ...credentials });
+  if (auth.user?.accountId !== PRODUCTION_ADMIN.accountId || auth.user?.role !== PRODUCTION_ADMIN.role || !auth.csrfToken) {
+    throw new Error("controlled_basic_pilot_admin_identity_invalid");
+  }
+
+  const pilotBefore = controlledPilotClosedMetrics(await requestJson({ ...requestOptions, auth, path: "/api/operator/health" }));
+  const before = await controlledPilotAuthoritySnapshot(requestOptions, auth);
+  const idempotencyKey = `controlled-pilot-closed-${runIdentity}`;
+  const response = await fetchImpl(`${normalizedOrigin}/api/workspace-launches`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      cookie: auth.cookie,
+      "x-opl-csrf": auth.csrfToken,
+      "Idempotency-Key": idempotencyKey
+    },
+    body: JSON.stringify({ name: `Gate E closed ${String(runIdentity).split("-", 1)[0]}`, packageId: "basic", sizeGb: 10, autoRenew: false }),
+    redirect: "manual",
+    signal: readOnlyRequestSignal(signal, requestTimeoutMs)
+  });
+  let rejection;
+  try {
+    rejection = JSON.parse(await response.text());
+  } catch {
+    throw new Error("controlled_basic_pilot_rejection_invalid");
+  }
+  if (response.status !== 409 || !exactObjectKeys(rejection, ["error"]) || rejection.error !== "workspace_launch_admission_disabled") {
+    throw new Error("controlled_basic_pilot_rejection_invalid");
+  }
+
+  const after = await controlledPilotAuthoritySnapshot(requestOptions, auth);
+  const pilotAfter = controlledPilotClosedMetrics(await requestJson({ ...requestOptions, auth, path: "/api/operator/health" }));
+  if (canonicalJson(pilotBefore.raw) !== canonicalJson(pilotAfter.raw)) {
+    throw new Error("controlled_basic_pilot_health_changed");
+  }
+  const authorityDigests = {};
+  for (const name of ["launches", "wallet", "keys", "workspaces", "receipts"]) {
+    const beforeDigest = controlledPilotAuthorityDigest(before[name]);
+    const afterDigest = controlledPilotAuthorityDigest(after[name]);
+    if (beforeDigest !== afterDigest) throw new Error(`controlled_basic_pilot_${name}_changed`);
+    authorityDigests[name] = { before: beforeDigest, after: afterDigest, match: true };
+  }
+  return {
+    schemaVersion: 1,
+    operationMode: CONTROLLED_PILOT_CLOSED_VALIDATE_MODE,
+    status: "proven",
+    errorCode: "none",
+    rejection: { statusCode: 409, reasonCode: "workspace_launch_admission_disabled", attempts: 1 },
+    pilot: pilotBefore.artifact,
+    authorityDigests,
+    mutationCounts: { database: 0, sub2api: 0, fabric: 0, tencent: 0, kubernetes: 0 },
+    verifiedAt: now.toISOString()
   };
 }
 
@@ -4469,15 +4589,37 @@ export async function runProductionLiveQaCli({
   now = new Date()
 } = {}) {
   if (argv.includes("--help") || argv.includes("-h")) {
-    stdout.write("Usage: node tools/production-live-qa.ts --read-only\nA Workspace identity receipt uses --workspace-identity-diagnose with protected customer credentials and exact account/workspace IDs. Recovery Plan evidence uses --recovery-plan-validate with only the account and original launch identity. A recovered Workspace E2E requires --recovered-workspace-e2e --allow-model-write, an independent approval, and the persisted Plan reference. A fixed-slot model request requires --allow-gateway-write --allow-model-write. A real customer canary requires --basic-customer-canary, an exact funding mode, and its explicit approvals.\n");
+    stdout.write("Usage: node tools/production-live-qa.ts --read-only\nA disabled Pilot proof uses --controlled-pilot-closed-validate and performs one expected fail-closed Launch POST. A Workspace identity receipt uses --workspace-identity-diagnose with protected customer credentials and exact account/workspace IDs. Recovery Plan evidence uses --recovery-plan-validate with only the account and original launch identity. A recovered Workspace E2E requires --recovered-workspace-e2e --allow-model-write, an independent approval, and the persisted Plan reference. A fixed-slot model request requires --allow-gateway-write --allow-model-write. A real customer canary requires --basic-customer-canary, an exact funding mode, and its explicit approvals.\n");
     return 0;
   }
   const computeClaimMode = computeClaimCliMode(argv);
   const workspaceLaunchReadbackMode = workspaceLaunchReadbackCliMode(argv);
   const recoveryPlanValidateMode = argv.includes("--recovery-plan-validate");
+  const controlledPilotClosedValidateMode = argv.includes("--controlled-pilot-closed-validate");
   try {
     if (env.OPL_VERIFY_MODEL_ACCESS_KEY) throw new Error("production_live_qa_raw_key_forbidden");
     const args = cliArgs(argv);
+    if (args["controlled-pilot-closed-validate"] === "true") {
+      const conflicts = [
+        "read-only", "workspace-identity-diagnose", "recovery-plan-validate", "recovered-workspace-e2e", "basic-customer-canary",
+        "manual-review-diagnose", "workspace-launch-readback-diagnose", "workspace-launch-readback-recover",
+        "compute-claim-diagnose", "compute-claim-validate", "compute-claim-recover", "compute-claim-continue",
+        "allow-account-provision", "allow-wallet-recharge", "allow-workspace-purchase", "allow-model-write", "allow-gateway-write",
+        "approval-id", "funding-mode", "phase"
+      ];
+      if (conflicts.some((name) => args[name])) throw new Error("controlled_basic_pilot_validation_conflict");
+      const result = await validateControlledBasicPilotClosed({
+        origin: args.origin || env.OPL_CONSOLE_ORIGIN,
+        adminEmail: env.OPL_SUB2API_ADMIN_EMAIL,
+        adminPassword: env.OPL_SUB2API_ADMIN_PASSWORD,
+        runIdentity: args["run-identity"] || `${env.GITHUB_RUN_ID || ""}-${env.GITHUB_RUN_ATTEMPT || ""}`,
+        requestTimeoutMs: Number(args["request-timeout-ms"] || env.OPL_VERIFY_REQUEST_TIMEOUT_MS || DEFAULT_REQUEST_TIMEOUT_MS),
+        fetchImpl,
+        now
+      });
+      stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+      return 0;
+    }
     if (args["recovery-plan-validate"] === "true") {
       const conflicts = [
         "read-only", "manual-review-diagnose", "workspace-launch-readback-diagnose", "workspace-launch-readback-recover",
@@ -4860,6 +5002,20 @@ export async function runProductionLiveQaCli({
     stdout.write(`${JSON.stringify(result, null, 2)}\n`);
     return 0;
 	} catch (error) {
+			if (controlledPilotClosedValidateMode) {
+			  const artifact = {
+			    schemaVersion: 1,
+			    operationMode: CONTROLLED_PILOT_CLOSED_VALIDATE_MODE,
+			    status: "blocked",
+			    errorCode: /^controlled_basic_pilot_[a-z_]+$/.test(String(error?.message || ""))
+			      ? error.message
+			      : "controlled_basic_pilot_validation_failed",
+			    mutationCounts: { database: "unknown", sub2api: "unknown", fabric: "unknown", tencent: "unknown", kubernetes: "unknown" }
+			  };
+			  stdout.write(`${JSON.stringify(artifact, null, 2)}\n`);
+			  stderr.write(`${JSON.stringify({ ok: false, errorCode: artifact.errorCode }, null, 2)}\n`);
+			  return 1;
+			}
 		if (recoveryPlanValidateMode) {
 		  const artifact = {
 		    schemaVersion: 1,

@@ -393,6 +393,116 @@ function source(payload, sourceName = "sub2api", status = "available", headers =
   });
 }
 
+test("disabled controlled Basic Pilot rejects one new launch before every business authority changes", async () => {
+  const calls = [];
+  const health = {
+    controlledBasicPilot: nestedSource({
+      enabled: false,
+      configured: true,
+      packageId: "basic",
+      accountAllowlistCount: 0,
+      maxInFlight: 1,
+      inFlight: 1,
+      availableCapacity: 0,
+      manualReview: 1,
+      stages: { compute_claim_pending: 1 },
+      failures: { workspace_compute_claim_identity_mismatch: 1 },
+      disableRequired: true,
+      alerts: [{ code: "controlled_pilot_first_failure", severity: "error", action: "disable_new_purchases" }]
+    }, "control-plane")
+  };
+  const launches = [];
+  const wallet = { sub2apiUserId: "43", balanceUsdMicros: "90000000", currency: "USD" };
+  const keys = { items: [{ id: "43", name: "admin-general", kind: "general", status: "active" }], total: 1, page: 1, pageSize: 20, pages: 1 };
+  const workspaces = { items: [], total: 0, page: 1, pageSize: 20 };
+  const receipts = { receipts: [], hasMore: false };
+  const fetchImpl = async (input, init = {}) => {
+    const url = new URL(String(input));
+    const method = String(init.method || "GET").toUpperCase();
+    const body = init.body ? JSON.parse(String(init.body)) : null;
+    calls.push({ method, path: url.pathname, search: url.search, headers: new Headers(init.headers), body });
+    if (url.pathname === "/api/auth/login") {
+      return json({ user: { accountId: ADMIN_ACCOUNT_ID, role: "admin" } }, 200, {
+        "set-cookie": "opl_session=admin; Path=/; HttpOnly",
+        "x-opl-csrf-token": "admin-csrf"
+      });
+    }
+    if (url.pathname === "/api/operator/health") return source(health, "control-plane");
+    if (url.pathname === "/api/workspace-launches" && method === "GET") return json(launches);
+    if (url.pathname === "/api/workspace-launches" && method === "POST") {
+      assert.deepEqual(body, { name: "Gate E closed 30768540000", packageId: "basic", sizeGb: 10, autoRenew: false });
+      return json({ error: "workspace_launch_admission_disabled" }, 409);
+    }
+    if (url.pathname === "/api/gateway/wallet") return source(wallet);
+    if (url.pathname === "/api/gateway/keys") return source(keys);
+    if (url.pathname === "/api/workspaces") return source(workspaces, "control-plane", "empty");
+    if (url.pathname === "/api/billing/receipts") return source(receipts, "ledger", "empty");
+    return json({ error: "unexpected" }, 404);
+  };
+
+  const result = await productionLiveQa.validateControlledBasicPilotClosed({
+    origin: "https://cloud.medopl.cn",
+    adminEmail: ADMIN_EMAIL,
+    adminPassword: ADMIN_PASSWORD,
+    runIdentity: "30768540000-1",
+    fetchImpl,
+    now: new Date("2026-08-03T00:00:00Z")
+  });
+
+  assert.equal(result.schemaVersion, 1);
+  assert.equal(result.operationMode, "controlled_basic_pilot_closed_validate");
+  assert.equal(result.status, "proven");
+  assert.equal(result.errorCode, "none");
+  assert.equal(result.rejection.statusCode, 409);
+  assert.equal(result.rejection.reasonCode, "workspace_launch_admission_disabled");
+  assert.equal(result.rejection.attempts, 1);
+  assert.deepEqual(result.pilot, {
+    enabled: false,
+    configured: true,
+    accountAllowlistCount: 0,
+    packageId: "basic",
+    maxInFlight: 1,
+    alertCodes: ["controlled_pilot_first_failure"]
+  });
+  assert.deepEqual(result.mutationCounts, { database: 0, sub2api: 0, fabric: 0, tencent: 0, kubernetes: 0 });
+  assert.deepEqual(Object.keys(result.authorityDigests).sort(), ["keys", "launches", "receipts", "wallet", "workspaces"]);
+  assert.equal(Object.values(result.authorityDigests).every((entry) => entry.before === entry.after && entry.match === true), true);
+  assert.equal(result.verifiedAt, "2026-08-03T00:00:00.000Z");
+
+  const launchPosts = calls.filter(({ method, path }) => method === "POST" && path === "/api/workspace-launches");
+  assert.equal(launchPosts.length, 1);
+  assert.equal(launchPosts[0].headers.get("idempotency-key"), "controlled-pilot-closed-30768540000-1");
+  assert.equal(launchPosts[0].headers.get("x-opl-csrf"), "admin-csrf");
+  assert.equal(calls.filter(({ method }) => method === "POST").length, 2);
+  assert.doesNotMatch(JSON.stringify(result), /acct-admin|admin-general|password|cookie|csrf|token|secret|balanceUsdMicros/i);
+});
+
+test("disabled controlled Pilot validator fails before POST unless live configuration is closed", async () => {
+  let launchPosts = 0;
+  const fetchImpl = async (input, init = {}) => {
+    const url = new URL(String(input));
+    if (url.pathname === "/api/auth/login") {
+      return json({ user: { accountId: ADMIN_ACCOUNT_ID, role: "admin" } }, 200, {
+        "set-cookie": "opl_session=admin; Path=/; HttpOnly",
+        "x-opl-csrf-token": "admin-csrf"
+      });
+    }
+    if (url.pathname === "/api/operator/health") {
+      return source({ controlledBasicPilot: nestedSource({ enabled: true, configured: true, packageId: "basic", accountAllowlistCount: 1, maxInFlight: 1 }, "control-plane") }, "control-plane");
+    }
+    if (url.pathname === "/api/workspace-launches" && String(init.method || "GET").toUpperCase() === "POST") launchPosts += 1;
+    return json({ error: "unexpected" }, 404);
+  };
+  await assert.rejects(() => productionLiveQa.validateControlledBasicPilotClosed({
+    origin: "https://cloud.medopl.cn",
+    adminEmail: ADMIN_EMAIL,
+    adminPassword: ADMIN_PASSWORD,
+    runIdentity: "30768540000-1",
+    fetchImpl
+  }), /controlled_basic_pilot_not_closed/);
+  assert.equal(launchPosts, 0);
+});
+
 function nestedSource(payload, sourceName) {
   return { source: sourceName, status: "available", available: true, fetchedAt: new Date().toISOString(), data: payload };
 }
