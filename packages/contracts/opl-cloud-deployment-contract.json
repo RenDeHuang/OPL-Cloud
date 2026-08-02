@@ -82,6 +82,7 @@
         "prepare-basic-customer-operation",
         "workspace-identity-diagnose",
         "acceptance-b-fresh-order",
+        "controlled-pilot-closed-validate",
         "compute-claim-validate"
       ]
     },
@@ -621,6 +622,20 @@
       "terminalEvidence": ["launch_succeeded", "runtime_ready", "receipt_completed", "pod_image_id_equals_approved_workspace_image_digest", "workspace_url_http_200"],
       "forbiddenFields": ["password", "token", "secret", "redeem_code", "provider_request_id", "model_prompt", "model_response"]
     }
+  },
+  "productionControlledBasicPilotClosedValidation": {
+    "workflow": ".github/workflows/production-basic-customer-operation.yml",
+    "workflowMode": "controlled_pilot_closed_validate",
+    "runner": ["self-hosted", "tencent-cloud", "opl-cloud", "tke-vpc"],
+    "environment": "production",
+    "prerequisite": "live_controlled_pilot_enabled_false_configured_true_empty_allowlist_max_in_flight_1_and_validation_account_has_no_active_launch",
+    "request": {"method": "POST", "path": "/api/workspace-launches", "packageId": "basic", "sizeGb": 10, "autoRenew": false, "attempts": 1},
+    "expectedRejection": "workspace_launch_admission_disabled",
+    "authorityReadbacks": ["control_plane_launches", "sub2api_wallet", "sub2api_keys", "control_plane_workspaces", "ledger_receipts"],
+    "requiredMutationCounts": {"database": 0, "sub2api": 0, "fabric": 0, "tencent": 0, "kubernetes": 0},
+    "forbiddenCapabilities": ["account_provision", "wallet_recharge", "workspace_purchase_approval", "kubeconfig", "internal_service_token", "tencent_credentials"],
+    "unknownResult": "fail_closed_no_retry_reconcile_authority_digests_only",
+    "artifact": "redacted_reason_code_pilot_aggregate_and_before_after_sha256_digests_only"
   },
   "productionWorkspaceRecoveryPlan": {
     "authority": "control_plane_only",
