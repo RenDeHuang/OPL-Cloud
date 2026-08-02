@@ -80,7 +80,8 @@ function source(data, name = "control-plane", status = "available") {
 }
 
 function unavailable(name) {
-  return { source: name, status: "unavailable", available: false, fetchedAt: NOW };
+  const normalizedName = name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "unknown";
+  return { source: name, status: "unavailable", available: false, fetchedAt: NOW, reasonCode: `${normalizedName}_unavailable` };
 }
 
 function gatewayKey(id = "11", name = "General fixture key", input = {}, identity = {}) {
@@ -1470,7 +1471,8 @@ export async function runConsoleBrowserQa({
       for (const sourceState of ["empty", "unavailable", "error"]) {
         state.sourceState = sourceState;
         await page.goto(`${server.origin}/console/api/keys?state=${sourceState}&viewport=${name}`, { waitUntil: "networkidle" });
-        await waitForText(page, sourceState === "empty" ? "暂无数据" : sourceState === "unavailable" ? "暂不可用" : "服务暂不可用");
+        await waitForText(page, sourceState === "empty" ? "暂无数据" : "API Keys 暂不可用");
+        if (sourceState !== "empty") await waitForText(page, "原因代码：sub2api_unavailable");
       }
 
       state.role = "operator";
@@ -1563,7 +1565,8 @@ export async function runConsoleBrowserQa({
         state.sourceState = sourceState;
         operatorReadStart = state.operatorPageReads.length;
         await page.goto(`${server.origin}/admin/resources?state=${sourceState}&viewport=${name}`, { waitUntil: "networkidle" });
-        await waitForText(page, sourceState === "empty" ? "暂无 Workspace" : sourceState === "unavailable" ? "Workspace 资源暂不可用" : "服务暂不可用");
+        await waitForText(page, sourceState === "empty" ? "暂无 Workspace" : "Workspace 资源暂不可用");
+        if (sourceState !== "empty") await waitForText(page, "原因代码：control_plane_fabric_sub2api_unavailable");
         assertOperatorPageReads(state, operatorReadStart, ["/api/operator/workspaces"]);
       }
       await assertNoViewportOverflow(page);
