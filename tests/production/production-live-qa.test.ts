@@ -3721,7 +3721,8 @@ test("compute-claim approval validation CLI proves the server binding without cl
         launchOperationId: COMPUTE_CLAIM_TARGET.launchOperationId,
         accountId: COMPUTE_CLAIM_TARGET.accountId,
         workspaceId: COMPUTE_CLAIM_TARGET.workspaceId,
-        runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
+        // Go's encoding/json sorts map keys, so production returns this order.
+        runnerDirectMutationCounts: { kubernetes: 0, sub2api: 0, tencent: 0 }
       });
     },
     now: new Date("2026-08-28T00:00:00Z")
@@ -3751,6 +3752,63 @@ test("compute-claim approval validation CLI proves the server binding without cl
   assert.equal(calls[2].method, "POST");
   assert.equal(calls[2].headers.get("x-opl-compute-claim-capability"), "compute-claim-runner-capability");
   assert.doesNotMatch(`${stdout}\n${stderr}`, /password|secret|token|cookie|customer@example\.com|compute-claim-runner-capability/i);
+});
+
+test("compute-claim approval validation rejects drifted direct mutation counts", async () => {
+  const approval = JSON.parse(computeClaimApprovalJson());
+  const approvalDigest = createHash("sha256").update(canonicalJsonForTest(approval)).digest("hex");
+  for (const runnerDirectMutationCounts of [
+    { sub2api: 0, tencent: 0 },
+    { sub2api: 0, tencent: 0, kubernetes: 0, database: 0 },
+    { sub2api: 0, tencent: 1, kubernetes: 0 },
+    { sub2api: "0", tencent: 0, kubernetes: 0 }
+  ]) {
+    let stdout = "";
+    const code = await runProductionLiveQaCli({
+      argv: [
+        "--compute-claim-validate",
+        "--compute-claim-target-json", JSON.stringify(COMPUTE_CLAIM_TARGET),
+        "--approval-id", approval.approvalId
+      ],
+      env: {
+        OPL_MERGED_SHA: BASIC_CANARY_MERGED_SHA,
+        OPL_COMPUTE_CLAIM_CLOUD_DIGEST: BASIC_CANARY_CLOUD_DIGEST,
+        OPL_COMPUTE_CLAIM_RECOVERY_APPROVAL_JSON: JSON.stringify(approval),
+        OPL_INTERNAL_SERVICE_TOKEN: "compute-claim-runner-capability",
+        OPL_CONSOLE_ORIGIN: "https://cloud.medopl.cn",
+        OPL_SUB2API_ADMIN_EMAIL: ADMIN_EMAIL,
+        OPL_SUB2API_ADMIN_PASSWORD: ADMIN_PASSWORD,
+        OPL_BASIC_CANARY_CUSTOMER_EMAIL: COMPUTE_CLAIM_CUSTOMER_EMAIL,
+        OPL_K8S_NAMESPACE: "opl-cloud",
+        KUBECONFIG: "/run/secrets/kubeconfig"
+      },
+      stdout: { write: (chunk) => { stdout += chunk; } },
+      stderr: { write: () => {} },
+      cloudRevisionEvidenceReader: async () => computeClaimCloudRevisionEvidence(),
+      fetchImpl: async (input) => {
+        const url = new URL(String(input));
+        if (url.pathname === "/api/auth/login") {
+          return json({ user: { accountId: "acct-admin", role: "admin" } }, 200, {
+            "set-cookie": "opl_session=session-fixture; Path=/; HttpOnly",
+            "x-opl-csrf-token": "csrf-compute-claim"
+          });
+        }
+        if (url.pathname === "/api/operator/accounts") return computeClaimAccountAuthority();
+        return json({
+          schemaVersion: 2,
+          status: "proven",
+          approvalId: approval.approvalId,
+          approvalDigest,
+          launchOperationId: COMPUTE_CLAIM_TARGET.launchOperationId,
+          accountId: COMPUTE_CLAIM_TARGET.accountId,
+          workspaceId: COMPUTE_CLAIM_TARGET.workspaceId,
+          runnerDirectMutationCounts
+        });
+      }
+    });
+    assert.equal(code, 1);
+    assert.equal(JSON.parse(stdout).errorCode, "compute_claim_validation_response_invalid");
+  }
 });
 
 test("compute-claim approval validation rejects workflow customer drift before release or network access", async () => {

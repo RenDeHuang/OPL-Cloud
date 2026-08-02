@@ -1623,6 +1623,11 @@ function computeClaimApprovedRequest(target, approval) {
   };
 }
 
+function computeClaimRunnerDirectMutationCountsAreZero(value) {
+  return exactObjectKeys(value, ["sub2api", "tencent", "kubernetes"]) &&
+    value.sub2api === 0 && value.tencent === 0 && value.kubernetes === 0;
+}
+
 export async function validateComputeClaimApproval(options = {}) {
   const {
     target: rawTarget, approvalJson, approvalId, mergedSha, cloudImageDigest, customerEmail, origin, adminEmail, adminPassword,
@@ -1687,7 +1692,7 @@ export async function validateComputeClaimApproval(options = {}) {
   if (!exactObjectKeys(payload, COMPUTE_CLAIM_VALIDATION_RESPONSE_KEYS) || payload.schemaVersion !== 2 || payload.status !== "proven" || payload.approvalId !== approval.approvalId ||
     payload.approvalDigest !== request.approvalDigest || payload.launchOperationId !== target.launchOperationId ||
     payload.accountId !== target.accountId || payload.workspaceId !== target.workspaceId ||
-    JSON.stringify(payload.runnerDirectMutationCounts) !== JSON.stringify({ sub2api: 0, tencent: 0, kubernetes: 0 })) {
+    !computeClaimRunnerDirectMutationCountsAreZero(payload.runnerDirectMutationCounts)) {
     const invalid = new Error("compute_claim_validation_response_invalid");
     invalid.responseMetadata = response.responseMetadata;
     throw invalid;
