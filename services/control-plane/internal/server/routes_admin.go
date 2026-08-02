@@ -289,19 +289,33 @@ func registerAdminRoutes(mux *http.ServeMux, app *controlPlaneServer, service *c
 				return
 			}
 		}
-		binding, err := app.workspaceComputeClaimApprovalBinding(r.Context(), operation, input, key, operation.ComputeClaimApproval != nil)
+		binding, bindingErr := app.workspaceComputeClaimApprovalBinding(r.Context(), operation, input, key, operation.ComputeClaimApproval != nil)
+		persistedBindingMatches := operation.ComputeClaimApproval == nil || workspaceComputeClaimApprovalBindingMatches(*operation.ComputeClaimApproval, binding) ||
+			workspaceComputeClaimApprovalMayBeSuperseded(operation, *operation.ComputeClaimApproval, binding)
+		identityEvidence, err := service.ComputeClaimRecoveryIdentityEvidence(r.Context(), clients.ComputeClaimRecoveryClaimInput{
+			ComputeClaimRecoveryInput: workspaceComputeClaimRecoveryInput(operation, input), MachineName: operation.ComputeMachineName,
+			NodeName: operation.ComputeNodeName, CVMInstanceID: operation.ComputeCVMInstanceID, PrivateIP: operation.ComputePrivateIP,
+			InstanceType: operation.ComputeInstanceType, Zone: operation.ComputeZone,
+		})
 		if err != nil {
-			writeWorkspaceComputeClaimError(w, err)
-			return
-		}
-		if operation.ComputeClaimApproval != nil && !workspaceComputeClaimApprovalBindingMatches(*operation.ComputeClaimApproval, binding) &&
-			!workspaceComputeClaimApprovalMayBeSuperseded(operation, *operation.ComputeClaimApproval, binding) {
 			writeWorkspaceComputeClaimError(w, errWorkspaceComputeClaimIdentity)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{
-			"schemaVersion": 2, "status": "proven", "approvalId": binding.ApprovalID, "approvalDigest": binding.ApprovalDigest,
+		providerProof, providerProofErr := service.ComputeClaimRecoveryProof(r.Context(), workspaceComputeClaimRecoveryInput(operation, input))
+		identityEvidence.Checks = append(workspaceComputeClaimApprovalIdentityEvidence(operation, input, binding, key), identityEvidence.Checks...)
+		identityEvidence.Checks = append(identityEvidence.Checks, workspaceComputeClaimProviderIdentityEvidence(input, providerProof, providerProofErr)...)
+		statusCode, status, errorCode := http.StatusOK, "proven", "none"
+		allIdentityChecksMatch := true
+		for _, check := range identityEvidence.Checks {
+			allIdentityChecksMatch = allIdentityChecksMatch && check.Matches
+		}
+		if bindingErr != nil || !persistedBindingMatches || !allIdentityChecksMatch {
+			statusCode, status, errorCode = http.StatusConflict, "blocked", "identity_mismatch"
+		}
+		writeJSON(w, statusCode, map[string]any{
+			"schemaVersion": 2, "status": status, "errorCode": errorCode, "approvalId": binding.ApprovalID, "approvalDigest": binding.ApprovalDigest,
 			"launchOperationId": operation.ID, "accountId": operation.AccountID, "workspaceId": operation.WorkspaceID,
+			"identityEvidence":           identityEvidence,
 			"runnerDirectMutationCounts": map[string]any{"sub2api": 0, "tencent": 0, "kubernetes": 0},
 		})
 	})))

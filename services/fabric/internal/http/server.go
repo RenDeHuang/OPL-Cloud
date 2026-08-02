@@ -119,6 +119,20 @@ func NewServer(service *fabric.Service, token string) http.Handler {
 		proof, err := service.ComputeClaimRecoveryProof(r.Context(), input)
 		writeComputeClaimRecoveryResult(w, http.StatusOK, proof, err)
 	})
+	mux.HandleFunc("POST /fabric/compute-claim-recovery/identity-evidence", func(w http.ResponseWriter, r *http.Request) {
+		var input fabric.ComputeClaimRecoveryClaimInput
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid JSON body")
+			return
+		}
+		input.IdempotencyKey = input.LaunchOperationID + ":compute"
+		evidence, err := service.ComputeClaimRecoveryIdentityEvidence(r.Context(), input)
+		if err != nil {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, evidence)
+	})
 	mux.HandleFunc("POST /fabric/compute-claim-recovery/claim", func(w http.ResponseWriter, r *http.Request) {
 		idempotencyKey := r.Header.Get("Idempotency-Key")
 		if strings.TrimSpace(idempotencyKey) == "" || idempotencyKey != strings.TrimSpace(idempotencyKey) {

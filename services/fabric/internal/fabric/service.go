@@ -466,6 +466,17 @@ func (s *Service) ComputeClaimRecoveryProof(ctx context.Context, input ComputeCl
 	return proof, nil
 }
 
+func (s *Service) ComputeClaimRecoveryIdentityEvidence(ctx context.Context, input ComputeClaimRecoveryClaimInput) (*ComputeClaimIdentityEvidence, error) {
+	if !validComputeClaimRecoveryClaimInput(input) {
+		return nil, ErrInvalidComputeClaimRecovery
+	}
+	operation, _, _, _, _, err := s.computeClaimRecoveryLocalState(ctx, input.ComputeClaimRecoveryInput)
+	if err != nil {
+		return nil, err
+	}
+	return computeClaimIdentityEvidence(operation, input), nil
+}
+
 func validStorageRecoveryDiscovery(discovery StorageRecoveryDiscovery) bool {
 	if discovery.MutationCount != 0 || strings.TrimSpace(discovery.ProviderRequestID) == "" {
 		return false
@@ -1126,6 +1137,53 @@ func historicalComputeClaimRecoveryBinding(input ComputeClaimRecoveryClaimInput)
 	legacy := input
 	legacy.IdempotencyKey = input.LaunchOperationID + ":compute-claim"
 	return newComputeClaimRecoveryBinding(legacy)
+}
+
+func computeClaimIdentityDigest(value string) string {
+	if value == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(sum[:])
+}
+
+func computeClaimIdentityEvidence(operation FabricOperation, input ComputeClaimRecoveryClaimInput) *ComputeClaimIdentityEvidence {
+	want := newComputeClaimRecoveryBinding(input)
+	historical := historicalComputeClaimRecoveryBinding(input)
+	got, present, valid := decodeComputeClaimRecoveryBinding(operation)
+	ledger, ledgerPresent, ledgerValid := decodeComputeClaimRecoveryMutation(operation)
+	ledgerState := "absent"
+	if ledgerPresent {
+		ledgerState = "invalid"
+		if ledgerValid {
+			ledgerState = ledger.State
+		}
+	}
+	checks := []ComputeClaimIdentityCheck{
+		{Field: "fabric.operationId", Matches: operation.OperationID != "", Expected: "non_empty", Actual: operation.OperationID},
+		{Field: "fabric.operationIdempotencyKey", Matches: operation.IdempotencyKey == input.LaunchOperationID+":compute", Expected: input.LaunchOperationID + ":compute", Actual: operation.IdempotencyKey},
+		{Field: "fabric.operationRequestHash", Matches: operation.RequestHash != "", ExpectedDigest: computeClaimIdentityDigest(operation.RequestHash), ActualDigest: computeClaimIdentityDigest(operation.RequestHash)},
+		{Field: "binding.present", Matches: present, Expected: "present", Actual: map[bool]string{true: "present", false: "absent"}[present]},
+		{Field: "binding.valid", Matches: valid, Expected: "valid", Actual: map[bool]string{true: "valid", false: "invalid"}[valid]},
+	}
+	if present && valid {
+		bindingKind := "mismatch"
+		expected := want
+		if got == want {
+			bindingKind = "current"
+		} else if got == historical {
+			bindingKind = "historical"
+			expected = historical
+		}
+		checks = append(checks,
+			ComputeClaimIdentityCheck{Field: "binding.compatibility", Matches: bindingKind != "mismatch", Expected: "current_or_historical", Actual: bindingKind},
+			ComputeClaimIdentityCheck{Field: "binding.launchOperationId", Matches: got.LaunchOperationID == expected.LaunchOperationID, Expected: expected.LaunchOperationID, Actual: got.LaunchOperationID},
+			ComputeClaimIdentityCheck{Field: "binding.idempotencyKey", Matches: got.IdempotencyKey == expected.IdempotencyKey, Expected: expected.IdempotencyKey, Actual: got.IdempotencyKey},
+			ComputeClaimIdentityCheck{Field: "binding.targetHash", Matches: got.TargetHash == expected.TargetHash, ExpectedDigest: computeClaimIdentityDigest(expected.TargetHash), ActualDigest: computeClaimIdentityDigest(got.TargetHash)},
+			ComputeClaimIdentityCheck{Field: "binding.requestHash", Matches: got.RequestHash == expected.RequestHash, ExpectedDigest: computeClaimIdentityDigest(expected.RequestHash), ActualDigest: computeClaimIdentityDigest(got.RequestHash)},
+		)
+	}
+	return &ComputeClaimIdentityEvidence{Checks: checks, MutationLedger: ledgerState}
 }
 
 func decodeComputeClaimRecoveryBinding(operation FabricOperation) (computeClaimRecoveryBinding, bool, bool) {

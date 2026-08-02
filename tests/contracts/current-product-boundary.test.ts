@@ -523,11 +523,12 @@ test("Current Fabric contracts require dedicated package NodePools without weake
         authority: "same_strict_approval_binding_as_claim_without_persistence_or_claim",
         customerEmailSource: "protected_customer_email_input_exactly_matches_approval_and_account_authority",
         legacyIdentity: "zero_mutation_proof_projected_in_memory_only",
+        identityEvidence: "control_plane_and_fabric_allowlisted_field_checks_with_raw_ids_and_second_digest_hashes",
         runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
         invalidResponseMetadata: {
           appliesOnlyTo: "compute_claim_validation_response_invalid",
           fields: ["statusCode", "contentType", "topLevelKeys"],
-          topLevelKeyAllowlist: ["schemaVersion", "status", "approvalId", "approvalDigest", "launchOperationId", "accountId", "workspaceId", "runnerDirectMutationCounts"],
+          topLevelKeyAllowlist: ["schemaVersion", "status", "errorCode", "approvalId", "approvalDigest", "launchOperationId", "accountId", "workspaceId", "identityEvidence", "runnerDirectMutationCounts"],
           forbidden: ["responseBody", "headers", "credentials", "customerIdentity"]
         },
         forbiddenCalls: ["ClaimComputeRecovery", "create_storage_volume", "debit", "refund", "recharge", "delete", "replace"]
@@ -860,6 +861,7 @@ test("Current contracts hard cut operator resources, wallet adjustments, and ann
   });
   assert.deepEqual(boundary.services.fabric.workspaceComputeClaimRecovery, {
     proofEndpoint: "POST /fabric/compute-claim-recovery/proof",
+    identityEvidenceEndpoint: "POST /fabric/compute-claim-recovery/identity-evidence",
     claimEndpoint: "POST /fabric/compute-claim-recovery/claim",
     scope: "workspace.launch.v2_compute_claim_pending_before_storage_create",
     proofAuthority: ["launch_operation", "compute_allocation", "allocation_plan", "machine_ownership", "tencent_describe", "tencent_describe_disks", "kubernetes_get"],
@@ -893,6 +895,7 @@ test("Current contracts hard cut operator resources, wallet adjustments, and ann
     reasons: ["local_identity", "provider_describe", "iam_rbac", "multiple_candidate", "identity_mismatch", "node_ownership_conflict", "storage_already_started"],
     proofMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
     idempotencyBinding: ["launch_operation_id", "idempotency_key", "target_hash", "request_hash"],
+    identityEvidence: "zero_mutation_allowlisted_expected_actual_for_ids_and_second_digest_for_hashes",
     bindingPersistence: "original_create_compute_allocation_operation_payload_cas",
     malformedOrDriftedBinding: "fail_closed_conflict_zero_provider_mutation",
     mutationLedger: {

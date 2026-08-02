@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
@@ -1930,6 +1931,86 @@ func workspaceComputeClaimApprovalBindingMatches(got, want workspaceComputeClaim
 	return gotErr == nil && wantErr == nil && bytes.Equal(gotPayload, wantPayload)
 }
 
+func workspaceComputeClaimIdentityCheck(field string, expected, actual any) clients.ComputeClaimIdentityCheck {
+	expectedValue, actualValue := fmt.Sprint(expected), fmt.Sprint(actual)
+	if expectedValue == "" {
+		expectedValue = "<empty>"
+	}
+	if actualValue == "" {
+		actualValue = "<empty>"
+	}
+	return clients.ComputeClaimIdentityCheck{Field: field, Matches: expectedValue == actualValue, Expected: expectedValue, Actual: actualValue}
+}
+
+func workspaceComputeClaimIdentityAllowedCheck(field, expected string, actual string, allowed ...string) clients.ComputeClaimIdentityCheck {
+	matches := false
+	for _, value := range allowed {
+		matches = matches || actual == value
+	}
+	if actual == "" {
+		actual = "<empty>"
+	}
+	return clients.ComputeClaimIdentityCheck{Field: field, Matches: matches, Expected: expected, Actual: actual}
+}
+
+func workspaceComputeClaimApprovalIdentityEvidence(operation workspaceLaunchOperation, input workspaceComputeClaimRecoveryRequest, binding workspaceComputeClaimApprovalBinding, key string) []clients.ComputeClaimIdentityCheck {
+	effective, persistedState := binding, "not_persisted"
+	if operation.ComputeClaimApproval != nil {
+		switch {
+		case workspaceComputeClaimApprovalBindingMatches(*operation.ComputeClaimApproval, binding):
+			effective, persistedState = *operation.ComputeClaimApproval, "exact"
+		case workspaceComputeClaimApprovalMayBeSuperseded(operation, *operation.ComputeClaimApproval, binding):
+			persistedState = "allowed_successor"
+		default:
+			effective, persistedState = *operation.ComputeClaimApproval, "mismatch"
+		}
+	}
+	persistedMatches := persistedState != "mismatch"
+	canonicalApprovalDigest := workspaceComputeClaimApprovalDigest(binding)
+	checks := []clients.ComputeClaimIdentityCheck{
+		workspaceComputeClaimIdentityCheck("controlPlane.launchOperationId", input.LaunchOperationID, operation.ID),
+		workspaceComputeClaimIdentityCheck("controlPlane.accountId", input.AccountID, operation.AccountID),
+		workspaceComputeClaimIdentityCheck("controlPlane.workspaceId", input.WorkspaceID, operation.WorkspaceID),
+		workspaceComputeClaimIdentityCheck("controlPlane.computeAllocationId", input.ComputeID, operation.ComputeID),
+		workspaceComputeClaimIdentityCheck("controlPlane.storageId", input.StorageID, operation.StorageID),
+		workspaceComputeClaimIdentityCheck("controlPlane.cvmInstanceId", input.CVMInstanceID, operation.ComputeCVMInstanceID),
+		workspaceComputeClaimIdentityCheck("controlPlane.zone", input.Zone, operation.ComputeZone),
+		workspaceComputeClaimIdentityCheck("controlPlane.privateIp", input.PrivateIP, operation.ComputePrivateIP),
+		workspaceComputeClaimIdentityCheck("controlPlane.instanceType", input.InstanceType, operation.ComputeInstanceType),
+		workspaceComputeClaimIdentityCheck("controlPlane.nodeName", input.NodeName, operation.ComputeNodeName),
+		workspaceComputeClaimIdentityCheck("controlPlane.machineName", input.MachineName, operation.ComputeMachineName),
+		workspaceComputeClaimIdentityCheck("controlPlane.workspaceApiKeyId", input.Resources.WorkspaceAPIKeyID, strconv.FormatInt(operation.WorkspaceAPIKeyID, 10)),
+		workspaceComputeClaimIdentityCheck("approval.approvalId", input.ApprovalID, effective.ApprovalID),
+		workspaceComputeClaimIdentityCheck("approval.approvalDigest", canonicalApprovalDigest, input.ApprovalDigest),
+		workspaceComputeClaimIdentityCheck("approval.persistedApprovalDigest", input.ApprovalDigest, effective.ApprovalDigest),
+		workspaceComputeClaimIdentityCheck("approval.idempotencyKey", key, effective.IdempotencyKey),
+		{Field: "approval.persistedBinding", Matches: persistedMatches, Expected: "not_persisted_or_exact_or_allowed_successor", Actual: persistedState},
+		workspaceComputeClaimIdentityCheck("release.mergedMainSha", input.MergedMainSHA, effective.MergedMainSHA),
+		workspaceComputeClaimIdentityCheck("release.cloudImageDigest", input.CloudImageDigest, effective.CloudImageDigest),
+		workspaceComputeClaimIdentityCheck("release.workspaceImageDigest", input.WorkspaceImageDigest, effective.WorkspaceImageDigest),
+	}
+	return checks
+}
+
+func workspaceComputeClaimProviderIdentityEvidence(input workspaceComputeClaimRecoveryRequest, proof clients.ComputeClaimRecoveryProof, proofErr error) []clients.ComputeClaimIdentityCheck {
+	readbackStatus := "available"
+	if proofErr != nil {
+		readbackStatus = "classified_failure"
+	}
+	return []clients.ComputeClaimIdentityCheck{
+		workspaceComputeClaimIdentityCheck("provider.readbackStatus", "available", readbackStatus),
+		workspaceComputeClaimIdentityCheck("provider.reason", "none", proof.Reason),
+		workspaceComputeClaimIdentityCheck("provider.cvmInstanceId", input.CVMInstanceID, proof.CVMInstanceID),
+		workspaceComputeClaimIdentityCheck("provider.zone", input.Zone, proof.Zone),
+		workspaceComputeClaimIdentityCheck("provider.privateIp", input.PrivateIP, proof.PrivateIP),
+		workspaceComputeClaimIdentityCheck("provider.instanceType", input.InstanceType, proof.InstanceType),
+		workspaceComputeClaimIdentityCheck("provider.nodeName", input.NodeName, proof.NodeName),
+		workspaceComputeClaimIdentityCheck("provider.machineName", input.MachineName, proof.MachineName),
+		workspaceComputeClaimIdentityAllowedCheck("provider.cvmOwnership", "recoverable_or_target_owned", proof.CVMOwnershipState, "recoverable", "target_owned"),
+		workspaceComputeClaimIdentityAllowedCheck("provider.nodeOwnership", "unallocated_or_target_owned", proof.NodeOwnershipState, "unallocated", "target_owned"),
+	}
+}
+
 func workspaceComputeClaimApprovalScopeMatches(got, want workspaceComputeClaimApprovalBinding) bool {
 	got.ApprovalID, got.ApprovalDigest, got.ExpiresAt = "", "", ""
 	got.MergedMainSHA, got.CloudImageDigest, got.IdempotencyKey, got.RecoveryKey = "", "", "", ""
@@ -1988,7 +2069,7 @@ func (app *controlPlaneServer) workspaceComputeClaimApprovalBinding(ctx context.
 		input.PoolID != target.PoolID || input.MachineName != target.MachineName || input.NodeName != target.NodeName || input.CVMInstanceID != target.CVMInstanceID ||
 		input.PrivateIP != target.PrivateIP || input.InstanceType != target.InstanceType || input.Zone != target.Zone ||
 		workspaceComputeClaimApprovalDigest(binding) != input.ApprovalDigest {
-		return workspaceComputeClaimApprovalBinding{}, errWorkspaceComputeClaimIdentity
+		return binding, errWorkspaceComputeClaimIdentity
 	}
 	return binding, nil
 }

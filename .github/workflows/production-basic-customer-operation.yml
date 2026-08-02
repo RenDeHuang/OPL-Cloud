@@ -1980,10 +1980,13 @@ jobs:
               ? JSON.stringify(value)
               : `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(",")}}`;
           const approvalDigest = createHash("sha256").update(canonicalJson(approval)).digest("hex");
+          const identityChecks = result?.identityEvidence?.checks;
           if (result?.schemaVersion !== 2 || result?.operationMode !== "compute_claim_validate" || result?.status !== "proven" ||
             result?.recoveryEligible !== true || result?.errorCode !== "none" || result?.release?.mergedSha !== process.env.OPL_MERGED_SHA ||
             result?.release?.cloudImageDigest !== process.env.OPL_COMPUTE_CLAIM_CLOUD_DIGEST || canonicalJson(result?.target) !== canonicalJson(target) ||
             result?.approval?.approvalId !== process.env.OPL_COMPUTE_CLAIM_RECOVERY_APPROVAL_ID || result?.approval?.approvalDigest !== approvalDigest ||
+            !Array.isArray(identityChecks) || identityChecks.length < 2 || !identityChecks.every((check) => typeof check?.field === "string" && check?.matches === true) ||
+            !["absent", "invalid", "reserved", "observed", "node_reserved", "succeeded"].includes(result?.identityEvidence?.mutationLedger) ||
             result?.runnerDirectMutationCounts?.sub2api !== 0 || result?.runnerDirectMutationCounts?.tencent !== 0 ||
             result?.runnerDirectMutationCounts?.kubernetes !== 0 || /@|password|secret|token|cookie|maskedValue/i.test(JSON.stringify(result))) {
             console.error(`Compute claim validation blocked: ${String(result?.errorCode || "validation_artifact_invalid")}`);

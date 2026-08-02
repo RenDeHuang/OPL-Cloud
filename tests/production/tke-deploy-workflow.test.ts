@@ -1272,6 +1272,8 @@ test("compute claim approval validation is a zero-mutation production mode befor
   assert.doesNotMatch(runs, /\brg -q 'compute-claim-recovery\/validate'/);
   assert.match(runs, /get secret opl-cloud-internal-service/);
   assert.match(runs, /runnerDirectMutationCounts/);
+  assert.match(runs, /identityEvidence/);
+  assert.match(runs, /identityChecks/);
   assert.doesNotMatch(runs, /compute-claim-recovery\/claim|--compute-claim-recover|ClaimComputeRecovery|create_original_cbs|reuse_original_cbs/i);
 });
 

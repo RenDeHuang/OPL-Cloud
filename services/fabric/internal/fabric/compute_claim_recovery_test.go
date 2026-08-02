@@ -882,6 +882,46 @@ func TestClaimComputeRecoveryRejectsMalformedPersistedBindingWithoutMutationOrOv
 	}
 }
 
+func TestComputeClaimRecoveryIdentityEvidenceClassifiesPersistedBindingWithoutMutation(t *testing.T) {
+	service, store, provider, input := seedComputeClaimRecovery(t, "basic")
+	claimInput := ComputeClaimRecoveryClaimInput{
+		ComputeClaimRecoveryInput: input, MachineName: "machine-after", NodeName: "10.0.0.18", CVMInstanceID: "ins-fixture",
+		PrivateIP: provider.proof.PrivateIP, InstanceType: provider.proof.InstanceType, Zone: provider.proof.Zone,
+		IdempotencyKey: input.LaunchOperationID + ":compute",
+	}
+	operations, err := store.List(context.Background())
+	if err != nil || len(operations) != 1 {
+		t.Fatalf("seed operations=%#v err=%v", operations, err)
+	}
+	pending := operations[0]
+	pending.Status, pending.ErrorCode, pending.FinishedAt = "claim_pending", "", time.Time{}
+	pending.RedactedProviderPayload = withComputeClaimRecoveryBinding(pending.RedactedProviderPayload, historicalComputeClaimRecoveryBinding(claimInput))
+	if err := store.SaveComputeClaimRecovery(context.Background(), operations[0], pending); err != nil {
+		t.Fatal(err)
+	}
+
+	evidence, err := service.ComputeClaimRecoveryIdentityEvidence(context.Background(), claimInput)
+	stored, listErr := store.List(context.Background())
+	if err != nil || listErr != nil || evidence == nil || evidence.MutationLedger != "absent" || len(evidence.Checks) != 10 ||
+		len(stored) != 1 || !reflect.DeepEqual(stored[0], pending) || provider.proofCalls != 0 || provider.claimCalls != 0 ||
+		provider.tagCalls != 0 || provider.scaleCalls != 0 || provider.storageCalls != 0 {
+		t.Fatalf("evidence=%#v err=%v stored=%#v listErr=%v provider=%#v", evidence, err, stored, listErr, provider)
+	}
+	checks := map[string]ComputeClaimIdentityCheck{}
+	for _, check := range evidence.Checks {
+		checks[check.Field] = check
+	}
+	if !checks["binding.compatibility"].Matches || checks["binding.compatibility"].Actual != "historical" ||
+		!checks["binding.idempotencyKey"].Matches || !checks["binding.requestHash"].Matches ||
+		checks["binding.targetHash"].ExpectedDigest == "" || checks["binding.targetHash"].ExpectedDigest != checks["binding.targetHash"].ActualDigest {
+		t.Fatalf("unexpected identity checks: %#v", checks)
+	}
+	serialized, marshalErr := json.Marshal(evidence)
+	if marshalErr != nil || strings.Contains(string(serialized), historicalComputeClaimRecoveryBinding(claimInput).RequestHash) {
+		t.Fatalf("identity evidence leaked raw hash: %s err=%v", serialized, marshalErr)
+	}
+}
+
 func TestMemoryComputeClaimRecoveryCASRejectsPersistedBindingDrift(t *testing.T) {
 	drifts := map[string]func(*computeClaimRecoveryBinding){
 		"launch": func(binding *computeClaimRecoveryBinding) { binding.LaunchOperationID = "workspace-launch-other" },

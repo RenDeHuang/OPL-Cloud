@@ -670,7 +670,17 @@ const COMPUTE_CLAIM_VALIDATION_ERROR_CODES = new Set([
   "compute_claim_validation_response_invalid"
 ]);
 const COMPUTE_CLAIM_VALIDATION_RESPONSE_KEYS = Object.freeze([
-  "schemaVersion", "status", "approvalId", "approvalDigest", "launchOperationId", "accountId", "workspaceId", "runnerDirectMutationCounts"
+  "schemaVersion", "status", "errorCode", "approvalId", "approvalDigest", "launchOperationId", "accountId", "workspaceId", "identityEvidence", "runnerDirectMutationCounts"
+]);
+const COMPUTE_CLAIM_IDENTITY_FIELDS = new Set([
+  "controlPlane.launchOperationId", "controlPlane.accountId", "controlPlane.workspaceId", "controlPlane.computeAllocationId", "controlPlane.storageId",
+  "controlPlane.cvmInstanceId", "controlPlane.zone", "controlPlane.privateIp", "controlPlane.instanceType", "controlPlane.nodeName",
+  "controlPlane.machineName", "controlPlane.workspaceApiKeyId", "approval.approvalId", "approval.approvalDigest", "approval.persistedApprovalDigest", "approval.idempotencyKey", "approval.persistedBinding",
+  "release.mergedMainSha", "release.cloudImageDigest", "release.workspaceImageDigest",
+  "fabric.operationId", "fabric.operationIdempotencyKey", "fabric.operationRequestHash",
+  "provider.readbackStatus", "provider.reason", "provider.cvmInstanceId", "provider.zone", "provider.privateIp", "provider.instanceType",
+  "provider.nodeName", "provider.machineName", "provider.cvmOwnership", "provider.nodeOwnership",
+  "binding.present", "binding.valid", "binding.compatibility", "binding.launchOperationId", "binding.idempotencyKey", "binding.targetHash", "binding.requestHash"
 ]);
 const COMPUTE_CLAIM_BLOCKED_ERROR_CODES = new Set([
   ...COMPUTE_CLAIM_REASONS,
@@ -1628,6 +1638,28 @@ function computeClaimRunnerDirectMutationCountsAreZero(value) {
     value.sub2api === 0 && value.tencent === 0 && value.kubernetes === 0;
 }
 
+function computeClaimIdentityEvidence(value) {
+  const checks = Array.isArray(value?.checks) ? value.checks.map((check) => ({
+    field: String(check?.field || ""),
+    matches: check?.matches === true,
+    expected: String(check?.expected || ""),
+    actual: String(check?.actual || ""),
+    expectedDigest: String(check?.expectedDigest || ""),
+    actualDigest: String(check?.actualDigest || "")
+  })) : [];
+  const fields = new Set(checks.map((check) => check.field));
+  const valid = checks.length >= 2 && fields.size === checks.length && fields.has("binding.present") && fields.has("binding.valid") &&
+    checks.every((check) => COMPUTE_CLAIM_IDENTITY_FIELDS.has(check.field) &&
+    (/Hash(?:\.|$)/.test(check.field)
+      ? !check.expected && !check.actual && /^[a-f0-9]{64}$/.test(check.expectedDigest) && /^[a-f0-9]{64}$/.test(check.actualDigest)
+      : !check.expectedDigest && !check.actualDigest && check.expected !== "" && check.actual !== ""));
+  const mutationLedger = String(value?.mutationLedger || "");
+  if (!valid || !new Set(["absent", "invalid", "reserved", "observed", "node_reserved", "succeeded"]).has(mutationLedger)) {
+    throw new Error("compute_claim_validation_response_invalid");
+  }
+  return { checks, mutationLedger };
+}
+
 export async function validateComputeClaimApproval(options = {}) {
   const {
     target: rawTarget, approvalJson, approvalId, mergedSha, cloudImageDigest, customerEmail, origin, adminEmail, adminPassword,
@@ -1676,6 +1708,36 @@ export async function validateComputeClaimApproval(options = {}) {
     invalid.responseMetadata = error?.responseMetadata;
     throw invalid;
   }
+  if (response.statusCode === 409 && exactObjectKeys(response.payload, COMPUTE_CLAIM_VALIDATION_RESPONSE_KEYS)) {
+    const payload = response.payload;
+    let identityEvidence;
+    try {
+      identityEvidence = computeClaimIdentityEvidence(payload.identityEvidence);
+    } catch (error) {
+      error.responseMetadata = response.responseMetadata;
+      throw error;
+    }
+    if (payload.schemaVersion !== 2 || payload.status !== "blocked" || payload.errorCode !== "identity_mismatch" ||
+      payload.approvalId !== approval.approvalId || payload.approvalDigest !== request.approvalDigest ||
+      payload.launchOperationId !== target.launchOperationId || payload.accountId !== target.accountId || payload.workspaceId !== target.workspaceId ||
+      identityEvidence.checks.every((check) => check.matches) || !computeClaimRunnerDirectMutationCountsAreZero(payload.runnerDirectMutationCounts)) {
+      const invalid = new Error("compute_claim_validation_response_invalid");
+      invalid.responseMetadata = response.responseMetadata;
+      throw invalid;
+    }
+    return {
+      schemaVersion: 2,
+      operationMode: COMPUTE_CLAIM_VALIDATE_MODE,
+      status: "blocked",
+      recoveryEligible: false,
+      errorCode: "identity_mismatch",
+      release: computeClaimReleaseEvidence(release),
+      target: { ...target },
+      approval: { approvalId: approval.approvalId, approvalDigest: request.approvalDigest },
+      identityEvidence,
+      runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
+    };
+  }
   if (response.statusCode !== 200) {
     const errorCode = response.statusCode === 400 ? "compute_claim_validation_request_invalid"
       : response.statusCode === 403 ? "compute_claim_validation_capability_invalid"
@@ -1689,9 +1751,22 @@ export async function validateComputeClaimApproval(options = {}) {
     throw failure;
   }
   const payload = response.payload;
-  if (!exactObjectKeys(payload, COMPUTE_CLAIM_VALIDATION_RESPONSE_KEYS) || payload.schemaVersion !== 2 || payload.status !== "proven" || payload.approvalId !== approval.approvalId ||
+  if (!exactObjectKeys(payload, COMPUTE_CLAIM_VALIDATION_RESPONSE_KEYS)) {
+    const invalid = new Error("compute_claim_validation_response_invalid");
+    invalid.responseMetadata = response.responseMetadata;
+    throw invalid;
+  }
+  let identityEvidence;
+  try {
+    identityEvidence = computeClaimIdentityEvidence(payload.identityEvidence);
+  } catch (error) {
+    error.responseMetadata = response.responseMetadata;
+    throw error;
+  }
+  if (payload.schemaVersion !== 2 || payload.status !== "proven" || payload.errorCode !== "none" || payload.approvalId !== approval.approvalId ||
     payload.approvalDigest !== request.approvalDigest || payload.launchOperationId !== target.launchOperationId ||
     payload.accountId !== target.accountId || payload.workspaceId !== target.workspaceId ||
+    !identityEvidence.checks.every((check) => check.matches) ||
     !computeClaimRunnerDirectMutationCountsAreZero(payload.runnerDirectMutationCounts)) {
     const invalid = new Error("compute_claim_validation_response_invalid");
     invalid.responseMetadata = response.responseMetadata;
@@ -1706,6 +1781,7 @@ export async function validateComputeClaimApproval(options = {}) {
     release: computeClaimReleaseEvidence(release),
     target: { ...target },
     approval: { approvalId: approval.approvalId, approvalDigest: request.approvalDigest },
+    identityEvidence,
     runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
   };
 }

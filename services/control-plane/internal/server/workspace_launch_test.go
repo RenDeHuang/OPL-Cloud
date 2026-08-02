@@ -2359,6 +2359,7 @@ func TestWorkspaceComputeClaimDiagnosisIsReadOnlyAndExact(t *testing.T) {
 
 func TestWorkspaceComputeClaimApprovalValidationIsReadOnlyAndExact(t *testing.T) {
 	fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, "basic")
+	fixture.fabric.computeClaimProof = computeClaimRecoveryProofForLaunch(operation, "unallocated")
 	path := "/api/operator/workspace-launches/" + operation.ID + "/compute-claim-recovery/validate"
 	key := "compute-claim-validation-fixture"
 	body := computeClaimRecoveryRequestBody(t, operation, true, key)
@@ -2374,8 +2375,9 @@ func TestWorkspaceComputeClaimApprovalValidationIsReadOnlyAndExact(t *testing.T)
 	current := fixture.operation(t)
 	if artifact["schemaVersion"] != float64(2) || artifact["status"] != "proven" || artifact["approvalId"] != "approval-compute-claim-fixture" ||
 		artifact["launchOperationId"] != operation.ID || artifact["accountId"] != operation.AccountID || artifact["workspaceId"] != operation.WorkspaceID ||
+		artifact["identityEvidence"] == nil ||
 		!computeClaimApprovalDigestPattern.MatchString(stringValue(artifact["approvalDigest"])) || current.ComputeClaimApproval != nil ||
-		current.Status != operation.Status || current.Phase != operation.Phase || len(fixture.fabric.computeClaimInputs) != 0 || len(fixture.fabric.computeClaimCalls) != 0 ||
+		current.Status != operation.Status || current.Phase != operation.Phase || len(fixture.fabric.computeClaimInputs) != 1 || len(fixture.fabric.computeClaimCalls) != 0 ||
 		len(fixture.fabric.storageIDs) != 0 || len(fixture.sub2API.charges) != 1 || len(fixture.sub2API.refunds) != 0 {
 		t.Fatalf("approval validation mutated state or returned drifted evidence: artifact=%#v current=%#v proofs=%#v claims=%#v", artifact, current, fixture.fabric.computeClaimInputs, fixture.fabric.computeClaimCalls)
 	}
@@ -2390,13 +2392,29 @@ func TestWorkspaceComputeClaimApprovalValidationIsReadOnlyAndExact(t *testing.T)
 		t.Fatal(err)
 	}
 	response = requestComputeClaimWithCapabilityForTest(t, fixture.server, fixture.operator, path, string(encoded), key)
-	if response.Code != http.StatusConflict || len(fixture.fabric.computeClaimInputs) != 0 || len(fixture.fabric.computeClaimCalls) != 0 || fixture.operation(t).ComputeClaimApproval != nil {
+	var blocked struct {
+		Status           string                               `json:"status"`
+		ErrorCode        string                               `json:"errorCode"`
+		IdentityEvidence clients.ComputeClaimIdentityEvidence `json:"identityEvidence"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&blocked); err != nil {
+		t.Fatal(err)
+	}
+	digestMismatch := false
+	for _, check := range blocked.IdentityEvidence.Checks {
+		if check.Field == "approval.approvalDigest" && !check.Matches {
+			digestMismatch = true
+		}
+	}
+	if response.Code != http.StatusConflict || blocked.Status != "blocked" || blocked.ErrorCode != "identity_mismatch" || !digestMismatch ||
+		len(fixture.fabric.computeClaimInputs) != 2 || len(fixture.fabric.computeClaimCalls) != 0 || fixture.operation(t).ComputeClaimApproval != nil {
 		t.Fatalf("drifted approval crossed validation boundary: status=%d body=%s proofs=%#v claims=%#v", response.Code, response.Body.String(), fixture.fabric.computeClaimInputs, fixture.fabric.computeClaimCalls)
 	}
 }
 
 func TestWorkspaceComputeClaimApprovalValidationRejectsPersistedBindingDrift(t *testing.T) {
 	fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, "basic")
+	fixture.fabric.computeClaimProof = computeClaimRecoveryProofForLaunch(operation, "unallocated")
 	originalKey := "compute-claim-validation-original"
 	originalBody := computeClaimRecoveryRequestBody(t, operation, true, originalKey)
 	var raw map[string]any
@@ -2417,13 +2435,32 @@ func TestWorkspaceComputeClaimApprovalValidationRejectsPersistedBindingDrift(t *
 	driftedKey := "compute-claim-validation-drifted"
 	path := "/api/operator/workspace-launches/" + operation.ID + "/compute-claim-recovery/validate"
 	response := requestComputeClaimWithCapabilityForTest(t, fixture.server, fixture.operator, path, computeClaimRecoveryRequestBody(t, operation, true, driftedKey), driftedKey)
-	if response.Code != http.StatusConflict || len(fixture.fabric.computeClaimInputs) != 0 || len(fixture.fabric.computeClaimCalls) != 0 {
+	var artifact struct {
+		SchemaVersion             int                                  `json:"schemaVersion"`
+		Status                    string                               `json:"status"`
+		IdentityEvidence          clients.ComputeClaimIdentityEvidence `json:"identityEvidence"`
+		RunnerDirectMutationCount map[string]int                       `json:"runnerDirectMutationCounts"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&artifact); err != nil {
+		t.Fatal(err)
+	}
+	checks := map[string]clients.ComputeClaimIdentityCheck{}
+	for _, check := range artifact.IdentityEvidence.Checks {
+		checks[check.Field] = check
+	}
+	current := fixture.operation(t)
+	if response.Code != http.StatusConflict || artifact.SchemaVersion != 2 || artifact.Status != "blocked" ||
+		checks["approval.idempotencyKey"].Matches || checks["approval.idempotencyKey"].Expected != driftedKey || checks["approval.idempotencyKey"].Actual != originalKey ||
+		artifact.RunnerDirectMutationCount["sub2api"] != 0 || artifact.RunnerDirectMutationCount["tencent"] != 0 || artifact.RunnerDirectMutationCount["kubernetes"] != 0 ||
+		!reflect.DeepEqual(current.ComputeClaimApproval, operation.ComputeClaimApproval) || len(fixture.fabric.computeClaimInputs) != 1 || len(fixture.fabric.computeClaimCalls) != 0 ||
+		len(fixture.fabric.storageIDs) != 0 || len(fixture.sub2API.charges) != 1 || len(fixture.sub2API.refunds) != 0 {
 		t.Fatalf("persisted approval binding drift crossed validation boundary: status=%d body=%s proofs=%#v claims=%#v", response.Code, response.Body.String(), fixture.fabric.computeClaimInputs, fixture.fabric.computeClaimCalls)
 	}
 }
 
 func TestWorkspaceComputeClaimApprovalSupersedesFailedUnclaimedReleaseBinding(t *testing.T) {
 	fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, "basic")
+	fixture.fabric.computeClaimProof = computeClaimRecoveryProofForLaunch(operation, "unallocated")
 	originalKey := "compute-claim-failed-release"
 	originalBody := computeClaimRecoveryRequestBody(t, operation, true, originalKey)
 	var raw map[string]any
@@ -2448,7 +2485,7 @@ func TestWorkspaceComputeClaimApprovalSupersedesFailedUnclaimedReleaseBinding(t 
 	validated := requestComputeClaimWithCapabilityForTest(t, fixture.server, fixture.operator, validatePath, successorBody, successorKey)
 	afterValidation := fixture.operation(t)
 	if validated.Code != http.StatusOK || afterValidation.ComputeClaimApproval == nil || afterValidation.ComputeClaimApproval.ApprovalID != binding.ApprovalID ||
-		afterValidation.Status != "manual_review" || afterValidation.Phase != "compute_claim_pending" || len(fixture.fabric.computeClaimInputs) != 0 ||
+		afterValidation.Status != "manual_review" || afterValidation.Phase != "compute_claim_pending" || len(fixture.fabric.computeClaimInputs) != 1 ||
 		len(fixture.fabric.computeClaimCalls) != 0 || len(fixture.fabric.storageIDs) != 0 {
 		t.Fatalf("successor validation mutated or rejected the failed binding: status=%d body=%s operation=%#v proofs=%#v claims=%#v", validated.Code, validated.Body.String(), afterValidation, fixture.fabric.computeClaimInputs, fixture.fabric.computeClaimCalls)
 	}
@@ -2461,7 +2498,7 @@ func TestWorkspaceComputeClaimApprovalSupersedesFailedUnclaimedReleaseBinding(t 
 	persisted := fixture.operation(t)
 	if claimed.Code != http.StatusOK || persisted.ComputeClaimApproval == nil || persisted.ComputeClaimApproval.ApprovalID != "approval-compute-claim-successor" ||
 		persisted.ComputeClaimApproval.MergedMainSHA != strings.Repeat("c", 40) || persisted.Status != "preparing" || persisted.Phase != "storage_fulfilling" ||
-		len(fixture.fabric.computeClaimInputs) != 1 || len(fixture.fabric.computeClaimCalls) != 1 || len(fixture.fabric.storageIDs) != 0 {
+		len(fixture.fabric.computeClaimInputs) != 2 || len(fixture.fabric.computeClaimCalls) != 1 || len(fixture.fabric.storageIDs) != 0 {
 		t.Fatalf("successor approval did not replace the failed release binding: status=%d body=%s operation=%#v proofs=%#v claims=%#v storage=%#v", claimed.Code, claimed.Body.String(), persisted, fixture.fabric.computeClaimInputs, fixture.fabric.computeClaimCalls, fixture.fabric.storageIDs)
 	}
 }
@@ -2490,6 +2527,7 @@ func TestWorkspaceComputeClaimApprovalSupersessionRejectsUnsafeSuccessors(t *tes
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, "basic")
+			fixture.fabric.computeClaimProof = computeClaimRecoveryProofForLaunch(operation, "unallocated")
 			originalKey := "compute-claim-unsafe-original"
 			originalBody := computeClaimRecoveryRequestBody(t, operation, true, originalKey)
 			var originalRaw map[string]any
@@ -2544,8 +2582,17 @@ func TestWorkspaceComputeClaimApprovalSupersessionRejectsUnsafeSuccessors(t *tes
 			path := "/api/operator/workspace-launches/" + operation.ID + "/compute-claim-recovery/validate"
 			response := requestComputeClaimWithCapabilityForTest(t, fixture.server, fixture.operator, path, string(encoded), successorKey)
 			current := fixture.operation(t)
-			if response.Code != http.StatusConflict || current.ComputeClaimApproval == nil || current.ComputeClaimApproval.ApprovalID != binding.ApprovalID ||
-				len(fixture.fabric.computeClaimInputs) != 0 || len(fixture.fabric.computeClaimCalls) != 0 || len(fixture.fabric.storageIDs) != 0 {
+			var blocked struct {
+				Status           string                               `json:"status"`
+				ErrorCode        string                               `json:"errorCode"`
+				IdentityEvidence clients.ComputeClaimIdentityEvidence `json:"identityEvidence"`
+			}
+			if err := json.NewDecoder(response.Body).Decode(&blocked); err != nil {
+				t.Fatal(err)
+			}
+			if response.Code != http.StatusConflict || blocked.Status != "blocked" || blocked.ErrorCode != "identity_mismatch" ||
+				current.ComputeClaimApproval == nil || current.ComputeClaimApproval.ApprovalID != binding.ApprovalID || len(blocked.IdentityEvidence.Checks) == 0 ||
+				len(fixture.fabric.computeClaimInputs) != 1 || len(fixture.fabric.computeClaimCalls) != 0 || len(fixture.fabric.storageIDs) != 0 {
 				t.Fatalf("unsafe successor crossed validation boundary: status=%d body=%s operation=%#v", response.Code, response.Body.String(), current)
 			}
 		})
@@ -2561,7 +2608,7 @@ func TestWorkspaceComputeClaimApprovalValidationProvesLegacyIdentityWithoutPersi
 	response := requestComputeClaimWithCapabilityForTest(t, fixture.server, fixture.operator, path, computeClaimRecoveryRequestBody(t, operation, true, key), key)
 	current := fixture.operation(t)
 	if response.Code != http.StatusOK || current.Status != "manual_review" || current.Phase != "compute_fulfilling" || current.ComputeClaimApproval != nil ||
-		current.ComputeMachineName != "" || len(fixture.fabric.computeClaimInputs) != 1 || len(fixture.fabric.computeClaimCalls) != 0 ||
+		current.ComputeMachineName != "" || len(fixture.fabric.computeClaimInputs) != 2 || len(fixture.fabric.computeClaimCalls) != 0 ||
 		len(fixture.fabric.storageIDs) != 0 || len(fixture.sub2API.charges) != 1 || len(fixture.sub2API.refunds) != 0 {
 		t.Fatalf("legacy validation persisted or mutated: status=%d body=%s current=%#v proofs=%#v claims=%#v", response.Code, response.Body.String(), current, fixture.fabric.computeClaimInputs, fixture.fabric.computeClaimCalls)
 	}

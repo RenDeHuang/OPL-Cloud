@@ -275,6 +275,18 @@ func (f *monthlyFabric) ComputeClaimRecoveryProof(_ context.Context, input clien
 	return f.computeClaimProof, f.computeClaimProofErr
 }
 
+func (f *monthlyFabric) ComputeClaimRecoveryIdentityEvidence(_ context.Context, input clients.ComputeClaimRecoveryClaimInput) (*clients.ComputeClaimIdentityEvidence, error) {
+	return &clients.ComputeClaimIdentityEvidence{
+		Checks: []clients.ComputeClaimIdentityCheck{
+			{Field: "binding.present", Matches: true, Expected: "present", Actual: "present"},
+			{Field: "binding.valid", Matches: true, Expected: "valid", Actual: "valid"},
+			{Field: "binding.launchOperationId", Matches: true, Expected: input.LaunchOperationID, Actual: input.LaunchOperationID},
+			{Field: "binding.idempotencyKey", Matches: true, Expected: input.LaunchOperationID + ":compute", Actual: input.LaunchOperationID + ":compute"},
+		},
+		MutationLedger: "absent",
+	}, nil
+}
+
 func (f *monthlyFabric) ClaimComputeRecovery(_ context.Context, input clients.ComputeClaimRecoveryClaimInput, key string) (clients.ComputeClaimRecoveryProof, error) {
 	if f.beforeComputeClaim != nil {
 		f.beforeComputeClaim()
