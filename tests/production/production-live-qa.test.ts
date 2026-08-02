@@ -3788,6 +3788,57 @@ test("compute-claim approval validation rejects workflow customer drift before r
   assert.equal(fetchCalls, 0);
 });
 
+test("compute-claim approval validation reports a redacted state-read failure", async () => {
+  let stdout = "";
+  let stderr = "";
+  const approval = JSON.parse(computeClaimApprovalJson());
+  const code = await runProductionLiveQaCli({
+    argv: [
+      "--compute-claim-validate",
+      "--compute-claim-target-json", JSON.stringify(COMPUTE_CLAIM_TARGET),
+      "--approval-id", approval.approvalId
+    ],
+    env: {
+      OPL_MERGED_SHA: BASIC_CANARY_MERGED_SHA,
+      OPL_COMPUTE_CLAIM_CLOUD_DIGEST: BASIC_CANARY_CLOUD_DIGEST,
+      OPL_COMPUTE_CLAIM_RECOVERY_APPROVAL_JSON: JSON.stringify(approval),
+      OPL_INTERNAL_SERVICE_TOKEN: "compute-claim-runner-capability",
+      OPL_CONSOLE_ORIGIN: "https://cloud.medopl.cn",
+      OPL_SUB2API_ADMIN_EMAIL: ADMIN_EMAIL,
+      OPL_SUB2API_ADMIN_PASSWORD: ADMIN_PASSWORD,
+      OPL_BASIC_CANARY_CUSTOMER_EMAIL: COMPUTE_CLAIM_CUSTOMER_EMAIL,
+      OPL_K8S_NAMESPACE: "opl-cloud",
+      KUBECONFIG: "/run/secrets/kubeconfig"
+    },
+    stdout: { write: (chunk) => { stdout += chunk; } },
+    stderr: { write: (chunk) => { stderr += chunk; } },
+    cloudRevisionEvidenceReader: async () => computeClaimCloudRevisionEvidence(),
+    fetchImpl: async (input) => {
+      const url = new URL(String(input));
+      if (url.pathname === "/api/auth/login") {
+        return json({ user: { accountId: "acct-admin", role: "admin" } }, 200, {
+          "set-cookie": "opl_session=session-fixture; Path=/; HttpOnly",
+          "x-opl-csrf-token": "csrf-compute-claim"
+        });
+      }
+      if (url.pathname === "/api/operator/accounts") return computeClaimAccountAuthority();
+      return json({ error: "workspace_compute_claim_unavailable", unsafeDetail: "must-not-leak" }, 502);
+    }
+  });
+
+  assert.equal(code, 1);
+  assert.deepEqual(JSON.parse(stdout), {
+    schemaVersion: 2,
+    operationMode: "compute_claim_validate",
+    status: "blocked",
+    recoveryEligible: false,
+    errorCode: "compute_claim_validation_state_read_unavailable",
+    runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
+  });
+  assert.match(stderr, /compute_claim_validation_state_read_unavailable/);
+  assert.doesNotMatch(`${stdout}\n${stderr}`, /must-not-leak|workspace_compute_claim_unavailable|customer@example\.com|compute-claim-runner-capability|password|secret|token/i);
+});
+
 test("compute-claim recovery CLI forwards the internal runner capability", async () => {
 	let stdout = "";
 	let stderr = "";

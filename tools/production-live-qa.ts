@@ -666,6 +666,7 @@ const COMPUTE_CLAIM_VALIDATION_ERROR_CODES = new Set([
   "compute_claim_validation_launch_not_found",
   "compute_claim_validation_customer_identity_mismatch",
   "compute_claim_validation_binding_mismatch",
+  "compute_claim_validation_state_read_unavailable",
   "compute_claim_validation_response_invalid"
 ]);
 const COMPUTE_CLAIM_BLOCKED_ERROR_CODES = new Set([
@@ -1654,6 +1655,8 @@ export async function validateComputeClaimApproval(options = {}) {
       : response.statusCode === 403 ? "compute_claim_validation_capability_invalid"
         : response.statusCode === 404 ? "compute_claim_validation_launch_not_found"
           : response.statusCode === 409 ? "compute_claim_validation_binding_mismatch"
+            : response.statusCode === 502 && response.payload?.error === "workspace_compute_claim_unavailable"
+              ? "compute_claim_validation_state_read_unavailable"
             : "compute_claim_validation_response_invalid";
     throw new Error(errorCode);
   }
