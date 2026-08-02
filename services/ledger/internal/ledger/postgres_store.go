@@ -79,6 +79,10 @@ func NewPostgresStore(db *sql.DB) *PostgresStore {
 	}
 }
 
+func (s *PostgresStore) Ready(ctx context.Context) error {
+	return s.db.PingContext(ctx)
+}
+
 func (s *PostgresStore) Install(ctx context.Context) error {
 	embedded, err := ledgerEmbeddedMigrations()
 	if err != nil {
@@ -180,6 +184,9 @@ func (s *PostgresStore) ListReceipts(ctx context.Context, query ReceiptQuery) (R
 	}
 	if query.Type != "" {
 		q = q.Where(evidencereceipt.ReceiptType(query.Type))
+	}
+	if query.TypePrefix != "" {
+		q = q.Where(evidencereceipt.ReceiptTypeHasPrefix(query.TypePrefix))
 	}
 	if query.Status != "" {
 		q = q.Where(evidencereceipt.Status(query.Status))

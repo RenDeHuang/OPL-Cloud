@@ -148,6 +148,12 @@
       "billing.charge_review_required.v1"
     ],
     "resourceReceiptNewWritesAllowed": false,
+    "billingReceiptRead": {
+      "endpoint": "GET /ledger/receipts",
+      "typePrefix": "billing.",
+      "filterApplication": "before_order_and_pagination",
+      "responseTypePrefixViolation": "fail_closed_unavailable"
+    },
     "receiptTypes": [
       "billing.reconciliation.v1",
       "billing.workspace_purchased.v1",
@@ -186,6 +192,7 @@
       "expired": "billing.workspace_expired.v1",
       "refunded": "billing.workspace_refunded.v1"
     },
+    "workspaceReceiptStatuses": ["completed"],
     "workspaceFulfillmentReceiptTypes": [
       "billing.workspace_purchased.v1",
       "billing.workspace_renewed.v1"

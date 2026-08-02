@@ -19,3 +19,7 @@ type Store interface {
 	EvaluateReviewGate(ctx context.Context, input ReviewGateInput) (ReviewGateResult, error)
 	RecordReconciliation(ctx context.Context, input ReconciliationInput) (ReconciliationResult, error)
 }
+
+type ReadinessStore interface {
+	Ready(ctx context.Context) error
+}

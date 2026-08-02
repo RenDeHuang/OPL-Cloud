@@ -2,7 +2,9 @@ package http
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -24,7 +26,9 @@ func TestServerAuthenticatesEverythingExceptGetHealthz(t *testing.T) {
 		want          int
 	}{
 		{name: "health", method: http.MethodGet, path: "/healthz", want: http.StatusOK},
+		{name: "readiness", method: http.MethodGet, path: "/readyz", want: http.StatusOK},
 		{name: "health wrong method", method: http.MethodPost, path: "/healthz", want: http.StatusUnauthorized},
+		{name: "readiness wrong method", method: http.MethodPost, path: "/readyz", want: http.StatusUnauthorized},
 		{name: "business anonymous", method: http.MethodGet, path: "/ledger/receipts", want: http.StatusUnauthorized},
 		{name: "unknown anonymous", method: http.MethodGet, path: "/missing", want: http.StatusUnauthorized},
 		{name: "wrong token", method: http.MethodGet, path: "/ledger/receipts", authorization: "Bearer wrong", want: http.StatusUnauthorized},
@@ -40,6 +44,24 @@ func TestServerAuthenticatesEverythingExceptGetHealthz(t *testing.T) {
 				t.Fatalf("status = %d, want %d", rec.Code, tt.want)
 			}
 		})
+	}
+}
+
+type unavailableReadinessStore struct {
+	ledger.Store
+}
+
+func (unavailableReadinessStore) Ready(context.Context) error {
+	return errors.New("postgres unavailable")
+}
+
+func TestReadyzFailsClosedWhenStoreIsUnavailable(t *testing.T) {
+	server := NewServer(unavailableReadinessStore{Store: ledger.NewMemoryStore()}, "internal-secret")
+	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), `"status":"unavailable"`) {
+		t.Fatalf("readiness status=%d body=%s", rec.Code, rec.Body.String())
 	}
 }
 

@@ -43,7 +43,6 @@ func TestBillingReceiptListIsStrictLedgerSource(t *testing.T) {
 	workspace := workspaceBillingReceipt("billing.workspace_renewed.v1")
 	ledger := &customerFactsLedger{page: clients.ReceiptPage{Receipts: []clients.Receipt{
 		receipt,
-		{ReceiptInput: clients.ReceiptInput{Type: "execution.receipt.v1", AccountID: "acct-alpha"}, ReceiptID: "receipt-execution"},
 		workspace,
 	}, NextCursor: "next-page", HasMore: true}}
 	server := NewServer(newTestService(ledger, &fakeFabricClient{}))
@@ -53,7 +52,7 @@ func TestBillingReceiptListIsStrictLedgerSource(t *testing.T) {
 	if response.Code != http.StatusOK {
 		t.Fatalf("receipt list = %d: %s", response.Code, response.Body.String())
 	}
-	if ledger.query != (clients.ReceiptQuery{AccountID: "acct-alpha", Cursor: "opaque", Limit: 50}) {
+	if ledger.query != (clients.ReceiptQuery{AccountID: "acct-alpha", TypePrefix: "billing.", Cursor: "opaque", Limit: 50}) {
 		t.Fatalf("Ledger query = %#v", ledger.query)
 	}
 	var envelope map[string]any
@@ -102,6 +101,9 @@ func TestBillingReceiptListInvalidSourceIsUnavailable(t *testing.T) {
 			receipt.Cost["chargeUsdMicros"] = 1.5
 			return receipt
 		}},
+		{name: "type prefix violation", receipt: func() clients.Receipt {
+			return clients.Receipt{ReceiptInput: clients.ReceiptInput{Type: "execution.receipt.v1", Status: "completed", AccountID: "acct-alpha"}, ReceiptID: "receipt-execution"}
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ledger := &customerFactsLedger{page: clients.ReceiptPage{Receipts: []clients.Receipt{tc.receipt()}}}
@@ -148,6 +150,28 @@ func TestWorkspaceBillingReceiptProjectionUsesAuthoritativeMoney(t *testing.T) {
 				t.Fatalf("refund projection = %#v", projected)
 			}
 		})
+	}
+}
+
+func TestWorkspaceBillingReceiptProjectionRejectsNonCompletedStatus(t *testing.T) {
+	for _, status := range []string{"running", "failed", "cancelled", "pending_review"} {
+		t.Run(status, func(t *testing.T) {
+			receipt := workspaceBillingReceipt("billing.workspace_purchased.v1")
+			receipt.Status = status
+			if projected, ok := projectCustomerBillingReceipt(receipt); ok || projected != nil {
+				t.Fatalf("status %q projected = %#v ok=%v", status, projected, ok)
+			}
+		})
+	}
+}
+
+func TestHistoricalBillingReceiptProjectionKeepsReviewRequiredStatus(t *testing.T) {
+	receipt := canonicalCustomerBillingReceipt()
+	receipt.Type = "billing.charge_review_required.v1"
+	receipt.Status = "review_required"
+	projected, ok := projectCustomerBillingReceipt(receipt)
+	if !ok || projected["status"] != "review_required" {
+		t.Fatalf("historical projection = %#v ok=%v", projected, ok)
 	}
 }
 

@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -30,6 +31,17 @@ type runtimeHealthSummaryFabric struct {
 	noRuntimeFanoutFabric
 	summary      clients.RuntimeHealthSummary
 	summaryCalls int
+}
+
+type readinessLedger struct {
+	fakeLedgerClient
+	err   error
+	calls int
+}
+
+func (l *readinessLedger) Ready(context.Context) error {
+	l.calls++
+	return l.err
 }
 
 type boundedOperatorHealthStore struct {
@@ -64,7 +76,8 @@ func TestOperatorHealthUsesSingleFabricRuntimeSummary(t *testing.T) {
 		}))
 	}
 	fabric := &runtimeHealthSummaryFabric{summary: clients.RuntimeHealthSummary{Total: 5, Ready: 4, Unready: 1}}
-	server, err := NewPersistentServer(controlplane.NewService(fakeLedgerClient{}, fabric, newOperatorProjectionClient()), store)
+	ledger := &readinessLedger{}
+	server, err := NewPersistentServer(controlplane.NewService(ledger, fabric, newOperatorProjectionClient()), store)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +95,7 @@ func TestOperatorHealthUsesSingleFabricRuntimeSummary(t *testing.T) {
 	if statusCalls != 0 || summaryCalls != 1 {
 		t.Fatalf("runtime health calls status=%d summary=%d", statusCalls, summaryCalls)
 	}
-	if store.listWorkspaceCalls != 0 || store.pageWorkspaceCalls != 1 {
+	if store.listWorkspaceCalls != 0 || store.pageWorkspaceCalls != 0 {
 		t.Fatalf("Workspace health reads list=%d page=%d", store.listWorkspaceCalls, store.pageWorkspaceCalls)
 	}
 	envelope := decodeOperatorEnvelope(t, response)
@@ -97,6 +110,30 @@ func TestOperatorHealthUsesSingleFabricRuntimeSummary(t *testing.T) {
 	}
 	if _, ok := runtimeData["items"]; ok {
 		t.Fatalf("Runtime health must not return per-Workspace items: %#v", runtimeData)
+	}
+	ledgerEnvelope := mapField(health, "ledger")
+	if ledger.calls != 1 || ledgerEnvelope["available"] != true || mapField(ledgerEnvelope, "data")["ready"] != true {
+		t.Fatalf("Ledger readiness calls=%d envelope=%#v", ledger.calls, ledgerEnvelope)
+	}
+}
+
+func TestOperatorHealthMarksLedgerUnavailableWhenReadyzFails(t *testing.T) {
+	ledger := &readinessLedger{err: errors.New("postgres unavailable")}
+	server, err := NewPersistentServer(controlplane.NewService(ledger, &fakeFabricClient{}, newOperatorProjectionClient()), newMemoryTableStore())
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := requestWithSession(t, server, reservedOperatorSessionForTest(t, server), http.MethodGet, "/api/operator/health", "")
+	if response.Code != http.StatusOK {
+		t.Fatalf("operator health without Ledger = %d: %s", response.Code, response.Body.String())
+	}
+	var envelope map[string]any
+	if err := json.NewDecoder(response.Body).Decode(&envelope); err != nil {
+		t.Fatal(err)
+	}
+	ledgerEnvelope := mapField(mapField(envelope, "data"), "ledger")
+	if ledger.calls != 1 || ledgerEnvelope["available"] != false || ledgerEnvelope["status"] != "unavailable" {
+		t.Fatalf("Ledger readiness calls=%d envelope=%#v", ledger.calls, ledgerEnvelope)
 	}
 }
 

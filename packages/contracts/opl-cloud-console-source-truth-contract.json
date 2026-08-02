@@ -297,7 +297,7 @@
         "controlPlanePaginationFirst": true,
         "sub2apiCalls": "current_control_plane_page_only_upstream_pages_and_batch_aggregates",
         "fabricCalls": "current_workspace_page_only_provider_facts_batch_max_50",
-        "ledgerCalls": "detail_only_authoritative_receipt_readback",
+        "ledgerCalls": "detail_receipt_readback_and_public_readyz_postgresql_ping",
         "readReplica": false,
         "sourceUpdatedAt": "authoritative_owner_timestamp_only_never_local_fetch_time"
       },
@@ -399,7 +399,7 @@
         "workspaceFulfillmentReceiptTypes": ["billing.workspace_purchased.v1", "billing.workspace_renewed.v1"],
         "workspaceFulfillmentFields": ["computeAllocationId", "storageId", "attachmentId", "workspaceApiKeyId", "runtimeId"],
         "rawProviderReadback": false,
-        "nonBillingRows": "ignore_without_projection",
+        "nonBillingRows": "type_prefix_violation_fail_closed_unavailable",
         "tenantMismatch": "whole_source_unavailable",
         "malformedBillingReceipt": "whole_source_unavailable",
         "legacyCnyFallback": false,

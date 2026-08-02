@@ -64,6 +64,36 @@ func TestLedgerReceiptList(t *testing.T) {
 	})
 }
 
+func TestLedgerReceiptListSendsTypePrefix(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("typePrefix") != "billing." {
+			t.Fatalf("typePrefix = %q", r.URL.Query().Get("typePrefix"))
+		}
+		_, _ = w.Write([]byte(`{"receipts":[],"nextCursor":"","hasMore":false}`))
+	}))
+	defer server.Close()
+
+	client := NewLedgerHTTPClient(server.URL, "internal-secret", server.Client()).(LedgerReceiptListClient)
+	if _, err := client.ListReceipts(context.Background(), ReceiptQuery{AccountID: "acct-alpha", TypePrefix: "billing."}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestLedgerReadinessUsesPublicReadyz(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/readyz" || r.Header.Get("Authorization") != "Bearer internal-secret" {
+			t.Fatalf("request = %s %s auth=%q", r.Method, r.URL.Path, r.Header.Get("Authorization"))
+		}
+		_, _ = w.Write([]byte(`{"status":"ready"}`))
+	}))
+	defer server.Close()
+
+	client := NewLedgerHTTPClient(server.URL, "internal-secret", server.Client()).(LedgerReadinessClient)
+	if err := client.Ready(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestLedgerHTTPClientReturnsBoundedErrorForFailedEvidenceWrite(t *testing.T) {
 	const secretMarker = "LEDGER_BODY_SECRET_MUST_NOT_LEAK"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

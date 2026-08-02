@@ -17,6 +17,14 @@ func NewServer(store ledger.Store, token string) http.Handler {
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
+	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
+		readiness, ok := store.(ledger.ReadinessStore)
+		if !ok || readiness.Ready(r.Context()) != nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "unavailable"})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
+	})
 	mux.HandleFunc("POST /ledger/receipts", func(w http.ResponseWriter, r *http.Request) {
 		idempotencyKey := r.Header.Get("Idempotency-Key")
 		if idempotencyKey == "" {
@@ -54,6 +62,7 @@ func NewServer(store ledger.Store, token string) http.Handler {
 			TaskID:         values.Get("taskId"),
 			JobID:          values.Get("jobId"),
 			Type:           values.Get("type"),
+			TypePrefix:     values.Get("typePrefix"),
 			Status:         values.Get("status"),
 			Cursor:         values.Get("cursor"),
 		}
@@ -361,7 +370,7 @@ func decodeJSONBody(r *http.Request, target any) error {
 func authenticate(next http.Handler, token string) http.Handler {
 	want := sha256.Sum256([]byte("Bearer " + token))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet && r.URL.Path == "/healthz" {
+		if r.Method == http.MethodGet && (r.URL.Path == "/healthz" || r.URL.Path == "/readyz") {
 			next.ServeHTTP(w, r)
 			return
 		}

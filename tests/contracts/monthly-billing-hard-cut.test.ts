@@ -194,6 +194,14 @@ test("receipt contract exposes monthly product behavior only", async () => {
 	assert.equal(evidence.monthlyBillingReceiptV1.newWritesAllowed, false);
 	assert.deepEqual(billing.ledgerEvidencePolicy.historicalReadOnlyReceiptTypes, evidence.monthlyBillingReceiptV1.types);
 	assert.equal(billing.ledgerEvidencePolicy.resourceReceiptNewWritesAllowed, false);
+	assert.deepEqual(billing.ledgerEvidencePolicy.billingReceiptRead, {
+		endpoint: "GET /ledger/receipts",
+		typePrefix: "billing.",
+		filterApplication: "before_order_and_pagination",
+		responseTypePrefixViolation: "fail_closed_unavailable"
+	});
+	assert.deepEqual(evidence.workspaceMonthlyBillingReceiptV1.statuses, ["completed"]);
+	assert.deepEqual(billing.ledgerEvidencePolicy.workspaceReceiptStatuses, ["completed"]);
 	assert.deepEqual(evidence.workspaceMonthlyBillingReceiptV1.exactComponents, {
 		compute: ["resourceType", "resourceId", "chargeUsdMicros"],
 		storage: ["resourceType", "resourceId", "sizeGb", "chargeUsdMicros"]

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -21,6 +22,10 @@ type MemoryStore struct {
 	receipts                  map[string]Receipt
 	reviewPolicies            map[string]ReviewPolicy
 	nextID                    int64
+}
+
+func (s *MemoryStore) Ready(context.Context) error {
+	return nil
 }
 
 type idempotencyRecord struct {
@@ -196,6 +201,7 @@ func (s *MemoryStore) ListReceipts(_ context.Context, query ReceiptQuery) (Recei
 			(query.TaskID != "" && receipt.TaskID != query.TaskID) ||
 			(query.JobID != "" && receipt.JobID != query.JobID) ||
 			(query.Type != "" && receipt.Type != query.Type) ||
+			(query.TypePrefix != "" && !strings.HasPrefix(receipt.Type, query.TypePrefix)) ||
 			(query.Status != "" && receipt.Status != query.Status) ||
 			(!cursor.CreatedAt.IsZero() && (receipt.CreatedAt.After(cursor.CreatedAt) || (receipt.CreatedAt.Equal(cursor.CreatedAt) && receipt.ReceiptID >= cursor.ReceiptID))) {
 			continue

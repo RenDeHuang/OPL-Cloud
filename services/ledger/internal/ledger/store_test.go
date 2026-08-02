@@ -184,6 +184,16 @@ func TestWorkspaceBillingReceiptSchemaMemory(t *testing.T) {
 func testWorkspaceBillingReceiptSchema(t *testing.T, store Store) {
 	t.Helper()
 	ctx := context.Background()
+	for _, status := range []string{"planned", "running", "failed", "cancelled", "review_required"} {
+		t.Run("reject status "+status, func(t *testing.T) {
+			input := validWorkspaceBillingReceiptInput("billing.workspace_renewed.v1")
+			input.Status = status
+			input.IdempotencyKey += "-status-" + status
+			if _, err := store.RecordReceipt(ctx, input); !errors.Is(err, ErrInvalidReceiptInput) {
+				t.Fatalf("status %q error=%v, want ErrInvalidReceiptInput", status, err)
+			}
+		})
+	}
 	for _, receiptType := range []string{"billing.workspace_renewed.v1", "billing.workspace_expired.v1", "billing.workspace_refunded.v1"} {
 		t.Run(receiptType, func(t *testing.T) {
 			if _, err := store.RecordReceipt(ctx, validWorkspaceBillingReceiptInput(receiptType)); err != nil {
@@ -1109,6 +1119,31 @@ func TestListReceiptsFiltersAndPaginatesNewestFirst(t *testing.T) {
 	}
 	if len(second.Receipts) != 1 || second.Receipts[0].ReceiptID != "receipt-a" || second.HasMore || second.NextCursor != "" {
 		t.Fatalf("second page = %#v", second)
+	}
+}
+
+func TestReceiptQueryTypePrefixFiltersBeforePagination(t *testing.T) {
+	store := NewMemoryStore()
+	createdAt := time.Date(2026, 7, 11, 10, 0, 0, 0, time.UTC)
+	store.receipts = map[string]Receipt{
+		"receipt-billing-new": {ReceiptInput: ReceiptInput{AccountID: "acct-billing-prefix", Type: "billing.workspace_renewed.v1", Status: "completed"}, ReceiptID: "receipt-billing-new", CreatedAt: createdAt},
+		"receipt-execution":   {ReceiptInput: ReceiptInput{AccountID: "acct-billing-prefix", Type: "execution.receipt.v1", Status: "completed"}, ReceiptID: "receipt-execution", CreatedAt: createdAt.Add(-time.Minute)},
+		"receipt-billing-old": {ReceiptInput: ReceiptInput{AccountID: "acct-billing-prefix", Type: "billing.workspace_purchased.v1", Status: "completed"}, ReceiptID: "receipt-billing-old", CreatedAt: createdAt.Add(-2 * time.Minute)},
+	}
+
+	first, err := store.ListReceipts(context.Background(), ReceiptQuery{AccountID: "acct-billing-prefix", TypePrefix: "billing.", Limit: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first.Receipts) != 1 || first.Receipts[0].ReceiptID != "receipt-billing-new" || !first.HasMore || first.NextCursor == "" {
+		t.Fatalf("first billing page = %#v", first)
+	}
+	second, err := store.ListReceipts(context.Background(), ReceiptQuery{AccountID: "acct-billing-prefix", TypePrefix: "billing.", Limit: 1, Cursor: first.NextCursor})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(second.Receipts) != 1 || second.Receipts[0].ReceiptID != "receipt-billing-old" || second.HasMore || second.NextCursor != "" {
+		t.Fatalf("second billing page = %#v", second)
 	}
 }
 

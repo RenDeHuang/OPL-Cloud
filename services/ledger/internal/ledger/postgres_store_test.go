@@ -46,6 +46,19 @@ func TestPostgresSchemaKeepsEvidenceAndDropsRetiredCommercialTables(t *testing.T
 	}
 }
 
+func TestPostgresStoreReadyFailsWhenDatabaseIsClosed(t *testing.T) {
+	db, err := sql.Open("postgres", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := NewPostgresStore(db).Ready(context.Background()); err == nil {
+		t.Fatal("closed PostgreSQL database reported ready")
+	}
+}
+
 func TestFormalAndEmbeddedMigrationTreesMatch(t *testing.T) {
 	formal, err := os.ReadDir("../../migrations")
 	if err != nil {

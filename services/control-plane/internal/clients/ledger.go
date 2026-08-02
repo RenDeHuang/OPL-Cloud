@@ -23,6 +23,10 @@ type LedgerReceiptListClient interface {
 	ListReceipts(ctx context.Context, query ReceiptQuery) (ReceiptPage, error)
 }
 
+type LedgerReadinessClient interface {
+	Ready(ctx context.Context) error
+}
+
 type ReconciliationInput struct {
 	Report map[string]any `json:"report"`
 }
@@ -72,9 +76,10 @@ type Receipt struct {
 }
 
 type ReceiptQuery struct {
-	AccountID string
-	Cursor    string
-	Limit     int
+	AccountID  string
+	TypePrefix string
+	Cursor     string
+	Limit      int
 }
 
 type ReceiptPage struct {
@@ -151,6 +156,9 @@ func (c *ledgerHTTPClient) ListReceipts(ctx context.Context, query ReceiptQuery)
 		"accountId": {query.AccountID},
 		"limit":     {fmt.Sprint(query.Limit)},
 	}
+	if query.TypePrefix != "" {
+		values.Set("typePrefix", query.TypePrefix)
+	}
 	if query.Cursor != "" {
 		values.Set("cursor", query.Cursor)
 	}
@@ -163,6 +171,19 @@ func (c *ledgerHTTPClient) Receipt(ctx context.Context, receiptID string) (Recei
 	var result Receipt
 	err := c.get(ctx, "/ledger/receipts/"+url.PathEscape(receiptID), &result)
 	return result, err
+}
+
+func (c *ledgerHTTPClient) Ready(ctx context.Context) error {
+	var result struct {
+		Status string `json:"status"`
+	}
+	if err := c.get(ctx, "/readyz", &result); err != nil {
+		return err
+	}
+	if result.Status != "ready" {
+		return fmt.Errorf("invalid Ledger readiness response")
+	}
+	return nil
 }
 
 func (c *ledgerHTTPClient) Artifact(ctx context.Context, artifactID string) (Artifact, error) {
