@@ -542,6 +542,47 @@ func TestPostgresNormalWorkspaceComputeStagesConvergeAcrossProcessRestart(t *tes
 	}
 }
 
+func TestPostgresPersistedClaimPendingConcurrentReplayHasOneNodePatchWinner(t *testing.T) {
+	databaseURL := fabricTestDatabaseURL(t)
+	firstStore, err := newTestPostgresOperationStore(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = firstStore.client.Close() })
+	secondStore, err := newTestPostgresOperationStore(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = secondStore.client.Close() })
+	provider := &normalLaunchComputeProvider{nodeClaimGate: newNormalLaunchProviderWriteGate()}
+	input, allocation := seedNormalWorkspaceComputeClaimPending(t, firstStore, provider, "postgres-automatic-concurrent")
+	first := NewServiceWithOperationStore(provider, firstStore)
+	second := NewServiceWithOperationStore(provider, secondStore)
+
+	if _, err := first.CreateComputeAllocation(context.Background(), input); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-provider.nodeClaimGate.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("PostgreSQL continuation winner did not reach Node patch")
+	}
+	if _, err := second.CreateComputeAllocation(context.Background(), input); err != nil {
+		t.Fatal(err)
+	}
+	waitForPostgresNormalComputeSucceeded(t, second, secondStore, provider, allocation.ID)
+	close(provider.nodeClaimGate.release)
+	waitForComputeReconcileIdle(t, first, allocation.ID)
+	prepare, create, proof, cvmClaim, nodeClaim := provider.automaticContinuationCounts()
+	if prepare != 0 || create != 0 || proof < 2 || cvmClaim != 0 || nodeClaim != 1 {
+		t.Fatalf("PostgreSQL continuation calls prepare=%d create=%d proof=%d cvmClaim=%d nodeClaim=%d, want 0/0/>=2/0/1", prepare, create, proof, cvmClaim, nodeClaim)
+	}
+	ownership, ownershipErr := secondStore.MachineOwnership(context.Background(), allocation.ID)
+	if ownershipErr != nil || ownership.Status != "active" {
+		t.Fatalf("PostgreSQL ownership=%#v err=%v", ownership, ownershipErr)
+	}
+}
+
 func waitForPostgresComputeLeaseExpiry(t *testing.T, store *PostgresOperationStore, resourceID string) {
 	t.Helper()
 	var remainingMilliseconds int64

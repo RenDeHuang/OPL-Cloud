@@ -12,9 +12,11 @@ import (
 type normalLaunchComputeProvider struct {
 	testProvider
 	mu                    sync.Mutex
+	prepareCalls          int
 	createCalls           int
 	readbackCalls         int
 	discoveryCalls        int
+	proofCalls            int
 	cvmClaimCalls         int
 	nodeClaimCalls        int
 	legacyClaimCalls      int
@@ -22,11 +24,19 @@ type normalLaunchComputeProvider struct {
 	createResultErr       error
 	cvmClaimResponseLost  bool
 	nodeClaimResponseLost bool
+	failProofAfterNode    bool
 	cvmOwned              bool
 	nodeOwned             bool
 	createGate            *normalLaunchProviderWriteGate
 	cvmClaimGate          *normalLaunchProviderWriteGate
 	nodeClaimGate         *normalLaunchProviderWriteGate
+}
+
+func (p *normalLaunchComputeProvider) PrepareComputeAllocation(ctx context.Context, input ComputeAllocationInput) (ComputeAllocationPreparation, error) {
+	p.mu.Lock()
+	p.prepareCalls++
+	p.mu.Unlock()
+	return p.testProvider.PrepareComputeAllocation(ctx, input)
 }
 
 type normalLaunchProviderWriteGate struct {
@@ -110,6 +120,9 @@ func (p *normalLaunchComputeProvider) ClaimComputeNode(_ context.Context, _ Comp
 	gate.afterWrite()
 	p.mu.Lock()
 	if p.nodeClaimResponseLost {
+		// Tencent's Node claim performs its bounded readback internally. A lost
+		// response plus unavailable readback is therefore consumed in this call.
+		p.failProofAfterNode = false
 		return errors.New("Node patch response lost")
 	}
 	return nil
@@ -118,6 +131,11 @@ func (p *normalLaunchComputeProvider) ClaimComputeNode(_ context.Context, _ Comp
 func (p *normalLaunchComputeProvider) ProveComputeClaimRecovery(_ context.Context, allocation ComputeAllocation, _ ComputeAllocationPreparation, _ MachineOwnership) (ComputeClaimProviderProof, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	p.proofCalls++
+	if p.nodeOwned && p.failProofAfterNode {
+		p.failProofAfterNode = false
+		return ComputeClaimProviderProof{Reason: "provider_describe"}, errors.New("node readback unavailable")
+	}
 	proof := ComputeClaimProviderProof{
 		Status: "proven", MachineName: allocation.MachineName, NodeName: allocation.NodeName,
 		CVMInstanceID: firstNonEmpty(allocation.InstanceID, allocation.CVMInstanceID), PrivateIP: allocation.PrivateIP,
@@ -134,10 +152,272 @@ func (p *normalLaunchComputeProvider) ProveComputeClaimRecovery(_ context.Contex
 	return proof, nil
 }
 
+func (p *normalLaunchComputeProvider) automaticContinuationCounts() (prepare, create, proof, cvmClaim, nodeClaim int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.prepareCalls, p.createCalls, p.proofCalls, p.cvmClaimCalls, p.nodeClaimCalls
+}
+
 func (p *normalLaunchComputeProvider) counts() (create, readback, discovery, cvmClaim, nodeClaim, legacyClaim int) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.createCalls, p.readbackCalls, p.discoveryCalls, p.cvmClaimCalls, p.nodeClaimCalls, p.legacyClaimCalls
+}
+
+func seedNormalWorkspaceComputeClaimPending(t *testing.T, store OperationStore, provider *normalLaunchComputeProvider, suffix string) (ComputeAllocationInput, ComputeAllocation) {
+	t.Helper()
+	launchOperationID := "workspace-launch-" + suffix
+	input := ComputeAllocationInput{
+		AccountID: "acct-" + suffix, WorkspaceID: "workspace-" + suffix, PackageID: "basic",
+		NodePoolID: "np-basic", IdempotencyKey: launchOperationID + ":compute",
+	}
+	input.ID = "ca_" + stableSuffix("create_compute_allocation", input.IdempotencyKey)[:18]
+	plan := ComputeAllocationPreparation{
+		PoolID: "pool-basic-2c4g", PackageID: input.PackageID, NodePoolID: input.NodePoolID, InstanceType: "SA5.MEDIUM4",
+		MaxReplicas: 20, BaselineReplicas: 1, TargetReplicas: 2, BeforeMachineNames: []string{"machine-existing"},
+	}
+	seededAllocation := ComputeAllocation{
+		ID: input.ID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, PackageID: input.PackageID,
+		NodePoolID: input.NodePoolID, Status: "compute_claim_pending", Provider: "tencent-tke", CreatedAt: time.Now().UTC(),
+	}
+	allocation := mergeComputeAllocation(readyComputeAllocationFor(ComputeAllocationExecution{
+		Allocation: seededAllocation,
+		Plan:       plan,
+	}, "machine-"+suffix), seededAllocation, plan)
+	allocation.Status = "compute_claim_pending"
+	allocation.ProviderData["machineName"] = allocation.MachineName
+	allocation.ProviderData["periodMonths"] = "1"
+	operation := newOperation(
+		"create_compute_allocation", "compute_allocation", allocation.ID, allocation.AccountID, allocation.WorkspaceID,
+		input.IdempotencyKey, hashInput(input), allocation.CreatedAt,
+	)
+	operation.ID = "fop_compute_claim_" + stableSuffix("create_compute_allocation", input.IdempotencyKey)
+	operation.Status = "claim_pending"
+	operation.ErrorCode = "compute_claim_cvm_readback_mismatch"
+	operation.ProviderRequestID = allocation.ProviderRequestID
+	operation.CreatedAt = allocation.CreatedAt
+	operation.ComputePoolKey = input.NodePoolID
+	operation.RedactedProviderPayload = computeAllocationOperationPayload(allocation, plan)
+	operation.RedactedProviderPayload = withNormalLaunchStageBudget(operation.RedactedProviderPayload, "compute_create", confirmedNormalLaunchMutationBudget())
+	operation.RedactedProviderPayload = withNormalLaunchStageBudget(operation.RedactedProviderPayload, "compute_claim_cvm", reservedNormalLaunchMutationBudget())
+	if err := store.Append(context.Background(), operation); err != nil {
+		t.Fatal(err)
+	}
+	ownership := MachineOwnership{
+		ID: "owner_" + stableSuffix(allocation.ID, allocation.MachineName)[:16], ResourceID: allocation.ID,
+		AccountID: allocation.AccountID, WorkspaceID: allocation.WorkspaceID, PackageID: allocation.PackageID,
+		NodePoolID: allocation.NodePoolID, MachineID: allocation.MachineName, InstanceID: allocation.InstanceID,
+		NodeName: allocation.NodeName, Status: "quarantined", ProviderRequestID: allocation.ProviderRequestID, ClaimedAt: allocation.CreatedAt,
+	}
+	if _, created, err := store.ClaimMachine(context.Background(), ownership); err != nil || !created {
+		t.Fatalf("seed machine ownership created=%v err=%v", created, err)
+	}
+	provider.cvmOwned = true
+	return input, allocation
+}
+
+func TestNormalWorkspacePersistedClaimPendingReplayContinuesTargetOwnedCVMWithoutRetagging(t *testing.T) {
+	store := NewMemoryOperationStore()
+	provider := &normalLaunchComputeProvider{}
+	input, allocation := seedNormalWorkspaceComputeClaimPending(t, store, provider, "automatic-continuation")
+	service := NewServiceWithOperationStore(provider, store)
+	configureFastComputeAllocationPolling(service, 100*time.Millisecond)
+
+	replayed, err := service.CreateComputeAllocation(context.Background(), input)
+	if err != nil || replayed.ID != allocation.ID {
+		t.Fatalf("replayed=%#v err=%v", replayed, err)
+	}
+	waitForOperation(t, service, "create_compute_allocation", "compute_allocation", allocation.ID, "succeeded")
+	prepare, create, proof, cvmClaim, nodeClaim := provider.automaticContinuationCounts()
+	if prepare != 0 || create != 0 || proof != 1 || cvmClaim != 0 || nodeClaim != 1 {
+		t.Fatalf("automatic continuation calls prepare=%d create=%d proof=%d cvmClaim=%d nodeClaim=%d, want 0/0/1/0/1", prepare, create, proof, cvmClaim, nodeClaim)
+	}
+	operations, operationErr := store.List(context.Background())
+	var persisted ComputeAllocation
+	if operationErr != nil || len(operations) != 1 || operations[0].Status != "succeeded" || !decodeOperationResource(operations[0], &persisted) || persisted.Status != "running" {
+		t.Fatalf("automatic continuation operations=%#v persisted=%#v err=%v", operations, persisted, operationErr)
+	}
+	for _, stage := range []string{"compute_claim_cvm", "compute_claim_node"} {
+		budget, present, valid := normalLaunchStageBudget(operations[0].RedactedProviderPayload, stage)
+		if !present || !valid || budget != confirmedNormalLaunchMutationBudget() {
+			t.Fatalf("automatic continuation stage %s budget=%#v present=%v valid=%v", stage, budget, present, valid)
+		}
+	}
+	ownership, ownershipErr := store.MachineOwnership(context.Background(), allocation.ID)
+	if ownershipErr != nil || ownership.Status != "active" {
+		t.Fatalf("ownership=%#v err=%v", ownership, ownershipErr)
+	}
+}
+
+func TestNormalWorkspacePersistedClaimPendingReplayConvergesTargetOwnedNodeWithoutPatch(t *testing.T) {
+	store := NewMemoryOperationStore()
+	provider := &normalLaunchComputeProvider{nodeOwned: true}
+	input, allocation := seedNormalWorkspaceComputeClaimPending(t, store, provider, "automatic-target-owned")
+	service := NewServiceWithOperationStore(provider, store)
+
+	if _, err := service.CreateComputeAllocation(context.Background(), input); err != nil {
+		t.Fatal(err)
+	}
+	waitForOperation(t, service, "create_compute_allocation", "compute_allocation", allocation.ID, "succeeded")
+	prepare, create, proof, cvmClaim, nodeClaim := provider.automaticContinuationCounts()
+	if prepare != 0 || create != 0 || proof != 1 || cvmClaim != 0 || nodeClaim != 0 {
+		t.Fatalf("target-owned continuation calls prepare=%d create=%d proof=%d cvmClaim=%d nodeClaim=%d, want 0/0/1/0/0", prepare, create, proof, cvmClaim, nodeClaim)
+	}
+	ownership, ownershipErr := store.MachineOwnership(context.Background(), allocation.ID)
+	if ownershipErr != nil || ownership.Status != "active" {
+		t.Fatalf("target-owned ownership=%#v err=%v", ownership, ownershipErr)
+	}
+}
+
+func TestNormalWorkspacePersistedClaimPendingConcurrentReplayHasOneNodePatchWinner(t *testing.T) {
+	store := NewMemoryOperationStore()
+	provider := &normalLaunchComputeProvider{nodeClaimGate: newNormalLaunchProviderWriteGate()}
+	input, allocation := seedNormalWorkspaceComputeClaimPending(t, store, provider, "automatic-concurrent")
+	first := NewServiceWithOperationStore(provider, store)
+	second := NewServiceWithOperationStore(provider, store)
+
+	if _, err := first.CreateComputeAllocation(context.Background(), input); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-provider.nodeClaimGate.entered:
+	case <-time.After(time.Second):
+		t.Fatal("continuation winner did not reach Node patch")
+	}
+	if _, err := second.CreateComputeAllocation(context.Background(), input); err != nil {
+		t.Fatal(err)
+	}
+	waitForOperation(t, second, "create_compute_allocation", "compute_allocation", allocation.ID, "succeeded")
+	close(provider.nodeClaimGate.release)
+	waitForComputeReconcileIdle(t, first, allocation.ID)
+	prepare, create, proof, cvmClaim, nodeClaim := provider.automaticContinuationCounts()
+	if prepare != 0 || create != 0 || proof < 2 || cvmClaim != 0 || nodeClaim != 1 {
+		t.Fatalf("concurrent continuation calls prepare=%d create=%d proof=%d cvmClaim=%d nodeClaim=%d, want 0/0/>=2/0/1", prepare, create, proof, cvmClaim, nodeClaim)
+	}
+}
+
+func TestNormalWorkspacePersistedClaimPendingRestartAfterLostNodeResponseUsesReadbackOnly(t *testing.T) {
+	store := NewMemoryOperationStore()
+	provider := &normalLaunchComputeProvider{nodeClaimResponseLost: true, failProofAfterNode: true}
+	input, allocation := seedNormalWorkspaceComputeClaimPending(t, store, provider, "automatic-lost-node-response")
+	first := NewServiceWithOperationStore(provider, store)
+
+	if _, err := first.CreateComputeAllocation(context.Background(), input); err != nil {
+		t.Fatal(err)
+	}
+	waitForComputeReconcileIdle(t, first, allocation.ID)
+	operations, err := store.List(context.Background())
+	if err != nil || len(operations) != 1 || operations[0].Status != "claim_pending" {
+		t.Fatalf("after lost response operations=%#v err=%v", operations, err)
+	}
+	nodeBudget, present, valid := normalLaunchStageBudget(operations[0].RedactedProviderPayload, "compute_claim_node")
+	if !present || !valid || nodeBudget != reservedNormalLaunchMutationBudget() {
+		t.Fatalf("persisted Node reservation=%#v present=%v valid=%v", nodeBudget, present, valid)
+	}
+
+	provider.nodeClaimResponseLost = false
+	restarted := NewServiceWithOperationStore(provider, store)
+	if _, err := restarted.CreateComputeAllocation(context.Background(), input); err != nil {
+		t.Fatal(err)
+	}
+	waitForOperation(t, restarted, "create_compute_allocation", "compute_allocation", allocation.ID, "succeeded")
+	prepare, create, proof, cvmClaim, nodeClaim := provider.automaticContinuationCounts()
+	if prepare != 0 || create != 0 || proof != 2 || cvmClaim != 0 || nodeClaim != 1 {
+		t.Fatalf("restart continuation calls prepare=%d create=%d proof=%d cvmClaim=%d nodeClaim=%d, want 0/0/2/0/1", prepare, create, proof, cvmClaim, nodeClaim)
+	}
+}
+
+func TestNormalWorkspacePersistedClaimPendingRejectsPersistedIdentityDriftBeforeProviderRead(t *testing.T) {
+	for _, testCase := range []struct {
+		name  string
+		drift func(*ComputeAllocation, *ComputeAllocationPreparation)
+	}{
+		{name: "allocation", drift: func(allocation *ComputeAllocation, _ *ComputeAllocationPreparation) {
+			allocation.InstanceType = "S6.MEDIUM4"
+		}},
+		{name: "plan", drift: func(_ *ComputeAllocation, plan *ComputeAllocationPreparation) {
+			plan.TargetReplicas++
+		}},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			store := NewMemoryOperationStore()
+			provider := &normalLaunchComputeProvider{}
+			input, allocation := seedNormalWorkspaceComputeClaimPending(t, store, provider, "automatic-drift-"+testCase.name)
+			operations, err := store.List(context.Background())
+			if err != nil || len(operations) != 1 {
+				t.Fatalf("seeded operations=%#v err=%v", operations, err)
+			}
+			operation := operations[0]
+			plan, hasPlan := decodeComputeAllocationPlan(operation)
+			if !hasPlan {
+				t.Fatal("seeded operation is missing allocation plan")
+			}
+			testCase.drift(&allocation, &plan)
+			binding, bindingOK := automaticComputeClaimRecoveryBinding(operation, allocation, plan)
+			if !bindingOK {
+				t.Fatal("drift fixture must retain a syntactically valid recovery binding")
+			}
+			drifted := operation
+			drifted.RedactedProviderPayload = preserveNormalLaunchMutationBudget(computeAllocationOperationPayload(allocation, plan), operation.RedactedProviderPayload)
+			drifted.RedactedProviderPayload = withComputeClaimRecoveryBinding(drifted.RedactedProviderPayload, binding)
+			if err := store.SaveComputeClaimRecovery(context.Background(), operation, drifted); err != nil {
+				t.Fatal(err)
+			}
+
+			service := NewServiceWithOperationStore(provider, store)
+			if _, err := service.CreateComputeAllocation(context.Background(), input); err != nil {
+				t.Fatal(err)
+			}
+			waitForComputeReconcileIdle(t, service, allocation.ID)
+			prepare, create, proof, cvmClaim, nodeClaim := provider.automaticContinuationCounts()
+			if prepare != 0 || create != 0 || proof != 0 || cvmClaim != 0 || nodeClaim != 0 {
+				t.Fatalf("identity drift calls prepare=%d create=%d proof=%d cvmClaim=%d nodeClaim=%d, want all zero", prepare, create, proof, cvmClaim, nodeClaim)
+			}
+			operations, err = store.List(context.Background())
+			if err != nil || len(operations) != 1 || operations[0].Status != "claim_pending" {
+				t.Fatalf("identity drift operations=%#v err=%v", operations, err)
+			}
+		})
+	}
+}
+
+func TestNormalWorkspacePersistedClaimPendingRejectsManualRecoveryLedgerBeforeProviderRead(t *testing.T) {
+	store := NewMemoryOperationStore()
+	provider := &normalLaunchComputeProvider{}
+	input, allocation := seedNormalWorkspaceComputeClaimPending(t, store, provider, "automatic-manual-recovery-ledger")
+	operations, err := store.List(context.Background())
+	if err != nil || len(operations) != 1 {
+		t.Fatalf("seeded operations=%#v err=%v", operations, err)
+	}
+	operation := operations[0]
+	plan, hasPlan := decodeComputeAllocationPlan(operation)
+	if !hasPlan {
+		t.Fatal("seeded operation is missing allocation plan")
+	}
+	binding, bindingOK := automaticComputeClaimRecoveryBinding(operation, allocation, plan)
+	if !bindingOK {
+		t.Fatal("seeded operation is missing automatic recovery binding")
+	}
+	manual := operation
+	manual.RedactedProviderPayload = withComputeClaimRecoveryBinding(manual.RedactedProviderPayload, binding)
+	manual.RedactedProviderPayload = withComputeClaimRecoveryMutation(manual.RedactedProviderPayload, reservedComputeClaimRecoveryMutation())
+	if err := store.SaveComputeClaimRecovery(context.Background(), operation, manual); err != nil {
+		t.Fatal(err)
+	}
+
+	service := NewServiceWithOperationStore(provider, store)
+	if _, err := service.CreateComputeAllocation(context.Background(), input); err != nil {
+		t.Fatal(err)
+	}
+	waitForComputeReconcileIdle(t, service, allocation.ID)
+	prepare, create, proof, cvmClaim, nodeClaim := provider.automaticContinuationCounts()
+	if prepare != 0 || create != 0 || proof != 0 || cvmClaim != 0 || nodeClaim != 0 {
+		t.Fatalf("manual recovery ledger calls prepare=%d create=%d proof=%d cvmClaim=%d nodeClaim=%d, want all zero", prepare, create, proof, cvmClaim, nodeClaim)
+	}
+	operations, err = store.List(context.Background())
+	if err != nil || len(operations) != 1 || operations[0].Status != "claim_pending" {
+		t.Fatalf("manual recovery ledger operations=%#v err=%v", operations, err)
+	}
 }
 
 func TestNormalWorkspaceComputeCreateResponseLossUsesReadbackAfterRestart(t *testing.T) {
