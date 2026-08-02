@@ -1508,6 +1508,93 @@ func TestPostgresComputeClaimRecoveryNodeReservationCASHasSingleWinnerAndKeepsOr
 	}
 }
 
+func TestPostgresHistoricalComputeClaimBindingWithoutLedgerHasOneNodeContinuationWinner(t *testing.T) {
+	databaseURL := fabricTestDatabaseURL(t)
+	firstStore, err := newTestPostgresOperationStore(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer firstStore.client.Close()
+	secondStore, err := newTestPostgresOperationStore(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer secondStore.client.Close()
+
+	_, memoryStore, fixtureProvider, input := seedComputeClaimRecovery(t, "basic")
+	operations, err := memoryStore.List(context.Background())
+	if err != nil || len(operations) != 1 {
+		t.Fatalf("fixture operations=%#v err=%v", operations, err)
+	}
+	canonicalInput := ComputeClaimRecoveryClaimInput{
+		ComputeClaimRecoveryInput: input, MachineName: fixtureProvider.proof.MachineName, NodeName: fixtureProvider.proof.NodeName,
+		CVMInstanceID: fixtureProvider.proof.CVMInstanceID, PrivateIP: fixtureProvider.proof.PrivateIP,
+		InstanceType: fixtureProvider.proof.InstanceType, Zone: fixtureProvider.proof.Zone,
+		IdempotencyKey: input.LaunchOperationID + ":compute",
+	}
+	legacyInput := canonicalInput
+	legacyInput.IdempotencyKey = input.LaunchOperationID + ":compute-claim"
+	operation := operations[0]
+	operation.Status, operation.ErrorCode, operation.FinishedAt = "claim_pending", "", time.Time{}
+	operation.RedactedProviderPayload = withComputeClaimRecoveryBinding(operation.RedactedProviderPayload, newComputeClaimRecoveryBinding(legacyInput))
+	if err := firstStore.Append(context.Background(), operation); err != nil {
+		t.Fatal(err)
+	}
+	ownership, err := memoryStore.MachineOwnership(context.Background(), input.ComputeAllocationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored, created, claimErr := firstStore.ClaimMachine(context.Background(), ownership); claimErr != nil || !created {
+		t.Fatalf("seed ownership=%#v created=%v err=%v", stored, created, claimErr)
+	}
+	provider := &postgresComputeClaimRecoveryProvider{fakeComputeClaimRecoveryProvider: *fixtureProvider}
+	provider.proof.CVMOwnershipState = "target_owned"
+	provider.proof.NodeOwnershipState = "unallocated"
+	provider.claim = ComputeClaimProviderClaim{
+		Proof: ComputeClaimProviderProof{
+			Status: "proven", Reason: "none", MachineName: provider.proof.MachineName, NodeName: provider.proof.NodeName,
+			CVMInstanceID: provider.proof.CVMInstanceID, PrivateIP: provider.proof.PrivateIP, InstanceType: provider.proof.InstanceType,
+			Zone: provider.proof.Zone, ChargeType: provider.proof.ChargeType, PeriodMonths: provider.proof.PeriodMonths,
+			RenewFlag: provider.proof.RenewFlag, Deadline: provider.proof.Deadline, CVMOwnershipState: "target_owned", NodeOwnershipState: "target_owned",
+		},
+		KubernetesMutationCount: 1,
+		Evidence:                &ComputeClaimEvidence{Node: ComputeClaimMutationEvidence{Attempted: 1, Confirmed: 1}},
+	}
+	provider.claimHook = func() { provider.proof.NodeOwnershipState = "target_owned" }
+
+	start := make(chan struct{})
+	results := make(chan ComputeClaimRecoveryProof, 2)
+	errors := make(chan error, 2)
+	for _, store := range []*PostgresOperationStore{firstStore, secondStore} {
+		store := store
+		go func() {
+			<-start
+			result, claimErr := NewServiceWithOperationStore(provider, store).ClaimComputeRecovery(context.Background(), canonicalInput)
+			results <- result
+			errors <- claimErr
+		}()
+	}
+	close(start)
+	kubernetesMutations := 0
+	for range 2 {
+		result, claimErr := <-results, <-errors
+		if claimErr != nil || !result.Eligible || result.TencentMutationCount != 0 {
+			t.Fatalf("concurrent result=%#v err=%v", result, claimErr)
+		}
+		kubernetesMutations += result.KubernetesMutationCount
+	}
+	stored, err := firstStore.List(context.Background())
+	finalOwnership, ownershipErr := firstStore.MachineOwnership(context.Background(), input.ComputeAllocationID)
+	binding, bindingPresent, bindingValid := decodeComputeClaimRecoveryBinding(stored[0])
+	ledger, ledgerPresent, ledgerValid := decodeComputeClaimRecoveryMutation(stored[0])
+	if kubernetesMutations != 1 || provider.claimCalls != 1 || err != nil || len(stored) != 1 || stored[0].Status != "succeeded" ||
+		ownershipErr != nil || finalOwnership.Status != "active" || !bindingPresent || !bindingValid || binding != newComputeClaimRecoveryBinding(legacyInput) ||
+		!ledgerPresent || !ledgerValid || ledger.State != "observed" || ledger.TencentMutationCount != 0 || ledger.KubernetesMutationCount != 1 ||
+		!reflect.DeepEqual(ledger.Evidence.CVM, ComputeClaimMutationEvidence{}) || ledger.Evidence.Node.Confirmed != 1 {
+		t.Fatalf("kubernetesMutations=%d stored=%#v err=%v ownership=%#v ownershipErr=%v binding=%#v ledger=%#v provider=%#v", kubernetesMutations, stored, err, finalOwnership, ownershipErr, binding, ledger, provider)
+	}
+}
+
 func TestPostgresComputeClaimRecoveryOwnershipCASActivatesOnlySameTarget(t *testing.T) {
 	databaseURL := fabricTestDatabaseURL(t)
 	store, err := newTestPostgresOperationStore(databaseURL)
