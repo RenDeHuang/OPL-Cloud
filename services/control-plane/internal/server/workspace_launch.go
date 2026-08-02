@@ -1942,6 +1942,16 @@ func workspaceComputeClaimIdentityCheck(field string, expected, actual any) clie
 	return clients.ComputeClaimIdentityCheck{Field: field, Matches: expectedValue == actualValue, Expected: expectedValue, Actual: actualValue}
 }
 
+func workspaceComputeClaimIdentityDigestCheck(field string, expected, actual any) clients.ComputeClaimIdentityCheck {
+	expectedValue, actualValue := fmt.Sprint(expected), fmt.Sprint(actual)
+	expectedDigest := sha256.Sum256([]byte(expectedValue))
+	actualDigest := sha256.Sum256([]byte(actualValue))
+	return clients.ComputeClaimIdentityCheck{
+		Field: field, Matches: expectedValue == actualValue,
+		ExpectedDigest: hex.EncodeToString(expectedDigest[:]), ActualDigest: hex.EncodeToString(actualDigest[:]),
+	}
+}
+
 func workspaceComputeClaimIdentityAllowedCheck(field, expected string, actual string, allowed ...string) clients.ComputeClaimIdentityCheck {
 	matches := false
 	for _, value := range allowed {
@@ -1981,13 +1991,13 @@ func workspaceComputeClaimApprovalIdentityEvidence(operation workspaceLaunchOper
 		workspaceComputeClaimIdentityCheck("controlPlane.machineName", input.MachineName, operation.ComputeMachineName),
 		workspaceComputeClaimIdentityCheck("controlPlane.workspaceApiKeyId", input.Resources.WorkspaceAPIKeyID, strconv.FormatInt(operation.WorkspaceAPIKeyID, 10)),
 		workspaceComputeClaimIdentityCheck("approval.approvalId", input.ApprovalID, effective.ApprovalID),
-		workspaceComputeClaimIdentityCheck("approval.approvalDigest", canonicalApprovalDigest, input.ApprovalDigest),
-		workspaceComputeClaimIdentityCheck("approval.persistedApprovalDigest", input.ApprovalDigest, effective.ApprovalDigest),
+		workspaceComputeClaimIdentityDigestCheck("approval.approvalDigest", canonicalApprovalDigest, input.ApprovalDigest),
+		workspaceComputeClaimIdentityDigestCheck("approval.persistedApprovalDigest", input.ApprovalDigest, effective.ApprovalDigest),
 		workspaceComputeClaimIdentityCheck("approval.idempotencyKey", key, effective.IdempotencyKey),
 		{Field: "approval.persistedBinding", Matches: persistedMatches, Expected: "not_persisted_or_exact_or_allowed_successor", Actual: persistedState},
-		workspaceComputeClaimIdentityCheck("release.mergedMainSha", input.MergedMainSHA, effective.MergedMainSHA),
-		workspaceComputeClaimIdentityCheck("release.cloudImageDigest", input.CloudImageDigest, effective.CloudImageDigest),
-		workspaceComputeClaimIdentityCheck("release.workspaceImageDigest", input.WorkspaceImageDigest, effective.WorkspaceImageDigest),
+		workspaceComputeClaimIdentityDigestCheck("release.mergedMainSha", input.MergedMainSHA, effective.MergedMainSHA),
+		workspaceComputeClaimIdentityDigestCheck("release.cloudImageDigest", input.CloudImageDigest, effective.CloudImageDigest),
+		workspaceComputeClaimIdentityDigestCheck("release.workspaceImageDigest", input.WorkspaceImageDigest, effective.WorkspaceImageDigest),
 	}
 	return checks
 }

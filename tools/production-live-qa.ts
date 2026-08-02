@@ -682,6 +682,11 @@ const COMPUTE_CLAIM_IDENTITY_FIELDS = new Set([
   "provider.nodeName", "provider.machineName", "provider.cvmOwnership", "provider.nodeOwnership",
   "binding.present", "binding.valid", "binding.compatibility", "binding.launchOperationId", "binding.idempotencyKey", "binding.targetHash", "binding.requestHash"
 ]);
+const COMPUTE_CLAIM_IDENTITY_DIGEST_FIELDS = new Set([
+  "approval.approvalDigest", "approval.persistedApprovalDigest",
+  "release.mergedMainSha", "release.cloudImageDigest", "release.workspaceImageDigest",
+  "fabric.operationRequestHash", "binding.targetHash", "binding.requestHash"
+]);
 const COMPUTE_CLAIM_BLOCKED_ERROR_CODES = new Set([
   ...COMPUTE_CLAIM_REASONS,
   ...COMPUTE_CLAIM_RECOVERY_STAGE_ERROR_CODES,
@@ -1638,7 +1643,7 @@ function computeClaimRunnerDirectMutationCountsAreZero(value) {
     value.sub2api === 0 && value.tencent === 0 && value.kubernetes === 0;
 }
 
-function computeClaimIdentityEvidence(value) {
+function computeClaimIdentityEvidence(value, requireComplete = false) {
   const checks = Array.isArray(value?.checks) ? value.checks.map((check) => ({
     field: String(check?.field || ""),
     matches: check?.matches === true,
@@ -1648,9 +1653,11 @@ function computeClaimIdentityEvidence(value) {
     actualDigest: String(check?.actualDigest || "")
   })) : [];
   const fields = new Set(checks.map((check) => check.field));
-  const valid = checks.length >= 2 && fields.size === checks.length && fields.has("binding.present") && fields.has("binding.valid") &&
+  const complete = checks.length === COMPUTE_CLAIM_IDENTITY_FIELDS.size && fields.size === COMPUTE_CLAIM_IDENTITY_FIELDS.size;
+  const valid = checks.length >= 2 && fields.size === checks.length && (!requireComplete || complete) &&
+    fields.has("binding.present") && fields.has("binding.valid") &&
     checks.every((check) => COMPUTE_CLAIM_IDENTITY_FIELDS.has(check.field) &&
-    (/Hash(?:\.|$)/.test(check.field)
+    (COMPUTE_CLAIM_IDENTITY_DIGEST_FIELDS.has(check.field)
       ? !check.expected && !check.actual && /^[a-f0-9]{64}$/.test(check.expectedDigest) && /^[a-f0-9]{64}$/.test(check.actualDigest)
       : !check.expectedDigest && !check.actualDigest && check.expected !== "" && check.actual !== ""));
   const mutationLedger = String(value?.mutationLedger || "");
@@ -1758,7 +1765,7 @@ export async function validateComputeClaimApproval(options = {}) {
   }
   let identityEvidence;
   try {
-    identityEvidence = computeClaimIdentityEvidence(payload.identityEvidence);
+    identityEvidence = computeClaimIdentityEvidence(payload.identityEvidence, true);
   } catch (error) {
     error.responseMetadata = response.responseMetadata;
     throw error;

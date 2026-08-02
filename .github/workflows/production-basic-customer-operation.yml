@@ -1981,11 +1981,23 @@ jobs:
               : `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(",")}}`;
           const approvalDigest = createHash("sha256").update(canonicalJson(approval)).digest("hex");
           const identityChecks = result?.identityEvidence?.checks;
+          const identityFields = new Set([
+            "controlPlane.launchOperationId", "controlPlane.accountId", "controlPlane.workspaceId", "controlPlane.computeAllocationId", "controlPlane.storageId",
+            "controlPlane.cvmInstanceId", "controlPlane.zone", "controlPlane.privateIp", "controlPlane.instanceType", "controlPlane.nodeName",
+            "controlPlane.machineName", "controlPlane.workspaceApiKeyId", "approval.approvalId", "approval.approvalDigest", "approval.persistedApprovalDigest",
+            "approval.idempotencyKey", "approval.persistedBinding", "release.mergedMainSha", "release.cloudImageDigest", "release.workspaceImageDigest",
+            "fabric.operationId", "fabric.operationIdempotencyKey", "fabric.operationRequestHash", "provider.readbackStatus", "provider.reason",
+            "provider.cvmInstanceId", "provider.zone", "provider.privateIp", "provider.instanceType", "provider.nodeName", "provider.machineName",
+            "provider.cvmOwnership", "provider.nodeOwnership", "binding.present", "binding.valid", "binding.compatibility", "binding.launchOperationId",
+            "binding.idempotencyKey", "binding.targetHash", "binding.requestHash"
+          ]);
           if (result?.schemaVersion !== 2 || result?.operationMode !== "compute_claim_validate" || result?.status !== "proven" ||
             result?.recoveryEligible !== true || result?.errorCode !== "none" || result?.release?.mergedSha !== process.env.OPL_MERGED_SHA ||
             result?.release?.cloudImageDigest !== process.env.OPL_COMPUTE_CLAIM_CLOUD_DIGEST || canonicalJson(result?.target) !== canonicalJson(target) ||
             result?.approval?.approvalId !== process.env.OPL_COMPUTE_CLAIM_RECOVERY_APPROVAL_ID || result?.approval?.approvalDigest !== approvalDigest ||
-            !Array.isArray(identityChecks) || identityChecks.length < 2 || !identityChecks.every((check) => typeof check?.field === "string" && check?.matches === true) ||
+            !Array.isArray(identityChecks) || identityChecks.length !== identityFields.size ||
+            new Set(identityChecks.map((check) => check?.field)).size !== identityFields.size ||
+            !identityChecks.every((check) => identityFields.has(check?.field) && check?.matches === true) ||
             !["absent", "invalid", "reserved", "observed", "node_reserved", "succeeded"].includes(result?.identityEvidence?.mutationLedger) ||
             result?.runnerDirectMutationCounts?.sub2api !== 0 || result?.runnerDirectMutationCounts?.tencent !== 0 ||
             result?.runnerDirectMutationCounts?.kubernetes !== 0 || /@|password|secret|token|cookie|maskedValue/i.test(JSON.stringify(result))) {

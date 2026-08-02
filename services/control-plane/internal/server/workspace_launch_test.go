@@ -2402,11 +2402,14 @@ func TestWorkspaceComputeClaimApprovalValidationIsReadOnlyAndExact(t *testing.T)
 	}
 	digestMismatch := false
 	for _, check := range blocked.IdentityEvidence.Checks {
-		if check.Field == "approval.approvalDigest" && !check.Matches {
+		if check.Field == "approval.approvalDigest" && !check.Matches && check.Expected == "" && check.Actual == "" &&
+			check.ExpectedDigest != "" && check.ActualDigest != "" && check.ExpectedDigest != check.ActualDigest {
 			digestMismatch = true
 		}
 	}
+	redactedEvidence, marshalErr := json.Marshal(blocked.IdentityEvidence)
 	if response.Code != http.StatusConflict || blocked.Status != "blocked" || blocked.ErrorCode != "identity_mismatch" || !digestMismatch ||
+		marshalErr != nil || strings.Contains(string(redactedEvidence), strings.Repeat("f", 64)) ||
 		len(fixture.fabric.computeClaimInputs) != 2 || len(fixture.fabric.computeClaimCalls) != 0 || fixture.operation(t).ComputeClaimApproval != nil {
 		t.Fatalf("drifted approval crossed validation boundary: status=%d body=%s proofs=%#v claims=%#v", response.Code, response.Body.String(), fixture.fabric.computeClaimInputs, fixture.fabric.computeClaimCalls)
 	}

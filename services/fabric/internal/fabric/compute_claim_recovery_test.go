@@ -912,6 +912,7 @@ func TestComputeClaimRecoveryIdentityEvidenceClassifiesPersistedBindingWithoutMu
 		checks[check.Field] = check
 	}
 	if !checks["binding.compatibility"].Matches || checks["binding.compatibility"].Actual != "historical" ||
+		!checks["fabric.operationId"].Matches || !checks["fabric.operationRequestHash"].Matches ||
 		!checks["binding.idempotencyKey"].Matches || !checks["binding.requestHash"].Matches ||
 		checks["binding.targetHash"].ExpectedDigest == "" || checks["binding.targetHash"].ExpectedDigest != checks["binding.targetHash"].ActualDigest {
 		t.Fatalf("unexpected identity checks: %#v", checks)
@@ -919,6 +920,47 @@ func TestComputeClaimRecoveryIdentityEvidenceClassifiesPersistedBindingWithoutMu
 	serialized, marshalErr := json.Marshal(evidence)
 	if marshalErr != nil || strings.Contains(string(serialized), historicalComputeClaimRecoveryBinding(claimInput).RequestHash) {
 		t.Fatalf("identity evidence leaked raw hash: %s err=%v", serialized, marshalErr)
+	}
+}
+
+func TestComputeClaimRecoveryIdentityEvidenceDetectsOriginalOperationRequestHashDriftWithoutMutation(t *testing.T) {
+	service, store, provider, input := seedComputeClaimRecovery(t, "basic")
+	claimInput := ComputeClaimRecoveryClaimInput{
+		ComputeClaimRecoveryInput: input, MachineName: "machine-after", NodeName: "10.0.0.18", CVMInstanceID: "ins-fixture",
+		PrivateIP: provider.proof.PrivateIP, InstanceType: provider.proof.InstanceType, Zone: provider.proof.Zone,
+		IdempotencyKey: input.LaunchOperationID + ":compute",
+	}
+	store.mu.Lock()
+	if len(store.operation) != 1 {
+		store.mu.Unlock()
+		t.Fatalf("operations=%#v", store.operation)
+	}
+	pending := store.operation[0]
+	pending.OperationID = "op_create_compute_allocation_drifted"
+	pending.RequestHash = "drifted-original-compute-request"
+	pending.RedactedProviderPayload = withComputeClaimRecoveryBinding(pending.RedactedProviderPayload, historicalComputeClaimRecoveryBinding(claimInput))
+	store.operation[0] = pending
+	store.mu.Unlock()
+
+	evidence, err := service.ComputeClaimRecoveryIdentityEvidence(context.Background(), claimInput)
+	stored, listErr := store.List(context.Background())
+	if err != nil || listErr != nil || evidence == nil || len(stored) != 1 || !reflect.DeepEqual(stored[0], pending) ||
+		provider.proofCalls != 0 || provider.claimCalls != 0 || provider.tagCalls != 0 || provider.scaleCalls != 0 || provider.storageCalls != 0 {
+		t.Fatalf("evidence=%#v err=%v stored=%#v listErr=%v provider=%#v", evidence, err, stored, listErr, provider)
+	}
+	checks := map[string]ComputeClaimIdentityCheck{}
+	for _, check := range evidence.Checks {
+		checks[check.Field] = check
+	}
+	operationID := checks["fabric.operationId"]
+	requestHash := checks["fabric.operationRequestHash"]
+	if operationID.Matches || operationID.Expected == "" || operationID.Actual != pending.OperationID ||
+		requestHash.Matches || requestHash.ExpectedDigest == "" || requestHash.ActualDigest == "" || requestHash.ExpectedDigest == requestHash.ActualDigest {
+		t.Fatalf("operation identity drift was not classified: operation=%#v requestHash=%#v", operationID, requestHash)
+	}
+	serialized, marshalErr := json.Marshal(evidence)
+	if marshalErr != nil || strings.Contains(string(serialized), pending.RequestHash) {
+		t.Fatalf("identity evidence leaked raw request hash: %s err=%v", serialized, marshalErr)
 	}
 }
 

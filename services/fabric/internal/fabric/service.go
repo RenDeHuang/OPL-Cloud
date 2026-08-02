@@ -1140,9 +1140,6 @@ func historicalComputeClaimRecoveryBinding(input ComputeClaimRecoveryClaimInput)
 }
 
 func computeClaimIdentityDigest(value string) string {
-	if value == "" {
-		return ""
-	}
 	sum := sha256.Sum256([]byte(value))
 	return hex.EncodeToString(sum[:])
 }
@@ -1150,6 +1147,15 @@ func computeClaimIdentityDigest(value string) string {
 func computeClaimIdentityEvidence(operation FabricOperation, input ComputeClaimRecoveryClaimInput) *ComputeClaimIdentityEvidence {
 	want := newComputeClaimRecoveryBinding(input)
 	historical := historicalComputeClaimRecoveryBinding(input)
+	expectedOperationInput := ComputeAllocationInput{
+		ID: input.ComputeAllocationID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID,
+		PackageID: input.PackageID, NodePoolID: input.NodePoolID, IdempotencyKey: input.LaunchOperationID + ":compute",
+	}
+	expectedOperationRequestHash := hashInput(expectedOperationInput)
+	expectedOperation := newOperation(
+		"create_compute_allocation", "compute_allocation", expectedOperationInput.ID, expectedOperationInput.AccountID,
+		expectedOperationInput.WorkspaceID, expectedOperationInput.IdempotencyKey, expectedOperationRequestHash, time.Time{},
+	)
 	got, present, valid := decodeComputeClaimRecoveryBinding(operation)
 	ledger, ledgerPresent, ledgerValid := decodeComputeClaimRecoveryMutation(operation)
 	ledgerState := "absent"
@@ -1160,9 +1166,9 @@ func computeClaimIdentityEvidence(operation FabricOperation, input ComputeClaimR
 		}
 	}
 	checks := []ComputeClaimIdentityCheck{
-		{Field: "fabric.operationId", Matches: operation.OperationID != "", Expected: "non_empty", Actual: operation.OperationID},
+		{Field: "fabric.operationId", Matches: operation.OperationID == expectedOperation.OperationID, Expected: expectedOperation.OperationID, Actual: operation.OperationID},
 		{Field: "fabric.operationIdempotencyKey", Matches: operation.IdempotencyKey == input.LaunchOperationID+":compute", Expected: input.LaunchOperationID + ":compute", Actual: operation.IdempotencyKey},
-		{Field: "fabric.operationRequestHash", Matches: operation.RequestHash != "", ExpectedDigest: computeClaimIdentityDigest(operation.RequestHash), ActualDigest: computeClaimIdentityDigest(operation.RequestHash)},
+		{Field: "fabric.operationRequestHash", Matches: operation.RequestHash == expectedOperationRequestHash, ExpectedDigest: computeClaimIdentityDigest(expectedOperationRequestHash), ActualDigest: computeClaimIdentityDigest(operation.RequestHash)},
 		{Field: "binding.present", Matches: present, Expected: "present", Actual: map[bool]string{true: "present", false: "absent"}[present]},
 		{Field: "binding.valid", Matches: valid, Expected: "valid", Actual: map[bool]string{true: "valid", false: "invalid"}[valid]},
 	}
