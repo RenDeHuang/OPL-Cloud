@@ -18,8 +18,9 @@ var errWorkspaceLaunchProcessRestart = errors.New("workspace_launch_process_rest
 
 type workspaceLaunchProcessRestartStore struct {
 	*postgresEntStateStore
-	stopPhase string
-	stopped   bool
+	stopPhase          string
+	stopStorageReserve bool
+	stopped            bool
 }
 
 type postgresWorkspaceLaunchClaimBarrier struct {
@@ -57,7 +58,8 @@ func (s *workspaceLaunchProcessRestartStore) PersistWorkspaceLaunch(ctx context.
 	if err != nil {
 		return err
 	}
-	stop := !s.stopped && operation.Phase == s.stopPhase
+	storageReserved := operation.Phase == "storage_fulfilling" && operation.ContinuationAttemptBudgets["storage"] == (workspaceLaunchStageBudget{Attempted: 1, Max: workspaceLaunchStageMax})
+	stop := !s.stopped && (operation.Phase == s.stopPhase || s.stopStorageReserve && storageReserved)
 	if stop && operation.LeaseExpiresAt != "" {
 		operation.LeaseExpiresAt = time.Now().UTC().Add(-time.Second).Format(time.RFC3339Nano)
 		desired := cloneMap(update.DesiredOperation)
@@ -197,6 +199,121 @@ func TestPostgresNormalWorkspaceLaunchSurvivesEveryPersistedBoundaryFromOnePost(
 			}
 			assertWorkspaceLaunchRuntimeIdentity(t, fabric.runtimeInputs, completed)
 		})
+	}
+}
+
+func TestPostgresWorkspaceLaunchReservedStorageAttemptResumesStagedPrepare(t *testing.T) {
+	t.Setenv("OPL_MONTHLY_BILLING_WORKER_ENABLED", "false")
+	t.Setenv("OPL_PROVIDER_RECONCILE_WORKER_ENABLED", "false")
+	t.Setenv("OPL_ARCHIVE_RETENTION_WORKER_ENABLED", "false")
+	t.Setenv("OPL_WORKSPACE_LAUNCH_WORKER_ENABLED", "false")
+	t.Setenv("OPL_WORKSPACE_IMAGE", workspaceImageRepository+"@sha256:"+strings.Repeat("d", 64))
+
+	admin := openControlPlaneTestPostgres(t)
+	schema := fmt.Sprintf("control_plane_storage_resume_%d", time.Now().UnixNano())
+	if _, err := admin.Exec(`CREATE SCHEMA ` + schema); err != nil {
+		t.Fatal(err)
+	}
+	databaseURL := controlPlaneTestPostgresURL(t, "postgres", schema)
+	t.Cleanup(func() {
+		_, _ = admin.Exec(`DROP SCHEMA ` + schema + ` CASCADE`)
+		_ = admin.Close()
+	})
+
+	events := []string{}
+	gateway := &durableWorkspaceLaunchSub2API{
+		workspaceLaunchSub2API: &workspaceLaunchSub2API{
+			monthlySub2API: &monthlySub2API{events: &events},
+			keys:           map[int64]clients.Sub2APIWorkspaceKey{},
+		},
+		balance:        1_000_000_000,
+		appliedCharges: map[string]clients.Sub2APIChargeInput{},
+	}
+	fabric := &monthlyFabric{fakeFabricClient: fakeFabricClient{calls: &events}, events: &events}
+	ledger := &workspaceLaunchLedger{events: &events, receipts: map[string]clients.Receipt{}}
+	service := controlplane.NewService(ledger, fabric, gateway)
+
+	state, err := newTestPostgresEntStateStore(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := state.(*postgresEntStateStore)
+	seedTenantMember(t, store, "acct-alpha", "org-alpha", "usr-alpha", "alpha@example.com")
+	handler, err := NewPersistentServer(service, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := loginForTest(t, handler, "alpha@example.com", "CorrectHorseBatteryStaple!")
+	created := requestWithMutationKeyForTest(t, handler, session, http.MethodPost, "/api/workspace-launches", `{"name":"Storage Resume","packageId":"basic","sizeGb":10,"autoRenew":false}`, "storage-resume-post")
+	if created.Code != http.StatusAccepted {
+		t.Fatalf("single POST status=%d body=%s", created.Code, created.Body.String())
+	}
+	rows, err := store.ListRuntimeOperations(context.Background())
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("single POST operations=%#v err=%v", rows, err)
+	}
+	operation, err := decodeWorkspaceLaunchOperation(rows[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	configurePostgresNormalWorkspaceLaunchFabric(fabric, operation)
+	if err := store.client.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	state, err = newTestPostgresEntStateStore(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := &workspaceLaunchProcessRestartStore{postgresEntStateStore: state.(*postgresEntStateStore), stopStorageReserve: true}
+	app, err := newControlPlaneAppWithStore(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := app.runWorkspaceLaunchesOnce(context.Background(), service); !errors.Is(err, errWorkspaceLaunchProcessRestart) || !first.stopped {
+		t.Fatalf("storage reserve did not stop after persisted boundary: err=%v stopped=%t", err, first.stopped)
+	}
+	row, found, err := first.GetRuntimeOperation(context.Background(), operation.ID)
+	if err != nil || !found {
+		t.Fatalf("reserved launch found=%t err=%v", found, err)
+	}
+	reserved, err := decodeWorkspaceLaunchOperation(row)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reserved.Status == "manual_review" || reserved.Phase != "storage_fulfilling" || reserved.ContinuationAttemptBudgets["storage"] != (workspaceLaunchStageBudget{Attempted: 1, Max: workspaceLaunchStageMax}) {
+		t.Fatalf("reserved PostgreSQL launch=%#v", reserved)
+	}
+	if err := first.client.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	state, err = newTestPostgresEntStateStore(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reopened := state.(*postgresEntStateStore)
+	t.Cleanup(func() { _ = reopened.client.Close() })
+	restarted, err := newControlPlaneAppWithStore(reopened)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := restarted.runWorkspaceLaunchesOnce(context.Background(), service); err != nil {
+		t.Fatal(err)
+	}
+	row, found, err = reopened.GetRuntimeOperation(context.Background(), operation.ID)
+	if err != nil || !found {
+		t.Fatalf("completed launch found=%t err=%v", found, err)
+	}
+	completed, err := decodeWorkspaceLaunchOperation(row)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if completed.Status != "succeeded" || completed.Phase != "succeeded" || completed.ContinuationAttemptBudgets["storage"] != (workspaceLaunchStageBudget{Attempted: 1, Confirmed: 1, Max: workspaceLaunchStageMax}) {
+		t.Fatalf("reopened Storage launch=%#v", completed)
+	}
+	if len(gateway.chargeCalls) != 1 || len(fabric.computeIDs) != 1 || len(fabric.storageIDs) != 1 || len(fabric.storageCreateKeys) != 1 || fabric.storageCreateKeys[0] != operation.ID+":storage" {
+		t.Fatalf("reopened Storage repeated mutation or changed identity: charges=%#v compute=%#v storage=%#v keys=%#v events=%#v", gateway.chargeCalls, fabric.computeIDs, fabric.storageIDs, fabric.storageCreateKeys, events)
 	}
 }
 

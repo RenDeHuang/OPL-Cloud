@@ -1838,6 +1838,48 @@ func TestWorkspaceLaunchConfirmedStorageAttemptResumesByReadbackWithoutSecondWri
 	}
 }
 
+func TestWorkspaceLaunchReservedStorageAttemptResumesStagedPrepareAfterRestart(t *testing.T) {
+	fixture := newWorkspaceLaunchWorkerFixture(t, []int64{1_000_000_000, 1_000_000_000, 947_420_000}, nil, nil)
+	if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err != nil {
+		t.Fatal(err)
+	}
+	configureWorkspaceLaunchFulfillment(t, fixture)
+	operation := fixture.operation(t)
+	operation.Status, operation.Phase = "preparing", "compute_fulfilling"
+	if outcome, err := fixture.app.fulfillWorkspaceLaunchResource(context.Background(), fixture.service, &operation, "compute"); err != nil || outcome != "ready" {
+		t.Fatalf("compute setup outcome=%q err=%v", outcome, err)
+	}
+	operation.Phase = "storage_fulfilling"
+	if err := fixture.app.persistWorkspaceLaunch(context.Background(), &operation); err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.app.reserveWorkspaceLaunchStageAttempt(context.Background(), &operation, "storage"); err != nil {
+		t.Fatal(err)
+	}
+	persisted := fixture.operation(t)
+	if persisted.ContinuationAttemptBudgets["storage"] != (workspaceLaunchStageBudget{Attempted: 1, Max: workspaceLaunchStageMax}) {
+		t.Fatalf("reserved Storage budget=%#v", persisted.ContinuationAttemptBudgets["storage"])
+	}
+	beforePrepare := countStrings(*fixture.events, "fabric.storage.prepare")
+	beforeKeys := len(fixture.fabric.storageCreateKeys)
+
+	restarted, err := newControlPlaneAppWithStore(fixture.store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := restarted.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err != nil {
+		t.Fatal(err)
+	}
+	completed := fixture.operation(t)
+	budget := completed.ContinuationAttemptBudgets["storage"]
+	if completed.Status != "succeeded" || completed.Phase != "succeeded" || budget != (workspaceLaunchStageBudget{Attempted: 1, Confirmed: 1, Max: workspaceLaunchStageMax}) {
+		t.Fatalf("reserved Storage restart did not complete: operation=%#v budget=%#v", completed, budget)
+	}
+	if countStrings(*fixture.events, "fabric.storage.prepare") != beforePrepare+1 || len(fixture.fabric.storageCreateKeys) != beforeKeys+1 || fixture.fabric.storageCreateKeys[len(fixture.fabric.storageCreateKeys)-1] != operation.ID+":storage" {
+		t.Fatalf("staged Storage replay identity/events=%#v keys=%#v", *fixture.events, fixture.fabric.storageCreateKeys)
+	}
+}
+
 func TestWorkspaceLaunchAttachmentUnknownAttemptSurvivesRestartWithoutSecondWrite(t *testing.T) {
 	fixture := newWorkspaceLaunchWorkerFixture(t, []int64{1_000_000_000, 1_000_000_000, 947_420_000}, nil, nil)
 	configureWorkspaceLaunchFulfillment(t, fixture)

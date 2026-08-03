@@ -982,18 +982,22 @@ func (app *controlPlaneServer) fulfillWorkspaceLaunchResource(ctx context.Contex
 		budget := operation.ContinuationAttemptBudgets[resourceType]
 		if budget.Confirmed == 0 {
 			preparedThisRun = true
+			storageInput := clients.StorageVolumeInput{
+				ID: operation.StorageID, AccountID: operation.AccountID, WorkspaceID: operation.WorkspaceID, ComputeID: operation.ComputeID,
+				Zone: stringValue(row["zone"]), SizeGB: operation.StorageGB,
+			}
+			if operation.ComputeClaimApproval != nil {
+				storageInput.ExpectedRecoveryState = operation.ComputeClaimApproval.Resources.StorageState
+				storageInput.ExpectedProviderResourceID = operation.ComputeClaimApproval.Resources.StorageProviderResourceID
+			}
 			if budget.Attempted == 0 {
 				if err := app.reserveWorkspaceLaunchStageAttempt(ctx, operation, resourceType); err != nil {
 					return "", err
 				}
-				storageInput := clients.StorageVolumeInput{
-					ID: operation.StorageID, AccountID: operation.AccountID, WorkspaceID: operation.WorkspaceID, ComputeID: operation.ComputeID,
-					Zone: stringValue(row["zone"]), SizeGB: operation.StorageGB,
-				}
-				if operation.ComputeClaimApproval != nil {
-					storageInput.ExpectedRecoveryState = operation.ComputeClaimApproval.Resources.StorageState
-					storageInput.ExpectedProviderResourceID = operation.ComputeClaimApproval.Resources.StorageProviderResourceID
-				}
+			}
+			if budget.Unknown == 0 {
+				// The outer budget can be reserved before a process exits. Re-enter
+				// Fabric's staged operation so it can replay its own persisted stages.
 				prepared, prepareErr = service.PrepareMonthlyStorage(ctx, storageInput, operation.ID+":storage")
 			} else {
 				prepared, prepareErr = service.ReadMonthlyStorage(ctx, operation.StorageID)
@@ -1006,9 +1010,6 @@ func (app *controlPlaneServer) fulfillWorkspaceLaunchResource(ctx context.Contex
 			preparedFacts := structToMap(prepared)
 			if prepareErr != nil || !workspaceLaunchResourceIdentityMatches(resourceType, preparedFacts, *operation) || stringValue(preparedFacts["providerResourceId"]) == "" {
 				return "", app.unknownWorkspaceLaunchStageAttempt(ctx, operation, resourceType, prepareErr)
-			}
-			if err := app.confirmWorkspaceLaunchStageAttempt(ctx, operation, resourceType); err != nil {
-				return "", err
 			}
 		}
 	} else {
@@ -1042,6 +1043,13 @@ func (app *controlPlaneServer) fulfillWorkspaceLaunchResource(ctx context.Contex
 	if resourceType == "storage" && !preparedThisRun && readErr != nil {
 		budget := operation.ContinuationAttemptBudgets[resourceType]
 		if budget.Max > 0 && budget.Confirmed == budget.Max {
+			return "", app.retryWorkspaceLaunchFulfillment(ctx, operation, "workspace_launch_storage_readback_unavailable", readErr)
+		}
+	}
+	if resourceType == "storage" && readErr != nil {
+		if existing, ok := app.getStorage(operation.StorageID); ok &&
+			workspaceLaunchResourceIdentityMatches(resourceType, existing, *operation) &&
+			stringValue(existing["providerResourceId"]) != "" && monthlyResourceInProgress(existing) {
 			return "", app.retryWorkspaceLaunchFulfillment(ctx, operation, "workspace_launch_storage_readback_unavailable", readErr)
 		}
 	}
@@ -1083,6 +1091,14 @@ func (app *controlPlaneServer) fulfillWorkspaceLaunchResource(ctx context.Contex
 	expected := workspaceLaunchProviderExpectation(*operation, resourceType)
 	if !monthlyPurchaseReadbackConfirmed(resourceType, expected, facts) {
 		return "unknown", nil
+	}
+	if resourceType == "storage" {
+		budget := operation.ContinuationAttemptBudgets[resourceType]
+		if budget.Confirmed == 0 {
+			if err := app.confirmWorkspaceLaunchStageAttempt(ctx, operation, resourceType); err != nil {
+				return "", err
+			}
+		}
 	}
 	return "ready", nil
 }
