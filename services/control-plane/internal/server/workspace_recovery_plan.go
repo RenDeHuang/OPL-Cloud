@@ -885,13 +885,18 @@ func (app *controlPlaneServer) reacquireWorkspaceRecoveryExecution(ctx context.C
 	if execution.Status == "completed" || execution.Status == "failed" {
 		return execution, false, nil
 	}
-	leaseExpiresAt, parseErr := time.Parse(time.RFC3339Nano, execution.LeaseExpiresAt)
-	if parseErr != nil {
+	now := time.Now().UTC()
+	if (execution.LeaseToken == "") != (execution.LeaseExpiresAt == "") {
 		return workspaceRecoveryExecution{}, false, errBillingReviewIdentity
 	}
-	now := time.Now().UTC()
-	if leaseExpiresAt.After(now) {
-		return execution, false, nil
+	if execution.LeaseExpiresAt != "" {
+		leaseExpiresAt, parseErr := time.Parse(time.RFC3339Nano, execution.LeaseExpiresAt)
+		if parseErr != nil {
+			return workspaceRecoveryExecution{}, false, errBillingReviewIdentity
+		}
+		if leaseExpiresAt.After(now) {
+			return execution, false, nil
+		}
 	}
 	execution.LeaseExpiresAt = now.Add(5 * time.Minute).Format(time.RFC3339Nano)
 	execution.LeaseToken = workspaceRecoveryAuthorityDigest([]string{"lease", execution.ExecutionID, execution.RunIdentity, execution.LeaseExpiresAt})
@@ -921,6 +926,32 @@ func workspaceRecoveryExecutionErrorCode(operation workspaceLaunchOperation, err
 		return "recovery_execution_failed"
 	default:
 		return ""
+	}
+}
+
+func syncWorkspaceRecoveryTerminalState(operation *workspaceLaunchOperation) {
+	if operation.RecoveryPlan == nil || operation.RecoveryExecution == nil || operation.RecoveryExecution.LeaseToken != "" || operation.RecoveryExecution.LeaseExpiresAt != "" ||
+		operation.RecoveryExecution.Status == "completed" || operation.RecoveryExecution.Status == "failed" {
+		return
+	}
+	execution, plan := operation.RecoveryExecution, operation.RecoveryPlan
+	plan.Stages = workspaceRecoveryPlanStages(*operation)
+	if plan.Action == "compute_claim_continue" {
+		computeStatus := "manual_review"
+		if operation.ComputeClaimProof != nil {
+			computeStatus = "completed"
+		}
+		plan.Stages = append([]workspaceRecoveryPlanStage{{Stage: "compute_claim", Status: computeStatus}}, plan.Stages...)
+	}
+	plan.URL, plan.ReceiptID = operation.URL, operation.ReceiptID
+	switch {
+	case operation.Status == "succeeded" && operation.Phase == "succeeded" && operation.URL != "" && operation.ReceiptID != "":
+		execution.Status, plan.Status, execution.ErrorCode, plan.ErrorCode = "completed", "completed", "", ""
+		execution.CompletedAt = time.Now().UTC().Format(time.RFC3339Nano)
+	case operation.Status == "manual_review":
+		code := workspaceRecoveryExecutionErrorCode(*operation, nil)
+		execution.Status, plan.Status, execution.ErrorCode, plan.ErrorCode = "failed", "failed", code, code
+		execution.CompletedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	}
 }
 

@@ -885,7 +885,7 @@ func (app *controlPlaneServer) fulfillWorkspaceLaunch(ctx context.Context, servi
 			} else {
 				workspace, err = app.readWorkspaceLaunchRuntime(ctx, service, *operation)
 				if err != nil {
-					return app.manualReviewWorkspaceLaunchFulfillment(ctx, operation, "workspace_launch_runtime_readback_invalid")
+					return app.retryWorkspaceLaunchFulfillment(ctx, operation, "workspace_launch_runtime_readback_unavailable", err)
 				}
 			}
 			if !workspaceProjectionMatchesLaunch(workspace, *operation) || !workspaceRuntimeAttemptMatches(workspace, *operation) {
@@ -1027,6 +1027,12 @@ func (app *controlPlaneServer) fulfillWorkspaceLaunchResource(ctx context.Contex
 		readback, readErr = service.ReadMonthlyStorage(ctx, operation.StorageID)
 	} else {
 		readback, readErr = service.SyncMonthlyCompute(ctx, operation.ComputeID)
+	}
+	if resourceType == "storage" && !preparedThisRun && readErr != nil {
+		budget := operation.ContinuationAttemptBudgets[resourceType]
+		if budget.Max > 0 && budget.Confirmed == budget.Max {
+			return "", app.retryWorkspaceLaunchFulfillment(ctx, operation, "workspace_launch_storage_readback_unavailable", readErr)
+		}
 	}
 	facts := structToMap(readback)
 	if !workspaceLaunchResourceIdentityMatches(resourceType, facts, *operation) {
@@ -2966,6 +2972,7 @@ func releaseWorkspaceLaunchLease(operation *workspaceLaunchOperation) {
 }
 
 func (app *controlPlaneServer) persistWorkspaceLaunch(ctx context.Context, operation *workspaceLaunchOperation) error {
+	syncWorkspaceRecoveryTerminalState(operation)
 	desired := workspaceLaunchOperationRow(*operation)
 	if err := app.tables.PersistWorkspaceLaunch(ctx, workspaceLaunchPersistCAS{
 		OperationID: operation.ID, ExpectedOperationResult: operation.PersistedResult, DesiredOperation: desired,
