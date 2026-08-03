@@ -828,7 +828,7 @@ func (app *controlPlaneServer) debitWorkspaceRenewal(ctx context.Context, servic
 			if balanceErr != nil {
 				return app.retryWorkspaceRenewal(ctx, operation, "sub2api_balance_unavailable", balanceErr)
 			}
-			if balance.USDMicros <= operation.TotalUSDMicros {
+			if balance.USDMicros < operation.TotalUSDMicros {
 				operation.Status, operation.ErrorCode = "insufficient", errMonthlyInsufficientBalance.Error()
 				releaseWorkspaceRenewalLease(operation)
 				if err := app.persistWorkspaceRenewal(ctx, operation, nil); err != nil {
@@ -865,7 +865,7 @@ func (app *controlPlaneServer) debitWorkspaceRenewal(ctx context.Context, servic
 		return app.retryWorkspaceRenewal(ctx, operation, "post_charge_balance_unavailable", err)
 	}
 	operation.PostChargeBalanceKnown, operation.PostChargeBalanceUSDMicros = true, postCharge.USDMicros
-	if operation.PreChargeBalanceUSDMicros <= operation.TotalUSDMicros || postCharge.USDMicros < 0 || postCharge.USDMicros != operation.PreChargeBalanceUSDMicros-operation.TotalUSDMicros {
+	if operation.PreChargeBalanceUSDMicros < operation.TotalUSDMicros || postCharge.USDMicros < 0 || postCharge.USDMicros != operation.PreChargeBalanceUSDMicros-operation.TotalUSDMicros {
 		return app.manualReviewWorkspaceRenewal(ctx, operation, "post_charge_balance_invalid")
 	}
 	operation.Status, operation.Phase, operation.ErrorCode = "debited", "provider_compute", ""

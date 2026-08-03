@@ -426,6 +426,18 @@ func TestWorkspaceLaunchTotalPreflightRejectsInsufficientBalanceWithoutSideEffec
 	}
 }
 
+func TestWorkspaceLaunchTotalPreflightAllowsEqualBalance(t *testing.T) {
+	fixture := newWorkspaceLaunchHTTPFixture(t, 52_580_000)
+	response := fixture.launch(t, `{"name":"Alpha","packageId":"basic","sizeGb":10,"autoRenew":false}`, "launch-equal-balance")
+	operations, err := fixture.store.ListRuntimeOperations(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusAccepted || len(operations) != 1 || len(fixture.sub2API.charges) != 0 {
+		t.Fatalf("equal balance launch status=%d body=%s operations=%#v charges=%#v", response.Code, response.Body.String(), operations, fixture.sub2API.charges)
+	}
+}
+
 func TestWorkspaceLaunchGatewayKeyPreflightFailsBeforeBalanceAndSideEffects(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
@@ -1316,13 +1328,16 @@ func TestWorkspaceLaunchPersistsDiscoveredNodePoolBeforeCharge(t *testing.T) {
 	}
 }
 
-func TestWorkspaceLaunchRejectsEqualBalanceBeforeCharge(t *testing.T) {
+func TestWorkspaceLaunchAllowsEqualBalanceBeforeCharge(t *testing.T) {
 	fixture := newWorkspaceLaunchWorkerFixture(t, []int64{100_000_000, 52_580_000, 0}, nil, nil)
-	err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service)
+	if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err != nil {
+		t.Fatal(err)
+	}
 	operation := fixture.operation(t)
-	if !errors.Is(err, errMonthlyInsufficientBalance) || operation.Status != "insufficient" || operation.Phase != "debit_pending" ||
-		len(fixture.sub2API.charges) != 0 || len(fixture.fabric.computeIDs) != 0 || len(fixture.fabric.storageIDs) != 0 {
-		t.Fatalf("equal balance crossed debit gate: err=%v operation=%#v charges=%#v compute=%#v storage=%#v", err, operation, fixture.sub2API.charges, fixture.fabric.computeIDs, fixture.fabric.storageIDs)
+	if operation.Status != "debited" || operation.Phase != "debited" ||
+		len(fixture.sub2API.charges) != 1 || fixture.sub2API.charges[0].ChargeUSDMicros != 52_580_000 ||
+		len(fixture.fabric.computeIDs) != 0 || len(fixture.fabric.storageIDs) != 0 {
+		t.Fatalf("equal balance did not complete debit: operation=%#v charges=%#v compute=%#v storage=%#v", operation, fixture.sub2API.charges, fixture.fabric.computeIDs, fixture.fabric.storageIDs)
 	}
 }
 

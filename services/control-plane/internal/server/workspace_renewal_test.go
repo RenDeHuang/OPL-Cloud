@@ -1605,16 +1605,18 @@ func TestWorkspaceRenewalInvalidPostChargeBalanceStillNeedsManualReview(t *testi
 	}
 }
 
-func TestWorkspaceRenewalRejectsEqualBalanceBeforeCharge(t *testing.T) {
-	fixture := newWorkspaceRenewalWorkerFixture(t, []int64{52_580_000})
-	err := fixture.app.runMonthlyBillingOnce(context.Background(), fixture.service, fixture.paidThrough.Add(-monthlyRenewalLead))
+func TestWorkspaceRenewalAllowsEqualBalanceBeforeCharge(t *testing.T) {
+	fixture := newWorkspaceRenewalWorkerFixture(t, []int64{52_580_000, 0})
+	if err := fixture.app.runMonthlyBillingOnce(context.Background(), fixture.service, fixture.paidThrough.Add(-monthlyRenewalLead)); err != nil {
+		t.Fatal(err)
+	}
 	operation, decodeErr := decodeWorkspaceRenewalOperation(fixture.operation(t))
 	if decodeErr != nil {
 		t.Fatal(decodeErr)
 	}
-	if err != nil || operation.Status != "insufficient" || operation.Phase != "debit" ||
-		len(fixture.sub2API.charges) != 0 || len(fixture.fabric.computeRenewKeys) != 0 || len(fixture.fabric.storageRenewKeys) != 0 {
-		t.Fatalf("equal renewal balance crossed debit gate: err=%v operation=%#v charges=%#v compute=%#v storage=%#v", err, operation, fixture.sub2API.charges, fixture.fabric.computeRenewKeys, fixture.fabric.storageRenewKeys)
+	if operation.Status != "active" || operation.Phase != "complete" || operation.PostChargeBalanceUSDMicros != 0 ||
+		len(fixture.sub2API.charges) != 1 || len(fixture.fabric.computeRenewKeys) != 1 || len(fixture.fabric.storageRenewKeys) != 1 || len(fixture.ledger.receipts) != 1 {
+		t.Fatalf("equal renewal balance did not complete: operation=%#v charges=%#v compute=%#v storage=%#v receipts=%#v", operation, fixture.sub2API.charges, fixture.fabric.computeRenewKeys, fixture.fabric.storageRenewKeys, fixture.ledger.receipts)
 	}
 }
 
