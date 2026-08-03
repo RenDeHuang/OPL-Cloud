@@ -3,7 +3,10 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { parse } from "yaml";
 
-import { createTencentPredebitIAMAttestation } from "../../tools/tencent-predebit-iam-attestation.ts";
+import {
+  createTencentPredebitIAMAttestation,
+  tencentPredebitIAMAttestationErrorProjection
+} from "../../tools/tencent-predebit-iam-attestation.ts";
 
 const releaseSha = "a".repeat(40);
 const policyDigest = `sha256:${"b".repeat(64)}`;
@@ -101,6 +104,43 @@ test("production runner attestation fails closed on incomplete STS identity", as
     }),
     /tencent_predebit_iam_sts_identity_invalid/
   );
+});
+
+test("production runner attestation reports only the safe Tencent error code", async () => {
+  const fetchImpl = async () => new Response(JSON.stringify({
+    Response: {
+      Error: {
+        Code: "AuthFailure.SignatureFailure",
+        Message: "signature included secret-value and must stay private"
+      },
+      RequestId: "request-id-must-stay-private"
+    }
+  }), { status: 401 });
+
+  let projection;
+  try {
+    await createTencentPredebitIAMAttestation({
+      secretId: "sid-production",
+      secretKey: "skey-production",
+      releaseSha,
+      policyDigest,
+      timestamp: 1785729600,
+      fetchImpl
+    });
+    assert.fail("expected STS failure");
+  } catch (error) {
+    projection = tencentPredebitIAMAttestationErrorProjection(error);
+  }
+
+  assert.deepEqual(projection, {
+    errorCode: "tencent_predebit_iam_sts_failed",
+    providerCode: "AuthFailure.SignatureFailure"
+  });
+  const serialized = JSON.stringify(projection);
+  assert.equal(serialized.includes("secret-value"), false);
+  assert.equal(serialized.includes("request-id-must-stay-private"), false);
+  assert.equal(serialized.includes("sid-production"), false);
+  assert.equal(serialized.includes("skey-production"), false);
 });
 
 test("production deploy generates IAM attestation from protected policy binding and installs it", async () => {
