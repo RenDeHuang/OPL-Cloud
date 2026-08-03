@@ -621,6 +621,15 @@
                     }
                   },
                   {
+                    "name": "OPL_TENCENT_PREDEBIT_IAM_ATTESTATION",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "name": "opl-cloud-tencent-mutation",
+                        "key": "OPL_TENCENT_PREDEBIT_IAM_ATTESTATION"
+                      }
+                    }
+                  },
+                  {
                     "name": "OPL_AIONUI_ADMIN_PASSWORD_SEED",
                     "valueFrom": {
                       "secretKeyRef": {

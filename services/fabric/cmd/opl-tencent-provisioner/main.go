@@ -44,6 +44,10 @@ const protectedCheckPassed = "passed"
 const protectedCheckFailed = "failed"
 const protectedCheckNotApplicable = "not_applicable"
 
+const predebitIAMProofMode = "production_runner_deployment_attestation"
+
+var predebitIAMRequiredActions = []string{"tag:TagResources", "tag:ModifyResourcesTagValue"}
+
 type Request struct {
 	Action           string                 `json:"action"`
 	DryRun           bool                   `json:"dryRun,omitempty"`
@@ -316,9 +320,32 @@ type getCallerIdentityRequest struct {
 type getCallerIdentityResponse struct {
 	*tchttp.BaseResponse
 	Response *struct {
-		AccountId *string `json:"AccountId,omitempty" name:"AccountId"`
-		RequestId *string `json:"RequestId,omitempty" name:"RequestId"`
+		Type        *string `json:"Type,omitempty" name:"Type"`
+		PrincipalId *string `json:"PrincipalId,omitempty" name:"PrincipalId"`
+		AccountId   *string `json:"AccountId,omitempty" name:"AccountId"`
+		UserId      *string `json:"UserId,omitempty" name:"UserId"`
+		RequestId   *string `json:"RequestId,omitempty" name:"RequestId"`
 	} `json:"Response"`
+}
+
+type predebitIAMIdentity struct {
+	Type        string `json:"type"`
+	PrincipalID string `json:"principalId"`
+	AccountID   string `json:"accountId"`
+	UserID      string `json:"userId"`
+}
+
+type predebitIAMAttestation struct {
+	SchemaVersion   int                 `json:"schemaVersion"`
+	ProofMode       string              `json:"proofMode"`
+	ReleaseSHA      string              `json:"releaseSha"`
+	Identity        predebitIAMIdentity `json:"identity"`
+	RequiredActions []string            `json:"requiredActions"`
+	PolicyDigest    string              `json:"policyDigest"`
+}
+
+type callerIdentityNativeAPI interface {
+	CallerIdentity() (map[string]string, string, error)
 }
 
 type createAndBindTag struct {
@@ -339,25 +366,45 @@ type createAndBindTagResponse struct {
 	} `json:"Response"`
 }
 
+func (client *tencentTagClient) CallerIdentity() (map[string]string, string, error) {
+	identityClient := client.identityClient
+	if identityClient == nil {
+		identityClient = client.client
+	}
+	identityRequest := &getCallerIdentityRequest{BaseRequest: &tchttp.BaseRequest{}}
+	identityRequest.Init().WithApiInfo("sts", "2018-08-13", "GetCallerIdentity")
+	identityResponse := &getCallerIdentityResponse{BaseResponse: &tchttp.BaseResponse{}}
+	if err := identityClient.Send(identityRequest, identityResponse); err != nil {
+		return nil, "", err
+	}
+	if identityResponse.Response == nil {
+		return nil, "", fmt.Errorf("Tencent STS GetCallerIdentity response is missing")
+	}
+	identity := map[string]string{
+		"type":        strings.TrimSpace(stringValue(identityResponse.Response.Type)),
+		"principalId": strings.TrimSpace(stringValue(identityResponse.Response.PrincipalId)),
+		"accountId":   strings.TrimSpace(stringValue(identityResponse.Response.AccountId)),
+		"userId":      strings.TrimSpace(stringValue(identityResponse.Response.UserId)),
+	}
+	requestID := strings.TrimSpace(stringValue(identityResponse.Response.RequestId))
+	for _, field := range []string{"type", "principalId", "accountId", "userId"} {
+		if identity[field] == "" {
+			return nil, "", fmt.Errorf("Tencent STS GetCallerIdentity response is missing %s", field)
+		}
+	}
+	if requestID == "" {
+		return nil, "", fmt.Errorf("Tencent STS GetCallerIdentity response is missing requestId")
+	}
+	return identity, requestID, nil
+}
+
 func (client *tencentTagClient) SetCVMTag(instanceID, key, value string, attached bool) (string, error) {
 	if !attached {
-		identityClient := client.identityClient
-		if identityClient == nil {
-			identityClient = client.client
-		}
-		identityRequest := &getCallerIdentityRequest{BaseRequest: &tchttp.BaseRequest{}}
-		identityRequest.Init().WithApiInfo("sts", "2018-08-13", "GetCallerIdentity")
-		identityResponse := &getCallerIdentityResponse{BaseResponse: &tchttp.BaseResponse{}}
-		if err := identityClient.Send(identityRequest, identityResponse); err != nil {
+		identity, _, err := client.CallerIdentity()
+		if err != nil {
 			return "", err
 		}
-		accountID := ""
-		if identityResponse.Response != nil {
-			accountID = strings.TrimSpace(stringValue(identityResponse.Response.AccountId))
-		}
-		if accountID == "" {
-			return "", fmt.Errorf("Tencent STS GetCallerIdentity response is missing")
-		}
+		accountID := identity["accountId"]
 		resource := fmt.Sprintf("qcs::cvm:%s:uin/%s:instance/%s", client.region, accountID, instanceID)
 		request := &createAndBindTagRequest{
 			BaseRequest:  &tchttp.BaseRequest{},
@@ -390,6 +437,77 @@ func (client *tencentTagClient) SetCVMTag(instanceID, key, value string, attache
 		return "", fmt.Errorf("Tencent Tag %s response is missing", action)
 	}
 	return stringValue(response.Response.RequestId), nil
+}
+
+func (client *tencentSDKClient) PredebitIAMGate(_ Request, env map[string]string) Response {
+	raw := strings.TrimSpace(env["OPL_TENCENT_PREDEBIT_IAM_ATTESTATION"])
+	if raw == "" {
+		return Response{Ok: false, ErrorCode: "predebit_iam_attestation_missing", Message: "Tencent pre-debit IAM deployment attestation is required.", Retryable: false, MutationCount: 0}
+	}
+	var attestation predebitIAMAttestation
+	decoder := json.NewDecoder(strings.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&attestation); err != nil {
+		return Response{Ok: false, ErrorCode: "predebit_iam_attestation_invalid", Message: "Tencent pre-debit IAM deployment attestation is invalid.", Retryable: false, MutationCount: 0}
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		return Response{Ok: false, ErrorCode: "predebit_iam_attestation_invalid", Message: "Tencent pre-debit IAM deployment attestation is invalid.", Retryable: false, MutationCount: 0}
+	}
+	if !validPredebitIAMAttestation(attestation) {
+		return Response{Ok: false, ErrorCode: "predebit_iam_attestation_invalid", Message: "Tencent pre-debit IAM deployment attestation is invalid.", Retryable: false, MutationCount: 0}
+	}
+	if releaseSHA := strings.TrimSpace(env["OPL_RELEASE_SHA"]); !validLowerHex(releaseSHA, 40) || attestation.ReleaseSHA != releaseSHA {
+		return Response{Ok: false, ErrorCode: "predebit_iam_release_mismatch", Message: "Tencent pre-debit IAM attestation release does not match the running release.", Retryable: false, MutationCount: 0}
+	}
+	identityClient, ok := client.nativeTagClient.(callerIdentityNativeAPI)
+	if !ok {
+		return Response{Ok: false, ErrorCode: "predebit_iam_sts_unavailable", Message: "Tencent STS identity client is unavailable.", Retryable: false, MutationCount: 0}
+	}
+	live, requestID, err := identityClient.CallerIdentity()
+	if err != nil {
+		return Response{Ok: false, ErrorCode: "predebit_iam_sts_failed", Message: "Tencent live STS identity could not be verified.", Retryable: true, MutationCount: 0}
+	}
+	if live["type"] != attestation.Identity.Type || live["principalId"] != attestation.Identity.PrincipalID || live["accountId"] != attestation.Identity.AccountID || live["userId"] != attestation.Identity.UserID {
+		return Response{Ok: false, ErrorCode: "predebit_iam_identity_mismatch", Message: "Tencent live STS identity does not match the deployment attestation.", Retryable: false, MutationCount: 0}
+	}
+	return Response{
+		Ok: true, Status: "ready", ProviderRequestId: requestID, MutationCount: 0,
+		ProviderData: map[string]string{
+			"proofMode": attestation.ProofMode, "releaseSha": attestation.ReleaseSHA,
+			"requiredActions": strings.Join(attestation.RequiredActions, ","), "policyDigest": attestation.PolicyDigest,
+		},
+	}
+}
+
+func validPredebitIAMAttestation(attestation predebitIAMAttestation) bool {
+	if attestation.SchemaVersion != 1 || attestation.ProofMode != predebitIAMProofMode || !validLowerHex(attestation.ReleaseSHA, 40) ||
+		len(attestation.RequiredActions) != len(predebitIAMRequiredActions) || !strings.HasPrefix(attestation.PolicyDigest, "sha256:") || !validLowerHex(strings.TrimPrefix(attestation.PolicyDigest, "sha256:"), 64) {
+		return false
+	}
+	for index, action := range predebitIAMRequiredActions {
+		if attestation.RequiredActions[index] != action {
+			return false
+		}
+	}
+	for _, value := range []string{attestation.Identity.Type, attestation.Identity.PrincipalID, attestation.Identity.AccountID, attestation.Identity.UserID} {
+		if value == "" || value != strings.TrimSpace(value) {
+			return false
+		}
+	}
+	return true
+}
+
+func validLowerHex(value string, size int) bool {
+	if len(value) != size {
+		return false
+	}
+	for _, current := range value {
+		if (current < '0' || current > '9') && (current < 'a' || current > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 type tkeNativeAPI interface {
@@ -4402,6 +4520,14 @@ func handleWithClient(request Request, env map[string]string, client TencentClie
 	}
 
 	switch request.Action {
+	case "predebit_iam_gate":
+		gate, ok := client.(interface {
+			PredebitIAMGate(Request, map[string]string) Response
+		})
+		if !ok {
+			return Response{Ok: false, ErrorCode: "tencent_live_not_implemented", Message: "Tencent pre-debit IAM gate is not implemented in this build.", Retryable: false}
+		}
+		return gate.PredebitIAMGate(request, env)
 	case "capacity_preflight":
 		return client.Capacity(request, env)
 	case "storage_preflight":

@@ -166,6 +166,7 @@ jobs:
       OPL_SUB2API_REQUEST_TIMEOUT_MS: ${{ vars.OPL_SUB2API_REQUEST_TIMEOUT_MS || '5000' }}
       TENCENTCLOUD_SECRET_ID: ${{ secrets.TENCENT_MUTATION_SECRET_ID }}
       TENCENTCLOUD_SECRET_KEY: ${{ secrets.TENCENT_MUTATION_SECRET_KEY }}
+      TENCENT_MUTATION_IAM_POLICY_DIGEST: ${{ secrets.TENCENT_MUTATION_IAM_POLICY_DIGEST }}
       TENCENTCLOUD_REGION: ${{ vars.TENCENTCLOUD_REGION || 'na-siliconvalley' }}
       TENCENT_DEPLOY_CLUSTER_ID: ${{ vars.TENCENT_DEPLOY_CLUSTER_ID }}
       TENCENT_CVM_SUBNET_ID: ${{ vars.TENCENT_CVM_SUBNET_ID }}
@@ -275,6 +276,7 @@ jobs:
             TCR_PASSWORD
             TENCENTCLOUD_SECRET_ID
             TENCENTCLOUD_SECRET_KEY
+            TENCENT_MUTATION_IAM_POLICY_DIGEST
             TENCENTCLOUD_REGION
             OPL_TENCENT_ZONE
             OPL_SYSTEM_COMPUTE_NODE_POOL_ID
@@ -378,6 +380,9 @@ jobs:
           fi
           echo "OPL_WORKSPACE_IMAGE=$current_workspace_image" >> "$GITHUB_ENV"
           echo "workspace_image=$current_workspace_image" >> "$GITHUB_OUTPUT"
+          attestation="$OPL_DEPLOY_SECRET_DIR/tencent-predebit-iam-attestation"
+          node tools/tencent-predebit-iam-attestation.ts > "$OPL_DEPLOY_SECRET_DIR/tencent-predebit-iam-attestation"
+          chmod 600 "$attestation"
 
       - name: Verify TKE access
         shell: bash
@@ -473,6 +478,7 @@ jobs:
           kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" create secret generic opl-cloud-tencent-mutation \
             --from-file=TENCENTCLOUD_SECRET_ID="$secret_dir/tencentcloud-secret-id" \
             --from-file=TENCENTCLOUD_SECRET_KEY="$secret_dir/tencentcloud-secret-key" \
+            --from-file=OPL_TENCENT_PREDEBIT_IAM_ATTESTATION="$secret_dir/tencent-predebit-iam-attestation" \
             --dry-run=client -o yaml | kubectl --kubeconfig "$KUBECONFIG" apply -f -
           kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" create secret generic "$OPL_IMAGE_PULL_SECRET_NAME" \
             --type=kubernetes.io/dockerconfigjson \

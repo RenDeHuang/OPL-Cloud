@@ -225,6 +225,34 @@ type fakeTencentClient struct {
 	truthRequest          Request
 }
 
+type fakePredebitIAMClient struct {
+	fakeTencentClient
+	calls    int
+	response Response
+}
+
+func (client *fakePredebitIAMClient) PredebitIAMGate(_ Request, _ map[string]string) Response {
+	client.calls++
+	return client.response
+}
+
+type fakePredebitTagAPI struct {
+	identityCalls int
+	tagCalls      int
+	identity      map[string]string
+	identityErr   error
+}
+
+func (client *fakePredebitTagAPI) CallerIdentity() (map[string]string, string, error) {
+	client.identityCalls++
+	return maps.Clone(client.identity), "req-sts-live", client.identityErr
+}
+
+func (client *fakePredebitTagAPI) SetCVMTag(_, _, _ string, _ bool) (string, error) {
+	client.tagCalls++
+	return "req-tag-unexpected", nil
+}
+
 func (client *fakeTencentClient) Capacity(request Request, _ map[string]string) Response {
 	return Response{Ok: true, Status: "ready", InstanceType: request.Pool.InstanceType, RequiredCapacity: request.Pool.DesiredReplicas}
 }
@@ -277,6 +305,130 @@ func (client *fakeTencentClient) BootstrapComputeNodePools(_ Request, _ map[stri
 
 func (client *fakeTencentClient) WorkspaceSKUInventory(_ Request, _ map[string]string) Response {
 	return Response{Ok: true, Status: "ready", MutationCount: 0}
+}
+
+func TestPredebitIAMGateUsesTencentClientBoundaryWithoutTagMutation(t *testing.T) {
+	client := &fakePredebitIAMClient{response: Response{Ok: true, Status: "ready", MutationCount: 0}}
+	response := handleWithClient(Request{Action: "predebit_iam_gate"}, protectedResourceEnv(), client)
+
+	if !response.Ok || response.Status != "ready" || response.MutationCount != 0 || client.calls != 1 {
+		t.Fatalf("pre-debit IAM response=%#v calls=%d", response, client.calls)
+	}
+}
+
+func TestTencentSDKPredebitIAMGateReadsLiveIdentityWithoutTagMutation(t *testing.T) {
+	identity := map[string]string{
+		"type": "CAMUser", "principalId": "100000000001:123456789", "accountId": "100000000001", "userId": "123456789",
+	}
+	attestation, err := json.Marshal(map[string]any{
+		"schemaVersion": 1,
+		"proofMode":     "production_runner_deployment_attestation",
+		"releaseSha":    strings.Repeat("a", 40),
+		"identity":      identity,
+		"requiredActions": []string{
+			"tag:TagResources",
+			"tag:ModifyResourcesTagValue",
+		},
+		"policyDigest": "sha256:" + strings.Repeat("b", 64),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := protectedResourceEnv()
+	env["OPL_RELEASE_SHA"] = strings.Repeat("a", 40)
+	env["OPL_TENCENT_PREDEBIT_IAM_ATTESTATION"] = string(attestation)
+	tagAPI := &fakePredebitTagAPI{identity: identity}
+	client := &tencentSDKClient{nativeTagClient: tagAPI}
+
+	response := handleWithClient(Request{Action: "predebit_iam_gate"}, env, client)
+
+	if !response.Ok || response.Status != "ready" || response.ProviderRequestId != "req-sts-live" || response.MutationCount != 0 || tagAPI.identityCalls != 1 || tagAPI.tagCalls != 0 {
+		t.Fatalf("pre-debit IAM response=%#v identityCalls=%d tagCalls=%d", response, tagAPI.identityCalls, tagAPI.tagCalls)
+	}
+}
+
+func TestTencentSDKPredebitIAMGateRejectsLiveIdentityDrift(t *testing.T) {
+	attestedIdentity := map[string]string{
+		"type": "CAMUser", "principalId": "100000000001:123456789", "accountId": "100000000001", "userId": "123456789",
+	}
+	liveIdentity := maps.Clone(attestedIdentity)
+	liveIdentity["userId"] = "987654321"
+	attestation, err := json.Marshal(map[string]any{
+		"schemaVersion": 1, "proofMode": "production_runner_deployment_attestation", "releaseSha": strings.Repeat("a", 40),
+		"identity": attestedIdentity, "requiredActions": []string{"tag:TagResources", "tag:ModifyResourcesTagValue"},
+		"policyDigest": "sha256:" + strings.Repeat("b", 64),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := protectedResourceEnv()
+	env["OPL_RELEASE_SHA"] = strings.Repeat("a", 40)
+	env["OPL_TENCENT_PREDEBIT_IAM_ATTESTATION"] = string(attestation)
+	tagAPI := &fakePredebitTagAPI{identity: liveIdentity}
+
+	response := handleWithClient(Request{Action: "predebit_iam_gate"}, env, &tencentSDKClient{nativeTagClient: tagAPI})
+
+	if response.Ok || response.ErrorCode != "predebit_iam_identity_mismatch" || response.MutationCount != 0 || tagAPI.identityCalls != 1 || tagAPI.tagCalls != 0 {
+		t.Fatalf("pre-debit IAM response=%#v identityCalls=%d tagCalls=%d", response, tagAPI.identityCalls, tagAPI.tagCalls)
+	}
+}
+
+func TestTencentSDKPredebitIAMGateRejectsMalformedDeploymentAttestationBeforeSTS(t *testing.T) {
+	identity := `{"type":"CAMUser","principalId":"100000000001:123456789","accountId":"100000000001","userId":"123456789"}`
+	releaseSHA := strings.Repeat("a", 40)
+	validActions := `"requiredActions":["tag:TagResources","tag:ModifyResourcesTagValue"]`
+	validDigest := `"policyDigest":"sha256:` + strings.Repeat("b", 64) + `"`
+	for _, tc := range []struct {
+		name        string
+		attestation string
+		errorCode   string
+	}{
+		{name: "missing", attestation: "", errorCode: "predebit_iam_attestation_missing"},
+		{name: "unknown field", attestation: `{"schemaVersion":1,"proofMode":"production_runner_deployment_attestation","releaseSha":"` + releaseSHA + `","identity":` + identity + `,` + validActions + `,` + validDigest + `,"extra":true}`, errorCode: "predebit_iam_attestation_invalid"},
+		{name: "wrong schema", attestation: `{"schemaVersion":2,"proofMode":"production_runner_deployment_attestation","releaseSha":"` + releaseSHA + `","identity":` + identity + `,` + validActions + `,` + validDigest + `}`, errorCode: "predebit_iam_attestation_invalid"},
+		{name: "wrong proof mode", attestation: `{"schemaVersion":1,"proofMode":"online_permission_simulation","releaseSha":"` + releaseSHA + `","identity":` + identity + `,` + validActions + `,` + validDigest + `}`, errorCode: "predebit_iam_attestation_invalid"},
+		{name: "release drift", attestation: `{"schemaVersion":1,"proofMode":"production_runner_deployment_attestation","releaseSha":"` + strings.Repeat("c", 40) + `","identity":` + identity + `,` + validActions + `,` + validDigest + `}`, errorCode: "predebit_iam_release_mismatch"},
+		{name: "action order drift", attestation: `{"schemaVersion":1,"proofMode":"production_runner_deployment_attestation","releaseSha":"` + releaseSHA + `","identity":` + identity + `,"requiredActions":["tag:ModifyResourcesTagValue","tag:TagResources"],` + validDigest + `}`, errorCode: "predebit_iam_attestation_invalid"},
+		{name: "extra action", attestation: `{"schemaVersion":1,"proofMode":"production_runner_deployment_attestation","releaseSha":"` + releaseSHA + `","identity":` + identity + `,"requiredActions":["tag:TagResources","tag:ModifyResourcesTagValue","cvm:RunInstances"],` + validDigest + `}`, errorCode: "predebit_iam_attestation_invalid"},
+		{name: "uppercase digest", attestation: `{"schemaVersion":1,"proofMode":"production_runner_deployment_attestation","releaseSha":"` + releaseSHA + `","identity":` + identity + `,` + validActions + `,"policyDigest":"sha256:` + strings.Repeat("B", 64) + `"}`, errorCode: "predebit_iam_attestation_invalid"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			env := protectedResourceEnv()
+			env["OPL_RELEASE_SHA"] = releaseSHA
+			env["OPL_TENCENT_PREDEBIT_IAM_ATTESTATION"] = tc.attestation
+			tagAPI := &fakePredebitTagAPI{identity: map[string]string{"type": "CAMUser", "principalId": "100000000001:123456789", "accountId": "100000000001", "userId": "123456789"}}
+
+			response := handleWithClient(Request{Action: "predebit_iam_gate"}, env, &tencentSDKClient{nativeTagClient: tagAPI})
+
+			if response.Ok || response.ErrorCode != tc.errorCode || response.MutationCount != 0 || tagAPI.identityCalls != 0 || tagAPI.tagCalls != 0 {
+				t.Fatalf("pre-debit IAM response=%#v identityCalls=%d tagCalls=%d", response, tagAPI.identityCalls, tagAPI.tagCalls)
+			}
+		})
+	}
+}
+
+func TestTencentSDKPredebitIAMGateFailsClosedOnSTSReadError(t *testing.T) {
+	identity := map[string]string{
+		"type": "CAMUser", "principalId": "100000000001:123456789", "accountId": "100000000001", "userId": "123456789",
+	}
+	attestation, err := json.Marshal(map[string]any{
+		"schemaVersion": 1, "proofMode": "production_runner_deployment_attestation", "releaseSha": strings.Repeat("a", 40),
+		"identity": identity, "requiredActions": []string{"tag:TagResources", "tag:ModifyResourcesTagValue"},
+		"policyDigest": "sha256:" + strings.Repeat("b", 64),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := protectedResourceEnv()
+	env["OPL_RELEASE_SHA"] = strings.Repeat("a", 40)
+	env["OPL_TENCENT_PREDEBIT_IAM_ATTESTATION"] = string(attestation)
+	tagAPI := &fakePredebitTagAPI{identity: identity, identityErr: errors.New("sts unavailable")}
+
+	response := handleWithClient(Request{Action: "predebit_iam_gate"}, env, &tencentSDKClient{nativeTagClient: tagAPI})
+
+	if response.Ok || response.ErrorCode != "predebit_iam_sts_failed" || strings.Contains(response.Message, "sts unavailable") || response.MutationCount != 0 || tagAPI.identityCalls != 1 || tagAPI.tagCalls != 0 {
+		t.Fatalf("pre-debit IAM response=%#v identityCalls=%d tagCalls=%d", response, tagAPI.identityCalls, tagAPI.tagCalls)
+	}
 }
 
 func TestProviderTruthUsesTencentClientBoundaryWithoutMutationFlag(t *testing.T) {
@@ -779,7 +931,7 @@ func TestTencentTagClientCreatesAndBindsMissingTagWithFullCVMQCS(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch action {
 		case "GetCallerIdentity":
-			_, _ = io.WriteString(w, `{"Response":{"AccountId":"100000000001","RequestId":"req-sts"}}`)
+			_, _ = io.WriteString(w, `{"Response":{"Type":"CAMUser","PrincipalId":"100000000001:123456789","AccountId":"100000000001","UserId":"123456789","RequestId":"req-sts"}}`)
 		case "TagResources":
 			_, _ = io.WriteString(w, `{"Response":{"RequestId":"req-tag"}}`)
 		default:

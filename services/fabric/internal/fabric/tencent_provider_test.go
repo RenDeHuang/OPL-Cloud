@@ -318,6 +318,9 @@ func TestTencentProviderMonthlyPreflightUsesExactConfiguredPackagePool(t *testin
 			provider := NewTencentProvider()
 			kubectlCalls := 0
 			provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
+				if request.Action == "predebit_iam_gate" {
+					return successfulPredebitIAMResponse(), nil
+				}
 				tc.check(t, request)
 				return tc.reply, nil
 			}
@@ -351,7 +354,7 @@ func TestTencentProviderMonthlyPreflightUsesExactConfiguredPackagePool(t *testin
 	}
 }
 
-func TestTencentProviderMonthlyComputePreflightChecksNodePatchRBACBeforeAndAfterProvisioner(t *testing.T) {
+func TestTencentProviderMonthlyComputePreflightChecksIAMBeforeNodePatchRBACAndCapacity(t *testing.T) {
 	t.Setenv("RUN_TENCENT_CREATE_RELEASE_EXECUTION", "1")
 	t.Setenv("OPL_BASIC_COMPUTE_NODE_POOL_MAX_REPLICAS", "40")
 	t.Setenv("OPL_SYSTEM_COMPUTE_MACHINE_ID", "")
@@ -365,7 +368,11 @@ func TestTencentProviderMonthlyComputePreflightChecksNodePatchRBACBeforeAndAfter
 		return []byte("yes\n"), nil
 	}
 	provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
-		events = append(events, "provisioner")
+		if request.Action == "predebit_iam_gate" {
+			events = append(events, "iam")
+			return successfulPredebitIAMResponse(), nil
+		}
+		events = append(events, "capacity")
 		return provisionerResponse{
 			OK: true, Status: "ready", NodePoolID: "np-basic", InstanceType: "SA5.MEDIUM4", InstanceAvailable: true, Zones: []string{"na-siliconvalley-1"},
 			ProviderPriceCNY: 142.91, RemainingQuota: 8, ProviderRequestIDs: map[string]string{"nodePool": "req-pool", "subnets": "req-subnets", "availability": "req-capacity", "quota": "req-quota"},
@@ -378,8 +385,42 @@ func TestTencentProviderMonthlyComputePreflightChecksNodePatchRBACBeforeAndAfter
 	if err != nil || !result.Available {
 		t.Fatalf("preflight=%#v err=%v", result, err)
 	}
-	if !reflect.DeepEqual(events, []string{"kubectl", "provisioner", "kubectl"}) {
+	if !reflect.DeepEqual(events, []string{"iam", "kubectl", "capacity", "kubectl"}) {
 		t.Fatalf("events=%#v", events)
+	}
+}
+
+func successfulPredebitIAMResponse() provisionerResponse {
+	return provisionerResponse{
+		OK: true, Status: "ready", MutationCount: 0,
+		ProviderData: map[string]string{
+			"proofMode": "production_runner_deployment_attestation", "releaseSha": strings.Repeat("a", 40),
+			"requiredActions": "tag:TagResources,tag:ModifyResourcesTagValue", "policyDigest": "sha256:" + strings.Repeat("b", 64),
+		},
+	}
+}
+
+func TestTencentProviderMonthlyComputePreflightIAMFailureStopsBeforeRBACAndCapacity(t *testing.T) {
+	t.Setenv("RUN_TENCENT_CREATE_RELEASE_EXECUTION", "1")
+	t.Setenv("OPL_BASIC_COMPUTE_NODE_POOL_MAX_REPLICAS", "40")
+	provider := NewTencentProvider()
+	kubectlCalls, capacityCalls := 0, 0
+	provider.kubectl = func(context.Context, []string, []byte) ([]byte, error) {
+		kubectlCalls++
+		return []byte("yes\n"), nil
+	}
+	provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
+		if request.Action == "predebit_iam_gate" {
+			return provisionerResponse{OK: false, ErrorCode: "predebit_iam_identity_mismatch", MutationCount: 0}, nil
+		}
+		capacityCalls++
+		return provisionerResponse{OK: true, Status: "ready"}, nil
+	}
+
+	result, err := provider.MonthlyPreflight(context.Background(), MonthlyPreflightInput{ResourceType: "compute", PackageID: "basic", Zone: "na-siliconvalley-1"})
+
+	if err == nil || err.Error() != "predebit_iam_identity_mismatch" || result.Available || kubectlCalls != 0 || capacityCalls != 0 {
+		t.Fatalf("preflight=%#v err=%v kubectlCalls=%d capacityCalls=%d", result, err, kubectlCalls, capacityCalls)
 	}
 }
 
@@ -392,21 +433,21 @@ func TestTencentProviderMonthlyComputePreflightFailsClosedOnNodePatchRBAC(t *tes
 		errors           []error
 		nilKubectl       bool
 		wantKubectlCalls int
-		wantProvisioner  int
+		wantCapacity     int
 	}{
 		{name: "pre nil kubectl", nilKubectl: true},
 		{name: "pre no", outputs: [][]byte{[]byte("no\n")}, wantKubectlCalls: 1},
 		{name: "pre empty", outputs: [][]byte{[]byte("")}, wantKubectlCalls: 1},
 		{name: "pre error", errors: []error{errors.New("forbidden")}, wantKubectlCalls: 1},
 		{name: "pre abnormal", outputs: [][]byte{[]byte("yes unexpected\n")}, wantKubectlCalls: 1},
-		{name: "post no", outputs: [][]byte{[]byte("yes\n"), []byte("no\n")}, wantKubectlCalls: 2, wantProvisioner: 1},
-		{name: "post empty", outputs: [][]byte{[]byte("yes\n"), []byte("")}, wantKubectlCalls: 2, wantProvisioner: 1},
-		{name: "post error", outputs: [][]byte{[]byte("yes\n")}, errors: []error{nil, errors.New("forbidden")}, wantKubectlCalls: 2, wantProvisioner: 1},
-		{name: "post abnormal", outputs: [][]byte{[]byte("yes\n"), []byte("allowed\n")}, wantKubectlCalls: 2, wantProvisioner: 1},
+		{name: "post no", outputs: [][]byte{[]byte("yes\n"), []byte("no\n")}, wantKubectlCalls: 2, wantCapacity: 1},
+		{name: "post empty", outputs: [][]byte{[]byte("yes\n"), []byte("")}, wantKubectlCalls: 2, wantCapacity: 1},
+		{name: "post error", outputs: [][]byte{[]byte("yes\n")}, errors: []error{nil, errors.New("forbidden")}, wantKubectlCalls: 2, wantCapacity: 1},
+		{name: "post abnormal", outputs: [][]byte{[]byte("yes\n"), []byte("allowed\n")}, wantKubectlCalls: 2, wantCapacity: 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			provider := NewTencentProvider()
-			kubectlCalls, provisionerCalls := 0, 0
+			kubectlCalls, iamCalls, capacityCalls := 0, 0, 0
 			if tc.nilKubectl {
 				provider.kubectl = nil
 			} else {
@@ -427,8 +468,12 @@ func TestTencentProviderMonthlyComputePreflightFailsClosedOnNodePatchRBAC(t *tes
 					return output, err
 				}
 			}
-			provider.provision = func(context.Context, provisionerRequest) (provisionerResponse, error) {
-				provisionerCalls++
+			provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
+				if request.Action == "predebit_iam_gate" {
+					iamCalls++
+					return successfulPredebitIAMResponse(), nil
+				}
+				capacityCalls++
 				return provisionerResponse{
 					OK: true, Status: "ready", NodePoolID: "np-basic", InstanceType: "SA5.MEDIUM4", InstanceAvailable: true, Zones: []string{"na-siliconvalley-1"},
 					ProviderPriceCNY: 142.91, RemainingQuota: 8, ProviderRequestIDs: map[string]string{"nodePool": "req-pool", "subnets": "req-subnets", "availability": "req-capacity", "quota": "req-quota"},
@@ -438,8 +483,8 @@ func TestTencentProviderMonthlyComputePreflightFailsClosedOnNodePatchRBAC(t *tes
 
 			_, err := provider.MonthlyPreflight(context.Background(), MonthlyPreflightInput{ResourceType: "compute", PackageID: "basic", Zone: "na-siliconvalley-1"})
 
-			if err == nil || err.Error() != "kubernetes_node_patch_rbac_unavailable" || kubectlCalls != tc.wantKubectlCalls || provisionerCalls != tc.wantProvisioner {
-				t.Fatalf("err=%v kubectl calls=%d provisioner calls=%d", err, kubectlCalls, provisionerCalls)
+			if err == nil || err.Error() != "kubernetes_node_patch_rbac_unavailable" || kubectlCalls != tc.wantKubectlCalls || iamCalls != 1 || capacityCalls != tc.wantCapacity {
+				t.Fatalf("err=%v kubectl calls=%d iam calls=%d capacity calls=%d", err, kubectlCalls, iamCalls, capacityCalls)
 			}
 		})
 	}
@@ -458,14 +503,18 @@ func TestTencentProviderMonthlyComputePreflightChecksNodePatchRBACAfterProvision
 		return []byte("yes\n"), nil
 	}
 	providerErr := errors.New("provider unavailable")
-	provider.provision = func(context.Context, provisionerRequest) (provisionerResponse, error) {
-		events = append(events, "provisioner")
+	provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
+		if request.Action == "predebit_iam_gate" {
+			events = append(events, "iam")
+			return successfulPredebitIAMResponse(), nil
+		}
+		events = append(events, "capacity")
 		return provisionerResponse{}, providerErr
 	}
 
 	_, err := provider.MonthlyPreflight(context.Background(), MonthlyPreflightInput{ResourceType: "compute", PackageID: "basic", Zone: "na-siliconvalley-1"})
 
-	if !errors.Is(err, providerErr) || !reflect.DeepEqual(events, []string{"kubectl", "provisioner", "kubectl"}) {
+	if !errors.Is(err, providerErr) || !reflect.DeepEqual(events, []string{"iam", "kubectl", "capacity", "kubectl"}) {
 		t.Fatalf("err=%v events=%#v", err, events)
 	}
 }
@@ -584,6 +633,8 @@ func TestTencentProviderMonthlyPreflightReportEvaluatesBasicAndPro(t *testing.T)
 	provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
 		calls = append(calls, request.PackageID+":"+request.Action)
 		switch request.Action {
+		case "predebit_iam_gate":
+			return successfulPredebitIAMResponse(), nil
 		case "capacity_preflight":
 			instanceType := packagePlan(request.PackageID).InstanceType
 			return provisionerResponse{OK: false, ErrorCode: "tencent_capacity_node_pool_unavailable", PreflightStages: []MonthlyPreflightStage{
@@ -630,7 +681,7 @@ func TestTencentProviderMonthlyPreflightReportEvaluatesBasicAndPro(t *testing.T)
 	}
 	for index, packageReport := range payload.Packages {
 		wantPackage, wantSize := []string{"basic", "pro"}[index], []int{10, 100}[index]
-		if packageReport.PackageID != wantPackage || packageReport.SizeGB != wantSize || packageReport.Status != "failed" || len(packageReport.Items) != 9 {
+		if packageReport.PackageID != wantPackage || packageReport.SizeGB != wantSize || packageReport.Status != "failed" || len(packageReport.Items) != 10 || packageReport.Items[0].Stage != "tencent_predebit_iam" || packageReport.Items[0].Status != "passed" {
 			t.Fatalf("package[%d]=%#v", index, packageReport)
 		}
 		for itemIndex, item := range packageReport.Items {
@@ -639,7 +690,7 @@ func TestTencentProviderMonthlyPreflightReportEvaluatesBasicAndPro(t *testing.T)
 			}
 		}
 	}
-	wantCalls := []string{"basic:capacity_preflight", "basic:storage_preflight", "pro:capacity_preflight", "pro:storage_preflight"}
+	wantCalls := []string{"basic:predebit_iam_gate", "basic:capacity_preflight", "basic:storage_preflight", "pro:predebit_iam_gate", "pro:capacity_preflight", "pro:storage_preflight"}
 	if !reflect.DeepEqual(calls, wantCalls) {
 		t.Fatalf("calls=%#v want=%#v", calls, wantCalls)
 	}
@@ -675,7 +726,7 @@ func TestTencentProviderMonthlyPreflightReportBlocksTencentChecksWithoutCredenti
 		t.Fatalf("environment stages=%#v", report.Items[:2])
 	}
 	encoded := string(mustJSON(report))
-	if !strings.Contains(encoded, `"packageId":"basic"`) || !strings.Contains(encoded, `"packageId":"pro"`) || strings.Count(encoded, `"status":"blocked"`) != 18 {
+	if !strings.Contains(encoded, `"packageId":"basic"`) || !strings.Contains(encoded, `"packageId":"pro"`) || strings.Count(encoded, `"status":"blocked"`) != 20 {
 		t.Fatalf("blocked package reports=%s", encoded)
 	}
 }
