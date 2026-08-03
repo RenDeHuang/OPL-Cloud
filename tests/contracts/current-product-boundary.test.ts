@@ -435,7 +435,7 @@ test("Current Fabric contracts require dedicated package NodePools without weake
     output: "redacted_evidence_only",
     currentState: "implemented_and_fake_tested_not_executed"
   });
-  assert.equal(deployment.schemaVersion, 34);
+  assert.equal(deployment.schemaVersion, 35);
   assert.equal(deployment.deployWorkflow.preDebitTencentIamGate.proofMode, "production_runner_deployment_attestation");
   assert.deepEqual(deployment.deployWorkflow.preDebitTencentIamGate.requiredTencentActions, ["tag:TagResources", "tag:ModifyResourcesTagValue"]);
   assert.equal(deployment.deployWorkflow.preDebitTencentIamGate.tencentTagWriteCalls, 0);
@@ -474,6 +474,20 @@ test("Current Fabric contracts require dedicated package NodePools without weake
     },
     legacyMutationJobs: ["manual-review-diagnose", "workspace-launch-readback-diagnose", "workspace-launch-readback-recover", "compute-claim-diagnose", "compute-claim-recover"],
     legacyMutationJobState: "source_removed"
+  });
+  assert.deepEqual(deployment.productionFabricLedgerReadback, {
+    workflow: ".github/workflows/production-basic-customer-operation.yml",
+    workflowMode: "fabric_ledger_readback",
+    job: "fabric-ledger-readback",
+    runner: ["self-hosted", "tencent-cloud", "opl-cloud", "tke-vpc"],
+    sourceAuthority: "github_actions_artifact_metadata_run_head_sha_digest_and_exact_redacted_payload",
+    targetAuthority: "downloaded_artifact_target_only_no_caller_supplied_resource_identity",
+    endpoint: "POST /fabric/compute-claim-recovery/identity-evidence",
+    readOnly: true,
+    diagnoseCalls: 0,
+    providerCalls: 0,
+    requiredMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
+    artifact: "redacted_fabric_ledger_state_outcome_and_boolean_identity_checks"
   });
   assert.equal(deployment.productionComputeClaimRecovery, undefined);
   assert.equal(deployment.productionWorkspaceLaunchReadbackRecovery, undefined);
