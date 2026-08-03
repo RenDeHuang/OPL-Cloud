@@ -464,6 +464,19 @@ test("TKE deploy workflow matches the current deployment contract", async () => 
     requiredValue: "1",
     enforcement: "shared_tencent_monthly_preflight"
   });
+  assert.deepEqual(contract.deployWorkflow.preDebitTencentIamGate, {
+    proofMode: "production_runner_deployment_attestation",
+    releaseBinding: "exact_merged_OPL_RELEASE_SHA",
+    identityAuthority: "live_STS_GetCallerIdentity_at_deploy_and_preflight",
+    identityFields: ["type", "principalId", "accountId", "userId"],
+    policyDigestEnv: "TENCENT_MUTATION_IAM_POLICY_DIGEST",
+    policyDigestAuthority: "protected_release_owner_verified_production_policy_digest",
+    requiredTencentActions: ["tag:TagResources", "tag:ModifyResourcesTagValue"],
+    runtimeSecretKey: "OPL_TENCENT_PREDEBIT_IAM_ATTESTATION",
+    consumer: "opl-cloud-fabric_only",
+    tencentTagWriteCalls: 0,
+    failure: "before_kubernetes_rbac_capacity_sub2api_debit_and_provider_write"
+  });
   for (const key of [
     "OPL_OPERATOR_CIDRS",
     "OPL_TRUSTED_PROXY_CIDRS",

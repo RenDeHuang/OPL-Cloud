@@ -105,6 +105,7 @@ func (p *TencentProvider) evaluateMonthlyPreflight(ctx context.Context, input Mo
 		return monthlyPreflightEvaluation{Err: err}
 	}
 	expectedStages := []string{"node_pool_discovery", "tke_cluster_capacity", "node_pool_contract", "subnet", "zone", "cvm_prepaid_quota", "cvm_sku_price"}
+	preflightStages := []MonthlyPreflightStage{}
 	if input.ResourceType == "compute" {
 		poolConfig, err := configuredPackageNodePool(input.PackageID)
 		if err != nil {
@@ -112,6 +113,13 @@ func (p *TencentProvider) evaluateMonthlyPreflight(ctx context.Context, input Mo
 		}
 		request.Action = "capacity_preflight"
 		request.Pool = provisionerPool{ID: plan.ID, PackageID: input.PackageID, InstanceType: plan.InstanceType, CPU: uint64(plan.CPU), MemoryGB: uint64(plan.MemoryGB), NodePoolID: poolConfig.NodePoolID, DesiredReplicas: 1, MaxReplicas: poolConfig.MaxReplicas}
+		iamResponse, iamErr := p.provision(ctx, provisionerRequest{Action: "predebit_iam_gate", PackageID: input.PackageID, Zone: input.Zone})
+		iamStage, gateErr := predebitIAMPreflightStage(iamResponse, iamErr)
+		preflightStages = append(preflightStages, iamStage)
+		if gateErr != nil {
+			preflightStages = append(preflightStages, blockedPreflightStages(expectedStages, "tencent_predebit_iam")...)
+			return monthlyPreflightEvaluation{Stages: preflightStages, Err: gateErr}
+		}
 	} else {
 		request.Action = "storage_preflight"
 		request.Storage = provisionerStorage{SizeGB: uint64(input.SizeGB), Zone: input.Zone, DiskType: firstNonEmpty(os.Getenv("TENCENT_CBS_DISK_TYPE"), "CLOUD_BSSD")}
@@ -123,7 +131,7 @@ func (p *TencentProvider) evaluateMonthlyPreflight(ctx context.Context, input Mo
 		}
 	}
 	response, err := p.provision(ctx, request)
-	evaluation := monthlyPreflightEvaluation{Stages: reportStages(response, err, expectedStages)}
+	evaluation := monthlyPreflightEvaluation{Stages: append(preflightStages, reportStages(response, err, expectedStages)...)}
 	if input.ResourceType == "compute" {
 		if rbacErr := p.requireNodePatchRBAC(ctx); rbacErr != nil {
 			evaluation.Err = rbacErr
@@ -160,6 +168,29 @@ func (p *TencentProvider) evaluateMonthlyPreflight(ctx context.Context, input Mo
 	return evaluation
 }
 
+func predebitIAMPreflightStage(response provisionerResponse, err error) (MonthlyPreflightStage, error) {
+	stage := MonthlyPreflightStage{Stage: "tencent_predebit_iam", Status: "failed", BlockedBy: []string{}, SafeFacts: map[string]any{}}
+	if err != nil {
+		stage.ErrorCode = "predebit_iam_unavailable"
+		return stage, err
+	}
+	if !response.OK {
+		stage.ErrorCode = firstNonEmpty(response.ErrorCode, "predebit_iam_unavailable")
+		return stage, provisionerError(response)
+	}
+	if response.Status != "ready" || response.MutationCount != 0 || response.ProviderData["proofMode"] != "production_runner_deployment_attestation" ||
+		response.ProviderData["requiredActions"] != "tag:TagResources,tag:ModifyResourcesTagValue" || response.ProviderData["releaseSha"] == "" || response.ProviderData["policyDigest"] == "" {
+		stage.ErrorCode = "predebit_iam_provider_mismatch"
+		return stage, errors.New(stage.ErrorCode)
+	}
+	stage.Status = "passed"
+	stage.SafeFacts = map[string]any{
+		"proofMode": response.ProviderData["proofMode"], "releaseBound": true,
+		"requiredActions": []string{"tag:TagResources", "tag:ModifyResourcesTagValue"}, "policyDigest": response.ProviderData["policyDigest"],
+	}
+	return stage, nil
+}
+
 func (p *TencentProvider) requireNodePatchRBAC(ctx context.Context) error {
 	if p.kubectl == nil {
 		return errors.New("kubernetes_node_patch_rbac_unavailable")
@@ -190,7 +221,7 @@ func (p *TencentProvider) MonthlyPreflightReport(ctx context.Context, input Mont
 		} else {
 			compute := p.evaluateMonthlyPreflight(ctx, MonthlyPreflightInput{ResourceType: "compute", PackageID: current.packageID, Zone: input.Zone})
 			storage := p.evaluateMonthlyPreflight(ctx, MonthlyPreflightInput{ResourceType: "storage", PackageID: current.packageID, SizeGB: current.sizeGB, Zone: input.Zone})
-			packageItems = append(packageItems, normalizedPreflightStages(compute, []string{"node_pool_discovery", "tke_cluster_capacity", "node_pool_contract", "subnet", "zone", "cvm_prepaid_quota", "cvm_sku_price"})...)
+			packageItems = append(packageItems, normalizedPreflightStages(compute, []string{"tencent_predebit_iam", "node_pool_discovery", "tke_cluster_capacity", "node_pool_contract", "subnet", "zone", "cvm_prepaid_quota", "cvm_sku_price"})...)
 			packageItems = append(packageItems, normalizedPreflightStages(storage, []string{"cbs_prepaid_quota", "cbs_price"})...)
 		}
 		packages = append(packages, MonthlyPreflightPackageReport{PackageID: current.packageID, SizeGB: current.sizeGB, Status: preflightStatus(packageItems), Items: packageItems})
@@ -205,7 +236,7 @@ func (p *TencentProvider) MonthlyPreflightReport(ctx context.Context, input Mont
 }
 
 func monthlyPreflightProviderStageNames() []string {
-	return []string{"node_pool_discovery", "tke_cluster_capacity", "node_pool_contract", "subnet", "zone", "cvm_prepaid_quota", "cvm_sku_price", "cbs_prepaid_quota", "cbs_price"}
+	return []string{"tencent_predebit_iam", "node_pool_discovery", "tke_cluster_capacity", "node_pool_contract", "subnet", "zone", "cvm_prepaid_quota", "cvm_sku_price", "cbs_prepaid_quota", "cbs_price"}
 }
 
 func normalizedPreflightStages(evaluation monthlyPreflightEvaluation, expected []string) []MonthlyPreflightStage {

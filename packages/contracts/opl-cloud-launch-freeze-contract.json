@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 23,
+  "schemaVersion": 24,
   "owner": "OPL Platform Architecture",
   "purpose": "Freeze the approved Pilot products, delegated Gateway key lifecycle, one charge per Workspace period, prepaid Tencent fulfillment, Runtime facts, operator workflows, announcements, and evidence levels without claiming unfinished implementation or runtime evidence.",
   "state": "current",
@@ -254,7 +254,11 @@
         "mutationOutcome": "explicit_confirmed_zero_nonzero_or_unknown_never_infer_zero_from_missing_json",
         "fabricLedgerEvidence": "mutationLedger_mutationLedgerOutcome_and_sha256_digest_from_fabric_identity_evidence",
         "terminalFailedSuccessor": "only_after_server_authoritative_zero_external_mutation_proof_archive_predecessor_plan_execution_and_failure_then_derive_new_generation_plan_digest",
-        "successorApproval": "fresh_validation_fresh_confirmation_and_new_plan_bound_approval_execution_run_identity"
+        "successorApproval": "fresh_validation_fresh_confirmation_and_new_plan_bound_approval_execution_run_identity",
+        "releasedLeaseReacquire": "both_token_and_expiry_empty_reacquire_same_nonterminal_execution_and_run_identity",
+        "partialOrInvalidLease": "fail_closed_identity_conflict",
+        "workerTerminalSync": "workspace_launch_postgresql_cas_synchronizes_succeeded_or_manual_review_to_plan_and_execution",
+        "confirmedWriteReadbackRetry": "cbs_and_runtime_transient_readback_only_no_budget_reset_or_second_external_write"
       },
       "githubActionsRole": "deploy_zero_mutation_validate_and_redacted_evidence_only_no_recovery_mutation_logic"
     },
@@ -383,6 +387,17 @@
       "requiredValue": "1",
       "check": "shared_tencent_monthly_preflight_before_sub2api_debit",
       "failure": "zero_charge_zero_fabric_mutation"
+    },
+    "preDebitIamGate": {
+      "timing": "compute_monthly_preflight_before_kubernetes_rbac_capacity_and_first_sub2api_debit",
+      "proofMode": "production_runner_deployment_attestation",
+      "releaseBinding": "exact_merged_OPL_RELEASE_SHA",
+      "identityAuthority": "live_STS_GetCallerIdentity_at_deploy_and_preflight",
+      "identityFields": ["type", "principalId", "accountId", "userId"],
+      "policyDigestSource": "protected_release_owner_verified_production_policy_digest",
+      "requiredTencentActions": ["tag:TagResources", "tag:ModifyResourcesTagValue"],
+      "actualTencentTagWriteCalls": 0,
+      "failure": "before_rbac_capacity_debit_and_provider_mutation_all_business_mutation_counts_zero"
     },
     "capacityCheck": "Read-only PREPAID inventory, compatibility, quota, and price check before debit; it must not create or reserve a resource.",
     "dedicatedNodePools": {

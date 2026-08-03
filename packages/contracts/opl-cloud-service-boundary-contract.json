@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 26,
+  "schemaVersion": 27,
   "owner": "OPL Platform Architecture",
   "purpose": "Current ownership contract for Console UI, Control Plane, Ledger, Fabric, and external Sub2API.",
   "state": "current",
@@ -199,7 +199,11 @@
           "mutationOutcome": "explicit_confirmed_zero_nonzero_or_unknown_persisted_on_execution",
           "authoritativeZeroEvidence": "fabric_identity_evidence_mutation_ledger_outcome_and_sha256_digest",
           "terminalFailedSuccessor": "confirmed_zero_only_archive_predecessor_and_derive_generation_bound_new_plan_digest_approval_execution_run",
-          "predecessorFencing": "archived_execution_lease_never_reactivated_stale_finalize_rejected"
+          "predecessorFencing": "archived_execution_lease_never_reactivated_stale_finalize_rejected",
+          "releasedLeaseReacquire": "both_token_and_expiry_empty_same_execution_and_run_new_fenced_lease",
+          "partialOrInvalidLease": "fail_closed_identity_conflict",
+          "workerTerminalSync": "workspace_launch_postgresql_cas_updates_plan_and_execution_terminal_projection",
+          "confirmedWriteReadbackRetry": "storage_and_runtime_readback_only_without_budget_reset_or_second_external_write"
         },
         "proofMutationCounts": {"sub2api": 0, "tencent": 0, "kubernetes": 0},
         "runnerDirectMutationCounts": {"sub2api": 0, "tencent": 0, "kubernetes": 0},
@@ -421,12 +425,24 @@
         "forbiddenCalls": ["CreateComputeAllocation", "scale", "debit", "refund", "recharge", "create_storage_volume", "delete", "replace_cvm"],
         "fullMonthlyProviderTruthUnchanged": true
       },
+      "monthlyPreflightPreDebitIamGate": {
+        "scope": "compute_monthly_preflight_before_first_sub2api_debit",
+        "proofMode": "production_runner_deployment_attestation",
+        "releaseBinding": "exact_OPL_RELEASE_SHA",
+        "identityAuthority": "live_STS_GetCallerIdentity",
+        "identityFields": ["type", "principalId", "accountId", "userId"],
+        "policyDigestAuthority": "protected_release_owner_verified_production_policy_digest",
+        "requiredTencentActions": ["tag:TagResources", "tag:ModifyResourcesTagValue"],
+        "tencentTagWriteCalls": 0,
+        "failureOrder": "before_kubernetes_rbac_capacity_sub2api_debit_and_provider_write",
+        "failureMutationCounts": {"sub2api": 0, "tencent": 0, "kubernetes": 0}
+      },
       "monthlyPreflightDiagnostics": {
         "endpoint": "GET /fabric/monthly-preflight-report?zone=<zone>",
         "authentication": "internal_service_token",
         "evaluator": "shared_with_normal_monthly_preflight",
         "packages": ["basic", "pro"],
-        "stages": ["launch_permission", "credentials", "node_pool_discovery", "tke_cluster_capacity", "node_pool_contract", "subnet", "zone", "cvm_prepaid_quota", "cvm_sku_price", "cbs_prepaid_quota", "cbs_price"],
+        "stages": ["launch_permission", "credentials", "tencent_predebit_iam", "node_pool_discovery", "tke_cluster_capacity", "node_pool_contract", "subnet", "zone", "cvm_prepaid_quota", "cvm_sku_price", "cbs_prepaid_quota", "cbs_price"],
         "independentChecks": "run_all_without_mutation",
         "dependentChecks": "blocked_with_blockedBy",
         "safeFactsOnly": true,

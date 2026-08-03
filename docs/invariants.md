@@ -78,6 +78,14 @@ The four implementation owner lanes are Console/Control Plane, Fabric, Gateway i
 - The shared real-Tencent monthly preflight fails closed unless
   `RUN_TENCENT_CREATE_RELEASE_EXECUTION=1`; this check runs before every first
   Sub2API debit and leaves both the charge count and Fabric mutation count at zero on failure.
+- Before that first debit, the compute monthly preflight also requires a
+  release-bound production-runner attestation. The authorized runner reads the
+  live Tencent STS caller identity and binds it to an operator-audited digest of
+  the deployed policy requiring `tag:TagResources` and
+  `tag:ModifyResourcesTagValue`. Fabric re-reads STS and requires the exact
+  attested identity and release. Missing, malformed, or drifted evidence fails
+  before Kubernetes RBAC, capacity, debit, or provider mutation; the proof
+  performs zero Tencent Tag writes.
 - Basic and Pro use separate pre-created TKE NativeCVM NodePools. Basic's
   customer resource contract is `2c4g`; Pro's is `8c16g`. Each Tencent instance
   type is resolved by stable sorting of the current Zone's PREPAID, SELL, exact-
@@ -664,6 +672,15 @@ contract or select the SKU for a customer launch.
   and performs zero database, Fabric, Sub2API, Tencent, or Kubernetes writes.
   An expired approval that was never persisted is rejected, and any key,
   digest, or target drift returns conflict without mutation.
+- A nonterminal Recovery execution whose lease token and expiry are both empty
+  may reacquire a fresh fenced lease only for the same persisted execution and
+  run identity. A partial lease or malformed expiry fails closed. Once the
+  original launch worker releases that lease, its PostgreSQL launch CAS also
+  synchronizes `succeeded` to completed Plan/Execution with URL and Receipt, or
+  `manual_review` to the matching failed terminal projection. Transient CBS or
+  Runtime readback after a confirmed write remains retryable and readback-only:
+  persisted stage budgets never reset and no second CBS, Runtime, Secret,
+  debit, CVM, Tag, or Node write is issued.
 - If an exact active Fabric MachineOwnership and current compute binding are
   preserved while authoritative provider truth proves the same CVM is
   target-owned and its unique Node is still unallocated, Fabric may reserve the
