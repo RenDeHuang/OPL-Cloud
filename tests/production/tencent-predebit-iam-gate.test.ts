@@ -10,6 +10,7 @@ import {
 
 const releaseSha = "a".repeat(40);
 const policyDigest = `sha256:${"b".repeat(64)}`;
+const region = "na-siliconvalley";
 const identityResponse = {
   Response: {
     Type: "CAMUser",
@@ -33,6 +34,7 @@ test("production runner attestation binds a live signed STS identity to release 
   const attestation = await createTencentPredebitIAMAttestation({
     secretId: "sid-production",
     secretKey: "skey-production",
+    region,
     releaseSha,
     policyDigest,
     timestamp: 1785729600,
@@ -58,8 +60,10 @@ test("production runner attestation binds a live signed STS identity to release 
   assert.equal(calls[0].init.body, "{}");
   assert.equal(calls[0].init.headers["X-TC-Action"], "GetCallerIdentity");
   assert.equal(calls[0].init.headers["X-TC-Version"], "2018-08-13");
+  assert.equal(calls[0].init.headers["Content-Type"], "application/json");
+  assert.equal(calls[0].init.headers["X-TC-Region"], region);
   assert.equal(calls[0].init.headers["X-TC-Timestamp"], "1785729600");
-  assert.match(calls[0].init.headers.Authorization, /^TC3-HMAC-SHA256 Credential=sid-production\//);
+  assert.match(calls[0].init.headers.Authorization, /^TC3-HMAC-SHA256 Credential=sid-production\/.*SignedHeaders=content-type;host,/);
   assert.equal(JSON.stringify({ attestation, calls }).includes("skey-production"), false);
 });
 
@@ -78,6 +82,7 @@ test("production runner attestation rejects invalid release and policy bindings 
       createTencentPredebitIAMAttestation({
         secretId: "sid-production",
         secretKey: "skey-production",
+        region,
         timestamp: 1785729600,
         fetchImpl,
         ...input
@@ -85,6 +90,27 @@ test("production runner attestation rejects invalid release and policy bindings 
       /tencent_predebit_iam_(?:release_sha|policy_digest)_invalid/
     );
   }
+  assert.equal(calls, 0);
+});
+
+test("production runner attestation requires the SDK region binding before STS", async () => {
+  let calls = 0;
+  const fetchImpl = async () => {
+    calls++;
+    return new Response(JSON.stringify(identityResponse));
+  };
+
+  await assert.rejects(
+    createTencentPredebitIAMAttestation({
+      secretId: "sid-production",
+      secretKey: "skey-production",
+      releaseSha,
+      policyDigest,
+      timestamp: 1785729600,
+      fetchImpl
+    }),
+    /tencent_predebit_iam_region_required/
+  );
   assert.equal(calls, 0);
 });
 
@@ -97,6 +123,7 @@ test("production runner attestation fails closed on incomplete STS identity", as
     createTencentPredebitIAMAttestation({
       secretId: "sid-production",
       secretKey: "skey-production",
+      region,
       releaseSha,
       policyDigest,
       timestamp: 1785729600,
@@ -122,6 +149,7 @@ test("production runner attestation reports only the safe Tencent error code", a
     await createTencentPredebitIAMAttestation({
       secretId: "sid-production",
       secretKey: "skey-production",
+      region,
       releaseSha,
       policyDigest,
       timestamp: 1785729600,
