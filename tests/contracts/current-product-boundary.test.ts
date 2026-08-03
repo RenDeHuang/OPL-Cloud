@@ -114,7 +114,7 @@ test("Current contracts hard cut Workspace purchase, access, and Runtime facts",
     json("packages/contracts/opl-cloud-console-source-truth-contract.json")
   ]);
 
-  assert.equal(freeze.schemaVersion, 24);
+  assert.equal(freeze.schemaVersion, 25);
   assert.equal(billing.schemaVersion, 11);
   assert.equal(freeze.workspaceLaunch.customerDebitCardinality, 1);
   assert.equal(freeze.workspaceLaunch.persistence, "control_plane_runtime_operations with action=workspace.launch.v2 and result.schemaVersion=2");
@@ -435,7 +435,7 @@ test("Current Fabric contracts require dedicated package NodePools without weake
     output: "redacted_evidence_only",
     currentState: "implemented_and_fake_tested_not_executed"
   });
-  assert.equal(deployment.schemaVersion, 33);
+  assert.equal(deployment.schemaVersion, 34);
   assert.equal(deployment.deployWorkflow.preDebitTencentIamGate.proofMode, "production_runner_deployment_attestation");
   assert.deepEqual(deployment.deployWorkflow.preDebitTencentIamGate.requiredTencentActions, ["tag:TagResources", "tag:ModifyResourcesTagValue"]);
   assert.equal(deployment.deployWorkflow.preDebitTencentIamGate.tencentTagWriteCalls, 0);
@@ -456,10 +456,13 @@ test("Current Fabric contracts require dedicated package NodePools without weake
     runner: ["self-hosted", "tencent-cloud", "opl-cloud", "tke-vpc"],
     artifact: {
       schemaVersion: 1,
-      fields: ["operationMode", "status", "recoveryEligible", "errorCode", "planId", "planDigest", "stages", "mismatches", "runnerDirectMutationCounts", "verifiedAt"],
+      fields: ["operationMode", "status", "recoveryEligible", "errorCode", "planId", "planDigest", "stages", "mismatches", "runnerDirectMutationCounts", "verifiedAt", "successorGate"],
       executeFields: ["executionId", "runId", "url", "receiptId", "controlPlaneExecutionMutationCounts"],
+      successorGateFields: ["applicable", "allowed", "planState", "executionState", "completionState", "leaseState", "identityState", "persistedMutationState", "fabricLedgerState"],
+      successorGatePersistence: "none_diagnose_response_only",
+      blockedDiagnoseValidation: "always_validate_exact_redacted_schema_then_keep_operation_failed",
       mismatchValues: "allowlisted_safe_value_or_sha256_digest",
-      forbidden: ["complete_plan", "complete_approval", "resource_target", "customer_email", "private_ip", "credential", "capability"]
+      forbidden: ["complete_plan", "complete_approval", "resource_target", "customer_email", "private_ip", "credential", "capability", "approval_digest", "lease_token", "lease_expiry", "mutation_ledger_digest"]
     },
     requiredMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
     consoleExecution: {
@@ -712,7 +715,7 @@ test("Current contracts hard cut operator resources, wallet adjustments, and ann
     absentRequires: "both_local_identities_and_exact_provider_describe_absence",
     forbiddenSideEffects: ["sync", "tag", "kubectl_apply", "delete", "label", "purchase", "renew", "destroy"]
   });
-  assert.equal(boundary.schemaVersion, 27);
+  assert.equal(boundary.schemaVersion, 28);
   assert.deepEqual(boundary.services.controlPlane.workspaceContinuationAttemptBudget, {
     owner: "original_workspace.launch.v2_operation",
     stages: ["storage", "attachment", "secret", "runtime", "activation", "receipt"],
@@ -882,6 +885,12 @@ test("Current contracts hard cut operator resources, wallet adjustments, and ann
     operatorInputFields: ["accountId", "launchOperationId", "decision"],
     executeRequestFields: ["planId", "planDigest", "decision", "confirmation"],
     resourceIdentityInput: "forbidden_server_authoritative_readback_only",
+    terminalSuccessorGateProjection: {
+      route: "diagnose_response_only",
+      persistence: "none",
+      fields: ["applicable", "allowed", "planState", "executionState", "completionState", "leaseState", "identityState", "persistedMutationState", "fabricLedgerState"],
+      forbidden: ["approval", "lease", "resource_identity", "private_ip", "provider_request_id", "mutation_ledger_digest"]
+    },
     implementation: "server_authoritative_plan_local_focused_verified_not_merged_deployed_or_production_verified"
   });
   assert.equal(boundary.externalServices.gateway.currentImplementation, "exact_id_current_page_users_batch_usage_bounded_key_counts_and_full_delegated_key_parity_code_complete_local_only");
@@ -967,7 +976,7 @@ test("Current contracts keep compute-claim continuation automatic while preservi
     implementationState: "contract_frozen_implementation_rollout_and_production_evidence_pending"
   });
 
-  assert.equal(sourceTruth.schemaVersion, 13);
+  assert.equal(sourceTruth.schemaVersion, 14);
   assert.deepEqual(sourceTruth.sources.operator.workspaceLaunchProgression, {
     route: "GET /api/operator/reconciliation",
     requiredItemFields: ["accountId", "billingOperationId", "phase", "errorCode", "progressionOwner", "allowedActions"],

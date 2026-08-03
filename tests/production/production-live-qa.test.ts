@@ -447,6 +447,72 @@ test("Recovery Plan diagnosis uses the operator session to persist and re-read o
   assert.equal(calls.some((call) => call.path.endsWith("/recovery-plan/execute")), false);
 });
 
+test("Recovery Plan diagnosis emits only the redacted terminal successor gate", async () => {
+  const accountId = "acct-f947b18f844e42b3c0";
+  const launchOperationId = "workspace-launch-f0375970d7678d0a3e";
+  const planDigest = "e".repeat(64);
+  const plan = {
+    planId: `recovery-plan-${planDigest.slice(0, 20)}`,
+    planDigest,
+    status: "blocked",
+    operationId: launchOperationId,
+    stages: [{ stage: "compute_claim", status: "manual_review" }],
+    mismatches: [],
+    mutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
+  };
+  const successorGate = {
+    applicable: true,
+    allowed: false,
+    planState: "terminal",
+    executionState: "failed",
+    completionState: "completed",
+    leaseState: "held",
+    identityState: "matches",
+    persistedMutationState: "missing",
+    fabricLedgerState: "absent"
+  };
+  const fetchImpl = async (input, init = {}) => {
+    const url = new URL(String(input));
+    const method = String(init.method || "GET").toUpperCase();
+    if (url.pathname === "/api/auth/login") {
+      return json({ user: { accountId: ADMIN_ACCOUNT_ID, role: "admin" } }, 200, {
+        "set-cookie": "opl_session=admin; Path=/; HttpOnly",
+        "x-opl-csrf-token": "admin-csrf"
+      });
+    }
+    if (url.pathname.endsWith("/recovery-plan/diagnose")) {
+      return json({
+        ...plan,
+        successorGate,
+        approvalDigest: "f".repeat(64),
+        leaseToken: "g".repeat(64),
+        cvmInstanceId: "ins-protected"
+      });
+    }
+    if (url.pathname.endsWith("/recovery-plan") && method === "GET") return json(plan);
+    return json({ error: "unexpected" }, 404);
+  };
+
+  const result = await productionLiveQa.diagnoseWorkspaceRecoveryPlan({
+    accountId,
+    launchOperationId,
+    origin: "https://cloud.medopl.cn",
+    adminEmail: ADMIN_EMAIL,
+    adminPassword: ADMIN_PASSWORD,
+    fetchImpl,
+    now: new Date("2026-08-03T12:00:00Z")
+  });
+
+  assert.equal(result.status, "blocked");
+  assert.deepEqual(result.successorGate, successorGate);
+  assert.deepEqual(result.runnerDirectMutationCounts, { sub2api: 0, tencent: 0, kubernetes: 0 });
+  assert.deepEqual(Object.keys(result).sort(), [
+    "errorCode", "mismatches", "operationMode", "planDigest", "planId", "recoveryEligible",
+    "runnerDirectMutationCounts", "schemaVersion", "stages", "status", "successorGate", "verifiedAt"
+  ]);
+  assert.doesNotMatch(JSON.stringify(result), /approvalDigest|leaseToken|cvmInstanceId|ins-protected|password|secret|cookie|csrf/i);
+});
+
 test("Recovery Plan execution posts one exact continuation and polls only the same persisted plan", async () => {
   const launchOperationId = "workspace-launch-f0375970d7678d0a3e";
   const planDigest = "c".repeat(64);

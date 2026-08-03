@@ -1175,7 +1175,7 @@ jobs:
 
 
       - name: Require exact redacted Recovery Plan evidence
-        if: ${{ steps.operate.outcome == 'success' }}
+        if: always()
         shell: bash
         working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
@@ -1190,15 +1190,26 @@ jobs:
             /^recovery-plan-[a-f0-9]{20}$/.test(String(result?.planId || "")) &&
             /^[a-f0-9]{64}$/.test(String(result?.planDigest || "")) && Array.isArray(result?.stages) && result.stages.length > 0 &&
             Array.isArray(result?.mismatches) && zero && !/password|secret|token|cookie|cvmInstanceId|nodeName|cloudImageDigest/i.test(JSON.stringify(result));
+          const gate = result?.successorGate;
+          const gateKeys = ["allowed", "applicable", "completionState", "executionState", "fabricLedgerState", "identityState", "leaseState", "persistedMutationState", "planState"];
+          const validGate = gate === undefined || (gate && JSON.stringify(Object.keys(gate).sort()) === JSON.stringify(gateKeys) &&
+            typeof gate.applicable === "boolean" && typeof gate.allowed === "boolean" &&
+            ["missing", "nonterminal", "terminal"].includes(gate.planState) && ["missing", "nonterminal", "failed"].includes(gate.executionState) &&
+            ["missing", "completed"].includes(gate.completionState) && ["released", "held", "partial"].includes(gate.leaseState) &&
+            ["unavailable", "matches", "mismatch"].includes(gate.identityState) &&
+            ["missing", "confirmed_zero", "nonzero", "unknown", "invalid"].includes(gate.persistedMutationState) &&
+            ["unavailable", "absent", "confirmed_zero", "nonzero", "unknown", "invalid"].includes(gate.fabricLedgerState));
           const validRead = ["recovery_plan_diagnose", "compute_claim_validate"].includes(mode) && result?.status === "proven" &&
             result?.recoveryEligible === true && result?.errorCode === "none" && result.mismatches.length === 0;
+          const validBlockedDiagnose = mode === "recovery_plan_diagnose" && result?.status === "blocked" && result?.recoveryEligible === false &&
+            typeof result?.errorCode === "string" && result.errorCode.length > 0 && gate?.applicable === true && gate?.allowed === false;
           const counts = result?.controlPlaneExecutionMutationCounts;
           const validExecute = mode === "recovery_plan_execute" && result?.status === "completed" && result?.errorCode === "none" &&
             /^recovery-exec-[A-Za-z0-9-]+$/.test(String(result?.executionId || "")) &&
             /^control-plane-run-[A-Za-z0-9-]+$/.test(String(result?.runId || "")) &&
             typeof result?.url === "string" && result.url.length > 0 && typeof result?.receiptId === "string" && result.receiptId.length > 0 &&
             counts && [counts.sub2api, counts.tencent, counts.kubernetes].every((count) => Number.isSafeInteger(count) && count >= 0);
-          if (!common || (!validRead && !validExecute)) {
+          if (!common || !validGate || (!validRead && !validBlockedDiagnose && !validExecute)) {
             console.error(`Recovery Plan operation blocked: ${String(result?.errorCode || "operation_artifact_invalid")}`);
             process.exit(1);
           }

@@ -1767,7 +1767,45 @@ function workspaceRecoveryPlanResponse(value, operationId, allowedStatuses) {
       .every((count) => Number.isSafeInteger(count) && count >= 0)) {
     throw new Error("workspace_recovery_plan_validation_response_invalid");
   }
-  return JSON.parse(JSON.stringify(value));
+  const successorGate = workspaceRecoverySuccessorGateResponse(value.successorGate);
+  const plan = {
+    planId: value.planId,
+    planDigest: value.planDigest,
+    status: value.status,
+    operationId: value.operationId,
+    stages: JSON.parse(JSON.stringify(value.stages)),
+    mismatches: JSON.parse(JSON.stringify(value.mismatches)),
+    mutationCounts: { sub2api: mutationCounts.sub2api, tencent: mutationCounts.tencent, kubernetes: mutationCounts.kubernetes }
+  };
+  for (const field of ["executionId", "runId", "url", "receiptId", "errorCode"]) {
+    if (typeof value[field] === "string" && value[field]) plan[field] = value[field];
+  }
+  if (successorGate) plan.successorGate = successorGate;
+  return plan;
+}
+
+function workspaceRecoverySuccessorGateResponse(value) {
+  if (value === undefined) return undefined;
+  const expectedKeys = [
+    "allowed", "applicable", "completionState", "executionState", "fabricLedgerState",
+    "identityState", "leaseState", "persistedMutationState", "planState"
+  ];
+  const enums = {
+    planState: new Set(["missing", "nonterminal", "terminal"]),
+    executionState: new Set(["missing", "nonterminal", "failed"]),
+    completionState: new Set(["missing", "completed"]),
+    leaseState: new Set(["released", "held", "partial"]),
+    identityState: new Set(["unavailable", "matches", "mismatch"]),
+    persistedMutationState: new Set(["missing", "confirmed_zero", "nonzero", "unknown", "invalid"]),
+    fabricLedgerState: new Set(["unavailable", "absent", "confirmed_zero", "nonzero", "unknown", "invalid"])
+  };
+  if (!value || typeof value !== "object" || Array.isArray(value) ||
+    JSON.stringify(Object.keys(value).sort()) !== JSON.stringify(expectedKeys) ||
+    typeof value.applicable !== "boolean" || typeof value.allowed !== "boolean" ||
+    Object.entries(enums).some(([field, allowed]) => !allowed.has(String(value[field] || "")))) {
+    throw new Error("workspace_recovery_plan_successor_gate_invalid");
+  }
+  return Object.fromEntries(expectedKeys.map((field) => [field, value[field]]));
 }
 
 function workspaceRecoveryPlanValidationResponse(value, operationId) {
@@ -1843,7 +1881,8 @@ export async function diagnoseWorkspaceRecoveryPlan({
   return recoveryPlanArtifact(RECOVERY_PLAN_DIAGNOSE_MODE, persisted, now, {
     status: proven ? "proven" : "blocked",
     recoveryEligible: proven,
-    errorCode: proven ? "none" : String(persisted.errorCode || "identity_mismatch")
+    errorCode: proven ? "none" : String(persisted.errorCode || "identity_mismatch"),
+    ...(diagnosis.successorGate ? { successorGate: diagnosis.successorGate } : {})
   });
 }
 

@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 24,
+  "schemaVersion": 25,
   "owner": "OPL Platform Architecture",
   "purpose": "Freeze the approved Pilot products, delegated Gateway key lifecycle, one charge per Workspace period, prepaid Tencent fulfillment, Runtime facts, operator workflows, announcements, and evidence levels without claiming unfinished implementation or runtime evidence.",
   "state": "current",
@@ -245,6 +245,11 @@
       "targetBindingSource": "authoritative_service_readback_only",
       "mismatchEvidence": "field_name_plus_safe_expected_actual_or_digest_fail_closed",
       "externalValidationMutationCounts": {"sub2api": 0, "tencent": 0, "kubernetes": 0},
+      "terminalSuccessorGateProjection": {
+        "persistence": "none_diagnose_response_only",
+        "fields": ["applicable", "allowed", "planState", "executionState", "completionState", "leaseState", "identityState", "persistedMutationState", "fabricLedgerState"],
+        "forbidden": ["approval", "approvalDigest", "leaseToken", "leaseExpiresAt", "resourceIdentity", "privateIp", "providerRequestId", "mutationLedgerDigest"]
+      },
       "execution": {
         "approvalDigest": "control_plane_generated_from_exact_release_target_and_allowed_write_binding",
         "singleWinner": "persisted_postgresql_cas_lease",

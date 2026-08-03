@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 13,
+  "schemaVersion": 14,
   "owner": "OPL Console Control Plane",
   "purpose": "Strict source envelopes and customer-safe live projections for Console source-of-truth APIs.",
   "state": "current",
@@ -319,6 +319,12 @@
         "operatorInputFields": ["accountId", "launchOperationId", "decision"],
         "executeRequestFields": ["planId", "planDigest", "decision", "confirmation"],
         "resourceIdentityInput": "forbidden_server_authoritative_readback_only",
+        "terminalSuccessorGateProjection": {
+          "route": "diagnose_response_only",
+          "persistence": "none",
+          "fields": ["applicable", "allowed", "planState", "executionState", "completionState", "leaseState", "identityState", "persistedMutationState", "fabricLedgerState"],
+          "forbidden": ["approval", "lease", "resource_identity", "private_ip", "provider_request_id", "mutation_ledger_digest"]
+        },
         "implementation": "server_authoritative_plan_local_focused_verified_not_merged_deployed_or_production_verified"
       },
       "workspaceLaunchProgression": {

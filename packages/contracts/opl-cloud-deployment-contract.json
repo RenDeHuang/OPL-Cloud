@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 33,
+  "schemaVersion": 34,
   "owner": "OPL Fabric",
   "purpose": "Deployment workflow, immutable Cloud and Workspace images, TKE handoff, read-only diagnostics, and production-verification safety.",
   "state": "current",
@@ -673,10 +673,13 @@
     "runner": ["self-hosted", "tencent-cloud", "opl-cloud", "tke-vpc"],
     "artifact": {
       "schemaVersion": 1,
-      "fields": ["operationMode", "status", "recoveryEligible", "errorCode", "planId", "planDigest", "stages", "mismatches", "runnerDirectMutationCounts", "verifiedAt"],
+      "fields": ["operationMode", "status", "recoveryEligible", "errorCode", "planId", "planDigest", "stages", "mismatches", "runnerDirectMutationCounts", "verifiedAt", "successorGate"],
       "executeFields": ["executionId", "runId", "url", "receiptId", "controlPlaneExecutionMutationCounts"],
+      "successorGateFields": ["applicable", "allowed", "planState", "executionState", "completionState", "leaseState", "identityState", "persistedMutationState", "fabricLedgerState"],
+      "successorGatePersistence": "none_diagnose_response_only",
+      "blockedDiagnoseValidation": "always_validate_exact_redacted_schema_then_keep_operation_failed",
       "mismatchValues": "allowlisted_safe_value_or_sha256_digest",
-      "forbidden": ["complete_plan", "complete_approval", "resource_target", "customer_email", "private_ip", "credential", "capability"]
+      "forbidden": ["complete_plan", "complete_approval", "resource_target", "customer_email", "private_ip", "credential", "capability", "approval_digest", "lease_token", "lease_expiry", "mutation_ledger_digest"]
     },
     "requiredMutationCounts": {"sub2api": 0, "tencent": 0, "kubernetes": 0},
     "consoleExecution": {
