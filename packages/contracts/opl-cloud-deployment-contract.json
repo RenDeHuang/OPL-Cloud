@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 34,
+  "schemaVersion": 35,
   "owner": "OPL Fabric",
   "purpose": "Deployment workflow, immutable Cloud and Workspace images, TKE handoff, read-only diagnostics, and production-verification safety.",
   "state": "current",
@@ -83,6 +83,7 @@
         "workspace-identity-diagnose",
         "acceptance-b-fresh-order",
         "controlled-pilot-closed-validate",
+        "fabric-ledger-readback",
         "recovery-plan-operation"
       ]
     },
@@ -691,6 +692,20 @@
     },
     "legacyMutationJobs": ["manual-review-diagnose", "workspace-launch-readback-diagnose", "workspace-launch-readback-recover", "compute-claim-diagnose", "compute-claim-recover"],
     "legacyMutationJobState": "source_removed"
+  },
+  "productionFabricLedgerReadback": {
+    "workflow": ".github/workflows/production-basic-customer-operation.yml",
+    "workflowMode": "fabric_ledger_readback",
+    "job": "fabric-ledger-readback",
+    "runner": ["self-hosted", "tencent-cloud", "opl-cloud", "tke-vpc"],
+    "sourceAuthority": "github_actions_artifact_metadata_run_head_sha_digest_and_exact_redacted_payload",
+    "targetAuthority": "downloaded_artifact_target_only_no_caller_supplied_resource_identity",
+    "endpoint": "POST /fabric/compute-claim-recovery/identity-evidence",
+    "readOnly": true,
+    "diagnoseCalls": 0,
+    "providerCalls": 0,
+    "requiredMutationCounts": {"sub2api": 0, "tencent": 0, "kubernetes": 0},
+    "artifact": "redacted_fabric_ledger_state_outcome_and_boolean_identity_checks"
   },
 
 

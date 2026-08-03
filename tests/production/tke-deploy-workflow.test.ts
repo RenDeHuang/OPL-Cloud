@@ -592,6 +592,7 @@ test("production self-hosted jobs use one run-and-job isolated source checkout",
       "workspace-identity-diagnose",
       "acceptance-b-fresh-order",
       "controlled-pilot-closed-validate",
+      "fabric-ledger-readback",
       "recovery-plan-operation"
     ]]
   ]);
@@ -638,9 +639,14 @@ test("production self-hosted jobs use one run-and-job isolated source checkout",
       assert.equal(cleanup?.env?.OPL_SOURCE_CHECKOUT, isolatedSourceCheckoutDirectory, `${path}:${name} cleanup directory`);
       assert.match(serializedStep(cleanup), /source_dir="\$\{OPL_SOURCE_CHECKOUT:-\}"/);
       assert.match(serializedStep(cleanup), /expected="\$GITHUB_WORKSPACE\/\.opl-checkouts\/\$GITHUB_RUN_ID-\$GITHUB_RUN_ATTEMPT-\$GITHUB_JOB"/);
-      assert.match(serializedStep(cleanup), /find "\$source_dir" -mindepth 1 -delete/);
-      assert.match(serializedStep(cleanup), /rmdir "\$source_dir"/);
-      assert.doesNotMatch(serializedStep(cleanup), /\brm\b|\.worktrees|find "\$GITHUB_WORKSPACE"|find "\$RUNNER_TEMP"|\*/);
+      if (name === "fabric-ledger-readback") {
+        assert.match(serializedStep(cleanup), /rm -rf -- "\$source_dir"/);
+        assert.doesNotMatch(serializedStep(cleanup), /find|\.worktrees|"\$GITHUB_WORKSPACE"|"\$RUNNER_TEMP"|\*/);
+      } else {
+        assert.match(serializedStep(cleanup), /find "\$source_dir" -mindepth 1 -delete/);
+        assert.match(serializedStep(cleanup), /rmdir "\$source_dir"/);
+        assert.doesNotMatch(serializedStep(cleanup), /\brm\b|\.worktrees|find "\$GITHUB_WORKSPACE"|find "\$RUNNER_TEMP"|\*/);
+      }
 
       for (const step of steps.slice(checkoutIndex + 1, -1)) {
         if (step.run) {
@@ -1163,6 +1169,73 @@ test("server-owned Recovery Plan diagnosis and execution are exact original-orde
   ]);
 });
 
+test("Fabric recovery ledger readback is artifact-bound, read-only, and cannot replay Diagnose or claim", async () => {
+  const workflow = await readWorkflow(".github/workflows/production-basic-customer-operation.yml");
+  const deployment = await readJson(deploymentContractPath);
+  const inputs = workflow.on.workflow_dispatch.inputs;
+  const job = workflowJob(workflow, "fabric-ledger-readback");
+  const runs = serializedRuns(job);
+  const downloads = (job.steps || []).filter((step) => step.uses === "actions/download-artifact@v4");
+
+  assert.ok(inputs.operation_mode.options.includes("fabric_ledger_readback"));
+  for (const name of ["recovery_evidence_run_id", "recovery_evidence_artifact_id", "recovery_evidence_artifact_digest"]) {
+    assert.equal(inputs[name].required, false, name);
+  }
+  assert.match(String(job.if), /inputs\.operation_mode == 'fabric_ledger_readback'/);
+  assert.match(String(job.if), /inputs\.workspace_identity_account_id != ''/);
+  assert.match(String(job.if), /inputs\.recovery_plan_launch_operation_id != ''/);
+  assert.match(String(job.if), /inputs\.recovery_evidence_run_id != ''/);
+  assert.match(String(job.if), /inputs\.recovery_evidence_artifact_id != ''/);
+  assert.match(String(job.if), /inputs\.recovery_evidence_artifact_digest != ''/);
+  assert.deepEqual(job["runs-on"], ["self-hosted", "tencent-cloud", "opl-cloud", "tke-vpc"]);
+  assert.equal(job.environment, "production");
+  assert.equal(job.env.OPL_RECOVERY_EVIDENCE_RUN_ID, "${{ inputs.recovery_evidence_run_id }}");
+  assert.equal(job.env.OPL_RECOVERY_EVIDENCE_ARTIFACT_ID, "${{ inputs.recovery_evidence_artifact_id }}");
+  assert.equal(job.env.OPL_RECOVERY_EVIDENCE_ARTIFACT_DIGEST, "${{ inputs.recovery_evidence_artifact_digest }}");
+  assert.deepEqual(downloads.map((step) => step.with), [{
+    "artifact-ids": "${{ inputs.recovery_evidence_artifact_id }}",
+    path: "${{ runner.temp }}/production-fabric-ledger-readback/source",
+    "github-token": "${{ github.token }}",
+    repository: "${{ github.repository }}",
+    "merge-multiple": true
+  }]);
+  assert.match(runs, /api\.github\.com\/repos\/\$GITHUB_REPOSITORY\/actions\/artifacts\/\$OPL_RECOVERY_EVIDENCE_ARTIFACT_ID/);
+  assert.match(runs, /api\.github\.com\/repos\/\$GITHUB_REPOSITORY\/actions\/runs\/\$OPL_RECOVERY_EVIDENCE_RUN_ID/);
+  assert.match(runs, /production-basic-compute-claim-evidence/);
+  assert.match(runs, /Production Basic Customer Operation/);
+  assert.match(runs, /workflow_dispatch/);
+  assert.match(runs, /target\.deadline === proof\.deadline/);
+  assert.match(runs, /compute-claim-recovery\.json/);
+  assert.match(runs, /target\.launchOperationId/);
+  assert.match(runs, /target\.accountId/);
+  assert.match(runs, /\/fabric\/compute-claim-recovery\/identity-evidence/);
+  for (const field of [
+    "fabric.operationId", "fabric.operationIdempotencyKey", "fabric.operationRequestHash",
+    "binding.present", "binding.valid", "binding.compatibility", "binding.launchOperationId",
+    "binding.idempotencyKey", "binding.targetHash", "binding.requestHash"
+  ]) assert.match(runs, new RegExp(field.replaceAll(".", "\\.")));
+  assert.match(runs, /mutationLedgerOutcome/);
+  assert.match(runs, /recoveryEligible/);
+  assert.match(runs, /historical_mutation_evidence_incomplete/);
+  assert.match(runs, /runnerDirectMutationCounts/);
+  assert.doesNotMatch(runs, /mutationLedgerDigest|recovery-plan\/(?:diagnose|validate|execute)|--recovery-plan-(?:diagnose|validate|execute)|compute-claim-recovery\/(?:proof|claim)|ClaimComputeRecovery|CreateComputeAllocation|CreateDisks|create_storage_volume|scale|debit|refund|delete|replace/i);
+  assert.doesNotMatch(JSON.stringify(job), /TENCENTCLOUD_SECRET|OPL_[A-Z_]*APPROVAL_JSON|target_json|cloud_digest|workspace_digest|recovery_confirmation/i);
+  assert.deepEqual(deployment.productionFabricLedgerReadback, {
+    workflow: ".github/workflows/production-basic-customer-operation.yml",
+    workflowMode: "fabric_ledger_readback",
+    job: "fabric-ledger-readback",
+    runner: ["self-hosted", "tencent-cloud", "opl-cloud", "tke-vpc"],
+    sourceAuthority: "github_actions_artifact_metadata_run_head_sha_digest_and_exact_redacted_payload",
+    targetAuthority: "downloaded_artifact_target_only_no_caller_supplied_resource_identity",
+    endpoint: "POST /fabric/compute-claim-recovery/identity-evidence",
+    readOnly: true,
+    diagnoseCalls: 0,
+    providerCalls: 0,
+    requiredMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
+    artifact: "redacted_fabric_ledger_state_outcome_and_boolean_identity_checks"
+  });
+});
+
 test("disabled controlled Basic Pilot has one production fail-closed proof with no provider capability", async () => {
   const workflow = await readWorkflow(".github/workflows/production-basic-customer-operation.yml");
   const deployment = await readJson(deploymentContractPath);
@@ -1222,6 +1295,7 @@ test("recovered Workspace E2E is a separate hosted mode with no resource mutatio
     "recovery_plan_diagnose",
     "acceptance_b_fresh_order",
     "compute_claim_validate",
+    "fabric_ledger_readback",
     "recovery_plan_execute",
     "controlled_pilot_closed_validate",
     "recovered_workspace_e2e"

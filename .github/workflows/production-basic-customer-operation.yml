@@ -23,6 +23,7 @@ on:
           - recovery_plan_diagnose
           - acceptance_b_fresh_order
           - compute_claim_validate
+          - fabric_ledger_readback
           - recovery_plan_execute
           - controlled_pilot_closed_validate
           - recovered_workspace_e2e
@@ -91,6 +92,21 @@ on:
         type: string
       recovery_plan_digest:
         description: Exact persisted Recovery Plan digest for zero-mutation validation or recovered Workspace E2E readback.
+        required: false
+        default: ""
+        type: string
+      recovery_evidence_run_id:
+        description: Exact historical GitHub Actions run containing the redacted compute-claim evidence.
+        required: false
+        default: ""
+        type: string
+      recovery_evidence_artifact_id:
+        description: Exact GitHub artifact ID owned by the historical evidence run.
+        required: false
+        default: ""
+        type: string
+      recovery_evidence_artifact_digest:
+        description: Exact sha256 digest returned by GitHub for the historical evidence artifact.
         required: false
         default: ""
         type: string
@@ -1034,6 +1050,426 @@ jobs:
           if [ -d "$source_dir" ]; then
             find "$source_dir" -mindepth 1 -delete
             rmdir "$source_dir"
+          fi
+
+  fabric-ledger-readback:
+    name: Read one artifact-bound Fabric compute-claim mutation ledger
+    if: ${{ github.ref == 'refs/heads/main' && github.sha == inputs.merged_sha && inputs.operation_mode == 'fabric_ledger_readback' && inputs.approval_id == '' && inputs.resume_run_id == '' && inputs.customer_email == '' && inputs.workspace_identity_account_id != '' && inputs.workspace_identity_workspace_id == '' && inputs.recovery_plan_launch_operation_id != '' && inputs.recovery_plan_id == '' && inputs.recovery_plan_digest == '' && inputs.recovery_evidence_run_id != '' && inputs.recovery_evidence_artifact_id != '' && inputs.recovery_evidence_artifact_digest != '' && !inputs.confirm_account_provision && !inputs.confirm_wallet_recharge && !inputs.confirm_workspace_purchase && !inputs.confirm_single_model_request && !inputs.confirm_recovery_plan_execute }}
+    runs-on: [self-hosted, tencent-cloud, opl-cloud, tke-vpc]
+    timeout-minutes: 15
+    environment: production
+    env:
+      OPL_MERGED_SHA: ${{ inputs.merged_sha }}
+      OPL_RECOVERY_PLAN_ACCOUNT_ID: ${{ inputs.workspace_identity_account_id }}
+      OPL_RECOVERY_PLAN_LAUNCH_OPERATION_ID: ${{ inputs.recovery_plan_launch_operation_id }}
+      OPL_RECOVERY_EVIDENCE_RUN_ID: ${{ inputs.recovery_evidence_run_id }}
+      OPL_RECOVERY_EVIDENCE_ARTIFACT_ID: ${{ inputs.recovery_evidence_artifact_id }}
+      OPL_RECOVERY_EVIDENCE_ARTIFACT_DIGEST: ${{ inputs.recovery_evidence_artifact_digest }}
+      OPL_GITHUB_REPOSITORY_ID: ${{ github.repository_id }}
+      OPL_K8S_NAMESPACE: ${{ vars.OPL_K8S_NAMESPACE || 'opl-cloud' }}
+      TENCENT_DEPLOY_KUBECONFIG_PATH: ${{ vars.TENCENT_DEPLOY_KUBECONFIG_PATH || '/home/actions/.secrets/medopl/v22/kubeconfig-package-d-deploy' }}
+      TENCENT_DEPLOY_KUBECONFIG_B64: ${{ secrets.TENCENT_DEPLOY_KUBECONFIG_B64 }}
+      TENCENT_DEPLOY_KUBECONFIG: ${{ secrets.TENCENT_DEPLOY_KUBECONFIG }}
+
+    steps:
+      - name: Prepare isolated source checkout
+        id: prepare_source
+        shell: bash
+        env:
+          OPL_SOURCE_CHECKOUT: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          expected="$GITHUB_WORKSPACE/.opl-checkouts/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
+          if [ "$OPL_SOURCE_CHECKOUT" != "$expected" ]; then
+            echo "Isolated source checkout path mismatch." >&2
+            exit 1
+          fi
+          mkdir -p "$GITHUB_WORKSPACE/.opl-checkouts"
+          mkdir "$OPL_SOURCE_CHECKOUT"
+
+      - name: Checkout exact merged main
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.merged_sha }}
+          fetch-depth: 0
+          path: .opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+
+      - name: Verify remote branch authority
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          mapfile -t remote_heads < <(git ls-remote --heads origin)
+          if [ "${#remote_heads[@]}" -ne 1 ]; then
+            echo "Production source authority requires exactly one remote head." >&2
+            exit 1
+          fi
+          read -r remote_main_sha remote_main_ref <<< "${remote_heads[0]}"
+          head_sha="$(git rev-parse HEAD)"
+          if [ "$remote_main_ref" != "refs/heads/main" ] || [ "$GITHUB_REF" != "refs/heads/main" ] ||
+             [ "$GITHUB_SHA" != "$head_sha" ] || [ "$remote_main_sha" != "$head_sha" ] || [ "$OPL_MERGED_SHA" != "$head_sha" ]; then
+            echo "Production source must be the exact current origin/main revision." >&2
+            exit 1
+          fi
+
+      - name: Verify exact ledger readback inputs
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$OPL_MERGED_SHA" =~ ^[0-9a-f]{40}$ ]] ||
+             ! [[ "$OPL_RECOVERY_PLAN_ACCOUNT_ID" =~ ^acct-[A-Za-z0-9-]+$ ]] ||
+             ! [[ "$OPL_RECOVERY_PLAN_LAUNCH_OPERATION_ID" =~ ^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$ ]] ||
+             ! [[ "$OPL_RECOVERY_EVIDENCE_RUN_ID" =~ ^[1-9][0-9]*$ ]] ||
+             ! [[ "$OPL_RECOVERY_EVIDENCE_ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]] ||
+             ! [[ "$OPL_RECOVERY_EVIDENCE_ARTIFACT_DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]] ||
+             ! [[ "$OPL_GITHUB_REPOSITORY_ID" =~ ^[1-9][0-9]*$ ]]; then
+            echo "Fabric ledger readback inputs are invalid." >&2
+            exit 1
+          fi
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Prepare isolated ledger evidence paths
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          raw_root="$RUNNER_TEMP/production-fabric-ledger-readback"
+          artifact_dir="$RUNNER_TEMP/production-fabric-ledger-readback-artifact"
+          mkdir "$raw_root" "$artifact_dir"
+          chmod 700 "$raw_root" "$artifact_dir"
+          kubeconfig="$raw_root/kubeconfig"
+          if [ -f "$TENCENT_DEPLOY_KUBECONFIG_PATH" ]; then
+            cp "$TENCENT_DEPLOY_KUBECONFIG_PATH" "$kubeconfig"
+          elif [ -n "${TENCENT_DEPLOY_KUBECONFIG_B64:-}" ]; then
+            printf '%s' "$TENCENT_DEPLOY_KUBECONFIG_B64" | base64 -d > "$kubeconfig"
+          elif [ -n "${TENCENT_DEPLOY_KUBECONFIG:-}" ]; then
+            printf '%s' "$TENCENT_DEPLOY_KUBECONFIG" > "$kubeconfig"
+          else
+            echo "No production kubeconfig was provided." >&2
+            exit 1
+          fi
+          chmod 600 "$kubeconfig"
+          echo "OPL_FABRIC_LEDGER_RAW_ROOT=$raw_root" >> "$GITHUB_ENV"
+          echo "OPL_FABRIC_LEDGER_ARTIFACT_DIR=$artifact_dir" >> "$GITHUB_ENV"
+          echo "KUBECONFIG=$kubeconfig" >> "$GITHUB_ENV"
+          OPL_FABRIC_LEDGER_ARTIFACT_DIR="$artifact_dir" node --input-type=module <<'NODE'
+          import { writeFile } from "node:fs/promises";
+          await writeFile(`${process.env.OPL_FABRIC_LEDGER_ARTIFACT_DIR}/fabric-ledger-readback.json`, `${JSON.stringify({
+            schemaVersion: 1,
+            operationMode: "fabric_ledger_readback",
+            status: "blocked",
+            recoveryEligible: false,
+            errorCode: "fabric_ledger_readback_not_completed",
+            identityChecks: [],
+            mutationLedger: "invalid",
+            mutationLedgerOutcome: "unknown",
+            runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
+          }, null, 2)}\n`, { mode: 0o600 });
+          NODE
+
+      - name: Download exact historical compute-claim evidence
+        uses: actions/download-artifact@v4
+        with:
+          artifact-ids: ${{ inputs.recovery_evidence_artifact_id }}
+          path: ${{ runner.temp }}/production-fabric-ledger-readback/source
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          merge-multiple: true
+
+      - name: Read exact Fabric mutation ledger without provider calls
+        id: readback
+        continue-on-error: true
+        shell: bash
+        env:
+          GITHUB_READ_TOKEN: ${{ github.token }}
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          metadata_path="$OPL_FABRIC_LEDGER_RAW_ROOT/artifact-metadata.json"
+          curl --silent --show-error --fail --location \
+            -H "Authorization: Bearer $GITHUB_READ_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/artifacts/$OPL_RECOVERY_EVIDENCE_ARTIFACT_ID" \
+            --output "$metadata_path"
+          run_metadata_path="$OPL_FABRIC_LEDGER_RAW_ROOT/run-metadata.json"
+          curl --silent --show-error --fail --location \
+            -H "Authorization: Bearer $GITHUB_READ_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/runs/$OPL_RECOVERY_EVIDENCE_RUN_ID" \
+            --output "$run_metadata_path"
+          node --input-type=module <<'NODE'
+          import { readFile, writeFile } from "node:fs/promises";
+          const metadata = JSON.parse(await readFile(`${process.env.OPL_FABRIC_LEDGER_RAW_ROOT}/artifact-metadata.json`, "utf8"));
+          const artifactRun = metadata?.workflow_run;
+          const run = JSON.parse(await readFile(`${process.env.OPL_FABRIC_LEDGER_RAW_ROOT}/run-metadata.json`, "utf8"));
+          if (String(metadata?.id || "") !== process.env.OPL_RECOVERY_EVIDENCE_ARTIFACT_ID ||
+            metadata?.name !== "production-basic-compute-claim-evidence" || metadata?.expired !== false ||
+            metadata?.digest !== process.env.OPL_RECOVERY_EVIDENCE_ARTIFACT_DIGEST ||
+            String(artifactRun?.id || "") !== process.env.OPL_RECOVERY_EVIDENCE_RUN_ID || artifactRun?.head_branch !== "main" ||
+            String(artifactRun?.repository_id || "") !== process.env.OPL_GITHUB_REPOSITORY_ID ||
+            !/^[a-f0-9]{40}$/.test(String(artifactRun?.head_sha || "")) ||
+            String(run?.id || "") !== process.env.OPL_RECOVERY_EVIDENCE_RUN_ID ||
+            run?.name !== "Production Basic Customer Operation" || run?.event !== "workflow_dispatch" ||
+            run?.head_branch !== "main" || run?.head_sha !== artifactRun.head_sha || run?.status !== "completed" || run?.conclusion !== "failure" ||
+            String(run?.repository?.id || "") !== process.env.OPL_GITHUB_REPOSITORY_ID || run?.repository?.full_name !== process.env.GITHUB_REPOSITORY) {
+            throw new Error("historical compute-claim artifact authority mismatch");
+          }
+          await writeFile(`${process.env.OPL_FABRIC_LEDGER_RAW_ROOT}/artifact-head-sha`, `${artifactRun.head_sha}\n`, { mode: 0o600 });
+          NODE
+          export OPL_RECOVERY_EVIDENCE_HEAD_SHA="$(tr -d '\n' < "$OPL_FABRIC_LEDGER_RAW_ROOT/artifact-head-sha")"
+          node --input-type=module <<'NODE'
+          import { readFile, writeFile } from "node:fs/promises";
+          const path = `${process.env.OPL_FABRIC_LEDGER_RAW_ROOT}/source/compute-claim-recovery.json`;
+          const evidence = JSON.parse(await readFile(path, "utf8"));
+          const target = evidence?.target;
+          const proof = evidence?.proof;
+          const exactCounts = (value) => value && Object.keys(value).sort().join(",") === "kubernetes,sub2api,tencent" &&
+            value.sub2api === 0 && value.tencent === 1 && value.kubernetes === 0;
+          const requiredTargetStrings = ["workspaceId", "computeAllocationId", "storageId", "poolId", "nodePoolId", "machineName", "nodeName", "cvmInstanceId", "privateIp", "instanceType", "zone", "deadline"];
+          const targetMatchesProof = target && proof && target.launchOperationId === proof.launchOperationId && target.accountId === proof.accountId &&
+            target.workspaceId === proof.workspaceId && target.computeAllocationId === proof.computeAllocationId &&
+            target.storageId === proof.storageVolumeId && target.packageId === proof.packageId && target.poolId === proof.poolId &&
+            target.nodePoolId === proof.nodePoolId && target.machineName === proof.machineName && target.nodeName === proof.nodeName &&
+            target.cvmInstanceId === proof.cvmInstanceId && target.privateIp === proof.privateIp && target.instanceType === proof.instanceType &&
+            target.zone === proof.zone && target.chargeType === proof.chargeType && target.periodMonths === proof.periodMonths &&
+            target.renewFlag === proof.renewFlag && target.deadline === proof.deadline;
+          if (evidence?.schemaVersion !== 1 || evidence?.operationMode !== "compute_claim_recover" || evidence?.status !== "blocked" ||
+            evidence?.errorCode !== "provider_describe" || evidence?.release?.mergedSha !== process.env.OPL_RECOVERY_EVIDENCE_HEAD_SHA ||
+            target?.launchOperationId !== process.env.OPL_RECOVERY_PLAN_LAUNCH_OPERATION_ID || target?.accountId !== process.env.OPL_RECOVERY_PLAN_ACCOUNT_ID ||
+            target?.packageId !== "basic" || target?.chargeType !== "PREPAID" || target?.periodMonths !== 1 ||
+            target?.renewFlag !== "NOTIFY_AND_MANUAL_RENEW" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(String(target?.deadline || "")) ||
+            requiredTargetStrings.some((field) => typeof target?.[field] !== "string" || target[field].length === 0 || target[field] !== target[field].trim()) ||
+            !/^ins-[A-Za-z0-9]+$/.test(String(target?.cvmInstanceId || "")) ||
+            proof?.schemaVersion !== 1 || proof?.eligible !== false || proof?.reason !== "provider_describe" || proof?.storageState !== "storage_not_started" ||
+            proof?.nodeOwnershipState !== "unallocated" || proof?.cvmOwnershipState !== "recoverable" || !targetMatchesProof ||
+            !exactCounts(evidence?.mutationCounts) || proof?.sub2apiMutationCount !== 0 || proof?.tencentMutationCount !== 1 || proof?.kubernetesMutationCount !== 0) {
+            throw new Error("historical compute-claim artifact payload mismatch");
+          }
+          const request = {
+            launchOperationId: target.launchOperationId,
+            accountId: target.accountId,
+            workspaceId: target.workspaceId,
+            computeAllocationId: target.computeAllocationId,
+            storageVolumeId: target.storageId,
+            packageId: target.packageId,
+            poolId: target.poolId,
+            nodePoolId: target.nodePoolId,
+            machineName: target.machineName,
+            nodeName: target.nodeName,
+            cvmInstanceId: target.cvmInstanceId,
+            privateIp: target.privateIp,
+            instanceType: target.instanceType,
+            zone: target.zone
+          };
+          await writeFile(`${process.env.OPL_FABRIC_LEDGER_RAW_ROOT}/identity-request.json`, `${JSON.stringify(request)}\n`, { mode: 0o600 });
+          NODE
+
+          kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" get deployment/opl-cloud-fabric -o json > "$OPL_FABRIC_LEDGER_RAW_ROOT/fabric-deployment.json"
+          kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" get replicasets -o json > "$OPL_FABRIC_LEDGER_RAW_ROOT/fabric-replicasets.json"
+          kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" get pods -o json > "$OPL_FABRIC_LEDGER_RAW_ROOT/fabric-pods.json"
+          fabric_pod="$(node <<'NODE'
+          const fs = require("node:fs");
+          const root = process.env.OPL_FABRIC_LEDGER_RAW_ROOT;
+          const deployment = JSON.parse(fs.readFileSync(`${root}/fabric-deployment.json`, "utf8"));
+          const replicaSets = JSON.parse(fs.readFileSync(`${root}/fabric-replicasets.json`, "utf8")).items || [];
+          const pods = JSON.parse(fs.readFileSync(`${root}/fabric-pods.json`, "utf8")).items || [];
+          const revisionKey = "deployment.kubernetes.io/revision";
+          const revision = deployment.metadata?.annotations?.[revisionKey];
+          const deploymentUID = deployment.metadata?.uid;
+          const expectedImage = deployment.spec?.template?.spec?.containers?.find((item) => item.name === "fabric")?.image;
+          const ownedBy = (item, kind, name, uid) => Boolean(name && uid) && (item.metadata?.ownerReferences || []).some((owner) =>
+            owner.controller === true && owner.kind === kind && owner.name === name && owner.uid === uid);
+          const currentReplicaSets = replicaSets.filter((item) => ownedBy(item, "Deployment", deployment.metadata?.name, deploymentUID) &&
+            item.metadata?.annotations?.[revisionKey] === revision && item.spec?.template?.spec?.containers?.some((container) => container.name === "fabric" && container.image === expectedImage));
+          if (!deploymentUID || !revision || !expectedImage || currentReplicaSets.length !== 1) process.exit(1);
+          const replicaSet = currentReplicaSets[0];
+          const readyPods = pods.filter((item) => !item.metadata?.deletionTimestamp && ownedBy(item, "ReplicaSet", replicaSet.metadata?.name, replicaSet.metadata?.uid) &&
+            item.status?.phase === "Running" && item.status?.conditions?.some((condition) => condition.type === "Ready" && condition.status === "True") &&
+            item.spec?.containers?.some((container) => container.name === "fabric" && container.image === expectedImage));
+          if (readyPods.length !== 1) process.exit(1);
+          process.stdout.write(readyPods[0].metadata.name);
+          NODE
+          )"
+          internal_token="$(kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" get secret opl-cloud-internal-service -o jsonpath='{.data.OPL_INTERNAL_SERVICE_TOKEN}' | base64 --decode)"
+          if [ -z "$internal_token" ]; then
+            echo "Current Fabric internal token is unavailable." >&2
+            exit 1
+          fi
+          echo "::add-mask::$internal_token"
+          kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" port-forward "pod/$fabric_pod" 18082:8082 > "$OPL_FABRIC_LEDGER_RAW_ROOT/fabric-port-forward.log" 2>&1 &
+          port_forward_pid=$!
+          cleanup_port_forward() {
+            kill "$port_forward_pid" >/dev/null 2>&1 || true
+            wait "$port_forward_pid" 2>/dev/null || true
+          }
+          trap cleanup_port_forward EXIT
+          ready=0
+          for attempt in $(seq 1 30); do
+            if curl --silent --fail --max-time 1 http://127.0.0.1:18082/healthz >/dev/null 2>&1; then ready=1; break; fi
+            sleep 1
+          done
+          if [ "$ready" -ne 1 ]; then
+            echo "Current Fabric Pod port-forward is unavailable." >&2
+            exit 1
+          fi
+          http_status="$(curl --silent --show-error --max-time 30 \
+            -H "Authorization: Bearer $internal_token" \
+            -H "Content-Type: application/json" \
+            --data-binary "@$OPL_FABRIC_LEDGER_RAW_ROOT/identity-request.json" \
+            --output "$OPL_FABRIC_LEDGER_RAW_ROOT/identity-response.json" \
+            --write-out '%{http_code}' \
+            http://127.0.0.1:18082/fabric/compute-claim-recovery/identity-evidence)"
+          if [ "$http_status" != "200" ]; then
+            echo "Fabric identity evidence returned HTTP $http_status." >&2
+            exit 1
+          fi
+          node --input-type=module <<'NODE'
+          import { readFile, writeFile } from "node:fs/promises";
+          const raw = JSON.parse(await readFile(`${process.env.OPL_FABRIC_LEDGER_RAW_ROOT}/identity-response.json`, "utf8"));
+          const checks = Array.isArray(raw?.checks) ? raw.checks : [];
+          const expectedFields = [
+            "fabric.operationId", "fabric.operationIdempotencyKey", "fabric.operationRequestHash",
+            "binding.present", "binding.valid", "binding.compatibility", "binding.launchOperationId",
+            "binding.idempotencyKey", "binding.targetHash", "binding.requestHash"
+          ];
+          const digestFields = new Set(["fabric.operationRequestHash", "binding.targetHash", "binding.requestHash"]);
+          const checksValid = checks.length === expectedFields.length && expectedFields.every((field, index) => {
+            const check = checks[index];
+            if (check?.field !== field || check?.matches !== true) return false;
+            if (digestFields.has(field)) {
+              return check.expected === undefined && check.actual === undefined &&
+                /^[a-f0-9]{64}$/.test(String(check?.expectedDigest || "")) && check.expectedDigest === check.actualDigest;
+            }
+            return check.expectedDigest === undefined && check.actualDigest === undefined &&
+              typeof check?.expected === "string" && check.expected.length > 0 && check.expected === check.expected.trim() &&
+              typeof check?.actual === "string" && check.actual.length > 0 && check.actual === check.actual.trim();
+          });
+          const ledgerRelationships = {
+            absent: new Set(["confirmed_zero"]),
+            observed: new Set(["confirmed_zero", "nonzero", "unknown"]),
+            reserved: new Set(["unknown"]),
+            node_reserved: new Set(["unknown"]),
+            invalid: new Set(["unknown"])
+          };
+          const ledgerValid = ledgerRelationships[raw?.mutationLedger]?.has(raw?.mutationLedgerOutcome) === true;
+          const ledgerState = Object.hasOwn(ledgerRelationships, raw?.mutationLedger) ? raw.mutationLedger : "invalid";
+          const ledgerOutcome = ["confirmed_zero", "nonzero", "unknown"].includes(raw?.mutationLedgerOutcome) ? raw.mutationLedgerOutcome : "unknown";
+          const authoritativeZero = raw?.mutationLedger === "observed" && raw?.mutationLedgerOutcome === "confirmed_zero";
+          const historicalEvidenceIncomplete = raw?.mutationLedger === "absent" && raw?.mutationLedgerOutcome === "confirmed_zero";
+          const recoveryEligible = checksValid && ledgerValid && authoritativeZero;
+          const errorCode = !checksValid || !ledgerValid ? "fabric_identity_evidence_invalid" :
+            historicalEvidenceIncomplete ? "historical_mutation_evidence_incomplete" :
+            raw.mutationLedgerOutcome === "nonzero" ? "fabric_mutation_ledger_nonzero" :
+            raw.mutationLedgerOutcome === "unknown" ? "fabric_mutation_ledger_unknown" : "none";
+          const artifact = {
+            schemaVersion: 1,
+            operationMode: "fabric_ledger_readback",
+            status: checksValid && ledgerValid ? "proven" : "blocked",
+            recoveryEligible,
+            errorCode,
+            source: {
+              runId: process.env.OPL_RECOVERY_EVIDENCE_RUN_ID,
+              artifactId: process.env.OPL_RECOVERY_EVIDENCE_ARTIFACT_ID,
+              artifactDigest: process.env.OPL_RECOVERY_EVIDENCE_ARTIFACT_DIGEST,
+              headSha: process.env.OPL_RECOVERY_EVIDENCE_HEAD_SHA
+            },
+            identityChecks: expectedFields.map((field, index) => ({ field, matches: checks[index]?.field === field && checks[index]?.matches === true })),
+            mutationLedger: ledgerState,
+            mutationLedgerOutcome: historicalEvidenceIncomplete ? "unknown" : ledgerOutcome,
+            runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
+            verifiedAt: new Date().toISOString()
+          };
+          await writeFile(`${process.env.OPL_FABRIC_LEDGER_ARTIFACT_DIR}/fabric-ledger-readback.json`, `${JSON.stringify(artifact, null, 2)}\n`, { mode: 0o600 });
+          if (artifact.status !== "proven") process.exitCode = 1;
+          NODE
+
+      - name: Require exact redacted Fabric ledger evidence
+        if: always()
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { readFile } from "node:fs/promises";
+          const artifact = JSON.parse(await readFile(`${process.env.OPL_FABRIC_LEDGER_ARTIFACT_DIR}/fabric-ledger-readback.json`, "utf8"));
+          const zero = artifact?.runnerDirectMutationCounts?.sub2api === 0 && artifact?.runnerDirectMutationCounts?.tencent === 0 && artifact?.runnerDirectMutationCounts?.kubernetes === 0;
+          const expectedFields = [
+            "fabric.operationId", "fabric.operationIdempotencyKey", "fabric.operationRequestHash",
+            "binding.present", "binding.valid", "binding.compatibility", "binding.launchOperationId",
+            "binding.idempotencyKey", "binding.targetHash", "binding.requestHash"
+          ];
+          const proven = artifact?.status === "proven" && typeof artifact?.recoveryEligible === "boolean" &&
+            ["none", "historical_mutation_evidence_incomplete", "fabric_mutation_ledger_nonzero", "fabric_mutation_ledger_unknown"].includes(artifact?.errorCode) &&
+            /^[1-9][0-9]*$/.test(String(artifact?.source?.runId || "")) && /^[1-9][0-9]*$/.test(String(artifact?.source?.artifactId || "")) &&
+            /^sha256:[a-f0-9]{64}$/.test(String(artifact?.source?.artifactDigest || "")) && /^[a-f0-9]{40}$/.test(String(artifact?.source?.headSha || "")) &&
+            Array.isArray(artifact?.identityChecks) && artifact.identityChecks.length === expectedFields.length &&
+            expectedFields.every((field, index) => artifact.identityChecks[index]?.field === field && artifact.identityChecks[index]?.matches === true) &&
+            ["absent", "reserved", "node_reserved", "observed", "invalid"].includes(artifact?.mutationLedger) &&
+            ["confirmed_zero", "nonzero", "unknown"].includes(artifact?.mutationLedgerOutcome) &&
+            (artifact.recoveryEligible ? artifact.errorCode === "none" && artifact.mutationLedger === "observed" && artifact.mutationLedgerOutcome === "confirmed_zero" : artifact.errorCode !== "none");
+          const blocked = artifact?.status === "blocked" && typeof artifact?.errorCode === "string" && artifact.errorCode.length > 0;
+          if (artifact?.schemaVersion !== 1 || artifact?.operationMode !== "fabric_ledger_readback" || !zero || (!proven && !blocked) ||
+            /password|secret|token|cookie|privateIp|cvmInstanceId|nodeName|machineName|workspaceId|accountId/i.test(JSON.stringify(artifact))) {
+            throw new Error("Fabric ledger readback artifact is invalid");
+          }
+          NODE
+
+      - name: Remove sensitive ledger readback inputs
+        if: always()
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          raw_root="${OPL_FABRIC_LEDGER_RAW_ROOT:-}"
+          expected="$RUNNER_TEMP/production-fabric-ledger-readback"
+          if [ -z "$raw_root" ] || [ "$raw_root" != "$expected" ]; then
+            echo "Refusing to remove unexpected ledger readback path." >&2
+            exit 1
+          fi
+          if [ -d "$raw_root" ]; then
+            rm -rf -- "$raw_root"
+          fi
+
+      - name: Upload redacted Fabric ledger readback
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-fabric-ledger-readback
+          path: ${{ runner.temp }}/production-fabric-ledger-readback-artifact
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 30
+
+      - name: Require Fabric ledger readback success
+        if: ${{ steps.readback.outcome != 'success' }}
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          echo "Fabric ledger readback stopped; inspect the redacted artifact." >&2
+          exit 1
+
+      - name: Remove isolated source checkout
+        if: always() && steps.prepare_source.outcome == 'success'
+        shell: bash
+        env:
+          OPL_SOURCE_CHECKOUT: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          source_dir="${OPL_SOURCE_CHECKOUT:-}"
+          expected="$GITHUB_WORKSPACE/.opl-checkouts/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
+          if [ -z "$source_dir" ] || [ "$source_dir" != "$expected" ]; then
+            echo "Refusing to remove unexpected source checkout path." >&2
+            exit 1
+          fi
+          if [ -d "$source_dir" ]; then
+            rm -rf -- "$source_dir"
           fi
 
   recovery-plan-operation:
