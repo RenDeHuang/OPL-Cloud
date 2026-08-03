@@ -270,6 +270,9 @@ func TestPostgresWorkspaceLaunchReservedStorageAttemptResumesStagedPrepare(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := app.runWorkspaceLaunchesOnce(context.Background(), service); err != nil {
+		t.Fatalf("initial debit failed: %v", err)
+	}
 	if err := app.runWorkspaceLaunchesOnce(context.Background(), service); !errors.Is(err, errWorkspaceLaunchProcessRestart) || !first.stopped {
 		t.Fatalf("storage reserve did not stop after persisted boundary: err=%v stopped=%t", err, first.stopped)
 	}
