@@ -1176,6 +1176,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           artifact-ids: ${{ inputs.recovery_evidence_artifact_id }}
+          run-id: ${{ inputs.recovery_evidence_run_id }}
           path: ${{ runner.temp }}/production-fabric-ledger-readback/source
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}
