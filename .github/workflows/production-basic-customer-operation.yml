@@ -20,8 +20,10 @@ on:
         options:
           - customer_operation
           - workspace_identity_diagnose
+          - recovery_plan_diagnose
           - acceptance_b_fresh_order
           - compute_claim_validate
+          - recovery_plan_execute
           - controlled_pilot_closed_validate
           - recovered_workspace_e2e
       funding_mode:
@@ -49,6 +51,11 @@ on:
         type: boolean
       confirm_single_model_request:
         description: Approve one real model request after Runtime readiness.
+        required: true
+        default: false
+        type: boolean
+      confirm_recovery_plan_execute:
+        description: Approve one exact persisted Recovery Plan continuation for the original Launch operation.
         required: true
         default: false
         type: boolean
@@ -402,7 +409,7 @@ jobs:
     needs: prepare-basic-customer-operation
     if: ${{ always() && needs.prepare-basic-customer-operation.result == 'success' && github.ref == 'refs/heads/main' && github.sha == inputs.merged_sha && inputs.operation_mode == 'customer_operation' && inputs.confirm_workspace_purchase && inputs.confirm_single_model_request && ((inputs.funding_mode == 'operator_precharge' && inputs.confirm_account_provision && inputs.confirm_wallet_recharge) || (inputs.funding_mode == 'operator_precharge_recovery' && !inputs.confirm_account_provision && !inputs.confirm_wallet_recharge)) }}
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 40
     environment: production
     env:
       OPL_MERGED_SHA: ${{ inputs.merged_sha }}
@@ -1029,14 +1036,16 @@ jobs:
             rmdir "$source_dir"
           fi
 
-  compute-claim-validate:
-    name: Validate one persisted server-owned Recovery Plan without mutation
-    if: ${{ github.ref == 'refs/heads/main' && github.sha == inputs.merged_sha && inputs.operation_mode == 'compute_claim_validate' && inputs.recovery_plan_launch_operation_id != '' && inputs.recovery_plan_id != '' && inputs.recovery_plan_digest != '' && inputs.resume_run_id == '' && !inputs.confirm_account_provision && !inputs.confirm_wallet_recharge && !inputs.confirm_workspace_purchase && !inputs.confirm_single_model_request }}
+  recovery-plan-operation:
+    name: Diagnose, validate, or execute one persisted server-owned Recovery Plan
+    if: ${{ github.ref == 'refs/heads/main' && github.sha == inputs.merged_sha && inputs.resume_run_id == '' && !inputs.confirm_account_provision && !inputs.confirm_wallet_recharge && !inputs.confirm_workspace_purchase && !inputs.confirm_single_model_request && ((inputs.operation_mode == 'recovery_plan_diagnose' && inputs.workspace_identity_account_id != '' && inputs.recovery_plan_launch_operation_id != '' && inputs.recovery_plan_id == '' && inputs.recovery_plan_digest == '' && !inputs.confirm_recovery_plan_execute) || (inputs.operation_mode == 'compute_claim_validate' && inputs.recovery_plan_launch_operation_id != '' && inputs.recovery_plan_id != '' && inputs.recovery_plan_digest != '' && !inputs.confirm_recovery_plan_execute) || (inputs.operation_mode == 'recovery_plan_execute' && inputs.recovery_plan_launch_operation_id != '' && inputs.recovery_plan_id != '' && inputs.recovery_plan_digest != '' && inputs.confirm_recovery_plan_execute)) }}
     runs-on: [self-hosted, tencent-cloud, opl-cloud, tke-vpc]
-    timeout-minutes: 15
+    timeout-minutes: 40
     environment: production
     env:
       OPL_MERGED_SHA: ${{ inputs.merged_sha }}
+      OPL_RECOVERY_PLAN_OPERATION_MODE: ${{ inputs.operation_mode }}
+      OPL_RECOVERY_PLAN_ACCOUNT_ID: ${{ inputs.workspace_identity_account_id }}
       OPL_RECOVERY_PLAN_LAUNCH_OPERATION_ID: ${{ inputs.recovery_plan_launch_operation_id }}
       OPL_RECOVERY_PLAN_ID: ${{ inputs.recovery_plan_id }}
       OPL_RECOVERY_PLAN_DIGEST: ${{ inputs.recovery_plan_digest }}
@@ -1044,6 +1053,8 @@ jobs:
       OPL_SUB2API_ADMIN_EMAIL: ${{ secrets.OPL_SUB2API_ADMIN_EMAIL }}
       OPL_SUB2API_ADMIN_PASSWORD: ${{ secrets.OPL_SUB2API_ADMIN_PASSWORD }}
       OPL_VERIFY_REQUEST_TIMEOUT_MS: ${{ vars.OPL_VERIFY_REQUEST_TIMEOUT_MS || '30000' }}
+      OPL_RECOVERY_PLAN_POLL_ATTEMPTS: ${{ vars.OPL_RECOVERY_PLAN_POLL_ATTEMPTS || '180' }}
+      OPL_RECOVERY_PLAN_POLL_DELAY_MS: ${{ vars.OPL_RECOVERY_PLAN_POLL_DELAY_MS || '10000' }}
 
     steps:
       - name: Prepare isolated source checkout
@@ -1087,90 +1098,128 @@ jobs:
             exit 1
           fi
 
-      - name: Verify exact validation source and inputs
+      - name: Verify exact Recovery Plan source and inputs
         shell: bash
         working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           set -euo pipefail
           if ! [[ "$OPL_MERGED_SHA" =~ ^[0-9a-f]{40}$ ]] ||
-             ! [[ "$OPL_RECOVERY_PLAN_LAUNCH_OPERATION_ID" =~ ^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$ ]] ||
-             ! [[ "$OPL_RECOVERY_PLAN_ID" =~ ^recovery-plan-[a-f0-9]{20}$ ]] ||
-             ! [[ "$OPL_RECOVERY_PLAN_DIGEST" =~ ^[a-f0-9]{64}$ ]]; then
-            echo "Recovery Plan validation requires the exact persisted Plan and original Launch identities." >&2
+             ! [[ "$OPL_RECOVERY_PLAN_LAUNCH_OPERATION_ID" =~ ^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$ ]]; then
+            echo "Recovery Plan operation requires the exact current main and original Launch identity." >&2
             exit 1
           fi
-          if ! grep -Fq 'recovery-plan/validate' tools/production-live-qa.ts; then
-            echo "Server-owned Recovery Plan validation source is unavailable." >&2
-            exit 1
-          fi
+          case "$OPL_RECOVERY_PLAN_OPERATION_MODE" in
+            recovery_plan_diagnose)
+              if ! [[ "$OPL_RECOVERY_PLAN_ACCOUNT_ID" =~ ^acct-[A-Za-z0-9-]+$ ]] || [ -n "$OPL_RECOVERY_PLAN_ID" ] || [ -n "$OPL_RECOVERY_PLAN_DIGEST" ]; then
+                echo "Recovery Plan diagnosis requires one account and no caller-supplied Plan identity." >&2
+                exit 1
+              fi
+              grep -Fq 'recovery-plan/diagnose' tools/production-live-qa.ts
+              ;;
+            compute_claim_validate|recovery_plan_execute)
+              if ! [[ "$OPL_RECOVERY_PLAN_ID" =~ ^recovery-plan-[a-f0-9]{20}$ ]] ||
+                 ! [[ "$OPL_RECOVERY_PLAN_DIGEST" =~ ^[a-f0-9]{64}$ ]]; then
+                echo "Recovery Plan validation and execution require the exact persisted Plan identity." >&2
+                exit 1
+              fi
+              grep -Fq 'recovery-plan/validate' tools/production-live-qa.ts
+              if [ "$OPL_RECOVERY_PLAN_OPERATION_MODE" = "recovery_plan_execute" ]; then
+                grep -Fq 'CONTINUE_RECOVERY_PLAN' tools/production-live-qa.ts
+                grep -Fq 'recovery-plan/execute' tools/production-live-qa.ts
+              fi
+              ;;
+            *) echo "Unsupported Recovery Plan operation mode." >&2; exit 1 ;;
+          esac
 
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
           node-version: "22"
 
-      - name: Prepare redacted Recovery Plan validation artifact
+      - name: Prepare redacted Recovery Plan operation artifact
         shell: bash
         working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           set -euo pipefail
-          artifact_dir="$RUNNER_TEMP/production-recovery-plan-validation"
+          artifact_dir="$RUNNER_TEMP/production-recovery-plan-operation"
           mkdir -p "$artifact_dir"
           chmod 700 "$artifact_dir"
           echo "OPL_RECOVERY_PLAN_ARTIFACT_DIR=$artifact_dir" >> "$GITHUB_ENV"
 
-      - name: Run zero-mutation server-owned Recovery Plan validation
-        id: validate
+      - name: Run exact server-owned Recovery Plan operation
+        id: operate
         continue-on-error: true
         shell: bash
         working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           set -euo pipefail
-          node tools/production-live-qa.ts --recovery-plan-validate \
-            --launch-operation-id "$OPL_RECOVERY_PLAN_LAUNCH_OPERATION_ID" \
-            --plan-id "$OPL_RECOVERY_PLAN_ID" \
-            --plan-digest "$OPL_RECOVERY_PLAN_DIGEST" \
-            > "$OPL_RECOVERY_PLAN_ARTIFACT_DIR/recovery-plan-validation.json"
+          case "$OPL_RECOVERY_PLAN_OPERATION_MODE" in
+            recovery_plan_diagnose)
+              node tools/production-live-qa.ts --recovery-plan-diagnose \
+                --account-id "$OPL_RECOVERY_PLAN_ACCOUNT_ID" \
+                --launch-operation-id "$OPL_RECOVERY_PLAN_LAUNCH_OPERATION_ID"
+              ;;
+            compute_claim_validate)
+              node tools/production-live-qa.ts --recovery-plan-validate \
+                --launch-operation-id "$OPL_RECOVERY_PLAN_LAUNCH_OPERATION_ID" \
+                --plan-id "$OPL_RECOVERY_PLAN_ID" \
+                --plan-digest "$OPL_RECOVERY_PLAN_DIGEST"
+              ;;
+            recovery_plan_execute)
+              node tools/production-live-qa.ts --recovery-plan-execute \
+                --launch-operation-id "$OPL_RECOVERY_PLAN_LAUNCH_OPERATION_ID" \
+                --plan-id "$OPL_RECOVERY_PLAN_ID" \
+                --plan-digest "$OPL_RECOVERY_PLAN_DIGEST"
+              ;;
+          esac > "$OPL_RECOVERY_PLAN_ARTIFACT_DIR/recovery-plan-operation.json"
 
 
-      - name: Require exact zero-mutation persisted Recovery Plan
-        if: ${{ steps.validate.outcome == 'success' }}
+      - name: Require exact redacted Recovery Plan evidence
+        if: ${{ steps.operate.outcome == 'success' }}
         shell: bash
         working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           set -euo pipefail
           node <<'NODE'
           const fs = require("node:fs");
-          const result = JSON.parse(fs.readFileSync(`${process.env.OPL_RECOVERY_PLAN_ARTIFACT_DIR}/recovery-plan-validation.json`, "utf8"));
-          if (result?.schemaVersion !== 1 || result?.operationMode !== "recovery_plan_validate" || result?.status !== "proven" ||
-            result?.recoveryEligible !== true || result?.errorCode !== "none" ||
-            !/^recovery-plan-[a-f0-9]{20}$/.test(String(result?.planId || "")) ||
-            !/^[a-f0-9]{64}$/.test(String(result?.planDigest || "")) || !Array.isArray(result?.stages) || result.stages.length === 0 ||
-            !Array.isArray(result?.mismatches) || result.mismatches.length !== 0 ||
-            result?.runnerDirectMutationCounts?.sub2api !== 0 || result?.runnerDirectMutationCounts?.tencent !== 0 ||
-            result?.runnerDirectMutationCounts?.kubernetes !== 0 ||
-            /password|secret|token|cookie|cvmInstanceId|nodeName|cloudImageDigest/i.test(JSON.stringify(result))) {
-            console.error(`Recovery Plan validation blocked: ${String(result?.errorCode || "validation_artifact_invalid")}`);
+          const result = JSON.parse(fs.readFileSync(`${process.env.OPL_RECOVERY_PLAN_ARTIFACT_DIR}/recovery-plan-operation.json`, "utf8"));
+          const mode = process.env.OPL_RECOVERY_PLAN_OPERATION_MODE;
+          const zero = result?.runnerDirectMutationCounts?.sub2api === 0 && result?.runnerDirectMutationCounts?.tencent === 0 &&
+            result?.runnerDirectMutationCounts?.kubernetes === 0;
+          const common = result?.schemaVersion === 1 && result?.operationMode === mode &&
+            /^recovery-plan-[a-f0-9]{20}$/.test(String(result?.planId || "")) &&
+            /^[a-f0-9]{64}$/.test(String(result?.planDigest || "")) && Array.isArray(result?.stages) && result.stages.length > 0 &&
+            Array.isArray(result?.mismatches) && zero && !/password|secret|token|cookie|cvmInstanceId|nodeName|cloudImageDigest/i.test(JSON.stringify(result));
+          const validRead = ["recovery_plan_diagnose", "compute_claim_validate"].includes(mode) && result?.status === "proven" &&
+            result?.recoveryEligible === true && result?.errorCode === "none" && result.mismatches.length === 0;
+          const counts = result?.controlPlaneExecutionMutationCounts;
+          const validExecute = mode === "recovery_plan_execute" && result?.status === "completed" && result?.errorCode === "none" &&
+            /^recovery-exec-[A-Za-z0-9-]+$/.test(String(result?.executionId || "")) &&
+            /^control-plane-run-[A-Za-z0-9-]+$/.test(String(result?.runId || "")) &&
+            typeof result?.url === "string" && result.url.length > 0 && typeof result?.receiptId === "string" && result.receiptId.length > 0 &&
+            counts && [counts.sub2api, counts.tencent, counts.kubernetes].every((count) => Number.isSafeInteger(count) && count >= 0);
+          if (!common || (!validRead && !validExecute)) {
+            console.error(`Recovery Plan operation blocked: ${String(result?.errorCode || "operation_artifact_invalid")}`);
             process.exit(1);
           }
           NODE
 
-      - name: Upload redacted Recovery Plan validation
+      - name: Upload redacted Recovery Plan operation
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: production-recovery-plan-validation
-          path: ${{ runner.temp }}/production-recovery-plan-validation
+          name: production-recovery-plan-operation
+          path: ${{ runner.temp }}/production-recovery-plan-operation
           if-no-files-found: error
           overwrite: true
           retention-days: 30
 
-      - name: Require Recovery Plan validation success
-        if: ${{ steps.validate.outcome != 'success' }}
+      - name: Require Recovery Plan operation success
+        if: ${{ steps.operate.outcome != 'success' }}
         shell: bash
         working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
-          echo "Recovery Plan validation stopped; inspect the redacted validation artifact." >&2
+          echo "Recovery Plan operation stopped; inspect the redacted operation artifact." >&2
           exit 1
 
       - name: Remove isolated source checkout

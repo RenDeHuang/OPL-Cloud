@@ -83,7 +83,7 @@
         "workspace-identity-diagnose",
         "acceptance-b-fresh-order",
         "controlled-pilot-closed-validate",
-        "compute-claim-validate"
+        "recovery-plan-operation"
       ]
     },
     "relativePath": ".opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}",
@@ -659,19 +659,22 @@
   "productionWorkspaceRecoveryPlan": {
     "authority": "control_plane_only",
     "workflow": ".github/workflows/production-basic-customer-operation.yml",
-    "workflowMode": "compute_claim_validate",
-    "workflowRole": "read_persisted_plan_then_zero_external_mutation_validate_and_upload_redacted_evidence_only",
-    "workflowInputs": ["merged_sha", "recovery_plan_launch_operation_id", "recovery_plan_id", "recovery_plan_digest"],
+    "workflowModes": ["recovery_plan_diagnose", "compute_claim_validate", "recovery_plan_execute"],
+    "workflowRole": "persist_one_server_derived_plan_validate_it_with_zero_external_mutation_then_execute_only_the_same_original_launch_continuation",
+    "workflowInputs": ["merged_sha", "workspace_identity_account_id", "recovery_plan_launch_operation_id", "recovery_plan_id", "recovery_plan_digest", "confirm_recovery_plan_execute"],
     "forbiddenWorkflowInputs": ["target_json", "approval_json", "cvm", "node", "machine", "workspace", "cloud_digest", "workspace_digest", "recovery_confirmation"],
     "routes": {
       "read": "GET /api/operator/workspace-launches/{operationId}/recovery-plan",
-      "validate": "POST /api/operator/workspace-launches/{operationId}/recovery-plan/validate"
+      "diagnose": "POST /api/operator/workspace-launches/{operationId}/recovery-plan/diagnose",
+      "validate": "POST /api/operator/workspace-launches/{operationId}/recovery-plan/validate",
+      "execute": "POST /api/operator/workspace-launches/{operationId}/recovery-plan/execute"
     },
-    "executeRouteInWorkflow": false,
+    "executeRouteInWorkflow": true,
     "runner": ["self-hosted", "tencent-cloud", "opl-cloud", "tke-vpc"],
     "artifact": {
       "schemaVersion": 1,
       "fields": ["operationMode", "status", "recoveryEligible", "errorCode", "planId", "planDigest", "stages", "mismatches", "runnerDirectMutationCounts", "verifiedAt"],
+      "executeFields": ["executionId", "runId", "url", "receiptId", "controlPlaneExecutionMutationCounts"],
       "mismatchValues": "allowlisted_safe_value_or_sha256_digest",
       "forbidden": ["complete_plan", "complete_approval", "resource_target", "customer_email", "private_ip", "credential", "capability"]
     },
@@ -681,7 +684,7 @@
       "request": ["planId", "planDigest", "decision", "confirmation"],
       "authority": "same_persisted_control_plane_plan_approval_execution_run_and_lease",
       "singleWinner": "postgresql_cas_and_byte_exact_lease_token_fencing",
-      "githubRunRequired": false
+      "githubRunRequired": true
     },
     "legacyMutationJobs": ["manual-review-diagnose", "workspace-launch-readback-diagnose", "workspace-launch-readback-recover", "compute-claim-diagnose", "compute-claim-recover"],
     "legacyMutationJobState": "source_removed"

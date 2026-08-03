@@ -592,7 +592,7 @@ test("production self-hosted jobs use one run-and-job isolated source checkout",
       "workspace-identity-diagnose",
       "acceptance-b-fresh-order",
       "controlled-pilot-closed-validate",
-      "compute-claim-validate"
+      "recovery-plan-operation"
     ]]
   ]);
 
@@ -1088,7 +1088,7 @@ test("Acceptance B fresh order is a separately approved exact-count production c
 test("server-owned Recovery Plan validation is a zero-mutation production mode", async () => {
   const workflow = await readWorkflow(".github/workflows/production-basic-customer-operation.yml");
   const inputs = workflow.on.workflow_dispatch.inputs;
-  const validate = workflowJob(workflow, "compute-claim-validate");
+  const validate = workflowJob(workflow, "recovery-plan-operation");
   const runs = serializedRuns(validate);
 
   assert.ok(inputs.operation_mode.options.includes("compute_claim_validate"));
@@ -1111,7 +1111,47 @@ test("server-owned Recovery Plan validation is a zero-mutation production mode",
   assert.match(runs, /runnerDirectMutationCounts/);
   assert.match(runs, /mismatches/);
   assert.doesNotMatch(runs, /get secret opl-cloud-internal-service|KUBECONFIG|target_json|approval_json|compute-claim-recovery\/claim|--compute-claim-recover|ClaimComputeRecovery|create_original_cbs|reuse_original_cbs/i);
-  assert.doesNotMatch(runs, /recovery-plan\/diagnose|recovery_plan_account_id|--account-id/);
+  assert.doesNotMatch(JSON.stringify(validate), /TENCENTCLOUD|OPL_INTERNAL_SERVICE_TOKEN|OPL_BASIC_CANARY_CUSTOMER_PASSWORD/);
+});
+
+test("server-owned Recovery Plan diagnosis and execution are exact original-order production modes", async () => {
+  const workflow = await readWorkflow(".github/workflows/production-basic-customer-operation.yml");
+  const deployment = await readJson(deploymentContractPath);
+  const inputs = workflow.on.workflow_dispatch.inputs;
+  const operation = workflowJob(workflow, "recovery-plan-operation");
+  const runs = serializedRuns(operation);
+
+  assert.ok(inputs.operation_mode.options.includes("recovery_plan_diagnose"));
+  assert.ok(inputs.operation_mode.options.includes("recovery_plan_execute"));
+  assert.equal(inputs.confirm_recovery_plan_execute.type, "boolean");
+  assert.match(String(operation.if), /inputs\.operation_mode == 'recovery_plan_diagnose'/);
+  assert.match(String(operation.if), /inputs\.operation_mode == 'compute_claim_validate'/);
+  assert.match(String(operation.if), /inputs\.operation_mode == 'recovery_plan_execute'/);
+  assert.deepEqual(operation["runs-on"], ["self-hosted", "tencent-cloud", "opl-cloud", "tke-vpc"]);
+  assert.equal(operation["timeout-minutes"], 40);
+  assert.equal(operation.environment, "production");
+  assert.equal(operation.env.OPL_SUB2API_ADMIN_EMAIL, "${{ secrets.OPL_SUB2API_ADMIN_EMAIL }}");
+  assert.equal(operation.env.OPL_SUB2API_ADMIN_PASSWORD, "${{ secrets.OPL_SUB2API_ADMIN_PASSWORD }}");
+  assert.doesNotMatch(JSON.stringify(operation), /KUBECONFIG|TENCENTCLOUD|OPL_INTERNAL_SERVICE_TOKEN|OPL_BASIC_CANARY_CUSTOMER_PASSWORD/);
+  assert.match(runs, /production-live-qa\.ts --recovery-plan-diagnose/);
+  assert.match(runs, /production-live-qa\.ts --recovery-plan-validate/);
+  assert.match(runs, /production-live-qa\.ts --recovery-plan-execute/);
+  assert.match(runs, /recovery-plan\/diagnose/);
+  assert.match(runs, /CONTINUE_RECOVERY_PLAN/);
+  assert.match(runs, /recovery-plan:\$\{?OPL_RECOVERY_PLAN_DIGEST|recovery-plan\/execute/);
+  assert.match(runs, /runnerDirectMutationCounts/);
+  assert.match(runs, /controlPlaneExecutionMutationCounts/);
+  assert.doesNotMatch(runs, /--basic-customer-canary|allow-workspace-purchase|allow-wallet-recharge|allow-account-provision|\/api\/workspace-launches/);
+  assert.deepEqual(deployment.productionWorkspaceRecoveryPlan.workflowModes, [
+    "recovery_plan_diagnose",
+    "compute_claim_validate",
+    "recovery_plan_execute"
+  ]);
+  assert.equal(deployment.productionWorkspaceRecoveryPlan.executeRouteInWorkflow, true);
+  assert.equal(deployment.productionWorkspaceRecoveryPlan.consoleExecution.githubRunRequired, true);
+  assert.deepEqual(deployment.productionWorkspaceRecoveryPlan.artifact.executeFields, [
+    "executionId", "runId", "url", "receiptId", "controlPlaneExecutionMutationCounts"
+  ]);
 });
 
 test("disabled controlled Basic Pilot has one production fail-closed proof with no provider capability", async () => {
@@ -1170,8 +1210,10 @@ test("recovered Workspace E2E is a separate hosted mode with no resource mutatio
   assert.deepEqual(inputs.operation_mode.options, [
     "customer_operation",
     "workspace_identity_diagnose",
+    "recovery_plan_diagnose",
     "acceptance_b_fresh_order",
     "compute_claim_validate",
+    "recovery_plan_execute",
     "controlled_pilot_closed_validate",
     "recovered_workspace_e2e"
   ]);
