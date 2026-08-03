@@ -540,11 +540,11 @@ func workspaceRecoveryExecutionSuccessorGate(operation workspaceLaunchOperation,
 		return workspaceRecoveryMutationOutcome{}, gate
 	}
 	outcome := operation.RecoveryExecution.MutationOutcome
-	if outcome.Status == "confirmed_zero" && outcome.Counts == (workspaceRecoveryMutationCounts{}) && outcome.FabricOperationMutations == 0 {
+	if outcome.Status == "confirmed_zero" && outcome.Counts == (workspaceRecoveryMutationCounts{}) && outcome.FabricOperationMutations == 0 && evidence == nil {
 		gate.Allowed = true
 		return outcome, gate
 	}
-	if outcome.Status != "" && outcome.Status != "unknown" || operation.RecoveryPlan.Action != "compute_claim_continue" || evidence == nil {
+	if outcome.Status != "" && outcome.Status != "unknown" && outcome.Status != "confirmed_zero" || operation.RecoveryPlan.Action != "compute_claim_continue" || evidence == nil {
 		return workspaceRecoveryMutationOutcome{}, gate
 	}
 	source, evidenceDigest := "", ""

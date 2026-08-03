@@ -958,6 +958,7 @@ type workspaceLaunchLedger struct {
 	receipts              map[string]clients.Receipt
 	receiptInputs         []clients.ReceiptInput
 	receiptErrors         []error
+	listReceiptErrors     []error
 	persistReceiptOnError bool
 	workspaceReceiptCalls int
 }
@@ -987,6 +988,13 @@ func (l *workspaceLaunchLedger) RecordReceipt(_ context.Context, input clients.R
 }
 
 func (l *workspaceLaunchLedger) ListReceipts(_ context.Context, query clients.ReceiptQuery) (clients.ReceiptPage, error) {
+	if len(l.listReceiptErrors) > 0 {
+		err := l.listReceiptErrors[0]
+		l.listReceiptErrors = l.listReceiptErrors[1:]
+		if err != nil {
+			return clients.ReceiptPage{}, err
+		}
+	}
 	receipts := make([]clients.Receipt, 0, len(l.receipts))
 	for _, receipt := range l.receipts {
 		if receipt.AccountID == query.AccountID {
@@ -1527,6 +1535,55 @@ func TestWorkspaceLaunchActivationReadsProviderTruthAgain(t *testing.T) {
 	}
 }
 
+func TestWorkspaceLaunchRecoveryResourceStateReadOnlyMatrix(t *testing.T) {
+	fixture := newWorkspaceLaunchWorkerFixture(t, []int64{1_000_000_000, 1_000_000_000, 947_420_000}, nil, nil)
+	configureWorkspaceLaunchFulfillment(t, fixture)
+	if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err != nil {
+		t.Fatal(err)
+	}
+	operation := fixture.operation(t)
+	computeFacts := structToMap(fixture.fabric.computeSync)
+	storageFacts := structToMap(fixture.fabric.storageSync)
+
+	for _, test := range []struct {
+		name         string
+		resourceType string
+		state        string
+		mutate       func(map[string]any)
+		want         string
+	}{
+		{name: "compute ready", resourceType: "compute", state: "ready", want: "ready"},
+		{name: "storage ready", resourceType: "storage", state: "ready", want: "ready"},
+		{name: "compute confirmed absent", resourceType: "compute", state: "absent", mutate: func(facts map[string]any) {
+			facts["status"] = "external_deleted"
+		}, want: "absent"},
+		{name: "storage confirmed absent", resourceType: "storage", state: "absent", mutate: func(facts map[string]any) {
+			facts["status"], facts["cbsStatus"] = "external_deleted", "NOT_FOUND"
+		}, want: "absent"},
+		{name: "provider unknown", resourceType: "compute", state: "unknown", want: "unknown"},
+		{name: "ready identity drift", resourceType: "compute", state: "ready", mutate: func(facts map[string]any) {
+			facts["workspaceId"] = "ws-other"
+		}, want: "unknown"},
+		{name: "absent without provider absence", resourceType: "storage", state: "absent", mutate: func(facts map[string]any) {
+			facts["status"], facts["cbsStatus"] = "external_deleted", "ATTACHED"
+		}, want: "unknown"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			facts := computeFacts
+			if test.resourceType == "storage" {
+				facts = storageFacts
+			}
+			facts = cloneMap(facts)
+			if test.mutate != nil {
+				test.mutate(facts)
+			}
+			if got := workspaceLaunchRecoveryResourceStateReadOnly(operation, test.resourceType, test.state, facts); got != test.want {
+				t.Fatalf("resource state=%q, want %q; resource=%s facts=%#v", got, test.want, test.resourceType, facts)
+			}
+		})
+	}
+}
+
 func TestWorkspaceLaunchActivationTruthFailureStopsBeforeWorkspaceAndReceipt(t *testing.T) {
 	t.Setenv("OPL_WORKSPACE_IMAGE", workspaceImageRepository+"@sha256:"+strings.Repeat("b", 64))
 	fixture := newWorkspaceLaunchWorkerFixture(t, []int64{1_000_000_000, 1_000_000_000, 947_420_000}, nil, nil)
@@ -1542,6 +1599,7 @@ func TestWorkspaceLaunchActivationTruthFailureStopsBeforeWorkspaceAndReceipt(t *
 	current := fixture.operation(t)
 	workspaces, _ := fixture.store.ListWorkspaces(context.Background(), operation.AccountID)
 	if current.Status != "manual_review" || current.Phase != "activating" || current.ErrorCode != "workspace_launch_activation_truth_identity_mismatch" ||
+		current.ContinuationAttemptBudgets["activation"] != (workspaceLaunchStageBudget{Attempted: 1, Unknown: 1, Max: workspaceLaunchStageMax}) ||
 		len(workspaces) != 0 || len(fixture.ledger.receiptInputs) != 0 || countStrings(*fixture.events, "fabric.workspace-activation-truth") != 1 {
 		t.Fatalf("activation truth failure crossed gate: operation=%#v workspaces=%#v receipts=%#v events=%#v", current, workspaces, fixture.ledger.receiptInputs, *fixture.events)
 	}
@@ -3697,6 +3755,34 @@ func TestWorkspaceLaunchReceiptUnknownDoesNotRetry(t *testing.T) {
 		if countStrings(*fixture.events, event) != countStrings(beforeEvents, event) {
 			t.Fatalf("receipt retry repeated %s: before=%#v after=%#v", event, beforeEvents, *fixture.events)
 		}
+	}
+}
+
+func TestWorkspaceLaunchReceiptReadbackReservesAttemptBeforeLedgerRead(t *testing.T) {
+	fixture := newWorkspaceLaunchWorkerFixture(t, []int64{1_000_000_000, 1_000_000_000, 947_420_000}, nil, nil)
+	configureWorkspaceLaunchFulfillment(t, fixture)
+	if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err != nil {
+		t.Fatal(err)
+	}
+	fixture.ledger.listReceiptErrors = []error{errors.New("ledger readback unavailable")}
+	if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err == nil {
+		t.Fatalf("Ledger readback failure did not enter manual review: operation=%#v events=%#v", fixture.operation(t), *fixture.events)
+	}
+
+	operation := fixture.operation(t)
+	if operation.Status != "manual_review" || operation.Phase != "receipt_pending" ||
+		operation.ErrorCode != "workspace_launch_receipt_attempt_unknown" ||
+		operation.ContinuationAttemptBudgets["receipt"] != (workspaceLaunchStageBudget{Attempted: 1, Unknown: 1, Max: workspaceLaunchStageMax}) ||
+		len(fixture.ledger.receiptInputs) != 0 {
+		t.Fatalf("receipt readback failure was not persisted before read: operation=%#v receiptInputs=%#v", operation, fixture.ledger.receiptInputs)
+	}
+	before := operation.PersistedResult
+	if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err != nil {
+		t.Fatal(err)
+	}
+	after := fixture.operation(t)
+	if after.PersistedResult != before || len(fixture.ledger.receiptInputs) != 0 {
+		t.Fatalf("unknown receipt stage retried or mutated after restart: before=%s after=%s inputs=%#v", before, after.PersistedResult, fixture.ledger.receiptInputs)
 	}
 }
 

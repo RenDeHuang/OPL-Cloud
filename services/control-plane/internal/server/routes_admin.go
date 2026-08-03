@@ -479,12 +479,12 @@ func workspaceLaunchReadbackRecoveryApprovalFromMap(value any, key string) (work
 		"target": {
 			"launchOperationId", "accountId", "workspaceId", "computeAllocationId", "storageId", "packageId", "poolId", "nodePoolId",
 			"machineName", "nodeName", "cvmInstanceId", "privateIp", "instanceType", "zone", "chargeType", "periodMonths", "renewFlag",
-			"deadline", "storageGb", "autoRenew", "priceVersion", "totalChargeUsdMicros", "periodStart", "paidThrough", "billingAnchorDay",
+			"deadline", "storageGb", "computeState", "storageState", "autoRenew", "priceVersion", "totalChargeUsdMicros", "periodStart", "paidThrough", "billingAnchorDay",
 		},
 		"resources": {
 			"computeAllocationId", "computeProviderResourceId", "storageVolumeId", "storageProviderResourceId", "storageZone", "storageSizeGb",
 			"storageChargeType", "storageRenewFlag", "storageDeadline", "attachmentId", "attachmentProviderId", "gatewaySecretRef",
-			"gatewaySecretFingerprint", "workspaceApiKeyId", "runtimeId", "runtimeServiceName", "receiptId",
+			"gatewaySecretFingerprint", "workspaceApiKeyId", "runtimeId", "runtimeServiceName", "receiptId", "computeState", "storageState",
 		},
 		"operationIds": {
 			"launchOperationId", "launchRequestHash", "machineOwnershipId", "compute", "storage", "attachment", "secret", "runtime",
@@ -542,8 +542,10 @@ func workspaceLaunchReadbackRecoveryApprovalFromMap(value any, key string) (work
 		approval.Target.NodeName == "" || approval.Target.CVMInstanceID == "" || approval.Target.PrivateIP == "" || approval.Target.InstanceType == "" ||
 		approval.Target.Zone == "" || approval.Target.ChargeType != "PREPAID" || approval.Target.PeriodMonths != 1 ||
 		approval.Target.RenewFlag != "NOTIFY_AND_MANUAL_RENEW" || approval.Target.StorageGB <= 0 || approval.Target.PriceVersion == "" ||
+		approval.Target.ComputeState != "ready" || approval.Target.StorageState != "ready" ||
 		approval.Target.TotalChargeUSDMicros <= 0 || approval.Target.BillingAnchorDay < 1 || approval.Target.BillingAnchorDay > 31 ||
 		!strings.HasPrefix(approval.Resources.ComputeProviderResourceID, "ins-") || !strings.HasPrefix(approval.Resources.StorageProviderResourceID, "disk-") ||
+		approval.Resources.ComputeState != approval.Target.ComputeState || approval.Resources.StorageState != approval.Target.StorageState ||
 		approval.Resources.StorageZone == "" || approval.Resources.StorageSizeGB <= 0 || approval.Resources.StorageChargeType != "PREPAID" ||
 		approval.Resources.StorageRenewFlag != "NOTIFY_AND_MANUAL_RENEW" || approval.Resources.WorkspaceAPIKeyID <= 0 ||
 		!equalWorkspaceComputeClaimStrings(allowedWrites, workspaceLaunchReadbackRecoveryAllowedWrites(approval.Stage)) ||

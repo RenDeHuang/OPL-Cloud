@@ -1028,8 +1028,12 @@ func TestWorkspaceRecoveryPlanSuccessorRejectsUnconfirmedFabricLedgerEvidence(t 
 	}
 	for name, evidence := range tests {
 		t.Run(name, func(t *testing.T) {
-			if outcome, ok := workspaceRecoveryExecutionConfirmedZero(operation, &evidence); ok {
-				t.Fatalf("unconfirmed evidence accepted: outcome=%#v evidence=%#v", outcome, evidence)
+			outcome, gate := workspaceRecoveryExecutionSuccessorGate(operation, &evidence)
+			if gate.Allowed {
+				t.Fatalf("unconfirmed evidence accepted: outcome=%#v gate=%#v evidence=%#v", outcome, gate, evidence)
+			}
+			if name == "unknown" && gate.FabricLedgerState != "unknown" {
+				t.Fatalf("unknown Fabric evidence was not preserved as unknown: gate=%#v", gate)
 			}
 		})
 	}
