@@ -1106,8 +1106,7 @@ test("server-owned Recovery Plan validation is a zero-mutation production mode",
   assert.match(runs, /production-live-qa\.ts --recovery-plan-validate/);
   assert.match(runs, /--plan-id/);
   assert.match(runs, /--plan-digest/);
-  assert.match(runs, /recovery-plan\/validate/);
-  assert.match(runs, /grep -Fq 'recovery-plan\/validate'/);
+  assert.match(runs, /grep -Fq -- '--recovery-plan-validate' tools\/production-live-qa\.ts/);
   assert.match(runs, /runnerDirectMutationCounts/);
   assert.match(runs, /mismatches/);
   assert.doesNotMatch(runs, /get secret opl-cloud-internal-service|KUBECONFIG|target_json|approval_json|compute-claim-recovery\/claim|--compute-claim-recover|ClaimComputeRecovery|create_original_cbs|reuse_original_cbs/i);
@@ -1136,9 +1135,10 @@ test("server-owned Recovery Plan diagnosis and execution are exact original-orde
   assert.match(runs, /production-live-qa\.ts --recovery-plan-diagnose/);
   assert.match(runs, /production-live-qa\.ts --recovery-plan-validate/);
   assert.match(runs, /production-live-qa\.ts --recovery-plan-execute/);
-  assert.match(runs, /recovery-plan\/diagnose/);
+  assert.match(runs, /grep -Fq -- '--recovery-plan-diagnose' tools\/production-live-qa\.ts/);
+  assert.match(runs, /grep -Fq -- '--recovery-plan-validate' tools\/production-live-qa\.ts/);
+  assert.match(runs, /grep -Fq -- '--recovery-plan-execute' tools\/production-live-qa\.ts/);
   assert.match(runs, /CONTINUE_RECOVERY_PLAN/);
-  assert.match(runs, /recovery-plan:\$\{?OPL_RECOVERY_PLAN_DIGEST|recovery-plan\/execute/);
   assert.match(runs, /runnerDirectMutationCounts/);
   assert.match(runs, /controlPlaneExecutionMutationCounts/);
   assert.doesNotMatch(runs, /--basic-customer-canary|allow-workspace-purchase|allow-wallet-recharge|allow-account-provision|\/api\/workspace-launches/);

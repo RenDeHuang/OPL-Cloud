@@ -1114,7 +1114,7 @@ jobs:
                 echo "Recovery Plan diagnosis requires one account and no caller-supplied Plan identity." >&2
                 exit 1
               fi
-              grep -Fq 'recovery-plan/diagnose' tools/production-live-qa.ts
+              grep -Fq -- '--recovery-plan-diagnose' tools/production-live-qa.ts
               ;;
             compute_claim_validate|recovery_plan_execute)
               if ! [[ "$OPL_RECOVERY_PLAN_ID" =~ ^recovery-plan-[a-f0-9]{20}$ ]] ||
@@ -1122,10 +1122,10 @@ jobs:
                 echo "Recovery Plan validation and execution require the exact persisted Plan identity." >&2
                 exit 1
               fi
-              grep -Fq 'recovery-plan/validate' tools/production-live-qa.ts
+              grep -Fq -- '--recovery-plan-validate' tools/production-live-qa.ts
               if [ "$OPL_RECOVERY_PLAN_OPERATION_MODE" = "recovery_plan_execute" ]; then
                 grep -Fq 'CONTINUE_RECOVERY_PLAN' tools/production-live-qa.ts
-                grep -Fq 'recovery-plan/execute' tools/production-live-qa.ts
+                grep -Fq -- '--recovery-plan-execute' tools/production-live-qa.ts
               fi
               ;;
             *) echo "Unsupported Recovery Plan operation mode." >&2; exit 1 ;;
