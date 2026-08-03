@@ -1141,6 +1141,11 @@ test("server-owned Recovery Plan diagnosis and execution are exact original-orde
   assert.match(runs, /CONTINUE_RECOVERY_PLAN/);
   assert.match(runs, /runnerDirectMutationCounts/);
   assert.match(runs, /controlPlaneExecutionMutationCounts/);
+  assert.equal(stepsByName(operation).get("Require exact redacted Recovery Plan evidence")?.if, "always()");
+  assert.match(runs, /successorGate/);
+  assert.match(runs, /validBlockedDiagnose/);
+  assert.match(runs, /persistedMutationState/);
+  assert.match(runs, /fabricLedgerState/);
   assert.doesNotMatch(runs, /--basic-customer-canary|allow-workspace-purchase|allow-wallet-recharge|allow-account-provision|\/api\/workspace-launches/);
   assert.deepEqual(deployment.productionWorkspaceRecoveryPlan.workflowModes, [
     "recovery_plan_diagnose",
@@ -1151,6 +1156,10 @@ test("server-owned Recovery Plan diagnosis and execution are exact original-orde
   assert.equal(deployment.productionWorkspaceRecoveryPlan.consoleExecution.githubRunRequired, true);
   assert.deepEqual(deployment.productionWorkspaceRecoveryPlan.artifact.executeFields, [
     "executionId", "runId", "url", "receiptId", "controlPlaneExecutionMutationCounts"
+  ]);
+  assert.deepEqual(deployment.productionWorkspaceRecoveryPlan.artifact.successorGateFields, [
+    "applicable", "allowed", "planState", "executionState", "completionState", "leaseState",
+    "identityState", "persistedMutationState", "fabricLedgerState"
   ]);
 });
 

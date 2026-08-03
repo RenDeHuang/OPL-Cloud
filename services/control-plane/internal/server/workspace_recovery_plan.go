@@ -89,6 +89,7 @@ type workspaceRecoveryPlan struct {
 	URL                    string                              `json:"url,omitempty"`
 	ReceiptID              string                              `json:"receiptId,omitempty"`
 	ErrorCode              string                              `json:"errorCode,omitempty"`
+	SuccessorGate          *workspaceRecoverySuccessorGateDTO  `json:"-"`
 }
 
 type workspaceRecoveryMutationOutcome struct {
@@ -100,18 +101,31 @@ type workspaceRecoveryMutationOutcome struct {
 }
 
 type workspaceRecoveryPlanDTO struct {
-	PlanID         string                          `json:"planId"`
-	PlanDigest     string                          `json:"planDigest"`
-	Status         string                          `json:"status"`
-	OperationID    string                          `json:"operationId,omitempty"`
-	Stages         []workspaceRecoveryPlanStage    `json:"stages"`
-	Mismatches     []workspaceRecoveryPlanMismatch `json:"mismatches"`
-	MutationCounts workspaceRecoveryMutationCounts `json:"mutationCounts"`
-	ExecutionID    string                          `json:"executionId,omitempty"`
-	RunID          string                          `json:"runId,omitempty"`
-	URL            string                          `json:"url,omitempty"`
-	ReceiptID      string                          `json:"receiptId,omitempty"`
-	ErrorCode      string                          `json:"errorCode,omitempty"`
+	PlanID         string                             `json:"planId"`
+	PlanDigest     string                             `json:"planDigest"`
+	Status         string                             `json:"status"`
+	OperationID    string                             `json:"operationId,omitempty"`
+	Stages         []workspaceRecoveryPlanStage       `json:"stages"`
+	Mismatches     []workspaceRecoveryPlanMismatch    `json:"mismatches"`
+	MutationCounts workspaceRecoveryMutationCounts    `json:"mutationCounts"`
+	ExecutionID    string                             `json:"executionId,omitempty"`
+	RunID          string                             `json:"runId,omitempty"`
+	URL            string                             `json:"url,omitempty"`
+	ReceiptID      string                             `json:"receiptId,omitempty"`
+	ErrorCode      string                             `json:"errorCode,omitempty"`
+	SuccessorGate  *workspaceRecoverySuccessorGateDTO `json:"successorGate,omitempty"`
+}
+
+type workspaceRecoverySuccessorGateDTO struct {
+	Applicable             bool   `json:"applicable"`
+	Allowed                bool   `json:"allowed"`
+	PlanState              string `json:"planState"`
+	ExecutionState         string `json:"executionState"`
+	CompletionState        string `json:"completionState"`
+	LeaseState             string `json:"leaseState"`
+	IdentityState          string `json:"identityState"`
+	PersistedMutationState string `json:"persistedMutationState"`
+	FabricLedgerState      string `json:"fabricLedgerState"`
 }
 
 func workspaceRecoveryPlanHTTPProjection(plan workspaceRecoveryPlan) workspaceRecoveryPlanDTO {
@@ -132,6 +146,7 @@ func workspaceRecoveryPlanHTTPProjection(plan workspaceRecoveryPlan) workspaceRe
 		PlanID: plan.PlanID, PlanDigest: plan.PlanDigest, Status: plan.Status, OperationID: plan.OperationID,
 		Stages: append([]workspaceRecoveryPlanStage(nil), plan.Stages...), Mismatches: mismatches, MutationCounts: plan.MutationCounts,
 		ExecutionID: plan.ExecutionID, RunID: plan.RunID, URL: plan.URL, ReceiptID: plan.ReceiptID, ErrorCode: plan.ErrorCode,
+		SuccessorGate: plan.SuccessorGate,
 	}
 }
 
@@ -457,20 +472,80 @@ func workspaceRecoveryPlanMismatches(persisted, current workspaceRecoveryPlan) [
 	return mismatches
 }
 
-func workspaceRecoveryExecutionConfirmedZero(operation workspaceLaunchOperation, evidence *clients.ComputeClaimIdentityEvidence) (workspaceRecoveryMutationOutcome, bool) {
-	if operation.RecoveryPlan == nil || operation.RecoveryExecution == nil || operation.RecoveryExecution.Status != "failed" ||
-		operation.RecoveryPlan.Status != "failed" && operation.RecoveryPlan.Status != "blocked" ||
-		operation.RecoveryExecution.CompletedAt == "" ||
-		operation.RecoveryExecution.LeaseToken != "" || operation.RecoveryExecution.LeaseExpiresAt != "" ||
-		operation.RecoveryExecution.PlanID != operation.RecoveryPlan.PlanID || operation.RecoveryExecution.PlanDigest != operation.RecoveryPlan.PlanDigest {
-		return workspaceRecoveryMutationOutcome{}, false
+func workspaceRecoveryExecutionSuccessorGate(operation workspaceLaunchOperation, evidence *clients.ComputeClaimIdentityEvidence) (workspaceRecoveryMutationOutcome, workspaceRecoverySuccessorGateDTO) {
+	gate := workspaceRecoverySuccessorGateDTO{
+		Applicable: true, PlanState: "missing", ExecutionState: "missing", CompletionState: "missing",
+		LeaseState: "released", IdentityState: "unavailable", PersistedMutationState: "missing", FabricLedgerState: "unavailable",
+	}
+	if operation.RecoveryPlan != nil {
+		gate.PlanState = "nonterminal"
+		if operation.RecoveryPlan.Status == "failed" || operation.RecoveryPlan.Status == "blocked" {
+			gate.PlanState = "terminal"
+		}
+	}
+	if operation.RecoveryExecution != nil {
+		gate.ExecutionState = "nonterminal"
+		if operation.RecoveryExecution.Status == "failed" {
+			gate.ExecutionState = "failed"
+		}
+		if operation.RecoveryExecution.CompletedAt != "" {
+			gate.CompletionState = "completed"
+		}
+		switch {
+		case operation.RecoveryExecution.LeaseToken != "" && operation.RecoveryExecution.LeaseExpiresAt != "":
+			gate.LeaseState = "held"
+		case operation.RecoveryExecution.LeaseToken != "" || operation.RecoveryExecution.LeaseExpiresAt != "":
+			gate.LeaseState = "partial"
+		}
+		if operation.RecoveryPlan != nil {
+			gate.IdentityState = "mismatch"
+			if operation.RecoveryExecution.PlanID == operation.RecoveryPlan.PlanID && operation.RecoveryExecution.PlanDigest == operation.RecoveryPlan.PlanDigest {
+				gate.IdentityState = "matches"
+			}
+		}
+		outcome := operation.RecoveryExecution.MutationOutcome
+		switch outcome.Status {
+		case "":
+			gate.PersistedMutationState = "missing"
+		case "confirmed_zero":
+			gate.PersistedMutationState = "invalid"
+			if outcome.Counts == (workspaceRecoveryMutationCounts{}) && outcome.FabricOperationMutations == 0 {
+				gate.PersistedMutationState = "confirmed_zero"
+			}
+		case "nonzero":
+			gate.PersistedMutationState = "nonzero"
+		case "unknown":
+			gate.PersistedMutationState = "unknown"
+		default:
+			gate.PersistedMutationState = "invalid"
+		}
+	}
+	if evidence != nil {
+		switch {
+		case evidence.MutationLedger == "absent" && (evidence.MutationLedgerOutcome == "" || evidence.MutationLedgerOutcome == "confirmed_zero"):
+			gate.FabricLedgerState = "absent"
+		case evidence.MutationLedger == "observed" && evidence.MutationLedgerOutcome == "confirmed_zero" &&
+			computeClaimApprovalDigestPattern.MatchString(evidence.MutationLedgerDigest):
+			gate.FabricLedgerState = "confirmed_zero"
+		case evidence.MutationLedger == "observed" && evidence.MutationLedgerOutcome == "nonzero":
+			gate.FabricLedgerState = "nonzero"
+		case evidence.MutationLedger == "observed" && evidence.MutationLedgerOutcome == "unknown":
+			gate.FabricLedgerState = "unknown"
+		default:
+			gate.FabricLedgerState = "invalid"
+		}
+	}
+	if gate.PlanState != "terminal" || gate.ExecutionState != "failed" || gate.CompletionState != "completed" ||
+		gate.LeaseState != "released" || gate.IdentityState != "matches" {
+		return workspaceRecoveryMutationOutcome{}, gate
 	}
 	outcome := operation.RecoveryExecution.MutationOutcome
 	if outcome.Status == "confirmed_zero" && outcome.Counts == (workspaceRecoveryMutationCounts{}) && outcome.FabricOperationMutations == 0 {
-		return outcome, true
+		gate.Allowed = true
+		return outcome, gate
 	}
 	if outcome.Status != "" && outcome.Status != "unknown" || operation.RecoveryPlan.Action != "compute_claim_continue" || evidence == nil {
-		return workspaceRecoveryMutationOutcome{}, false
+		return workspaceRecoveryMutationOutcome{}, gate
 	}
 	source, evidenceDigest := "", ""
 	switch {
@@ -483,9 +558,15 @@ func workspaceRecoveryExecutionConfirmedZero(operation workspaceLaunchOperation,
 		computeClaimApprovalDigestPattern.MatchString(evidence.MutationLedgerDigest):
 		source, evidenceDigest = "fabric_mutation_ledger_confirmed_zero", evidence.MutationLedgerDigest
 	default:
-		return workspaceRecoveryMutationOutcome{}, false
+		return workspaceRecoveryMutationOutcome{}, gate
 	}
-	return workspaceRecoveryMutationOutcome{Status: "confirmed_zero", Source: source, EvidenceDigest: evidenceDigest}, true
+	gate.Allowed = true
+	return workspaceRecoveryMutationOutcome{Status: "confirmed_zero", Source: source, EvidenceDigest: evidenceDigest}, gate
+}
+
+func workspaceRecoveryExecutionConfirmedZero(operation workspaceLaunchOperation, evidence *clients.ComputeClaimIdentityEvidence) (workspaceRecoveryMutationOutcome, bool) {
+	outcome, gate := workspaceRecoveryExecutionSuccessorGate(operation, evidence)
+	return outcome, gate.Allowed
 }
 
 func workspaceRecoveryMutationOutcomeFromComputeClaim(proof clients.ComputeClaimRecoveryProof) workspaceRecoveryMutationOutcome {
@@ -566,9 +647,11 @@ func (app *controlPlaneServer) diagnoseWorkspaceRecoveryPlan(ctx context.Context
 		if operation.RecoveryExecution.Status != "failed" {
 			return workspaceRecoveryPlanProjection(operation), nil
 		}
-		outcome, successorAllowed := workspaceRecoveryExecutionConfirmedZero(operation, computeEvidence)
-		if !successorAllowed {
-			return workspaceRecoveryPlanProjection(operation), nil
+		outcome, successorGate := workspaceRecoveryExecutionSuccessorGate(operation, computeEvidence)
+		if !successorGate.Allowed {
+			projected := workspaceRecoveryPlanProjection(operation)
+			projected.SuccessorGate = &successorGate
+			return projected, nil
 		}
 		predecessorPlan := *operation.RecoveryPlan
 		predecessorExecution := *operation.RecoveryExecution
@@ -579,6 +662,7 @@ func (app *controlPlaneServer) diagnoseWorkspaceRecoveryPlan(ctx context.Context
 			Plan: predecessorPlan, Execution: predecessorExecution, ArchivedAt: time.Now().UTC().Format(time.RFC3339Nano),
 		})
 		plan = newWorkspaceRecoverySuccessor(plan, predecessorPlan, predecessorExecution, len(operation.RecoveryHistory)-1)
+		plan.SuccessorGate = &successorGate
 		operation.RecoveryPlan = &plan
 		operation.RecoveryExecution = nil
 		if err := app.persistWorkspaceLaunch(ctx, &operation); err != nil {

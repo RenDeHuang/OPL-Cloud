@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 27,
+  "schemaVersion": 28,
   "owner": "OPL Platform Architecture",
   "purpose": "Current ownership contract for Console UI, Control Plane, Ledger, Fabric, and external Sub2API.",
   "state": "current",
@@ -204,6 +204,13 @@
           "partialOrInvalidLease": "fail_closed_identity_conflict",
           "workerTerminalSync": "workspace_launch_postgresql_cas_updates_plan_and_execution_terminal_projection",
           "confirmedWriteReadbackRetry": "storage_and_runtime_readback_only_without_budget_reset_or_second_external_write"
+        },
+        "terminalSuccessorGateProjection": {
+          "persistence": "none_diagnose_response_only",
+          "fields": ["applicable", "allowed", "planState", "executionState", "completionState", "leaseState", "identityState", "persistedMutationState", "fabricLedgerState"],
+          "values": "fixed_boolean_and_enum_allowlist_only",
+          "forbidden": ["approval", "approval_digest", "lease_token", "lease_expiry", "resource_identity", "private_ip", "provider_request_id", "mutation_ledger_digest"],
+          "mutationCounts": {"database": 0, "sub2api": 0, "tencent": 0, "kubernetes": 0}
         },
         "proofMutationCounts": {"sub2api": 0, "tencent": 0, "kubernetes": 0},
         "runnerDirectMutationCounts": {"sub2api": 0, "tencent": 0, "kubernetes": 0},

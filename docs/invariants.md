@@ -700,6 +700,14 @@ contract or select the SKU for a customer launch.
   generation-bound PlanID/PlanDigest and requires fresh validation,
   confirmation, approval, execution, and run identities. Nonzero or
   unprovable outcomes always replay the failed execution without provider entry.
+- A terminal failed Diagnose response may include a non-persisted
+  `successorGate` projection containing only fixed booleans and enum states for
+  Plan terminality, Execution failure/completion, lease release, Plan identity,
+  persisted mutation outcome, and Fabric mutation-ledger evidence. It never
+  includes approval material, lease values, resource identity, private IP,
+  provider request identity, or a mutation-ledger digest. The production runner
+  validates this exact allowlist even when Diagnose remains blocked, uploads the
+  redacted evidence, and still fails the operation without retrying or mutating.
 - Recovery Plan diagnosis, validation, blocked, and continuation projections
   use explicit allowlist DTOs. Complete proof and approval data remain inside
   Control Plane persistence and are never uploaded. The workflow only receives

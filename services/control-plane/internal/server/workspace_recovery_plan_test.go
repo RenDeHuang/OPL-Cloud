@@ -1052,6 +1052,62 @@ func TestWorkspaceRecoveryPlanSuccessorRejectsNonterminalPlanStatus(t *testing.T
 	}
 }
 
+func TestWorkspaceRecoveryPlanDiagnoseProjectsRedactedSuccessorGate(t *testing.T) {
+	t.Setenv("OPL_RELEASE_SHA", strings.Repeat("a", 40))
+	t.Setenv("OPL_CLOUD_IMAGE", "uswccr.ccs.tencentyun.com/oplcloud/opl-cloud@sha256:"+strings.Repeat("b", 64))
+	fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, "basic")
+	fixture.fabric.computeClaimProof = computeClaimRecoveryProofForLaunch(operation, "unallocated")
+
+	first := recoveryPlanResponse(t, requestWorkspaceRecoveryPlan(t, fixture, http.MethodPost, "/diagnose", map[string]any{"accountId": operation.AccountID}))
+	failed := fixture.operation(t)
+	failed.Status, failed.ErrorCode = "manual_review", "workspace_compute_claim_identity_mismatch"
+	failed.RecoveryPlan.Status, failed.RecoveryPlan.ErrorCode = "blocked", "identity_mismatch"
+	failed.RecoveryExecution = &workspaceRecoveryExecution{
+		ExecutionID: "recovery-exec-held-lease", RunIdentity: "control-plane-run-held-lease",
+		PlanID: first.PlanID, PlanDigest: first.PlanDigest, ApprovalDigest: strings.Repeat("c", 64), Decision: "continue",
+		Status: "failed", StartedAt: time.Now().UTC().Add(-time.Minute).Format(time.RFC3339Nano),
+		CompletedAt: time.Now().UTC().Format(time.RFC3339Nano), ErrorCode: failed.ErrorCode,
+		LeaseToken: strings.Repeat("d", 64), LeaseExpiresAt: time.Now().UTC().Add(time.Minute).Format(time.RFC3339Nano),
+	}
+	mustStore(t, fixture.store.SaveRuntimeOperation(context.Background(), workspaceLaunchOperationRow(failed)))
+
+	response := requestWorkspaceRecoveryPlan(t, fixture, http.MethodPost, "/diagnose", map[string]any{"accountId": operation.AccountID})
+	if response.Code != http.StatusOK {
+		t.Fatalf("successor gate diagnose status=%d body=%s", response.Code, response.Body.String())
+	}
+	rawBody := append([]byte(nil), response.Body.Bytes()...)
+	var body map[string]any
+	if err := json.Unmarshal(rawBody, &body); err != nil {
+		t.Fatal(err)
+	}
+	gate, ok := body["successorGate"].(map[string]any)
+	if !ok {
+		t.Fatalf("successor gate missing: %#v", body)
+	}
+	want := map[string]any{
+		"applicable": true, "allowed": false, "planState": "terminal",
+		"executionState": "failed", "completionState": "completed", "leaseState": "held",
+		"identityState": "matches", "persistedMutationState": "missing", "fabricLedgerState": "absent",
+	}
+	for field, expected := range want {
+		if gate[field] != expected {
+			t.Fatalf("successor gate %s=%#v, want %#v: %#v", field, gate[field], expected, gate)
+		}
+	}
+	encoded := string(rawBody)
+	if strings.Contains(encoded, strings.Repeat("c", 64)) || strings.Contains(encoded, strings.Repeat("d", 64)) ||
+		strings.Contains(encoded, failed.ComputeCVMInstanceID) || strings.Contains(encoded, failed.ComputeNodeName) ||
+		strings.Contains(encoded, "approvalDigest") || strings.Contains(encoded, "leaseToken") || strings.Contains(encoded, "leaseExpiresAt") ||
+		strings.Contains(encoded, "mutationLedgerDigest") {
+		t.Fatalf("successor gate leaked protected identity: %s", encoded)
+	}
+	persisted := fixture.operation(t)
+	if persisted.RecoveryPlan.PlanID != first.PlanID || persisted.RecoveryExecution == nil ||
+		persisted.RecoveryExecution.ExecutionID != failed.RecoveryExecution.ExecutionID || len(persisted.RecoveryHistory) != 0 {
+		t.Fatalf("successor gate diagnosis mutated terminal history: %#v", persisted)
+	}
+}
+
 func TestWorkspaceRecoveryPlanDiagnoseKeepsFailedExecutionWithNonzeroMutationEvidence(t *testing.T) {
 	t.Setenv("OPL_RELEASE_SHA", strings.Repeat("a", 40))
 	t.Setenv("OPL_CLOUD_IMAGE", "uswccr.ccs.tencentyun.com/oplcloud/opl-cloud@sha256:"+strings.Repeat("b", 64))
