@@ -23,6 +23,27 @@ function requiredString(value, code) {
   return value;
 }
 
+function safeProviderCode(value) {
+  return typeof value === "string" && /^[A-Za-z][A-Za-z0-9._-]{0,127}$/.test(value) ? value : "unknown";
+}
+
+function stsFailure(providerCode) {
+  const error = new Error("tencent_predebit_iam_sts_failed");
+  Object.defineProperty(error, "providerCode", { value: safeProviderCode(providerCode) });
+  return error;
+}
+
+export function tencentPredebitIAMAttestationErrorProjection(error) {
+  const errorCode = error instanceof Error && /^tencent_predebit_iam_[a-z0-9_]+$/.test(error.message)
+    ? error.message
+    : "tencent_predebit_iam_attestation_failed";
+  const projection = { errorCode };
+  if (errorCode === "tencent_predebit_iam_sts_failed") {
+    projection.providerCode = safeProviderCode(error?.providerCode);
+  }
+  return projection;
+}
+
 function signedHeaders(secretId, secretKey, timestamp, body) {
   const date = new Date(timestamp * 1000).toISOString().slice(0, 10);
   const contentType = "application/json; charset=utf-8";
@@ -71,7 +92,7 @@ export async function createTencentPredebitIAMAttestation({
   } catch {
     throw new Error("tencent_predebit_iam_sts_response_invalid");
   }
-  if (!response.ok || payload?.Response?.Error) throw new Error("tencent_predebit_iam_sts_failed");
+  if (!response.ok || payload?.Response?.Error) throw stsFailure(payload?.Response?.Error?.Code);
 
   const source = payload?.Response;
   const identity = {
@@ -105,7 +126,7 @@ async function main() {
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   main().catch((error) => {
-    process.stderr.write(`${error instanceof Error ? error.message : "tencent_predebit_iam_attestation_failed"}\n`);
+    process.stderr.write(`${JSON.stringify(tencentPredebitIAMAttestationErrorProjection(error))}\n`);
     process.exitCode = 1;
   });
 }
