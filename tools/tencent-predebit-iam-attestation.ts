@@ -44,11 +44,11 @@ export function tencentPredebitIAMAttestationErrorProjection(error) {
   return projection;
 }
 
-function signedHeaders(secretId, secretKey, timestamp, body) {
+function signedHeaders(secretId, secretKey, region, timestamp, body) {
   const date = new Date(timestamp * 1000).toISOString().slice(0, 10);
-  const contentType = "application/json; charset=utf-8";
-  const canonicalHeaders = `content-type:${contentType}\nhost:${host}\nx-tc-action:${action.toLowerCase()}\n`;
-  const signedHeaderNames = "content-type;host;x-tc-action";
+  const contentType = "application/json";
+  const canonicalHeaders = `content-type:${contentType}\nhost:${host}\n`;
+  const signedHeaderNames = "content-type;host";
   const canonicalRequest = ["POST", "/", "", canonicalHeaders, signedHeaderNames, sha256(body)].join("\n");
   const credentialScope = `${date}/${service}/tc3_request`;
   const stringToSign = [algorithm, String(timestamp), credentialScope, sha256(canonicalRequest)].join("\n");
@@ -62,13 +62,15 @@ function signedHeaders(secretId, secretKey, timestamp, body) {
     Host: host,
     "X-TC-Action": action,
     "X-TC-Timestamp": String(timestamp),
-    "X-TC-Version": version
+    "X-TC-Version": version,
+    "X-TC-Region": region
   };
 }
 
 export async function createTencentPredebitIAMAttestation({
   secretId,
   secretKey,
+  region,
   releaseSha,
   policyDigest,
   timestamp = Math.floor(Date.now() / 1000),
@@ -76,6 +78,7 @@ export async function createTencentPredebitIAMAttestation({
 }) {
   requiredString(secretId, "tencent_predebit_iam_secret_id_required");
   requiredString(secretKey, "tencent_predebit_iam_secret_key_required");
+  requiredString(region, "tencent_predebit_iam_region_required");
   if (!/^[0-9a-f]{40}$/.test(releaseSha || "")) throw new Error("tencent_predebit_iam_release_sha_invalid");
   if (!/^sha256:[0-9a-f]{64}$/.test(policyDigest || "")) throw new Error("tencent_predebit_iam_policy_digest_invalid");
   if (!Number.isInteger(timestamp) || timestamp <= 0) throw new Error("tencent_predebit_iam_timestamp_invalid");
@@ -83,7 +86,7 @@ export async function createTencentPredebitIAMAttestation({
   const body = "{}";
   const response = await fetchImpl(endpoint, {
     method: "POST",
-    headers: signedHeaders(secretId, secretKey, timestamp, body),
+    headers: signedHeaders(secretId, secretKey, region, timestamp, body),
     body
   });
   let payload;
@@ -118,6 +121,7 @@ async function main() {
   const attestation = await createTencentPredebitIAMAttestation({
     secretId: process.env.TENCENTCLOUD_SECRET_ID,
     secretKey: process.env.TENCENTCLOUD_SECRET_KEY,
+    region: process.env.TENCENTCLOUD_REGION,
     releaseSha: process.env.OPL_RELEASE_SHA,
     policyDigest: process.env.TENCENT_MUTATION_IAM_POLICY_DIGEST
   });
