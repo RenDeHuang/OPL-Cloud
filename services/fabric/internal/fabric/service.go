@@ -692,7 +692,9 @@ func (s *Service) ClaimComputeRecovery(ctx context.Context, input ComputeClaimRe
 		resumeObservedNodeClaim := mutationPresent &&
 			(recoverableObservedComputeClaimRecoveryMutation(mutationLedger) || historicalNodeContinuation) &&
 			proof.CVMOwnershipState == "target_owned" && proof.NodeOwnershipState == "unallocated"
-		nodeOnlyContinuation := resumeObservedNodeClaim || reserveHistoricalNodeClaim
+		activeNodeContinuation := ownership.Status == "active" && !mutationPresent && bindingPresent && bindingValid && persistedBinding == binding &&
+			proof.CVMOwnershipState == "target_owned" && proof.NodeOwnershipState == "unallocated"
+		nodeOnlyContinuation := resumeObservedNodeClaim || reserveHistoricalNodeClaim || activeNodeContinuation
 		resumeReservedNodeReadback := mutationPresent && validNodeReservedComputeClaimRecoveryMutation(mutationLedger) &&
 			proof.CVMOwnershipState == "target_owned" && proof.NodeOwnershipState == "target_owned"
 		reservedNodeOutcomeUnknown := mutationPresent && validNodeReservedComputeClaimRecoveryMutation(mutationLedger) &&
@@ -705,12 +707,12 @@ func (s *Service) ClaimComputeRecovery(ctx context.Context, input ComputeClaimRe
 			result.Eligible, result.Reason = false, "identity_mismatch"
 			return ErrComputeClaimRecoveryIdempotencyConflict
 		}
-		if ownership.Status == "active" {
+		if ownership.Status == "active" && !activeNodeContinuation {
 			if proof.CVMOwnershipState != "target_owned" || proof.NodeOwnershipState != "target_owned" {
 				result.Eligible, result.Reason = false, "identity_mismatch"
 				return fmt.Errorf("%w: identity_mismatch", ErrComputeClaimRecoveryUnavailable)
 			}
-		} else if proof.CVMOwnershipState != "target_owned" || proof.NodeOwnershipState != "target_owned" {
+		} else if activeNodeContinuation || proof.CVMOwnershipState != "target_owned" || proof.NodeOwnershipState != "target_owned" {
 			provider, ok := s.provider.(computeClaimRecoveryClaimProvider)
 			if !ok {
 				result.Eligible, result.Reason = false, "provider_describe"
@@ -721,7 +723,7 @@ func (s *Service) ClaimComputeRecovery(ctx context.Context, input ComputeClaimRe
 				return fmt.Errorf("%w: %s", ErrComputeClaimRecoveryUnavailable, result.Reason)
 			}
 			if nodeOnlyContinuation {
-				if reserveHistoricalNodeClaim {
+				if reserveHistoricalNodeClaim || activeNodeContinuation {
 					mutationLedger = legacyNodeReservedComputeClaimRecoveryMutation()
 				} else {
 					mutationLedger = nodeReservedComputeClaimRecoveryMutation(mutationLedger)
@@ -1111,7 +1113,8 @@ func validLegacyNodeReservationTransition(current, next FabricOperation, nextLed
 	currentBinding, currentPresent, currentValid := decodeComputeClaimRecoveryBinding(current)
 	nextBinding, nextPresent, nextValid := decodeComputeClaimRecoveryBinding(next)
 	return currentPresent && currentValid && nextPresent && nextValid && currentBinding == nextBinding &&
-		currentBinding.IdempotencyKey == currentBinding.LaunchOperationID+":compute-claim" &&
+		(currentBinding.IdempotencyKey == currentBinding.LaunchOperationID+":compute-claim" ||
+			currentBinding.IdempotencyKey == currentBinding.LaunchOperationID+":compute") &&
 		current.IdempotencyKey == currentBinding.LaunchOperationID+":compute" &&
 		reflect.DeepEqual(nextLedger, legacyNodeReservedComputeClaimRecoveryMutation())
 }

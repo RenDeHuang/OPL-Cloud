@@ -26,7 +26,7 @@ test("root agent instructions require the launch invariants", async () => {
 test("launch freeze fixes the V2 products, owner lanes, settlement, and verification slot", async () => {
   const freeze = await json("packages/contracts/opl-cloud-launch-freeze-contract.json");
 
-  assert.equal(freeze.schemaVersion, 21);
+  assert.equal(freeze.schemaVersion, 22);
   assert.equal(freeze.architectureAuthority.repository, "https://github.com/gaofeng21cn/one-person-lab-cloud");
   assert.equal(freeze.architectureAuthority.reviewedRevision, "c349a41d860e706ed43a4090b9e75abb0b130971");
   assert.deepEqual(Object.keys(freeze.productSurfaces), ["gateway", "workspace", "serve", "console", "fabric", "ledger"]);
@@ -130,7 +130,8 @@ test("launch freeze fixes the V2 products, owner lanes, settlement, and verifica
     singleWinner: "postgresql_cas_persisted_execution_lease",
     fencing: "byte_exact_current_lease_token_required_to_finalize",
     identity: ["planId", "planDigest", "approvalDigest", "executionId", "runId", "decision"],
-    replay: "same_plan_digest_and_decision_returns_same_execution_and_run_identity"
+    replay: "same_plan_digest_and_decision_returns_same_execution_and_run_identity",
+    failedZeroSuccessor: "archive_old_plan_execution_approval_error_and_mutation_outcome_then_require_new_plan_validation_and_approval"
   });
   assert.deepEqual({
     trigger: freeze.workspaceLaunch.computeClaimRecovery.trigger,

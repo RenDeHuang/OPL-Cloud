@@ -466,6 +466,56 @@ func TestClaimComputeRecoveryRestartAfterActiveOwnershipSkipsProviderMutation(t 
 	assertRecoveredComputeOperation(t, operations, input, "succeeded")
 }
 
+func TestClaimComputeRecoveryReconcilesExactActiveOwnershipWithUnallocatedNodeOnce(t *testing.T) {
+	_, store, provider, input := seedComputeClaimRecovery(t, "basic")
+	claimInput := ComputeClaimRecoveryClaimInput{
+		ComputeClaimRecoveryInput: input, MachineName: "machine-after", NodeName: "10.0.0.18", CVMInstanceID: "ins-fixture",
+		PrivateIP: provider.proof.PrivateIP, InstanceType: provider.proof.InstanceType, Zone: provider.proof.Zone,
+		IdempotencyKey: input.LaunchOperationID + ":compute",
+	}
+	operations, err := store.List(context.Background())
+	if err != nil || len(operations) != 1 {
+		t.Fatalf("seed operations=%#v err=%v", operations, err)
+	}
+	pending := operations[0]
+	pending.Status, pending.ErrorCode, pending.FinishedAt = "claim_pending", "", time.Time{}
+	pending.RedactedProviderPayload = withComputeClaimRecoveryBinding(pending.RedactedProviderPayload, newComputeClaimRecoveryBinding(claimInput))
+	if err := store.SaveComputeClaimRecovery(context.Background(), operations[0], pending); err != nil {
+		t.Fatal(err)
+	}
+	ownership, err := store.MachineOwnership(context.Background(), input.ComputeAllocationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ownership.Status = "active"
+	if err := store.ActivateComputeClaimRecoveryOwnership(context.Background(), ownership); err != nil {
+		t.Fatal(err)
+	}
+	provider.proof.CVMOwnershipState = "target_owned"
+	provider.proof.NodeOwnershipState = "unallocated"
+	provider.claim.TencentMutationCount = 0
+	provider.claim.KubernetesMutationCount = 1
+	provider.claim.Evidence = &ComputeClaimEvidence{Node: ComputeClaimMutationEvidence{Attempted: 1, Confirmed: 1}}
+	provider.claimHook = func() { provider.proof.NodeOwnershipState = "target_owned" }
+
+	result, err := NewServiceWithOperationStore(provider, store).ClaimComputeRecovery(context.Background(), claimInput)
+	if err != nil || !result.Eligible || result.TencentMutationCount != 0 || result.KubernetesMutationCount != 1 || provider.claimCalls != 1 {
+		t.Fatalf("active drift result=%#v err=%v provider=%#v", result, err, provider)
+	}
+	stored, listErr := store.List(context.Background())
+	ledger, present, valid := decodeComputeClaimRecoveryMutation(stored[0])
+	if listErr != nil || len(stored) != 1 || stored[0].Status != "succeeded" || !present || !valid || ledger.State != "observed" ||
+		ledger.TencentMutationCount != 0 || ledger.KubernetesMutationCount != 1 {
+		t.Fatalf("active drift stored=%#v listErr=%v ledger=%#v present=%v valid=%v", stored, listErr, ledger, present, valid)
+	}
+
+	provider.proof.NodeOwnershipState = "target_owned"
+	replayed, replayErr := NewServiceWithOperationStore(provider, store).ClaimComputeRecovery(context.Background(), claimInput)
+	if replayErr != nil || replayed.TencentMutationCount != 0 || replayed.KubernetesMutationCount != 0 || provider.claimCalls != 1 {
+		t.Fatalf("active drift replay=%#v err=%v provider=%#v", replayed, replayErr, provider)
+	}
+}
+
 func TestClaimComputeRecoveryContinuesHistoricalCVMOnlyObservedLedgerWithOneNodePatch(t *testing.T) {
 	_, store, provider, input := seedComputeClaimRecovery(t, "basic")
 	canonicalInput := ComputeClaimRecoveryClaimInput{

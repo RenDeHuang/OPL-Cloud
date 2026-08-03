@@ -36,6 +36,12 @@ type workspaceLaunchReadbackRecoveryFabric struct {
 	stageConvergeCalls int
 }
 
+func (f *workspaceLaunchReadbackRecoveryFabric) MonthlyProviderTruth(ctx context.Context, computeID, storageID string) (clients.MonthlyProviderTruth, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.monthlyFabric.MonthlyProviderTruth(ctx, computeID, storageID)
+}
+
 func (f *workspaceLaunchReadbackRecoveryFabric) ListOperations(_ context.Context) ([]clients.FabricOperation, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -44,6 +50,8 @@ func (f *workspaceLaunchReadbackRecoveryFabric) ListOperations(_ context.Context
 }
 
 func (f *workspaceLaunchReadbackRecoveryFabric) MachineOwnership(_ context.Context, resourceID string) (clients.MachineOwnership, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.record("fabric.machine-ownership")
 	if f.ownership.ResourceID != resourceID {
 		return clients.MachineOwnership{}, errors.New("machine ownership not found")

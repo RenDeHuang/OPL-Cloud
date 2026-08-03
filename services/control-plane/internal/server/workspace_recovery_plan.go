@@ -66,26 +66,36 @@ type workspaceRecoveryPlanMismatch struct {
 }
 
 type workspaceRecoveryPlan struct {
-	SchemaVersion    int                                 `json:"schemaVersion"`
-	PlanID           string                              `json:"planId"`
-	PlanDigest       string                              `json:"planDigest"`
-	Status           string                              `json:"status"`
-	Action           string                              `json:"action"`
-	GeneratedAt      string                              `json:"generatedAt"`
-	ValidatedAt      string                              `json:"validatedAt,omitempty"`
-	ReleaseBinding   workspaceRecoveryReleaseBinding     `json:"releaseBinding"`
-	TargetBinding    workspaceRecoveryTargetBinding      `json:"targetBinding"`
-	Stages           []workspaceRecoveryPlanStage        `json:"stages"`
-	AllowedDecisions []string                            `json:"allowedDecisions"`
-	IdentityEvidence []clients.ComputeClaimIdentityCheck `json:"identityEvidence"`
-	MutationCounts   workspaceRecoveryMutationCounts     `json:"mutationCounts"`
-	OperationID      string                              `json:"operationId"`
-	Mismatches       []workspaceRecoveryPlanMismatch     `json:"mismatches"`
-	ExecutionID      string                              `json:"executionId,omitempty"`
-	RunID            string                              `json:"runId,omitempty"`
-	URL              string                              `json:"url,omitempty"`
-	ReceiptID        string                              `json:"receiptId,omitempty"`
-	ErrorCode        string                              `json:"errorCode,omitempty"`
+	SchemaVersion          int                                 `json:"schemaVersion"`
+	Generation             int                                 `json:"generation,omitempty"`
+	PredecessorPlanDigest  string                              `json:"predecessorPlanDigest,omitempty"`
+	PredecessorExecutionID string                              `json:"predecessorExecutionId,omitempty"`
+	PlanID                 string                              `json:"planId"`
+	PlanDigest             string                              `json:"planDigest"`
+	Status                 string                              `json:"status"`
+	Action                 string                              `json:"action"`
+	GeneratedAt            string                              `json:"generatedAt"`
+	ValidatedAt            string                              `json:"validatedAt,omitempty"`
+	ReleaseBinding         workspaceRecoveryReleaseBinding     `json:"releaseBinding"`
+	TargetBinding          workspaceRecoveryTargetBinding      `json:"targetBinding"`
+	Stages                 []workspaceRecoveryPlanStage        `json:"stages"`
+	AllowedDecisions       []string                            `json:"allowedDecisions"`
+	IdentityEvidence       []clients.ComputeClaimIdentityCheck `json:"identityEvidence"`
+	MutationCounts         workspaceRecoveryMutationCounts     `json:"mutationCounts"`
+	OperationID            string                              `json:"operationId"`
+	Mismatches             []workspaceRecoveryPlanMismatch     `json:"mismatches"`
+	ExecutionID            string                              `json:"executionId,omitempty"`
+	RunID                  string                              `json:"runId,omitempty"`
+	URL                    string                              `json:"url,omitempty"`
+	ReceiptID              string                              `json:"receiptId,omitempty"`
+	ErrorCode              string                              `json:"errorCode,omitempty"`
+}
+
+type workspaceRecoveryMutationOutcome struct {
+	Status                   string                          `json:"status"`
+	Counts                   workspaceRecoveryMutationCounts `json:"counts"`
+	FabricOperationMutations int                             `json:"fabricOperationMutations"`
+	Source                   string                          `json:"source,omitempty"`
 }
 
 type workspaceRecoveryPlanDTO struct {
@@ -137,8 +147,15 @@ type workspaceRecoveryExecution struct {
 	StartedAt           string                                   `json:"startedAt"`
 	CompletedAt         string                                   `json:"completedAt,omitempty"`
 	ErrorCode           string                                   `json:"errorCode,omitempty"`
+	MutationOutcome     workspaceRecoveryMutationOutcome         `json:"mutationOutcome"`
 	Approval            *workspaceLaunchReadbackRecoveryApproval `json:"approval,omitempty"`
 	ComputeClaimRequest *workspaceComputeClaimRecoveryRequest    `json:"computeClaimRequest,omitempty"`
+}
+
+type workspaceRecoveryPlanHistoryEntry struct {
+	Plan       workspaceRecoveryPlan      `json:"plan"`
+	Execution  workspaceRecoveryExecution `json:"execution"`
+	ArchivedAt string                     `json:"archivedAt"`
 }
 
 func deployedImageDigest(value string) string {
@@ -174,15 +191,19 @@ func workspaceRecoveryAuthorityDigest(value any) string {
 
 func workspaceRecoveryPlanDigest(plan workspaceRecoveryPlan) string {
 	material := struct {
-		SchemaVersion    int                             `json:"schemaVersion"`
-		Action           string                          `json:"action"`
-		ReleaseBinding   workspaceRecoveryReleaseBinding `json:"releaseBinding"`
-		TargetBinding    workspaceRecoveryTargetBinding  `json:"targetBinding"`
-		Stages           []workspaceRecoveryPlanStage    `json:"stages"`
-		AllowedDecisions []string                        `json:"allowedDecisions"`
-		MutationCounts   workspaceRecoveryMutationCounts `json:"mutationCounts"`
+		SchemaVersion          int                             `json:"schemaVersion"`
+		Generation             int                             `json:"generation,omitempty"`
+		PredecessorPlanDigest  string                          `json:"predecessorPlanDigest,omitempty"`
+		PredecessorExecutionID string                          `json:"predecessorExecutionId,omitempty"`
+		Action                 string                          `json:"action"`
+		ReleaseBinding         workspaceRecoveryReleaseBinding `json:"releaseBinding"`
+		TargetBinding          workspaceRecoveryTargetBinding  `json:"targetBinding"`
+		Stages                 []workspaceRecoveryPlanStage    `json:"stages"`
+		AllowedDecisions       []string                        `json:"allowedDecisions"`
+		MutationCounts         workspaceRecoveryMutationCounts `json:"mutationCounts"`
 	}{
-		SchemaVersion: plan.SchemaVersion, Action: plan.Action, ReleaseBinding: plan.ReleaseBinding,
+		SchemaVersion: plan.SchemaVersion, Generation: plan.Generation, PredecessorPlanDigest: plan.PredecessorPlanDigest,
+		PredecessorExecutionID: plan.PredecessorExecutionID, Action: plan.Action, ReleaseBinding: plan.ReleaseBinding,
 		TargetBinding: plan.TargetBinding, Stages: plan.Stages, AllowedDecisions: plan.AllowedDecisions,
 		MutationCounts: plan.MutationCounts,
 	}
@@ -242,6 +263,7 @@ func newWorkspaceReadbackRecoveryPlan(operation workspaceLaunchOperation, proof 
 	for _, check := range plan.IdentityEvidence {
 		if !check.Matches {
 			plan.Status = "blocked"
+			plan.Mismatches = append(plan.Mismatches, workspaceRecoveryPlanMismatchFromCheck(check))
 		}
 	}
 	plan.PlanDigest = workspaceRecoveryPlanDigest(plan)
@@ -363,6 +385,7 @@ func newWorkspaceComputeClaimRecoveryPlan(operation workspaceLaunchOperation, in
 	for _, check := range plan.IdentityEvidence {
 		if !check.Matches {
 			plan.Status = "blocked"
+			plan.Mismatches = append(plan.Mismatches, workspaceRecoveryPlanMismatchFromCheck(check))
 		}
 	}
 	plan.PlanDigest = workspaceRecoveryPlanDigest(plan)
@@ -433,6 +456,49 @@ func workspaceRecoveryPlanMismatches(persisted, current workspaceRecoveryPlan) [
 	return mismatches
 }
 
+func workspaceRecoveryExecutionConfirmedZero(operation workspaceLaunchOperation, evidence *clients.ComputeClaimIdentityEvidence) (workspaceRecoveryMutationOutcome, bool) {
+	if operation.RecoveryPlan == nil || operation.RecoveryExecution == nil || operation.RecoveryPlan.Status != "failed" ||
+		operation.RecoveryExecution.Status != "failed" || operation.RecoveryExecution.CompletedAt == "" ||
+		operation.RecoveryExecution.LeaseToken != "" || operation.RecoveryExecution.LeaseExpiresAt != "" ||
+		operation.RecoveryExecution.PlanID != operation.RecoveryPlan.PlanID || operation.RecoveryExecution.PlanDigest != operation.RecoveryPlan.PlanDigest {
+		return workspaceRecoveryMutationOutcome{}, false
+	}
+	outcome := operation.RecoveryExecution.MutationOutcome
+	if outcome.Status == "confirmed_zero" && outcome.Counts == (workspaceRecoveryMutationCounts{}) && outcome.FabricOperationMutations == 0 {
+		return outcome, true
+	}
+	if outcome.Status != "" && outcome.Status != "unknown" || operation.RecoveryPlan.Action != "compute_claim_continue" || evidence == nil || evidence.MutationLedger != "absent" {
+		return workspaceRecoveryMutationOutcome{}, false
+	}
+	return workspaceRecoveryMutationOutcome{Status: "confirmed_zero", Source: "fabric_mutation_ledger_absent"}, true
+}
+
+func workspaceRecoveryMutationOutcomeFromComputeClaim(proof clients.ComputeClaimRecoveryProof) workspaceRecoveryMutationOutcome {
+	outcome := workspaceRecoveryMutationOutcome{Status: "unknown", Source: "compute_claim_response"}
+	if !workspaceComputeClaimEvidenceMatches(proof, false) || proof.Sub2APIMutationCount < 0 || proof.TencentMutationCount < 0 || proof.KubernetesMutationCount < 0 {
+		return outcome
+	}
+	outcome.Counts = workspaceRecoveryMutationCounts{
+		Sub2API: proof.Sub2APIMutationCount, Tencent: proof.TencentMutationCount, Kubernetes: proof.KubernetesMutationCount,
+	}
+	if outcome.Counts != (workspaceRecoveryMutationCounts{}) {
+		outcome.Status = "nonzero"
+	}
+	return outcome
+}
+
+func newWorkspaceRecoverySuccessor(plan workspaceRecoveryPlan, predecessor workspaceRecoveryPlan, execution workspaceRecoveryExecution, historyLength int) workspaceRecoveryPlan {
+	plan.Generation = predecessor.Generation + 1
+	if plan.Generation <= historyLength {
+		plan.Generation = historyLength + 1
+	}
+	plan.PredecessorPlanDigest = predecessor.PlanDigest
+	plan.PredecessorExecutionID = execution.ExecutionID
+	plan.PlanDigest = workspaceRecoveryPlanDigest(plan)
+	plan.PlanID = "recovery-plan-" + plan.PlanDigest[:20]
+	return plan
+}
+
 func (app *controlPlaneServer) diagnoseWorkspaceRecoveryPlan(ctx context.Context, service *controlplane.Service, accountID, operationID string) (workspaceRecoveryPlan, error) {
 	operation, ok, err := app.workspaceLaunchOperation(ctx, operationID)
 	if err != nil || !ok {
@@ -460,11 +526,13 @@ func (app *controlPlaneServer) diagnoseWorkspaceRecoveryPlan(ctx context.Context
 	}
 	recovered, proof, err := app.workspaceLaunchReadbackRecoveryProofForOperation(ctx, service, operation)
 	var plan workspaceRecoveryPlan
+	var computeEvidence *clients.ComputeClaimIdentityEvidence
 	if workspaceComputeClaimCanonical(operation) || workspaceComputeClaimLegacyCandidate(operation) {
 		computeInput, computeProof, evidence, computeErr := app.workspaceComputeClaimRecoveryProofForPlan(ctx, service, operation)
 		if computeErr != nil {
 			return workspaceRecoveryPlan{}, computeErr
 		}
+		computeEvidence = evidence
 		plan, err = newWorkspaceComputeClaimRecoveryPlan(operation, computeInput, computeProof, evidence, release)
 	} else {
 		if err != nil {
@@ -478,6 +546,42 @@ func (app *controlPlaneServer) diagnoseWorkspaceRecoveryPlan(ctx context.Context
 	}
 	if err != nil {
 		return workspaceRecoveryPlan{}, err
+	}
+	if operation.RecoveryExecution != nil {
+		if operation.RecoveryExecution.Status != "failed" {
+			return workspaceRecoveryPlanProjection(operation), nil
+		}
+		outcome, successorAllowed := workspaceRecoveryExecutionConfirmedZero(operation, computeEvidence)
+		if !successorAllowed {
+			return workspaceRecoveryPlanProjection(operation), nil
+		}
+		predecessorPlan := *operation.RecoveryPlan
+		predecessorExecution := *operation.RecoveryExecution
+		predecessorExecution.MutationOutcome = outcome
+		operation.RecoveryHistory = append(operation.RecoveryHistory, workspaceRecoveryPlanHistoryEntry{
+			Plan: predecessorPlan, Execution: predecessorExecution, ArchivedAt: time.Now().UTC().Format(time.RFC3339Nano),
+		})
+		plan = newWorkspaceRecoverySuccessor(plan, predecessorPlan, predecessorExecution, len(operation.RecoveryHistory)-1)
+		operation.RecoveryPlan = &plan
+		operation.RecoveryExecution = nil
+		if err := app.persistWorkspaceLaunch(ctx, &operation); err != nil {
+			if errors.Is(err, errWorkspaceLaunchCASConflict) {
+				current, found, loadErr := app.workspaceLaunchOperation(ctx, operationID)
+				if loadErr == nil && found && current.RecoveryPlan != nil && current.RecoveryPlan.PlanDigest == plan.PlanDigest &&
+					len(current.RecoveryHistory) >= len(operation.RecoveryHistory) {
+					return workspaceRecoveryPlanProjection(current), nil
+				}
+			}
+			return workspaceRecoveryPlan{}, err
+		}
+		return plan, nil
+	}
+	if operation.RecoveryPlan != nil && operation.RecoveryPlan.Generation > 0 {
+		plan.Generation = operation.RecoveryPlan.Generation
+		plan.PredecessorPlanDigest = operation.RecoveryPlan.PredecessorPlanDigest
+		plan.PredecessorExecutionID = operation.RecoveryPlan.PredecessorExecutionID
+		plan.PlanDigest = workspaceRecoveryPlanDigest(plan)
+		plan.PlanID = "recovery-plan-" + plan.PlanDigest[:20]
 	}
 	if operation.RecoveryPlan != nil && operation.RecoveryPlan.PlanDigest == plan.PlanDigest {
 		return *operation.RecoveryPlan, nil
@@ -806,7 +910,7 @@ func workspaceRecoveryExecutionErrorCode(operation workspaceLaunchOperation, err
 	}
 }
 
-func (app *controlPlaneServer) finalizeWorkspaceRecoveryExecution(ctx context.Context, operationID, executionID, leaseToken string, executionErr error) (workspaceRecoveryPlan, error) {
+func (app *controlPlaneServer) finalizeWorkspaceRecoveryExecution(ctx context.Context, operationID, executionID, leaseToken string, mutationOutcome workspaceRecoveryMutationOutcome, executionErr error) (workspaceRecoveryPlan, error) {
 	if leaseToken == "" {
 		return workspaceRecoveryPlan{}, errBillingReviewIdentity
 	}
@@ -828,6 +932,7 @@ func (app *controlPlaneServer) finalizeWorkspaceRecoveryExecution(ctx context.Co
 		return workspaceRecoveryPlan{}, err
 	}
 	execution, plan := operation.RecoveryExecution, operation.RecoveryPlan
+	execution.MutationOutcome = mutationOutcome
 	plan.Stages = workspaceRecoveryPlanStages(operation)
 	if plan.Action == "compute_claim_continue" {
 		computeStatus := "manual_review"
@@ -910,8 +1015,11 @@ func (app *controlPlaneServer) executeWorkspaceRecoveryPlan(ctx context.Context,
 		}
 	}
 	var executionErr error
+	mutationOutcome := workspaceRecoveryMutationOutcome{Status: "unknown", Source: "recovery_execution"}
 	if execution.ComputeClaimRequest != nil {
-		_, executionErr = app.claimWorkspaceCompute(ctx, service, *execution.ComputeClaimRequest, execution.ExecutionID)
+		claimProof, claimErr := app.claimWorkspaceCompute(ctx, service, *execution.ComputeClaimRequest, execution.ExecutionID)
+		mutationOutcome = workspaceRecoveryMutationOutcomeFromComputeClaim(claimProof)
+		executionErr = claimErr
 		if executionErr == nil {
 			current, currentFound, loadErr := app.workspaceLaunchOperation(ctx, operationID)
 			if loadErr != nil || !currentFound {
@@ -929,5 +1037,5 @@ func (app *controlPlaneServer) executeWorkspaceRecoveryPlan(ctx context.Context,
 	} else {
 		return workspaceRecoveryPlan{}, errBillingReviewIdentity
 	}
-	return app.finalizeWorkspaceRecoveryExecution(ctx, operationID, execution.ExecutionID, execution.LeaseToken, executionErr)
+	return app.finalizeWorkspaceRecoveryExecution(ctx, operationID, execution.ExecutionID, execution.LeaseToken, mutationOutcome, executionErr)
 }

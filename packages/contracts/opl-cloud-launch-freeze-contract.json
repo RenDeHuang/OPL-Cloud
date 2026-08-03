@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 21,
+  "schemaVersion": 22,
   "owner": "OPL Platform Architecture",
   "purpose": "Freeze the approved Pilot products, delegated Gateway key lifecycle, one charge per Workspace period, prepaid Tencent fulfillment, Runtime facts, operator workflows, announcements, and evidence levels without claiming unfinished implementation or runtime evidence.",
   "state": "current",
@@ -250,7 +250,10 @@
         "singleWinner": "persisted_postgresql_cas_lease",
         "fencing": "current_byte_exact_lease_token_required_to_finalize",
         "runIdentity": "stable_from_execution_id_and_approval_digest",
-        "unknownResult": "reconcile_same_persisted_execution_never_create_second_execution"
+        "unknownResult": "reconcile_same_persisted_execution_never_create_second_execution",
+        "mutationOutcome": "explicit_confirmed_zero_nonzero_or_unknown_never_infer_zero_from_missing_json",
+        "terminalFailedSuccessor": "only_after_server_authoritative_zero_external_mutation_proof_archive_predecessor_plan_execution_and_failure_then_derive_new_generation_plan_digest",
+        "successorApproval": "fresh_validation_fresh_confirmation_and_new_plan_bound_approval_execution_run_identity"
       },
       "githubActionsRole": "deploy_zero_mutation_validate_and_redacted_evidence_only_no_recovery_mutation_logic"
     },
@@ -316,7 +319,8 @@
         "singleWinner": "postgresql_cas_persisted_execution_lease",
         "fencing": "byte_exact_current_lease_token_required_to_finalize",
         "identity": ["planId", "planDigest", "approvalDigest", "executionId", "runId", "decision"],
-        "replay": "same_plan_digest_and_decision_returns_same_execution_and_run_identity"
+        "replay": "same_plan_digest_and_decision_returns_same_execution_and_run_identity",
+        "failedZeroSuccessor": "archive_old_plan_execution_approval_error_and_mutation_outcome_then_require_new_plan_validation_and_approval"
       },
       "fabricIdempotencyBinding": ["launch_operation_id", "idempotency_key", "target_hash", "request_hash"],
       "claimMutationBounds": {"sub2api": 0, "tencent": {"min": 0, "max": 5}, "kubernetes": {"min": 0, "max": 1}},

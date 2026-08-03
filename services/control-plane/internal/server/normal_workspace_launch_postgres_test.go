@@ -187,3 +187,60 @@ func configurePostgresNormalWorkspaceLaunchFabric(fabric *monthlyFabric, operati
 		Deadline: "2099-01-01T00:00:00Z", Zone: "ap-shanghai-2", ProviderData: map[string]string{"chargeType": "PREPAID"},
 	}
 }
+
+func TestPostgresFailedZeroMutationRecoveryPlanCreatesPersistedSuccessorAfterReopen(t *testing.T) {
+	t.Setenv("OPL_RELEASE_SHA", strings.Repeat("a", 40))
+	t.Setenv("OPL_CLOUD_IMAGE", "uswccr.ccs.tencentyun.com/oplcloud/opl-cloud@sha256:"+strings.Repeat("b", 64))
+	fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, "basic")
+	fixture.fabric.computeClaimProof = computeClaimRecoveryProofForLaunch(operation, "unallocated")
+	first := recoveryPlanResponse(t, requestWorkspaceRecoveryPlan(t, fixture, http.MethodPost, "/diagnose", map[string]any{"accountId": operation.AccountID}))
+	failed := fixture.operation(t)
+	failed.Status, failed.ErrorCode = "manual_review", "workspace_compute_claim_identity_mismatch"
+	failed.RecoveryPlan.Status, failed.RecoveryPlan.ErrorCode = "failed", failed.ErrorCode
+	failed.RecoveryExecution = &workspaceRecoveryExecution{
+		ExecutionID: "recovery-exec-postgres-failed-zero", RunIdentity: "control-plane-run-postgres-failed-zero",
+		PlanID: first.PlanID, PlanDigest: first.PlanDigest, ApprovalDigest: strings.Repeat("c", 64), Decision: "continue",
+		Status: "failed", StartedAt: time.Now().UTC().Add(-time.Minute).Format(time.RFC3339Nano),
+		CompletedAt: time.Now().UTC().Format(time.RFC3339Nano), ErrorCode: failed.ErrorCode,
+	}
+
+	admin := openControlPlaneTestPostgres(t)
+	schema := fmt.Sprintf("control_plane_recovery_successor_%d", time.Now().UnixNano())
+	if _, err := admin.Exec(`CREATE SCHEMA ` + schema); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = admin.Exec(`DROP SCHEMA ` + schema + ` CASCADE`)
+		_ = admin.Close()
+	})
+	state, err := newTestPostgresEntStateStore(controlPlaneTestPostgresURL(t, "postgres", schema))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := state.(*postgresEntStateStore)
+	t.Cleanup(func() { _ = store.client.Close() })
+	seedTenantMember(t, store, failed.AccountID, "org-alpha", failed.OwnerUserID, "alpha@example.com")
+	if err := store.SaveRuntimeOperation(context.Background(), workspaceLaunchOperationRow(failed)); err != nil {
+		t.Fatal(err)
+	}
+	server, err := NewPersistentServer(fixture.service, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pgFixture := fixture
+	pgFixture.server, pgFixture.operator = server, reservedOperatorSessionForTest(t, server)
+	response := requestWorkspaceRecoveryPlan(t, pgFixture, http.MethodPost, "/diagnose", map[string]any{"accountId": failed.AccountID})
+	if response.Code != http.StatusOK {
+		t.Fatalf("PostgreSQL successor diagnose status=%d body=%s", response.Code, response.Body.String())
+	}
+	successor := recoveryPlanResponse(t, response)
+	app, err := newControlPlaneAppWithStore(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	persisted, found, err := app.workspaceLaunchOperation(context.Background(), failed.ID)
+	if err != nil || !found || persisted.RecoveryPlan == nil || persisted.RecoveryExecution != nil || len(persisted.RecoveryHistory) != 1 ||
+		successor.PlanID == first.PlanID || successor.PlanDigest == first.PlanDigest || persisted.RecoveryHistory[0].Execution.MutationOutcome.Status != "confirmed_zero" {
+		t.Fatalf("PostgreSQL successor=%#v operation=%#v found=%v err=%v", successor, persisted, found, err)
+	}
+}

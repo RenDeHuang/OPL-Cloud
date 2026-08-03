@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 24,
+  "schemaVersion": 25,
   "owner": "OPL Platform Architecture",
   "purpose": "Current ownership contract for Console UI, Control Plane, Ledger, Fabric, and external Sub2API.",
   "state": "current",
@@ -195,7 +195,10 @@
           "identity": ["plan_id", "plan_digest", "approval_digest", "execution_id", "run_id", "decision"],
           "singleWinner": "postgresql_cas",
           "fencing": "byte_exact_current_lease_token_required_to_finalize",
-          "unknownResult": "reconcile_same_execution_identity_without_second_provider_entry"
+          "unknownResult": "reconcile_same_execution_identity_without_second_provider_entry",
+          "mutationOutcome": "explicit_confirmed_zero_nonzero_or_unknown_persisted_on_execution",
+          "terminalFailedSuccessor": "confirmed_zero_only_archive_predecessor_and_derive_generation_bound_new_plan_digest_approval_execution_run",
+          "predecessorFencing": "archived_execution_lease_never_reactivated_stale_finalize_rejected"
         },
         "proofMutationCounts": {"sub2api": 0, "tencent": 0, "kubernetes": 0},
         "runnerDirectMutationCounts": {"sub2api": 0, "tencent": 0, "kubernetes": 0},
@@ -382,6 +385,7 @@
           "missingOutcome": "conservative_unknown_at_full_bound",
           "replayProofUnavailable": "return_persisted_mutation_evidence_zero_incremental_external_mutation",
           "observedCvmTagRepairContinuation": "only_cvm_tag_readback_zero_unknown_zero_kubernetes_then_fresh_exact_cvm_target_owned_node_unallocated_proof_may_reconcile_original_claim_identity_and_attempt_one_node_patch_without_binding_takeover",
+          "activeOwnershipNodeDriftContinuation": "exact_active_machine_ownership_current_binding_no_ledger_cvm_target_owned_node_unallocated_may_reserve_node_once_and_patch_with_tencent_zero_kubernetes_max_one",
           "persistedApprovalExpiryReplay": "new_approval_must_be_unexpired_exact_persisted_approval_identity_may_replay_after_expiry",
           "observedSuccessReadbackMismatch": "fail_closed_identity_mismatch_claim_final_readback"
         },
