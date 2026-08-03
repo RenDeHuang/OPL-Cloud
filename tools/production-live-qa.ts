@@ -769,7 +769,9 @@ export async function diagnoseManualReviewRecovery({
 const COMPUTE_CLAIM_DIAGNOSE_MODE = "compute_claim_diagnose";
 const COMPUTE_CLAIM_VALIDATE_MODE = "compute_claim_validate";
 const COMPUTE_CLAIM_RECOVER_MODE = "compute_claim_recover";
+const RECOVERY_PLAN_DIAGNOSE_MODE = "recovery_plan_diagnose";
 const RECOVERY_PLAN_VALIDATE_MODE = "recovery_plan_validate";
+const RECOVERY_PLAN_EXECUTE_MODE = "recovery_plan_execute";
 const COMPUTE_CLAIM_REASONS = new Set([
   "none", "local_identity", "provider_describe", "iam_rbac", "multiple_candidate",
   "identity_mismatch", "node_ownership_conflict", "storage_already_started"
@@ -1753,18 +1755,96 @@ async function workspaceRecoveryPlanGet({ fetchImpl, origin, auth, path, request
   return { statusCode: response.status, payload };
 }
 
-function workspaceRecoveryPlanValidationResponse(value, operationId) {
+function workspaceRecoveryPlanResponse(value, operationId, allowedStatuses) {
   const mutationCounts = value?.mutationCounts;
   if (!value || typeof value !== "object" || Array.isArray(value) ||
     !/^recovery-plan-[a-f0-9]{20}$/.test(String(value.planId || "")) ||
     !/^[a-f0-9]{64}$/.test(String(value.planDigest || "")) ||
     value.operationId !== operationId ||
-    !new Set(["diagnosed", "validated", "blocked"]).has(String(value.status || "")) ||
+    !allowedStatuses.has(String(value.status || "")) ||
     !Array.isArray(value.stages) || !Array.isArray(value.mismatches) ||
-    !computeClaimRunnerDirectMutationCountsAreZero(mutationCounts)) {
+    !mutationCounts || ![mutationCounts.sub2api, mutationCounts.tencent, mutationCounts.kubernetes]
+      .every((count) => Number.isSafeInteger(count) && count >= 0)) {
     throw new Error("workspace_recovery_plan_validation_response_invalid");
   }
   return JSON.parse(JSON.stringify(value));
+}
+
+function workspaceRecoveryPlanValidationResponse(value, operationId) {
+  const plan = workspaceRecoveryPlanResponse(value, operationId, new Set(["diagnosed", "validated", "blocked"]));
+  if (!computeClaimRunnerDirectMutationCountsAreZero(plan.mutationCounts)) {
+    throw new Error("workspace_recovery_plan_validation_response_invalid");
+  }
+  return plan;
+}
+
+function recoveryPlanRequestIdentity(launchOperationId, planId = "", planDigest = "") {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/.test(String(launchOperationId || "")) ||
+    planId && !/^recovery-plan-[a-f0-9]{20}$/.test(String(planId)) ||
+    planDigest && !/^[a-f0-9]{64}$/.test(String(planDigest))) {
+    throw new Error("workspace_recovery_plan_request_invalid");
+  }
+}
+
+function recoveryPlanArtifact(operationMode, plan, now, overrides = {}) {
+  return {
+    schemaVersion: 1,
+    operationMode,
+    status: plan.status,
+    errorCode: String(plan.errorCode || "none"),
+    planId: plan.planId,
+    planDigest: plan.planDigest,
+    stages: plan.stages,
+    mismatches: plan.mismatches,
+    runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
+    verifiedAt: now.toISOString(),
+    ...overrides
+  };
+}
+
+export async function diagnoseWorkspaceRecoveryPlan({
+  accountId,
+  launchOperationId,
+  origin,
+  adminEmail,
+  adminPassword,
+  requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
+  fetchImpl = globalThis.fetch,
+  now = new Date()
+} = {}) {
+  recoveryPlanRequestIdentity(launchOperationId);
+  if (!/^acct-[A-Za-z0-9-]+$/.test(String(accountId || "")) ||
+    !Number.isInteger(requestTimeoutMs) || requestTimeoutMs < 1 || requestTimeoutMs > 300_000) {
+    throw new Error("workspace_recovery_plan_diagnosis_request_invalid");
+  }
+  const { auth, normalizedOrigin } = await workspaceLaunchReadbackSession({
+    fetchImpl, origin, adminEmail, adminPassword, requestTimeoutMs
+  });
+  const path = `/api/operator/workspace-launches/${encodeURIComponent(launchOperationId)}/recovery-plan`;
+  const diagnosisResponse = await computeClaimControlPlanePost({
+    fetchImpl,
+    origin: normalizedOrigin,
+    auth,
+    path: `${path}/diagnose`,
+    body: { accountId },
+    requestTimeoutMs
+  });
+  if (diagnosisResponse.statusCode !== 200) throw new Error("workspace_recovery_plan_diagnosis_failed");
+  const diagnosis = workspaceRecoveryPlanValidationResponse(diagnosisResponse.payload, launchOperationId);
+  const persistedResponse = await workspaceRecoveryPlanGet({
+    fetchImpl, origin: normalizedOrigin, auth, path, requestTimeoutMs
+  });
+  if (persistedResponse.statusCode !== 200) throw new Error("workspace_recovery_plan_read_failed");
+  const persisted = workspaceRecoveryPlanValidationResponse(persistedResponse.payload, launchOperationId);
+  if (persisted.planId !== diagnosis.planId || persisted.planDigest !== diagnosis.planDigest) {
+    throw new Error("workspace_recovery_plan_diagnosis_identity_mismatch");
+  }
+  const proven = persisted.status === "diagnosed" && persisted.mismatches.length === 0;
+  return recoveryPlanArtifact(RECOVERY_PLAN_DIAGNOSE_MODE, persisted, now, {
+    status: proven ? "proven" : "blocked",
+    recoveryEligible: proven,
+    errorCode: proven ? "none" : String(persisted.errorCode || "identity_mismatch")
+  });
 }
 
 export async function validateWorkspaceRecoveryPlan({
@@ -1831,6 +1911,89 @@ export async function validateWorkspaceRecoveryPlan({
     runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
     verifiedAt: now.toISOString()
   };
+}
+
+export async function executeWorkspaceRecoveryPlan({
+  launchOperationId,
+  planId,
+  planDigest,
+  origin,
+  adminEmail,
+  adminPassword,
+  requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
+  pollAttempts = 180,
+  pollDelayMs = 10_000,
+  fetchImpl = globalThis.fetch,
+  sleepImpl = sleep,
+  now = new Date()
+} = {}) {
+  recoveryPlanRequestIdentity(launchOperationId, planId, planDigest);
+  if (!Number.isInteger(requestTimeoutMs) || requestTimeoutMs < 1 || requestTimeoutMs > 300_000 ||
+    !Number.isInteger(pollAttempts) || pollAttempts < 1 || pollAttempts > 360 ||
+    !Number.isInteger(pollDelayMs) || pollDelayMs < 0 || pollDelayMs > 60_000) {
+    throw new Error("workspace_recovery_plan_execution_request_invalid");
+  }
+  const { auth, normalizedOrigin } = await workspaceLaunchReadbackSession({
+    fetchImpl, origin, adminEmail, adminPassword, requestTimeoutMs
+  });
+  const path = `/api/operator/workspace-launches/${encodeURIComponent(launchOperationId)}/recovery-plan`;
+  const readPlan = async () => {
+    const response = await workspaceRecoveryPlanGet({
+      fetchImpl, origin: normalizedOrigin, auth, path, requestTimeoutMs
+    });
+    if (response.statusCode !== 200) throw new Error("workspace_recovery_plan_read_failed");
+    const plan = workspaceRecoveryPlanResponse(response.payload, launchOperationId,
+      new Set(["validated", "executing", "completed", "failed"]));
+    if (plan.planId !== planId || plan.planDigest !== planDigest) {
+      throw new Error("workspace_recovery_plan_execution_identity_mismatch");
+    }
+    return plan;
+  };
+  const before = await readPlan();
+  if (before.status !== "validated" || before.mismatches.length !== 0) {
+    throw new Error("workspace_recovery_plan_execution_not_validated");
+  }
+  let executionResponse;
+  try {
+    executionResponse = await computeClaimControlPlanePost({
+      fetchImpl,
+      origin: normalizedOrigin,
+      auth,
+      path: `${path}/execute`,
+      body: { planId, planDigest, decision: "continue", confirmation: "CONTINUE_RECOVERY_PLAN" },
+      idempotencyKey: `recovery-plan:${planDigest}`,
+      requestTimeoutMs
+    });
+  } catch {
+    executionResponse = null;
+  }
+  if (executionResponse && executionResponse.statusCode !== 200) {
+    throw new Error("workspace_recovery_plan_execution_failed");
+  }
+  if (executionResponse) {
+    const accepted = workspaceRecoveryPlanResponse(executionResponse.payload, launchOperationId,
+      new Set(["executing", "completed", "failed"]));
+    if (accepted.planId !== planId || accepted.planDigest !== planDigest) {
+      throw new Error("workspace_recovery_plan_execution_identity_mismatch");
+    }
+  }
+  let current;
+  for (let attempt = 0; attempt < pollAttempts; attempt += 1) {
+    current = await readPlan();
+    if (current.status === "completed" || current.status === "failed") break;
+    if (attempt + 1 < pollAttempts) await sleepImpl(pollDelayMs);
+  }
+  if (!current || current.status === "validated" || current.status === "executing") {
+    throw new Error("workspace_recovery_plan_execution_result_unknown");
+  }
+  return recoveryPlanArtifact(RECOVERY_PLAN_EXECUTE_MODE, current, now, {
+    errorCode: current.status === "completed" ? "none" : String(current.errorCode || "recovery_execution_failed"),
+    executionId: String(current.executionId || ""),
+    runId: String(current.runId || ""),
+    url: String(current.url || ""),
+    receiptId: String(current.receiptId || ""),
+    controlPlaneExecutionMutationCounts: current.mutationCounts
+  });
 }
 
 function computeClaimApprovedRequest(target, approval) {
@@ -4589,19 +4752,21 @@ export async function runProductionLiveQaCli({
   now = new Date()
 } = {}) {
   if (argv.includes("--help") || argv.includes("-h")) {
-    stdout.write("Usage: node tools/production-live-qa.ts --read-only\nA disabled Pilot proof uses --controlled-pilot-closed-validate and performs one expected fail-closed Launch POST. A Workspace identity receipt uses --workspace-identity-diagnose with protected customer credentials and exact account/workspace IDs. Recovery Plan evidence uses --recovery-plan-validate with only the account and original launch identity. A recovered Workspace E2E requires --recovered-workspace-e2e --allow-model-write, an independent approval, and the persisted Plan reference. A fixed-slot model request requires --allow-gateway-write --allow-model-write. A real customer canary requires --basic-customer-canary, an exact funding mode, and its explicit approvals.\n");
+    stdout.write("Usage: node tools/production-live-qa.ts --read-only\nA disabled Pilot proof uses --controlled-pilot-closed-validate and performs one expected fail-closed Launch POST. A Workspace identity receipt uses --workspace-identity-diagnose with protected customer credentials and exact account/workspace IDs. Recovery Plan operations use --recovery-plan-diagnose, --recovery-plan-validate, or --recovery-plan-execute with the exact original launch and persisted Plan identities. A recovered Workspace E2E requires --recovered-workspace-e2e --allow-model-write, an independent approval, and the persisted Plan reference. A fixed-slot model request requires --allow-gateway-write --allow-model-write. A real customer canary requires --basic-customer-canary, an exact funding mode, and its explicit approvals.\n");
     return 0;
   }
   const computeClaimMode = computeClaimCliMode(argv);
   const workspaceLaunchReadbackMode = workspaceLaunchReadbackCliMode(argv);
+  const recoveryPlanDiagnoseMode = argv.includes("--recovery-plan-diagnose");
   const recoveryPlanValidateMode = argv.includes("--recovery-plan-validate");
+  const recoveryPlanExecuteMode = argv.includes("--recovery-plan-execute");
   const controlledPilotClosedValidateMode = argv.includes("--controlled-pilot-closed-validate");
   try {
     if (env.OPL_VERIFY_MODEL_ACCESS_KEY) throw new Error("production_live_qa_raw_key_forbidden");
     const args = cliArgs(argv);
     if (args["controlled-pilot-closed-validate"] === "true") {
       const conflicts = [
-        "read-only", "workspace-identity-diagnose", "recovery-plan-validate", "recovered-workspace-e2e", "basic-customer-canary",
+        "read-only", "workspace-identity-diagnose", "recovery-plan-diagnose", "recovery-plan-validate", "recovery-plan-execute", "recovered-workspace-e2e", "basic-customer-canary",
         "manual-review-diagnose", "workspace-launch-readback-diagnose", "workspace-launch-readback-recover",
         "compute-claim-diagnose", "compute-claim-validate", "compute-claim-recover", "compute-claim-continue",
         "allow-account-provision", "allow-wallet-recharge", "allow-workspace-purchase", "allow-model-write", "allow-gateway-write",
@@ -4620,9 +4785,32 @@ export async function runProductionLiveQaCli({
       stdout.write(`${JSON.stringify(result, null, 2)}\n`);
       return 0;
     }
+    if (args["recovery-plan-diagnose"] === "true") {
+      const conflicts = [
+        "read-only", "workspace-identity-diagnose", "recovery-plan-validate", "recovery-plan-execute",
+        "manual-review-diagnose", "workspace-launch-readback-diagnose", "workspace-launch-readback-recover",
+        "compute-claim-diagnose", "compute-claim-validate", "compute-claim-recover", "compute-claim-continue",
+        "recovered-workspace-e2e", "basic-customer-canary", "allow-account-provision", "allow-wallet-recharge",
+        "allow-workspace-purchase", "allow-model-write", "allow-gateway-write", "approval-id", "funding-mode", "phase",
+        "plan-id", "plan-digest"
+      ];
+      if (conflicts.some((name) => args[name])) throw new Error("workspace_recovery_plan_diagnosis_conflict");
+      const result = await diagnoseWorkspaceRecoveryPlan({
+        accountId: args["account-id"] || env.OPL_RECOVERY_PLAN_ACCOUNT_ID,
+        launchOperationId: args["launch-operation-id"] || env.OPL_RECOVERY_PLAN_LAUNCH_OPERATION_ID,
+        origin: args.origin || env.OPL_CONSOLE_ORIGIN,
+        adminEmail: env.OPL_SUB2API_ADMIN_EMAIL,
+        adminPassword: env.OPL_SUB2API_ADMIN_PASSWORD,
+        requestTimeoutMs: Number(args["request-timeout-ms"] || env.OPL_VERIFY_REQUEST_TIMEOUT_MS || DEFAULT_REQUEST_TIMEOUT_MS),
+        fetchImpl,
+        now
+      });
+      stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+      return result.status === "proven" ? 0 : 1;
+    }
     if (args["recovery-plan-validate"] === "true") {
       const conflicts = [
-        "read-only", "manual-review-diagnose", "workspace-launch-readback-diagnose", "workspace-launch-readback-recover",
+        "read-only", "recovery-plan-diagnose", "recovery-plan-execute", "manual-review-diagnose", "workspace-launch-readback-diagnose", "workspace-launch-readback-recover",
         "compute-claim-diagnose", "compute-claim-validate", "compute-claim-recover", "compute-claim-continue",
         "recovered-workspace-e2e", "basic-customer-canary", "allow-account-provision", "allow-wallet-recharge",
         "allow-workspace-purchase", "allow-model-write", "allow-gateway-write", "approval-id", "funding-mode", "phase"
@@ -4642,9 +4830,35 @@ export async function runProductionLiveQaCli({
       stdout.write(`${JSON.stringify(result, null, 2)}\n`);
       return result.status === "proven" ? 0 : 1;
     }
+    if (args["recovery-plan-execute"] === "true") {
+      const conflicts = [
+        "read-only", "workspace-identity-diagnose", "recovery-plan-diagnose", "recovery-plan-validate",
+        "manual-review-diagnose", "workspace-launch-readback-diagnose", "workspace-launch-readback-recover",
+        "compute-claim-diagnose", "compute-claim-validate", "compute-claim-recover", "compute-claim-continue",
+        "recovered-workspace-e2e", "basic-customer-canary", "allow-account-provision", "allow-wallet-recharge",
+        "allow-workspace-purchase", "allow-model-write", "allow-gateway-write", "approval-id", "funding-mode", "phase",
+        "account-id"
+      ];
+      if (conflicts.some((name) => args[name])) throw new Error("workspace_recovery_plan_execution_conflict");
+      const result = await executeWorkspaceRecoveryPlan({
+        launchOperationId: args["launch-operation-id"] || env.OPL_RECOVERY_PLAN_LAUNCH_OPERATION_ID,
+        planId: args["plan-id"] || env.OPL_RECOVERY_PLAN_ID,
+        planDigest: args["plan-digest"] || env.OPL_RECOVERY_PLAN_DIGEST,
+        origin: args.origin || env.OPL_CONSOLE_ORIGIN,
+        adminEmail: env.OPL_SUB2API_ADMIN_EMAIL,
+        adminPassword: env.OPL_SUB2API_ADMIN_PASSWORD,
+        requestTimeoutMs: Number(args["request-timeout-ms"] || env.OPL_VERIFY_REQUEST_TIMEOUT_MS || DEFAULT_REQUEST_TIMEOUT_MS),
+        pollAttempts: Number(env.OPL_RECOVERY_PLAN_POLL_ATTEMPTS || 180),
+        pollDelayMs: Number(env.OPL_RECOVERY_PLAN_POLL_DELAY_MS || 10_000),
+        fetchImpl,
+        now
+      });
+      stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+      return result.status === "completed" ? 0 : 1;
+    }
     if (args["workspace-identity-diagnose"] === "true") {
       const conflicts = [
-        "read-only", "manual-review-diagnose", "workspace-launch-readback-diagnose", "workspace-launch-readback-recover",
+        "read-only", "recovery-plan-diagnose", "recovery-plan-validate", "recovery-plan-execute", "manual-review-diagnose", "workspace-launch-readback-diagnose", "workspace-launch-readback-recover",
         "compute-claim-diagnose", "compute-claim-validate", "compute-claim-recover", "compute-claim-continue", "recovered-workspace-e2e", "basic-customer-canary",
         "allow-account-provision", "allow-wallet-recharge", "allow-workspace-purchase", "allow-model-write", "allow-gateway-write",
         "allow-existing-precharge-recovery", "approval-id", "funding-mode", "phase"
@@ -5016,15 +5230,19 @@ export async function runProductionLiveQaCli({
 			  stderr.write(`${JSON.stringify({ ok: false, errorCode: artifact.errorCode }, null, 2)}\n`);
 			  return 1;
 			}
-		if (recoveryPlanValidateMode) {
+		if (recoveryPlanDiagnoseMode || recoveryPlanValidateMode || recoveryPlanExecuteMode) {
+		  const operationMode = recoveryPlanDiagnoseMode ? RECOVERY_PLAN_DIAGNOSE_MODE
+		    : recoveryPlanExecuteMode ? RECOVERY_PLAN_EXECUTE_MODE : RECOVERY_PLAN_VALIDATE_MODE;
 		  const artifact = {
 		    schemaVersion: 1,
-		    operationMode: RECOVERY_PLAN_VALIDATE_MODE,
+		    operationMode,
 		    status: "blocked",
-		    recoveryEligible: false,
+		    ...(recoveryPlanExecuteMode ? {} : { recoveryEligible: false }),
 		    errorCode: /^workspace_recovery_plan_[a-z_]+$/.test(String(error?.message || ""))
 		      ? error.message
-		      : "workspace_recovery_plan_validation_failed",
+		      : recoveryPlanDiagnoseMode ? "workspace_recovery_plan_diagnosis_failed"
+		        : recoveryPlanExecuteMode ? "workspace_recovery_plan_execution_failed"
+		          : "workspace_recovery_plan_validation_failed",
 		    runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
 		  };
 		  stdout.write(`${JSON.stringify(artifact, null, 2)}\n`);

@@ -386,6 +386,222 @@ test("Recovery Plan validation consumes only the persisted plan identity and nev
   assert.equal(JSON.stringify(planCalls).includes("cloudImageDigest"), false);
 });
 
+test("Recovery Plan diagnosis uses the operator session to persist and re-read one server-owned plan", async () => {
+  const accountId = "acct-f947b18f844e42b3c0";
+  const launchOperationId = "workspace-launch-f0375970d7678d0a3e";
+  const planDigest = "b".repeat(64);
+  const plan = {
+    planId: `recovery-plan-${planDigest.slice(0, 20)}`,
+    planDigest,
+    status: "diagnosed",
+    operationId: launchOperationId,
+    stages: [{ stage: "compute_claim", status: "manual_review" }],
+    mismatches: [],
+    mutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
+  };
+  const calls = [];
+  const fetchImpl = async (input, init = {}) => {
+    const url = new URL(String(input));
+    const method = String(init.method || "GET").toUpperCase();
+    const body = init.body ? JSON.parse(String(init.body)) : null;
+    calls.push({ method, path: url.pathname, body, headers: init.headers || {} });
+    if (url.pathname === "/api/auth/login") {
+      return json({ user: { accountId: ADMIN_ACCOUNT_ID, role: "admin" } }, 200, {
+        "set-cookie": "opl_session=admin; Path=/; HttpOnly",
+        "x-opl-csrf-token": "admin-csrf"
+      });
+    }
+    if (url.pathname.endsWith("/recovery-plan/diagnose")) return json(plan);
+    if (url.pathname.endsWith("/recovery-plan") && method === "GET") return json(plan);
+    return json({ error: "unexpected" }, 404);
+  };
+
+  const result = await productionLiveQa.diagnoseWorkspaceRecoveryPlan({
+    accountId,
+    launchOperationId,
+    origin: "https://cloud.medopl.cn",
+    adminEmail: ADMIN_EMAIL,
+    adminPassword: ADMIN_PASSWORD,
+    fetchImpl
+  });
+
+  assert.equal(result.operationMode, "recovery_plan_diagnose");
+  assert.equal(result.status, "proven");
+  assert.equal(result.planId, plan.planId);
+  assert.equal(result.planDigest, planDigest);
+  assert.deepEqual(result.runnerDirectMutationCounts, { sub2api: 0, tencent: 0, kubernetes: 0 });
+  const planCalls = calls.filter((call) => call.path.includes("/recovery-plan"));
+  assert.deepEqual(planCalls.map(({ method, path, body }) => ({ method, path, body })), [
+    {
+      method: "POST",
+      path: `/api/operator/workspace-launches/${launchOperationId}/recovery-plan/diagnose`,
+      body: { accountId }
+    },
+    {
+      method: "GET",
+      path: `/api/operator/workspace-launches/${launchOperationId}/recovery-plan`,
+      body: null
+    }
+  ]);
+  assert.equal(calls.some((call) => call.path.endsWith("/recovery-plan/validate")), false);
+  assert.equal(calls.some((call) => call.path.endsWith("/recovery-plan/execute")), false);
+});
+
+test("Recovery Plan execution posts one exact continuation and polls only the same persisted plan", async () => {
+  const launchOperationId = "workspace-launch-f0375970d7678d0a3e";
+  const planDigest = "c".repeat(64);
+  const planId = `recovery-plan-${planDigest.slice(0, 20)}`;
+  const validated = {
+    planId,
+    planDigest,
+    status: "validated",
+    operationId: launchOperationId,
+    stages: [{ stage: "compute_claim", status: "manual_review" }],
+    mismatches: [],
+    mutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
+  };
+  const executing = {
+    ...validated,
+    status: "executing",
+    executionId: "recovery-exec-authority",
+    runId: "control-plane-run-authority"
+  };
+  const completed = {
+    ...executing,
+    status: "completed",
+    stages: [
+      { stage: "compute_claim", status: "completed" },
+      { stage: "storage", status: "completed" },
+      { stage: "attachment", status: "completed" },
+      { stage: "secret", status: "completed" },
+      { stage: "runtime", status: "completed" },
+      { stage: "activation", status: "completed" },
+      { stage: "receipt", status: "completed" }
+    ],
+    mutationCounts: { sub2api: 0, tencent: 1, kubernetes: 1 },
+    url: "https://workspace.example.cloud.medopl.cn",
+    receiptId: "receipt-authority"
+  };
+  const calls = [];
+  let reads = 0;
+  const fetchImpl = async (input, init = {}) => {
+    const url = new URL(String(input));
+    const method = String(init.method || "GET").toUpperCase();
+    const body = init.body ? JSON.parse(String(init.body)) : null;
+    calls.push({ method, path: url.pathname, body, headers: init.headers || {} });
+    if (url.pathname === "/api/auth/login") {
+      return json({ user: { accountId: ADMIN_ACCOUNT_ID, role: "admin" } }, 200, {
+        "set-cookie": "opl_session=admin; Path=/; HttpOnly",
+        "x-opl-csrf-token": "admin-csrf"
+      });
+    }
+    if (url.pathname.endsWith("/recovery-plan/execute")) return json(executing);
+    if (url.pathname.endsWith("/recovery-plan") && method === "GET") {
+      reads += 1;
+      return json(reads === 1 ? validated : completed);
+    }
+    return json({ error: "unexpected" }, 404);
+  };
+
+  const result = await productionLiveQa.executeWorkspaceRecoveryPlan({
+    launchOperationId,
+    planId,
+    planDigest,
+    origin: "https://cloud.medopl.cn",
+    adminEmail: ADMIN_EMAIL,
+    adminPassword: ADMIN_PASSWORD,
+    pollAttempts: 2,
+    pollDelayMs: 0,
+    sleepImpl: async () => {},
+    fetchImpl
+  });
+
+  assert.equal(result.operationMode, "recovery_plan_execute");
+  assert.equal(result.status, "completed");
+  assert.equal(result.errorCode, "none");
+  assert.equal(result.executionId, completed.executionId);
+  assert.equal(result.runId, completed.runId);
+  assert.equal(result.url, completed.url);
+  assert.equal(result.receiptId, completed.receiptId);
+  assert.deepEqual(result.runnerDirectMutationCounts, { sub2api: 0, tencent: 0, kubernetes: 0 });
+  assert.deepEqual(result.controlPlaneExecutionMutationCounts, completed.mutationCounts);
+  const planCalls = calls.filter((call) => call.path.includes("/recovery-plan"));
+  assert.deepEqual(planCalls.map(({ method, path, body }) => ({ method, path, body })), [
+    { method: "GET", path: `/api/operator/workspace-launches/${launchOperationId}/recovery-plan`, body: null },
+    {
+      method: "POST",
+      path: `/api/operator/workspace-launches/${launchOperationId}/recovery-plan/execute`,
+      body: { planId, planDigest, decision: "continue", confirmation: "CONTINUE_RECOVERY_PLAN" }
+    },
+    { method: "GET", path: `/api/operator/workspace-launches/${launchOperationId}/recovery-plan`, body: null }
+  ]);
+  const executeCall = planCalls.find((call) => call.path.endsWith("/execute"));
+  assert.equal(executeCall.headers["Idempotency-Key"], `recovery-plan:${planDigest}`);
+  assert.equal(calls.some((call) => call.path === "/api/workspace-launches"), false);
+  assert.equal(calls.some((call) => /wallet|compute-allocations|storage-volumes/.test(call.path)), false);
+});
+
+test("Recovery Plan execution never resends after an unknown POST result", async () => {
+  const launchOperationId = "workspace-launch-f0375970d7678d0a3e";
+  const planDigest = "d".repeat(64);
+  const planId = `recovery-plan-${planDigest.slice(0, 20)}`;
+  const validated = {
+    planId,
+    planDigest,
+    status: "validated",
+    operationId: launchOperationId,
+    stages: [{ stage: "compute_claim", status: "manual_review" }],
+    mismatches: [],
+    mutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
+  };
+  const executing = { ...validated, status: "executing", executionId: "recovery-exec-unknown", runId: "control-plane-run-unknown" };
+  const completed = {
+    ...executing,
+    status: "completed",
+    stages: [{ stage: "compute_claim", status: "completed" }],
+    url: "https://workspace.example.cloud.medopl.cn",
+    receiptId: "receipt-unknown"
+  };
+  let reads = 0;
+  let executePosts = 0;
+  const fetchImpl = async (input, init = {}) => {
+    const url = new URL(String(input));
+    const method = String(init.method || "GET").toUpperCase();
+    if (url.pathname === "/api/auth/login") {
+      return json({ user: { accountId: ADMIN_ACCOUNT_ID, role: "admin" } }, 200, {
+        "set-cookie": "opl_session=admin; Path=/; HttpOnly",
+        "x-opl-csrf-token": "admin-csrf"
+      });
+    }
+    if (url.pathname.endsWith("/recovery-plan/execute")) {
+      executePosts += 1;
+      throw new Error("response_lost_after_commit");
+    }
+    if (url.pathname.endsWith("/recovery-plan") && method === "GET") {
+      reads += 1;
+      return json(reads === 1 ? validated : reads === 2 ? executing : completed);
+    }
+    return json({ error: "unexpected" }, 404);
+  };
+
+  const result = await productionLiveQa.executeWorkspaceRecoveryPlan({
+    launchOperationId,
+    planId,
+    planDigest,
+    origin: "https://cloud.medopl.cn",
+    adminEmail: ADMIN_EMAIL,
+    adminPassword: ADMIN_PASSWORD,
+    pollAttempts: 3,
+    pollDelayMs: 0,
+    sleepImpl: async () => {},
+    fetchImpl
+  });
+
+  assert.equal(result.status, "completed");
+  assert.equal(executePosts, 1);
+  assert.equal(reads, 3);
+});
+
 function source(payload, sourceName = "sub2api", status = "available", headers = {}) {
   return json({ source: sourceName, status, available: true, fetchedAt: new Date().toISOString(), data: payload }, 200, {
     "cache-control": "private, no-store",
