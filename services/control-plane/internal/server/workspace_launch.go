@@ -3078,7 +3078,7 @@ func (app *controlPlaneServer) debitWorkspaceLaunch(ctx context.Context, service
 			if balanceErr != nil {
 				return app.retryWorkspaceLaunchDebit(ctx, operation, "sub2api_balance_unavailable", balanceErr)
 			}
-			if balance.USDMicros <= operation.TotalChargeUSDMicros {
+			if balance.USDMicros < operation.TotalChargeUSDMicros {
 				operation.Status, operation.Phase, operation.ErrorCode = "insufficient", "debit_pending", errMonthlyInsufficientBalance.Error()
 				releaseWorkspaceLaunchLease(operation)
 				if err := app.persistWorkspaceLaunch(ctx, operation); err != nil {
