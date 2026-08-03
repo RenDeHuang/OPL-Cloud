@@ -1225,7 +1225,7 @@ func TestWorkspaceRecoveryPlanWorkerRetriesCBSReadbackAfterConfirmedNodeClaim(t 
 	waitingPlan := recoveryPlanResponse(t, execute)
 	waiting := fixture.operation(t)
 	if waitingPlan.Status != "executing" || waiting.Status != "waiting" || waiting.Phase != "storage_fulfilling" || waiting.ComputeClaimProof == nil ||
-		waiting.RecoveryExecution == nil || waiting.RecoveryExecution.LeaseToken != "" || waiting.ContinuationAttemptBudgets["storage"] != (workspaceLaunchStageBudget{Attempted: 1, Confirmed: 1, Max: 1}) {
+		waiting.RecoveryExecution == nil || waiting.RecoveryExecution.LeaseToken != "" || waiting.ContinuationAttemptBudgets["storage"] != (workspaceLaunchStageBudget{Attempted: 1, Max: 1}) {
 		t.Fatalf("CBS waiting recovery plan=%#v launch=%#v", waitingPlan, waiting)
 	}
 
@@ -1252,11 +1252,18 @@ func TestWorkspaceRecoveryPlanWorkerRetriesCBSReadbackAfterConfirmedNodeClaim(t 
 	}
 	completed, found, err := restarted.workspaceLaunchOperation(context.Background(), operation.ID)
 	if err != nil || !found || completed.Status != "succeeded" || completed.Phase != "succeeded" || completed.URL == "" || completed.ReceiptID == "" ||
-		completed.RecoveryPlan == nil || completed.RecoveryPlan.Status != "completed" || completed.RecoveryExecution == nil || completed.RecoveryExecution.Status != "completed" {
+		completed.RecoveryPlan == nil || completed.RecoveryPlan.Status != "completed" || completed.RecoveryExecution == nil || completed.RecoveryExecution.Status != "completed" ||
+		completed.ContinuationAttemptBudgets["storage"] != (workspaceLaunchStageBudget{Attempted: 1, Confirmed: 1, Max: 1}) {
 		t.Fatalf("CBS restart terminal readback launch=%#v found=%v err=%v", completed, found, err)
 	}
-	if len(fixture.fabric.computeClaimCalls) != 1 || len(fixture.fabric.storageIDs) != 1 || len(fixture.sub2API.charges) != 1 || len(fixture.fabric.computeIDs) != 1 ||
+	if len(fixture.fabric.computeClaimCalls) != 1 || len(fixture.fabric.storageIDs) != 3 || len(fixture.fabric.storageCreateKeys) != len(fixture.fabric.storageIDs) ||
+		len(fixture.sub2API.charges) != 1 || len(fixture.fabric.computeIDs) != 1 ||
 		len(fixture.ledger.receiptInputs) != 1 {
 		t.Fatalf("CBS retry repeated mutation: claims=%d storage=%d charges=%d compute=%d receipts=%d", len(fixture.fabric.computeClaimCalls), len(fixture.fabric.storageIDs), len(fixture.sub2API.charges), len(fixture.fabric.computeIDs), len(fixture.ledger.receiptInputs))
+	}
+	for index, storageID := range fixture.fabric.storageIDs {
+		if storageID != operation.StorageID || fixture.fabric.storageCreateKeys[index] != operation.ID+":storage" {
+			t.Fatalf("CBS retry changed original operation identity: ids=%#v keys=%#v", fixture.fabric.storageIDs, fixture.fabric.storageCreateKeys)
+		}
 	}
 }
