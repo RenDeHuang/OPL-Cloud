@@ -895,6 +895,71 @@ func TestWorkspaceRecoveryPlanDiagnoseCreatesSuccessorForFailedZeroMutationExecu
 	}
 }
 
+func TestWorkspaceRecoveryPlanValidatePreservesTerminalFailedExecution(t *testing.T) {
+	t.Setenv("OPL_RELEASE_SHA", strings.Repeat("a", 40))
+	t.Setenv("OPL_CLOUD_IMAGE", "uswccr.ccs.tencentyun.com/oplcloud/opl-cloud@sha256:"+strings.Repeat("b", 64))
+	fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, "basic")
+	fixture.fabric.computeClaimProof = computeClaimRecoveryProofForLaunch(operation, "unallocated")
+
+	first := recoveryPlanResponse(t, requestWorkspaceRecoveryPlan(t, fixture, http.MethodPost, "/diagnose", map[string]any{"accountId": operation.AccountID}))
+	failed := fixture.operation(t)
+	failed.Status, failed.ErrorCode = "manual_review", "workspace_compute_claim_identity_mismatch"
+	failed.RecoveryPlan.Status, failed.RecoveryPlan.ErrorCode = "failed", failed.ErrorCode
+	failed.RecoveryExecution = &workspaceRecoveryExecution{
+		ExecutionID: "recovery-exec-terminal-failed", RunIdentity: "control-plane-run-terminal-failed",
+		PlanID: first.PlanID, PlanDigest: first.PlanDigest, ApprovalDigest: strings.Repeat("c", 64), Decision: "continue",
+		Status: "failed", StartedAt: time.Now().UTC().Add(-time.Minute).Format(time.RFC3339Nano),
+		CompletedAt: time.Now().UTC().Format(time.RFC3339Nano), ErrorCode: failed.ErrorCode,
+	}
+	mustStore(t, fixture.store.SaveRuntimeOperation(context.Background(), workspaceLaunchOperationRow(failed)))
+
+	response := requestWorkspaceRecoveryPlan(t, fixture, http.MethodPost, "/validate", map[string]any{
+		"planId": first.PlanID, "planDigest": first.PlanDigest,
+	})
+	if response.Code != http.StatusOK {
+		t.Fatalf("terminal validate status=%d body=%s", response.Code, response.Body.String())
+	}
+	terminal := recoveryPlanResponse(t, response)
+	persisted := fixture.operation(t)
+	if terminal.Status != "failed" || terminal.ErrorCode != failed.ErrorCode || persisted.RecoveryPlan.Status != "failed" ||
+		persisted.RecoveryPlan.ValidatedAt != "" || persisted.RecoveryExecution == nil || persisted.RecoveryExecution.Status != "failed" {
+		t.Fatalf("terminal validation rewrote failed execution: response=%#v operation=%#v", terminal, persisted)
+	}
+}
+
+func TestWorkspaceRecoveryPlanDiagnoseCreatesSuccessorAfterTerminalPlanWasBlocked(t *testing.T) {
+	t.Setenv("OPL_RELEASE_SHA", strings.Repeat("a", 40))
+	t.Setenv("OPL_CLOUD_IMAGE", "uswccr.ccs.tencentyun.com/oplcloud/opl-cloud@sha256:"+strings.Repeat("b", 64))
+	fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, "basic")
+	fixture.fabric.computeClaimProof = computeClaimRecoveryProofForLaunch(operation, "unallocated")
+
+	first := recoveryPlanResponse(t, requestWorkspaceRecoveryPlan(t, fixture, http.MethodPost, "/diagnose", map[string]any{"accountId": operation.AccountID}))
+	failed := fixture.operation(t)
+	failed.Status, failed.ErrorCode = "manual_review", "workspace_compute_claim_identity_mismatch"
+	failed.RecoveryPlan.Status, failed.RecoveryPlan.ErrorCode = "blocked", "identity_mismatch"
+	failed.RecoveryPlan.Mismatches = []workspaceRecoveryPlanMismatch{{
+		Field: "release.mainSha", Expected: strings.Repeat("d", 40), Actual: strings.Repeat("a", 40),
+	}}
+	failed.RecoveryExecution = &workspaceRecoveryExecution{
+		ExecutionID: "recovery-exec-failed-blocked-plan", RunIdentity: "control-plane-run-failed-blocked-plan",
+		PlanID: first.PlanID, PlanDigest: first.PlanDigest, ApprovalDigest: strings.Repeat("c", 64), Decision: "continue",
+		Status: "failed", StartedAt: time.Now().UTC().Add(-time.Minute).Format(time.RFC3339Nano),
+		CompletedAt: time.Now().UTC().Format(time.RFC3339Nano), ErrorCode: failed.ErrorCode,
+	}
+	mustStore(t, fixture.store.SaveRuntimeOperation(context.Background(), workspaceLaunchOperationRow(failed)))
+
+	successor := recoveryPlanResponse(t, requestWorkspaceRecoveryPlan(t, fixture, http.MethodPost, "/diagnose", map[string]any{"accountId": operation.AccountID}))
+	persisted := fixture.operation(t)
+	if successor.Status != "diagnosed" || successor.PlanID == first.PlanID || successor.PlanDigest == first.PlanDigest ||
+		persisted.RecoveryExecution != nil || len(persisted.RecoveryHistory) != 1 || persisted.RecoveryHistory[0].Plan.Status != "failed" ||
+		persisted.RecoveryHistory[0].Execution.Status != "failed" || persisted.RecoveryHistory[0].Execution.MutationOutcome.Status != "confirmed_zero" {
+		t.Fatalf("blocked terminal plan did not create successor: first=%#v successor=%#v operation=%#v", first, successor, persisted)
+	}
+	if len(fixture.fabric.computeClaimCalls) != 0 || len(fixture.fabric.storageIDs) != 0 || len(fixture.sub2API.charges) != 1 || len(fixture.fabric.computeIDs) != 1 {
+		t.Fatalf("blocked terminal successor crossed zero-mutation boundary: claims=%d storage=%d charges=%d computes=%d", len(fixture.fabric.computeClaimCalls), len(fixture.fabric.storageIDs), len(fixture.sub2API.charges), len(fixture.fabric.computeIDs))
+	}
+}
+
 func TestWorkspaceRecoveryPlanDiagnoseCreatesSuccessorForAuthoritativeObservedZeroLedger(t *testing.T) {
 	t.Setenv("OPL_RELEASE_SHA", strings.Repeat("a", 40))
 	t.Setenv("OPL_CLOUD_IMAGE", "uswccr.ccs.tencentyun.com/oplcloud/opl-cloud@sha256:"+strings.Repeat("b", 64))
@@ -967,6 +1032,23 @@ func TestWorkspaceRecoveryPlanSuccessorRejectsUnconfirmedFabricLedgerEvidence(t 
 				t.Fatalf("unconfirmed evidence accepted: outcome=%#v evidence=%#v", outcome, evidence)
 			}
 		})
+	}
+}
+
+func TestWorkspaceRecoveryPlanSuccessorRejectsNonterminalPlanStatus(t *testing.T) {
+	planID, planDigest := "recovery-plan-failed", strings.Repeat("a", 64)
+	operation := workspaceLaunchOperation{
+		RecoveryPlan: &workspaceRecoveryPlan{
+			PlanID: planID, PlanDigest: planDigest, Status: "validated", Action: "compute_claim_continue",
+		},
+		RecoveryExecution: &workspaceRecoveryExecution{
+			ExecutionID: "recovery-exec-failed", PlanID: planID, PlanDigest: planDigest, Status: "failed",
+			CompletedAt:     time.Now().UTC().Format(time.RFC3339Nano),
+			MutationOutcome: workspaceRecoveryMutationOutcome{Status: "confirmed_zero"},
+		},
+	}
+	if outcome, ok := workspaceRecoveryExecutionConfirmedZero(operation, nil); ok {
+		t.Fatalf("nonterminal plan status accepted: outcome=%#v operation=%#v", outcome, operation)
 	}
 }
 

@@ -458,8 +458,9 @@ func workspaceRecoveryPlanMismatches(persisted, current workspaceRecoveryPlan) [
 }
 
 func workspaceRecoveryExecutionConfirmedZero(operation workspaceLaunchOperation, evidence *clients.ComputeClaimIdentityEvidence) (workspaceRecoveryMutationOutcome, bool) {
-	if operation.RecoveryPlan == nil || operation.RecoveryExecution == nil || operation.RecoveryPlan.Status != "failed" ||
-		operation.RecoveryExecution.Status != "failed" || operation.RecoveryExecution.CompletedAt == "" ||
+	if operation.RecoveryPlan == nil || operation.RecoveryExecution == nil || operation.RecoveryExecution.Status != "failed" ||
+		operation.RecoveryPlan.Status != "failed" && operation.RecoveryPlan.Status != "blocked" ||
+		operation.RecoveryExecution.CompletedAt == "" ||
 		operation.RecoveryExecution.LeaseToken != "" || operation.RecoveryExecution.LeaseExpiresAt != "" ||
 		operation.RecoveryExecution.PlanID != operation.RecoveryPlan.PlanID || operation.RecoveryExecution.PlanDigest != operation.RecoveryPlan.PlanDigest {
 		return workspaceRecoveryMutationOutcome{}, false
@@ -571,6 +572,8 @@ func (app *controlPlaneServer) diagnoseWorkspaceRecoveryPlan(ctx context.Context
 		}
 		predecessorPlan := *operation.RecoveryPlan
 		predecessorExecution := *operation.RecoveryExecution
+		predecessorPlan.Status = "failed"
+		predecessorPlan.ErrorCode = predecessorExecution.ErrorCode
 		predecessorExecution.MutationOutcome = outcome
 		operation.RecoveryHistory = append(operation.RecoveryHistory, workspaceRecoveryPlanHistoryEntry{
 			Plan: predecessorPlan, Execution: predecessorExecution, ArchivedAt: time.Now().UTC().Format(time.RFC3339Nano),
@@ -645,6 +648,10 @@ func (app *controlPlaneServer) validateWorkspaceRecoveryPlan(ctx context.Context
 			err = errBillingReviewIdentity
 		}
 		return workspaceRecoveryPlan{}, err
+	}
+	if operation.RecoveryExecution != nil &&
+		(operation.RecoveryExecution.Status == "completed" || operation.RecoveryExecution.Status == "failed") {
+		return workspaceRecoveryPlanProjection(operation), nil
 	}
 	release, err := currentWorkspaceRecoveryReleaseBinding()
 	if err != nil {

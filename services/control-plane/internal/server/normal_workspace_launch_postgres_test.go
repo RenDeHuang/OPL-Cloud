@@ -219,7 +219,7 @@ func configurePostgresNormalWorkspaceLaunchFabric(fabric *monthlyFabric, operati
 	}
 }
 
-func TestPostgresFailedAuthoritativeZeroMutationRecoveryPlanCreatesPersistedSuccessorAfterReopen(t *testing.T) {
+func TestPostgresBlockedTerminalRecoveryPlanCreatesPersistedSuccessorAfterReopen(t *testing.T) {
 	t.Setenv("OPL_RELEASE_SHA", strings.Repeat("a", 40))
 	t.Setenv("OPL_CLOUD_IMAGE", "uswccr.ccs.tencentyun.com/oplcloud/opl-cloud@sha256:"+strings.Repeat("b", 64))
 	fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, "basic")
@@ -233,7 +233,10 @@ func TestPostgresFailedAuthoritativeZeroMutationRecoveryPlanCreatesPersistedSucc
 	first := recoveryPlanResponse(t, requestWorkspaceRecoveryPlan(t, fixture, http.MethodPost, "/diagnose", map[string]any{"accountId": operation.AccountID}))
 	failed := fixture.operation(t)
 	failed.Status, failed.ErrorCode = "manual_review", "workspace_compute_claim_identity_mismatch"
-	failed.RecoveryPlan.Status, failed.RecoveryPlan.ErrorCode = "failed", failed.ErrorCode
+	failed.RecoveryPlan.Status, failed.RecoveryPlan.ErrorCode = "blocked", "identity_mismatch"
+	failed.RecoveryPlan.Mismatches = []workspaceRecoveryPlanMismatch{{
+		Field: "release.mainSha", Expected: strings.Repeat("d", 40), Actual: strings.Repeat("a", 40),
+	}}
 	failed.RecoveryExecution = &workspaceRecoveryExecution{
 		ExecutionID: "recovery-exec-postgres-failed-zero", RunIdentity: "control-plane-run-postgres-failed-zero",
 		PlanID: first.PlanID, PlanDigest: first.PlanDigest, ApprovalDigest: strings.Repeat("c", 64), Decision: "continue",
@@ -278,7 +281,7 @@ func TestPostgresFailedAuthoritativeZeroMutationRecoveryPlanCreatesPersistedSucc
 	persisted, found, err := app.workspaceLaunchOperation(context.Background(), failed.ID)
 	if err != nil || !found || persisted.RecoveryPlan == nil || persisted.RecoveryExecution != nil || len(persisted.RecoveryHistory) != 1 ||
 		successor.PlanID == first.PlanID || successor.PlanDigest == first.PlanDigest || persisted.RecoveryHistory[0].Execution.MutationOutcome.Status != "confirmed_zero" ||
-		persisted.RecoveryHistory[0].Execution.MutationOutcome.EvidenceDigest != strings.Repeat("d", 64) {
+		persisted.RecoveryHistory[0].Execution.MutationOutcome.EvidenceDigest != strings.Repeat("d", 64) || persisted.RecoveryHistory[0].Plan.Status != "failed" {
 		t.Fatalf("PostgreSQL successor=%#v operation=%#v found=%v err=%v", successor, persisted, found, err)
 	}
 }
