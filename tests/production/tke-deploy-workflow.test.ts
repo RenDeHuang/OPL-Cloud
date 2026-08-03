@@ -1194,6 +1194,7 @@ test("Fabric recovery ledger readback is artifact-bound, read-only, and cannot r
   assert.equal(job.env.OPL_RECOVERY_EVIDENCE_ARTIFACT_DIGEST, "${{ inputs.recovery_evidence_artifact_digest }}");
   assert.deepEqual(downloads.map((step) => step.with), [{
     "artifact-ids": "${{ inputs.recovery_evidence_artifact_id }}",
+    "run-id": "${{ inputs.recovery_evidence_run_id }}",
     path: "${{ runner.temp }}/production-fabric-ledger-readback/source",
     "github-token": "${{ github.token }}",
     repository: "${{ github.repository }}",
