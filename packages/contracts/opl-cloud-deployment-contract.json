@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 32,
+  "schemaVersion": 33,
   "owner": "OPL Fabric",
   "purpose": "Deployment workflow, immutable Cloud and Workspace images, TKE handoff, read-only diagnostics, and production-verification safety.",
   "state": "current",
@@ -125,6 +125,19 @@
       "requiredValue": "1",
       "enforcement": "shared_tencent_monthly_preflight"
     },
+    "preDebitTencentIamGate": {
+      "proofMode": "production_runner_deployment_attestation",
+      "releaseBinding": "exact_merged_OPL_RELEASE_SHA",
+      "identityAuthority": "live_STS_GetCallerIdentity_at_deploy_and_preflight",
+      "identityFields": ["type", "principalId", "accountId", "userId"],
+      "policyDigestEnv": "TENCENT_MUTATION_IAM_POLICY_DIGEST",
+      "policyDigestAuthority": "protected_release_owner_verified_production_policy_digest",
+      "requiredTencentActions": ["tag:TagResources", "tag:ModifyResourcesTagValue"],
+      "runtimeSecretKey": "OPL_TENCENT_PREDEBIT_IAM_ATTESTATION",
+      "consumer": "opl-cloud-fabric_only",
+      "tencentTagWriteCalls": 0,
+      "failure": "before_kubernetes_rbac_capacity_sub2api_debit_and_provider_write"
+    },
     "requiredEnv": [
       "OPL_RUNTIME_PROVIDER",
       "OPL_K8S_NAMESPACE",
@@ -172,6 +185,7 @@
       "OPL_SUB2API_ADMIN_PASSWORD",
       "TENCENTCLOUD_SECRET_ID",
       "TENCENTCLOUD_SECRET_KEY",
+      "TENCENT_MUTATION_IAM_POLICY_DIGEST",
       "TENCENTCLOUD_REGION",
       "TENCENT_DEPLOY_CLUSTER_ID",
       "TENCENT_CVM_SUBNET_ID",
@@ -195,6 +209,7 @@
       "OPL_SUB2API_ADMIN_PASSWORD",
       "TENCENTCLOUD_SECRET_ID",
       "TENCENTCLOUD_SECRET_KEY",
+      "TENCENT_MUTATION_IAM_POLICY_DIGEST",
       "TCR_USERNAME",
       "TCR_PASSWORD",
       "TENCENT_DEPLOY_KUBECONFIG_B64",
@@ -275,7 +290,10 @@
         "current_workspace_image",
         "requested_workspace_image",
         "must match the current production Workspace image",
-        "sha256"
+        "sha256",
+        "TENCENT_MUTATION_IAM_POLICY_DIGEST",
+        "node tools/tencent-predebit-iam-attestation.ts",
+        "tencent-predebit-iam-attestation"
       ],
       "Preflight rollout node storage": [
         "source tools/tke-image-rollout.sh",
@@ -289,6 +307,7 @@
         "--from-file=OPL_SUB2API_ADMIN_PASSWORD=\"$secret_dir/sub2api-admin-password\"",
         "--from-file=TENCENTCLOUD_SECRET_ID=\"$secret_dir/tencentcloud-secret-id\"",
         "--from-file=TENCENTCLOUD_SECRET_KEY=\"$secret_dir/tencentcloud-secret-key\"",
+        "--from-file=OPL_TENCENT_PREDEBIT_IAM_ATTESTATION=\"$secret_dir/tencent-predebit-iam-attestation\"",
         "--from-file=.dockerconfigjson=\"$docker_config\"",
         "--from-file=kubeconfig=\"$KUBECONFIG\""
       ],

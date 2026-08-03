@@ -26,7 +26,7 @@ test("root agent instructions require the launch invariants", async () => {
 test("launch freeze fixes the V2 products, owner lanes, settlement, and verification slot", async () => {
   const freeze = await json("packages/contracts/opl-cloud-launch-freeze-contract.json");
 
-  assert.equal(freeze.schemaVersion, 23);
+  assert.equal(freeze.schemaVersion, 24);
   assert.equal(freeze.architectureAuthority.repository, "https://github.com/gaofeng21cn/one-person-lab-cloud");
   assert.equal(freeze.architectureAuthority.reviewedRevision, "c349a41d860e706ed43a4090b9e75abb0b130971");
   assert.deepEqual(Object.keys(freeze.productSurfaces), ["gateway", "workspace", "serve", "console", "fabric", "ledger"]);
@@ -90,6 +90,10 @@ test("launch freeze fixes the V2 products, owner lanes, settlement, and verifica
   assert.deepEqual(freeze.workspaceLaunch.recoveryPlan.operatorInput, ["accountId", "launchOperationId", "decision"]);
   assert.deepEqual(freeze.workspaceLaunch.recoveryPlan.consoleExecuteRequest, ["planId", "planDigest", "decision", "confirmation"]);
   assert.equal(freeze.workspaceLaunch.recoveryPlan.execution.fencing, "current_byte_exact_lease_token_required_to_finalize");
+  assert.equal(freeze.workspaceLaunch.recoveryPlan.execution.releasedLeaseReacquire, "both_token_and_expiry_empty_reacquire_same_nonterminal_execution_and_run_identity");
+  assert.equal(freeze.workspaceLaunch.recoveryPlan.execution.partialOrInvalidLease, "fail_closed_identity_conflict");
+  assert.equal(freeze.workspaceLaunch.recoveryPlan.execution.workerTerminalSync, "workspace_launch_postgresql_cas_synchronizes_succeeded_or_manual_review_to_plan_and_execution");
+  assert.equal(freeze.workspaceLaunch.recoveryPlan.execution.confirmedWriteReadbackRetry, "cbs_and_runtime_transient_readback_only_no_budget_reset_or_second_external_write");
   assert.equal(freeze.workspaceLaunch.manualReviewRecovery.route, "POST /api/operator/workspace-launches/{operationId}/recovery-plan/execute");
   assert.equal(freeze.workspaceLaunch.manualReviewRecovery.operatorAuthorization, "authenticated_reserved_operator_session_plus_csrf");
   assert.equal(freeze.workspaceLaunch.manualReviewRecovery.resourceIdentityInput, "forbidden_server_authoritative_readback_only");
@@ -132,6 +136,17 @@ test("launch freeze fixes the V2 products, owner lanes, settlement, and verifica
     identity: ["planId", "planDigest", "approvalDigest", "executionId", "runId", "decision"],
     replay: "same_plan_digest_and_decision_returns_same_execution_and_run_identity",
     failedZeroSuccessor: "archive_old_plan_execution_approval_error_and_mutation_outcome_then_require_new_plan_validation_and_approval"
+  });
+  assert.deepEqual(freeze.providerProcurement.preDebitIamGate, {
+    timing: "compute_monthly_preflight_before_kubernetes_rbac_capacity_and_first_sub2api_debit",
+    proofMode: "production_runner_deployment_attestation",
+    releaseBinding: "exact_merged_OPL_RELEASE_SHA",
+    identityAuthority: "live_STS_GetCallerIdentity_at_deploy_and_preflight",
+    identityFields: ["type", "principalId", "accountId", "userId"],
+    policyDigestSource: "protected_release_owner_verified_production_policy_digest",
+    requiredTencentActions: ["tag:TagResources", "tag:ModifyResourcesTagValue"],
+    actualTencentTagWriteCalls: 0,
+    failure: "before_rbac_capacity_debit_and_provider_mutation_all_business_mutation_counts_zero"
   });
   assert.deepEqual({
     trigger: freeze.workspaceLaunch.computeClaimRecovery.trigger,

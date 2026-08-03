@@ -114,7 +114,7 @@ test("Current contracts hard cut Workspace purchase, access, and Runtime facts",
     json("packages/contracts/opl-cloud-console-source-truth-contract.json")
   ]);
 
-  assert.equal(freeze.schemaVersion, 23);
+  assert.equal(freeze.schemaVersion, 24);
   assert.equal(billing.schemaVersion, 11);
   assert.equal(freeze.workspaceLaunch.customerDebitCardinality, 1);
   assert.equal(freeze.workspaceLaunch.persistence, "control_plane_runtime_operations with action=workspace.launch.v2 and result.schemaVersion=2");
@@ -125,6 +125,8 @@ test("Current contracts hard cut Workspace purchase, access, and Runtime facts",
     freeze.workspaceLaunch.recoveryPlan.execution.fabricLedgerEvidence,
     "mutationLedger_mutationLedgerOutcome_and_sha256_digest_from_fabric_identity_evidence"
   );
+  assert.equal(freeze.workspaceLaunch.recoveryPlan.execution.releasedLeaseReacquire, "both_token_and_expiry_empty_reacquire_same_nonterminal_execution_and_run_identity");
+  assert.equal(freeze.workspaceLaunch.recoveryPlan.execution.workerTerminalSync, "workspace_launch_postgresql_cas_synchronizes_succeeded_or_manual_review_to_plan_and_execution");
   assert.equal(freeze.workspaceLaunch.nextBlockedStage, undefined);
   assert.deepEqual(freeze.workspaceLaunch.fulfillmentResources, ["compute", "storage", "attachment", "gateway_secret", "runtime"]);
   assert.deepEqual(freeze.workspaceLaunch.computeClaimRecoveryCustomerProjection, {
@@ -433,7 +435,10 @@ test("Current Fabric contracts require dedicated package NodePools without weake
     output: "redacted_evidence_only",
     currentState: "implemented_and_fake_tested_not_executed"
   });
-  assert.equal(deployment.schemaVersion, 32);
+  assert.equal(deployment.schemaVersion, 33);
+  assert.equal(deployment.deployWorkflow.preDebitTencentIamGate.proofMode, "production_runner_deployment_attestation");
+  assert.deepEqual(deployment.deployWorkflow.preDebitTencentIamGate.requiredTencentActions, ["tag:TagResources", "tag:ModifyResourcesTagValue"]);
+  assert.equal(deployment.deployWorkflow.preDebitTencentIamGate.tencentTagWriteCalls, 0);
   assert.deepEqual(deployment.productionWorkspaceRecoveryPlan, {
     authority: "control_plane_only",
     workflow: ".github/workflows/production-basic-customer-operation.yml",
@@ -704,7 +709,7 @@ test("Current contracts hard cut operator resources, wallet adjustments, and ann
     absentRequires: "both_local_identities_and_exact_provider_describe_absence",
     forbiddenSideEffects: ["sync", "tag", "kubectl_apply", "delete", "label", "purchase", "renew", "destroy"]
   });
-  assert.equal(boundary.schemaVersion, 26);
+  assert.equal(boundary.schemaVersion, 27);
   assert.deepEqual(boundary.services.controlPlane.workspaceContinuationAttemptBudget, {
     owner: "original_workspace.launch.v2_operation",
     stages: ["storage", "attachment", "secret", "runtime", "activation", "receipt"],
@@ -732,6 +737,10 @@ test("Current contracts hard cut operator resources, wallet adjustments, and ann
   assert.equal(recoveryPlan.executionLease.fencing, "byte_exact_current_lease_token_required_to_finalize");
   assert.equal(recoveryPlan.executionLease.unknownResult, "reconcile_same_execution_identity_without_second_provider_entry");
   assert.equal(recoveryPlan.executionLease.authoritativeZeroEvidence, "fabric_identity_evidence_mutation_ledger_outcome_and_sha256_digest");
+  assert.equal(recoveryPlan.executionLease.releasedLeaseReacquire, "both_token_and_expiry_empty_same_execution_and_run_new_fenced_lease");
+  assert.equal(recoveryPlan.executionLease.partialOrInvalidLease, "fail_closed_identity_conflict");
+  assert.equal(recoveryPlan.executionLease.workerTerminalSync, "workspace_launch_postgresql_cas_updates_plan_and_execution_terminal_projection");
+  assert.equal(recoveryPlan.executionLease.confirmedWriteReadbackRetry, "storage_and_runtime_readback_only_without_budget_reset_or_second_external_write");
   assert.equal(recoveryPlan.proofMutationCounts.sub2api, 0);
   assert.equal(recoveryPlan.proofMutationCounts.tencent, 0);
   assert.equal(recoveryPlan.proofMutationCounts.kubernetes, 0);
@@ -844,7 +853,7 @@ test("Current contracts hard cut operator resources, wallet adjustments, and ann
     authentication: "internal_service_token",
     evaluator: "shared_with_normal_monthly_preflight",
     packages: ["basic", "pro"],
-    stages: ["launch_permission", "credentials", "node_pool_discovery", "tke_cluster_capacity", "node_pool_contract", "subnet", "zone", "cvm_prepaid_quota", "cvm_sku_price", "cbs_prepaid_quota", "cbs_price"],
+    stages: ["launch_permission", "credentials", "tencent_predebit_iam", "node_pool_discovery", "tke_cluster_capacity", "node_pool_contract", "subnet", "zone", "cvm_prepaid_quota", "cvm_sku_price", "cbs_prepaid_quota", "cbs_price"],
     independentChecks: "run_all_without_mutation",
     dependentChecks: "blocked_with_blockedBy",
     safeFactsOnly: true,
