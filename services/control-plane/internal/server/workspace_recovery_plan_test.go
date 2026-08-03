@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"opl-cloud/services/control-plane/internal/clients"
 	"opl-cloud/services/control-plane/internal/controlplane"
 )
 
@@ -563,7 +564,7 @@ func TestWorkspaceRecoveryPlanExpiredLeaseRejectsStaleHolderFinalize(t *testing.
 	if err != nil || !won || fresh.LeaseToken == "" || fresh.LeaseToken == stale.LeaseToken {
 		t.Fatalf("lease takeover won=%v err=%v stale=%#v fresh=%#v", won, err, stale, fresh)
 	}
-	if _, err := fixture.app.finalizeWorkspaceRecoveryExecution(context.Background(), scenario.unknown.ID, stale.ExecutionID, stale.LeaseToken, nil); !errors.Is(err, errBillingReviewIdentity) {
+	if _, err := fixture.app.finalizeWorkspaceRecoveryExecution(context.Background(), scenario.unknown.ID, stale.ExecutionID, stale.LeaseToken, workspaceRecoveryMutationOutcome{Status: "unknown"}, nil); !errors.Is(err, errBillingReviewIdentity) {
 		t.Fatalf("stale holder finalize err=%v", err)
 	}
 	current := fixture.operation(t)
@@ -684,6 +685,100 @@ func TestWorkspaceRecoveryPlanValidateReportsComputeIdentityConflictAndKeepsManu
 	}
 	if !internalExact {
 		t.Fatalf("persisted authority omitted exact CVM expected/actual: %#v", persisted.RecoveryPlan.Mismatches)
+	}
+}
+
+func TestWorkspaceRecoveryPlanDiagnoseCreatesSuccessorForFailedZeroMutationExecution(t *testing.T) {
+	t.Setenv("OPL_RELEASE_SHA", strings.Repeat("a", 40))
+	t.Setenv("OPL_CLOUD_IMAGE", "uswccr.ccs.tencentyun.com/oplcloud/opl-cloud@sha256:"+strings.Repeat("b", 64))
+	fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, "basic")
+	fixture.fabric.computeClaimProof = computeClaimRecoveryProofForLaunch(operation, "unallocated")
+
+	first := recoveryPlanResponse(t, requestWorkspaceRecoveryPlan(t, fixture, http.MethodPost, "/diagnose", map[string]any{"accountId": operation.AccountID}))
+	failed := fixture.operation(t)
+	failed.Status, failed.ErrorCode = "manual_review", "workspace_compute_claim_identity_mismatch"
+	failed.RecoveryPlan.Status, failed.RecoveryPlan.ErrorCode = "failed", "workspace_compute_claim_identity_mismatch"
+	failed.RecoveryExecution = &workspaceRecoveryExecution{
+		ExecutionID: "recovery-exec-failed-zero", RunIdentity: "control-plane-run-failed-zero",
+		PlanID: first.PlanID, PlanDigest: first.PlanDigest, ApprovalDigest: strings.Repeat("c", 64), Decision: "continue",
+		Status: "failed", StartedAt: time.Now().UTC().Add(-time.Minute).Format(time.RFC3339Nano),
+		CompletedAt: time.Now().UTC().Format(time.RFC3339Nano), ErrorCode: failed.ErrorCode,
+	}
+	mustStore(t, fixture.store.SaveRuntimeOperation(context.Background(), workspaceLaunchOperationRow(failed)))
+
+	successorResponse := requestWorkspaceRecoveryPlan(t, fixture, http.MethodPost, "/diagnose", map[string]any{"accountId": operation.AccountID})
+	if successorResponse.Code != http.StatusOK {
+		t.Fatalf("successor diagnose status=%d body=%s", successorResponse.Code, successorResponse.Body.String())
+	}
+	successor := recoveryPlanResponse(t, successorResponse)
+	persisted := fixture.operation(t)
+	if successor.Status != "diagnosed" || successor.PlanID == first.PlanID || successor.PlanDigest == first.PlanDigest ||
+		persisted.RecoveryExecution != nil || len(persisted.RecoveryHistory) != 1 {
+		t.Fatalf("failed zero execution did not create successor: first=%#v successor=%#v operation=%#v", first, successor, persisted)
+	}
+	history := persisted.RecoveryHistory[0]
+	if history.Plan.PlanID != first.PlanID || history.Plan.PlanDigest != first.PlanDigest || history.Plan.Status != "failed" ||
+		history.Execution.ExecutionID != "recovery-exec-failed-zero" || history.Execution.ErrorCode != failed.ErrorCode ||
+		history.Execution.MutationOutcome.Status != "confirmed_zero" || history.Execution.MutationOutcome.Counts != (workspaceRecoveryMutationCounts{}) ||
+		persisted.RecoveryPlan.Generation != 1 || persisted.RecoveryPlan.PredecessorPlanDigest != first.PlanDigest ||
+		persisted.RecoveryPlan.PredecessorExecutionID != history.Execution.ExecutionID {
+		t.Fatalf("successor evidence not preserved: history=%#v current=%#v", history, persisted.RecoveryPlan)
+	}
+	if len(fixture.fabric.computeClaimCalls) != 0 || len(fixture.fabric.storageIDs) != 0 || len(fixture.sub2API.charges) != 1 || len(fixture.fabric.computeIDs) != 1 {
+		t.Fatalf("successor diagnose crossed zero-mutation boundary: claims=%d storage=%d charges=%d computes=%d", len(fixture.fabric.computeClaimCalls), len(fixture.fabric.storageIDs), len(fixture.sub2API.charges), len(fixture.fabric.computeIDs))
+	}
+	replayed := recoveryPlanResponse(t, requestWorkspaceRecoveryPlan(t, fixture, http.MethodPost, "/diagnose", map[string]any{"accountId": operation.AccountID}))
+	replayedOperation := fixture.operation(t)
+	if replayed.PlanID != successor.PlanID || replayed.PlanDigest != successor.PlanDigest || len(replayedOperation.RecoveryHistory) != 1 || replayedOperation.RecoveryExecution != nil {
+		t.Fatalf("successor diagnose replay drifted identity: successor=%#v replay=%#v operation=%#v", successor, replayed, replayedOperation)
+	}
+}
+
+func TestWorkspaceRecoveryPlanDiagnoseKeepsFailedExecutionWithNonzeroMutationEvidence(t *testing.T) {
+	t.Setenv("OPL_RELEASE_SHA", strings.Repeat("a", 40))
+	t.Setenv("OPL_CLOUD_IMAGE", "uswccr.ccs.tencentyun.com/oplcloud/opl-cloud@sha256:"+strings.Repeat("b", 64))
+	fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, "basic")
+	fixture.fabric.computeClaimProof = computeClaimRecoveryProofForLaunch(operation, "unallocated")
+	first := recoveryPlanResponse(t, requestWorkspaceRecoveryPlan(t, fixture, http.MethodPost, "/diagnose", map[string]any{"accountId": operation.AccountID}))
+	failed := fixture.operation(t)
+	failed.Status, failed.ErrorCode = "manual_review", "workspace_compute_claim_identity_mismatch"
+	failed.RecoveryPlan.Status, failed.RecoveryPlan.ErrorCode = "failed", failed.ErrorCode
+	failed.RecoveryExecution = &workspaceRecoveryExecution{
+		ExecutionID: "recovery-exec-failed-nonzero", RunIdentity: "control-plane-run-failed-nonzero",
+		PlanID: first.PlanID, PlanDigest: first.PlanDigest, ApprovalDigest: strings.Repeat("c", 64), Decision: "continue",
+		Status: "failed", StartedAt: time.Now().UTC().Add(-time.Minute).Format(time.RFC3339Nano),
+		CompletedAt: time.Now().UTC().Format(time.RFC3339Nano), ErrorCode: failed.ErrorCode,
+		MutationOutcome: workspaceRecoveryMutationOutcome{
+			Status: "nonzero", Counts: workspaceRecoveryMutationCounts{Kubernetes: 1}, Source: "compute_claim_response",
+		},
+	}
+	mustStore(t, fixture.store.SaveRuntimeOperation(context.Background(), workspaceLaunchOperationRow(failed)))
+
+	replayed := recoveryPlanResponse(t, requestWorkspaceRecoveryPlan(t, fixture, http.MethodPost, "/diagnose", map[string]any{"accountId": operation.AccountID}))
+	persisted := fixture.operation(t)
+	if replayed.PlanID != first.PlanID || replayed.PlanDigest != first.PlanDigest || replayed.Status != "failed" ||
+		persisted.RecoveryExecution == nil || persisted.RecoveryExecution.ExecutionID != failed.RecoveryExecution.ExecutionID || len(persisted.RecoveryHistory) != 0 ||
+		len(fixture.fabric.computeClaimCalls) != 0 || len(fixture.fabric.storageIDs) != 0 {
+		t.Fatalf("nonzero failed execution was replaced or repeated: replay=%#v operation=%#v", replayed, persisted)
+	}
+}
+
+func TestWorkspaceRecoveryPlanDiagnosePersistsFieldMismatch(t *testing.T) {
+	fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, "basic")
+	proof := computeClaimRecoveryProofForLaunch(operation, "unallocated")
+	input := workspaceComputeClaimRecoveryRequestForOperation(operation)
+	evidence := &clients.ComputeClaimIdentityEvidence{
+		Checks: []clients.ComputeClaimIdentityCheck{{
+			Field: "binding.operationId", Matches: false, Expected: operation.ID + ":compute", Actual: "op-conflict",
+		}},
+		MutationLedger: "absent",
+	}
+	plan, err := newWorkspaceComputeClaimRecoveryPlan(operation, input, proof, evidence, workspaceRecoveryReleaseBinding{
+		MainSHA: strings.Repeat("a", 40), CloudImageDigest: "sha256:" + strings.Repeat("b", 64), WorkspaceImageDigest: deployedImageDigest(operation.WorkspaceImageDigest),
+	})
+	if err != nil || plan.Status != "blocked" || len(plan.Mismatches) != 1 || plan.Mismatches[0].Field != "binding.operationId" ||
+		plan.Mismatches[0].Expected != operation.ID+":compute" || plan.Mismatches[0].Actual != "op-conflict" || len(fixture.fabric.computeClaimCalls) != 0 {
+		t.Fatalf("diagnose mismatch plan=%#v err=%v", plan, err)
 	}
 }
 

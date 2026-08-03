@@ -664,6 +664,22 @@ contract or select the SKU for a customer launch.
   and performs zero database, Fabric, Sub2API, Tencent, or Kubernetes writes.
   An expired approval that was never persisted is rejected, and any key,
   digest, or target drift returns conflict without mutation.
+- If an exact active Fabric MachineOwnership and current compute binding are
+  preserved while authoritative provider truth proves the same CVM is
+  target-owned and its unique Node is still unallocated, Fabric may reserve the
+  existing node-only mutation ledger under the original launch lock. This path
+  performs zero Tencent writes, permits at most one CAS-bound Kubernetes Node
+  patch, and then requires target-owned provider readback. Any competing owner,
+  malformed binding, existing unknown ledger outcome, or stale readback remains
+  `manual_review` without another patch.
+- A terminal failed Recovery Plan may produce a successor only when Control
+  Plane has explicit persisted `confirmed_zero` mutation evidence, or fresh
+  authoritative Fabric evidence proves the original compute mutation ledger is
+  absent. The predecessor Plan, Execution, approval identity, error, and
+  mutation outcome remain immutable history. The successor has a new
+  generation-bound PlanID/PlanDigest and requires fresh validation,
+  confirmation, approval, execution, and run identities. Nonzero or
+  unprovable outcomes always replay the failed execution without provider entry.
 - Recovery Plan diagnosis, validation, blocked, and continuation projections
   use explicit allowlist DTOs. Complete proof and approval data remain inside
   Control Plane persistence and are never uploaded. The workflow only receives

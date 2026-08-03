@@ -120,6 +120,7 @@ type workspaceLaunchOperation struct {
 	ReadbackRecoveryProof      *workspaceLaunchReadbackRecoveryProof    `json:"readbackRecoveryProof,omitempty"`
 	RecoveryPlan               *workspaceRecoveryPlan                   `json:"recoveryPlan,omitempty"`
 	RecoveryExecution          *workspaceRecoveryExecution              `json:"recoveryExecution,omitempty"`
+	RecoveryHistory            []workspaceRecoveryPlanHistoryEntry      `json:"recoveryHistory,omitempty"`
 	WorkspaceImageDigest       string                                   `json:"workspaceImageDigest,omitempty"`
 	ComputeClaimPrivateIP      string                                   `json:"computeClaimPrivateIp,omitempty"`
 	ComputeClaimProof          *clients.ComputeClaimRecoveryProof       `json:"computeClaimProof,omitempty"`
