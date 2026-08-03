@@ -360,7 +360,8 @@ func (s *MemoryOperationStore) SaveComputeClaimRecovery(_ context.Context, expec
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if !validComputeClaimRecoveryTransition(expected.Status, next.Status) || !sameComputeClaimRecoveryOperation(expected, next) ||
-		!validComputeClaimRecoveryBindingTransition(expected, next) || !validComputeClaimRecoveryMutationTransition(expected, next) {
+		!validComputeClaimRecoveryBindingTransition(expected, next) || !validComputeClaimRecoveryMutationTransition(expected, next) ||
+		!validComputeClaimTerminalTransition(expected, next) {
 		return ErrRuntimeOperationNotCurrent
 	}
 	expectedPayload, err := operationPayloadJSON(expected)
@@ -1179,7 +1180,8 @@ func (s *PostgresOperationStore) SaveRuntime(ctx context.Context, operation Fabr
 
 func (s *PostgresOperationStore) SaveComputeClaimRecovery(ctx context.Context, expected, next FabricOperation) error {
 	if !validComputeClaimRecoveryTransition(expected.Status, next.Status) || !sameComputeClaimRecoveryOperation(expected, next) ||
-		!validComputeClaimRecoveryBindingTransition(expected, next) || !validComputeClaimRecoveryMutationTransition(expected, next) {
+		!validComputeClaimRecoveryBindingTransition(expected, next) || !validComputeClaimRecoveryMutationTransition(expected, next) ||
+		!validComputeClaimTerminalTransition(expected, next) {
 		return ErrRuntimeOperationNotCurrent
 	}
 	expectedPayloadJSON, err := operationPayloadJSON(expected)
@@ -1262,7 +1264,8 @@ func (s *PostgresOperationStore) ConvergeRuntimeReadback(ctx context.Context, ex
 func validComputeClaimRecoveryTransition(currentStatus, nextStatus string) bool {
 	return currentStatus == "failed" && nextStatus == "claim_pending" ||
 		currentStatus == "claim_pending" && nextStatus == "claim_pending" ||
-		currentStatus == "claim_pending" && nextStatus == "succeeded"
+		currentStatus == "claim_pending" && nextStatus == "succeeded" ||
+		currentStatus == "claim_pending" && nextStatus == "failed"
 }
 
 func sameComputeClaimRecoveryOperation(current, next FabricOperation) bool {
@@ -1280,7 +1283,27 @@ func validComputeClaimRecoveryBindingTransition(current, next FabricOperation) b
 	if currentPresent {
 		return currentValid && currentBinding == nextBinding
 	}
-	return next.Status == "claim_pending"
+	if next.Status == "claim_pending" {
+		return true
+	}
+	if next.Status != "failed" {
+		return false
+	}
+	launchOperationID, ok := strings.CutSuffix(current.IdempotencyKey, ":compute")
+	return ok && nextBinding.LaunchOperationID == launchOperationID && nextBinding.IdempotencyKey == current.IdempotencyKey && nextBinding.RequestHash == current.RequestHash
+}
+
+func validComputeClaimTerminalTransition(current, next FabricOperation) bool {
+	if next.Status != "failed" {
+		return true
+	}
+	if current.Status != "claim_pending" || next.FinishedAt.IsZero() {
+		return false
+	}
+	evidence, present, valid := decodeComputeClaimTerminalEvidence(next)
+	return present && valid && evidence.FabricRecordID == current.ID && evidence.OperationID == current.OperationID && evidence.IdempotencyKey == current.IdempotencyKey &&
+		evidence.RequestHash == current.RequestHash && evidence.ComputeAllocationID == current.ResourceID && evidence.AccountID == current.AccountID && evidence.WorkspaceID == current.WorkspaceID &&
+		next.ErrorCode == evidence.ErrorCode
 }
 
 func operationPayloadJSON(operation FabricOperation) (string, error) {

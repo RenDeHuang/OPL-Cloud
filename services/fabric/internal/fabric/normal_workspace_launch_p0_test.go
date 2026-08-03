@@ -11,25 +11,26 @@ import (
 
 type normalLaunchComputeProvider struct {
 	testProvider
-	mu                    sync.Mutex
-	prepareCalls          int
-	createCalls           int
-	readbackCalls         int
-	discoveryCalls        int
-	proofCalls            int
-	cvmClaimCalls         int
-	nodeClaimCalls        int
-	legacyClaimCalls      int
-	created               ComputeAllocation
-	createResultErr       error
-	cvmClaimResponseLost  bool
-	nodeClaimResponseLost bool
-	failProofAfterNode    bool
-	cvmOwned              bool
-	nodeOwned             bool
-	createGate            *normalLaunchProviderWriteGate
-	cvmClaimGate          *normalLaunchProviderWriteGate
-	nodeClaimGate         *normalLaunchProviderWriteGate
+	mu                         sync.Mutex
+	prepareCalls               int
+	createCalls                int
+	readbackCalls              int
+	discoveryCalls             int
+	proofCalls                 int
+	cvmClaimCalls              int
+	nodeClaimCalls             int
+	legacyClaimCalls           int
+	created                    ComputeAllocation
+	createResultErr            error
+	cvmClaimResponseLost       bool
+	nodeClaimResponseLost      bool
+	nodeClaimLeavesUnallocated bool
+	failProofAfterNode         bool
+	cvmOwned                   bool
+	nodeOwned                  bool
+	createGate                 *normalLaunchProviderWriteGate
+	cvmClaimGate               *normalLaunchProviderWriteGate
+	nodeClaimGate              *normalLaunchProviderWriteGate
 }
 
 func (p *normalLaunchComputeProvider) PrepareComputeAllocation(ctx context.Context, input ComputeAllocationInput) (ComputeAllocationPreparation, error) {
@@ -114,7 +115,9 @@ func (p *normalLaunchComputeProvider) ClaimComputeNode(_ context.Context, _ Comp
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.nodeClaimCalls++
-	p.nodeOwned = true
+	if !p.nodeClaimLeavesUnallocated {
+		p.nodeOwned = true
+	}
 	gate := p.nodeClaimGate
 	p.mu.Unlock()
 	gate.afterWrite()
@@ -456,6 +459,56 @@ func TestNormalWorkspacePersistedClaimPendingRejectsManualRecoveryLedgerBeforePr
 	operations, err = store.List(context.Background())
 	if err != nil || len(operations) != 1 || operations[0].Status != "claim_pending" {
 		t.Fatalf("manual recovery ledger operations=%#v err=%v", operations, err)
+	}
+}
+
+func TestNormalWorkspacePersistedClaimPendingTerminalizesUnprovableNodeWithoutReplay(t *testing.T) {
+	store := NewMemoryOperationStore()
+	provider := &normalLaunchComputeProvider{nodeClaimResponseLost: true, nodeClaimLeavesUnallocated: true}
+	input, allocation := seedNormalWorkspaceComputeClaimPending(t, store, provider, "automatic-terminal-node")
+	service := NewServiceWithOperationStore(provider, store)
+
+	if _, err := service.CreateComputeAllocation(context.Background(), input); err != nil {
+		t.Fatal(err)
+	}
+	waitForComputeReconcileIdle(t, service, allocation.ID)
+	operations, err := store.List(context.Background())
+	if err != nil || len(operations) != 1 || operations[0].Status != "claim_pending" {
+		t.Fatalf("terminal operations=%#v err=%v", operations, err)
+	}
+	// The first replay only records the Node reservation.  The second replay
+	// is the bounded readback that produces the terminal result.
+	if _, err := service.CreateComputeAllocation(context.Background(), input); err != nil {
+		t.Fatalf("reservation replay err=%v", err)
+	}
+	waitForComputeReconcileIdle(t, service, allocation.ID)
+	operations, err = store.List(context.Background())
+	if err != nil || len(operations) != 1 || operations[0].Status != "failed" || operations[0].FinishedAt.IsZero() {
+		t.Fatalf("terminal operations=%#v err=%v", operations, err)
+	}
+	terminal, present, valid := decodeComputeClaimTerminalEvidence(operations[0])
+	if !present || !valid || terminal.Stage != "compute_claim_node" || terminal.Status != "terminal_unprovable" || terminal.AttemptCount == 0 || terminal.ErrorCode == "" {
+		t.Fatalf("terminal evidence=%#v present=%v valid=%v", terminal, present, valid)
+	}
+	var persisted ComputeAllocation
+	if !decodeOperationResource(operations[0], &persisted) || persisted.Status != "quarantined" || persisted.ClaimTerminalEvidence == nil {
+		t.Fatalf("terminal allocation=%#v", persisted)
+	}
+	ownership, err := store.MachineOwnership(context.Background(), allocation.ID)
+	if err != nil || ownership.Status != "quarantined" {
+		t.Fatalf("terminal ownership=%#v err=%v", ownership, err)
+	}
+	_, _, proofCalls, _, nodeClaims := provider.automaticContinuationCounts()
+	if proofCalls != 2 || nodeClaims != 1 {
+		t.Fatalf("initial terminal provider calls proof=%d node=%d", proofCalls, nodeClaims)
+	}
+	if _, err := service.CreateComputeAllocation(context.Background(), input); !errors.Is(err, ErrComputeOperationFailed) {
+		t.Fatalf("terminal replay err=%v, want %v", err, ErrComputeOperationFailed)
+	}
+	waitForComputeReconcileIdle(t, service, allocation.ID)
+	_, _, proofCalls, _, nodeClaims = provider.automaticContinuationCounts()
+	if proofCalls != 2 || nodeClaims != 1 {
+		t.Fatalf("terminal replay repeated provider calls proof=%d node=%d", proofCalls, nodeClaims)
 	}
 }
 

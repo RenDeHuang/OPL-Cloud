@@ -1296,6 +1296,41 @@ func TestPostgresComputeClaimRecoveryOperationCASRejectsSkippedTransition(t *tes
 	}
 }
 
+func TestPostgresComputeClaimRecoveryOperationCASAllowsOneTerminalClaimResult(t *testing.T) {
+	databaseURL := fabricTestDatabaseURL(t)
+	store, err := newTestPostgresOperationStore(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.client.Close()
+
+	operation := postgresComputeClaimOperation("terminal", "claim_pending")
+	if err := store.Append(context.Background(), operation); err != nil {
+		t.Fatal(err)
+	}
+	now := operation.CreatedAt.Add(time.Minute)
+	terminal := operation
+	terminal.Status, terminal.ErrorCode, terminal.FinishedAt = "failed", "compute_claim_terminal_node_unprovable", now
+	terminal.RedactedProviderPayload = withComputeClaimTerminalEvidence(operation.RedactedProviderPayload, ComputeClaimTerminalEvidence{
+		SchemaVersion: 1, Stage: "compute_claim_node", Status: "terminal_unprovable", ErrorCode: terminal.ErrorCode,
+		ReadbackStatus: "unallocated", AttemptCount: 0, Attempted: 0, Confirmed: 0, Unknown: 0, Max: 0,
+		StartedAt: operation.StartedAt.Format(time.RFC3339Nano), FinishedAt: now.Format(time.RFC3339Nano),
+		FabricRecordID: operation.ID, OperationID: operation.OperationID, IdempotencyKey: operation.IdempotencyKey,
+		RequestHash: operation.RequestHash, AccountID: operation.AccountID, WorkspaceID: operation.WorkspaceID,
+		ComputeAllocationID: operation.ResourceID, PackageID: "basic", NodePoolID: "np-postgres-basic",
+	})
+	if err := store.SaveComputeClaimRecovery(context.Background(), operation, terminal); err != nil {
+		t.Fatalf("claim_pending -> terminal failed: %v", err)
+	}
+	if err := store.SaveComputeClaimRecovery(context.Background(), operation, terminal); !errors.Is(err, ErrRuntimeOperationNotCurrent) {
+		t.Fatalf("stale terminal replay error=%v, want ErrRuntimeOperationNotCurrent", err)
+	}
+	operations, err := store.List(context.Background())
+	if err != nil || len(operations) != 1 || operations[0].Status != "failed" || operations[0].ErrorCode != terminal.ErrorCode {
+		t.Fatalf("terminal operation=%#v err=%v", operations, err)
+	}
+}
+
 func TestPostgresComputeClaimRecoveryOperationCASRejectsStaleAndRequestHashDrift(t *testing.T) {
 	databaseURL := fabricTestDatabaseURL(t)
 	store, err := newTestPostgresOperationStore(databaseURL)

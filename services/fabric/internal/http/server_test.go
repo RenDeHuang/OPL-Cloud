@@ -962,6 +962,22 @@ func TestStorageSnapshotHTTPCreateRestoreAndDestroy(t *testing.T) {
 	}
 }
 
+func TestWriteComputeAllocationResultPreservesTerminalEvidence(t *testing.T) {
+	allocation := fabric.ComputeAllocation{
+		ID: "compute-fixture", AccountID: "acct-fixture", WorkspaceID: "ws-fixture", PackageID: "basic", Status: "quarantined",
+		ClaimTerminalEvidence: &fabric.ComputeClaimTerminalEvidence{Stage: "compute_claim_node", Status: "terminal_unprovable", ErrorCode: "compute_claim_node_unprovable"},
+	}
+	recorder := httptest.NewRecorder()
+	writeComputeAllocationResult(recorder, allocation, fabric.ErrComputeOperationFailed)
+	if recorder.Code != http.StatusConflict {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var got fabric.ComputeAllocation
+	if err := json.NewDecoder(recorder.Body).Decode(&got); err != nil || got.ID != allocation.ID || got.ClaimTerminalEvidence == nil || got.ClaimTerminalEvidence.Status != "terminal_unprovable" {
+		t.Fatalf("allocation=%#v err=%v", got, err)
+	}
+}
+
 func TestCreateComputeAllocationHTTPRequiresIdempotencyKey(t *testing.T) {
 	server := NewServer(fabric.NewService(testProvider{}), "internal-secret")
 	body := bytes.NewBufferString(`{"accountId":"acct-alpha","workspaceId":"ws-alpha","packageId":"basic","dryRun":true}`)
