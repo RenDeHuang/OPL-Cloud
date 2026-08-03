@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 25,
+  "schemaVersion": 26,
   "owner": "OPL Platform Architecture",
   "purpose": "Current ownership contract for Console UI, Control Plane, Ledger, Fabric, and external Sub2API.",
   "state": "current",
@@ -197,6 +197,7 @@
           "fencing": "byte_exact_current_lease_token_required_to_finalize",
           "unknownResult": "reconcile_same_execution_identity_without_second_provider_entry",
           "mutationOutcome": "explicit_confirmed_zero_nonzero_or_unknown_persisted_on_execution",
+          "authoritativeZeroEvidence": "fabric_identity_evidence_mutation_ledger_outcome_and_sha256_digest",
           "terminalFailedSuccessor": "confirmed_zero_only_archive_predecessor_and_derive_generation_bound_new_plan_digest_approval_execution_run",
           "predecessorFencing": "archived_execution_lease_never_reactivated_stale_finalize_rejected"
         },
@@ -375,6 +376,15 @@
         "proofMutationCounts": {"sub2api": 0, "tencent": 0, "kubernetes": 0},
         "idempotencyBinding": ["launch_operation_id", "idempotency_key", "target_hash", "request_hash"],
         "identityEvidence": "zero_mutation_allowlisted_expected_actual_for_ids_and_second_digest_for_hashes",
+        "mutationLedgerEvidence": {
+          "fields": ["mutationLedger", "mutationLedgerOutcome", "mutationLedgerDigest"],
+          "outcomes": ["confirmed_zero", "nonzero", "unknown"],
+          "confirmedZero": "absent_or_observed_complete_zero_counts",
+          "nonzero": "observed_complete_positive_count",
+          "unknown": "reserved_node_reserved_invalid_incomplete_or_unconfirmed",
+          "digest": "sha256_of_redacted_persisted_mutation_ledger",
+          "consumer": "control_plane_terminal_failed_successor_gate"
+        },
         "bindingPersistence": "original_create_compute_allocation_operation_payload_cas",
         "malformedOrDriftedBinding": "fail_closed_conflict_zero_provider_mutation",
         "mutationLedger": {

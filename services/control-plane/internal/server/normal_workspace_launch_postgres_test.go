@@ -188,11 +188,17 @@ func configurePostgresNormalWorkspaceLaunchFabric(fabric *monthlyFabric, operati
 	}
 }
 
-func TestPostgresFailedZeroMutationRecoveryPlanCreatesPersistedSuccessorAfterReopen(t *testing.T) {
+func TestPostgresFailedAuthoritativeZeroMutationRecoveryPlanCreatesPersistedSuccessorAfterReopen(t *testing.T) {
 	t.Setenv("OPL_RELEASE_SHA", strings.Repeat("a", 40))
 	t.Setenv("OPL_CLOUD_IMAGE", "uswccr.ccs.tencentyun.com/oplcloud/opl-cloud@sha256:"+strings.Repeat("b", 64))
 	fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, "basic")
 	fixture.fabric.computeClaimProof = computeClaimRecoveryProofForLaunch(operation, "unallocated")
+	useWorkspaceRecoveryPlanIdentityEvidence(t, &fixture, &clients.ComputeClaimIdentityEvidence{
+		Checks: []clients.ComputeClaimIdentityCheck{{
+			Field: "binding.compatibility", Matches: true, Expected: "current_or_historical", Actual: "historical",
+		}},
+		MutationLedger: "observed", MutationLedgerOutcome: "confirmed_zero", MutationLedgerDigest: strings.Repeat("d", 64),
+	})
 	first := recoveryPlanResponse(t, requestWorkspaceRecoveryPlan(t, fixture, http.MethodPost, "/diagnose", map[string]any{"accountId": operation.AccountID}))
 	failed := fixture.operation(t)
 	failed.Status, failed.ErrorCode = "manual_review", "workspace_compute_claim_identity_mismatch"
@@ -240,7 +246,8 @@ func TestPostgresFailedZeroMutationRecoveryPlanCreatesPersistedSuccessorAfterReo
 	}
 	persisted, found, err := app.workspaceLaunchOperation(context.Background(), failed.ID)
 	if err != nil || !found || persisted.RecoveryPlan == nil || persisted.RecoveryExecution != nil || len(persisted.RecoveryHistory) != 1 ||
-		successor.PlanID == first.PlanID || successor.PlanDigest == first.PlanDigest || persisted.RecoveryHistory[0].Execution.MutationOutcome.Status != "confirmed_zero" {
+		successor.PlanID == first.PlanID || successor.PlanDigest == first.PlanDigest || persisted.RecoveryHistory[0].Execution.MutationOutcome.Status != "confirmed_zero" ||
+		persisted.RecoveryHistory[0].Execution.MutationOutcome.EvidenceDigest != strings.Repeat("d", 64) {
 		t.Fatalf("PostgreSQL successor=%#v operation=%#v found=%v err=%v", successor, persisted, found, err)
 	}
 }

@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 22,
+  "schemaVersion": 23,
   "owner": "OPL Platform Architecture",
   "purpose": "Freeze the approved Pilot products, delegated Gateway key lifecycle, one charge per Workspace period, prepaid Tencent fulfillment, Runtime facts, operator workflows, announcements, and evidence levels without claiming unfinished implementation or runtime evidence.",
   "state": "current",
@@ -252,6 +252,7 @@
         "runIdentity": "stable_from_execution_id_and_approval_digest",
         "unknownResult": "reconcile_same_persisted_execution_never_create_second_execution",
         "mutationOutcome": "explicit_confirmed_zero_nonzero_or_unknown_never_infer_zero_from_missing_json",
+        "fabricLedgerEvidence": "mutationLedger_mutationLedgerOutcome_and_sha256_digest_from_fabric_identity_evidence",
         "terminalFailedSuccessor": "only_after_server_authoritative_zero_external_mutation_proof_archive_predecessor_plan_execution_and_failure_then_derive_new_generation_plan_digest",
         "successorApproval": "fresh_validation_fresh_confirmation_and_new_plan_bound_approval_execution_run_identity"
       },

@@ -1160,14 +1160,7 @@ func computeClaimIdentityEvidence(operation FabricOperation, input ComputeClaimR
 		expectedOperationInput.WorkspaceID, expectedOperationInput.IdempotencyKey, expectedOperationRequestHash, time.Time{},
 	)
 	got, present, valid := decodeComputeClaimRecoveryBinding(operation)
-	ledger, ledgerPresent, ledgerValid := decodeComputeClaimRecoveryMutation(operation)
-	ledgerState := "absent"
-	if ledgerPresent {
-		ledgerState = "invalid"
-		if ledgerValid {
-			ledgerState = ledger.State
-		}
-	}
+	ledgerState, ledgerOutcome, ledgerDigest := computeClaimMutationLedgerEvidence(operation)
 	checks := []ComputeClaimIdentityCheck{
 		{Field: "fabric.operationId", Matches: operation.OperationID == expectedOperation.OperationID, Expected: expectedOperation.OperationID, Actual: operation.OperationID},
 		{Field: "fabric.operationIdempotencyKey", Matches: operation.IdempotencyKey == input.LaunchOperationID+":compute", Expected: input.LaunchOperationID + ":compute", Actual: operation.IdempotencyKey},
@@ -1192,7 +1185,37 @@ func computeClaimIdentityEvidence(operation FabricOperation, input ComputeClaimR
 			ComputeClaimIdentityCheck{Field: "binding.requestHash", Matches: got.RequestHash == expected.RequestHash, ExpectedDigest: computeClaimIdentityDigest(expected.RequestHash), ActualDigest: computeClaimIdentityDigest(got.RequestHash)},
 		)
 	}
-	return &ComputeClaimIdentityEvidence{Checks: checks, MutationLedger: ledgerState}
+	return &ComputeClaimIdentityEvidence{
+		Checks: checks, MutationLedger: ledgerState, MutationLedgerOutcome: ledgerOutcome, MutationLedgerDigest: ledgerDigest,
+	}
+}
+
+func computeClaimMutationLedgerEvidence(operation FabricOperation) (string, string, string) {
+	value, present := operation.RedactedProviderPayload[computeClaimRecoveryMutationPayloadKey]
+	if !present {
+		return "absent", "confirmed_zero", computeClaimIdentityDigest("absent")
+	}
+	body, err := json.Marshal(value)
+	if err != nil {
+		return "invalid", "unknown", computeClaimIdentityDigest("invalid")
+	}
+	digest := computeClaimIdentityDigest(string(body))
+	ledger, _, valid := decodeComputeClaimRecoveryMutation(operation)
+	if !valid {
+		return "invalid", "unknown", digest
+	}
+	if ledger.State != "observed" {
+		return ledger.State, "unknown", digest
+	}
+	complete := validComputeClaimMutationEvidence(ledger.Evidence.CVM, ledger.TencentMutationCount, 5, "cvm") &&
+		validComputeClaimMutationEvidence(ledger.Evidence.Node, ledger.KubernetesMutationCount, 1, "node")
+	if !complete {
+		return ledger.State, "unknown", digest
+	}
+	if ledger.TencentMutationCount == 0 && ledger.KubernetesMutationCount == 0 {
+		return ledger.State, "confirmed_zero", digest
+	}
+	return ledger.State, "nonzero", digest
 }
 
 func decodeComputeClaimRecoveryBinding(operation FabricOperation) (computeClaimRecoveryBinding, bool, bool) {

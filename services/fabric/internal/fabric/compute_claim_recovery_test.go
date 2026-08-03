@@ -973,6 +973,106 @@ func TestComputeClaimRecoveryIdentityEvidenceClassifiesPersistedBindingWithoutMu
 	}
 }
 
+func TestComputeClaimRecoveryIdentityEvidenceClassifiesObservedConfirmedZeroLedgerWithoutMutation(t *testing.T) {
+	service, store, provider, input := seedComputeClaimRecovery(t, "basic")
+	claimInput := ComputeClaimRecoveryClaimInput{
+		ComputeClaimRecoveryInput: input, MachineName: "machine-after", NodeName: "10.0.0.18", CVMInstanceID: "ins-fixture",
+		PrivateIP: provider.proof.PrivateIP, InstanceType: provider.proof.InstanceType, Zone: provider.proof.Zone,
+		IdempotencyKey: input.LaunchOperationID + ":compute",
+	}
+	store.mu.Lock()
+	if len(store.operation) != 1 {
+		store.mu.Unlock()
+		t.Fatalf("operations=%#v", store.operation)
+	}
+	pending := store.operation[0]
+	pending.Status, pending.ErrorCode, pending.FinishedAt = "claim_pending", "", time.Time{}
+	pending.RedactedProviderPayload = withComputeClaimRecoveryBinding(pending.RedactedProviderPayload, historicalComputeClaimRecoveryBinding(claimInput))
+	pending.RedactedProviderPayload = withComputeClaimRecoveryMutation(pending.RedactedProviderPayload, computeClaimRecoveryMutationLedger{
+		State: "observed", Reason: "identity_mismatch", Evidence: ComputeClaimEvidence{},
+	})
+	store.operation[0] = pending
+	store.mu.Unlock()
+
+	evidence, err := service.ComputeClaimRecoveryIdentityEvidence(context.Background(), claimInput)
+	stored, listErr := store.List(context.Background())
+	if err != nil || listErr != nil || evidence == nil || evidence.MutationLedger != "observed" ||
+		evidence.MutationLedgerOutcome != "confirmed_zero" || len(evidence.MutationLedgerDigest) != 64 ||
+		len(stored) != 1 || !reflect.DeepEqual(stored[0], pending) || provider.proofCalls != 0 || provider.claimCalls != 0 ||
+		provider.tagCalls != 0 || provider.scaleCalls != 0 || provider.storageCalls != 0 {
+		t.Fatalf("evidence=%#v err=%v stored=%#v listErr=%v provider=%#v", evidence, err, stored, listErr, provider)
+	}
+}
+
+func TestComputeClaimRecoveryIdentityEvidenceClassifiesObservedNonzeroLedgerWithoutMutation(t *testing.T) {
+	service, store, provider, input := seedComputeClaimRecovery(t, "basic")
+	claimInput := ComputeClaimRecoveryClaimInput{
+		ComputeClaimRecoveryInput: input, MachineName: "machine-after", NodeName: "10.0.0.18", CVMInstanceID: "ins-fixture",
+		PrivateIP: provider.proof.PrivateIP, InstanceType: provider.proof.InstanceType, Zone: provider.proof.Zone,
+		IdempotencyKey: input.LaunchOperationID + ":compute",
+	}
+	store.mu.Lock()
+	if len(store.operation) != 1 {
+		store.mu.Unlock()
+		t.Fatalf("operations=%#v", store.operation)
+	}
+	pending := store.operation[0]
+	pending.Status, pending.ErrorCode, pending.FinishedAt = "claim_pending", "", time.Time{}
+	pending.RedactedProviderPayload = withComputeClaimRecoveryBinding(pending.RedactedProviderPayload, historicalComputeClaimRecoveryBinding(claimInput))
+	pending.RedactedProviderPayload = withComputeClaimRecoveryMutation(pending.RedactedProviderPayload, computeClaimRecoveryMutationLedger{
+		State: "observed", Reason: "none", TencentMutationCount: 1, KubernetesMutationCount: 1,
+		Evidence: ComputeClaimEvidence{
+			CVM:  ComputeClaimMutationEvidence{Attempted: 1, Confirmed: 1},
+			Node: ComputeClaimMutationEvidence{Attempted: 1, Confirmed: 1},
+		},
+	})
+	store.operation[0] = pending
+	store.mu.Unlock()
+
+	evidence, err := service.ComputeClaimRecoveryIdentityEvidence(context.Background(), claimInput)
+	stored, listErr := store.List(context.Background())
+	if err != nil || listErr != nil || evidence == nil || evidence.MutationLedger != "observed" ||
+		evidence.MutationLedgerOutcome != "nonzero" || len(evidence.MutationLedgerDigest) != 64 ||
+		len(stored) != 1 || !reflect.DeepEqual(stored[0], pending) || provider.proofCalls != 0 || provider.claimCalls != 0 ||
+		provider.tagCalls != 0 || provider.scaleCalls != 0 || provider.storageCalls != 0 {
+		t.Fatalf("evidence=%#v err=%v stored=%#v listErr=%v provider=%#v", evidence, err, stored, listErr, provider)
+	}
+}
+
+func TestComputeClaimRecoveryIdentityEvidenceKeepsUnconfirmedLedgersUnknown(t *testing.T) {
+	tests := map[string]struct {
+		payload map[string]any
+		state   string
+	}{
+		"reserved": {
+			payload: withComputeClaimRecoveryMutation(nil, reservedComputeClaimRecoveryMutation()),
+			state:   "reserved",
+		},
+		"invalid": {
+			payload: map[string]any{computeClaimRecoveryMutationPayloadKey: "invalid"},
+			state:   "invalid",
+		},
+		"incomplete": {
+			payload: withComputeClaimRecoveryMutation(nil, computeClaimRecoveryMutationLedger{
+				State: "observed", Reason: "identity_mismatch", TencentMutationCount: 1,
+				Evidence: ComputeClaimEvidence{
+					CVM: ComputeClaimMutationEvidence{Attempted: 1, Unknown: 1, Missing: []string{"instance_name"}},
+				},
+			}),
+			state: "observed",
+		},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			operation := FabricOperation{RedactedProviderPayload: test.payload}
+			state, outcome, digest := computeClaimMutationLedgerEvidence(operation)
+			if state != test.state || outcome != "unknown" || len(digest) != 64 {
+				t.Fatalf("state=%q outcome=%q digest=%q", state, outcome, digest)
+			}
+		})
+	}
+}
+
 func TestComputeClaimRecoveryIdentityEvidenceDetectsOriginalOperationRequestHashDriftWithoutMutation(t *testing.T) {
 	service, store, provider, input := seedComputeClaimRecovery(t, "basic")
 	claimInput := ComputeClaimRecoveryClaimInput{

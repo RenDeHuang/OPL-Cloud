@@ -186,8 +186,10 @@ type ComputeClaimIdentityCheck struct {
 }
 
 type ComputeClaimIdentityEvidence struct {
-	Checks         []ComputeClaimIdentityCheck `json:"checks"`
-	MutationLedger string                      `json:"mutationLedger"`
+	Checks                []ComputeClaimIdentityCheck `json:"checks"`
+	MutationLedger        string                      `json:"mutationLedger"`
+	MutationLedgerOutcome string                      `json:"mutationLedgerOutcome"`
+	MutationLedgerDigest  string                      `json:"mutationLedgerDigest"`
 }
 
 type ComputeClaimRecoveryProof struct {
