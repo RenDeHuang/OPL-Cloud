@@ -1090,6 +1090,32 @@ func TestWorkspaceLaunchReadbackRecoveryFailsClosedWithoutUniqueExactAuthority(t
 	}
 }
 
+func TestWorkspaceLaunchReadbackRecoveryStageRejectsAmbiguousOrMalformedBudget(t *testing.T) {
+	scenario := newWorkspaceLaunchReadbackRecoveryScenario(t, "runtime", "basic")
+	for _, test := range []struct {
+		name   string
+		mutate func(*workspaceLaunchOperation)
+	}{
+		{name: "multiple unknown stages", mutate: func(operation *workspaceLaunchOperation) {
+			operation.ContinuationAttemptBudgets["secret"] = workspaceLaunchStageBudget{Attempted: 1, Unknown: 1, Max: workspaceLaunchStageMax}
+		}},
+		{name: "malformed budget", mutate: func(operation *workspaceLaunchOperation) {
+			operation.ContinuationAttemptBudgets["runtime"] = workspaceLaunchStageBudget{Attempted: 2, Unknown: 1, Max: workspaceLaunchStageMax}
+		}},
+		{name: "phase mismatch", mutate: func(operation *workspaceLaunchOperation) {
+			operation.Phase = "secret_writing"
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			operation := scenario.unknown
+			test.mutate(&operation)
+			if stage, ok := workspaceLaunchReadbackRecoveryStage(operation); ok {
+				t.Fatalf("invalid recovery state accepted: stage=%q operation=%#v", stage, operation)
+			}
+		})
+	}
+}
+
 func TestWorkspaceLaunchReadbackApprovalDriftStopsBeforeProviderOrDatabaseMutation(t *testing.T) {
 	t.Setenv("OPL_INTERNAL_SERVICE_TOKEN", "workspace-launch-readback-capability")
 	for _, test := range []struct {
