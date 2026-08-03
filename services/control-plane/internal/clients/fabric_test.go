@@ -421,6 +421,35 @@ func TestFabricHTTPClientCreatesZonedPrepaidStorage(t *testing.T) {
 	}
 }
 
+func TestFabricHTTPClientPreservesTerminalComputeAllocationOnConflict(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/fabric/compute-allocations" || r.Header.Get("Idempotency-Key") != "launch-fixture:compute" {
+			t.Fatalf("unexpected request: %s %s key=%q", r.Method, r.URL.Path, r.Header.Get("Idempotency-Key"))
+		}
+		w.WriteHeader(http.StatusConflict)
+		_ = json.NewEncoder(w).Encode(ComputeAllocation{
+			ID: "compute-fixture", AccountID: "acct-fixture", WorkspaceID: "ws-fixture", PackageID: "basic",
+			Status: "quarantined", Provider: "tencent-tke", NodePoolID: "np-basic",
+			ClaimTerminalEvidence: &ComputeClaimTerminalEvidence{
+				SchemaVersion: 1, Stage: "compute_claim_node", Status: "terminal_unprovable", ErrorCode: "compute_claim_node_unprovable",
+				FabricRecordID: "fop-fixture", OperationID: "op-fixture", IdempotencyKey: "launch-fixture:compute", RequestHash: "hash-fixture",
+				LaunchOperationID: "launch-fixture", AccountID: "acct-fixture", WorkspaceID: "ws-fixture", ComputeAllocationID: "compute-fixture",
+			},
+		})
+	}))
+	defer upstream.Close()
+
+	client := NewFabricHTTPClient(upstream.URL, "internal-secret", upstream.Client())
+	allocation, err := client.CreateComputeAllocation(context.Background(), ComputeAllocationInput{
+		ID: "compute-fixture", AccountID: "acct-fixture", WorkspaceID: "ws-fixture", PackageID: "basic", NodePoolID: "np-basic",
+	}, "launch-fixture:compute")
+	var httpErr *FabricHTTPError
+	if !errors.As(err, &httpErr) || httpErr.StatusCode != http.StatusConflict || allocation.ID != "compute-fixture" || allocation.Status != "quarantined" ||
+		allocation.ClaimTerminalEvidence == nil || allocation.ClaimTerminalEvidence.Status != "terminal_unprovable" || allocation.ClaimTerminalEvidence.Stage != "compute_claim_node" {
+		t.Fatalf("allocation=%#v err=%v", allocation, err)
+	}
+}
+
 func TestFabricHTTPClientRenewsMonthlyResourcesWithReadback(t *testing.T) {
 	paths := []string{}
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

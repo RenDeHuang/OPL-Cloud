@@ -299,7 +299,7 @@ func NewServer(service *fabric.Service, token string) http.Handler {
 			return
 		}
 		allocation, err := service.CreateComputeAllocation(r.Context(), input)
-		writeResult(w, allocation, err)
+		writeComputeAllocationResult(w, allocation, err)
 	})
 	mux.HandleFunc("GET /fabric/compute-allocations/{id}", func(w http.ResponseWriter, r *http.Request) {
 		allocation, ok := service.GetComputeAllocation(r.Context(), strings.TrimSpace(r.PathValue("id")))
@@ -515,6 +515,14 @@ func writeResult(w http.ResponseWriter, body any, err error) {
 		return
 	}
 	writeJSON(w, http.StatusAccepted, body)
+}
+
+func writeComputeAllocationResult(w http.ResponseWriter, allocation fabric.ComputeAllocation, err error) {
+	if errors.Is(err, fabric.ErrComputeOperationFailed) && allocation.ClaimTerminalEvidence != nil {
+		writeJSON(w, http.StatusConflict, allocation)
+		return
+	}
+	writeResult(w, allocation, err)
 }
 
 func writeComputeClaimRecoveryResult(w http.ResponseWriter, successStatus int, proof fabric.ComputeClaimRecoveryProof, err error) {
