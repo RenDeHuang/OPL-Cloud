@@ -15,6 +15,27 @@ import (
 	"opl-cloud/services/control-plane/internal/controlplane"
 )
 
+type workspaceRecoveryPlanFabric struct {
+	*monthlyFabric
+	identityEvidence *clients.ComputeClaimIdentityEvidence
+}
+
+func (f *workspaceRecoveryPlanFabric) ComputeClaimRecoveryIdentityEvidence(_ context.Context, _ clients.ComputeClaimRecoveryClaimInput) (*clients.ComputeClaimIdentityEvidence, error) {
+	return f.identityEvidence, nil
+}
+
+func useWorkspaceRecoveryPlanIdentityEvidence(t *testing.T, fixture *workspaceLaunchWorkerFixture, evidence *clients.ComputeClaimIdentityEvidence) {
+	t.Helper()
+	fixture.service = controlplane.NewService(fixture.ledger, &workspaceRecoveryPlanFabric{
+		monthlyFabric: fixture.fabric, identityEvidence: evidence,
+	}, fixture.sub2API)
+	server, err := NewPersistentServer(fixture.service, fixture.store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture.server, fixture.operator = server, reservedOperatorSessionForTest(t, server)
+}
+
 func requestWorkspaceRecoveryPlan(t *testing.T, fixture workspaceLaunchWorkerFixture, method, suffix string, body map[string]any) *httptest.ResponseRecorder {
 	t.Helper()
 	encoded, err := json.Marshal(body)
@@ -731,6 +752,81 @@ func TestWorkspaceRecoveryPlanDiagnoseCreatesSuccessorForFailedZeroMutationExecu
 	replayedOperation := fixture.operation(t)
 	if replayed.PlanID != successor.PlanID || replayed.PlanDigest != successor.PlanDigest || len(replayedOperation.RecoveryHistory) != 1 || replayedOperation.RecoveryExecution != nil {
 		t.Fatalf("successor diagnose replay drifted identity: successor=%#v replay=%#v operation=%#v", successor, replayed, replayedOperation)
+	}
+}
+
+func TestWorkspaceRecoveryPlanDiagnoseCreatesSuccessorForAuthoritativeObservedZeroLedger(t *testing.T) {
+	t.Setenv("OPL_RELEASE_SHA", strings.Repeat("a", 40))
+	t.Setenv("OPL_CLOUD_IMAGE", "uswccr.ccs.tencentyun.com/oplcloud/opl-cloud@sha256:"+strings.Repeat("b", 64))
+	fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, "basic")
+	fixture.fabric.computeClaimProof = computeClaimRecoveryProofForLaunch(operation, "unallocated")
+	useWorkspaceRecoveryPlanIdentityEvidence(t, &fixture, &clients.ComputeClaimIdentityEvidence{
+		Checks: []clients.ComputeClaimIdentityCheck{{
+			Field: "binding.compatibility", Matches: true, Expected: "current_or_historical", Actual: "historical",
+		}},
+		MutationLedger: "observed", MutationLedgerOutcome: "confirmed_zero", MutationLedgerDigest: strings.Repeat("d", 64),
+	})
+
+	first := recoveryPlanResponse(t, requestWorkspaceRecoveryPlan(t, fixture, http.MethodPost, "/diagnose", map[string]any{"accountId": operation.AccountID}))
+	failed := fixture.operation(t)
+	failed.Status, failed.ErrorCode = "manual_review", "workspace_compute_claim_identity_mismatch"
+	failed.RecoveryPlan.Status, failed.RecoveryPlan.ErrorCode = "failed", failed.ErrorCode
+	failed.RecoveryExecution = &workspaceRecoveryExecution{
+		ExecutionID: "recovery-exec-failed-authoritative-zero", RunIdentity: "control-plane-run-failed-authoritative-zero",
+		PlanID: first.PlanID, PlanDigest: first.PlanDigest, ApprovalDigest: strings.Repeat("c", 64), Decision: "continue",
+		Status: "failed", StartedAt: time.Now().UTC().Add(-time.Minute).Format(time.RFC3339Nano),
+		CompletedAt: time.Now().UTC().Format(time.RFC3339Nano), ErrorCode: failed.ErrorCode,
+	}
+	mustStore(t, fixture.store.SaveRuntimeOperation(context.Background(), workspaceLaunchOperationRow(failed)))
+
+	successor := recoveryPlanResponse(t, requestWorkspaceRecoveryPlan(t, fixture, http.MethodPost, "/diagnose", map[string]any{"accountId": operation.AccountID}))
+	persisted := fixture.operation(t)
+	if successor.Status != "diagnosed" || successor.PlanID == first.PlanID || successor.PlanDigest == first.PlanDigest ||
+		persisted.RecoveryExecution != nil || len(persisted.RecoveryHistory) != 1 ||
+		persisted.RecoveryHistory[0].Execution.MutationOutcome.Status != "confirmed_zero" ||
+		persisted.RecoveryHistory[0].Execution.MutationOutcome.Source != "fabric_mutation_ledger_confirmed_zero" ||
+		persisted.RecoveryHistory[0].Execution.MutationOutcome.EvidenceDigest != strings.Repeat("d", 64) {
+		t.Fatalf("authoritative zero ledger did not create successor: first=%#v successor=%#v operation=%#v", first, successor, persisted)
+	}
+	if len(fixture.fabric.computeClaimCalls) != 0 || len(fixture.fabric.storageIDs) != 0 || len(fixture.sub2API.charges) != 1 || len(fixture.fabric.computeIDs) != 1 {
+		t.Fatalf("authoritative successor crossed zero-mutation boundary: claims=%d storage=%d charges=%d computes=%d", len(fixture.fabric.computeClaimCalls), len(fixture.fabric.storageIDs), len(fixture.sub2API.charges), len(fixture.fabric.computeIDs))
+	}
+}
+
+func TestWorkspaceRecoveryPlanSuccessorRejectsUnconfirmedFabricLedgerEvidence(t *testing.T) {
+	planID, planDigest := "recovery-plan-failed", strings.Repeat("a", 64)
+	operation := workspaceLaunchOperation{
+		RecoveryPlan: &workspaceRecoveryPlan{
+			PlanID: planID, PlanDigest: planDigest, Status: "failed", Action: "compute_claim_continue",
+		},
+		RecoveryExecution: &workspaceRecoveryExecution{
+			ExecutionID: "recovery-exec-failed", PlanID: planID, PlanDigest: planDigest, Status: "failed",
+			CompletedAt: time.Now().UTC().Format(time.RFC3339Nano),
+		},
+	}
+	tests := map[string]clients.ComputeClaimIdentityEvidence{
+		"nonzero": {
+			MutationLedger: "observed", MutationLedgerOutcome: "nonzero", MutationLedgerDigest: strings.Repeat("b", 64),
+		},
+		"unknown": {
+			MutationLedger: "observed", MutationLedgerOutcome: "unknown", MutationLedgerDigest: strings.Repeat("b", 64),
+		},
+		"missing_digest": {
+			MutationLedger: "observed", MutationLedgerOutcome: "confirmed_zero",
+		},
+		"invalid_digest": {
+			MutationLedger: "observed", MutationLedgerOutcome: "confirmed_zero", MutationLedgerDigest: "not-a-digest",
+		},
+		"contradictory_absent": {
+			MutationLedger: "absent", MutationLedgerOutcome: "nonzero", MutationLedgerDigest: strings.Repeat("b", 64),
+		},
+	}
+	for name, evidence := range tests {
+		t.Run(name, func(t *testing.T) {
+			if outcome, ok := workspaceRecoveryExecutionConfirmedZero(operation, &evidence); ok {
+				t.Fatalf("unconfirmed evidence accepted: outcome=%#v evidence=%#v", outcome, evidence)
+			}
+		})
 	}
 }
 

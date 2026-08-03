@@ -96,6 +96,7 @@ type workspaceRecoveryMutationOutcome struct {
 	Counts                   workspaceRecoveryMutationCounts `json:"counts"`
 	FabricOperationMutations int                             `json:"fabricOperationMutations"`
 	Source                   string                          `json:"source,omitempty"`
+	EvidenceDigest           string                          `json:"evidenceDigest,omitempty"`
 }
 
 type workspaceRecoveryPlanDTO struct {
@@ -467,10 +468,23 @@ func workspaceRecoveryExecutionConfirmedZero(operation workspaceLaunchOperation,
 	if outcome.Status == "confirmed_zero" && outcome.Counts == (workspaceRecoveryMutationCounts{}) && outcome.FabricOperationMutations == 0 {
 		return outcome, true
 	}
-	if outcome.Status != "" && outcome.Status != "unknown" || operation.RecoveryPlan.Action != "compute_claim_continue" || evidence == nil || evidence.MutationLedger != "absent" {
+	if outcome.Status != "" && outcome.Status != "unknown" || operation.RecoveryPlan.Action != "compute_claim_continue" || evidence == nil {
 		return workspaceRecoveryMutationOutcome{}, false
 	}
-	return workspaceRecoveryMutationOutcome{Status: "confirmed_zero", Source: "fabric_mutation_ledger_absent"}, true
+	source, evidenceDigest := "", ""
+	switch {
+	case evidence.MutationLedger == "absent" && (evidence.MutationLedgerOutcome == "" || evidence.MutationLedgerOutcome == "confirmed_zero"):
+		source = "fabric_mutation_ledger_absent"
+		if computeClaimApprovalDigestPattern.MatchString(evidence.MutationLedgerDigest) {
+			evidenceDigest = evidence.MutationLedgerDigest
+		}
+	case evidence.MutationLedger == "observed" && evidence.MutationLedgerOutcome == "confirmed_zero" &&
+		computeClaimApprovalDigestPattern.MatchString(evidence.MutationLedgerDigest):
+		source, evidenceDigest = "fabric_mutation_ledger_confirmed_zero", evidence.MutationLedgerDigest
+	default:
+		return workspaceRecoveryMutationOutcome{}, false
+	}
+	return workspaceRecoveryMutationOutcome{Status: "confirmed_zero", Source: source, EvidenceDigest: evidenceDigest}, true
 }
 
 func workspaceRecoveryMutationOutcomeFromComputeClaim(proof clients.ComputeClaimRecoveryProof) workspaceRecoveryMutationOutcome {

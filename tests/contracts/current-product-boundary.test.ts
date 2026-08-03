@@ -114,13 +114,17 @@ test("Current contracts hard cut Workspace purchase, access, and Runtime facts",
     json("packages/contracts/opl-cloud-console-source-truth-contract.json")
   ]);
 
-  assert.equal(freeze.schemaVersion, 22);
+  assert.equal(freeze.schemaVersion, 23);
   assert.equal(billing.schemaVersion, 11);
   assert.equal(freeze.workspaceLaunch.customerDebitCardinality, 1);
   assert.equal(freeze.workspaceLaunch.persistence, "control_plane_runtime_operations with action=workspace.launch.v2 and result.schemaVersion=2");
   assert.equal(freeze.workspaceLaunch.codeCompleteThroughPhase, undefined);
   assert.equal(freeze.workspaceLaunch.legacyNonTerminalPolicy, "manual_review_compute_fulfilling_is_read_only_candidate_normalized_only_after_debit_identity_local_storage_zero_and_compute_plus_exact_cbs_proof_via_postgresql_cas");
   assert.equal(freeze.workspaceLaunch.backgroundProgression, "non_review_and_manual_review_recovery_integrated_local_fake_verified");
+  assert.equal(
+    freeze.workspaceLaunch.recoveryPlan.execution.fabricLedgerEvidence,
+    "mutationLedger_mutationLedgerOutcome_and_sha256_digest_from_fabric_identity_evidence"
+  );
   assert.equal(freeze.workspaceLaunch.nextBlockedStage, undefined);
   assert.deepEqual(freeze.workspaceLaunch.fulfillmentResources, ["compute", "storage", "attachment", "gateway_secret", "runtime"]);
   assert.deepEqual(freeze.workspaceLaunch.computeClaimRecoveryCustomerProjection, {
@@ -700,7 +704,7 @@ test("Current contracts hard cut operator resources, wallet adjustments, and ann
     absentRequires: "both_local_identities_and_exact_provider_describe_absence",
     forbiddenSideEffects: ["sync", "tag", "kubectl_apply", "delete", "label", "purchase", "renew", "destroy"]
   });
-  assert.equal(boundary.schemaVersion, 25);
+  assert.equal(boundary.schemaVersion, 26);
   assert.deepEqual(boundary.services.controlPlane.workspaceContinuationAttemptBudget, {
     owner: "original_workspace.launch.v2_operation",
     stages: ["storage", "attachment", "secret", "runtime", "activation", "receipt"],
@@ -727,6 +731,7 @@ test("Current contracts hard cut operator resources, wallet adjustments, and ann
   assert.deepEqual(recoveryPlan.executionLease.identity, ["plan_id", "plan_digest", "approval_digest", "execution_id", "run_id", "decision"]);
   assert.equal(recoveryPlan.executionLease.fencing, "byte_exact_current_lease_token_required_to_finalize");
   assert.equal(recoveryPlan.executionLease.unknownResult, "reconcile_same_execution_identity_without_second_provider_entry");
+  assert.equal(recoveryPlan.executionLease.authoritativeZeroEvidence, "fabric_identity_evidence_mutation_ledger_outcome_and_sha256_digest");
   assert.equal(recoveryPlan.proofMutationCounts.sub2api, 0);
   assert.equal(recoveryPlan.proofMutationCounts.tencent, 0);
   assert.equal(recoveryPlan.proofMutationCounts.kubernetes, 0);
@@ -789,6 +794,15 @@ test("Current contracts hard cut operator resources, wallet adjustments, and ann
     proofMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
     idempotencyBinding: ["launch_operation_id", "idempotency_key", "target_hash", "request_hash"],
     identityEvidence: "zero_mutation_allowlisted_expected_actual_for_ids_and_second_digest_for_hashes",
+    mutationLedgerEvidence: {
+      fields: ["mutationLedger", "mutationLedgerOutcome", "mutationLedgerDigest"],
+      outcomes: ["confirmed_zero", "nonzero", "unknown"],
+      confirmedZero: "absent_or_observed_complete_zero_counts",
+      nonzero: "observed_complete_positive_count",
+      unknown: "reserved_node_reserved_invalid_incomplete_or_unconfirmed",
+      digest: "sha256_of_redacted_persisted_mutation_ledger",
+      consumer: "control_plane_terminal_failed_successor_gate"
+    },
     bindingPersistence: "original_create_compute_allocation_operation_payload_cas",
     malformedOrDriftedBinding: "fail_closed_conflict_zero_provider_mutation",
     mutationLedger: {
@@ -1010,6 +1024,7 @@ test("Current human truth preserves public entry points and evidence levels", as
   assert.match(consoleProduct, /Home.*Login.*Logo/is);
   assert.match(consoleProduct, /URL.*用户名.*密码.*Workspace Key/is);
   assert.match(invariants, /Dedicated `workspace\.launch\.v2` review recovery uses the Console flow[\s\S]{0,400}`diagnose -> view persisted Recovery Plan -> validate -> confirm continue`/i);
+  assert.match(invariants, /Fabric evidence proves the original compute mutation ledger is\s+(?:absent\s+or\s+)?observed with complete confirmed-zero evidence/i);
   assert.match(invariants, /Server-authoritative Recovery Plan handling has local focused evidence only/i);
   assert.doesNotMatch(invariants, /pending integrated verification/i);
   assert.doesNotMatch(invariants, /stops at\s+`debited`[\s\S]{0,300}S8/i);

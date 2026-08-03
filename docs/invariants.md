@@ -675,7 +675,10 @@ contract or select the SKU for a customer launch.
 - A terminal failed Recovery Plan may produce a successor only when Control
   Plane has explicit persisted `confirmed_zero` mutation evidence, or fresh
   authoritative Fabric evidence proves the original compute mutation ledger is
-  absent. The predecessor Plan, Execution, approval identity, error, and
+  absent or observed with complete confirmed-zero evidence. Fabric projects the
+  ledger outcome plus a SHA-256 digest; Control Plane persists that digest with
+  the archived execution and never infers zero from a missing, reserved,
+  incomplete, invalid, or positive ledger. The predecessor Plan, Execution, approval identity, error, and
   mutation outcome remain immutable history. The successor has a new
   generation-bound PlanID/PlanDigest and requires fresh validation,
   confirmation, approval, execution, and run identities. Nonzero or
