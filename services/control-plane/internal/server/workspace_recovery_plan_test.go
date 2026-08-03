@@ -559,6 +559,146 @@ func TestWorkspaceRecoveryPlanExpiredLeaseReconcilesSameExecutionAfterRestart(t 
 	}
 }
 
+func TestWorkspaceRecoveryPlanReleasedLeaseCanBeReacquired(t *testing.T) {
+	t.Setenv("OPL_RELEASE_SHA", strings.Repeat("a", 40))
+	t.Setenv("OPL_CLOUD_IMAGE", "uswccr.ccs.tencentyun.com/oplcloud/opl-cloud@sha256:"+strings.Repeat("b", 64))
+	scenario := newWorkspaceLaunchReadbackRecoveryScenario(t, "runtime", "basic")
+	fixture := scenario.fixture
+	fixture.service = controlplane.NewService(fixture.ledger, scenario.readback, fixture.sub2API)
+	server, err := NewPersistentServer(fixture.service, fixture.store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture.server, fixture.operator = server, reservedOperatorSessionForTest(t, server)
+	diagnosed := recoveryPlanResponse(t, requestWorkspaceRecoveryPlan(t, fixture, http.MethodPost, "/diagnose", map[string]any{"accountId": scenario.unknown.AccountID}))
+	validated := recoveryPlanResponse(t, requestWorkspaceRecoveryPlan(t, fixture, http.MethodPost, "/validate", map[string]any{
+		"planId": diagnosed.PlanID, "planDigest": diagnosed.PlanDigest,
+	}))
+	execution, won, err := fixture.app.reserveWorkspaceRecoveryExecution(context.Background(), fixture.service, scenario.unknown.ID, validated.PlanID, validated.PlanDigest, "continue")
+	if err != nil || !won {
+		t.Fatalf("initial execution reservation won=%v err=%v execution=%#v", won, err, execution)
+	}
+	persisted := fixture.operation(t)
+	persisted.RecoveryExecution.LeaseToken, persisted.RecoveryExecution.LeaseExpiresAt = "", ""
+	mustStore(t, fixture.store.SaveRuntimeOperation(context.Background(), workspaceLaunchOperationRow(persisted)))
+
+	restarted, err := newControlPlaneAppWithStore(fixture.store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reacquired, won, err := restarted.reacquireWorkspaceRecoveryExecution(context.Background(), scenario.unknown.ID, validated.PlanID, validated.PlanDigest, "continue")
+	if err != nil || !won || reacquired.ExecutionID != execution.ExecutionID || reacquired.RunIdentity != execution.RunIdentity || reacquired.LeaseToken == "" || reacquired.LeaseExpiresAt == "" {
+		t.Fatalf("released lease reacquire won=%v err=%v initial=%#v reacquired=%#v", won, err, execution, reacquired)
+	}
+	if scenario.readback.stageConvergeCalls != 0 || workspaceLaunchStageWriteCount(fixture, "runtime") != scenario.beforeCurrentWrites {
+		t.Fatalf("lease reacquire crossed provider boundary: converge=%d runtime=%d", scenario.readback.stageConvergeCalls, workspaceLaunchStageWriteCount(fixture, "runtime"))
+	}
+}
+
+func TestWorkspaceRecoveryPlanRejectsPartialOrInvalidReleasedLease(t *testing.T) {
+	t.Setenv("OPL_RELEASE_SHA", strings.Repeat("a", 40))
+	t.Setenv("OPL_CLOUD_IMAGE", "uswccr.ccs.tencentyun.com/oplcloud/opl-cloud@sha256:"+strings.Repeat("b", 64))
+	scenario := newWorkspaceLaunchReadbackRecoveryScenario(t, "runtime", "basic")
+	fixture := scenario.fixture
+	fixture.service = controlplane.NewService(fixture.ledger, scenario.readback, fixture.sub2API)
+	server, err := NewPersistentServer(fixture.service, fixture.store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture.server, fixture.operator = server, reservedOperatorSessionForTest(t, server)
+	diagnosed := recoveryPlanResponse(t, requestWorkspaceRecoveryPlan(t, fixture, http.MethodPost, "/diagnose", map[string]any{"accountId": scenario.unknown.AccountID}))
+	validated := recoveryPlanResponse(t, requestWorkspaceRecoveryPlan(t, fixture, http.MethodPost, "/validate", map[string]any{
+		"planId": diagnosed.PlanID, "planDigest": diagnosed.PlanDigest,
+	}))
+	execution, won, err := fixture.app.reserveWorkspaceRecoveryExecution(context.Background(), fixture.service, scenario.unknown.ID, validated.PlanID, validated.PlanDigest, "continue")
+	if err != nil || !won {
+		t.Fatalf("initial execution reservation won=%v err=%v execution=%#v", won, err, execution)
+	}
+	for _, test := range []struct {
+		name       string
+		leaseToken string
+		expiresAt  string
+	}{
+		{name: "missing token", expiresAt: time.Now().UTC().Add(time.Minute).Format(time.RFC3339Nano)},
+		{name: "missing expiry", leaseToken: execution.LeaseToken},
+		{name: "invalid expiry", leaseToken: execution.LeaseToken, expiresAt: "not-a-timestamp"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			persisted := fixture.operation(t)
+			persisted.RecoveryExecution.LeaseToken, persisted.RecoveryExecution.LeaseExpiresAt = test.leaseToken, test.expiresAt
+			mustStore(t, fixture.store.SaveRuntimeOperation(context.Background(), workspaceLaunchOperationRow(persisted)))
+			_, won, err := fixture.app.reacquireWorkspaceRecoveryExecution(context.Background(), scenario.unknown.ID, validated.PlanID, validated.PlanDigest, "continue")
+			if !errors.Is(err, errBillingReviewIdentity) || won {
+				t.Fatalf("partial or invalid lease reacquire won=%v err=%v", won, err)
+			}
+		})
+	}
+	if scenario.readback.stageConvergeCalls != 0 || workspaceLaunchStageWriteCount(fixture, "runtime") != scenario.beforeCurrentWrites {
+		t.Fatalf("invalid lease crossed provider boundary: converge=%d runtime=%d", scenario.readback.stageConvergeCalls, workspaceLaunchStageWriteCount(fixture, "runtime"))
+	}
+}
+
+func TestWorkspaceRecoveryPlanWorkerRetriesDelayedRuntimeAndSynchronizesTerminalReadback(t *testing.T) {
+	t.Setenv("OPL_RELEASE_SHA", strings.Repeat("a", 40))
+	t.Setenv("OPL_CLOUD_IMAGE", "uswccr.ccs.tencentyun.com/oplcloud/opl-cloud@sha256:"+strings.Repeat("b", 64))
+	scenario := newWorkspaceLaunchReadbackRecoveryScenario(t, "runtime", "basic")
+	fixture := scenario.fixture
+	ready := fixture.fabric.runtimeStatus
+	unready := ready
+	unready.Status, unready.Ready = "unready", false
+	fixture.fabric.runtimeStatusResults = []clients.WorkspaceRuntime{unready}
+	fixture.service = controlplane.NewService(fixture.ledger, scenario.readback, fixture.sub2API)
+	server, err := NewPersistentServer(fixture.service, fixture.store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture.server, fixture.operator = server, reservedOperatorSessionForTest(t, server)
+	diagnosed := recoveryPlanResponse(t, requestWorkspaceRecoveryPlan(t, fixture, http.MethodPost, "/diagnose", map[string]any{"accountId": scenario.unknown.AccountID}))
+	validated := recoveryPlanResponse(t, requestWorkspaceRecoveryPlan(t, fixture, http.MethodPost, "/validate", map[string]any{
+		"planId": diagnosed.PlanID, "planDigest": diagnosed.PlanDigest,
+	}))
+	execute := requestWorkspaceRecoveryPlan(t, fixture, http.MethodPost, "/execute", map[string]any{
+		"planId": validated.PlanID, "planDigest": validated.PlanDigest, "decision": "continue", "confirmation": "CONTINUE_RECOVERY_PLAN",
+	})
+	if execute.Code != http.StatusOK {
+		t.Fatalf("initial delayed Runtime execute status=%d body=%s", execute.Code, execute.Body.String())
+	}
+	waitingPlan := recoveryPlanResponse(t, execute)
+	waiting := fixture.operation(t)
+	if waitingPlan.Status != "executing" || waiting.Status != "waiting" || waiting.Phase != "runtime_starting" || waiting.RecoveryExecution == nil ||
+		waiting.RecoveryExecution.LeaseToken != "" || waiting.RecoveryExecution.LeaseExpiresAt != "" {
+		t.Fatalf("delayed Runtime recovery plan=%#v launch=%#v", waitingPlan, waiting)
+	}
+
+	fixture.fabric.runtimeStatusErr = errors.New("transient Runtime readback failure")
+	if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err == nil {
+		t.Fatal("transient Runtime readback failure was not returned")
+	}
+	retryable := fixture.operation(t)
+	if retryable.Status != "retryable" || retryable.Phase != "runtime_starting" || retryable.RecoveryPlan == nil || retryable.RecoveryPlan.Status != "executing" ||
+		retryable.RecoveryExecution == nil || retryable.RecoveryExecution.Status != "running" {
+		t.Fatalf("transient Runtime readback was not retryable: %#v", retryable)
+	}
+	fixture.fabric.runtimeStatusErr = nil
+	restarted, err := newControlPlaneAppWithStore(fixture.store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := restarted.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err != nil {
+		t.Fatal(err)
+	}
+	completed, found, err := restarted.workspaceLaunchOperation(context.Background(), scenario.unknown.ID)
+	if err != nil || !found || completed.Status != "succeeded" || completed.Phase != "succeeded" || completed.URL == "" || completed.ReceiptID == "" ||
+		completed.RecoveryPlan == nil || completed.RecoveryPlan.Status != "completed" || completed.RecoveryPlan.URL != completed.URL || completed.RecoveryPlan.ReceiptID != completed.ReceiptID ||
+		completed.RecoveryExecution == nil || completed.RecoveryExecution.Status != "completed" || completed.RecoveryExecution.CompletedAt == "" {
+		t.Fatalf("restarted worker terminal readback launch=%#v found=%v err=%v", completed, found, err)
+	}
+	if workspaceLaunchStageWriteCount(fixture, "runtime") != scenario.beforeCurrentWrites || len(fixture.fabric.storageIDs) != 1 || len(fixture.fabric.computeIDs) != 1 ||
+		len(fixture.sub2API.charges) != 1 || len(fixture.ledger.receiptInputs) != 1 {
+		t.Fatalf("Runtime retry repeated write: runtime=%d storage=%d compute=%d charges=%d receipts=%d", workspaceLaunchStageWriteCount(fixture, "runtime"), len(fixture.fabric.storageIDs), len(fixture.fabric.computeIDs), len(fixture.sub2API.charges), len(fixture.ledger.receiptInputs))
+	}
+}
+
 func TestWorkspaceRecoveryPlanExpiredLeaseRejectsStaleHolderFinalize(t *testing.T) {
 	t.Setenv("OPL_RELEASE_SHA", strings.Repeat("a", 40))
 	t.Setenv("OPL_CLOUD_IMAGE", "uswccr.ccs.tencentyun.com/oplcloud/opl-cloud@sha256:"+strings.Repeat("b", 64))
@@ -917,5 +1057,68 @@ func TestWorkspaceRecoveryPlanExecuteComputeClaimContinuesOriginalLaunchOnce(t *
 	if persisted.Status != "succeeded" || persisted.Phase != "succeeded" || persisted.ComputeClaimApproval == nil || persisted.ComputeClaimProof == nil ||
 		persisted.RecoveryExecution == nil || persisted.RecoveryExecution.ExecutionID != first.ExecutionID {
 		t.Fatalf("compute claim execution not persisted on original launch: %#v", persisted)
+	}
+}
+
+func TestWorkspaceRecoveryPlanWorkerRetriesCBSReadbackAfterConfirmedNodeClaim(t *testing.T) {
+	t.Setenv("OPL_RELEASE_SHA", strings.Repeat("a", 40))
+	t.Setenv("OPL_CLOUD_IMAGE", "uswccr.ccs.tencentyun.com/oplcloud/opl-cloud@sha256:"+strings.Repeat("b", 64))
+	fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, "basic")
+	fixture.fabric.computeClaimProof = computeClaimRecoveryProofForLaunch(operation, "unallocated")
+	claimed := computeClaimRecoveryProofForLaunch(operation, "target_owned")
+	fixture.fabric.computeClaimResult = &claimed
+	configureWorkspaceLaunchFulfillment(t, fixture)
+	configureWorkspaceComputeClaimReadback(fixture, operation)
+	pendingStorage := fixture.fabric.storageSync
+	pendingStorage.Status, pendingStorage.CBSStatus = "provisioning", "CREATING"
+	fixture.fabric.storageSync = pendingStorage
+	fixture.fabric.mutateStorage = func(created *clients.StorageVolume) { *created = pendingStorage }
+
+	diagnosed := recoveryPlanResponse(t, requestWorkspaceRecoveryPlan(t, fixture, http.MethodPost, "/diagnose", map[string]any{"accountId": operation.AccountID}))
+	validated := recoveryPlanResponse(t, requestWorkspaceRecoveryPlan(t, fixture, http.MethodPost, "/validate", map[string]any{
+		"planId": diagnosed.PlanID, "planDigest": diagnosed.PlanDigest,
+	}))
+	execute := requestWorkspaceRecoveryPlan(t, fixture, http.MethodPost, "/execute", map[string]any{
+		"planId": validated.PlanID, "planDigest": validated.PlanDigest, "decision": "continue", "confirmation": "CONTINUE_RECOVERY_PLAN",
+	})
+	if execute.Code != http.StatusOK {
+		t.Fatalf("CBS waiting execute status=%d body=%s", execute.Code, execute.Body.String())
+	}
+	waitingPlan := recoveryPlanResponse(t, execute)
+	waiting := fixture.operation(t)
+	if waitingPlan.Status != "executing" || waiting.Status != "waiting" || waiting.Phase != "storage_fulfilling" || waiting.ComputeClaimProof == nil ||
+		waiting.RecoveryExecution == nil || waiting.RecoveryExecution.LeaseToken != "" || waiting.ContinuationAttemptBudgets["storage"] != (workspaceLaunchStageBudget{Attempted: 1, Confirmed: 1, Max: 1}) {
+		t.Fatalf("CBS waiting recovery plan=%#v launch=%#v", waitingPlan, waiting)
+	}
+
+	fixture.fabric.storageSyncErr = errors.New("transient CBS Describe failure")
+	if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err == nil {
+		t.Fatal("transient CBS Describe failure was not returned")
+	}
+	retryable := fixture.operation(t)
+	if retryable.Status != "retryable" || retryable.Phase != "storage_fulfilling" || retryable.RecoveryPlan == nil || retryable.RecoveryPlan.Status != "executing" ||
+		retryable.RecoveryExecution == nil || retryable.RecoveryExecution.Status != "running" {
+		t.Fatalf("transient CBS readback was not retryable: %#v", retryable)
+	}
+	fixture.fabric.storageSyncErr = nil
+	fixture.fabric.mutateStorage = nil
+	readyStorage := pendingStorage
+	readyStorage.Status, readyStorage.CBSStatus = "available", "UNATTACHED"
+	fixture.fabric.storageSync = readyStorage
+	restarted, err := newControlPlaneAppWithStore(fixture.store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := restarted.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err != nil {
+		t.Fatal(err)
+	}
+	completed, found, err := restarted.workspaceLaunchOperation(context.Background(), operation.ID)
+	if err != nil || !found || completed.Status != "succeeded" || completed.Phase != "succeeded" || completed.URL == "" || completed.ReceiptID == "" ||
+		completed.RecoveryPlan == nil || completed.RecoveryPlan.Status != "completed" || completed.RecoveryExecution == nil || completed.RecoveryExecution.Status != "completed" {
+		t.Fatalf("CBS restart terminal readback launch=%#v found=%v err=%v", completed, found, err)
+	}
+	if len(fixture.fabric.computeClaimCalls) != 1 || len(fixture.fabric.storageIDs) != 1 || len(fixture.sub2API.charges) != 1 || len(fixture.fabric.computeIDs) != 1 ||
+		len(fixture.ledger.receiptInputs) != 1 {
+		t.Fatalf("CBS retry repeated mutation: claims=%d storage=%d charges=%d compute=%d receipts=%d", len(fixture.fabric.computeClaimCalls), len(fixture.fabric.storageIDs), len(fixture.sub2API.charges), len(fixture.fabric.computeIDs), len(fixture.ledger.receiptInputs))
 	}
 }

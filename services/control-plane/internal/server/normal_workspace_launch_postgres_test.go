@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -19,6 +20,36 @@ type workspaceLaunchProcessRestartStore struct {
 	*postgresEntStateStore
 	stopPhase string
 	stopped   bool
+}
+
+type postgresWorkspaceLaunchClaimBarrier struct {
+	mu      sync.Mutex
+	waiting int
+	release chan struct{}
+	results chan error
+}
+
+type postgresWorkspaceLaunchClaimBarrierStore struct {
+	*postgresEntStateStore
+	barrier *postgresWorkspaceLaunchClaimBarrier
+}
+
+func (s *postgresWorkspaceLaunchClaimBarrierStore) ClaimWorkspaceLaunch(ctx context.Context, claim workspaceLaunchClaimCAS) error {
+	s.barrier.mu.Lock()
+	s.barrier.waiting++
+	if s.barrier.waiting == 2 {
+		close(s.barrier.release)
+	}
+	release := s.barrier.release
+	s.barrier.mu.Unlock()
+	select {
+	case <-release:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	err := s.postgresEntStateStore.ClaimWorkspaceLaunch(ctx, claim)
+	s.barrier.results <- err
+	return err
 }
 
 func (s *workspaceLaunchProcessRestartStore) PersistWorkspaceLaunch(ctx context.Context, update workspaceLaunchPersistCAS) error {
@@ -249,5 +280,156 @@ func TestPostgresFailedAuthoritativeZeroMutationRecoveryPlanCreatesPersistedSucc
 		successor.PlanID == first.PlanID || successor.PlanDigest == first.PlanDigest || persisted.RecoveryHistory[0].Execution.MutationOutcome.Status != "confirmed_zero" ||
 		persisted.RecoveryHistory[0].Execution.MutationOutcome.EvidenceDigest != strings.Repeat("d", 64) {
 		t.Fatalf("PostgreSQL successor=%#v operation=%#v found=%v err=%v", successor, persisted, found, err)
+	}
+}
+
+func TestPostgresReleasedRecoveryExecutionConvergesOnceAcrossReopenedWorkers(t *testing.T) {
+	t.Setenv("OPL_RELEASE_SHA", strings.Repeat("a", 40))
+	t.Setenv("OPL_CLOUD_IMAGE", "uswccr.ccs.tencentyun.com/oplcloud/opl-cloud@sha256:"+strings.Repeat("b", 64))
+	t.Setenv("OPL_WORKSPACE_LAUNCH_WORKER_ENABLED", "false")
+	fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, "basic")
+	fixture.fabric.computeClaimProof = computeClaimRecoveryProofForLaunch(operation, "unallocated")
+	claimed := computeClaimRecoveryProofForLaunch(operation, "target_owned")
+	fixture.fabric.computeClaimResult = &claimed
+	configureWorkspaceLaunchFulfillment(t, fixture)
+	configureWorkspaceComputeClaimReadback(fixture, operation)
+	readyRuntime := clients.WorkspaceRuntime{
+		ID: "runtime-from-fabric", OperationID: operation.WorkspaceOperationID + ":runtime", WorkspaceID: operation.WorkspaceID,
+		URL: "https://workspace.medopl.cn/w/" + operation.WorkspaceID + "/", Status: "running", Ready: true, ServiceName: "opl-compute-from-fabric",
+		Access: clients.WorkspaceRuntimeAccess{Username: "admin", Password: "runtime-password-alpha", CredentialStatus: "configured", CredentialVersion: "v1", SecretRef: "opl-compute-from-fabric-env"},
+	}
+	unreadyRuntime := readyRuntime
+	unreadyRuntime.Status, unreadyRuntime.Ready = "unready", false
+	fixture.fabric.runtime = unreadyRuntime
+	fixture.fabric.runtimeStatusResults = []clients.WorkspaceRuntime{unreadyRuntime}
+
+	admin := openControlPlaneTestPostgres(t)
+	schema := fmt.Sprintf("control_plane_recovery_worker_cas_%d", time.Now().UnixNano())
+	if _, err := admin.Exec(`CREATE SCHEMA ` + schema); err != nil {
+		t.Fatal(err)
+	}
+	databaseURL := controlPlaneTestPostgresURL(t, "postgres", schema)
+	t.Cleanup(func() {
+		_, _ = admin.Exec(`DROP SCHEMA ` + schema + ` CASCADE`)
+		_ = admin.Close()
+	})
+	state, err := newTestPostgresEntStateStore(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstStore := state.(*postgresEntStateStore)
+	seedTenantMember(t, firstStore, operation.AccountID, "org-alpha", operation.OwnerUserID, "alpha@example.com")
+	computes, err := fixture.store.ListComputes(context.Background(), operation.AccountID)
+	if err != nil || len(computes) != 1 {
+		t.Fatalf("compute claim fixture rows=%#v err=%v", computes, err)
+	}
+	if err := firstStore.SaveCompute(context.Background(), computes[0]); err != nil {
+		t.Fatal(err)
+	}
+	if err := firstStore.SaveRuntimeOperation(context.Background(), workspaceLaunchOperationRow(operation)); err != nil {
+		t.Fatal(err)
+	}
+	server, err := NewPersistentServer(fixture.service, firstStore)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pgFixture := fixture
+	pgFixture.server, pgFixture.operator = server, reservedOperatorSessionForTest(t, server)
+	diagnosed := recoveryPlanResponse(t, requestWorkspaceRecoveryPlan(t, pgFixture, http.MethodPost, "/diagnose", map[string]any{"accountId": operation.AccountID}))
+	validated := recoveryPlanResponse(t, requestWorkspaceRecoveryPlan(t, pgFixture, http.MethodPost, "/validate", map[string]any{
+		"planId": diagnosed.PlanID, "planDigest": diagnosed.PlanDigest,
+	}))
+	execute := requestWorkspaceRecoveryPlan(t, pgFixture, http.MethodPost, "/execute", map[string]any{
+		"planId": validated.PlanID, "planDigest": validated.PlanDigest, "decision": "continue", "confirmation": "CONTINUE_RECOVERY_PLAN",
+	})
+	if execute.Code != http.StatusOK {
+		t.Fatalf("PostgreSQL waiting execute status=%d body=%s", execute.Code, execute.Body.String())
+	}
+	waitingRow, found, err := firstStore.GetRuntimeOperation(context.Background(), operation.ID)
+	if err != nil || !found {
+		t.Fatalf("PostgreSQL waiting launch found=%t err=%v", found, err)
+	}
+	waiting, err := decodeWorkspaceLaunchOperation(waitingRow)
+	if err != nil || waiting.Status != "waiting" || waiting.Phase != "runtime_starting" || waiting.LeaseToken != "" || waiting.LeaseExpiresAt != "" ||
+		waiting.RecoveryPlan == nil || waiting.RecoveryPlan.Status != "executing" || waiting.RecoveryExecution == nil || waiting.RecoveryExecution.Status != "running" ||
+		waiting.RecoveryExecution.LeaseToken != "" || waiting.RecoveryExecution.LeaseExpiresAt != "" {
+		t.Fatalf("PostgreSQL waiting recovery launch=%#v err=%v", waiting, err)
+	}
+	if err := firstStore.client.Close(); err != nil {
+		t.Fatal(err)
+	}
+	fixture.fabric.runtime = readyRuntime
+
+	barrier := &postgresWorkspaceLaunchClaimBarrier{release: make(chan struct{}), results: make(chan error, 2)}
+	apps := make([]*controlPlaneServer, 0, 2)
+	stores := make([]*postgresEntStateStore, 0, 2)
+	for range 2 {
+		state, err := newTestPostgresEntStateStore(databaseURL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		store := state.(*postgresEntStateStore)
+		stores = append(stores, store)
+		app, err := newControlPlaneAppWithStore(&postgresWorkspaceLaunchClaimBarrierStore{postgresEntStateStore: store, barrier: barrier})
+		if err != nil {
+			t.Fatal(err)
+		}
+		apps = append(apps, app)
+	}
+	workerCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	workerResults := make(chan error, 2)
+	start := make(chan struct{})
+	for _, app := range apps {
+		go func(app *controlPlaneServer) {
+			<-start
+			workerResults <- app.runWorkspaceLaunchesOnce(workerCtx, fixture.service)
+		}(app)
+	}
+	close(start)
+	for range 2 {
+		if err := <-workerResults; err != nil {
+			t.Fatalf("reopened PostgreSQL worker failed: %v", err)
+		}
+	}
+	casWinners, casConflicts := 0, 0
+	for range 2 {
+		switch err := <-barrier.results; {
+		case err == nil:
+			casWinners++
+		case errors.Is(err, errWorkspaceLaunchCASConflict):
+			casConflicts++
+		default:
+			t.Fatalf("unexpected PostgreSQL workspace launch CAS result: %v", err)
+		}
+	}
+	if casWinners != 1 || casConflicts != 1 {
+		t.Fatalf("PostgreSQL workspace launch CAS winners=%d conflicts=%d", casWinners, casConflicts)
+	}
+	for _, store := range stores {
+		if err := store.client.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	state, err = newTestPostgresEntStateStore(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	finalStore := state.(*postgresEntStateStore)
+	t.Cleanup(func() { _ = finalStore.client.Close() })
+	finalRow, found, err := finalStore.GetRuntimeOperation(context.Background(), operation.ID)
+	if err != nil || !found {
+		t.Fatalf("final PostgreSQL recovery launch found=%t err=%v", found, err)
+	}
+	completed, err := decodeWorkspaceLaunchOperation(finalRow)
+	if err != nil || completed.Status != "succeeded" || completed.Phase != "succeeded" || completed.URL == "" || completed.ReceiptID == "" ||
+		completed.RecoveryPlan == nil || completed.RecoveryPlan.Status != "completed" || completed.RecoveryPlan.URL != completed.URL || completed.RecoveryPlan.ReceiptID != completed.ReceiptID ||
+		completed.RecoveryExecution == nil || completed.RecoveryExecution.Status != "completed" || completed.RecoveryExecution.CompletedAt == "" {
+		t.Fatalf("final PostgreSQL recovery launch=%#v err=%v", completed, err)
+	}
+	if len(fixture.fabric.computeClaimCalls) != 1 || len(fixture.fabric.storageIDs) != 1 || len(fixture.sub2API.charges) != 1 || len(fixture.fabric.computeIDs) != 1 ||
+		len(fixture.ledger.receiptInputs) != 1 {
+		t.Fatalf("PostgreSQL recovery repeated mutation: claims=%d storage=%d charges=%d compute=%d receipts=%d", len(fixture.fabric.computeClaimCalls), len(fixture.fabric.storageIDs), len(fixture.sub2API.charges), len(fixture.fabric.computeIDs), len(fixture.ledger.receiptInputs))
 	}
 }
