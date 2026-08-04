@@ -371,8 +371,20 @@ test("funding approval failures expose only fixed redacted validation stages", (
     /recovery_acceptance_approval_invalid_shape/
   );
   assert.throws(
+    () => parseRecoveryAcceptanceFundingApproval({ ...approval, schemaVersion: 2 }, { approvalId: approval.approvalId, mergedSha: mergedMainSha }),
+    /recovery_acceptance_approval_invalid_schema_version/
+  );
+  assert.throws(
+    () => parseRecoveryAcceptanceFundingApproval({ ...approval, operationMode: "other" }, { approvalId: approval.approvalId, mergedSha: mergedMainSha }),
+    /recovery_acceptance_approval_invalid_operation_mode/
+  );
+  assert.throws(
     () => parseRecoveryAcceptanceFundingApproval(approval, { approvalId: "different-approval", mergedSha: mergedMainSha }),
-    /recovery_acceptance_approval_invalid_metadata/
+    /recovery_acceptance_approval_invalid_approval_id/
+  );
+  assert.throws(
+    () => parseRecoveryAcceptanceFundingApproval({ ...approval, expiresAt: "2020-08-04T00:00:00Z" }, { approvalId: approval.approvalId, mergedSha: mergedMainSha }),
+    /recovery_acceptance_approval_invalid_expiry/
   );
   assert.throws(
     () => parseRecoveryAcceptanceFundingApproval({ ...approval, approvalDigest: "0".repeat(64) }, { approvalId: approval.approvalId, mergedSha: mergedMainSha }),
