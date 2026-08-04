@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import {
   RECOVERY_ACCEPTANCE_FUNDING_ALLOWED_WRITES,
@@ -30,6 +32,20 @@ const workspaceImageDigest = `sha256:${"c".repeat(64)}`;
 const accountId = "acct-acceptance-b";
 const email = "acceptance-b@example.com";
 const nonce = "d".repeat(32);
+
+test("relative-path CLI invocation does not silently skip the recovery runner", () => {
+  const repoRoot = fileURLToPath(new URL("../../", import.meta.url));
+  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("OPL_") && !key.startsWith("TENCENT_")));
+  const result = spawnSync(process.execPath, ["tools/recovery-original-launch-driver.ts", "--recovery-acceptance-funding-prepare", "--approval-id", "cli-entrypoint-regression"], {
+    cwd: repoRoot,
+    env,
+    encoding: "utf8"
+  });
+
+  assert.equal(result.status, 1);
+  assert.equal(result.stdout, "");
+  assert.equal(result.stderr, "recovery_acceptance_approval_invalid\n");
+});
 
 function stableId(...parts: string[]) {
   const hash = createHash("sha1");
