@@ -144,7 +144,7 @@ function validFundingArtifactWriteCounts(value: unknown, operationMode: string):
     Object.values(counts).some((count) => !Number.isSafeInteger(count) || (count as number) < 0)) return false;
   const variableField = operationMode === RECOVERY_ACCEPTANCE_FUNDING_MODE ? "walletRecoveryPosts" : "walletAdjustmentPosts";
   return Object.entries(counts).every(([key, count]) => key === variableField
-    ? operationMode === RECOVERY_ACCEPTANCE_FUNDING_MODE ? [0, 1].includes(count as number) : count === 1
+    ? [0, 1].includes(count as number)
     : count === 0);
 }
 
@@ -645,7 +645,6 @@ export async function runRecoveryAcceptanceExtraFundingPrepare(options: Recovery
     operation ||= await readWalletAdjustment(requestOptions, adminAuth, approval.walletOperationId);
   }
   if (!operation || operation.status !== "succeeded") throw new Error("recovery_acceptance_extra_funding_readback_invalid");
-  walletAdjustmentPosts = 1;
   const adjustment = validateWalletAdjustment(operation, approval, RECOVERY_ACCEPTANCE_EXTRA_FUNDING_REASON);
   const afterWallet = walletFact(sourceEnvelope(await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/gateway/wallet" }), "sub2api"), identity.sub2apiUserId);
   if (afterWallet.usdMicros !== adjustment.afterUsdMicros || BigInt(adjustment.afterUsdMicros) < BigInt(beforeWallet.usdMicros)) throw new Error("recovery_acceptance_extra_funding_balance_invalid");

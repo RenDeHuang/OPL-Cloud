@@ -363,13 +363,18 @@ test("funding prepare reads a succeeded old operation without posting", async ()
   assert.equal(result.status, "succeeded");
   assert.doesNotThrow(() => validateRecoveryAcceptanceFundingArtifact(result, RECOVERY_ACCEPTANCE_FUNDING_MODE));
   assert.throws(() => validateRecoveryAcceptanceFundingArtifact(result, RECOVERY_ACCEPTANCE_EXTRA_FUNDING_MODE), /artifact_invalid/);
-  const extraArtifact = {
+  const extraArtifactZero = {
     ...result,
     operationMode: RECOVERY_ACCEPTANCE_EXTRA_FUNDING_MODE,
-    writeCounts: { ...result.writeCounts, walletAdjustmentPosts: 1 }
+    writeCounts: { ...result.writeCounts, walletAdjustmentPosts: 0 }
   };
-  assert.doesNotThrow(() => validateRecoveryAcceptanceFundingArtifact(extraArtifact, RECOVERY_ACCEPTANCE_EXTRA_FUNDING_MODE));
-  assert.throws(() => validateRecoveryAcceptanceFundingArtifact(result, RECOVERY_ACCEPTANCE_EXTRA_FUNDING_MODE), /artifact_invalid/);
+  assert.doesNotThrow(() => validateRecoveryAcceptanceFundingArtifact(extraArtifactZero, RECOVERY_ACCEPTANCE_EXTRA_FUNDING_MODE));
+  const extraArtifactOne = {
+    ...extraArtifactZero,
+    writeCounts: { ...extraArtifactZero.writeCounts, walletAdjustmentPosts: 1 }
+  };
+  assert.doesNotThrow(() => validateRecoveryAcceptanceFundingArtifact(extraArtifactOne, RECOVERY_ACCEPTANCE_EXTRA_FUNDING_MODE));
+  assert.throws(() => validateRecoveryAcceptanceFundingArtifact({ ...extraArtifactZero, writeCounts: { ...extraArtifactZero.writeCounts, walletAdjustmentPosts: 2 } }, RECOVERY_ACCEPTANCE_EXTRA_FUNDING_MODE), /artifact_invalid/);
   assert.equal(result.errorCode, "none");
   assert.equal(result.mutationOutcome, "confirmed");
   assert.equal(result.writeCounts.walletAdjustmentPosts, 0);
