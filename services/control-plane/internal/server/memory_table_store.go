@@ -643,7 +643,7 @@ func (s *memoryTableStore) ClaimWorkspaceLaunch(_ context.Context, claim workspa
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	desired, err := decodeWorkspaceLaunchOperation(claim.DesiredOperation)
-	if err != nil || desired.AccountID != claim.AccountID || s.accounts[claim.AccountID] == nil {
+	if err != nil || desired.AccountID != claim.AccountID || claim.ExpectedOperationResult == "" && desired.AcceptanceBCapacitySlot != claim.AcceptanceBCapacitySlot || s.accounts[claim.AccountID] == nil {
 		return errWorkspaceLaunchCASConflict
 	}
 	index := -1
@@ -662,13 +662,20 @@ func (s *memoryTableStore) ClaimWorkspaceLaunch(_ context.Context, claim workspa
 				return errWorkspaceLaunchInProgress
 			}
 		}
-		inFlight := 0
+		inFlight, acceptanceClaims := 0, 0
 		for _, row := range s.runtimeOps {
+			if isWorkspaceLaunchAction(stringValue(row["action"])) && workspaceLaunchHasAcceptanceBCapacitySlot(row) {
+				acceptanceClaims++
+			}
 			if isWorkspaceLaunchAction(stringValue(row["action"])) && !terminalWorkspaceLaunchStatus(stringValue(row["status"])) {
 				inFlight++
 			}
 		}
-		if inFlight >= controlledBasicPilotGlobalInFlightLimit() {
+		if claim.AcceptanceBCapacitySlot {
+			if acceptanceClaims >= 1 {
+				return errWorkspaceLaunchCapacityReached
+			}
+		} else if inFlight >= controlledBasicPilotGlobalInFlightLimit() {
 			return errWorkspaceLaunchCapacityReached
 		}
 		s.runtimeOps = append(s.runtimeOps, cloneMap(claim.DesiredOperation))
