@@ -81,6 +81,7 @@
       ".github/workflows/production-basic-customer-operation.yml": [
         "prepare-basic-customer-operation",
         "workspace-identity-diagnose",
+        "acceptance-b-account-prepare",
         "acceptance-b-fresh-order",
         "controlled-pilot-closed-validate",
         "fabric-ledger-readback",
@@ -641,6 +642,46 @@
       "authorities": ["control_plane_launch", "sub2api_debit_history", "fabric_operations_and_provider_truth", "runtime_ready_pod", "ledger_purchase_receipt", "workspace_url_http"],
       "terminalEvidence": ["launch_succeeded", "runtime_ready", "receipt_completed", "pod_image_id_equals_approved_workspace_image_digest", "workspace_url_http_200"],
       "forbiddenFields": ["password", "token", "secret", "redeem_code", "provider_request_id", "model_prompt", "model_response"]
+    }
+  },
+  "productionBasicAcceptanceBAccountPrepare": {
+    "tool": "tools/production-basic-acceptance-b.ts",
+    "operationMode": "acceptance_b_account_prepare",
+    "execution": "github_actions_production_environment_authoritative_readback_workflow",
+    "productionNetwork": "github_actions_production_environment_authorized_runner_only",
+    "workflowIntegration": {
+      "file": ".github/workflows/production-basic-customer-operation.yml",
+      "job": "acceptance-b-account-prepare",
+      "runner": ["self-hosted", "tencent-cloud", "opl-cloud", "tke-vpc"],
+      "requiredConfirmations": ["confirm_account_provision", "confirm_wallet_recharge"],
+      "forbiddenConfirmations": ["confirm_workspace_purchase", "confirm_single_model_request", "confirm_recovery_plan_execute"],
+      "customerCredentials": ["OPL_PRODUCTION_BASIC_ACCEPTANCE_B_CUSTOMER_EMAIL", "OPL_PRODUCTION_BASIC_ACCEPTANCE_B_CUSTOMER_PASSWORD"],
+      "workflowInputCustomerIdentity": "forbidden",
+      "launchAndProviderMutation": "forbidden"
+    },
+    "operationContract": {
+      "schemaVersion": 1,
+      "operationMode": "acceptance_b_account_prepare",
+      "packageId": "basic",
+      "sizeGb": 10,
+      "autoRenew": false,
+      "rechargeUsdMicros": "60000000",
+      "accountProvisionMaximum": 1,
+      "walletRechargeMaximum": 1,
+      "forbiddenWrites": ["workspace_launch", "sub2api_debit", "cvm_create", "node_claim", "cbs_create", "attachment_create", "gateway_secret", "runtime_create", "workspace_activate", "workspace_receipt", "model_request", "refund", "renew", "delete", "replace"]
+    },
+    "readback": {
+      "accountIdentity": "authoritative_active_account_console_user_sub2api_user",
+      "baseline": "zero_workspace_launch_workspace_key_and_workspace_receipt",
+      "wallet": "authoritative_active_balance_strictly_above_current_basic_quote",
+      "unknownPost": "authoritative_get_same_stable_idempotency_identity_without_retry",
+      "redactedArtifactFields": ["customerIdentitySha256", "accountProvisionIdentitySha256", "rechargeIdentitySha256", "status", "baseline", "quote", "wallet", "writeCounts", "mutationLedgerState", "runnerDirectMutationCounts", "reconciliationRequired"],
+      "blockedArtifact": {
+        "mutationLedgerState": "unknown",
+        "runnerDirectMutationCounts": {"sub2api": "unknown", "tencent": "unknown", "kubernetes": "unknown"},
+        "reconciliationRequired": ["account_provision", "wallet_recharge"]
+      },
+      "forbiddenArtifactFields": ["email", "password", "accountId", "consoleUserId", "sub2apiUserId", "operationId", "workspaceId", "secret", "token", "cookie", "csrf"]
     }
   },
   "productionControlledBasicPilotClosedValidation": {

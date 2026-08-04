@@ -8,8 +8,13 @@ import {
   PRODUCTION_BASIC_ACCEPTANCE_B_CONFIRMATION,
   PRODUCTION_BASIC_ACCEPTANCE_B_FORBIDDEN_WRITES,
   PRODUCTION_BASIC_ACCEPTANCE_B_OPERATION,
+  PRODUCTION_BASIC_ACCEPTANCE_B_ACCOUNT_PREPARE_OPERATION,
+  blockedProductionBasicAcceptanceBPrepareArtifact,
+  findUniqueProductionBasicAcceptanceBAccount,
+  findUniqueProductionBasicAcceptanceBEmailAccount,
   parseProductionBasicAcceptanceBApproval,
   productionBasicAcceptanceBApprovalDigest,
+  validateProductionBasicAcceptanceBPrepareReadback,
   validateProductionBasicAcceptanceBReadback,
   validateProductionBasicAcceptanceBWriteCounts
 } from "../../tools/production-basic-acceptance-b.ts";
@@ -206,6 +211,95 @@ test("Acceptance B approval rejects expiry, identity drift, extra fields, and br
   }
 });
 
+test("Acceptance B matches the approved account pair across pages without requiring a singleton production account total", () => {
+  const approved = { accountId: ACCOUNT_ID, email: "acceptance-b@example.com", status: "active" };
+  const pages = [
+    {
+      items: Array.from({ length: 50 }, (_, index) => ({
+        accountId: `acct-filler-${index + 1}`,
+        email: `filler-${index + 1}@example.com`
+      })),
+      total: 51,
+      page: 1,
+      pageSize: 50
+    },
+    { items: [approved], total: 51, page: 2, pageSize: 50 }
+  ];
+  assert.deepEqual(findUniqueProductionBasicAcceptanceBAccount(pages, approved.accountId, approved.email), approved);
+  const pairDriftOnAnotherPage = {
+    ...pages[0],
+    items: [{ accountId: approved.accountId, email: "different@example.com" }, ...pages[0].items.slice(1)]
+  };
+  assert.throws(() => findUniqueProductionBasicAcceptanceBAccount([pairDriftOnAnotherPage, pages[1]], approved.accountId, approved.email), /production_basic_acceptance_b_account_readback_invalid/);
+  const emailDriftOnAnotherPage = {
+    ...pages[0],
+    items: [{ accountId: "acct-different", email: approved.email }, ...pages[0].items.slice(1)]
+  };
+  assert.throws(() => findUniqueProductionBasicAcceptanceBAccount([emailDriftOnAnotherPage, pages[1]], approved.accountId, approved.email), /production_basic_acceptance_b_account_readback_invalid/);
+  const duplicatePages = [
+    { ...pages[0], total: 52 },
+    { items: [approved, { ...approved }], total: 52, page: 2, pageSize: 50 }
+  ];
+  assert.throws(() => findUniqueProductionBasicAcceptanceBAccount([
+    ...duplicatePages
+  ], approved.accountId, approved.email), /production_basic_acceptance_b_account_readback_invalid/);
+});
+
+test("Acceptance B account preparation exposes only a redacted zero-workspace checkpoint", () => {
+  assert.deepEqual(PRODUCTION_BASIC_ACCEPTANCE_B_ACCOUNT_PREPARE_OPERATION, {
+    schemaVersion: 1,
+    operationMode: "acceptance_b_account_prepare",
+    packageId: "basic",
+    sizeGb: 10,
+    autoRenew: false,
+    rechargeUsdMicros: "60000000",
+    confirmation: "PREPARE_ONE_ACCEPTANCE_B_ACCOUNT_WITH_ONE_PROVISION_AND_ONE_RECHARGE",
+    forbiddenWrites: [
+      "workspace_launch", "sub2api_debit", "cvm_create", "node_claim", "cbs_create", "attachment_create",
+      "gateway_secret", "runtime_create", "workspace_activate", "workspace_receipt", "model_request", "refund", "renew", "delete", "replace"
+    ]
+  });
+  const evidence = {
+    schemaVersion: 1,
+    operationMode: "acceptance_b_account_prepare",
+    status: "succeeded",
+    mergedMainSha: "a".repeat(40),
+    customerIdentitySha256: "b".repeat(64),
+    identity: { accountProvisionIdentitySha256: "c".repeat(64), status: "active" },
+    baseline: { workspaceCount: 0, workspaceLaunchCount: 0, workspaceKeyCount: 0, workspaceReceiptCount: 0 },
+    quote: { packageId: "basic", sizeGb: 10, totalChargeUsdMicros: 52580000, currency: "USD" },
+    wallet: { beforeUsdMicros: "0", afterUsdMicros: "60000000", rechargeIdentitySha256: "d".repeat(64), rechargeCount: 1 },
+    writeCounts: { accountProvisionPosts: 1, walletAdjustmentPosts: 1, workspaceLaunchPosts: 0, sub2apiDebits: 0, tencentCvmCreates: 0, kubernetesNodeClaims: 0, tencentCbsCreates: 0, runtimeCreates: 0, receiptCreates: 0, modelRequests: 0, refunds: 0, renewals: 0, deletes: 0, replacements: 0 }
+  };
+  assert.deepEqual(validateProductionBasicAcceptanceBPrepareReadback(evidence, { mergedSha: evidence.mergedMainSha }), evidence);
+  for (const forbidden of [
+    { password: "must-not-be-present" },
+    { identity: { ...evidence.identity, accountId: "acct-raw" } },
+    { wallet: { ...evidence.wallet, operationId: "wallet-adjustment-raw" } },
+    { nested: { email: "raw@example.com" } }
+  ]) {
+    assert.throws(() => validateProductionBasicAcceptanceBPrepareReadback({ ...evidence, ...forbidden }, { mergedSha: evidence.mergedMainSha }), /production_basic_acceptance_b_prepare_readback_invalid/);
+  }
+});
+
+test("Acceptance B blocked preparation keeps partial provision or recharge results unknown", () => {
+  const artifact = blockedProductionBasicAcceptanceBPrepareArtifact("production_basic_acceptance_b_recharge_failed");
+  assert.equal(artifact.status, "blocked");
+  assert.equal(artifact.mutationLedgerState, "unknown");
+  assert.deepEqual(artifact.runnerDirectMutationCounts, { sub2api: "unknown", tencent: "unknown", kubernetes: "unknown" });
+  assert.deepEqual(artifact.reconciliationRequired, ["account_provision", "wallet_recharge"]);
+  assert.notDeepEqual(artifact.runnerDirectMutationCounts, { sub2api: 0, tencent: 0, kubernetes: 0 });
+});
+
+test("Acceptance B email selector returns no account, one account, and fails duplicate identities", () => {
+  const empty = [{ items: [], total: 0, page: 1, pageSize: 50 }];
+  assert.equal(findUniqueProductionBasicAcceptanceBEmailAccount(empty, "prepare@example.com"), null);
+  const account = { accountId: "acct-prepare", consoleUserId: "usr-prepare", sub2apiUserId: "41", email: "prepare@example.com", role: "owner", status: "active" };
+  const pages = [{ items: [account], total: 1, page: 1, pageSize: 50 }];
+  assert.deepEqual(findUniqueProductionBasicAcceptanceBEmailAccount(pages, account.email), account);
+  assert.throws(() => findUniqueProductionBasicAcceptanceBEmailAccount([{ items: [account, { ...account, accountId: "acct-other" }], total: 2, page: 1, pageSize: 50 }], account.email), /production_basic_acceptance_b_account_readback_invalid/);
+});
+
 test("Acceptance B write accounting accepts only the frozen one-order cardinalities", () => {
   assert.deepEqual(validateProductionBasicAcceptanceBWriteCounts(exactWriteCounts()), exactWriteCounts());
   for (const value of [
@@ -282,4 +376,11 @@ test("deployment machine contract registers the local-only Acceptance B integrat
       forbiddenFields: ["password", "token", "secret", "redeem_code", "provider_request_id", "model_prompt", "model_response"]
     }
   });
+});
+
+test("Acceptance B reads only its independent customer password secret", async () => {
+  const workflow = await readFile(new URL("../../.github/workflows/production-basic-customer-operation.yml", import.meta.url), "utf8");
+  const acceptanceB = workflow.slice(workflow.indexOf("  acceptance-b-fresh-order:"), workflow.indexOf("  controlled-pilot-closed-validate:"));
+  assert.match(acceptanceB, /OPL_PRODUCTION_BASIC_ACCEPTANCE_B_CUSTOMER_PASSWORD:\s*\$\{\{ secrets\.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_CUSTOMER_PASSWORD \}\}/);
+  assert.doesNotMatch(acceptanceB, /OPL_BASIC_CANARY_CUSTOMER_PASSWORD/);
 });
