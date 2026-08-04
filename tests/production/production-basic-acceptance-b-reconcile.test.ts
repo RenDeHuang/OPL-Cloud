@@ -215,6 +215,56 @@ test("request failure before the account-reconcile response uses a zero-digest f
   assert.doesNotMatch(stdout, /reconcile@example\.com|acct-admin|operationId|password|secret|token/i);
 });
 
+test("only prepared passes the CLI business gate while safe_to_retry_absent and unknown remain validator-valid but rejected", async () => {
+  const base = {
+    OPL_MERGED_SHA: MERGED_SHA,
+    OPL_CONSOLE_ORIGIN: "https://cloud.medopl.cn",
+    OPL_SUB2API_ADMIN_EMAIL: ADMIN_EMAIL,
+    OPL_SUB2API_ADMIN_PASSWORD: "admin-password",
+    OPL_PRODUCTION_BASIC_ACCEPTANCE_B_CUSTOMER_EMAIL: EMAIL,
+    OPL_PRODUCTION_BASIC_ACCEPTANCE_B_CUSTOMER_PASSWORD: "customer-password",
+    OPL_PRODUCTION_BASIC_ACCEPTANCE_B_RECONCILE_ARTIFACT_PATH: ""
+  };
+  for (const status of ["safe_to_retry_absent", "unknown"]) {
+    const fetchImpl = async (url) => {
+      const parsed = new URL(url);
+      if (parsed.pathname === "/api/auth/login") return loginPayload("acct-admin", "admin");
+      if (parsed.pathname === "/api/operator/account-reconciliation") {
+        return response(envelope("control-plane+sub2api+ledger", routeData({
+          status,
+          localGraph: status === "safe_to_retry_absent" ? "absent" : "unknown",
+          remoteIdentity: status === "safe_to_retry_absent" ? "absent" : "unknown",
+          customerLogin: status === "safe_to_retry_absent" ? "not_attempted" : "unknown",
+          wallet: status === "safe_to_retry_absent" ? "absent" : "unknown",
+          walletUsdMicros: "",
+          walletAdjustment: status === "safe_to_retry_absent" ? "absent" : "unknown",
+          failureStage: status === "safe_to_retry_absent" ? "route_request" : "remote_identity",
+          readbackError: status === "safe_to_retry_absent" ? "none" : "sub2api_authority_unavailable"
+        })));
+      }
+      throw new Error(`unexpected_request:${parsed.pathname}`);
+    };
+    let stdout = "";
+    const code = await runProductionBasicAcceptanceBReconcileCli({
+      argv: ["--reconcile-account"], env: base, stdout: { write: (value) => { stdout += value; } }, stderr: { write: () => {} }, fetchImpl,
+      now: new Date("2026-08-04T00:00:00.000Z")
+    });
+    assert.equal(code, 1);
+    const artifact = JSON.parse(stdout);
+    assert.equal(artifact.status, status);
+    assert.deepEqual(validateProductionBasicAcceptanceBReconcileReadback(artifact, { mergedSha: MERGED_SHA }), artifact);
+  }
+});
+
+test("workflow validates through the exported reconcile validator and gates only prepared", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const workflow = await readFile(new URL("../../.github/workflows/production-basic-customer-operation.yml", import.meta.url), "utf8");
+  assert.match(workflow, /import \{ validateProductionBasicAcceptanceBReconcileReadback \} from \"\.\/tools\/production-basic-acceptance-b-reconcile\.ts\"/);
+  assert.match(workflow, /validateProductionBasicAcceptanceBReconcileReadback\(evidence/);
+  assert.match(workflow, /evidence\.status !== \"prepared\"/);
+  assert.doesNotMatch(workflow, /safe_to_retry_absent.*includes\(evidence\.status\)/);
+});
+
 test("an HTTP response without a valid DTO uses a nonzero response digest, never a zero fallback, and validates", async () => {
   const fetchImpl = async (url) => {
     const parsed = new URL(url);

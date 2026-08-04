@@ -473,7 +473,7 @@ export async function runProductionBasicAcceptanceBReconcileCli({
     const artifactPath = String(env.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_RECONCILE_ARTIFACT_PATH || "");
     if (artifactPath) await writeFile(artifactPath, `${JSON.stringify(result, null, 2)}\n`, { mode: 0o600 });
     stdout.write(`${JSON.stringify(result, null, 2)}\n`);
-    return result.status === "prepared" || result.status === "safe_to_retry_absent" ? 0 : 1;
+    return result.status === "prepared" ? 0 : 1;
   } catch (error) {
     const hasServerResponse = error?.responseReceived === true;
     const artifact = blockedProductionBasicAcceptanceBReconcileArtifact({
