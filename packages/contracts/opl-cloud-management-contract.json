@@ -168,6 +168,7 @@
       "workspaces": "GET /api/operator/workspaces",
       "workspaceDetail": "GET /api/operator/workspaces/{workspaceId}",
       "reconciliation": "GET /api/operator/reconciliation",
+      "accountReconciliation": "GET /api/operator/account-reconciliation",
       "health": "GET /api/operator/health"
     },
     "managementState": "GET /api/management/state",

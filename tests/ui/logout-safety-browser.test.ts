@@ -22,10 +22,24 @@ test("Console hides secrets and rejects late account data while logout is unconf
 
     const passwordRow = page.locator(".workspace-access-panel .data-list > div").filter({ hasText: "密码" }).first();
     await passwordRow.getByRole("button", { name: "显示", exact: true }).click();
+    await passwordRow.locator("code").waitFor({ state: "visible" });
+    await page.waitForFunction(() => {
+      const rows = [...document.querySelectorAll(".workspace-access-panel .data-list > div")];
+      const row = rows.find((candidate) => candidate.textContent?.includes("密码"));
+      const value = row?.querySelector("code")?.textContent || "";
+      return Boolean(value) && !value.includes("••");
+    });
     const password = String(await passwordRow.locator("code").textContent());
     assert.ok(password && !password.includes("••"));
     const workspaceKeyRow = page.locator(".workspace-access-panel .data-list > div").filter({ hasText: "Workspace Key" }).first();
     await workspaceKeyRow.getByRole("button", { name: "显示", exact: true }).click();
+    await workspaceKeyRow.locator("code").waitFor({ state: "visible" });
+    await page.waitForFunction(() => {
+      const rows = [...document.querySelectorAll(".workspace-access-panel .data-list > div")];
+      const row = rows.find((candidate) => candidate.textContent?.includes("Workspace Key"));
+      const value = row?.querySelector("code")?.textContent || "";
+      return Boolean(value) && !value.includes("••");
+    });
     const workspaceKey = String(await workspaceKeyRow.locator("code").textContent());
     assert.ok(workspaceKey && !workspaceKey.includes("••"));
 
