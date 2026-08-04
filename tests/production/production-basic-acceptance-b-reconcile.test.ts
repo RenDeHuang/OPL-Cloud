@@ -350,6 +350,8 @@ test("a nonzero Fresh baseline remains a baseline failure after customer login s
     if (parsed.pathname === "/api/auth/me") return response(envelope("sub2api", { email: EMAIL, role: "owner", status: "active" }));
     if (parsed.pathname === "/api/workspaces") return response(envelope("control-plane", { items: [], total: 0, page: 1, pageSize: 50 }));
     if (parsed.pathname === "/api/workspace-launches") return response([{ operationId: "redacted-by-artifact" }]);
+    if (parsed.pathname === "/api/gateway/keys") return response(envelope("sub2api", { items: [{ kind: "workspace" }], total: 1, page: 1, pageSize: 50 }));
+    if (parsed.pathname === "/api/billing/receipts") return response(envelope("ledger", { receipts: [], nextCursor: "", hasMore: false }, "empty"));
     throw new Error(`unexpected_request:${parsed.pathname}`);
   };
 
@@ -363,6 +365,30 @@ test("a nonzero Fresh baseline remains a baseline failure after customer login s
   assert.equal(result.keyCount, 1);
   assert.deepEqual(validateProductionBasicAcceptanceBReconcileReadback(result, { mergedSha: MERGED_SHA }), result);
   assert.equal(requests.some((request) => request.method === "POST" && request.path === "/api/workspace-launches"), false);
+});
+
+test("an unavailable Fresh baseline fails closed after customer login succeeds", async () => {
+  const fetchImpl = async (url, init = {}) => {
+    const parsed = new URL(url);
+    if (parsed.pathname === "/api/auth/login") {
+      const body = JSON.parse(init.body);
+      return loginPayload(body.email === ADMIN_EMAIL ? "acct-admin" : "acct-reconcile", body.email === ADMIN_EMAIL ? "admin" : "owner");
+    }
+    if (parsed.pathname === "/api/operator/account-reconciliation") {
+      return response(envelope("control-plane+sub2api+ledger", routeData()));
+    }
+    if (parsed.pathname === "/api/auth/me") return response(envelope("sub2api", { email: EMAIL, role: "owner", status: "active" }));
+    if (parsed.pathname === "/api/workspaces") throw new Error("connection_reset");
+    throw new Error(`unexpected_request:${parsed.pathname}`);
+  };
+
+  const result = await reconcileProductionBasicAcceptanceBAccount(baseOptions(fetchImpl));
+  assert.equal(result.status, "unknown");
+  assert.equal(result.customerLogin, "active");
+  assert.equal(result.failureStage, "baseline");
+  assert.equal(result.readbackError, "baseline_authority_unavailable");
+  assert.equal(result.errorCode, "acceptance_b_account_reconcile_unknown");
+  assert.deepEqual(validateProductionBasicAcceptanceBReconcileReadback(result, { mergedSha: MERGED_SHA }), result);
 });
 
 test("manual-review server DTOs get a wallet-adjustment failure stage without losing the readback shape", async () => {

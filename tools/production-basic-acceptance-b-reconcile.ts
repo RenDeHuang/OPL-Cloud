@@ -369,6 +369,7 @@ export async function reconcileProductionBasicAcceptanceBAccount(options = {}) {
   let customerLogin = data.status === "safe_to_retry_absent" ? "not_attempted" : "unknown";
   let failureStage = serverFailureStage;
   let readbackError = serverReadbackError;
+  let baselineReadbackUnknown = false;
   if (data.status !== "unknown" && data.remoteIdentity === "active") {
     let customerAuth;
     try {
@@ -389,6 +390,7 @@ export async function reconcileProductionBasicAcceptanceBAccount(options = {}) {
         baseline.keyCount = current.keyCount;
         baseline.receiptCount = current.receiptCount;
       } catch {
+        baselineReadbackUnknown = true;
         failureStage = "baseline";
         readbackError = "baseline_authority_unavailable";
       }
@@ -396,6 +398,7 @@ export async function reconcileProductionBasicAcceptanceBAccount(options = {}) {
   }
   let status = data.status;
   if (customerLogin === "failed") status = "unknown";
+  if (baselineReadbackUnknown) status = "unknown";
   if (customerLogin === "active" && Object.values(baseline).some((count) => count !== 0)) {
     failureStage = "baseline";
     readbackError = "baseline_not_zero";
