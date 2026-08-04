@@ -52,10 +52,10 @@ test("relative-path CLI invocation does not silently skip the recovery runner", 
   assert.doesNotThrow(() => validateRecoveryAcceptanceFundingArtifact(artifact, RECOVERY_ACCEPTANCE_FUNDING_MODE));
   assert.equal(artifact.status, "failed");
   assert.equal(artifact.operationMode, RECOVERY_ACCEPTANCE_FUNDING_MODE);
-  assert.equal(artifact.errorCode, "recovery_acceptance_approval_invalid");
+  assert.equal(artifact.errorCode, "recovery_acceptance_approval_invalid_json");
   assert.equal(artifact.mutationOutcome, "unknown");
   assert.doesNotMatch(result.stdout, /password|secret|cookie|csrf|authorization|raw_.*id/i);
-  assert.equal(result.stderr, "recovery_acceptance_approval_invalid\n");
+  assert.equal(result.stderr, "recovery_acceptance_approval_invalid_json\n");
 });
 
 test("symlinked checkout CLI invocation does not silently skip the recovery runner", async () => {
@@ -78,10 +78,10 @@ test("symlinked checkout CLI invocation does not silently skip the recovery runn
     assert.doesNotThrow(() => validateRecoveryAcceptanceFundingArtifact(artifact, RECOVERY_ACCEPTANCE_FUNDING_MODE));
     assert.equal(artifact.status, "failed");
     assert.equal(artifact.operationMode, RECOVERY_ACCEPTANCE_FUNDING_MODE);
-    assert.equal(artifact.errorCode, "recovery_acceptance_approval_invalid");
+    assert.equal(artifact.errorCode, "recovery_acceptance_approval_invalid_json");
     assert.equal(artifact.mutationOutcome, "unknown");
     assert.doesNotMatch(result.stdout, /password|secret|cookie|csrf|authorization|raw_.*id/i);
-    assert.match(result.stderr, /recovery_acceptance_approval_invalid/);
+    assert.match(result.stderr, /recovery_acceptance_approval_invalid_json/);
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }
@@ -351,6 +351,41 @@ test("funding approval binds the existing Acceptance B deterministic wallet oper
   assert.equal(parsed.confirmation, RECOVERY_ACCEPTANCE_FUNDING_CONFIRMATION);
   assert.notEqual(parsed.walletOperationId, "wallet-adjustment-acceptance-b-wallet-recharge-v1");
   assert.throws(() => parseRecoveryAcceptanceFundingApproval(JSON.stringify({ ...approval, rechargeUsdMicros: "52580000" }), { approvalId: approval.approvalId, mergedSha: mergedMainSha }), /approval_invalid/);
+});
+
+test("funding approval failures expose only fixed redacted validation stages", () => {
+  const approval = fundingApproval();
+  const withDigest = (overrides: Record<string, unknown>) => {
+    const value = { ...approval, ...overrides, approvalDigest: "" };
+    value.approvalDigest = recoveryAcceptanceApprovalDigest(value);
+    return value;
+  };
+
+  assert.throws(
+    () => parseRecoveryAcceptanceFundingApproval("not-json", { approvalId: approval.approvalId, mergedSha: mergedMainSha }),
+    /recovery_acceptance_approval_invalid_json/
+  );
+  const { nonce: _nonce, ...missingKey } = approval;
+  assert.throws(
+    () => parseRecoveryAcceptanceFundingApproval(missingKey, { approvalId: approval.approvalId, mergedSha: mergedMainSha }),
+    /recovery_acceptance_approval_invalid_shape/
+  );
+  assert.throws(
+    () => parseRecoveryAcceptanceFundingApproval(approval, { approvalId: "different-approval", mergedSha: mergedMainSha }),
+    /recovery_acceptance_approval_invalid_metadata/
+  );
+  assert.throws(
+    () => parseRecoveryAcceptanceFundingApproval({ ...approval, approvalDigest: "0".repeat(64) }, { approvalId: approval.approvalId, mergedSha: mergedMainSha }),
+    /recovery_acceptance_approval_invalid_digest/
+  );
+  assert.throws(
+    () => parseRecoveryAcceptanceFundingApproval(approval, { approvalId: approval.approvalId, mergedSha: "f".repeat(40) }),
+    /recovery_acceptance_approval_invalid_release/
+  );
+  assert.throws(
+    () => parseRecoveryAcceptanceFundingApproval(withDigest({ rechargeUsdMicros: "52580000" }), { approvalId: approval.approvalId, mergedSha: mergedMainSha }),
+    /recovery_acceptance_approval_invalid_funding_contract/
+  );
 });
 
 test("funding prepare reads a succeeded old operation without posting", async () => {

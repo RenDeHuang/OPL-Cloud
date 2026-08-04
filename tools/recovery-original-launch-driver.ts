@@ -298,15 +298,20 @@ function acceptanceBWalletOperationId(accountId: string, email: string): string 
 function parseApproval(value: string | Record<string, unknown>, options: { approvalId?: string; mergedSha?: string; now?: Date }, mode: string, keys: string[]): Record<string, unknown> {
   let parsed: unknown = value;
   if (typeof value === "string") {
-    try { parsed = JSON.parse(value); } catch { parsed = null; }
+    try { parsed = JSON.parse(value); } catch { throw new Error("recovery_acceptance_approval_invalid_json"); }
   }
   const now = options.now instanceof Date ? options.now : new Date(options.now || Date.now());
   const record = parsed as Record<string, unknown>;
-  if (!exactKeys(record, keys) || record.schemaVersion !== 1 || record.operationMode !== mode ||
+  if (!exactKeys(record, keys)) throw new Error("recovery_acceptance_approval_invalid_shape");
+  if (record.schemaVersion !== 1 || record.operationMode !== mode ||
     (options.approvalId !== undefined && record.approvalId !== options.approvalId) ||
-    !String(record.approvalId || "") || !validExpiry(record.expiresAt, now) ||
-    record.approvalDigest !== recoveryAcceptanceApprovalDigest(record)) throw new Error("recovery_acceptance_approval_invalid");
-  if (options.mergedSha && (record.release as Record<string, unknown>)?.mergedMainSha !== options.mergedSha) throw new Error("recovery_acceptance_approval_invalid");
+    !String(record.approvalId || "") || !validExpiry(record.expiresAt, now)) {
+    throw new Error("recovery_acceptance_approval_invalid_metadata");
+  }
+  if (record.approvalDigest !== recoveryAcceptanceApprovalDigest(record)) throw new Error("recovery_acceptance_approval_invalid_digest");
+  if (options.mergedSha && (record.release as Record<string, unknown>)?.mergedMainSha !== options.mergedSha) {
+    throw new Error("recovery_acceptance_approval_invalid_release");
+  }
   return record;
 }
 
@@ -335,7 +340,9 @@ export function parseRecoveryAcceptanceFundingApproval(value: string | Record<st
   const expectedWalletOperationID = acceptanceBWalletOperationId(String(customer?.accountId || ""), String(customer?.email || ""));
   if (record.confirmation !== RECOVERY_ACCEPTANCE_FUNDING_CONFIRMATION || !/^[a-f0-9]{32,128}$/.test(String(record.nonce || "")) ||
     !validRelease(release) || !validCustomer(customer) || record.rechargeUsdMicros !== RECOVERY_ACCEPTANCE_FUNDING_RECHARGE_USD_MICROS || record.walletOperationId !== expectedWalletOperationID ||
-    !validWriteBoundary(record, RECOVERY_ACCEPTANCE_FUNDING_ALLOWED_WRITES, RECOVERY_ACCEPTANCE_FUNDING_FORBIDDEN_WRITES)) throw new Error("recovery_acceptance_approval_invalid");
+    !validWriteBoundary(record, RECOVERY_ACCEPTANCE_FUNDING_ALLOWED_WRITES, RECOVERY_ACCEPTANCE_FUNDING_FORBIDDEN_WRITES)) {
+    throw new Error("recovery_acceptance_approval_invalid_funding_contract");
+  }
   return record as unknown as RecoveryAcceptanceFundingApproval;
 }
 
