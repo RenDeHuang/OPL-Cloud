@@ -26,7 +26,8 @@ import {
   runRecoveryAcceptanceExtraFundingPrepare,
   parseRecoveryAcceptanceFundingApproval,
   parseRecoveryAcceptanceOriginalLaunchApproval,
-  recoveryAcceptanceApprovalDigest
+  recoveryAcceptanceApprovalDigest,
+  validateRecoveryAcceptanceFundingArtifact
 } from "../../tools/recovery-original-launch-driver.ts";
 
 const mergedMainSha = "a".repeat(40);
@@ -46,7 +47,14 @@ test("relative-path CLI invocation does not silently skip the recovery runner", 
   });
 
   assert.equal(result.status, 1);
-  assert.equal(result.stdout, "");
+  assert.notEqual(result.stdout.trim(), "");
+  const artifact = JSON.parse(result.stdout);
+  assert.doesNotThrow(() => validateRecoveryAcceptanceFundingArtifact(artifact));
+  assert.equal(artifact.status, "failed");
+  assert.equal(artifact.operationMode, RECOVERY_ACCEPTANCE_FUNDING_MODE);
+  assert.equal(artifact.errorCode, "recovery_acceptance_approval_invalid");
+  assert.equal(artifact.mutationOutcome, "unknown");
+  assert.doesNotMatch(result.stdout, /password|secret|cookie|csrf|authorization|raw_.*id/i);
   assert.equal(result.stderr, "recovery_acceptance_approval_invalid\n");
 });
 
@@ -65,7 +73,14 @@ test("symlinked checkout CLI invocation does not silently skip the recovery runn
     });
 
     assert.equal(result.status, 1);
-    assert.equal(result.stdout, "");
+    assert.notEqual(result.stdout.trim(), "");
+    const artifact = JSON.parse(result.stdout);
+    assert.doesNotThrow(() => validateRecoveryAcceptanceFundingArtifact(artifact));
+    assert.equal(artifact.status, "failed");
+    assert.equal(artifact.operationMode, RECOVERY_ACCEPTANCE_FUNDING_MODE);
+    assert.equal(artifact.errorCode, "recovery_acceptance_approval_invalid");
+    assert.equal(artifact.mutationOutcome, "unknown");
+    assert.doesNotMatch(result.stdout, /password|secret|cookie|csrf|authorization|raw_.*id/i);
     assert.match(result.stderr, /recovery_acceptance_approval_invalid/);
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
@@ -346,6 +361,9 @@ test("funding prepare reads a succeeded old operation without posting", async ()
     now: new Date("2026-08-04T00:00:00Z")
   });
   assert.equal(result.status, "succeeded");
+  assert.doesNotThrow(() => validateRecoveryAcceptanceFundingArtifact(result));
+  assert.equal(result.errorCode, "none");
+  assert.equal(result.mutationOutcome, "confirmed");
   assert.equal(result.writeCounts.walletAdjustmentPosts, 0);
   assert.equal(result.writeCounts.walletRecoveryPosts, 0);
   assert.equal(fixture.calls.filter((call) => call.method === "POST" && call.path.endsWith("/recover")).length, 0);
@@ -358,6 +376,9 @@ test("manual-review old operation permits one recover POST and succeeds on same 
     approvalJson: JSON.stringify(fixture.approval), approvalId: fixture.approval.approvalId, mergedSha: mergedMainSha, confirmWalletRecharge: true, fetchImpl: fixture.fetchImpl,
     now: new Date("2026-08-04T00:00:00Z")
   });
+  assert.doesNotThrow(() => validateRecoveryAcceptanceFundingArtifact(result));
+  assert.equal(result.errorCode, "none");
+  assert.equal(result.mutationOutcome, "confirmed");
   const recoveryPosts = fixture.calls.filter((call) => call.method === "POST" && call.path.endsWith("/recover"));
   assert.equal(recoveryPosts.length, 1);
   assert.deepEqual(recoveryPosts[0].body, { accountId, evidenceRef: "case-20260804-acceptb" });

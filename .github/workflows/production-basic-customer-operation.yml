@@ -1919,8 +1919,10 @@ jobs:
           set -euo pipefail
           node --input-type=module <<'NODE'
           import { readFile } from "node:fs/promises";
+          import { validateRecoveryAcceptanceFundingArtifact } from "./tools/recovery-original-launch-driver.ts";
           const evidence = JSON.parse(await readFile(process.env.OPL_RECOVERY_ACCEPTANCE_FUNDING_ARTIFACT_PATH, "utf8"));
-          if (evidence.status !== "succeeded" || evidence.operationMode !== "recovery_acceptance_funding_prepare" || evidence.writeCounts?.walletAdjustmentPosts !== 0 || ![0, 1].includes(evidence.writeCounts?.walletRecoveryPosts) || /password|secret|cookie|csrf|authorization|raw_.*id/i.test(JSON.stringify(evidence))) process.exit(1);
+          validateRecoveryAcceptanceFundingArtifact(evidence);
+          if (evidence.status !== "succeeded") process.exit(1);
           NODE
       - name: Upload redacted funding evidence
         if: always()
@@ -2019,8 +2021,10 @@ jobs:
           set -euo pipefail
           node --input-type=module <<'NODE'
           import { readFile } from "node:fs/promises";
+          import { validateRecoveryAcceptanceFundingArtifact } from "./tools/recovery-original-launch-driver.ts";
           const evidence = JSON.parse(await readFile(process.env.OPL_RECOVERY_ACCEPTANCE_EXTRA_FUNDING_ARTIFACT_PATH, "utf8"));
-          if (evidence.status !== "succeeded" || evidence.operationMode !== "recovery_acceptance_extra_funding_prepare" || evidence.writeCounts?.walletAdjustmentPosts !== 1 || evidence.writeCounts?.walletRecoveryPosts !== 0 || /password|secret|cookie|csrf|authorization|raw_.*id/i.test(JSON.stringify(evidence))) process.exit(1);
+          validateRecoveryAcceptanceFundingArtifact(evidence);
+          if (evidence.status !== "succeeded") process.exit(1);
           NODE
       - name: Upload redacted extra funding evidence
         if: always()
