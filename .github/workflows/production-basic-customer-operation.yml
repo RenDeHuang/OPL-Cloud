@@ -1199,13 +1199,13 @@ jobs:
           set -euo pipefail
           node --input-type=module <<'NODE'
           import { readFile } from "node:fs/promises";
-          import { parseProductionBasicAcceptanceBApproval, validateProductionBasicAcceptanceBReadback } from "./tools/production-basic-acceptance-b.ts";
+          import { parseProductionBasicAcceptanceBApproval, validateProductionBasicAcceptanceBArtifact } from "./tools/production-basic-acceptance-b.ts";
           const evidence = JSON.parse(await readFile(process.env.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_ARTIFACT_PATH, "utf8"));
           const approval = parseProductionBasicAcceptanceBApproval(process.env.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_APPROVAL_JSON, {
             approvalId: process.env.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_APPROVAL_ID
           });
+          validateProductionBasicAcceptanceBArtifact(evidence, approval);
           if (evidence.status !== "succeeded") throw new Error("Acceptance B did not produce succeeded evidence.");
-          validateProductionBasicAcceptanceBReadback(evidence, approval);
           if (!String(evidence.runtime?.podImageId || "").endsWith(approval.release.workspaceImageDigest) || evidence.workspaceUrl?.statusCode !== 200) throw new Error("Acceptance B terminal evidence mismatch.");
           NODE
 

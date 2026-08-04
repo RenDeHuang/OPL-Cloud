@@ -463,6 +463,60 @@ export function validateProductionBasicAcceptanceBReadback(value, approval) {
   return cloneJson(value);
 }
 
+const ACCEPTANCE_B_SAFE_ARTIFACT_TOKEN = /^[a-z][a-z0-9_]{0,95}$/;
+
+function safeAcceptanceBArtifactToken(value, fallback = "unknown") {
+  const token = String(value || "").trim();
+  return ACCEPTANCE_B_SAFE_ARTIFACT_TOKEN.test(token) ? token : fallback;
+}
+
+function productionBasicAcceptanceBLaunchReadback(value) {
+  if (value?.responseReceived !== true) {
+    return { responseReceived: false, status: "unknown", phase: "unknown", errorCode: "unknown" };
+  }
+  return {
+    responseReceived: true,
+    status: safeAcceptanceBArtifactToken(value.status, "invalid"),
+    phase: safeAcceptanceBArtifactToken(value.phase, "invalid"),
+    errorCode: safeAcceptanceBArtifactToken(value.errorCode || "none", "invalid")
+  };
+}
+
+function productionBasicAcceptanceBLaunchError(errorCode, launch) {
+  const error = new Error(errorCode);
+  error.launchReadback = productionBasicAcceptanceBLaunchReadback({ responseReceived: true, ...launch });
+  return error;
+}
+
+export function validateProductionBasicAcceptanceBBlockedReadback(value) {
+  const fail = () => { throw new Error("production_basic_acceptance_b_blocked_readback_invalid"); };
+  if (!exactObjectKeys(value, [
+    "schemaVersion", "operationMode", "status", "errorCode", "mutationLedgerState",
+    "runnerDirectMutationCounts", "reconciliationRequired", "launchReadback"
+  ]) || value.schemaVersion !== 1 || value.operationMode !== PRODUCTION_BASIC_ACCEPTANCE_B_OPERATION.operationMode ||
+    value.status !== "blocked" || !ACCEPTANCE_B_SAFE_ARTIFACT_TOKEN.test(String(value.errorCode || "")) ||
+    value.mutationLedgerState !== "unknown" ||
+    !exactObjectKeys(value.runnerDirectMutationCounts, ["sub2api", "tencent", "kubernetes"]) ||
+    Object.values(value.runnerDirectMutationCounts).some((count) => count !== "unknown") ||
+    canonicalJson(value.reconciliationRequired) !== canonicalJson(["workspace_launch"]) ||
+    !exactObjectKeys(value.launchReadback, ["responseReceived", "status", "phase", "errorCode"]) ||
+    typeof value.launchReadback.responseReceived !== "boolean" ||
+    [value.launchReadback.status, value.launchReadback.phase, value.launchReadback.errorCode]
+      .some((token) => !ACCEPTANCE_B_SAFE_ARTIFACT_TOKEN.test(String(token || ""))) ||
+    (value.launchReadback.responseReceived === false && canonicalJson(value.launchReadback) !== canonicalJson({
+      responseReceived: false, status: "unknown", phase: "unknown", errorCode: "unknown"
+    }))) {
+    fail();
+  }
+  return cloneJson(value);
+}
+
+export function validateProductionBasicAcceptanceBArtifact(value, approval) {
+  return value?.status === "succeeded"
+    ? validateProductionBasicAcceptanceBReadback(value, approval)
+    : validateProductionBasicAcceptanceBBlockedReadback(value);
+}
+
 function sourceData(result, expectedSource, allowEmpty = false) {
   return sourceEnvelope(result, expectedSource, allowEmpty).data;
 }
@@ -532,11 +586,11 @@ export async function readProductionBasicAcceptanceBLaunchUntilTerminal({
     if (!launch) throw new Error("production_basic_acceptance_b_launch_readback_unknown");
     assertAcceptanceBLaunchIdentity(launch, approval);
     if (["manual_review", "failed", "refunded"].includes(launch.status)) {
-      throw new Error("production_basic_acceptance_b_launch_failed");
+      throw productionBasicAcceptanceBLaunchError("production_basic_acceptance_b_launch_failed", launch);
     }
     if (launch.status === "succeeded" && launch.phase === "succeeded") return launch;
   }
-  throw new Error("production_basic_acceptance_b_launch_timeout");
+  throw productionBasicAcceptanceBLaunchError("production_basic_acceptance_b_launch_timeout", launch);
 }
 
 function deterministicLaunchRejection(error) {
@@ -1110,7 +1164,8 @@ export async function runProductionBasicAcceptanceB(options = {}) {
   return validateProductionBasicAcceptanceBReadback(readback, approval);
 }
 
-function blockedProductionBasicAcceptanceBArtifact(errorCode = "production_basic_acceptance_b_failed") {
+export function blockedProductionBasicAcceptanceBArtifact(error = "production_basic_acceptance_b_failed") {
+  const errorCode = safeAcceptanceBArtifactToken(typeof error === "string" ? error : error?.message, "production_basic_acceptance_b_failed");
   return {
     schemaVersion: 1,
     operationMode: PRODUCTION_BASIC_ACCEPTANCE_B_OPERATION.operationMode,
@@ -1118,7 +1173,8 @@ function blockedProductionBasicAcceptanceBArtifact(errorCode = "production_basic
     errorCode,
     mutationLedgerState: "unknown",
     runnerDirectMutationCounts: { sub2api: "unknown", tencent: "unknown", kubernetes: "unknown" },
-    reconciliationRequired: ["workspace_launch"]
+    reconciliationRequired: ["workspace_launch"],
+    launchReadback: productionBasicAcceptanceBLaunchReadback(error?.launchReadback)
   };
 }
 
@@ -1207,7 +1263,7 @@ export async function runProductionBasicAcceptanceBCli({
     stdout.write(`${JSON.stringify(result, null, 2)}\n`);
     return 0;
   } catch (error) {
-    const artifact = blockedProductionBasicAcceptanceBArtifact(error?.message || undefined);
+    const artifact = blockedProductionBasicAcceptanceBArtifact(error);
     const artifactPath = String(env.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_ARTIFACT_PATH || "");
     if (artifactPath) await writeFile(artifactPath, `${JSON.stringify(artifact, null, 2)}\n`, { mode: 0o600 });
     stdout.write(`${JSON.stringify(artifact, null, 2)}\n`);

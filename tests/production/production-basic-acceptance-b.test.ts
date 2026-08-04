@@ -9,6 +9,7 @@ import {
   PRODUCTION_BASIC_ACCEPTANCE_B_FORBIDDEN_WRITES,
   PRODUCTION_BASIC_ACCEPTANCE_B_OPERATION,
   PRODUCTION_BASIC_ACCEPTANCE_B_ACCOUNT_PREPARE_OPERATION,
+  blockedProductionBasicAcceptanceBArtifact,
   blockedProductionBasicAcceptanceBPrepareArtifact,
   findUniqueProductionBasicAcceptanceBAccount,
   findUniqueProductionBasicAcceptanceBEmailAccount,
@@ -18,6 +19,7 @@ import {
   productionBasicAcceptanceBApprovalDigest,
   readProductionBasicAcceptanceBLaunchUntilTerminal,
   submitProductionBasicAcceptanceBLaunch,
+  validateProductionBasicAcceptanceBArtifact,
   validateProductionBasicAcceptanceBPrepareReadback,
   validateProductionBasicAcceptanceBReadback,
   validateProductionBasicAcceptanceBStageBudgets,
@@ -586,6 +588,81 @@ test("Acceptance B timeout continuation polls the exact existing Launch with GET
   ]);
 });
 
+test("Acceptance B timeout preserves only the last safe server Launch observation", async () => {
+  const approval = parseProductionBasicAcceptanceBApproval(approvalFixture(), {
+    approvalId: APPROVAL_ID,
+    now: new Date("2026-08-02T00:00:00Z")
+  });
+  const fetchImpl = async (input, init = {}) => {
+    const url = new URL(String(input));
+    const method = String(init.method || "GET").toUpperCase();
+    if (method !== "GET" || url.pathname !== `/api/workspace-launches/${approval.launch.operationId}`) {
+      throw new Error(`unexpected_request:${method}:${url.pathname}`);
+    }
+    return response({
+      operationId: approval.launch.operationId,
+      workspaceId: approval.launch.workspaceId,
+      accountId: approval.customer.accountId,
+      status: "retryable",
+      phase: "compute_claim_pending",
+      errorCode: "fabric_compute_claim_pending"
+    });
+  };
+
+  await assert.rejects(() => readProductionBasicAcceptanceBLaunchUntilTerminal({
+    requestOptions: { fetchImpl, origin: "https://cloud.medopl.cn", timeoutMs: 1_000 },
+    customerAuth: { cookie: "customer=test", csrfToken: "csrf-test" },
+    approval,
+    launchPollAttempts: 2,
+    launchPollDelayMs: 0
+  }), (error) => {
+    assert.equal(error.message, "production_basic_acceptance_b_launch_timeout");
+    assert.deepEqual(error.launchReadback, {
+      responseReceived: true,
+      status: "retryable",
+      phase: "compute_claim_pending",
+      errorCode: "fabric_compute_claim_pending"
+    });
+    return true;
+  });
+});
+
+test("Acceptance B blocked artifact uses the shared validator and forbids identities", () => {
+  const approval = parseProductionBasicAcceptanceBApproval(approvalFixture(), {
+    approvalId: APPROVAL_ID,
+    now: new Date("2026-08-02T00:00:00Z")
+  });
+  const error = new Error("production_basic_acceptance_b_launch_timeout");
+  error.launchReadback = {
+    responseReceived: true,
+    status: "retryable",
+    phase: "compute_claim_pending",
+    errorCode: "fabric_compute_claim_pending"
+  };
+  const artifact = blockedProductionBasicAcceptanceBArtifact(error);
+  assert.deepEqual(validateProductionBasicAcceptanceBArtifact(artifact, approval), artifact);
+  assert.deepEqual(artifact.launchReadback, error.launchReadback);
+  assert.deepEqual(
+    validateProductionBasicAcceptanceBArtifact(readbackFixture(approval), approval),
+    readbackFixture(approval)
+  );
+  const noResponse = blockedProductionBasicAcceptanceBArtifact("production_basic_acceptance_b_launch_readback_unknown");
+  assert.deepEqual(validateProductionBasicAcceptanceBArtifact(noResponse, approval).launchReadback, {
+    responseReceived: false,
+    status: "unknown",
+    phase: "unknown",
+    errorCode: "unknown"
+  });
+  assert.throws(() => validateProductionBasicAcceptanceBArtifact({
+    ...artifact,
+    launchReadback: { ...artifact.launchReadback, accountId: ACCOUNT_ID }
+  }, approval), /production_basic_acceptance_b_blocked_readback_invalid/);
+  assert.throws(() => validateProductionBasicAcceptanceBArtifact({
+    ...artifact,
+    launchReadback: { ...artifact.launchReadback, errorCode: "unsafe error with spaces" }
+  }, approval), /production_basic_acceptance_b_blocked_readback_invalid/);
+});
+
 test("Acceptance B launch stops after one POST when deterministic readback is absent", async () => {
   const approval = parseProductionBasicAcceptanceBApproval(approvalFixture(), {
     approvalId: APPROVAL_ID,
@@ -746,6 +823,14 @@ test("deployment machine contract registers the local-only Acceptance B integrat
         baselineAuthority: "validated_prepared_acceptance_b_account_reconcile_artifact_from_resume_run_id",
         releaseAuthority: "approval_release_sha_equals_current_production_configmap_release_sha",
         launchMutation: "forbidden_get_exact_existing_operation_only",
+        blockedArtifactValidator: "same_validateProductionBasicAcceptanceBArtifact_union_as_success",
+        blockedArtifactLaunchReadback: {
+          responseReceived: "boolean",
+          fields: ["status", "phase", "errorCode"],
+          values: "lowercase_safe_tokens_only",
+          identityFields: "forbidden",
+          noResponseFallback: { responseReceived: false, status: "unknown", phase: "unknown", errorCode: "unknown" }
+        },
         businessMutationCounts: {
           accountProvision: 0,
           walletAdjustment: 0,
@@ -782,5 +867,6 @@ test("Acceptance B timeout continuation reuses a prepared baseline artifact and 
   assert.match(workflow, /inputs\.resume_run_id != ''/);
   assert.match(workflow, /name:\s*production-basic-acceptance-b-reconcile/);
   assert.match(workflow, /node tools\/production-basic-acceptance-b\.ts --readback/);
+  assert.match(workflow, /validateProductionBasicAcceptanceBArtifact/);
   assert.match(workflow, /OPL_PRODUCTION_BASIC_ACCEPTANCE_B_BASELINE_ARTIFACT_PATH/);
 });

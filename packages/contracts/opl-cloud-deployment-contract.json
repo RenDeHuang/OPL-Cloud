@@ -695,6 +695,14 @@
         "baselineAuthority": "validated_prepared_acceptance_b_account_reconcile_artifact_from_resume_run_id",
         "releaseAuthority": "approval_release_sha_equals_current_production_configmap_release_sha",
         "launchMutation": "forbidden_get_exact_existing_operation_only",
+        "blockedArtifactValidator": "same_validateProductionBasicAcceptanceBArtifact_union_as_success",
+        "blockedArtifactLaunchReadback": {
+          "responseReceived": "boolean",
+          "fields": ["status", "phase", "errorCode"],
+          "values": "lowercase_safe_tokens_only",
+          "identityFields": "forbidden",
+          "noResponseFallback": {"responseReceived": false, "status": "unknown", "phase": "unknown", "errorCode": "unknown"}
+        },
         "businessMutationCounts": {"accountProvision": 0, "walletAdjustment": 0, "workspaceLaunchPost": 0, "debit": 0, "cvmCreate": 0, "cvmOwnershipClaim": 0, "nodeClaim": 0, "cbsCreate": 0, "runtimeCreate": 0, "receiptCreate": 0}
       },
       "authorities": ["control_plane_launch", "sub2api_debit_history", "fabric_operations_and_provider_truth", "runtime_ready_pod", "ledger_purchase_receipt", "workspace_url_http"],
