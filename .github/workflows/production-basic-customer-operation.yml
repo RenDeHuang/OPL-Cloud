@@ -876,7 +876,7 @@ jobs:
           import { validateProductionBasicAcceptanceBReconcileReadback } from "./tools/production-basic-acceptance-b-reconcile.ts";
           const evidence = JSON.parse(await readFile(process.env.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_RECONCILE_ARTIFACT_PATH, "utf8"));
           validateProductionBasicAcceptanceBReconcileReadback(evidence, { mergedSha: process.env.OPL_MERGED_SHA });
-          if (!["prepared", "safe_to_retry_absent"].includes(evidence.status)) throw new Error("Acceptance B account reconciliation is not safe to continue.");
+          if (evidence.status !== "prepared") throw new Error("Acceptance B account reconciliation is not safe to continue.");
           NODE
 
       - name: Upload redacted Acceptance B reconciliation evidence

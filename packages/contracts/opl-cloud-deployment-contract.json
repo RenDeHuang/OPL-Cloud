@@ -750,7 +750,7 @@
       "accountIdentity": "authoritative_console_graph_and_full_page_exact_sub2api_email_match",
       "baseline": "zero_workspace_launch_workspace_key_and_workspace_receipt",
       "unknownPost": "authority_unknown_is_preserved_without_retry_or_mutation",
-      "redactedArtifactFields": ["customerIdentitySha256", "accountProvisionIdentitySha256", "walletAdjustmentIdentitySha256", "status", "localGraph", "remoteIdentity", "customerLogin", "wallet", "walletUsdMicros", "walletAdjustment", "workspaceCount", "launchCount", "keyCount", "receiptCount", "writeCounts", "runnerDirectMutationCounts"],
+      "redactedArtifactFields": ["customerIdentitySha256", "accountProvisionIdentitySha256", "walletAdjustmentIdentitySha256", "status", "localGraph", "remoteIdentity", "customerLogin", "wallet", "walletUsdMicros", "walletAdjustment", "workspaceCount", "launchCount", "keyCount", "receiptCount", "writeCounts", "runnerDirectMutationCounts", "failureStage", "readbackError", "errorCode"],
       "forbiddenArtifactFields": ["email", "password", "accountId", "consoleUserId", "sub2apiUserId", "operationId", "workspaceId", "secret", "token", "cookie", "csrf"]
     }
   },
