@@ -685,6 +685,48 @@
       "forbiddenArtifactFields": ["email", "password", "accountId", "consoleUserId", "sub2apiUserId", "operationId", "workspaceId", "secret", "token", "cookie", "csrf"]
     }
   },
+  "productionBasicAcceptanceBAccountReconcile": {
+    "tool": "tools/production-basic-acceptance-b-reconcile.ts",
+    "operationMode": "acceptance_b_account_reconcile",
+    "execution": "github_actions_production_environment_authoritative_readback_workflow",
+    "productionNetwork": "github_actions_production_environment_authorized_runner_only",
+    "workflowIntegration": {
+      "file": ".github/workflows/production-basic-customer-operation.yml",
+      "job": "acceptance-b-account-reconcile",
+      "runner": ["self-hosted", "tencent-cloud", "opl-cloud", "tke-vpc"],
+      "customerCredentials": ["OPL_PRODUCTION_BASIC_ACCEPTANCE_B_CUSTOMER_EMAIL", "OPL_PRODUCTION_BASIC_ACCEPTANCE_B_CUSTOMER_PASSWORD"],
+      "workflowInputCustomerIdentity": "forbidden",
+      "businessMutation": "GET_only_no_account_provision_wallet_recharge_launch_or_provider_write"
+    },
+    "operationContract": {
+      "schemaVersion": 1,
+      "operationMode": "acceptance_b_account_reconcile",
+      "readOnly": true,
+      "mutationCounts": {
+        "accountProvisionPosts": 0,
+        "walletAdjustmentPosts": 0,
+        "workspaceLaunchPosts": 0,
+        "sub2apiDebits": 0,
+        "tencentCvmCreates": 0,
+        "kubernetesNodeClaims": 0,
+        "tencentCbsCreates": 0,
+        "runtimeCreates": 0,
+        "receiptCreates": 0,
+        "modelRequests": 0,
+        "refunds": 0,
+        "renewals": 0,
+        "deletes": 0,
+        "replacements": 0
+      }
+    },
+    "readback": {
+      "accountIdentity": "authoritative_console_graph_and_full_page_exact_sub2api_email_match",
+      "baseline": "zero_workspace_launch_workspace_key_and_workspace_receipt",
+      "unknownPost": "authority_unknown_is_preserved_without_retry_or_mutation",
+      "redactedArtifactFields": ["customerIdentitySha256", "accountProvisionIdentitySha256", "walletAdjustmentIdentitySha256", "status", "localGraph", "remoteIdentity", "customerLogin", "wallet", "walletUsdMicros", "walletAdjustment", "workspaceCount", "launchCount", "keyCount", "receiptCount", "writeCounts", "runnerDirectMutationCounts"],
+      "forbiddenArtifactFields": ["email", "password", "accountId", "consoleUserId", "sub2apiUserId", "operationId", "workspaceId", "secret", "token", "cookie", "csrf"]
+    }
+  },
   "productionControlledBasicPilotClosedValidation": {
     "workflow": ".github/workflows/production-basic-customer-operation.yml",
     "workflowMode": "controlled_pilot_closed_validate",
