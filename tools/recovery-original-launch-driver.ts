@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 
 import {
   assertPublicHttpsUrl,
@@ -575,7 +577,7 @@ function parseArgs(argv: string[]) {
   return args;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   const args = parseArgs(process.argv.slice(2));
   const env = process.env;
   const run = args["recovery-acceptance-original-launch"] ? runRecoveryAcceptanceOriginalLaunch({
