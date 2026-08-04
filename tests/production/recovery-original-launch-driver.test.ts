@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
+import { mkdtemp, rm, symlink } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
@@ -45,6 +48,28 @@ test("relative-path CLI invocation does not silently skip the recovery runner", 
   assert.equal(result.status, 1);
   assert.equal(result.stdout, "");
   assert.equal(result.stderr, "recovery_acceptance_approval_invalid\n");
+});
+
+test("symlinked checkout CLI invocation does not silently skip the recovery runner", async () => {
+  const repoRoot = fileURLToPath(new URL("../../", import.meta.url));
+  const tempRoot = await mkdtemp(join(tmpdir(), "recovery-driver-cli-"));
+  const symlinkRoot = join(tempRoot, "checkout");
+  await symlink(repoRoot, symlinkRoot, "dir");
+  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("OPL_") && !key.startsWith("TENCENT_")));
+
+  try {
+    const result = spawnSync(process.execPath, [join(symlinkRoot, "tools/recovery-original-launch-driver.ts"), "--recovery-acceptance-funding-prepare", "--approval-id", "symlink-entrypoint-regression"], {
+      cwd: symlinkRoot,
+      env,
+      encoding: "utf8"
+    });
+
+    assert.equal(result.status, 1);
+    assert.equal(result.stdout, "");
+    assert.match(result.stderr, /recovery_acceptance_approval_invalid/);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
 });
 
 function stableId(...parts: string[]) {

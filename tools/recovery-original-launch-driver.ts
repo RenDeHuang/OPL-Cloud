@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
+import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
 import {
   assertPublicHttpsUrl,
@@ -577,7 +578,16 @@ function parseArgs(argv: string[]) {
   return args;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+function isDirectEntry(entryPath: string | undefined): boolean {
+  if (!entryPath) return false;
+  try {
+    return realpathSync(fileURLToPath(import.meta.url)) === realpathSync(resolve(entryPath));
+  } catch {
+    return false;
+  }
+}
+
+if (isDirectEntry(process.argv[1])) {
   const args = parseArgs(process.argv.slice(2));
   const env = process.env;
   const run = args["recovery-acceptance-original-launch"] ? runRecoveryAcceptanceOriginalLaunch({
