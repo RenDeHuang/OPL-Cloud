@@ -49,7 +49,7 @@ test("relative-path CLI invocation does not silently skip the recovery runner", 
   assert.equal(result.status, 1);
   assert.notEqual(result.stdout.trim(), "");
   const artifact = JSON.parse(result.stdout);
-  assert.doesNotThrow(() => validateRecoveryAcceptanceFundingArtifact(artifact));
+  assert.doesNotThrow(() => validateRecoveryAcceptanceFundingArtifact(artifact, RECOVERY_ACCEPTANCE_FUNDING_MODE));
   assert.equal(artifact.status, "failed");
   assert.equal(artifact.operationMode, RECOVERY_ACCEPTANCE_FUNDING_MODE);
   assert.equal(artifact.errorCode, "recovery_acceptance_approval_invalid");
@@ -75,7 +75,7 @@ test("symlinked checkout CLI invocation does not silently skip the recovery runn
     assert.equal(result.status, 1);
     assert.notEqual(result.stdout.trim(), "");
     const artifact = JSON.parse(result.stdout);
-    assert.doesNotThrow(() => validateRecoveryAcceptanceFundingArtifact(artifact));
+    assert.doesNotThrow(() => validateRecoveryAcceptanceFundingArtifact(artifact, RECOVERY_ACCEPTANCE_FUNDING_MODE));
     assert.equal(artifact.status, "failed");
     assert.equal(artifact.operationMode, RECOVERY_ACCEPTANCE_FUNDING_MODE);
     assert.equal(artifact.errorCode, "recovery_acceptance_approval_invalid");
@@ -361,7 +361,15 @@ test("funding prepare reads a succeeded old operation without posting", async ()
     now: new Date("2026-08-04T00:00:00Z")
   });
   assert.equal(result.status, "succeeded");
-  assert.doesNotThrow(() => validateRecoveryAcceptanceFundingArtifact(result));
+  assert.doesNotThrow(() => validateRecoveryAcceptanceFundingArtifact(result, RECOVERY_ACCEPTANCE_FUNDING_MODE));
+  assert.throws(() => validateRecoveryAcceptanceFundingArtifact(result, RECOVERY_ACCEPTANCE_EXTRA_FUNDING_MODE), /artifact_invalid/);
+  const extraArtifact = {
+    ...result,
+    operationMode: RECOVERY_ACCEPTANCE_EXTRA_FUNDING_MODE,
+    writeCounts: { ...result.writeCounts, walletAdjustmentPosts: 1 }
+  };
+  assert.doesNotThrow(() => validateRecoveryAcceptanceFundingArtifact(extraArtifact, RECOVERY_ACCEPTANCE_EXTRA_FUNDING_MODE));
+  assert.throws(() => validateRecoveryAcceptanceFundingArtifact(result, RECOVERY_ACCEPTANCE_EXTRA_FUNDING_MODE), /artifact_invalid/);
   assert.equal(result.errorCode, "none");
   assert.equal(result.mutationOutcome, "confirmed");
   assert.equal(result.writeCounts.walletAdjustmentPosts, 0);
@@ -376,7 +384,7 @@ test("manual-review old operation permits one recover POST and succeeds on same 
     approvalJson: JSON.stringify(fixture.approval), approvalId: fixture.approval.approvalId, mergedSha: mergedMainSha, confirmWalletRecharge: true, fetchImpl: fixture.fetchImpl,
     now: new Date("2026-08-04T00:00:00Z")
   });
-  assert.doesNotThrow(() => validateRecoveryAcceptanceFundingArtifact(result));
+  assert.doesNotThrow(() => validateRecoveryAcceptanceFundingArtifact(result, RECOVERY_ACCEPTANCE_FUNDING_MODE));
   assert.equal(result.errorCode, "none");
   assert.equal(result.mutationOutcome, "confirmed");
   const recoveryPosts = fixture.calls.filter((call) => call.method === "POST" && call.path.endsWith("/recover"));

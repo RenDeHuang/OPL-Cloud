@@ -1921,7 +1921,7 @@ jobs:
           import { readFile } from "node:fs/promises";
           import { validateRecoveryAcceptanceFundingArtifact } from "./tools/recovery-original-launch-driver.ts";
           const evidence = JSON.parse(await readFile(process.env.OPL_RECOVERY_ACCEPTANCE_FUNDING_ARTIFACT_PATH, "utf8"));
-          validateRecoveryAcceptanceFundingArtifact(evidence);
+          validateRecoveryAcceptanceFundingArtifact(evidence, "recovery_acceptance_funding_prepare");
           if (evidence.status !== "succeeded") process.exit(1);
           NODE
       - name: Upload redacted funding evidence
@@ -2023,7 +2023,7 @@ jobs:
           import { readFile } from "node:fs/promises";
           import { validateRecoveryAcceptanceFundingArtifact } from "./tools/recovery-original-launch-driver.ts";
           const evidence = JSON.parse(await readFile(process.env.OPL_RECOVERY_ACCEPTANCE_EXTRA_FUNDING_ARTIFACT_PATH, "utf8"));
-          validateRecoveryAcceptanceFundingArtifact(evidence);
+          validateRecoveryAcceptanceFundingArtifact(evidence, "recovery_acceptance_extra_funding_prepare");
           if (evidence.status !== "succeeded") process.exit(1);
           NODE
       - name: Upload redacted extra funding evidence

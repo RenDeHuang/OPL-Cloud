@@ -143,7 +143,9 @@ function validFundingArtifactWriteCounts(value: unknown, operationMode: string):
   if (!exactArtifactKeys(counts, Object.keys(ZERO_MUTATION_COUNTS)) ||
     Object.values(counts).some((count) => !Number.isSafeInteger(count) || (count as number) < 0)) return false;
   const variableField = operationMode === RECOVERY_ACCEPTANCE_FUNDING_MODE ? "walletRecoveryPosts" : "walletAdjustmentPosts";
-  return Object.entries(counts).every(([key, count]) => key === variableField ? [0, 1].includes(count as number) : count === 0);
+  return Object.entries(counts).every(([key, count]) => key === variableField
+    ? operationMode === RECOVERY_ACCEPTANCE_FUNDING_MODE ? [0, 1].includes(count as number) : count === 1
+    : count === 0);
 }
 
 function validFundingArtifactSuccess(value: Record<string, unknown>): boolean {
@@ -161,12 +163,12 @@ function validFundingArtifactSuccess(value: Record<string, unknown>): boolean {
 }
 
 /** Validate the redacted stdout artifact shared by the funding driver and workflow gate. */
-export function validateRecoveryAcceptanceFundingArtifact(value: unknown): RecoveryAcceptanceFundingArtifact {
+export function validateRecoveryAcceptanceFundingArtifact(value: unknown, expectedOperationMode: string): RecoveryAcceptanceFundingArtifact {
   if (!value || typeof value !== "object" || Array.isArray(value) || !fundingArtifactIsRedacted(value)) {
     throw new Error("recovery_acceptance_funding_artifact_invalid");
   }
   const artifact = value as Record<string, unknown>;
-  if (artifact.schemaVersion !== 1 || !RECOVERY_ACCEPTANCE_FUNDING_ARTIFACT_MODES.has(String(artifact.operationMode)) ||
+  if (artifact.schemaVersion !== 1 || !RECOVERY_ACCEPTANCE_FUNDING_ARTIFACT_MODES.has(String(expectedOperationMode)) || artifact.operationMode !== expectedOperationMode ||
     !["succeeded", "failed"].includes(String(artifact.status)) || typeof artifact.errorCode !== "string" || artifact.errorCode.length === 0 ||
     !["confirmed", "unknown"].includes(String(artifact.mutationOutcome)) || typeof artifact.verifiedAt !== "string" || !Number.isFinite(Date.parse(artifact.verifiedAt))) {
     throw new Error("recovery_acceptance_funding_artifact_invalid");
@@ -643,6 +645,7 @@ export async function runRecoveryAcceptanceExtraFundingPrepare(options: Recovery
     operation ||= await readWalletAdjustment(requestOptions, adminAuth, approval.walletOperationId);
   }
   if (!operation || operation.status !== "succeeded") throw new Error("recovery_acceptance_extra_funding_readback_invalid");
+  walletAdjustmentPosts = 1;
   const adjustment = validateWalletAdjustment(operation, approval, RECOVERY_ACCEPTANCE_EXTRA_FUNDING_REASON);
   const afterWallet = walletFact(sourceEnvelope(await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/gateway/wallet" }), "sub2api"), identity.sub2apiUserId);
   if (afterWallet.usdMicros !== adjustment.afterUsdMicros || BigInt(adjustment.afterUsdMicros) < BigInt(beforeWallet.usdMicros)) throw new Error("recovery_acceptance_extra_funding_balance_invalid");
@@ -698,7 +701,7 @@ if (isDirectEntry(process.argv[1])) {
     origin: env.OPL_CONSOLE_ORIGIN || "https://cloud.medopl.cn", customerEmail: env.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_CUSTOMER_EMAIL || "", customerPassword: env.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_CUSTOMER_PASSWORD || "", adminEmail: env.OPL_SUB2API_ADMIN_EMAIL || "", adminPassword: env.OPL_SUB2API_ADMIN_PASSWORD || "", approvalJson: env.OPL_PRODUCTION_BASIC_RECOVERY_ACCEPTANCE_FUNDING_APPROVAL_JSON || env.OPL_PRODUCTION_BASIC_RECOVERY_ACCEPTANCE_APPROVAL_JSON || "", approvalId: args["approval-id"] || "", mergedSha: env.OPL_MERGED_SHA || "", confirmWalletRecharge: env.OPL_RECOVERY_ACCEPTANCE_FUNDING_CONFIRMATION === RECOVERY_ACCEPTANCE_FUNDING_CONFIRMATION, requestTimeoutMs: Number(env.OPL_VERIFY_REQUEST_TIMEOUT_MS || "30000")
   }) : Promise.reject(new Error("recovery_acceptance_mode_required"));
   run.then((result) => {
-    if (fundingArtifactMode) validateRecoveryAcceptanceFundingArtifact(result);
+    if (fundingArtifactMode) validateRecoveryAcceptanceFundingArtifact(result, fundingArtifactMode);
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   }).catch((error) => {
     if (fundingArtifactMode) process.stdout.write(`${JSON.stringify(fundingFailureArtifact(fundingArtifactMode, error), null, 2)}\n`);
