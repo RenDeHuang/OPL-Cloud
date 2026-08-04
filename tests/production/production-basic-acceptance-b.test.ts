@@ -13,6 +13,7 @@ import {
   findUniqueProductionBasicAcceptanceBAccount,
   findUniqueProductionBasicAcceptanceBEmailAccount,
   parseProductionBasicAcceptanceBApproval,
+  prepareProductionBasicAcceptanceBAccount,
   productionBasicAcceptanceBApprovalDigest,
   validateProductionBasicAcceptanceBPrepareReadback,
   validateProductionBasicAcceptanceBReadback,
@@ -168,6 +169,90 @@ function readbackFixture(approval, overrides = {}) {
   return { ...value, ...overrides };
 }
 
+function sourcePayload(source, data, status = "available") {
+  return {
+    source,
+    status,
+    available: true,
+    fetchedAt: "2026-08-04T00:00:00.000Z",
+    data
+  };
+}
+
+function response(payload, status = 200, headers = {}) {
+  return new Response(JSON.stringify(payload), {
+    status,
+    headers: { "cache-control": "private, no-store", ...headers }
+  });
+}
+
+function prepareFetchFixture({ keys = [], walletValues = ["0"], adjustmentAvailable = true, adjustmentPostStatus = 201, accountAvailable = true, accountPostStatus = 201 } = {}) {
+  const email = "prepare@example.com";
+  const accountId = `acct-${stableId("account", email).slice(0, 18)}`;
+  const emailDigest = createHash("sha256").update(email).update(Buffer.from([0])).digest("hex");
+  const operationKey = `acceptance-b-wallet-recharge-v1:${accountId}:${emailDigest}`;
+  const walletOperationId = `wallet-adjustment-${stableId(accountId, operationKey).slice(0, 18)}`;
+  const requests = [];
+  let walletRead = 0;
+  let adjustmentExists = adjustmentAvailable;
+  let accountExists = accountAvailable;
+  const account = {
+    accountId,
+    consoleUserId: "usr-prepare",
+    sub2apiUserId: "41",
+    email,
+    role: "owner",
+    status: "active"
+  };
+  const adjustment = {
+    operationId: walletOperationId,
+    accountId,
+    kind: "recharge",
+    amountUsd: "60.000000",
+    reason: "production Basic Acceptance B account preparation",
+    status: "succeeded",
+    phase: "complete",
+    beforeBalance: sourcePayload("sub2api", { currency: "USD", usdMicros: "0" }),
+    afterBalance: sourcePayload("sub2api", { currency: "USD", usdMicros: "60000000" })
+  };
+  const fetchImpl = async (url, init = {}) => {
+    const parsed = new URL(url);
+    requests.push({ method: init.method || "GET", path: parsed.pathname + parsed.search, body: init.body ? JSON.parse(init.body) : undefined });
+    if (parsed.pathname === "/api/auth/login") {
+      const body = JSON.parse(init.body);
+      const isAdmin = body.email === "admin@medopl.cn";
+      return response({ user: isAdmin ? { accountId: "acct-admin", role: "admin" } : { accountId, role: "owner" } }, 200, { "set-cookie": `${isAdmin ? "admin" : "customer"}=session; Path=/` });
+    }
+    if (parsed.pathname === "/api/operator/accounts") {
+      if (init.method === "POST") {
+        accountExists = true;
+        const idempotencyKey = init.headers?.["Idempotency-Key"] || "";
+        return response({ status: "succeeded", accountId, operationId: `account-provision-${stableId(idempotencyKey, email).slice(0, 18)}` }, accountPostStatus);
+      }
+      return response(sourcePayload("control-plane+sub2api", accountExists ? { items: [account], total: 1, page: 1, pageSize: 50 } : { items: [], total: 0, page: 1, pageSize: 50 }, accountExists ? "available" : "empty"));
+    }
+    if (parsed.pathname === "/api/auth/me") return response(sourcePayload("sub2api", { accountId, email, role: "owner", status: "active", consoleUserId: "usr-prepare", sub2apiUserId: "41" }));
+    if (parsed.pathname === "/api/workspaces") return response(sourcePayload("control-plane", { items: [], total: 0, page: 1, pageSize: 50 }, "empty"));
+    if (parsed.pathname === "/api/workspace-launches") return response({ items: [] });
+    if (parsed.pathname === "/api/gateway/keys") return response(sourcePayload("sub2api", { items: keys, total: keys.length, page: 1, pageSize: 50 }, keys.length ? "available" : "empty"));
+    if (parsed.pathname === "/api/billing/receipts") return response(sourcePayload("ledger", { receipts: [], hasMore: false }, "empty"));
+    if (parsed.pathname === "/api/pricing/preview") return response({ resourceType: "workspace", packageId: "basic", currency: "USD", priceVersion: "pilot-usd-2026-07-v1", totalChargeUsdMicros: 52580000, storage: { priceSnapshot: { sizeGb: 10 } } });
+    if (parsed.pathname === "/api/gateway/wallet") {
+      const value = walletValues[Math.min(walletRead++, walletValues.length - 1)];
+      return response(sourcePayload("sub2api", { userId: "41", currency: "USD", usdMicros: value, status: "active" }));
+    }
+    if (parsed.pathname === `/api/operator/wallet-adjustments/${walletOperationId}`) {
+      return adjustmentExists ? response(adjustment) : response({ error: "wallet_adjustment_not_found" }, 404);
+    }
+    if (parsed.pathname === `/api/operator/accounts/${accountId}/wallet-adjustments` && init.method === "POST") {
+      adjustmentExists = true;
+      return response(adjustment, adjustmentPostStatus);
+    }
+    throw new Error(`unexpected_request:${init.method || "GET"}:${parsed.pathname}`);
+  };
+  return { email, accountId, walletOperationId, requests, fetchImpl };
+}
+
 test("Acceptance B exposes one dedicated fresh-order operation and parses its exact approval", () => {
   assert.deepEqual(PRODUCTION_BASIC_ACCEPTANCE_B_OPERATION, {
     schemaVersion: 1,
@@ -280,6 +365,72 @@ test("Acceptance B account preparation exposes only a redacted zero-workspace ch
   ]) {
     assert.throws(() => validateProductionBasicAcceptanceBPrepareReadback({ ...evidence, ...forbidden }, { mergedSha: evidence.mergedMainSha }), /production_basic_acceptance_b_prepare_readback_invalid/);
   }
+});
+
+test("Acceptance B prepare re-reads the wallet after an existing recharge operation", async () => {
+  const fixture = prepareFetchFixture({ walletValues: ["0", "60000000"] });
+  const result = await prepareProductionBasicAcceptanceBAccount({
+    origin: "https://cloud.medopl.cn",
+    adminEmail: "admin@medopl.cn",
+    adminPassword: "admin-password",
+    customerEmail: fixture.email,
+    customerPassword: "customer-password",
+    mergedSha: MERGED_MAIN_SHA,
+    fetchImpl: fixture.fetchImpl,
+    now: new Date("2026-08-04T00:00:00.000Z")
+  });
+  assert.equal(result.wallet.afterUsdMicros, "60000000");
+  assert.equal(result.wallet.rechargeCount, 1);
+  assert.equal(result.writeCounts.walletAdjustmentPosts, 1);
+  assert.equal(fixture.requests.filter((request) => request.method === "POST" && request.path.includes("wallet-adjustments")).length, 0);
+  assert.equal(fixture.requests.filter((request) => request.path === "/api/gateway/wallet").length, 2);
+});
+
+test("Acceptance B prepare never retries a recharge after an untrusted POST when readback proves success", async () => {
+  const fixture = prepareFetchFixture({ adjustmentAvailable: false, adjustmentPostStatus: 202, walletValues: ["0", "60000000"] });
+  const result = await prepareProductionBasicAcceptanceBAccount({
+    origin: "https://cloud.medopl.cn",
+    adminEmail: "admin@medopl.cn",
+    adminPassword: "admin-password",
+    customerEmail: fixture.email,
+    customerPassword: "customer-password",
+    mergedSha: MERGED_MAIN_SHA,
+    fetchImpl: fixture.fetchImpl,
+    now: new Date("2026-08-04T00:00:00.000Z")
+  });
+  assert.equal(result.wallet.afterUsdMicros, "60000000");
+  assert.equal(result.writeCounts.walletAdjustmentPosts, 1);
+  assert.equal(fixture.requests.filter((request) => request.method === "POST" && request.path.endsWith("/wallet-adjustments")).length, 1);
+});
+
+test("Acceptance B prepare never retries a provision after an untrusted POST when the account readback proves success", async () => {
+  const fixture = prepareFetchFixture({ accountAvailable: false, accountPostStatus: 202, walletValues: ["60000000"] });
+  const result = await prepareProductionBasicAcceptanceBAccount({
+    origin: "https://cloud.medopl.cn",
+    adminEmail: "admin@medopl.cn",
+    adminPassword: "admin-password",
+    customerEmail: fixture.email,
+    customerPassword: "customer-password",
+    mergedSha: MERGED_MAIN_SHA,
+    fetchImpl: fixture.fetchImpl,
+    now: new Date("2026-08-04T00:00:00.000Z")
+  });
+  assert.equal(result.writeCounts.accountProvisionPosts, 1);
+  assert.equal(fixture.requests.filter((request) => request.method === "POST" && request.path === "/api/operator/accounts").length, 1);
+});
+
+test("Acceptance B prepare rejects any pre-existing API key, not only workspace keys", async () => {
+  const fixture = prepareFetchFixture({ keys: [{ id: "41", kind: "general", status: "active" }] });
+  await assert.rejects(() => prepareProductionBasicAcceptanceBAccount({
+    origin: "https://cloud.medopl.cn",
+    adminEmail: "admin@medopl.cn",
+    adminPassword: "admin-password",
+    customerEmail: fixture.email,
+    customerPassword: "customer-password",
+    mergedSha: MERGED_MAIN_SHA,
+    fetchImpl: fixture.fetchImpl,
+    now: new Date("2026-08-04T00:00:00.000Z")
+  }), /production_basic_acceptance_b_baseline_not_fresh/);
 });
 
 test("Acceptance B blocked preparation keeps partial provision or recharge results unknown", () => {
