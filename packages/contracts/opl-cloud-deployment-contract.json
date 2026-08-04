@@ -861,7 +861,7 @@
     "allowedWrites": ["recover_one_existing_wallet_adjustment"],
     "forbiddenWrites": ["adjust_new_wallet", "provision_account", "submit_workspace_launch", "debit", "create_cvm", "claim_node", "create_cbs", "create_runtime", "record_receipt"],
     "mutationCounts": {"walletAdjustmentPosts": 0, "walletRecoveryPosts": "0_or_1", "accountProvisionPosts": 0, "workspaceLaunchPosts": 0},
-    "artifact": {"fields": ["operationMode", "status", "approvalDigest", "release", "customerIdentitySha256", "walletOperationIdSha256", "wallet", "writeCounts", "verifiedAt"], "forbidden": ["email", "password", "accountId", "operationId", "nonce", "secret", "token", "cookie", "csrf"]}
+    "artifact": {"fields": ["operationMode", "status", "errorCode", "mutationOutcome", "approvalDigest", "release", "customerIdentitySha256", "walletOperationIdSha256", "wallet", "writeCounts", "verifiedAt"], "forbidden": ["email", "password", "accountId", "operationId", "nonce", "secret", "token", "cookie", "csrf"]}
   },
   "productionRecoveryAcceptanceExtraFundingPrepare": {
     "workflow": ".github/workflows/production-basic-customer-operation.yml",
@@ -875,7 +875,7 @@
     "allowedWrites": ["adjust_one_wallet"],
     "forbiddenWrites": ["recover_existing_wallet_adjustment", "submit_workspace_launch", "debit", "create_cvm", "claim_node", "create_cbs", "create_runtime", "record_receipt"],
     "mutationCounts": {"walletAdjustmentPosts": 1, "walletRecoveryPosts": 0},
-    "artifact": {"fields": ["operationMode", "status", "approvalDigest", "release", "customerIdentitySha256", "walletOperationIdSha256", "wallet", "writeCounts", "verifiedAt"], "forbidden": ["email", "password", "accountId", "operationId", "nonce", "secret", "token", "cookie", "csrf"]}
+    "artifact": {"fields": ["operationMode", "status", "errorCode", "mutationOutcome", "approvalDigest", "release", "customerIdentitySha256", "walletOperationIdSha256", "wallet", "writeCounts", "verifiedAt"], "forbidden": ["email", "password", "accountId", "operationId", "nonce", "secret", "token", "cookie", "csrf"]}
   },
   "productionRecoveryAcceptanceOriginalLaunch": {
     "workflow": ".github/workflows/production-basic-customer-operation.yml",
