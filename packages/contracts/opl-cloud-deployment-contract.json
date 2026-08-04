@@ -81,6 +81,7 @@
       ".github/workflows/production-basic-customer-operation.yml": [
         "prepare-basic-customer-operation",
         "workspace-identity-diagnose",
+        "acceptance-b-account-reconcile",
         "acceptance-b-account-prepare",
         "acceptance-b-fresh-order",
         "controlled-pilot-closed-validate",
