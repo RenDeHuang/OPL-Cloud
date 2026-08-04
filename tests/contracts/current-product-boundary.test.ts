@@ -734,7 +734,24 @@ test("Current contracts hard cut operator resources, wallet adjustments, and ann
     absentRequires: "both_local_identities_and_exact_provider_describe_absence",
     forbiddenSideEffects: ["sync", "tag", "kubectl_apply", "delete", "label", "purchase", "renew", "destroy"]
   });
-  assert.equal(boundary.schemaVersion, 28);
+  assert.equal(boundary.schemaVersion, 29);
+  assert.deepEqual(boundary.services.controlPlane.workspaceLaunchRecoveryAcceptanceCanary, {
+    defaultEnabled: false,
+    allowlistEnv: "OPL_RECOVERY_ACCEPTANCE_CANARY_ACCOUNT_IDS",
+    binding: ["accountId", "launchOperationId", "releaseSha", "cloudImageDigest", "approvalDigest", "nonce"],
+    approvalSource: "dedicated_process_memory_only_approval_secret_or_exact_digest_nonce_env",
+    target: "one_allowlisted_original_workspace.launch.v2_operation",
+    hook: "fulfillWorkspaceLaunch_after_compute_node_confirmed_before_storage_budget_reserve",
+    precondition: ["compute_claim_proof_schema_v1_eligible", "cvm_attempted_positive_confirmed_exact", "node_attempted_positive_confirmed_exact", "unknown_zero", "missing_empty", "storage_not_started", "continuation_budgets_all_zero", "no_control_plane_storage_record"],
+    route: "POST /api/operator/workspace-launches/{operationId}/recovery-acceptance/manual-review",
+    transition: "original_launch_to_manual_review_storage_fulfilling",
+    databaseMutationMaximum: 1,
+    externalMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0, fabric: 0 },
+    continuation: "same_original_launch_only_no_second_launch_no_provider_retry",
+    invalidConfiguration: "fail_closed_manual_review_without_storage_reservation",
+    responseBinding: "approval_digest_only",
+    forbiddenPersistence: ["nonce", "approval_secret", "provider_credentials", "fabric_ledger_fabrication", "raw_resource_target"]
+  });
   assert.deepEqual(boundary.services.controlPlane.workspaceContinuationAttemptBudget, {
     owner: "original_workspace.launch.v2_operation",
     stages: ["storage", "attachment", "secret", "runtime", "activation", "receipt"],

@@ -13,7 +13,7 @@ on:
         default: ""
         type: string
       operation_mode:
-        description: Select a customer operation, identity readback, fresh Acceptance, server-owned Recovery Plan validation, or the isolated recovered Workspace E2E.
+        description: Select a customer operation, identity readback, fresh Acceptance, server-owned Recovery Plan validation, Recovery Acceptance canary, or the isolated recovered Workspace E2E.
         required: true
         default: customer_operation
         type: choice
@@ -26,6 +26,7 @@ on:
           - compute_claim_validate
           - fabric_ledger_readback
           - recovery_plan_execute
+          - recovery_acceptance_canary
           - controlled_pilot_closed_validate
           - recovered_workspace_e2e
       funding_mode:
@@ -61,6 +62,11 @@ on:
         required: true
         default: false
         type: boolean
+      confirm_recovery_acceptance_canary:
+        description: Approve one allowlisted Recovery Acceptance canary that only moves the original Launch to manual_review.
+        required: true
+        default: false
+        type: boolean
       resume_run_id:
         description: Optional prior run ID whose redacted checkpoint should be resumed with the same approval.
         required: false
@@ -93,6 +99,16 @@ on:
         type: string
       recovery_plan_digest:
         description: Exact persisted Recovery Plan digest for zero-mutation validation or recovered Workspace E2E readback.
+        required: false
+        default: ""
+        type: string
+      recovery_acceptance_account_id:
+        description: Exact allowlisted account ID for the Recovery Acceptance canary.
+        required: false
+        default: ""
+        type: string
+      recovery_acceptance_launch_operation_id:
+        description: Exact original Launch operation ID for the Recovery Acceptance canary.
         required: false
         default: ""
         type: string
@@ -1679,6 +1695,176 @@ jobs:
           fi
           if [ -d "$source_dir" ]; then
             rm -rf -- "$source_dir"
+          fi
+
+  recovery-acceptance-canary:
+    name: Converge one allowlisted original Launch to manual review
+    if: ${{ github.ref == 'refs/heads/main' && github.sha == inputs.merged_sha && inputs.operation_mode == 'recovery_acceptance_canary' && inputs.confirm_recovery_acceptance_canary && inputs.recovery_acceptance_account_id != '' && inputs.recovery_acceptance_launch_operation_id != '' && inputs.approval_id == '' && inputs.resume_run_id == '' && inputs.customer_email == '' && inputs.workspace_identity_account_id == '' && inputs.workspace_identity_workspace_id == '' && inputs.recovery_plan_launch_operation_id == '' && inputs.recovery_plan_id == '' && inputs.recovery_plan_digest == '' && inputs.recovery_evidence_run_id == '' && inputs.recovery_evidence_artifact_id == '' && inputs.recovery_evidence_artifact_digest == '' && !inputs.confirm_account_provision && !inputs.confirm_wallet_recharge && !inputs.confirm_workspace_purchase && !inputs.confirm_single_model_request && !inputs.confirm_recovery_plan_execute }}
+    runs-on: [self-hosted, tencent-cloud, opl-cloud, tke-vpc]
+    timeout-minutes: 20
+    environment: production
+    env:
+      OPL_MERGED_SHA: ${{ inputs.merged_sha }}
+      OPL_RECOVERY_ACCEPTANCE_CANARY_ACCOUNT_ID: ${{ inputs.recovery_acceptance_account_id }}
+      OPL_RECOVERY_ACCEPTANCE_CANARY_LAUNCH_OPERATION_ID: ${{ inputs.recovery_acceptance_launch_operation_id }}
+      OPL_RECOVERY_ACCEPTANCE_CANARY_APPROVAL_JSON: ${{ secrets.OPL_RECOVERY_ACCEPTANCE_CANARY_APPROVAL_JSON }}
+      OPL_RECOVERY_ACCEPTANCE_CANARY_ENABLED: ${{ vars.OPL_RECOVERY_ACCEPTANCE_CANARY_ENABLED || '0' }}
+      OPL_RECOVERY_ACCEPTANCE_CANARY_ACCOUNT_IDS: ${{ vars.OPL_RECOVERY_ACCEPTANCE_CANARY_ACCOUNT_IDS || '' }}
+      OPL_CONSOLE_ORIGIN: ${{ vars.OPL_CONSOLE_ORIGIN || 'https://cloud.medopl.cn' }}
+      OPL_SUB2API_ADMIN_EMAIL: ${{ secrets.OPL_SUB2API_ADMIN_EMAIL }}
+      OPL_SUB2API_ADMIN_PASSWORD: ${{ secrets.OPL_SUB2API_ADMIN_PASSWORD }}
+      OPL_VERIFY_REQUEST_TIMEOUT_MS: ${{ vars.OPL_VERIFY_REQUEST_TIMEOUT_MS || '30000' }}
+
+    steps:
+      - name: Prepare isolated source checkout
+        id: prepare_source
+        shell: bash
+        env:
+          OPL_SOURCE_CHECKOUT: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          expected="$GITHUB_WORKSPACE/.opl-checkouts/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
+          if [ "$OPL_SOURCE_CHECKOUT" != "$expected" ]; then
+            echo "Isolated source checkout path mismatch." >&2
+            exit 1
+          fi
+          mkdir -p "$GITHUB_WORKSPACE/.opl-checkouts"
+          mkdir "$OPL_SOURCE_CHECKOUT"
+
+      - name: Checkout exact merged main
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.merged_sha }}
+          fetch-depth: 0
+          path: .opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+
+      - name: Verify remote branch authority
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          mapfile -t remote_heads < <(git ls-remote --heads origin)
+          if [ "${#remote_heads[@]}" -ne 1 ]; then
+            echo "Production source authority requires exactly one remote head." >&2
+            exit 1
+          fi
+          read -r remote_main_sha remote_main_ref <<< "${remote_heads[0]}"
+          head_sha="$(git rev-parse HEAD)"
+          if [ "$remote_main_ref" != "refs/heads/main" ] || [ "$GITHUB_REF" != "refs/heads/main" ] ||
+             [ "$GITHUB_SHA" != "$head_sha" ] || [ "$remote_main_sha" != "$head_sha" ] || [ "$OPL_MERGED_SHA" != "$head_sha" ]; then
+            echo "Recovery Acceptance canary source must be the exact current origin/main revision." >&2
+            exit 1
+          fi
+
+      - name: Verify Recovery Acceptance canary inputs
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$OPL_MERGED_SHA" =~ ^[0-9a-f]{40}$ ]] ||
+             ! [[ "$OPL_RECOVERY_ACCEPTANCE_CANARY_ACCOUNT_ID" =~ ^acct-[A-Za-z0-9][A-Za-z0-9-]{1,127}$ ]] ||
+             ! [[ "$OPL_RECOVERY_ACCEPTANCE_CANARY_LAUNCH_OPERATION_ID" =~ ^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$ ]]; then
+            echo "Recovery Acceptance canary identity inputs are invalid." >&2
+            exit 1
+          fi
+          if [ "$OPL_RECOVERY_ACCEPTANCE_CANARY_ENABLED" != "1" ] && [ "$OPL_RECOVERY_ACCEPTANCE_CANARY_ENABLED" != "true" ]; then
+            echo "Recovery Acceptance canary is default-off; enable the dedicated production variable explicitly." >&2
+            exit 1
+          fi
+          case ",${OPL_RECOVERY_ACCEPTANCE_CANARY_ACCOUNT_IDS}," in
+            *,"$OPL_RECOVERY_ACCEPTANCE_CANARY_ACCOUNT_ID",*) ;;
+            *) echo "Recovery Acceptance canary account is not allowlisted." >&2; exit 1 ;;
+          esac
+          if [ -z "$OPL_RECOVERY_ACCEPTANCE_CANARY_APPROVAL_JSON" ]; then
+            echo "Dedicated Recovery Acceptance approval Secret is unavailable." >&2
+            exit 1
+          fi
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Prepare redacted Recovery Acceptance artifact
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          artifact_dir="$RUNNER_TEMP/production-recovery-acceptance-canary"
+          mkdir -p "$artifact_dir"
+          chmod 700 "$artifact_dir"
+          echo "OPL_RECOVERY_ACCEPTANCE_CANARY_ARTIFACT_DIR=$artifact_dir" >> "$GITHUB_ENV"
+
+      - name: Run one Recovery Acceptance canary
+        id: canary
+        continue-on-error: true
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          node tools/recovery-acceptance-canary.ts --recovery-acceptance-canary \
+            --account-id "$OPL_RECOVERY_ACCEPTANCE_CANARY_ACCOUNT_ID" \
+            --launch-operation-id "$OPL_RECOVERY_ACCEPTANCE_CANARY_LAUNCH_OPERATION_ID" \
+            > "$OPL_RECOVERY_ACCEPTANCE_CANARY_ARTIFACT_DIR/recovery-acceptance-canary.json"
+
+      - name: Validate redacted Recovery Acceptance evidence
+        if: always()
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const fs = require("node:fs");
+          const path = `${process.env.OPL_RECOVERY_ACCEPTANCE_CANARY_ARTIFACT_DIR}/recovery-acceptance-canary.json`;
+          const result = JSON.parse(fs.readFileSync(path, "utf8"));
+          const counts = result?.controlPlaneMutationCounts;
+          const runner = result?.runnerDirectMutationCounts;
+          const valid = result?.schemaVersion === 1 && result?.operationMode === "recovery_acceptance_canary" &&
+            result?.status === "proven" && result?.recoveryEligible === true && result?.errorCode === "none" &&
+            result?.manualReview?.status === "manual_review" && result?.manualReview?.phase === "storage_fulfilling" &&
+            counts && counts.database === 1 && counts.sub2api === 0 && counts.tencent === 0 && counts.kubernetes === 0 &&
+            runner && runner.sub2api === 0 && runner.tencent === 0 && runner.kubernetes === 0 &&
+            !/password|secret|cookie|nonce|csrf|authorization/i.test(JSON.stringify(result));
+          if (!valid) {
+            console.error("Recovery Acceptance canary artifact is invalid or not redacted.");
+            process.exit(1);
+          }
+          NODE
+
+      - name: Upload redacted Recovery Acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-recovery-acceptance-canary
+          path: ${{ runner.temp }}/production-recovery-acceptance-canary
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 30
+
+      - name: Require Recovery Acceptance canary success
+        if: ${{ steps.canary.outcome != 'success' }}
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          echo "Recovery Acceptance canary stopped; inspect the redacted artifact." >&2
+          exit 1
+
+      - name: Remove isolated source checkout
+        if: always() && steps.prepare_source.outcome == 'success'
+        shell: bash
+        env:
+          OPL_SOURCE_CHECKOUT: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          source_dir="${OPL_SOURCE_CHECKOUT:-}"
+          expected="$GITHUB_WORKSPACE/.opl-checkouts/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
+          if [ -z "$source_dir" ] || [ "$source_dir" != "$expected" ]; then
+            echo "Refusing to remove unexpected source checkout path." >&2
+            exit 1
+          fi
+          if [ -d "$source_dir" ]; then
+            find "$source_dir" -mindepth 1 -delete
+            rmdir "$source_dir"
           fi
 
   recovery-plan-operation:
