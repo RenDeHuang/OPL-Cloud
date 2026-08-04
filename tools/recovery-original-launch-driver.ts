@@ -106,12 +106,15 @@ const RECOVERY_ACCEPTANCE_FUNDING_ARTIFACT_KEYS = [
   "schemaVersion", "operationMode", "status", "errorCode", "mutationOutcome", "approvalId", "approvalDigest", "release",
   "customerIdentitySha256", "walletOperationIdSha256", "wallet", "writeCounts", "verifiedAt"
 ];
-const RECOVERY_ACCEPTANCE_FUNDING_FAILURE_ARTIFACT_KEYS = ["schemaVersion", "operationMode", "status", "errorCode", "mutationOutcome", "verifiedAt"];
+const RECOVERY_ACCEPTANCE_FUNDING_FAILURE_ARTIFACT_KEYS = [
+  "schemaVersion", "operationMode", "status", "errorCode", "mutationOutcome", "requestedApprovalIdSha256", "secretApprovalIdSha256", "verifiedAt"
+];
 const RECOVERY_ACCEPTANCE_FUNDING_ARTIFACT_MODES = new Set([
   RECOVERY_ACCEPTANCE_FUNDING_MODE,
   RECOVERY_ACCEPTANCE_EXTRA_FUNDING_MODE
 ]);
 const RECOVERY_ACCEPTANCE_FUNDING_ARTIFACT_FORBIDDEN_TEXT = /password|secret|cookie|csrf|authorization|token|apikey|raw_.*(?:response|id)|rawsub2apiresponse|rawproviderresponse|providerrequestid|signedurl|presignedurl|objectkey|kubeconfig/i;
+const RECOVERY_ACCEPTANCE_FUNDING_ALLOWED_REDACTED_KEYS = new Set(["secretApprovalIdSha256"]);
 
 export type RecoveryAcceptanceFundingArtifact = Record<string, unknown>;
 
@@ -124,7 +127,7 @@ function fundingArtifactIsRedacted(value: unknown): boolean {
   if (Array.isArray(value)) return value.every(fundingArtifactIsRedacted);
   if (!value || typeof value !== "object") return true;
   return Object.entries(value as Record<string, unknown>).every(([key, nested]) =>
-    !RECOVERY_ACCEPTANCE_FUNDING_ARTIFACT_FORBIDDEN_TEXT.test(key) && fundingArtifactIsRedacted(nested));
+    (RECOVERY_ACCEPTANCE_FUNDING_ALLOWED_REDACTED_KEYS.has(key) || !RECOVERY_ACCEPTANCE_FUNDING_ARTIFACT_FORBIDDEN_TEXT.test(key)) && fundingArtifactIsRedacted(nested));
 }
 
 function validFundingArtifactDigest(value: unknown): boolean {
@@ -174,7 +177,8 @@ export function validateRecoveryAcceptanceFundingArtifact(value: unknown, expect
     throw new Error("recovery_acceptance_funding_artifact_invalid");
   }
   if (artifact.status === "failed") {
-    if (!exactArtifactKeys(artifact, RECOVERY_ACCEPTANCE_FUNDING_FAILURE_ARTIFACT_KEYS) || artifact.errorCode === "none" || artifact.mutationOutcome !== "unknown") {
+    if (!exactArtifactKeys(artifact, RECOVERY_ACCEPTANCE_FUNDING_FAILURE_ARTIFACT_KEYS) || artifact.errorCode === "none" || artifact.mutationOutcome !== "unknown" ||
+      !validFundingArtifactDigest(artifact.requestedApprovalIdSha256) || !validFundingArtifactDigest(artifact.secretApprovalIdSha256)) {
       throw new Error("recovery_acceptance_funding_artifact_invalid");
     }
     return artifact;
@@ -183,7 +187,18 @@ export function validateRecoveryAcceptanceFundingArtifact(value: unknown, expect
   return artifact;
 }
 
-function fundingFailureArtifact(operationMode: string, error: unknown): RecoveryAcceptanceFundingArtifact {
+function fundingApprovalIdSha256(approvalJson: unknown): string {
+  let parsed = approvalJson;
+  if (typeof approvalJson === "string") {
+    try { parsed = JSON.parse(approvalJson); } catch { parsed = null; }
+  }
+  const approvalId = parsed && typeof parsed === "object" && !Array.isArray(parsed)
+    ? (parsed as Record<string, unknown>).approvalId
+    : "";
+  return sha(typeof approvalId === "string" ? approvalId : "");
+}
+
+function fundingFailureArtifact(operationMode: string, error: unknown, approvalInput: { requestedApprovalId: string; approvalJson: unknown }): RecoveryAcceptanceFundingArtifact {
   const message = String((error as { message?: unknown })?.message || "");
   const prefix = operationMode === RECOVERY_ACCEPTANCE_EXTRA_FUNDING_MODE ? "recovery_acceptance_extra_funding" : "recovery_acceptance_funding";
   const errorCode = /^recovery_acceptance_[a-z0-9_]+$/.test(message) && !RECOVERY_ACCEPTANCE_FUNDING_ARTIFACT_FORBIDDEN_TEXT.test(message) ? message : `${prefix}_failed`;
@@ -193,6 +208,8 @@ function fundingFailureArtifact(operationMode: string, error: unknown): Recovery
     status: "failed",
     errorCode,
     mutationOutcome: "unknown",
+    requestedApprovalIdSha256: sha(approvalInput.requestedApprovalId),
+    secretApprovalIdSha256: fundingApprovalIdSha256(approvalInput.approvalJson),
     verifiedAt: new Date().toISOString()
   };
 }
@@ -679,8 +696,10 @@ function parseArgs(argv: string[]) {
     const value = argv[index];
     if (!value.startsWith("--")) continue;
     const [key, inline] = value.slice(2).split("=", 2);
-    args[key] = inline ?? argv[index + 1] ?? "";
-    if (inline === undefined) index += 1;
+    const next = argv[index + 1];
+    const hasSeparateValue = inline === undefined && typeof next === "string" && !next.startsWith("--");
+    args[key] = inline ?? (hasSeparateValue ? next : "");
+    if (hasSeparateValue) index += 1;
   }
   return args;
 }
@@ -697,21 +716,30 @@ function isDirectEntry(entryPath: string | undefined): boolean {
 if (isDirectEntry(process.argv[1])) {
   const args = parseArgs(process.argv.slice(2));
   const env = process.env;
-  const fundingArtifactMode = args["recovery-acceptance-extra-funding-prepare"]
+  const hasOriginalLaunchMode = Object.hasOwn(args, "recovery-acceptance-original-launch");
+  const hasExtraFundingMode = Object.hasOwn(args, "recovery-acceptance-extra-funding-prepare");
+  const hasFundingMode = Object.hasOwn(args, "recovery-acceptance-funding-prepare");
+  const fundingArtifactMode = hasExtraFundingMode
     ? RECOVERY_ACCEPTANCE_EXTRA_FUNDING_MODE
-    : args["recovery-acceptance-funding-prepare"] ? RECOVERY_ACCEPTANCE_FUNDING_MODE : "";
-  const run = args["recovery-acceptance-original-launch"] ? runRecoveryAcceptanceOriginalLaunch({
+    : hasFundingMode ? RECOVERY_ACCEPTANCE_FUNDING_MODE : "";
+  const requestedApprovalId = args["approval-id"] || "";
+  const fundingApprovalJson = hasExtraFundingMode
+    ? env.OPL_PRODUCTION_BASIC_RECOVERY_ACCEPTANCE_EXTRA_FUNDING_APPROVAL_JSON || ""
+    : hasFundingMode
+      ? env.OPL_PRODUCTION_BASIC_RECOVERY_ACCEPTANCE_FUNDING_APPROVAL_JSON || env.OPL_PRODUCTION_BASIC_RECOVERY_ACCEPTANCE_APPROVAL_JSON || ""
+      : "";
+  const run = hasOriginalLaunchMode ? runRecoveryAcceptanceOriginalLaunch({
     origin: env.OPL_CONSOLE_ORIGIN || "https://cloud.medopl.cn", customerEmail: env.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_CUSTOMER_EMAIL || "", customerPassword: env.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_CUSTOMER_PASSWORD || "", adminEmail: env.OPL_SUB2API_ADMIN_EMAIL || "", adminPassword: env.OPL_SUB2API_ADMIN_PASSWORD || "", approvalJson: env.OPL_PRODUCTION_BASIC_RECOVERY_ACCEPTANCE_APPROVAL_JSON || "", approvalId: args["approval-id"] || "", mergedSha: env.OPL_MERGED_SHA || "", fabricOrigin: env.OPL_FABRIC_INTERNAL_ORIGIN || "", internalServiceToken: env.OPL_INTERNAL_SERVICE_TOKEN || "", launchPollAttempts: Number(env.OPL_VERIFY_LAUNCH_POLL_ATTEMPTS || "180"), launchPollDelayMs: Number(env.OPL_VERIFY_LAUNCH_POLL_DELAY_MS || "10000"), requestTimeoutMs: Number(env.OPL_VERIFY_REQUEST_TIMEOUT_MS || "30000")
-  }) : args["recovery-acceptance-extra-funding-prepare"] ? runRecoveryAcceptanceExtraFundingPrepare({
-    origin: env.OPL_CONSOLE_ORIGIN || "https://cloud.medopl.cn", customerEmail: env.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_CUSTOMER_EMAIL || "", customerPassword: env.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_CUSTOMER_PASSWORD || "", adminEmail: env.OPL_SUB2API_ADMIN_EMAIL || "", adminPassword: env.OPL_SUB2API_ADMIN_PASSWORD || "", approvalJson: env.OPL_PRODUCTION_BASIC_RECOVERY_ACCEPTANCE_EXTRA_FUNDING_APPROVAL_JSON || "", approvalId: args["approval-id"] || "", mergedSha: env.OPL_MERGED_SHA || "", confirmWalletRecharge: env.OPL_RECOVERY_ACCEPTANCE_EXTRA_FUNDING_CONFIRMATION === RECOVERY_ACCEPTANCE_EXTRA_FUNDING_CONFIRMATION, requestTimeoutMs: Number(env.OPL_VERIFY_REQUEST_TIMEOUT_MS || "30000")
-  }) : args["recovery-acceptance-funding-prepare"] ? runRecoveryAcceptanceFundingPrepare({
-    origin: env.OPL_CONSOLE_ORIGIN || "https://cloud.medopl.cn", customerEmail: env.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_CUSTOMER_EMAIL || "", customerPassword: env.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_CUSTOMER_PASSWORD || "", adminEmail: env.OPL_SUB2API_ADMIN_EMAIL || "", adminPassword: env.OPL_SUB2API_ADMIN_PASSWORD || "", approvalJson: env.OPL_PRODUCTION_BASIC_RECOVERY_ACCEPTANCE_FUNDING_APPROVAL_JSON || env.OPL_PRODUCTION_BASIC_RECOVERY_ACCEPTANCE_APPROVAL_JSON || "", approvalId: args["approval-id"] || "", mergedSha: env.OPL_MERGED_SHA || "", confirmWalletRecharge: env.OPL_RECOVERY_ACCEPTANCE_FUNDING_CONFIRMATION === RECOVERY_ACCEPTANCE_FUNDING_CONFIRMATION, requestTimeoutMs: Number(env.OPL_VERIFY_REQUEST_TIMEOUT_MS || "30000")
+  }) : hasExtraFundingMode ? runRecoveryAcceptanceExtraFundingPrepare({
+    origin: env.OPL_CONSOLE_ORIGIN || "https://cloud.medopl.cn", customerEmail: env.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_CUSTOMER_EMAIL || "", customerPassword: env.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_CUSTOMER_PASSWORD || "", adminEmail: env.OPL_SUB2API_ADMIN_EMAIL || "", adminPassword: env.OPL_SUB2API_ADMIN_PASSWORD || "", approvalJson: fundingApprovalJson, approvalId: requestedApprovalId, mergedSha: env.OPL_MERGED_SHA || "", confirmWalletRecharge: env.OPL_RECOVERY_ACCEPTANCE_EXTRA_FUNDING_CONFIRMATION === RECOVERY_ACCEPTANCE_EXTRA_FUNDING_CONFIRMATION, requestTimeoutMs: Number(env.OPL_VERIFY_REQUEST_TIMEOUT_MS || "30000")
+  }) : hasFundingMode ? runRecoveryAcceptanceFundingPrepare({
+    origin: env.OPL_CONSOLE_ORIGIN || "https://cloud.medopl.cn", customerEmail: env.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_CUSTOMER_EMAIL || "", customerPassword: env.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_CUSTOMER_PASSWORD || "", adminEmail: env.OPL_SUB2API_ADMIN_EMAIL || "", adminPassword: env.OPL_SUB2API_ADMIN_PASSWORD || "", approvalJson: fundingApprovalJson, approvalId: requestedApprovalId, mergedSha: env.OPL_MERGED_SHA || "", confirmWalletRecharge: env.OPL_RECOVERY_ACCEPTANCE_FUNDING_CONFIRMATION === RECOVERY_ACCEPTANCE_FUNDING_CONFIRMATION, requestTimeoutMs: Number(env.OPL_VERIFY_REQUEST_TIMEOUT_MS || "30000")
   }) : Promise.reject(new Error("recovery_acceptance_mode_required"));
   run.then((result) => {
     if (fundingArtifactMode) validateRecoveryAcceptanceFundingArtifact(result, fundingArtifactMode);
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   }).catch((error) => {
-    if (fundingArtifactMode) process.stdout.write(`${JSON.stringify(fundingFailureArtifact(fundingArtifactMode, error), null, 2)}\n`);
+    if (fundingArtifactMode) process.stdout.write(`${JSON.stringify(fundingFailureArtifact(fundingArtifactMode, error, { requestedApprovalId, approvalJson: fundingApprovalJson }), null, 2)}\n`);
     process.stderr.write(`${String(error?.message || error)}\n`);
     process.exitCode = 1;
   });

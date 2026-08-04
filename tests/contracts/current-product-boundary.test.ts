@@ -1105,3 +1105,15 @@ test("Current human truth preserves public entry points and evidence levels", as
   assert.match(runbook, /OPL_CAPACITY_TESTS=1/);
   assert.match(runbook, /Action=skip/);
 });
+
+test("Production funding failure evidence preserves only approval ID digests", async () => {
+  const deployment = await json("packages/contracts/opl-cloud-deployment-contract.json");
+  for (const artifact of [
+    deployment.productionRecoveryAcceptanceFundingPrepare.artifact,
+    deployment.productionRecoveryAcceptanceExtraFundingPrepare.artifact
+  ]) {
+    assert.deepEqual(artifact.failureDiagnosticFields, ["requestedApprovalIdSha256", "secretApprovalIdSha256"]);
+    assert.equal(artifact.failureDiagnosticSource, "process_memory_only_workflow_input_and_selected_secret_json_approval_id");
+    assert.deepEqual(artifact.forbidden, ["email", "password", "accountId", "operationId", "nonce", "secret", "token", "cookie", "csrf"]);
+  }
+});

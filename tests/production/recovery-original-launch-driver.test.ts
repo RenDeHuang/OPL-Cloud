@@ -54,7 +54,11 @@ test("relative-path CLI invocation does not silently skip the recovery runner", 
   assert.equal(artifact.operationMode, RECOVERY_ACCEPTANCE_FUNDING_MODE);
   assert.equal(artifact.errorCode, "recovery_acceptance_approval_invalid_json");
   assert.equal(artifact.mutationOutcome, "unknown");
-  assert.doesNotMatch(result.stdout, /password|secret|cookie|csrf|authorization|raw_.*id/i);
+  assert.equal(artifact.requestedApprovalIdSha256, createHash("sha256").update("cli-entrypoint-regression").digest("hex"));
+  assert.equal(artifact.secretApprovalIdSha256, createHash("sha256").update("").digest("hex"));
+  const { requestedApprovalIdSha256: _requestedDigest, secretApprovalIdSha256: _secretDigest, ...redactedArtifact } = artifact;
+  assert.doesNotMatch(JSON.stringify(redactedArtifact), /password|secret|cookie|csrf|authorization|raw_.*id/i);
+  assert.doesNotMatch(result.stdout, /cli-entrypoint-regression/);
   assert.equal(result.stderr, "recovery_acceptance_approval_invalid_json\n");
 });
 
@@ -80,7 +84,11 @@ test("symlinked checkout CLI invocation does not silently skip the recovery runn
     assert.equal(artifact.operationMode, RECOVERY_ACCEPTANCE_FUNDING_MODE);
     assert.equal(artifact.errorCode, "recovery_acceptance_approval_invalid_json");
     assert.equal(artifact.mutationOutcome, "unknown");
-    assert.doesNotMatch(result.stdout, /password|secret|cookie|csrf|authorization|raw_.*id/i);
+    assert.equal(artifact.requestedApprovalIdSha256, createHash("sha256").update("symlink-entrypoint-regression").digest("hex"));
+    assert.equal(artifact.secretApprovalIdSha256, createHash("sha256").update("").digest("hex"));
+    const { requestedApprovalIdSha256: _requestedDigest, secretApprovalIdSha256: _secretDigest, ...redactedArtifact } = artifact;
+    assert.doesNotMatch(JSON.stringify(redactedArtifact), /password|secret|cookie|csrf|authorization|raw_.*id/i);
+    assert.doesNotMatch(result.stdout, /symlink-entrypoint-regression/);
     assert.match(result.stderr, /recovery_acceptance_approval_invalid_json/);
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
@@ -143,6 +151,63 @@ function fundingApproval(overrides: Record<string, unknown> = {}) {
   value.approvalDigest = recoveryAcceptanceApprovalDigest(value);
   return value;
 }
+
+test("funding CLI failure artifact preserves only requested and secret approval ID digests", () => {
+  const repoRoot = fileURLToPath(new URL("../../", import.meta.url));
+  const approval = fundingApproval();
+  const requestedApprovalId = "workflow-selected-different-approval";
+  const env = {
+    ...Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("OPL_") && !key.startsWith("TENCENT_"))),
+    OPL_MERGED_SHA: mergedMainSha,
+    OPL_PRODUCTION_BASIC_RECOVERY_ACCEPTANCE_FUNDING_APPROVAL_JSON: JSON.stringify(approval)
+  };
+  const result = spawnSync(process.execPath, ["tools/recovery-original-launch-driver.ts", "--recovery-acceptance-funding-prepare", "--approval-id", requestedApprovalId], {
+    cwd: repoRoot,
+    env,
+    encoding: "utf8"
+  });
+
+  assert.equal(result.status, 1);
+  const artifact = JSON.parse(result.stdout);
+  assert.doesNotThrow(() => validateRecoveryAcceptanceFundingArtifact(artifact, RECOVERY_ACCEPTANCE_FUNDING_MODE));
+  assert.equal(artifact.status, "failed");
+  assert.equal(artifact.errorCode, "recovery_acceptance_approval_invalid_approval_id");
+  assert.equal(artifact.requestedApprovalIdSha256, createHash("sha256").update(requestedApprovalId).digest("hex"));
+  assert.equal(artifact.secretApprovalIdSha256, createHash("sha256").update(String(approval.approvalId)).digest("hex"));
+  assert.doesNotMatch(result.stdout, new RegExp(`${requestedApprovalId}|${String(approval.approvalId)}`));
+  assert.throws(
+    () => validateRecoveryAcceptanceFundingArtifact({ ...artifact, requestedApprovalIdSha256: "0" }, RECOVERY_ACCEPTANCE_FUNDING_MODE),
+    /artifact_invalid/
+  );
+  assert.throws(
+    () => validateRecoveryAcceptanceFundingArtifact({ ...artifact, secretApprovalIdSha256: "0" }, RECOVERY_ACCEPTANCE_FUNDING_MODE),
+    /artifact_invalid/
+  );
+});
+
+test("funding CLI passes the workflow approval ID to the parser before any request", () => {
+  const repoRoot = fileURLToPath(new URL("../../", import.meta.url));
+  const approval = fundingApproval();
+  const env = {
+    ...Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("OPL_") && !key.startsWith("TENCENT_"))),
+    OPL_MERGED_SHA: mergedMainSha,
+    OPL_PRODUCTION_BASIC_RECOVERY_ACCEPTANCE_FUNDING_APPROVAL_JSON: JSON.stringify(approval)
+  };
+  const result = spawnSync(process.execPath, ["tools/recovery-original-launch-driver.ts", "--recovery-acceptance-funding-prepare", "--approval-id", String(approval.approvalId)], {
+    cwd: repoRoot,
+    env,
+    encoding: "utf8"
+  });
+
+  assert.equal(result.status, 1);
+  const artifact = JSON.parse(result.stdout);
+  assert.doesNotThrow(() => validateRecoveryAcceptanceFundingArtifact(artifact, RECOVERY_ACCEPTANCE_FUNDING_MODE));
+  assert.equal(artifact.errorCode, "recovery_acceptance_funding_confirmation_required");
+  const approvalIdDigest = createHash("sha256").update(String(approval.approvalId)).digest("hex");
+  assert.equal(artifact.requestedApprovalIdSha256, approvalIdDigest);
+  assert.equal(artifact.secretApprovalIdSha256, approvalIdDigest);
+  assert.doesNotMatch(result.stdout, new RegExp(String(approval.approvalId)));
+});
 
 function sourcePayload(source: string, data: Record<string, unknown>) {
   return { source, available: true, status: "available", fetchedAt: "2026-08-04T00:00:00.000Z", data };
