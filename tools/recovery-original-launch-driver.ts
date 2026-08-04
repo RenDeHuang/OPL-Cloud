@@ -16,6 +16,8 @@ export const RECOVERY_ACCEPTANCE_FUNDING_CONFIRMATION = "RECOVER_ONE_EXISTING_AC
 export const RECOVERY_ACCEPTANCE_EXTRA_FUNDING_CONFIRMATION = "PREPARE_ONE_RECOVERY_ACCEPTANCE_BASIC_EXTRA_FUNDING";
 export const RECOVERY_ACCEPTANCE_FUNDING_RECHARGE_USD_MICROS = "60000000";
 export const RECOVERY_ACCEPTANCE_FUNDING_REASON = "Recovery Acceptance funding prepare";
+export const RECOVERY_ACCEPTANCE_EXTRA_FUNDING_REASON = "Recovery Acceptance extra funding prepare";
+export const ACCEPTANCE_B_PREPARE_REASON = "production Basic Acceptance B account preparation";
 
 export const RECOVERY_ACCEPTANCE_ORIGINAL_LAUNCH_ALLOWED_WRITES = Object.freeze([
   "submit_one_workspace_launch",
@@ -93,7 +95,8 @@ const ZERO_MUTATION_COUNTS = Object.freeze({
   refunds: 0,
   renewals: 0,
   deletes: 0,
-  replacements: 0
+  replacements: 0,
+  walletRecoveryPosts: 0
 });
 
 export interface RecoveryAcceptanceOriginalLaunchApproval {
@@ -280,6 +283,15 @@ function verifyComputeBudgets(operation: Record<string, any>): boolean {
   const budgets = operation?.redactedProviderPayload?.normalLaunchMutationBudget;
   return exactBudget(budgets?.compute_create) && exactBudget(budgets?.compute_claim_cvm) && exactBudget(budgets?.compute_claim_node);
 }
+function verifyComputeIdentity(compute: Record<string, any>, ownership: Record<string, any>, approval: RecoveryAcceptanceOriginalLaunchApproval, launch: Record<string, any>): boolean {
+  const instanceType = String(compute?.instanceType || compute?.providerData?.instanceType || "");
+  return compute?.id === launch.computeAllocationId && compute?.accountId === approval.customer.accountId && compute?.workspaceId === approval.launch.workspaceId &&
+    compute?.packageId === "basic" && compute?.status === "running" && compute?.cvmStatus === "RUNNING" &&
+    compute?.nodePoolId === approval.expected.nodePoolId && instanceType === approval.expected.resolvedInstanceType &&
+    /^ins-[A-Za-z0-9-]+$/.test(String(compute?.cvmInstanceId || compute?.instanceId || "")) &&
+    ownership?.resourceId === launch.computeAllocationId && ownership?.accountId === approval.customer.accountId && ownership?.workspaceId === approval.launch.workspaceId &&
+    ownership?.status === "active" && Boolean(ownership?.nodeName);
+}
 function verifyContinuationBudgets(launch: Record<string, any>): boolean {
   const budgets = launch?.continuationAttemptBudgets;
   if (!budgets || typeof budgets !== "object") return false;
@@ -300,6 +312,8 @@ export interface RecoveryAcceptanceOriginalLaunchOptions {
   origin: string;
   customerEmail: string;
   customerPassword: string;
+  adminEmail: string;
+  adminPassword: string;
   approvalJson: string | RecoveryAcceptanceOriginalLaunchApproval;
   approvalId: string;
   mergedSha: string;
@@ -312,14 +326,26 @@ export interface RecoveryAcceptanceOriginalLaunchOptions {
   now?: Date;
 }
 
+export function assertManualReviewResourceAbsence(detail: Record<string, any>) {
+  if (!detail || !Array.isArray(detail.resources) || !detail.receipt) throw new Error("recovery_acceptance_resource_authority_invalid");
+  if (detail.receipt?.status === "available") throw new Error("recovery_acceptance_orphan_receipt_invalid");
+  for (const resource of detail.resources) {
+    const resourceType = nestedSourceData(resource?.resourceType, "fabric");
+    if (["storage", "attachment", "runtime"].includes(String(resourceType))) throw new Error("recovery_acceptance_orphan_resource_invalid");
+    if (resource?.receiptRef?.status === "available") throw new Error("recovery_acceptance_orphan_receipt_invalid");
+  }
+}
+
 export async function runRecoveryAcceptanceOriginalLaunch(options: RecoveryAcceptanceOriginalLaunchOptions) {
   const { origin, customerEmail, customerPassword, approvalJson, approvalId, mergedSha, fabricOrigin, internalServiceToken, fetchImpl = globalThis.fetch, launchPollAttempts = 180, launchPollDelayMs = 10_000, requestTimeoutMs = 30_000, now = new Date() } = options;
   const approval = parseRecoveryAcceptanceOriginalLaunchApproval(approvalJson, { approvalId, mergedSha, now });
-  if (String(customerEmail || "").trim().toLowerCase() !== approval.customer.email || !String(customerPassword || "") || !/^http:\/\/127\.0\.0\.1:\d+$/.test(String(fabricOrigin || "")) || !String(internalServiceToken || "")) throw new Error("recovery_acceptance_config_invalid");
+  if (String(customerEmail || "").trim().toLowerCase() !== approval.customer.email || !String(customerPassword || "") || !String(adminEmail || "") || !String(adminPassword || "") || !/^http:\/\/127\.0\.0\.1:\d+$/.test(String(fabricOrigin || "")) || !String(internalServiceToken || "")) throw new Error("recovery_acceptance_config_invalid");
   const normalizedOrigin = assertPublicHttpsUrl(origin, "public_console_origin_required", { hostname: "cloud.medopl.cn" }).origin;
   const requestOptions = { fetchImpl, origin: normalizedOrigin, timeoutMs: requestTimeoutMs };
   const fabricOptions = { fetchImpl, origin: fabricOrigin, timeoutMs: requestTimeoutMs, headers: { authorization: `Bearer ${internalServiceToken}` } };
   const customerAuth = await login({ ...requestOptions, email: approval.customer.email, password: customerPassword });
+  const adminAuth = await login({ ...requestOptions, email: adminEmail, password: adminPassword });
+  if (adminAuth.user?.accountId !== "acct-admin" || adminAuth.user?.role !== "admin") throw new Error("recovery_acceptance_admin_login_failed");
   const identity = sourceData(await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/auth/me" }), "sub2api");
   if (identity?.accountId !== approval.customer.accountId || identity?.email !== approval.customer.email || identity?.role !== "owner" || identity?.status !== "active") throw new Error("recovery_acceptance_customer_identity_invalid");
   const quoteRaw = (await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/pricing/preview", method: "POST", body: { resourceType: "workspace", packageId: "basic", sizeGb: 10 } })).payload;
@@ -361,6 +387,11 @@ export async function runRecoveryAcceptanceOriginalLaunch(options: RecoveryAccep
   const computeOperations = operations.filter((operation: any) => operation?.action === "create_compute_allocation" && operation?.status === "succeeded" && operation?.resourceId === launch.computeAllocationId);
   const forbiddenOperations = operations.filter((operation: any) => ["create_storage_volume", "create_storage_attachment", "upsert_gateway_secret", "create_workspace_runtime"].includes(operation?.action));
   if (computeOperations.length !== 1 || forbiddenOperations.length !== 0 || !verifyComputeBudgets(computeOperations[0])) throw new Error("recovery_acceptance_fabric_operation_counts_invalid");
+  const computeAllocation = (await requestJson({ ...fabricOptions, path: `/fabric/compute-allocations/${encodeURIComponent(launch.computeAllocationId)}` })).payload as Record<string, any>;
+  const ownership = (await requestJson({ ...fabricOptions, path: `/fabric/machine-ownerships/${encodeURIComponent(launch.computeAllocationId)}` })).payload as Record<string, any>;
+  if (!verifyComputeIdentity(computeAllocation, ownership, approval, launch)) throw new Error("recovery_acceptance_compute_identity_invalid");
+  const workspaceDetail = sourceData(await requestJson({ ...requestOptions, auth: adminAuth, path: `/api/operator/workspaces/${encodeURIComponent(approval.launch.workspaceId)}` }), "control-plane+fabric+ledger");
+  assertManualReviewResourceAbsence(workspaceDetail);
   const historyAfter = await readBalanceHistory(requestOptions, customerAuth);
   const debitMatchesBefore = matchingDebit(historyBefore, quoteRaw.totalChargeUsdMicros, startedAt);
   const debitMatchesAfter = matchingDebit(historyAfter, quoteRaw.totalChargeUsdMicros, startedAt);
@@ -395,6 +426,8 @@ export interface RecoveryAcceptanceFundingOptions {
   now?: Date;
 }
 
+export type RecoveryAcceptanceExtraFundingOptions = RecoveryAcceptanceFundingOptions;
+
 async function readWalletAdjustment(requestOptions: any, adminAuth: any, operationId: string) {
   try { return (await requestJson({ ...requestOptions, auth: adminAuth, path: `/api/operator/wallet-adjustments/${encodeURIComponent(operationId)}` })).payload as Record<string, any>; }
   catch (error) { if (String(error?.message || "").includes(`request_failed:GET:/api/operator/wallet-adjustments/${encodeURIComponent(operationId)}:404:`)) return null; throw error; }
@@ -404,10 +437,18 @@ function decimalMicros(value: string): bigint {
   if (!match) throw new Error("recovery_acceptance_funding_readback_invalid");
   return BigInt(match[1]) * 1_000_000n + BigInt((match[2] || "").padEnd(6, "0") || "0");
 }
-function validateWalletAdjustment(value: Record<string, any>, approval: RecoveryAcceptanceFundingApproval) {
-  if (value?.operationId !== approval.walletOperationId || value?.accountId !== approval.customer.accountId || value?.kind !== "recharge" || decimalMicros(value?.amountUsd) !== BigInt(approval.rechargeUsdMicros) || value?.reason !== RECOVERY_ACCEPTANCE_FUNDING_REASON || value?.status !== "succeeded" || value?.phase !== "complete") throw new Error("recovery_acceptance_funding_readback_invalid");
-  const before = sourceData(value.beforeBalance, "sub2api");
-  const after = sourceData(value.afterBalance, "sub2api");
+function nestedSourceData(value: unknown, expectedSource: string): any {
+  const envelope = (value as Record<string, any>)?.payload || value as Record<string, any>;
+  if (envelope?.source !== expectedSource || envelope?.available !== true || envelope?.status !== "available" ||
+    !Number.isFinite(Date.parse(String(envelope?.fetchedAt || ""))) || envelope.data === undefined || envelope.data === null) {
+    throw new Error("recovery_acceptance_funding_readback_invalid");
+  }
+  return envelope.data as Record<string, any>;
+}
+function validateWalletAdjustment(value: Record<string, any>, approval: RecoveryAcceptanceFundingApproval, expectedReason: string) {
+  if (value?.operationId !== approval.walletOperationId || value?.accountId !== approval.customer.accountId || value?.kind !== "recharge" || decimalMicros(value?.amountUsd) !== BigInt(approval.rechargeUsdMicros) || value?.reason !== expectedReason || value?.status !== "succeeded" || value?.phase !== "complete") throw new Error("recovery_acceptance_funding_readback_invalid");
+  const before = nestedSourceData(value.beforeBalance, "sub2api");
+  const after = nestedSourceData(value.afterBalance, "sub2api");
   if (!/^(0|[1-9][0-9]*)$/.test(String(before?.usdMicros || "")) || !/^(0|[1-9][0-9]*)$/.test(String(after?.usdMicros || "")) || BigInt(after.usdMicros) - BigInt(before.usdMicros) !== BigInt(approval.rechargeUsdMicros)) throw new Error("recovery_acceptance_funding_readback_invalid");
   return { beforeUsdMicros: String(before.usdMicros), afterUsdMicros: String(after.usdMicros) };
 }
@@ -425,23 +466,36 @@ export async function runRecoveryAcceptanceFundingPrepare(options: RecoveryAccep
   if (identity?.accountId !== approval.customer.accountId || identity?.email !== approval.customer.email || identity?.role !== "owner" || identity?.status !== "active") throw new Error("recovery_acceptance_customer_identity_invalid");
   const beforeWallet = walletFact(sourceEnvelope(await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/gateway/wallet" }), "sub2api"), identity.sub2apiUserId);
   let operation = await readWalletAdjustment(requestOptions, adminAuth, approval.walletOperationId);
-  let walletAdjustmentPosts = 0;
+  let walletRecoveryPosts = 0;
   let reconciled = false;
-  if (!operation) {
+  if (!operation) throw new Error("recovery_acceptance_funding_operation_missing");
+  if (operation.status === "manual_review") {
+    if (!Array.isArray(operation.allowedActions) || !operation.allowedActions.includes("recover_wallet_adjustment")) throw new Error("recovery_acceptance_funding_recovery_not_allowed");
+    const recoveryIdempotencyKey = `wallet-adjustment-recovery-${approval.approvalDigest.slice(0, 32)}`;
     try {
-      walletAdjustmentPosts = 1;
-      await requestJson({ ...requestOptions, auth: adminAuth, path: `/api/operator/accounts/${encodeURIComponent(approval.customer.accountId)}/wallet-adjustments`, method: "POST", headers: { "Idempotency-Key": `recovery-acceptance-funding-v1:${approval.customer.accountId}:${approval.nonce}` }, body: { kind: "recharge", amountUsd: "60.000000", reason: RECOVERY_ACCEPTANCE_FUNDING_REASON, confirmationAccountId: approval.customer.accountId } });
+      walletRecoveryPosts = 1;
+      await requestJson({
+        ...requestOptions,
+        auth: adminAuth,
+        path: `/api/operator/wallet-adjustments/${encodeURIComponent(approval.walletOperationId)}/recover`,
+        method: "POST",
+        headers: { "Idempotency-Key": recoveryIdempotencyKey },
+        body: { accountId: approval.customer.accountId, evidenceRef: "case-20260804-acceptb" }
+      });
     } catch (error) {
       operation = await readWalletAdjustment(requestOptions, adminAuth, approval.walletOperationId);
       if (!operation) throw new Error(String(error?.message || "recovery_acceptance_funding_unknown"));
+      if (operation.status !== "succeeded") throw new Error("recovery_acceptance_funding_unknown");
       reconciled = true;
     }
-    operation ||= await readWalletAdjustment(requestOptions, adminAuth, approval.walletOperationId);
+    operation = await readWalletAdjustment(requestOptions, adminAuth, approval.walletOperationId);
+    if (!operation || operation.status !== "succeeded") throw new Error("recovery_acceptance_funding_unknown");
   }
-  if (!operation) throw new Error("recovery_acceptance_funding_readback_invalid");
-  const adjustment = validateWalletAdjustment(operation, approval);
+  if (operation.status !== "succeeded") throw new Error("recovery_acceptance_funding_unknown");
+  const adjustment = validateWalletAdjustment(operation, approval, ACCEPTANCE_B_PREPARE_REASON);
   const afterWallet = walletFact(sourceEnvelope(await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/gateway/wallet" }), "sub2api"), identity.sub2apiUserId);
   if (afterWallet.usdMicros !== adjustment.afterUsdMicros) throw new Error("recovery_acceptance_funding_balance_invalid");
+  if (BigInt(adjustment.afterUsdMicros) < BigInt(beforeWallet.usdMicros)) throw new Error("recovery_acceptance_funding_balance_invalid");
   return {
     schemaVersion: 1,
     operationMode: RECOVERY_ACCEPTANCE_FUNDING_MODE,
@@ -452,7 +506,59 @@ export async function runRecoveryAcceptanceFundingPrepare(options: RecoveryAccep
     customerIdentitySha256: sha(approval.customer.email),
     walletOperationIdSha256: sha(approval.walletOperationId),
     wallet: { beforeUsdMicros: adjustment.beforeUsdMicros, afterUsdMicros: adjustment.afterUsdMicros, rechargeUsdMicros: approval.rechargeUsdMicros, rechargeCount: 1, reconciled },
-    writeCounts: { ...ZERO_MUTATION_COUNTS, walletAdjustmentPosts: walletAdjustmentPosts || 1 },
+    writeCounts: { ...ZERO_MUTATION_COUNTS, walletRecoveryPosts },
+    verifiedAt: now.toISOString()
+  };
+}
+
+export async function runRecoveryAcceptanceExtraFundingPrepare(options: RecoveryAcceptanceExtraFundingOptions) {
+  const { origin, customerEmail, customerPassword, adminEmail, adminPassword, approvalJson, approvalId, mergedSha, confirmWalletRecharge, fetchImpl = globalThis.fetch, requestTimeoutMs = 30_000, now = new Date() } = options;
+  const approval = parseRecoveryAcceptanceExtraFundingApproval(approvalJson, { approvalId, mergedSha, now });
+  if (!confirmWalletRecharge || String(customerEmail || "").trim().toLowerCase() !== approval.customer.email || !customerPassword || !adminEmail || !adminPassword) throw new Error("recovery_acceptance_extra_funding_confirmation_required");
+  const normalizedOrigin = assertPublicHttpsUrl(origin, "public_console_origin_required", { hostname: "cloud.medopl.cn" }).origin;
+  const requestOptions = { fetchImpl, origin: normalizedOrigin, timeoutMs: requestTimeoutMs };
+  const adminAuth = await login({ ...requestOptions, email: adminEmail, password: adminPassword });
+  if (adminAuth.user?.accountId !== "acct-admin" || adminAuth.user?.role !== "admin") throw new Error("recovery_acceptance_admin_login_failed");
+  const customerAuth = await login({ ...requestOptions, email: approval.customer.email, password: customerPassword });
+  const identity = sourceData(await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/auth/me" }), "sub2api");
+  if (identity?.accountId !== approval.customer.accountId || identity?.email !== approval.customer.email || identity?.role !== "owner" || identity?.status !== "active") throw new Error("recovery_acceptance_customer_identity_invalid");
+  const beforeWallet = walletFact(sourceEnvelope(await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/gateway/wallet" }), "sub2api"), identity.sub2apiUserId);
+  let operation = await readWalletAdjustment(requestOptions, adminAuth, approval.walletOperationId);
+  let walletAdjustmentPosts = 0;
+  let reconciled = false;
+  if (!operation) {
+    try {
+      walletAdjustmentPosts = 1;
+      await requestJson({
+        ...requestOptions,
+        auth: adminAuth,
+        path: `/api/operator/accounts/${encodeURIComponent(approval.customer.accountId)}/wallet-adjustments`,
+        method: "POST",
+        headers: { "Idempotency-Key": `recovery-acceptance-extra-funding-v1:${approval.customer.accountId}:${approval.nonce}` },
+        body: { kind: "recharge", amountUsd: "60.000000", reason: RECOVERY_ACCEPTANCE_EXTRA_FUNDING_REASON, confirmationAccountId: approval.customer.accountId }
+      });
+    } catch (error) {
+      operation = await readWalletAdjustment(requestOptions, adminAuth, approval.walletOperationId);
+      if (!operation) throw new Error(String(error?.message || "recovery_acceptance_extra_funding_unknown"));
+      reconciled = true;
+    }
+    operation ||= await readWalletAdjustment(requestOptions, adminAuth, approval.walletOperationId);
+  }
+  if (!operation || operation.status !== "succeeded") throw new Error("recovery_acceptance_extra_funding_readback_invalid");
+  const adjustment = validateWalletAdjustment(operation, approval, RECOVERY_ACCEPTANCE_EXTRA_FUNDING_REASON);
+  const afterWallet = walletFact(sourceEnvelope(await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/gateway/wallet" }), "sub2api"), identity.sub2apiUserId);
+  if (afterWallet.usdMicros !== adjustment.afterUsdMicros || BigInt(adjustment.afterUsdMicros) < BigInt(beforeWallet.usdMicros)) throw new Error("recovery_acceptance_extra_funding_balance_invalid");
+  return {
+    schemaVersion: 1,
+    operationMode: RECOVERY_ACCEPTANCE_EXTRA_FUNDING_MODE,
+    status: "succeeded",
+    approvalId: approval.approvalId,
+    approvalDigest: approval.approvalDigest,
+    release: { ...approval.release },
+    customerIdentitySha256: sha(approval.customer.email),
+    walletOperationIdSha256: sha(approval.walletOperationId),
+    wallet: { beforeUsdMicros: adjustment.beforeUsdMicros, afterUsdMicros: adjustment.afterUsdMicros, rechargeUsdMicros: approval.rechargeUsdMicros, rechargeCount: 1, reconciled },
+    writeCounts: { ...ZERO_MUTATION_COUNTS, walletAdjustmentPosts },
     verifiedAt: now.toISOString()
   };
 }
@@ -473,9 +579,11 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const args = parseArgs(process.argv.slice(2));
   const env = process.env;
   const run = args["recovery-acceptance-original-launch"] ? runRecoveryAcceptanceOriginalLaunch({
-    origin: env.OPL_CONSOLE_ORIGIN || "https://cloud.medopl.cn", customerEmail: env.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_CUSTOMER_EMAIL || "", customerPassword: env.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_CUSTOMER_PASSWORD || "", approvalJson: env.OPL_PRODUCTION_BASIC_RECOVERY_ACCEPTANCE_APPROVAL_JSON || "", approvalId: args["approval-id"] || "", mergedSha: env.OPL_MERGED_SHA || "", fabricOrigin: env.OPL_FABRIC_INTERNAL_ORIGIN || "", internalServiceToken: env.OPL_INTERNAL_SERVICE_TOKEN || "", launchPollAttempts: Number(env.OPL_VERIFY_LAUNCH_POLL_ATTEMPTS || "180"), launchPollDelayMs: Number(env.OPL_VERIFY_LAUNCH_POLL_DELAY_MS || "10000"), requestTimeoutMs: Number(env.OPL_VERIFY_REQUEST_TIMEOUT_MS || "30000")
+    origin: env.OPL_CONSOLE_ORIGIN || "https://cloud.medopl.cn", customerEmail: env.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_CUSTOMER_EMAIL || "", customerPassword: env.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_CUSTOMER_PASSWORD || "", adminEmail: env.OPL_SUB2API_ADMIN_EMAIL || "", adminPassword: env.OPL_SUB2API_ADMIN_PASSWORD || "", approvalJson: env.OPL_PRODUCTION_BASIC_RECOVERY_ACCEPTANCE_APPROVAL_JSON || "", approvalId: args["approval-id"] || "", mergedSha: env.OPL_MERGED_SHA || "", fabricOrigin: env.OPL_FABRIC_INTERNAL_ORIGIN || "", internalServiceToken: env.OPL_INTERNAL_SERVICE_TOKEN || "", launchPollAttempts: Number(env.OPL_VERIFY_LAUNCH_POLL_ATTEMPTS || "180"), launchPollDelayMs: Number(env.OPL_VERIFY_LAUNCH_POLL_DELAY_MS || "10000"), requestTimeoutMs: Number(env.OPL_VERIFY_REQUEST_TIMEOUT_MS || "30000")
+  }) : args["recovery-acceptance-extra-funding-prepare"] ? runRecoveryAcceptanceExtraFundingPrepare({
+    origin: env.OPL_CONSOLE_ORIGIN || "https://cloud.medopl.cn", customerEmail: env.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_CUSTOMER_EMAIL || "", customerPassword: env.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_CUSTOMER_PASSWORD || "", adminEmail: env.OPL_SUB2API_ADMIN_EMAIL || "", adminPassword: env.OPL_SUB2API_ADMIN_PASSWORD || "", approvalJson: env.OPL_PRODUCTION_BASIC_RECOVERY_ACCEPTANCE_EXTRA_FUNDING_APPROVAL_JSON || "", approvalId: args["approval-id"] || "", mergedSha: env.OPL_MERGED_SHA || "", confirmWalletRecharge: env.OPL_RECOVERY_ACCEPTANCE_EXTRA_FUNDING_CONFIRMATION === RECOVERY_ACCEPTANCE_EXTRA_FUNDING_CONFIRMATION, requestTimeoutMs: Number(env.OPL_VERIFY_REQUEST_TIMEOUT_MS || "30000")
   }) : args["recovery-acceptance-funding-prepare"] ? runRecoveryAcceptanceFundingPrepare({
-    origin: env.OPL_CONSOLE_ORIGIN || "https://cloud.medopl.cn", customerEmail: env.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_CUSTOMER_EMAIL || "", customerPassword: env.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_CUSTOMER_PASSWORD || "", adminEmail: env.OPL_SUB2API_ADMIN_EMAIL || "", adminPassword: env.OPL_SUB2API_ADMIN_PASSWORD || "", approvalJson: env.OPL_PRODUCTION_BASIC_RECOVERY_ACCEPTANCE_FUNDING_APPROVAL_JSON || "", approvalId: args["approval-id"] || "", mergedSha: env.OPL_MERGED_SHA || "", confirmWalletRecharge: env.OPL_RECOVERY_ACCEPTANCE_FUNDING_CONFIRMATION === RECOVERY_ACCEPTANCE_FUNDING_CONFIRMATION, requestTimeoutMs: Number(env.OPL_VERIFY_REQUEST_TIMEOUT_MS || "30000")
+    origin: env.OPL_CONSOLE_ORIGIN || "https://cloud.medopl.cn", customerEmail: env.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_CUSTOMER_EMAIL || "", customerPassword: env.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_CUSTOMER_PASSWORD || "", adminEmail: env.OPL_SUB2API_ADMIN_EMAIL || "", adminPassword: env.OPL_SUB2API_ADMIN_PASSWORD || "", approvalJson: env.OPL_PRODUCTION_BASIC_RECOVERY_ACCEPTANCE_FUNDING_APPROVAL_JSON || env.OPL_PRODUCTION_BASIC_RECOVERY_ACCEPTANCE_APPROVAL_JSON || "", approvalId: args["approval-id"] || "", mergedSha: env.OPL_MERGED_SHA || "", confirmWalletRecharge: env.OPL_RECOVERY_ACCEPTANCE_FUNDING_CONFIRMATION === RECOVERY_ACCEPTANCE_FUNDING_CONFIRMATION, requestTimeoutMs: Number(env.OPL_VERIFY_REQUEST_TIMEOUT_MS || "30000")
   }) : Promise.reject(new Error("recovery_acceptance_mode_required"));
   run.then((result) => process.stdout.write(`${JSON.stringify(result, null, 2)}\n`)).catch((error) => { process.stderr.write(`${String(error?.message || error)}\n`); process.exitCode = 1; });
 }

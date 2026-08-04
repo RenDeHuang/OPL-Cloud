@@ -595,6 +595,9 @@ test("production self-hosted jobs use one run-and-job isolated source checkout",
       "acceptance-b-fresh-order",
       "controlled-pilot-closed-validate",
       "fabric-ledger-readback",
+      "recovery-acceptance-funding-prepare",
+      "recovery-acceptance-extra-funding-prepare",
+      "recovery-acceptance-original-launch",
       "recovery-acceptance-canary",
       "recovery-plan-operation"
     ]]
@@ -1430,6 +1433,9 @@ test("recovered Workspace E2E is a separate hosted mode with no resource mutatio
     "fabric_ledger_readback",
     "recovery_plan_execute",
     "recovery_acceptance_canary",
+    "recovery_acceptance_funding_prepare",
+    "recovery_acceptance_extra_funding_prepare",
+    "recovery_acceptance_original_launch",
     "controlled_pilot_closed_validate",
     "recovered_workspace_e2e"
   ]);

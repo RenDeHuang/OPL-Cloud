@@ -15,6 +15,9 @@ import {
   RECOVERY_ACCEPTANCE_ORIGINAL_LAUNCH_CONFIRMATION,
   RECOVERY_ACCEPTANCE_ORIGINAL_LAUNCH_FORBIDDEN_WRITES,
   RECOVERY_ACCEPTANCE_ORIGINAL_LAUNCH_MODE,
+  assertManualReviewResourceAbsence,
+  runRecoveryAcceptanceFundingPrepare,
+  runRecoveryAcceptanceExtraFundingPrepare,
   parseRecoveryAcceptanceFundingApproval,
   parseRecoveryAcceptanceOriginalLaunchApproval,
   recoveryAcceptanceApprovalDigest
@@ -84,6 +87,54 @@ function fundingApproval(overrides: Record<string, unknown> = {}) {
   return value;
 }
 
+function sourcePayload(source: string, data: Record<string, unknown>) {
+  return { source, available: true, status: "available", fetchedAt: "2026-08-04T00:00:00.000Z", data };
+}
+
+function fundingFixture({ initialStatus = "succeeded", recoverStatus = "succeeded", recoverThrows = false } = {}) {
+  const approval = fundingApproval();
+  const operation = {
+    operationId: approval.walletOperationId,
+    accountId,
+    kind: "recharge",
+    amountUsd: "60.000000",
+    reason: "production Basic Acceptance B account preparation",
+    status: initialStatus,
+    phase: initialStatus === "succeeded" ? "complete" : "review",
+    allowedActions: initialStatus === "manual_review" ? ["recover_wallet_adjustment"] : [],
+    beforeBalance: sourcePayload("sub2api", { currency: "USD", usdMicros: "0" }),
+    afterBalance: sourcePayload("sub2api", { currency: "USD", usdMicros: "60000000" })
+  };
+  const calls: Array<{ method: string; path: string; body?: Record<string, unknown> }> = [];
+  let walletReads = 0;
+  const fetchImpl = async (input: string | URL, init: RequestInit = {}) => {
+    const url = new URL(String(input));
+    const method = init.method || "GET";
+    const body = init.body ? JSON.parse(String(init.body)) as Record<string, unknown> : undefined;
+    calls.push({ method, path: url.pathname, body });
+    if (url.pathname === "/api/auth/login") {
+      const isAdmin = body?.email === "admin@example.com";
+      return new Response(JSON.stringify({ user: isAdmin ? { accountId: "acct-admin", role: "admin" } : { accountId, role: "owner" } }), { status: 200, headers: { "set-cookie": `${isAdmin ? "admin" : "customer"}=fixture`, "x-opl-csrf-token": "csrf-fixture" } });
+    }
+    if (url.pathname === "/api/auth/me") return new Response(JSON.stringify(sourcePayload("sub2api", { accountId, email, role: "owner", status: "active", sub2apiUserId: "41" })), { status: 200, headers: { "cache-control": "private, no-store" } });
+    if (url.pathname === "/api/gateway/wallet") {
+      const usdMicros = walletReads++ === 0 ? "0" : "60000000";
+      return new Response(JSON.stringify(sourcePayload("sub2api", { userId: "41", currency: "USD", usdMicros, status: "active" })), { status: 200, headers: { "cache-control": "private, no-store" } });
+    }
+    if (url.pathname === `/api/operator/wallet-adjustments/${approval.walletOperationId}`) {
+      return new Response(JSON.stringify(operation), { status: 200, headers: { "cache-control": "private, no-store" } });
+    }
+    if (url.pathname === `/api/operator/wallet-adjustments/${approval.walletOperationId}/recover` && method === "POST") {
+      if (recoverThrows) return new Response(JSON.stringify({ error: "provider_result_unknown" }), { status: 502, headers: { "cache-control": "private, no-store" } });
+      operation.status = recoverStatus;
+      operation.phase = recoverStatus === "succeeded" ? "complete" : "review";
+      return new Response(JSON.stringify(operation), { status: 200, headers: { "cache-control": "private, no-store" } });
+    }
+    throw new Error(`unexpected_request:${method}:${url.pathname}`);
+  };
+  return { approval, calls, fetchImpl };
+}
+
 test("original launch approval rejects release or identity drift and keeps exact write boundary", () => {
   const approval = launchApproval();
   assert.equal(parseRecoveryAcceptanceOriginalLaunchApproval(JSON.stringify(approval), { approvalId: approval.approvalId, mergedSha: mergedMainSha }).approvalDigest, approval.approvalDigest);
@@ -93,7 +144,7 @@ test("original launch approval rejects release or identity drift and keeps exact
   assert.ok(approval.forbiddenWrites.includes("create_one_cbs"));
 });
 
-test("funding approval is independent and derives one new deterministic wallet operation", () => {
+test("funding approval binds the existing Acceptance B deterministic wallet operation", () => {
   const approval = fundingApproval();
   const parsed = parseRecoveryAcceptanceFundingApproval(JSON.stringify(approval), { approvalId: approval.approvalId, mergedSha: mergedMainSha });
   assert.equal(parsed.walletOperationId, approval.walletOperationId);
@@ -101,6 +152,54 @@ test("funding approval is independent and derives one new deterministic wallet o
   assert.equal(parsed.confirmation, RECOVERY_ACCEPTANCE_FUNDING_CONFIRMATION);
   assert.notEqual(parsed.walletOperationId, "wallet-adjustment-acceptance-b-wallet-recharge-v1");
   assert.throws(() => parseRecoveryAcceptanceFundingApproval(JSON.stringify({ ...approval, rechargeUsdMicros: "52580000" }), { approvalId: approval.approvalId, mergedSha: mergedMainSha }), /approval_invalid/);
+});
+
+test("funding prepare reads a succeeded old operation without posting", async () => {
+  const fixture = fundingFixture();
+  const result = await runRecoveryAcceptanceFundingPrepare({
+    origin: "https://cloud.medopl.cn", customerEmail: email, customerPassword: "customer-secret", adminEmail: "admin@example.com", adminPassword: "admin-secret",
+    approvalJson: JSON.stringify(fixture.approval), approvalId: fixture.approval.approvalId, mergedSha: mergedMainSha, confirmWalletRecharge: true, fetchImpl: fixture.fetchImpl,
+    now: new Date("2026-08-04T00:00:00Z")
+  });
+  assert.equal(result.status, "succeeded");
+  assert.equal(result.writeCounts.walletAdjustmentPosts, 0);
+  assert.equal(result.writeCounts.walletRecoveryPosts, 0);
+  assert.equal(fixture.calls.filter((call) => call.method === "POST" && call.path.endsWith("/recover")).length, 0);
+});
+
+test("manual-review old operation permits one recover POST and succeeds on same identity", async () => {
+  const fixture = fundingFixture({ initialStatus: "manual_review" });
+  const result = await runRecoveryAcceptanceFundingPrepare({
+    origin: "https://cloud.medopl.cn", customerEmail: email, customerPassword: "customer-secret", adminEmail: "admin@example.com", adminPassword: "admin-secret",
+    approvalJson: JSON.stringify(fixture.approval), approvalId: fixture.approval.approvalId, mergedSha: mergedMainSha, confirmWalletRecharge: true, fetchImpl: fixture.fetchImpl,
+    now: new Date("2026-08-04T00:00:00Z")
+  });
+  const recoveryPosts = fixture.calls.filter((call) => call.method === "POST" && call.path.endsWith("/recover"));
+  assert.equal(recoveryPosts.length, 1);
+  assert.deepEqual(recoveryPosts[0].body, { accountId, evidenceRef: "case-20260804-acceptb" });
+  assert.equal(result.writeCounts.walletRecoveryPosts, 1);
+  assert.equal(result.writeCounts.walletAdjustmentPosts, 0);
+});
+
+test("unknown old-operation recovery is fail-closed and never retries the POST", async () => {
+  const fixture = fundingFixture({ initialStatus: "manual_review", recoverThrows: true });
+  await assert.rejects(() => runRecoveryAcceptanceFundingPrepare({
+    origin: "https://cloud.medopl.cn", customerEmail: email, customerPassword: "customer-secret", adminEmail: "admin@example.com", adminPassword: "admin-secret",
+    approvalJson: JSON.stringify(fixture.approval), approvalId: fixture.approval.approvalId, mergedSha: mergedMainSha, confirmWalletRecharge: true, fetchImpl: fixture.fetchImpl,
+    now: new Date("2026-08-04T00:00:00Z")
+  }), /recovery_acceptance_funding_unknown/);
+  assert.equal(fixture.calls.filter((call) => call.method === "POST" && call.path.endsWith("/recover")).length, 1);
+});
+
+test("manual-review resource authority rejects orphan storage, runtime, or receipt facts", () => {
+  const noReceipt = { source: "ledger", available: false, status: "unavailable", fetchedAt: "2026-08-04T00:00:00.000Z", data: null };
+  const detail = { resources: [{ resourceType: sourcePayload("fabric", "compute") }], receipt: noReceipt };
+  assert.doesNotThrow(() => assertManualReviewResourceAbsence(detail));
+  for (const orphan of [
+    { resources: [{ resourceType: sourcePayload("fabric", "storage") }], receipt: noReceipt },
+    { resources: [{ resourceType: sourcePayload("fabric", "runtime") }], receipt: noReceipt },
+    { resources: [{ resourceType: sourcePayload("fabric", "compute") }], receipt: sourcePayload("ledger", { receiptId: "receipt-orphan" }) }
+  ]) assert.throws(() => assertManualReviewResourceAbsence(orphan), /recovery_acceptance_orphan_/);
 });
 
 test("extra funding requires a distinct operation mode and approval boundary", async () => {
