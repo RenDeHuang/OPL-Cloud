@@ -1090,6 +1090,8 @@ test("Acceptance B fresh order is a separately approved exact-count production c
     /send_model_request/
   ]) assert.doesNotMatch(runs, forbidden);
   const acceptanceTool = await readFile(repoFile("tools/production-basic-acceptance-b.ts"), "utf8");
+  assert.match(acceptanceTool, /x-opl-acceptance-b-capability/i);
+  assert.match(acceptanceTool, /x-opl-acceptance-b-approval-id/i);
   for (const forbiddenWrite of ["provision_account", "adjust_wallet", "refund", "renew", "delete", "replace", "send_model_request"]) {
     assert.match(acceptanceTool, new RegExp(forbiddenWrite));
   }
@@ -1857,7 +1859,7 @@ test("image release accepts only full App, active-shell, and Framework commit SH
   }
 });
 
-test("TKE deploy installs Sub2API credentials and isolated Recovery Acceptance approval", async () => {
+test("TKE deploy installs Sub2API credentials and isolated production acceptance approvals", async () => {
   const workflow = await readWorkflow(".github/workflows/deploy-tke-production.yml");
   const currentJob = workflowJob(workflow, "deploy");
   const steps = stepsByName(currentJob);
@@ -1873,6 +1875,9 @@ test("TKE deploy installs Sub2API credentials and isolated Recovery Acceptance a
   assert.equal(currentJob.env.OPL_RECOVERY_ACCEPTANCE_CANARY_ENABLED, "${{ vars.OPL_RECOVERY_ACCEPTANCE_CANARY_ENABLED || '0' }}");
   assert.equal(currentJob.env.OPL_RECOVERY_ACCEPTANCE_CANARY_ACCOUNT_IDS, "${{ vars.OPL_RECOVERY_ACCEPTANCE_CANARY_ACCOUNT_IDS || '' }}");
   assert.equal(currentJob.env.OPL_RECOVERY_ACCEPTANCE_CANARY_APPROVAL_JSON, "${{ secrets.OPL_RECOVERY_ACCEPTANCE_CANARY_APPROVAL_JSON }}");
+  assert.match(install, /create secret generic opl-cloud-acceptance-b/);
+  assert.match(install, /--from-file=OPL_PRODUCTION_BASIC_ACCEPTANCE_B_APPROVAL_JSON="\$secret_dir\/production-basic-acceptance-b-approval"/);
+  assert.equal(currentJob.env.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_APPROVAL_JSON, "${{ secrets.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_APPROVAL_JSON }}");
   assert.equal(Object.hasOwn(currentJob.env, "OPL_PROVIDER_ACCEPTANCE_TOKEN"), false);
   assert.doesNotMatch(install, /provider-acceptance|OPL_PROVIDER_ACCEPTANCE_TOKEN/);
   assert.doesNotMatch(install, /OPL_BASIC_CANARY_CUSTOMER_PASSWORD|OPL_PRODUCTION_BASIC_ACCEPTANCE_B_CUSTOMER_PASSWORD/);
@@ -1917,6 +1922,7 @@ test("deployment inputs contain monthly and Sub2API config without retired billi
     "OPL_RECOVERY_ACCEPTANCE_CANARY_ENABLED",
     "OPL_RECOVERY_ACCEPTANCE_CANARY_ACCOUNT_IDS",
     "OPL_RECOVERY_ACCEPTANCE_CANARY_APPROVAL_JSON",
+    "OPL_PRODUCTION_BASIC_ACCEPTANCE_B_APPROVAL_JSON",
     "OPL_SUB2API_BASE_URL",
     "OPL_SUB2API_REQUEST_TIMEOUT_MS",
     "OPL_TENCENT_ZONE"
@@ -1964,6 +1970,8 @@ test("TKE manifest renderer replaces current values and never renders secrets", 
   const sub2apiEnv = controlPlane.spec.template.spec.containers[0].env.filter((item) => item.name.startsWith("OPL_SUB2API_ADMIN_"));
   assert.equal(sub2apiEnv.length, 2);
   assert.equal(sub2apiEnv.every((item) => item.valueFrom?.secretKeyRef && item.value === undefined), true);
+  const acceptanceBEnv = controlPlane.spec.template.spec.containers[0].env.find((item) => item.name === "OPL_PRODUCTION_BASIC_ACCEPTANCE_B_APPROVAL_JSON");
+  assert.deepEqual(acceptanceBEnv?.valueFrom?.secretKeyRef, { name: "opl-cloud-acceptance-b", key: "OPL_PRODUCTION_BASIC_ACCEPTANCE_B_APPROVAL_JSON" });
 
   for (const deployment of rendered.items.filter((item) => item.kind === "Deployment")) {
     assert.deepEqual(deployment.spec.template.spec.imagePullSecrets, [{ name: "pull-test" }]);

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
@@ -30,6 +31,112 @@ func TestControlledBasicPilotAdmissionDefaultsClosedBeforeAnySideEffect(t *testi
 	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), "workspace_launch_admission_disabled") || err != nil ||
 		len(operations) != 0 || fixture.sub2API.createCalls != 0 || len(fixture.sub2API.charges) != 0 || len(*fixture.events) != 0 {
 		t.Fatalf("closed admission status=%d body=%s operations=%#v creates=%d charges=%#v events=%#v err=%v", response.Code, response.Body.String(), operations, fixture.sub2API.createCalls, fixture.sub2API.charges, *fixture.events, err)
+	}
+}
+
+func TestControlledBasicPilotClosedAllowsOnlyExactProductionAcceptanceBLaunch(t *testing.T) {
+	t.Setenv("OPL_CONTROLLED_BASIC_PILOT_ENABLED", "")
+	t.Setenv("OPL_CONTROLLED_BASIC_PILOT_ACCOUNT_IDS", "")
+	t.Setenv("OPL_INTERNAL_SERVICE_TOKEN", "acceptance-b-capability")
+	t.Setenv("OPL_RELEASE_SHA", strings.Repeat("a", 40))
+	t.Setenv("OPL_CLOUD_IMAGE", "uswccr.ccs.tencentyun.com/oplcloud/opl-cloud@sha256:"+strings.Repeat("b", 64))
+	t.Setenv("OPL_WORKSPACE_IMAGE", "uswccr.ccs.tencentyun.com/oplcloud/one-person-lab-app@sha256:"+strings.Repeat("c", 64))
+	t.Setenv("OPL_BASIC_COMPUTE_NODE_POOL_ID", "np-basic-acceptance")
+	t.Setenv("OPL_BASIC_COMPUTE_INSTANCE_TYPE", "SA5.MEDIUM4")
+	key := "acceptance-b-closed-pilot"
+	operationID := workspaceLaunchOperationID("acct-alpha", key)
+	workspaceID := "ws-" + stableID("workspace-launch-v2", "acct-alpha", operationID)[:18]
+	approval := map[string]any{
+		"schemaVersion": 1, "operationMode": "acceptance_b_fresh_order", "approvalId": "acceptance-b-approval",
+		"expiresAt": "2099-08-05T00:00:00Z", "confirmation": "RUN_ONE_INDEPENDENT_FRESH_BASIC_ORDER_FOR_ACCEPTANCE_B",
+		"release":         map[string]any{"mergedMainSha": strings.Repeat("a", 40), "cloudImageDigest": "sha256:" + strings.Repeat("b", 64), "workspaceImageDigest": "sha256:" + strings.Repeat("c", 64)},
+		"customer":        map[string]any{"email": "alpha@example.com", "accountId": "acct-alpha"},
+		"launch":          map[string]any{"idempotencyKey": key, "operationId": operationID, "workspaceId": workspaceID, "name": "Acceptance B Basic Workspace", "packageId": "basic", "sizeGb": 10, "autoRenew": false},
+		"expected":        map[string]any{"nodePoolId": "np-basic-acceptance", "resolvedInstanceType": "SA5.MEDIUM4"},
+		"allowedWrites":   []string{"submit_one_workspace_launch", "debit_one_basic_month", "create_one_workspace_key", "create_one_cvm", "claim_one_cvm_ownership", "claim_one_node", "create_one_cbs", "create_one_attachment", "upsert_one_gateway_secret", "create_one_runtime", "activate_one_workspace", "record_one_purchase_receipt"},
+		"forbiddenWrites": []string{"provision_account", "adjust_wallet", "submit_second_workspace_launch", "create_second_cvm", "create_second_cbs", "refund", "renew", "delete", "replace", "send_model_request"},
+	}
+	encoded, err := json.Marshal(approval)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("OPL_PRODUCTION_BASIC_ACCEPTANCE_B_APPROVAL_JSON", string(encoded))
+	fixture := newWorkspaceLaunchHTTPFixture(t, 1_000_000_000)
+	fixture.sub2API.keys = map[int64]clients.Sub2APIWorkspaceKey{}
+	req := httptest.NewRequest(http.MethodPost, "/api/workspace-launches", strings.NewReader(`{"name":"Acceptance B Basic Workspace","packageId":"basic","sizeGb":10,"autoRenew":false}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Idempotency-Key", key)
+	req.Header.Set("x-opl-acceptance-b-capability", "acceptance-b-capability")
+	req.Header.Set("x-opl-acceptance-b-approval-id", "acceptance-b-approval")
+	addAuth(req, fixture.session)
+	response := httptest.NewRecorder()
+	fixture.server.ServeHTTP(response, req)
+	operations, listErr := fixture.store.ListRuntimeOperations(context.Background())
+	if response.Code != http.StatusAccepted || listErr != nil || len(operations) != 1 || stringValue(operations[0]["id"]) != operationID {
+		t.Fatalf("Acceptance B admission status=%d body=%s operations=%#v err=%v", response.Code, response.Body.String(), operations, listErr)
+	}
+}
+
+func TestControlledBasicPilotClosedRejectsAcceptanceBDriftBeforeAnySideEffect(t *testing.T) {
+	for _, testCase := range []struct {
+		name      string
+		mutateEnv func(t *testing.T)
+		mutateReq func(req *http.Request)
+	}{
+		{name: "missing capability", mutateReq: func(req *http.Request) { req.Header.Del("x-opl-acceptance-b-capability") }},
+		{name: "wrong approval id", mutateReq: func(req *http.Request) { req.Header.Set("x-opl-acceptance-b-approval-id", "approval-wrong") }},
+		{name: "release drift", mutateEnv: func(t *testing.T) { t.Setenv("OPL_RELEASE_SHA", strings.Repeat("d", 40)) }},
+		{name: "workspace digest drift", mutateEnv: func(t *testing.T) {
+			t.Setenv("OPL_WORKSPACE_IMAGE", "uswccr.ccs.tencentyun.com/oplcloud/one-person-lab-app@sha256:"+strings.Repeat("d", 64))
+		}},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Setenv("OPL_CONTROLLED_BASIC_PILOT_ENABLED", "")
+			t.Setenv("OPL_CONTROLLED_BASIC_PILOT_ACCOUNT_IDS", "")
+			t.Setenv("OPL_INTERNAL_SERVICE_TOKEN", "acceptance-b-capability")
+			t.Setenv("OPL_RELEASE_SHA", strings.Repeat("a", 40))
+			t.Setenv("OPL_CLOUD_IMAGE", "uswccr.ccs.tencentyun.com/oplcloud/opl-cloud@sha256:"+strings.Repeat("b", 64))
+			t.Setenv("OPL_WORKSPACE_IMAGE", "uswccr.ccs.tencentyun.com/oplcloud/one-person-lab-app@sha256:"+strings.Repeat("c", 64))
+			t.Setenv("OPL_BASIC_COMPUTE_NODE_POOL_ID", "np-basic-acceptance")
+			t.Setenv("OPL_BASIC_COMPUTE_INSTANCE_TYPE", "SA5.MEDIUM4")
+			key := "acceptance-b-closed-pilot"
+			operationID := workspaceLaunchOperationID("acct-alpha", key)
+			approval := map[string]any{
+				"schemaVersion": 1, "operationMode": "acceptance_b_fresh_order", "approvalId": "acceptance-b-approval",
+				"expiresAt": "2099-08-05T00:00:00Z", "confirmation": productionAcceptanceBConfirmation,
+				"release":       map[string]any{"mergedMainSha": strings.Repeat("a", 40), "cloudImageDigest": "sha256:" + strings.Repeat("b", 64), "workspaceImageDigest": "sha256:" + strings.Repeat("c", 64)},
+				"customer":      map[string]any{"email": "alpha@example.com", "accountId": "acct-alpha"},
+				"launch":        map[string]any{"idempotencyKey": key, "operationId": operationID, "workspaceId": "ws-" + stableID("workspace-launch-v2", "acct-alpha", operationID)[:18], "name": "Acceptance B Basic Workspace", "packageId": "basic", "sizeGb": 10, "autoRenew": false},
+				"expected":      map[string]any{"nodePoolId": "np-basic-acceptance", "resolvedInstanceType": "SA5.MEDIUM4"},
+				"allowedWrites": productionAcceptanceBAllowedWrites, "forbiddenWrites": productionAcceptanceBForbiddenWrites,
+			}
+			encoded, err := json.Marshal(approval)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv(productionAcceptanceBApprovalEnv, string(encoded))
+			if testCase.mutateEnv != nil {
+				testCase.mutateEnv(t)
+			}
+			fixture := newWorkspaceLaunchHTTPFixture(t, 1_000_000_000)
+			fixture.sub2API.keys = map[int64]clients.Sub2APIWorkspaceKey{}
+			req := httptest.NewRequest(http.MethodPost, "/api/workspace-launches", strings.NewReader(`{"name":"Acceptance B Basic Workspace","packageId":"basic","sizeGb":10,"autoRenew":false}`))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Idempotency-Key", key)
+			req.Header.Set("x-opl-acceptance-b-capability", "acceptance-b-capability")
+			req.Header.Set("x-opl-acceptance-b-approval-id", "acceptance-b-approval")
+			if testCase.mutateReq != nil {
+				testCase.mutateReq(req)
+			}
+			addAuth(req, fixture.session)
+			response := httptest.NewRecorder()
+			fixture.server.ServeHTTP(response, req)
+			operations, listErr := fixture.store.ListRuntimeOperations(context.Background())
+			if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), "workspace_launch_admission_disabled") || listErr != nil ||
+				len(operations) != 0 || fixture.sub2API.createCalls != 0 || len(fixture.sub2API.charges) != 0 || len(*fixture.events) != 0 {
+				t.Fatalf("status=%d body=%s operations=%#v creates=%d charges=%#v events=%#v err=%v", response.Code, response.Body.String(), operations, fixture.sub2API.createCalls, fixture.sub2API.charges, *fixture.events, listErr)
+			}
+		})
 	}
 }
 

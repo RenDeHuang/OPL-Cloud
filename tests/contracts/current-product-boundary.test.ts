@@ -33,9 +33,14 @@ test("Controlled Basic Pilot is closed by default, identifier-free, and continua
   assert.match(workflow, /OPL_CONTROLLED_BASIC_PILOT_ENABLED:[^\n]*'0'/);
   assert.match(workflow, /OPL_RECOVERY_ACCEPTANCE_CANARY_ENABLED:[^\n]*'0'/);
   assert.match(workflow, /OPL_RECOVERY_ACCEPTANCE_CANARY_APPROVAL_JSON:[^\n]*secrets\.OPL_RECOVERY_ACCEPTANCE_CANARY_APPROVAL_JSON/);
+  assert.match(workflow, /OPL_PRODUCTION_BASIC_ACCEPTANCE_B_APPROVAL_JSON:[^\n]*secrets\.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_APPROVAL_JSON/);
   assert.deepEqual(freeze.workspaceLaunch.controlledBasicPilot.packageIds, ["basic"]);
   assert.equal(freeze.workspaceLaunch.controlledBasicPilot.disableBehavior, "block_new_purchase_only_reads_and_original_operation_continuations_remain_available");
   assert.equal(boundary.services.controlPlane.controlledBasicPilotAdmission.continuationPrecedence, "exact_idempotency_or_single_matching_active_operation_before_admission");
+  assert.equal(boundary.services.controlPlane.controlledBasicPilotAdmission.productionAcceptanceBException.publicBillingMode, false);
+  assert.equal(boundary.services.controlPlane.controlledBasicPilotAdmission.productionAcceptanceBException.pilotEnablement, false);
+  assert.equal(deployment.productionBasicAcceptanceBAdmissionRuntime.approvalKubernetesSecret, "opl-cloud-acceptance-b");
+  assert.equal(deployment.productionBasicAcceptanceBAdmissionRuntime.pilotEnabledRequired, false);
   assert.deepEqual(observability.controlledBasicPilot.customerSupportPath, ["Diagnose", "Plan", "Validate", "Confirm"]);
   assert.equal(observability.controlledBasicPilot.customerSuppliedResourceIds, false);
   for (const field of ["accountId", "operationId", "workspaceId", "computeId", "storageId", "providerResourceId"]) {
