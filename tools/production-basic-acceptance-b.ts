@@ -65,6 +65,33 @@ export const PRODUCTION_BASIC_ACCEPTANCE_B_OPERATION = Object.freeze({
   ])
 });
 
+export const PRODUCTION_BASIC_ACCEPTANCE_B_ACCOUNT_PREPARE_OPERATION = Object.freeze({
+  schemaVersion: 1,
+  operationMode: "acceptance_b_account_prepare",
+  packageId: "basic",
+  sizeGb: 10,
+  autoRenew: false,
+  rechargeUsdMicros: "60000000",
+  confirmation: "PREPARE_ONE_ACCEPTANCE_B_ACCOUNT_WITH_ONE_PROVISION_AND_ONE_RECHARGE",
+  forbiddenWrites: Object.freeze([
+    "workspace_launch",
+    "sub2api_debit",
+    "cvm_create",
+    "node_claim",
+    "cbs_create",
+    "attachment_create",
+    "gateway_secret",
+    "runtime_create",
+    "workspace_activate",
+    "workspace_receipt",
+    "model_request",
+    "refund",
+    "renew",
+    "delete",
+    "replace"
+  ])
+});
+
 const APPROVAL_KEYS = [
   "schemaVersion",
   "operationMode",
@@ -115,6 +142,12 @@ const EXACT_WRITE_COUNTS = Object.freeze({
 
 const ACCEPTANCE_B_ACCOUNT_PAGE_SIZE = 50;
 const MAX_ACCEPTANCE_B_ACCOUNT_PAGES = 1000;
+const ACCEPTANCE_B_PREPARE_REASON = "production Basic Acceptance B account preparation";
+const PREPARE_WRITE_COUNT_KEYS = [
+  "accountProvisionPosts", "walletAdjustmentPosts", "workspaceLaunchPosts", "sub2apiDebits", "tencentCvmCreates",
+  "kubernetesNodeClaims", "tencentCbsCreates", "runtimeCreates", "receiptCreates", "modelRequests", "refunds", "renewals", "deletes", "replacements"
+];
+const PREPARE_ZERO_WRITE_FIELDS = PREPARE_WRITE_COUNT_KEYS.filter((key) => !["accountProvisionPosts", "walletAdjustmentPosts"].includes(key));
 
 function exactObjectKeys(value, keys) {
   return value && typeof value === "object" && !Array.isArray(value) &&
@@ -133,23 +166,13 @@ function cloneJson(value) {
   }
 }
 
-/**
- * Select exactly one approved account identity from the complete paginated
- * operator account readback. The production account total is deliberately not
- * part of the identity contract: other operator-provisioned accounts may
- * exist. Both approved fields must match the same item, and pagination must be
- * complete and stable before the pair is accepted.
- */
-export function findUniqueProductionBasicAcceptanceBAccount(pages, accountId, email) {
-  const normalizedAccountId = String(accountId || "");
-  const normalizedEmail = String(email || "").trim().toLowerCase();
-  if (!Array.isArray(pages) || pages.length === 0 || !normalizedAccountId || !normalizedEmail) {
+function completeAcceptanceBAccountItems(pages) {
+  if (!Array.isArray(pages) || pages.length === 0) {
     throw new Error("production_basic_acceptance_b_account_readback_invalid");
   }
-
   let total = null;
   let expectedPages = null;
-  const matches = [];
+  const items = [];
   for (let index = 0; index < pages.length; index += 1) {
     const page = pages[index];
     const pageNumber = index + 1;
@@ -165,14 +188,51 @@ export function findUniqueProductionBasicAcceptanceBAccount(pages, accountId, em
     }
     const expectedItems = pageNumber < expectedPages ? ACCEPTANCE_B_ACCOUNT_PAGE_SIZE : total - (pageNumber - 1) * ACCEPTANCE_B_ACCOUNT_PAGE_SIZE;
     if (page.items.length !== Math.max(0, expectedItems)) throw new Error("production_basic_acceptance_b_account_readback_invalid");
-    for (const item of page.items) {
-      if (item?.accountId === normalizedAccountId && String(item?.email || "").trim().toLowerCase() === normalizedEmail) matches.push(item);
-    }
+    items.push(...page.items);
   }
-  if (expectedPages === null || pages.length !== expectedPages || matches.length !== 1) {
+  if (expectedPages === null || pages.length !== expectedPages) {
     throw new Error("production_basic_acceptance_b_account_readback_invalid");
   }
-  return matches[0];
+  return items;
+}
+
+/**
+ * Select exactly one approved account identity from the complete paginated
+ * operator account readback. The production account total is deliberately not
+ * part of the identity contract: other operator-provisioned accounts may
+ * exist. Every row matching either approved identity component is a candidate;
+ * exactly one candidate must contain both components, otherwise the readback
+ * fails closed.
+ */
+export function findUniqueProductionBasicAcceptanceBAccount(pages, accountId, email) {
+  const normalizedAccountId = String(accountId || "");
+  const normalizedEmail = String(email || "").trim().toLowerCase();
+  if (!Array.isArray(pages) || pages.length === 0 || !normalizedAccountId || !normalizedEmail) {
+    throw new Error("production_basic_acceptance_b_account_readback_invalid");
+  }
+  const candidates = completeAcceptanceBAccountItems(pages).filter((item) =>
+    item?.accountId === normalizedAccountId || String(item?.email || "").trim().toLowerCase() === normalizedEmail);
+  if (candidates.length !== 1 || candidates[0]?.accountId !== normalizedAccountId ||
+    String(candidates[0]?.email || "").trim().toLowerCase() !== normalizedEmail) {
+    throw new Error("production_basic_acceptance_b_account_readback_invalid");
+  }
+  return candidates[0];
+}
+
+/** Select one account by approved email while the account ID is not known yet. */
+export function findUniqueProductionBasicAcceptanceBEmailAccount(pages, email) {
+  const normalizedEmail = String(email || "").trim().toLowerCase();
+  if (!normalizedEmail) throw new Error("production_basic_acceptance_b_account_readback_invalid");
+  const matches = completeAcceptanceBAccountItems(pages).filter((item) => String(item?.email || "").trim().toLowerCase() === normalizedEmail);
+  if (matches.length === 0) return null;
+  if (matches.length !== 1) throw new Error("production_basic_acceptance_b_account_readback_invalid");
+  const account = matches[0];
+  if (!/^acct-[A-Za-z0-9-]+$/.test(String(account?.accountId || "")) ||
+    !/^usr-[A-Za-z0-9-]+$/.test(String(account?.consoleUserId || "")) ||
+    !/^[1-9][0-9]*$/.test(String(account?.sub2apiUserId || "")) || account?.role !== "owner" || account?.status !== "active") {
+    throw new Error("production_basic_acceptance_b_account_readback_invalid");
+  }
+  return account;
 }
 
 function stableId(...parts) {
@@ -248,6 +308,63 @@ export function validateProductionBasicAcceptanceBWriteCounts(value) {
     throw new Error("production_basic_acceptance_b_write_counts_invalid");
   }
   return { ...value };
+}
+
+const PREPARE_ARTIFACT_DIGEST_KEYS = new Set(["customerIdentitySha256", "accountProvisionIdentitySha256", "rechargeIdentitySha256"]);
+const PREPARE_FORBIDDEN_ARTIFACT_KEYS = /(?:password|secret|token|cookie|csrf|email|accountid|userid|operationid|workspaceid|resourceid|name|providerrequestid|redeemcode)/i;
+
+function assertPrepareArtifactRedacted(value) {
+  if (!value || typeof value !== "object") return;
+  if (Array.isArray(value)) {
+    for (const item of value) assertPrepareArtifactRedacted(item);
+    return;
+  }
+  for (const [key, nested] of Object.entries(value)) {
+    if (PREPARE_ARTIFACT_DIGEST_KEYS.has(key)) {
+      if (!/^[0-9a-f]{64}$/.test(String(nested || ""))) throw new Error("production_basic_acceptance_b_prepare_readback_invalid");
+      continue;
+    }
+    if (PREPARE_FORBIDDEN_ARTIFACT_KEYS.test(key)) throw new Error("production_basic_acceptance_b_prepare_readback_invalid");
+    assertPrepareArtifactRedacted(nested);
+  }
+}
+
+function exactPrepareWriteCounts(value) {
+  if (!exactObjectKeys(value, PREPARE_WRITE_COUNT_KEYS) || PREPARE_WRITE_COUNT_KEYS.some((key) => !Number.isSafeInteger(value[key]) || value[key] < 0) ||
+    PREPARE_ZERO_WRITE_FIELDS.some((key) => value[key] !== 0) || value.accountProvisionPosts > 1 || value.walletAdjustmentPosts > 1) {
+    throw new Error("production_basic_acceptance_b_prepare_readback_invalid");
+  }
+  return { ...value };
+}
+
+export function validateProductionBasicAcceptanceBPrepareReadback(value, options = {}) {
+  try {
+    assertPrepareArtifactRedacted(value);
+    const topLevelKeys = ["schemaVersion", "operationMode", "status", "mergedMainSha", "customerIdentitySha256", "identity", "baseline", "quote", "wallet", "writeCounts"];
+    if (!exactObjectKeys(value, topLevelKeys) || value.schemaVersion !== 1 || value.operationMode !== PRODUCTION_BASIC_ACCEPTANCE_B_ACCOUNT_PREPARE_OPERATION.operationMode ||
+      value.status !== "succeeded" || value.mergedMainSha !== options.mergedSha || !/^[0-9a-f]{40}$/.test(String(value.mergedMainSha || "")) ||
+      !/^[0-9a-f]{64}$/.test(String(value.customerIdentitySha256 || "")) ||
+      !exactObjectKeys(value.identity, ["accountProvisionIdentitySha256", "status"]) || !/^[0-9a-f]{64}$/.test(String(value.identity.accountProvisionIdentitySha256 || "")) || value.identity.status !== "active" ||
+      !exactObjectKeys(value.baseline, ["workspaceCount", "workspaceLaunchCount", "workspaceKeyCount", "workspaceReceiptCount"]) || Object.values(value.baseline).some((count) => count !== 0) ||
+      !exactObjectKeys(value.quote, ["packageId", "sizeGb", "totalChargeUsdMicros", "currency"]) || value.quote.packageId !== "basic" || value.quote.sizeGb !== 10 || value.quote.currency !== "USD" ||
+      !positiveSafeInteger(value.quote.totalChargeUsdMicros) || value.quote.totalChargeUsdMicros >= Number(PRODUCTION_BASIC_ACCEPTANCE_B_ACCOUNT_PREPARE_OPERATION.rechargeUsdMicros) ||
+      !exactObjectKeys(value.wallet, ["beforeUsdMicros", "afterUsdMicros", "rechargeIdentitySha256", "rechargeCount"]) ||
+      !/^(0|[1-9][0-9]*)$/.test(String(value.wallet.beforeUsdMicros || "")) || !/^(0|[1-9][0-9]*)$/.test(String(value.wallet.afterUsdMicros || "")) ||
+      !/^[0-9a-f]{64}$/.test(String(value.wallet.rechargeIdentitySha256 || "")) || ![0, 1].includes(value.wallet.rechargeCount) ||
+      (value.wallet.rechargeCount === 1 && BigInt(value.wallet.afterUsdMicros) - BigInt(value.wallet.beforeUsdMicros) !== BigInt(PRODUCTION_BASIC_ACCEPTANCE_B_ACCOUNT_PREPARE_OPERATION.rechargeUsdMicros)) ||
+      (value.wallet.rechargeCount === 0 && value.wallet.afterUsdMicros !== value.wallet.beforeUsdMicros)) {
+      throw new Error("production_basic_acceptance_b_prepare_readback_invalid");
+    }
+    exactPrepareWriteCounts(value.writeCounts);
+    if (value.wallet.rechargeCount !== value.writeCounts.walletAdjustmentPosts || BigInt(value.wallet.beforeUsdMicros) > 9_223_372_036_854_775_807n ||
+      BigInt(value.wallet.afterUsdMicros) > 9_223_372_036_854_775_807n || BigInt(value.wallet.afterUsdMicros) <= BigInt(value.quote.totalChargeUsdMicros)) {
+      throw new Error("production_basic_acceptance_b_prepare_readback_invalid");
+    }
+    return cloneJson(value);
+  } catch (error) {
+    if (error?.message === "production_basic_acceptance_b_prepare_readback_invalid") throw error;
+    throw new Error("production_basic_acceptance_b_prepare_readback_invalid");
+  }
 }
 
 function positiveSafeInteger(value) {
@@ -375,6 +492,255 @@ function basicAcceptanceBReceipt(data, launch, totalChargeUsdMicros) {
     runtimeId: fulfillment.runtimeId,
     totalChargeUsdMicros
   };
+}
+
+function prepareDigest(...parts) {
+  const hash = createHash("sha256");
+  for (const part of parts) {
+    hash.update(String(part));
+    hash.update(Buffer.from([0]));
+  }
+  return hash.digest("hex");
+}
+
+function usdMicrosToDecimal(value) {
+  const micros = BigInt(String(value));
+  return `${micros / 1_000_000n}.${String(micros % 1_000_000n).padStart(6, "0")}`;
+}
+
+function prepareNestedWalletBalance(value) {
+  if (!value || value.source !== "sub2api" || value.available !== true || value.status !== "available" || !value.data ||
+    !Number.isFinite(Date.parse(value.fetchedAt)) || value.data.currency !== "USD" || !/^(0|[1-9][0-9]*)$/.test(String(value.data.usdMicros || ""))) {
+    throw new Error("production_basic_acceptance_b_recharge_readback_invalid");
+  }
+  return { usdMicros: String(value.data.usdMicros) };
+}
+
+function validatePrepareWalletAdjustment(payload, operationId, accountId) {
+  if (payload?.operationId !== operationId || payload?.accountId !== accountId || payload?.kind !== "recharge" ||
+    payload?.amountUsd !== usdMicrosToDecimal(PRODUCTION_BASIC_ACCEPTANCE_B_ACCOUNT_PREPARE_OPERATION.rechargeUsdMicros) ||
+    payload?.reason !== ACCEPTANCE_B_PREPARE_REASON || payload?.status !== "succeeded" || payload?.phase !== "complete") {
+    throw new Error("production_basic_acceptance_b_recharge_readback_invalid");
+  }
+  const before = prepareNestedWalletBalance(payload.beforeBalance);
+  const after = prepareNestedWalletBalance(payload.afterBalance);
+  if (BigInt(after.usdMicros) - BigInt(before.usdMicros) !== BigInt(PRODUCTION_BASIC_ACCEPTANCE_B_ACCOUNT_PREPARE_OPERATION.rechargeUsdMicros)) {
+    throw new Error("production_basic_acceptance_b_recharge_readback_invalid");
+  }
+  return { before, after };
+}
+
+async function prepareAuthoritativeGet(options) {
+  try {
+    return await requestJson(options);
+  } catch (error) {
+    if (String(error?.message || "").startsWith(`request_failed:GET:${options.path}:404:`)) return null;
+    throw error;
+  }
+}
+
+async function readPrepareAccount(requestOptions, adminAuth, customerEmail) {
+  const pages = [];
+  for (let page = 1; ; page += 1) {
+    if (page > MAX_ACCEPTANCE_B_ACCOUNT_PAGES) throw new Error("production_basic_acceptance_b_account_readback_invalid");
+    const data = sourceData(await requestJson({
+      ...requestOptions,
+      auth: adminAuth,
+      path: `/api/operator/accounts?page=${page}&pageSize=${ACCEPTANCE_B_ACCOUNT_PAGE_SIZE}`
+    }), "control-plane+sub2api", true);
+    pages.push(data);
+    if (!Number.isSafeInteger(data?.total) || data.total < 0 || data.page !== page || data.pageSize !== ACCEPTANCE_B_ACCOUNT_PAGE_SIZE) {
+      throw new Error("production_basic_acceptance_b_account_readback_invalid");
+    }
+    const expectedPages = Math.max(1, Math.ceil(data.total / ACCEPTANCE_B_ACCOUNT_PAGE_SIZE));
+    if (expectedPages > MAX_ACCEPTANCE_B_ACCOUNT_PAGES || page >= expectedPages) break;
+  }
+  return findUniqueProductionBasicAcceptanceBEmailAccount(pages, customerEmail);
+}
+
+async function readPrepareBaseline(requestOptions, customerAuth) {
+  const workspacePage = sourceData(await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/workspaces?page=1&pageSize=50" }), "control-plane", true);
+  const launches = listPayload(await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/workspace-launches" }));
+  const keyPages = [];
+  for (let page = 1; ; page += 1) {
+    if (page > MAX_ACCEPTANCE_B_ACCOUNT_PAGES) throw new Error("production_basic_acceptance_b_baseline_not_fresh");
+    const keys = sourceData(await requestJson({ ...requestOptions, auth: customerAuth, path: `/api/gateway/keys?page=${page}&pageSize=50` }), "sub2api", true);
+    if (!Array.isArray(keys?.items) || !Number.isSafeInteger(keys?.total) || keys.total < 0 || keys.page !== page || keys.pageSize !== 50) {
+      throw new Error("production_basic_acceptance_b_baseline_not_fresh");
+    }
+    keyPages.push(keys);
+    const expectedPages = Math.max(1, Math.ceil(keys.total / 50));
+    const expectedItems = page < expectedPages ? 50 : keys.total - (page - 1) * 50;
+    if (keys.items.length !== Math.max(0, expectedItems)) throw new Error("production_basic_acceptance_b_baseline_not_fresh");
+    if (page >= expectedPages) break;
+  }
+  const keyTotal = keyPages[0]?.total;
+  if (keyPages.some((page, index) => page.total !== keyTotal || page.page !== index + 1)) throw new Error("production_basic_acceptance_b_baseline_not_fresh");
+  const keys = { items: keyPages.flatMap((page) => page.items), total: keyTotal };
+  const receipts = sourceData(await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/billing/receipts?limit=50" }), "ledger", true);
+  const workspaceKeys = (keys?.items || []).filter((key) => key?.kind === "workspace");
+  const workspaceReceipts = (receipts?.receipts || []).filter((receipt) => receipt?.type === "billing.workspace_purchased.v1" || receipt?.workspaceId);
+  if (!Array.isArray(workspacePage?.items) || workspacePage.total !== 0 || workspacePage.items.length !== 0 || launches.length !== 0 || workspaceKeys.length !== 0 ||
+    !Array.isArray(receipts?.receipts) || workspaceReceipts.length !== 0 || receipts.hasMore !== false) {
+    throw new Error("production_basic_acceptance_b_baseline_not_fresh");
+  }
+  return { workspaceCount: 0, workspaceLaunchCount: 0, workspaceKeyCount: 0, workspaceReceiptCount: 0 };
+}
+
+/**
+ * Prepare the independent Acceptance B account. This mode intentionally stops
+ * after authoritative identity, empty-workspace and funded-wallet readback;
+ * it has no launch, provider, runtime, receipt or model capability.
+ */
+export async function prepareProductionBasicAcceptanceBAccount(options = {}) {
+  const {
+    origin,
+    adminEmail,
+    adminPassword,
+    customerEmail,
+    customerPassword,
+    mergedSha,
+    requestTimeoutMs = 30_000,
+    fetchImpl = globalThis.fetch,
+    now = new Date()
+  } = options;
+  const normalizedEmail = String(customerEmail || "").trim().toLowerCase();
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(normalizedEmail) || !String(customerPassword || "") ||
+    !String(adminEmail || "") || !String(adminPassword || "") || !/^[0-9a-f]{40}$/.test(String(mergedSha || "")) || !(now instanceof Date) || Number.isNaN(now.getTime())) {
+    throw new Error("production_basic_acceptance_b_prepare_config_invalid");
+  }
+  const normalizedOrigin = assertPublicHttpsUrl(origin, "public_console_origin_required", { hostname: "cloud.medopl.cn" }).origin;
+  const requestOptions = { fetchImpl, origin: normalizedOrigin, timeoutMs: requestTimeoutMs };
+  const adminAuth = await login({ ...requestOptions, email: adminEmail, password: adminPassword });
+  if (adminAuth.user?.accountId !== "acct-admin" || adminAuth.user?.role !== "admin") throw new Error("production_basic_acceptance_b_admin_login_failed");
+
+  let account = await readPrepareAccount(requestOptions, adminAuth, normalizedEmail);
+  let accountProvisionPosts = 0;
+  const customerEmailSha256 = prepareDigest(normalizedEmail);
+  const accountProvisionIdempotencyKey = `acceptance-b-account-provision-v1:${customerEmailSha256}`;
+  const expectedAccountId = `acct-${stableId("account", normalizedEmail).slice(0, 18)}`;
+  const expectedAccountOperationId = `account-provision-${stableId(accountProvisionIdempotencyKey, normalizedEmail).slice(0, 18)}`;
+  if (account && account.accountId !== expectedAccountId) throw new Error("production_basic_acceptance_b_account_identity_drift");
+  if (!account) {
+    accountProvisionPosts = 1;
+    let postResponseInvalid = false;
+    try {
+      const provision = await requestJson({
+        ...requestOptions,
+        auth: adminAuth,
+        path: "/api/operator/accounts",
+        method: "POST",
+        headers: { "Idempotency-Key": accountProvisionIdempotencyKey },
+        body: { email: normalizedEmail, password: String(customerPassword), name: "Acceptance B Basic Customer" }
+      });
+      if (provision.response.status !== 201 || provision.payload?.status !== "succeeded" || provision.payload?.accountId !== expectedAccountId || provision.payload?.operationId !== expectedAccountOperationId) {
+        postResponseInvalid = true;
+        throw new Error("production_basic_acceptance_b_account_provision_failed");
+      }
+    } catch (error) {
+      // A lost/failed POST is reconciled by the complete account page readback;
+      // it is never retried because the provider result may already be applied.
+      account = await readPrepareAccount(requestOptions, adminAuth, normalizedEmail);
+      if (postResponseInvalid) throw error;
+      if (!account) throw new Error(error?.message === "production_basic_acceptance_b_account_provision_failed"
+        ? error.message
+        : "production_basic_acceptance_b_account_provision_unknown");
+    }
+    account ||= await readPrepareAccount(requestOptions, adminAuth, normalizedEmail);
+    if (!account) throw new Error("production_basic_acceptance_b_account_readback_invalid");
+    if (account.accountId !== expectedAccountId) throw new Error("production_basic_acceptance_b_account_identity_drift");
+  }
+
+  const customerAuth = await login({ ...requestOptions, email: normalizedEmail, password: String(customerPassword) });
+  const identity = sourceData(await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/auth/me" }), "sub2api");
+  if (identity?.accountId !== account.accountId || identity?.email !== normalizedEmail || identity?.role !== "owner" || identity?.status !== "active" ||
+    !/^usr-[A-Za-z0-9-]+$/.test(String(identity?.consoleUserId || "")) || !/^[1-9][0-9]*$/.test(String(identity?.sub2apiUserId || ""))) {
+    throw new Error("production_basic_acceptance_b_customer_identity_invalid");
+  }
+  const baseline = await readPrepareBaseline(requestOptions, customerAuth);
+  const quoteRaw = (await requestJson({
+    ...requestOptions,
+    auth: customerAuth,
+    path: "/api/pricing/preview",
+    method: "POST",
+    body: { resourceType: "workspace", packageId: "basic", sizeGb: 10 }
+  })).payload;
+  if (quoteRaw?.resourceType !== "workspace" || quoteRaw?.packageId !== "basic" || quoteRaw?.currency !== "USD" || quoteRaw?.storage?.priceSnapshot?.sizeGb !== 10 ||
+    !String(quoteRaw?.priceVersion || "")) throw new Error("production_basic_acceptance_b_quote_invalid");
+  const totalChargeUsdMicros = positiveMicros(quoteRaw.totalChargeUsdMicros, "quote");
+  if (BigInt(totalChargeUsdMicros) >= BigInt(PRODUCTION_BASIC_ACCEPTANCE_B_ACCOUNT_PREPARE_OPERATION.rechargeUsdMicros)) throw new Error("production_basic_acceptance_b_prepare_budget_invalid");
+  const walletBefore = walletFact(sourceEnvelope(await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/gateway/wallet" }), "sub2api"), identity.sub2apiUserId);
+  let walletAfter = walletBefore;
+  let walletAdjustmentPosts = 0;
+  const walletAdjustmentIdempotencyKey = `acceptance-b-wallet-recharge-v1:${account.accountId}:${customerEmailSha256}`;
+  const walletOperationId = `wallet-adjustment-${stableId(account.accountId, walletAdjustmentIdempotencyKey).slice(0, 18)}`;
+  if (BigInt(walletBefore.usdMicros) <= BigInt(totalChargeUsdMicros)) {
+    let walletAuthority = await prepareAuthoritativeGet({ ...requestOptions, auth: adminAuth, path: `/api/operator/wallet-adjustments/${encodeURIComponent(walletOperationId)}` });
+    if (!walletAuthority) {
+      walletAdjustmentPosts = 1;
+      let postResponseInvalid = false;
+      try {
+        const adjustment = await requestJson({
+          ...requestOptions,
+          auth: adminAuth,
+          path: `/api/operator/accounts/${encodeURIComponent(account.accountId)}/wallet-adjustments`,
+          method: "POST",
+          headers: { "Idempotency-Key": walletAdjustmentIdempotencyKey },
+          body: {
+            kind: "recharge",
+            amountUsd: usdMicrosToDecimal(PRODUCTION_BASIC_ACCEPTANCE_B_ACCOUNT_PREPARE_OPERATION.rechargeUsdMicros),
+            reason: ACCEPTANCE_B_PREPARE_REASON,
+            confirmationAccountId: account.accountId
+          }
+        });
+        if (![201, 200].includes(adjustment.response.status)) {
+          postResponseInvalid = true;
+          throw new Error("production_basic_acceptance_b_recharge_failed");
+        }
+      } catch (error) {
+        walletAuthority = await prepareAuthoritativeGet({ ...requestOptions, auth: adminAuth, path: `/api/operator/wallet-adjustments/${encodeURIComponent(walletOperationId)}` });
+        if (postResponseInvalid) throw error;
+        if (!walletAuthority) throw new Error(error?.message === "production_basic_acceptance_b_recharge_failed" ? error.message : "production_basic_acceptance_b_recharge_unknown");
+      }
+      walletAuthority ||= await prepareAuthoritativeGet({ ...requestOptions, auth: adminAuth, path: `/api/operator/wallet-adjustments/${encodeURIComponent(walletOperationId)}` });
+      if (!walletAuthority) throw new Error("production_basic_acceptance_b_recharge_readback_invalid");
+      const adjustment = validatePrepareWalletAdjustment(walletAuthority.payload, walletOperationId, account.accountId);
+      walletAfter = walletFact(sourceEnvelope(await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/gateway/wallet" }), "sub2api"), identity.sub2apiUserId);
+      if (BigInt(walletAfter.usdMicros) - BigInt(walletBefore.usdMicros) !== BigInt(PRODUCTION_BASIC_ACCEPTANCE_B_ACCOUNT_PREPARE_OPERATION.rechargeUsdMicros) ||
+        BigInt(walletAfter.usdMicros) !== BigInt(adjustment.after.usdMicros)) throw new Error("production_basic_acceptance_b_recharge_readback_invalid");
+    } else {
+      validatePrepareWalletAdjustment(walletAuthority.payload, walletOperationId, account.accountId);
+    }
+  }
+  if (BigInt(walletAfter.usdMicros) <= BigInt(totalChargeUsdMicros)) throw new Error("production_basic_acceptance_b_wallet_insufficient");
+  const readback = {
+    schemaVersion: 1,
+    operationMode: PRODUCTION_BASIC_ACCEPTANCE_B_ACCOUNT_PREPARE_OPERATION.operationMode,
+    status: "succeeded",
+    mergedMainSha: String(mergedSha),
+    customerIdentitySha256: prepareDigest(account.accountId, identity.consoleUserId, identity.sub2apiUserId, normalizedEmail, identity.status),
+    identity: { accountProvisionIdentitySha256: prepareDigest(accountProvisionIdempotencyKey), status: identity.status },
+    baseline,
+    quote: { packageId: "basic", sizeGb: 10, totalChargeUsdMicros, currency: "USD" },
+    wallet: { beforeUsdMicros: walletBefore.usdMicros, afterUsdMicros: walletAfter.usdMicros, rechargeIdentitySha256: prepareDigest(account.accountId, walletOperationId), rechargeCount: walletAdjustmentPosts },
+    writeCounts: {
+      accountProvisionPosts,
+      walletAdjustmentPosts,
+      workspaceLaunchPosts: 0,
+      sub2apiDebits: 0,
+      tencentCvmCreates: 0,
+      kubernetesNodeClaims: 0,
+      tencentCbsCreates: 0,
+      runtimeCreates: 0,
+      receiptCreates: 0,
+      modelRequests: 0,
+      refunds: 0,
+      renewals: 0,
+      deletes: 0,
+      replacements: 0
+    }
+  };
+  return validateProductionBasicAcceptanceBPrepareReadback(readback, { mergedSha });
 }
 
 /**
@@ -607,6 +973,23 @@ function blockedProductionBasicAcceptanceBArtifact(errorCode = "production_basic
   };
 }
 
+export function blockedProductionBasicAcceptanceBPrepareArtifact(errorCode = "production_basic_acceptance_b_prepare_failed") {
+  const rawCode = String(errorCode);
+  const safeCode = /^production_basic_acceptance_b_[a-z0-9_]+$/.test(rawCode) ? rawCode : "production_basic_acceptance_b_prepare_failed";
+  return {
+    schemaVersion: 1,
+    operationMode: PRODUCTION_BASIC_ACCEPTANCE_B_ACCOUNT_PREPARE_OPERATION.operationMode,
+    status: "blocked",
+    errorCode: safeCode,
+    // A failure can happen after a provision or recharge POST has been accepted
+    // but before its response/readback is trustworthy. Keep all mutation facts
+    // unknown so a later run must reconcile the deterministic identities first.
+    mutationLedgerState: "unknown",
+    runnerDirectMutationCounts: { sub2api: "unknown", tencent: "unknown", kubernetes: "unknown" },
+    reconciliationRequired: ["account_provision", "wallet_recharge"]
+  };
+}
+
 export async function runProductionBasicAcceptanceBCli({
   argv = process.argv.slice(2),
   env = process.env,
@@ -616,6 +999,32 @@ export async function runProductionBasicAcceptanceBCli({
   execFileImpl,
   now = new Date()
 } = {}) {
+  if (argv.includes("--prepare-account")) {
+    try {
+      const result = await prepareProductionBasicAcceptanceBAccount({
+        origin: env.OPL_CONSOLE_ORIGIN,
+        adminEmail: env.OPL_SUB2API_ADMIN_EMAIL,
+        adminPassword: env.OPL_SUB2API_ADMIN_PASSWORD,
+        customerEmail: env.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_CUSTOMER_EMAIL,
+        customerPassword: env.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_CUSTOMER_PASSWORD,
+        mergedSha: env.OPL_MERGED_SHA,
+        requestTimeoutMs: Number(env.OPL_VERIFY_REQUEST_TIMEOUT_MS || 30_000),
+        fetchImpl,
+        now
+      });
+      const artifactPath = String(env.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_PREPARE_ARTIFACT_PATH || "");
+      if (artifactPath) await writeFile(artifactPath, `${JSON.stringify(result, null, 2)}\n`, { mode: 0o600 });
+      stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+      return 0;
+    } catch (error) {
+      const artifact = blockedProductionBasicAcceptanceBPrepareArtifact(error?.message || undefined);
+      const artifactPath = String(env.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_PREPARE_ARTIFACT_PATH || "");
+      if (artifactPath) await writeFile(artifactPath, `${JSON.stringify(artifact, null, 2)}\n`, { mode: 0o600 });
+      stdout.write(`${JSON.stringify(artifact, null, 2)}\n`);
+      stderr.write(`${JSON.stringify({ ok: false, errorCode: artifact.errorCode })}\n`);
+      return 1;
+    }
+  }
   if (!argv.includes("--run")) return 2;
   try {
     const result = await runProductionBasicAcceptanceB({

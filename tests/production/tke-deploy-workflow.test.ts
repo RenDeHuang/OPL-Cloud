@@ -590,6 +590,7 @@ test("production self-hosted jobs use one run-and-job isolated source checkout",
     [".github/workflows/production-basic-customer-operation.yml", [
       "prepare-basic-customer-operation",
       "workspace-identity-diagnose",
+      "acceptance-b-account-prepare",
       "acceptance-b-fresh-order",
       "controlled-pilot-closed-validate",
       "fabric-ledger-readback",
@@ -1092,6 +1093,46 @@ test("Acceptance B fresh order is a separately approved exact-count production c
   }
 });
 
+test("Acceptance B account preparation is a production-only prepare gate with isolated secrets and no launch capability", async () => {
+  const workflow = await readWorkflow(".github/workflows/production-basic-customer-operation.yml");
+  const inputs = workflow.on.workflow_dispatch.inputs;
+  assert.ok(inputs.operation_mode.options.includes("acceptance_b_account_prepare"));
+  const job = workflowJob(workflow, "acceptance-b-account-prepare");
+  const runs = serializedRuns(job);
+  assert.deepEqual(job["runs-on"], ["self-hosted", "tencent-cloud", "opl-cloud", "tke-vpc"]);
+  assert.equal(job.environment, "production");
+  assert.match(String(job.if), /github\.ref == 'refs\/heads\/main'/);
+  assert.match(String(job.if), /github\.sha == inputs\.merged_sha/);
+  assert.match(String(job.if), /inputs\.operation_mode == 'acceptance_b_account_prepare'/);
+  assert.match(String(job.if), /inputs\.confirm_account_provision/);
+  assert.match(String(job.if), /inputs\.confirm_wallet_recharge/);
+  for (const confirmation of ["workspace_purchase", "single_model_request", "recovery_plan_execute"]) {
+    assert.match(String(job.if), new RegExp(`!inputs\\.confirm_${confirmation}`));
+  }
+  assert.match(String(job.if), /inputs\.resume_run_id == ''/);
+  for (const secret of [
+    "OPL_SUB2API_ADMIN_EMAIL",
+    "OPL_SUB2API_ADMIN_PASSWORD",
+    "OPL_PRODUCTION_BASIC_ACCEPTANCE_B_CUSTOMER_EMAIL",
+    "OPL_PRODUCTION_BASIC_ACCEPTANCE_B_CUSTOMER_PASSWORD"
+  ]) assert.equal(job.env[secret], undefined, `${secret} must not be job-scoped`);
+  const prepareStep = stepsByName(job).get("Prepare account and wallet with authoritative readback");
+  assert.equal(prepareStep?.env?.OPL_SUB2API_ADMIN_EMAIL, "${{ secrets.OPL_SUB2API_ADMIN_EMAIL }}");
+  assert.equal(prepareStep?.env?.OPL_SUB2API_ADMIN_PASSWORD, "${{ secrets.OPL_SUB2API_ADMIN_PASSWORD }}");
+  assert.equal(prepareStep?.env?.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_CUSTOMER_EMAIL, "${{ secrets.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_CUSTOMER_EMAIL }}");
+  assert.equal(prepareStep?.env?.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_CUSTOMER_PASSWORD, "${{ secrets.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_CUSTOMER_PASSWORD }}");
+  assert.equal(job.env.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_APPROVAL_JSON, undefined);
+  assert.equal(job.env.OPL_BASIC_CANARY_CUSTOMER_PASSWORD, undefined);
+  assert.equal(job.env.TENCENT_DEPLOY_KUBECONFIG, undefined);
+  assert.equal(job.env.OPL_INTERNAL_SERVICE_TOKEN, undefined);
+  assert.match(runs, /git ls-remote --heads origin/);
+  assert.match(runs, /node tools\/production-basic-acceptance-b\.ts --prepare-account/);
+  assert.match(runs, /validateProductionBasicAcceptanceBPrepareReadback/);
+  assert.match(JSON.stringify(job.steps), /actions\/upload-artifact@v4/);
+  assert.doesNotMatch(runs, /workspace-launches|model_request|send_model_request|kubectl|port-forward|debit|cvm|cbs|runtime|receipt/i);
+  assert.doesNotMatch(JSON.stringify(job), /OPL_PRODUCTION_BASIC_ACCEPTANCE_B_APPROVAL_JSON|OPL_BASIC_CANARY_CUSTOMER_PASSWORD|TENCENT_DEPLOY_KUBECONFIG|OPL_INTERNAL_SERVICE_TOKEN/);
+});
+
 test("server-owned Recovery Plan validation is a zero-mutation production mode", async () => {
   const workflow = await readWorkflow(".github/workflows/production-basic-customer-operation.yml");
   const inputs = workflow.on.workflow_dispatch.inputs;
@@ -1294,6 +1335,7 @@ test("recovered Workspace E2E is a separate hosted mode with no resource mutatio
   assert.deepEqual(inputs.operation_mode.options, [
     "customer_operation",
     "workspace_identity_diagnose",
+    "acceptance_b_account_prepare",
     "recovery_plan_diagnose",
     "acceptance_b_fresh_order",
     "compute_claim_validate",
