@@ -234,9 +234,14 @@ type ComputeClaimIdentityCheck struct {
 
 type ComputeClaimIdentityEvidence struct {
 	Checks                []ComputeClaimIdentityCheck `json:"checks"`
+	BindingClassification string                      `json:"bindingClassification"`
+	BindingDigest         string                      `json:"bindingDigest"`
 	MutationLedger        string                      `json:"mutationLedger"`
 	MutationLedgerOutcome string                      `json:"mutationLedgerOutcome"`
 	MutationLedgerDigest  string                      `json:"mutationLedgerDigest"`
+	MutationEvidence      *ComputeClaimEvidence       `json:"mutationEvidence,omitempty"`
+	FailureStage          string                      `json:"failureStage"`
+	ProviderErrorClass    string                      `json:"providerErrorClass"`
 }
 
 type ComputeClaimRecoveryProof struct {

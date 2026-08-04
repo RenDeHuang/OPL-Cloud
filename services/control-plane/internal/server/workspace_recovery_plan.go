@@ -369,7 +369,38 @@ func workspaceComputeClaimPlanIdentityEvidence(operation workspaceLaunchOperatio
 		workspaceComputeClaimIdentityAllowedCheck("provider.cvmOwnership", "recoverable_or_target_owned", proof.CVMOwnershipState, "recoverable", "target_owned"),
 	}
 	checks = append(checks, evidence.Checks...)
+	bindingAuthority := evidence.BindingClassification == "current" || evidence.BindingClassification == "compute-claim"
+	bindingAuthority = bindingAuthority && computeClaimApprovalDigestPattern.MatchString(evidence.BindingDigest)
+	checks = append(checks, workspaceComputeClaimIdentityCheck(
+		"fabric.bindingRecoveryAuthority", "current_or_compute_claim", map[bool]string{true: "current_or_compute_claim", false: "classification_only"}[bindingAuthority],
+	))
 	return checks
+}
+
+func workspaceComputeClaimRecoverableCVMOnly(evidence *clients.ComputeClaimIdentityEvidence) bool {
+	if evidence == nil || evidence.MutationEvidence == nil || evidence.MutationLedger != "observed" || evidence.MutationLedgerOutcome != "nonzero" ||
+		!computeClaimApprovalDigestPattern.MatchString(evidence.MutationLedgerDigest) ||
+		!computeClaimApprovalDigestPattern.MatchString(evidence.BindingDigest) ||
+		(evidence.BindingClassification != "current" && evidence.BindingClassification != "compute-claim") ||
+		!safeWorkspaceComputeClaimFailureStage(evidence.FailureStage) || !safeWorkspaceComputeClaimProviderErrorClass(evidence.ProviderErrorClass) {
+		return false
+	}
+	expectedFields := []string{
+		"fabric.operationId", "fabric.operationIdempotencyKey", "fabric.operationRequestHash",
+		"binding.present", "binding.valid", "binding.compatibility", "binding.launchOperationId",
+		"binding.idempotencyKey", "binding.targetHash", "binding.requestHash",
+	}
+	if len(evidence.Checks) != len(expectedFields) {
+		return false
+	}
+	for index, field := range expectedFields {
+		if evidence.Checks[index].Field != field || !evidence.Checks[index].Matches {
+			return false
+		}
+	}
+	cvm, node := evidence.MutationEvidence.CVM, evidence.MutationEvidence.Node
+	return cvm.Attempted > 0 && workspaceComputeClaimMutationEvidenceMatches(cvm, cvm.Attempted, 5, "cvm", true) &&
+		node.Attempted == 0 && workspaceComputeClaimMutationEvidenceMatches(node, 0, 1, "node", true)
 }
 
 func newWorkspaceComputeClaimRecoveryPlan(operation workspaceLaunchOperation, input workspaceComputeClaimRecoveryRequest, proof clients.ComputeClaimRecoveryProof, evidence *clients.ComputeClaimIdentityEvidence, release workspaceRecoveryReleaseBinding) (workspaceRecoveryPlan, error) {
@@ -540,6 +571,18 @@ func workspaceRecoveryExecutionSuccessorGate(operation workspaceLaunchOperation,
 		return workspaceRecoveryMutationOutcome{}, gate
 	}
 	outcome := operation.RecoveryExecution.MutationOutcome
+	if workspaceComputeClaimRecoverableCVMOnly(evidence) {
+		counts := workspaceRecoveryMutationCounts{Tencent: evidence.MutationEvidence.CVM.Attempted}
+		persistedCountsCompatible := outcome.Counts == (workspaceRecoveryMutationCounts{}) || outcome.Counts == counts
+		persistedOutcomeCompatible := outcome.Status == "" || outcome.Status == "unknown" || outcome.Status == "nonzero" && outcome.Counts == counts
+		if persistedCountsCompatible && persistedOutcomeCompatible && outcome.FabricOperationMutations == 0 {
+			gate.Allowed = true
+			return workspaceRecoveryMutationOutcome{
+				Status: "nonzero", Counts: counts, Source: "fabric_mutation_ledger_recoverable_cvm_only", EvidenceDigest: evidence.MutationLedgerDigest,
+			}, gate
+		}
+		return workspaceRecoveryMutationOutcome{}, gate
+	}
 	if outcome.Status == "confirmed_zero" && outcome.Counts == (workspaceRecoveryMutationCounts{}) && outcome.FabricOperationMutations == 0 && evidence == nil {
 		gate.Allowed = true
 		return outcome, gate

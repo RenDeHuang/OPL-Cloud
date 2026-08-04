@@ -298,9 +298,12 @@ func TestFabricHTTPClientSeparatesComputeClaimProofAndMutation(t *testing.T) {
 		case "/fabric/compute-claim-recovery/identity-evidence":
 			_ = json.NewEncoder(w).Encode(ComputeClaimIdentityEvidence{
 				Checks:                []ComputeClaimIdentityCheck{{Field: "binding.compatibility", Matches: true, Expected: "current_or_historical", Actual: "historical"}},
+				BindingClassification: "compute-claim",
+				BindingDigest:         strings.Repeat("b", 64),
 				MutationLedger:        "observed",
 				MutationLedgerOutcome: "confirmed_zero",
 				MutationLedgerDigest:  strings.Repeat("d", 64),
+				MutationEvidence:      &ComputeClaimEvidence{CVM: ComputeClaimMutationEvidence{Attempted: 1, Confirmed: 1}},
 			})
 			return
 		default:
@@ -331,7 +334,9 @@ func TestFabricHTTPClientSeparatesComputeClaimProofAndMutation(t *testing.T) {
 		ComputeClaimRecoveryInput: input, MachineName: proof.MachineName, NodeName: proof.NodeName, CVMInstanceID: proof.CVMInstanceID,
 		PrivateIP: proof.PrivateIP, InstanceType: proof.InstanceType, Zone: proof.Zone,
 	})
-	if err != nil || evidence == nil || evidence.MutationLedger != "observed" || evidence.MutationLedgerOutcome != "confirmed_zero" ||
+	if err != nil || evidence == nil || evidence.BindingClassification != "compute-claim" || evidence.BindingDigest != strings.Repeat("b", 64) ||
+		evidence.MutationLedger != "observed" || evidence.MutationLedgerOutcome != "confirmed_zero" || evidence.MutationEvidence == nil ||
+		evidence.MutationEvidence.CVM.Attempted != 1 || evidence.MutationEvidence.CVM.Confirmed != 1 ||
 		evidence.MutationLedgerDigest != strings.Repeat("d", 64) || len(evidence.Checks) != 1 || !evidence.Checks[0].Matches {
 		t.Fatalf("identity evidence=%#v err=%v", evidence, err)
 	}

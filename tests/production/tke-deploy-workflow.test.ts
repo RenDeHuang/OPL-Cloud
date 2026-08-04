@@ -1258,8 +1258,27 @@ test("Fabric recovery ledger readback is artifact-bound, read-only, and cannot r
     "binding.idempotencyKey", "binding.targetHash", "binding.requestHash"
   ]) assert.match(runs, new RegExp(field.replaceAll(".", "\\.")));
   assert.match(runs, /mutationLedgerOutcome/);
-  assert.match(runs, /recoveryEligible/);
-  assert.match(runs, /historical_mutation_evidence_incomplete/);
+  assert.match(runs, /bindingClassification/);
+  assert.match(runs, /bindingDigest/);
+  assert.match(runs, /current.*compute-claim.*known-legacy.*other/s);
+  for (const field of ["attempted", "confirmed", "unknown", "missing", "failureStage", "providerErrorClass"]) {
+    assert.match(runs, new RegExp(field));
+  }
+  assert.match(runs, /recoverable_cvm_only/);
+  assert.match(runs, /operator_compensation_required/);
+  assert.match(runs, /cvm\.attempted > 0/);
+  assert.match(runs, /cvm\.confirmed === cvm\.attempted/);
+  assert.match(runs, /node\.attempted === 0/);
+  assert.match(runs, /check\.matches === \(check\.expectedDigest === check\.actualDigest\)/);
+  assert.match(runs, /check\.matches === \(check\.expected === check\.actual\)/);
+  assert.match(runs, /Object\.keys\(value\)\.sort\(\)\.join\(","\) !== "attempted,confirmed,missing,unknown"/);
+  assert.match(runs, /value\.attempted > maximum/);
+  assert.match(runs, /value\.confirmed \+ value\.unknown > value\.attempted/);
+  assert.match(runs, /new Set\(value\.missing\)\.size !== value\.missing\.length/);
+  assert.match(runs, /failureStages\.has\(artifact\?\.failureStage\)/);
+  assert.match(runs, /providerErrorClasses\.has\(artifact\?\.providerErrorClass\)/);
+  assert.match(runs, /artifact\.mutationLedgerOutcome === "nonzero"/);
+  assert.match(runs, /artifact\?\.compensationReason === "fabric_ledger_readback_not_completed"/);
   assert.match(runs, /runnerDirectMutationCounts/);
   assert.doesNotMatch(runs, /mutationLedgerDigest|recovery-plan\/(?:diagnose|validate|execute)|--recovery-plan-(?:diagnose|validate|execute)|compute-claim-recovery\/(?:proof|claim)|ClaimComputeRecovery|CreateComputeAllocation|CreateDisks|create_storage_volume|scale|debit|refund|delete|replace/i);
   assert.doesNotMatch(JSON.stringify(job), /TENCENTCLOUD_SECRET|OPL_[A-Z_]*APPROVAL_JSON|target_json|cloud_digest|workspace_digest|recovery_confirmation/i);
@@ -1275,7 +1294,12 @@ test("Fabric recovery ledger readback is artifact-bound, read-only, and cannot r
     diagnoseCalls: 0,
     providerCalls: 0,
     requiredMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
-    artifact: "redacted_fabric_ledger_state_outcome_and_boolean_identity_checks"
+    artifactSchemaVersion: 2,
+    bindingClassifications: ["current", "compute-claim", "known-legacy", "other"],
+    providerMutationFields: ["attempted", "confirmed", "unknown", "missing", "failureStage", "providerErrorClass"],
+    recoverableCVMOnly: "recognized_current_or_compute_claim_binding_and_cvm_attempted_positive_fully_confirmed_unknown_zero_missing_empty_and_node_attempted_zero",
+    knownLegacy: "recovery_exec_lowerhex20_old_request_hash_exact_match_classification_only_operator_compensation_required_never_binding_takeover",
+    artifact: "redacted_binding_class_digest_and_exact_persisted_cvm_node_mutation_evidence"
   });
 });
 

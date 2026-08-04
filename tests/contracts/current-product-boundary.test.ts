@@ -123,7 +123,7 @@ test("Current contracts hard cut Workspace purchase, access, and Runtime facts",
   assert.equal(freeze.workspaceLaunch.backgroundProgression, "non_review_and_manual_review_recovery_integrated_local_fake_verified");
   assert.equal(
     freeze.workspaceLaunch.recoveryPlan.execution.fabricLedgerEvidence,
-    "mutationLedger_mutationLedgerOutcome_and_sha256_digest_from_fabric_identity_evidence"
+    "mutationLedger_mutationLedgerOutcome_binding_classification_binding_sha256_digest_and_exact_persisted_cvm_node_attempted_confirmed_unknown_missing_failureStage_providerErrorClass_from_zero_mutation_fabric_identity_evidence"
   );
   assert.equal(freeze.workspaceLaunch.recoveryPlan.execution.releasedLeaseReacquire, "both_token_and_expiry_empty_reacquire_same_nonterminal_execution_and_run_identity");
   assert.equal(freeze.workspaceLaunch.recoveryPlan.execution.workerTerminalSync, "workspace_launch_postgresql_cas_synchronizes_succeeded_or_manual_review_to_plan_and_execution");
@@ -487,7 +487,12 @@ test("Current Fabric contracts require dedicated package NodePools without weake
     diagnoseCalls: 0,
     providerCalls: 0,
     requiredMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
-    artifact: "redacted_fabric_ledger_state_outcome_and_boolean_identity_checks"
+    artifactSchemaVersion: 2,
+    bindingClassifications: ["current", "compute-claim", "known-legacy", "other"],
+    providerMutationFields: ["attempted", "confirmed", "unknown", "missing", "failureStage", "providerErrorClass"],
+    recoverableCVMOnly: "recognized_current_or_compute_claim_binding_and_cvm_attempted_positive_fully_confirmed_unknown_zero_missing_empty_and_node_attempted_zero",
+    knownLegacy: "recovery_exec_lowerhex20_old_request_hash_exact_match_classification_only_operator_compensation_required_never_binding_takeover",
+    artifact: "redacted_binding_class_digest_and_exact_persisted_cvm_node_mutation_evidence"
   });
   assert.equal(deployment.productionComputeClaimRecovery, undefined);
   assert.equal(deployment.productionWorkspaceLaunchReadbackRecovery, undefined);
@@ -756,7 +761,7 @@ test("Current contracts hard cut operator resources, wallet adjustments, and ann
   assert.deepEqual(recoveryPlan.executionLease.identity, ["plan_id", "plan_digest", "approval_digest", "execution_id", "run_id", "decision"]);
   assert.equal(recoveryPlan.executionLease.fencing, "byte_exact_current_lease_token_required_to_finalize");
   assert.equal(recoveryPlan.executionLease.unknownResult, "reconcile_same_execution_identity_without_second_provider_entry");
-  assert.equal(recoveryPlan.executionLease.authoritativeZeroEvidence, "fabric_identity_evidence_mutation_ledger_outcome_and_sha256_digest");
+  assert.equal(recoveryPlan.executionLease.authoritativeZeroEvidence, "fabric_identity_evidence_exact_binding_class_digest_and_persisted_cvm_node_mutation_shape");
   assert.equal(recoveryPlan.executionLease.releasedLeaseReacquire, "both_token_and_expiry_empty_same_execution_and_run_new_fenced_lease");
   assert.equal(recoveryPlan.executionLease.partialOrInvalidLease, "fail_closed_identity_conflict");
   assert.equal(recoveryPlan.executionLease.workerTerminalSync, "workspace_launch_postgresql_cas_updates_plan_and_execution_terminal_projection");
@@ -822,7 +827,15 @@ test("Current contracts hard cut operator resources, wallet adjustments, and ann
     reasons: ["local_identity", "provider_describe", "iam_rbac", "multiple_candidate", "identity_mismatch", "node_ownership_conflict", "storage_already_started"],
     proofMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
     idempotencyBinding: ["launch_operation_id", "idempotency_key", "target_hash", "request_hash"],
-    identityEvidence: "zero_mutation_allowlisted_expected_actual_for_ids_and_second_digest_for_hashes",
+    identityEvidence: "zero_mutation_allowlisted_expected_actual_for_ids_second_digest_for_hashes_and_redacted_persisted_binding_class_digest",
+    identityEvidenceProjection: {
+      bindingClassifications: ["current", "compute-claim", "known-legacy", "other"],
+      bindingDigest: "sha256_of_exact_persisted_binding_payload",
+      knownLegacy: "recovery_exec_lowerhex20_old_request_hash_exact_match_classification_only_never_binding_takeover",
+      providerMutationFields: ["attempted", "confirmed", "unknown", "missing", "failureStage", "providerErrorClass"],
+      recoverableCVMOnly: "current_or_compute_claim_binding_and_cvm_attempted_positive_fully_confirmed_unknown_zero_missing_empty_and_node_attempted_zero",
+      otherOutcome: "operator_compensation_required_without_provider_entry"
+    },
     mutationLedgerEvidence: {
       fields: ["mutationLedger", "mutationLedgerOutcome", "mutationLedgerDigest"],
       outcomes: ["confirmed_zero", "nonzero", "unknown"],

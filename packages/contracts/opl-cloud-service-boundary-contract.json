@@ -197,8 +197,8 @@
           "fencing": "byte_exact_current_lease_token_required_to_finalize",
           "unknownResult": "reconcile_same_execution_identity_without_second_provider_entry",
           "mutationOutcome": "explicit_confirmed_zero_nonzero_or_unknown_persisted_on_execution",
-          "authoritativeZeroEvidence": "fabric_identity_evidence_mutation_ledger_outcome_and_sha256_digest",
-          "terminalFailedSuccessor": "confirmed_zero_only_archive_predecessor_and_derive_generation_bound_new_plan_digest_approval_execution_run",
+          "authoritativeZeroEvidence": "fabric_identity_evidence_exact_binding_class_digest_and_persisted_cvm_node_mutation_shape",
+          "terminalFailedSuccessor": "confirmed_zero_or_exact_recoverable_cvm_only_archive_predecessor_and_derive_generation_bound_new_plan_digest_approval_execution_run",
           "predecessorFencing": "archived_execution_lease_never_reactivated_stale_finalize_rejected",
           "releasedLeaseReacquire": "both_token_and_expiry_empty_same_execution_and_run_new_fenced_lease",
           "partialOrInvalidLease": "fail_closed_identity_conflict",
@@ -386,7 +386,15 @@
         "reasons": ["local_identity", "provider_describe", "iam_rbac", "multiple_candidate", "identity_mismatch", "node_ownership_conflict", "storage_already_started"],
         "proofMutationCounts": {"sub2api": 0, "tencent": 0, "kubernetes": 0},
         "idempotencyBinding": ["launch_operation_id", "idempotency_key", "target_hash", "request_hash"],
-        "identityEvidence": "zero_mutation_allowlisted_expected_actual_for_ids_and_second_digest_for_hashes",
+        "identityEvidence": "zero_mutation_allowlisted_expected_actual_for_ids_second_digest_for_hashes_and_redacted_persisted_binding_class_digest",
+        "identityEvidenceProjection": {
+          "bindingClassifications": ["current", "compute-claim", "known-legacy", "other"],
+          "bindingDigest": "sha256_of_exact_persisted_binding_payload",
+          "knownLegacy": "recovery_exec_lowerhex20_old_request_hash_exact_match_classification_only_never_binding_takeover",
+          "providerMutationFields": ["attempted", "confirmed", "unknown", "missing", "failureStage", "providerErrorClass"],
+          "recoverableCVMOnly": "current_or_compute_claim_binding_and_cvm_attempted_positive_fully_confirmed_unknown_zero_missing_empty_and_node_attempted_zero",
+          "otherOutcome": "operator_compensation_required_without_provider_entry"
+        },
         "mutationLedgerEvidence": {
           "fields": ["mutationLedger", "mutationLedgerOutcome", "mutationLedgerDigest"],
           "outcomes": ["confirmed_zero", "nonzero", "unknown"],
