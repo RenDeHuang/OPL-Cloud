@@ -517,6 +517,12 @@ async function readAcceptanceBLaunch(requestOptions, customerAuth, operationId) 
   }
 }
 
+function deterministicLaunchRejection(error) {
+  const match = String(error?.message || "").match(/^request_failed:POST:\/api\/workspace-launches:(4[0-9]{2}):[a-z0-9_]+$/);
+  if (!match) return null;
+  return new Error(`production_basic_acceptance_b_launch_rejected_http_${match[1]}`);
+}
+
 export async function submitProductionBasicAcceptanceBLaunch({ requestOptions, customerAuth, approval, internalServiceToken }) {
   const existing = await readAcceptanceBLaunch(requestOptions, customerAuth, approval.launch.operationId);
   if (existing) return assertAcceptanceBLaunchIdentity(existing, approval);
@@ -536,7 +542,9 @@ export async function submitProductionBasicAcceptanceBLaunch({ requestOptions, c
     });
     if (response.response.status !== 202) throw new Error("production_basic_acceptance_b_launch_not_accepted");
     return assertAcceptanceBLaunchIdentity(response.payload, approval);
-  } catch {
+  } catch (error) {
+    const rejection = deterministicLaunchRejection(error);
+    if (rejection) throw rejection;
     const readback = await readAcceptanceBLaunch(requestOptions, customerAuth, approval.launch.operationId);
     if (!readback) throw new Error("production_basic_acceptance_b_launch_outcome_unknown");
     return assertAcceptanceBLaunchIdentity(readback, approval);

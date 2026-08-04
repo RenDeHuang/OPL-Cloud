@@ -567,6 +567,34 @@ test("Acceptance B launch stops after one POST when deterministic readback is ab
   assert.equal(calls.filter((call) => call.method === "GET").length, 2);
 });
 
+test("Acceptance B launch classifies a deterministic HTTP rejection without treating it as unknown", async () => {
+  const approval = parseProductionBasicAcceptanceBApproval(approvalFixture(), {
+    approvalId: APPROVAL_ID,
+    now: new Date("2026-08-02T00:00:00Z")
+  });
+  const calls = [];
+  const fetchImpl = async (input, init = {}) => {
+    const url = new URL(String(input));
+    const method = String(init.method || "GET").toUpperCase();
+    calls.push({ method, path: url.pathname });
+    if (method === "GET" && url.pathname === `/api/workspace-launches/${approval.launch.operationId}`) {
+      return response({ error: "not_found" }, 404);
+    }
+    if (method === "POST" && url.pathname === "/api/workspace-launches") {
+      return response({ error: "workspace_launch_admission_disabled" }, 409);
+    }
+    throw new Error(`unexpected_request:${method}:${url.pathname}`);
+  };
+  await assert.rejects(() => submitProductionBasicAcceptanceBLaunch({
+    requestOptions: { fetchImpl, origin: "https://cloud.medopl.cn", timeoutMs: 1_000 },
+    customerAuth: { cookie: "customer=test", csrfToken: "csrf-test" },
+    approval,
+    internalServiceToken: "acceptance-b-capability"
+  }), /production_basic_acceptance_b_launch_rejected_http_409/);
+  assert.equal(calls.filter((call) => call.method === "POST").length, 1);
+  assert.equal(calls.filter((call) => call.method === "GET").length, 1);
+});
+
 test("Acceptance B stage budgets separately prove CVM create, ownership, Node, storage, and continuation", () => {
   const approval = approvalFixture();
   const launch = {
