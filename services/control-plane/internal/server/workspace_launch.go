@@ -125,6 +125,7 @@ type workspaceLaunchOperation struct {
 	ComputeClaimPrivateIP        string                                   `json:"computeClaimPrivateIp,omitempty"`
 	ComputeClaimProof            *clients.ComputeClaimRecoveryProof       `json:"computeClaimProof,omitempty"`
 	ComputeClaimTerminalEvidence *clients.ComputeClaimTerminalEvidence    `json:"computeClaimTerminalEvidence,omitempty"`
+	RecoveryCanaryDigest         string                                   `json:"recoveryAcceptanceApprovalDigest,omitempty"`
 	StorageID                    string                                   `json:"storageId"`
 	AttachmentID                 string                                   `json:"attachmentId,omitempty"`
 	AttachmentOperationID        string                                   `json:"attachmentOperationId"`
@@ -622,6 +623,11 @@ func workspaceLaunchResponse(row map[string]any) (map[string]any, error) {
 			"recoveryKey": approval.RecoveryKey, "workspaceImageDigest": approval.WorkspaceImageDigest,
 		}
 	}
+	if operation.RecoveryCanaryDigest != "" {
+		response["recoveryAcceptance"] = map[string]any{
+			"approvalDigest": operation.RecoveryCanaryDigest,
+		}
+	}
 	return response, nil
 }
 
@@ -734,6 +740,13 @@ func (app *controlPlaneServer) fulfillWorkspaceLaunch(ctx context.Context, servi
 			switch outcome {
 			case "ready":
 				if resourceType == "compute" {
+					enteredCanary, err := app.enterRecoveryAcceptanceCanaryAtStorageBoundary(ctx, operation)
+					if err != nil {
+						return err
+					}
+					if enteredCanary {
+						return nil
+					}
 					operation.Phase = "storage_fulfilling"
 				} else {
 					operation.Phase = "attaching"

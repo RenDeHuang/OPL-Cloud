@@ -97,6 +97,25 @@ func registerAdminRoutes(mux *http.ServeMux, app *controlPlaneServer, service *c
 		}
 		writeJSON(w, http.StatusOK, workspaceRecoveryPlanHTTPProjection(plan))
 	}))
+	mux.HandleFunc("POST /api/operator/workspace-launches/{operationId}/recovery-acceptance/manual-review", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
+		key, ok := requiredMutationKey(w, r)
+		if !ok {
+			return
+		}
+		operationID := strings.TrimSpace(r.PathValue("operationId"))
+		input := decodeJSON(r)
+		approval, err := parseRecoveryAcceptanceCanaryApproval(input, operationID)
+		if err != nil || key != "recovery-acceptance:"+approval.ApprovalDigest {
+			writeError(w, http.StatusBadRequest, errRecoveryAcceptanceCanaryApprovalInvalid.Error())
+			return
+		}
+		result, err := app.executeRecoveryAcceptanceCanary(r.Context(), operationID, approval)
+		if err != nil {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, result)
+	}))
 	mux.HandleFunc("POST /api/operator/accounts/{accountId}/wallet-adjustments", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
 		app.createWalletAdjustment(w, r, service)
 	}))

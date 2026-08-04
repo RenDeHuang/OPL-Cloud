@@ -85,6 +85,7 @@
         "acceptance-b-fresh-order",
         "controlled-pilot-closed-validate",
         "fabric-ledger-readback",
+        "recovery-acceptance-canary",
         "recovery-plan-operation"
       ]
     },
@@ -753,7 +754,31 @@
     "knownLegacy": "recovery_exec_lowerhex20_old_request_hash_exact_match_classification_only_operator_compensation_required_never_binding_takeover",
     "artifact": "redacted_binding_class_digest_and_exact_persisted_cvm_node_mutation_evidence"
   },
-
+  "productionRecoveryAcceptanceCanary": {
+    "workflow": ".github/workflows/production-basic-customer-operation.yml",
+    "workflowMode": "recovery_acceptance_canary",
+    "job": "recovery-acceptance-canary",
+    "runner": ["self-hosted", "tencent-cloud", "opl-cloud", "tke-vpc"],
+    "environment": "production",
+    "defaultEnabled": false,
+    "requiredConfirmation": "confirm_recovery_acceptance_canary",
+    "workflowInputs": ["merged_sha", "recovery_acceptance_account_id", "recovery_acceptance_launch_operation_id", "confirm_recovery_acceptance_canary"],
+    "approvalSecret": "OPL_RECOVERY_ACCEPTANCE_CANARY_APPROVAL_JSON",
+    "allowlistEnv": "OPL_RECOVERY_ACCEPTANCE_CANARY_ACCOUNT_IDS",
+    "releaseBindingEnv": ["OPL_RELEASE_SHA", "OPL_CLOUD_IMAGE"],
+    "route": "POST /api/operator/workspace-launches/{operationId}/recovery-acceptance/manual-review",
+    "precondition": "original_launch_preparing_storage_fulfilling_compute_and_node_confirmed_storage_not_started",
+    "allowedWrites": ["persist_original_launch_manual_review_recovery_acceptance"],
+    "forbiddenWrites": ["submit_second_workspace_launch", "debit", "create_cvm", "claim_second_node", "create_cbs", "provider_mutation", "fabric_mutation", "database_fabric_ledger_fabrication"],
+    "mutationCounts": {"database": 1, "sub2api": 0, "tencent": 0, "kubernetes": 0},
+    "unknownPost": "GET_original_launch_by_same_operation_identity_without_retry",
+    "artifact": {
+      "schemaVersion": 1,
+      "fields": ["operationMode", "status", "recoveryEligible", "errorCode", "release", "target", "approval", "manualReview", "controlPlaneMutationCounts", "runnerDirectMutationCounts", "verifiedAt"],
+      "forbidden": ["password", "secret", "token", "cookie", "nonce", "csrf", "raw_launch_operation_id", "raw_workspace_id"]
+    },
+    "currentState": "implemented_and_locally_fake_tested_not_executed"
+  },
 
   "productionRecoveredWorkspaceE2E": {
     "workflow": ".github/workflows/production-basic-customer-operation.yml",

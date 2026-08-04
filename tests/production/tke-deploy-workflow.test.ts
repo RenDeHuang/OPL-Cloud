@@ -594,6 +594,7 @@ test("production self-hosted jobs use one run-and-job isolated source checkout",
       "acceptance-b-fresh-order",
       "controlled-pilot-closed-validate",
       "fabric-ledger-readback",
+      "recovery-acceptance-canary",
       "recovery-plan-operation"
     ]]
   ]);
@@ -1303,6 +1304,67 @@ test("Fabric recovery ledger readback is artifact-bound, read-only, and cannot r
   });
 });
 
+test("Recovery Acceptance canary is default-off, allowlisted, original-launch-only, and redacted", async () => {
+  const workflow = await readWorkflow(".github/workflows/production-basic-customer-operation.yml");
+  const deployment = await readJson(deploymentContractPath);
+  const inputs = workflow.on.workflow_dispatch.inputs;
+  const job = workflowJob(workflow, "recovery-acceptance-canary");
+  const runs = serializedRuns(job);
+
+  assert.ok(inputs.operation_mode.options.includes("recovery_acceptance_canary"));
+  assert.equal(inputs.confirm_recovery_acceptance_canary.type, "boolean");
+  assert.equal(inputs.recovery_acceptance_account_id.required, false);
+  assert.equal(inputs.recovery_acceptance_launch_operation_id.required, false);
+  assert.match(String(job.if), /inputs\.operation_mode == 'recovery_acceptance_canary'/);
+  assert.match(String(job.if), /inputs\.confirm_recovery_acceptance_canary/);
+  assert.match(String(job.if), /inputs\.recovery_acceptance_account_id != ''/);
+  assert.match(String(job.if), /inputs\.recovery_acceptance_launch_operation_id != ''/);
+  assert.match(String(job.if), /!inputs\.confirm_workspace_purchase/);
+  assert.match(String(job.if), /!inputs\.confirm_recovery_plan_execute/);
+  assert.deepEqual(job["runs-on"], ["self-hosted", "tencent-cloud", "opl-cloud", "tke-vpc"]);
+  assert.equal(job.environment, "production");
+  assert.equal(job.env.OPL_RECOVERY_ACCEPTANCE_CANARY_APPROVAL_JSON, "${{ secrets.OPL_RECOVERY_ACCEPTANCE_CANARY_APPROVAL_JSON }}");
+  assert.equal(job.env.OPL_RECOVERY_ACCEPTANCE_CANARY_ACCOUNT_ID, "${{ inputs.recovery_acceptance_account_id }}");
+  assert.equal(job.env.OPL_RECOVERY_ACCEPTANCE_CANARY_LAUNCH_OPERATION_ID, "${{ inputs.recovery_acceptance_launch_operation_id }}");
+  assert.equal(job.env.OPL_RECOVERY_ACCEPTANCE_CANARY_ENABLED, "${{ vars.OPL_RECOVERY_ACCEPTANCE_CANARY_ENABLED || '0' }}");
+  assert.equal(job.env.OPL_RECOVERY_ACCEPTANCE_CANARY_ACCOUNT_IDS, "${{ vars.OPL_RECOVERY_ACCEPTANCE_CANARY_ACCOUNT_IDS || '' }}");
+  assert.equal(job.env.OPL_SUB2API_ADMIN_EMAIL, "${{ secrets.OPL_SUB2API_ADMIN_EMAIL }}");
+  assert.equal(job.env.OPL_SUB2API_ADMIN_PASSWORD, "${{ secrets.OPL_SUB2API_ADMIN_PASSWORD }}");
+  assert.match(runs, /git ls-remote --heads origin/);
+  assert.match(runs, /node tools\/recovery-acceptance-canary\.ts --recovery-acceptance-canary/);
+  assert.match(runs, /recovery-acceptance-canary\.json/);
+  assert.match(runs, /controlPlaneMutationCounts/);
+  assert.match(runs, /runnerDirectMutationCounts/);
+  assert.match(JSON.stringify(job.steps), /actions\/upload-artifact@v4/);
+  assert.doesNotMatch(runs, /kubectl|port-forward|--basic-customer-canary|allow-workspace-purchase|allow-model-write|debit|create_cvm|create_cbs|send_model_request/i);
+  assert.doesNotMatch(JSON.stringify(job), /OPL_BASIC_CANARY_CUSTOMER_PASSWORD|TENCENT_DEPLOY_KUBECONFIG|OPL_INTERNAL_SERVICE_TOKEN/);
+  assert.deepEqual(deployment.productionRecoveryAcceptanceCanary, {
+    workflow: ".github/workflows/production-basic-customer-operation.yml",
+    workflowMode: "recovery_acceptance_canary",
+    job: "recovery-acceptance-canary",
+    runner: ["self-hosted", "tencent-cloud", "opl-cloud", "tke-vpc"],
+    environment: "production",
+    defaultEnabled: false,
+    requiredConfirmation: "confirm_recovery_acceptance_canary",
+    workflowInputs: ["merged_sha", "recovery_acceptance_account_id", "recovery_acceptance_launch_operation_id", "confirm_recovery_acceptance_canary"],
+    approvalSecret: "OPL_RECOVERY_ACCEPTANCE_CANARY_APPROVAL_JSON",
+    allowlistEnv: "OPL_RECOVERY_ACCEPTANCE_CANARY_ACCOUNT_IDS",
+    releaseBindingEnv: ["OPL_RELEASE_SHA", "OPL_CLOUD_IMAGE"],
+    route: "POST /api/operator/workspace-launches/{operationId}/recovery-acceptance/manual-review",
+    precondition: "original_launch_preparing_storage_fulfilling_compute_and_node_confirmed_storage_not_started",
+    allowedWrites: ["persist_original_launch_manual_review_recovery_acceptance"],
+    forbiddenWrites: ["submit_second_workspace_launch", "debit", "create_cvm", "claim_second_node", "create_cbs", "provider_mutation", "fabric_mutation", "database_fabric_ledger_fabrication"],
+    mutationCounts: { database: 1, sub2api: 0, tencent: 0, kubernetes: 0 },
+    unknownPost: "GET_original_launch_by_same_operation_identity_without_retry",
+    artifact: {
+      schemaVersion: 1,
+      fields: ["operationMode", "status", "recoveryEligible", "errorCode", "release", "target", "approval", "manualReview", "controlPlaneMutationCounts", "runnerDirectMutationCounts", "verifiedAt"],
+      forbidden: ["password", "secret", "token", "cookie", "nonce", "csrf", "raw_launch_operation_id", "raw_workspace_id"]
+    },
+    currentState: "implemented_and_locally_fake_tested_not_executed"
+  });
+});
+
 test("disabled controlled Basic Pilot has one production fail-closed proof with no provider capability", async () => {
   const workflow = await readWorkflow(".github/workflows/production-basic-customer-operation.yml");
   const deployment = await readJson(deploymentContractPath);
@@ -1365,6 +1427,7 @@ test("recovered Workspace E2E is a separate hosted mode with no resource mutatio
     "compute_claim_validate",
     "fabric_ledger_readback",
     "recovery_plan_execute",
+    "recovery_acceptance_canary",
     "controlled_pilot_closed_validate",
     "recovered_workspace_e2e"
   ]);
