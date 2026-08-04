@@ -303,11 +303,12 @@ function parseApproval(value: string | Record<string, unknown>, options: { appro
   const now = options.now instanceof Date ? options.now : new Date(options.now || Date.now());
   const record = parsed as Record<string, unknown>;
   if (!exactKeys(record, keys)) throw new Error("recovery_acceptance_approval_invalid_shape");
-  if (record.schemaVersion !== 1 || record.operationMode !== mode ||
-    (options.approvalId !== undefined && record.approvalId !== options.approvalId) ||
-    !String(record.approvalId || "") || !validExpiry(record.expiresAt, now)) {
-    throw new Error("recovery_acceptance_approval_invalid_metadata");
+  if (record.schemaVersion !== 1) throw new Error("recovery_acceptance_approval_invalid_schema_version");
+  if (record.operationMode !== mode) throw new Error("recovery_acceptance_approval_invalid_operation_mode");
+  if (!String(record.approvalId || "") || (options.approvalId !== undefined && record.approvalId !== options.approvalId)) {
+    throw new Error("recovery_acceptance_approval_invalid_approval_id");
   }
+  if (!validExpiry(record.expiresAt, now)) throw new Error("recovery_acceptance_approval_invalid_expiry");
   if (record.approvalDigest !== recoveryAcceptanceApprovalDigest(record)) throw new Error("recovery_acceptance_approval_invalid_digest");
   if (options.mergedSha && (record.release as Record<string, unknown>)?.mergedMainSha !== options.mergedSha) {
     throw new Error("recovery_acceptance_approval_invalid_release");
