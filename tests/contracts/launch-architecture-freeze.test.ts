@@ -117,12 +117,15 @@ test("launch freeze fixes the V2 products, owner lanes, settlement, and verifica
       capabilitySource: "current_internal_service_secret_runner_memory_only",
       exactBinding: ["account", "email", "approval_id", "idempotency_key", "operation_id", "workspace_id", "release_sha", "cloud_image_digest", "workspace_image_digest", "basic_10gb_autoRenew_false", "node_pool", "instance_type", "expiry", "allowed_and_forbidden_writes"],
       launchPostMaximum: 1,
+      capacitySlot: "one_global_single_use_exact_approval_slot_independent_of_ordinary_pilot_in_flight_capacity",
+      sameAccountNonterminal: "reject",
+      secondAcceptanceOperation: "reject",
       prePostReadback: "deterministic_operation_get_first",
       unknownPost: "same_operation_get_only_no_second_post",
       rejectionMutationCounts: { database: 0, sub2api: 0, fabric: 0, tencent: 0, kubernetes: 0 }
     },
     rejectionMutationCounts: { database: 0, sub2api: 0, fabric: 0, tencent: 0, kubernetes: 0 },
-    globalCapacity: "memory_mutex_or_postgresql_transaction_with_stable_account_row_lock_before_global_nonterminal_count_and_insert",
+    globalCapacity: "ordinary_launches_use_configured_max_in_flight; one_exact_acceptance_b_operation_uses_a_separate_global_single_use_slot; both_are_serialized_by_memory_mutex_or_postgresql_transaction_with_stable_account_row_lock_before_count_and_insert",
     disableBehavior: "block_new_purchase_only_reads_and_original_operation_continuations_remain_available",
     firstFailure: "operator_health_disableRequired_and_redacted_alert_then_set_enabled_0",
     productionEvidence: "pending"

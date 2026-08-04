@@ -1844,7 +1844,7 @@ func (s *postgresEntStateStore) ApplyWorkspaceRenewalIntent(ctx context.Context,
 
 func (s *postgresEntStateStore) ClaimWorkspaceLaunch(ctx context.Context, claim workspaceLaunchClaimCAS) error {
 	desired, err := decodeWorkspaceLaunchOperation(claim.DesiredOperation)
-	if err != nil || desired.AccountID != claim.AccountID {
+	if err != nil || desired.AccountID != claim.AccountID || claim.ExpectedOperationResult == "" && desired.AcceptanceBCapacitySlot != claim.AcceptanceBCapacitySlot {
 		return errWorkspaceLaunchCASConflict
 	}
 	tx, err := s.client.Tx(ctx)
@@ -1885,14 +1885,27 @@ func (s *postgresEntStateStore) ClaimWorkspaceLaunch(ctx context.Context, claim 
 		if existing != nil {
 			return errWorkspaceLaunchCASConflict
 		}
-		inFlight, err := client.RuntimeOperation.Query().Where(
+		launchEntities, err := client.RuntimeOperation.Query().Where(
 			runtimeoperation.ActionIn(workspaceLaunchAction, "workspace.launch"),
-			runtimeoperation.StatusNotIn("succeeded", "refunded", "failed"),
-		).Count(ctx)
+		).All(ctx)
 		if err != nil {
 			return err
 		}
-		if inFlight >= controlledBasicPilotGlobalInFlightLimit() {
+		inFlight, acceptanceClaims := 0, 0
+		for _, entity := range launchEntities {
+			row := recordFromEnt(entity, runtimeOpEntFields)
+			if workspaceLaunchHasAcceptanceBCapacitySlot(row) {
+				acceptanceClaims++
+			}
+			if !terminalWorkspaceLaunchStatus(stringValue(row["status"])) {
+				inFlight++
+			}
+		}
+		if claim.AcceptanceBCapacitySlot {
+			if acceptanceClaims >= 1 {
+				return errWorkspaceLaunchCapacityReached
+			}
+		} else if inFlight >= controlledBasicPilotGlobalInFlightLimit() {
 			return errWorkspaceLaunchCapacityReached
 		}
 		if err := saveRecord(ctx, desired.ID, controlPlaneRecord(claim.DesiredOperation), client.RuntimeOperation.Create(), runtimeOpEntFields); err != nil {

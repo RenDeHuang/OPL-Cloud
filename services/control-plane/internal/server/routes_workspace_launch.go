@@ -108,10 +108,11 @@ func registerWorkspaceLaunchRoutes(mux *http.ServeMux, app *controlPlaneServer, 
 		}
 		admission := controlledBasicPilotAdmissionFromEnv()
 		code := admission.rejectNewLaunch(accountID, packageID, autoRenew)
+		acceptanceBApproved := false
 		if code == "workspace_launch_admission_disabled" {
 			approval, configured := parseProductionAcceptanceBApproval()
 			if configured && productionAcceptanceBLaunchApproved(r.Header, approval, accountID, stringValue(user["email"]), name, packageID, int(storageGB), autoRenew, key) {
-				code = ""
+				code, acceptanceBApproved = "", true
 			}
 		}
 		if code != "" {
@@ -139,6 +140,7 @@ func registerWorkspaceLaunchRoutes(mux *http.ServeMux, app *controlPlaneServer, 
 			accountID, ownerUserID, name, packageID, int(storageGB), autoRenew, stringValue(quote["priceVersion"]),
 			int64(numberField(quote, "totalChargeUsdMicros", 0)), key,
 		)
+		operation.AcceptanceBCapacitySlot = acceptanceBApproved
 
 		zone := monthlyComputeLaunchZone()
 		for _, preflightInput := range []clients.MonthlyPreflightInput{
@@ -179,7 +181,9 @@ func registerWorkspaceLaunchRoutes(mux *http.ServeMux, app *controlPlaneServer, 
 		}
 		operation.Phase = "key_pending"
 		row = workspaceLaunchOperationRow(operation)
-		if err := app.tables.ClaimWorkspaceLaunch(r.Context(), workspaceLaunchClaimCAS{AccountID: accountID, DesiredOperation: row}); err != nil {
+		if err := app.tables.ClaimWorkspaceLaunch(r.Context(), workspaceLaunchClaimCAS{
+			AccountID: accountID, DesiredOperation: row, AcceptanceBCapacitySlot: acceptanceBApproved,
+		}); err != nil {
 			if errors.Is(err, errWorkspaceLaunchCapacityReached) {
 				writeError(w, http.StatusConflict, err.Error())
 				return

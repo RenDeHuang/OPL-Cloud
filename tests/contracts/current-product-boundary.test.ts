@@ -39,6 +39,9 @@ test("Controlled Basic Pilot is closed by default, identifier-free, and continua
   assert.equal(boundary.services.controlPlane.controlledBasicPilotAdmission.continuationPrecedence, "exact_idempotency_or_single_matching_active_operation_before_admission");
   assert.equal(boundary.services.controlPlane.controlledBasicPilotAdmission.productionAcceptanceBException.publicBillingMode, false);
   assert.equal(boundary.services.controlPlane.controlledBasicPilotAdmission.productionAcceptanceBException.pilotEnablement, false);
+  assert.equal(boundary.services.controlPlane.controlledBasicPilotAdmission.productionAcceptanceBException.capacitySlot, "one_global_single_use_exact_approval_slot_independent_of_ordinary_pilot_in_flight_capacity");
+  assert.equal(boundary.services.controlPlane.controlledBasicPilotAdmission.productionAcceptanceBException.sameAccountNonterminal, "reject");
+  assert.equal(boundary.services.controlPlane.controlledBasicPilotAdmission.productionAcceptanceBException.secondAcceptanceOperation, "reject");
   assert.equal(deployment.productionBasicAcceptanceBAdmissionRuntime.approvalKubernetesSecret, "opl-cloud-acceptance-b");
   assert.equal(deployment.productionBasicAcceptanceBAdmissionRuntime.pilotEnabledRequired, false);
   assert.deepEqual(observability.controlledBasicPilot.customerSupportPath, ["Diagnose", "Plan", "Validate", "Confirm"]);

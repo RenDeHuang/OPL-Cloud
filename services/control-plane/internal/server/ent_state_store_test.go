@@ -1221,6 +1221,65 @@ func TestPostgresWorkspaceLaunchClaimEnforcesGlobalInFlightCapacity(t *testing.T
 	}
 }
 
+func TestPostgresWorkspaceLaunchAcceptanceBCapacitySlotIsAtomicAndSingleUse(t *testing.T) {
+	if controlPlaneTestPostgresBaseURL() == "" {
+		t.Skip("local PostgreSQL unavailable: set CONTROL_PLANE_TEST_DATABASE_URL or OPL_POSTGRES_TESTS=1 with isolated PG settings")
+	}
+	t.Setenv("OPL_CONTROLLED_BASIC_PILOT_MAX_IN_FLIGHT", "1")
+	ctx := context.Background()
+	store := newPostgresWorkspaceRenewalStore(t)
+	for _, identity := range []struct {
+		accountID, organizationID, userID, email string
+		sub2APIUserID                            int64
+	}{
+		{accountID: "acct-alpha", organizationID: "org-alpha", userID: "usr-alpha", email: "alpha@example.com", sub2APIUserID: 41},
+		{accountID: "acct-beta", organizationID: "org-beta", userID: "usr-beta", email: "beta@example.com", sub2APIUserID: 42},
+		{accountID: "acct-gamma", organizationID: "org-gamma", userID: "usr-gamma", email: "gamma@example.com", sub2APIUserID: 43},
+	} {
+		seedTenantMemberWithSub2APIUserID(t, store, identity.accountID, identity.organizationID, identity.userID, identity.email, identity.sub2APIUserID)
+	}
+	ordinary := newWorkspaceLaunchOperation("acct-beta", "usr-beta", "Ordinary", "basic", 10, false, pricingCatalogVersion, 52_580_000, "postgres-ordinary-capacity")
+	ordinary.Status, ordinary.Phase = "key_pending", "key_pending"
+	mustStore(t, store.ClaimWorkspaceLaunch(ctx, workspaceLaunchClaimCAS{
+		AccountID: ordinary.AccountID, DesiredOperation: workspaceLaunchOperationRow(ordinary),
+	}))
+
+	claims := make([]workspaceLaunchClaimCAS, 0, 2)
+	for _, identity := range []struct{ accountID, userID, key string }{
+		{accountID: "acct-alpha", userID: "usr-alpha", key: "postgres-acceptance-alpha"},
+		{accountID: "acct-gamma", userID: "usr-gamma", key: "postgres-acceptance-gamma"},
+	} {
+		operation := newWorkspaceLaunchOperation(identity.accountID, identity.userID, "Acceptance", "basic", 10, false, pricingCatalogVersion, 52_580_000, identity.key)
+		operation.Status, operation.Phase = "key_pending", "key_pending"
+		operation.AcceptanceBCapacitySlot = true
+		claims = append(claims, workspaceLaunchClaimCAS{
+			AccountID: identity.accountID, DesiredOperation: workspaceLaunchOperationRow(operation), AcceptanceBCapacitySlot: true,
+		})
+	}
+	start, results := make(chan struct{}), make(chan error, len(claims))
+	for _, claim := range claims {
+		go func(claim workspaceLaunchClaimCAS) {
+			<-start
+			results <- store.ClaimWorkspaceLaunch(ctx, claim)
+		}(claim)
+	}
+	close(start)
+	won, capacity := 0, 0
+	for range claims {
+		if err := <-results; err == nil {
+			won++
+		} else if errors.Is(err, errWorkspaceLaunchCapacityReached) {
+			capacity++
+		} else {
+			t.Fatalf("unexpected PostgreSQL Acceptance claim error: %v", err)
+		}
+	}
+	rows, err := store.ListRuntimeOperations(ctx)
+	if err != nil || won != 1 || capacity != 1 || len(rows) != 2 {
+		t.Fatalf("PostgreSQL Acceptance capacity won=%d capacity=%d rows=%#v err=%v", won, capacity, rows, err)
+	}
+}
+
 func TestPostgresWorkspaceComputeClaimLegacyNormalizationCASIsSingleWinner(t *testing.T) {
 	if controlPlaneTestPostgresBaseURL() == "" {
 		t.Skip("local PostgreSQL unavailable: set CONTROL_PLANE_TEST_DATABASE_URL or OPL_POSTGRES_TESTS=1 with isolated PG settings")

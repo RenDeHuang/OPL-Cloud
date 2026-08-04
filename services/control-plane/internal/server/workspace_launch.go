@@ -126,6 +126,7 @@ type workspaceLaunchOperation struct {
 	ComputeClaimProof            *clients.ComputeClaimRecoveryProof       `json:"computeClaimProof,omitempty"`
 	ComputeClaimTerminalEvidence *clients.ComputeClaimTerminalEvidence    `json:"computeClaimTerminalEvidence,omitempty"`
 	RecoveryCanaryDigest         string                                   `json:"recoveryAcceptanceApprovalDigest,omitempty"`
+	AcceptanceBCapacitySlot      bool                                     `json:"acceptanceBCapacitySlot,omitempty"`
 	StorageID                    string                                   `json:"storageId"`
 	AttachmentID                 string                                   `json:"attachmentId,omitempty"`
 	AttachmentOperationID        string                                   `json:"attachmentOperationId"`
@@ -369,6 +370,7 @@ type workspaceLaunchClaimCAS struct {
 	AccountID               string
 	ExpectedOperationResult string
 	DesiredOperation        map[string]any
+	AcceptanceBCapacitySlot bool
 }
 
 type workspaceLaunchPersistCAS struct {
@@ -587,6 +589,11 @@ func workspaceLaunchClaimIdentityMatches(current, desired map[string]any) bool {
 	next, nextErr := decodeWorkspaceLaunchOperation(desired)
 	return existingErr == nil && nextErr == nil && existing.ID == next.ID && existing.AccountID == next.AccountID &&
 		existing.WorkspaceID == next.WorkspaceID && existing.RequestHash == next.RequestHash
+}
+
+func workspaceLaunchHasAcceptanceBCapacitySlot(row map[string]any) bool {
+	operation, err := decodeWorkspaceLaunchOperation(row)
+	return err == nil && operation.AcceptanceBCapacitySlot
 }
 
 func workspaceLaunchResponse(row map[string]any) (map[string]any, error) {

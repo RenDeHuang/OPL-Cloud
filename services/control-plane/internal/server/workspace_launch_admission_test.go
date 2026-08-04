@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -63,6 +64,13 @@ func TestControlledBasicPilotClosedAllowsOnlyExactProductionAcceptanceBLaunch(t 
 	t.Setenv("OPL_PRODUCTION_BASIC_ACCEPTANCE_B_APPROVAL_JSON", string(encoded))
 	fixture := newWorkspaceLaunchHTTPFixture(t, 1_000_000_000)
 	fixture.sub2API.keys = map[int64]clients.Sub2APIWorkspaceKey{}
+	seedTenantMember(t, fixture.store, "acct-beta", "org-beta", "usr-beta", "beta@example.com")
+	occupied := newWorkspaceLaunchOperation("acct-beta", "usr-beta", "Occupied", "basic", 10, false, pricingCatalogVersion, 52_580_000, "occupied-global-capacity")
+	occupied.Status, occupied.Phase = "manual_review", "compute_fulfilling"
+	occupied.WorkspaceAPIKeyID = 9
+	mustStore(t, fixture.store.ClaimWorkspaceLaunch(context.Background(), workspaceLaunchClaimCAS{
+		AccountID: occupied.AccountID, DesiredOperation: workspaceLaunchOperationRow(occupied),
+	}))
 	req := httptest.NewRequest(http.MethodPost, "/api/workspace-launches", strings.NewReader(`{"name":"Acceptance B Basic Workspace","packageId":"basic","sizeGb":10,"autoRenew":false}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Idempotency-Key", key)
@@ -72,7 +80,7 @@ func TestControlledBasicPilotClosedAllowsOnlyExactProductionAcceptanceBLaunch(t 
 	response := httptest.NewRecorder()
 	fixture.server.ServeHTTP(response, req)
 	operations, listErr := fixture.store.ListRuntimeOperations(context.Background())
-	if response.Code != http.StatusAccepted || listErr != nil || len(operations) != 1 || stringValue(operations[0]["id"]) != operationID {
+	if response.Code != http.StatusAccepted || listErr != nil || len(operations) != 2 || findRecord(operations, operationID) == nil {
 		t.Fatalf("Acceptance B admission status=%d body=%s operations=%#v err=%v", response.Code, response.Body.String(), operations, listErr)
 	}
 }
@@ -226,6 +234,126 @@ func TestControlledBasicPilotGlobalCapacityAllowsOneCrossAccountClaim(t *testing
 	if err != nil || won != 1 || capacity != 1 || len(rows) != 1 {
 		t.Fatalf("global capacity won=%d capacity=%d rows=%#v err=%v", won, capacity, rows, err)
 	}
+}
+
+func TestControlledBasicPilotAcceptanceBCapacitySlotIsAtomicAndSingleUse(t *testing.T) {
+	t.Setenv("OPL_CONTROLLED_BASIC_PILOT_MAX_IN_FLIGHT", "1")
+	store := newMemoryTableStore()
+	for _, identity := range []struct {
+		accountID, organizationID, userID, email string
+		sub2APIUserID                            int64
+	}{
+		{accountID: "acct-alpha", organizationID: "org-alpha", userID: "usr-alpha", email: "alpha@example.com", sub2APIUserID: 41},
+		{accountID: "acct-beta", organizationID: "org-beta", userID: "usr-beta", email: "beta@example.com", sub2APIUserID: 42},
+		{accountID: "acct-gamma", organizationID: "org-gamma", userID: "usr-gamma", email: "gamma@example.com", sub2APIUserID: 43},
+		{accountID: "acct-delta", organizationID: "org-delta", userID: "usr-delta", email: "delta@example.com", sub2APIUserID: 44},
+	} {
+		seedTenantMemberWithSub2APIUserID(t, store, identity.accountID, identity.organizationID, identity.userID, identity.email, identity.sub2APIUserID)
+	}
+	ordinary := newWorkspaceLaunchOperation("acct-beta", "usr-beta", "Ordinary", "basic", 10, false, pricingCatalogVersion, 52_580_000, "ordinary-capacity")
+	ordinary.Status, ordinary.Phase = "key_pending", "key_pending"
+	mustStore(t, store.ClaimWorkspaceLaunch(context.Background(), workspaceLaunchClaimCAS{
+		AccountID: ordinary.AccountID, DesiredOperation: workspaceLaunchOperationRow(ordinary),
+	}))
+
+	sameAccount := newWorkspaceLaunchOperation("acct-beta", "usr-beta", "Acceptance", "basic", 10, false, pricingCatalogVersion, 52_580_000, "same-account-acceptance")
+	sameAccount.Status, sameAccount.Phase = "key_pending", "key_pending"
+	sameAccount.AcceptanceBCapacitySlot = true
+	if err := store.ClaimWorkspaceLaunch(context.Background(), workspaceLaunchClaimCAS{
+		AccountID: sameAccount.AccountID, DesiredOperation: workspaceLaunchOperationRow(sameAccount), AcceptanceBCapacitySlot: true,
+	}); !errors.Is(err, errWorkspaceLaunchInProgress) {
+		t.Fatalf("same-account Acceptance claim error=%v, want %v", err, errWorkspaceLaunchInProgress)
+	}
+
+	claims := make([]workspaceLaunchClaimCAS, 0, 2)
+	for _, identity := range []struct{ accountID, userID, key string }{
+		{accountID: "acct-alpha", userID: "usr-alpha", key: "acceptance-alpha"},
+		{accountID: "acct-gamma", userID: "usr-gamma", key: "acceptance-gamma"},
+	} {
+		operation := newWorkspaceLaunchOperation(identity.accountID, identity.userID, "Acceptance", "basic", 10, false, pricingCatalogVersion, 52_580_000, identity.key)
+		operation.Status, operation.Phase = "key_pending", "key_pending"
+		operation.AcceptanceBCapacitySlot = true
+		claims = append(claims, workspaceLaunchClaimCAS{
+			AccountID: identity.accountID, DesiredOperation: workspaceLaunchOperationRow(operation), AcceptanceBCapacitySlot: true,
+		})
+	}
+	start, results := make(chan struct{}), make(chan error, len(claims))
+	for _, claim := range claims {
+		go func(claim workspaceLaunchClaimCAS) {
+			<-start
+			results <- store.ClaimWorkspaceLaunch(context.Background(), claim)
+		}(claim)
+	}
+	close(start)
+	won, capacity := 0, 0
+	for range claims {
+		if err := <-results; err == nil {
+			won++
+		} else if errors.Is(err, errWorkspaceLaunchCapacityReached) {
+			capacity++
+		} else {
+			t.Fatalf("unexpected Acceptance claim error: %v", err)
+		}
+	}
+	if won != 1 || capacity != 1 {
+		t.Fatalf("Acceptance capacity won=%d capacity=%d", won, capacity)
+	}
+
+	ordinaryAfterAcceptance := newWorkspaceLaunchOperation("acct-delta", "usr-delta", "Ordinary", "basic", 10, false, pricingCatalogVersion, 52_580_000, "ordinary-after-acceptance")
+	ordinaryAfterAcceptance.Status, ordinaryAfterAcceptance.Phase = "key_pending", "key_pending"
+	if err := store.ClaimWorkspaceLaunch(context.Background(), workspaceLaunchClaimCAS{
+		AccountID: ordinaryAfterAcceptance.AccountID, DesiredOperation: workspaceLaunchOperationRow(ordinaryAfterAcceptance),
+	}); !errors.Is(err, errWorkspaceLaunchCapacityReached) {
+		t.Fatalf("ordinary claim after Acceptance error=%v, want %v", err, errWorkspaceLaunchCapacityReached)
+	}
+	rows, err := store.ListRuntimeOperations(context.Background())
+	if err != nil || len(rows) != 2 {
+		t.Fatalf("Acceptance capacity rows=%#v err=%v", rows, err)
+	}
+	for _, row := range rows {
+		operation, decodeErr := decodeWorkspaceLaunchOperation(row)
+		if decodeErr != nil || !operation.AcceptanceBCapacitySlot {
+			continue
+		}
+		operation.LeaseToken, operation.LeaseExpiresAt = "acceptance-worker", "2099-08-05T00:00:00Z"
+		if err := store.ClaimWorkspaceLaunch(context.Background(), workspaceLaunchClaimCAS{
+			AccountID: operation.AccountID, ExpectedOperationResult: operation.PersistedResult, DesiredOperation: workspaceLaunchOperationRow(operation),
+		}); err != nil {
+			t.Fatalf("Acceptance continuation CAS error=%v", err)
+		}
+		persisted, found, readErr := store.GetRuntimeOperation(context.Background(), operation.ID)
+		if readErr != nil || !found {
+			t.Fatalf("Acceptance continuation readback found=%v err=%v", found, readErr)
+		}
+		operation, decodeErr = decodeWorkspaceLaunchOperation(persisted)
+		if decodeErr != nil {
+			t.Fatal(decodeErr)
+		}
+		operation.Status = "failed"
+		if err := store.ClaimWorkspaceLaunch(context.Background(), workspaceLaunchClaimCAS{
+			AccountID: operation.AccountID, ExpectedOperationResult: operation.PersistedResult, DesiredOperation: workspaceLaunchOperationRow(operation),
+		}); err != nil {
+			t.Fatalf("Acceptance terminal CAS error=%v", err)
+		}
+		secondAcceptance := newWorkspaceLaunchOperation("acct-delta", "usr-delta", "Second Acceptance", "basic", 10, false, pricingCatalogVersion, 52_580_000, "second-acceptance-after-terminal")
+		secondAcceptance.Status, secondAcceptance.Phase, secondAcceptance.AcceptanceBCapacitySlot = "key_pending", "key_pending", true
+		if err := store.ClaimWorkspaceLaunch(context.Background(), workspaceLaunchClaimCAS{
+			AccountID: secondAcceptance.AccountID, DesiredOperation: workspaceLaunchOperationRow(secondAcceptance), AcceptanceBCapacitySlot: true,
+		}); !errors.Is(err, errWorkspaceLaunchCapacityReached) {
+			t.Fatalf("second Acceptance after terminal error=%v, want %v", err, errWorkspaceLaunchCapacityReached)
+		}
+		return
+	}
+	t.Fatal("Acceptance capacity row not found")
+}
+
+func seedTenantMemberWithSub2APIUserID(t *testing.T, store controlPlaneTableStore, accountID, organizationID, userID, email string, sub2APIUserID int64) {
+	t.Helper()
+	account := map[string]any{"id": accountID, "ownerUserId": userID, "sub2apiUserId": sub2APIUserID, "status": "active"}
+	user := map[string]any{"id": userID, "email": email, "accountId": accountID, "role": "owner", "status": "active"}
+	organization := map[string]any{"id": organizationID, "name": "Organization " + accountID, "billingAccountId": accountID, "status": "active"}
+	membership := map[string]any{"id": "mem-" + userID, "organizationId": organizationID, "userId": userID, "accountId": accountID, "role": "owner", "status": "active"}
+	mustStore(t, store.CreateProvisionedAccount(context.Background(), account, user, organization, membership))
 }
 
 func TestControlledBasicPilotHealthIsRedactedAndRequiresDisableOnFirstFailure(t *testing.T) {
