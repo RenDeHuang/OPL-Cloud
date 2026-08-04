@@ -182,3 +182,35 @@ test("reconcile validator rejects a nonzero mutation count or sensitive field", 
   assert.throws(() => validateProductionBasicAcceptanceBReconcileReadback({ ...base, writeCounts: { ...ZERO_COUNTS, receiptCreates: 1 } }, { mergedSha: MERGED_SHA }), /acceptance_b_account_reconcile_readback_invalid/);
   assert.throws(() => validateProductionBasicAcceptanceBReconcileReadback({ ...base, customerEmail: EMAIL }, { mergedSha: MERGED_SHA }), /acceptance_b_account_reconcile_readback_invalid/);
 });
+
+test("deployment contract freezes reconcile mode as GET-only with independent B secrets", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const contract = JSON.parse(await readFile(new URL("../../packages/contracts/opl-cloud-deployment-contract.json", import.meta.url), "utf8"));
+  assert.deepEqual(contract.productionBasicAcceptanceBAccountReconcile, {
+    tool: "tools/production-basic-acceptance-b-reconcile.ts",
+    operationMode: PRODUCTION_BASIC_ACCEPTANCE_B_RECONCILE_MODE,
+    execution: "github_actions_production_environment_authoritative_readback_workflow",
+    productionNetwork: "github_actions_production_environment_authorized_runner_only",
+    workflowIntegration: {
+      file: ".github/workflows/production-basic-customer-operation.yml",
+      job: "acceptance-b-account-reconcile",
+      runner: ["self-hosted", "tencent-cloud", "opl-cloud", "tke-vpc"],
+      customerCredentials: ["OPL_PRODUCTION_BASIC_ACCEPTANCE_B_CUSTOMER_EMAIL", "OPL_PRODUCTION_BASIC_ACCEPTANCE_B_CUSTOMER_PASSWORD"],
+      workflowInputCustomerIdentity: "forbidden",
+      businessMutation: "GET_only_no_account_provision_wallet_recharge_launch_or_provider_write"
+    },
+    operationContract: {
+      schemaVersion: 1,
+      operationMode: PRODUCTION_BASIC_ACCEPTANCE_B_RECONCILE_MODE,
+      readOnly: true,
+      mutationCounts: { ...ZERO_COUNTS }
+    },
+    readback: {
+      accountIdentity: "authoritative_console_graph_and_full_page_exact_sub2api_email_match",
+      baseline: "zero_workspace_launch_workspace_key_and_workspace_receipt",
+      unknownPost: "authority_unknown_is_preserved_without_retry_or_mutation",
+      redactedArtifactFields: ["customerIdentitySha256", "accountProvisionIdentitySha256", "walletAdjustmentIdentitySha256", "status", "localGraph", "remoteIdentity", "customerLogin", "wallet", "walletUsdMicros", "walletAdjustment", "workspaceCount", "launchCount", "keyCount", "receiptCount", "writeCounts", "runnerDirectMutationCounts"],
+      forbiddenArtifactFields: ["email", "password", "accountId", "consoleUserId", "sub2apiUserId", "operationId", "workspaceId", "secret", "token", "cookie", "csrf"]
+    }
+  });
+});
