@@ -16,6 +16,7 @@ import {
   RECOVERY_ACCEPTANCE_ORIGINAL_LAUNCH_FORBIDDEN_WRITES,
   RECOVERY_ACCEPTANCE_ORIGINAL_LAUNCH_MODE,
   assertManualReviewResourceAbsence,
+  runRecoveryAcceptanceOriginalLaunch,
   runRecoveryAcceptanceFundingPrepare,
   runRecoveryAcceptanceExtraFundingPrepare,
   parseRecoveryAcceptanceFundingApproval,
@@ -91,6 +92,76 @@ function sourcePayload(source: string, data: Record<string, unknown>) {
   return { source, available: true, status: "available", fetchedAt: "2026-08-04T00:00:00.000Z", data };
 }
 
+function response(payload: unknown, status = 200, headers: Record<string, string> = {}) {
+  return new Response(JSON.stringify(payload), { status, headers: { "cache-control": "private, no-store", ...headers } });
+}
+
+function originalLaunchFixture(computeOverrides: Record<string, unknown> = {}) {
+  const approval = launchApproval();
+  const launch = {
+    ...approval.launch,
+    accountId,
+    computeAllocationId: "compute-recovery-acceptance",
+    status: "manual_review",
+    phase: "storage_fulfilling",
+    errorCode: "recovery_acceptance_canary_manual_review",
+    storageId: null,
+    runtimeServiceName: null,
+    receiptId: null,
+    continuationAttemptBudgets: Object.fromEntries(["storage", "attachment", "secret", "runtime", "activation", "receipt"].map((stage) => [stage, { max: 1, attempted: 0, confirmed: 0, unknown: 0 }]))
+  };
+  const computeOperation = {
+    workspaceId: approval.launch.workspaceId,
+    action: "create_compute_allocation",
+    status: "succeeded",
+    resourceId: launch.computeAllocationId,
+    redactedProviderPayload: {
+      normalLaunchMutationBudget: Object.fromEntries(["compute_create", "compute_claim_cvm", "compute_claim_node"].map((stage) => [stage, { max: 1, attempted: 1, confirmed: 1, unknown: 0 }]))
+    }
+  };
+  const compute = {
+    id: launch.computeAllocationId,
+    accountId,
+    workspaceId: approval.launch.workspaceId,
+    packageId: "basic",
+    status: "running",
+    cvmStatus: "RUNNING",
+    nodePoolId: approval.expected.nodePoolId,
+    instanceType: approval.expected.resolvedInstanceType,
+    cvmInstanceId: "ins-recovery-acceptance",
+    ...computeOverrides
+  };
+  const ownership = { resourceId: launch.computeAllocationId, accountId, workspaceId: approval.launch.workspaceId, status: "active", nodeName: "node-recovery-acceptance" };
+  let launchReads = 0;
+  let historyReads = 0;
+  const calls: Array<{ method: string; path: string }> = [];
+  const fetchImpl = async (input: string | URL, init: RequestInit = {}) => {
+    const url = new URL(String(input));
+    const method = String(init.method || "GET").toUpperCase();
+    calls.push({ method, path: url.pathname });
+    if (url.pathname === "/api/auth/login" && method === "POST") {
+      const body = JSON.parse(String(init.body || "{}")) as Record<string, unknown>;
+      const admin = body.email === "admin@example.com";
+      return response({ user: admin ? { accountId: "acct-admin", role: "admin" } : { accountId, role: "owner" } }, 200, { "set-cookie": `${admin ? "admin" : "customer"}=fixture`, "x-opl-csrf-token": "csrf-fixture" });
+    }
+    if (url.pathname === "/api/auth/me") return response(sourcePayload("sub2api", { accountId, email, role: "owner", status: "active", sub2apiUserId: "41" }));
+    if (url.pathname === "/api/pricing/preview" && method === "POST") return response({ packageId: "basic", sizeGb: 10, currency: "USD", totalChargeUsdMicros: 52_580_000 });
+    if (url.pathname === "/api/gateway/wallet") return response(sourcePayload("sub2api", { userId: "41", currency: "USD", usdMicros: "100000000", status: "active" }));
+    if (url.pathname === "/api/gateway/balance-history") return response(sourcePayload("sub2api", { items: historyReads++ === 0 ? [] : [{ type: "balance", status: "used", valueUsdMicros: "-52580000", createdAt: "2099-08-04T00:00:00.000Z" }] }));
+    if (url.pathname === `/api/workspace-launches/${approval.launch.operationId}`) {
+      if (launchReads++ === 0) return response({ error: "not_found" }, 404);
+      return response(launch);
+    }
+    if (url.pathname === "/api/workspace-launches" && method === "POST") return response(launch, 202);
+    if (url.pathname === "/fabric/operations") return response([computeOperation]);
+    if (url.pathname === `/fabric/compute-allocations/${launch.computeAllocationId}`) return response(compute);
+    if (url.pathname === `/fabric/machine-ownerships/${launch.computeAllocationId}`) return response(ownership);
+    if (url.pathname === `/api/operator/workspaces/${approval.launch.workspaceId}`) return response(sourcePayload("control-plane+fabric+ledger", { resources: [{ resourceType: sourcePayload("fabric", "compute") }], receipt: { status: "not_available" } }));
+    throw new Error(`unexpected_request:${method}:${url.pathname}`);
+  };
+  return { approval, calls, fetchImpl };
+}
+
 function fundingFixture({ initialStatus = "succeeded", recoverStatus = "succeeded", recoverThrows = false } = {}) {
   const approval = fundingApproval();
   const operation = {
@@ -143,6 +214,49 @@ test("original launch approval rejects release or identity drift and keeps exact
   assert.ok(approval.forbiddenWrites.includes("submit_second_workspace_launch"));
   assert.ok(approval.forbiddenWrites.includes("create_one_cbs"));
 });
+
+test("original launch validates admin configuration before any request", async () => {
+  const approval = launchApproval();
+  await assert.rejects(() => runRecoveryAcceptanceOriginalLaunch({
+    origin: "https://cloud.medopl.cn",
+    customerEmail: email,
+    customerPassword: "customer-secret",
+    adminEmail: "",
+    adminPassword: "",
+    approvalJson: JSON.stringify(approval),
+    approvalId: approval.approvalId as string,
+    mergedSha: mergedMainSha,
+    fabricOrigin: "http://127.0.0.1:3000",
+    internalServiceToken: "fixture-token",
+    fetchImpl: async () => { throw new Error("unexpected_request"); },
+    now: new Date("2026-08-04T00:00:00Z")
+  }), /recovery_acceptance_config_invalid/);
+});
+
+for (const [label, computeOverrides] of [
+  ["wrong NodePool", { nodePoolId: "np-other-acceptance" }],
+  ["wrong instance type", { instanceType: "SA5.LARGE8" }]
+] as const) {
+  test(`original launch rejects ${label} at run-level identity readback`, async () => {
+    const fixture = originalLaunchFixture(computeOverrides);
+    await assert.rejects(() => runRecoveryAcceptanceOriginalLaunch({
+      origin: "https://cloud.medopl.cn",
+      customerEmail: email,
+      customerPassword: "customer-secret",
+      adminEmail: "admin@example.com",
+      adminPassword: "admin-secret",
+      approvalJson: JSON.stringify(fixture.approval),
+      approvalId: fixture.approval.approvalId as string,
+      mergedSha: mergedMainSha,
+      fabricOrigin: "http://127.0.0.1:3000",
+      internalServiceToken: "fixture-token",
+      launchPollAttempts: 1,
+      launchPollDelayMs: 0,
+      fetchImpl: fixture.fetchImpl,
+      now: new Date("2026-08-04T00:00:00Z")
+    }), /recovery_acceptance_compute_identity_invalid/);
+  });
+}
 
 test("funding approval binds the existing Acceptance B deterministic wallet operation", () => {
   const approval = fundingApproval();

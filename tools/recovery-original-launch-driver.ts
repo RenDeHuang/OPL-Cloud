@@ -337,7 +337,7 @@ export function assertManualReviewResourceAbsence(detail: Record<string, any>) {
 }
 
 export async function runRecoveryAcceptanceOriginalLaunch(options: RecoveryAcceptanceOriginalLaunchOptions) {
-  const { origin, customerEmail, customerPassword, approvalJson, approvalId, mergedSha, fabricOrigin, internalServiceToken, fetchImpl = globalThis.fetch, launchPollAttempts = 180, launchPollDelayMs = 10_000, requestTimeoutMs = 30_000, now = new Date() } = options;
+  const { origin, customerEmail, customerPassword, adminEmail, adminPassword, approvalJson, approvalId, mergedSha, fabricOrigin, internalServiceToken, fetchImpl = globalThis.fetch, launchPollAttempts = 180, launchPollDelayMs = 10_000, requestTimeoutMs = 30_000, now = new Date() } = options;
   const approval = parseRecoveryAcceptanceOriginalLaunchApproval(approvalJson, { approvalId, mergedSha, now });
   if (String(customerEmail || "").trim().toLowerCase() !== approval.customer.email || !String(customerPassword || "") || !String(adminEmail || "") || !String(adminPassword || "") || !/^http:\/\/127\.0\.0\.1:\d+$/.test(String(fabricOrigin || "")) || !String(internalServiceToken || "")) throw new Error("recovery_acceptance_config_invalid");
   const normalizedOrigin = assertPublicHttpsUrl(origin, "public_console_origin_required", { hostname: "cloud.medopl.cn" }).origin;
