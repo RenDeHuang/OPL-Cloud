@@ -297,7 +297,7 @@ func acceptanceBBillingReceiptCount(ctx context.Context, service *controlplane.S
 	cursor := ""
 	count := 0
 	for page := 0; page < acceptanceBAccountReconcileMaxPages; page++ {
-		result, err := service.BillingReceipts(ctx, clients.ReceiptQuery{AccountID: accountID, Cursor: cursor, Limit: 100})
+		result, err := service.BillingReceipts(ctx, clients.ReceiptQuery{AccountID: accountID, TypePrefix: "billing.", Cursor: cursor, Limit: 100})
 		if err != nil {
 			return 0, err
 		}

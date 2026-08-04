@@ -93,3 +93,36 @@ func TestAcceptanceBReconcileRemoteIdentityUsesExactEmailAndFullPages(t *testing
 		t.Fatalf("remote absent state=%q user=%#v err=%v", state, user, err)
 	}
 }
+
+type acceptanceBReceiptListLedger struct {
+	fakeLedgerClient
+	query clients.ReceiptQuery
+}
+
+func (l *acceptanceBReceiptListLedger) ListReceipts(_ context.Context, query clients.ReceiptQuery) (clients.ReceiptPage, error) {
+	l.query = query
+	receipts := []clients.Receipt{
+		{ReceiptInput: clients.ReceiptInput{Type: "gateway.wallet_adjustment.v1"}},
+		{ReceiptInput: clients.ReceiptInput{Type: "billing.workspace_purchased.v1"}},
+	}
+	if query.TypePrefix != "" {
+		receipts = receipts[1:]
+	}
+	return clients.ReceiptPage{Receipts: receipts}, nil
+}
+
+func TestAcceptanceBBillingReceiptCountFiltersWalletAdjustmentReceipts(t *testing.T) {
+	ledger := &acceptanceBReceiptListLedger{}
+	service := controlplane.NewService(ledger, &fakeFabricClient{}, &acceptanceBReconcileSub2APIClient{})
+
+	count, err := acceptanceBBillingReceiptCount(context.Background(), service, "acct-reconcile")
+	if err != nil {
+		t.Fatalf("billing receipt count: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("billing receipt count=%d, want 1", count)
+	}
+	if ledger.query.TypePrefix != "billing." {
+		t.Fatalf("receipt query type prefix=%q, want billing.", ledger.query.TypePrefix)
+	}
+}
