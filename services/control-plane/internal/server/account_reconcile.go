@@ -1,0 +1,314 @@
+package server
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"net/http"
+	"strconv"
+	"strings"
+
+	"opl-cloud/services/control-plane/internal/clients"
+	"opl-cloud/services/control-plane/internal/controlplane"
+)
+
+const (
+	acceptanceBAccountReconcileRoute                = "/api/operator/account-reconciliation"
+	acceptanceBAccountReconcileHeader               = "X-OPL-Account-Reconcile-Email"
+	acceptanceBAccountReconcilePageSize             = 50
+	acceptanceBAccountReconcileMaxPages             = 1000
+	acceptanceBAccountReconcileRechargeMicros int64 = 60_000_000
+	acceptanceBAccountReconcileReason               = "production Basic Acceptance B account preparation"
+)
+
+var errAcceptanceBAccountReconcileUnknown = errors.New("acceptance_b_account_reconcile_unknown")
+
+// acceptanceBAccountReconcileData is deliberately a redacted DTO. It contains
+// no customer/account/user/resource identifiers and is safe to upload as an
+// operator evidence artifact.
+type acceptanceBAccountReconcileData struct {
+	SchemaVersion                  int    `json:"schemaVersion"`
+	OperationMode                  string `json:"operationMode"`
+	Status                         string `json:"status"`
+	CustomerIdentitySHA256         string `json:"customerIdentitySha256"`
+	AccountProvisionIdentitySHA256 string `json:"accountProvisionIdentitySha256"`
+	WalletAdjustmentIdentitySHA256 string `json:"walletAdjustmentIdentitySha256"`
+	LocalGraph                     string `json:"localGraph"`
+	RemoteIdentity                 string `json:"remoteIdentity"`
+	CustomerLogin                  string `json:"customerLogin"`
+	Wallet                         string `json:"wallet"`
+	WalletUSDMicros                string `json:"walletUsdMicros,omitempty"`
+	WalletAdjustment               string `json:"walletAdjustment"`
+	WorkspaceCount                 int    `json:"workspaceCount"`
+	LaunchCount                    int    `json:"launchCount"`
+	KeyCount                       int    `json:"keyCount"`
+	ReceiptCount                   int    `json:"receiptCount"`
+	ReadbackError                  string `json:"readbackError,omitempty"`
+}
+
+// registerAcceptanceBAccountReconcileRoute installs a GET-only route. The
+// email is accepted only in a request header so it never appears in a URL,
+// response body, or redacted artifact. This handler never invokes a mutation
+// client and does not persist a checkpoint.
+func registerAcceptanceBAccountReconcileRoute(mux *http.ServeMux, app *controlPlaneServer, service *controlplane.Service) {
+	mux.HandleFunc("GET "+acceptanceBAccountReconcileRoute, app.protected(true, func(w http.ResponseWriter, r *http.Request) {
+		email, err := canonicalEmail(r.Header.Get(acceptanceBAccountReconcileHeader))
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "acceptance_b_account_reconcile_email_invalid")
+			return
+		}
+		data, err := app.reconcileAcceptanceBAccount(r.Context(), service, email)
+		if err != nil {
+			if errors.Is(err, errAcceptanceBAccountReconcileUnknown) {
+				// The reconcile contract is a readback, not an availability probe. A
+				// failed authority read must remain an explicit unknown data state so
+				// the runner can preserve the digest and refuse any mutation.
+				writeSourceEnvelope(w, http.StatusOK, "control-plane+sub2api+ledger", "available", data)
+				return
+			}
+			writeSourceEnvelope(w, http.StatusOK, "control-plane+sub2api+ledger", "available", data)
+			return
+		}
+		writeSourceEnvelope(w, http.StatusOK, "control-plane+sub2api+ledger", "available", data)
+	}))
+}
+
+func acceptanceBAccountDigest(email string) string {
+	return acceptanceBDigestParts(email)
+}
+
+func acceptanceBAccountIdentityDigest(email string) string {
+	return acceptanceBDigestParts("acceptance-b-account-provision-v1:" + acceptanceBAccountDigest(email))
+}
+
+func acceptanceBWalletIdentityDigest(accountID, email string) string {
+	return acceptanceBDigestParts(accountID, acceptanceBWalletOperationID(accountID, email))
+}
+
+func acceptanceBDigestParts(parts ...string) string {
+	hash := sha256.New()
+	for _, part := range parts {
+		_, _ = hash.Write([]byte(part))
+		_, _ = hash.Write([]byte{0})
+	}
+	return hex.EncodeToString(hash.Sum(nil))
+}
+
+func acceptanceBAccountOperationID(email string) string {
+	key := "acceptance-b-account-provision-v1:" + acceptanceBAccountDigest(email)
+	return "account-provision-" + stableID(key, email)[:18]
+}
+
+func acceptanceBWalletOperationID(accountID, email string) string {
+	key := "acceptance-b-wallet-recharge-v1:" + accountID + ":" + acceptanceBAccountDigest(email)
+	return "wallet-adjustment-" + stableID(accountID, key)[:18]
+}
+
+func (app *controlPlaneServer) reconcileAcceptanceBAccount(ctx context.Context, service *controlplane.Service, email string) (acceptanceBAccountReconcileData, error) {
+	accountID := "acct-" + stableID("account", email)[:18]
+	userID := "usr-" + stableID("customer", email)[:18]
+	data := acceptanceBAccountReconcileData{
+		SchemaVersion: 1, OperationMode: "acceptance_b_account_reconcile", Status: "unknown",
+		CustomerIdentitySHA256:         acceptanceBAccountDigest(email),
+		AccountProvisionIdentitySHA256: acceptanceBAccountIdentityDigest(email),
+		WalletAdjustmentIdentitySHA256: acceptanceBWalletIdentityDigest(accountID, email),
+		LocalGraph:                     "unknown", RemoteIdentity: "unknown", CustomerLogin: "not_attempted",
+		Wallet: "unknown", WalletAdjustment: "unknown",
+	}
+
+	localState, localAccount, localUser, err := app.acceptanceBLocalGraph(ctx, accountID, userID, email)
+	if err != nil {
+		data.ReadbackError = "local_authority_unavailable"
+		return data, errAcceptanceBAccountReconcileUnknown
+	}
+	data.LocalGraph = localState
+
+	remoteState, remote, err := acceptanceBRemoteIdentity(ctx, service, email)
+	if err != nil {
+		data.ReadbackError = "sub2api_authority_unavailable"
+		return data, errAcceptanceBAccountReconcileUnknown
+	}
+	data.RemoteIdentity = remoteState
+
+	if localState == "absent" && remoteState == "absent" {
+		data.Status = "safe_to_retry_absent"
+		return data, nil
+	}
+	if localState != "complete" || remoteState != "active" || localAccount == nil || localUser == nil || remote == nil ||
+		int64(numberField(localAccount, "sub2apiUserId", 0)) != remote.ID || normalizeEmail(stringValue(localUser["email"])) != remote.Email {
+		data.Status = "partial"
+		return data, nil
+	}
+	data.CustomerIdentitySHA256 = acceptanceBDigestParts(accountID, userID, strconv.FormatInt(remote.ID, 10), email, "active")
+	data.CustomerLogin = "active_identity_readback_only"
+
+	wallet, err := service.Sub2APIBalance(ctx, remote.ID)
+	if err != nil || wallet.UserID != remote.ID || wallet.Status != "active" || wallet.USDMicros < 0 {
+		data.ReadbackError = "wallet_authority_unavailable"
+		return data, errAcceptanceBAccountReconcileUnknown
+	}
+	data.Wallet = "available"
+	data.WalletUSDMicros = strconv.FormatInt(wallet.USDMicros, 10)
+
+	walletOperationID := acceptanceBWalletOperationID(accountID, email)
+	operation, found, err := app.walletAdjustment(ctx, walletOperationID, "")
+	if err != nil {
+		data.ReadbackError = "wallet_adjustment_authority_invalid"
+		return data, errAcceptanceBAccountReconcileUnknown
+	}
+	if !found {
+		data.WalletAdjustment = "absent"
+		data.Status = "manual_review"
+		return data, nil
+	}
+	if operation.AccountID != accountID || operation.Kind != "recharge" || operation.AmountUSDMicros != acceptanceBAccountReconcileRechargeMicros ||
+		operation.Reason != acceptanceBAccountReconcileReason || operation.Status != "succeeded" || operation.Phase != "complete" ||
+		!operation.BeforeBalanceKnown || !operation.AfterBalanceKnown || operation.AfterBalanceMicros-operation.BeforeBalanceMicros != acceptanceBAccountReconcileRechargeMicros {
+		data.WalletAdjustment = "manual_review"
+		data.Status = "manual_review"
+		return data, nil
+	}
+	data.WalletAdjustment = "succeeded"
+
+	workspaces, err := app.tables.ListWorkspaces(ctx, accountID)
+	if err != nil {
+		data.ReadbackError = "workspace_authority_unavailable"
+		return data, errAcceptanceBAccountReconcileUnknown
+	}
+	data.WorkspaceCount = len(workspaces)
+	currentLaunches, err := queryRuntimeOperations(ctx, app.tables, runtimeOperationQuery{AccountID: accountID, Action: workspaceLaunchAction})
+	if err != nil {
+		data.ReadbackError = "launch_authority_unavailable"
+		return data, errAcceptanceBAccountReconcileUnknown
+	}
+	legacyLaunches, err := queryRuntimeOperations(ctx, app.tables, runtimeOperationQuery{AccountID: accountID, Action: "workspace.launch"})
+	if err != nil {
+		data.ReadbackError = "launch_authority_unavailable"
+		return data, errAcceptanceBAccountReconcileUnknown
+	}
+	data.LaunchCount = len(currentLaunches) + len(legacyLaunches)
+	data.KeyCount, err = service.AdminUserKeyCount(ctx, remote.ID)
+	if err != nil {
+		data.ReadbackError = "key_authority_unavailable"
+		return data, errAcceptanceBAccountReconcileUnknown
+	}
+	data.ReceiptCount, err = acceptanceBBillingReceiptCount(ctx, service, accountID)
+	if err != nil {
+		data.ReadbackError = "ledger_authority_unavailable"
+		return data, errAcceptanceBAccountReconcileUnknown
+	}
+	if data.WorkspaceCount != 0 || data.LaunchCount != 0 || data.KeyCount != 0 || data.ReceiptCount != 0 {
+		data.Status = "partial"
+		return data, nil
+	}
+	data.Status = "prepared"
+	return data, nil
+}
+
+func (app *controlPlaneServer) acceptanceBLocalGraph(ctx context.Context, accountID, userID, email string) (string, map[string]any, map[string]any, error) {
+	account, accountFound, err := app.tables.GetAccount(ctx, accountID)
+	if err != nil {
+		return "unknown", nil, nil, err
+	}
+	user, userFound, err := app.tables.GetUserByEmail(ctx, email, true)
+	if err != nil {
+		return "unknown", nil, nil, err
+	}
+	if !accountFound && !userFound {
+		if _, found, err := app.tables.GetOrganizationByAccount(ctx, accountID); err != nil {
+			return "unknown", nil, nil, err
+		} else if found {
+			return "partial", account, user, nil
+		}
+		if _, found, err := app.tables.GetMembershipByAccount(ctx, accountID); err != nil {
+			return "unknown", nil, nil, err
+		} else if found {
+			return "partial", account, user, nil
+		}
+		return "absent", nil, nil, nil
+	}
+	if !accountFound || !userFound || stringValue(user["id"]) != userID || stringValue(user["accountId"]) != accountID ||
+		normalizeEmail(stringValue(user["email"])) != email || stringValue(user["role"]) != "owner" || stringValue(user["status"]) != "active" ||
+		stringValue(account["id"]) != accountID || stringValue(account["ownerUserId"]) != userID || stringValue(account["status"]) != "active" || int64(numberField(account, "sub2apiUserId", 0)) <= 0 {
+		return "partial", account, user, nil
+	}
+	if owner, found, err := app.tables.GetUser(ctx, userID); err != nil {
+		return "unknown", nil, nil, err
+	} else if !found || stringValue(owner["id"]) != userID {
+		return "partial", account, user, nil
+	}
+	organization, organizationFound, err := app.tables.GetOrganizationByAccount(ctx, accountID)
+	if err != nil {
+		return "unknown", nil, nil, err
+	}
+	membership, membershipFound, err := app.tables.GetMembershipByAccount(ctx, accountID)
+	if err != nil {
+		return "unknown", nil, nil, err
+	}
+	if !organizationFound || stringValue(organization["billingAccountId"]) != accountID || stringValue(organization["status"]) != "active" ||
+		!membershipFound || stringValue(membership["accountId"]) != accountID || stringValue(membership["organizationId"]) != stringValue(organization["id"]) ||
+		stringValue(membership["userId"]) != userID || stringValue(membership["role"]) != "owner" || stringValue(membership["status"]) != "active" {
+		return "partial", account, user, nil
+	}
+	return "complete", account, user, nil
+}
+
+func acceptanceBRemoteIdentity(ctx context.Context, service *controlplane.Service, email string) (string, *clients.Sub2APIUser, error) {
+	var matches []clients.Sub2APIUser
+	var total int64 = -1
+	var pages int
+	for page := 1; ; page++ {
+		if page > acceptanceBAccountReconcileMaxPages {
+			return "unknown", nil, errAcceptanceBAccountReconcileUnknown
+		}
+		result, err := service.Sub2APIAdminUsers(ctx, clients.Sub2APIUserPageQuery{Page: page, PageSize: acceptanceBAccountReconcilePageSize, Search: email, SortBy: "id", SortOrder: "asc"})
+		if err != nil {
+			return "unknown", nil, err
+		}
+		if page == 1 {
+			total = result.Total
+			pages = result.Pages
+		} else if result.Total != total || result.Pages != pages {
+			return "unknown", nil, errAcceptanceBAccountReconcileUnknown
+		}
+		for _, item := range result.Items {
+			if normalizeEmail(item.Email) == email {
+				matches = append(matches, item)
+			}
+		}
+		if page >= pages {
+			break
+		}
+	}
+	if len(matches) == 0 {
+		return "absent", nil, nil
+	}
+	if len(matches) != 1 {
+		return "ambiguous", nil, nil
+	}
+	if matches[0].Status != "active" {
+		return "disabled", &matches[0], nil
+	}
+	return "active", &matches[0], nil
+}
+
+func acceptanceBBillingReceiptCount(ctx context.Context, service *controlplane.Service, accountID string) (int, error) {
+	cursor := ""
+	count := 0
+	for page := 0; page < acceptanceBAccountReconcileMaxPages; page++ {
+		result, err := service.BillingReceipts(ctx, clients.ReceiptQuery{AccountID: accountID, Cursor: cursor, Limit: 100})
+		if err != nil {
+			return 0, err
+		}
+		count += len(result.Receipts)
+		if !result.HasMore {
+			return count, nil
+		}
+		if strings.TrimSpace(result.NextCursor) == "" || result.NextCursor == cursor {
+			return 0, errAcceptanceBAccountReconcileUnknown
+		}
+		cursor = result.NextCursor
+	}
+	return 0, errAcceptanceBAccountReconcileUnknown
+}

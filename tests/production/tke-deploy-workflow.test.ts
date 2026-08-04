@@ -590,6 +590,7 @@ test("production self-hosted jobs use one run-and-job isolated source checkout",
     [".github/workflows/production-basic-customer-operation.yml", [
       "prepare-basic-customer-operation",
       "workspace-identity-diagnose",
+      "acceptance-b-account-reconcile",
       "acceptance-b-account-prepare",
       "acceptance-b-fresh-order",
       "controlled-pilot-closed-validate",
@@ -1359,6 +1360,7 @@ test("recovered Workspace E2E is a separate hosted mode with no resource mutatio
   assert.deepEqual(inputs.operation_mode.options, [
     "customer_operation",
     "workspace_identity_diagnose",
+    "acceptance_b_account_reconcile",
     "acceptance_b_account_prepare",
     "recovery_plan_diagnose",
     "acceptance_b_fresh_order",

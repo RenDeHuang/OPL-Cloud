@@ -118,6 +118,7 @@ func registerAdminRoutes(mux *http.ServeMux, app *controlPlaneServer, service *c
 		}
 		writeSourceEnvelope(w, http.StatusOK, "control-plane+sub2api", status, data)
 	}))
+	registerAcceptanceBAccountReconcileRoute(mux, app, service)
 	mux.HandleFunc("GET /api/operator/overview", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
 		data, err := app.operatorOverview(r.Context(), service)
 		if err != nil {
