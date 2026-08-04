@@ -560,6 +560,7 @@ test("Current contracts hard cut operator resources, wallet adjustments, and ann
     workspaces: "GET /api/operator/workspaces",
     workspaceDetail: "GET /api/operator/workspaces/{workspaceId}",
     reconciliation: "GET /api/operator/reconciliation",
+    accountReconciliation: "GET /api/operator/account-reconciliation",
     health: "GET /api/operator/health"
   });
   assert.deepEqual(management.operatorProjection.sub2apiReads, {
