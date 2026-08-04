@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 
 import {
@@ -10,6 +10,7 @@ import {
   walletFact
 } from "./production-verifier.ts";
 import { readBasicCanaryRuntimePodEvidence } from "./production-live-qa.ts";
+import { validateProductionBasicAcceptanceBReconcileReadback } from "./production-basic-acceptance-b-reconcile.ts";
 
 export const PRODUCTION_BASIC_ACCEPTANCE_B_CONFIRMATION = "RUN_ONE_INDEPENDENT_FRESH_BASIC_ORDER_FOR_ACCEPTANCE_B";
 
@@ -517,6 +518,27 @@ async function readAcceptanceBLaunch(requestOptions, customerAuth, operationId) 
   }
 }
 
+export async function readProductionBasicAcceptanceBLaunchUntilTerminal({
+  requestOptions,
+  customerAuth,
+  approval,
+  launchPollAttempts = 180,
+  launchPollDelayMs = 10_000
+}) {
+  let launch = null;
+  for (let attempt = 1; attempt <= launchPollAttempts; attempt += 1) {
+    if (attempt > 1 && launchPollDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, launchPollDelayMs));
+    launch = await readAcceptanceBLaunch(requestOptions, customerAuth, approval.launch.operationId);
+    if (!launch) throw new Error("production_basic_acceptance_b_launch_readback_unknown");
+    assertAcceptanceBLaunchIdentity(launch, approval);
+    if (["manual_review", "failed", "refunded"].includes(launch.status)) {
+      throw new Error("production_basic_acceptance_b_launch_failed");
+    }
+    if (launch.status === "succeeded" && launch.phase === "succeeded") return launch;
+  }
+  throw new Error("production_basic_acceptance_b_launch_timeout");
+}
+
 function deterministicLaunchRejection(error) {
   const match = String(error?.message || "").match(/^request_failed:POST:\/api\/workspace-launches:(4[0-9]{2}):[a-z0-9_]+$/);
   if (!match) return null;
@@ -889,10 +911,12 @@ export async function runProductionBasicAcceptanceB(options = {}) {
     requestTimeoutMs = 30_000,
     fetchImpl = globalThis.fetch,
     execFileImpl,
-    now = new Date()
+    now = new Date(),
+    readbackOnly = false,
+    baselineArtifact
   } = options;
   const approval = parseProductionBasicAcceptanceBApproval(approvalJson, { approvalId, now });
-  if (mergedSha !== approval.release.mergedMainSha || !String(customerPassword || "") ||
+  if ((!readbackOnly && mergedSha !== approval.release.mergedMainSha) || !/^[a-f0-9]{40}$/.test(String(mergedSha || "")) || !String(customerPassword || "") ||
     !String(internalServiceToken || "") || !String(kubeconfigPath || "").startsWith("/") ||
     !/^https:\/\/workspace\.medopl\.cn\/w\//.test(canonicalWorkspaceUrl(approval.launch.workspaceId))) {
     throw new Error("production_basic_acceptance_b_config_invalid");
@@ -928,41 +952,61 @@ export async function runProductionBasicAcceptanceB(options = {}) {
   }
   findUniqueProductionBasicAcceptanceBAccount(accountPages, approval.customer.accountId, approval.customer.email);
 
-  const workspacePage = sourceData(await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/workspaces?page=1&pageSize=20" }), "control-plane", true);
-  const launchesBefore = listPayload(await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/workspace-launches" }));
-  const keysBefore = sourceData(await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/gateway/keys?page=1&pageSize=50" }), "sub2api", true);
-  const receiptsBefore = sourceData(await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/billing/receipts?limit=50" }), "ledger", true);
-  const workspaceKeysBefore = (keysBefore?.items || []).filter((key) => key?.kind === "workspace");
-  const workspaceReceiptsBefore = (receiptsBefore?.receipts || []).filter((receipt) => receipt?.type === "billing.workspace_purchased.v1");
-  const baseline = {
-    workspaceCount: workspacePage?.total,
-    workspaceLaunchCount: launchesBefore.length,
-    workspaceKeyCount: workspaceKeysBefore.length,
-    workspaceReceiptCount: workspaceReceiptsBefore.length
-  };
-  if (Object.values(baseline).some((count) => count !== 0)) throw new Error("production_basic_acceptance_b_baseline_not_fresh");
+  let baseline;
+  let quote;
+  let totalChargeUsdMicros;
+  let launch;
+  if (readbackOnly) {
+    const prepared = validateProductionBasicAcceptanceBReconcileReadback(baselineArtifact, { mergedSha: approval.release.mergedMainSha });
+    if (prepared.status !== "prepared" || [prepared.workspaceCount, prepared.launchCount, prepared.keyCount, prepared.receiptCount].some((count) => count !== 0)) {
+      throw new Error("production_basic_acceptance_b_baseline_artifact_invalid");
+    }
+    baseline = {
+      workspaceCount: prepared.workspaceCount,
+      workspaceLaunchCount: prepared.launchCount,
+      workspaceKeyCount: prepared.keyCount,
+      workspaceReceiptCount: prepared.receiptCount
+    };
+    launch = await readProductionBasicAcceptanceBLaunchUntilTerminal({ requestOptions, customerAuth, approval, launchPollAttempts, launchPollDelayMs });
+    totalChargeUsdMicros = positiveMicros(launch.totalChargeUsdMicros, "quote");
+    quote = { packageId: launch.packageId, sizeGb: launch.sizeGb, priceVersion: launch.priceVersion, currency: launch.currency, totalChargeUsdMicros };
+  } else {
+    const workspacePage = sourceData(await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/workspaces?page=1&pageSize=20" }), "control-plane", true);
+    const launchesBefore = listPayload(await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/workspace-launches" }));
+    const keysBefore = sourceData(await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/gateway/keys?page=1&pageSize=50" }), "sub2api", true);
+    const receiptsBefore = sourceData(await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/billing/receipts?limit=50" }), "ledger", true);
+    const workspaceKeysBefore = (keysBefore?.items || []).filter((key) => key?.kind === "workspace");
+    const workspaceReceiptsBefore = (receiptsBefore?.receipts || []).filter((receipt) => receipt?.type === "billing.workspace_purchased.v1");
+    baseline = {
+      workspaceCount: workspacePage?.total,
+      workspaceLaunchCount: launchesBefore.length,
+      workspaceKeyCount: workspaceKeysBefore.length,
+      workspaceReceiptCount: workspaceReceiptsBefore.length
+    };
+    if (Object.values(baseline).some((count) => count !== 0)) throw new Error("production_basic_acceptance_b_baseline_not_fresh");
 
-  const quoteRaw = (await requestJson({
-    ...requestOptions,
-    auth: customerAuth,
-    path: "/api/pricing/preview",
-    method: "POST",
-    body: { resourceType: "workspace", packageId: "basic", sizeGb: 10 }
-  })).payload;
-  if (quoteRaw?.resourceType !== "workspace" || quoteRaw?.packageId !== "basic" || quoteRaw?.currency !== "USD" ||
-    quoteRaw?.storage?.priceSnapshot?.sizeGb !== 10 || !String(quoteRaw?.priceVersion || "")) {
-    throw new Error("production_basic_acceptance_b_quote_invalid");
-  }
-  const totalChargeUsdMicros = positiveMicros(quoteRaw.totalChargeUsdMicros, "quote");
-  const quote = { packageId: "basic", sizeGb: 10, priceVersion: quoteRaw.priceVersion, currency: "USD", totalChargeUsdMicros };
-  const wallet = walletFact(sourceEnvelope(await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/gateway/wallet" }), "sub2api"), identity.sub2apiUserId);
-  if (BigInt(wallet.usdMicros) <= BigInt(totalChargeUsdMicros)) throw new Error("production_basic_acceptance_b_wallet_insufficient");
+    const quoteRaw = (await requestJson({
+      ...requestOptions,
+      auth: customerAuth,
+      path: "/api/pricing/preview",
+      method: "POST",
+      body: { resourceType: "workspace", packageId: "basic", sizeGb: 10 }
+    })).payload;
+    if (quoteRaw?.resourceType !== "workspace" || quoteRaw?.packageId !== "basic" || quoteRaw?.currency !== "USD" ||
+      quoteRaw?.storage?.priceSnapshot?.sizeGb !== 10 || !String(quoteRaw?.priceVersion || "")) {
+      throw new Error("production_basic_acceptance_b_quote_invalid");
+    }
+    totalChargeUsdMicros = positiveMicros(quoteRaw.totalChargeUsdMicros, "quote");
+    quote = { packageId: "basic", sizeGb: 10, priceVersion: quoteRaw.priceVersion, currency: "USD", totalChargeUsdMicros };
+    const wallet = walletFact(sourceEnvelope(await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/gateway/wallet" }), "sub2api"), identity.sub2apiUserId);
+    if (BigInt(wallet.usdMicros) <= BigInt(totalChargeUsdMicros)) throw new Error("production_basic_acceptance_b_wallet_insufficient");
 
-  let launch = await submitProductionBasicAcceptanceBLaunch({ requestOptions, customerAuth, approval, internalServiceToken });
-  for (let attempt = 1; attempt <= launchPollAttempts && (launch.status !== "succeeded" || launch.phase !== "succeeded"); attempt += 1) {
-    if (attempt > 1 && launchPollDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, launchPollDelayMs));
-    launch = (await requestJson({ ...requestOptions, auth: customerAuth, path: `/api/workspace-launches/${encodeURIComponent(approval.launch.operationId)}` })).payload;
-    if (launch?.status === "manual_review" || launch?.status === "failed" || launch?.status === "refunded") throw new Error("production_basic_acceptance_b_launch_failed");
+    launch = await submitProductionBasicAcceptanceBLaunch({ requestOptions, customerAuth, approval, internalServiceToken });
+    for (let attempt = 1; attempt <= launchPollAttempts && (launch.status !== "succeeded" || launch.phase !== "succeeded"); attempt += 1) {
+      if (attempt > 1 && launchPollDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, launchPollDelayMs));
+      launch = (await requestJson({ ...requestOptions, auth: customerAuth, path: `/api/workspace-launches/${encodeURIComponent(approval.launch.operationId)}` })).payload;
+      if (launch?.status === "manual_review" || launch?.status === "failed" || launch?.status === "refunded") throw new Error("production_basic_acceptance_b_launch_failed");
+    }
   }
   if (launch.status !== "succeeded" || launch.phase !== "succeeded" || launch.accountId !== approval.customer.accountId || launch.workspaceId !== approval.launch.workspaceId) {
     throw new Error("production_basic_acceptance_b_launch_timeout");
@@ -1130,8 +1174,13 @@ export async function runProductionBasicAcceptanceBCli({
       return 1;
     }
   }
-  if (!argv.includes("--run")) return 2;
+  const readbackOnly = argv.includes("--readback");
+  if (!argv.includes("--run") && !readbackOnly) return 2;
   try {
+    const baselineArtifactPath = String(env.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_BASELINE_ARTIFACT_PATH || "");
+    const baselineArtifact = readbackOnly && baselineArtifactPath
+      ? JSON.parse(await readFile(baselineArtifactPath, "utf8"))
+      : undefined;
     const result = await runProductionBasicAcceptanceB({
       origin: env.OPL_CONSOLE_ORIGIN,
       fabricOrigin: env.OPL_FABRIC_INTERNAL_ORIGIN,
@@ -1149,7 +1198,9 @@ export async function runProductionBasicAcceptanceBCli({
       requestTimeoutMs: Number(env.OPL_VERIFY_REQUEST_TIMEOUT_MS || 30_000),
       fetchImpl,
       execFileImpl,
-      now
+      now,
+      readbackOnly,
+      baselineArtifact
     });
     const artifactPath = String(env.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_ARTIFACT_PATH || "");
     if (artifactPath) await writeFile(artifactPath, `${JSON.stringify(result, null, 2)}\n`, { mode: 0o600 });

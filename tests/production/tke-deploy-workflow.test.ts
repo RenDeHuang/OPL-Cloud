@@ -1051,6 +1051,7 @@ test("Acceptance B fresh order is a separately approved exact-count production c
   assert.match(String(job.if), /github\.ref == 'refs\/heads\/main'/);
   assert.match(String(job.if), /github\.sha == inputs\.merged_sha/);
   assert.match(String(job.if), /inputs\.operation_mode == 'acceptance_b_fresh_order'/);
+  assert.match(String(job.if), /inputs\.operation_mode == 'acceptance_b_fresh_readback'/);
   assert.match(String(job.if), /inputs\.confirm_workspace_purchase/);
   assert.match(String(job.if), /!inputs\.confirm_single_model_request/);
   assert.match(String(job.if), /!inputs\.confirm_account_provision/);
@@ -1437,6 +1438,7 @@ test("recovered Workspace E2E is a separate hosted mode with no resource mutatio
     "acceptance_b_account_prepare",
     "recovery_plan_diagnose",
     "acceptance_b_fresh_order",
+    "acceptance_b_fresh_readback",
     "compute_claim_validate",
     "fabric_ledger_readback",
     "recovery_plan_execute",

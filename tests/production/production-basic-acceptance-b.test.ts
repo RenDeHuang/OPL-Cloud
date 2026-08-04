@@ -16,6 +16,7 @@ import {
   prepareProductionBasicAcceptanceBAccount,
   productionBasicAcceptanceBStageBudgets,
   productionBasicAcceptanceBApprovalDigest,
+  readProductionBasicAcceptanceBLaunchUntilTerminal,
   submitProductionBasicAcceptanceBLaunch,
   validateProductionBasicAcceptanceBPrepareReadback,
   validateProductionBasicAcceptanceBReadback,
@@ -544,6 +545,47 @@ test("Acceptance B launch continues an existing deterministic operation without 
   assert.deepEqual(calls, [{ method: "GET", path: `/api/workspace-launches/${approval.launch.operationId}` }]);
 });
 
+test("Acceptance B timeout continuation polls the exact existing Launch with GET only", async () => {
+  const approval = parseProductionBasicAcceptanceBApproval(approvalFixture(), {
+    approvalId: APPROVAL_ID,
+    now: new Date("2026-08-02T00:00:00Z")
+  });
+  const calls = [];
+  const states = [
+    { status: "queued", phase: "storage_fulfilling" },
+    { status: "succeeded", phase: "succeeded" }
+  ];
+  const fetchImpl = async (input, init = {}) => {
+    const url = new URL(String(input));
+    const method = String(init.method || "GET").toUpperCase();
+    calls.push({ method, path: url.pathname });
+    if (method !== "GET" || url.pathname !== `/api/workspace-launches/${approval.launch.operationId}`) {
+      throw new Error(`unexpected_request:${method}:${url.pathname}`);
+    }
+    const state = states[Math.min(calls.length - 1, states.length - 1)];
+    return response({
+      operationId: approval.launch.operationId,
+      workspaceId: approval.launch.workspaceId,
+      accountId: approval.customer.accountId,
+      ...state
+    });
+  };
+
+  const launch = await readProductionBasicAcceptanceBLaunchUntilTerminal({
+    requestOptions: { fetchImpl, origin: "https://cloud.medopl.cn", timeoutMs: 1_000 },
+    customerAuth: { cookie: "customer=test", csrfToken: "csrf-test" },
+    approval,
+    launchPollAttempts: 2,
+    launchPollDelayMs: 0
+  });
+  assert.equal(launch.status, "succeeded");
+  assert.equal(launch.phase, "succeeded");
+  assert.deepEqual(calls, [
+    { method: "GET", path: `/api/workspace-launches/${approval.launch.operationId}` },
+    { method: "GET", path: `/api/workspace-launches/${approval.launch.operationId}` }
+  ]);
+});
+
 test("Acceptance B launch stops after one POST when deterministic readback is absent", async () => {
   const approval = parseProductionBasicAcceptanceBApproval(approvalFixture(), {
     approvalId: APPROVAL_ID,
@@ -699,6 +741,24 @@ test("deployment machine contract registers the local-only Acceptance B integrat
     readback: {
       baseline: "zero_workspace_launch_workspace_key_and_workspace_receipt_for_approved_account",
       launchPostUnknown: "authoritative_get_before_one_post_then_authoritative_get_same_operation_id_without_retry",
+      timeoutContinuation: {
+        operationMode: "acceptance_b_fresh_readback",
+        baselineAuthority: "validated_prepared_acceptance_b_account_reconcile_artifact_from_resume_run_id",
+        releaseAuthority: "approval_release_sha_equals_current_production_configmap_release_sha",
+        launchMutation: "forbidden_get_exact_existing_operation_only",
+        businessMutationCounts: {
+          accountProvision: 0,
+          walletAdjustment: 0,
+          workspaceLaunchPost: 0,
+          debit: 0,
+          cvmCreate: 0,
+          cvmOwnershipClaim: 0,
+          nodeClaim: 0,
+          cbsCreate: 0,
+          runtimeCreate: 0,
+          receiptCreate: 0
+        }
+      },
       authorities: ["control_plane_launch", "sub2api_debit_history", "fabric_operations_and_provider_truth", "runtime_ready_pod", "ledger_purchase_receipt", "workspace_url_http"],
       stageBudgetFields: ["compute_create", "compute_claim_cvm", "compute_claim_node", "cbs_create", "static_binding_apply", "attachment", "secret", "runtime", "activation", "receipt"],
       stageBudgetRequiredValue: { attempted: 1, confirmed: 1, unknown: 0, max: 1 },
@@ -713,4 +773,14 @@ test("Acceptance B reads only its independent customer password secret", async (
   const acceptanceB = workflow.slice(workflow.indexOf("  acceptance-b-fresh-order:"), workflow.indexOf("  controlled-pilot-closed-validate:"));
   assert.match(acceptanceB, /OPL_PRODUCTION_BASIC_ACCEPTANCE_B_CUSTOMER_PASSWORD:\s*\$\{\{ secrets\.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_CUSTOMER_PASSWORD \}\}/);
   assert.doesNotMatch(acceptanceB, /OPL_BASIC_CANARY_CUSTOMER_PASSWORD/);
+});
+
+test("Acceptance B timeout continuation reuses a prepared baseline artifact and has no purchase confirmation", async () => {
+  const workflow = await readFile(new URL("../../.github/workflows/production-basic-customer-operation.yml", import.meta.url), "utf8");
+  assert.match(workflow, /acceptance_b_fresh_readback/);
+  assert.match(workflow, /inputs\.operation_mode == 'acceptance_b_fresh_readback'/);
+  assert.match(workflow, /inputs\.resume_run_id != ''/);
+  assert.match(workflow, /name:\s*production-basic-acceptance-b-reconcile/);
+  assert.match(workflow, /node tools\/production-basic-acceptance-b\.ts --readback/);
+  assert.match(workflow, /OPL_PRODUCTION_BASIC_ACCEPTANCE_B_BASELINE_ARTIFACT_PATH/);
 });
