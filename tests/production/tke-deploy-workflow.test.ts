@@ -1076,7 +1076,7 @@ test("Acceptance B fresh order is a separately approved exact-count production c
   }
   assert.match(runs, /git ls-remote --heads origin/);
   assert.match(runs, /node tools\/production-basic-acceptance-b\.ts --run/);
-  assert.match(runs, /validateProductionBasicAcceptanceBReadback/);
+  assert.match(runs, /validateProductionBasicAcceptanceBArtifact/);
   assert.doesNotMatch(runs, /Acceptance B write count mismatch/);
   assert.match(runs, /podImageId/);
   assert.match(runs, /statusCode.*200|statusCode === 200/);
