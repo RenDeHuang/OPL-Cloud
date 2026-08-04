@@ -23,6 +23,8 @@ test("OPL Cloud TKE manifest declares three decoupled services and monthly Sub2A
   assert.equal(config.data.OPL_CONTROLLED_BASIC_PILOT_ENABLED, "0");
   assert.equal(config.data.OPL_CONTROLLED_BASIC_PILOT_ACCOUNT_IDS, "");
   assert.equal(config.data.OPL_CONTROLLED_BASIC_PILOT_MAX_IN_FLIGHT, "1");
+  assert.equal(config.data.OPL_RECOVERY_ACCEPTANCE_CANARY_ENABLED, "0");
+  assert.equal(config.data.OPL_RECOVERY_ACCEPTANCE_CANARY_ACCOUNT_IDS, "");
   assert.equal(config.data.OPL_SUB2API_BASE_URL, "https://gflabtoken.cn");
   assert.equal(config.data.OPL_GATEWAY_PUBLIC_BASE_URL, undefined);
   assert.equal(config.data.OPL_CODEX_BASE_URL, undefined);
@@ -74,8 +76,16 @@ test("OPL Cloud TKE manifest declares three decoupled services and monthly Sub2A
     "OPL_INTERNAL_SERVICE_TOKEN",
     "OPL_AIONUI_ADMIN_PASSWORD_SEED",
     "OPL_SUB2API_ADMIN_EMAIL",
-    "OPL_SUB2API_ADMIN_PASSWORD"
+    "OPL_SUB2API_ADMIN_PASSWORD",
+    "OPL_RECOVERY_ACCEPTANCE_CANARY_APPROVAL_JSON"
   ]);
+  const recoveryApproval = controlContainer.env.find((item) => item.name === "OPL_RECOVERY_ACCEPTANCE_CANARY_APPROVAL_JSON");
+  assert.deepEqual(recoveryApproval.valueFrom, {
+    secretKeyRef: {
+      name: "opl-cloud-recovery-acceptance-canary",
+      key: "OPL_RECOVERY_ACCEPTANCE_CANARY_APPROVAL_JSON"
+    }
+  });
   assert.equal(source.includes("OPL_OPERATOR_SUMMARY_TOKEN"), false);
   assert.equal(source.includes("OPL_CODEX_API_KEY"), false);
 

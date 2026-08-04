@@ -1845,7 +1845,7 @@ test("image release accepts only full App, active-shell, and Framework commit SH
   }
 });
 
-test("TKE deploy installs Sub2API credentials without Acceptance credentials", async () => {
+test("TKE deploy installs Sub2API credentials and isolated Recovery Acceptance approval", async () => {
   const workflow = await readWorkflow(".github/workflows/deploy-tke-production.yml");
   const currentJob = workflowJob(workflow, "deploy");
   const steps = stepsByName(currentJob);
@@ -1856,8 +1856,16 @@ test("TKE deploy installs Sub2API credentials without Acceptance credentials", a
   assert.match(install, /create secret generic opl-cloud-sub2api/);
   assert.match(install, /--from-file=OPL_SUB2API_ADMIN_EMAIL/);
   assert.match(install, /--from-file=OPL_SUB2API_ADMIN_PASSWORD/);
+  assert.match(install, /create secret generic opl-cloud-recovery-acceptance-canary/);
+  assert.match(install, /--from-file=OPL_RECOVERY_ACCEPTANCE_CANARY_APPROVAL_JSON="\$secret_dir\/recovery-acceptance-canary-approval"/);
+  assert.equal(currentJob.env.OPL_RECOVERY_ACCEPTANCE_CANARY_ENABLED, "${{ vars.OPL_RECOVERY_ACCEPTANCE_CANARY_ENABLED || '0' }}");
+  assert.equal(currentJob.env.OPL_RECOVERY_ACCEPTANCE_CANARY_ACCOUNT_IDS, "${{ vars.OPL_RECOVERY_ACCEPTANCE_CANARY_ACCOUNT_IDS || '' }}");
+  assert.equal(currentJob.env.OPL_RECOVERY_ACCEPTANCE_CANARY_APPROVAL_JSON, "${{ secrets.OPL_RECOVERY_ACCEPTANCE_CANARY_APPROVAL_JSON }}");
   assert.equal(Object.hasOwn(currentJob.env, "OPL_PROVIDER_ACCEPTANCE_TOKEN"), false);
   assert.doesNotMatch(install, /provider-acceptance|OPL_PROVIDER_ACCEPTANCE_TOKEN/);
+  assert.doesNotMatch(install, /OPL_BASIC_CANARY_CUSTOMER_PASSWORD|OPL_PRODUCTION_BASIC_ACCEPTANCE_B_CUSTOMER_PASSWORD/);
+  assert.match(serializedStep(steps.get("Check deployment inputs")), /OPL_RECOVERY_ACCEPTANCE_CANARY_ENABLED/);
+  assert.match(serializedStep(steps.get("Check deployment inputs")), /dedicated approval Secret/);
   assert.equal(currentJob.env.OPL_TENCENT_ZONE, "${{ vars.OPL_TENCENT_ZONE || 'na-siliconvalley-1' }}");
   assert.equal(currentJob.env.TENCENTCLOUD_REGION, "${{ vars.TENCENTCLOUD_REGION || 'na-siliconvalley' }}");
   assert.equal(currentJob.env.OPL_BASIC_COMPUTE_INSTANCE_TYPE, "${{ vars.OPL_BASIC_COMPUTE_INSTANCE_TYPE }}");
@@ -1894,6 +1902,9 @@ test("deployment inputs contain monthly and Sub2API config without retired billi
     "OPL_CONTROLLED_BASIC_PILOT_ENABLED",
     "OPL_CONTROLLED_BASIC_PILOT_ACCOUNT_IDS",
     "OPL_CONTROLLED_BASIC_PILOT_MAX_IN_FLIGHT",
+    "OPL_RECOVERY_ACCEPTANCE_CANARY_ENABLED",
+    "OPL_RECOVERY_ACCEPTANCE_CANARY_ACCOUNT_IDS",
+    "OPL_RECOVERY_ACCEPTANCE_CANARY_APPROVAL_JSON",
     "OPL_SUB2API_BASE_URL",
     "OPL_SUB2API_REQUEST_TIMEOUT_MS",
     "OPL_TENCENT_ZONE"

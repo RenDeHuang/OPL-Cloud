@@ -24,10 +24,15 @@ test("Controlled Basic Pilot is closed by default, identifier-free, and continua
   ]);
   const config = manifest.items.find((item: { kind: string; metadata?: { name?: string } }) => item.kind === "ConfigMap" && item.metadata?.name === "opl-cloud-config").data;
   assert.deepEqual(deployment.controlledBasicPilot.productionDefaults, { enabled: "0", accountAllowlist: "", maxInFlight: "1" });
+  assert.deepEqual(deployment.recoveryAcceptanceCanaryRuntime.productionDefaults, { enabled: "0", accountAllowlist: "", approval: "empty" });
   assert.equal(config.OPL_CONTROLLED_BASIC_PILOT_ENABLED, "0");
   assert.equal(config.OPL_CONTROLLED_BASIC_PILOT_ACCOUNT_IDS, "");
   assert.equal(config.OPL_CONTROLLED_BASIC_PILOT_MAX_IN_FLIGHT, "1");
+  assert.equal(config.OPL_RECOVERY_ACCEPTANCE_CANARY_ENABLED, "0");
+  assert.equal(config.OPL_RECOVERY_ACCEPTANCE_CANARY_ACCOUNT_IDS, "");
   assert.match(workflow, /OPL_CONTROLLED_BASIC_PILOT_ENABLED:[^\n]*'0'/);
+  assert.match(workflow, /OPL_RECOVERY_ACCEPTANCE_CANARY_ENABLED:[^\n]*'0'/);
+  assert.match(workflow, /OPL_RECOVERY_ACCEPTANCE_CANARY_APPROVAL_JSON:[^\n]*secrets\.OPL_RECOVERY_ACCEPTANCE_CANARY_APPROVAL_JSON/);
   assert.deepEqual(freeze.workspaceLaunch.controlledBasicPilot.packageIds, ["basic"]);
   assert.equal(freeze.workspaceLaunch.controlledBasicPilot.disableBehavior, "block_new_purchase_only_reads_and_original_operation_continuations_remain_available");
   assert.equal(boundary.services.controlPlane.controlledBasicPilotAdmission.continuationPrecedence, "exact_idempotency_or_single_matching_active_operation_before_admission");
@@ -435,7 +440,7 @@ test("Current Fabric contracts require dedicated package NodePools without weake
     output: "redacted_evidence_only",
     currentState: "implemented_and_fake_tested_not_executed"
   });
-  assert.equal(deployment.schemaVersion, 35);
+  assert.equal(deployment.schemaVersion, 36);
   assert.equal(deployment.deployWorkflow.preDebitTencentIamGate.proofMode, "production_runner_deployment_attestation");
   assert.deepEqual(deployment.deployWorkflow.preDebitTencentIamGate.requiredTencentActions, ["tag:TagResources", "tag:ModifyResourcesTagValue"]);
   assert.equal(deployment.deployWorkflow.preDebitTencentIamGate.tencentTagWriteCalls, 0);
