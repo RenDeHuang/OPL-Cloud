@@ -486,7 +486,7 @@ test("Acceptance B write accounting accepts only the frozen one-order cardinalit
   }
 });
 
-test("Acceptance B launch submits once and reconciles a lost response by deterministic GET", async () => {
+test("Acceptance B launch reads the deterministic identity before its single POST and reconciles a lost response", async () => {
   const approval = parseProductionBasicAcceptanceBApproval(approvalFixture(), {
     approvalId: APPROVAL_ID,
     now: new Date("2026-08-02T00:00:00Z")
@@ -494,6 +494,7 @@ test("Acceptance B launch submits once and reconciles a lost response by determi
   const launch = { operationId: approval.launch.operationId, workspaceId: approval.launch.workspaceId, accountId: approval.customer.accountId, status: "queued", phase: "compute_fulfilling" };
   for (const responseLost of [false, true]) {
     const calls = [];
+    let getCount = 0;
     const fetchImpl = async (input, init = {}) => {
       const url = new URL(String(input));
       const method = String(init.method || "GET").toUpperCase();
@@ -502,17 +503,45 @@ test("Acceptance B launch submits once and reconciles a lost response by determi
         if (responseLost) throw new Error("response_lost");
         return response(launch, 202);
       }
-      if (method === "GET" && url.pathname === `/api/workspace-launches/${approval.launch.operationId}`) return response(launch);
+      if (method === "GET" && url.pathname === `/api/workspace-launches/${approval.launch.operationId}`) {
+        getCount += 1;
+        if (getCount === 1) return response({ error: "not_found" }, 404);
+        return response(launch);
+      }
       throw new Error(`unexpected_request:${method}:${url.pathname}`);
     };
     assert.deepEqual(await submitProductionBasicAcceptanceBLaunch({
       requestOptions: { fetchImpl, origin: "https://cloud.medopl.cn", timeoutMs: 1_000 },
       customerAuth: { cookie: "customer=test", csrfToken: "csrf-test" },
-      approval
+      approval,
+      internalServiceToken: "acceptance-b-capability"
     }), launch);
     assert.equal(calls.filter((call) => call.method === "POST").length, 1);
-    assert.equal(calls.filter((call) => call.method === "GET").length, responseLost ? 1 : 0);
+    assert.equal(calls.filter((call) => call.method === "GET").length, responseLost ? 2 : 1);
   }
+});
+
+test("Acceptance B launch continues an existing deterministic operation without a second POST", async () => {
+  const approval = parseProductionBasicAcceptanceBApproval(approvalFixture(), {
+    approvalId: APPROVAL_ID,
+    now: new Date("2026-08-02T00:00:00Z")
+  });
+  const launch = { operationId: approval.launch.operationId, workspaceId: approval.launch.workspaceId, accountId: approval.customer.accountId, status: "queued", phase: "compute_fulfilling" };
+  const calls = [];
+  const fetchImpl = async (input, init = {}) => {
+    const url = new URL(String(input));
+    const method = String(init.method || "GET").toUpperCase();
+    calls.push({ method, path: url.pathname });
+    if (method === "GET" && url.pathname === `/api/workspace-launches/${approval.launch.operationId}`) return response(launch);
+    throw new Error(`unexpected_request:${method}:${url.pathname}`);
+  };
+  assert.deepEqual(await submitProductionBasicAcceptanceBLaunch({
+    requestOptions: { fetchImpl, origin: "https://cloud.medopl.cn", timeoutMs: 1_000 },
+    customerAuth: { cookie: "customer=test", csrfToken: "csrf-test" },
+    approval,
+    internalServiceToken: "acceptance-b-capability"
+  }), launch);
+  assert.deepEqual(calls, [{ method: "GET", path: `/api/workspace-launches/${approval.launch.operationId}` }]);
 });
 
 test("Acceptance B launch stops after one POST when deterministic readback is absent", async () => {
@@ -531,10 +560,11 @@ test("Acceptance B launch stops after one POST when deterministic readback is ab
   await assert.rejects(() => submitProductionBasicAcceptanceBLaunch({
     requestOptions: { fetchImpl, origin: "https://cloud.medopl.cn", timeoutMs: 1_000 },
     customerAuth: { cookie: "customer=test", csrfToken: "csrf-test" },
-    approval
+    approval,
+    internalServiceToken: "acceptance-b-capability"
   }), /production_basic_acceptance_b_launch_outcome_unknown/);
   assert.equal(calls.filter((call) => call.method === "POST").length, 1);
-  assert.equal(calls.filter((call) => call.method === "GET").length, 1);
+  assert.equal(calls.filter((call) => call.method === "GET").length, 2);
 });
 
 test("Acceptance B stage budgets separately prove CVM create, ownership, Node, storage, and continuation", () => {
@@ -612,6 +642,17 @@ test("deployment machine contract registers the local-only Acceptance B integrat
       modelRequest: "forbidden_not_part_of_acceptance_b"
     },
     operationContract: PRODUCTION_BASIC_ACCEPTANCE_B_OPERATION,
+    admission: {
+      pilotMayRemainDisabled: true,
+      customerAuthorization: "owner_session_and_csrf",
+      privateCapabilityHeader: "x-opl-acceptance-b-capability",
+      approvalIdHeader: "x-opl-acceptance-b-approval-id",
+      capabilitySource: "current_opl-cloud-internal-service_secret_runner_memory_only",
+      approvalSource: "dedicated_opl-cloud-acceptance-b_secret_control_plane_only",
+      prePostReadback: "get_exact_operation_before_single_post",
+      unknownPost: "get_exact_operation_only_without_second_post",
+      mismatch: "fail_closed_before_preflight_debit_or_provider_mutation"
+    },
     approvalSchema: {
       schemaVersion: 1,
       exactTopLevelFields: ["schemaVersion", "operationMode", "approvalId", "expiresAt", "confirmation", "release", "customer", "launch", "expected", "allowedWrites", "forbiddenWrites"],
@@ -629,7 +670,7 @@ test("deployment machine contract registers the local-only Acceptance B integrat
     },
     readback: {
       baseline: "zero_workspace_launch_workspace_key_and_workspace_receipt_for_approved_account",
-      launchPostUnknown: "one_post_then_authoritative_get_same_operation_id_without_retry",
+      launchPostUnknown: "authoritative_get_before_one_post_then_authoritative_get_same_operation_id_without_retry",
       authorities: ["control_plane_launch", "sub2api_debit_history", "fabric_operations_and_provider_truth", "runtime_ready_pod", "ledger_purchase_receipt", "workspace_url_http"],
       stageBudgetFields: ["compute_create", "compute_claim_cvm", "compute_claim_node", "cbs_create", "static_binding_apply", "attachment", "secret", "runtime", "activation", "receipt"],
       stageBudgetRequiredValue: { attempted: 1, confirmed: 1, unknown: 0, max: 1 },

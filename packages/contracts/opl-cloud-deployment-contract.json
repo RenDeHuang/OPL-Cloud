@@ -54,6 +54,17 @@
     "secretHandling": "runner_temp_file_0600_to_dedicated_kubernetes_secret_without_output_or_artifact",
     "externalMutationCounts": {"sub2api": 0, "tencent": 0, "kubernetes": 0, "fabric": 0}
   },
+  "productionBasicAcceptanceBAdmissionRuntime": {
+    "deployment": "deploy/tke/opl-cloud.k8s.json#Deployment/opl-cloud-control-plane",
+    "workflow": ".github/workflows/deploy-tke-production.yml#deploy",
+    "approvalSecretEnv": "OPL_PRODUCTION_BASIC_ACCEPTANCE_B_APPROVAL_JSON",
+    "approvalKubernetesSecret": "opl-cloud-acceptance-b",
+    "capabilityKubernetesSecret": "opl-cloud-internal-service",
+    "pilotEnabledRequired": false,
+    "publicBillingMode": false,
+    "secretHandling": "runner_temp_file_0600_to_dedicated_control_plane_only_kubernetes_secret_without_output_or_artifact",
+    "exactBinding": ["account", "email", "approval_id", "idempotency_key", "operation_id", "workspace_id", "release_sha", "cloud_image_digest", "workspace_image_digest", "basic_10gb_autoRenew_false", "node_pool", "instance_type", "expiry", "write_budget"]
+  },
   "deferredControlPlaneSelectorMigration": {
     "deployment": "opl-cloud-control-plane",
     "currentSelector": {"app.kubernetes.io/name": "opl-cloud"},
@@ -650,6 +661,17 @@
       "exactWrites": {"sub2apiDebit": 1, "cvmCreate": 1, "cvmOwnershipClaim": 1, "nodeClaim": 1, "cbsCreate": 1, "runtimeCreate": 1, "receiptCreate": 1},
       "terminalEvidence": ["launch_succeeded", "runtime_ready", "receipt_completed", "pod_image_id_equals_approved_workspace_image_digest", "workspace_url_http_200"]
     },
+    "admission": {
+      "pilotMayRemainDisabled": true,
+      "customerAuthorization": "owner_session_and_csrf",
+      "privateCapabilityHeader": "x-opl-acceptance-b-capability",
+      "approvalIdHeader": "x-opl-acceptance-b-approval-id",
+      "capabilitySource": "current_opl-cloud-internal-service_secret_runner_memory_only",
+      "approvalSource": "dedicated_opl-cloud-acceptance-b_secret_control_plane_only",
+      "prePostReadback": "get_exact_operation_before_single_post",
+      "unknownPost": "get_exact_operation_only_without_second_post",
+      "mismatch": "fail_closed_before_preflight_debit_or_provider_mutation"
+    },
     "approvalSchema": {
       "schemaVersion": 1,
       "exactTopLevelFields": ["schemaVersion", "operationMode", "approvalId", "expiresAt", "confirmation", "release", "customer", "launch", "expected", "allowedWrites", "forbiddenWrites"],
@@ -667,7 +689,7 @@
     },
     "readback": {
       "baseline": "zero_workspace_launch_workspace_key_and_workspace_receipt_for_approved_account",
-      "launchPostUnknown": "one_post_then_authoritative_get_same_operation_id_without_retry",
+      "launchPostUnknown": "authoritative_get_before_one_post_then_authoritative_get_same_operation_id_without_retry",
       "authorities": ["control_plane_launch", "sub2api_debit_history", "fabric_operations_and_provider_truth", "runtime_ready_pod", "ledger_purchase_receipt", "workspace_url_http"],
       "stageBudgetFields": ["compute_create", "compute_claim_cvm", "compute_claim_node", "cbs_create", "static_binding_apply", "attachment", "secret", "runtime", "activation", "receipt"],
       "stageBudgetRequiredValue": {"attempted": 1, "confirmed": 1, "unknown": 0, "max": 1},

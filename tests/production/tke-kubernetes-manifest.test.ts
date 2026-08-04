@@ -77,13 +77,21 @@ test("OPL Cloud TKE manifest declares three decoupled services and monthly Sub2A
     "OPL_AIONUI_ADMIN_PASSWORD_SEED",
     "OPL_SUB2API_ADMIN_EMAIL",
     "OPL_SUB2API_ADMIN_PASSWORD",
-    "OPL_RECOVERY_ACCEPTANCE_CANARY_APPROVAL_JSON"
+    "OPL_RECOVERY_ACCEPTANCE_CANARY_APPROVAL_JSON",
+    "OPL_PRODUCTION_BASIC_ACCEPTANCE_B_APPROVAL_JSON"
   ]);
   const recoveryApproval = controlContainer.env.find((item) => item.name === "OPL_RECOVERY_ACCEPTANCE_CANARY_APPROVAL_JSON");
   assert.deepEqual(recoveryApproval.valueFrom, {
     secretKeyRef: {
       name: "opl-cloud-recovery-acceptance-canary",
       key: "OPL_RECOVERY_ACCEPTANCE_CANARY_APPROVAL_JSON"
+    }
+  });
+  const acceptanceBApproval = controlContainer.env.find((item) => item.name === "OPL_PRODUCTION_BASIC_ACCEPTANCE_B_APPROVAL_JSON");
+  assert.deepEqual(acceptanceBApproval.valueFrom, {
+    secretKeyRef: {
+      name: "opl-cloud-acceptance-b",
+      key: "OPL_PRODUCTION_BASIC_ACCEPTANCE_B_APPROVAL_JSON"
     }
   });
   assert.equal(source.includes("OPL_OPERATOR_SUMMARY_TOKEN"), false);

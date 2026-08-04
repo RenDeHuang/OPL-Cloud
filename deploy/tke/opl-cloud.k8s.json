@@ -217,6 +217,15 @@
                         "key": "OPL_RECOVERY_ACCEPTANCE_CANARY_APPROVAL_JSON"
                       }
                     }
+                  },
+                  {
+                    "name": "OPL_PRODUCTION_BASIC_ACCEPTANCE_B_APPROVAL_JSON",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "name": "opl-cloud-acceptance-b",
+                        "key": "OPL_PRODUCTION_BASIC_ACCEPTANCE_B_APPROVAL_JSON"
+                      }
+                    }
                   }
                 ],
                 "readinessProbe": {

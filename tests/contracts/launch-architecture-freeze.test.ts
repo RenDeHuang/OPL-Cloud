@@ -109,7 +109,18 @@ test("launch freeze fixes the V2 products, owner lanes, settlement, and verifica
       defaultEnabled: false,
       defaultMaxInFlight: 1
     },
-    admissionOrder: ["validate_request", "resume_exact_or_matching_active_operation", "controlled_pilot_gate", "fabric_catalog_and_preflight", "sub2api_balance", "global_launch_claim", "workspace_key_convergence"],
+    admissionOrder: ["validate_request", "resume_exact_or_matching_active_operation", "controlled_pilot_or_exact_acceptance_b_gate", "fabric_catalog_and_preflight", "sub2api_balance", "global_launch_claim", "workspace_key_convergence"],
+    productionAcceptanceBException: {
+      publicMode: false,
+      pilotMayRemainDisabled: true,
+      approvalSource: "dedicated_control_plane_kubernetes_secret",
+      capabilitySource: "current_internal_service_secret_runner_memory_only",
+      exactBinding: ["account", "email", "approval_id", "idempotency_key", "operation_id", "workspace_id", "release_sha", "cloud_image_digest", "workspace_image_digest", "basic_10gb_autoRenew_false", "node_pool", "instance_type", "expiry", "allowed_and_forbidden_writes"],
+      launchPostMaximum: 1,
+      prePostReadback: "deterministic_operation_get_first",
+      unknownPost: "same_operation_get_only_no_second_post",
+      rejectionMutationCounts: { database: 0, sub2api: 0, fabric: 0, tencent: 0, kubernetes: 0 }
+    },
     rejectionMutationCounts: { database: 0, sub2api: 0, fabric: 0, tencent: 0, kubernetes: 0 },
     globalCapacity: "memory_mutex_or_postgresql_transaction_with_stable_account_row_lock_before_global_nonterminal_count_and_insert",
     disableBehavior: "block_new_purchase_only_reads_and_original_operation_continuations_remain_available",

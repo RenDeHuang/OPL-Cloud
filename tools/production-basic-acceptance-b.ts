@@ -517,14 +517,21 @@ async function readAcceptanceBLaunch(requestOptions, customerAuth, operationId) 
   }
 }
 
-export async function submitProductionBasicAcceptanceBLaunch({ requestOptions, customerAuth, approval }) {
+export async function submitProductionBasicAcceptanceBLaunch({ requestOptions, customerAuth, approval, internalServiceToken }) {
+  const existing = await readAcceptanceBLaunch(requestOptions, customerAuth, approval.launch.operationId);
+  if (existing) return assertAcceptanceBLaunchIdentity(existing, approval);
+  if (!String(internalServiceToken || "")) throw new Error("production_basic_acceptance_b_config_invalid");
   try {
     const response = await requestJson({
       ...requestOptions,
       auth: customerAuth,
       path: "/api/workspace-launches",
       method: "POST",
-      headers: { "Idempotency-Key": approval.launch.idempotencyKey },
+      headers: {
+        "Idempotency-Key": approval.launch.idempotencyKey,
+        "x-opl-acceptance-b-capability": internalServiceToken,
+        "x-opl-acceptance-b-approval-id": approval.approvalId
+      },
       body: { name: approval.launch.name, packageId: "basic", sizeGb: 10, autoRenew: false }
     });
     if (response.response.status !== 202) throw new Error("production_basic_acceptance_b_launch_not_accepted");
@@ -943,7 +950,7 @@ export async function runProductionBasicAcceptanceB(options = {}) {
   const wallet = walletFact(sourceEnvelope(await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/gateway/wallet" }), "sub2api"), identity.sub2apiUserId);
   if (BigInt(wallet.usdMicros) <= BigInt(totalChargeUsdMicros)) throw new Error("production_basic_acceptance_b_wallet_insufficient");
 
-  let launch = await submitProductionBasicAcceptanceBLaunch({ requestOptions, customerAuth, approval });
+  let launch = await submitProductionBasicAcceptanceBLaunch({ requestOptions, customerAuth, approval, internalServiceToken });
   for (let attempt = 1; attempt <= launchPollAttempts && (launch.status !== "succeeded" || launch.phase !== "succeeded"); attempt += 1) {
     if (attempt > 1 && launchPollDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, launchPollDelayMs));
     launch = (await requestJson({ ...requestOptions, auth: customerAuth, path: `/api/workspace-launches/${encodeURIComponent(approval.launch.operationId)}` })).payload;

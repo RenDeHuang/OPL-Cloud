@@ -144,6 +144,16 @@
         "globalClaimSerialization": "postgresql_transaction_stable_first_account_row_for_update_then_count_and_insert",
         "continuationPrecedence": "exact_idempotency_or_single_matching_active_operation_before_admission",
         "disabledContinuation": "read_and_original_operation_progress_allowed",
+        "productionAcceptanceBException": {
+          "scope": "one_exact_fresh_basic_acceptance_launch_only",
+          "default": "unconfigured_fail_closed",
+          "authorization": "customer_session_plus_current_internal_service_capability_plus_dedicated_exact_approval",
+          "binding": ["account", "email", "approval_id", "idempotency_key", "operation_id", "workspace_id", "release_sha", "cloud_image_digest", "workspace_image_digest", "basic_10gb_autoRenew_false", "node_pool", "instance_type", "expiry", "write_budget"],
+          "continuation": "deterministic_get_before_post_and_get_only_after_unknown_response",
+          "publicBillingMode": false,
+          "pilotEnablement": false,
+          "rejectedExternalCalls": 0
+        },
         "rejectedExternalCalls": 0,
         "observabilityContract": "opl-cloud-observability-contract.json#controlledBasicPilot"
       },

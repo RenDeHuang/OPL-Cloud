@@ -107,7 +107,14 @@ func registerWorkspaceLaunchRoutes(mux *http.ServeMux, app *controlPlaneServer, 
 			}
 		}
 		admission := controlledBasicPilotAdmissionFromEnv()
-		if code := admission.rejectNewLaunch(accountID, packageID, autoRenew); code != "" {
+		code := admission.rejectNewLaunch(accountID, packageID, autoRenew)
+		if code == "workspace_launch_admission_disabled" {
+			approval, configured := parseProductionAcceptanceBApproval()
+			if configured && productionAcceptanceBLaunchApproved(r.Header, approval, accountID, stringValue(user["email"]), name, packageID, int(storageGB), autoRenew, key) {
+				code = ""
+			}
+		}
+		if code != "" {
 			writeError(w, http.StatusConflict, code)
 			return
 		}
