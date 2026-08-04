@@ -22,6 +22,8 @@ const DEPLOY_VALUE_KEYS = [
   "OPL_CONTROLLED_BASIC_PILOT_ENABLED",
   "OPL_CONTROLLED_BASIC_PILOT_ACCOUNT_IDS",
   "OPL_CONTROLLED_BASIC_PILOT_MAX_IN_FLIGHT",
+  "OPL_RECOVERY_ACCEPTANCE_CANARY_ENABLED",
+  "OPL_RECOVERY_ACCEPTANCE_CANARY_ACCOUNT_IDS",
   "OPL_SUB2API_BASE_URL",
   "OPL_SUB2API_REQUEST_TIMEOUT_MS",
   "OPL_TENCENT_ZONE",
@@ -54,7 +56,11 @@ const DEPLOY_VALUE_KEYS = [
   "TENCENT_DEPLOY_KUBECONFIG_REF"
 ];
 function requiredValues(values) {
-  const optionalWhenEmpty = new Set(["OPL_SYSTEM_COMPUTE_CVM_ID", "OPL_CONTROLLED_BASIC_PILOT_ACCOUNT_IDS"]);
+  const optionalWhenEmpty = new Set([
+    "OPL_SYSTEM_COMPUTE_CVM_ID",
+    "OPL_CONTROLLED_BASIC_PILOT_ACCOUNT_IDS",
+    "OPL_RECOVERY_ACCEPTANCE_CANARY_ACCOUNT_IDS"
+  ]);
   const missing = DEPLOY_VALUE_KEYS.filter((key) => !optionalWhenEmpty.has(key) && !String(values?.[key] ?? "").trim());
   if (missing.length) throw new Error(`missing_tke_manifest_values:${missing.join(",")}`);
   const pilotEnabled = String(values.OPL_CONTROLLED_BASIC_PILOT_ENABLED || "").trim();
