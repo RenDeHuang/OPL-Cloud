@@ -113,6 +113,9 @@ const EXACT_WRITE_COUNTS = Object.freeze({
   replacements: 0
 });
 
+const ACCEPTANCE_B_ACCOUNT_PAGE_SIZE = 50;
+const MAX_ACCEPTANCE_B_ACCOUNT_PAGES = 1000;
+
 function exactObjectKeys(value, keys) {
   return value && typeof value === "object" && !Array.isArray(value) &&
     Object.keys(value).sort().join("\u0000") === [...keys].sort().join("\u0000");
@@ -128,6 +131,48 @@ function cloneJson(value) {
   } catch {
     return null;
   }
+}
+
+/**
+ * Select exactly one approved account identity from the complete paginated
+ * operator account readback. The production account total is deliberately not
+ * part of the identity contract: other operator-provisioned accounts may
+ * exist. Both approved fields must match the same item, and pagination must be
+ * complete and stable before the pair is accepted.
+ */
+export function findUniqueProductionBasicAcceptanceBAccount(pages, accountId, email) {
+  const normalizedAccountId = String(accountId || "");
+  const normalizedEmail = String(email || "").trim().toLowerCase();
+  if (!Array.isArray(pages) || pages.length === 0 || !normalizedAccountId || !normalizedEmail) {
+    throw new Error("production_basic_acceptance_b_account_readback_invalid");
+  }
+
+  let total = null;
+  let expectedPages = null;
+  const matches = [];
+  for (let index = 0; index < pages.length; index += 1) {
+    const page = pages[index];
+    const pageNumber = index + 1;
+    if (!Array.isArray(page?.items) || !Number.isSafeInteger(page?.total) || page.total < 0 ||
+      page.page !== pageNumber || page.pageSize !== ACCEPTANCE_B_ACCOUNT_PAGE_SIZE || page.items.length > ACCEPTANCE_B_ACCOUNT_PAGE_SIZE) {
+      throw new Error("production_basic_acceptance_b_account_readback_invalid");
+    }
+    if (total === null) total = page.total;
+    if (page.total !== total) throw new Error("production_basic_acceptance_b_account_readback_invalid");
+    expectedPages = Math.max(1, Math.ceil(total / ACCEPTANCE_B_ACCOUNT_PAGE_SIZE));
+    if (expectedPages > MAX_ACCEPTANCE_B_ACCOUNT_PAGES || pageNumber > expectedPages) {
+      throw new Error("production_basic_acceptance_b_account_readback_invalid");
+    }
+    const expectedItems = pageNumber < expectedPages ? ACCEPTANCE_B_ACCOUNT_PAGE_SIZE : total - (pageNumber - 1) * ACCEPTANCE_B_ACCOUNT_PAGE_SIZE;
+    if (page.items.length !== Math.max(0, expectedItems)) throw new Error("production_basic_acceptance_b_account_readback_invalid");
+    for (const item of page.items) {
+      if (item?.accountId === normalizedAccountId && String(item?.email || "").trim().toLowerCase() === normalizedEmail) matches.push(item);
+    }
+  }
+  if (expectedPages === null || pages.length !== expectedPages || matches.length !== 1) {
+    throw new Error("production_basic_acceptance_b_account_readback_invalid");
+  }
+  return matches[0];
 }
 
 function stableId(...parts) {
@@ -376,11 +421,23 @@ export async function runProductionBasicAcceptanceB(options = {}) {
     throw new Error("production_basic_acceptance_b_customer_identity_invalid");
   }
 
-  const accountPage = sourceData(await requestJson({ ...requestOptions, auth: adminAuth, path: "/api/operator/accounts?page=1&pageSize=50" }), "control-plane+sub2api", true);
-  const accountMatches = (accountPage?.items || []).filter((item) => item?.accountId === approval.customer.accountId || item?.email === approval.customer.email);
-  if (accountPage?.total !== 1 || accountMatches.length !== 1 || accountMatches[0]?.accountId !== approval.customer.accountId || accountMatches[0]?.email !== approval.customer.email) {
-    throw new Error("production_basic_acceptance_b_account_readback_invalid");
+  const accountPages = [];
+  for (let page = 1; ; page += 1) {
+    if (page > MAX_ACCEPTANCE_B_ACCOUNT_PAGES) throw new Error("production_basic_acceptance_b_account_readback_invalid");
+    const accountPage = sourceData(await requestJson({
+      ...requestOptions,
+      auth: adminAuth,
+      path: `/api/operator/accounts?page=${page}&pageSize=${ACCEPTANCE_B_ACCOUNT_PAGE_SIZE}`
+    }), "control-plane+sub2api", true);
+    accountPages.push(accountPage);
+    if (!Number.isSafeInteger(accountPage?.total) || accountPage.total < 0 || accountPage.page !== page || accountPage.pageSize !== ACCEPTANCE_B_ACCOUNT_PAGE_SIZE) {
+      throw new Error("production_basic_acceptance_b_account_readback_invalid");
+    }
+    const pages = Math.max(1, Math.ceil(accountPage.total / ACCEPTANCE_B_ACCOUNT_PAGE_SIZE));
+    if (pages > MAX_ACCEPTANCE_B_ACCOUNT_PAGES) throw new Error("production_basic_acceptance_b_account_readback_invalid");
+    if (page >= pages) break;
   }
+  findUniqueProductionBasicAcceptanceBAccount(accountPages, approval.customer.accountId, approval.customer.email);
 
   const workspacePage = sourceData(await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/workspaces?page=1&pageSize=20" }), "control-plane", true);
   const launchesBefore = listPayload(await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/workspace-launches" }));
@@ -567,7 +624,7 @@ export async function runProductionBasicAcceptanceBCli({
       internalServiceToken: env.OPL_INTERNAL_SERVICE_TOKEN,
       adminEmail: env.OPL_SUB2API_ADMIN_EMAIL,
       adminPassword: env.OPL_SUB2API_ADMIN_PASSWORD,
-      customerPassword: env.OPL_BASIC_CANARY_CUSTOMER_PASSWORD,
+      customerPassword: env.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_CUSTOMER_PASSWORD,
       approvalJson: env.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_APPROVAL_JSON,
       approvalId: env.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_APPROVAL_ID,
       mergedSha: env.OPL_MERGED_SHA,

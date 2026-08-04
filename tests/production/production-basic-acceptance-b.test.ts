@@ -8,6 +8,7 @@ import {
   PRODUCTION_BASIC_ACCEPTANCE_B_CONFIRMATION,
   PRODUCTION_BASIC_ACCEPTANCE_B_FORBIDDEN_WRITES,
   PRODUCTION_BASIC_ACCEPTANCE_B_OPERATION,
+  findUniqueProductionBasicAcceptanceBAccount,
   parseProductionBasicAcceptanceBApproval,
   productionBasicAcceptanceBApprovalDigest,
   validateProductionBasicAcceptanceBReadback,
@@ -206,6 +207,35 @@ test("Acceptance B approval rejects expiry, identity drift, extra fields, and br
   }
 });
 
+test("Acceptance B matches the approved account pair across pages without requiring a singleton production account total", () => {
+  const approved = { accountId: ACCOUNT_ID, email: "acceptance-b@example.com", status: "active" };
+  const pages = [
+    {
+      items: Array.from({ length: 50 }, (_, index) => ({
+        accountId: `acct-filler-${index + 1}`,
+        email: `filler-${index + 1}@example.com`
+      })),
+      total: 51,
+      page: 1,
+      pageSize: 50
+    },
+    { items: [approved], total: 51, page: 2, pageSize: 50 }
+  ];
+  assert.deepEqual(findUniqueProductionBasicAcceptanceBAccount(pages, approved.accountId, approved.email), approved);
+  const pairDriftOnAnotherPage = {
+    ...pages[0],
+    items: [{ accountId: approved.accountId, email: "different@example.com" }, ...pages[0].items.slice(1)]
+  };
+  assert.deepEqual(findUniqueProductionBasicAcceptanceBAccount([pairDriftOnAnotherPage, pages[1]], approved.accountId, approved.email), approved);
+  const duplicatePages = [
+    { ...pages[0], total: 52 },
+    { items: [approved, { ...approved }], total: 52, page: 2, pageSize: 50 }
+  ];
+  assert.throws(() => findUniqueProductionBasicAcceptanceBAccount([
+    ...duplicatePages
+  ], approved.accountId, approved.email), /production_basic_acceptance_b_account_readback_invalid/);
+});
+
 test("Acceptance B write accounting accepts only the frozen one-order cardinalities", () => {
   assert.deepEqual(validateProductionBasicAcceptanceBWriteCounts(exactWriteCounts()), exactWriteCounts());
   for (const value of [
@@ -282,4 +312,11 @@ test("deployment machine contract registers the local-only Acceptance B integrat
       forbiddenFields: ["password", "token", "secret", "redeem_code", "provider_request_id", "model_prompt", "model_response"]
     }
   });
+});
+
+test("Acceptance B reads only its independent customer password secret", async () => {
+  const workflow = await readFile(new URL("../../.github/workflows/production-basic-customer-operation.yml", import.meta.url), "utf8");
+  const acceptanceB = workflow.slice(workflow.indexOf("  acceptance-b-fresh-order:"), workflow.indexOf("  controlled-pilot-closed-validate:"));
+  assert.match(acceptanceB, /OPL_PRODUCTION_BASIC_ACCEPTANCE_B_CUSTOMER_PASSWORD:\s*\$\{\{ secrets\.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_CUSTOMER_PASSWORD \}\}/);
+  assert.doesNotMatch(acceptanceB, /OPL_BASIC_CANARY_CUSTOMER_PASSWORD/);
 });

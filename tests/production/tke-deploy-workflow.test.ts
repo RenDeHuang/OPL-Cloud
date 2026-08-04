@@ -1057,7 +1057,8 @@ test("Acceptance B fresh order is a separately approved exact-count production c
   assert.equal(job.env.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_ARTIFACT_PATH, undefined);
   assert.equal(job.env.OPL_SUB2API_ADMIN_EMAIL, "${{ secrets.OPL_SUB2API_ADMIN_EMAIL }}");
   assert.equal(job.env.OPL_SUB2API_ADMIN_PASSWORD, "${{ secrets.OPL_SUB2API_ADMIN_PASSWORD }}");
-  assert.equal(job.env.OPL_BASIC_CANARY_CUSTOMER_PASSWORD, "${{ secrets.OPL_BASIC_CANARY_CUSTOMER_PASSWORD }}");
+  assert.equal(job.env.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_CUSTOMER_PASSWORD, "${{ secrets.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_CUSTOMER_PASSWORD }}");
+  assert.equal(job.env.OPL_BASIC_CANARY_CUSTOMER_PASSWORD, undefined);
   assert.equal(job.env.OPL_INTERNAL_SERVICE_TOKEN, undefined);
   assert.equal(job.env.TENCENT_DEPLOY_KUBECONFIG_B64, "${{ secrets.TENCENT_DEPLOY_KUBECONFIG_B64 }}");
   assert.equal(job.env.TENCENT_DEPLOY_KUBECONFIG, "${{ secrets.TENCENT_DEPLOY_KUBECONFIG }}");
