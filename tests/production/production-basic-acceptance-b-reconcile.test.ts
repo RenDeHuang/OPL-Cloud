@@ -326,6 +326,45 @@ test("a customer-login failure after a valid server DTO keeps the server digests
   assert.deepEqual(validateProductionBasicAcceptanceBReconcileReadback(result, { mergedSha: MERGED_SHA }), result);
 });
 
+test("a nonzero Fresh baseline remains a baseline failure after customer login succeeds", async () => {
+  const requests = [];
+  const fetchImpl = async (url, init = {}) => {
+    const parsed = new URL(url);
+    requests.push({ method: init.method || "GET", path: parsed.pathname });
+    if (parsed.pathname === "/api/auth/login") {
+      const body = JSON.parse(init.body);
+      return loginPayload(body.email === ADMIN_EMAIL ? "acct-admin" : "acct-reconcile", body.email === ADMIN_EMAIL ? "admin" : "owner");
+    }
+    if (parsed.pathname === "/api/operator/account-reconciliation") {
+      return response(envelope("control-plane+sub2api+ledger", routeData({
+        status: "partial",
+        walletUsdMicros: "7420000",
+        workspaceCount: 0,
+        launchCount: 1,
+        keyCount: 1,
+        receiptCount: 0,
+        failureStage: "baseline",
+        readbackError: "baseline_not_zero"
+      })));
+    }
+    if (parsed.pathname === "/api/auth/me") return response(envelope("sub2api", { email: EMAIL, role: "owner", status: "active" }));
+    if (parsed.pathname === "/api/workspaces") return response(envelope("control-plane", { items: [], total: 0, page: 1, pageSize: 50 }));
+    if (parsed.pathname === "/api/workspace-launches") return response([{ operationId: "redacted-by-artifact" }]);
+    throw new Error(`unexpected_request:${parsed.pathname}`);
+  };
+
+  const result = await reconcileProductionBasicAcceptanceBAccount(baseOptions(fetchImpl));
+  assert.equal(result.status, "partial");
+  assert.equal(result.customerLogin, "active");
+  assert.equal(result.failureStage, "baseline");
+  assert.equal(result.readbackError, "baseline_not_zero");
+  assert.equal(result.errorCode, "acceptance_b_account_reconcile_baseline");
+  assert.equal(result.launchCount, 1);
+  assert.equal(result.keyCount, 1);
+  assert.deepEqual(validateProductionBasicAcceptanceBReconcileReadback(result, { mergedSha: MERGED_SHA }), result);
+  assert.equal(requests.some((request) => request.method === "POST" && request.path === "/api/workspace-launches"), false);
+});
+
 test("manual-review server DTOs get a wallet-adjustment failure stage without losing the readback shape", async () => {
   const fetchImpl = async (url, init = {}) => {
     const parsed = new URL(url);

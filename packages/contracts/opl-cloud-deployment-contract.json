@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 36,
+  "schemaVersion": 37,
   "owner": "OPL Fabric",
   "purpose": "Deployment workflow, immutable Cloud and Workspace images, TKE handoff, read-only diagnostics, and production-verification safety.",
   "state": "current",
@@ -690,6 +690,13 @@
     "readback": {
       "baseline": "zero_workspace_launch_workspace_key_and_workspace_receipt_for_approved_account",
       "launchPostUnknown": "authoritative_get_before_one_post_then_authoritative_get_same_operation_id_without_retry",
+      "timeoutContinuation": {
+        "operationMode": "acceptance_b_fresh_readback",
+        "baselineAuthority": "validated_prepared_acceptance_b_account_reconcile_artifact_from_resume_run_id",
+        "releaseAuthority": "approval_release_sha_equals_current_production_configmap_release_sha",
+        "launchMutation": "forbidden_get_exact_existing_operation_only",
+        "businessMutationCounts": {"accountProvision": 0, "walletAdjustment": 0, "workspaceLaunchPost": 0, "debit": 0, "cvmCreate": 0, "cvmOwnershipClaim": 0, "nodeClaim": 0, "cbsCreate": 0, "runtimeCreate": 0, "receiptCreate": 0}
+      },
       "authorities": ["control_plane_launch", "sub2api_debit_history", "fabric_operations_and_provider_truth", "runtime_ready_pod", "ledger_purchase_receipt", "workspace_url_http"],
       "stageBudgetFields": ["compute_create", "compute_claim_cvm", "compute_claim_node", "cbs_create", "static_binding_apply", "attachment", "secret", "runtime", "activation", "receipt"],
       "stageBudgetRequiredValue": {"attempted": 1, "confirmed": 1, "unknown": 0, "max": 1},

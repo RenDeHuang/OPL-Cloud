@@ -256,17 +256,16 @@ async function readFullKeys(requestOptions, customerAuth) {
   throw new Error("acceptance_b_account_reconcile_keys_invalid");
 }
 
-async function readZeroBaseline(requestOptions, customerAuth) {
+async function readBaseline(requestOptions, customerAuth) {
   const workspaces = sourceEnvelope(await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/workspaces?page=1&pageSize=50" }), "control-plane", true).data;
   const launchesRaw = (await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/workspace-launches" })).payload;
   const keys = await readFullKeys(requestOptions, customerAuth);
   const receipts = sourceEnvelope(await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/billing/receipts?limit=100" }), "ledger", true).data;
-  if (!Array.isArray(workspaces?.items) || workspaces.total !== 0 || workspaces.items.length !== 0 ||
-    !Array.isArray(launchesRaw) || launchesRaw.length !== 0 || keys.length !== 0 ||
-    !Array.isArray(receipts?.receipts) || receipts.receipts.length !== 0 || receipts.hasMore !== false) {
-    throw new Error("acceptance_b_account_reconcile_baseline_not_zero");
+  if (!Array.isArray(workspaces?.items) || !Number.isSafeInteger(workspaces.total) || workspaces.total < 0 ||
+    !Array.isArray(launchesRaw) || !Array.isArray(receipts?.receipts) || receipts.hasMore !== false) {
+    throw new Error("acceptance_b_account_reconcile_baseline_unavailable");
   }
-  return { workspaceCount: 0, launchCount: 0, keyCount: 0, receiptCount: 0 };
+  return { workspaceCount: workspaces.total, launchCount: launchesRaw.length, keyCount: keys.length, receiptCount: receipts.receipts.length };
 }
 
 export async function reconcileProductionBasicAcceptanceBAccount(options = {}) {
@@ -371,30 +370,38 @@ export async function reconcileProductionBasicAcceptanceBAccount(options = {}) {
   let failureStage = serverFailureStage;
   let readbackError = serverReadbackError;
   if (data.status !== "unknown" && data.remoteIdentity === "active") {
+    let customerAuth;
     try {
-      const customerAuth = await login({ ...requestOptions, email: normalizedEmail, password: String(customerPassword) });
+      customerAuth = await login({ ...requestOptions, email: normalizedEmail, password: String(customerPassword) });
       const identity = sourceEnvelope(await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/auth/me" }), "sub2api").data;
       if (identity?.email !== normalizedEmail || identity?.role !== "owner" || identity?.status !== "active") throw new Error("acceptance_b_account_reconcile_customer_identity_invalid");
       customerLogin = "active";
-      const fresh = await readZeroBaseline(requestOptions, customerAuth);
-      baseline.workspaceCount = fresh.workspaceCount;
-      baseline.launchCount = fresh.launchCount;
-      baseline.keyCount = fresh.keyCount;
-      baseline.receiptCount = fresh.receiptCount;
     } catch {
       customerLogin = "failed";
       failureStage = "customer_login";
       readbackError = "customer_login_failed";
     }
+    if (customerLogin === "active") {
+      try {
+        const current = await readBaseline(requestOptions, customerAuth);
+        baseline.workspaceCount = current.workspaceCount;
+        baseline.launchCount = current.launchCount;
+        baseline.keyCount = current.keyCount;
+        baseline.receiptCount = current.receiptCount;
+      } catch {
+        failureStage = "baseline";
+        readbackError = "baseline_authority_unavailable";
+      }
+    }
   }
   let status = data.status;
   if (customerLogin === "failed") status = "unknown";
+  if (customerLogin === "active" && Object.values(baseline).some((count) => count !== 0)) {
+    failureStage = "baseline";
+    readbackError = "baseline_not_zero";
+  }
   if (status === "prepared" && (customerLogin !== "active" || Object.values(baseline).some((count) => count !== 0))) {
     status = "unknown";
-    if (customerLogin === "active" && Object.values(baseline).some((count) => count !== 0)) {
-      failureStage = "baseline";
-      readbackError = "baseline_not_zero";
-    }
   }
   if (SUCCESS_STATUSES.has(status)) {
     failureStage = "none";

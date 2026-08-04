@@ -24,6 +24,7 @@ on:
           - acceptance_b_account_prepare
           - recovery_plan_diagnose
           - acceptance_b_fresh_order
+          - acceptance_b_fresh_readback
           - compute_claim_validate
           - fabric_ledger_readback
           - recovery_plan_execute
@@ -1048,8 +1049,8 @@ jobs:
           fi
 
   acceptance-b-fresh-order:
-    name: Run one independently approved fresh Basic order in TKE VPC
-    if: ${{ github.ref == 'refs/heads/main' && github.sha == inputs.merged_sha && inputs.operation_mode == 'acceptance_b_fresh_order' && inputs.confirm_workspace_purchase && !inputs.confirm_single_model_request && !inputs.confirm_account_provision && !inputs.confirm_wallet_recharge && inputs.resume_run_id == '' }}
+    name: Run or read back one independently approved fresh Basic order in TKE VPC
+    if: ${{ github.ref == 'refs/heads/main' && github.sha == inputs.merged_sha && ((inputs.operation_mode == 'acceptance_b_fresh_order' && inputs.confirm_workspace_purchase && inputs.resume_run_id == '') || (inputs.operation_mode == 'acceptance_b_fresh_readback' && !inputs.confirm_workspace_purchase && inputs.resume_run_id != '')) && !inputs.confirm_single_model_request && !inputs.confirm_account_provision && !inputs.confirm_wallet_recharge }}
     runs-on: [self-hosted, tencent-cloud, opl-cloud, tke-vpc]
     timeout-minutes: 40
     environment: production
@@ -1130,12 +1131,36 @@ jobs:
         with:
           node-version: "22"
 
+      - name: Download prepared Acceptance B baseline
+        if: ${{ inputs.operation_mode == 'acceptance_b_fresh_readback' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: production-basic-acceptance-b-reconcile
+          path: ${{ runner.temp }}/production-basic-acceptance-b-baseline
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.resume_run_id }}
+
+      - name: Verify readback release is still deployed
+        if: ${{ inputs.operation_mode == 'acceptance_b_fresh_readback' }}
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          approval_release="$(node --input-type=module -e 'import { parseProductionBasicAcceptanceBApproval } from "./tools/production-basic-acceptance-b.ts"; const value=parseProductionBasicAcceptanceBApproval(process.env.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_APPROVAL_JSON,{approvalId:process.env.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_APPROVAL_ID}); process.stdout.write(value.release.mergedMainSha)')"
+          deployed_release="$(kubectl --kubeconfig "$TENCENT_DEPLOY_KUBECONFIG_PATH" -n "$OPL_K8S_NAMESPACE" get configmap opl-cloud-config -o jsonpath='{.data.OPL_RELEASE_SHA}')"
+          if [ -z "$approval_release" ] || [ "$deployed_release" != "$approval_release" ]; then
+            echo "Acceptance B readback release is not the exact deployed release." >&2
+            exit 1
+          fi
+
       - name: Run one fresh Basic order with authoritative readback
         id: acceptance
         continue-on-error: true
         shell: bash
         env:
           OPL_PRODUCTION_BASIC_ACCEPTANCE_B_ARTIFACT_PATH: ${{ runner.temp }}/production-basic-acceptance-b/evidence.json
+          OPL_PRODUCTION_BASIC_ACCEPTANCE_B_BASELINE_ARTIFACT_PATH: ${{ runner.temp }}/production-basic-acceptance-b-baseline/evidence.json
+          OPL_ACCEPTANCE_B_OPERATION_MODE: ${{ inputs.operation_mode }}
         working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           set -euo pipefail
@@ -1158,7 +1183,11 @@ jobs:
             if curl --silent --fail --max-time 1 http://127.0.0.1:18082/healthz >/dev/null 2>&1; then break; fi
             sleep 1
           done
-          OPL_FABRIC_INTERNAL_ORIGIN=http://127.0.0.1:18082 OPL_INTERNAL_SERVICE_TOKEN="$internal_token" node tools/production-basic-acceptance-b.ts --run
+          if [ "$OPL_ACCEPTANCE_B_OPERATION_MODE" = "acceptance_b_fresh_readback" ]; then
+            OPL_FABRIC_INTERNAL_ORIGIN=http://127.0.0.1:18082 OPL_INTERNAL_SERVICE_TOKEN="$internal_token" node tools/production-basic-acceptance-b.ts --readback
+          else
+            OPL_FABRIC_INTERNAL_ORIGIN=http://127.0.0.1:18082 OPL_INTERNAL_SERVICE_TOKEN="$internal_token" node tools/production-basic-acceptance-b.ts --run
+          fi
 
       - name: Validate redacted Acceptance B evidence and exact counts
         if: always()
