@@ -18,6 +18,7 @@ export const PRODUCTION_BASIC_ACCEPTANCE_B_ALLOWED_WRITES = Object.freeze([
   "debit_one_basic_month",
   "create_one_workspace_key",
   "create_one_cvm",
+  "claim_one_cvm_ownership",
   "claim_one_node",
   "create_one_cbs",
   "create_one_attachment",
@@ -51,6 +52,7 @@ export const PRODUCTION_BASIC_ACCEPTANCE_B_OPERATION = Object.freeze({
   exactWrites: Object.freeze({
     sub2apiDebit: 1,
     cvmCreate: 1,
+    cvmOwnershipClaim: 1,
     nodeClaim: 1,
     cbsCreate: 1,
     runtimeCreate: 1,
@@ -110,6 +112,7 @@ const WRITE_COUNT_KEYS = [
   "workspaceLaunchPosts",
   "sub2apiDebits",
   "tencentCvmCreates",
+  "tencentCvmOwnershipClaims",
   "kubernetesNodeClaims",
   "tencentCbsCreates",
   "runtimeCreates",
@@ -127,6 +130,7 @@ const EXACT_WRITE_COUNTS = Object.freeze({
   workspaceLaunchPosts: 1,
   sub2apiDebits: 1,
   tencentCvmCreates: 1,
+  tencentCvmOwnershipClaims: 1,
   kubernetesNodeClaims: 1,
   tencentCbsCreates: 1,
   runtimeCreates: 1,
@@ -142,6 +146,19 @@ const EXACT_WRITE_COUNTS = Object.freeze({
 
 const ACCEPTANCE_B_ACCOUNT_PAGE_SIZE = 50;
 const MAX_ACCEPTANCE_B_ACCOUNT_PAGES = 1000;
+const ACCEPTANCE_B_STAGE_BUDGET_KEYS = [
+  "compute_create",
+  "compute_claim_cvm",
+  "compute_claim_node",
+  "cbs_create",
+  "static_binding_apply",
+  "attachment",
+  "secret",
+  "runtime",
+  "activation",
+  "receipt"
+];
+const CONFIRMED_STAGE_BUDGET = Object.freeze({ attempted: 1, confirmed: 1, unknown: 0, max: 1 });
 const ACCEPTANCE_B_PREPARE_REASON = "production Basic Acceptance B account preparation";
 const PREPARE_WRITE_COUNT_KEYS = [
   "accountProvisionPosts", "walletAdjustmentPosts", "workspaceLaunchPosts", "sub2apiDebits", "tencentCvmCreates",
@@ -310,6 +327,15 @@ export function validateProductionBasicAcceptanceBWriteCounts(value) {
   return { ...value };
 }
 
+export function validateProductionBasicAcceptanceBStageBudgets(value) {
+  if (!exactObjectKeys(value, ACCEPTANCE_B_STAGE_BUDGET_KEYS) || ACCEPTANCE_B_STAGE_BUDGET_KEYS.some((stage) =>
+    !exactObjectKeys(value[stage], ["attempted", "confirmed", "unknown", "max"]) ||
+    canonicalJson(value[stage]) !== canonicalJson(CONFIRMED_STAGE_BUDGET))) {
+    throw new Error("production_basic_acceptance_b_stage_budgets_invalid");
+  }
+  return cloneJson(value);
+}
+
 const PREPARE_ARTIFACT_DIGEST_KEYS = new Set(["customerIdentitySha256", "accountProvisionIdentitySha256", "rechargeIdentitySha256"]);
 const PREPARE_FORBIDDEN_ARTIFACT_KEYS = /(?:password|secret|token|cookie|csrf|email|accountid|userid|operationid|workspaceid|resourceid|name|providerrequestid|redeemcode)/i;
 
@@ -375,7 +401,7 @@ export function validateProductionBasicAcceptanceBReadback(value, approval) {
   const fail = () => { throw new Error("production_basic_acceptance_b_readback_invalid"); };
   const topLevelKeys = [
     "schemaVersion", "operationMode", "status", "approvalId", "approvalDigest", "release", "baseline", "quote", "debit",
-    "launch", "compute", "storage", "attachment", "runtime", "receipt", "workspaceUrl", "writeCounts"
+    "launch", "compute", "storage", "attachment", "runtime", "receipt", "workspaceUrl", "stageBudgets", "writeCounts"
   ];
   if (!exactObjectKeys(value, topLevelKeys) || value.schemaVersion !== 1 ||
     value.operationMode !== PRODUCTION_BASIC_ACCEPTANCE_B_OPERATION.operationMode || value.status !== "succeeded" ||
@@ -401,6 +427,7 @@ export function validateProductionBasicAcceptanceBReadback(value, approval) {
 
   try {
     validateProductionBasicAcceptanceBWriteCounts(value.writeCounts);
+    validateProductionBasicAcceptanceBStageBudgets(value.stageBudgets);
   } catch {
     fail();
   }
@@ -467,6 +494,81 @@ function positiveMicros(value, name) {
 
 function canonicalWorkspaceUrl(workspaceId) {
   return `https://workspace.medopl.cn/w/${workspaceId}/`;
+}
+
+function assertAcceptanceBLaunchIdentity(launch, approval) {
+  if (launch?.operationId !== approval.launch.operationId || launch?.workspaceId !== approval.launch.workspaceId ||
+    launch?.accountId !== approval.customer.accountId) {
+    throw new Error("production_basic_acceptance_b_launch_identity_invalid");
+  }
+  return launch;
+}
+
+async function readAcceptanceBLaunch(requestOptions, customerAuth, operationId) {
+  try {
+    return (await requestJson({
+      ...requestOptions,
+      auth: customerAuth,
+      path: `/api/workspace-launches/${encodeURIComponent(operationId)}`
+    })).payload;
+  } catch (error) {
+    if (String(error?.message || "").startsWith(`request_failed:GET:/api/workspace-launches/${encodeURIComponent(operationId)}:404:`)) return null;
+    throw new Error("production_basic_acceptance_b_launch_readback_unknown");
+  }
+}
+
+export async function submitProductionBasicAcceptanceBLaunch({ requestOptions, customerAuth, approval }) {
+  try {
+    const response = await requestJson({
+      ...requestOptions,
+      auth: customerAuth,
+      path: "/api/workspace-launches",
+      method: "POST",
+      headers: { "Idempotency-Key": approval.launch.idempotencyKey },
+      body: { name: approval.launch.name, packageId: "basic", sizeGb: 10, autoRenew: false }
+    });
+    if (response.response.status !== 202) throw new Error("production_basic_acceptance_b_launch_not_accepted");
+    return assertAcceptanceBLaunchIdentity(response.payload, approval);
+  } catch {
+    const readback = await readAcceptanceBLaunch(requestOptions, customerAuth, approval.launch.operationId);
+    if (!readback) throw new Error("production_basic_acceptance_b_launch_outcome_unknown");
+    return assertAcceptanceBLaunchIdentity(readback, approval);
+  }
+}
+
+function exactSucceededOperation(operations, action, resourceId = "") {
+  const matches = operations.filter((operation) => operation?.action === action && (!resourceId || operation?.resourceId === resourceId));
+  if (matches.length !== 1 || matches[0]?.status !== "succeeded") {
+    throw new Error("production_basic_acceptance_b_fabric_operation_counts_invalid");
+  }
+  return matches[0];
+}
+
+function operationStageBudget(operation, stage) {
+  return operation?.redactedProviderPayload?.normalLaunchMutationBudget?.[stage];
+}
+
+export function productionBasicAcceptanceBStageBudgets(operations, launch) {
+  const compute = exactSucceededOperation(operations, "create_compute_allocation", launch.computeAllocationId);
+  const storage = exactSucceededOperation(operations, "create_storage_volume", launch.storageId);
+  for (const [action, resourceId] of [
+    ["create_storage_attachment", launch.attachmentId],
+    ["upsert_gateway_secret", ""],
+    ["create_workspace_runtime", ""]
+  ]) exactSucceededOperation(operations, action, resourceId);
+  const continuation = launch?.continuationAttemptBudgets;
+  return validateProductionBasicAcceptanceBStageBudgets({
+    compute_create: operationStageBudget(compute, "compute_create"),
+    compute_claim_cvm: operationStageBudget(compute, "compute_claim_cvm"),
+    compute_claim_node: operationStageBudget(compute, "compute_claim_node"),
+    cbs_create: operationStageBudget(storage, "cbs_create"),
+    static_binding_apply: operationStageBudget(storage, "static_binding_apply"),
+    attachment: continuation?.attachment,
+    secret: continuation?.secret,
+    runtime: continuation?.runtime,
+    activation: continuation?.activation,
+    receipt: continuation?.receipt
+  });
 }
 
 function basicAcceptanceBReceipt(data, launch, totalChargeUsdMicros) {
@@ -841,19 +943,7 @@ export async function runProductionBasicAcceptanceB(options = {}) {
   const wallet = walletFact(sourceEnvelope(await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/gateway/wallet" }), "sub2api"), identity.sub2apiUserId);
   if (BigInt(wallet.usdMicros) <= BigInt(totalChargeUsdMicros)) throw new Error("production_basic_acceptance_b_wallet_insufficient");
 
-  const launchResponse = await requestJson({
-    ...requestOptions,
-    auth: customerAuth,
-    path: "/api/workspace-launches",
-    method: "POST",
-    headers: { "Idempotency-Key": approval.launch.idempotencyKey },
-    body: { name: approval.launch.name, packageId: "basic", sizeGb: 10, autoRenew: false }
-  });
-  if (launchResponse.response.status !== 202 || launchResponse.payload?.operationId !== approval.launch.operationId ||
-    launchResponse.payload?.workspaceId !== approval.launch.workspaceId || launchResponse.payload?.accountId !== approval.customer.accountId) {
-    throw new Error("production_basic_acceptance_b_launch_not_accepted");
-  }
-  let launch = launchResponse.payload;
+  let launch = await submitProductionBasicAcceptanceBLaunch({ requestOptions, customerAuth, approval });
   for (let attempt = 1; attempt <= launchPollAttempts && (launch.status !== "succeeded" || launch.phase !== "succeeded"); attempt += 1) {
     if (attempt > 1 && launchPollDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, launchPollDelayMs));
     launch = (await requestJson({ ...requestOptions, auth: customerAuth, path: `/api/workspace-launches/${encodeURIComponent(approval.launch.operationId)}` })).payload;
@@ -886,18 +976,8 @@ export async function runProductionBasicAcceptanceB(options = {}) {
   const computeAllocation = (await requestJson({ ...fabricOptions, path: `/fabric/compute-allocations/${encodeURIComponent(launch.computeAllocationId)}` })).payload;
   const ownership = (await requestJson({ ...fabricOptions, path: `/fabric/machine-ownerships/${encodeURIComponent(launch.computeAllocationId)}` })).payload;
   const truth = (await requestJson({ ...fabricOptions, path: `/fabric/monthly-provider-truth?computeAllocationId=${encodeURIComponent(launch.computeAllocationId)}&storageVolumeId=${encodeURIComponent(launch.storageId)}` })).payload;
-  const operations = listPayload(await requestJson({ ...fabricOptions, path: "/fabric/operations" })).filter((operation) => operation?.workspaceId === launch.workspaceId && operation?.status === "succeeded");
-  const countAction = (action) => operations.filter((operation) => operation.action === action).length;
-  const operationCounts = {
-    compute: countAction("create_compute_allocation"),
-    storage: countAction("create_storage_volume"),
-    attachment: countAction("create_storage_attachment"),
-    secret: countAction("upsert_gateway_secret"),
-    runtime: countAction("create_workspace_runtime")
-  };
-  if (operationCounts.compute !== 1 || operationCounts.storage !== 1 || operationCounts.attachment !== 1 || operationCounts.secret !== 1 || operationCounts.runtime !== 1) {
-    throw new Error("production_basic_acceptance_b_fabric_operation_counts_invalid");
-  }
+  const operations = listPayload(await requestJson({ ...fabricOptions, path: "/fabric/operations" })).filter((operation) => operation?.workspaceId === launch.workspaceId);
+  const stageBudgets = productionBasicAcceptanceBStageBudgets(operations, launch);
   const cvmInstanceId = String(computeAllocation?.cvmInstanceId || computeAllocation?.instanceId || "");
   const nodeName = String(computeAllocation?.nodeName || "");
   const instanceType = String(computeAllocation?.instanceType || computeAllocation?.providerData?.instanceType || "");
@@ -949,14 +1029,16 @@ export async function runProductionBasicAcceptanceB(options = {}) {
     runtime: { id: runtimeId, status: runtimeData.status, ready: runtimeData.ready, url: runtimeData.url, podImageId: pod.imageID },
     receipt,
     workspaceUrl: { url: expectedUrl, statusCode: workspaceResponse.status },
+    stageBudgets,
     writeCounts: {
       workspaceLaunchPosts: 1,
       sub2apiDebits: 1,
-      tencentCvmCreates: operationCounts.compute,
-      kubernetesNodeClaims: operationCounts.compute,
-      tencentCbsCreates: operationCounts.storage,
-      runtimeCreates: operationCounts.runtime,
-      receiptCreates: 1,
+      tencentCvmCreates: stageBudgets.compute_create.confirmed,
+      tencentCvmOwnershipClaims: stageBudgets.compute_claim_cvm.confirmed,
+      kubernetesNodeClaims: stageBudgets.compute_claim_node.confirmed,
+      tencentCbsCreates: stageBudgets.cbs_create.confirmed,
+      runtimeCreates: stageBudgets.runtime.confirmed,
+      receiptCreates: stageBudgets.receipt.confirmed,
       accountProvisionPosts: 0,
       walletAdjustmentPosts: 0,
       modelRequests: 0,
@@ -975,7 +1057,9 @@ function blockedProductionBasicAcceptanceBArtifact(errorCode = "production_basic
     operationMode: PRODUCTION_BASIC_ACCEPTANCE_B_OPERATION.operationMode,
     status: "blocked",
     errorCode,
-    runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
+    mutationLedgerState: "unknown",
+    runnerDirectMutationCounts: { sub2api: "unknown", tencent: "unknown", kubernetes: "unknown" },
+    reconciliationRequired: ["workspace_launch"]
   };
 }
 

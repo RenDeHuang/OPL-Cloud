@@ -1177,9 +1177,6 @@ jobs:
           });
           if (evidence.status !== "succeeded") throw new Error("Acceptance B did not produce succeeded evidence.");
           validateProductionBasicAcceptanceBReadback(evidence, approval);
-          for (const [field, expected] of Object.entries({ workspaceLaunchPosts: 1, sub2apiDebits: 1, tencentCvmCreates: 1, kubernetesNodeClaims: 1, tencentCbsCreates: 1, runtimeCreates: 1, receiptCreates: 1, accountProvisionPosts: 0, walletAdjustmentPosts: 0, modelRequests: 0, refunds: 0, renewals: 0, deletes: 0, replacements: 0 })) {
-            if (evidence.writeCounts[field] !== expected) throw new Error(`Acceptance B write count mismatch: ${field}`);
-          }
           if (!String(evidence.runtime?.podImageId || "").endsWith(approval.release.workspaceImageDigest) || evidence.workspaceUrl?.statusCode !== 200) throw new Error("Acceptance B terminal evidence mismatch.");
           NODE
 
@@ -1856,6 +1853,7 @@ jobs:
     environment: production
     env:
       OPL_MERGED_SHA: ${{ inputs.merged_sha }}
+      OPL_RECOVERY_ACCEPTANCE_FUNDING_APPROVAL_ID: ${{ inputs.approval_id }}
       OPL_PRODUCTION_BASIC_RECOVERY_ACCEPTANCE_FUNDING_APPROVAL_JSON: ${{ secrets.OPL_PRODUCTION_BASIC_RECOVERY_ACCEPTANCE_FUNDING_APPROVAL_JSON }}
       OPL_PRODUCTION_BASIC_ACCEPTANCE_B_CUSTOMER_EMAIL: ${{ secrets.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_CUSTOMER_EMAIL }}
       OPL_PRODUCTION_BASIC_ACCEPTANCE_B_CUSTOMER_PASSWORD: ${{ secrets.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_CUSTOMER_PASSWORD }}
@@ -1908,7 +1906,7 @@ jobs:
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/production-recovery-acceptance-funding"
           chmod 700 "$RUNNER_TEMP/production-recovery-acceptance-funding"
-          node tools/recovery-original-launch-driver.ts --recovery-acceptance-funding-prepare --approval-id "${{ inputs.approval_id }}" > "$OPL_RECOVERY_ACCEPTANCE_FUNDING_ARTIFACT_PATH"
+          node tools/recovery-original-launch-driver.ts --recovery-acceptance-funding-prepare --approval-id "$OPL_RECOVERY_ACCEPTANCE_FUNDING_APPROVAL_ID" > "$OPL_RECOVERY_ACCEPTANCE_FUNDING_ARTIFACT_PATH"
       - name: Validate redacted funding evidence
         if: always()
         shell: bash

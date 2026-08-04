@@ -621,7 +621,7 @@
     "acceptanceBFreshOrderCanary": {
       "scope": "independent_new_basic_order",
       "workspaceLaunchPostCount": 1,
-      "exactWrites": {"sub2apiDebit": 1, "cvmCreate": 1, "nodeClaim": 1, "cbsCreate": 1, "runtimeCreate": 1, "receiptCreate": 1},
+      "exactWrites": {"sub2apiDebit": 1, "cvmCreate": 1, "cvmOwnershipClaim": 1, "nodeClaim": 1, "cbsCreate": 1, "runtimeCreate": 1, "receiptCreate": 1},
       "terminalEvidence": ["launch_succeeded", "runtime_ready", "receipt_completed", "pod_image_id_equals_approved_workspace_image_digest", "workspace_url_http_200"]
     },
     "evidenceSubstitution": "forbidden_both_A_and_B_required",
@@ -647,7 +647,7 @@
       "sizeGb": 10,
       "autoRenew": false,
       "workspaceLaunchPostCount": 1,
-      "exactWrites": {"sub2apiDebit": 1, "cvmCreate": 1, "nodeClaim": 1, "cbsCreate": 1, "runtimeCreate": 1, "receiptCreate": 1},
+      "exactWrites": {"sub2apiDebit": 1, "cvmCreate": 1, "cvmOwnershipClaim": 1, "nodeClaim": 1, "cbsCreate": 1, "runtimeCreate": 1, "receiptCreate": 1},
       "terminalEvidence": ["launch_succeeded", "runtime_ready", "receipt_completed", "pod_image_id_equals_approved_workspace_image_digest", "workspace_url_http_200"]
     },
     "approvalSchema": {
@@ -657,17 +657,20 @@
       "customerFields": ["email", "accountId"],
       "launchFields": ["idempotencyKey", "operationId", "workspaceId", "name", "packageId", "sizeGb", "autoRenew"],
       "expectedFields": ["nodePoolId", "resolvedInstanceType"],
-      "allowedWrites": ["submit_one_workspace_launch", "debit_one_basic_month", "create_one_workspace_key", "create_one_cvm", "claim_one_node", "create_one_cbs", "create_one_attachment", "upsert_one_gateway_secret", "create_one_runtime", "activate_one_workspace", "record_one_purchase_receipt"],
+      "allowedWrites": ["submit_one_workspace_launch", "debit_one_basic_month", "create_one_workspace_key", "create_one_cvm", "claim_one_cvm_ownership", "claim_one_node", "create_one_cbs", "create_one_attachment", "upsert_one_gateway_secret", "create_one_runtime", "activate_one_workspace", "record_one_purchase_receipt"],
       "forbiddenWrites": ["provision_account", "adjust_wallet", "submit_second_workspace_launch", "create_second_cvm", "create_second_cbs", "refund", "renew", "delete", "replace", "send_model_request"]
     },
     "writeAccounting": {
       "authority": "authoritative_service_readback_not_http_attempts",
-      "exactCountFields": ["workspaceLaunchPosts", "sub2apiDebits", "tencentCvmCreates", "kubernetesNodeClaims", "tencentCbsCreates", "runtimeCreates", "receiptCreates"],
+      "exactCountFields": ["workspaceLaunchPosts", "sub2apiDebits", "tencentCvmCreates", "tencentCvmOwnershipClaims", "kubernetesNodeClaims", "tencentCbsCreates", "runtimeCreates", "receiptCreates"],
       "zeroCountFields": ["accountProvisionPosts", "walletAdjustmentPosts", "modelRequests", "refunds", "renewals", "deletes", "replacements"]
     },
     "readback": {
       "baseline": "zero_workspace_launch_workspace_key_and_workspace_receipt_for_approved_account",
+      "launchPostUnknown": "one_post_then_authoritative_get_same_operation_id_without_retry",
       "authorities": ["control_plane_launch", "sub2api_debit_history", "fabric_operations_and_provider_truth", "runtime_ready_pod", "ledger_purchase_receipt", "workspace_url_http"],
+      "stageBudgetFields": ["compute_create", "compute_claim_cvm", "compute_claim_node", "cbs_create", "static_binding_apply", "attachment", "secret", "runtime", "activation", "receipt"],
+      "stageBudgetRequiredValue": {"attempted": 1, "confirmed": 1, "unknown": 0, "max": 1},
       "terminalEvidence": ["launch_succeeded", "runtime_ready", "receipt_completed", "pod_image_id_equals_approved_workspace_image_digest", "workspace_url_http_200"],
       "forbiddenFields": ["password", "token", "secret", "redeem_code", "provider_request_id", "model_prompt", "model_response"]
     }
