@@ -1,0 +1,127 @@
+import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import test from "node:test";
+
+import {
+  RECOVERY_ACCEPTANCE_FUNDING_ALLOWED_WRITES,
+  RECOVERY_ACCEPTANCE_FUNDING_CONFIRMATION,
+  RECOVERY_ACCEPTANCE_FUNDING_FORBIDDEN_WRITES,
+  RECOVERY_ACCEPTANCE_FUNDING_MODE,
+  RECOVERY_ACCEPTANCE_EXTRA_FUNDING_ALLOWED_WRITES,
+  RECOVERY_ACCEPTANCE_EXTRA_FUNDING_CONFIRMATION,
+  RECOVERY_ACCEPTANCE_EXTRA_FUNDING_FORBIDDEN_WRITES,
+  RECOVERY_ACCEPTANCE_EXTRA_FUNDING_MODE,
+  RECOVERY_ACCEPTANCE_ORIGINAL_LAUNCH_ALLOWED_WRITES,
+  RECOVERY_ACCEPTANCE_ORIGINAL_LAUNCH_CONFIRMATION,
+  RECOVERY_ACCEPTANCE_ORIGINAL_LAUNCH_FORBIDDEN_WRITES,
+  RECOVERY_ACCEPTANCE_ORIGINAL_LAUNCH_MODE,
+  parseRecoveryAcceptanceFundingApproval,
+  parseRecoveryAcceptanceOriginalLaunchApproval,
+  recoveryAcceptanceApprovalDigest
+} from "../../tools/recovery-original-launch-driver.ts";
+
+const mergedMainSha = "a".repeat(40);
+const cloudImageDigest = `sha256:${"b".repeat(64)}`;
+const workspaceImageDigest = `sha256:${"c".repeat(64)}`;
+const accountId = "acct-acceptance-b";
+const email = "acceptance-b@example.com";
+const nonce = "d".repeat(32);
+
+function stableId(...parts: string[]) {
+  const hash = createHash("sha1");
+  for (const part of parts) {
+    hash.update(part);
+    hash.update(Buffer.from([0]));
+  }
+  return hash.digest("hex");
+}
+
+function launchIdentities(idempotencyKey: string) {
+  const operationId = `workspace-launch-${stableId(accountId, idempotencyKey).slice(0, 18)}`;
+  return { operationId, workspaceId: `ws-${stableId("workspace-launch-v2", accountId, operationId).slice(0, 18)}` };
+}
+
+function launchApproval(overrides: Record<string, unknown> = {}) {
+  const launch = { idempotencyKey: "recovery-acceptance-launch-20260804-01", ...launchIdentities("recovery-acceptance-launch-20260804-01"), name: "Recovery Acceptance Basic", packageId: "basic", sizeGb: 10, autoRenew: false };
+  const value = {
+    schemaVersion: 1,
+    operationMode: RECOVERY_ACCEPTANCE_ORIGINAL_LAUNCH_MODE,
+    approvalId: "recovery-acceptance-original-launch-01",
+    expiresAt: "2099-08-04T00:00:00Z",
+    confirmation: RECOVERY_ACCEPTANCE_ORIGINAL_LAUNCH_CONFIRMATION,
+    nonce,
+    release: { mergedMainSha, cloudImageDigest, workspaceImageDigest },
+    customer: { email, accountId },
+    launch,
+    expected: { nodePoolId: "np-basic-acceptance-b", resolvedInstanceType: "SA5.MEDIUM4" },
+    allowedWrites: [...RECOVERY_ACCEPTANCE_ORIGINAL_LAUNCH_ALLOWED_WRITES],
+    forbiddenWrites: [...RECOVERY_ACCEPTANCE_ORIGINAL_LAUNCH_FORBIDDEN_WRITES],
+    approvalDigest: "",
+    ...overrides
+  } as Record<string, unknown>;
+  value.approvalDigest = recoveryAcceptanceApprovalDigest(value);
+  return value;
+}
+
+function fundingApproval(overrides: Record<string, unknown> = {}) {
+  const value = {
+    schemaVersion: 1,
+    operationMode: RECOVERY_ACCEPTANCE_FUNDING_MODE,
+    approvalId: "recovery-acceptance-funding-01",
+    expiresAt: "2099-08-04T00:00:00Z",
+    confirmation: RECOVERY_ACCEPTANCE_FUNDING_CONFIRMATION,
+    nonce,
+    release: { mergedMainSha, cloudImageDigest, workspaceImageDigest },
+    customer: { email, accountId },
+    rechargeUsdMicros: "60000000",
+    walletOperationId: `wallet-adjustment-${stableId(accountId, `acceptance-b-wallet-recharge-v1:${accountId}:${createHash("sha256").update(email).update(Buffer.from([0])).digest("hex")}`).slice(0, 18)}`,
+    allowedWrites: [...RECOVERY_ACCEPTANCE_FUNDING_ALLOWED_WRITES],
+    forbiddenWrites: [...RECOVERY_ACCEPTANCE_FUNDING_FORBIDDEN_WRITES],
+    approvalDigest: "",
+    ...overrides
+  } as Record<string, unknown>;
+  value.approvalDigest = recoveryAcceptanceApprovalDigest(value);
+  return value;
+}
+
+test("original launch approval rejects release or identity drift and keeps exact write boundary", () => {
+  const approval = launchApproval();
+  assert.equal(parseRecoveryAcceptanceOriginalLaunchApproval(JSON.stringify(approval), { approvalId: approval.approvalId, mergedSha: mergedMainSha }).approvalDigest, approval.approvalDigest);
+  assert.throws(() => parseRecoveryAcceptanceOriginalLaunchApproval(JSON.stringify({ ...approval, release: { ...approval.release, cloudImageDigest: `sha256:${"e".repeat(64)}` } }), { approvalId: approval.approvalId, mergedSha: mergedMainSha }), /approval_invalid/);
+  assert.deepEqual(approval.allowedWrites, ["submit_one_workspace_launch", "debit_one_basic_month", "create_one_cvm", "claim_one_node", "persist_original_launch_manual_review"]);
+  assert.ok(approval.forbiddenWrites.includes("submit_second_workspace_launch"));
+  assert.ok(approval.forbiddenWrites.includes("create_one_cbs"));
+});
+
+test("funding approval is independent and derives one new deterministic wallet operation", () => {
+  const approval = fundingApproval();
+  const parsed = parseRecoveryAcceptanceFundingApproval(JSON.stringify(approval), { approvalId: approval.approvalId, mergedSha: mergedMainSha });
+  assert.equal(parsed.walletOperationId, approval.walletOperationId);
+  assert.equal(parsed.rechargeUsdMicros, "60000000");
+  assert.equal(parsed.confirmation, RECOVERY_ACCEPTANCE_FUNDING_CONFIRMATION);
+  assert.notEqual(parsed.walletOperationId, "wallet-adjustment-acceptance-b-wallet-recharge-v1");
+  assert.throws(() => parseRecoveryAcceptanceFundingApproval(JSON.stringify({ ...approval, rechargeUsdMicros: "52580000" }), { approvalId: approval.approvalId, mergedSha: mergedMainSha }), /approval_invalid/);
+});
+
+test("extra funding requires a distinct operation mode and approval boundary", async () => {
+  const operationKey = `recovery-acceptance-extra-funding-v1:${accountId}:${nonce}`;
+  const value: Record<string, unknown> = {
+    schemaVersion: 1,
+    operationMode: RECOVERY_ACCEPTANCE_EXTRA_FUNDING_MODE,
+    approvalId: "recovery-acceptance-extra-funding-01",
+    expiresAt: "2099-08-04T00:00:00Z",
+    confirmation: RECOVERY_ACCEPTANCE_EXTRA_FUNDING_CONFIRMATION,
+    nonce,
+    release: { mergedMainSha, cloudImageDigest, workspaceImageDigest },
+    customer: { email, accountId },
+    rechargeUsdMicros: "60000000",
+    walletOperationId: `wallet-adjustment-${stableId(accountId, operationKey).slice(0, 18)}`,
+    allowedWrites: [...RECOVERY_ACCEPTANCE_EXTRA_FUNDING_ALLOWED_WRITES],
+    forbiddenWrites: [...RECOVERY_ACCEPTANCE_EXTRA_FUNDING_FORBIDDEN_WRITES],
+    approvalDigest: ""
+  };
+  value.approvalDigest = recoveryAcceptanceApprovalDigest(value);
+  const { parseRecoveryAcceptanceExtraFundingApproval } = await import("../../tools/recovery-original-launch-driver.ts");
+  assert.equal(parseRecoveryAcceptanceExtraFundingApproval(JSON.stringify(value), { approvalId: value.approvalId as string, mergedSha: mergedMainSha }).operationMode, RECOVERY_ACCEPTANCE_EXTRA_FUNDING_MODE);
+  assert.ok((value.forbiddenWrites as string[]).includes("recover_existing_wallet_adjustment"));
+});
