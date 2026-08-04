@@ -100,6 +100,9 @@
         "acceptance-b-fresh-order",
         "controlled-pilot-closed-validate",
         "fabric-ledger-readback",
+        "recovery-acceptance-funding-prepare",
+        "recovery-acceptance-extra-funding-prepare",
+        "recovery-acceptance-original-launch",
         "recovery-acceptance-canary",
         "recovery-plan-operation"
       ]
@@ -844,6 +847,51 @@
       "forbidden": ["password", "secret", "token", "cookie", "nonce", "csrf", "raw_launch_operation_id", "raw_workspace_id"]
     },
     "currentState": "implemented_and_locally_fake_tested_not_executed"
+  },
+  "productionRecoveryAcceptanceFundingPrepare": {
+    "workflow": ".github/workflows/production-basic-customer-operation.yml",
+    "workflowMode": "recovery_acceptance_funding_prepare",
+    "job": "recovery-acceptance-funding-prepare",
+    "runner": ["self-hosted", "tencent-cloud", "opl-cloud", "tke-vpc"],
+    "environment": "production",
+    "approvalSecret": "OPL_PRODUCTION_BASIC_RECOVERY_ACCEPTANCE_FUNDING_APPROVAL_JSON",
+    "behavior": "GET_exact_acceptance_b_wallet_operation_then_one_manual_review_recover_only",
+    "existingOperationIdentity": "acceptance-b-wallet-recharge-v1_account_email_digest",
+    "unknownPost": "GET_same_wallet_operation_without_recover_retry_or_new_recharge",
+    "allowedWrites": ["recover_one_existing_wallet_adjustment"],
+    "forbiddenWrites": ["adjust_new_wallet", "provision_account", "submit_workspace_launch", "debit", "create_cvm", "claim_node", "create_cbs", "create_runtime", "record_receipt"],
+    "mutationCounts": {"walletAdjustmentPosts": 0, "walletRecoveryPosts": "0_or_1", "accountProvisionPosts": 0, "workspaceLaunchPosts": 0},
+    "artifact": {"fields": ["operationMode", "status", "approvalDigest", "release", "customerIdentitySha256", "walletOperationIdSha256", "wallet", "writeCounts", "verifiedAt"], "forbidden": ["email", "password", "accountId", "operationId", "nonce", "secret", "token", "cookie", "csrf"]}
+  },
+  "productionRecoveryAcceptanceExtraFundingPrepare": {
+    "workflow": ".github/workflows/production-basic-customer-operation.yml",
+    "workflowMode": "recovery_acceptance_extra_funding_prepare",
+    "job": "recovery-acceptance-extra-funding-prepare",
+    "runner": ["self-hosted", "tencent-cloud", "opl-cloud", "tke-vpc"],
+    "environment": "production",
+    "defaultEnabled": false,
+    "approvalSecret": "OPL_PRODUCTION_BASIC_RECOVERY_ACCEPTANCE_EXTRA_FUNDING_APPROVAL_JSON",
+    "operationIdentity": "recovery-acceptance-extra-funding-v1_account_nonce",
+    "allowedWrites": ["adjust_one_wallet"],
+    "forbiddenWrites": ["recover_existing_wallet_adjustment", "submit_workspace_launch", "debit", "create_cvm", "claim_node", "create_cbs", "create_runtime", "record_receipt"],
+    "mutationCounts": {"walletAdjustmentPosts": 1, "walletRecoveryPosts": 0},
+    "artifact": {"fields": ["operationMode", "status", "approvalDigest", "release", "customerIdentitySha256", "walletOperationIdSha256", "wallet", "writeCounts", "verifiedAt"], "forbidden": ["email", "password", "accountId", "operationId", "nonce", "secret", "token", "cookie", "csrf"]}
+  },
+  "productionRecoveryAcceptanceOriginalLaunch": {
+    "workflow": ".github/workflows/production-basic-customer-operation.yml",
+    "workflowMode": "recovery_acceptance_original_launch",
+    "job": "recovery-acceptance-original-launch",
+    "runner": ["self-hosted", "tencent-cloud", "opl-cloud", "tke-vpc"],
+    "environment": "production",
+    "approvalSecret": "OPL_PRODUCTION_BASIC_RECOVERY_ACCEPTANCE_APPROVAL_JSON",
+    "customerPasswordSecret": "OPL_PRODUCTION_BASIC_ACCEPTANCE_B_CUSTOMER_PASSWORD",
+    "allowedWrites": ["submit_one_workspace_launch", "debit_one_basic_month", "create_one_cvm", "claim_one_node", "persist_original_launch_manual_review"],
+    "forbiddenWrites": ["submit_second_workspace_launch", "create_second_cvm", "create_one_cbs", "create_one_runtime", "record_one_purchase_receipt", "adjust_wallet", "provision_account"],
+    "exactMutationCounts": {"workspaceLaunchPosts": 1, "sub2apiDebits": 1, "tencentCvmCreates": 1, "kubernetesNodeClaims": 1, "tencentCbsCreates": 0, "runtimeCreates": 0, "receiptCreates": 0},
+    "authorityReadbacks": ["original_launch", "fabric_operations", "fabric_compute_allocation", "fabric_machine_ownership", "operator_workspace_detail_control_plane_fabric_ledger", "sub2api_balance_history"],
+    "manualReviewPrecondition": "compute_and_node_confirmed_storage_runtime_receipt_absent_by_authority_not_projection_only",
+    "unknownPost": "GET_same_original_launch_operation_without_retry",
+    "artifact": {"fields": ["operationMode", "status", "approvalId", "approvalDigest", "release", "target", "manualReview", "writeCounts", "providerEvidence", "verifiedAt"], "forbidden": ["email", "password", "accountId", "launchOperationId", "workspaceId", "nonce", "secret", "token", "cookie", "csrf"]}
   },
 
   "productionRecoveredWorkspaceE2E": {
