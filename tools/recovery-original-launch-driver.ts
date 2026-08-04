@@ -395,7 +395,7 @@ export async function runRecoveryAcceptanceOriginalLaunch(options: RecoveryAccep
   const historyAfter = await readBalanceHistory(requestOptions, customerAuth);
   const debitMatchesBefore = matchingDebit(historyBefore, quoteRaw.totalChargeUsdMicros, startedAt);
   const debitMatchesAfter = matchingDebit(historyAfter, quoteRaw.totalChargeUsdMicros, startedAt);
-  if (debitMatchesAfter.length !== debitMatchesBefore.length + (reconciled ? 0 : 1) || (workspaceLaunchPosts === 1 && debitMatchesAfter.length < 1)) throw new Error("recovery_acceptance_debit_readback_invalid");
+  if (debitMatchesAfter.length !== debitMatchesBefore.length + workspaceLaunchPosts || (workspaceLaunchPosts === 1 && debitMatchesAfter.length < 1)) throw new Error("recovery_acceptance_debit_readback_invalid");
   return {
     schemaVersion: 1,
     operationMode: RECOVERY_ACCEPTANCE_ORIGINAL_LAUNCH_MODE,

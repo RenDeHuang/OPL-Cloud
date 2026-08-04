@@ -96,7 +96,7 @@ function response(payload: unknown, status = 200, headers: Record<string, string
   return new Response(JSON.stringify(payload), { status, headers: { "cache-control": "private, no-store", ...headers } });
 }
 
-function originalLaunchFixture(computeOverrides: Record<string, unknown> = {}) {
+function originalLaunchFixture(computeOverrides: Record<string, unknown> = {}, { launchPostUnknown = false } = {}) {
   const approval = launchApproval();
   const launch = {
     ...approval.launch,
@@ -152,7 +152,10 @@ function originalLaunchFixture(computeOverrides: Record<string, unknown> = {}) {
       if (launchReads++ === 0) return response({ error: "not_found" }, 404);
       return response(launch);
     }
-    if (url.pathname === "/api/workspace-launches" && method === "POST") return response(launch, 202);
+    if (url.pathname === "/api/workspace-launches" && method === "POST") {
+      if (launchPostUnknown) throw new Error("post_result_unknown");
+      return response(launch, 202);
+    }
     if (url.pathname === "/fabric/operations") return response([computeOperation]);
     if (url.pathname === `/fabric/compute-allocations/${launch.computeAllocationId}`) return response(compute);
     if (url.pathname === `/fabric/machine-ownerships/${launch.computeAllocationId}`) return response(ownership);
@@ -257,6 +260,32 @@ for (const [label, computeOverrides] of [
     }), /recovery_acceptance_compute_identity_invalid/);
   });
 }
+
+test("original launch reconciles a lost POST response through the same launch GET", async () => {
+  const fixture = originalLaunchFixture({}, { launchPostUnknown: true });
+  const result = await runRecoveryAcceptanceOriginalLaunch({
+    origin: "https://cloud.medopl.cn",
+    customerEmail: email,
+    customerPassword: "customer-secret",
+    adminEmail: "admin@example.com",
+    adminPassword: "admin-secret",
+    approvalJson: JSON.stringify(fixture.approval),
+    approvalId: fixture.approval.approvalId as string,
+    mergedSha: mergedMainSha,
+    fabricOrigin: "http://127.0.0.1:3000",
+    internalServiceToken: "fixture-token",
+    launchPollAttempts: 1,
+    launchPollDelayMs: 0,
+    fetchImpl: fixture.fetchImpl,
+    now: new Date("2026-08-04T00:00:00Z")
+  });
+  assert.equal(result.status, "succeeded");
+  assert.equal(result.manualReview.reconciled, true);
+  assert.equal(result.writeCounts.workspaceLaunchPosts, 1);
+  assert.equal(result.writeCounts.sub2apiDebits, 1);
+  assert.equal(fixture.calls.filter((call) => call.method === "POST" && call.path === "/api/workspace-launches").length, 1);
+  assert.equal(fixture.calls.filter((call) => call.method === "GET" && call.path === `/api/workspace-launches/${fixture.approval.launch.operationId}`).length, 2);
+});
 
 test("funding approval binds the existing Acceptance B deterministic wallet operation", () => {
   const approval = fundingApproval();
