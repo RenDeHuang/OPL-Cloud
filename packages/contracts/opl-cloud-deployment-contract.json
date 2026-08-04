@@ -746,7 +746,12 @@
     "diagnoseCalls": 0,
     "providerCalls": 0,
     "requiredMutationCounts": {"sub2api": 0, "tencent": 0, "kubernetes": 0},
-    "artifact": "redacted_fabric_ledger_state_outcome_and_boolean_identity_checks"
+    "artifactSchemaVersion": 2,
+    "bindingClassifications": ["current", "compute-claim", "known-legacy", "other"],
+    "providerMutationFields": ["attempted", "confirmed", "unknown", "missing", "failureStage", "providerErrorClass"],
+    "recoverableCVMOnly": "recognized_current_or_compute_claim_binding_and_cvm_attempted_positive_fully_confirmed_unknown_zero_missing_empty_and_node_attempted_zero",
+    "knownLegacy": "recovery_exec_lowerhex20_old_request_hash_exact_match_classification_only_operator_compensation_required_never_binding_takeover",
+    "artifact": "redacted_binding_class_digest_and_exact_persisted_cvm_node_mutation_evidence"
   },
 
 

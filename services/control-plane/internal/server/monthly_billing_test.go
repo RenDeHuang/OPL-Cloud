@@ -277,6 +277,8 @@ func (f *monthlyFabric) ComputeClaimRecoveryProof(_ context.Context, input clien
 
 func (f *monthlyFabric) ComputeClaimRecoveryIdentityEvidence(_ context.Context, input clients.ComputeClaimRecoveryClaimInput) (*clients.ComputeClaimIdentityEvidence, error) {
 	return &clients.ComputeClaimIdentityEvidence{
+		BindingClassification: "current",
+		BindingDigest:         strings.Repeat("b", 64),
 		Checks: []clients.ComputeClaimIdentityCheck{
 			{Field: "binding.present", Matches: true, Expected: "present", Actual: "present"},
 			{Field: "binding.valid", Matches: true, Expected: "valid", Actual: "valid"},

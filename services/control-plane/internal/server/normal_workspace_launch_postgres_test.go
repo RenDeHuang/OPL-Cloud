@@ -345,6 +345,7 @@ func TestPostgresBlockedTerminalRecoveryPlanCreatesPersistedSuccessorAfterReopen
 	fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, "basic")
 	fixture.fabric.computeClaimProof = computeClaimRecoveryProofForLaunch(operation, "unallocated")
 	useWorkspaceRecoveryPlanIdentityEvidence(t, &fixture, &clients.ComputeClaimIdentityEvidence{
+		BindingClassification: "current", BindingDigest: strings.Repeat("b", 64),
 		Checks: []clients.ComputeClaimIdentityCheck{{
 			Field: "binding.compatibility", Matches: true, Expected: "current_or_historical", Actual: "historical",
 		}},

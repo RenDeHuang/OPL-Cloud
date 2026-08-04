@@ -152,6 +152,17 @@ The four implementation owner lanes are Console/Control Plane, Fabric, Gateway i
   array only for that fully confirmed shape. CVM `missing` accepts only
   `instance`, `instance_name`, and the four `opl_*` ownership tags; Node
   `missing` accepts only `node_ownership`.
+- The zero-mutation Fabric ledger readback classifies the exact persisted
+  compute binding as `current`, `compute-claim`, `known-legacy`, or `other` and
+  exposes only that class plus a SHA-256 digest. It also projects the persisted
+  CVM/Node attempt evidence, failure stage, and provider error class without a
+  provider call. `known-legacy` requires the exact historical
+  `recovery-exec-<20 lowercase hex>` request-hash generation, is
+  classification-only, and never authorizes a binding takeover.
+  `recoverable_cvm_only` requires a `current` or
+  `compute-claim` binding, at least one fully confirmed CVM attempt with zero
+  unknown or missing facts, and zero Node attempts; every other result requires
+  one operator-compensation decision and no provider entry.
 - The system NodePool `np-6l4nkdto`, Machine `np-6l4nkdto-2cdtm`, and Node
   `10.66.0.42` must each resolve uniquely and are protected from every
   Tencent/Kubernetes mutation and cleanup path. Its actual NodePool MachineType

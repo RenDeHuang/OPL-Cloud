@@ -580,7 +580,8 @@ async function readPrepareBaseline(requestOptions, customerAuth) {
   const receipts = sourceData(await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/billing/receipts?limit=50" }), "ledger", true);
   const workspaceKeys = (keys?.items || []).filter((key) => key?.kind === "workspace");
   const workspaceReceipts = (receipts?.receipts || []).filter((receipt) => receipt?.type === "billing.workspace_purchased.v1" || receipt?.workspaceId);
-  if (!Array.isArray(workspacePage?.items) || workspacePage.total !== 0 || workspacePage.items.length !== 0 || launches.length !== 0 || workspaceKeys.length !== 0 ||
+  if (!Array.isArray(workspacePage?.items) || workspacePage.total !== 0 || workspacePage.items.length !== 0 || launches.length !== 0 ||
+    keys.total !== 0 || keys.items.length !== 0 || workspaceKeys.length !== 0 ||
     !Array.isArray(receipts?.receipts) || workspaceReceipts.length !== 0 || receipts.hasMore !== false) {
     throw new Error("production_basic_acceptance_b_baseline_not_fresh");
   }
@@ -641,10 +642,10 @@ export async function prepareProductionBasicAcceptanceBAccount(options = {}) {
       // A lost/failed POST is reconciled by the complete account page readback;
       // it is never retried because the provider result may already be applied.
       account = await readPrepareAccount(requestOptions, adminAuth, normalizedEmail);
-      if (postResponseInvalid) throw error;
-      if (!account) throw new Error(error?.message === "production_basic_acceptance_b_account_provision_failed"
-        ? error.message
-        : "production_basic_acceptance_b_account_provision_unknown");
+      if (!account) {
+        if (postResponseInvalid) throw error;
+        throw new Error("production_basic_acceptance_b_account_provision_unknown");
+      }
     }
     account ||= await readPrepareAccount(requestOptions, adminAuth, normalizedEmail);
     if (!account) throw new Error("production_basic_acceptance_b_account_readback_invalid");
@@ -669,7 +670,7 @@ export async function prepareProductionBasicAcceptanceBAccount(options = {}) {
     !String(quoteRaw?.priceVersion || "")) throw new Error("production_basic_acceptance_b_quote_invalid");
   const totalChargeUsdMicros = positiveMicros(quoteRaw.totalChargeUsdMicros, "quote");
   if (BigInt(totalChargeUsdMicros) >= BigInt(PRODUCTION_BASIC_ACCEPTANCE_B_ACCOUNT_PREPARE_OPERATION.rechargeUsdMicros)) throw new Error("production_basic_acceptance_b_prepare_budget_invalid");
-  const walletBefore = walletFact(sourceEnvelope(await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/gateway/wallet" }), "sub2api"), identity.sub2apiUserId);
+  let walletBefore = walletFact(sourceEnvelope(await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/gateway/wallet" }), "sub2api"), identity.sub2apiUserId);
   let walletAfter = walletBefore;
   let walletAdjustmentPosts = 0;
   const walletAdjustmentIdempotencyKey = `acceptance-b-wallet-recharge-v1:${account.accountId}:${customerEmailSha256}`;
@@ -699,17 +700,22 @@ export async function prepareProductionBasicAcceptanceBAccount(options = {}) {
         }
       } catch (error) {
         walletAuthority = await prepareAuthoritativeGet({ ...requestOptions, auth: adminAuth, path: `/api/operator/wallet-adjustments/${encodeURIComponent(walletOperationId)}` });
-        if (postResponseInvalid) throw error;
-        if (!walletAuthority) throw new Error(error?.message === "production_basic_acceptance_b_recharge_failed" ? error.message : "production_basic_acceptance_b_recharge_unknown");
+        if (!walletAuthority) {
+          if (postResponseInvalid) throw error;
+          throw new Error("production_basic_acceptance_b_recharge_unknown");
+        }
       }
       walletAuthority ||= await prepareAuthoritativeGet({ ...requestOptions, auth: adminAuth, path: `/api/operator/wallet-adjustments/${encodeURIComponent(walletOperationId)}` });
-      if (!walletAuthority) throw new Error("production_basic_acceptance_b_recharge_readback_invalid");
-      const adjustment = validatePrepareWalletAdjustment(walletAuthority.payload, walletOperationId, account.accountId);
-      walletAfter = walletFact(sourceEnvelope(await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/gateway/wallet" }), "sub2api"), identity.sub2apiUserId);
-      if (BigInt(walletAfter.usdMicros) - BigInt(walletBefore.usdMicros) !== BigInt(PRODUCTION_BASIC_ACCEPTANCE_B_ACCOUNT_PREPARE_OPERATION.rechargeUsdMicros) ||
-        BigInt(walletAfter.usdMicros) !== BigInt(adjustment.after.usdMicros)) throw new Error("production_basic_acceptance_b_recharge_readback_invalid");
-    } else {
-      validatePrepareWalletAdjustment(walletAuthority.payload, walletOperationId, account.accountId);
+    }
+    if (!walletAuthority) throw new Error("production_basic_acceptance_b_recharge_readback_invalid");
+    // A previously persisted successful operation is one authoritative recharge
+    // for this deterministic identity; do not submit a second POST on replay.
+    walletAdjustmentPosts = 1;
+    const adjustment = validatePrepareWalletAdjustment(walletAuthority.payload, walletOperationId, account.accountId);
+    walletBefore = { ...walletBefore, usdMicros: adjustment.before.usdMicros };
+    walletAfter = walletFact(sourceEnvelope(await requestJson({ ...requestOptions, auth: customerAuth, path: "/api/gateway/wallet" }), "sub2api"), identity.sub2apiUserId);
+    if (BigInt(walletAfter.usdMicros) !== BigInt(adjustment.after.usdMicros)) {
+      throw new Error("production_basic_acceptance_b_recharge_readback_invalid");
     }
   }
   if (BigInt(walletAfter.usdMicros) <= BigInt(totalChargeUsdMicros)) throw new Error("production_basic_acceptance_b_wallet_insufficient");

@@ -36,6 +36,26 @@ func useWorkspaceRecoveryPlanIdentityEvidence(t *testing.T, fixture *workspaceLa
 	fixture.server, fixture.operator = server, reservedOperatorSessionForTest(t, server)
 }
 
+func recoverableCVMOnlyIdentityEvidence() clients.ComputeClaimIdentityEvidence {
+	fields := []string{
+		"fabric.operationId", "fabric.operationIdempotencyKey", "fabric.operationRequestHash",
+		"binding.present", "binding.valid", "binding.compatibility", "binding.launchOperationId",
+		"binding.idempotencyKey", "binding.targetHash", "binding.requestHash",
+	}
+	checks := make([]clients.ComputeClaimIdentityCheck, 0, len(fields))
+	for _, field := range fields {
+		checks = append(checks, clients.ComputeClaimIdentityCheck{Field: field, Matches: true})
+	}
+	return clients.ComputeClaimIdentityEvidence{
+		Checks: checks, BindingClassification: "current", BindingDigest: strings.Repeat("b", 64),
+		MutationLedger: "observed", MutationLedgerOutcome: "nonzero", MutationLedgerDigest: strings.Repeat("d", 64),
+		MutationEvidence: &clients.ComputeClaimEvidence{
+			CVM: clients.ComputeClaimMutationEvidence{Attempted: 1, Confirmed: 1},
+		},
+		FailureStage: "cvm_tag_readback", ProviderErrorClass: "readback_mismatch",
+	}
+}
+
 func requestWorkspaceRecoveryPlan(t *testing.T, fixture workspaceLaunchWorkerFixture, method, suffix string, body map[string]any) *httptest.ResponseRecorder {
 	t.Helper()
 	encoded, err := json.Marshal(body)
@@ -966,6 +986,7 @@ func TestWorkspaceRecoveryPlanDiagnoseCreatesSuccessorForAuthoritativeObservedZe
 	fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, "basic")
 	fixture.fabric.computeClaimProof = computeClaimRecoveryProofForLaunch(operation, "unallocated")
 	useWorkspaceRecoveryPlanIdentityEvidence(t, &fixture, &clients.ComputeClaimIdentityEvidence{
+		BindingClassification: "current", BindingDigest: strings.Repeat("b", 64),
 		Checks: []clients.ComputeClaimIdentityCheck{{
 			Field: "binding.compatibility", Matches: true, Expected: "current_or_historical", Actual: "historical",
 		}},
@@ -1034,6 +1055,48 @@ func TestWorkspaceRecoveryPlanSuccessorRejectsUnconfirmedFabricLedgerEvidence(t 
 			}
 			if name == "unknown" && gate.FabricLedgerState != "unknown" {
 				t.Fatalf("unknown Fabric evidence was not preserved as unknown: gate=%#v", gate)
+			}
+		})
+	}
+}
+
+func TestWorkspaceRecoveryPlanSuccessorAllowsOnlyExactRecoverableCVMOnlyEvidence(t *testing.T) {
+	planID, planDigest := "recovery-plan-failed", strings.Repeat("a", 64)
+	operation := workspaceLaunchOperation{
+		RecoveryPlan: &workspaceRecoveryPlan{
+			PlanID: planID, PlanDigest: planDigest, Status: "failed", Action: "compute_claim_continue",
+		},
+		RecoveryExecution: &workspaceRecoveryExecution{
+			ExecutionID: "recovery-exec-failed", PlanID: planID, PlanDigest: planDigest, Status: "failed",
+			CompletedAt:     time.Now().UTC().Format(time.RFC3339Nano),
+			MutationOutcome: workspaceRecoveryMutationOutcome{Status: "unknown"},
+		},
+	}
+	evidence := recoverableCVMOnlyIdentityEvidence()
+	outcome, gate := workspaceRecoveryExecutionSuccessorGate(operation, &evidence)
+	if !gate.Allowed || gate.FabricLedgerState != "nonzero" || outcome.Status != "nonzero" ||
+		outcome.Counts != (workspaceRecoveryMutationCounts{Tencent: 1}) || outcome.Source != "fabric_mutation_ledger_recoverable_cvm_only" ||
+		outcome.EvidenceDigest != evidence.MutationLedgerDigest {
+		t.Fatalf("exact recoverable CVM-only evidence was rejected: outcome=%#v gate=%#v", outcome, gate)
+	}
+
+	for name, mutate := range map[string]func(*clients.ComputeClaimIdentityEvidence){
+		"known legacy": func(candidate *clients.ComputeClaimIdentityEvidence) {
+			candidate.BindingClassification = "known-legacy"
+		},
+		"node attempted": func(candidate *clients.ComputeClaimIdentityEvidence) {
+			candidate.MutationEvidence.Node = clients.ComputeClaimMutationEvidence{Attempted: 1, Confirmed: 1}
+		},
+		"cvm unknown": func(candidate *clients.ComputeClaimIdentityEvidence) {
+			candidate.MutationEvidence.CVM = clients.ComputeClaimMutationEvidence{Attempted: 1, Unknown: 1}
+		},
+		"identity mismatch": func(candidate *clients.ComputeClaimIdentityEvidence) { candidate.Checks[0].Matches = false },
+	} {
+		t.Run(name, func(t *testing.T) {
+			candidate := recoverableCVMOnlyIdentityEvidence()
+			mutate(&candidate)
+			if rejectedOutcome, rejectedGate := workspaceRecoveryExecutionSuccessorGate(operation, &candidate); rejectedGate.Allowed {
+				t.Fatalf("unsafe successor evidence accepted: outcome=%#v gate=%#v evidence=%#v", rejectedOutcome, rejectedGate, candidate)
 			}
 		})
 	}
@@ -1146,6 +1209,7 @@ func TestWorkspaceRecoveryPlanDiagnosePersistsFieldMismatch(t *testing.T) {
 	proof := computeClaimRecoveryProofForLaunch(operation, "unallocated")
 	input := workspaceComputeClaimRecoveryRequestForOperation(operation)
 	evidence := &clients.ComputeClaimIdentityEvidence{
+		BindingClassification: "current", BindingDigest: strings.Repeat("b", 64),
 		Checks: []clients.ComputeClaimIdentityCheck{{
 			Field: "binding.operationId", Matches: false, Expected: operation.ID + ":compute", Actual: "op-conflict",
 		}},
@@ -1157,6 +1221,32 @@ func TestWorkspaceRecoveryPlanDiagnosePersistsFieldMismatch(t *testing.T) {
 	if err != nil || plan.Status != "blocked" || len(plan.Mismatches) != 1 || plan.Mismatches[0].Field != "binding.operationId" ||
 		plan.Mismatches[0].Expected != operation.ID+":compute" || plan.Mismatches[0].Actual != "op-conflict" || len(fixture.fabric.computeClaimCalls) != 0 {
 		t.Fatalf("diagnose mismatch plan=%#v err=%v", plan, err)
+	}
+}
+
+func TestWorkspaceRecoveryPlanRejectsClassificationOnlyBindingAuthority(t *testing.T) {
+	fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, "basic")
+	proof := computeClaimRecoveryProofForLaunch(operation, "unallocated")
+	evidence := recoverableCVMOnlyIdentityEvidence()
+	evidence.BindingClassification = "known-legacy"
+	plan, err := newWorkspaceComputeClaimRecoveryPlan(
+		operation, workspaceComputeClaimRecoveryRequestForOperation(operation), proof, &evidence,
+		workspaceRecoveryReleaseBinding{
+			MainSHA: strings.Repeat("a", 40), CloudImageDigest: "sha256:" + strings.Repeat("b", 64),
+			WorkspaceImageDigest: deployedImageDigest(operation.WorkspaceImageDigest),
+		},
+	)
+	if err != nil || plan.Status != "blocked" || len(plan.Mismatches) == 0 || len(fixture.fabric.computeClaimCalls) != 0 {
+		t.Fatalf("classification-only binding became recovery authority: plan=%#v err=%v", plan, err)
+	}
+	found := false
+	for _, mismatch := range plan.Mismatches {
+		if mismatch.Field == "fabric.bindingRecoveryAuthority" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("classification-only binding mismatch was not explicit: %#v", plan.Mismatches)
 	}
 }
 

@@ -1293,14 +1293,21 @@ jobs:
           OPL_FABRIC_LEDGER_ARTIFACT_DIR="$artifact_dir" node --input-type=module <<'NODE'
           import { writeFile } from "node:fs/promises";
           await writeFile(`${process.env.OPL_FABRIC_LEDGER_ARTIFACT_DIR}/fabric-ledger-readback.json`, `${JSON.stringify({
-            schemaVersion: 1,
+            schemaVersion: 2,
             operationMode: "fabric_ledger_readback",
             status: "blocked",
             recoveryEligible: false,
+            recoveryDisposition: "operator_compensation_required",
+            compensationReason: "fabric_ledger_readback_not_completed",
             errorCode: "fabric_ledger_readback_not_completed",
+            binding: { classification: "other", digest: "sha256:" + "0".repeat(64) },
             identityChecks: [],
             mutationLedger: "invalid",
             mutationLedgerOutcome: "unknown",
+            cvm: null,
+            node: null,
+            failureStage: "",
+            providerErrorClass: "",
             runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
           }, null, 2)}\n`, { mode: 0o600 });
           NODE
@@ -1474,17 +1481,25 @@ jobs:
             "binding.idempotencyKey", "binding.targetHash", "binding.requestHash"
           ];
           const digestFields = new Set(["fabric.operationRequestHash", "binding.targetHash", "binding.requestHash"]);
-          const checksValid = checks.length === expectedFields.length && expectedFields.every((field, index) => {
+          const checksSchemaValid = checks.length === expectedFields.length && expectedFields.every((field, index) => {
             const check = checks[index];
-            if (check?.field !== field || check?.matches !== true) return false;
+            if (check?.field !== field || typeof check?.matches !== "boolean") return false;
             if (digestFields.has(field)) {
               return check.expected === undefined && check.actual === undefined &&
-                /^[a-f0-9]{64}$/.test(String(check?.expectedDigest || "")) && check.expectedDigest === check.actualDigest;
+                /^[a-f0-9]{64}$/.test(String(check?.expectedDigest || "")) && /^[a-f0-9]{64}$/.test(String(check?.actualDigest || "")) &&
+                check.matches === (check.expectedDigest === check.actualDigest);
             }
             return check.expectedDigest === undefined && check.actualDigest === undefined &&
               typeof check?.expected === "string" && check.expected.length > 0 && check.expected === check.expected.trim() &&
-              typeof check?.actual === "string" && check.actual.length > 0 && check.actual === check.actual.trim();
+              typeof check?.actual === "string" && check.actual.length > 0 && check.actual === check.actual.trim() &&
+              check.matches === (check.expected === check.actual);
           });
+          const bindingClassifications = new Set(["current", "compute-claim", "known-legacy", "other"]);
+          const bindingClassification = bindingClassifications.has(raw?.bindingClassification) ? raw.bindingClassification : "other";
+          const bindingDigest = /^[a-f0-9]{64}$/.test(String(raw?.bindingDigest || "")) ? `sha256:${raw.bindingDigest}` : `sha256:${"0".repeat(64)}`;
+          const operationIdentityValid = checksSchemaValid && checks.slice(0, 5).every((check) => check.matches === true);
+          const bindingIdentityValid = checksSchemaValid && checks.slice(5).every((check) => check.matches === true) &&
+            new Set(["current", "compute-claim"]).has(bindingClassification);
           const ledgerRelationships = {
             absent: new Set(["confirmed_zero"]),
             observed: new Set(["confirmed_zero", "nonzero", "unknown"]),
@@ -1495,18 +1510,41 @@ jobs:
           const ledgerValid = ledgerRelationships[raw?.mutationLedger]?.has(raw?.mutationLedgerOutcome) === true;
           const ledgerState = Object.hasOwn(ledgerRelationships, raw?.mutationLedger) ? raw.mutationLedger : "invalid";
           const ledgerOutcome = ["confirmed_zero", "nonzero", "unknown"].includes(raw?.mutationLedgerOutcome) ? raw.mutationLedgerOutcome : "unknown";
-          const authoritativeZero = raw?.mutationLedger === "observed" && raw?.mutationLedgerOutcome === "confirmed_zero";
-          const historicalEvidenceIncomplete = raw?.mutationLedger === "absent" && raw?.mutationLedgerOutcome === "confirmed_zero";
-          const recoveryEligible = checksValid && ledgerValid && authoritativeZero;
-          const errorCode = !checksValid || !ledgerValid ? "fabric_identity_evidence_invalid" :
-            historicalEvidenceIncomplete ? "historical_mutation_evidence_incomplete" :
-            raw.mutationLedgerOutcome === "nonzero" ? "fabric_mutation_ledger_nonzero" :
-            raw.mutationLedgerOutcome === "unknown" ? "fabric_mutation_ledger_unknown" : "none";
+          const cvmMissing = new Set(["instance", "instance_name", "opl_account_id", "opl_workspace_id", "opl_resource_id", "opl_operation_id"]);
+          const nodeMissing = new Set(["node_ownership"]);
+          const mutationEvidence = (value, maximum, allowedMissing) => {
+            const missing = Array.isArray(value?.missing) ? value.missing : [];
+            if (!Number.isInteger(value?.attempted) || value.attempted < 0 || value.attempted > maximum || !Number.isInteger(value?.confirmed) || value.confirmed < 0 ||
+              !Number.isInteger(value?.unknown) || value.unknown < 0 || value.confirmed > value.attempted || value.unknown > value.attempted ||
+              value.confirmed + value.unknown > value.attempted || new Set(missing).size !== missing.length ||
+              missing.some((field) => !allowedMissing.has(field))) return null;
+            return { attempted: value.attempted, confirmed: value.confirmed, unknown: value.unknown, missing };
+          };
+          const cvm = mutationEvidence(raw?.mutationEvidence?.cvm, 5, cvmMissing);
+          const node = mutationEvidence(raw?.mutationEvidence?.node, 1, nodeMissing);
+          const failureStages = new Set(["", "cvm_pre_read", "cvm_conflict_check", "cvm_mutation_precondition", "cvm_rename_readback", "cvm_tag_readback", "cvm_final_readback", "cvm_provisioner_transport", "cvm_mutation_evidence", "node_pre_cvm_read", "node_pre_read", "node_conflict_check", "node_patch_build", "node_patch_readback", "node_final_readback", "claim_final_readback"]);
+          const providerErrorClasses = new Set(["", "client_unavailable", "malformed_readback", "ownership_conflict", "readback_mismatch", "timeout", "iam_rbac", "provider_error", "transport_error", "evidence_incomplete"]);
+          const failureStage = failureStages.has(raw?.failureStage) ? raw.failureStage : "invalid";
+          const providerErrorClass = providerErrorClasses.has(raw?.providerErrorClass) ? raw.providerErrorClass : "invalid";
+          const persistedEvidenceValid = ledgerState === "absent" || ledgerState === "invalid" ? cvm === null && node === null : cvm !== null && node !== null;
+          const responseValid = checksSchemaValid && bindingDigest !== `sha256:${"0".repeat(64)}` && ledgerValid && persistedEvidenceValid &&
+            failureStage !== "invalid" && providerErrorClass !== "invalid";
+          const cvmConfirmed = cvm !== null && cvm.attempted > 0 && cvm.confirmed === cvm.attempted && cvm.unknown === 0 && cvm.missing.length === 0;
+          const nodeNotAttempted = node !== null && node.attempted === 0 && node.confirmed === 0 && node.unknown === 0 && node.missing.length === 0;
+          const recoveryEligible = responseValid && operationIdentityValid && bindingIdentityValid && ledgerState === "observed" && ledgerOutcome === "nonzero" && cvmConfirmed && nodeNotAttempted;
+          const compensationReason = recoveryEligible ? "none" : !responseValid ? "evidence_schema_invalid" :
+            !operationIdentityValid ? "fabric_operation_identity_invalid" : bindingClassification === "known-legacy" ? "binding_known_legacy" :
+            !bindingIdentityValid ? "binding_other" :
+            cvm === null || node === null ? "mutation_evidence_unavailable" : !cvmConfirmed ? "cvm_unconfirmed" :
+            !nodeNotAttempted ? "node_attempted" : ledgerState !== "observed" ? "ledger_state_not_observed" : "ledger_outcome_not_nonzero";
+          const errorCode = recoveryEligible ? "none" : responseValid ? "operator_compensation_required" : "fabric_identity_evidence_invalid";
           const artifact = {
-            schemaVersion: 1,
+            schemaVersion: 2,
             operationMode: "fabric_ledger_readback",
-            status: checksValid && ledgerValid ? "proven" : "blocked",
+            status: responseValid ? "proven" : "blocked",
             recoveryEligible,
+            recoveryDisposition: recoveryEligible ? "recoverable_cvm_only" : "operator_compensation_required",
+            compensationReason,
             errorCode,
             source: {
               runId: process.env.OPL_RECOVERY_EVIDENCE_RUN_ID,
@@ -1514,9 +1552,14 @@ jobs:
               artifactDigest: process.env.OPL_RECOVERY_EVIDENCE_ARTIFACT_DIGEST,
               headSha: process.env.OPL_RECOVERY_EVIDENCE_HEAD_SHA
             },
+            binding: { classification: bindingClassification, digest: bindingDigest },
             identityChecks: expectedFields.map((field, index) => ({ field, matches: checks[index]?.field === field && checks[index]?.matches === true })),
             mutationLedger: ledgerState,
-            mutationLedgerOutcome: historicalEvidenceIncomplete ? "unknown" : ledgerOutcome,
+            mutationLedgerOutcome: ledgerState === "absent" ? "unknown" : ledgerOutcome,
+            cvm,
+            node,
+            failureStage,
+            providerErrorClass,
             runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
             verifiedAt: new Date().toISOString()
           };
@@ -1539,17 +1582,49 @@ jobs:
             "binding.present", "binding.valid", "binding.compatibility", "binding.launchOperationId",
             "binding.idempotencyKey", "binding.targetHash", "binding.requestHash"
           ];
+          const cvmMissing = new Set(["instance", "instance_name", "opl_account_id", "opl_workspace_id", "opl_resource_id", "opl_operation_id"]);
+          const nodeMissing = new Set(["node_ownership"]);
+          const mutationEvidenceValid = (value, maximum, allowedMissing) => {
+            if (value === null || typeof value !== "object" || Array.isArray(value) ||
+              Object.keys(value).sort().join(",") !== "attempted,confirmed,missing,unknown" ||
+              !Number.isInteger(value.attempted) || value.attempted < 0 || value.attempted > maximum ||
+              !Number.isInteger(value.confirmed) || value.confirmed < 0 || value.confirmed > value.attempted ||
+              !Number.isInteger(value.unknown) || value.unknown < 0 || value.unknown > value.attempted ||
+              value.confirmed + value.unknown > value.attempted || !Array.isArray(value.missing) ||
+              new Set(value.missing).size !== value.missing.length || value.missing.some((field) => !allowedMissing.has(field))) return false;
+            return true;
+          };
+          const cvmValid = mutationEvidenceValid(artifact?.cvm, 5, cvmMissing);
+          const nodeValid = mutationEvidenceValid(artifact?.node, 1, nodeMissing);
+          const evidencePresenceValid = ["absent", "invalid"].includes(artifact?.mutationLedger) ? artifact?.cvm === null && artifact?.node === null : cvmValid && nodeValid;
+          const failureStages = new Set(["", "cvm_pre_read", "cvm_conflict_check", "cvm_mutation_precondition", "cvm_rename_readback", "cvm_tag_readback", "cvm_final_readback", "cvm_provisioner_transport", "cvm_mutation_evidence", "node_pre_cvm_read", "node_pre_read", "node_conflict_check", "node_patch_build", "node_patch_readback", "node_final_readback", "claim_final_readback"]);
+          const providerErrorClasses = new Set(["", "client_unavailable", "malformed_readback", "ownership_conflict", "readback_mismatch", "timeout", "iam_rbac", "provider_error", "transport_error", "evidence_incomplete"]);
+          const bindingDigestValid = /^sha256:[a-f0-9]{64}$/.test(String(artifact?.binding?.digest || "")) && artifact.binding.digest !== `sha256:${"0".repeat(64)}`;
           const proven = artifact?.status === "proven" && typeof artifact?.recoveryEligible === "boolean" &&
-            ["none", "historical_mutation_evidence_incomplete", "fabric_mutation_ledger_nonzero", "fabric_mutation_ledger_unknown"].includes(artifact?.errorCode) &&
+            ["none", "operator_compensation_required"].includes(artifact?.errorCode) &&
+            ["recoverable_cvm_only", "operator_compensation_required"].includes(artifact?.recoveryDisposition) &&
+            ["none", "fabric_operation_identity_invalid", "binding_known_legacy", "binding_other", "mutation_evidence_unavailable", "cvm_unconfirmed", "node_attempted", "ledger_state_not_observed", "ledger_outcome_not_nonzero"].includes(artifact?.compensationReason) &&
             /^[1-9][0-9]*$/.test(String(artifact?.source?.runId || "")) && /^[1-9][0-9]*$/.test(String(artifact?.source?.artifactId || "")) &&
             /^sha256:[a-f0-9]{64}$/.test(String(artifact?.source?.artifactDigest || "")) && /^[a-f0-9]{40}$/.test(String(artifact?.source?.headSha || "")) &&
+            ["current", "compute-claim", "known-legacy", "other"].includes(artifact?.binding?.classification) && bindingDigestValid &&
             Array.isArray(artifact?.identityChecks) && artifact.identityChecks.length === expectedFields.length &&
-            expectedFields.every((field, index) => artifact.identityChecks[index]?.field === field && artifact.identityChecks[index]?.matches === true) &&
+            expectedFields.every((field, index) => artifact.identityChecks[index]?.field === field && typeof artifact.identityChecks[index]?.matches === "boolean") &&
             ["absent", "reserved", "node_reserved", "observed", "invalid"].includes(artifact?.mutationLedger) &&
-            ["confirmed_zero", "nonzero", "unknown"].includes(artifact?.mutationLedgerOutcome) &&
-            (artifact.recoveryEligible ? artifact.errorCode === "none" && artifact.mutationLedger === "observed" && artifact.mutationLedgerOutcome === "confirmed_zero" : artifact.errorCode !== "none");
-          const blocked = artifact?.status === "blocked" && typeof artifact?.errorCode === "string" && artifact.errorCode.length > 0;
-          if (artifact?.schemaVersion !== 1 || artifact?.operationMode !== "fabric_ledger_readback" || !zero || (!proven && !blocked) ||
+            ["confirmed_zero", "nonzero", "unknown"].includes(artifact?.mutationLedgerOutcome) && evidencePresenceValid &&
+            failureStages.has(artifact?.failureStage) && providerErrorClasses.has(artifact?.providerErrorClass) &&
+            (artifact.recoveryEligible ? artifact.errorCode === "none" && artifact.recoveryDisposition === "recoverable_cvm_only" &&
+              ["current", "compute-claim"].includes(artifact.binding.classification) && artifact.identityChecks.every((check) => check.matches === true) &&
+              artifact.mutationLedger === "observed" && artifact.mutationLedgerOutcome === "nonzero" && cvmValid && nodeValid &&
+              artifact.cvm.attempted > 0 && artifact.cvm.confirmed === artifact.cvm.attempted && artifact.cvm.unknown === 0 && artifact.cvm.missing.length === 0 &&
+              artifact.node.attempted === 0 && artifact.node.confirmed === 0 && artifact.node.unknown === 0 && artifact.node.missing.length === 0 :
+              artifact.errorCode === "operator_compensation_required" && artifact.recoveryDisposition === "operator_compensation_required" && artifact.compensationReason !== "none");
+          const blocked = artifact?.status === "blocked" && artifact?.recoveryEligible === false &&
+            artifact?.recoveryDisposition === "operator_compensation_required" && artifact?.compensationReason === "fabric_ledger_readback_not_completed" &&
+            artifact?.errorCode === "fabric_ledger_readback_not_completed" && artifact?.binding?.classification === "other" &&
+            artifact?.binding?.digest === `sha256:${"0".repeat(64)}` && Array.isArray(artifact?.identityChecks) && artifact.identityChecks.length === 0 &&
+            artifact?.mutationLedger === "invalid" && artifact?.mutationLedgerOutcome === "unknown" && artifact?.cvm === null && artifact?.node === null &&
+            artifact?.failureStage === "" && artifact?.providerErrorClass === "";
+          if (artifact?.schemaVersion !== 2 || artifact?.operationMode !== "fabric_ledger_readback" || !zero || (!proven && !blocked) ||
             /password|secret|token|cookie|privateIp|cvmInstanceId|nodeName|machineName|workspaceId|accountId/i.test(JSON.stringify(artifact))) {
             throw new Error("Fabric ledger readback artifact is invalid");
           }

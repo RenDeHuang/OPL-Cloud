@@ -952,7 +952,8 @@ func TestComputeClaimRecoveryIdentityEvidenceClassifiesPersistedBindingWithoutMu
 
 	evidence, err := service.ComputeClaimRecoveryIdentityEvidence(context.Background(), claimInput)
 	stored, listErr := store.List(context.Background())
-	if err != nil || listErr != nil || evidence == nil || evidence.MutationLedger != "absent" || len(evidence.Checks) != 10 ||
+	if err != nil || listErr != nil || evidence == nil || evidence.BindingClassification != "compute-claim" || len(evidence.BindingDigest) != 64 ||
+		evidence.MutationLedger != "absent" || evidence.MutationEvidence != nil || len(evidence.Checks) != 10 ||
 		len(stored) != 1 || !reflect.DeepEqual(stored[0], pending) || provider.proofCalls != 0 || provider.claimCalls != 0 ||
 		provider.tagCalls != 0 || provider.scaleCalls != 0 || provider.storageCalls != 0 {
 		t.Fatalf("evidence=%#v err=%v stored=%#v listErr=%v provider=%#v", evidence, err, stored, listErr, provider)
@@ -961,7 +962,7 @@ func TestComputeClaimRecoveryIdentityEvidenceClassifiesPersistedBindingWithoutMu
 	for _, check := range evidence.Checks {
 		checks[check.Field] = check
 	}
-	if !checks["binding.compatibility"].Matches || checks["binding.compatibility"].Actual != "historical" ||
+	if !checks["binding.compatibility"].Matches || checks["binding.compatibility"].Actual != "compute-claim" ||
 		!checks["fabric.operationId"].Matches || !checks["fabric.operationRequestHash"].Matches ||
 		!checks["binding.idempotencyKey"].Matches || !checks["binding.requestHash"].Matches ||
 		checks["binding.targetHash"].ExpectedDigest == "" || checks["binding.targetHash"].ExpectedDigest != checks["binding.targetHash"].ActualDigest {
@@ -970,6 +971,75 @@ func TestComputeClaimRecoveryIdentityEvidenceClassifiesPersistedBindingWithoutMu
 	serialized, marshalErr := json.Marshal(evidence)
 	if marshalErr != nil || strings.Contains(string(serialized), historicalComputeClaimRecoveryBinding(claimInput).RequestHash) {
 		t.Fatalf("identity evidence leaked raw hash: %s err=%v", serialized, marshalErr)
+	}
+}
+
+func TestComputeClaimRecoveryIdentityEvidenceClassifiesBindingGenerationsWithoutMutation(t *testing.T) {
+	tests := map[string]struct {
+		binding func(ComputeClaimRecoveryClaimInput) computeClaimRecoveryBinding
+		want    string
+	}{
+		"current": {
+			binding: newComputeClaimRecoveryBinding,
+			want:    "current",
+		},
+		"compute claim": {
+			binding: historicalComputeClaimRecoveryBinding,
+			want:    "compute-claim",
+		},
+		"known legacy": {
+			binding: func(input ComputeClaimRecoveryClaimInput) computeClaimRecoveryBinding {
+				input.IdempotencyKey = "recovery-exec-0123456789abcdefabcd"
+				return newComputeClaimRecoveryBinding(input)
+			},
+			want: "known-legacy",
+		},
+		"arbitrary legacy-shaped request": {
+			binding: func(input ComputeClaimRecoveryClaimInput) computeClaimRecoveryBinding {
+				input.IdempotencyKey = "recovery-exec-not-authoritative"
+				return newComputeClaimRecoveryBinding(input)
+			},
+			want: "other",
+		},
+		"other": {
+			binding: func(input ComputeClaimRecoveryClaimInput) computeClaimRecoveryBinding {
+				binding := newComputeClaimRecoveryBinding(input)
+				binding.TargetHash = "drifted-target-hash"
+				return binding
+			},
+			want: "other",
+		},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			service, store, provider, input := seedComputeClaimRecovery(t, "basic")
+			claimInput := ComputeClaimRecoveryClaimInput{
+				ComputeClaimRecoveryInput: input, MachineName: "machine-after", NodeName: "10.0.0.18", CVMInstanceID: "ins-fixture",
+				PrivateIP: provider.proof.PrivateIP, InstanceType: provider.proof.InstanceType, Zone: provider.proof.Zone,
+				IdempotencyKey: input.LaunchOperationID + ":compute",
+			}
+			store.mu.Lock()
+			pending := store.operation[0]
+			pending.Status, pending.ErrorCode, pending.FinishedAt = "claim_pending", "", time.Time{}
+			pending.RedactedProviderPayload = withComputeClaimRecoveryBinding(pending.RedactedProviderPayload, test.binding(claimInput))
+			store.operation[0] = pending
+			store.mu.Unlock()
+
+			evidence, err := service.ComputeClaimRecoveryIdentityEvidence(context.Background(), claimInput)
+			stored, listErr := store.List(context.Background())
+			if err != nil || listErr != nil || evidence == nil || evidence.BindingClassification != test.want || len(evidence.BindingDigest) != 64 ||
+				len(stored) != 1 || !reflect.DeepEqual(stored[0], pending) || provider.proofCalls != 0 || provider.claimCalls != 0 ||
+				provider.tagCalls != 0 || provider.scaleCalls != 0 || provider.storageCalls != 0 {
+				t.Fatalf("evidence=%#v err=%v stored=%#v listErr=%v provider=%#v", evidence, err, stored, listErr, provider)
+			}
+			if test.want == "known-legacy" {
+				for _, check := range evidence.Checks {
+					if check.Field == "binding.compatibility" && check.Matches {
+						t.Fatalf("known legacy binding became mutation authority: %#v", evidence.Checks)
+					}
+				}
+			}
+		})
 	}
 }
 
@@ -1033,6 +1103,45 @@ func TestComputeClaimRecoveryIdentityEvidenceClassifiesObservedNonzeroLedgerWith
 	stored, listErr := store.List(context.Background())
 	if err != nil || listErr != nil || evidence == nil || evidence.MutationLedger != "observed" ||
 		evidence.MutationLedgerOutcome != "nonzero" || len(evidence.MutationLedgerDigest) != 64 ||
+		evidence.MutationEvidence == nil || !reflect.DeepEqual(*evidence.MutationEvidence, ComputeClaimEvidence{
+		CVM: ComputeClaimMutationEvidence{Attempted: 1, Confirmed: 1}, Node: ComputeClaimMutationEvidence{Attempted: 1, Confirmed: 1},
+	}) || evidence.FailureStage != "" || evidence.ProviderErrorClass != "" ||
+		len(stored) != 1 || !reflect.DeepEqual(stored[0], pending) || provider.proofCalls != 0 || provider.claimCalls != 0 ||
+		provider.tagCalls != 0 || provider.scaleCalls != 0 || provider.storageCalls != 0 {
+		t.Fatalf("evidence=%#v err=%v stored=%#v listErr=%v provider=%#v", evidence, err, stored, listErr, provider)
+	}
+}
+
+func TestComputeClaimRecoveryIdentityEvidenceProjectsExactUnconfirmedLedgerWithoutMutation(t *testing.T) {
+	service, store, provider, input := seedComputeClaimRecovery(t, "basic")
+	claimInput := ComputeClaimRecoveryClaimInput{
+		ComputeClaimRecoveryInput: input, MachineName: "machine-after", NodeName: "10.0.0.18", CVMInstanceID: "ins-fixture",
+		PrivateIP: provider.proof.PrivateIP, InstanceType: provider.proof.InstanceType, Zone: provider.proof.Zone,
+		IdempotencyKey: input.LaunchOperationID + ":compute",
+	}
+	wantEvidence := ComputeClaimEvidence{
+		CVM: ComputeClaimMutationEvidence{
+			Attempted: 1, Missing: []string{"opl_account_id", "opl_workspace_id", "opl_resource_id", "opl_operation_id"},
+		},
+		Node: ComputeClaimMutationEvidence{},
+	}
+	store.mu.Lock()
+	pending := store.operation[0]
+	pending.Status, pending.ErrorCode, pending.FinishedAt = "claim_pending", "", time.Time{}
+	pending.RedactedProviderPayload = withComputeClaimRecoveryBinding(pending.RedactedProviderPayload, historicalComputeClaimRecoveryBinding(claimInput))
+	pending.RedactedProviderPayload = withComputeClaimRecoveryMutation(pending.RedactedProviderPayload, computeClaimRecoveryMutationLedger{
+		State: "observed", Reason: "provider_describe", TencentMutationCount: 1, KubernetesMutationCount: 0,
+		FailureStage: "cvm_tag_readback", ProviderErrorClass: "readback_mismatch", Evidence: wantEvidence,
+	})
+	store.operation[0] = pending
+	store.mu.Unlock()
+
+	evidence, err := service.ComputeClaimRecoveryIdentityEvidence(context.Background(), claimInput)
+	stored, listErr := store.List(context.Background())
+	if err != nil || listErr != nil || evidence == nil || evidence.BindingClassification != "compute-claim" ||
+		evidence.MutationLedger != "observed" || evidence.MutationLedgerOutcome != "unknown" ||
+		evidence.MutationEvidence == nil || !reflect.DeepEqual(*evidence.MutationEvidence, wantEvidence) ||
+		evidence.FailureStage != "cvm_tag_readback" || evidence.ProviderErrorClass != "readback_mismatch" ||
 		len(stored) != 1 || !reflect.DeepEqual(stored[0], pending) || provider.proofCalls != 0 || provider.claimCalls != 0 ||
 		provider.tagCalls != 0 || provider.scaleCalls != 0 || provider.storageCalls != 0 {
 		t.Fatalf("evidence=%#v err=%v stored=%#v listErr=%v provider=%#v", evidence, err, stored, listErr, provider)
