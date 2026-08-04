@@ -14,9 +14,12 @@ import {
   findUniqueProductionBasicAcceptanceBEmailAccount,
   parseProductionBasicAcceptanceBApproval,
   prepareProductionBasicAcceptanceBAccount,
+  productionBasicAcceptanceBStageBudgets,
   productionBasicAcceptanceBApprovalDigest,
+  submitProductionBasicAcceptanceBLaunch,
   validateProductionBasicAcceptanceBPrepareReadback,
   validateProductionBasicAcceptanceBReadback,
+  validateProductionBasicAcceptanceBStageBudgets,
   validateProductionBasicAcceptanceBWriteCounts
 } from "../../tools/production-basic-acceptance-b.ts";
 
@@ -79,6 +82,7 @@ function exactWriteCounts(overrides = {}) {
     workspaceLaunchPosts: 1,
     sub2apiDebits: 1,
     tencentCvmCreates: 1,
+    tencentCvmOwnershipClaims: 1,
     kubernetesNodeClaims: 1,
     tencentCbsCreates: 1,
     runtimeCreates: 1,
@@ -90,6 +94,23 @@ function exactWriteCounts(overrides = {}) {
     renewals: 0,
     deletes: 0,
     replacements: 0,
+    ...overrides
+  };
+}
+
+function exactStageBudgets(overrides = {}) {
+  const confirmed = () => ({ attempted: 1, confirmed: 1, unknown: 0, max: 1 });
+  return {
+    compute_create: confirmed(),
+    compute_claim_cvm: confirmed(),
+    compute_claim_node: confirmed(),
+    cbs_create: confirmed(),
+    static_binding_apply: confirmed(),
+    attachment: confirmed(),
+    secret: confirmed(),
+    runtime: confirmed(),
+    activation: confirmed(),
+    receipt: confirmed(),
     ...overrides
   };
 }
@@ -164,6 +185,7 @@ function readbackFixture(approval, overrides = {}) {
       totalChargeUsdMicros
     },
     workspaceUrl: { url, statusCode: 200 },
+    stageBudgets: exactStageBudgets(),
     writeCounts: exactWriteCounts()
   };
   return { ...value, ...overrides };
@@ -262,7 +284,7 @@ test("Acceptance B exposes one dedicated fresh-order operation and parses its ex
     sizeGb: 10,
     autoRenew: false,
     workspaceLaunchPostCount: 1,
-    exactWrites: { sub2apiDebit: 1, cvmCreate: 1, nodeClaim: 1, cbsCreate: 1, runtimeCreate: 1, receiptCreate: 1 },
+    exactWrites: { sub2apiDebit: 1, cvmCreate: 1, cvmOwnershipClaim: 1, nodeClaim: 1, cbsCreate: 1, runtimeCreate: 1, receiptCreate: 1 },
     terminalEvidence: [
       "launch_succeeded",
       "runtime_ready",
@@ -455,12 +477,96 @@ test("Acceptance B write accounting accepts only the frozen one-order cardinalit
   assert.deepEqual(validateProductionBasicAcceptanceBWriteCounts(exactWriteCounts()), exactWriteCounts());
   for (const value of [
     exactWriteCounts({ workspaceLaunchPosts: 2 }),
+    exactWriteCounts({ tencentCvmOwnershipClaims: 0 }),
     exactWriteCounts({ kubernetesNodeClaims: 0 }),
     exactWriteCounts({ modelRequests: 1 }),
     { ...exactWriteCounts(), unexpected: 0 }
   ]) {
     assert.throws(() => validateProductionBasicAcceptanceBWriteCounts(value), /production_basic_acceptance_b_write_counts_invalid/);
   }
+});
+
+test("Acceptance B launch submits once and reconciles a lost response by deterministic GET", async () => {
+  const approval = parseProductionBasicAcceptanceBApproval(approvalFixture(), {
+    approvalId: APPROVAL_ID,
+    now: new Date("2026-08-02T00:00:00Z")
+  });
+  const launch = { operationId: approval.launch.operationId, workspaceId: approval.launch.workspaceId, accountId: approval.customer.accountId, status: "queued", phase: "compute_fulfilling" };
+  for (const responseLost of [false, true]) {
+    const calls = [];
+    const fetchImpl = async (input, init = {}) => {
+      const url = new URL(String(input));
+      const method = String(init.method || "GET").toUpperCase();
+      calls.push({ method, path: url.pathname });
+      if (method === "POST") {
+        if (responseLost) throw new Error("response_lost");
+        return response(launch, 202);
+      }
+      if (method === "GET" && url.pathname === `/api/workspace-launches/${approval.launch.operationId}`) return response(launch);
+      throw new Error(`unexpected_request:${method}:${url.pathname}`);
+    };
+    assert.deepEqual(await submitProductionBasicAcceptanceBLaunch({
+      requestOptions: { fetchImpl, origin: "https://cloud.medopl.cn", timeoutMs: 1_000 },
+      customerAuth: { cookie: "customer=test", csrfToken: "csrf-test" },
+      approval
+    }), launch);
+    assert.equal(calls.filter((call) => call.method === "POST").length, 1);
+    assert.equal(calls.filter((call) => call.method === "GET").length, responseLost ? 1 : 0);
+  }
+});
+
+test("Acceptance B launch stops after one POST when deterministic readback is absent", async () => {
+  const approval = parseProductionBasicAcceptanceBApproval(approvalFixture(), {
+    approvalId: APPROVAL_ID,
+    now: new Date("2026-08-02T00:00:00Z")
+  });
+  const calls = [];
+  const fetchImpl = async (input, init = {}) => {
+    const url = new URL(String(input));
+    const method = String(init.method || "GET").toUpperCase();
+    calls.push({ method, path: url.pathname });
+    if (method === "POST") throw new Error("response_lost");
+    return response({ error: "not_found" }, 404);
+  };
+  await assert.rejects(() => submitProductionBasicAcceptanceBLaunch({
+    requestOptions: { fetchImpl, origin: "https://cloud.medopl.cn", timeoutMs: 1_000 },
+    customerAuth: { cookie: "customer=test", csrfToken: "csrf-test" },
+    approval
+  }), /production_basic_acceptance_b_launch_outcome_unknown/);
+  assert.equal(calls.filter((call) => call.method === "POST").length, 1);
+  assert.equal(calls.filter((call) => call.method === "GET").length, 1);
+});
+
+test("Acceptance B stage budgets separately prove CVM create, ownership, Node, storage, and continuation", () => {
+  const approval = approvalFixture();
+  const launch = {
+    computeAllocationId: "ca_acceptance_b_01",
+    storageId: "vol_acceptance_b_01",
+    attachmentId: "att_acceptance_b_01",
+    continuationAttemptBudgets: Object.fromEntries(["attachment", "secret", "runtime", "activation", "receipt"].map((stage) => [stage, exactStageBudgets()[stage]]))
+  };
+  const operations = [
+    { action: "create_compute_allocation", status: "succeeded", resourceId: launch.computeAllocationId, redactedProviderPayload: { normalLaunchMutationBudget: {
+      compute_create: exactStageBudgets().compute_create,
+      compute_claim_cvm: exactStageBudgets().compute_claim_cvm,
+      compute_claim_node: exactStageBudgets().compute_claim_node
+    } } },
+    { action: "create_storage_volume", status: "succeeded", resourceId: launch.storageId, redactedProviderPayload: { normalLaunchMutationBudget: {
+      cbs_create: exactStageBudgets().cbs_create,
+      static_binding_apply: exactStageBudgets().static_binding_apply
+    } } },
+    { action: "create_storage_attachment", status: "succeeded", resourceId: launch.attachmentId },
+    { action: "upsert_gateway_secret", status: "succeeded" },
+    { action: "create_workspace_runtime", status: "succeeded" }
+  ];
+  assert.deepEqual(productionBasicAcceptanceBStageBudgets(operations, launch), exactStageBudgets());
+  assert.deepEqual(validateProductionBasicAcceptanceBStageBudgets(exactStageBudgets()), exactStageBudgets());
+  for (const value of [
+    exactStageBudgets({ compute_claim_cvm: { attempted: 1, confirmed: 0, unknown: 1, max: 1 } }),
+    exactStageBudgets({ unexpected: { attempted: 1, confirmed: 1, unknown: 0, max: 1 } }),
+    Object.fromEntries(Object.entries(exactStageBudgets()).filter(([stage]) => stage !== "static_binding_apply"))
+  ]) assert.throws(() => validateProductionBasicAcceptanceBStageBudgets(value), /production_basic_acceptance_b_stage_budgets_invalid/);
+  assert.equal(approval.expected.nodePoolId, "np-basic-acceptance-b");
 });
 
 test("Acceptance B readback proves the exact fresh Basic resource chain and terminal URL", () => {
@@ -481,6 +587,7 @@ test("Acceptance B readback fails closed on non-fresh baseline, count, image, re
   const cases = [
     { ...base, baseline: { ...base.baseline, workspaceCount: 1 } },
     { ...base, writeCounts: exactWriteCounts({ receiptCreates: 0 }) },
+    { ...base, stageBudgets: exactStageBudgets({ static_binding_apply: { attempted: 1, confirmed: 0, unknown: 1, max: 1 } }) },
     { ...base, runtime: { ...base.runtime, podImageId: `containerd://workspace@sha256:${"d".repeat(64)}` } },
     { ...base, receipt: { ...base.receipt, workspaceId: "ws-drift" } },
     { ...base, workspaceUrl: { ...base.workspaceUrl, statusCode: 503 } }
@@ -517,12 +624,15 @@ test("deployment machine contract registers the local-only Acceptance B integrat
     },
     writeAccounting: {
       authority: "authoritative_service_readback_not_http_attempts",
-      exactCountFields: ["workspaceLaunchPosts", "sub2apiDebits", "tencentCvmCreates", "kubernetesNodeClaims", "tencentCbsCreates", "runtimeCreates", "receiptCreates"],
+      exactCountFields: ["workspaceLaunchPosts", "sub2apiDebits", "tencentCvmCreates", "tencentCvmOwnershipClaims", "kubernetesNodeClaims", "tencentCbsCreates", "runtimeCreates", "receiptCreates"],
       zeroCountFields: ["accountProvisionPosts", "walletAdjustmentPosts", "modelRequests", "refunds", "renewals", "deletes", "replacements"]
     },
     readback: {
       baseline: "zero_workspace_launch_workspace_key_and_workspace_receipt_for_approved_account",
+      launchPostUnknown: "one_post_then_authoritative_get_same_operation_id_without_retry",
       authorities: ["control_plane_launch", "sub2api_debit_history", "fabric_operations_and_provider_truth", "runtime_ready_pod", "ledger_purchase_receipt", "workspace_url_http"],
+      stageBudgetFields: ["compute_create", "compute_claim_cvm", "compute_claim_node", "cbs_create", "static_binding_apply", "attachment", "secret", "runtime", "activation", "receipt"],
+      stageBudgetRequiredValue: { attempted: 1, confirmed: 1, unknown: 0, max: 1 },
       terminalEvidence: PRODUCTION_BASIC_ACCEPTANCE_B_OPERATION.terminalEvidence,
       forbiddenFields: ["password", "token", "secret", "redeem_code", "provider_request_id", "model_prompt", "model_response"]
     }

@@ -1076,10 +1076,7 @@ test("Acceptance B fresh order is a separately approved exact-count production c
   assert.match(runs, /git ls-remote --heads origin/);
   assert.match(runs, /node tools\/production-basic-acceptance-b\.ts --run/);
   assert.match(runs, /validateProductionBasicAcceptanceBReadback/);
-  for (const count of [
-    "workspaceLaunchPosts", "sub2apiDebits", "tencentCvmCreates", "kubernetesNodeClaims", "tencentCbsCreates", "runtimeCreates", "receiptCreates",
-    "accountProvisionPosts", "walletAdjustmentPosts", "modelRequests", "refunds", "renewals", "deletes", "replacements"
-  ]) assert.match(runs, new RegExp(count));
+  assert.doesNotMatch(runs, /Acceptance B write count mismatch/);
   assert.match(runs, /podImageId/);
   assert.match(runs, /statusCode.*200|statusCode === 200/);
   assert.match(JSON.stringify(job.steps), /actions\/upload-artifact@v4/);
@@ -1096,6 +1093,15 @@ test("Acceptance B fresh order is a separately approved exact-count production c
   for (const forbiddenWrite of ["provision_account", "adjust_wallet", "refund", "renew", "delete", "replace", "send_model_request"]) {
     assert.match(acceptanceTool, new RegExp(forbiddenWrite));
   }
+});
+
+test("Acceptance B funding approval ID is passed through a job environment boundary", async () => {
+  const workflow = await readWorkflow(".github/workflows/production-basic-customer-operation.yml");
+  const job = workflowJob(workflow, "recovery-acceptance-funding-prepare");
+  const runs = serializedRuns(job);
+  assert.equal(job.env.OPL_RECOVERY_ACCEPTANCE_FUNDING_APPROVAL_ID, "${{ inputs.approval_id }}");
+  assert.match(runs, /--approval-id "\$OPL_RECOVERY_ACCEPTANCE_FUNDING_APPROVAL_ID"/);
+  assert.doesNotMatch(runs, /--approval-id "\$\{\{ inputs\.approval_id \}\}"/);
 });
 
 test("Acceptance B account preparation is a production-only prepare gate with isolated secrets and no launch capability", async () => {

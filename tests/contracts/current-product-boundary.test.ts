@@ -1019,7 +1019,7 @@ test("Current contracts keep compute-claim continuation automatic while preservi
     acceptanceBFreshOrderCanary: {
       scope: "independent_new_basic_order",
       workspaceLaunchPostCount: 1,
-      exactWrites: { sub2apiDebit: 1, cvmCreate: 1, nodeClaim: 1, cbsCreate: 1, runtimeCreate: 1, receiptCreate: 1 },
+      exactWrites: { sub2apiDebit: 1, cvmCreate: 1, cvmOwnershipClaim: 1, nodeClaim: 1, cbsCreate: 1, runtimeCreate: 1, receiptCreate: 1 },
       terminalEvidence: ["launch_succeeded", "runtime_ready", "receipt_completed", "pod_image_id_equals_approved_workspace_image_digest", "workspace_url_http_200"]
     },
     evidenceSubstitution: "forbidden_both_A_and_B_required",
