@@ -152,6 +152,66 @@ func TestWorkspaceRecoveryPlanRequestHashReconciliationRejectsAnyAdditionalMisma
 	}
 }
 
+func TestWorkspaceRecoveryPlanRequestHashReconciliationExecutesOriginalLaunchOnce(t *testing.T) {
+	t.Setenv("OPL_RELEASE_SHA", strings.Repeat("a", 40))
+	t.Setenv("OPL_CLOUD_IMAGE", "uswccr.ccs.tencentyun.com/oplcloud/opl-cloud@sha256:"+strings.Repeat("b", 64))
+	fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, "basic")
+	fixture.fabric.computeClaimProof = computeClaimRecoveryProofForLaunch(operation, "unallocated")
+	claimResult := computeClaimRecoveryProofForLaunch(operation, "target_owned")
+	claimResult.KubernetesMutationCount = 1
+	claimResult.Evidence = &clients.ComputeClaimEvidence{
+		Node: clients.ComputeClaimMutationEvidence{Attempted: 1, Confirmed: 1},
+	}
+	fixture.fabric.computeClaimResult = &claimResult
+	configureWorkspaceLaunchFulfillment(t, fixture)
+	configureWorkspaceComputeClaimReadback(fixture, operation)
+	evidence := requestHashReconciliationIdentityEvidence()
+	useWorkspaceRecoveryPlanIdentityEvidence(t, &fixture, &evidence)
+
+	diagnosed := recoveryPlanResponse(t, requestWorkspaceRecoveryPlan(t, fixture, http.MethodPost, "/diagnose", map[string]any{"accountId": operation.AccountID}))
+	if diagnosed.Status != "diagnosed" || diagnosed.OperationID != operation.ID || len(diagnosed.Mismatches) != 0 {
+		t.Fatalf("diagnosed plan=%#v", diagnosed)
+	}
+	read := recoveryPlanResponse(t, requestWorkspaceRecoveryPlan(t, fixture, http.MethodGet, "", nil))
+	if read.PlanID != diagnosed.PlanID || read.PlanDigest != diagnosed.PlanDigest || read.OperationID != operation.ID {
+		t.Fatalf("read plan=%#v diagnosed=%#v", read, diagnosed)
+	}
+	validated := recoveryPlanResponse(t, requestWorkspaceRecoveryPlan(t, fixture, http.MethodPost, "/validate", map[string]any{
+		"planId": diagnosed.PlanID, "planDigest": diagnosed.PlanDigest,
+	}))
+	if validated.Status != "validated" || len(validated.Mismatches) != 0 {
+		t.Fatalf("validated plan=%#v", validated)
+	}
+	executeBody := map[string]any{
+		"planId": validated.PlanID, "planDigest": validated.PlanDigest, "decision": "continue", "confirmation": "CONTINUE_RECOVERY_PLAN",
+	}
+	firstResponse := requestWorkspaceRecoveryPlan(t, fixture, http.MethodPost, "/execute", executeBody)
+	first := recoveryPlanResponse(t, firstResponse)
+	if firstResponse.Code != http.StatusOK || first.Status != "completed" || first.ExecutionID == "" || first.RunID == "" || first.URL == "" || first.ReceiptID == "" {
+		t.Fatalf("execute status=%d plan=%#v body=%s", firstResponse.Code, first, firstResponse.Body.String())
+	}
+	current := fixture.operation(t)
+	if current.ID != operation.ID || current.Status != "succeeded" || current.RecoveryExecution == nil || current.RecoveryExecution.ExecutionID != first.ExecutionID ||
+		len(fixture.sub2API.charges) != 1 || len(fixture.fabric.computeIDs) != 1 || len(fixture.fabric.computeClaimCalls) != 1 ||
+		len(fixture.fabric.storageIDs) != 1 || len(fixture.sub2API.refunds) != 0 {
+		t.Fatalf("current=%#v charges=%d computes=%d claims=%d storage=%d refunds=%d", current, len(fixture.sub2API.charges),
+			len(fixture.fabric.computeIDs), len(fixture.fabric.computeClaimCalls), len(fixture.fabric.storageIDs), len(fixture.sub2API.refunds))
+	}
+	if fixture.fabric.computeClaimCalls[0].LaunchOperationID != operation.ID || fixture.fabric.computeClaimCalls[0].ComputeAllocationID != operation.ComputeID ||
+		fixture.fabric.computeClaimCalls[0].StorageVolumeID != operation.StorageID || fixture.fabric.computeClaimKeys[0] != operation.ID+":compute" {
+		t.Fatalf("claim calls=%#v keys=%#v", fixture.fabric.computeClaimCalls, fixture.fabric.computeClaimKeys)
+	}
+
+	secondResponse := requestWorkspaceRecoveryPlan(t, fixture, http.MethodPost, "/execute", executeBody)
+	second := recoveryPlanResponse(t, secondResponse)
+	if secondResponse.Code != http.StatusOK || second.ExecutionID != first.ExecutionID || second.RunID != first.RunID || second.URL != first.URL || second.ReceiptID != first.ReceiptID ||
+		len(fixture.sub2API.charges) != 1 || len(fixture.fabric.computeIDs) != 1 || len(fixture.fabric.computeClaimCalls) != 1 ||
+		len(fixture.fabric.storageIDs) != 1 || len(fixture.sub2API.refunds) != 0 {
+		t.Fatalf("replay status=%d first=%#v second=%#v charges=%d computes=%d claims=%d storage=%d refunds=%d", secondResponse.Code, first, second,
+			len(fixture.sub2API.charges), len(fixture.fabric.computeIDs), len(fixture.fabric.computeClaimCalls), len(fixture.fabric.storageIDs), len(fixture.sub2API.refunds))
+	}
+}
+
 func requestWorkspaceRecoveryPlan(t *testing.T, fixture workspaceLaunchWorkerFixture, method, suffix string, body map[string]any) *httptest.ResponseRecorder {
 	t.Helper()
 	encoded, err := json.Marshal(body)

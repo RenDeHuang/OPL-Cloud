@@ -752,7 +752,7 @@ func validComputeClaimRecoveryOwnership(allocation ComputeAllocation, ownership 
 	return ownership.ResourceID == allocation.ID && ownership.AccountID == allocation.AccountID && ownership.WorkspaceID == allocation.WorkspaceID &&
 		ownership.PackageID == allocation.PackageID && ownership.NodePoolID == allocation.NodePoolID && ownership.MachineID == allocation.MachineName &&
 		ownership.InstanceID == firstNonEmpty(allocation.InstanceID, allocation.CVMInstanceID) && ownership.NodeName == allocation.NodeName &&
-		(ownership.Status == "quarantined" || ownership.Status == "active")
+		ownership.ReleasedAt == nil && (ownership.Status == "quarantined" || ownership.Status == "active")
 }
 
 func validComputeClaimProviderProof(proof ComputeClaimProviderProof, allocation ComputeAllocation, plan ComputeAllocationPreparation) bool {
@@ -1590,9 +1590,10 @@ func computeClaimRecoveryOwnershipIdentityDigest(ownership MachineOwnership) str
 	identity := struct {
 		ID, ResourceID, AccountID, WorkspaceID, PackageID, NodePoolID string
 		MachineID, InstanceID, NodeName, ProviderRequestID            string
+		ReleasedAt                                                    *time.Time
 	}{
 		ownership.ID, ownership.ResourceID, ownership.AccountID, ownership.WorkspaceID, ownership.PackageID, ownership.NodePoolID,
-		ownership.MachineID, ownership.InstanceID, ownership.NodeName, ownership.ProviderRequestID,
+		ownership.MachineID, ownership.InstanceID, ownership.NodeName, ownership.ProviderRequestID, ownership.ReleasedAt,
 	}
 	return hashInput(identity)
 }

@@ -874,6 +874,33 @@ func TestClaimComputeRecoveryRequestHashReconciliationConcurrentReplayHasOneNode
 	}
 }
 
+func TestClaimComputeRecoveryRequestHashReconciliationRejectsReleasedOwnershipBeforeProofOrCAS(t *testing.T) {
+	_, store, provider, input := seedComputeClaimRecovery(t, "basic")
+	claimInput := seedRequestHashReconciliationCandidate(t, store, provider, input)
+
+	store.mu.Lock()
+	ownership := store.machineOwnerships[input.ComputeAllocationID]
+	releasedAt := time.Now().UTC()
+	ownership.ReleasedAt = &releasedAt
+	store.machineOwnerships[input.ComputeAllocationID] = ownership
+	before := store.operation[0]
+	beforePayload, beforePayloadErr := operationPayloadJSON(before)
+	store.mu.Unlock()
+	if beforePayloadErr != nil {
+		t.Fatal(beforePayloadErr)
+	}
+
+	result, claimErr := NewServiceWithOperationStore(provider, store).ClaimComputeRecovery(context.Background(), claimInput)
+	operations, listErr := store.List(context.Background())
+	afterPayload, afterPayloadErr := operationPayloadJSON(operations[0])
+	_, reconciliationPresent, _ := decodeComputeClaimRecoveryReconciliation(operations[0])
+	if claimErr == nil || result.Eligible || result.Reason != "local_identity" || listErr != nil || len(operations) != 1 ||
+		afterPayloadErr != nil || beforePayload != afterPayload || reconciliationPresent || provider.proofCalls != 0 || provider.claimCalls != 0 ||
+		provider.tagCalls != 0 || provider.scaleCalls != 0 || provider.storageCalls != 0 {
+		t.Fatalf("result=%#v err=%v operations=%#v listErr=%v payloadChanged=%v provider=%#v", result, claimErr, operations, listErr, beforePayload != afterPayload, provider)
+	}
+}
+
 func TestClaimComputeRecoveryRequestHashReconciliationFailsClosedBeforeMutation(t *testing.T) {
 	type driftCase struct {
 		mutate                func(*FabricOperation, *ComputeAllocation, *ComputeAllocationPreparation, *MachineOwnership, *computeClaimRecoveryBinding, *computeClaimRecoveryMutationLedger, *fakeComputeClaimRecoveryProvider)
