@@ -83,6 +83,17 @@ func requestHashReconciliationIdentityEvidence() clients.ComputeClaimIdentityEvi
 	}
 }
 
+func terminalRequestHashReconciliationIdentityEvidence() clients.ComputeClaimIdentityEvidence {
+	evidence := requestHashReconciliationIdentityEvidence()
+	evidence.MutationLedger = "absent"
+	evidence.MutationLedgerOutcome = "confirmed_zero"
+	evidence.MutationLedgerDigest = "5ad38304b535c2987dbd24657c1a11b884984ff600d9f389deb0d4e634fee792"
+	evidence.MutationEvidence = nil
+	evidence.FailureStage = ""
+	evidence.ProviderErrorClass = ""
+	return evidence
+}
+
 func TestWorkspaceRecoveryPlanDiagnoseAdmitsOnlyFabricRequestHashReconciliationCandidateWithoutMutation(t *testing.T) {
 	t.Setenv("OPL_RELEASE_SHA", strings.Repeat("a", 40))
 	t.Setenv("OPL_CLOUD_IMAGE", "uswccr.ccs.tencentyun.com/oplcloud/opl-cloud@sha256:"+strings.Repeat("b", 64))
@@ -99,6 +110,72 @@ func TestWorkspaceRecoveryPlanDiagnoseAdmitsOnlyFabricRequestHashReconciliationC
 		len(fixture.fabric.storageIDs) != 0 || len(fixture.sub2API.charges) != 1 || len(fixture.fabric.computeIDs) != 1 {
 		t.Fatalf("status=%d plan=%#v operation=%#v claims=%d storage=%d charges=%d computes=%d", response.Code, plan, persisted,
 			len(fixture.fabric.computeClaimCalls), len(fixture.fabric.storageIDs), len(fixture.sub2API.charges), len(fixture.fabric.computeIDs))
+	}
+}
+
+func TestWorkspaceRecoveryPlanDiagnoseAdmitsFabricTerminalRequestHashReconciliationCandidateWithoutMutation(t *testing.T) {
+	t.Setenv("OPL_RELEASE_SHA", strings.Repeat("a", 40))
+	t.Setenv("OPL_CLOUD_IMAGE", "uswccr.ccs.tencentyun.com/oplcloud/opl-cloud@sha256:"+strings.Repeat("b", 64))
+	fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, "basic")
+	fixture.fabric.computeClaimProof = computeClaimRecoveryProofForLaunch(operation, "unallocated")
+	evidence := terminalRequestHashReconciliationIdentityEvidence()
+	useWorkspaceRecoveryPlanIdentityEvidence(t, &fixture, &evidence)
+
+	response := requestWorkspaceRecoveryPlan(t, fixture, http.MethodPost, "/diagnose", map[string]any{"accountId": operation.AccountID})
+	plan := recoveryPlanResponse(t, response)
+	persisted := fixture.operation(t)
+	if response.Code != http.StatusOK || plan.Status != "diagnosed" || len(plan.Mismatches) != 0 ||
+		persisted.RecoveryPlan == nil || persisted.RecoveryPlan.Status != "diagnosed" || len(fixture.fabric.computeClaimCalls) != 0 ||
+		len(fixture.fabric.storageIDs) != 0 || len(fixture.sub2API.charges) != 1 || len(fixture.fabric.computeIDs) != 1 {
+		t.Fatalf("status=%d plan=%#v operation=%#v claims=%d storage=%d charges=%d computes=%d", response.Code, plan, persisted,
+			len(fixture.fabric.computeClaimCalls), len(fixture.fabric.storageIDs), len(fixture.sub2API.charges), len(fixture.fabric.computeIDs))
+	}
+}
+
+func TestWorkspaceRecoveryPlanTerminalRequestHashReconciliationRejectsDriftWithoutMutation(t *testing.T) {
+	tests := map[string]func(*clients.ComputeClaimIdentityEvidence){
+		"ledger outcome": func(evidence *clients.ComputeClaimIdentityEvidence) {
+			evidence.MutationLedgerOutcome = "unknown"
+		},
+		"ledger digest": func(evidence *clients.ComputeClaimIdentityEvidence) {
+			evidence.MutationLedgerDigest = strings.Repeat("f", 64)
+		},
+		"mutation evidence": func(evidence *clients.ComputeClaimIdentityEvidence) {
+			evidence.MutationEvidence = &clients.ComputeClaimEvidence{}
+		},
+		"failure stage": func(evidence *clients.ComputeClaimIdentityEvidence) {
+			evidence.FailureStage = "cvm_tag_readback"
+		},
+		"provider class": func(evidence *clients.ComputeClaimIdentityEvidence) {
+			evidence.ProviderErrorClass = "provider_error"
+		},
+		"target mismatch": func(evidence *clients.ComputeClaimIdentityEvidence) {
+			evidence.Checks[8].Matches = false
+			evidence.Checks[8].ExpectedDigest = strings.Repeat("e", 64)
+			evidence.Checks[8].ActualDigest = strings.Repeat("f", 64)
+		},
+		"check missing": func(evidence *clients.ComputeClaimIdentityEvidence) {
+			evidence.Checks = evidence.Checks[:len(evidence.Checks)-1]
+		},
+	}
+	for name, mutate := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("OPL_RELEASE_SHA", strings.Repeat("a", 40))
+			t.Setenv("OPL_CLOUD_IMAGE", "uswccr.ccs.tencentyun.com/oplcloud/opl-cloud@sha256:"+strings.Repeat("b", 64))
+			fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, "basic")
+			fixture.fabric.computeClaimProof = computeClaimRecoveryProofForLaunch(operation, "unallocated")
+			evidence := terminalRequestHashReconciliationIdentityEvidence()
+			mutate(&evidence)
+			useWorkspaceRecoveryPlanIdentityEvidence(t, &fixture, &evidence)
+
+			response := requestWorkspaceRecoveryPlan(t, fixture, http.MethodPost, "/diagnose", map[string]any{"accountId": operation.AccountID})
+			plan := recoveryPlanResponse(t, response)
+			if response.Code != http.StatusOK || plan.Status != "blocked" || len(plan.Mismatches) == 0 || len(fixture.fabric.computeClaimCalls) != 0 ||
+				len(fixture.fabric.storageIDs) != 0 || len(fixture.sub2API.charges) != 1 || len(fixture.fabric.computeIDs) != 1 {
+				t.Fatalf("status=%d plan=%#v claims=%d storage=%d charges=%d computes=%d", response.Code, plan,
+					len(fixture.fabric.computeClaimCalls), len(fixture.fabric.storageIDs), len(fixture.sub2API.charges), len(fixture.fabric.computeIDs))
+			}
+		})
 	}
 }
 
@@ -153,6 +230,15 @@ func TestWorkspaceRecoveryPlanRequestHashReconciliationRejectsAnyAdditionalMisma
 }
 
 func TestWorkspaceRecoveryPlanRequestHashReconciliationExecutesOriginalLaunchOnce(t *testing.T) {
+	assertWorkspaceRecoveryPlanRequestHashReconciliationExecutesOriginalLaunchOnce(t, requestHashReconciliationIdentityEvidence())
+}
+
+func TestWorkspaceRecoveryPlanTerminalRequestHashReconciliationExecutesOriginalLaunchOnce(t *testing.T) {
+	assertWorkspaceRecoveryPlanRequestHashReconciliationExecutesOriginalLaunchOnce(t, terminalRequestHashReconciliationIdentityEvidence())
+}
+
+func assertWorkspaceRecoveryPlanRequestHashReconciliationExecutesOriginalLaunchOnce(t *testing.T, evidence clients.ComputeClaimIdentityEvidence) {
+	t.Helper()
 	t.Setenv("OPL_RELEASE_SHA", strings.Repeat("a", 40))
 	t.Setenv("OPL_CLOUD_IMAGE", "uswccr.ccs.tencentyun.com/oplcloud/opl-cloud@sha256:"+strings.Repeat("b", 64))
 	fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, "basic")
@@ -165,7 +251,6 @@ func TestWorkspaceRecoveryPlanRequestHashReconciliationExecutesOriginalLaunchOnc
 	fixture.fabric.computeClaimResult = &claimResult
 	configureWorkspaceLaunchFulfillment(t, fixture)
 	configureWorkspaceComputeClaimReadback(fixture, operation)
-	evidence := requestHashReconciliationIdentityEvidence()
 	useWorkspaceRecoveryPlanIdentityEvidence(t, &fixture, &evidence)
 
 	diagnosed := recoveryPlanResponse(t, requestWorkspaceRecoveryPlan(t, fixture, http.MethodPost, "/diagnose", map[string]any{"accountId": operation.AccountID}))

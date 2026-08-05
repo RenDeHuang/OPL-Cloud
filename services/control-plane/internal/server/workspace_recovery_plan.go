@@ -496,9 +496,8 @@ func workspaceComputeClaimPlanIdentityEvidence(operation workspaceLaunchOperatio
 
 func workspaceComputeClaimRequestHashReconciliation(evidence *clients.ComputeClaimIdentityEvidence) bool {
 	if evidence == nil || evidence.BindingClassification != "request-hash-reconciliation" ||
-		!computeClaimApprovalDigestPattern.MatchString(evidence.BindingDigest) || evidence.MutationLedger != "observed" ||
-		evidence.MutationLedgerOutcome != "unknown" || !computeClaimApprovalDigestPattern.MatchString(evidence.MutationLedgerDigest) ||
-		evidence.MutationEvidence == nil || evidence.FailureStage != "cvm_tag_readback" || evidence.ProviderErrorClass != "provider_error" {
+		!computeClaimApprovalDigestPattern.MatchString(evidence.BindingDigest) ||
+		!computeClaimApprovalDigestPattern.MatchString(evidence.MutationLedgerDigest) {
 		return false
 	}
 	expectedFields := []string{
@@ -516,6 +515,16 @@ func workspaceComputeClaimRequestHashReconciliation(evidence *clients.ComputeCla
 				!computeClaimApprovalDigestPattern.MatchString(check.ActualDigest) || check.ExpectedDigest == check.ActualDigest) {
 			return false
 		}
+	}
+	if evidence.MutationLedger == "absent" {
+		absentDigest := sha256.Sum256([]byte("absent"))
+		return evidence.MutationLedgerOutcome == "confirmed_zero" &&
+			evidence.MutationLedgerDigest == hex.EncodeToString(absentDigest[:]) && evidence.MutationEvidence == nil &&
+			evidence.FailureStage == "" && evidence.ProviderErrorClass == ""
+	}
+	if evidence.MutationLedger != "observed" || evidence.MutationLedgerOutcome != "unknown" ||
+		evidence.MutationEvidence == nil || evidence.FailureStage != "cvm_tag_readback" || evidence.ProviderErrorClass != "provider_error" {
+		return false
 	}
 	cvm, node := evidence.MutationEvidence.CVM, evidence.MutationEvidence.Node
 	return cvm.Attempted == 1 && cvm.Confirmed == 0 && cvm.Unknown == 1 && len(cvm.Missing) == 1 && cvm.Missing[0] == "opl_account_id" &&
