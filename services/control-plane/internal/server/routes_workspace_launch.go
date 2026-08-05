@@ -158,6 +158,15 @@ func registerWorkspaceLaunchRoutes(mux *http.ServeMux, app *controlPlaneServer, 
 			}
 			if preflightInput.ResourceType == "compute" {
 				operation.ComputeNodePoolID = preflight.NodePoolID
+				stage, code, gateErr := verifyWorkspaceLaunchComputePoolHead(r.Context(), service, preflight.NodePoolID)
+				if gateErr != nil {
+					status := http.StatusConflict
+					if code == "fabric_compute_pool_head_unavailable" {
+						status = http.StatusBadGateway
+					}
+					writeJSON(w, status, map[string]any{"error": code, "failureStage": stage, "errorCode": code})
+					return
+				}
 			}
 		}
 		unlockAccount := app.lockResource("account", accountID)

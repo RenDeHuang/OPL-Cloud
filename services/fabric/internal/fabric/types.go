@@ -21,6 +21,9 @@ var ErrMonthlyProviderTruthUnavailable = errors.New("monthly_provider_truth_unav
 var ErrInvalidComputeClaimRecovery = errors.New("invalid_compute_claim_recovery")
 var ErrComputeClaimRecoveryUnavailable = errors.New("compute_claim_recovery_unavailable")
 var ErrComputeClaimRecoveryIdempotencyConflict = errors.New("compute_claim_recovery_idempotency_conflict")
+var ErrInvalidComputePoolHeadTerminalization = errors.New("invalid_compute_pool_head_terminalization")
+var ErrComputePoolHeadTerminalizationUnavailable = errors.New("compute_pool_head_terminalization_unavailable")
+var ErrComputePoolHeadTerminalizationConflict = errors.New("compute_pool_head_terminalization_conflict")
 var ErrInvalidWorkspaceActivationTruth = errors.New("invalid_workspace_activation_truth")
 var ErrWorkspaceActivationTruthUnavailable = errors.New("workspace_activation_truth_unavailable")
 var ErrRuntimeHealthSummaryUnavailable = errors.New("runtime_health_summary_unavailable")
@@ -63,6 +66,37 @@ type MonthlyPreflight struct {
 	RenewFlag          string            `json:"renewFlag"`
 	ProviderPriceCNY   float64           `json:"providerPriceCny"`
 	ProviderRequestIDs map[string]string `json:"providerRequestIds"`
+}
+
+type ComputePoolHeadReadback struct {
+	SchemaVersion     int    `json:"schemaVersion"`
+	Status            string `json:"status"`
+	ContinuationState string `json:"continuationState"`
+	FailureStage      string `json:"failureStage"`
+	ErrorCode         string `json:"errorCode"`
+}
+
+type ComputePoolHeadTerminalizationInput struct {
+	NodePoolID     string `json:"nodePoolId"`
+	ApprovalID     string `json:"approvalId"`
+	ApprovalDigest string `json:"approvalDigest"`
+	IdempotencyKey string `json:"-"`
+}
+
+type ComputePoolHeadTerminalizationReadback struct {
+	SchemaVersion              int    `json:"schemaVersion"`
+	Status                     string `json:"status"`
+	HeadStatus                 string `json:"headStatus"`
+	AllocationStatus           string `json:"allocationStatus"`
+	OwnershipStatus            string `json:"ownershipStatus"`
+	TerminalStatus             string `json:"terminalStatus,omitempty"`
+	ApprovalDigest             string `json:"approvalDigest"`
+	BindingDigest              string `json:"bindingDigest"`
+	ManualRecoveryLedgerDigest string `json:"manualRecoveryLedgerDigest"`
+	Replayed                   bool   `json:"replayed"`
+	Sub2APIMutationCount       int    `json:"sub2apiMutationCount"`
+	TencentMutationCount       int    `json:"tencentMutationCount"`
+	KubernetesMutationCount    int    `json:"kubernetesMutationCount"`
 }
 
 type MonthlyPreflightReportInput struct {
@@ -181,39 +215,43 @@ type ComputeClaimEvidence struct {
 // the original operation/resource binding so an operator can diagnose the
 // exact continuation without replaying a provider mutation.
 type ComputeClaimTerminalEvidence struct {
-	SchemaVersion       int                                `json:"schemaVersion"`
-	Stage               string                             `json:"stage"`
-	Status              string                             `json:"status"`
-	ErrorCode           string                             `json:"errorCode"`
-	Reason              string                             `json:"reason,omitempty"`
-	ReadbackStatus      string                             `json:"readbackStatus"`
-	AttemptCount        int                                `json:"attemptCount"`
-	Attempted           int                                `json:"attempted"`
-	Confirmed           int                                `json:"confirmed"`
-	Unknown             int                                `json:"unknown"`
-	Max                 int                                `json:"max"`
-	StartedAt           string                             `json:"startedAt"`
-	FinishedAt          string                             `json:"finishedAt"`
-	FabricRecordID      string                             `json:"fabricRecordId"`
-	OperationID         string                             `json:"operationId"`
-	IdempotencyKey      string                             `json:"idempotencyKey"`
-	RequestHash         string                             `json:"requestHash"`
-	LaunchOperationID   string                             `json:"launchOperationId,omitempty"`
-	AccountID           string                             `json:"accountId"`
-	WorkspaceID         string                             `json:"workspaceId"`
-	ComputeAllocationID string                             `json:"computeAllocationId"`
-	StorageVolumeID     string                             `json:"storageVolumeId,omitempty"`
-	PackageID           string                             `json:"packageId"`
-	PoolID              string                             `json:"poolId,omitempty"`
-	NodePoolID          string                             `json:"nodePoolId"`
-	MachineName         string                             `json:"machineName,omitempty"`
-	NodeName            string                             `json:"nodeName,omitempty"`
-	CVMInstanceID       string                             `json:"cvmInstanceId,omitempty"`
-	CVMOwnershipState   string                             `json:"cvmOwnershipState,omitempty"`
-	NodeOwnershipState  string                             `json:"nodeOwnershipState,omitempty"`
-	BindingDigest       string                             `json:"bindingDigest,omitempty"`
-	Evidence            *ComputeClaimEvidence              `json:"evidence,omitempty"`
-	StageBudgets        map[string]ComputeClaimStageBudget `json:"stageBudgets,omitempty"`
+	SchemaVersion              int                                `json:"schemaVersion"`
+	Stage                      string                             `json:"stage"`
+	Status                     string                             `json:"status"`
+	ErrorCode                  string                             `json:"errorCode"`
+	Reason                     string                             `json:"reason,omitempty"`
+	ReadbackStatus             string                             `json:"readbackStatus"`
+	AttemptCount               int                                `json:"attemptCount"`
+	Attempted                  int                                `json:"attempted"`
+	Confirmed                  int                                `json:"confirmed"`
+	Unknown                    int                                `json:"unknown"`
+	Max                        int                                `json:"max"`
+	StartedAt                  string                             `json:"startedAt"`
+	FinishedAt                 string                             `json:"finishedAt"`
+	FabricRecordID             string                             `json:"fabricRecordId"`
+	OperationID                string                             `json:"operationId"`
+	IdempotencyKey             string                             `json:"idempotencyKey"`
+	RequestHash                string                             `json:"requestHash"`
+	LaunchOperationID          string                             `json:"launchOperationId,omitempty"`
+	AccountID                  string                             `json:"accountId"`
+	WorkspaceID                string                             `json:"workspaceId"`
+	ComputeAllocationID        string                             `json:"computeAllocationId"`
+	StorageVolumeID            string                             `json:"storageVolumeId,omitempty"`
+	PackageID                  string                             `json:"packageId"`
+	PoolID                     string                             `json:"poolId,omitempty"`
+	NodePoolID                 string                             `json:"nodePoolId"`
+	MachineName                string                             `json:"machineName,omitempty"`
+	NodeName                   string                             `json:"nodeName,omitempty"`
+	CVMInstanceID              string                             `json:"cvmInstanceId,omitempty"`
+	CVMOwnershipState          string                             `json:"cvmOwnershipState,omitempty"`
+	NodeOwnershipState         string                             `json:"nodeOwnershipState,omitempty"`
+	BindingDigest              string                             `json:"bindingDigest,omitempty"`
+	OperatorApprovalID         string                             `json:"operatorApprovalId,omitempty"`
+	OperatorApprovalDigest     string                             `json:"operatorApprovalDigest,omitempty"`
+	OperatorIdempotencyKey     string                             `json:"operatorIdempotencyKey,omitempty"`
+	ManualRecoveryLedgerDigest string                             `json:"manualRecoveryLedgerDigest,omitempty"`
+	Evidence                   *ComputeClaimEvidence              `json:"evidence,omitempty"`
+	StageBudgets               map[string]ComputeClaimStageBudget `json:"stageBudgets,omitempty"`
 }
 
 type ComputeClaimStageBudget struct {

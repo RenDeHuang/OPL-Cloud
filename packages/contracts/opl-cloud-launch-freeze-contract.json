@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 25,
+  "schemaVersion": 26,
   "owner": "OPL Platform Architecture",
   "purpose": "Freeze the approved Pilot products, delegated Gateway key lifecycle, one charge per Workspace period, prepaid Tencent fulfillment, Runtime facts, operator workflows, announcements, and evidence levels without claiming unfinished implementation or runtime evidence.",
   "state": "current",
@@ -246,6 +246,35 @@
       "forbiddenRepeats": ["monthly_preflight", "sub2api_debit", "nodepool_scale", "cvm_create", "cvm_rename", "cvm_tag_write"],
       "success": "continue_same_launch_storage_runtime_activation_receipt",
       "failure": "manual_review"
+    },
+    "computePoolHeadPreDebitGate": {
+      "owner": "control_plane",
+      "scope": "first_charge_only_for_new_workspace.launch.v2",
+      "timing": "after_compute_monthly_preflight_before_sub2api_debit",
+      "authority": "GET /fabric/compute-pool-head?nodePoolId=<persisted_exact_node_pool_id>",
+      "allowed": ["absent", "current_head_continuable"],
+      "blocked": ["current_head_blocked", "unknown", "invalid"],
+      "failureProjection": {"failureStage": "compute_pool_head", "errorCodePrefix": "fabric_compute_pool_head_"},
+      "chargedContinuation": "skip_gate_when_ChargeAttempted_or_ChargeConfirmation_is_present",
+      "externalMutationCounts": {"sub2api": 0, "tencent": 0, "kubernetes": 0}
+    },
+    "computePoolHeadTerminalization": {
+      "authority": "operator_authorized_production_workflow_only",
+      "scope": "one_exact_current_fifo_head",
+      "eligible": {
+        "operationStatus": "claim_pending",
+        "allocationStatuses": ["compute_claim_pending", "quarantined"],
+        "ownershipStatus": "quarantined",
+        "requiredEvidence": ["exact_current_binding", "valid_manual_recovery_ledger", "exact_allocation_plan", "exact_machine_ownership"]
+      },
+      "approvalBinding": "server_derived_sha256_of_current_operation_allocation_plan_ownership_binding_and_manual_recovery_ledger",
+      "cas": "claim_pending_to_failed_with_terminal_unprovable_evidence_single_winner",
+      "controlPlaneLaunchState": "preserved_manual_review_compute_claim_pending",
+      "preserved": ["debit", "launch", "cvm", "binding", "manual_recovery_ledger", "ownership", "resource_identity"],
+      "providerMutationCounts": {"sub2api": 0, "tencent": 0, "kubernetes": 0},
+      "idempotency": "same_approval_id_and_digest_replays_succeeded_without_second_cas",
+      "responseLoss": "GET_exact_terminalization_result_then_GET_current_pool_head_never_second_POST",
+      "forbidden": ["skip_all_claim_pending", "refund", "delete", "replace", "reuse_cvm", "direct_sql"]
     },
     "recoveryPlan": {
       "authority": "control_plane_only",

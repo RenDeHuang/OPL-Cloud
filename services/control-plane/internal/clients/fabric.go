@@ -58,6 +58,10 @@ type FabricMonthlyPreflightClient interface {
 	MonthlyPreflight(context.Context, MonthlyPreflightInput) (MonthlyPreflight, error)
 }
 
+type FabricComputePoolHeadClient interface {
+	ComputePoolHead(context.Context, string) (ComputePoolHeadReadback, error)
+}
+
 type FabricMonthlyProviderTruthClient interface {
 	MonthlyProviderTruth(context.Context, string, string) (MonthlyProviderTruth, error)
 }
@@ -153,6 +157,14 @@ type MonthlyPreflight struct {
 	RenewFlag          string            `json:"renewFlag"`
 	ProviderPriceCNY   float64           `json:"providerPriceCny"`
 	ProviderRequestIDs map[string]string `json:"providerRequestIds"`
+}
+
+type ComputePoolHeadReadback struct {
+	SchemaVersion     int    `json:"schemaVersion"`
+	Status            string `json:"status"`
+	ContinuationState string `json:"continuationState"`
+	FailureStage      string `json:"failureStage"`
+	ErrorCode         string `json:"errorCode"`
 }
 
 type MonthlyProviderTruth struct {
@@ -628,6 +640,13 @@ func (c *fabricHTTPClient) Catalog(ctx context.Context) (FabricCatalog, error) {
 func (c *fabricHTTPClient) MonthlyPreflight(ctx context.Context, input MonthlyPreflightInput) (MonthlyPreflight, error) {
 	var result MonthlyPreflight
 	err := c.post(ctx, "/fabric/monthly-preflight", input, "", &result)
+	return result, err
+}
+
+func (c *fabricHTTPClient) ComputePoolHead(ctx context.Context, nodePoolID string) (ComputePoolHeadReadback, error) {
+	params := url.Values{"nodePoolId": {nodePoolID}}
+	var result ComputePoolHeadReadback
+	err := c.get(ctx, "/fabric/compute-pool-head?"+params.Encode(), &result)
 	return result, err
 }
 

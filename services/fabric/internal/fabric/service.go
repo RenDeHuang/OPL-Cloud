@@ -333,6 +333,208 @@ func (s *Service) MonthlyPreflight(ctx context.Context, input MonthlyPreflightIn
 	return result, nil
 }
 
+func (s *Service) ReadComputePoolHead(ctx context.Context, nodePoolID string) (ComputePoolHeadReadback, error) {
+	result := ComputePoolHeadReadback{SchemaVersion: 1, Status: "unknown", ContinuationState: "unknown", FailureStage: "compute_pool_head", ErrorCode: "fabric_compute_pool_head_unavailable"}
+	if !validComputePoolNodePoolID(nodePoolID) {
+		return result, ErrInvalidMonthlyPreflight
+	}
+	head, found, err := s.operations.ComputePoolHead(ctx, nodePoolID)
+	if err != nil {
+		return result, fmt.Errorf("%w: compute_pool_head_read_failed", ErrMonthlyPreflightUnavailable)
+	}
+	if !found {
+		result.Status, result.ContinuationState, result.FailureStage, result.ErrorCode = "absent", "absent", "none", "none"
+		return result, nil
+	}
+	result.Status = head.Status
+	var allocation ComputeAllocation
+	plan, hasPlan := decodeComputeAllocationPlan(head)
+	if !decodeOperationResource(head, &allocation) || !hasPlan || head.ComputePoolKey != nodePoolID || allocation.NodePoolID != nodePoolID ||
+		validateComputeAllocationPreparation(plan, allocation, packagePlan(allocation.PackageID)) != nil || validateNewComputeAllocation(allocation, plan) != nil {
+		return result, nil
+	}
+	if head.Status == "started" {
+		result.ContinuationState, result.FailureStage, result.ErrorCode = "continuable", "none", "none"
+		return result, nil
+	}
+	if head.Status != "claim_pending" {
+		return result, nil
+	}
+	_, manualPresent, manualValid := decodeComputeClaimRecoveryMutation(head)
+	if manualPresent {
+		if manualValid {
+			result.ContinuationState, result.ErrorCode = "blocked", "fabric_compute_pool_head_manual_recovery"
+		}
+		return result, nil
+	}
+	binding, bindingOK := automaticComputeClaimRecoveryBinding(head, allocation, plan)
+	persisted, bindingPresent, bindingValid := decodeComputeClaimRecoveryBinding(head)
+	ownership, ownershipErr := s.operations.MachineOwnership(ctx, allocation.ID)
+	if bindingOK && (!bindingPresent || bindingValid && persisted == binding) && ownershipErr == nil && validComputeClaimRecoveryOwnership(allocation, ownership) {
+		result.ContinuationState, result.FailureStage, result.ErrorCode = "continuable", "none", "none"
+	}
+	return result, nil
+}
+
+type computePoolHeadTerminalizationCandidate struct {
+	operation  FabricOperation
+	allocation ComputeAllocation
+	plan       ComputeAllocationPreparation
+	ownership  MachineOwnership
+	binding    computeClaimRecoveryBinding
+	ledger     computeClaimRecoveryMutationLedger
+	readback   ComputePoolHeadTerminalizationReadback
+}
+
+func (s *Service) ReadComputePoolHeadTerminalization(ctx context.Context, nodePoolID string) (ComputePoolHeadTerminalizationReadback, error) {
+	candidate, err := s.computePoolHeadTerminalizationCandidate(ctx, nodePoolID)
+	if err != nil {
+		return ComputePoolHeadTerminalizationReadback{SchemaVersion: 1, Status: "blocked"}, err
+	}
+	return candidate.readback, nil
+}
+
+func (s *Service) computePoolHeadTerminalizationCandidate(ctx context.Context, nodePoolID string) (computePoolHeadTerminalizationCandidate, error) {
+	if !validComputePoolNodePoolID(nodePoolID) {
+		return computePoolHeadTerminalizationCandidate{}, ErrInvalidComputePoolHeadTerminalization
+	}
+	operation, found, err := s.operations.ComputePoolHead(ctx, nodePoolID)
+	if err != nil || !found || operation.Status != "claim_pending" || operation.ComputePoolKey != nodePoolID {
+		return computePoolHeadTerminalizationCandidate{}, fmt.Errorf("%w: exact_claim_pending_head_required", ErrComputePoolHeadTerminalizationUnavailable)
+	}
+	var allocation ComputeAllocation
+	plan, hasPlan := decodeComputeAllocationPlan(operation)
+	if !decodeOperationResource(operation, &allocation) || !hasPlan || allocation.ID != operation.ResourceID || allocation.NodePoolID != nodePoolID ||
+		(allocation.Status != "compute_claim_pending" && allocation.Status != "quarantined") ||
+		validateComputeAllocationPreparation(plan, allocation, packagePlan(allocation.PackageID)) != nil || validateNewComputeAllocation(allocation, plan) != nil {
+		return computePoolHeadTerminalizationCandidate{}, fmt.Errorf("%w: allocation_identity_invalid", ErrComputePoolHeadTerminalizationUnavailable)
+	}
+	binding, bindingPresent, bindingValid := decodeComputeClaimRecoveryBinding(operation)
+	expectedBinding, expectedBindingValid := automaticComputeClaimRecoveryBinding(operation, allocation, plan)
+	ledger, ledgerPresent, ledgerValid := decodeComputeClaimRecoveryMutation(operation)
+	ownership, ownershipErr := s.operations.MachineOwnership(ctx, allocation.ID)
+	if !bindingPresent || !bindingValid || !expectedBindingValid || binding != expectedBinding || !ledgerPresent || !ledgerValid ||
+		ownershipErr != nil || ownership.Status != "quarantined" || !validComputeClaimRecoveryOwnership(allocation, ownership) {
+		return computePoolHeadTerminalizationCandidate{}, fmt.Errorf("%w: terminalization_binding_invalid", ErrComputePoolHeadTerminalizationUnavailable)
+	}
+	bindingDigest := computeClaimIdentityDigest(binding.LaunchOperationID + "|" + binding.IdempotencyKey + "|" + binding.TargetHash + "|" + binding.RequestHash)
+	_, _, ledgerDigest := computeClaimMutationLedgerEvidence(operation)
+	approvalDigest := hashInput(struct {
+		SchemaVersion  int
+		OperationID    string
+		ResourceID     string
+		Status         string
+		RequestHash    string
+		IdempotencyKey string
+		ComputePoolKey string
+		Allocation     ComputeAllocation
+		Plan           ComputeAllocationPreparation
+		Ownership      MachineOwnership
+		Binding        computeClaimRecoveryBinding
+		Ledger         computeClaimRecoveryMutationLedger
+	}{1, operation.OperationID, operation.ResourceID, operation.Status, operation.RequestHash, operation.IdempotencyKey, operation.ComputePoolKey, allocation, plan, ownership, binding, ledger})
+	readback := ComputePoolHeadTerminalizationReadback{
+		SchemaVersion: 1, Status: "candidate", HeadStatus: operation.Status, AllocationStatus: allocation.Status, OwnershipStatus: ownership.Status,
+		ApprovalDigest: approvalDigest, BindingDigest: bindingDigest, ManualRecoveryLedgerDigest: ledgerDigest,
+	}
+	return computePoolHeadTerminalizationCandidate{operation: operation, allocation: allocation, plan: plan, ownership: ownership, binding: binding, ledger: ledger, readback: readback}, nil
+}
+
+func (s *Service) TerminalizeComputePoolHead(ctx context.Context, input ComputePoolHeadTerminalizationInput) (ComputePoolHeadTerminalizationReadback, error) {
+	if !validComputePoolNodePoolID(input.NodePoolID) || !validComputePoolTerminalizationToken(input.ApprovalID) ||
+		input.IdempotencyKey != input.ApprovalID || !validComputePoolTerminalizationToken(input.IdempotencyKey) || !validSHA256Hex(input.ApprovalDigest) {
+		return ComputePoolHeadTerminalizationReadback{}, ErrInvalidComputePoolHeadTerminalization
+	}
+	if replay, found, err := s.computePoolHeadTerminalizationReplay(ctx, input); found || err != nil {
+		return replay, err
+	}
+	candidate, err := s.computePoolHeadTerminalizationCandidate(ctx, input.NodePoolID)
+	if err != nil {
+		return ComputePoolHeadTerminalizationReadback{}, err
+	}
+	if subtle.ConstantTimeCompare([]byte(candidate.readback.ApprovalDigest), []byte(input.ApprovalDigest)) != 1 {
+		return ComputePoolHeadTerminalizationReadback{}, ErrComputePoolHeadTerminalizationConflict
+	}
+	approval := input
+	if err := terminalizeComputeClaimPendingWithApproval(ctx, s, candidate.operation, candidate.allocation, candidate.plan, "compute_claim_finalization", "operator_terminalized", nil, nil, &approval); err != nil {
+		if replay, found, replayErr := s.computePoolHeadTerminalizationReplay(ctx, input); found || replayErr != nil {
+			return replay, replayErr
+		}
+		return ComputePoolHeadTerminalizationReadback{}, err
+	}
+	result := candidate.readback
+	result.Status, result.HeadStatus, result.TerminalStatus = "succeeded", "failed", "terminal_unprovable"
+	return result, nil
+}
+
+func (s *Service) ReadComputePoolHeadTerminalizationResult(ctx context.Context, input ComputePoolHeadTerminalizationInput) (ComputePoolHeadTerminalizationReadback, error) {
+	if !validComputePoolNodePoolID(input.NodePoolID) || !validComputePoolTerminalizationToken(input.ApprovalID) ||
+		input.IdempotencyKey != input.ApprovalID || !validSHA256Hex(input.ApprovalDigest) {
+		return ComputePoolHeadTerminalizationReadback{}, ErrInvalidComputePoolHeadTerminalization
+	}
+	if replay, found, err := s.computePoolHeadTerminalizationReplay(ctx, input); found || err != nil {
+		return replay, err
+	}
+	candidate, err := s.computePoolHeadTerminalizationCandidate(ctx, input.NodePoolID)
+	if err != nil {
+		return ComputePoolHeadTerminalizationReadback{}, err
+	}
+	if subtle.ConstantTimeCompare([]byte(candidate.readback.ApprovalDigest), []byte(input.ApprovalDigest)) != 1 {
+		return ComputePoolHeadTerminalizationReadback{}, ErrComputePoolHeadTerminalizationConflict
+	}
+	result := candidate.readback
+	result.Status = "pending"
+	return result, nil
+}
+
+func (s *Service) computePoolHeadTerminalizationReplay(ctx context.Context, input ComputePoolHeadTerminalizationInput) (ComputePoolHeadTerminalizationReadback, bool, error) {
+	operations, err := s.operations.List(ctx)
+	if err != nil {
+		return ComputePoolHeadTerminalizationReadback{}, false, err
+	}
+	for _, operation := range operations {
+		evidence, present, valid := decodeComputeClaimTerminalEvidence(operation)
+		if !present || !valid || evidence.OperatorApprovalID != input.ApprovalID && evidence.OperatorIdempotencyKey != input.IdempotencyKey {
+			continue
+		}
+		if evidence.OperatorApprovalID != input.ApprovalID || evidence.OperatorIdempotencyKey != input.IdempotencyKey || evidence.OperatorApprovalDigest != input.ApprovalDigest ||
+			operation.ComputePoolKey != input.NodePoolID || operation.Status != "failed" {
+			return ComputePoolHeadTerminalizationReadback{}, true, ErrComputePoolHeadTerminalizationConflict
+		}
+		return ComputePoolHeadTerminalizationReadback{
+			SchemaVersion: 1, Status: "succeeded", HeadStatus: "failed", AllocationStatus: "quarantined", OwnershipStatus: "quarantined",
+			TerminalStatus: "terminal_unprovable", ApprovalDigest: evidence.OperatorApprovalDigest, BindingDigest: evidence.BindingDigest,
+			ManualRecoveryLedgerDigest: evidence.ManualRecoveryLedgerDigest, Replayed: true,
+		}, true, nil
+	}
+	return ComputePoolHeadTerminalizationReadback{}, false, nil
+}
+
+func validComputePoolNodePoolID(value string) bool {
+	value = strings.TrimSpace(value)
+	return value != "" && len(value) <= 200 && !strings.ContainsAny(value, "\r\n\t ")
+}
+
+func validComputePoolTerminalizationToken(value string) bool {
+	if len(value) < 16 || len(value) > 120 || value != strings.TrimSpace(value) {
+		return false
+	}
+	for _, character := range value {
+		if character != '-' && character != '_' && (character < 'a' || character > 'z') && (character < '0' || character > '9') {
+			return false
+		}
+	}
+	return true
+}
+
+func validSHA256Hex(value string) bool {
+	if len(value) != 64 {
+		return false
+	}
+	_, err := hex.DecodeString(value)
+	return err == nil && strings.ToLower(value) == value
+}
+
 func (s *Service) MonthlyPreflightReport(ctx context.Context, input MonthlyPreflightReportInput) (MonthlyPreflightReport, error) {
 	provider, ok := s.provider.(monthlyPreflightReportProvider)
 	if !ok {
@@ -1347,6 +1549,8 @@ func withComputeClaimTerminalEvidence(payload map[string]any, evidence ComputeCl
 		"poolId": evidence.PoolID, "nodePoolId": evidence.NodePoolID, "machineName": evidence.MachineName,
 		"nodeName": evidence.NodeName, "cvmInstanceId": evidence.CVMInstanceID, "cvmOwnershipState": evidence.CVMOwnershipState,
 		"nodeOwnershipState": evidence.NodeOwnershipState, "bindingDigest": evidence.BindingDigest,
+		"operatorApprovalId": evidence.OperatorApprovalID, "operatorApprovalDigest": evidence.OperatorApprovalDigest,
+		"operatorIdempotencyKey": evidence.OperatorIdempotencyKey, "manualRecoveryLedgerDigest": evidence.ManualRecoveryLedgerDigest,
 		"evidence": evidence.Evidence, "stageBudgets": evidence.StageBudgets,
 	}
 	return result
@@ -1361,6 +1565,17 @@ func validComputeClaimTerminalEvidence(evidence ComputeClaimTerminalEvidence) bo
 		return false
 	}
 	if safeComputeClaimTerminalToken(evidence.ErrorCode) != evidence.ErrorCode || evidence.Reason != "" && safeComputeClaimTerminalToken(evidence.Reason) != evidence.Reason {
+		return false
+	}
+	operatorFields := []string{evidence.OperatorApprovalID, evidence.OperatorApprovalDigest, evidence.OperatorIdempotencyKey, evidence.ManualRecoveryLedgerDigest}
+	operatorFieldCount := 0
+	for _, field := range operatorFields {
+		if field != "" {
+			operatorFieldCount++
+		}
+	}
+	if operatorFieldCount != 0 && (operatorFieldCount != len(operatorFields) || !validComputePoolTerminalizationToken(evidence.OperatorApprovalID) ||
+		evidence.OperatorApprovalID != evidence.OperatorIdempotencyKey || !validSHA256Hex(evidence.OperatorApprovalDigest) || !validSHA256Hex(evidence.ManualRecoveryLedgerDigest)) {
 		return false
 	}
 	started, startedErr := time.Parse(time.RFC3339Nano, evidence.StartedAt)
@@ -1389,7 +1604,7 @@ func validComputeClaimTerminalStage(stage string) bool {
 
 func validComputeClaimTerminalReadback(status string) bool {
 	switch status {
-	case "not_attempted", "unavailable", "mismatch", "unallocated", "target_owned", "ownership_unavailable":
+	case "not_attempted", "unavailable", "mismatch", "unallocated", "target_owned", "ownership_unavailable", "operator_terminalized":
 		return true
 	default:
 		return false
@@ -2469,6 +2684,10 @@ func computeAllocationClaimPending(ctx context.Context, s *Service, operation Fa
 // mutation ledger, and binding remain part of the CAS identity and no provider
 // write is retried by a replay.
 func terminalizeComputeClaimPending(ctx context.Context, s *Service, operation FabricOperation, allocation ComputeAllocation, prepared ComputeAllocationPreparation, stage, readbackStatus string, cause error, proof *ComputeClaimProviderProof) error {
+	return terminalizeComputeClaimPendingWithApproval(ctx, s, operation, allocation, prepared, stage, readbackStatus, cause, proof, nil)
+}
+
+func terminalizeComputeClaimPendingWithApproval(ctx context.Context, s *Service, operation FabricOperation, allocation ComputeAllocation, prepared ComputeAllocationPreparation, stage, readbackStatus string, cause error, proof *ComputeClaimProviderProof, approval *ComputePoolHeadTerminalizationInput) error {
 	if operation.Status != "claim_pending" || allocation.ID == "" {
 		return cause
 	}
@@ -2486,6 +2705,11 @@ func terminalizeComputeClaimPending(ctx context.Context, s *Service, operation F
 	}
 	now := s.now()
 	evidence := terminalComputeClaimEvidence(operation, allocation, prepared, stage, readbackStatus, cause, cvmBudget, nodeBudget, now, binding, proof)
+	if approval != nil {
+		_, _, ledgerDigest := computeClaimMutationLedgerEvidence(operation)
+		evidence.OperatorApprovalID, evidence.OperatorApprovalDigest = approval.ApprovalID, approval.ApprovalDigest
+		evidence.OperatorIdempotencyKey, evidence.ManualRecoveryLedgerDigest = approval.IdempotencyKey, ledgerDigest
+	}
 	evidence.StorageVolumeID = "vol_" + stableID("vol", allocation.AccountID, evidence.LaunchOperationID+":storage")[:18]
 	evidence.PoolID = prepared.PoolID
 	allocation.Status = "quarantined"

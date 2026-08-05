@@ -1175,6 +1175,65 @@ func TestPostgresComputeClaimPendingKeepsFIFOHead(t *testing.T) {
 	}
 }
 
+func TestPostgresComputePoolHeadTerminalizationCASReleasesFreshFIFOHead(t *testing.T) {
+	databaseURL := fabricTestDatabaseURL(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	firstStore, err := newTestPostgresOperationStore(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer firstStore.client.Close()
+	secondStore, err := newTestPostgresOperationStore(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer secondStore.client.Close()
+	provider := &normalLaunchComputeProvider{}
+	input, _, _ := seedOperatorTerminalizationHead(t, firstStore, provider)
+	fresh := FabricOperation{
+		ID: "fop-postgres-fresh", OperationID: "op-postgres-fresh", Action: "create_compute_allocation", ResourceKind: "compute_allocation", ResourceID: "ca-postgres-fresh",
+		IdempotencyKey: "workspace-launch-postgres-fresh:compute", RequestHash: "hash-postgres-fresh", Status: "started", ComputePoolKey: input.NodePoolID,
+	}
+	if _, claimed, err := firstStore.ClaimComputePoolRuntime(ctx, fresh); err != nil || !claimed {
+		t.Fatalf("fresh seed claimed=%v err=%v", claimed, err)
+	}
+	firstService := NewServiceWithOperationStore(provider, firstStore)
+	secondService := NewServiceWithOperationStore(provider, secondStore)
+	readback, err := firstService.ReadComputePoolHeadTerminalization(ctx, input.NodePoolID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := ComputePoolHeadTerminalizationInput{
+		NodePoolID: input.NodePoolID, ApprovalID: "fresh-head-terminalize-30970000004",
+		ApprovalDigest: readback.ApprovalDigest, IdempotencyKey: "fresh-head-terminalize-30970000004",
+	}
+	start := make(chan struct{})
+	results := make(chan error, 2)
+	for _, service := range []*Service{firstService, secondService} {
+		service := service
+		go func() {
+			<-start
+			_, err := service.TerminalizeComputePoolHead(ctx, request)
+			results <- err
+		}()
+	}
+	close(start)
+	for range 2 {
+		if err := <-results; err != nil {
+			t.Fatalf("terminalization error=%v", err)
+		}
+	}
+	head, found, err := firstStore.ComputePoolHead(ctx, input.NodePoolID)
+	if err != nil || !found || head.ID != fresh.ID || head.Status != "started" || head.ComputePoolLeaseOwner != "" {
+		t.Fatalf("fresh read-only head=%#v found=%v err=%v", head, found, err)
+	}
+	claimedHead, claimed, err := secondStore.TryClaimComputePoolHead(ctx, fresh.ID, input.NodePoolID, "fresh-postgres-lease", time.Now().UTC(), time.Now().UTC().Add(time.Minute))
+	if err != nil || !claimed || claimedHead.ID != fresh.ID {
+		t.Fatalf("fresh claimed head=%#v claimed=%v err=%v", claimedHead, claimed, err)
+	}
+}
+
 func TestPostgresComputePoolLeaseUsesDatabaseClockAcrossServiceInstances(t *testing.T) {
 	databaseURL := fabricTestDatabaseURL(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

@@ -27,6 +27,7 @@ on:
           - acceptance_b_fresh_readback
           - compute_claim_validate
           - fabric_ledger_readback
+          - compute_pool_head_terminalize
           - recovery_plan_execute
           - recovery_acceptance_canary
           - recovery_acceptance_funding_prepare
@@ -84,6 +85,11 @@ on:
         type: boolean
       confirm_recovery_acceptance_original_launch:
         description: Approve one original Launch Recovery Acceptance Basic launch; default off.
+        required: true
+        default: false
+        type: boolean
+      confirm_compute_pool_head_terminalization:
+        description: Approve one exact current Basic pool-head claim_pending to failed/terminal_unprovable CAS with zero provider mutation.
         required: true
         default: false
         type: boolean
@@ -1358,6 +1364,359 @@ jobs:
         working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           echo "Controlled Pilot closed validation stopped; inspect the redacted artifact." >&2
+          exit 1
+
+      - name: Remove isolated source checkout
+        if: always() && steps.prepare_source.outcome == 'success'
+        shell: bash
+        env:
+          OPL_SOURCE_CHECKOUT: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          source_dir="${OPL_SOURCE_CHECKOUT:-}"
+          expected="$GITHUB_WORKSPACE/.opl-checkouts/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
+          if [ -z "$source_dir" ] || [ "$source_dir" != "$expected" ]; then
+            echo "Refusing to remove unexpected source checkout path." >&2
+            exit 1
+          fi
+          if [ -d "$source_dir" ]; then
+            find "$source_dir" -mindepth 1 -delete
+            rmdir "$source_dir"
+          fi
+
+  compute-pool-head-terminalization:
+    name: Terminalize one exact unprovable Basic compute pool head
+    if: ${{ github.ref == 'refs/heads/main' && github.sha == inputs.merged_sha && inputs.operation_mode == 'compute_pool_head_terminalize' && inputs.approval_id != '' && inputs.confirm_compute_pool_head_terminalization && inputs.resume_run_id == '' && inputs.customer_email == '' && inputs.workspace_identity_account_id == '' && inputs.workspace_identity_workspace_id == '' && inputs.recovery_plan_launch_operation_id == '' && inputs.recovery_plan_id == '' && inputs.recovery_plan_digest == '' && inputs.recovery_acceptance_account_id == '' && inputs.recovery_acceptance_launch_operation_id == '' && inputs.recovery_evidence_run_id == '' && inputs.recovery_evidence_artifact_id == '' && inputs.recovery_evidence_artifact_digest == '' && !inputs.confirm_account_provision && !inputs.confirm_wallet_recharge && !inputs.confirm_workspace_purchase && !inputs.confirm_single_model_request && !inputs.confirm_recovery_plan_execute && !inputs.confirm_recovery_acceptance_canary && !inputs.confirm_recovery_acceptance_funding && !inputs.confirm_recovery_acceptance_extra_funding && !inputs.confirm_recovery_acceptance_original_launch }}
+    runs-on: [self-hosted, tencent-cloud, opl-cloud, tke-vpc]
+    timeout-minutes: 15
+    environment: production
+    env:
+      OPL_MERGED_SHA: ${{ inputs.merged_sha }}
+      OPL_POOL_HEAD_TERMINALIZATION_APPROVAL_ID: ${{ inputs.approval_id }}
+      OPL_BASIC_COMPUTE_NODE_POOL_ID: ${{ vars.OPL_BASIC_COMPUTE_NODE_POOL_ID }}
+      OPL_K8S_NAMESPACE: ${{ vars.OPL_K8S_NAMESPACE || 'opl-cloud' }}
+      TENCENT_DEPLOY_KUBECONFIG_PATH: ${{ vars.TENCENT_DEPLOY_KUBECONFIG_PATH || '/home/actions/.secrets/medopl/v22/kubeconfig-package-d-deploy' }}
+
+    steps:
+      - name: Prepare isolated source checkout
+        id: prepare_source
+        shell: bash
+        env:
+          OPL_SOURCE_CHECKOUT: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          expected="$GITHUB_WORKSPACE/.opl-checkouts/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
+          if [ "$OPL_SOURCE_CHECKOUT" != "$expected" ]; then
+            echo "Isolated source checkout path mismatch." >&2
+            exit 1
+          fi
+          mkdir -p "$GITHUB_WORKSPACE/.opl-checkouts"
+          mkdir "$OPL_SOURCE_CHECKOUT"
+
+      - name: Checkout exact merged main
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.merged_sha }}
+          fetch-depth: 0
+          path: .opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+
+      - name: Verify remote branch authority
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          mapfile -t remote_heads < <(git ls-remote --heads origin)
+          if [ "${#remote_heads[@]}" -ne 1 ]; then
+            echo "Production source authority requires exactly one remote head." >&2
+            exit 1
+          fi
+          read -r remote_main_sha remote_main_ref <<< "${remote_heads[0]}"
+          head_sha="$(git rev-parse HEAD)"
+          if [ "$remote_main_ref" != "refs/heads/main" ] || [ "$GITHUB_REF" != "refs/heads/main" ] ||
+             [ "$GITHUB_SHA" != "$head_sha" ] || [ "$remote_main_sha" != "$head_sha" ] || [ "$OPL_MERGED_SHA" != "$head_sha" ]; then
+            echo "Pool-head terminalization source must be the exact current origin/main revision." >&2
+            exit 1
+          fi
+          if ! [[ "$OPL_MERGED_SHA" =~ ^[0-9a-f]{40}$ ]] ||
+             ! [[ "$OPL_POOL_HEAD_TERMINALIZATION_APPROVAL_ID" =~ ^[a-z0-9][a-z0-9_-]{15,119}$ ]] ||
+             ! [[ "$OPL_BASIC_COMPUTE_NODE_POOL_ID" =~ ^np-[A-Za-z0-9-]+$ ]]; then
+            echo "Pool-head terminalization inputs are invalid." >&2
+            exit 1
+          fi
+
+      - name: Execute one exact Fabric pool-head CAS with GET-only reconciliation
+        id: terminalize
+        continue-on-error: true
+        shell: bash
+        env:
+          TENCENT_DEPLOY_KUBECONFIG_B64: ${{ secrets.TENCENT_DEPLOY_KUBECONFIG_B64 }}
+          TENCENT_DEPLOY_KUBECONFIG: ${{ secrets.TENCENT_DEPLOY_KUBECONFIG }}
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          raw_root="$RUNNER_TEMP/production-compute-pool-head-terminalization-raw"
+          artifact_dir="$RUNNER_TEMP/production-compute-pool-head-terminalization"
+          mkdir "$raw_root" "$artifact_dir"
+          chmod 700 "$raw_root" "$artifact_dir"
+          export OPL_POOL_HEAD_TERMINALIZATION_RAW_ROOT="$raw_root"
+          export OPL_POOL_HEAD_TERMINALIZATION_ARTIFACT_PATH="$artifact_dir/evidence.json"
+          node --input-type=module <<'NODE'
+          import { createHash } from "node:crypto";
+          import { writeFile } from "node:fs/promises";
+          const digest = (value) => `sha256:${createHash("sha256").update(value).digest("hex")}`;
+          await writeFile(process.env.OPL_POOL_HEAD_TERMINALIZATION_ARTIFACT_PATH, `${JSON.stringify({
+            schemaVersion: 1,
+            operationMode: "compute_pool_head_terminalize",
+            status: "blocked",
+            errorCode: "compute_pool_head_terminalization_not_completed",
+            release: { mergedSha: process.env.OPL_MERGED_SHA, deployedSha: "unknown", cloudImageDigest: "unknown" },
+            nodePoolIdDigest: digest(process.env.OPL_BASIC_COMPUTE_NODE_POOL_ID),
+            approvalIdDigest: digest(process.env.OPL_POOL_HEAD_TERMINALIZATION_APPROVAL_ID),
+            candidate: null,
+            terminalization: null,
+            finalPoolHead: null,
+            casPostCount: 0,
+            responseDisposition: "not_attempted",
+            runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
+          }, null, 2)}\n`, { mode: 0o600 });
+          NODE
+
+          kubeconfig="$raw_root/kubeconfig"
+          if [ -f "$TENCENT_DEPLOY_KUBECONFIG_PATH" ]; then
+            cp "$TENCENT_DEPLOY_KUBECONFIG_PATH" "$kubeconfig"
+          elif [ -n "${TENCENT_DEPLOY_KUBECONFIG_B64:-}" ]; then
+            printf '%s' "$TENCENT_DEPLOY_KUBECONFIG_B64" | base64 -d > "$kubeconfig"
+          elif [ -n "${TENCENT_DEPLOY_KUBECONFIG:-}" ]; then
+            printf '%s' "$TENCENT_DEPLOY_KUBECONFIG" > "$kubeconfig"
+          else
+            echo "No production kubeconfig was provided." >&2
+            exit 1
+          fi
+          chmod 600 "$kubeconfig"
+          export KUBECONFIG="$kubeconfig"
+
+          deployed_release="$(kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" get configmap opl-cloud-config -o jsonpath='{.data.OPL_RELEASE_SHA}')"
+          if [ "$deployed_release" != "$OPL_MERGED_SHA" ]; then
+            echo "Pool-head terminalization release is not the exact deployed release." >&2
+            exit 1
+          fi
+          kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" get deployment/opl-cloud-fabric -o json > "$raw_root/fabric-deployment.json"
+          kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" get replicasets -o json > "$raw_root/fabric-replicasets.json"
+          kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" get pods -o json > "$raw_root/fabric-pods.json"
+          node --input-type=module <<'NODE'
+          import { readFile, writeFile } from "node:fs/promises";
+          const root = process.env.OPL_POOL_HEAD_TERMINIZATION_RAW_ROOT;
+          const deployment = JSON.parse(await readFile(`${root}/fabric-deployment.json`, "utf8"));
+          const replicaSets = JSON.parse(await readFile(`${root}/fabric-replicasets.json`, "utf8")).items || [];
+          const pods = JSON.parse(await readFile(`${root}/fabric-pods.json`, "utf8")).items || [];
+          const revisionKey = "deployment.kubernetes.io/revision";
+          const revision = deployment.metadata?.annotations?.[revisionKey];
+          const deploymentUID = deployment.metadata?.uid;
+          const expectedImage = deployment.spec?.template?.spec?.containers?.find((item) => item.name === "fabric")?.image;
+          const ownedBy = (item, kind, name, uid) => Boolean(name && uid) && (item.metadata?.ownerReferences || []).some((owner) =>
+            owner.controller === true && owner.kind === kind && owner.name === name && owner.uid === uid);
+          const currentReplicaSets = replicaSets.filter((item) => ownedBy(item, "Deployment", deployment.metadata?.name, deploymentUID) &&
+            item.metadata?.annotations?.[revisionKey] === revision && item.spec?.template?.spec?.containers?.some((container) => container.name === "fabric" && container.image === expectedImage));
+          if (!deploymentUID || !revision || !/^.+@sha256:[a-f0-9]{64}$/.test(String(expectedImage || "")) || currentReplicaSets.length !== 1) throw new Error("fabric_revision_invalid");
+          const replicaSet = currentReplicaSets[0];
+          const readyPods = pods.filter((item) => !item.metadata?.deletionTimestamp && ownedBy(item, "ReplicaSet", replicaSet.metadata?.name, replicaSet.metadata?.uid) &&
+            item.status?.phase === "Running" && item.status?.conditions?.some((condition) => condition.type === "Ready" && condition.status === "True") &&
+            item.spec?.containers?.some((container) => container.name === "fabric" && container.image === expectedImage));
+          if (readyPods.length !== 1) throw new Error("fabric_ready_pod_invalid");
+          await writeFile(`${root}/fabric-runtime.json`, `${JSON.stringify({ pod: readyPods[0].metadata.name, image: expectedImage })}\n`, { mode: 0o600 });
+          NODE
+          fabric_pod="$(node --input-type=module -e 'import { readFile } from "node:fs/promises"; const value=JSON.parse(await readFile(process.argv[1], "utf8")); process.stdout.write(value.pod)' "$raw_root/fabric-runtime.json")"
+          cloud_image="$(node --input-type=module -e 'import { readFile } from "node:fs/promises"; const value=JSON.parse(await readFile(process.argv[1], "utf8")); process.stdout.write(value.image)' "$raw_root/fabric-runtime.json")"
+          internal_token="$(kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" get secret opl-cloud-internal-service -o jsonpath='{.data.OPL_INTERNAL_SERVICE_TOKEN}' | base64 --decode)"
+          if [ -z "$internal_token" ]; then
+            echo "Current Fabric internal token is unavailable." >&2
+            exit 1
+          fi
+          echo "::add-mask::$internal_token"
+          kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" port-forward "pod/$fabric_pod" 18082:8082 > "$raw_root/fabric-port-forward.log" 2>&1 &
+          port_forward_pid=$!
+          cleanup_port_forward() {
+            kill "$port_forward_pid" >/dev/null 2>&1 || true
+            wait "$port_forward_pid" 2>/dev/null || true
+          }
+          trap cleanup_port_forward EXIT
+          ready=0
+          for attempt in $(seq 1 30); do
+            if curl --silent --fail --max-time 1 http://127.0.0.1:18082/healthz >/dev/null 2>&1; then ready=1; break; fi
+            sleep 1
+          done
+          if [ "$ready" -ne 1 ]; then
+            echo "Current Fabric Pod port-forward is unavailable." >&2
+            exit 1
+          fi
+
+          candidate_status="$(curl --silent --show-error --max-time 30 --get \
+            -H "Authorization: Bearer $internal_token" \
+            --data-urlencode "nodePoolId=$OPL_BASIC_COMPUTE_NODE_POOL_ID" \
+            --output "$raw_root/candidate.json" --write-out '%{http_code}' \
+            http://127.0.0.1:18082/fabric/compute-pool-head/terminalization)"
+          if [ "$candidate_status" != "200" ]; then
+            echo "Fabric pool-head candidate returned HTTP $candidate_status." >&2
+            exit 1
+          fi
+          node --input-type=module <<'NODE'
+          import { readFile, writeFile } from "node:fs/promises";
+          const root = process.env.OPL_POOL_HEAD_TERMINIZATION_RAW_ROOT;
+          const value = JSON.parse(await readFile(`${root}/candidate.json`, "utf8"));
+          const digest = (item) => /^[a-f0-9]{64}$/.test(String(item || ""));
+          if (value?.schemaVersion !== 1 || value?.status !== "candidate" || value?.headStatus !== "claim_pending" ||
+            !new Set(["compute_claim_pending", "quarantined"]).has(value?.allocationStatus) || value?.ownershipStatus !== "quarantined" ||
+            !digest(value?.approvalDigest) || !digest(value?.bindingDigest) || !digest(value?.manualRecoveryLedgerDigest) || value?.replayed !== false ||
+            value?.sub2apiMutationCount !== 0 || value?.tencentMutationCount !== 0 || value?.kubernetesMutationCount !== 0) {
+            throw new Error("compute_pool_head_candidate_invalid");
+          }
+          const body = { nodePoolId: process.env.OPL_BASIC_COMPUTE_NODE_POOL_ID, approvalId: process.env.OPL_POOL_HEAD_TERMINIZATION_APPROVAL_ID, approvalDigest: value.approvalDigest };
+          await writeFile(`${root}/request.json`, `${JSON.stringify(body)}\n`, { mode: 0o600 });
+          await writeFile(`${root}/approval-digest`, `${value.approvalDigest}\n`, { mode: 0o600 });
+          NODE
+          approval_digest="$(tr -d '\n' < "$raw_root/approval-digest")"
+
+          set +e
+          post_status="$(curl --silent --show-error --max-time 30 \
+            -H "Authorization: Bearer $internal_token" \
+            -H "Content-Type: application/json" \
+            -H "Idempotency-Key: $OPL_POOL_HEAD_TERMINIZATION_APPROVAL_ID" \
+            --data-binary "@$raw_root/request.json" \
+            --output "$raw_root/post-response.json" --write-out '%{http_code}' \
+            http://127.0.0.1:18082/fabric/compute-pool-head/terminalization)"
+          post_exit=$?
+          set -e
+          response_disposition="received_non_200"
+          if [ "$post_exit" -ne 0 ]; then
+            response_disposition="response_unknown_reconciled"
+          elif [ "$post_status" = "200" ]; then
+            response_disposition="received_200"
+          fi
+
+          result_status="$(curl --silent --show-error --max-time 30 --get \
+            -H "Authorization: Bearer $internal_token" \
+            --data-urlencode "nodePoolId=$OPL_BASIC_COMPUTE_NODE_POOL_ID" \
+            --data-urlencode "approvalId=$OPL_POOL_HEAD_TERMINIZATION_APPROVAL_ID" \
+            --data-urlencode "approvalDigest=$approval_digest" \
+            --output "$raw_root/result.json" --write-out '%{http_code}' \
+            http://127.0.0.1:18082/fabric/compute-pool-head/terminalization)"
+          if [ "$result_status" != "200" ]; then
+            echo "Fabric pool-head terminalization result returned HTTP $result_status." >&2
+            exit 1
+          fi
+          final_status="$(curl --silent --show-error --max-time 30 --get \
+            -H "Authorization: Bearer $internal_token" \
+            --data-urlencode "nodePoolId=$OPL_BASIC_COMPUTE_NODE_POOL_ID" \
+            --output "$raw_root/final-pool-head.json" --write-out '%{http_code}' \
+            http://127.0.0.1:18082/fabric/compute-pool-head)"
+          if [ "$final_status" != "200" ]; then
+            echo "Final Fabric pool-head readback returned HTTP $final_status." >&2
+            exit 1
+          fi
+
+          OPL_DEPLOYED_RELEASE="$deployed_release" OPL_DEPLOYED_CLOUD_IMAGE="$cloud_image" OPL_RESPONSE_DISPOSITION="$response_disposition" node --input-type=module <<'NODE'
+          import { createHash } from "node:crypto";
+          import { readFile, writeFile } from "node:fs/promises";
+          const root = process.env.OPL_POOL_HEAD_TERMINIZATION_RAW_ROOT;
+          const candidate = JSON.parse(await readFile(`${root}/candidate.json`, "utf8"));
+          const terminalization = JSON.parse(await readFile(`${root}/result.json`, "utf8"));
+          const finalPoolHead = JSON.parse(await readFile(`${root}/final-pool-head.json`, "utf8"));
+          const digest = (value) => `sha256:${createHash("sha256").update(value).digest("hex")}`;
+          const validDigest = (value) => /^[a-f0-9]{64}$/.test(String(value || ""));
+          const zeroMutation = (value) => value?.sub2apiMutationCount === 0 && value?.tencentMutationCount === 0 && value?.kubernetesMutationCount === 0;
+          const finalCleared = finalPoolHead?.schemaVersion === 1 && finalPoolHead?.failureStage === "none" && finalPoolHead?.errorCode === "none" &&
+            (finalPoolHead?.status === "absent" && finalPoolHead?.continuationState === "absent" ||
+             new Set(["started", "claim_pending"]).has(finalPoolHead?.status) && finalPoolHead?.continuationState === "continuable");
+          if (terminalization?.schemaVersion !== 1 || terminalization?.status !== "succeeded" || terminalization?.headStatus !== "failed" ||
+            terminalization?.allocationStatus !== "quarantined" || terminalization?.ownershipStatus !== "quarantined" || terminalization?.terminalStatus !== "terminal_unprovable" ||
+            terminalization?.replayed !== true || terminalization?.approvalDigest !== candidate.approvalDigest || terminalization?.bindingDigest !== candidate.bindingDigest ||
+            terminalization?.manualRecoveryLedgerDigest !== candidate.manualRecoveryLedgerDigest || !validDigest(terminalization?.approvalDigest) || !zeroMutation(terminalization) || !finalCleared) {
+            throw new Error("compute_pool_head_terminalization_result_invalid");
+          }
+          const artifact = {
+            schemaVersion: 1,
+            operationMode: "compute_pool_head_terminalize",
+            status: "succeeded",
+            errorCode: "none",
+            release: { mergedSha: process.env.OPL_MERGED_SHA, deployedSha: process.env.OPL_DEPLOYED_RELEASE, cloudImageDigest: process.env.OPL_DEPLOYED_CLOUD_IMAGE.split("@sha256:")[1] ? `sha256:${process.env.OPL_DEPLOYED_CLOUD_IMAGE.split("@sha256:")[1]}` : "unknown" },
+            nodePoolIdDigest: digest(process.env.OPL_BASIC_COMPUTE_NODE_POOL_ID),
+            approvalIdDigest: digest(process.env.OPL_POOL_HEAD_TERMINIZATION_APPROVAL_ID),
+            candidate,
+            terminalization,
+            finalPoolHead,
+            casPostCount: 1,
+            responseDisposition: process.env.OPL_RESPONSE_DISPOSITION,
+            runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
+          };
+          const wire = JSON.stringify(artifact);
+          if (!/^[0-9a-f]{40}$/.test(artifact.release.mergedSha) || artifact.release.deployedSha !== artifact.release.mergedSha ||
+            !/^sha256:[a-f0-9]{64}$/.test(artifact.release.cloudImageDigest) || !/^sha256:[a-f0-9]{64}$/.test(artifact.nodePoolIdDigest) ||
+            !/^sha256:[a-f0-9]{64}$/.test(artifact.approvalIdDigest) || artifact.casPostCount !== 1 ||
+            !new Set(["received_200", "response_unknown_reconciled", "received_non_200"]).has(artifact.responseDisposition) ||
+            /accountId|workspaceId|launchOperationId|computeAllocationId|machineName|nodeName|cvmInstanceId|privateIp|password|token|credential/i.test(wire)) {
+            throw new Error("compute_pool_head_terminalization_artifact_invalid");
+          }
+          await writeFile(process.env.OPL_POOL_HEAD_TERMINIZATION_ARTIFACT_PATH, `${JSON.stringify(artifact, null, 2)}\n`, { mode: 0o600 });
+          NODE
+
+      - name: Validate redacted pool-head terminalization artifact
+        if: always()
+        shell: bash
+        env:
+          OPL_POOL_HEAD_TERMINIZATION_ARTIFACT_PATH: ${{ runner.temp }}/production-compute-pool-head-terminalization/evidence.json
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { readFile } from "node:fs/promises";
+          const artifact = JSON.parse(await readFile(process.env.OPL_POOL_HEAD_TERMINIZATION_ARTIFACT_PATH, "utf8"));
+          const exactCounts = (value) => value && Object.keys(value).sort().join(",") === "kubernetes,sub2api,tencent" && value.sub2api === 0 && value.tencent === 0 && value.kubernetes === 0;
+          if (artifact?.schemaVersion !== 1 || artifact?.operationMode !== "compute_pool_head_terminalize" ||
+            !new Set(["succeeded", "blocked"]).has(artifact?.status) || typeof artifact?.errorCode !== "string" || artifact.errorCode.length === 0 ||
+            !/^sha256:[a-f0-9]{64}$/.test(String(artifact?.nodePoolIdDigest || "")) || !/^sha256:[a-f0-9]{64}$/.test(String(artifact?.approvalIdDigest || "")) ||
+            !Number.isInteger(artifact?.casPostCount) || artifact.casPostCount < 0 || artifact.casPostCount > 1 || !exactCounts(artifact?.runnerDirectMutationCounts)) {
+            throw new Error("compute_pool_head_terminalization_artifact_invalid");
+          }
+          if (artifact.status !== "succeeded" || artifact.errorCode !== "none" || artifact.casPostCount !== 1 || artifact?.terminalization?.terminalStatus !== "terminal_unprovable") {
+            throw new Error("compute_pool_head_terminalization_not_succeeded");
+          }
+          NODE
+
+      - name: Upload redacted pool-head terminalization evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-compute-pool-head-terminalization
+          path: ${{ runner.temp }}/production-compute-pool-head-terminalization
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 30
+
+      - name: Remove pool-head terminalization raw evidence
+        if: always()
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        env:
+          OPL_POOL_HEAD_TERMINIZATION_RAW_ROOT: ${{ runner.temp }}/production-compute-pool-head-terminalization-raw
+        run: |
+          set -euo pipefail
+          raw_root="${OPL_POOL_HEAD_TERMINIZATION_RAW_ROOT:-}"
+          expected="$RUNNER_TEMP/production-compute-pool-head-terminalization-raw"
+          if [ -z "$raw_root" ] || [ "$raw_root" != "$expected" ]; then
+            echo "Refusing to remove unexpected pool-head terminalization raw path." >&2
+            exit 1
+          fi
+          if [ -d "$raw_root" ]; then
+            find "$raw_root" -mindepth 1 -delete
+            rmdir "$raw_root"
+          fi
+
+      - name: Require pool-head terminalization success
+        if: ${{ steps.terminalize.outcome != 'success' }}
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          echo "Pool-head terminalization stopped; inspect the redacted artifact. Do not retry POST before GET result readback." >&2
           exit 1
 
       - name: Remove isolated source checkout

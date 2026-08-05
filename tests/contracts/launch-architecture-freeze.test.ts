@@ -26,7 +26,7 @@ test("root agent instructions require the launch invariants", async () => {
 test("launch freeze fixes the V2 products, owner lanes, settlement, and verification slot", async () => {
   const freeze = await json("packages/contracts/opl-cloud-launch-freeze-contract.json");
 
-  assert.equal(freeze.schemaVersion, 25);
+  assert.equal(freeze.schemaVersion, 26);
   assert.equal(freeze.architectureAuthority.repository, "https://github.com/gaofeng21cn/one-person-lab-cloud");
   assert.equal(freeze.architectureAuthority.reviewedRevision, "c349a41d860e706ed43a4090b9e75abb0b130971");
   assert.deepEqual(Object.keys(freeze.productSurfaces), ["gateway", "workspace", "serve", "console", "fabric", "ledger"]);
@@ -162,6 +162,14 @@ test("launch freeze fixes the V2 products, owner lanes, settlement, and verifica
     actualTencentTagWriteCalls: 0,
     failure: "before_rbac_capacity_debit_and_provider_mutation_all_business_mutation_counts_zero"
   });
+  assert.equal(freeze.workspaceLaunch.computePoolHeadPreDebitGate.timing, "after_compute_monthly_preflight_before_sub2api_debit");
+  assert.equal(freeze.workspaceLaunch.computePoolHeadPreDebitGate.chargedContinuation, "skip_gate_when_ChargeAttempted_or_ChargeConfirmation_is_present");
+  assert.deepEqual(freeze.workspaceLaunch.computePoolHeadPreDebitGate.externalMutationCounts, { sub2api: 0, tencent: 0, kubernetes: 0 });
+  assert.equal(freeze.workspaceLaunch.computePoolHeadTerminalization.scope, "one_exact_current_fifo_head");
+  assert.equal(freeze.workspaceLaunch.computePoolHeadTerminalization.cas, "claim_pending_to_failed_with_terminal_unprovable_evidence_single_winner");
+  assert.equal(freeze.workspaceLaunch.computePoolHeadTerminalization.controlPlaneLaunchState, "preserved_manual_review_compute_claim_pending");
+  assert.deepEqual(freeze.workspaceLaunch.computePoolHeadTerminalization.providerMutationCounts, { sub2api: 0, tencent: 0, kubernetes: 0 });
+  assert.match(freeze.workspaceLaunch.computePoolHeadTerminalization.responseLoss, /never_second_POST/);
   assert.deepEqual({
     trigger: freeze.workspaceLaunch.computeClaimRecovery.trigger,
     pendingState: freeze.workspaceLaunch.computeClaimRecovery.pendingState,

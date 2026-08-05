@@ -1052,6 +1052,8 @@ func (f unavailableProCatalogFabricClient) Catalog(_ context.Context) (clients.F
 
 type fakeFabricClient struct {
 	calls                *[]string
+	poolHead             clients.ComputePoolHeadReadback
+	poolHeadErr          error
 	runtime              clients.WorkspaceRuntime
 	runtimeResults       []clients.WorkspaceRuntime
 	runtimeErr           error
@@ -1145,6 +1147,14 @@ func (f *fakeFabricClient) MonthlyPreflight(_ context.Context, input clients.Mon
 		Available: true, ChargeType: "PREPAID", PeriodMonths: 1, RenewFlag: "NOTIFY_AND_MANUAL_RENEW",
 		ProviderPriceCNY: 12.34, ProviderRequestIDs: requestIDs,
 	}, nil
+}
+
+func (f *fakeFabricClient) ComputePoolHead(_ context.Context, _ string) (clients.ComputePoolHeadReadback, error) {
+	f.record("fabric.compute-pool-head")
+	if f.poolHead.SchemaVersion == 0 && f.poolHeadErr == nil {
+		return clients.ComputePoolHeadReadback{SchemaVersion: 1, Status: "absent", ContinuationState: "absent", FailureStage: "none", ErrorCode: "none"}, nil
+	}
+	return f.poolHead, f.poolHeadErr
 }
 
 func (f *fakeFabricClient) CreateComputeAllocation(_ context.Context, input clients.ComputeAllocationInput, _ string) (clients.ComputeAllocation, error) {

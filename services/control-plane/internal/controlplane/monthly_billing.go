@@ -37,6 +37,14 @@ func (s *Service) PreflightMonthlyResource(ctx context.Context, input clients.Mo
 	return client.MonthlyPreflight(ctx, input)
 }
 
+func (s *Service) ComputePoolHead(ctx context.Context, nodePoolID string) (clients.ComputePoolHeadReadback, error) {
+	client, ok := s.fabric.(clients.FabricComputePoolHeadClient)
+	if !ok {
+		return clients.ComputePoolHeadReadback{}, errors.New("fabric_compute_pool_head_unavailable")
+	}
+	return client.ComputePoolHead(ctx, nodePoolID)
+}
+
 func (s *Service) MonthlyProviderTruth(ctx context.Context, computeID, storageID string) (clients.MonthlyProviderTruth, error) {
 	client, ok := s.fabric.(clients.FabricMonthlyProviderTruthClient)
 	if !ok {

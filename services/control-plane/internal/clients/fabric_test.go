@@ -85,6 +85,25 @@ func TestFabricHTTPClientPreflightsMonthlyResourceWithoutIdempotencyKey(t *testi
 	}
 }
 
+func TestFabricHTTPClientReadsComputePoolHeadWithoutMutation(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/fabric/compute-pool-head" || r.URL.Query().Get("nodePoolId") != "np basic" || r.Header.Get("Authorization") != "Bearer internal-secret" {
+			t.Fatalf("unexpected request: %s %s?%s", r.Method, r.URL.Path, r.URL.RawQuery)
+		}
+		if _, ok := r.Header["Idempotency-Key"]; ok {
+			t.Fatalf("read-only pool-head sent Idempotency-Key: %#v", r.Header.Values("Idempotency-Key"))
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"schemaVersion": 1, "status": "claim_pending", "continuationState": "blocked", "failureStage": "compute_pool_head", "errorCode": "fabric_compute_pool_head_manual_recovery"})
+	}))
+	defer upstream.Close()
+
+	client := NewFabricHTTPClient(upstream.URL, "internal-secret", upstream.Client()).(FabricComputePoolHeadClient)
+	result, err := client.ComputePoolHead(context.Background(), "np basic")
+	if err != nil || result.SchemaVersion != 1 || result.Status != "claim_pending" || result.ContinuationState != "blocked" || result.FailureStage != "compute_pool_head" || result.ErrorCode != "fabric_compute_pool_head_manual_recovery" {
+		t.Fatalf("pool head=%#v err=%v", result, err)
+	}
+}
+
 func TestFabricHTTPClientReadsMonthlyProviderTruthWithoutMutation(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet || r.URL.Path != "/fabric/monthly-provider-truth" || r.Header.Get("Authorization") != "Bearer internal-secret" ||

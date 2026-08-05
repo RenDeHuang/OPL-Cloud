@@ -594,6 +594,7 @@ test("production self-hosted jobs use one run-and-job isolated source checkout",
       "acceptance-b-account-prepare",
       "acceptance-b-fresh-order",
       "controlled-pilot-closed-validate",
+      "compute-pool-head-terminalization",
       "fabric-ledger-readback",
       "recovery-acceptance-funding-prepare",
       "recovery-acceptance-extra-funding-prepare",
@@ -1404,6 +1405,57 @@ test("disabled controlled Basic Pilot has one production fail-closed proof with 
   assert.doesNotMatch(JSON.stringify(job), /KUBECONFIG|TENCENTCLOUD|OPL_INTERNAL_SERVICE_TOKEN|allow-workspace-purchase|basic-customer-canary/);
 });
 
+test("operator terminalizes only one exact blocked compute pool head with one CAS and zero provider mutation", async () => {
+  const workflow = await readWorkflow(".github/workflows/production-basic-customer-operation.yml");
+  const deployment = await readJson(deploymentContractPath);
+  const inputs = workflow.on.workflow_dispatch.inputs;
+  const job = workflowJob(workflow, "compute-pool-head-terminalization");
+  const runs = serializedRuns(job);
+  const boundary = deployment.productionComputePoolHeadTerminalization;
+
+  assert.ok(inputs.operation_mode.options.includes("compute_pool_head_terminalize"));
+  assert.equal(inputs.confirm_compute_pool_head_terminalization.type, "boolean");
+  assert.match(String(job.if), /inputs\.operation_mode == 'compute_pool_head_terminalize'/);
+  assert.match(String(job.if), /inputs\.confirm_compute_pool_head_terminalization/);
+  assert.deepEqual(job["runs-on"], ["self-hosted", "tencent-cloud", "opl-cloud", "tke-vpc"]);
+  assert.equal(job.environment, "production");
+  assert.equal(job.env.OPL_POOL_HEAD_TERMINALIZATION_APPROVAL_ID, "${{ inputs.approval_id }}");
+  assert.equal(job.env.OPL_BASIC_COMPUTE_NODE_POOL_ID, "${{ vars.OPL_BASIC_COMPUTE_NODE_POOL_ID }}");
+  assert.match(runs, /GET exact candidate|candidate_status/);
+  assert.equal((runs.match(/--data-binary "@\$raw_root\/request\.json"/g) || []).length, 1);
+  assert.match(runs, /result_status/);
+  assert.match(runs, /final-pool-head\.json/);
+  assert.match(runs, /response_unknown_reconciled/);
+  assert.match(runs, /terminal_unprovable/);
+  assert.match(runs, /runnerDirectMutationCounts: \{ sub2api: 0, tencent: 0, kubernetes: 0 \}/);
+  assert.match(runs, /production-compute-pool-head-terminalization-raw/);
+  assert.match(runs, /find "\$raw_root" -mindepth 1 -delete/);
+  assert.doesNotMatch(runs, /CreateComputeAllocation|CreateDisks|TagResources|ModifyResourcesTagValue|kubectl[^\n]*(?:apply|patch|delete)|wallet-adjustments|workspace-launches/);
+  assert.deepEqual(boundary, {
+    workflow: ".github/workflows/production-basic-customer-operation.yml",
+    workflowMode: "compute_pool_head_terminalize",
+    job: "compute-pool-head-terminalization",
+    runner: ["self-hosted", "tencent-cloud", "opl-cloud", "tke-vpc"],
+    environment: "production",
+    requiredConfirmation: "confirm_compute_pool_head_terminalization",
+    inputs: ["merged_sha", "approval_id", "confirm_compute_pool_head_terminalization"],
+    nodePoolSource: "production_OPL_BASIC_COMPUTE_NODE_POOL_ID_variable",
+    sourceGate: "github_sha_checkout_head_and_only_remote_main_equal_exact_merged_sha",
+    deploymentGate: "production_configmap_release_sha_and_current_ready_fabric_revision_image_digest",
+    sequence: ["GET_exact_candidate", "POST_single_cas", "GET_exact_result", "GET_final_pool_head"],
+    postMaximum: 1,
+    unknownPost: "GET_exact_result_only_never_second_POST",
+    terminalResult: "fabric_operation_failed_terminal_unprovable_and_original_control_plane_launch_unchanged",
+    mutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
+    artifact: {
+      fields: ["operationMode", "status", "errorCode", "release", "nodePoolIdDigest", "approvalIdDigest", "candidate", "terminalization", "finalPoolHead", "casPostCount", "responseDisposition", "runnerDirectMutationCounts"],
+      forbidden: ["accountId", "workspaceId", "launchOperationId", "computeAllocationId", "machineName", "nodeName", "cvmInstanceId", "privateIp", "password", "token", "credential"]
+    },
+    rawEvidenceCleanup: "always_remove_exact_runner_temp_directory_after_artifact_projection",
+    forbidden: ["second_post", "sub2api_write", "tencent_write", "kubernetes_write", "refund", "resource_reuse", "direct_sql"]
+  });
+});
+
 test("legacy target-based Recovery workflow surfaces are removed", async () => {
   const workflow = await readWorkflow(".github/workflows/production-basic-customer-operation.yml");
   const source = await readFile(repoFile(".github/workflows/production-basic-customer-operation.yml"), "utf8");
@@ -1441,6 +1493,7 @@ test("recovered Workspace E2E is a separate hosted mode with no resource mutatio
     "acceptance_b_fresh_readback",
     "compute_claim_validate",
     "fabric_ledger_readback",
+    "compute_pool_head_terminalize",
     "recovery_plan_execute",
     "recovery_acceptance_canary",
     "recovery_acceptance_funding_prepare",
