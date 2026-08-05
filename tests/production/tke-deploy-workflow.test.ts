@@ -1431,6 +1431,8 @@ test("operator terminalizes only one exact blocked compute pool head with one CA
   assert.match(runs, /terminal_unprovable/);
   assert.match(runs, /runnerDirectMutationCounts: \{ sub2api: 0, tencent: 0, kubernetes: 0 \}/);
   assert.match(runs, /production-compute-pool-head-terminalization-raw/);
+  assert.match(runs, /OPL_POOL_HEAD_TERMINALIZATION_RAW_ROOT/);
+  assert.doesNotMatch(JSON.stringify(job), /OPL_POOL_HEAD_TERMINIZATION_/);
   assert.match(runs, /find "\$raw_root" -mindepth 1 -delete/);
   assert.doesNotMatch(runs, /CreateComputeAllocation|CreateDisks|TagResources|ModifyResourcesTagValue|kubectl[^\n]*(?:apply|patch|delete)|wallet-adjustments|workspace-launches/);
   assert.deepEqual(boundary, {

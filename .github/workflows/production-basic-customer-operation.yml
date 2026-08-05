@@ -1500,7 +1500,7 @@ jobs:
           kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" get pods -o json > "$raw_root/fabric-pods.json"
           node --input-type=module <<'NODE'
           import { readFile, writeFile } from "node:fs/promises";
-          const root = process.env.OPL_POOL_HEAD_TERMINIZATION_RAW_ROOT;
+          const root = process.env.OPL_POOL_HEAD_TERMINALIZATION_RAW_ROOT;
           const deployment = JSON.parse(await readFile(`${root}/fabric-deployment.json`, "utf8"));
           const replicaSets = JSON.parse(await readFile(`${root}/fabric-replicasets.json`, "utf8")).items || [];
           const pods = JSON.parse(await readFile(`${root}/fabric-pods.json`, "utf8")).items || [];
@@ -1556,7 +1556,7 @@ jobs:
           fi
           node --input-type=module <<'NODE'
           import { readFile, writeFile } from "node:fs/promises";
-          const root = process.env.OPL_POOL_HEAD_TERMINIZATION_RAW_ROOT;
+          const root = process.env.OPL_POOL_HEAD_TERMINALIZATION_RAW_ROOT;
           const value = JSON.parse(await readFile(`${root}/candidate.json`, "utf8"));
           const digest = (item) => /^[a-f0-9]{64}$/.test(String(item || ""));
           if (value?.schemaVersion !== 1 || value?.status !== "candidate" || value?.headStatus !== "claim_pending" ||
@@ -1565,7 +1565,7 @@ jobs:
             value?.sub2apiMutationCount !== 0 || value?.tencentMutationCount !== 0 || value?.kubernetesMutationCount !== 0) {
             throw new Error("compute_pool_head_candidate_invalid");
           }
-          const body = { nodePoolId: process.env.OPL_BASIC_COMPUTE_NODE_POOL_ID, approvalId: process.env.OPL_POOL_HEAD_TERMINIZATION_APPROVAL_ID, approvalDigest: value.approvalDigest };
+          const body = { nodePoolId: process.env.OPL_BASIC_COMPUTE_NODE_POOL_ID, approvalId: process.env.OPL_POOL_HEAD_TERMINALIZATION_APPROVAL_ID, approvalDigest: value.approvalDigest };
           await writeFile(`${root}/request.json`, `${JSON.stringify(body)}\n`, { mode: 0o600 });
           await writeFile(`${root}/approval-digest`, `${value.approvalDigest}\n`, { mode: 0o600 });
           NODE
@@ -1575,7 +1575,7 @@ jobs:
           post_status="$(curl --silent --show-error --max-time 30 \
             -H "Authorization: Bearer $internal_token" \
             -H "Content-Type: application/json" \
-            -H "Idempotency-Key: $OPL_POOL_HEAD_TERMINIZATION_APPROVAL_ID" \
+            -H "Idempotency-Key: $OPL_POOL_HEAD_TERMINALIZATION_APPROVAL_ID" \
             --data-binary "@$raw_root/request.json" \
             --output "$raw_root/post-response.json" --write-out '%{http_code}' \
             http://127.0.0.1:18082/fabric/compute-pool-head/terminalization)"
@@ -1591,7 +1591,7 @@ jobs:
           result_status="$(curl --silent --show-error --max-time 30 --get \
             -H "Authorization: Bearer $internal_token" \
             --data-urlencode "nodePoolId=$OPL_BASIC_COMPUTE_NODE_POOL_ID" \
-            --data-urlencode "approvalId=$OPL_POOL_HEAD_TERMINIZATION_APPROVAL_ID" \
+            --data-urlencode "approvalId=$OPL_POOL_HEAD_TERMINALIZATION_APPROVAL_ID" \
             --data-urlencode "approvalDigest=$approval_digest" \
             --output "$raw_root/result.json" --write-out '%{http_code}' \
             http://127.0.0.1:18082/fabric/compute-pool-head/terminalization)"
@@ -1612,7 +1612,7 @@ jobs:
           OPL_DEPLOYED_RELEASE="$deployed_release" OPL_DEPLOYED_CLOUD_IMAGE="$cloud_image" OPL_RESPONSE_DISPOSITION="$response_disposition" node --input-type=module <<'NODE'
           import { createHash } from "node:crypto";
           import { readFile, writeFile } from "node:fs/promises";
-          const root = process.env.OPL_POOL_HEAD_TERMINIZATION_RAW_ROOT;
+          const root = process.env.OPL_POOL_HEAD_TERMINALIZATION_RAW_ROOT;
           const candidate = JSON.parse(await readFile(`${root}/candidate.json`, "utf8"));
           const terminalization = JSON.parse(await readFile(`${root}/result.json`, "utf8"));
           const finalPoolHead = JSON.parse(await readFile(`${root}/final-pool-head.json`, "utf8"));
@@ -1635,7 +1635,7 @@ jobs:
             errorCode: "none",
             release: { mergedSha: process.env.OPL_MERGED_SHA, deployedSha: process.env.OPL_DEPLOYED_RELEASE, cloudImageDigest: process.env.OPL_DEPLOYED_CLOUD_IMAGE.split("@sha256:")[1] ? `sha256:${process.env.OPL_DEPLOYED_CLOUD_IMAGE.split("@sha256:")[1]}` : "unknown" },
             nodePoolIdDigest: digest(process.env.OPL_BASIC_COMPUTE_NODE_POOL_ID),
-            approvalIdDigest: digest(process.env.OPL_POOL_HEAD_TERMINIZATION_APPROVAL_ID),
+            approvalIdDigest: digest(process.env.OPL_POOL_HEAD_TERMINALIZATION_APPROVAL_ID),
             candidate,
             terminalization,
             finalPoolHead,
@@ -1651,20 +1651,20 @@ jobs:
             /accountId|workspaceId|launchOperationId|computeAllocationId|machineName|nodeName|cvmInstanceId|privateIp|password|token|credential/i.test(wire)) {
             throw new Error("compute_pool_head_terminalization_artifact_invalid");
           }
-          await writeFile(process.env.OPL_POOL_HEAD_TERMINIZATION_ARTIFACT_PATH, `${JSON.stringify(artifact, null, 2)}\n`, { mode: 0o600 });
+          await writeFile(process.env.OPL_POOL_HEAD_TERMINALIZATION_ARTIFACT_PATH, `${JSON.stringify(artifact, null, 2)}\n`, { mode: 0o600 });
           NODE
 
       - name: Validate redacted pool-head terminalization artifact
         if: always()
         shell: bash
         env:
-          OPL_POOL_HEAD_TERMINIZATION_ARTIFACT_PATH: ${{ runner.temp }}/production-compute-pool-head-terminalization/evidence.json
+          OPL_POOL_HEAD_TERMINALIZATION_ARTIFACT_PATH: ${{ runner.temp }}/production-compute-pool-head-terminalization/evidence.json
         working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           set -euo pipefail
           node --input-type=module <<'NODE'
           import { readFile } from "node:fs/promises";
-          const artifact = JSON.parse(await readFile(process.env.OPL_POOL_HEAD_TERMINIZATION_ARTIFACT_PATH, "utf8"));
+          const artifact = JSON.parse(await readFile(process.env.OPL_POOL_HEAD_TERMINALIZATION_ARTIFACT_PATH, "utf8"));
           const exactCounts = (value) => value && Object.keys(value).sort().join(",") === "kubernetes,sub2api,tencent" && value.sub2api === 0 && value.tencent === 0 && value.kubernetes === 0;
           if (artifact?.schemaVersion !== 1 || artifact?.operationMode !== "compute_pool_head_terminalize" ||
             !new Set(["succeeded", "blocked"]).has(artifact?.status) || typeof artifact?.errorCode !== "string" || artifact.errorCode.length === 0 ||
@@ -1692,10 +1692,10 @@ jobs:
         shell: bash
         working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         env:
-          OPL_POOL_HEAD_TERMINIZATION_RAW_ROOT: ${{ runner.temp }}/production-compute-pool-head-terminalization-raw
+          OPL_POOL_HEAD_TERMINALIZATION_RAW_ROOT: ${{ runner.temp }}/production-compute-pool-head-terminalization-raw
         run: |
           set -euo pipefail
-          raw_root="${OPL_POOL_HEAD_TERMINIZATION_RAW_ROOT:-}"
+          raw_root="${OPL_POOL_HEAD_TERMINALIZATION_RAW_ROOT:-}"
           expected="$RUNNER_TEMP/production-compute-pool-head-terminalization-raw"
           if [ -z "$raw_root" ] || [ "$raw_root" != "$expected" ]; then
             echo "Refusing to remove unexpected pool-head terminalization raw path." >&2
