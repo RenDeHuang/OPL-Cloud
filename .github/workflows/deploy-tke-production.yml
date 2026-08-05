@@ -35,6 +35,11 @@ on:
         required: false
         default: false
         type: boolean
+      fresh_compute_readback_operation_id:
+        description: Optional existing Fresh launch operation for a redacted GET-only Fabric compute readback.
+        required: false
+        default: ""
+        type: string
 permissions:
   contents: read
 
@@ -77,6 +82,7 @@ jobs:
           echo "KUBECONFIG=$kubeconfig" >> "$GITHUB_ENV"
 
       - name: Read cluster diagnostics
+        if: ${{ inputs.fresh_compute_readback_operation_id == '' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -93,6 +99,136 @@ jobs:
             done < <(kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" get pod \
               -l "app.kubernetes.io/name=opl-cloud,app.kubernetes.io/component=$component" -o name)
           done
+
+      - name: Set up Node for targeted diagnostics
+        if: ${{ inputs.fresh_compute_readback_operation_id != '' }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Read exact Fresh compute operation
+        id: fresh_compute_readback
+        if: ${{ inputs.fresh_compute_readback_operation_id != '' }}
+        continue-on-error: true
+        shell: bash
+        env:
+          OPL_FRESH_LAUNCH_OPERATION_ID: ${{ inputs.fresh_compute_readback_operation_id }}
+          OPL_PRODUCTION_FRESH_COMPUTE_READBACK_ARTIFACT_PATH: ${{ runner.temp }}/production-fresh-compute-readback/evidence.json
+        run: |
+          set -euo pipefail
+          artifact_dir="$RUNNER_TEMP/production-fresh-compute-readback"
+          mkdir -p "$artifact_dir"
+          chmod 700 "$artifact_dir"
+          fabric_pods="$(kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" get pods -l app.kubernetes.io/name=opl-cloud,app.kubernetes.io/component=fabric -o json)"
+          fabric_pod="$(node --input-type=module -e 'const v=JSON.parse(process.argv[1]); const p=(v.items||[]).filter((x)=>!x.metadata?.deletionTimestamp && x.status?.phase === "Running" && (x.status?.conditions||[]).some((c)=>c.type === "Ready" && c.status === "True")); if (p.length !== 1) process.exit(1); process.stdout.write(p[0].metadata.name)' "$fabric_pods")"
+          internal_token="$(kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" get secret opl-cloud-internal-service -o jsonpath='{.data.OPL_INTERNAL_SERVICE_TOKEN}' | base64 --decode)"
+          if [ -z "$internal_token" ]; then
+            echo "Current Fabric internal token is unavailable." >&2
+            exit 1
+          fi
+          echo "::add-mask::$internal_token"
+          kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" port-forward "pod/$fabric_pod" 18082:8082 > "$artifact_dir/fabric-port-forward.log" 2>&1 &
+          port_forward_pid=$!
+          trap 'kill "$port_forward_pid" >/dev/null 2>&1 || true' EXIT
+          for attempt in $(seq 1 30); do
+            if curl --silent --fail --max-time 1 http://127.0.0.1:18082/healthz >/dev/null 2>&1; then break; fi
+            sleep 1
+          done
+          OPL_FABRIC_INTERNAL_ORIGIN=http://127.0.0.1:18082 OPL_INTERNAL_SERVICE_TOKEN="$internal_token" node --input-type=module <<'NODE'
+          import { createHash } from "node:crypto";
+          import { writeFile } from "node:fs/promises";
+
+          const launchId = String(process.env.OPL_FRESH_LAUNCH_OPERATION_ID || "");
+          const origin = String(process.env.OPL_FABRIC_INTERNAL_ORIGIN || "");
+          const token = String(process.env.OPL_INTERNAL_SERVICE_TOKEN || "");
+          const artifactPath = String(process.env.OPL_PRODUCTION_FRESH_COMPUTE_READBACK_ARTIFACT_PATH || "");
+          const safeToken = (value, fallback = "unknown") => /^[a-z0-9_]{1,64}$/.test(String(value || "").trim().toLowerCase()) ? String(value).trim().toLowerCase() : fallback;
+          const digest = (value) => `sha256:${createHash("sha256").update(String(value)).digest("hex")}`;
+          const budget = (value) => {
+            if (value === undefined) return { state: "absent", attempted: 0, confirmed: 0, unknown: 0, max: 1 };
+            const attempted = Number(value?.attempted), confirmed = Number(value?.confirmed), unknown = Number(value?.unknown), max = Number(value?.max);
+            if (![attempted, confirmed, unknown, max].every(Number.isSafeInteger) || attempted !== 1 || max !== 1 || confirmed < 0 || unknown < 0 || confirmed + unknown !== 1) {
+              return { state: "invalid", attempted: 0, confirmed: 0, unknown: 0, max: 1 };
+            }
+            return { state: confirmed === 1 ? "confirmed" : "reserved", attempted, confirmed, unknown, max };
+          };
+          const get = async (path) => {
+            const response = await fetch(new URL(path, origin), { method: "GET", headers: { authorization: `Bearer ${token}` } });
+            return { status: response.status, body: await response.json().catch(() => null) };
+          };
+          let artifact;
+          try {
+            if (!/^workspace-launch-[a-f0-9]{18}$/.test(launchId) || !origin.startsWith("http://127.0.0.1:") || !token || !artifactPath) throw new Error("config_invalid");
+            // GET /fabric/operations
+            const operationsRead = await get("/fabric/operations");
+            if (operationsRead.status !== 200 || !Array.isArray(operationsRead.body)) throw new Error("operations_readback_failed");
+            const key = `${launchId}:compute`;
+            const matches = operationsRead.body.filter((item) => item?.action === "create_compute_allocation" && item?.idempotencyKey === key);
+            if (matches.length !== 1) throw new Error(matches.length === 0 ? "operation_absent" : "operation_multiple");
+            const operation = matches[0];
+            const resourceId = String(operation?.resourceId || "");
+            const nodePoolId = String(operation?.redactedProviderPayload?.allocationPlan?.nodePoolId || "");
+            if (!resourceId || !nodePoolId) throw new Error("operation_identity_invalid");
+            // GET /fabric/compute-allocations/{id}
+            const allocationRead = await get(`/fabric/compute-allocations/${encodeURIComponent(resourceId)}`);
+            const allocation = allocationRead.status === 200 && allocationRead.body && typeof allocationRead.body === "object" ? allocationRead.body : null;
+            const operationTime = Date.parse(String(operation.createdAt || operation.startedAt || ""));
+            const operationStatus = safeToken(operation.status);
+            const terminal = ["succeeded", "failed", "claim_pending", "rejected"].includes(operationStatus);
+            const ageClass = terminal ? "terminal" : Number.isFinite(operationTime) && Date.now() - operationTime >= 900000 ? "stale" : Number.isFinite(operationTime) ? "fresh" : "unknown";
+            const queueAhead = operationsRead.body.filter((item) => item?.action === "create_compute_allocation" && ["started", "claim_pending"].includes(item?.status) &&
+              item?.redactedProviderPayload?.allocationPlan?.nodePoolId === nodePoolId && Date.parse(String(item.createdAt || "")) < operationTime);
+            const queueAheadState = queueAhead.length === 0 ? "none" : queueAhead.length === 1 ? safeToken(queueAhead[0].status) : "multiple";
+            const effective = allocation || operation?.redactedProviderPayload?.resource || {};
+            artifact = {
+              schemaVersion: 1,
+              status: "succeeded",
+              errorCode: "none",
+              operation: {
+                matchCount: 1,
+                identitySha256: digest(`${operation.id || ""}\0${operation.requestHash || ""}\0${resourceId}`),
+                status: operationStatus,
+                ageClass,
+                errorCode: safeToken(operation.errorCode, "none"),
+                queueAheadCount: queueAhead.length,
+                queueAheadState,
+                computeCreate: budget(operation?.redactedProviderPayload?.normalLaunchMutationBudget?.compute_create)
+              },
+              allocation: {
+                readback: allocation ? "received" : allocationRead.status === 404 ? "absent" : "unknown",
+                status: safeToken(effective.status),
+                machineIdentity: effective.machineName ? "present" : "missing",
+                cvmIdentity: effective.cvmInstanceId || effective.instanceId ? "present" : "missing",
+                nodeIdentity: effective.nodeName ? "present" : "missing"
+              },
+              runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
+            };
+          } catch (error) {
+            artifact = {
+              schemaVersion: 1,
+              status: "blocked",
+              errorCode: safeToken(error?.message, "fresh_compute_readback_failed"),
+              operation: { matchCount: 0, identitySha256: digest("unavailable"), status: "unknown", ageClass: "unknown", errorCode: "unknown", queueAheadCount: 0, queueAheadState: "unknown", computeCreate: budget(undefined) },
+              allocation: { readback: "unknown", status: "unknown", machineIdentity: "unknown", cvmIdentity: "unknown", nodeIdentity: "unknown" },
+              runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
+            };
+          }
+          const serialized = JSON.stringify(artifact);
+          if (/@|workspace-launch-|\b(?:acct|ca|ins|np|req)-|providerRequestId|idempotencyKey|accountId|workspaceId/i.test(serialized)) throw new Error("fresh_compute_readback_artifact_sensitive");
+          await writeFile(artifactPath, `${JSON.stringify(artifact, null, 2)}\n`, { mode: 0o600 });
+          process.stdout.write(`${JSON.stringify(artifact, null, 2)}\n`);
+          if (artifact.status !== "succeeded") process.exitCode = 1;
+          NODE
+
+      - name: Upload redacted Fresh compute evidence
+        if: ${{ always() && inputs.fresh_compute_readback_operation_id != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-fresh-compute-readback
+          path: ${{ runner.temp }}/production-fresh-compute-readback
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 30
 
       - name: Remove diagnostics kubeconfig
         if: always()

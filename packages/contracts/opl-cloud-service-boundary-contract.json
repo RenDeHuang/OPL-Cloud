@@ -343,6 +343,32 @@
         "unavailableFallback": "none",
         "tencentMutationCount": 0
       },
+      "freshComputeContinuationReadback": {
+        "workflow": ".github/workflows/deploy-tke-production.yml diagnostics_only",
+        "implementation": "single_inline_redacted_projection_without_source_checkout",
+        "scope": "one_existing_workspace.launch.v2_compute_operation",
+        "authority": ["GET /fabric/operations", "GET /fabric/compute-allocations/{id}"],
+        "selection": "exact_launch_operation_id_plus_:compute_idempotency_key",
+        "projection": [
+          "operation_status",
+          "operation_age_class",
+          "operation_error_code",
+          "compute_create_budget",
+          "same_node_pool_queue_ahead_count_and_state",
+          "allocation_status",
+          "machine_cvm_node_identity_presence"
+        ],
+        "identityProjection": "sha256_only",
+        "forbiddenProjection": [
+          "account_id",
+          "workspace_id",
+          "compute_allocation_id",
+          "provider_request_id",
+          "idempotency_key",
+          "credential"
+        ],
+        "mutationCounts": {"sub2api": 0, "tencent": 0, "kubernetes": 0}
+      },
       "gatewaySecretWrite": {
         "endpoint": "POST /fabric/gateway-secrets",
         "requestFields": ["accountId", "workspaceId", "workspaceApiKeyId", "fingerprint", "gatewayApiKey"],

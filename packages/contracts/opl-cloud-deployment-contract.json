@@ -150,7 +150,8 @@
       "promote_workspace_image",
       "workspace_promotion_confirmation",
       "bootstrap_mode",
-      "diagnostics_only"
+      "diagnostics_only",
+      "fresh_compute_readback_operation_id"
     ],
     "preDebitTencentMutationGate": {
       "env": "RUN_TENCENT_CREATE_RELEASE_EXECUTION",
@@ -460,7 +461,7 @@
     "file": ".github/workflows/deploy-tke-production.yml",
     "job": "diagnose",
     "runner": ["self-hosted", "tencent-cloud", "opl-cloud", "tke-vpc"],
-    "inputs": ["diagnostics_only"],
+    "inputs": ["diagnostics_only", "fresh_compute_readback_operation_id"],
     "requiredEnv": [
       "OPL_K8S_NAMESPACE",
       "TENCENT_DEPLOY_KUBECONFIG_PATH",
@@ -471,6 +472,9 @@
     "steps": [
       "Prepare diagnostics kubeconfig",
       "Read cluster diagnostics",
+      "Set up Node for targeted diagnostics",
+      "Read exact Fresh compute operation",
+      "Upload redacted Fresh compute evidence",
       "Remove diagnostics kubeconfig"
     ],
     "requiredCommandsByStep": {
@@ -485,6 +489,14 @@
         "get events",
         "describe \"$pod\"",
         "logs \"$pod\""
+      ],
+      "Read exact Fresh compute operation": [
+        "OPL_FRESH_LAUNCH_OPERATION_ID",
+        "OPL_PRODUCTION_FRESH_COMPUTE_READBACK_ARTIFACT_PATH",
+        "OPL_INTERNAL_SERVICE_TOKEN",
+        "GET /fabric/operations",
+        "GET /fabric/compute-allocations/{id}",
+        "node --input-type=module"
       ],
       "Remove diagnostics kubeconfig": [
         "always()",
