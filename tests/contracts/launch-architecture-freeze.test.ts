@@ -273,7 +273,7 @@ test("launch freeze fixes the V2 products, owner lanes, settlement, and verifica
     createNodePool: false,
     admission: "persisted_fifo_by_exact_node_pool",
     admissionLock: "short_postgresql_transaction_advisory_lock_only",
-    headExecution: "only_started_head_can_prepare_scale_bounded_poll_and_claim",
+    headExecution: "only_started_head_can_prepare_scale_and_bounded_poll_claim_pending_uses_its_separate_original_identity_and_does_not_block_later_allocation",
     executionFence: "short_lease_without_provider_call_holding_postgresql_connection",
     crossPoolConcurrency: "independent_node_pools_parallel",
     persistBeforeTencentMutation: ["baselineReplicas", "targetReplicas=baselineReplicas+1", "beforeMachineNames"],
