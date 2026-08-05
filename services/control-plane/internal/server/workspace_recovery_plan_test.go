@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -820,6 +821,51 @@ func TestWorkspaceRecoveryPlanDiagnoseAndValidateComputeClaimFromServerAuthority
 	if persisted.Status != "compute_claim_pending" || persisted.Phase != "compute_claim_pending" || persisted.ComputeClaimApproval != nil ||
 		len(fixture.fabric.computeClaimInputs) != 2 || len(fixture.fabric.computeClaimCalls) != 0 || len(fixture.fabric.storageIDs) != 0 {
 		t.Fatalf("compute claim plan crossed zero-mutation boundary: operation=%#v proofs=%#v claims=%#v storage=%#v", persisted, fixture.fabric.computeClaimInputs, fixture.fabric.computeClaimCalls, fixture.fabric.storageIDs)
+	}
+}
+
+func TestWorkspaceRecoveryPlanDiagnosePreservesRedactedComputeClaimFailure(t *testing.T) {
+	t.Setenv("OPL_RELEASE_SHA", strings.Repeat("a", 40))
+	t.Setenv("OPL_CLOUD_IMAGE", "uswccr.ccs.tencentyun.com/oplcloud/opl-cloud@sha256:"+strings.Repeat("b", 64))
+	fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, "basic")
+	fixture.fabric.computeClaimProof = computeClaimRecoveryProofForLaunch(operation, "unallocated")
+	fixture.fabric.computeClaimProof.Eligible = false
+	fixture.fabric.computeClaimProof.Reason = "provider_describe"
+	fixture.fabric.computeClaimProof.FailureStage = "cvm_tag_readback"
+	fixture.fabric.computeClaimProof.ProviderErrorClass = "readback_mismatch"
+	fixture.fabric.computeClaimProofErr = errors.New("raw provider response must not escape")
+
+	response := requestWorkspaceRecoveryPlan(t, fixture, http.MethodPost, "/diagnose", map[string]any{"accountId": operation.AccountID})
+	if response.Code != http.StatusConflict {
+		t.Fatalf("compute claim blocked diagnose status=%d body=%s", response.Code, response.Body.String())
+	}
+	var body map[string]any
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	wantKeys := []string{"errorCode", "failureStage", "mutationCounts", "readbackError", "recoveryEligible", "schemaVersion", "status"}
+	actualKeys := make([]string, 0, len(body))
+	for key := range body {
+		actualKeys = append(actualKeys, key)
+	}
+	sort.Strings(actualKeys)
+	if !equalWorkspaceComputeClaimStrings(actualKeys, wantKeys) || body["schemaVersion"] != float64(1) || body["status"] != "blocked" || body["recoveryEligible"] != false ||
+		body["failureStage"] != "cvm_tag_readback" || body["readbackError"] != "readback_mismatch" ||
+		body["errorCode"] != "workspace_recovery_plan_fabric_proof_failed" {
+		t.Fatalf("compute claim blocked diagnose evidence=%#v", body)
+	}
+	counts, ok := body["mutationCounts"].(map[string]any)
+	if !ok || len(counts) != 3 || counts["sub2api"] != float64(0) || counts["tencent"] != float64(0) || counts["kubernetes"] != float64(0) {
+		t.Fatalf("compute claim blocked diagnose mutation counts=%#v", body["mutationCounts"])
+	}
+	if strings.Contains(response.Body.String(), "raw provider") || strings.Contains(response.Body.String(), operation.ComputeCVMInstanceID) ||
+		strings.Contains(response.Body.String(), operation.AccountID) || strings.Contains(response.Body.String(), operation.ID) {
+		t.Fatalf("compute claim blocked diagnose leaked protected evidence: %s", response.Body.String())
+	}
+	persisted := fixture.operation(t)
+	if persisted.RecoveryPlan != nil || persisted.RecoveryExecution != nil || persisted.Status != operation.Status || persisted.Phase != operation.Phase ||
+		len(fixture.fabric.computeClaimCalls) != 0 || len(fixture.fabric.storageIDs) != 0 {
+		t.Fatalf("blocked diagnose crossed mutation boundary: operation=%#v claims=%#v storage=%#v", persisted, fixture.fabric.computeClaimCalls, fixture.fabric.storageIDs)
 	}
 }
 

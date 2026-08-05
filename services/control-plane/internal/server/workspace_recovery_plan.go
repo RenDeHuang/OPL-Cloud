@@ -52,6 +52,79 @@ type workspaceRecoveryMutationCounts struct {
 	Kubernetes int `json:"kubernetes"`
 }
 
+type workspaceRecoveryPlanFailureDTO struct {
+	SchemaVersion    int                             `json:"schemaVersion"`
+	Status           string                          `json:"status"`
+	RecoveryEligible bool                            `json:"recoveryEligible"`
+	FailureStage     string                          `json:"failureStage"`
+	ReadbackError    string                          `json:"readbackError"`
+	ErrorCode        string                          `json:"errorCode"`
+	MutationCounts   workspaceRecoveryMutationCounts `json:"mutationCounts"`
+}
+
+type workspaceRecoveryPlanFailure struct {
+	cause         error
+	failureStage  string
+	readbackError string
+	errorCode     string
+}
+
+func (failure *workspaceRecoveryPlanFailure) Error() string { return failure.errorCode }
+func (failure *workspaceRecoveryPlanFailure) Unwrap() error { return failure.cause }
+
+func workspaceRecoveryPlanClassifiedFailure(cause error, failureStage, readbackError, errorCode string) error {
+	return &workspaceRecoveryPlanFailure{
+		cause: cause, failureStage: failureStage, readbackError: readbackError, errorCode: errorCode,
+	}
+}
+
+func workspaceRecoveryPlanProofFailure(proof clients.ComputeClaimRecoveryProof, cause error) error {
+	if cause == nil {
+		cause = errWorkspaceComputeClaimProof
+	} else {
+		cause = errors.Join(errWorkspaceComputeClaimProof, cause)
+	}
+	failureStage := "fabric_proof"
+	if proof.FailureStage != "" && safeWorkspaceComputeClaimFailureStage(proof.FailureStage) {
+		failureStage = proof.FailureStage
+	}
+	readbackError := "workspace_compute_claim_proof_failed"
+	if proof.ProviderErrorClass != "" && safeWorkspaceComputeClaimProviderErrorClass(proof.ProviderErrorClass) {
+		readbackError = proof.ProviderErrorClass
+	} else if proof.Reason != "" && proof.Reason != "none" && safeWorkspaceComputeClaimReason(proof.Reason) {
+		readbackError = proof.Reason
+	}
+	return workspaceRecoveryPlanClassifiedFailure(cause, failureStage, readbackError, "workspace_recovery_plan_fabric_proof_failed")
+}
+
+func workspaceRecoveryPlanFailureProjection(err error) workspaceRecoveryPlanFailureDTO {
+	failureStage, readbackError, errorCode := "unknown", "unknown", "workspace_recovery_plan_unavailable"
+	var classified *workspaceRecoveryPlanFailure
+	switch {
+	case errors.As(err, &classified):
+		failureStage, readbackError, errorCode = classified.failureStage, classified.readbackError, classified.errorCode
+	case errors.Is(err, errBillingReviewNotFound):
+		failureStage, readbackError, errorCode = "operation_read", "workspace_launch_not_found", "workspace_recovery_plan_operation_read_failed"
+	case errors.Is(err, errBillingReviewIdentity):
+		failureStage, readbackError, errorCode = "account_identity", "billing_review_identity_mismatch", "workspace_recovery_plan_account_identity_mismatch"
+	case errors.Is(err, errBillingReviewChargeFact):
+		failureStage, readbackError, errorCode = "account_identity", "billing_review_charge_fact_unconfirmed", "workspace_recovery_plan_account_identity_mismatch"
+	case errors.Is(err, errWorkspaceComputeClaimNotPending):
+		failureStage, readbackError, errorCode = "control_plane_state", "workspace_compute_claim_not_pending", "workspace_recovery_plan_state_ineligible"
+	case errors.Is(err, errWorkspaceComputeClaimIdentity):
+		failureStage, readbackError, errorCode = "fabric_identity", "workspace_compute_claim_identity_mismatch", "workspace_recovery_plan_fabric_identity_invalid"
+	case errors.Is(err, errWorkspaceComputeClaimProof), errors.Is(err, errBillingReviewProviderFact):
+		failureStage, readbackError, errorCode = "fabric_proof", "workspace_compute_claim_proof_failed", "workspace_recovery_plan_fabric_proof_failed"
+	case errors.Is(err, errWorkspaceLaunchCASConflict):
+		failureStage, readbackError, errorCode = "state_persist", "workspace_launch_cas_conflict", "workspace_recovery_plan_state_persist_failed"
+	}
+	return workspaceRecoveryPlanFailureDTO{
+		SchemaVersion: 1, Status: "blocked", RecoveryEligible: false,
+		FailureStage: failureStage, ReadbackError: readbackError, ErrorCode: errorCode,
+		MutationCounts: workspaceRecoveryMutationCounts{},
+	}
+}
+
 type workspaceRecoveryPlanStage struct {
 	Stage  string `json:"stage"`
 	Status string `json:"status"`
@@ -337,7 +410,7 @@ func (app *controlPlaneServer) workspaceComputeClaimRecoveryProofForPlan(ctx con
 	}
 	proof, proofErr := service.ComputeClaimRecoveryProof(ctx, workspaceComputeClaimRecoveryInput(operation, input))
 	if proofErr != nil || proof.SchemaVersion != 1 || proof.TencentMutationCount != 0 || proof.KubernetesMutationCount != 0 || proof.Sub2APIMutationCount != 0 {
-		return input, proof, nil, errWorkspaceComputeClaimProof
+		return input, proof, nil, workspaceRecoveryPlanProofFailure(proof, proofErr)
 	}
 	evidence, evidenceErr := service.ComputeClaimRecoveryIdentityEvidence(ctx, clients.ComputeClaimRecoveryClaimInput{
 		ComputeClaimRecoveryInput: workspaceComputeClaimRecoveryInput(operation, input), MachineName: proof.MachineName,
@@ -345,7 +418,9 @@ func (app *controlPlaneServer) workspaceComputeClaimRecoveryProofForPlan(ctx con
 		InstanceType: proof.InstanceType, Zone: proof.Zone,
 	})
 	if evidenceErr != nil || evidence == nil {
-		return input, proof, nil, errWorkspaceComputeClaimIdentity
+		return input, proof, nil, workspaceRecoveryPlanClassifiedFailure(
+			errors.Join(errWorkspaceComputeClaimIdentity, evidenceErr), "fabric_identity", "fabric_identity_evidence_unavailable", "workspace_recovery_plan_fabric_identity_invalid",
+		)
 	}
 	return input, proof, evidence, nil
 }
@@ -409,7 +484,7 @@ func newWorkspaceComputeClaimRecoveryPlan(operation workspaceLaunchOperation, in
 		Evidence *clients.ComputeClaimIdentityEvidence `json:"evidence"`
 	}{Proof: proof, Evidence: evidence})
 	if authorityDigest == "" || !proof.Eligible || proof.Reason != "none" || proof.Sub2APIMutationCount != 0 || proof.TencentMutationCount != 0 || proof.KubernetesMutationCount != 0 {
-		return workspaceRecoveryPlan{}, errWorkspaceComputeClaimProof
+		return workspaceRecoveryPlan{}, workspaceRecoveryPlanProofFailure(proof, nil)
 	}
 	privateIPDigest := workspaceRecoveryAuthorityDigest(proof.PrivateIP)
 	plan := workspaceRecoveryPlan{
@@ -651,7 +726,9 @@ func (app *controlPlaneServer) diagnoseWorkspaceRecoveryPlan(ctx context.Context
 	}
 	release, err := currentWorkspaceRecoveryReleaseBinding()
 	if err != nil {
-		return workspaceRecoveryPlan{}, err
+		return workspaceRecoveryPlan{}, workspaceRecoveryPlanClassifiedFailure(
+			err, "release_binding", "release_binding_invalid", "workspace_recovery_plan_release_binding_invalid",
+		)
 	}
 
 	unlock := app.lockResource("workspace-launch", operation.AccountID)

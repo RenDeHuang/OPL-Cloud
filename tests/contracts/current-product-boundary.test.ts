@@ -448,7 +448,7 @@ test("Current Fabric contracts require dedicated package NodePools without weake
     output: "redacted_evidence_only",
     currentState: "implemented_and_fake_tested_not_executed"
   });
-  assert.equal(deployment.schemaVersion, 39);
+  assert.equal(deployment.schemaVersion, 40);
   assert.equal(deployment.deployWorkflow.preDebitTencentIamGate.proofMode, "production_runner_deployment_attestation");
   assert.deepEqual(deployment.deployWorkflow.preDebitTencentIamGate.requiredTencentActions, ["tag:TagResources", "tag:ModifyResourcesTagValue"]);
   assert.equal(deployment.deployWorkflow.preDebitTencentIamGate.tencentTagWriteCalls, 0);
@@ -469,11 +469,13 @@ test("Current Fabric contracts require dedicated package NodePools without weake
     runner: ["self-hosted", "tencent-cloud", "opl-cloud", "tke-vpc"],
     artifact: {
       schemaVersion: 1,
-      fields: ["operationMode", "status", "recoveryEligible", "errorCode", "planId", "planDigest", "stages", "mismatches", "runnerDirectMutationCounts", "verifiedAt", "successorGate"],
+      fields: ["operationMode", "status", "recoveryEligible", "failureStage", "readbackError", "errorCode", "planId", "planDigest", "stages", "mismatches", "runnerDirectMutationCounts", "verifiedAt", "successorGate"],
+      failureFields: ["failureStage", "readbackError", "errorCode"],
+      validator: "tools/production-live-qa.ts#validateProductionWorkspaceRecoveryPlanArtifact",
       executeFields: ["executionId", "runId", "url", "receiptId", "controlPlaneExecutionMutationCounts"],
       successorGateFields: ["applicable", "allowed", "planState", "executionState", "completionState", "leaseState", "identityState", "persistedMutationState", "fabricLedgerState"],
       successorGatePersistence: "none_diagnose_response_only",
-      blockedDiagnoseValidation: "always_validate_exact_redacted_schema_then_keep_operation_failed",
+      blockedDiagnoseValidation: "always_use_shared_artifact_validator_then_keep_operation_failed",
       mismatchValues: "allowlisted_safe_value_or_sha256_digest",
       forbidden: ["complete_plan", "complete_approval", "resource_target", "customer_email", "private_ip", "credential", "capability", "approval_digest", "lease_token", "lease_expiry", "mutation_ledger_digest"]
     },

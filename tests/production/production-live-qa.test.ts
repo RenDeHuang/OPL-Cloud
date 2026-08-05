@@ -507,10 +507,71 @@ test("Recovery Plan diagnosis emits only the redacted terminal successor gate", 
   assert.deepEqual(result.successorGate, successorGate);
   assert.deepEqual(result.runnerDirectMutationCounts, { sub2api: 0, tencent: 0, kubernetes: 0 });
   assert.deepEqual(Object.keys(result).sort(), [
-    "errorCode", "mismatches", "operationMode", "planDigest", "planId", "recoveryEligible",
-    "runnerDirectMutationCounts", "schemaVersion", "stages", "status", "successorGate", "verifiedAt"
+    "errorCode", "failureStage", "mismatches", "operationMode", "planDigest", "planId", "readbackError",
+    "recoveryEligible", "runnerDirectMutationCounts", "schemaVersion", "stages", "status", "successorGate", "verifiedAt"
   ]);
   assert.doesNotMatch(JSON.stringify(result), /approvalDigest|leaseToken|cvmInstanceId|ins-protected|password|secret|cookie|csrf/i);
+});
+
+test("Recovery Plan diagnosis CLI preserves one validated redacted server failure artifact", async () => {
+  const accountId = "acct-f947b18f844e42b3c0";
+  const launchOperationId = "workspace-launch-f0375970d7678d0a3e";
+  const calls = [];
+  const fetchImpl = async (input, init = {}) => {
+    const url = new URL(String(input));
+    const method = String(init.method || "GET").toUpperCase();
+    calls.push({ method, path: url.pathname });
+    if (url.pathname === "/api/auth/login") {
+      return json({ user: { accountId: ADMIN_ACCOUNT_ID, role: "admin" } }, 200, {
+        "set-cookie": "opl_session=admin; Path=/; HttpOnly",
+        "x-opl-csrf-token": "admin-csrf"
+      });
+    }
+    if (url.pathname.endsWith("/recovery-plan/diagnose")) {
+      return json({
+        schemaVersion: 1,
+        status: "blocked",
+        recoveryEligible: false,
+        failureStage: "cvm_tag_readback",
+        readbackError: "readback_mismatch",
+        errorCode: "workspace_recovery_plan_fabric_proof_failed",
+        mutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
+      }, 409);
+    }
+    return json({ error: "unexpected" }, 404);
+  };
+  let stdout = "";
+  let stderr = "";
+  const code = await runProductionLiveQaCli({
+    argv: ["--recovery-plan-diagnose", "--account-id", accountId, "--launch-operation-id", launchOperationId],
+    env: {
+      OPL_CONSOLE_ORIGIN: "https://cloud.medopl.cn",
+      OPL_SUB2API_ADMIN_EMAIL: ADMIN_EMAIL,
+      OPL_SUB2API_ADMIN_PASSWORD: ADMIN_PASSWORD
+    },
+    stdout: { write: (chunk) => { stdout += chunk; } },
+    stderr: { write: (chunk) => { stderr += chunk; } },
+    fetchImpl,
+    now: new Date("2026-08-05T00:00:00Z")
+  });
+
+  assert.equal(code, 1);
+  assert.deepEqual(JSON.parse(stdout), {
+    schemaVersion: 1,
+    operationMode: "recovery_plan_diagnose",
+    status: "blocked",
+    recoveryEligible: false,
+    failureStage: "cvm_tag_readback",
+    readbackError: "readback_mismatch",
+    errorCode: "workspace_recovery_plan_fabric_proof_failed",
+    runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
+  });
+  assert.match(stderr, /workspace_recovery_plan_fabric_proof_failed/);
+  assert.deepEqual(calls.map(({ method, path }) => ({ method, path })), [
+    { method: "POST", path: "/api/auth/login" },
+    { method: "POST", path: `/api/operator/workspace-launches/${launchOperationId}/recovery-plan/diagnose` }
+  ]);
+  assert.doesNotMatch(stdout, /accountId|launchOperationId|cvmInstanceId|password|secret|cookie|csrf/i);
 });
 
 test("Recovery Plan execution posts one exact continuation and polls only the same persisted plan", async () => {

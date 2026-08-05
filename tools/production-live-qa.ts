@@ -772,6 +772,36 @@ const COMPUTE_CLAIM_RECOVER_MODE = "compute_claim_recover";
 const RECOVERY_PLAN_DIAGNOSE_MODE = "recovery_plan_diagnose";
 const RECOVERY_PLAN_VALIDATE_MODE = "recovery_plan_validate";
 const RECOVERY_PLAN_EXECUTE_MODE = "recovery_plan_execute";
+const RECOVERY_PLAN_FAILURE_STAGES = new Set([
+  "none", "config", "admin_login", "route_request", "response_envelope", "operation_read", "account_identity",
+  "release_binding", "control_plane_state", "fabric_proof", "fabric_identity", "state_persist", "identity_evidence",
+  "successor_gate", "unknown", "cvm_pre_read", "cvm_conflict_check", "cvm_mutation_precondition", "cvm_rename_readback",
+  "cvm_tag_readback", "cvm_final_readback", "cvm_provisioner_transport", "cvm_mutation_evidence", "node_pre_cvm_read",
+  "node_pre_read", "node_conflict_check", "node_patch_build", "node_patch_readback", "node_final_readback", "claim_final_readback"
+]);
+const RECOVERY_PLAN_READBACK_ERRORS = new Set([
+  "none", "response_not_received", "response_invalid", "workspace_launch_not_found", "billing_review_identity_mismatch",
+  "billing_review_charge_fact_unconfirmed", "workspace_compute_claim_not_pending", "workspace_compute_claim_identity_mismatch",
+  "workspace_compute_claim_proof_failed", "fabric_identity_evidence_unavailable", "workspace_launch_cas_conflict",
+  "release_binding_invalid", "identity_mismatch", "successor_not_allowed", "unknown", "local_identity", "provider_describe",
+  "iam_rbac", "multiple_candidate", "node_ownership_conflict", "storage_already_started", "client_unavailable",
+  "malformed_readback", "ownership_conflict", "readback_mismatch", "timeout", "provider_error", "transport_error", "evidence_incomplete"
+]);
+const RECOVERY_PLAN_ERROR_CODES = new Set([
+  "none", "identity_mismatch", "recovery_execution_failed", "workspace_compute_claim_identity_mismatch",
+  "workspace_compute_claim_not_pending", "workspace_compute_claim_proof_failed", "workspace_recovery_plan_unavailable",
+  "workspace_recovery_plan_operation_read_failed", "workspace_recovery_plan_account_identity_mismatch",
+  "workspace_recovery_plan_release_binding_invalid", "workspace_recovery_plan_state_ineligible",
+  "workspace_recovery_plan_fabric_proof_failed", "workspace_recovery_plan_fabric_identity_invalid",
+  "workspace_recovery_plan_state_persist_failed", "workspace_recovery_plan_diagnosis_request_invalid",
+  "workspace_recovery_plan_diagnosis_conflict", "workspace_recovery_plan_diagnosis_failed",
+  "workspace_recovery_plan_diagnosis_identity_mismatch", "workspace_recovery_plan_read_failed",
+  "workspace_recovery_plan_validation_request_invalid", "workspace_recovery_plan_validation_conflict",
+  "workspace_recovery_plan_validation_failed", "workspace_recovery_plan_validation_identity_mismatch",
+  "workspace_recovery_plan_execution_request_invalid", "workspace_recovery_plan_execution_conflict",
+  "workspace_recovery_plan_execution_not_validated", "workspace_recovery_plan_execution_failed",
+  "workspace_recovery_plan_execution_identity_mismatch", "workspace_recovery_plan_execution_result_unknown"
+]);
 const COMPUTE_CLAIM_REASONS = new Set([
   "none", "local_identity", "provider_describe", "iam_rbac", "multiple_candidate",
   "identity_mismatch", "node_ownership_conflict", "storage_already_started"
@@ -1829,6 +1859,8 @@ function recoveryPlanArtifact(operationMode, plan, now, overrides = {}) {
     schemaVersion: 1,
     operationMode,
     status: plan.status,
+    failureStage: "none",
+    readbackError: "none",
     errorCode: String(plan.errorCode || "none"),
     planId: plan.planId,
     planDigest: plan.planDigest,
@@ -1838,6 +1870,98 @@ function recoveryPlanArtifact(operationMode, plan, now, overrides = {}) {
     verifiedAt: now.toISOString(),
     ...overrides
   };
+}
+
+function workspaceRecoveryPlanFailureResponse(value) {
+  const keys = ["errorCode", "failureStage", "mutationCounts", "readbackError", "recoveryEligible", "schemaVersion", "status"];
+  const counts = value?.mutationCounts;
+  if (!value || typeof value !== "object" || Array.isArray(value) || !exactObjectKeys(value, keys) || value.schemaVersion !== 1 ||
+    value.status !== "blocked" || value.recoveryEligible !== false || !RECOVERY_PLAN_FAILURE_STAGES.has(String(value.failureStage || "")) ||
+    value.failureStage === "none" || !RECOVERY_PLAN_READBACK_ERRORS.has(String(value.readbackError || "")) || value.readbackError === "none" ||
+    !RECOVERY_PLAN_ERROR_CODES.has(String(value.errorCode || "")) || value.errorCode === "none" || !counts ||
+    !exactObjectKeys(counts, ["kubernetes", "sub2api", "tencent"]) || !computeClaimRunnerDirectMutationCountsAreZero(counts)) {
+    throw new Error("workspace_recovery_plan_failure_response_invalid");
+  }
+  return {
+    failureStage: String(value.failureStage),
+    readbackError: String(value.readbackError),
+    errorCode: String(value.errorCode)
+  };
+}
+
+function blockedWorkspaceRecoveryPlanArtifact(operationMode, error) {
+  if (error?.recoveryPlanArtifact) {
+    return validateProductionWorkspaceRecoveryPlanArtifact(error.recoveryPlanArtifact, operationMode);
+  }
+  const message = String(error?.message || "");
+  const responseInvalid = message.endsWith("_response_invalid");
+  return {
+    schemaVersion: 1,
+    operationMode,
+    status: "blocked",
+    recoveryEligible: false,
+    failureStage: responseInvalid ? "response_envelope" : "route_request",
+    readbackError: responseInvalid ? "response_invalid" : "response_not_received",
+    errorCode: RECOVERY_PLAN_ERROR_CODES.has(message) && message !== "none"
+      ? message
+      : operationMode === RECOVERY_PLAN_DIAGNOSE_MODE ? "workspace_recovery_plan_diagnosis_failed"
+        : operationMode === RECOVERY_PLAN_EXECUTE_MODE ? "workspace_recovery_plan_execution_failed"
+          : "workspace_recovery_plan_validation_failed",
+    runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
+  };
+}
+
+export function validateProductionWorkspaceRecoveryPlanArtifact(value, expectedOperationMode = "") {
+  const operationMode = String(value?.operationMode || "");
+  const modes = new Set([RECOVERY_PLAN_DIAGNOSE_MODE, RECOVERY_PLAN_VALIDATE_MODE, RECOVERY_PLAN_EXECUTE_MODE]);
+  const counts = value?.runnerDirectMutationCounts;
+  const safeJSON = JSON.stringify(value || {});
+  if (!value || typeof value !== "object" || Array.isArray(value) || value.schemaVersion !== 1 || !modes.has(operationMode) ||
+    expectedOperationMode && operationMode !== expectedOperationMode || !counts ||
+    !exactObjectKeys(counts, ["kubernetes", "sub2api", "tencent"]) || !computeClaimRunnerDirectMutationCountsAreZero(counts) ||
+    !RECOVERY_PLAN_FAILURE_STAGES.has(String(value.failureStage || "")) || !RECOVERY_PLAN_READBACK_ERRORS.has(String(value.readbackError || "")) ||
+    !RECOVERY_PLAN_ERROR_CODES.has(String(value.errorCode || "")) || /password|secret|token|cookie|csrf|accountId|launchOperationId|cvmInstanceId|nodeName|cloudImageDigest/i.test(safeJSON)) {
+    throw new Error("workspace_recovery_plan_artifact_invalid");
+  }
+  const failureKeys = [
+    "errorCode", "failureStage", "operationMode", "readbackError", "recoveryEligible", "runnerDirectMutationCounts", "schemaVersion", "status"
+  ];
+  if (value.status === "blocked" && !Object.hasOwn(value, "planId")) {
+    if (!exactObjectKeys(value, failureKeys) || value.recoveryEligible !== false || value.failureStage === "none" ||
+      value.readbackError === "none" || value.errorCode === "none") {
+      throw new Error("workspace_recovery_plan_artifact_invalid");
+    }
+    return value;
+  }
+  const allowedKeys = new Set([
+    "schemaVersion", "operationMode", "status", "recoveryEligible", "failureStage", "readbackError", "errorCode", "planId",
+    "planDigest", "stages", "mismatches", "runnerDirectMutationCounts", "verifiedAt", "successorGate", "executionId", "runId",
+    "url", "receiptId", "controlPlaneExecutionMutationCounts"
+  ]);
+  if (Object.keys(value).some((key) => !allowedKeys.has(key)) || !/^recovery-plan-[a-f0-9]{20}$/.test(String(value.planId || "")) ||
+    !/^[a-f0-9]{64}$/.test(String(value.planDigest || "")) || !Array.isArray(value.stages) || value.stages.length === 0 ||
+    !Array.isArray(value.mismatches) || !Number.isFinite(Date.parse(String(value.verifiedAt || "")))) {
+    throw new Error("workspace_recovery_plan_artifact_invalid");
+  }
+  if ([RECOVERY_PLAN_DIAGNOSE_MODE, RECOVERY_PLAN_VALIDATE_MODE].includes(operationMode)) {
+    if (!["proven", "blocked"].includes(value.status) || typeof value.recoveryEligible !== "boolean" || value.status === "proven" &&
+      (value.recoveryEligible !== true || value.failureStage !== "none" || value.readbackError !== "none" || value.errorCode !== "none" || value.mismatches.length !== 0) ||
+      value.status === "blocked" && (value.recoveryEligible !== false || value.failureStage === "none" || value.readbackError === "none" || value.errorCode === "none")) {
+      throw new Error("workspace_recovery_plan_artifact_invalid");
+    }
+    workspaceRecoverySuccessorGateResponse(value.successorGate);
+    return value;
+  }
+  const executionCounts = value.controlPlaneExecutionMutationCounts;
+  if (!executionCounts || ![executionCounts.sub2api, executionCounts.tencent, executionCounts.kubernetes]
+    .every((count) => Number.isSafeInteger(count) && count >= 0) ||
+    value.status === "completed" && (value.failureStage !== "none" || value.readbackError !== "none" || value.errorCode !== "none" ||
+      !/^recovery-exec-[A-Za-z0-9-]+$/.test(String(value.executionId || "")) ||
+      !/^control-plane-run-[A-Za-z0-9-]+$/.test(String(value.runId || "")) || !String(value.url || "") || !String(value.receiptId || "")) ||
+    value.status !== "completed" && (value.failureStage === "none" || value.readbackError === "none" || value.errorCode === "none")) {
+    throw new Error("workspace_recovery_plan_artifact_invalid");
+  }
+  return value;
 }
 
 export async function diagnoseWorkspaceRecoveryPlan({
@@ -1867,7 +1991,21 @@ export async function diagnoseWorkspaceRecoveryPlan({
     body: { accountId },
     requestTimeoutMs
   });
-  if (diagnosisResponse.statusCode !== 200) throw new Error("workspace_recovery_plan_diagnosis_failed");
+  if (diagnosisResponse.statusCode !== 200) {
+    const failure = workspaceRecoveryPlanFailureResponse(diagnosisResponse.payload);
+    const error = new Error(failure.errorCode);
+    error.recoveryPlanArtifact = {
+      schemaVersion: 1,
+      operationMode: RECOVERY_PLAN_DIAGNOSE_MODE,
+      status: "blocked",
+      recoveryEligible: false,
+      failureStage: failure.failureStage,
+      readbackError: failure.readbackError,
+      errorCode: failure.errorCode,
+      runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
+    };
+    throw error;
+  }
   const diagnosis = workspaceRecoveryPlanValidationResponse(diagnosisResponse.payload, launchOperationId);
   const persistedResponse = await workspaceRecoveryPlanGet({
     fetchImpl, origin: normalizedOrigin, auth, path, requestTimeoutMs
@@ -1881,6 +2019,8 @@ export async function diagnoseWorkspaceRecoveryPlan({
   return recoveryPlanArtifact(RECOVERY_PLAN_DIAGNOSE_MODE, persisted, now, {
     status: proven ? "proven" : "blocked",
     recoveryEligible: proven,
+    failureStage: proven ? "none" : diagnosis.successorGate ? "successor_gate" : "identity_evidence",
+    readbackError: proven ? "none" : diagnosis.successorGate ? "successor_not_allowed" : "identity_mismatch",
     errorCode: proven ? "none" : String(persisted.errorCode || "identity_mismatch"),
     ...(diagnosis.successorGate ? { successorGate: diagnosis.successorGate } : {})
   });
@@ -1942,6 +2082,8 @@ export async function validateWorkspaceRecoveryPlan({
     operationMode: RECOVERY_PLAN_VALIDATE_MODE,
     status: recoveryEligible ? "proven" : "blocked",
     recoveryEligible,
+    failureStage: recoveryEligible ? "none" : "identity_evidence",
+    readbackError: recoveryEligible ? "none" : "identity_mismatch",
     errorCode: recoveryEligible ? "none" : String(validation.errorCode || "identity_mismatch"),
     planId: validation.planId,
     planDigest: validation.planDigest,
@@ -2026,6 +2168,8 @@ export async function executeWorkspaceRecoveryPlan({
     throw new Error("workspace_recovery_plan_execution_result_unknown");
   }
   return recoveryPlanArtifact(RECOVERY_PLAN_EXECUTE_MODE, current, now, {
+    failureStage: current.status === "completed" ? "none" : "control_plane_state",
+    readbackError: current.status === "completed" ? "none" : "unknown",
     errorCode: current.status === "completed" ? "none" : String(current.errorCode || "recovery_execution_failed"),
     executionId: String(current.executionId || ""),
     runId: String(current.runId || ""),
@@ -5272,18 +5416,7 @@ export async function runProductionLiveQaCli({
 		if (recoveryPlanDiagnoseMode || recoveryPlanValidateMode || recoveryPlanExecuteMode) {
 		  const operationMode = recoveryPlanDiagnoseMode ? RECOVERY_PLAN_DIAGNOSE_MODE
 		    : recoveryPlanExecuteMode ? RECOVERY_PLAN_EXECUTE_MODE : RECOVERY_PLAN_VALIDATE_MODE;
-		  const artifact = {
-		    schemaVersion: 1,
-		    operationMode,
-		    status: "blocked",
-		    ...(recoveryPlanExecuteMode ? {} : { recoveryEligible: false }),
-		    errorCode: /^workspace_recovery_plan_[a-z_]+$/.test(String(error?.message || ""))
-		      ? error.message
-		      : recoveryPlanDiagnoseMode ? "workspace_recovery_plan_diagnosis_failed"
-		        : recoveryPlanExecuteMode ? "workspace_recovery_plan_execution_failed"
-		          : "workspace_recovery_plan_validation_failed",
-		    runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
-		  };
+		  const artifact = blockedWorkspaceRecoveryPlanArtifact(operationMode, error);
 		  stdout.write(`${JSON.stringify(artifact, null, 2)}\n`);
 		  stderr.write(`${JSON.stringify({ ok: false, errorCode: artifact.errorCode }, null, 2)}\n`);
 		  return 1;
