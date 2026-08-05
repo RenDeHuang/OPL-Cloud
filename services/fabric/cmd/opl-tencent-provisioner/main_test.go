@@ -536,6 +536,22 @@ func TestTencentSDKComputeClaimTruthProvesOriginalUniqueNativeCVMWithoutMutation
 	}
 }
 
+func TestTencentSDKComputeClaimTruthTreatsProviderAssignedCVMNameAsRecoverableWithoutMutation(t *testing.T) {
+	tkeAPI := &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 2, maxReplicas: 10}
+	client := newFakeTencentSDKClient(tkeAPI)
+	cvmAPI := client.nativeCvmClient.(*fakeNativeCvmAPI)
+	cvmAPI.instanceName = "tke-provider-assigned"
+	cvmAPI.tags = map[string]string{}
+
+	response := client.ComputeClaimTruth(computeClaimTruthRequest(), nil)
+
+	if !response.Ok || response.Status != "proven" || response.MutationCount != 0 ||
+		response.ProviderData["cvmOwnershipState"] != "recoverable" || response.ProviderIdentityFailure != nil ||
+		len(cvmAPI.modifyInstancesRequest) != 0 || len(client.nativeTagClient.(*fakeNativeTagAPI).calls) != 0 {
+		t.Fatalf("provider-assigned CVM name must remain recoverable after exact identity proof: %#v", response)
+	}
+}
+
 func TestTencentSDKComputeClaimTruthFailsClosedWithoutMutation(t *testing.T) {
 	for _, tc := range []struct {
 		name          string
@@ -612,7 +628,7 @@ func TestTencentSDKClaimComputeMachineConvergesRecoverableCVMAndReplaysWithoutMu
 	tkeAPI := &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 2, maxReplicas: 10}
 	client := newFakeTencentSDKClient(tkeAPI)
 	cvmAPI := client.nativeCvmClient.(*fakeNativeCvmAPI)
-	cvmAPI.instanceName = "node-basic-2"
+	cvmAPI.instanceName = "tke-provider-assigned"
 	cvmAPI.tags = map[string]string{}
 
 	claimed := client.ClaimComputeMachine(request, nil)
@@ -632,13 +648,34 @@ func TestTencentSDKClaimComputeMachineConvergesRecoverableCVMAndReplaysWithoutMu
 	}
 }
 
+func TestTencentSDKClaimComputeMachineRenamesProviderAssignedCVMWithoutRepeatingOwnedTags(t *testing.T) {
+	request := computeClaimTruthRequest()
+	request.Action = "claim_compute_machine"
+	tkeAPI := &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 2, maxReplicas: 10}
+	client := newFakeTencentSDKClient(tkeAPI)
+	cvmAPI := client.nativeCvmClient.(*fakeNativeCvmAPI)
+	cvmAPI.instanceName = "tke-provider-assigned"
+	cvmAPI.tags = computeOwnershipTags()
+	tagAPI := client.nativeTagClient.(*fakeNativeTagAPI)
+
+	claimed := client.ClaimComputeMachine(request, nil)
+
+	if !claimed.Ok || claimed.MutationCount != 1 || len(cvmAPI.modifyInstancesRequest) != 1 || len(tagAPI.calls) != 0 {
+		t.Fatalf("already-owned tags must not be repeated: claimed=%#v modify=%#v tags=%#v", claimed, cvmAPI.modifyInstancesRequest, tagAPI.calls)
+	}
+	replayed := client.ClaimComputeMachine(request, nil)
+	if !replayed.Ok || replayed.MutationCount != 0 || len(cvmAPI.modifyInstancesRequest) != 1 || len(tagAPI.calls) != 0 {
+		t.Fatalf("rename replay must be read-only: replayed=%#v modify=%#v tags=%#v", replayed, cvmAPI.modifyInstancesRequest, tagAPI.calls)
+	}
+}
+
 func TestTencentSDKClaimComputeMachineRejectsOwnershipConflictBeforeMutation(t *testing.T) {
 	request := computeClaimTruthRequest()
 	request.Action = "claim_compute_machine"
 	tkeAPI := &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 2, maxReplicas: 10}
 	client := newFakeTencentSDKClient(tkeAPI)
 	cvmAPI := client.nativeCvmClient.(*fakeNativeCvmAPI)
-	cvmAPI.instanceName = "node-basic-2"
+	cvmAPI.instanceName = "tke-provider-assigned"
 	cvmAPI.tags = map[string]string{"opl_workspace_id": "ws-other"}
 
 	response := client.ClaimComputeMachine(request, nil)
@@ -697,7 +734,7 @@ func TestTencentSDKClaimComputeMachineConfirmsRenameAfterTimeout(t *testing.T) {
 	tkeAPI := &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 2, maxReplicas: 10}
 	client := newFakeTencentSDKClient(tkeAPI)
 	cvmAPI := client.nativeCvmClient.(*fakeNativeCvmAPI)
-	cvmAPI.instanceName = "node-basic-2"
+	cvmAPI.instanceName = "tke-provider-assigned"
 	cvmAPI.tags = map[string]string{}
 	cvmAPI.modifyInstancesErr = context.DeadlineExceeded
 	cvmAPI.modifyInstancesApplyBeforeError = true

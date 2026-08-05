@@ -2301,7 +2301,7 @@ func (client *tencentSDKClient) ComputeClaimTruth(request Request, _ map[string]
 			"zone": zone, "chargeType": stringValue(cvmInstance.InstanceChargeType), "renewFlag": stringValue(cvmInstance.RenewFlag), "deadline": deadline,
 		})
 	}
-	ownershipState, ok, ownershipPredicate := computeClaimCVMOwnershipState(cvmInstance, machineName, request)
+	ownershipState, ok, ownershipPredicate := computeClaimCVMOwnershipState(cvmInstance, request)
 	if !ok {
 		actualTags, _ := cvmOwnershipTags(cvmInstance)
 		return computeClaimProviderIdentityFailure(ownershipPredicate, map[string]any{
@@ -2330,7 +2330,7 @@ func computeClaimNodePoolMatches(pool *tke2022.NodePool, request Request) bool {
 		stringValue(pool.Native.InstanceTypes[0]) == request.Pool.InstanceType && len(pool.Native.SubnetIds) > 0
 }
 
-func computeClaimCVMOwnershipState(instance *cvm2017.Instance, machineName string, request Request) (string, bool, string) {
+func computeClaimCVMOwnershipState(instance *cvm2017.Instance, request Request) (string, bool, string) {
 	tags, err := cvmOwnershipTags(instance)
 	if err != nil {
 		return "", false, "compute_claim.cvm_ownership_shape"
@@ -2347,9 +2347,6 @@ func computeClaimCVMOwnershipState(instance *cvm2017.Instance, machineName strin
 		targetCount++
 	}
 	instanceName := strings.TrimSpace(stringValue(instance.InstanceName))
-	if instanceName != "" && instanceName != machineName && instanceName != request.Allocation.Id {
-		return "", false, "compute_claim.cvm_ownership.instance_name"
-	}
 	if instanceName == request.Allocation.Id && targetCount == len(cbsOwnershipTagKeys) {
 		return "target_owned", true, ""
 	}
@@ -2698,7 +2695,7 @@ func (client *tencentSDKClient) ClaimComputeMachine(request Request, _ map[strin
 		return truth
 	}
 	converged, failure := client.convergeCVMOwnership(cvmOwnershipTarget{
-		InstanceID: request.Allocation.InstanceId, CurrentName: request.Allocation.MachineName,
+		InstanceID: request.Allocation.InstanceId,
 		TargetName: request.Allocation.Id, Tags: request.Tags,
 	})
 	if failure != nil {
