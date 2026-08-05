@@ -167,7 +167,7 @@ jobs:
             if (matches.length !== 1) throw new Error(matches.length === 0 ? "operation_absent" : "operation_multiple");
             const operation = matches[0];
             const resourceId = String(operation?.resourceId || "");
-            const nodePoolId = String(operation?.redactedProviderPayload?.allocationPlan?.nodePoolId || "");
+            const nodePoolId = String(operation?.redactedProviderPayload?.allocationPlan?.nodePoolId || operation?.redactedProviderPayload?.resource?.nodePoolId || "");
             if (!resourceId || !nodePoolId) throw new Error("operation_identity_invalid");
             // GET /fabric/compute-allocations/{id}
             const allocationRead = await get(`/fabric/compute-allocations/${encodeURIComponent(resourceId)}`);
@@ -177,7 +177,7 @@ jobs:
             const terminal = ["succeeded", "failed", "claim_pending", "rejected"].includes(operationStatus);
             const ageClass = terminal ? "terminal" : Number.isFinite(operationTime) && Date.now() - operationTime >= 900000 ? "stale" : Number.isFinite(operationTime) ? "fresh" : "unknown";
             const queueAhead = operationsRead.body.filter((item) => item?.action === "create_compute_allocation" && ["started", "claim_pending"].includes(item?.status) &&
-              item?.redactedProviderPayload?.allocationPlan?.nodePoolId === nodePoolId && Date.parse(String(item.createdAt || "")) < operationTime);
+              String(item?.redactedProviderPayload?.allocationPlan?.nodePoolId || item?.redactedProviderPayload?.resource?.nodePoolId || "") === nodePoolId && Date.parse(String(item.createdAt || "")) < operationTime);
             const queueAheadState = queueAhead.length === 0 ? "none" : queueAhead.length === 1 ? safeToken(queueAhead[0].status) : "multiple";
             const effective = allocation || operation?.redactedProviderPayload?.resource || {};
             artifact = {
