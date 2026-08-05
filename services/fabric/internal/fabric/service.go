@@ -410,10 +410,9 @@ func (s *Service) computePoolHeadTerminalizationCandidate(ctx context.Context, n
 		return computePoolHeadTerminalizationCandidate{}, fmt.Errorf("%w: allocation_identity_invalid", ErrComputePoolHeadTerminalizationUnavailable)
 	}
 	binding, bindingPresent, bindingValid := decodeComputeClaimRecoveryBinding(operation)
-	expectedBinding, expectedBindingValid := automaticComputeClaimRecoveryBinding(operation, allocation, plan)
 	ledger, ledgerPresent, ledgerValid := decodeComputeClaimRecoveryMutation(operation)
 	ownership, ownershipErr := s.operations.MachineOwnership(ctx, allocation.ID)
-	if !bindingPresent || !bindingValid || !expectedBindingValid || binding != expectedBinding || !ledgerPresent || !ledgerValid ||
+	if !bindingPresent || !bindingValid || !validComputePoolHeadTerminalizationBinding(operation, binding) || !ledgerPresent || !ledgerValid ||
 		ownershipErr != nil || ownership.Status != "quarantined" || !validComputeClaimRecoveryOwnership(allocation, ownership) {
 		return computePoolHeadTerminalizationCandidate{}, fmt.Errorf("%w: terminalization_binding_invalid", ErrComputePoolHeadTerminalizationUnavailable)
 	}
@@ -525,6 +524,13 @@ func validComputePoolTerminalizationToken(value string) bool {
 		}
 	}
 	return true
+}
+
+func validComputePoolHeadTerminalizationBinding(operation FabricOperation, binding computeClaimRecoveryBinding) bool {
+	launchOperationID, ok := strings.CutSuffix(strings.TrimSpace(operation.IdempotencyKey), ":compute")
+	return ok && launchOperationID != "" && binding.LaunchOperationID == launchOperationID &&
+		binding.IdempotencyKey != "" && binding.IdempotencyKey == strings.TrimSpace(binding.IdempotencyKey) && len(binding.IdempotencyKey) <= 200 &&
+		validSHA256Hex(binding.TargetHash) && validSHA256Hex(binding.RequestHash)
 }
 
 func validSHA256Hex(value string) bool {
