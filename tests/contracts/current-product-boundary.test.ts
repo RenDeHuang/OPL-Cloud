@@ -127,7 +127,7 @@ test("Current contracts hard cut Workspace purchase, access, and Runtime facts",
     json("packages/contracts/opl-cloud-console-source-truth-contract.json")
   ]);
 
-  assert.equal(freeze.schemaVersion, 25);
+  assert.equal(freeze.schemaVersion, 26);
   assert.equal(billing.schemaVersion, 11);
   assert.equal(freeze.workspaceLaunch.customerDebitCardinality, 1);
   assert.equal(freeze.workspaceLaunch.persistence, "control_plane_runtime_operations with action=workspace.launch.v2 and result.schemaVersion=2");
@@ -448,7 +448,7 @@ test("Current Fabric contracts require dedicated package NodePools without weake
     output: "redacted_evidence_only",
     currentState: "implemented_and_fake_tested_not_executed"
   });
-  assert.equal(deployment.schemaVersion, 37);
+  assert.equal(deployment.schemaVersion, 38);
   assert.equal(deployment.deployWorkflow.preDebitTencentIamGate.proofMode, "production_runner_deployment_attestation");
   assert.deepEqual(deployment.deployWorkflow.preDebitTencentIamGate.requiredTencentActions, ["tag:TagResources", "tag:ModifyResourcesTagValue"]);
   assert.equal(deployment.deployWorkflow.preDebitTencentIamGate.tencentTagWriteCalls, 0);
@@ -748,7 +748,7 @@ test("Current contracts hard cut operator resources, wallet adjustments, and ann
     absentRequires: "both_local_identities_and_exact_provider_describe_absence",
     forbiddenSideEffects: ["sync", "tag", "kubectl_apply", "delete", "label", "purchase", "renew", "destroy"]
   });
-  assert.equal(boundary.schemaVersion, 29);
+  assert.equal(boundary.schemaVersion, 30);
   assert.deepEqual(boundary.services.controlPlane.workspaceLaunchRecoveryAcceptanceCanary, {
     defaultEnabled: false,
     allowlistEnv: "OPL_RECOVERY_ACCEPTANCE_CANARY_ACCOUNT_IDS",
@@ -994,6 +994,60 @@ test("Current contracts keep compute-claim continuation automatic while preservi
     reservation: "postgresql_cas_single_winner",
     continuation: "shared_fulfillWorkspaceLaunch_after_target_owned_readback",
     terminalFailure: "manual_review_worker_stops"
+  });
+  assert.deepEqual(freeze.workspaceLaunch.computePoolHeadPreDebitGate, {
+    owner: "control_plane",
+    scope: "first_charge_only_for_new_workspace.launch.v2",
+    timing: "after_compute_monthly_preflight_before_sub2api_debit",
+    authority: "GET /fabric/compute-pool-head?nodePoolId=<persisted_exact_node_pool_id>",
+    allowed: ["absent", "current_head_continuable"],
+    blocked: ["current_head_blocked", "unknown", "invalid"],
+    failureProjection: { failureStage: "compute_pool_head", errorCodePrefix: "fabric_compute_pool_head_" },
+    chargedContinuation: "skip_gate_when_ChargeAttempted_or_ChargeConfirmation_is_present",
+    externalMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
+  });
+  assert.deepEqual(boundary.services.controlPlane.workspaceComputePoolHeadPreDebitGate, {
+    scope: "new_workspace.launch.v2_before_first_sub2api_debit",
+    authority: "fabric_current_exact_node_pool_head_readback",
+    allowed: ["absent", "continuable_exact_head"],
+    blocked: ["blocked_exact_head", "unknown", "invalid"],
+    failureStage: "compute_pool_head",
+    errorCodePrefix: "fabric_compute_pool_head_",
+    chargedContinuation: "ChargeAttempted_or_ChargeConfirmation_skips_gate_and_resumes_original_launch",
+    externalMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
+  });
+  assert.deepEqual(freeze.workspaceLaunch.computePoolHeadTerminalization, {
+    authority: "operator_authorized_production_workflow_only",
+    scope: "one_exact_current_fifo_head",
+    eligible: {
+      operationStatus: "claim_pending",
+      allocationStatuses: ["compute_claim_pending", "quarantined"],
+      ownershipStatus: "quarantined",
+      requiredEvidence: ["exact_current_binding", "valid_manual_recovery_ledger", "exact_allocation_plan", "exact_machine_ownership"]
+    },
+    approvalBinding: "server_derived_sha256_of_current_operation_allocation_plan_ownership_binding_and_manual_recovery_ledger",
+    cas: "claim_pending_to_failed_with_terminal_unprovable_evidence_single_winner",
+    controlPlaneLaunchState: "preserved_manual_review_compute_claim_pending",
+    preserved: ["debit", "launch", "cvm", "binding", "manual_recovery_ledger", "ownership", "resource_identity"],
+    providerMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
+    idempotency: "same_approval_id_and_digest_replays_succeeded_without_second_cas",
+    responseLoss: "GET_exact_terminalization_result_then_GET_current_pool_head_never_second_POST",
+    forbidden: ["skip_all_claim_pending", "refund", "delete", "replace", "reuse_cvm", "direct_sql"]
+  });
+  assert.deepEqual(boundary.services.fabric.computePoolHeadTerminalization, {
+    candidateEndpoint: "GET /fabric/compute-pool-head/terminalization?nodePoolId=<id>",
+    mutationEndpoint: "POST /fabric/compute-pool-head/terminalization",
+    resultEndpoint: "GET /fabric/compute-pool-head/terminalization?nodePoolId=<id>&approvalId=<id>&approvalDigest=<digest>",
+    scope: "one_exact_current_fifo_head_only",
+    eligible: ["operation_claim_pending", "allocation_compute_claim_pending_or_quarantined", "ownership_quarantined", "exact_current_binding", "valid_manual_recovery_ledger"],
+    approvalDigest: "server_derived_from_current_operation_allocation_plan_ownership_binding_and_manual_recovery_ledger",
+    idempotency: "approval_id_equals_http_idempotency_key_and_same_digest_replays",
+    cas: "operation_claim_pending_to_failed_terminal_unprovable_single_winner",
+    preserved: ["allocation", "binding", "manual_recovery_ledger", "ownership", "resource_identity"],
+    controlPlaneLaunchMutationCount: 0,
+    providerMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
+    responseLoss: "GET_result_only_no_second_POST",
+    forbidden: ["skip_nonterminal_head", "refund", "delete", "replace", "reuse_resource", "direct_sql"]
   });
   assert.deepEqual(boundary.services.fabric.workspaceComputeClaimIdentity, {
     claimIdentity: "original_operationId:compute",

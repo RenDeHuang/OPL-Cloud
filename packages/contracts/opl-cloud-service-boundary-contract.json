@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 29,
+  "schemaVersion": 30,
   "owner": "OPL Platform Architecture",
   "purpose": "Current ownership contract for Console UI, Control Plane, Ledger, Fabric, and external Sub2API.",
   "state": "current",
@@ -123,6 +123,16 @@
         "reservation": "postgresql_cas_single_winner",
         "continuation": "shared_fulfillWorkspaceLaunch_after_target_owned_readback",
         "terminalFailure": "manual_review_worker_stops"
+      },
+      "workspaceComputePoolHeadPreDebitGate": {
+        "scope": "new_workspace.launch.v2_before_first_sub2api_debit",
+        "authority": "fabric_current_exact_node_pool_head_readback",
+        "allowed": ["absent", "continuable_exact_head"],
+        "blocked": ["blocked_exact_head", "unknown", "invalid"],
+        "failureStage": "compute_pool_head",
+        "errorCodePrefix": "fabric_compute_pool_head_",
+        "chargedContinuation": "ChargeAttempted_or_ChargeConfirmation_skips_gate_and_resumes_original_launch",
+        "externalMutationCounts": {"sub2api": 0, "tencent": 0, "kubernetes": 0}
       },
       "normalWorkspaceLaunch": {
         "entryPostMaximum": 1,
@@ -495,6 +505,21 @@
         "strictReadback": ["cvm_target_owned", "node_target_owned", "machine_ownership_active"],
         "forbiddenCalls": ["CreateComputeAllocation", "scale", "debit", "refund", "recharge", "create_storage_volume", "delete", "replace_cvm"],
         "fullMonthlyProviderTruthUnchanged": true
+      },
+      "computePoolHeadTerminalization": {
+        "candidateEndpoint": "GET /fabric/compute-pool-head/terminalization?nodePoolId=<id>",
+        "mutationEndpoint": "POST /fabric/compute-pool-head/terminalization",
+        "resultEndpoint": "GET /fabric/compute-pool-head/terminalization?nodePoolId=<id>&approvalId=<id>&approvalDigest=<digest>",
+        "scope": "one_exact_current_fifo_head_only",
+        "eligible": ["operation_claim_pending", "allocation_compute_claim_pending_or_quarantined", "ownership_quarantined", "exact_current_binding", "valid_manual_recovery_ledger"],
+        "approvalDigest": "server_derived_from_current_operation_allocation_plan_ownership_binding_and_manual_recovery_ledger",
+        "idempotency": "approval_id_equals_http_idempotency_key_and_same_digest_replays",
+        "cas": "operation_claim_pending_to_failed_terminal_unprovable_single_winner",
+        "preserved": ["allocation", "binding", "manual_recovery_ledger", "ownership", "resource_identity"],
+        "controlPlaneLaunchMutationCount": 0,
+        "providerMutationCounts": {"sub2api": 0, "tencent": 0, "kubernetes": 0},
+        "responseLoss": "GET_result_only_no_second_POST",
+        "forbidden": ["skip_nonterminal_head", "refund", "delete", "replace", "reuse_resource", "direct_sql"]
       },
       "monthlyPreflightPreDebitIamGate": {
         "scope": "compute_monthly_preflight_before_first_sub2api_debit",

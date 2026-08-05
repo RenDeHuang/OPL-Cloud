@@ -158,6 +158,7 @@ type workspaceLaunchOperation struct {
 	URL                          string                                   `json:"url,omitempty"`
 	ReceiptID                    string                                   `json:"receiptId,omitempty"`
 	ContinuationAttemptBudgets   map[string]workspaceLaunchStageBudget    `json:"continuationAttemptBudgets"`
+	FailureStage                 string                                   `json:"failureStage,omitempty"`
 	ErrorCode                    string                                   `json:"errorCode,omitempty"`
 }
 
@@ -611,7 +612,8 @@ func workspaceLaunchResponse(row map[string]any) (map[string]any, error) {
 		"workspaceKeyStatus": operation.WorkspaceKeyStatus, "workspaceKeyFingerprint": operation.WorkspaceKeyFingerprint,
 		"runtimeServiceName": operation.RuntimeServiceName, "url": operation.URL, "receiptId": operation.ReceiptID,
 		"continuationAttemptBudgets": operation.ContinuationAttemptBudgets,
-		"errorCode":                  operation.ErrorCode, "createdAt": row["createdAt"], "updatedAt": row["updatedAt"],
+		"failureStage":               operation.FailureStage, "errorCode": operation.ErrorCode,
+		"createdAt": row["createdAt"], "updatedAt": row["updatedAt"],
 	}
 	if operation.RecoveryPlan != nil {
 		response["recoveryPlan"] = workspaceRecoveryPlanHTTPProjection(workspaceRecoveryPlanProjection(operation))
@@ -718,8 +720,8 @@ func (app *controlPlaneServer) runWorkspaceLaunch(ctx context.Context, service *
 			return app.retryWorkspaceLaunchDebit(ctx, &operation, "workspace_image_digest_drift", errors.New("workspace_image_digest_drift"))
 		}
 		if !operation.ChargeAttempted && operation.ChargeConfirmation == nil {
-			if code, preflightErr := verifyWorkspaceLaunchPreflight(ctx, service, operation); preflightErr != nil {
-				return app.retryWorkspaceLaunchDebit(ctx, &operation, code, preflightErr)
+			if stage, code, preflightErr := verifyWorkspaceLaunchPreflight(ctx, service, operation); preflightErr != nil {
+				return app.retryWorkspaceLaunchDebitAtStage(ctx, &operation, stage, code, preflightErr)
 			}
 		}
 		return app.debitWorkspaceLaunch(ctx, service, &operation)
@@ -1226,9 +1228,9 @@ func workspaceLaunchProviderExpectation(operation workspaceLaunchOperation, reso
 	return expected
 }
 
-func verifyWorkspaceLaunchPreflight(ctx context.Context, service *controlplane.Service, operation workspaceLaunchOperation) (string, error) {
+func verifyWorkspaceLaunchPreflight(ctx context.Context, service *controlplane.Service, operation workspaceLaunchOperation) (string, string, error) {
 	if currentWorkspaceImageDigest() != operation.WorkspaceImageDigest || !validWorkspaceImageIdentity(operation.WorkspaceImageDigest) {
-		return "workspace_image_digest_drift", errors.New("workspace_image_digest_drift")
+		return "", "workspace_image_digest_drift", errors.New("workspace_image_digest_drift")
 	}
 	zone := monthlyComputeLaunchZone()
 	inputs := []clients.MonthlyPreflightInput{
@@ -1239,13 +1241,35 @@ func verifyWorkspaceLaunchPreflight(ctx context.Context, service *controlplane.S
 		result, err := service.PreflightMonthlyResource(ctx, input)
 		code := "fabric_" + input.ResourceType + "_preflight_failed"
 		if err != nil {
-			return code, err
+			return "", code, err
 		}
 		if !monthlyPreflightConfirmed(input, result) || input.ResourceType == "compute" && result.NodePoolID != operation.ComputeNodePoolID {
-			return code, errors.New(code)
+			return "", code, errors.New(code)
+		}
+		if input.ResourceType == "compute" {
+			if stage, gateCode, gateErr := verifyWorkspaceLaunchComputePoolHead(ctx, service, result.NodePoolID); gateErr != nil {
+				return stage, gateCode, gateErr
+			}
 		}
 	}
-	return "", nil
+	return "", "", nil
+}
+
+func verifyWorkspaceLaunchComputePoolHead(ctx context.Context, service *controlplane.Service, nodePoolID string) (string, string, error) {
+	const stage = "compute_pool_head"
+	result, err := service.ComputePoolHead(ctx, nodePoolID)
+	if err != nil || result.SchemaVersion != 1 || result.FailureStage == "" || result.ErrorCode == "" {
+		return stage, "fabric_compute_pool_head_unavailable", errors.New("fabric_compute_pool_head_unavailable")
+	}
+	if result.Status == "absent" && result.ContinuationState == "absent" && result.FailureStage == "none" && result.ErrorCode == "none" ||
+		(result.Status == "started" || result.Status == "claim_pending") && result.ContinuationState == "continuable" && result.FailureStage == "none" && result.ErrorCode == "none" {
+		return "", "", nil
+	}
+	code := result.ErrorCode
+	if result.FailureStage != stage || code == "none" || !strings.HasPrefix(code, "fabric_compute_pool_head_") {
+		code = "fabric_compute_pool_head_unavailable"
+	}
+	return stage, code, errors.New(code)
 }
 
 func (app *controlPlaneServer) verifyWorkspaceLaunchActivationTruth(ctx context.Context, service *controlplane.Service, operation *workspaceLaunchOperation) error {
@@ -3183,10 +3207,14 @@ func (app *controlPlaneServer) unknownWorkspaceLaunchStageAttemptWithCode(ctx co
 }
 
 func (app *controlPlaneServer) retryWorkspaceLaunchDebit(ctx context.Context, operation *workspaceLaunchOperation, code string, cause error) error {
+	return app.retryWorkspaceLaunchDebitAtStage(ctx, operation, "", code, cause)
+}
+
+func (app *controlPlaneServer) retryWorkspaceLaunchDebitAtStage(ctx context.Context, operation *workspaceLaunchOperation, stage, code string, cause error) error {
 	if cause == nil {
 		cause = errors.New(code)
 	}
-	operation.Status, operation.Phase, operation.ErrorCode = "unknown", "debit_pending", code
+	operation.Status, operation.Phase, operation.FailureStage, operation.ErrorCode = "unknown", "debit_pending", stage, code
 	releaseWorkspaceLaunchLease(operation)
 	return errors.Join(cause, app.persistWorkspaceLaunch(ctx, operation))
 }
@@ -3298,7 +3326,7 @@ func (app *controlPlaneServer) debitWorkspaceLaunch(ctx context.Context, service
 			return app.manualReviewWorkspaceLaunchDebit(ctx, operation, "post_charge_balance_invalid")
 		}
 	}
-	operation.Status, operation.Phase, operation.ErrorCode = "debited", "debited", ""
+	operation.Status, operation.Phase, operation.FailureStage, operation.ErrorCode = "debited", "debited", "", ""
 	releaseWorkspaceLaunchLease(operation)
 	return app.persistWorkspaceLaunch(ctx, operation)
 }

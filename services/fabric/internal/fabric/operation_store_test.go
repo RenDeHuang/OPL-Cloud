@@ -153,6 +153,42 @@ func TestMemoryOperationStoreComputeClaimPendingKeepsFIFOHead(t *testing.T) {
 	}
 }
 
+func TestMemoryOperationStoreComputePoolHeadReadIsFIFOAndDoesNotClaimLease(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemoryOperationStore()
+	createdAt := time.Date(2026, 8, 5, 1, 0, 0, 0, time.UTC)
+	first := FabricOperation{
+		ID: "fop-head-first", Action: "create_compute_allocation", ResourceID: "ca-first",
+		OperationID: "op-first", IdempotencyKey: "launch-first:compute", RequestHash: "hash-first", Status: "claim_pending",
+		ComputePoolKey: "np-basic", ComputePoolLeaseOwner: "existing-owner", CreatedAt: createdAt,
+	}
+	expiresAt := createdAt.Add(time.Hour)
+	first.ComputePoolLeaseExpires = &expiresAt
+	second := FabricOperation{
+		ID: "fop-head-second", Action: "create_compute_allocation", ResourceID: "ca-second",
+		OperationID: "op-second", IdempotencyKey: "launch-second:compute", RequestHash: "hash-second", Status: "started",
+		ComputePoolKey: "np-basic", CreatedAt: createdAt.Add(time.Second),
+	}
+	for _, operation := range []FabricOperation{first, second} {
+		if _, claimed, err := store.ClaimComputePoolRuntime(ctx, operation); err != nil || !claimed {
+			t.Fatalf("seed operation %s: claimed=%v err=%v", operation.ID, claimed, err)
+		}
+	}
+
+	head, found, err := store.ComputePoolHead(ctx, "np-basic")
+	if err != nil || !found || head.ID != first.ID || head.Status != "claim_pending" || head.ComputePoolLeaseOwner != "existing-owner" || head.ComputePoolLeaseExpires == nil || !head.ComputePoolLeaseExpires.Equal(expiresAt) {
+		t.Fatalf("head=%#v found=%v err=%v", head, found, err)
+	}
+	missing, found, err := store.ComputePoolHead(ctx, "np-pro")
+	if err != nil || found || missing.ID != "" {
+		t.Fatalf("missing=%#v found=%v err=%v", missing, found, err)
+	}
+	stored, err := store.List(ctx)
+	if err != nil || len(stored) != 2 || stored[0].ComputePoolLeaseOwner != "existing-owner" || stored[1].ComputePoolLeaseOwner != "" {
+		t.Fatalf("read-only head query changed operations: %#v err=%v", stored, err)
+	}
+}
+
 func TestPostgresOperationSchemaDefinesFabricOperationsAuditTable(t *testing.T) {
 	schema := PostgresOperationSchemaSQL()
 	for _, marker := range []string{

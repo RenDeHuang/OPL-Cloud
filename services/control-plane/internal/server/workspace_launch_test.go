@@ -438,6 +438,37 @@ func TestWorkspaceLaunchTotalPreflightAllowsEqualBalance(t *testing.T) {
 	}
 }
 
+func TestWorkspaceLaunchPoolHeadGateStopsBeforeLaunchAndDebit(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		readback   clients.ComputePoolHeadReadback
+		err        error
+		wantStatus int
+		wantCode   string
+	}{
+		{
+			name: "manual recovery head", wantStatus: http.StatusConflict, wantCode: "fabric_compute_pool_head_manual_recovery",
+			readback: clients.ComputePoolHeadReadback{SchemaVersion: 1, Status: "claim_pending", ContinuationState: "blocked", FailureStage: "compute_pool_head", ErrorCode: "fabric_compute_pool_head_manual_recovery"},
+		},
+		{name: "readback unavailable", wantStatus: http.StatusBadGateway, wantCode: "fabric_compute_pool_head_unavailable", err: errors.New("private fabric readback")},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newWorkspaceLaunchHTTPFixture(t, 1_000_000_000)
+			fixture.fabric.fakeFabricClient.poolHead = test.readback
+			fixture.fabric.fakeFabricClient.poolHeadErr = test.err
+			response := fixture.launch(t, `{"name":"Alpha","packageId":"basic","sizeGb":10,"autoRenew":false}`, "launch-pool-head-gate")
+			operations, _ := fixture.store.ListRuntimeOperations(context.Background())
+			computes, _ := fixture.store.ListComputes(context.Background(), "acct-alpha")
+			storages, _ := fixture.store.ListStorages(context.Background(), "acct-alpha")
+			if response.Code != test.wantStatus || !strings.Contains(response.Body.String(), `"failureStage":"compute_pool_head"`) || !strings.Contains(response.Body.String(), `"errorCode":"`+test.wantCode+`"`) ||
+				len(operations) != 0 || len(computes) != 0 || len(storages) != 0 || len(fixture.sub2API.charges) != 0 || len(fixture.sub2API.refunds) != 0 ||
+				len(fixture.fabric.computeIDs) != 0 || len(fixture.fabric.storageIDs) != 0 {
+				t.Fatalf("pool head gate status=%d body=%s operations=%#v computes=%#v storages=%#v charges=%#v", response.Code, response.Body.String(), operations, computes, storages, fixture.sub2API.charges)
+			}
+		})
+	}
+}
+
 func TestWorkspaceLaunchGatewayKeyPreflightFailsBeforeBalanceAndSideEffects(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
@@ -1475,6 +1506,41 @@ func TestWorkspaceLaunchWorkerRechecksProviderPreflightBeforeFirstCharge(t *test
 	if err == nil || operation.Status != "unknown" || operation.Phase != "debit_pending" || operation.ErrorCode != "fabric_compute_preflight_failed" ||
 		len(fixture.sub2API.charges) != 0 || len(fixture.fabric.computeIDs) != 0 || len(fixture.fabric.storageIDs) != 0 {
 		t.Fatalf("worker skipped preflight gate: err=%v operation=%#v charges=%#v compute=%#v storage=%#v", err, operation, fixture.sub2API.charges, fixture.fabric.computeIDs, fixture.fabric.storageIDs)
+	}
+}
+
+func TestWorkspaceLaunchWorkerPoolHeadGateStopsBeforeFirstCharge(t *testing.T) {
+	fixture := newExistingWorkspaceLaunchWorkerFixtureForPlan(t, []int64{100_000_000}, nil, nil, "basic", 10, false)
+	fixture.fabric.fakeFabricClient.poolHead = clients.ComputePoolHeadReadback{
+		SchemaVersion: 1, Status: "claim_pending", ContinuationState: "blocked", FailureStage: "compute_pool_head", ErrorCode: "fabric_compute_pool_head_manual_recovery",
+	}
+	err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service)
+	operation := fixture.operation(t)
+	if err == nil || operation.Status != "unknown" || operation.Phase != "debit_pending" || operation.FailureStage != "compute_pool_head" || operation.ErrorCode != "fabric_compute_pool_head_manual_recovery" ||
+		countStrings(*fixture.events, "fabric.compute-pool-head") != 1 || len(fixture.sub2API.charges) != 0 || len(fixture.fabric.computeIDs) != 0 || len(fixture.fabric.storageIDs) != 0 {
+		t.Fatalf("pool head gate err=%v operation=%#v events=%#v charges=%#v compute=%#v storage=%#v", err, operation, *fixture.events, fixture.sub2API.charges, fixture.fabric.computeIDs, fixture.fabric.storageIDs)
+	}
+}
+
+func TestWorkspaceLaunchConfirmedDebitContinuationSkipsPoolHeadGateAndSecondCharge(t *testing.T) {
+	fixture := newExistingWorkspaceLaunchWorkerFixtureForPlan(t, []int64{47_420_000}, nil, nil, "basic", 10, false)
+	operation := fixture.operation(t)
+	charge := clients.Sub2APIChargeInput{Code: operation.RedeemCode, UserID: 41, ChargeUSDMicros: operation.TotalChargeUSDMicros}
+	operation.ChargeAttempted = true
+	operation.ChargeConfirmation = map[string]any{"code": charge.Code, "userId": charge.UserID, "chargeUsdMicros": charge.ChargeUSDMicros, "status": "used"}
+	fixture.sub2API.charges = []clients.Sub2APIChargeInput{charge}
+	fixture.fabric.fakeFabricClient.poolHead = clients.ComputePoolHeadReadback{
+		SchemaVersion: 1, Status: "claim_pending", ContinuationState: "blocked", FailureStage: "compute_pool_head", ErrorCode: "fabric_compute_pool_head_manual_recovery",
+	}
+	mustStore(t, fixture.store.memoryTableStore.SaveRuntimeOperation(context.Background(), workspaceLaunchOperationRow(operation)))
+
+	if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err != nil {
+		t.Fatal(err)
+	}
+	after := fixture.operation(t)
+	if after.Status != "debited" || after.Phase != "debited" || after.FailureStage != "" || after.ErrorCode != "" ||
+		countStrings(*fixture.events, "fabric.compute-pool-head") != 0 || len(fixture.sub2API.charges) != 1 || len(fixture.fabric.computeIDs) != 0 || len(fixture.fabric.storageIDs) != 0 {
+		t.Fatalf("confirmed continuation operation=%#v events=%#v charges=%#v compute=%#v storage=%#v", after, *fixture.events, fixture.sub2API.charges, fixture.fabric.computeIDs, fixture.fabric.storageIDs)
 	}
 }
 

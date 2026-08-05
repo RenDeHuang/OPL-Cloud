@@ -47,6 +47,68 @@ func NewServer(service *fabric.Service, token string) http.Handler {
 		}
 		writeJSON(w, http.StatusOK, result)
 	})
+	mux.HandleFunc("GET /fabric/compute-pool-head", func(w http.ResponseWriter, r *http.Request) {
+		nodePoolID, ok := exactQueryValue(r, "nodePoolId")
+		if !ok {
+			writeError(w, http.StatusBadRequest, fabric.ErrInvalidMonthlyPreflight.Error())
+			return
+		}
+		result, err := service.ReadComputePoolHead(r.Context(), nodePoolID)
+		if errors.Is(err, fabric.ErrInvalidMonthlyPreflight) {
+			writeError(w, http.StatusBadRequest, fabric.ErrInvalidMonthlyPreflight.Error())
+			return
+		}
+		if err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, result)
+			return
+		}
+		writeJSON(w, http.StatusOK, result)
+	})
+	mux.HandleFunc("GET /fabric/compute-pool-head/terminalization", func(w http.ResponseWriter, r *http.Request) {
+		values := r.URL.Query()
+		if len(values) == 1 {
+			nodePoolID, ok := exactQueryValue(r, "nodePoolId")
+			if !ok {
+				writeError(w, http.StatusBadRequest, fabric.ErrInvalidComputePoolHeadTerminalization.Error())
+				return
+			}
+			result, err := service.ReadComputePoolHeadTerminalization(r.Context(), nodePoolID)
+			writeComputePoolHeadTerminalizationResult(w, result, err)
+			return
+		}
+		if len(values) != 3 || len(values["nodePoolId"]) != 1 || len(values["approvalId"]) != 1 || len(values["approvalDigest"]) != 1 {
+			writeError(w, http.StatusBadRequest, fabric.ErrInvalidComputePoolHeadTerminalization.Error())
+			return
+		}
+		input := fabric.ComputePoolHeadTerminalizationInput{
+			NodePoolID: values.Get("nodePoolId"), ApprovalID: values.Get("approvalId"), ApprovalDigest: values.Get("approvalDigest"),
+			IdempotencyKey: values.Get("approvalId"),
+		}
+		result, err := service.ReadComputePoolHeadTerminalizationResult(r.Context(), input)
+		writeComputePoolHeadTerminalizationResult(w, result, err)
+	})
+	mux.HandleFunc("POST /fabric/compute-pool-head/terminalization", func(w http.ResponseWriter, r *http.Request) {
+		idempotencyKey := r.Header.Get("Idempotency-Key")
+		if idempotencyKey == "" || idempotencyKey != strings.TrimSpace(idempotencyKey) {
+			writeError(w, http.StatusBadRequest, "missing Idempotency-Key")
+			return
+		}
+		var input fabric.ComputePoolHeadTerminalizationInput
+		decoder := json.NewDecoder(io.LimitReader(r.Body, 4097))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&input); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid JSON body")
+			return
+		}
+		var trailing any
+		if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+			writeError(w, http.StatusBadRequest, "invalid JSON body")
+			return
+		}
+		input.IdempotencyKey = idempotencyKey
+		result, err := service.TerminalizeComputePoolHead(r.Context(), input)
+		writeComputePoolHeadTerminalizationResult(w, result, err)
+	})
 	mux.HandleFunc("GET /fabric/monthly-preflight-report", func(w http.ResponseWriter, r *http.Request) {
 		values := r.URL.Query()
 		if len(values) != 1 || len(values["zone"]) != 1 {
@@ -501,6 +563,15 @@ func decodeWrite(w http.ResponseWriter, r *http.Request, idempotencyKey *string,
 	return true
 }
 
+func exactQueryValue(r *http.Request, name string) (string, bool) {
+	values := r.URL.Query()
+	items, ok := values[name]
+	if !ok || len(values) != 1 || len(items) != 1 || items[0] == "" || items[0] != strings.TrimSpace(items[0]) {
+		return "", false
+	}
+	return items[0], true
+}
+
 func writeResult(w http.ResponseWriter, body any, err error) {
 	if errors.Is(err, fabric.ErrUnsupportedComputePackage) || errors.Is(err, fabric.ErrInvalidStorageSize) {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -537,6 +608,31 @@ func writeComputeClaimRecoveryResult(w http.ResponseWriter, successStatus int, p
 		status = http.StatusServiceUnavailable
 	}
 	writeJSON(w, status, proof)
+}
+
+func writeComputePoolHeadTerminalizationResult(w http.ResponseWriter, result fabric.ComputePoolHeadTerminalizationReadback, err error) {
+	if err == nil {
+		writeJSON(w, http.StatusOK, result)
+		return
+	}
+	status := http.StatusConflict
+	if errors.Is(err, fabric.ErrInvalidComputePoolHeadTerminalization) {
+		status = http.StatusBadRequest
+	} else if !errors.Is(err, fabric.ErrComputePoolHeadTerminalizationConflict) && !errors.Is(err, fabric.ErrComputePoolHeadTerminalizationUnavailable) {
+		status = http.StatusServiceUnavailable
+	}
+	writeJSON(w, status, map[string]any{"schemaVersion": 1, "status": "blocked", "errorCode": stableComputePoolHeadTerminalizationError(err)})
+}
+
+func stableComputePoolHeadTerminalizationError(err error) string {
+	switch {
+	case errors.Is(err, fabric.ErrInvalidComputePoolHeadTerminalization):
+		return fabric.ErrInvalidComputePoolHeadTerminalization.Error()
+	case errors.Is(err, fabric.ErrComputePoolHeadTerminalizationConflict):
+		return fabric.ErrComputePoolHeadTerminalizationConflict.Error()
+	default:
+		return fabric.ErrComputePoolHeadTerminalizationUnavailable.Error()
+	}
 }
 
 func writeWorkspaceActivationTruthResult(w http.ResponseWriter, truth fabric.WorkspaceActivationTruth, err error) {

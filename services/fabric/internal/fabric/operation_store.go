@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -27,6 +28,7 @@ type OperationStore interface {
 	ClaimRuntime(ctx context.Context, operation FabricOperation) (FabricOperation, bool, error)
 	ClaimComputePoolRuntime(ctx context.Context, operation FabricOperation) (FabricOperation, bool, error)
 	ReclaimRuntime(ctx context.Context, id string, priorStartedAt, startedAt time.Time) (FabricOperation, bool, error)
+	ComputePoolHead(ctx context.Context, poolKey string) (FabricOperation, bool, error)
 	TryClaimComputePoolHead(ctx context.Context, operationID, poolKey, leaseOwner string, now, leaseExpiresAt time.Time) (FabricOperation, bool, error)
 	ReleaseComputePoolHead(ctx context.Context, operationID, poolKey, leaseOwner string) error
 	SaveRuntime(ctx context.Context, operation FabricOperation) error
@@ -213,16 +215,7 @@ func (s *MemoryOperationStore) claimRuntimeLocked(operation FabricOperation) (Fa
 func (s *MemoryOperationStore) TryClaimComputePoolHead(_ context.Context, operationID, poolKey, leaseOwner string, now, leaseExpiresAt time.Time) (FabricOperation, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	head := -1
-	for index := range s.operation {
-		operation := s.operation[index]
-		if operation.Action != "create_compute_allocation" || !computePoolHeadStatus(operation.Status) || operation.ComputePoolKey != poolKey {
-			continue
-		}
-		if head < 0 || operation.CreatedAt.Before(s.operation[head].CreatedAt) || (operation.CreatedAt.Equal(s.operation[head].CreatedAt) && operation.ID < s.operation[head].ID) {
-			head = index
-		}
-	}
+	head := memoryComputePoolHeadIndex(s.operation, poolKey)
 	if head < 0 {
 		return FabricOperation{}, false, fmt.Errorf("compute_pool_head_not_found")
 	}
@@ -240,6 +233,30 @@ func (s *MemoryOperationStore) TryClaimComputePoolHead(_ context.Context, operat
 	current.ComputePoolLeaseExpires = &leaseExpiresAt
 	s.operation[head] = current
 	return current, true, nil
+}
+
+func (s *MemoryOperationStore) ComputePoolHead(_ context.Context, poolKey string) (FabricOperation, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	head := memoryComputePoolHeadIndex(s.operation, poolKey)
+	if head < 0 {
+		return FabricOperation{}, false, nil
+	}
+	return s.operation[head], true, nil
+}
+
+func memoryComputePoolHeadIndex(operations []FabricOperation, poolKey string) int {
+	head := -1
+	for index := range operations {
+		operation := operations[index]
+		if operation.Action != "create_compute_allocation" || !computePoolHeadStatus(operation.Status) || operation.ComputePoolKey != poolKey {
+			continue
+		}
+		if head < 0 || operation.CreatedAt.Before(operations[head].CreatedAt) || (operation.CreatedAt.Equal(operations[head].CreatedAt) && operation.ID < operations[head].ID) {
+			head = index
+		}
+	}
+	return head
 }
 
 func (s *MemoryOperationStore) ReleaseComputePoolHead(_ context.Context, operationID, poolKey, leaseOwner string) error {
@@ -1020,6 +1037,26 @@ func scanPostgresFabricOperation(row postgresRowScanner) (FabricOperation, error
 		_ = json.Unmarshal([]byte(payload), &operation.RedactedProviderPayload)
 	}
 	return operation, nil
+}
+
+func (s *PostgresOperationStore) ComputePoolHead(ctx context.Context, poolKey string) (FabricOperation, bool, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT id, operation_id, caller_service, action, resource_kind, resource_id, account_id, workspace_id,
+			provider, provider_request_id, idempotency_key, request_hash, redacted_provider_payload, status,
+			error_code, retryable, compute_pool_key, compute_pool_lease_owner, compute_pool_lease_expires_at,
+			started_at, finished_at, created_at
+		FROM fabric_operations
+		WHERE action = 'create_compute_allocation' AND status IN ('started', 'claim_pending') AND compute_pool_key = $1
+		ORDER BY created_at, id
+		LIMIT 1`, poolKey)
+	operation, err := scanPostgresFabricOperation(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return FabricOperation{}, false, nil
+	}
+	if err != nil {
+		return FabricOperation{}, false, err
+	}
+	return operation, true, nil
 }
 
 func (s *PostgresOperationStore) TryClaimComputePoolHead(ctx context.Context, operationID, poolKey, leaseOwner string, now, leaseExpiresAt time.Time) (FabricOperation, bool, error) {
