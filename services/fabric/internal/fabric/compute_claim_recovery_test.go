@@ -197,6 +197,48 @@ func TestComputeClaimRecoveryProofAllowsHistoricalMissingPeriodWhenProviderProve
 	}
 }
 
+func TestComputeClaimRecoveryProofPreservesOnlyValidatedProviderIdentityFailure(t *testing.T) {
+	service, _, provider, input := seedComputeClaimRecovery(t, "basic")
+	provider.proof = ComputeClaimProviderProof{
+		Reason: "identity_mismatch", FailureStage: "cvm_pre_read", ProviderErrorClass: "readback_mismatch",
+		ProviderIdentityFailure: &ComputeClaimProviderIdentityFailure{
+			Predicate:      "compute_claim.cvm_ownership.opl_account_id",
+			ExpectedDigest: strings.Repeat("a", 64), ActualDigest: strings.Repeat("b", 64),
+		},
+	}
+	provider.proofErr = errors.New("raw provider identity must not escape")
+
+	proof, err := service.ComputeClaimRecoveryProof(context.Background(), input)
+
+	if err == nil || proof.Eligible || proof.Reason != "identity_mismatch" || proof.FailureStage != "cvm_pre_read" ||
+		proof.ProviderErrorClass != "readback_mismatch" || proof.ProviderIdentityFailure == nil ||
+		proof.ProviderIdentityFailure.Predicate != "compute_claim.cvm_ownership.opl_account_id" ||
+		proof.ProviderIdentityFailure.ExpectedDigest != strings.Repeat("a", 64) ||
+		proof.ProviderIdentityFailure.ActualDigest != strings.Repeat("b", 64) ||
+		proof.Sub2APIMutationCount != 0 || proof.TencentMutationCount != 0 || proof.KubernetesMutationCount != 0 || provider.proofCalls != 1 {
+		t.Fatalf("proof=%#v err=%v", proof, err)
+	}
+}
+
+func TestComputeClaimRecoveryProofRejectsUnallowlistedProviderIdentityFailure(t *testing.T) {
+	service, _, provider, input := seedComputeClaimRecovery(t, "basic")
+	provider.proof = ComputeClaimProviderProof{
+		Reason: "identity_mismatch", FailureStage: "cvm_pre_read", ProviderErrorClass: "readback_mismatch",
+		ProviderIdentityFailure: &ComputeClaimProviderIdentityFailure{
+			Predicate: "raw.provider.account", ExpectedDigest: strings.Repeat("a", 64), ActualDigest: strings.Repeat("b", 64),
+		},
+	}
+	provider.proofErr = errors.New("raw provider identity must not escape")
+
+	proof, err := service.ComputeClaimRecoveryProof(context.Background(), input)
+
+	if err == nil || proof.Eligible || proof.Reason != "identity_mismatch" || proof.FailureStage != "" ||
+		proof.ProviderErrorClass != "" || proof.ProviderIdentityFailure != nil || proof.Sub2APIMutationCount != 0 ||
+		proof.TencentMutationCount != 0 || proof.KubernetesMutationCount != 0 || provider.proofCalls != 1 {
+		t.Fatalf("proof=%#v err=%v", proof, err)
+	}
+}
+
 func TestComputeClaimRecoveryProofRejectsHistoricalMissingPeriodWhenProviderDoesNotProveOneMonth(t *testing.T) {
 	service, _, provider, input := seedComputeClaimRecoveryWithPeriod(t, "basic", "")
 	provider.proof.PeriodMonths = 2

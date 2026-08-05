@@ -53,20 +53,22 @@ type workspaceRecoveryMutationCounts struct {
 }
 
 type workspaceRecoveryPlanFailureDTO struct {
-	SchemaVersion    int                             `json:"schemaVersion"`
-	Status           string                          `json:"status"`
-	RecoveryEligible bool                            `json:"recoveryEligible"`
-	FailureStage     string                          `json:"failureStage"`
-	ReadbackError    string                          `json:"readbackError"`
-	ErrorCode        string                          `json:"errorCode"`
-	MutationCounts   workspaceRecoveryMutationCounts `json:"mutationCounts"`
+	SchemaVersion           int                                          `json:"schemaVersion"`
+	Status                  string                                       `json:"status"`
+	RecoveryEligible        bool                                         `json:"recoveryEligible"`
+	FailureStage            string                                       `json:"failureStage"`
+	ReadbackError           string                                       `json:"readbackError"`
+	ErrorCode               string                                       `json:"errorCode"`
+	MutationCounts          workspaceRecoveryMutationCounts              `json:"mutationCounts"`
+	ProviderIdentityFailure *clients.ComputeClaimProviderIdentityFailure `json:"providerIdentityFailure,omitempty"`
 }
 
 type workspaceRecoveryPlanFailure struct {
-	cause         error
-	failureStage  string
-	readbackError string
-	errorCode     string
+	cause                   error
+	failureStage            string
+	readbackError           string
+	errorCode               string
+	providerIdentityFailure *clients.ComputeClaimProviderIdentityFailure
 }
 
 func (failure *workspaceRecoveryPlanFailure) Error() string { return failure.errorCode }
@@ -94,7 +96,14 @@ func workspaceRecoveryPlanProofFailure(proof clients.ComputeClaimRecoveryProof, 
 	} else if proof.Reason != "" && proof.Reason != "none" && safeWorkspaceComputeClaimReason(proof.Reason) {
 		readbackError = proof.Reason
 	}
-	return workspaceRecoveryPlanClassifiedFailure(cause, failureStage, readbackError, "workspace_recovery_plan_fabric_proof_failed")
+	failure := &workspaceRecoveryPlanFailure{
+		cause: cause, failureStage: failureStage, readbackError: readbackError, errorCode: "workspace_recovery_plan_fabric_proof_failed",
+	}
+	if validWorkspaceComputeClaimProviderIdentityFailure(proof.ProviderIdentityFailure) {
+		value := *proof.ProviderIdentityFailure
+		failure.providerIdentityFailure = &value
+	}
+	return failure
 }
 
 func workspaceRecoveryPlanFailureProjection(err error) workspaceRecoveryPlanFailureDTO {
@@ -122,6 +131,32 @@ func workspaceRecoveryPlanFailureProjection(err error) workspaceRecoveryPlanFail
 		SchemaVersion: 1, Status: "blocked", RecoveryEligible: false,
 		FailureStage: failureStage, ReadbackError: readbackError, ErrorCode: errorCode,
 		MutationCounts: workspaceRecoveryMutationCounts{},
+		ProviderIdentityFailure: func() *clients.ComputeClaimProviderIdentityFailure {
+			if classified == nil || !validWorkspaceComputeClaimProviderIdentityFailure(classified.providerIdentityFailure) {
+				return nil
+			}
+			value := *classified.providerIdentityFailure
+			return &value
+		}(),
+	}
+}
+
+func validWorkspaceComputeClaimProviderIdentityFailure(value *clients.ComputeClaimProviderIdentityFailure) bool {
+	if value == nil || value.ExpectedDigest == value.ActualDigest || !computeClaimApprovalDigestPattern.MatchString(value.ExpectedDigest) ||
+		!computeClaimApprovalDigestPattern.MatchString(value.ActualDigest) {
+		return false
+	}
+	switch value.Predicate {
+	case "compute_claim.request_contract", "compute_claim.machine_selection", "compute_claim.node_pool_identity",
+		"compute_claim.machine_identity", "compute_claim.tke_instance_identity", "compute_claim.network_identity",
+		"compute_claim.cvm_identity", "compute_claim.cvm_billing", "compute_claim.cvm_ownership_shape",
+		"compute_claim.cvm_ownership.instance_name", "compute_claim.cvm_ownership.opl_account_id",
+		"compute_claim.cvm_ownership.opl_workspace_id", "compute_claim.cvm_ownership.opl_resource_id",
+		"compute_claim.cvm_ownership.opl_operation_id", "compute_claim.provider_response_identity",
+		"compute_claim.kubernetes_node_identity":
+		return true
+	default:
+		return false
 	}
 }
 

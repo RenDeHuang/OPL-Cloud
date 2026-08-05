@@ -636,6 +636,11 @@ func (s *Service) ComputeClaimRecoveryProof(ctx context.Context, input ComputeCl
 	providerProof, err := provider.ProveComputeClaimRecovery(ctx, allocation, plan, ownership)
 	if err != nil {
 		proof.Reason = safeComputeClaimRecoveryReason(providerProof.Reason, "provider_describe")
+		if validComputeClaimProviderFailureEvidence(providerProof) {
+			proof.FailureStage = providerProof.FailureStage
+			proof.ProviderErrorClass = providerProof.ProviderErrorClass
+			proof.ProviderIdentityFailure = cloneComputeClaimProviderIdentityFailure(providerProof.ProviderIdentityFailure)
+		}
 		return proof, fmt.Errorf("%w: %s", ErrComputeClaimRecoveryUnavailable, proof.Reason)
 	}
 	if !validComputeClaimProviderProof(providerProof, allocation, plan) {
@@ -756,7 +761,52 @@ func validComputeClaimProviderProof(proof ComputeClaimProviderProof, allocation 
 		(proof.CVMOwnershipState == "recoverable" || proof.CVMOwnershipState == "target_owned") &&
 		proof.MachineName == allocation.MachineName && proof.NodeName == allocation.NodeName && proof.CVMInstanceID == firstNonEmpty(allocation.InstanceID, allocation.CVMInstanceID) &&
 		proof.PrivateIP == allocation.PrivateIP && proof.InstanceType == plan.InstanceType && proof.Zone == allocation.Zone && proof.ChargeType == "PREPAID" &&
-		proof.PeriodMonths == 1 && proof.RenewFlag == "NOTIFY_AND_MANUAL_RENEW" && proof.Deadline == allocation.Deadline && deadlineErr == nil && !deadline.IsZero()
+		proof.PeriodMonths == 1 && proof.RenewFlag == "NOTIFY_AND_MANUAL_RENEW" && proof.Deadline == allocation.Deadline && deadlineErr == nil && !deadline.IsZero() &&
+		proof.FailureStage == "" && proof.ProviderErrorClass == "" && proof.ProviderIdentityFailure == nil
+}
+
+func validComputeClaimProviderFailureEvidence(proof ComputeClaimProviderProof) bool {
+	return proof.Reason == "identity_mismatch" && proof.FailureStage != "" && validComputeClaimFailureStage(proof.FailureStage) &&
+		proof.ProviderErrorClass != "" && validComputeClaimProviderErrorClass(proof.ProviderErrorClass) &&
+		validComputeClaimProviderIdentityFailure(proof.ProviderIdentityFailure)
+}
+
+func validComputeClaimProviderIdentityFailure(value *ComputeClaimProviderIdentityFailure) bool {
+	if value == nil || !validComputeClaimProviderIdentityPredicate(value.Predicate) || value.ExpectedDigest == value.ActualDigest {
+		return false
+	}
+	for _, digest := range []string{value.ExpectedDigest, value.ActualDigest} {
+		if len(digest) != 64 {
+			return false
+		}
+		if _, err := hex.DecodeString(digest); err != nil || strings.ToLower(digest) != digest {
+			return false
+		}
+	}
+	return true
+}
+
+func validComputeClaimProviderIdentityPredicate(value string) bool {
+	switch value {
+	case "compute_claim.request_contract", "compute_claim.machine_selection", "compute_claim.node_pool_identity",
+		"compute_claim.machine_identity", "compute_claim.tke_instance_identity", "compute_claim.network_identity",
+		"compute_claim.cvm_identity", "compute_claim.cvm_billing", "compute_claim.cvm_ownership_shape",
+		"compute_claim.cvm_ownership.instance_name", "compute_claim.cvm_ownership.opl_account_id",
+		"compute_claim.cvm_ownership.opl_workspace_id", "compute_claim.cvm_ownership.opl_resource_id",
+		"compute_claim.cvm_ownership.opl_operation_id", "compute_claim.provider_response_identity",
+		"compute_claim.kubernetes_node_identity":
+		return true
+	default:
+		return false
+	}
+}
+
+func cloneComputeClaimProviderIdentityFailure(value *ComputeClaimProviderIdentityFailure) *ComputeClaimProviderIdentityFailure {
+	if !validComputeClaimProviderIdentityFailure(value) {
+		return nil
+	}
+	clone := *value
+	return &clone
 }
 
 func safeComputeClaimRecoveryReason(value, fallback string) string {

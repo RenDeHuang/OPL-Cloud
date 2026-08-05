@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 40,
+  "schemaVersion": 41,
   "owner": "OPL Fabric",
   "purpose": "Deployment workflow, immutable Cloud and Workspace images, TKE handoff, read-only diagnostics, and production-verification safety.",
   "state": "current",
@@ -845,7 +845,9 @@
     "artifact": {
       "schemaVersion": 1,
       "fields": ["operationMode", "status", "recoveryEligible", "failureStage", "readbackError", "errorCode", "planId", "planDigest", "stages", "mismatches", "runnerDirectMutationCounts", "verifiedAt", "successorGate"],
-      "failureFields": ["failureStage", "readbackError", "errorCode"],
+      "failureFields": ["failureStage", "readbackError", "errorCode", "providerIdentityFailure"],
+      "providerIdentityFailureFields": ["predicate", "expectedDigest", "actualDigest"],
+      "providerIdentityFailureAuthority": "Fabric_ProveComputeClaimRecovery_digest_only_optional_on_deterministic_identity_mismatch",
       "validator": "tools/production-live-qa.ts#validateProductionWorkspaceRecoveryPlanArtifact",
       "executeFields": ["executionId", "runId", "url", "receiptId", "controlPlaneExecutionMutationCounts"],
       "successorGateFields": ["applicable", "allowed", "planState", "executionState", "completionState", "leaseState", "identityState", "persistedMutationState", "fabricLedgerState"],

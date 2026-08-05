@@ -633,44 +633,45 @@ type provisionerStorage struct {
 }
 
 type provisionerResponse struct {
-	OK                 bool                          `json:"ok"`
-	OperationID        string                        `json:"operationId,omitempty"`
-	PoolID             string                        `json:"poolId,omitempty"`
-	NodePoolID         string                        `json:"nodePoolId,omitempty"`
-	InstanceID         string                        `json:"instanceId,omitempty"`
-	NodeName           string                        `json:"nodeName,omitempty"`
-	PrivateIP          string                        `json:"privateIp,omitempty"`
-	PublicIP           string                        `json:"publicIp,omitempty"`
-	MachinePresent     *bool                         `json:"machinePresent,omitempty"`
-	StoragePresent     *bool                         `json:"storagePresent,omitempty"`
-	StorageVolumeID    string                        `json:"storageVolumeId,omitempty"`
-	StorageState       string                        `json:"storageState,omitempty"`
-	CBSStatus          string                        `json:"cbsStatus,omitempty"`
-	CVMStatus          string                        `json:"cvmStatus,omitempty"`
-	TKEStatus          string                        `json:"tkeStatus,omitempty"`
-	Status             string                        `json:"status,omitempty"`
-	ProviderRequestID  string                        `json:"providerRequestId,omitempty"`
-	ProviderRequestIDs map[string]string             `json:"providerRequestIds,omitempty"`
-	ProviderPriceCNY   float64                       `json:"providerPriceCny,omitempty"`
-	ProviderData       map[string]string             `json:"providerData,omitempty"`
-	ErrorCode          string                        `json:"errorCode,omitempty"`
-	Message            string                        `json:"message,omitempty"`
-	Retryable          bool                          `json:"retryable,omitempty"`
-	MissingEnv         []string                      `json:"missingEnv,omitempty"`
-	Machines           []provisionerMachine          `json:"machines,omitempty"`
-	InstanceType       string                        `json:"instanceType,omitempty"`
-	InstanceAvailable  bool                          `json:"instanceAvailable,omitempty"`
-	RemainingQuota     uint64                        `json:"remainingQuota,omitempty"`
-	Zones              []string                      `json:"zones,omitempty"`
-	PreflightStages    []MonthlyPreflightStage       `json:"preflightStages,omitempty"`
-	CurrentReplicas    int64                         `json:"currentReplicas,omitempty"`
-	ReadyReplicas      int64                         `json:"readyReplicas,omitempty"`
-	MaxReplicas        int64                         `json:"maxReplicas,omitempty"`
-	TargetReplicas     int64                         `json:"targetReplicas,omitempty"`
-	MutationCount      int                           `json:"mutationCount"`
-	FailureStage       string                        `json:"failureStage,omitempty"`
-	ProviderErrorClass string                        `json:"providerErrorClass,omitempty"`
-	MutationEvidence   *ComputeClaimMutationEvidence `json:"mutationEvidence,omitempty"`
+	OK                      bool                                 `json:"ok"`
+	OperationID             string                               `json:"operationId,omitempty"`
+	PoolID                  string                               `json:"poolId,omitempty"`
+	NodePoolID              string                               `json:"nodePoolId,omitempty"`
+	InstanceID              string                               `json:"instanceId,omitempty"`
+	NodeName                string                               `json:"nodeName,omitempty"`
+	PrivateIP               string                               `json:"privateIp,omitempty"`
+	PublicIP                string                               `json:"publicIp,omitempty"`
+	MachinePresent          *bool                                `json:"machinePresent,omitempty"`
+	StoragePresent          *bool                                `json:"storagePresent,omitempty"`
+	StorageVolumeID         string                               `json:"storageVolumeId,omitempty"`
+	StorageState            string                               `json:"storageState,omitempty"`
+	CBSStatus               string                               `json:"cbsStatus,omitempty"`
+	CVMStatus               string                               `json:"cvmStatus,omitempty"`
+	TKEStatus               string                               `json:"tkeStatus,omitempty"`
+	Status                  string                               `json:"status,omitempty"`
+	ProviderRequestID       string                               `json:"providerRequestId,omitempty"`
+	ProviderRequestIDs      map[string]string                    `json:"providerRequestIds,omitempty"`
+	ProviderPriceCNY        float64                              `json:"providerPriceCny,omitempty"`
+	ProviderData            map[string]string                    `json:"providerData,omitempty"`
+	ErrorCode               string                               `json:"errorCode,omitempty"`
+	Message                 string                               `json:"message,omitempty"`
+	Retryable               bool                                 `json:"retryable,omitempty"`
+	MissingEnv              []string                             `json:"missingEnv,omitempty"`
+	Machines                []provisionerMachine                 `json:"machines,omitempty"`
+	InstanceType            string                               `json:"instanceType,omitempty"`
+	InstanceAvailable       bool                                 `json:"instanceAvailable,omitempty"`
+	RemainingQuota          uint64                               `json:"remainingQuota,omitempty"`
+	Zones                   []string                             `json:"zones,omitempty"`
+	PreflightStages         []MonthlyPreflightStage              `json:"preflightStages,omitempty"`
+	CurrentReplicas         int64                                `json:"currentReplicas,omitempty"`
+	ReadyReplicas           int64                                `json:"readyReplicas,omitempty"`
+	MaxReplicas             int64                                `json:"maxReplicas,omitempty"`
+	TargetReplicas          int64                                `json:"targetReplicas,omitempty"`
+	MutationCount           int                                  `json:"mutationCount"`
+	FailureStage            string                               `json:"failureStage,omitempty"`
+	ProviderErrorClass      string                               `json:"providerErrorClass,omitempty"`
+	ProviderIdentityFailure *ComputeClaimProviderIdentityFailure `json:"providerIdentityFailure,omitempty"`
+	MutationEvidence        *ComputeClaimMutationEvidence        `json:"mutationEvidence,omitempty"`
 }
 
 type provisionerMachine struct {
@@ -855,6 +856,9 @@ func (p *TencentProvider) ProveComputeClaimRecovery(ctx context.Context, allocat
 	}
 	if !response.OK {
 		proof.Reason = safeComputeClaimRecoveryReason(response.ErrorCode, "provider_describe")
+		proof.FailureStage = response.FailureStage
+		proof.ProviderErrorClass = response.ProviderErrorClass
+		proof.ProviderIdentityFailure = cloneComputeClaimProviderIdentityFailure(response.ProviderIdentityFailure)
 		return proof, computeClaimProviderError(proof.Reason)
 	}
 	periodMonths, periodErr := strconv.Atoi(response.ProviderData["periodMonths"])
@@ -870,6 +874,12 @@ func (p *TencentProvider) ProveComputeClaimRecovery(ctx context.Context, allocat
 		proof.ChargeType != "PREPAID" || proof.PeriodMonths != 1 || proof.RenewFlag != "NOTIFY_AND_MANUAL_RENEW" || proof.Deadline != allocation.Deadline ||
 		(proof.CVMOwnershipState != "recoverable" && proof.CVMOwnershipState != "target_owned") {
 		proof.Reason = "identity_mismatch"
+		proof.FailureStage, proof.ProviderErrorClass = "cvm_pre_read", "readback_mismatch"
+		proof.ProviderIdentityFailure = newComputeClaimProviderIdentityFailure("compute_claim.provider_response_identity", map[string]any{
+			"status": "proven", "machineName": allocation.MachineName, "nodeName": allocation.NodeName, "cvmInstanceId": instanceID,
+			"privateIp": allocation.PrivateIP, "instanceType": prepared.InstanceType, "zone": allocation.Zone, "chargeType": "PREPAID",
+			"periodMonths": 1, "renewFlag": "NOTIFY_AND_MANUAL_RENEW", "deadline": allocation.Deadline,
+		}, proof)
 		return proof, computeClaimProviderError(proof.Reason)
 	}
 	nodeRaw, err := p.callKubectl(ctx, []string{"get", "node/" + allocation.NodeName, "-o", "json"}, nil, protectedresource.Target{})
@@ -886,12 +896,40 @@ func (p *TencentProvider) ProveComputeClaimRecovery(ctx context.Context, allocat
 		proof.Reason = "node_ownership_conflict"
 		if nodeState == "identity_mismatch" {
 			proof.Reason = "identity_mismatch"
+			proof.FailureStage, proof.ProviderErrorClass = "node_pre_read", "readback_mismatch"
+			proof.ProviderIdentityFailure = newComputeClaimProviderIdentityFailure("compute_claim.kubernetes_node_identity", map[string]any{
+				"nodeName": allocation.NodeName, "privateIp": allocation.PrivateIP, "resourceId": allocation.ID,
+				"accountId": allocation.AccountID, "workspaceId": allocation.WorkspaceID,
+			}, json.RawMessage(nodeRaw))
 		}
 		return proof, computeClaimProviderError(proof.Reason)
 	}
 	proof.NodeOwnershipState = nodeState
 	proof.Reason = ""
 	return proof, nil
+}
+
+func newComputeClaimProviderIdentityFailure(predicate string, expected, actual any) *ComputeClaimProviderIdentityFailure {
+	digest := func(value any) (string, bool) {
+		raw, err := json.Marshal(value)
+		if err != nil {
+			return "", false
+		}
+		sum := sha256.Sum256(raw)
+		return hex.EncodeToString(sum[:]), true
+	}
+	expectedDigest, expectedOK := digest(expected)
+	actualDigest, actualOK := digest(actual)
+	if !expectedOK || !actualOK || expectedDigest == actualDigest {
+		return nil
+	}
+	value := &ComputeClaimProviderIdentityFailure{
+		Predicate: predicate, ExpectedDigest: expectedDigest, ActualDigest: actualDigest,
+	}
+	if !validComputeClaimProviderIdentityFailure(value) {
+		return nil
+	}
+	return value
 }
 
 func (p *TencentProvider) ClaimComputeRecovery(ctx context.Context, allocation ComputeAllocation, prepared ComputeAllocationPreparation, ownership MachineOwnership) (ComputeClaimProviderClaim, error) {

@@ -802,6 +802,15 @@ const RECOVERY_PLAN_ERROR_CODES = new Set([
   "workspace_recovery_plan_execution_not_validated", "workspace_recovery_plan_execution_failed",
   "workspace_recovery_plan_execution_identity_mismatch", "workspace_recovery_plan_execution_result_unknown"
 ]);
+const RECOVERY_PLAN_PROVIDER_IDENTITY_PREDICATES = new Set([
+  "compute_claim.request_contract", "compute_claim.machine_selection", "compute_claim.node_pool_identity",
+  "compute_claim.machine_identity", "compute_claim.tke_instance_identity", "compute_claim.network_identity",
+  "compute_claim.cvm_identity", "compute_claim.cvm_billing", "compute_claim.cvm_ownership_shape",
+  "compute_claim.cvm_ownership.instance_name", "compute_claim.cvm_ownership.opl_account_id",
+  "compute_claim.cvm_ownership.opl_workspace_id", "compute_claim.cvm_ownership.opl_resource_id",
+  "compute_claim.cvm_ownership.opl_operation_id", "compute_claim.provider_response_identity",
+  "compute_claim.kubernetes_node_identity"
+]);
 const COMPUTE_CLAIM_REASONS = new Set([
   "none", "local_identity", "provider_describe", "iam_rbac", "multiple_candidate",
   "identity_mismatch", "node_ownership_conflict", "storage_already_started"
@@ -1873,7 +1882,8 @@ function recoveryPlanArtifact(operationMode, plan, now, overrides = {}) {
 }
 
 function workspaceRecoveryPlanFailureResponse(value) {
-  const keys = ["errorCode", "failureStage", "mutationCounts", "readbackError", "recoveryEligible", "schemaVersion", "status"];
+  const providerIdentityFailure = workspaceRecoveryProviderIdentityFailure(value?.providerIdentityFailure, "workspace_recovery_plan_failure_response_invalid");
+  const keys = ["errorCode", "failureStage", "mutationCounts", ...(providerIdentityFailure ? ["providerIdentityFailure"] : []), "readbackError", "recoveryEligible", "schemaVersion", "status"];
   const counts = value?.mutationCounts;
   if (!value || typeof value !== "object" || Array.isArray(value) || !exactObjectKeys(value, keys) || value.schemaVersion !== 1 ||
     value.status !== "blocked" || value.recoveryEligible !== false || !RECOVERY_PLAN_FAILURE_STAGES.has(String(value.failureStage || "")) ||
@@ -1885,7 +1895,22 @@ function workspaceRecoveryPlanFailureResponse(value) {
   return {
     failureStage: String(value.failureStage),
     readbackError: String(value.readbackError),
-    errorCode: String(value.errorCode)
+    errorCode: String(value.errorCode),
+    ...(providerIdentityFailure ? { providerIdentityFailure } : {})
+  };
+}
+
+function workspaceRecoveryProviderIdentityFailure(value, invalidError = "workspace_recovery_plan_provider_identity_failure_invalid") {
+  if (value === undefined) return null;
+  if (!value || typeof value !== "object" || Array.isArray(value) ||
+    !exactObjectKeys(value, ["actualDigest", "expectedDigest", "predicate"]) ||
+    !RECOVERY_PLAN_PROVIDER_IDENTITY_PREDICATES.has(String(value.predicate || "")) ||
+    !/^[a-f0-9]{64}$/.test(String(value.expectedDigest || "")) ||
+    !/^[a-f0-9]{64}$/.test(String(value.actualDigest || "")) || value.expectedDigest === value.actualDigest) {
+    throw new Error(invalidError);
+  }
+  return {
+    predicate: String(value.predicate), expectedDigest: String(value.expectedDigest), actualDigest: String(value.actualDigest)
   };
 }
 
@@ -1916,6 +1941,7 @@ export function validateProductionWorkspaceRecoveryPlanArtifact(value, expectedO
   const modes = new Set([RECOVERY_PLAN_DIAGNOSE_MODE, RECOVERY_PLAN_VALIDATE_MODE, RECOVERY_PLAN_EXECUTE_MODE]);
   const counts = value?.runnerDirectMutationCounts;
   const safeJSON = JSON.stringify(value || {});
+  const providerIdentityFailure = workspaceRecoveryProviderIdentityFailure(value?.providerIdentityFailure, "workspace_recovery_plan_artifact_invalid");
   if (!value || typeof value !== "object" || Array.isArray(value) || value.schemaVersion !== 1 || !modes.has(operationMode) ||
     expectedOperationMode && operationMode !== expectedOperationMode || !counts ||
     !exactObjectKeys(counts, ["kubernetes", "sub2api", "tencent"]) || !computeClaimRunnerDirectMutationCountsAreZero(counts) ||
@@ -1924,7 +1950,7 @@ export function validateProductionWorkspaceRecoveryPlanArtifact(value, expectedO
     throw new Error("workspace_recovery_plan_artifact_invalid");
   }
   const failureKeys = [
-    "errorCode", "failureStage", "operationMode", "readbackError", "recoveryEligible", "runnerDirectMutationCounts", "schemaVersion", "status"
+    "errorCode", "failureStage", "operationMode", ...(providerIdentityFailure ? ["providerIdentityFailure"] : []), "readbackError", "recoveryEligible", "runnerDirectMutationCounts", "schemaVersion", "status"
   ];
   if (value.status === "blocked" && !Object.hasOwn(value, "planId")) {
     if (!exactObjectKeys(value, failureKeys) || value.recoveryEligible !== false || value.failureStage === "none" ||
@@ -1936,7 +1962,7 @@ export function validateProductionWorkspaceRecoveryPlanArtifact(value, expectedO
   const allowedKeys = new Set([
     "schemaVersion", "operationMode", "status", "recoveryEligible", "failureStage", "readbackError", "errorCode", "planId",
     "planDigest", "stages", "mismatches", "runnerDirectMutationCounts", "verifiedAt", "successorGate", "executionId", "runId",
-    "url", "receiptId", "controlPlaneExecutionMutationCounts"
+    "url", "receiptId", "controlPlaneExecutionMutationCounts", "providerIdentityFailure"
   ]);
   if (Object.keys(value).some((key) => !allowedKeys.has(key)) || !/^recovery-plan-[a-f0-9]{20}$/.test(String(value.planId || "")) ||
     !/^[a-f0-9]{64}$/.test(String(value.planDigest || "")) || !Array.isArray(value.stages) || value.stages.length === 0 ||
@@ -2002,6 +2028,7 @@ export async function diagnoseWorkspaceRecoveryPlan({
       failureStage: failure.failureStage,
       readbackError: failure.readbackError,
       errorCode: failure.errorCode,
+      ...(failure.providerIdentityFailure ? { providerIdentityFailure: failure.providerIdentityFailure } : {}),
       runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
     };
     throw error;

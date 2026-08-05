@@ -162,20 +162,29 @@ type ComputeClaimRecoveryClaimInput struct {
 }
 
 type ComputeClaimProviderProof struct {
-	Status             string `json:"status"`
-	Reason             string `json:"reason,omitempty"`
-	NodeOwnershipState string `json:"nodeOwnershipState"`
-	CVMOwnershipState  string `json:"cvmOwnershipState"`
-	MachineName        string `json:"machineName"`
-	NodeName           string `json:"nodeName"`
-	CVMInstanceID      string `json:"cvmInstanceId"`
-	PrivateIP          string `json:"privateIp"`
-	InstanceType       string `json:"instanceType"`
-	Zone               string `json:"zone"`
-	ChargeType         string `json:"chargeType"`
-	PeriodMonths       int    `json:"periodMonths"`
-	RenewFlag          string `json:"renewFlag"`
-	Deadline           string `json:"deadline"`
+	Status                  string                               `json:"status"`
+	Reason                  string                               `json:"reason,omitempty"`
+	NodeOwnershipState      string                               `json:"nodeOwnershipState"`
+	CVMOwnershipState       string                               `json:"cvmOwnershipState"`
+	MachineName             string                               `json:"machineName"`
+	NodeName                string                               `json:"nodeName"`
+	CVMInstanceID           string                               `json:"cvmInstanceId"`
+	PrivateIP               string                               `json:"privateIp"`
+	InstanceType            string                               `json:"instanceType"`
+	Zone                    string                               `json:"zone"`
+	ChargeType              string                               `json:"chargeType"`
+	PeriodMonths            int                                  `json:"periodMonths"`
+	RenewFlag               string                               `json:"renewFlag"`
+	Deadline                string                               `json:"deadline"`
+	FailureStage            string                               `json:"failureStage,omitempty"`
+	ProviderErrorClass      string                               `json:"providerErrorClass,omitempty"`
+	ProviderIdentityFailure *ComputeClaimProviderIdentityFailure `json:"providerIdentityFailure,omitempty"`
+}
+
+type ComputeClaimProviderIdentityFailure struct {
+	Predicate      string `json:"predicate"`
+	ExpectedDigest string `json:"expectedDigest"`
+	ActualDigest   string `json:"actualDigest"`
 }
 
 type ComputeClaimProviderClaim struct {
@@ -283,38 +292,39 @@ type ComputeClaimIdentityEvidence struct {
 }
 
 type ComputeClaimRecoveryProof struct {
-	SchemaVersion             int                           `json:"schemaVersion"`
-	Eligible                  bool                          `json:"eligible"`
-	Reason                    string                        `json:"reason"`
-	StorageState              string                        `json:"storageState"`
-	StorageProviderResourceID string                        `json:"storageProviderResourceId,omitempty"`
-	LaunchOperationID         string                        `json:"launchOperationId"`
-	AccountID                 string                        `json:"accountId"`
-	WorkspaceID               string                        `json:"workspaceId"`
-	ComputeAllocationID       string                        `json:"computeAllocationId"`
-	StorageVolumeID           string                        `json:"storageVolumeId"`
-	PackageID                 string                        `json:"packageId"`
-	PoolID                    string                        `json:"poolId"`
-	NodePoolID                string                        `json:"nodePoolId"`
-	MachineName               string                        `json:"machineName,omitempty"`
-	NodeName                  string                        `json:"nodeName,omitempty"`
-	CVMInstanceID             string                        `json:"cvmInstanceId,omitempty"`
-	PrivateIP                 string                        `json:"privateIp,omitempty"`
-	InstanceType              string                        `json:"instanceType,omitempty"`
-	Zone                      string                        `json:"zone,omitempty"`
-	ChargeType                string                        `json:"chargeType,omitempty"`
-	PeriodMonths              int                           `json:"periodMonths,omitempty"`
-	RenewFlag                 string                        `json:"renewFlag,omitempty"`
-	Deadline                  string                        `json:"deadline,omitempty"`
-	NodeOwnershipState        string                        `json:"nodeOwnershipState,omitempty"`
-	CVMOwnershipState         string                        `json:"cvmOwnershipState,omitempty"`
-	Sub2APIMutationCount      int                           `json:"sub2apiMutationCount"`
-	TencentMutationCount      int                           `json:"tencentMutationCount"`
-	KubernetesMutationCount   int                           `json:"kubernetesMutationCount"`
-	FailureStage              string                        `json:"failureStage,omitempty"`
-	ProviderErrorClass        string                        `json:"providerErrorClass,omitempty"`
-	Evidence                  *ComputeClaimEvidence         `json:"evidence,omitempty"`
-	IdentityEvidence          *ComputeClaimIdentityEvidence `json:"identityEvidence,omitempty"`
+	SchemaVersion             int                                  `json:"schemaVersion"`
+	Eligible                  bool                                 `json:"eligible"`
+	Reason                    string                               `json:"reason"`
+	StorageState              string                               `json:"storageState"`
+	StorageProviderResourceID string                               `json:"storageProviderResourceId,omitempty"`
+	LaunchOperationID         string                               `json:"launchOperationId"`
+	AccountID                 string                               `json:"accountId"`
+	WorkspaceID               string                               `json:"workspaceId"`
+	ComputeAllocationID       string                               `json:"computeAllocationId"`
+	StorageVolumeID           string                               `json:"storageVolumeId"`
+	PackageID                 string                               `json:"packageId"`
+	PoolID                    string                               `json:"poolId"`
+	NodePoolID                string                               `json:"nodePoolId"`
+	MachineName               string                               `json:"machineName,omitempty"`
+	NodeName                  string                               `json:"nodeName,omitempty"`
+	CVMInstanceID             string                               `json:"cvmInstanceId,omitempty"`
+	PrivateIP                 string                               `json:"privateIp,omitempty"`
+	InstanceType              string                               `json:"instanceType,omitempty"`
+	Zone                      string                               `json:"zone,omitempty"`
+	ChargeType                string                               `json:"chargeType,omitempty"`
+	PeriodMonths              int                                  `json:"periodMonths,omitempty"`
+	RenewFlag                 string                               `json:"renewFlag,omitempty"`
+	Deadline                  string                               `json:"deadline,omitempty"`
+	NodeOwnershipState        string                               `json:"nodeOwnershipState,omitempty"`
+	CVMOwnershipState         string                               `json:"cvmOwnershipState,omitempty"`
+	Sub2APIMutationCount      int                                  `json:"sub2apiMutationCount"`
+	TencentMutationCount      int                                  `json:"tencentMutationCount"`
+	KubernetesMutationCount   int                                  `json:"kubernetesMutationCount"`
+	FailureStage              string                               `json:"failureStage,omitempty"`
+	ProviderErrorClass        string                               `json:"providerErrorClass,omitempty"`
+	ProviderIdentityFailure   *ComputeClaimProviderIdentityFailure `json:"providerIdentityFailure,omitempty"`
+	Evidence                  *ComputeClaimEvidence                `json:"evidence,omitempty"`
+	IdentityEvidence          *ComputeClaimIdentityEvidence        `json:"identityEvidence,omitempty"`
 }
 
 type WorkspacePackage struct {
