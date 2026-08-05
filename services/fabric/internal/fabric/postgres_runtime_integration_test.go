@@ -1190,7 +1190,9 @@ func TestPostgresComputePoolHeadTerminalizationCASReleasesFreshFIFOHead(t *testi
 	}
 	defer secondStore.client.Close()
 	provider := &normalLaunchComputeProvider{}
-	input, _, _ := seedOperatorTerminalizationHead(t, firstStore, provider)
+	input, _, _ := seedOperatorTerminalizationHeadWithBinding(t, firstStore, provider, func(binding *computeClaimRecoveryBinding) {
+		binding.IdempotencyKey = "recovery-exec-14deb7f41022c8a5ae9d"
+	})
 	fresh := FabricOperation{
 		ID: "fop-postgres-fresh", OperationID: "op-postgres-fresh", Action: "create_compute_allocation", ResourceKind: "compute_allocation", ResourceID: "ca-postgres-fresh",
 		IdempotencyKey: "workspace-launch-postgres-fresh:compute", RequestHash: "hash-postgres-fresh", Status: "started", ComputePoolKey: input.NodePoolID,
