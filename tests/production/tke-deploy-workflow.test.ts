@@ -1633,6 +1633,49 @@ test("TKE diagnostics are read only and mutually exclusive with deploy", async (
   assert.doesNotMatch(runs, /\b(?:apply|delete|patch|scale)\b|set image|rollout restart/);
 });
 
+test("targeted Fresh compute diagnostics prove the exact allocation and MachineOwnership binding without writes", async () => {
+  const [workflow, contract] = await Promise.all([
+    readWorkflow(".github/workflows/deploy-tke-production.yml"),
+    readJson(deploymentContractPath)
+  ]);
+  const diagnose = workflowJob(workflow, "diagnose");
+  const steps = stepsByName(diagnose);
+  const readback = serializedStep(steps.get("Read exact Fresh compute operation"));
+
+  assert.equal(workflow.on.workflow_dispatch.inputs.fresh_compute_readback_operation_id.type, "string");
+  assert.equal(workflow.on.workflow_dispatch.inputs.fresh_compute_readback_operation_id.default, "");
+  assert.match(readback, /GET \/fabric\/operations/);
+  assert.match(readback, /GET \/fabric\/compute-allocations\/\{id\}/);
+  assert.match(readback, /\/fabric\/machine-ownerships\//);
+  assert.match(readback, /\/fabric\/compute-pool-head\?/);
+  for (const field of [
+    "allocationMatchesOperation",
+    "ownershipMatchesAllocation",
+    "productionReleaseIdentitySha256",
+    "instanceIdentitySha256",
+    "customerBindingSha256",
+    "nodePoolIdentitySha256",
+    "machineIdentitySha256",
+    "nodeIdentitySha256",
+    "computeClaimCvm",
+    "computeClaimNode",
+    "poolHeadAuthoritative",
+    "poolHead"
+  ]) assert.match(readback, new RegExp(field));
+  assert.match(readback, /get configmap opl-cloud-config -o jsonpath=.*OPL_RELEASE_SHA/);
+  for (const identityField of ["resourceId", "accountId", "workspaceId", "packageId", "nodePoolId", "machineId", "instanceId", "nodeName"]) {
+    assert.match(readback, new RegExp(`ownership\\?\\.${identityField}`));
+  }
+  assert.match(readback, /runnerDirectMutationCounts:\s*\{\s*sub2api:\s*0,\s*tencent:\s*0,\s*kubernetes:\s*0,\s*fabric:\s*0\s*\}/);
+  assert.doesNotMatch(readback, /method:\s*["']POST["']|\b(?:kubectl|curl)\s+(?:apply|delete|patch|scale)\b/);
+  assert.deepEqual(contract.deployWorkflow.freshComputeReadback, {
+    authority: "fabric_operations_allocation_machine_ownership_and_pool_head_get_only",
+    binding: ["production_release", "launch_operation", "compute_allocation", "customer", "workspace", "package", "node_pool", "machine", "instance", "node"],
+    mutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0, fabric: 0 },
+    artifact: "redacted_digests_statuses_and_match_booleans_only"
+  });
+});
+
 test("ordinary TKE release isolates cluster and public read-only verifiers", async () => {
   const [workflow, contract] = await Promise.all([
     readWorkflow(".github/workflows/deploy-tke-production.yml"),
