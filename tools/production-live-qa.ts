@@ -1914,6 +1914,15 @@ function workspaceRecoveryProviderIdentityFailure(value, invalidError = "workspa
   };
 }
 
+const RECOVERY_PLAN_SENSITIVE_FIELD_PATTERN = /password|secret|token|cookie|csrf|accountId|launchOperationId|cvmInstanceId|nodeName|cloudImageDigest/i;
+
+function workspaceRecoveryArtifactContainsSensitiveField(value) {
+  if (Array.isArray(value)) return value.some(workspaceRecoveryArtifactContainsSensitiveField);
+  if (!value || typeof value !== "object") return false;
+  return Object.entries(value).some(([key, item]) =>
+    RECOVERY_PLAN_SENSITIVE_FIELD_PATTERN.test(key) || workspaceRecoveryArtifactContainsSensitiveField(item));
+}
+
 function blockedWorkspaceRecoveryPlanArtifact(operationMode, error) {
   if (error?.recoveryPlanArtifact) {
     return validateProductionWorkspaceRecoveryPlanArtifact(error.recoveryPlanArtifact, operationMode);
@@ -1940,13 +1949,12 @@ export function validateProductionWorkspaceRecoveryPlanArtifact(value, expectedO
   const operationMode = String(value?.operationMode || "");
   const modes = new Set([RECOVERY_PLAN_DIAGNOSE_MODE, RECOVERY_PLAN_VALIDATE_MODE, RECOVERY_PLAN_EXECUTE_MODE]);
   const counts = value?.runnerDirectMutationCounts;
-  const safeJSON = JSON.stringify(value || {});
   const providerIdentityFailure = workspaceRecoveryProviderIdentityFailure(value?.providerIdentityFailure, "workspace_recovery_plan_artifact_invalid");
   if (!value || typeof value !== "object" || Array.isArray(value) || value.schemaVersion !== 1 || !modes.has(operationMode) ||
     expectedOperationMode && operationMode !== expectedOperationMode || !counts ||
     !exactObjectKeys(counts, ["kubernetes", "sub2api", "tencent"]) || !computeClaimRunnerDirectMutationCountsAreZero(counts) ||
     !RECOVERY_PLAN_FAILURE_STAGES.has(String(value.failureStage || "")) || !RECOVERY_PLAN_READBACK_ERRORS.has(String(value.readbackError || "")) ||
-    !RECOVERY_PLAN_ERROR_CODES.has(String(value.errorCode || "")) || /password|secret|token|cookie|csrf|accountId|launchOperationId|cvmInstanceId|nodeName|cloudImageDigest/i.test(safeJSON)) {
+    !RECOVERY_PLAN_ERROR_CODES.has(String(value.errorCode || "")) || workspaceRecoveryArtifactContainsSensitiveField(value)) {
     throw new Error("workspace_recovery_plan_artifact_invalid");
   }
   const failureKeys = [
