@@ -897,9 +897,12 @@ func (s *Service) ClaimComputeRecovery(ctx context.Context, input ComputeClaimRe
 		reconciliation, reconciliationPresent, reconciliationValid := decodeComputeClaimRecoveryReconciliation(operation)
 		historicalBinding := bindingPresent && bindingValid && persistedBinding != binding &&
 			persistedBinding == historicalComputeClaimRecoveryBinding(input)
-		requestHashBinding := isolatedRequestHashReconciliationBinding(operation, input, persistedBinding, bindingPresent, bindingValid)
-		reconciliationCandidate := requestHashBinding && operation.Status == "claim_pending" && allocation.Status == "quarantined" && ownership.Status == "quarantined"
-		reconciliationReplay := requestHashBinding && reconciliationPresent && reconciliationValid && mutationPresent && mutationValid &&
+		reconciliationProvenance, requestHashBinding := isolatedRequestHashReconciliationProvenance(operation, input, persistedBinding, bindingPresent, bindingValid)
+		reconciliationCandidate := requestHashBinding && allocation.Status == "quarantined" && ownership.Status == "quarantined" &&
+			(operation.Status == "claim_pending" && reconciliationProvenance.SchemaVersion == 1 ||
+				operation.Status == "failed" && reconciliationProvenance.SchemaVersion == 2)
+		reconciliationReplay := requestHashBinding && reconciliationPresent && reconciliationValid &&
+			(reconciliation.SchemaVersion == 1 && mutationPresent && mutationValid || reconciliation.SchemaVersion == 2 && !mutationPresent) &&
 			computeClaimRecoveryReconciliationMatches(reconciliation, operation, input, persistedBinding, mutationLedger)
 		requestHashReconciliation := reconciliationCandidate || reconciliationReplay
 		historicalWithoutLedger := historicalBinding && !mutationPresent
@@ -943,6 +946,9 @@ func (s *Service) ClaimComputeRecovery(ctx context.Context, input ComputeClaimRe
 				}
 			} else {
 				verified := operation
+				if verified.Status == "failed" {
+					verified.Status, verified.ErrorCode, verified.FinishedAt = "claim_pending", "", time.Time{}
+				}
 				verified.RedactedProviderPayload = withComputeClaimRecoveryReconciliation(verified.RedactedProviderPayload, expectedReconciliation)
 				if err := s.operations.SaveComputeClaimRecovery(lockCtx, operation, verified); err != nil {
 					result.Eligible, result.Reason = false, "local_identity"
@@ -1056,7 +1062,9 @@ func (s *Service) ClaimComputeRecovery(ctx context.Context, input ComputeClaimRe
 				}
 				operation = reserved
 			}
-			mutationPresent = true
+			if !reconciledNodeContinuation {
+				mutationPresent = true
+			}
 			claimed, claimErr := provider.ClaimComputeRecovery(lockCtx, allocation, plan, ownership)
 			result.TencentMutationCount = max(0, claimed.TencentMutationCount)
 			result.KubernetesMutationCount = max(0, claimed.KubernetesMutationCount)
@@ -1144,7 +1152,11 @@ func (s *Service) ClaimComputeRecovery(ctx context.Context, input ComputeClaimRe
 			if historicalBinding || requestHashReconciliation {
 				finalBinding = persistedBinding
 			}
-			recovered.RedactedProviderPayload = withComputeClaimRecoveryBinding(computeAllocationOperationPayload(allocation, plan), finalBinding)
+			recovered.RedactedProviderPayload = preserveNormalLaunchMutationBudget(computeAllocationOperationPayload(allocation, plan), operation.RedactedProviderPayload)
+			recovered.RedactedProviderPayload = withComputeClaimRecoveryBinding(recovered.RedactedProviderPayload, finalBinding)
+			if terminal, present, valid := decodeComputeClaimTerminalEvidence(operation); present && valid {
+				recovered.RedactedProviderPayload = withComputeClaimTerminalEvidence(recovered.RedactedProviderPayload, terminal)
+			}
 			if mutationPresent {
 				recovered.RedactedProviderPayload = withComputeClaimRecoveryMutation(recovered.RedactedProviderPayload, mutationLedger)
 			}
@@ -1193,6 +1205,8 @@ type computeClaimRecoveryReconciliation struct {
 	SchemaVersion              int                          `json:"schemaVersion"`
 	Consumer                   string                       `json:"consumer"`
 	Generation                 string                       `json:"generation"`
+	ProvenanceSource           string                       `json:"provenanceSource,omitempty"`
+	ProvenanceDigest           string                       `json:"provenanceDigest,omitempty"`
 	State                      string                       `json:"state"`
 	BindingDigest              string                       `json:"bindingDigest"`
 	ExpectedRequestHashDigest  string                       `json:"expectedRequestHashDigest"`
@@ -1202,6 +1216,13 @@ type computeClaimRecoveryReconciliation struct {
 	FailureStage               string                       `json:"failureStage,omitempty"`
 	ProviderErrorClass         string                       `json:"providerErrorClass,omitempty"`
 	Node                       ComputeClaimMutationEvidence `json:"node"`
+}
+
+type computeClaimRecoveryReconciliationProvenance struct {
+	SchemaVersion int
+	Generation    string
+	Source        string
+	Digest        string
 }
 
 type computeClaimRecoveryMutationLedger struct {
@@ -1559,17 +1580,75 @@ func isolatedRequestHashReconciliationLedger(ledger computeClaimRecoveryMutation
 	return true
 }
 
-func isolatedRequestHashReconciliationBinding(operation FabricOperation, input ComputeClaimRecoveryClaimInput, persisted computeClaimRecoveryBinding, present, valid bool) bool {
+func normalLaunchTerminalRequestHashReconciliationEvidence(
+	operation FabricOperation,
+	input ComputeClaimRecoveryClaimInput,
+	binding computeClaimRecoveryBinding,
+) (string, bool) {
+	if _, present, _ := decodeComputeClaimRecoveryMutation(operation); present {
+		return "", false
+	}
+	createBudget, createPresent, createValid := normalLaunchStageBudget(operation.RedactedProviderPayload, "compute_create")
+	cvmBudget, cvmPresent, cvmValid := normalLaunchStageBudget(operation.RedactedProviderPayload, "compute_claim_cvm")
+	_, nodePresent, nodeValid := normalLaunchStageBudget(operation.RedactedProviderPayload, "compute_claim_node")
+	terminal, terminalPresent, terminalValid := decodeComputeClaimTerminalEvidence(operation)
+	wantBindingDigest := computeClaimIdentityDigest(binding.LaunchOperationID + "|" + binding.IdempotencyKey + "|" + binding.TargetHash + "|" + binding.RequestHash)
+	if !createPresent || !createValid || createBudget != confirmedNormalLaunchMutationBudget() ||
+		!cvmPresent || !cvmValid || cvmBudget != reservedNormalLaunchMutationBudget() || nodePresent || !nodeValid ||
+		!terminalPresent || !terminalValid || terminal.Stage != "compute_claim_cvm" || terminal.Status != "terminal_unprovable" ||
+		terminal.AttemptCount != 1 || terminal.Attempted != 1 || terminal.Confirmed != 0 || terminal.Unknown != 1 || terminal.Max != 1 ||
+		terminal.FabricRecordID != operation.ID || terminal.OperationID != operation.OperationID || terminal.IdempotencyKey != operation.IdempotencyKey ||
+		terminal.RequestHash != operation.RequestHash || terminal.LaunchOperationID != input.LaunchOperationID || terminal.AccountID != input.AccountID ||
+		terminal.WorkspaceID != input.WorkspaceID || terminal.ComputeAllocationID != input.ComputeAllocationID || terminal.StorageVolumeID != input.StorageVolumeID ||
+		terminal.PackageID != input.PackageID || terminal.PoolID != input.PoolID || terminal.NodePoolID != input.NodePoolID ||
+		terminal.MachineName != input.MachineName || terminal.NodeName != input.NodeName || terminal.CVMInstanceID != input.CVMInstanceID ||
+		terminal.BindingDigest != wantBindingDigest || terminal.OperatorApprovalID != "" || terminal.OperatorApprovalDigest != "" ||
+		terminal.OperatorIdempotencyKey != "" || terminal.ManualRecoveryLedgerDigest != "" || terminal.Evidence != nil || len(terminal.StageBudgets) != 1 ||
+		terminal.StageBudgets["compute_claim_cvm"] != (ComputeClaimStageBudget{Attempted: 1, Confirmed: 0, Unknown: 1, Max: 1}) {
+		return "", false
+	}
+	return hashInput(struct {
+		ComputeCreate normalLaunchMutationBudget
+		ComputeClaim  normalLaunchMutationBudget
+		Terminal      ComputeClaimTerminalEvidence
+	}{createBudget, cvmBudget, terminal}), true
+}
+
+func isolatedRequestHashReconciliationProvenance(
+	operation FabricOperation,
+	input ComputeClaimRecoveryClaimInput,
+	persisted computeClaimRecoveryBinding,
+	present, valid bool,
+) (computeClaimRecoveryReconciliationProvenance, bool) {
 	if !present || !valid || !canonicalComputeClaimRecoveryOperation(operation, input.ComputeClaimRecoveryInput) {
-		return false
+		return computeClaimRecoveryReconciliationProvenance{}, false
 	}
 	want := newComputeClaimRecoveryBinding(input)
 	if persisted.LaunchOperationID != want.LaunchOperationID || persisted.IdempotencyKey != want.IdempotencyKey ||
 		persisted.TargetHash != want.TargetHash || persisted.RequestHash == want.RequestHash {
-		return false
+		return computeClaimRecoveryReconciliationProvenance{}, false
 	}
 	ledger, ledgerPresent, ledgerValid := decodeComputeClaimRecoveryMutation(operation)
-	return ledgerPresent && ledgerValid && isolatedRequestHashReconciliationLedger(ledger)
+	if ledgerPresent {
+		if !ledgerValid || !isolatedRequestHashReconciliationLedger(ledger) {
+			return computeClaimRecoveryReconciliationProvenance{}, false
+		}
+		return computeClaimRecoveryReconciliationProvenance{
+			SchemaVersion: 1, Generation: "isolated_request_hash_v1", Source: "manual_recovery_ledger", Digest: computeClaimRecoveryMutationDigest(ledger),
+		}, true
+	}
+	digest, ok := normalLaunchTerminalRequestHashReconciliationEvidence(operation, input, persisted)
+	if !ok {
+		return computeClaimRecoveryReconciliationProvenance{}, false
+	}
+	return computeClaimRecoveryReconciliationProvenance{
+		SchemaVersion: 2, Generation: "normal_launch_terminal_evidence_v1", Source: "normal_launch_terminal_evidence", Digest: digest,
+	}, true
+}
+
+func isolatedRequestHashReconciliationBinding(operation FabricOperation, input ComputeClaimRecoveryClaimInput, persisted computeClaimRecoveryBinding, present, valid bool) bool {
+	_, ok := isolatedRequestHashReconciliationProvenance(operation, input, persisted, present, valid)
+	return ok
 }
 
 func computeClaimRecoveryAllocationIdentityDigest(allocation ComputeAllocation) string {
@@ -1609,6 +1688,46 @@ func newComputeClaimRecoveryReconciliation(
 	ledger computeClaimRecoveryMutationLedger,
 ) computeClaimRecoveryReconciliation {
 	want := newComputeClaimRecoveryBinding(input)
+	provenance, provenanceOK := isolatedRequestHashReconciliationProvenance(operation, input, binding, true, true)
+	if provenanceOK && provenance.SchemaVersion == 2 {
+		authority := struct {
+			FabricRecordID              string                         `json:"fabricRecordId"`
+			OperationID                 string                         `json:"operationId"`
+			OperationHash               string                         `json:"operationHash"`
+			AllocationID                string                         `json:"allocationId"`
+			AllocationProviderRequestID string                         `json:"allocationProviderRequestId"`
+			AllocationIdentityDigest    string                         `json:"allocationIdentityDigest"`
+			AdmittedAllocationStatus    string                         `json:"admittedAllocationStatus"`
+			Plan                        ComputeAllocationPreparation   `json:"plan"`
+			OwnershipID                 string                         `json:"ownershipId"`
+			OwnershipProviderRequestID  string                         `json:"ownershipProviderRequestId"`
+			OwnershipIdentityDigest     string                         `json:"ownershipIdentityDigest"`
+			AdmittedOwnershipStatus     string                         `json:"admittedOwnershipStatus"`
+			Input                       ComputeClaimRecoveryClaimInput `json:"input"`
+			ChargeType                  string                         `json:"chargeType"`
+			PeriodMonths                int                            `json:"periodMonths"`
+			RenewFlag                   string                         `json:"renewFlag"`
+			Deadline                    string                         `json:"deadline"`
+			StorageState                string                         `json:"storageState"`
+			Binding                     computeClaimRecoveryBinding    `json:"binding"`
+			ProvenanceSource            string                         `json:"provenanceSource"`
+			ProvenanceDigest            string                         `json:"provenanceDigest"`
+		}{
+			FabricRecordID: operation.ID, OperationID: operation.OperationID, OperationHash: operation.RequestHash,
+			AllocationID: allocation.ID, AllocationProviderRequestID: allocation.ProviderRequestID,
+			AllocationIdentityDigest: computeClaimRecoveryAllocationIdentityDigest(allocation), AdmittedAllocationStatus: "quarantined", Plan: plan,
+			OwnershipID: ownership.ID, OwnershipProviderRequestID: ownership.ProviderRequestID,
+			OwnershipIdentityDigest: computeClaimRecoveryOwnershipIdentityDigest(ownership), AdmittedOwnershipStatus: "quarantined", Input: input,
+			ChargeType: proof.ChargeType, PeriodMonths: proof.PeriodMonths, RenewFlag: proof.RenewFlag, Deadline: proof.Deadline,
+			StorageState: proof.StorageState, Binding: binding, ProvenanceSource: provenance.Source, ProvenanceDigest: provenance.Digest,
+		}
+		return computeClaimRecoveryReconciliation{
+			SchemaVersion: 2, Consumer: "claim_compute_recovery", Generation: provenance.Generation,
+			ProvenanceSource: provenance.Source, ProvenanceDigest: provenance.Digest, State: "verified",
+			BindingDigest: computeClaimRecoveryBindingDigest(binding), ExpectedRequestHashDigest: computeClaimIdentityDigest(want.RequestHash),
+			PersistedRequestHashDigest: computeClaimIdentityDigest(binding.RequestHash), AuthorityDigest: hashInput(authority),
+		}
+	}
 	authority := struct {
 		FabricRecordID              string                             `json:"fabricRecordId"`
 		OperationID                 string                             `json:"operationId"`
@@ -1649,10 +1768,23 @@ func newComputeClaimRecoveryReconciliation(
 }
 
 func validComputeClaimRecoveryReconciliation(value computeClaimRecoveryReconciliation) bool {
-	if value.SchemaVersion != 1 || value.Consumer != "claim_compute_recovery" || value.Generation != "isolated_request_hash_v1" ||
-		!validComputeClaimRecoveryDigest(value.BindingDigest) || !validComputeClaimRecoveryDigest(value.ExpectedRequestHashDigest) ||
+	if value.Consumer != "claim_compute_recovery" || !validComputeClaimRecoveryDigest(value.BindingDigest) || !validComputeClaimRecoveryDigest(value.ExpectedRequestHashDigest) ||
 		!validComputeClaimRecoveryDigest(value.PersistedRequestHashDigest) || value.ExpectedRequestHashDigest == value.PersistedRequestHashDigest ||
-		!validComputeClaimRecoveryDigest(value.MutationLedgerDigest) || !validComputeClaimRecoveryDigest(value.AuthorityDigest) {
+		!validComputeClaimRecoveryDigest(value.AuthorityDigest) {
+		return false
+	}
+	switch value.SchemaVersion {
+	case 1:
+		if value.Generation != "isolated_request_hash_v1" || value.ProvenanceSource != "" || value.ProvenanceDigest != "" ||
+			!validComputeClaimRecoveryDigest(value.MutationLedgerDigest) {
+			return false
+		}
+	case 2:
+		if value.Generation != "normal_launch_terminal_evidence_v1" || value.ProvenanceSource != "normal_launch_terminal_evidence" ||
+			!validComputeClaimRecoveryDigest(value.ProvenanceDigest) || value.MutationLedgerDigest != "" {
+			return false
+		}
+	default:
 		return false
 	}
 	switch value.State {
@@ -1680,11 +1812,19 @@ func computeClaimRecoveryReconciliationMatches(
 	ledger computeClaimRecoveryMutationLedger,
 ) bool {
 	want := newComputeClaimRecoveryBinding(input)
-	return value.BindingDigest == computeClaimRecoveryBindingDigest(binding) &&
-		value.ExpectedRequestHashDigest == computeClaimIdentityDigest(want.RequestHash) &&
-		value.PersistedRequestHashDigest == computeClaimIdentityDigest(binding.RequestHash) &&
-		value.MutationLedgerDigest == computeClaimRecoveryMutationDigest(ledger) &&
-		canonicalComputeClaimRecoveryOperation(operation, input.ComputeClaimRecoveryInput)
+	if value.BindingDigest != computeClaimRecoveryBindingDigest(binding) {
+		return false
+	}
+	if value.ExpectedRequestHashDigest != computeClaimIdentityDigest(want.RequestHash) ||
+		value.PersistedRequestHashDigest != computeClaimIdentityDigest(binding.RequestHash) ||
+		!canonicalComputeClaimRecoveryOperation(operation, input.ComputeClaimRecoveryInput) {
+		return false
+	}
+	if value.SchemaVersion == 1 {
+		return value.MutationLedgerDigest == computeClaimRecoveryMutationDigest(ledger)
+	}
+	provenance, ok := isolatedRequestHashReconciliationProvenance(operation, input, binding, true, true)
+	return ok && provenance.SchemaVersion == 2 && value.ProvenanceSource == provenance.Source && value.ProvenanceDigest == provenance.Digest
 }
 
 func decodeComputeClaimRecoveryReconciliation(operation FabricOperation) (computeClaimRecoveryReconciliation, bool, bool) {
@@ -1710,6 +1850,7 @@ func withComputeClaimRecoveryReconciliation(payload map[string]any, value comput
 	}
 	result[computeClaimRecoveryReconciliationPayloadKey] = map[string]any{
 		"schemaVersion": value.SchemaVersion, "consumer": value.Consumer, "generation": value.Generation, "state": value.State,
+		"provenanceSource": value.ProvenanceSource, "provenanceDigest": value.ProvenanceDigest,
 		"bindingDigest": value.BindingDigest, "expectedRequestHashDigest": value.ExpectedRequestHashDigest,
 		"persistedRequestHashDigest": value.PersistedRequestHashDigest, "mutationLedgerDigest": value.MutationLedgerDigest,
 		"authorityDigest": value.AuthorityDigest, "failureStage": value.FailureStage, "providerErrorClass": value.ProviderErrorClass,
@@ -1728,7 +1869,8 @@ func validComputeClaimRecoveryReconciliationTransition(current, next FabricOpera
 		return !nextPresent || nextValue.State == "verified"
 	}
 	if !nextPresent || currentValue.SchemaVersion != nextValue.SchemaVersion || currentValue.Consumer != nextValue.Consumer ||
-		currentValue.Generation != nextValue.Generation || currentValue.BindingDigest != nextValue.BindingDigest ||
+		currentValue.Generation != nextValue.Generation || currentValue.ProvenanceSource != nextValue.ProvenanceSource || currentValue.ProvenanceDigest != nextValue.ProvenanceDigest ||
+		currentValue.BindingDigest != nextValue.BindingDigest ||
 		currentValue.ExpectedRequestHashDigest != nextValue.ExpectedRequestHashDigest ||
 		currentValue.PersistedRequestHashDigest != nextValue.PersistedRequestHashDigest ||
 		currentValue.MutationLedgerDigest != nextValue.MutationLedgerDigest || currentValue.AuthorityDigest != nextValue.AuthorityDigest {

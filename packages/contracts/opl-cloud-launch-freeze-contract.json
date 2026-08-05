@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 26,
+  "schemaVersion": 27,
   "owner": "OPL Platform Architecture",
   "purpose": "Freeze the approved Pilot products, delegated Gateway key lifecycle, one charge per Workspace period, prepaid Tencent fulfillment, Runtime facts, operator workflows, announcements, and evidence levels without claiming unfinished implementation or runtime evidence.",
   "state": "current",
@@ -381,12 +381,29 @@
         "owner": "Fabric_ClaimComputeRecovery",
         "candidate": "persisted_request_hash_is_the_only_primitive_binding_mismatch",
         "requiredIdentity": ["canonical_compute_operation", "original_launch", "target_hash", "allocation_plan", "quarantined_compute_allocation", "quarantined_machine_ownership", "tencent_cvm", "tke_machine", "kubernetes_node", "node_pool", "sku", "zone", "prepaid_manual_renew_deadline", "storage_not_started"],
-        "requiredLedger": "observed_provider_describe_cvm_tag_readback_provider_error_cvm_attempted_1_confirmed_0_unknown_1_missing_only_opl_account_id_node_zero",
+        "generations": {
+          "isolated_request_hash_v1": {
+            "schemaVersion": 1,
+            "operationStatus": "claim_pending",
+            "requiredEvidence": "valid_isolated_manual_recovery_ledger"
+          },
+          "normal_launch_terminal_evidence_v1": {
+            "schemaVersion": 2,
+            "operationStatus": "failed",
+            "manualRecoveryLedger": "absent",
+            "requiredStageBudgets": {
+              "computeCreate": {"attempted": 1, "confirmed": 1, "unknown": 0, "max": 1},
+              "computeClaimCvm": {"attempted": 1, "confirmed": 0, "unknown": 1, "max": 1},
+              "computeClaimNode": "absent"
+            },
+            "requiredTerminalEvidence": "compute_claim_cvm_terminal_unprovable_exact_operation_binding_and_resource_identity"
+          }
+        },
         "persistence": "versioned_single_winner_cas_provenance_on_original_compute_operation",
-        "preserved": ["persisted_binding", "persisted_unknown_mutation_ledger", "launch", "debit", "cvm", "allocation", "ownership"],
+        "preserved": ["persisted_binding", "source_recovery_evidence", "normal_launch_mutation_budgets", "terminal_evidence", "launch", "debit", "cvm", "allocation", "ownership"],
         "consumer": "original_ClaimComputeRecovery_only",
         "mutationBounds": {"sub2api": 0, "tencent": 0, "kubernetesNodePatchMax": 1},
-        "failClosed": ["zero_or_multiple_compute_candidates", "other_binding_mismatch", "ledger_drift", "provider_identity_drift", "storage_started", "cas_conflict", "unknown_readback"]
+        "failClosed": ["released_ownership", "zero_or_multiple_compute_candidates", "other_binding_mismatch", "source_evidence_drift", "provider_identity_drift", "storage_started", "cas_conflict", "unknown_readback"]
       },
       "claimMutationBounds": {"sub2api": 0, "tencent": {"min": 0, "max": 5}, "kubernetes": {"min": 0, "max": 1}},
       "storageProof": "DescribeDisks_only_four_ownership_tags_complete_pagination_exact_facts_mutation_zero",

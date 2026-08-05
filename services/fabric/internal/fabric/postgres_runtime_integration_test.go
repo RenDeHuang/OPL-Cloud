@@ -1731,7 +1731,7 @@ func TestPostgresRequestHashReconciliationHasOneClaimWinnerAcrossServiceInstance
 	for range 2 {
 		result := <-results
 		if result.err != nil || !result.proof.Eligible || result.proof.TencentMutationCount != 0 || result.proof.KubernetesMutationCount > 1 {
-			t.Fatalf("outcome=%#v", result)
+			t.Fatalf("proof=%#v err=%v", result.proof, result.err)
 		}
 		kubernetesMutations += result.proof.KubernetesMutationCount
 	}
@@ -1749,6 +1749,84 @@ func TestPostgresRequestHashReconciliationHasOneClaimWinnerAcrossServiceInstance
 		!reconciliationPresent || !reconciliationValid || reconciliation.State != "succeeded" || stored[0].Status != "succeeded" {
 		t.Fatalf("stored=%#v err=%v ownership=%#v ownershipErr=%v binding=%#v ledger=%#v reconciliation=%#v provider=%#v kubernetes=%d",
 			stored, err, finalOwnership, ownershipErr, binding, ledger, reconciliation, provider, kubernetesMutations)
+	}
+}
+
+func TestPostgresNormalLaunchTerminalReconciliationHasOneClaimWinnerAcrossServiceInstances(t *testing.T) {
+	databaseURL := fabricTestDatabaseURL(t)
+	firstStore, err := newTestPostgresOperationStore(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer firstStore.client.Close()
+	secondStore, err := newTestPostgresOperationStore(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer secondStore.client.Close()
+
+	_, memoryStore, fixtureProvider, input := seedComputeClaimRecovery(t, "basic")
+	claimInput := seedNormalLaunchTerminalRequestHashReconciliationCandidate(t, memoryStore, fixtureProvider, input)
+	operations, err := memoryStore.List(context.Background())
+	if err != nil || len(operations) != 1 || operations[0].Status != "failed" {
+		t.Fatalf("fixture operations=%#v err=%v", operations, err)
+	}
+	if err := firstStore.Append(context.Background(), operations[0]); err != nil {
+		t.Fatal(err)
+	}
+	ownership, err := memoryStore.MachineOwnership(context.Background(), input.ComputeAllocationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored, created, err := firstStore.ClaimMachine(context.Background(), ownership); err != nil || !created {
+		t.Fatalf("seed ownership=%#v created=%v err=%v", stored, created, err)
+	}
+	provider := &postgresComputeClaimRecoveryProvider{fakeComputeClaimRecoveryProvider: *fixtureProvider}
+	configureRequestHashReconciliationNodeSuccess(&provider.fakeComputeClaimRecoveryProvider)
+
+	type outcome struct {
+		proof ComputeClaimRecoveryProof
+		err   error
+	}
+	start := make(chan struct{})
+	results := make(chan outcome, 2)
+	for _, store := range []*PostgresOperationStore{firstStore, secondStore} {
+		store := store
+		go func() {
+			<-start
+			proof, claimErr := NewServiceWithOperationStore(provider, store).ClaimComputeRecovery(context.Background(), claimInput)
+			results <- outcome{proof: proof, err: claimErr}
+		}()
+	}
+	close(start)
+	kubernetesMutations := 0
+	for range 2 {
+		result := <-results
+		if result.err != nil || !result.proof.Eligible || result.proof.TencentMutationCount != 0 || result.proof.KubernetesMutationCount > 1 {
+			t.Fatalf("proof=%#v err=%v", result.proof, result.err)
+		}
+		kubernetesMutations += result.proof.KubernetesMutationCount
+	}
+
+	stored, err := firstStore.List(context.Background())
+	if err != nil || len(stored) != 1 {
+		t.Fatalf("stored=%#v err=%v", stored, err)
+	}
+	finalOwnership, ownershipErr := firstStore.MachineOwnership(context.Background(), input.ComputeAllocationID)
+	binding, bindingPresent, bindingValid := decodeComputeClaimRecoveryBinding(stored[0])
+	_, ledgerPresent, _ := decodeComputeClaimRecoveryMutation(stored[0])
+	reconciliation, reconciliationPresent, reconciliationValid := decodeComputeClaimRecoveryReconciliation(stored[0])
+	terminal, terminalPresent, terminalValid := decodeComputeClaimTerminalEvidence(stored[0])
+	createBudget, createPresent, createValid := normalLaunchStageBudget(stored[0].RedactedProviderPayload, "compute_create")
+	cvmBudget, cvmPresent, cvmValid := normalLaunchStageBudget(stored[0].RedactedProviderPayload, "compute_claim_cvm")
+	_, nodePresent, nodeValid := normalLaunchStageBudget(stored[0].RedactedProviderPayload, "compute_claim_node")
+	if kubernetesMutations != 1 || provider.claimCalls != 1 || ownershipErr != nil || finalOwnership.Status != "active" ||
+		!bindingPresent || !bindingValid || binding.RequestHash != strings.Repeat("7", 64) || ledgerPresent ||
+		!reconciliationPresent || !reconciliationValid || reconciliation.SchemaVersion != 2 || reconciliation.State != "succeeded" ||
+		!terminalPresent || !terminalValid || terminal.Status != "terminal_unprovable" || !createPresent || !createValid || createBudget != confirmedNormalLaunchMutationBudget() ||
+		!cvmPresent || !cvmValid || cvmBudget != reservedNormalLaunchMutationBudget() || nodePresent || !nodeValid || stored[0].Status != "succeeded" {
+		t.Fatalf("stored=%#v err=%v ownership=%#v ownershipErr=%v binding=%#v reconciliation=%#v terminal=%#v provider=%#v kubernetes=%d",
+			stored, err, finalOwnership, ownershipErr, binding, reconciliation, terminal, provider, kubernetesMutations)
 	}
 }
 

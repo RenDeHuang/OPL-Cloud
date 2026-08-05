@@ -612,21 +612,28 @@ contract or select the SKU for a customer launch.
   persisted on the launch may replay after expiry. Lease takeover keeps the same
   execution/run identity, and a stale holder cannot finalize after its token has
   been fenced out.
-- One production-specific reconciliation generation is permitted only inside
-  Fabric's canonical `ClaimComputeRecovery` owner when the persisted binding's
-  `requestHash` is the sole primitive mismatch. The original compute operation,
-  Launch, target hash, allocation plan, quarantined ComputeAllocation,
-  quarantined MachineOwnership, Tencent CVM, TKE Machine, Kubernetes Node,
-  NodePool, SKU, Zone, prepaid/manual-renew deadline, and storage-not-started
-  truth must all match uniquely. The preserved ledger must remain exactly
-  `observed/provider_describe`, `cvm_tag_readback/provider_error`, CVM
-  attempted/confirmed/unknown `1/0/1` with only `opl_account_id` missing, and
-  zero Node attempts. A PostgreSQL CAS appends versioned reconciliation
-  provenance without rewriting the old binding or unknown ledger. That
-  provenance is consumed only by the original Claim path, permits zero Tencent
-  writes and at most one Node patch, and remains fail-closed for zero/multiple
-  candidates, any additional identity drift, storage activity, CAS conflict, or
-  unknown readback.
+- Request-hash reconciliation is permitted only inside Fabric's canonical
+  `ClaimComputeRecovery` owner when the persisted binding's `requestHash` is the
+  sole primitive mismatch. The original compute operation, Launch, target hash,
+  allocation plan, quarantined ComputeAllocation, quarantined MachineOwnership,
+  Tencent CVM, TKE Machine, Kubernetes Node, NodePool, SKU, Zone,
+  prepaid/manual-renew deadline, and storage-not-started truth must all match
+  uniquely through fresh provider proof. The existing
+  `isolated_request_hash_v1` generation still requires its exact valid manual
+  recovery ledger and a `claim_pending` operation. The
+  `normal_launch_terminal_evidence_v1` generation accepts only a `failed`
+  operation with no manual recovery ledger, a confirmed `compute_create`
+  budget of `1/1/0/max=1`, a `compute_claim_cvm` budget of
+  `1/0/1/max=1`, no Node attempt budget, and matching
+  `compute_claim_cvm/terminal_unprovable` evidence bound to the same operation,
+  binding, allocation, ownership, and resource identity. A PostgreSQL CAS
+  appends versioned reconciliation provenance and returns the operation to
+  `claim_pending` without rewriting the old binding, historical unknown, stage
+  budgets, or terminal evidence. That provenance is consumed only by the
+  original Claim path, permits zero Tencent writes and at most one Node patch,
+  and remains fail-closed for released ownership, zero/multiple candidates, any
+  additional identity or source-evidence drift, storage activity, CAS conflict,
+  or unknown readback.
 - Production closure requires two independent evidence sets and neither may
   substitute for the other. Acceptance A restores the one exact existing Launch
   with zero additional debit, CVM creation, or Tencent Tag write, at most one Node
