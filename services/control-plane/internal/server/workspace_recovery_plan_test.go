@@ -57,6 +57,161 @@ func recoverableCVMOnlyIdentityEvidence() clients.ComputeClaimIdentityEvidence {
 	}
 }
 
+func requestHashReconciliationIdentityEvidence() clients.ComputeClaimIdentityEvidence {
+	fields := []string{
+		"fabric.operationId", "fabric.operationIdempotencyKey", "fabric.operationRequestHash",
+		"binding.present", "binding.valid", "binding.compatibility", "binding.launchOperationId",
+		"binding.idempotencyKey", "binding.targetHash", "binding.requestHash",
+	}
+	checks := make([]clients.ComputeClaimIdentityCheck, 0, len(fields))
+	for _, field := range fields {
+		check := clients.ComputeClaimIdentityCheck{Field: field, Matches: true, Expected: "exact", Actual: "exact"}
+		if field == "binding.requestHash" {
+			check = clients.ComputeClaimIdentityCheck{
+				Field: field, Matches: false, ExpectedDigest: strings.Repeat("a", 64), ActualDigest: strings.Repeat("b", 64),
+			}
+		}
+		checks = append(checks, check)
+	}
+	return clients.ComputeClaimIdentityEvidence{
+		Checks: checks, BindingClassification: "request-hash-reconciliation", BindingDigest: strings.Repeat("c", 64),
+		MutationLedger: "observed", MutationLedgerOutcome: "unknown", MutationLedgerDigest: strings.Repeat("d", 64),
+		MutationEvidence: &clients.ComputeClaimEvidence{
+			CVM: clients.ComputeClaimMutationEvidence{Attempted: 1, Unknown: 1, Missing: []string{"opl_account_id"}},
+		},
+		FailureStage: "cvm_tag_readback", ProviderErrorClass: "provider_error",
+	}
+}
+
+func TestWorkspaceRecoveryPlanDiagnoseAdmitsOnlyFabricRequestHashReconciliationCandidateWithoutMutation(t *testing.T) {
+	t.Setenv("OPL_RELEASE_SHA", strings.Repeat("a", 40))
+	t.Setenv("OPL_CLOUD_IMAGE", "uswccr.ccs.tencentyun.com/oplcloud/opl-cloud@sha256:"+strings.Repeat("b", 64))
+	fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, "basic")
+	fixture.fabric.computeClaimProof = computeClaimRecoveryProofForLaunch(operation, "unallocated")
+	evidence := requestHashReconciliationIdentityEvidence()
+	useWorkspaceRecoveryPlanIdentityEvidence(t, &fixture, &evidence)
+
+	response := requestWorkspaceRecoveryPlan(t, fixture, http.MethodPost, "/diagnose", map[string]any{"accountId": operation.AccountID})
+	plan := recoveryPlanResponse(t, response)
+	persisted := fixture.operation(t)
+	if response.Code != http.StatusOK || plan.Status != "diagnosed" || len(plan.Mismatches) != 0 ||
+		persisted.RecoveryPlan == nil || persisted.RecoveryPlan.Status != "diagnosed" || len(fixture.fabric.computeClaimCalls) != 0 ||
+		len(fixture.fabric.storageIDs) != 0 || len(fixture.sub2API.charges) != 1 || len(fixture.fabric.computeIDs) != 1 {
+		t.Fatalf("status=%d plan=%#v operation=%#v claims=%d storage=%d charges=%d computes=%d", response.Code, plan, persisted,
+			len(fixture.fabric.computeClaimCalls), len(fixture.fabric.storageIDs), len(fixture.sub2API.charges), len(fixture.fabric.computeIDs))
+	}
+}
+
+func TestWorkspaceRecoveryPlanRequestHashReconciliationRejectsAnyAdditionalMismatchWithoutMutation(t *testing.T) {
+	tests := map[string]func(*clients.ComputeClaimIdentityEvidence){
+		"wrong missing": func(evidence *clients.ComputeClaimIdentityEvidence) {
+			evidence.MutationEvidence.CVM.Missing = []string{"opl_account_id", "opl_workspace_id"}
+		},
+		"wrong failure stage": func(evidence *clients.ComputeClaimIdentityEvidence) {
+			evidence.FailureStage = "cvm_final_readback"
+		},
+		"wrong provider class": func(evidence *clients.ComputeClaimIdentityEvidence) {
+			evidence.ProviderErrorClass = "readback_mismatch"
+		},
+		"target mismatch": func(evidence *clients.ComputeClaimIdentityEvidence) {
+			evidence.Checks[8].Matches = false
+			evidence.Checks[8].ExpectedDigest = strings.Repeat("e", 64)
+			evidence.Checks[8].ActualDigest = strings.Repeat("f", 64)
+		},
+		"check order": func(evidence *clients.ComputeClaimIdentityEvidence) {
+			evidence.Checks[7], evidence.Checks[8] = evidence.Checks[8], evidence.Checks[7]
+		},
+		"check missing": func(evidence *clients.ComputeClaimIdentityEvidence) {
+			evidence.Checks = evidence.Checks[:len(evidence.Checks)-1]
+		},
+		"invalid digest": func(evidence *clients.ComputeClaimIdentityEvidence) {
+			evidence.Checks[9].ActualDigest = "invalid"
+		},
+		"equal digest": func(evidence *clients.ComputeClaimIdentityEvidence) {
+			evidence.Checks[9].ActualDigest = evidence.Checks[9].ExpectedDigest
+		},
+	}
+	for name, mutate := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("OPL_RELEASE_SHA", strings.Repeat("a", 40))
+			t.Setenv("OPL_CLOUD_IMAGE", "uswccr.ccs.tencentyun.com/oplcloud/opl-cloud@sha256:"+strings.Repeat("b", 64))
+			fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, "basic")
+			fixture.fabric.computeClaimProof = computeClaimRecoveryProofForLaunch(operation, "unallocated")
+			evidence := requestHashReconciliationIdentityEvidence()
+			mutate(&evidence)
+			useWorkspaceRecoveryPlanIdentityEvidence(t, &fixture, &evidence)
+
+			response := requestWorkspaceRecoveryPlan(t, fixture, http.MethodPost, "/diagnose", map[string]any{"accountId": operation.AccountID})
+			plan := recoveryPlanResponse(t, response)
+			if response.Code != http.StatusOK || plan.Status != "blocked" || len(plan.Mismatches) == 0 || len(fixture.fabric.computeClaimCalls) != 0 ||
+				len(fixture.fabric.storageIDs) != 0 || len(fixture.sub2API.charges) != 1 || len(fixture.fabric.computeIDs) != 1 {
+				t.Fatalf("status=%d plan=%#v claims=%d storage=%d charges=%d computes=%d", response.Code, plan,
+					len(fixture.fabric.computeClaimCalls), len(fixture.fabric.storageIDs), len(fixture.sub2API.charges), len(fixture.fabric.computeIDs))
+			}
+		})
+	}
+}
+
+func TestWorkspaceRecoveryPlanRequestHashReconciliationExecutesOriginalLaunchOnce(t *testing.T) {
+	t.Setenv("OPL_RELEASE_SHA", strings.Repeat("a", 40))
+	t.Setenv("OPL_CLOUD_IMAGE", "uswccr.ccs.tencentyun.com/oplcloud/opl-cloud@sha256:"+strings.Repeat("b", 64))
+	fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, "basic")
+	fixture.fabric.computeClaimProof = computeClaimRecoveryProofForLaunch(operation, "unallocated")
+	claimResult := computeClaimRecoveryProofForLaunch(operation, "target_owned")
+	claimResult.KubernetesMutationCount = 1
+	claimResult.Evidence = &clients.ComputeClaimEvidence{
+		Node: clients.ComputeClaimMutationEvidence{Attempted: 1, Confirmed: 1},
+	}
+	fixture.fabric.computeClaimResult = &claimResult
+	configureWorkspaceLaunchFulfillment(t, fixture)
+	configureWorkspaceComputeClaimReadback(fixture, operation)
+	evidence := requestHashReconciliationIdentityEvidence()
+	useWorkspaceRecoveryPlanIdentityEvidence(t, &fixture, &evidence)
+
+	diagnosed := recoveryPlanResponse(t, requestWorkspaceRecoveryPlan(t, fixture, http.MethodPost, "/diagnose", map[string]any{"accountId": operation.AccountID}))
+	if diagnosed.Status != "diagnosed" || diagnosed.OperationID != operation.ID || len(diagnosed.Mismatches) != 0 {
+		t.Fatalf("diagnosed plan=%#v", diagnosed)
+	}
+	read := recoveryPlanResponse(t, requestWorkspaceRecoveryPlan(t, fixture, http.MethodGet, "", nil))
+	if read.PlanID != diagnosed.PlanID || read.PlanDigest != diagnosed.PlanDigest || read.OperationID != operation.ID {
+		t.Fatalf("read plan=%#v diagnosed=%#v", read, diagnosed)
+	}
+	validated := recoveryPlanResponse(t, requestWorkspaceRecoveryPlan(t, fixture, http.MethodPost, "/validate", map[string]any{
+		"planId": diagnosed.PlanID, "planDigest": diagnosed.PlanDigest,
+	}))
+	if validated.Status != "validated" || len(validated.Mismatches) != 0 {
+		t.Fatalf("validated plan=%#v", validated)
+	}
+	executeBody := map[string]any{
+		"planId": validated.PlanID, "planDigest": validated.PlanDigest, "decision": "continue", "confirmation": "CONTINUE_RECOVERY_PLAN",
+	}
+	firstResponse := requestWorkspaceRecoveryPlan(t, fixture, http.MethodPost, "/execute", executeBody)
+	first := recoveryPlanResponse(t, firstResponse)
+	if firstResponse.Code != http.StatusOK || first.Status != "completed" || first.ExecutionID == "" || first.RunID == "" || first.URL == "" || first.ReceiptID == "" {
+		t.Fatalf("execute status=%d plan=%#v body=%s", firstResponse.Code, first, firstResponse.Body.String())
+	}
+	current := fixture.operation(t)
+	if current.ID != operation.ID || current.Status != "succeeded" || current.RecoveryExecution == nil || current.RecoveryExecution.ExecutionID != first.ExecutionID ||
+		len(fixture.sub2API.charges) != 1 || len(fixture.fabric.computeIDs) != 1 || len(fixture.fabric.computeClaimCalls) != 1 ||
+		len(fixture.fabric.storageIDs) != 1 || len(fixture.sub2API.refunds) != 0 {
+		t.Fatalf("current=%#v charges=%d computes=%d claims=%d storage=%d refunds=%d", current, len(fixture.sub2API.charges),
+			len(fixture.fabric.computeIDs), len(fixture.fabric.computeClaimCalls), len(fixture.fabric.storageIDs), len(fixture.sub2API.refunds))
+	}
+	if fixture.fabric.computeClaimCalls[0].LaunchOperationID != operation.ID || fixture.fabric.computeClaimCalls[0].ComputeAllocationID != operation.ComputeID ||
+		fixture.fabric.computeClaimCalls[0].StorageVolumeID != operation.StorageID || fixture.fabric.computeClaimKeys[0] != operation.ID+":compute" {
+		t.Fatalf("claim calls=%#v keys=%#v", fixture.fabric.computeClaimCalls, fixture.fabric.computeClaimKeys)
+	}
+
+	secondResponse := requestWorkspaceRecoveryPlan(t, fixture, http.MethodPost, "/execute", executeBody)
+	second := recoveryPlanResponse(t, secondResponse)
+	if secondResponse.Code != http.StatusOK || second.ExecutionID != first.ExecutionID || second.RunID != first.RunID || second.URL != first.URL || second.ReceiptID != first.ReceiptID ||
+		len(fixture.sub2API.charges) != 1 || len(fixture.fabric.computeIDs) != 1 || len(fixture.fabric.computeClaimCalls) != 1 ||
+		len(fixture.fabric.storageIDs) != 1 || len(fixture.sub2API.refunds) != 0 {
+		t.Fatalf("replay status=%d first=%#v second=%#v charges=%d computes=%d claims=%d storage=%d refunds=%d", secondResponse.Code, first, second,
+			len(fixture.sub2API.charges), len(fixture.fabric.computeIDs), len(fixture.fabric.computeClaimCalls), len(fixture.fabric.storageIDs), len(fixture.sub2API.refunds))
+	}
+}
+
 func requestWorkspaceRecoveryPlan(t *testing.T, fixture workspaceLaunchWorkerFixture, method, suffix string, body map[string]any) *httptest.ResponseRecorder {
 	t.Helper()
 	encoded, err := json.Marshal(body)

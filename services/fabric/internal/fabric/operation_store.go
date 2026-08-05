@@ -378,7 +378,7 @@ func (s *MemoryOperationStore) SaveComputeClaimRecovery(_ context.Context, expec
 	defer s.mu.Unlock()
 	if !validComputeClaimRecoveryTransition(expected.Status, next.Status) || !sameComputeClaimRecoveryOperation(expected, next) ||
 		!validComputeClaimRecoveryBindingTransition(expected, next) || !validComputeClaimRecoveryMutationTransition(expected, next) ||
-		!validComputeClaimTerminalTransition(expected, next) {
+		!validComputeClaimRecoveryReconciliationTransition(expected, next) || !validComputeClaimTerminalTransition(expected, next) {
 		return ErrRuntimeOperationNotCurrent
 	}
 	expectedPayload, err := operationPayloadJSON(expected)
@@ -1218,7 +1218,7 @@ func (s *PostgresOperationStore) SaveRuntime(ctx context.Context, operation Fabr
 func (s *PostgresOperationStore) SaveComputeClaimRecovery(ctx context.Context, expected, next FabricOperation) error {
 	if !validComputeClaimRecoveryTransition(expected.Status, next.Status) || !sameComputeClaimRecoveryOperation(expected, next) ||
 		!validComputeClaimRecoveryBindingTransition(expected, next) || !validComputeClaimRecoveryMutationTransition(expected, next) ||
-		!validComputeClaimTerminalTransition(expected, next) {
+		!validComputeClaimRecoveryReconciliationTransition(expected, next) || !validComputeClaimTerminalTransition(expected, next) {
 		return ErrRuntimeOperationNotCurrent
 	}
 	expectedPayloadJSON, err := operationPayloadJSON(expected)

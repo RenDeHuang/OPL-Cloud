@@ -131,7 +131,8 @@ The four implementation owner lanes are Console/Control Plane, Fabric, Gateway i
   labels/taint patch, and the same MachineOwnership on the proved CVM and Node.
   The original compute operation persists the launch ID, idempotency key,
   target hash, and request hash; a missing, malformed, or drifted existing
-  binding fails closed. Exact-key, exact-target replay is idempotent with zero
+  binding fails closed except for the versioned request-hash-only reconciliation
+  below. Exact-key, exact-target replay is idempotent with zero
   incremental external mutation. Sub2API mutations are always zero, Tencent
   mutations are bounded to zero through five, and Kubernetes mutations are
   bounded to zero or one. Ambiguity,
@@ -153,7 +154,8 @@ The four implementation owner lanes are Console/Control Plane, Fabric, Gateway i
   `instance`, `instance_name`, and the four `opl_*` ownership tags; Node
   `missing` accepts only `node_ownership`.
 - The zero-mutation Fabric ledger readback classifies the exact persisted
-  compute binding as `current`, `compute-claim`, `known-legacy`, or `other` and
+  compute binding as `current`, `compute-claim`, `request-hash-reconciliation`,
+  `known-legacy`, or `other` and
   exposes only that class plus a SHA-256 digest. It also projects the persisted
   CVM/Node attempt evidence, failure stage, and provider error class without a
   provider call. `known-legacy` requires the exact historical
@@ -610,6 +612,21 @@ contract or select the SKU for a customer launch.
   persisted on the launch may replay after expiry. Lease takeover keeps the same
   execution/run identity, and a stale holder cannot finalize after its token has
   been fenced out.
+- One production-specific reconciliation generation is permitted only inside
+  Fabric's canonical `ClaimComputeRecovery` owner when the persisted binding's
+  `requestHash` is the sole primitive mismatch. The original compute operation,
+  Launch, target hash, allocation plan, quarantined ComputeAllocation,
+  quarantined MachineOwnership, Tencent CVM, TKE Machine, Kubernetes Node,
+  NodePool, SKU, Zone, prepaid/manual-renew deadline, and storage-not-started
+  truth must all match uniquely. The preserved ledger must remain exactly
+  `observed/provider_describe`, `cvm_tag_readback/provider_error`, CVM
+  attempted/confirmed/unknown `1/0/1` with only `opl_account_id` missing, and
+  zero Node attempts. A PostgreSQL CAS appends versioned reconciliation
+  provenance without rewriting the old binding or unknown ledger. That
+  provenance is consumed only by the original Claim path, permits zero Tencent
+  writes and at most one Node patch, and remains fail-closed for zero/multiple
+  candidates, any additional identity drift, storage activity, CAS conflict, or
+  unknown readback.
 - Production closure requires two independent evidence sets and neither may
   substitute for the other. Acceptance A restores the one exact existing Launch
   with zero additional debit, CVM creation, or Tencent Tag write, at most one Node
