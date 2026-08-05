@@ -983,14 +983,14 @@ func postgresFabricOperationByPoolHead(ctx context.Context, tx *sql.Tx, poolKey 
 			error_code, retryable, compute_pool_key, compute_pool_lease_owner, compute_pool_lease_expires_at,
 			started_at, finished_at, created_at
 		FROM fabric_operations
-		WHERE action = 'create_compute_allocation' AND status = 'started' AND compute_pool_key = $1
+		WHERE action = 'create_compute_allocation' AND status IN ('started', 'claim_pending') AND compute_pool_key = $1
 		ORDER BY created_at, id
 		LIMIT 1`, poolKey)
 	return scanPostgresFabricOperation(row)
 }
 
 func computePoolHeadStatus(status string) bool {
-	return status == "started"
+	return status == "started" || status == "claim_pending"
 }
 
 type postgresRowScanner interface {

@@ -252,45 +252,6 @@ func TestNormalWorkspacePersistedClaimPendingReplayContinuesTargetOwnedCVMWithou
 	}
 }
 
-func TestNormalWorkspaceClaimPendingDoesNotBlockLaterComputeProcurement(t *testing.T) {
-	store := NewMemoryOperationStore()
-	provider := &normalLaunchComputeProvider{}
-	_, earlier := seedNormalWorkspaceComputeClaimPending(t, store, provider, "earlier-manual-review")
-	service := NewServiceWithOperationStore(provider, store)
-	configureFastComputeAllocationPolling(service, time.Millisecond)
-
-	input := ComputeAllocationInput{
-		AccountID: "acct-fresh", WorkspaceID: "workspace-fresh", PackageID: "basic",
-		NodePoolID: earlier.NodePoolID, IdempotencyKey: "workspace-launch-fresh:compute",
-	}
-	created, err := service.CreateComputeAllocation(context.Background(), input)
-	if err != nil {
-		t.Fatal(err)
-	}
-	waitForOperation(t, service, "create_compute_allocation", "compute_allocation", created.ID, "succeeded")
-
-	operations, err := store.List(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	var earlierStatus, freshStatus string
-	for _, operation := range operations {
-		switch operation.ResourceID {
-		case earlier.ID:
-			earlierStatus = operation.Status
-		case created.ID:
-			freshStatus = operation.Status
-		}
-	}
-	if earlierStatus != "claim_pending" || freshStatus != "succeeded" {
-		t.Fatalf("operation states earlier=%q fresh=%q", earlierStatus, freshStatus)
-	}
-	_, createCalls, _, cvmClaimCalls, nodeClaimCalls := provider.automaticContinuationCounts()
-	if createCalls != 1 || cvmClaimCalls != 1 || nodeClaimCalls != 1 {
-		t.Fatalf("fresh provider calls create=%d cvm=%d node=%d, want 1/1/1", createCalls, cvmClaimCalls, nodeClaimCalls)
-	}
-}
-
 func TestNormalWorkspacePersistedClaimPendingReplayConvergesTargetOwnedNodeWithoutPatch(t *testing.T) {
 	store := NewMemoryOperationStore()
 	provider := &normalLaunchComputeProvider{nodeOwned: true}

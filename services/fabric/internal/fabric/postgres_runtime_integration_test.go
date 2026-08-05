@@ -1133,7 +1133,7 @@ func waitForPostgresComputeOperationSucceeded(t *testing.T, ctx context.Context,
 	}
 }
 
-func TestPostgresComputeClaimPendingReleasesFIFOHead(t *testing.T) {
+func TestPostgresComputeClaimPendingKeepsFIFOHead(t *testing.T) {
 	databaseURL := fabricTestDatabaseURL(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -1170,8 +1170,8 @@ func TestPostgresComputeClaimPendingReleasesFIFOHead(t *testing.T) {
 	}
 
 	queued, claimed, err := store.TryClaimComputePoolHead(ctx, second.ID, "np-basic", "lease-second", createdAt.Add(time.Minute), createdAt.Add(2*time.Minute))
-	if err != nil || !claimed || queued.ID != second.ID || queued.Status != "started" || queued.ComputePoolLeaseOwner != "lease-second" {
-		t.Fatalf("claim_pending head did not release allocation queue: queued=%#v claimed=%v err=%v", queued, claimed, err)
+	if err != nil || claimed || queued.ID != first.ID || queued.Status != "claim_pending" {
+		t.Fatalf("claim_pending head was bypassed: queued=%#v claimed=%v err=%v", queued, claimed, err)
 	}
 }
 

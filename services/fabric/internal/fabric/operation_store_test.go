@@ -117,7 +117,7 @@ func TestMemoryOperationStoreComputePoolAdmissionIsFIFOAndFencesExpiredOwner(t *
 	}
 }
 
-func TestMemoryOperationStoreComputeClaimPendingReleasesFIFOHead(t *testing.T) {
+func TestMemoryOperationStoreComputeClaimPendingKeepsFIFOHead(t *testing.T) {
 	ctx := context.Background()
 	store := NewMemoryOperationStore()
 	createdAt := time.Date(2026, 7, 26, 1, 0, 0, 0, time.UTC)
@@ -148,8 +148,8 @@ func TestMemoryOperationStoreComputeClaimPendingReleasesFIFOHead(t *testing.T) {
 	}
 
 	queued, claimed, err := store.TryClaimComputePoolHead(ctx, second.ID, "np-basic", "lease-second", createdAt.Add(time.Minute), createdAt.Add(2*time.Minute))
-	if err != nil || !claimed || queued.ID != second.ID || queued.Status != "started" || queued.ComputePoolLeaseOwner != "lease-second" {
-		t.Fatalf("claim_pending head did not release allocation queue: queued=%#v claimed=%v err=%v", queued, claimed, err)
+	if err != nil || claimed || queued.ID != first.ID || queued.Status != "claim_pending" {
+		t.Fatalf("claim_pending head was bypassed: queued=%#v claimed=%v err=%v", queued, claimed, err)
 	}
 }
 

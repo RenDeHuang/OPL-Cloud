@@ -96,11 +96,8 @@ The four implementation owner lanes are Console/Control Plane, Fabric, Gateway i
   path NodePool creation are forbidden.
 - Fabric persists a FIFO admission queue per exact NodePool. A short PostgreSQL
   transaction lock orders admission only; no database connection is held during
-  provider work. Only the persisted `started` head may prepare, scale, and
-  bounded-poll. Once its one scale is confirmed and it enters the separately
-  idempotent `claim_pending` continuation, it leaves the allocation queue without
-  changing or retrying that claim; a later `started` operation therefore cannot
-  be blocked indefinitely by an operator-owned claim review. A fenced short execution lease permits crash recovery without
+  provider work. Only the persisted `started` head may prepare, scale, bounded-
+  poll, or claim. A fenced short execution lease permits crash recovery without
   allowing a later Workspace to pass the head, while different NodePools run in
   parallel. Before Tencent mutation the head persists the current replica
   baseline, the absolute `N+1` target, and the complete before-machine set.
