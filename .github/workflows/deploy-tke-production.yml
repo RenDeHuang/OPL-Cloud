@@ -172,6 +172,11 @@ jobs:
             // GET /fabric/compute-allocations/{id}
             const allocationRead = await get(`/fabric/compute-allocations/${encodeURIComponent(resourceId)}`);
             const allocation = allocationRead.status === 200 && allocationRead.body && typeof allocationRead.body === "object" ? allocationRead.body : null;
+            // GET /fabric/machine-ownerships/{resourceId}
+            const ownershipRead = await get(`/fabric/machine-ownerships/${encodeURIComponent(resourceId)}`);
+            const ownership = ownershipRead.status === 200 && ownershipRead.body && typeof ownershipRead.body === "object" ? ownershipRead.body : null;
+            // GET /fabric/compute-pool-head?nodePoolId={id}
+            const poolHeadRead = await get(`/fabric/compute-pool-head?nodePoolId=${encodeURIComponent(nodePoolId)}`);
             const operationTime = Date.parse(String(operation.createdAt || operation.startedAt || ""));
             const operationStatus = safeToken(operation.status);
             const terminal = ["succeeded", "failed", "claim_pending", "rejected"].includes(operationStatus);
@@ -179,11 +184,29 @@ jobs:
             const queueAhead = operationsRead.body.filter((item) => item?.action === "create_compute_allocation" && ["started", "claim_pending"].includes(item?.status) &&
               String(item?.redactedProviderPayload?.allocationPlan?.nodePoolId || item?.redactedProviderPayload?.resource?.nodePoolId || "") === nodePoolId && Date.parse(String(item.createdAt || "")) < operationTime);
             const queueAheadState = queueAhead.length === 0 ? "none" : queueAhead.length === 1 ? safeToken(queueAhead[0].status) : "multiple";
-            const effective = allocation || operation?.redactedProviderPayload?.resource || {};
+            const operationResource = operation?.redactedProviderPayload?.resource || {};
+            const instanceId = String(allocation?.cvmInstanceId || allocation?.instanceId || "");
+            const allocationMatchesOperation = Boolean(allocation) && allocation.id === resourceId && operation.idempotencyKey === key &&
+              allocation.accountId === operation.accountId && allocation.workspaceId === operation.workspaceId && allocation.nodePoolId === nodePoolId &&
+              (!operationResource.packageId || allocation.packageId === operationResource.packageId);
+            const ownershipMatchesAllocation = Boolean(ownership) && Boolean(allocation) && ownership?.resourceId === allocation.id &&
+              ownership?.accountId === allocation.accountId && ownership?.workspaceId === allocation.workspaceId && ownership?.packageId === allocation.packageId &&
+              ownership?.nodePoolId === allocation.nodePoolId && ownership?.machineId === allocation.machineName && ownership?.instanceId === instanceId &&
+              ownership?.nodeName === allocation.nodeName;
+            const poolHeadReceived = poolHeadRead.status === 200 && poolHeadRead.body && typeof poolHeadRead.body === "object" && poolHeadRead.body.schemaVersion === 1;
+            const poolHeadStatus = safeToken(poolHeadRead.body?.status);
+            const poolHeadContinuationState = safeToken(poolHeadRead.body?.continuationState);
+            const poolHeadFailureStage = safeToken(poolHeadRead.body?.failureStage);
+            const poolHeadErrorCode = safeToken(poolHeadRead.body?.errorCode);
+            const poolHeadAuthoritative = poolHeadReceived && ![poolHeadStatus, poolHeadContinuationState, poolHeadFailureStage, poolHeadErrorCode].includes("unknown");
+            const bindingConfirmed = allocationMatchesOperation && ownershipMatchesAllocation && poolHeadAuthoritative;
             artifact = {
               schemaVersion: 1,
-              status: "succeeded",
-              errorCode: "none",
+              status: bindingConfirmed ? "succeeded" : "blocked",
+              errorCode: bindingConfirmed ? "none" : !allocation ? allocationRead.status === 404 ? "allocation_absent" : "allocation_readback_failed" :
+                !ownership ? ownershipRead.status === 404 ? "machine_ownership_absent" : "machine_ownership_readback_failed" :
+                !allocationMatchesOperation ? "allocation_operation_binding_mismatch" : !ownershipMatchesAllocation ? "machine_ownership_binding_mismatch" :
+                !poolHeadReceived ? "pool_head_readback_failed" : "pool_head_unknown",
               operation: {
                 matchCount: 1,
                 identitySha256: digest(`${operation.id || ""}\0${operation.requestHash || ""}\0${resourceId}`),
@@ -192,25 +215,52 @@ jobs:
                 errorCode: safeToken(operation.errorCode, "none"),
                 queueAheadCount: queueAhead.length,
                 queueAheadState,
-                computeCreate: budget(operation?.redactedProviderPayload?.normalLaunchMutationBudget?.compute_create)
+                computeCreate: budget(operation?.redactedProviderPayload?.normalLaunchMutationBudget?.compute_create),
+                computeClaimCvm: budget(operation?.redactedProviderPayload?.normalLaunchMutationBudget?.compute_claim_cvm),
+                computeClaimNode: budget(operation?.redactedProviderPayload?.normalLaunchMutationBudget?.compute_claim_node)
               },
               allocation: {
                 readback: allocation ? "received" : allocationRead.status === 404 ? "absent" : "unknown",
-                status: safeToken(effective.status),
-                machineIdentity: effective.machineName ? "present" : "missing",
-                cvmIdentity: effective.cvmInstanceId || effective.instanceId ? "present" : "missing",
-                nodeIdentity: effective.nodeName ? "present" : "missing"
+                status: safeToken(allocation?.status),
+                machineIdentity: allocation?.machineName ? "present" : "missing",
+                cvmIdentity: instanceId ? "present" : "missing",
+                nodeIdentity: allocation?.nodeName ? "present" : "missing"
               },
-              runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
+              machineOwnership: {
+                readback: ownership ? "received" : ownershipRead.status === 404 ? "absent" : "unknown",
+                status: safeToken(ownership?.status)
+              },
+              binding: {
+                status: bindingConfirmed ? "confirmed" : !allocation || !ownership ? "incomplete" : "mismatch",
+                allocationMatchesOperation,
+                ownershipMatchesAllocation,
+                instanceIdentitySha256: digest(instanceId || "unavailable"),
+                customerBindingSha256: digest(`${operation.accountId || ""}\0${operation.workspaceId || ""}`),
+                nodePoolIdentitySha256: digest(nodePoolId),
+                machineIdentitySha256: digest(String(allocation?.machineName || "unavailable")),
+                nodeIdentitySha256: digest(String(allocation?.nodeName || "unavailable"))
+              },
+              poolHead: {
+                readback: poolHeadReceived ? "received" : poolHeadRead.status === 404 ? "absent" : "unknown",
+                authoritative: poolHeadAuthoritative,
+                status: poolHeadStatus,
+                continuationState: poolHeadContinuationState,
+                failureStage: poolHeadFailureStage,
+                errorCode: poolHeadErrorCode
+              },
+              runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0, fabric: 0 }
             };
           } catch (error) {
             artifact = {
               schemaVersion: 1,
               status: "blocked",
               errorCode: safeToken(error?.message, "fresh_compute_readback_failed"),
-              operation: { matchCount: 0, identitySha256: digest("unavailable"), status: "unknown", ageClass: "unknown", errorCode: "unknown", queueAheadCount: 0, queueAheadState: "unknown", computeCreate: budget(undefined) },
+              operation: { matchCount: 0, identitySha256: digest("unavailable"), status: "unknown", ageClass: "unknown", errorCode: "unknown", queueAheadCount: 0, queueAheadState: "unknown", computeCreate: budget(undefined), computeClaimCvm: budget(undefined), computeClaimNode: budget(undefined) },
               allocation: { readback: "unknown", status: "unknown", machineIdentity: "unknown", cvmIdentity: "unknown", nodeIdentity: "unknown" },
-              runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
+              machineOwnership: { readback: "unknown", status: "unknown" },
+              binding: { status: "unknown", allocationMatchesOperation: false, ownershipMatchesAllocation: false, instanceIdentitySha256: digest("unavailable"), customerBindingSha256: digest("unavailable"), nodePoolIdentitySha256: digest("unavailable"), machineIdentitySha256: digest("unavailable"), nodeIdentitySha256: digest("unavailable") },
+              poolHead: { readback: "unknown", authoritative: false, status: "unknown", continuationState: "unknown", failureStage: "unknown", errorCode: "unknown" },
+              runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0, fabric: 0 }
             };
           }
           const serialized = JSON.stringify(artifact);
