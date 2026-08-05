@@ -1651,6 +1651,7 @@ test("targeted Fresh compute diagnostics prove the exact allocation and MachineO
   for (const field of [
     "allocationMatchesOperation",
     "ownershipMatchesAllocation",
+    "productionReleaseIdentitySha256",
     "instanceIdentitySha256",
     "customerBindingSha256",
     "nodePoolIdentitySha256",
@@ -1661,6 +1662,7 @@ test("targeted Fresh compute diagnostics prove the exact allocation and MachineO
     "poolHeadAuthoritative",
     "poolHead"
   ]) assert.match(readback, new RegExp(field));
+  assert.match(readback, /get configmap opl-cloud-config -o jsonpath=.*OPL_RELEASE_SHA/);
   for (const identityField of ["resourceId", "accountId", "workspaceId", "packageId", "nodePoolId", "machineId", "instanceId", "nodeName"]) {
     assert.match(readback, new RegExp(`ownership\\?\\.${identityField}`));
   }
@@ -1668,7 +1670,7 @@ test("targeted Fresh compute diagnostics prove the exact allocation and MachineO
   assert.doesNotMatch(readback, /method:\s*["']POST["']|\b(?:kubectl|curl)\s+(?:apply|delete|patch|scale)\b/);
   assert.deepEqual(contract.deployWorkflow.freshComputeReadback, {
     authority: "fabric_operations_allocation_machine_ownership_and_pool_head_get_only",
-    binding: ["launch_operation", "compute_allocation", "customer", "workspace", "package", "node_pool", "machine", "instance", "node"],
+    binding: ["production_release", "launch_operation", "compute_allocation", "customer", "workspace", "package", "node_pool", "machine", "instance", "node"],
     mutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0, fabric: 0 },
     artifact: "redacted_digests_statuses_and_match_booleans_only"
   });

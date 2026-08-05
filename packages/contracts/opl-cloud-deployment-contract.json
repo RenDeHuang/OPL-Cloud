@@ -156,7 +156,7 @@
     ],
     "freshComputeReadback": {
       "authority": "fabric_operations_allocation_machine_ownership_and_pool_head_get_only",
-      "binding": ["launch_operation", "compute_allocation", "customer", "workspace", "package", "node_pool", "machine", "instance", "node"],
+      "binding": ["production_release", "launch_operation", "compute_allocation", "customer", "workspace", "package", "node_pool", "machine", "instance", "node"],
       "mutationCounts": {"sub2api": 0, "tencent": 0, "kubernetes": 0, "fabric": 0},
       "artifact": "redacted_digests_statuses_and_match_booleans_only"
     },
