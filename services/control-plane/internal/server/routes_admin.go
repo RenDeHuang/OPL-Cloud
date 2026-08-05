@@ -41,7 +41,7 @@ func registerAdminRoutes(mux *http.ServeMux, app *controlPlaneServer, service *c
 		}
 		plan, err := app.diagnoseWorkspaceRecoveryPlan(r.Context(), service, accountID, operationID)
 		if err != nil {
-			writeError(w, http.StatusConflict, "workspace_recovery_plan_unavailable")
+			writeJSON(w, http.StatusConflict, workspaceRecoveryPlanFailureProjection(err))
 			return
 		}
 		writeJSON(w, http.StatusOK, workspaceRecoveryPlanHTTPProjection(plan))

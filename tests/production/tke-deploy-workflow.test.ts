@@ -1150,6 +1150,7 @@ test("Acceptance B account preparation is a production-only prepare gate with is
 
 test("server-owned Recovery Plan validation is a zero-mutation production mode", async () => {
   const workflow = await readWorkflow(".github/workflows/production-basic-customer-operation.yml");
+  const validatorSource = await readFile(repoFile("tools/production-live-qa.ts"), "utf8");
   const inputs = workflow.on.workflow_dispatch.inputs;
   const validate = workflowJob(workflow, "recovery-plan-operation");
   const runs = serializedRuns(validate);
@@ -1170,8 +1171,9 @@ test("server-owned Recovery Plan validation is a zero-mutation production mode",
   assert.match(runs, /--plan-id/);
   assert.match(runs, /--plan-digest/);
   assert.match(runs, /grep -Fq -- '--recovery-plan-validate' tools\/production-live-qa\.ts/);
-  assert.match(runs, /runnerDirectMutationCounts/);
-  assert.match(runs, /mismatches/);
+  assert.match(runs, /validateProductionWorkspaceRecoveryPlanArtifact/);
+  assert.match(validatorSource, /runnerDirectMutationCounts/);
+  assert.match(validatorSource, /mismatches/);
   assert.doesNotMatch(runs, /get secret opl-cloud-internal-service|KUBECONFIG|target_json|approval_json|compute-claim-recovery\/claim|--compute-claim-recover|ClaimComputeRecovery|create_original_cbs|reuse_original_cbs/i);
   assert.doesNotMatch(JSON.stringify(validate), /TENCENTCLOUD|OPL_INTERNAL_SERVICE_TOKEN|OPL_BASIC_CANARY_CUSTOMER_PASSWORD/);
 });
@@ -1179,6 +1181,7 @@ test("server-owned Recovery Plan validation is a zero-mutation production mode",
 test("server-owned Recovery Plan diagnosis and execution are exact original-order production modes", async () => {
   const workflow = await readWorkflow(".github/workflows/production-basic-customer-operation.yml");
   const deployment = await readJson(deploymentContractPath);
+  const validatorSource = await readFile(repoFile("tools/production-live-qa.ts"), "utf8");
   const inputs = workflow.on.workflow_dispatch.inputs;
   const operation = workflowJob(workflow, "recovery-plan-operation");
   const runs = serializedRuns(operation);
@@ -1202,13 +1205,17 @@ test("server-owned Recovery Plan diagnosis and execution are exact original-orde
   assert.match(runs, /grep -Fq -- '--recovery-plan-validate' tools\/production-live-qa\.ts/);
   assert.match(runs, /grep -Fq -- '--recovery-plan-execute' tools\/production-live-qa\.ts/);
   assert.match(runs, /CONTINUE_RECOVERY_PLAN/);
-  assert.match(runs, /runnerDirectMutationCounts/);
-  assert.match(runs, /controlPlaneExecutionMutationCounts/);
   assert.equal(stepsByName(operation).get("Require exact redacted Recovery Plan evidence")?.if, "always()");
-  assert.match(runs, /successorGate/);
   assert.match(runs, /validBlockedDiagnose/);
-  assert.match(runs, /persistedMutationState/);
-  assert.match(runs, /fabricLedgerState/);
+  assert.match(runs, /validateProductionWorkspaceRecoveryPlanArtifact/);
+  assert.match(runs, /mode === "compute_claim_validate" \? "recovery_plan_validate" : mode/);
+  assert.match(runs, /production-live-qa\.ts/);
+  assert.doesNotMatch(runs, /const common = result\?\.schemaVersion/);
+  assert.match(validatorSource, /runnerDirectMutationCounts/);
+  assert.match(validatorSource, /controlPlaneExecutionMutationCounts/);
+  assert.match(validatorSource, /successorGate/);
+  assert.match(validatorSource, /persistedMutationState/);
+  assert.match(validatorSource, /fabricLedgerState/);
   assert.doesNotMatch(runs, /--basic-customer-canary|allow-workspace-purchase|allow-wallet-recharge|allow-account-provision|\/api\/workspace-launches/);
   assert.deepEqual(deployment.productionWorkspaceRecoveryPlan.workflowModes, [
     "recovery_plan_diagnose",
@@ -1224,6 +1231,10 @@ test("server-owned Recovery Plan diagnosis and execution are exact original-orde
     "applicable", "allowed", "planState", "executionState", "completionState", "leaseState",
     "identityState", "persistedMutationState", "fabricLedgerState"
   ]);
+  assert.deepEqual(deployment.productionWorkspaceRecoveryPlan.artifact.failureFields, [
+    "failureStage", "readbackError", "errorCode"
+  ]);
+  assert.equal(deployment.productionWorkspaceRecoveryPlan.artifact.validator, "tools/production-live-qa.ts#validateProductionWorkspaceRecoveryPlanArtifact");
 });
 
 test("Fabric recovery ledger readback is artifact-bound, read-only, and cannot replay Diagnose or claim", async () => {
