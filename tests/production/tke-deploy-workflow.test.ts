@@ -1293,7 +1293,7 @@ test("Fabric recovery ledger readback is artifact-bound, read-only, and cannot r
   assert.match(runs, /mutationLedgerOutcome/);
   assert.match(runs, /bindingClassification/);
   assert.match(runs, /bindingDigest/);
-  assert.match(runs, /current.*compute-claim.*known-legacy.*other/s);
+  assert.match(runs, /current.*compute-claim.*request-hash-reconciliation.*known-legacy.*other/s);
   for (const field of ["attempted", "confirmed", "unknown", "missing", "failureStage", "providerErrorClass"]) {
     assert.match(runs, new RegExp(field));
   }
@@ -1328,7 +1328,8 @@ test("Fabric recovery ledger readback is artifact-bound, read-only, and cannot r
     providerCalls: 0,
     requiredMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
     artifactSchemaVersion: 2,
-    bindingClassifications: ["current", "compute-claim", "known-legacy", "other"],
+    bindingClassifications: ["current", "compute-claim", "request-hash-reconciliation", "known-legacy", "other"],
+    requestHashReconciliation: "readback_schema_only_never_recoverable_cvm_only_or_workflow_mutation_authority",
     providerMutationFields: ["attempted", "confirmed", "unknown", "missing", "failureStage", "providerErrorClass"],
     recoverableCVMOnly: "recognized_current_or_compute_claim_binding_and_cvm_attempted_positive_fully_confirmed_unknown_zero_missing_empty_and_node_attempted_zero",
     knownLegacy: "recovery_exec_lowerhex20_old_request_hash_exact_match_classification_only_operator_compensation_required_never_binding_takeover",

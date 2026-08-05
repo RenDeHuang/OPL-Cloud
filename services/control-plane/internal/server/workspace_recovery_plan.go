@@ -479,12 +479,47 @@ func workspaceComputeClaimPlanIdentityEvidence(operation workspaceLaunchOperatio
 		workspaceComputeClaimIdentityAllowedCheck("provider.cvmOwnership", "recoverable_or_target_owned", proof.CVMOwnershipState, "recoverable", "target_owned"),
 	}
 	checks = append(checks, evidence.Checks...)
-	bindingAuthority := evidence.BindingClassification == "current" || evidence.BindingClassification == "compute-claim"
-	bindingAuthority = bindingAuthority && computeClaimApprovalDigestPattern.MatchString(evidence.BindingDigest)
-	checks = append(checks, workspaceComputeClaimIdentityCheck(
-		"fabric.bindingRecoveryAuthority", "current_or_compute_claim", map[bool]string{true: "current_or_compute_claim", false: "classification_only"}[bindingAuthority],
-	))
+	if workspaceComputeClaimRequestHashReconciliation(evidence) {
+		checks = append(checks, workspaceComputeClaimIdentityCheck(
+			"fabric.bindingReconciliationCandidate", "request_hash_only_candidate", "request_hash_only_candidate",
+		))
+	} else {
+		bindingAuthority := (evidence.BindingClassification == "current" || evidence.BindingClassification == "compute-claim") &&
+			computeClaimApprovalDigestPattern.MatchString(evidence.BindingDigest)
+		checks = append(checks, workspaceComputeClaimIdentityCheck(
+			"fabric.bindingRecoveryAuthority", "current_or_compute_claim",
+			map[bool]string{true: "current_or_compute_claim", false: "classification_only"}[bindingAuthority],
+		))
+	}
 	return checks
+}
+
+func workspaceComputeClaimRequestHashReconciliation(evidence *clients.ComputeClaimIdentityEvidence) bool {
+	if evidence == nil || evidence.BindingClassification != "request-hash-reconciliation" ||
+		!computeClaimApprovalDigestPattern.MatchString(evidence.BindingDigest) || evidence.MutationLedger != "observed" ||
+		evidence.MutationLedgerOutcome != "unknown" || !computeClaimApprovalDigestPattern.MatchString(evidence.MutationLedgerDigest) ||
+		evidence.MutationEvidence == nil || evidence.FailureStage != "cvm_tag_readback" || evidence.ProviderErrorClass != "provider_error" {
+		return false
+	}
+	expectedFields := []string{
+		"fabric.operationId", "fabric.operationIdempotencyKey", "fabric.operationRequestHash",
+		"binding.present", "binding.valid", "binding.compatibility", "binding.launchOperationId",
+		"binding.idempotencyKey", "binding.targetHash", "binding.requestHash",
+	}
+	if len(evidence.Checks) != len(expectedFields) {
+		return false
+	}
+	for index, field := range expectedFields {
+		check := evidence.Checks[index]
+		if check.Field != field || field != "binding.requestHash" && !check.Matches ||
+			field == "binding.requestHash" && (check.Matches || !computeClaimApprovalDigestPattern.MatchString(check.ExpectedDigest) ||
+				!computeClaimApprovalDigestPattern.MatchString(check.ActualDigest) || check.ExpectedDigest == check.ActualDigest) {
+			return false
+		}
+	}
+	cvm, node := evidence.MutationEvidence.CVM, evidence.MutationEvidence.Node
+	return cvm.Attempted == 1 && cvm.Confirmed == 0 && cvm.Unknown == 1 && len(cvm.Missing) == 1 && cvm.Missing[0] == "opl_account_id" &&
+		node.Attempted == 0 && node.Confirmed == 0 && node.Unknown == 0 && len(node.Missing) == 0
 }
 
 func workspaceComputeClaimRecoverableCVMOnly(evidence *clients.ComputeClaimIdentityEvidence) bool {
@@ -539,7 +574,11 @@ func newWorkspaceComputeClaimRecoveryPlan(operation workspaceLaunchOperation, in
 		AllowedDecisions: []string{"continue", "escalate"}, MutationCounts: workspaceRecoveryMutationCounts{},
 	}
 	plan.IdentityEvidence = workspaceComputeClaimPlanIdentityEvidence(operation, input, proof, evidence)
+	requestHashReconciliation := workspaceComputeClaimRequestHashReconciliation(evidence)
 	for _, check := range plan.IdentityEvidence {
+		if requestHashReconciliation && check.Field == "binding.requestHash" {
+			continue
+		}
 		if !check.Matches {
 			plan.Status = "blocked"
 			plan.Mismatches = append(plan.Mismatches, workspaceRecoveryPlanMismatchFromCheck(check))

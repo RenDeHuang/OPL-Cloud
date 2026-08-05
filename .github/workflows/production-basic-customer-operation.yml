@@ -2041,7 +2041,7 @@ jobs:
               typeof check?.actual === "string" && check.actual.length > 0 && check.actual === check.actual.trim() &&
               check.matches === (check.expected === check.actual);
           });
-          const bindingClassifications = new Set(["current", "compute-claim", "known-legacy", "other"]);
+          const bindingClassifications = new Set(["current", "compute-claim", "request-hash-reconciliation", "known-legacy", "other"]);
           const bindingClassification = bindingClassifications.has(raw?.bindingClassification) ? raw.bindingClassification : "other";
           const bindingDigest = /^[a-f0-9]{64}$/.test(String(raw?.bindingDigest || "")) ? `sha256:${raw.bindingDigest}` : `sha256:${"0".repeat(64)}`;
           const operationIdentityValid = checksSchemaValid && checks.slice(0, 5).every((check) => check.matches === true);
@@ -2153,7 +2153,7 @@ jobs:
             ["none", "fabric_operation_identity_invalid", "binding_known_legacy", "binding_other", "mutation_evidence_unavailable", "cvm_unconfirmed", "node_attempted", "ledger_state_not_observed", "ledger_outcome_not_nonzero"].includes(artifact?.compensationReason) &&
             /^[1-9][0-9]*$/.test(String(artifact?.source?.runId || "")) && /^[1-9][0-9]*$/.test(String(artifact?.source?.artifactId || "")) &&
             /^sha256:[a-f0-9]{64}$/.test(String(artifact?.source?.artifactDigest || "")) && /^[a-f0-9]{40}$/.test(String(artifact?.source?.headSha || "")) &&
-            ["current", "compute-claim", "known-legacy", "other"].includes(artifact?.binding?.classification) && bindingDigestValid &&
+            ["current", "compute-claim", "request-hash-reconciliation", "known-legacy", "other"].includes(artifact?.binding?.classification) && bindingDigestValid &&
             Array.isArray(artifact?.identityChecks) && artifact.identityChecks.length === expectedFields.length &&
             expectedFields.every((field, index) => artifact.identityChecks[index]?.field === field && typeof artifact.identityChecks[index]?.matches === "boolean") &&
             ["absent", "reserved", "node_reserved", "observed", "invalid"].includes(artifact?.mutationLedger) &&

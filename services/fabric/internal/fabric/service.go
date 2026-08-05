@@ -894,17 +894,24 @@ func (s *Service) ClaimComputeRecovery(ctx context.Context, input ComputeClaimRe
 		binding := newComputeClaimRecoveryBinding(input)
 		persistedBinding, bindingPresent, bindingValid := decodeComputeClaimRecoveryBinding(operation)
 		mutationLedger, mutationPresent, mutationValid := decodeComputeClaimRecoveryMutation(operation)
+		reconciliation, reconciliationPresent, reconciliationValid := decodeComputeClaimRecoveryReconciliation(operation)
 		historicalBinding := bindingPresent && bindingValid && persistedBinding != binding &&
 			persistedBinding == historicalComputeClaimRecoveryBinding(input)
+		requestHashBinding := isolatedRequestHashReconciliationBinding(operation, input, persistedBinding, bindingPresent, bindingValid)
+		reconciliationCandidate := requestHashBinding && operation.Status == "claim_pending" && allocation.Status == "quarantined" && ownership.Status == "quarantined"
+		reconciliationReplay := requestHashBinding && reconciliationPresent && reconciliationValid && mutationPresent && mutationValid &&
+			computeClaimRecoveryReconciliationMatches(reconciliation, operation, input, persistedBinding, mutationLedger)
+		requestHashReconciliation := reconciliationCandidate || reconciliationReplay
 		historicalWithoutLedger := historicalBinding && !mutationPresent
 		historicalNodeContinuation := historicalBinding && mutationPresent && mutationValid && confirmedCVMOnlyObservedComputeClaimRecoveryMutation(mutationLedger)
 		historicalReservedReplay := historicalBinding && mutationPresent && mutationValid && validNodeReservedComputeClaimRecoveryMutation(mutationLedger)
 		historicalCompletedReplay := historicalBinding && mutationPresent && mutationValid && successfulNodeClaimRecoveryMutation(mutationLedger) && ownership.Status == "active"
-		if bindingPresent && (!bindingValid || persistedBinding != binding && !historicalWithoutLedger && !historicalNodeContinuation && !historicalReservedReplay && !historicalCompletedReplay) {
+		if bindingPresent && (!bindingValid || persistedBinding != binding && !historicalWithoutLedger && !historicalNodeContinuation && !historicalReservedReplay && !historicalCompletedReplay &&
+			!requestHashReconciliation) {
 			result.Eligible, result.Reason = false, "identity_mismatch"
 			return ErrComputeClaimRecoveryIdempotencyConflict
 		}
-		if mutationPresent && (!mutationValid || !bindingPresent) {
+		if mutationPresent && (!mutationValid || !bindingPresent) || reconciliationPresent && (!reconciliationValid || !reconciliationReplay) {
 			result.Eligible, result.Reason = false, "identity_mismatch"
 			return ErrComputeClaimRecoveryIdempotencyConflict
 		}
@@ -922,6 +929,27 @@ func (s *Service) ClaimComputeRecovery(ctx context.Context, input ComputeClaimRe
 			input.InstanceType != proof.InstanceType || input.Zone != proof.Zone || input.PoolID != proof.PoolID {
 			result.Eligible, result.Reason = false, "identity_mismatch"
 			return fmt.Errorf("%w: identity_mismatch", ErrComputeClaimRecoveryUnavailable)
+		}
+		if requestHashReconciliation {
+			if proof.CVMOwnershipState != "target_owned" || (proof.NodeOwnershipState != "unallocated" && proof.NodeOwnershipState != "target_owned") {
+				result.Eligible, result.Reason = false, "identity_mismatch"
+				return fmt.Errorf("%w: identity_mismatch", ErrComputeClaimRecoveryUnavailable)
+			}
+			expectedReconciliation := newComputeClaimRecoveryReconciliation(operation, allocation, plan, ownership, input, proof, persistedBinding, mutationLedger)
+			if reconciliationPresent {
+				if reconciliation.AuthorityDigest != expectedReconciliation.AuthorityDigest {
+					result.Eligible, result.Reason = false, "identity_mismatch"
+					return ErrComputeClaimRecoveryIdempotencyConflict
+				}
+			} else {
+				verified := operation
+				verified.RedactedProviderPayload = withComputeClaimRecoveryReconciliation(verified.RedactedProviderPayload, expectedReconciliation)
+				if err := s.operations.SaveComputeClaimRecovery(lockCtx, operation, verified); err != nil {
+					result.Eligible, result.Reason = false, "local_identity"
+					return err
+				}
+				operation, reconciliation, reconciliationPresent = verified, expectedReconciliation, true
+			}
 		}
 		if !bindingPresent {
 			if operation.Status == "succeeded" {
@@ -950,10 +978,15 @@ func (s *Service) ClaimComputeRecovery(ctx context.Context, input ComputeClaimRe
 		resumeObservedNodeClaim := mutationPresent &&
 			(recoverableObservedComputeClaimRecoveryMutation(mutationLedger) || historicalNodeContinuation) &&
 			proof.CVMOwnershipState == "target_owned" && proof.NodeOwnershipState == "unallocated"
+		reconciledNodeContinuation := requestHashReconciliation && reconciliationPresent && reconciliation.State == "verified" &&
+			ownership.Status != "active" && proof.CVMOwnershipState == "target_owned" && proof.NodeOwnershipState == "unallocated"
 		activeNodeContinuation := ownership.Status == "active" && !mutationPresent && bindingPresent && bindingValid && persistedBinding == binding &&
 			proof.CVMOwnershipState == "target_owned" && proof.NodeOwnershipState == "unallocated"
-		nodeOnlyContinuation := resumeObservedNodeClaim || reserveHistoricalNodeClaim || activeNodeContinuation
+		nodeOnlyContinuation := resumeObservedNodeClaim || reserveHistoricalNodeClaim || activeNodeContinuation || reconciledNodeContinuation
 		resumeReservedNodeReadback := mutationPresent && validNodeReservedComputeClaimRecoveryMutation(mutationLedger) &&
+			proof.CVMOwnershipState == "target_owned" && proof.NodeOwnershipState == "target_owned"
+		reconciledReservedReadback := requestHashReconciliation && reconciliationPresent &&
+			(reconciliation.State == "node_reserved" || reconciliation.State == "observed") &&
 			proof.CVMOwnershipState == "target_owned" && proof.NodeOwnershipState == "target_owned"
 		reservedNodeOutcomeUnknown := mutationPresent && validNodeReservedComputeClaimRecoveryMutation(mutationLedger) &&
 			proof.CVMOwnershipState == "target_owned" && proof.NodeOwnershipState == "unallocated"
@@ -964,6 +997,13 @@ func (s *Service) ClaimComputeRecovery(ctx context.Context, input ComputeClaimRe
 		if mutationPresent && mutationLedger.State == "node_reserved" && !resumeReservedNodeReadback {
 			result.Eligible, result.Reason = false, "identity_mismatch"
 			return ErrComputeClaimRecoveryIdempotencyConflict
+		}
+		if requestHashReconciliation && reconciliationPresent &&
+			(reconciliation.State == "node_reserved" || reconciliation.State == "observed") && !reconciledReservedReadback {
+			result.Eligible, result.Reason = false, "provider_describe"
+			result.FailureStage, result.ProviderErrorClass = reconciliation.FailureStage, reconciliation.ProviderErrorClass
+			result.Evidence = &ComputeClaimEvidence{CVM: cloneComputeClaimMutationEvidence(mutationLedger.Evidence.CVM), Node: cloneComputeClaimMutationEvidence(reconciliation.Node)}
+			return fmt.Errorf("%w: provider_describe", ErrComputeClaimRecoveryUnavailable)
 		}
 		if ownership.Status == "active" && !activeNodeContinuation {
 			if proof.CVMOwnershipState != "target_owned" || proof.NodeOwnershipState != "target_owned" {
@@ -976,23 +1016,35 @@ func (s *Service) ClaimComputeRecovery(ctx context.Context, input ComputeClaimRe
 				result.Eligible, result.Reason = false, "provider_describe"
 				return fmt.Errorf("%w: provider_describe", ErrComputeClaimRecoveryUnavailable)
 			}
-			if mutationPresent && !resumeObservedNodeClaim {
+			if mutationPresent && !resumeObservedNodeClaim && !reconciledNodeContinuation {
 				applyComputeClaimRecoveryReplayFailure(&result, mutationLedger, proof.Reason)
 				return fmt.Errorf("%w: %s", ErrComputeClaimRecoveryUnavailable, result.Reason)
 			}
 			if nodeOnlyContinuation {
-				if reserveHistoricalNodeClaim || activeNodeContinuation {
+				if reconciledNodeContinuation {
+					reconciliation.State, reconciliation.FailureStage, reconciliation.ProviderErrorClass = "node_reserved", "node_patch_readback", "transport_error"
+					reconciliation.Node = ComputeClaimMutationEvidence{Attempted: 1, Unknown: 1, Missing: []string{"node_ownership"}}
+					reserved := operation
+					reserved.RedactedProviderPayload = withComputeClaimRecoveryReconciliation(reserved.RedactedProviderPayload, reconciliation)
+					if err := s.operations.SaveComputeClaimRecovery(lockCtx, operation, reserved); err != nil {
+						result.Eligible, result.Reason = false, "local_identity"
+						return err
+					}
+					operation = reserved
+				} else if reserveHistoricalNodeClaim || activeNodeContinuation {
 					mutationLedger = legacyNodeReservedComputeClaimRecoveryMutation()
 				} else {
 					mutationLedger = nodeReservedComputeClaimRecoveryMutation(mutationLedger)
 				}
-				reserved := operation
-				reserved.RedactedProviderPayload = withComputeClaimRecoveryMutation(reserved.RedactedProviderPayload, mutationLedger)
-				if err := s.operations.SaveComputeClaimRecovery(lockCtx, operation, reserved); err != nil {
-					result.Eligible, result.Reason = false, "local_identity"
-					return err
+				if !reconciledNodeContinuation {
+					reserved := operation
+					reserved.RedactedProviderPayload = withComputeClaimRecoveryMutation(reserved.RedactedProviderPayload, mutationLedger)
+					if err := s.operations.SaveComputeClaimRecovery(lockCtx, operation, reserved); err != nil {
+						result.Eligible, result.Reason = false, "local_identity"
+						return err
+					}
+					operation = reserved
 				}
-				operation = reserved
 			}
 			if !nodeOnlyContinuation {
 				mutationLedger = reservedComputeClaimRecoveryMutation()
@@ -1034,25 +1086,48 @@ func (s *Service) ClaimComputeRecovery(ctx context.Context, input ComputeClaimRe
 				result.ChargeType, result.PeriodMonths, result.RenewFlag, result.Deadline = claimed.Proof.ChargeType, claimed.Proof.PeriodMonths, claimed.Proof.RenewFlag, claimed.Proof.Deadline
 				result.NodeOwnershipState, result.CVMOwnershipState, result.Eligible, result.Reason = "target_owned", "target_owned", true, "none"
 			}
-			if nodeOnlyContinuation {
+			if reconciledNodeContinuation {
+				reconciliation.State = "observed"
+				reconciliation.FailureStage, reconciliation.ProviderErrorClass = result.FailureStage, result.ProviderErrorClass
+				if result.Evidence != nil && validComputeClaimMutationEvidenceShape(result.Evidence.Node, result.KubernetesMutationCount, 1, "node") {
+					reconciliation.Node = cloneComputeClaimMutationEvidence(result.Evidence.Node)
+				}
+				if claimSucceeded {
+					reconciliation.State, reconciliation.FailureStage, reconciliation.ProviderErrorClass = "succeeded", "", ""
+				}
+			} else if nodeOnlyContinuation {
 				mutationLedger = observedNodeClaimRecoveryMutation(mutationLedger, result)
 			} else {
 				mutationLedger = observedComputeClaimRecoveryMutation(result)
 			}
 			observed := operation
-			observed.RedactedProviderPayload = withComputeClaimRecoveryMutation(operation.RedactedProviderPayload, mutationLedger)
+			if reconciledNodeContinuation {
+				observed.RedactedProviderPayload = withComputeClaimRecoveryReconciliation(operation.RedactedProviderPayload, reconciliation)
+			} else {
+				observed.RedactedProviderPayload = withComputeClaimRecoveryMutation(operation.RedactedProviderPayload, mutationLedger)
+			}
 			if err := s.operations.SaveComputeClaimRecovery(lockCtx, operation, observed); err != nil {
 				result.Eligible, result.Reason = false, "local_identity"
 				return err
 			}
 			operation = observed
 			if !claimSucceeded {
-				applyComputeClaimRecoveryMutation(&result, mutationLedger)
+				if !reconciledNodeContinuation {
+					applyComputeClaimRecoveryMutation(&result, mutationLedger)
+				}
 				return fmt.Errorf("%w: %s", ErrComputeClaimRecoveryUnavailable, result.Reason)
 			}
 		}
 		if mutationPresent && mutationLedger.State == "node_reserved" && proof.NodeOwnershipState == "target_owned" {
 			mutationLedger = observedNodeClaimReadbackMutation(mutationLedger)
+		}
+		if requestHashReconciliation && reconciliationPresent && reconciliation.State != "succeeded" && proof.NodeOwnershipState == "target_owned" {
+			reconciliation.State, reconciliation.FailureStage, reconciliation.ProviderErrorClass = "succeeded", "", ""
+			if reconciliation.Node.Attempted == 1 {
+				reconciliation.Node = ComputeClaimMutationEvidence{Attempted: 1, Confirmed: 1}
+			} else {
+				reconciliation.Node = ComputeClaimMutationEvidence{}
+			}
 		}
 		allocation.Status = "ready"
 		allocation.CostTags = oplCostTags(allocation.AccountID, allocation.WorkspaceID, allocation.ID, ownership.ID)
@@ -1066,12 +1141,15 @@ func (s *Service) ClaimComputeRecovery(ctx context.Context, input ComputeClaimRe
 			recovered := operation
 			recovered.Status, recovered.ErrorCode, recovered.FinishedAt = "succeeded", "", s.now()
 			finalBinding := binding
-			if historicalBinding {
+			if historicalBinding || requestHashReconciliation {
 				finalBinding = persistedBinding
 			}
 			recovered.RedactedProviderPayload = withComputeClaimRecoveryBinding(computeAllocationOperationPayload(allocation, plan), finalBinding)
 			if mutationPresent {
 				recovered.RedactedProviderPayload = withComputeClaimRecoveryMutation(recovered.RedactedProviderPayload, mutationLedger)
+			}
+			if requestHashReconciliation && reconciliationPresent {
+				recovered.RedactedProviderPayload = withComputeClaimRecoveryReconciliation(recovered.RedactedProviderPayload, reconciliation)
 			}
 			if err := s.operations.SaveComputeClaimRecovery(lockCtx, operation, recovered); err != nil {
 				result.Eligible, result.Reason = false, "local_identity"
@@ -1106,9 +1184,25 @@ type computeClaimRecoveryBinding struct {
 }
 
 const (
-	computeClaimRecoveryMutationPayloadKey = "computeClaimRecoveryMutation"
-	computeClaimTerminalEvidencePayloadKey = "computeClaimTerminalEvidence"
+	computeClaimRecoveryMutationPayloadKey       = "computeClaimRecoveryMutation"
+	computeClaimRecoveryReconciliationPayloadKey = "computeClaimRecoveryReconciliation"
+	computeClaimTerminalEvidencePayloadKey       = "computeClaimTerminalEvidence"
 )
+
+type computeClaimRecoveryReconciliation struct {
+	SchemaVersion              int                          `json:"schemaVersion"`
+	Consumer                   string                       `json:"consumer"`
+	Generation                 string                       `json:"generation"`
+	State                      string                       `json:"state"`
+	BindingDigest              string                       `json:"bindingDigest"`
+	ExpectedRequestHashDigest  string                       `json:"expectedRequestHashDigest"`
+	PersistedRequestHashDigest string                       `json:"persistedRequestHashDigest"`
+	MutationLedgerDigest       string                       `json:"mutationLedgerDigest"`
+	AuthorityDigest            string                       `json:"authorityDigest"`
+	FailureStage               string                       `json:"failureStage,omitempty"`
+	ProviderErrorClass         string                       `json:"providerErrorClass,omitempty"`
+	Node                       ComputeClaimMutationEvidence `json:"node"`
+}
 
 type computeClaimRecoveryMutationLedger struct {
 	State                   string               `json:"state"`
@@ -1403,6 +1497,256 @@ func historicalComputeClaimRecoveryBinding(input ComputeClaimRecoveryClaimInput)
 	return newComputeClaimRecoveryBinding(legacy)
 }
 
+func expectedComputeClaimRecoveryOperation(input ComputeClaimRecoveryInput) FabricOperation {
+	expectedInput := ComputeAllocationInput{
+		ID: input.ComputeAllocationID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID,
+		PackageID: input.PackageID, NodePoolID: input.NodePoolID, IdempotencyKey: input.LaunchOperationID + ":compute",
+	}
+	expected := newOperation(
+		"create_compute_allocation", "compute_allocation", expectedInput.ID, expectedInput.AccountID,
+		expectedInput.WorkspaceID, expectedInput.IdempotencyKey, hashInput(expectedInput), time.Time{},
+	)
+	return expected
+}
+
+func canonicalComputeClaimRecoveryOperation(operation FabricOperation, input ComputeClaimRecoveryInput) bool {
+	expected := expectedComputeClaimRecoveryOperation(input)
+	return operation.OperationID == expected.OperationID && operation.CallerService == expected.CallerService &&
+		operation.Action == expected.Action && operation.ResourceKind == expected.ResourceKind && operation.ResourceID == expected.ResourceID &&
+		operation.AccountID == expected.AccountID && operation.WorkspaceID == expected.WorkspaceID &&
+		operation.IdempotencyKey == expected.IdempotencyKey && operation.RequestHash == expected.RequestHash
+}
+
+func computeClaimRecoveryBindingDigest(binding computeClaimRecoveryBinding) string {
+	body, err := json.Marshal(binding)
+	if err != nil {
+		return ""
+	}
+	return computeClaimIdentityDigest(string(body))
+}
+
+func computeClaimRecoveryMutationDigest(ledger computeClaimRecoveryMutationLedger) string {
+	body, err := json.Marshal(ledger)
+	if err != nil {
+		return ""
+	}
+	return computeClaimIdentityDigest(string(body))
+}
+
+func validComputeClaimRecoveryDigest(value string) bool {
+	if len(value) != 64 {
+		return false
+	}
+	for _, character := range value {
+		if character < '0' || character > '9' {
+			if character < 'a' || character > 'f' {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func isolatedRequestHashReconciliationLedger(ledger computeClaimRecoveryMutationLedger) bool {
+	if ledger.State != "observed" || ledger.Reason != "provider_describe" || ledger.FailureStage != "cvm_tag_readback" ||
+		ledger.ProviderErrorClass != "provider_error" ||
+		ledger.TencentMutationCount != 1 || ledger.KubernetesMutationCount != 0 ||
+		!reflect.DeepEqual(ledger.Evidence.Node, ComputeClaimMutationEvidence{}) ||
+		ledger.Evidence.CVM.Attempted != 1 || ledger.Evidence.CVM.Confirmed != 0 || ledger.Evidence.CVM.Unknown != 1 ||
+		!reflect.DeepEqual(ledger.Evidence.CVM.Missing, []string{"opl_account_id"}) {
+		return false
+	}
+	return true
+}
+
+func isolatedRequestHashReconciliationBinding(operation FabricOperation, input ComputeClaimRecoveryClaimInput, persisted computeClaimRecoveryBinding, present, valid bool) bool {
+	if !present || !valid || !canonicalComputeClaimRecoveryOperation(operation, input.ComputeClaimRecoveryInput) {
+		return false
+	}
+	want := newComputeClaimRecoveryBinding(input)
+	if persisted.LaunchOperationID != want.LaunchOperationID || persisted.IdempotencyKey != want.IdempotencyKey ||
+		persisted.TargetHash != want.TargetHash || persisted.RequestHash == want.RequestHash {
+		return false
+	}
+	ledger, ledgerPresent, ledgerValid := decodeComputeClaimRecoveryMutation(operation)
+	return ledgerPresent && ledgerValid && isolatedRequestHashReconciliationLedger(ledger)
+}
+
+func computeClaimRecoveryAllocationIdentityDigest(allocation ComputeAllocation) string {
+	identity := struct {
+		ID, AccountID, WorkspaceID, PackageID, Provider, ProviderResourceID, ProviderRequestID string
+		PoolID, NodePoolID, MachineName, InstanceID, CVMInstanceID, NodeName, PrivateIP        string
+		InstanceType, Zone, ChargeType, RenewFlag, Deadline                                    string
+	}{
+		allocation.ID, allocation.AccountID, allocation.WorkspaceID, allocation.PackageID, allocation.Provider,
+		allocation.ProviderResourceID, allocation.ProviderRequestID, allocation.PoolID, allocation.NodePoolID,
+		allocation.MachineName, allocation.InstanceID, allocation.CVMInstanceID, allocation.NodeName, allocation.PrivateIP,
+		allocation.InstanceType, allocation.Zone, allocation.ChargeType, allocation.RenewFlag, allocation.Deadline,
+	}
+	return hashInput(identity)
+}
+
+func computeClaimRecoveryOwnershipIdentityDigest(ownership MachineOwnership) string {
+	identity := struct {
+		ID, ResourceID, AccountID, WorkspaceID, PackageID, NodePoolID string
+		MachineID, InstanceID, NodeName, ProviderRequestID            string
+	}{
+		ownership.ID, ownership.ResourceID, ownership.AccountID, ownership.WorkspaceID, ownership.PackageID, ownership.NodePoolID,
+		ownership.MachineID, ownership.InstanceID, ownership.NodeName, ownership.ProviderRequestID,
+	}
+	return hashInput(identity)
+}
+
+func newComputeClaimRecoveryReconciliation(
+	operation FabricOperation,
+	allocation ComputeAllocation,
+	plan ComputeAllocationPreparation,
+	ownership MachineOwnership,
+	input ComputeClaimRecoveryClaimInput,
+	proof ComputeClaimRecoveryProof,
+	binding computeClaimRecoveryBinding,
+	ledger computeClaimRecoveryMutationLedger,
+) computeClaimRecoveryReconciliation {
+	want := newComputeClaimRecoveryBinding(input)
+	authority := struct {
+		FabricRecordID              string                             `json:"fabricRecordId"`
+		OperationID                 string                             `json:"operationId"`
+		OperationHash               string                             `json:"operationHash"`
+		AllocationID                string                             `json:"allocationId"`
+		AllocationProviderRequestID string                             `json:"allocationProviderRequestId"`
+		AllocationIdentityDigest    string                             `json:"allocationIdentityDigest"`
+		AdmittedAllocationStatus    string                             `json:"admittedAllocationStatus"`
+		Plan                        ComputeAllocationPreparation       `json:"plan"`
+		OwnershipID                 string                             `json:"ownershipId"`
+		OwnershipProviderRequestID  string                             `json:"ownershipProviderRequestId"`
+		OwnershipIdentityDigest     string                             `json:"ownershipIdentityDigest"`
+		AdmittedOwnershipStatus     string                             `json:"admittedOwnershipStatus"`
+		Input                       ComputeClaimRecoveryClaimInput     `json:"input"`
+		ChargeType                  string                             `json:"chargeType"`
+		PeriodMonths                int                                `json:"periodMonths"`
+		RenewFlag                   string                             `json:"renewFlag"`
+		Deadline                    string                             `json:"deadline"`
+		StorageState                string                             `json:"storageState"`
+		Binding                     computeClaimRecoveryBinding        `json:"binding"`
+		Ledger                      computeClaimRecoveryMutationLedger `json:"ledger"`
+	}{
+		FabricRecordID: operation.ID, OperationID: operation.OperationID, OperationHash: operation.RequestHash,
+		AllocationID: allocation.ID, AllocationProviderRequestID: allocation.ProviderRequestID,
+		AllocationIdentityDigest: computeClaimRecoveryAllocationIdentityDigest(allocation), AdmittedAllocationStatus: "quarantined", Plan: plan,
+		OwnershipID: ownership.ID, OwnershipProviderRequestID: ownership.ProviderRequestID,
+		OwnershipIdentityDigest: computeClaimRecoveryOwnershipIdentityDigest(ownership), AdmittedOwnershipStatus: "quarantined", Input: input,
+		ChargeType: proof.ChargeType, PeriodMonths: proof.PeriodMonths, RenewFlag: proof.RenewFlag, Deadline: proof.Deadline,
+		StorageState: proof.StorageState, Binding: binding, Ledger: ledger,
+	}
+	return computeClaimRecoveryReconciliation{
+		SchemaVersion: 1, Consumer: "claim_compute_recovery", Generation: "isolated_request_hash_v1", State: "verified",
+		BindingDigest:              computeClaimRecoveryBindingDigest(binding),
+		ExpectedRequestHashDigest:  computeClaimIdentityDigest(want.RequestHash),
+		PersistedRequestHashDigest: computeClaimIdentityDigest(binding.RequestHash),
+		MutationLedgerDigest:       computeClaimRecoveryMutationDigest(ledger), AuthorityDigest: hashInput(authority),
+	}
+}
+
+func validComputeClaimRecoveryReconciliation(value computeClaimRecoveryReconciliation) bool {
+	if value.SchemaVersion != 1 || value.Consumer != "claim_compute_recovery" || value.Generation != "isolated_request_hash_v1" ||
+		!validComputeClaimRecoveryDigest(value.BindingDigest) || !validComputeClaimRecoveryDigest(value.ExpectedRequestHashDigest) ||
+		!validComputeClaimRecoveryDigest(value.PersistedRequestHashDigest) || value.ExpectedRequestHashDigest == value.PersistedRequestHashDigest ||
+		!validComputeClaimRecoveryDigest(value.MutationLedgerDigest) || !validComputeClaimRecoveryDigest(value.AuthorityDigest) {
+		return false
+	}
+	switch value.State {
+	case "verified":
+		return value.FailureStage == "" && value.ProviderErrorClass == "" && reflect.DeepEqual(value.Node, ComputeClaimMutationEvidence{})
+	case "node_reserved":
+		return value.FailureStage == "node_patch_readback" && value.ProviderErrorClass == "transport_error" &&
+			reflect.DeepEqual(value.Node, ComputeClaimMutationEvidence{Attempted: 1, Unknown: 1, Missing: []string{"node_ownership"}})
+	case "observed":
+		return validComputeClaimFailureStage(value.FailureStage) && validComputeClaimProviderErrorClass(value.ProviderErrorClass) &&
+			validComputeClaimMutationEvidenceShape(value.Node, value.Node.Attempted, 1, "node")
+	case "succeeded":
+		return value.FailureStage == "" && value.ProviderErrorClass == "" &&
+			(reflect.DeepEqual(value.Node, ComputeClaimMutationEvidence{}) || reflect.DeepEqual(value.Node, ComputeClaimMutationEvidence{Attempted: 1, Confirmed: 1}))
+	default:
+		return false
+	}
+}
+
+func computeClaimRecoveryReconciliationMatches(
+	value computeClaimRecoveryReconciliation,
+	operation FabricOperation,
+	input ComputeClaimRecoveryClaimInput,
+	binding computeClaimRecoveryBinding,
+	ledger computeClaimRecoveryMutationLedger,
+) bool {
+	want := newComputeClaimRecoveryBinding(input)
+	return value.BindingDigest == computeClaimRecoveryBindingDigest(binding) &&
+		value.ExpectedRequestHashDigest == computeClaimIdentityDigest(want.RequestHash) &&
+		value.PersistedRequestHashDigest == computeClaimIdentityDigest(binding.RequestHash) &&
+		value.MutationLedgerDigest == computeClaimRecoveryMutationDigest(ledger) &&
+		canonicalComputeClaimRecoveryOperation(operation, input.ComputeClaimRecoveryInput)
+}
+
+func decodeComputeClaimRecoveryReconciliation(operation FabricOperation) (computeClaimRecoveryReconciliation, bool, bool) {
+	value, present := operation.RedactedProviderPayload[computeClaimRecoveryReconciliationPayloadKey]
+	if !present {
+		return computeClaimRecoveryReconciliation{}, false, false
+	}
+	body, err := json.Marshal(value)
+	if err != nil {
+		return computeClaimRecoveryReconciliation{}, true, false
+	}
+	var reconciliation computeClaimRecoveryReconciliation
+	if json.Unmarshal(body, &reconciliation) != nil || !validComputeClaimRecoveryReconciliation(reconciliation) {
+		return computeClaimRecoveryReconciliation{}, true, false
+	}
+	return reconciliation, true, true
+}
+
+func withComputeClaimRecoveryReconciliation(payload map[string]any, value computeClaimRecoveryReconciliation) map[string]any {
+	result := maps.Clone(payload)
+	if result == nil {
+		result = map[string]any{}
+	}
+	result[computeClaimRecoveryReconciliationPayloadKey] = map[string]any{
+		"schemaVersion": value.SchemaVersion, "consumer": value.Consumer, "generation": value.Generation, "state": value.State,
+		"bindingDigest": value.BindingDigest, "expectedRequestHashDigest": value.ExpectedRequestHashDigest,
+		"persistedRequestHashDigest": value.PersistedRequestHashDigest, "mutationLedgerDigest": value.MutationLedgerDigest,
+		"authorityDigest": value.AuthorityDigest, "failureStage": value.FailureStage, "providerErrorClass": value.ProviderErrorClass,
+		"node": map[string]any{"attempted": value.Node.Attempted, "confirmed": value.Node.Confirmed, "unknown": value.Node.Unknown, "missing": append([]string(nil), value.Node.Missing...)},
+	}
+	return result
+}
+
+func validComputeClaimRecoveryReconciliationTransition(current, next FabricOperation) bool {
+	currentValue, currentPresent, currentValid := decodeComputeClaimRecoveryReconciliation(current)
+	nextValue, nextPresent, nextValid := decodeComputeClaimRecoveryReconciliation(next)
+	if currentPresent && !currentValid || nextPresent && !nextValid {
+		return false
+	}
+	if !currentPresent {
+		return !nextPresent || nextValue.State == "verified"
+	}
+	if !nextPresent || currentValue.SchemaVersion != nextValue.SchemaVersion || currentValue.Consumer != nextValue.Consumer ||
+		currentValue.Generation != nextValue.Generation || currentValue.BindingDigest != nextValue.BindingDigest ||
+		currentValue.ExpectedRequestHashDigest != nextValue.ExpectedRequestHashDigest ||
+		currentValue.PersistedRequestHashDigest != nextValue.PersistedRequestHashDigest ||
+		currentValue.MutationLedgerDigest != nextValue.MutationLedgerDigest || currentValue.AuthorityDigest != nextValue.AuthorityDigest {
+		return false
+	}
+	switch currentValue.State {
+	case "verified":
+		return nextValue.State == "verified" || nextValue.State == "node_reserved" || nextValue.State == "succeeded"
+	case "node_reserved":
+		return nextValue.State == "node_reserved" || nextValue.State == "observed" || nextValue.State == "succeeded"
+	case "observed":
+		return nextValue.State == "observed" || nextValue.State == "succeeded"
+	case "succeeded":
+		return nextValue.State == "succeeded" && reflect.DeepEqual(currentValue, nextValue)
+	default:
+		return false
+	}
+}
+
 func computeClaimIdentityDigest(value string) string {
 	sum := sha256.Sum256([]byte(value))
 	return hex.EncodeToString(sum[:])
@@ -1411,22 +1755,14 @@ func computeClaimIdentityDigest(value string) string {
 func computeClaimIdentityEvidence(operation FabricOperation, input ComputeClaimRecoveryClaimInput) *ComputeClaimIdentityEvidence {
 	want := newComputeClaimRecoveryBinding(input)
 	historical := historicalComputeClaimRecoveryBinding(input)
-	expectedOperationInput := ComputeAllocationInput{
-		ID: input.ComputeAllocationID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID,
-		PackageID: input.PackageID, NodePoolID: input.NodePoolID, IdempotencyKey: input.LaunchOperationID + ":compute",
-	}
-	expectedOperationRequestHash := hashInput(expectedOperationInput)
-	expectedOperation := newOperation(
-		"create_compute_allocation", "compute_allocation", expectedOperationInput.ID, expectedOperationInput.AccountID,
-		expectedOperationInput.WorkspaceID, expectedOperationInput.IdempotencyKey, expectedOperationRequestHash, time.Time{},
-	)
+	expectedOperation := expectedComputeClaimRecoveryOperation(input.ComputeClaimRecoveryInput)
 	got, present, valid := decodeComputeClaimRecoveryBinding(operation)
 	bindingClassification, bindingDigest := classifyComputeClaimRecoveryBinding(operation, input, got, present, valid)
 	ledgerState, ledgerOutcome, ledgerDigest := computeClaimMutationLedgerEvidence(operation)
 	checks := []ComputeClaimIdentityCheck{
 		{Field: "fabric.operationId", Matches: operation.OperationID == expectedOperation.OperationID, Expected: expectedOperation.OperationID, Actual: operation.OperationID},
 		{Field: "fabric.operationIdempotencyKey", Matches: operation.IdempotencyKey == input.LaunchOperationID+":compute", Expected: input.LaunchOperationID + ":compute", Actual: operation.IdempotencyKey},
-		{Field: "fabric.operationRequestHash", Matches: operation.RequestHash == expectedOperationRequestHash, ExpectedDigest: computeClaimIdentityDigest(expectedOperationRequestHash), ActualDigest: computeClaimIdentityDigest(operation.RequestHash)},
+		{Field: "fabric.operationRequestHash", Matches: operation.RequestHash == expectedOperation.RequestHash, ExpectedDigest: computeClaimIdentityDigest(expectedOperation.RequestHash), ActualDigest: computeClaimIdentityDigest(operation.RequestHash)},
 		{Field: "binding.present", Matches: present, Expected: "present", Actual: map[bool]string{true: "present", false: "absent"}[present]},
 		{Field: "binding.valid", Matches: valid, Expected: "valid", Actual: map[bool]string{true: "valid", false: "invalid"}[valid]},
 	}
@@ -1438,9 +1774,9 @@ func computeClaimIdentityEvidence(operation FabricOperation, input ComputeClaimR
 		case "compute-claim":
 			expected = historical
 		}
-		compatible := bindingClassification == "current" || bindingClassification == "compute-claim"
+		compatible := bindingClassification == "current" || bindingClassification == "compute-claim" || bindingClassification == "request-hash-reconciliation"
 		checks = append(checks,
-			ComputeClaimIdentityCheck{Field: "binding.compatibility", Matches: compatible, Expected: "current_or_compute_claim", Actual: bindingKind},
+			ComputeClaimIdentityCheck{Field: "binding.compatibility", Matches: compatible, Expected: "current_compute_claim_or_request_hash_reconciliation", Actual: bindingKind},
 			ComputeClaimIdentityCheck{Field: "binding.launchOperationId", Matches: got.LaunchOperationID == expected.LaunchOperationID, Expected: expected.LaunchOperationID, Actual: got.LaunchOperationID},
 			ComputeClaimIdentityCheck{Field: "binding.idempotencyKey", Matches: got.IdempotencyKey == expected.IdempotencyKey, Expected: expected.IdempotencyKey, Actual: got.IdempotencyKey},
 			ComputeClaimIdentityCheck{Field: "binding.targetHash", Matches: got.TargetHash == expected.TargetHash, ExpectedDigest: computeClaimIdentityDigest(expected.TargetHash), ActualDigest: computeClaimIdentityDigest(got.TargetHash)},
@@ -1489,6 +1825,9 @@ func classifyComputeClaimRecoveryBinding(operation FabricOperation, input Comput
 	}
 	if got == historicalComputeClaimRecoveryBinding(input) {
 		return "compute-claim", digest
+	}
+	if isolatedRequestHashReconciliationBinding(operation, input, got, present, valid) {
+		return "request-hash-reconciliation", digest
 	}
 	if knownLegacyComputeClaimRecoveryIdempotencyKey(got.IdempotencyKey) {
 		legacy := input

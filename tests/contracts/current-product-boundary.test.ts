@@ -505,7 +505,8 @@ test("Current Fabric contracts require dedicated package NodePools without weake
     providerCalls: 0,
     requiredMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
     artifactSchemaVersion: 2,
-    bindingClassifications: ["current", "compute-claim", "known-legacy", "other"],
+    bindingClassifications: ["current", "compute-claim", "request-hash-reconciliation", "known-legacy", "other"],
+    requestHashReconciliation: "readback_schema_only_never_recoverable_cvm_only_or_workflow_mutation_authority",
     providerMutationFields: ["attempted", "confirmed", "unknown", "missing", "failureStage", "providerErrorClass"],
     recoverableCVMOnly: "recognized_current_or_compute_claim_binding_and_cvm_attempted_positive_fully_confirmed_unknown_zero_missing_empty_and_node_attempted_zero",
     knownLegacy: "recovery_exec_lowerhex20_old_request_hash_exact_match_classification_only_operator_compensation_required_never_binding_takeover",
@@ -882,8 +883,9 @@ test("Current contracts hard cut operator resources, wallet adjustments, and ann
     idempotencyBinding: ["launch_operation_id", "idempotency_key", "target_hash", "request_hash"],
     identityEvidence: "zero_mutation_allowlisted_expected_actual_for_ids_second_digest_for_hashes_and_redacted_persisted_binding_class_digest",
     identityEvidenceProjection: {
-      bindingClassifications: ["current", "compute-claim", "known-legacy", "other"],
+      bindingClassifications: ["current", "compute-claim", "request-hash-reconciliation", "known-legacy", "other"],
       bindingDigest: "sha256_of_exact_persisted_binding_payload",
+      requestHashReconciliation: "routing_candidate_only_not_mutation_authority",
       knownLegacy: "recovery_exec_lowerhex20_old_request_hash_exact_match_classification_only_never_binding_takeover",
       providerMutationFields: ["attempted", "confirmed", "unknown", "missing", "failureStage", "providerErrorClass"],
       recoverableCVMOnly: "current_or_compute_claim_binding_and_cvm_attempted_positive_fully_confirmed_unknown_zero_missing_empty_and_node_attempted_zero",
@@ -899,7 +901,7 @@ test("Current contracts hard cut operator resources, wallet adjustments, and ann
       consumer: "control_plane_terminal_failed_successor_gate"
     },
     bindingPersistence: "original_create_compute_allocation_operation_payload_cas",
-    malformedOrDriftedBinding: "fail_closed_conflict_zero_provider_mutation",
+    malformedOrDriftedBinding: "fail_closed_conflict_zero_provider_mutation_except_exact_request_hash_only_reconciliation",
     mutationLedger: {
       persistence: "original_create_compute_allocation_operation_payload_cas_before_provider_call",
       states: ["reserved", "node_reserved", "observed"],
@@ -908,6 +910,7 @@ test("Current contracts hard cut operator resources, wallet adjustments, and ann
       missingOutcome: "conservative_unknown_at_full_bound",
       replayProofUnavailable: "return_persisted_mutation_evidence_zero_incremental_external_mutation",
       observedCvmTagRepairContinuation: "only_cvm_tag_readback_zero_unknown_zero_kubernetes_then_fresh_exact_cvm_target_owned_node_unallocated_proof_may_reconcile_original_claim_identity_and_attempt_one_node_patch_without_binding_takeover",
+      requestHashOnlyReconciliation: "claim_compute_recovery_only_consumer_requires_canonical_compute_operation_quarantined_allocation_and_ownership_exact_original_launch_target_plan_machine_cvm_node_pool_node_billing_and_storage_not_started_plus_preserved_observed_unknown_1_0_1_cvm_ledger_failure_cvm_tag_readback_provider_error_missing_only_opl_account_id_then_cas_versioned_provenance_preserves_binding_and_ledger_tencent_zero_kubernetes_max_one",
       activeOwnershipNodeDriftContinuation: "exact_active_machine_ownership_current_binding_no_ledger_cvm_target_owned_node_unallocated_may_reserve_node_once_and_patch_with_tencent_zero_kubernetes_max_one",
       persistedApprovalExpiryReplay: "new_approval_must_be_unexpired_exact_persisted_approval_identity_may_replay_after_expiry",
       observedSuccessReadbackMismatch: "fail_closed_identity_mismatch_claim_final_readback"
@@ -917,7 +920,8 @@ test("Current contracts hard cut operator resources, wallet adjustments, and ann
     claimMutationBounds: {
       sub2api: 0,
       tencent: { min: 0, max: 5, meaning: "one_instance_name_plus_four_ownership_tags" },
-      kubernetes: { min: 0, max: 1, meaning: "one_exact_node_json_patch" }
+      kubernetes: { min: 0, max: 1, meaning: "one_exact_node_json_patch" },
+      requestHashReconciliation: { tencent: 0, kubernetesMax: 1 }
     },
     mutationEvidence: {
       fields: ["attempted", "confirmed", "unknown", "missing"],
@@ -1077,7 +1081,8 @@ test("Current contracts keep compute-claim continuation automatic while preservi
     recoveryKeyAsFabricIdentity: false,
     bindingTakeover: false,
     manualRecoveryInvocation: "control_plane_calls_fabric_with_original_claim_identity",
-    drift: "identity_mismatch_zero_provider_mutation"
+    requestHashReconciliation: "versioned_provenance_cas_only_when_request_hash_is_the_single_primitive_mismatch_and_the_full_original_identity_chain_is_exact",
+    drift: "all_other_identity_mismatch_zero_provider_mutation"
   });
 
   assert.deepEqual(deployment.productionWorkspaceLaunchClaimClosure, {
