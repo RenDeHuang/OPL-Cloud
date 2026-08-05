@@ -1216,6 +1216,8 @@ test("server-owned Recovery Plan diagnosis and execution are exact original-orde
   assert.match(validatorSource, /successorGate/);
   assert.match(validatorSource, /persistedMutationState/);
   assert.match(validatorSource, /fabricLedgerState/);
+  assert.match(validatorSource, /RECOVERY_PLAN_PROVIDER_IDENTITY_PREDICATES/);
+  assert.match(validatorSource, /workspaceRecoveryProviderIdentityFailure/);
   assert.doesNotMatch(runs, /--basic-customer-canary|allow-workspace-purchase|allow-wallet-recharge|allow-account-provision|\/api\/workspace-launches/);
   assert.deepEqual(deployment.productionWorkspaceRecoveryPlan.workflowModes, [
     "recovery_plan_diagnose",
@@ -1232,8 +1234,13 @@ test("server-owned Recovery Plan diagnosis and execution are exact original-orde
     "identityState", "persistedMutationState", "fabricLedgerState"
   ]);
   assert.deepEqual(deployment.productionWorkspaceRecoveryPlan.artifact.failureFields, [
-    "failureStage", "readbackError", "errorCode"
+    "failureStage", "readbackError", "errorCode", "providerIdentityFailure"
   ]);
+  assert.deepEqual(deployment.productionWorkspaceRecoveryPlan.artifact.providerIdentityFailureFields, [
+    "predicate", "expectedDigest", "actualDigest"
+  ]);
+  assert.equal(deployment.productionWorkspaceRecoveryPlan.artifact.providerIdentityFailureAuthority,
+    "Fabric_ProveComputeClaimRecovery_digest_only_optional_on_deterministic_identity_mismatch");
   assert.equal(deployment.productionWorkspaceRecoveryPlan.artifact.validator, "tools/production-live-qa.ts#validateProductionWorkspaceRecoveryPlanArtifact");
 });
 

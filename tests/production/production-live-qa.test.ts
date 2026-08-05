@@ -535,6 +535,11 @@ test("Recovery Plan diagnosis CLI preserves one validated redacted server failur
         failureStage: "cvm_tag_readback",
         readbackError: "readback_mismatch",
         errorCode: "workspace_recovery_plan_fabric_proof_failed",
+        providerIdentityFailure: {
+          predicate: "compute_claim.cvm_ownership.opl_account_id",
+          expectedDigest: "a".repeat(64),
+          actualDigest: "b".repeat(64)
+        },
         mutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
       }, 409);
     }
@@ -564,6 +569,11 @@ test("Recovery Plan diagnosis CLI preserves one validated redacted server failur
     failureStage: "cvm_tag_readback",
     readbackError: "readback_mismatch",
     errorCode: "workspace_recovery_plan_fabric_proof_failed",
+    providerIdentityFailure: {
+      predicate: "compute_claim.cvm_ownership.opl_account_id",
+      expectedDigest: "a".repeat(64),
+      actualDigest: "b".repeat(64)
+    },
     runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
   });
   assert.match(stderr, /workspace_recovery_plan_fabric_proof_failed/);
@@ -572,6 +582,28 @@ test("Recovery Plan diagnosis CLI preserves one validated redacted server failur
     { method: "POST", path: `/api/operator/workspace-launches/${launchOperationId}/recovery-plan/diagnose` }
   ]);
   assert.doesNotMatch(stdout, /accountId|launchOperationId|cvmInstanceId|password|secret|cookie|csrf/i);
+});
+
+test("Recovery Plan artifact rejects unallowlisted or non-digest provider identity evidence", () => {
+  const base = {
+    schemaVersion: 1,
+    operationMode: "recovery_plan_diagnose",
+    status: "blocked",
+    recoveryEligible: false,
+    failureStage: "cvm_pre_read",
+    readbackError: "readback_mismatch",
+    errorCode: "workspace_recovery_plan_fabric_proof_failed",
+    runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
+  };
+  for (const providerIdentityFailure of [
+    { predicate: "raw.provider.account", expectedDigest: "a".repeat(64), actualDigest: "b".repeat(64) },
+    { predicate: "compute_claim.cvm_identity", expectedDigest: "raw-account", actualDigest: "b".repeat(64) },
+    { predicate: "compute_claim.cvm_identity", expectedDigest: "a".repeat(64), actualDigest: "a".repeat(64) },
+    { predicate: "compute_claim.cvm_identity", expectedDigest: "a".repeat(64), actualDigest: "b".repeat(64), accountId: "acct-secret" }
+  ]) {
+    assert.throws(() => productionLiveQa.validateProductionWorkspaceRecoveryPlanArtifact({ ...base, providerIdentityFailure }),
+      /workspace_recovery_plan_artifact_invalid/);
+  }
 });
 
 test("Recovery Plan execution posts one exact continuation and polls only the same persisted plan", async () => {

@@ -978,6 +978,48 @@ func TestTencentProviderComputeClaimRecoveryProofClassifiesNodeAndDependencyFail
 	}
 }
 
+func TestTencentProviderComputeClaimRecoveryProofPreservesRedactedProviderIdentityFailure(t *testing.T) {
+	setProtectedResourceEnv(t)
+	allocation, plan, ownership := computeClaimProviderFixture()
+	provider := NewTencentProvider()
+	provider.provision = func(context.Context, provisionerRequest) (provisionerResponse, error) {
+		return provisionerResponse{
+			OK: false, ErrorCode: "identity_mismatch", MutationCount: 0,
+			FailureStage: "cvm_pre_read", ProviderErrorClass: "readback_mismatch",
+			ProviderIdentityFailure: &ComputeClaimProviderIdentityFailure{
+				Predicate:      "compute_claim.cvm_ownership.opl_account_id",
+				ExpectedDigest: strings.Repeat("a", 64), ActualDigest: strings.Repeat("b", 64),
+			},
+		}, nil
+	}
+	provider.kubectl = func(context.Context, []string, []byte) ([]byte, error) {
+		t.Fatal("failed Tencent proof must not reach Kubernetes")
+		return nil, nil
+	}
+
+	proof, err := provider.ProveComputeClaimRecovery(context.Background(), allocation, plan, ownership)
+
+	if err == nil || proof.Reason != "identity_mismatch" || proof.FailureStage != "cvm_pre_read" ||
+		proof.ProviderErrorClass != "readback_mismatch" || proof.ProviderIdentityFailure == nil ||
+		proof.ProviderIdentityFailure.Predicate != "compute_claim.cvm_ownership.opl_account_id" ||
+		proof.ProviderIdentityFailure.ExpectedDigest != strings.Repeat("a", 64) ||
+		proof.ProviderIdentityFailure.ActualDigest != strings.Repeat("b", 64) {
+		t.Fatalf("proof=%#v err=%v", proof, err)
+	}
+}
+
+func TestComputeClaimProviderIdentityFailureDoesNotSynthesizeUnknownDigest(t *testing.T) {
+	evidence := newComputeClaimProviderIdentityFailure(
+		"compute_claim.provider_response_identity",
+		map[string]any{"identity": "expected"},
+		map[string]any{"identity": func() {}},
+	)
+
+	if evidence != nil {
+		t.Fatalf("evidence=%#v", evidence)
+	}
+}
+
 func TestTencentProviderClaimComputeRecoveryConvergesExactCVMAndNodeWithStrictReadback(t *testing.T) {
 	setProtectedResourceEnv(t)
 	allocation, plan, ownership := computeClaimProviderFixture()

@@ -833,6 +833,10 @@ func TestWorkspaceRecoveryPlanDiagnosePreservesRedactedComputeClaimFailure(t *te
 	fixture.fabric.computeClaimProof.Reason = "provider_describe"
 	fixture.fabric.computeClaimProof.FailureStage = "cvm_tag_readback"
 	fixture.fabric.computeClaimProof.ProviderErrorClass = "readback_mismatch"
+	fixture.fabric.computeClaimProof.ProviderIdentityFailure = &clients.ComputeClaimProviderIdentityFailure{
+		Predicate:      "compute_claim.cvm_ownership.opl_account_id",
+		ExpectedDigest: strings.Repeat("a", 64), ActualDigest: strings.Repeat("b", 64),
+	}
 	fixture.fabric.computeClaimProofErr = errors.New("raw provider response must not escape")
 
 	response := requestWorkspaceRecoveryPlan(t, fixture, http.MethodPost, "/diagnose", map[string]any{"accountId": operation.AccountID})
@@ -843,7 +847,7 @@ func TestWorkspaceRecoveryPlanDiagnosePreservesRedactedComputeClaimFailure(t *te
 	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
 	}
-	wantKeys := []string{"errorCode", "failureStage", "mutationCounts", "readbackError", "recoveryEligible", "schemaVersion", "status"}
+	wantKeys := []string{"errorCode", "failureStage", "mutationCounts", "providerIdentityFailure", "readbackError", "recoveryEligible", "schemaVersion", "status"}
 	actualKeys := make([]string, 0, len(body))
 	for key := range body {
 		actualKeys = append(actualKeys, key)
@@ -857,6 +861,11 @@ func TestWorkspaceRecoveryPlanDiagnosePreservesRedactedComputeClaimFailure(t *te
 	counts, ok := body["mutationCounts"].(map[string]any)
 	if !ok || len(counts) != 3 || counts["sub2api"] != float64(0) || counts["tencent"] != float64(0) || counts["kubernetes"] != float64(0) {
 		t.Fatalf("compute claim blocked diagnose mutation counts=%#v", body["mutationCounts"])
+	}
+	identityFailure, ok := body["providerIdentityFailure"].(map[string]any)
+	if !ok || len(identityFailure) != 3 || identityFailure["predicate"] != "compute_claim.cvm_ownership.opl_account_id" ||
+		identityFailure["expectedDigest"] != strings.Repeat("a", 64) || identityFailure["actualDigest"] != strings.Repeat("b", 64) {
+		t.Fatalf("compute claim provider identity failure=%#v", body["providerIdentityFailure"])
 	}
 	if strings.Contains(response.Body.String(), "raw provider") || strings.Contains(response.Body.String(), operation.ComputeCVMInstanceID) ||
 		strings.Contains(response.Body.String(), operation.AccountID) || strings.Contains(response.Body.String(), operation.ID) {

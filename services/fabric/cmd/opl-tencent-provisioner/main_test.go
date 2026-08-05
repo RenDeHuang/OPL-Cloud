@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -520,6 +521,7 @@ func TestTencentSDKComputeClaimTruthProvesOriginalUniqueNativeCVMWithoutMutation
 	response := client.ComputeClaimTruth(computeClaimTruthRequest(), nil)
 
 	if !response.Ok || response.Status != "proven" || response.ErrorCode != "" || response.MutationCount != 0 ||
+		response.FailureStage != "" || response.ProviderErrorClass != "" || response.ProviderIdentityFailure != nil ||
 		response.PoolId != "pool-basic-2c4g" || response.NodePoolId != "np-basic" || response.InstanceId != "ins-basic-2" ||
 		response.NodeName != "10.0.0.12" || response.PrivateIp != "10.0.0.12" || response.InstanceType != "SA5.MEDIUM4" ||
 		response.ProviderData["machineName"] != "node-basic-2" || response.ProviderData["zone"] != "ap-guangzhou-3" ||
@@ -536,21 +538,22 @@ func TestTencentSDKComputeClaimTruthProvesOriginalUniqueNativeCVMWithoutMutation
 
 func TestTencentSDKComputeClaimTruthFailsClosedWithoutMutation(t *testing.T) {
 	for _, tc := range []struct {
-		name       string
-		wantReason string
-		configure  func(*Request, *fakeNativeTkeAPI, *fakeNativeCvmAPI)
+		name          string
+		wantReason    string
+		wantPredicate string
+		configure     func(*Request, *fakeNativeTkeAPI, *fakeNativeCvmAPI)
 	}{
 		{name: "multiple candidate", wantReason: "multiple_candidate", configure: func(_ *Request, tke *fakeNativeTkeAPI, _ *fakeNativeCvmAPI) { tke.replicas = 3 }},
-		{name: "old machine", wantReason: "identity_mismatch", configure: func(request *Request, _ *fakeNativeTkeAPI, _ *fakeNativeCvmAPI) {
+		{name: "old machine", wantReason: "identity_mismatch", wantPredicate: "compute_claim.machine_identity", configure: func(request *Request, _ *fakeNativeTkeAPI, _ *fakeNativeCvmAPI) {
 			request.Allocation.MachineName = "node-basic-1"
 		}},
-		{name: "wrong sku", wantReason: "identity_mismatch", configure: func(_ *Request, _ *fakeNativeTkeAPI, cvm *fakeNativeCvmAPI) { cvm.instanceType = "SA5.2XLARGE16" }},
-		{name: "wrong zone", wantReason: "identity_mismatch", configure: func(_ *Request, _ *fakeNativeTkeAPI, cvm *fakeNativeCvmAPI) { cvm.zone = "ap-guangzhou-4" }},
-		{name: "postpaid", wantReason: "identity_mismatch", configure: func(_ *Request, _ *fakeNativeTkeAPI, cvm *fakeNativeCvmAPI) {
+		{name: "wrong sku", wantReason: "identity_mismatch", wantPredicate: "compute_claim.cvm_identity", configure: func(_ *Request, _ *fakeNativeTkeAPI, cvm *fakeNativeCvmAPI) { cvm.instanceType = "SA5.2XLARGE16" }},
+		{name: "wrong zone", wantReason: "identity_mismatch", wantPredicate: "compute_claim.cvm_billing", configure: func(_ *Request, _ *fakeNativeTkeAPI, cvm *fakeNativeCvmAPI) { cvm.zone = "ap-guangzhou-4" }},
+		{name: "postpaid", wantReason: "identity_mismatch", wantPredicate: "compute_claim.cvm_billing", configure: func(_ *Request, _ *fakeNativeTkeAPI, cvm *fakeNativeCvmAPI) {
 			cvm.instanceChargeType = "POSTPAID_BY_HOUR"
 		}},
-		{name: "auto renew", wantReason: "identity_mismatch", configure: func(_ *Request, _ *fakeNativeTkeAPI, cvm *fakeNativeCvmAPI) { cvm.renewFlag = "NOTIFY_AND_AUTO_RENEW" }},
-		{name: "ownership conflict", wantReason: "identity_mismatch", configure: func(_ *Request, _ *fakeNativeTkeAPI, cvm *fakeNativeCvmAPI) {
+		{name: "auto renew", wantReason: "identity_mismatch", wantPredicate: "compute_claim.cvm_billing", configure: func(_ *Request, _ *fakeNativeTkeAPI, cvm *fakeNativeCvmAPI) { cvm.renewFlag = "NOTIFY_AND_AUTO_RENEW" }},
+		{name: "ownership conflict", wantReason: "identity_mismatch", wantPredicate: "compute_claim.cvm_ownership.opl_workspace_id", configure: func(_ *Request, _ *fakeNativeTkeAPI, cvm *fakeNativeCvmAPI) {
 			cvm.tags = map[string]string{"opl_workspace_id": "ws-other"}
 		}},
 		{name: "provider failure", wantReason: "provider_describe", configure: func(_ *Request, tke *fakeNativeTkeAPI, _ *fakeNativeCvmAPI) {
@@ -572,10 +575,34 @@ func TestTencentSDKComputeClaimTruthFailsClosedWithoutMutation(t *testing.T) {
 				len(response.ProviderRequestIDs) != 0 || strings.Contains(response.Message, "request-id-sensitive") {
 				t.Fatalf("response=%#v", response)
 			}
+			if tc.wantPredicate == "" {
+				if response.ProviderIdentityFailure != nil {
+					t.Fatalf("non-identity failure exposed identity evidence: %#v", response.ProviderIdentityFailure)
+				}
+			} else if response.FailureStage != "cvm_pre_read" || response.ProviderErrorClass != "readback_mismatch" ||
+				response.ProviderIdentityFailure == nil || response.ProviderIdentityFailure.Predicate != tc.wantPredicate ||
+				!regexp.MustCompile(`^[a-f0-9]{64}$`).MatchString(response.ProviderIdentityFailure.ExpectedDigest) ||
+				!regexp.MustCompile(`^[a-f0-9]{64}$`).MatchString(response.ProviderIdentityFailure.ActualDigest) ||
+				response.ProviderIdentityFailure.ExpectedDigest == response.ProviderIdentityFailure.ActualDigest {
+				t.Fatalf("identity evidence=%#v response=%#v", response.ProviderIdentityFailure, response)
+			}
 			if tkeAPI.scaleNodePoolRequest != nil || tkeAPI.modifyNodePoolRequest != nil || tkeAPI.createNodePoolRequest != nil || tkeAPI.deleteMachinesRequest != nil || len(cvmAPI.modifyInstancesRequest) != 0 {
 				t.Fatalf("rejected proof mutated provider: tke=%#v cvm=%#v", tkeAPI, cvmAPI.modifyInstancesRequest)
 			}
 		})
+	}
+}
+
+func TestComputeClaimProviderIdentityFailureDoesNotSynthesizeUnknownDigest(t *testing.T) {
+	response := computeClaimProviderIdentityFailure(
+		"compute_claim.provider_response_identity",
+		map[string]any{"identity": "expected"},
+		map[string]any{"identity": func() {}},
+	)
+
+	if response.Ok || response.ErrorCode != "identity_mismatch" || response.ProviderIdentityFailure != nil ||
+		response.FailureStage != "" || response.ProviderErrorClass != "" || response.MutationCount != 0 {
+		t.Fatalf("response=%#v", response)
 	}
 }
 

@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 30,
+  "schemaVersion": 31,
   "owner": "OPL Platform Architecture",
   "purpose": "Current ownership contract for Console UI, Control Plane, Ledger, Fabric, and external Sub2API.",
   "state": "current",
@@ -451,6 +451,33 @@
         "ownershipProof": {"node": ["unallocated", "target_owned"], "cvm": ["recoverable", "target_owned"]},
         "reasons": ["local_identity", "provider_describe", "iam_rbac", "multiple_candidate", "identity_mismatch", "node_ownership_conflict", "storage_already_started"],
         "proofMutationCounts": {"sub2api": 0, "tencent": 0, "kubernetes": 0},
+        "providerIdentityFailureEvidence": {
+          "owner": "Fabric_ProveComputeClaimRecovery",
+          "readOnlyOperations": ["Tencent_Describe_Get_List", "TKE_Describe_Get_List", "Kubernetes_GET"],
+          "fields": ["predicate", "expectedDigest", "actualDigest", "failureStage", "providerErrorClass"],
+          "predicates": [
+            "compute_claim.request_contract",
+            "compute_claim.machine_selection",
+            "compute_claim.node_pool_identity",
+            "compute_claim.machine_identity",
+            "compute_claim.tke_instance_identity",
+            "compute_claim.network_identity",
+            "compute_claim.cvm_identity",
+            "compute_claim.cvm_billing",
+            "compute_claim.cvm_ownership_shape",
+            "compute_claim.cvm_ownership.instance_name",
+            "compute_claim.cvm_ownership.opl_account_id",
+            "compute_claim.cvm_ownership.opl_workspace_id",
+            "compute_claim.cvm_ownership.opl_resource_id",
+            "compute_claim.cvm_ownership.opl_operation_id",
+            "compute_claim.provider_response_identity",
+            "compute_claim.kubernetes_node_identity"
+          ],
+          "digest": "lowercase_sha256_of_canonical_expected_or_actual_value",
+          "rawIdentity": "forbidden",
+          "unknown": "preserved_without_synthetic_predicate_or_digest",
+          "mutationCounts": {"sub2api": 0, "tencent": 0, "kubernetes": 0}
+        },
         "idempotencyBinding": ["launch_operation_id", "idempotency_key", "target_hash", "request_hash"],
         "identityEvidence": "zero_mutation_allowlisted_expected_actual_for_ids_second_digest_for_hashes_and_redacted_persisted_binding_class_digest",
         "identityEvidenceProjection": {

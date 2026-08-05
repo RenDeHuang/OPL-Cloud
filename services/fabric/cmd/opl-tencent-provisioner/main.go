@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/sha1"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -151,7 +152,14 @@ type Response struct {
 	MutationCount            int                       `json:"mutationCount"`
 	FailureStage             string                    `json:"failureStage,omitempty"`
 	ProviderErrorClass       string                    `json:"providerErrorClass,omitempty"`
+	ProviderIdentityFailure  *ProviderIdentityFailure  `json:"providerIdentityFailure,omitempty"`
 	MutationEvidence         *MutationEvidence         `json:"mutationEvidence,omitempty"`
+}
+
+type ProviderIdentityFailure struct {
+	Predicate      string `json:"predicate"`
+	ExpectedDigest string `json:"expectedDigest"`
+	ActualDigest   string `json:"actualDigest"`
 }
 
 type MutationEvidence struct {
@@ -2208,7 +2216,17 @@ func (client *tencentSDKClient) ComputeClaimTruth(request Request, _ map[string]
 		strings.TrimSpace(request.Allocation.NodeName) == "" || strings.TrimSpace(request.Allocation.PrivateIp) == "" ||
 		strings.TrimSpace(request.Allocation.Deadline) == "" || !validOwnershipTags(request.Tags) ||
 		request.Tags["opl_account_id"] != request.AccountId || request.Tags["opl_resource_id"] != request.Allocation.Id {
-		return computeClaimTruthFailure("identity_mismatch")
+		return computeClaimProviderIdentityFailure("compute_claim.request_contract", map[string]any{
+			"knownPackage": true, "shapeMatches": true, "accountPresent": true, "zonePresent": true, "poolIdentityPresent": true,
+			"capacityPlanValid": true, "allocationIdentityPresent": true, "ownershipTagsValid": true,
+		}, map[string]any{
+			"knownPackage": knownPackage, "shapeMatches": request.Pool.CPU == expectedCPU && request.Pool.MemoryGB == expectedMemoryGB,
+			"accountPresent": strings.TrimSpace(request.AccountId) != "", "zonePresent": strings.TrimSpace(request.Zone) != "",
+			"poolIdentityPresent":       strings.TrimSpace(request.Pool.Id) != "" && strings.TrimSpace(request.Pool.NodePoolId) != "" && strings.TrimSpace(request.Pool.InstanceType) != "",
+			"capacityPlanValid":         request.Pool.MaxReplicas > 0 && request.Pool.BaselineReplicas >= 0 && request.Pool.TargetReplicas == request.Pool.BaselineReplicas+1 && int64(len(request.Pool.BeforeMachineNames)) == request.Pool.BaselineReplicas,
+			"allocationIdentityPresent": strings.TrimSpace(request.Allocation.Id) != "" && strings.HasPrefix(request.Allocation.InstanceId, "ins-") && strings.TrimSpace(request.Allocation.MachineName) != "" && strings.TrimSpace(request.Allocation.NodeName) != "" && strings.TrimSpace(request.Allocation.PrivateIp) != "" && strings.TrimSpace(request.Allocation.Deadline) != "",
+			"ownershipTagsValid":        validOwnershipTags(request.Tags) && request.Tags["opl_account_id"] == request.AccountId && request.Tags["opl_resource_id"] == request.Allocation.Id,
+		})
 	}
 	pool, _, err := client.describeNativeNodePool(request.Pool.NodePoolId)
 	if err != nil {
@@ -2223,29 +2241,38 @@ func (client *tencentSDKClient) ComputeClaimTruth(request Request, _ map[string]
 		if differenceCode == "compute_allocation_machine_difference_ambiguous" {
 			return computeClaimTruthFailure("multiple_candidate")
 		}
-		return computeClaimTruthFailure("identity_mismatch")
+		return computeClaimProviderIdentityFailure("compute_claim.machine_selection", map[string]any{"differenceCode": "", "machineSelected": true}, map[string]any{"differenceCode": differenceCode, "machineSelected": machine != nil})
 	}
 	if !computeClaimNodePoolMatches(pool, request) {
-		return computeClaimTruthFailure("identity_mismatch")
+		return computeClaimProviderIdentityFailure("compute_claim.node_pool_identity", request.Pool, pool)
 	}
 	machineName, privateIP := stringValue(machine.MachineName), stringValue(machine.LanIP)
 	if machineName != request.Allocation.MachineName || kubernetesNodeName(machine) != request.Allocation.NodeName || privateIP != request.Allocation.PrivateIp ||
 		!machineResourceShapeMatches(machine, request.Pool) {
-		return computeClaimTruthFailure("identity_mismatch")
+		return computeClaimProviderIdentityFailure("compute_claim.machine_identity", map[string]any{
+			"machineName": request.Allocation.MachineName, "nodeName": request.Allocation.NodeName, "privateIp": request.Allocation.PrivateIp,
+			"instanceType": request.Pool.InstanceType, "cpu": request.Pool.CPU, "memoryGb": request.Pool.MemoryGB,
+		}, map[string]any{
+			"machineName": machineName, "nodeName": kubernetesNodeName(machine), "privateIp": privateIP,
+			"instanceType": stringValue(machine.InstanceType), "cpu": machine.CPU, "memory": machine.Memory,
+		})
 	}
 	tkeInstance, _, err := client.describeNativeTkeClusterInstanceByMachineName(machineName, request.Pool.NodePoolId)
 	if err != nil {
 		return computeClaimTruthFailure(computeClaimDescribeReason(err))
 	}
 	if validateNativeTkeAllocationIdentity(tkeInstance, machine, request) != nil || !nativeResourceShapeMatches(tkeInstance.Native, request.Pool) {
-		return computeClaimTruthFailure("identity_mismatch")
+		return computeClaimProviderIdentityFailure("compute_claim.tke_instance_identity", map[string]any{
+			"machineName": machineName, "nodePoolId": request.Pool.NodePoolId, "nodeName": request.Allocation.NodeName,
+			"privateIp": privateIP, "instanceType": request.Pool.InstanceType,
+		}, tkeInstance)
 	}
 	targetVPCID, _, err := client.describeNodePoolSubnetVpc(pool, stringValue(tkeInstance.Native.SubnetId))
 	if err != nil {
 		return computeClaimTruthFailure(computeClaimDescribeReason(err))
 	}
 	if stringValue(tkeInstance.Native.VpcId) != targetVPCID {
-		return computeClaimTruthFailure("identity_mismatch")
+		return computeClaimProviderIdentityFailure("compute_claim.network_identity", map[string]string{"vpcId": targetVPCID}, map[string]string{"vpcId": stringValue(tkeInstance.Native.VpcId)})
 	}
 	cvmInstance, _, err := client.describeCvmInstanceByPrivateIp(privateIP)
 	if err != nil {
@@ -2256,7 +2283,10 @@ func (client *tencentSDKClient) ComputeClaimTruth(request Request, _ map[string]
 		stringValue(cvmInstance.VirtualPrivateCloud.SubnetId) != stringValue(tkeInstance.Native.SubnetId) ||
 		stringValue(cvmInstance.InstanceType) != request.Pool.InstanceType || !cvmResourceShapeMatches(cvmInstance, request.Pool) ||
 		!strings.EqualFold(strings.TrimSpace(stringValue(cvmInstance.InstanceState)), "running") {
-		return computeClaimTruthFailure("identity_mismatch")
+		return computeClaimProviderIdentityFailure("compute_claim.cvm_identity", map[string]any{
+			"instanceId": request.Allocation.InstanceId, "privateIp": privateIP, "vpcId": targetVPCID,
+			"subnetId": stringValue(tkeInstance.Native.SubnetId), "instanceType": request.Pool.InstanceType, "state": "running",
+		}, cvmInstance)
 	}
 	zone := ""
 	if cvmInstance.Placement != nil {
@@ -2265,11 +2295,18 @@ func (client *tencentSDKClient) ComputeClaimTruth(request Request, _ map[string]
 	deadline := normalizeTencentDeadline(stringValue(cvmInstance.ExpiredTime))
 	if zone != request.Zone || stringValue(cvmInstance.InstanceChargeType) != "PREPAID" ||
 		stringValue(cvmInstance.RenewFlag) != "NOTIFY_AND_MANUAL_RENEW" || deadline == "" || deadline != request.Allocation.Deadline {
-		return computeClaimTruthFailure("identity_mismatch")
+		return computeClaimProviderIdentityFailure("compute_claim.cvm_billing", map[string]any{
+			"zone": request.Zone, "chargeType": "PREPAID", "renewFlag": "NOTIFY_AND_MANUAL_RENEW", "deadline": request.Allocation.Deadline,
+		}, map[string]any{
+			"zone": zone, "chargeType": stringValue(cvmInstance.InstanceChargeType), "renewFlag": stringValue(cvmInstance.RenewFlag), "deadline": deadline,
+		})
 	}
-	ownershipState, ok := computeClaimCVMOwnershipState(cvmInstance, machineName, request)
+	ownershipState, ok, ownershipPredicate := computeClaimCVMOwnershipState(cvmInstance, machineName, request)
 	if !ok {
-		return computeClaimTruthFailure("identity_mismatch")
+		actualTags, _ := cvmOwnershipTags(cvmInstance)
+		return computeClaimProviderIdentityFailure(ownershipPredicate, map[string]any{
+			"instanceNames": []string{machineName, request.Allocation.Id}, "tags": request.Tags,
+		}, map[string]any{"instanceName": stringValue(cvmInstance.InstanceName), "tags": actualTags})
 	}
 	return Response{
 		Ok: true, Status: "proven", PoolId: request.Pool.Id, NodePoolId: request.Pool.NodePoolId,
@@ -2293,10 +2330,10 @@ func computeClaimNodePoolMatches(pool *tke2022.NodePool, request Request) bool {
 		stringValue(pool.Native.InstanceTypes[0]) == request.Pool.InstanceType && len(pool.Native.SubnetIds) > 0
 }
 
-func computeClaimCVMOwnershipState(instance *cvm2017.Instance, machineName string, request Request) (string, bool) {
+func computeClaimCVMOwnershipState(instance *cvm2017.Instance, machineName string, request Request) (string, bool, string) {
 	tags, err := cvmOwnershipTags(instance)
 	if err != nil {
-		return "", false
+		return "", false, "compute_claim.cvm_ownership_shape"
 	}
 	targetCount := 0
 	for _, key := range cbsOwnershipTagKeys {
@@ -2305,18 +2342,27 @@ func computeClaimCVMOwnershipState(instance *cvm2017.Instance, machineName strin
 			continue
 		}
 		if actual != request.Tags[key] {
-			return "", false
+			return "", false, computeClaimOwnershipPredicate(key)
 		}
 		targetCount++
 	}
 	instanceName := strings.TrimSpace(stringValue(instance.InstanceName))
 	if instanceName != "" && instanceName != machineName && instanceName != request.Allocation.Id {
-		return "", false
+		return "", false, "compute_claim.cvm_ownership.instance_name"
 	}
 	if instanceName == request.Allocation.Id && targetCount == len(cbsOwnershipTagKeys) {
-		return "target_owned", true
+		return "target_owned", true, ""
 	}
-	return "recoverable", true
+	return "recoverable", true, ""
+}
+
+func computeClaimOwnershipPredicate(key string) string {
+	switch key {
+	case "opl_account_id", "opl_workspace_id", "opl_resource_id", "opl_operation_id":
+		return "compute_claim.cvm_ownership." + key
+	default:
+		return "compute_claim.cvm_ownership_shape"
+	}
 }
 
 type cvmOwnershipTarget struct {
@@ -2602,6 +2648,48 @@ func computeClaimTruthFailure(reason string) Response {
 		reason = "provider_describe"
 	}
 	return Response{Ok: false, ErrorCode: reason, Message: "Compute claim truth could not be proven.", Retryable: false}
+}
+
+func computeClaimProviderIdentityFailure(predicate string, expected, actual any) Response {
+	if !validComputeClaimProviderIdentityPredicate(predicate) {
+		predicate = "compute_claim.provider_response_identity"
+	}
+	response := computeClaimTruthFailure("identity_mismatch")
+	expectedDigest, expectedOK := computeClaimProviderIdentityDigest(expected)
+	actualDigest, actualOK := computeClaimProviderIdentityDigest(actual)
+	if !expectedOK || !actualOK || expectedDigest == actualDigest {
+		return response
+	}
+	response.FailureStage = "cvm_pre_read"
+	response.ProviderErrorClass = "readback_mismatch"
+	response.ProviderIdentityFailure = &ProviderIdentityFailure{
+		Predicate: predicate, ExpectedDigest: expectedDigest, ActualDigest: actualDigest,
+	}
+	return response
+}
+
+func computeClaimProviderIdentityDigest(value any) (string, bool) {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return "", false
+	}
+	digest := sha256.Sum256(raw)
+	return hex.EncodeToString(digest[:]), true
+}
+
+func validComputeClaimProviderIdentityPredicate(value string) bool {
+	switch value {
+	case "compute_claim.request_contract", "compute_claim.machine_selection", "compute_claim.node_pool_identity",
+		"compute_claim.machine_identity", "compute_claim.tke_instance_identity", "compute_claim.network_identity",
+		"compute_claim.cvm_identity", "compute_claim.cvm_billing", "compute_claim.cvm_ownership_shape",
+		"compute_claim.cvm_ownership.instance_name", "compute_claim.cvm_ownership.opl_account_id",
+		"compute_claim.cvm_ownership.opl_workspace_id", "compute_claim.cvm_ownership.opl_resource_id",
+		"compute_claim.cvm_ownership.opl_operation_id", "compute_claim.provider_response_identity",
+		"compute_claim.kubernetes_node_identity":
+		return true
+	default:
+		return false
+	}
 }
 
 func (client *tencentSDKClient) ClaimComputeMachine(request Request, _ map[string]string) Response {

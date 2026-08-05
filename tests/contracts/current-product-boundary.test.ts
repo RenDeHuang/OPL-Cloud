@@ -448,7 +448,7 @@ test("Current Fabric contracts require dedicated package NodePools without weake
     output: "redacted_evidence_only",
     currentState: "implemented_and_fake_tested_not_executed"
   });
-  assert.equal(deployment.schemaVersion, 40);
+  assert.equal(deployment.schemaVersion, 41);
   assert.equal(deployment.deployWorkflow.preDebitTencentIamGate.proofMode, "production_runner_deployment_attestation");
   assert.deepEqual(deployment.deployWorkflow.preDebitTencentIamGate.requiredTencentActions, ["tag:TagResources", "tag:ModifyResourcesTagValue"]);
   assert.equal(deployment.deployWorkflow.preDebitTencentIamGate.tencentTagWriteCalls, 0);
@@ -470,7 +470,9 @@ test("Current Fabric contracts require dedicated package NodePools without weake
     artifact: {
       schemaVersion: 1,
       fields: ["operationMode", "status", "recoveryEligible", "failureStage", "readbackError", "errorCode", "planId", "planDigest", "stages", "mismatches", "runnerDirectMutationCounts", "verifiedAt", "successorGate"],
-      failureFields: ["failureStage", "readbackError", "errorCode"],
+      failureFields: ["failureStage", "readbackError", "errorCode", "providerIdentityFailure"],
+      providerIdentityFailureFields: ["predicate", "expectedDigest", "actualDigest"],
+      providerIdentityFailureAuthority: "Fabric_ProveComputeClaimRecovery_digest_only_optional_on_deterministic_identity_mismatch",
       validator: "tools/production-live-qa.ts#validateProductionWorkspaceRecoveryPlanArtifact",
       executeFields: ["executionId", "runId", "url", "receiptId", "controlPlaneExecutionMutationCounts"],
       successorGateFields: ["applicable", "allowed", "planState", "executionState", "completionState", "leaseState", "identityState", "persistedMutationState", "fabricLedgerState"],
@@ -750,7 +752,7 @@ test("Current contracts hard cut operator resources, wallet adjustments, and ann
     absentRequires: "both_local_identities_and_exact_provider_describe_absence",
     forbiddenSideEffects: ["sync", "tag", "kubectl_apply", "delete", "label", "purchase", "renew", "destroy"]
   });
-  assert.equal(boundary.schemaVersion, 30);
+  assert.equal(boundary.schemaVersion, 31);
   assert.deepEqual(boundary.services.controlPlane.workspaceLaunchRecoveryAcceptanceCanary, {
     defaultEnabled: false,
     allowlistEnv: "OPL_RECOVERY_ACCEPTANCE_CANARY_ACCOUNT_IDS",
@@ -859,6 +861,24 @@ test("Current contracts hard cut operator resources, wallet adjustments, and ann
     ownershipProof: { node: ["unallocated", "target_owned"], cvm: ["recoverable", "target_owned"] },
     reasons: ["local_identity", "provider_describe", "iam_rbac", "multiple_candidate", "identity_mismatch", "node_ownership_conflict", "storage_already_started"],
     proofMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
+    providerIdentityFailureEvidence: {
+      owner: "Fabric_ProveComputeClaimRecovery",
+      readOnlyOperations: ["Tencent_Describe_Get_List", "TKE_Describe_Get_List", "Kubernetes_GET"],
+      fields: ["predicate", "expectedDigest", "actualDigest", "failureStage", "providerErrorClass"],
+      predicates: [
+        "compute_claim.request_contract", "compute_claim.machine_selection", "compute_claim.node_pool_identity",
+        "compute_claim.machine_identity", "compute_claim.tke_instance_identity", "compute_claim.network_identity",
+        "compute_claim.cvm_identity", "compute_claim.cvm_billing", "compute_claim.cvm_ownership_shape",
+        "compute_claim.cvm_ownership.instance_name", "compute_claim.cvm_ownership.opl_account_id",
+        "compute_claim.cvm_ownership.opl_workspace_id", "compute_claim.cvm_ownership.opl_resource_id",
+        "compute_claim.cvm_ownership.opl_operation_id", "compute_claim.provider_response_identity",
+        "compute_claim.kubernetes_node_identity"
+      ],
+      digest: "lowercase_sha256_of_canonical_expected_or_actual_value",
+      rawIdentity: "forbidden",
+      unknown: "preserved_without_synthetic_predicate_or_digest",
+      mutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
+    },
     idempotencyBinding: ["launch_operation_id", "idempotency_key", "target_hash", "request_hash"],
     identityEvidence: "zero_mutation_allowlisted_expected_actual_for_ids_second_digest_for_hashes_and_redacted_persisted_binding_class_digest",
     identityEvidenceProjection: {

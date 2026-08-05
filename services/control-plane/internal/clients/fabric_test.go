@@ -372,10 +372,15 @@ func TestFabricHTTPClientPreservesSafeComputeClaimFailureProof(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusConflict)
 		_ = json.NewEncoder(w).Encode(ComputeClaimRecoveryProof{
-			SchemaVersion: 1, Eligible: false, Reason: "storage_already_started", StorageState: "unknown",
+			SchemaVersion: 1, Eligible: false, Reason: "identity_mismatch", StorageState: "unknown",
 			LaunchOperationID: "launch-fixture", AccountID: "acct-fixture", WorkspaceID: "ws-fixture",
 			ComputeAllocationID: "ca-fixture", StorageVolumeID: "vol-fixture", PackageID: "basic",
 			PoolID: "pool-basic-2c4g", NodePoolID: "np-workspace-basic",
+			FailureStage: "cvm_pre_read", ProviderErrorClass: "readback_mismatch",
+			ProviderIdentityFailure: &ComputeClaimProviderIdentityFailure{
+				Predicate:      "compute_claim.cvm_ownership.opl_account_id",
+				ExpectedDigest: strings.Repeat("a", 64), ActualDigest: strings.Repeat("b", 64),
+			},
 			Evidence: &ComputeClaimEvidence{},
 		})
 	}))
@@ -387,8 +392,9 @@ func TestFabricHTTPClientPreservesSafeComputeClaimFailureProof(t *testing.T) {
 		StorageVolumeID: "vol-fixture", PackageID: "basic", PoolID: "pool-basic-2c4g", NodePoolID: "np-workspace-basic",
 	})
 	var upstreamErr *FabricHTTPError
-	if !errors.As(err, &upstreamErr) || upstreamErr.StatusCode != http.StatusConflict || proof.Eligible || proof.Reason != "storage_already_started" ||
-		proof.Sub2APIMutationCount != 0 || proof.TencentMutationCount != 0 || proof.KubernetesMutationCount != 0 {
+	if !errors.As(err, &upstreamErr) || upstreamErr.StatusCode != http.StatusConflict || proof.Eligible || proof.Reason != "identity_mismatch" ||
+		proof.Sub2APIMutationCount != 0 || proof.TencentMutationCount != 0 || proof.KubernetesMutationCount != 0 ||
+		proof.ProviderIdentityFailure == nil || proof.ProviderIdentityFailure.Predicate != "compute_claim.cvm_ownership.opl_account_id" {
 		t.Fatalf("proof=%#v err=%v", proof, err)
 	}
 }
