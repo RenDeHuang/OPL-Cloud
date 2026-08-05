@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 38,
+  "schemaVersion": 39,
   "owner": "OPL Fabric",
   "purpose": "Deployment workflow, immutable Cloud and Workspace images, TKE handoff, read-only diagnostics, and production-verification safety.",
   "state": "current",
@@ -882,8 +882,8 @@
     "job": "compute-pool-head-terminalization",
     "runner": ["self-hosted", "tencent-cloud", "opl-cloud", "tke-vpc"],
     "environment": "production",
-    "requiredConfirmation": "confirm_compute_pool_head_terminalization",
-    "inputs": ["merged_sha", "approval_id", "confirm_compute_pool_head_terminalization"],
+    "requiredConfirmation": "operation_mode_compute_pool_head_terminalize_and_nonempty_approval_id",
+    "inputs": ["merged_sha", "operation_mode", "approval_id"],
     "nodePoolSource": "production_OPL_BASIC_COMPUTE_NODE_POOL_ID_variable",
     "sourceGate": "github_sha_checkout_head_and_only_remote_main_equal_exact_merged_sha",
     "deploymentGate": "production_configmap_release_sha_and_current_ready_fabric_revision_image_digest",

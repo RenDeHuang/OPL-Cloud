@@ -88,11 +88,6 @@ on:
         required: true
         default: false
         type: boolean
-      confirm_compute_pool_head_terminalization:
-        description: Approve one exact current Basic pool-head claim_pending to failed/terminal_unprovable CAS with zero provider mutation.
-        required: true
-        default: false
-        type: boolean
       resume_run_id:
         description: Optional prior run ID whose redacted checkpoint should be resumed with the same approval.
         required: false
@@ -1386,7 +1381,7 @@ jobs:
 
   compute-pool-head-terminalization:
     name: Terminalize one exact unprovable Basic compute pool head
-    if: ${{ github.ref == 'refs/heads/main' && github.sha == inputs.merged_sha && inputs.operation_mode == 'compute_pool_head_terminalize' && inputs.approval_id != '' && inputs.confirm_compute_pool_head_terminalization && inputs.resume_run_id == '' && inputs.customer_email == '' && inputs.workspace_identity_account_id == '' && inputs.workspace_identity_workspace_id == '' && inputs.recovery_plan_launch_operation_id == '' && inputs.recovery_plan_id == '' && inputs.recovery_plan_digest == '' && inputs.recovery_acceptance_account_id == '' && inputs.recovery_acceptance_launch_operation_id == '' && inputs.recovery_evidence_run_id == '' && inputs.recovery_evidence_artifact_id == '' && inputs.recovery_evidence_artifact_digest == '' && !inputs.confirm_account_provision && !inputs.confirm_wallet_recharge && !inputs.confirm_workspace_purchase && !inputs.confirm_single_model_request && !inputs.confirm_recovery_plan_execute && !inputs.confirm_recovery_acceptance_canary && !inputs.confirm_recovery_acceptance_funding && !inputs.confirm_recovery_acceptance_extra_funding && !inputs.confirm_recovery_acceptance_original_launch }}
+    if: ${{ github.ref == 'refs/heads/main' && github.sha == inputs.merged_sha && inputs.operation_mode == 'compute_pool_head_terminalize' && inputs.approval_id != '' && inputs.resume_run_id == '' && inputs.customer_email == '' && inputs.workspace_identity_account_id == '' && inputs.workspace_identity_workspace_id == '' && inputs.recovery_plan_launch_operation_id == '' && inputs.recovery_plan_id == '' && inputs.recovery_plan_digest == '' && inputs.recovery_acceptance_account_id == '' && inputs.recovery_acceptance_launch_operation_id == '' && inputs.recovery_evidence_run_id == '' && inputs.recovery_evidence_artifact_id == '' && inputs.recovery_evidence_artifact_digest == '' && !inputs.confirm_account_provision && !inputs.confirm_wallet_recharge && !inputs.confirm_workspace_purchase && !inputs.confirm_single_model_request && !inputs.confirm_recovery_plan_execute && !inputs.confirm_recovery_acceptance_canary && !inputs.confirm_recovery_acceptance_funding && !inputs.confirm_recovery_acceptance_extra_funding && !inputs.confirm_recovery_acceptance_original_launch }}
     runs-on: [self-hosted, tencent-cloud, opl-cloud, tke-vpc]
     timeout-minutes: 15
     environment: production

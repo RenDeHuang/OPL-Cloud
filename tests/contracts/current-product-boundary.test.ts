@@ -448,7 +448,7 @@ test("Current Fabric contracts require dedicated package NodePools without weake
     output: "redacted_evidence_only",
     currentState: "implemented_and_fake_tested_not_executed"
   });
-  assert.equal(deployment.schemaVersion, 38);
+  assert.equal(deployment.schemaVersion, 39);
   assert.equal(deployment.deployWorkflow.preDebitTencentIamGate.proofMode, "production_runner_deployment_attestation");
   assert.deepEqual(deployment.deployWorkflow.preDebitTencentIamGate.requiredTencentActions, ["tag:TagResources", "tag:ModifyResourcesTagValue"]);
   assert.equal(deployment.deployWorkflow.preDebitTencentIamGate.tencentTagWriteCalls, 0);

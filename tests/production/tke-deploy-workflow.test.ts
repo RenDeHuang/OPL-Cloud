@@ -1414,9 +1414,11 @@ test("operator terminalizes only one exact blocked compute pool head with one CA
   const boundary = deployment.productionComputePoolHeadTerminalization;
 
   assert.ok(inputs.operation_mode.options.includes("compute_pool_head_terminalize"));
-  assert.equal(inputs.confirm_compute_pool_head_terminalization.type, "boolean");
+  assert.equal(Object.keys(inputs).length, 25);
+  assert.equal(inputs.confirm_compute_pool_head_terminalization, undefined);
   assert.match(String(job.if), /inputs\.operation_mode == 'compute_pool_head_terminalize'/);
-  assert.match(String(job.if), /inputs\.confirm_compute_pool_head_terminalization/);
+  assert.match(String(job.if), /inputs\.approval_id != ''/);
+  assert.doesNotMatch(String(job.if), /inputs\.confirm_compute_pool_head_terminalization/);
   assert.deepEqual(job["runs-on"], ["self-hosted", "tencent-cloud", "opl-cloud", "tke-vpc"]);
   assert.equal(job.environment, "production");
   assert.equal(job.env.OPL_POOL_HEAD_TERMINALIZATION_APPROVAL_ID, "${{ inputs.approval_id }}");
@@ -1437,8 +1439,8 @@ test("operator terminalizes only one exact blocked compute pool head with one CA
     job: "compute-pool-head-terminalization",
     runner: ["self-hosted", "tencent-cloud", "opl-cloud", "tke-vpc"],
     environment: "production",
-    requiredConfirmation: "confirm_compute_pool_head_terminalization",
-    inputs: ["merged_sha", "approval_id", "confirm_compute_pool_head_terminalization"],
+    requiredConfirmation: "operation_mode_compute_pool_head_terminalize_and_nonempty_approval_id",
+    inputs: ["merged_sha", "operation_mode", "approval_id"],
     nodePoolSource: "production_OPL_BASIC_COMPUTE_NODE_POOL_ID_variable",
     sourceGate: "github_sha_checkout_head_and_only_remote_main_equal_exact_merged_sha",
     deploymentGate: "production_configmap_release_sha_and_current_ready_fabric_revision_image_digest",
