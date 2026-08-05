@@ -127,7 +127,7 @@ test("Current contracts hard cut Workspace purchase, access, and Runtime facts",
     json("packages/contracts/opl-cloud-console-source-truth-contract.json")
   ]);
 
-  assert.equal(freeze.schemaVersion, 26);
+  assert.equal(freeze.schemaVersion, 27);
   assert.equal(billing.schemaVersion, 11);
   assert.equal(freeze.workspaceLaunch.customerDebitCardinality, 1);
   assert.equal(freeze.workspaceLaunch.persistence, "control_plane_runtime_operations with action=workspace.launch.v2 and result.schemaVersion=2");
@@ -753,7 +753,7 @@ test("Current contracts hard cut operator resources, wallet adjustments, and ann
     absentRequires: "both_local_identities_and_exact_provider_describe_absence",
     forbiddenSideEffects: ["sync", "tag", "kubectl_apply", "delete", "label", "purchase", "renew", "destroy"]
   });
-  assert.equal(boundary.schemaVersion, 31);
+  assert.equal(boundary.schemaVersion, 32);
   assert.deepEqual(boundary.services.controlPlane.workspaceLaunchRecoveryAcceptanceCanary, {
     defaultEnabled: false,
     allowlistEnv: "OPL_RECOVERY_ACCEPTANCE_CANARY_ACCOUNT_IDS",
@@ -910,7 +910,17 @@ test("Current contracts hard cut operator resources, wallet adjustments, and ann
       missingOutcome: "conservative_unknown_at_full_bound",
       replayProofUnavailable: "return_persisted_mutation_evidence_zero_incremental_external_mutation",
       observedCvmTagRepairContinuation: "only_cvm_tag_readback_zero_unknown_zero_kubernetes_then_fresh_exact_cvm_target_owned_node_unallocated_proof_may_reconcile_original_claim_identity_and_attempt_one_node_patch_without_binding_takeover",
-      requestHashOnlyReconciliation: "claim_compute_recovery_only_consumer_requires_canonical_compute_operation_quarantined_allocation_and_ownership_exact_original_launch_target_plan_machine_cvm_node_pool_node_billing_and_storage_not_started_plus_preserved_observed_unknown_1_0_1_cvm_ledger_failure_cvm_tag_readback_provider_error_missing_only_opl_account_id_then_cas_versioned_provenance_preserves_binding_and_ledger_tencent_zero_kubernetes_max_one",
+      requestHashOnlyReconciliation: {
+        consumer: "claim_compute_recovery_only",
+        commonIdentity: "canonical_compute_operation_quarantined_allocation_and_ownership_exact_original_launch_target_plan_machine_cvm_node_pool_node_billing_and_storage_not_started",
+        generations: {
+          isolated_request_hash_v1: "schema_1_claim_pending_valid_isolated_manual_recovery_ledger",
+          normal_launch_terminal_evidence_v1: "schema_2_failed_no_manual_ledger_compute_create_1_1_0_max1_compute_claim_cvm_1_0_1_max1_node_budget_absent_exact_compute_claim_cvm_terminal_unprovable_evidence"
+        },
+        persistence: "failed_to_claim_pending_versioned_single_winner_cas_for_schema_2",
+        preserved: ["binding", "source_recovery_evidence", "normal_launch_mutation_budgets", "terminal_evidence"],
+        mutationBounds: { tencent: 0, kubernetesMax: 1 }
+      },
       activeOwnershipNodeDriftContinuation: "exact_active_machine_ownership_current_binding_no_ledger_cvm_target_owned_node_unallocated_may_reserve_node_once_and_patch_with_tencent_zero_kubernetes_max_one",
       persistedApprovalExpiryReplay: "new_approval_must_be_unexpired_exact_persisted_approval_identity_may_replay_after_expiry",
       observedSuccessReadbackMismatch: "fail_closed_identity_mismatch_claim_final_readback"

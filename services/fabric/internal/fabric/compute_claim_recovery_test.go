@@ -241,6 +241,42 @@ func seedRequestHashReconciliationCandidate(t *testing.T, store *MemoryOperation
 	return claimInput
 }
 
+func seedNormalLaunchTerminalRequestHashReconciliationCandidate(t *testing.T, store *MemoryOperationStore, provider *fakeComputeClaimRecoveryProvider, input ComputeClaimRecoveryInput) ComputeClaimRecoveryClaimInput {
+	t.Helper()
+	claimInput := ComputeClaimRecoveryClaimInput{
+		ComputeClaimRecoveryInput: input, MachineName: "machine-after", NodeName: "10.0.0.18", CVMInstanceID: "ins-fixture",
+		PrivateIP: provider.proof.PrivateIP, InstanceType: provider.proof.InstanceType, Zone: provider.proof.Zone,
+		IdempotencyKey: input.LaunchOperationID + ":compute",
+	}
+	claimInput.StorageVolumeID = "vol_" + stableID("vol", input.AccountID, input.LaunchOperationID+":storage")[:18]
+	binding := newComputeClaimRecoveryBinding(claimInput)
+	binding.RequestHash = strings.Repeat("7", 64)
+
+	store.mu.Lock()
+	pending := store.operation[0]
+	var allocation ComputeAllocation
+	plan, planPresent := decodeComputeAllocationPlan(pending)
+	if !decodeOperationResource(pending, &allocation) || !planPresent {
+		store.mu.Unlock()
+		t.Fatal("seed compute identity missing")
+	}
+	pending.Status, pending.ErrorCode, pending.FinishedAt = "claim_pending", "", time.Time{}
+	pending.RedactedProviderPayload = withComputeClaimRecoveryBinding(pending.RedactedProviderPayload, binding)
+	pending.RedactedProviderPayload = withNormalLaunchStageBudget(pending.RedactedProviderPayload, "compute_create", confirmedNormalLaunchMutationBudget())
+	pending.RedactedProviderPayload = withNormalLaunchStageBudget(pending.RedactedProviderPayload, "compute_claim_cvm", reservedNormalLaunchMutationBudget())
+	store.operation[0] = pending
+	store.mu.Unlock()
+
+	service := NewServiceWithOperationStore(provider, store)
+	cause := errors.New("compute_claim_cvm_readback_mismatch")
+	proof := provider.proof
+	if err := terminalizeComputeClaimPending(context.Background(), service, pending, allocation, plan, "compute_claim_cvm", "mismatch", cause, &proof); !errors.Is(err, cause) {
+		t.Fatalf("terminalize normal launch: %v", err)
+	}
+	configureRequestHashReconciliationNodeSuccess(provider)
+	return claimInput
+}
+
 func configureRequestHashReconciliationNodeSuccess(provider *fakeComputeClaimRecoveryProvider) {
 	provider.proof.CVMOwnershipState = "target_owned"
 	provider.proof.NodeOwnershipState = "unallocated"
@@ -803,6 +839,224 @@ func TestClaimComputeRecoveryReconcilesOnlyIsolatedRequestHashAndPreservesUnknow
 		replayedBindingJSONErr != nil || replayedLedgerJSONErr != nil ||
 		!reflect.DeepEqual(replayedBindingJSON, originalBindingJSON) || !reflect.DeepEqual(replayedLedgerJSON, originalLedgerJSON) {
 		t.Fatalf("replay=%#v err=%v provider=%#v", replayed, replayErr, provider)
+	}
+}
+
+func TestClaimComputeRecoveryReconcilesFailedNormalLaunchTerminalEvidenceAndPreservesUnknown(t *testing.T) {
+	_, store, provider, input := seedComputeClaimRecovery(t, "basic")
+	claimInput := seedNormalLaunchTerminalRequestHashReconciliationCandidate(t, store, provider, input)
+	operations, listErr := store.List(context.Background())
+	if listErr != nil || len(operations) != 1 {
+		t.Fatalf("seed operations=%#v err=%v", operations, listErr)
+	}
+	original := operations[0]
+	originalBinding, bindingErr := json.Marshal(original.RedactedProviderPayload["computeClaimRecovery"])
+	originalBudgets, budgetsErr := json.Marshal(original.RedactedProviderPayload["normalLaunchMutationBudget"])
+	originalTerminal, terminalErr := json.Marshal(original.RedactedProviderPayload[computeClaimTerminalEvidencePayloadKey])
+	if bindingErr != nil || budgetsErr != nil || terminalErr != nil {
+		t.Fatalf("seed evidence: binding=%v budgets=%v terminal=%v", bindingErr, budgetsErr, terminalErr)
+	}
+	if _, present, _ := decodeComputeClaimRecoveryMutation(original); present {
+		t.Fatal("normal launch fixture unexpectedly contains a manual recovery ledger")
+	}
+	persistedBinding, persistedBindingPresent, persistedBindingValid := decodeComputeClaimRecoveryBinding(original)
+	if digest, ok := normalLaunchTerminalRequestHashReconciliationEvidence(original, claimInput, persistedBinding); !ok || digest == "" || !persistedBindingPresent || !persistedBindingValid {
+		terminal, terminalPresent, terminalValid := decodeComputeClaimTerminalEvidence(original)
+		createBudget, createPresent, createValid := normalLaunchStageBudget(original.RedactedProviderPayload, "compute_create")
+		cvmBudget, cvmPresent, cvmValid := normalLaunchStageBudget(original.RedactedProviderPayload, "compute_claim_cvm")
+		_, nodePresent, nodeValid := normalLaunchStageBudget(original.RedactedProviderPayload, "compute_claim_node")
+		t.Fatalf("normal launch provenance rejected: binding=%#v/%v/%v terminal=%#v/%v/%v create=%#v/%v/%v cvm=%#v/%v/%v node=%v/%v",
+			persistedBinding, persistedBindingPresent, persistedBindingValid, terminal, terminalPresent, terminalValid,
+			createBudget, createPresent, createValid, cvmBudget, cvmPresent, cvmValid, nodePresent, nodeValid)
+	}
+
+	evidence, evidenceErr := NewServiceWithOperationStore(provider, store).ComputeClaimRecoveryIdentityEvidence(context.Background(), claimInput)
+	if evidenceErr != nil || evidence.BindingClassification != "request-hash-reconciliation" || evidence.MutationLedger != "absent" {
+		t.Fatalf("identity evidence=%#v err=%v", evidence, evidenceErr)
+	}
+
+	result, claimErr := NewServiceWithOperationStore(provider, store).ClaimComputeRecovery(context.Background(), claimInput)
+	stored, storedErr := store.List(context.Background())
+	ownership, ownershipErr := store.MachineOwnership(context.Background(), input.ComputeAllocationID)
+	if storedErr != nil || len(stored) != 1 {
+		t.Fatalf("stored=%#v err=%v", stored, storedErr)
+	}
+	recovered := stored[0]
+	binding, bindingPresent, bindingValid := decodeComputeClaimRecoveryBinding(recovered)
+	reconciliation, reconciliationPresent, reconciliationValid := decodeComputeClaimRecoveryReconciliation(recovered)
+	terminal, terminalPresent, terminalValid := decodeComputeClaimTerminalEvidence(recovered)
+	createBudget, createPresent, createValid := normalLaunchStageBudget(recovered.RedactedProviderPayload, "compute_create")
+	cvmBudget, cvmPresent, cvmValid := normalLaunchStageBudget(recovered.RedactedProviderPayload, "compute_claim_cvm")
+	_, nodePresent, nodeValid := normalLaunchStageBudget(recovered.RedactedProviderPayload, "compute_claim_node")
+	storedBinding, storedBindingErr := json.Marshal(recovered.RedactedProviderPayload["computeClaimRecovery"])
+	storedBudgets, storedBudgetsErr := json.Marshal(recovered.RedactedProviderPayload["normalLaunchMutationBudget"])
+	storedTerminal, storedTerminalErr := json.Marshal(recovered.RedactedProviderPayload[computeClaimTerminalEvidencePayloadKey])
+	_, manualLedgerPresent, _ := decodeComputeClaimRecoveryMutation(recovered)
+	if claimErr != nil || !result.Eligible || result.TencentMutationCount != 0 || result.KubernetesMutationCount != 1 ||
+		provider.claimCalls != 1 || ownershipErr != nil || ownership.Status != "active" || recovered.Status != "succeeded" ||
+		!bindingPresent || !bindingValid || binding.RequestHash != strings.Repeat("7", 64) || manualLedgerPresent ||
+		!reconciliationPresent || !reconciliationValid || reconciliation.SchemaVersion != 2 || reconciliation.Generation != "normal_launch_terminal_evidence_v1" || reconciliation.State != "succeeded" ||
+		!terminalPresent || !terminalValid || terminal.Status != "terminal_unprovable" || !createPresent || !createValid || createBudget != confirmedNormalLaunchMutationBudget() ||
+		!cvmPresent || !cvmValid || cvmBudget != reservedNormalLaunchMutationBudget() || nodePresent || !nodeValid ||
+		storedBindingErr != nil || storedBudgetsErr != nil || storedTerminalErr != nil || !reflect.DeepEqual(storedBinding, originalBinding) ||
+		!reflect.DeepEqual(storedBudgets, originalBudgets) || !reflect.DeepEqual(storedTerminal, originalTerminal) {
+		t.Fatalf("result=%#v err=%v operation=%#v binding=%#v reconciliation=%#v terminal=%#v budgets=%#v/%#v nodePresent=%v ownership=%#v provider=%#v",
+			result, claimErr, recovered, binding, reconciliation, terminal, createBudget, cvmBudget, nodePresent, ownership, provider)
+	}
+}
+
+func TestClaimComputeRecoveryNormalLaunchTerminalReconciliationCASResponseLossReplaysOnce(t *testing.T) {
+	_, store, provider, input := seedComputeClaimRecovery(t, "basic")
+	claimInput := seedNormalLaunchTerminalRequestHashReconciliationCandidate(t, store, provider, input)
+
+	first, firstErr := NewServiceWithOperationStore(provider, &failAfterComputeClaimReconciliationCASStore{OperationStore: store}).ClaimComputeRecovery(context.Background(), claimInput)
+	operations, listErr := store.List(context.Background())
+	reconciliation, present, valid := decodeComputeClaimRecoveryReconciliation(operations[0])
+	binding, bindingPresent, bindingValid := decodeComputeClaimRecoveryBinding(operations[0])
+	provenance, provenanceValid := isolatedRequestHashReconciliationProvenance(operations[0], claimInput, binding, bindingPresent, bindingValid)
+	matches := computeClaimRecoveryReconciliationMatches(reconciliation, operations[0], claimInput, binding, computeClaimRecoveryMutationLedger{})
+	if firstErr == nil || first.Eligible || listErr != nil || len(operations) != 1 || operations[0].Status != "claim_pending" ||
+		!present || !valid || reconciliation.SchemaVersion != 2 || reconciliation.State != "verified" || provider.claimCalls != 0 ||
+		first.TencentMutationCount != 0 || first.KubernetesMutationCount != 0 || !provenanceValid || provenance.SchemaVersion != 2 || !matches {
+		t.Fatalf("first=%#v err=%v operations=%#v binding=%#v provenance=%#v/%v reconciliation=%#v matches=%v provider=%#v",
+			first, firstErr, operations, binding, provenance, provenanceValid, reconciliation, matches, provider)
+	}
+
+	replayed, replayErr := NewServiceWithOperationStore(provider, store).ClaimComputeRecovery(context.Background(), claimInput)
+	if replayErr != nil || !replayed.Eligible || replayed.TencentMutationCount != 0 || replayed.KubernetesMutationCount != 1 || provider.claimCalls != 1 {
+		t.Fatalf("replay=%#v err=%v provider=%#v", replayed, replayErr, provider)
+	}
+}
+
+func TestClaimComputeRecoveryNormalLaunchTerminalNodePatchResponseLossConvergesByReadback(t *testing.T) {
+	_, store, provider, input := seedComputeClaimRecovery(t, "basic")
+	claimInput := seedNormalLaunchTerminalRequestHashReconciliationCandidate(t, store, provider, input)
+
+	first, firstErr := NewServiceWithOperationStore(provider, &failBeforeReconciledComputeClaimObservedSaveStore{OperationStore: store}).ClaimComputeRecovery(context.Background(), claimInput)
+	operations, listErr := store.List(context.Background())
+	reconciliation, present, valid := decodeComputeClaimRecoveryReconciliation(operations[0])
+	if firstErr == nil || first.Eligible || listErr != nil || len(operations) != 1 || !present || !valid || reconciliation.SchemaVersion != 2 ||
+		reconciliation.State != "node_reserved" || provider.claimCalls != 1 || first.TencentMutationCount != 0 || first.KubernetesMutationCount != 1 {
+		t.Fatalf("first=%#v err=%v operations=%#v reconciliation=%#v provider=%#v", first, firstErr, operations, reconciliation, provider)
+	}
+
+	replayed, replayErr := NewServiceWithOperationStore(provider, store).ClaimComputeRecovery(context.Background(), claimInput)
+	if replayErr != nil || !replayed.Eligible || replayed.TencentMutationCount != 0 || replayed.KubernetesMutationCount != 0 || provider.claimCalls != 1 {
+		t.Fatalf("replay=%#v err=%v provider=%#v", replayed, replayErr, provider)
+	}
+}
+
+func TestClaimComputeRecoveryNormalLaunchTerminalConcurrentReplayHasOneNodePatch(t *testing.T) {
+	_, store, provider, input := seedComputeClaimRecovery(t, "basic")
+	claimInput := seedNormalLaunchTerminalRequestHashReconciliationCandidate(t, store, provider, input)
+
+	type outcome struct {
+		proof ComputeClaimRecoveryProof
+		err   error
+	}
+	start := make(chan struct{})
+	results := make(chan outcome, 2)
+	for range 2 {
+		go func() {
+			<-start
+			proof, err := NewServiceWithOperationStore(provider, store).ClaimComputeRecovery(context.Background(), claimInput)
+			results <- outcome{proof: proof, err: err}
+		}()
+	}
+	close(start)
+	for range 2 {
+		result := <-results
+		if result.err != nil || !result.proof.Eligible || result.proof.TencentMutationCount != 0 || result.proof.KubernetesMutationCount > 1 {
+			t.Fatalf("outcome=%#v", result)
+		}
+	}
+	if provider.claimCalls != 1 {
+		t.Fatalf("provider=%#v", provider)
+	}
+}
+
+func TestClaimComputeRecoveryNormalLaunchTerminalReconciliationFailsClosedBeforeMutation(t *testing.T) {
+	tests := map[string]func(*FabricOperation, *ComputeAllocation, *ComputeAllocationPreparation, *MachineOwnership, *fakeComputeClaimRecoveryProvider){
+		"binding target": func(operation *FabricOperation, _ *ComputeAllocation, _ *ComputeAllocationPreparation, _ *MachineOwnership, _ *fakeComputeClaimRecoveryProvider) {
+			binding, _, _ := decodeComputeClaimRecoveryBinding(*operation)
+			binding.TargetHash = strings.Repeat("8", 64)
+			operation.RedactedProviderPayload = withComputeClaimRecoveryBinding(operation.RedactedProviderPayload, binding)
+		},
+		"allocation plan": func(operation *FabricOperation, _ *ComputeAllocation, plan *ComputeAllocationPreparation, _ *MachineOwnership, _ *fakeComputeClaimRecoveryProvider) {
+			plan.TargetReplicas++
+			operation.RedactedProviderPayload["allocationPlan"] = *plan
+		},
+		"compute allocation": func(operation *FabricOperation, allocation *ComputeAllocation, _ *ComputeAllocationPreparation, _ *MachineOwnership, _ *fakeComputeClaimRecoveryProvider) {
+			allocation.CVMInstanceID = "ins-other"
+			allocation.InstanceID = "ins-other"
+			operation.RedactedProviderPayload["resource"] = *allocation
+		},
+		"machine ownership": func(_ *FabricOperation, _ *ComputeAllocation, _ *ComputeAllocationPreparation, ownership *MachineOwnership, _ *fakeComputeClaimRecoveryProvider) {
+			ownership.InstanceID = "ins-other"
+		},
+		"terminal launch": func(operation *FabricOperation, _ *ComputeAllocation, _ *ComputeAllocationPreparation, _ *MachineOwnership, _ *fakeComputeClaimRecoveryProvider) {
+			terminal, _, _ := decodeComputeClaimTerminalEvidence(*operation)
+			terminal.LaunchOperationID = "workspace-launch-other"
+			operation.RedactedProviderPayload = withComputeClaimTerminalEvidence(operation.RedactedProviderPayload, terminal)
+		},
+		"terminal binding": func(operation *FabricOperation, _ *ComputeAllocation, _ *ComputeAllocationPreparation, _ *MachineOwnership, _ *fakeComputeClaimRecoveryProvider) {
+			terminal, _, _ := decodeComputeClaimTerminalEvidence(*operation)
+			terminal.BindingDigest = strings.Repeat("9", 64)
+			operation.RedactedProviderPayload = withComputeClaimTerminalEvidence(operation.RedactedProviderPayload, terminal)
+		},
+		"compute create budget": func(operation *FabricOperation, _ *ComputeAllocation, _ *ComputeAllocationPreparation, _ *MachineOwnership, _ *fakeComputeClaimRecoveryProvider) {
+			operation.RedactedProviderPayload = withNormalLaunchStageBudget(operation.RedactedProviderPayload, "compute_create", reservedNormalLaunchMutationBudget())
+		},
+		"cvm budget": func(operation *FabricOperation, _ *ComputeAllocation, _ *ComputeAllocationPreparation, _ *MachineOwnership, _ *fakeComputeClaimRecoveryProvider) {
+			operation.RedactedProviderPayload = withNormalLaunchStageBudget(operation.RedactedProviderPayload, "compute_claim_cvm", confirmedNormalLaunchMutationBudget())
+		},
+		"node budget": func(operation *FabricOperation, _ *ComputeAllocation, _ *ComputeAllocationPreparation, _ *MachineOwnership, _ *fakeComputeClaimRecoveryProvider) {
+			operation.RedactedProviderPayload = withNormalLaunchStageBudget(operation.RedactedProviderPayload, "compute_claim_node", reservedNormalLaunchMutationBudget())
+		},
+		"manual ledger": func(operation *FabricOperation, _ *ComputeAllocation, _ *ComputeAllocationPreparation, _ *MachineOwnership, _ *fakeComputeClaimRecoveryProvider) {
+			operation.RedactedProviderPayload = withComputeClaimRecoveryMutation(operation.RedactedProviderPayload, reservedComputeClaimRecoveryMutation())
+		},
+		"provider cvm": func(_ *FabricOperation, _ *ComputeAllocation, _ *ComputeAllocationPreparation, _ *MachineOwnership, provider *fakeComputeClaimRecoveryProvider) {
+			provider.proof.CVMOwnershipState = "recoverable"
+		},
+		"provider machine": func(_ *FabricOperation, _ *ComputeAllocation, _ *ComputeAllocationPreparation, _ *MachineOwnership, provider *fakeComputeClaimRecoveryProvider) {
+			provider.proof.MachineName = "machine-other"
+		},
+		"provider unknown": func(_ *FabricOperation, _ *ComputeAllocation, _ *ComputeAllocationPreparation, _ *MachineOwnership, provider *fakeComputeClaimRecoveryProvider) {
+			provider.proofErr = errors.New("provider readback unavailable")
+		},
+	}
+	for name, mutate := range tests {
+		t.Run(name, func(t *testing.T) {
+			_, store, provider, input := seedComputeClaimRecovery(t, "basic")
+			claimInput := seedNormalLaunchTerminalRequestHashReconciliationCandidate(t, store, provider, input)
+			store.mu.Lock()
+			operation := store.operation[0]
+			var allocation ComputeAllocation
+			plan, planPresent := decodeComputeAllocationPlan(operation)
+			if !decodeOperationResource(operation, &allocation) || !planPresent {
+				store.mu.Unlock()
+				t.Fatal("seed compute identity missing")
+			}
+			ownership := store.machineOwnerships[input.ComputeAllocationID]
+			mutate(&operation, &allocation, &plan, &ownership, provider)
+			store.operation[0] = operation
+			store.machineOwnerships[input.ComputeAllocationID] = ownership
+			beforePayload, payloadErr := operationPayloadJSON(operation)
+			store.mu.Unlock()
+			if payloadErr != nil {
+				t.Fatal(payloadErr)
+			}
+
+			result, claimErr := NewServiceWithOperationStore(provider, store).ClaimComputeRecovery(context.Background(), claimInput)
+			stored, listErr := store.List(context.Background())
+			afterPayload, afterPayloadErr := operationPayloadJSON(stored[0])
+			_, reconciliationPresent, _ := decodeComputeClaimRecoveryReconciliation(stored[0])
+			if claimErr == nil || result.Eligible || listErr != nil || len(stored) != 1 || afterPayloadErr != nil || beforePayload != afterPayload ||
+				reconciliationPresent || provider.claimCalls != 0 || provider.tagCalls != 0 || provider.scaleCalls != 0 || provider.storageCalls != 0 {
+				t.Fatalf("result=%#v err=%v stored=%#v listErr=%v payloadChanged=%v provider=%#v", result, claimErr, stored, listErr, beforePayload != afterPayload, provider)
+			}
+		})
 	}
 }
 
