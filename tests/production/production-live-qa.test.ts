@@ -606,6 +606,41 @@ test("Recovery Plan artifact rejects unallowlisted or non-digest provider identi
   }
 });
 
+test("Recovery Plan artifact accepts the production stage contract without allowing sensitive fields", () => {
+  const artifact = {
+    schemaVersion: 1,
+    operationMode: "recovery_plan_diagnose",
+    status: "proven",
+    recoveryEligible: true,
+    failureStage: "none",
+    readbackError: "none",
+    errorCode: "none",
+    planId: "recovery-plan-51e492d0f6b224c1ee81",
+    planDigest: "51e492d0f6b224c1ee815ae5759e3f5ee061bcd05f710e7cf5f98e04f2f78882",
+    stages: [
+      { stage: "compute_claim", status: "manual_review" },
+      { stage: "storage", status: "pending" },
+      { stage: "attachment", status: "pending" },
+      { stage: "secret", status: "pending" },
+      { stage: "runtime", status: "pending" },
+      { stage: "activation", status: "pending" },
+      { stage: "receipt", status: "pending" }
+    ],
+    mismatches: [],
+    runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
+    verifiedAt: "2026-08-05T23:23:33.358Z"
+  };
+
+  assert.equal(productionLiveQa.validateProductionWorkspaceRecoveryPlanArtifact(artifact), artifact);
+
+  for (const sensitiveField of ["password", "token", "cookie", "csrf", "accountId", "launchOperationId", "cvmInstanceId", "nodeName", "cloudImageDigest"]) {
+    assert.throws(() => productionLiveQa.validateProductionWorkspaceRecoveryPlanArtifact({
+      ...artifact,
+      stages: [{ ...artifact.stages[0], evidence: { [sensitiveField]: "redacted" } }]
+    }), /workspace_recovery_plan_artifact_invalid/);
+  }
+});
+
 test("Recovery Plan execution posts one exact continuation and polls only the same persisted plan", async () => {
   const launchOperationId = "workspace-launch-f0375970d7678d0a3e";
   const planDigest = "c".repeat(64);
