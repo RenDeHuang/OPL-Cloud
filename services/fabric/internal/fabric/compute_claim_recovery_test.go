@@ -871,7 +871,11 @@ func TestClaimComputeRecoveryReconcilesFailedNormalLaunchTerminalEvidenceAndPres
 	}
 
 	evidence, evidenceErr := NewServiceWithOperationStore(provider, store).ComputeClaimRecoveryIdentityEvidence(context.Background(), claimInput)
-	if evidenceErr != nil || evidence.BindingClassification != "request-hash-reconciliation" || evidence.MutationLedger != "absent" {
+	if evidenceErr != nil || evidence.BindingClassification != "request-hash-reconciliation" || evidence.MutationLedger != "absent" ||
+		evidence.MutationLedgerOutcome != "confirmed_zero" || evidence.MutationLedgerDigest != computeClaimIdentityDigest("absent") ||
+		evidence.MutationEvidence != nil || evidence.FailureStage != "" || evidence.ProviderErrorClass != "" || len(evidence.Checks) != 10 ||
+		!evidence.Checks[8].Matches || evidence.Checks[9].Matches || !validComputeClaimRecoveryDigest(evidence.Checks[9].ExpectedDigest) ||
+		!validComputeClaimRecoveryDigest(evidence.Checks[9].ActualDigest) || evidence.Checks[9].ExpectedDigest == evidence.Checks[9].ActualDigest {
 		t.Fatalf("identity evidence=%#v err=%v", evidence, evidenceErr)
 	}
 
