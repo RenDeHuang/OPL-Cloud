@@ -536,6 +536,29 @@ func TestTencentSDKComputeClaimTruthProvesOriginalUniqueNativeCVMWithoutMutation
 	}
 }
 
+func TestTencentSDKComputeClaimTruthSelectsPersistedMachineAmongTwoReadyMachinesWithoutMutation(t *testing.T) {
+	request := computeClaimTruthRequest()
+	request.Pool.BeforeMachineNames = []string{"node-basic-2"}
+	tkeAPI := &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 2, maxReplicas: 10}
+	client := newFakeTencentSDKClient(tkeAPI)
+	cvmAPI := client.nativeCvmClient.(*fakeNativeCvmAPI)
+	cvmAPI.instanceName = "compute-alpha"
+	cvmAPI.tags = computeOwnershipTags()
+
+	response := client.ComputeClaimTruth(request, nil)
+
+	if !response.Ok || response.Status != "proven" || response.MutationCount != 0 || response.ProviderIdentityFailure != nil ||
+		response.ProviderData["machineName"] != request.Allocation.MachineName || response.NodeName != request.Allocation.NodeName ||
+		response.PrivateIp != request.Allocation.PrivateIp || response.InstanceId != request.Allocation.InstanceId ||
+		response.ProviderData["cvmOwnershipState"] != "target_owned" {
+		t.Fatalf("persisted machine truth=%#v", response)
+	}
+	if tkeAPI.scaleNodePoolRequest != nil || tkeAPI.modifyNodePoolRequest != nil || tkeAPI.createNodePoolRequest != nil ||
+		tkeAPI.deleteMachinesRequest != nil || len(cvmAPI.modifyInstancesRequest) != 0 || len(client.nativeTagClient.(*fakeNativeTagAPI).calls) != 0 {
+		t.Fatalf("persisted machine truth mutated provider: tke=%#v cvm=%#v", tkeAPI, cvmAPI)
+	}
+}
+
 func TestTencentSDKComputeClaimTruthTreatsProviderAssignedCVMNameAsRecoverableWithoutMutation(t *testing.T) {
 	tkeAPI := &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 2, maxReplicas: 10}
 	client := newFakeTencentSDKClient(tkeAPI)
@@ -559,9 +582,28 @@ func TestTencentSDKComputeClaimTruthFailsClosedWithoutMutation(t *testing.T) {
 		wantPredicate string
 		configure     func(*Request, *fakeNativeTkeAPI, *fakeNativeCvmAPI)
 	}{
-		{name: "multiple candidate", wantReason: "multiple_candidate", configure: func(_ *Request, tke *fakeNativeTkeAPI, _ *fakeNativeCvmAPI) { tke.replicas = 3 }},
+		{name: "zero persisted machine matches", wantReason: "identity_mismatch", wantPredicate: "compute_claim.machine_selection", configure: func(request *Request, _ *fakeNativeTkeAPI, _ *fakeNativeCvmAPI) {
+			request.Allocation.MachineName = "node-missing"
+		}},
+		{name: "multiple persisted machine matches", wantReason: "identity_mismatch", wantPredicate: "compute_claim.machine_selection", configure: func(request *Request, tke *fakeNativeTkeAPI, _ *fakeNativeCvmAPI) {
+			request.Pool.BeforeMachineNames = []string{"node-basic-2"}
+			request.Allocation.MachineName = "node-basic-1"
+			request.Allocation.NodeName = "10.0.0.11"
+			request.Allocation.PrivateIp = "10.0.0.11"
+			tke.duplicateMachineName = true
+			tke.rejectMachinePoolFilter = true
+		}},
 		{name: "old machine", wantReason: "identity_mismatch", wantPredicate: "compute_claim.machine_identity", configure: func(request *Request, _ *fakeNativeTkeAPI, _ *fakeNativeCvmAPI) {
 			request.Allocation.MachineName = "node-basic-1"
+		}},
+		{name: "node name drift", wantReason: "identity_mismatch", wantPredicate: "compute_claim.machine_identity", configure: func(request *Request, _ *fakeNativeTkeAPI, _ *fakeNativeCvmAPI) {
+			request.Allocation.NodeName = "10.0.0.99"
+		}},
+		{name: "private ip drift", wantReason: "identity_mismatch", wantPredicate: "compute_claim.machine_identity", configure: func(request *Request, _ *fakeNativeTkeAPI, _ *fakeNativeCvmAPI) {
+			request.Allocation.PrivateIp = "10.0.0.99"
+		}},
+		{name: "cvm instance drift", wantReason: "identity_mismatch", wantPredicate: "compute_claim.cvm_identity", configure: func(_ *Request, _ *fakeNativeTkeAPI, cvm *fakeNativeCvmAPI) {
+			cvm.privateIPInstanceID = "ins-other"
 		}},
 		{name: "wrong sku", wantReason: "identity_mismatch", wantPredicate: "compute_claim.cvm_identity", configure: func(_ *Request, _ *fakeNativeTkeAPI, cvm *fakeNativeCvmAPI) { cvm.instanceType = "SA5.2XLARGE16" }},
 		{name: "wrong zone", wantReason: "identity_mismatch", wantPredicate: "compute_claim.cvm_billing", configure: func(_ *Request, _ *fakeNativeTkeAPI, cvm *fakeNativeCvmAPI) { cvm.zone = "ap-guangzhou-4" }},

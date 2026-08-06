@@ -2236,12 +2236,9 @@ func (client *tencentSDKClient) ComputeClaimTruth(request Request, _ map[string]
 	if err != nil {
 		return computeClaimTruthFailure(computeClaimDescribeReason(err))
 	}
-	machine, differenceCode := exactNewReadyMachine(machines, request.Pool.BeforeMachineNames, request.Pool.InstanceType)
-	if differenceCode != "" {
-		if differenceCode == "compute_allocation_machine_difference_ambiguous" {
-			return computeClaimTruthFailure("multiple_candidate")
-		}
-		return computeClaimProviderIdentityFailure("compute_claim.machine_selection", map[string]any{"differenceCode": "", "machineSelected": true}, map[string]any{"differenceCode": differenceCode, "machineSelected": machine != nil})
+	machine, selectionCode := exactPersistedReadyMachine(machines, request.Allocation.MachineName)
+	if selectionCode != "" {
+		return computeClaimProviderIdentityFailure("compute_claim.machine_selection", map[string]any{"selectionCode": "", "machineSelected": true}, map[string]any{"selectionCode": selectionCode, "machineSelected": machine != nil})
 	}
 	if !computeClaimNodePoolMatches(pool, request) {
 		return computeClaimProviderIdentityFailure("compute_claim.node_pool_identity", request.Pool, pool)
@@ -2749,6 +2746,34 @@ func exactNewReadyMachine(after []*tke2022.Machine, before []string, instanceTyp
 		return nil, "compute_allocation_machine_identity_mismatch"
 	}
 	return machine, ""
+}
+
+func exactPersistedReadyMachine(machines []*tke2022.Machine, machineName string) (*tke2022.Machine, string) {
+	if machineName == "" || machineName != strings.TrimSpace(machineName) {
+		return nil, "compute_claim_persisted_machine_invalid"
+	}
+	seen := map[string]bool{}
+	var match *tke2022.Machine
+	for _, machine := range machines {
+		if machine == nil || stringValue(machine.MachineName) == "" {
+			return nil, "compute_claim_machine_inventory_incomplete"
+		}
+		name := stringValue(machine.MachineName)
+		if seen[name] {
+			return nil, "compute_claim_machine_inventory_ambiguous"
+		}
+		seen[name] = true
+		if name == machineName {
+			match = machine
+		}
+	}
+	if match == nil {
+		return nil, "compute_claim_persisted_machine_missing"
+	}
+	if !explicitReadyState(stringValue(match.MachineState)) {
+		return nil, "compute_claim_persisted_machine_not_ready"
+	}
+	return match, ""
 }
 
 func explicitReadyState(state string) bool {
