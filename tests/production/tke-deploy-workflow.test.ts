@@ -1227,8 +1227,16 @@ test("server-owned Recovery Plan diagnosis and execution are exact original-orde
   assert.equal(deployment.productionWorkspaceRecoveryPlan.executeRouteInWorkflow, true);
   assert.equal(deployment.productionWorkspaceRecoveryPlan.consoleExecution.githubRunRequired, true);
   assert.deepEqual(deployment.productionWorkspaceRecoveryPlan.artifact.executeFields, [
-    "executionId", "runId", "url", "receiptId", "controlPlaneExecutionMutationCounts"
+    "executionId", "runId", "url", "receiptId", "controlPlaneExecutionMutationCounts", "computeClaimEvidence"
   ]);
+  assert.deepEqual(deployment.productionWorkspaceRecoveryPlan.artifact.computeClaimEvidenceFields, [
+    "bindingClassification", "mismatchField", "expectedDigest", "actualDigest", "mutationLedger", "mutationLedgerOutcome",
+    "cvm", "node", "ledgerFailureStage", "ledgerProviderErrorClass", "failureStage", "providerErrorClass", "reconciliation"
+  ]);
+  assert.equal(deployment.productionWorkspaceRecoveryPlan.artifact.computeClaimEvidenceAuthority,
+    "Fabric_ClaimComputeRecovery_persisted_reconciliation_and_mutation_ledger_digest_only_projection");
+  assert.equal(deployment.productionWorkspaceRecoveryPlan.artifact.computeClaimEvidenceConsumer,
+    "failed_original_Recovery_Plan_execution_readback_only");
   assert.deepEqual(deployment.productionWorkspaceRecoveryPlan.artifact.successorGateFields, [
     "applicable", "allowed", "planState", "executionState", "completionState", "leaseState",
     "identityState", "persistedMutationState", "fabricLedgerState"

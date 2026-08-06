@@ -276,15 +276,30 @@ type ComputeClaimIdentityCheck struct {
 }
 
 type ComputeClaimIdentityEvidence struct {
-	Checks                []ComputeClaimIdentityCheck `json:"checks"`
-	BindingClassification string                      `json:"bindingClassification"`
-	BindingDigest         string                      `json:"bindingDigest"`
-	MutationLedger        string                      `json:"mutationLedger"`
-	MutationLedgerOutcome string                      `json:"mutationLedgerOutcome"`
-	MutationLedgerDigest  string                      `json:"mutationLedgerDigest"`
-	MutationEvidence      *ComputeClaimEvidence       `json:"mutationEvidence,omitempty"`
-	FailureStage          string                      `json:"failureStage"`
-	ProviderErrorClass    string                      `json:"providerErrorClass"`
+	Checks                []ComputeClaimIdentityCheck         `json:"checks"`
+	BindingClassification string                              `json:"bindingClassification"`
+	BindingDigest         string                              `json:"bindingDigest"`
+	MutationLedger        string                              `json:"mutationLedger"`
+	MutationLedgerOutcome string                              `json:"mutationLedgerOutcome"`
+	MutationLedgerDigest  string                              `json:"mutationLedgerDigest"`
+	MutationEvidence      *ComputeClaimEvidence               `json:"mutationEvidence,omitempty"`
+	FailureStage          string                              `json:"failureStage"`
+	ProviderErrorClass    string                              `json:"providerErrorClass"`
+	Reconciliation        *ComputeClaimReconciliationEvidence `json:"reconciliation,omitempty"`
+}
+
+type ComputeClaimReconciliationEvidence struct {
+	SchemaVersion              int                          `json:"schemaVersion"`
+	Consumer                   string                       `json:"consumer"`
+	Generation                 string                       `json:"generation"`
+	ProvenanceSource           string                       `json:"provenanceSource,omitempty"`
+	ProvenanceDigest           string                       `json:"provenanceDigest,omitempty"`
+	State                      string                       `json:"state"`
+	ExpectedRequestHashDigest  string                       `json:"expectedRequestHashDigest"`
+	PersistedRequestHashDigest string                       `json:"persistedRequestHashDigest"`
+	FailureStage               string                       `json:"failureStage,omitempty"`
+	ProviderErrorClass         string                       `json:"providerErrorClass,omitempty"`
+	Node                       ComputeClaimMutationEvidence `json:"node"`
 }
 
 type ComputeClaimProviderIdentityFailure struct {
