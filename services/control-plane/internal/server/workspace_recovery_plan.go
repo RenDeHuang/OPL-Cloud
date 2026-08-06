@@ -951,7 +951,7 @@ func workspaceRecoveryComputeClaimEvidenceFromProof(proof clients.ComputeClaimRe
 	if evidence.BindingClassification == "request-hash-reconciliation" && !mismatchPresent {
 		return nil
 	}
-	cvm, node := proof.Evidence.CVM, proof.Evidence.Node
+	cvm, node := clients.ComputeClaimMutationEvidence{}, clients.ComputeClaimMutationEvidence{}
 	if evidence.MutationEvidence != nil {
 		cvm, node = evidence.MutationEvidence.CVM, evidence.MutationEvidence.Node
 	}

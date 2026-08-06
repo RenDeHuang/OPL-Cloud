@@ -268,6 +268,33 @@ func TestWorkspaceRecoveryPlanProjectsPersistedRequestHashReconciliationFailureE
 	}
 }
 
+func TestWorkspaceRecoveryPlanKeepsAbsentMutationLedgerEvidenceZero(t *testing.T) {
+	evidence := terminalRequestHashReconciliationIdentityEvidence()
+	evidence.Reconciliation = &clients.ComputeClaimReconciliationEvidence{
+		SchemaVersion: 2, Consumer: "claim_compute_recovery", Generation: "normal_launch_terminal_evidence_v1",
+		ProvenanceSource: "normal_launch_terminal_evidence", ProvenanceDigest: strings.Repeat("e", 64), State: "observed",
+		ExpectedRequestHashDigest: evidence.Checks[9].ExpectedDigest, PersistedRequestHashDigest: evidence.Checks[9].ActualDigest,
+		FailureStage: "node_patch_readback", ProviderErrorClass: "transport_error",
+		Node: clients.ComputeClaimMutationEvidence{Attempted: 1, Unknown: 1, Missing: []string{"node_ownership"}},
+	}
+	proof := clients.ComputeClaimRecoveryProof{
+		IdentityEvidence: &evidence, FailureStage: "node_patch_readback", ProviderErrorClass: "transport_error",
+		Evidence: &clients.ComputeClaimEvidence{
+			Node: clients.ComputeClaimMutationEvidence{Attempted: 1, Unknown: 1, Missing: []string{"node_ownership"}},
+		},
+	}
+
+	got := workspaceRecoveryComputeClaimEvidenceFromProof(proof)
+	if got == nil || got.MutationLedger != "absent" || got.MutationLedgerOutcome != "confirmed_zero" ||
+		got.CVM.Attempted != 0 || got.CVM.Confirmed != 0 || got.CVM.Unknown != 0 || len(got.CVM.Missing) != 0 ||
+		got.Node.Attempted != 0 || got.Node.Confirmed != 0 || got.Node.Unknown != 0 || len(got.Node.Missing) != 0 ||
+		got.Reconciliation == nil || got.Reconciliation.SchemaVersion != 2 || got.Reconciliation.State != "observed" ||
+		got.Reconciliation.Node.Attempted != 1 || got.Reconciliation.Node.Unknown != 1 ||
+		len(got.Reconciliation.Node.Missing) != 1 || got.Reconciliation.Node.Missing[0] != "node_ownership" {
+		t.Fatalf("absent mutation ledger mixed with proof attempts: %#v", got)
+	}
+}
+
 func TestWorkspaceRecoveryPlanOmitsOneSidedReconciliationFailureEvidence(t *testing.T) {
 	evidence := requestHashReconciliationIdentityEvidence()
 	evidence.Reconciliation = &clients.ComputeClaimReconciliationEvidence{
