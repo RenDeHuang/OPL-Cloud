@@ -926,6 +926,118 @@ func TestClaimComputeRecoveryReconcilesFailedNormalLaunchTerminalEvidenceAndPres
 	}
 }
 
+func TestClaimComputeRecoveryRetriesExactLegacyKubectlClientRejectionOnce(t *testing.T) {
+	_, store, provider, input := seedComputeClaimRecovery(t, "basic")
+	claimInput := seedNormalLaunchTerminalRequestHashReconciliationCandidate(t, store, provider, input)
+	provider.claim = ComputeClaimProviderClaim{
+		Proof: ComputeClaimProviderProof{
+			Status: "proven", Reason: "provider_describe", MachineName: provider.proof.MachineName, NodeName: provider.proof.NodeName,
+			CVMInstanceID: provider.proof.CVMInstanceID, PrivateIP: provider.proof.PrivateIP, InstanceType: provider.proof.InstanceType,
+			Zone: provider.proof.Zone, ChargeType: provider.proof.ChargeType, PeriodMonths: provider.proof.PeriodMonths,
+			RenewFlag: provider.proof.RenewFlag, Deadline: provider.proof.Deadline, CVMOwnershipState: "recoverable", NodeOwnershipState: "unallocated",
+		},
+		KubernetesMutationCount: 1, FailureStage: "node_patch_readback", ProviderErrorClass: "provider_error",
+		Evidence: &ComputeClaimEvidence{Node: ComputeClaimMutationEvidence{Attempted: 1, Unknown: 1, Missing: []string{"node_ownership"}}},
+	}
+	provider.claimHook = nil
+	provider.claimErr = errors.New("kubectl client rejected patch before API request")
+
+	first, firstErr := NewServiceWithOperationStore(provider, store).ClaimComputeRecovery(context.Background(), claimInput)
+	operations, listErr := store.List(context.Background())
+	if listErr != nil || len(operations) != 1 {
+		t.Fatalf("first operations=%#v err=%v", operations, listErr)
+	}
+	observed, observedPresent, observedValid := decodeComputeClaimRecoveryReconciliation(operations[0])
+	if firstErr == nil || first.Eligible || first.KubernetesMutationCount != 1 || provider.nodeOnlyClaimCalls != 1 ||
+		!observedPresent || !observedValid || observed.SchemaVersion != 2 || observed.State != "observed" ||
+		observed.FailureStage != "node_patch_readback" || observed.ProviderErrorClass != "provider_error" ||
+		!reflect.DeepEqual(observed.Node, ComputeClaimMutationEvidence{Attempted: 1, Unknown: 1, Missing: []string{"node_ownership"}}) {
+		t.Fatalf("first=%#v err=%v observed=%#v provider=%#v", first, firstErr, observed, provider)
+	}
+
+	provider.claimErr = nil
+	configureNormalLaunchTerminalNodeOnlySuccess(provider)
+	second, secondErr := NewServiceWithOperationStore(provider, store).ClaimComputeRecovery(context.Background(), claimInput)
+	operations, listErr = store.List(context.Background())
+	if listErr != nil || len(operations) != 1 {
+		t.Fatalf("second operations=%#v err=%v", operations, listErr)
+	}
+	rejection, rejectionPresent, rejectionValid := decodeComputeClaimNodeClientRejectionRecovery(operations[0])
+	if secondErr != nil || !second.Eligible || second.TencentMutationCount != 0 || second.KubernetesMutationCount != 1 ||
+		provider.nodeOnlyClaimCalls != 2 || !rejectionPresent || !rejectionValid || rejection.RecordedCalls != 1 ||
+		rejection.APIAcceptedMutations != 0 || rejection.Classification != "kubectl_client_validation_rejected" ||
+		rejection.Invocation != "patch_json_filename_stdin_v1" || rejection.SourceReconciliationDigest != hashInput(observed) {
+		t.Fatalf("second=%#v err=%v rejection=%#v/%v/%v provider=%#v", second, secondErr, rejection, rejectionPresent, rejectionValid, provider)
+	}
+
+	replayed, replayErr := NewServiceWithOperationStore(provider, store).ClaimComputeRecovery(context.Background(), claimInput)
+	if replayErr != nil || !replayed.Eligible || replayed.KubernetesMutationCount != 0 || provider.nodeOnlyClaimCalls != 2 {
+		t.Fatalf("replayed=%#v err=%v provider=%#v", replayed, replayErr, provider)
+	}
+}
+
+func TestClaimComputeRecoveryDoesNotRetryDriftedLegacyKubectlFailure(t *testing.T) {
+	_, store, provider, input := seedComputeClaimRecovery(t, "basic")
+	claimInput := seedNormalLaunchTerminalRequestHashReconciliationCandidate(t, store, provider, input)
+	provider.claim = ComputeClaimProviderClaim{
+		Proof: ComputeClaimProviderProof{
+			Status: "proven", Reason: "provider_describe", MachineName: provider.proof.MachineName, NodeName: provider.proof.NodeName,
+			CVMInstanceID: provider.proof.CVMInstanceID, PrivateIP: provider.proof.PrivateIP, InstanceType: provider.proof.InstanceType,
+			Zone: provider.proof.Zone, ChargeType: provider.proof.ChargeType, PeriodMonths: provider.proof.PeriodMonths,
+			RenewFlag: provider.proof.RenewFlag, Deadline: provider.proof.Deadline, CVMOwnershipState: "recoverable", NodeOwnershipState: "unallocated",
+		},
+		KubernetesMutationCount: 1, FailureStage: "node_patch_readback", ProviderErrorClass: "transport_error",
+		Evidence: &ComputeClaimEvidence{Node: ComputeClaimMutationEvidence{Attempted: 1, Unknown: 1, Missing: []string{"node_ownership"}}},
+	}
+	provider.claimHook = nil
+	provider.claimErr = errors.New("unknown Node patch outcome")
+
+	first, firstErr := NewServiceWithOperationStore(provider, store).ClaimComputeRecovery(context.Background(), claimInput)
+	provider.claimErr = nil
+	configureNormalLaunchTerminalNodeOnlySuccess(provider)
+	second, secondErr := NewServiceWithOperationStore(provider, store).ClaimComputeRecovery(context.Background(), claimInput)
+
+	if firstErr == nil || first.Eligible || secondErr == nil || second.Eligible || provider.nodeOnlyClaimCalls != 1 {
+		t.Fatalf("first=%#v firstErr=%v second=%#v secondErr=%v provider=%#v", first, firstErr, second, secondErr, provider)
+	}
+}
+
+func TestClaimComputeRecoveryClientRejectionRetryFailureDoesNotOpenThirdPatch(t *testing.T) {
+	_, store, provider, input := seedComputeClaimRecovery(t, "basic")
+	claimInput := seedNormalLaunchTerminalRequestHashReconciliationCandidate(t, store, provider, input)
+	provider.claim = ComputeClaimProviderClaim{
+		Proof: ComputeClaimProviderProof{
+			Status: "proven", Reason: "provider_describe", MachineName: provider.proof.MachineName, NodeName: provider.proof.NodeName,
+			CVMInstanceID: provider.proof.CVMInstanceID, PrivateIP: provider.proof.PrivateIP, InstanceType: provider.proof.InstanceType,
+			Zone: provider.proof.Zone, ChargeType: provider.proof.ChargeType, PeriodMonths: provider.proof.PeriodMonths,
+			RenewFlag: provider.proof.RenewFlag, Deadline: provider.proof.Deadline, CVMOwnershipState: "recoverable", NodeOwnershipState: "unallocated",
+		},
+		KubernetesMutationCount: 1, FailureStage: "node_patch_readback", ProviderErrorClass: "provider_error",
+		Evidence: &ComputeClaimEvidence{Node: ComputeClaimMutationEvidence{Attempted: 1, Unknown: 1, Missing: []string{"node_ownership"}}},
+	}
+	provider.claimHook = nil
+	provider.claimErr = errors.New("legacy kubectl client rejection")
+	first, firstErr := NewServiceWithOperationStore(provider, store).ClaimComputeRecovery(context.Background(), claimInput)
+	provider.claimErr = errors.New("valid Node patch outcome unknown")
+	second, secondErr := NewServiceWithOperationStore(provider, store).ClaimComputeRecovery(context.Background(), claimInput)
+	operations, listErr := store.List(context.Background())
+	if listErr != nil || len(operations) != 1 {
+		t.Fatalf("operations=%#v err=%v", operations, listErr)
+	}
+	rejection, rejectionPresent, rejectionValid := decodeComputeClaimNodeClientRejectionRecovery(operations[0])
+	reconciliation, reconciliationPresent, reconciliationValid := decodeComputeClaimRecoveryReconciliation(operations[0])
+	provider.claimErr = nil
+	configureNormalLaunchTerminalNodeOnlySuccess(provider)
+	third, thirdErr := NewServiceWithOperationStore(provider, store).ClaimComputeRecovery(context.Background(), claimInput)
+
+	if firstErr == nil || first.Eligible || secondErr == nil || second.Eligible || thirdErr == nil || third.Eligible ||
+		provider.nodeOnlyClaimCalls != 2 || !rejectionPresent || !rejectionValid || !reconciliationPresent || !reconciliationValid ||
+		reconciliation.State != "observed" || rejection.SourceReconciliationDigest == "" {
+		t.Fatalf("first=%#v/%v second=%#v/%v third=%#v/%v rejection=%#v reconciliation=%#v provider=%#v",
+			first, firstErr, second, secondErr, third, thirdErr, rejection, reconciliation, provider)
+	}
+}
+
 func TestClaimComputeRecoveryNormalLaunchTerminalReconciliationCASResponseLossReplaysOnce(t *testing.T) {
 	_, store, provider, input := seedComputeClaimRecovery(t, "basic")
 	claimInput := seedNormalLaunchTerminalRequestHashReconciliationCandidate(t, store, provider, input)

@@ -899,6 +899,7 @@ func (s *Service) ClaimComputeRecovery(ctx context.Context, input ComputeClaimRe
 		persistedBinding, bindingPresent, bindingValid := decodeComputeClaimRecoveryBinding(operation)
 		mutationLedger, mutationPresent, mutationValid := decodeComputeClaimRecoveryMutation(operation)
 		reconciliation, reconciliationPresent, reconciliationValid := decodeComputeClaimRecoveryReconciliation(operation)
+		clientRejection, clientRejectionPresent, clientRejectionValid := decodeComputeClaimNodeClientRejectionRecovery(operation)
 		historicalBinding := bindingPresent && bindingValid && persistedBinding != binding &&
 			persistedBinding == historicalComputeClaimRecoveryBinding(input)
 		reconciliationProvenance, requestHashBinding := isolatedRequestHashReconciliationProvenance(operation, input, persistedBinding, bindingPresent, bindingValid)
@@ -918,7 +919,8 @@ func (s *Service) ClaimComputeRecovery(ctx context.Context, input ComputeClaimRe
 			result.Eligible, result.Reason = false, "identity_mismatch"
 			return ErrComputeClaimRecoveryIdempotencyConflict
 		}
-		if mutationPresent && (!mutationValid || !bindingPresent) || reconciliationPresent && (!reconciliationValid || !reconciliationReplay) {
+		if mutationPresent && (!mutationValid || !bindingPresent) || reconciliationPresent && (!reconciliationValid || !reconciliationReplay) ||
+			clientRejectionPresent && (!clientRejectionValid || !reconciliationPresent) {
 			result.Eligible, result.Reason = false, "identity_mismatch"
 			return ErrComputeClaimRecoveryIdempotencyConflict
 		}
@@ -990,7 +992,10 @@ func (s *Service) ClaimComputeRecovery(ctx context.Context, input ComputeClaimRe
 		resumeObservedNodeClaim := mutationPresent &&
 			(recoverableObservedComputeClaimRecoveryMutation(mutationLedger) || historicalNodeContinuation) &&
 			proof.CVMOwnershipState == "target_owned" && proof.NodeOwnershipState == "unallocated"
-		reconciledNodeContinuation := requestHashReconciliation && reconciliationPresent && reconciliation.State == "verified" &&
+		legacyClientRejectedNodeCall := requestHashReconciliation && reconciliationPresent && !clientRejectionPresent &&
+			exactLegacyKubectlClientRejectedReconciliation(reconciliation) && reconciledCVMOwnership && proof.NodeOwnershipState == "unallocated"
+		reconciledNodeContinuation := requestHashReconciliation && reconciliationPresent &&
+			(reconciliation.State == "verified" || legacyClientRejectedNodeCall) &&
 			ownership.Status != "active" && reconciledCVMOwnership && proof.NodeOwnershipState == "unallocated"
 		activeNodeContinuation := ownership.Status == "active" && !mutationPresent && bindingPresent && bindingValid && persistedBinding == binding &&
 			proof.CVMOwnershipState == "target_owned" && proof.NodeOwnershipState == "unallocated"
@@ -1010,7 +1015,7 @@ func (s *Service) ClaimComputeRecovery(ctx context.Context, input ComputeClaimRe
 			result.Eligible, result.Reason = false, "identity_mismatch"
 			return ErrComputeClaimRecoveryIdempotencyConflict
 		}
-		if requestHashReconciliation && reconciliationPresent &&
+		if requestHashReconciliation && reconciliationPresent && !legacyClientRejectedNodeCall &&
 			(reconciliation.State == "node_reserved" || reconciliation.State == "observed") && !reconciledNodeReadback {
 			result.Eligible, result.Reason = false, "provider_describe"
 			result.FailureStage, result.ProviderErrorClass = reconciliation.FailureStage, reconciliation.ProviderErrorClass
@@ -1036,10 +1041,18 @@ func (s *Service) ClaimComputeRecovery(ctx context.Context, input ComputeClaimRe
 			}
 			if nodeOnlyContinuation {
 				if reconciledNodeContinuation {
+					var rejectedCall computeClaimNodeClientRejectionRecovery
+					if legacyClientRejectedNodeCall {
+						rejectedCall = newComputeClaimNodeClientRejectionRecovery(reconciliation)
+						clientRejection, clientRejectionPresent = rejectedCall, true
+					}
 					reconciliation.State, reconciliation.FailureStage, reconciliation.ProviderErrorClass = "node_reserved", "node_patch_readback", "transport_error"
 					reconciliation.Node = ComputeClaimMutationEvidence{Attempted: 1, Unknown: 1, Missing: []string{"node_ownership"}}
 					reserved := operation
 					reserved.RedactedProviderPayload = withComputeClaimRecoveryReconciliation(reserved.RedactedProviderPayload, reconciliation)
+					if legacyClientRejectedNodeCall {
+						reserved.RedactedProviderPayload = withComputeClaimNodeClientRejectionRecovery(reserved.RedactedProviderPayload, rejectedCall)
+					}
 					if err := s.operations.SaveComputeClaimRecovery(lockCtx, operation, reserved); err != nil {
 						result.Eligible, result.Reason = false, "local_identity"
 						return err
@@ -1182,6 +1195,9 @@ func (s *Service) ClaimComputeRecovery(ctx context.Context, input ComputeClaimRe
 			if requestHashReconciliation && reconciliationPresent {
 				recovered.RedactedProviderPayload = withComputeClaimRecoveryReconciliation(recovered.RedactedProviderPayload, reconciliation)
 			}
+			if clientRejectionPresent {
+				recovered.RedactedProviderPayload = withComputeClaimNodeClientRejectionRecovery(recovered.RedactedProviderPayload, clientRejection)
+			}
 			if err := s.operations.SaveComputeClaimRecovery(lockCtx, operation, recovered); err != nil {
 				result.Eligible, result.Reason = false, "local_identity"
 				return err
@@ -1221,6 +1237,7 @@ const (
 	computeClaimRecoveryMutationPayloadKey       = "computeClaimRecoveryMutation"
 	computeClaimRecoveryReconciliationPayloadKey = "computeClaimRecoveryReconciliation"
 	computeClaimTerminalEvidencePayloadKey       = "computeClaimTerminalEvidence"
+	computeClaimNodeClientRejectionPayloadKey    = "computeClaimNodeClientRejectionRecovery"
 )
 
 type computeClaimRecoveryReconciliation struct {
@@ -1238,6 +1255,15 @@ type computeClaimRecoveryReconciliation struct {
 	FailureStage               string                       `json:"failureStage,omitempty"`
 	ProviderErrorClass         string                       `json:"providerErrorClass,omitempty"`
 	Node                       ComputeClaimMutationEvidence `json:"node"`
+}
+
+type computeClaimNodeClientRejectionRecovery struct {
+	SchemaVersion              int    `json:"schemaVersion"`
+	Classification             string `json:"classification"`
+	Invocation                 string `json:"invocation"`
+	RecordedCalls              int    `json:"recordedCalls"`
+	APIAcceptedMutations       int    `json:"apiAcceptedMutations"`
+	SourceReconciliationDigest string `json:"sourceReconciliationDigest"`
 }
 
 type computeClaimRecoveryReconciliationProvenance struct {
@@ -1826,6 +1852,55 @@ func validComputeClaimRecoveryReconciliation(value computeClaimRecoveryReconcili
 	}
 }
 
+func exactLegacyKubectlClientRejectedReconciliation(value computeClaimRecoveryReconciliation) bool {
+	return value.SchemaVersion == 2 && value.Generation == "normal_launch_terminal_evidence_v1" &&
+		value.ProvenanceSource == "normal_launch_terminal_evidence" && value.State == "observed" &&
+		value.FailureStage == "node_patch_readback" && value.ProviderErrorClass == "provider_error" &&
+		reflect.DeepEqual(value.Node, ComputeClaimMutationEvidence{Attempted: 1, Unknown: 1, Missing: []string{"node_ownership"}})
+}
+
+func newComputeClaimNodeClientRejectionRecovery(source computeClaimRecoveryReconciliation) computeClaimNodeClientRejectionRecovery {
+	return computeClaimNodeClientRejectionRecovery{
+		SchemaVersion: 1, Classification: "kubectl_client_validation_rejected", Invocation: "patch_json_filename_stdin_v1",
+		RecordedCalls: 1, APIAcceptedMutations: 0, SourceReconciliationDigest: hashInput(source),
+	}
+}
+
+func validComputeClaimNodeClientRejectionRecovery(value computeClaimNodeClientRejectionRecovery) bool {
+	return value.SchemaVersion == 1 && value.Classification == "kubectl_client_validation_rejected" &&
+		value.Invocation == "patch_json_filename_stdin_v1" && value.RecordedCalls == 1 && value.APIAcceptedMutations == 0 &&
+		validComputeClaimRecoveryDigest(value.SourceReconciliationDigest)
+}
+
+func decodeComputeClaimNodeClientRejectionRecovery(operation FabricOperation) (computeClaimNodeClientRejectionRecovery, bool, bool) {
+	value, present := operation.RedactedProviderPayload[computeClaimNodeClientRejectionPayloadKey]
+	if !present {
+		return computeClaimNodeClientRejectionRecovery{}, false, false
+	}
+	body, err := json.Marshal(value)
+	if err != nil {
+		return computeClaimNodeClientRejectionRecovery{}, true, false
+	}
+	var recovery computeClaimNodeClientRejectionRecovery
+	if json.Unmarshal(body, &recovery) != nil || !validComputeClaimNodeClientRejectionRecovery(recovery) {
+		return computeClaimNodeClientRejectionRecovery{}, true, false
+	}
+	return recovery, true, true
+}
+
+func withComputeClaimNodeClientRejectionRecovery(payload map[string]any, value computeClaimNodeClientRejectionRecovery) map[string]any {
+	result := maps.Clone(payload)
+	if result == nil {
+		result = map[string]any{}
+	}
+	result[computeClaimNodeClientRejectionPayloadKey] = map[string]any{
+		"schemaVersion": value.SchemaVersion, "classification": value.Classification, "invocation": value.Invocation,
+		"recordedCalls": value.RecordedCalls, "apiAcceptedMutations": value.APIAcceptedMutations,
+		"sourceReconciliationDigest": value.SourceReconciliationDigest,
+	}
+	return result
+}
+
 func computeClaimRecoveryReconciliationMatches(
 	value computeClaimRecoveryReconciliation,
 	operation FabricOperation,
@@ -1884,11 +1959,23 @@ func withComputeClaimRecoveryReconciliation(payload map[string]any, value comput
 func validComputeClaimRecoveryReconciliationTransition(current, next FabricOperation) bool {
 	currentValue, currentPresent, currentValid := decodeComputeClaimRecoveryReconciliation(current)
 	nextValue, nextPresent, nextValid := decodeComputeClaimRecoveryReconciliation(next)
+	currentRejection, currentRejectionPresent, currentRejectionValid := decodeComputeClaimNodeClientRejectionRecovery(current)
+	nextRejection, nextRejectionPresent, nextRejectionValid := decodeComputeClaimNodeClientRejectionRecovery(next)
 	if currentPresent && !currentValid || nextPresent && !nextValid {
 		return false
 	}
+	if currentRejectionPresent && !currentRejectionValid || nextRejectionPresent && !nextRejectionValid {
+		return false
+	}
 	if !currentPresent {
-		return !nextPresent || nextValue.State == "verified"
+		return !currentRejectionPresent && !nextRejectionPresent && (!nextPresent || nextValue.State == "verified")
+	}
+	legacyClientRejectionReservation := !currentRejectionPresent && nextRejectionPresent &&
+		exactLegacyKubectlClientRejectedReconciliation(currentValue) && nextValue.State == "node_reserved" &&
+		nextRejection == newComputeClaimNodeClientRejectionRecovery(currentValue)
+	if currentRejectionPresent && (!nextRejectionPresent || currentRejection != nextRejection) ||
+		!currentRejectionPresent && nextRejectionPresent && !legacyClientRejectionReservation {
+		return false
 	}
 	if !nextPresent || currentValue.SchemaVersion != nextValue.SchemaVersion || currentValue.Consumer != nextValue.Consumer ||
 		currentValue.Generation != nextValue.Generation || currentValue.ProvenanceSource != nextValue.ProvenanceSource || currentValue.ProvenanceDigest != nextValue.ProvenanceDigest ||
@@ -1904,7 +1991,7 @@ func validComputeClaimRecoveryReconciliationTransition(current, next FabricOpera
 	case "node_reserved":
 		return nextValue.State == "node_reserved" || nextValue.State == "observed" || nextValue.State == "succeeded"
 	case "observed":
-		return nextValue.State == "observed" || nextValue.State == "succeeded"
+		return nextValue.State == "observed" || nextValue.State == "succeeded" || legacyClientRejectionReservation
 	case "succeeded":
 		return nextValue.State == "succeeded" && reflect.DeepEqual(currentValue, nextValue)
 	default:
