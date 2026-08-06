@@ -772,6 +772,11 @@ const COMPUTE_CLAIM_RECOVER_MODE = "compute_claim_recover";
 const RECOVERY_PLAN_DIAGNOSE_MODE = "recovery_plan_diagnose";
 const RECOVERY_PLAN_VALIDATE_MODE = "recovery_plan_validate";
 const RECOVERY_PLAN_EXECUTE_MODE = "recovery_plan_execute";
+const RECOVERY_PLAN_COMPUTE_CLAIM_BINDING_CLASSIFICATIONS = new Set([
+  "current", "compute-claim", "request-hash-reconciliation", "known-legacy", "other"
+]);
+const RECOVERY_PLAN_COMPUTE_CLAIM_LEDGER_STATES = new Set(["absent", "invalid", "reserved", "node_reserved", "observed"]);
+const RECOVERY_PLAN_COMPUTE_CLAIM_LEDGER_OUTCOMES = new Set(["confirmed_zero", "nonzero", "unknown"]);
 const RECOVERY_PLAN_FAILURE_STAGES = new Set([
   "none", "config", "admin_login", "route_request", "response_envelope", "operation_read", "account_identity",
   "release_binding", "control_plane_state", "fabric_proof", "fabric_identity", "state_persist", "identity_evidence",
@@ -1842,28 +1847,38 @@ function workspaceRecoveryComputeClaimMutationEvidence(value, maximum, allowedMi
 function workspaceRecoveryComputeClaimEvidence(value) {
   if (value === undefined) return undefined;
   const reconciliationPresent = value && Object.hasOwn(value, "reconciliation");
-  const keys = ["actualDigest", "bindingClassification", "cvm", "expectedDigest", "failureStage", "ledgerFailureStage",
-    "ledgerProviderErrorClass", "mismatchField", "mutationLedger", "mutationLedgerOutcome", "node", "providerErrorClass",
+  const mismatchFields = ["actualDigest", "expectedDigest", "mismatchField"];
+  const mismatchFieldCount = mismatchFields.filter((field) => value && Object.hasOwn(value, field)).length;
+  const mismatchPresent = mismatchFieldCount === mismatchFields.length;
+  const keys = ["bindingClassification", "cvm", "failureStage", "ledgerFailureStage", "ledgerProviderErrorClass",
+    ...(mismatchPresent ? mismatchFields : []), "mutationLedger", "mutationLedgerOutcome", "node", "providerErrorClass",
     ...(reconciliationPresent ? ["reconciliation"] : []), "schemaVersion"];
   if (!value || typeof value !== "object" || Array.isArray(value) || !exactObjectKeys(value, keys) || value.schemaVersion !== 1 ||
-    value.bindingClassification !== "request-hash-reconciliation" || value.mismatchField !== "binding.requestHash" ||
-    !/^[a-f0-9]{64}$/.test(String(value.expectedDigest || "")) || !/^[a-f0-9]{64}$/.test(String(value.actualDigest || "")) ||
-    value.expectedDigest === value.actualDigest || !RECOVERY_PLAN_FAILURE_STAGES.has(String(value.failureStage || "")) ||
+    !RECOVERY_PLAN_COMPUTE_CLAIM_BINDING_CLASSIFICATIONS.has(String(value.bindingClassification || "")) ||
+    mismatchFieldCount !== 0 && !mismatchPresent || value.bindingClassification === "request-hash-reconciliation" !== mismatchPresent ||
+    mismatchPresent && (value.mismatchField !== "binding.requestHash" ||
+      !/^[a-f0-9]{64}$/.test(String(value.expectedDigest || "")) || !/^[a-f0-9]{64}$/.test(String(value.actualDigest || "")) ||
+      value.expectedDigest === value.actualDigest) || !RECOVERY_PLAN_FAILURE_STAGES.has(String(value.failureStage || "")) ||
     value.failureStage === "none" || !RECOVERY_PLAN_READBACK_ERRORS.has(String(value.providerErrorClass || "")) ||
-    value.providerErrorClass === "none") {
+    value.providerErrorClass === "none" || !RECOVERY_PLAN_COMPUTE_CLAIM_LEDGER_STATES.has(String(value.mutationLedger || "")) ||
+    !RECOVERY_PLAN_COMPUTE_CLAIM_LEDGER_OUTCOMES.has(String(value.mutationLedgerOutcome || ""))) {
     throw new Error("workspace_recovery_plan_compute_claim_evidence_invalid");
   }
   const cvm = workspaceRecoveryComputeClaimMutationEvidence(value.cvm, 5,
     new Set(["instance", "instance_name", "opl_account_id", "opl_workspace_id", "opl_resource_id", "opl_operation_id"]));
   const node = workspaceRecoveryComputeClaimMutationEvidence(value.node, 1, new Set(["node_ownership"]));
-  const observed = value.mutationLedger === "observed" && value.mutationLedgerOutcome === "unknown" &&
-    value.ledgerFailureStage === "cvm_tag_readback" && value.ledgerProviderErrorClass === "provider_error" &&
-    cvm.attempted === 1 && cvm.confirmed === 0 && cvm.unknown === 1 && cvm.missing.length === 1 && cvm.missing[0] === "opl_account_id" &&
-    node.attempted === 0 && node.confirmed === 0 && node.unknown === 0 && node.missing.length === 0;
-  const absent = value.mutationLedger === "absent" && value.mutationLedgerOutcome === "confirmed_zero" &&
-    value.ledgerFailureStage === "" && value.ledgerProviderErrorClass === "" &&
-    cvm.attempted === 0 && node.attempted === 0;
-  if (!observed && !absent) throw new Error("workspace_recovery_plan_compute_claim_evidence_invalid");
+  const ledgerFailureStage = String(value.ledgerFailureStage || "");
+  const ledgerProviderErrorClass = String(value.ledgerProviderErrorClass || "");
+  const ledgerFailureValid = ledgerFailureStage === "" && ledgerProviderErrorClass === "" ||
+    ledgerFailureStage !== "" && ledgerProviderErrorClass !== "" && RECOVERY_PLAN_FAILURE_STAGES.has(ledgerFailureStage) &&
+      ledgerFailureStage !== "none" && RECOVERY_PLAN_READBACK_ERRORS.has(ledgerProviderErrorClass) && ledgerProviderErrorClass !== "none";
+  const attempted = cvm.attempted + node.attempted;
+  const ledgerShapeValid = value.mutationLedger === "absent" && value.mutationLedgerOutcome === "confirmed_zero" && attempted === 0 &&
+      ledgerFailureStage === "" && ledgerProviderErrorClass === "" ||
+    value.mutationLedger === "observed" && (value.mutationLedgerOutcome === "unknown" ||
+      value.mutationLedgerOutcome === "confirmed_zero" && attempted === 0 || value.mutationLedgerOutcome === "nonzero" && attempted > 0) ||
+    new Set(["invalid", "reserved", "node_reserved"]).has(value.mutationLedger) && value.mutationLedgerOutcome === "unknown";
+  if (!ledgerFailureValid || !ledgerShapeValid) throw new Error("workspace_recovery_plan_compute_claim_evidence_invalid");
   let reconciliation;
   if (reconciliationPresent) {
     const raw = value.reconciliation;
@@ -1872,7 +1887,8 @@ function workspaceRecoveryComputeClaimEvidence(value) {
     const reconciliationKeys = ["consumer", ...(failurePresent ? ["failureStage"] : []), "generation", "node",
       ...(failurePresent ? ["providerErrorClass"] : []), ...(versionTwo ? ["provenanceDigest", "provenanceSource"] : []),
       "schemaVersion", "state"];
-    if (!raw || typeof raw !== "object" || Array.isArray(raw) || !exactObjectKeys(raw, reconciliationKeys) ||
+    if (!mismatchPresent || value.bindingClassification !== "request-hash-reconciliation" || !raw ||
+      typeof raw !== "object" || Array.isArray(raw) || !exactObjectKeys(raw, reconciliationKeys) ||
       ![1, 2].includes(raw.schemaVersion) || raw.consumer !== "claim_compute_recovery" ||
       raw.generation !== (versionTwo ? "normal_launch_terminal_evidence_v1" : "isolated_request_hash_v1") ||
       !new Set(["verified", "node_reserved", "observed", "succeeded"]).has(String(raw.state || "")) ||

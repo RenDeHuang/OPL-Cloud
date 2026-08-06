@@ -652,6 +652,47 @@ test("Recovery Plan diagnosis CLI preserves persisted unknown CVM claim evidence
   assert.doesNotMatch(stdout, /accountId|launchOperationId|cvmInstanceId|password|secret|cookie|csrf/i);
 });
 
+test("Recovery Plan artifact accepts persisted compute-claim evidence without request-hash mismatch", () => {
+  const computeClaimEvidence = {
+    schemaVersion: 1,
+    bindingClassification: "compute-claim",
+    mutationLedger: "observed",
+    mutationLedgerOutcome: "unknown",
+    cvm: {
+      attempted: 1,
+      confirmed: 0,
+      unknown: 0,
+      missing: ["opl_account_id", "opl_workspace_id", "opl_resource_id", "opl_operation_id"]
+    },
+    node: { attempted: 0, confirmed: 0, unknown: 0, missing: [] },
+    ledgerFailureStage: "cvm_tag_readback",
+    ledgerProviderErrorClass: "readback_mismatch",
+    failureStage: "cvm_pre_read",
+    providerErrorClass: "readback_mismatch"
+  };
+  const artifact = {
+    schemaVersion: 1,
+    operationMode: "recovery_plan_diagnose",
+    status: "blocked",
+    recoveryEligible: false,
+    failureStage: "cvm_pre_read",
+    readbackError: "readback_mismatch",
+    errorCode: "workspace_recovery_plan_fabric_proof_failed",
+    computeClaimEvidence,
+    runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
+  };
+
+  assert.equal(productionLiveQa.validateProductionWorkspaceRecoveryPlanArtifact(artifact), artifact);
+  assert.throws(() => productionLiveQa.validateProductionWorkspaceRecoveryPlanArtifact({
+    ...artifact,
+    computeClaimEvidence: { ...computeClaimEvidence, bindingClassification: "untrusted" }
+  }), /workspace_recovery_plan_artifact_invalid|workspace_recovery_plan_compute_claim_evidence_invalid/);
+  assert.throws(() => productionLiveQa.validateProductionWorkspaceRecoveryPlanArtifact({
+    ...artifact,
+    computeClaimEvidence: { ...computeClaimEvidence, cvmInstanceId: "ins-sensitive" }
+  }), /workspace_recovery_plan_artifact_invalid|workspace_recovery_plan_compute_claim_evidence_invalid/);
+});
+
 test("Recovery Plan artifact rejects unallowlisted or non-digest provider identity evidence", () => {
   const base = {
     schemaVersion: 1,
