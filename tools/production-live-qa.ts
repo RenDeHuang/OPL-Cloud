@@ -789,7 +789,9 @@ const RECOVERY_PLAN_READBACK_ERRORS = new Set([
 ]);
 const RECOVERY_PLAN_ERROR_CODES = new Set([
   "none", "identity_mismatch", "recovery_execution_failed", "workspace_compute_claim_identity_mismatch",
-  "workspace_compute_claim_not_pending", "workspace_compute_claim_proof_failed", "workspace_recovery_plan_unavailable",
+  "workspace_compute_claim_not_pending", "workspace_compute_claim_proof_failed", "workspace_compute_claim_local_identity",
+  "workspace_compute_claim_provider_describe", "workspace_compute_claim_iam_rbac", "workspace_compute_claim_multiple_candidate",
+  "workspace_compute_claim_node_ownership_conflict", "workspace_compute_claim_storage_already_started", "workspace_recovery_plan_unavailable",
   "workspace_recovery_plan_operation_read_failed", "workspace_recovery_plan_account_identity_mismatch",
   "workspace_recovery_plan_release_binding_invalid", "workspace_recovery_plan_state_ineligible",
   "workspace_recovery_plan_fabric_proof_failed", "workspace_recovery_plan_fabric_identity_invalid",
@@ -1819,8 +1821,70 @@ function workspaceRecoveryPlanResponse(value, operationId, allowedStatuses) {
   for (const field of ["executionId", "runId", "url", "receiptId", "errorCode"]) {
     if (typeof value[field] === "string" && value[field]) plan[field] = value[field];
   }
+  const computeClaimEvidence = workspaceRecoveryComputeClaimEvidence(value.computeClaimEvidence);
+  if (computeClaimEvidence) plan.computeClaimEvidence = computeClaimEvidence;
   if (successorGate) plan.successorGate = successorGate;
   return plan;
+}
+
+function workspaceRecoveryComputeClaimMutationEvidence(value, maximum, allowedMissing) {
+  if (!value || typeof value !== "object" || Array.isArray(value) || !exactObjectKeys(value, ["attempted", "confirmed", "missing", "unknown"]) ||
+    !Number.isSafeInteger(value.attempted) || value.attempted < 0 || value.attempted > maximum ||
+    !Number.isSafeInteger(value.confirmed) || value.confirmed < 0 || value.confirmed > value.attempted ||
+    !Number.isSafeInteger(value.unknown) || value.unknown < 0 || value.unknown > value.attempted ||
+    value.confirmed + value.unknown > value.attempted || !Array.isArray(value.missing) ||
+    new Set(value.missing).size !== value.missing.length || value.missing.some((field) => !allowedMissing.has(field))) {
+    throw new Error("workspace_recovery_plan_compute_claim_evidence_invalid");
+  }
+  return { attempted: value.attempted, confirmed: value.confirmed, unknown: value.unknown, missing: [...value.missing] };
+}
+
+function workspaceRecoveryComputeClaimEvidence(value) {
+  if (value === undefined) return undefined;
+  const reconciliationPresent = value && Object.hasOwn(value, "reconciliation");
+  const keys = ["actualDigest", "bindingClassification", "cvm", "expectedDigest", "failureStage", "ledgerFailureStage",
+    "ledgerProviderErrorClass", "mismatchField", "mutationLedger", "mutationLedgerOutcome", "node", "providerErrorClass",
+    ...(reconciliationPresent ? ["reconciliation"] : []), "schemaVersion"];
+  if (!value || typeof value !== "object" || Array.isArray(value) || !exactObjectKeys(value, keys) || value.schemaVersion !== 1 ||
+    value.bindingClassification !== "request-hash-reconciliation" || value.mismatchField !== "binding.requestHash" ||
+    !/^[a-f0-9]{64}$/.test(String(value.expectedDigest || "")) || !/^[a-f0-9]{64}$/.test(String(value.actualDigest || "")) ||
+    value.expectedDigest === value.actualDigest || !RECOVERY_PLAN_FAILURE_STAGES.has(String(value.failureStage || "")) ||
+    value.failureStage === "none" || !RECOVERY_PLAN_READBACK_ERRORS.has(String(value.providerErrorClass || "")) ||
+    value.providerErrorClass === "none") {
+    throw new Error("workspace_recovery_plan_compute_claim_evidence_invalid");
+  }
+  const cvm = workspaceRecoveryComputeClaimMutationEvidence(value.cvm, 5,
+    new Set(["instance", "instance_name", "opl_account_id", "opl_workspace_id", "opl_resource_id", "opl_operation_id"]));
+  const node = workspaceRecoveryComputeClaimMutationEvidence(value.node, 1, new Set(["node_ownership"]));
+  const observed = value.mutationLedger === "observed" && value.mutationLedgerOutcome === "unknown" &&
+    value.ledgerFailureStage === "cvm_tag_readback" && value.ledgerProviderErrorClass === "provider_error" &&
+    cvm.attempted === 1 && cvm.confirmed === 0 && cvm.unknown === 1 && cvm.missing.length === 1 && cvm.missing[0] === "opl_account_id" &&
+    node.attempted === 0 && node.confirmed === 0 && node.unknown === 0 && node.missing.length === 0;
+  const absent = value.mutationLedger === "absent" && value.mutationLedgerOutcome === "confirmed_zero" &&
+    value.ledgerFailureStage === "" && value.ledgerProviderErrorClass === "" &&
+    cvm.attempted === 0 && node.attempted === 0;
+  if (!observed && !absent) throw new Error("workspace_recovery_plan_compute_claim_evidence_invalid");
+  let reconciliation;
+  if (reconciliationPresent) {
+    const raw = value.reconciliation;
+    const versionTwo = raw?.schemaVersion === 2;
+    const failurePresent = raw && Object.hasOwn(raw, "failureStage") && Object.hasOwn(raw, "providerErrorClass");
+    const reconciliationKeys = ["consumer", ...(failurePresent ? ["failureStage"] : []), "generation", "node",
+      ...(failurePresent ? ["providerErrorClass"] : []), ...(versionTwo ? ["provenanceDigest", "provenanceSource"] : []),
+      "schemaVersion", "state"];
+    if (!raw || typeof raw !== "object" || Array.isArray(raw) || !exactObjectKeys(raw, reconciliationKeys) ||
+      ![1, 2].includes(raw.schemaVersion) || raw.consumer !== "claim_compute_recovery" ||
+      raw.generation !== (versionTwo ? "normal_launch_terminal_evidence_v1" : "isolated_request_hash_v1") ||
+      !new Set(["verified", "node_reserved", "observed", "succeeded"]).has(String(raw.state || "")) ||
+      versionTwo && (raw.provenanceSource !== "normal_launch_terminal_evidence" || !/^[a-f0-9]{64}$/.test(String(raw.provenanceDigest || ""))) ||
+      failurePresent && (!RECOVERY_PLAN_FAILURE_STAGES.has(String(raw.failureStage || "")) || raw.failureStage === "none" ||
+        !RECOVERY_PLAN_READBACK_ERRORS.has(String(raw.providerErrorClass || "")) || raw.providerErrorClass === "none")) {
+      throw new Error("workspace_recovery_plan_compute_claim_evidence_invalid");
+    }
+    const reconciliationNode = workspaceRecoveryComputeClaimMutationEvidence(raw.node, 1, new Set(["node_ownership"]));
+    reconciliation = { ...raw, node: reconciliationNode };
+  }
+  return { ...value, cvm, node, ...(reconciliation ? { reconciliation } : {}) };
 }
 
 function workspaceRecoverySuccessorGateResponse(value) {
@@ -1950,6 +2014,7 @@ export function validateProductionWorkspaceRecoveryPlanArtifact(value, expectedO
   const modes = new Set([RECOVERY_PLAN_DIAGNOSE_MODE, RECOVERY_PLAN_VALIDATE_MODE, RECOVERY_PLAN_EXECUTE_MODE]);
   const counts = value?.runnerDirectMutationCounts;
   const providerIdentityFailure = workspaceRecoveryProviderIdentityFailure(value?.providerIdentityFailure, "workspace_recovery_plan_artifact_invalid");
+  const computeClaimEvidence = workspaceRecoveryComputeClaimEvidence(value?.computeClaimEvidence);
   if (!value || typeof value !== "object" || Array.isArray(value) || value.schemaVersion !== 1 || !modes.has(operationMode) ||
     expectedOperationMode && operationMode !== expectedOperationMode || !counts ||
     !exactObjectKeys(counts, ["kubernetes", "sub2api", "tencent"]) || !computeClaimRunnerDirectMutationCountsAreZero(counts) ||
@@ -1970,7 +2035,7 @@ export function validateProductionWorkspaceRecoveryPlanArtifact(value, expectedO
   const allowedKeys = new Set([
     "schemaVersion", "operationMode", "status", "recoveryEligible", "failureStage", "readbackError", "errorCode", "planId",
     "planDigest", "stages", "mismatches", "runnerDirectMutationCounts", "verifiedAt", "successorGate", "executionId", "runId",
-    "url", "receiptId", "controlPlaneExecutionMutationCounts", "providerIdentityFailure"
+    "url", "receiptId", "controlPlaneExecutionMutationCounts", "providerIdentityFailure", "computeClaimEvidence"
   ]);
   if (Object.keys(value).some((key) => !allowedKeys.has(key)) || !/^recovery-plan-[a-f0-9]{20}$/.test(String(value.planId || "")) ||
     !/^[a-f0-9]{64}$/.test(String(value.planDigest || "")) || !Array.isArray(value.stages) || value.stages.length === 0 ||
@@ -1992,7 +2057,9 @@ export function validateProductionWorkspaceRecoveryPlanArtifact(value, expectedO
     value.status === "completed" && (value.failureStage !== "none" || value.readbackError !== "none" || value.errorCode !== "none" ||
       !/^recovery-exec-[A-Za-z0-9-]+$/.test(String(value.executionId || "")) ||
       !/^control-plane-run-[A-Za-z0-9-]+$/.test(String(value.runId || "")) || !String(value.url || "") || !String(value.receiptId || "")) ||
-    value.status !== "completed" && (value.failureStage === "none" || value.readbackError === "none" || value.errorCode === "none")) {
+    value.status !== "completed" && (value.failureStage === "none" || value.readbackError === "none" || value.errorCode === "none") ||
+    computeClaimEvidence && (operationMode !== RECOVERY_PLAN_EXECUTE_MODE || value.status === "completed" ||
+      value.failureStage !== computeClaimEvidence.failureStage || value.readbackError !== computeClaimEvidence.providerErrorClass)) {
     throw new Error("workspace_recovery_plan_artifact_invalid");
   }
   return value;
@@ -2203,14 +2270,15 @@ export async function executeWorkspaceRecoveryPlan({
     throw new Error("workspace_recovery_plan_execution_result_unknown");
   }
   return recoveryPlanArtifact(RECOVERY_PLAN_EXECUTE_MODE, current, now, {
-    failureStage: current.status === "completed" ? "none" : "control_plane_state",
-    readbackError: current.status === "completed" ? "none" : "unknown",
+    failureStage: current.status === "completed" ? "none" : current.computeClaimEvidence?.failureStage || "control_plane_state",
+    readbackError: current.status === "completed" ? "none" : current.computeClaimEvidence?.providerErrorClass || "unknown",
     errorCode: current.status === "completed" ? "none" : String(current.errorCode || "recovery_execution_failed"),
     executionId: String(current.executionId || ""),
     runId: String(current.runId || ""),
     url: String(current.url || ""),
     receiptId: String(current.receiptId || ""),
-    controlPlaneExecutionMutationCounts: current.mutationCounts
+    controlPlaneExecutionMutationCounts: current.mutationCounts,
+    ...(current.computeClaimEvidence ? { computeClaimEvidence: current.computeClaimEvidence } : {})
   });
 }
 

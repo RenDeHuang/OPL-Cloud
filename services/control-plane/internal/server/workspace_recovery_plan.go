@@ -174,54 +174,86 @@ type workspaceRecoveryPlanMismatch struct {
 }
 
 type workspaceRecoveryPlan struct {
-	SchemaVersion          int                                 `json:"schemaVersion"`
-	Generation             int                                 `json:"generation,omitempty"`
-	PredecessorPlanDigest  string                              `json:"predecessorPlanDigest,omitempty"`
-	PredecessorExecutionID string                              `json:"predecessorExecutionId,omitempty"`
-	PlanID                 string                              `json:"planId"`
-	PlanDigest             string                              `json:"planDigest"`
-	Status                 string                              `json:"status"`
-	Action                 string                              `json:"action"`
-	GeneratedAt            string                              `json:"generatedAt"`
-	ValidatedAt            string                              `json:"validatedAt,omitempty"`
-	ReleaseBinding         workspaceRecoveryReleaseBinding     `json:"releaseBinding"`
-	TargetBinding          workspaceRecoveryTargetBinding      `json:"targetBinding"`
-	Stages                 []workspaceRecoveryPlanStage        `json:"stages"`
-	AllowedDecisions       []string                            `json:"allowedDecisions"`
-	IdentityEvidence       []clients.ComputeClaimIdentityCheck `json:"identityEvidence"`
-	MutationCounts         workspaceRecoveryMutationCounts     `json:"mutationCounts"`
-	OperationID            string                              `json:"operationId"`
-	Mismatches             []workspaceRecoveryPlanMismatch     `json:"mismatches"`
-	ExecutionID            string                              `json:"executionId,omitempty"`
-	RunID                  string                              `json:"runId,omitempty"`
-	URL                    string                              `json:"url,omitempty"`
-	ReceiptID              string                              `json:"receiptId,omitempty"`
-	ErrorCode              string                              `json:"errorCode,omitempty"`
-	SuccessorGate          *workspaceRecoverySuccessorGateDTO  `json:"-"`
+	SchemaVersion          int                                    `json:"schemaVersion"`
+	Generation             int                                    `json:"generation,omitempty"`
+	PredecessorPlanDigest  string                                 `json:"predecessorPlanDigest,omitempty"`
+	PredecessorExecutionID string                                 `json:"predecessorExecutionId,omitempty"`
+	PlanID                 string                                 `json:"planId"`
+	PlanDigest             string                                 `json:"planDigest"`
+	Status                 string                                 `json:"status"`
+	Action                 string                                 `json:"action"`
+	GeneratedAt            string                                 `json:"generatedAt"`
+	ValidatedAt            string                                 `json:"validatedAt,omitempty"`
+	ReleaseBinding         workspaceRecoveryReleaseBinding        `json:"releaseBinding"`
+	TargetBinding          workspaceRecoveryTargetBinding         `json:"targetBinding"`
+	Stages                 []workspaceRecoveryPlanStage           `json:"stages"`
+	AllowedDecisions       []string                               `json:"allowedDecisions"`
+	IdentityEvidence       []clients.ComputeClaimIdentityCheck    `json:"identityEvidence"`
+	MutationCounts         workspaceRecoveryMutationCounts        `json:"mutationCounts"`
+	OperationID            string                                 `json:"operationId"`
+	Mismatches             []workspaceRecoveryPlanMismatch        `json:"mismatches"`
+	ExecutionID            string                                 `json:"executionId,omitempty"`
+	RunID                  string                                 `json:"runId,omitempty"`
+	URL                    string                                 `json:"url,omitempty"`
+	ReceiptID              string                                 `json:"receiptId,omitempty"`
+	ErrorCode              string                                 `json:"errorCode,omitempty"`
+	SuccessorGate          *workspaceRecoverySuccessorGateDTO     `json:"-"`
+	ComputeClaimEvidence   *workspaceRecoveryComputeClaimEvidence `json:"-"`
 }
 
 type workspaceRecoveryMutationOutcome struct {
-	Status                   string                          `json:"status"`
-	Counts                   workspaceRecoveryMutationCounts `json:"counts"`
-	FabricOperationMutations int                             `json:"fabricOperationMutations"`
-	Source                   string                          `json:"source,omitempty"`
-	EvidenceDigest           string                          `json:"evidenceDigest,omitempty"`
+	Status                   string                                 `json:"status"`
+	Counts                   workspaceRecoveryMutationCounts        `json:"counts"`
+	FabricOperationMutations int                                    `json:"fabricOperationMutations"`
+	Source                   string                                 `json:"source,omitempty"`
+	EvidenceDigest           string                                 `json:"evidenceDigest,omitempty"`
+	ComputeClaimEvidence     *workspaceRecoveryComputeClaimEvidence `json:"computeClaimEvidence,omitempty"`
+}
+
+type workspaceRecoveryComputeClaimReconciliationEvidence struct {
+	SchemaVersion      int                                  `json:"schemaVersion"`
+	Consumer           string                               `json:"consumer"`
+	Generation         string                               `json:"generation"`
+	ProvenanceSource   string                               `json:"provenanceSource,omitempty"`
+	ProvenanceDigest   string                               `json:"provenanceDigest,omitempty"`
+	State              string                               `json:"state"`
+	FailureStage       string                               `json:"failureStage,omitempty"`
+	ProviderErrorClass string                               `json:"providerErrorClass,omitempty"`
+	Node               clients.ComputeClaimMutationEvidence `json:"node"`
+}
+
+type workspaceRecoveryComputeClaimEvidence struct {
+	SchemaVersion            int                                                  `json:"schemaVersion"`
+	BindingClassification    string                                               `json:"bindingClassification"`
+	MismatchField            string                                               `json:"mismatchField"`
+	ExpectedDigest           string                                               `json:"expectedDigest"`
+	ActualDigest             string                                               `json:"actualDigest"`
+	MutationLedger           string                                               `json:"mutationLedger"`
+	MutationLedgerOutcome    string                                               `json:"mutationLedgerOutcome"`
+	CVM                      clients.ComputeClaimMutationEvidence                 `json:"cvm"`
+	Node                     clients.ComputeClaimMutationEvidence                 `json:"node"`
+	LedgerFailureStage       string                                               `json:"ledgerFailureStage"`
+	LedgerProviderErrorClass string                                               `json:"ledgerProviderErrorClass"`
+	FailureStage             string                                               `json:"failureStage"`
+	ProviderErrorClass       string                                               `json:"providerErrorClass"`
+	Reconciliation           *workspaceRecoveryComputeClaimReconciliationEvidence `json:"reconciliation,omitempty"`
 }
 
 type workspaceRecoveryPlanDTO struct {
-	PlanID         string                             `json:"planId"`
-	PlanDigest     string                             `json:"planDigest"`
-	Status         string                             `json:"status"`
-	OperationID    string                             `json:"operationId,omitempty"`
-	Stages         []workspaceRecoveryPlanStage       `json:"stages"`
-	Mismatches     []workspaceRecoveryPlanMismatch    `json:"mismatches"`
-	MutationCounts workspaceRecoveryMutationCounts    `json:"mutationCounts"`
-	ExecutionID    string                             `json:"executionId,omitempty"`
-	RunID          string                             `json:"runId,omitempty"`
-	URL            string                             `json:"url,omitempty"`
-	ReceiptID      string                             `json:"receiptId,omitempty"`
-	ErrorCode      string                             `json:"errorCode,omitempty"`
-	SuccessorGate  *workspaceRecoverySuccessorGateDTO `json:"successorGate,omitempty"`
+	PlanID               string                                 `json:"planId"`
+	PlanDigest           string                                 `json:"planDigest"`
+	Status               string                                 `json:"status"`
+	OperationID          string                                 `json:"operationId,omitempty"`
+	Stages               []workspaceRecoveryPlanStage           `json:"stages"`
+	Mismatches           []workspaceRecoveryPlanMismatch        `json:"mismatches"`
+	MutationCounts       workspaceRecoveryMutationCounts        `json:"mutationCounts"`
+	ExecutionID          string                                 `json:"executionId,omitempty"`
+	RunID                string                                 `json:"runId,omitempty"`
+	URL                  string                                 `json:"url,omitempty"`
+	ReceiptID            string                                 `json:"receiptId,omitempty"`
+	ErrorCode            string                                 `json:"errorCode,omitempty"`
+	SuccessorGate        *workspaceRecoverySuccessorGateDTO     `json:"successorGate,omitempty"`
+	ComputeClaimEvidence *workspaceRecoveryComputeClaimEvidence `json:"computeClaimEvidence,omitempty"`
 }
 
 type workspaceRecoverySuccessorGateDTO struct {
@@ -254,7 +286,7 @@ func workspaceRecoveryPlanHTTPProjection(plan workspaceRecoveryPlan) workspaceRe
 		PlanID: plan.PlanID, PlanDigest: plan.PlanDigest, Status: plan.Status, OperationID: plan.OperationID,
 		Stages: append([]workspaceRecoveryPlanStage(nil), plan.Stages...), Mismatches: mismatches, MutationCounts: plan.MutationCounts,
 		ExecutionID: plan.ExecutionID, RunID: plan.RunID, URL: plan.URL, ReceiptID: plan.ReceiptID, ErrorCode: plan.ErrorCode,
-		SuccessorGate: plan.SuccessorGate,
+		SuccessorGate: plan.SuccessorGate, ComputeClaimEvidence: plan.ComputeClaimEvidence,
 	}
 }
 
@@ -614,6 +646,7 @@ func workspaceRecoveryPlanProjection(operation workspaceLaunchOperation) workspa
 		if operation.RecoveryExecution.ErrorCode != "" {
 			plan.ErrorCode = operation.RecoveryExecution.ErrorCode
 		}
+		plan.ComputeClaimEvidence = operation.RecoveryExecution.MutationOutcome.ComputeClaimEvidence
 	}
 	return plan
 }
@@ -772,6 +805,9 @@ func workspaceRecoveryExecutionConfirmedZero(operation workspaceLaunchOperation,
 
 func workspaceRecoveryMutationOutcomeFromComputeClaim(proof clients.ComputeClaimRecoveryProof) workspaceRecoveryMutationOutcome {
 	outcome := workspaceRecoveryMutationOutcome{Status: "unknown", Source: "compute_claim_response"}
+	if !proof.Eligible || proof.Reason != "none" {
+		outcome.ComputeClaimEvidence = workspaceRecoveryComputeClaimEvidenceFromProof(proof)
+	}
 	if !workspaceComputeClaimEvidenceMatches(proof, false) || proof.Sub2APIMutationCount < 0 || proof.TencentMutationCount < 0 || proof.KubernetesMutationCount < 0 {
 		return outcome
 	}
@@ -782,6 +818,48 @@ func workspaceRecoveryMutationOutcomeFromComputeClaim(proof clients.ComputeClaim
 		outcome.Status = "nonzero"
 	}
 	return outcome
+}
+
+func workspaceRecoveryComputeClaimEvidenceFromProof(proof clients.ComputeClaimRecoveryProof) *workspaceRecoveryComputeClaimEvidence {
+	evidence := proof.IdentityEvidence
+	if evidence == nil || !workspaceComputeClaimRequestHashReconciliation(evidence) || proof.Evidence == nil ||
+		proof.FailureStage == "" || proof.ProviderErrorClass == "" ||
+		!safeWorkspaceComputeClaimFailureStage(proof.FailureStage) || !safeWorkspaceComputeClaimProviderErrorClass(proof.ProviderErrorClass) {
+		return nil
+	}
+	mismatch := evidence.Checks[len(evidence.Checks)-1]
+	cvm, node := proof.Evidence.CVM, proof.Evidence.Node
+	if evidence.MutationEvidence != nil {
+		cvm, node = evidence.MutationEvidence.CVM, evidence.MutationEvidence.Node
+	}
+	result := &workspaceRecoveryComputeClaimEvidence{
+		SchemaVersion: 1, BindingClassification: evidence.BindingClassification, MismatchField: mismatch.Field,
+		ExpectedDigest: mismatch.ExpectedDigest, ActualDigest: mismatch.ActualDigest,
+		MutationLedger: evidence.MutationLedger, MutationLedgerOutcome: evidence.MutationLedgerOutcome,
+		CVM: cvm, Node: node,
+		LedgerFailureStage: evidence.FailureStage, LedgerProviderErrorClass: evidence.ProviderErrorClass,
+		FailureStage: proof.FailureStage, ProviderErrorClass: proof.ProviderErrorClass,
+	}
+	if reconciliation := evidence.Reconciliation; reconciliation != nil &&
+		reconciliation.Consumer == "claim_compute_recovery" && (reconciliation.SchemaVersion == 1 || reconciliation.SchemaVersion == 2) &&
+		(reconciliation.Generation == "isolated_request_hash_v1" || reconciliation.Generation == "normal_launch_terminal_evidence_v1") &&
+		(reconciliation.State == "verified" || reconciliation.State == "node_reserved" || reconciliation.State == "observed" || reconciliation.State == "succeeded") &&
+		reconciliation.ExpectedRequestHashDigest == mismatch.ExpectedDigest && reconciliation.PersistedRequestHashDigest == mismatch.ActualDigest &&
+		safeWorkspaceComputeClaimFailureStage(reconciliation.FailureStage) && safeWorkspaceComputeClaimProviderErrorClass(reconciliation.ProviderErrorClass) &&
+		workspaceComputeClaimMutationEvidenceMatches(reconciliation.Node, reconciliation.Node.Attempted, 1, "node", false) {
+		provenanceValid := reconciliation.SchemaVersion == 1 && reconciliation.ProvenanceSource == "" && reconciliation.ProvenanceDigest == "" ||
+			reconciliation.SchemaVersion == 2 && reconciliation.ProvenanceSource == "normal_launch_terminal_evidence" &&
+				computeClaimApprovalDigestPattern.MatchString(reconciliation.ProvenanceDigest)
+		if provenanceValid {
+			result.Reconciliation = &workspaceRecoveryComputeClaimReconciliationEvidence{
+				SchemaVersion: reconciliation.SchemaVersion, Consumer: reconciliation.Consumer, Generation: reconciliation.Generation,
+				ProvenanceSource: reconciliation.ProvenanceSource, ProvenanceDigest: reconciliation.ProvenanceDigest,
+				State: reconciliation.State, FailureStage: reconciliation.FailureStage,
+				ProviderErrorClass: reconciliation.ProviderErrorClass, Node: reconciliation.Node,
+			}
+		}
+	}
+	return result
 }
 
 func newWorkspaceRecoverySuccessor(plan workspaceRecoveryPlan, predecessor workspaceRecoveryPlan, execution workspaceRecoveryExecution, historyLength int) workspaceRecoveryPlan {

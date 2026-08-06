@@ -835,7 +835,10 @@ func TestClaimComputeRecoveryReconcilesOnlyIsolatedRequestHashAndPreservesUnknow
 	if claimErr != nil || !result.Eligible || result.TencentMutationCount != 0 || result.KubernetesMutationCount != 1 ||
 		provider.claimCalls != 0 || provider.nodeOnlyClaimCalls != 1 || listErr != nil || len(stored) != 1 || stored[0].Status != "succeeded" ||
 		!bindingPresent || !bindingValid || binding != persistedBinding || !ledgerPresent || !ledgerValid || !reflect.DeepEqual(ledger, originalLedger) ||
-		!reconciliationPresent || !reconciliationValid || reconciliation.State != "succeeded" ||
+		!reconciliationPresent || !reconciliationValid || reconciliation.State != "succeeded" || result.IdentityEvidence == nil ||
+		result.IdentityEvidence.Reconciliation == nil || result.IdentityEvidence.Reconciliation.State != "succeeded" ||
+		result.IdentityEvidence.Reconciliation.ExpectedRequestHashDigest != evidence.Checks[9].ExpectedDigest ||
+		result.IdentityEvidence.Reconciliation.PersistedRequestHashDigest != evidence.Checks[9].ActualDigest ||
 		!reflect.DeepEqual(reconciliation.Node, ComputeClaimMutationEvidence{Attempted: 1, Confirmed: 1}) ||
 		storedBindingJSONErr != nil || storedLedgerJSONErr != nil || !reflect.DeepEqual(storedBindingJSON, originalBindingJSON) || !reflect.DeepEqual(storedLedgerJSON, originalLedgerJSON) {
 		t.Fatalf("result=%#v err=%v stored=%#v listErr=%v binding=%#v ledger=%#v reconciliation=%#v provider=%#v", result, claimErr, stored, listErr, binding, ledger, reconciliation, provider)
@@ -978,6 +981,12 @@ func TestClaimComputeRecoveryNormalLaunchTerminalNodePatchResponseLossConvergesB
 	if firstErr == nil || first.Eligible || listErr != nil || len(operations) != 1 || !present || !valid || reconciliation.SchemaVersion != 2 ||
 		reconciliation.State != "node_reserved" || provider.claimCalls != 0 || provider.nodeOnlyClaimCalls != 1 || first.TencentMutationCount != 0 || first.KubernetesMutationCount != 1 {
 		t.Fatalf("first=%#v err=%v operations=%#v reconciliation=%#v provider=%#v", first, firstErr, operations, reconciliation, provider)
+	}
+	if first.IdentityEvidence == nil || first.IdentityEvidence.Reconciliation == nil || first.IdentityEvidence.Reconciliation.State != "node_reserved" ||
+		first.IdentityEvidence.Reconciliation.Generation != "normal_launch_terminal_evidence_v1" ||
+		first.IdentityEvidence.Reconciliation.Consumer != "claim_compute_recovery" ||
+		!reflect.DeepEqual(first.IdentityEvidence.Reconciliation.Node, ComputeClaimMutationEvidence{Attempted: 1, Unknown: 1, Missing: []string{"node_ownership"}}) {
+		t.Fatalf("response-loss reconciliation evidence=%#v", first.IdentityEvidence)
 	}
 
 	replayed, replayErr := NewServiceWithOperationStore(provider, store).ClaimComputeRecovery(context.Background(), claimInput)

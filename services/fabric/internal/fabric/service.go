@@ -1192,6 +1192,9 @@ func (s *Service) ClaimComputeRecovery(ctx context.Context, input ComputeClaimRe
 		s.mu.Unlock()
 		return nil
 	})
+	if evidence, evidenceErr := s.ComputeClaimRecoveryIdentityEvidence(ctx, input); evidenceErr == nil {
+		result.IdentityEvidence = evidence
+	}
 	return result, err
 }
 
@@ -1956,6 +1959,16 @@ func computeClaimIdentityEvidence(operation FabricOperation, input ComputeClaimR
 		}
 		result.FailureStage = ledger.FailureStage
 		result.ProviderErrorClass = ledger.ProviderErrorClass
+	}
+	if reconciliation, present, valid := decodeComputeClaimRecoveryReconciliation(operation); present && valid {
+		result.Reconciliation = &ComputeClaimReconciliationEvidence{
+			SchemaVersion: reconciliation.SchemaVersion, Consumer: reconciliation.Consumer, Generation: reconciliation.Generation,
+			ProvenanceSource: reconciliation.ProvenanceSource, ProvenanceDigest: reconciliation.ProvenanceDigest, State: reconciliation.State,
+			ExpectedRequestHashDigest:  reconciliation.ExpectedRequestHashDigest,
+			PersistedRequestHashDigest: reconciliation.PersistedRequestHashDigest,
+			FailureStage:               reconciliation.FailureStage, ProviderErrorClass: reconciliation.ProviderErrorClass,
+			Node: cloneComputeClaimMutationEvidence(reconciliation.Node),
+		}
 	}
 	return result
 }

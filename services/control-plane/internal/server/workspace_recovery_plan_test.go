@@ -237,6 +237,37 @@ func TestWorkspaceRecoveryPlanTerminalRequestHashReconciliationExecutesOriginalL
 	assertWorkspaceRecoveryPlanRequestHashReconciliationExecutesOriginalLaunchOnce(t, terminalRequestHashReconciliationIdentityEvidence())
 }
 
+func TestWorkspaceRecoveryPlanProjectsPersistedRequestHashReconciliationFailureEvidence(t *testing.T) {
+	evidence := requestHashReconciliationIdentityEvidence()
+	evidence.Reconciliation = &clients.ComputeClaimReconciliationEvidence{
+		SchemaVersion: 1, Consumer: "claim_compute_recovery", Generation: "isolated_request_hash_v1", State: "node_reserved",
+		ExpectedRequestHashDigest: evidence.Checks[9].ExpectedDigest, PersistedRequestHashDigest: evidence.Checks[9].ActualDigest,
+		FailureStage: "node_patch_readback", ProviderErrorClass: "transport_error",
+		Node: clients.ComputeClaimMutationEvidence{Attempted: 1, Unknown: 1, Missing: []string{"node_ownership"}},
+	}
+	proof := clients.ComputeClaimRecoveryProof{
+		IdentityEvidence: &evidence, FailureStage: "node_patch_readback", ProviderErrorClass: "transport_error",
+		Evidence: &clients.ComputeClaimEvidence{
+			CVM:  clients.ComputeClaimMutationEvidence{Attempted: 1, Unknown: 1, Missing: []string{"opl_account_id"}},
+			Node: clients.ComputeClaimMutationEvidence{Attempted: 1, Unknown: 1, Missing: []string{"node_ownership"}},
+		},
+	}
+	outcome := workspaceRecoveryMutationOutcomeFromComputeClaim(proof)
+	got := outcome.ComputeClaimEvidence
+	if got == nil || got.BindingClassification != "request-hash-reconciliation" || got.MismatchField != "binding.requestHash" ||
+		got.ExpectedDigest != evidence.Checks[9].ExpectedDigest || got.ActualDigest != evidence.Checks[9].ActualDigest ||
+		got.MutationLedger != "observed" || got.MutationLedgerOutcome != "unknown" || got.FailureStage != "node_patch_readback" ||
+		got.ProviderErrorClass != "transport_error" || got.Reconciliation == nil || got.Reconciliation.State != "node_reserved" ||
+		got.Reconciliation.Consumer != "claim_compute_recovery" || got.Reconciliation.Generation != "isolated_request_hash_v1" {
+		t.Fatalf("projected reconciliation evidence=%#v", got)
+	}
+	serialized, err := json.Marshal(got)
+	if err != nil || bytes.Contains(serialized, []byte("acct-")) || bytes.Contains(serialized, []byte("workspace-launch-")) ||
+		bytes.Contains(serialized, []byte("ins-")) || bytes.Contains(serialized, []byte("nodeName")) {
+		t.Fatalf("reconciliation evidence leaked identity: %s err=%v", serialized, err)
+	}
+}
+
 func assertWorkspaceRecoveryPlanRequestHashReconciliationExecutesOriginalLaunchOnce(t *testing.T, evidence clients.ComputeClaimIdentityEvidence) {
 	t.Helper()
 	t.Setenv("OPL_RELEASE_SHA", strings.Repeat("a", 40))

@@ -796,6 +796,97 @@ test("Recovery Plan execution never resends after an unknown POST result", async
   assert.equal(reads, 3);
 });
 
+test("Recovery Plan execution preserves redacted request-hash reconciliation failure evidence", async () => {
+  const launchOperationId = "workspace-launch-f0375970d7678d0a3e";
+  const planDigest = "e".repeat(64);
+  const planId = `recovery-plan-${planDigest.slice(0, 20)}`;
+  const validated = {
+    planId,
+    planDigest,
+    status: "validated",
+    operationId: launchOperationId,
+    stages: [{ stage: "compute_claim", status: "manual_review" }],
+    mismatches: [],
+    mutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
+  };
+  const computeClaimEvidence = {
+    schemaVersion: 1,
+    bindingClassification: "request-hash-reconciliation",
+    mismatchField: "binding.requestHash",
+    expectedDigest: "a".repeat(64),
+    actualDigest: "b".repeat(64),
+    mutationLedger: "observed",
+    mutationLedgerOutcome: "unknown",
+    cvm: { attempted: 1, confirmed: 0, unknown: 1, missing: ["opl_account_id"] },
+    node: { attempted: 0, confirmed: 0, unknown: 0, missing: [] },
+    ledgerFailureStage: "cvm_tag_readback",
+    ledgerProviderErrorClass: "provider_error",
+    failureStage: "node_patch_readback",
+    providerErrorClass: "transport_error",
+    reconciliation: {
+      schemaVersion: 1,
+      consumer: "claim_compute_recovery",
+      generation: "isolated_request_hash_v1",
+      state: "node_reserved",
+      failureStage: "node_patch_readback",
+      providerErrorClass: "transport_error",
+      node: { attempted: 1, confirmed: 0, unknown: 1, missing: ["node_ownership"] }
+    }
+  };
+  const failed = {
+    ...validated,
+    status: "failed",
+    executionId: "recovery-exec-reconciliation",
+    runId: "control-plane-run-reconciliation",
+    errorCode: "workspace_compute_claim_provider_describe",
+    computeClaimEvidence
+  };
+  let reads = 0;
+  let executePosts = 0;
+  const fetchImpl = async (input, init = {}) => {
+    const url = new URL(String(input));
+    const method = String(init.method || "GET").toUpperCase();
+    if (url.pathname === "/api/auth/login") {
+      return json({ user: { accountId: ADMIN_ACCOUNT_ID, role: "admin" } }, 200, {
+        "set-cookie": "opl_session=admin; Path=/; HttpOnly",
+        "x-opl-csrf-token": "admin-csrf"
+      });
+    }
+    if (url.pathname.endsWith("/recovery-plan/execute")) {
+      executePosts += 1;
+      return json({ ...validated, status: "executing", executionId: failed.executionId, runId: failed.runId });
+    }
+    if (url.pathname.endsWith("/recovery-plan") && method === "GET") {
+      reads += 1;
+      return json(reads === 1 ? validated : failed);
+    }
+    return json({ error: "unexpected" }, 404);
+  };
+
+  const result = await productionLiveQa.executeWorkspaceRecoveryPlan({
+    launchOperationId,
+    planId,
+    planDigest,
+    origin: "https://cloud.medopl.cn",
+    adminEmail: ADMIN_EMAIL,
+    adminPassword: ADMIN_PASSWORD,
+    pollAttempts: 1,
+    pollDelayMs: 0,
+    sleepImpl: async () => {},
+    fetchImpl,
+    now: new Date("2026-08-06T03:00:00Z")
+  });
+
+  assert.equal(result.status, "failed");
+  assert.equal(result.failureStage, "node_patch_readback");
+  assert.equal(result.readbackError, "transport_error");
+  assert.deepEqual(result.computeClaimEvidence, computeClaimEvidence);
+  assert.equal(executePosts, 1);
+  assert.equal(reads, 2);
+  assert.equal(productionLiveQa.validateProductionWorkspaceRecoveryPlanArtifact(result), result);
+  assert.doesNotMatch(JSON.stringify(result), /test@|acct-|workspace-launch-|ins-|nodeName|privateIp|password|secret|token/i);
+});
+
 function source(payload, sourceName = "sub2api", status = "available", headers = {}) {
   return json({ source: sourceName, status, available: true, fetchedAt: new Date().toISOString(), data: payload }, 200, {
     "cache-control": "private, no-store",
