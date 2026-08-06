@@ -584,6 +584,74 @@ test("Recovery Plan diagnosis CLI preserves one validated redacted server failur
   assert.doesNotMatch(stdout, /accountId|launchOperationId|cvmInstanceId|password|secret|cookie|csrf/i);
 });
 
+test("Recovery Plan diagnosis CLI preserves persisted unknown CVM claim evidence", async () => {
+  const accountId = "acct-f947b18f844e42b3c0";
+  const launchOperationId = "workspace-launch-f0375970d7678d0a3e";
+  const computeClaimEvidence = {
+    schemaVersion: 1,
+    bindingClassification: "request-hash-reconciliation",
+    mismatchField: "binding.requestHash",
+    expectedDigest: "a".repeat(64),
+    actualDigest: "b".repeat(64),
+    mutationLedger: "observed",
+    mutationLedgerOutcome: "unknown",
+    cvm: { attempted: 1, confirmed: 0, unknown: 1, missing: ["opl_account_id"] },
+    node: { attempted: 0, confirmed: 0, unknown: 0, missing: [] },
+    ledgerFailureStage: "cvm_tag_readback",
+    ledgerProviderErrorClass: "provider_error",
+    failureStage: "cvm_pre_read",
+    providerErrorClass: "readback_mismatch"
+  };
+  const fetchImpl = async (input, init = {}) => {
+    const url = new URL(String(input));
+    if (url.pathname === "/api/auth/login") {
+      return json({ user: { accountId: ADMIN_ACCOUNT_ID, role: "admin" } }, 200, {
+        "set-cookie": "opl_session=admin; Path=/; HttpOnly",
+        "x-opl-csrf-token": "admin-csrf"
+      });
+    }
+    if (url.pathname.endsWith("/recovery-plan/diagnose")) {
+      return json({
+        schemaVersion: 1,
+        status: "blocked",
+        recoveryEligible: false,
+        failureStage: "cvm_pre_read",
+        readbackError: "readback_mismatch",
+        errorCode: "workspace_recovery_plan_fabric_proof_failed",
+        mutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
+        computeClaimEvidence
+      }, 409);
+    }
+    return json({ error: "unexpected" }, 404);
+  };
+  let stdout = "";
+  const code = await runProductionLiveQaCli({
+    argv: ["--recovery-plan-diagnose", "--account-id", accountId, "--launch-operation-id", launchOperationId],
+    env: {
+      OPL_CONSOLE_ORIGIN: "https://cloud.medopl.cn",
+      OPL_SUB2API_ADMIN_EMAIL: ADMIN_EMAIL,
+      OPL_SUB2API_ADMIN_PASSWORD: ADMIN_PASSWORD
+    },
+    stdout: { write: (chunk) => { stdout += chunk; } },
+    stderr: { write: () => {} },
+    fetchImpl
+  });
+
+  assert.equal(code, 1);
+  assert.deepEqual(JSON.parse(stdout), {
+    schemaVersion: 1,
+    operationMode: "recovery_plan_diagnose",
+    status: "blocked",
+    recoveryEligible: false,
+    failureStage: "cvm_pre_read",
+    readbackError: "readback_mismatch",
+    errorCode: "workspace_recovery_plan_fabric_proof_failed",
+    computeClaimEvidence,
+    runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
+  });
+  assert.doesNotMatch(stdout, /accountId|launchOperationId|cvmInstanceId|password|secret|cookie|csrf/i);
+});
+
 test("Recovery Plan artifact rejects unallowlisted or non-digest provider identity evidence", () => {
   const base = {
     schemaVersion: 1,

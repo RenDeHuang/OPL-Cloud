@@ -1947,7 +1947,9 @@ function recoveryPlanArtifact(operationMode, plan, now, overrides = {}) {
 
 function workspaceRecoveryPlanFailureResponse(value) {
   const providerIdentityFailure = workspaceRecoveryProviderIdentityFailure(value?.providerIdentityFailure, "workspace_recovery_plan_failure_response_invalid");
-  const keys = ["errorCode", "failureStage", "mutationCounts", ...(providerIdentityFailure ? ["providerIdentityFailure"] : []), "readbackError", "recoveryEligible", "schemaVersion", "status"];
+  const computeClaimEvidence = workspaceRecoveryComputeClaimEvidence(value?.computeClaimEvidence);
+  const keys = ["errorCode", "failureStage", "mutationCounts", ...(providerIdentityFailure ? ["providerIdentityFailure"] : []),
+    ...(computeClaimEvidence ? ["computeClaimEvidence"] : []), "readbackError", "recoveryEligible", "schemaVersion", "status"];
   const counts = value?.mutationCounts;
   if (!value || typeof value !== "object" || Array.isArray(value) || !exactObjectKeys(value, keys) || value.schemaVersion !== 1 ||
     value.status !== "blocked" || value.recoveryEligible !== false || !RECOVERY_PLAN_FAILURE_STAGES.has(String(value.failureStage || "")) ||
@@ -1960,7 +1962,8 @@ function workspaceRecoveryPlanFailureResponse(value) {
     failureStage: String(value.failureStage),
     readbackError: String(value.readbackError),
     errorCode: String(value.errorCode),
-    ...(providerIdentityFailure ? { providerIdentityFailure } : {})
+    ...(providerIdentityFailure ? { providerIdentityFailure } : {}),
+    ...(computeClaimEvidence ? { computeClaimEvidence } : {})
   };
 }
 
@@ -2023,7 +2026,8 @@ export function validateProductionWorkspaceRecoveryPlanArtifact(value, expectedO
     throw new Error("workspace_recovery_plan_artifact_invalid");
   }
   const failureKeys = [
-    "errorCode", "failureStage", "operationMode", ...(providerIdentityFailure ? ["providerIdentityFailure"] : []), "readbackError", "recoveryEligible", "runnerDirectMutationCounts", "schemaVersion", "status"
+    "errorCode", "failureStage", "operationMode", ...(providerIdentityFailure ? ["providerIdentityFailure"] : []),
+    ...(computeClaimEvidence ? ["computeClaimEvidence"] : []), "readbackError", "recoveryEligible", "runnerDirectMutationCounts", "schemaVersion", "status"
   ];
   if (value.status === "blocked" && !Object.hasOwn(value, "planId")) {
     if (!exactObjectKeys(value, failureKeys) || value.recoveryEligible !== false || value.failureStage === "none" ||
@@ -2104,6 +2108,7 @@ export async function diagnoseWorkspaceRecoveryPlan({
       readbackError: failure.readbackError,
       errorCode: failure.errorCode,
       ...(failure.providerIdentityFailure ? { providerIdentityFailure: failure.providerIdentityFailure } : {}),
+      ...(failure.computeClaimEvidence ? { computeClaimEvidence: failure.computeClaimEvidence } : {}),
       runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
     };
     throw error;

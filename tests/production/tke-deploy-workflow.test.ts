@@ -1234,15 +1234,15 @@ test("server-owned Recovery Plan diagnosis and execution are exact original-orde
     "cvm", "node", "ledgerFailureStage", "ledgerProviderErrorClass", "failureStage", "providerErrorClass", "reconciliation"
   ]);
   assert.equal(deployment.productionWorkspaceRecoveryPlan.artifact.computeClaimEvidenceAuthority,
-    "Fabric_ClaimComputeRecovery_persisted_reconciliation_and_mutation_ledger_digest_only_projection");
+    "Fabric_ProveComputeClaimRecovery_plus_persisted_identity_evidence_digest_only_projection");
   assert.equal(deployment.productionWorkspaceRecoveryPlan.artifact.computeClaimEvidenceConsumer,
-    "failed_original_Recovery_Plan_execution_readback_only");
+    "original_Launch_Recovery_Claim_readback_and_production_live_qa_artifact_validator");
   assert.deepEqual(deployment.productionWorkspaceRecoveryPlan.artifact.successorGateFields, [
     "applicable", "allowed", "planState", "executionState", "completionState", "leaseState",
     "identityState", "persistedMutationState", "fabricLedgerState"
   ]);
   assert.deepEqual(deployment.productionWorkspaceRecoveryPlan.artifact.failureFields, [
-    "failureStage", "readbackError", "errorCode", "providerIdentityFailure"
+    "failureStage", "readbackError", "errorCode", "providerIdentityFailure", "computeClaimEvidence"
   ]);
   assert.deepEqual(deployment.productionWorkspaceRecoveryPlan.artifact.providerIdentityFailureFields, [
     "predicate", "expectedDigest", "actualDigest"

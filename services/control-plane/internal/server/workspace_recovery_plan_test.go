@@ -1149,6 +1149,55 @@ func TestWorkspaceRecoveryPlanDiagnosePreservesRedactedComputeClaimFailure(t *te
 	}
 }
 
+func TestWorkspaceRecoveryPlanDiagnosePreservesPersistedUnknownCVMClaimEvidence(t *testing.T) {
+	t.Setenv("OPL_RELEASE_SHA", strings.Repeat("a", 40))
+	t.Setenv("OPL_CLOUD_IMAGE", "uswccr.ccs.tencentyun.com/oplcloud/opl-cloud@sha256:"+strings.Repeat("b", 64))
+	fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, "basic")
+	fixture.fabric.computeClaimProof = computeClaimRecoveryProofForLaunch(operation, "unallocated")
+	fixture.fabric.computeClaimProof.Eligible = false
+	fixture.fabric.computeClaimProof.Reason = "provider_describe"
+	fixture.fabric.computeClaimProof.FailureStage = "cvm_pre_read"
+	fixture.fabric.computeClaimProof.ProviderErrorClass = "readback_mismatch"
+	fixture.fabric.computeClaimProof.Evidence = &clients.ComputeClaimEvidence{
+		CVM: clients.ComputeClaimMutationEvidence{Attempted: 1, Unknown: 1, Missing: []string{"opl_account_id"}},
+	}
+	fixture.fabric.computeClaimProofErr = errors.New("provider proof failed")
+	evidence := requestHashReconciliationIdentityEvidence()
+	useWorkspaceRecoveryPlanIdentityEvidence(t, &fixture, &evidence)
+
+	response := requestWorkspaceRecoveryPlan(t, fixture, http.MethodPost, "/diagnose", map[string]any{"accountId": operation.AccountID})
+	if response.Code != http.StatusConflict {
+		t.Fatalf("compute claim blocked diagnose status=%d body=%s", response.Code, response.Body.String())
+	}
+	var body struct {
+		FailureStage         string                                 `json:"failureStage"`
+		ReadbackError        string                                 `json:"readbackError"`
+		ErrorCode            string                                 `json:"errorCode"`
+		MutationCounts       workspaceRecoveryMutationCounts        `json:"mutationCounts"`
+		ComputeClaimEvidence *workspaceRecoveryComputeClaimEvidence `json:"computeClaimEvidence"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	got := body.ComputeClaimEvidence
+	if body.FailureStage != "cvm_pre_read" || body.ReadbackError != "readback_mismatch" ||
+		body.ErrorCode != "workspace_recovery_plan_fabric_proof_failed" || body.MutationCounts != (workspaceRecoveryMutationCounts{}) ||
+		got == nil || got.BindingClassification != "request-hash-reconciliation" || got.MismatchField != "binding.requestHash" ||
+		got.MutationLedger != "observed" || got.MutationLedgerOutcome != "unknown" ||
+		got.CVM.Attempted != 1 || got.CVM.Confirmed != 0 || got.CVM.Unknown != 1 ||
+		len(got.CVM.Missing) != 1 || got.CVM.Missing[0] != "opl_account_id" ||
+		got.Node.Attempted != 0 || got.Node.Confirmed != 0 || got.Node.Unknown != 0 || len(got.Node.Missing) != 0 ||
+		got.LedgerFailureStage != "cvm_tag_readback" || got.LedgerProviderErrorClass != "provider_error" ||
+		got.FailureStage != "cvm_pre_read" || got.ProviderErrorClass != "readback_mismatch" {
+		t.Fatalf("compute claim blocked evidence=%#v body=%s", got, response.Body.String())
+	}
+	if strings.Contains(response.Body.String(), operation.ComputeCVMInstanceID) || strings.Contains(response.Body.String(), operation.AccountID) ||
+		strings.Contains(response.Body.String(), operation.ID) || len(fixture.fabric.computeClaimCalls) != 0 || len(fixture.fabric.storageIDs) != 0 {
+		t.Fatalf("blocked diagnose leaked identity or mutated provider: body=%s claims=%d storage=%d", response.Body.String(),
+			len(fixture.fabric.computeClaimCalls), len(fixture.fabric.storageIDs))
+	}
+}
+
 func TestWorkspaceRecoveryPlanValidateReportsComputeIdentityConflictAndKeepsManualReview(t *testing.T) {
 	t.Setenv("OPL_RELEASE_SHA", strings.Repeat("a", 40))
 	t.Setenv("OPL_CLOUD_IMAGE", "uswccr.ccs.tencentyun.com/oplcloud/opl-cloud@sha256:"+strings.Repeat("b", 64))
