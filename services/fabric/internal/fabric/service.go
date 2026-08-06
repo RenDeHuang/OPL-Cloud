@@ -997,8 +997,8 @@ func (s *Service) ClaimComputeRecovery(ctx context.Context, input ComputeClaimRe
 		nodeOnlyContinuation := resumeObservedNodeClaim || reserveHistoricalNodeClaim || activeNodeContinuation || reconciledNodeContinuation
 		resumeReservedNodeReadback := mutationPresent && validNodeReservedComputeClaimRecoveryMutation(mutationLedger) &&
 			proof.CVMOwnershipState == "target_owned" && proof.NodeOwnershipState == "target_owned"
-		reconciledReservedReadback := requestHashReconciliation && reconciliationPresent &&
-			(reconciliation.State == "node_reserved" || reconciliation.State == "observed") &&
+		reconciledNodeReadback := requestHashReconciliation && reconciliationPresent &&
+			(reconciliation.State == "verified" || reconciliation.State == "node_reserved" || reconciliation.State == "observed") &&
 			reconciledCVMOwnership && proof.NodeOwnershipState == "target_owned"
 		reservedNodeOutcomeUnknown := mutationPresent && validNodeReservedComputeClaimRecoveryMutation(mutationLedger) &&
 			proof.CVMOwnershipState == "target_owned" && proof.NodeOwnershipState == "unallocated"
@@ -1011,7 +1011,7 @@ func (s *Service) ClaimComputeRecovery(ctx context.Context, input ComputeClaimRe
 			return ErrComputeClaimRecoveryIdempotencyConflict
 		}
 		if requestHashReconciliation && reconciliationPresent &&
-			(reconciliation.State == "node_reserved" || reconciliation.State == "observed") && !reconciledReservedReadback {
+			(reconciliation.State == "node_reserved" || reconciliation.State == "observed") && !reconciledNodeReadback {
 			result.Eligible, result.Reason = false, "provider_describe"
 			result.FailureStage, result.ProviderErrorClass = reconciliation.FailureStage, reconciliation.ProviderErrorClass
 			result.Evidence = &ComputeClaimEvidence{CVM: cloneComputeClaimMutationEvidence(mutationLedger.Evidence.CVM), Node: cloneComputeClaimMutationEvidence(reconciliation.Node)}
@@ -1022,7 +1022,7 @@ func (s *Service) ClaimComputeRecovery(ctx context.Context, input ComputeClaimRe
 				result.Eligible, result.Reason = false, "identity_mismatch"
 				return fmt.Errorf("%w: identity_mismatch", ErrComputeClaimRecoveryUnavailable)
 			}
-		} else if !reconciledReservedReadback &&
+		} else if !reconciledNodeReadback &&
 			(activeNodeContinuation || proof.CVMOwnershipState != "target_owned" || proof.NodeOwnershipState != "target_owned") {
 			provider, providerOK := s.provider.(computeClaimRecoveryClaimProvider)
 			nodeOnlyProvider, nodeOnlyProviderOK := s.provider.(computeClaimRecoveryNodeOnlyProvider)
@@ -1152,6 +1152,9 @@ func (s *Service) ClaimComputeRecovery(ctx context.Context, input ComputeClaimRe
 			} else {
 				reconciliation.Node = ComputeClaimMutationEvidence{}
 			}
+		}
+		if requestHashReconciliation && reconciliationPresent && reconciliation.State == "succeeded" {
+			result.NodeOwnershipState, result.CVMOwnershipState, result.Eligible, result.Reason = "target_owned", "target_owned", true, "none"
 		}
 		allocation.Status = "ready"
 		allocation.CostTags = oplCostTags(allocation.AccountID, allocation.WorkspaceID, allocation.ID, ownership.ID)

@@ -947,6 +947,27 @@ func TestClaimComputeRecoveryNormalLaunchTerminalReconciliationCASResponseLossRe
 	}
 }
 
+func TestClaimComputeRecoveryNormalLaunchTerminalVerifiedTargetReadbackSkipsProviderMutation(t *testing.T) {
+	_, store, provider, input := seedComputeClaimRecovery(t, "basic")
+	claimInput := seedNormalLaunchTerminalRequestHashReconciliationCandidate(t, store, provider, input)
+
+	first, firstErr := NewServiceWithOperationStore(provider, &failAfterComputeClaimReconciliationCASStore{OperationStore: store}).ClaimComputeRecovery(context.Background(), claimInput)
+	if firstErr == nil || first.Eligible || provider.claimCalls != 0 || provider.nodeOnlyClaimCalls != 0 {
+		t.Fatalf("first=%#v err=%v provider=%#v", first, firstErr, provider)
+	}
+	provider.proof.NodeOwnershipState = "target_owned"
+	provider.claimHook = nil
+
+	replayed, replayErr := NewServiceWithOperationStore(provider, store).ClaimComputeRecovery(context.Background(), claimInput)
+	operations, listErr := store.List(context.Background())
+	reconciliation, present, valid := decodeComputeClaimRecoveryReconciliation(operations[0])
+	if replayErr != nil || !replayed.Eligible || replayed.CVMOwnershipState != "target_owned" || replayed.NodeOwnershipState != "target_owned" ||
+		replayed.TencentMutationCount != 0 || replayed.KubernetesMutationCount != 0 || provider.claimCalls != 0 || provider.nodeOnlyClaimCalls != 0 ||
+		listErr != nil || len(operations) != 1 || operations[0].Status != "succeeded" || !present || !valid || reconciliation.State != "succeeded" {
+		t.Fatalf("replay=%#v err=%v operations=%#v listErr=%v reconciliation=%#v provider=%#v", replayed, replayErr, operations, listErr, reconciliation, provider)
+	}
+}
+
 func TestClaimComputeRecoveryNormalLaunchTerminalNodePatchResponseLossConvergesByReadback(t *testing.T) {
 	_, store, provider, input := seedComputeClaimRecovery(t, "basic")
 	claimInput := seedNormalLaunchTerminalRequestHashReconciliationCandidate(t, store, provider, input)
@@ -960,7 +981,8 @@ func TestClaimComputeRecoveryNormalLaunchTerminalNodePatchResponseLossConvergesB
 	}
 
 	replayed, replayErr := NewServiceWithOperationStore(provider, store).ClaimComputeRecovery(context.Background(), claimInput)
-	if replayErr != nil || !replayed.Eligible || replayed.TencentMutationCount != 0 || replayed.KubernetesMutationCount != 0 ||
+	if replayErr != nil || !replayed.Eligible || replayed.CVMOwnershipState != "target_owned" || replayed.NodeOwnershipState != "target_owned" ||
+		replayed.TencentMutationCount != 0 || replayed.KubernetesMutationCount != 0 ||
 		provider.claimCalls != 0 || provider.nodeOnlyClaimCalls != 1 {
 		t.Fatalf("replay=%#v err=%v provider=%#v", replayed, replayErr, provider)
 	}

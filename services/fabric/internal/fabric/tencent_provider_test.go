@@ -1137,6 +1137,41 @@ func TestTencentProviderClaimComputeRecoveryNodeOnlyPreservesRecoverableCVM(t *t
 	}
 }
 
+func TestTencentProviderClaimComputeRecoveryNodeOnlyRejectsCVMOwnershipReadbackDrift(t *testing.T) {
+	setProtectedResourceEnv(t)
+	allocation, plan, ownership := computeClaimProviderFixture()
+	provider := NewTencentProvider()
+	proofCalls := 0
+	provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
+		if request.Action != "compute_claim_truth" {
+			t.Fatalf("node-only reconciliation attempted Tencent mutation: action=%q", request.Action)
+		}
+		proofCalls++
+		cvmOwnershipState := "target_owned"
+		if proofCalls > 1 {
+			cvmOwnershipState = "recoverable"
+		}
+		return provisionerResponse{
+			OK: true, Status: "proven", PoolID: plan.PoolID, NodePoolID: plan.NodePoolID,
+			InstanceID: allocation.InstanceID, NodeName: allocation.NodeName, PrivateIP: allocation.PrivateIP, InstanceType: plan.InstanceType,
+			ProviderData: map[string]string{
+				"machineName": allocation.MachineName, "zone": allocation.Zone, "chargeType": "PREPAID", "periodMonths": "1",
+				"renewFlag": "NOTIFY_AND_MANUAL_RENEW", "deadline": allocation.Deadline, "cvmOwnershipState": cvmOwnershipState,
+			},
+		}, nil
+	}
+	provider.kubectl = func(context.Context, []string, []byte) ([]byte, error) {
+		return []byte(`{"metadata":{"name":"10.0.0.8","resourceVersion":"8","labels":{"medopl.cn/workload":"workspace","oplcloud.cn/resource-id":"compute-alpha","oplcloud.cn/account-id":"acct-alpha","oplcloud.cn/workspace-id":"ws-alpha"}},"spec":{"taints":[{"key":"oplcloud.cn/workspace-id","value":"ws-alpha","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`), nil
+	}
+
+	claim, err := provider.ClaimComputeRecoveryNodeOnly(context.Background(), allocation, plan, ownership)
+
+	if err == nil || claim.Proof.Reason != "identity_mismatch" || claim.FailureStage != "claim_final_readback" ||
+		claim.ProviderErrorClass != "readback_mismatch" || claim.TencentMutationCount != 0 || claim.KubernetesMutationCount != 0 || proofCalls != 2 {
+		t.Fatalf("claim=%#v err=%v proofCalls=%d", claim, err, proofCalls)
+	}
+}
+
 func TestTencentProviderClaimComputeRecoveryRejectsNodeConflictBeforeMutation(t *testing.T) {
 	allocation, plan, ownership := computeClaimProviderFixture()
 	provider := NewTencentProvider()

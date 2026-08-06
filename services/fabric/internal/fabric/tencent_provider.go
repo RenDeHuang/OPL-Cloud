@@ -1038,6 +1038,7 @@ func (p *TencentProvider) ClaimComputeRecoveryNodeOnly(ctx context.Context, allo
 		result.Proof.Reason = "identity_mismatch"
 		return result, computeClaimProviderError(result.Proof.Reason)
 	}
+	initialCVMOwnershipState := proof.CVMOwnershipState
 	if proof.NodeOwnershipState != "target_owned" {
 		nodeEvidence, nodeErr := p.convergeComputeClaimNode(ctx, allocation, ownership, target)
 		result.KubernetesMutationCount = nodeEvidence.Attempted
@@ -1050,7 +1051,7 @@ func (p *TencentProvider) ClaimComputeRecoveryNodeOnly(ctx context.Context, allo
 	}
 	readback, err := p.ProveComputeClaimRecovery(ctx, allocation, prepared, ownership)
 	result.Proof = readback
-	if err != nil || (readback.CVMOwnershipState != "recoverable" && readback.CVMOwnershipState != "target_owned") || readback.NodeOwnershipState != "target_owned" {
+	if err != nil || readback.CVMOwnershipState != initialCVMOwnershipState || readback.NodeOwnershipState != "target_owned" {
 		if result.Proof.Reason == "" {
 			result.Proof.Reason = "identity_mismatch"
 		}
