@@ -234,9 +234,9 @@ type workspaceRecoveryComputeClaimReconciliationEvidence struct {
 type workspaceRecoveryComputeClaimEvidence struct {
 	SchemaVersion            int                                                  `json:"schemaVersion"`
 	BindingClassification    string                                               `json:"bindingClassification"`
-	MismatchField            string                                               `json:"mismatchField"`
-	ExpectedDigest           string                                               `json:"expectedDigest"`
-	ActualDigest             string                                               `json:"actualDigest"`
+	MismatchField            string                                               `json:"mismatchField,omitempty"`
+	ExpectedDigest           string                                               `json:"expectedDigest,omitempty"`
+	ActualDigest             string                                               `json:"actualDigest,omitempty"`
 	MutationLedger           string                                               `json:"mutationLedger"`
 	MutationLedgerOutcome    string                                               `json:"mutationLedgerOutcome"`
 	CVM                      clients.ComputeClaimMutationEvidence                 `json:"cvm"`
@@ -840,27 +840,118 @@ func workspaceRecoveryMutationOutcomeFromComputeClaim(proof clients.ComputeClaim
 	return outcome
 }
 
+func safeWorkspaceRecoveryComputeClaimBindingClassification(value string) bool {
+	switch value {
+	case "current", "compute-claim", "request-hash-reconciliation", "known-legacy", "other":
+		return true
+	default:
+		return false
+	}
+}
+
+func workspaceRecoveryComputeClaimIdentityChecksValid(evidence *clients.ComputeClaimIdentityEvidence) bool {
+	fields := []string{
+		"fabric.operationId", "fabric.operationIdempotencyKey", "fabric.operationRequestHash",
+		"binding.present", "binding.valid",
+	}
+	if len(evidence.Checks) == 10 {
+		fields = append(fields, "binding.compatibility", "binding.launchOperationId", "binding.idempotencyKey", "binding.targetHash", "binding.requestHash")
+	} else if len(evidence.Checks) != len(fields) || evidence.BindingClassification != "other" {
+		return false
+	}
+	for index, field := range fields {
+		if evidence.Checks[index].Field != field {
+			return false
+		}
+	}
+	return true
+}
+
+func workspaceRecoveryComputeClaimRequestHashMismatch(evidence *clients.ComputeClaimIdentityEvidence) (clients.ComputeClaimIdentityCheck, bool) {
+	if evidence.BindingClassification != "request-hash-reconciliation" || len(evidence.Checks) != 10 {
+		return clients.ComputeClaimIdentityCheck{}, false
+	}
+	for _, check := range evidence.Checks {
+		if check.Field != "binding.requestHash" {
+			continue
+		}
+		return check, !check.Matches && computeClaimApprovalDigestPattern.MatchString(check.ExpectedDigest) &&
+			computeClaimApprovalDigestPattern.MatchString(check.ActualDigest) && check.ExpectedDigest != check.ActualDigest
+	}
+	return clients.ComputeClaimIdentityCheck{}, false
+}
+
+func workspaceRecoveryComputeClaimLedgerEvidenceValid(evidence *clients.ComputeClaimIdentityEvidence) bool {
+	if !computeClaimApprovalDigestPattern.MatchString(evidence.MutationLedgerDigest) ||
+		!safeWorkspaceComputeClaimFailureStage(evidence.FailureStage) ||
+		!safeWorkspaceComputeClaimProviderErrorClass(evidence.ProviderErrorClass) ||
+		(evidence.FailureStage == "") != (evidence.ProviderErrorClass == "") {
+		return false
+	}
+	validMutationEvidence := func() bool {
+		if evidence.MutationEvidence == nil {
+			return true
+		}
+		return workspaceComputeClaimMutationEvidenceMatches(evidence.MutationEvidence.CVM, evidence.MutationEvidence.CVM.Attempted, 5, "cvm", false) &&
+			workspaceComputeClaimMutationEvidenceMatches(evidence.MutationEvidence.Node, evidence.MutationEvidence.Node.Attempted, 1, "node", false)
+	}
+	switch evidence.MutationLedger {
+	case "absent":
+		return evidence.MutationLedgerOutcome == "confirmed_zero" && evidence.MutationEvidence == nil &&
+			evidence.FailureStage == "" && evidence.ProviderErrorClass == ""
+	case "observed":
+		if evidence.MutationEvidence == nil || !validMutationEvidence() {
+			return false
+		}
+		switch evidence.MutationLedgerOutcome {
+		case "confirmed_zero":
+			return evidence.MutationEvidence.CVM.Attempted == 0 && evidence.MutationEvidence.Node.Attempted == 0
+		case "nonzero":
+			return evidence.MutationEvidence.CVM.Attempted+evidence.MutationEvidence.Node.Attempted > 0
+		case "unknown":
+			return true
+		default:
+			return false
+		}
+	case "reserved", "node_reserved":
+		return evidence.MutationLedgerOutcome == "unknown" && validMutationEvidence()
+	case "invalid":
+		return evidence.MutationLedgerOutcome == "unknown" && evidence.MutationEvidence == nil
+	default:
+		return false
+	}
+}
+
 func workspaceRecoveryComputeClaimEvidenceFromProof(proof clients.ComputeClaimRecoveryProof) *workspaceRecoveryComputeClaimEvidence {
 	evidence := proof.IdentityEvidence
-	if evidence == nil || !workspaceComputeClaimRequestHashReconciliation(evidence) || proof.Evidence == nil ||
+	if evidence == nil || !safeWorkspaceRecoveryComputeClaimBindingClassification(evidence.BindingClassification) ||
+		!computeClaimApprovalDigestPattern.MatchString(evidence.BindingDigest) || !workspaceRecoveryComputeClaimIdentityChecksValid(evidence) ||
+		!workspaceRecoveryComputeClaimLedgerEvidenceValid(evidence) || proof.Evidence == nil ||
 		proof.FailureStage == "" || proof.ProviderErrorClass == "" ||
-		!safeWorkspaceComputeClaimFailureStage(proof.FailureStage) || !safeWorkspaceComputeClaimProviderErrorClass(proof.ProviderErrorClass) {
+		!safeWorkspaceComputeClaimFailureStage(proof.FailureStage) || !safeWorkspaceComputeClaimProviderErrorClass(proof.ProviderErrorClass) ||
+		!workspaceComputeClaimMutationEvidenceMatches(proof.Evidence.CVM, proof.Evidence.CVM.Attempted, 5, "cvm", false) ||
+		!workspaceComputeClaimMutationEvidenceMatches(proof.Evidence.Node, proof.Evidence.Node.Attempted, 1, "node", false) {
 		return nil
 	}
-	mismatch := evidence.Checks[len(evidence.Checks)-1]
+	mismatch, mismatchPresent := workspaceRecoveryComputeClaimRequestHashMismatch(evidence)
+	if evidence.BindingClassification == "request-hash-reconciliation" && !mismatchPresent {
+		return nil
+	}
 	cvm, node := proof.Evidence.CVM, proof.Evidence.Node
 	if evidence.MutationEvidence != nil {
 		cvm, node = evidence.MutationEvidence.CVM, evidence.MutationEvidence.Node
 	}
 	result := &workspaceRecoveryComputeClaimEvidence{
-		SchemaVersion: 1, BindingClassification: evidence.BindingClassification, MismatchField: mismatch.Field,
-		ExpectedDigest: mismatch.ExpectedDigest, ActualDigest: mismatch.ActualDigest,
+		SchemaVersion: 1, BindingClassification: evidence.BindingClassification,
 		MutationLedger: evidence.MutationLedger, MutationLedgerOutcome: evidence.MutationLedgerOutcome,
 		CVM: cvm, Node: node,
 		LedgerFailureStage: evidence.FailureStage, LedgerProviderErrorClass: evidence.ProviderErrorClass,
 		FailureStage: proof.FailureStage, ProviderErrorClass: proof.ProviderErrorClass,
 	}
-	if reconciliation := evidence.Reconciliation; reconciliation != nil &&
+	if mismatchPresent {
+		result.MismatchField, result.ExpectedDigest, result.ActualDigest = mismatch.Field, mismatch.ExpectedDigest, mismatch.ActualDigest
+	}
+	if reconciliation := evidence.Reconciliation; mismatchPresent && reconciliation != nil &&
 		reconciliation.Consumer == "claim_compute_recovery" && (reconciliation.SchemaVersion == 1 || reconciliation.SchemaVersion == 2) &&
 		(reconciliation.Generation == "isolated_request_hash_v1" || reconciliation.Generation == "normal_launch_terminal_evidence_v1") &&
 		(reconciliation.State == "verified" || reconciliation.State == "node_reserved" || reconciliation.State == "observed" || reconciliation.State == "succeeded") &&

@@ -268,6 +268,50 @@ func TestWorkspaceRecoveryPlanProjectsPersistedRequestHashReconciliationFailureE
 	}
 }
 
+func TestWorkspaceRecoveryPlanProjectsPersistedComputeClaimFailureEvidenceWithoutRequestHashMismatch(t *testing.T) {
+	evidence := recoverableCVMOnlyIdentityEvidence()
+	evidence.BindingClassification = "compute-claim"
+	evidence.MutationLedgerOutcome = "unknown"
+	evidence.MutationEvidence = &clients.ComputeClaimEvidence{
+		CVM: clients.ComputeClaimMutationEvidence{
+			Attempted: 1,
+			Missing:   []string{"opl_account_id", "opl_workspace_id", "opl_resource_id", "opl_operation_id"},
+		},
+	}
+	evidence.ProviderErrorClass = "readback_mismatch"
+	proof := clients.ComputeClaimRecoveryProof{
+		Eligible: false, Reason: "provider_describe",
+		LaunchOperationID: "workspace-launch-sensitive", AccountID: "acct-sensitive", WorkspaceID: "ws-sensitive",
+		CVMInstanceID: "ins-sensitive", NodeName: "10.0.0.18", PrivateIP: "10.0.0.18",
+		IdentityEvidence: &evidence, FailureStage: "cvm_pre_read", ProviderErrorClass: "readback_mismatch",
+		Evidence: &clients.ComputeClaimEvidence{
+			CVM: clients.ComputeClaimMutationEvidence{
+				Attempted: 1,
+				Missing:   []string{"opl_account_id", "opl_workspace_id", "opl_resource_id", "opl_operation_id"},
+			},
+		},
+	}
+
+	outcome := workspaceRecoveryMutationOutcomeFromComputeClaim(proof)
+	got := outcome.ComputeClaimEvidence
+	if got == nil || got.BindingClassification != "compute-claim" || got.MismatchField != "" || got.ExpectedDigest != "" || got.ActualDigest != "" ||
+		got.MutationLedger != "observed" || got.MutationLedgerOutcome != "unknown" ||
+		got.CVM.Attempted != 1 || got.CVM.Confirmed != 0 || got.CVM.Unknown != 0 || len(got.CVM.Missing) != 4 ||
+		got.Node.Attempted != 0 || got.Node.Confirmed != 0 || got.Node.Unknown != 0 || len(got.Node.Missing) != 0 ||
+		got.LedgerFailureStage != "cvm_tag_readback" || got.LedgerProviderErrorClass != "readback_mismatch" ||
+		got.FailureStage != "cvm_pre_read" || got.ProviderErrorClass != "readback_mismatch" || got.Reconciliation != nil {
+		t.Fatalf("projected compute-claim evidence=%#v", got)
+	}
+	serialized, err := json.Marshal(got)
+	if err != nil || bytes.Contains(serialized, []byte("mismatchField")) || bytes.Contains(serialized, []byte("expectedDigest")) ||
+		bytes.Contains(serialized, []byte("actualDigest")) || bytes.Contains(serialized, []byte("bindingDigest")) ||
+		bytes.Contains(serialized, []byte("workspace-launch-sensitive")) || bytes.Contains(serialized, []byte("acct-sensitive")) ||
+		bytes.Contains(serialized, []byte("ws-sensitive")) || bytes.Contains(serialized, []byte("ins-sensitive")) ||
+		bytes.Contains(serialized, []byte("10.0.0.18")) {
+		t.Fatalf("compute-claim evidence leaked protected identity: %s err=%v", serialized, err)
+	}
+}
+
 func assertWorkspaceRecoveryPlanRequestHashReconciliationExecutesOriginalLaunchOnce(t *testing.T, evidence clients.ComputeClaimIdentityEvidence) {
 	t.Helper()
 	t.Setenv("OPL_RELEASE_SHA", strings.Repeat("a", 40))
