@@ -1018,6 +1018,50 @@ func (p *TencentProvider) ClaimComputeRecovery(ctx context.Context, allocation C
 	return result, nil
 }
 
+func (p *TencentProvider) ClaimComputeRecoveryNodeOnly(ctx context.Context, allocation ComputeAllocation, prepared ComputeAllocationPreparation, ownership MachineOwnership) (ComputeClaimProviderClaim, error) {
+	result := ComputeClaimProviderClaim{Evidence: &ComputeClaimEvidence{}}
+	proof, err := p.ProveComputeClaimRecovery(ctx, allocation, prepared, ownership)
+	result.Proof = proof
+	if err != nil {
+		return result, err
+	}
+	target := protectedresource.Target{
+		PackageID: ownership.PackageID, NodePoolID: ownership.NodePoolID, MachineID: ownership.MachineID,
+		NodeName: ownership.NodeName, CVMID: ownership.InstanceID,
+	}
+	if err := protectedresource.FromEnv().Check(target); err != nil {
+		result.Proof.Reason = "identity_mismatch"
+		return result, err
+	}
+	if proof.CVMOwnershipState != "recoverable" && proof.CVMOwnershipState != "target_owned" ||
+		proof.NodeOwnershipState != "unallocated" && proof.NodeOwnershipState != "target_owned" {
+		result.Proof.Reason = "identity_mismatch"
+		return result, computeClaimProviderError(result.Proof.Reason)
+	}
+	if proof.NodeOwnershipState != "target_owned" {
+		nodeEvidence, nodeErr := p.convergeComputeClaimNode(ctx, allocation, ownership, target)
+		result.KubernetesMutationCount = nodeEvidence.Attempted
+		result.Evidence.Node = cloneComputeClaimMutationEvidence(nodeEvidence)
+		if nodeErr != nil {
+			result.Proof.Reason = safeComputeClaimRecoveryReason(nodeErr.Reason, "provider_describe")
+			result.FailureStage, result.ProviderErrorClass = nodeErr.Stage, nodeErr.ProviderClass
+			return result, computeClaimProviderError(result.Proof.Reason)
+		}
+	}
+	readback, err := p.ProveComputeClaimRecovery(ctx, allocation, prepared, ownership)
+	result.Proof = readback
+	if err != nil || (readback.CVMOwnershipState != "recoverable" && readback.CVMOwnershipState != "target_owned") || readback.NodeOwnershipState != "target_owned" {
+		if result.Proof.Reason == "" {
+			result.Proof.Reason = "identity_mismatch"
+		}
+		if result.FailureStage == "" {
+			result.FailureStage, result.ProviderErrorClass = "claim_final_readback", "readback_mismatch"
+		}
+		return result, computeClaimProviderError(result.Proof.Reason)
+	}
+	return result, nil
+}
+
 func cloneComputeClaimMutationEvidence(value ComputeClaimMutationEvidence) ComputeClaimMutationEvidence {
 	value.Missing = append([]string(nil), value.Missing...)
 	return value

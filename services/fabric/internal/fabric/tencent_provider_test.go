@@ -1088,6 +1088,55 @@ func TestTencentProviderClaimComputeRecoveryConvergesExactCVMAndNodeWithStrictRe
 	}
 }
 
+func TestTencentProviderClaimComputeRecoveryNodeOnlyPreservesRecoverableCVM(t *testing.T) {
+	setProtectedResourceEnv(t)
+	allocation, plan, ownership := computeClaimProviderFixture()
+	provider := NewTencentProvider()
+	nodeOwned := false
+	provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
+		if request.Action != "compute_claim_truth" {
+			t.Fatalf("node-only reconciliation attempted Tencent mutation: action=%q", request.Action)
+		}
+		return provisionerResponse{
+			OK: true, Status: "proven", PoolID: plan.PoolID, NodePoolID: plan.NodePoolID,
+			InstanceID: allocation.InstanceID, NodeName: allocation.NodeName, PrivateIP: allocation.PrivateIP, InstanceType: plan.InstanceType,
+			ProviderData: map[string]string{
+				"machineName": allocation.MachineName, "zone": allocation.Zone, "chargeType": "PREPAID", "periodMonths": "1",
+				"renewFlag": "NOTIFY_AND_MANUAL_RENEW", "deadline": allocation.Deadline, "cvmOwnershipState": "recoverable",
+			},
+		}, nil
+	}
+	patchCalls := 0
+	provider.kubectl = func(_ context.Context, args []string, stdin []byte) ([]byte, error) {
+		switch args[0] {
+		case "get":
+			if nodeOwned {
+				return []byte(`{"metadata":{"name":"10.0.0.8","resourceVersion":"8","labels":{"medopl.cn/workload":"workspace","oplcloud.cn/resource-id":"compute-alpha","oplcloud.cn/account-id":"acct-alpha","oplcloud.cn/workspace-id":"ws-alpha"}},"spec":{"taints":[{"key":"oplcloud.cn/workspace-id","value":"ws-alpha","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`), nil
+			}
+			return []byte(`{"metadata":{"name":"10.0.0.8","resourceVersion":"7","labels":{}},"spec":{"taints":[{"key":"oplcloud.cn/workspace-id","value":"unallocated","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`), nil
+		case "patch":
+			patchCalls++
+			if !slices.Equal(args, []string{"patch", "node/10.0.0.8", "--type=json", "-f", "-"}) || len(stdin) == 0 {
+				t.Fatalf("patch args=%#v stdin=%s", args, stdin)
+			}
+			nodeOwned = true
+			return nil, nil
+		default:
+			t.Fatalf("kubectl args=%#v", args)
+			return nil, nil
+		}
+	}
+
+	claim, err := provider.ClaimComputeRecoveryNodeOnly(context.Background(), allocation, plan, ownership)
+
+	if err != nil || claim.Proof.CVMOwnershipState != "recoverable" || claim.Proof.NodeOwnershipState != "target_owned" ||
+		claim.TencentMutationCount != 0 || claim.KubernetesMutationCount != 1 || claim.Evidence == nil ||
+		!reflect.DeepEqual(claim.Evidence.CVM, ComputeClaimMutationEvidence{}) ||
+		!reflect.DeepEqual(claim.Evidence.Node, ComputeClaimMutationEvidence{Attempted: 1, Confirmed: 1}) || patchCalls != 1 {
+		t.Fatalf("claim=%#v err=%v patchCalls=%d", claim, err, patchCalls)
+	}
+}
+
 func TestTencentProviderClaimComputeRecoveryRejectsNodeConflictBeforeMutation(t *testing.T) {
 	allocation, plan, ownership := computeClaimProviderFixture()
 	provider := NewTencentProvider()

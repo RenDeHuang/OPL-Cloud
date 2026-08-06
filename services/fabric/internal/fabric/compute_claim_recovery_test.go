@@ -21,6 +21,7 @@ type fakeComputeClaimRecoveryProvider struct {
 	storageDiscoveryErr error
 	proofCalls          int
 	claimCalls          int
+	nodeOnlyClaimCalls  int
 	storageDiscoveries  []StorageVolumeInput
 	claimHook           func()
 	tagCalls            int
@@ -115,6 +116,14 @@ func (p *fakeComputeClaimRecoveryProvider) ProveComputeClaimRecovery(_ context.C
 
 func (p *fakeComputeClaimRecoveryProvider) ClaimComputeRecovery(_ context.Context, allocation ComputeAllocation, plan ComputeAllocationPreparation, ownership MachineOwnership) (ComputeClaimProviderClaim, error) {
 	p.claimCalls++
+	if p.claimHook != nil {
+		p.claimHook()
+	}
+	return p.claim, p.claimErr
+}
+
+func (p *fakeComputeClaimRecoveryProvider) ClaimComputeRecoveryNodeOnly(_ context.Context, allocation ComputeAllocation, plan ComputeAllocationPreparation, ownership MachineOwnership) (ComputeClaimProviderClaim, error) {
+	p.nodeOnlyClaimCalls++
 	if p.claimHook != nil {
 		p.claimHook()
 	}
@@ -273,19 +282,35 @@ func seedNormalLaunchTerminalRequestHashReconciliationCandidate(t *testing.T, st
 	if err := terminalizeComputeClaimPending(context.Background(), service, pending, allocation, plan, "compute_claim_cvm", "mismatch", cause, &proof); !errors.Is(err, cause) {
 		t.Fatalf("terminalize normal launch: %v", err)
 	}
-	configureRequestHashReconciliationNodeSuccess(provider)
+	configureNormalLaunchTerminalNodeOnlySuccess(provider)
 	return claimInput
 }
 
-func configureRequestHashReconciliationNodeSuccess(provider *fakeComputeClaimRecoveryProvider) {
-	provider.proof.CVMOwnershipState = "target_owned"
+func configureNormalLaunchTerminalNodeOnlySuccess(provider *fakeComputeClaimRecoveryProvider) {
+	provider.proof.CVMOwnershipState = "recoverable"
 	provider.proof.NodeOwnershipState = "unallocated"
 	provider.claim = ComputeClaimProviderClaim{
 		Proof: ComputeClaimProviderProof{
 			Status: "proven", Reason: "none", MachineName: provider.proof.MachineName, NodeName: provider.proof.NodeName,
 			CVMInstanceID: provider.proof.CVMInstanceID, PrivateIP: provider.proof.PrivateIP, InstanceType: provider.proof.InstanceType,
 			Zone: provider.proof.Zone, ChargeType: provider.proof.ChargeType, PeriodMonths: provider.proof.PeriodMonths,
-			RenewFlag: provider.proof.RenewFlag, Deadline: provider.proof.Deadline, CVMOwnershipState: "target_owned", NodeOwnershipState: "target_owned",
+			RenewFlag: provider.proof.RenewFlag, Deadline: provider.proof.Deadline, CVMOwnershipState: "recoverable", NodeOwnershipState: "target_owned",
+		},
+		KubernetesMutationCount: 1,
+		Evidence:                &ComputeClaimEvidence{Node: ComputeClaimMutationEvidence{Attempted: 1, Confirmed: 1}},
+	}
+	provider.claimHook = func() { provider.proof.NodeOwnershipState = "target_owned" }
+}
+
+func configureRequestHashReconciliationNodeSuccess(provider *fakeComputeClaimRecoveryProvider) {
+	provider.proof.CVMOwnershipState = "recoverable"
+	provider.proof.NodeOwnershipState = "unallocated"
+	provider.claim = ComputeClaimProviderClaim{
+		Proof: ComputeClaimProviderProof{
+			Status: "proven", Reason: "none", MachineName: provider.proof.MachineName, NodeName: provider.proof.NodeName,
+			CVMInstanceID: provider.proof.CVMInstanceID, PrivateIP: provider.proof.PrivateIP, InstanceType: provider.proof.InstanceType,
+			Zone: provider.proof.Zone, ChargeType: provider.proof.ChargeType, PeriodMonths: provider.proof.PeriodMonths,
+			RenewFlag: provider.proof.RenewFlag, Deadline: provider.proof.Deadline, CVMOwnershipState: "recoverable", NodeOwnershipState: "target_owned",
 		},
 		KubernetesMutationCount: 1,
 		Evidence:                &ComputeClaimEvidence{Node: ComputeClaimMutationEvidence{Attempted: 1, Confirmed: 1}},
@@ -798,19 +823,7 @@ func TestClaimComputeRecoveryReconcilesOnlyIsolatedRequestHashAndPreservesUnknow
 		t.Fatalf("identity evidence=%#v err=%v", evidence, evidenceErr)
 	}
 
-	provider.proof.CVMOwnershipState = "target_owned"
-	provider.proof.NodeOwnershipState = "unallocated"
-	provider.claim = ComputeClaimProviderClaim{
-		Proof: ComputeClaimProviderProof{
-			Status: "proven", Reason: "none", MachineName: provider.proof.MachineName, NodeName: provider.proof.NodeName,
-			CVMInstanceID: provider.proof.CVMInstanceID, PrivateIP: provider.proof.PrivateIP, InstanceType: provider.proof.InstanceType,
-			Zone: provider.proof.Zone, ChargeType: provider.proof.ChargeType, PeriodMonths: provider.proof.PeriodMonths,
-			RenewFlag: provider.proof.RenewFlag, Deadline: provider.proof.Deadline, CVMOwnershipState: "target_owned", NodeOwnershipState: "target_owned",
-		},
-		KubernetesMutationCount: 1,
-		Evidence:                &ComputeClaimEvidence{Node: ComputeClaimMutationEvidence{Attempted: 1, Confirmed: 1}},
-	}
-	provider.claimHook = func() { provider.proof.NodeOwnershipState = "target_owned" }
+	configureRequestHashReconciliationNodeSuccess(provider)
 
 	result, claimErr := NewServiceWithOperationStore(provider, store).ClaimComputeRecovery(context.Background(), claimInput)
 	stored, listErr := store.List(context.Background())
@@ -820,7 +833,7 @@ func TestClaimComputeRecoveryReconcilesOnlyIsolatedRequestHashAndPreservesUnknow
 	storedBindingJSON, storedBindingJSONErr := json.Marshal(stored[0].RedactedProviderPayload["computeClaimRecovery"])
 	storedLedgerJSON, storedLedgerJSONErr := json.Marshal(stored[0].RedactedProviderPayload[computeClaimRecoveryMutationPayloadKey])
 	if claimErr != nil || !result.Eligible || result.TencentMutationCount != 0 || result.KubernetesMutationCount != 1 ||
-		provider.claimCalls != 1 || listErr != nil || len(stored) != 1 || stored[0].Status != "succeeded" ||
+		provider.claimCalls != 0 || provider.nodeOnlyClaimCalls != 1 || listErr != nil || len(stored) != 1 || stored[0].Status != "succeeded" ||
 		!bindingPresent || !bindingValid || binding != persistedBinding || !ledgerPresent || !ledgerValid || !reflect.DeepEqual(ledger, originalLedger) ||
 		!reconciliationPresent || !reconciliationValid || reconciliation.State != "succeeded" ||
 		!reflect.DeepEqual(reconciliation.Node, ComputeClaimMutationEvidence{Attempted: 1, Confirmed: 1}) ||
@@ -835,7 +848,8 @@ func TestClaimComputeRecoveryReconcilesOnlyIsolatedRequestHashAndPreservesUnknow
 	}
 	replayedBindingJSON, replayedBindingJSONErr := json.Marshal(replayedStored[0].RedactedProviderPayload["computeClaimRecovery"])
 	replayedLedgerJSON, replayedLedgerJSONErr := json.Marshal(replayedStored[0].RedactedProviderPayload[computeClaimRecoveryMutationPayloadKey])
-	if replayErr != nil || !replayed.Eligible || replayed.TencentMutationCount != 0 || replayed.KubernetesMutationCount != 0 || provider.claimCalls != 1 ||
+	if replayErr != nil || !replayed.Eligible || replayed.TencentMutationCount != 0 || replayed.KubernetesMutationCount != 0 ||
+		provider.claimCalls != 0 || provider.nodeOnlyClaimCalls != 1 ||
 		replayedBindingJSONErr != nil || replayedLedgerJSONErr != nil ||
 		!reflect.DeepEqual(replayedBindingJSON, originalBindingJSON) || !reflect.DeepEqual(replayedLedgerJSON, originalLedgerJSON) {
 		t.Fatalf("replay=%#v err=%v provider=%#v", replayed, replayErr, provider)
@@ -897,7 +911,7 @@ func TestClaimComputeRecoveryReconcilesFailedNormalLaunchTerminalEvidenceAndPres
 	storedTerminal, storedTerminalErr := json.Marshal(recovered.RedactedProviderPayload[computeClaimTerminalEvidencePayloadKey])
 	_, manualLedgerPresent, _ := decodeComputeClaimRecoveryMutation(recovered)
 	if claimErr != nil || !result.Eligible || result.TencentMutationCount != 0 || result.KubernetesMutationCount != 1 ||
-		provider.claimCalls != 1 || ownershipErr != nil || ownership.Status != "active" || recovered.Status != "succeeded" ||
+		provider.claimCalls != 0 || provider.nodeOnlyClaimCalls != 1 || ownershipErr != nil || ownership.Status != "active" || recovered.Status != "succeeded" ||
 		!bindingPresent || !bindingValid || binding.RequestHash != strings.Repeat("7", 64) || manualLedgerPresent ||
 		!reconciliationPresent || !reconciliationValid || reconciliation.SchemaVersion != 2 || reconciliation.Generation != "normal_launch_terminal_evidence_v1" || reconciliation.State != "succeeded" ||
 		!terminalPresent || !terminalValid || terminal.Status != "terminal_unprovable" || !createPresent || !createValid || createBudget != confirmedNormalLaunchMutationBudget() ||
@@ -920,14 +934,15 @@ func TestClaimComputeRecoveryNormalLaunchTerminalReconciliationCASResponseLossRe
 	provenance, provenanceValid := isolatedRequestHashReconciliationProvenance(operations[0], claimInput, binding, bindingPresent, bindingValid)
 	matches := computeClaimRecoveryReconciliationMatches(reconciliation, operations[0], claimInput, binding, computeClaimRecoveryMutationLedger{})
 	if firstErr == nil || first.Eligible || listErr != nil || len(operations) != 1 || operations[0].Status != "claim_pending" ||
-		!present || !valid || reconciliation.SchemaVersion != 2 || reconciliation.State != "verified" || provider.claimCalls != 0 ||
+		!present || !valid || reconciliation.SchemaVersion != 2 || reconciliation.State != "verified" || provider.claimCalls != 0 || provider.nodeOnlyClaimCalls != 0 ||
 		first.TencentMutationCount != 0 || first.KubernetesMutationCount != 0 || !provenanceValid || provenance.SchemaVersion != 2 || !matches {
 		t.Fatalf("first=%#v err=%v operations=%#v binding=%#v provenance=%#v/%v reconciliation=%#v matches=%v provider=%#v",
 			first, firstErr, operations, binding, provenance, provenanceValid, reconciliation, matches, provider)
 	}
 
 	replayed, replayErr := NewServiceWithOperationStore(provider, store).ClaimComputeRecovery(context.Background(), claimInput)
-	if replayErr != nil || !replayed.Eligible || replayed.TencentMutationCount != 0 || replayed.KubernetesMutationCount != 1 || provider.claimCalls != 1 {
+	if replayErr != nil || !replayed.Eligible || replayed.TencentMutationCount != 0 || replayed.KubernetesMutationCount != 1 ||
+		provider.claimCalls != 0 || provider.nodeOnlyClaimCalls != 1 {
 		t.Fatalf("replay=%#v err=%v provider=%#v", replayed, replayErr, provider)
 	}
 }
@@ -940,12 +955,13 @@ func TestClaimComputeRecoveryNormalLaunchTerminalNodePatchResponseLossConvergesB
 	operations, listErr := store.List(context.Background())
 	reconciliation, present, valid := decodeComputeClaimRecoveryReconciliation(operations[0])
 	if firstErr == nil || first.Eligible || listErr != nil || len(operations) != 1 || !present || !valid || reconciliation.SchemaVersion != 2 ||
-		reconciliation.State != "node_reserved" || provider.claimCalls != 1 || first.TencentMutationCount != 0 || first.KubernetesMutationCount != 1 {
+		reconciliation.State != "node_reserved" || provider.claimCalls != 0 || provider.nodeOnlyClaimCalls != 1 || first.TencentMutationCount != 0 || first.KubernetesMutationCount != 1 {
 		t.Fatalf("first=%#v err=%v operations=%#v reconciliation=%#v provider=%#v", first, firstErr, operations, reconciliation, provider)
 	}
 
 	replayed, replayErr := NewServiceWithOperationStore(provider, store).ClaimComputeRecovery(context.Background(), claimInput)
-	if replayErr != nil || !replayed.Eligible || replayed.TencentMutationCount != 0 || replayed.KubernetesMutationCount != 0 || provider.claimCalls != 1 {
+	if replayErr != nil || !replayed.Eligible || replayed.TencentMutationCount != 0 || replayed.KubernetesMutationCount != 0 ||
+		provider.claimCalls != 0 || provider.nodeOnlyClaimCalls != 1 {
 		t.Fatalf("replay=%#v err=%v provider=%#v", replayed, replayErr, provider)
 	}
 }
@@ -974,7 +990,7 @@ func TestClaimComputeRecoveryNormalLaunchTerminalConcurrentReplayHasOneNodePatch
 			t.Fatalf("outcome=%#v", result)
 		}
 	}
-	if provider.claimCalls != 1 {
+	if provider.claimCalls != 0 || provider.nodeOnlyClaimCalls != 1 {
 		t.Fatalf("provider=%#v", provider)
 	}
 }
@@ -1020,8 +1036,8 @@ func TestClaimComputeRecoveryNormalLaunchTerminalReconciliationFailsClosedBefore
 		"manual ledger": func(operation *FabricOperation, _ *ComputeAllocation, _ *ComputeAllocationPreparation, _ *MachineOwnership, _ *fakeComputeClaimRecoveryProvider) {
 			operation.RedactedProviderPayload = withComputeClaimRecoveryMutation(operation.RedactedProviderPayload, reservedComputeClaimRecoveryMutation())
 		},
-		"provider cvm": func(_ *FabricOperation, _ *ComputeAllocation, _ *ComputeAllocationPreparation, _ *MachineOwnership, provider *fakeComputeClaimRecoveryProvider) {
-			provider.proof.CVMOwnershipState = "recoverable"
+		"provider cvm unknown": func(_ *FabricOperation, _ *ComputeAllocation, _ *ComputeAllocationPreparation, _ *MachineOwnership, provider *fakeComputeClaimRecoveryProvider) {
+			provider.proof.CVMOwnershipState = "unknown"
 		},
 		"provider machine": func(_ *FabricOperation, _ *ComputeAllocation, _ *ComputeAllocationPreparation, _ *MachineOwnership, provider *fakeComputeClaimRecoveryProvider) {
 			provider.proof.MachineName = "machine-other"
@@ -1057,7 +1073,7 @@ func TestClaimComputeRecoveryNormalLaunchTerminalReconciliationFailsClosedBefore
 			afterPayload, afterPayloadErr := operationPayloadJSON(stored[0])
 			_, reconciliationPresent, _ := decodeComputeClaimRecoveryReconciliation(stored[0])
 			if claimErr == nil || result.Eligible || listErr != nil || len(stored) != 1 || afterPayloadErr != nil || beforePayload != afterPayload ||
-				reconciliationPresent || provider.claimCalls != 0 || provider.tagCalls != 0 || provider.scaleCalls != 0 || provider.storageCalls != 0 {
+				reconciliationPresent || provider.claimCalls != 0 || provider.nodeOnlyClaimCalls != 0 || provider.tagCalls != 0 || provider.scaleCalls != 0 || provider.storageCalls != 0 {
 				t.Fatalf("result=%#v err=%v stored=%#v listErr=%v payloadChanged=%v provider=%#v", result, claimErr, stored, listErr, beforePayload != afterPayload, provider)
 			}
 		})
@@ -1078,7 +1094,8 @@ func TestClaimComputeRecoveryRequestHashReconciliationCASResponseLossReplaysOnce
 	}
 
 	replayed, replayErr := NewServiceWithOperationStore(provider, store).ClaimComputeRecovery(context.Background(), claimInput)
-	if replayErr != nil || !replayed.Eligible || replayed.TencentMutationCount != 0 || replayed.KubernetesMutationCount != 1 || provider.claimCalls != 1 {
+	if replayErr != nil || !replayed.Eligible || replayed.TencentMutationCount != 0 || replayed.KubernetesMutationCount != 1 ||
+		provider.claimCalls != 0 || provider.nodeOnlyClaimCalls != 1 {
 		t.Fatalf("replay=%#v err=%v provider=%#v", replayed, replayErr, provider)
 	}
 }
@@ -1092,12 +1109,13 @@ func TestClaimComputeRecoveryRequestHashReconciliationNodePatchResponseLossConve
 	operations, listErr := store.List(context.Background())
 	reconciliation, present, valid := decodeComputeClaimRecoveryReconciliation(operations[0])
 	if firstErr == nil || first.Eligible || listErr != nil || len(operations) != 1 || !present || !valid || reconciliation.State != "node_reserved" ||
-		provider.claimCalls != 1 || first.TencentMutationCount != 0 || first.KubernetesMutationCount != 1 {
+		provider.claimCalls != 0 || provider.nodeOnlyClaimCalls != 1 || first.TencentMutationCount != 0 || first.KubernetesMutationCount != 1 {
 		t.Fatalf("first=%#v err=%v operations=%#v reconciliation=%#v provider=%#v", first, firstErr, operations, reconciliation, provider)
 	}
 
 	replayed, replayErr := NewServiceWithOperationStore(provider, store).ClaimComputeRecovery(context.Background(), claimInput)
-	if replayErr != nil || !replayed.Eligible || replayed.TencentMutationCount != 0 || replayed.KubernetesMutationCount != 0 || provider.claimCalls != 1 {
+	if replayErr != nil || !replayed.Eligible || replayed.TencentMutationCount != 0 || replayed.KubernetesMutationCount != 0 ||
+		provider.claimCalls != 0 || provider.nodeOnlyClaimCalls != 1 {
 		t.Fatalf("replay=%#v err=%v provider=%#v", replayed, replayErr, provider)
 	}
 }
@@ -1127,7 +1145,7 @@ func TestClaimComputeRecoveryRequestHashReconciliationConcurrentReplayHasOneNode
 			t.Fatalf("outcome=%#v", result)
 		}
 	}
-	if provider.claimCalls != 1 {
+	if provider.claimCalls != 0 || provider.nodeOnlyClaimCalls != 1 {
 		t.Fatalf("provider=%#v", provider)
 	}
 }
@@ -1192,9 +1210,8 @@ func TestClaimComputeRecoveryRequestHashReconciliationFailsClosedBeforeMutation(
 		"ledger provider error class": {mutate: func(_ *FabricOperation, _ *ComputeAllocation, _ *ComputeAllocationPreparation, _ *MachineOwnership, _ *computeClaimRecoveryBinding, ledger *computeClaimRecoveryMutationLedger, _ *fakeComputeClaimRecoveryProvider) {
 			ledger.ProviderErrorClass = "readback_mismatch"
 		}},
-		"provider CVM not owned": {mutate: func(_ *FabricOperation, _ *ComputeAllocation, _ *ComputeAllocationPreparation, _ *MachineOwnership, _ *computeClaimRecoveryBinding, _ *computeClaimRecoveryMutationLedger, provider *fakeComputeClaimRecoveryProvider) {
-			provider.proof.CVMOwnershipState = "recoverable"
-			provider.proof.NodeOwnershipState = "unallocated"
+		"provider CVM unknown": {mutate: func(_ *FabricOperation, _ *ComputeAllocation, _ *ComputeAllocationPreparation, _ *MachineOwnership, _ *computeClaimRecoveryBinding, _ *computeClaimRecoveryMutationLedger, provider *fakeComputeClaimRecoveryProvider) {
+			provider.proof.CVMOwnershipState = "unknown"
 		}},
 		"provider node drift": {mutate: func(_ *FabricOperation, _ *ComputeAllocation, _ *ComputeAllocationPreparation, _ *MachineOwnership, _ *computeClaimRecoveryBinding, _ *computeClaimRecoveryMutationLedger, provider *fakeComputeClaimRecoveryProvider) {
 			provider.proof.NodeName = "node-other"
@@ -1264,7 +1281,7 @@ func TestClaimComputeRecoveryRequestHashReconciliationFailsClosedBeforeMutation(
 			}
 			storedPayload, storedPayloadErr := operationPayloadJSON(original)
 			_, reconciliationPresent, _ := decodeComputeClaimRecoveryReconciliation(original)
-			if claimErr == nil || result.Eligible || listErr != nil || storedPayloadErr != nil || storedPayload != originalPayload || reconciliationPresent || provider.claimCalls != 0 ||
+			if claimErr == nil || result.Eligible || listErr != nil || storedPayloadErr != nil || storedPayload != originalPayload || reconciliationPresent || provider.claimCalls != 0 || provider.nodeOnlyClaimCalls != 0 ||
 				provider.tagCalls != 0 || provider.scaleCalls != 0 || provider.storageCalls != 0 {
 				t.Fatalf("result=%#v err=%v stored=%#v listErr=%v payloadChanged=%v provider=%#v", result, claimErr, stored, listErr, storedPayload != originalPayload, provider)
 			}

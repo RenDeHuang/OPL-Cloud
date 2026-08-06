@@ -1744,7 +1744,7 @@ func TestPostgresRequestHashReconciliationHasOneClaimWinnerAcrossServiceInstance
 	binding, bindingPresent, bindingValid := decodeComputeClaimRecoveryBinding(stored[0])
 	ledger, ledgerPresent, ledgerValid := decodeComputeClaimRecoveryMutation(stored[0])
 	reconciliation, reconciliationPresent, reconciliationValid := decodeComputeClaimRecoveryReconciliation(stored[0])
-	if kubernetesMutations != 1 || provider.claimCalls != 1 || ownershipErr != nil || finalOwnership.Status != "active" ||
+	if kubernetesMutations != 1 || provider.claimCalls != 0 || provider.nodeOnlyClaimCalls != 1 || ownershipErr != nil || finalOwnership.Status != "active" ||
 		!bindingPresent || !bindingValid || binding.RequestHash != strings.Repeat("7", 64) || !ledgerPresent || !ledgerValid || !isolatedRequestHashReconciliationLedger(ledger) ||
 		!reconciliationPresent || !reconciliationValid || reconciliation.State != "succeeded" || stored[0].Status != "succeeded" {
 		t.Fatalf("stored=%#v err=%v ownership=%#v ownershipErr=%v binding=%#v ledger=%#v reconciliation=%#v provider=%#v kubernetes=%d",
@@ -1782,7 +1782,7 @@ func TestPostgresNormalLaunchTerminalReconciliationHasOneClaimWinnerAcrossServic
 		t.Fatalf("seed ownership=%#v created=%v err=%v", stored, created, err)
 	}
 	provider := &postgresComputeClaimRecoveryProvider{fakeComputeClaimRecoveryProvider: *fixtureProvider}
-	configureRequestHashReconciliationNodeSuccess(&provider.fakeComputeClaimRecoveryProvider)
+	configureNormalLaunchTerminalNodeOnlySuccess(&provider.fakeComputeClaimRecoveryProvider)
 
 	type outcome struct {
 		proof ComputeClaimRecoveryProof
@@ -1820,7 +1820,7 @@ func TestPostgresNormalLaunchTerminalReconciliationHasOneClaimWinnerAcrossServic
 	createBudget, createPresent, createValid := normalLaunchStageBudget(stored[0].RedactedProviderPayload, "compute_create")
 	cvmBudget, cvmPresent, cvmValid := normalLaunchStageBudget(stored[0].RedactedProviderPayload, "compute_claim_cvm")
 	_, nodePresent, nodeValid := normalLaunchStageBudget(stored[0].RedactedProviderPayload, "compute_claim_node")
-	if kubernetesMutations != 1 || provider.claimCalls != 1 || ownershipErr != nil || finalOwnership.Status != "active" ||
+	if kubernetesMutations != 1 || provider.claimCalls != 0 || provider.nodeOnlyClaimCalls != 1 || ownershipErr != nil || finalOwnership.Status != "active" ||
 		!bindingPresent || !bindingValid || binding.RequestHash != strings.Repeat("7", 64) || ledgerPresent ||
 		!reconciliationPresent || !reconciliationValid || reconciliation.SchemaVersion != 2 || reconciliation.State != "succeeded" ||
 		!terminalPresent || !terminalValid || terminal.Status != "terminal_unprovable" || !createPresent || !createValid || createBudget != confirmedNormalLaunchMutationBudget() ||
