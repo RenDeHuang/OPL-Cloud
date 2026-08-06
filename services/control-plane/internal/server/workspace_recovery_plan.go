@@ -61,6 +61,7 @@ type workspaceRecoveryPlanFailureDTO struct {
 	ErrorCode               string                                       `json:"errorCode"`
 	MutationCounts          workspaceRecoveryMutationCounts              `json:"mutationCounts"`
 	ProviderIdentityFailure *clients.ComputeClaimProviderIdentityFailure `json:"providerIdentityFailure,omitempty"`
+	ComputeClaimEvidence    *workspaceRecoveryComputeClaimEvidence       `json:"computeClaimEvidence,omitempty"`
 }
 
 type workspaceRecoveryPlanFailure struct {
@@ -69,6 +70,7 @@ type workspaceRecoveryPlanFailure struct {
 	readbackError           string
 	errorCode               string
 	providerIdentityFailure *clients.ComputeClaimProviderIdentityFailure
+	computeClaimEvidence    *workspaceRecoveryComputeClaimEvidence
 }
 
 func (failure *workspaceRecoveryPlanFailure) Error() string { return failure.errorCode }
@@ -103,6 +105,7 @@ func workspaceRecoveryPlanProofFailure(proof clients.ComputeClaimRecoveryProof, 
 		value := *proof.ProviderIdentityFailure
 		failure.providerIdentityFailure = &value
 	}
+	failure.computeClaimEvidence = workspaceRecoveryComputeClaimEvidenceFromProof(proof)
 	return failure
 }
 
@@ -137,6 +140,12 @@ func workspaceRecoveryPlanFailureProjection(err error) workspaceRecoveryPlanFail
 			}
 			value := *classified.providerIdentityFailure
 			return &value
+		}(),
+		ComputeClaimEvidence: func() *workspaceRecoveryComputeClaimEvidence {
+			if classified == nil {
+				return nil
+			}
+			return classified.computeClaimEvidence
 		}(),
 	}
 }
@@ -476,8 +485,19 @@ func (app *controlPlaneServer) workspaceComputeClaimRecoveryProofForPlan(ctx con
 		input = workspaceComputeClaimRecoveryRequestFromAllocation(operation, allocation)
 	}
 	proof, proofErr := service.ComputeClaimRecoveryProof(ctx, workspaceComputeClaimRecoveryInput(operation, input))
-	if proofErr != nil || proof.SchemaVersion != 1 || proof.TencentMutationCount != 0 || proof.KubernetesMutationCount != 0 || proof.Sub2APIMutationCount != 0 {
+	if proof.SchemaVersion != 1 || proof.TencentMutationCount != 0 || proof.KubernetesMutationCount != 0 || proof.Sub2APIMutationCount != 0 {
 		return input, proof, nil, workspaceRecoveryPlanProofFailure(proof, proofErr)
+	}
+	if proofErr != nil {
+		evidence, evidenceErr := service.ComputeClaimRecoveryIdentityEvidence(ctx, clients.ComputeClaimRecoveryClaimInput{
+			ComputeClaimRecoveryInput: workspaceComputeClaimRecoveryInput(operation, input), MachineName: input.MachineName,
+			NodeName: input.NodeName, CVMInstanceID: input.CVMInstanceID, PrivateIP: input.PrivateIP,
+			InstanceType: input.InstanceType, Zone: input.Zone,
+		})
+		if evidenceErr == nil && evidence != nil {
+			proof.IdentityEvidence = evidence
+		}
+		return input, proof, evidence, workspaceRecoveryPlanProofFailure(proof, proofErr)
 	}
 	evidence, evidenceErr := service.ComputeClaimRecoveryIdentityEvidence(ctx, clients.ComputeClaimRecoveryClaimInput{
 		ComputeClaimRecoveryInput: workspaceComputeClaimRecoveryInput(operation, input), MachineName: proof.MachineName,
