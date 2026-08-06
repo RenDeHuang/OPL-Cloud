@@ -971,6 +971,7 @@ func workspaceRecoveryComputeClaimEvidenceFromProof(proof clients.ComputeClaimRe
 		(reconciliation.Generation == "isolated_request_hash_v1" || reconciliation.Generation == "normal_launch_terminal_evidence_v1") &&
 		(reconciliation.State == "verified" || reconciliation.State == "node_reserved" || reconciliation.State == "observed" || reconciliation.State == "succeeded") &&
 		reconciliation.ExpectedRequestHashDigest == mismatch.ExpectedDigest && reconciliation.PersistedRequestHashDigest == mismatch.ActualDigest &&
+		(reconciliation.FailureStage == "") == (reconciliation.ProviderErrorClass == "") &&
 		safeWorkspaceComputeClaimFailureStage(reconciliation.FailureStage) && safeWorkspaceComputeClaimProviderErrorClass(reconciliation.ProviderErrorClass) &&
 		workspaceComputeClaimMutationEvidenceMatches(reconciliation.Node, reconciliation.Node.Attempted, 1, "node", false) {
 		provenanceValid := reconciliation.SchemaVersion == 1 && reconciliation.ProvenanceSource == "" && reconciliation.ProvenanceDigest == "" ||

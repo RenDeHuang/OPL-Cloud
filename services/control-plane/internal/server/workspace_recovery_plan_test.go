@@ -268,6 +268,31 @@ func TestWorkspaceRecoveryPlanProjectsPersistedRequestHashReconciliationFailureE
 	}
 }
 
+func TestWorkspaceRecoveryPlanOmitsOneSidedReconciliationFailureEvidence(t *testing.T) {
+	evidence := requestHashReconciliationIdentityEvidence()
+	evidence.Reconciliation = &clients.ComputeClaimReconciliationEvidence{
+		SchemaVersion: 1, Consumer: "claim_compute_recovery", Generation: "isolated_request_hash_v1", State: "observed",
+		ExpectedRequestHashDigest: evidence.Checks[9].ExpectedDigest, PersistedRequestHashDigest: evidence.Checks[9].ActualDigest,
+		FailureStage: "node_patch_readback",
+		Node:         clients.ComputeClaimMutationEvidence{Attempted: 1, Unknown: 1, Missing: []string{"node_ownership"}},
+	}
+	proof := clients.ComputeClaimRecoveryProof{
+		IdentityEvidence: &evidence, FailureStage: "cvm_pre_read", ProviderErrorClass: "readback_mismatch",
+		Evidence: &clients.ComputeClaimEvidence{
+			CVM: clients.ComputeClaimMutationEvidence{Attempted: 1, Unknown: 1, Missing: []string{"opl_account_id"}},
+		},
+	}
+
+	got := workspaceRecoveryComputeClaimEvidenceFromProof(proof)
+	if got == nil || got.FailureStage != "cvm_pre_read" || got.ProviderErrorClass != "readback_mismatch" || got.Reconciliation != nil {
+		t.Fatalf("one-sided reconciliation evidence must not invalidate the safe failure envelope: %#v", got)
+	}
+	serialized, err := json.Marshal(got)
+	if err != nil || bytes.Contains(serialized, []byte(`"reconciliation"`)) {
+		t.Fatalf("one-sided reconciliation evidence escaped projection: %s err=%v", serialized, err)
+	}
+}
+
 func TestWorkspaceRecoveryPlanProjectsPersistedComputeClaimFailureEvidenceWithoutRequestHashMismatch(t *testing.T) {
 	evidence := recoverableCVMOnlyIdentityEvidence()
 	evidence.BindingClassification = "compute-claim"
