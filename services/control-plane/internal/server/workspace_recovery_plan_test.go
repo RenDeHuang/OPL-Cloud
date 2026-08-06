@@ -1207,11 +1207,31 @@ func TestWorkspaceRecoveryPlanDiagnosePreservesPersistedUnknownCVMClaimEvidence(
 	}
 	fixture.fabric.computeClaimProofErr = errors.New("provider proof failed")
 	evidence := requestHashReconciliationIdentityEvidence()
+	evidence.MutationEvidence.CVM.Missing = nil
 	useWorkspaceRecoveryPlanIdentityEvidence(t, &fixture, &evidence)
 
 	response := requestWorkspaceRecoveryPlan(t, fixture, http.MethodPost, "/diagnose", map[string]any{"accountId": operation.AccountID})
 	if response.Code != http.StatusConflict {
 		t.Fatalf("compute claim blocked diagnose status=%d body=%s", response.Code, response.Body.String())
+	}
+	var rawBody struct {
+		ComputeClaimEvidence struct {
+			CVM  map[string]json.RawMessage `json:"cvm"`
+			Node map[string]json.RawMessage `json:"node"`
+		} `json:"computeClaimEvidence"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &rawBody); err != nil {
+		t.Fatal(err)
+	}
+	for name, mutationEvidence := range map[string]map[string]json.RawMessage{
+		"cvm":  rawBody.ComputeClaimEvidence.CVM,
+		"node": rawBody.ComputeClaimEvidence.Node,
+	} {
+		var missing []string
+		missingJSON, ok := mutationEvidence["missing"]
+		if !ok || json.Unmarshal(missingJSON, &missing) != nil || len(missing) != 0 {
+			t.Fatalf("compute claim blocked diagnose must preserve explicit empty %s missing evidence: %s", name, response.Body.String())
+		}
 	}
 	var body struct {
 		FailureStage         string                                 `json:"failureStage"`
@@ -1228,8 +1248,7 @@ func TestWorkspaceRecoveryPlanDiagnosePreservesPersistedUnknownCVMClaimEvidence(
 		body.ErrorCode != "workspace_recovery_plan_fabric_proof_failed" || body.MutationCounts != (workspaceRecoveryMutationCounts{}) ||
 		got == nil || got.BindingClassification != "request-hash-reconciliation" || got.MismatchField != "binding.requestHash" ||
 		got.MutationLedger != "observed" || got.MutationLedgerOutcome != "unknown" ||
-		got.CVM.Attempted != 1 || got.CVM.Confirmed != 0 || got.CVM.Unknown != 1 ||
-		len(got.CVM.Missing) != 1 || got.CVM.Missing[0] != "opl_account_id" ||
+		got.CVM.Attempted != 1 || got.CVM.Confirmed != 0 || got.CVM.Unknown != 1 || len(got.CVM.Missing) != 0 ||
 		got.Node.Attempted != 0 || got.Node.Confirmed != 0 || got.Node.Unknown != 0 || len(got.Node.Missing) != 0 ||
 		got.LedgerFailureStage != "cvm_tag_readback" || got.LedgerProviderErrorClass != "provider_error" ||
 		got.FailureStage != "cvm_pre_read" || got.ProviderErrorClass != "readback_mismatch" {

@@ -220,15 +220,22 @@ type workspaceRecoveryMutationOutcome struct {
 }
 
 type workspaceRecoveryComputeClaimReconciliationEvidence struct {
-	SchemaVersion      int                                  `json:"schemaVersion"`
-	Consumer           string                               `json:"consumer"`
-	Generation         string                               `json:"generation"`
-	ProvenanceSource   string                               `json:"provenanceSource,omitempty"`
-	ProvenanceDigest   string                               `json:"provenanceDigest,omitempty"`
-	State              string                               `json:"state"`
-	FailureStage       string                               `json:"failureStage,omitempty"`
-	ProviderErrorClass string                               `json:"providerErrorClass,omitempty"`
-	Node               clients.ComputeClaimMutationEvidence `json:"node"`
+	SchemaVersion      int                                           `json:"schemaVersion"`
+	Consumer           string                                        `json:"consumer"`
+	Generation         string                                        `json:"generation"`
+	ProvenanceSource   string                                        `json:"provenanceSource,omitempty"`
+	ProvenanceDigest   string                                        `json:"provenanceDigest,omitempty"`
+	State              string                                        `json:"state"`
+	FailureStage       string                                        `json:"failureStage,omitempty"`
+	ProviderErrorClass string                                        `json:"providerErrorClass,omitempty"`
+	Node               workspaceRecoveryComputeClaimMutationEvidence `json:"node"`
+}
+
+type workspaceRecoveryComputeClaimMutationEvidence struct {
+	Attempted int      `json:"attempted"`
+	Confirmed int      `json:"confirmed"`
+	Unknown   int      `json:"unknown"`
+	Missing   []string `json:"missing"`
 }
 
 type workspaceRecoveryComputeClaimEvidence struct {
@@ -239,13 +246,20 @@ type workspaceRecoveryComputeClaimEvidence struct {
 	ActualDigest             string                                               `json:"actualDigest,omitempty"`
 	MutationLedger           string                                               `json:"mutationLedger"`
 	MutationLedgerOutcome    string                                               `json:"mutationLedgerOutcome"`
-	CVM                      clients.ComputeClaimMutationEvidence                 `json:"cvm"`
-	Node                     clients.ComputeClaimMutationEvidence                 `json:"node"`
+	CVM                      workspaceRecoveryComputeClaimMutationEvidence        `json:"cvm"`
+	Node                     workspaceRecoveryComputeClaimMutationEvidence        `json:"node"`
 	LedgerFailureStage       string                                               `json:"ledgerFailureStage"`
 	LedgerProviderErrorClass string                                               `json:"ledgerProviderErrorClass"`
 	FailureStage             string                                               `json:"failureStage"`
 	ProviderErrorClass       string                                               `json:"providerErrorClass"`
 	Reconciliation           *workspaceRecoveryComputeClaimReconciliationEvidence `json:"reconciliation,omitempty"`
+}
+
+func workspaceRecoveryComputeClaimMutationEvidenceProjection(value clients.ComputeClaimMutationEvidence) workspaceRecoveryComputeClaimMutationEvidence {
+	return workspaceRecoveryComputeClaimMutationEvidence{
+		Attempted: value.Attempted, Confirmed: value.Confirmed, Unknown: value.Unknown,
+		Missing: append([]string{}, value.Missing...),
+	}
 }
 
 type workspaceRecoveryPlanDTO struct {
@@ -944,7 +958,8 @@ func workspaceRecoveryComputeClaimEvidenceFromProof(proof clients.ComputeClaimRe
 	result := &workspaceRecoveryComputeClaimEvidence{
 		SchemaVersion: 1, BindingClassification: evidence.BindingClassification,
 		MutationLedger: evidence.MutationLedger, MutationLedgerOutcome: evidence.MutationLedgerOutcome,
-		CVM: cvm, Node: node,
+		CVM:                workspaceRecoveryComputeClaimMutationEvidenceProjection(cvm),
+		Node:               workspaceRecoveryComputeClaimMutationEvidenceProjection(node),
 		LedgerFailureStage: evidence.FailureStage, LedgerProviderErrorClass: evidence.ProviderErrorClass,
 		FailureStage: proof.FailureStage, ProviderErrorClass: proof.ProviderErrorClass,
 	}
@@ -966,7 +981,8 @@ func workspaceRecoveryComputeClaimEvidenceFromProof(proof clients.ComputeClaimRe
 				SchemaVersion: reconciliation.SchemaVersion, Consumer: reconciliation.Consumer, Generation: reconciliation.Generation,
 				ProvenanceSource: reconciliation.ProvenanceSource, ProvenanceDigest: reconciliation.ProvenanceDigest,
 				State: reconciliation.State, FailureStage: reconciliation.FailureStage,
-				ProviderErrorClass: reconciliation.ProviderErrorClass, Node: reconciliation.Node,
+				ProviderErrorClass: reconciliation.ProviderErrorClass,
+				Node:               workspaceRecoveryComputeClaimMutationEvidenceProjection(reconciliation.Node),
 			}
 		}
 	}
