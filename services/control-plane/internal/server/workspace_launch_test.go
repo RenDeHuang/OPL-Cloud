@@ -2816,7 +2816,19 @@ func TestWorkspaceComputeClaimApprovalSupersedesFailedUnclaimedReleaseBinding(t 
 		t.Fatal(err)
 	}
 	operation.ComputeClaimApproval = &binding
-	operation.Status, operation.Phase, operation.ErrorCode = "manual_review", "compute_claim_pending", "workspace_compute_claim_identity_mismatch"
+	operation.Status, operation.Phase, operation.ErrorCode = "manual_review", "compute_claim_pending", "workspace_compute_claim_provider_describe"
+	predecessorPlan := workspaceRecoveryPlan{PlanDigest: strings.Repeat("d", 64), Status: "failed", Action: "compute_claim_continue"}
+	predecessorExecution := workspaceRecoveryExecution{
+		ExecutionID: "recovery-exec-client-rejected", Status: "failed",
+		MutationOutcome: workspaceRecoveryMutationOutcome{
+			Status: "nonzero", Counts: workspaceRecoveryMutationCounts{Kubernetes: 1}, Source: "compute_claim_response",
+		},
+	}
+	operation.RecoveryHistory = []workspaceRecoveryPlanHistoryEntry{{Plan: predecessorPlan, Execution: predecessorExecution}}
+	operation.RecoveryPlan = &workspaceRecoveryPlan{
+		Action: "compute_claim_continue", PredecessorPlanDigest: predecessorPlan.PlanDigest,
+		PredecessorExecutionID: predecessorExecution.ExecutionID,
+	}
 	mustStore(t, fixture.store.SaveRuntimeOperation(context.Background(), workspaceLaunchOperationRow(operation)))
 
 	successorKey := "compute-claim-successor-release"
@@ -2863,6 +2875,9 @@ func TestWorkspaceComputeClaimApprovalSupersessionRejectsUnsafeSuccessors(t *tes
 			budget := operation.ContinuationAttemptBudgets["storage"]
 			budget.Attempted = 1
 			operation.ContinuationAttemptBudgets["storage"] = budget
+		}},
+		{name: "provider describe without exact predecessor", mutate: func(operation *workspaceLaunchOperation, _ map[string]any) {
+			operation.ErrorCode = "workspace_compute_claim_provider_describe"
 		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
