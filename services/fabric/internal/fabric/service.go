@@ -1895,7 +1895,7 @@ func exactLegacyKubectlClientRejectedReconciliation(value computeClaimRecoveryRe
 	return value.SchemaVersion == 2 && value.Generation == "normal_launch_terminal_evidence_v1" &&
 		value.ProvenanceSource == "normal_launch_terminal_evidence" && value.State == "observed" &&
 		value.FailureStage == "node_patch_readback" && value.ProviderErrorClass == "provider_error" &&
-		reflect.DeepEqual(value.Node, ComputeClaimMutationEvidence{Attempted: 1, Unknown: 1, Missing: []string{"node_ownership"}})
+		reflect.DeepEqual(value.Node, ComputeClaimMutationEvidence{Attempted: 1, Missing: []string{"node_ownership"}})
 }
 
 func newComputeClaimNodeClientRejectionRecovery(source computeClaimRecoveryReconciliation) computeClaimNodeClientRejectionRecovery {

@@ -1853,7 +1853,7 @@ func TestPostgresLegacyKubectlClientRejectionRetryHasOneNodePatchWinner(t *testi
 			RenewFlag: fixtureProvider.proof.RenewFlag, Deadline: fixtureProvider.proof.Deadline, CVMOwnershipState: "recoverable", NodeOwnershipState: "unallocated",
 		},
 		KubernetesMutationCount: 1, FailureStage: "node_patch_readback", ProviderErrorClass: "provider_error",
-		Evidence: &ComputeClaimEvidence{Node: ComputeClaimMutationEvidence{Attempted: 1, Unknown: 1, Missing: []string{"node_ownership"}}},
+		Evidence: &ComputeClaimEvidence{Node: ComputeClaimMutationEvidence{Attempted: 1, Missing: []string{"node_ownership"}}},
 	}
 	fixtureProvider.claimHook = nil
 	fixtureProvider.claimErr = errors.New("legacy kubectl client rejection")
