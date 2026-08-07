@@ -840,9 +840,9 @@ func TestWorkspaceRecoveryPlanDiagnosePrioritizesComputeClaimOverStorageUnknown(
 	fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, "basic")
 	operation.Status, operation.Phase, operation.ErrorCode = "manual_review", "storage_fulfilling", "workspace_launch_storage_attempt_unknown"
 	operation.ContinuationAttemptBudgets["storage"] = workspaceLaunchStageBudget{Attempted: 1, Unknown: 1, Max: workspaceLaunchStageMax}
-	operation.ComputeClaimProof = nil
 	fixture.fabric.providerTruthErr = errors.New("monthly_provider_truth_unavailable")
 	fixture.fabric.computeClaimProof = computeClaimRecoveryProofForLaunchStorage(operation, "unallocated", "storage_attempt_unknown", "")
+	operation.ComputeClaimProof = &fixture.fabric.computeClaimProof
 	fixture.fabric.computeClaimProofFn = func(input clients.ComputeClaimRecoveryInput) (clients.ComputeClaimRecoveryProof, error) {
 		if !input.AllowExistingStorageOperation {
 			return fixture.fabric.computeClaimProof, errors.New("compute_claim_recovery_storage_already_started")
