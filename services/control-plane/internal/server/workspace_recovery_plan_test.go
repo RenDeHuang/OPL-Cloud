@@ -944,6 +944,19 @@ func TestWorkspaceRecoveryPlanExecuteUsesOnePersistedExecutionAndOriginalLaunchC
 	}
 }
 
+func TestWorkspaceComputeClaimStageAwareReadbackAllowsLegacyManualReviewBeforeStorage(t *testing.T) {
+	operation := workspaceLaunchOperation{
+		Status: "manual_review",
+		Phase:  "compute_fulfilling",
+	}
+	if !workspaceComputeClaimStageAwareReadback(operation) {
+		t.Fatal("legacy manual-review compute claim must allow storage readback without making a storage decision")
+	}
+	if workspaceComputeClaimStageAwareReadback(workspaceLaunchOperation{Status: "manual_review", Phase: "storage_fulfilling"}) {
+		t.Fatal("storage-stage manual review must not authorize compute-first storage bypass")
+	}
+}
+
 func TestWorkspaceRecoveryPlanExecutionLeaseHasOneCrossInstanceWinner(t *testing.T) {
 	t.Setenv("OPL_RELEASE_SHA", strings.Repeat("a", 40))
 	t.Setenv("OPL_CLOUD_IMAGE", "uswccr.ccs.tencentyun.com/oplcloud/opl-cloud@sha256:"+strings.Repeat("b", 64))

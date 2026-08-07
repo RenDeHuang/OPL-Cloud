@@ -1563,7 +1563,10 @@ func workspaceComputeClaimStageAwareReadback(operation workspaceLaunchOperation)
 	// Compute Claim owns the first incomplete stage. Fabric must still inspect
 	// an exact existing Storage operation, but its unknown state never grants a
 	// Storage write or blocks the authoritative Node ownership readback.
-	return workspaceComputeClaimCanonical(operation)
+	// Keep the same isolation for the legacy manual-review shape: it is still a
+	// compute-claim recovery candidate, and must not be rejected by a later
+	// storage attempt before the provider can read the CVM and Node.
+	return workspaceComputeClaimCanonical(operation) || workspaceComputeClaimLegacyCandidate(operation)
 }
 
 func workspaceComputeClaimRecoveryRequestMatches(operation workspaceLaunchOperation, input workspaceComputeClaimRecoveryRequest) bool {
