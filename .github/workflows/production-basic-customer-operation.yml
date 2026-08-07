@@ -3055,9 +3055,8 @@ jobs:
           node --input-type=module <<'NODE'
           import { readFile } from "node:fs/promises";
           const result = JSON.parse(await readFile(`${process.env.OPL_READBACK_ARTIFACT_DIR}/compute-claim-readback.json`, "utf8"));
-          const actions = new Set(["GET_ONLY_RECONCILE_STORAGE", "NODE_ONLY_CONTINUATION_ONCE", "RESUME_EXISTING_STORAGE", "MANUAL_REVIEW"]);
-          const valid = result?.schemaVersion === 1 && result?.operationMode === "compute_claim_readback" && ["proven", "blocked"].includes(result?.status) &&
-            actions.has(result?.nextAction) && result?.node?.resourceVersion && result?.node?.taint && result?.node?.ownership &&
+          const valid = result?.schemaVersion === 1 && result?.operationMode === "compute_claim_readback" && result?.status === "evidence_only" &&
+            result?.node?.resourceVersion && result?.node?.taint && result?.node?.ownership &&
             result?.storage?.stageBudget && result?.providerTruth && result?.mutationCounts?.sub2api === 0 && result?.mutationCounts?.tencent === 0 && result?.mutationCounts?.kubernetes === 0 &&
             !/password|secret|cookie|csrf|authorization/i.test(JSON.stringify(result));
           if (!valid) { console.error("Compute claim readback artifact is invalid or not redacted."); process.exit(1); }

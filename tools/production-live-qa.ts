@@ -640,12 +640,24 @@ function manualReviewNodeEvidence(node, target, allocation) {
 }
 
 const COMPUTE_CLAIM_READBACK_MODE = "compute_claim_readback";
-const COMPUTE_CLAIM_READBACK_NEXT_ACTIONS = new Set([
-  "GET_ONLY_RECONCILE_STORAGE",
-  "NODE_ONLY_CONTINUATION_ONCE",
-  "RESUME_EXISTING_STORAGE",
-  "MANUAL_REVIEW"
-]);
+
+// The readback runner is deliberately evidence-only. Business decisions are
+// accepted only when they are already attached to a Control Plane/Fabric
+// snapshot; this function never infers a stage or authorizes a write.
+const COMPUTE_CLAIM_READBACK_DECISION_FIELDS = [
+  "currentStage", "stageState", "firstFalsePredicate", "expected", "actual", "authority",
+  "nextAction", "failureStage", "stageAttemptId", "decisionVersion", "decidedAt"
+];
+
+function normalizeAuthoritativeComputeClaimDecision(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const decision = {};
+  for (const field of COMPUTE_CLAIM_READBACK_DECISION_FIELDS) {
+    if (typeof value[field] === "string" && value[field].trim() !== "") decision[field] = value[field];
+    else if (field === "decisionVersion" && Number.isInteger(value[field]) && value[field] > 0) decision[field] = value[field];
+  }
+  return Object.keys(decision).length > 0 ? decision : null;
+}
 
 function computeClaimReadbackStageBudget(operation) {
   const budget = operation?.redactedProviderPayload?.normalLaunchMutationBudget?.compute ||
@@ -746,28 +758,6 @@ export function summarizeWorkspaceComputeClaimReadback(snapshot = {}) {
   const node = computeClaimReadbackNode(snapshot.node, target);
   const computeBudget = computeClaimReadbackStageBudget(computeOperation.operation);
   const storageBudget = computeClaimReadbackStorageBudget(storageOperation.operation);
-  const computeReadable = Boolean(snapshot.allocation && snapshot.ownership && computeOperation.cardinality === 1);
-  const nodeAvailable = Boolean(snapshot.node && node.name);
-  const computeIdentity = computeReadable && snapshot.allocation.accountId === target.accountId && snapshot.ownership.accountId === target.accountId &&
-    snapshot.allocation.workspaceId === target.workspaceId && snapshot.ownership.workspaceId === target.workspaceId &&
-    snapshot.ownership.nodePoolId === snapshot.allocation.nodePoolId && snapshot.ownership.machineId === snapshot.allocation.machineName &&
-    snapshot.ownership.instanceId === target.cvmInstanceId && snapshot.ownership.nodeName === target.nodeName;
-  const nodeOwnershipConfirmed = nodeAvailable && computeIdentity && node.ownership === "target_owned";
-  const nodeUnallocated = nodeAvailable && computeIdentity && node.ownership === "unallocated";
-  const nodeConflict = !nodeAvailable || !computeIdentity || node.ownership === "conflict";
-  const firstFalsePredicate = nodeOwnershipConfirmed ? "" : nodeConflict ? "provider.nodeIdentity" : "provider.nodeOwnership";
-  const firstIncompleteStage = nodeOwnershipConfirmed ? "storage" : "compute_claim";
-  const failureStage = nodeOwnershipConfirmed ? "" : "compute_claim";
-  let nextAction = "MANUAL_REVIEW";
-  if (nodeOwnershipConfirmed) {
-    nextAction = storageOperation.cardinality === 1 && storageOperation.status === "succeeded" && providerTruth.storage === "ready"
-      ? "RESUME_EXISTING_STORAGE"
-      : storageOperation.cardinality === 0 && providerTruth.storage === "absent" && storageBudget.attempted === 0
-        ? "GET_ONLY_RECONCILE_STORAGE"
-        : "GET_ONLY_RECONCILE_STORAGE";
-  } else if (nodeUnallocated && computeIdentity && computeBudget.attempted <= 1 && computeBudget.unknown === 0) {
-    nextAction = "NODE_ONLY_CONTINUATION_ONCE";
-  }
   const storageState = storageOperation.cardinality > 1 || storageOperation.status === "conflict"
     ? "conflict"
     : storageOperation.cardinality === 1 && providerTruth.storage === "ready" ? "exact_existing"
@@ -776,17 +766,11 @@ export function summarizeWorkspaceComputeClaimReadback(snapshot = {}) {
   const result = {
     schemaVersion: 1,
     operationMode: COMPUTE_CLAIM_READBACK_MODE,
-    status: nodeConflict ? "blocked" : "proven",
-    firstIncompleteStage,
-    firstFalsePredicate,
-    expected: nodeOwnershipConfirmed ? "storage_authoritative" : "target_owned",
-    actual: nodeOwnershipConfirmed ? storageState : node.ownership,
-    authority: nodeOwnershipConfirmed ? "fabric+tencent" : "kubernetes.node",
-    nextAction,
-    failureStage,
+    status: "evidence_only",
+    authoritativeDecision: normalizeAuthoritativeComputeClaimDecision(snapshot.authoritativeDecision),
     node,
     providerTruth,
-    compute: { stageBudget: computeBudget, operation: { cardinality: computeOperation.cardinality, status: computeOperation.status }, identity: computeIdentity },
+    compute: { stageBudget: computeBudget, operation: { cardinality: computeOperation.cardinality, status: computeOperation.status } },
     storage: {
       state: storageState,
       stageBudget: storageBudget,
@@ -795,13 +779,11 @@ export function summarizeWorkspaceComputeClaimReadback(snapshot = {}) {
     },
     mutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
   };
-  if (!COMPUTE_CLAIM_READBACK_NEXT_ACTIONS.has(result.nextAction)) throw new Error("compute_claim_readback_next_action_invalid");
   return result;
 }
 
 export function workspaceComputeClaimReadbackArtifact(result) {
-  if (!result || result.schemaVersion !== 1 || result.operationMode !== COMPUTE_CLAIM_READBACK_MODE ||
-    !COMPUTE_CLAIM_READBACK_NEXT_ACTIONS.has(result.nextAction) ||
+  if (!result || result.schemaVersion !== 1 || result.operationMode !== COMPUTE_CLAIM_READBACK_MODE || result.status !== "evidence_only" ||
     !result.mutationCounts || result.mutationCounts.sub2api !== 0 || result.mutationCounts.tencent !== 0 || result.mutationCounts.kubernetes !== 0 ||
     !result.node || !result.storage || !result.providerTruth) {
     throw new Error("compute_claim_readback_artifact_invalid");
@@ -818,13 +800,7 @@ export function workspaceComputeClaimReadbackArtifact(result) {
     schemaVersion: 1,
     operationMode: COMPUTE_CLAIM_READBACK_MODE,
     status: result.status,
-    firstIncompleteStage: result.firstIncompleteStage,
-    firstFalsePredicate: result.firstFalsePredicate,
-    expected: result.expected,
-    actual: result.actual,
-    authority: result.authority,
-    nextAction: result.nextAction,
-    failureStage: result.failureStage,
+    authoritativeDecision: result.authoritativeDecision || null,
     node: {
       resourceVersion: result.node.resourceVersion,
       labels: redactedLabels,
@@ -889,6 +865,7 @@ export async function readWorkspaceComputeClaimReadback({
   const operationsRead = await manualReviewFabricGet(options, "/fabric/operations", "fabric_operations_not_found", "fabric_operations_unavailable");
   if (operationsRead.state !== "present" || !Array.isArray(operationsRead.payload)) throw new Error(operationsRead.errorCode);
   const target = workspaceComputeClaimReadbackTargetFromOperations(operationsRead.payload, normalizedAccountId, normalizedLaunchOperationId);
+  const computeOperation = computeClaimReadbackOperation(operationsRead.payload, "create_compute_allocation", target.computeAllocationId, `${normalizedLaunchOperationId}:compute`);
   const computeRead = await manualReviewFabricGet(options, `/fabric/compute-allocations/${encodeURIComponent(target.computeAllocationId)}`, "compute_allocation_not_found", "compute_allocation_unavailable");
   const ownershipRead = await manualReviewFabricGet(options, `/fabric/machine-ownerships/${encodeURIComponent(target.computeAllocationId)}`, "machine_ownership_not_found", "machine_ownership_unavailable");
   const storageRead = await manualReviewFabricGet(options, `/fabric/storage-volumes/${encodeURIComponent(target.storageId)}`, "storage_volume_not_found", "storage_volume_unavailable");
@@ -908,7 +885,9 @@ export async function readWorkspaceComputeClaimReadback({
     ownership: ownershipRead.payload,
     storage: storageRead.payload || { id: target.storageId },
     providerTruth: providerTruthRead.payload,
-    node: nodeRead.payload
+    node: nodeRead.payload,
+    authoritativeDecision: computeOperation.operation?.redactedProviderPayload?.currentDecision ||
+      computeOperation.operation?.redactedProviderPayload?.authoritativeDecision || null
   });
   return {
     ...result,

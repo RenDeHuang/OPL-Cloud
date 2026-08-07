@@ -97,6 +97,18 @@ test("stage-aware compute readback keeps Node ownership first when storage is at
     },
     storage: { id: "vol_57f5d2a477b616e8c9", status: "pending", providerResourceId: "" },
     providerTruth: { computeState: "ready", storageState: "unknown", compute: { providerResourceId: "ins-rjkoixhs" }, storage: null },
+    authoritativeDecision: {
+      currentStage: "compute_claim",
+      stageState: "pending",
+      firstFalsePredicate: "provider.nodeOwnership",
+      expected: "target_owned",
+      actual: "unallocated",
+      authority: "control_plane.fabric",
+      nextAction: "NODE_ONLY_CONTINUATION_ONCE",
+      failureStage: "compute_claim",
+      decisionVersion: 3,
+      decidedAt: "2026-08-08T00:00:00Z"
+    },
     node: {
       metadata: {
         name: "10.66.0.191",
@@ -115,12 +127,21 @@ test("stage-aware compute readback keeps Node ownership first when storage is at
     }
   });
 
-  assert.equal(result.firstIncompleteStage, "compute_claim");
-  assert.equal(result.firstFalsePredicate, "provider.nodeOwnership");
-  assert.equal(result.expected, "target_owned");
-  assert.equal(result.actual, "unallocated");
-  assert.equal(result.nextAction, "NODE_ONLY_CONTINUATION_ONCE");
-  assert.equal(result.failureStage, "compute_claim");
+  assert.equal(result.status, "evidence_only");
+  assert.deepEqual(result.authoritativeDecision, {
+    currentStage: "compute_claim",
+    stageState: "pending",
+    firstFalsePredicate: "provider.nodeOwnership",
+    expected: "target_owned",
+    actual: "unallocated",
+    authority: "control_plane.fabric",
+    nextAction: "NODE_ONLY_CONTINUATION_ONCE",
+    failureStage: "compute_claim",
+    decisionVersion: 3,
+    decidedAt: "2026-08-08T00:00:00Z"
+  });
+  assert.equal(result.firstFalsePredicate, undefined);
+  assert.equal(result.nextAction, undefined);
   assert.deepEqual(result.storage.stageBudget, { attempted: 1, confirmed: 0, unknown: 1, max: 1 });
   assert.equal(result.storage.state, "attempted_unknown");
   assert.deepEqual(result.mutationCounts, { sub2api: 0, tencent: 0, kubernetes: 0 });
@@ -164,10 +185,15 @@ test("compute claim production readback derives the original resources and perfo
   const result = await productionLiveQa.readWorkspaceComputeClaimReadback({
     accountId, launchOperationId, kubeconfigPath: "/run/secrets/kubeconfig", fabricPod: "opl-cloud-fabric-abc", fabricNamespace: "opl-cloud", execFileImpl
   });
-  assert.equal(result.firstIncompleteStage, "compute_claim");
-  assert.equal(result.firstFalsePredicate, "provider.nodeOwnership");
-  assert.equal(result.nextAction, "NODE_ONLY_CONTINUATION_ONCE");
+  assert.equal(result.status, "evidence_only");
+  assert.equal(result.authoritativeDecision, null);
+  assert.equal(result.firstIncompleteStage, undefined);
+  assert.equal(result.firstFalsePredicate, undefined);
+  assert.equal(result.nextAction, undefined);
   assert.equal(result.storage.state, "attempted_unknown");
+  assert.equal(result.node.taint.value, "unallocated");
+  assert.equal(result.node.resourceVersion, "418");
+  assert.equal(result.providerTruth.compute, "ready");
   assert.deepEqual(result.mutationCounts, { sub2api: 0, tencent: 0, kubernetes: 0 });
   assert.equal(calls.filter((call) => call.args.includes("patch")).length, 0);
   assert.equal(calls.filter((call) => call.args.includes("node") && call.args.includes("get")).length, 1);

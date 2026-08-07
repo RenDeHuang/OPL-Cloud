@@ -345,15 +345,15 @@ func (app *controlPlaneServer) respondWorkspaceLaunchContinuation(w http.Respons
 }
 
 func workspaceLaunchNeedsKeyConvergence(operation workspaceLaunchOperation) bool {
-	if operation.Status == "succeeded" || operation.Status == "manual_review" || operation.Status == "failed" || operation.Status == "refunded" ||
-		operation.WorkspaceKeyStatus == workspaceKeyCodexGroupBound || operation.WorkspaceKeyStatus == "configured" {
+	if operation.Status == "succeeded" || operation.Status == "failed" || operation.Status == "refunded" ||
+		operation.WorkspaceKeyStatus == workspaceKeyCodexGroupBound {
 		return false
 	}
 	if operation.Phase == "key_pending" {
 		return true
 	}
 	switch operation.Phase {
-	case "debit_pending", "compute_claim_pending", "storage_fulfilling", "attaching":
+	case "debit_pending", "compute_claim_pending", "storage_fulfilling", "attaching", "secret_writing", "runtime_starting":
 		return operation.WorkspaceAPIKeyID > 0
 	default:
 		return false
@@ -366,6 +366,9 @@ func (app *controlPlaneServer) convergeAndPersistWorkspaceLaunchKey(ctx context.
 		return err
 	}
 	operation.WorkspaceAPIKeyID = workspaceKey.ID
+	if workspaceKey.GroupID != nil && *workspaceKey.GroupID > 0 {
+		operation.WorkspaceKeyGroupID = *workspaceKey.GroupID
+	}
 	operation.WorkspaceKeyStatus = workspaceKeyCodexGroupBound
 	if operation.Phase == "key_pending" {
 		operation.Status, operation.Phase, operation.ErrorCode = "debit_pending", "debit_pending", ""

@@ -28,6 +28,7 @@ var (
 	errWorkspaceComputeClaimProof         = errors.New("workspace_compute_claim_proof_failed")
 	errWorkspaceCodexGroupUnavailable     = errors.New("apiKey.codexGroupUnavailable")
 	errWorkspaceCodexGroupMutationUnknown = errors.New("apiKey.codexGroupMutationUnknown")
+	errWorkspaceCodexGroupReadback        = errors.New("apiKey.codexGroupReadbackUnavailable")
 )
 
 const (
@@ -137,6 +138,7 @@ type workspaceLaunchOperation struct {
 	AttachmentOperationID        string                                   `json:"attachmentOperationId"`
 	WorkspaceOperationID         string                                   `json:"workspaceOperationId"`
 	WorkspaceAPIKeyID            int64                                    `json:"workspaceApiKeyId"`
+	WorkspaceKeyGroupID          int64                                    `json:"workspaceKeyGroupId,omitempty"`
 	RedeemCode                   string                                   `json:"sub2apiRedeemCode"`
 	RefundCode                   string                                   `json:"sub2apiRefundCode,omitempty"`
 	ChargeAttempted              bool                                     `json:"chargeAttempted,omitempty"`
@@ -852,6 +854,9 @@ func (app *controlPlaneServer) fulfillWorkspaceLaunch(ctx context.Context, servi
 				return err
 			}
 		case "secret_writing":
+			if err := app.verifyWorkspaceLaunchCodexKeyReadback(ctx, service, operation); err != nil {
+				return app.manualReviewWorkspaceLaunchFulfillment(ctx, operation, errWorkspaceCodexGroupReadback.Error())
+			}
 			budget := operation.ContinuationAttemptBudgets["secret"]
 			if budget.Confirmed == 0 {
 				var secret clients.GatewaySecretWriteResult
@@ -1009,6 +1014,33 @@ func (app *controlPlaneServer) fulfillWorkspaceLaunch(ctx context.Context, servi
 		}
 	}
 	return app.retryWorkspaceLaunchFulfillment(ctx, operation, "workspace_launch_transition_limit", errors.New("workspace launch transition limit"))
+}
+
+// verifyWorkspaceLaunchCodexKeyReadback is the last owner-side guard before
+// the Gateway Secret write. It deliberately reads the persisted key by its
+// exact ID; WorkspaceKeyStatus is only a local stage marker and is not proof.
+func (app *controlPlaneServer) verifyWorkspaceLaunchCodexKeyReadback(ctx context.Context, service *controlplane.Service, operation *workspaceLaunchOperation) error {
+	// The group ID is persisted only after GatewayUserGroups has returned one
+	// unique active Codex group. A positive GroupID from the key alone is not
+	// enough: it would allow a legacy/configured marker to bypass the live
+	// group authority before the Secret boundary.
+	if operation == nil || operation.WorkspaceAPIKeyID <= 0 || operation.WorkspaceKeyGroupID <= 0 {
+		return errWorkspaceCodexGroupReadback
+	}
+	userID, err := app.sub2APIUserID(ctx, operation.AccountID)
+	if err != nil {
+		return errors.Join(errWorkspaceCodexGroupReadback, err)
+	}
+	key, err := service.WorkspaceKeyByIDForConvergence(ctx, userID, operation.WorkspaceAPIKeyID, workspaceReservedKeyName(operation.WorkspaceID))
+	if err != nil || key.ID != operation.WorkspaceAPIKeyID || key.UserID != userID || key.Name != workspaceReservedKeyName(operation.WorkspaceID) || key.Status != "active" || key.GroupID == nil || *key.GroupID <= 0 {
+		return errors.Join(errWorkspaceCodexGroupReadback, err)
+	}
+	if operation.WorkspaceKeyGroupID != *key.GroupID {
+		return errWorkspaceCodexGroupReadback
+	}
+	operation.WorkspaceKeyGroupID = *key.GroupID
+	operation.WorkspaceKeyStatus = workspaceKeyCodexGroupBound
+	return nil
 }
 
 func (app *controlPlaneServer) fulfillWorkspaceLaunchResource(ctx context.Context, service *controlplane.Service, operation *workspaceLaunchOperation, resourceType string) (string, error) {

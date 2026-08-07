@@ -619,7 +619,7 @@ func TestWorkspaceKeyConvergenceCreatesBeforeBalanceAndPersistsID(t *testing.T) 
 		t.Fatalf("launch operations=%#v err=%v", operations, err)
 	}
 	operation, err := decodeWorkspaceLaunchOperation(operations[0])
-	if err != nil || operation.WorkspaceAPIKeyID != 19 || client.createCalls != 1 {
+	if err != nil || operation.WorkspaceAPIKeyID != 19 || operation.WorkspaceKeyGroupID != 7 || operation.WorkspaceKeyStatus != workspaceKeyCodexGroupBound || client.createCalls != 1 {
 		t.Fatalf("converged operation=%#v creates=%d err=%v", operation, client.createCalls, err)
 	}
 	if got := *fixture.events; !reflect.DeepEqual(got, []string{
@@ -1367,6 +1367,8 @@ func newWorkspaceLaunchWorkerFixtureForPlanMode(t *testing.T, balances []int64, 
 		operation.ComputeNodePoolID = "np-" + packageID
 		operation.WorkspaceAPIKeyID = 19
 		key := clients.Sub2APIWorkspaceKey{ID: operation.WorkspaceAPIKeyID, UserID: 41, Name: workspaceReservedKeyName(operation.WorkspaceID), Key: "created-workspace-key-secret", GroupID: workspaceTestCodexGroupID(), Status: "active"}
+		operation.WorkspaceKeyGroupID = *key.GroupID
+		operation.WorkspaceKeyStatus = workspaceKeyCodexGroupBound
 		sub2API.keys = map[int64]clients.Sub2APIWorkspaceKey{key.ID: key}
 		mustStore(t, store.SaveRuntimeOperation(context.Background(), workspaceLaunchOperationRow(operation)))
 		operationID = operation.ID
@@ -1864,6 +1866,51 @@ func TestWorkspaceLaunchUnknownStageAttemptSurvivesRestartWithoutSecondWrite(t *
 	after := fixture.operation(t)
 	if countStrings(*fixture.events, "fabric.gateway-secret") != beforeWrites || after.Status != "manual_review" || persistedWorkspaceLaunchStageBudget(t, after, "secret")["unknown"] != float64(1) {
 		t.Fatalf("restart repeated unknown Secret write: before=%d events=%#v operation=%#v", beforeWrites, *fixture.events, after)
+	}
+}
+
+func TestWorkspaceLaunchSecretRequiresPersistedLiveCodexGroupReadback(t *testing.T) {
+	for _, test := range []struct {
+		name           string
+		persistedGroup int64
+		keyGroup       *int64
+		wantSecret     bool
+	}{
+		{name: "configured marker with exact live group readback", persistedGroup: 7, keyGroup: func() *int64 { value := int64(7); return &value }(), wantSecret: true},
+		{name: "configured marker without live group authority", persistedGroup: 0, keyGroup: func() *int64 { value := int64(7); return &value }()},
+		{name: "same key group disappeared", persistedGroup: 7, keyGroup: nil},
+		{name: "same key points at a different group", persistedGroup: 7, keyGroup: func() *int64 { value := int64(8); return &value }()},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newExistingWorkspaceLaunchWorkerFixtureForPlan(t, []int64{1_000_000_000}, nil, nil, "basic", 10, false)
+			operation := fixture.operation(t)
+			operation.Status, operation.Phase, operation.ErrorCode = "preparing", "secret_writing", ""
+			operation.WorkspaceKeyStatus = "configured"
+			operation.WorkspaceKeyGroupID = test.persistedGroup
+			operation.ContinuationAttemptBudgets["storage"] = workspaceLaunchStageBudget{Attempted: 1, Confirmed: 1, Max: workspaceLaunchStageMax}
+			operation.ContinuationAttemptBudgets["attachment"] = workspaceLaunchStageBudget{Attempted: 1, Confirmed: 1, Max: workspaceLaunchStageMax}
+			key := fixture.sub2API.keys[operation.WorkspaceAPIKeyID]
+			key.GroupID = test.keyGroup
+			fixture.sub2API.keys[operation.WorkspaceAPIKeyID] = key
+			row := workspaceLaunchOperationRow(operation)
+			mustStore(t, fixture.store.memoryTableStore.SaveRuntimeOperation(context.Background(), row))
+			operation.PersistedResult = stringValue(row["result"])
+
+			err := fixture.app.fulfillWorkspaceLaunch(context.Background(), fixture.service, &operation)
+			current := fixture.operation(t)
+			secretWrites := countStrings(*fixture.events, "fabric.gateway-secret")
+			runtimeWrites := countStrings(*fixture.events, "fabric.runtime")
+			if test.wantSecret {
+				if secretWrites != 1 || current.ErrorCode == "apiKey.codexGroupReadbackUnavailable" {
+					t.Fatalf("exact Codex readback did not cross Secret boundary: err=%v operation=%#v events=%#v", err, current, *fixture.events)
+				}
+				_ = runtimeWrites
+				return
+			}
+			if err == nil || current.Status != "manual_review" || current.Phase != "secret_writing" || current.ErrorCode != "apiKey.codexGroupReadbackUnavailable" || secretWrites != 0 || runtimeWrites != 0 {
+				t.Fatalf("invalid Codex readback crossed Secret/Runtime boundary: err=%v operation=%#v events=%#v", err, current, *fixture.events)
+			}
+		})
 	}
 }
 
