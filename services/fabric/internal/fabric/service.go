@@ -375,10 +375,26 @@ func (s *Service) ReadComputePoolHead(ctx context.Context, nodePoolID string) (C
 	persisted, bindingPresent, bindingValid := decodeComputeClaimRecoveryBinding(head)
 	ownership, ownershipErr := s.operations.MachineOwnership(ctx, allocation.ID)
 	requestHashRecovery := exactUnmarkedLegacyKubectlClientRejection(head, allocation, plan)
-	if bindingOK && (requestHashRecovery || !bindingPresent || bindingValid && persisted == binding) && ownershipErr == nil && validComputeClaimRecoveryOwnership(allocation, ownership) {
+	historicalRecovery := ownershipErr == nil && exactHistoricalComputeClaimRecoveryWithoutLedger(head, allocation, plan, ownership)
+	if bindingOK && (requestHashRecovery || historicalRecovery || !bindingPresent || bindingValid && persisted == binding) &&
+		ownershipErr == nil && validComputeClaimRecoveryOwnership(allocation, ownership) {
 		result.ContinuationState, result.FailureStage, result.ErrorCode = "continuable", "none", "none"
 	}
 	return result, nil
+}
+
+func exactHistoricalComputeClaimRecoveryWithoutLedger(operation FabricOperation, allocation ComputeAllocation, plan ComputeAllocationPreparation, ownership MachineOwnership) bool {
+	input, inputOK := automaticComputeClaimRecoveryInput(operation, allocation, plan)
+	if !inputOK || allocation.Status != "quarantined" || ownership.Status != "quarantined" ||
+		!validComputeClaimRecoveryOwnership(allocation, ownership) {
+		return false
+	}
+	persisted, bindingPresent, bindingValid := decodeComputeClaimRecoveryBinding(operation)
+	_, mutationPresent, _ := decodeComputeClaimRecoveryMutation(operation)
+	_, reconciliationPresent, _ := decodeComputeClaimRecoveryReconciliation(operation)
+	_, clientRejectionPresent, _ := decodeComputeClaimNodeClientRejectionRecovery(operation)
+	return bindingPresent && bindingValid && persisted == historicalComputeClaimRecoveryBinding(input) &&
+		!mutationPresent && !reconciliationPresent && !clientRejectionPresent
 }
 
 func exactUnmarkedLegacyKubectlClientRejection(operation FabricOperation, allocation ComputeAllocation, plan ComputeAllocationPreparation) bool {
