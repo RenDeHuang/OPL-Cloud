@@ -473,7 +473,7 @@ func TestComputeClaimRecoveryProofFailsClosedOnUnknownCBSDiscovery(t *testing.T)
 	}
 }
 
-func TestComputeClaimRecoveryProofRejectsStorageOperationBeforeProviderRead(t *testing.T) {
+func TestComputeClaimRecoveryProofReadsNodeBeforeRejectingUnexpectedStorageOperation(t *testing.T) {
 	service, store, provider, input := seedComputeClaimRecovery(t, "basic")
 	now := time.Now().UTC()
 	storage := newOperation("create_storage_volume", "storage_volume", input.StorageVolumeID, input.AccountID, input.WorkspaceID, input.LaunchOperationID+":storage", "hash", now)
@@ -484,7 +484,10 @@ func TestComputeClaimRecoveryProofRejectsStorageOperationBeforeProviderRead(t *t
 	}
 
 	proof, err := service.ComputeClaimRecoveryProof(context.Background(), input)
-	if err == nil || proof.Eligible || proof.Reason != "storage_already_started" || provider.proofCalls != 0 || provider.claimCalls != 0 || provider.tagCalls != 0 || provider.scaleCalls != 0 || provider.storageCalls != 0 {
+	if err == nil || proof.Eligible || proof.Reason != "storage_already_started" ||
+		proof.NodeOwnershipState != "unallocated" || proof.CVMOwnershipState != "recoverable" ||
+		proof.TencentMutationCount != 0 || proof.KubernetesMutationCount != 0 || proof.Sub2APIMutationCount != 0 ||
+		provider.proofCalls != 1 || provider.claimCalls != 0 || provider.tagCalls != 0 || provider.scaleCalls != 0 || provider.storageCalls != 0 {
 		t.Fatalf("proof=%#v err=%v provider=%#v", proof, err, provider)
 	}
 }
@@ -532,7 +535,8 @@ func TestComputeClaimRecoveryProofRejectsConflictingStorageWithStageAwareReadbac
 
 	proof, err := service.ComputeClaimRecoveryProof(context.Background(), input)
 
-	if err == nil || proof.Eligible || proof.Reason != "identity_mismatch" || provider.proofCalls != 0 ||
+	if err == nil || proof.Eligible || proof.Reason != "identity_mismatch" || proof.NodeOwnershipState != "unallocated" ||
+		proof.CVMOwnershipState != "recoverable" || provider.proofCalls != 1 ||
 		len(provider.storageDiscoveries) != 0 || provider.claimCalls != 0 || provider.storageCalls != 0 {
 		t.Fatalf("proof=%#v err=%v provider=%#v", proof, err, provider)
 	}
@@ -549,12 +553,13 @@ func TestComputeClaimRecoveryProofRejectsConflictingStorageOperationIdentityBefo
 	}
 
 	proof, err := service.ComputeClaimRecoveryProof(context.Background(), input)
-	if err == nil || proof.Eligible || proof.Reason != "storage_already_started" || provider.proofCalls != 0 || provider.claimCalls != 0 || provider.tagCalls != 0 || provider.scaleCalls != 0 || provider.storageCalls != 0 {
+	if err == nil || proof.Eligible || proof.Reason != "storage_already_started" || proof.NodeOwnershipState != "unallocated" ||
+		proof.CVMOwnershipState != "recoverable" || provider.proofCalls != 1 || provider.claimCalls != 0 || provider.tagCalls != 0 || provider.scaleCalls != 0 || provider.storageCalls != 0 {
 		t.Fatalf("proof=%#v err=%v provider=%#v", proof, err, provider)
 	}
 }
 
-func TestComputeClaimRecoveryProofRejectsWorkspaceStorageOperationWithDifferentIdentityBeforeProviderRead(t *testing.T) {
+func TestComputeClaimRecoveryProofRejectsWorkspaceStorageOperationWithDifferentIdentityAfterProviderRead(t *testing.T) {
 	service, store, provider, input := seedComputeClaimRecovery(t, "basic")
 	now := time.Now().UTC()
 	storage := newOperation("create_storage_volume", "storage_volume", "vol_other", input.AccountID, input.WorkspaceID, "other-storage-key", "hash", now)
@@ -565,7 +570,9 @@ func TestComputeClaimRecoveryProofRejectsWorkspaceStorageOperationWithDifferentI
 	}
 
 	proof, err := service.ComputeClaimRecoveryProof(context.Background(), input)
-	if err == nil || proof.Eligible || proof.Reason != "storage_already_started" || provider.proofCalls != 0 || provider.claimCalls != 0 {
+	if err == nil || proof.Eligible || proof.Reason != "storage_already_started" ||
+		proof.NodeOwnershipState != "unallocated" || proof.CVMOwnershipState != "recoverable" ||
+		provider.proofCalls != 1 || provider.claimCalls != 0 {
 		t.Fatalf("proof=%#v err=%v provider=%#v", proof, err, provider)
 	}
 }

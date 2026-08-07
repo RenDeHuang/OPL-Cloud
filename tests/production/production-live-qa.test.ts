@@ -47,6 +47,158 @@ const mutationApprovalJson = JSON.stringify({
   resourceIds: [fixedSlotDescriptor.id, "9"]
 });
 
+test("stage-aware compute readback keeps Node ownership first when storage is attempted unknown", () => {
+  const result = productionLiveQa.summarizeWorkspaceComputeClaimReadback({
+    accountId: "acct-54658088f52b242ed8",
+    launchOperationId: "workspace-launch-f4338141c25d0882b0",
+    operations: [
+      {
+        action: "create_compute_allocation",
+        resourceId: "ca_2968bc5edba23a5c36",
+        accountId: "acct-54658088f52b242ed8",
+        workspaceId: "ws-30e2861bbdf9805492",
+        idempotencyKey: "workspace-launch-f4338141c25d0882b0:compute",
+        status: "failed",
+        redactedProviderPayload: { resource: { packageId: "basic", nodePoolId: "np-33sy1qqa" } }
+      },
+      {
+        action: "create_storage_volume",
+        resourceId: "vol_57f5d2a477b616e8c9",
+        accountId: "acct-54658088f52b242ed8",
+        workspaceId: "ws-30e2861bbdf9805492",
+        idempotencyKey: "workspace-launch-f4338141c25d0882b0:storage",
+        status: "started",
+        redactedProviderPayload: { normalLaunchMutationBudget: { storage: { attempted: 1, confirmed: 0, unknown: 1, max: 1 } } }
+      }
+    ],
+    allocation: {
+      id: "ca_2968bc5edba23a5c36",
+      accountId: "acct-54658088f52b242ed8",
+      workspaceId: "ws-30e2861bbdf9805492",
+      packageId: "basic",
+      nodePoolId: "np-33sy1qqa",
+      machineName: "np-33sy1qqa-whp8b",
+      instanceId: "ins-rjkoixhs",
+      cvmInstanceId: "ins-rjkoixhs",
+      nodeName: "10.66.0.191",
+      privateIp: "10.66.0.191",
+      status: "quarantined"
+    },
+    ownership: {
+      id: "ownership-1",
+      resourceId: "ca_2968bc5edba23a5c36",
+      accountId: "acct-54658088f52b242ed8",
+      workspaceId: "ws-30e2861bbdf9805492",
+      nodePoolId: "np-33sy1qqa",
+      machineId: "np-33sy1qqa-whp8b",
+      instanceId: "ins-rjkoixhs",
+      nodeName: "10.66.0.191",
+      status: "active"
+    },
+    storage: { id: "vol_57f5d2a477b616e8c9", status: "pending", providerResourceId: "" },
+    providerTruth: { computeState: "ready", storageState: "unknown", compute: { providerResourceId: "ins-rjkoixhs" }, storage: null },
+    authoritativeDecision: {
+      currentStage: "compute_claim",
+      stageState: "pending",
+      firstFalsePredicate: "provider.nodeOwnership",
+      expected: "target_owned",
+      actual: "unallocated",
+      authority: "control_plane.fabric",
+      nextAction: "NODE_ONLY_CONTINUATION_ONCE",
+      failureStage: "compute_claim",
+      decisionVersion: 3,
+      decidedAt: "2026-08-08T00:00:00Z"
+    },
+    node: {
+      metadata: {
+        name: "10.66.0.191",
+        resourceVersion: "418",
+        labels: {
+          "medopl.cn/workload": "workspace",
+          "oplcloud.cn/resource-id": "ca_2968bc5edba23a5c36",
+          "oplcloud.cn/account-id": "acct-54658088f52b242ed8",
+          "oplcloud.cn/workspace-id": "ws-30e2861bbdf9805492",
+          "node.tke.cloud.tencent.com/machineset": "np-33sy1qqa",
+          "node.tke.cloud.tencent.com/machine": "np-33sy1qqa-whp8b"
+        }
+      },
+      spec: { taints: [{ key: "oplcloud.cn/workspace-id", value: "unallocated", effect: "NoSchedule" }] },
+      status: { addresses: [{ type: "InternalIP", address: "10.66.0.191" }] }
+    }
+  });
+
+  assert.equal(result.status, "evidence_only");
+  assert.deepEqual(result.authoritativeDecision, {
+    currentStage: "compute_claim",
+    stageState: "pending",
+    firstFalsePredicate: "provider.nodeOwnership",
+    expected: "target_owned",
+    actual: "unallocated",
+    authority: "control_plane.fabric",
+    nextAction: "NODE_ONLY_CONTINUATION_ONCE",
+    failureStage: "compute_claim",
+    decisionVersion: 3,
+    decidedAt: "2026-08-08T00:00:00Z"
+  });
+  assert.equal(result.firstFalsePredicate, undefined);
+  assert.equal(result.nextAction, undefined);
+  assert.deepEqual(result.storage.stageBudget, { attempted: 1, confirmed: 0, unknown: 1, max: 1 });
+  assert.equal(result.storage.state, "attempted_unknown");
+  assert.deepEqual(result.mutationCounts, { sub2api: 0, tencent: 0, kubernetes: 0 });
+  assert.equal(result.storage.nextAction, undefined);
+  assert.equal(result.node.resourceVersion, "418");
+  assert.equal(result.node.taint.value, "unallocated");
+});
+
+test("compute claim production readback derives the original resources and performs GET-only Fabric/Node reads", async () => {
+  const calls = [];
+  const accountId = "acct-54658088f52b242ed8";
+  const launchOperationId = "workspace-launch-f4338141c25d0882b0";
+  const computeAllocationId = "ca_2968bc5edba23a5c36";
+  const storageId = "vol_57f5d2a477b616e8c9";
+  const node = {
+    metadata: { name: "10.66.0.191", resourceVersion: "418", labels: {
+      "oplcloud.cn/resource-id": computeAllocationId,
+      "oplcloud.cn/account-id": accountId,
+      "oplcloud.cn/workspace-id": "ws-30e2861bbdf9805492"
+    } },
+    spec: { taints: [{ key: "oplcloud.cn/workspace-id", value: "unallocated", effect: "NoSchedule" }] },
+    status: { addresses: [{ type: "InternalIP", address: "10.66.0.191" }] }
+  };
+  const allocation = { id: computeAllocationId, accountId, workspaceId: "ws-30e2861bbdf9805492", nodeName: "10.66.0.191", privateIp: "10.66.0.191", machineName: "np-33sy1qqa-whp8b", cvmInstanceId: "ins-rjkoixhs", instanceId: "ins-rjkoixhs", nodePoolId: "np-33sy1qqa" };
+  const ownership = { resourceId: computeAllocationId, accountId, workspaceId: "ws-30e2861bbdf9805492", nodeName: "10.66.0.191", nodePoolId: "np-33sy1qqa", machineId: "np-33sy1qqa-whp8b", instanceId: "ins-rjkoixhs", status: "active" };
+  const operations = [
+    { action: "create_compute_allocation", resourceId: computeAllocationId, accountId, workspaceId: "ws-30e2861bbdf9805492", idempotencyKey: `${launchOperationId}:compute`, status: "failed", redactedProviderPayload: { resource: allocation } },
+    { action: "create_storage_volume", resourceId: storageId, accountId, workspaceId: "ws-30e2861bbdf9805492", idempotencyKey: `${launchOperationId}:storage`, status: "started", redactedProviderPayload: { normalLaunchMutationBudget: { storage: { attempted: 1, confirmed: 0, unknown: 1, max: 1 } } } }
+  ];
+  const execFileImpl = async (command, args) => {
+    calls.push({ command, args });
+    if (args.includes("get") && args.includes("node")) return { stdout: JSON.stringify(node) };
+    const path = args.at(-1);
+    const payload = path === "/fabric/operations" ? operations
+      : path.includes("/compute-allocations/") ? allocation
+        : path.includes("/machine-ownerships/") ? ownership
+          : path.includes("/storage-volumes/") ? { id: storageId, accountId, workspaceId: "ws-30e2861bbdf9805492", status: "pending" }
+            : { computeState: "ready", storageState: "unknown", compute: { providerResourceId: "ins-rjkoixhs" }, storage: null };
+    return { stdout: JSON.stringify({ statusCode: 200, payload, errorCode: "none" }) };
+  };
+  const result = await productionLiveQa.readWorkspaceComputeClaimReadback({
+    accountId, launchOperationId, kubeconfigPath: "/run/secrets/kubeconfig", fabricPod: "opl-cloud-fabric-abc", fabricNamespace: "opl-cloud", execFileImpl
+  });
+  assert.equal(result.status, "evidence_only");
+  assert.equal(result.authoritativeDecision, null);
+  assert.equal(result.firstIncompleteStage, undefined);
+  assert.equal(result.firstFalsePredicate, undefined);
+  assert.equal(result.nextAction, undefined);
+  assert.equal(result.storage.state, "attempted_unknown");
+  assert.equal(result.node.taint.value, "unallocated");
+  assert.equal(result.node.resourceVersion, "418");
+  assert.equal(result.providerTruth.compute, "ready");
+  assert.deepEqual(result.mutationCounts, { sub2api: 0, tencent: 0, kubernetes: 0 });
+  assert.equal(calls.filter((call) => call.args.includes("patch")).length, 0);
+  assert.equal(calls.filter((call) => call.args.includes("node") && call.args.includes("get")).length, 1);
+});
+
 test("customer Basic canary orchestration stays inside production-live-qa", () => {
   assert.equal(typeof productionLiveQa.verifyProductionBasicCustomerCanary, "function");
 });

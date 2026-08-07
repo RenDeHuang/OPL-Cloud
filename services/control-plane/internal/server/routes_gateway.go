@@ -1008,6 +1008,10 @@ func writeGatewayUserKeyError(w http.ResponseWriter, err error) {
 
 func writeGatewayKeyError(w http.ResponseWriter, err error) {
 	switch {
+	case errors.Is(err, errWorkspaceCodexGroupUnavailable):
+		writeError(w, http.StatusConflict, "apiKey.codexGroupUnavailable")
+	case errors.Is(err, errWorkspaceCodexGroupMutationUnknown):
+		writeError(w, http.StatusConflict, "apiKey.codexGroupMutationUnknown")
 	case errors.Is(err, clients.ErrSub2APIWorkspaceKeyMissing):
 		writeError(w, http.StatusConflict, "gateway_key_missing")
 	case errors.Is(err, clients.ErrSub2APIWorkspaceKeyAmbiguous):

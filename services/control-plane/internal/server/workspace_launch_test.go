@@ -560,7 +560,7 @@ func TestWorkspaceLaunchKeyPendingConcurrentRecoveryReturnsPersistedWinner(t *te
 
 	newServer := func() (http.Handler, *httptest.ResponseRecorder) {
 		events := []string{}
-		key := clients.Sub2APIWorkspaceKey{ID: 19, UserID: 41, Name: workspaceReservedKeyName(original.WorkspaceID), Status: "active"}
+		key := clients.Sub2APIWorkspaceKey{ID: 19, UserID: 41, Name: workspaceReservedKeyName(original.WorkspaceID), GroupID: workspaceTestCodexGroupID(), Status: "active"}
 		gateway := &workspaceLaunchSub2API{
 			monthlySub2API: &monthlySub2API{events: &events, balances: []int64{1_000_000_000}},
 			keys:           map[int64]clients.Sub2APIWorkspaceKey{key.ID: key},
@@ -619,7 +619,7 @@ func TestWorkspaceKeyConvergenceCreatesBeforeBalanceAndPersistsID(t *testing.T) 
 		t.Fatalf("launch operations=%#v err=%v", operations, err)
 	}
 	operation, err := decodeWorkspaceLaunchOperation(operations[0])
-	if err != nil || operation.WorkspaceAPIKeyID != 19 || client.createCalls != 1 {
+	if err != nil || operation.WorkspaceAPIKeyID != 19 || operation.WorkspaceKeyGroupID != 7 || operation.WorkspaceKeyStatus != workspaceKeyCodexGroupBound || client.createCalls != 1 {
 		t.Fatalf("converged operation=%#v creates=%d err=%v", operation, client.createCalls, err)
 	}
 	if got := *fixture.events; !reflect.DeepEqual(got, []string{
@@ -633,6 +633,51 @@ func TestWorkspaceKeyConvergenceCreatesBeforeBalanceAndPersistsID(t *testing.T) 
 	replay := fixture.launch(t, `{"name":"Alpha","packageId":"basic","sizeGb":10,"autoRenew":false}`, "launch-converge")
 	if replay.Code != http.StatusAccepted || client.createCalls != 1 || len(client.keys) != 1 {
 		t.Fatalf("convergence replay status=%d creates=%d keys=%#v", replay.Code, client.createCalls, client.keys)
+	}
+}
+
+func TestWorkspaceKeyConvergenceReusesCorrectCodexKeyWithoutMutation(t *testing.T) {
+	fixture := newWorkspaceLaunchHTTPFixture(t, 1_000_000_000)
+	operation := newWorkspaceLaunchOperation("acct-alpha", "usr-alpha", "Alpha", "basic", 10, false, pilotPriceVersion, 52_580_000, "launch-existing-codex")
+	fixture.sub2API.keys = map[int64]clients.Sub2APIWorkspaceKey{
+		19: {ID: 19, UserID: 41, Name: workspaceReservedKeyName(operation.WorkspaceID), Key: "existing-workspace-key-secret", GroupID: workspaceTestCodexGroupID(), Status: "active"},
+	}
+	response := fixture.launch(t, `{"name":"Alpha","packageId":"basic","sizeGb":10,"autoRenew":false}`, "launch-existing-codex")
+	if response.Code != http.StatusAccepted || fixture.sub2API.createCalls != 0 || fixture.sub2API.updateCalls != 0 {
+		t.Fatalf("correct Codex key was mutated: status=%d body=%s creates=%d updates=%d", response.Code, response.Body.String(), fixture.sub2API.createCalls, fixture.sub2API.updateCalls)
+	}
+}
+
+func TestWorkspaceKeyConvergenceUpdatesExistingKeyGroupOnce(t *testing.T) {
+	for name, groupID := range map[string]*int64{"missing": nil, "wrong": func() *int64 { value := int64(8); return &value }()} {
+		t.Run(name, func(t *testing.T) {
+			fixture := newWorkspaceLaunchHTTPFixture(t, 1_000_000_000)
+			operation := newWorkspaceLaunchOperation("acct-alpha", "usr-alpha", "Alpha", "basic", 10, false, pilotPriceVersion, 52_580_000, "launch-update-codex-"+name)
+			fixture.sub2API.keys = map[int64]clients.Sub2APIWorkspaceKey{
+				19: {ID: 19, UserID: 41, Name: workspaceReservedKeyName(operation.WorkspaceID), Key: "existing-workspace-key-secret", GroupID: groupID, Status: "active"},
+			}
+			response := fixture.launch(t, `{"name":"Alpha","packageId":"basic","sizeGb":10,"autoRenew":false}`, "launch-update-codex-"+name)
+			key := fixture.sub2API.keys[19]
+			if response.Code != http.StatusAccepted || fixture.sub2API.createCalls != 0 || fixture.sub2API.updateCalls != 1 || !workspaceKeyCodexGroupMatches(key, 7) {
+				t.Fatalf("existing key group convergence failed: status=%d body=%s creates=%d updates=%d key=%#v", response.Code, response.Body.String(), fixture.sub2API.createCalls, fixture.sub2API.updateCalls, key)
+			}
+		})
+	}
+}
+
+func TestWorkspaceKeyConvergenceStopsWithoutKeyMutationWhenCodexUnavailable(t *testing.T) {
+	for name, groups := range map[string][]clients.Sub2APIGroup{
+		"missing":   {},
+		"duplicate": {{ID: 7, Name: "Codex", Status: "active"}, {ID: 8, Name: "Codex", Status: "active"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			fixture := newWorkspaceLaunchHTTPFixture(t, 1_000_000_000)
+			fixture.sub2API.groups = groups
+			response := fixture.launch(t, `{"name":"Alpha","packageId":"basic","sizeGb":10,"autoRenew":false}`, "launch-codex-unavailable-"+name)
+			if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), "apiKey.codexGroupUnavailable") || fixture.sub2API.createCalls != 0 || fixture.sub2API.updateCalls != 0 {
+				t.Fatalf("Codex unavailable crossed key mutation boundary: status=%d body=%s creates=%d updates=%d", response.Code, response.Body.String(), fixture.sub2API.createCalls, fixture.sub2API.updateCalls)
+			}
+		})
 	}
 }
 
@@ -1039,7 +1084,14 @@ type workspaceLaunchSub2API struct {
 	*monthlySub2API
 	keys        map[int64]clients.Sub2APIWorkspaceKey
 	createCalls int
+	updateCalls int
+	groups      []clients.Sub2APIGroup
 	userKeysErr error
+}
+
+func workspaceTestCodexGroupID() *int64 {
+	groupID := int64(7)
+	return &groupID
 }
 
 type durableWorkspaceLaunchSub2API struct {
@@ -1153,6 +1205,19 @@ func (s *workspaceLaunchSub2API) WorkspaceKey(ctx context.Context, userID int64)
 	return s.monthlySub2API.WorkspaceKey(ctx, userID)
 }
 
+func (s *workspaceLaunchSub2API) UserGroups(_ context.Context, credential clients.SessionDelegatedCredential, userID int64) ([]clients.Sub2APIGroup, error) {
+	// Tenant fixtures use user 41; the reserved operator fixture maps
+	// admin@medopl.cn to user 1. Both identities must exercise the same live
+	// Codex-group contract without changing production behavior.
+	if credential.Bearer != "test-user-delegated-token" || userID != 41 && userID != 1 {
+		return nil, errors.New("wrong delegated group identity")
+	}
+	if s.groups != nil {
+		return append([]clients.Sub2APIGroup(nil), s.groups...), nil
+	}
+	return []clients.Sub2APIGroup{{ID: 7, Name: "Codex", Platform: "openai", RateMultiplier: 1, Status: "active"}}, nil
+}
+
 func (s *workspaceLaunchSub2API) WorkspaceKeysForConvergence(_ context.Context, userID int64, name string) ([]clients.Sub2APIWorkspaceKey, error) {
 	keys := make([]clients.Sub2APIWorkspaceKey, 0, len(s.keys))
 	for _, key := range s.keys {
@@ -1193,11 +1258,12 @@ func (s *workspaceLaunchSub2API) UserKey(_ context.Context, credential clients.S
 
 func (s *workspaceLaunchSub2API) CreateUserKey(_ context.Context, credential clients.SessionDelegatedCredential, userID int64, input clients.Sub2APICreateKeyInput, idempotencyKey string) (clients.Sub2APIWorkspaceKey, error) {
 	*s.events = append(*s.events, "sub2api.create_workspace_key")
-	if credential.Bearer != "test-user-delegated-token" || idempotencyKey == "" || !strings.HasPrefix(input.Name, "opl-workspace-") || input.Name == "opl-workspace" || input.ExpiresInDays != nil {
+	if credential.Bearer != "test-user-delegated-token" || idempotencyKey == "" || input.GroupID != 7 || !strings.HasPrefix(input.Name, "opl-workspace-") || input.Name == "opl-workspace" || input.ExpiresInDays != nil {
 		return clients.Sub2APIWorkspaceKey{}, errors.New("invalid Workspace Key create")
 	}
 	s.createCalls++
-	key := clients.Sub2APIWorkspaceKey{ID: int64(18 + s.createCalls), UserID: userID, Name: input.Name, Key: "created-workspace-key-secret", Status: "active"}
+	groupID := input.GroupID
+	key := clients.Sub2APIWorkspaceKey{ID: int64(18 + s.createCalls), UserID: userID, Name: input.Name, Key: "created-workspace-key-secret", GroupID: &groupID, Status: "active"}
 	if s.keys == nil {
 		s.keys = map[int64]clients.Sub2APIWorkspaceKey{}
 	}
@@ -1205,8 +1271,19 @@ func (s *workspaceLaunchSub2API) CreateUserKey(_ context.Context, credential cli
 	return key, nil
 }
 
-func (s *workspaceLaunchSub2API) UpdateUserKey(context.Context, clients.SessionDelegatedCredential, int64, int64, clients.Sub2APIUpdateKeyInput) (clients.Sub2APIWorkspaceKey, error) {
-	return clients.Sub2APIWorkspaceKey{}, errors.New("unexpected Workspace Key update")
+func (s *workspaceLaunchSub2API) UpdateUserKey(_ context.Context, credential clients.SessionDelegatedCredential, userID, keyID int64, input clients.Sub2APIUpdateKeyInput) (clients.Sub2APIWorkspaceKey, error) {
+	if credential.Bearer != "test-user-delegated-token" || input.GroupID == nil || *input.GroupID != 7 {
+		return clients.Sub2APIWorkspaceKey{}, errors.New("invalid Workspace Key update")
+	}
+	key, ok := s.keys[keyID]
+	if !ok || key.UserID != userID {
+		return clients.Sub2APIWorkspaceKey{}, clients.ErrSub2APIKeyNotFound
+	}
+	s.updateCalls++
+	groupID := *input.GroupID
+	key.GroupID = &groupID
+	s.keys[keyID] = key
+	return key, nil
 }
 
 func (s *workspaceLaunchSub2API) DeleteUserKey(context.Context, clients.SessionDelegatedCredential, int64, int64) error {
@@ -1292,7 +1369,9 @@ func newWorkspaceLaunchWorkerFixtureForPlanMode(t *testing.T, balances []int64, 
 		operation.Status, operation.Phase = "debit_pending", "debit_pending"
 		operation.ComputeNodePoolID = "np-" + packageID
 		operation.WorkspaceAPIKeyID = 19
-		key := clients.Sub2APIWorkspaceKey{ID: operation.WorkspaceAPIKeyID, UserID: 41, Name: workspaceReservedKeyName(operation.WorkspaceID), Key: "created-workspace-key-secret", Status: "active"}
+		key := clients.Sub2APIWorkspaceKey{ID: operation.WorkspaceAPIKeyID, UserID: 41, Name: workspaceReservedKeyName(operation.WorkspaceID), Key: "created-workspace-key-secret", GroupID: workspaceTestCodexGroupID(), Status: "active"}
+		operation.WorkspaceKeyGroupID = *key.GroupID
+		operation.WorkspaceKeyStatus = workspaceKeyCodexGroupBound
 		sub2API.keys = map[int64]clients.Sub2APIWorkspaceKey{key.ID: key}
 		mustStore(t, store.SaveRuntimeOperation(context.Background(), workspaceLaunchOperationRow(operation)))
 		operationID = operation.ID
@@ -1793,6 +1872,51 @@ func TestWorkspaceLaunchUnknownStageAttemptSurvivesRestartWithoutSecondWrite(t *
 	}
 }
 
+func TestWorkspaceLaunchSecretRequiresPersistedLiveCodexGroupReadback(t *testing.T) {
+	for _, test := range []struct {
+		name           string
+		persistedGroup int64
+		keyGroup       *int64
+		wantSecret     bool
+	}{
+		{name: "configured marker with exact live group readback", persistedGroup: 7, keyGroup: func() *int64 { value := int64(7); return &value }(), wantSecret: true},
+		{name: "configured marker without live group authority", persistedGroup: 0, keyGroup: func() *int64 { value := int64(7); return &value }()},
+		{name: "same key group disappeared", persistedGroup: 7, keyGroup: nil},
+		{name: "same key points at a different group", persistedGroup: 7, keyGroup: func() *int64 { value := int64(8); return &value }()},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newExistingWorkspaceLaunchWorkerFixtureForPlan(t, []int64{1_000_000_000}, nil, nil, "basic", 10, false)
+			operation := fixture.operation(t)
+			operation.Status, operation.Phase, operation.ErrorCode = "preparing", "secret_writing", ""
+			operation.WorkspaceKeyStatus = "configured"
+			operation.WorkspaceKeyGroupID = test.persistedGroup
+			operation.ContinuationAttemptBudgets["storage"] = workspaceLaunchStageBudget{Attempted: 1, Confirmed: 1, Max: workspaceLaunchStageMax}
+			operation.ContinuationAttemptBudgets["attachment"] = workspaceLaunchStageBudget{Attempted: 1, Confirmed: 1, Max: workspaceLaunchStageMax}
+			key := fixture.sub2API.keys[operation.WorkspaceAPIKeyID]
+			key.GroupID = test.keyGroup
+			fixture.sub2API.keys[operation.WorkspaceAPIKeyID] = key
+			row := workspaceLaunchOperationRow(operation)
+			mustStore(t, fixture.store.memoryTableStore.SaveRuntimeOperation(context.Background(), row))
+			operation.PersistedResult = stringValue(row["result"])
+
+			err := fixture.app.fulfillWorkspaceLaunch(context.Background(), fixture.service, &operation)
+			current := fixture.operation(t)
+			secretWrites := countStrings(*fixture.events, "fabric.gateway-secret")
+			runtimeWrites := countStrings(*fixture.events, "fabric.runtime")
+			if test.wantSecret {
+				if secretWrites != 1 || current.ErrorCode == "apiKey.codexGroupReadbackUnavailable" {
+					t.Fatalf("exact Codex readback did not cross Secret boundary: err=%v operation=%#v events=%#v", err, current, *fixture.events)
+				}
+				_ = runtimeWrites
+				return
+			}
+			if err == nil || current.Status != "manual_review" || current.Phase != "secret_writing" || current.ErrorCode != "apiKey.codexGroupReadbackUnavailable" || secretWrites != 0 || runtimeWrites != 0 {
+				t.Fatalf("invalid Codex readback crossed Secret/Runtime boundary: err=%v operation=%#v events=%#v", err, current, *fixture.events)
+			}
+		})
+	}
+}
+
 func TestPostgresWorkspaceLaunchUnknownStageAttemptSurvivesStoreReopenWithoutSecondWrite(t *testing.T) {
 	t.Setenv("OPL_MONTHLY_BILLING_WORKER_ENABLED", "false")
 	t.Setenv("OPL_PROVIDER_RECONCILE_WORKER_ENABLED", "false")
@@ -1820,6 +1944,10 @@ func TestPostgresWorkspaceLaunchUnknownStageAttemptSurvivesStoreReopenWithoutSec
 	operation := newWorkspaceLaunchOperation("acct-alpha", "usr-alpha", "Alpha", "basic", 10, false, pilotPriceVersion, 52_580_000, "launch-postgres-secret-unknown")
 	operation.Status, operation.Phase = "preparing", "secret_writing"
 	operation.WorkspaceAPIKeyID = 19
+	// Secret-boundary recovery requires the non-sensitive live Codex group
+	// evidence persisted by key convergence. The raw Key remains test-only
+	// provider state and is never part of the operation row.
+	operation.WorkspaceKeyGroupID = *workspaceTestCodexGroupID()
 	operation.AttachmentID = "attachment-alpha"
 	operation.ContinuationAttemptBudgets["storage"] = workspaceLaunchStageBudget{Attempted: 1, Confirmed: 1, Max: workspaceLaunchStageMax}
 	operation.ContinuationAttemptBudgets["attachment"] = workspaceLaunchStageBudget{Attempted: 1, Confirmed: 1, Max: workspaceLaunchStageMax}
@@ -1831,7 +1959,7 @@ func TestPostgresWorkspaceLaunchUnknownStageAttemptSurvivesStoreReopenWithoutSec
 	sub2API := &workspaceLaunchSub2API{
 		monthlySub2API: &monthlySub2API{events: &events},
 		keys: map[int64]clients.Sub2APIWorkspaceKey{
-			19: {ID: 19, UserID: 41, Name: workspaceReservedKeyName(operation.WorkspaceID), Key: "workspace-key-secret", Status: "active"},
+			19: {ID: 19, UserID: 41, Name: workspaceReservedKeyName(operation.WorkspaceID), Key: "workspace-key-secret", GroupID: workspaceTestCodexGroupID(), Status: "active"},
 		},
 	}
 	fabric := &monthlyFabric{

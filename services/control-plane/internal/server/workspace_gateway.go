@@ -446,6 +446,10 @@ func (app *controlPlaneServer) runWorkspaceKeyRotation(r *http.Request, service 
 				return operation, err
 			}
 		case "replacement_create":
+			codexGroupID, groupErr := workspaceCodexGroupID(ctx, service, credential, userID)
+			if groupErr != nil {
+				return operation, groupErr
+			}
 			keys, err := workspaceRotationKeys(ctx, service, credential, userID, operation.ReplacementName)
 			if err != nil {
 				return operation, err
@@ -455,7 +459,7 @@ func (app *controlPlaneServer) runWorkspaceKeyRotation(r *http.Request, service 
 				return operation, errWorkspaceKeyRotationConflict
 			}
 			if len(matches) == 1 {
-				if matches[0].Status != "active" || matches[0].ID <= 0 {
+				if matches[0].Status != "active" || matches[0].ID <= 0 || !workspaceKeyCodexGroupMatches(matches[0], codexGroupID) {
 					return operation, errWorkspaceKeyRotationConflict
 				}
 				operation.NewKeyID = matches[0].ID
@@ -466,18 +470,18 @@ func (app *controlPlaneServer) runWorkspaceKeyRotation(r *http.Request, service 
 						return operation, err
 					}
 				}
-				created, err := service.CreateGatewayUserKey(ctx, credential, userID, clients.Sub2APICreateKeyInput{Name: operation.ReplacementName}, operationID+":replacement")
+				created, err := service.CreateGatewayUserKey(ctx, credential, userID, clients.Sub2APICreateKeyInput{Name: operation.ReplacementName, GroupID: codexGroupID}, operationID+":replacement")
 				if err != nil {
 					return operation, err
 				}
-				if created.ID <= 0 || created.UserID != userID || created.Name != operation.ReplacementName || created.Status != "active" {
+				if created.ID <= 0 || created.UserID != userID || created.Name != operation.ReplacementName || created.Status != "active" || !workspaceKeyCodexGroupMatches(created, codexGroupID) {
 					return operation, errWorkspaceKeyRotationConflict
 				}
 				readback, err := service.GatewayUserKey(ctx, credential, userID, created.ID)
 				if err != nil {
 					return operation, err
 				}
-				if readback.ID != created.ID || readback.UserID != userID || readback.Name != operation.ReplacementName || readback.Status != "active" {
+				if readback.ID != created.ID || readback.UserID != userID || readback.Name != operation.ReplacementName || readback.Status != "active" || !workspaceKeyCodexGroupMatches(readback, codexGroupID) {
 					return operation, errWorkspaceKeyRotationConflict
 				}
 				operation.NewKeyID = readback.ID
@@ -632,6 +636,27 @@ func (app *controlPlaneServer) runWorkspaceKeyRotation(r *http.Request, service 
 
 func workspaceReservedKeyName(workspaceID string) string {
 	return "opl-workspace-" + stableID(workspaceID)[:12]
+}
+
+func workspaceCodexGroupID(ctx context.Context, service *controlplane.Service, credential clients.SessionDelegatedCredential, userID int64) (int64, error) {
+	groups, err := service.GatewayUserGroups(ctx, credential, userID)
+	if err != nil {
+		return 0, errWorkspaceCodexGroupUnavailable
+	}
+	var matches []clients.Sub2APIGroup
+	for _, group := range groups {
+		if group.ID > 0 && group.Name == "Codex" && strings.EqualFold(strings.TrimSpace(group.Status), "active") {
+			matches = append(matches, group)
+		}
+	}
+	if len(matches) != 1 {
+		return 0, errWorkspaceCodexGroupUnavailable
+	}
+	return matches[0].ID, nil
+}
+
+func workspaceKeyCodexGroupMatches(key clients.Sub2APIWorkspaceKey, groupID int64) bool {
+	return key.GroupID != nil && *key.GroupID == groupID
 }
 
 func workspaceRotationReplacementName(operationID string) string {

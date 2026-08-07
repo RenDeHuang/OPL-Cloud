@@ -600,7 +600,8 @@ test("production self-hosted jobs use one run-and-job isolated source checkout",
       "recovery-acceptance-extra-funding-prepare",
       "recovery-acceptance-original-launch",
       "recovery-acceptance-canary",
-      "recovery-plan-operation"
+      "recovery-plan-operation",
+      "compute-claim-readback"
     ]]
   ]);
 
@@ -1252,6 +1253,29 @@ test("server-owned Recovery Plan diagnosis and execution are exact original-orde
   assert.equal(deployment.productionWorkspaceRecoveryPlan.artifact.validator, "tools/production-live-qa.ts#validateProductionWorkspaceRecoveryPlanArtifact");
 });
 
+test("original Launch compute claim readback is a single GET-only production mode", async () => {
+  const workflow = await readWorkflow(".github/workflows/production-basic-customer-operation.yml");
+  const inputs = workflow.on.workflow_dispatch.inputs;
+  const job = workflowJob(workflow, "compute-claim-readback");
+  const runs = serializedRuns(job);
+  assert.ok(inputs.operation_mode.options.includes("compute_claim_readback"));
+  assert.match(String(job.if), /inputs\.operation_mode == 'compute_claim_readback'/);
+  assert.match(String(job.if), /inputs\.workspace_identity_account_id != ''/);
+  assert.match(String(job.if), /inputs\.recovery_plan_launch_operation_id != ''/);
+  assert.deepEqual(job["runs-on"], ["self-hosted", "tencent-cloud", "opl-cloud", "tke-vpc"]);
+  assert.equal(job.environment, "production");
+  assert.equal(job.env.OPL_RECOVERY_PLAN_ACCOUNT_ID, "${{ inputs.workspace_identity_account_id }}");
+  assert.equal(job.env.OPL_RECOVERY_PLAN_LAUNCH_OPERATION_ID, "${{ inputs.recovery_plan_launch_operation_id }}");
+  assert.match(runs, /--workspace-compute-claim-readback/);
+  assert.match(runs, /kubectl .* get pods/);
+  assert.match(runs, /kubectl .* get secret opl-cloud-internal-service/);
+  assert.match(runs, /--fabric-pod/);
+  assert.match(runs, /compute-claim-readback\.json/);
+  assert.match(runs, /mutationCounts/);
+  assert.doesNotMatch(runs, /recovery-plan\/(?:diagnose|validate|execute)|--recovery-plan-(?:diagnose|validate|execute)|CreateDisks|create_storage_volume|patch node|debit|refund|create_cvm/i);
+  assert.doesNotMatch(JSON.stringify(job), /OPL_SUB2API_ADMIN_PASSWORD|OPL_BASIC_CANARY_CUSTOMER_PASSWORD|approval_json/);
+});
+
 test("Fabric recovery ledger readback is artifact-bound, read-only, and cannot replay Diagnose or claim", async () => {
   const workflow = await readWorkflow(".github/workflows/production-basic-customer-operation.yml");
   const deployment = await readJson(deploymentContractPath);
@@ -1531,6 +1555,7 @@ test("recovered Workspace E2E is a separate hosted mode with no resource mutatio
     "recovery_acceptance_extra_funding_prepare",
     "recovery_acceptance_original_launch",
     "controlled_pilot_closed_validate",
+    "compute_claim_readback",
     "recovered_workspace_e2e"
   ]);
   assert.equal(inputs.customer_email.required, false);

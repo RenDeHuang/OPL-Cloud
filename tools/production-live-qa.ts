@@ -639,6 +639,270 @@ function manualReviewNodeEvidence(node, target, allocation) {
   };
 }
 
+const COMPUTE_CLAIM_READBACK_MODE = "compute_claim_readback";
+
+// The readback runner is deliberately evidence-only. Business decisions are
+// accepted only when they are already attached to a Control Plane/Fabric
+// snapshot; this function never infers a stage or authorizes a write.
+const COMPUTE_CLAIM_READBACK_DECISION_FIELDS = [
+  "currentStage", "stageState", "firstFalsePredicate", "expected", "actual", "authority",
+  "nextAction", "failureStage", "stageAttemptId", "decisionVersion", "decidedAt"
+];
+
+function normalizeAuthoritativeComputeClaimDecision(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const decision = {};
+  for (const field of COMPUTE_CLAIM_READBACK_DECISION_FIELDS) {
+    if (typeof value[field] === "string" && value[field].trim() !== "") decision[field] = value[field];
+    else if (field === "decisionVersion" && Number.isInteger(value[field]) && value[field] > 0) decision[field] = value[field];
+  }
+  return Object.keys(decision).length > 0 ? decision : null;
+}
+
+function computeClaimReadbackStageBudget(operation) {
+  const budget = operation?.redactedProviderPayload?.normalLaunchMutationBudget?.compute ||
+    operation?.redactedProviderPayload?.attemptBudget?.compute || {};
+  return {
+    attempted: Number.isInteger(budget.attempted) ? budget.attempted : 0,
+    confirmed: Number.isInteger(budget.confirmed) ? budget.confirmed : 0,
+    unknown: Number.isInteger(budget.unknown) ? budget.unknown : 0,
+    max: Number.isInteger(budget.max) ? budget.max : 1
+  };
+}
+
+function computeClaimReadbackStorageBudget(operation) {
+  const budget = operation?.redactedProviderPayload?.normalLaunchMutationBudget?.storage ||
+    operation?.redactedProviderPayload?.attemptBudget?.storage || {};
+  return {
+    attempted: Number.isInteger(budget.attempted) ? budget.attempted : 0,
+    confirmed: Number.isInteger(budget.confirmed) ? budget.confirmed : 0,
+    unknown: Number.isInteger(budget.unknown) ? budget.unknown : 0,
+    max: Number.isInteger(budget.max) ? budget.max : 1
+  };
+}
+
+function computeClaimReadbackOperation(operations, action, resourceId, operationId) {
+  const matches = Array.isArray(operations)
+    ? operations.filter((operation) => operation?.action === action && operation?.resourceId === resourceId &&
+      (!operationId || operation?.operationId === operationId || operation?.idempotencyKey === operationId))
+    : [];
+  if (matches.length !== 1) {
+    return { cardinality: matches.length, status: matches.length === 0 ? "absent" : "conflict", operation: null };
+  }
+  return { cardinality: 1, status: safeManualReviewStatus(matches[0]?.status), operation: matches[0] };
+}
+
+function computeClaimReadbackNode(node, target) {
+  const metadata = node?.metadata || {};
+  const labels = metadata.labels && typeof metadata.labels === "object" ? { ...metadata.labels } : {};
+  const taints = Array.isArray(node?.spec?.taints) ? node.spec.taints : [];
+  const workspaceTaints = taints.filter((taint) => taint?.key === "oplcloud.cn/workspace-id");
+  const taint = workspaceTaints.length === 1 ? {
+    key: String(workspaceTaints[0]?.key || ""),
+    value: String(workspaceTaints[0]?.value || ""),
+    effect: String(workspaceTaints[0]?.effect || "")
+  } : null;
+  const addresses = Array.isArray(node?.status?.addresses) ? node.status.addresses : [];
+  const privateIPs = addresses.filter((address) => address?.type === "InternalIP").map((address) => String(address.address || ""));
+  const labelsMatch = labels["oplcloud.cn/resource-id"] === target.computeAllocationId &&
+    labels["oplcloud.cn/account-id"] === target.accountId && labels["oplcloud.cn/workspace-id"] === target.workspaceId;
+  const identityMatches = metadata.name === target.nodeName && labelsMatch &&
+    (target.privateIp ? privateIPs.length === 1 && privateIPs[0] === target.privateIp : true);
+  const ownership = identityMatches && taint?.effect === "NoSchedule" &&
+    (taint.value === "unallocated" || taint.value === target.workspaceId)
+    ? taint.value === target.workspaceId ? "target_owned" : "unallocated"
+    : "conflict";
+  return {
+    name: String(metadata.name || ""),
+    resourceVersion: String(metadata.resourceVersion || ""),
+    labels,
+    taint,
+    identity: {
+      nameMatches: metadata.name === target.nodeName,
+      resourceIdLabelMatches: labels["oplcloud.cn/resource-id"] === target.computeAllocationId,
+      accountIdLabelMatches: labels["oplcloud.cn/account-id"] === target.accountId,
+      workspaceIdLabelMatches: labels["oplcloud.cn/workspace-id"] === target.workspaceId,
+      privateIpMatches: target.privateIp ? privateIPs.length === 1 && privateIPs[0] === target.privateIp : true
+    },
+    ownership
+  };
+}
+
+function computeClaimReadbackProviderTruth(providerTruth) {
+  const computeState = ["ready", "absent", "unknown"].includes(String(providerTruth?.computeState || ""))
+    ? providerTruth.computeState : "unknown";
+  const storageState = ["ready", "absent", "unknown"].includes(String(providerTruth?.storageState || ""))
+    ? providerTruth.storageState : "unknown";
+  return {
+    compute: computeState,
+    storage: storageState,
+    computeResourceId: String(providerTruth?.compute?.providerResourceId || providerTruth?.compute?.cvmInstanceId || ""),
+    storageResourceId: String(providerTruth?.storage?.providerResourceId || "")
+  };
+}
+
+export function summarizeWorkspaceComputeClaimReadback(snapshot = {}) {
+  const target = {
+    accountId: String(snapshot.accountId || ""),
+    launchOperationId: String(snapshot.launchOperationId || ""),
+    workspaceId: String(snapshot.ownership?.workspaceId || snapshot.allocation?.workspaceId || ""),
+    computeAllocationId: String(snapshot.allocation?.id || ""),
+    storageId: String(snapshot.storage?.id || ""),
+    nodeName: String(snapshot.allocation?.nodeName || snapshot.ownership?.nodeName || ""),
+    privateIp: String(snapshot.allocation?.privateIp || ""),
+    cvmInstanceId: String(snapshot.allocation?.cvmInstanceId || snapshot.allocation?.instanceId || "")
+  };
+  const computeOperation = computeClaimReadbackOperation(snapshot.operations, "create_compute_allocation", target.computeAllocationId, `${target.launchOperationId}:compute`);
+  const storageOperation = computeClaimReadbackOperation(snapshot.operations, "create_storage_volume", target.storageId, `${target.launchOperationId}:storage`);
+  const providerTruth = computeClaimReadbackProviderTruth(snapshot.providerTruth);
+  const node = computeClaimReadbackNode(snapshot.node, target);
+  const computeBudget = computeClaimReadbackStageBudget(computeOperation.operation);
+  const storageBudget = computeClaimReadbackStorageBudget(storageOperation.operation);
+  const storageState = storageOperation.cardinality > 1 || storageOperation.status === "conflict"
+    ? "conflict"
+    : storageOperation.cardinality === 1 && providerTruth.storage === "ready" ? "exact_existing"
+      : storageOperation.cardinality === 0 && providerTruth.storage === "absent" ? "absent"
+        : storageOperation.cardinality === 1 ? "attempted_unknown" : "unknown";
+  const result = {
+    schemaVersion: 1,
+    operationMode: COMPUTE_CLAIM_READBACK_MODE,
+    status: "evidence_only",
+    authoritativeDecision: normalizeAuthoritativeComputeClaimDecision(snapshot.authoritativeDecision),
+    node,
+    providerTruth,
+    compute: { stageBudget: computeBudget, operation: { cardinality: computeOperation.cardinality, status: computeOperation.status } },
+    storage: {
+      state: storageState,
+      stageBudget: storageBudget,
+      operation: { cardinality: storageOperation.cardinality, status: storageOperation.status },
+      providerTruth: providerTruth.storage
+    },
+    mutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
+  };
+  return result;
+}
+
+export function workspaceComputeClaimReadbackArtifact(result) {
+  if (!result || result.schemaVersion !== 1 || result.operationMode !== COMPUTE_CLAIM_READBACK_MODE || result.status !== "evidence_only" ||
+    !result.mutationCounts || result.mutationCounts.sub2api !== 0 || result.mutationCounts.tencent !== 0 || result.mutationCounts.kubernetes !== 0 ||
+    !result.node || !result.storage || !result.providerTruth) {
+    throw new Error("compute_claim_readback_artifact_invalid");
+  }
+  const labels = result.node.labels && typeof result.node.labels === "object" ? result.node.labels : {};
+  const redactedLabels = {};
+  for (const key of Object.keys(labels).sort()) {
+    const value = String(labels[key] || "");
+    redactedLabels[key] = /^(acct-|ws-|ca_)/.test(value)
+      ? `sha256:${createHash("sha256").update(value).digest("hex")}`
+      : value;
+  }
+  return {
+    schemaVersion: 1,
+    operationMode: COMPUTE_CLAIM_READBACK_MODE,
+    status: result.status,
+    authoritativeDecision: result.authoritativeDecision || null,
+    node: {
+      resourceVersion: result.node.resourceVersion,
+      labels: redactedLabels,
+      taint: result.node.taint,
+      identity: result.node.identity,
+      ownership: result.node.ownership
+    },
+    providerTruth: result.providerTruth,
+    compute: result.compute,
+    storage: result.storage,
+    mutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
+    reads: result.reads,
+    readbackErrors: Array.isArray(result.readbackErrors) ? [...result.readbackErrors] : []
+  };
+}
+
+function workspaceComputeClaimReadbackTargetFromOperations(operations, accountId, launchOperationId) {
+  const matches = (action, operationId) => (Array.isArray(operations) ? operations : []).filter((operation) =>
+    operation?.action === action && (operation?.operationId === operationId || operation?.idempotencyKey === operationId) && operation?.accountId === accountId);
+  const compute = matches("create_compute_allocation", `${launchOperationId}:compute`);
+  const storage = matches("create_storage_volume", `${launchOperationId}:storage`);
+  if (compute.length !== 1 || storage.length > 1) throw new Error("compute_claim_readback_operation_identity_invalid");
+  const allocation = compute[0]?.redactedProviderPayload?.resource || compute[0]?.redactedProviderPayload?.allocation || {};
+  const target = {
+    accountId,
+    launchOperationId,
+    computeAllocationId: String(compute[0].resourceId || ""),
+    storageId: String(storage[0]?.resourceId || compute[0]?.redactedProviderPayload?.storageVolumeId || ""),
+    workspaceId: String(compute[0].workspaceId || ""),
+    nodeName: String(allocation.nodeName || compute[0]?.redactedProviderPayload?.nodeName || ""),
+    privateIp: String(allocation.privateIp || compute[0]?.redactedProviderPayload?.privateIp || ""),
+    cvmInstanceId: String(allocation.cvmInstanceId || allocation.instanceId || compute[0]?.redactedProviderPayload?.cvmInstanceId || "")
+  };
+  if (!/^ca_[A-Za-z0-9-]+$/.test(target.computeAllocationId) || !/^vol_[A-Za-z0-9-]+$/.test(target.storageId) ||
+    !/^ws-[A-Za-z0-9-]+$/.test(target.workspaceId) || !target.nodeName || !target.cvmInstanceId) {
+    throw new Error("compute_claim_readback_target_unavailable");
+  }
+  return target;
+}
+
+export async function readWorkspaceComputeClaimReadback({
+  accountId,
+  launchOperationId,
+  kubeconfigPath,
+  fabricPod,
+  fabricNamespace,
+  fetchImpl = globalThis.fetch,
+  execFileImpl = defaultExecFile
+} = {}) {
+  const normalizedAccountId = String(accountId || "").trim();
+  const normalizedLaunchOperationId = String(launchOperationId || "").trim();
+  if (!/^acct-[A-Za-z0-9-]+$/.test(normalizedAccountId) || !/^workspace-launch-[A-Za-z0-9-]+$/.test(normalizedLaunchOperationId) ||
+    !String(kubeconfigPath || "").startsWith("/") || !fabricPod || !fabricNamespace) {
+    throw new Error("compute_claim_readback_config_invalid");
+  }
+  const options = {
+    kubeconfigPath: String(kubeconfigPath),
+    fabricPod: manualReviewFabricPodName(fabricPod),
+    fabricNamespace: manualReviewFabricNamespace(fabricNamespace),
+    execFileImpl
+  };
+  const operationsRead = await manualReviewFabricGet(options, "/fabric/operations", "fabric_operations_not_found", "fabric_operations_unavailable");
+  if (operationsRead.state !== "present" || !Array.isArray(operationsRead.payload)) throw new Error(operationsRead.errorCode);
+  const target = workspaceComputeClaimReadbackTargetFromOperations(operationsRead.payload, normalizedAccountId, normalizedLaunchOperationId);
+  const computeOperation = computeClaimReadbackOperation(operationsRead.payload, "create_compute_allocation", target.computeAllocationId, `${normalizedLaunchOperationId}:compute`);
+  const computeRead = await manualReviewFabricGet(options, `/fabric/compute-allocations/${encodeURIComponent(target.computeAllocationId)}`, "compute_allocation_not_found", "compute_allocation_unavailable");
+  const ownershipRead = await manualReviewFabricGet(options, `/fabric/machine-ownerships/${encodeURIComponent(target.computeAllocationId)}`, "machine_ownership_not_found", "machine_ownership_unavailable");
+  const storageRead = await manualReviewFabricGet(options, `/fabric/storage-volumes/${encodeURIComponent(target.storageId)}`, "storage_volume_not_found", "storage_volume_unavailable");
+  const providerTruthRead = await manualReviewFabricGet(options, `/fabric/monthly-provider-truth?computeAllocationId=${encodeURIComponent(target.computeAllocationId)}&storageVolumeId=${encodeURIComponent(target.storageId)}`, "monthly_provider_truth_unavailable", "monthly_provider_truth_unavailable");
+  let nodeRead;
+  try {
+    const result = await execFileImpl("kubectl", ["--kubeconfig", String(kubeconfigPath), "get", "node", target.nodeName, "-o", "json"], { encoding: "utf8", maxBuffer: 4 * 1024 * 1024 });
+    nodeRead = { state: "present", payload: JSON.parse(result.stdout), errorCode: "none" };
+  } catch {
+    nodeRead = { state: "unavailable", payload: null, errorCode: "node_get_unavailable" };
+  }
+  const result = summarizeWorkspaceComputeClaimReadback({
+    accountId: normalizedAccountId,
+    launchOperationId: normalizedLaunchOperationId,
+    operations: operationsRead.payload,
+    allocation: computeRead.payload,
+    ownership: ownershipRead.payload,
+    storage: storageRead.payload || { id: target.storageId },
+    providerTruth: providerTruthRead.payload,
+    node: nodeRead.payload,
+    authoritativeDecision: computeOperation.operation?.redactedProviderPayload?.currentDecision ||
+      computeOperation.operation?.redactedProviderPayload?.authoritativeDecision || null
+  });
+  return {
+    ...result,
+    reads: {
+      operations: operationsRead.state,
+      compute: computeRead.state,
+      ownership: ownershipRead.state,
+      storage: storageRead.state,
+      providerTruth: providerTruthRead.state,
+      node: nodeRead.state
+    },
+    readbackErrors: [computeRead, ownershipRead, storageRead, providerTruthRead, nodeRead].filter((read) => read.state === "unavailable").map((read) => read.errorCode)
+  };
+}
+
 export async function diagnoseManualReviewRecovery({
   fabricOrigin,
   internalServiceToken,
@@ -4979,6 +5243,23 @@ function cliArgs(argv) {
   return args;
 }
 
+function blockedWorkspaceComputeClaimReadbackArtifact(error) {
+  return {
+    schemaVersion: 1,
+    operationMode: COMPUTE_CLAIM_READBACK_MODE,
+    status: "blocked",
+    firstIncompleteStage: "compute_claim",
+    firstFalsePredicate: "provider.readback",
+    expected: "authoritative_snapshot",
+    actual: "unavailable",
+    authority: "production.runner",
+    nextAction: "MANUAL_REVIEW",
+    failureStage: "compute_claim",
+    errorCode: /^[a-z0-9_]{1,96}$/.test(String(error?.message || "")) ? error.message : "compute_claim_readback_failed",
+    mutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
+  };
+}
+
 function computeClaimCliMode(argv) {
   if (argv.includes("--compute-claim-diagnose")) return COMPUTE_CLAIM_DIAGNOSE_MODE;
   if (argv.includes("--compute-claim-validate")) return COMPUTE_CLAIM_VALIDATE_MODE;
@@ -5069,6 +5350,7 @@ export async function runProductionLiveQaCli({
   }
   const computeClaimMode = computeClaimCliMode(argv);
   const workspaceLaunchReadbackMode = workspaceLaunchReadbackCliMode(argv);
+  const workspaceComputeClaimReadbackMode = argv.includes("--workspace-compute-claim-readback");
   const recoveryPlanDiagnoseMode = argv.includes("--recovery-plan-diagnose");
   const recoveryPlanValidateMode = argv.includes("--recovery-plan-validate");
   const recoveryPlanExecuteMode = argv.includes("--recovery-plan-execute");
@@ -5076,6 +5358,27 @@ export async function runProductionLiveQaCli({
   try {
     if (env.OPL_VERIFY_MODEL_ACCESS_KEY) throw new Error("production_live_qa_raw_key_forbidden");
     const args = cliArgs(argv);
+    if (workspaceComputeClaimReadbackMode) {
+      const conflicts = [
+        "read-only", "workspace-identity-diagnose", "recovery-plan-diagnose", "recovery-plan-validate", "recovery-plan-execute",
+        "manual-review-diagnose", "workspace-launch-readback-diagnose", "workspace-launch-readback-recover",
+        "compute-claim-diagnose", "compute-claim-validate", "compute-claim-recover", "compute-claim-continue",
+        "recovered-workspace-e2e", "basic-customer-canary", "controlled-pilot-closed-validate",
+        "allow-account-provision", "allow-wallet-recharge", "allow-workspace-purchase", "allow-model-write", "allow-gateway-write",
+        "approval-id", "funding-mode", "phase", "plan-id", "plan-digest"
+      ];
+      if (conflicts.some((name) => args[name])) throw new Error("compute_claim_readback_conflict");
+      const result = await readWorkspaceComputeClaimReadback({
+        accountId: args["account-id"] || env.OPL_RECOVERY_PLAN_ACCOUNT_ID,
+        launchOperationId: args["launch-operation-id"] || env.OPL_RECOVERY_PLAN_LAUNCH_OPERATION_ID,
+        kubeconfigPath: args.kubeconfig || env.TENCENT_DEPLOY_KUBECONFIG_PATH,
+        fabricPod: args["fabric-pod"] || env.OPL_FABRIC_POD,
+        fabricNamespace: args["fabric-namespace"] || env.OPL_K8S_NAMESPACE || "opl-cloud",
+        execFileImpl
+      });
+      stdout.write(`${JSON.stringify(workspaceComputeClaimReadbackArtifact(result), null, 2)}\n`);
+      return result.status === "proven" || result.status === "blocked" ? 0 : 1;
+    }
     if (args["controlled-pilot-closed-validate"] === "true") {
       const conflicts = [
         "read-only", "workspace-identity-diagnose", "recovery-plan-diagnose", "recovery-plan-validate", "recovery-plan-execute", "recovered-workspace-e2e", "basic-customer-canary",
@@ -5528,6 +5831,12 @@ export async function runProductionLiveQaCli({
     stdout.write(`${JSON.stringify(result, null, 2)}\n`);
     return 0;
 	} catch (error) {
+		if (workspaceComputeClaimReadbackMode) {
+		  const artifact = blockedWorkspaceComputeClaimReadbackArtifact(error);
+		  stdout.write(`${JSON.stringify(artifact, null, 2)}\n`);
+		  stderr.write(`${JSON.stringify({ ok: false, errorCode: artifact.errorCode }, null, 2)}\n`);
+		  return 1;
+		}
 			if (controlledPilotClosedValidateMode) {
 			  const artifact = {
 			    schemaVersion: 1,

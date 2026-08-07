@@ -468,14 +468,14 @@ func TestUserKeyCreateIdempotent(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 			t.Fatal(err)
 		}
-		if len(input) != 2 || input["name"] != "general-key" || input["quota"] != 12.345678 {
+		if len(input) != 3 || input["name"] != "general-key" || input["group_id"] != float64(7) || input["quota"] != 12.345678 {
 			t.Fatalf("create input = %#v", input)
 		}
 		writeSub2APISuccess(t, w, userKeyFixture(17, "active"))
 	}, time.Second)
 
 	key, err := client.CreateUserKey(context.Background(), SessionDelegatedCredential{Bearer: "delegated-user-token"}, 41, Sub2APICreateKeyInput{
-		Name: "general-key", QuotaUSDMicros: 12_345_678,
+		Name: "general-key", GroupID: 7, QuotaUSDMicros: 12_345_678,
 	}, "key-create-once")
 	if err != nil || key.ID != 17 || key.UserID != 41 || key.Key != "sk-user-secret" || key.Status != "active" {
 		t.Fatalf("created key = %#v err=%v", key, err)
@@ -485,13 +485,24 @@ func TestUserKeyCreateIdempotent(t *testing.T) {
 	}
 }
 
+func TestUserKeyCreateRequiresPositiveGroupIDBeforeNetwork(t *testing.T) {
+	calls := 0
+	client := newSub2APITestClient(t, func(http.ResponseWriter, *http.Request) { calls++ }, time.Second)
+	_, err := client.CreateUserKey(context.Background(), SessionDelegatedCredential{Bearer: "delegated-user-token"}, 41, Sub2APICreateKeyInput{
+		Name: "general-key", GroupID: 0,
+	}, "key-create-invalid-group")
+	if err == nil || calls != 0 {
+		t.Fatalf("non-positive GroupID crossed client validation: err=%v calls=%d", err, calls)
+	}
+}
+
 func TestUserKeyCreateExpiresInDays(t *testing.T) {
 	client := newSub2APITestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		var input map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 			t.Fatal(err)
 		}
-		if len(input) != 3 || input["expires_in_days"] != float64(30) {
+		if len(input) != 4 || input["group_id"] != float64(7) || input["expires_in_days"] != float64(30) {
 			t.Fatalf("create expiry input = %#v", input)
 		}
 		if _, exists := input["expires_at"]; exists {
@@ -502,7 +513,7 @@ func TestUserKeyCreateExpiresInDays(t *testing.T) {
 
 	days := 30
 	key, err := client.CreateUserKey(context.Background(), SessionDelegatedCredential{Bearer: "delegated-user-token"}, 41, Sub2APICreateKeyInput{
-		Name: "general-key", QuotaUSDMicros: 12_345_678, ExpiresInDays: &days,
+		Name: "general-key", GroupID: 7, QuotaUSDMicros: 12_345_678, ExpiresInDays: &days,
 	}, "key-create-expiry")
 	if err != nil || key.ExpiresAt == nil || key.ExpiresAt.Format(time.RFC3339) != "2026-08-18T01:02:03Z" {
 		t.Fatalf("created expiry = %#v err=%v", key.ExpiresAt, err)
