@@ -680,6 +680,109 @@ func TestWorkspaceRecoveryPlanDiagnoseBuildsAndPersistsServerAuthority(t *testin
 	}
 }
 
+func TestWorkspaceRecoveryPlanDiagnoseKeepsComputeClaimPendingWhenNodeOwnershipIsUnallocated(t *testing.T) {
+	t.Setenv("OPL_RELEASE_SHA", strings.Repeat("a", 40))
+	t.Setenv("OPL_CLOUD_IMAGE", "uswccr.ccs.tencentyun.com/oplcloud/opl-cloud@sha256:"+strings.Repeat("b", 64))
+	scenario := newWorkspaceLaunchReadbackRecoveryScenario(t, "storage", "basic")
+	fixture := scenario.fixture
+	// Production-shaped readback: the compute resource is ready, but the exact
+	// Node still carries the unallocated workspace taint despite the target label.
+	// Storage has already been attempted with an unknown provider result.
+	compute := fixture.fabric.computeSync
+	compute.ID = scenario.unknown.ComputeID
+	compute.AccountID = scenario.unknown.AccountID
+	compute.WorkspaceID = scenario.unknown.WorkspaceID
+	compute.PackageID = scenario.unknown.PackageID
+	compute.Status = "ready"
+	compute.ProviderData = map[string]string{
+		"nodeLabel.oplcloud.cn/workspace-id": scenario.unknown.WorkspaceID,
+		"nodeTaint.oplcloud.cn/workspace-id": "unallocated",
+		"nodeResourceVersion":                "7",
+	}
+	fixture.fabric.providerTruth = &clients.MonthlyProviderTruth{
+		ComputeState: "ready", StorageState: "unknown",
+		Compute: compute,
+		Storage: scenario.readback.providerTruth.Storage,
+	}
+	fixture.service = controlplane.NewService(fixture.ledger, scenario.readback, fixture.sub2API)
+	server, err := NewPersistentServer(fixture.service, fixture.store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture.server, fixture.operator = server, reservedOperatorSessionForTest(t, server)
+
+	// The failed Execute shape can leave the control-plane phase at
+	// compute_claim_pending while the storage budget records an unknown attempt.
+	stalePhase := scenario.unknown
+	stalePhase.Phase = "compute_claim_pending"
+	stalePhase.ErrorCode = "workspace_launch_storage_attempt_unknown"
+	stalePhase.ComputePoolID = compute.PoolID
+	stalePhase.ComputeNodePoolID = compute.NodePoolID
+	stalePhase.ComputeMachineName = compute.MachineName
+	stalePhase.ComputeNodeName = compute.NodeName
+	stalePhase.ComputeCVMInstanceID = compute.CVMInstanceID
+	stalePhase.ComputePrivateIP = compute.PrivateIP
+	stalePhase.ComputeInstanceType = compute.InstanceType
+	stalePhase.ComputeZone = compute.Zone
+	stalePhase.ComputeChargeType = compute.ChargeType
+	stalePhase.ComputeRenewFlag = compute.RenewFlag
+	stalePhase.ComputeDeadline = compute.Deadline
+	fixture.fabric.computeClaimProof = computeClaimRecoveryProofForLaunchStorage(stalePhase, "unallocated", "storage_attempt_unknown", "")
+	predecessorDigest := strings.Repeat("c", 64)
+	stalePhase.RecoveryPlan = &workspaceRecoveryPlan{
+		SchemaVersion: workspaceRecoveryPlanSchemaVersion, PlanID: "recovery-plan-" + predecessorDigest[:20], PlanDigest: predecessorDigest,
+		Status: "failed", Action: "compute_claim_continue", OperationID: stalePhase.ID,
+		ErrorCode: "workspace_launch_storage_attempt_unknown",
+	}
+	stalePhase.RecoveryExecution = &workspaceRecoveryExecution{
+		ExecutionID: "recovery-exec-storage-attempt-unknown", RunIdentity: "control-plane-run-storage-attempt-unknown",
+		PlanID: stalePhase.RecoveryPlan.PlanID, PlanDigest: predecessorDigest, ApprovalDigest: strings.Repeat("d", 64), Decision: "continue",
+		Status: "failed", StartedAt: time.Now().UTC().Add(-time.Minute).Format(time.RFC3339Nano),
+		CompletedAt: time.Now().UTC().Format(time.RFC3339Nano), ErrorCode: stalePhase.ErrorCode,
+		MutationOutcome: workspaceRecoveryMutationOutcome{Status: "unknown", Source: "recovery_execution"},
+	}
+	if _, decodeErr := decodeWorkspaceLaunchOperation(workspaceLaunchOperationRow(stalePhase)); decodeErr != nil {
+		t.Fatalf("stale compute-claim fixture rejected: %v operation=%+v", decodeErr, stalePhase)
+	}
+	if err := fixture.store.SaveRuntimeOperation(context.Background(), workspaceLaunchOperationRow(stalePhase)); err != nil {
+		t.Fatal(err)
+	}
+	storageWrites := len(fixture.fabric.storageIDs)
+
+	response := requestWorkspaceRecoveryPlan(t, fixture, http.MethodPost, "/diagnose", map[string]any{
+		"accountId": stalePhase.AccountID,
+	})
+	plan := recoveryPlanResponse(t, response)
+	persisted, ok, err := fixture.app.workspaceLaunchOperation(context.Background(), stalePhase.ID)
+	if err != nil || !ok {
+		t.Fatalf("persisted operation read failed: ok=%v err=%v", ok, err)
+	}
+	storageBudget := persisted.ContinuationAttemptBudgets["storage"]
+	firstIncompleteStage := ""
+	if persisted.RecoveryPlan != nil && len(persisted.RecoveryPlan.Stages) > 0 {
+		firstIncompleteStage = persisted.RecoveryPlan.Stages[0].Stage
+	}
+	firstFalsePredicate := ""
+	for _, check := range persisted.RecoveryPlan.IdentityEvidence {
+		if check.Field == "provider.nodeOwnership" && check.Actual != "target_owned" {
+			firstFalsePredicate = check.Field
+			break
+		}
+	}
+	if response.Code != http.StatusOK || plan.Status != "diagnosed" || plan.MutationCounts != (workspaceRecoveryMutationCounts{}) ||
+		persisted.RecoveryPlan == nil || persisted.RecoveryPlan.Action != "compute_claim_continue" || persisted.RecoveryPlan.TargetBinding.Stage != "compute_claim" ||
+		firstIncompleteStage != "compute_claim" || firstFalsePredicate != "provider.nodeOwnership" ||
+		persisted.RecoveryExecution != nil || len(persisted.RecoveryHistory) != 1 ||
+		persisted.RecoveryHistory[0].Plan.PlanDigest != predecessorDigest || persisted.RecoveryHistory[0].Execution.MutationOutcome.Status != "unknown" ||
+		storageBudget != (workspaceLaunchStageBudget{Attempted: 1, Unknown: 1, Max: workspaceLaunchStageMax}) ||
+		persisted.RecoveryPlan.TargetBinding.NodeOwnershipState != "unallocated" || persisted.RecoveryPlan.TargetBinding.StorageState != "storage_attempt_unknown" ||
+		scenario.readback.stageProofCalls != 0 || len(fixture.fabric.computeClaimInputs) != 1 || len(fixture.fabric.computeClaimCalls) != 0 ||
+		len(fixture.fabric.storageIDs) != storageWrites || len(fixture.sub2API.charges) != 1 || len(fixture.sub2API.refunds) != 0 {
+		t.Fatalf("compute phase was not kept first: status=%d plan=%#v operation=%#v stageProofCalls=%d computeProofs=%d claims=%d storageWrites=%d/%d charges=%d refunds=%d",
+			response.Code, plan, persisted, scenario.readback.stageProofCalls, len(fixture.fabric.computeClaimInputs), len(fixture.fabric.computeClaimCalls), len(fixture.fabric.storageIDs), storageWrites, len(fixture.sub2API.charges), len(fixture.sub2API.refunds))
+	}
+}
+
 func TestWorkspaceRecoveryPlanReadAndValidateReportExactReleaseDriftWithoutExternalMutation(t *testing.T) {
 	mainSHA := strings.Repeat("a", 40)
 	t.Setenv("OPL_RELEASE_SHA", mainSHA)
