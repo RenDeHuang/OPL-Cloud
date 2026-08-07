@@ -711,11 +711,13 @@ func TestWorkspaceRecoveryPlanDiagnoseKeepsComputeClaimPendingWhenNodeOwnershipI
 	}
 	fixture.server, fixture.operator = server, reservedOperatorSessionForTest(t, server)
 
-	// The failed Execute shape can leave the control-plane phase at
-	// compute_claim_pending while the storage budget records an unknown attempt.
+	// Production readback can prove one exact started Fabric storage operation
+	// while the Control Plane storage budget is still untouched. The later
+	// storage uncertainty must not hide the earlier Node ownership stage.
 	stalePhase := scenario.unknown
 	stalePhase.Phase = "compute_claim_pending"
-	stalePhase.ErrorCode = "workspace_launch_storage_attempt_unknown"
+	stalePhase.ErrorCode = "workspace_recovery_plan_fabric_proof_failed"
+	stalePhase.ContinuationAttemptBudgets["storage"] = workspaceLaunchStageBudget{Max: workspaceLaunchStageMax}
 	stalePhase.ComputePoolID = compute.PoolID
 	stalePhase.ComputeNodePoolID = compute.NodePoolID
 	stalePhase.ComputeMachineName = compute.MachineName
@@ -728,20 +730,28 @@ func TestWorkspaceRecoveryPlanDiagnoseKeepsComputeClaimPendingWhenNodeOwnershipI
 	stalePhase.ComputeRenewFlag = compute.RenewFlag
 	stalePhase.ComputeDeadline = compute.Deadline
 	fixture.fabric.computeClaimProof = computeClaimRecoveryProofForLaunchStorage(stalePhase, "unallocated", "storage_attempt_unknown", "")
-	// The real Fabric proof rejects the old compute-only proof once the original
-	// storage operation is present.  Diagnosis must use the stage-aware GET-only
-	// readback instead of collapsing this shape into fabric_proof.
+	fixture.fabric.computeClaimProof.Deadline = stalePhase.ComputeDeadline
+	// Fabric still owns the exact storage-operation identity check. Control Plane
+	// must allow that readback while Compute Claim is the current stage.
 	fixture.fabric.computeClaimProofFn = func(input clients.ComputeClaimRecoveryInput) (clients.ComputeClaimRecoveryProof, error) {
 		if !input.AllowExistingStorageOperation {
 			return fixture.fabric.computeClaimProof, errors.New("compute_claim_recovery_storage_already_started")
 		}
 		return fixture.fabric.computeClaimProof, nil
 	}
+	claimed := computeClaimRecoveryProofForLaunchStorage(stalePhase, "target_owned", "storage_attempt_unknown", "")
+	claimed.Deadline = stalePhase.ComputeDeadline
+	claimed.KubernetesMutationCount = 1
+	claimed.Evidence = &clients.ComputeClaimEvidence{
+		Node: clients.ComputeClaimMutationEvidence{Attempted: 1, Confirmed: 1},
+	}
+	fixture.fabric.computeClaimResult = &claimed
+	configureWorkspaceComputeClaimReadback(fixture, stalePhase)
 	predecessorDigest := strings.Repeat("c", 64)
 	stalePhase.RecoveryPlan = &workspaceRecoveryPlan{
 		SchemaVersion: workspaceRecoveryPlanSchemaVersion, PlanID: "recovery-plan-" + predecessorDigest[:20], PlanDigest: predecessorDigest,
 		Status: "failed", Action: "compute_claim_continue", OperationID: stalePhase.ID,
-		ErrorCode: "workspace_launch_storage_attempt_unknown",
+		ErrorCode: "workspace_recovery_plan_fabric_proof_failed",
 	}
 	stalePhase.RecoveryExecution = &workspaceRecoveryExecution{
 		ExecutionID: "recovery-exec-storage-attempt-unknown", RunIdentity: "control-plane-run-storage-attempt-unknown",
@@ -782,13 +792,45 @@ func TestWorkspaceRecoveryPlanDiagnoseKeepsComputeClaimPendingWhenNodeOwnershipI
 		persisted.RecoveryPlan == nil || persisted.RecoveryPlan.Action != "compute_claim_continue" || persisted.RecoveryPlan.TargetBinding.Stage != "compute_claim" ||
 		firstIncompleteStage != "compute_claim" || firstFalsePredicate != "provider.nodeOwnership" ||
 		persisted.RecoveryExecution != nil || len(persisted.RecoveryHistory) != 1 ||
-		persisted.RecoveryHistory[0].Plan.PlanDigest != predecessorDigest || persisted.RecoveryHistory[0].Execution.MutationOutcome.Status != "unknown" ||
-		storageBudget != (workspaceLaunchStageBudget{Attempted: 1, Unknown: 1, Max: workspaceLaunchStageMax}) ||
+		persisted.RecoveryHistory[0].Plan.PlanDigest != predecessorDigest || persisted.RecoveryHistory[0].Execution.MutationOutcome.Status != "confirmed_zero" ||
+		storageBudget != (workspaceLaunchStageBudget{Max: workspaceLaunchStageMax}) ||
 		persisted.RecoveryPlan.TargetBinding.NodeOwnershipState != "unallocated" || persisted.RecoveryPlan.TargetBinding.StorageState != "storage_attempt_unknown" ||
 		scenario.readback.stageProofCalls != 0 || len(fixture.fabric.computeClaimInputs) != 1 || !fixture.fabric.computeClaimInputs[0].AllowExistingStorageOperation || len(fixture.fabric.computeClaimCalls) != 0 ||
 		len(fixture.fabric.storageIDs) != storageWrites || len(fixture.sub2API.charges) != 1 || len(fixture.sub2API.refunds) != 0 {
 		t.Fatalf("compute phase was not kept first: status=%d plan=%#v operation=%#v stageProofCalls=%d computeProofs=%d claims=%d storageWrites=%d/%d charges=%d refunds=%d",
 			response.Code, plan, persisted, scenario.readback.stageProofCalls, len(fixture.fabric.computeClaimInputs), len(fixture.fabric.computeClaimCalls), len(fixture.fabric.storageIDs), storageWrites, len(fixture.sub2API.charges), len(fixture.sub2API.refunds))
+	}
+
+	validatedResponse := requestWorkspaceRecoveryPlan(t, fixture, http.MethodPost, "/validate", map[string]any{
+		"planId": plan.PlanID, "planDigest": plan.PlanDigest,
+	})
+	validated := recoveryPlanResponse(t, validatedResponse)
+	if validatedResponse.Code != http.StatusOK || validated.Status != "validated" {
+		t.Fatalf("validate status=%d plan=%#v body=%s", validatedResponse.Code, validated, validatedResponse.Body.String())
+	}
+	beforeDownstreamWrites := map[string]int{}
+	for _, stage := range []string{"attachment", "secret", "runtime", "activation", "receipt"} {
+		beforeDownstreamWrites[stage] = workspaceLaunchStageWriteCount(fixture, stage)
+	}
+	fixture.fabric.storageSyncErr = errors.New("storage provider readback unavailable")
+	executeResponse := requestWorkspaceRecoveryPlan(t, fixture, http.MethodPost, "/execute", map[string]any{
+		"planId": validated.PlanID, "planDigest": validated.PlanDigest, "decision": "continue", "confirmation": "CONTINUE_RECOVERY_PLAN",
+	})
+	executed := recoveryPlanResponse(t, executeResponse)
+	current := fixture.operation(t)
+	if executeResponse.Code != http.StatusOK || executed.Status != "failed" || current.Status != "manual_review" || current.Phase != "storage_fulfilling" ||
+		current.ErrorCode != "workspace_launch_storage_attempt_unknown" || current.ComputeClaimProof == nil || current.ComputeClaimProof.NodeOwnershipState != "target_owned" ||
+		current.ContinuationAttemptBudgets["storage"] != (workspaceLaunchStageBudget{Attempted: 1, Unknown: 1, Max: workspaceLaunchStageMax}) ||
+		len(fixture.fabric.computeClaimCalls) != 1 || countStrings(*fixture.events, "fabric.compute.get") != 1 || len(fixture.fabric.storageIDs) != storageWrites ||
+		len(fixture.sub2API.charges) != 1 || len(fixture.sub2API.refunds) != 0 {
+		t.Fatalf("Node continuation did not isolate unknown Storage: status=%d plan=%#v operation=%#v claims=%d computeGets=%d storageWrites=%d/%d charges=%d refunds=%d",
+			executeResponse.Code, executed, current, len(fixture.fabric.computeClaimCalls), countStrings(*fixture.events, "fabric.compute.get"),
+			len(fixture.fabric.storageIDs), storageWrites, len(fixture.sub2API.charges), len(fixture.sub2API.refunds))
+	}
+	for stage, before := range beforeDownstreamWrites {
+		if after := workspaceLaunchStageWriteCount(fixture, stage); after != before {
+			t.Fatalf("Storage unknown crossed %s mutation boundary: before=%d after=%d", stage, before, after)
+		}
 	}
 }
 

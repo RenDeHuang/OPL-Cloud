@@ -1560,8 +1560,10 @@ func workspaceComputeClaimRecoveryInput(operation workspaceLaunchOperation, inpu
 }
 
 func workspaceComputeClaimStageAwareReadback(operation workspaceLaunchOperation) bool {
-	return workspaceComputeClaimCanonical(operation) && operation.ErrorCode == "workspace_launch_storage_attempt_unknown" &&
-		operation.ContinuationAttemptBudgets["storage"] == (workspaceLaunchStageBudget{Attempted: 1, Unknown: 1, Max: workspaceLaunchStageMax})
+	// Compute Claim owns the first incomplete stage. Fabric must still inspect
+	// an exact existing Storage operation, but its unknown state never grants a
+	// Storage write or blocks the authoritative Node ownership readback.
+	return workspaceComputeClaimCanonical(operation)
 }
 
 func workspaceComputeClaimRecoveryRequestMatches(operation workspaceLaunchOperation, input workspaceComputeClaimRecoveryRequest) bool {
