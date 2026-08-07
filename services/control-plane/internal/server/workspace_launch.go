@@ -19,13 +19,15 @@ import (
 )
 
 var (
-	errInvalidWorkspaceLaunchOperation = errors.New("invalid_workspace_launch_operation")
-	errWorkspaceLaunchInProgress       = errors.New("workspace_launch_in_progress")
-	errWorkspaceLaunchCASConflict      = errors.New("workspace_launch_cas_conflict")
-	errWorkspaceComputeClaimInvalid    = errors.New("workspace_compute_claim_invalid")
-	errWorkspaceComputeClaimIdentity   = errors.New("workspace_compute_claim_identity_mismatch")
-	errWorkspaceComputeClaimNotPending = errors.New("workspace_compute_claim_not_pending")
-	errWorkspaceComputeClaimProof      = errors.New("workspace_compute_claim_proof_failed")
+	errInvalidWorkspaceLaunchOperation    = errors.New("invalid_workspace_launch_operation")
+	errWorkspaceLaunchInProgress          = errors.New("workspace_launch_in_progress")
+	errWorkspaceLaunchCASConflict         = errors.New("workspace_launch_cas_conflict")
+	errWorkspaceComputeClaimInvalid       = errors.New("workspace_compute_claim_invalid")
+	errWorkspaceComputeClaimIdentity      = errors.New("workspace_compute_claim_identity_mismatch")
+	errWorkspaceComputeClaimNotPending    = errors.New("workspace_compute_claim_not_pending")
+	errWorkspaceComputeClaimProof         = errors.New("workspace_compute_claim_proof_failed")
+	errWorkspaceCodexGroupUnavailable     = errors.New("apiKey.codexGroupUnavailable")
+	errWorkspaceCodexGroupMutationUnknown = errors.New("apiKey.codexGroupMutationUnknown")
 )
 
 const (
@@ -42,6 +44,9 @@ var workspaceComputeClaimForbiddenWrites = []string{
 }
 
 const workspaceLaunchReadbackRecoveryConfirmation = "RECOVER_UNKNOWN_WORKSPACE_LAUNCH_STAGE_FROM_AUTHORITATIVE_READBACK"
+
+const workspaceKeyCodexGroupUpdateAttempted = "codex_group_update_attempted"
+const workspaceKeyCodexGroupBound = "codex_group_bound"
 
 var workspaceLaunchReadbackRecoveryForbiddenWrites = []string{
 	"create_launch", "debit", "recharge", "refund", "scale", "create_cvm", "create_second_cbs", "delete", "replace", "retry_unknown_stage_write",

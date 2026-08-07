@@ -315,7 +315,7 @@ func registerWorkspaceLaunchRoutes(mux *http.ServeMux, app *controlPlaneServer, 
 }
 
 func (app *controlPlaneServer) respondWorkspaceLaunchContinuation(w http.ResponseWriter, r *http.Request, service *controlplane.Service, operation workspaceLaunchOperation) {
-	if operation.Phase == "key_pending" {
+	if workspaceLaunchNeedsKeyConvergence(operation) {
 		unlockAccount := app.lockResource("account", operation.AccountID)
 		defer unlockAccount()
 		credentialUser, sub2APIUserID, credential, ok := app.gatewayUserContext(w, r)
@@ -344,13 +344,32 @@ func (app *controlPlaneServer) respondWorkspaceLaunchContinuation(w http.Respons
 	writeJSON(w, http.StatusAccepted, body)
 }
 
+func workspaceLaunchNeedsKeyConvergence(operation workspaceLaunchOperation) bool {
+	if operation.Status == "succeeded" || operation.Status == "manual_review" || operation.Status == "failed" || operation.Status == "refunded" ||
+		operation.WorkspaceKeyStatus == workspaceKeyCodexGroupBound || operation.WorkspaceKeyStatus == "configured" {
+		return false
+	}
+	if operation.Phase == "key_pending" {
+		return true
+	}
+	switch operation.Phase {
+	case "debit_pending", "compute_claim_pending", "storage_fulfilling", "attaching":
+		return operation.WorkspaceAPIKeyID > 0
+	default:
+		return false
+	}
+}
+
 func (app *controlPlaneServer) convergeAndPersistWorkspaceLaunchKey(ctx context.Context, service *controlplane.Service, credential clients.SessionDelegatedCredential, userID int64, operation *workspaceLaunchOperation) error {
-	workspaceKey, err := convergeWorkspaceAPIKey(ctx, service, credential, userID, operation.WorkspaceID, operation.ID)
+	workspaceKey, err := app.convergeWorkspaceAPIKey(ctx, service, credential, userID, operation)
 	if err != nil {
 		return err
 	}
 	operation.WorkspaceAPIKeyID = workspaceKey.ID
-	operation.Status, operation.Phase, operation.ErrorCode = "debit_pending", "debit_pending", ""
+	operation.WorkspaceKeyStatus = workspaceKeyCodexGroupBound
+	if operation.Phase == "key_pending" {
+		operation.Status, operation.Phase, operation.ErrorCode = "debit_pending", "debit_pending", ""
+	}
 	if err := app.persistWorkspaceLaunch(ctx, operation); err != nil {
 		if !errors.Is(err, errWorkspaceLaunchCASConflict) {
 			return err
@@ -368,7 +387,12 @@ func (app *controlPlaneServer) convergeAndPersistWorkspaceLaunchKey(ctx context.
 	return nil
 }
 
-func convergeWorkspaceAPIKey(ctx context.Context, service *controlplane.Service, credential clients.SessionDelegatedCredential, userID int64, workspaceID, operationID string) (clients.Sub2APIWorkspaceKey, error) {
+func (app *controlPlaneServer) convergeWorkspaceAPIKey(ctx context.Context, service *controlplane.Service, credential clients.SessionDelegatedCredential, userID int64, operation *workspaceLaunchOperation) (clients.Sub2APIWorkspaceKey, error) {
+	workspaceID, operationID := operation.WorkspaceID, operation.ID
+	codexGroupID, err := workspaceCodexGroupID(ctx, service, credential, userID)
+	if err != nil {
+		return clients.Sub2APIWorkspaceKey{}, err
+	}
 	name := workspaceReservedKeyName(workspaceID)
 	keys, err := service.GatewayWorkspaceKeysForConvergence(ctx, credential, userID, name)
 	if err != nil {
@@ -376,12 +400,37 @@ func convergeWorkspaceAPIKey(ctx context.Context, service *controlplane.Service,
 	}
 	reserved := workspaceKeysNamed(keys, name)
 	if len(reserved) == 1 && reserved[0].UserID == userID && reserved[0].ID > 0 && reserved[0].Status == "active" {
-		return reserved[0], nil
+		if workspaceKeyCodexGroupMatches(reserved[0], codexGroupID) {
+			return reserved[0], nil
+		}
+		if operation.WorkspaceKeyStatus == workspaceKeyCodexGroupUpdateAttempted {
+			readback, readErr := service.GatewayUserKey(ctx, credential, userID, reserved[0].ID)
+			if readErr == nil && workspaceKeyCodexGroupMatches(readback, codexGroupID) {
+				return readback, nil
+			}
+			return clients.Sub2APIWorkspaceKey{}, errWorkspaceCodexGroupMutationUnknown
+		}
+		operation.WorkspaceKeyStatus = workspaceKeyCodexGroupUpdateAttempted
+		if err := app.persistWorkspaceLaunch(ctx, operation); err != nil {
+			return clients.Sub2APIWorkspaceKey{}, err
+		}
+		updated, updateErr := service.UpdateGatewayUserKey(ctx, credential, userID, reserved[0].ID, clients.Sub2APIUpdateKeyInput{GroupID: &codexGroupID})
+		readback, readErr := service.GatewayUserKey(ctx, credential, userID, reserved[0].ID)
+		if readErr == nil && workspaceKeyCodexGroupMatches(readback, codexGroupID) &&
+			readback.ID == reserved[0].ID && readback.UserID == userID && readback.Name == name && readback.Status == "active" {
+			operation.WorkspaceKeyStatus = workspaceKeyCodexGroupBound
+			return readback, nil
+		}
+		if updateErr != nil || readErr != nil {
+			return clients.Sub2APIWorkspaceKey{}, errWorkspaceCodexGroupMutationUnknown
+		}
+		_ = updated
+		return clients.Sub2APIWorkspaceKey{}, errWorkspaceCodexGroupMutationUnknown
 	}
 	if len(reserved) != 0 {
 		return clients.Sub2APIWorkspaceKey{}, clients.ErrSub2APIWorkspaceKeyAmbiguous
 	}
-	created, createErr := service.CreateGatewayUserKey(ctx, credential, userID, clients.Sub2APICreateKeyInput{Name: name}, operationID+":workspace-key")
+	created, createErr := service.CreateGatewayUserKey(ctx, credential, userID, clients.Sub2APICreateKeyInput{Name: name, GroupID: codexGroupID}, operationID+":workspace-key")
 	keys, readErr := service.GatewayWorkspaceKeysForConvergence(ctx, credential, userID, name)
 	if readErr != nil {
 		if createErr != nil {
@@ -390,9 +439,11 @@ func convergeWorkspaceAPIKey(ctx context.Context, service *controlplane.Service,
 		return clients.Sub2APIWorkspaceKey{}, readErr
 	}
 	reserved = workspaceKeysNamed(keys, name)
-	if len(reserved) != 1 || reserved[0].UserID != userID || reserved[0].ID <= 0 || reserved[0].Status != "active" || created.ID > 0 && created.ID != reserved[0].ID {
+	if len(reserved) != 1 || reserved[0].UserID != userID || reserved[0].ID <= 0 || reserved[0].Status != "active" ||
+		!workspaceKeyCodexGroupMatches(reserved[0], codexGroupID) || created.ID > 0 && created.ID != reserved[0].ID {
 		return clients.Sub2APIWorkspaceKey{}, clients.ErrSub2APIWorkspaceKeyAmbiguous
 	}
+	operation.WorkspaceKeyStatus = workspaceKeyCodexGroupBound
 	return reserved[0], nil
 }
 

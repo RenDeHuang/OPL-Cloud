@@ -33,7 +33,7 @@ func (c *sourceTruthGatewayClient) UserGroups(_ context.Context, credential clie
 	if credential.Bearer != "test-user-delegated-token" || userID != 41 {
 		return nil, errors.New("wrong delegated credential")
 	}
-	return []clients.Sub2APIGroup{{ID: 7, Name: "Basic", Platform: "openai", RateMultiplier: 1, Status: "active"}}, nil
+	return []clients.Sub2APIGroup{{ID: 7, Name: "Basic", Platform: "openai", RateMultiplier: 1, Status: "active"}, {ID: 11, Name: "Codex", Platform: "openai", RateMultiplier: 1, Status: "active"}}, nil
 }
 
 func (c *sourceTruthGatewayClient) Balance(ctx context.Context, userID int64) (clients.Sub2APIBalance, error) {
@@ -468,8 +468,15 @@ func (c *workspaceKeyRotationClient) fail(stage string) bool {
 	return false
 }
 
+func (c *workspaceKeyRotationClient) UserGroups(_ context.Context, credential clients.SessionDelegatedCredential, userID int64) ([]clients.Sub2APIGroup, error) {
+	if credential.Bearer != "test-user-delegated-token" || userID != 41 {
+		return nil, errors.New("wrong delegated group identity")
+	}
+	return []clients.Sub2APIGroup{{ID: 11, Name: "Codex", Platform: "openai", RateMultiplier: 1, Status: "active"}}, nil
+}
+
 func (c *workspaceKeyRotationClient) CreateUserKey(_ context.Context, credential clients.SessionDelegatedCredential, userID int64, input clients.Sub2APICreateKeyInput, idempotencyKey string) (clients.Sub2APIWorkspaceKey, error) {
-	if credential.Bearer != "test-user-delegated-token" || userID != 41 || idempotencyKey == "" || !strings.HasPrefix(input.Name, "opl-workspace-replacement-") {
+	if credential.Bearer != "test-user-delegated-token" || userID != 41 || input.GroupID != 11 || idempotencyKey == "" || !strings.HasPrefix(input.Name, "opl-workspace-replacement-") {
 		return clients.Sub2APIWorkspaceKey{}, errors.New("invalid replacement create")
 	}
 	if c.createStarted != nil {
@@ -490,7 +497,8 @@ func (c *workspaceKeyRotationClient) CreateUserKey(_ context.Context, credential
 		}
 		keyID++
 	}
-	key := clients.Sub2APIWorkspaceKey{ID: keyID, UserID: userID, Name: input.Name, Key: "replacement-workspace-key-secret", Status: "active"}
+	groupID := input.GroupID
+	key := clients.Sub2APIWorkspaceKey{ID: keyID, UserID: userID, Name: input.Name, Key: "replacement-workspace-key-secret", GroupID: &groupID, Status: "active"}
 	c.keys[key.ID] = key
 	c.createWrites++
 	if c.fail("create") {

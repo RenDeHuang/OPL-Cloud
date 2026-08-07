@@ -34,6 +34,7 @@ on:
           - recovery_acceptance_extra_funding_prepare
           - recovery_acceptance_original_launch
           - controlled_pilot_closed_validate
+          - compute_claim_readback
           - recovered_workspace_e2e
       funding_mode:
         description: operator_precharge performs the approved provision and recharge; operator_precharge_recovery reads one approved completed precharge before the purchase.
@@ -2946,6 +2947,144 @@ jobs:
             rmdir "$source_dir"
           fi
 
+
+  compute-claim-readback:
+    name: Read back one original Launch compute claim without mutation
+    if: ${{ github.ref == 'refs/heads/main' && github.sha == inputs.merged_sha && inputs.operation_mode == 'compute_claim_readback' && inputs.workspace_identity_account_id != '' && inputs.recovery_plan_launch_operation_id != '' && inputs.resume_run_id == '' && !inputs.confirm_account_provision && !inputs.confirm_wallet_recharge && !inputs.confirm_workspace_purchase && !inputs.confirm_single_model_request && !inputs.confirm_recovery_plan_execute }}
+    runs-on: [self-hosted, tencent-cloud, opl-cloud, tke-vpc]
+    timeout-minutes: 20
+    environment: production
+    env:
+      OPL_MERGED_SHA: ${{ inputs.merged_sha }}
+      OPL_RECOVERY_PLAN_ACCOUNT_ID: ${{ inputs.workspace_identity_account_id }}
+      OPL_RECOVERY_PLAN_LAUNCH_OPERATION_ID: ${{ inputs.recovery_plan_launch_operation_id }}
+      OPL_K8S_NAMESPACE: ${{ vars.OPL_K8S_NAMESPACE || 'opl-cloud' }}
+      TENCENT_DEPLOY_KUBECONFIG_PATH: ${{ vars.TENCENT_DEPLOY_KUBECONFIG_PATH || '/home/actions/.secrets/medopl/v22/kubeconfig-package-d-deploy' }}
+      TENCENT_DEPLOY_KUBECONFIG_B64: ${{ secrets.TENCENT_DEPLOY_KUBECONFIG_B64 }}
+
+    steps:
+      - name: Prepare isolated source checkout
+        id: prepare_source
+        shell: bash
+        env:
+          OPL_SOURCE_CHECKOUT: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          expected="$GITHUB_WORKSPACE/.opl-checkouts/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
+          if [ "$OPL_SOURCE_CHECKOUT" != "$expected" ]; then echo "Isolated source checkout path mismatch." >&2; exit 1; fi
+          mkdir -p "$GITHUB_WORKSPACE/.opl-checkouts"
+          mkdir "$OPL_SOURCE_CHECKOUT"
+
+      - name: Checkout exact merged main
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.merged_sha }}
+          fetch-depth: 0
+          path: .opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+
+      - name: Verify remote branch authority
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$OPL_MERGED_SHA" =~ ^[0-9a-f]{40}$ ]] || ! [[ "$OPL_RECOVERY_PLAN_ACCOUNT_ID" =~ ^acct-[A-Za-z0-9-]+$ ]] || ! [[ "$OPL_RECOVERY_PLAN_LAUNCH_OPERATION_ID" =~ ^workspace-launch-[A-Za-z0-9-]+$ ]]; then
+            echo "Compute claim readback requires the exact original Launch identity." >&2
+            exit 1
+          fi
+          mapfile -t remote_heads < <(git ls-remote --heads origin)
+          if [ "${#remote_heads[@]}" -ne 1 ]; then echo "Production source authority requires exactly one remote head." >&2; exit 1; fi
+          read -r remote_main_sha remote_main_ref <<< "${remote_heads[0]}"
+          head_sha="$(git rev-parse HEAD)"
+          if [ "$remote_main_ref" != "refs/heads/main" ] || [ "$GITHUB_REF" != "refs/heads/main" ] || [ "$GITHUB_SHA" != "$head_sha" ] || [ "$remote_main_sha" != "$head_sha" ] || [ "$head_sha" != "$OPL_MERGED_SHA" ]; then
+            echo "Readback source is not the exact current origin/main revision." >&2
+            exit 1
+          fi
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Prepare read-only Fabric Pod transport
+        id: fabric_transport
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          readback_dir="$RUNNER_TEMP/production-compute-claim-readback"
+          raw_dir="$RUNNER_TEMP/production-compute-claim-readback-raw"
+          mkdir -p "$readback_dir" "$raw_dir"
+          chmod 700 "$readback_dir" "$raw_dir"
+          kubeconfig="$raw_dir/kubeconfig"
+          if [ -f "$TENCENT_DEPLOY_KUBECONFIG_PATH" ]; then cp "$TENCENT_DEPLOY_KUBECONFIG_PATH" "$kubeconfig"
+          elif [ -n "${TENCENT_DEPLOY_KUBECONFIG_B64:-}" ]; then printf '%s' "$TENCENT_DEPLOY_KUBECONFIG_B64" | base64 -d > "$kubeconfig"
+          else echo "Production kubeconfig is unavailable." >&2; exit 1; fi
+          chmod 600 "$kubeconfig"
+          fabric_pods="$(kubectl --kubeconfig "$kubeconfig" -n "$OPL_K8S_NAMESPACE" get pods -l app.kubernetes.io/name=opl-cloud,app.kubernetes.io/component=fabric -o json)"
+          fabric_pod="$(node --input-type=module -e 'const v=JSON.parse(process.argv[1]); const p=(v.items||[]).filter((x)=>!x.metadata?.deletionTimestamp && x.status?.phase === "Running" && x.status?.conditions?.some((c)=>c.type === "Ready" && c.status === "True")); if(p.length!==1) process.exit(1); process.stdout.write(p[0].metadata.name)' "$fabric_pods")"
+          internal_token="$(kubectl --kubeconfig "$kubeconfig" -n "$OPL_K8S_NAMESPACE" get secret opl-cloud-internal-service -o jsonpath='{.data.OPL_INTERNAL_SERVICE_TOKEN}' | base64 --decode)"
+          if [ -z "$internal_token" ]; then echo "Fabric internal token is unavailable." >&2; exit 1; fi
+          echo "::add-mask::$internal_token"
+          echo "OPL_READBACK_KUBECONFIG=$kubeconfig" >> "$GITHUB_ENV"
+          echo "OPL_FABRIC_POD=$fabric_pod" >> "$GITHUB_ENV"
+          echo "OPL_INTERNAL_SERVICE_TOKEN=$internal_token" >> "$GITHUB_ENV"
+          echo "OPL_READBACK_ARTIFACT_DIR=$readback_dir" >> "$GITHUB_ENV"
+          echo "OPL_READBACK_RAW_DIR=$raw_dir" >> "$GITHUB_ENV"
+
+      - name: Run one GET-only compute claim readback
+        id: readback
+        continue-on-error: true
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          node tools/production-live-qa.ts --workspace-compute-claim-readback \
+            --account-id "$OPL_RECOVERY_PLAN_ACCOUNT_ID" \
+            --launch-operation-id "$OPL_RECOVERY_PLAN_LAUNCH_OPERATION_ID" \
+            --kubeconfig "$OPL_READBACK_KUBECONFIG" \
+            --fabric-pod "$OPL_FABRIC_POD" \
+            --fabric-namespace "$OPL_K8S_NAMESPACE" \
+            > "$OPL_READBACK_ARTIFACT_DIR/compute-claim-readback.json"
+
+      - name: Validate redacted GET-only readback
+        if: always()
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { readFile } from "node:fs/promises";
+          const result = JSON.parse(await readFile(`${process.env.OPL_READBACK_ARTIFACT_DIR}/compute-claim-readback.json`, "utf8"));
+          const actions = new Set(["GET_ONLY_RECONCILE_STORAGE", "NODE_ONLY_CONTINUATION_ONCE", "RESUME_EXISTING_STORAGE", "MANUAL_REVIEW"]);
+          const valid = result?.schemaVersion === 1 && result?.operationMode === "compute_claim_readback" && ["proven", "blocked"].includes(result?.status) &&
+            actions.has(result?.nextAction) && result?.node?.resourceVersion && result?.node?.taint && result?.node?.ownership &&
+            result?.storage?.stageBudget && result?.providerTruth && result?.mutationCounts?.sub2api === 0 && result?.mutationCounts?.tencent === 0 && result?.mutationCounts?.kubernetes === 0 &&
+            !/password|secret|cookie|csrf|authorization/i.test(JSON.stringify(result));
+          if (!valid) { console.error("Compute claim readback artifact is invalid or not redacted."); process.exit(1); }
+          NODE
+
+      - name: Upload GET-only compute claim readback
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-compute-claim-readback
+          path: ${{ runner.temp }}/production-compute-claim-readback
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 30
+
+      - name: Remove isolated source checkout
+        if: always() && steps.prepare_source.outcome == 'success'
+        shell: bash
+        env:
+          OPL_SOURCE_CHECKOUT: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          if [ -n "${OPL_READBACK_RAW_DIR:-}" ] && [ -d "$OPL_READBACK_RAW_DIR" ]; then find "$OPL_READBACK_RAW_DIR" -mindepth 1 -delete; rmdir "$OPL_READBACK_RAW_DIR"; fi
+          source_dir="${OPL_SOURCE_CHECKOUT:-}"
+          expected="$GITHUB_WORKSPACE/.opl-checkouts/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
+          if [ -z "$source_dir" ] || [ "$source_dir" != "$expected" ]; then echo "Refusing to remove unexpected source checkout path." >&2; exit 1; fi
+          if [ -d "$source_dir" ]; then find "$source_dir" -mindepth 1 -delete; rmdir "$source_dir"; fi
 
   recovered-workspace-e2e:
     name: Verify one recovered Workspace request on a hosted runner

@@ -116,7 +116,8 @@
         "recovery-acceptance-extra-funding-prepare",
         "recovery-acceptance-original-launch",
         "recovery-acceptance-canary",
-        "recovery-plan-operation"
+        "recovery-plan-operation",
+        "compute-claim-readback"
       ]
     },
     "relativePath": ".opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}",

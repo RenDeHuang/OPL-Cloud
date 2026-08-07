@@ -1394,13 +1394,10 @@ func (c *Sub2APIHTTPClient) CreateUserKey(ctx context.Context, credential Sessio
 		return Sub2APIWorkspaceKey{}, err
 	}
 	input.Name = strings.TrimSpace(input.Name)
-	if input.Name == "" || input.GroupID < 0 || input.QuotaUSDMicros < 0 || input.RateLimit5hUSDMicros < 0 || input.RateLimit1dUSDMicros < 0 || input.RateLimit7dUSDMicros < 0 || strings.TrimSpace(idempotencyKey) == "" || input.ExpiresInDays != nil && *input.ExpiresInDays <= 0 {
+	if input.Name == "" || input.GroupID <= 0 || input.QuotaUSDMicros < 0 || input.RateLimit5hUSDMicros < 0 || input.RateLimit1dUSDMicros < 0 || input.RateLimit7dUSDMicros < 0 || strings.TrimSpace(idempotencyKey) == "" || input.ExpiresInDays != nil && *input.ExpiresInDays <= 0 {
 		return Sub2APIWorkspaceKey{}, errors.New("invalid sub2api key create input")
 	}
-	request := map[string]any{"name": input.Name, "quota": usdMicrosJSON(input.QuotaUSDMicros)}
-	if input.GroupID > 0 {
-		request["group_id"] = input.GroupID
-	}
+	request := map[string]any{"name": input.Name, "group_id": input.GroupID, "quota": usdMicrosJSON(input.QuotaUSDMicros)}
 	if len(input.IPWhitelist) > 0 {
 		request["ip_whitelist"] = input.IPWhitelist
 	}

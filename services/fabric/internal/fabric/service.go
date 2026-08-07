@@ -644,14 +644,6 @@ func (s *Service) ComputeClaimRecoveryProof(ctx context.Context, input ComputeCl
 		}
 	}
 	storagePresent, storageExact := computeClaimRecoveryStorageOperationState(operations, input)
-	if storagePresent && !input.AllowExistingStorageOperation {
-		proof.Reason = "storage_already_started"
-		return proof, fmt.Errorf("%w: storage_already_started", ErrComputeClaimRecoveryUnavailable)
-	}
-	if storagePresent && !storageExact {
-		proof.Reason = "identity_mismatch"
-		return proof, fmt.Errorf("%w: identity_mismatch", ErrComputeClaimRecoveryUnavailable)
-	}
 	if len(computeOperations) != 1 {
 		proof.Reason = "local_identity"
 		return proof, fmt.Errorf("%w: local_identity", ErrComputeClaimRecoveryUnavailable)
@@ -689,6 +681,18 @@ func (s *Service) ComputeClaimRecoveryProof(ctx context.Context, input ComputeCl
 		proof.Reason = safeComputeClaimRecoveryReason(providerProof.Reason, "identity_mismatch")
 		return proof, fmt.Errorf("%w: %s", ErrComputeClaimRecoveryUnavailable, proof.Reason)
 	}
+	// Compute ownership is authoritative for the first incomplete stage. Read
+	// CVM and Node before applying any later storage-operation disposition so an
+	// attempted or conflicting storage record cannot hide Node ownership truth.
+	applyComputeClaimRecoveryProviderProof(&proof, providerProof)
+	if storagePresent && !input.AllowExistingStorageOperation {
+		proof.Reason = "storage_already_started"
+		return proof, fmt.Errorf("%w: storage_already_started", ErrComputeClaimRecoveryUnavailable)
+	}
+	if storagePresent && !storageExact {
+		proof.Reason = "identity_mismatch"
+		return proof, fmt.Errorf("%w: identity_mismatch", ErrComputeClaimRecoveryUnavailable)
+	}
 	storageProvider, ok := s.provider.(storageRecoveryDiscoveryProvider)
 	if !ok {
 		proof.Reason = "provider_describe"
@@ -706,7 +710,6 @@ func (s *Service) ComputeClaimRecoveryProof(ctx context.Context, input ComputeCl
 	storageDiscovery, err := storageProvider.DiscoverStorageRecovery(ctx, storageInput)
 	if err != nil {
 		if storagePresent && input.AllowExistingStorageOperation && storageDiscovery.MutationCount == 0 {
-			applyComputeClaimRecoveryProviderProof(&proof, providerProof)
 			proof.Eligible, proof.Reason, proof.StorageState = true, "none", "storage_attempt_unknown"
 			return proof, nil
 		}
@@ -719,7 +722,6 @@ func (s *Service) ComputeClaimRecoveryProof(ctx context.Context, input ComputeCl
 	}
 	proof.Eligible, proof.Reason, proof.StorageState = true, "none", storageDiscovery.State
 	proof.StorageProviderResourceID = storageDiscovery.ProviderResourceID
-	applyComputeClaimRecoveryProviderProof(&proof, providerProof)
 	return proof, nil
 }
 
