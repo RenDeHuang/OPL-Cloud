@@ -531,6 +531,73 @@ func TestWorkspaceLaunchUnknownStageConvergesFromAuthoritativeReadbackAfterResta
 	}
 }
 
+func TestWorkspaceRecoveryManualReviewToSecretRequiresLiveCodexGroupReadback(t *testing.T) {
+	t.Setenv("OPL_INTERNAL_SERVICE_TOKEN", "workspace-launch-readback-capability")
+	t.Setenv("OPL_RELEASE_SHA", strings.Repeat("a", 40))
+	t.Setenv("OPL_CLOUD_IMAGE", "uswccr.ccs.tencentyun.com/oplcloud/opl-cloud@sha256:"+strings.Repeat("b", 64))
+
+	for _, test := range []struct {
+		name       string
+		keyGroup   *int64
+		wantStatus string
+		wantSecret bool
+	}{
+		{name: "live Codex group permits Secret", keyGroup: workspaceTestCodexGroupID(), wantStatus: "succeeded", wantSecret: true},
+		{name: "missing live group blocks Secret", keyGroup: nil, wantStatus: "manual_review", wantSecret: false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			scenario := newWorkspaceLaunchReadbackRecoveryScenario(t, "attachment", "basic")
+			fixture := scenario.fixture
+			fixture.service = controlplane.NewService(fixture.ledger, scenario.readback, fixture.sub2API)
+			operation := fixture.operation(t)
+			// A legacy row may retain only the configured marker. Recovery must
+			// re-read the same Sub2API Key before crossing the Secret boundary.
+			operation.WorkspaceKeyStatus = "configured"
+			operation.WorkspaceKeyGroupID = *workspaceTestCodexGroupID()
+			key := fixture.sub2API.keys[operation.WorkspaceAPIKeyID]
+			key.GroupID = test.keyGroup
+			fixture.sub2API.keys[operation.WorkspaceAPIKeyID] = key
+			mustStore(t, fixture.store.SaveRuntimeOperation(context.Background(), workspaceLaunchOperationRow(operation)))
+			beforeSecretWrites := workspaceLaunchStageWriteCount(fixture, "secret")
+
+			server, err := NewPersistentServer(fixture.service, fixture.store)
+			if err != nil {
+				t.Fatal(err)
+			}
+			fixture.server, fixture.operator = server, reservedOperatorSessionForTest(t, server)
+
+			diagnosed := recoveryPlanResponse(t, requestWorkspaceRecoveryPlan(t, fixture, http.MethodPost, "/diagnose", map[string]any{"accountId": operation.AccountID}))
+			if diagnosed.Status != "diagnosed" {
+				t.Fatalf("diagnosed plan=%#v", diagnosed)
+			}
+			validated := recoveryPlanResponse(t, requestWorkspaceRecoveryPlan(t, fixture, http.MethodPost, "/validate", map[string]any{
+				"planId": diagnosed.PlanID, "planDigest": diagnosed.PlanDigest,
+			}))
+			if validated.Status != "validated" {
+				t.Fatalf("validated plan=%#v", validated)
+			}
+
+			executed := recoveryPlanResponse(t, requestWorkspaceRecoveryPlan(t, fixture, http.MethodPost, "/execute", map[string]any{
+				"planId": validated.PlanID, "planDigest": validated.PlanDigest, "decision": "continue", "confirmation": "CONTINUE_RECOVERY_PLAN",
+			}))
+			current := fixture.operation(t)
+			secretWrites := workspaceLaunchStageWriteCount(fixture, "secret")
+			runtimeWrites := workspaceLaunchStageWriteCount(fixture, "runtime")
+			if test.wantSecret {
+				if executed.Status != "completed" || current.Status != test.wantStatus || current.Phase != "succeeded" ||
+					secretWrites != beforeSecretWrites+1 || runtimeWrites == 0 || fixture.sub2API.updateCalls != 0 {
+					t.Fatalf("live Codex Recovery did not cross Secret boundary: executed=%#v current=%#v secretWrites=%d baseline=%d runtimeWrites=%d keyUpdates=%d", executed, current, secretWrites, beforeSecretWrites, runtimeWrites, fixture.sub2API.updateCalls)
+				}
+				return
+			}
+			if executed.Status != "failed" || current.Status != test.wantStatus || current.Phase != "secret_writing" ||
+				current.ErrorCode != errWorkspaceCodexGroupReadback.Error() || secretWrites != beforeSecretWrites || runtimeWrites != 0 || fixture.sub2API.updateCalls != 0 {
+				t.Fatalf("missing Codex group crossed Secret/Runtime boundary: executed=%#v current=%#v secretWrites=%d baseline=%d runtimeWrites=%d keyUpdates=%d", executed, current, secretWrites, beforeSecretWrites, runtimeWrites, fixture.sub2API.updateCalls)
+			}
+		})
+	}
+}
+
 func TestWorkspaceLaunchRecoveredStorageAuthorizesAttachmentRecoveryAfterRestart(t *testing.T) {
 	t.Setenv("OPL_INTERNAL_SERVICE_TOKEN", "workspace-launch-readback-capability")
 	scenario := newWorkspaceLaunchReadbackRecoveryScenario(t, "storage", "basic")
