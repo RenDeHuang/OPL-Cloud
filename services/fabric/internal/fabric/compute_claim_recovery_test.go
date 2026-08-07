@@ -448,7 +448,7 @@ func TestComputeClaimRecoveryProofBindsOneExactExistingCBS(t *testing.T) {
 	}
 }
 
-func TestComputeClaimRecoveryProofFailsClosedOnUnknownCBSDiscovery(t *testing.T) {
+func TestComputeClaimRecoveryProofFailsClosedOnUnknownCBSDiscoveryWithoutStageApproval(t *testing.T) {
 	for _, test := range []struct {
 		name      string
 		discovery StorageRecoveryDiscovery
@@ -470,6 +470,30 @@ func TestComputeClaimRecoveryProofFailsClosedOnUnknownCBSDiscovery(t *testing.T)
 				t.Fatalf("proof=%#v err=%v provider=%#v", proof, err, provider)
 			}
 		})
+	}
+}
+
+func TestComputeClaimRecoveryProofKeepsComputeEligibleForIncompleteStorageLedger(t *testing.T) {
+	service, store, provider, input := seedComputeClaimRecovery(t, "basic")
+	now := time.Now().UTC()
+	storage := newOperation("create_storage_volume", "storage_volume", input.StorageVolumeID, input.AccountID, input.WorkspaceID, input.LaunchOperationID+":storage", "hash", now)
+	storage.ID, storage.Status, storage.CreatedAt = "fop-storage-attempted", "started", now
+	// This is the production attempted/unknown shape: the launch identity is
+	// known, but the persisted resource payload is incomplete after the write.
+	fillOperationResource(&storage, StorageVolume{ID: input.StorageVolumeID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID})
+	if err := store.Append(context.Background(), storage); err != nil {
+		t.Fatal(err)
+	}
+	provider.storageDiscovery = StorageRecoveryDiscovery{State: "storage_not_started", ProviderRequestID: "req-storage-readback"}
+	input.AllowExistingStorageOperation = true
+
+	proof, err := service.ComputeClaimRecoveryProof(context.Background(), input)
+
+	if err != nil || !proof.Eligible || proof.Reason != "none" || proof.StorageState != "storage_attempt_unknown" ||
+		proof.NodeOwnershipState != "unallocated" || proof.CVMOwnershipState != "recoverable" ||
+		proof.Sub2APIMutationCount != 0 || proof.TencentMutationCount != 0 || proof.KubernetesMutationCount != 0 ||
+		provider.proofCalls != 1 || len(provider.storageDiscoveries) != 1 || provider.storageCalls != 0 {
+		t.Fatalf("proof=%#v err=%v provider=%#v", proof, err, provider)
 	}
 }
 
@@ -553,7 +577,7 @@ func TestComputeClaimRecoveryProofRejectsConflictingStorageOperationIdentityBefo
 	}
 
 	proof, err := service.ComputeClaimRecoveryProof(context.Background(), input)
-	if err == nil || proof.Eligible || proof.Reason != "storage_already_started" || proof.NodeOwnershipState != "unallocated" ||
+	if err == nil || proof.Eligible || proof.Reason != "identity_mismatch" || proof.NodeOwnershipState != "unallocated" ||
 		proof.CVMOwnershipState != "recoverable" || provider.proofCalls != 1 || provider.claimCalls != 0 || provider.tagCalls != 0 || provider.scaleCalls != 0 || provider.storageCalls != 0 {
 		t.Fatalf("proof=%#v err=%v provider=%#v", proof, err, provider)
 	}
@@ -570,7 +594,7 @@ func TestComputeClaimRecoveryProofRejectsWorkspaceStorageOperationWithDifferentI
 	}
 
 	proof, err := service.ComputeClaimRecoveryProof(context.Background(), input)
-	if err == nil || proof.Eligible || proof.Reason != "storage_already_started" ||
+	if err == nil || proof.Eligible || proof.Reason != "identity_mismatch" ||
 		proof.NodeOwnershipState != "unallocated" || proof.CVMOwnershipState != "recoverable" ||
 		provider.proofCalls != 1 || provider.claimCalls != 0 {
 		t.Fatalf("proof=%#v err=%v provider=%#v", proof, err, provider)
@@ -745,6 +769,57 @@ func TestClaimComputeRecoveryReconcilesExactActiveOwnershipWithUnallocatedNodeOn
 	replayed, replayErr := NewServiceWithOperationStore(provider, store).ClaimComputeRecovery(context.Background(), claimInput)
 	if replayErr != nil || replayed.TencentMutationCount != 0 || replayed.KubernetesMutationCount != 0 || provider.claimCalls != 1 {
 		t.Fatalf("active drift replay=%#v err=%v provider=%#v", replayed, replayErr, provider)
+	}
+}
+
+func TestClaimComputeRecoveryContinuesNodeOnlyWithAttemptedUnknownStorage(t *testing.T) {
+	_, store, provider, input := seedComputeClaimRecovery(t, "basic")
+	now := time.Now().UTC()
+	storage := newOperation("create_storage_volume", "storage_volume", input.StorageVolumeID, input.AccountID, input.WorkspaceID, input.LaunchOperationID+":storage", "hash", now)
+	storage.ID, storage.Status, storage.CreatedAt = "fop-storage-attempted", "started", now
+	fillOperationResource(&storage, StorageVolume{ID: input.StorageVolumeID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID})
+	if err := store.Append(context.Background(), storage); err != nil {
+		t.Fatal(err)
+	}
+	input.AllowExistingStorageOperation = true
+	claimInput := ComputeClaimRecoveryClaimInput{
+		ComputeClaimRecoveryInput: input, MachineName: "machine-after", NodeName: "10.0.0.18", CVMInstanceID: "ins-fixture",
+		PrivateIP: provider.proof.PrivateIP, InstanceType: provider.proof.InstanceType, Zone: provider.proof.Zone,
+		IdempotencyKey: input.LaunchOperationID + ":compute",
+	}
+	operations, err := store.List(context.Background())
+	if err != nil || len(operations) != 2 {
+		t.Fatalf("seed operations=%#v err=%v", operations, err)
+	}
+	pending := operations[0]
+	pending.Status, pending.ErrorCode, pending.FinishedAt = "claim_pending", "", time.Time{}
+	pending.RedactedProviderPayload = withComputeClaimRecoveryBinding(pending.RedactedProviderPayload, newComputeClaimRecoveryBinding(claimInput))
+	if err := store.SaveComputeClaimRecovery(context.Background(), operations[0], pending); err != nil {
+		t.Fatal(err)
+	}
+	ownership, err := store.MachineOwnership(context.Background(), input.ComputeAllocationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ownership.Status = "active"
+	if err := store.ActivateComputeClaimRecoveryOwnership(context.Background(), ownership); err != nil {
+		t.Fatal(err)
+	}
+	provider.proof.CVMOwnershipState = "target_owned"
+	provider.proof.NodeOwnershipState = "unallocated"
+	provider.storageDiscovery = StorageRecoveryDiscovery{State: "unknown", Reason: "provider_describe"}
+	provider.storageDiscoveryErr = errors.New("storage provider readback unavailable")
+	provider.claim.TencentMutationCount = 0
+	provider.claim.KubernetesMutationCount = 1
+	provider.claim.Evidence = &ComputeClaimEvidence{Node: ComputeClaimMutationEvidence{Attempted: 1, Confirmed: 1}}
+	provider.claimHook = func() { provider.proof.NodeOwnershipState = "target_owned" }
+
+	result, claimErr := NewServiceWithOperationStore(provider, store).ClaimComputeRecovery(context.Background(), claimInput)
+
+	if claimErr != nil || !result.Eligible || result.StorageState != "storage_attempt_unknown" ||
+		result.TencentMutationCount != 0 || result.KubernetesMutationCount != 1 || provider.claimCalls != 1 ||
+		provider.nodeOnlyClaimCalls != 0 || provider.storageCalls != 0 {
+		t.Fatalf("result=%#v err=%v provider=%#v", result, claimErr, provider)
 	}
 }
 
