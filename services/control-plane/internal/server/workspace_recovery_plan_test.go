@@ -94,6 +94,18 @@ func terminalRequestHashReconciliationIdentityEvidence() clients.ComputeClaimIde
 	return evidence
 }
 
+func legacyKubectlClientRejectedIdentityEvidence() clients.ComputeClaimIdentityEvidence {
+	evidence := terminalRequestHashReconciliationIdentityEvidence()
+	evidence.Reconciliation = &clients.ComputeClaimReconciliationEvidence{
+		SchemaVersion: 2, Consumer: "claim_compute_recovery", Generation: "normal_launch_terminal_evidence_v1",
+		ProvenanceSource: "normal_launch_terminal_evidence", ProvenanceDigest: strings.Repeat("e", 64), State: "observed",
+		ExpectedRequestHashDigest: evidence.Checks[9].ExpectedDigest, PersistedRequestHashDigest: evidence.Checks[9].ActualDigest,
+		FailureStage: "node_patch_readback", ProviderErrorClass: "provider_error",
+		Node: clients.ComputeClaimMutationEvidence{Attempted: 1, Unknown: 1, Missing: []string{"node_ownership"}},
+	}
+	return evidence
+}
+
 func TestWorkspaceRecoveryPlanDiagnoseAdmitsOnlyFabricRequestHashReconciliationCandidateWithoutMutation(t *testing.T) {
 	t.Setenv("OPL_RELEASE_SHA", strings.Repeat("a", 40))
 	t.Setenv("OPL_CLOUD_IMAGE", "uswccr.ccs.tencentyun.com/oplcloud/opl-cloud@sha256:"+strings.Repeat("b", 64))
@@ -1592,6 +1604,63 @@ func TestWorkspaceRecoveryPlanSuccessorAllowsOnlyExactRecoverableCVMOnlyEvidence
 	}
 }
 
+func TestWorkspaceRecoveryPlanSuccessorAllowsOnlyExactLegacyKubectlClientRejectedRecordedCall(t *testing.T) {
+	planID, planDigest := "recovery-plan-failed", strings.Repeat("a", 64)
+	operation := workspaceLaunchOperation{
+		RecoveryPlan: &workspaceRecoveryPlan{
+			PlanID: planID, PlanDigest: planDigest, Status: "failed", Action: "compute_claim_continue",
+		},
+		RecoveryExecution: &workspaceRecoveryExecution{
+			ExecutionID: "recovery-exec-failed", PlanID: planID, PlanDigest: planDigest, Status: "failed",
+			CompletedAt: time.Now().UTC().Format(time.RFC3339Nano),
+			MutationOutcome: workspaceRecoveryMutationOutcome{
+				Status: "nonzero", Counts: workspaceRecoveryMutationCounts{Kubernetes: 1}, Source: "compute_claim_response",
+			},
+		},
+	}
+	evidence := legacyKubectlClientRejectedIdentityEvidence()
+	outcome, gate := workspaceRecoveryExecutionSuccessorGate(operation, &evidence)
+	if !gate.Allowed || gate.PersistedMutationState != "nonzero" || gate.FabricLedgerState != "absent" ||
+		outcome != operation.RecoveryExecution.MutationOutcome {
+		t.Fatalf("exact legacy client-rejected call was not admitted: outcome=%#v gate=%#v", outcome, gate)
+	}
+
+	for name, mutate := range map[string]func(*workspaceLaunchOperation, *clients.ComputeClaimIdentityEvidence){
+		"tencent recorded": func(operation *workspaceLaunchOperation, _ *clients.ComputeClaimIdentityEvidence) {
+			operation.RecoveryExecution.MutationOutcome.Counts = workspaceRecoveryMutationCounts{Tencent: 1}
+		},
+		"fabric operation mutation": func(operation *workspaceLaunchOperation, _ *clients.ComputeClaimIdentityEvidence) {
+			operation.RecoveryExecution.MutationOutcome.FabricOperationMutations = 1
+		},
+		"wrong source": func(operation *workspaceLaunchOperation, _ *clients.ComputeClaimIdentityEvidence) {
+			operation.RecoveryExecution.MutationOutcome.Source = "recovery_execution"
+		},
+		"wrong generation": func(_ *workspaceLaunchOperation, evidence *clients.ComputeClaimIdentityEvidence) {
+			evidence.Reconciliation.Generation = "isolated_request_hash_v1"
+		},
+		"wrong state": func(_ *workspaceLaunchOperation, evidence *clients.ComputeClaimIdentityEvidence) {
+			evidence.Reconciliation.State = "node_reserved"
+		},
+		"wrong provider class": func(_ *workspaceLaunchOperation, evidence *clients.ComputeClaimIdentityEvidence) {
+			evidence.Reconciliation.ProviderErrorClass = "transport_error"
+		},
+		"confirmed node mutation": func(_ *workspaceLaunchOperation, evidence *clients.ComputeClaimIdentityEvidence) {
+			evidence.Reconciliation.Node = clients.ComputeClaimMutationEvidence{Attempted: 1, Confirmed: 1}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			candidateOperation := operation
+			candidateExecution := *operation.RecoveryExecution
+			candidateOperation.RecoveryExecution = &candidateExecution
+			candidateEvidence := legacyKubectlClientRejectedIdentityEvidence()
+			mutate(&candidateOperation, &candidateEvidence)
+			if rejectedOutcome, rejectedGate := workspaceRecoveryExecutionSuccessorGate(candidateOperation, &candidateEvidence); rejectedGate.Allowed {
+				t.Fatalf("drifted legacy client-rejected call was admitted: outcome=%#v gate=%#v", rejectedOutcome, rejectedGate)
+			}
+		})
+	}
+}
+
 func TestWorkspaceRecoveryPlanSuccessorRejectsNonterminalPlanStatus(t *testing.T) {
 	planID, planDigest := "recovery-plan-failed", strings.Repeat("a", 64)
 	operation := workspaceLaunchOperation{
@@ -1691,6 +1760,43 @@ func TestWorkspaceRecoveryPlanDiagnoseKeepsFailedExecutionWithNonzeroMutationEvi
 		persisted.RecoveryExecution == nil || persisted.RecoveryExecution.ExecutionID != failed.RecoveryExecution.ExecutionID || len(persisted.RecoveryHistory) != 0 ||
 		len(fixture.fabric.computeClaimCalls) != 0 || len(fixture.fabric.storageIDs) != 0 {
 		t.Fatalf("nonzero failed execution was replaced or repeated: replay=%#v operation=%#v", replayed, persisted)
+	}
+}
+
+func TestWorkspaceRecoveryPlanDiagnoseCreatesSuccessorForExactLegacyKubectlClientRejectedRecordedCall(t *testing.T) {
+	t.Setenv("OPL_RELEASE_SHA", strings.Repeat("a", 40))
+	t.Setenv("OPL_CLOUD_IMAGE", "uswccr.ccs.tencentyun.com/oplcloud/opl-cloud@sha256:"+strings.Repeat("b", 64))
+	fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, "basic")
+	fixture.fabric.computeClaimProof = computeClaimRecoveryProofForLaunch(operation, "unallocated")
+	evidence := legacyKubectlClientRejectedIdentityEvidence()
+	useWorkspaceRecoveryPlanIdentityEvidence(t, &fixture, &evidence)
+
+	first := recoveryPlanResponse(t, requestWorkspaceRecoveryPlan(t, fixture, http.MethodPost, "/diagnose", map[string]any{"accountId": operation.AccountID}))
+	failed := fixture.operation(t)
+	failed.Status, failed.ErrorCode = "manual_review", "workspace_compute_claim_provider_describe"
+	failed.RecoveryPlan.Status, failed.RecoveryPlan.ErrorCode = "failed", failed.ErrorCode
+	failed.RecoveryExecution = &workspaceRecoveryExecution{
+		ExecutionID: "recovery-exec-client-rejected", RunIdentity: "control-plane-run-client-rejected",
+		PlanID: first.PlanID, PlanDigest: first.PlanDigest, ApprovalDigest: strings.Repeat("c", 64), Decision: "continue",
+		Status: "failed", StartedAt: time.Now().UTC().Add(-time.Minute).Format(time.RFC3339Nano),
+		CompletedAt: time.Now().UTC().Format(time.RFC3339Nano), ErrorCode: failed.ErrorCode,
+		MutationOutcome: workspaceRecoveryMutationOutcome{
+			Status: "nonzero", Counts: workspaceRecoveryMutationCounts{Kubernetes: 1}, Source: "compute_claim_response",
+		},
+	}
+	mustStore(t, fixture.store.SaveRuntimeOperation(context.Background(), workspaceLaunchOperationRow(failed)))
+
+	successor := recoveryPlanResponse(t, requestWorkspaceRecoveryPlan(t, fixture, http.MethodPost, "/diagnose", map[string]any{"accountId": operation.AccountID}))
+	persisted := fixture.operation(t)
+	if successor.Status != "diagnosed" || successor.PlanID == first.PlanID || successor.PlanDigest == first.PlanDigest ||
+		successor.SuccessorGate == nil || !successor.SuccessorGate.Allowed || persisted.RecoveryExecution != nil || len(persisted.RecoveryHistory) != 1 ||
+		persisted.RecoveryPlan == nil || persisted.RecoveryPlan.Generation != 1 ||
+		persisted.RecoveryHistory[0].Execution.MutationOutcome.Status != "nonzero" ||
+		persisted.RecoveryHistory[0].Execution.MutationOutcome.Counts != (workspaceRecoveryMutationCounts{Kubernetes: 1}) {
+		t.Fatalf("legacy client-rejected execution did not create one successor: first=%#v successor=%#v operation=%#v", first, successor, persisted)
+	}
+	if len(fixture.fabric.computeClaimCalls) != 0 || len(fixture.fabric.storageIDs) != 0 || len(fixture.sub2API.charges) != 1 || len(fixture.fabric.computeIDs) != 1 {
+		t.Fatalf("client-rejected successor crossed zero-mutation boundary: claims=%d storage=%d charges=%d computes=%d", len(fixture.fabric.computeClaimCalls), len(fixture.fabric.storageIDs), len(fixture.sub2API.charges), len(fixture.fabric.computeIDs))
 	}
 }
 
