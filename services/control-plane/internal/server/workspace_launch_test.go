@@ -1206,7 +1206,10 @@ func (s *workspaceLaunchSub2API) WorkspaceKey(ctx context.Context, userID int64)
 }
 
 func (s *workspaceLaunchSub2API) UserGroups(_ context.Context, credential clients.SessionDelegatedCredential, userID int64) ([]clients.Sub2APIGroup, error) {
-	if credential.Bearer != "test-user-delegated-token" || userID != 41 {
+	// Tenant fixtures use user 41; the reserved operator fixture maps
+	// admin@medopl.cn to user 1. Both identities must exercise the same live
+	// Codex-group contract without changing production behavior.
+	if credential.Bearer != "test-user-delegated-token" || userID != 41 && userID != 1 {
 		return nil, errors.New("wrong delegated group identity")
 	}
 	if s.groups != nil {
@@ -1941,6 +1944,10 @@ func TestPostgresWorkspaceLaunchUnknownStageAttemptSurvivesStoreReopenWithoutSec
 	operation := newWorkspaceLaunchOperation("acct-alpha", "usr-alpha", "Alpha", "basic", 10, false, pilotPriceVersion, 52_580_000, "launch-postgres-secret-unknown")
 	operation.Status, operation.Phase = "preparing", "secret_writing"
 	operation.WorkspaceAPIKeyID = 19
+	// Secret-boundary recovery requires the non-sensitive live Codex group
+	// evidence persisted by key convergence. The raw Key remains test-only
+	// provider state and is never part of the operation row.
+	operation.WorkspaceKeyGroupID = *workspaceTestCodexGroupID()
 	operation.AttachmentID = "attachment-alpha"
 	operation.ContinuationAttemptBudgets["storage"] = workspaceLaunchStageBudget{Attempted: 1, Confirmed: 1, Max: workspaceLaunchStageMax}
 	operation.ContinuationAttemptBudgets["attachment"] = workspaceLaunchStageBudget{Attempted: 1, Confirmed: 1, Max: workspaceLaunchStageMax}
