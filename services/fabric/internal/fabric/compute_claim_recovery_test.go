@@ -937,7 +937,7 @@ func TestClaimComputeRecoveryRetriesExactLegacyKubectlClientRejectionOnce(t *tes
 			RenewFlag: provider.proof.RenewFlag, Deadline: provider.proof.Deadline, CVMOwnershipState: "recoverable", NodeOwnershipState: "unallocated",
 		},
 		KubernetesMutationCount: 1, FailureStage: "node_patch_readback", ProviderErrorClass: "provider_error",
-		Evidence: &ComputeClaimEvidence{Node: ComputeClaimMutationEvidence{Attempted: 1, Unknown: 1, Missing: []string{"node_ownership"}}},
+		Evidence: &ComputeClaimEvidence{Node: ComputeClaimMutationEvidence{Attempted: 1, Missing: []string{"node_ownership"}}},
 	}
 	provider.claimHook = nil
 	provider.claimErr = errors.New("kubectl client rejected patch before API request")
@@ -951,7 +951,7 @@ func TestClaimComputeRecoveryRetriesExactLegacyKubectlClientRejectionOnce(t *tes
 	if firstErr == nil || first.Eligible || first.KubernetesMutationCount != 1 || provider.nodeOnlyClaimCalls != 1 ||
 		!observedPresent || !observedValid || observed.SchemaVersion != 2 || observed.State != "observed" ||
 		observed.FailureStage != "node_patch_readback" || observed.ProviderErrorClass != "provider_error" ||
-		!reflect.DeepEqual(observed.Node, ComputeClaimMutationEvidence{Attempted: 1, Unknown: 1, Missing: []string{"node_ownership"}}) {
+		!reflect.DeepEqual(observed.Node, ComputeClaimMutationEvidence{Attempted: 1, Missing: []string{"node_ownership"}}) {
 		t.Fatalf("first=%#v err=%v observed=%#v provider=%#v", first, firstErr, observed, provider)
 	}
 
@@ -1028,7 +1028,10 @@ func TestReadComputePoolHeadContinuesOnlyExactUnmarkedLegacyKubectlClientRejecti
 					RenewFlag: provider.proof.RenewFlag, Deadline: provider.proof.Deadline, CVMOwnershipState: "recoverable", NodeOwnershipState: "unallocated",
 				},
 				KubernetesMutationCount: 1, FailureStage: "node_patch_readback", ProviderErrorClass: test.providerErrorClass,
-				Evidence: &ComputeClaimEvidence{Node: ComputeClaimMutationEvidence{Attempted: 1, Unknown: 1, Missing: []string{"node_ownership"}}},
+				Evidence: &ComputeClaimEvidence{Node: ComputeClaimMutationEvidence{Attempted: 1, Missing: []string{"node_ownership"}}},
+			}
+			if test.providerErrorClass == "transport_error" {
+				provider.claim.Evidence.Node.Unknown = 1
 			}
 			provider.claimHook = nil
 			provider.claimErr = errors.New("kubectl client rejected patch before API request")
@@ -1132,11 +1135,12 @@ func TestClaimComputeRecoveryClientRejectionRetryFailureDoesNotOpenThirdPatch(t 
 			RenewFlag: provider.proof.RenewFlag, Deadline: provider.proof.Deadline, CVMOwnershipState: "recoverable", NodeOwnershipState: "unallocated",
 		},
 		KubernetesMutationCount: 1, FailureStage: "node_patch_readback", ProviderErrorClass: "provider_error",
-		Evidence: &ComputeClaimEvidence{Node: ComputeClaimMutationEvidence{Attempted: 1, Unknown: 1, Missing: []string{"node_ownership"}}},
+		Evidence: &ComputeClaimEvidence{Node: ComputeClaimMutationEvidence{Attempted: 1, Missing: []string{"node_ownership"}}},
 	}
 	provider.claimHook = nil
 	provider.claimErr = errors.New("legacy kubectl client rejection")
 	first, firstErr := NewServiceWithOperationStore(provider, store).ClaimComputeRecovery(context.Background(), claimInput)
+	provider.claim.Evidence.Node.Unknown = 1
 	provider.claimErr = errors.New("valid Node patch outcome unknown")
 	second, secondErr := NewServiceWithOperationStore(provider, store).ClaimComputeRecovery(context.Background(), claimInput)
 	operations, listErr := store.List(context.Background())
