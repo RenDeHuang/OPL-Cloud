@@ -689,7 +689,7 @@ func (s *Service) ComputeClaimRecoveryProof(ctx context.Context, input ComputeCl
 		proof.Reason = "storage_already_started"
 		return proof, fmt.Errorf("%w: storage_already_started", ErrComputeClaimRecoveryUnavailable)
 	}
-	if storageDisposition == computeClaimStorageOperationConflict {
+	if storageDisposition == computeClaimStorageOperationConflict && !input.AllowExistingStorageOperation {
 		proof.Reason = "identity_mismatch"
 		return proof, fmt.Errorf("%w: identity_mismatch", ErrComputeClaimRecoveryUnavailable)
 	}
@@ -714,12 +714,12 @@ func (s *Service) ComputeClaimRecoveryProof(ctx context.Context, input ComputeCl
 	)
 	storageInput.OperationID = storageOperation.OperationID
 	storageDiscovery, err := storageProvider.DiscoverStorageRecovery(ctx, storageInput)
-	if storageDisposition == computeClaimStorageOperationUnknown {
+	if storageDisposition == computeClaimStorageOperationUnknown || storageDisposition == computeClaimStorageOperationConflict {
 		if storageDiscovery.MutationCount != 0 {
 			proof.Reason = "provider_describe"
 			return proof, fmt.Errorf("%w: provider_describe", ErrComputeClaimRecoveryUnavailable)
 		}
-		// The persisted Storage write is attempted but not authoritative. Keep
+		// A persisted Storage attempt or conflict is not authoritative. Keep
 		// that stage unknown so the caller can continue the proven Compute claim
 		// without authorizing a CBS write or treating absence as proven.
 		proof.Eligible, proof.Reason, proof.StorageState, proof.StorageProviderResourceID = true, "none", "storage_attempt_unknown", ""
