@@ -1830,6 +1830,87 @@ func TestPostgresNormalLaunchTerminalReconciliationHasOneClaimWinnerAcrossServic
 	}
 }
 
+func TestPostgresLegacyKubectlClientRejectionRetryHasOneNodePatchWinner(t *testing.T) {
+	databaseURL := fabricTestDatabaseURL(t)
+	firstStore, err := newTestPostgresOperationStore(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer firstStore.client.Close()
+	secondStore, err := newTestPostgresOperationStore(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer secondStore.client.Close()
+
+	_, memoryStore, fixtureProvider, input := seedComputeClaimRecovery(t, "basic")
+	claimInput := seedNormalLaunchTerminalRequestHashReconciliationCandidate(t, memoryStore, fixtureProvider, input)
+	fixtureProvider.claim = ComputeClaimProviderClaim{
+		Proof: ComputeClaimProviderProof{
+			Status: "proven", Reason: "provider_describe", MachineName: fixtureProvider.proof.MachineName, NodeName: fixtureProvider.proof.NodeName,
+			CVMInstanceID: fixtureProvider.proof.CVMInstanceID, PrivateIP: fixtureProvider.proof.PrivateIP, InstanceType: fixtureProvider.proof.InstanceType,
+			Zone: fixtureProvider.proof.Zone, ChargeType: fixtureProvider.proof.ChargeType, PeriodMonths: 1,
+			RenewFlag: fixtureProvider.proof.RenewFlag, Deadline: fixtureProvider.proof.Deadline, CVMOwnershipState: "recoverable", NodeOwnershipState: "unallocated",
+		},
+		KubernetesMutationCount: 1, FailureStage: "node_patch_readback", ProviderErrorClass: "provider_error",
+		Evidence: &ComputeClaimEvidence{Node: ComputeClaimMutationEvidence{Attempted: 1, Unknown: 1, Missing: []string{"node_ownership"}}},
+	}
+	fixtureProvider.claimHook = nil
+	fixtureProvider.claimErr = errors.New("legacy kubectl client rejection")
+	first, firstErr := NewServiceWithOperationStore(fixtureProvider, memoryStore).ClaimComputeRecovery(context.Background(), claimInput)
+	operations, err := memoryStore.List(context.Background())
+	if firstErr == nil || first.Eligible || err != nil || len(operations) != 1 {
+		t.Fatalf("first=%#v err=%v operations=%#v", first, firstErr, operations)
+	}
+	if err := firstStore.Append(context.Background(), operations[0]); err != nil {
+		t.Fatal(err)
+	}
+	ownership, err := memoryStore.MachineOwnership(context.Background(), input.ComputeAllocationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, created, err := firstStore.ClaimMachine(context.Background(), ownership); err != nil || !created {
+		t.Fatalf("seed ownership created=%v err=%v", created, err)
+	}
+
+	fixtureProvider.claimErr = nil
+	provider := &postgresComputeClaimRecoveryProvider{fakeComputeClaimRecoveryProvider: *fixtureProvider}
+	configureNormalLaunchTerminalNodeOnlySuccess(&provider.fakeComputeClaimRecoveryProvider)
+	type outcome struct {
+		proof ComputeClaimRecoveryProof
+		err   error
+	}
+	start := make(chan struct{})
+	results := make(chan outcome, 2)
+	for _, store := range []*PostgresOperationStore{firstStore, secondStore} {
+		store := store
+		go func() {
+			<-start
+			proof, claimErr := NewServiceWithOperationStore(provider, store).ClaimComputeRecovery(context.Background(), claimInput)
+			results <- outcome{proof: proof, err: claimErr}
+		}()
+	}
+	close(start)
+	mutations := 0
+	for range 2 {
+		result := <-results
+		if result.err != nil || !result.proof.Eligible || result.proof.TencentMutationCount != 0 || result.proof.KubernetesMutationCount > 1 {
+			t.Fatalf("result=%#v", result)
+		}
+		mutations += result.proof.KubernetesMutationCount
+	}
+	stored, err := firstStore.List(context.Background())
+	if err != nil || len(stored) != 1 {
+		t.Fatalf("stored=%#v err=%v", stored, err)
+	}
+	rejection, rejectionPresent, rejectionValid := decodeComputeClaimNodeClientRejectionRecovery(stored[0])
+	reconciliation, reconciliationPresent, reconciliationValid := decodeComputeClaimRecoveryReconciliation(stored[0])
+	if mutations != 1 || provider.nodeOnlyClaimCalls != 2 || !rejectionPresent || !rejectionValid || !reconciliationPresent || !reconciliationValid ||
+		rejection.APIAcceptedMutations != 0 || reconciliation.State != "succeeded" || stored[0].Status != "succeeded" {
+		t.Fatalf("stored=%#v err=%v rejection=%#v reconciliation=%#v provider=%#v mutations=%d", stored, err, rejection, reconciliation, provider, mutations)
+	}
+}
+
 func TestPostgresHistoricalComputeClaimBindingWithoutLedgerHasOneNodeContinuationWinner(t *testing.T) {
 	databaseURL := fabricTestDatabaseURL(t)
 	firstStore, err := newTestPostgresOperationStore(databaseURL)

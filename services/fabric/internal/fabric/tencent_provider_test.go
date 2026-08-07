@@ -1058,7 +1058,7 @@ func TestTencentProviderClaimComputeRecoveryConvergesExactCVMAndNodeWithStrictRe
 			return []byte(`{"metadata":{"name":"10.0.0.8","resourceVersion":"7","labels":{}},"spec":{"taints":[{"key":"oplcloud.cn/workspace-id","value":"unallocated","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`), nil
 		case "patch":
 			patchCalls++
-			if !slices.Equal(args, []string{"patch", "node/10.0.0.8", "--type=json", "-f", "-"}) {
+			if !slices.Equal(args, []string{"patch", "node/10.0.0.8", "--type=json", "--patch-file=/dev/stdin"}) {
 				t.Fatalf("patch args=%#v", args)
 			}
 			var patch []map[string]any
@@ -1116,7 +1116,7 @@ func TestTencentProviderClaimComputeRecoveryNodeOnlyPreservesRecoverableCVM(t *t
 			return []byte(`{"metadata":{"name":"10.0.0.8","resourceVersion":"7","labels":{}},"spec":{"taints":[{"key":"oplcloud.cn/workspace-id","value":"unallocated","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`), nil
 		case "patch":
 			patchCalls++
-			if !slices.Equal(args, []string{"patch", "node/10.0.0.8", "--type=json", "-f", "-"}) || len(stdin) == 0 {
+			if !slices.Equal(args, []string{"patch", "node/10.0.0.8", "--type=json", "--patch-file=/dev/stdin"}) || len(stdin) == 0 {
 				t.Fatalf("patch args=%#v stdin=%s", args, stdin)
 			}
 			nodeOwned = true
@@ -1133,6 +1133,47 @@ func TestTencentProviderClaimComputeRecoveryNodeOnlyPreservesRecoverableCVM(t *t
 		claim.TencentMutationCount != 0 || claim.KubernetesMutationCount != 1 || claim.Evidence == nil ||
 		!reflect.DeepEqual(claim.Evidence.CVM, ComputeClaimMutationEvidence{}) ||
 		!reflect.DeepEqual(claim.Evidence.Node, ComputeClaimMutationEvidence{Attempted: 1, Confirmed: 1}) || patchCalls != 1 {
+		t.Fatalf("claim=%#v err=%v patchCalls=%d", claim, err, patchCalls)
+	}
+}
+
+func TestTencentProviderNodePatchClientRejectionIsNotCountedAsAPIAcceptedMutation(t *testing.T) {
+	setProtectedResourceEnv(t)
+	allocation, plan, ownership := computeClaimProviderFixture()
+	provider := NewTencentProvider()
+	provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
+		if request.Action != "compute_claim_truth" {
+			t.Fatalf("node-only reconciliation attempted Tencent mutation: action=%q", request.Action)
+		}
+		return provisionerResponse{
+			OK: true, Status: "proven", PoolID: plan.PoolID, NodePoolID: plan.NodePoolID,
+			InstanceID: allocation.InstanceID, NodeName: allocation.NodeName, PrivateIP: allocation.PrivateIP, InstanceType: plan.InstanceType,
+			ProviderData: map[string]string{
+				"machineName": allocation.MachineName, "zone": allocation.Zone, "chargeType": "PREPAID", "periodMonths": "1",
+				"renewFlag": "NOTIFY_AND_MANUAL_RENEW", "deadline": allocation.Deadline, "cvmOwnershipState": "recoverable",
+			},
+		}, nil
+	}
+	patchCalls := 0
+	provider.kubectl = func(_ context.Context, args []string, _ []byte) ([]byte, error) {
+		switch args[0] {
+		case "get":
+			return []byte(`{"metadata":{"name":"10.0.0.8","resourceVersion":"7","labels":{}},"spec":{"taints":[{"key":"oplcloud.cn/workspace-id","value":"unallocated","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`), nil
+		case "patch":
+			patchCalls++
+			return nil, errors.New("error: must specify --patch or --patch-file containing the contents of the patch")
+		default:
+			t.Fatalf("kubectl args=%#v", args)
+			return nil, nil
+		}
+	}
+
+	claim, err := provider.ClaimComputeRecoveryNodeOnly(context.Background(), allocation, plan, ownership)
+
+	if err == nil || claim.FailureStage != "node_patch_readback" || claim.ProviderErrorClass != "provider_error" ||
+		claim.TencentMutationCount != 0 || claim.KubernetesMutationCount != 0 || claim.Evidence == nil ||
+		!reflect.DeepEqual(claim.Evidence.CVM, ComputeClaimMutationEvidence{}) ||
+		!reflect.DeepEqual(claim.Evidence.Node, ComputeClaimMutationEvidence{Missing: []string{"node_ownership"}}) || patchCalls != 1 {
 		t.Fatalf("claim=%#v err=%v patchCalls=%d", claim, err, patchCalls)
 	}
 }
@@ -1618,7 +1659,7 @@ func TestTencentTagComputeMachineConvergesProviderAndNodeWithStrictReadback(t *t
 			return []byte(`{"metadata":{"name":"node-alpha","resourceVersion":"7","labels":{}},"spec":{"taints":[{"key":"oplcloud.cn/workspace-id","value":"unallocated","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`), nil
 		case "patch":
 			events = append(events, "patch")
-			if !slices.Equal(args, []string{"patch", "node/node-alpha", "--type=json", "-f", "-"}) {
+			if !slices.Equal(args, []string{"patch", "node/node-alpha", "--type=json", "--patch-file=/dev/stdin"}) {
 				t.Fatalf("kubectl patch args = %#v", args)
 			}
 			var patch []map[string]any

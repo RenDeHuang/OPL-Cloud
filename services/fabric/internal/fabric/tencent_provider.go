@@ -1101,11 +1101,13 @@ func (p *TencentProvider) convergeComputeClaimNode(ctx context.Context, allocati
 	if patchErr != nil {
 		return evidence, &computeClaimNodeConvergenceError{Reason: "node_ownership_conflict", Stage: "node_patch_build", ProviderClass: "ownership_conflict"}
 	}
-	evidence.Attempted = 1
-	_, patchErr = p.callKubectl(ctx, []string{"patch", "node/" + allocation.NodeName, "--type=json", "-f", "-"}, patch, target)
+	_, patchErr = p.callKubectl(ctx, []string{"patch", "node/" + allocation.NodeName, "--type=json", "--patch-file=/dev/stdin"}, patch, target)
+	if !computeClaimKubectlClientRejectedBeforeAPI(patchErr) {
+		evidence.Attempted = 1
+	}
 	readbackState, readbackOK, readbackErr, readbackClass := p.readNodeOwnershipAfterMutation(ctx, allocation, ownership)
 	if readbackOK && readbackState == "target_owned" {
-		evidence.Confirmed = 1
+		evidence.Confirmed = evidence.Attempted
 		return evidence, nil
 	}
 	evidence.Missing = []string{"node_ownership"}
@@ -1175,6 +1177,13 @@ func computeClaimKubectlErrorClass(err error) string {
 		return "ownership_conflict"
 	}
 	return "provider_error"
+}
+
+func computeClaimKubectlClientRejectedBeforeAPI(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "must specify --patch or --patch-file containing the contents of the patch")
 }
 
 func computeClaimProvisionerRequest(action string, allocation ComputeAllocation, prepared ComputeAllocationPreparation, ownership MachineOwnership) provisionerRequest {
