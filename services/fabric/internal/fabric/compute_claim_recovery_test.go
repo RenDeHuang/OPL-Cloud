@@ -1060,6 +1060,41 @@ func TestReadComputePoolHeadContinuesOnlyExactUnmarkedLegacyKubectlClientRejecti
 	}
 }
 
+func TestReadComputePoolHeadContinuesExactHistoricalBindingWithoutLedger(t *testing.T) {
+	_, store, provider, input := seedComputeClaimRecovery(t, "basic")
+	store.mu.Lock()
+	pending := store.operation[0]
+	pending.Status, pending.ErrorCode, pending.FinishedAt = "claim_pending", "", time.Time{}
+	pending.ComputePoolKey = input.NodePoolID
+	var allocation ComputeAllocation
+	plan, hasPlan := decodeComputeAllocationPlan(pending)
+	if !decodeOperationResource(pending, &allocation) || !hasPlan {
+		store.mu.Unlock()
+		t.Fatal("missing persisted allocation identity")
+	}
+	claimInput, inputOK := automaticComputeClaimRecoveryInput(pending, allocation, plan)
+	if !inputOK {
+		store.mu.Unlock()
+		t.Fatal("missing automatic recovery input")
+	}
+	pending.RedactedProviderPayload = withComputeClaimRecoveryBinding(
+		pending.RedactedProviderPayload,
+		historicalComputeClaimRecoveryBinding(claimInput),
+	)
+	store.operation[0] = pending
+	store.mu.Unlock()
+	proofCalls, claimCalls, nodeOnlyClaimCalls := provider.proofCalls, provider.claimCalls, provider.nodeOnlyClaimCalls
+
+	readback, err := NewServiceWithOperationStore(provider, store).ReadComputePoolHead(context.Background(), input.NodePoolID)
+	if err != nil || readback.Status != "claim_pending" || readback.ContinuationState != "continuable" ||
+		readback.FailureStage != "none" || readback.ErrorCode != "none" {
+		t.Fatalf("readback=%#v err=%v", readback, err)
+	}
+	if provider.proofCalls != proofCalls || provider.claimCalls != claimCalls || provider.nodeOnlyClaimCalls != nodeOnlyClaimCalls {
+		t.Fatalf("GET-only pool head invoked provider: before=%d/%d/%d after=%d/%d/%d", proofCalls, claimCalls, nodeOnlyClaimCalls, provider.proofCalls, provider.claimCalls, provider.nodeOnlyClaimCalls)
+	}
+}
+
 func TestClaimComputeRecoveryDoesNotRetryDriftedLegacyKubectlFailure(t *testing.T) {
 	_, store, provider, input := seedComputeClaimRecovery(t, "basic")
 	claimInput := seedNormalLaunchTerminalRequestHashReconciliationCandidate(t, store, provider, input)
