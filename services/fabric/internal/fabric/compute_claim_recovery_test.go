@@ -543,7 +543,7 @@ func TestComputeClaimRecoveryProofReadsNodeBeforeUnresolvedExactStorage(t *testi
 	}
 }
 
-func TestComputeClaimRecoveryProofRejectsConflictingStorageWithStageAwareReadback(t *testing.T) {
+func TestComputeClaimRecoveryProofKeepsComputeEligibleForConflictingStorageWithStageAwareReadback(t *testing.T) {
 	service, store, provider, input := seedComputeClaimRecovery(t, "basic")
 	now := time.Now().UTC()
 	storage := newOperation("create_storage_volume", "storage_volume", "vol-conflict", input.AccountID, input.WorkspaceID, input.LaunchOperationID+":storage", "hash", now)
@@ -559,9 +559,10 @@ func TestComputeClaimRecoveryProofRejectsConflictingStorageWithStageAwareReadbac
 
 	proof, err := service.ComputeClaimRecoveryProof(context.Background(), input)
 
-	if err == nil || proof.Eligible || proof.Reason != "identity_mismatch" || proof.NodeOwnershipState != "unallocated" ||
-		proof.CVMOwnershipState != "recoverable" || provider.proofCalls != 1 ||
-		len(provider.storageDiscoveries) != 0 || provider.claimCalls != 0 || provider.storageCalls != 0 {
+	if err != nil || !proof.Eligible || proof.Reason != "none" || proof.StorageState != "storage_attempt_unknown" ||
+		proof.StorageProviderResourceID != "" || proof.NodeOwnershipState != "unallocated" || proof.CVMOwnershipState != "recoverable" ||
+		proof.Sub2APIMutationCount != 0 || proof.TencentMutationCount != 0 || proof.KubernetesMutationCount != 0 ||
+		provider.proofCalls != 1 || len(provider.storageDiscoveries) != 1 || provider.claimCalls != 0 || provider.storageCalls != 0 {
 		t.Fatalf("proof=%#v err=%v provider=%#v", proof, err, provider)
 	}
 }
