@@ -1566,7 +1566,7 @@ func workspaceComputeClaimStageAwareReadback(operation workspaceLaunchOperation)
 	// Keep the same isolation for the legacy manual-review shape: it is still a
 	// compute-claim recovery candidate, and must not be rejected by a later
 	// storage attempt before the provider can read the CVM and Node.
-	return workspaceComputeClaimCanonical(operation) || workspaceComputeClaimLegacyCandidate(operation)
+	return workspaceComputeClaimRecoveryCandidate(operation)
 }
 
 func workspaceComputeClaimRecoveryRequestMatches(operation workspaceLaunchOperation, input workspaceComputeClaimRecoveryRequest) bool {
@@ -2439,6 +2439,17 @@ func workspaceComputeClaimLegacyCandidate(operation workspaceLaunchOperation) bo
 	return operation.Status == "manual_review" && operation.Phase == "compute_fulfilling"
 }
 
+func workspaceComputeClaimStorageBoundaryCandidate(operation workspaceLaunchOperation) bool {
+	stage, ok := workspaceLaunchReadbackRecoveryStage(operation)
+	return ok && stage == "storage" &&
+		operation.ComputeClaimProof == nil && operation.ComputeClaimTerminalEvidence == nil &&
+		validWorkspaceLaunchComputeClaimIdentity(operation)
+}
+
+func workspaceComputeClaimRecoveryCandidate(operation workspaceLaunchOperation) bool {
+	return workspaceComputeClaimCanonical(operation) || workspaceComputeClaimLegacyCandidate(operation) || workspaceComputeClaimStorageBoundaryCandidate(operation)
+}
+
 func (app *controlPlaneServer) loadWorkspaceComputeClaimOperation(ctx context.Context, operationID string, input workspaceComputeClaimRecoveryRequest, allowLegacy bool) (workspaceLaunchOperation, error) {
 	operation, ok, err := app.workspaceLaunchOperation(ctx, operationID)
 	if err != nil {
@@ -2450,7 +2461,7 @@ func (app *controlPlaneServer) loadWorkspaceComputeClaimOperation(ctx context.Co
 	if !workspaceComputeClaimRecoveryRequestMatches(operation, input) {
 		return workspaceLaunchOperation{}, errWorkspaceComputeClaimIdentity
 	}
-	if !workspaceComputeClaimCanonical(operation) && (!allowLegacy || !workspaceComputeClaimLegacyCandidate(operation)) {
+	if !workspaceComputeClaimRecoveryCandidate(operation) && (!allowLegacy || !workspaceComputeClaimLegacyCandidate(operation)) {
 		return workspaceLaunchOperation{}, errWorkspaceComputeClaimNotPending
 	}
 	userID, err := app.sub2APIUserID(ctx, operation.AccountID)

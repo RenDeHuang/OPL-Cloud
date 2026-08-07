@@ -478,7 +478,7 @@ func workspaceComputeClaimRecoveryRequestFromAllocation(operation workspaceLaunc
 }
 
 func (app *controlPlaneServer) workspaceComputeClaimRecoveryProofForPlan(ctx context.Context, service *controlplane.Service, operation workspaceLaunchOperation) (workspaceComputeClaimRecoveryRequest, clients.ComputeClaimRecoveryProof, *clients.ComputeClaimIdentityEvidence, error) {
-	if !workspaceComputeClaimCanonical(operation) && !workspaceComputeClaimLegacyCandidate(operation) {
+	if !workspaceComputeClaimRecoveryCandidate(operation) {
 		return workspaceComputeClaimRecoveryRequest{}, clients.ComputeClaimRecoveryProof{}, nil, errWorkspaceComputeClaimNotPending
 	}
 	userID, err := app.sub2APIUserID(ctx, operation.AccountID)
@@ -1078,28 +1078,38 @@ func (app *controlPlaneServer) diagnoseWorkspaceRecoveryPlan(ctx context.Context
 		return workspaceRecoveryPlan{}, err
 	}
 	readbackCandidate, stageReadback := workspaceRecoveryPlanReadbackCandidate(operation)
-	recovered, proof, err := app.workspaceLaunchReadbackRecoveryProofForOperation(ctx, service, readbackCandidate)
 	var plan workspaceRecoveryPlan
 	var computeEvidence *clients.ComputeClaimIdentityEvidence
-	if stageReadback {
-		if err != nil {
-			return workspaceRecoveryPlan{}, err
-		}
-		expectedPrivateIP, privateIPErr := app.workspaceRecoveryPlanExpectedPrivateIP(recovered)
-		if privateIPErr != nil {
-			return workspaceRecoveryPlan{}, privateIPErr
-		}
-		plan, err = newWorkspaceReadbackRecoveryPlan(recovered, proof, release, expectedPrivateIP)
-	} else if workspaceComputeClaimCanonical(operation) || workspaceComputeClaimLegacyCandidate(operation) {
+	var recovered workspaceLaunchOperation
+	var proof workspaceLaunchReadbackRecoveryProof
+	var readbackErr error
+	computeClaimCandidate := workspaceComputeClaimRecoveryCandidate(operation)
+	if computeClaimCandidate {
+		// A later Storage unknown is only a Storage mutation boundary. Read the
+		// authoritative Compute Claim first so Node ownership can converge.
+		stageReadback = false
+	}
+	if computeClaimCandidate {
 		computeInput, computeProof, evidence, computeErr := app.workspaceComputeClaimRecoveryProofForPlan(ctx, service, operation)
 		if computeErr != nil {
 			return workspaceRecoveryPlan{}, computeErr
 		}
 		computeEvidence = evidence
 		plan, err = newWorkspaceComputeClaimRecoveryPlan(operation, computeInput, computeProof, evidence, release)
+	} else if stageReadback {
+		recovered, proof, readbackErr = app.workspaceLaunchReadbackRecoveryProofForOperation(ctx, service, readbackCandidate)
+		if readbackErr != nil {
+			return workspaceRecoveryPlan{}, readbackErr
+		}
+		expectedPrivateIP, privateIPErr := app.workspaceRecoveryPlanExpectedPrivateIP(recovered)
+		if privateIPErr != nil {
+			return workspaceRecoveryPlan{}, privateIPErr
+		}
+		plan, err = newWorkspaceReadbackRecoveryPlan(recovered, proof, release, expectedPrivateIP)
 	} else {
-		if err != nil {
-			return workspaceRecoveryPlan{}, err
+		recovered, proof, readbackErr = app.workspaceLaunchReadbackRecoveryProofForOperation(ctx, service, readbackCandidate)
+		if readbackErr != nil {
+			return workspaceRecoveryPlan{}, readbackErr
 		}
 		expectedPrivateIP, privateIPErr := app.workspaceRecoveryPlanExpectedPrivateIP(recovered)
 		if privateIPErr != nil {
