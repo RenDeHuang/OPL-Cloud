@@ -834,6 +834,40 @@ func TestWorkspaceRecoveryPlanDiagnoseKeepsComputeClaimPendingWhenNodeOwnershipI
 	}
 }
 
+func TestWorkspaceRecoveryPlanDiagnosePrioritizesComputeClaimOverStorageUnknown(t *testing.T) {
+	t.Setenv("OPL_RELEASE_SHA", strings.Repeat("a", 40))
+	t.Setenv("OPL_CLOUD_IMAGE", "uswccr.ccs.tencentyun.com/oplcloud/opl-cloud@sha256:"+strings.Repeat("b", 64))
+	fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, "basic")
+	operation.Status, operation.Phase, operation.ErrorCode = "manual_review", "storage_fulfilling", "workspace_launch_storage_attempt_unknown"
+	operation.ContinuationAttemptBudgets["storage"] = workspaceLaunchStageBudget{Attempted: 1, Unknown: 1, Max: workspaceLaunchStageMax}
+	operation.ComputeClaimProof = nil
+	fixture.fabric.providerTruthErr = errors.New("monthly_provider_truth_unavailable")
+	fixture.fabric.computeClaimProof = computeClaimRecoveryProofForLaunchStorage(operation, "unallocated", "storage_attempt_unknown", "")
+	fixture.fabric.computeClaimProofFn = func(input clients.ComputeClaimRecoveryInput) (clients.ComputeClaimRecoveryProof, error) {
+		if !input.AllowExistingStorageOperation {
+			return fixture.fabric.computeClaimProof, errors.New("compute_claim_recovery_storage_already_started")
+		}
+		return fixture.fabric.computeClaimProof, nil
+	}
+	if err := fixture.store.SaveRuntimeOperation(context.Background(), workspaceLaunchOperationRow(operation)); err != nil {
+		t.Fatal(err)
+	}
+
+	response := requestWorkspaceRecoveryPlan(t, fixture, http.MethodPost, "/diagnose", map[string]any{"accountId": operation.AccountID})
+	if response.Code != http.StatusOK {
+		t.Fatalf("compute claim was hidden by Storage unknown: status=%d body=%s", response.Code, response.Body.String())
+	}
+	plan := recoveryPlanResponse(t, response)
+	persisted := fixture.operation(t)
+	if plan.Status != "diagnosed" || persisted.RecoveryPlan == nil || persisted.RecoveryPlan.Action != "compute_claim_continue" || persisted.RecoveryPlan.TargetBinding.Stage != "compute_claim" ||
+		len(fixture.fabric.computeClaimInputs) != 1 || !fixture.fabric.computeClaimInputs[0].AllowExistingStorageOperation ||
+		len(fixture.fabric.storageIDs) != 0 || len(fixture.sub2API.charges) != 1 ||
+		countStrings(*fixture.events, "fabric.monthly-provider-truth") != 0 {
+		t.Fatalf("stage isolation failed: plan=%#v operation=%#v computeInputs=%#v storage=%d charges=%d events=%#v", plan, persisted,
+			fixture.fabric.computeClaimInputs, len(fixture.fabric.storageIDs), len(fixture.sub2API.charges), *fixture.events)
+	}
+}
+
 func TestWorkspaceRecoveryPlanReadAndValidateReportExactReleaseDriftWithoutExternalMutation(t *testing.T) {
 	mainSHA := strings.Repeat("a", 40)
 	t.Setenv("OPL_RELEASE_SHA", mainSHA)
