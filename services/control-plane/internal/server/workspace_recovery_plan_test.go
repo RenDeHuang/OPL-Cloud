@@ -101,7 +101,7 @@ func legacyKubectlClientRejectedIdentityEvidence() clients.ComputeClaimIdentityE
 		ProvenanceSource: "normal_launch_terminal_evidence", ProvenanceDigest: strings.Repeat("e", 64), State: "observed",
 		ExpectedRequestHashDigest: evidence.Checks[9].ExpectedDigest, PersistedRequestHashDigest: evidence.Checks[9].ActualDigest,
 		FailureStage: "node_patch_readback", ProviderErrorClass: "provider_error",
-		Node: clients.ComputeClaimMutationEvidence{Attempted: 1, Unknown: 1, Missing: []string{"node_ownership"}},
+		Node: clients.ComputeClaimMutationEvidence{Attempted: 1, Missing: []string{"node_ownership"}},
 	}
 	return evidence
 }
@@ -1646,6 +1646,9 @@ func TestWorkspaceRecoveryPlanSuccessorAllowsOnlyExactLegacyKubectlClientRejecte
 		},
 		"confirmed node mutation": func(_ *workspaceLaunchOperation, evidence *clients.ComputeClaimIdentityEvidence) {
 			evidence.Reconciliation.Node = clients.ComputeClaimMutationEvidence{Attempted: 1, Confirmed: 1}
+		},
+		"unknown node mutation": func(_ *workspaceLaunchOperation, evidence *clients.ComputeClaimIdentityEvidence) {
+			evidence.Reconciliation.Node.Unknown = 1
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
