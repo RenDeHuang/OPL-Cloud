@@ -1518,7 +1518,13 @@ func workspaceComputeClaimRecoveryInput(operation workspaceLaunchOperation, inpu
 		LaunchOperationID: operation.ID, AccountID: operation.AccountID, WorkspaceID: operation.WorkspaceID,
 		ComputeAllocationID: operation.ComputeID, StorageVolumeID: operation.StorageID, PackageID: operation.PackageID,
 		PoolID: firstNonEmpty(operation.ComputePoolID, input.PoolID), NodePoolID: operation.ComputeNodePoolID,
+		AllowExistingStorageOperation: workspaceComputeClaimStageAwareReadback(operation),
 	}
+}
+
+func workspaceComputeClaimStageAwareReadback(operation workspaceLaunchOperation) bool {
+	return workspaceComputeClaimCanonical(operation) && operation.ErrorCode == "workspace_launch_storage_attempt_unknown" &&
+		operation.ContinuationAttemptBudgets["storage"] == (workspaceLaunchStageBudget{Attempted: 1, Unknown: 1, Max: workspaceLaunchStageMax})
 }
 
 func workspaceComputeClaimRecoveryRequestMatches(operation workspaceLaunchOperation, input workspaceComputeClaimRecoveryRequest) bool {
@@ -2025,12 +2031,17 @@ func workspaceComputeClaimStorageBindingValid(state, providerResourceID string) 
 		return providerResourceID == ""
 	case "storage_existing_exact":
 		return strings.HasPrefix(providerResourceID, "disk-")
+	case "storage_attempt_unknown":
+		return providerResourceID == ""
 	default:
 		return false
 	}
 }
 
 func workspaceComputeClaimAllowedWritesForStorage(state string) []string {
+	if state == "storage_attempt_unknown" {
+		return []string{"claim_existing_cvm_node"}
+	}
 	storageWrite := "create_original_cbs"
 	if state == "storage_existing_exact" {
 		storageWrite = "reuse_original_cbs"

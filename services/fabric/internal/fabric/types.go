@@ -148,6 +148,9 @@ type ComputeClaimRecoveryInput struct {
 	PackageID           string `json:"packageId"`
 	PoolID              string `json:"poolId"`
 	NodePoolID          string `json:"nodePoolId"`
+	// AllowExistingStorageOperation is restricted to the server-owned
+	// compute-first readback shape. It never authorizes a storage write.
+	AllowExistingStorageOperation bool `json:"allowExistingStorageOperation,omitempty"`
 }
 
 type ComputeClaimRecoveryClaimInput struct {
