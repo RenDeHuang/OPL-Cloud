@@ -623,6 +623,24 @@ func workspaceComputeClaimRecoverableCVMOnly(evidence *clients.ComputeClaimIdent
 		node.Attempted == 0 && workspaceComputeClaimMutationEvidenceMatches(node, 0, 1, "node", true)
 }
 
+func workspaceComputeClaimLegacyKubectlClientRejected(evidence *clients.ComputeClaimIdentityEvidence) bool {
+	if !workspaceComputeClaimRequestHashReconciliation(evidence) || evidence.Reconciliation == nil {
+		return false
+	}
+	mismatch, ok := workspaceRecoveryComputeClaimRequestHashMismatch(evidence)
+	if !ok {
+		return false
+	}
+	reconciliation, node := evidence.Reconciliation, evidence.Reconciliation.Node
+	return reconciliation.SchemaVersion == 2 && reconciliation.Consumer == "claim_compute_recovery" &&
+		reconciliation.Generation == "normal_launch_terminal_evidence_v1" &&
+		reconciliation.ProvenanceSource == "normal_launch_terminal_evidence" &&
+		computeClaimApprovalDigestPattern.MatchString(reconciliation.ProvenanceDigest) && reconciliation.State == "observed" &&
+		reconciliation.ExpectedRequestHashDigest == mismatch.ExpectedDigest && reconciliation.PersistedRequestHashDigest == mismatch.ActualDigest &&
+		reconciliation.FailureStage == "node_patch_readback" && reconciliation.ProviderErrorClass == "provider_error" &&
+		node.Attempted == 1 && node.Confirmed == 0 && node.Unknown == 1 && len(node.Missing) == 1 && node.Missing[0] == "node_ownership"
+}
+
 func newWorkspaceComputeClaimRecoveryPlan(operation workspaceLaunchOperation, input workspaceComputeClaimRecoveryRequest, proof clients.ComputeClaimRecoveryProof, evidence *clients.ComputeClaimIdentityEvidence, release workspaceRecoveryReleaseBinding) (workspaceRecoveryPlan, error) {
 	authorityDigest := workspaceRecoveryAuthorityDigest(struct {
 		Proof    clients.ComputeClaimRecoveryProof     `json:"proof"`
@@ -805,6 +823,14 @@ func workspaceRecoveryExecutionSuccessorGate(operation workspaceLaunchOperation,
 			return workspaceRecoveryMutationOutcome{
 				Status: "nonzero", Counts: counts, Source: "fabric_mutation_ledger_recoverable_cvm_only", EvidenceDigest: evidence.MutationLedgerDigest,
 			}, gate
+		}
+		return workspaceRecoveryMutationOutcome{}, gate
+	}
+	if workspaceComputeClaimLegacyKubectlClientRejected(evidence) {
+		if outcome.Status == "nonzero" && outcome.Counts == (workspaceRecoveryMutationCounts{Kubernetes: 1}) &&
+			outcome.FabricOperationMutations == 0 && outcome.Source == "compute_claim_response" {
+			gate.Allowed = true
+			return outcome, gate
 		}
 		return workspaceRecoveryMutationOutcome{}, gate
 	}
