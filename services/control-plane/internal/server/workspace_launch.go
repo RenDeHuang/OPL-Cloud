@@ -2172,10 +2172,26 @@ func workspaceComputeClaimApprovalScopeMatches(got, want workspaceComputeClaimAp
 	return workspaceComputeClaimApprovalBindingMatches(got, want)
 }
 
+func workspaceComputeClaimLegacyClientRejectedSuccessor(operation workspaceLaunchOperation) bool {
+	if operation.ErrorCode != "workspace_compute_claim_provider_describe" || operation.RecoveryPlan == nil || len(operation.RecoveryHistory) == 0 {
+		return false
+	}
+	predecessor := operation.RecoveryHistory[len(operation.RecoveryHistory)-1]
+	outcome := predecessor.Execution.MutationOutcome
+	return operation.RecoveryPlan.Action == "compute_claim_continue" && predecessor.Plan.Action == "compute_claim_continue" &&
+		operation.RecoveryPlan.PredecessorPlanDigest == predecessor.Plan.PlanDigest &&
+		operation.RecoveryPlan.PredecessorExecutionID == predecessor.Execution.ExecutionID &&
+		predecessor.Plan.Status == "failed" && predecessor.Execution.Status == "failed" &&
+		outcome.Status == "nonzero" && outcome.Counts == (workspaceRecoveryMutationCounts{Kubernetes: 1}) &&
+		outcome.FabricOperationMutations == 0 && outcome.Source == "compute_claim_response"
+}
+
 func workspaceComputeClaimApprovalMayBeSuperseded(operation workspaceLaunchOperation, got, want workspaceComputeClaimApprovalBinding) bool {
 	wantExpiresAt, wantExpiresErr := time.Parse(time.RFC3339, want.ExpiresAt)
+	failureAllowsSuccessor := operation.ErrorCode == "workspace_compute_claim_identity_mismatch" ||
+		workspaceComputeClaimLegacyClientRejectedSuccessor(operation)
 	if operation.Status != "manual_review" || operation.Phase != "compute_claim_pending" ||
-		operation.ErrorCode != "workspace_compute_claim_identity_mismatch" || operation.ComputeClaimProof != nil ||
+		!failureAllowsSuccessor || operation.ComputeClaimProof != nil ||
 		operation.ComputeClaimRequestHash != "" || operation.ComputeClaimApprovalID != "" || operation.ComputeClaimMergedMainSHA != "" ||
 		operation.ComputeClaimCloudDigest != "" || operation.ComputeClaimPrivateIP != "" || operation.AttachmentID != "" ||
 		operation.GatewaySecretRef != "" || operation.RuntimeID != "" || operation.ReceiptID != "" ||
