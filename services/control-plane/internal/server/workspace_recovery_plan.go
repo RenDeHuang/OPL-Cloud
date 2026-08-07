@@ -845,6 +845,12 @@ func workspaceRecoveryExecutionSuccessorGate(operation workspaceLaunchOperation,
 		}
 		return workspaceRecoveryMutationOutcome{}, gate
 	}
+	if outcome.Status == "unknown" && outcome.Counts == (workspaceRecoveryMutationCounts{}) && outcome.FabricOperationMutations == 0 &&
+		operation.RecoveryExecution.ErrorCode == "workspace_launch_storage_attempt_unknown" &&
+		operation.ContinuationAttemptBudgets["storage"] == (workspaceLaunchStageBudget{Attempted: 1, Unknown: 1, Max: workspaceLaunchStageMax}) {
+		gate.Allowed = true
+		return outcome, gate
+	}
 	if outcome.Status == "confirmed_zero" && outcome.Counts == (workspaceRecoveryMutationCounts{}) && outcome.FabricOperationMutations == 0 && evidence == nil {
 		gate.Allowed = true
 		return outcome, gate
@@ -1039,6 +1045,11 @@ func newWorkspaceRecoverySuccessor(plan workspaceRecoveryPlan, predecessor works
 	return plan
 }
 
+func workspaceRecoveryPlanReadbackCandidate(operation workspaceLaunchOperation) (workspaceLaunchOperation, bool) {
+	_, ok := workspaceLaunchReadbackRecoveryStage(operation)
+	return operation, ok
+}
+
 func (app *controlPlaneServer) diagnoseWorkspaceRecoveryPlan(ctx context.Context, service *controlplane.Service, accountID, operationID string) (workspaceRecoveryPlan, error) {
 	operation, ok, err := app.workspaceLaunchOperation(ctx, operationID)
 	if err != nil || !ok {
@@ -1066,10 +1077,20 @@ func (app *controlPlaneServer) diagnoseWorkspaceRecoveryPlan(ctx context.Context
 		}
 		return workspaceRecoveryPlan{}, err
 	}
-	recovered, proof, err := app.workspaceLaunchReadbackRecoveryProofForOperation(ctx, service, operation)
+	readbackCandidate, stageReadback := workspaceRecoveryPlanReadbackCandidate(operation)
+	recovered, proof, err := app.workspaceLaunchReadbackRecoveryProofForOperation(ctx, service, readbackCandidate)
 	var plan workspaceRecoveryPlan
 	var computeEvidence *clients.ComputeClaimIdentityEvidence
-	if workspaceComputeClaimCanonical(operation) || workspaceComputeClaimLegacyCandidate(operation) {
+	if stageReadback {
+		if err != nil {
+			return workspaceRecoveryPlan{}, err
+		}
+		expectedPrivateIP, privateIPErr := app.workspaceRecoveryPlanExpectedPrivateIP(recovered)
+		if privateIPErr != nil {
+			return workspaceRecoveryPlan{}, privateIPErr
+		}
+		plan, err = newWorkspaceReadbackRecoveryPlan(recovered, proof, release, expectedPrivateIP)
+	} else if workspaceComputeClaimCanonical(operation) || workspaceComputeClaimLegacyCandidate(operation) {
 		computeInput, computeProof, evidence, computeErr := app.workspaceComputeClaimRecoveryProofForPlan(ctx, service, operation)
 		if computeErr != nil {
 			return workspaceRecoveryPlan{}, computeErr
@@ -1093,22 +1114,32 @@ func (app *controlPlaneServer) diagnoseWorkspaceRecoveryPlan(ctx context.Context
 		if operation.RecoveryExecution.Status != "failed" {
 			return workspaceRecoveryPlanProjection(operation), nil
 		}
-		outcome, successorGate := workspaceRecoveryExecutionSuccessorGate(operation, computeEvidence)
-		if !successorGate.Allowed {
-			projected := workspaceRecoveryPlanProjection(operation)
-			projected.SuccessorGate = &successorGate
-			return projected, nil
-		}
 		predecessorPlan := *operation.RecoveryPlan
 		predecessorExecution := *operation.RecoveryExecution
 		predecessorPlan.Status = "failed"
 		predecessorPlan.ErrorCode = predecessorExecution.ErrorCode
-		predecessorExecution.MutationOutcome = outcome
+		if stageReadback {
+			_, terminalGate := workspaceRecoveryExecutionSuccessorGate(operation, nil)
+			if terminalGate.PlanState != "terminal" || terminalGate.ExecutionState != "failed" || terminalGate.CompletionState != "completed" ||
+				terminalGate.LeaseState != "released" || terminalGate.IdentityState != "matches" {
+				projected := workspaceRecoveryPlanProjection(operation)
+				projected.SuccessorGate = &terminalGate
+				return projected, nil
+			}
+		} else {
+			outcome, successorGate := workspaceRecoveryExecutionSuccessorGate(operation, computeEvidence)
+			if !successorGate.Allowed {
+				projected := workspaceRecoveryPlanProjection(operation)
+				projected.SuccessorGate = &successorGate
+				return projected, nil
+			}
+			predecessorExecution.MutationOutcome = outcome
+			plan.SuccessorGate = &successorGate
+		}
 		operation.RecoveryHistory = append(operation.RecoveryHistory, workspaceRecoveryPlanHistoryEntry{
 			Plan: predecessorPlan, Execution: predecessorExecution, ArchivedAt: time.Now().UTC().Format(time.RFC3339Nano),
 		})
 		plan = newWorkspaceRecoverySuccessor(plan, predecessorPlan, predecessorExecution, len(operation.RecoveryHistory)-1)
-		plan.SuccessorGate = &successorGate
 		operation.RecoveryPlan = &plan
 		operation.RecoveryExecution = nil
 		if err := app.persistWorkspaceLaunch(ctx, &operation); err != nil {
