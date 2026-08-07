@@ -638,7 +638,7 @@ func workspaceComputeClaimLegacyKubectlClientRejected(evidence *clients.ComputeC
 		computeClaimApprovalDigestPattern.MatchString(reconciliation.ProvenanceDigest) && reconciliation.State == "observed" &&
 		reconciliation.ExpectedRequestHashDigest == mismatch.ExpectedDigest && reconciliation.PersistedRequestHashDigest == mismatch.ActualDigest &&
 		reconciliation.FailureStage == "node_patch_readback" && reconciliation.ProviderErrorClass == "provider_error" &&
-		node.Attempted == 1 && node.Confirmed == 0 && node.Unknown == 1 && len(node.Missing) == 1 && node.Missing[0] == "node_ownership"
+		node.Attempted == 1 && node.Confirmed == 0 && node.Unknown == 0 && len(node.Missing) == 1 && node.Missing[0] == "node_ownership"
 }
 
 func newWorkspaceComputeClaimRecoveryPlan(operation workspaceLaunchOperation, input workspaceComputeClaimRecoveryRequest, proof clients.ComputeClaimRecoveryProof, evidence *clients.ComputeClaimIdentityEvidence, release workspaceRecoveryReleaseBinding) (workspaceRecoveryPlan, error) {
