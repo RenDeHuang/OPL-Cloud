@@ -976,6 +976,90 @@ func TestClaimComputeRecoveryRetriesExactLegacyKubectlClientRejectionOnce(t *tes
 	}
 }
 
+func TestReadComputePoolHeadContinuesOnlyExactUnmarkedLegacyKubectlClientRejection(t *testing.T) {
+	tests := []struct {
+		name               string
+		providerErrorClass string
+		mutate             func(*MemoryOperationStore, computeClaimRecoveryReconciliation)
+		wantContinuation   string
+	}{
+		{name: "exact client rejection", providerErrorClass: "provider_error", wantContinuation: "continuable"},
+		{
+			name: "successor marker already exists", providerErrorClass: "provider_error", wantContinuation: "unknown",
+			mutate: func(store *MemoryOperationStore, reconciliation computeClaimRecoveryReconciliation) {
+				store.operation[0].RedactedProviderPayload = withComputeClaimNodeClientRejectionRecovery(
+					store.operation[0].RedactedProviderPayload,
+					newComputeClaimNodeClientRejectionRecovery(reconciliation),
+				)
+			},
+		},
+		{
+			name: "manual recovery ledger", providerErrorClass: "provider_error", wantContinuation: "blocked",
+			mutate: func(store *MemoryOperationStore, _ computeClaimRecoveryReconciliation) {
+				store.operation[0].RedactedProviderPayload = withComputeClaimRecoveryMutation(
+					store.operation[0].RedactedProviderPayload,
+					reservedComputeClaimRecoveryMutation(),
+				)
+			},
+		},
+		{name: "transport outcome unknown", providerErrorClass: "transport_error", wantContinuation: "unknown"},
+		{
+			name: "ownership identity drift", providerErrorClass: "provider_error", wantContinuation: "unknown",
+			mutate: func(store *MemoryOperationStore, _ computeClaimRecoveryReconciliation) {
+				ownership := store.machineOwnerships["ca_fixture"]
+				ownership.NodeName = "10.0.0.99"
+				store.machineOwnerships["ca_fixture"] = ownership
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, store, provider, input := seedComputeClaimRecovery(t, "basic")
+			claimInput := seedNormalLaunchTerminalRequestHashReconciliationCandidate(t, store, provider, input)
+			store.mu.Lock()
+			store.operation[0].ComputePoolKey = input.NodePoolID
+			store.mu.Unlock()
+			provider.claim = ComputeClaimProviderClaim{
+				Proof: ComputeClaimProviderProof{
+					Status: "proven", Reason: "provider_describe", MachineName: provider.proof.MachineName, NodeName: provider.proof.NodeName,
+					CVMInstanceID: provider.proof.CVMInstanceID, PrivateIP: provider.proof.PrivateIP, InstanceType: provider.proof.InstanceType,
+					Zone: provider.proof.Zone, ChargeType: provider.proof.ChargeType, PeriodMonths: provider.proof.PeriodMonths,
+					RenewFlag: provider.proof.RenewFlag, Deadline: provider.proof.Deadline, CVMOwnershipState: "recoverable", NodeOwnershipState: "unallocated",
+				},
+				KubernetesMutationCount: 1, FailureStage: "node_patch_readback", ProviderErrorClass: test.providerErrorClass,
+				Evidence: &ComputeClaimEvidence{Node: ComputeClaimMutationEvidence{Attempted: 1, Unknown: 1, Missing: []string{"node_ownership"}}},
+			}
+			provider.claimHook = nil
+			provider.claimErr = errors.New("kubectl client rejected patch before API request")
+
+			first, firstErr := NewServiceWithOperationStore(provider, store).ClaimComputeRecovery(context.Background(), claimInput)
+			operations, listErr := store.List(context.Background())
+			if listErr != nil || len(operations) != 1 {
+				t.Fatalf("operations=%#v err=%v", operations, listErr)
+			}
+			reconciliation, reconciliationPresent, reconciliationValid := decodeComputeClaimRecoveryReconciliation(operations[0])
+			if firstErr == nil || first.Eligible || !reconciliationPresent || !reconciliationValid || reconciliation.State != "observed" {
+				t.Fatalf("first=%#v err=%v reconciliation=%#v/%v/%v", first, firstErr, reconciliation, reconciliationPresent, reconciliationValid)
+			}
+			if test.mutate != nil {
+				store.mu.Lock()
+				test.mutate(store, reconciliation)
+				store.mu.Unlock()
+			}
+			proofCalls, claimCalls, nodeOnlyClaimCalls := provider.proofCalls, provider.claimCalls, provider.nodeOnlyClaimCalls
+
+			readback, err := NewServiceWithOperationStore(provider, store).ReadComputePoolHead(context.Background(), input.NodePoolID)
+			if err != nil || readback.Status != "claim_pending" || readback.ContinuationState != test.wantContinuation {
+				t.Fatalf("readback=%#v err=%v", readback, err)
+			}
+			if provider.proofCalls != proofCalls || provider.claimCalls != claimCalls || provider.nodeOnlyClaimCalls != nodeOnlyClaimCalls {
+				t.Fatalf("GET-only pool head invoked provider: before=%d/%d/%d after=%d/%d/%d", proofCalls, claimCalls, nodeOnlyClaimCalls, provider.proofCalls, provider.claimCalls, provider.nodeOnlyClaimCalls)
+			}
+		})
+	}
+}
+
 func TestClaimComputeRecoveryDoesNotRetryDriftedLegacyKubectlFailure(t *testing.T) {
 	_, store, provider, input := seedComputeClaimRecovery(t, "basic")
 	claimInput := seedNormalLaunchTerminalRequestHashReconciliationCandidate(t, store, provider, input)
