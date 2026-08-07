@@ -374,10 +374,33 @@ func (s *Service) ReadComputePoolHead(ctx context.Context, nodePoolID string) (C
 	binding, bindingOK := automaticComputeClaimRecoveryBinding(head, allocation, plan)
 	persisted, bindingPresent, bindingValid := decodeComputeClaimRecoveryBinding(head)
 	ownership, ownershipErr := s.operations.MachineOwnership(ctx, allocation.ID)
-	if bindingOK && (!bindingPresent || bindingValid && persisted == binding) && ownershipErr == nil && validComputeClaimRecoveryOwnership(allocation, ownership) {
+	requestHashRecovery := exactUnmarkedLegacyKubectlClientRejection(head, allocation, plan)
+	if bindingOK && (requestHashRecovery || !bindingPresent || bindingValid && persisted == binding) && ownershipErr == nil && validComputeClaimRecoveryOwnership(allocation, ownership) {
 		result.ContinuationState, result.FailureStage, result.ErrorCode = "continuable", "none", "none"
 	}
 	return result, nil
+}
+
+func exactUnmarkedLegacyKubectlClientRejection(operation FabricOperation, allocation ComputeAllocation, plan ComputeAllocationPreparation) bool {
+	input, inputOK := automaticComputeClaimRecoveryInput(operation, allocation, plan)
+	if !inputOK {
+		return false
+	}
+	persisted, bindingPresent, bindingValid := decodeComputeClaimRecoveryBinding(operation)
+	if !bindingPresent || !bindingValid {
+		return false
+	}
+	provenance, provenanceOK := isolatedRequestHashReconciliationProvenance(operation, input, persisted, bindingPresent, bindingValid)
+	if !provenanceOK || provenance.SchemaVersion != 2 {
+		return false
+	}
+	reconciliation, reconciliationPresent, reconciliationValid := decodeComputeClaimRecoveryReconciliation(operation)
+	if !reconciliationPresent || !reconciliationValid || !exactLegacyKubectlClientRejectedReconciliation(reconciliation) ||
+		!computeClaimRecoveryReconciliationMatches(reconciliation, operation, input, persisted, computeClaimRecoveryMutationLedger{}) {
+		return false
+	}
+	_, clientRejectionPresent, clientRejectionValid := decodeComputeClaimNodeClientRejectionRecovery(operation)
+	return !clientRejectionPresent && !clientRejectionValid
 }
 
 type computePoolHeadTerminalizationCandidate struct {
@@ -2674,10 +2697,10 @@ func (s *Service) computeClaimRecoverySucceeded(operation FabricOperation) bool 
 	return false
 }
 
-func automaticComputeClaimRecoveryBinding(operation FabricOperation, allocation ComputeAllocation, plan ComputeAllocationPreparation) (computeClaimRecoveryBinding, bool) {
+func automaticComputeClaimRecoveryInput(operation FabricOperation, allocation ComputeAllocation, plan ComputeAllocationPreparation) (ComputeClaimRecoveryClaimInput, bool) {
 	launchOperationID, ok := strings.CutSuffix(strings.TrimSpace(operation.IdempotencyKey), ":compute")
 	if !ok || launchOperationID == "" || allocation.ID != operation.ResourceID {
-		return computeClaimRecoveryBinding{}, false
+		return ComputeClaimRecoveryClaimInput{}, false
 	}
 	claimInput := ComputeClaimRecoveryClaimInput{
 		ComputeClaimRecoveryInput: ComputeClaimRecoveryInput{
@@ -2690,6 +2713,14 @@ func automaticComputeClaimRecoveryBinding(operation FabricOperation, allocation 
 		InstanceType: plan.InstanceType, Zone: allocation.Zone, IdempotencyKey: operation.IdempotencyKey,
 	}
 	if !validComputeClaimRecoveryClaimInput(claimInput) {
+		return ComputeClaimRecoveryClaimInput{}, false
+	}
+	return claimInput, true
+}
+
+func automaticComputeClaimRecoveryBinding(operation FabricOperation, allocation ComputeAllocation, plan ComputeAllocationPreparation) (computeClaimRecoveryBinding, bool) {
+	claimInput, ok := automaticComputeClaimRecoveryInput(operation, allocation, plan)
+	if !ok {
 		return computeClaimRecoveryBinding{}, false
 	}
 	return newComputeClaimRecoveryBinding(claimInput), true
