@@ -238,6 +238,7 @@ type monthlyFabric struct {
 	activationTruthInputs   []clients.WorkspaceActivationTruthInput
 	computeClaimProof       clients.ComputeClaimRecoveryProof
 	computeClaimProofErr    error
+	computeClaimProofFn     func(clients.ComputeClaimRecoveryInput) (clients.ComputeClaimRecoveryProof, error)
 	computeClaimResult      *clients.ComputeClaimRecoveryProof
 	computeClaimErr         error
 	computeClaimInputs      []clients.ComputeClaimRecoveryInput
@@ -272,6 +273,9 @@ func (f *monthlyFabric) ComputeClaimRecoveryProof(_ context.Context, input clien
 	}
 	*f.events = append(*f.events, "fabric.compute-claim.proof")
 	f.computeClaimInputs = append(f.computeClaimInputs, input)
+	if f.computeClaimProofFn != nil {
+		return f.computeClaimProofFn(input)
+	}
 	return f.computeClaimProof, f.computeClaimProofErr
 }
 

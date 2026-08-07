@@ -637,21 +637,20 @@ func (s *Service) ComputeClaimRecoveryProof(ctx context.Context, input ComputeCl
 		return proof, fmt.Errorf("%w: local_identity", ErrComputeClaimRecoveryUnavailable)
 	}
 	computeOperations := make([]FabricOperation, 0, 1)
-	storageOperations := 0
 	for _, operation := range operations {
 		if operation.Action == "create_compute_allocation" && (operation.ResourceID == input.ComputeAllocationID ||
 			operation.IdempotencyKey == input.LaunchOperationID+":compute" || operation.AccountID == input.AccountID && operation.WorkspaceID == input.WorkspaceID) {
 			computeOperations = append(computeOperations, operation)
 		}
-		if operation.Action == "create_storage_volume" &&
-			(operation.ResourceID == input.StorageVolumeID || operation.IdempotencyKey == input.LaunchOperationID+":storage" ||
-				operation.AccountID == input.AccountID && operation.WorkspaceID == input.WorkspaceID) {
-			storageOperations++
-		}
 	}
-	if storageOperations != 0 {
+	storagePresent, storageExact := computeClaimRecoveryStorageOperationState(operations, input)
+	if storagePresent && !input.AllowExistingStorageOperation {
 		proof.Reason = "storage_already_started"
 		return proof, fmt.Errorf("%w: storage_already_started", ErrComputeClaimRecoveryUnavailable)
+	}
+	if storagePresent && !storageExact {
+		proof.Reason = "identity_mismatch"
+		return proof, fmt.Errorf("%w: identity_mismatch", ErrComputeClaimRecoveryUnavailable)
 	}
 	if len(computeOperations) != 1 {
 		proof.Reason = "local_identity"
@@ -706,6 +705,11 @@ func (s *Service) ComputeClaimRecoveryProof(ctx context.Context, input ComputeCl
 	storageInput.OperationID = storageOperation.OperationID
 	storageDiscovery, err := storageProvider.DiscoverStorageRecovery(ctx, storageInput)
 	if err != nil {
+		if storagePresent && input.AllowExistingStorageOperation && storageDiscovery.MutationCount == 0 {
+			applyComputeClaimRecoveryProviderProof(&proof, providerProof)
+			proof.Eligible, proof.Reason, proof.StorageState = true, "none", "storage_attempt_unknown"
+			return proof, nil
+		}
 		proof.Reason = safeComputeClaimRecoveryReason(storageDiscovery.Reason, "provider_describe")
 		return proof, fmt.Errorf("%w: %s", ErrComputeClaimRecoveryUnavailable, proof.Reason)
 	}
@@ -715,11 +719,49 @@ func (s *Service) ComputeClaimRecoveryProof(ctx context.Context, input ComputeCl
 	}
 	proof.Eligible, proof.Reason, proof.StorageState = true, "none", storageDiscovery.State
 	proof.StorageProviderResourceID = storageDiscovery.ProviderResourceID
+	applyComputeClaimRecoveryProviderProof(&proof, providerProof)
+	return proof, nil
+}
+
+func applyComputeClaimRecoveryProviderProof(proof *ComputeClaimRecoveryProof, providerProof ComputeClaimProviderProof) {
 	proof.MachineName, proof.NodeName, proof.CVMInstanceID = providerProof.MachineName, providerProof.NodeName, providerProof.CVMInstanceID
 	proof.PrivateIP, proof.InstanceType, proof.Zone = providerProof.PrivateIP, providerProof.InstanceType, providerProof.Zone
 	proof.ChargeType, proof.PeriodMonths, proof.RenewFlag, proof.Deadline = providerProof.ChargeType, providerProof.PeriodMonths, providerProof.RenewFlag, providerProof.Deadline
 	proof.NodeOwnershipState, proof.CVMOwnershipState = providerProof.NodeOwnershipState, providerProof.CVMOwnershipState
-	return proof, nil
+}
+
+func computeClaimRecoveryStorageOperationState(operations []FabricOperation, input ComputeClaimRecoveryInput) (bool, bool) {
+	matches := make([]FabricOperation, 0, 1)
+	for _, operation := range operations {
+		if operation.Action == "create_storage_volume" &&
+			(operation.ResourceID == input.StorageVolumeID || operation.IdempotencyKey == input.LaunchOperationID+":storage" ||
+				operation.AccountID == input.AccountID && operation.WorkspaceID == input.WorkspaceID) {
+			matches = append(matches, operation)
+		}
+	}
+	if len(matches) == 0 {
+		return false, true
+	}
+	if len(matches) != 1 {
+		return true, false
+	}
+	operation := matches[0]
+	if operation.ResourceKind != "storage_volume" || operation.ResourceID != input.StorageVolumeID ||
+		operation.IdempotencyKey != input.LaunchOperationID+":storage" || operation.AccountID != input.AccountID ||
+		operation.WorkspaceID != input.WorkspaceID || operation.ID == "" || operation.OperationID == "" || operation.RequestHash == "" {
+		return true, false
+	}
+	switch operation.Status {
+	case "started", "failed", "succeeded":
+	default:
+		return true, false
+	}
+	var storage StorageVolume
+	if !decodeOperationResource(operation, &storage) || storage.ID != input.StorageVolumeID ||
+		storage.OperationID != input.LaunchOperationID+":storage" || storage.AccountID != input.AccountID || storage.WorkspaceID != input.WorkspaceID {
+		return true, false
+	}
+	return true, true
 }
 
 func (s *Service) ComputeClaimRecoveryIdentityEvidence(ctx context.Context, input ComputeClaimRecoveryClaimInput) (*ComputeClaimIdentityEvidence, error) {
@@ -1591,11 +1633,13 @@ func newComputeClaimRecoveryBinding(input ComputeClaimRecoveryClaimInput) comput
 		InstanceType  string `json:"instanceType"`
 		Zone          string `json:"zone"`
 	}{input.MachineName, input.NodeName, input.CVMInstanceID, input.PrivateIP, input.InstanceType, input.Zone}
+	bindingInput := input
+	bindingInput.AllowExistingStorageOperation = false
 	return computeClaimRecoveryBinding{
 		LaunchOperationID: input.LaunchOperationID,
 		IdempotencyKey:    input.IdempotencyKey,
 		TargetHash:        hashInput(target),
-		RequestHash:       hashInput(input),
+		RequestHash:       hashInput(bindingInput),
 	}
 }
 
@@ -2393,22 +2437,22 @@ func (s *Service) computeClaimRecoveryLocalState(ctx context.Context, input Comp
 		return FabricOperation{}, ComputeAllocation{}, ComputeAllocationPreparation{}, MachineOwnership{}, "local_identity", err
 	}
 	var operation FabricOperation
-	computeCount, storageCount := 0, 0
+	computeCount := 0
 	for _, candidate := range operations {
 		if candidate.Action == "create_compute_allocation" && (candidate.ResourceID == input.ComputeAllocationID ||
 			candidate.IdempotencyKey == input.LaunchOperationID+":compute" || candidate.AccountID == input.AccountID && candidate.WorkspaceID == input.WorkspaceID) {
 			computeCount++
 			operation = candidate
 		}
-		if candidate.Action == "create_storage_volume" &&
-			(candidate.ResourceID == input.StorageVolumeID || candidate.IdempotencyKey == input.LaunchOperationID+":storage" ||
-				candidate.AccountID == input.AccountID && candidate.WorkspaceID == input.WorkspaceID) {
-			storageCount++
-		}
 	}
-	if storageCount != 0 {
+	storagePresent, storageExact := computeClaimRecoveryStorageOperationState(operations, input)
+	if storagePresent && !input.AllowExistingStorageOperation {
 		return FabricOperation{}, ComputeAllocation{}, ComputeAllocationPreparation{}, MachineOwnership{}, "storage_already_started",
 			fmt.Errorf("%w: storage_already_started", ErrComputeClaimRecoveryUnavailable)
+	}
+	if storagePresent && !storageExact {
+		return FabricOperation{}, ComputeAllocation{}, ComputeAllocationPreparation{}, MachineOwnership{}, "identity_mismatch",
+			fmt.Errorf("%w: identity_mismatch", ErrComputeClaimRecoveryUnavailable)
 	}
 	if computeCount != 1 || operation.AccountID != input.AccountID || operation.WorkspaceID != input.WorkspaceID ||
 		operation.IdempotencyKey != input.LaunchOperationID+":compute" ||

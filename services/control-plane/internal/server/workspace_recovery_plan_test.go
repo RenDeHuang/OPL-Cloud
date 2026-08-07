@@ -728,6 +728,15 @@ func TestWorkspaceRecoveryPlanDiagnoseKeepsComputeClaimPendingWhenNodeOwnershipI
 	stalePhase.ComputeRenewFlag = compute.RenewFlag
 	stalePhase.ComputeDeadline = compute.Deadline
 	fixture.fabric.computeClaimProof = computeClaimRecoveryProofForLaunchStorage(stalePhase, "unallocated", "storage_attempt_unknown", "")
+	// The real Fabric proof rejects the old compute-only proof once the original
+	// storage operation is present.  Diagnosis must use the stage-aware GET-only
+	// readback instead of collapsing this shape into fabric_proof.
+	fixture.fabric.computeClaimProofFn = func(input clients.ComputeClaimRecoveryInput) (clients.ComputeClaimRecoveryProof, error) {
+		if !input.AllowExistingStorageOperation {
+			return fixture.fabric.computeClaimProof, errors.New("compute_claim_recovery_storage_already_started")
+		}
+		return fixture.fabric.computeClaimProof, nil
+	}
 	predecessorDigest := strings.Repeat("c", 64)
 	stalePhase.RecoveryPlan = &workspaceRecoveryPlan{
 		SchemaVersion: workspaceRecoveryPlanSchemaVersion, PlanID: "recovery-plan-" + predecessorDigest[:20], PlanDigest: predecessorDigest,
@@ -776,7 +785,7 @@ func TestWorkspaceRecoveryPlanDiagnoseKeepsComputeClaimPendingWhenNodeOwnershipI
 		persisted.RecoveryHistory[0].Plan.PlanDigest != predecessorDigest || persisted.RecoveryHistory[0].Execution.MutationOutcome.Status != "unknown" ||
 		storageBudget != (workspaceLaunchStageBudget{Attempted: 1, Unknown: 1, Max: workspaceLaunchStageMax}) ||
 		persisted.RecoveryPlan.TargetBinding.NodeOwnershipState != "unallocated" || persisted.RecoveryPlan.TargetBinding.StorageState != "storage_attempt_unknown" ||
-		scenario.readback.stageProofCalls != 0 || len(fixture.fabric.computeClaimInputs) != 1 || len(fixture.fabric.computeClaimCalls) != 0 ||
+		scenario.readback.stageProofCalls != 0 || len(fixture.fabric.computeClaimInputs) != 1 || !fixture.fabric.computeClaimInputs[0].AllowExistingStorageOperation || len(fixture.fabric.computeClaimCalls) != 0 ||
 		len(fixture.fabric.storageIDs) != storageWrites || len(fixture.sub2API.charges) != 1 || len(fixture.sub2API.refunds) != 0 {
 		t.Fatalf("compute phase was not kept first: status=%d plan=%#v operation=%#v stageProofCalls=%d computeProofs=%d claims=%d storageWrites=%d/%d charges=%d refunds=%d",
 			response.Code, plan, persisted, scenario.readback.stageProofCalls, len(fixture.fabric.computeClaimInputs), len(fixture.fabric.computeClaimCalls), len(fixture.fabric.storageIDs), storageWrites, len(fixture.sub2API.charges), len(fixture.sub2API.refunds))
