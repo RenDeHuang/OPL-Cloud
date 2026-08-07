@@ -1927,8 +1927,10 @@ function workspaceRecoverySuccessorGateResponse(value) {
   return Object.fromEntries(expectedKeys.map((field) => [field, value[field]]));
 }
 
-function workspaceRecoveryPlanValidationResponse(value, operationId) {
-  const plan = workspaceRecoveryPlanResponse(value, operationId, new Set(["diagnosed", "validated", "blocked"]));
+function workspaceRecoveryPlanValidationResponse(value, operationId, allowTerminalFailed = false) {
+  const allowedStatuses = new Set(["diagnosed", "validated", "blocked"]);
+  if (allowTerminalFailed) allowedStatuses.add("failed");
+  const plan = workspaceRecoveryPlanResponse(value, operationId, allowedStatuses);
   if (!computeClaimRunnerDirectMutationCountsAreZero(plan.mutationCounts)) {
     throw new Error("workspace_recovery_plan_validation_response_invalid");
   }
@@ -2129,12 +2131,15 @@ export async function diagnoseWorkspaceRecoveryPlan({
     };
     throw error;
   }
-  const diagnosis = workspaceRecoveryPlanValidationResponse(diagnosisResponse.payload, launchOperationId);
+  const diagnosis = workspaceRecoveryPlanValidationResponse(diagnosisResponse.payload, launchOperationId, true);
+  if (diagnosis.status === "failed" && !diagnosis.successorGate) {
+    throw new Error("workspace_recovery_plan_validation_response_invalid");
+  }
   const persistedResponse = await workspaceRecoveryPlanGet({
     fetchImpl, origin: normalizedOrigin, auth, path, requestTimeoutMs
   });
   if (persistedResponse.statusCode !== 200) throw new Error("workspace_recovery_plan_read_failed");
-  const persisted = workspaceRecoveryPlanValidationResponse(persistedResponse.payload, launchOperationId);
+  const persisted = workspaceRecoveryPlanValidationResponse(persistedResponse.payload, launchOperationId, true);
   if (persisted.planId !== diagnosis.planId || persisted.planDigest !== diagnosis.planDigest) {
     throw new Error("workspace_recovery_plan_diagnosis_identity_mismatch");
   }

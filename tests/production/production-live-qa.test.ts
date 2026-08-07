@@ -513,6 +513,81 @@ test("Recovery Plan diagnosis emits only the redacted terminal successor gate", 
   assert.doesNotMatch(JSON.stringify(result), /approvalDigest|leaseToken|cvmInstanceId|ins-protected|password|secret|cookie|csrf/i);
 });
 
+test("Recovery Plan diagnosis preserves a terminal failed successor response without retry", async () => {
+  const accountId = "acct-f947b18f844e42b3c0";
+  const launchOperationId = "workspace-launch-f0375970d7678d0a3e";
+  const planDigest = "f".repeat(64);
+  const plan = {
+    planId: `recovery-plan-${planDigest.slice(0, 20)}`,
+    planDigest,
+    status: "failed",
+    operationId: launchOperationId,
+    stages: [{ stage: "compute_claim", status: "manual_review" }],
+    mismatches: [],
+    mutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
+    executionId: "recovery-exec-terminal-failure",
+    runId: "control-plane-run-terminal-failure",
+    errorCode: "workspace_compute_claim_provider_describe"
+  };
+  const successorGate = {
+    applicable: true,
+    allowed: false,
+    planState: "terminal",
+    executionState: "failed",
+    completionState: "completed",
+    leaseState: "released",
+    identityState: "matches",
+    persistedMutationState: "confirmed_zero",
+    fabricLedgerState: "confirmed_zero"
+  };
+  const calls = [];
+  const fetchImpl = async (input, init = {}) => {
+    const url = new URL(String(input));
+    const method = String(init.method || "GET").toUpperCase();
+    calls.push({ method, path: url.pathname });
+    if (url.pathname === "/api/auth/login") {
+      return json({ user: { accountId: ADMIN_ACCOUNT_ID, role: "admin" } }, 200, {
+        "set-cookie": "opl_session=admin; Path=/; HttpOnly",
+        "x-opl-csrf-token": "admin-csrf"
+      });
+    }
+    if (url.pathname.endsWith("/recovery-plan/diagnose")) {
+      return json({
+        ...plan,
+        successorGate,
+        approvalDigest: "a".repeat(64),
+        leaseToken: "b".repeat(64),
+        cvmInstanceId: "ins-protected"
+      });
+    }
+    if (url.pathname.endsWith("/recovery-plan") && method === "GET") return json(plan);
+    return json({ error: "unexpected" }, 404);
+  };
+
+  const result = await productionLiveQa.diagnoseWorkspaceRecoveryPlan({
+    accountId,
+    launchOperationId,
+    origin: "https://cloud.medopl.cn",
+    adminEmail: ADMIN_EMAIL,
+    adminPassword: ADMIN_PASSWORD,
+    fetchImpl,
+    now: new Date("2026-08-07T05:30:00Z")
+  });
+
+  assert.equal(result.status, "blocked");
+  assert.equal(result.failureStage, "successor_gate");
+  assert.equal(result.readbackError, "successor_not_allowed");
+  assert.equal(result.errorCode, plan.errorCode);
+  assert.deepEqual(result.successorGate, successorGate);
+  assert.deepEqual(result.runnerDirectMutationCounts, { sub2api: 0, tencent: 0, kubernetes: 0 });
+  assert.deepEqual(calls.filter((call) => call.path.includes("/recovery-plan")), [
+    { method: "POST", path: `/api/operator/workspace-launches/${launchOperationId}/recovery-plan/diagnose` },
+    { method: "GET", path: `/api/operator/workspace-launches/${launchOperationId}/recovery-plan` }
+  ]);
+  assert.equal(productionLiveQa.validateProductionWorkspaceRecoveryPlanArtifact(result), result);
+  assert.doesNotMatch(JSON.stringify(result), /approvalDigest|leaseToken|cvmInstanceId|ins-protected|password|secret|cookie|csrf/i);
+});
+
 test("Recovery Plan diagnosis CLI preserves one validated redacted server failure artifact", async () => {
   const accountId = "acct-f947b18f844e42b3c0";
   const launchOperationId = "workspace-launch-f0375970d7678d0a3e";
