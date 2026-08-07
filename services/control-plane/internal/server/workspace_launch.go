@@ -2441,8 +2441,10 @@ func workspaceComputeClaimLegacyCandidate(operation workspaceLaunchOperation) bo
 
 func workspaceComputeClaimStorageBoundaryCandidate(operation workspaceLaunchOperation) bool {
 	stage, ok := workspaceLaunchReadbackRecoveryStage(operation)
-	return ok && stage == "storage" &&
-		operation.ComputeClaimProof == nil && operation.ComputeClaimTerminalEvidence == nil &&
+	computeClaimConfirmed := operation.ComputeClaimProof != nil &&
+		operation.ComputeClaimProof.NodeOwnershipState == "target_owned" &&
+		operation.ComputeClaimProof.CVMOwnershipState == "target_owned"
+	return ok && stage == "storage" && !computeClaimConfirmed && operation.ComputeClaimTerminalEvidence == nil &&
 		validWorkspaceLaunchComputeClaimIdentity(operation)
 }
 
