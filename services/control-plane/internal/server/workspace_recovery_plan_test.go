@@ -1664,6 +1664,31 @@ func TestWorkspaceRecoveryPlanSuccessorAllowsOnlyExactLegacyKubectlClientRejecte
 	}
 }
 
+func TestWorkspaceRecoveryPlanSuccessorClassifiesLegacyKubectlClientRejectedUnknownExecution(t *testing.T) {
+	planID, planDigest := "recovery-plan-failed", strings.Repeat("a", 64)
+	operation := workspaceLaunchOperation{
+		RecoveryPlan: &workspaceRecoveryPlan{
+			PlanID: planID, PlanDigest: planDigest, Status: "failed", Action: "compute_claim_continue",
+		},
+		RecoveryExecution: &workspaceRecoveryExecution{
+			ExecutionID: "recovery-exec-failed", PlanID: planID, PlanDigest: planDigest, Status: "failed",
+			CompletedAt: time.Now().UTC().Format(time.RFC3339Nano),
+			MutationOutcome: workspaceRecoveryMutationOutcome{
+				Status: "unknown", Source: "compute_claim_response",
+			},
+		},
+	}
+	outcome, gate := workspaceRecoveryExecutionSuccessorGate(operation, func() *clients.ComputeClaimIdentityEvidence {
+		evidence := legacyKubectlClientRejectedIdentityEvidence()
+		return &evidence
+	}())
+	if !gate.Allowed || gate.PersistedMutationState != "unknown" || gate.FabricLedgerState != "absent" ||
+		outcome.Status != "nonzero" || outcome.Counts != (workspaceRecoveryMutationCounts{Kubernetes: 1}) ||
+		outcome.Source != "compute_claim_response" {
+		t.Fatalf("legacy client rejection with unclassified execution was not normalized: outcome=%#v gate=%#v", outcome, gate)
+	}
+}
+
 func TestWorkspaceRecoveryPlanSuccessorRejectsNonterminalPlanStatus(t *testing.T) {
 	planID, planDigest := "recovery-plan-failed", strings.Repeat("a", 64)
 	operation := workspaceLaunchOperation{
