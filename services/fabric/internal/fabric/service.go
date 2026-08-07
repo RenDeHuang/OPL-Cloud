@@ -643,7 +643,6 @@ func (s *Service) ComputeClaimRecoveryProof(ctx context.Context, input ComputeCl
 			computeOperations = append(computeOperations, operation)
 		}
 	}
-	storagePresent, storageExact := computeClaimRecoveryStorageOperationState(operations, input)
 	if len(computeOperations) != 1 {
 		proof.Reason = "local_identity"
 		return proof, fmt.Errorf("%w: local_identity", ErrComputeClaimRecoveryUnavailable)
@@ -685,18 +684,25 @@ func (s *Service) ComputeClaimRecoveryProof(ctx context.Context, input ComputeCl
 	// CVM and Node before applying any later storage-operation disposition so an
 	// attempted or conflicting storage record cannot hide Node ownership truth.
 	applyComputeClaimRecoveryProviderProof(&proof, providerProof)
-	if storagePresent && !input.AllowExistingStorageOperation {
+	storageDisposition := computeClaimRecoveryStorageOperationDisposition(operations, input)
+	if storageDisposition == computeClaimStorageOperationUnknown && !input.AllowExistingStorageOperation {
 		proof.Reason = "storage_already_started"
 		return proof, fmt.Errorf("%w: storage_already_started", ErrComputeClaimRecoveryUnavailable)
 	}
-	if storagePresent && !storageExact {
+	if storageDisposition == computeClaimStorageOperationConflict {
 		proof.Reason = "identity_mismatch"
 		return proof, fmt.Errorf("%w: identity_mismatch", ErrComputeClaimRecoveryUnavailable)
 	}
 	storageProvider, ok := s.provider.(storageRecoveryDiscoveryProvider)
 	if !ok {
-		proof.Reason = "provider_describe"
-		return proof, fmt.Errorf("%w: provider_describe", ErrComputeClaimRecoveryUnavailable)
+		if !input.AllowExistingStorageOperation {
+			proof.Reason = "provider_describe"
+			return proof, fmt.Errorf("%w: provider_describe", ErrComputeClaimRecoveryUnavailable)
+		}
+		// A missing Storage readback capability is an unknown downstream stage;
+		// it must not erase an already authoritative Compute proof.
+		proof.Eligible, proof.Reason, proof.StorageState, proof.StorageProviderResourceID = true, "none", "storage_attempt_unknown", ""
+		return proof, nil
 	}
 	storageInput := StorageVolumeInput{
 		ID: input.StorageVolumeID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, ComputeID: input.ComputeAllocationID,
@@ -708,15 +714,33 @@ func (s *Service) ComputeClaimRecoveryProof(ctx context.Context, input ComputeCl
 	)
 	storageInput.OperationID = storageOperation.OperationID
 	storageDiscovery, err := storageProvider.DiscoverStorageRecovery(ctx, storageInput)
+	if storageDisposition == computeClaimStorageOperationUnknown {
+		if storageDiscovery.MutationCount != 0 {
+			proof.Reason = "provider_describe"
+			return proof, fmt.Errorf("%w: provider_describe", ErrComputeClaimRecoveryUnavailable)
+		}
+		// The persisted Storage write is attempted but not authoritative. Keep
+		// that stage unknown so the caller can continue the proven Compute claim
+		// without authorizing a CBS write or treating absence as proven.
+		proof.Eligible, proof.Reason, proof.StorageState, proof.StorageProviderResourceID = true, "none", "storage_attempt_unknown", ""
+		return proof, nil
+	}
 	if err != nil {
-		if storagePresent && input.AllowExistingStorageOperation && storageDiscovery.MutationCount == 0 {
-			proof.Eligible, proof.Reason, proof.StorageState = true, "none", "storage_attempt_unknown"
+		if input.AllowExistingStorageOperation && storageDiscovery.MutationCount == 0 {
+			// Storage readback is independent of the already-proved Compute
+			// ownership. Preserve the unknown stage and let the launch worker
+			// reconcile it before any storage mutation.
+			proof.Eligible, proof.Reason, proof.StorageState, proof.StorageProviderResourceID = true, "none", "storage_attempt_unknown", ""
 			return proof, nil
 		}
 		proof.Reason = safeComputeClaimRecoveryReason(storageDiscovery.Reason, "provider_describe")
 		return proof, fmt.Errorf("%w: %s", ErrComputeClaimRecoveryUnavailable, proof.Reason)
 	}
 	if !validStorageRecoveryDiscovery(storageDiscovery) {
+		if input.AllowExistingStorageOperation && storageDiscovery.MutationCount == 0 {
+			proof.Eligible, proof.Reason, proof.StorageState, proof.StorageProviderResourceID = true, "none", "storage_attempt_unknown", ""
+			return proof, nil
+		}
 		proof.Reason = safeComputeClaimRecoveryReason(storageDiscovery.Reason, "identity_mismatch")
 		return proof, fmt.Errorf("%w: %s", ErrComputeClaimRecoveryUnavailable, proof.Reason)
 	}
@@ -732,7 +756,16 @@ func applyComputeClaimRecoveryProviderProof(proof *ComputeClaimRecoveryProof, pr
 	proof.NodeOwnershipState, proof.CVMOwnershipState = providerProof.NodeOwnershipState, providerProof.CVMOwnershipState
 }
 
-func computeClaimRecoveryStorageOperationState(operations []FabricOperation, input ComputeClaimRecoveryInput) (bool, bool) {
+type computeClaimStorageOperationDisposition string
+
+const (
+	computeClaimStorageOperationAbsent   computeClaimStorageOperationDisposition = "absent"
+	computeClaimStorageOperationExact    computeClaimStorageOperationDisposition = "exact"
+	computeClaimStorageOperationUnknown  computeClaimStorageOperationDisposition = "attempted_unknown"
+	computeClaimStorageOperationConflict computeClaimStorageOperationDisposition = "conflict"
+)
+
+func computeClaimRecoveryStorageOperationDisposition(operations []FabricOperation, input ComputeClaimRecoveryInput) computeClaimStorageOperationDisposition {
 	matches := make([]FabricOperation, 0, 1)
 	for _, operation := range operations {
 		if operation.Action == "create_storage_volume" &&
@@ -742,28 +775,31 @@ func computeClaimRecoveryStorageOperationState(operations []FabricOperation, inp
 		}
 	}
 	if len(matches) == 0 {
-		return false, true
+		return computeClaimStorageOperationAbsent
 	}
 	if len(matches) != 1 {
-		return true, false
+		return computeClaimStorageOperationConflict
 	}
 	operation := matches[0]
 	if operation.ResourceKind != "storage_volume" || operation.ResourceID != input.StorageVolumeID ||
 		operation.IdempotencyKey != input.LaunchOperationID+":storage" || operation.AccountID != input.AccountID ||
-		operation.WorkspaceID != input.WorkspaceID || operation.ID == "" || operation.OperationID == "" || operation.RequestHash == "" {
-		return true, false
+		operation.WorkspaceID != input.WorkspaceID {
+		return computeClaimStorageOperationConflict
 	}
 	switch operation.Status {
 	case "started", "failed", "succeeded":
 	default:
-		return true, false
+		return computeClaimStorageOperationConflict
+	}
+	if operation.ID == "" || operation.OperationID == "" || operation.RequestHash == "" {
+		return computeClaimStorageOperationUnknown
 	}
 	var storage StorageVolume
 	if !decodeOperationResource(operation, &storage) || storage.ID != input.StorageVolumeID ||
 		storage.OperationID != input.LaunchOperationID+":storage" || storage.AccountID != input.AccountID || storage.WorkspaceID != input.WorkspaceID {
-		return true, false
+		return computeClaimStorageOperationUnknown
 	}
-	return true, true
+	return computeClaimStorageOperationExact
 }
 
 func (s *Service) ComputeClaimRecoveryIdentityEvidence(ctx context.Context, input ComputeClaimRecoveryClaimInput) (*ComputeClaimIdentityEvidence, error) {
@@ -2447,12 +2483,12 @@ func (s *Service) computeClaimRecoveryLocalState(ctx context.Context, input Comp
 			operation = candidate
 		}
 	}
-	storagePresent, storageExact := computeClaimRecoveryStorageOperationState(operations, input)
-	if storagePresent && !input.AllowExistingStorageOperation {
+	storageDisposition := computeClaimRecoveryStorageOperationDisposition(operations, input)
+	if storageDisposition == computeClaimStorageOperationUnknown && !input.AllowExistingStorageOperation {
 		return FabricOperation{}, ComputeAllocation{}, ComputeAllocationPreparation{}, MachineOwnership{}, "storage_already_started",
 			fmt.Errorf("%w: storage_already_started", ErrComputeClaimRecoveryUnavailable)
 	}
-	if storagePresent && !storageExact {
+	if storageDisposition == computeClaimStorageOperationConflict {
 		return FabricOperation{}, ComputeAllocation{}, ComputeAllocationPreparation{}, MachineOwnership{}, "identity_mismatch",
 			fmt.Errorf("%w: identity_mismatch", ErrComputeClaimRecoveryUnavailable)
 	}
