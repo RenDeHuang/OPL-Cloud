@@ -832,6 +832,17 @@ func workspaceRecoveryExecutionSuccessorGate(operation workspaceLaunchOperation,
 			gate.Allowed = true
 			return outcome, gate
 		}
+		// The historical client rejection is authoritative even when the
+		// successor's failed execution was recorded before the response could
+		// be classified. Preserve the consumed Node budget as an attempted
+		// call; API acceptance remains zero in the Fabric reconciliation.
+		if outcome.Status == "unknown" && outcome.Counts == (workspaceRecoveryMutationCounts{}) &&
+			outcome.FabricOperationMutations == 0 && outcome.Source == "compute_claim_response" && gate.FabricLedgerState == "absent" {
+			gate.Allowed = true
+			return workspaceRecoveryMutationOutcome{
+				Status: "nonzero", Counts: workspaceRecoveryMutationCounts{Kubernetes: 1}, Source: "compute_claim_response",
+			}, gate
+		}
 		return workspaceRecoveryMutationOutcome{}, gate
 	}
 	if outcome.Status == "confirmed_zero" && outcome.Counts == (workspaceRecoveryMutationCounts{}) && outcome.FabricOperationMutations == 0 && evidence == nil {
