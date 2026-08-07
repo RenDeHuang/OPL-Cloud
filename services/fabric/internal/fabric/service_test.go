@@ -691,6 +691,7 @@ func TestStorageRecoveryExpectationUsesStableFabricOperationIdentity(t *testing.
 	for _, invalid := range []StorageVolumeInput{
 		{ID: "storage-invalid-absent", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", ComputeID: "compute-alpha", Zone: "ap-guangzhou-3", SizeGB: 10, IdempotencyKey: "invalid-absent", ExpectedRecoveryState: "storage_not_started", ExpectedProviderResourceID: "disk-unexpected"},
 		{ID: "storage-invalid-existing", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", ComputeID: "compute-alpha", Zone: "ap-guangzhou-3", SizeGB: 10, IdempotencyKey: "invalid-existing", ExpectedRecoveryState: "storage_existing_exact"},
+		{ID: "storage-invalid-unknown", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", ComputeID: "compute-alpha", Zone: "ap-guangzhou-3", SizeGB: 10, IdempotencyKey: "invalid-unknown", ExpectedRecoveryState: "storage_attempt_unknown"},
 	} {
 		if _, err := service.CreateStorageVolume(context.Background(), invalid); err == nil || err.Error() != "storage_recovery_expectation_invalid" {
 			t.Fatalf("invalid recovery expectation=%#v err=%v", invalid, err)

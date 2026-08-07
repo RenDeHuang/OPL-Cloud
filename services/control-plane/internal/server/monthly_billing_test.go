@@ -407,6 +407,9 @@ func (f *monthlyFabric) CreateComputeAllocation(_ context.Context, input clients
 }
 
 func (f *monthlyFabric) CreateStorageVolume(_ context.Context, input clients.StorageVolumeInput, key string) (clients.StorageVolume, error) {
+	if input.ExpectedRecoveryState == "storage_attempt_unknown" {
+		return clients.StorageVolume{ID: input.ID}, errors.New("storage_recovery_expectation_invalid")
+	}
 	*f.events = append(*f.events, "fabric.storage.prepare")
 	f.storageIDs = append(f.storageIDs, input.ID)
 	f.storageCreateKeys = append(f.storageCreateKeys, key)
