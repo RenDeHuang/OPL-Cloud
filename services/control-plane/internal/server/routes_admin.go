@@ -47,6 +47,21 @@ func registerAdminRoutes(mux *http.ServeMux, app *controlPlaneServer, service *c
 		writeJSON(w, http.StatusOK, workspaceRecoveryPlanHTTPProjection(plan))
 	}))
 	mux.HandleFunc("GET /api/operator/workspace-launches/{operationId}/recovery-plan", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("trace") == "compute_claim" {
+			accountID := strings.TrimSpace(r.URL.Query().Get("accountId"))
+			operationID := strings.TrimSpace(r.PathValue("operationId"))
+			if accountID == "" || operationID == "" || r.URL.Query().Get("accountId") != accountID {
+				writeError(w, http.StatusBadRequest, errInvalidBillingReview.Error())
+				return
+			}
+			trace, err := app.traceWorkspaceComputeClaim(r.Context(), service, accountID, operationID)
+			if err != nil {
+				writeBillingReviewResolutionError(w, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, trace)
+			return
+		}
 		operationID := strings.TrimSpace(r.PathValue("operationId"))
 		if operationID == "" {
 			writeError(w, http.StatusBadRequest, errInvalidBillingReview.Error())

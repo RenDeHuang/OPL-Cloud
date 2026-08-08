@@ -796,6 +796,7 @@ export function workspaceComputeClaimReadbackArtifact(result) {
       ? `sha256:${createHash("sha256").update(value).digest("hex")}`
       : value;
   }
+  const controlPlaneTrace = result.controlPlaneTrace ? workspaceComputeClaimTraceArtifact(result.controlPlaneTrace) : null;
   return {
     schemaVersion: 1,
     operationMode: COMPUTE_CLAIM_READBACK_MODE,
@@ -813,8 +814,44 @@ export function workspaceComputeClaimReadbackArtifact(result) {
     storage: result.storage,
     mutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
     reads: result.reads,
-    readbackErrors: Array.isArray(result.readbackErrors) ? [...result.readbackErrors] : []
+    readbackErrors: Array.isArray(result.readbackErrors) ? [...result.readbackErrors] : [],
+    ...(controlPlaneTrace ? { controlPlaneTrace } : {})
   };
+}
+
+function workspaceComputeClaimTraceArtifact(value) {
+  const allowedFirstFalsePredicates = new Set([
+    "provider.nodeOwnership", "provider.cvmOwnership", "provider.computeClaimEvidence", "provider.computeClaimProofBase",
+    "provider.proofEligible", "provider.proofReason", "provider.storageBinding", "provider.machineIdentity", "provider.nodeIdentity",
+    "provider.cvmIdentity", "provider.privateIpIdentity", "provider.instanceType", "provider.zone", "provider.chargeType",
+    "provider.periodMonths", "provider.renewFlag", "provider.failureStage", "provider.errorClass", "provider.proofEligibility",
+    "controlPlane.workspaceComputeClaimRecoveryCandidate", "controlPlane.loadWorkspaceComputeClaimOperation", "controlPlane.debitConfirmed",
+    "controlPlane.debitIdentity", "controlPlane.reducer"
+  ]);
+  const allowedNextActions = new Set([
+    "GET_ONLY_RECONCILE_STORAGE", "NODE_ONLY_CONTINUATION_ONCE", "RESUME_EXISTING_STORAGE", "CONTINUE_ORIGINAL_LAUNCH", "MANUAL_REVIEW", "NONE"
+  ]);
+  if (!value || value.schemaVersion !== 1 || value.operationMode !== "compute_claim_trace" || value.status !== "evidence_only" ||
+    !value.candidate || !value.identity || !value.storage || !value.controlPlane || !value.providerTruth || !value.proofEligibility || !value.reducer ||
+    !value.mutationCounts || value.mutationCounts.sub2api !== 0 || value.mutationCounts.tencent !== 0 || value.mutationCounts.kubernetes !== 0 ||
+    typeof value.candidate.recoveryCandidate !== "boolean" || typeof value.storage.allowExistingStorageOperation !== "boolean" ||
+    typeof value.controlPlane.loadAttempted !== "boolean" || typeof value.controlPlane.loaded !== "boolean" ||
+    typeof value.providerTruth.collectorCalled !== "boolean" || typeof value.proofEligibility.called !== "boolean" ||
+    typeof value.proofEligibility.eligible !== "boolean" || typeof value.reducer.called !== "boolean" ||
+    typeof value.reducer.persisted !== "boolean" || typeof value.firstFalsePredicate !== "string" || !allowedFirstFalsePredicates.has(value.firstFalsePredicate) ||
+    typeof value.nextAction !== "string" || !allowedNextActions.has(value.nextAction) ||
+    /password|secret|cookie|csrf|authorization|apiKey|token/i.test(JSON.stringify(value))) {
+    throw new Error("compute_claim_trace_artifact_invalid");
+  }
+  if (value.storage.allowExistingStorageOperation !== value.candidate.recoveryCandidate ||
+    (!value.candidate.recoveryCandidate && (value.controlPlane.loadAttempted || value.controlPlane.loaded || value.providerTruth.collectorCalled ||
+      value.proofEligibility.called || value.reducer.called)) ||
+    (value.controlPlane.loaded && (!value.providerTruth.collectorCalled || !value.proofEligibility.called || !value.reducer.called)) ||
+    (!value.proofEligibility.called && value.proofEligibility.eligible) ||
+    (!value.reducer.called && value.reducer.persisted && value.authoritativeDecision !== null && value.authoritativeDecision !== undefined)) {
+    throw new Error("compute_claim_trace_artifact_invalid");
+  }
+  return JSON.parse(JSON.stringify(value));
 }
 
 function workspaceComputeClaimReadbackTargetFromOperations(operations, accountId, launchOperationId) {
@@ -847,6 +884,10 @@ export async function readWorkspaceComputeClaimReadback({
   kubeconfigPath,
   fabricPod,
   fabricNamespace,
+  controlPlaneOrigin,
+  adminEmail,
+  adminPassword,
+  requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
   fetchImpl = globalThis.fetch,
   execFileImpl = defaultExecFile
 } = {}) {
@@ -915,6 +956,28 @@ export async function readWorkspaceComputeClaimReadback({
     authoritativeDecision: computeOperation.operation?.redactedProviderPayload?.currentDecision ||
       computeOperation.operation?.redactedProviderPayload?.authoritativeDecision || null
   });
+  let controlPlaneTrace = null;
+  let controlPlaneTraceError = "";
+  if (controlPlaneOrigin && adminEmail && adminPassword) {
+    try {
+      controlPlaneTrace = await readWorkspaceComputeClaimControlPlaneTrace({
+        accountId: normalizedAccountId,
+        launchOperationId: normalizedLaunchOperationId,
+        origin: controlPlaneOrigin,
+        adminEmail,
+        adminPassword,
+        requestTimeoutMs,
+        fetchImpl
+      });
+    } catch (error) {
+      controlPlaneTraceError = /^[a-z0-9_]{1,96}$/.test(String(error?.message || ""))
+        ? error.message
+        : "control_plane_trace_unavailable";
+    }
+  }
+  const readbackErrors = [computeRead, ownershipRead, storageRead, computeProviderTruthRead, monthlyProviderTruthRead, nodeRead]
+    .filter((read) => read.state === "unavailable").map((read) => read.errorCode);
+  if (controlPlaneTraceError) readbackErrors.push(controlPlaneTraceError);
   return {
     ...result,
     reads: {
@@ -925,11 +988,34 @@ export async function readWorkspaceComputeClaimReadback({
       providerTruth: providerTruthRead.state,
       computeProviderTruth: computeProviderTruthRead.state,
       monthlyProviderTruth: monthlyProviderTruthRead.state,
-      node: nodeRead.state
+      node: nodeRead.state,
+      controlPlaneTrace: controlPlaneTrace ? "present" : controlPlaneTraceError ? "unavailable" : "not_requested"
     },
-    readbackErrors: [computeRead, ownershipRead, storageRead, computeProviderTruthRead, monthlyProviderTruthRead, nodeRead]
-      .filter((read) => read.state === "unavailable").map((read) => read.errorCode)
+    readbackErrors: [...new Set(readbackErrors)]
+    , ...(controlPlaneTrace ? { controlPlaneTrace } : {})
   };
+}
+
+async function readWorkspaceComputeClaimControlPlaneTrace({
+  accountId,
+  launchOperationId,
+  origin,
+  adminEmail,
+  adminPassword,
+  requestTimeoutMs,
+  fetchImpl
+}) {
+  const { auth, normalizedOrigin } = await workspaceLaunchReadbackSession({
+    fetchImpl, origin, adminEmail, adminPassword, requestTimeoutMs
+  });
+  const response = await requestJson({
+    fetchImpl,
+    origin: normalizedOrigin,
+    auth,
+    path: `/api/operator/workspace-launches/${encodeURIComponent(launchOperationId)}/recovery-plan?trace=compute_claim&accountId=${encodeURIComponent(accountId)}`,
+    timeoutMs: requestTimeoutMs
+  });
+  return workspaceComputeClaimTraceArtifact(response.payload);
 }
 
 export async function diagnoseManualReviewRecovery({
@@ -5403,6 +5489,10 @@ export async function runProductionLiveQaCli({
         kubeconfigPath: args.kubeconfig || env.TENCENT_DEPLOY_KUBECONFIG_PATH,
         fabricPod: args["fabric-pod"] || env.OPL_FABRIC_POD,
         fabricNamespace: args["fabric-namespace"] || env.OPL_K8S_NAMESPACE || "opl-cloud",
+        controlPlaneOrigin: args.origin || env.OPL_CONSOLE_ORIGIN,
+        adminEmail: env.OPL_SUB2API_ADMIN_EMAIL,
+        adminPassword: env.OPL_SUB2API_ADMIN_PASSWORD,
+        requestTimeoutMs: Number(args["request-timeout-ms"] || env.OPL_VERIFY_REQUEST_TIMEOUT_MS || DEFAULT_REQUEST_TIMEOUT_MS),
         execFileImpl
       });
       stdout.write(`${JSON.stringify(workspaceComputeClaimReadbackArtifact(result), null, 2)}\n`);

@@ -182,8 +182,11 @@ test("compute claim production readback derives the original resources and perfo
             : { computeState: "ready", storageState: "unknown", compute: { providerResourceId: "ins-rjkoixhs" }, storage: null };
     return { stdout: JSON.stringify({ statusCode: 200, payload, errorCode: "none" }) };
   };
+  const controlPlaneFetchImpl = async () => json({ error: "unavailable" }, 503);
   const result = await productionLiveQa.readWorkspaceComputeClaimReadback({
-    accountId, launchOperationId, kubeconfigPath: "/run/secrets/kubeconfig", fabricPod: "opl-cloud-fabric-abc", fabricNamespace: "opl-cloud", execFileImpl
+    accountId, launchOperationId, kubeconfigPath: "/run/secrets/kubeconfig", fabricPod: "opl-cloud-fabric-abc", fabricNamespace: "opl-cloud",
+    controlPlaneOrigin: "https://cloud.medopl.cn", adminEmail: ADMIN_EMAIL, adminPassword: ADMIN_PASSWORD,
+    fetchImpl: controlPlaneFetchImpl, execFileImpl
   });
   assert.equal(result.status, "evidence_only");
   assert.equal(result.authoritativeDecision, null);
@@ -195,6 +198,8 @@ test("compute claim production readback derives the original resources and perfo
   assert.equal(result.node.resourceVersion, "418");
   assert.equal(result.providerTruth.compute, "ready");
   assert.deepEqual(result.mutationCounts, { sub2api: 0, tencent: 0, kubernetes: 0 });
+  assert.equal(result.reads.controlPlaneTrace, "unavailable");
+  assert.deepEqual(result.readbackErrors, ["control_plane_trace_unavailable"]);
   assert.equal(calls.filter((call) => call.args.includes("patch")).length, 0);
   assert.equal(calls.filter((call) => call.args.includes("node") && call.args.includes("get")).length, 1);
 });
@@ -5905,12 +5910,14 @@ test("manual-review diagnose rejects an ambiguous workspace ownership taint", as
 test("manual-review diagnose implementation uses only Fabric GET and no Kubernetes write commands", async () => {
   const source = await readFile(new URL("../../tools/production-live-qa.ts", import.meta.url), "utf8");
   const helperStart = source.indexOf("const MANUAL_REVIEW_FABRIC_POD_GET_SCRIPT");
+  const helperEnd = source.indexOf("\nconst COMPUTE_CLAIM_READBACK_MODE", helperStart);
   const start = source.indexOf("export async function diagnoseManualReviewRecovery");
   const end = source.indexOf("\nconst COMPUTE_CLAIM_DIAGNOSE_MODE", start);
   assert.notEqual(helperStart, -1);
+  assert.notEqual(helperEnd, -1);
   assert.notEqual(start, -1);
   assert.notEqual(end, -1);
-  const readOnlyImplementation = source.slice(helperStart, end);
+  const readOnlyImplementation = `${source.slice(helperStart, helperEnd)}\n${source.slice(start, end)}`;
   assert.match(readOnlyImplementation, /method: "GET"/);
   assert.match(readOnlyImplementation, /fabricPod/);
   assert.match(readOnlyImplementation, /"exec"/);

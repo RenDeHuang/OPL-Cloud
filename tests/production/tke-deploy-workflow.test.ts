@@ -1273,7 +1273,8 @@ test("original Launch compute claim readback is a single GET-only production mod
   assert.match(runs, /compute-claim-readback\.json/);
   assert.match(runs, /mutationCounts/);
   assert.doesNotMatch(runs, /recovery-plan\/(?:diagnose|validate|execute)|--recovery-plan-(?:diagnose|validate|execute)|CreateDisks|create_storage_volume|patch node|debit|refund|create_cvm/i);
-  assert.doesNotMatch(JSON.stringify(job), /OPL_SUB2API_ADMIN_PASSWORD|OPL_BASIC_CANARY_CUSTOMER_PASSWORD|approval_json/);
+  assert.match(JSON.stringify(job), /OPL_SUB2API_ADMIN_PASSWORD/);
+  assert.doesNotMatch(JSON.stringify(job), /OPL_BASIC_CANARY_CUSTOMER_PASSWORD|approval_json/);
 });
 
 test("Fabric recovery ledger readback is artifact-bound, read-only, and cannot replay Diagnose or claim", async () => {
