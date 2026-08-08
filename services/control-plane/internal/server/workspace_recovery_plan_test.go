@@ -993,7 +993,7 @@ func TestWorkspaceRecoveryPlanDiagnoseKeepsComputeClaimPendingWhenNodeOwnershipI
 	}
 }
 
-func TestWorkspaceRecoveryPlanDiagnoseReentersNodeContinuationAfterArchivedClientRejection(t *testing.T) {
+func TestWorkspaceRecoveryPlanDiagnoseReentersNodeContinuationAfterArchivedClientRejectionWithRecoverableCVM(t *testing.T) {
 	t.Setenv("OPL_RELEASE_SHA", strings.Repeat("a", 40))
 	t.Setenv("OPL_CLOUD_IMAGE", "uswccr.ccs.tencentyun.com/oplcloud/opl-cloud@sha256:"+strings.Repeat("b", 64))
 	fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, "basic")
@@ -1034,9 +1034,10 @@ func TestWorkspaceRecoveryPlanDiagnoseReentersNodeContinuationAfterArchivedClien
 
 	proof := computeClaimRecoveryProofForLaunchStorage(operation, "unallocated", "storage_attempt_unknown", "")
 	proof.Deadline = operation.ComputeDeadline
+	proof.CVMOwnershipState = "recoverable"
 	fixture.fabric.computeProviderTruth = &clients.ComputeProviderTruth{
 		SchemaVersion: 1, State: "ready", ComputeState: "ready", StorageState: "unknown",
-		NodeOwnershipState: "unallocated", CVMOwnershipState: "target_owned", Proof: &proof,
+		NodeOwnershipState: "unallocated", CVMOwnershipState: "recoverable", Proof: &proof,
 	}
 	claimed := computeClaimRecoveryProofForLaunchStorage(operation, "target_owned", "storage_attempt_unknown", "")
 	claimed.Deadline = operation.ComputeDeadline
@@ -1069,7 +1070,7 @@ func TestWorkspaceRecoveryPlanDiagnoseReentersNodeContinuationAfterArchivedClien
 		plan.SuccessorGate == nil || !plan.SuccessorGate.Allowed || persisted.RecoveryExecution != nil || len(persisted.RecoveryHistory) != 2 ||
 		decision == nil || decision.CurrentStage != "compute_claim" || decision.FirstFalsePredicate != "provider.nodeOwnership" ||
 		decision.Expected != "target_owned" || decision.Actual != "unallocated" || decision.NextAction != "NODE_ONLY_CONTINUATION_ONCE" ||
-		decision.AllowedMutation != "node_only_continuation" || len(fixture.fabric.computeClaimCalls) != 0 ||
+		decision.AllowedMutation != "node_only_continuation" || persisted.RecoveryPlan == nil || persisted.RecoveryPlan.TargetBinding.CVMOwnershipState != "recoverable" || len(fixture.fabric.computeClaimCalls) != 0 ||
 		len(fixture.fabric.storageIDs) != storageWrites {
 		t.Fatalf("archived client rejection did not re-enter Node continuation: status=%d plan=%#v operation=%#v claims=%d storage=%d/%d",
 			response.Code, plan, persisted, len(fixture.fabric.computeClaimCalls), len(fixture.fabric.storageIDs), storageWrites)
@@ -1222,12 +1223,17 @@ func TestWorkspaceRecoveryPlanSuccessorAllowsStorageUnknownWithFreshUnallocatedN
 	}
 	evaluation := &workspaceComputeClaimProofEvaluation{
 		Eligible: true, FirstFalsePredicate: "provider.nodeOwnership", Expected: "target_owned", Actual: "unallocated",
-		Authority: "provider.nodeOwnership", CVMOwnershipState: "target_owned", NodeOwnershipState: "unallocated",
+		Authority: "provider.nodeOwnership", CVMOwnershipState: "recoverable", NodeOwnershipState: "unallocated",
 	}
 	outcome, gate := workspaceRecoveryExecutionSuccessorGate(operation, &evidence, evaluation)
 	if !gate.Allowed || outcome.Status != "nonzero" || outcome.Counts != (workspaceRecoveryMutationCounts{Kubernetes: 1}) ||
 		gate.PersistedMutationState != "nonzero" || gate.FabricLedgerState != "absent" {
 		t.Fatalf("fresh Node authority was blocked by historical Storage state: outcome=%#v gate=%#v", outcome, gate)
+	}
+	unknownCVM := *evaluation
+	unknownCVM.CVMOwnershipState = "unknown"
+	if rejectedOutcome, rejectedGate := workspaceRecoveryExecutionSuccessorGate(operation, &evidence, &unknownCVM); rejectedGate.Allowed {
+		t.Fatalf("unknown CVM ownership crossed the Node-only successor gate: outcome=%#v gate=%#v", rejectedOutcome, rejectedGate)
 	}
 }
 

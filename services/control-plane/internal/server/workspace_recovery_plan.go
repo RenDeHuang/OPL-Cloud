@@ -1229,7 +1229,8 @@ func workspaceRecoveryExecutionSuccessorGate(operation workspaceLaunchOperation,
 		evidence.FailureStage == "" && evidence.ProviderErrorClass == "" &&
 		evaluation != nil && evaluation.Eligible && evaluation.FirstFalsePredicate == "provider.nodeOwnership" &&
 		evaluation.Expected == "target_owned" && evaluation.Actual == "unallocated" && evaluation.Authority == "provider.nodeOwnership" &&
-		evaluation.CVMOwnershipState == "target_owned" && evaluation.NodeOwnershipState == "unallocated" {
+		(evaluation.CVMOwnershipState == "target_owned" || evaluation.CVMOwnershipState == "recoverable") &&
+		evaluation.NodeOwnershipState == "unallocated" {
 		gate.Allowed = true
 		return outcome, gate
 	}
