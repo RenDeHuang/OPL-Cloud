@@ -3,6 +3,8 @@ package server
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -988,6 +990,208 @@ func TestWorkspaceRecoveryPlanDiagnoseKeepsComputeClaimPendingWhenNodeOwnershipI
 		t.Fatalf("confirmed Node mutation did not advance to Storage reconciliation: response=%d predecessor=%#v successor=%#v operation=%#v claims=%d/%d storage=%d/%d",
 			successorResponse.Code, executed, successor, advanced, len(fixture.fabric.computeClaimCalls), claimsBeforeSuccessor,
 			len(fixture.fabric.storageIDs), storageWritesBeforeSuccessor)
+	}
+}
+
+func TestWorkspaceRecoveryPlanDiagnoseReentersNodeContinuationAfterArchivedClientRejection(t *testing.T) {
+	t.Setenv("OPL_RELEASE_SHA", strings.Repeat("a", 40))
+	t.Setenv("OPL_CLOUD_IMAGE", "uswccr.ccs.tencentyun.com/oplcloud/opl-cloud@sha256:"+strings.Repeat("b", 64))
+	fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, "basic")
+	operation.Status, operation.Phase, operation.ErrorCode = "manual_review", "storage_fulfilling", "workspace_launch_storage_attempt_unknown"
+	operation.ContinuationAttemptBudgets["storage"] = workspaceLaunchStageBudget{Attempted: 1, Unknown: 1, Max: workspaceLaunchStageMax}
+	staleProof := computeClaimRecoveryProofForLaunchStorage(operation, "target_owned", "storage_attempt_unknown", "")
+	operation.ComputeClaimProof = &staleProof
+	operation.CurrentDecision = nil
+
+	legacyDigest := strings.Repeat("c", 64)
+	operation.RecoveryHistory = []workspaceRecoveryPlanHistoryEntry{{
+		Plan: workspaceRecoveryPlan{
+			SchemaVersion: workspaceRecoveryPlanSchemaVersion, PlanID: "recovery-plan-" + legacyDigest[:20], PlanDigest: legacyDigest,
+			Status: "failed", Action: "compute_claim_continue", OperationID: operation.ID,
+		},
+		Execution: workspaceRecoveryExecution{
+			ExecutionID: "recovery-exec-legacy-client-rejected", PlanID: "recovery-plan-" + legacyDigest[:20], PlanDigest: legacyDigest,
+			Status: "failed", CompletedAt: time.Now().UTC().Add(-2 * time.Minute).Format(time.RFC3339Nano),
+			ErrorCode: "workspace_compute_claim_provider_describe",
+			MutationOutcome: workspaceRecoveryMutationOutcome{
+				Status: "nonzero", Counts: workspaceRecoveryMutationCounts{Kubernetes: 1}, Source: "compute_claim_response",
+			},
+		},
+		ArchivedAt: time.Now().UTC().Add(-time.Minute).Format(time.RFC3339Nano),
+	}}
+	currentDigest := strings.Repeat("d", 64)
+	operation.RecoveryPlan = &workspaceRecoveryPlan{
+		SchemaVersion: workspaceRecoveryPlanSchemaVersion, PlanID: "recovery-plan-" + currentDigest[:20], PlanDigest: currentDigest,
+		Status: "failed", Action: "compute_claim_continue", OperationID: operation.ID, ErrorCode: operation.ErrorCode,
+	}
+	operation.RecoveryExecution = &workspaceRecoveryExecution{
+		ExecutionID: "recovery-exec-storage-attempt-unknown", PlanID: operation.RecoveryPlan.PlanID, PlanDigest: currentDigest,
+		Status: "failed", CompletedAt: time.Now().UTC().Format(time.RFC3339Nano), ErrorCode: operation.ErrorCode,
+		MutationOutcome: workspaceRecoveryMutationOutcome{
+			Status: "nonzero", Counts: workspaceRecoveryMutationCounts{Kubernetes: 1}, Source: "compute_claim_response",
+		},
+	}
+
+	proof := computeClaimRecoveryProofForLaunchStorage(operation, "unallocated", "storage_attempt_unknown", "")
+	proof.Deadline = operation.ComputeDeadline
+	fixture.fabric.computeProviderTruth = &clients.ComputeProviderTruth{
+		SchemaVersion: 1, State: "ready", ComputeState: "ready", StorageState: "unknown",
+		NodeOwnershipState: "unallocated", CVMOwnershipState: "target_owned", Proof: &proof,
+	}
+	claimed := computeClaimRecoveryProofForLaunchStorage(operation, "target_owned", "storage_attempt_unknown", "")
+	claimed.Deadline = operation.ComputeDeadline
+	claimed.KubernetesMutationCount = 1
+	claimed.Evidence = &clients.ComputeClaimEvidence{
+		Node: clients.ComputeClaimMutationEvidence{Attempted: 1, Confirmed: 1},
+	}
+	fixture.fabric.computeClaimResult = &claimed
+	computeReadback := configureWorkspaceComputeClaimReadback(fixture, operation)
+	computeReadback.Status = "running"
+	computeReadback.ProviderRequestID = "req-node-continuation-readback"
+	fixture.fabric.computeSync = computeReadback
+	evidence := recoverableCVMOnlyIdentityEvidence()
+	evidence.MutationLedger = "absent"
+	evidence.MutationLedgerOutcome = "confirmed_zero"
+	evidence.MutationLedgerDigest = "5ad38304b535c2987dbd24657c1a11b884984ff600d9f389deb0d4e634fee792"
+	evidence.MutationEvidence = nil
+	evidence.FailureStage, evidence.ProviderErrorClass = "", ""
+	useWorkspaceRecoveryPlanIdentityEvidence(t, &fixture, &evidence)
+	if err := fixture.store.SaveRuntimeOperation(context.Background(), workspaceLaunchOperationRow(operation)); err != nil {
+		t.Fatal(err)
+	}
+	storageWrites := len(fixture.fabric.storageIDs)
+
+	response := requestWorkspaceRecoveryPlan(t, fixture, http.MethodPost, "/diagnose", map[string]any{"accountId": operation.AccountID})
+	plan := recoveryPlanResponse(t, response)
+	persisted := fixture.operation(t)
+	decision := persisted.CurrentDecision
+	if response.Code != http.StatusOK || plan.Status != "diagnosed" || plan.PlanID == operation.RecoveryPlan.PlanID ||
+		plan.SuccessorGate == nil || !plan.SuccessorGate.Allowed || persisted.RecoveryExecution != nil || len(persisted.RecoveryHistory) != 2 ||
+		decision == nil || decision.CurrentStage != "compute_claim" || decision.FirstFalsePredicate != "provider.nodeOwnership" ||
+		decision.Expected != "target_owned" || decision.Actual != "unallocated" || decision.NextAction != "NODE_ONLY_CONTINUATION_ONCE" ||
+		decision.AllowedMutation != "node_only_continuation" || len(fixture.fabric.computeClaimCalls) != 0 ||
+		len(fixture.fabric.storageIDs) != storageWrites {
+		t.Fatalf("archived client rejection did not re-enter Node continuation: status=%d plan=%#v operation=%#v claims=%d storage=%d/%d",
+			response.Code, plan, persisted, len(fixture.fabric.computeClaimCalls), len(fixture.fabric.storageIDs), storageWrites)
+	}
+
+	validatedResponse := requestWorkspaceRecoveryPlan(t, fixture, http.MethodPost, "/validate", map[string]any{
+		"planId": plan.PlanID, "planDigest": plan.PlanDigest,
+	})
+	validated := recoveryPlanResponse(t, validatedResponse)
+	if validatedResponse.Code != http.StatusOK || validated.Status != "validated" {
+		t.Fatalf("validate status=%d plan=%#v body=%s", validatedResponse.Code, validated, validatedResponse.Body.String())
+	}
+	fixture.fabric.beforeComputeClaim = func() {
+		persisted := fixture.operation(t)
+		decision := persisted.CurrentDecision
+		if persisted.ComputeClaimProof == nil || persisted.ComputeClaimProof.NodeOwnershipState != "target_owned" || decision == nil ||
+			decision.CurrentStage != "compute_claim" || decision.FirstFalsePredicate != "provider.nodeOwnership" ||
+			decision.Expected != "target_owned" || decision.Actual != "unallocated" || decision.Authority != "provider.nodeOwnership" ||
+			decision.NextAction != nextActionNodeOnlyContinuation || !AuthorizeStageMutation(*decision, "node_only_continuation") {
+			t.Fatalf("Recovery executor did not consume the persisted CurrentDecision: %#v", persisted)
+		}
+	}
+	executeResponse := requestWorkspaceRecoveryPlan(t, fixture, http.MethodPost, "/execute", map[string]any{
+		"planId": validated.PlanID, "planDigest": validated.PlanDigest, "decision": "continue", "confirmation": "CONTINUE_RECOVERY_PLAN",
+	})
+	executed := recoveryPlanResponse(t, executeResponse)
+	afterExecute := fixture.operation(t)
+	if executeResponse.Code != http.StatusOK || executed.Status != "failed" || afterExecute.ComputeClaimProof == nil ||
+		afterExecute.ComputeClaimProof.NodeOwnershipState != "target_owned" || len(fixture.fabric.computeClaimCalls) != 1 ||
+		afterExecute.RecoveryExecution == nil || afterExecute.RecoveryExecution.ComputeClaimRequest == nil ||
+		afterExecute.RecoveryExecution.ComputeClaimRequest.AttemptLimits.Claim != (workspaceComputeClaimProviderAttemptLimits{Kubernetes: 1}) ||
+		afterExecute.RecoveryExecution.MutationOutcome.Counts != (workspaceRecoveryMutationCounts{Kubernetes: 1}) ||
+		afterExecute.RecoveryExecution.MutationOutcome.Counts.Tencent != 0 || len(fixture.fabric.storageIDs) != storageWrites {
+		t.Fatalf("Node continuation write set or target-owned readback drifted: status=%d plan=%#v operation=%#v claims=%d storage=%d/%d",
+			executeResponse.Code, executed, afterExecute, len(fixture.fabric.computeClaimCalls), len(fixture.fabric.storageIDs), storageWrites)
+	}
+
+	ownedReadback := computeClaimRecoveryProofForLaunchStorage(afterExecute, "target_owned", "storage_attempt_unknown", "")
+	ownedReadback.Deadline = afterExecute.ComputeDeadline
+	fixture.fabric.computeProviderTruth = &clients.ComputeProviderTruth{
+		SchemaVersion: 1, State: "ready", ComputeState: "ready", StorageState: "unknown",
+		NodeOwnershipState: "target_owned", CVMOwnershipState: "target_owned", Proof: &ownedReadback,
+	}
+	claimsBeforeStorage := len(fixture.fabric.computeClaimCalls)
+	storageResponse := requestWorkspaceRecoveryPlan(t, fixture, http.MethodPost, "/diagnose", map[string]any{"accountId": operation.AccountID})
+	storagePlan := recoveryPlanResponse(t, storageResponse)
+	afterStorageDecision := fixture.operation(t)
+	if storageResponse.Code != http.StatusOK || storagePlan.Status != "diagnosed" || storagePlan.SuccessorGate == nil ||
+		!storagePlan.SuccessorGate.Allowed || afterStorageDecision.CurrentDecision == nil ||
+		afterStorageDecision.CurrentDecision.CurrentStage != "storage" || afterStorageDecision.CurrentDecision.AllowedMutation != "none" ||
+		len(fixture.fabric.computeClaimCalls) != claimsBeforeStorage || len(fixture.fabric.storageIDs) != storageWrites {
+		t.Fatalf("target-owned readback did not return to Storage reconciliation: status=%d plan=%#v operation=%#v claims=%d/%d storage=%d/%d",
+			storageResponse.Code, storagePlan, afterStorageDecision, len(fixture.fabric.computeClaimCalls), claimsBeforeStorage,
+			len(fixture.fabric.storageIDs), storageWrites)
+	}
+}
+
+func TestWorkspaceRecoveryPlanSuccessorRejectsDriftedArchivedNodeClientRejection(t *testing.T) {
+	absentDigest := sha256.Sum256([]byte("absent"))
+	planDigest := strings.Repeat("a", 64)
+	historyDigest := strings.Repeat("b", 64)
+	operation := workspaceLaunchOperation{
+		ID: "workspace-launch-f4338141c25d0882b0",
+		RecoveryPlan: &workspaceRecoveryPlan{
+			PlanID: "recovery-plan-" + planDigest[:20], PlanDigest: planDigest, Status: "failed", Action: "compute_claim_continue",
+		},
+		RecoveryExecution: &workspaceRecoveryExecution{
+			ExecutionID: "recovery-exec-storage-unknown", PlanID: "recovery-plan-" + planDigest[:20], PlanDigest: planDigest,
+			Status: "failed", CompletedAt: time.Now().UTC().Format(time.RFC3339Nano), ErrorCode: "workspace_launch_storage_attempt_unknown",
+			MutationOutcome: workspaceRecoveryMutationOutcome{Status: "nonzero", Counts: workspaceRecoveryMutationCounts{Kubernetes: 1}, Source: "compute_claim_response"},
+		},
+		RecoveryHistory: []workspaceRecoveryPlanHistoryEntry{{
+			Plan: workspaceRecoveryPlan{
+				PlanID: "recovery-plan-" + historyDigest[:20], PlanDigest: historyDigest, Status: "failed", Action: "compute_claim_continue",
+				OperationID: "workspace-launch-f4338141c25d0882b0",
+			},
+			Execution: workspaceRecoveryExecution{
+				ExecutionID: "recovery-exec-client-rejected", PlanID: "recovery-plan-" + historyDigest[:20], PlanDigest: historyDigest,
+				Status: "failed", CompletedAt: time.Now().UTC().Format(time.RFC3339Nano), ErrorCode: "workspace_compute_claim_provider_describe",
+				MutationOutcome: workspaceRecoveryMutationOutcome{Status: "nonzero", Counts: workspaceRecoveryMutationCounts{Kubernetes: 1}, Source: "compute_claim_response"},
+			},
+			ArchivedAt: time.Now().UTC().Format(time.RFC3339Nano),
+		}},
+		ContinuationAttemptBudgets: map[string]workspaceLaunchStageBudget{
+			"storage": {Attempted: 1, Unknown: 1, Max: workspaceLaunchStageMax},
+		},
+	}
+	evidence := clients.ComputeClaimIdentityEvidence{
+		MutationLedger: "absent", MutationLedgerOutcome: "confirmed_zero", MutationLedgerDigest: hex.EncodeToString(absentDigest[:]),
+	}
+	evaluation := workspaceComputeClaimProofEvaluation{
+		Eligible: true, FirstFalsePredicate: "provider.nodeOwnership", Expected: "target_owned", Actual: "unallocated",
+		Authority: "provider.nodeOwnership", CVMOwnershipState: "target_owned", NodeOwnershipState: "unallocated",
+	}
+
+	if _, gate := workspaceRecoveryExecutionSuccessorGate(operation, &evidence, &evaluation); !gate.Allowed {
+		t.Fatalf("exact archived client rejection was rejected: %#v", gate)
+	}
+	for name, mutate := range map[string]func(*workspaceLaunchOperation, *clients.ComputeClaimIdentityEvidence, *workspaceComputeClaimProofEvaluation){
+		"different launch": func(candidate *workspaceLaunchOperation, _ *clients.ComputeClaimIdentityEvidence, _ *workspaceComputeClaimProofEvaluation) {
+			candidate.RecoveryHistory[0].Plan.OperationID = "workspace-launch-other"
+		},
+		"ledger digest": func(_ *workspaceLaunchOperation, candidate *clients.ComputeClaimIdentityEvidence, _ *workspaceComputeClaimProofEvaluation) {
+			candidate.MutationLedgerDigest = strings.Repeat("c", 64)
+		},
+		"storage budget": func(candidate *workspaceLaunchOperation, _ *clients.ComputeClaimIdentityEvidence, _ *workspaceComputeClaimProofEvaluation) {
+			candidate.ContinuationAttemptBudgets["storage"] = workspaceLaunchStageBudget{Max: workspaceLaunchStageMax}
+		},
+		"fresh evaluation": func(_ *workspaceLaunchOperation, _ *clients.ComputeClaimIdentityEvidence, candidate *workspaceComputeClaimProofEvaluation) {
+			candidate.FirstFalsePredicate, candidate.Actual = "provider.cvmOwnership", "recoverable"
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			candidate := operation
+			candidate.RecoveryHistory = append([]workspaceRecoveryPlanHistoryEntry(nil), operation.RecoveryHistory...)
+			candidate.ContinuationAttemptBudgets = map[string]workspaceLaunchStageBudget{"storage": operation.ContinuationAttemptBudgets["storage"]}
+			candidateEvidence, candidateEvaluation := evidence, evaluation
+			mutate(&candidate, &candidateEvidence, &candidateEvaluation)
+			if outcome, gate := workspaceRecoveryExecutionSuccessorGate(candidate, &candidateEvidence, &candidateEvaluation); gate.Allowed {
+				t.Fatalf("drifted archived client rejection was admitted: outcome=%#v gate=%#v", outcome, gate)
+			}
+		})
 	}
 }
 

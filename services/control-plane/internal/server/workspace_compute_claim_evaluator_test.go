@@ -150,7 +150,7 @@ func TestEvaluateWorkspaceComputeClaimProofReportsEveryFailureCondition(t *testi
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			operation, input, proof := validComputeClaimProofForEvaluator(t)
+			operation, input, proof := productionComputeClaimEvaluationFixture()
 			tc.mutate(&operation, &input, &proof)
 			evaluation := evaluateWorkspaceComputeClaimProof(operation, input, proof, tc.claimed)
 			if evaluation.Eligible || evaluation.FirstFalsePredicate != tc.predicate {
@@ -228,7 +228,7 @@ func TestComputeClaimEvaluationContractFeedsCurrentDecisionAndMutationBudget(t *
 }
 
 func TestCurrentDecisionConsumesPersistedEvaluationInsteadOfRawProof(t *testing.T) {
-	operation, input, proof := validComputeClaimProofForEvaluator(t)
+	operation, input, proof := productionComputeClaimEvaluationFixture()
 	proof.NodeOwnershipState, proof.CVMOwnershipState = "unallocated", "target_owned"
 	evaluation := evaluateWorkspaceComputeClaimProof(operation, input, proof, false)
 	if !evaluation.Eligible {

@@ -1072,6 +1072,22 @@ func workspaceRecoveryPlanMismatches(persisted, current workspaceRecoveryPlan) [
 	return mismatches
 }
 
+func workspaceRecoveryHistoryProvesArchivedNodeClientRejection(operation workspaceLaunchOperation) bool {
+	for _, entry := range operation.RecoveryHistory {
+		outcome := entry.Execution.MutationOutcome
+		if entry.ArchivedAt != "" && entry.Plan.Status == "failed" && entry.Plan.Action == "compute_claim_continue" && entry.Plan.OperationID == operation.ID &&
+			entry.Execution.Status == "failed" && entry.Execution.CompletedAt != "" &&
+			entry.Execution.LeaseToken == "" && entry.Execution.LeaseExpiresAt == "" &&
+			entry.Execution.PlanID == entry.Plan.PlanID && entry.Execution.PlanDigest == entry.Plan.PlanDigest &&
+			entry.Execution.ErrorCode == "workspace_compute_claim_provider_describe" &&
+			outcome.Status == "nonzero" && outcome.Counts == (workspaceRecoveryMutationCounts{Kubernetes: 1}) &&
+			outcome.FabricOperationMutations == 0 && outcome.Source == "compute_claim_response" {
+			return true
+		}
+	}
+	return false
+}
+
 func workspaceRecoveryExecutionSuccessorGate(operation workspaceLaunchOperation, evidence *clients.ComputeClaimIdentityEvidence, evaluation *workspaceComputeClaimProofEvaluation) (workspaceRecoveryMutationOutcome, workspaceRecoverySuccessorGateDTO) {
 	gate := workspaceRecoverySuccessorGateDTO{
 		Applicable: true, PlanState: "missing", ExecutionState: "missing", CompletionState: "missing",
@@ -1174,6 +1190,21 @@ func workspaceRecoveryExecutionSuccessorGate(operation workspaceLaunchOperation,
 	if outcome.Status == "unknown" && outcome.Counts == (workspaceRecoveryMutationCounts{}) && outcome.FabricOperationMutations == 0 &&
 		operation.RecoveryExecution.ErrorCode == "workspace_launch_storage_attempt_unknown" &&
 		operation.ContinuationAttemptBudgets["storage"] == (workspaceLaunchStageBudget{Attempted: 1, Unknown: 1, Max: workspaceLaunchStageMax}) {
+		gate.Allowed = true
+		return outcome, gate
+	}
+	absentDigest := sha256.Sum256([]byte("absent"))
+	if outcome.Status == "nonzero" && outcome.Counts == (workspaceRecoveryMutationCounts{Kubernetes: 1}) &&
+		outcome.FabricOperationMutations == 0 && outcome.Source == "compute_claim_response" &&
+		operation.RecoveryExecution.ErrorCode == "workspace_launch_storage_attempt_unknown" &&
+		operation.ContinuationAttemptBudgets["storage"] == (workspaceLaunchStageBudget{Attempted: 1, Unknown: 1, Max: workspaceLaunchStageMax}) &&
+		workspaceRecoveryHistoryProvesArchivedNodeClientRejection(operation) && evidence != nil &&
+		evidence.MutationLedger == "absent" && evidence.MutationLedgerOutcome == "confirmed_zero" &&
+		evidence.MutationLedgerDigest == hex.EncodeToString(absentDigest[:]) && evidence.MutationEvidence == nil &&
+		evidence.FailureStage == "" && evidence.ProviderErrorClass == "" &&
+		evaluation != nil && evaluation.Eligible && evaluation.FirstFalsePredicate == "provider.nodeOwnership" &&
+		evaluation.Expected == "target_owned" && evaluation.Actual == "unallocated" && evaluation.Authority == "provider.nodeOwnership" &&
+		evaluation.CVMOwnershipState == "target_owned" && evaluation.NodeOwnershipState == "unallocated" {
 		gate.Allowed = true
 		return outcome, gate
 	}
@@ -1683,7 +1714,10 @@ func newWorkspaceComputeClaimRecoveryExecution(operation workspaceLaunchOperatio
 		Target:               workspaceComputeClaimApprovalTargetFromOperation(targetOperation),
 		Resources:            workspaceComputeClaimExpectedResources(targetOperation, proof.StorageState, proof.StorageProviderResourceID),
 		AttemptLimits: workspaceComputeClaimAttemptLimits{
-			Claim:   workspaceComputeClaimProviderAttemptLimits{Sub2API: 0, Tencent: 5, Kubernetes: 1},
+			Claim: workspaceComputeClaimProviderAttemptLimits{
+				Sub2API: plan.DecisionBinding.MutationBudget.Sub2API, Tencent: plan.DecisionBinding.MutationBudget.Tencent,
+				Kubernetes: plan.DecisionBinding.MutationBudget.Kubernetes,
+			},
 			Storage: 1, Attachment: 1, Secret: 1, Runtime: 1, Activation: 1, Receipt: 1,
 		},
 		AllowedWrites:   workspaceComputeClaimAllowedWritesForStorage(proof.StorageState),
@@ -1848,7 +1882,13 @@ func (app *controlPlaneServer) reacquireWorkspaceRecoveryExecution(ctx context.C
 	execution.LeaseExpiresAt = now.Add(5 * time.Minute).Format(time.RFC3339Nano)
 	execution.LeaseToken = workspaceRecoveryAuthorityDigest([]string{"lease", execution.ExecutionID, execution.RunIdentity, execution.LeaseExpiresAt})
 	operation.RecoveryExecution = &execution
-	if err := app.persistWorkspaceLaunch(ctx, &operation); err != nil {
+	persist := func() error {
+		if operation.CurrentDecision != nil {
+			return app.persistWorkspaceLaunchWithDecision(ctx, &operation, *operation.CurrentDecision)
+		}
+		return app.persistWorkspaceLaunch(ctx, &operation)
+	}
+	if err := persist(); err != nil {
 		if errors.Is(err, errWorkspaceLaunchCASConflict) {
 			current, found, loadErr := app.workspaceLaunchOperation(ctx, operationID)
 			if loadErr == nil && found && current.RecoveryExecution != nil && current.RecoveryExecution.ExecutionID == execution.ExecutionID {
