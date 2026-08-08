@@ -506,13 +506,20 @@ func TestComputeProviderTruthPreservesComputeWhenStorageRecordIsAbsent(t *testin
 	if err := store.Append(context.Background(), storage); err != nil {
 		t.Fatal(err)
 	}
+	// A rollout may rebuild Compute truth from the persisted operation before
+	// the process-local resource projection is populated.
+	service.computes = map[string]ComputeAllocation{}
+	provider.proof.CVMOwnershipState = "target_owned"
 	input.AllowExistingStorageOperation = true
 
 	truth, err := service.ComputeProviderTruth(context.Background(), input)
 
 	if err != nil || truth.State != "ready" || truth.ComputeState != "ready" || truth.NodeOwnershipState != "unallocated" ||
-		truth.CVMOwnershipState != "recoverable" || truth.Compute.ID != input.ComputeAllocationID ||
-		truth.StorageState != "unknown" || provider.proofCalls != 1 || provider.storageCalls != 0 {
+		truth.CVMOwnershipState != "target_owned" || truth.Compute.ID != input.ComputeAllocationID ||
+		truth.StorageState != "unknown" || truth.Proof == nil || !truth.Proof.Eligible || truth.Proof.Reason != "none" ||
+		truth.Proof.StorageState != "storage_attempt_unknown" || truth.Proof.Sub2APIMutationCount != 0 ||
+		truth.Proof.TencentMutationCount != 0 || truth.Proof.KubernetesMutationCount != 0 ||
+		provider.proofCalls != 1 || provider.storageCalls != 0 {
 		t.Fatalf("compute truth was coupled to Storage: truth=%#v err=%v provider=%#v", truth, err, provider)
 	}
 }
