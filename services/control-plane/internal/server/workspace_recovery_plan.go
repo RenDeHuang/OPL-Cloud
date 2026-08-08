@@ -1103,11 +1103,13 @@ func workspaceRecoveryHistoryProvesArchivedNodeClientRejection(operation workspa
 }
 
 func workspaceRecoveryStorageAttemptUnknown(operation workspaceLaunchOperation) bool {
-	if operation.ErrorCode != "" {
-		return operation.Status == "manual_review" && operation.Phase == "storage_fulfilling" &&
-			operation.ErrorCode == "workspace_launch_storage_attempt_unknown"
+	if operation.Status == "manual_review" && operation.Phase == "storage_fulfilling" {
+		return operation.ContinuationAttemptBudgets["storage"] == (workspaceLaunchStageBudget{
+			Attempted: 1, Unknown: 1, Max: workspaceLaunchStageMax,
+		})
 	}
-	return operation.RecoveryExecution != nil && operation.RecoveryExecution.ErrorCode == "workspace_launch_storage_attempt_unknown"
+	return operation.Status == "" && operation.Phase == "" && operation.ErrorCode == "" &&
+		operation.RecoveryExecution != nil && operation.RecoveryExecution.ErrorCode == "workspace_launch_storage_attempt_unknown"
 }
 
 func workspaceRecoveryExecutionSuccessorGate(operation workspaceLaunchOperation, evidence *clients.ComputeClaimIdentityEvidence, evaluation *workspaceComputeClaimProofEvaluation) (workspaceRecoveryMutationOutcome, workspaceRecoverySuccessorGateDTO) {
