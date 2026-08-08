@@ -2431,11 +2431,40 @@ func workspaceComputeClaimSafeFailureForOperation(operation workspaceLaunchOpera
 }
 
 func persistWorkspaceComputeClaimIdentityFromProof(operation *workspaceLaunchOperation, proof clients.ComputeClaimRecoveryProof) bool {
-	operation.ComputePoolID, operation.ComputeMachineName, operation.ComputeNodeName = proof.PoolID, proof.MachineName, proof.NodeName
-	operation.ComputeCVMInstanceID, operation.ComputePrivateIP = proof.CVMInstanceID, proof.PrivateIP
-	operation.ComputeInstanceType, operation.ComputeZone = proof.InstanceType, proof.Zone
-	operation.ComputeChargeType, operation.ComputeRenewFlag, operation.ComputeDeadline = proof.ChargeType, proof.RenewFlag, proof.Deadline
-	return validWorkspaceLaunchComputeClaimIdentity(*operation)
+	candidate := *operation
+	for _, values := range [][2]string{
+		{candidate.ComputePoolID, proof.PoolID}, {candidate.ComputeMachineName, proof.MachineName}, {candidate.ComputeNodeName, proof.NodeName},
+		{candidate.ComputeCVMInstanceID, proof.CVMInstanceID}, {candidate.ComputePrivateIP, proof.PrivateIP},
+		{candidate.ComputeInstanceType, proof.InstanceType}, {candidate.ComputeZone, proof.Zone},
+		{candidate.ComputeChargeType, proof.ChargeType}, {candidate.ComputeRenewFlag, proof.RenewFlag}, {candidate.ComputeDeadline, proof.Deadline},
+	} {
+		if values[0] != "" && values[0] != values[1] {
+			return false
+		}
+	}
+	candidate.ComputePoolID, candidate.ComputeMachineName, candidate.ComputeNodeName = proof.PoolID, proof.MachineName, proof.NodeName
+	candidate.ComputeCVMInstanceID, candidate.ComputePrivateIP = proof.CVMInstanceID, proof.PrivateIP
+	candidate.ComputeInstanceType, candidate.ComputeZone = proof.InstanceType, proof.Zone
+	candidate.ComputeChargeType, candidate.ComputeRenewFlag, candidate.ComputeDeadline = proof.ChargeType, proof.RenewFlag, proof.Deadline
+	if !validWorkspaceLaunchComputeClaimIdentity(candidate) {
+		return false
+	}
+	*operation = candidate
+	return true
+}
+
+func hydrateWorkspaceComputeClaimIdentityFromAllocation(operation *workspaceLaunchOperation, allocation clients.ComputeAllocation) bool {
+	if allocation.ID != operation.ComputeID || allocation.AccountID != operation.AccountID || allocation.WorkspaceID != operation.WorkspaceID ||
+		allocation.PackageID != operation.PackageID || allocation.NodePoolID != operation.ComputeNodePoolID {
+		return false
+	}
+	proof := clients.ComputeClaimRecoveryProof{
+		PoolID: allocation.PoolID, MachineName: allocation.MachineName, NodeName: allocation.NodeName,
+		CVMInstanceID: firstNonEmpty(allocation.CVMInstanceID, allocation.InstanceID), PrivateIP: allocation.PrivateIP,
+		InstanceType: allocation.InstanceType, Zone: allocation.Zone, ChargeType: allocation.ChargeType,
+		RenewFlag: allocation.RenewFlag, Deadline: allocation.Deadline,
+	}
+	return persistWorkspaceComputeClaimIdentityFromProof(operation, proof)
 }
 
 func workspaceComputeClaimCanonical(operation workspaceLaunchOperation) bool {
@@ -2451,7 +2480,7 @@ func workspaceComputeClaimStorageBoundaryCandidate(operation workspaceLaunchOper
 		operation.ComputeClaimProof.NodeOwnershipState == "target_owned" &&
 		operation.ComputeClaimProof.CVMOwnershipState == "target_owned"
 	if operation.Status != "manual_review" || operation.Phase != "storage_fulfilling" || computeClaimConfirmed ||
-		operation.ComputeClaimTerminalEvidence != nil || !validWorkspaceLaunchComputeClaimIdentity(operation) {
+		operation.ComputeClaimTerminalEvidence != nil || operation.ComputeID == "" || operation.StorageID == "" || operation.ComputeNodePoolID == "" {
 		return false
 	}
 	// Older launches can reach the Storage phase before the Control Plane has

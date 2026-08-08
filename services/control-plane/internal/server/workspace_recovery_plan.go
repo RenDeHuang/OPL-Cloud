@@ -482,14 +482,6 @@ func workspaceComputeClaimRecoveryRequestForOperation(operation workspaceLaunchO
 	}
 }
 
-func workspaceComputeClaimRecoveryRequestFromAllocation(operation workspaceLaunchOperation, allocation clients.ComputeAllocation) workspaceComputeClaimRecoveryRequest {
-	request := workspaceComputeClaimRecoveryRequestForOperation(operation)
-	request.PoolID, request.MachineName, request.NodeName = allocation.PoolID, allocation.MachineName, allocation.NodeName
-	request.CVMInstanceID, request.PrivateIP = firstNonEmpty(allocation.CVMInstanceID, allocation.InstanceID), allocation.PrivateIP
-	request.InstanceType, request.Zone = allocation.InstanceType, allocation.Zone
-	return request
-}
-
 func (app *controlPlaneServer) workspaceComputeClaimRecoveryProofForPlan(ctx context.Context, service *controlplane.Service, operation workspaceLaunchOperation) (workspaceComputeClaimRecoveryRequest, clients.ComputeClaimRecoveryProof, *clients.ComputeClaimIdentityEvidence, error) {
 	if !workspaceComputeClaimRecoveryCandidate(operation) {
 		return workspaceComputeClaimRecoveryRequest{}, clients.ComputeClaimRecoveryProof{}, nil, errWorkspaceComputeClaimNotPending
@@ -499,17 +491,17 @@ func (app *controlPlaneServer) workspaceComputeClaimRecoveryProofForPlan(ctx con
 	if workspaceComputeClaimLegacyCandidate(operation) {
 		validIdentity = validWorkspaceLaunchLegacyComputeClaimIdentity(operation)
 	}
-	if err != nil || !validIdentity || !workspaceLaunchChargeConfirmed(operation, userID) {
+	storageBoundaryHydration := workspaceComputeClaimStorageBoundaryCandidate(operation) && !validWorkspaceLaunchComputeClaimIdentity(operation)
+	if err != nil || !workspaceLaunchChargeConfirmed(operation, userID) || !validIdentity && !storageBoundaryHydration {
 		return workspaceComputeClaimRecoveryRequest{}, clients.ComputeClaimRecoveryProof{}, nil, errWorkspaceComputeClaimIdentity
 	}
 	input := workspaceComputeClaimRecoveryRequestForOperation(operation)
-	if workspaceComputeClaimLegacyCandidate(operation) {
+	if workspaceComputeClaimLegacyCandidate(operation) || !validWorkspaceLaunchComputeClaimIdentity(operation) {
 		allocation, readErr := service.ReadMonthlyCompute(ctx, operation.ComputeID)
-		if readErr != nil || allocation.ID != operation.ComputeID || allocation.AccountID != operation.AccountID || allocation.WorkspaceID != operation.WorkspaceID ||
-			allocation.PackageID != operation.PackageID || allocation.NodePoolID != operation.ComputeNodePoolID {
+		if readErr != nil || !hydrateWorkspaceComputeClaimIdentityFromAllocation(&operation, allocation) {
 			return workspaceComputeClaimRecoveryRequest{}, clients.ComputeClaimRecoveryProof{}, nil, errWorkspaceComputeClaimIdentity
 		}
-		input = workspaceComputeClaimRecoveryRequestFromAllocation(operation, allocation)
+		input = workspaceComputeClaimRecoveryRequestForOperation(operation)
 	}
 	proof, proofErr := collectWorkspaceComputeClaimEvidence(ctx, service, operation, input)
 	if proof.SchemaVersion != 1 || proof.TencentMutationCount != 0 || proof.KubernetesMutationCount != 0 || proof.Sub2APIMutationCount != 0 {
@@ -1131,6 +1123,9 @@ func (app *controlPlaneServer) diagnoseWorkspaceRecoveryPlan(ctx context.Context
 		computeInput, computeProof, evidence, computeErr := app.workspaceComputeClaimRecoveryProofForPlan(ctx, service, operation)
 		if computeErr != nil {
 			return workspaceRecoveryPlan{}, computeErr
+		}
+		if !validWorkspaceLaunchComputeClaimIdentity(operation) && !persistWorkspaceComputeClaimIdentityFromProof(&operation, computeProof) {
+			return workspaceRecoveryPlan{}, errWorkspaceComputeClaimIdentity
 		}
 		computeEvidence = evidence
 		decision := currentDecisionForComputeClaimProof(operation, computeProof, nil)
