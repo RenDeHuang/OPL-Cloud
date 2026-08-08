@@ -511,7 +511,7 @@ func (app *controlPlaneServer) workspaceComputeClaimRecoveryProofForPlan(ctx con
 		}
 		input = workspaceComputeClaimRecoveryRequestFromAllocation(operation, allocation)
 	}
-	proof, proofErr := service.ComputeClaimRecoveryProof(ctx, workspaceComputeClaimRecoveryInput(operation, input))
+	proof, proofErr := collectWorkspaceComputeClaimEvidence(ctx, service, operation, input)
 	if proof.SchemaVersion != 1 || proof.TencentMutationCount != 0 || proof.KubernetesMutationCount != 0 || proof.Sub2APIMutationCount != 0 {
 		return input, proof, nil, workspaceRecoveryPlanProofFailure(proof, proofErr)
 	}

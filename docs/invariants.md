@@ -121,7 +121,9 @@ The four implementation owner lanes are Console/Control Plane, Fabric, Gateway i
   reconciled only after Node ownership is `target_owned`; its own absent, exact,
   unknown, and conflict states independently gate `CreateDisks`. Every readback
   reports per-source `present`, `absent`, `unavailable`, or `conflict` and zero
-  Sub2API, Tencent, and Kubernetes mutations.
+  Sub2API, Tencent, and Kubernetes mutations. Control Plane Normal Launch and
+  Recovery consume that same `GET /fabric/compute-provider-truth` through one
+  shared Compute evidence collector before reduction or mutation authorization.
 - Compute claim convergence may run only after the complete Compute identity and
   ownership proof and may only
   converge the same CVM name and four ownership tags, one exact Node

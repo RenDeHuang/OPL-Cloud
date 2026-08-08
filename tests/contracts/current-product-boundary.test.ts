@@ -136,7 +136,7 @@ test("Current contracts hard cut Workspace purchase, access, and Runtime facts",
   assert.deepEqual(freeze.workspaceLaunch.stageDecisionContract, {
     aggregateRoot: "workspace.launch.v2",
     orderedStages: ["debit", "compute_claim", "storage", "attachment", "secret", "runtime", "activation", "receipt", "succeeded"],
-    collector: "per_source_present_absent_unavailable_or_conflict_without_cross_source_erasure",
+    collector: "shared_control_plane_GET_/fabric/compute-provider-truth_per_source_present_absent_unavailable_or_conflict_without_cross_source_erasure",
     reducer: "pure_normalized_snapshot_to_one_current_decision",
     currentDecisionFields: ["currentStage", "stageState", "firstFalsePredicate", "expected", "actual", "authority", "nextAction", "requiresApproval", "allowedMutation", "stageAttemptId", "mutationState", "evidenceDigest", "decisionVersion"],
     atomicPersistence: "phase_status_and_currentDecision_same_launch_postgresql_cas",
@@ -800,7 +800,7 @@ test("Current contracts hard cut operator resources, wallet adjustments, and ann
   assert.deepEqual(boundary.services.controlPlane.workspaceLaunchStageDecision, {
     aggregateRoot: "workspace.launch.v2",
     orderedStages: ["debit", "compute_claim", "storage", "attachment", "secret", "runtime", "activation", "receipt", "succeeded"],
-    collector: "normalized_per_source_evidence_without_cross_stage_erasure",
+    collector: "shared_control_plane_GET_/fabric/compute-provider-truth_normalized_per_source_without_cross_stage_erasure",
     reducer: "pure_function",
     persistence: "phase_status_currentDecision_one_postgresql_cas",
     attemptCounters: "stage_attempt_ledger_only_not_currentDecision",

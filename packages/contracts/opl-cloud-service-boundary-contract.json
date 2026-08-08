@@ -118,7 +118,7 @@
       "workspaceLaunchStageDecision": {
         "aggregateRoot": "workspace.launch.v2",
         "orderedStages": ["debit", "compute_claim", "storage", "attachment", "secret", "runtime", "activation", "receipt", "succeeded"],
-        "collector": "normalized_per_source_evidence_without_cross_stage_erasure",
+        "collector": "shared_control_plane_GET_/fabric/compute-provider-truth_normalized_per_source_without_cross_stage_erasure",
         "reducer": "pure_function",
         "persistence": "phase_status_currentDecision_one_postgresql_cas",
         "attemptCounters": "stage_attempt_ledger_only_not_currentDecision",
