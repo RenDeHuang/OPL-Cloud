@@ -492,7 +492,7 @@ func TestComputeClaimRecoveryProofKeepsComputeEligibleForIncompleteStorageLedger
 	if err != nil || !proof.Eligible || proof.Reason != "none" || proof.StorageState != "storage_attempt_unknown" ||
 		proof.NodeOwnershipState != "unallocated" || proof.CVMOwnershipState != "recoverable" ||
 		proof.Sub2APIMutationCount != 0 || proof.TencentMutationCount != 0 || proof.KubernetesMutationCount != 0 ||
-		provider.proofCalls != 1 || len(provider.storageDiscoveries) != 1 || provider.storageCalls != 0 {
+		provider.proofCalls != 1 || len(provider.storageDiscoveries) != 0 || provider.storageCalls != 0 {
 		t.Fatalf("proof=%#v err=%v provider=%#v", proof, err, provider)
 	}
 }
@@ -537,7 +537,7 @@ func TestComputeClaimRecoveryProofReadsNodeBeforeUnresolvedExactStorage(t *testi
 	if err != nil || !proof.Eligible || proof.Reason != "none" || proof.StorageState != "storage_attempt_unknown" ||
 		proof.NodeOwnershipState != "unallocated" || proof.CVMOwnershipState != "recoverable" ||
 		proof.TencentMutationCount != 0 || proof.KubernetesMutationCount != 0 || proof.Sub2APIMutationCount != 0 ||
-		provider.proofCalls != 1 || len(provider.storageDiscoveries) != 1 || provider.claimCalls != 0 ||
+		provider.proofCalls != 1 || len(provider.storageDiscoveries) != 0 || provider.claimCalls != 0 ||
 		provider.nodeOnlyClaimCalls != 0 || provider.storageCalls != 0 {
 		t.Fatalf("proof=%#v err=%v provider=%#v", proof, err, provider)
 	}
@@ -562,7 +562,7 @@ func TestComputeClaimRecoveryProofKeepsComputeEligibleForConflictingStorageWithS
 	if err != nil || !proof.Eligible || proof.Reason != "none" || proof.StorageState != "storage_attempt_unknown" ||
 		proof.StorageProviderResourceID != "" || proof.NodeOwnershipState != "unallocated" || proof.CVMOwnershipState != "recoverable" ||
 		proof.Sub2APIMutationCount != 0 || proof.TencentMutationCount != 0 || proof.KubernetesMutationCount != 0 ||
-		provider.proofCalls != 1 || len(provider.storageDiscoveries) != 1 || provider.claimCalls != 0 || provider.storageCalls != 0 {
+		provider.proofCalls != 1 || len(provider.storageDiscoveries) != 0 || provider.claimCalls != 0 || provider.storageCalls != 0 {
 		t.Fatalf("proof=%#v err=%v provider=%#v", proof, err, provider)
 	}
 }
@@ -820,6 +820,55 @@ func TestClaimComputeRecoveryContinuesNodeOnlyWithAttemptedUnknownStorage(t *tes
 	if claimErr != nil || !result.Eligible || result.StorageState != "storage_attempt_unknown" ||
 		result.TencentMutationCount != 0 || result.KubernetesMutationCount != 1 || provider.claimCalls != 1 ||
 		provider.nodeOnlyClaimCalls != 0 || provider.storageCalls != 0 {
+		t.Fatalf("result=%#v err=%v provider=%#v", result, claimErr, provider)
+	}
+}
+
+func TestClaimComputeRecoveryContinuesNodeOnlyWithConflictingStorage(t *testing.T) {
+	_, store, provider, input := seedComputeClaimRecovery(t, "basic")
+	now := time.Now().UTC()
+	storage := newOperation("create_storage_volume", "storage_volume", "vol-conflict", input.AccountID, input.WorkspaceID, input.LaunchOperationID+":storage", "hash", now)
+	storage.ID, storage.Status, storage.CreatedAt = "fop-storage-conflict", "started", now
+	fillOperationResource(&storage, StorageVolume{ID: "vol-conflict", OperationID: input.LaunchOperationID + ":storage", AccountID: input.AccountID, WorkspaceID: input.WorkspaceID})
+	if err := store.Append(context.Background(), storage); err != nil {
+		t.Fatal(err)
+	}
+	input.AllowExistingStorageOperation = true
+	claimInput := ComputeClaimRecoveryClaimInput{
+		ComputeClaimRecoveryInput: input, MachineName: "machine-after", NodeName: "10.0.0.18", CVMInstanceID: "ins-fixture",
+		PrivateIP: provider.proof.PrivateIP, InstanceType: provider.proof.InstanceType, Zone: provider.proof.Zone,
+		IdempotencyKey: input.LaunchOperationID + ":compute",
+	}
+	operations, err := store.List(context.Background())
+	if err != nil || len(operations) != 2 {
+		t.Fatalf("seed operations=%#v err=%v", operations, err)
+	}
+	pending := operations[0]
+	pending.Status, pending.ErrorCode, pending.FinishedAt = "claim_pending", "", time.Time{}
+	pending.RedactedProviderPayload = withComputeClaimRecoveryBinding(pending.RedactedProviderPayload, newComputeClaimRecoveryBinding(claimInput))
+	if err := store.SaveComputeClaimRecovery(context.Background(), operations[0], pending); err != nil {
+		t.Fatal(err)
+	}
+	ownership, err := store.MachineOwnership(context.Background(), input.ComputeAllocationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ownership.Status = "active"
+	if err := store.ActivateComputeClaimRecoveryOwnership(context.Background(), ownership); err != nil {
+		t.Fatal(err)
+	}
+	provider.proof.CVMOwnershipState = "target_owned"
+	provider.proof.NodeOwnershipState = "unallocated"
+	provider.claim.TencentMutationCount = 0
+	provider.claim.KubernetesMutationCount = 1
+	provider.claim.Evidence = &ComputeClaimEvidence{Node: ComputeClaimMutationEvidence{Attempted: 1, Confirmed: 1}}
+	provider.claimHook = func() { provider.proof.NodeOwnershipState = "target_owned" }
+
+	result, claimErr := NewServiceWithOperationStore(provider, store).ClaimComputeRecovery(context.Background(), claimInput)
+
+	if claimErr != nil || !result.Eligible || result.StorageState != "storage_attempt_unknown" ||
+		result.TencentMutationCount != 0 || result.KubernetesMutationCount != 1 || provider.claimCalls != 1 ||
+		provider.nodeOnlyClaimCalls != 0 || len(provider.storageDiscoveries) != 0 || provider.storageCalls != 0 {
 		t.Fatalf("result=%#v err=%v provider=%#v", result, claimErr, provider)
 	}
 }
