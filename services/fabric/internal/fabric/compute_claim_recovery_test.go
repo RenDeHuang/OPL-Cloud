@@ -54,6 +54,19 @@ type failBeforeReconciledComputeClaimObservedSaveStore struct {
 	failed bool
 }
 
+type failFirstComputeProviderProjectionReadStore struct {
+	OperationStore
+	failed bool
+}
+
+func (s *failFirstComputeProviderProjectionReadStore) List(ctx context.Context) ([]FabricOperation, error) {
+	if !s.failed {
+		s.failed = true
+		return nil, errors.New("compute provider projection unavailable")
+	}
+	return s.OperationStore.List(ctx)
+}
+
 func (s *failAfterComputeClaimReconciliationCASStore) SaveComputeClaimRecovery(ctx context.Context, expected, next FabricOperation) error {
 	if err := s.OperationStore.SaveComputeClaimRecovery(ctx, expected, next); err != nil {
 		return err
@@ -521,6 +534,31 @@ func TestComputeProviderTruthPreservesComputeWhenStorageRecordIsAbsent(t *testin
 		truth.Proof.TencentMutationCount != 0 || truth.Proof.KubernetesMutationCount != 0 ||
 		provider.proofCalls != 1 || provider.storageCalls != 0 {
 		t.Fatalf("compute truth was coupled to Storage: truth=%#v err=%v provider=%#v", truth, err, provider)
+	}
+}
+
+func TestComputeProviderTruthPreservesAuthoritativeProofWhenProcessProjectionReadFails(t *testing.T) {
+	service, store, provider, input := seedComputeClaimRecovery(t, "basic")
+	now := time.Now().UTC()
+	storage := newOperation("create_storage_volume", "storage_volume", input.StorageVolumeID, input.AccountID, input.WorkspaceID, input.LaunchOperationID+":storage", "hash", now)
+	storage.ID, storage.Status, storage.CreatedAt = "fop-storage-attempted", "started", now
+	fillOperationResource(&storage, StorageVolume{ID: input.StorageVolumeID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID})
+	if err := store.Append(context.Background(), storage); err != nil {
+		t.Fatal(err)
+	}
+	service.computes = map[string]ComputeAllocation{}
+	service.operations = &failFirstComputeProviderProjectionReadStore{OperationStore: store}
+	provider.proof.CVMOwnershipState = "target_owned"
+	input.AllowExistingStorageOperation = true
+
+	truth, err := service.ComputeProviderTruth(context.Background(), input)
+
+	if err != nil || truth.State != "ready" || truth.ComputeState != "ready" || truth.NodeOwnershipState != "unallocated" ||
+		truth.CVMOwnershipState != "target_owned" || truth.Compute.ID != input.ComputeAllocationID || truth.StorageState != "unknown" ||
+		truth.Proof == nil || !truth.Proof.Eligible || truth.Proof.Reason != "none" || truth.Proof.StorageState != "storage_attempt_unknown" ||
+		truth.Proof.Sub2APIMutationCount != 0 || truth.Proof.TencentMutationCount != 0 || truth.Proof.KubernetesMutationCount != 0 ||
+		provider.proofCalls != 1 || provider.storageCalls != 0 {
+		t.Fatalf("optional process projection hid authoritative proof: truth=%#v err=%v provider=%#v", truth, err, provider)
 	}
 }
 
