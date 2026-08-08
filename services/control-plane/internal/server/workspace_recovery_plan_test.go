@@ -1231,6 +1231,40 @@ func TestWorkspaceRecoveryPlanSuccessorAllowsStorageUnknownWithFreshUnallocatedN
 	}
 }
 
+func TestWorkspaceRecoveryPlanSuccessorUsesCurrentStorageStageInsteadOfHistoricalErrorCode(t *testing.T) {
+	operation := workspaceLaunchOperation{
+		ID: "workspace-launch-f4338141c25d0882b0", Status: "manual_review", Phase: "storage_fulfilling",
+		ErrorCode: "workspace_recovery_plan_fabric_proof_failed",
+		RecoveryPlan: &workspaceRecoveryPlan{
+			PlanID: "recovery-plan-" + strings.Repeat("a", 20), PlanDigest: strings.Repeat("a", 64),
+			Status: "failed", Action: "compute_claim_continue", OperationID: "workspace-launch-f4338141c25d0882b0",
+		},
+		RecoveryExecution: &workspaceRecoveryExecution{
+			ExecutionID: "recovery-exec-storage-unknown", PlanID: "recovery-plan-" + strings.Repeat("a", 20), PlanDigest: strings.Repeat("a", 64),
+			Status: "failed", CompletedAt: time.Now().UTC().Format(time.RFC3339Nano), ErrorCode: "workspace_recovery_plan_fabric_proof_failed",
+			MutationOutcome: workspaceRecoveryMutationOutcome{
+				Status: "nonzero", Counts: workspaceRecoveryMutationCounts{Kubernetes: 1}, Source: "compute_claim_response",
+			},
+		},
+		ContinuationAttemptBudgets: map[string]workspaceLaunchStageBudget{
+			"storage": {Attempted: 1, Unknown: 1, Max: workspaceLaunchStageMax},
+		},
+	}
+	absentDigest := sha256.Sum256([]byte("absent"))
+	evidence := &clients.ComputeClaimIdentityEvidence{
+		MutationLedger: "absent", MutationLedgerOutcome: "confirmed_zero",
+		MutationLedgerDigest: hex.EncodeToString(absentDigest[:]),
+	}
+	evaluation := &workspaceComputeClaimProofEvaluation{
+		Eligible: true, FirstFalsePredicate: "provider.nodeOwnership", Expected: "target_owned", Actual: "unallocated",
+		Authority: "provider.nodeOwnership", CVMOwnershipState: "target_owned", NodeOwnershipState: "unallocated",
+	}
+	outcome, gate := workspaceRecoveryExecutionSuccessorGate(operation, evidence, evaluation)
+	if !gate.Allowed || outcome.Status != "nonzero" || outcome.Counts != (workspaceRecoveryMutationCounts{Kubernetes: 1}) {
+		t.Fatalf("current Storage stage was blocked by historical errors: outcome=%#v gate=%#v", outcome, gate)
+	}
+}
+
 func TestWorkspaceRecoveryPlanDiagnoseUsesFreshComputeAuthorityAheadOfStalePersistedProof(t *testing.T) {
 	t.Setenv("OPL_RELEASE_SHA", strings.Repeat("a", 40))
 	t.Setenv("OPL_CLOUD_IMAGE", "uswccr.ccs.tencentyun.com/oplcloud/opl-cloud@sha256:"+strings.Repeat("b", 64))
