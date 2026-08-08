@@ -1162,7 +1162,14 @@ func (s *Service) ClaimComputeRecovery(ctx context.Context, input ComputeClaimRe
 			ownership.Status != "active" && reconciledCVMOwnership && proof.NodeOwnershipState == "unallocated"
 		activeNodeContinuation := ownership.Status == "active" && !mutationPresent && bindingPresent && bindingValid && persistedBinding == binding &&
 			proof.CVMOwnershipState == "target_owned" && proof.NodeOwnershipState == "unallocated"
-		nodeOnlyContinuation := resumeObservedNodeClaim || reserveHistoricalNodeClaim || activeNodeContinuation || reconciledNodeContinuation
+		createBudget, createPresent, createValid := normalLaunchStageBudget(operation.RedactedProviderPayload, "compute_create")
+		cvmBudget, cvmPresent, cvmValid := normalLaunchStageBudget(operation.RedactedProviderPayload, "compute_claim_cvm")
+		_, nodePresent, nodeValid := normalLaunchStageBudget(operation.RedactedProviderPayload, "compute_claim_node")
+		currentNodeContinuation := operation.Status == "claim_pending" && !mutationPresent &&
+			proof.CVMOwnershipState == "target_owned" && proof.NodeOwnershipState == "unallocated" &&
+			createPresent && createValid && createBudget == confirmedNormalLaunchMutationBudget() &&
+			cvmPresent && cvmValid && cvmBudget == confirmedNormalLaunchMutationBudget() && !nodePresent && nodeValid
+		nodeOnlyContinuation := resumeObservedNodeClaim || reserveHistoricalNodeClaim || activeNodeContinuation || reconciledNodeContinuation || currentNodeContinuation
 		resumeReservedNodeReadback := mutationPresent && validNodeReservedComputeClaimRecoveryMutation(mutationLedger) &&
 			proof.CVMOwnershipState == "target_owned" && proof.NodeOwnershipState == "target_owned"
 		reconciledNodeReadback := requestHashReconciliation && reconciliationPresent &&
@@ -1194,7 +1201,7 @@ func (s *Service) ClaimComputeRecovery(ctx context.Context, input ComputeClaimRe
 			(activeNodeContinuation || proof.CVMOwnershipState != "target_owned" || proof.NodeOwnershipState != "target_owned") {
 			provider, providerOK := s.provider.(computeClaimRecoveryClaimProvider)
 			nodeOnlyProvider, nodeOnlyProviderOK := s.provider.(computeClaimRecoveryNodeOnlyProvider)
-			if reconciledNodeContinuation && !nodeOnlyProviderOK || !reconciledNodeContinuation && !providerOK {
+			if nodeOnlyContinuation && !nodeOnlyProviderOK || !nodeOnlyContinuation && !providerOK {
 				result.Eligible, result.Reason = false, "provider_describe"
 				return fmt.Errorf("%w: provider_describe", ErrComputeClaimRecoveryUnavailable)
 			}
@@ -1221,7 +1228,7 @@ func (s *Service) ClaimComputeRecovery(ctx context.Context, input ComputeClaimRe
 						return err
 					}
 					operation = reserved
-				} else if reserveHistoricalNodeClaim || activeNodeContinuation {
+				} else if reserveHistoricalNodeClaim || activeNodeContinuation || currentNodeContinuation {
 					mutationLedger = legacyNodeReservedComputeClaimRecoveryMutation()
 				} else {
 					mutationLedger = nodeReservedComputeClaimRecoveryMutation(mutationLedger)
@@ -1251,7 +1258,7 @@ func (s *Service) ClaimComputeRecovery(ctx context.Context, input ComputeClaimRe
 			}
 			var claimed ComputeClaimProviderClaim
 			var claimErr error
-			if reconciledNodeContinuation {
+			if nodeOnlyContinuation {
 				claimed, claimErr = nodeOnlyProvider.ClaimComputeRecoveryNodeOnly(lockCtx, allocation, plan, ownership)
 			} else {
 				claimed, claimErr = provider.ClaimComputeRecovery(lockCtx, allocation, plan, ownership)
@@ -2648,8 +2655,6 @@ func (s *Service) CreateComputeAllocation(ctx context.Context, input ComputeAllo
 		replayed, err := replayComputeAllocationOperation(stored, requestHash)
 		if err == nil && stored.Status == "started" {
 			s.startComputeAllocation(stored, replayed, input.DryRun)
-		} else if err == nil && stored.Status == "claim_pending" {
-			s.startComputeClaimPendingContinuation(stored, replayed)
 		}
 		return replayed, err
 	}
@@ -2675,168 +2680,6 @@ func (s *Service) startComputeAllocation(operation FabricOperation, allocation C
 		}()
 		s.finishCreateComputeAllocation(operation, allocation, dryRun)
 	}()
-}
-
-func (s *Service) startComputeClaimPendingContinuation(operation FabricOperation, allocation ComputeAllocation) {
-	s.mu.Lock()
-	if s.reconciling[allocation.ID] {
-		s.mu.Unlock()
-		return
-	}
-	s.reconciling[allocation.ID] = true
-	s.computes[allocation.ID] = allocation
-	s.mu.Unlock()
-	go func() {
-		defer func() {
-			s.mu.Lock()
-			delete(s.reconciling, allocation.ID)
-			s.mu.Unlock()
-		}()
-		s.continueComputeClaimPending(operation, allocation)
-	}()
-}
-
-func (s *Service) continueComputeClaimPending(operation FabricOperation, allocation ComputeAllocation) {
-	provider, ok := s.provider.(normalComputeClaimStageProvider)
-	reader, readOK := s.provider.(computeClaimRecoveryProvider)
-	plan, hasPlan := decodeComputeAllocationPlan(operation)
-	if !hasPlan || validateComputeAllocationPreparation(plan, allocation, packagePlan(allocation.PackageID)) != nil ||
-		validateNewComputeAllocation(allocation, plan) != nil {
-		return
-	}
-	binding, bindingOK := automaticComputeClaimRecoveryBinding(operation, allocation, plan)
-	persistedBinding, bindingPresent, bindingValid := decodeComputeClaimRecoveryBinding(operation)
-	if !bindingOK || bindingPresent && (!bindingValid || persistedBinding != binding) {
-		// Identity drift stays fail-closed and is left for an authorized review.
-		return
-	}
-	ownership, ownershipErr := s.operations.MachineOwnership(context.Background(), allocation.ID)
-	if operation.Status != "claim_pending" {
-		return
-	}
-	createBudget, createPresent, createValid := normalLaunchStageBudget(operation.RedactedProviderPayload, "compute_create")
-	cvmBudget, cvmPresent, cvmValid := normalLaunchStageBudget(operation.RedactedProviderPayload, "compute_claim_cvm")
-	nodeBudget, nodePresent, nodeValid := normalLaunchStageBudget(operation.RedactedProviderPayload, "compute_claim_node")
-	_, manualRecoveryPresent, _ := decodeComputeClaimRecoveryMutation(operation)
-	if manualRecoveryPresent {
-		// A persisted manual recovery ledger belongs to the operator-controlled
-		// recovery path; the automatic worker must leave it untouched.
-		return
-	}
-	if !createPresent || !createValid || createBudget != confirmedNormalLaunchMutationBudget() || !cvmPresent || !cvmValid ||
-		cvmBudget.Attempted != 1 || nodePresent && !nodeValid {
-		_ = terminalizeComputeClaimPending(context.Background(), s, operation, allocation, plan, "compute_claim_cvm", "mismatch", fmt.Errorf("compute_claim_stage_budget_invalid"), nil)
-		return
-	}
-	if ownershipErr != nil {
-		_ = terminalizeComputeClaimPending(context.Background(), s, operation, allocation, plan, "compute_claim_cvm", "ownership_unavailable", ownershipErr, nil)
-		return
-	}
-	if !validComputeClaimRecoveryOwnership(allocation, ownership) {
-		return
-	}
-	if !ok || !readOK || !normalWorkspaceComputeBudgetEnabled(operation, s.provider) {
-		_ = terminalizeComputeClaimPending(context.Background(), s, operation, allocation, plan, "compute_claim_cvm", "unavailable", fmt.Errorf("compute_claim_readback_unavailable"), nil)
-		return
-	}
-	cvmWasConfirmed := cvmBudget.Confirmed == 1
-	nodeWasConfirmed := nodePresent && nodeBudget.Confirmed == 1
-
-	proof, err := reader.ProveComputeClaimRecovery(context.Background(), allocation, plan, ownership)
-	if err != nil || !validComputeClaimProviderProof(proof, allocation, plan) || proof.CVMOwnershipState != "target_owned" {
-		if err == nil {
-			err = fmt.Errorf("compute_claim_cvm_readback_mismatch")
-		}
-		_ = terminalizeComputeClaimPending(context.Background(), s, operation, allocation, plan, "compute_claim_cvm", "mismatch", err, &proof)
-		return
-	}
-	cvmBudget = confirmedNormalLaunchMutationBudget()
-
-	switch proof.NodeOwnershipState {
-	case "target_owned":
-		nodeBudget = confirmedNormalLaunchMutationBudget()
-		if !bindingPresent || !cvmWasConfirmed || !nodeWasConfirmed {
-			confirmed := operation
-			confirmed.RedactedProviderPayload = withComputeClaimRecoveryBinding(operation.RedactedProviderPayload, binding)
-			confirmed.RedactedProviderPayload = withNormalLaunchStageBudget(confirmed.RedactedProviderPayload, "compute_claim_cvm", cvmBudget)
-			confirmed.RedactedProviderPayload = withNormalLaunchStageBudget(confirmed.RedactedProviderPayload, "compute_claim_node", nodeBudget)
-			if err := s.operations.SaveComputeClaimRecovery(context.Background(), operation, confirmed); err != nil {
-				if s.computeClaimRecoverySucceeded(operation) {
-					return
-				}
-				_ = terminalizeComputeClaimPending(context.Background(), s, operation, allocation, plan, "compute_claim_finalization", "unavailable", err, &proof)
-				return
-			}
-			operation = confirmed
-		}
-	case "unallocated":
-		if nodePresent {
-			_ = terminalizeComputeClaimPending(context.Background(), s, operation, allocation, plan, "compute_claim_node", "unallocated", fmt.Errorf("compute_claim_node_reservation_unprovable"), &proof)
-			return
-		}
-		nodeBudget = reservedNormalLaunchMutationBudget()
-		reserved := operation
-		reserved.RedactedProviderPayload = withComputeClaimRecoveryBinding(operation.RedactedProviderPayload, binding)
-		reserved.RedactedProviderPayload = withNormalLaunchStageBudget(reserved.RedactedProviderPayload, "compute_claim_cvm", cvmBudget)
-		reserved.RedactedProviderPayload = withNormalLaunchStageBudget(reserved.RedactedProviderPayload, "compute_claim_node", nodeBudget)
-		if err := s.operations.SaveComputeClaimRecovery(context.Background(), operation, reserved); err != nil {
-			_ = terminalizeComputeClaimPending(context.Background(), s, operation, allocation, plan, "compute_claim_node", "unavailable", err, &proof)
-			return
-		}
-		operation = reserved
-		if err := provider.ClaimComputeNode(context.Background(), allocation, ownership); err != nil {
-			// The Node reservation is already durable.  Give the next replay one
-			// authoritative readback chance; if it still proves unallocated, the
-			// node-present branch above terminalizes without another patch.
-			return
-		}
-		nodeBudget = confirmedNormalLaunchMutationBudget()
-	default:
-		_ = terminalizeComputeClaimPending(context.Background(), s, operation, allocation, plan, "compute_claim_node", "mismatch", fmt.Errorf("compute_claim_node_readback_mismatch"), &proof)
-		return
-	}
-
-	allocation.Status = "running"
-	allocation.CostTags = oplCostTags(allocation.AccountID, allocation.WorkspaceID, allocation.ID, ownership.ID)
-	allocation.NodeSelector = tkeNodeSelector(allocation.ProviderData, allocation.NodeName)
-	ownership.Status, ownership.ReleasedAt = "active", nil
-	if err := s.operations.ActivateComputeClaimRecoveryOwnership(context.Background(), ownership); err != nil {
-		ownership.Status, ownership.ReleasedAt = "quarantined", nil
-		_ = s.operations.SaveMachineOwnership(context.Background(), ownership)
-		_ = terminalizeComputeClaimPending(context.Background(), s, operation, allocation, plan, "compute_claim_finalization", "ownership_unavailable", err, &proof)
-		return
-	}
-	recovered := operation
-	recovered.Status, recovered.ErrorCode, recovered.FinishedAt = "succeeded", "", s.now()
-	recovered.RedactedProviderPayload = preserveNormalLaunchMutationBudget(computeAllocationOperationPayload(allocation, plan), operation.RedactedProviderPayload)
-	recovered.RedactedProviderPayload = withComputeClaimRecoveryBinding(recovered.RedactedProviderPayload, binding)
-	recovered.RedactedProviderPayload = withNormalLaunchStageBudget(recovered.RedactedProviderPayload, "compute_claim_cvm", cvmBudget)
-	recovered.RedactedProviderPayload = withNormalLaunchStageBudget(recovered.RedactedProviderPayload, "compute_claim_node", nodeBudget)
-	if err := s.operations.SaveComputeClaimRecovery(context.Background(), operation, recovered); err != nil {
-		if s.computeClaimRecoverySucceeded(operation) {
-			return
-		}
-		ownership.Status, ownership.ReleasedAt = "quarantined", nil
-		_ = s.operations.SaveMachineOwnership(context.Background(), ownership)
-		_ = terminalizeComputeClaimPending(context.Background(), s, operation, allocation, plan, "compute_claim_finalization", "unavailable", err, &proof)
-		return
-	}
-	s.mu.Lock()
-	s.computes[allocation.ID] = allocation
-	s.mu.Unlock()
-}
-
-func (s *Service) computeClaimRecoverySucceeded(operation FabricOperation) bool {
-	operations, err := s.operations.List(context.Background())
-	if err != nil {
-		return false
-	}
-	for _, current := range operations {
-		if current.ID == operation.ID && current.Status == "succeeded" && sameComputeClaimRecoveryOperation(current, operation) {
-			return true
-		}
-	}
-	return false
 }
 
 func automaticComputeClaimRecoveryInput(operation FabricOperation, allocation ComputeAllocation, plan ComputeAllocationPreparation) (ComputeClaimRecoveryClaimInput, bool) {
@@ -3049,108 +2892,17 @@ func (s *Service) finishCreateComputeAllocation(operation FabricOperation, alloc
 		return
 	}
 	result.CostTags = oplCostTags(result.AccountID, result.WorkspaceID, result.ID, claimed.ID)
+	claimErr = fmt.Errorf("compute_claim_stage_provider_unavailable")
 	if split, ok := s.provider.(normalComputeClaimStageProvider); ok {
-		if claimErr := s.convergeNormalComputeClaimStages(finalizeCtx, &operation, result, prepared, machine, claimed, split); claimErr != nil {
-			claimed.Status = "quarantined"
-			_ = s.operations.SaveMachineOwnership(context.Background(), claimed)
-			terminal = true
-			_ = computeAllocationClaimPending(context.Background(), s, operation, result, prepared, claimErr)
-			return
-		}
-	} else {
-		claimBudget, claimBudgetPresent, claimBudgetValid := normalLaunchStageBudget(operation.RedactedProviderPayload, "compute_claim")
-		if !claimBudgetValid {
-			claimed.Status = "quarantined"
-			_ = s.operations.SaveMachineOwnership(context.Background(), claimed)
-			terminal = true
-			_ = computeAllocationClaimPending(context.Background(), s, operation, result, prepared, fmt.Errorf("compute_claim_budget_invalid"))
-			return
-		}
-		freshClaimReservation := !claimBudgetPresent
-		if freshClaimReservation {
-			claimBudget = reservedNormalLaunchMutationBudget()
-			operation.RedactedProviderPayload = withNormalLaunchStageBudget(preserveNormalLaunchMutationBudget(computeAllocationOperationPayload(result, prepared), operation.RedactedProviderPayload), "compute_claim", claimBudget)
-			if err := s.operations.SaveRuntime(finalizeCtx, operation); err != nil {
-				return
-			}
-		}
-		claimConfirmed := claimBudget.Confirmed == 1
-		var tagErr error
-		if freshClaimReservation {
-			tagErr = s.provider.TagComputeMachine(finalizeCtx, machine, claimed)
-			if tagErr == nil {
-				claimBudget = confirmedNormalLaunchMutationBudget()
-				operation.RedactedProviderPayload = withNormalLaunchStageBudget(preserveNormalLaunchMutationBudget(computeAllocationOperationPayload(result, prepared), operation.RedactedProviderPayload), "compute_claim", claimBudget)
-				if saveErr := s.operations.SaveRuntime(finalizeCtx, operation); saveErr != nil {
-					return
-				}
-				claimConfirmed = true
-			} else {
-				claimed.Status = "quarantined"
-				_ = s.operations.SaveMachineOwnership(context.Background(), claimed)
-				operation.RedactedProviderPayload = withNormalLaunchStageBudget(preserveNormalLaunchMutationBudget(computeAllocationOperationPayload(result, prepared), operation.RedactedProviderPayload), "compute_claim", claimBudget)
-				if saveErr := s.operations.SaveRuntime(context.Background(), operation); saveErr != nil {
-					return
-				}
-			}
-		}
-		if !claimConfirmed {
-			reader, ok := s.provider.(computeClaimRecoveryProvider)
-			if !ok {
-				if tagErr == nil {
-					tagErr = fmt.Errorf("compute_claim_readback_unavailable")
-				}
-				terminal = true
-				_ = computeAllocationClaimPending(context.Background(), s, operation, result, prepared, tagErr)
-				return
-			}
-			readback, readErr := reader.ProveComputeClaimRecovery(finalizeCtx, result, prepared, claimed)
-			if readErr != nil || !validComputeClaimProviderProof(readback, result, prepared) || readback.CVMOwnershipState != "target_owned" || readback.NodeOwnershipState != "target_owned" {
-				claimed.Status = "quarantined"
-				_ = s.operations.SaveMachineOwnership(context.Background(), claimed)
-				terminal = true
-				if readErr == nil {
-					readErr = fmt.Errorf("compute_claim_readback_mismatch")
-				}
-				_ = computeAllocationClaimPending(context.Background(), s, operation, result, prepared, readErr)
-				return
-			}
-			claimBudget = confirmedNormalLaunchMutationBudget()
-			operation.RedactedProviderPayload = withNormalLaunchStageBudget(preserveNormalLaunchMutationBudget(computeAllocationOperationPayload(result, prepared), operation.RedactedProviderPayload), "compute_claim", claimBudget)
-			if saveErr := s.operations.SaveRuntime(finalizeCtx, operation); saveErr != nil {
-				return
-			}
-		}
+		claimErr = s.convergeNormalComputeClaimStages(finalizeCtx, &operation, result, prepared, machine, claimed, split)
 	}
-	verified, verifyErr := s.provider.SyncComputeAllocation(finalizeCtx, result)
-	verified = mergeComputeAllocation(verified, result, prepared)
-	if verifyErr != nil || validateNewComputeAllocation(verified, prepared) != nil || !isReadyResourceStatus(verified.Status) {
-		claimed.Status = "quarantined"
-		_ = s.operations.SaveMachineOwnership(context.Background(), claimed)
-		if verifyErr == nil {
-			verifyErr = fmt.Errorf("compute_provider_readback_mismatch")
-		}
-		terminal = true
-		_ = computeAllocationClaimPending(context.Background(), s, operation, verified, prepared, verifyErr)
-		return
+	if claimErr == nil {
+		claimErr = errors.New("compute_claim_control_plane_decision_required")
 	}
-	claimed.Status = "active"
-	if err := s.operations.SaveMachineOwnership(finalizeCtx, claimed); err != nil {
-		terminal = true
-		_ = computeAllocationFailure(context.Background(), s, operation, verified, prepared, err)
-		return
-	}
-	operation.Status = "succeeded"
-	operation.FinishedAt = s.now()
-	operation.ProviderRequestID = firstNonEmpty(verified.ProviderRequestID, operation.ProviderRequestID)
-	operation.RedactedProviderPayload = preserveNormalLaunchMutationBudget(computeAllocationOperationPayload(verified, prepared), operation.RedactedProviderPayload)
-	if err := s.operations.SaveRuntime(finalizeCtx, operation); err != nil {
-		return
-	}
+	claimed.Status = "quarantined"
+	_ = s.operations.SaveMachineOwnership(context.Background(), claimed)
 	terminal = true
-	s.mu.Lock()
-	s.computes[verified.ID] = verified
-	s.mu.Unlock()
+	_ = computeAllocationClaimPending(context.Background(), s, operation, result, prepared, claimErr)
 }
 
 func normalWorkspaceComputeBudgetEnabled(operation FabricOperation, provider Provider) bool {
@@ -3178,15 +2930,6 @@ func (s *Service) convergeNormalComputeClaimStages(ctx context.Context, operatio
 				return provider.TagComputeMachineCVM(ctx, machine, ownership)
 			},
 			proved: func(proof ComputeClaimProviderProof) bool { return proof.CVMOwnershipState == "target_owned" },
-		},
-		{
-			name: "compute_claim_node",
-			mutate: func() error {
-				return provider.ClaimComputeNode(ctx, allocation, ownership)
-			},
-			proved: func(proof ComputeClaimProviderProof) bool {
-				return proof.CVMOwnershipState == "target_owned" && proof.NodeOwnershipState == "target_owned"
-			},
 		},
 	}
 	for _, stage := range stages {
@@ -3225,7 +2968,7 @@ func (s *Service) convergeNormalComputeClaimStages(ctx context.Context, operatio
 			return err
 		}
 	}
-	return nil
+	return errors.New("compute_claim_control_plane_decision_required")
 }
 
 // finishCreateComputeAllocationLegacy preserves the established compute

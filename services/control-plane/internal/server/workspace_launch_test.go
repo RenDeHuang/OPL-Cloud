@@ -2374,12 +2374,15 @@ func TestWorkspaceLaunchComputeClaimPendingWorkerReplaysOriginalComputeOperation
 			beforeCharges := len(fixture.sub2API.charges)
 			beforeComputeCalls := len(fixture.fabric.computeIDs)
 			fixture.fabric.mutateCompute = nil
-			ready := pending
-			ready.Status = "running"
-			ready.ProviderResourceID = ready.CVMInstanceID
-			ready.ProviderRequestID = "req-claim-resume"
-			ready.ProviderData = map[string]string{"zone": ready.Zone, "instanceType": ready.InstanceType}
-			fixture.fabric.computeSync = ready
+			fixture.fabric.computeClaimProof = computeClaimRecoveryProofForLaunchStorage(persisted, "unallocated", "storage_not_started", "")
+			claimed := computeClaimRecoveryProofForLaunchStorage(persisted, "target_owned", "storage_not_started", "")
+			claimed.KubernetesMutationCount = 1
+			claimed.Evidence.Node = clients.ComputeClaimMutationEvidence{Attempted: 1, Confirmed: 1}
+			fixture.fabric.computeClaimResult = &claimed
+			readback := configureWorkspaceComputeClaimReadback(fixture, persisted)
+			readback.Status = "running"
+			readback.ProviderRequestID = "req-claim-resume"
+			fixture.fabric.computeSync = readback
 			fixture.fabric.storageSync = clients.StorageVolume{
 				ID: operation.StorageID, AccountID: operation.AccountID, WorkspaceID: operation.WorkspaceID, Status: "available",
 				Provider: "tencent-tke", ProviderResourceID: "disk-" + operation.StorageID, ProviderRequestID: "req-" + operation.StorageID,
@@ -2391,15 +2394,61 @@ func TestWorkspaceLaunchComputeClaimPendingWorkerReplaysOriginalComputeOperation
 				t.Fatal(err)
 			}
 			continued := fixture.operation(t)
-			if continued.Status != "succeeded" || continued.Phase != "succeeded" || continued.URL == "" || len(fixture.fabric.computeIDs) != beforeComputeCalls+1 ||
-				fixture.fabric.computeCreateKeys[len(fixture.fabric.computeCreateKeys)-1] != operation.ID+":compute" || len(fixture.fabric.storageIDs) != 1 {
+			if continued.Status != "preparing" || continued.Phase != "storage_fulfilling" || len(fixture.fabric.computeIDs) != beforeComputeCalls ||
+				len(fixture.fabric.computeClaimInputs) != 1 || len(fixture.fabric.computeClaimCalls) != 1 || len(fixture.fabric.storageIDs) != 0 {
 				t.Fatalf("pending worker did not resume original compute operation: operation=%#v compute=%#v keys=%#v storage=%#v events=%#v", continued, fixture.fabric.computeIDs, fixture.fabric.computeCreateKeys, fixture.fabric.storageIDs, *fixture.events)
 			}
+			if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err != nil {
+				t.Fatal(err)
+			}
+			continued = fixture.operation(t)
+			if continued.Status != "succeeded" || continued.Phase != "succeeded" || continued.URL == "" || len(fixture.fabric.computeIDs) != beforeComputeCalls || len(fixture.fabric.storageIDs) != 1 {
+				t.Fatalf("pending worker did not continue original launch after Compute: operation=%#v compute=%#v storage=%#v events=%#v", continued, fixture.fabric.computeIDs, fixture.fabric.storageIDs, *fixture.events)
+			}
 			if countStrings(*fixture.events, "fabric.monthly.preflight") != beforePreflight || len(fixture.sub2API.charges) != beforeCharges || len(fixture.sub2API.refunds) != 0 ||
-				countStrings(*fixture.events, "fabric.compute-claim.proof") != 0 || countStrings(*fixture.events, "fabric.compute-claim.claim") != 0 {
+				countStrings(*fixture.events, "fabric.compute-claim.proof") != 1 || countStrings(*fixture.events, "fabric.compute-claim.claim") != 1 {
 				t.Fatalf("pending worker repeated guarded side effects: events=%#v charges=%#v refunds=%#v", *fixture.events, fixture.sub2API.charges, fixture.sub2API.refunds)
 			}
 		})
+	}
+}
+
+func TestWorkspaceLaunchComputeClaimPendingWorkerPersistsDecisionBeforeNodeContinuation(t *testing.T) {
+	fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, "basic")
+	fixture.fabric.computeClaimProof = computeClaimRecoveryProofForLaunchStorage(operation, "unallocated", "storage_not_started", "")
+	claimed := computeClaimRecoveryProofForLaunchStorage(operation, "target_owned", "storage_not_started", "")
+	claimed.KubernetesMutationCount = 1
+	claimed.Evidence.Node = clients.ComputeClaimMutationEvidence{Attempted: 1, Confirmed: 1}
+	fixture.fabric.computeClaimResult = &claimed
+	configureWorkspaceLaunchFulfillment(t, fixture)
+	configureWorkspaceComputeClaimReadback(fixture, operation)
+	fixture.fabric.beforeComputeClaim = func() {
+		persisted := fixture.operation(t)
+		decision := persisted.CurrentDecision
+		if persisted.Status != "compute_claim_pending" || persisted.Phase != "compute_claim_pending" || decision == nil ||
+			decision.CurrentStage != "compute_claim" || decision.StageState != "pending" ||
+			decision.FirstFalsePredicate != "provider.nodeOwnership" || decision.Expected != "target_owned" || decision.Actual != "unallocated" ||
+			decision.NextAction != "NODE_ONLY_CONTINUATION_ONCE" || decision.AllowedMutation != "node_only_continuation" ||
+			decision.RequiresApproval || !AuthorizeStageMutation(*decision, "node_only_continuation") {
+			t.Fatalf("normal Launch Node continuation ran without persisted Decision: %#v", persisted)
+		}
+	}
+
+	if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err != nil {
+		t.Fatal(err)
+	}
+	current := fixture.operation(t)
+	if current.Status != "preparing" || current.Phase != "storage_fulfilling" || len(fixture.fabric.computeClaimInputs) != 1 ||
+		len(fixture.fabric.computeClaimCalls) != 1 || len(fixture.fabric.storageIDs) != 0 {
+		t.Fatalf("normal Launch did not stop after shared Compute executor: operation=%#v proofs=%#v claims=%#v storage=%#v", current, fixture.fabric.computeClaimInputs, fixture.fabric.computeClaimCalls, fixture.fabric.storageIDs)
+	}
+	if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err != nil {
+		t.Fatal(err)
+	}
+	current = fixture.operation(t)
+	if current.Status != "succeeded" || current.Phase != "succeeded" || len(fixture.fabric.computeClaimInputs) != 1 ||
+		len(fixture.fabric.computeClaimCalls) != 1 || len(fixture.fabric.storageIDs) != 1 {
+		t.Fatalf("normal Launch did not continue from Compute to succeeded: operation=%#v proofs=%#v claims=%#v storage=%#v", current, fixture.fabric.computeClaimInputs, fixture.fabric.computeClaimCalls, fixture.fabric.storageIDs)
 	}
 }
 
@@ -3562,15 +3611,14 @@ func TestWorkspaceComputeClaimPrivateIPProofAndReadbackDriftStopBeforeStorage(t 
 	}
 }
 
-func TestWorkspaceComputeClaimPartialMutationFailurePreservesCountsAndStops(t *testing.T) {
+func TestWorkspaceComputeClaimNodeOnlyFailurePreservesKubernetesCountAndStops(t *testing.T) {
 	fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, "pro")
 	fixture.fabric.computeClaimProof = computeClaimRecoveryProofForLaunch(operation, "unallocated")
 	failed := computeClaimRecoveryProofForLaunch(operation, "unallocated")
 	failed.Eligible, failed.Reason = false, "iam_rbac"
-	failed.TencentMutationCount, failed.KubernetesMutationCount = 3, 1
+	failed.TencentMutationCount, failed.KubernetesMutationCount = 0, 1
 	failed.FailureStage, failed.ProviderErrorClass = "node_patch_readback", "iam_rbac"
 	failed.Evidence = &clients.ComputeClaimEvidence{
-		CVM:  clients.ComputeClaimMutationEvidence{Attempted: 3, Confirmed: 3},
 		Node: clients.ComputeClaimMutationEvidence{Attempted: 1, Unknown: 1, Missing: []string{"node_ownership"}},
 	}
 	fixture.fabric.computeClaimResult = &failed
@@ -3583,7 +3631,7 @@ func TestWorkspaceComputeClaimPartialMutationFailurePreservesCountsAndStops(t *t
 		t.Fatal(err)
 	}
 	current := fixture.operation(t)
-	if response.Code != http.StatusConflict || result.Reason != "iam_rbac" || result.TencentMutationCount != 3 || result.KubernetesMutationCount != 1 ||
+	if response.Code != http.StatusConflict || result.Reason != "iam_rbac" || result.TencentMutationCount != 0 || result.KubernetesMutationCount != 1 ||
 		current.Status != "manual_review" || current.Phase != "compute_claim_pending" || len(fixture.fabric.computeClaimInputs) != 1 ||
 		len(fixture.fabric.computeClaimCalls) != 1 || len(fixture.fabric.storageIDs) != 0 || len(fixture.fabric.computeIDs) != 1 ||
 		len(fixture.sub2API.charges) != 1 || len(fixture.sub2API.refunds) != 0 {

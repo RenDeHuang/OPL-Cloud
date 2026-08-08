@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 33,
+  "schemaVersion": 34,
   "owner": "OPL Platform Architecture",
   "purpose": "Current ownership contract for Console UI, Control Plane, Ledger, Fabric, and external Sub2API.",
   "state": "current",
@@ -131,8 +131,10 @@
         "owner": "original_workspace.launch.v2_worker",
         "selection": "compute_claim_pending_only_manual_review_excluded",
         "claimIdentity": "original_operationId:compute",
-        "authorization": "internal_service_capability_without_operator_approval",
+        "fabricCreateBoundary": "compute_create_and_compute_claim_cvm_only_then_claim_pending_without_node_patch",
+        "authorization": "persisted_and_read_back_currentDecision_plus_internal_service_capability_without_operator_approval",
         "reservation": "postgresql_cas_single_winner",
+        "allowedWrites": {"tencent": 0, "kubernetesNodePatchMax": 1},
         "continuation": "shared_fulfillWorkspaceLaunch_after_target_owned_readback",
         "terminalFailure": "manual_review_worker_stops"
       },
@@ -636,7 +638,8 @@
         "customerLaunchCreateNodePool": false
       },
       "normalWorkspaceLaunch": {
-        "computeStages": ["compute_create", "compute_claim"],
+        "computeStages": ["compute_create", "compute_claim_cvm"],
+        "nodeClaimOwner": "control_plane_persisted_decision_authorized_compute_stage_executor",
         "storageStages": ["cbs_create", "static_binding_apply"],
         "reservation": "fabric_postgresql_cas_before_each_external_write",
         "restartAfterReservedOrUnknown": "authoritative_describe_get_only",

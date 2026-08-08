@@ -62,6 +62,29 @@ func TestCurrentDecisionDoesNotAuthorizeNodeMutationWithoutProviderProof(t *test
 	}
 }
 
+func TestCurrentDecisionDoesNotAuthorizeNodeOnlyContinuationForRecoverableCVM(t *testing.T) {
+	operation := workspaceLaunchOperation{
+		ID:     "workspace-launch-cvm-target-owned-required",
+		Status: "compute_claim_pending",
+		Phase:  "compute_claim_pending",
+		ContinuationAttemptBudgets: map[string]workspaceLaunchStageBudget{
+			"storage": {Attempted: 1, Unknown: 1, Max: 1},
+		},
+	}
+	proof := computeClaimRecoveryProofForLaunchStorage(operation, "unallocated", "storage_attempt_unknown", "")
+	proof.CVMOwnershipState = "recoverable"
+
+	decision := currentDecisionForComputeClaimProof(operation, proof, nil)
+
+	if decision.CurrentStage != "compute_claim" || decision.StageState != "unknown" ||
+		decision.FirstFalsePredicate != "provider.cvmOwnership" || decision.Expected != "target_owned" ||
+		decision.Actual != "recoverable" || decision.NextAction != "MANUAL_REVIEW" ||
+		decision.AllowedMutation != "none" || !decision.RequiresApproval ||
+		AuthorizeStageMutation(decision, "node_only_continuation") {
+		t.Fatalf("recoverable CVM authorized Node-only continuation: %#v", decision)
+	}
+}
+
 func TestP0ReducerDoesNotAuthorizeMutationOutsideComputeClaim(t *testing.T) {
 	tests := []struct {
 		name     string

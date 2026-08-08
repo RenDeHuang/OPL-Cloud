@@ -57,7 +57,8 @@ test("normal Workspace launch freezes one POST safety authorities and restart bu
   });
 
   assert.deepEqual(boundary.services.fabric.normalWorkspaceLaunch, {
-    computeStages: ["compute_create", "compute_claim"],
+    computeStages: ["compute_create", "compute_claim_cvm"],
+    nodeClaimOwner: "control_plane_persisted_decision_authorized_compute_stage_executor",
     storageStages: ["cbs_create", "static_binding_apply"],
     reservation: "fabric_postgresql_cas_before_each_external_write",
     restartAfterReservedOrUnknown: "authoritative_describe_get_only",
@@ -66,6 +67,23 @@ test("normal Workspace launch freezes one POST safety authorities and restart bu
     storageIdentityConfirmed: "CreateDisks_permanently_zero_then_original_PV_PVC_apply_or_readback",
     activePaidPendingStorage: "converge_original_identity_or_manual_review",
     forbiddenPendingStorageActions: ["delete_pv", "delete_pvc", "retained", "replacement_cbs"]
+  });
+
+  assert.equal(
+    freeze.workspaceLaunch.computeClaimAutomaticContinuation.fabricCreateBoundary,
+    "compute_create_and_compute_claim_cvm_only_then_claim_pending_without_node_patch"
+  );
+  assert.equal(
+    freeze.workspaceLaunch.computeClaimAutomaticContinuation.decisionAuthority,
+    "control_plane_phase_status_currentDecision_atomic_cas_then_exact_decision_readback"
+  );
+  assert.equal(
+    boundary.services.controlPlane.workspaceComputeClaimAutomaticContinuation.authorization,
+    "persisted_and_read_back_currentDecision_plus_internal_service_capability_without_operator_approval"
+  );
+  assert.deepEqual(boundary.services.controlPlane.workspaceComputeClaimAutomaticContinuation.allowedWrites, {
+    tencent: 0,
+    kubernetesNodePatchMax: 1
   });
 
   assert.deepEqual(deployment.normalWorkspaceLaunchImageGate, {

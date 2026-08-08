@@ -749,7 +749,9 @@ func (app *controlPlaneServer) fulfillWorkspaceLaunch(ctx context.Context, servi
 			if err := app.persistWorkspaceLaunch(ctx, operation); err != nil {
 				return err
 			}
-		case "compute_fulfilling", "storage_fulfilling", "compute_claim_pending":
+		case "compute_claim_pending":
+			return app.continueNormalWorkspaceComputeClaim(ctx, service, operation)
+		case "compute_fulfilling", "storage_fulfilling":
 			resourceType := "compute"
 			if operation.Phase == "storage_fulfilling" {
 				resourceType = "storage"
@@ -2589,16 +2591,75 @@ func (app *controlPlaneServer) claimWorkspaceCompute(ctx context.Context, servic
 		}
 	}
 
-	decision := currentDecisionForComputeClaimProof(operation, proof, nil)
-	if proof.NodeOwnershipState == "unallocated" && !AuthorizeStageMutation(decision, "node_only_continuation") {
-		operation.Status, operation.ErrorCode = "manual_review", "workspace_compute_claim_node_ownership_conflict"
-		releaseWorkspaceLaunchLease(&operation)
-		if err := app.persistWorkspaceLaunchWithDecision(ctx, &operation, decision); err != nil {
+	operation.ComputeClaimRequestHash, operation.ComputeClaimApprovalID = requestHash, input.ApprovalID
+	operation.ComputeClaimMergedMainSHA, operation.ComputeClaimCloudDigest = input.MergedMainSHA, input.CloudImageDigest
+	operation.ComputeClaimPrivateIP = input.PrivateIP
+	return app.executeWorkspaceComputeClaimStage(ctx, service, &operation, input, proof, nil)
+}
+
+func (app *controlPlaneServer) continueNormalWorkspaceComputeClaim(ctx context.Context, service *controlplane.Service, operation *workspaceLaunchOperation) error {
+	input := workspaceComputeClaimRequestFromOperation(*operation)
+	proof, proofErr := service.ComputeClaimRecoveryProof(ctx, workspaceComputeClaimRecoveryInput(*operation, input))
+	_, err := app.executeWorkspaceComputeClaimStage(ctx, service, operation, input, proof, proofErr)
+	return err
+}
+
+func workspaceComputeClaimRequestFromOperation(operation workspaceLaunchOperation) workspaceComputeClaimRecoveryRequest {
+	return workspaceComputeClaimRecoveryRequest{
+		LaunchOperationID: operation.ID,
+		AccountID:         operation.AccountID,
+		WorkspaceID:       operation.WorkspaceID,
+		ComputeID:         operation.ComputeID,
+		StorageID:         operation.StorageID,
+		PackageID:         operation.PackageID,
+		PoolID:            operation.ComputePoolID,
+		NodePoolID:        operation.ComputeNodePoolID,
+		MachineName:       operation.ComputeMachineName,
+		NodeName:          operation.ComputeNodeName,
+		CVMInstanceID:     operation.ComputeCVMInstanceID,
+		PrivateIP:         operation.ComputePrivateIP,
+		InstanceType:      operation.ComputeInstanceType,
+		Zone:              operation.ComputeZone,
+	}
+}
+
+// executeWorkspaceComputeClaimStage is the single Compute mutation boundary
+// shared by the original launch worker and operator-approved Recovery.
+func (app *controlPlaneServer) executeWorkspaceComputeClaimStage(
+	ctx context.Context,
+	service *controlplane.Service,
+	operation *workspaceLaunchOperation,
+	input workspaceComputeClaimRecoveryRequest,
+	proof clients.ComputeClaimRecoveryProof,
+	proofErr error,
+) (clients.ComputeClaimRecoveryProof, error) {
+	if !workspaceComputeClaimProofBaseMatches(*operation, input, proof) || proof.TencentMutationCount != 0 || proof.KubernetesMutationCount != 0 {
+		proof = workspaceComputeClaimFailureProof(*operation, "local_identity")
+		proofErr = errWorkspaceComputeClaimProof
+	}
+	if proofErr != nil || !workspaceComputeClaimProofEligible(*operation, input, proof, false) || proof.CVMOwnershipState != "target_owned" {
+		if !workspaceComputeClaimSafeFailureForOperation(*operation, input, proof) {
+			proof = workspaceComputeClaimFailureProof(*operation, "provider_describe")
+		}
+		decision := currentDecisionForComputeClaimProof(*operation, proof, proofErr)
+		operation.Status, operation.Phase, operation.ErrorCode = "manual_review", "compute_claim_pending", "workspace_compute_claim_"+proof.Reason
+		releaseWorkspaceLaunchLease(operation)
+		if err := app.persistWorkspaceLaunchWithDecision(ctx, operation, decision); err != nil {
 			return clients.ComputeClaimRecoveryProof{}, err
 		}
 		return proof, errWorkspaceComputeClaimProof
 	}
-	if err := app.persistWorkspaceLaunchWithDecision(ctx, &operation, decision); err != nil {
+
+	decision := currentDecisionForComputeClaimProof(*operation, proof, nil)
+	if proof.NodeOwnershipState == "unallocated" && !AuthorizeStageMutation(decision, "node_only_continuation") {
+		operation.Status, operation.Phase, operation.ErrorCode = "manual_review", "compute_claim_pending", "workspace_compute_claim_node_ownership_conflict"
+		releaseWorkspaceLaunchLease(operation)
+		if err := app.persistWorkspaceLaunchWithDecision(ctx, operation, decision); err != nil {
+			return clients.ComputeClaimRecoveryProof{}, err
+		}
+		return proof, errWorkspaceComputeClaimProof
+	}
+	if err := app.persistWorkspaceLaunchWithDecision(ctx, operation, decision); err != nil {
 		return clients.ComputeClaimRecoveryProof{}, err
 	}
 	persisted, found, err := app.workspaceLaunchOperation(ctx, operation.ID)
@@ -2609,36 +2670,41 @@ func (app *controlPlaneServer) claimWorkspaceCompute(ctx context.Context, servic
 		}
 		return clients.ComputeClaimRecoveryProof{}, err
 	}
-	operation = persisted
+	*operation = persisted
 
 	claimed, claimErr := service.ClaimComputeRecovery(ctx, clients.ComputeClaimRecoveryClaimInput{
-		ComputeClaimRecoveryInput: workspaceComputeClaimRecoveryInput(operation, input), MachineName: operation.ComputeMachineName,
-		NodeName: operation.ComputeNodeName, CVMInstanceID: operation.ComputeCVMInstanceID, PrivateIP: operation.ComputePrivateIP,
-		InstanceType: operation.ComputeInstanceType, Zone: operation.ComputeZone,
+		ComputeClaimRecoveryInput: workspaceComputeClaimRecoveryInput(*operation, input),
+		MachineName:               operation.ComputeMachineName,
+		NodeName:                  operation.ComputeNodeName,
+		CVMInstanceID:             operation.ComputeCVMInstanceID,
+		PrivateIP:                 operation.ComputePrivateIP,
+		InstanceType:              operation.ComputeInstanceType,
+		Zone:                      operation.ComputeZone,
 	}, operation.ID+":compute")
-	if claimErr != nil || !workspaceComputeClaimProofEligible(operation, input, claimed, true) {
-		if !workspaceComputeClaimSafeFailureForOperation(operation, input, claimed) {
-			claimed = workspaceComputeClaimFailureProof(operation, "identity_mismatch")
+	if claimed.TencentMutationCount != 0 {
+		claimed = workspaceComputeClaimFailureProof(*operation, "identity_mismatch")
+		claimErr = errWorkspaceComputeClaimProof
+	}
+	if claimErr != nil || !workspaceComputeClaimProofEligible(*operation, input, claimed, true) {
+		if !workspaceComputeClaimSafeFailureForOperation(*operation, input, claimed) {
+			claimed = workspaceComputeClaimFailureProof(*operation, "identity_mismatch")
 		}
-		decision = currentDecisionForComputeClaimProof(operation, claimed, claimErr)
-		operation.Status, operation.ErrorCode = "manual_review", "workspace_compute_claim_"+claimed.Reason
-		releaseWorkspaceLaunchLease(&operation)
-		if err := app.persistWorkspaceLaunchWithDecision(ctx, &operation, decision); err != nil {
+		decision = currentDecisionForComputeClaimProof(*operation, claimed, claimErr)
+		operation.Status, operation.Phase, operation.ErrorCode = "manual_review", "compute_claim_pending", "workspace_compute_claim_"+claimed.Reason
+		releaseWorkspaceLaunchLease(operation)
+		if err := app.persistWorkspaceLaunchWithDecision(ctx, operation, decision); err != nil {
 			return clients.ComputeClaimRecoveryProof{}, err
 		}
 		return claimed, errWorkspaceComputeClaimProof
 	}
 
 	operation.Status, operation.Phase, operation.ErrorCode = "compute_claim_pending", "compute_claim_pending", ""
-	operation.ComputeClaimRequestHash, operation.ComputeClaimApprovalID = requestHash, input.ApprovalID
-	operation.ComputeClaimMergedMainSHA, operation.ComputeClaimCloudDigest = input.MergedMainSHA, input.CloudImageDigest
-	operation.ComputeClaimPrivateIP = input.PrivateIP
 	operation.ComputeClaimProof = &claimed
-	releaseWorkspaceLaunchLease(&operation)
-	if err := app.persistWorkspaceLaunch(ctx, &operation); err != nil {
+	releaseWorkspaceLaunchLease(operation)
+	if err := app.persistWorkspaceLaunch(ctx, operation); err != nil {
 		return clients.ComputeClaimRecoveryProof{}, err
 	}
-	if err := app.continueWorkspaceComputeClaimReadback(ctx, service, &operation); err != nil {
+	if err := app.continueWorkspaceComputeClaimReadback(ctx, service, operation); err != nil {
 		return claimed, err
 	}
 	return claimed, nil
