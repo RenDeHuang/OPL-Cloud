@@ -2480,7 +2480,7 @@ func workspaceComputeClaimStorageBoundaryCandidate(operation workspaceLaunchOper
 		operation.ComputeClaimProof.NodeOwnershipState == "target_owned" &&
 		operation.ComputeClaimProof.CVMOwnershipState == "target_owned"
 	if operation.Status != "manual_review" || operation.Phase != "storage_fulfilling" || computeClaimConfirmed ||
-		operation.ComputeClaimTerminalEvidence != nil || operation.ComputeID == "" || operation.StorageID == "" || operation.ComputeNodePoolID == "" {
+		operation.ComputeID == "" || operation.StorageID == "" || operation.ComputeNodePoolID == "" {
 		return false
 	}
 	// Older launches can reach the Storage phase before the Control Plane has

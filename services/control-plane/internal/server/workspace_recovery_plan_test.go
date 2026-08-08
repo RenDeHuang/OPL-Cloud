@@ -843,7 +843,13 @@ func TestWorkspaceRecoveryPlanDiagnoseUsesComputeAuthorityForStaleStoragePhaseWi
 	operation.Status, operation.Phase, operation.ErrorCode = "manual_review", "storage_fulfilling", "workspace_recovery_plan_fabric_proof_failed"
 	operation.ContinuationAttemptBudgets["storage"] = workspaceLaunchStageBudget{Max: workspaceLaunchStageMax}
 	operation.ComputeClaimProof = nil
-	operation.ComputeClaimTerminalEvidence = nil
+	operation.ComputeClaimTerminalEvidence = &clients.ComputeClaimTerminalEvidence{
+		SchemaVersion: 1, Stage: "compute_claim_node", Status: "terminal_unprovable", ErrorCode: "compute_claim_terminal_node_unprovable",
+		ReadbackStatus: "unallocated", AttemptCount: 1, Attempted: 1, Confirmed: 0, Unknown: 1, Max: 1,
+		LaunchOperationID: operation.ID, AccountID: operation.AccountID, WorkspaceID: operation.WorkspaceID,
+		ComputeAllocationID: operation.ComputeID, PackageID: operation.PackageID, NodePoolID: operation.ComputeNodePoolID,
+		CVMOwnershipState: "target_owned", NodeOwnershipState: "unallocated",
+	}
 	operation.CurrentDecision = nil
 	fixture.fabric.computeClaimProof = computeClaimRecoveryProofForLaunchStorage(operation, "unallocated", "storage_attempt_unknown", "")
 	fixture.fabric.computeProviderTruth = &clients.ComputeProviderTruth{
