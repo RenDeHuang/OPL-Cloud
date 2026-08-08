@@ -233,6 +233,10 @@ type monthlyFabric struct {
 	preflightInputs         []clients.MonthlyPreflightInput
 	providerTruth           *clients.MonthlyProviderTruth
 	providerTruthErr        error
+	computeProviderTruth    *clients.ComputeProviderTruth
+	computeProviderTruthErr error
+	computeProviderTruthFn  func(clients.ComputeClaimRecoveryInput) (clients.ComputeProviderTruth, error)
+	computeProviderInputs   []clients.ComputeClaimRecoveryInput
 	activationTruth         *clients.WorkspaceActivationTruth
 	activationTruthErr      error
 	activationTruthInputs   []clients.WorkspaceActivationTruthInput
@@ -277,6 +281,36 @@ func (f *monthlyFabric) ComputeClaimRecoveryProof(_ context.Context, input clien
 		return f.computeClaimProofFn(input)
 	}
 	return f.computeClaimProof, f.computeClaimProofErr
+}
+
+func (f *monthlyFabric) ComputeProviderTruth(_ context.Context, input clients.ComputeClaimRecoveryInput) (clients.ComputeProviderTruth, error) {
+	*f.events = append(*f.events, "fabric.compute-provider-truth")
+	f.computeProviderInputs = append(f.computeProviderInputs, input)
+	if f.computeProviderTruthFn != nil {
+		return f.computeProviderTruthFn(input)
+	}
+	if f.computeProviderTruth != nil {
+		return *f.computeProviderTruth, f.computeProviderTruthErr
+	}
+	// Preserve the legacy fake's observation fields for existing assertions.
+	// The explicit ComputeProviderTruth fixtures above verify the production GET path.
+	*f.events = append(*f.events, "fabric.compute-claim.proof")
+	f.computeClaimInputs = append(f.computeClaimInputs, input)
+	if f.beforeComputeClaimProof != nil {
+		f.beforeComputeClaimProof()
+	}
+	proof, proofErr := f.computeClaimProof, f.computeClaimProofErr
+	if f.computeClaimProofFn != nil {
+		proof, proofErr = f.computeClaimProofFn(input)
+	}
+	state, computeState := "unknown", "unknown"
+	if proofErr == nil && proof.Eligible && proof.Reason == "none" {
+		state, computeState = "ready", "ready"
+	}
+	return clients.ComputeProviderTruth{
+		SchemaVersion: 1, State: state, ComputeState: computeState, StorageState: "unknown",
+		NodeOwnershipState: proof.NodeOwnershipState, CVMOwnershipState: proof.CVMOwnershipState, Proof: &proof,
+	}, proofErr
 }
 
 func (f *monthlyFabric) ComputeClaimRecoveryIdentityEvidence(_ context.Context, input clients.ComputeClaimRecoveryClaimInput) (*clients.ComputeClaimIdentityEvidence, error) {

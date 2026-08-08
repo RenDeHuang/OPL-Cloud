@@ -2498,7 +2498,7 @@ func (app *controlPlaneServer) diagnoseWorkspaceComputeClaim(ctx context.Context
 	if err != nil {
 		return clients.ComputeClaimRecoveryProof{}, err
 	}
-	proof, proofErr := service.ComputeClaimRecoveryProof(ctx, workspaceComputeClaimRecoveryInput(operation, input))
+	proof, proofErr := collectWorkspaceComputeClaimEvidence(ctx, service, operation, input)
 	if !workspaceComputeClaimProofBaseMatches(operation, input, proof) || proof.TencentMutationCount != 0 || proof.KubernetesMutationCount != 0 {
 		return clients.ComputeClaimRecoveryProof{}, errWorkspaceComputeClaimProof
 	}
@@ -2551,7 +2551,7 @@ func (app *controlPlaneServer) claimWorkspaceCompute(ctx context.Context, servic
 		}
 	}
 
-	proof, proofErr := service.ComputeClaimRecoveryProof(ctx, workspaceComputeClaimRecoveryInput(operation, input))
+	proof, proofErr := collectWorkspaceComputeClaimEvidence(ctx, service, operation, input)
 	if !workspaceComputeClaimProofBaseMatches(operation, input, proof) || proof.TencentMutationCount != 0 || proof.KubernetesMutationCount != 0 {
 		proof = workspaceComputeClaimFailureProof(operation, "local_identity")
 		proofErr = errWorkspaceComputeClaimProof
@@ -2599,9 +2599,38 @@ func (app *controlPlaneServer) claimWorkspaceCompute(ctx context.Context, servic
 
 func (app *controlPlaneServer) continueNormalWorkspaceComputeClaim(ctx context.Context, service *controlplane.Service, operation *workspaceLaunchOperation) error {
 	input := workspaceComputeClaimRequestFromOperation(*operation)
-	proof, proofErr := service.ComputeClaimRecoveryProof(ctx, workspaceComputeClaimRecoveryInput(*operation, input))
+	proof, proofErr := collectWorkspaceComputeClaimEvidence(ctx, service, *operation, input)
 	_, err := app.executeWorkspaceComputeClaimStage(ctx, service, operation, input, proof, proofErr)
 	return err
+}
+
+// collectWorkspaceComputeClaimEvidence is the shared GET-only Compute collector.
+// It preserves Fabric's partial proof on read failure and never authorizes a write.
+func collectWorkspaceComputeClaimEvidence(
+	ctx context.Context,
+	service *controlplane.Service,
+	operation workspaceLaunchOperation,
+	input workspaceComputeClaimRecoveryRequest,
+) (clients.ComputeClaimRecoveryProof, error) {
+	truth, truthErr := service.ComputeProviderTruth(ctx, workspaceComputeClaimRecoveryInput(operation, input))
+	if truth.Proof == nil {
+		proof := workspaceComputeClaimFailureProof(operation, firstNonEmpty(truth.Reason, "provider_describe"))
+		proof.FailureStage, proof.ProviderErrorClass = truth.FailureStage, truth.ProviderErrorClass
+		if truthErr != nil {
+			return proof, truthErr
+		}
+		return proof, errWorkspaceComputeClaimProof
+	}
+	proof := *truth.Proof
+	if truthErr != nil {
+		return proof, truthErr
+	}
+	if truth.SchemaVersion != 1 || truth.State != "ready" || truth.ComputeState != "ready" ||
+		truth.NodeOwnershipState != proof.NodeOwnershipState || truth.CVMOwnershipState != proof.CVMOwnershipState ||
+		proof.Sub2APIMutationCount != 0 || proof.TencentMutationCount != 0 || proof.KubernetesMutationCount != 0 {
+		return proof, errWorkspaceComputeClaimProof
+	}
+	return proof, nil
 }
 
 func workspaceComputeClaimRequestFromOperation(operation workspaceLaunchOperation) workspaceComputeClaimRecoveryRequest {

@@ -53,6 +53,14 @@ func (s *Service) MonthlyProviderTruth(ctx context.Context, computeID, storageID
 	return client.MonthlyProviderTruth(ctx, computeID, storageID)
 }
 
+func (s *Service) ComputeProviderTruth(ctx context.Context, input clients.ComputeClaimRecoveryInput) (clients.ComputeProviderTruth, error) {
+	client, ok := s.fabric.(clients.FabricComputeProviderTruthClient)
+	if !ok {
+		return clients.ComputeProviderTruth{State: "unknown", ComputeState: "unknown", StorageState: "unknown"}, errors.New("fabric_compute_provider_truth_unavailable")
+	}
+	return client.ComputeProviderTruth(ctx, input)
+}
+
 func (s *Service) MachineOwnership(ctx context.Context, resourceID string) (clients.MachineOwnership, error) {
 	client, ok := s.fabric.(clients.FabricMachineOwnershipClient)
 	if !ok {

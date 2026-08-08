@@ -236,7 +236,7 @@ test("launch freeze fixes the V2 products, owner lanes, settlement, and verifica
     successTransition: "same_launch_storage_fulfilling_with_original_storage_identity",
     failureTransition: "manual_review_without_refund_or_replacement",
     forbidden: ["second_debit", "refund", "second_cvm", "early_cbs", "replacement_compute"],
-    currentImplementation: "code_complete_local_focused_and_postgresql_verified_not_merged_released_deployed_or_executed"
+    currentImplementation: "control_plane_normal_launch_and_recovery_share_compute_provider_truth_collector_local_focused_verified_release_deploy_and_original_launch_execution_pending"
   });
 
   assert.deepEqual(freeze.monthlySettlement.protocol, ["debit", "fabric_fulfillment", "claim", "activate", "record_workspace_receipt"]);

@@ -2416,6 +2416,14 @@ func TestWorkspaceLaunchComputeClaimPendingWorkerReplaysOriginalComputeOperation
 func TestWorkspaceLaunchComputeClaimPendingWorkerPersistsDecisionBeforeNodeContinuation(t *testing.T) {
 	fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, "basic")
 	fixture.fabric.computeClaimProof = computeClaimRecoveryProofForLaunchStorage(operation, "unallocated", "storage_not_started", "")
+	fixture.fabric.computeProviderTruth = &clients.ComputeProviderTruth{
+		SchemaVersion: 1, State: "ready", ComputeState: "ready", StorageState: "absent",
+		NodeOwnershipState: "unallocated", CVMOwnershipState: "target_owned", Proof: &fixture.fabric.computeClaimProof,
+	}
+	fixture.fabric.computeClaimProofFn = func(input clients.ComputeClaimRecoveryInput) (clients.ComputeClaimRecoveryProof, error) {
+		t.Fatalf("Normal Launch called legacy full proof: %#v", input)
+		return clients.ComputeClaimRecoveryProof{}, errors.New("legacy full proof called")
+	}
 	claimed := computeClaimRecoveryProofForLaunchStorage(operation, "target_owned", "storage_not_started", "")
 	claimed.KubernetesMutationCount = 1
 	claimed.Evidence.Node = clients.ComputeClaimMutationEvidence{Attempted: 1, Confirmed: 1}
@@ -2438,17 +2446,17 @@ func TestWorkspaceLaunchComputeClaimPendingWorkerPersistsDecisionBeforeNodeConti
 		t.Fatal(err)
 	}
 	current := fixture.operation(t)
-	if current.Status != "preparing" || current.Phase != "storage_fulfilling" || len(fixture.fabric.computeClaimInputs) != 1 ||
+	if current.Status != "preparing" || current.Phase != "storage_fulfilling" || len(fixture.fabric.computeProviderInputs) != 1 || len(fixture.fabric.computeClaimInputs) != 0 ||
 		len(fixture.fabric.computeClaimCalls) != 1 || len(fixture.fabric.storageIDs) != 0 {
-		t.Fatalf("normal Launch did not stop after shared Compute executor: operation=%#v proofs=%#v claims=%#v storage=%#v", current, fixture.fabric.computeClaimInputs, fixture.fabric.computeClaimCalls, fixture.fabric.storageIDs)
+		t.Fatalf("normal Launch did not stop after shared Compute executor: operation=%#v truths=%#v proofs=%#v claims=%#v storage=%#v", current, fixture.fabric.computeProviderInputs, fixture.fabric.computeClaimInputs, fixture.fabric.computeClaimCalls, fixture.fabric.storageIDs)
 	}
 	if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err != nil {
 		t.Fatal(err)
 	}
 	current = fixture.operation(t)
-	if current.Status != "succeeded" || current.Phase != "succeeded" || len(fixture.fabric.computeClaimInputs) != 1 ||
+	if current.Status != "succeeded" || current.Phase != "succeeded" || len(fixture.fabric.computeProviderInputs) != 1 || len(fixture.fabric.computeClaimInputs) != 0 ||
 		len(fixture.fabric.computeClaimCalls) != 1 || len(fixture.fabric.storageIDs) != 1 {
-		t.Fatalf("normal Launch did not continue from Compute to succeeded: operation=%#v proofs=%#v claims=%#v storage=%#v", current, fixture.fabric.computeClaimInputs, fixture.fabric.computeClaimCalls, fixture.fabric.storageIDs)
+		t.Fatalf("normal Launch did not continue from Compute to succeeded: operation=%#v truths=%#v proofs=%#v claims=%#v storage=%#v", current, fixture.fabric.computeProviderInputs, fixture.fabric.computeClaimInputs, fixture.fabric.computeClaimCalls, fixture.fabric.storageIDs)
 	}
 }
 

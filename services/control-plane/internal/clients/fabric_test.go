@@ -128,6 +128,53 @@ func TestFabricHTTPClientReadsMonthlyProviderTruthWithoutMutation(t *testing.T) 
 	}
 }
 
+func TestFabricHTTPClientReadsComputeProviderTruthWithoutMutation(t *testing.T) {
+	input := ComputeClaimRecoveryInput{
+		LaunchOperationID: "workspace-launch-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha",
+		ComputeAllocationID: "ca-alpha", StorageVolumeID: "vol-alpha", PackageID: "basic",
+		PoolID: "pool-basic-2c4g", NodePoolID: "np-alpha",
+	}
+	proof := ComputeClaimRecoveryProof{
+		SchemaVersion: 1, Eligible: true, Reason: "none", StorageState: "storage_attempt_unknown",
+		LaunchOperationID: input.LaunchOperationID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID,
+		ComputeAllocationID: input.ComputeAllocationID, StorageVolumeID: input.StorageVolumeID, PackageID: input.PackageID,
+		PoolID: input.PoolID, NodePoolID: input.NodePoolID, MachineName: "machine-alpha", NodeName: "10.66.0.191",
+		CVMInstanceID: "ins-alpha", PrivateIP: "10.66.0.191", InstanceType: "SA5.MEDIUM4", Zone: "ap-guangzhou-3",
+		ChargeType: "PREPAID", PeriodMonths: 1, RenewFlag: "NOTIFY_AND_MANUAL_RENEW", Deadline: "2026-08-28T00:00:00Z",
+		NodeOwnershipState: "unallocated", CVMOwnershipState: "target_owned", Evidence: &ComputeClaimEvidence{},
+	}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/fabric/compute-provider-truth" || r.Header.Get("Authorization") != "Bearer internal-secret" {
+			t.Fatalf("unexpected request: %s %s auth=%q", r.Method, r.URL.Path, r.Header.Get("Authorization"))
+		}
+		if _, ok := r.Header["Idempotency-Key"]; ok {
+			t.Fatalf("read-only compute truth sent Idempotency-Key: %#v", r.Header.Values("Idempotency-Key"))
+		}
+		query := r.URL.Query()
+		if len(query) != 8 || query.Get("launchOperationId") != input.LaunchOperationID || query.Get("accountId") != input.AccountID ||
+			query.Get("workspaceId") != input.WorkspaceID || query.Get("computeAllocationId") != input.ComputeAllocationID ||
+			query.Get("storageVolumeId") != input.StorageVolumeID || query.Get("packageId") != input.PackageID ||
+			query.Get("poolId") != input.PoolID || query.Get("nodePoolId") != input.NodePoolID {
+			t.Fatalf("compute truth query=%#v", query)
+		}
+		_ = json.NewEncoder(w).Encode(ComputeProviderTruth{
+			SchemaVersion: 1, State: "ready", ComputeState: "ready", StorageState: "unknown",
+			Compute:            ComputeAllocation{ID: input.ComputeAllocationID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, Status: "ready"},
+			NodeOwnershipState: "unallocated", CVMOwnershipState: "target_owned", Proof: &proof,
+		})
+	}))
+	defer upstream.Close()
+
+	client := NewFabricHTTPClient(upstream.URL, "internal-secret", upstream.Client()).(FabricComputeProviderTruthClient)
+	truth, err := client.ComputeProviderTruth(context.Background(), input)
+	if err != nil || truth.SchemaVersion != 1 || truth.State != "ready" || truth.ComputeState != "ready" || truth.StorageState != "unknown" ||
+		truth.NodeOwnershipState != "unallocated" || truth.CVMOwnershipState != "target_owned" || truth.Proof == nil ||
+		truth.Proof.StorageState != "storage_attempt_unknown" || truth.Proof.Sub2APIMutationCount != 0 ||
+		truth.Proof.TencentMutationCount != 0 || truth.Proof.KubernetesMutationCount != 0 {
+		t.Fatalf("compute provider truth=%#v err=%v", truth, err)
+	}
+}
+
 func TestFabricHTTPClientReadsExactMachineOwnershipWithoutMutation(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet || r.URL.EscapedPath() != "/fabric/machine-ownerships/compute%20alpha" || r.Header.Get("Authorization") != "Bearer internal-secret" {

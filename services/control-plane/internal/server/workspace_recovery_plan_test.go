@@ -731,13 +731,15 @@ func TestWorkspaceRecoveryPlanDiagnoseKeepsComputeClaimPendingWhenNodeOwnershipI
 	stalePhase.ComputeDeadline = compute.Deadline
 	fixture.fabric.computeClaimProof = computeClaimRecoveryProofForLaunchStorage(stalePhase, "unallocated", "storage_attempt_unknown", "")
 	fixture.fabric.computeClaimProof.Deadline = stalePhase.ComputeDeadline
-	// Fabric still owns the exact storage-operation identity check. Control Plane
-	// must allow that readback while Compute Claim is the current stage.
+	fixture.fabric.computeProviderTruth = &clients.ComputeProviderTruth{
+		SchemaVersion: 1, State: "ready", ComputeState: "ready", StorageState: "unknown", Compute: compute,
+		NodeOwnershipState: "unallocated", CVMOwnershipState: "target_owned", Proof: &fixture.fabric.computeClaimProof,
+	}
+	// Recovery must consume the same Compute-only authority as Normal Launch.
+	// Calling the old full proof here would reproduce the production short-circuit.
 	fixture.fabric.computeClaimProofFn = func(input clients.ComputeClaimRecoveryInput) (clients.ComputeClaimRecoveryProof, error) {
-		if !input.AllowExistingStorageOperation {
-			return fixture.fabric.computeClaimProof, errors.New("compute_claim_recovery_storage_already_started")
-		}
-		return fixture.fabric.computeClaimProof, nil
+		t.Fatalf("legacy full proof called for compute evidence: %#v", input)
+		return clients.ComputeClaimRecoveryProof{}, errors.New("legacy full proof called")
 	}
 	claimed := computeClaimRecoveryProofForLaunchStorage(stalePhase, "target_owned", "storage_attempt_unknown", "")
 	claimed.Deadline = stalePhase.ComputeDeadline
@@ -795,7 +797,7 @@ func TestWorkspaceRecoveryPlanDiagnoseKeepsComputeClaimPendingWhenNodeOwnershipI
 		persisted.RecoveryHistory[0].Plan.PlanDigest != predecessorDigest || persisted.RecoveryHistory[0].Execution.MutationOutcome.Status != "confirmed_zero" ||
 		storageBudget != (workspaceLaunchStageBudget{Max: workspaceLaunchStageMax}) ||
 		persisted.RecoveryPlan.TargetBinding.NodeOwnershipState != "unallocated" || persisted.RecoveryPlan.TargetBinding.StorageState != "storage_attempt_unknown" ||
-		scenario.readback.stageProofCalls != 0 || len(fixture.fabric.computeClaimInputs) != 1 || !fixture.fabric.computeClaimInputs[0].AllowExistingStorageOperation || len(fixture.fabric.computeClaimCalls) != 0 ||
+		scenario.readback.stageProofCalls != 0 || len(fixture.fabric.computeProviderInputs) != 1 || len(fixture.fabric.computeClaimInputs) != 0 || len(fixture.fabric.computeClaimCalls) != 0 ||
 		len(fixture.fabric.storageIDs) != storageWrites || len(fixture.sub2API.charges) != 1 || len(fixture.sub2API.refunds) != 0 {
 		t.Fatalf("compute phase was not kept first: status=%d plan=%#v operation=%#v stageProofCalls=%d computeProofs=%d claims=%d storageWrites=%d/%d charges=%d refunds=%d",
 			response.Code, plan, persisted, scenario.readback.stageProofCalls, len(fixture.fabric.computeClaimInputs), len(fixture.fabric.computeClaimCalls), len(fixture.fabric.storageIDs), storageWrites, len(fixture.sub2API.charges), len(fixture.sub2API.refunds))

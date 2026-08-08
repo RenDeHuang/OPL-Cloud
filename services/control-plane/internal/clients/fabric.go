@@ -66,6 +66,10 @@ type FabricMonthlyProviderTruthClient interface {
 	MonthlyProviderTruth(context.Context, string, string) (MonthlyProviderTruth, error)
 }
 
+type FabricComputeProviderTruthClient interface {
+	ComputeProviderTruth(context.Context, ComputeClaimRecoveryInput) (ComputeProviderTruth, error)
+}
+
 type FabricMachineOwnershipClient interface {
 	MachineOwnership(context.Context, string) (MachineOwnership, error)
 }
@@ -174,6 +178,21 @@ type MonthlyProviderTruth struct {
 	Storage           StorageVolume     `json:"storage"`
 	ProviderRequestID string            `json:"providerRequestId,omitempty"`
 	ErrorCode         string            `json:"errorCode,omitempty"`
+}
+
+type ComputeProviderTruth struct {
+	SchemaVersion      int                        `json:"schemaVersion"`
+	State              string                     `json:"state"`
+	Reason             string                     `json:"reason,omitempty"`
+	ComputeState       string                     `json:"computeState"`
+	StorageState       string                     `json:"storageState"`
+	Compute            ComputeAllocation          `json:"compute"`
+	NodeOwnershipState string                     `json:"nodeOwnershipState"`
+	CVMOwnershipState  string                     `json:"cvmOwnershipState"`
+	ProviderRequestID  string                     `json:"providerRequestId,omitempty"`
+	FailureStage       string                     `json:"failureStage,omitempty"`
+	ProviderErrorClass string                     `json:"providerErrorClass,omitempty"`
+	Proof              *ComputeClaimRecoveryProof `json:"proof,omitempty"`
 }
 
 type MachineOwnership struct {
@@ -679,6 +698,22 @@ func (c *fabricHTTPClient) MonthlyProviderTruth(ctx context.Context, computeID, 
 	params := url.Values{"computeAllocationId": {computeID}, "storageVolumeId": {storageID}}
 	var result MonthlyProviderTruth
 	err := c.get(ctx, "/fabric/monthly-provider-truth?"+params.Encode(), &result)
+	return result, err
+}
+
+func (c *fabricHTTPClient) ComputeProviderTruth(ctx context.Context, input ComputeClaimRecoveryInput) (ComputeProviderTruth, error) {
+	params := url.Values{
+		"launchOperationId":   {input.LaunchOperationID},
+		"accountId":           {input.AccountID},
+		"workspaceId":         {input.WorkspaceID},
+		"computeAllocationId": {input.ComputeAllocationID},
+		"storageVolumeId":     {input.StorageVolumeID},
+		"packageId":           {input.PackageID},
+		"poolId":              {input.PoolID},
+		"nodePoolId":          {input.NodePoolID},
+	}
+	var result ComputeProviderTruth
+	err := c.get(ctx, "/fabric/compute-provider-truth?"+params.Encode(), &result)
 	return result, err
 }
 
