@@ -150,6 +150,71 @@ test("stage-aware compute readback keeps Node ownership first when storage is at
   assert.equal(result.node.taint.value, "unallocated");
 });
 
+test("compute claim readback preserves a canonical evaluator storage approval predicate", () => {
+  const predicate = "provider.storageApprovalBinding";
+  const artifact = productionLiveQa.workspaceComputeClaimReadbackArtifact({
+    schemaVersion: 1,
+    operationMode: "compute_claim_readback",
+    status: "evidence_only",
+    authoritativeDecision: null,
+    node: {
+      resourceVersion: "18504605277",
+      labels: {},
+      taint: { key: "oplcloud.cn/workspace-id", value: "unallocated", effect: "NoSchedule" },
+      identity: {
+        nameMatches: true,
+        resourceIdLabelMatches: true,
+        accountIdLabelMatches: true,
+        workspaceIdLabelMatches: true,
+        privateIpMatches: true
+      },
+      ownership: "unallocated"
+    },
+    providerTruth: { compute: "ready", storage: "unknown", computeResourceId: "ins-redacted", storageResourceId: "" },
+    compute: { stageBudget: { attempted: 0, confirmed: 0, unknown: 0, max: 1 }, operation: { cardinality: 1, status: "succeeded" } },
+    storage: {
+      state: "attempted_unknown",
+      stageBudget: { attempted: 0, confirmed: 0, unknown: 0, max: 1 },
+      operation: { cardinality: 1, status: "started" },
+      providerTruth: "unknown"
+    },
+    mutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
+    reads: { operations: "present", compute: "present", ownership: "present", storage: "absent", providerTruth: "present", node: "present", controlPlaneTrace: "present" },
+    readbackErrors: ["monthly_provider_truth_unavailable"],
+    controlPlaneTrace: {
+      schemaVersion: 1,
+      operationMode: "compute_claim_trace",
+      status: "evidence_only",
+      launch: { status: "manual_review", phase: "storage_fulfilling", errorCode: "workspace_launch_storage_attempt_unknown" },
+      candidate: { canonical: false, legacy: false, storageBoundary: true, recoveryCandidate: true, terminalEvidenceBlocksOld: true },
+      terminalEvidence: { present: true, status: "terminal_unprovable", nodeOwnershipState: "unallocated", cvmOwnershipState: "target_owned" },
+      identity: { accountMatches: true, launchOperationIdMatches: true, workspaceIdPresent: true, computeIdPresent: true, storageIdPresent: true, nodePoolIdPresent: true, computeClaimIdentityValid: true, debitChargeConfirmed: true },
+      storage: {
+        continuationBudget: { attempted: 1, confirmed: 0, unknown: 1, max: 1 },
+        recoveryStage: "storage",
+        recoveryStagePresent: true,
+        allowExistingStorageOperation: true
+      },
+      authoritativeDecision: null,
+      controlPlane: { loadAttempted: true, loaded: true, errorCode: "none" },
+      providerTruth: { collectorCalled: true, state: "available", computeState: "ready", storageState: "unknown", nodeOwnershipState: "unallocated", cvmOwnershipState: "target_owned", eligible: true, reason: "none", failureStage: "", providerErrorClass: "", tencentMutationCount: 0, kubernetesMutationCount: 0 },
+      proofEligibility: { called: true, eligible: false, function: "evaluateWorkspaceComputeClaimProof", firstFalsePredicate: predicate, expected: "matches", actual: "unknown", authority: "controlPlane.computeClaimApproval", condition: "storageApprovalBinding" },
+      reducer: { called: true, persisted: false, decision: { currentStage: "compute_claim", firstFalsePredicate: predicate, expected: "matches", actual: "unknown", authority: "controlPlane.computeClaimApproval", nextAction: "MANUAL_REVIEW" } },
+      firstFalsePredicate: predicate,
+      expected: "matches",
+      actual: "unknown",
+      authority: "controlPlane.computeClaimApproval",
+      nextAction: "MANUAL_REVIEW",
+      readbackErrors: [],
+      mutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
+    }
+  });
+
+  assert.equal(artifact.controlPlaneTrace.proofEligibility.function, "evaluateWorkspaceComputeClaimProof");
+  assert.equal(artifact.controlPlaneTrace.firstFalsePredicate, predicate);
+  assert.equal(artifact.controlPlaneTrace.proofEligibility.firstFalsePredicate, predicate);
+});
+
 test("compute claim production readback derives the original resources and performs GET-only Fabric/Node reads", async () => {
   const calls = [];
   const accountId = "acct-54658088f52b242ed8";

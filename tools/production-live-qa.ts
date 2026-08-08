@@ -820,17 +820,19 @@ export function workspaceComputeClaimReadbackArtifact(result) {
 }
 
 function workspaceComputeClaimTraceArtifact(value) {
-  const allowedFirstFalsePredicates = new Set([
-    "provider.nodeOwnership", "provider.cvmOwnership", "provider.computeClaimEvidence", "provider.computeClaimProofBase",
-    "provider.proofEligible", "provider.proofReason", "provider.storageBinding", "provider.machineIdentity", "provider.nodeIdentity",
-    "provider.cvmIdentity", "provider.privateIpIdentity", "provider.instanceType", "provider.zone", "provider.chargeType",
-    "provider.periodMonths", "provider.renewFlag", "provider.failureStage", "provider.errorClass", "provider.proofEligibility",
-    "controlPlane.workspaceComputeClaimRecoveryCandidate", "controlPlane.loadWorkspaceComputeClaimOperation", "controlPlane.debitConfirmed",
-    "controlPlane.debitIdentity", "controlPlane.reducer"
-  ]);
   const allowedNextActions = new Set([
     "GET_ONLY_RECONCILE_STORAGE", "NODE_ONLY_CONTINUATION_ONCE", "RESUME_EXISTING_STORAGE", "CONTINUE_ORIGINAL_LAUNCH", "MANUAL_REVIEW", "NONE"
   ]);
+  const safePredicate = (candidate) => typeof candidate === "string" &&
+    /^(?:provider|controlPlane)\.[A-Za-z][A-Za-z0-9]*(?:\.[A-Za-z][A-Za-z0-9]*)*$/.test(candidate);
+  const evaluation = value?.proofEligibility;
+  const evaluationMatches = !evaluation?.called ||
+    evaluation.function === "evaluateWorkspaceComputeClaimProof" &&
+    typeof evaluation.firstFalsePredicate === "string" && typeof evaluation.expected === "string" &&
+    typeof evaluation.actual === "string" && typeof evaluation.authority === "string" &&
+    (evaluation.firstFalsePredicate === "" ||
+      safePredicate(evaluation.firstFalsePredicate) && value?.firstFalsePredicate === evaluation.firstFalsePredicate &&
+      value?.expected === evaluation.expected && value?.actual === evaluation.actual && value?.authority === evaluation.authority);
   if (!value || value.schemaVersion !== 1 || value.operationMode !== "compute_claim_trace" || value.status !== "evidence_only" ||
     !value.candidate || !value.identity || !value.storage || !value.controlPlane || !value.providerTruth || !value.proofEligibility || !value.reducer ||
     !value.mutationCounts || value.mutationCounts.sub2api !== 0 || value.mutationCounts.tencent !== 0 || value.mutationCounts.kubernetes !== 0 ||
@@ -838,7 +840,8 @@ function workspaceComputeClaimTraceArtifact(value) {
     typeof value.controlPlane.loadAttempted !== "boolean" || typeof value.controlPlane.loaded !== "boolean" ||
     typeof value.providerTruth.collectorCalled !== "boolean" || typeof value.proofEligibility.called !== "boolean" ||
     typeof value.proofEligibility.eligible !== "boolean" || typeof value.reducer.called !== "boolean" ||
-    typeof value.reducer.persisted !== "boolean" || typeof value.firstFalsePredicate !== "string" || !allowedFirstFalsePredicates.has(value.firstFalsePredicate) ||
+    typeof value.reducer.persisted !== "boolean" || !safePredicate(value.firstFalsePredicate) ||
+    typeof value.expected !== "string" || typeof value.actual !== "string" || typeof value.authority !== "string" || !evaluationMatches ||
     typeof value.nextAction !== "string" || !allowedNextActions.has(value.nextAction) ||
     /password|secret|cookie|csrf|authorization|apiKey|token/i.test(JSON.stringify(value))) {
     throw new Error("compute_claim_trace_artifact_invalid");
