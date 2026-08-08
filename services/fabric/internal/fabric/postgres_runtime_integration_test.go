@@ -464,9 +464,9 @@ func TestPostgresWorkspaceLaunchStageReadbackProofAndCASAcrossRestart(t *testing
 	}
 }
 
-func TestPostgresNormalWorkspaceComputeStagesConvergeAcrossProcessRestart(t *testing.T) {
+func TestPostgresNormalWorkspaceComputeStagesStopForControlPlaneDecisionAcrossProcessRestart(t *testing.T) {
 	for _, packageID := range []string{"basic", "pro"} {
-		for _, interruptedStage := range []string{"compute_create", "compute_claim_cvm", "compute_claim_node"} {
+		for _, interruptedStage := range []string{"compute_create", "compute_claim_cvm"} {
 			t.Run(packageID+"/"+interruptedStage, func(t *testing.T) {
 				databaseURL := fabricTestDatabaseURL(t)
 				firstStore, err := newTestPostgresOperationStore(databaseURL)
@@ -481,9 +481,6 @@ func TestPostgresNormalWorkspaceComputeStagesConvergeAcrossProcessRestart(t *tes
 				case "compute_claim_cvm":
 					provider.cvmClaimGate = gate
 					provider.cvmClaimResponseLost = true
-				case "compute_claim_node":
-					provider.nodeClaimGate = gate
-					provider.nodeClaimResponseLost = true
 				}
 				input := ComputeAllocationInput{
 					AccountID:   "acct-" + packageID + "-" + interruptedStage,
@@ -512,8 +509,8 @@ func TestPostgresNormalWorkspaceComputeStagesConvergeAcrossProcessRestart(t *tes
 				waitForComputeReconcileIdle(t, first, allocation.ID)
 
 				provider.mu.Lock()
-				provider.createGate, provider.cvmClaimGate, provider.nodeClaimGate = nil, nil, nil
-				provider.cvmClaimResponseLost, provider.nodeClaimResponseLost = false, false
+				provider.createGate, provider.cvmClaimGate = nil, nil
+				provider.cvmClaimResponseLost = false
 				provider.mu.Unlock()
 				reopenedStore, err := newTestPostgresOperationStore(databaseURL)
 				if err != nil {
@@ -528,21 +525,23 @@ func TestPostgresNormalWorkspaceComputeStagesConvergeAcrossProcessRestart(t *tes
 				if replayed, err := restarted.CreateComputeAllocation(context.Background(), input); err != nil || replayed.ID != allocation.ID {
 					t.Fatalf("replay=%#v err=%v", replayed, err)
 				}
-				waitForPostgresNormalComputeSucceeded(t, restarted, reopenedStore, provider, allocation.ID)
+				waitForComputeReconcileIdle(t, restarted, allocation.ID)
+				assertNormalLaunchOperationStatus(t, reopenedStore, "create_compute_allocation", allocation.ID, "claim_pending")
 
 				createCalls, readbackCalls, discoveryCalls, cvmClaimCalls, nodeClaimCalls, legacyClaimCalls := provider.counts()
-				if createCalls != 1 || readbackCalls != 0 || discoveryCalls == 0 || cvmClaimCalls != 1 || nodeClaimCalls != 1 || legacyClaimCalls != 0 {
+				if createCalls != 1 || readbackCalls != 0 || discoveryCalls == 0 || cvmClaimCalls != 1 || nodeClaimCalls != 0 || legacyClaimCalls != 0 {
 					t.Fatalf("provider calls create=%d read=%d discover=%d cvm=%d node=%d legacy=%d", createCalls, readbackCalls, discoveryCalls, cvmClaimCalls, nodeClaimCalls, legacyClaimCalls)
 				}
-				for _, stage := range []string{"compute_create", "compute_claim_cvm", "compute_claim_node"} {
+				for _, stage := range []string{"compute_create", "compute_claim_cvm"} {
 					assertNormalLaunchStageBudget(t, reopenedStore, "create_compute_allocation", stage, 1, 1, 0)
 				}
+				assertNormalLaunchStageBudgetAbsent(t, reopenedStore, "create_compute_allocation", "compute_claim_node")
 			})
 		}
 	}
 }
 
-func TestPostgresPersistedClaimPendingConcurrentReplayHasOneNodePatchWinner(t *testing.T) {
+func TestPostgresPersistedClaimPendingConcurrentReplayWaitsForControlPlaneDecision(t *testing.T) {
 	databaseURL := fabricTestDatabaseURL(t)
 	firstStore, err := newTestPostgresOperationStore(databaseURL)
 	if err != nil {
@@ -554,31 +553,37 @@ func TestPostgresPersistedClaimPendingConcurrentReplayHasOneNodePatchWinner(t *t
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = secondStore.client.Close() })
-	provider := &normalLaunchComputeProvider{nodeClaimGate: newNormalLaunchProviderWriteGate()}
+	provider := &normalLaunchComputeProvider{}
 	input, allocation := seedNormalWorkspaceComputeClaimPending(t, firstStore, provider, "postgres-automatic-concurrent")
 	first := NewServiceWithOperationStore(provider, firstStore)
 	second := NewServiceWithOperationStore(provider, secondStore)
 
-	if _, err := first.CreateComputeAllocation(context.Background(), input); err != nil {
-		t.Fatal(err)
+	start := make(chan struct{})
+	errs := make(chan error, 2)
+	for _, service := range []*Service{first, second} {
+		service := service
+		go func() {
+			<-start
+			_, replayErr := service.CreateComputeAllocation(context.Background(), input)
+			errs <- replayErr
+		}()
 	}
-	select {
-	case <-provider.nodeClaimGate.entered:
-	case <-time.After(5 * time.Second):
-		t.Fatal("PostgreSQL continuation winner did not reach Node patch")
+	close(start)
+	for range 2 {
+		if replayErr := <-errs; replayErr != nil {
+			t.Fatal(replayErr)
+		}
 	}
-	if _, err := second.CreateComputeAllocation(context.Background(), input); err != nil {
-		t.Fatal(err)
-	}
-	waitForPostgresNormalComputeSucceeded(t, second, secondStore, provider, allocation.ID)
-	close(provider.nodeClaimGate.release)
-	waitForComputeReconcileIdle(t, first, allocation.ID)
 	prepare, create, proof, cvmClaim, nodeClaim := provider.automaticContinuationCounts()
-	if prepare != 0 || create != 0 || proof < 2 || cvmClaim != 0 || nodeClaim != 1 {
-		t.Fatalf("PostgreSQL continuation calls prepare=%d create=%d proof=%d cvmClaim=%d nodeClaim=%d, want 0/0/>=2/0/1", prepare, create, proof, cvmClaim, nodeClaim)
+	if prepare != 0 || create != 0 || proof != 0 || cvmClaim != 0 || nodeClaim != 0 {
+		t.Fatalf("PostgreSQL replay crossed Control Plane authorization: prepare=%d create=%d proof=%d cvmClaim=%d nodeClaim=%d", prepare, create, proof, cvmClaim, nodeClaim)
+	}
+	operations, operationsErr := secondStore.List(context.Background())
+	if operationsErr != nil || len(operations) != 1 || operations[0].Status != "claim_pending" {
+		t.Fatalf("PostgreSQL replay changed operation: operations=%#v err=%v", operations, operationsErr)
 	}
 	ownership, ownershipErr := secondStore.MachineOwnership(context.Background(), allocation.ID)
-	if ownershipErr != nil || ownership.Status != "active" {
+	if ownershipErr != nil || ownership.Status != "quarantined" {
 		t.Fatalf("PostgreSQL ownership=%#v err=%v", ownership, ownershipErr)
 	}
 }
@@ -599,30 +604,6 @@ func waitForPostgresComputeLeaseExpiry(t *testing.T, store *PostgresOperationSto
 		defer timer.Stop()
 		<-timer.C
 	}
-}
-
-func waitForPostgresNormalComputeSucceeded(t *testing.T, service *Service, store *PostgresOperationStore, provider *normalLaunchComputeProvider, resourceID string) {
-	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		operations, err := store.List(context.Background())
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, operation := range operations {
-			if operation.Action == "create_compute_allocation" && operation.ResourceID == resourceID && operation.Status == "succeeded" {
-				return
-			}
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	operations, operationsErr := store.List(context.Background())
-	ownership, ownershipErr := store.MachineOwnership(context.Background(), resourceID)
-	create, readback, discovery, cvm, node, legacy := provider.counts()
-	service.mu.Lock()
-	reconciling := service.reconciling[resourceID]
-	service.mu.Unlock()
-	t.Fatalf("compute did not converge: operations=%#v operationsErr=%v ownership=%#v ownershipErr=%v calls=create:%d read:%d discover:%d cvm:%d node:%d legacy:%d reconciling=%v", operations, operationsErr, ownership, ownershipErr, create, readback, discovery, cvm, node, legacy, reconciling)
 }
 
 func TestPostgresNormalWorkspaceCBSResponseLossConvergesAcrossProcessRestart(t *testing.T) {
@@ -1990,7 +1971,7 @@ func TestPostgresHistoricalComputeClaimBindingWithoutLedgerHasOneNodeContinuatio
 	finalOwnership, ownershipErr := firstStore.MachineOwnership(context.Background(), input.ComputeAllocationID)
 	binding, bindingPresent, bindingValid := decodeComputeClaimRecoveryBinding(stored[0])
 	ledger, ledgerPresent, ledgerValid := decodeComputeClaimRecoveryMutation(stored[0])
-	if kubernetesMutations != 1 || provider.claimCalls != 1 || err != nil || len(stored) != 1 || stored[0].Status != "succeeded" ||
+	if kubernetesMutations != 1 || provider.claimCalls != 0 || provider.nodeOnlyClaimCalls != 1 || err != nil || len(stored) != 1 || stored[0].Status != "succeeded" ||
 		ownershipErr != nil || finalOwnership.Status != "active" || !bindingPresent || !bindingValid || binding != newComputeClaimRecoveryBinding(legacyInput) ||
 		!ledgerPresent || !ledgerValid || ledger.State != "observed" || ledger.TencentMutationCount != 0 || ledger.KubernetesMutationCount != 1 ||
 		!reflect.DeepEqual(ledger.Evidence.CVM, ComputeClaimMutationEvidence{}) || ledger.Evidence.Node.Confirmed != 1 {
@@ -2079,7 +2060,7 @@ func TestPostgresActiveComputeClaimOwnershipDriftHasOneNodeContinuationWinner(t 
 	stored, err := firstStore.List(context.Background())
 	finalOwnership, ownershipErr := firstStore.MachineOwnership(context.Background(), input.ComputeAllocationID)
 	ledger, ledgerPresent, ledgerValid := decodeComputeClaimRecoveryMutation(stored[0])
-	if kubernetesMutations != 1 || provider.claimCalls != 1 || err != nil || len(stored) != 1 || stored[0].Status != "succeeded" ||
+	if kubernetesMutations != 1 || provider.claimCalls != 0 || provider.nodeOnlyClaimCalls != 1 || err != nil || len(stored) != 1 || stored[0].Status != "succeeded" ||
 		ownershipErr != nil || finalOwnership.Status != "active" || !ledgerPresent || !ledgerValid || ledger.State != "observed" ||
 		ledger.TencentMutationCount != 0 || ledger.KubernetesMutationCount != 1 || ledger.Evidence.Node.Confirmed != 1 {
 		t.Fatalf("kubernetesMutations=%d stored=%#v err=%v ownership=%#v ownershipErr=%v ledger=%#v provider=%#v", kubernetesMutations, stored, err, finalOwnership, ownershipErr, ledger, provider)
@@ -2461,7 +2442,7 @@ func TestPostgresComputeClaimRecoveryNodePatchCrashConvergesByReadbackAndReplays
 	}
 	provider.claimErr = nil
 	interrupted, interruptedErr := NewServiceWithOperationStore(provider, &failBeforeComputeClaimObservedSaveStore{OperationStore: firstStore}).ClaimComputeRecovery(context.Background(), claimInput)
-	if interruptedErr == nil || interrupted.Eligible || provider.claimCalls != 2 {
+	if interruptedErr == nil || interrupted.Eligible || provider.claimCalls != 1 || provider.nodeOnlyClaimCalls != 1 {
 		t.Fatalf("interrupted=%#v err=%v provider=%#v", interrupted, interruptedErr, provider)
 	}
 	if err := firstStore.client.Close(); err != nil {
@@ -2482,7 +2463,7 @@ func TestPostgresComputeClaimRecoveryNodePatchCrashConvergesByReadbackAndReplays
 	binding, bindingPresent, bindingValid := decodeComputeClaimRecoveryBinding(operations[0])
 	if recoverErr != nil || replayErr != nil || !recovered.Eligible || !replayed.Eligible || recovered.TencentMutationCount != 0 ||
 		recovered.KubernetesMutationCount != 0 || replayed.TencentMutationCount != 0 || replayed.KubernetesMutationCount != 0 ||
-		ownershipErr != nil || ownership.Status != "active" || operationsErr != nil || provider.claimCalls != 2 ||
+		ownershipErr != nil || ownership.Status != "active" || operationsErr != nil || provider.claimCalls != 1 || provider.nodeOnlyClaimCalls != 1 ||
 		!ledgerPresent || !ledgerValid || !successfulNodeClaimRecoveryMutation(ledger) || ledger.Evidence.CVM.Confirmed != 1 ||
 		ledger.Evidence.Node.Confirmed != 1 || !bindingPresent || !bindingValid || binding.IdempotencyKey != input.LaunchOperationID+":compute" {
 		t.Fatalf("recovered=%#v recoverErr=%v replayed=%#v replayErr=%v ownership=%#v ownershipErr=%v operationsErr=%v ledger=%#v present=%v valid=%v binding=%#v bindingPresent=%v bindingValid=%v provider=%#v", recovered, recoverErr, replayed, replayErr, ownership, ownershipErr, operationsErr, ledger, ledgerPresent, ledgerValid, binding, bindingPresent, bindingValid, provider)

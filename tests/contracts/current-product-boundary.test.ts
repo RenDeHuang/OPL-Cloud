@@ -127,7 +127,7 @@ test("Current contracts hard cut Workspace purchase, access, and Runtime facts",
     json("packages/contracts/opl-cloud-console-source-truth-contract.json")
   ]);
 
-  assert.equal(freeze.schemaVersion, 28);
+  assert.equal(freeze.schemaVersion, 29);
   assert.equal(billing.schemaVersion, 11);
   assert.equal(freeze.workspaceLaunch.customerDebitCardinality, 1);
   assert.equal(freeze.workspaceLaunch.persistence, "control_plane_runtime_operations with action=workspace.launch.v2 and result.schemaVersion=2");
@@ -770,7 +770,7 @@ test("Current contracts hard cut operator resources, wallet adjustments, and ann
     absentRequires: "both_local_identities_and_exact_provider_describe_absence",
     forbiddenSideEffects: ["sync", "tag", "kubectl_apply", "delete", "label", "purchase", "renew", "destroy"]
   });
-  assert.equal(boundary.schemaVersion, 33);
+  assert.equal(boundary.schemaVersion, 34);
   assert.deepEqual(boundary.services.controlPlane.workspaceLaunchRecoveryAcceptanceCanary, {
     defaultEnabled: false,
     allowlistEnv: "OPL_RECOVERY_ACCEPTANCE_CANARY_ACCOUNT_IDS",
@@ -1040,6 +1040,8 @@ test("Current contracts keep compute-claim continuation automatic while preservi
     manualReviewPolicy: "excluded_operator_recovery_only",
     fabricClaimIdentity: "original_operationId:compute",
     approvalDependency: "none",
+    fabricCreateBoundary: "compute_create_and_compute_claim_cvm_only_then_claim_pending_without_node_patch",
+    decisionAuthority: "control_plane_phase_status_currentDecision_atomic_cas_then_exact_decision_readback",
     freshReadback: ["tencent_cvm_describe", "kubernetes_node_get"],
     preflight: {
       kubernetes: "kubectl_auth_can_i_patch_nodes",
@@ -1047,7 +1049,7 @@ test("Current contracts keep compute-claim continuation automatic while preservi
       requiredTencentActions: ["tag:TagResources", "tag:ModifyResourcesTagValue"],
       tencentTagWriteCalls: 0
     },
-    singleWinner: "postgresql_cas_before_node_patch",
+    singleWinner: "persisted_currentDecision_readback_then_postgresql_cas_before_node_patch",
     allowedWrites: { tencent: 0, kubernetesNodePatchMax: 1 },
     nodeReadback: { attemptsMax: 6, writes: 0 },
     forbiddenRepeats: ["monthly_preflight", "sub2api_debit", "nodepool_scale", "cvm_create", "cvm_rename", "cvm_tag_write"],
@@ -1059,8 +1061,10 @@ test("Current contracts keep compute-claim continuation automatic while preservi
     owner: "original_workspace.launch.v2_worker",
     selection: "compute_claim_pending_only_manual_review_excluded",
     claimIdentity: "original_operationId:compute",
-    authorization: "internal_service_capability_without_operator_approval",
+    fabricCreateBoundary: "compute_create_and_compute_claim_cvm_only_then_claim_pending_without_node_patch",
+    authorization: "persisted_and_read_back_currentDecision_plus_internal_service_capability_without_operator_approval",
     reservation: "postgresql_cas_single_winner",
+    allowedWrites: { tencent: 0, kubernetesNodePatchMax: 1 },
     continuation: "shared_fulfillWorkspaceLaunch_after_target_owned_readback",
     terminalFailure: "manual_review_worker_stops"
   });

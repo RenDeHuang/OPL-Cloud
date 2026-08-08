@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 28,
+  "schemaVersion": 29,
   "owner": "OPL Platform Architecture",
   "purpose": "Freeze the approved Pilot products, delegated Gateway key lifecycle, one charge per Workspace period, prepaid Tencent fulfillment, Runtime facts, operator workflows, announcements, and evidence levels without claiming unfinished implementation or runtime evidence.",
   "state": "current",
@@ -247,6 +247,8 @@
       "manualReviewPolicy": "excluded_operator_recovery_only",
       "fabricClaimIdentity": "original_operationId:compute",
       "approvalDependency": "none",
+      "fabricCreateBoundary": "compute_create_and_compute_claim_cvm_only_then_claim_pending_without_node_patch",
+      "decisionAuthority": "control_plane_phase_status_currentDecision_atomic_cas_then_exact_decision_readback",
       "freshReadback": ["tencent_cvm_describe", "kubernetes_node_get"],
       "preflight": {
         "kubernetes": "kubectl_auth_can_i_patch_nodes",
@@ -254,7 +256,7 @@
         "requiredTencentActions": ["tag:TagResources", "tag:ModifyResourcesTagValue"],
         "tencentTagWriteCalls": 0
       },
-      "singleWinner": "postgresql_cas_before_node_patch",
+      "singleWinner": "persisted_currentDecision_readback_then_postgresql_cas_before_node_patch",
       "allowedWrites": {"tencent": 0, "kubernetesNodePatchMax": 1},
       "nodeReadback": {"attemptsMax": 6, "writes": 0},
       "forbiddenRepeats": ["monthly_preflight", "sub2api_debit", "nodepool_scale", "cvm_create", "cvm_rename", "cvm_tag_write"],

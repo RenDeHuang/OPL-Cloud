@@ -207,8 +207,13 @@ The four implementation owner lanes are Console/Control Plane, Fabric, Gateway i
   `CREATE_MISSING_WORKSPACE_NODEPOOLS` and exact merged `origin/main` SHA.
 - Fabric creates CBS with a stable `ClientToken`, reads back CVM/CBS identity and billing facts, then binds CBS through a static PV/PVC in the compute Zone.
 - Normal compute fulfillment persists separate `compute_create` and
-  `compute_claim` reservations before their Tencent/Kubernetes writes. Normal
-  storage fulfillment likewise persists separate `cbs_create` and
+  `compute_claim_cvm` reservations before their Tencent writes. Fabric then
+  stops the original Compute operation at `claim_pending`; it never patches the
+  Node from `CreateComputeAllocation` or its replay. The original Control Plane
+  launch worker must first persist and read back the matching Compute
+  `CurrentDecision`, then invoke the Tencent-zero Node-only executor and require
+  authoritative `target_owned` readback. Normal storage fulfillment likewise
+  persists separate `cbs_create` and
   `static_binding_apply` reservations. Each stage permits at most one external
   write; after a reserved or unknown outcome, restart uses authoritative
   Describe/GET readback only and ambiguity enters manual review.

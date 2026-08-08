@@ -196,18 +196,27 @@ func workspaceLaunchEvidenceSnapshot(operation workspaceLaunchOperation) Evidenc
 func workspaceLaunchEvidenceSnapshotWithComputeProof(operation workspaceLaunchOperation, proof clients.ComputeClaimRecoveryProof, proofErr error) EvidenceSnapshot {
 	snapshot := workspaceLaunchEvidenceSnapshot(operation)
 	snapshot.ComputeClaim.Confirmed = false
-	switch proof.NodeOwnershipState {
-	case "target_owned":
-		snapshot.ComputeClaim.State, snapshot.ComputeClaim.Confirmed, snapshot.ComputeClaim.Actual = EvidencePresent, true, "target_owned"
-	case "unallocated":
-		snapshot.ComputeClaim.State, snapshot.ComputeClaim.Actual = EvidencePresent, "unallocated"
-	case "conflict":
-		snapshot.ComputeClaim.State, snapshot.ComputeClaim.Actual = EvidenceConflict, "conflict"
-	default:
-		snapshot.ComputeClaim.State, snapshot.ComputeClaim.Actual = EvidenceUnavailable, "unknown"
-	}
-	if proofErr != nil && proof.NodeOwnershipState != "target_owned" && proof.NodeOwnershipState != "unallocated" {
-		snapshot.ComputeClaim.State, snapshot.ComputeClaim.Actual = EvidenceUnavailable, "unknown"
+	if proof.CVMOwnershipState != "target_owned" {
+		snapshot.ComputeClaim = StageEvidence{
+			State:     EvidenceUnavailable,
+			Expected:  "target_owned",
+			Actual:    firstNonEmptyDecision(proof.CVMOwnershipState, "unknown"),
+			Authority: "provider.cvmOwnership",
+		}
+	} else {
+		switch proof.NodeOwnershipState {
+		case "target_owned":
+			snapshot.ComputeClaim.State, snapshot.ComputeClaim.Confirmed, snapshot.ComputeClaim.Actual = EvidencePresent, true, "target_owned"
+		case "unallocated":
+			snapshot.ComputeClaim.State, snapshot.ComputeClaim.Actual = EvidencePresent, "unallocated"
+		case "conflict":
+			snapshot.ComputeClaim.State, snapshot.ComputeClaim.Actual = EvidenceConflict, "conflict"
+		default:
+			snapshot.ComputeClaim.State, snapshot.ComputeClaim.Actual = EvidenceUnavailable, "unknown"
+		}
+		if proofErr != nil && proof.NodeOwnershipState != "target_owned" && proof.NodeOwnershipState != "unallocated" {
+			snapshot.ComputeClaim.State, snapshot.ComputeClaim.Actual = EvidenceUnavailable, "unknown"
+		}
 	}
 	switch proof.StorageState {
 	case "storage_not_started":
