@@ -1200,14 +1200,15 @@ func TestWorkspaceRecoveryPlanSuccessorAllowsStorageUnknownWithFreshUnallocatedN
 	absentDigest := sha256.Sum256([]byte("absent"))
 	planDigest := strings.Repeat("a", 64)
 	operation := workspaceLaunchOperation{
-		ID: "workspace-launch-f4338141c25d0882b0",
+		ID:     "workspace-launch-f4338141c25d0882b0",
+		Status: "manual_review", Phase: "storage_fulfilling", ErrorCode: "workspace_launch_storage_attempt_unknown",
 		RecoveryPlan: &workspaceRecoveryPlan{
 			PlanID: "recovery-plan-" + planDigest[:20], PlanDigest: planDigest,
 			Status: "failed", Action: "compute_claim_continue", OperationID: "workspace-launch-f4338141c25d0882b0",
 		},
 		RecoveryExecution: &workspaceRecoveryExecution{
 			ExecutionID: "recovery-exec-storage-unknown", PlanID: "recovery-plan-" + planDigest[:20], PlanDigest: planDigest,
-			Status: "failed", CompletedAt: time.Now().UTC().Format(time.RFC3339Nano), ErrorCode: "workspace_launch_storage_attempt_unknown",
+			Status: "failed", CompletedAt: time.Now().UTC().Format(time.RFC3339Nano), ErrorCode: "workspace_recovery_plan_fabric_proof_failed",
 			MutationOutcome: workspaceRecoveryMutationOutcome{
 				Status: "nonzero", Counts: workspaceRecoveryMutationCounts{Kubernetes: 1}, Source: "compute_claim_response",
 			},
