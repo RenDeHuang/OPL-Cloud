@@ -1072,7 +1072,7 @@ func workspaceRecoveryPlanMismatches(persisted, current workspaceRecoveryPlan) [
 	return mismatches
 }
 
-func workspaceRecoveryExecutionSuccessorGate(operation workspaceLaunchOperation, evidence *clients.ComputeClaimIdentityEvidence) (workspaceRecoveryMutationOutcome, workspaceRecoverySuccessorGateDTO) {
+func workspaceRecoveryExecutionSuccessorGate(operation workspaceLaunchOperation, evidence *clients.ComputeClaimIdentityEvidence, evaluation *workspaceComputeClaimProofEvaluation) (workspaceRecoveryMutationOutcome, workspaceRecoverySuccessorGateDTO) {
 	gate := workspaceRecoverySuccessorGateDTO{
 		Applicable: true, PlanState: "missing", ExecutionState: "missing", CompletionState: "missing",
 		LeaseState: "released", IdentityState: "unavailable", PersistedMutationState: "missing", FabricLedgerState: "unavailable",
@@ -1177,6 +1177,15 @@ func workspaceRecoveryExecutionSuccessorGate(operation workspaceLaunchOperation,
 		gate.Allowed = true
 		return outcome, gate
 	}
+	if outcome.Status == "nonzero" && outcome.Counts == (workspaceRecoveryMutationCounts{Kubernetes: 1}) &&
+		outcome.FabricOperationMutations == 0 && outcome.Source == "compute_claim_response" &&
+		operation.RecoveryExecution.ErrorCode == "workspace_launch_storage_attempt_unknown" &&
+		operation.ContinuationAttemptBudgets["storage"] == (workspaceLaunchStageBudget{Attempted: 1, Unknown: 1, Max: workspaceLaunchStageMax}) &&
+		evaluation != nil && evaluation.Eligible && evaluation.FirstFalsePredicate == "" &&
+		evaluation.CVMOwnershipState == "target_owned" && evaluation.NodeOwnershipState == "target_owned" {
+		gate.Allowed = true
+		return outcome, gate
+	}
 	if outcome.Status == "confirmed_zero" && outcome.Counts == (workspaceRecoveryMutationCounts{}) && outcome.FabricOperationMutations == 0 && evidence == nil {
 		gate.Allowed = true
 		return outcome, gate
@@ -1202,7 +1211,7 @@ func workspaceRecoveryExecutionSuccessorGate(operation workspaceLaunchOperation,
 }
 
 func workspaceRecoveryExecutionConfirmedZero(operation workspaceLaunchOperation, evidence *clients.ComputeClaimIdentityEvidence) (workspaceRecoveryMutationOutcome, bool) {
-	outcome, gate := workspaceRecoveryExecutionSuccessorGate(operation, evidence)
+	outcome, gate := workspaceRecoveryExecutionSuccessorGate(operation, evidence, nil)
 	return outcome, gate.Allowed
 }
 
@@ -1410,6 +1419,7 @@ func (app *controlPlaneServer) diagnoseWorkspaceRecoveryPlan(ctx context.Context
 	var proof workspaceLaunchReadbackRecoveryProof
 	var readbackErr error
 	var computeDecision *CurrentDecision
+	var computeEvaluation *workspaceComputeClaimProofEvaluation
 	computeClaimCandidate := workspaceComputeClaimRecoveryCandidate(operation)
 	if computeClaimCandidate {
 		// A later Storage unknown is only a Storage mutation boundary. Read the
@@ -1426,6 +1436,7 @@ func (app *controlPlaneServer) diagnoseWorkspaceRecoveryPlan(ctx context.Context
 		}
 		computeEvidence = evidence
 		evaluation := evaluateWorkspaceComputeClaimProof(operation, computeInput, computeProof, false)
+		computeEvaluation = &evaluation
 		decision := currentDecisionForComputeClaimEvaluation(operation, nil, evaluation)
 		computeDecision = &decision
 		plan, err = newWorkspaceComputeClaimRecoveryPlan(operation, computeInput, computeProof, evaluation, evidence, release)
@@ -1462,7 +1473,7 @@ func (app *controlPlaneServer) diagnoseWorkspaceRecoveryPlan(ctx context.Context
 		predecessorPlan.Status = "failed"
 		predecessorPlan.ErrorCode = predecessorExecution.ErrorCode
 		if stageReadback {
-			_, terminalGate := workspaceRecoveryExecutionSuccessorGate(operation, nil)
+			_, terminalGate := workspaceRecoveryExecutionSuccessorGate(operation, nil, nil)
 			if terminalGate.PlanState != "terminal" || terminalGate.ExecutionState != "failed" || terminalGate.CompletionState != "completed" ||
 				terminalGate.LeaseState != "released" || terminalGate.IdentityState != "matches" {
 				projected := workspaceRecoveryPlanProjection(operation)
@@ -1470,7 +1481,7 @@ func (app *controlPlaneServer) diagnoseWorkspaceRecoveryPlan(ctx context.Context
 				return projected, nil
 			}
 		} else {
-			outcome, successorGate := workspaceRecoveryExecutionSuccessorGate(operation, computeEvidence)
+			outcome, successorGate := workspaceRecoveryExecutionSuccessorGate(operation, computeEvidence, computeEvaluation)
 			if !successorGate.Allowed {
 				projected := workspaceRecoveryPlanProjection(operation)
 				projected.SuccessorGate = &successorGate

@@ -967,6 +967,28 @@ func TestWorkspaceRecoveryPlanDiagnoseKeepsComputeClaimPendingWhenNodeOwnershipI
 			t.Fatalf("Storage unknown crossed %s mutation boundary: before=%d after=%d", stage, before, after)
 		}
 	}
+
+	ownedReadback := computeClaimRecoveryProofForLaunchStorage(current, "target_owned", "storage_attempt_unknown", "")
+	ownedReadback.Deadline = current.ComputeDeadline
+	fixture.fabric.computeProviderTruth = &clients.ComputeProviderTruth{
+		SchemaVersion: 1, State: "ready", ComputeState: "ready", StorageState: "unknown",
+		NodeOwnershipState: "target_owned", CVMOwnershipState: "target_owned", Proof: &ownedReadback,
+	}
+	claimsBeforeSuccessor := len(fixture.fabric.computeClaimCalls)
+	storageWritesBeforeSuccessor := len(fixture.fabric.storageIDs)
+	successorResponse := requestWorkspaceRecoveryPlan(t, fixture, http.MethodPost, "/diagnose", map[string]any{
+		"accountId": current.AccountID,
+	})
+	successor := recoveryPlanResponse(t, successorResponse)
+	advanced := fixture.operation(t)
+	if successorResponse.Code != http.StatusOK || successor.Status != "diagnosed" || successor.PlanID == executed.PlanID ||
+		successor.SuccessorGate == nil || !successor.SuccessorGate.Allowed || advanced.RecoveryExecution != nil || len(advanced.RecoveryHistory) != 2 ||
+		advanced.CurrentDecision == nil || advanced.CurrentDecision.CurrentStage != "storage" || advanced.CurrentDecision.AllowedMutation != "none" ||
+		len(fixture.fabric.computeClaimCalls) != claimsBeforeSuccessor || len(fixture.fabric.storageIDs) != storageWritesBeforeSuccessor {
+		t.Fatalf("confirmed Node mutation did not advance to Storage reconciliation: response=%d predecessor=%#v successor=%#v operation=%#v claims=%d/%d storage=%d/%d",
+			successorResponse.Code, executed, successor, advanced, len(fixture.fabric.computeClaimCalls), claimsBeforeSuccessor,
+			len(fixture.fabric.storageIDs), storageWritesBeforeSuccessor)
+	}
 }
 
 func TestWorkspaceRecoveryPlanDiagnoseUsesFreshComputeAuthorityAheadOfStalePersistedProof(t *testing.T) {
@@ -2038,7 +2060,7 @@ func TestWorkspaceRecoveryPlanSuccessorRejectsUnconfirmedFabricLedgerEvidence(t 
 	}
 	for name, evidence := range tests {
 		t.Run(name, func(t *testing.T) {
-			outcome, gate := workspaceRecoveryExecutionSuccessorGate(operation, &evidence)
+			outcome, gate := workspaceRecoveryExecutionSuccessorGate(operation, &evidence, nil)
 			if gate.Allowed {
 				t.Fatalf("unconfirmed evidence accepted: outcome=%#v gate=%#v evidence=%#v", outcome, gate, evidence)
 			}
@@ -2062,7 +2084,7 @@ func TestWorkspaceRecoveryPlanSuccessorAllowsOnlyExactRecoverableCVMOnlyEvidence
 		},
 	}
 	evidence := recoverableCVMOnlyIdentityEvidence()
-	outcome, gate := workspaceRecoveryExecutionSuccessorGate(operation, &evidence)
+	outcome, gate := workspaceRecoveryExecutionSuccessorGate(operation, &evidence, nil)
 	if !gate.Allowed || gate.FabricLedgerState != "nonzero" || outcome.Status != "nonzero" ||
 		outcome.Counts != (workspaceRecoveryMutationCounts{Tencent: 1}) || outcome.Source != "fabric_mutation_ledger_recoverable_cvm_only" ||
 		outcome.EvidenceDigest != evidence.MutationLedgerDigest {
@@ -2084,7 +2106,7 @@ func TestWorkspaceRecoveryPlanSuccessorAllowsOnlyExactRecoverableCVMOnlyEvidence
 		t.Run(name, func(t *testing.T) {
 			candidate := recoverableCVMOnlyIdentityEvidence()
 			mutate(&candidate)
-			if rejectedOutcome, rejectedGate := workspaceRecoveryExecutionSuccessorGate(operation, &candidate); rejectedGate.Allowed {
+			if rejectedOutcome, rejectedGate := workspaceRecoveryExecutionSuccessorGate(operation, &candidate, nil); rejectedGate.Allowed {
 				t.Fatalf("unsafe successor evidence accepted: outcome=%#v gate=%#v evidence=%#v", rejectedOutcome, rejectedGate, candidate)
 			}
 		})
@@ -2106,7 +2128,7 @@ func TestWorkspaceRecoveryPlanSuccessorAllowsOnlyExactLegacyKubectlClientRejecte
 		},
 	}
 	evidence := legacyKubectlClientRejectedIdentityEvidence()
-	outcome, gate := workspaceRecoveryExecutionSuccessorGate(operation, &evidence)
+	outcome, gate := workspaceRecoveryExecutionSuccessorGate(operation, &evidence, nil)
 	if !gate.Allowed || gate.PersistedMutationState != "nonzero" || gate.FabricLedgerState != "absent" ||
 		outcome != operation.RecoveryExecution.MutationOutcome {
 		t.Fatalf("exact legacy client-rejected call was not admitted: outcome=%#v gate=%#v", outcome, gate)
@@ -2144,7 +2166,7 @@ func TestWorkspaceRecoveryPlanSuccessorAllowsOnlyExactLegacyKubectlClientRejecte
 			candidateOperation.RecoveryExecution = &candidateExecution
 			candidateEvidence := legacyKubectlClientRejectedIdentityEvidence()
 			mutate(&candidateOperation, &candidateEvidence)
-			if rejectedOutcome, rejectedGate := workspaceRecoveryExecutionSuccessorGate(candidateOperation, &candidateEvidence); rejectedGate.Allowed {
+			if rejectedOutcome, rejectedGate := workspaceRecoveryExecutionSuccessorGate(candidateOperation, &candidateEvidence, nil); rejectedGate.Allowed {
 				t.Fatalf("drifted legacy client-rejected call was admitted: outcome=%#v gate=%#v", rejectedOutcome, rejectedGate)
 			}
 		})
@@ -2168,7 +2190,7 @@ func TestWorkspaceRecoveryPlanSuccessorClassifiesLegacyKubectlClientRejectedUnkn
 	outcome, gate := workspaceRecoveryExecutionSuccessorGate(operation, func() *clients.ComputeClaimIdentityEvidence {
 		evidence := legacyKubectlClientRejectedIdentityEvidence()
 		return &evidence
-	}())
+	}(), nil)
 	if !gate.Allowed || gate.PersistedMutationState != "unknown" || gate.FabricLedgerState != "absent" ||
 		outcome.Status != "nonzero" || outcome.Counts != (workspaceRecoveryMutationCounts{Kubernetes: 1}) ||
 		outcome.Source != "compute_claim_response" {
