@@ -1134,7 +1134,7 @@ func TestWorkspaceRecoveryPlanSuccessorRejectsDriftedArchivedNodeClientRejection
 	operation := workspaceLaunchOperation{
 		ID: "workspace-launch-f4338141c25d0882b0",
 		RecoveryPlan: &workspaceRecoveryPlan{
-			PlanID: "recovery-plan-" + planDigest[:20], PlanDigest: planDigest, Status: "failed", Action: "compute_claim_continue",
+			PlanID: "recovery-plan-" + planDigest[:20], PlanDigest: planDigest, Status: "failed", Action: "compute_claim_continue", OperationID: "workspace-launch-f4338141c25d0882b0",
 		},
 		RecoveryExecution: &workspaceRecoveryExecution{
 			ExecutionID: "recovery-exec-storage-unknown", PlanID: "recovery-plan-" + planDigest[:20], PlanDigest: planDigest,
@@ -1170,6 +1170,7 @@ func TestWorkspaceRecoveryPlanSuccessorRejectsDriftedArchivedNodeClientRejection
 	}
 	for name, mutate := range map[string]func(*workspaceLaunchOperation, *clients.ComputeClaimIdentityEvidence, *workspaceComputeClaimProofEvaluation){
 		"different launch": func(candidate *workspaceLaunchOperation, _ *clients.ComputeClaimIdentityEvidence, _ *workspaceComputeClaimProofEvaluation) {
+			candidate.RecoveryPlan.OperationID = "workspace-launch-other"
 			candidate.RecoveryHistory[0].Plan.OperationID = "workspace-launch-other"
 		},
 		"ledger digest": func(_ *workspaceLaunchOperation, candidate *clients.ComputeClaimIdentityEvidence, _ *workspaceComputeClaimProofEvaluation) {
@@ -1192,6 +1193,40 @@ func TestWorkspaceRecoveryPlanSuccessorRejectsDriftedArchivedNodeClientRejection
 				t.Fatalf("drifted archived client rejection was admitted: outcome=%#v gate=%#v", outcome, gate)
 			}
 		})
+	}
+}
+
+func TestWorkspaceRecoveryPlanSuccessorAllowsStorageUnknownWithFreshUnallocatedNode(t *testing.T) {
+	absentDigest := sha256.Sum256([]byte("absent"))
+	planDigest := strings.Repeat("a", 64)
+	operation := workspaceLaunchOperation{
+		ID: "workspace-launch-f4338141c25d0882b0",
+		RecoveryPlan: &workspaceRecoveryPlan{
+			PlanID: "recovery-plan-" + planDigest[:20], PlanDigest: planDigest,
+			Status: "failed", Action: "compute_claim_continue", OperationID: "workspace-launch-f4338141c25d0882b0",
+		},
+		RecoveryExecution: &workspaceRecoveryExecution{
+			ExecutionID: "recovery-exec-storage-unknown", PlanID: "recovery-plan-" + planDigest[:20], PlanDigest: planDigest,
+			Status: "failed", CompletedAt: time.Now().UTC().Format(time.RFC3339Nano), ErrorCode: "workspace_launch_storage_attempt_unknown",
+			MutationOutcome: workspaceRecoveryMutationOutcome{
+				Status: "nonzero", Counts: workspaceRecoveryMutationCounts{Kubernetes: 1}, Source: "compute_claim_response",
+			},
+		},
+		ContinuationAttemptBudgets: map[string]workspaceLaunchStageBudget{
+			"storage": {Attempted: 1, Unknown: 1, Max: workspaceLaunchStageMax},
+		},
+	}
+	evidence := clients.ComputeClaimIdentityEvidence{
+		MutationLedger: "absent", MutationLedgerOutcome: "confirmed_zero", MutationLedgerDigest: hex.EncodeToString(absentDigest[:]),
+	}
+	evaluation := &workspaceComputeClaimProofEvaluation{
+		Eligible: true, FirstFalsePredicate: "provider.nodeOwnership", Expected: "target_owned", Actual: "unallocated",
+		Authority: "provider.nodeOwnership", CVMOwnershipState: "target_owned", NodeOwnershipState: "unallocated",
+	}
+	outcome, gate := workspaceRecoveryExecutionSuccessorGate(operation, &evidence, evaluation)
+	if !gate.Allowed || outcome.Status != "nonzero" || outcome.Counts != (workspaceRecoveryMutationCounts{Kubernetes: 1}) ||
+		gate.PersistedMutationState != "nonzero" || gate.FabricLedgerState != "absent" {
+		t.Fatalf("fresh Node authority was blocked by historical Storage state: outcome=%#v gate=%#v", outcome, gate)
 	}
 }
 
