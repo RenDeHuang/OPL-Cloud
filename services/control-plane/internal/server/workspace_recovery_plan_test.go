@@ -836,6 +836,48 @@ func TestWorkspaceRecoveryPlanDiagnoseKeepsComputeClaimPendingWhenNodeOwnershipI
 	}
 }
 
+func TestWorkspaceRecoveryPlanDiagnoseUsesComputeAuthorityForStaleStoragePhaseWithoutLaunchAttempt(t *testing.T) {
+	t.Setenv("OPL_RELEASE_SHA", strings.Repeat("a", 40))
+	t.Setenv("OPL_CLOUD_IMAGE", "uswccr.ccs.tencentyun.com/oplcloud/opl-cloud@sha256:"+strings.Repeat("b", 64))
+	fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, "basic")
+	operation.Status, operation.Phase, operation.ErrorCode = "manual_review", "storage_fulfilling", "workspace_recovery_plan_fabric_proof_failed"
+	operation.ContinuationAttemptBudgets["storage"] = workspaceLaunchStageBudget{Max: workspaceLaunchStageMax}
+	operation.ComputeClaimProof = nil
+	operation.ComputeClaimTerminalEvidence = nil
+	operation.CurrentDecision = nil
+	fixture.fabric.computeClaimProof = computeClaimRecoveryProofForLaunchStorage(operation, "unallocated", "storage_attempt_unknown", "")
+	fixture.fabric.computeProviderTruth = &clients.ComputeProviderTruth{
+		SchemaVersion: 1, State: "ready", ComputeState: "ready", StorageState: "unknown",
+		NodeOwnershipState: "unallocated", CVMOwnershipState: "target_owned", Proof: &fixture.fabric.computeClaimProof,
+	}
+	fixture.fabric.computeClaimProofFn = func(input clients.ComputeClaimRecoveryInput) (clients.ComputeClaimRecoveryProof, error) {
+		t.Fatalf("stale Storage phase called legacy Compute proof: %#v", input)
+		return clients.ComputeClaimRecoveryProof{}, errors.New("legacy full proof called")
+	}
+	if err := fixture.store.SaveRuntimeOperation(context.Background(), workspaceLaunchOperationRow(operation)); err != nil {
+		t.Fatal(err)
+	}
+	storageWrites := len(fixture.fabric.storageIDs)
+
+	response := requestWorkspaceRecoveryPlan(t, fixture, http.MethodPost, "/diagnose", map[string]any{"accountId": operation.AccountID})
+	plan := recoveryPlanResponse(t, response)
+	persisted := fixture.operation(t)
+	decision := persisted.CurrentDecision
+	if response.Code != http.StatusOK || plan.Status != "diagnosed" || persisted.RecoveryPlan == nil ||
+		persisted.RecoveryPlan.Action != "compute_claim_continue" || persisted.RecoveryPlan.TargetBinding.Stage != "compute_claim" ||
+		persisted.RecoveryPlan.TargetBinding.NodeOwnershipState != "unallocated" || persisted.RecoveryPlan.TargetBinding.StorageState != "storage_attempt_unknown" ||
+		decision == nil || decision.CurrentStage != "compute_claim" || decision.FirstFalsePredicate != "provider.nodeOwnership" ||
+		decision.Expected != "target_owned" || decision.Actual != "unallocated" || decision.NextAction != "NODE_ONLY_CONTINUATION_ONCE" ||
+		len(fixture.fabric.computeProviderInputs) != 1 || len(fixture.fabric.computeClaimInputs) != 0 ||
+		countStrings(*fixture.events, "fabric.monthly-provider-truth") != 0 ||
+		len(fixture.fabric.storageIDs) != storageWrites ||
+		persisted.ContinuationAttemptBudgets["storage"] != (workspaceLaunchStageBudget{Max: workspaceLaunchStageMax}) {
+		t.Fatalf("stale Storage phase hid Compute authority: status=%d plan=%#v operation=%#v truths=%#v proofs=%#v storageWrites=%d/%d events=%#v",
+			response.Code, plan, persisted, fixture.fabric.computeProviderInputs, fixture.fabric.computeClaimInputs,
+			len(fixture.fabric.storageIDs), storageWrites, *fixture.events)
+	}
+}
+
 func TestWorkspaceRecoveryPlanDiagnosePrioritizesComputeClaimOverStorageUnknown(t *testing.T) {
 	t.Setenv("OPL_RELEASE_SHA", strings.Repeat("a", 40))
 	t.Setenv("OPL_CLOUD_IMAGE", "uswccr.ccs.tencentyun.com/oplcloud/opl-cloud@sha256:"+strings.Repeat("b", 64))
