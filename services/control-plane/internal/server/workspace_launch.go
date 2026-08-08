@@ -2447,12 +2447,20 @@ func workspaceComputeClaimLegacyCandidate(operation workspaceLaunchOperation) bo
 }
 
 func workspaceComputeClaimStorageBoundaryCandidate(operation workspaceLaunchOperation) bool {
-	stage, ok := workspaceLaunchReadbackRecoveryStage(operation)
 	computeClaimConfirmed := operation.ComputeClaimProof != nil &&
 		operation.ComputeClaimProof.NodeOwnershipState == "target_owned" &&
 		operation.ComputeClaimProof.CVMOwnershipState == "target_owned"
-	return ok && stage == "storage" && !computeClaimConfirmed && operation.ComputeClaimTerminalEvidence == nil &&
-		validWorkspaceLaunchComputeClaimIdentity(operation)
+	if operation.Status != "manual_review" || operation.Phase != "storage_fulfilling" || computeClaimConfirmed ||
+		operation.ComputeClaimTerminalEvidence != nil || !validWorkspaceLaunchComputeClaimIdentity(operation) {
+		return false
+	}
+	// Older launches can reach the Storage phase before the Control Plane has
+	// reserved its Storage attempt. Compute authority must still be read first.
+	if operation.ContinuationAttemptBudgets["storage"] == (workspaceLaunchStageBudget{Max: workspaceLaunchStageMax}) {
+		return true
+	}
+	stage, ok := workspaceLaunchReadbackRecoveryStage(operation)
+	return ok && stage == "storage"
 }
 
 func workspaceComputeClaimRecoveryCandidate(operation workspaceLaunchOperation) bool {
