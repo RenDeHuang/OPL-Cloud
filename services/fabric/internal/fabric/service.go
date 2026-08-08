@@ -633,6 +633,12 @@ func (s *Service) ComputeProviderTruth(ctx context.Context, input ComputeClaimRe
 	s.mu.Lock()
 	compute := cloneComputeAllocation(s.computes[strings.TrimSpace(input.ComputeAllocationID)])
 	s.mu.Unlock()
+	if compute.ID != strings.TrimSpace(input.ComputeAllocationID) {
+		_, persisted, _, _, _, persistedErr := s.computeClaimRecoveryLocalState(ctx, input)
+		if persistedErr == nil {
+			compute = cloneComputeAllocation(persisted)
+		}
+	}
 	truth := ComputeProviderTruth{
 		SchemaVersion: 1, State: "unknown", ComputeState: "unknown", StorageState: "unknown", Compute: compute,
 	}
