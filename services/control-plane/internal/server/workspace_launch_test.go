@@ -2691,6 +2691,50 @@ func TestWorkspaceComputeClaimPersistsProviderDecisionBeforeNodeContinuation(t *
 	}
 }
 
+func TestWorkspaceComputeClaimNodeContinuationUsesCandidateModeForPersistedUnallocatedProof(t *testing.T) {
+	fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, "basic")
+	operation.ContinuationAttemptBudgets["storage"] = workspaceLaunchStageBudget{Attempted: 1, Unknown: 1, Max: workspaceLaunchStageMax}
+	staleProof := computeClaimRecoveryProofForLaunchStorage(operation, "unallocated", "storage_attempt_unknown", "")
+	staleProof.CVMOwnershipState = "recoverable"
+	operation.ComputeClaimProof = &staleProof
+	input := workspaceComputeClaimRequestFromOperation(operation)
+	evaluation := evaluateWorkspaceComputeClaimProof(operation, input, staleProof, false)
+	decision := currentDecisionForComputeClaimEvaluation(operation, nil, evaluation)
+	operation.CurrentDecision = &decision
+	mustStore(t, fixture.store.memoryTableStore.SaveRuntimeOperation(context.Background(), workspaceLaunchOperationRow(operation)))
+
+	fixture.fabric.computeClaimProof = staleProof
+	fixture.fabric.computeProviderTruth = &clients.ComputeProviderTruth{
+		SchemaVersion: 1, State: "ready", ComputeState: "ready", StorageState: "unknown",
+		NodeOwnershipState: "unallocated", CVMOwnershipState: "recoverable", Proof: &staleProof,
+	}
+	claimed := computeClaimRecoveryProofForLaunchStorage(operation, "target_owned", "storage_attempt_unknown", "")
+	claimed.KubernetesMutationCount = 1
+	claimed.Evidence.Node = clients.ComputeClaimMutationEvidence{Attempted: 1, Confirmed: 1}
+	fixture.fabric.computeClaimResult = &claimed
+	readback := configureWorkspaceComputeClaimReadback(fixture, operation)
+	readback.Status = "running"
+	readback.ProviderRequestID = "req-stale-proof-node-continuation"
+	fixture.fabric.computeSync = readback
+
+	path := "/api/operator/workspace-launches/" + operation.ID + "/compute-claim-recovery/claim"
+	response := requestComputeClaimWithCapabilityForTest(
+		t, fixture.server, fixture.operator, path,
+		computeClaimRecoveryRequestBodyForStorage(t, operation, true, "compute-claim-stale-proof-gate", "storage_attempt_unknown", ""),
+		"compute-claim-stale-proof-gate",
+	)
+
+	persisted := fixture.operation(t)
+	if response.Code != http.StatusOK || len(fixture.fabric.computeClaimCalls) != 1 || len(fixture.fabric.storageIDs) != 0 ||
+		!fixture.fabric.computeClaimCalls[0].NodeOnlyContinuation ||
+		persisted.ComputeClaimProof == nil || persisted.ComputeClaimProof.NodeOwnershipState != "target_owned" ||
+		persisted.ComputeClaimProof.TencentMutationCount != 0 || persisted.ComputeClaimProof.KubernetesMutationCount > 1 ||
+		persisted.Status != "preparing" || persisted.Phase != "storage_fulfilling" ||
+		persisted.CurrentDecision == nil || persisted.CurrentDecision.CurrentStage != "storage" {
+		t.Fatalf("persisted unallocated proof blocked Node continuation: status=%d body=%s operation=%#v claims=%#v storage=%#v", response.Code, response.Body.String(), persisted, fixture.fabric.computeClaimCalls, fixture.fabric.storageIDs)
+	}
+}
+
 func expireComputeClaimRecoveryRequestBody(t *testing.T, operation workspaceLaunchOperation, body string, idempotencyKey string) string {
 	t.Helper()
 	var request map[string]any

@@ -1150,6 +1150,7 @@ func (s *Service) ClaimComputeRecovery(ctx context.Context, input ComputeClaimRe
 				return err
 			}
 			operation = pending
+			bindingPresent, bindingValid = true, true
 		}
 		reserveHistoricalNodeClaim := historicalWithoutLedger && ownership.Status != "active" &&
 			proof.CVMOwnershipState == "target_owned" && proof.NodeOwnershipState == "unallocated"
@@ -1169,8 +1170,10 @@ func (s *Service) ClaimComputeRecovery(ctx context.Context, input ComputeClaimRe
 		reconciledNodeContinuation := requestHashReconciliation && reconciliationPresent &&
 			(reconciliation.State == "verified" || legacyClientRejectedNodeCall) &&
 			ownership.Status != "active" && reconciledCVMOwnership && proof.NodeOwnershipState == "unallocated"
+		requestedNodeContinuation := input.NodeOnlyContinuation && !mutationPresent && operation.Status == "claim_pending" &&
+			(proof.CVMOwnershipState == "recoverable" || proof.CVMOwnershipState == "target_owned") && proof.NodeOwnershipState == "unallocated"
 		activeNodeContinuation := ownership.Status == "active" && !mutationPresent && bindingPresent && bindingValid && persistedBinding == binding &&
-			proof.CVMOwnershipState == "target_owned" && proof.NodeOwnershipState == "unallocated"
+			proof.NodeOwnershipState == "unallocated" && (requestedNodeContinuation || proof.CVMOwnershipState == "target_owned")
 		createBudget, createPresent, createValid := normalLaunchStageBudget(operation.RedactedProviderPayload, "compute_create")
 		cvmBudget, cvmPresent, cvmValid := normalLaunchStageBudget(operation.RedactedProviderPayload, "compute_claim_cvm")
 		_, nodePresent, nodeValid := normalLaunchStageBudget(operation.RedactedProviderPayload, "compute_claim_node")
@@ -1178,7 +1181,7 @@ func (s *Service) ClaimComputeRecovery(ctx context.Context, input ComputeClaimRe
 			proof.CVMOwnershipState == "target_owned" && proof.NodeOwnershipState == "unallocated" &&
 			createPresent && createValid && createBudget == confirmedNormalLaunchMutationBudget() &&
 			cvmPresent && cvmValid && cvmBudget == confirmedNormalLaunchMutationBudget() && !nodePresent && nodeValid
-		nodeOnlyContinuation := resumeObservedNodeClaim || reserveHistoricalNodeClaim || activeNodeContinuation || reconciledNodeContinuation || currentNodeContinuation
+		nodeOnlyContinuation := requestedNodeContinuation || resumeObservedNodeClaim || reserveHistoricalNodeClaim || activeNodeContinuation || reconciledNodeContinuation || currentNodeContinuation
 		resumeReservedNodeReadback := mutationPresent && validNodeReservedComputeClaimRecoveryMutation(mutationLedger) &&
 			proof.CVMOwnershipState == "target_owned" && proof.NodeOwnershipState == "target_owned"
 		reconciledNodeReadback := requestHashReconciliation && reconciliationPresent &&
@@ -1283,7 +1286,7 @@ func (s *Service) ClaimComputeRecovery(ctx context.Context, input ComputeClaimRe
 				}
 			}
 			claimedCVMOwnership := claimed.Proof.CVMOwnershipState == "target_owned" ||
-				reconciledNodeContinuation && claimed.Proof.CVMOwnershipState == "recoverable"
+				nodeOnlyContinuation && claimed.Proof.CVMOwnershipState == "recoverable"
 			claimSucceeded := claimErr == nil && validComputeClaimProviderProof(claimed.Proof, allocation, plan) &&
 				claimedCVMOwnership && claimed.Proof.NodeOwnershipState == "target_owned" && validComputeClaimEvidence(claimed)
 			if nodeOnlyContinuation {
@@ -1733,6 +1736,10 @@ func newComputeClaimRecoveryBinding(input ComputeClaimRecoveryClaimInput) comput
 	}{input.MachineName, input.NodeName, input.CVMInstanceID, input.PrivateIP, input.InstanceType, input.Zone}
 	bindingInput := input
 	bindingInput.AllowExistingStorageOperation = false
+	// The execution selector is an authorization command, not part of the
+	// stable resource binding. Replays must retain the original operation
+	// identity while the service independently enforces the Node-only write set.
+	bindingInput.NodeOnlyContinuation = false
 	return computeClaimRecoveryBinding{
 		LaunchOperationID: input.LaunchOperationID,
 		IdempotencyKey:    input.IdempotencyKey,

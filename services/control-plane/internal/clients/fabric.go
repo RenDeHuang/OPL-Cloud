@@ -231,6 +231,11 @@ type ComputeClaimRecoveryClaimInput struct {
 	PrivateIP     string `json:"privateIp"`
 	InstanceType  string `json:"instanceType"`
 	Zone          string `json:"zone"`
+	// NodeOnlyContinuation is set only after the Control Plane has persisted
+	// and read back a CurrentDecision authorizing the bounded Node-only stage.
+	// It never authorizes a Tencent write; Fabric enforces the zero-Tencent
+	// provider path and its own identity/readback contract.
+	NodeOnlyContinuation bool `json:"nodeOnlyContinuation,omitempty"`
 }
 
 type ComputeClaimMutationEvidence struct {

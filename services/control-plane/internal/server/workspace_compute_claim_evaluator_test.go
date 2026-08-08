@@ -43,7 +43,7 @@ func productionComputeClaimEvaluationFixture() (workspaceLaunchOperation, worksp
 		NodeName: operation.ComputeNodeName, CVMInstanceID: operation.ComputeCVMInstanceID, PrivateIP: operation.ComputePrivateIP,
 		InstanceType: operation.ComputeInstanceType, Zone: operation.ComputeZone, ChargeType: "PREPAID", PeriodMonths: 1,
 		RenewFlag: "NOTIFY_AND_MANUAL_RENEW", Deadline: operation.ComputeDeadline,
-		NodeOwnershipState: "unallocated", CVMOwnershipState: "target_owned", Evidence: &clients.ComputeClaimEvidence{},
+		NodeOwnershipState: "unallocated", CVMOwnershipState: "recoverable", Evidence: &clients.ComputeClaimEvidence{},
 	}
 	return operation, input, proof
 }

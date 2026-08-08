@@ -213,20 +213,20 @@ func workspaceLaunchEvidenceSnapshotWithComputeEvaluation(operation workspaceLau
 	if !evaluation.Eligible {
 		return snapshot
 	}
-	if evaluation.CVMOwnershipState != "target_owned" {
-		snapshot.ComputeClaim.FirstFalsePredicate = firstNonEmptyDecision(evaluation.FirstFalsePredicate, "provider.cvmOwnership")
-		snapshot.ComputeClaim.Expected = "target_owned"
-		snapshot.ComputeClaim.Actual = firstNonEmptyDecision(evaluation.CVMOwnershipState, "unknown")
-		snapshot.ComputeClaim.Authority = "provider.cvmOwnership"
-		return snapshot
-	}
 	switch evaluation.NodeOwnershipState {
 	case "target_owned":
-		snapshot.ComputeClaim.State = EvidencePresent
-		snapshot.ComputeClaim.Confirmed = true
-		snapshot.ComputeClaim.Expected = "target_owned"
-		snapshot.ComputeClaim.Actual = "target_owned"
-		snapshot.ComputeClaim.Authority = "provider.nodeOwnership"
+		if evaluation.CVMOwnershipState == "target_owned" {
+			snapshot.ComputeClaim.State = EvidencePresent
+			snapshot.ComputeClaim.Confirmed = true
+			snapshot.ComputeClaim.Expected = "target_owned"
+			snapshot.ComputeClaim.Actual = "target_owned"
+			snapshot.ComputeClaim.Authority = "provider.nodeOwnership"
+		} else {
+			snapshot.ComputeClaim.Expected = "target_owned"
+			snapshot.ComputeClaim.Actual = firstNonEmptyDecision(evaluation.CVMOwnershipState, "unknown")
+			snapshot.ComputeClaim.Authority = firstNonEmptyDecision(evaluation.Authority, "provider.cvmOwnership")
+			snapshot.ComputeClaim.FirstFalsePredicate = firstNonEmptyDecision(evaluation.FirstFalsePredicate, "provider.cvmOwnership")
+		}
 	case "unallocated":
 		snapshot.ComputeClaim.State = EvidencePresent
 		snapshot.ComputeClaim.Expected = "target_owned"
