@@ -783,6 +783,49 @@ func TestComputeClaimRecoveryHTTPSeparatesReadOnlyProofAndIdempotentClaim(t *tes
 	}
 }
 
+func TestComputeProviderTruthHTTPIsAuthenticatedStrictAndReadOnly(t *testing.T) {
+	service, store, provider, input := computeClaimHTTPFixture(t)
+	server := NewServer(service, "internal-secret")
+	path := "/fabric/compute-provider-truth?launchOperationId=" + input.LaunchOperationID +
+		"&accountId=" + input.AccountID + "&workspaceId=" + input.WorkspaceID +
+		"&computeAllocationId=" + input.ComputeAllocationID + "&storageVolumeId=" + input.StorageVolumeID +
+		"&packageId=" + input.PackageID + "&poolId=" + input.PoolID + "&nodePoolId=" + input.NodePoolID
+
+	unauthorized := httptest.NewRecorder()
+	server.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodGet, path, nil))
+	if unauthorized.Code != http.StatusUnauthorized || provider.proofCalls != 0 || provider.claimCalls != 0 {
+		t.Fatalf("unauthorized status=%d calls=%d/%d", unauthorized.Code, provider.proofCalls, provider.claimCalls)
+	}
+
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, testRequest(http.MethodGet, path, nil))
+	var truth fabric.ComputeProviderTruth
+	if recorder.Code != http.StatusOK || json.NewDecoder(recorder.Body).Decode(&truth) != nil || truth.State != "ready" ||
+		truth.ComputeState != "ready" || truth.NodeOwnershipState != "unallocated" || truth.CVMOwnershipState != "recoverable" ||
+		provider.proofCalls != 1 || provider.claimCalls != 0 {
+		t.Fatalf("truth status=%d truth=%#v calls=%d/%d body=%s", recorder.Code, truth, provider.proofCalls, provider.claimCalls, recorder.Body.String())
+	}
+	operations, err := store.List(context.Background())
+	if err != nil || len(operations) != 1 || operations[0].Status != "failed" {
+		t.Fatalf("GET-only truth mutated operations=%#v err=%v", operations, err)
+	}
+
+	for _, invalidPath := range []string{
+		path + "&extra=value",
+		path + "&nodePoolId=duplicate",
+		strings.Replace(path, "packageId=basic", "packageId=%20basic", 1),
+	} {
+		invalid := httptest.NewRecorder()
+		server.ServeHTTP(invalid, testRequest(http.MethodGet, invalidPath, nil))
+		if invalid.Code != http.StatusBadRequest {
+			t.Fatalf("invalid query status=%d body=%s path=%s", invalid.Code, invalid.Body.String(), invalidPath)
+		}
+	}
+	if provider.proofCalls != 1 || provider.claimCalls != 0 {
+		t.Fatalf("invalid query reached provider calls=%d/%d", provider.proofCalls, provider.claimCalls)
+	}
+}
+
 func TestComputePoolHeadTerminalizationHTTPUsesOneExactCASAndReadOnlyReplay(t *testing.T) {
 	service, store, provider, input := computeClaimHTTPFixture(t)
 	provider.claim = fabric.ComputeClaimProviderClaim{

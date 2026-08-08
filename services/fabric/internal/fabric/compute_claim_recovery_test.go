@@ -497,6 +497,26 @@ func TestComputeClaimRecoveryProofKeepsComputeEligibleForIncompleteStorageLedger
 	}
 }
 
+func TestComputeProviderTruthPreservesComputeWhenStorageRecordIsAbsent(t *testing.T) {
+	service, store, provider, input := seedComputeClaimRecovery(t, "basic")
+	now := time.Now().UTC()
+	storage := newOperation("create_storage_volume", "storage_volume", input.StorageVolumeID, input.AccountID, input.WorkspaceID, input.LaunchOperationID+":storage", "hash", now)
+	storage.ID, storage.Status, storage.CreatedAt = "fop-storage-attempted", "started", now
+	fillOperationResource(&storage, StorageVolume{ID: input.StorageVolumeID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID})
+	if err := store.Append(context.Background(), storage); err != nil {
+		t.Fatal(err)
+	}
+	input.AllowExistingStorageOperation = true
+
+	truth, err := service.ComputeProviderTruth(context.Background(), input)
+
+	if err != nil || truth.State != "ready" || truth.ComputeState != "ready" || truth.NodeOwnershipState != "unallocated" ||
+		truth.CVMOwnershipState != "recoverable" || truth.Compute.ID != input.ComputeAllocationID ||
+		truth.StorageState != "unknown" || provider.proofCalls != 1 || provider.storageCalls != 0 {
+		t.Fatalf("compute truth was coupled to Storage: truth=%#v err=%v provider=%#v", truth, err, provider)
+	}
+}
+
 func TestComputeClaimRecoveryProofReadsNodeBeforeRejectingUnexpectedStorageOperation(t *testing.T) {
 	service, store, provider, input := seedComputeClaimRecovery(t, "basic")
 	now := time.Now().UTC()

@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 27,
+  "schemaVersion": 28,
   "owner": "OPL Platform Architecture",
   "purpose": "Freeze the approved Pilot products, delegated Gateway key lifecycle, one charge per Workspace period, prepaid Tencent fulfillment, Runtime facts, operator workflows, announcements, and evidence levels without claiming unfinished implementation or runtime evidence.",
   "state": "current",
@@ -194,6 +194,20 @@
         "replay": "reuse_persisted_values_never_recalculate"
       }
     },
+    "stageDecisionContract": {
+      "aggregateRoot": "workspace.launch.v2",
+      "orderedStages": ["debit", "compute_claim", "storage", "attachment", "secret", "runtime", "activation", "receipt", "succeeded"],
+      "collector": "per_source_present_absent_unavailable_or_conflict_without_cross_source_erasure",
+      "reducer": "pure_normalized_snapshot_to_one_current_decision",
+      "currentDecisionFields": ["currentStage", "stageState", "firstFalsePredicate", "expected", "actual", "authority", "nextAction", "requiresApproval", "allowedMutation", "stageAttemptId", "mutationState", "evidenceDigest", "decisionVersion"],
+      "atomicPersistence": "phase_status_and_currentDecision_same_launch_postgresql_cas",
+      "sharedConsumers": ["normal_launch", "manual_review_recovery", "recovery_diagnose_validate_execute"],
+      "projectionOnly": ["get_only_workflow", "console", "artifact"],
+      "p0MutationAuthorizationScope": "compute_claim",
+      "stageIsolation": "storage_attempted_unknown_or_conflict_never_masks_or_blocks_authoritative_compute_node_ownership",
+      "storageEntry": "node_target_owned_only",
+      "failClosed": "freeze_current_dangerous_mutation_preserve_other_successful_evidence_and_active_launch"
+    },
     "controlledBasicPilot": {
       "state": "code_complete_local_verified_production_default_disabled",
       "scope": "new_workspace.launch.v2_purchase_only",
@@ -286,6 +300,9 @@
       "authoritativeSources": ["control_plane_original_launch", "fabric_operation_store", "tencent_describe", "kubernetes_get", "sub2api_debit_history", "ledger_receipt"],
       "releaseBindingSource": ["OPL_RELEASE_SHA", "OPL_CLOUD_IMAGE", "OPL_WORKSPACE_IMAGE"],
       "targetBindingSource": "authoritative_service_readback_only",
+      "decisionBinding": ["decisionDigest", "evidenceDigest", "decisionVersion", "currentStage", "stageAttemptId", "allowedMutation", "mutationBudget"],
+      "reviewerBinding": "authenticated_operator_session_in_persisted_execution_and_execution_identity",
+      "businessStateRole": "authorization_receipt_only_never_second_stage_machine",
       "mismatchEvidence": "field_name_plus_safe_expected_actual_or_digest_fail_closed",
       "externalValidationMutationCounts": {"sub2api": 0, "tencent": 0, "kubernetes": 0},
       "terminalSuccessorGateProjection": {
@@ -345,7 +362,7 @@
       "implementation": "server_authoritative_plan_local_focused_verified_not_merged_deployed_or_production_verified"
     },
     "computeClaimRecovery": {
-      "trigger": "debit_confirmed_unique_compute_created_claim_interrupted_before_local_storage_operation",
+      "trigger": "debit_confirmed_unique_compute_created_claim_interrupted_regardless_of_later_storage_attempt_state",
       "pendingState": "compute_claim_pending",
       "publicRoutes": [],
       "legacyPublicRoutes": [
@@ -361,9 +378,10 @@
         "execute": "POST /api/operator/workspace-launches/{operationId}/recovery-plan/execute"
       },
       "proofContract": "opl-cloud-service-boundary-contract.json#services.fabric.workspaceComputeClaimRecovery",
+      "stageIsolation": "compute_provider_and_node_readback_precede_and_remain_authoritative_independent_of_storage_state",
       "identitySource": ["workspace.launch.v2", "create_compute_allocation", "allocation_plan", "machine_ownership"],
       "legacyCandidates": [{"status": "manual_review", "phase": "compute_fulfilling"}],
-      "legacyNormalization": "after_debit_identity_local_storage_zero_and_compute_plus_exact_cbs_proof_postgresql_cas_to_compute_claim_pending",
+      "legacyNormalization": "after_debit_and_exact_compute_identity_ownership_proof_postgresql_cas_to_compute_claim_pending",
       "normalizationMutationCounts": {"sub2api": 0, "tencent": 0, "kubernetes": 0},
       "claimAuthorization": "reserved_operator_session_plus_csrf_then_control_plane_persisted_validated_plan_and_server_generated_approval_digest",
       "consoleSubmittedFields": ["planId", "planDigest", "decision", "confirmation"],
@@ -372,15 +390,15 @@
         "owner": "control_plane",
         "singleWinner": "postgresql_cas_persisted_execution_lease",
         "fencing": "byte_exact_current_lease_token_required_to_finalize",
-        "identity": ["planId", "planDigest", "approvalDigest", "executionId", "runId", "decision"],
-        "replay": "same_plan_digest_and_decision_returns_same_execution_and_run_identity",
+        "identity": ["planId", "planDigest", "approvalDigest", "executionId", "runId", "decision", "reviewer"],
+        "replay": "same_plan_digest_decision_and_reviewer_returns_same_execution_and_run_identity",
         "failedZeroSuccessor": "archive_old_plan_execution_approval_error_and_mutation_outcome_then_require_new_plan_validation_and_approval"
       },
       "fabricIdempotencyBinding": ["launch_operation_id", "idempotency_key", "target_hash", "request_hash"],
       "requestHashReconciliation": {
         "owner": "Fabric_ClaimComputeRecovery",
         "candidate": "persisted_request_hash_is_the_only_primitive_binding_mismatch",
-        "requiredIdentity": ["canonical_compute_operation", "original_launch", "target_hash", "allocation_plan", "quarantined_compute_allocation", "quarantined_machine_ownership", "tencent_cvm", "tke_machine", "kubernetes_node", "node_pool", "sku", "zone", "prepaid_manual_renew_deadline", "storage_not_started"],
+        "requiredIdentity": ["canonical_compute_operation", "original_launch", "target_hash", "allocation_plan", "quarantined_compute_allocation", "quarantined_machine_ownership", "tencent_cvm", "tke_machine", "kubernetes_node", "node_pool", "sku", "zone", "prepaid_manual_renew_deadline"],
         "generations": {
           "isolated_request_hash_v1": {
             "schemaVersion": 1,
@@ -403,7 +421,7 @@
         "preserved": ["persisted_binding", "source_recovery_evidence", "normal_launch_mutation_budgets", "terminal_evidence", "launch", "debit", "cvm", "allocation", "ownership"],
         "consumer": "original_ClaimComputeRecovery_only",
         "mutationBounds": {"sub2api": 0, "tencent": 0, "kubernetesNodePatchMax": 1},
-        "failClosed": ["released_ownership", "zero_or_multiple_compute_candidates", "other_binding_mismatch", "source_evidence_drift", "provider_identity_drift", "storage_started", "cas_conflict", "unknown_readback"]
+        "failClosed": ["released_ownership", "zero_or_multiple_compute_candidates", "other_binding_mismatch", "source_evidence_drift", "provider_identity_drift", "cas_conflict", "compute_unknown_readback"]
       },
       "claimMutationBounds": {"sub2api": 0, "tencent": {"min": 0, "max": 5}, "kubernetes": {"min": 0, "max": 1}},
       "storageProof": "DescribeDisks_only_four_ownership_tags_complete_pagination_exact_facts_mutation_zero",
@@ -417,7 +435,7 @@
       "currentImplementation": "code_complete_local_focused_and_postgresql_verified_not_merged_released_deployed_or_executed"
     },
     "persistence": "control_plane_runtime_operations with action=workspace.launch.v2 and result.schemaVersion=2",
-    "legacyNonTerminalPolicy": "manual_review_compute_fulfilling_is_read_only_candidate_normalized_only_after_debit_identity_local_storage_zero_and_compute_plus_exact_cbs_proof_via_postgresql_cas",
+    "legacyNonTerminalPolicy": "manual_review_compute_fulfilling_is_read_only_candidate_normalized_only_after_debit_and_exact_compute_identity_ownership_proof_via_postgresql_cas",
     "submissionOrder": ["workspace_quote", "compute_read_only_preflight", "storage_read_only_preflight", "workspace_key_preflight", "sub2api_total_balance_preflight", "persist_launch"],
     "providerPreflightRecovery": {
       "timing": "before_first_charge_attempt",

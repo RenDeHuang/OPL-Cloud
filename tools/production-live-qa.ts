@@ -867,9 +867,35 @@ export async function readWorkspaceComputeClaimReadback({
   const target = workspaceComputeClaimReadbackTargetFromOperations(operationsRead.payload, normalizedAccountId, normalizedLaunchOperationId);
   const computeOperation = computeClaimReadbackOperation(operationsRead.payload, "create_compute_allocation", target.computeAllocationId, `${normalizedLaunchOperationId}:compute`);
   const computeRead = await manualReviewFabricGet(options, `/fabric/compute-allocations/${encodeURIComponent(target.computeAllocationId)}`, "compute_allocation_not_found", "compute_allocation_unavailable");
+  const packageId = String(computeRead.payload?.packageId || "").trim();
+  const poolId = String(computeRead.payload?.poolId || "").trim();
+  const nodePoolId = String(computeRead.payload?.nodePoolId || "").trim();
+  if (computeRead.state !== "present" || !["basic", "pro"].includes(packageId) || !poolId || !nodePoolId) {
+    throw new Error("compute_claim_readback_provider_identity_unavailable");
+  }
   const ownershipRead = await manualReviewFabricGet(options, `/fabric/machine-ownerships/${encodeURIComponent(target.computeAllocationId)}`, "machine_ownership_not_found", "machine_ownership_unavailable");
   const storageRead = await manualReviewFabricGet(options, `/fabric/storage-volumes/${encodeURIComponent(target.storageId)}`, "storage_volume_not_found", "storage_volume_unavailable");
-  const providerTruthRead = await manualReviewFabricGet(options, `/fabric/monthly-provider-truth?computeAllocationId=${encodeURIComponent(target.computeAllocationId)}&storageVolumeId=${encodeURIComponent(target.storageId)}`, "monthly_provider_truth_unavailable", "monthly_provider_truth_unavailable");
+  const computeProviderTruthRead = await manualReviewFabricGet(
+    options,
+    `/fabric/compute-provider-truth?launchOperationId=${encodeURIComponent(normalizedLaunchOperationId)}&accountId=${encodeURIComponent(normalizedAccountId)}&workspaceId=${encodeURIComponent(target.workspaceId)}&computeAllocationId=${encodeURIComponent(target.computeAllocationId)}&storageVolumeId=${encodeURIComponent(target.storageId)}&packageId=${encodeURIComponent(packageId)}&poolId=${encodeURIComponent(poolId)}&nodePoolId=${encodeURIComponent(nodePoolId)}`,
+    "compute_provider_truth_unavailable",
+    "compute_provider_truth_unavailable"
+  );
+  const monthlyProviderTruthRead = await manualReviewFabricGet(
+    options,
+    `/fabric/monthly-provider-truth?computeAllocationId=${encodeURIComponent(target.computeAllocationId)}&storageVolumeId=${encodeURIComponent(target.storageId)}`,
+    "monthly_provider_truth_unavailable",
+    "monthly_provider_truth_unavailable"
+  );
+  const providerTruthRead = {
+    state: computeProviderTruthRead.state,
+    payload: {
+      ...(computeProviderTruthRead.payload || {}),
+      storageState: monthlyProviderTruthRead.payload?.storageState || computeProviderTruthRead.payload?.storageState || "unknown",
+      storage: monthlyProviderTruthRead.payload?.storage || computeProviderTruthRead.payload?.storage || null
+    },
+    errorCode: computeProviderTruthRead.errorCode
+  };
   let nodeRead;
   try {
     const result = await execFileImpl("kubectl", ["--kubeconfig", String(kubeconfigPath), "get", "node", target.nodeName, "-o", "json"], { encoding: "utf8", maxBuffer: 4 * 1024 * 1024 });
@@ -897,9 +923,12 @@ export async function readWorkspaceComputeClaimReadback({
       ownership: ownershipRead.state,
       storage: storageRead.state,
       providerTruth: providerTruthRead.state,
+      computeProviderTruth: computeProviderTruthRead.state,
+      monthlyProviderTruth: monthlyProviderTruthRead.state,
       node: nodeRead.state
     },
-    readbackErrors: [computeRead, ownershipRead, storageRead, providerTruthRead, nodeRead].filter((read) => read.state === "unavailable").map((read) => read.errorCode)
+    readbackErrors: [computeRead, ownershipRead, storageRead, computeProviderTruthRead, monthlyProviderTruthRead, nodeRead]
+      .filter((read) => read.state === "unavailable").map((read) => read.errorCode)
   };
 }
 

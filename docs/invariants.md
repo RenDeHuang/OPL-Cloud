@@ -109,24 +109,21 @@ The four implementation owner lanes are Console/Control Plane, Fabric, Gateway i
   resolution must return exactly one instance whose TKE Machine, `ins-*` CVM,
   VPC, and Subnet identities all match. Zero, multiple, incomplete, or
   inconsistent results fail closed.
-- If the unique new NativeCVM was created but ownership claim was interrupted
-  before any local storage operation started, Fabric exposes a separate zero-
-  mutation Describe/get-only proof. It derives identity from the original launch,
+- If the unique new NativeCVM was created but ownership claim was interrupted,
+  Fabric exposes a zero-mutation Compute provider readback. It derives identity from the original launch,
   compute allocation, persisted allocation plan, and MachineOwnership; requires
   the unique Ready/Running Machine in `after - before`; verifies the exact
   NodePool/Machine/Node/private-IP/CVM/SKU/Zone and PREPAID one-month manual-renew
-  facts; and accepts only an unallocated Node or the exact target ownership. A
-  zero local storage-operation count is not proof that CBS is absent: the same
-  proof pages through Tencent `DescribeDisks` using the four `opl_*` ownership
-  tags and an exact DiskName fallback. It validates DiskName, Zone, size, data-
-  disk usage, PREPAID one-month billing, DiskType, manual-renew flag, and
-  deadline. Zero candidates reports `storage_not_started`; one exact candidate
-  reports `storage_existing_exact` and its `disk-*`; multiple candidates,
-  provider failure, or any tag/property drift reports unknown and remains
-  manual review. All proof paths report zero Sub2API, Tencent, and Kubernetes
-  mutations. The strict compute-plus-storage
-  `MonthlyProviderTruth` contract remains unchanged.
-- Compute claim convergence may run only after that complete proof and may only
+  facts; and accepts only an unallocated Node or the exact target ownership.
+  Compute evidence is returned independently of Storage evidence: a later
+  Storage operation, attempted/unknown result, missing local Storage record, or
+  provider read failure cannot hide an already-read CVM or Node fact. Storage is
+  reconciled only after Node ownership is `target_owned`; its own absent, exact,
+  unknown, and conflict states independently gate `CreateDisks`. Every readback
+  reports per-source `present`, `absent`, `unavailable`, or `conflict` and zero
+  Sub2API, Tencent, and Kubernetes mutations.
+- Compute claim convergence may run only after the complete Compute identity and
+  ownership proof and may only
   converge the same CVM name and four ownership tags, one exact Node
   labels/taint patch, and the same MachineOwnership on the proved CVM and Node.
   The original compute operation persists the launch ID, idempotency key,
@@ -136,8 +133,20 @@ The four implementation owner lanes are Console/Control Plane, Fabric, Gateway i
   incremental external mutation. Sub2API mutations are always zero, Tencent
   mutations are bounded to zero through five, and Kubernetes mutations are
   bounded to zero or one. Ambiguity,
-  conflicting ownership, provider/IAM/RBAC failure, or any existing storage
-  operation fails closed before mutation and remains manual review.
+  conflicting ownership, or provider/IAM/RBAC failure fails closed before the
+  Compute mutation. A Storage attempted/unknown/conflict result freezes only
+  Storage mutation and cannot block a proved Node-only continuation.
+- `workspace.launch.v2` persists `phase`, `status`, and one `CurrentDecision` in
+  the same PostgreSQL CAS. The normalized evidence snapshot is reduced by a pure
+  stage reducer in this order: debit, compute_claim, storage, attachment, secret,
+  runtime, activation, receipt, succeeded. `CurrentDecision` stores only the
+  current stage/state, first false predicate, expected/actual authority,
+  next action, approval and allowed-mutation decision, stage attempt identity,
+  mutation state, evidence digest, and decision version; attempt counters remain
+  in the stage-attempt ledger. Normal launch and Recovery use the same reducer
+  and Compute stage executor. GET-only tools, Console, and Artifacts may project
+  persisted decisions and component evidence but cannot authorize a mutation or
+  derive an independent business stage.
 - Recovery Plan diagnosis and validation use one safe schema with field-level
   mismatches represented by allowlisted values or SHA-256 digests. A validation
   artifact's `runnerDirectMutationCounts=0` means the GitHub runner performs no
@@ -153,6 +162,11 @@ The four implementation owner lanes are Console/Control Plane, Fabric, Gateway i
   array only for that fully confirmed shape. CVM `missing` accepts only
   `instance`, `instance_name`, and the four `opl_*` ownership tags; Node
   `missing` accepts only `node_ownership`.
+  A Compute Recovery Plan is an authorization receipt, not a business state
+  machine: its digest binds the persisted Decision digest/version, stage attempt,
+  allowed mutation, Compute mutation budget, release/resource identity, and the
+  executing operator reviewer. Validation and reservation repeat the same
+  authoritative readback and reject any Decision drift before mutation.
 - The zero-mutation Fabric ledger readback classifies the exact persisted
   compute binding as `current`, `compute-claim`, `request-hash-reconciliation`,
   `known-legacy`, or `other` and
@@ -616,9 +630,9 @@ contract or select the SKU for a customer launch.
   `ClaimComputeRecovery` owner when the persisted binding's `requestHash` is the
   sole primitive mismatch. The original compute operation, Launch, target hash,
   allocation plan, quarantined ComputeAllocation, quarantined MachineOwnership,
-  Tencent CVM, TKE Machine, Kubernetes Node, NodePool, SKU, Zone,
-  prepaid/manual-renew deadline, and storage-not-started truth must all match
-  uniquely through fresh provider proof. The existing
+  Tencent CVM, TKE Machine, Kubernetes Node, NodePool, SKU, Zone, and
+  prepaid/manual-renew deadline facts must all match uniquely through fresh
+  provider proof. The existing
   `isolated_request_hash_v1` generation still requires its exact valid manual
   recovery ledger and a `claim_pending` operation. The
   `normal_launch_terminal_evidence_v1` generation accepts only a `failed`
@@ -632,8 +646,9 @@ contract or select the SKU for a customer launch.
   budgets, or terminal evidence. That provenance is consumed only by the
   original Claim path, permits zero Tencent writes and at most one Node patch,
   and remains fail-closed for released ownership, zero/multiple candidates, any
-  additional identity or source-evidence drift, storage activity, CAS conflict,
-  or unknown readback.
+  additional identity or source-evidence drift, CAS conflict, or unknown Compute
+  readback. Later Storage state remains independently
+  fail-closed for Storage mutation.
 - Production closure requires two independent evidence sets and neither may
   substitute for the other. Acceptance A restores the one exact existing Launch
   with zero additional debit, CVM creation, or Tencent Tag write, at most one Node

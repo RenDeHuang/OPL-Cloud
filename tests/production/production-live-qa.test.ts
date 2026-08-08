@@ -165,7 +165,7 @@ test("compute claim production readback derives the original resources and perfo
     spec: { taints: [{ key: "oplcloud.cn/workspace-id", value: "unallocated", effect: "NoSchedule" }] },
     status: { addresses: [{ type: "InternalIP", address: "10.66.0.191" }] }
   };
-  const allocation = { id: computeAllocationId, accountId, workspaceId: "ws-30e2861bbdf9805492", nodeName: "10.66.0.191", privateIp: "10.66.0.191", machineName: "np-33sy1qqa-whp8b", cvmInstanceId: "ins-rjkoixhs", instanceId: "ins-rjkoixhs", nodePoolId: "np-33sy1qqa" };
+  const allocation = { id: computeAllocationId, accountId, workspaceId: "ws-30e2861bbdf9805492", packageId: "basic", poolId: "pool-basic-2c4g", nodeName: "10.66.0.191", privateIp: "10.66.0.191", machineName: "np-33sy1qqa-whp8b", cvmInstanceId: "ins-rjkoixhs", instanceId: "ins-rjkoixhs", nodePoolId: "np-33sy1qqa" };
   const ownership = { resourceId: computeAllocationId, accountId, workspaceId: "ws-30e2861bbdf9805492", nodeName: "10.66.0.191", nodePoolId: "np-33sy1qqa", machineId: "np-33sy1qqa-whp8b", instanceId: "ins-rjkoixhs", status: "active" };
   const operations = [
     { action: "create_compute_allocation", resourceId: computeAllocationId, accountId, workspaceId: "ws-30e2861bbdf9805492", idempotencyKey: `${launchOperationId}:compute`, status: "failed", redactedProviderPayload: { resource: allocation } },
@@ -197,6 +197,37 @@ test("compute claim production readback derives the original resources and perfo
   assert.deepEqual(result.mutationCounts, { sub2api: 0, tencent: 0, kubernetes: 0 });
   assert.equal(calls.filter((call) => call.args.includes("patch")).length, 0);
   assert.equal(calls.filter((call) => call.args.includes("node") && call.args.includes("get")).length, 1);
+});
+
+test("compute claim production readback rejects missing exact package and pool identity", async () => {
+  const accountId = "acct-54658088f52b242ed8";
+  const launchOperationId = "workspace-launch-f4338141c25d0882b0";
+  const computeAllocationId = "ca_2968bc5edba23a5c36";
+  const storageId = "vol_57f5d2a477b616e8c9";
+  const allocation = {
+    id: computeAllocationId, accountId, workspaceId: "ws-30e2861bbdf9805492", nodePoolId: "np-33sy1qqa",
+    nodeName: "10.66.0.191", privateIp: "10.66.0.191", machineName: "np-33sy1qqa-whp8b", cvmInstanceId: "ins-rjkoixhs"
+  };
+  const operations = [
+    { action: "create_compute_allocation", resourceId: computeAllocationId, accountId, workspaceId: allocation.workspaceId, idempotencyKey: `${launchOperationId}:compute`, status: "succeeded", redactedProviderPayload: { resource: allocation } },
+    { action: "create_storage_volume", resourceId: storageId, accountId, workspaceId: allocation.workspaceId, idempotencyKey: `${launchOperationId}:storage`, status: "started" }
+  ];
+  const calls = [];
+  const execFileImpl = async (_command, args) => {
+    calls.push(args);
+    const path = args.at(-1);
+    if (path === "/fabric/operations") return { stdout: JSON.stringify({ statusCode: 200, payload: operations, errorCode: "none" }) };
+    if (path.includes("/compute-allocations/")) return { stdout: JSON.stringify({ statusCode: 200, payload: allocation, errorCode: "none" }) };
+    throw new Error("unexpected_followup_read");
+  };
+
+  await assert.rejects(
+    productionLiveQa.readWorkspaceComputeClaimReadback({
+      accountId, launchOperationId, kubeconfigPath: "/run/secrets/kubeconfig", fabricPod: "opl-cloud-fabric-abc", fabricNamespace: "opl-cloud", execFileImpl
+    }),
+    /compute_claim_readback_provider_identity_unavailable/
+  );
+  assert.equal(calls.length, 2);
 });
 
 test("customer Basic canary orchestration stays inside production-live-qa", () => {

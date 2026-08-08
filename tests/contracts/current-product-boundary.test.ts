@@ -127,12 +127,26 @@ test("Current contracts hard cut Workspace purchase, access, and Runtime facts",
     json("packages/contracts/opl-cloud-console-source-truth-contract.json")
   ]);
 
-  assert.equal(freeze.schemaVersion, 27);
+  assert.equal(freeze.schemaVersion, 28);
   assert.equal(billing.schemaVersion, 11);
   assert.equal(freeze.workspaceLaunch.customerDebitCardinality, 1);
   assert.equal(freeze.workspaceLaunch.persistence, "control_plane_runtime_operations with action=workspace.launch.v2 and result.schemaVersion=2");
   assert.equal(freeze.workspaceLaunch.codeCompleteThroughPhase, undefined);
-  assert.equal(freeze.workspaceLaunch.legacyNonTerminalPolicy, "manual_review_compute_fulfilling_is_read_only_candidate_normalized_only_after_debit_identity_local_storage_zero_and_compute_plus_exact_cbs_proof_via_postgresql_cas");
+  assert.equal(freeze.workspaceLaunch.legacyNonTerminalPolicy, "manual_review_compute_fulfilling_is_read_only_candidate_normalized_only_after_debit_and_exact_compute_identity_ownership_proof_via_postgresql_cas");
+  assert.deepEqual(freeze.workspaceLaunch.stageDecisionContract, {
+    aggregateRoot: "workspace.launch.v2",
+    orderedStages: ["debit", "compute_claim", "storage", "attachment", "secret", "runtime", "activation", "receipt", "succeeded"],
+    collector: "per_source_present_absent_unavailable_or_conflict_without_cross_source_erasure",
+    reducer: "pure_normalized_snapshot_to_one_current_decision",
+    currentDecisionFields: ["currentStage", "stageState", "firstFalsePredicate", "expected", "actual", "authority", "nextAction", "requiresApproval", "allowedMutation", "stageAttemptId", "mutationState", "evidenceDigest", "decisionVersion"],
+    atomicPersistence: "phase_status_and_currentDecision_same_launch_postgresql_cas",
+    sharedConsumers: ["normal_launch", "manual_review_recovery", "recovery_diagnose_validate_execute"],
+    projectionOnly: ["get_only_workflow", "console", "artifact"],
+    p0MutationAuthorizationScope: "compute_claim",
+    stageIsolation: "storage_attempted_unknown_or_conflict_never_masks_or_blocks_authoritative_compute_node_ownership",
+    storageEntry: "node_target_owned_only",
+    failClosed: "freeze_current_dangerous_mutation_preserve_other_successful_evidence_and_active_launch"
+  });
   assert.equal(freeze.workspaceLaunch.backgroundProgression, "non_review_and_manual_review_recovery_integrated_local_fake_verified");
   assert.equal(
     freeze.workspaceLaunch.recoveryPlan.execution.fabricLedgerEvidence,
@@ -756,7 +770,7 @@ test("Current contracts hard cut operator resources, wallet adjustments, and ann
     absentRequires: "both_local_identities_and_exact_provider_describe_absence",
     forbiddenSideEffects: ["sync", "tag", "kubectl_apply", "delete", "label", "purchase", "renew", "destroy"]
   });
-  assert.equal(boundary.schemaVersion, 32);
+  assert.equal(boundary.schemaVersion, 33);
   assert.deepEqual(boundary.services.controlPlane.workspaceLaunchRecoveryAcceptanceCanary, {
     defaultEnabled: false,
     allowlistEnv: "OPL_RECOVERY_ACCEPTANCE_CANARY_ACCOUNT_IDS",
@@ -783,6 +797,18 @@ test("Current contracts hard cut operator resources, wallet adjustments, and ann
     restart: "persisted_budget_never_resets",
     terminalFailure: "unknown_or_exhausted_enters_manual_review_and_active_worker_excludes_it"
   });
+  assert.deepEqual(boundary.services.controlPlane.workspaceLaunchStageDecision, {
+    aggregateRoot: "workspace.launch.v2",
+    orderedStages: ["debit", "compute_claim", "storage", "attachment", "secret", "runtime", "activation", "receipt", "succeeded"],
+    collector: "normalized_per_source_evidence_without_cross_stage_erasure",
+    reducer: "pure_function",
+    persistence: "phase_status_currentDecision_one_postgresql_cas",
+    attemptCounters: "stage_attempt_ledger_only_not_currentDecision",
+    computeConsumers: ["normal_launch", "manual_review_recovery", "recovery_diagnose_validate_execute"],
+    projectionOnly: ["get_only_workflow", "console", "artifact"],
+    mutationAuthorization: "persisted_currentDecision_only",
+    p0Scope: "compute_claim"
+  });
   const recoveryPlan = boundary.services.controlPlane.workspaceLaunchAuthoritativeReadbackRecovery;
   assert.equal(recoveryPlan.authority, "control_plane_persisted_recovery_plan");
   assert.deepEqual(recoveryPlan.routes, {
@@ -797,7 +823,9 @@ test("Current contracts hard cut operator resources, wallet adjustments, and ann
   assert.equal(recoveryPlan.resourceIdentityInput, "forbidden");
   assert.equal(recoveryPlan.legacyPublicRouteStatus, "404_retired");
   assert.equal(recoveryPlan.planBinding.targetSource, "authoritative_control_plane_fabric_provider_and_ledger_readback");
-  assert.deepEqual(recoveryPlan.executionLease.identity, ["plan_id", "plan_digest", "approval_digest", "execution_id", "run_id", "decision"]);
+  assert.deepEqual(recoveryPlan.planBinding.decisionFields, ["decisionDigest", "evidenceDigest", "decisionVersion", "currentStage", "stageAttemptId", "allowedMutation", "mutationBudget"]);
+  assert.deepEqual(recoveryPlan.executionLease.identity, ["plan_id", "plan_digest", "approval_digest", "execution_id", "run_id", "decision", "reviewer"]);
+  assert.equal(recoveryPlan.executionLease.reviewer, "authenticated_operator_session_bound_into_execution_identity");
   assert.equal(recoveryPlan.executionLease.fencing, "byte_exact_current_lease_token_required_to_finalize");
   assert.equal(recoveryPlan.executionLease.unknownResult, "reconcile_same_execution_identity_without_second_provider_entry");
   assert.equal(recoveryPlan.executionLease.authoritativeZeroEvidence, "fabric_identity_evidence_exact_binding_class_digest_and_persisted_cvm_node_mutation_shape");
@@ -831,13 +859,15 @@ test("Current contracts hard cut operator resources, wallet adjustments, and ann
     mutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
   });
   assert.deepEqual(boundary.services.fabric.workspaceComputeClaimRecovery, {
+    computeProviderTruthEndpoint: "GET /fabric/compute-provider-truth",
     proofEndpoint: "POST /fabric/compute-claim-recovery/proof",
     identityEvidenceEndpoint: "POST /fabric/compute-claim-recovery/identity-evidence",
     claimEndpoint: "POST /fabric/compute-claim-recovery/claim",
-    scope: "workspace.launch.v2_compute_claim_pending_before_storage_create",
-    proofAuthority: ["launch_operation", "compute_allocation", "allocation_plan", "machine_ownership", "tencent_describe", "tencent_describe_disks", "kubernetes_get"],
+    scope: "workspace.launch.v2_compute_claim_pending_independent_of_later_storage_attempt_state",
+    proofAuthority: ["launch_operation", "compute_allocation", "allocation_plan", "machine_ownership", "tencent_describe", "kubernetes_get"],
     packages: ["basic", "pro"],
-    storageGate: "zero_local_create_storage_volume_operations_requires_exact_tencent_cbs_discovery",
+    stageIsolation: "storage_attempted_unknown_or_conflict_is_reported_but_never_masks_compute_or_node_truth",
+    storageGate: "node_target_owned_before_independent_storage_reconciliation_and_any_cbs_mutation",
     storageDiscovery: {
       operation: "DescribeDisks_only",
       ownershipTags: ["opl_account_id", "opl_workspace_id", "opl_resource_id", "opl_operation_id"],
@@ -863,7 +893,7 @@ test("Current contracts hard cut operator resources, wallet adjustments, and ann
     exactIdentity: ["account", "workspace", "compute_operation", "pool", "node_pool", "machine", "node", "private_ip", "cvm", "sku", "zone"],
     billingFacts: { chargeType: "PREPAID", periodMonths: 1, renewFlag: "NOTIFY_AND_MANUAL_RENEW", deadline: "exact" },
     ownershipProof: { node: ["unallocated", "target_owned"], cvm: ["recoverable", "target_owned"] },
-    reasons: ["local_identity", "provider_describe", "iam_rbac", "multiple_candidate", "identity_mismatch", "node_ownership_conflict", "storage_already_started"],
+    reasons: ["local_identity", "provider_describe", "iam_rbac", "multiple_candidate", "identity_mismatch", "node_ownership_conflict"],
     proofMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
     providerIdentityFailureEvidence: {
       owner: "Fabric_ProveComputeClaimRecovery",
@@ -915,7 +945,7 @@ test("Current contracts hard cut operator resources, wallet adjustments, and ann
       observedCvmTagRepairContinuation: "only_cvm_tag_readback_zero_unknown_zero_kubernetes_then_fresh_exact_cvm_target_owned_node_unallocated_proof_may_reconcile_original_claim_identity_and_attempt_one_node_patch_without_binding_takeover",
       requestHashOnlyReconciliation: {
         consumer: "claim_compute_recovery_only",
-        commonIdentity: "canonical_compute_operation_quarantined_allocation_and_ownership_exact_original_launch_target_plan_machine_cvm_node_pool_node_billing_and_storage_not_started",
+        commonIdentity: "canonical_compute_operation_quarantined_allocation_and_ownership_exact_original_launch_target_plan_machine_cvm_node_pool_node_and_billing",
         generations: {
           isolated_request_hash_v1: "schema_1_claim_pending_valid_isolated_manual_recovery_ledger",
           normal_launch_terminal_evidence_v1: "schema_2_failed_no_manual_ledger_compute_create_1_1_0_max1_compute_claim_cvm_1_0_1_max1_node_budget_absent_exact_compute_claim_cvm_terminal_unprovable_evidence"
