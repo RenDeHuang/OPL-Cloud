@@ -1,6 +1,7 @@
 package server
 
 import (
+	"strings"
 	"testing"
 
 	"opl-cloud/services/control-plane/internal/clients"
@@ -244,5 +245,60 @@ func TestCurrentDecisionConsumesPersistedEvaluationInsteadOfRawProof(t *testing.
 		decision.Actual != "unallocated" || decision.Authority != "provider.nodeOwnership" ||
 		!AuthorizeStageMutation(decision, "node_only_continuation") {
 		t.Fatalf("CurrentDecision reinterpreted raw proof: decision=%#v evaluation=%#v", decision, evaluation)
+	}
+}
+
+func TestComputeClaimRequestHydratesStorageUnknownFromAuthoritativeAttemptLedger(t *testing.T) {
+	operation, _, proof := productionComputeClaimEvaluationFixture()
+	// This is the production shape that triggered the P0: a historical approval
+	// still says storage_not_started while the launch ledger already records the
+	// one permitted storage attempt as unknown.
+	operation.ComputeClaimApproval.Resources.StorageState = "storage_not_started"
+	operation.ComputeClaimApproval.Resources.StorageProviderResourceID = ""
+	approvalDigest := operation.ComputeClaimApproval.ApprovalDigest
+
+	input := workspaceComputeClaimRequestFromOperation(operation)
+	if input.Resources.StorageState != "storage_attempt_unknown" || input.Resources.StorageProviderResourceID != "" {
+		t.Fatalf("storage attempt ledger was not hydrated: %#v", input.Resources)
+	}
+	if operation.ComputeClaimApproval.ApprovalDigest != approvalDigest {
+		t.Fatalf("hydration changed persisted approval digest: before=%s after=%s", approvalDigest, operation.ComputeClaimApproval.ApprovalDigest)
+	}
+
+	evaluation := evaluateWorkspaceComputeClaimProof(operation, input, proof, false)
+	decision := currentDecisionForComputeClaimEvaluation(operation, nil, evaluation)
+	if !evaluation.Eligible || evaluation.FirstFalsePredicate != "provider.nodeOwnership" ||
+		evaluation.Expected != "target_owned" || evaluation.Actual != "unallocated" ||
+		evaluation.Authority != "provider.nodeOwnership" ||
+		decision.NextAction != nextActionNodeOnlyContinuation ||
+		!AuthorizeStageMutation(decision, "node_only_continuation") ||
+		AuthorizeStageMutation(decision, "create_original_cbs") {
+		t.Fatalf("hydrated Compute decision did not isolate Node continuation: evaluation=%#v decision=%#v", evaluation, decision)
+	}
+}
+
+func TestComputeClaimApprovalStorageBoundaryRefreshIsNarrow(t *testing.T) {
+	operation, _, _ := productionComputeClaimEvaluationFixture()
+	operation.ComputeClaimApproval = &workspaceComputeClaimApprovalBinding{
+		SchemaVersion: 2, ApprovalID: "approval-old", ExpiresAt: "2099-01-01T00:00:00Z",
+		MergedMainSHA: "0123456789012345678901234567890123456789", CloudImageDigest: "sha256:" + strings.Repeat("a", 64),
+		WorkspaceImageDigest: operation.WorkspaceImageDigest, Confirmation: "RECOVER_PROVEN_COMPUTE_AND_CONTINUE_ORIGINAL_LAUNCH",
+		IdempotencyKey: "recovery-old", RecoveryKey: "recovery-old", Target: workspaceComputeClaimApprovalTargetFromOperation(operation),
+		Resources:     workspaceComputeClaimExpectedResources(operation, "storage_not_started", ""),
+		AttemptLimits: workspaceComputeClaimAttemptLimits{Claim: workspaceComputeClaimProviderAttemptLimits{Tencent: 5, Kubernetes: 1}, Storage: 1, Attachment: 1, Secret: 1, Runtime: 1, Activation: 1, Receipt: 1},
+		AllowedWrites: workspaceComputeClaimAllowedWritesForStorage("storage_not_started"), ForbiddenWrites: append([]string(nil), workspaceComputeClaimForbiddenWrites...),
+	}
+	operation.ComputeClaimApproval.ApprovalDigest = workspaceComputeClaimApprovalDigest(*operation.ComputeClaimApproval)
+	want := *operation.ComputeClaimApproval
+	want.Resources = workspaceComputeClaimExpectedResources(operation, "storage_attempt_unknown", "")
+	want.AllowedWrites = workspaceComputeClaimAllowedWritesForStorage("storage_attempt_unknown")
+	want.ApprovalDigest = workspaceComputeClaimApprovalDigest(want)
+
+	if !workspaceComputeClaimApprovalStorageBoundaryRefreshAllowed(operation, *operation.ComputeClaimApproval, want) {
+		t.Fatal("exact storage-unknown boundary refresh was rejected")
+	}
+	want.Target.NodeName = "different-node"
+	if workspaceComputeClaimApprovalStorageBoundaryRefreshAllowed(operation, *operation.ComputeClaimApproval, want) {
+		t.Fatal("identity drift was accepted during storage-boundary refresh")
 	}
 }

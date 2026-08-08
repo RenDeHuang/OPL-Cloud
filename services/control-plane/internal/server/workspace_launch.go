@@ -2274,21 +2274,41 @@ func workspaceComputeClaimApprovalMayBeSuperseded(operation workspaceLaunchOpera
 	wantExpiresAt, wantExpiresErr := time.Parse(time.RFC3339, want.ExpiresAt)
 	failureAllowsSuccessor := operation.ErrorCode == "workspace_compute_claim_identity_mismatch" ||
 		workspaceComputeClaimLegacyClientRejectedSuccessor(operation)
-	if operation.Status != "manual_review" || operation.Phase != "compute_claim_pending" ||
-		!failureAllowsSuccessor || operation.ComputeClaimProof != nil ||
-		operation.ComputeClaimRequestHash != "" || operation.ComputeClaimApprovalID != "" || operation.ComputeClaimMergedMainSHA != "" ||
-		operation.ComputeClaimCloudDigest != "" || operation.ComputeClaimPrivateIP != "" || operation.AttachmentID != "" ||
-		operation.GatewaySecretRef != "" || operation.RuntimeID != "" || operation.ReceiptID != "" ||
-		wantExpiresErr != nil || !wantExpiresAt.After(time.Now().UTC()) ||
+	if wantExpiresErr != nil || !wantExpiresAt.After(time.Now().UTC()) ||
 		got.ApprovalDigest == "" || got.ApprovalDigest != workspaceComputeClaimApprovalDigest(got) {
 		return false
 	}
-	for _, budget := range operation.ContinuationAttemptBudgets {
-		if budget.Attempted != 0 || budget.Confirmed != 0 || budget.Unknown != 0 {
-			return false
+	if failureAllowsSuccessor && operation.Status == "manual_review" && operation.Phase == "compute_claim_pending" &&
+		operation.ComputeClaimProof == nil && operation.ComputeClaimRequestHash == "" && operation.ComputeClaimApprovalID == "" &&
+		operation.ComputeClaimMergedMainSHA == "" && operation.ComputeClaimCloudDigest == "" && operation.ComputeClaimPrivateIP == "" &&
+		operation.AttachmentID == "" && operation.GatewaySecretRef == "" && operation.RuntimeID == "" && operation.ReceiptID == "" {
+		for _, budget := range operation.ContinuationAttemptBudgets {
+			if budget.Attempted != 0 || budget.Confirmed != 0 || budget.Unknown != 0 {
+				return false
+			}
 		}
+		return workspaceComputeClaimApprovalScopeMatches(got, want)
 	}
-	return workspaceComputeClaimApprovalScopeMatches(got, want)
+	return workspaceComputeClaimApprovalStorageBoundaryRefreshAllowed(operation, got, want)
+}
+
+func workspaceComputeClaimApprovalStorageBoundaryRefreshAllowed(operation workspaceLaunchOperation, got, want workspaceComputeClaimApprovalBinding) bool {
+	if operation.Status != "manual_review" || operation.Phase != "storage_fulfilling" || operation.ComputeClaimProof != nil ||
+		operation.ComputeClaimRequestHash != "" || operation.ComputeClaimApprovalID != "" || operation.ComputeClaimMergedMainSHA != "" ||
+		operation.ComputeClaimCloudDigest != "" || operation.ComputeClaimPrivateIP != "" || operation.AttachmentID != "" ||
+		operation.GatewaySecretRef != "" || operation.RuntimeID != "" || operation.ReceiptID != "" ||
+		operation.ContinuationAttemptBudgets["storage"] != (workspaceLaunchStageBudget{Attempted: 1, Unknown: 1, Max: workspaceLaunchStageMax}) ||
+		want.Resources.StorageState != "storage_attempt_unknown" || want.Resources.StorageProviderResourceID != "" {
+		return false
+	}
+	// Only the stage-bound Storage state and its dependent write projection may
+	// change. Every protected identity, budget, and customer binding remains
+	// exact, and the old approval itself must already have a valid digest.
+	normalized := got
+	normalized.Resources.StorageState = want.Resources.StorageState
+	normalized.Resources.StorageProviderResourceID = want.Resources.StorageProviderResourceID
+	normalized.AllowedWrites = append([]string(nil), want.AllowedWrites...)
+	return workspaceComputeClaimApprovalScopeMatches(normalized, want)
 }
 
 func workspaceComputeClaimWorkspaceImageDigestMatches(operation workspaceLaunchOperation, input workspaceComputeClaimRecoveryRequest) bool {
@@ -2722,6 +2742,7 @@ func (app *controlPlaneServer) diagnoseWorkspaceComputeClaim(ctx context.Context
 	if err != nil {
 		return clients.ComputeClaimRecoveryProof{}, err
 	}
+	input = hydrateWorkspaceComputeClaimRecoveryRequestStage(operation, input)
 	proof, proofErr := collectWorkspaceComputeClaimEvidence(ctx, service, operation, input)
 	evaluation := evaluateWorkspaceComputeClaimProof(operation, input, proof, false)
 	if !evaluation.BaseMatches || proof.TencentMutationCount != 0 || proof.KubernetesMutationCount != 0 {
@@ -2750,6 +2771,7 @@ func (app *controlPlaneServer) claimWorkspaceCompute(ctx context.Context, servic
 		}
 		return clients.ComputeClaimRecoveryProof{}, err
 	}
+	input = hydrateWorkspaceComputeClaimRecoveryRequestStage(operation, input)
 	requestHash := workspaceComputeClaimRequestHash(input, key)
 	if operation.ComputeClaimProof != nil {
 		nodeOnlyAuthorized := operation.CurrentDecision != nil && AuthorizeStageMutation(*operation.CurrentDecision, "node_only_continuation")
@@ -2787,6 +2809,7 @@ func (app *controlPlaneServer) claimWorkspaceCompute(ctx context.Context, servic
 	if err != nil {
 		return clients.ComputeClaimRecoveryProof{}, err
 	}
+	input = hydrateWorkspaceComputeClaimRecoveryRequestStage(operation, input)
 	legacyCandidate := workspaceComputeClaimLegacyCandidate(operation)
 	if !legacyCandidate {
 		if err := app.bindWorkspaceComputeClaimApproval(ctx, &operation, input, key, true); err != nil {
