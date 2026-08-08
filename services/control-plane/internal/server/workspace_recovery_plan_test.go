@@ -2324,7 +2324,8 @@ func TestWorkspaceRecoveryPlanDiagnosePersistsFieldMismatch(t *testing.T) {
 		}},
 		MutationLedger: "absent",
 	}
-	plan, err := newWorkspaceComputeClaimRecoveryPlan(operation, input, proof, evidence, workspaceRecoveryReleaseBinding{
+	evaluation := evaluateWorkspaceComputeClaimProof(operation, input, proof, false)
+	plan, err := newWorkspaceComputeClaimRecoveryPlan(operation, input, proof, evaluation, evidence, workspaceRecoveryReleaseBinding{
 		MainSHA: strings.Repeat("a", 40), CloudImageDigest: "sha256:" + strings.Repeat("b", 64), WorkspaceImageDigest: deployedImageDigest(operation.WorkspaceImageDigest),
 	})
 	if err != nil || plan.Status != "blocked" || len(plan.Mismatches) != 1 || plan.Mismatches[0].Field != "binding.operationId" ||
@@ -2338,8 +2339,10 @@ func TestWorkspaceRecoveryPlanRejectsClassificationOnlyBindingAuthority(t *testi
 	proof := computeClaimRecoveryProofForLaunch(operation, "unallocated")
 	evidence := recoverableCVMOnlyIdentityEvidence()
 	evidence.BindingClassification = "known-legacy"
+	input := workspaceComputeClaimRecoveryRequestForOperation(operation)
+	evaluation := evaluateWorkspaceComputeClaimProof(operation, input, proof, false)
 	plan, err := newWorkspaceComputeClaimRecoveryPlan(
-		operation, workspaceComputeClaimRecoveryRequestForOperation(operation), proof, &evidence,
+		operation, input, proof, evaluation, &evidence,
 		workspaceRecoveryReleaseBinding{
 			MainSHA: strings.Repeat("a", 40), CloudImageDigest: "sha256:" + strings.Repeat("b", 64),
 			WorkspaceImageDigest: deployedImageDigest(operation.WorkspaceImageDigest),

@@ -5,8 +5,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"strings"
-
-	"opl-cloud/services/control-plane/internal/clients"
 )
 
 // EvidenceState is deliberately per-source. A failed Storage read must not
@@ -21,11 +19,12 @@ const (
 )
 
 type StageEvidence struct {
-	State     EvidenceState `json:"state"`
-	Confirmed bool          `json:"confirmed"`
-	Expected  string        `json:"expected,omitempty"`
-	Actual    string        `json:"actual,omitempty"`
-	Authority string        `json:"authority,omitempty"`
+	State               EvidenceState `json:"state"`
+	Confirmed           bool          `json:"confirmed"`
+	Expected            string        `json:"expected,omitempty"`
+	Actual              string        `json:"actual,omitempty"`
+	Authority           string        `json:"authority,omitempty"`
+	FirstFalsePredicate string        `json:"firstFalsePredicate,omitempty"`
 }
 
 // EvidenceSnapshot is the Compute Claim decision input. It contains only
@@ -122,7 +121,7 @@ func decisionForEvidence(decision *CurrentDecision, stage string, evidence Stage
 	decision.Authority = firstNonEmptyDecision(evidence.Authority, predicate)
 	decision.Expected = firstNonEmptyDecision(evidence.Expected, expected)
 	decision.Actual = firstNonEmptyDecision(evidence.Actual, fallbackActual)
-	decision.FirstFalsePredicate = decision.Authority
+	decision.FirstFalsePredicate = firstNonEmptyDecision(evidence.FirstFalsePredicate, decision.Authority)
 	if stage == "storage" && evidence.Actual == "attempted_unknown" {
 		decision.StageState, decision.NextAction, decision.RequiresApproval, decision.MutationState = "unknown", nextActionGetOnlyReconcileStorage, true, "frozen"
 		return *decision
@@ -193,38 +192,53 @@ func workspaceLaunchEvidenceSnapshot(operation workspaceLaunchOperation) Evidenc
 	return snapshot
 }
 
-func workspaceLaunchEvidenceSnapshotWithComputeProof(operation workspaceLaunchOperation, proof clients.ComputeClaimRecoveryProof, proofErr error) EvidenceSnapshot {
+func workspaceLaunchEvidenceSnapshotWithComputeEvaluation(operation workspaceLaunchOperation, evaluation workspaceComputeClaimProofEvaluation, proofErr error) EvidenceSnapshot {
 	snapshot := workspaceLaunchEvidenceSnapshot(operation)
-	snapshot.ComputeClaim.Confirmed = false
-	if proof.CVMOwnershipState != "target_owned" {
-		snapshot.ComputeClaim = StageEvidence{
-			State:     EvidenceUnavailable,
-			Expected:  "target_owned",
-			Actual:    firstNonEmptyDecision(proof.CVMOwnershipState, "unknown"),
-			Authority: "provider.cvmOwnership",
-		}
-	} else {
-		switch proof.NodeOwnershipState {
-		case "target_owned":
-			snapshot.ComputeClaim.State, snapshot.ComputeClaim.Confirmed, snapshot.ComputeClaim.Actual = EvidencePresent, true, "target_owned"
-		case "unallocated":
-			snapshot.ComputeClaim.State, snapshot.ComputeClaim.Actual = EvidencePresent, "unallocated"
-		case "conflict":
-			snapshot.ComputeClaim.State, snapshot.ComputeClaim.Actual = EvidenceConflict, "conflict"
-		default:
-			snapshot.ComputeClaim.State, snapshot.ComputeClaim.Actual = EvidenceUnavailable, "unknown"
-		}
-		if proofErr != nil && proof.NodeOwnershipState != "target_owned" && proof.NodeOwnershipState != "unallocated" {
-			snapshot.ComputeClaim.State, snapshot.ComputeClaim.Actual = EvidenceUnavailable, "unknown"
-		}
+	snapshot.ComputeClaim = StageEvidence{
+		State:               EvidenceUnavailable,
+		Expected:            firstNonEmptyDecision(evaluation.Expected, "target_owned"),
+		Actual:              firstNonEmptyDecision(evaluation.Actual, "unknown"),
+		Authority:           firstNonEmptyDecision(evaluation.Authority, "provider.computeClaimProof"),
+		FirstFalsePredicate: evaluation.FirstFalsePredicate,
 	}
-	switch proof.StorageState {
-	case "storage_not_started":
-		snapshot.Storage = StageEvidence{State: EvidenceAbsent, Expected: "confirmed", Actual: "authoritative_absent", Authority: "provider.storage"}
-	case "storage_existing_exact":
-		snapshot.Storage = StageEvidence{State: EvidencePresent, Expected: "confirmed", Actual: "exact_existing", Authority: "provider.storage"}
-	case "storage_attempt_unknown", "unknown":
-		snapshot.Storage = StageEvidence{State: EvidenceUnavailable, Expected: "confirmed", Actual: "attempted_unknown", Authority: "provider.storage"}
+	if proofErr != nil {
+		if snapshot.ComputeClaim.FirstFalsePredicate == "" {
+			snapshot.ComputeClaim.FirstFalsePredicate = "provider.computeClaimEvidence"
+			snapshot.ComputeClaim.Expected = "available"
+			snapshot.ComputeClaim.Actual = "unavailable"
+			snapshot.ComputeClaim.Authority = "fabric.computeClaimProof"
+		}
+		return snapshot
+	}
+	if !evaluation.Eligible {
+		return snapshot
+	}
+	if evaluation.CVMOwnershipState != "target_owned" {
+		snapshot.ComputeClaim.FirstFalsePredicate = firstNonEmptyDecision(evaluation.FirstFalsePredicate, "provider.cvmOwnership")
+		snapshot.ComputeClaim.Expected = "target_owned"
+		snapshot.ComputeClaim.Actual = firstNonEmptyDecision(evaluation.CVMOwnershipState, "unknown")
+		snapshot.ComputeClaim.Authority = "provider.cvmOwnership"
+		return snapshot
+	}
+	switch evaluation.NodeOwnershipState {
+	case "target_owned":
+		snapshot.ComputeClaim.State = EvidencePresent
+		snapshot.ComputeClaim.Confirmed = true
+		snapshot.ComputeClaim.Expected = "target_owned"
+		snapshot.ComputeClaim.Actual = "target_owned"
+		snapshot.ComputeClaim.Authority = "provider.nodeOwnership"
+	case "unallocated":
+		snapshot.ComputeClaim.State = EvidencePresent
+		snapshot.ComputeClaim.Expected = "target_owned"
+		snapshot.ComputeClaim.Actual = "unallocated"
+		snapshot.ComputeClaim.Authority = "provider.nodeOwnership"
+		snapshot.ComputeClaim.FirstFalsePredicate = "provider.nodeOwnership"
+	default:
+		snapshot.ComputeClaim.State = EvidenceUnavailable
+		snapshot.ComputeClaim.Expected = "target_owned"
+		snapshot.ComputeClaim.Actual = firstNonEmptyDecision(evaluation.NodeOwnershipState, "unknown")
+		snapshot.ComputeClaim.Authority = "provider.nodeOwnership"
+		snapshot.ComputeClaim.FirstFalsePredicate = "provider.nodeOwnership"
 	}
 	return snapshot
 }
@@ -255,8 +269,11 @@ func currentDecisionForWorkspaceLaunch(operation workspaceLaunchOperation) Curre
 	return currentDecisionForEvidence(operation, workspaceLaunchEvidenceSnapshot(operation))
 }
 
-func currentDecisionForComputeClaimProof(operation workspaceLaunchOperation, proof clients.ComputeClaimRecoveryProof, proofErr error) CurrentDecision {
-	return currentDecisionForEvidence(operation, workspaceLaunchEvidenceSnapshotWithComputeProof(operation, proof, proofErr))
+func currentDecisionForComputeClaimEvaluation(operation workspaceLaunchOperation, proofErr error, evaluation workspaceComputeClaimProofEvaluation) CurrentDecision {
+	// The reducer consumes the exact evaluator result produced by the caller. It
+	// never rebuilds an input or reevaluates raw provider proof.
+	snapshot := workspaceLaunchEvidenceSnapshotWithComputeEvaluation(operation, evaluation, proofErr)
+	return currentDecisionForEvidence(operation, snapshot)
 }
 
 func sameCurrentDecisionAuthority(got *CurrentDecision, want CurrentDecision) bool {

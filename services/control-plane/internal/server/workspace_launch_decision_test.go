@@ -74,7 +74,8 @@ func TestCurrentDecisionDoesNotAuthorizeNodeOnlyContinuationForRecoverableCVM(t 
 	proof := computeClaimRecoveryProofForLaunchStorage(operation, "unallocated", "storage_attempt_unknown", "")
 	proof.CVMOwnershipState = "recoverable"
 
-	decision := currentDecisionForComputeClaimProof(operation, proof, nil)
+	evaluation := evaluateWorkspaceComputeClaimProof(operation, workspaceComputeClaimRequestFromOperation(operation), proof, false)
+	decision := currentDecisionForComputeClaimEvaluation(operation, nil, evaluation)
 
 	if decision.CurrentStage != "compute_claim" || decision.StageState != "unknown" ||
 		decision.FirstFalsePredicate != "provider.cvmOwnership" || decision.Expected != "target_owned" ||
