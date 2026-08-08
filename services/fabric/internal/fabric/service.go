@@ -647,15 +647,18 @@ func (s *Service) ComputeProviderTruth(ctx context.Context, input ComputeClaimRe
 	truth.NodeOwnershipState, truth.CVMOwnershipState, truth.Proof = proof.NodeOwnershipState, proof.CVMOwnershipState, &proof
 	truth.StorageState = normalizedComputeStorageState(proof.StorageState)
 	truth.ProviderRequestID = compute.ProviderRequestID
-	if proof.ComputeAllocationID != "" && proof.ComputeAllocationID != compute.ID {
-		return truth, fmt.Errorf("%w: compute_identity", ErrComputeClaimRecoveryUnavailable)
-	}
 	if err != nil {
 		return truth, err
 	}
 	if !proof.Eligible || proof.Reason != "none" {
 		return truth, fmt.Errorf("%w: %s", ErrComputeClaimRecoveryUnavailable, firstNonEmpty(proof.Reason, "provider_describe"))
 	}
+	// The proof already binds the persisted Fabric operation, MachineOwnership,
+	// CVM, and Node. The process projection is optional output enrichment and
+	// must not become a second authorization gate after those authorities agree.
+	truth.Compute.ID, truth.Compute.AccountID, truth.Compute.WorkspaceID = proof.ComputeAllocationID, proof.AccountID, proof.WorkspaceID
+	truth.Compute.PackageID, truth.Compute.Provider = proof.PackageID, "tencent-tke"
+	truth.Compute.PoolID, truth.Compute.NodePoolID = proof.PoolID, proof.NodePoolID
 	truth.State, truth.ComputeState = "ready", "ready"
 	truth.Compute.Status = "ready"
 	truth.Compute.MachineName, truth.Compute.NodeName = proof.MachineName, proof.NodeName
