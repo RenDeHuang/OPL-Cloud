@@ -106,11 +106,12 @@ func legacyKubectlClientRejectedIdentityEvidence() clients.ComputeClaimIdentityE
 	return evidence
 }
 
-func TestWorkspaceComputeClaimTraceKeepsNodeAuthorityAheadOfHistoricalTerminalEvidence(t *testing.T) {
+func TestWorkspaceComputeClaimTraceKeepsFreshNodeAuthorityAheadOfStalePersistedProof(t *testing.T) {
 	fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, "basic")
 	operation.Status, operation.Phase, operation.ErrorCode = "manual_review", "storage_fulfilling", "workspace_recovery_plan_fabric_proof_failed"
 	operation.ContinuationAttemptBudgets["storage"] = workspaceLaunchStageBudget{Attempted: 1, Unknown: 1, Max: workspaceLaunchStageMax}
-	operation.ComputeClaimProof = nil
+	staleProof := computeClaimRecoveryProofForLaunchStorage(operation, "target_owned", "storage_attempt_unknown", "")
+	operation.ComputeClaimProof = &staleProof
 	operation.CurrentDecision = nil
 	operation.ComputeClaimTerminalEvidence = &clients.ComputeClaimTerminalEvidence{
 		SchemaVersion: 1, Stage: "compute_claim_node", Status: "terminal_unprovable", ErrorCode: "compute_claim_terminal_node_unprovable",
@@ -968,13 +969,14 @@ func TestWorkspaceRecoveryPlanDiagnoseKeepsComputeClaimPendingWhenNodeOwnershipI
 	}
 }
 
-func TestWorkspaceRecoveryPlanDiagnoseUsesComputeAuthorityForStaleStoragePhaseWithoutLaunchAttempt(t *testing.T) {
+func TestWorkspaceRecoveryPlanDiagnoseUsesFreshComputeAuthorityAheadOfStalePersistedProof(t *testing.T) {
 	t.Setenv("OPL_RELEASE_SHA", strings.Repeat("a", 40))
 	t.Setenv("OPL_CLOUD_IMAGE", "uswccr.ccs.tencentyun.com/oplcloud/opl-cloud@sha256:"+strings.Repeat("b", 64))
 	fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, "basic")
 	operation.Status, operation.Phase, operation.ErrorCode = "manual_review", "storage_fulfilling", "workspace_recovery_plan_fabric_proof_failed"
 	operation.ContinuationAttemptBudgets["storage"] = workspaceLaunchStageBudget{Max: workspaceLaunchStageMax}
-	operation.ComputeClaimProof = nil
+	staleProof := computeClaimRecoveryProofForLaunchStorage(operation, "target_owned", "storage_attempt_unknown", "")
+	operation.ComputeClaimProof = &staleProof
 	operation.ComputeClaimTerminalEvidence = &clients.ComputeClaimTerminalEvidence{
 		SchemaVersion: 1, Stage: "compute_claim_node", Status: "terminal_unprovable", ErrorCode: "compute_claim_terminal_node_unprovable",
 		ReadbackStatus: "unallocated", AttemptCount: 1, Attempted: 1, Confirmed: 0, Unknown: 1, Max: 1,
