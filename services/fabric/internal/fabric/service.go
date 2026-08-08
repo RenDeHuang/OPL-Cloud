@@ -693,6 +693,14 @@ func (s *Service) ComputeClaimRecoveryProof(ctx context.Context, input ComputeCl
 		proof.Reason = "identity_mismatch"
 		return proof, fmt.Errorf("%w: identity_mismatch", ErrComputeClaimRecoveryUnavailable)
 	}
+	if input.AllowExistingStorageOperation && storageDisposition != computeClaimStorageOperationAbsent {
+		// Storage is a later stage. Once the compute provider has proved the
+		// original CVM and Node identity, an attempted or conflicting storage
+		// record remains unknown and cannot block the safe Node-only continuation.
+		// The storage worker must reconcile it before any CBS mutation.
+		proof.Eligible, proof.Reason, proof.StorageState, proof.StorageProviderResourceID = true, "none", "storage_attempt_unknown", ""
+		return proof, nil
+	}
 	storageProvider, ok := s.provider.(storageRecoveryDiscoveryProvider)
 	if !ok {
 		if !input.AllowExistingStorageOperation {
@@ -714,17 +722,6 @@ func (s *Service) ComputeClaimRecoveryProof(ctx context.Context, input ComputeCl
 	)
 	storageInput.OperationID = storageOperation.OperationID
 	storageDiscovery, err := storageProvider.DiscoverStorageRecovery(ctx, storageInput)
-	if storageDisposition == computeClaimStorageOperationUnknown || storageDisposition == computeClaimStorageOperationConflict {
-		if storageDiscovery.MutationCount != 0 {
-			proof.Reason = "provider_describe"
-			return proof, fmt.Errorf("%w: provider_describe", ErrComputeClaimRecoveryUnavailable)
-		}
-		// A persisted Storage attempt or conflict is not authoritative. Keep
-		// that stage unknown so the caller can continue the proven Compute claim
-		// without authorizing a CBS write or treating absence as proven.
-		proof.Eligible, proof.Reason, proof.StorageState, proof.StorageProviderResourceID = true, "none", "storage_attempt_unknown", ""
-		return proof, nil
-	}
 	if err != nil {
 		if input.AllowExistingStorageOperation && storageDiscovery.MutationCount == 0 {
 			// Storage readback is independent of the already-proved Compute
@@ -2488,7 +2485,7 @@ func (s *Service) computeClaimRecoveryLocalState(ctx context.Context, input Comp
 		return FabricOperation{}, ComputeAllocation{}, ComputeAllocationPreparation{}, MachineOwnership{}, "storage_already_started",
 			fmt.Errorf("%w: storage_already_started", ErrComputeClaimRecoveryUnavailable)
 	}
-	if storageDisposition == computeClaimStorageOperationConflict {
+	if storageDisposition == computeClaimStorageOperationConflict && !input.AllowExistingStorageOperation {
 		return FabricOperation{}, ComputeAllocation{}, ComputeAllocationPreparation{}, MachineOwnership{}, "identity_mismatch",
 			fmt.Errorf("%w: identity_mismatch", ErrComputeClaimRecoveryUnavailable)
 	}
