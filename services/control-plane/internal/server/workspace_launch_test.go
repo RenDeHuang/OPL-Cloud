@@ -2447,7 +2447,9 @@ func TestWorkspaceLaunchComputeClaimPendingWorkerPersistsDecisionBeforeNodeConti
 	}
 	current := fixture.operation(t)
 	if current.Status != "preparing" || current.Phase != "storage_fulfilling" || len(fixture.fabric.computeProviderInputs) != 1 || len(fixture.fabric.computeClaimInputs) != 0 ||
-		len(fixture.fabric.computeClaimCalls) != 1 || len(fixture.fabric.storageIDs) != 0 {
+		len(fixture.fabric.computeClaimCalls) != 1 || len(fixture.fabric.storageIDs) != 0 || current.StorageID != operation.StorageID ||
+		current.ComputeClaimProof == nil || current.ComputeClaimProof.NodeOwnershipState != "target_owned" || current.ComputeClaimProof.CVMOwnershipState != "target_owned" ||
+		current.ComputeClaimProof.TencentMutationCount != 0 || current.ComputeClaimProof.KubernetesMutationCount > 1 {
 		t.Fatalf("normal Launch did not stop after shared Compute executor: operation=%#v truths=%#v proofs=%#v claims=%#v storage=%#v", current, fixture.fabric.computeProviderInputs, fixture.fabric.computeClaimInputs, fixture.fabric.computeClaimCalls, fixture.fabric.storageIDs)
 	}
 	if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err != nil {
@@ -2810,7 +2812,7 @@ func requestComputeClaimWithCapabilityForTest(t *testing.T, server http.Handler,
 		}
 		if workspaceComputeClaimLegacyCandidate(operation) {
 			proof, proofErr := service.ComputeClaimRecoveryProof(ctx, workspaceComputeClaimRecoveryInput(operation, input))
-			if proofErr != nil || !workspaceComputeClaimProofEligible(operation, input, proof, false) || !persistWorkspaceComputeClaimIdentityFromProof(&operation, proof) {
+			if proofErr != nil || !evaluateWorkspaceComputeClaimProof(operation, input, proof, false).Eligible || !persistWorkspaceComputeClaimIdentityFromProof(&operation, proof) {
 				writeWorkspaceComputeClaimError(rec, errWorkspaceComputeClaimIdentity)
 				return rec
 			}

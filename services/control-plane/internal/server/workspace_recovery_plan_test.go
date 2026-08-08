@@ -106,6 +106,138 @@ func legacyKubectlClientRejectedIdentityEvidence() clients.ComputeClaimIdentityE
 	return evidence
 }
 
+func TestWorkspaceComputeClaimTraceKeepsNodeAuthorityAheadOfHistoricalTerminalEvidence(t *testing.T) {
+	fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, "basic")
+	operation.Status, operation.Phase, operation.ErrorCode = "manual_review", "storage_fulfilling", "workspace_recovery_plan_fabric_proof_failed"
+	operation.ContinuationAttemptBudgets["storage"] = workspaceLaunchStageBudget{Attempted: 1, Unknown: 1, Max: workspaceLaunchStageMax}
+	operation.ComputeClaimProof = nil
+	operation.CurrentDecision = nil
+	operation.ComputeClaimTerminalEvidence = &clients.ComputeClaimTerminalEvidence{
+		SchemaVersion: 1, Stage: "compute_claim_node", Status: "terminal_unprovable", ErrorCode: "compute_claim_terminal_node_unprovable",
+		ReadbackStatus: "unallocated", AttemptCount: 1, Attempted: 1, Confirmed: 0, Unknown: 1, Max: 1,
+		LaunchOperationID: operation.ID, AccountID: operation.AccountID, WorkspaceID: operation.WorkspaceID,
+		ComputeAllocationID: operation.ComputeID, PackageID: operation.PackageID, NodePoolID: operation.ComputeNodePoolID,
+		CVMOwnershipState: "target_owned", NodeOwnershipState: "unallocated",
+	}
+	proof := computeClaimRecoveryProofForLaunchStorage(operation, "unallocated", "storage_attempt_unknown", "")
+	fixture.fabric.computeProviderTruth = &clients.ComputeProviderTruth{
+		SchemaVersion: 1, State: "ready", ComputeState: "ready", StorageState: "unknown",
+		NodeOwnershipState: "unallocated", CVMOwnershipState: "target_owned", Proof: &proof,
+	}
+	mustStore(t, fixture.store.SaveRuntimeOperation(context.Background(), workspaceLaunchOperationRow(operation)))
+	before := encodeWorkspaceLaunchOperation(operation)
+
+	trace, err := fixture.app.traceWorkspaceComputeClaim(context.Background(), fixture.service, operation.AccountID, operation.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if trace["firstFalsePredicate"] != "provider.nodeOwnership" || trace["expected"] != "target_owned" || trace["actual"] != "unallocated" ||
+		trace["nextAction"] != nextActionNodeOnlyContinuation || trace["authoritativeDecision"] != nil {
+		t.Fatalf("trace did not preserve the first Compute predicate: %#v", trace)
+	}
+	candidate, ok := trace["candidate"].(map[string]any)
+	if !ok || candidate["recoveryCandidate"] != true || candidate["terminalEvidenceBlocksOld"] != true {
+		t.Fatalf("trace candidate projection = %#v", trace["candidate"])
+	}
+	proofProjection, ok := trace["proofEligibility"].(map[string]any)
+	if !ok || proofProjection["called"] != true || proofProjection["eligible"] != true {
+		t.Fatalf("trace proof projection = %#v", trace["proofEligibility"])
+	}
+	reducer, ok := trace["reducer"].(map[string]any)
+	if !ok || reducer["called"] != true {
+		t.Fatalf("trace reducer projection = %#v", trace["reducer"])
+	}
+	counts, ok := trace["mutationCounts"].(map[string]int)
+	if !ok || counts["sub2api"] != 0 || counts["tencent"] != 0 || counts["kubernetes"] != 0 {
+		t.Fatalf("trace mutation counts = %#v", trace["mutationCounts"])
+	}
+	after, found, err := fixture.store.GetRuntimeOperation(context.Background(), operation.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !found {
+		t.Fatal("trace target disappeared")
+	}
+	if got := stringValue(after["result"]); got != before {
+		t.Fatalf("GET-only trace persisted Launch state: before=%s after=%s", before, got)
+	}
+}
+
+func TestWorkspaceComputeClaimTraceReportsCandidatePredicateWithoutInvokingCollector(t *testing.T) {
+	fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, "basic")
+	operation.Status, operation.Phase = "manual_review", "runtime_starting"
+	operation.ComputeClaimProof = nil
+	operation.CurrentDecision = nil
+	mustStore(t, fixture.store.SaveRuntimeOperation(context.Background(), workspaceLaunchOperationRow(operation)))
+
+	trace, err := fixture.app.traceWorkspaceComputeClaim(context.Background(), fixture.service, operation.AccountID, operation.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if trace["firstFalsePredicate"] != "controlPlane.workspaceComputeClaimRecoveryCandidate" ||
+		trace["expected"] != "true" || trace["actual"] != "false" || trace["nextAction"] != "MANUAL_REVIEW" ||
+		trace["authoritativeDecision"] != nil {
+		t.Fatalf("trace candidate predicate = %#v", trace)
+	}
+	candidate, ok := trace["candidate"].(map[string]any)
+	if !ok || candidate["recoveryCandidate"] != false {
+		t.Fatalf("trace candidate projection = %#v", trace["candidate"])
+	}
+	controlPlane, ok := trace["controlPlane"].(map[string]any)
+	if !ok || controlPlane["loadAttempted"] != false || controlPlane["loaded"] != false {
+		t.Fatalf("trace control-plane projection = %#v", trace["controlPlane"])
+	}
+	providerTruth, ok := trace["providerTruth"].(map[string]any)
+	if !ok || providerTruth["collectorCalled"] != false {
+		t.Fatalf("trace provider projection = %#v", trace["providerTruth"])
+	}
+	proofEligibility, ok := trace["proofEligibility"].(map[string]any)
+	if !ok || proofEligibility["called"] != false {
+		t.Fatalf("trace proof projection = %#v", trace["proofEligibility"])
+	}
+	reducer, ok := trace["reducer"].(map[string]any)
+	if !ok || reducer["called"] != false {
+		t.Fatalf("trace reducer projection = %#v", trace["reducer"])
+	}
+	counts, ok := trace["mutationCounts"].(map[string]int)
+	if !ok || counts["sub2api"] != 0 || counts["tencent"] != 0 || counts["kubernetes"] != 0 {
+		t.Fatalf("trace mutation counts = %#v", trace["mutationCounts"])
+	}
+}
+
+func TestWorkspaceComputeClaimTraceRouteIsGETOnlyAndServerOwned(t *testing.T) {
+	fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, "basic")
+	operation.CurrentDecision = nil
+	fixture.fabric.computeClaimProof = computeClaimRecoveryProofForLaunchStorage(operation, "unallocated", "storage_attempt_unknown", "")
+	fixture.fabric.computeProviderTruth = &clients.ComputeProviderTruth{
+		SchemaVersion: 1, State: "ready", ComputeState: "ready", StorageState: "unknown",
+		NodeOwnershipState: "unallocated", CVMOwnershipState: "target_owned", Proof: &fixture.fabric.computeClaimProof,
+	}
+	mustStore(t, fixture.store.SaveRuntimeOperation(context.Background(), workspaceLaunchOperationRow(operation)))
+	before := encodeWorkspaceLaunchOperation(operation)
+	request := httptest.NewRequest(http.MethodGet, "/api/operator/workspace-launches/"+operation.ID+"/recovery-plan?trace=compute_claim&accountId="+operation.AccountID, nil)
+	addAuth(request, fixture.operator)
+	response := httptest.NewRecorder()
+	fixture.server.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("trace route status=%d body=%s", response.Code, response.Body.String())
+	}
+	var trace map[string]any
+	if err := json.Unmarshal(response.Body.Bytes(), &trace); err != nil {
+		t.Fatal(err)
+	}
+	if trace["operationMode"] != "compute_claim_trace" || trace["firstFalsePredicate"] != "provider.nodeOwnership" ||
+		trace["nextAction"] != nextActionNodeOnlyContinuation {
+		t.Fatalf("trace route projection=%#v", trace)
+	}
+	if counts, ok := trace["mutationCounts"].(map[string]any); !ok || counts["sub2api"] != float64(0) || counts["tencent"] != float64(0) || counts["kubernetes"] != float64(0) {
+		t.Fatalf("trace route mutation counts=%#v", trace["mutationCounts"])
+	}
+	if got := fixture.operation(t); encodeWorkspaceLaunchOperation(got) != before || len(fixture.fabric.computeClaimCalls) != 0 || len(fixture.fabric.storageIDs) != 0 {
+		t.Fatalf("trace route mutated business state: operation=%#v claims=%d storage=%d", got, len(fixture.fabric.computeClaimCalls), len(fixture.fabric.storageIDs))
+	}
+}
+
 func TestWorkspaceRecoveryPlanDiagnoseAdmitsOnlyFabricRequestHashReconciliationCandidateWithoutMutation(t *testing.T) {
 	t.Setenv("OPL_RELEASE_SHA", strings.Repeat("a", 40))
 	t.Setenv("OPL_CLOUD_IMAGE", "uswccr.ccs.tencentyun.com/oplcloud/opl-cloud@sha256:"+strings.Repeat("b", 64))
@@ -2192,7 +2324,8 @@ func TestWorkspaceRecoveryPlanDiagnosePersistsFieldMismatch(t *testing.T) {
 		}},
 		MutationLedger: "absent",
 	}
-	plan, err := newWorkspaceComputeClaimRecoveryPlan(operation, input, proof, evidence, workspaceRecoveryReleaseBinding{
+	evaluation := evaluateWorkspaceComputeClaimProof(operation, input, proof, false)
+	plan, err := newWorkspaceComputeClaimRecoveryPlan(operation, input, proof, evaluation, evidence, workspaceRecoveryReleaseBinding{
 		MainSHA: strings.Repeat("a", 40), CloudImageDigest: "sha256:" + strings.Repeat("b", 64), WorkspaceImageDigest: deployedImageDigest(operation.WorkspaceImageDigest),
 	})
 	if err != nil || plan.Status != "blocked" || len(plan.Mismatches) != 1 || plan.Mismatches[0].Field != "binding.operationId" ||
@@ -2206,8 +2339,10 @@ func TestWorkspaceRecoveryPlanRejectsClassificationOnlyBindingAuthority(t *testi
 	proof := computeClaimRecoveryProofForLaunch(operation, "unallocated")
 	evidence := recoverableCVMOnlyIdentityEvidence()
 	evidence.BindingClassification = "known-legacy"
+	input := workspaceComputeClaimRecoveryRequestForOperation(operation)
+	evaluation := evaluateWorkspaceComputeClaimProof(operation, input, proof, false)
 	plan, err := newWorkspaceComputeClaimRecoveryPlan(
-		operation, workspaceComputeClaimRecoveryRequestForOperation(operation), proof, &evidence,
+		operation, input, proof, evaluation, &evidence,
 		workspaceRecoveryReleaseBinding{
 			MainSHA: strings.Repeat("a", 40), CloudImageDigest: "sha256:" + strings.Repeat("b", 64),
 			WorkspaceImageDigest: deployedImageDigest(operation.WorkspaceImageDigest),

@@ -73,6 +73,287 @@ type workspaceRecoveryPlanFailure struct {
 	computeClaimEvidence    *workspaceRecoveryComputeClaimEvidence
 }
 
+// workspaceComputeClaimTrace is a bounded, GET-only projection of the
+// Control Plane recovery decision path. It intentionally does not persist a
+// plan or CurrentDecision and cannot authorize a mutation.
+func (app *controlPlaneServer) traceWorkspaceComputeClaim(ctx context.Context, service *controlplane.Service, accountID, operationID string) (map[string]any, error) {
+	operation, found, err := app.workspaceLaunchOperation(ctx, operationID)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, errBillingReviewNotFound
+	}
+	if operation.AccountID != accountID {
+		return nil, errBillingReviewIdentity
+	}
+
+	canonical := workspaceComputeClaimCanonical(operation)
+	legacy := workspaceComputeClaimLegacyCandidate(operation)
+	storageBoundary := workspaceComputeClaimStorageBoundaryCandidate(operation)
+	candidate := workspaceComputeClaimRecoveryCandidate(operation)
+	terminal := operation.ComputeClaimTerminalEvidence
+	storageBudget := operation.ContinuationAttemptBudgets["storage"]
+	recoveryStage, recoveryStagePresent := workspaceLaunchReadbackRecoveryStage(operation)
+	allowExistingStorageOperation := workspaceComputeClaimStageAwareReadback(operation)
+	var authoritativeDecision any
+	if operation.CurrentDecision != nil {
+		authoritativeDecision = operation.CurrentDecision
+	}
+
+	trace := map[string]any{
+		"schemaVersion": 1,
+		"operationMode": "compute_claim_trace",
+		"status":        "evidence_only",
+		"launch": map[string]any{
+			"status":    operation.Status,
+			"phase":     operation.Phase,
+			"errorCode": operation.ErrorCode,
+		},
+		"candidate": map[string]any{
+			"canonical":                 canonical,
+			"legacy":                    legacy,
+			"storageBoundary":           storageBoundary,
+			"recoveryCandidate":         candidate,
+			"terminalEvidenceBlocksOld": terminal != nil,
+		},
+		"terminalEvidence": workspaceComputeClaimTraceTerminalEvidence(terminal),
+		"identity": map[string]any{
+			"accountMatches":            operation.AccountID == accountID,
+			"launchOperationIdMatches":  operation.ID == operationID,
+			"workspaceIdPresent":        operation.WorkspaceID != "",
+			"computeIdPresent":          operation.ComputeID != "",
+			"storageIdPresent":          operation.StorageID != "",
+			"nodePoolIdPresent":         operation.ComputeNodePoolID != "",
+			"computeClaimIdentityValid": validWorkspaceLaunchComputeClaimIdentity(operation),
+		},
+		"storage": map[string]any{
+			"continuationBudget":            workspaceComputeClaimTraceBudget(storageBudget),
+			"recoveryStage":                 recoveryStage,
+			"recoveryStagePresent":          recoveryStagePresent,
+			"allowExistingStorageOperation": allowExistingStorageOperation,
+		},
+		"authoritativeDecision": authoritativeDecision,
+		"mutationCounts": map[string]int{
+			"sub2api": 0, "tencent": 0, "kubernetes": 0,
+		},
+	}
+
+	firstFalsePredicate := ""
+	expected, actual, authority, nextAction := "", "", "", ""
+	readbackErrors := []string{}
+	setFirst := func(predicate, want, got, source string) {
+		if firstFalsePredicate == "" {
+			firstFalsePredicate, expected, actual, authority = predicate, want, got, source
+		}
+	}
+
+	userID, userErr := app.sub2APIUserID(ctx, operation.AccountID)
+	chargeConfirmed := userErr == nil && workspaceLaunchChargeConfirmed(operation, userID)
+	identity := trace["identity"].(map[string]any)
+	identity["debitChargeConfirmed"] = chargeConfirmed
+	identity["debitReadback"] = map[string]any{
+		"state": func() string {
+			if userErr != nil {
+				return "unavailable"
+			}
+			if chargeConfirmed {
+				return "confirmed"
+			}
+			return "unconfirmed"
+		}(),
+	}
+	if userErr != nil {
+		readbackErrors = append(readbackErrors, "control_plane_account_read")
+		setFirst("controlPlane.debitIdentity", "confirmed", "unavailable", "control-plane")
+	} else if !chargeConfirmed {
+		setFirst("controlPlane.debitConfirmed", "confirmed", "unconfirmed", "control-plane")
+	}
+	if !candidate {
+		setFirst("controlPlane.workspaceComputeClaimRecoveryCandidate", "true", "false", "control-plane")
+	}
+
+	loaded := false
+	loadAttempted := candidate
+	loadError := "none"
+	traceOperation := operation
+	input := workspaceComputeClaimRecoveryRequestForOperation(operation)
+	var proof clients.ComputeClaimRecoveryProof
+	var proofErr error
+	var reducerDecision *CurrentDecision
+	if candidate && userErr == nil && chargeConfirmed && validWorkspaceLaunchComputeClaimIdentity(operation) {
+		loadedOperation, loadErr := app.loadWorkspaceComputeClaimOperation(ctx, operationID, input, true)
+		if loadErr != nil {
+			loadError = workspaceComputeClaimTraceErrorCode(loadErr)
+			readbackErrors = append(readbackErrors, loadError)
+			setFirst("controlPlane.loadWorkspaceComputeClaimOperation", "loaded", loadError, "control-plane")
+		} else {
+			loaded, traceOperation = true, loadedOperation
+		}
+	} else if candidate {
+		loadError = "precondition_not_satisfied"
+		setFirst("controlPlane.loadWorkspaceComputeClaimOperation", "preconditions", loadError, "control-plane")
+	}
+	trace["controlPlane"] = map[string]any{
+		"loadAttempted": loadAttempted,
+		"loaded":        loaded,
+		"errorCode":     loadError,
+	}
+
+	if loaded {
+		input = workspaceComputeClaimRecoveryRequestForOperation(traceOperation)
+		proof, proofErr = collectWorkspaceComputeClaimEvidence(ctx, service, traceOperation, input)
+		evaluation := evaluateWorkspaceComputeClaimProof(traceOperation, input, proof, false)
+		trace["providerTruth"] = workspaceComputeClaimTraceProviderTruth(proof, proofErr)
+		trace["proofEligibility"] = workspaceComputeClaimTraceProofEligibility(evaluation)
+		reducer := currentDecisionForComputeClaimEvaluation(traceOperation, proofErr, evaluation)
+		reducerDecision = &reducer
+		trace["reducer"] = map[string]any{
+			"called":    true,
+			"persisted": operation.CurrentDecision != nil,
+			"decision":  reducer,
+		}
+		if proofErr != nil {
+			readbackErrors = append(readbackErrors, workspaceComputeClaimTraceErrorCode(proofErr))
+		}
+		if evaluation.FirstFalsePredicate != "" {
+			eligibility := trace["proofEligibility"].(map[string]any)
+			setFirst(
+				stringValue(eligibility["firstFalsePredicate"]),
+				stringValue(eligibility["expected"]),
+				stringValue(eligibility["actual"]),
+				stringValue(eligibility["authority"]),
+			)
+		} else if proofErr != nil {
+			setFirst("provider.computeClaimEvidence", "available", workspaceComputeClaimTraceErrorCode(proofErr), "fabric.computeClaimProof")
+		}
+	} else {
+		trace["providerTruth"] = map[string]any{
+			"collectorCalled": false,
+			"state":           "not_called",
+		}
+		trace["proofEligibility"] = map[string]any{
+			"called":   false,
+			"eligible": false,
+		}
+		trace["reducer"] = map[string]any{
+			"called":    false,
+			"persisted": operation.CurrentDecision != nil,
+		}
+	}
+
+	if reducerDecision != nil {
+		nextAction = reducerDecision.NextAction
+		if firstFalsePredicate == "" {
+			firstFalsePredicate, expected, actual, authority = reducerDecision.FirstFalsePredicate, reducerDecision.Expected, reducerDecision.Actual, reducerDecision.Authority
+		}
+		if firstFalsePredicate == "" && reducerDecision.CurrentStage == "succeeded" {
+			nextAction = nextActionNone
+		}
+	}
+	if firstFalsePredicate == "" {
+		firstFalsePredicate, expected, actual, authority = "controlPlane.reducer", "decision", "not_proven", "control-plane"
+	}
+	if nextAction == "" {
+		nextAction = "MANUAL_REVIEW"
+	}
+	trace["firstFalsePredicate"], trace["expected"], trace["actual"], trace["authority"], trace["nextAction"] = firstFalsePredicate, expected, actual, authority, nextAction
+	trace["readbackErrors"] = uniqueWorkspaceComputeClaimTraceErrors(readbackErrors)
+	return trace, nil
+}
+
+func workspaceComputeClaimTraceBudget(budget workspaceLaunchStageBudget) map[string]int {
+	return map[string]int{"attempted": budget.Attempted, "confirmed": budget.Confirmed, "unknown": budget.Unknown, "max": budget.Max}
+}
+
+func workspaceComputeClaimTraceTerminalEvidence(evidence *clients.ComputeClaimTerminalEvidence) map[string]any {
+	result := map[string]any{"present": evidence != nil}
+	if evidence == nil {
+		return result
+	}
+	result["status"] = evidence.Status
+	result["stage"] = evidence.Stage
+	result["errorCode"] = evidence.ErrorCode
+	result["readbackStatus"] = evidence.ReadbackStatus
+	result["nodeOwnershipState"] = evidence.NodeOwnershipState
+	result["cvmOwnershipState"] = evidence.CVMOwnershipState
+	result["attempted"] = evidence.Attempted
+	result["confirmed"] = evidence.Confirmed
+	result["unknown"] = evidence.Unknown
+	return result
+}
+
+func workspaceComputeClaimTraceProviderTruth(proof clients.ComputeClaimRecoveryProof, proofErr error) map[string]any {
+	result := map[string]any{
+		"collectorCalled":         true,
+		"state":                   "available",
+		"computeState":            "unknown",
+		"storageState":            proof.StorageState,
+		"nodeOwnershipState":      proof.NodeOwnershipState,
+		"cvmOwnershipState":       proof.CVMOwnershipState,
+		"eligible":                proof.Eligible,
+		"reason":                  proof.Reason,
+		"failureStage":            proof.FailureStage,
+		"providerErrorClass":      proof.ProviderErrorClass,
+		"tencentMutationCount":    proof.TencentMutationCount,
+		"kubernetesMutationCount": proof.KubernetesMutationCount,
+	}
+	if proofErr != nil {
+		result["state"] = "unavailable"
+		result["errorCode"] = workspaceComputeClaimTraceErrorCode(proofErr)
+	}
+	if proof.Eligible && proof.Reason == "none" {
+		result["computeState"] = "ready"
+	}
+	return result
+}
+
+func workspaceComputeClaimTraceProofEligibility(evaluation workspaceComputeClaimProofEvaluation) map[string]any {
+	result := map[string]any{
+		"called":              true,
+		"eligible":            evaluation.Eligible,
+		"function":            "evaluateWorkspaceComputeClaimProof",
+		"firstFalsePredicate": evaluation.FirstFalsePredicate,
+		"expected":            evaluation.Expected,
+		"actual":              evaluation.Actual,
+		"authority":           evaluation.Authority,
+		"condition":           evaluation.Condition,
+	}
+	return result
+}
+
+func workspaceComputeClaimTraceErrorCode(err error) string {
+	switch {
+	case err == nil:
+		return "none"
+	case errors.Is(err, errBillingReviewNotFound):
+		return "workspace_launch_not_found"
+	case errors.Is(err, errBillingReviewIdentity), errors.Is(err, errWorkspaceComputeClaimIdentity):
+		return "identity_mismatch"
+	case errors.Is(err, errBillingReviewChargeFact):
+		return "charge_unconfirmed"
+	case errors.Is(err, errWorkspaceComputeClaimNotPending):
+		return "compute_claim_not_pending"
+	case errors.Is(err, errWorkspaceComputeClaimProof):
+		return "compute_claim_proof_failed"
+	default:
+		return "readback_unavailable"
+	}
+}
+
+func uniqueWorkspaceComputeClaimTraceErrors(values []string) []string {
+	seen := map[string]bool{}
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		result = append(result, value)
+	}
+	return result
+}
+
 func (failure *workspaceRecoveryPlanFailure) Error() string { return failure.errorCode }
 func (failure *workspaceRecoveryPlanFailure) Unwrap() error { return failure.cause }
 
@@ -473,13 +754,21 @@ func (app *controlPlaneServer) workspaceRecoveryPlanExpectedPrivateIP(operation 
 }
 
 func workspaceComputeClaimRecoveryRequestForOperation(operation workspaceLaunchOperation) workspaceComputeClaimRecoveryRequest {
-	return workspaceComputeClaimRecoveryRequest{
+	input := workspaceComputeClaimRecoveryRequest{
 		LaunchOperationID: operation.ID, AccountID: operation.AccountID, WorkspaceID: operation.WorkspaceID,
 		ComputeID: operation.ComputeID, StorageID: operation.StorageID, PackageID: operation.PackageID,
 		PoolID: operation.ComputePoolID, NodePoolID: operation.ComputeNodePoolID, MachineName: operation.ComputeMachineName,
 		NodeName: operation.ComputeNodeName, CVMInstanceID: operation.ComputeCVMInstanceID, PrivateIP: operation.ComputePrivateIP,
 		InstanceType: operation.ComputeInstanceType, Zone: operation.ComputeZone,
 	}
+	if approval := operation.ComputeClaimApproval; approval != nil {
+		input.MergedMainSHA, input.CloudImageDigest, input.ApprovalID, input.ApprovalDigest = approval.MergedMainSHA, approval.CloudImageDigest, approval.ApprovalID, approval.ApprovalDigest
+		input.ExpiresAt, input.Confirmation, input.WorkspaceImageDigest = approval.ExpiresAt, approval.Confirmation, approval.WorkspaceImageDigest
+		input.CustomerEmail, input.RecoveryKey = approval.Customer.Email, approval.RecoveryKey
+		input.Resources, input.AttemptLimits = approval.Resources, approval.AttemptLimits
+		input.AllowedWrites, input.ForbiddenWrites = append([]string(nil), approval.AllowedWrites...), append([]string(nil), approval.ForbiddenWrites...)
+	}
+	return input
 }
 
 func (app *controlPlaneServer) workspaceComputeClaimRecoveryProofForPlan(ctx context.Context, service *controlplane.Service, operation workspaceLaunchOperation) (workspaceComputeClaimRecoveryRequest, clients.ComputeClaimRecoveryProof, *clients.ComputeClaimIdentityEvidence, error) {
@@ -646,21 +935,19 @@ func workspaceComputeClaimLegacyKubectlClientRejected(evidence *clients.ComputeC
 		node.Attempted == 1 && node.Confirmed == 0 && node.Unknown == 0 && len(node.Missing) == 1 && node.Missing[0] == "node_ownership"
 }
 
-func newWorkspaceComputeClaimRecoveryPlan(operation workspaceLaunchOperation, input workspaceComputeClaimRecoveryRequest, proof clients.ComputeClaimRecoveryProof, evidence *clients.ComputeClaimIdentityEvidence, release workspaceRecoveryReleaseBinding) (workspaceRecoveryPlan, error) {
+func newWorkspaceComputeClaimRecoveryPlan(operation workspaceLaunchOperation, input workspaceComputeClaimRecoveryRequest, proof clients.ComputeClaimRecoveryProof, evaluation workspaceComputeClaimProofEvaluation, evidence *clients.ComputeClaimIdentityEvidence, release workspaceRecoveryReleaseBinding) (workspaceRecoveryPlan, error) {
 	authorityDigest := workspaceRecoveryAuthorityDigest(struct {
 		Proof    clients.ComputeClaimRecoveryProof     `json:"proof"`
 		Evidence *clients.ComputeClaimIdentityEvidence `json:"evidence"`
 	}{Proof: proof, Evidence: evidence})
-	if authorityDigest == "" || !proof.Eligible || proof.Reason != "none" || proof.Sub2APIMutationCount != 0 || proof.TencentMutationCount != 0 || proof.KubernetesMutationCount != 0 {
+	if authorityDigest == "" || proof.Sub2APIMutationCount != 0 || proof.TencentMutationCount != 0 || proof.KubernetesMutationCount != 0 {
 		return workspaceRecoveryPlan{}, workspaceRecoveryPlanProofFailure(proof, nil)
 	}
 	privateIPDigest := workspaceRecoveryAuthorityDigest(proof.PrivateIP)
-	decision := currentDecisionForComputeClaimProof(operation, proof, nil)
+	decision := currentDecisionForComputeClaimEvaluation(operation, nil, evaluation)
 	mutationBudget := workspaceRecoveryMutationCounts{}
-	if proof.CVMOwnershipState == "recoverable" {
-		mutationBudget.Tencent = 5
-	}
-	if proof.NodeOwnershipState == "unallocated" {
+	nodeMutationAuthorized := evaluation.Eligible && proof.NodeOwnershipState == "unallocated" && AuthorizeStageMutation(decision, "node_only_continuation")
+	if nodeMutationAuthorized {
 		mutationBudget.Kubernetes = 1
 	}
 	decisionBinding := workspaceRecoveryDecisionBinding{
@@ -668,8 +955,7 @@ func newWorkspaceComputeClaimRecoveryPlan(operation workspaceLaunchOperation, in
 		DecisionVersion: decision.DecisionVersion, CurrentStage: decision.CurrentStage,
 		StageAttemptID: decision.StageAttemptID, AllowedMutation: decision.AllowedMutation, MutationBudget: mutationBudget,
 	}
-	if decisionBinding.DecisionDigest == "" || decisionBinding.EvidenceDigest == "" ||
-		proof.NodeOwnershipState == "unallocated" && !AuthorizeStageMutation(decision, "node_only_continuation") {
+	if decisionBinding.DecisionDigest == "" || decisionBinding.EvidenceDigest == "" {
 		return workspaceRecoveryPlan{}, errBillingReviewIdentity
 	}
 	plan := workspaceRecoveryPlan{
@@ -687,6 +973,17 @@ func newWorkspaceComputeClaimRecoveryPlan(operation workspaceLaunchOperation, in
 		},
 		Stages:           append([]workspaceRecoveryPlanStage{{Stage: "compute_claim", Status: "manual_review"}}, workspaceRecoveryPlanStages(operation)...),
 		AllowedDecisions: []string{"continue", "escalate"}, DecisionBinding: decisionBinding, MutationCounts: workspaceRecoveryMutationCounts{},
+	}
+	if !evaluation.Eligible {
+		plan.Status = "blocked"
+		plan.Mismatches = append(plan.Mismatches, workspaceRecoveryPlanMismatch{
+			Field: evaluation.FirstFalsePredicate, Expected: evaluation.Expected, Actual: evaluation.Actual,
+		})
+	} else if proof.NodeOwnershipState == "unallocated" && !nodeMutationAuthorized {
+		plan.Status = "blocked"
+		plan.Mismatches = append(plan.Mismatches, workspaceRecoveryPlanMismatch{
+			Field: "decision.allowedMutation", Expected: "node_only_continuation", Actual: decision.AllowedMutation,
+		})
 	}
 	plan.IdentityEvidence = workspaceComputeClaimPlanIdentityEvidence(operation, input, proof, evidence)
 	requestHashReconciliation := workspaceComputeClaimRequestHashReconciliation(evidence)
@@ -1128,9 +1425,10 @@ func (app *controlPlaneServer) diagnoseWorkspaceRecoveryPlan(ctx context.Context
 			return workspaceRecoveryPlan{}, errWorkspaceComputeClaimIdentity
 		}
 		computeEvidence = evidence
-		decision := currentDecisionForComputeClaimProof(operation, computeProof, nil)
+		evaluation := evaluateWorkspaceComputeClaimProof(operation, computeInput, computeProof, false)
+		decision := currentDecisionForComputeClaimEvaluation(operation, nil, evaluation)
 		computeDecision = &decision
-		plan, err = newWorkspaceComputeClaimRecoveryPlan(operation, computeInput, computeProof, evidence, release)
+		plan, err = newWorkspaceComputeClaimRecoveryPlan(operation, computeInput, computeProof, evaluation, evidence, release)
 	} else if stageReadback {
 		recovered, proof, readbackErr = app.workspaceLaunchReadbackRecoveryProofForOperation(ctx, service, readbackCandidate)
 		if readbackErr != nil {
@@ -1282,9 +1580,10 @@ func (app *controlPlaneServer) validateWorkspaceRecoveryPlan(ctx context.Context
 		if computeErr != nil {
 			return workspaceRecoveryPlan{}, computeErr
 		}
-		decision := currentDecisionForComputeClaimProof(operation, computeProof, nil)
+		evaluation := evaluateWorkspaceComputeClaimProof(operation, computeInput, computeProof, false)
+		decision := currentDecisionForComputeClaimEvaluation(operation, nil, evaluation)
 		computeDecision = &decision
-		current, err = newWorkspaceComputeClaimRecoveryPlan(operation, computeInput, computeProof, evidence, release)
+		current, err = newWorkspaceComputeClaimRecoveryPlan(operation, computeInput, computeProof, evaluation, evidence, release)
 	} else {
 		recovered, proof, proofErr := app.workspaceLaunchReadbackRecoveryProofForOperation(ctx, service, operation)
 		if proofErr != nil {
@@ -1446,9 +1745,10 @@ func (app *controlPlaneServer) reserveWorkspaceRecoveryExecution(ctx context.Con
 		if proofErr != nil {
 			return workspaceRecoveryExecution{}, false, proofErr
 		}
-		currentDecision := currentDecisionForComputeClaimProof(operation, proof, nil)
+		evaluation := evaluateWorkspaceComputeClaimProof(operation, input, proof, false)
+		currentDecision := currentDecisionForComputeClaimEvaluation(operation, nil, evaluation)
 		computeDecision = &currentDecision
-		current, err = newWorkspaceComputeClaimRecoveryPlan(operation, input, proof, evidence, release)
+		current, err = newWorkspaceComputeClaimRecoveryPlan(operation, input, proof, evaluation, evidence, release)
 		if err == nil {
 			customer, customerErr := app.workspaceLaunchReadbackRecoveryCustomer(ctx, operation)
 			if customerErr != nil {

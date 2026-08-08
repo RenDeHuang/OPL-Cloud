@@ -2397,34 +2397,194 @@ func workspaceComputeClaimEvidenceMatches(proof clients.ComputeClaimRecoveryProo
 		workspaceComputeClaimMutationEvidenceMatches(proof.Evidence.Node, proof.KubernetesMutationCount, 1, "node", confirmed)
 }
 
-func workspaceComputeClaimProofBaseMatches(operation workspaceLaunchOperation, input workspaceComputeClaimRecoveryRequest, proof clients.ComputeClaimRecoveryProof) bool {
-	return proof.SchemaVersion == 1 && proof.LaunchOperationID == operation.ID && proof.AccountID == operation.AccountID &&
-		proof.WorkspaceID == operation.WorkspaceID && proof.ComputeAllocationID == operation.ComputeID && proof.StorageVolumeID == operation.StorageID &&
-		proof.PackageID == operation.PackageID && proof.PoolID == input.PoolID && proof.NodePoolID == operation.ComputeNodePoolID &&
-		proof.Sub2APIMutationCount == 0 && safeWorkspaceComputeClaimReason(proof.Reason) && workspaceComputeClaimEvidenceMatches(proof, false)
+// workspaceComputeClaimProofEvaluation is the sole structured evaluator for
+// the Compute Claim provider proof. Its output is safe to consume by the
+// normal Launch executor, Recovery, the pure CurrentDecision reducer, and
+// GET-only projections. It performs no network access and never authorizes a
+// mutation by itself.
+type workspaceComputeClaimProofEvaluation struct {
+	Eligible            bool
+	BaseMatches         bool
+	FirstFalsePredicate string
+	Expected            string
+	Actual              string
+	Authority           string
+	Condition           string
+	NodeOwnershipState  string
+	CVMOwnershipState   string
+	StorageState        string
+	StorageProviderID   string
 }
 
-func workspaceComputeClaimProofEligible(operation workspaceLaunchOperation, input workspaceComputeClaimRecoveryRequest, proof clients.ComputeClaimRecoveryProof, claimed bool) bool {
+func workspaceComputeClaimProofEvaluationFailure(predicate, expected, actual, authority, condition string) workspaceComputeClaimProofEvaluation {
+	if strings.Contains(predicate, "Identity") || strings.HasSuffix(predicate, "Id") || strings.Contains(predicate, "privateIp") || predicate == "provider.deadlineEquality" {
+		expected, actual = workspaceComputeClaimEvaluationDigest(expected), workspaceComputeClaimEvaluationDigest(actual)
+	}
+	return workspaceComputeClaimProofEvaluation{
+		FirstFalsePredicate: predicate,
+		Expected:            expected,
+		Actual:              actual,
+		Authority:           authority,
+		Condition:           condition,
+	}
+}
+
+func workspaceComputeClaimEvaluationDigest(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	digest := sha256.Sum256([]byte(value))
+	return "sha256:" + hex.EncodeToString(digest[:])
+}
+
+func workspaceComputeClaimProofEvaluationFacts(proof clients.ComputeClaimRecoveryProof) workspaceComputeClaimProofEvaluation {
+	return workspaceComputeClaimProofEvaluation{
+		NodeOwnershipState: proof.NodeOwnershipState,
+		CVMOwnershipState:  proof.CVMOwnershipState,
+		StorageState:       proof.StorageState,
+		StorageProviderID:  proof.StorageProviderResourceID,
+	}
+}
+
+func evaluateWorkspaceComputeClaimProof(operation workspaceLaunchOperation, input workspaceComputeClaimRecoveryRequest, proof clients.ComputeClaimRecoveryProof, claimed bool) workspaceComputeClaimProofEvaluation {
+	facts := workspaceComputeClaimProofEvaluationFacts(proof)
+	failureFor := func(predicate, expected, actual, authority, condition string) workspaceComputeClaimProofEvaluation {
+		failure := workspaceComputeClaimProofEvaluationFailure(predicate, expected, actual, authority, condition)
+		failure.NodeOwnershipState = facts.NodeOwnershipState
+		failure.CVMOwnershipState = facts.CVMOwnershipState
+		failure.StorageState = facts.StorageState
+		failure.StorageProviderID = facts.StorageProviderID
+		return failure
+	}
+	check := func(predicate, expected, actual, authority, condition string, ok bool) (workspaceComputeClaimProofEvaluation, bool) {
+		if ok {
+			return workspaceComputeClaimProofEvaluation{}, true
+		}
+		return failureFor(predicate, expected, actual, authority, condition), false
+	}
+
+	// Keep the order identical to the original proof eligibility contract. The
+	// first failed check is the only predicate exposed to operators.
+	checks := []struct {
+		predicate, expected, actual, authority, condition string
+		ok                                                bool
+	}{
+		{"provider.proofSchemaVersion", "1", strconv.Itoa(proof.SchemaVersion), "fabric.computeClaimProof", "schemaVersion", proof.SchemaVersion == 1},
+		{"provider.launchOperationId", operation.ID, proof.LaunchOperationID, "fabric.computeClaimProof", "launchOperationId", proof.LaunchOperationID == operation.ID},
+		{"provider.accountId", operation.AccountID, proof.AccountID, "fabric.computeClaimProof", "accountId", proof.AccountID == operation.AccountID},
+		{"provider.workspaceId", operation.WorkspaceID, proof.WorkspaceID, "fabric.computeClaimProof", "workspaceId", proof.WorkspaceID == operation.WorkspaceID},
+		{"provider.computeAllocationId", operation.ComputeID, proof.ComputeAllocationID, "fabric.computeClaimProof", "computeAllocationId", proof.ComputeAllocationID == operation.ComputeID},
+		{"provider.storageVolumeId", operation.StorageID, proof.StorageVolumeID, "fabric.computeClaimProof", "storageVolumeId", proof.StorageVolumeID == operation.StorageID},
+		{"provider.packageId", operation.PackageID, proof.PackageID, "fabric.computeClaimProof", "packageId", proof.PackageID == operation.PackageID},
+		{"provider.poolId", input.PoolID, proof.PoolID, "fabric.computeClaimProof", "poolId", proof.PoolID == input.PoolID},
+		{"provider.nodePoolId", operation.ComputeNodePoolID, proof.NodePoolID, "fabric.computeClaimProof", "nodePoolId", proof.NodePoolID == operation.ComputeNodePoolID},
+		{"provider.sub2apiMutationCount", "0", strconv.Itoa(proof.Sub2APIMutationCount), "fabric.computeClaimProof", "sub2apiMutationCount", proof.Sub2APIMutationCount == 0},
+		{"provider.proofReasonAllowlisted", "allowlisted", proof.Reason, "fabric.computeClaimProof", "safeReason", safeWorkspaceComputeClaimReason(proof.Reason)},
+	}
+	for _, candidate := range checks {
+		if failure, ok := check(candidate.predicate, candidate.expected, candidate.actual, candidate.authority, candidate.condition, candidate.ok); !ok {
+			return failure
+		}
+	}
+	if proof.Evidence == nil {
+		return failureFor("provider.mutationEvidence", "present", "absent", "fabric.computeClaimProof", "evidence")
+	}
+	if !safeWorkspaceComputeClaimFailureStage(proof.FailureStage) {
+		return failureFor("provider.failureStageAllowlisted", "allowlisted", proof.FailureStage, "fabric.computeClaimProof", "failureStage")
+	}
+	if !safeWorkspaceComputeClaimProviderErrorClass(proof.ProviderErrorClass) {
+		return failureFor("provider.errorClassAllowlisted", "allowlisted", proof.ProviderErrorClass, "fabric.computeClaimProof", "providerErrorClass")
+	}
+	if !workspaceComputeClaimMutationEvidenceMatches(proof.Evidence.CVM, proof.TencentMutationCount, 5, "cvm", false) {
+		return failureFor("provider.cvmMutationEvidence", "bounded", "mismatch", "fabric.computeClaimProof", "mutationEvidence.cvm")
+	}
+	if !workspaceComputeClaimMutationEvidenceMatches(proof.Evidence.Node, proof.KubernetesMutationCount, 1, "node", false) {
+		return failureFor("provider.nodeMutationEvidence", "bounded", "mismatch", "fabric.computeClaimProof", "mutationEvidence.node")
+	}
+
+	base := facts
+	base.BaseMatches = true
+	failEligible := func(predicate, expected, actual, authority, condition string) workspaceComputeClaimProofEvaluation {
+		failure := failureFor(predicate, expected, actual, authority, condition)
+		failure.BaseMatches = true
+		return failure
+	}
+	checks = []struct {
+		predicate, expected, actual, authority, condition string
+		ok                                                bool
+	}{
+		{"provider.proofEligible", "true", strconv.FormatBool(proof.Eligible), "fabric.computeClaimProof", "proof.eligible", proof.Eligible},
+		{"provider.proofReason", "none", proof.Reason, "fabric.computeClaimProof", "proof.reason", proof.Reason == "none"},
+		{"provider.storageBinding", "valid", proof.StorageState, "fabric.computeClaimProof", "storageBinding", workspaceComputeClaimStorageBindingValid(proof.StorageState, proof.StorageProviderResourceID)},
+		{"provider.storageApprovalBinding", "matches", proof.StorageState, "controlPlane.computeClaimApproval", "storageApprovalBinding", input.Resources.StorageState == "" || proof.StorageState == input.Resources.StorageState && proof.StorageProviderResourceID == input.Resources.StorageProviderResourceID},
+		{"provider.machineIdentity", input.MachineName, proof.MachineName, "fabric.computeClaimProof", "machineName", proof.MachineName == input.MachineName},
+		{"provider.nodeIdentity", input.NodeName, proof.NodeName, "fabric.computeClaimProof", "nodeName", proof.NodeName == input.NodeName},
+		{"provider.cvmIdentity", input.CVMInstanceID, proof.CVMInstanceID, "fabric.computeClaimProof", "cvmInstanceId", proof.CVMInstanceID == input.CVMInstanceID},
+		{"provider.privateIpIdentity", input.PrivateIP, proof.PrivateIP, "fabric.computeClaimProof", "privateIp", proof.PrivateIP == input.PrivateIP},
+		{"provider.instanceType", input.InstanceType, proof.InstanceType, "fabric.computeClaimProof", "instanceType", proof.InstanceType == input.InstanceType},
+		{"provider.zone", input.Zone, proof.Zone, "fabric.computeClaimProof", "zone", proof.Zone == input.Zone},
+		{"provider.chargeType", "PREPAID", proof.ChargeType, "fabric.computeClaimProof", "chargeType", proof.ChargeType == "PREPAID"},
+		{"provider.periodMonths", "1", strconv.Itoa(proof.PeriodMonths), "fabric.computeClaimProof", "periodMonths", proof.PeriodMonths == 1},
+		{"provider.renewFlag", "NOTIFY_AND_MANUAL_RENEW", proof.RenewFlag, "fabric.computeClaimProof", "renewFlag", proof.RenewFlag == "NOTIFY_AND_MANUAL_RENEW"},
+	}
+	for _, candidate := range checks {
+		if failure, ok := check(candidate.predicate, candidate.expected, candidate.actual, candidate.authority, candidate.condition, candidate.ok); !ok {
+			failure.BaseMatches = true
+			return failure
+		}
+	}
 	deadline, deadlineErr := time.Parse(time.RFC3339, proof.Deadline)
-	storageMatchesApproval := input.Resources.StorageState == "" || proof.StorageState == input.Resources.StorageState && proof.StorageProviderResourceID == input.Resources.StorageProviderResourceID
-	if !workspaceComputeClaimProofBaseMatches(operation, input, proof) || !proof.Eligible || proof.Reason != "none" ||
-		!workspaceComputeClaimStorageBindingValid(proof.StorageState, proof.StorageProviderResourceID) || !storageMatchesApproval ||
-		proof.MachineName != input.MachineName || proof.NodeName != input.NodeName || proof.CVMInstanceID != input.CVMInstanceID || proof.PrivateIP != input.PrivateIP ||
-		proof.InstanceType != input.InstanceType || proof.Zone != input.Zone || proof.ChargeType != "PREPAID" || proof.PeriodMonths != 1 ||
-		proof.RenewFlag != "NOTIFY_AND_MANUAL_RENEW" || deadlineErr != nil || deadline.IsZero() ||
-		validWorkspaceLaunchComputeClaimIdentity(operation) && proof.Deadline != operation.ComputeDeadline ||
-		!workspaceComputeClaimEvidenceMatches(proof, true) || proof.FailureStage != "" || proof.ProviderErrorClass != "" {
-		return false
+	if deadlineErr != nil || deadline.IsZero() {
+		return failEligible("provider.deadlineParse", "RFC3339", proof.Deadline, "fabric.computeClaimProof", "deadlineParse")
+	}
+	if validWorkspaceLaunchComputeClaimIdentity(operation) && proof.Deadline != operation.ComputeDeadline {
+		return failEligible("provider.deadlineEquality", operation.ComputeDeadline, proof.Deadline, "controlPlane.computeClaim", "deadlineEquality")
+	}
+	if !workspaceComputeClaimEvidenceMatches(proof, true) {
+		return failEligible("provider.confirmedMutationEvidence", "all_attempts_confirmed", "unconfirmed_or_missing", "fabric.computeClaimProof", "confirmedMutationEvidence")
+	}
+	if proof.FailureStage != "" {
+		return failEligible("provider.failureStage", "empty", proof.FailureStage, "fabric.computeClaimProof", "failureStageEmpty")
+	}
+	if proof.ProviderErrorClass != "" {
+		return failEligible("provider.errorClass", "empty", proof.ProviderErrorClass, "fabric.computeClaimProof", "providerErrorClassEmpty")
 	}
 	if claimed {
-		return proof.NodeOwnershipState == "target_owned" && proof.CVMOwnershipState == "target_owned"
+		if proof.NodeOwnershipState != "target_owned" {
+			return failEligible("provider.nodeOwnership", "target_owned", proof.NodeOwnershipState, "provider.nodeOwnership", "claimedNodeOwnership")
+		}
+		if proof.CVMOwnershipState != "target_owned" {
+			return failEligible("provider.cvmOwnership", "target_owned", proof.CVMOwnershipState, "provider.cvmOwnership", "claimedCVMOwnership")
+		}
+	} else {
+		if proof.NodeOwnershipState != "unallocated" && proof.NodeOwnershipState != "target_owned" {
+			return failEligible("provider.nodeOwnership", "unallocated_or_target_owned", proof.NodeOwnershipState, "provider.nodeOwnership", "candidateNodeOwnership")
+		}
+		if proof.CVMOwnershipState != "recoverable" && proof.CVMOwnershipState != "target_owned" {
+			return failEligible("provider.cvmOwnership", "recoverable_or_target_owned", proof.CVMOwnershipState, "provider.cvmOwnership", "candidateCVMOwnership")
+		}
 	}
-	return (proof.NodeOwnershipState == "unallocated" || proof.NodeOwnershipState == "target_owned") &&
-		(proof.CVMOwnershipState == "recoverable" || proof.CVMOwnershipState == "target_owned")
+	base.Eligible = true
+	if !claimed {
+		if base.CVMOwnershipState != "target_owned" {
+			base.FirstFalsePredicate = "provider.cvmOwnership"
+			base.Expected = "target_owned"
+			base.Actual = firstNonEmpty(base.CVMOwnershipState, "unknown")
+			base.Authority = "provider.cvmOwnership"
+		} else if base.NodeOwnershipState != "target_owned" {
+			base.FirstFalsePredicate = "provider.nodeOwnership"
+			base.Expected = "target_owned"
+			base.Actual = firstNonEmpty(base.NodeOwnershipState, "unknown")
+			base.Authority = "provider.nodeOwnership"
+		}
+	}
+	return base
 }
 
 func workspaceComputeClaimSafeFailureForOperation(operation workspaceLaunchOperation, input workspaceComputeClaimRecoveryRequest, proof clients.ComputeClaimRecoveryProof) bool {
-	if !workspaceComputeClaimProofBaseMatches(operation, input, proof) || proof.Eligible || proof.Reason == "none" || !safeWorkspaceComputeClaimReason(proof.Reason) {
+	evaluation := evaluateWorkspaceComputeClaimProof(operation, input, proof, false)
+	if !evaluation.BaseMatches || proof.Eligible || proof.Reason == "none" || !safeWorkspaceComputeClaimReason(proof.Reason) {
 		return false
 	}
 	return proof.FailureStage == "" && proof.ProviderErrorClass == "" || proof.FailureStage != "" && proof.ProviderErrorClass != ""
@@ -2536,10 +2696,11 @@ func (app *controlPlaneServer) diagnoseWorkspaceComputeClaim(ctx context.Context
 		return clients.ComputeClaimRecoveryProof{}, err
 	}
 	proof, proofErr := collectWorkspaceComputeClaimEvidence(ctx, service, operation, input)
-	if !workspaceComputeClaimProofBaseMatches(operation, input, proof) || proof.TencentMutationCount != 0 || proof.KubernetesMutationCount != 0 {
+	evaluation := evaluateWorkspaceComputeClaimProof(operation, input, proof, false)
+	if !evaluation.BaseMatches || proof.TencentMutationCount != 0 || proof.KubernetesMutationCount != 0 {
 		return clients.ComputeClaimRecoveryProof{}, errWorkspaceComputeClaimProof
 	}
-	if proofErr != nil || !workspaceComputeClaimProofEligible(operation, input, proof, false) {
+	if proofErr != nil || !evaluation.Eligible {
 		return proof, errWorkspaceComputeClaimProof
 	}
 	return proof, nil
@@ -2567,7 +2728,7 @@ func (app *controlPlaneServer) claimWorkspaceCompute(ctx context.Context, servic
 		if app.bindWorkspaceComputeClaimApproval(ctx, &operation, input, key, false) != nil || operation.ComputeClaimRequestHash != requestHash || operation.ComputeClaimApprovalID != input.ApprovalID ||
 			operation.ComputeClaimMergedMainSHA != input.MergedMainSHA || operation.ComputeClaimCloudDigest != input.CloudImageDigest ||
 			operation.ComputeClaimPrivateIP != input.PrivateIP || operation.ComputeClaimProof.PrivateIP != input.PrivateIP ||
-			!workspaceComputeClaimRecoveryRequestMatches(operation, input) || !workspaceComputeClaimProofEligible(operation, input, *operation.ComputeClaimProof, true) {
+			!workspaceComputeClaimRecoveryRequestMatches(operation, input) || !evaluateWorkspaceComputeClaimProof(operation, input, *operation.ComputeClaimProof, true).Eligible {
 			return clients.ComputeClaimRecoveryProof{}, errWorkspaceComputeClaimIdentity
 		}
 		if operation.Phase == "compute_claim_pending" {
@@ -2589,15 +2750,17 @@ func (app *controlPlaneServer) claimWorkspaceCompute(ctx context.Context, servic
 	}
 
 	proof, proofErr := collectWorkspaceComputeClaimEvidence(ctx, service, operation, input)
-	if !workspaceComputeClaimProofBaseMatches(operation, input, proof) || proof.TencentMutationCount != 0 || proof.KubernetesMutationCount != 0 {
+	evaluation := evaluateWorkspaceComputeClaimProof(operation, input, proof, false)
+	if !evaluation.BaseMatches || proof.TencentMutationCount != 0 || proof.KubernetesMutationCount != 0 {
 		proof = workspaceComputeClaimFailureProof(operation, "local_identity")
 		proofErr = errWorkspaceComputeClaimProof
+		evaluation = evaluateWorkspaceComputeClaimProof(operation, input, proof, false)
 	}
-	if proofErr != nil || !workspaceComputeClaimProofEligible(operation, input, proof, false) {
+	if proofErr != nil || !evaluation.Eligible {
 		if !workspaceComputeClaimSafeFailureForOperation(operation, input, proof) {
 			proof = workspaceComputeClaimFailureProof(operation, "provider_describe")
 		}
-		decision := currentDecisionForComputeClaimProof(operation, proof, proofErr)
+		decision := currentDecisionForComputeClaimEvaluation(operation, proofErr, evaluation)
 		operation.Status, operation.ErrorCode = "manual_review", "workspace_compute_claim_"+proof.Reason
 		releaseWorkspaceLaunchLease(&operation)
 		if err := app.persistWorkspaceLaunchWithDecision(ctx, &operation, decision); err != nil {
@@ -2631,13 +2794,14 @@ func (app *controlPlaneServer) claimWorkspaceCompute(ctx context.Context, servic
 	operation.ComputeClaimRequestHash, operation.ComputeClaimApprovalID = requestHash, input.ApprovalID
 	operation.ComputeClaimMergedMainSHA, operation.ComputeClaimCloudDigest = input.MergedMainSHA, input.CloudImageDigest
 	operation.ComputeClaimPrivateIP = input.PrivateIP
-	return app.executeWorkspaceComputeClaimStage(ctx, service, &operation, input, proof, nil)
+	return app.executeWorkspaceComputeClaimStage(ctx, service, &operation, input, proof, nil, evaluation)
 }
 
 func (app *controlPlaneServer) continueNormalWorkspaceComputeClaim(ctx context.Context, service *controlplane.Service, operation *workspaceLaunchOperation) error {
 	input := workspaceComputeClaimRequestFromOperation(*operation)
 	proof, proofErr := collectWorkspaceComputeClaimEvidence(ctx, service, *operation, input)
-	_, err := app.executeWorkspaceComputeClaimStage(ctx, service, operation, input, proof, proofErr)
+	evaluation := evaluateWorkspaceComputeClaimProof(*operation, input, proof, false)
+	_, err := app.executeWorkspaceComputeClaimStage(ctx, service, operation, input, proof, proofErr, evaluation)
 	return err
 }
 
@@ -2671,22 +2835,7 @@ func collectWorkspaceComputeClaimEvidence(
 }
 
 func workspaceComputeClaimRequestFromOperation(operation workspaceLaunchOperation) workspaceComputeClaimRecoveryRequest {
-	return workspaceComputeClaimRecoveryRequest{
-		LaunchOperationID: operation.ID,
-		AccountID:         operation.AccountID,
-		WorkspaceID:       operation.WorkspaceID,
-		ComputeID:         operation.ComputeID,
-		StorageID:         operation.StorageID,
-		PackageID:         operation.PackageID,
-		PoolID:            operation.ComputePoolID,
-		NodePoolID:        operation.ComputeNodePoolID,
-		MachineName:       operation.ComputeMachineName,
-		NodeName:          operation.ComputeNodeName,
-		CVMInstanceID:     operation.ComputeCVMInstanceID,
-		PrivateIP:         operation.ComputePrivateIP,
-		InstanceType:      operation.ComputeInstanceType,
-		Zone:              operation.ComputeZone,
-	}
+	return workspaceComputeClaimRecoveryRequestForOperation(operation)
 }
 
 // executeWorkspaceComputeClaimStage is the single Compute mutation boundary
@@ -2698,16 +2847,18 @@ func (app *controlPlaneServer) executeWorkspaceComputeClaimStage(
 	input workspaceComputeClaimRecoveryRequest,
 	proof clients.ComputeClaimRecoveryProof,
 	proofErr error,
+	evaluation workspaceComputeClaimProofEvaluation,
 ) (clients.ComputeClaimRecoveryProof, error) {
-	if !workspaceComputeClaimProofBaseMatches(*operation, input, proof) || proof.TencentMutationCount != 0 || proof.KubernetesMutationCount != 0 {
+	if !evaluation.BaseMatches || proof.TencentMutationCount != 0 || proof.KubernetesMutationCount != 0 {
 		proof = workspaceComputeClaimFailureProof(*operation, "local_identity")
 		proofErr = errWorkspaceComputeClaimProof
+		evaluation = evaluateWorkspaceComputeClaimProof(*operation, input, proof, false)
 	}
-	if proofErr != nil || !workspaceComputeClaimProofEligible(*operation, input, proof, false) || proof.CVMOwnershipState != "target_owned" {
+	if proofErr != nil || !evaluation.Eligible || proof.CVMOwnershipState != "target_owned" {
 		if !workspaceComputeClaimSafeFailureForOperation(*operation, input, proof) {
 			proof = workspaceComputeClaimFailureProof(*operation, "provider_describe")
 		}
-		decision := currentDecisionForComputeClaimProof(*operation, proof, proofErr)
+		decision := currentDecisionForComputeClaimEvaluation(*operation, proofErr, evaluation)
 		operation.Status, operation.Phase, operation.ErrorCode = "manual_review", "compute_claim_pending", "workspace_compute_claim_"+proof.Reason
 		releaseWorkspaceLaunchLease(operation)
 		if err := app.persistWorkspaceLaunchWithDecision(ctx, operation, decision); err != nil {
@@ -2716,7 +2867,7 @@ func (app *controlPlaneServer) executeWorkspaceComputeClaimStage(
 		return proof, errWorkspaceComputeClaimProof
 	}
 
-	decision := currentDecisionForComputeClaimProof(*operation, proof, nil)
+	decision := currentDecisionForComputeClaimEvaluation(*operation, nil, evaluation)
 	if proof.NodeOwnershipState == "unallocated" && !AuthorizeStageMutation(decision, "node_only_continuation") {
 		operation.Status, operation.Phase, operation.ErrorCode = "manual_review", "compute_claim_pending", "workspace_compute_claim_node_ownership_conflict"
 		releaseWorkspaceLaunchLease(operation)
@@ -2751,11 +2902,12 @@ func (app *controlPlaneServer) executeWorkspaceComputeClaimStage(
 		claimed = workspaceComputeClaimFailureProof(*operation, "identity_mismatch")
 		claimErr = errWorkspaceComputeClaimProof
 	}
-	if claimErr != nil || !workspaceComputeClaimProofEligible(*operation, input, claimed, true) {
+	claimedEvaluation := evaluateWorkspaceComputeClaimProof(*operation, input, claimed, true)
+	if claimErr != nil || !claimedEvaluation.Eligible {
 		if !workspaceComputeClaimSafeFailureForOperation(*operation, input, claimed) {
 			claimed = workspaceComputeClaimFailureProof(*operation, "identity_mismatch")
 		}
-		decision = currentDecisionForComputeClaimProof(*operation, claimed, claimErr)
+		decision = currentDecisionForComputeClaimEvaluation(*operation, claimErr, claimedEvaluation)
 		operation.Status, operation.Phase, operation.ErrorCode = "manual_review", "compute_claim_pending", "workspace_compute_claim_"+claimed.Reason
 		releaseWorkspaceLaunchLease(operation)
 		if err := app.persistWorkspaceLaunchWithDecision(ctx, operation, decision); err != nil {

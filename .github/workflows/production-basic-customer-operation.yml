@@ -2958,6 +2958,9 @@ jobs:
       OPL_MERGED_SHA: ${{ inputs.merged_sha }}
       OPL_RECOVERY_PLAN_ACCOUNT_ID: ${{ inputs.workspace_identity_account_id }}
       OPL_RECOVERY_PLAN_LAUNCH_OPERATION_ID: ${{ inputs.recovery_plan_launch_operation_id }}
+      OPL_CONSOLE_ORIGIN: ${{ vars.OPL_CONSOLE_ORIGIN || 'https://cloud.medopl.cn' }}
+      OPL_SUB2API_ADMIN_EMAIL: ${{ secrets.OPL_SUB2API_ADMIN_EMAIL }}
+      OPL_SUB2API_ADMIN_PASSWORD: ${{ secrets.OPL_SUB2API_ADMIN_PASSWORD }}
       OPL_K8S_NAMESPACE: ${{ vars.OPL_K8S_NAMESPACE || 'opl-cloud' }}
       TENCENT_DEPLOY_KUBECONFIG_PATH: ${{ vars.TENCENT_DEPLOY_KUBECONFIG_PATH || '/home/actions/.secrets/medopl/v22/kubeconfig-package-d-deploy' }}
       TENCENT_DEPLOY_KUBECONFIG_B64: ${{ secrets.TENCENT_DEPLOY_KUBECONFIG_B64 }}
@@ -3058,6 +3061,19 @@ jobs:
           const valid = result?.schemaVersion === 1 && result?.operationMode === "compute_claim_readback" && result?.status === "evidence_only" &&
             result?.node?.resourceVersion && result?.node?.taint && result?.node?.ownership &&
             result?.storage?.stageBudget && result?.providerTruth && result?.mutationCounts?.sub2api === 0 && result?.mutationCounts?.tencent === 0 && result?.mutationCounts?.kubernetes === 0 &&
+            result?.controlPlaneTrace?.operationMode === "compute_claim_trace" && result?.controlPlaneTrace?.status === "evidence_only" &&
+            typeof result?.controlPlaneTrace?.candidate?.recoveryCandidate === 'boolean' &&
+            typeof result?.controlPlaneTrace?.storage?.allowExistingStorageOperation === 'boolean' &&
+            result?.controlPlaneTrace?.storage?.allowExistingStorageOperation === result?.controlPlaneTrace?.candidate?.recoveryCandidate &&
+            typeof result?.controlPlaneTrace?.controlPlane?.loadAttempted === 'boolean' && typeof result?.controlPlaneTrace?.controlPlane?.loaded === 'boolean' &&
+            typeof result?.controlPlaneTrace?.providerTruth?.collectorCalled === 'boolean' &&
+            typeof result?.controlPlaneTrace?.proofEligibility?.called === 'boolean' && typeof result?.controlPlaneTrace?.reducer?.called === 'boolean' &&
+            (result?.controlPlaneTrace?.candidate?.recoveryCandidate ||
+              (!result?.controlPlaneTrace?.controlPlane?.loadAttempted && !result?.controlPlaneTrace?.controlPlane?.loaded &&
+                !result?.controlPlaneTrace?.providerTruth?.collectorCalled && !result?.controlPlaneTrace?.proofEligibility?.called &&
+                !result?.controlPlaneTrace?.reducer?.called)) &&
+            result?.controlPlaneTrace?.mutationCounts?.sub2api === 0 &&
+            result?.controlPlaneTrace?.mutationCounts?.tencent === 0 && result?.controlPlaneTrace?.mutationCounts?.kubernetes === 0 &&
             !/password|secret|cookie|csrf|authorization/i.test(JSON.stringify(result));
           if (!valid) { console.error("Compute claim readback artifact is invalid or not redacted."); process.exit(1); }
           NODE
