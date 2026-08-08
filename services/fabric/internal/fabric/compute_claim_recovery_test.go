@@ -853,7 +853,7 @@ func TestClaimComputeRecoveryContinuesNodeOnlyWithAttemptedUnknownStorage(t *tes
 	claimInput := ComputeClaimRecoveryClaimInput{
 		ComputeClaimRecoveryInput: input, MachineName: "machine-after", NodeName: "10.0.0.18", CVMInstanceID: "ins-fixture",
 		PrivateIP: provider.proof.PrivateIP, InstanceType: provider.proof.InstanceType, Zone: provider.proof.Zone,
-		IdempotencyKey: input.LaunchOperationID + ":compute",
+		IdempotencyKey: input.LaunchOperationID + ":compute", NodeOnlyContinuation: true,
 	}
 	operations, err := store.List(context.Background())
 	if err != nil || len(operations) != 2 {
@@ -873,12 +873,14 @@ func TestClaimComputeRecoveryContinuesNodeOnlyWithAttemptedUnknownStorage(t *tes
 	if err := store.ActivateComputeClaimRecoveryOwnership(context.Background(), ownership); err != nil {
 		t.Fatal(err)
 	}
-	provider.proof.CVMOwnershipState = "target_owned"
+	provider.proof.CVMOwnershipState = "recoverable"
 	provider.proof.NodeOwnershipState = "unallocated"
 	provider.storageDiscovery = StorageRecoveryDiscovery{State: "unknown", Reason: "provider_describe"}
 	provider.storageDiscoveryErr = errors.New("storage provider readback unavailable")
 	provider.claim.TencentMutationCount = 0
 	provider.claim.KubernetesMutationCount = 1
+	provider.claim.Proof.CVMOwnershipState = "recoverable"
+	provider.claim.Proof.NodeOwnershipState = "target_owned"
 	provider.claim.Evidence = &ComputeClaimEvidence{Node: ComputeClaimMutationEvidence{Attempted: 1, Confirmed: 1}}
 	provider.claimHook = func() { provider.proof.NodeOwnershipState = "target_owned" }
 

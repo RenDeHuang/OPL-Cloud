@@ -2498,6 +2498,18 @@ func workspaceComputeClaimProofEvaluationFacts(proof clients.ComputeClaimRecover
 }
 
 func evaluateWorkspaceComputeClaimProof(operation workspaceLaunchOperation, input workspaceComputeClaimRecoveryRequest, proof clients.ComputeClaimRecoveryProof, claimed bool) workspaceComputeClaimProofEvaluation {
+	return evaluateWorkspaceComputeClaimProofMode(operation, input, proof, claimed, false)
+}
+
+// evaluateWorkspaceComputeClaimProofNodeOnlyClaim uses the same canonical
+// evaluator for the post-read of the bounded Node-only continuation. A
+// recoverable CVM is an accepted fact for this specific write set; it must not
+// be projected as a successful full Compute Claim.
+func evaluateWorkspaceComputeClaimProofNodeOnlyClaim(operation workspaceLaunchOperation, input workspaceComputeClaimRecoveryRequest, proof clients.ComputeClaimRecoveryProof) workspaceComputeClaimProofEvaluation {
+	return evaluateWorkspaceComputeClaimProofMode(operation, input, proof, true, true)
+}
+
+func evaluateWorkspaceComputeClaimProofMode(operation workspaceLaunchOperation, input workspaceComputeClaimRecoveryRequest, proof clients.ComputeClaimRecoveryProof, claimed, nodeOnlyClaim bool) workspaceComputeClaimProofEvaluation {
 	facts := workspaceComputeClaimProofEvaluationFacts(proof)
 	failureFor := func(predicate, expected, actual, authority, condition string) workspaceComputeClaimProofEvaluation {
 		failure := workspaceComputeClaimProofEvaluationFailure(predicate, expected, actual, authority, condition)
@@ -2604,7 +2616,7 @@ func evaluateWorkspaceComputeClaimProof(operation workspaceLaunchOperation, inpu
 		if proof.NodeOwnershipState != "target_owned" {
 			return failEligible("provider.nodeOwnership", "target_owned", proof.NodeOwnershipState, "provider.nodeOwnership", "claimedNodeOwnership")
 		}
-		if proof.CVMOwnershipState != "target_owned" {
+		if proof.CVMOwnershipState != "target_owned" && !(nodeOnlyClaim && proof.CVMOwnershipState == "recoverable") {
 			return failEligible("provider.cvmOwnership", "target_owned", proof.CVMOwnershipState, "provider.cvmOwnership", "claimedCVMOwnership")
 		}
 	} else {
@@ -2617,16 +2629,19 @@ func evaluateWorkspaceComputeClaimProof(operation workspaceLaunchOperation, inpu
 	}
 	base.Eligible = true
 	if !claimed {
-		if base.CVMOwnershipState != "target_owned" {
-			base.FirstFalsePredicate = "provider.cvmOwnership"
-			base.Expected = "target_owned"
-			base.Actual = firstNonEmpty(base.CVMOwnershipState, "unknown")
-			base.Authority = "provider.cvmOwnership"
-		} else if base.NodeOwnershipState != "target_owned" {
+		// Node ownership is the first executable predicate. A recoverable CVM
+		// is an allowed provider fact for the Node-only continuation and must not
+		// mask the unallocated Node that the executor is authorized to converge.
+		if base.NodeOwnershipState != "target_owned" {
 			base.FirstFalsePredicate = "provider.nodeOwnership"
 			base.Expected = "target_owned"
 			base.Actual = firstNonEmpty(base.NodeOwnershipState, "unknown")
 			base.Authority = "provider.nodeOwnership"
+		} else if base.CVMOwnershipState != "target_owned" {
+			base.FirstFalsePredicate = "provider.cvmOwnership"
+			base.Expected = "target_owned"
+			base.Actual = firstNonEmpty(base.CVMOwnershipState, "unknown")
+			base.Authority = "provider.cvmOwnership"
 		}
 	}
 	return base
@@ -2781,10 +2796,11 @@ func (app *controlPlaneServer) claimWorkspaceCompute(ctx context.Context, servic
 			operation.ComputeClaimMergedMainSHA, operation.ComputeClaimCloudDigest = input.MergedMainSHA, input.CloudImageDigest
 			operation.ComputeClaimPrivateIP = input.PrivateIP
 		}
+		persistedProofEvaluation := evaluateWorkspaceComputeClaimProof(operation, input, *operation.ComputeClaimProof, !nodeOnlyAuthorized)
 		if app.bindWorkspaceComputeClaimApproval(ctx, &operation, input, key, nodeOnlyAuthorized) != nil || operation.ComputeClaimRequestHash != requestHash || operation.ComputeClaimApprovalID != input.ApprovalID ||
 			operation.ComputeClaimMergedMainSHA != input.MergedMainSHA || operation.ComputeClaimCloudDigest != input.CloudImageDigest ||
 			operation.ComputeClaimPrivateIP != input.PrivateIP || operation.ComputeClaimProof.PrivateIP != input.PrivateIP ||
-			!workspaceComputeClaimRecoveryRequestMatches(operation, input) || !evaluateWorkspaceComputeClaimProof(operation, input, *operation.ComputeClaimProof, true).Eligible {
+			!workspaceComputeClaimRecoveryRequestMatches(operation, input) || !persistedProofEvaluation.Eligible {
 			return clients.ComputeClaimRecoveryProof{}, errWorkspaceComputeClaimIdentity
 		}
 		if nodeOnlyAuthorized {
@@ -2922,7 +2938,7 @@ func (app *controlPlaneServer) executeWorkspaceComputeClaimStage(
 		proofErr = errWorkspaceComputeClaimProof
 		evaluation = evaluateWorkspaceComputeClaimProof(*operation, input, proof, false)
 	}
-	if proofErr != nil || !evaluation.Eligible || proof.CVMOwnershipState != "target_owned" {
+	if proofErr != nil || !evaluation.Eligible {
 		if !workspaceComputeClaimSafeFailureForOperation(*operation, input, proof) {
 			proof = workspaceComputeClaimFailureProof(*operation, "provider_describe")
 		}
@@ -2944,6 +2960,21 @@ func (app *controlPlaneServer) executeWorkspaceComputeClaimStage(
 		}
 		return proof, errWorkspaceComputeClaimProof
 	}
+	if decision.CurrentStage == "compute_claim" && decision.FirstFalsePredicate != "" && proof.NodeOwnershipState != "unallocated" {
+		// A recoverable CVM with an already-owned Node is not a Node-only
+		// continuation. Preserve the authoritative CVM predicate and freeze the
+		// stage rather than allowing the broad Compute provider path to mutate.
+		operation.Status, operation.Phase, operation.ErrorCode = "manual_review", "compute_claim_pending", "workspace_compute_claim_"+decision.FirstFalsePredicate
+		releaseWorkspaceLaunchLease(operation)
+		if err := app.persistWorkspaceLaunchWithDecision(ctx, operation, decision); err != nil {
+			return clients.ComputeClaimRecoveryProof{}, err
+		}
+		return proof, errWorkspaceComputeClaimProof
+	}
+	// The decision, phase, and status cross the Compute mutation boundary in
+	// one launch CAS. Recovery therefore rejoins the original Compute stage
+	// before the shared executor is allowed to call Fabric.
+	operation.Status, operation.Phase, operation.ErrorCode = "compute_claim_pending", "compute_claim_pending", ""
 	if err := app.persistWorkspaceLaunchWithDecision(ctx, operation, decision); err != nil {
 		return clients.ComputeClaimRecoveryProof{}, err
 	}
@@ -2956,6 +2987,7 @@ func (app *controlPlaneServer) executeWorkspaceComputeClaimStage(
 		return clients.ComputeClaimRecoveryProof{}, err
 	}
 	*operation = persisted
+	nodeOnlyContinuation := AuthorizeStageMutation(*persisted.CurrentDecision, "node_only_continuation")
 
 	claimed, claimErr := service.ClaimComputeRecovery(ctx, clients.ComputeClaimRecoveryClaimInput{
 		ComputeClaimRecoveryInput: workspaceComputeClaimRecoveryInput(*operation, input),
@@ -2965,12 +2997,16 @@ func (app *controlPlaneServer) executeWorkspaceComputeClaimStage(
 		PrivateIP:                 operation.ComputePrivateIP,
 		InstanceType:              operation.ComputeInstanceType,
 		Zone:                      operation.ComputeZone,
+		NodeOnlyContinuation:      nodeOnlyContinuation,
 	}, operation.ID+":compute")
 	if claimed.TencentMutationCount != 0 {
 		claimed = workspaceComputeClaimFailureProof(*operation, "identity_mismatch")
 		claimErr = errWorkspaceComputeClaimProof
 	}
 	claimedEvaluation := evaluateWorkspaceComputeClaimProof(*operation, input, claimed, true)
+	if nodeOnlyContinuation {
+		claimedEvaluation = evaluateWorkspaceComputeClaimProofNodeOnlyClaim(*operation, input, claimed)
+	}
 	if claimErr != nil || !claimedEvaluation.Eligible {
 		if !workspaceComputeClaimSafeFailureForOperation(*operation, input, claimed) {
 			claimed = workspaceComputeClaimFailureProof(*operation, "identity_mismatch")

@@ -62,7 +62,7 @@ func TestCurrentDecisionDoesNotAuthorizeNodeMutationWithoutProviderProof(t *test
 	}
 }
 
-func TestCurrentDecisionDoesNotAuthorizeNodeOnlyContinuationForRecoverableCVM(t *testing.T) {
+func TestCurrentDecisionAuthorizesNodeOnlyContinuationForRecoverableCVM(t *testing.T) {
 	operation := workspaceLaunchOperation{
 		ID:     "workspace-launch-cvm-target-owned-required",
 		Status: "compute_claim_pending",
@@ -77,12 +77,12 @@ func TestCurrentDecisionDoesNotAuthorizeNodeOnlyContinuationForRecoverableCVM(t 
 	evaluation := evaluateWorkspaceComputeClaimProof(operation, workspaceComputeClaimRequestFromOperation(operation), proof, false)
 	decision := currentDecisionForComputeClaimEvaluation(operation, nil, evaluation)
 
-	if decision.CurrentStage != "compute_claim" || decision.StageState != "unknown" ||
-		decision.FirstFalsePredicate != "provider.cvmOwnership" || decision.Expected != "target_owned" ||
-		decision.Actual != "recoverable" || decision.NextAction != "MANUAL_REVIEW" ||
-		decision.AllowedMutation != "none" || !decision.RequiresApproval ||
-		AuthorizeStageMutation(decision, "node_only_continuation") {
-		t.Fatalf("recoverable CVM authorized Node-only continuation: %#v", decision)
+	if decision.CurrentStage != "compute_claim" || decision.StageState != "pending" ||
+		decision.FirstFalsePredicate != "provider.nodeOwnership" || decision.Expected != "target_owned" ||
+		decision.Actual != "unallocated" || decision.NextAction != "NODE_ONLY_CONTINUATION_ONCE" ||
+		decision.AllowedMutation != "node_only_continuation" || decision.RequiresApproval ||
+		!AuthorizeStageMutation(decision, "node_only_continuation") {
+		t.Fatalf("recoverable CVM did not authorize the bounded Node-only continuation: %#v", decision)
 	}
 }
 
