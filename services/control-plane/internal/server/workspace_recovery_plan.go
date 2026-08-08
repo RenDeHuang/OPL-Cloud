@@ -1212,7 +1212,8 @@ func workspaceRecoveryExecutionSuccessorGate(operation workspaceLaunchOperation,
 		outcome.FabricOperationMutations == 0 && outcome.Source == "compute_claim_response" &&
 		operation.RecoveryExecution.ErrorCode == "workspace_launch_storage_attempt_unknown" &&
 		operation.ContinuationAttemptBudgets["storage"] == (workspaceLaunchStageBudget{Attempted: 1, Unknown: 1, Max: workspaceLaunchStageMax}) &&
-		workspaceRecoveryHistoryProvesArchivedNodeClientRejection(operation) && evidence != nil &&
+		operation.RecoveryPlan.OperationID == operation.ID &&
+		evidence != nil &&
 		evidence.MutationLedger == "absent" && evidence.MutationLedgerOutcome == "confirmed_zero" &&
 		evidence.MutationLedgerDigest == hex.EncodeToString(absentDigest[:]) && evidence.MutationEvidence == nil &&
 		evidence.FailureStage == "" && evidence.ProviderErrorClass == "" &&
