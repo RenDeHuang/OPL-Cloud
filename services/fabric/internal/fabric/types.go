@@ -139,6 +139,24 @@ type MonthlyProviderTruth struct {
 	ErrorCode         string            `json:"errorCode,omitempty"`
 }
 
+// ComputeProviderTruth is the compute-stage projection of provider truth.
+// It intentionally does not require a StorageVolume record; Storage remains a
+// later stage and is reported independently as unknown/not-started.
+type ComputeProviderTruth struct {
+	SchemaVersion      int                        `json:"schemaVersion"`
+	State              string                     `json:"state"`
+	Reason             string                     `json:"reason,omitempty"`
+	ComputeState       string                     `json:"computeState"`
+	StorageState       string                     `json:"storageState"`
+	Compute            ComputeAllocation          `json:"compute"`
+	NodeOwnershipState string                     `json:"nodeOwnershipState"`
+	CVMOwnershipState  string                     `json:"cvmOwnershipState"`
+	ProviderRequestID  string                     `json:"providerRequestId,omitempty"`
+	FailureStage       string                     `json:"failureStage,omitempty"`
+	ProviderErrorClass string                     `json:"providerErrorClass,omitempty"`
+	Proof              *ComputeClaimRecoveryProof `json:"proof,omitempty"`
+}
+
 type ComputeClaimRecoveryInput struct {
 	LaunchOperationID   string `json:"launchOperationId"`
 	AccountID           string `json:"accountId"`

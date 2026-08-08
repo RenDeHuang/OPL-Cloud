@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 32,
+  "schemaVersion": 33,
   "owner": "OPL Platform Architecture",
   "purpose": "Current ownership contract for Console UI, Control Plane, Ledger, Fabric, and external Sub2API.",
   "state": "current",
@@ -115,6 +115,18 @@
         "restart": "persisted_budget_never_resets",
         "terminalFailure": "unknown_or_exhausted_enters_manual_review_and_active_worker_excludes_it"
       },
+      "workspaceLaunchStageDecision": {
+        "aggregateRoot": "workspace.launch.v2",
+        "orderedStages": ["debit", "compute_claim", "storage", "attachment", "secret", "runtime", "activation", "receipt", "succeeded"],
+        "collector": "normalized_per_source_evidence_without_cross_stage_erasure",
+        "reducer": "pure_function",
+        "persistence": "phase_status_currentDecision_one_postgresql_cas",
+        "attemptCounters": "stage_attempt_ledger_only_not_currentDecision",
+        "computeConsumers": ["normal_launch", "manual_review_recovery", "recovery_diagnose_validate_execute"],
+        "projectionOnly": ["get_only_workflow", "console", "artifact"],
+        "mutationAuthorization": "persisted_currentDecision_only",
+        "p0Scope": "compute_claim"
+      },
       "workspaceComputeClaimAutomaticContinuation": {
         "owner": "original_workspace.launch.v2_worker",
         "selection": "compute_claim_pending_only_manual_review_excluded",
@@ -193,7 +205,7 @@
         "fabricProofRoute": "POST /fabric/workspace-launch-stage-readback/proof",
         "fabricConvergenceRoute": "POST /fabric/workspace-launch-stage-readback/converge",
         "fabricProofSemantics": "authenticated_structured_post_get_describe_only",
-        "stages": ["storage", "attachment", "secret", "runtime", "activation", "receipt"],
+        "stages": ["compute_claim", "storage", "attachment", "secret", "runtime", "activation", "receipt"],
         "inputBudget": {"attempted": 1, "confirmed": 0, "unknown": 1, "max": 1},
         "convergedBudget": {"attempted": 1, "confirmed": 1, "unknown": 0, "max": 1},
         "proofAuthorities": ["monthly_provider_truth", "machine_ownership", "fabric_operation_store", "workspace_runtime_status", "workspace_activation_truth", "ledger_receipt"],
@@ -210,12 +222,14 @@
         "planBinding": {
           "releaseSource": ["OPL_RELEASE_SHA", "OPL_CLOUD_IMAGE", "OPL_WORKSPACE_IMAGE"],
           "targetSource": "authoritative_control_plane_fabric_provider_and_ledger_readback",
-          "digest": "canonical_sha256_of_release_target_stage_and_write_budget",
+          "decisionFields": ["decisionDigest", "evidenceDigest", "decisionVersion", "currentStage", "stageAttemptId", "allowedMutation", "mutationBudget"],
+          "digest": "canonical_sha256_of_release_target_stage_decision_and_write_budget",
           "mismatchProjection": "field_name_with_safe_value_or_digest"
         },
         "executionLease": {
           "persistence": "original_workspace.launch.v2_operation",
-          "identity": ["plan_id", "plan_digest", "approval_digest", "execution_id", "run_id", "decision"],
+          "identity": ["plan_id", "plan_digest", "approval_digest", "execution_id", "run_id", "decision", "reviewer"],
+          "reviewer": "authenticated_operator_session_bound_into_execution_identity",
           "singleWinner": "postgresql_cas",
           "fencing": "byte_exact_current_lease_token_required_to_finalize",
           "unknownResult": "reconcile_same_execution_identity_without_second_provider_entry",
@@ -418,13 +432,15 @@
         "drift": "all_other_identity_mismatch_zero_provider_mutation"
       },
       "workspaceComputeClaimRecovery": {
+        "computeProviderTruthEndpoint": "GET /fabric/compute-provider-truth",
         "proofEndpoint": "POST /fabric/compute-claim-recovery/proof",
         "identityEvidenceEndpoint": "POST /fabric/compute-claim-recovery/identity-evidence",
         "claimEndpoint": "POST /fabric/compute-claim-recovery/claim",
-        "scope": "workspace.launch.v2_compute_claim_pending_before_storage_create",
-        "proofAuthority": ["launch_operation", "compute_allocation", "allocation_plan", "machine_ownership", "tencent_describe", "tencent_describe_disks", "kubernetes_get"],
+        "scope": "workspace.launch.v2_compute_claim_pending_independent_of_later_storage_attempt_state",
+        "proofAuthority": ["launch_operation", "compute_allocation", "allocation_plan", "machine_ownership", "tencent_describe", "kubernetes_get"],
         "packages": ["basic", "pro"],
-        "storageGate": "zero_local_create_storage_volume_operations_requires_exact_tencent_cbs_discovery",
+        "stageIsolation": "storage_attempted_unknown_or_conflict_is_reported_but_never_masks_compute_or_node_truth",
+        "storageGate": "node_target_owned_before_independent_storage_reconciliation_and_any_cbs_mutation",
         "storageDiscovery": {
           "operation": "DescribeDisks_only",
           "ownershipTags": ["opl_account_id", "opl_workspace_id", "opl_resource_id", "opl_operation_id"],
@@ -450,7 +466,7 @@
         "exactIdentity": ["account", "workspace", "compute_operation", "pool", "node_pool", "machine", "node", "private_ip", "cvm", "sku", "zone"],
         "billingFacts": {"chargeType": "PREPAID", "periodMonths": 1, "renewFlag": "NOTIFY_AND_MANUAL_RENEW", "deadline": "exact"},
         "ownershipProof": {"node": ["unallocated", "target_owned"], "cvm": ["recoverable", "target_owned"]},
-        "reasons": ["local_identity", "provider_describe", "iam_rbac", "multiple_candidate", "identity_mismatch", "node_ownership_conflict", "storage_already_started"],
+        "reasons": ["local_identity", "provider_describe", "iam_rbac", "multiple_candidate", "identity_mismatch", "node_ownership_conflict"],
         "proofMutationCounts": {"sub2api": 0, "tencent": 0, "kubernetes": 0},
         "providerIdentityFailureEvidence": {
           "owner": "Fabric_ProveComputeClaimRecovery",
@@ -511,7 +527,7 @@
           "observedCvmTagRepairContinuation": "only_cvm_tag_readback_zero_unknown_zero_kubernetes_then_fresh_exact_cvm_target_owned_node_unallocated_proof_may_reconcile_original_claim_identity_and_attempt_one_node_patch_without_binding_takeover",
           "requestHashOnlyReconciliation": {
             "consumer": "claim_compute_recovery_only",
-            "commonIdentity": "canonical_compute_operation_quarantined_allocation_and_ownership_exact_original_launch_target_plan_machine_cvm_node_pool_node_billing_and_storage_not_started",
+            "commonIdentity": "canonical_compute_operation_quarantined_allocation_and_ownership_exact_original_launch_target_plan_machine_cvm_node_pool_node_and_billing",
             "generations": {
               "isolated_request_hash_v1": "schema_1_claim_pending_valid_isolated_manual_recovery_ledger",
               "normal_launch_terminal_evidence_v1": "schema_2_failed_no_manual_ledger_compute_create_1_1_0_max1_compute_claim_cvm_1_0_1_max1_node_budget_absent_exact_compute_claim_cvm_terminal_unprovable_evidence"

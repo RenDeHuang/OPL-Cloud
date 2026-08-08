@@ -2544,6 +2544,9 @@ func computeClaimRecoveryRequestBodyForStorage(t *testing.T, operation workspace
 			"claim_existing_cvm_node", storageWrite, "create_original_pv_pvc_attachment", "upsert_original_gateway_secret",
 			"create_original_workspace_runtime", "activate_original_workspace", "record_original_purchase_receipt",
 		}
+		if storageState == "storage_attempt_unknown" {
+			allowedWrites = []string{"claim_existing_cvm_node"}
+		}
 		forbiddenWrites := []string{"create_launch", "debit", "recharge", "refund", "scale", "create_cvm", "create_second_cbs", "delete", "replace"}
 		approval := map[string]any{
 			"schemaVersion":        2,
@@ -2590,6 +2593,43 @@ func computeClaimRecoveryRequestBodyForStorage(t *testing.T, operation workspace
 		t.Fatal(err)
 	}
 	return string(encoded)
+}
+
+func TestWorkspaceComputeClaimPersistsProviderDecisionBeforeNodeContinuation(t *testing.T) {
+	fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, "basic")
+	fixture.fabric.computeClaimProof = computeClaimRecoveryProofForLaunchStorage(operation, "unallocated", "storage_attempt_unknown", "")
+	claimed := computeClaimRecoveryProofForLaunchStorage(operation, "target_owned", "storage_attempt_unknown", "")
+	claimed.KubernetesMutationCount = 1
+	claimed.Evidence.Node = clients.ComputeClaimMutationEvidence{Attempted: 1, Confirmed: 1}
+	fixture.fabric.computeClaimResult = &claimed
+	configureWorkspaceLaunchFulfillment(t, fixture)
+	configureWorkspaceComputeClaimReadback(fixture, operation)
+
+	fixture.fabric.beforeComputeClaim = func() {
+		persisted := fixture.operation(t)
+		decision := persisted.CurrentDecision
+		if persisted.Status != "compute_claim_pending" || persisted.Phase != "compute_claim_pending" || decision == nil ||
+			decision.CurrentStage != "compute_claim" || decision.StageState != "pending" ||
+			decision.FirstFalsePredicate != "provider.nodeOwnership" || decision.Expected != "target_owned" || decision.Actual != "unallocated" ||
+			decision.NextAction != "NODE_ONLY_CONTINUATION_ONCE" || decision.AllowedMutation != "node_only_continuation" ||
+			decision.RequiresApproval || !AuthorizeStageMutation(*decision, "node_only_continuation") {
+			t.Fatalf("Node continuation ran without the persisted provider decision: %#v", persisted)
+		}
+	}
+
+	path := "/api/operator/workspace-launches/" + operation.ID + "/compute-claim-recovery/claim"
+	response := requestComputeClaimWithCapabilityForTest(
+		t,
+		fixture.server,
+		fixture.operator,
+		path,
+		computeClaimRecoveryRequestBodyForStorage(t, operation, true, "compute-claim-decision-gate", "storage_attempt_unknown", ""),
+		"compute-claim-decision-gate",
+	)
+
+	if response.Code != http.StatusOK || len(fixture.fabric.computeClaimCalls) != 1 || len(fixture.fabric.storageIDs) != 0 {
+		t.Fatalf("provider-authorized Node continuation failed: status=%d body=%s operation=%#v calls=%#v storage=%#v", response.Code, response.Body.String(), fixture.operation(t), fixture.fabric.computeClaimCalls, fixture.fabric.storageIDs)
+	}
 }
 
 func expireComputeClaimRecoveryRequestBody(t *testing.T, operation workspaceLaunchOperation, body string, idempotencyKey string) string {

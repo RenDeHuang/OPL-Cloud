@@ -625,6 +625,53 @@ func (s *Service) MonthlyProviderTruth(ctx context.Context, computeID, storageID
 	return result, nil
 }
 
+// ComputeProviderTruth reads only the Compute Claim provider proof. It is the
+// authoritative GET-only collector for the compute stage and deliberately
+// keeps a later Storage read failure out of the Compute result.
+func (s *Service) ComputeProviderTruth(ctx context.Context, input ComputeClaimRecoveryInput) (ComputeProviderTruth, error) {
+	input.AllowExistingStorageOperation = true
+	s.mu.Lock()
+	compute := cloneComputeAllocation(s.computes[strings.TrimSpace(input.ComputeAllocationID)])
+	s.mu.Unlock()
+	truth := ComputeProviderTruth{
+		SchemaVersion: 1, State: "unknown", ComputeState: "unknown", StorageState: "unknown", Compute: compute,
+	}
+	proof, err := s.ComputeClaimRecoveryProof(ctx, input)
+	truth.Reason, truth.FailureStage, truth.ProviderErrorClass = proof.Reason, proof.FailureStage, proof.ProviderErrorClass
+	truth.NodeOwnershipState, truth.CVMOwnershipState, truth.Proof = proof.NodeOwnershipState, proof.CVMOwnershipState, &proof
+	truth.StorageState = normalizedComputeStorageState(proof.StorageState)
+	truth.ProviderRequestID = compute.ProviderRequestID
+	if proof.ComputeAllocationID != "" && proof.ComputeAllocationID != compute.ID {
+		return truth, fmt.Errorf("%w: compute_identity", ErrComputeClaimRecoveryUnavailable)
+	}
+	if err != nil {
+		return truth, err
+	}
+	if !proof.Eligible || proof.Reason != "none" {
+		return truth, fmt.Errorf("%w: %s", ErrComputeClaimRecoveryUnavailable, firstNonEmpty(proof.Reason, "provider_describe"))
+	}
+	truth.State, truth.ComputeState = "ready", "ready"
+	truth.Compute.Status = "ready"
+	truth.Compute.MachineName, truth.Compute.NodeName = proof.MachineName, proof.NodeName
+	truth.Compute.CVMInstanceID, truth.Compute.InstanceID = proof.CVMInstanceID, proof.CVMInstanceID
+	truth.Compute.PrivateIP, truth.Compute.InstanceType, truth.Compute.Zone = proof.PrivateIP, proof.InstanceType, proof.Zone
+	truth.Compute.ChargeType, truth.Compute.RenewFlag, truth.Compute.Deadline = proof.ChargeType, proof.RenewFlag, proof.Deadline
+	truth.Compute.ProviderResourceID = proof.CVMInstanceID
+	truth.Compute.ProviderRequestID = firstNonEmpty(truth.ProviderRequestID, compute.ProviderRequestID)
+	return truth, nil
+}
+
+func normalizedComputeStorageState(value string) string {
+	switch value {
+	case "storage_not_started", "absent":
+		return "absent"
+	case "storage_existing_exact", "ready":
+		return "ready"
+	default:
+		return "unknown"
+	}
+}
+
 func (s *Service) ComputeClaimRecoveryProof(ctx context.Context, input ComputeClaimRecoveryInput) (ComputeClaimRecoveryProof, error) {
 	proof := newComputeClaimRecoveryProof(input)
 	if !validComputeClaimRecoveryInput(input) {

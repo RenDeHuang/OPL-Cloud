@@ -131,6 +131,7 @@ type workspaceLaunchOperation struct {
 	ComputeClaimPrivateIP        string                                   `json:"computeClaimPrivateIp,omitempty"`
 	ComputeClaimProof            *clients.ComputeClaimRecoveryProof       `json:"computeClaimProof,omitempty"`
 	ComputeClaimTerminalEvidence *clients.ComputeClaimTerminalEvidence    `json:"computeClaimTerminalEvidence,omitempty"`
+	CurrentDecision              *CurrentDecision                         `json:"currentDecision,omitempty"`
 	RecoveryCanaryDigest         string                                   `json:"recoveryAcceptanceApprovalDigest,omitempty"`
 	AcceptanceBCapacitySlot      bool                                     `json:"acceptanceBCapacitySlot,omitempty"`
 	StorageID                    string                                   `json:"storageId"`
@@ -427,7 +428,7 @@ func newWorkspaceLaunchOperation(accountID, ownerUserID, name, packageID string,
 	workspaceID := "ws-" + stableID("workspace-launch-v2", accountID, operationID)[:18]
 	workspaceImageDigest := currentWorkspaceImageDigest()
 	now := time.Now().UTC()
-	return workspaceLaunchOperation{
+	operation := workspaceLaunchOperation{
 		ID: operationID, Status: "debit_pending", CreatedAt: now.Format(time.RFC3339Nano), Phase: "debit_pending", SchemaVersion: workspaceLaunchSchemaVersion,
 		RequestHash: stableID("workspace-launch-v2", accountID, ownerUserID, name, packageID, strconv.Itoa(storageGB), strconv.FormatBool(autoRenew), priceVersion, workspaceImageDigest),
 		AccountID:   accountID, OwnerUserID: ownerUserID, WorkspaceID: workspaceID, Name: name, PackageID: packageID,
@@ -440,6 +441,9 @@ func newWorkspaceLaunchOperation(accountID, ownerUserID, name, packageID string,
 		RedeemCode: monthlyRedeemCode(monthlyEnvironment(), operationID), RefundCode: monthlyRefundCode(monthlyEnvironment(), operationID),
 		ContinuationAttemptBudgets: newWorkspaceLaunchContinuationAttemptBudgets(),
 	}
+	decision := currentDecisionForWorkspaceLaunch(operation)
+	operation.CurrentDecision = &decision
+	return operation
 }
 
 func workspaceLaunchOperationID(accountID, key string) string {
@@ -620,7 +624,8 @@ func workspaceLaunchResponse(row map[string]any) (map[string]any, error) {
 		"runtimeServiceName": operation.RuntimeServiceName, "url": operation.URL, "receiptId": operation.ReceiptID,
 		"continuationAttemptBudgets": operation.ContinuationAttemptBudgets,
 		"failureStage":               operation.FailureStage, "errorCode": operation.ErrorCode,
-		"createdAt": row["createdAt"], "updatedAt": row["updatedAt"],
+		"currentDecision": operation.CurrentDecision,
+		"createdAt":       row["createdAt"], "updatedAt": row["updatedAt"],
 	}
 	if operation.RecoveryPlan != nil {
 		response["recoveryPlan"] = workspaceRecoveryPlanHTTPProjection(workspaceRecoveryPlanProjection(operation))
@@ -2553,9 +2558,10 @@ func (app *controlPlaneServer) claimWorkspaceCompute(ctx context.Context, servic
 		if !workspaceComputeClaimSafeFailureForOperation(operation, input, proof) {
 			proof = workspaceComputeClaimFailureProof(operation, "provider_describe")
 		}
+		decision := currentDecisionForComputeClaimProof(operation, proof, proofErr)
 		operation.Status, operation.ErrorCode = "manual_review", "workspace_compute_claim_"+proof.Reason
 		releaseWorkspaceLaunchLease(&operation)
-		if err := app.persistWorkspaceLaunch(ctx, &operation); err != nil {
+		if err := app.persistWorkspaceLaunchWithDecision(ctx, &operation, decision); err != nil {
 			return clients.ComputeClaimRecoveryProof{}, err
 		}
 		return proof, errWorkspaceComputeClaimProof
@@ -2583,6 +2589,28 @@ func (app *controlPlaneServer) claimWorkspaceCompute(ctx context.Context, servic
 		}
 	}
 
+	decision := currentDecisionForComputeClaimProof(operation, proof, nil)
+	if proof.NodeOwnershipState == "unallocated" && !AuthorizeStageMutation(decision, "node_only_continuation") {
+		operation.Status, operation.ErrorCode = "manual_review", "workspace_compute_claim_node_ownership_conflict"
+		releaseWorkspaceLaunchLease(&operation)
+		if err := app.persistWorkspaceLaunchWithDecision(ctx, &operation, decision); err != nil {
+			return clients.ComputeClaimRecoveryProof{}, err
+		}
+		return proof, errWorkspaceComputeClaimProof
+	}
+	if err := app.persistWorkspaceLaunchWithDecision(ctx, &operation, decision); err != nil {
+		return clients.ComputeClaimRecoveryProof{}, err
+	}
+	persisted, found, err := app.workspaceLaunchOperation(ctx, operation.ID)
+	if err != nil || !found || !sameCurrentDecisionAuthority(persisted.CurrentDecision, decision) ||
+		proof.NodeOwnershipState == "unallocated" && !AuthorizeStageMutation(*persisted.CurrentDecision, "node_only_continuation") {
+		if err == nil {
+			err = errWorkspaceComputeClaimIdentity
+		}
+		return clients.ComputeClaimRecoveryProof{}, err
+	}
+	operation = persisted
+
 	claimed, claimErr := service.ClaimComputeRecovery(ctx, clients.ComputeClaimRecoveryClaimInput{
 		ComputeClaimRecoveryInput: workspaceComputeClaimRecoveryInput(operation, input), MachineName: operation.ComputeMachineName,
 		NodeName: operation.ComputeNodeName, CVMInstanceID: operation.ComputeCVMInstanceID, PrivateIP: operation.ComputePrivateIP,
@@ -2592,9 +2620,10 @@ func (app *controlPlaneServer) claimWorkspaceCompute(ctx context.Context, servic
 		if !workspaceComputeClaimSafeFailureForOperation(operation, input, claimed) {
 			claimed = workspaceComputeClaimFailureProof(operation, "identity_mismatch")
 		}
+		decision = currentDecisionForComputeClaimProof(operation, claimed, claimErr)
 		operation.Status, operation.ErrorCode = "manual_review", "workspace_compute_claim_"+claimed.Reason
 		releaseWorkspaceLaunchLease(&operation)
-		if err := app.persistWorkspaceLaunch(ctx, &operation); err != nil {
+		if err := app.persistWorkspaceLaunchWithDecision(ctx, &operation, decision); err != nil {
 			return clients.ComputeClaimRecoveryProof{}, err
 		}
 		return claimed, errWorkspaceComputeClaimProof
@@ -3226,6 +3255,12 @@ func releaseWorkspaceLaunchLease(operation *workspaceLaunchOperation) {
 
 func (app *controlPlaneServer) persistWorkspaceLaunch(ctx context.Context, operation *workspaceLaunchOperation) error {
 	syncWorkspaceRecoveryTerminalState(operation)
+	decision := currentDecisionForWorkspaceLaunch(*operation)
+	return app.persistWorkspaceLaunchWithDecision(ctx, operation, decision)
+}
+
+func (app *controlPlaneServer) persistWorkspaceLaunchWithDecision(ctx context.Context, operation *workspaceLaunchOperation, decision CurrentDecision) error {
+	operation.CurrentDecision = &decision
 	desired := workspaceLaunchOperationRow(*operation)
 	if err := app.tables.PersistWorkspaceLaunch(ctx, workspaceLaunchPersistCAS{
 		OperationID: operation.ID, ExpectedOperationResult: operation.PersistedResult, DesiredOperation: desired,

@@ -26,7 +26,7 @@ test("root agent instructions require the launch invariants", async () => {
 test("launch freeze fixes the V2 products, owner lanes, settlement, and verification slot", async () => {
   const freeze = await json("packages/contracts/opl-cloud-launch-freeze-contract.json");
 
-  assert.equal(freeze.schemaVersion, 27);
+  assert.equal(freeze.schemaVersion, 28);
   assert.equal(freeze.architectureAuthority.repository, "https://github.com/gaofeng21cn/one-person-lab-cloud");
   assert.equal(freeze.architectureAuthority.reviewedRevision, "c349a41d860e706ed43a4090b9e75abb0b130971");
   assert.deepEqual(Object.keys(freeze.productSurfaces), ["gateway", "workspace", "serve", "console", "fabric", "ledger"]);
@@ -147,8 +147,8 @@ test("launch freeze fixes the V2 products, owner lanes, settlement, and verifica
     owner: "control_plane",
     singleWinner: "postgresql_cas_persisted_execution_lease",
     fencing: "byte_exact_current_lease_token_required_to_finalize",
-    identity: ["planId", "planDigest", "approvalDigest", "executionId", "runId", "decision"],
-    replay: "same_plan_digest_and_decision_returns_same_execution_and_run_identity",
+    identity: ["planId", "planDigest", "approvalDigest", "executionId", "runId", "decision", "reviewer"],
+    replay: "same_plan_digest_decision_and_reviewer_returns_same_execution_and_run_identity",
     failedZeroSuccessor: "archive_old_plan_execution_approval_error_and_mutation_outcome_then_require_new_plan_validation_and_approval"
   });
   assert.deepEqual(freeze.providerProcurement.preDebitIamGate, {
@@ -191,18 +191,18 @@ test("launch freeze fixes the V2 products, owner lanes, settlement, and verifica
     forbidden: freeze.workspaceLaunch.computeClaimRecovery.forbidden,
     currentImplementation: freeze.workspaceLaunch.computeClaimRecovery.currentImplementation
   }, {
-    trigger: "debit_confirmed_unique_compute_created_claim_interrupted_before_local_storage_operation",
+    trigger: "debit_confirmed_unique_compute_created_claim_interrupted_regardless_of_later_storage_attempt_state",
     pendingState: "compute_claim_pending",
     proofContract: "opl-cloud-service-boundary-contract.json#services.fabric.workspaceComputeClaimRecovery",
     identitySource: ["workspace.launch.v2", "create_compute_allocation", "allocation_plan", "machine_ownership"],
     legacyCandidates: [{ status: "manual_review", phase: "compute_fulfilling" }],
-    legacyNormalization: "after_debit_identity_local_storage_zero_and_compute_plus_exact_cbs_proof_postgresql_cas_to_compute_claim_pending",
+    legacyNormalization: "after_debit_and_exact_compute_identity_ownership_proof_postgresql_cas_to_compute_claim_pending",
     normalizationMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
     fabricIdempotencyBinding: ["launch_operation_id", "idempotency_key", "target_hash", "request_hash"],
     requestHashReconciliation: {
       owner: "Fabric_ClaimComputeRecovery",
       candidate: "persisted_request_hash_is_the_only_primitive_binding_mismatch",
-      requiredIdentity: ["canonical_compute_operation", "original_launch", "target_hash", "allocation_plan", "quarantined_compute_allocation", "quarantined_machine_ownership", "tencent_cvm", "tke_machine", "kubernetes_node", "node_pool", "sku", "zone", "prepaid_manual_renew_deadline", "storage_not_started"],
+      requiredIdentity: ["canonical_compute_operation", "original_launch", "target_hash", "allocation_plan", "quarantined_compute_allocation", "quarantined_machine_ownership", "tencent_cvm", "tke_machine", "kubernetes_node", "node_pool", "sku", "zone", "prepaid_manual_renew_deadline"],
       generations: {
         isolated_request_hash_v1: {
           schemaVersion: 1,
@@ -225,7 +225,7 @@ test("launch freeze fixes the V2 products, owner lanes, settlement, and verifica
       preserved: ["persisted_binding", "source_recovery_evidence", "normal_launch_mutation_budgets", "terminal_evidence", "launch", "debit", "cvm", "allocation", "ownership"],
       consumer: "original_ClaimComputeRecovery_only",
       mutationBounds: { sub2api: 0, tencent: 0, kubernetesNodePatchMax: 1 },
-      failClosed: ["released_ownership", "zero_or_multiple_compute_candidates", "other_binding_mismatch", "source_evidence_drift", "provider_identity_drift", "storage_started", "cas_conflict", "unknown_readback"]
+      failClosed: ["released_ownership", "zero_or_multiple_compute_candidates", "other_binding_mismatch", "source_evidence_drift", "provider_identity_drift", "cas_conflict", "compute_unknown_readback"]
     },
     claimMutationBounds: { sub2api: 0, tencent: { min: 0, max: 5 }, kubernetes: { min: 0, max: 1 } },
     storageProof: "DescribeDisks_only_four_ownership_tags_complete_pagination_exact_facts_mutation_zero",

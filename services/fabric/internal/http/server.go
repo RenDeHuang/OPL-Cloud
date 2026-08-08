@@ -145,6 +145,38 @@ func NewServer(service *fabric.Service, token string) http.Handler {
 		}
 		writeJSON(w, http.StatusOK, result)
 	})
+	mux.HandleFunc("GET /fabric/compute-provider-truth", func(w http.ResponseWriter, r *http.Request) {
+		query := r.URL.Query()
+		keys := []string{"launchOperationId", "accountId", "workspaceId", "computeAllocationId", "storageVolumeId", "packageId", "poolId", "nodePoolId"}
+		if len(query) != len(keys) {
+			writeError(w, http.StatusBadRequest, fabric.ErrInvalidComputeClaimRecovery.Error())
+			return
+		}
+		values := make(map[string]string, len(keys))
+		for _, key := range keys {
+			items, ok := query[key]
+			if !ok || len(items) != 1 || items[0] == "" || items[0] != strings.TrimSpace(items[0]) {
+				writeError(w, http.StatusBadRequest, fabric.ErrInvalidComputeClaimRecovery.Error())
+				return
+			}
+			values[key] = items[0]
+		}
+		input := fabric.ComputeClaimRecoveryInput{
+			LaunchOperationID: values["launchOperationId"], AccountID: values["accountId"], WorkspaceID: values["workspaceId"],
+			ComputeAllocationID: values["computeAllocationId"], StorageVolumeID: values["storageVolumeId"], PackageID: values["packageId"],
+			PoolID: values["poolId"], NodePoolID: values["nodePoolId"], AllowExistingStorageOperation: true,
+		}
+		if input.LaunchOperationID == "" || input.AccountID == "" || input.WorkspaceID == "" || input.ComputeAllocationID == "" ||
+			input.StorageVolumeID == "" || input.PackageID == "" || input.PoolID == "" || input.NodePoolID == "" {
+			writeError(w, http.StatusBadRequest, fabric.ErrInvalidComputeClaimRecovery.Error())
+			return
+		}
+		result, _ := service.ComputeProviderTruth(r.Context(), input)
+		// A normalized unavailable result is still evidence. Keep HTTP 200 so
+		// callers can retain other successful reads instead of losing the whole
+		// Compute snapshot to a later-stage Storage error.
+		writeJSON(w, http.StatusOK, result)
+	})
 	mux.HandleFunc("POST /fabric/workspace-activation-truth", func(w http.ResponseWriter, r *http.Request) {
 		var input fabric.WorkspaceActivationTruthInput
 		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {

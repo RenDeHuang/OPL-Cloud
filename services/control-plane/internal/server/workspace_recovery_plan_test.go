@@ -1018,7 +1018,7 @@ func TestWorkspaceRecoveryPlanExecutionLeaseHasOneCrossInstanceWinner(t *testing
 	results := make(chan reservation, 2)
 	for _, app := range []*controlPlaneServer{fixture.app, peer} {
 		go func(candidate *controlPlaneServer) {
-			execution, won, reserveErr := candidate.reserveWorkspaceRecoveryExecution(context.Background(), fixture.service, scenario.unknown.ID, validated.PlanID, validated.PlanDigest, "continue")
+			execution, won, reserveErr := candidate.reserveWorkspaceRecoveryExecution(context.Background(), fixture.service, scenario.unknown.ID, validated.PlanID, validated.PlanDigest, "continue", "usr-admin")
 			results <- reservation{execution: execution, won: won, err: reserveErr}
 		}(app)
 	}
@@ -1134,7 +1134,7 @@ func TestWorkspaceRecoveryPlanExpiredLeaseReconcilesSameExecutionAfterRestart(t 
 	validated := recoveryPlanResponse(t, requestWorkspaceRecoveryPlan(t, fixture, http.MethodPost, "/validate", map[string]any{
 		"planId": diagnosed.PlanID, "planDigest": diagnosed.PlanDigest,
 	}))
-	execution, won, err := fixture.app.reserveWorkspaceRecoveryExecution(context.Background(), fixture.service, operation.ID, validated.PlanID, validated.PlanDigest, "continue")
+	execution, won, err := fixture.app.reserveWorkspaceRecoveryExecution(context.Background(), fixture.service, operation.ID, validated.PlanID, validated.PlanDigest, "continue", "usr-admin")
 	if err != nil || !won {
 		t.Fatalf("initial execution reservation won=%v err=%v execution=%#v", won, err, execution)
 	}
@@ -1175,7 +1175,7 @@ func TestWorkspaceRecoveryPlanReleasedLeaseCanBeReacquired(t *testing.T) {
 	validated := recoveryPlanResponse(t, requestWorkspaceRecoveryPlan(t, fixture, http.MethodPost, "/validate", map[string]any{
 		"planId": diagnosed.PlanID, "planDigest": diagnosed.PlanDigest,
 	}))
-	execution, won, err := fixture.app.reserveWorkspaceRecoveryExecution(context.Background(), fixture.service, scenario.unknown.ID, validated.PlanID, validated.PlanDigest, "continue")
+	execution, won, err := fixture.app.reserveWorkspaceRecoveryExecution(context.Background(), fixture.service, scenario.unknown.ID, validated.PlanID, validated.PlanDigest, "continue", "usr-admin")
 	if err != nil || !won {
 		t.Fatalf("initial execution reservation won=%v err=%v execution=%#v", won, err, execution)
 	}
@@ -1211,7 +1211,7 @@ func TestWorkspaceRecoveryPlanRejectsPartialOrInvalidReleasedLease(t *testing.T)
 	validated := recoveryPlanResponse(t, requestWorkspaceRecoveryPlan(t, fixture, http.MethodPost, "/validate", map[string]any{
 		"planId": diagnosed.PlanID, "planDigest": diagnosed.PlanDigest,
 	}))
-	execution, won, err := fixture.app.reserveWorkspaceRecoveryExecution(context.Background(), fixture.service, scenario.unknown.ID, validated.PlanID, validated.PlanDigest, "continue")
+	execution, won, err := fixture.app.reserveWorkspaceRecoveryExecution(context.Background(), fixture.service, scenario.unknown.ID, validated.PlanID, validated.PlanDigest, "continue", "usr-admin")
 	if err != nil || !won {
 		t.Fatalf("initial execution reservation won=%v err=%v execution=%#v", won, err, execution)
 	}
@@ -1315,7 +1315,7 @@ func TestWorkspaceRecoveryPlanExpiredLeaseRejectsStaleHolderFinalize(t *testing.
 	validated := recoveryPlanResponse(t, requestWorkspaceRecoveryPlan(t, fixture, http.MethodPost, "/validate", map[string]any{
 		"planId": diagnosed.PlanID, "planDigest": diagnosed.PlanDigest,
 	}))
-	stale, won, err := fixture.app.reserveWorkspaceRecoveryExecution(context.Background(), fixture.service, scenario.unknown.ID, validated.PlanID, validated.PlanDigest, "continue")
+	stale, won, err := fixture.app.reserveWorkspaceRecoveryExecution(context.Background(), fixture.service, scenario.unknown.ID, validated.PlanID, validated.PlanDigest, "continue", "usr-admin")
 	if err != nil || !won || stale.LeaseToken == "" {
 		t.Fatalf("initial reservation won=%v err=%v execution=%#v", won, err, stale)
 	}
@@ -1401,6 +1401,56 @@ func TestWorkspaceRecoveryPlanDiagnoseAndValidateComputeClaimFromServerAuthority
 	if persisted.Status != "compute_claim_pending" || persisted.Phase != "compute_claim_pending" || persisted.ComputeClaimApproval != nil ||
 		len(fixture.fabric.computeClaimInputs) != 2 || len(fixture.fabric.computeClaimCalls) != 0 || len(fixture.fabric.storageIDs) != 0 {
 		t.Fatalf("compute claim plan crossed zero-mutation boundary: operation=%#v proofs=%#v claims=%#v storage=%#v", persisted, fixture.fabric.computeClaimInputs, fixture.fabric.computeClaimCalls, fixture.fabric.storageIDs)
+	}
+}
+
+func TestWorkspaceRecoveryPlanDiagnosePersistsComputeDecisionAuthority(t *testing.T) {
+	t.Setenv("OPL_RELEASE_SHA", strings.Repeat("a", 40))
+	t.Setenv("OPL_CLOUD_IMAGE", "uswccr.ccs.tencentyun.com/oplcloud/opl-cloud@sha256:"+strings.Repeat("b", 64))
+	fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, "basic")
+	fixture.fabric.computeClaimProof = computeClaimRecoveryProofForLaunchStorage(operation, "unallocated", "storage_attempt_unknown", "")
+
+	response := requestWorkspaceRecoveryPlan(t, fixture, http.MethodPost, "/diagnose", map[string]any{"accountId": operation.AccountID})
+	if response.Code != http.StatusOK {
+		t.Fatalf("compute claim diagnose status=%d body=%s", response.Code, response.Body.String())
+	}
+	persisted := fixture.operation(t)
+	decision := persisted.CurrentDecision
+	if persisted.RecoveryPlan == nil || decision == nil || decision.CurrentStage != "compute_claim" || decision.StageState != "pending" ||
+		decision.FirstFalsePredicate != "provider.nodeOwnership" || decision.Expected != "target_owned" || decision.Actual != "unallocated" ||
+		decision.NextAction != "NODE_ONLY_CONTINUATION_ONCE" || decision.AllowedMutation != "node_only_continuation" ||
+		decision.RequiresApproval || !AuthorizeStageMutation(*decision, "node_only_continuation") {
+		t.Fatalf("Recovery Plan was not atomically bound to the Compute Decision: %#v", persisted)
+	}
+	if len(fixture.fabric.computeClaimCalls) != 0 || len(fixture.fabric.storageIDs) != 0 {
+		t.Fatalf("diagnose crossed zero-mutation boundary: claim=%#v storage=%#v", fixture.fabric.computeClaimCalls, fixture.fabric.storageIDs)
+	}
+}
+
+func TestWorkspaceRecoveryPlanReserveRejectsPersistedDecisionDrift(t *testing.T) {
+	t.Setenv("OPL_RELEASE_SHA", strings.Repeat("a", 40))
+	t.Setenv("OPL_CLOUD_IMAGE", "uswccr.ccs.tencentyun.com/oplcloud/opl-cloud@sha256:"+strings.Repeat("b", 64))
+	fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, "basic")
+	fixture.fabric.computeClaimProof = computeClaimRecoveryProofForLaunchStorage(operation, "unallocated", "storage_attempt_unknown", "")
+
+	diagnosed := recoveryPlanResponse(t, requestWorkspaceRecoveryPlan(t, fixture, http.MethodPost, "/diagnose", map[string]any{"accountId": operation.AccountID}))
+	validated := recoveryPlanResponse(t, requestWorkspaceRecoveryPlan(t, fixture, http.MethodPost, "/validate", map[string]any{
+		"planId": diagnosed.PlanID, "planDigest": diagnosed.PlanDigest,
+	}))
+	drifted := fixture.operation(t)
+	if drifted.CurrentDecision == nil {
+		t.Fatal("diagnose did not persist CurrentDecision")
+	}
+	drifted.CurrentDecision.EvidenceDigest = "sha256:" + strings.Repeat("d", 64)
+	drifted.CurrentDecision.DecisionVersion++
+	mustStore(t, fixture.store.SaveRuntimeOperation(context.Background(), workspaceLaunchOperationRow(drifted)))
+
+	_, won, err := fixture.app.reserveWorkspaceRecoveryExecution(context.Background(), fixture.service, operation.ID, validated.PlanID, validated.PlanDigest, "continue", "usr-admin")
+	if !errors.Is(err, errBillingReviewIdentity) || won {
+		t.Fatalf("stale Decision authorized Recovery execution: won=%v err=%v operation=%#v", won, err, fixture.operation(t))
+	}
+	if len(fixture.fabric.computeClaimCalls) != 0 || len(fixture.fabric.storageIDs) != 0 {
+		t.Fatalf("Decision drift crossed mutation boundary: claim=%#v storage=%#v", fixture.fabric.computeClaimCalls, fixture.fabric.storageIDs)
 	}
 }
 
@@ -2111,8 +2161,10 @@ func TestWorkspaceRecoveryPlanExecuteComputeClaimContinuesOriginalLaunchOnce(t *
 		t.Fatalf("compute claim replay repeated mutation: first=%#v second=%#v claims=%d storage=%d charges=%d computes=%d", first, second, len(fixture.fabric.computeClaimCalls), len(fixture.fabric.storageIDs), len(fixture.sub2API.charges), len(fixture.fabric.computeIDs))
 	}
 	persisted := fixture.operation(t)
+	executionWire := structToMap(*persisted.RecoveryExecution)
+	expectedReviewer := sessionUserIDForTest(t, fixture.server, fixture.operator)
 	if persisted.Status != "succeeded" || persisted.Phase != "succeeded" || persisted.ComputeClaimApproval == nil || persisted.ComputeClaimProof == nil ||
-		persisted.RecoveryExecution == nil || persisted.RecoveryExecution.ExecutionID != first.ExecutionID {
+		persisted.RecoveryExecution == nil || persisted.RecoveryExecution.ExecutionID != first.ExecutionID || stringValue(executionWire["reviewer"]) != expectedReviewer {
 		t.Fatalf("compute claim execution not persisted on original launch: %#v", persisted)
 	}
 }

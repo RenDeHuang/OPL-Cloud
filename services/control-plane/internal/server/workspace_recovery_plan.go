@@ -197,6 +197,7 @@ type workspaceRecoveryPlan struct {
 	TargetBinding          workspaceRecoveryTargetBinding         `json:"targetBinding"`
 	Stages                 []workspaceRecoveryPlanStage           `json:"stages"`
 	AllowedDecisions       []string                               `json:"allowedDecisions"`
+	DecisionBinding        workspaceRecoveryDecisionBinding       `json:"decisionBinding"`
 	IdentityEvidence       []clients.ComputeClaimIdentityCheck    `json:"identityEvidence"`
 	MutationCounts         workspaceRecoveryMutationCounts        `json:"mutationCounts"`
 	OperationID            string                                 `json:"operationId"`
@@ -208,6 +209,16 @@ type workspaceRecoveryPlan struct {
 	ErrorCode              string                                 `json:"errorCode,omitempty"`
 	SuccessorGate          *workspaceRecoverySuccessorGateDTO     `json:"-"`
 	ComputeClaimEvidence   *workspaceRecoveryComputeClaimEvidence `json:"-"`
+}
+
+type workspaceRecoveryDecisionBinding struct {
+	DecisionDigest  string                          `json:"decisionDigest"`
+	EvidenceDigest  string                          `json:"evidenceDigest"`
+	DecisionVersion int64                           `json:"decisionVersion"`
+	CurrentStage    string                          `json:"currentStage"`
+	StageAttemptID  string                          `json:"stageAttemptId"`
+	AllowedMutation string                          `json:"allowedMutation"`
+	MutationBudget  workspaceRecoveryMutationCounts `json:"mutationBudget"`
 }
 
 type workspaceRecoveryMutationOutcome struct {
@@ -320,6 +331,7 @@ type workspaceRecoveryExecution struct {
 	PlanDigest          string                                   `json:"planDigest"`
 	ApprovalDigest      string                                   `json:"approvalDigest"`
 	Decision            string                                   `json:"decision"`
+	Reviewer            string                                   `json:"reviewer"`
 	Status              string                                   `json:"status"`
 	LeaseToken          string                                   `json:"leaseToken,omitempty"`
 	LeaseExpiresAt      string                                   `json:"leaseExpiresAt,omitempty"`
@@ -370,21 +382,22 @@ func workspaceRecoveryAuthorityDigest(value any) string {
 
 func workspaceRecoveryPlanDigest(plan workspaceRecoveryPlan) string {
 	material := struct {
-		SchemaVersion          int                             `json:"schemaVersion"`
-		Generation             int                             `json:"generation,omitempty"`
-		PredecessorPlanDigest  string                          `json:"predecessorPlanDigest,omitempty"`
-		PredecessorExecutionID string                          `json:"predecessorExecutionId,omitempty"`
-		Action                 string                          `json:"action"`
-		ReleaseBinding         workspaceRecoveryReleaseBinding `json:"releaseBinding"`
-		TargetBinding          workspaceRecoveryTargetBinding  `json:"targetBinding"`
-		Stages                 []workspaceRecoveryPlanStage    `json:"stages"`
-		AllowedDecisions       []string                        `json:"allowedDecisions"`
-		MutationCounts         workspaceRecoveryMutationCounts `json:"mutationCounts"`
+		SchemaVersion          int                              `json:"schemaVersion"`
+		Generation             int                              `json:"generation,omitempty"`
+		PredecessorPlanDigest  string                           `json:"predecessorPlanDigest,omitempty"`
+		PredecessorExecutionID string                           `json:"predecessorExecutionId,omitempty"`
+		Action                 string                           `json:"action"`
+		ReleaseBinding         workspaceRecoveryReleaseBinding  `json:"releaseBinding"`
+		TargetBinding          workspaceRecoveryTargetBinding   `json:"targetBinding"`
+		Stages                 []workspaceRecoveryPlanStage     `json:"stages"`
+		AllowedDecisions       []string                         `json:"allowedDecisions"`
+		DecisionBinding        workspaceRecoveryDecisionBinding `json:"decisionBinding"`
+		MutationCounts         workspaceRecoveryMutationCounts  `json:"mutationCounts"`
 	}{
 		SchemaVersion: plan.SchemaVersion, Generation: plan.Generation, PredecessorPlanDigest: plan.PredecessorPlanDigest,
 		PredecessorExecutionID: plan.PredecessorExecutionID, Action: plan.Action, ReleaseBinding: plan.ReleaseBinding,
 		TargetBinding: plan.TargetBinding, Stages: plan.Stages, AllowedDecisions: plan.AllowedDecisions,
-		MutationCounts: plan.MutationCounts,
+		DecisionBinding: plan.DecisionBinding, MutationCounts: plan.MutationCounts,
 	}
 	return workspaceRecoveryAuthorityDigest(material)
 }
@@ -650,6 +663,23 @@ func newWorkspaceComputeClaimRecoveryPlan(operation workspaceLaunchOperation, in
 		return workspaceRecoveryPlan{}, workspaceRecoveryPlanProofFailure(proof, nil)
 	}
 	privateIPDigest := workspaceRecoveryAuthorityDigest(proof.PrivateIP)
+	decision := currentDecisionForComputeClaimProof(operation, proof, nil)
+	mutationBudget := workspaceRecoveryMutationCounts{}
+	if proof.CVMOwnershipState == "recoverable" {
+		mutationBudget.Tencent = 5
+	}
+	if proof.NodeOwnershipState == "unallocated" {
+		mutationBudget.Kubernetes = 1
+	}
+	decisionBinding := workspaceRecoveryDecisionBinding{
+		DecisionDigest: workspaceRecoveryAuthorityDigest(decision), EvidenceDigest: decision.EvidenceDigest,
+		DecisionVersion: decision.DecisionVersion, CurrentStage: decision.CurrentStage,
+		StageAttemptID: decision.StageAttemptID, AllowedMutation: decision.AllowedMutation, MutationBudget: mutationBudget,
+	}
+	if decisionBinding.DecisionDigest == "" || decisionBinding.EvidenceDigest == "" ||
+		proof.NodeOwnershipState == "unallocated" && !AuthorizeStageMutation(decision, "node_only_continuation") {
+		return workspaceRecoveryPlan{}, errBillingReviewIdentity
+	}
 	plan := workspaceRecoveryPlan{
 		SchemaVersion: workspaceRecoveryPlanSchemaVersion, Status: "diagnosed", Action: "compute_claim_continue",
 		GeneratedAt: time.Now().UTC().Format(time.RFC3339Nano), ReleaseBinding: release,
@@ -664,7 +694,7 @@ func newWorkspaceComputeClaimRecoveryPlan(operation workspaceLaunchOperation, in
 			StorageState: proof.StorageState, StorageProviderID: proof.StorageProviderResourceID, WorkspaceAPIKeyID: operation.WorkspaceAPIKeyID,
 		},
 		Stages:           append([]workspaceRecoveryPlanStage{{Stage: "compute_claim", Status: "manual_review"}}, workspaceRecoveryPlanStages(operation)...),
-		AllowedDecisions: []string{"continue", "escalate"}, MutationCounts: workspaceRecoveryMutationCounts{},
+		AllowedDecisions: []string{"continue", "escalate"}, DecisionBinding: decisionBinding, MutationCounts: workspaceRecoveryMutationCounts{},
 	}
 	plan.IdentityEvidence = workspaceComputeClaimPlanIdentityEvidence(operation, input, proof, evidence)
 	requestHashReconciliation := workspaceComputeClaimRequestHashReconciliation(evidence)
@@ -736,6 +766,13 @@ func workspaceRecoveryPlanMismatches(persisted, current workspaceRecoveryPlan) [
 		workspaceComputeClaimIdentityCheck("provider.storageState", persisted.TargetBinding.StorageState, current.TargetBinding.StorageState),
 		workspaceComputeClaimIdentityCheck("provider.storageResourceId", persisted.TargetBinding.StorageProviderID, current.TargetBinding.StorageProviderID),
 		workspaceComputeClaimIdentityCheck("controlPlane.workspaceApiKeyId", persisted.TargetBinding.WorkspaceAPIKeyID, current.TargetBinding.WorkspaceAPIKeyID),
+		workspaceComputeClaimIdentityDigestCheck("decision.digest", persisted.DecisionBinding.DecisionDigest, current.DecisionBinding.DecisionDigest),
+		workspaceComputeClaimIdentityDigestCheck("decision.evidenceDigest", persisted.DecisionBinding.EvidenceDigest, current.DecisionBinding.EvidenceDigest),
+		workspaceComputeClaimIdentityCheck("decision.version", persisted.DecisionBinding.DecisionVersion, current.DecisionBinding.DecisionVersion),
+		workspaceComputeClaimIdentityCheck("decision.currentStage", persisted.DecisionBinding.CurrentStage, current.DecisionBinding.CurrentStage),
+		workspaceComputeClaimIdentityCheck("decision.stageAttemptId", persisted.DecisionBinding.StageAttemptID, current.DecisionBinding.StageAttemptID),
+		workspaceComputeClaimIdentityCheck("decision.allowedMutation", persisted.DecisionBinding.AllowedMutation, current.DecisionBinding.AllowedMutation),
+		workspaceComputeClaimIdentityCheck("decision.mutationBudget", persisted.DecisionBinding.MutationBudget, current.DecisionBinding.MutationBudget),
 	}
 	mismatches := make([]workspaceRecoveryPlanMismatch, 0)
 	for _, check := range checks {
@@ -1083,6 +1120,7 @@ func (app *controlPlaneServer) diagnoseWorkspaceRecoveryPlan(ctx context.Context
 	var recovered workspaceLaunchOperation
 	var proof workspaceLaunchReadbackRecoveryProof
 	var readbackErr error
+	var computeDecision *CurrentDecision
 	computeClaimCandidate := workspaceComputeClaimRecoveryCandidate(operation)
 	if computeClaimCandidate {
 		// A later Storage unknown is only a Storage mutation boundary. Read the
@@ -1095,6 +1133,8 @@ func (app *controlPlaneServer) diagnoseWorkspaceRecoveryPlan(ctx context.Context
 			return workspaceRecoveryPlan{}, computeErr
 		}
 		computeEvidence = evidence
+		decision := currentDecisionForComputeClaimProof(operation, computeProof, nil)
+		computeDecision = &decision
 		plan, err = newWorkspaceComputeClaimRecoveryPlan(operation, computeInput, computeProof, evidence, release)
 	} else if stageReadback {
 		recovered, proof, readbackErr = app.workspaceLaunchReadbackRecoveryProofForOperation(ctx, service, readbackCandidate)
@@ -1152,7 +1192,7 @@ func (app *controlPlaneServer) diagnoseWorkspaceRecoveryPlan(ctx context.Context
 		plan = newWorkspaceRecoverySuccessor(plan, predecessorPlan, predecessorExecution, len(operation.RecoveryHistory)-1)
 		operation.RecoveryPlan = &plan
 		operation.RecoveryExecution = nil
-		if err := app.persistWorkspaceLaunch(ctx, &operation); err != nil {
+		if err := app.persistWorkspaceRecoveryPlanDecision(ctx, &operation, computeDecision); err != nil {
 			if errors.Is(err, errWorkspaceLaunchCASConflict) {
 				current, found, loadErr := app.workspaceLaunchOperation(ctx, operationID)
 				if loadErr == nil && found && current.RecoveryPlan != nil && current.RecoveryPlan.PlanDigest == plan.PlanDigest &&
@@ -1172,11 +1212,16 @@ func (app *controlPlaneServer) diagnoseWorkspaceRecoveryPlan(ctx context.Context
 		plan.PlanID = "recovery-plan-" + plan.PlanDigest[:20]
 	}
 	if operation.RecoveryPlan != nil && operation.RecoveryPlan.PlanDigest == plan.PlanDigest {
+		if computeDecision != nil && !sameCurrentDecisionAuthority(operation.CurrentDecision, *computeDecision) {
+			if err := app.persistWorkspaceLaunchWithDecision(ctx, &operation, *computeDecision); err != nil {
+				return workspaceRecoveryPlan{}, err
+			}
+		}
 		return *operation.RecoveryPlan, nil
 	}
 	operation.RecoveryPlan = &plan
 	operation.RecoveryExecution = nil
-	if err := app.persistWorkspaceLaunch(ctx, &operation); err != nil {
+	if err := app.persistWorkspaceRecoveryPlanDecision(ctx, &operation, computeDecision); err != nil {
 		if errors.Is(err, errWorkspaceLaunchCASConflict) {
 			current, found, loadErr := app.workspaceLaunchOperation(ctx, operationID)
 			if loadErr == nil && found && current.RecoveryPlan != nil && current.RecoveryPlan.PlanDigest == plan.PlanDigest {
@@ -1186,6 +1231,13 @@ func (app *controlPlaneServer) diagnoseWorkspaceRecoveryPlan(ctx context.Context
 		return workspaceRecoveryPlan{}, err
 	}
 	return plan, nil
+}
+
+func (app *controlPlaneServer) persistWorkspaceRecoveryPlanDecision(ctx context.Context, operation *workspaceLaunchOperation, decision *CurrentDecision) error {
+	if decision != nil {
+		return app.persistWorkspaceLaunchWithDecision(ctx, operation, *decision)
+	}
+	return app.persistWorkspaceLaunch(ctx, operation)
 }
 
 func (app *controlPlaneServer) getWorkspaceRecoveryPlan(ctx context.Context, operationID string) (workspaceRecoveryPlan, error) {
@@ -1229,11 +1281,14 @@ func (app *controlPlaneServer) validateWorkspaceRecoveryPlan(ctx context.Context
 		return workspaceRecoveryPlan{}, err
 	}
 	var current workspaceRecoveryPlan
+	var computeDecision *CurrentDecision
 	if operation.RecoveryPlan.Action == "compute_claim_continue" {
 		computeInput, computeProof, evidence, computeErr := app.workspaceComputeClaimRecoveryProofForPlan(ctx, service, operation)
 		if computeErr != nil {
 			return workspaceRecoveryPlan{}, computeErr
 		}
+		decision := currentDecisionForComputeClaimProof(operation, computeProof, nil)
+		computeDecision = &decision
 		current, err = newWorkspaceComputeClaimRecoveryPlan(operation, computeInput, computeProof, evidence, release)
 	} else {
 		recovered, proof, proofErr := app.workspaceLaunchReadbackRecoveryProofForOperation(ctx, service, operation)
@@ -1257,14 +1312,14 @@ func (app *controlPlaneServer) validateWorkspaceRecoveryPlan(ctx context.Context
 		validated.Status, validated.ErrorCode = "blocked", "identity_mismatch"
 	}
 	operation.RecoveryPlan = &validated
-	if err := app.persistWorkspaceLaunch(ctx, &operation); err != nil {
+	if err := app.persistWorkspaceRecoveryPlanDecision(ctx, &operation, computeDecision); err != nil {
 		return workspaceRecoveryPlan{}, err
 	}
 	return workspaceRecoveryPlanProjection(operation), nil
 }
 
-func newWorkspaceRecoveryExecution(plan workspaceRecoveryPlan, proof workspaceLaunchReadbackRecoveryProof, decision string) workspaceRecoveryExecution {
-	executionID := "recovery-exec-" + workspaceRecoveryAuthorityDigest([]string{plan.PlanID, plan.PlanDigest, decision})[:20]
+func newWorkspaceRecoveryExecution(plan workspaceRecoveryPlan, proof workspaceLaunchReadbackRecoveryProof, decision, reviewer string) workspaceRecoveryExecution {
+	executionID := "recovery-exec-" + workspaceRecoveryAuthorityDigest([]string{plan.PlanID, plan.PlanDigest, decision, reviewer})[:20]
 	approval := workspaceLaunchReadbackRecoveryApproval{
 		SchemaVersion:        1,
 		ApprovalID:           "recovery-approval-" + plan.PlanDigest[:20],
@@ -1293,6 +1348,7 @@ func newWorkspaceRecoveryExecution(plan workspaceRecoveryPlan, proof workspaceLa
 		PlanDigest:     plan.PlanDigest,
 		ApprovalDigest: approval.ApprovalDigest,
 		Decision:       decision,
+		Reviewer:       reviewer,
 		Status:         "running",
 		LeaseToken:     workspaceRecoveryAuthorityDigest([]string{"lease", executionID, approval.ApprovalDigest}),
 		LeaseExpiresAt: now.Add(5 * time.Minute).Format(time.RFC3339Nano),
@@ -1301,12 +1357,12 @@ func newWorkspaceRecoveryExecution(plan workspaceRecoveryPlan, proof workspaceLa
 	}
 }
 
-func newWorkspaceComputeClaimRecoveryExecution(operation workspaceLaunchOperation, plan workspaceRecoveryPlan, input workspaceComputeClaimRecoveryRequest, proof clients.ComputeClaimRecoveryProof, customer workspaceLaunchReadbackRecoveryCustomer, decision string) (workspaceRecoveryExecution, error) {
+func newWorkspaceComputeClaimRecoveryExecution(operation workspaceLaunchOperation, plan workspaceRecoveryPlan, input workspaceComputeClaimRecoveryRequest, proof clients.ComputeClaimRecoveryProof, customer workspaceLaunchReadbackRecoveryCustomer, decision, reviewer string) (workspaceRecoveryExecution, error) {
 	targetOperation := operation
 	if !persistWorkspaceComputeClaimIdentityFromProof(&targetOperation, proof) {
 		return workspaceRecoveryExecution{}, errWorkspaceComputeClaimIdentity
 	}
-	executionID := "recovery-exec-" + workspaceRecoveryAuthorityDigest([]string{plan.PlanID, plan.PlanDigest, decision})[:20]
+	executionID := "recovery-exec-" + workspaceRecoveryAuthorityDigest([]string{plan.PlanID, plan.PlanDigest, decision, reviewer})[:20]
 	now := time.Now().UTC()
 	binding := workspaceComputeClaimApprovalBinding{
 		SchemaVersion:        2,
@@ -1340,14 +1396,18 @@ func newWorkspaceComputeClaimRecoveryExecution(operation workspaceLaunchOperatio
 		ExecutionID: executionID,
 		RunIdentity: "control-plane-run-" + workspaceRecoveryAuthorityDigest([]string{executionID, binding.ApprovalDigest})[:20],
 		PlanID:      plan.PlanID, PlanDigest: plan.PlanDigest, ApprovalDigest: binding.ApprovalDigest,
-		Decision: decision, Status: "running",
+		Decision: decision, Reviewer: reviewer, Status: "running",
 		LeaseToken:     workspaceRecoveryAuthorityDigest([]string{"lease", executionID, binding.ApprovalDigest}),
 		LeaseExpiresAt: now.Add(5 * time.Minute).Format(time.RFC3339Nano), StartedAt: now.Format(time.RFC3339Nano),
 		ComputeClaimRequest: &input,
 	}, nil
 }
 
-func (app *controlPlaneServer) reserveWorkspaceRecoveryExecution(ctx context.Context, service *controlplane.Service, operationID, planID, planDigest, decision string) (workspaceRecoveryExecution, bool, error) {
+func (app *controlPlaneServer) reserveWorkspaceRecoveryExecution(ctx context.Context, service *controlplane.Service, operationID, planID, planDigest, decision, reviewer string) (workspaceRecoveryExecution, bool, error) {
+	reviewer = strings.TrimSpace(reviewer)
+	if reviewer == "" {
+		return workspaceRecoveryExecution{}, false, errBillingReviewIdentity
+	}
 	operation, ok, err := app.workspaceLaunchOperation(ctx, operationID)
 	if err != nil || !ok || operation.RecoveryPlan == nil {
 		if err == nil {
@@ -1372,7 +1432,7 @@ func (app *controlPlaneServer) reserveWorkspaceRecoveryExecution(ctx context.Con
 		execution := *operation.RecoveryExecution
 		readbackApprovalValid := execution.Approval != nil && execution.ApprovalDigest == execution.Approval.ApprovalDigest
 		computeApprovalValid := execution.ComputeClaimRequest != nil && execution.ApprovalDigest == execution.ComputeClaimRequest.ApprovalDigest
-		if execution.PlanID != planID || execution.PlanDigest != planDigest || execution.Decision != decision ||
+		if execution.PlanID != planID || execution.PlanDigest != planDigest || execution.Decision != decision || execution.Reviewer != reviewer ||
 			execution.ApprovalDigest == "" || !readbackApprovalValid && !computeApprovalValid {
 			return workspaceRecoveryExecution{}, false, errBillingReviewIdentity
 		}
@@ -1385,18 +1445,21 @@ func (app *controlPlaneServer) reserveWorkspaceRecoveryExecution(ctx context.Con
 	}
 	var current workspaceRecoveryPlan
 	var execution workspaceRecoveryExecution
+	var computeDecision *CurrentDecision
 	if plan.Action == "compute_claim_continue" {
 		input, proof, evidence, proofErr := app.workspaceComputeClaimRecoveryProofForPlan(ctx, service, operation)
 		if proofErr != nil {
 			return workspaceRecoveryExecution{}, false, proofErr
 		}
+		currentDecision := currentDecisionForComputeClaimProof(operation, proof, nil)
+		computeDecision = &currentDecision
 		current, err = newWorkspaceComputeClaimRecoveryPlan(operation, input, proof, evidence, release)
 		if err == nil {
 			customer, customerErr := app.workspaceLaunchReadbackRecoveryCustomer(ctx, operation)
 			if customerErr != nil {
 				return workspaceRecoveryExecution{}, false, customerErr
 			}
-			execution, err = newWorkspaceComputeClaimRecoveryExecution(operation, *plan, input, proof, customer, decision)
+			execution, err = newWorkspaceComputeClaimRecoveryExecution(operation, *plan, input, proof, customer, decision, reviewer)
 		}
 	} else {
 		recovered, proof, proofErr := app.workspaceLaunchReadbackRecoveryProofForOperation(ctx, service, operation)
@@ -1409,7 +1472,7 @@ func (app *controlPlaneServer) reserveWorkspaceRecoveryExecution(ctx context.Con
 		}
 		current, err = newWorkspaceReadbackRecoveryPlan(recovered, proof, release, expectedPrivateIP)
 		if err == nil {
-			execution = newWorkspaceRecoveryExecution(*plan, proof, decision)
+			execution = newWorkspaceRecoveryExecution(*plan, proof, decision, reviewer)
 		}
 	}
 	if err != nil {
@@ -1417,14 +1480,14 @@ func (app *controlPlaneServer) reserveWorkspaceRecoveryExecution(ctx context.Con
 	}
 	if mismatches := workspaceRecoveryPlanMismatches(*plan, current); len(mismatches) != 0 {
 		plan.Status, plan.ErrorCode, plan.Mismatches = "blocked", "identity_mismatch", mismatches
-		if persistErr := app.persistWorkspaceLaunch(ctx, &operation); persistErr != nil {
+		if persistErr := app.persistWorkspaceRecoveryPlanDecision(ctx, &operation, computeDecision); persistErr != nil {
 			return workspaceRecoveryExecution{}, false, persistErr
 		}
 		return workspaceRecoveryExecution{}, false, errBillingReviewIdentity
 	}
 	operation.RecoveryExecution = &execution
 	plan.Status = "executing"
-	if err := app.persistWorkspaceLaunch(ctx, &operation); err != nil {
+	if err := app.persistWorkspaceRecoveryPlanDecision(ctx, &operation, computeDecision); err != nil {
 		if errors.Is(err, errWorkspaceLaunchCASConflict) {
 			currentOperation, found, loadErr := app.workspaceLaunchOperation(ctx, operationID)
 			if loadErr == nil && found && currentOperation.RecoveryExecution != nil && currentOperation.RecoveryExecution.PlanDigest == planDigest {
@@ -1598,7 +1661,7 @@ func (app *controlPlaneServer) executeWorkspaceRecoveryPlan(ctx context.Context,
 	if found && operation.RecoveryExecution != nil {
 		execution = *operation.RecoveryExecution
 		if execution.PlanID != planID || execution.PlanDigest != planDigest || execution.Decision != decision ||
-			execution.Approval == nil && execution.ComputeClaimRequest == nil {
+			execution.Reviewer != strings.TrimSpace(reviewer) || execution.Approval == nil && execution.ComputeClaimRequest == nil {
 			return workspaceRecoveryPlan{}, errBillingReviewIdentity
 		}
 		if execution.Status == "completed" || execution.Status == "failed" {
@@ -1625,7 +1688,7 @@ func (app *controlPlaneServer) executeWorkspaceRecoveryPlan(ctx context.Context,
 			return workspaceRecoveryPlan{}, errBillingReviewIdentity
 		}
 		var won bool
-		execution, won, err = app.reserveWorkspaceRecoveryExecution(ctx, service, operationID, planID, planDigest, decision)
+		execution, won, err = app.reserveWorkspaceRecoveryExecution(ctx, service, operationID, planID, planDigest, decision, reviewer)
 		if err != nil {
 			return workspaceRecoveryPlan{}, err
 		}
