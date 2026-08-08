@@ -1102,6 +1102,14 @@ func workspaceRecoveryHistoryProvesArchivedNodeClientRejection(operation workspa
 	return false
 }
 
+func workspaceRecoveryStorageAttemptUnknown(operation workspaceLaunchOperation) bool {
+	if operation.ErrorCode != "" {
+		return operation.Status == "manual_review" && operation.Phase == "storage_fulfilling" &&
+			operation.ErrorCode == "workspace_launch_storage_attempt_unknown"
+	}
+	return operation.RecoveryExecution != nil && operation.RecoveryExecution.ErrorCode == "workspace_launch_storage_attempt_unknown"
+}
+
 func workspaceRecoveryExecutionSuccessorGate(operation workspaceLaunchOperation, evidence *clients.ComputeClaimIdentityEvidence, evaluation *workspaceComputeClaimProofEvaluation) (workspaceRecoveryMutationOutcome, workspaceRecoverySuccessorGateDTO) {
 	gate := workspaceRecoverySuccessorGateDTO{
 		Applicable: true, PlanState: "missing", ExecutionState: "missing", CompletionState: "missing",
@@ -1202,7 +1210,7 @@ func workspaceRecoveryExecutionSuccessorGate(operation workspaceLaunchOperation,
 		return workspaceRecoveryMutationOutcome{}, gate
 	}
 	if outcome.Status == "unknown" && outcome.Counts == (workspaceRecoveryMutationCounts{}) && outcome.FabricOperationMutations == 0 &&
-		operation.RecoveryExecution.ErrorCode == "workspace_launch_storage_attempt_unknown" &&
+		workspaceRecoveryStorageAttemptUnknown(operation) &&
 		operation.ContinuationAttemptBudgets["storage"] == (workspaceLaunchStageBudget{Attempted: 1, Unknown: 1, Max: workspaceLaunchStageMax}) {
 		gate.Allowed = true
 		return outcome, gate
@@ -1210,7 +1218,7 @@ func workspaceRecoveryExecutionSuccessorGate(operation workspaceLaunchOperation,
 	absentDigest := sha256.Sum256([]byte("absent"))
 	if outcome.Status == "nonzero" && outcome.Counts == (workspaceRecoveryMutationCounts{Kubernetes: 1}) &&
 		outcome.FabricOperationMutations == 0 && outcome.Source == "compute_claim_response" &&
-		operation.RecoveryExecution.ErrorCode == "workspace_launch_storage_attempt_unknown" &&
+		workspaceRecoveryStorageAttemptUnknown(operation) &&
 		operation.ContinuationAttemptBudgets["storage"] == (workspaceLaunchStageBudget{Attempted: 1, Unknown: 1, Max: workspaceLaunchStageMax}) &&
 		operation.RecoveryPlan.OperationID == operation.ID &&
 		evidence != nil &&
@@ -1225,7 +1233,7 @@ func workspaceRecoveryExecutionSuccessorGate(operation workspaceLaunchOperation,
 	}
 	if outcome.Status == "nonzero" && outcome.Counts == (workspaceRecoveryMutationCounts{Kubernetes: 1}) &&
 		outcome.FabricOperationMutations == 0 && outcome.Source == "compute_claim_response" &&
-		operation.RecoveryExecution.ErrorCode == "workspace_launch_storage_attempt_unknown" &&
+		workspaceRecoveryStorageAttemptUnknown(operation) &&
 		operation.ContinuationAttemptBudgets["storage"] == (workspaceLaunchStageBudget{Attempted: 1, Unknown: 1, Max: workspaceLaunchStageMax}) &&
 		evaluation != nil && evaluation.Eligible && evaluation.FirstFalsePredicate == "" &&
 		evaluation.CVMOwnershipState == "target_owned" && evaluation.NodeOwnershipState == "target_owned" {
