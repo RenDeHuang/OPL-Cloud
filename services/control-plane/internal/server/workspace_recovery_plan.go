@@ -753,6 +753,15 @@ func (app *controlPlaneServer) workspaceRecoveryPlanExpectedPrivateIP(operation 
 	return privateIP, nil
 }
 
+func hydrateWorkspaceComputeClaimRecoveryRequestStage(operation workspaceLaunchOperation, input workspaceComputeClaimRecoveryRequest) workspaceComputeClaimRecoveryRequest {
+	if budget := operation.ContinuationAttemptBudgets["storage"]; budget.Unknown > 0 {
+		input.Resources.StorageState = "storage_attempt_unknown"
+		input.Resources.StorageProviderResourceID = ""
+		input.AllowedWrites = append([]string(nil), workspaceComputeClaimAllowedWritesForStorage("storage_attempt_unknown")...)
+	}
+	return input
+}
+
 func workspaceComputeClaimRecoveryRequestForOperation(operation workspaceLaunchOperation) workspaceComputeClaimRecoveryRequest {
 	input := workspaceComputeClaimRecoveryRequest{
 		LaunchOperationID: operation.ID, AccountID: operation.AccountID, WorkspaceID: operation.WorkspaceID,
@@ -768,7 +777,12 @@ func workspaceComputeClaimRecoveryRequestForOperation(operation workspaceLaunchO
 		input.Resources, input.AttemptLimits = approval.Resources, approval.AttemptLimits
 		input.AllowedWrites, input.ForbiddenWrites = append([]string(nil), approval.AllowedWrites...), append([]string(nil), approval.ForbiddenWrites...)
 	}
-	return input
+	// The continuation ledger is authoritative for a later Storage attempt. A
+	// historical approval may still carry the pre-attempt binding; preserve all
+	// approval identity fields but hydrate only this stage fact from the ledger.
+	// This keeps Compute Claim evaluation aligned with the current Launch without
+	// changing the approval digest or authorizing a Storage write.
+	return hydrateWorkspaceComputeClaimRecoveryRequestStage(operation, input)
 }
 
 func (app *controlPlaneServer) workspaceComputeClaimRecoveryProofForPlan(ctx context.Context, service *controlplane.Service, operation workspaceLaunchOperation) (workspaceComputeClaimRecoveryRequest, clients.ComputeClaimRecoveryProof, *clients.ComputeClaimIdentityEvidence, error) {
