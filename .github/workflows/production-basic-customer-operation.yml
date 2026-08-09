@@ -3242,13 +3242,43 @@ jobs:
             const providerErrorClasses = new Set(["", "client_unavailable", "malformed_readback", "ownership_conflict", "readback_mismatch", "timeout", "iam_rbac", "provider_error", "transport_error", "evidence_incomplete"]);
             const ledgerState = String(raw?.mutationLedger || "");
             const ledgerOutcome = String(raw?.mutationLedgerOutcome || "");
-            if (!checksValid || !safeValuesValid || bindingPresentAndValid !== bindingShapeComplete ||
-              !classifications.has(raw?.bindingClassification) || !digestPattern.test(String(raw?.bindingDigest || "")) ||
-              !Object.hasOwn(ledgerRelationships, ledgerState) || !ledgerRelationships[ledgerState].has(ledgerOutcome) ||
-              !digestPattern.test(String(raw?.mutationLedgerDigest || "")) || !failureStages.has(raw?.failureStage) ||
-              !providerErrorClasses.has(raw?.providerErrorClass)) {
+            function requireCurrentFabricAuthority(predicate, matches, expected, actual, safeActual = true) {
+              if (matches) return;
+              const diagnostic = {
+                failureBoundary: "workflow.compute_claim_readback.fabric_authority_projection",
+                exactFunction: "requireCurrentFabricAuthority",
+                reasonCode: "fabric_ledger_current_authority_invalid",
+                firstFalsePredicate: predicate,
+                expected,
+                actual: safeActual ? String(actual) : sha256(actual),
+                authority: "fabric.operationStore.identityEvidence",
+                mutationOutcome: { status: "confirmed_zero", attempted: 0, accepted: 0, confirmed: 0, unknown: 0 }
+              };
+              const encoded = JSON.stringify(diagnostic);
+              if (/acct-|workspace-launch-|ws-|ca_|vol_|ins-|privateIp|cvmInstanceId|nodeName|machineName|password|secret|token|cookie/i.test(encoded)) {
+                throw new Error("fabric_ledger_current_authority_diagnostic_redaction_invalid");
+              }
+              process.stderr.write(`FABRIC_LEDGER_AUTHORITY_ERROR=${encoded}\n`);
               throw new Error("fabric_ledger_current_authority_invalid");
             }
+            requireCurrentFabricAuthority("fabric.identityEvidence.checks", checksValid, "valid", "invalid");
+            requireCurrentFabricAuthority("fabric.identityEvidence.safeValues", safeValuesValid, "allowlisted", "invalid");
+            requireCurrentFabricAuthority("fabric.identityEvidence.bindingShape", bindingPresentAndValid === bindingShapeComplete,
+              "complete_iff_present_and_valid", bindingShapeComplete ? "unexpected_complete" : "incomplete");
+            requireCurrentFabricAuthority("fabric.identityEvidence.bindingClassification", classifications.has(raw?.bindingClassification),
+              "allowlisted", raw?.bindingClassification, false);
+            requireCurrentFabricAuthority("fabric.identityEvidence.bindingDigest", digestPattern.test(String(raw?.bindingDigest || "")),
+              "lowercase_sha256", raw?.bindingDigest, false);
+            requireCurrentFabricAuthority("fabric.identityEvidence.mutationLedgerState", Object.hasOwn(ledgerRelationships, ledgerState),
+              "allowlisted", ledgerState, false);
+            requireCurrentFabricAuthority("fabric.identityEvidence.mutationLedgerOutcome", ledgerRelationships[ledgerState]?.has(ledgerOutcome) === true,
+              "allowed_for_state", `${ledgerState}:${ledgerOutcome}`, false);
+            requireCurrentFabricAuthority("fabric.identityEvidence.mutationLedgerDigest", digestPattern.test(String(raw?.mutationLedgerDigest || "")),
+              "lowercase_sha256", raw?.mutationLedgerDigest, false);
+            requireCurrentFabricAuthority("fabric.identityEvidence.failureStage", failureStages.has(raw?.failureStage),
+              "allowlisted", raw?.failureStage, false);
+            requireCurrentFabricAuthority("fabric.identityEvidence.providerErrorClass", providerErrorClasses.has(raw?.providerErrorClass),
+              "allowlisted", raw?.providerErrorClass, false);
             const cvmMissing = new Set(["instance", "instance_name", "opl_account_id", "opl_workspace_id", "opl_resource_id", "opl_operation_id"]);
             const evidenceAbsent = raw?.mutationEvidence === undefined || raw?.mutationEvidence === null;
             const cvm = evidenceAbsent ? null : mutationEvidence(raw.mutationEvidence.cvm, 5, cvmMissing);
