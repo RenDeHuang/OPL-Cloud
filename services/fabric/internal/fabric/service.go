@@ -1170,10 +1170,16 @@ func (s *Service) ClaimComputeRecovery(ctx context.Context, input ComputeClaimRe
 		reconciledNodeContinuation := requestHashReconciliation && reconciliationPresent &&
 			(reconciliation.State == "verified" || legacyClientRejectedNodeCall) &&
 			ownership.Status != "active" && reconciledCVMOwnership && proof.NodeOwnershipState == "unallocated"
-		requestedNodeContinuation := input.NodeOnlyContinuation && !mutationPresent && operation.Status == "claim_pending" &&
+		requestedNodeContinuation := input.NodeOnlyContinuation && !mutationPresent &&
+			(operation.Status == "claim_pending" || operation.Status == "succeeded" && ownership.Status == "active" &&
+				bindingPresent && bindingValid && persistedBinding == binding) &&
 			(proof.CVMOwnershipState == "recoverable" || proof.CVMOwnershipState == "target_owned") && proof.NodeOwnershipState == "unallocated"
 		activeNodeContinuation := ownership.Status == "active" && !mutationPresent && bindingPresent && bindingValid && persistedBinding == binding &&
 			proof.NodeOwnershipState == "unallocated" && (requestedNodeContinuation || proof.CVMOwnershipState == "target_owned")
+		completedNodeOnlyReadback := ownership.Status == "active" && mutationPresent && mutationValid &&
+			successfulNodeClaimRecoveryMutation(mutationLedger) && mutationLedger.TencentMutationCount == 0 &&
+			reflect.DeepEqual(mutationLedger.Evidence.CVM, ComputeClaimMutationEvidence{}) &&
+			(proof.CVMOwnershipState == "recoverable" || proof.CVMOwnershipState == "target_owned") && proof.NodeOwnershipState == "target_owned"
 		createBudget, createPresent, createValid := normalLaunchStageBudget(operation.RedactedProviderPayload, "compute_create")
 		cvmBudget, cvmPresent, cvmValid := normalLaunchStageBudget(operation.RedactedProviderPayload, "compute_claim_cvm")
 		_, nodePresent, nodeValid := normalLaunchStageBudget(operation.RedactedProviderPayload, "compute_claim_node")
@@ -1204,12 +1210,12 @@ func (s *Service) ClaimComputeRecovery(ctx context.Context, input ComputeClaimRe
 			result.Evidence = &ComputeClaimEvidence{CVM: cloneComputeClaimMutationEvidence(mutationLedger.Evidence.CVM), Node: cloneComputeClaimMutationEvidence(reconciliation.Node)}
 			return fmt.Errorf("%w: provider_describe", ErrComputeClaimRecoveryUnavailable)
 		}
-		if ownership.Status == "active" && !activeNodeContinuation {
+		if ownership.Status == "active" && !activeNodeContinuation && !completedNodeOnlyReadback {
 			if proof.CVMOwnershipState != "target_owned" && !reconciledCVMOwnership || proof.NodeOwnershipState != "target_owned" {
 				result.Eligible, result.Reason = false, "identity_mismatch"
 				return fmt.Errorf("%w: identity_mismatch", ErrComputeClaimRecoveryUnavailable)
 			}
-		} else if !reconciledNodeReadback &&
+		} else if !completedNodeOnlyReadback && !reconciledNodeReadback &&
 			(activeNodeContinuation || proof.CVMOwnershipState != "target_owned" || proof.NodeOwnershipState != "target_owned") {
 			provider, providerOK := s.provider.(computeClaimRecoveryClaimProvider)
 			nodeOnlyProvider, nodeOnlyProviderOK := s.provider.(computeClaimRecoveryNodeOnlyProvider)
@@ -1303,7 +1309,8 @@ func (s *Service) ClaimComputeRecovery(ctx context.Context, input ComputeClaimRe
 				result.MachineName, result.NodeName, result.CVMInstanceID = claimed.Proof.MachineName, claimed.Proof.NodeName, claimed.Proof.CVMInstanceID
 				result.PrivateIP, result.InstanceType, result.Zone = claimed.Proof.PrivateIP, claimed.Proof.InstanceType, claimed.Proof.Zone
 				result.ChargeType, result.PeriodMonths, result.RenewFlag, result.Deadline = claimed.Proof.ChargeType, claimed.Proof.PeriodMonths, claimed.Proof.RenewFlag, claimed.Proof.Deadline
-				result.NodeOwnershipState, result.CVMOwnershipState, result.Eligible, result.Reason = "target_owned", "target_owned", true, "none"
+				result.NodeOwnershipState, result.CVMOwnershipState = claimed.Proof.NodeOwnershipState, claimed.Proof.CVMOwnershipState
+				result.Eligible, result.Reason = true, "none"
 			}
 			if reconciledNodeContinuation {
 				reconciliation.State = "observed"
