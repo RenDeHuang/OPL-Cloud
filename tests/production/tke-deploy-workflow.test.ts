@@ -1296,6 +1296,15 @@ test("original Launch compute claim readback is a single GET-only production mod
   assert.match(fabricLedgerRun, /mutationLedgerDigest/);
   assert.match(fabricLedgerRun, /reconciliation/);
   assert.match(fabricLedgerRun, /FABRIC_LEDGER_AUTHORITY=/);
+  assert.match(fabricLedgerRun, /FABRIC_LEDGER_AUTHORITY_ERROR=/);
+  for (const field of ["failureBoundary", "exactFunction", "reasonCode", "firstFalsePredicate", "expected", "actual", "authority", "mutationOutcome"]) {
+    assert.match(fabricLedgerRun, new RegExp(field));
+  }
+  assert.match(fabricLedgerRun, /function requireCurrentFabricAuthority/);
+  assert.match(fabricLedgerRun, /actual: safeActual \? String\(actual\) : sha256\(actual\)/);
+  assert.match(fabricLedgerRun, /status: "confirmed_zero", attempted: 0, accepted: 0, confirmed: 0, unknown: 0/);
+  assert.match(fabricLedgerRun, /fabric\.identityEvidence\.checks/);
+  assert.match(fabricLedgerRun, /fabric\.identityEvidence\.providerErrorClass/);
   assert.doesNotMatch(fabricLedgerRun, /recovery-plan\/(?:diagnose|validate|execute)|compute-claim-recovery\/(?:proof|claim)|CreateComputeAllocation|CreateDisks|create_storage_volume|patch node|scale|debit|refund|delete|replace/i);
   assert.doesNotMatch(runs, /recovery-plan\/(?:diagnose|validate|execute)|--recovery-plan-(?:diagnose|validate|execute)|CreateDisks|create_storage_volume|patch node|debit|refund|create_cvm/i);
   assert.match(JSON.stringify(job), /OPL_SUB2API_ADMIN_PASSWORD/);
