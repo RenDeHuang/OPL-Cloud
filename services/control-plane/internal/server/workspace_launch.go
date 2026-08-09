@@ -2348,12 +2348,17 @@ func workspaceComputeClaimApprovalStorageBoundaryRefreshAllowed(operation worksp
 		want.Resources.StorageState != "storage_attempt_unknown" || want.Resources.StorageProviderResourceID != "" {
 		return false
 	}
-	// Only the stage-bound Storage state and its dependent write projection may
-	// change. Every protected identity, budget, and customer binding remains
-	// exact, and the old approval itself must already have a valid digest.
+	// A historical approval may carry the original full Compute budget. Refresh
+	// may only narrow it to the exact Decision-bound Plan budget; all continuation
+	// budgets and protected resource bindings remain exact.
+	if !workspaceComputeClaimAttemptLimitsMatchOperation(operation, want.AttemptLimits) ||
+		(!workspaceComputeClaimAttemptLimitsExact(got.AttemptLimits) && !workspaceComputeClaimAttemptLimitsMatchOperation(operation, got.AttemptLimits)) {
+		return false
+	}
 	normalized := got
 	normalized.Resources.StorageState = want.Resources.StorageState
 	normalized.Resources.StorageProviderResourceID = want.Resources.StorageProviderResourceID
+	normalized.AttemptLimits = want.AttemptLimits
 	normalized.AllowedWrites = append([]string(nil), want.AllowedWrites...)
 	return workspaceComputeClaimApprovalScopeMatches(normalized, want)
 }
