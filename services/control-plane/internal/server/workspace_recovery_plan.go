@@ -508,6 +508,8 @@ type workspaceRecoveryMutationOutcome struct {
 	FabricOperationMutations int                                    `json:"fabricOperationMutations"`
 	Source                   string                                 `json:"source,omitempty"`
 	EvidenceDigest           string                                 `json:"evidenceDigest,omitempty"`
+	APIAccepted              *bool                                  `json:"apiAccepted,omitempty"`
+	Confirmed                bool                                   `json:"confirmed"`
 	ComputeClaimEvidence     *workspaceRecoveryComputeClaimEvidence `json:"computeClaimEvidence,omitempty"`
 }
 
@@ -1219,7 +1221,7 @@ func workspaceRecoveryExecutionSuccessorGate(operation workspaceLaunchOperation,
 	}
 	absentDigest := sha256.Sum256([]byte("absent"))
 	if outcome.Status == "nonzero" && outcome.Counts == (workspaceRecoveryMutationCounts{Kubernetes: 1}) &&
-		outcome.FabricOperationMutations == 0 && outcome.Source == "compute_claim_response" &&
+		outcome.FabricOperationMutations == 0 && workspaceRecoveryConfirmedNodeMutationOutcome(outcome) &&
 		workspaceRecoveryStorageAttemptUnknown(operation) &&
 		operation.ContinuationAttemptBudgets["storage"] == (workspaceLaunchStageBudget{Attempted: 1, Unknown: 1, Max: workspaceLaunchStageMax}) &&
 		operation.RecoveryPlan.OperationID == operation.ID &&
@@ -1235,7 +1237,7 @@ func workspaceRecoveryExecutionSuccessorGate(operation workspaceLaunchOperation,
 		return outcome, gate
 	}
 	if outcome.Status == "nonzero" && outcome.Counts == (workspaceRecoveryMutationCounts{Kubernetes: 1}) &&
-		outcome.FabricOperationMutations == 0 && outcome.Source == "compute_claim_response" &&
+		outcome.FabricOperationMutations == 0 && workspaceRecoveryConfirmedNodeMutationOutcome(outcome) &&
 		workspaceRecoveryStorageAttemptUnknown(operation) &&
 		operation.ContinuationAttemptBudgets["storage"] == (workspaceLaunchStageBudget{Attempted: 1, Unknown: 1, Max: workspaceLaunchStageMax}) &&
 		evaluation != nil && evaluation.Eligible && evaluation.FirstFalsePredicate == "" &&
@@ -1272,6 +1274,17 @@ func workspaceRecoveryExecutionConfirmedZero(operation workspaceLaunchOperation,
 	return outcome, gate.Allowed
 }
 
+func workspaceRecoveryConfirmedNodeMutationOutcome(outcome workspaceRecoveryMutationOutcome) bool {
+	if outcome.Source == "compute_claim_response" {
+		return true
+	}
+	return outcome.Source == "compute_claim_post_read_confirmed" && outcome.Confirmed && outcome.APIAccepted != nil && *outcome.APIAccepted
+}
+
+func workspaceRecoveryMutationOutcomeBeforeProvider() workspaceRecoveryMutationOutcome {
+	return workspaceRecoveryMutationOutcome{Status: "confirmed_zero", Source: "control_plane_pre_provider", Confirmed: true}
+}
+
 func workspaceRecoveryMutationOutcomeFromComputeClaim(proof clients.ComputeClaimRecoveryProof) workspaceRecoveryMutationOutcome {
 	outcome := workspaceRecoveryMutationOutcome{Status: "unknown", Source: "compute_claim_response"}
 	if !proof.Eligible || proof.Reason != "none" {
@@ -1283,8 +1296,22 @@ func workspaceRecoveryMutationOutcomeFromComputeClaim(proof clients.ComputeClaim
 	outcome.Counts = workspaceRecoveryMutationCounts{
 		Sub2API: proof.Sub2APIMutationCount, Tencent: proof.TencentMutationCount, Kubernetes: proof.KubernetesMutationCount,
 	}
-	if outcome.Counts != (workspaceRecoveryMutationCounts{}) {
-		outcome.Status = "nonzero"
+	if outcome.Counts == (workspaceRecoveryMutationCounts{}) {
+		return outcome
+	}
+	outcome.Status = "nonzero"
+	cvm, node := proof.Evidence.CVM, proof.Evidence.Node
+	if cvm.Unknown+node.Unknown > 0 {
+		outcome.Status, outcome.Source = "unknown", "compute_claim_mutation_readback_unknown"
+		return outcome
+	}
+	apiAccepted := cvm.Confirmed+node.Confirmed > 0
+	outcome.APIAccepted = &apiAccepted
+	switch {
+	case !apiAccepted:
+		outcome.Confirmed, outcome.Source = true, "compute_claim_provider_rejected"
+	case cvm.Confirmed == cvm.Attempted && node.Confirmed == node.Attempted && proof.NodeOwnershipState == "target_owned":
+		outcome.Confirmed, outcome.Source = true, "compute_claim_post_read_confirmed"
 	}
 	return outcome
 }
@@ -1927,14 +1954,18 @@ func (app *controlPlaneServer) reacquireWorkspaceRecoveryExecution(ctx context.C
 }
 
 func workspaceRecoveryExecutionErrorCode(operation workspaceLaunchOperation, err error) string {
-	if operation.ErrorCode != "" {
-		return operation.ErrorCode
-	}
 	switch {
-	case errors.Is(err, errBillingReviewIdentity):
+	case errors.Is(err, errBillingReviewIdentity), errors.Is(err, errWorkspaceComputeClaimIdentity):
 		return "identity_mismatch"
 	case errors.Is(err, errBillingReviewProviderFact):
 		return "provider_truth_unavailable"
+	case errors.Is(err, errWorkspaceComputeClaimProof):
+		if strings.HasPrefix(operation.ErrorCode, "workspace_compute_claim_") {
+			return operation.ErrorCode
+		}
+		return "workspace_compute_claim_proof_failed"
+	case operation.ErrorCode != "":
+		return operation.ErrorCode
 	case err != nil:
 		return "recovery_execution_failed"
 	default:
@@ -2073,10 +2104,14 @@ func (app *controlPlaneServer) executeWorkspaceRecoveryPlan(ctx context.Context,
 		}
 	}
 	var executionErr error
-	mutationOutcome := workspaceRecoveryMutationOutcome{Status: "unknown", Source: "recovery_execution"}
+	mutationOutcome := workspaceRecoveryMutationOutcomeBeforeProvider()
 	if execution.ComputeClaimRequest != nil {
 		claimProof, claimErr := app.claimWorkspaceCompute(ctx, service, *execution.ComputeClaimRequest, execution.ExecutionID)
-		mutationOutcome = workspaceRecoveryMutationOutcomeFromComputeClaim(claimProof)
+		if claimProof.SchemaVersion != 0 || claimProof.LaunchOperationID != "" || claimProof.Evidence != nil ||
+			claimProof.FailureStage != "" || claimProof.ProviderErrorClass != "" || claimProof.Sub2APIMutationCount != 0 ||
+			claimProof.TencentMutationCount != 0 || claimProof.KubernetesMutationCount != 0 {
+			mutationOutcome = workspaceRecoveryMutationOutcomeFromComputeClaim(claimProof)
+		}
 		executionErr = claimErr
 		if executionErr == nil {
 			current, currentFound, loadErr := app.workspaceLaunchOperation(ctx, operationID)

@@ -2292,8 +2292,55 @@ func workspaceComputeClaimApprovalMayBeSuperseded(operation workspaceLaunchOpera
 	return workspaceComputeClaimApprovalStorageBoundaryRefreshAllowed(operation, got, want)
 }
 
+func workspaceComputeClaimPersistedNodeOnlyContinuationAuthorized(operation workspaceLaunchOperation, input workspaceComputeClaimRecoveryRequest, key string) bool {
+	decision, plan, execution := operation.CurrentDecision, operation.RecoveryPlan, operation.RecoveryExecution
+	if decision == nil || plan == nil || execution == nil ||
+		!AuthorizeStageMutation(*decision, "node_only_continuation") ||
+		plan.Status != "executing" || plan.Action != "compute_claim_continue" || len(plan.Mismatches) != 0 || plan.ErrorCode != "" ||
+		execution.Status != "running" || execution.ExecutionID != key || execution.PlanID != plan.PlanID || execution.PlanDigest != plan.PlanDigest ||
+		execution.ApprovalDigest != input.ApprovalDigest || execution.ComputeClaimRequest == nil || execution.Decision != "continue" ||
+		strings.TrimSpace(execution.Reviewer) == "" || strings.TrimSpace(execution.RunIdentity) == "" || execution.LeaseToken == "" || plan.OperationID != operation.ID ||
+		plan.DecisionBinding.MutationBudget != (workspaceRecoveryMutationCounts{Kubernetes: 1}) ||
+		!workspaceComputeClaimRecoveryRequestMatches(operation, input) || !workspaceComputeClaimAttemptLimitsMatchOperation(operation, input.AttemptLimits) {
+		return false
+	}
+	leaseExpiresAt, leaseErr := time.Parse(time.RFC3339Nano, execution.LeaseExpiresAt)
+	if leaseErr != nil || !leaseExpiresAt.After(time.Now().UTC()) {
+		return false
+	}
+
+	// Reuse the Plan mismatch validator for immutable resource and Decision
+	// bindings. Provider ownership and stage eligibility remain exactly as they
+	// were persisted by the canonical evaluator; this execution check never
+	// derives them again from historical proof.
+	current := *plan
+	current.TargetBinding.LaunchOperationID = operation.ID
+	current.TargetBinding.AccountID = operation.AccountID
+	current.TargetBinding.WorkspaceID = operation.WorkspaceID
+	current.TargetBinding.ComputeAllocationID = operation.ComputeID
+	current.TargetBinding.StorageID = operation.StorageID
+	current.TargetBinding.Stage = "compute_claim"
+	current.TargetBinding.WorkspaceImageDigest = operation.WorkspaceImageDigest
+	current.TargetBinding.PoolID = operation.ComputePoolID
+	current.TargetBinding.NodePoolID = operation.ComputeNodePoolID
+	current.TargetBinding.MachineName = operation.ComputeMachineName
+	current.TargetBinding.NodeName = operation.ComputeNodeName
+	current.TargetBinding.CVMInstanceID = operation.ComputeCVMInstanceID
+	current.TargetBinding.PrivateIPDigest = workspaceRecoveryAuthorityDigest(operation.ComputePrivateIP)
+	current.TargetBinding.InstanceType = operation.ComputeInstanceType
+	current.TargetBinding.Zone = operation.ComputeZone
+	current.TargetBinding.WorkspaceAPIKeyID = operation.WorkspaceAPIKeyID
+	current.DecisionBinding = workspaceRecoveryDecisionBinding{
+		DecisionDigest: workspaceRecoveryAuthorityDigest(*decision), EvidenceDigest: decision.EvidenceDigest,
+		DecisionVersion: decision.DecisionVersion, CurrentStage: decision.CurrentStage,
+		StageAttemptID: decision.StageAttemptID, AllowedMutation: decision.AllowedMutation,
+		MutationBudget: plan.DecisionBinding.MutationBudget,
+	}
+	return len(workspaceRecoveryPlanMismatches(*plan, current)) == 0
+}
+
 func workspaceComputeClaimApprovalStorageBoundaryRefreshAllowed(operation workspaceLaunchOperation, got, want workspaceComputeClaimApprovalBinding) bool {
-	if operation.Status != "manual_review" || operation.Phase != "storage_fulfilling" || operation.ComputeClaimProof != nil ||
+	if operation.Status != "manual_review" || operation.Phase != "storage_fulfilling" ||
 		operation.ComputeClaimRequestHash != "" || operation.ComputeClaimApprovalID != "" || operation.ComputeClaimMergedMainSHA != "" ||
 		operation.ComputeClaimCloudDigest != "" || operation.ComputeClaimPrivateIP != "" || operation.AttachmentID != "" ||
 		operation.GatewaySecretRef != "" || operation.RuntimeID != "" || operation.ReceiptID != "" ||
@@ -2789,18 +2836,24 @@ func (app *controlPlaneServer) claimWorkspaceCompute(ctx context.Context, servic
 	input = hydrateWorkspaceComputeClaimRecoveryRequestStage(operation, input)
 	requestHash := workspaceComputeClaimRequestHash(input, key)
 	if operation.ComputeClaimProof != nil {
-		nodeOnlyAuthorized := operation.CurrentDecision != nil && AuthorizeStageMutation(*operation.CurrentDecision, "node_only_continuation")
+		nodeOnlyAuthorized := workspaceComputeClaimPersistedNodeOnlyContinuationAuthorized(operation, input, key)
+		persistedProofEligible := nodeOnlyAuthorized
+		if !nodeOnlyAuthorized {
+			persistedProofEligible = evaluateWorkspaceComputeClaimProof(operation, input, *operation.ComputeClaimProof, true).Eligible
+		}
+		if app.bindWorkspaceComputeClaimApproval(ctx, &operation, input, key, nodeOnlyAuthorized) != nil {
+			return clients.ComputeClaimRecoveryProof{}, errWorkspaceComputeClaimIdentity
+		}
 		if nodeOnlyAuthorized && operation.ComputeClaimRequestHash == "" && operation.ComputeClaimApprovalID == "" &&
 			operation.ComputeClaimMergedMainSHA == "" && operation.ComputeClaimCloudDigest == "" && operation.ComputeClaimPrivateIP == "" {
 			operation.ComputeClaimRequestHash, operation.ComputeClaimApprovalID = requestHash, input.ApprovalID
 			operation.ComputeClaimMergedMainSHA, operation.ComputeClaimCloudDigest = input.MergedMainSHA, input.CloudImageDigest
 			operation.ComputeClaimPrivateIP = input.PrivateIP
 		}
-		persistedProofEvaluation := evaluateWorkspaceComputeClaimProof(operation, input, *operation.ComputeClaimProof, !nodeOnlyAuthorized)
-		if app.bindWorkspaceComputeClaimApproval(ctx, &operation, input, key, nodeOnlyAuthorized) != nil || operation.ComputeClaimRequestHash != requestHash || operation.ComputeClaimApprovalID != input.ApprovalID ||
+		if operation.ComputeClaimRequestHash != requestHash || operation.ComputeClaimApprovalID != input.ApprovalID ||
 			operation.ComputeClaimMergedMainSHA != input.MergedMainSHA || operation.ComputeClaimCloudDigest != input.CloudImageDigest ||
 			operation.ComputeClaimPrivateIP != input.PrivateIP || operation.ComputeClaimProof.PrivateIP != input.PrivateIP ||
-			!workspaceComputeClaimRecoveryRequestMatches(operation, input) || !persistedProofEvaluation.Eligible {
+			!workspaceComputeClaimRecoveryRequestMatches(operation, input) || !persistedProofEligible {
 			return clients.ComputeClaimRecoveryProof{}, errWorkspaceComputeClaimIdentity
 		}
 		if nodeOnlyAuthorized {
