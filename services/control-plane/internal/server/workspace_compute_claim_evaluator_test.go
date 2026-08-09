@@ -294,13 +294,21 @@ func TestComputeClaimApprovalStorageBoundaryRefreshIsNarrow(t *testing.T) {
 	want.AllowedWrites = workspaceComputeClaimAllowedWritesForStorage("storage_attempt_unknown")
 	want.ApprovalDigest = workspaceComputeClaimApprovalDigest(want)
 
-	if !workspaceComputeClaimApprovalStorageBoundaryRefreshAllowed(operation, *operation.ComputeClaimApproval, want) {
+	if !workspaceComputeClaimApprovalStorageBoundaryRefreshAllowed(operation, *operation.ComputeClaimApproval, want, false) {
 		t.Fatal("exact storage-unknown boundary refresh was rejected")
 	}
 	historicalRequest := workspaceComputeClaimRecoveryRequestForOperation(operation)
 	bindWorkspaceComputeClaimRequest(&operation, historicalRequest, operation.ComputeClaimApproval.IdempotencyKey)
-	if !workspaceComputeClaimApprovalStorageBoundaryRefreshAllowed(operation, *operation.ComputeClaimApproval, want) {
+	if !workspaceComputeClaimApprovalStorageBoundaryRefreshAllowed(operation, *operation.ComputeClaimApproval, want, false) {
 		t.Fatal("exact historical request binding was rejected")
+	}
+	computePending := operation
+	computePending.Phase = "compute_claim_pending"
+	if workspaceComputeClaimApprovalStorageBoundaryRefreshAllowed(computePending, *computePending.ComputeClaimApproval, want, false) {
+		t.Fatal("compute-pending approval refresh was accepted without persisted Node-only authorization")
+	}
+	if !workspaceComputeClaimApprovalStorageBoundaryRefreshAllowed(computePending, *computePending.ComputeClaimApproval, want, true) {
+		t.Fatal("persisted Node-only continuation could not refresh its exact approval binding")
 	}
 	for name, drift := range map[string]func(*workspaceLaunchOperation){
 		"request hash": func(candidate *workspaceLaunchOperation) { candidate.ComputeClaimRequestHash = strings.Repeat("f", 40) },
@@ -316,13 +324,13 @@ func TestComputeClaimApprovalStorageBoundaryRefreshIsNarrow(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			candidate := operation
 			drift(&candidate)
-			if workspaceComputeClaimApprovalStorageBoundaryRefreshAllowed(candidate, *candidate.ComputeClaimApproval, want) {
+			if workspaceComputeClaimApprovalStorageBoundaryRefreshAllowed(candidate, *candidate.ComputeClaimApproval, want, false) {
 				t.Fatal("drifted historical request binding was accepted")
 			}
 		})
 	}
 	want.Target.NodeName = "different-node"
-	if workspaceComputeClaimApprovalStorageBoundaryRefreshAllowed(operation, *operation.ComputeClaimApproval, want) {
+	if workspaceComputeClaimApprovalStorageBoundaryRefreshAllowed(operation, *operation.ComputeClaimApproval, want, false) {
 		t.Fatal("identity drift was accepted during storage-boundary refresh")
 	}
 }
