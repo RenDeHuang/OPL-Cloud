@@ -2778,6 +2778,128 @@ func TestWorkspaceRecoveryPlanExecuteComputeClaimContinuesOriginalLaunchOnce(t *
 	}
 }
 
+func TestWorkspaceRecoveryPlanExecuteHistoricalProofContinuesNodeBeforeStorageUnknown(t *testing.T) {
+	t.Setenv("OPL_RELEASE_SHA", strings.Repeat("a", 40))
+	t.Setenv("OPL_CLOUD_IMAGE", "uswccr.ccs.tencentyun.com/oplcloud/opl-cloud@sha256:"+strings.Repeat("b", 64))
+	fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, "basic")
+	operation.Status, operation.Phase, operation.ErrorCode = "manual_review", "storage_fulfilling", "workspace_launch_storage_attempt_unknown"
+	operation.ContinuationAttemptBudgets["storage"] = workspaceLaunchStageBudget{Attempted: 1, Unknown: 1, Max: workspaceLaunchStageMax}
+
+	historicalProof := computeClaimRecoveryProofForLaunchStorage(operation, "unallocated", "storage_attempt_unknown", "")
+	historicalProof.CVMOwnershipState = "recoverable"
+	if !persistWorkspaceComputeClaimIdentityFromProof(&operation, historicalProof) {
+		t.Fatal("historical production proof did not hydrate the exact compute identity")
+	}
+	operation.ComputeClaimProof = &historicalProof
+	operation.ComputeClaimApproval = &workspaceComputeClaimApprovalBinding{
+		SchemaVersion: 2, ApprovalID: "approval-before-storage-unknown", ExpiresAt: "2099-01-01T00:00:00Z",
+		MergedMainSHA: strings.Repeat("a", 40), CloudImageDigest: "sha256:" + strings.Repeat("b", 64),
+		WorkspaceImageDigest: operation.WorkspaceImageDigest, Confirmation: "RECOVER_PROVEN_COMPUTE_AND_CONTINUE_ORIGINAL_LAUNCH",
+		IdempotencyKey: "recovery-before-storage-unknown", RecoveryKey: "recovery-before-storage-unknown",
+		Customer:  workspaceComputeClaimApprovalCustomer{Email: "alpha@example.com", AccountID: operation.AccountID},
+		Target:    workspaceComputeClaimApprovalTargetFromOperation(operation),
+		Resources: workspaceComputeClaimExpectedResources(operation, "storage_not_started", ""),
+		AttemptLimits: workspaceComputeClaimAttemptLimits{
+			Claim:   workspaceComputeClaimProviderAttemptLimits{Kubernetes: 1},
+			Storage: 1, Attachment: 1, Secret: 1, Runtime: 1, Activation: 1, Receipt: 1,
+		},
+		AllowedWrites:   workspaceComputeClaimAllowedWritesForStorage("storage_not_started"),
+		ForbiddenWrites: append([]string(nil), workspaceComputeClaimForbiddenWrites...),
+	}
+	operation.ComputeClaimApproval.ApprovalDigest = workspaceComputeClaimApprovalDigest(*operation.ComputeClaimApproval)
+	mustStore(t, fixture.store.SaveRuntimeOperation(context.Background(), workspaceLaunchOperationRow(operation)))
+
+	fixture.fabric.computeClaimProof = historicalProof
+	claimed := computeClaimRecoveryProofForLaunchStorage(operation, "target_owned", "storage_attempt_unknown", "")
+	claimed.CVMOwnershipState = "recoverable"
+	claimed.KubernetesMutationCount = 1
+	claimed.Evidence.Node = clients.ComputeClaimMutationEvidence{Attempted: 1, Confirmed: 1}
+	fixture.fabric.computeClaimResult = &claimed
+	configureWorkspaceComputeProviderTruthTransition(fixture, historicalProof, claimed)
+	configureWorkspaceLaunchFulfillment(t, fixture)
+	configureWorkspaceComputeClaimReadback(fixture, operation)
+	fixture.fabric.beforeComputeClaim = func() {
+		persisted := fixture.operation(t)
+		if persisted.CurrentDecision == nil || !AuthorizeStageMutation(*persisted.CurrentDecision, "node_only_continuation") ||
+			persisted.ComputeClaimApproval == nil || persisted.ComputeClaimApproval.Resources.StorageState != "storage_attempt_unknown" ||
+			persisted.Status != "compute_claim_pending" || persisted.Phase != "compute_claim_pending" || len(fixture.fabric.storageIDs) != 0 {
+			t.Fatalf("Node provider boundary was not guarded by the refreshed persisted authority: %#v", persisted)
+		}
+	}
+
+	diagnosed := recoveryPlanResponse(t, requestWorkspaceRecoveryPlan(t, fixture, http.MethodPost, "/diagnose", map[string]any{"accountId": operation.AccountID}))
+	validated := recoveryPlanResponse(t, requestWorkspaceRecoveryPlan(t, fixture, http.MethodPost, "/validate", map[string]any{
+		"planId": diagnosed.PlanID, "planDigest": diagnosed.PlanDigest,
+	}))
+	execute := requestWorkspaceRecoveryPlan(t, fixture, http.MethodPost, "/execute", map[string]any{
+		"planId": validated.PlanID, "planDigest": validated.PlanDigest, "decision": "continue", "confirmation": "CONTINUE_RECOVERY_PLAN",
+	})
+	if execute.Code != http.StatusOK {
+		t.Fatalf("historical proof execute status=%d body=%s", execute.Code, execute.Body.String())
+	}
+
+	persisted := fixture.operation(t)
+	if len(fixture.fabric.computeClaimCalls) != 1 || !fixture.fabric.computeClaimCalls[0].NodeOnlyContinuation ||
+		persisted.ComputeClaimProof == nil || persisted.ComputeClaimProof.NodeOwnershipState != "target_owned" ||
+		persisted.ComputeClaimProof.TencentMutationCount != 0 || persisted.ComputeClaimProof.KubernetesMutationCount > 1 ||
+		persisted.Phase != "storage_fulfilling" || persisted.CurrentDecision == nil || persisted.CurrentDecision.CurrentStage != "storage" ||
+		persisted.StorageID != operation.StorageID || len(fixture.fabric.storageIDs) != 0 || countStrings(*fixture.events, "fabric.storage.get") == 0 ||
+		persisted.RecoveryExecution == nil || persisted.RecoveryExecution.MutationOutcome.Status != "nonzero" ||
+		persisted.RecoveryExecution.MutationOutcome.Source != "compute_claim_post_read_confirmed" || !persisted.RecoveryExecution.MutationOutcome.Confirmed ||
+		persisted.RecoveryExecution.MutationOutcome.APIAccepted == nil || !*persisted.RecoveryExecution.MutationOutcome.APIAccepted {
+		t.Fatalf("historical proof did not close Node before the original Storage readback: operation=%#v claims=%#v storage=%#v events=%#v", persisted, fixture.fabric.computeClaimCalls, fixture.fabric.storageIDs, *fixture.events)
+	}
+}
+
+func TestWorkspaceRecoveryMutationOutcomeDistinguishesComputeExecutionBoundaries(t *testing.T) {
+	preProvider := workspaceRecoveryMutationOutcomeBeforeProvider()
+	if preProvider.Status != "confirmed_zero" || preProvider.Source != "control_plane_pre_provider" ||
+		preProvider.Counts != (workspaceRecoveryMutationCounts{}) || !preProvider.Confirmed || preProvider.APIAccepted != nil {
+		t.Fatalf("pre-provider failure was not confirmed zero: %#v", preProvider)
+	}
+
+	base := clients.ComputeClaimRecoveryProof{
+		SchemaVersion: 1, Eligible: false, Reason: "provider_describe", NodeOwnershipState: "unallocated",
+		CVMOwnershipState: "recoverable", FailureStage: "node_patch_readback", ProviderErrorClass: "provider_error",
+		KubernetesMutationCount: 1, Evidence: &clients.ComputeClaimEvidence{},
+	}
+
+	unknown := base
+	unknown.Evidence.Node = clients.ComputeClaimMutationEvidence{Attempted: 1, Unknown: 1, Missing: []string{"node_ownership"}}
+	unknownOutcome := workspaceRecoveryMutationOutcomeFromComputeClaim(unknown)
+	if unknownOutcome.Status != "unknown" || unknownOutcome.Source != "compute_claim_mutation_readback_unknown" || unknownOutcome.APIAccepted != nil || unknownOutcome.Confirmed {
+		t.Fatalf("reserved unknown mutation was misclassified: %#v", unknownOutcome)
+	}
+
+	rejected := base
+	rejected.Evidence.Node = clients.ComputeClaimMutationEvidence{Attempted: 1, Missing: []string{"node_ownership"}}
+	rejectedOutcome := workspaceRecoveryMutationOutcomeFromComputeClaim(rejected)
+	if rejectedOutcome.Status != "nonzero" || rejectedOutcome.Source != "compute_claim_provider_rejected" ||
+		rejectedOutcome.APIAccepted == nil || *rejectedOutcome.APIAccepted || !rejectedOutcome.Confirmed {
+		t.Fatalf("provider rejection was misclassified: %#v", rejectedOutcome)
+	}
+
+	confirmed := base
+	confirmed.Eligible, confirmed.Reason, confirmed.NodeOwnershipState = true, "none", "target_owned"
+	confirmed.FailureStage, confirmed.ProviderErrorClass = "", ""
+	confirmed.Evidence.Node = clients.ComputeClaimMutationEvidence{Attempted: 1, Confirmed: 1}
+	confirmedOutcome := workspaceRecoveryMutationOutcomeFromComputeClaim(confirmed)
+	if confirmedOutcome.Status != "nonzero" || confirmedOutcome.Source != "compute_claim_post_read_confirmed" ||
+		confirmedOutcome.APIAccepted == nil || !*confirmedOutcome.APIAccepted || !confirmedOutcome.Confirmed {
+		t.Fatalf("authoritative Node post-read was misclassified: %#v", confirmedOutcome)
+	}
+}
+
+func TestWorkspaceRecoveryExecutionErrorPrefersCurrentComputeFailure(t *testing.T) {
+	operation := workspaceLaunchOperation{ErrorCode: "workspace_launch_storage_attempt_unknown"}
+	if code := workspaceRecoveryExecutionErrorCode(operation, errWorkspaceComputeClaimIdentity); code != "identity_mismatch" {
+		t.Fatalf("historical Storage state masked the current Compute failure: %s", code)
+	}
+	if code := workspaceRecoveryExecutionErrorCode(operation, nil); code != operation.ErrorCode {
+		t.Fatalf("secondary stage state was lost when there was no current execution failure: %s", code)
+	}
+}
+
 func TestWorkspaceRecoveryPlanWorkerRetriesCBSReadbackAfterConfirmedNodeClaim(t *testing.T) {
 	t.Setenv("OPL_RELEASE_SHA", strings.Repeat("a", 40))
 	t.Setenv("OPL_CLOUD_IMAGE", "uswccr.ccs.tencentyun.com/oplcloud/opl-cloud@sha256:"+strings.Repeat("b", 64))

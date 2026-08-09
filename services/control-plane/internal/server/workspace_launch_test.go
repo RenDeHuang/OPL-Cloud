@@ -2498,9 +2498,20 @@ func TestWorkspaceLaunchDoesNotEnterStorageBeforeAuthoritativeNodePostRead(t *te
 	current := fixture.operation(t)
 	if current.Status != "manual_review" || current.Phase != "compute_claim_pending" ||
 		current.CurrentDecision == nil || current.CurrentDecision.CurrentStage != "compute_claim" ||
-		current.CurrentDecision.Actual != "unallocated" || len(fixture.fabric.computeClaimCalls) != 1 ||
+		current.CurrentDecision.FirstFalsePredicate != "provider.nodeOwnership" || current.CurrentDecision.Expected != "target_owned" ||
+		current.CurrentDecision.Actual != "unallocated" || current.CurrentDecision.NextAction != "MANUAL_REVIEW" ||
+		!current.CurrentDecision.RequiresApproval || current.CurrentDecision.AllowedMutation != "none" ||
+		current.ErrorCode != "workspace_compute_claim_node_post_readback" || len(fixture.fabric.computeClaimCalls) != 1 ||
 		len(fixture.fabric.storageIDs) != 0 || claimed.KubernetesMutationCount > 1 {
 		t.Fatalf("Node post-read did not fail closed before Storage: operation=%#v claims=%#v storage=%#v", current, fixture.fabric.computeClaimCalls, fixture.fabric.storageIDs)
+	}
+	if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err != nil {
+		t.Fatal(err)
+	}
+	replayed := fixture.operation(t)
+	if replayed.Status != "manual_review" || replayed.Phase != "compute_claim_pending" ||
+		len(fixture.fabric.computeClaimCalls) != 1 || len(fixture.fabric.storageIDs) != 0 {
+		t.Fatalf("unallocated post-read repeated Node or Storage mutation: operation=%#v claims=%#v storage=%#v", replayed, fixture.fabric.computeClaimCalls, fixture.fabric.storageIDs)
 	}
 }
 
@@ -2759,7 +2770,7 @@ func TestWorkspaceComputeClaimPersistsProviderDecisionBeforeNodeContinuation(t *
 	}
 }
 
-func TestWorkspaceComputeClaimNodeContinuationUsesCandidateModeForPersistedUnallocatedProof(t *testing.T) {
+func TestWorkspaceComputeClaimHistoricalProofRequiresRecoveryPlanDecisionBinding(t *testing.T) {
 	fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, "basic")
 	operation.ContinuationAttemptBudgets["storage"] = workspaceLaunchStageBudget{Attempted: 1, Unknown: 1, Max: workspaceLaunchStageMax}
 	staleProof := computeClaimRecoveryProofForLaunchStorage(operation, "unallocated", "storage_attempt_unknown", "")
@@ -2776,16 +2787,6 @@ func TestWorkspaceComputeClaimNodeContinuationUsesCandidateModeForPersistedUnall
 		SchemaVersion: 1, State: "ready", ComputeState: "ready", StorageState: "unknown",
 		NodeOwnershipState: "unallocated", CVMOwnershipState: "recoverable", Proof: &staleProof,
 	}
-	claimed := computeClaimRecoveryProofForLaunchStorage(operation, "target_owned", "storage_attempt_unknown", "")
-	claimed.KubernetesMutationCount = 1
-	claimed.Evidence.Node = clients.ComputeClaimMutationEvidence{Attempted: 1, Confirmed: 1}
-	fixture.fabric.computeClaimResult = &claimed
-	configureWorkspaceComputeProviderTruthTransition(fixture, staleProof, claimed)
-	readback := configureWorkspaceComputeClaimReadback(fixture, operation)
-	readback.Status = "running"
-	readback.ProviderRequestID = "req-stale-proof-node-continuation"
-	fixture.fabric.computeSync = readback
-
 	path := "/api/operator/workspace-launches/" + operation.ID + "/compute-claim-recovery/claim"
 	response := requestComputeClaimWithCapabilityForTest(
 		t, fixture.server, fixture.operator, path,
@@ -2794,13 +2795,11 @@ func TestWorkspaceComputeClaimNodeContinuationUsesCandidateModeForPersistedUnall
 	)
 
 	persisted := fixture.operation(t)
-	if response.Code != http.StatusOK || len(fixture.fabric.computeClaimCalls) != 1 || len(fixture.fabric.storageIDs) != 0 ||
-		!fixture.fabric.computeClaimCalls[0].NodeOnlyContinuation ||
-		persisted.ComputeClaimProof == nil || persisted.ComputeClaimProof.NodeOwnershipState != "target_owned" ||
-		persisted.ComputeClaimProof.TencentMutationCount != 0 || persisted.ComputeClaimProof.KubernetesMutationCount > 1 ||
-		persisted.Status != "preparing" || persisted.Phase != "storage_fulfilling" ||
-		persisted.CurrentDecision == nil || persisted.CurrentDecision.CurrentStage != "storage" {
-		t.Fatalf("persisted unallocated proof blocked Node continuation: status=%d body=%s operation=%#v claims=%#v storage=%#v", response.Code, response.Body.String(), persisted, fixture.fabric.computeClaimCalls, fixture.fabric.storageIDs)
+	if response.Code != http.StatusConflict || len(fixture.fabric.computeClaimCalls) != 0 || len(fixture.fabric.storageIDs) != 0 ||
+		persisted.ComputeClaimProof == nil || persisted.ComputeClaimProof.NodeOwnershipState != "unallocated" ||
+		persisted.Status != "compute_claim_pending" || persisted.Phase != "compute_claim_pending" ||
+		persisted.CurrentDecision == nil || !AuthorizeStageMutation(*persisted.CurrentDecision, "node_only_continuation") {
+		t.Fatalf("unbound historical proof crossed the persisted Recovery authority: status=%d body=%s operation=%#v claims=%#v storage=%#v", response.Code, response.Body.String(), persisted, fixture.fabric.computeClaimCalls, fixture.fabric.storageIDs)
 	}
 }
 
