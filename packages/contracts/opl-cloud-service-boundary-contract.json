@@ -538,7 +538,7 @@
             "preserved": ["binding", "source_recovery_evidence", "normal_launch_mutation_budgets", "terminal_evidence"],
             "mutationBounds": {"tencent": 0, "kubernetesMax": 1}
           },
-          "activeOwnershipNodeDriftContinuation": "exact_active_machine_ownership_current_binding_no_ledger_cvm_target_owned_node_unallocated_may_reserve_node_once_and_patch_with_tencent_zero_kubernetes_max_one",
+          "activeOwnershipNodeDriftContinuation": "exact_active_machine_ownership_current_binding_no_ledger_cvm_recoverable_or_target_owned_node_unallocated_may_reserve_node_once_and_patch_with_tencent_zero_kubernetes_max_one",
           "persistedApprovalExpiryReplay": "new_approval_must_be_unexpired_exact_persisted_approval_identity_may_replay_after_expiry",
           "observedSuccessReadbackMismatch": "fail_closed_identity_mismatch_claim_final_readback"
         },

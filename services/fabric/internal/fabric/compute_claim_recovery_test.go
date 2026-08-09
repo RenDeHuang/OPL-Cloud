@@ -860,11 +860,14 @@ func TestClaimComputeRecoveryContinuesNodeOnlyWithAttemptedUnknownStorage(t *tes
 		t.Fatalf("seed operations=%#v err=%v", operations, err)
 	}
 	pending := operations[0]
-	pending.Status, pending.ErrorCode, pending.FinishedAt = "claim_pending", "", time.Time{}
+	// Production recovery re-enters the Node stage after the original Compute
+	// operation has already reached succeeded while the active MachineOwnership
+	// still points at an exact unallocated Node.
+	pending.Status, pending.ErrorCode = "succeeded", ""
 	pending.RedactedProviderPayload = withComputeClaimRecoveryBinding(pending.RedactedProviderPayload, newComputeClaimRecoveryBinding(claimInput))
-	if err := store.SaveComputeClaimRecovery(context.Background(), operations[0], pending); err != nil {
-		t.Fatal(err)
-	}
+	store.mu.Lock()
+	store.operation[0] = pending
+	store.mu.Unlock()
 	ownership, err := store.MachineOwnership(context.Background(), input.ComputeAllocationID)
 	if err != nil {
 		t.Fatal(err)
@@ -886,10 +889,24 @@ func TestClaimComputeRecoveryContinuesNodeOnlyWithAttemptedUnknownStorage(t *tes
 
 	result, claimErr := NewServiceWithOperationStore(provider, store).ClaimComputeRecovery(context.Background(), claimInput)
 
+	stored, listErr := store.List(context.Background())
+	binding, bindingPresent, bindingValid := decodeComputeClaimRecoveryBinding(stored[0])
+	ledger, ledgerPresent, ledgerValid := decodeComputeClaimRecoveryMutation(stored[0])
 	if claimErr != nil || !result.Eligible || result.StorageState != "storage_attempt_unknown" ||
 		result.TencentMutationCount != 0 || result.KubernetesMutationCount != 1 || provider.claimCalls != 0 ||
-		provider.nodeOnlyClaimCalls != 1 || provider.storageCalls != 0 {
-		t.Fatalf("result=%#v err=%v provider=%#v", result, claimErr, provider)
+		provider.nodeOnlyClaimCalls != 1 || provider.storageCalls != 0 || listErr != nil || len(stored) != 2 ||
+		!bindingPresent || !bindingValid || binding != newComputeClaimRecoveryBinding(claimInput) ||
+		!ledgerPresent || !ledgerValid || ledger.State != "observed" || ledger.TencentMutationCount != 0 ||
+		ledger.KubernetesMutationCount != 1 || !reflect.DeepEqual(ledger.Evidence.CVM, ComputeClaimMutationEvidence{}) ||
+		!reflect.DeepEqual(ledger.Evidence.Node, ComputeClaimMutationEvidence{Attempted: 1, Confirmed: 1}) {
+		t.Fatalf("result=%#v err=%v stored=%#v listErr=%v binding=%#v ledger=%#v provider=%#v", result, claimErr, stored, listErr, binding, ledger, provider)
+	}
+
+	replayed, replayErr := NewServiceWithOperationStore(provider, store).ClaimComputeRecovery(context.Background(), claimInput)
+	if replayErr != nil || !replayed.Eligible || replayed.NodeOwnershipState != "target_owned" ||
+		replayed.CVMOwnershipState != "recoverable" || replayed.TencentMutationCount != 0 || replayed.KubernetesMutationCount != 0 ||
+		provider.claimCalls != 0 || provider.nodeOnlyClaimCalls != 1 || provider.storageCalls != 0 {
+		t.Fatalf("replay=%#v err=%v provider=%#v", replayed, replayErr, provider)
 	}
 }
 
@@ -2491,6 +2508,47 @@ func TestMemoryComputeClaimRecoveryCASRejectsReservedLedgerCompletion(t *testing
 	stored, err := store.List(context.Background())
 	if err != nil || len(stored) != 1 || stored[0].Status != "claim_pending" || !reflect.DeepEqual(stored[0].RedactedProviderPayload, reserved.RedactedProviderPayload) {
 		t.Fatalf("reserved completion changed operation: stored=%#v err=%v", stored, err)
+	}
+}
+
+func TestMemorySucceededComputeClaimRecoveryCASOnlyWritesNodeLedger(t *testing.T) {
+	drifts := map[string]func(*FabricOperation){
+		"error_code":  func(operation *FabricOperation) { operation.ErrorCode = "unexpected" },
+		"finished_at": func(operation *FabricOperation) { operation.FinishedAt = operation.FinishedAt.Add(time.Minute) },
+		"provider_payload": func(operation *FabricOperation) {
+			operation.RedactedProviderPayload["unexpected"] = true
+		},
+	}
+	for name, drift := range drifts {
+		t.Run(name, func(t *testing.T) {
+			_, store, provider, input := seedComputeClaimRecovery(t, "basic")
+			claimInput := ComputeClaimRecoveryClaimInput{
+				ComputeClaimRecoveryInput: input, MachineName: "machine-after", NodeName: "10.0.0.18", CVMInstanceID: "ins-fixture",
+				PrivateIP: provider.proof.PrivateIP, InstanceType: provider.proof.InstanceType, Zone: provider.proof.Zone,
+				IdempotencyKey: input.LaunchOperationID + ":compute", NodeOnlyContinuation: true,
+			}
+			operations, err := store.List(context.Background())
+			if err != nil || len(operations) != 1 {
+				t.Fatalf("seed operations=%#v err=%v", operations, err)
+			}
+			current := operations[0]
+			current.Status, current.ErrorCode = "succeeded", ""
+			current.RedactedProviderPayload = withComputeClaimRecoveryBinding(current.RedactedProviderPayload, newComputeClaimRecoveryBinding(claimInput))
+			store.mu.Lock()
+			store.operation[0] = current
+			store.mu.Unlock()
+
+			reserved := current
+			reserved.RedactedProviderPayload = withComputeClaimRecoveryMutation(reserved.RedactedProviderPayload, legacyNodeReservedComputeClaimRecoveryMutation())
+			drift(&reserved)
+			if err := store.SaveComputeClaimRecovery(context.Background(), current, reserved); !errors.Is(err, ErrRuntimeOperationNotCurrent) {
+				t.Fatalf("succeeded ledger drift error=%v, want ErrRuntimeOperationNotCurrent", err)
+			}
+			stored, err := store.List(context.Background())
+			if err != nil || len(stored) != 1 || !reflect.DeepEqual(stored[0], current) {
+				t.Fatalf("rejected ledger drift changed operation: stored=%#v err=%v", stored, err)
+			}
+		})
 	}
 }
 

@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -376,7 +378,7 @@ func (s *MemoryOperationStore) ConvergeRuntimeReadback(_ context.Context, expect
 func (s *MemoryOperationStore) SaveComputeClaimRecovery(_ context.Context, expected, next FabricOperation) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if !validComputeClaimRecoveryTransition(expected.Status, next.Status) || !sameComputeClaimRecoveryOperation(expected, next) ||
+	if !validComputeClaimRecoveryTransition(expected, next) || !sameComputeClaimRecoveryOperation(expected, next) ||
 		!validComputeClaimRecoveryBindingTransition(expected, next) || !validComputeClaimRecoveryMutationTransition(expected, next) ||
 		!validComputeClaimRecoveryReconciliationTransition(expected, next) || !validComputeClaimTerminalTransition(expected, next) {
 		return ErrRuntimeOperationNotCurrent
@@ -1216,7 +1218,7 @@ func (s *PostgresOperationStore) SaveRuntime(ctx context.Context, operation Fabr
 }
 
 func (s *PostgresOperationStore) SaveComputeClaimRecovery(ctx context.Context, expected, next FabricOperation) error {
-	if !validComputeClaimRecoveryTransition(expected.Status, next.Status) || !sameComputeClaimRecoveryOperation(expected, next) ||
+	if !validComputeClaimRecoveryTransition(expected, next) || !sameComputeClaimRecoveryOperation(expected, next) ||
 		!validComputeClaimRecoveryBindingTransition(expected, next) || !validComputeClaimRecoveryMutationTransition(expected, next) ||
 		!validComputeClaimRecoveryReconciliationTransition(expected, next) || !validComputeClaimTerminalTransition(expected, next) {
 		return ErrRuntimeOperationNotCurrent
@@ -1298,11 +1300,35 @@ func (s *PostgresOperationStore) ConvergeRuntimeReadback(ctx context.Context, ex
 	return nil
 }
 
-func validComputeClaimRecoveryTransition(currentStatus, nextStatus string) bool {
-	return currentStatus == "failed" && nextStatus == "claim_pending" ||
-		currentStatus == "claim_pending" && nextStatus == "claim_pending" ||
-		currentStatus == "claim_pending" && nextStatus == "succeeded" ||
-		currentStatus == "claim_pending" && nextStatus == "failed"
+func validComputeClaimRecoveryTransition(current, next FabricOperation) bool {
+	if current.Status == "failed" && next.Status == "claim_pending" ||
+		current.Status == "claim_pending" && next.Status == "claim_pending" ||
+		current.Status == "claim_pending" && next.Status == "succeeded" ||
+		current.Status == "claim_pending" && next.Status == "failed" {
+		return true
+	}
+	if current.Status != "succeeded" || next.Status != "succeeded" {
+		return false
+	}
+	currentLedger, currentPresent, currentValid := decodeComputeClaimRecoveryMutation(current)
+	nextLedger, nextPresent, nextValid := decodeComputeClaimRecoveryMutation(next)
+	validNodeTransition := !currentPresent && nextPresent && nextValid && nextLedger.State == "node_reserved" &&
+		validLegacyNodeReservationTransition(current, next, nextLedger) ||
+		currentPresent && currentValid && currentLedger.State == "node_reserved" && nextPresent && nextValid &&
+			nextLedger.State == "observed" && nextLedger.TencentMutationCount == 0 &&
+			reflect.DeepEqual(nextLedger.Evidence.CVM, ComputeClaimMutationEvidence{})
+	if !validNodeTransition {
+		return false
+	}
+	currentWithoutPayload, nextWithoutPayload := current, next
+	currentWithoutPayload.RedactedProviderPayload, nextWithoutPayload.RedactedProviderPayload = nil, nil
+	if !reflect.DeepEqual(currentWithoutPayload, nextWithoutPayload) {
+		return false
+	}
+	currentPayload, nextPayload := maps.Clone(current.RedactedProviderPayload), maps.Clone(next.RedactedProviderPayload)
+	delete(currentPayload, computeClaimRecoveryMutationPayloadKey)
+	delete(nextPayload, computeClaimRecoveryMutationPayloadKey)
+	return reflect.DeepEqual(currentPayload, nextPayload)
 }
 
 func sameComputeClaimRecoveryOperation(current, next FabricOperation) bool {

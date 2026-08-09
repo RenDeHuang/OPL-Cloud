@@ -2001,10 +2001,10 @@ func TestPostgresActiveComputeClaimOwnershipDriftHasOneNodeContinuationWinner(t 
 		ComputeClaimRecoveryInput: input, MachineName: fixtureProvider.proof.MachineName, NodeName: fixtureProvider.proof.NodeName,
 		CVMInstanceID: fixtureProvider.proof.CVMInstanceID, PrivateIP: fixtureProvider.proof.PrivateIP,
 		InstanceType: fixtureProvider.proof.InstanceType, Zone: fixtureProvider.proof.Zone,
-		IdempotencyKey: input.LaunchOperationID + ":compute",
+		IdempotencyKey: input.LaunchOperationID + ":compute", NodeOnlyContinuation: true,
 	}
 	operation := operations[0]
-	operation.Status, operation.ErrorCode, operation.FinishedAt = "claim_pending", "", time.Time{}
+	operation.Status, operation.ErrorCode = "succeeded", ""
 	operation.RedactedProviderPayload = withComputeClaimRecoveryBinding(operation.RedactedProviderPayload, newComputeClaimRecoveryBinding(claimInput))
 	if err := firstStore.Append(context.Background(), operation); err != nil {
 		t.Fatal(err)
@@ -2022,14 +2022,14 @@ func TestPostgresActiveComputeClaimOwnershipDriftHasOneNodeContinuationWinner(t 
 		t.Fatal(err)
 	}
 	provider := &postgresComputeClaimRecoveryProvider{fakeComputeClaimRecoveryProvider: *fixtureProvider}
-	provider.proof.CVMOwnershipState = "target_owned"
+	provider.proof.CVMOwnershipState = "recoverable"
 	provider.proof.NodeOwnershipState = "unallocated"
 	provider.claim = ComputeClaimProviderClaim{
 		Proof: ComputeClaimProviderProof{
 			Status: "proven", Reason: "none", MachineName: provider.proof.MachineName, NodeName: provider.proof.NodeName,
 			CVMInstanceID: provider.proof.CVMInstanceID, PrivateIP: provider.proof.PrivateIP, InstanceType: provider.proof.InstanceType,
 			Zone: provider.proof.Zone, ChargeType: provider.proof.ChargeType, PeriodMonths: provider.proof.PeriodMonths,
-			RenewFlag: provider.proof.RenewFlag, Deadline: provider.proof.Deadline, CVMOwnershipState: "target_owned", NodeOwnershipState: "target_owned",
+			RenewFlag: provider.proof.RenewFlag, Deadline: provider.proof.Deadline, CVMOwnershipState: "recoverable", NodeOwnershipState: "target_owned",
 		},
 		KubernetesMutationCount: 1,
 		Evidence:                &ComputeClaimEvidence{Node: ComputeClaimMutationEvidence{Attempted: 1, Confirmed: 1}},
@@ -2059,11 +2059,13 @@ func TestPostgresActiveComputeClaimOwnershipDriftHasOneNodeContinuationWinner(t 
 	}
 	stored, err := firstStore.List(context.Background())
 	finalOwnership, ownershipErr := firstStore.MachineOwnership(context.Background(), input.ComputeAllocationID)
+	binding, bindingPresent, bindingValid := decodeComputeClaimRecoveryBinding(stored[0])
 	ledger, ledgerPresent, ledgerValid := decodeComputeClaimRecoveryMutation(stored[0])
 	if kubernetesMutations != 1 || provider.claimCalls != 0 || provider.nodeOnlyClaimCalls != 1 || err != nil || len(stored) != 1 || stored[0].Status != "succeeded" ||
-		ownershipErr != nil || finalOwnership.Status != "active" || !ledgerPresent || !ledgerValid || ledger.State != "observed" ||
-		ledger.TencentMutationCount != 0 || ledger.KubernetesMutationCount != 1 || ledger.Evidence.Node.Confirmed != 1 {
-		t.Fatalf("kubernetesMutations=%d stored=%#v err=%v ownership=%#v ownershipErr=%v ledger=%#v provider=%#v", kubernetesMutations, stored, err, finalOwnership, ownershipErr, ledger, provider)
+		ownershipErr != nil || finalOwnership.Status != "active" || !bindingPresent || !bindingValid || binding != newComputeClaimRecoveryBinding(claimInput) ||
+		!ledgerPresent || !ledgerValid || ledger.State != "observed" || ledger.TencentMutationCount != 0 || ledger.KubernetesMutationCount != 1 ||
+		!reflect.DeepEqual(ledger.Evidence.CVM, ComputeClaimMutationEvidence{}) || ledger.Evidence.Node.Confirmed != 1 {
+		t.Fatalf("kubernetesMutations=%d stored=%#v err=%v ownership=%#v ownershipErr=%v binding=%#v ledger=%#v provider=%#v", kubernetesMutations, stored, err, finalOwnership, ownershipErr, binding, ledger, provider)
 	}
 }
 

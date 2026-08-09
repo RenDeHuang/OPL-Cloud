@@ -740,7 +740,7 @@ contract or select the SKU for a customer launch.
   debit, CVM, Tag, or Node write is issued.
 - If an exact active Fabric MachineOwnership and current compute binding are
   preserved while authoritative provider truth proves the same CVM is
-  target-owned and its unique Node is still unallocated, Fabric may reserve the
+  recoverable or target-owned and its unique Node is still unallocated, Fabric may reserve the
   existing node-only mutation ledger under the original launch lock. This path
   performs zero Tencent writes, permits at most one CAS-bound Kubernetes Node
   patch, and then requires target-owned provider readback. Any competing owner,
