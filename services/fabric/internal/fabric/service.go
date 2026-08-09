@@ -1152,8 +1152,11 @@ func (s *Service) ClaimComputeRecovery(ctx context.Context, input ComputeClaimRe
 			operation = pending
 			bindingPresent, bindingValid = true, true
 		}
-		reserveHistoricalNodeClaim := historicalWithoutLedger && ownership.Status != "active" &&
-			proof.CVMOwnershipState == "target_owned" && proof.NodeOwnershipState == "unallocated"
+		activeHistoricalNodeContinuation := historicalWithoutLedger && input.NodeOnlyContinuation && operation.Status == "succeeded" &&
+			ownership.Status == "active" && (proof.CVMOwnershipState == "recoverable" || proof.CVMOwnershipState == "target_owned") &&
+			proof.NodeOwnershipState == "unallocated"
+		reserveHistoricalNodeClaim := historicalWithoutLedger && (ownership.Status != "active" &&
+			proof.CVMOwnershipState == "target_owned" && proof.NodeOwnershipState == "unallocated" || activeHistoricalNodeContinuation)
 		if historicalWithoutLedger && !reserveHistoricalNodeClaim {
 			result.Eligible, result.Reason = false, "identity_mismatch"
 			return ErrComputeClaimRecoveryIdempotencyConflict
@@ -1176,6 +1179,7 @@ func (s *Service) ClaimComputeRecovery(ctx context.Context, input ComputeClaimRe
 			(proof.CVMOwnershipState == "recoverable" || proof.CVMOwnershipState == "target_owned") && proof.NodeOwnershipState == "unallocated"
 		activeNodeContinuation := ownership.Status == "active" && !mutationPresent && bindingPresent && bindingValid && persistedBinding == binding &&
 			proof.NodeOwnershipState == "unallocated" && (requestedNodeContinuation || proof.CVMOwnershipState == "target_owned")
+		activeNodeContinuation = activeNodeContinuation || activeHistoricalNodeContinuation
 		completedNodeOnlyReadback := ownership.Status == "active" && mutationPresent && mutationValid &&
 			successfulNodeClaimRecoveryMutation(mutationLedger) && mutationLedger.TencentMutationCount == 0 &&
 			reflect.DeepEqual(mutationLedger.Evidence.CVM, ComputeClaimMutationEvidence{}) &&
