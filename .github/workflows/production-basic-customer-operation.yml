@@ -3048,6 +3048,255 @@ jobs:
             --fabric-namespace "$OPL_K8S_NAMESPACE" \
             > "$OPL_READBACK_ARTIFACT_DIR/compute-claim-readback.json"
 
+      - name: Log current redacted Fabric ledger authority
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          kubectl --kubeconfig "$OPL_READBACK_KUBECONFIG" -n "$OPL_K8S_NAMESPACE" exec -i "$OPL_FABRIC_POD" -c fabric -- \
+            node - "$OPL_RECOVERY_PLAN_ACCOUNT_ID" "$OPL_RECOVERY_PLAN_LAUNCH_OPERATION_ID" <<'NODE'
+          const http = require("node:http");
+          const { createHash } = require("node:crypto");
+
+          const accountId = process.argv[2];
+          const launchOperationId = process.argv[3];
+          const token = process.env.OPL_INTERNAL_SERVICE_TOKEN;
+          const digestPattern = /^[a-f0-9]{64}$/;
+          if (!/^acct-[A-Za-z0-9-]+$/.test(accountId || "") ||
+            !/^workspace-launch-[A-Za-z0-9-]+$/.test(launchOperationId || "") || !token) {
+            throw new Error("fabric_ledger_current_authority_input_invalid");
+          }
+
+          function request(method, path, payload) {
+            if (!new Set(["GET", "POST"]).has(method) || !/^\/fabric\/[A-Za-z0-9_?=.&/%-]{1,1024}$/.test(path)) {
+              throw new Error("fabric_ledger_current_authority_path_invalid");
+            }
+            const body = payload === undefined ? "" : JSON.stringify(payload);
+            return new Promise((resolve, reject) => {
+              const req = http.request({
+                hostname: "127.0.0.1",
+                port: 8082,
+                method,
+                path,
+                headers: {
+                  Authorization: `Bearer ${token}`,
+                  ...(body ? { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) } : {})
+                }
+              }, (response) => {
+                let responseBody = "";
+                response.setEncoding("utf8");
+                response.on("data", (chunk) => {
+                  responseBody += chunk;
+                  if (Buffer.byteLength(responseBody) > 4 * 1024 * 1024) {
+                    req.destroy(new Error("fabric_ledger_current_authority_response_too_large"));
+                  }
+                });
+                response.on("end", () => {
+                  if (response.statusCode !== 200) {
+                    reject(new Error(`fabric_ledger_current_authority_http_${response.statusCode}`));
+                    return;
+                  }
+                  try {
+                    resolve(JSON.parse(responseBody));
+                  } catch {
+                    reject(new Error("fabric_ledger_current_authority_response_invalid"));
+                  }
+                });
+              });
+              req.setTimeout(30000, () => req.destroy(new Error("fabric_ledger_current_authority_timeout")));
+              req.on("error", reject);
+              if (body) req.write(body);
+              req.end();
+            });
+          }
+
+          function exactOne(values, code) {
+            if (!Array.isArray(values) || values.length !== 1) throw new Error(code);
+            return values[0];
+          }
+
+          function sha256(value) {
+            return `sha256:${createHash("sha256").update(String(value)).digest("hex")}`;
+          }
+
+          function mutationEvidence(value, maximum, allowedMissing) {
+            const missing = Array.isArray(value?.missing) ? value.missing : [];
+            if (!Number.isInteger(value?.attempted) || value.attempted < 0 || value.attempted > maximum ||
+              !Number.isInteger(value?.confirmed) || value.confirmed < 0 || value.confirmed > value.attempted ||
+              !Number.isInteger(value?.unknown) || value.unknown < 0 || value.unknown > value.attempted ||
+              value.confirmed + value.unknown > value.attempted || new Set(missing).size !== missing.length ||
+              missing.some((field) => !allowedMissing.has(field))) {
+              throw new Error("fabric_ledger_current_authority_mutation_evidence_invalid");
+            }
+            return { attempted: value.attempted, confirmed: value.confirmed, unknown: value.unknown, missing };
+          }
+
+          function safeReconciliation(value, failureStages, providerErrorClasses) {
+            if (value === undefined || value === null) return null;
+            const versionTwo = value?.schemaVersion === 2;
+            const generation = versionTwo ? "normal_launch_terminal_evidence_v1" : "isolated_request_hash_v1";
+            if (![1, 2].includes(value?.schemaVersion) || value?.consumer !== "claim_compute_recovery" ||
+              value?.generation !== generation || !new Set(["verified", "node_reserved", "observed", "succeeded"]).has(value?.state) ||
+              !digestPattern.test(String(value?.expectedRequestHashDigest || "")) ||
+              !digestPattern.test(String(value?.persistedRequestHashDigest || "")) ||
+              value.expectedRequestHashDigest === value.persistedRequestHashDigest ||
+              versionTwo && (value?.provenanceSource !== "normal_launch_terminal_evidence" ||
+                !digestPattern.test(String(value?.provenanceDigest || ""))) ||
+              value?.failureStage && !failureStages.has(value.failureStage) ||
+              value?.providerErrorClass && !providerErrorClasses.has(value.providerErrorClass)) {
+              throw new Error("fabric_ledger_current_authority_reconciliation_invalid");
+            }
+            return {
+              schemaVersion: value.schemaVersion,
+              consumer: value.consumer,
+              generation: value.generation,
+              state: value.state,
+              expectedRequestHashDigest: `sha256:${value.expectedRequestHashDigest}`,
+              persistedRequestHashDigest: `sha256:${value.persistedRequestHashDigest}`,
+              ...(versionTwo ? {
+                provenanceSource: value.provenanceSource,
+                provenanceDigest: `sha256:${value.provenanceDigest}`
+              } : {}),
+              ...(value.failureStage ? { failureStage: value.failureStage } : {}),
+              ...(value.providerErrorClass ? { providerErrorClass: value.providerErrorClass } : {}),
+              node: mutationEvidence(value.node, 1, new Set(["node_ownership"]))
+            };
+          }
+
+          (async () => {
+            const operations = await request("GET", "/fabric/operations");
+            const computeKey = `${launchOperationId}:compute`;
+            const computeOperation = exactOne((Array.isArray(operations) ? operations : []).filter((operation) =>
+              operation?.action === "create_compute_allocation" && operation?.accountId === accountId &&
+              (operation?.operationId === computeKey || operation?.idempotencyKey === computeKey)),
+            "fabric_ledger_current_compute_operation_not_unique");
+            const computeAllocationId = String(computeOperation?.resourceId || "");
+            const workspaceId = String(computeOperation?.workspaceId || "");
+            const storageKey = `${launchOperationId}:storage`;
+            const storageOperation = exactOne((Array.isArray(operations) ? operations : []).filter((operation) =>
+              operation?.accountId === accountId && operation?.workspaceId === workspaceId &&
+              (operation?.operationId === storageKey || operation?.idempotencyKey === storageKey)),
+            "fabric_ledger_current_storage_operation_not_unique");
+            const storageVolumeId = String(storageOperation?.resourceId || "");
+            const allocation = await request("GET", `/fabric/compute-allocations/${encodeURIComponent(computeAllocationId)}`);
+            const ownership = await request("GET", `/fabric/machine-ownerships/${encodeURIComponent(computeAllocationId)}`);
+            const packageId = String(allocation?.packageId || "");
+            const poolId = String(allocation?.poolId || "");
+            const nodePoolId = String(allocation?.nodePoolId || "");
+            const machineName = String(allocation?.machineName || "");
+            const nodeName = String(allocation?.nodeName || "");
+            const cvmInstanceId = String(allocation?.cvmInstanceId || allocation?.instanceId || "");
+            const privateIp = String(allocation?.privateIp || "");
+            const instanceType = String(allocation?.instanceType || "");
+            const zone = String(allocation?.zone || "");
+            const exactIdentity = /^ca_[A-Za-z0-9-]+$/.test(computeAllocationId) && /^vol_[A-Za-z0-9-]+$/.test(storageVolumeId) &&
+              /^ws-[A-Za-z0-9-]+$/.test(workspaceId) && ["basic", "pro"].includes(packageId) && poolId && nodePoolId &&
+              machineName && nodeName && /^ins-[A-Za-z0-9-]+$/.test(cvmInstanceId) && privateIp && instanceType && zone &&
+              allocation?.id === computeAllocationId && allocation?.accountId === accountId && allocation?.workspaceId === workspaceId &&
+              ownership?.resourceId === computeAllocationId && ownership?.accountId === accountId && ownership?.workspaceId === workspaceId &&
+              ownership?.nodePoolId === nodePoolId && ownership?.machineId === machineName && ownership?.nodeName === nodeName &&
+              ownership?.instanceId === cvmInstanceId && ownership?.status === "active";
+            if (!exactIdentity) throw new Error("fabric_ledger_current_identity_mismatch");
+
+            const raw = await request("POST", "/fabric/compute-claim-recovery/identity-evidence", {
+              launchOperationId, accountId, workspaceId, computeAllocationId, storageVolumeId, packageId, poolId,
+              nodePoolId, machineName, nodeName, cvmInstanceId, privateIp, instanceType, zone
+            });
+            const expectedFields = [
+              "fabric.operationId", "fabric.operationIdempotencyKey", "fabric.operationRequestHash",
+              "binding.present", "binding.valid", "binding.compatibility", "binding.launchOperationId",
+              "binding.idempotencyKey", "binding.targetHash", "binding.requestHash"
+            ];
+            const baseFields = expectedFields.slice(0, 5);
+            const digestFields = new Set(["fabric.operationRequestHash", "binding.targetHash", "binding.requestHash"]);
+            const safeValueFields = new Set(["binding.present", "binding.valid", "binding.compatibility"]);
+            const checks = Array.isArray(raw?.checks) ? raw.checks : [];
+            const checkFields = checks.length === baseFields.length ? baseFields : checks.length === expectedFields.length ? expectedFields : [];
+            const checksValid = checkFields.length > 0 && checkFields.length === checks.length && checkFields.every((field, index) => {
+              const check = checks[index];
+              if (check?.field !== field || typeof check?.matches !== "boolean") return false;
+              if (digestFields.has(field)) {
+                return check.expected === undefined && check.actual === undefined &&
+                  digestPattern.test(String(check?.expectedDigest || "")) && digestPattern.test(String(check?.actualDigest || "")) &&
+                  check.matches === (check.expectedDigest === check.actualDigest);
+              }
+              return check.expectedDigest === undefined && check.actualDigest === undefined &&
+                typeof check?.expected === "string" && check.expected.length > 0 &&
+                typeof check?.actual === "string" && check.actual.length > 0 && check.matches === (check.expected === check.actual);
+            });
+            const bindingShapeComplete = checks.length === expectedFields.length;
+            const bindingPresentAndValid = checks[3]?.matches === true && checks[4]?.matches === true;
+            const classifications = new Set(["current", "compute-claim", "request-hash-reconciliation", "known-legacy", "other"]);
+            const safeValuesValid = checks.every((check) => !safeValueFields.has(check.field) ||
+              check.field === "binding.present" && check.expected === "present" && new Set(["present", "absent"]).has(check.actual) ||
+              check.field === "binding.valid" && check.expected === "valid" && new Set(["valid", "invalid"]).has(check.actual) ||
+              check.field === "binding.compatibility" && check.expected === "current_compute_claim_or_request_hash_reconciliation" && classifications.has(check.actual));
+            const ledgerRelationships = {
+              absent: new Set(["confirmed_zero"]),
+              observed: new Set(["confirmed_zero", "nonzero", "unknown"]),
+              reserved: new Set(["unknown"]),
+              node_reserved: new Set(["unknown"]),
+              invalid: new Set(["unknown"])
+            };
+            const failureStages = new Set(["", "cvm_pre_read", "cvm_conflict_check", "cvm_mutation_precondition", "cvm_rename_readback", "cvm_tag_readback", "cvm_final_readback", "cvm_provisioner_transport", "cvm_mutation_evidence", "node_pre_cvm_read", "node_pre_read", "node_conflict_check", "node_patch_build", "node_patch_readback", "node_final_readback", "claim_final_readback"]);
+            const providerErrorClasses = new Set(["", "client_unavailable", "malformed_readback", "ownership_conflict", "readback_mismatch", "timeout", "iam_rbac", "provider_error", "transport_error", "evidence_incomplete"]);
+            const ledgerState = String(raw?.mutationLedger || "");
+            const ledgerOutcome = String(raw?.mutationLedgerOutcome || "");
+            if (!checksValid || !safeValuesValid || bindingPresentAndValid !== bindingShapeComplete ||
+              !classifications.has(raw?.bindingClassification) || !digestPattern.test(String(raw?.bindingDigest || "")) ||
+              !Object.hasOwn(ledgerRelationships, ledgerState) || !ledgerRelationships[ledgerState].has(ledgerOutcome) ||
+              !digestPattern.test(String(raw?.mutationLedgerDigest || "")) || !failureStages.has(raw?.failureStage) ||
+              !providerErrorClasses.has(raw?.providerErrorClass)) {
+              throw new Error("fabric_ledger_current_authority_invalid");
+            }
+            const cvmMissing = new Set(["instance", "instance_name", "opl_account_id", "opl_workspace_id", "opl_resource_id", "opl_operation_id"]);
+            const evidenceAbsent = raw?.mutationEvidence === undefined || raw?.mutationEvidence === null;
+            const cvm = evidenceAbsent ? null : mutationEvidence(raw.mutationEvidence.cvm, 5, cvmMissing);
+            const node = evidenceAbsent ? null : mutationEvidence(raw.mutationEvidence.node, 1, new Set(["node_ownership"]));
+            if ((new Set(["absent", "invalid"]).has(ledgerState)) !== evidenceAbsent) {
+              throw new Error("fabric_ledger_current_authority_evidence_presence_invalid");
+            }
+            const identityChecks = checks.map((check) => ({
+              field: check.field,
+              matches: check.matches,
+              ...(digestFields.has(check.field) ? {
+                expectedDigest: `sha256:${check.expectedDigest}`,
+                actualDigest: `sha256:${check.actualDigest}`
+              } : safeValueFields.has(check.field) ? {
+                expected: check.expected,
+                actual: check.actual
+              } : {
+                expectedDigest: sha256(check.expected),
+                actualDigest: sha256(check.actual)
+              })
+            }));
+            const projection = {
+              operation: { cardinality: 1, status: String(computeOperation.status || "unknown") },
+              storageOperation: { cardinality: 1, status: String(storageOperation.status || "unknown") },
+              machineOwnership: { readback: "present", status: ownership.status },
+              authorityIdentityMatches: true,
+              binding: { classification: raw.bindingClassification, digest: `sha256:${raw.bindingDigest}` },
+              identityChecks,
+              firstFalseIdentityCheck: identityChecks.find((check) => !check.matches) || null,
+              mutationLedger: { state: ledgerState, outcome: ledgerOutcome, digest: `sha256:${raw.mutationLedgerDigest}` },
+              cvm,
+              node,
+              failureStage: raw.failureStage,
+              providerErrorClass: raw.providerErrorClass,
+              reconciliation: safeReconciliation(raw.reconciliation, failureStages, providerErrorClasses),
+              mutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
+            };
+            const encoded = JSON.stringify(projection);
+            if (/acct-|workspace-launch-|ws-|ca_|vol_|ins-|privateIp|cvmInstanceId|nodeName|machineName|password|secret|token|cookie/i.test(encoded)) {
+              throw new Error("fabric_ledger_current_authority_redaction_invalid");
+            }
+            process.stdout.write(`FABRIC_LEDGER_AUTHORITY=${encoded}\n`);
+          })().catch((error) => {
+            process.stderr.write(`${String(error?.message || "fabric_ledger_current_authority_failed")}\n`);
+            process.exit(1);
+          });
+          NODE
+
       - name: Validate redacted GET-only readback
         if: always()
         shell: bash
