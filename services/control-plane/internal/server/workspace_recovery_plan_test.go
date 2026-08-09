@@ -2782,10 +2782,10 @@ func TestWorkspaceRecoveryPlanExecuteHistoricalProofContinuesNodeBeforeStorageUn
 	t.Setenv("OPL_RELEASE_SHA", strings.Repeat("a", 40))
 	t.Setenv("OPL_CLOUD_IMAGE", "uswccr.ccs.tencentyun.com/oplcloud/opl-cloud@sha256:"+strings.Repeat("b", 64))
 	fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, "basic")
-	operation.Status, operation.Phase, operation.ErrorCode = "manual_review", "compute_claim_pending", "workspace_compute_claim_identity_mismatch"
-	operation.ContinuationAttemptBudgets["storage"] = workspaceLaunchStageBudget{Attempted: 1, Unknown: 1, Max: workspaceLaunchStageMax}
 
-	historicalProof := computeClaimRecoveryProofForLaunchStorage(operation, "unallocated", "storage_attempt_unknown", "")
+	// Preserve the production ordering: the original Compute approval and
+	// request were bound before the later Storage attempt became unknown.
+	historicalProof := computeClaimRecoveryProofForLaunchStorage(operation, "unallocated", "storage_not_started", "")
 	historicalProof.CVMOwnershipState = "recoverable"
 	if !persistWorkspaceComputeClaimIdentityFromProof(&operation, historicalProof) {
 		t.Fatal("historical production proof did not hydrate the exact compute identity")
@@ -2808,20 +2808,39 @@ func TestWorkspaceRecoveryPlanExecuteHistoricalProofContinuesNodeBeforeStorageUn
 	}
 	operation.ComputeClaimApproval.ApprovalDigest = workspaceComputeClaimApprovalDigest(*operation.ComputeClaimApproval)
 	historicalRequest := workspaceComputeClaimRecoveryRequestForOperation(operation)
-	operation.ComputeClaimRequestHash = workspaceComputeClaimRequestHash(historicalRequest, operation.ComputeClaimApproval.IdempotencyKey)
+	operation.ComputeClaimRequestHash = stableID(
+		historicalRequest.LaunchOperationID, historicalRequest.AccountID, historicalRequest.WorkspaceID,
+		historicalRequest.ComputeID, historicalRequest.StorageID, historicalRequest.PackageID,
+		historicalRequest.PoolID, historicalRequest.NodePoolID, historicalRequest.MachineName, historicalRequest.NodeName,
+		historicalRequest.CVMInstanceID, historicalRequest.PrivateIP, historicalRequest.InstanceType, historicalRequest.Zone,
+		historicalRequest.MergedMainSHA, historicalRequest.CloudImageDigest, historicalRequest.ApprovalID,
+		historicalRequest.Confirmation, operation.ComputeClaimApproval.IdempotencyKey,
+	)
 	operation.ComputeClaimApprovalID = operation.ComputeClaimApproval.ApprovalID
 	operation.ComputeClaimMergedMainSHA = operation.ComputeClaimApproval.MergedMainSHA
 	operation.ComputeClaimCloudDigest = operation.ComputeClaimApproval.CloudImageDigest
 	operation.ComputeClaimPrivateIP = operation.ComputePrivateIP
+
+	operation.Status, operation.Phase, operation.ErrorCode = "manual_review", "compute_claim_pending", "workspace_compute_claim_identity_mismatch"
+	operation.ContinuationAttemptBudgets["storage"] = workspaceLaunchStageBudget{Attempted: 1, Unknown: 1, Max: workspaceLaunchStageMax}
+	operation.CurrentDecision = &CurrentDecision{
+		CurrentStage: "storage", StageState: "unknown", FirstFalsePredicate: "provider.storage",
+		Expected: "confirmed", Actual: "attempted_unknown", Authority: "provider.storage",
+		NextAction: nextActionGetOnlyReconcileStorage, RequiresApproval: true, AllowedMutation: "none",
+		StageAttemptID: operation.ID + ":storage", MutationState: "frozen",
+		EvidenceDigest: "sha256:" + strings.Repeat("c", 64), DecisionVersion: 20,
+	}
 	mustStore(t, fixture.store.SaveRuntimeOperation(context.Background(), workspaceLaunchOperationRow(operation)))
 
-	fixture.fabric.computeClaimProof = historicalProof
+	freshProof := computeClaimRecoveryProofForLaunchStorage(operation, "unallocated", "storage_attempt_unknown", "")
+	freshProof.CVMOwnershipState = "recoverable"
+	fixture.fabric.computeClaimProof = freshProof
 	claimed := computeClaimRecoveryProofForLaunchStorage(operation, "target_owned", "storage_attempt_unknown", "")
 	claimed.CVMOwnershipState = "recoverable"
 	claimed.KubernetesMutationCount = 1
 	claimed.Evidence.Node = clients.ComputeClaimMutationEvidence{Attempted: 1, Confirmed: 1}
 	fixture.fabric.computeClaimResult = &claimed
-	configureWorkspaceComputeProviderTruthTransition(fixture, historicalProof, claimed)
+	configureWorkspaceComputeProviderTruthTransition(fixture, freshProof, claimed)
 	configureWorkspaceLaunchFulfillment(t, fixture)
 	configureWorkspaceComputeClaimReadback(fixture, operation)
 	fixture.fabric.beforeComputeClaim = func() {
@@ -2840,6 +2859,18 @@ func TestWorkspaceRecoveryPlanExecuteHistoricalProofContinuesNodeBeforeStorageUn
 			t.Fatalf("Node provider boundary was not guarded by the refreshed persisted authority: %#v", persisted)
 		}
 	}
+
+	predecessor := recoveryPlanResponse(t, requestWorkspaceRecoveryPlan(t, fixture, http.MethodPost, "/diagnose", map[string]any{"accountId": operation.AccountID}))
+	failed := fixture.operation(t)
+	failed.Status, failed.Phase, failed.ErrorCode = "manual_review", "compute_claim_pending", "workspace_compute_claim_identity_mismatch"
+	failed.RecoveryPlan.Status, failed.RecoveryPlan.ErrorCode = "failed", failed.ErrorCode
+	failed.RecoveryExecution = &workspaceRecoveryExecution{
+		ExecutionID: "recovery-exec-production-confirmed-zero", RunIdentity: "control-plane-run-production-confirmed-zero",
+		PlanID: predecessor.PlanID, PlanDigest: predecessor.PlanDigest, ApprovalDigest: strings.Repeat("d", 64), Decision: "continue",
+		Status: "failed", StartedAt: time.Now().UTC().Add(-time.Minute).Format(time.RFC3339Nano),
+		CompletedAt: time.Now().UTC().Format(time.RFC3339Nano), ErrorCode: failed.ErrorCode,
+	}
+	mustStore(t, fixture.store.SaveRuntimeOperation(context.Background(), workspaceLaunchOperationRow(failed)))
 
 	diagnosed := recoveryPlanResponse(t, requestWorkspaceRecoveryPlan(t, fixture, http.MethodPost, "/diagnose", map[string]any{"accountId": operation.AccountID}))
 	validated := recoveryPlanResponse(t, requestWorkspaceRecoveryPlan(t, fixture, http.MethodPost, "/validate", map[string]any{

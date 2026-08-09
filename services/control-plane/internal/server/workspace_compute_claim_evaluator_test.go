@@ -302,6 +302,20 @@ func TestComputeClaimApprovalStorageBoundaryRefreshIsNarrow(t *testing.T) {
 	if !workspaceComputeClaimApprovalStorageBoundaryRefreshAllowed(operation, *operation.ComputeClaimApproval, want, false) {
 		t.Fatal("exact historical request binding was rejected")
 	}
+	legacyHash := workspaceComputeClaimHistoricalRequestHash(historicalRequest, operation.ComputeClaimApproval.IdempotencyKey)
+	if legacyHash == operation.ComputeClaimRequestHash {
+		t.Fatal("historical and current request hashes unexpectedly match")
+	}
+	legacyBound := operation
+	legacyBound.ComputeClaimRequestHash = legacyHash
+	if workspaceComputeClaimRequestBindingMatchesApproval(legacyBound, *legacyBound.ComputeClaimApproval, false) ||
+		workspaceComputeClaimApprovalStorageBoundaryRefreshAllowed(legacyBound, *legacyBound.ComputeClaimApproval, want, false) {
+		t.Fatal("historical request hash was accepted without persisted Node-only authorization")
+	}
+	if !workspaceComputeClaimRequestBindingMatchesApproval(legacyBound, *legacyBound.ComputeClaimApproval, true) ||
+		!workspaceComputeClaimApprovalStorageBoundaryRefreshAllowed(legacyBound, *legacyBound.ComputeClaimApproval, want, true) {
+		t.Fatal("persisted Node-only authorization could not reconcile the exact historical request hash")
+	}
 	computePending := operation
 	computePending.Phase = "compute_claim_pending"
 	if workspaceComputeClaimApprovalStorageBoundaryRefreshAllowed(computePending, *computePending.ComputeClaimApproval, want, false) {

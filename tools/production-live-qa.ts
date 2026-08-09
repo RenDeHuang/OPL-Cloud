@@ -767,6 +767,11 @@ export function summarizeWorkspaceComputeClaimReadback(snapshot = {}) {
     schemaVersion: 1,
     operationMode: COMPUTE_CLAIM_READBACK_MODE,
     status: "evidence_only",
+    producerExitCode: 0,
+    failureStage: "none",
+    errorCode: "none",
+    firstFalsePredicate: String(snapshot.authoritativeDecision?.firstFalsePredicate || "controlPlane.currentDecision"),
+    mutationOutcome: { status: "confirmed_zero", attempted: 0, apiAccepted: null, confirmed: true, unknown: false },
     authoritativeDecision: normalizeAuthoritativeComputeClaimDecision(snapshot.authoritativeDecision),
     node,
     providerTruth,
@@ -783,11 +788,20 @@ export function summarizeWorkspaceComputeClaimReadback(snapshot = {}) {
 }
 
 export function workspaceComputeClaimReadbackArtifact(result) {
-  if (!result || result.schemaVersion !== 1 || result.operationMode !== COMPUTE_CLAIM_READBACK_MODE || result.status !== "evidence_only" ||
+  const mutationOutcomeValid = result?.mutationOutcome?.status === "confirmed_zero" && result.mutationOutcome.attempted === 0 &&
+    result.mutationOutcome.apiAccepted === null && result.mutationOutcome.confirmed === true && result.mutationOutcome.unknown === false;
+  const firstFalsePredicateValid = /^(?:provider|controlPlane)\.[A-Za-z][A-Za-z0-9]*(?:\.[A-Za-z][A-Za-z0-9]*)*$/.test(String(result?.firstFalsePredicate || ""));
+  const evidenceOnly = result?.status === "evidence_only" && result.producerExitCode === 0 &&
+    result.failureStage === "none" && result.errorCode === "none";
+  const blocked = result?.status === "blocked" && result.producerExitCode === 1 &&
+    result.failureStage === "compute_claim_readback" && /^[a-z0-9_]{1,96}$/.test(String(result.errorCode || "")) && result.errorCode !== "none";
+  if (!result || result.schemaVersion !== 1 || result.operationMode !== COMPUTE_CLAIM_READBACK_MODE ||
+    !mutationOutcomeValid || !firstFalsePredicateValid || !evidenceOnly && !blocked ||
     !result.mutationCounts || result.mutationCounts.sub2api !== 0 || result.mutationCounts.tencent !== 0 || result.mutationCounts.kubernetes !== 0 ||
-    !result.node || !result.storage || !result.providerTruth) {
+    evidenceOnly && (!result.node || !result.storage || !result.providerTruth)) {
     throw new Error("compute_claim_readback_artifact_invalid");
   }
+  if (blocked) return JSON.parse(JSON.stringify(result));
   const labels = result.node.labels && typeof result.node.labels === "object" ? result.node.labels : {};
   const redactedLabels = {};
   for (const key of Object.keys(labels).sort()) {
@@ -801,6 +815,11 @@ export function workspaceComputeClaimReadbackArtifact(result) {
     schemaVersion: 1,
     operationMode: COMPUTE_CLAIM_READBACK_MODE,
     status: result.status,
+    producerExitCode: result.producerExitCode,
+    failureStage: result.failureStage,
+    errorCode: result.errorCode,
+    firstFalsePredicate: result.firstFalsePredicate,
+    mutationOutcome: result.mutationOutcome,
     authoritativeDecision: result.authoritativeDecision || null,
     node: {
       resourceVersion: result.node.resourceVersion,
@@ -981,8 +1000,11 @@ export async function readWorkspaceComputeClaimReadback({
   const readbackErrors = [computeRead, ownershipRead, storageRead, computeProviderTruthRead, monthlyProviderTruthRead, nodeRead]
     .filter((read) => read.state === "unavailable").map((read) => read.errorCode);
   if (controlPlaneTraceError) readbackErrors.push(controlPlaneTraceError);
+  const firstFalsePredicate = String(controlPlaneTrace?.firstFalsePredicate ||
+    result.authoritativeDecision?.firstFalsePredicate || "controlPlane.currentDecision");
   return {
     ...result,
+    firstFalsePredicate,
     reads: {
       operations: operationsRead.state,
       compute: computeRead.state,
@@ -5366,14 +5388,16 @@ function blockedWorkspaceComputeClaimReadbackArtifact(error) {
     schemaVersion: 1,
     operationMode: COMPUTE_CLAIM_READBACK_MODE,
     status: "blocked",
+    producerExitCode: 1,
     firstIncompleteStage: "compute_claim",
     firstFalsePredicate: "provider.readback",
     expected: "authoritative_snapshot",
     actual: "unavailable",
     authority: "production.runner",
     nextAction: "MANUAL_REVIEW",
-    failureStage: "compute_claim",
+    failureStage: "compute_claim_readback",
     errorCode: /^[a-z0-9_]{1,96}$/.test(String(error?.message || "")) ? error.message : "compute_claim_readback_failed",
+    mutationOutcome: { status: "confirmed_zero", attempted: 0, apiAccepted: null, confirmed: true, unknown: false },
     mutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
   };
 }
@@ -5499,7 +5523,7 @@ export async function runProductionLiveQaCli({
         execFileImpl
       });
       stdout.write(`${JSON.stringify(workspaceComputeClaimReadbackArtifact(result), null, 2)}\n`);
-      return result.status === "proven" || result.status === "blocked" ? 0 : 1;
+      return result.producerExitCode;
     }
     if (args["controlled-pilot-closed-validate"] === "true") {
       const conflicts = [

@@ -3036,7 +3036,6 @@ jobs:
 
       - name: Run one GET-only compute claim readback
         id: readback
-        continue-on-error: true
         shell: bash
         working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
@@ -3058,9 +3057,13 @@ jobs:
           node --input-type=module <<'NODE'
           import { readFile } from "node:fs/promises";
           const result = JSON.parse(await readFile(`${process.env.OPL_READBACK_ARTIFACT_DIR}/compute-claim-readback.json`, "utf8"));
-          const valid = result?.schemaVersion === 1 && result?.operationMode === "compute_claim_readback" && result?.status === "evidence_only" &&
-            result?.node?.resourceVersion && result?.node?.taint && result?.node?.ownership &&
-            result?.storage?.stageBudget && result?.providerTruth && result?.mutationCounts?.sub2api === 0 && result?.mutationCounts?.tencent === 0 && result?.mutationCounts?.kubernetes === 0 &&
+          const mutationOutcomeValid = result?.mutationOutcome?.status === "confirmed_zero" && result?.mutationOutcome?.attempted === 0 &&
+            result?.mutationOutcome?.apiAccepted === null && result?.mutationOutcome?.confirmed === true && result?.mutationOutcome?.unknown === false;
+          const firstFalsePredicateValid = /^(?:provider|controlPlane)\.[A-Za-z][A-Za-z0-9]*(?:\.[A-Za-z][A-Za-z0-9]*)*$/.test(String(result?.firstFalsePredicate || ""));
+          const commonValid = result?.schemaVersion === 1 && result?.operationMode === "compute_claim_readback" && mutationOutcomeValid &&
+            firstFalsePredicateValid && result?.mutationCounts?.sub2api === 0 && result?.mutationCounts?.tencent === 0 && result?.mutationCounts?.kubernetes === 0;
+          const evidenceOnly = result?.status === "evidence_only" && result?.producerExitCode === 0 && result?.failureStage === "none" && result?.errorCode === "none" &&
+            result?.node?.resourceVersion && result?.node?.taint && result?.node?.ownership && result?.storage?.stageBudget && result?.providerTruth &&
             result?.controlPlaneTrace?.operationMode === "compute_claim_trace" && result?.controlPlaneTrace?.status === "evidence_only" &&
             typeof result?.controlPlaneTrace?.candidate?.recoveryCandidate === 'boolean' &&
             typeof result?.controlPlaneTrace?.storage?.allowExistingStorageOperation === 'boolean' &&
@@ -3073,9 +3076,12 @@ jobs:
                 !result?.controlPlaneTrace?.providerTruth?.collectorCalled && !result?.controlPlaneTrace?.proofEligibility?.called &&
                 !result?.controlPlaneTrace?.reducer?.called)) &&
             result?.controlPlaneTrace?.mutationCounts?.sub2api === 0 &&
-            result?.controlPlaneTrace?.mutationCounts?.tencent === 0 && result?.controlPlaneTrace?.mutationCounts?.kubernetes === 0 &&
-            !/password|secret|cookie|csrf|authorization/i.test(JSON.stringify(result));
+            result?.controlPlaneTrace?.mutationCounts?.tencent === 0 && result?.controlPlaneTrace?.mutationCounts?.kubernetes === 0;
+          const blocked = result?.status === "blocked" && result?.producerExitCode === 1 && result?.failureStage === "compute_claim_readback" &&
+            /^[a-z0-9_]{1,96}$/.test(String(result?.errorCode || "")) && result?.errorCode !== "none";
+          const valid = commonValid && (evidenceOnly || blocked) && !/password|secret|cookie|csrf|authorization/i.test(JSON.stringify(result));
           if (!valid) { console.error("Compute claim readback artifact is invalid or not redacted."); process.exit(1); }
+          if (blocked) { console.error(`Compute claim readback producer blocked: ${result.errorCode}`); process.exit(1); }
           NODE
 
       - name: Upload GET-only compute claim readback
