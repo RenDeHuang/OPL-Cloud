@@ -1301,8 +1301,14 @@ test("original Launch compute claim readback is a single GET-only production mod
     assert.match(fabricLedgerRun, new RegExp(field));
   }
   assert.match(fabricLedgerRun, /function requireCurrentFabricAuthority/);
+  assert.match(fabricLedgerRun, /function validateIdentityChecks/);
+  assert.match(fabricLedgerRun, /fabric\.identityEvidence\.checks\.atIndex/);
+  assert.match(fabricLedgerRun, /function currentFabricAuthoritySnapshot/);
+  assert.match(fabricLedgerRun, /currentAuthority: currentFabricAuthoritySnapshot\(\)/);
+  assert.match(fabricLedgerRun, /mutationEvidenceProjection/);
+  assert.match(fabricLedgerRun, /reconciliationProjection/);
   assert.match(fabricLedgerRun, /actual: safeActual \? String\(actual\) : sha256\(actual\)/);
-  assert.match(fabricLedgerRun, /check\.actual === undefined \|\| typeof check\.actual === "string"/);
+  assert.match(fabricLedgerRun, /check\.actual !== undefined && typeof check\.actual !== "string"/);
   assert.match(fabricLedgerRun, /actualDigest: sha256\(check\.actual \?\? ""\)/);
   assert.match(fabricLedgerRun, /status: "confirmed_zero", attempted: 0, accepted: 0, confirmed: 0, unknown: 0/);
   assert.match(fabricLedgerRun, /fabric\.identityEvidence\.checks/);
