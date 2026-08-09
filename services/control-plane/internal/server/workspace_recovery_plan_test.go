@@ -525,6 +525,20 @@ func assertWorkspaceRecoveryPlanRequestHashReconciliationExecutesOriginalLaunchO
 	fixture.fabric.computeClaimResult = &claimResult
 	configureWorkspaceLaunchFulfillment(t, fixture)
 	configureWorkspaceComputeClaimReadback(fixture, operation)
+	initialTruth := clients.ComputeProviderTruth{
+		SchemaVersion: 1, State: "ready", ComputeState: "ready", StorageState: "absent",
+		NodeOwnershipState: "unallocated", CVMOwnershipState: "target_owned", Proof: &fixture.fabric.computeClaimProof,
+	}
+	fixture.fabric.computeProviderTruthFn = func(clients.ComputeClaimRecoveryInput) (clients.ComputeProviderTruth, error) {
+		truth := initialTruth
+		proof := *initialTruth.Proof
+		if len(fixture.fabric.computeClaimCalls) > 0 {
+			proof.NodeOwnershipState = "target_owned"
+			truth.NodeOwnershipState = "target_owned"
+		}
+		truth.Proof = &proof
+		return truth, nil
+	}
 	useWorkspaceRecoveryPlanIdentityEvidence(t, &fixture, &evidence)
 
 	diagnosed := recoveryPlanResponse(t, requestWorkspaceRecoveryPlan(t, fixture, http.MethodPost, "/diagnose", map[string]any{"accountId": operation.AccountID}))
@@ -884,6 +898,17 @@ func TestWorkspaceRecoveryPlanDiagnoseKeepsComputeClaimPendingWhenNodeOwnershipI
 	}
 	fixture.fabric.computeClaimResult = &claimed
 	configureWorkspaceComputeClaimReadback(fixture, stalePhase)
+	initialTruth := *fixture.fabric.computeProviderTruth
+	fixture.fabric.computeProviderTruthFn = func(clients.ComputeClaimRecoveryInput) (clients.ComputeProviderTruth, error) {
+		truth := initialTruth
+		proof := *initialTruth.Proof
+		if len(fixture.fabric.computeClaimCalls) > 0 {
+			proof.NodeOwnershipState = "target_owned"
+			truth.NodeOwnershipState = "target_owned"
+		}
+		truth.Proof = &proof
+		return truth, nil
+	}
 	predecessorDigest := strings.Repeat("c", 64)
 	stalePhase.RecoveryPlan = &workspaceRecoveryPlan{
 		SchemaVersion: workspaceRecoveryPlanSchemaVersion, PlanID: "recovery-plan-" + predecessorDigest[:20], PlanDigest: predecessorDigest,
@@ -1038,6 +1063,16 @@ func TestWorkspaceRecoveryPlanDiagnoseReentersNodeContinuationAfterArchivedClien
 	fixture.fabric.computeProviderTruth = &clients.ComputeProviderTruth{
 		SchemaVersion: 1, State: "ready", ComputeState: "ready", StorageState: "unknown",
 		NodeOwnershipState: "unallocated", CVMOwnershipState: "recoverable", Proof: &proof,
+	}
+	fixture.fabric.computeProviderTruthFn = func(clients.ComputeClaimRecoveryInput) (clients.ComputeProviderTruth, error) {
+		truth := *fixture.fabric.computeProviderTruth
+		providerProof := *truth.Proof
+		if len(fixture.fabric.computeClaimCalls) > 0 && truth.NodeOwnershipState == "unallocated" {
+			providerProof.NodeOwnershipState = "target_owned"
+		}
+		truth.Proof = &providerProof
+		truth.NodeOwnershipState = providerProof.NodeOwnershipState
+		return truth, nil
 	}
 	claimed := computeClaimRecoveryProofForLaunchStorage(operation, "target_owned", "storage_attempt_unknown", "")
 	claimed.Deadline = operation.ComputeDeadline
@@ -1591,6 +1626,7 @@ func TestWorkspaceRecoveryPlanConcurrentConsoleExecuteDoesNotEnterProviderTwice(
 	fixture.fabric.computeClaimProof = computeClaimRecoveryProofForLaunch(operation, "unallocated")
 	claimed := computeClaimRecoveryProofForLaunch(operation, "target_owned")
 	fixture.fabric.computeClaimResult = &claimed
+	configureWorkspaceComputeProviderTruthTransition(fixture, fixture.fabric.computeClaimProof, claimed)
 	configureWorkspaceLaunchFulfillment(t, fixture)
 	configureWorkspaceComputeClaimReadback(fixture, operation)
 	diagnosed := recoveryPlanResponse(t, requestWorkspaceRecoveryPlan(t, fixture, http.MethodPost, "/diagnose", map[string]any{"accountId": operation.AccountID}))
@@ -1666,6 +1702,7 @@ func TestWorkspaceRecoveryPlanExpiredLeaseReconcilesSameExecutionAfterRestart(t 
 	fixture.fabric.computeClaimProof = computeClaimRecoveryProofForLaunch(operation, "unallocated")
 	claimed := computeClaimRecoveryProofForLaunch(operation, "target_owned")
 	fixture.fabric.computeClaimResult = &claimed
+	configureWorkspaceComputeProviderTruthTransition(fixture, fixture.fabric.computeClaimProof, claimed)
 	configureWorkspaceLaunchFulfillment(t, fixture)
 	configureWorkspaceComputeClaimReadback(fixture, operation)
 	diagnosed := recoveryPlanResponse(t, requestWorkspaceRecoveryPlan(t, fixture, http.MethodPost, "/diagnose", map[string]any{"accountId": operation.AccountID}))
@@ -2673,6 +2710,7 @@ func TestWorkspaceRecoveryPlanExecuteComputeClaimContinuesOriginalLaunchOnce(t *
 	fixture.fabric.computeClaimProof = computeClaimRecoveryProofForLaunch(operation, "unallocated")
 	claimed := computeClaimRecoveryProofForLaunch(operation, "target_owned")
 	fixture.fabric.computeClaimResult = &claimed
+	configureWorkspaceComputeProviderTruthTransition(fixture, fixture.fabric.computeClaimProof, claimed)
 	configureWorkspaceLaunchFulfillment(t, fixture)
 	configureWorkspaceComputeClaimReadback(fixture, operation)
 
@@ -2717,6 +2755,7 @@ func TestWorkspaceRecoveryPlanWorkerRetriesCBSReadbackAfterConfirmedNodeClaim(t 
 	fixture.fabric.computeClaimProof = computeClaimRecoveryProofForLaunch(operation, "unallocated")
 	claimed := computeClaimRecoveryProofForLaunch(operation, "target_owned")
 	fixture.fabric.computeClaimResult = &claimed
+	configureWorkspaceComputeProviderTruthTransition(fixture, fixture.fabric.computeClaimProof, claimed)
 	configureWorkspaceLaunchFulfillment(t, fixture)
 	configureWorkspaceComputeClaimReadback(fixture, operation)
 	pendingStorage := fixture.fabric.storageSync

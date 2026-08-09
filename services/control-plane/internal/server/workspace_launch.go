@@ -2815,7 +2815,7 @@ func (app *controlPlaneServer) claimWorkspaceCompute(ctx context.Context, servic
 			return app.executeWorkspaceComputeClaimStage(ctx, service, &operation, input, proof, proofErr, evaluation)
 		}
 		if operation.Phase == "compute_claim_pending" {
-			if err := app.continueWorkspaceComputeClaimReadback(ctx, service, &operation); err != nil {
+			if err := app.continueWorkspaceComputeClaimReadback(ctx, service, &operation, input); err != nil {
 				return *operation.ComputeClaimProof, err
 			}
 		}
@@ -3026,13 +3026,31 @@ func (app *controlPlaneServer) executeWorkspaceComputeClaimStage(
 	if err := app.persistWorkspaceLaunch(ctx, operation); err != nil {
 		return clients.ComputeClaimRecoveryProof{}, err
 	}
-	if err := app.continueWorkspaceComputeClaimReadback(ctx, service, operation); err != nil {
+	if err := app.continueWorkspaceComputeClaimReadback(ctx, service, operation, input); err != nil {
 		return claimed, err
 	}
 	return claimed, nil
 }
 
-func (app *controlPlaneServer) continueWorkspaceComputeClaimReadback(ctx context.Context, service *controlplane.Service, operation *workspaceLaunchOperation) error {
+// continueWorkspaceComputeClaimReadback closes the Compute stage only after a
+// fresh provider GET proves the same Node is target-owned. The Compute
+// allocation readback below is necessary for the persisted CVM identity, but
+// it cannot substitute for Kubernetes Node ownership authority.
+func (app *controlPlaneServer) continueWorkspaceComputeClaimReadback(ctx context.Context, service *controlplane.Service, operation *workspaceLaunchOperation, input workspaceComputeClaimRecoveryRequest) error {
+	input = hydrateWorkspaceComputeClaimRecoveryRequestStage(*operation, input)
+	postReadProof, postReadErr := collectWorkspaceComputeClaimEvidence(ctx, service, *operation, input)
+	postReadEvaluation := evaluateWorkspaceComputeClaimProofNodeOnlyClaim(*operation, input, postReadProof)
+	if postReadErr != nil || !postReadEvaluation.Eligible || postReadProof.NodeOwnershipState != "target_owned" {
+		if postReadErr == nil {
+			postReadErr = errWorkspaceComputeClaimProof
+		}
+		operation.ComputeClaimProof = &postReadProof
+		operation.Status, operation.Phase, operation.ErrorCode = "manual_review", "compute_claim_pending", "workspace_compute_claim_node_post_readback"
+		releaseWorkspaceLaunchLease(operation)
+		decision := currentDecisionForComputeClaimEvaluation(*operation, postReadErr, postReadEvaluation)
+		return errors.Join(postReadErr, app.persistWorkspaceLaunchWithDecision(ctx, operation, decision))
+	}
+	operation.ComputeClaimProof = &postReadProof
 	readback, err := service.ReadMonthlyCompute(ctx, operation.ComputeID)
 	if err != nil {
 		return app.blockWorkspaceComputeClaimReadback(ctx, operation, "workspace_compute_claim_readback_unavailable", err)

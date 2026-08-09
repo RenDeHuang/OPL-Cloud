@@ -2379,6 +2379,7 @@ func TestWorkspaceLaunchComputeClaimPendingWorkerReplaysOriginalComputeOperation
 			claimed.KubernetesMutationCount = 1
 			claimed.Evidence.Node = clients.ComputeClaimMutationEvidence{Attempted: 1, Confirmed: 1}
 			fixture.fabric.computeClaimResult = &claimed
+			configureWorkspaceComputeProviderTruthTransition(fixture, fixture.fabric.computeClaimProof, claimed)
 			readback := configureWorkspaceComputeClaimReadback(fixture, persisted)
 			readback.Status = "running"
 			readback.ProviderRequestID = "req-claim-resume"
@@ -2395,7 +2396,8 @@ func TestWorkspaceLaunchComputeClaimPendingWorkerReplaysOriginalComputeOperation
 			}
 			continued := fixture.operation(t)
 			if continued.Status != "preparing" || continued.Phase != "storage_fulfilling" || len(fixture.fabric.computeIDs) != beforeComputeCalls ||
-				len(fixture.fabric.computeClaimInputs) != 1 || len(fixture.fabric.computeClaimCalls) != 1 || len(fixture.fabric.storageIDs) != 0 {
+				len(fixture.fabric.computeProviderInputs) != 2 || len(fixture.fabric.computeClaimInputs) != 0 ||
+				len(fixture.fabric.computeClaimCalls) != 1 || len(fixture.fabric.storageIDs) != 0 {
 				t.Fatalf("pending worker did not resume original compute operation: operation=%#v compute=%#v keys=%#v storage=%#v events=%#v", continued, fixture.fabric.computeIDs, fixture.fabric.computeCreateKeys, fixture.fabric.storageIDs, *fixture.events)
 			}
 			if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err != nil {
@@ -2406,7 +2408,8 @@ func TestWorkspaceLaunchComputeClaimPendingWorkerReplaysOriginalComputeOperation
 				t.Fatalf("pending worker did not continue original launch after Compute: operation=%#v compute=%#v storage=%#v events=%#v", continued, fixture.fabric.computeIDs, fixture.fabric.storageIDs, *fixture.events)
 			}
 			if countStrings(*fixture.events, "fabric.monthly.preflight") != beforePreflight || len(fixture.sub2API.charges) != beforeCharges || len(fixture.sub2API.refunds) != 0 ||
-				countStrings(*fixture.events, "fabric.compute-claim.proof") != 1 || countStrings(*fixture.events, "fabric.compute-claim.claim") != 1 {
+				countStrings(*fixture.events, "fabric.compute-provider-truth") != 2 || countStrings(*fixture.events, "fabric.compute-claim.proof") != 0 ||
+				countStrings(*fixture.events, "fabric.compute-claim.claim") != 1 {
 				t.Fatalf("pending worker repeated guarded side effects: events=%#v charges=%#v refunds=%#v", *fixture.events, fixture.sub2API.charges, fixture.sub2API.refunds)
 			}
 		})
@@ -2416,9 +2419,21 @@ func TestWorkspaceLaunchComputeClaimPendingWorkerReplaysOriginalComputeOperation
 func TestWorkspaceLaunchComputeClaimPendingWorkerPersistsDecisionBeforeNodeContinuation(t *testing.T) {
 	fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, "basic")
 	fixture.fabric.computeClaimProof = computeClaimRecoveryProofForLaunchStorage(operation, "unallocated", "storage_not_started", "")
-	fixture.fabric.computeProviderTruth = &clients.ComputeProviderTruth{
+	initialTruth := clients.ComputeProviderTruth{
 		SchemaVersion: 1, State: "ready", ComputeState: "ready", StorageState: "absent",
 		NodeOwnershipState: "unallocated", CVMOwnershipState: "target_owned", Proof: &fixture.fabric.computeClaimProof,
+	}
+	providerTruthCalls := 0
+	fixture.fabric.computeProviderTruthFn = func(clients.ComputeClaimRecoveryInput) (clients.ComputeProviderTruth, error) {
+		providerTruthCalls++
+		truth := initialTruth
+		proof := *initialTruth.Proof
+		if providerTruthCalls >= 2 {
+			proof.NodeOwnershipState = "target_owned"
+			truth.NodeOwnershipState = "target_owned"
+		}
+		truth.Proof = &proof
+		return truth, nil
 	}
 	fixture.fabric.computeClaimProofFn = func(input clients.ComputeClaimRecoveryInput) (clients.ComputeClaimRecoveryProof, error) {
 		t.Fatalf("Normal Launch called legacy full proof: %#v", input)
@@ -2446,9 +2461,10 @@ func TestWorkspaceLaunchComputeClaimPendingWorkerPersistsDecisionBeforeNodeConti
 		t.Fatal(err)
 	}
 	current := fixture.operation(t)
-	if current.Status != "preparing" || current.Phase != "storage_fulfilling" || len(fixture.fabric.computeProviderInputs) != 1 || len(fixture.fabric.computeClaimInputs) != 0 ||
+	if current.Status != "preparing" || current.Phase != "storage_fulfilling" || len(fixture.fabric.computeProviderInputs) != 2 || len(fixture.fabric.computeClaimInputs) != 0 ||
 		len(fixture.fabric.computeClaimCalls) != 1 || len(fixture.fabric.storageIDs) != 0 || current.StorageID != operation.StorageID ||
-		current.ComputeClaimProof == nil || current.ComputeClaimProof.NodeOwnershipState != "target_owned" || current.ComputeClaimProof.CVMOwnershipState != "target_owned" ||
+		current.CurrentDecision == nil || current.CurrentDecision.CurrentStage != "storage" || current.ComputeClaimProof == nil ||
+		current.ComputeClaimProof.NodeOwnershipState != "target_owned" || current.ComputeClaimProof.CVMOwnershipState != "target_owned" ||
 		current.ComputeClaimProof.TencentMutationCount != 0 || current.ComputeClaimProof.KubernetesMutationCount > 1 {
 		t.Fatalf("normal Launch did not stop after shared Compute executor: operation=%#v truths=%#v proofs=%#v claims=%#v storage=%#v", current, fixture.fabric.computeProviderInputs, fixture.fabric.computeClaimInputs, fixture.fabric.computeClaimCalls, fixture.fabric.storageIDs)
 	}
@@ -2456,9 +2472,35 @@ func TestWorkspaceLaunchComputeClaimPendingWorkerPersistsDecisionBeforeNodeConti
 		t.Fatal(err)
 	}
 	current = fixture.operation(t)
-	if current.Status != "succeeded" || current.Phase != "succeeded" || len(fixture.fabric.computeProviderInputs) != 1 || len(fixture.fabric.computeClaimInputs) != 0 ||
+	if current.Status != "succeeded" || current.Phase != "succeeded" || len(fixture.fabric.computeProviderInputs) != 2 || len(fixture.fabric.computeClaimInputs) != 0 ||
 		len(fixture.fabric.computeClaimCalls) != 1 || len(fixture.fabric.storageIDs) != 1 {
 		t.Fatalf("normal Launch did not continue from Compute to succeeded: operation=%#v truths=%#v proofs=%#v claims=%#v storage=%#v", current, fixture.fabric.computeProviderInputs, fixture.fabric.computeClaimInputs, fixture.fabric.computeClaimCalls, fixture.fabric.storageIDs)
+	}
+}
+
+func TestWorkspaceLaunchDoesNotEnterStorageBeforeAuthoritativeNodePostRead(t *testing.T) {
+	fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, "basic")
+	proof := computeClaimRecoveryProofForLaunchStorage(operation, "unallocated", "storage_not_started", "")
+	fixture.fabric.computeProviderTruth = &clients.ComputeProviderTruth{
+		SchemaVersion: 1, State: "ready", ComputeState: "ready", StorageState: "absent",
+		NodeOwnershipState: "unallocated", CVMOwnershipState: "target_owned", Proof: &proof,
+	}
+	claimed := computeClaimRecoveryProofForLaunchStorage(operation, "target_owned", "storage_not_started", "")
+	claimed.KubernetesMutationCount = 1
+	claimed.Evidence.Node = clients.ComputeClaimMutationEvidence{Attempted: 1, Confirmed: 1}
+	fixture.fabric.computeClaimResult = &claimed
+	configureWorkspaceLaunchFulfillment(t, fixture)
+	configureWorkspaceComputeClaimReadback(fixture, operation)
+
+	if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err == nil {
+		t.Fatal("Node post-read failure unexpectedly returned success")
+	}
+	current := fixture.operation(t)
+	if current.Status != "manual_review" || current.Phase != "compute_claim_pending" ||
+		current.CurrentDecision == nil || current.CurrentDecision.CurrentStage != "compute_claim" ||
+		current.CurrentDecision.Actual != "unallocated" || len(fixture.fabric.computeClaimCalls) != 1 ||
+		len(fixture.fabric.storageIDs) != 0 || claimed.KubernetesMutationCount > 1 {
+		t.Fatalf("Node post-read did not fail closed before Storage: operation=%#v claims=%#v storage=%#v", current, fixture.fabric.computeClaimCalls, fixture.fabric.storageIDs)
 	}
 }
 
@@ -2538,6 +2580,31 @@ func workspaceLaunchComputeClaimPendingFixture(t *testing.T, packageID string) (
 
 func computeClaimRecoveryProofForLaunch(operation workspaceLaunchOperation, nodeOwnershipState string) clients.ComputeClaimRecoveryProof {
 	return computeClaimRecoveryProofForLaunchStorage(operation, nodeOwnershipState, "storage_not_started", "")
+}
+
+func configureWorkspaceComputeProviderTruthTransition(fixture workspaceLaunchWorkerFixture, before, after clients.ComputeClaimRecoveryProof) {
+	fixture.fabric.computeProviderTruthFn = func(clients.ComputeClaimRecoveryInput) (clients.ComputeProviderTruth, error) {
+		proof := before
+		if len(fixture.fabric.computeClaimCalls) > 0 {
+			proof = after
+		}
+		// Provider truth is a GET-only snapshot. The claim response's mutation
+		// counters are recorded separately and must not make the post-read
+		// collector look like another write.
+		proof.Sub2APIMutationCount = 0
+		proof.TencentMutationCount = 0
+		proof.KubernetesMutationCount = 0
+		proof.Evidence = &clients.ComputeClaimEvidence{}
+		return clients.ComputeProviderTruth{
+			SchemaVersion:      1,
+			State:              "ready",
+			ComputeState:       "ready",
+			StorageState:       proof.StorageState,
+			NodeOwnershipState: proof.NodeOwnershipState,
+			CVMOwnershipState:  proof.CVMOwnershipState,
+			Proof:              &proof,
+		}, nil
+	}
 }
 
 func computeClaimRecoveryProofForLaunchStorage(operation workspaceLaunchOperation, nodeOwnershipState, storageState, storageProviderResourceID string) clients.ComputeClaimRecoveryProof {
@@ -2661,6 +2728,7 @@ func TestWorkspaceComputeClaimPersistsProviderDecisionBeforeNodeContinuation(t *
 	claimed.KubernetesMutationCount = 1
 	claimed.Evidence.Node = clients.ComputeClaimMutationEvidence{Attempted: 1, Confirmed: 1}
 	fixture.fabric.computeClaimResult = &claimed
+	configureWorkspaceComputeProviderTruthTransition(fixture, fixture.fabric.computeClaimProof, claimed)
 	configureWorkspaceLaunchFulfillment(t, fixture)
 	configureWorkspaceComputeClaimReadback(fixture, operation)
 
@@ -2712,6 +2780,7 @@ func TestWorkspaceComputeClaimNodeContinuationUsesCandidateModeForPersistedUnall
 	claimed.KubernetesMutationCount = 1
 	claimed.Evidence.Node = clients.ComputeClaimMutationEvidence{Attempted: 1, Confirmed: 1}
 	fixture.fabric.computeClaimResult = &claimed
+	configureWorkspaceComputeProviderTruthTransition(fixture, staleProof, claimed)
 	readback := configureWorkspaceComputeClaimReadback(fixture, operation)
 	readback.Status = "running"
 	readback.ProviderRequestID = "req-stale-proof-node-continuation"
@@ -3121,7 +3190,8 @@ func TestWorkspaceComputeClaimApprovalSupersedesFailedUnclaimedReleaseBinding(t 
 	persisted := fixture.operation(t)
 	if claimed.Code != http.StatusOK || persisted.ComputeClaimApproval == nil || persisted.ComputeClaimApproval.ApprovalID != "approval-compute-claim-successor" ||
 		persisted.ComputeClaimApproval.MergedMainSHA != strings.Repeat("c", 40) || persisted.Status != "preparing" || persisted.Phase != "storage_fulfilling" ||
-		len(fixture.fabric.computeClaimInputs) != 2 || len(fixture.fabric.computeClaimCalls) != 1 || len(fixture.fabric.storageIDs) != 0 {
+		len(fixture.fabric.computeProviderInputs) != 2 || len(fixture.fabric.computeClaimInputs) != 3 ||
+		len(fixture.fabric.computeClaimCalls) != 1 || len(fixture.fabric.storageIDs) != 0 {
 		t.Fatalf("successor approval did not replace the failed release binding: status=%d body=%s operation=%#v proofs=%#v claims=%#v storage=%#v", claimed.Code, claimed.Body.String(), persisted, fixture.fabric.computeClaimInputs, fixture.fabric.computeClaimCalls, fixture.fabric.storageIDs)
 	}
 }
@@ -3277,6 +3347,10 @@ func TestWorkspaceComputeClaimLegacyPhaseNormalizesOnlyAfterProof(t *testing.T) 
 	fixture.fabric.computeClaimProof = computeClaimRecoveryProofForLaunch(operation, "unallocated")
 	claimed := computeClaimRecoveryProofForLaunch(operation, "target_owned")
 	fixture.fabric.computeClaimResult = &claimed
+	fixture.fabric.computeProviderTruth = &clients.ComputeProviderTruth{
+		SchemaVersion: 1, State: "ready", ComputeState: "ready", StorageState: "ready",
+		NodeOwnershipState: "target_owned", CVMOwnershipState: "target_owned", Proof: &claimed,
+	}
 	configureWorkspaceLaunchFulfillment(t, fixture)
 	configureWorkspaceComputeClaimReadback(fixture, operation)
 	fixture.fabric.beforeComputeClaim = func() {
@@ -3290,7 +3364,8 @@ func TestWorkspaceComputeClaimLegacyPhaseNormalizesOnlyAfterProof(t *testing.T) 
 	response := requestComputeClaimWithCapabilityForTest(t, fixture.server, fixture.operator, path, computeClaimRecoveryRequestBody(t, operation, true, "compute-claim-legacy"), "compute-claim-legacy")
 	current := fixture.operation(t)
 	if response.Code != http.StatusOK || current.Status != "preparing" || current.Phase != "storage_fulfilling" ||
-		len(fixture.fabric.computeClaimInputs) != 1 || len(fixture.fabric.computeClaimCalls) != 1 || countStrings(*fixture.events, "fabric.compute.get") != 1 || len(fixture.fabric.storageIDs) != 0 ||
+		len(fixture.fabric.computeProviderInputs) != 2 || len(fixture.fabric.computeClaimInputs) != 0 || len(fixture.fabric.computeClaimCalls) != 1 ||
+		countStrings(*fixture.events, "fabric.compute.get") != 1 || len(fixture.fabric.storageIDs) != 0 ||
 		len(fixture.sub2API.charges) != 1 || len(fixture.sub2API.refunds) != 0 {
 		t.Fatalf("legacy claim did not normalize and resume original launch: status=%d body=%s operation=%#v proofs=%#v claims=%#v", response.Code, response.Body.String(), current, fixture.fabric.computeClaimInputs, fixture.fabric.computeClaimCalls)
 	}
@@ -3535,6 +3610,10 @@ func TestWorkspaceComputeClaimApprovalBindsMissingHistoricalWorkspaceImageDigest
 	mustStore(t, fixture.store.SaveRuntimeOperation(context.Background(), workspaceLaunchOperationRow(historicalOperation)))
 
 	fixture.fabric.computeClaimProof = computeClaimRecoveryProofForLaunch(approvedOperation, "target_owned")
+	fixture.fabric.computeProviderTruth = &clients.ComputeProviderTruth{
+		SchemaVersion: 1, State: "ready", ComputeState: "ready", StorageState: "ready",
+		NodeOwnershipState: "target_owned", CVMOwnershipState: "target_owned", Proof: &fixture.fabric.computeClaimProof,
+	}
 	configureWorkspaceLaunchFulfillment(t, fixture)
 	configureWorkspaceComputeClaimReadback(fixture, approvedOperation)
 	fixture.fabric.beforeComputeClaimProof = func() {
@@ -3557,7 +3636,8 @@ func TestWorkspaceComputeClaimApprovalBindsMissingHistoricalWorkspaceImageDigest
 	persisted := fixture.operation(t)
 	if response.Code != http.StatusOK || persisted.WorkspaceImageDigest != approvedOperation.WorkspaceImageDigest ||
 		persisted.ComputeClaimApproval == nil || persisted.Status != "preparing" || persisted.Phase != "storage_fulfilling" ||
-		len(fixture.fabric.computeClaimInputs) != 1 || len(fixture.fabric.computeClaimCalls) != 1 || len(fixture.fabric.storageIDs) != 0 {
+		len(fixture.fabric.computeProviderInputs) != 2 || len(fixture.fabric.computeClaimInputs) != 0 ||
+		len(fixture.fabric.computeClaimCalls) != 1 || len(fixture.fabric.storageIDs) != 0 {
 		t.Fatalf("historical Workspace image digest did not bind and resume safely: status=%d body=%s operation=%#v proofs=%#v claims=%#v storage=%#v", response.Code, response.Body.String(), persisted, fixture.fabric.computeClaimInputs, fixture.fabric.computeClaimCalls, fixture.fabric.storageIDs)
 	}
 }
