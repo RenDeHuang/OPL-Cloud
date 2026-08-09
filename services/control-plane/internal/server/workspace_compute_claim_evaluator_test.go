@@ -297,6 +297,30 @@ func TestComputeClaimApprovalStorageBoundaryRefreshIsNarrow(t *testing.T) {
 	if !workspaceComputeClaimApprovalStorageBoundaryRefreshAllowed(operation, *operation.ComputeClaimApproval, want) {
 		t.Fatal("exact storage-unknown boundary refresh was rejected")
 	}
+	historicalRequest := workspaceComputeClaimRecoveryRequestForOperation(operation)
+	bindWorkspaceComputeClaimRequest(&operation, historicalRequest, operation.ComputeClaimApproval.IdempotencyKey)
+	if !workspaceComputeClaimApprovalStorageBoundaryRefreshAllowed(operation, *operation.ComputeClaimApproval, want) {
+		t.Fatal("exact historical request binding was rejected")
+	}
+	for name, drift := range map[string]func(*workspaceLaunchOperation){
+		"request hash": func(candidate *workspaceLaunchOperation) { candidate.ComputeClaimRequestHash = strings.Repeat("f", 40) },
+		"approval id":  func(candidate *workspaceLaunchOperation) { candidate.ComputeClaimApprovalID += "-drift" },
+		"main sha": func(candidate *workspaceLaunchOperation) {
+			candidate.ComputeClaimMergedMainSHA = strings.Repeat("f", 40)
+		},
+		"cloud digest": func(candidate *workspaceLaunchOperation) {
+			candidate.ComputeClaimCloudDigest = "sha256:" + strings.Repeat("f", 64)
+		},
+		"private ip": func(candidate *workspaceLaunchOperation) { candidate.ComputeClaimPrivateIP = "10.20.30.99" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			candidate := operation
+			drift(&candidate)
+			if workspaceComputeClaimApprovalStorageBoundaryRefreshAllowed(candidate, *candidate.ComputeClaimApproval, want) {
+				t.Fatal("drifted historical request binding was accepted")
+			}
+		})
+	}
 	want.Target.NodeName = "different-node"
 	if workspaceComputeClaimApprovalStorageBoundaryRefreshAllowed(operation, *operation.ComputeClaimApproval, want) {
 		t.Fatal("identity drift was accepted during storage-boundary refresh")
