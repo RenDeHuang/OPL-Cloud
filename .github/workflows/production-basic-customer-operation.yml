@@ -3220,9 +3220,11 @@ jobs:
                   digestPattern.test(String(check?.expectedDigest || "")) && digestPattern.test(String(check?.actualDigest || "")) &&
                   check.matches === (check.expectedDigest === check.actualDigest);
               }
+              const expected = String(check?.expected ?? "");
+              const actual = String(check?.actual ?? "");
               return check.expectedDigest === undefined && check.actualDigest === undefined &&
-                typeof check?.expected === "string" && check.expected.length > 0 &&
-                typeof check?.actual === "string" && check.actual.length > 0 && check.matches === (check.expected === check.actual);
+                typeof check?.expected === "string" && expected.length > 0 &&
+                (check.actual === undefined || typeof check.actual === "string") && check.matches === (expected === actual);
             });
             const bindingShapeComplete = checks.length === expectedFields.length;
             const bindingPresentAndValid = checks[3]?.matches === true && checks[4]?.matches === true;
@@ -3296,8 +3298,8 @@ jobs:
                 expected: check.expected,
                 actual: check.actual
               } : {
-                expectedDigest: sha256(check.expected),
-                actualDigest: sha256(check.actual)
+                expectedDigest: sha256(check.expected ?? ""),
+                actualDigest: sha256(check.actual ?? "")
               })
             }));
             const projection = {
