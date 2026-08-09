@@ -2800,7 +2800,7 @@ func TestWorkspaceRecoveryPlanExecuteHistoricalProofContinuesNodeBeforeStorageUn
 		Target:    workspaceComputeClaimApprovalTargetFromOperation(operation),
 		Resources: workspaceComputeClaimExpectedResources(operation, "storage_not_started", ""),
 		AttemptLimits: workspaceComputeClaimAttemptLimits{
-			Claim:   workspaceComputeClaimProviderAttemptLimits{Kubernetes: 1},
+			Claim:   workspaceComputeClaimProviderAttemptLimits{Tencent: 5, Kubernetes: 1},
 			Storage: 1, Attachment: 1, Secret: 1, Runtime: 1, Activation: 1, Receipt: 1,
 		},
 		AllowedWrites:   workspaceComputeClaimAllowedWritesForStorage("storage_not_started"),
@@ -2822,6 +2822,7 @@ func TestWorkspaceRecoveryPlanExecuteHistoricalProofContinuesNodeBeforeStorageUn
 		persisted := fixture.operation(t)
 		if persisted.CurrentDecision == nil || !AuthorizeStageMutation(*persisted.CurrentDecision, "node_only_continuation") ||
 			persisted.ComputeClaimApproval == nil || persisted.ComputeClaimApproval.Resources.StorageState != "storage_attempt_unknown" ||
+			persisted.ComputeClaimApproval.AttemptLimits.Claim != (workspaceComputeClaimProviderAttemptLimits{Kubernetes: 1}) ||
 			persisted.Status != "compute_claim_pending" || persisted.Phase != "compute_claim_pending" || len(fixture.fabric.storageIDs) != 0 {
 			t.Fatalf("Node provider boundary was not guarded by the refreshed persisted authority: %#v", persisted)
 		}
