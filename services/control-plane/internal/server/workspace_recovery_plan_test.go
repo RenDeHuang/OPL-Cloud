@@ -2807,6 +2807,12 @@ func TestWorkspaceRecoveryPlanExecuteHistoricalProofContinuesNodeBeforeStorageUn
 		ForbiddenWrites: append([]string(nil), workspaceComputeClaimForbiddenWrites...),
 	}
 	operation.ComputeClaimApproval.ApprovalDigest = workspaceComputeClaimApprovalDigest(*operation.ComputeClaimApproval)
+	historicalRequest := workspaceComputeClaimRecoveryRequestForOperation(operation)
+	operation.ComputeClaimRequestHash = workspaceComputeClaimRequestHash(historicalRequest, operation.ComputeClaimApproval.IdempotencyKey)
+	operation.ComputeClaimApprovalID = operation.ComputeClaimApproval.ApprovalID
+	operation.ComputeClaimMergedMainSHA = operation.ComputeClaimApproval.MergedMainSHA
+	operation.ComputeClaimCloudDigest = operation.ComputeClaimApproval.CloudImageDigest
+	operation.ComputeClaimPrivateIP = operation.ComputePrivateIP
 	mustStore(t, fixture.store.SaveRuntimeOperation(context.Background(), workspaceLaunchOperationRow(operation)))
 
 	fixture.fabric.computeClaimProof = historicalProof
@@ -2820,9 +2826,16 @@ func TestWorkspaceRecoveryPlanExecuteHistoricalProofContinuesNodeBeforeStorageUn
 	configureWorkspaceComputeClaimReadback(fixture, operation)
 	fixture.fabric.beforeComputeClaim = func() {
 		persisted := fixture.operation(t)
+		execution := persisted.RecoveryExecution
 		if persisted.CurrentDecision == nil || !AuthorizeStageMutation(*persisted.CurrentDecision, "node_only_continuation") ||
 			persisted.ComputeClaimApproval == nil || persisted.ComputeClaimApproval.Resources.StorageState != "storage_attempt_unknown" ||
 			persisted.ComputeClaimApproval.AttemptLimits.Claim != (workspaceComputeClaimProviderAttemptLimits{Kubernetes: 1}) ||
+			execution == nil || execution.ComputeClaimRequest == nil ||
+			persisted.ComputeClaimRequestHash != workspaceComputeClaimRequestHash(*execution.ComputeClaimRequest, execution.ExecutionID) ||
+			persisted.ComputeClaimApprovalID != execution.ComputeClaimRequest.ApprovalID ||
+			persisted.ComputeClaimMergedMainSHA != execution.ComputeClaimRequest.MergedMainSHA ||
+			persisted.ComputeClaimCloudDigest != execution.ComputeClaimRequest.CloudImageDigest ||
+			persisted.ComputeClaimPrivateIP != execution.ComputeClaimRequest.PrivateIP ||
 			persisted.Status != "compute_claim_pending" || persisted.Phase != "compute_claim_pending" || len(fixture.fabric.storageIDs) != 0 {
 			t.Fatalf("Node provider boundary was not guarded by the refreshed persisted authority: %#v", persisted)
 		}

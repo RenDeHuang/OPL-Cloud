@@ -2256,6 +2256,29 @@ func workspaceComputeClaimApprovalScopeMatches(got, want workspaceComputeClaimAp
 	return workspaceComputeClaimApprovalBindingMatches(got, want)
 }
 
+func workspaceComputeClaimRequestBindingEmpty(operation workspaceLaunchOperation) bool {
+	return operation.ComputeClaimRequestHash == "" && operation.ComputeClaimApprovalID == "" &&
+		operation.ComputeClaimMergedMainSHA == "" && operation.ComputeClaimCloudDigest == "" && operation.ComputeClaimPrivateIP == ""
+}
+
+func workspaceComputeClaimRequestBindingMatchesApproval(operation workspaceLaunchOperation, approval workspaceComputeClaimApprovalBinding) bool {
+	if approval.ApprovalDigest == "" || approval.ApprovalDigest != workspaceComputeClaimApprovalDigest(approval) {
+		return false
+	}
+	bound := operation
+	bound.ComputeClaimApproval = &approval
+	request := workspaceComputeClaimRecoveryRequestForOperation(bound)
+	return operation.ComputeClaimRequestHash == workspaceComputeClaimRequestHash(request, approval.IdempotencyKey) &&
+		operation.ComputeClaimApprovalID == approval.ApprovalID && operation.ComputeClaimMergedMainSHA == approval.MergedMainSHA &&
+		operation.ComputeClaimCloudDigest == approval.CloudImageDigest && operation.ComputeClaimPrivateIP == request.PrivateIP
+}
+
+func bindWorkspaceComputeClaimRequest(operation *workspaceLaunchOperation, input workspaceComputeClaimRecoveryRequest, key string) {
+	operation.ComputeClaimRequestHash, operation.ComputeClaimApprovalID = workspaceComputeClaimRequestHash(input, key), input.ApprovalID
+	operation.ComputeClaimMergedMainSHA, operation.ComputeClaimCloudDigest = input.MergedMainSHA, input.CloudImageDigest
+	operation.ComputeClaimPrivateIP = input.PrivateIP
+}
+
 func workspaceComputeClaimLegacyClientRejectedSuccessor(operation workspaceLaunchOperation) bool {
 	if operation.ErrorCode != "workspace_compute_claim_provider_describe" || operation.RecoveryPlan == nil || len(operation.RecoveryHistory) == 0 {
 		return false
@@ -2340,9 +2363,9 @@ func workspaceComputeClaimPersistedNodeOnlyContinuationAuthorized(operation work
 }
 
 func workspaceComputeClaimApprovalStorageBoundaryRefreshAllowed(operation workspaceLaunchOperation, got, want workspaceComputeClaimApprovalBinding) bool {
+	requestBindingMatches := workspaceComputeClaimRequestBindingEmpty(operation) || workspaceComputeClaimRequestBindingMatchesApproval(operation, got)
 	if operation.Status != "manual_review" || operation.Phase != "storage_fulfilling" ||
-		operation.ComputeClaimRequestHash != "" || operation.ComputeClaimApprovalID != "" || operation.ComputeClaimMergedMainSHA != "" ||
-		operation.ComputeClaimCloudDigest != "" || operation.ComputeClaimPrivateIP != "" || operation.AttachmentID != "" ||
+		!requestBindingMatches || operation.AttachmentID != "" ||
 		operation.GatewaySecretRef != "" || operation.RuntimeID != "" || operation.ReceiptID != "" ||
 		operation.ContinuationAttemptBudgets["storage"] != (workspaceLaunchStageBudget{Attempted: 1, Unknown: 1, Max: workspaceLaunchStageMax}) ||
 		want.Resources.StorageState != "storage_attempt_unknown" || want.Resources.StorageProviderResourceID != "" {
@@ -2412,10 +2435,14 @@ func (app *controlPlaneServer) bindWorkspaceComputeClaimApproval(ctx context.Con
 	}
 	if operation.ComputeClaimApproval != nil {
 		if !workspaceComputeClaimApprovalBindingMatches(*operation.ComputeClaimApproval, binding) {
+			refreshRequestBinding := workspaceComputeClaimRequestBindingMatchesApproval(*operation, *operation.ComputeClaimApproval)
 			if !persist || !workspaceComputeClaimApprovalMayBeSuperseded(*operation, *operation.ComputeClaimApproval, binding) {
 				return errWorkspaceComputeClaimIdentity
 			}
 			operation.ComputeClaimApproval = &binding
+			if refreshRequestBinding {
+				bindWorkspaceComputeClaimRequest(operation, input, key)
+			}
 			return persistBinding()
 		}
 		return nil
@@ -2849,11 +2876,8 @@ func (app *controlPlaneServer) claimWorkspaceCompute(ctx context.Context, servic
 		if app.bindWorkspaceComputeClaimApproval(ctx, &operation, input, key, nodeOnlyAuthorized) != nil {
 			return clients.ComputeClaimRecoveryProof{}, errWorkspaceComputeClaimIdentity
 		}
-		if nodeOnlyAuthorized && operation.ComputeClaimRequestHash == "" && operation.ComputeClaimApprovalID == "" &&
-			operation.ComputeClaimMergedMainSHA == "" && operation.ComputeClaimCloudDigest == "" && operation.ComputeClaimPrivateIP == "" {
-			operation.ComputeClaimRequestHash, operation.ComputeClaimApprovalID = requestHash, input.ApprovalID
-			operation.ComputeClaimMergedMainSHA, operation.ComputeClaimCloudDigest = input.MergedMainSHA, input.CloudImageDigest
-			operation.ComputeClaimPrivateIP = input.PrivateIP
+		if nodeOnlyAuthorized && workspaceComputeClaimRequestBindingEmpty(operation) {
+			bindWorkspaceComputeClaimRequest(&operation, input, key)
 		}
 		if operation.ComputeClaimRequestHash != requestHash || operation.ComputeClaimApprovalID != input.ApprovalID ||
 			operation.ComputeClaimMergedMainSHA != input.MergedMainSHA || operation.ComputeClaimCloudDigest != input.CloudImageDigest ||
@@ -2933,9 +2957,7 @@ func (app *controlPlaneServer) claimWorkspaceCompute(ctx context.Context, servic
 		}
 	}
 
-	operation.ComputeClaimRequestHash, operation.ComputeClaimApprovalID = requestHash, input.ApprovalID
-	operation.ComputeClaimMergedMainSHA, operation.ComputeClaimCloudDigest = input.MergedMainSHA, input.CloudImageDigest
-	operation.ComputeClaimPrivateIP = input.PrivateIP
+	bindWorkspaceComputeClaimRequest(&operation, input, key)
 	return app.executeWorkspaceComputeClaimStage(ctx, service, &operation, input, proof, nil, evaluation)
 }
 
