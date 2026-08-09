@@ -1266,12 +1266,21 @@ test("original Launch compute claim readback is a single GET-only production mod
   assert.equal(job.environment, "production");
   assert.equal(job.env.OPL_RECOVERY_PLAN_ACCOUNT_ID, "${{ inputs.workspace_identity_account_id }}");
   assert.equal(job.env.OPL_RECOVERY_PLAN_LAUNCH_OPERATION_ID, "${{ inputs.recovery_plan_launch_operation_id }}");
+  const producer = job.steps.find((step) => step.id === "readback");
+  assert.ok(producer);
+  assert.equal(producer["continue-on-error"], undefined);
   assert.match(runs, /--workspace-compute-claim-readback/);
   assert.match(runs, /kubectl .* get pods/);
   assert.match(runs, /kubectl .* get secret opl-cloud-internal-service/);
   assert.match(runs, /--fabric-pod/);
   assert.match(runs, /compute-claim-readback\.json/);
   assert.match(runs, /mutationCounts/);
+  for (const field of ["producerExitCode", "status", "failureStage", "errorCode", "firstFalsePredicate", "mutationOutcome"]) {
+    assert.match(runs, new RegExp(field));
+  }
+  assert.match(runs, /status === "evidence_only"/);
+  assert.match(runs, /status === "blocked"/);
+  assert.match(runs, /Compute claim readback producer blocked/);
   assert.doesNotMatch(runs, /recovery-plan\/(?:diagnose|validate|execute)|--recovery-plan-(?:diagnose|validate|execute)|CreateDisks|create_storage_volume|patch node|debit|refund|create_cvm/i);
   assert.match(JSON.stringify(job), /OPL_SUB2API_ADMIN_PASSWORD/);
   assert.doesNotMatch(JSON.stringify(job), /OPL_BASIC_CANARY_CUSTOMER_PASSWORD|approval_json/);

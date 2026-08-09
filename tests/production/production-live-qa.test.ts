@@ -128,6 +128,13 @@ test("stage-aware compute readback keeps Node ownership first when storage is at
   });
 
   assert.equal(result.status, "evidence_only");
+  assert.equal(result.producerExitCode, 0);
+  assert.equal(result.failureStage, "none");
+  assert.equal(result.errorCode, "none");
+  assert.equal(result.firstFalsePredicate, "provider.nodeOwnership");
+  assert.deepEqual(result.mutationOutcome, {
+    status: "confirmed_zero", attempted: 0, apiAccepted: null, confirmed: true, unknown: false
+  });
   assert.deepEqual(result.authoritativeDecision, {
     currentStage: "compute_claim",
     stageState: "pending",
@@ -140,7 +147,6 @@ test("stage-aware compute readback keeps Node ownership first when storage is at
     decisionVersion: 3,
     decidedAt: "2026-08-08T00:00:00Z"
   });
-  assert.equal(result.firstFalsePredicate, undefined);
   assert.equal(result.nextAction, undefined);
   assert.deepEqual(result.storage.stageBudget, { attempted: 1, confirmed: 0, unknown: 1, max: 1 });
   assert.equal(result.storage.state, "attempted_unknown");
@@ -156,6 +162,11 @@ test("compute claim readback preserves a canonical evaluator storage approval pr
     schemaVersion: 1,
     operationMode: "compute_claim_readback",
     status: "evidence_only",
+    producerExitCode: 0,
+    failureStage: "none",
+    errorCode: "none",
+    firstFalsePredicate: predicate,
+    mutationOutcome: { status: "confirmed_zero", attempted: 0, apiAccepted: null, confirmed: true, unknown: false },
     authoritativeDecision: null,
     node: {
       resourceVersion: "18504605277",
@@ -254,9 +265,15 @@ test("compute claim production readback derives the original resources and perfo
     fetchImpl: controlPlaneFetchImpl, execFileImpl
   });
   assert.equal(result.status, "evidence_only");
+  assert.equal(result.producerExitCode, 0);
+  assert.equal(result.failureStage, "none");
+  assert.equal(result.errorCode, "none");
   assert.equal(result.authoritativeDecision, null);
   assert.equal(result.firstIncompleteStage, undefined);
-  assert.equal(result.firstFalsePredicate, undefined);
+  assert.equal(result.firstFalsePredicate, "controlPlane.currentDecision");
+  assert.deepEqual(result.mutationOutcome, {
+    status: "confirmed_zero", attempted: 0, apiAccepted: null, confirmed: true, unknown: false
+  });
   assert.equal(result.nextAction, undefined);
   assert.equal(result.storage.state, "attempted_unknown");
   assert.equal(result.node.taint.value, "unallocated");
@@ -267,6 +284,25 @@ test("compute claim production readback derives the original resources and perfo
   assert.deepEqual(result.readbackErrors, ["control_plane_trace_unavailable"]);
   assert.equal(calls.filter((call) => call.args.includes("patch")).length, 0);
   assert.equal(calls.filter((call) => call.args.includes("node") && call.args.includes("get")).length, 1);
+
+  let stdout = "";
+  const cliCode = await runProductionLiveQaCli({
+    argv: [
+      "--workspace-compute-claim-readback", "--account-id", accountId,
+      "--launch-operation-id", launchOperationId, "--kubeconfig", "/run/secrets/kubeconfig",
+      "--fabric-pod", "opl-cloud-fabric-abc", "--fabric-namespace", "opl-cloud"
+    ],
+    env: {}, execFileImpl,
+    stdout: { write: (chunk) => { stdout += chunk; } }, stderr: { write: () => {} }
+  });
+  assert.equal(cliCode, 0);
+  const cliArtifact = JSON.parse(stdout);
+  assert.equal(cliArtifact.status, "evidence_only");
+  assert.equal(cliArtifact.producerExitCode, 0);
+  assert.equal(cliArtifact.failureStage, "none");
+  assert.equal(cliArtifact.errorCode, "none");
+  assert.equal(cliArtifact.firstFalsePredicate, "controlPlane.currentDecision");
+  assert.equal(cliArtifact.mutationOutcome.status, "confirmed_zero");
 });
 
 test("compute claim production readback rejects missing exact package and pool identity", async () => {
@@ -298,6 +334,24 @@ test("compute claim production readback rejects missing exact package and pool i
     /compute_claim_readback_provider_identity_unavailable/
   );
   assert.equal(calls.length, 2);
+
+  let stdout = "";
+  const code = await runProductionLiveQaCli({
+    argv: [
+      "--workspace-compute-claim-readback", "--account-id", accountId,
+      "--launch-operation-id", launchOperationId, "--kubeconfig", "/run/secrets/kubeconfig",
+      "--fabric-pod", "opl-cloud-fabric-abc", "--fabric-namespace", "opl-cloud"
+    ],
+    env: {}, execFileImpl,
+    stdout: { write: (chunk) => { stdout += chunk; } }, stderr: { write: () => {} }
+  });
+  assert.equal(code, 1);
+  const artifact = JSON.parse(stdout);
+  assert.equal(artifact.status, "blocked");
+  assert.equal(artifact.producerExitCode, 1);
+  assert.equal(artifact.failureStage, "compute_claim_readback");
+  assert.equal(artifact.firstFalsePredicate, "provider.readback");
+  assert.equal(artifact.mutationOutcome.status, "confirmed_zero");
 });
 
 test("customer Basic canary orchestration stays inside production-live-qa", () => {

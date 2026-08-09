@@ -2261,14 +2261,29 @@ func workspaceComputeClaimRequestBindingEmpty(operation workspaceLaunchOperation
 		operation.ComputeClaimMergedMainSHA == "" && operation.ComputeClaimCloudDigest == "" && operation.ComputeClaimPrivateIP == ""
 }
 
-func workspaceComputeClaimRequestBindingMatchesApproval(operation workspaceLaunchOperation, approval workspaceComputeClaimApprovalBinding) bool {
+func workspaceComputeClaimHistoricalRequestHash(input workspaceComputeClaimRecoveryRequest, idempotencyKey string) string {
+	// Schema-v1 bindings predate the approval-scoped fields in the current hash.
+	// Callers may accept this digest only after persisted Node-only execution
+	// bindings have already been validated, then immediately rebind current data.
+	return stableID(
+		input.LaunchOperationID, input.AccountID, input.WorkspaceID, input.ComputeID, input.StorageID, input.PackageID,
+		input.PoolID, input.NodePoolID, input.MachineName, input.NodeName, input.CVMInstanceID, input.PrivateIP, input.InstanceType, input.Zone,
+		input.MergedMainSHA, input.CloudImageDigest, input.ApprovalID, input.Confirmation, idempotencyKey,
+	)
+}
+
+func workspaceComputeClaimRequestBindingMatchesApproval(operation workspaceLaunchOperation, approval workspaceComputeClaimApprovalBinding, allowHistoricalHash bool) bool {
 	if approval.ApprovalDigest == "" || approval.ApprovalDigest != workspaceComputeClaimApprovalDigest(approval) {
 		return false
 	}
 	bound := operation
 	bound.ComputeClaimApproval = &approval
 	request := workspaceComputeClaimRecoveryRequestForOperation(bound)
-	return operation.ComputeClaimRequestHash == workspaceComputeClaimRequestHash(request, approval.IdempotencyKey) &&
+	requestHashMatches := operation.ComputeClaimRequestHash == workspaceComputeClaimRequestHash(request, approval.IdempotencyKey)
+	if !requestHashMatches && allowHistoricalHash {
+		requestHashMatches = operation.ComputeClaimRequestHash == workspaceComputeClaimHistoricalRequestHash(request, approval.IdempotencyKey)
+	}
+	return requestHashMatches &&
 		operation.ComputeClaimApprovalID == approval.ApprovalID && operation.ComputeClaimMergedMainSHA == approval.MergedMainSHA &&
 		operation.ComputeClaimCloudDigest == approval.CloudImageDigest && operation.ComputeClaimPrivateIP == request.PrivateIP
 }
@@ -2362,7 +2377,8 @@ func workspaceComputeClaimPersistedNodeOnlyContinuationBindingsMatch(operation w
 }
 
 func workspaceComputeClaimApprovalStorageBoundaryRefreshAllowed(operation workspaceLaunchOperation, got, want workspaceComputeClaimApprovalBinding, persistedNodeOnlyContinuationAuthorized bool) bool {
-	requestBindingMatches := workspaceComputeClaimRequestBindingEmpty(operation) || workspaceComputeClaimRequestBindingMatchesApproval(operation, got)
+	requestBindingMatches := workspaceComputeClaimRequestBindingEmpty(operation) ||
+		workspaceComputeClaimRequestBindingMatchesApproval(operation, got, persistedNodeOnlyContinuationAuthorized)
 	phaseMatches := operation.Phase == "storage_fulfilling" ||
 		persistedNodeOnlyContinuationAuthorized && operation.Phase == "compute_claim_pending"
 	if operation.Status != "manual_review" || !phaseMatches ||
@@ -2436,7 +2452,9 @@ func (app *controlPlaneServer) bindWorkspaceComputeClaimApproval(ctx context.Con
 	}
 	if operation.ComputeClaimApproval != nil {
 		if !workspaceComputeClaimApprovalBindingMatches(*operation.ComputeClaimApproval, binding) {
-			refreshRequestBinding := workspaceComputeClaimRequestBindingMatchesApproval(*operation, *operation.ComputeClaimApproval)
+			refreshRequestBinding := workspaceComputeClaimRequestBindingMatchesApproval(
+				*operation, *operation.ComputeClaimApproval, persistedNodeOnlyContinuationAuthorized,
+			)
 			mayBeSuperseded := workspaceComputeClaimApprovalMayBeSuperseded(*operation, *operation.ComputeClaimApproval, binding)
 			if persistedNodeOnlyContinuationAuthorized {
 				mayBeSuperseded = mayBeSuperseded || workspaceComputeClaimApprovalStorageBoundaryRefreshAllowed(
