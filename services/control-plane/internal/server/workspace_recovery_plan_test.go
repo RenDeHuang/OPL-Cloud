@@ -2782,7 +2782,7 @@ func TestWorkspaceRecoveryPlanExecuteHistoricalProofContinuesNodeBeforeStorageUn
 	t.Setenv("OPL_RELEASE_SHA", strings.Repeat("a", 40))
 	t.Setenv("OPL_CLOUD_IMAGE", "uswccr.ccs.tencentyun.com/oplcloud/opl-cloud@sha256:"+strings.Repeat("b", 64))
 	fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, "basic")
-	operation.Status, operation.Phase, operation.ErrorCode = "manual_review", "storage_fulfilling", "workspace_launch_storage_attempt_unknown"
+	operation.Status, operation.Phase, operation.ErrorCode = "manual_review", "compute_claim_pending", "workspace_compute_claim_identity_mismatch"
 	operation.ContinuationAttemptBudgets["storage"] = workspaceLaunchStageBudget{Attempted: 1, Unknown: 1, Max: workspaceLaunchStageMax}
 
 	historicalProof := computeClaimRecoveryProofForLaunchStorage(operation, "unallocated", "storage_attempt_unknown", "")

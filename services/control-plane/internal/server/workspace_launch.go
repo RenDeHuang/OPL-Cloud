@@ -2312,13 +2312,12 @@ func workspaceComputeClaimApprovalMayBeSuperseded(operation workspaceLaunchOpera
 		}
 		return workspaceComputeClaimApprovalScopeMatches(got, want)
 	}
-	return workspaceComputeClaimApprovalStorageBoundaryRefreshAllowed(operation, got, want)
+	return workspaceComputeClaimApprovalStorageBoundaryRefreshAllowed(operation, got, want, false)
 }
 
-func workspaceComputeClaimPersistedNodeOnlyContinuationAuthorized(operation workspaceLaunchOperation, input workspaceComputeClaimRecoveryRequest, key string) bool {
+func workspaceComputeClaimPersistedNodeOnlyContinuationBindingsMatch(operation workspaceLaunchOperation, input workspaceComputeClaimRecoveryRequest, key string) bool {
 	decision, plan, execution := operation.CurrentDecision, operation.RecoveryPlan, operation.RecoveryExecution
 	if decision == nil || plan == nil || execution == nil ||
-		!AuthorizeStageMutation(*decision, "node_only_continuation") ||
 		plan.Status != "executing" || plan.Action != "compute_claim_continue" || len(plan.Mismatches) != 0 || plan.ErrorCode != "" ||
 		execution.Status != "running" || execution.ExecutionID != key || execution.PlanID != plan.PlanID || execution.PlanDigest != plan.PlanDigest ||
 		execution.ApprovalDigest != input.ApprovalDigest || execution.ComputeClaimRequest == nil || execution.Decision != "continue" ||
@@ -2362,9 +2361,11 @@ func workspaceComputeClaimPersistedNodeOnlyContinuationAuthorized(operation work
 	return len(workspaceRecoveryPlanMismatches(*plan, current)) == 0
 }
 
-func workspaceComputeClaimApprovalStorageBoundaryRefreshAllowed(operation workspaceLaunchOperation, got, want workspaceComputeClaimApprovalBinding) bool {
+func workspaceComputeClaimApprovalStorageBoundaryRefreshAllowed(operation workspaceLaunchOperation, got, want workspaceComputeClaimApprovalBinding, persistedNodeOnlyContinuationAuthorized bool) bool {
 	requestBindingMatches := workspaceComputeClaimRequestBindingEmpty(operation) || workspaceComputeClaimRequestBindingMatchesApproval(operation, got)
-	if operation.Status != "manual_review" || operation.Phase != "storage_fulfilling" ||
+	phaseMatches := operation.Phase == "storage_fulfilling" ||
+		persistedNodeOnlyContinuationAuthorized && operation.Phase == "compute_claim_pending"
+	if operation.Status != "manual_review" || !phaseMatches ||
 		!requestBindingMatches || operation.AttachmentID != "" ||
 		operation.GatewaySecretRef != "" || operation.RuntimeID != "" || operation.ReceiptID != "" ||
 		operation.ContinuationAttemptBudgets["storage"] != (workspaceLaunchStageBudget{Attempted: 1, Unknown: 1, Max: workspaceLaunchStageMax}) ||
@@ -2422,7 +2423,7 @@ func (app *controlPlaneServer) workspaceComputeClaimApprovalBinding(ctx context.
 	return binding, nil
 }
 
-func (app *controlPlaneServer) bindWorkspaceComputeClaimApproval(ctx context.Context, operation *workspaceLaunchOperation, input workspaceComputeClaimRecoveryRequest, key string, persist bool) error {
+func (app *controlPlaneServer) bindWorkspaceComputeClaimApproval(ctx context.Context, operation *workspaceLaunchOperation, input workspaceComputeClaimRecoveryRequest, key string, persist, persistedNodeOnlyContinuationAuthorized bool) error {
 	binding, err := app.workspaceComputeClaimApprovalBinding(ctx, *operation, input, key, operation.ComputeClaimApproval != nil)
 	if err != nil {
 		return err
@@ -2436,7 +2437,13 @@ func (app *controlPlaneServer) bindWorkspaceComputeClaimApproval(ctx context.Con
 	if operation.ComputeClaimApproval != nil {
 		if !workspaceComputeClaimApprovalBindingMatches(*operation.ComputeClaimApproval, binding) {
 			refreshRequestBinding := workspaceComputeClaimRequestBindingMatchesApproval(*operation, *operation.ComputeClaimApproval)
-			if !persist || !workspaceComputeClaimApprovalMayBeSuperseded(*operation, *operation.ComputeClaimApproval, binding) {
+			mayBeSuperseded := workspaceComputeClaimApprovalMayBeSuperseded(*operation, *operation.ComputeClaimApproval, binding)
+			if persistedNodeOnlyContinuationAuthorized {
+				mayBeSuperseded = mayBeSuperseded || workspaceComputeClaimApprovalStorageBoundaryRefreshAllowed(
+					*operation, *operation.ComputeClaimApproval, binding, true,
+				)
+			}
+			if !persist || !mayBeSuperseded {
 				return errWorkspaceComputeClaimIdentity
 			}
 			operation.ComputeClaimApproval = &binding
@@ -2868,12 +2875,13 @@ func (app *controlPlaneServer) claimWorkspaceCompute(ctx context.Context, servic
 	input = hydrateWorkspaceComputeClaimRecoveryRequestStage(operation, input)
 	requestHash := workspaceComputeClaimRequestHash(input, key)
 	if operation.ComputeClaimProof != nil {
-		nodeOnlyAuthorized := workspaceComputeClaimPersistedNodeOnlyContinuationAuthorized(operation, input, key)
+		nodeOnlyAuthorized := operation.CurrentDecision != nil && AuthorizeStageMutation(*operation.CurrentDecision, "node_only_continuation") &&
+			workspaceComputeClaimPersistedNodeOnlyContinuationBindingsMatch(operation, input, key)
 		persistedProofEligible := nodeOnlyAuthorized
 		if !nodeOnlyAuthorized {
 			persistedProofEligible = evaluateWorkspaceComputeClaimProof(operation, input, *operation.ComputeClaimProof, true).Eligible
 		}
-		if app.bindWorkspaceComputeClaimApproval(ctx, &operation, input, key, nodeOnlyAuthorized) != nil {
+		if app.bindWorkspaceComputeClaimApproval(ctx, &operation, input, key, nodeOnlyAuthorized, nodeOnlyAuthorized) != nil {
 			return clients.ComputeClaimRecoveryProof{}, errWorkspaceComputeClaimIdentity
 		}
 		if nodeOnlyAuthorized && workspaceComputeClaimRequestBindingEmpty(operation) {
@@ -2910,7 +2918,7 @@ func (app *controlPlaneServer) claimWorkspaceCompute(ctx context.Context, servic
 	input = hydrateWorkspaceComputeClaimRecoveryRequestStage(operation, input)
 	legacyCandidate := workspaceComputeClaimLegacyCandidate(operation)
 	if !legacyCandidate {
-		if err := app.bindWorkspaceComputeClaimApproval(ctx, &operation, input, key, true); err != nil {
+		if err := app.bindWorkspaceComputeClaimApproval(ctx, &operation, input, key, true, false); err != nil {
 			return clients.ComputeClaimRecoveryProof{}, err
 		}
 	}
@@ -2952,7 +2960,7 @@ func (app *controlPlaneServer) claimWorkspaceCompute(ctx context.Context, servic
 		}
 	}
 	if legacyCandidate {
-		if err := app.bindWorkspaceComputeClaimApproval(ctx, &operation, input, key, true); err != nil {
+		if err := app.bindWorkspaceComputeClaimApproval(ctx, &operation, input, key, true, false); err != nil {
 			return clients.ComputeClaimRecoveryProof{}, err
 		}
 	}
