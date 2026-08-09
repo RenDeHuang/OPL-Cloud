@@ -415,6 +415,7 @@ func TestPostgresReleasedRecoveryExecutionConvergesOnceAcrossReopenedWorkers(t *
 	fixture.fabric.computeClaimProof = computeClaimRecoveryProofForLaunch(operation, "unallocated")
 	claimed := computeClaimRecoveryProofForLaunch(operation, "target_owned")
 	fixture.fabric.computeClaimResult = &claimed
+	configureWorkspaceComputeProviderTruthTransition(fixture, fixture.fabric.computeClaimProof, claimed)
 	configureWorkspaceLaunchFulfillment(t, fixture)
 	configureWorkspaceComputeClaimReadback(fixture, operation)
 	readyRuntime := clients.WorkspaceRuntime{
