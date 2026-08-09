@@ -3212,20 +3212,50 @@ jobs:
             const safeValueFields = new Set(["binding.present", "binding.valid", "binding.compatibility"]);
             const checks = Array.isArray(raw?.checks) ? raw.checks : [];
             const checkFields = checks.length === baseFields.length ? baseFields : checks.length === expectedFields.length ? expectedFields : [];
-            const checksValid = checkFields.length > 0 && checkFields.length === checks.length && checkFields.every((field, index) => {
-              const check = checks[index];
-              if (check?.field !== field || typeof check?.matches !== "boolean") return false;
-              if (digestFields.has(field)) {
-                return check.expected === undefined && check.actual === undefined &&
-                  digestPattern.test(String(check?.expectedDigest || "")) && digestPattern.test(String(check?.actualDigest || "")) &&
-                  check.matches === (check.expectedDigest === check.actualDigest);
+            function validateIdentityChecks() {
+              if (!Array.isArray(raw?.checks) || checkFields.length === 0) {
+                return { valid: false, predicate: "fabric.identityEvidence.checks.cardinality", expected: "five_or_ten", actual: Array.isArray(raw?.checks) ? checks.length : "not_array", safeActual: true };
               }
-              const expected = String(check?.expected ?? "");
-              const actual = String(check?.actual ?? "");
-              return check.expectedDigest === undefined && check.actualDigest === undefined &&
-                typeof check?.expected === "string" && expected.length > 0 &&
-                (check.actual === undefined || typeof check.actual === "string") && check.matches === (expected === actual);
-            });
+              for (const [index, field] of checkFields.entries()) {
+                const check = checks[index];
+                const predicate = `fabric.identityEvidence.checks.atIndex${index}`;
+                if (check?.field !== field) {
+                  const actual = String(check?.field ?? "");
+                  return { valid: false, predicate: `${predicate}.field`, expected: field, actual, safeActual: expectedFields.includes(actual) };
+                }
+                if (typeof check?.matches !== "boolean") {
+                  return { valid: false, predicate: `${predicate}.matchesType`, expected: "boolean", actual: typeof check?.matches, safeActual: true };
+                }
+                if (digestFields.has(field)) {
+                  if (check.expected !== undefined || check.actual !== undefined) {
+                    return { valid: false, predicate: `${predicate}.digestOnly`, expected: "digest_only", actual: "raw_value_present", safeActual: true };
+                  }
+                  if (!digestPattern.test(String(check?.expectedDigest || ""))) {
+                    return { valid: false, predicate: `${predicate}.expectedDigest`, expected: "lowercase_sha256", actual: check?.expectedDigest, safeActual: false };
+                  }
+                  if (!digestPattern.test(String(check?.actualDigest || ""))) {
+                    return { valid: false, predicate: `${predicate}.actualDigest`, expected: "lowercase_sha256", actual: check?.actualDigest, safeActual: false };
+                  }
+                  if (check.matches !== (check.expectedDigest === check.actualDigest)) {
+                    return { valid: false, predicate: `${predicate}.matchesDigestEquality`, expected: "digest_equality_relation", actual: "inconsistent", safeActual: true };
+                  }
+                  continue;
+                }
+                const expected = String(check?.expected ?? "");
+                const actual = String(check?.actual ?? "");
+                if (check.expectedDigest !== undefined || check.actualDigest !== undefined ||
+                  typeof check?.expected !== "string" || expected.length === 0 ||
+                  check.actual !== undefined && typeof check.actual !== "string") {
+                  return { valid: false, predicate: `${predicate}.valueShape`, expected: "nonempty_expected_and_string_or_omitted_actual", actual: "invalid", safeActual: true };
+                }
+                if (check.matches !== (expected === actual)) {
+                  return { valid: false, predicate: `${predicate}.matchesValueEquality`, expected: "value_equality_relation", actual: "inconsistent", safeActual: true };
+                }
+              }
+              return { valid: true, predicate: "", expected: "", actual: "", safeActual: true };
+            }
+            const checksValidation = validateIdentityChecks();
+            const checksValid = checksValidation.valid;
             const bindingShapeComplete = checks.length === expectedFields.length;
             const bindingPresentAndValid = checks[3]?.matches === true && checks[4]?.matches === true;
             const classifications = new Set(["current", "compute-claim", "request-hash-reconciliation", "known-legacy", "other"]);
@@ -3244,6 +3274,38 @@ jobs:
             const providerErrorClasses = new Set(["", "client_unavailable", "malformed_readback", "ownership_conflict", "readback_mismatch", "timeout", "iam_rbac", "provider_error", "transport_error", "evidence_incomplete"]);
             const ledgerState = String(raw?.mutationLedger || "");
             const ledgerOutcome = String(raw?.mutationLedgerOutcome || "");
+            function currentFabricAuthoritySnapshot() {
+              const safeDigest = (value) => digestPattern.test(String(value || "")) ? `sha256:${value}` : sha256(value);
+              const safeEnum = (value, allowed) => allowed.has(String(value ?? "")) ? String(value ?? "") : sha256(value);
+              let mutationEvidenceProjection = null;
+              try {
+                if (raw?.mutationEvidence !== undefined && raw?.mutationEvidence !== null) {
+                  mutationEvidenceProjection = {
+                    cvm: mutationEvidence(raw.mutationEvidence.cvm, 5, new Set(["instance", "instance_name", "opl_account_id", "opl_workspace_id", "opl_resource_id", "opl_operation_id"])),
+                    node: mutationEvidence(raw.mutationEvidence.node, 1, new Set(["node_ownership"]))
+                  };
+                }
+              } catch {
+                mutationEvidenceProjection = "invalid";
+              }
+              let reconciliationProjection = null;
+              try {
+                reconciliationProjection = safeReconciliation(raw?.reconciliation, failureStages, providerErrorClasses);
+              } catch {
+                reconciliationProjection = "invalid";
+              }
+              return {
+                binding: { classification: safeEnum(raw?.bindingClassification, classifications), digest: safeDigest(raw?.bindingDigest) },
+                mutationLedger: {
+                  state: safeEnum(ledgerState, new Set(Object.keys(ledgerRelationships))),
+                  outcome: safeEnum(ledgerOutcome, new Set(["confirmed_zero", "nonzero", "unknown"])),
+                  digest: safeDigest(raw?.mutationLedgerDigest), evidence: mutationEvidenceProjection
+                },
+                failureStage: safeEnum(raw?.failureStage, failureStages),
+                providerErrorClass: safeEnum(raw?.providerErrorClass, providerErrorClasses),
+                reconciliation: reconciliationProjection
+              };
+            }
             function requireCurrentFabricAuthority(predicate, matches, expected, actual, safeActual = true) {
               if (matches) return;
               const diagnostic = {
@@ -3254,6 +3316,7 @@ jobs:
                 expected,
                 actual: safeActual ? String(actual) : sha256(actual),
                 authority: "fabric.operationStore.identityEvidence",
+                currentAuthority: currentFabricAuthoritySnapshot(),
                 mutationOutcome: { status: "confirmed_zero", attempted: 0, accepted: 0, confirmed: 0, unknown: 0 }
               };
               const encoded = JSON.stringify(diagnostic);
@@ -3263,7 +3326,7 @@ jobs:
               process.stderr.write(`FABRIC_LEDGER_AUTHORITY_ERROR=${encoded}\n`);
               throw new Error("fabric_ledger_current_authority_invalid");
             }
-            requireCurrentFabricAuthority("fabric.identityEvidence.checks", checksValid, "valid", "invalid");
+            requireCurrentFabricAuthority(checksValidation.predicate, checksValid, checksValidation.expected, checksValidation.actual, checksValidation.safeActual);
             requireCurrentFabricAuthority("fabric.identityEvidence.safeValues", safeValuesValid, "allowlisted", "invalid");
             requireCurrentFabricAuthority("fabric.identityEvidence.bindingShape", bindingPresentAndValid === bindingShapeComplete,
               "complete_iff_present_and_valid", bindingShapeComplete ? "unexpected_complete" : "incomplete");
