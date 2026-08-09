@@ -2055,6 +2055,46 @@ func (app *controlPlaneServer) finalizeWorkspaceRecoveryExecution(ctx context.Co
 	return workspaceRecoveryPlanProjection(operation), nil
 }
 
+// reconcileWorkspaceComputeClaimExecutionDecision closes the narrow gap where
+// an already-reserved Recovery execution still holds a canonical Compute
+// decision binding while the Launch row has an older decision snapshot. The
+// collector/evaluator remains GET-only; the shared executor still consumes only
+// the decision persisted by this CAS.
+func (app *controlPlaneServer) reconcileWorkspaceComputeClaimExecutionDecision(ctx context.Context, service *controlplane.Service, operationID string) error {
+	operation, found, err := app.workspaceLaunchOperation(ctx, operationID)
+	if err != nil {
+		return err
+	}
+	if !found || operation.RecoveryPlan == nil || operation.RecoveryExecution == nil ||
+		operation.RecoveryPlan.Action != "compute_claim_continue" || operation.RecoveryExecution.ComputeClaimRequest == nil {
+		return nil
+	}
+	binding := operation.RecoveryPlan.DecisionBinding
+	decision := operation.CurrentDecision
+	if decision != nil && binding.DecisionDigest == workspaceRecoveryAuthorityDigest(*decision) &&
+		binding.EvidenceDigest == decision.EvidenceDigest && binding.DecisionVersion == decision.DecisionVersion &&
+		binding.CurrentStage == decision.CurrentStage && binding.StageAttemptID == decision.StageAttemptID &&
+		binding.AllowedMutation == decision.AllowedMutation {
+		return nil
+	}
+
+	input := hydrateWorkspaceComputeClaimRecoveryRequestStage(operation, *operation.RecoveryExecution.ComputeClaimRequest)
+	proof, proofErr := collectWorkspaceComputeClaimEvidence(ctx, service, operation, input)
+	evaluation := evaluateWorkspaceComputeClaimProof(operation, input, proof, false)
+	if proofErr != nil || !evaluation.Eligible || proof.NodeOwnershipState != "unallocated" {
+		return errWorkspaceComputeClaimIdentity
+	}
+	decisionValue := currentDecisionForComputeClaimEvaluation(operation, nil, evaluation)
+	if !AuthorizeStageMutation(decisionValue, "node_only_continuation") ||
+		binding.DecisionDigest != workspaceRecoveryAuthorityDigest(decisionValue) ||
+		binding.EvidenceDigest != decisionValue.EvidenceDigest || binding.DecisionVersion != decisionValue.DecisionVersion ||
+		binding.CurrentStage != decisionValue.CurrentStage || binding.StageAttemptID != decisionValue.StageAttemptID ||
+		binding.AllowedMutation != decisionValue.AllowedMutation || binding.MutationBudget != (workspaceRecoveryMutationCounts{Kubernetes: 1}) {
+		return errWorkspaceComputeClaimIdentity
+	}
+	return app.persistWorkspaceLaunchWithDecision(ctx, &operation, decisionValue)
+}
+
 func (app *controlPlaneServer) executeWorkspaceRecoveryPlan(ctx context.Context, service *controlplane.Service, operationID, planID, planDigest, decision, reviewer string) (workspaceRecoveryPlan, error) {
 	operation, found, err := app.workspaceLaunchOperation(ctx, operationID)
 	if err != nil {
@@ -2106,13 +2146,20 @@ func (app *controlPlaneServer) executeWorkspaceRecoveryPlan(ctx context.Context,
 	var executionErr error
 	mutationOutcome := workspaceRecoveryMutationOutcomeBeforeProvider()
 	if execution.ComputeClaimRequest != nil {
-		claimProof, claimErr := app.claimWorkspaceCompute(ctx, service, *execution.ComputeClaimRequest, execution.ExecutionID)
+		executionErr = app.reconcileWorkspaceComputeClaimExecutionDecision(ctx, service, operationID)
+		var claimProof clients.ComputeClaimRecoveryProof
+		var claimErr error
+		if executionErr == nil {
+			claimProof, claimErr = app.claimWorkspaceCompute(ctx, service, *execution.ComputeClaimRequest, execution.ExecutionID)
+		}
 		if claimProof.SchemaVersion != 0 || claimProof.LaunchOperationID != "" || claimProof.Evidence != nil ||
 			claimProof.FailureStage != "" || claimProof.ProviderErrorClass != "" || claimProof.Sub2APIMutationCount != 0 ||
 			claimProof.TencentMutationCount != 0 || claimProof.KubernetesMutationCount != 0 {
 			mutationOutcome = workspaceRecoveryMutationOutcomeFromComputeClaim(claimProof)
 		}
-		executionErr = claimErr
+		if executionErr == nil {
+			executionErr = claimErr
+		}
 		if executionErr == nil {
 			current, currentFound, loadErr := app.workspaceLaunchOperation(ctx, operationID)
 			if loadErr != nil || !currentFound {

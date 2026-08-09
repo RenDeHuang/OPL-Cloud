@@ -2847,6 +2847,7 @@ func TestWorkspaceRecoveryPlanExecuteHistoricalProofContinuesNodeBeforeStorageUn
 		persisted := fixture.operation(t)
 		execution := persisted.RecoveryExecution
 		if persisted.CurrentDecision == nil || !AuthorizeStageMutation(*persisted.CurrentDecision, "node_only_continuation") ||
+			persisted.CurrentDecision.DecisionVersion != 21 || persisted.Status != "compute_claim_pending" ||
 			persisted.ComputeClaimApproval == nil || persisted.ComputeClaimApproval.Resources.StorageState != "storage_attempt_unknown" ||
 			persisted.ComputeClaimApproval.AttemptLimits.Claim != (workspaceComputeClaimProviderAttemptLimits{Kubernetes: 1}) ||
 			execution == nil || execution.ComputeClaimRequest == nil ||
@@ -2855,7 +2856,7 @@ func TestWorkspaceRecoveryPlanExecuteHistoricalProofContinuesNodeBeforeStorageUn
 			persisted.ComputeClaimMergedMainSHA != execution.ComputeClaimRequest.MergedMainSHA ||
 			persisted.ComputeClaimCloudDigest != execution.ComputeClaimRequest.CloudImageDigest ||
 			persisted.ComputeClaimPrivateIP != execution.ComputeClaimRequest.PrivateIP ||
-			persisted.Status != "compute_claim_pending" || persisted.Phase != "compute_claim_pending" || len(fixture.fabric.storageIDs) != 0 {
+			persisted.Phase != "compute_claim_pending" || len(fixture.fabric.storageIDs) != 0 {
 			t.Fatalf("Node provider boundary was not guarded by the refreshed persisted authority: %#v", persisted)
 		}
 	}
@@ -2893,6 +2894,98 @@ func TestWorkspaceRecoveryPlanExecuteHistoricalProofContinuesNodeBeforeStorageUn
 		persisted.RecoveryExecution.MutationOutcome.Source != "compute_claim_post_read_confirmed" || !persisted.RecoveryExecution.MutationOutcome.Confirmed ||
 		persisted.RecoveryExecution.MutationOutcome.APIAccepted == nil || !*persisted.RecoveryExecution.MutationOutcome.APIAccepted {
 		t.Fatalf("historical proof did not close Node before the original Storage readback: operation=%#v claims=%#v storage=%#v events=%#v", persisted, fixture.fabric.computeClaimCalls, fixture.fabric.storageIDs, *fixture.events)
+	}
+}
+
+func TestWorkspaceRecoveryPlanExecuteReconcilesStalePersistedComputeDecision(t *testing.T) {
+	t.Setenv("OPL_RELEASE_SHA", strings.Repeat("a", 40))
+	t.Setenv("OPL_CLOUD_IMAGE", "uswccr.ccs.tencentyun.com/oplcloud/opl-cloud@sha256:"+strings.Repeat("b", 64))
+	fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, "basic")
+
+	// Production ordering: the historical Compute proof/request existed before
+	// the later Storage attempt became unknown.
+	historicalProof := computeClaimRecoveryProofForLaunchStorage(operation, "unallocated", "storage_not_started", "")
+	historicalProof.CVMOwnershipState = "recoverable"
+	if !persistWorkspaceComputeClaimIdentityFromProof(&operation, historicalProof) {
+		t.Fatal("historical production proof did not hydrate the exact compute identity")
+	}
+	operation.ComputeClaimProof = &historicalProof
+	operation.ComputeClaimApproval = &workspaceComputeClaimApprovalBinding{
+		SchemaVersion: 2, ApprovalID: "approval-before-storage-unknown", ExpiresAt: "2099-01-01T00:00:00Z",
+		MergedMainSHA: strings.Repeat("a", 40), CloudImageDigest: "sha256:" + strings.Repeat("b", 64),
+		WorkspaceImageDigest: operation.WorkspaceImageDigest, Confirmation: "RECOVER_PROVEN_COMPUTE_AND_CONTINUE_ORIGINAL_LAUNCH",
+		IdempotencyKey: "recovery-before-storage-unknown", RecoveryKey: "recovery-before-storage-unknown",
+		Customer:  workspaceComputeClaimApprovalCustomer{Email: "alpha@example.com", AccountID: operation.AccountID},
+		Target:    workspaceComputeClaimApprovalTargetFromOperation(operation),
+		Resources: workspaceComputeClaimExpectedResources(operation, "storage_not_started", ""),
+		AttemptLimits: workspaceComputeClaimAttemptLimits{
+			Claim:   workspaceComputeClaimProviderAttemptLimits{Tencent: 5, Kubernetes: 1},
+			Storage: 1, Attachment: 1, Secret: 1, Runtime: 1, Activation: 1, Receipt: 1,
+		},
+		AllowedWrites: workspaceComputeClaimAllowedWritesForStorage("storage_not_started"), ForbiddenWrites: append([]string(nil), workspaceComputeClaimForbiddenWrites...),
+	}
+	operation.ComputeClaimApproval.ApprovalDigest = workspaceComputeClaimApprovalDigest(*operation.ComputeClaimApproval)
+	historicalRequest := workspaceComputeClaimRecoveryRequestForOperation(operation)
+	operation.ComputeClaimRequestHash = workspaceComputeClaimHistoricalRequestHash(historicalRequest, operation.ComputeClaimApproval.IdempotencyKey)
+	operation.ComputeClaimApprovalID = operation.ComputeClaimApproval.ApprovalID
+	operation.ComputeClaimMergedMainSHA = operation.ComputeClaimApproval.MergedMainSHA
+	operation.ComputeClaimCloudDigest = operation.ComputeClaimApproval.CloudImageDigest
+	operation.ComputeClaimPrivateIP = operation.ComputePrivateIP
+	operation.Status, operation.Phase, operation.ErrorCode = "manual_review", "compute_claim_pending", "workspace_compute_claim_identity_mismatch"
+	operation.ContinuationAttemptBudgets["storage"] = workspaceLaunchStageBudget{Attempted: 1, Unknown: 1, Max: workspaceLaunchStageMax}
+	operation.CurrentDecision = &CurrentDecision{
+		CurrentStage: "storage", StageState: "unknown", FirstFalsePredicate: "provider.storage", Expected: "confirmed", Actual: "attempted_unknown",
+		Authority: "provider.storage", NextAction: nextActionGetOnlyReconcileStorage, RequiresApproval: true, AllowedMutation: "none",
+		StageAttemptID: operation.ID + ":storage", MutationState: "frozen", EvidenceDigest: "sha256:" + strings.Repeat("c", 64), DecisionVersion: 20,
+	}
+	mustStore(t, fixture.store.SaveRuntimeOperation(context.Background(), workspaceLaunchOperationRow(operation)))
+
+	freshProof := computeClaimRecoveryProofForLaunchStorage(operation, "unallocated", "storage_attempt_unknown", "")
+	freshProof.CVMOwnershipState = "recoverable"
+	claimed := computeClaimRecoveryProofForLaunchStorage(operation, "target_owned", "storage_attempt_unknown", "")
+	claimed.CVMOwnershipState = "recoverable"
+	claimed.KubernetesMutationCount = 1
+	claimed.Evidence.Node = clients.ComputeClaimMutationEvidence{Attempted: 1, Confirmed: 1}
+	fixture.fabric.computeClaimProof = freshProof
+	fixture.fabric.computeClaimResult = &claimed
+	configureWorkspaceComputeProviderTruthTransition(fixture, freshProof, claimed)
+	configureWorkspaceLaunchFulfillment(t, fixture)
+	configureWorkspaceComputeClaimReadback(fixture, operation)
+
+	diagnosed := recoveryPlanResponse(t, requestWorkspaceRecoveryPlan(t, fixture, http.MethodPost, "/diagnose", map[string]any{"accountId": operation.AccountID}))
+	validated := recoveryPlanResponse(t, requestWorkspaceRecoveryPlan(t, fixture, http.MethodPost, "/validate", map[string]any{
+		"planId": diagnosed.PlanID, "planDigest": diagnosed.PlanDigest,
+	}))
+	if validated.Status != "validated" || len(validated.Mismatches) != 0 {
+		t.Fatalf("validated production-shaped plan=%#v", validated)
+	}
+	execution, won, err := fixture.app.reserveWorkspaceRecoveryExecution(context.Background(), fixture.service, operation.ID, validated.PlanID, validated.PlanDigest, "continue", "usr-admin")
+	if err != nil || !won || execution.Status != "running" {
+		t.Fatalf("reserved production-shaped execution=%#v won=%v err=%v", execution, won, err)
+	}
+
+	// Reproduce the Artifact ordering: Plan/Execution are live, but the
+	// persisted launch snapshot is still the old Storage decision v20.
+	stale := fixture.operation(t)
+	stale.CurrentDecision = &CurrentDecision{
+		CurrentStage: "storage", StageState: "unknown", FirstFalsePredicate: "provider.storage", Expected: "confirmed", Actual: "attempted_unknown",
+		Authority: "provider.storage", NextAction: nextActionGetOnlyReconcileStorage, RequiresApproval: true, AllowedMutation: "none",
+		StageAttemptID: stale.ID + ":storage", MutationState: "frozen", EvidenceDigest: "sha256:" + strings.Repeat("c", 64), DecisionVersion: 20,
+	}
+	stale.RecoveryExecution.LeaseExpiresAt = "2020-01-01T00:00:00.000000000Z"
+	mustStore(t, fixture.store.SaveRuntimeOperation(context.Background(), workspaceLaunchOperationRow(stale)))
+
+	_, err = fixture.app.executeWorkspaceRecoveryPlan(context.Background(), fixture.service, operation.ID, validated.PlanID, validated.PlanDigest, "continue", "usr-admin")
+	if err != nil {
+		t.Fatalf("stale persisted decision was not reconciled before shared executor: %v", err)
+	}
+	persisted := fixture.operation(t)
+	if len(fixture.fabric.computeClaimCalls) != 1 || !fixture.fabric.computeClaimCalls[0].NodeOnlyContinuation ||
+		persisted.ComputeClaimProof == nil || persisted.ComputeClaimProof.NodeOwnershipState != "target_owned" ||
+		persisted.ComputeClaimProof.TencentMutationCount != 0 || persisted.ComputeClaimProof.KubernetesMutationCount > 1 ||
+		persisted.Phase != "storage_fulfilling" || persisted.CurrentDecision == nil || persisted.CurrentDecision.CurrentStage != "storage" ||
+		len(fixture.fabric.storageIDs) != 0 {
+		t.Fatalf("stale decision did not close Node before Storage: operation=%#v calls=%#v storage=%#v", persisted, fixture.fabric.computeClaimCalls, fixture.fabric.storageIDs)
 	}
 }
 
