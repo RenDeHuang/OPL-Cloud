@@ -821,9 +821,39 @@ test("dedicated NodePool bootstrap is the only manual CreateNodePool workflow", 
   }
   const migrationAction = serializedStep(stepsByName(job).get("Inventory and migrate package NodePool taints"));
   assert.match(migrationAction, /RUN_TAINT_MIGRATION !== "1"/);
+  const migrationBaseline = serializedStep(stepsByName(job).get("Capture package taint migration baseline"));
+  const immediateReadback = serializedStep(stepsByName(job).get("Read back affected Nodes immediately"));
+  const stableReadback = serializedStep(stepsByName(job).get("Poll NodePools and affected Nodes until stable"));
+  const stableGate = serializedStep(stepsByName(job).get("Validate stable package taint migration"));
+  assert.match(migrationBaseline, /affectedNodeNames/);
+  assert.match(migrationBaseline, /kubectl[^\n]+get node/);
+  assert.match(migrationBaseline, /metadata\.uid/);
+  assert.match(migrationBaseline, /metadata\.resourceVersion/);
+  assert.match(migrationBaseline, /oplcloud\.cn\/workspace-id/);
+  assert.match(migrationBaseline, /OPL_TAINT_MIGRATION_MUTATION_BINDING_DIGEST/);
+  assert.match(immediateReadback, /kubectl[^\n]+get node/);
+  assert.match(stableReadback, /sleep [1-9][0-9]*/);
+  assert.match(stableReadback, /migrate_workspace_node_pool_taints/);
+  assert.match(stableReadback, /dryRun:\s*true/);
+  assert.match(stableReadback, /kubectl[^\n]+get node/);
+  for (const nodeReadback of [migrationBaseline, immediateReadback, stableReadback]) {
+    assert.match(nodeReadback, /kubectl[^\n]+get node[^\n]+2>\s*"\$OPL_BOOTSTRAP_SECRET_DIR\//);
+  }
+  assert.match(stableGate, /sameNodeUID/);
+  assert.match(stableGate, /sameWorkspaceLabels/);
+  assert.match(stableGate, /packageTaintStable/);
+  assert.match(stableGate, /runnerDirectMutationCounts/);
+  assert.match(stableGate, /kubernetes:\s*0/);
+  assert.match(stableGate, /sub2api:\s*0/);
+  assert.match(stableGate, /cvm:\s*0/);
+  assert.match(stableGate, /storage:\s*0/);
+  assert.match(stableGate, /key:\s*0/);
+  assert.doesNotMatch(stableGate, /kubernetesMutationCount/);
   const migrationReportGate = serializedStep(stepsByName(job).get("Validate taint migration report"));
   assert.match(migrationReportGate, /report\.mutationCount !== 0/);
   assert.match(migrationReportGate, /pool\.nodePoolId !== expectedPoolIds\[pool\.packageId\]/);
+  assert.match(migrationReportGate, /\^\[0-9a-f\]\{64\}\$/);
+  assert.match(migrationReportGate, /mutationBindingDigest/);
   assert.match(migrationReportGate, /new Set\(report\.nodePools\.map\(\(pool\) => pool\.packageId\)\)\.size !== 2/);
   assert.match(migrationReportGate, /pool\.status !== expectedPoolStatus/);
   assert.match(migrationReportGate, /pool\.taintsBefore/);
@@ -837,8 +867,9 @@ test("dedicated NodePool bootstrap is the only manual CreateNodePool workflow", 
   assert.match(migrationReportGate, /nodeCheckStatus !== "passed"/);
   assert.match(inputs.taint_migration_confirmation.description, /MIGRATE_BASIC_PRO_NODEPOOL_PACKAGE_TAINTS/);
   assert.equal(job.env.RUN_TENCENT_NODE_POOL_BOOTSTRAP_CONFIRMATION, "${{ inputs.mutation_confirmation }}");
-  assert.doesNotMatch(runs, /get node "\$OPL_SYSTEM_COMPUTE_NODE_NAME" -o json|providerID/);
+  assert.doesNotMatch(runs, /get node "\$OPL_SYSTEM_COMPUTE_NODE_NAME" -o json|providerID|kubectl[^\n]+(?:patch|apply|label|taint|annotate|delete|create|replace)/);
   assert.match(runs, /actions\/upload-artifact@v4|bootstrap-nodepool-report/);
+  assert.doesNotMatch(String(stepsByName(job).get("Upload bootstrap report")?.with?.path), /OPL_BOOTSTRAP_SECRET_DIR/);
   assert.match(runs, /workspace_sku_inventory/);
   assert.match(runs, /requiredCapacity[^\n]+1/);
   assert.match(runs, /recommendedInstanceType/);
@@ -868,6 +899,327 @@ test("dedicated NodePool bootstrap is the only manual CreateNodePool workflow", 
   assert.match(reportGate, /nodePoolInventoryBeforeMutation/);
   assert.match(reportGate, /bootstrap_nodepool_inventory_before_mutation_invalid/);
   assert.doesNotMatch(runs, /workspace-launches|control-plane|ScaleNodePool|DeleteClusterMachines/);
+});
+
+test("package taint migration readback accepts stable Nodes and rejects Workspace label drift", async () => {
+  const workflow = await readWorkflow(".github/workflows/bootstrap-tke-workspace-nodepools.yml");
+  const gate = stepsByName(workflowJob(workflow, "bootstrap")).get("Validate stable package taint migration");
+
+  async function runGate({ driftWorkspaceLabel = false } = {}) {
+    const root = await mkdtemp(join(tmpdir(), "opl-taint-migration-gate-"));
+    const secretDir = join(root, "secret");
+    const artifactDir = join(root, "artifact");
+    await mkdir(secretDir);
+    await mkdir(artifactDir);
+    const system = { nodePoolId: "np-system", poolCheckStatus: "passed", machineCheckStatus: "passed", nodeCheckStatus: "passed" };
+    const legacyTaint = [{ key: "oplcloud.cn/workspace-id", value: "unallocated", effect: "NoSchedule" }];
+    const packageTaint = (packageId) => [{ key: "oplcloud.cn/package-id", value: packageId, effect: "NoSchedule" }];
+    const pool = (packageId, nodePoolId, status, taintsBefore, affectedNodeNames) => ({
+      packageId,
+      nodePoolId,
+      status,
+      taintsBefore,
+      taintsAfter: packageTaint(packageId),
+      estimatedNodeCount: affectedNodeNames.length,
+      affectedNodeNames
+    });
+    const before = {
+      ok: true,
+      status: "migration_required",
+      mutationCount: 0,
+      protectedSystem: system,
+      nodePools: [pool("basic", "np-basic", "migration_required", legacyTaint, ["10.0.0.11"]), pool("pro", "np-pro", "migration_required", legacyTaint, [])]
+    };
+    const action = {
+      ...before,
+      status: "migrated",
+      mutationCount: 2,
+      nodePools: [pool("basic", "np-basic", "migrated", legacyTaint, ["10.0.0.11"]), pool("pro", "np-pro", "migrated", legacyTaint, [])]
+    };
+    const stable = {
+      ...before,
+      status: "registered",
+      nodePools: [pool("basic", "np-basic", "registered", packageTaint("basic"), ["10.0.0.11"]), pool("pro", "np-pro", "registered", packageTaint("pro"), [])]
+    };
+    const workspaceLabels = {
+      "medopl.cn/workload": "workspace",
+      "oplcloud.cn/resource-id": "resource-redacted",
+      "oplcloud.cn/account-id": "account-redacted",
+      "oplcloud.cn/workspace-id": "workspace-redacted"
+    };
+    const target = { nodePoolId: "np-basic", packageId: "basic", index: 0, nodeName: "10.0.0.11" };
+    const baselineNodes = [{
+      ...target,
+      uid: "uid-redacted",
+      resourceVersion: "100",
+      workspaceLabels,
+      taints: legacyTaint
+    }];
+    const node = (labels, resourceVersion) => ({
+      metadata: { name: target.nodeName, uid: "uid-redacted", resourceVersion, labels },
+      spec: { taints: packageTaint("basic") }
+    });
+    const files = {
+      "taint-migration-before.json": before,
+      "taint-migration-action.json": action,
+      "taint-migration-stable-first.json": stable,
+      "taint-migration-stable-second.json": stable,
+      "taint-migration-baseline-nodes.json": baselineNodes,
+      "taint-migration-targets.json": { nodes: [target] },
+      "immediate-basic-0.json": node(workspaceLabels, "101"),
+      "stable-first-basic-0.json": node({ ...workspaceLabels, ...(driftWorkspaceLabel ? { "oplcloud.cn/workspace-id": "workspace-other" } : {}) }, "102"),
+      "stable-second-basic-0.json": node(workspaceLabels, "103")
+    };
+    for (const [name, value] of Object.entries(files)) await writeFile(join(secretDir, name), JSON.stringify(value));
+    const result = spawnSync("bash", ["-c", gate.run], {
+      cwd: fileURLToPath(repoFile(".")),
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        OPL_BOOTSTRAP_SECRET_DIR: secretDir,
+        OPL_BOOTSTRAP_ARTIFACT_DIR: artifactDir,
+        OPL_BASIC_COMPUTE_NODE_POOL_ID: "np-basic",
+        OPL_PRO_COMPUTE_NODE_POOL_ID: "np-pro",
+        OPL_SYSTEM_COMPUTE_NODE_POOL_ID: "np-system",
+        TAINT_MIGRATION_ACTION_OUTCOME: "success",
+        IMMEDIATE_READBACK_OUTCOME: "success",
+        STABLE_READBACK_OUTCOME: "success",
+        OPL_TAINT_MIGRATION_MUTATION_BINDING_DIGEST: "a".repeat(64)
+      }
+    });
+    const summary = JSON.parse(await readFile(join(artifactDir, "taint-migration-summary.json"), "utf8"));
+    await rm(root, { recursive: true, force: true });
+    return { result, summary };
+  }
+
+  const stable = await runGate();
+  assert.equal(stable.result.status, 0, stable.result.stderr);
+  assert.deepEqual({
+    status: stable.summary.status,
+    mutationCount: stable.summary.mutationCount,
+    sameNodeUID: stable.summary.sameNodeUID,
+    sameWorkspaceLabels: stable.summary.sameWorkspaceLabels,
+    packageTaintStable: stable.summary.packageTaintStable,
+    kubernetesMutationCount: stable.summary.runnerDirectMutationCounts.kubernetes
+  }, {
+    status: "stable",
+    mutationCount: 2,
+    sameNodeUID: true,
+    sameWorkspaceLabels: true,
+    packageTaintStable: true,
+    kubernetesMutationCount: 0
+  });
+
+  const drift = await runGate({ driftWorkspaceLabel: true });
+  assert.notEqual(drift.result.status, 0);
+  assert.equal(drift.summary.status, "unknown");
+  assert.equal(drift.summary.reasonCode, "taint_migration_workspace_labels_drift");
+});
+
+test("package taint migration preserves unknown mutation count when the action receipt is unavailable", async () => {
+  const workflow = await readWorkflow(".github/workflows/bootstrap-tke-workspace-nodepools.yml");
+  const action = stepsByName(workflowJob(workflow, "bootstrap")).get("Inventory and migrate package NodePool taints");
+  const root = await mkdtemp(join(tmpdir(), "opl-taint-migration-action-"));
+  const secretDir = join(root, "secret");
+  const artifactDir = join(root, "artifact");
+
+  try {
+    await mkdir(secretDir);
+    await mkdir(artifactDir);
+    const legacyTaint = [{ key: "oplcloud.cn/workspace-id", value: "unallocated", effect: "NoSchedule" }];
+    const report = {
+      ok: true,
+      status: "migration_required",
+      mutationCount: 0,
+      protectedSystem: { nodePoolId: "np-system", poolCheckStatus: "passed", machineCheckStatus: "passed", nodeCheckStatus: "passed" },
+      nodePools: ["basic", "pro"].map((packageId) => ({
+        nodePoolId: `np-${packageId}`,
+        packageId,
+        taintsBefore: legacyTaint,
+        taintsAfter: [{ key: "oplcloud.cn/package-id", value: packageId, effect: "NoSchedule" }],
+        estimatedNodeCount: 0,
+        affectedNodeNames: []
+      }))
+    };
+    const canonical = (value) => {
+      if (Array.isArray(value)) return value.map(canonical).sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
+      if (value && typeof value === "object") return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])]));
+      return value;
+    };
+    const binding = report.nodePools.map((pool) => ({
+      nodePoolId: pool.nodePoolId,
+      packageId: pool.packageId,
+      taints: pool.taintsBefore,
+      targetTaints: pool.taintsAfter,
+      nodes: []
+    }));
+    const bindingDigest = createHash("sha256").update(JSON.stringify(canonical(binding))).digest("hex");
+    await writeFile(join(secretDir, "opl-tencent-provisioner"), `#!/usr/bin/env node
+let input = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => input += chunk);
+process.stdin.on("end", () => {
+  if (JSON.parse(input).dryRun) process.stdout.write(${JSON.stringify(JSON.stringify(report))});
+  else process.exit(1);
+});
+`);
+    await chmod(join(secretDir, "opl-tencent-provisioner"), 0o700);
+    await writeFile(join(secretDir, "taint-migration-targets.json"), JSON.stringify({ nodes: [] }));
+    await writeFile(join(secretDir, "taint-migration-targets.tsv"), "");
+    await writeFile(join(artifactDir, "taint-migration-summary.json"), JSON.stringify({
+      schemaVersion: 1,
+      status: "not_started",
+      mutationCount: 0
+    }));
+
+    const result = spawnSync("bash", ["-c", action.run], {
+      cwd: fileURLToPath(repoFile(".")),
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        OPL_BOOTSTRAP_SECRET_DIR: secretDir,
+        OPL_BOOTSTRAP_ARTIFACT_DIR: artifactDir,
+        RUN_TAINT_MIGRATION: "1",
+        OPL_BASIC_COMPUTE_NODE_POOL_ID: "np-basic",
+        OPL_PRO_COMPUTE_NODE_POOL_ID: "np-pro",
+        OPL_SYSTEM_COMPUTE_NODE_POOL_ID: "np-system",
+        OPL_TAINT_MIGRATION_MUTATION_BINDING_DIGEST: bindingDigest
+      }
+    });
+    const summary = JSON.parse(await readFile(join(artifactDir, "taint-migration-summary.json"), "utf8"));
+
+    assert.notEqual(result.status, 0);
+    assert.equal(summary.status, "unknown");
+    assert.equal(summary.mutationCount, null);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("package taint migration rejects fresh Node inventory drift before provider reservation", async () => {
+  const workflow = await readWorkflow(".github/workflows/bootstrap-tke-workspace-nodepools.yml");
+  const action = stepsByName(workflowJob(workflow, "bootstrap")).get("Inventory and migrate package NodePool taints");
+  const root = await mkdtemp(join(tmpdir(), "opl-taint-migration-inventory-drift-"));
+  const secretDir = join(root, "secret");
+  const artifactDir = join(root, "artifact");
+
+  try {
+    await mkdir(secretDir);
+    await mkdir(artifactDir);
+    const legacyTaint = [{ key: "oplcloud.cn/workspace-id", value: "unallocated", effect: "NoSchedule" }];
+    const report = {
+      ok: true,
+      status: "migration_required",
+      mutationCount: 0,
+      protectedSystem: { nodePoolId: "np-system", poolCheckStatus: "passed", machineCheckStatus: "passed", nodeCheckStatus: "passed" },
+      nodePools: [
+        {
+          nodePoolId: "np-basic", packageId: "basic", taintsBefore: legacyTaint, estimatedNodeCount: 2,
+          taintsAfter: [{ key: "oplcloud.cn/package-id", value: "basic", effect: "NoSchedule" }],
+          affectedNodeNames: ["10.0.0.11", "10.0.0.12"]
+        },
+        {
+          nodePoolId: "np-pro", packageId: "pro", taintsBefore: legacyTaint, estimatedNodeCount: 0,
+          taintsAfter: [{ key: "oplcloud.cn/package-id", value: "pro", effect: "NoSchedule" }], affectedNodeNames: []
+        }
+      ]
+    };
+    const callLog = join(root, "provisioner-calls.txt");
+    await writeFile(join(secretDir, "opl-tencent-provisioner"), `#!/usr/bin/env node
+const fs = require("node:fs");
+let input = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => input += chunk);
+process.stdin.on("end", () => {
+  const request = JSON.parse(input);
+  fs.appendFileSync(process.env.OPL_TEST_PROVISIONER_CALL_LOG, request.dryRun ? "dry\\n" : "live\\n");
+  process.stdout.write(${JSON.stringify(JSON.stringify(report))});
+});
+`);
+    await chmod(join(secretDir, "opl-tencent-provisioner"), 0o700);
+    await writeFile(join(secretDir, "kubectl"), `#!/usr/bin/env node
+const nodeName = process.argv[process.argv.indexOf("node") + 1];
+process.stdout.write(JSON.stringify({
+  metadata: { name: nodeName, uid: "uid-redacted", resourceVersion: "100", labels: {} },
+  status: { addresses: [{ type: "InternalIP", address: nodeName }] },
+  spec: { taints: [{ key: "oplcloud.cn/workspace-id", value: "unallocated", effect: "NoSchedule" }] }
+}));
+`);
+    await chmod(join(secretDir, "kubectl"), 0o700);
+    await writeFile(join(secretDir, "taint-migration-targets.json"), JSON.stringify({
+      nodes: [{ nodePoolId: "np-basic", packageId: "basic", index: 0, nodeName: "10.0.0.11" }]
+    }));
+    await writeFile(join(secretDir, "taint-migration-targets.tsv"), "basic\t0\t10.0.0.11\n");
+    await writeFile(join(artifactDir, "taint-migration-summary.json"), JSON.stringify({
+      schemaVersion: 1,
+      status: "not_started",
+      mutationCount: 0
+    }));
+
+    const result = spawnSync("bash", ["-c", action.run], {
+      cwd: fileURLToPath(repoFile(".")),
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PATH: `${secretDir}:${process.env.PATH}`,
+        OPL_BOOTSTRAP_SECRET_DIR: secretDir,
+        OPL_BOOTSTRAP_ARTIFACT_DIR: artifactDir,
+        OPL_TEST_PROVISIONER_CALL_LOG: callLog,
+        KUBECONFIG: join(secretDir, "kubeconfig"),
+        RUN_TAINT_MIGRATION: "1",
+        OPL_BASIC_COMPUTE_NODE_POOL_ID: "np-basic",
+        OPL_PRO_COMPUTE_NODE_POOL_ID: "np-pro",
+        OPL_SYSTEM_COMPUTE_NODE_POOL_ID: "np-system",
+        OPL_SYSTEM_COMPUTE_NODE_NAME: "10.0.0.42",
+        OPL_TAINT_MIGRATION_MUTATION_BINDING_DIGEST: "a".repeat(64)
+      }
+    });
+
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /taint_migration_pre_mutation_node_inventory_drift/);
+    assert.equal(await readFile(callLog, "utf8"), "dry\n");
+    assert.equal(await readFile(join(artifactDir, "taint-migration-summary.json"), "utf8"), JSON.stringify({
+      schemaVersion: 1,
+      status: "not_started",
+      mutationCount: 0
+    }));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("package taint migration binds the full fresh Node identity, reserves once, and condition-polls two stable observations", async () => {
+  const workflow = await readWorkflow(".github/workflows/bootstrap-tke-workspace-nodepools.yml");
+  const job = workflowJob(workflow, "bootstrap");
+  const steps = stepsByName(job);
+  const baseline = serializedStep(steps.get("Capture package taint migration baseline"));
+  const action = serializedStep(steps.get("Inventory and migrate package NodePool taints"));
+  const stableReadback = serializedStep(steps.get("Poll NodePools and affected Nodes until stable"));
+  const stableGate = serializedStep(steps.get("Validate stable package taint migration"));
+
+  assert.equal(job.env.DATABASE_URL, "${{ secrets.DATABASE_URL }}");
+  assert.equal(job.env.PGSSLMODE, "disable");
+  for (const required of [
+    "nodePoolId", "packageId", "nodeName", "internalIp", "uid", "workspaceLabels", "taints"
+  ]) {
+    assert.match(baseline, new RegExp(required, "i"));
+  }
+  assert.match(baseline, /OPL_TAINT_MIGRATION_MUTATION_BINDING_DIGEST/);
+  assert.match(baseline, /targetTaints:\s*canonical\(pool\.taintsAfter/);
+  assert.match(action, /OPL_TAINT_MIGRATION_MUTATION_BINDING_DIGEST/);
+  assert.match(action, /targetTaints:\s*canonical\(pool\.taintsAfter/);
+  assert.match(action, /exactTargetTaint\(pool\.taintsAfter, pool\.packageId\)/);
+  assert.match(action, /kubectl[^\n]+get node/);
+  assert.match(action, /taint_migration_pre_mutation_binding_drift/);
+  assert.match(stableReadback, /for\s+attempt\s+in/);
+  assert.match(stableReadback, /consecutive/);
+  assert.match(stableReadback, /kubectl[^\n]+get node/);
+  assert.doesNotMatch(stableReadback, /sleep\s+60(?:\D|$)/);
+  assert.match(stableGate, /runnerDirectMutationCounts/);
+  assert.match(stableGate, /nodePoolMutation/);
+  assert.match(stableGate, /updateExistedNode/);
+  assert.match(stableGate, /affectedNodeCount/);
+  assert.match(stableGate, /indirectNodeTaintEffect/);
 });
 
 test("bootstrap report validation preserves an earlier inventory failure when bootstrap did not run", async () => {
