@@ -5078,7 +5078,7 @@ select:focus-visible,
 
 /* Quiet Ledger visual contract. */
 :root {
-  --action: #157b76;
+  --action: #075b3b;
   --action-hover: #0c5c58;
   --action-soft: #eaf3f9;
   --canvas: #ffffff;
