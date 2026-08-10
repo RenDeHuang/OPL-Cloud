@@ -31,11 +31,15 @@ test("dedicated Node drift workflow is launch-derived, single-purpose, and GET-o
   assert.equal(job.env.OPL_SUB2API_BASE_URL, undefined);
   assert.equal(job.env.OPL_SUB2API_ADMIN_EMAIL, undefined);
   assert.equal(job.env.OPL_SUB2API_ADMIN_PASSWORD, undefined);
+  assert.equal(job.env.OPL_NODE_DRIFT_RAW_DIR, undefined);
+  assert.equal(job.env.OPL_NODE_DRIFT_ARTIFACT_DIR, undefined);
   assert.equal(job.env.OPL_NODE_DRIFT_EXPECTED_CUSTOMER_EMAIL, "${{ secrets.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_CUSTOMER_EMAIL }}");
   assert.equal(job.env.OPL_NODE_DRIFT_CUSTOMER_PASSWORD, undefined);
   assert.doesNotMatch(workflowText, /OPL_BASIC_CANARY_CUSTOMER_PASSWORD/);
   const transportStep = job.steps.find((step) => step.name === "Prepare GET-only transports and runner temporary evidence boundary");
   assert.ok(transportStep?.run);
+  assert.equal(transportStep.env.OPL_NODE_DRIFT_RAW_DIR, "${{ runner.temp }}/production-node-drift-diagnostic-raw");
+  assert.equal(transportStep.env.OPL_NODE_DRIFT_ARTIFACT_DIR, "${{ runner.temp }}/production-node-drift-diagnostic");
   assert.match(transportStep.run, /--identity-out/);
   assert.match(transportStep.run, /control-plane-identity\.json/);
   assert.ok(transportStep.run.indexOf("--identity-out") < transportStep.run.indexOf("kubectl"));

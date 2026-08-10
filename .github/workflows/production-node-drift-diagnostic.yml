@@ -43,8 +43,6 @@ jobs:
       TENCENTCLOUD_SECRET_KEY: ${{ secrets.TENCENT_MUTATION_SECRET_KEY }}
       TENCENTCLOUD_REGION: ${{ vars.TENCENTCLOUD_REGION || 'na-siliconvalley' }}
       TENCENT_DEPLOY_CLUSTER_ID: ${{ vars.TENCENT_DEPLOY_CLUSTER_ID }}
-      OPL_NODE_DRIFT_RAW_DIR: ${{ runner.temp }}/production-node-drift-diagnostic-raw
-      OPL_NODE_DRIFT_ARTIFACT_DIR: ${{ runner.temp }}/production-node-drift-diagnostic
 
     steps:
       - name: Prepare isolated source checkout
@@ -97,6 +95,9 @@ jobs:
 
       - name: Prepare GET-only transports and runner temporary evidence boundary
         shell: bash
+        env:
+          OPL_NODE_DRIFT_RAW_DIR: ${{ runner.temp }}/production-node-drift-diagnostic-raw
+          OPL_NODE_DRIFT_ARTIFACT_DIR: ${{ runner.temp }}/production-node-drift-diagnostic
         working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           set -euo pipefail
@@ -151,6 +152,9 @@ jobs:
 
       - name: Collect and project one GET-only Node drift packet
         shell: bash
+        env:
+          OPL_NODE_DRIFT_RAW_DIR: ${{ runner.temp }}/production-node-drift-diagnostic-raw
+          OPL_NODE_DRIFT_ARTIFACT_DIR: ${{ runner.temp }}/production-node-drift-diagnostic
         working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           set -euo pipefail
@@ -163,6 +167,8 @@ jobs:
         id: artifact_gate
         if: always()
         shell: bash
+        env:
+          OPL_NODE_DRIFT_ARTIFACT_DIR: ${{ runner.temp }}/production-node-drift-diagnostic
         working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           set -euo pipefail
@@ -181,6 +187,9 @@ jobs:
       - name: Remove runner temporary diagnostic evidence
         if: always() && steps.prepare_source.outcome == 'success'
         shell: bash
+        env:
+          OPL_NODE_DRIFT_RAW_DIR: ${{ runner.temp }}/production-node-drift-diagnostic-raw
+          OPL_NODE_DRIFT_ARTIFACT_DIR: ${{ runner.temp }}/production-node-drift-diagnostic
         working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           set -euo pipefail
