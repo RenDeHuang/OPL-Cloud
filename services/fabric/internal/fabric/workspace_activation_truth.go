@@ -67,6 +67,10 @@ func (s *Service) WorkspaceActivationTruth(ctx context.Context, input WorkspaceA
 		!validWorkspaceActivationTruthInput(input, compute, storage, attachment) {
 		return activationTruthFailure(unknown, "identity_mismatch", "readback_mismatch", ErrInvalidWorkspaceActivationTruth)
 	}
+	ownership, ownershipErr := s.operations.MachineOwnership(ctx, compute.ID)
+	if ownershipErr != nil || !sameActivationMachineOwnership(compute, ownership) {
+		return activationTruthFailure(unknown, "identity_mismatch", "readback_mismatch", ErrInvalidWorkspaceActivationTruth)
+	}
 	provider, ok := s.provider.(workspaceActivationTruthProvider)
 	if !ok {
 		return activationTruthFailure(unknown, "provider_unavailable", "provider_error", ErrWorkspaceActivationTruthUnavailable)
@@ -301,6 +305,8 @@ func (p *TencentProvider) WorkspaceActivationTruth(
 	wantSelector := stringAnyMap(runtimeSelectorLabels(input.ServiceName, compute))
 	if !reflect.DeepEqual(nested(deployment, "spec", "selector", "matchLabels"), wantSelector) ||
 		!reflect.DeepEqual(nested(service, "spec", "selector"), wantSelector) ||
+		!validActivationScheduling(nested(deployment, "spec", "template", "spec"), compute, false) ||
+		!validActivationScheduling(nested(pod, "spec"), compute, true) ||
 		!workspaceNetworkPolicyReady(policy, deployment) ||
 		!workloadUsesPVC(deployment, pvcName) || !workloadUsesPVC(pod, pvcName) {
 		return activationTruthFailure(truth, "identity_mismatch", "readback_mismatch", ErrWorkspaceActivationTruthUnavailable)
@@ -374,8 +380,18 @@ func validWorkspaceActivationTruthInput(input WorkspaceActivationTruthInput, com
 
 func sameActivationCompute(expected, actual ComputeAllocation) bool {
 	return actual.ID == expected.ID && actual.OperationID == expected.OperationID && actual.AccountID == expected.AccountID && actual.WorkspaceID == expected.WorkspaceID &&
+		actual.PackageID == expected.PackageID && actual.PoolID == expected.PoolID && actual.NodePoolID == expected.NodePoolID &&
+		actual.MachineName == expected.MachineName && actual.InstanceType == expected.InstanceType && actual.Zone == expected.Zone &&
 		firstNonEmpty(actual.InstanceID, actual.CVMInstanceID) == firstNonEmpty(expected.InstanceID, expected.CVMInstanceID) &&
 		actual.NodeName == expected.NodeName && actual.PrivateIP == expected.PrivateIP
+}
+
+func sameActivationMachineOwnership(compute ComputeAllocation, ownership MachineOwnership) bool {
+	return ownership.Status == "active" && ownership.ReleasedAt == nil && ownership.ID != "" &&
+		compute.CostTags["opl_operation_id"] == ownership.ID &&
+		ownership.ResourceID == compute.ID && ownership.AccountID == compute.AccountID && ownership.WorkspaceID == compute.WorkspaceID &&
+		ownership.PackageID == compute.PackageID && ownership.NodePoolID == compute.NodePoolID && ownership.MachineID == compute.MachineName &&
+		ownership.InstanceID == firstNonEmpty(compute.InstanceID, compute.CVMInstanceID) && ownership.NodeName == compute.NodeName
 }
 
 func sameActivationStorage(expected, actual StorageVolume) bool {
@@ -437,18 +453,56 @@ func validActivationNode(input WorkspaceActivationTruthInput, compute ComputeAll
 		}
 	}
 	taints, _ := nested(node, "spec", "taints").([]any)
-	matchingTaints := 0
-	workspaceTaints := 0
+	matchingPackageTaints := 0
+	packageTaints := 0
 	for _, item := range taints {
 		taint, _ := item.(map[string]any)
 		if stringValue(taint["key"]) == "oplcloud.cn/workspace-id" {
-			workspaceTaints++
-			if stringValue(taint["value"]) == input.WorkspaceID && stringValue(taint["effect"]) == "NoSchedule" {
-				matchingTaints++
+			return false
+		}
+		if stringValue(taint["key"]) == "oplcloud.cn/package-id" {
+			packageTaints++
+			if stringValue(taint["value"]) == compute.PackageID && stringValue(taint["effect"]) == "NoSchedule" {
+				matchingPackageTaints++
 			}
 		}
 	}
-	return matchingIPs == 1 && workspaceTaints == 1 && matchingTaints == 1
+	return matchingIPs == 1 && packageTaints == 1 && matchingPackageTaints == 1
+}
+
+func validActivationScheduling(raw any, compute ComputeAllocation, allowDefaultPodTolerations bool) bool {
+	spec, _ := raw.(map[string]any)
+	return reflect.DeepEqual(spec["nodeSelector"], map[string]any{"kubernetes.io/hostname": compute.NodeName}) &&
+		validActivationTolerations(spec["tolerations"], compute.PackageID, allowDefaultPodTolerations)
+}
+
+func validActivationTolerations(raw any, packageID string, allowDefaults bool) bool {
+	tolerations, ok := raw.([]any)
+	if !ok {
+		return false
+	}
+	packageToleration := map[string]any{"key": "oplcloud.cn/package-id", "operator": "Equal", "value": packageID, "effect": "NoSchedule"}
+	packageMatches := 0
+	for _, item := range tolerations {
+		toleration, ok := item.(map[string]any)
+		if !ok {
+			return false
+		}
+		if reflect.DeepEqual(toleration, packageToleration) {
+			packageMatches++
+			continue
+		}
+		if !allowDefaults {
+			return false
+		}
+		key, operator, effect := stringValue(toleration["key"]), stringValue(toleration["operator"]), stringValue(toleration["effect"])
+		seconds, secondsOK := toleration["tolerationSeconds"].(float64)
+		if operator != "Exists" || effect != "NoExecute" || seconds != 300 || !secondsOK || len(toleration) != 4 ||
+			(key != "node.kubernetes.io/not-ready" && key != "node.kubernetes.io/unreachable") {
+			return false
+		}
+	}
+	return packageMatches == 1
 }
 
 func validActivationGatewaySecret(input WorkspaceActivationTruthInput, secret map[string]any) bool {

@@ -1233,34 +1233,39 @@ func computeClaimNodePatch(raw []byte, allocation ComputeAllocation, ownership M
 	if json.Unmarshal(raw, &node) != nil || node.Metadata.Name != allocation.NodeName || node.Metadata.ResourceVersion == "" {
 		return nil, fmt.Errorf("node_identity_mismatch")
 	}
-	taintIndex := -1
-	for index, taint := range node.Spec.Taints {
+	packageTaints := 0
+	for _, taint := range node.Spec.Taints {
 		if taint.Key == "oplcloud.cn/workspace-id" {
-			if taintIndex >= 0 || taint.Value != "unallocated" || taint.Effect != "NoSchedule" {
+			return nil, fmt.Errorf("node_ownership_conflict")
+		}
+		if taint.Key == "oplcloud.cn/package-id" {
+			packageTaints++
+			if taint.Value != allocation.PackageID || taint.Effect != "NoSchedule" {
 				return nil, fmt.Errorf("node_ownership_conflict")
 			}
-			taintIndex = index
 		}
 	}
-	if taintIndex < 0 {
+	if packageTaints != 1 {
 		return nil, fmt.Errorf("node_ownership_conflict")
 	}
-	patch := []map[string]any{
-		{"op": "test", "path": "/metadata/resourceVersion", "value": node.Metadata.ResourceVersion},
-		{"op": "test", "path": fmt.Sprintf("/spec/taints/%d/value", taintIndex), "value": "unallocated"},
-	}
-	if node.Metadata.Labels == nil {
-		patch = append(patch, map[string]any{"op": "add", "path": "/metadata/labels", "value": map[string]string{}})
-	}
-	for _, label := range []struct{ key, value string }{
+	expected := []struct{ key, value string }{
 		{key: "medopl.cn/workload", value: "workspace"},
 		{key: "oplcloud.cn/resource-id", value: ownership.ResourceID},
 		{key: "oplcloud.cn/account-id", value: ownership.AccountID},
 		{key: "oplcloud.cn/workspace-id", value: ownership.WorkspaceID},
-	} {
+	}
+	for _, label := range expected {
+		if _, present := node.Metadata.Labels[label.key]; present {
+			return nil, fmt.Errorf("node_ownership_conflict")
+		}
+	}
+	patch := []map[string]any{{"op": "test", "path": "/metadata/resourceVersion", "value": node.Metadata.ResourceVersion}}
+	if node.Metadata.Labels == nil {
+		patch = append(patch, map[string]any{"op": "add", "path": "/metadata/labels", "value": map[string]string{}})
+	}
+	for _, label := range expected {
 		patch = append(patch, map[string]any{"op": "add", "path": "/metadata/labels/" + strings.ReplaceAll(label.key, "/", "~1"), "value": label.value})
 	}
-	patch = append(patch, map[string]any{"op": "replace", "path": fmt.Sprintf("/spec/taints/%d/value", taintIndex), "value": ownership.WorkspaceID})
 	return json.Marshal(patch)
 }
 
@@ -1297,38 +1302,40 @@ func computeClaimNodeOwnershipState(raw []byte, allocation ComputeAllocation, ow
 	if internalIPCount != 1 {
 		return "identity_mismatch", false
 	}
-	taintValue, taintCount := "", 0
+	packageTaintCount := 0
 	for _, taint := range node.Spec.Taints {
 		if taint.Key == "oplcloud.cn/workspace-id" {
-			taintCount++
-			if taint.Effect != "NoSchedule" {
+			return "node_ownership_conflict", false
+		}
+		if taint.Key == "oplcloud.cn/package-id" {
+			packageTaintCount++
+			if taint.Value != allocation.PackageID || taint.Effect != "NoSchedule" {
 				return "node_ownership_conflict", false
 			}
-			taintValue = taint.Value
 		}
 	}
-	if taintCount != 1 {
+	if packageTaintCount != 1 || allocation.PackageID != ownership.PackageID {
 		return "node_ownership_conflict", false
 	}
 	expected := map[string]string{
 		"medopl.cn/workload": "workspace", "oplcloud.cn/resource-id": ownership.ResourceID,
 		"oplcloud.cn/account-id": ownership.AccountID, "oplcloud.cn/workspace-id": ownership.WorkspaceID,
 	}
-	targetOwned := taintValue == ownership.WorkspaceID
-	unallocated := taintValue == "unallocated"
+	present := 0
 	for key, value := range expected {
-		actual := node.Metadata.Labels[key]
-		if targetOwned && actual != value {
-			return "node_ownership_conflict", false
+		actual, exists := node.Metadata.Labels[key]
+		if !exists {
+			continue
 		}
-		if unallocated && actual != "" && actual != value {
+		present++
+		if actual != value {
 			return "node_ownership_conflict", false
 		}
 	}
-	if targetOwned {
+	if present == len(expected) {
 		return "target_owned", true
 	}
-	if unallocated {
+	if present == 0 {
 		return "unallocated", true
 	}
 	return "node_ownership_conflict", false
@@ -2829,10 +2836,16 @@ func workspaceManifest(input WorkspaceRuntimeInput, workspaceName string, creden
 	}
 	secretVolume := map[string]any{"name": "workspace-secrets", "projected": map[string]any{"sources": secretSources}}
 	podAnnotations := stringAnyMap(mergeStringMaps(tags, map[string]string{"opl.medopl.cn/credential-revision": stableID("workspace-credential", workspaceID, credentialSeed)[:16]}))
-	deployment := map[string]any{"apiVersion": "apps/v1", "kind": "Deployment", "metadata": map[string]any{"name": serviceName, "labels": labels, "annotations": tags}, "spec": map[string]any{"replicas": 1, "selector": map[string]any{"matchLabels": selectorLabels}, "template": map[string]any{"metadata": map[string]any{"labels": labels, "annotations": podAnnotations}, "spec": map[string]any{"automountServiceAccountToken": false, "dnsPolicy": "ClusterFirst", "securityContext": map[string]any{"runAsNonRoot": true, "runAsUser": 10001, "runAsGroup": 10001, "fsGroup": 10001, "seccompProfile": map[string]any{"type": "RuntimeDefault"}}, "imagePullSecrets": []any{map[string]any{"name": os.Getenv("OPL_IMAGE_PULL_SECRET_NAME")}}, "nodeSelector": compute.NodeSelector, "tolerations": []any{map[string]any{"key": "tke.cloud.tencent.com/eni-ip-unavailable", "operator": "Exists", "effect": "NoSchedule"}, map[string]any{"key": "oplcloud.cn/workspace-id", "operator": "Equal", "value": workspaceID, "effect": "NoSchedule"}}, "containers": []any{workspaceContainer}, "volumes": []any{map[string]any{"name": "workspace-data", "persistentVolumeClaim": map[string]any{"claimName": pvcName}}, secretVolume}}}}}
+	deployment := map[string]any{"apiVersion": "apps/v1", "kind": "Deployment", "metadata": map[string]any{"name": serviceName, "labels": labels, "annotations": tags}, "spec": map[string]any{"replicas": 1, "selector": map[string]any{"matchLabels": selectorLabels}, "template": map[string]any{"metadata": map[string]any{"labels": labels, "annotations": podAnnotations}, "spec": map[string]any{"automountServiceAccountToken": false, "dnsPolicy": "ClusterFirst", "securityContext": map[string]any{"runAsNonRoot": true, "runAsUser": 10001, "runAsGroup": 10001, "fsGroup": 10001, "seccompProfile": map[string]any{"type": "RuntimeDefault"}}, "imagePullSecrets": []any{map[string]any{"name": os.Getenv("OPL_IMAGE_PULL_SECRET_NAME")}}, "nodeSelector": map[string]any{"kubernetes.io/hostname": compute.NodeName}, "tolerations": workspaceNodeTolerations(compute.PackageID), "containers": []any{workspaceContainer}, "volumes": []any{map[string]any{"name": "workspace-data", "persistentVolumeClaim": map[string]any{"claimName": pvcName}}, secretVolume}}}}}
 	service := map[string]any{"apiVersion": "v1", "kind": "Service", "metadata": map[string]any{"name": serviceName, "labels": labels, "annotations": tags}, "spec": map[string]any{"type": "ClusterIP", "selector": selectorLabels, "ports": []any{map[string]any{"name": "http", "port": 3000, "targetPort": "http"}}}}
 	networkPolicy := map[string]any{"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy", "metadata": map[string]any{"name": serviceName, "labels": labels, "annotations": tags}, "spec": map[string]any{"podSelector": map[string]any{"matchLabels": selectorLabels}, "policyTypes": []any{"Ingress", "Egress"}, "ingress": []any{map[string]any{"from": []any{map[string]any{"podSelector": map[string]any{"matchLabels": map[string]any{"app.kubernetes.io/name": "opl-cloud", "app.kubernetes.io/component": "control-plane"}}}}, "ports": []any{map[string]any{"protocol": "TCP", "port": 3000}}}}, "egress": workspaceEgressRules()}}
 	return mustJSON(map[string]any{"apiVersion": "v1", "kind": "List", "items": []any{secret, deployment, service, networkPolicy}})
+}
+
+func workspaceNodeTolerations(packageID string) []any {
+	return []any{
+		map[string]any{"key": "oplcloud.cn/package-id", "operator": "Equal", "value": packageID, "effect": "NoSchedule"},
+	}
 }
 
 func workspaceEgressRules() []any {
@@ -2955,9 +2968,6 @@ func executeKubectl(ctx context.Context, args []string, stdin []byte) ([]byte, e
 func tkeNodeSelector(providerData map[string]string, nodeName string) map[string]any {
 	if nodeName := strings.TrimSpace(nodeName); nodeName != "" {
 		return map[string]any{"kubernetes.io/hostname": nodeName}
-	}
-	if machineName := strings.TrimSpace(providerData["machineName"]); machineName != "" {
-		return map[string]any{"cloud.tencent.com/node-instance-id": machineName}
 	}
 	return map[string]any{}
 }

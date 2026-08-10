@@ -173,6 +173,68 @@ func TestTencentProviderWorkspaceActivationTruthRejectsRuntimeReplicaDrift(t *te
 	}
 }
 
+func TestTencentProviderWorkspaceActivationTruthRejectsSchedulingDrift(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate func(*workspaceActivationTruthFixture)
+	}{
+		{
+			name: "deployment hostname selector",
+			mutate: func(fixture *workspaceActivationTruthFixture) {
+				fixture.deployment["spec"].(map[string]any)["template"].(map[string]any)["spec"].(map[string]any)["nodeSelector"] = map[string]any{"kubernetes.io/hostname": "node-other"}
+			},
+		},
+		{
+			name: "pod package toleration",
+			mutate: func(fixture *workspaceActivationTruthFixture) {
+				pod := fixture.items[len(fixture.items)-1].(map[string]any)
+				pod["spec"].(map[string]any)["tolerations"] = []any{map[string]any{
+					"key": "oplcloud.cn/package-id", "operator": "Equal", "value": "pro", "effect": "NoSchedule",
+				}}
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("TENCENT_DEPLOY_CLUSTER_ID", "cls-activation")
+			t.Setenv("OPL_BASIC_COMPUTE_INSTANCE_TYPE", "SA5.MEDIUM4")
+			image := "registry.example/one-person-lab-app@sha256:" + repeatHex("4", 64)
+			t.Setenv("OPL_WORKSPACE_IMAGE", image)
+			fixture := newWorkspaceActivationTruthFixture(image)
+			tc.mutate(fixture)
+			provider := NewTencentProvider()
+			provider.provision = fixture.provision
+			provider.kubectl = fixture.kubectl
+
+			truth, err := provider.WorkspaceActivationTruth(context.Background(), fixture.input, fixture.compute, fixture.storage, fixture.attachment)
+			if err == nil || truth.Ready || truth.Reason != "identity_mismatch" || truth.ErrorClass != "readback_mismatch" {
+				t.Fatalf("truth=%#v err=%v", truth, err)
+			}
+		})
+	}
+}
+
+func TestTencentProviderWorkspaceActivationTruthAcceptsKubernetesDefaultPodTolerations(t *testing.T) {
+	t.Setenv("TENCENT_DEPLOY_CLUSTER_ID", "cls-activation")
+	t.Setenv("OPL_BASIC_COMPUTE_INSTANCE_TYPE", "SA5.MEDIUM4")
+	image := "registry.example/one-person-lab-app@sha256:" + repeatHex("5", 64)
+	t.Setenv("OPL_WORKSPACE_IMAGE", image)
+	fixture := newWorkspaceActivationTruthFixture(image)
+	pod := fixture.items[len(fixture.items)-1].(map[string]any)
+	podSpec := pod["spec"].(map[string]any)
+	podSpec["tolerations"] = append(podSpec["tolerations"].([]any),
+		map[string]any{"key": "node.kubernetes.io/not-ready", "operator": "Exists", "effect": "NoExecute", "tolerationSeconds": float64(300)},
+		map[string]any{"key": "node.kubernetes.io/unreachable", "operator": "Exists", "effect": "NoExecute", "tolerationSeconds": float64(300)},
+	)
+	provider := NewTencentProvider()
+	provider.provision = fixture.provision
+	provider.kubectl = fixture.kubectl
+
+	truth, err := provider.WorkspaceActivationTruth(context.Background(), fixture.input, fixture.compute, fixture.storage, fixture.attachment)
+	if err != nil || !truth.Ready {
+		t.Fatalf("truth=%#v err=%v", truth, err)
+	}
+}
+
 func TestTencentProviderWorkspaceActivationTruthPropagatesKubernetesReadErrors(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
@@ -309,6 +371,42 @@ func TestWorkspaceActivationTruthServiceRejectsLocalIdentityDriftBeforeProvider(
 	}
 }
 
+func TestWorkspaceActivationTruthServiceRequiresExactActiveMachineOwnership(t *testing.T) {
+	provider := &recordingWorkspaceActivationTruthProvider{}
+	service, store, input := workspaceActivationTruthServiceFixture(t, provider)
+	ownership, err := store.MachineOwnership(context.Background(), input.ComputeAllocationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ownership.NodePoolID = "np-other"
+	store.mu.Lock()
+	store.machineOwnerships[input.ComputeAllocationID] = ownership
+	store.mu.Unlock()
+
+	truth, truthErr := service.WorkspaceActivationTruth(context.Background(), input)
+	if truthErr == nil || !errors.Is(truthErr, ErrInvalidWorkspaceActivationTruth) || truth.Ready || provider.calls != 0 {
+		t.Fatalf("truth=%#v err=%v calls=%d", truth, truthErr, provider.calls)
+	}
+}
+
+func TestWorkspaceActivationTruthServiceBindsMachineOwnershipOperationTag(t *testing.T) {
+	provider := &recordingWorkspaceActivationTruthProvider{}
+	service, store, input := workspaceActivationTruthServiceFixture(t, provider)
+	ownership, err := store.MachineOwnership(context.Background(), input.ComputeAllocationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ownership.ID = "owner-other"
+	store.mu.Lock()
+	store.machineOwnerships[input.ComputeAllocationID] = ownership
+	store.mu.Unlock()
+
+	truth, truthErr := service.WorkspaceActivationTruth(context.Background(), input)
+	if truthErr == nil || !errors.Is(truthErr, ErrInvalidWorkspaceActivationTruth) || truth.Ready || provider.calls != 0 {
+		t.Fatalf("truth=%#v err=%v calls=%d", truth, truthErr, provider.calls)
+	}
+}
+
 func workspaceActivationTruthServiceFixture(t *testing.T, provider *recordingWorkspaceActivationTruthProvider) (*Service, *MemoryOperationStore, WorkspaceActivationTruthInput) {
 	t.Helper()
 	compute, storage := monthlyTruthResources()
@@ -336,6 +434,14 @@ func workspaceActivationTruthServiceFixture(t *testing.T, provider *recordingWor
 		if err := store.Append(context.Background(), operation); err != nil {
 			t.Fatal(err)
 		}
+	}
+	ownership := MachineOwnership{
+		ID: compute.CostTags["opl_operation_id"], ResourceID: compute.ID, AccountID: compute.AccountID, WorkspaceID: compute.WorkspaceID,
+		PackageID: compute.PackageID, NodePoolID: compute.NodePoolID, MachineID: compute.MachineName,
+		InstanceID: firstNonEmpty(compute.InstanceID, compute.CVMInstanceID), NodeName: compute.NodeName, Status: "active", ClaimedAt: now,
+	}
+	if _, created, err := store.ClaimMachine(context.Background(), ownership); err != nil || !created {
+		t.Fatalf("seed machine ownership: created=%v err=%v", created, err)
 	}
 	input := WorkspaceActivationTruthInput{
 		LaunchOperationID: launchID, AccountID: compute.AccountID, WorkspaceID: compute.WorkspaceID,
@@ -414,6 +520,10 @@ func newWorkspaceActivationTruthFixture(image string) *workspaceActivationTruthF
 	}
 	podSpec := map[string]any{
 		"nodeName": compute.NodeName, "automountServiceAccountToken": false, "dnsPolicy": "ClusterFirst",
+		"nodeSelector": map[string]any{"kubernetes.io/hostname": compute.NodeName},
+		"tolerations": []any{
+			map[string]any{"key": "oplcloud.cn/package-id", "operator": "Equal", "value": compute.PackageID, "effect": "NoSchedule"},
+		},
 		"securityContext": map[string]any{"runAsNonRoot": true, "runAsUser": 10001, "runAsGroup": 10001, "fsGroup": 10001, "seccompProfile": map[string]any{"type": "RuntimeDefault"}},
 		"containers":      []any{container}, "volumes": volumes,
 	}
@@ -452,7 +562,7 @@ func newWorkspaceActivationTruthFixture(image string) *workspaceActivationTruthF
 	}
 	podName, podIP := "opl-compute-alpha-7d6c", "10.244.0.8"
 	pod := map[string]any{
-		"kind": "Pod", "metadata": map[string]any{"name": podName, "uid": "pod-uid-alpha", "labels": cloneJSONMap(runtimeLabels)}, "spec": podSpec,
+		"kind": "Pod", "metadata": map[string]any{"name": podName, "uid": "pod-uid-alpha", "labels": cloneJSONMap(runtimeLabels)}, "spec": cloneJSONMap(podSpec),
 		"status": map[string]any{
 			"phase": "Running", "podIP": podIP,
 			"conditions":        []any{map[string]any{"type": "PodScheduled", "status": "True"}, map[string]any{"type": "Ready", "status": "True"}},
@@ -480,7 +590,7 @@ func newWorkspaceActivationTruthFixture(image string) *workspaceActivationTruthF
 		"kind": "Node", "metadata": map[string]any{"name": compute.NodeName, "labels": map[string]any{
 			"medopl.cn/workload": "workspace", "oplcloud.cn/resource-id": compute.ID, "oplcloud.cn/account-id": input.AccountID, "oplcloud.cn/workspace-id": input.WorkspaceID,
 		}},
-		"spec":   map[string]any{"taints": []any{map[string]any{"key": "oplcloud.cn/workspace-id", "value": input.WorkspaceID, "effect": "NoSchedule"}}},
+		"spec":   map[string]any{"taints": []any{map[string]any{"key": "oplcloud.cn/package-id", "value": compute.PackageID, "effect": "NoSchedule"}}},
 		"status": map[string]any{"addresses": []any{map[string]any{"type": "InternalIP", "address": compute.PrivateIP}}},
 	}
 	return &workspaceActivationTruthFixture{

@@ -1406,8 +1406,8 @@ func TestBuildCreateNativeNodePoolRequestUsesCurrentPackageShape(t *testing.T) {
 	if len(createRequest.Tags) != 0 {
 		t.Fatalf("node pool request must not carry first-customer Tencent tags: %#v", createRequest.Tags)
 	}
-	if len(createRequest.Taints) != 1 || stringValue(createRequest.Taints[0].Key) != "oplcloud.cn/workspace-id" || stringValue(createRequest.Taints[0].Value) != "unallocated" || stringValue(createRequest.Taints[0].Effect) != "NoSchedule" {
-		t.Fatalf("node pool must quarantine unallocated nodes: %#v", createRequest.Taints)
+	if len(createRequest.Taints) != 1 || stringValue(createRequest.Taints[0].Key) != "oplcloud.cn/package-id" || stringValue(createRequest.Taints[0].Value) != "basic" || stringValue(createRequest.Taints[0].Effect) != "NoSchedule" {
+		t.Fatalf("node pool must own the stable package taint: %#v", createRequest.Taints)
 	}
 
 	request.Pool.MaxReplicas = 0
@@ -1426,6 +1426,8 @@ type fakeNativeTkeAPI struct {
 	describeMachinesRequest     []*tke2022.DescribeClusterMachinesRequest
 	describeNodePoolsRequest    []*tke2022.DescribeNodePoolsRequest
 	modifyNodePoolRequest       *tke2022.ModifyNodePoolRequest
+	modifyNodePoolRequests      []*tke2022.ModifyNodePoolRequest
+	modifyNodePoolErrAt         int
 	scaleNodePoolRequest        *tke2022.ScaleNodePoolRequest
 	scaleNodePoolRequests       []*tke2022.ScaleNodePoolRequest
 	scaleNodePoolErr            error
@@ -2476,7 +2478,7 @@ func bootstrapNodePool(nodePoolID, poolID, packageID, instanceType string, maxRe
 	api := &fakeNativeTkeAPI{maxReplicas: maxReplicas, instanceTypes: []string{instanceType}, labelPoolId: poolID, labelPackageId: packageID, labelInstanceType: instanceType}
 	return &tke2022.NodePool{
 		NodePoolId: common.StringPtr(nodePoolID), Name: common.StringPtr(poolID), Type: common.StringPtr("Native"), LifeState: common.StringPtr("Running"), DeletionProtection: common.BoolPtr(true),
-		Taints: []*tke2022.Taint{{Key: common.StringPtr("oplcloud.cn/workspace-id"), Value: common.StringPtr("unallocated"), Effect: common.StringPtr("NoSchedule")}},
+		Taints: []*tke2022.Taint{{Key: common.StringPtr("oplcloud.cn/package-id"), Value: common.StringPtr(packageID), Effect: common.StringPtr("NoSchedule")}},
 		Labels: []*tke2022.Label{
 			{Name: common.StringPtr("oplcloud.cn/pool-id"), Value: common.StringPtr(poolID)},
 			{Name: common.StringPtr("oplcloud.cn/package-id"), Value: common.StringPtr(packageID)},
@@ -2484,6 +2486,82 @@ func bootstrapNodePool(nodePoolID, poolID, packageID, instanceType string, maxRe
 			{Name: common.StringPtr("medopl.cn/workload"), Value: common.StringPtr("workspace")},
 		},
 		Native: fakeNativeNodePoolInfo(api),
+	}
+}
+
+func legacyBootstrapNodePool(nodePoolID, poolID, packageID, instanceType string, maxReplicas int64) *tke2022.NodePool {
+	pool := bootstrapNodePool(nodePoolID, poolID, packageID, instanceType, maxReplicas)
+	pool.Taints = []*tke2022.Taint{{Key: common.StringPtr("oplcloud.cn/workspace-id"), Value: common.StringPtr("unallocated"), Effect: common.StringPtr("NoSchedule")}}
+	return pool
+}
+
+func TestMigrateWorkspaceNodePoolTaintsIsOneWayAndExcludesSystem(t *testing.T) {
+	tkeAPI := &fakeNativeTkeAPI{nodePools: []*tke2022.NodePool{
+		bootstrapNodePool("np-system", "system", "system", "S5.2XLARGE16", 20),
+		legacyBootstrapNodePool("np-basic", "pool-basic-2c4g", "basic", basicResolvedInstanceType, 50),
+		legacyBootstrapNodePool("np-pro", "pool-pro-8c16g", "pro", proResolvedInstanceType, 50),
+	}}
+	client := newBootstrapTencentSDKClient(tkeAPI)
+	env := bootstrapEnv()
+	env["OPL_BASIC_COMPUTE_NODE_POOL_ID"] = "np-basic"
+	env["OPL_PRO_COMPUTE_NODE_POOL_ID"] = "np-pro"
+
+	dryRun := client.MigrateWorkspaceNodePoolTaints(Request{Action: "migrate_workspace_node_pool_taints", DryRun: true}, env)
+	if !dryRun.Ok || dryRun.Status != "migration_required" || dryRun.MutationCount != 0 || len(dryRun.NodePools) != 2 || len(tkeAPI.modifyNodePoolRequests) != 0 {
+		t.Fatalf("dry-run=%#v requests=%#v", dryRun, tkeAPI.modifyNodePoolRequests)
+	}
+	dryRunJSON, err := json.Marshal(dryRun)
+	if err != nil || strings.Count(string(dryRunJSON), `"estimatedNodeCount":0`) != 2 {
+		t.Fatalf("dry-run JSON must preserve zero Node impact for both pools: %s err=%v", dryRunJSON, err)
+	}
+	for _, result := range dryRun.NodePools {
+		if result.Status != "migration_required" || result.EstimatedNodeCount != 0 ||
+			!reflect.DeepEqual(result.TaintsBefore, []NodePoolTaintFact{{Key: "oplcloud.cn/workspace-id", Value: "unallocated", Effect: "NoSchedule"}}) ||
+			!reflect.DeepEqual(result.TaintsAfter, []NodePoolTaintFact{{Key: "oplcloud.cn/package-id", Value: result.PackageID, Effect: "NoSchedule"}}) {
+			t.Fatalf("dry-run result=%#v", result)
+		}
+	}
+
+	migrated := client.MigrateWorkspaceNodePoolTaints(Request{Action: "migrate_workspace_node_pool_taints"}, env)
+	if !migrated.Ok || migrated.Status != "migrated" || migrated.MutationCount != 2 || len(tkeAPI.modifyNodePoolRequests) != 2 {
+		t.Fatalf("migrated=%#v requests=%#v", migrated, tkeAPI.modifyNodePoolRequests)
+	}
+	for index, request := range tkeAPI.modifyNodePoolRequests {
+		wantID := []string{"np-basic", "np-pro"}[index]
+		wantPackage := []string{"basic", "pro"}[index]
+		if stringValue(request.NodePoolId) != wantID || len(request.Taints) != 1 || stringValue(request.Taints[0].Key) != "oplcloud.cn/package-id" ||
+			stringValue(request.Taints[0].Value) != wantPackage || stringValue(request.Taints[0].Effect) != "NoSchedule" || request.Native == nil ||
+			request.Native.UpdateExistedNode == nil || !*request.Native.UpdateExistedNode || request.Name != nil || request.Labels != nil || request.Tags != nil {
+			t.Fatalf("request[%d]=%#v", index, request)
+		}
+	}
+	for _, request := range tkeAPI.modifyNodePoolRequests {
+		if stringValue(request.NodePoolId) == env["OPL_SYSTEM_COMPUTE_NODE_POOL_ID"] {
+			t.Fatalf("System NodePool entered migration: %#v", request)
+		}
+	}
+
+	replayed := client.MigrateWorkspaceNodePoolTaints(Request{Action: "migrate_workspace_node_pool_taints"}, env)
+	if !replayed.Ok || replayed.Status != "registered" || replayed.MutationCount != 0 || len(tkeAPI.modifyNodePoolRequests) != 2 {
+		t.Fatalf("replayed=%#v requests=%#v", replayed, tkeAPI.modifyNodePoolRequests)
+	}
+}
+
+func TestMigrateWorkspaceNodePoolTaintsStopsAfterUnknownWithoutTouchingSecondPool(t *testing.T) {
+	tkeAPI := &fakeNativeTkeAPI{nodePools: []*tke2022.NodePool{
+		bootstrapNodePool("np-system", "system", "system", "S5.2XLARGE16", 20),
+		legacyBootstrapNodePool("np-basic", "pool-basic-2c4g", "basic", basicResolvedInstanceType, 50),
+		legacyBootstrapNodePool("np-pro", "pool-pro-8c16g", "pro", proResolvedInstanceType, 50),
+	}, modifyNodePoolErrAt: 1}
+	client := newBootstrapTencentSDKClient(tkeAPI)
+	env := bootstrapEnv()
+	env["OPL_BASIC_COMPUTE_NODE_POOL_ID"] = "np-basic"
+	env["OPL_PRO_COMPUTE_NODE_POOL_ID"] = "np-pro"
+
+	result := client.MigrateWorkspaceNodePoolTaints(Request{Action: "migrate_workspace_node_pool_taints"}, env)
+	if result.Ok || result.Status != "unknown" || result.MutationCount != 1 || len(tkeAPI.modifyNodePoolRequests) != 1 ||
+		stringValue(tkeAPI.modifyNodePoolRequests[0].NodePoolId) != "np-basic" {
+		t.Fatalf("result=%#v requests=%#v", result, tkeAPI.modifyNodePoolRequests)
 	}
 }
 
@@ -4691,11 +4769,22 @@ func (api *fakeNativeTkeAPI) ScaleNodePool(request *tke2022.ScaleNodePoolRequest
 func (api *fakeNativeTkeAPI) ModifyNodePool(request *tke2022.ModifyNodePoolRequest) (*tke2022.ModifyNodePoolResponse, error) {
 	api.record("ModifyNodePool")
 	api.modifyNodePoolRequest = request
+	api.modifyNodePoolRequests = append(api.modifyNodePoolRequests, request)
+	if api.modifyNodePoolErrAt > 0 && len(api.modifyNodePoolRequests) == api.modifyNodePoolErrAt {
+		return nil, errors.New("modify result unknown")
+	}
 	if request.Native != nil && request.Native.EnableAutoscaling != nil {
 		api.enableAutoscaling = *request.Native.EnableAutoscaling
 	}
 	if request.Native != nil && request.Native.AutoRepair != nil {
 		api.autoRepair = *request.Native.AutoRepair
+	}
+	if request.NodePoolId != nil && request.Taints != nil {
+		for _, pool := range api.nodePools {
+			if pool != nil && stringValue(pool.NodePoolId) == stringValue(request.NodePoolId) {
+				pool.Taints = request.Taints
+			}
+		}
 	}
 	return &tke2022.ModifyNodePoolResponse{
 		Response: &tke2022.ModifyNodePoolResponseParams{

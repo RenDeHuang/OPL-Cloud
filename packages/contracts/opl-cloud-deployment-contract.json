@@ -608,6 +608,7 @@
     "resolvedInstanceTypeRegistration": ["bootstrap_report", "node_pool_label", "tke_native_instance_types", "production_configuration"],
     "maxReplicas": {"basic": 50, "pro": 50, "source": "release_owner_approved_workflow_configuration_no_code_default_independent_pool_limits"},
     "mutationConfirmation": "CREATE_MISSING_WORKSPACE_NODEPOOLS",
+    "taintMigration": {"action": "migrate_workspace_node_pool_taints", "confirmation": "MIGRATE_BASIC_PRO_NODEPOOL_PACKAGE_TAINTS", "targetPools": ["basic", "pro"], "protectedSystemExcluded": true, "default": "dry_run", "unknown": "get_only_no_retry", "maxModifyNodePoolCalls": 2, "updateExistedNode": true},
     "dryRunMutationCount": 0,
     "idempotency": "register_running_wait_exact_creating_create_missing_only",
     "partialFailure": "preserve_created_pool_retry_missing_only",

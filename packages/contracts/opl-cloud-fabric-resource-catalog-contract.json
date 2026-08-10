@@ -53,6 +53,16 @@
       "unknownNodePool": "fail_closed_before_create"
     },
     "customerLaunchBehavior": "scale_exact_configured_pool_from_N_to_N_plus_1_without_nodepool_creation_or_existing_machine_claim"
+    ,"nodeOwnership": {
+      "nodePoolOwner": "oplcloud.cn/package-id=<basic|pro>:NoSchedule",
+      "fabricOwnerLabels": ["medopl.cn/workload=workspace", "oplcloud.cn/resource-id", "oplcloud.cn/account-id", "oplcloud.cn/workspace-id"],
+      "unallocated": "exact_machine_identity_and_package_taint_with_zero_fabric_owner_labels",
+      "targetOwned": "exact_machine_identity_and_package_taint_with_all_four_fabric_owner_labels",
+      "conflict": "partial_duplicate_or_other_fabric_owner_labels_or_workspace_taint",
+      "claimWrites": ["metadata.resourceVersion", "metadata.labels"],
+      "claimTaintMutation": false,
+      "runtimeScheduling": {"selector": "kubernetes.io/hostname=<NodeName>", "toleration": "oplcloud.cn/package-id=<PackageID>:NoSchedule"}
+    }
   },
   "pilotV2": {
     "computeAndStorageRole": "workspace_fulfillment_only",

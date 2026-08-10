@@ -40,6 +40,7 @@ var errTKEInstanceNotFound = errors.New("TKE instance not found")
 
 const tkeListPageLimit int64 = 100
 const nodePoolBootstrapMutationConfirmation = "CREATE_MISSING_WORKSPACE_NODEPOOLS"
+const nodePoolTaintMigrationMutationConfirmation = "MIGRATE_BASIC_PRO_NODEPOOL_PACKAGE_TAINTS"
 const protectedCheckNotChecked = "not_checked"
 const protectedCheckPassed = "passed"
 const protectedCheckFailed = "failed"
@@ -221,19 +222,28 @@ type ProtectedSystemFacts struct {
 }
 
 type NodePoolBootstrapResult struct {
-	PackageID                 string `json:"packageId"`
-	PoolID                    string `json:"poolId"`
-	NodePoolID                string `json:"nodePoolId,omitempty"`
-	InstanceType              string `json:"instanceType"`
-	CPU                       uint64 `json:"cpu"`
-	MemoryGB                  uint64 `json:"memoryGb"`
-	MaxReplicas               int64  `json:"maxReplicas"`
-	MaxReplicasSource         string `json:"maxReplicasSource"`
-	MaxReplicasDecision       string `json:"maxReplicasDecision"`
-	MaxReplicasConstraint     string `json:"maxReplicasConstraint"`
-	MaxReplicasRecommendation string `json:"maxReplicasRecommendation"`
-	Status                    string `json:"status"`
-	ErrorCode                 string `json:"errorCode,omitempty"`
+	PackageID                 string              `json:"packageId"`
+	PoolID                    string              `json:"poolId"`
+	NodePoolID                string              `json:"nodePoolId,omitempty"`
+	InstanceType              string              `json:"instanceType"`
+	CPU                       uint64              `json:"cpu"`
+	MemoryGB                  uint64              `json:"memoryGb"`
+	MaxReplicas               int64               `json:"maxReplicas"`
+	MaxReplicasSource         string              `json:"maxReplicasSource"`
+	MaxReplicasDecision       string              `json:"maxReplicasDecision"`
+	MaxReplicasConstraint     string              `json:"maxReplicasConstraint"`
+	MaxReplicasRecommendation string              `json:"maxReplicasRecommendation"`
+	Status                    string              `json:"status"`
+	ErrorCode                 string              `json:"errorCode,omitempty"`
+	TaintsBefore              []NodePoolTaintFact `json:"taintsBefore,omitempty"`
+	TaintsAfter               []NodePoolTaintFact `json:"taintsAfter,omitempty"`
+	EstimatedNodeCount        int64               `json:"estimatedNodeCount"`
+}
+
+type NodePoolTaintFact struct {
+	Key    string `json:"key"`
+	Value  string `json:"value"`
+	Effect string `json:"effect"`
 }
 
 type PreflightStage struct {
@@ -3833,7 +3843,7 @@ func buildCreateNativeNodePoolRequest(request Request, env map[string]string) (*
 		{Name: common.StringPtr("medopl.cn/workload"), Value: common.StringPtr("workspace")},
 	}
 	createRequest.Labels = nodePoolLabels
-	createRequest.Taints = []*tke2022.Taint{{Key: common.StringPtr("oplcloud.cn/workspace-id"), Value: common.StringPtr("unallocated"), Effect: common.StringPtr("NoSchedule")}}
+	createRequest.Taints = []*tke2022.Taint{{Key: common.StringPtr("oplcloud.cn/package-id"), Value: common.StringPtr(request.PackageId), Effect: common.StringPtr("NoSchedule")}}
 	createRequest.Native = &tke2022.CreateNativeNodePoolParam{
 		Scaling: &tke2022.MachineSetScaling{
 			MinReplicas:  common.Int64Ptr(0),
@@ -4050,11 +4060,7 @@ func bootstrapPackagePoolStatus(pool *tke2022.NodePool, spec bootstrapPackageSpe
 		len(native.InstanceTypes) != 1 || stringValue(native.InstanceTypes[0]) != spec.InstanceType || len(native.SubnetIds) == 0 {
 		return ""
 	}
-	if pool.DeletionProtection == nil || !*pool.DeletionProtection || len(pool.Taints) != 1 {
-		return ""
-	}
-	taint := pool.Taints[0]
-	if taint == nil || stringValue(taint.Key) != "oplcloud.cn/workspace-id" || stringValue(taint.Value) != "unallocated" || stringValue(taint.Effect) != "NoSchedule" {
+	if pool.DeletionProtection == nil || !*pool.DeletionProtection || bootstrapPackageTaintState(pool, spec) != "target" {
 		return ""
 	}
 	if lifeState == "creating" {
@@ -4063,7 +4069,57 @@ func bootstrapPackagePoolStatus(pool *tke2022.NodePool, spec bootstrapPackageSpe
 	return "registered"
 }
 
+func bootstrapPackageTaintState(pool *tke2022.NodePool, spec bootstrapPackageSpec) string {
+	if pool == nil || len(pool.Taints) != 1 || pool.Taints[0] == nil || stringValue(pool.Taints[0].Effect) != "NoSchedule" {
+		return "conflict"
+	}
+	taint := pool.Taints[0]
+	switch {
+	case stringValue(taint.Key) == "oplcloud.cn/package-id" && stringValue(taint.Value) == spec.PackageID:
+		return "target"
+	case stringValue(taint.Key) == "oplcloud.cn/workspace-id" && stringValue(taint.Value) == "unallocated":
+		return "legacy"
+	default:
+		return "conflict"
+	}
+}
+
+func bootstrapPackageMigrationStatus(pool *tke2022.NodePool, spec bootstrapPackageSpec) string {
+	if pool == nil {
+		return ""
+	}
+	clone := *pool
+	clone.Taints = []*tke2022.Taint{{Key: common.StringPtr("oplcloud.cn/package-id"), Value: common.StringPtr(spec.PackageID), Effect: common.StringPtr("NoSchedule")}}
+	if bootstrapPackagePoolStatus(&clone, spec) == "" {
+		return ""
+	}
+	return bootstrapPackageTaintState(pool, spec)
+}
+
+func nodePoolTaintFacts(pool *tke2022.NodePool) []NodePoolTaintFact {
+	if pool == nil {
+		return nil
+	}
+	result := make([]NodePoolTaintFact, 0, len(pool.Taints))
+	for _, taint := range pool.Taints {
+		if taint == nil {
+			continue
+		}
+		result = append(result, NodePoolTaintFact{Key: stringValue(taint.Key), Value: stringValue(taint.Value), Effect: stringValue(taint.Effect)})
+	}
+	return result
+}
+
 func bootstrapInventoryMatches(pools []*tke2022.NodePool, env map[string]string, specs []bootstrapPackageSpec) (map[string]*tke2022.NodePool, *Response) {
+	return bootstrapInventoryMatchesByStatus(pools, env, specs, bootstrapPackagePoolStatus)
+}
+
+func bootstrapInventoryMatchesByStatus(
+	pools []*tke2022.NodePool,
+	env map[string]string,
+	specs []bootstrapPackageSpec,
+	status func(*tke2022.NodePool, bootstrapPackageSpec) string,
+) (map[string]*tke2022.NodePool, *Response) {
 	systemPoolID := strings.TrimSpace(env["OPL_SYSTEM_COMPUTE_NODE_POOL_ID"])
 	var systemPool *tke2022.NodePool
 	for _, pool := range pools {
@@ -4102,7 +4158,7 @@ func bootstrapInventoryMatches(pools []*tke2022.NodePool, env map[string]string,
 			if pool == systemPool || !poolTouchesBootstrapSpec(pool, spec) {
 				continue
 			}
-			if matches[spec.PackageID] != nil || bootstrapPackagePoolStatus(pool, spec) == "" {
+			if matches[spec.PackageID] != nil || status(pool, spec) == "" {
 				return nil, &Response{Ok: false, ErrorCode: "node_pool_bootstrap_inventory_conflict", Message: "Package NodePool inventory is duplicated or does not match the fixed contract.", Retryable: false}
 			}
 			matches[spec.PackageID] = pool
@@ -4112,6 +4168,94 @@ func bootstrapInventoryMatches(pools []*tke2022.NodePool, env map[string]string,
 		return nil, &Response{Ok: false, ErrorCode: "node_pool_bootstrap_inventory_conflict", Message: "Basic and Pro cannot share a NodePool.", Retryable: false}
 	}
 	return matches, nil
+}
+
+func (client *tencentSDKClient) MigrateWorkspaceNodePoolTaints(request Request, env map[string]string) Response {
+	specs, failure := bootstrapPackageSpecs(env, true)
+	if failure != nil {
+		return *failure
+	}
+	if failure = validateBootstrapSystemConfig(env, specs); failure != nil {
+		return *failure
+	}
+	pools, err := client.bootstrapNodePoolInventory()
+	if err != nil {
+		return Response{Ok: false, Status: "unknown", ErrorCode: "node_pool_migration_inventory_unavailable", Message: "Tencent NodePool inventory is unavailable.", Retryable: false, MutationCount: 0}
+	}
+	matches, failure := bootstrapInventoryMatchesByStatus(pools, env, specs, bootstrapPackageMigrationStatus)
+	if failure != nil {
+		failure.Status = "conflict"
+		failure.MutationCount = 0
+		failure.NodePoolInventory = bootstrapNodePoolIDs(pools)
+		return *failure
+	}
+	protectedSystem, err := client.verifyBootstrapSystemIdentity(pools, env)
+	if err != nil {
+		return Response{Ok: false, Status: "conflict", ErrorCode: "protected_system_identity_mismatch", Message: "Protected system identity is unavailable or inconsistent.", ProtectedSystem: protectedSystem, NodePoolInventory: bootstrapNodePoolIDs(pools), MutationCount: 0, Retryable: false}
+	}
+
+	results := make([]NodePoolBootstrapResult, 0, len(specs))
+	migrationRequired := 0
+	for _, spec := range specs {
+		pool := matches[spec.PackageID]
+		state := bootstrapPackageMigrationStatus(pool, spec)
+		status := "registered"
+		if state == "legacy" {
+			status = "migration_required"
+			migrationRequired++
+		}
+		replicas := int64(0)
+		if pool.Native != nil && pool.Native.Replicas != nil {
+			replicas = *pool.Native.Replicas
+		}
+		results = append(results, NodePoolBootstrapResult{
+			PackageID: spec.PackageID, PoolID: spec.PoolID, NodePoolID: stringValue(pool.NodePoolId), InstanceType: spec.InstanceType,
+			CPU: spec.CPU, MemoryGB: spec.MemoryGB, MaxReplicas: spec.MaxReplicas, Status: status,
+			TaintsBefore:       nodePoolTaintFacts(pool),
+			TaintsAfter:        []NodePoolTaintFact{{Key: "oplcloud.cn/package-id", Value: spec.PackageID, Effect: "NoSchedule"}},
+			EstimatedNodeCount: replicas,
+		})
+	}
+	base := Response{Ok: true, Status: "registered", NodePools: results, ProtectedSystem: protectedSystem, NodePoolInventory: bootstrapNodePoolIDs(pools), MutationCount: 0}
+	if migrationRequired == 0 {
+		return base
+	}
+	if request.DryRun {
+		base.Status = "migration_required"
+		return base
+	}
+
+	for index, spec := range specs {
+		if results[index].Status != "migration_required" {
+			continue
+		}
+		modifyRequest := tke2022.NewModifyNodePoolRequest()
+		modifyRequest.ClusterId = common.StringPtr(client.clusterId)
+		modifyRequest.NodePoolId = common.StringPtr(results[index].NodePoolID)
+		modifyRequest.Taints = []*tke2022.Taint{{Key: common.StringPtr("oplcloud.cn/package-id"), Value: common.StringPtr(spec.PackageID), Effect: common.StringPtr("NoSchedule")}}
+		modifyRequest.Native = &tke2022.UpdateNativeNodePoolParam{UpdateExistedNode: common.BoolPtr(true)}
+		base.MutationCount++
+		modified, modifyErr := client.nativeTkeClient.ModifyNodePool(modifyRequest)
+		if modifyErr != nil || modified == nil || modified.Response == nil || strings.TrimSpace(stringValue(modified.Response.RequestId)) == "" {
+			base.Ok, base.Status, base.ErrorCode = false, "unknown", "node_pool_taint_migration_result_unknown"
+			base.Message = "Tencent NodePool taint migration result is unknown; reconcile by GET only."
+			results[index].Status, results[index].ErrorCode = "unknown", base.ErrorCode
+			base.NodePools = results
+			return base
+		}
+		readback, _, readbackErr := client.describeNativeNodePool(results[index].NodePoolID)
+		if readbackErr != nil || bootstrapPackagePoolStatus(readback, spec) != "registered" {
+			base.Ok, base.Status, base.ErrorCode = false, "unknown", "node_pool_taint_migration_readback_unknown"
+			base.Message = "Tencent NodePool taint migration readback is unknown; reconcile by GET only."
+			results[index].Status, results[index].ErrorCode = "unknown", base.ErrorCode
+			base.NodePools = results
+			return base
+		}
+		results[index].Status = "migrated"
+		results[index].TaintsAfter = nodePoolTaintFacts(readback)
+	}
+	base.Status, base.NodePools = "migrated", results
+	return base
 }
 
 func newProtectedSystemFacts() ProtectedSystemFacts {
@@ -4607,6 +4751,24 @@ func handleWithClient(request Request, env map[string]string, client TencentClie
 			return Response{Ok: false, ErrorCode: "node_pool_bootstrap_flag_required", Message: "Set RUN_TENCENT_NODE_POOL_BOOTSTRAP=1 only in the approved manual bootstrap workflow.", Retryable: false}
 		}
 		return client.BootstrapComputeNodePools(request, env)
+	}
+	if request.Action == "migrate_workspace_node_pool_taints" {
+		if !request.DryRun && strings.TrimSpace(env["RUN_TENCENT_NODE_POOL_TAINT_MIGRATION_CONFIRMATION"]) != nodePoolTaintMigrationMutationConfirmation {
+			return Response{Ok: false, ErrorCode: "node_pool_taint_migration_confirmation_required", Message: "The exact NodePool taint migration confirmation is required.", Retryable: false}
+		}
+		if !request.DryRun && strings.TrimSpace(env["RUN_TENCENT_CREATE_RELEASE_EXECUTION"]) != "1" {
+			return Response{Ok: false, ErrorCode: "live_mutation_flag_required", Message: "Set RUN_TENCENT_CREATE_RELEASE_EXECUTION=1 to run live Tencent resource mutations.", Retryable: false}
+		}
+		if !request.DryRun && strings.TrimSpace(env["RUN_TENCENT_NODE_POOL_TAINT_MIGRATION"]) != "1" {
+			return Response{Ok: false, ErrorCode: "node_pool_taint_migration_flag_required", Message: "Set RUN_TENCENT_NODE_POOL_TAINT_MIGRATION=1 only in the approved manual migration workflow.", Retryable: false}
+		}
+		migrator, ok := client.(interface {
+			MigrateWorkspaceNodePoolTaints(Request, map[string]string) Response
+		})
+		if !ok {
+			return Response{Ok: false, ErrorCode: "tencent_live_not_implemented", Message: "Tencent live NodePool taint migration is not implemented in this build.", Retryable: false}
+		}
+		return migrator.MigrateWorkspaceNodePoolTaints(request, env)
 	}
 	if isLiveMutation(request) && strings.TrimSpace(env["RUN_TENCENT_CREATE_RELEASE_EXECUTION"]) != "1" {
 		return Response{

@@ -4,6 +4,10 @@ This file is the mandatory human-readable launch contract for this implementatio
 
 The upstream repository owns product architecture. This repository owns its selected backend, exact prices, provider procurement, delivery state, and runtime evidence. A frozen target is not a readiness claim. Current gaps and required evidence are recorded here and in `packages/contracts/opl-cloud-launch-freeze-contract.json`.
 
+## Node Field Ownership
+
+Workspace NodePools own only the stable package taint `oplcloud.cn/package-id=<basic|pro>:NoSchedule`. Fabric owns only the four per-workspace labels (`medopl.cn/workload`, `oplcloud.cn/resource-id`, `oplcloud.cn/account-id`, and `oplcloud.cn/workspace-id`). A claim is a fresh `resourceVersion` CAS that writes labels only; it never writes the package taint. Runtime scheduling uses the exact `kubernetes.io/hostname=<NodeName>` selector and the matching package toleration.
+
 ## Product Surfaces And Owner Lanes
 
 The five product surfaces are OPL Gateway, OPL Workspace, OPL Console, OPL Fabric, and OPL Ledger. Workspace is the product delivered by Fabric after it opens CVM and CBS and deploys the pinned `one-person-lab-app` image; it is not a fifth service repository.
