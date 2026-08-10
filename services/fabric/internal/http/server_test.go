@@ -527,6 +527,7 @@ func workspaceActivationTruthHTTPFixture(t *testing.T, provider *workspaceActiva
 		ID: "compute-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", PackageID: "basic", Status: "running", Provider: "tencent-tke",
 		ProviderResourceID: "machine/node-alpha", ProviderRequestID: "req-compute", NodePoolID: "np-basic", InstanceID: "ins-alpha", CVMInstanceID: "ins-alpha",
 		MachineName: "node-alpha", NodeName: "10.0.0.8", PrivateIP: "10.0.0.8", InstanceType: "SA5.MEDIUM4", Zone: "ap-guangzhou-3",
+		CostTags: map[string]string{"opl_operation_id": "owner-alpha"},
 	}
 	storage := fabric.StorageVolume{
 		ID: "storage-alpha", AccountID: compute.AccountID, WorkspaceID: compute.WorkspaceID, Status: "ready", Provider: "tencent-tke",
@@ -548,6 +549,13 @@ func workspaceActivationTruthHTTPFixture(t *testing.T, provider *workspaceActiva
 		if err := store.Append(context.Background(), operation); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if _, created, err := store.ClaimMachine(context.Background(), fabric.MachineOwnership{
+		ID: "owner-alpha", ResourceID: compute.ID, AccountID: compute.AccountID, WorkspaceID: compute.WorkspaceID,
+		PackageID: compute.PackageID, NodePoolID: compute.NodePoolID, MachineID: compute.MachineName,
+		InstanceID: compute.CVMInstanceID, NodeName: compute.NodeName, Status: "active", ClaimedAt: now,
+	}); err != nil || !created {
+		t.Fatalf("seed machine ownership: created=%v err=%v", created, err)
 	}
 	input := fabric.WorkspaceActivationTruthInput{
 		LaunchOperationID: launchID, AccountID: compute.AccountID, WorkspaceID: compute.WorkspaceID,
