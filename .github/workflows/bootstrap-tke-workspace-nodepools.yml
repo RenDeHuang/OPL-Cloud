@@ -80,14 +80,31 @@ jobs:
       RUN_TENCENT_NODE_POOL_TAINT_MIGRATION_CONFIRMATION: ${{ inputs.taint_migration_confirmation }}
 
     steps:
+      - name: Prepare isolated source checkout
+        id: prepare_source
+        shell: bash
+        env:
+          OPL_SOURCE_CHECKOUT: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          expected="$GITHUB_WORKSPACE/.opl-checkouts/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
+          if [ "$OPL_SOURCE_CHECKOUT" != "$expected" ]; then
+            echo "Isolated source checkout path mismatch." >&2
+            exit 1
+          fi
+          mkdir -p "$GITHUB_WORKSPACE/.opl-checkouts"
+          mkdir "$OPL_SOURCE_CHECKOUT"
+
       - name: Checkout exact source
         uses: actions/checkout@v4
         with:
+          path: .opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
           ref: ${{ inputs.merged_sha }}
           fetch-depth: 0
 
-      - name: Verify mutation source
+      - name: Verify remote branch authority
         shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         env:
           OPL_MERGED_SHA: ${{ inputs.merged_sha }}
         run: |
@@ -96,10 +113,15 @@ jobs:
             echo "A full merged main SHA is required." >&2
             exit 1
           fi
-          git fetch --no-tags origin main:refs/remotes/origin/main
+          mapfile -t remote_heads < <(git ls-remote --heads origin)
+          if [ "${#remote_heads[@]}" -ne 1 ]; then
+            printf 'Production source authority requires exactly one remote head; observed: %s\n' "${remote_heads[*]:-none}" >&2
+            exit 1
+          fi
+          read -r remote_main_sha remote_main_ref <<< "${remote_heads[0]}"
           head_sha="$(git rev-parse HEAD)"
-          main_sha="$(git rev-parse refs/remotes/origin/main)"
-          if [ "$head_sha" != "$OPL_MERGED_SHA" ] || [ "$main_sha" != "$OPL_MERGED_SHA" ]; then
+          if [ "$remote_main_ref" != "refs/heads/main" ] || [ "$GITHUB_REF" != "refs/heads/main" ] ||
+             [ "$GITHUB_SHA" != "$head_sha" ] || [ "$head_sha" != "$OPL_MERGED_SHA" ] || [ "$remote_main_sha" != "$head_sha" ]; then
             echo "Bootstrap source is not the exact current origin/main revision." >&2
             exit 1
           fi
@@ -108,9 +130,11 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: "1.22"
+          cache-dependency-path: .opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}/services/fabric/go.sum
 
       - name: Require one NodePool operation mode
         shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         env:
           MUTATE_MISSING_POOLS: ${{ inputs.mutate_missing_pools }}
           MIGRATE_PACKAGE_TAINTS: ${{ inputs.migrate_package_taints }}
@@ -123,6 +147,7 @@ jobs:
 
       - name: Prepare bootstrap workspace
         shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           set -euo pipefail
           secret_dir="$(mktemp -d)"
@@ -147,6 +172,7 @@ jobs:
 
       - name: Build current provisioner
         shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           set -euo pipefail
           cd services/fabric
@@ -155,6 +181,7 @@ jobs:
       - name: Inventory and select Workspace SKUs
         if: ${{ inputs.migrate_package_taints != 'true' }}
         shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           set -euo pipefail
           request="$OPL_BOOTSTRAP_SECRET_DIR/sku-inventory-request.json"
@@ -217,6 +244,7 @@ jobs:
       - name: Revalidate selected Workspace SKUs before mutation
         if: ${{ inputs.migrate_package_taints != 'true' }}
         shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           set -euo pipefail
           request="$OPL_BOOTSTRAP_SECRET_DIR/pre-mutation-sku-inventory-request.json"
@@ -259,6 +287,7 @@ jobs:
         if: ${{ inputs.migrate_package_taints != 'true' }}
         continue-on-error: true
         shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         env:
           MUTATE_MISSING_POOLS: ${{ inputs.mutate_missing_pools }}
         run: |
@@ -280,6 +309,7 @@ jobs:
         if: ${{ inputs.migrate_package_taints == 'true' }}
         continue-on-error: true
         shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         env:
           RUN_TAINT_MIGRATION: ${{ env.RUN_TENCENT_NODE_POOL_TAINT_MIGRATION }}
         run: |
@@ -299,6 +329,7 @@ jobs:
       - name: Validate taint migration report
         if: always() && inputs.migrate_package_taints == 'true'
         shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         env:
           TAINT_MIGRATION_ACTION_OUTCOME: ${{ steps.taint_migration_action.outcome }}
           RUN_TAINT_MIGRATION: ${{ env.RUN_TENCENT_NODE_POOL_TAINT_MIGRATION }}
@@ -360,6 +391,7 @@ jobs:
       - name: Validate bootstrap report
         if: always() && inputs.migrate_package_taints != 'true'
         shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         env:
           BOOTSTRAP_ACTION_OUTCOME: ${{ steps.bootstrap_action.outcome }}
         run: |
@@ -424,6 +456,7 @@ jobs:
       - name: Require bootstrap action success
         if: ${{ inputs.migrate_package_taints != 'true' && steps.bootstrap_action.outcome != 'success' }}
         shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           echo "NodePool bootstrap did not complete; inspect the uploaded partial-state report." >&2
           exit 1
@@ -431,6 +464,7 @@ jobs:
       - name: Remove bootstrap secrets
         if: always()
         shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: |
           set -euo pipefail
           secret_dir="${OPL_BOOTSTRAP_SECRET_DIR:-}"
@@ -438,3 +472,19 @@ jobs:
             find "$secret_dir" -mindepth 1 -delete
             rmdir "$secret_dir"
           fi
+
+      - name: Remove isolated source checkout
+        if: always() && steps.prepare_source.outcome == 'success'
+        shell: bash
+        env:
+          OPL_SOURCE_CHECKOUT: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          source_dir="${OPL_SOURCE_CHECKOUT:-}"
+          expected="$GITHUB_WORKSPACE/.opl-checkouts/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
+          if [ "$source_dir" != "$expected" ] || [ -z "$source_dir" ] || [ ! -d "$source_dir" ]; then
+            echo "Isolated source checkout cleanup path mismatch or directory missing." >&2
+            exit 1
+          fi
+          find "$source_dir" -mindepth 1 -delete
+          rmdir "$source_dir"
