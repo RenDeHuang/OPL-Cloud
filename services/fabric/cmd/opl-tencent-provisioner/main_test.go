@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,6 +17,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	fabricstore "opl-cloud/services/fabric/internal/fabric"
 
 	cbs2017 "github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/cbs/v20170312"
 	"github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common"
@@ -2360,7 +2363,13 @@ func bootstrapEnv() map[string]string {
 }
 
 func newBootstrapTencentSDKClient(tkeAPI *fakeNativeTkeAPI) *tencentSDKClient {
-	return newWorkspaceSKUInventoryTencentSDKClient(tkeAPI)
+	return newBootstrapTencentSDKClientWithOperationStore(tkeAPI, fabricstore.NewMemoryOperationStore())
+}
+
+func newBootstrapTencentSDKClientWithOperationStore(tkeAPI *fakeNativeTkeAPI, store fabricstore.OperationStore) *tencentSDKClient {
+	client := newWorkspaceSKUInventoryTencentSDKClient(tkeAPI)
+	client.claimNodePoolTaintMigrationAttempt = store.ClaimRuntime
+	return client
 }
 
 func workspaceInventoryEnv() map[string]string {
@@ -2500,7 +2509,9 @@ func TestMigrateWorkspaceNodePoolTaintsIsOneWayAndExcludesSystem(t *testing.T) {
 		bootstrapNodePool("np-system", "system", "system", "S5.2XLARGE16", 20),
 		legacyBootstrapNodePool("np-basic", "pool-basic-2c4g", "basic", basicResolvedInstanceType, 50),
 		legacyBootstrapNodePool("np-pro", "pool-pro-8c16g", "pro", proResolvedInstanceType, 50),
-	}}
+	}, replicas: 2, machinePoolIds: []string{"np-basic", "np-basic"}}
+	tkeAPI.nodePools[1].Native.Replicas = common.Int64Ptr(2)
+	tkeAPI.nodePools[1].Native.ReadyReplicas = common.Int64Ptr(2)
 	client := newBootstrapTencentSDKClient(tkeAPI)
 	env := bootstrapEnv()
 	env["OPL_BASIC_COMPUTE_NODE_POOL_ID"] = "np-basic"
@@ -2511,16 +2522,24 @@ func TestMigrateWorkspaceNodePoolTaintsIsOneWayAndExcludesSystem(t *testing.T) {
 		t.Fatalf("dry-run=%#v requests=%#v", dryRun, tkeAPI.modifyNodePoolRequests)
 	}
 	dryRunJSON, err := json.Marshal(dryRun)
-	if err != nil || strings.Count(string(dryRunJSON), `"estimatedNodeCount":0`) != 2 {
-		t.Fatalf("dry-run JSON must preserve zero Node impact for both pools: %s err=%v", dryRunJSON, err)
+	if err != nil || strings.Count(string(dryRunJSON), `"estimatedNodeCount":0`) != 1 || strings.Count(string(dryRunJSON), `"estimatedNodeCount":2`) != 1 {
+		t.Fatalf("dry-run JSON must preserve the exact per-pool Node impact: %s err=%v", dryRunJSON, err)
 	}
 	for _, result := range dryRun.NodePools {
-		if result.Status != "migration_required" || result.EstimatedNodeCount != 0 ||
+		expectedNodes := []string{}
+		if result.PackageID == "basic" {
+			expectedNodes = []string{"10.0.0.11", "10.0.0.12"}
+		}
+		if result.Status != "migration_required" || result.EstimatedNodeCount != int64(len(expectedNodes)) || !reflect.DeepEqual(result.AffectedNodeNames, expectedNodes) ||
 			!reflect.DeepEqual(result.TaintsBefore, []NodePoolTaintFact{{Key: "oplcloud.cn/workspace-id", Value: "unallocated", Effect: "NoSchedule"}}) ||
 			!reflect.DeepEqual(result.TaintsAfter, []NodePoolTaintFact{{Key: "oplcloud.cn/package-id", Value: result.PackageID, Effect: "NoSchedule"}}) {
 			t.Fatalf("dry-run result=%#v", result)
 		}
+		if slices.Contains(result.AffectedNodeNames, env["OPL_SYSTEM_COMPUTE_NODE_NAME"]) {
+			t.Fatalf("System Node entered migration inventory: %#v", result)
+		}
 	}
+	env[nodePoolTaintMigrationBindingDigestEnv] = strings.Repeat("a", sha256.Size*2)
 
 	migrated := client.MigrateWorkspaceNodePoolTaints(Request{Action: "migrate_workspace_node_pool_taints"}, env)
 	if !migrated.Ok || migrated.Status != "migrated" || migrated.MutationCount != 2 || len(tkeAPI.modifyNodePoolRequests) != 2 {
@@ -2553,14 +2572,69 @@ func TestMigrateWorkspaceNodePoolTaintsStopsAfterUnknownWithoutTouchingSecondPoo
 		legacyBootstrapNodePool("np-basic", "pool-basic-2c4g", "basic", basicResolvedInstanceType, 50),
 		legacyBootstrapNodePool("np-pro", "pool-pro-8c16g", "pro", proResolvedInstanceType, 50),
 	}, modifyNodePoolErrAt: 1}
+	store := fabricstore.NewMemoryOperationStore()
+	client := newBootstrapTencentSDKClientWithOperationStore(tkeAPI, store)
+	env := bootstrapEnv()
+	env["OPL_BASIC_COMPUTE_NODE_POOL_ID"] = "np-basic"
+	env["OPL_PRO_COMPUTE_NODE_POOL_ID"] = "np-pro"
+	env[nodePoolTaintMigrationBindingDigestEnv] = strings.Repeat("a", sha256.Size*2)
+
+	result := client.MigrateWorkspaceNodePoolTaints(Request{Action: "migrate_workspace_node_pool_taints"}, env)
+	if result.Ok || result.Status != "unknown" || result.MutationCount != 1 || len(tkeAPI.modifyNodePoolRequests) != 1 ||
+		stringValue(tkeAPI.modifyNodePoolRequests[0].NodePoolId) != "np-basic" {
+		t.Fatalf("result=%#v requests=%#v", result, tkeAPI.modifyNodePoolRequests)
+	}
+
+	restarted := newBootstrapTencentSDKClientWithOperationStore(tkeAPI, store)
+	replayed := restarted.MigrateWorkspaceNodePoolTaints(Request{Action: "migrate_workspace_node_pool_taints"}, env)
+	if !replayed.Ok || replayed.Status != "reconcile_only" || replayed.MutationCount != 0 || len(tkeAPI.modifyNodePoolRequests) != 1 {
+		t.Fatalf("unknown attempt replayed provider mutation: replay=%#v requests=%#v", replayed, tkeAPI.modifyNodePoolRequests)
+	}
+	env[nodePoolTaintMigrationBindingDigestEnv] = strings.Repeat("b", sha256.Size*2)
+	conflict := restarted.MigrateWorkspaceNodePoolTaints(Request{Action: "migrate_workspace_node_pool_taints"}, env)
+	if conflict.Ok || conflict.Status != "conflict" || conflict.ErrorCode != "node_pool_migration_attempt_binding_conflict" ||
+		conflict.MutationCount != 0 || len(tkeAPI.modifyNodePoolRequests) != 1 {
+		t.Fatalf("drifted attempt binding=%#v requests=%#v", conflict, tkeAPI.modifyNodePoolRequests)
+	}
+}
+
+func TestMigrateWorkspaceNodePoolTaintsStopsBeforeMutationWhenNodeInventoryIsIncomplete(t *testing.T) {
+	tkeAPI := &fakeNativeTkeAPI{nodePools: []*tke2022.NodePool{
+		bootstrapNodePool("np-system", "system", "system", "S5.2XLARGE16", 20),
+		legacyBootstrapNodePool("np-basic", "pool-basic-2c4g", "basic", basicResolvedInstanceType, 50),
+		legacyBootstrapNodePool("np-pro", "pool-pro-8c16g", "pro", proResolvedInstanceType, 50),
+	}}
+	tkeAPI.nodePools[1].Native.Replicas = common.Int64Ptr(1)
+	tkeAPI.nodePools[1].Native.ReadyReplicas = common.Int64Ptr(1)
 	client := newBootstrapTencentSDKClient(tkeAPI)
 	env := bootstrapEnv()
 	env["OPL_BASIC_COMPUTE_NODE_POOL_ID"] = "np-basic"
 	env["OPL_PRO_COMPUTE_NODE_POOL_ID"] = "np-pro"
 
 	result := client.MigrateWorkspaceNodePoolTaints(Request{Action: "migrate_workspace_node_pool_taints"}, env)
-	if result.Ok || result.Status != "unknown" || result.MutationCount != 1 || len(tkeAPI.modifyNodePoolRequests) != 1 ||
-		stringValue(tkeAPI.modifyNodePoolRequests[0].NodePoolId) != "np-basic" {
+
+	if result.Ok || result.Status != "unknown" || result.ErrorCode != "node_pool_migration_node_inventory_unavailable" || result.MutationCount != 0 || len(tkeAPI.modifyNodePoolRequests) != 0 {
+		t.Fatalf("result=%#v requests=%#v", result, tkeAPI.modifyNodePoolRequests)
+	}
+}
+
+func TestMigrateWorkspaceNodePoolTaintsStopsBeforeMutationWhenFullBindingIsInvalid(t *testing.T) {
+	tkeAPI := &fakeNativeTkeAPI{nodePools: []*tke2022.NodePool{
+		bootstrapNodePool("np-system", "system", "system", "S5.2XLARGE16", 20),
+		legacyBootstrapNodePool("np-basic", "pool-basic-2c4g", "basic", basicResolvedInstanceType, 50),
+		legacyBootstrapNodePool("np-pro", "pool-pro-8c16g", "pro", proResolvedInstanceType, 50),
+	}, replicas: 1, machinePoolIds: []string{"np-basic"}}
+	tkeAPI.nodePools[1].Native.Replicas = common.Int64Ptr(1)
+	tkeAPI.nodePools[1].Native.ReadyReplicas = common.Int64Ptr(1)
+	client := newBootstrapTencentSDKClient(tkeAPI)
+	env := bootstrapEnv()
+	env["OPL_BASIC_COMPUTE_NODE_POOL_ID"] = "np-basic"
+	env["OPL_PRO_COMPUTE_NODE_POOL_ID"] = "np-pro"
+	env[nodePoolTaintMigrationBindingDigestEnv] = "not-a-sha256-digest"
+
+	result := client.MigrateWorkspaceNodePoolTaints(Request{Action: "migrate_workspace_node_pool_taints"}, env)
+
+	if result.Ok || result.Status != "conflict" || result.ErrorCode != "node_pool_migration_binding_invalid" || result.MutationCount != 0 || len(tkeAPI.modifyNodePoolRequests) != 0 {
 		t.Fatalf("result=%#v requests=%#v", result, tkeAPI.modifyNodePoolRequests)
 	}
 }
