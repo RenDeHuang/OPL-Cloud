@@ -1,4 +1,4 @@
-import { AlertCircle, ArrowLeft, Cloud, LockKeyhole, RefreshCw } from "lucide-react";
+import { AlertCircle, ArrowLeft, Cloud, KeyRound, LockKeyhole, ReceiptText, RefreshCw, Server } from "lucide-react";
 import { useState, type FormEvent } from "react";
 
 import type { ConsoleController } from "../app/use-console-controller.ts";
@@ -13,13 +13,17 @@ export function PublicHome({ controller }: { controller: ConsoleController }) {
     <div className="access-page">
       <nav className="public-nav"><PublicBrand /><Button onClick={() => controller.navigate("/login")} variant="outline">Console 登录</Button></nav>
       <main className="access-main">
-        <div>
+        <section className="access-hero">
           <p className="kicker">OPL Cloud Console</p>
           <h1>工作区、API 服务与账单，在一个权威控制面里。</h1>
-          <p>管理员预配置账户后登录。公开注册、在线充值和浏览器端业务推导不属于当前产品边界。</p>
+          <p className="access-lede">管理员预配置账户后登录。公开注册、在线充值和浏览器端业务推导不属于当前产品边界。</p>
           <Button color="primary" onClick={() => controller.navigate("/login")}>进入 Console</Button>
-        </div>
-        <img alt="OPL Cloud" className="access-mark" src="/opl-app-icon.png" />
+        </section>
+        <ul aria-label="产品能力" className="access-features">
+          <li><Server aria-hidden size={22} /><div><strong>工作区</strong><span>预配置计算与存储，按权威状态交付。</span></div></li>
+          <li><KeyRound aria-hidden size={22} /><div><strong>API 服务</strong><span>网关密钥、请求用量与调用事实可审计。</span></div></li>
+          <li><ReceiptText aria-hidden size={22} /><div><strong>账单与用量</strong><span>日历月计费、余额守卫与正式回执。</span></div></li>
+        </ul>
       </main>
     </div>
   );
@@ -36,6 +40,12 @@ export function LoginPage({ controller }: { controller: ConsoleController }) {
   return (
     <main className="login-page">
       <button className="back-button" onClick={() => controller.navigate("/")}><ArrowLeft aria-hidden size={17} />返回</button>
+      <aside aria-hidden="true" className="login-aside">
+        <img alt="" src="/opl-app-icon.png" />
+        <p className="kicker">OPL Cloud Console</p>
+        <strong>权威控制面</strong>
+        <span>工作区 · API 服务 · 账单</span>
+      </aside>
       <section className="login-panel" aria-labelledby="login-heading">
         <div className="login-brand"><img alt="OPL Cloud" src="/opl-app-icon.png" /><div><strong id="login-heading">Console 登录</strong><span>管理员预配置账户</span></div></div>
         <form onSubmit={submit}>
