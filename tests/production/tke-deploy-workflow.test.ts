@@ -603,7 +603,8 @@ test("production self-hosted jobs use one run-and-job isolated source checkout",
       "recovery-plan-operation",
       "compute-claim-readback"
     ]],
-    [".github/workflows/production-node-drift-diagnostic.yml", ["diagnose"]]
+    [".github/workflows/production-node-drift-diagnostic.yml", ["diagnose"]],
+    [".github/workflows/bootstrap-tke-workspace-nodepools.yml", ["bootstrap"]]
   ]);
 
   for (const [path, expectedJobs] of workflowJobs) {
@@ -798,8 +799,9 @@ test("dedicated NodePool bootstrap is the only manual CreateNodePool workflow", 
   const checkout = stepsByName(job).get("Checkout exact source");
   assert.equal(checkout.with.ref, "${{ inputs.merged_sha }}");
   assert.equal(checkout.with["fetch-depth"], 0);
-  const sourceGate = serializedStep(stepsByName(job).get("Verify mutation source"));
-  assert.match(sourceGate, /refs\/remotes\/origin\/main/);
+  const sourceGate = serializedStep(stepsByName(job).get("Verify remote branch authority"));
+  assert.match(sourceGate, /git ls-remote --heads origin/);
+  assert.match(sourceGate, /refs\/heads\/main/);
   assert.match(sourceGate, /git rev-parse HEAD/);
   assert.match(sourceGate, /OPL_MERGED_SHA/);
   const operationModeGate = serializedStep(stepsByName(job).get("Require one NodePool operation mode"));

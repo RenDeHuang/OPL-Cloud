@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 42,
+  "schemaVersion": 43,
   "owner": "OPL Fabric",
   "purpose": "Deployment workflow, immutable Cloud and Workspace images, TKE handoff, read-only diagnostics, and production-verification safety.",
   "state": "current",
@@ -121,6 +121,9 @@
       ],
       ".github/workflows/production-node-drift-diagnostic.yml": [
         "diagnose"
+      ],
+      ".github/workflows/bootstrap-tke-workspace-nodepools.yml": [
+        "bootstrap"
       ]
     },
     "relativePath": ".opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}",
