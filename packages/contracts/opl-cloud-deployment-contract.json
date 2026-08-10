@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 41,
+  "schemaVersion": 42,
   "owner": "OPL Fabric",
   "purpose": "Deployment workflow, immutable Cloud and Workspace images, TKE handoff, read-only diagnostics, and production-verification safety.",
   "state": "current",
@@ -118,6 +118,9 @@
         "recovery-acceptance-canary",
         "recovery-plan-operation",
         "compute-claim-readback"
+      ],
+      ".github/workflows/production-node-drift-diagnostic.yml": [
+        "diagnose"
       ]
     },
     "relativePath": ".opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}",
@@ -135,6 +138,56 @@
       "additionalHeads": "fail_closed",
       "remoteMutation": 0
     }
+  },
+  "nodeDriftGetOnlyDiagnostic": {
+    "file": ".github/workflows/production-node-drift-diagnostic.yml",
+    "job": "diagnose",
+    "runner": ["self-hosted", "tencent-cloud", "opl-cloud", "tke-vpc"],
+    "environment": "production",
+    "inputs": ["merged_sha", "launch_operation_id", "confirmation"],
+    "confirmation": "GET_ONLY_NODE_DRIFT_DIAGNOSTIC_ONCE",
+    "sourceAuthority": "exact_current_origin_main_only",
+    "resourceIdentitySource": "control_plane_and_fabric_authoritative_get_from_original_launch_only",
+    "originalLaunchAuthority": "control_plane_runtime_operations_exact_one_read_only",
+    "originalLaunchRequiredIdentity": "account_id_owner_user_id_workspace_id_compute_allocation_id",
+    "customerIdentity": "original_launch_account_owner_plus_control_plane_account_user_email_plus_original_launch_and_account_persisted_sub2api_user_id_binding_plus_approved_normalized_email_sha256",
+    "customerIdentityGate": "approved_normalized_email_sha256_plus_original_launch_account_owner_plus_control_plane_account_user_email_plus_persisted_sub2api_user_id_binding",
+    "sub2apiIdentityAuthority": "control_plane.persisted_sub2api_binding",
+    "sub2apiRealtimeRead": false,
+    "identityGateOrdering": "before_fabric_tencent_and_target_kubernetes_get",
+    "postgresSession": "default_transaction_read_only_on",
+    "resourceIdentityInputs": "forbidden",
+    "readAuthorities": [
+      "control_plane_original_launch_account_user_postgresql_read",
+      "control_plane_persisted_sub2api_binding",
+      "fabric_operation_compute_allocation_machine_ownership_get",
+      "kubernetes_node_machine_machineset_events_get",
+      "tke_describe_log_switches",
+      "cls_search_log_when_audit_opened"
+    ],
+    "nodeEvidence": [
+      "uid_digest",
+      "creation_timestamp",
+      "resource_version",
+      "ownership_label_match_booleans",
+      "workspace_taint_match_state",
+      "relevant_managed_fields_manager_operation_time_and_safe_field_paths"
+    ],
+    "controllerEvidence": [
+      "node_event_reason_reporting_controller_action_and_times_without_message",
+      "machine_and_node_pool_owner_digests_and_managed_fields",
+      "audit_patch_update_create_delete_subject_or_digest_user_agent_time_and_node_uid_digest"
+    ],
+    "rootCausePacket": ["sameNodeUID", "exactWriter", "exactController", "exactWriteTime", "exactOwnedFields", "rootCause", "evidence"],
+    "attributionGate": "same_uid_requires_later_audit_unallocated_write_and_matching_managed_fields_or_explicit_request_ownership_paths_recreation_requires_old_target_uid_current_create_uid_and_matching_current_managed_fields",
+    "auditWindow": "original_launch_persisted_recovery_execution_started_at_plus_or_minus_15_minutes",
+    "tkeAuditResultContract": "cls_search_log_v20201016_results_log_info_log_json",
+    "inconclusive": "DIAGNOSTIC_INCONCLUSIVE_without_synthetic_writer_or_uid_relation",
+    "rawEvidence": "runner_temp_0600_never_uploaded",
+    "artifact": "allowlisted_redacted_root_cause_packet_only",
+    "artifactForbidden": ["raw_resource_json", "raw_identity", "ip", "labels", "event_message", "token", "secret", "tke_topic_and_logset_identity"],
+    "mutationCounts": {"sub2api": 0, "tencent": 0, "kubernetes": 0},
+    "forbidden": ["successor", "validate", "execute", "fabric_claim", "provider_mutation", "storage_mutation"]
   },
   "normalWorkspaceLaunchImageGate": {
     "source": "OPL_WORKSPACE_IMAGE",

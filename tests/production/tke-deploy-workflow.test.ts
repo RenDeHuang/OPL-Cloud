@@ -602,7 +602,8 @@ test("production self-hosted jobs use one run-and-job isolated source checkout",
       "recovery-acceptance-canary",
       "recovery-plan-operation",
       "compute-claim-readback"
-    ]]
+    ]],
+    [".github/workflows/production-node-drift-diagnostic.yml", ["diagnose"]]
   ]);
 
   for (const [path, expectedJobs] of workflowJobs) {

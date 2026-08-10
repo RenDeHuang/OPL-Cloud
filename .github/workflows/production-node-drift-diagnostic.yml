@@ -1,0 +1,223 @@
+name: Production Node Drift GET-only Diagnostic
+
+on:
+  workflow_dispatch:
+    inputs:
+      merged_sha:
+        description: Exact current origin/main SHA containing this dedicated diagnostic.
+        required: true
+        type: string
+      launch_operation_id:
+        description: Original Launch operation ID; every provider resource identity is derived by authoritative GET.
+        required: true
+        type: string
+      confirmation:
+        description: Confirm this one GET-only diagnostic run.
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: production-node-drift-get-only-diagnostic
+  cancel-in-progress: false
+
+jobs:
+  diagnose:
+    name: Diagnose one original Launch Node drift without mutation
+    if: ${{ github.ref == 'refs/heads/main' && github.sha == inputs.merged_sha && inputs.confirmation == 'GET_ONLY_NODE_DRIFT_DIAGNOSTIC_ONCE' }}
+    runs-on: [self-hosted, tencent-cloud, opl-cloud, tke-vpc]
+    timeout-minutes: 20
+    environment: production
+    env:
+      OPL_MERGED_SHA: ${{ inputs.merged_sha }}
+      OPL_LAUNCH_OPERATION_ID: ${{ inputs.launch_operation_id }}
+      OPL_NODE_DRIFT_EXPECTED_CUSTOMER_EMAIL: ${{ secrets.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_CUSTOMER_EMAIL }}
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      OPL_K8S_NAMESPACE: ${{ vars.OPL_K8S_NAMESPACE || 'opl-cloud' }}
+      TENCENT_DEPLOY_KUBECONFIG_PATH: ${{ vars.TENCENT_DEPLOY_KUBECONFIG_PATH || '/home/actions/.secrets/medopl/v22/kubeconfig-package-d-deploy' }}
+      TENCENT_DEPLOY_KUBECONFIG_B64: ${{ secrets.TENCENT_DEPLOY_KUBECONFIG_B64 }}
+      TENCENTCLOUD_SECRET_ID: ${{ secrets.TENCENT_MUTATION_SECRET_ID }}
+      TENCENTCLOUD_SECRET_KEY: ${{ secrets.TENCENT_MUTATION_SECRET_KEY }}
+      TENCENTCLOUD_REGION: ${{ vars.TENCENTCLOUD_REGION || 'na-siliconvalley' }}
+      TENCENT_DEPLOY_CLUSTER_ID: ${{ vars.TENCENT_DEPLOY_CLUSTER_ID }}
+      OPL_NODE_DRIFT_RAW_DIR: ${{ runner.temp }}/production-node-drift-diagnostic-raw
+      OPL_NODE_DRIFT_ARTIFACT_DIR: ${{ runner.temp }}/production-node-drift-diagnostic
+
+    steps:
+      - name: Prepare isolated source checkout
+        id: prepare_source
+        shell: bash
+        env:
+          OPL_SOURCE_CHECKOUT: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          expected="$GITHUB_WORKSPACE/.opl-checkouts/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
+          if [ "$OPL_SOURCE_CHECKOUT" != "$expected" ]; then
+            echo "Isolated source checkout path mismatch." >&2
+            exit 1
+          fi
+          mkdir -p "$GITHUB_WORKSPACE/.opl-checkouts"
+          mkdir "$OPL_SOURCE_CHECKOUT"
+
+      - name: Checkout exact merged main
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.merged_sha }}
+          fetch-depth: 0
+          path: .opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+
+      - name: Verify remote branch authority
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$OPL_MERGED_SHA" =~ ^[0-9a-f]{40}$ ]] || ! [[ "$OPL_LAUNCH_OPERATION_ID" =~ ^workspace-launch-[A-Za-z0-9-]+$ ]]; then
+            echo "The diagnostic requires exact main and original Launch identities." >&2
+            exit 1
+          fi
+          mapfile -t remote_heads < <(git ls-remote --heads origin)
+          if [ "${#remote_heads[@]}" -ne 1 ]; then
+            echo "Production source authority requires exactly one remote head." >&2
+            exit 1
+          fi
+          read -r remote_main_sha remote_main_ref <<< "${remote_heads[0]}"
+          head_sha="$(git rev-parse HEAD)"
+          if [ "$remote_main_ref" != "refs/heads/main" ] || [ "$GITHUB_REF" != "refs/heads/main" ] || [ "$GITHUB_SHA" != "$head_sha" ] || [ "$remote_main_sha" != "$head_sha" ] || [ "$head_sha" != "$OPL_MERGED_SHA" ]; then
+            echo "Diagnostic source is not exact current origin/main." >&2
+            exit 1
+          fi
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Prepare GET-only transports and runner temporary evidence boundary
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          raw_dir="$RUNNER_TEMP/production-node-drift-diagnostic-raw"
+          artifact_dir="$RUNNER_TEMP/production-node-drift-diagnostic"
+          if [ "$raw_dir" != "$OPL_NODE_DRIFT_RAW_DIR" ] || [ "$artifact_dir" != "$OPL_NODE_DRIFT_ARTIFACT_DIR" ]; then
+            echo "Node drift temporary evidence boundary mismatch." >&2
+            exit 1
+          fi
+          mkdir "$raw_dir" "$artifact_dir"
+          chmod 700 "$raw_dir" "$artifact_dir"
+          node tools/production-node-drift-diagnostic.ts \
+            --launch-operation-id "$OPL_LAUNCH_OPERATION_ID" \
+            --identity-out "$raw_dir/control-plane-identity.json" \
+            --out "$artifact_dir/root-cause-packet.json"
+          kubeconfig="$raw_dir/kubeconfig"
+          if [ -f "$TENCENT_DEPLOY_KUBECONFIG_PATH" ]; then
+            cp "$TENCENT_DEPLOY_KUBECONFIG_PATH" "$kubeconfig"
+          elif [ -n "${TENCENT_DEPLOY_KUBECONFIG_B64:-}" ]; then
+            printf '%s' "$TENCENT_DEPLOY_KUBECONFIG_B64" | base64 -d > "$kubeconfig"
+          else
+            echo "Production kubeconfig is unavailable." >&2
+            exit 1
+          fi
+          chmod 600 "$kubeconfig"
+          fabric_pods="$(kubectl --kubeconfig "$kubeconfig" -n "$OPL_K8S_NAMESPACE" get pods -l app.kubernetes.io/name=opl-cloud,app.kubernetes.io/component=fabric -o json)"
+          fabric_pod="$(node --input-type=module -e 'const v=JSON.parse(process.argv[1]); const p=(v.items||[]).filter((x)=>!x.metadata?.deletionTimestamp && x.status?.phase === "Running" && x.status?.conditions?.some((c)=>c.type === "Ready" && c.status === "True")); if(p.length!==1) process.exit(1); process.stdout.write(p[0].metadata.name)' "$fabric_pods")"
+          token_b64="$(kubectl --kubeconfig "$kubeconfig" -n "$OPL_K8S_NAMESPACE" get secret opl-cloud-internal-service -o jsonpath='{.data.OPL_INTERNAL_SERVICE_TOKEN}')"
+          if [ -z "$token_b64" ]; then
+            echo "Fabric internal token is unavailable." >&2
+            exit 1
+          fi
+          printf '%s' "$token_b64" | base64 -d > "$raw_dir/internal-token"
+          unset token_b64
+          chmod 600 "$raw_dir/internal-token"
+          kubectl --kubeconfig "$kubeconfig" -n "$OPL_K8S_NAMESPACE" port-forward "pod/$fabric_pod" 18082:8082 > "$raw_dir/fabric-port-forward.log" 2>&1 &
+          port_forward_pid=$!
+          printf '%s\n' "$port_forward_pid" > "$raw_dir/fabric-port-forward.pid"
+          chmod 600 "$raw_dir/fabric-port-forward.pid"
+          ready=0
+          for attempt in $(seq 1 30); do
+            if curl --silent --fail --max-time 1 http://127.0.0.1:18082/healthz >/dev/null 2>&1; then ready=1; break; fi
+            sleep 1
+          done
+          if [ "$ready" -ne 1 ]; then
+            echo "Fabric GET transport is unavailable." >&2
+            exit 1
+          fi
+          echo "OPL_NODE_DRIFT_KUBECONFIG=$kubeconfig" >> "$GITHUB_ENV"
+          echo "OPL_INTERNAL_SERVICE_TOKEN_PATH=$raw_dir/internal-token" >> "$GITHUB_ENV"
+          echo "OPL_FABRIC_INTERNAL_ORIGIN=http://127.0.0.1:18082" >> "$GITHUB_ENV"
+
+      - name: Collect and project one GET-only Node drift packet
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          node tools/production-node-drift-diagnostic.ts \
+            --launch-operation-id "$OPL_LAUNCH_OPERATION_ID" \
+            --identity "$OPL_NODE_DRIFT_RAW_DIR/control-plane-identity.json" \
+            --out "$OPL_NODE_DRIFT_ARTIFACT_DIR/root-cause-packet.json"
+
+      - name: Validate redacted Artifact allowlist
+        id: artifact_gate
+        if: always()
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          node tools/production-node-drift-diagnostic.ts --validate \
+            --artifact "$OPL_NODE_DRIFT_ARTIFACT_DIR/root-cause-packet.json"
+
+      - name: Upload redacted Root Cause Packet only
+        if: ${{ always() && steps.artifact_gate.outcome == 'success' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-node-drift-root-cause-packet
+          path: ${{ runner.temp }}/production-node-drift-diagnostic/root-cause-packet.json
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Remove runner temporary diagnostic evidence
+        if: always() && steps.prepare_source.outcome == 'success'
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          raw_dir="$RUNNER_TEMP/production-node-drift-diagnostic-raw"
+          artifact_dir="$RUNNER_TEMP/production-node-drift-diagnostic"
+          if [ "$raw_dir" != "$OPL_NODE_DRIFT_RAW_DIR" ] || [ "$artifact_dir" != "$OPL_NODE_DRIFT_ARTIFACT_DIR" ]; then
+            echo "Node drift cleanup boundary mismatch." >&2
+            exit 1
+          fi
+          if [ -f "$raw_dir/fabric-port-forward.pid" ]; then
+            port_forward_pid="$(tr -d '\r\n' < "$raw_dir/fabric-port-forward.pid")"
+            if [[ "$port_forward_pid" =~ ^[0-9]+$ ]]; then
+              kill "$port_forward_pid" 2>/dev/null || true
+              wait "$port_forward_pid" 2>/dev/null || true
+            fi
+          fi
+          if [ -d "$raw_dir" ]; then
+            find "$raw_dir" -mindepth 1 -maxdepth 1 -type f -delete
+            rmdir "$raw_dir"
+          fi
+          if [ -d "$artifact_dir" ]; then
+            find "$artifact_dir" -mindepth 1 -maxdepth 1 -type f -delete
+            rmdir "$artifact_dir"
+          fi
+
+      - name: Remove isolated source checkout
+        if: always() && steps.prepare_source.outcome == 'success'
+        shell: bash
+        env:
+          OPL_SOURCE_CHECKOUT: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          source_dir="${OPL_SOURCE_CHECKOUT:-}"
+          expected="$GITHUB_WORKSPACE/.opl-checkouts/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
+          if [ -z "$source_dir" ] || [ "$source_dir" != "$expected" ] || [ ! -d "$source_dir" ]; then
+            echo "Isolated source cleanup boundary mismatch." >&2
+            exit 1
+          fi
+          find "$source_dir" -mindepth 1 -delete
+          rmdir "$source_dir"
