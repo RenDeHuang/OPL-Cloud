@@ -19,12 +19,13 @@ const (
 )
 
 type StageEvidence struct {
-	State               EvidenceState `json:"state"`
-	Confirmed           bool          `json:"confirmed"`
-	Expected            string        `json:"expected,omitempty"`
-	Actual              string        `json:"actual,omitempty"`
-	Authority           string        `json:"authority,omitempty"`
-	FirstFalsePredicate string        `json:"firstFalsePredicate,omitempty"`
+	State                  EvidenceState `json:"state"`
+	Confirmed              bool          `json:"confirmed"`
+	RecoveryClassification string        `json:"recoveryClassification,omitempty"`
+	Expected               string        `json:"expected,omitempty"`
+	Actual                 string        `json:"actual,omitempty"`
+	Authority              string        `json:"authority,omitempty"`
+	FirstFalsePredicate    string        `json:"firstFalsePredicate,omitempty"`
 }
 
 // EvidenceSnapshot is the Compute Claim decision input. It contains only
@@ -61,6 +62,7 @@ type CurrentDecision struct {
 const (
 	nextActionGetOnlyReconcileStorage = "GET_ONLY_RECONCILE_STORAGE"
 	nextActionNodeOnlyContinuation    = "NODE_ONLY_CONTINUATION_ONCE"
+	nextActionConfirmedNodeDrift      = "CONFIRMED_NODE_DRIFT_REQUIRES_APPROVAL"
 	nextActionResumeExistingStorage   = "RESUME_EXISTING_STORAGE"
 	nextActionContinueOriginalLaunch  = "CONTINUE_ORIGINAL_LAUNCH"
 	nextActionManualReview            = "MANUAL_REVIEW"
@@ -87,6 +89,13 @@ func ReduceLaunchStage(snapshot EvidenceSnapshot) CurrentDecision {
 		decision.Expected = firstNonEmptyDecision(compute.Expected, "target_owned")
 		decision.Actual = firstNonEmptyDecision(compute.Actual, "unallocated")
 		decision.Authority = firstNonEmptyDecision(compute.Authority, "provider.nodeOwnership")
+		if compute.RecoveryClassification == "confirmed_node_drift" {
+			decision.NextAction = nextActionConfirmedNodeDrift
+			decision.RequiresApproval = true
+			decision.AllowedMutation = "confirmed_node_drift_recovery"
+			decision.MutationState = "pending"
+			return decision
+		}
 		decision.NextAction = nextActionNodeOnlyContinuation
 		decision.AllowedMutation = "node_only_continuation"
 		decision.MutationState = "pending"
@@ -148,6 +157,12 @@ func AuthorizeStageMutation(decision CurrentDecision, mutation string) bool {
 		decision.AllowedMutation == "node_only_continuation"
 }
 
+func AuthorizeApprovedStageMutation(decision CurrentDecision, mutation string) bool {
+	return decision.CurrentStage == "compute_claim" && strings.TrimSpace(mutation) == "confirmed_node_drift_recovery" &&
+		decision.RequiresApproval && decision.StageState == "pending" && decision.MutationState == "pending" &&
+		decision.NextAction == nextActionConfirmedNodeDrift && decision.AllowedMutation == "confirmed_node_drift_recovery"
+}
+
 func firstNonEmptyDecision(values ...string) string {
 	for _, value := range values {
 		if strings.TrimSpace(value) != "" {
@@ -176,6 +191,7 @@ func workspaceLaunchEvidenceSnapshot(operation workspaceLaunchOperation) Evidenc
 	}
 	if operation.ComputeClaimProof != nil {
 		snapshot.ComputeClaim.Actual = operation.ComputeClaimProof.NodeOwnershipState
+		snapshot.ComputeClaim.RecoveryClassification = operation.ComputeClaimProof.RecoveryClassification
 		snapshot.ComputeClaim.State = EvidencePresent
 		snapshot.ComputeClaim.Confirmed = operation.ComputeClaimProof.NodeOwnershipState == "target_owned" && operation.Phase != "compute_claim_pending"
 	} else if state := operation.ComputeClaimTerminalEvidenceNodeState(); state != "" {
@@ -195,11 +211,12 @@ func workspaceLaunchEvidenceSnapshot(operation workspaceLaunchOperation) Evidenc
 func workspaceLaunchEvidenceSnapshotWithComputeEvaluation(operation workspaceLaunchOperation, evaluation workspaceComputeClaimProofEvaluation, proofErr error) EvidenceSnapshot {
 	snapshot := workspaceLaunchEvidenceSnapshot(operation)
 	snapshot.ComputeClaim = StageEvidence{
-		State:               EvidenceUnavailable,
-		Expected:            firstNonEmptyDecision(evaluation.Expected, "target_owned"),
-		Actual:              firstNonEmptyDecision(evaluation.Actual, "unknown"),
-		Authority:           firstNonEmptyDecision(evaluation.Authority, "provider.computeClaimProof"),
-		FirstFalsePredicate: evaluation.FirstFalsePredicate,
+		State:                  EvidenceUnavailable,
+		RecoveryClassification: evaluation.RecoveryClassification,
+		Expected:               firstNonEmptyDecision(evaluation.Expected, "target_owned"),
+		Actual:                 firstNonEmptyDecision(evaluation.Actual, "unknown"),
+		Authority:              firstNonEmptyDecision(evaluation.Authority, "provider.computeClaimProof"),
+		FirstFalsePredicate:    evaluation.FirstFalsePredicate,
 	}
 	if proofErr != nil {
 		if snapshot.ComputeClaim.FirstFalsePredicate == "" {

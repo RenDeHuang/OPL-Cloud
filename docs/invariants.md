@@ -138,6 +138,20 @@ The four implementation owner lanes are Console/Control Plane, Fabric, Gateway i
   conflicting ownership, or provider/IAM/RBAC failure fails closed before the
   Compute mutation. A Storage attempted/unknown/conflict result freezes only
   Storage mutation and cannot block a proved Node-only continuation.
+- Fabric mutation ledgers are immutable history, while fresh Tencent Describe
+  and Kubernetes GET are the current resource authority. A historically
+  confirmed Node mutation whose fresh GET is `unallocated` is classified as
+  `confirmed_node_drift`; neither fact may overwrite the other. Normal Launch
+  retains its lifetime Kubernetes Patch maximum of one. Only an operator-
+  approved `normal_launch_confirmed_node_drift_v1` Recovery attempt may receive
+  a separate Node repair budget after the original Launch, Compute allocation,
+  NodePool, Machine, CVM, Node, billing facts, binding, and reconciliation
+  provenance all match exactly. The approval digest identifies the attempt but
+  never replaces the original Compute binding. Fabric CAS-reserves that attempt
+  once before the provider boundary, performs zero Tencent mutation and at most
+  one Kubernetes Patch bound to a fresh Node resourceVersion, then requires a
+  fresh GET of `target_owned`. Reserved, accepted, timeout, unknown, or failed
+  readback outcomes are GET-only on every replay and cannot Patch again.
 - `workspace.launch.v2` persists `phase`, `status`, and one `CurrentDecision` in
   the same PostgreSQL CAS. The normalized evidence snapshot is reduced by a pure
   stage reducer in this order: debit, compute_claim, storage, attachment, secret,
@@ -169,6 +183,11 @@ The four implementation owner lanes are Console/Control Plane, Fabric, Gateway i
   allowed mutation, Compute mutation budget, release/resource identity, and the
   executing operator reviewer. Validation and reservation repeat the same
   authoritative readback and reject any Decision drift before mutation.
+  `confirmed_node_drift` remains approval-required in the shared reducer; the
+  Normal worker cannot consume it. Diagnose, Validate, and Execute bind the same
+  persisted Decision and the operator-approved attempt, while Normal and
+  Recovery continue to use the same evidence collector and Compute stage
+  executor. The attempt cannot create another Launch, debit, CVM, CBS, or Key.
 - The zero-mutation Fabric ledger readback classifies the exact persisted
   compute binding as `current`, `compute-claim`, `request-hash-reconciliation`,
   `known-legacy`, or `other` and

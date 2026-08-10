@@ -740,6 +740,9 @@ func (s *Service) ComputeClaimRecoveryProof(ctx context.Context, input ComputeCl
 	// CVM and Node before applying any later storage-operation disposition so an
 	// attempted or conflicting storage record cannot hide Node ownership truth.
 	applyComputeClaimRecoveryProviderProof(&proof, providerProof)
+	if confirmedNodeDrift(operation, ownership, input, proof) {
+		proof.RecoveryClassification = "confirmed_node_drift"
+	}
 	storageDisposition := computeClaimRecoveryStorageOperationDisposition(operations, input)
 	if storageDisposition == computeClaimStorageOperationUnknown && !input.AllowExistingStorageOperation {
 		proof.Reason = "storage_already_started"
@@ -800,6 +803,18 @@ func (s *Service) ComputeClaimRecoveryProof(ctx context.Context, input ComputeCl
 	proof.Eligible, proof.Reason, proof.StorageState = true, "none", storageDiscovery.State
 	proof.StorageProviderResourceID = storageDiscovery.ProviderResourceID
 	return proof, nil
+}
+
+func confirmedNodeDrift(operation FabricOperation, ownership MachineOwnership, input ComputeClaimRecoveryInput, proof ComputeClaimRecoveryProof) bool {
+	persistedBinding, bindingPresent, bindingValid := decodeComputeClaimRecoveryBinding(operation)
+	_, mutationPresent, _ := decodeComputeClaimRecoveryMutation(operation)
+	claimInput := ComputeClaimRecoveryClaimInput{ComputeClaimRecoveryInput: input}
+	claimInput.MachineName, claimInput.NodeName, claimInput.CVMInstanceID = proof.MachineName, proof.NodeName, proof.CVMInstanceID
+	claimInput.PrivateIP, claimInput.InstanceType, claimInput.Zone = proof.PrivateIP, proof.InstanceType, proof.Zone
+	claimInput.IdempotencyKey = input.LaunchOperationID + ":compute"
+	return !mutationPresent && bindingPresent && bindingValid && validConfirmedNodeDriftAuthority(operation, ownership, claimInput, persistedBinding) &&
+		proof.NodeOwnershipState == "unallocated" &&
+		(proof.CVMOwnershipState == "recoverable" || proof.CVMOwnershipState == "target_owned")
 }
 
 func applyComputeClaimRecoveryProviderProof(proof *ComputeClaimRecoveryProof, providerProof ComputeClaimProviderProof) {
@@ -1061,10 +1076,15 @@ func (s *Service) ClaimComputeRecovery(ctx context.Context, input ComputeClaimRe
 		result.Reason = "local_identity"
 		return result, ErrInvalidComputeClaimRecovery
 	}
+	driftAttemptDigest, driftAttempt := confirmedNodeDriftAttemptDigest(input)
 	err := s.operations.WithPoolLock(ctx, workspaceLaunchResourceLockKey(input.LaunchOperationID), func(lockCtx context.Context) error {
 		operation, allocation, plan, ownership, localReason, err := s.computeClaimRecoveryLocalState(lockCtx, input.ComputeClaimRecoveryInput)
 		if err != nil {
 			result.Eligible, result.Reason = false, safeComputeClaimRecoveryReason(localReason, "local_identity")
+			return err
+		}
+		if driftAttempt {
+			result, err = s.claimApprovedConfirmedNodeDrift(lockCtx, input, operation, allocation, plan, ownership, driftAttemptDigest)
 			return err
 		}
 		binding := newComputeClaimRecoveryBinding(input)
@@ -1359,7 +1379,7 @@ func (s *Service) ClaimComputeRecovery(ctx context.Context, input ComputeClaimRe
 				reconciliation.Node = ComputeClaimMutationEvidence{}
 			}
 		}
-		if requestHashReconciliation && reconciliationPresent && reconciliation.State == "succeeded" {
+		if requestHashReconciliation && reconciliationPresent && reconciliation.State == "succeeded" && proof.NodeOwnershipState == "target_owned" {
 			result.NodeOwnershipState, result.CVMOwnershipState, result.Eligible, result.Reason = "target_owned", "target_owned", true, "none"
 		}
 		allocation.Status = "ready"
@@ -1401,10 +1421,137 @@ func (s *Service) ClaimComputeRecovery(ctx context.Context, input ComputeClaimRe
 		s.mu.Unlock()
 		return nil
 	})
-	if evidence, evidenceErr := s.ComputeClaimRecoveryIdentityEvidence(ctx, input); evidenceErr == nil {
+	evidenceInput := input
+	if driftAttempt {
+		evidenceInput.IdempotencyKey = input.LaunchOperationID + ":compute"
+	}
+	if evidence, evidenceErr := s.ComputeClaimRecoveryIdentityEvidence(ctx, evidenceInput); evidenceErr == nil {
 		result.IdentityEvidence = evidence
 	}
 	return result, err
+}
+
+func (s *Service) claimApprovedConfirmedNodeDrift(
+	ctx context.Context,
+	input ComputeClaimRecoveryClaimInput,
+	operation FabricOperation,
+	allocation ComputeAllocation,
+	plan ComputeAllocationPreparation,
+	ownership MachineOwnership,
+	attemptDigest string,
+) (ComputeClaimRecoveryProof, error) {
+	result := newComputeClaimRecoveryProof(input.ComputeClaimRecoveryInput)
+	canonicalInput := input
+	canonicalInput.IdempotencyKey = input.LaunchOperationID + ":compute"
+	persistedBinding, bindingPresent, bindingValid := decodeComputeClaimRecoveryBinding(operation)
+	ledger, ledgerPresent, ledgerValid := decodeComputeClaimRecoveryMutation(operation)
+	if !bindingPresent || !bindingValid || !validConfirmedNodeDriftAuthority(operation, ownership, canonicalInput, persistedBinding) ||
+		ledgerPresent && (!ledgerValid || ledger.Generation != confirmedNodeDriftGeneration || ledger.AttemptDigest != attemptDigest) {
+		result.Reason = "identity_mismatch"
+		return result, ErrComputeClaimRecoveryIdempotencyConflict
+	}
+
+	proof, proofErr := s.ComputeClaimRecoveryProof(ctx, input.ComputeClaimRecoveryInput)
+	result = proof
+	if proofErr != nil {
+		if ledgerPresent {
+			applyComputeClaimRecoveryMutation(&result, ledger)
+		}
+		return result, proofErr
+	}
+	if input.MachineName != proof.MachineName || input.NodeName != proof.NodeName || input.CVMInstanceID != proof.CVMInstanceID ||
+		input.PrivateIP != proof.PrivateIP || input.InstanceType != proof.InstanceType || input.Zone != proof.Zone || input.PoolID != proof.PoolID ||
+		(proof.CVMOwnershipState != "recoverable" && proof.CVMOwnershipState != "target_owned") {
+		result.Eligible, result.Reason = false, "identity_mismatch"
+		return result, fmt.Errorf("%w: identity_mismatch", ErrComputeClaimRecoveryUnavailable)
+	}
+	if proof.NodeOwnershipState == "target_owned" {
+		if ledgerPresent && ledger.State == "node_reserved" {
+			observedLedger := ledger
+			observedLedger.State, observedLedger.Reason = "observed", "confirmed_node_drift"
+			observedLedger.FailureStage, observedLedger.ProviderErrorClass = "", ""
+			observedLedger.Evidence.Node = ComputeClaimMutationEvidence{Attempted: 1, Confirmed: 1}
+			observed := operation
+			observed.RedactedProviderPayload = withComputeClaimRecoveryMutation(observed.RedactedProviderPayload, observedLedger)
+			if err := s.operations.SaveComputeClaimRecovery(ctx, operation, observed); err != nil {
+				result.Eligible, result.Reason = false, "local_identity"
+				return result, err
+			}
+		}
+		result.Eligible, result.Reason = true, "none"
+		result.TencentMutationCount, result.KubernetesMutationCount, result.Evidence = 0, 0, nil
+		return result, nil
+	}
+	if proof.NodeOwnershipState != "unallocated" {
+		result.Eligible, result.Reason = false, "identity_mismatch"
+		return result, fmt.Errorf("%w: identity_mismatch", ErrComputeClaimRecoveryUnavailable)
+	}
+	if ledgerPresent {
+		applyComputeClaimRecoveryMutation(&result, ledger)
+		if ledger.State == "observed" {
+			result.Reason, result.FailureStage, result.ProviderErrorClass = "identity_mismatch", "claim_final_readback", "readback_mismatch"
+		}
+		return result, fmt.Errorf("%w: %s", ErrComputeClaimRecoveryUnavailable, result.Reason)
+	}
+	if proof.RecoveryClassification != "confirmed_node_drift" {
+		result.Eligible, result.Reason = false, "identity_mismatch"
+		return result, ErrComputeClaimRecoveryIdempotencyConflict
+	}
+	nodeOnlyProvider, ok := s.provider.(computeClaimRecoveryNodeOnlyProvider)
+	if !ok {
+		result.Eligible, result.Reason = false, "provider_describe"
+		return result, fmt.Errorf("%w: provider_describe", ErrComputeClaimRecoveryUnavailable)
+	}
+
+	ledger = reservedConfirmedNodeDriftMutation(attemptDigest)
+	reserved := operation
+	reserved.RedactedProviderPayload = withComputeClaimRecoveryMutation(reserved.RedactedProviderPayload, ledger)
+	if err := s.operations.SaveComputeClaimRecovery(ctx, operation, reserved); err != nil {
+		result.Eligible, result.Reason = false, "local_identity"
+		return result, err
+	}
+	operation = reserved
+
+	claimed, claimErr := nodeOnlyProvider.ClaimComputeRecoveryNodeOnly(ctx, allocation, plan, ownership)
+	result.TencentMutationCount = max(0, claimed.TencentMutationCount)
+	result.KubernetesMutationCount = max(0, claimed.KubernetesMutationCount)
+	result.FailureStage, result.ProviderErrorClass = claimed.FailureStage, claimed.ProviderErrorClass
+	if claimed.Evidence != nil {
+		result.Evidence = &ComputeClaimEvidence{
+			CVM: cloneComputeClaimMutationEvidence(claimed.Evidence.CVM), Node: cloneComputeClaimMutationEvidence(claimed.Evidence.Node),
+		}
+	}
+	claimSucceeded := claimErr == nil && validComputeClaimProviderProof(claimed.Proof, allocation, plan) &&
+		(claimed.Proof.CVMOwnershipState == "recoverable" || claimed.Proof.CVMOwnershipState == "target_owned") &&
+		claimed.Proof.NodeOwnershipState == "target_owned" && claimed.TencentMutationCount == 0 && claimed.KubernetesMutationCount == 1 &&
+		claimed.Evidence != nil && reflect.DeepEqual(claimed.Evidence.CVM, ComputeClaimMutationEvidence{}) &&
+		reflect.DeepEqual(claimed.Evidence.Node, ComputeClaimMutationEvidence{Attempted: 1, Confirmed: 1}) && validComputeClaimEvidence(claimed)
+	if claimSucceeded {
+		applyComputeClaimRecoveryProviderProof(&result, claimed.Proof)
+		result.Eligible, result.Reason = true, "none"
+	} else {
+		result.Eligible = false
+		result.Reason = safeComputeClaimRecoveryReason(claimed.Proof.Reason, "identity_mismatch")
+		if claimErr != nil && claimed.Proof.Reason == "" {
+			result.Reason = "provider_describe"
+		}
+	}
+	recordableOutcome := result.Evidence != nil && result.TencentMutationCount == 0 && result.KubernetesMutationCount >= 0 && result.KubernetesMutationCount <= 1 &&
+		reflect.DeepEqual(result.Evidence.CVM, ComputeClaimMutationEvidence{}) &&
+		validComputeClaimMutationEvidenceShape(result.Evidence.Node, result.KubernetesMutationCount, 1, "node")
+	if recordableOutcome {
+		observedLedger := observedConfirmedNodeDriftMutation(ledger, result)
+		observed := operation
+		observed.RedactedProviderPayload = withComputeClaimRecoveryMutation(observed.RedactedProviderPayload, observedLedger)
+		if err := s.operations.SaveComputeClaimRecovery(ctx, operation, observed); err != nil {
+			result.Eligible, result.Reason = false, "local_identity"
+			return result, err
+		}
+	}
+	if !claimSucceeded {
+		return result, fmt.Errorf("%w: %s", ErrComputeClaimRecoveryUnavailable, result.Reason)
+	}
+	return result, nil
 }
 
 func validComputeClaimRecoveryClaimInput(input ComputeClaimRecoveryClaimInput) bool {
@@ -1416,7 +1563,37 @@ func validComputeClaimRecoveryClaimInput(input ComputeClaimRecoveryClaimInput) b
 			return false
 		}
 	}
-	return strings.HasPrefix(input.CVMInstanceID, "ins-") && input.IdempotencyKey == input.LaunchOperationID+":compute"
+	_, driftAttempt := confirmedNodeDriftAttemptDigest(input)
+	return strings.HasPrefix(input.CVMInstanceID, "ins-") &&
+		(input.IdempotencyKey == input.LaunchOperationID+":compute" || driftAttempt)
+}
+
+func confirmedNodeDriftAttemptDigest(input ComputeClaimRecoveryClaimInput) (string, bool) {
+	digest, ok := strings.CutPrefix(input.IdempotencyKey, input.LaunchOperationID+":compute:confirmed-node-drift:")
+	return digest, ok && validComputeClaimRecoveryDigest(digest)
+}
+
+func validConfirmedNodeDriftAuthority(
+	operation FabricOperation,
+	ownership MachineOwnership,
+	input ComputeClaimRecoveryClaimInput,
+	persistedBinding computeClaimRecoveryBinding,
+) bool {
+	if operation.Status != "succeeded" || ownership.Status != "active" {
+		return false
+	}
+	reconciliation, present, valid := decodeComputeClaimRecoveryReconciliation(operation)
+	if !present || !valid || reconciliation.SchemaVersion != 2 || reconciliation.Consumer != "claim_compute_recovery" ||
+		reconciliation.Generation != "normal_launch_terminal_evidence_v1" || reconciliation.State != "succeeded" ||
+		!reflect.DeepEqual(reconciliation.Node, ComputeClaimMutationEvidence{Attempted: 1, Confirmed: 1}) {
+		return false
+	}
+	withoutAttempt := operation
+	withoutAttempt.RedactedProviderPayload = maps.Clone(operation.RedactedProviderPayload)
+	delete(withoutAttempt.RedactedProviderPayload, computeClaimRecoveryMutationPayloadKey)
+	return computeClaimRecoveryReconciliationMatches(
+		reconciliation, withoutAttempt, input, persistedBinding, computeClaimRecoveryMutationLedger{},
+	)
 }
 
 type computeClaimRecoveryBinding struct {
@@ -1467,6 +1644,8 @@ type computeClaimRecoveryReconciliationProvenance struct {
 }
 
 type computeClaimRecoveryMutationLedger struct {
+	Generation              string               `json:"generation,omitempty"`
+	AttemptDigest           string               `json:"attemptDigest,omitempty"`
 	State                   string               `json:"state"`
 	Reason                  string               `json:"reason"`
 	TencentMutationCount    int                  `json:"tencentMutationCount"`
@@ -1474,6 +1653,37 @@ type computeClaimRecoveryMutationLedger struct {
 	FailureStage            string               `json:"failureStage,omitempty"`
 	ProviderErrorClass      string               `json:"providerErrorClass,omitempty"`
 	Evidence                ComputeClaimEvidence `json:"evidence"`
+}
+
+const confirmedNodeDriftGeneration = "normal_launch_confirmed_node_drift_v1"
+
+func reservedConfirmedNodeDriftMutation(attemptDigest string) computeClaimRecoveryMutationLedger {
+	return computeClaimRecoveryMutationLedger{
+		Generation: confirmedNodeDriftGeneration, AttemptDigest: attemptDigest,
+		State: "node_reserved", Reason: "confirmed_node_drift", TencentMutationCount: 0, KubernetesMutationCount: 1,
+		FailureStage: "node_patch_readback", ProviderErrorClass: "transport_error",
+		Evidence: ComputeClaimEvidence{Node: ComputeClaimMutationEvidence{
+			Attempted: 1, Unknown: 1, Missing: []string{"node_ownership"},
+		}},
+	}
+}
+
+func observedConfirmedNodeDriftMutation(reserved computeClaimRecoveryMutationLedger, result ComputeClaimRecoveryProof) computeClaimRecoveryMutationLedger {
+	ledger := reserved
+	ledger.State = "observed"
+	ledger.Reason = safeComputeClaimRecoveryReason(result.Reason, "provider_describe")
+	ledger.FailureStage = result.FailureStage
+	ledger.ProviderErrorClass = result.ProviderErrorClass
+	if result.Eligible && result.Reason == "none" {
+		ledger.Reason, ledger.FailureStage, ledger.ProviderErrorClass = "confirmed_node_drift", "", ""
+	}
+	if result.Evidence != nil && result.TencentMutationCount == 0 &&
+		reflect.DeepEqual(result.Evidence.CVM, ComputeClaimMutationEvidence{}) &&
+		validComputeClaimMutationEvidenceShape(result.Evidence.Node, result.KubernetesMutationCount, 1, "node") {
+		ledger.KubernetesMutationCount = result.KubernetesMutationCount
+		ledger.Evidence.Node = cloneComputeClaimMutationEvidence(result.Evidence.Node)
+	}
+	return ledger
 }
 
 func reservedComputeClaimRecoveryMutation() computeClaimRecoveryMutationLedger {
@@ -1510,7 +1720,7 @@ func legacyNodeReservedComputeClaimRecoveryMutation() computeClaimRecoveryMutati
 }
 
 func validNodeReservedComputeClaimRecoveryMutation(ledger computeClaimRecoveryMutationLedger) bool {
-	return ledger.State == "node_reserved" && ledger.Reason == "provider_describe" && ledger.FailureStage == "node_patch_readback" &&
+	return ledger.Generation == "" && ledger.AttemptDigest == "" && ledger.State == "node_reserved" && ledger.Reason == "provider_describe" && ledger.FailureStage == "node_patch_readback" &&
 		ledger.ProviderErrorClass == "transport_error" && ledger.TencentMutationCount >= 0 && ledger.TencentMutationCount <= 5 &&
 		ledger.KubernetesMutationCount == 1 && ledger.Evidence.CVM.Attempted == ledger.TencentMutationCount &&
 		ledger.Evidence.CVM.Confirmed == ledger.TencentMutationCount && ledger.Evidence.CVM.Unknown == 0 && len(ledger.Evidence.CVM.Missing) == 0 &&
@@ -1518,7 +1728,7 @@ func validNodeReservedComputeClaimRecoveryMutation(ledger computeClaimRecoveryMu
 }
 
 func successfulNodeClaimRecoveryMutation(ledger computeClaimRecoveryMutationLedger) bool {
-	return ledger.State == "observed" && ledger.Reason == "none" && ledger.TencentMutationCount >= 0 && ledger.TencentMutationCount <= 5 &&
+	return ledger.Generation == "" && ledger.AttemptDigest == "" && ledger.State == "observed" && ledger.Reason == "none" && ledger.TencentMutationCount >= 0 && ledger.TencentMutationCount <= 5 &&
 		ledger.KubernetesMutationCount == 1 && validComputeClaimMutationEvidence(ledger.Evidence.CVM, ledger.TencentMutationCount, 5, "cvm") &&
 		reflect.DeepEqual(ledger.Evidence.Node, ComputeClaimMutationEvidence{Attempted: 1, Confirmed: 1})
 }
@@ -1582,6 +1792,9 @@ func observedComputeClaimRecoveryMutation(result ComputeClaimRecoveryProof) comp
 }
 
 func validComputeClaimRecoveryMutationLedger(ledger computeClaimRecoveryMutationLedger) bool {
+	if ledger.Generation != "" || ledger.AttemptDigest != "" {
+		return validConfirmedNodeDriftMutationLedger(ledger)
+	}
 	if ledger.State != "reserved" && ledger.State != "node_reserved" && ledger.State != "observed" {
 		return false
 	}
@@ -1608,8 +1821,29 @@ func validComputeClaimRecoveryMutationLedger(ledger computeClaimRecoveryMutation
 	return true
 }
 
+func validConfirmedNodeDriftMutationLedger(ledger computeClaimRecoveryMutationLedger) bool {
+	if ledger.Generation != confirmedNodeDriftGeneration || !validComputeClaimRecoveryDigest(ledger.AttemptDigest) ||
+		ledger.TencentMutationCount != 0 || ledger.KubernetesMutationCount < 0 || ledger.KubernetesMutationCount > 1 ||
+		!reflect.DeepEqual(ledger.Evidence.CVM, ComputeClaimMutationEvidence{}) ||
+		!validComputeClaimMutationEvidenceShape(ledger.Evidence.Node, ledger.KubernetesMutationCount, 1, "node") {
+		return false
+	}
+	if ledger.State == "node_reserved" {
+		return reflect.DeepEqual(ledger, reservedConfirmedNodeDriftMutation(ledger.AttemptDigest))
+	}
+	if ledger.State != "observed" {
+		return false
+	}
+	if ledger.Reason == "confirmed_node_drift" {
+		return ledger.FailureStage == "" && ledger.ProviderErrorClass == "" && ledger.KubernetesMutationCount == 1 &&
+			reflect.DeepEqual(ledger.Evidence.Node, ComputeClaimMutationEvidence{Attempted: 1, Confirmed: 1})
+	}
+	return ledger.Reason != "none" && safeComputeClaimRecoveryReason(ledger.Reason, "") == ledger.Reason &&
+		validComputeClaimFailureStage(ledger.FailureStage) && validComputeClaimProviderErrorClass(ledger.ProviderErrorClass)
+}
+
 func recoverableObservedComputeClaimRecoveryMutation(ledger computeClaimRecoveryMutationLedger) bool {
-	if ledger.State != "observed" || ledger.Reason != "provider_describe" || ledger.FailureStage != "cvm_tag_readback" ||
+	if ledger.Generation != "" || ledger.AttemptDigest != "" || ledger.State != "observed" || ledger.Reason != "provider_describe" || ledger.FailureStage != "cvm_tag_readback" ||
 		ledger.TencentMutationCount < 1 || ledger.TencentMutationCount > 5 || ledger.KubernetesMutationCount != 0 ||
 		ledger.Evidence.CVM.Attempted != ledger.TencentMutationCount || ledger.Evidence.CVM.Confirmed != 0 || ledger.Evidence.CVM.Unknown != 0 ||
 		!reflect.DeepEqual(ledger.Evidence.Node, ComputeClaimMutationEvidence{}) || len(ledger.Evidence.CVM.Missing) == 0 {
@@ -1626,7 +1860,7 @@ func recoverableObservedComputeClaimRecoveryMutation(ledger computeClaimRecovery
 }
 
 func confirmedCVMOnlyObservedComputeClaimRecoveryMutation(ledger computeClaimRecoveryMutationLedger) bool {
-	return ledger.State == "observed" && ledger.Reason == "none" && ledger.FailureStage == "" && ledger.ProviderErrorClass == "" &&
+	return ledger.Generation == "" && ledger.AttemptDigest == "" && ledger.State == "observed" && ledger.Reason == "none" && ledger.FailureStage == "" && ledger.ProviderErrorClass == "" &&
 		ledger.TencentMutationCount >= 1 && ledger.TencentMutationCount <= 5 && ledger.KubernetesMutationCount == 0 &&
 		validComputeClaimMutationEvidence(ledger.Evidence.CVM, ledger.TencentMutationCount, 5, "cvm") &&
 		reflect.DeepEqual(ledger.Evidence.Node, ComputeClaimMutationEvidence{})
@@ -1653,7 +1887,7 @@ func withComputeClaimRecoveryMutation(payload map[string]any, ledger computeClai
 	if result == nil {
 		result = map[string]any{}
 	}
-	result[computeClaimRecoveryMutationPayloadKey] = map[string]any{
+	value := map[string]any{
 		"state": ledger.State, "reason": ledger.Reason,
 		"tencentMutationCount": ledger.TencentMutationCount, "kubernetesMutationCount": ledger.KubernetesMutationCount,
 		"failureStage": ledger.FailureStage, "providerErrorClass": ledger.ProviderErrorClass,
@@ -1668,6 +1902,13 @@ func withComputeClaimRecoveryMutation(payload map[string]any, ledger computeClai
 			},
 		},
 	}
+	if ledger.Generation != "" {
+		value["generation"] = ledger.Generation
+	}
+	if ledger.AttemptDigest != "" {
+		value["attemptDigest"] = ledger.AttemptDigest
+	}
+	result[computeClaimRecoveryMutationPayloadKey] = value
 	return result
 }
 
@@ -1703,6 +1944,19 @@ func validComputeClaimRecoveryMutationTransition(current, next FabricOperation) 
 	if currentPresent && !currentValid || nextPresent && !nextValid {
 		return false
 	}
+	if currentPresent && currentLedger.Generation == confirmedNodeDriftGeneration ||
+		nextPresent && nextLedger.Generation == confirmedNodeDriftGeneration {
+		if !nextPresent || nextLedger.Generation != confirmedNodeDriftGeneration {
+			return false
+		}
+		if !currentPresent {
+			return nextLedger.State == "node_reserved" && validConfirmedNodeDriftReservationTransition(current, next, nextLedger)
+		}
+		if currentLedger.Generation != confirmedNodeDriftGeneration || currentLedger.AttemptDigest != nextLedger.AttemptDigest {
+			return false
+		}
+		return reflect.DeepEqual(currentLedger, nextLedger) || currentLedger.State == "node_reserved" && nextLedger.State == "observed"
+	}
 	if !currentPresent {
 		return !nextPresent || nextLedger.State == "reserved" || validLegacyNodeReservationTransition(current, next, nextLedger)
 	}
@@ -1724,6 +1978,21 @@ func validComputeClaimRecoveryMutationTransition(current, next FabricOperation) 
 	default:
 		return false
 	}
+}
+
+func validConfirmedNodeDriftReservationTransition(current, next FabricOperation, nextLedger computeClaimRecoveryMutationLedger) bool {
+	if current.Status != "succeeded" || next.Status != "succeeded" || !validConfirmedNodeDriftMutationLedger(nextLedger) || nextLedger.State != "node_reserved" {
+		return false
+	}
+	currentBinding, currentBindingPresent, currentBindingValid := decodeComputeClaimRecoveryBinding(current)
+	nextBinding, nextBindingPresent, nextBindingValid := decodeComputeClaimRecoveryBinding(next)
+	currentReconciliation, currentReconciliationPresent, currentReconciliationValid := decodeComputeClaimRecoveryReconciliation(current)
+	nextReconciliation, nextReconciliationPresent, nextReconciliationValid := decodeComputeClaimRecoveryReconciliation(next)
+	return currentBindingPresent && currentBindingValid && nextBindingPresent && nextBindingValid && currentBinding == nextBinding &&
+		currentReconciliationPresent && currentReconciliationValid && nextReconciliationPresent && nextReconciliationValid &&
+		reflect.DeepEqual(currentReconciliation, nextReconciliation) && currentReconciliation.SchemaVersion == 2 &&
+		currentReconciliation.Generation == "normal_launch_terminal_evidence_v1" && currentReconciliation.State == "succeeded" &&
+		reflect.DeepEqual(currentReconciliation.Node, ComputeClaimMutationEvidence{Attempted: 1, Confirmed: 1})
 }
 
 func validLegacyNodeReservationTransition(current, next FabricOperation, nextLedger computeClaimRecoveryMutationLedger) bool {

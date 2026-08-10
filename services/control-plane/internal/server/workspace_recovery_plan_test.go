@@ -2989,6 +2989,75 @@ func TestWorkspaceRecoveryPlanExecuteReconcilesStalePersistedComputeDecision(t *
 	}
 }
 
+func TestWorkspaceRecoveryPlanExecutesApprovedConfirmedNodeDriftThroughSharedStage(t *testing.T) {
+	t.Setenv("OPL_RELEASE_SHA", strings.Repeat("a", 40))
+	t.Setenv("OPL_CLOUD_IMAGE", "uswccr.ccs.tencentyun.com/oplcloud/opl-cloud@sha256:"+strings.Repeat("b", 64))
+	fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, "basic")
+
+	drift := computeClaimRecoveryProofForLaunch(operation, "unallocated")
+	drift.CVMOwnershipState = "recoverable"
+	drift.RecoveryClassification = "confirmed_node_drift"
+	claimed := computeClaimRecoveryProofForLaunch(operation, "target_owned")
+	claimed.CVMOwnershipState = "recoverable"
+	claimed.RecoveryClassification = "confirmed_node_drift"
+	claimed.KubernetesMutationCount = 1
+	claimed.Evidence.Node = clients.ComputeClaimMutationEvidence{Attempted: 1, Confirmed: 1}
+	fixture.fabric.computeClaimProof = drift
+	fixture.fabric.computeClaimResult = &claimed
+	configureWorkspaceComputeProviderTruthTransition(fixture, drift, claimed)
+	configureWorkspaceLaunchFulfillment(t, fixture)
+	configureWorkspaceComputeClaimReadback(fixture, operation)
+
+	diagnosed := recoveryPlanResponse(t, requestWorkspaceRecoveryPlan(t, fixture, http.MethodPost, "/diagnose", map[string]any{"accountId": operation.AccountID}))
+	diagnosedOperation := fixture.operation(t)
+	if diagnosed.Status != "diagnosed" || diagnosedOperation.RecoveryPlan == nil ||
+		diagnosedOperation.RecoveryPlan.DecisionBinding.AllowedMutation != "confirmed_node_drift_recovery" ||
+		diagnosedOperation.RecoveryPlan.DecisionBinding.MutationBudget != (workspaceRecoveryMutationCounts{Kubernetes: 1}) {
+		t.Fatalf("diagnosed drift plan=%#v operation=%#v", diagnosed, diagnosedOperation)
+	}
+	validated := recoveryPlanResponse(t, requestWorkspaceRecoveryPlan(t, fixture, http.MethodPost, "/validate", map[string]any{
+		"planId": diagnosed.PlanID, "planDigest": diagnosed.PlanDigest,
+	}))
+	if validated.Status != "validated" || len(validated.Mismatches) != 0 {
+		t.Fatalf("validated drift plan=%#v", validated)
+	}
+	execute := requestWorkspaceRecoveryPlan(t, fixture, http.MethodPost, "/execute", map[string]any{
+		"planId": validated.PlanID, "planDigest": validated.PlanDigest, "decision": "continue", "confirmation": "CONTINUE_RECOVERY_PLAN",
+	})
+	if execute.Code != http.StatusOK {
+		t.Fatalf("drift execute status=%d body=%s", execute.Code, execute.Body.String())
+	}
+	persisted := fixture.operation(t)
+	if len(fixture.fabric.computeClaimCalls) != 1 || len(fixture.fabric.computeClaimKeys) != 1 ||
+		persisted.RecoveryExecution == nil || persisted.RecoveryExecution.ComputeClaimRequest == nil ||
+		fixture.fabric.computeClaimKeys[0] != operation.ID+":compute:confirmed-node-drift:"+persisted.RecoveryExecution.ComputeClaimRequest.ApprovalDigest ||
+		!fixture.fabric.computeClaimCalls[0].NodeOnlyContinuation || persisted.ComputeClaimProof == nil ||
+		persisted.ComputeClaimProof.NodeOwnershipState != "target_owned" || persisted.ComputeClaimProof.TencentMutationCount != 0 ||
+		persisted.ComputeClaimProof.KubernetesMutationCount != 0 || persisted.Status != "succeeded" || persisted.Phase != "succeeded" ||
+		persisted.RecoveryExecution.MutationOutcome.Counts != (workspaceRecoveryMutationCounts{Kubernetes: 1}) ||
+		!persisted.RecoveryExecution.MutationOutcome.Confirmed {
+		t.Fatalf("approved drift did not use shared stage: operation=%#v calls=%#v keys=%#v", persisted, fixture.fabric.computeClaimCalls, fixture.fabric.computeClaimKeys)
+	}
+}
+
+func TestNormalWorkspaceLaunchCannotExecuteConfirmedNodeDriftWithoutRecoveryPlan(t *testing.T) {
+	fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, "basic")
+	drift := computeClaimRecoveryProofForLaunch(operation, "unallocated")
+	drift.CVMOwnershipState = "recoverable"
+	drift.RecoveryClassification = "confirmed_node_drift"
+	fixture.fabric.computeClaimProof = drift
+	configureWorkspaceComputeProviderTruthTransition(fixture, drift, drift)
+
+	loaded := fixture.operation(t)
+	err := fixture.app.continueNormalWorkspaceComputeClaim(context.Background(), fixture.service, &loaded)
+	persisted := fixture.operation(t)
+	if err == nil || len(fixture.fabric.computeClaimCalls) != 0 || persisted.Status != "manual_review" ||
+		persisted.CurrentDecision == nil || !AuthorizeApprovedStageMutation(*persisted.CurrentDecision, "confirmed_node_drift_recovery") ||
+		AuthorizeStageMutation(*persisted.CurrentDecision, "node_only_continuation") {
+		t.Fatalf("normal worker crossed drift approval boundary: err=%v operation=%#v calls=%#v", err, persisted, fixture.fabric.computeClaimCalls)
+	}
+}
+
 func TestWorkspaceRecoveryMutationOutcomeDistinguishesComputeExecutionBoundaries(t *testing.T) {
 	preProvider := workspaceRecoveryMutationOutcomeBeforeProvider()
 	if preProvider.Status != "confirmed_zero" || preProvider.Source != "control_plane_pre_provider" ||

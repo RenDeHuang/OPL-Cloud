@@ -2,9 +2,11 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -35,6 +37,25 @@ type postgresWorkspaceLaunchClaimBarrierStore struct {
 	barrier *postgresWorkspaceLaunchClaimBarrier
 }
 
+type postgresRecoveryExecutionReservationBarrier struct {
+	mu       sync.Mutex
+	waiting  int
+	release  chan struct{}
+	results  chan error
+	attempts chan workspaceLaunchOperation
+}
+
+type postgresRecoveryExecutionReservationBarrierStore struct {
+	*postgresEntStateStore
+	barrier *postgresRecoveryExecutionReservationBarrier
+}
+
+type postgresConfirmedNodeDriftFabric struct {
+	*monthlyFabric
+	mu         sync.Mutex
+	claimCalls int
+}
+
 func (s *postgresWorkspaceLaunchClaimBarrierStore) ClaimWorkspaceLaunch(ctx context.Context, claim workspaceLaunchClaimCAS) error {
 	s.barrier.mu.Lock()
 	s.barrier.waiting++
@@ -51,6 +72,52 @@ func (s *postgresWorkspaceLaunchClaimBarrierStore) ClaimWorkspaceLaunch(ctx cont
 	err := s.postgresEntStateStore.ClaimWorkspaceLaunch(ctx, claim)
 	s.barrier.results <- err
 	return err
+}
+
+func (s *postgresRecoveryExecutionReservationBarrierStore) PersistWorkspaceLaunch(ctx context.Context, update workspaceLaunchPersistCAS) error {
+	var expected workspaceLaunchOperation
+	if err := json.Unmarshal([]byte(update.ExpectedOperationResult), &expected); err != nil {
+		return err
+	}
+	desired, err := decodeWorkspaceLaunchOperation(update.DesiredOperation)
+	if err != nil {
+		return err
+	}
+	if expected.RecoveryExecution == nil || desired.RecoveryExecution == nil ||
+		expected.RecoveryExecution.LeaseToken != "" || expected.RecoveryExecution.LeaseExpiresAt != "" ||
+		desired.RecoveryExecution.ExecutionID != expected.RecoveryExecution.ExecutionID || desired.RecoveryExecution.LeaseToken == "" {
+		return s.postgresEntStateStore.PersistWorkspaceLaunch(ctx, update)
+	}
+
+	s.barrier.attempts <- expected
+	s.barrier.mu.Lock()
+	s.barrier.waiting++
+	if s.barrier.waiting == 2 {
+		close(s.barrier.release)
+	}
+	release := s.barrier.release
+	s.barrier.mu.Unlock()
+	select {
+	case <-release:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	err = s.postgresEntStateStore.PersistWorkspaceLaunch(ctx, update)
+	s.barrier.results <- err
+	return err
+}
+
+func (f *postgresConfirmedNodeDriftFabric) ClaimComputeRecovery(ctx context.Context, input clients.ComputeClaimRecoveryClaimInput, key string) (clients.ComputeClaimRecoveryProof, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.claimCalls++
+	return f.monthlyFabric.ClaimComputeRecovery(ctx, input, key)
+}
+
+func (f *postgresConfirmedNodeDriftFabric) claimCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.claimCalls
 }
 
 func (s *workspaceLaunchProcessRestartStore) PersistWorkspaceLaunch(ctx context.Context, update workspaceLaunchPersistCAS) error {
@@ -556,5 +623,179 @@ func TestPostgresReleasedRecoveryExecutionConvergesOnceAcrossReopenedWorkers(t *
 	if len(fixture.fabric.computeClaimCalls) != 1 || len(fixture.fabric.storageIDs) != 1 || len(fixture.sub2API.charges) != 1 || len(fixture.fabric.computeIDs) != 1 ||
 		len(fixture.ledger.receiptInputs) != 1 {
 		t.Fatalf("PostgreSQL recovery repeated mutation: claims=%d storage=%d charges=%d compute=%d receipts=%d", len(fixture.fabric.computeClaimCalls), len(fixture.fabric.storageIDs), len(fixture.sub2API.charges), len(fixture.fabric.computeIDs), len(fixture.ledger.receiptInputs))
+	}
+}
+
+func TestPostgresConfirmedNodeDriftRecoveryExecutionReservationHasOneWinner(t *testing.T) {
+	t.Setenv("OPL_RELEASE_SHA", strings.Repeat("a", 40))
+	t.Setenv("OPL_CLOUD_IMAGE", "uswccr.ccs.tencentyun.com/oplcloud/opl-cloud@sha256:"+strings.Repeat("b", 64))
+	t.Setenv("OPL_WORKSPACE_LAUNCH_WORKER_ENABLED", "false")
+	fixture, operation := workspaceLaunchComputeClaimPendingFixture(t, "basic")
+	drift := computeClaimRecoveryProofForLaunch(operation, "unallocated")
+	drift.CVMOwnershipState = "recoverable"
+	drift.RecoveryClassification = "confirmed_node_drift"
+	claimed := computeClaimRecoveryProofForLaunch(operation, "target_owned")
+	claimed.CVMOwnershipState = "recoverable"
+	claimed.RecoveryClassification = "confirmed_node_drift"
+	claimed.KubernetesMutationCount = 1
+	claimed.Evidence.Node = clients.ComputeClaimMutationEvidence{Attempted: 1, Confirmed: 1}
+	fixture.fabric.computeClaimProof = drift
+	fixture.fabric.computeClaimResult = &claimed
+	configureWorkspaceLaunchFulfillment(t, fixture)
+	configureWorkspaceComputeClaimReadback(fixture, operation)
+	recordingFabric := &postgresConfirmedNodeDriftFabric{monthlyFabric: fixture.fabric}
+	fixture.fabric.computeProviderTruthFn = func(clients.ComputeClaimRecoveryInput) (clients.ComputeProviderTruth, error) {
+		recordingFabric.mu.Lock()
+		proof := drift
+		if recordingFabric.claimCalls > 0 {
+			proof = claimed
+		}
+		recordingFabric.mu.Unlock()
+		proof.Sub2APIMutationCount, proof.TencentMutationCount, proof.KubernetesMutationCount = 0, 0, 0
+		proof.Evidence = &clients.ComputeClaimEvidence{}
+		return clients.ComputeProviderTruth{
+			SchemaVersion: 1, State: "ready", ComputeState: "ready", StorageState: proof.StorageState,
+			NodeOwnershipState: proof.NodeOwnershipState, CVMOwnershipState: proof.CVMOwnershipState, Proof: &proof,
+		}, nil
+	}
+	service := controlplane.NewService(fixture.ledger, recordingFabric, fixture.sub2API)
+
+	admin := openControlPlaneTestPostgres(t)
+	schema := fmt.Sprintf("control_plane_confirmed_node_drift_cas_%d", time.Now().UnixNano())
+	if _, err := admin.Exec(`CREATE SCHEMA ` + schema); err != nil {
+		t.Fatal(err)
+	}
+	databaseURL := controlPlaneTestPostgresURL(t, "postgres", schema)
+	t.Cleanup(func() {
+		_, _ = admin.Exec(`DROP SCHEMA ` + schema + ` CASCADE`)
+		_ = admin.Close()
+	})
+	state, err := newTestPostgresEntStateStore(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedStore := state.(*postgresEntStateStore)
+	computes, err := fixture.store.ListComputes(context.Background(), operation.AccountID)
+	if err != nil || len(computes) != 1 {
+		t.Fatalf("compute claim fixture rows=%#v err=%v", computes, err)
+	}
+	if err := seedStore.SaveCompute(context.Background(), computes[0]); err != nil {
+		t.Fatal(err)
+	}
+	if err := seedStore.SaveRuntimeOperation(context.Background(), workspaceLaunchOperationRow(operation)); err != nil {
+		t.Fatal(err)
+	}
+	users, err := fixture.store.ListUsers(context.Background(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := findRecord(users, operation.OwnerUserID)
+	if owner == nil || normalizeEmail(stringValue(owner["email"])) == "" {
+		t.Fatalf("workspace launch owner identity missing: ownerUserId=%q", operation.OwnerUserID)
+	}
+	seedTenantMember(t, seedStore, operation.AccountID, "org-alpha", operation.OwnerUserID, stringValue(owner["email"]))
+	server, err := NewPersistentServer(service, seedStore)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pgFixture := fixture
+	pgFixture.service, pgFixture.server, pgFixture.operator = service, server, reservedOperatorSessionForTest(t, server)
+	diagnosed := recoveryPlanResponse(t, requestWorkspaceRecoveryPlan(t, pgFixture, http.MethodPost, "/diagnose", map[string]any{"accountId": operation.AccountID}))
+	validated := recoveryPlanResponse(t, requestWorkspaceRecoveryPlan(t, pgFixture, http.MethodPost, "/validate", map[string]any{
+		"planId": diagnosed.PlanID, "planDigest": diagnosed.PlanDigest,
+	}))
+	if validated.Status != "validated" || len(validated.Mismatches) != 0 {
+		t.Fatalf("validated confirmed Node drift plan=%#v", validated)
+	}
+
+	seedApp, err := newControlPlaneAppWithStore(seedStore)
+	if err != nil {
+		t.Fatal(err)
+	}
+	execution, won, err := seedApp.reserveWorkspaceRecoveryExecution(
+		context.Background(), service, operation.ID, validated.PlanID, validated.PlanDigest, "continue", "usr-admin",
+	)
+	if err != nil || !won || execution.ComputeClaimRequest == nil || execution.ApprovalDigest == "" {
+		t.Fatalf("seed recovery execution=%#v won=%t err=%v", execution, won, err)
+	}
+	released, found, err := seedApp.workspaceLaunchOperation(context.Background(), operation.ID)
+	if err != nil || !found || released.CurrentDecision == nil || released.RecoveryPlan == nil || released.RecoveryExecution == nil ||
+		released.CurrentDecision.AllowedMutation != "confirmed_node_drift_recovery" ||
+		released.RecoveryPlan.DecisionBinding.AllowedMutation != "confirmed_node_drift_recovery" ||
+		released.RecoveryExecution.ApprovalDigest != execution.ApprovalDigest {
+		t.Fatalf("persisted drift authority operation=%#v found=%t err=%v", released, found, err)
+	}
+	released.RecoveryExecution.LeaseToken, released.RecoveryExecution.LeaseExpiresAt = "", ""
+	if err := seedApp.persistWorkspaceLaunchWithDecision(context.Background(), &released, *released.CurrentDecision); err != nil {
+		t.Fatal(err)
+	}
+	if err := seedStore.client.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	barrier := &postgresRecoveryExecutionReservationBarrier{
+		release: make(chan struct{}), results: make(chan error, 2), attempts: make(chan workspaceLaunchOperation, 2),
+	}
+	apps := make([]*controlPlaneServer, 0, 2)
+	stores := make([]*postgresEntStateStore, 0, 2)
+	for range 2 {
+		state, err := newTestPostgresEntStateStore(databaseURL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		store := state.(*postgresEntStateStore)
+		stores = append(stores, store)
+		app, err := newControlPlaneAppWithStore(&postgresRecoveryExecutionReservationBarrierStore{postgresEntStateStore: store, barrier: barrier})
+		if err != nil {
+			t.Fatal(err)
+		}
+		apps = append(apps, app)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	type executionResult struct {
+		plan workspaceRecoveryPlan
+		err  error
+	}
+	results := make(chan executionResult, 2)
+	start := make(chan struct{})
+	for _, app := range apps {
+		go func(app *controlPlaneServer) {
+			<-start
+			plan, executeErr := app.executeWorkspaceRecoveryPlan(ctx, service, operation.ID, validated.PlanID, validated.PlanDigest, "continue", "usr-admin")
+			results <- executionResult{plan: plan, err: executeErr}
+		}(app)
+	}
+	close(start)
+	for range 2 {
+		result := <-results
+		if result.err != nil {
+			t.Fatalf("concurrent confirmed Node drift Execute failed: plan=%#v err=%v", result.plan, result.err)
+		}
+	}
+
+	casWinners, casConflicts := 0, 0
+	for range 2 {
+		switch err := <-barrier.results; {
+		case err == nil:
+			casWinners++
+		case errors.Is(err, errWorkspaceLaunchCASConflict):
+			casConflicts++
+		default:
+			t.Fatalf("unexpected recovery execution reservation CAS result: %v", err)
+		}
+	}
+	firstAttempt, secondAttempt := <-barrier.attempts, <-barrier.attempts
+	if casWinners != 1 || casConflicts != 1 || !sameCurrentDecisionAuthority(firstAttempt.CurrentDecision, *secondAttempt.CurrentDecision) ||
+		!reflect.DeepEqual(firstAttempt.RecoveryPlan.DecisionBinding, secondAttempt.RecoveryPlan.DecisionBinding) ||
+		!reflect.DeepEqual(firstAttempt.RecoveryExecution, secondAttempt.RecoveryExecution) ||
+		firstAttempt.RecoveryExecution.ApprovalDigest != execution.ApprovalDigest || recordingFabric.claimCount() != 1 {
+		t.Fatalf("reservation winners=%d conflicts=%d first=%#v second=%#v Fabric claims=%d",
+			casWinners, casConflicts, firstAttempt, secondAttempt, recordingFabric.claimCount())
+	}
+	for _, store := range stores {
+		if err := store.client.Close(); err != nil {
+			t.Fatal(err)
+		}
 	}
 }

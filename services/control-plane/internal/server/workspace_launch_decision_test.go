@@ -86,6 +86,32 @@ func TestCurrentDecisionAuthorizesNodeOnlyContinuationForRecoverableCVM(t *testi
 	}
 }
 
+func TestCurrentDecisionRequiresApprovalForConfirmedNodeDrift(t *testing.T) {
+	operation := workspaceLaunchOperation{
+		ID:     "workspace-launch-confirmed-node-drift",
+		Status: "manual_review",
+		Phase:  "compute_claim_pending",
+		ContinuationAttemptBudgets: map[string]workspaceLaunchStageBudget{
+			"storage": {Attempted: 1, Unknown: 1, Max: 1},
+		},
+	}
+	proof := computeClaimRecoveryProofForLaunchStorage(operation, "unallocated", "storage_attempt_unknown", "")
+	proof.CVMOwnershipState = "recoverable"
+	proof.RecoveryClassification = "confirmed_node_drift"
+
+	evaluation := evaluateWorkspaceComputeClaimProof(operation, workspaceComputeClaimRequestFromOperation(operation), proof, false)
+	decision := currentDecisionForComputeClaimEvaluation(operation, nil, evaluation)
+
+	if decision.CurrentStage != "compute_claim" || decision.StageState != "pending" ||
+		decision.FirstFalsePredicate != "provider.nodeOwnership" || decision.Expected != "target_owned" ||
+		decision.Actual != "unallocated" || decision.NextAction != "CONFIRMED_NODE_DRIFT_REQUIRES_APPROVAL" ||
+		decision.AllowedMutation != "confirmed_node_drift_recovery" || !decision.RequiresApproval ||
+		AuthorizeStageMutation(decision, "node_only_continuation") ||
+		!AuthorizeApprovedStageMutation(decision, "confirmed_node_drift_recovery") {
+		t.Fatalf("confirmed Node drift did not stay behind manual approval: %#v", decision)
+	}
+}
+
 func TestP0ReducerDoesNotAuthorizeMutationOutsideComputeClaim(t *testing.T) {
 	tests := []struct {
 		name     string

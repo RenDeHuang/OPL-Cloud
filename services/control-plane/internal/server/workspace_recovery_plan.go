@@ -962,7 +962,9 @@ func newWorkspaceComputeClaimRecoveryPlan(operation workspaceLaunchOperation, in
 	privateIPDigest := workspaceRecoveryAuthorityDigest(proof.PrivateIP)
 	decision := currentDecisionForComputeClaimEvaluation(operation, nil, evaluation)
 	mutationBudget := workspaceRecoveryMutationCounts{}
-	nodeMutationAuthorized := evaluation.Eligible && proof.NodeOwnershipState == "unallocated" && AuthorizeStageMutation(decision, "node_only_continuation")
+	nodeMutationAuthorized := evaluation.Eligible && proof.NodeOwnershipState == "unallocated" &&
+		(AuthorizeStageMutation(decision, "node_only_continuation") ||
+			proof.RecoveryClassification == "confirmed_node_drift" && AuthorizeApprovedStageMutation(decision, "confirmed_node_drift_recovery"))
 	if nodeMutationAuthorized {
 		mutationBudget.Kubernetes = 1
 	}
@@ -2085,7 +2087,10 @@ func (app *controlPlaneServer) reconcileWorkspaceComputeClaimExecutionDecision(c
 		return errWorkspaceComputeClaimIdentity
 	}
 	decisionValue := currentDecisionForComputeClaimEvaluation(operation, nil, evaluation)
-	if !AuthorizeStageMutation(decisionValue, "node_only_continuation") ||
+	mutationAuthorized := AuthorizeStageMutation(decisionValue, "node_only_continuation") ||
+		proof.RecoveryClassification == "confirmed_node_drift" && operation.RecoveryExecution != nil &&
+			workspaceConfirmedNodeDriftExecutionAuthorized(operation, input, operation.RecoveryExecution.ExecutionID)
+	if !mutationAuthorized ||
 		binding.DecisionDigest != workspaceRecoveryAuthorityDigest(decisionValue) ||
 		binding.EvidenceDigest != decisionValue.EvidenceDigest || binding.DecisionVersion != decisionValue.DecisionVersion ||
 		binding.CurrentStage != decisionValue.CurrentStage || binding.StageAttemptID != decisionValue.StageAttemptID ||

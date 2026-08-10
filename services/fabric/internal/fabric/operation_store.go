@@ -1313,9 +1313,10 @@ func validComputeClaimRecoveryTransition(current, next FabricOperation) bool {
 	currentLedger, currentPresent, currentValid := decodeComputeClaimRecoveryMutation(current)
 	nextLedger, nextPresent, nextValid := decodeComputeClaimRecoveryMutation(next)
 	validNodeTransition := !currentPresent && nextPresent && nextValid && nextLedger.State == "node_reserved" &&
-		validLegacyNodeReservationTransition(current, next, nextLedger) ||
+		(validLegacyNodeReservationTransition(current, next, nextLedger) || validConfirmedNodeDriftReservationTransition(current, next, nextLedger)) ||
 		currentPresent && currentValid && currentLedger.State == "node_reserved" && nextPresent && nextValid &&
-			nextLedger.State == "observed" && nextLedger.TencentMutationCount == 0 &&
+			nextLedger.State == "observed" && nextLedger.TencentMutationCount == 0 && currentLedger.Generation == nextLedger.Generation &&
+			currentLedger.AttemptDigest == nextLedger.AttemptDigest &&
 			reflect.DeepEqual(nextLedger.Evidence.CVM, ComputeClaimMutationEvidence{})
 	if !validNodeTransition {
 		return false

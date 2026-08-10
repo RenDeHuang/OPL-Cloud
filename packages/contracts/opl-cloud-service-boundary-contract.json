@@ -431,7 +431,8 @@
         "bindingTakeover": false,
         "manualRecoveryInvocation": "control_plane_calls_fabric_with_original_claim_identity",
         "requestHashReconciliation": "versioned_provenance_cas_only_when_request_hash_is_the_single_primitive_mismatch_and_the_full_original_identity_chain_is_exact",
-        "drift": "all_other_identity_mismatch_zero_provider_mutation"
+        "drift": "all_other_identity_mismatch_zero_provider_mutation",
+        "confirmedNodeDriftAttempt": "approval_digest_selects_one_cas_reserved_attempt_but_never_replaces_original_compute_binding"
       },
       "workspaceComputeClaimRecovery": {
         "computeProviderTruthEndpoint": "GET /fabric/compute-provider-truth",
@@ -539,6 +540,22 @@
             "mutationBounds": {"tencent": 0, "kubernetesMax": 1}
           },
           "activeOwnershipNodeDriftContinuation": "exact_active_machine_ownership_current_binding_no_ledger_cvm_recoverable_or_target_owned_node_unallocated_may_reserve_node_once_and_patch_with_tencent_zero_kubernetes_max_one",
+          "confirmedNodeDriftRecovery": {
+            "generation": "normal_launch_confirmed_node_drift_v1",
+            "classification": "schema_2_normal_launch_terminal_reconciliation_succeeded_node_1_1_0_then_fresh_node_unallocated",
+            "requiredOperation": "original_create_compute_allocation_succeeded",
+            "requiredOwnership": "original_exact_machine_ownership_active",
+            "requiredBinding": "original_binding_immutable_and_full_reconciliation_authority_recomputed_exact",
+            "approval": "control_plane_validated_recovery_plan_execution_approval_digest",
+            "attemptKey": "original_launch_compute_confirmed_node_drift_approval_digest",
+            "reservation": "absent_to_node_reserved_single_winner_payload_cas",
+            "immutableHistory": ["binding", "normal_launch_terminal_reconciliation", "terminal_evidence", "normal_launch_mutation_budgets"],
+            "mutationBounds": {"sub2api": 0, "tencent": 0, "kubernetesPatchMax": 1},
+            "patchBinding": "provider_fresh_get_resourceVersion_json_patch_test",
+            "success": "observed_1_1_0_and_fresh_node_target_owned",
+            "replay": "node_reserved_or_observed_always_fresh_get_only_zero_incremental_patch",
+            "failure": "accepted_timeout_unknown_or_readback_failure_never_automatic_retry"
+          },
           "persistedApprovalExpiryReplay": "new_approval_must_be_unexpired_exact_persisted_approval_identity_may_replay_after_expiry",
           "observedSuccessReadbackMismatch": "fail_closed_identity_mismatch_claim_final_readback"
         },
@@ -548,7 +565,8 @@
           "sub2api": 0,
           "tencent": {"min": 0, "max": 5, "meaning": "one_instance_name_plus_four_ownership_tags"},
           "kubernetes": {"min": 0, "max": 1, "meaning": "one_exact_node_json_patch"},
-          "requestHashReconciliation": {"tencent": 0, "kubernetesMax": 1}
+          "requestHashReconciliation": {"tencent": 0, "kubernetesMax": 1},
+          "confirmedNodeDriftRecoveryAttempt": {"tencent": 0, "kubernetesMax": 1}
         },
         "mutationEvidence": {
           "fields": ["attempted", "confirmed", "unknown", "missing"],

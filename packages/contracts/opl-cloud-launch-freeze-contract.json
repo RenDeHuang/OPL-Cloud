@@ -425,6 +425,29 @@
         "mutationBounds": {"sub2api": 0, "tencent": 0, "kubernetesNodePatchMax": 1},
         "failClosed": ["released_ownership", "zero_or_multiple_compute_candidates", "other_binding_mismatch", "source_evidence_drift", "provider_identity_drift", "cas_conflict", "compute_unknown_readback"]
       },
+      "confirmedNodeDriftRecovery": {
+        "contract": "normal_launch_confirmed_node_drift_v1",
+        "classification": "persisted_node_mutation_confirmed_and_fresh_kubernetes_get_unallocated",
+        "authorities": {
+          "history": "immutable_fabric_reconciliation_and_mutation_ledger",
+          "current": "fresh_tencent_describe_and_kubernetes_get"
+        },
+        "requiredIdentity": ["original_launch", "account", "owner_user", "workspace", "compute_allocation", "node_pool", "machine", "cvm", "node", "private_ip", "sku", "zone", "prepaid_manual_renew_deadline", "fabric_binding", "reconciliation_provenance"],
+        "authorization": "validated_control_plane_recovery_plan_operator_execution_receipt_only",
+        "normalLaunchKubernetesPatchLifetimeMax": 1,
+        "attempt": {
+          "idempotency": "launch_operation_id:compute:confirmed-node-drift:approval_digest",
+          "canonicalComputeBindingUnchanged": true,
+          "reservation": "original_fabric_operation_payload_single_winner_cas",
+          "ledgerGeneration": "normal_launch_confirmed_node_drift_v1",
+          "mutationBounds": {"sub2api": 0, "tencent": 0, "kubernetesPatchMax": 1},
+          "patchPrecondition": "fresh_kubernetes_get_resourceVersion",
+          "successReadback": "fresh_kubernetes_get_target_owned",
+          "replayAfterReservedAcceptedTimeoutUnknownOrReadbackFailure": "get_only_no_second_patch"
+        },
+        "sharedPath": ["compute_provider_truth_collector", "compute_claim_evaluator", "launch_stage_reducer", "current_decision", "compute_stage_executor"],
+        "forbidden": ["automatic_normal_launch_drift_patch", "binding_takeover", "second_launch", "second_debit", "second_cvm", "second_cbs", "second_key", "automatic_retry_after_failure"]
+      },
       "claimMutationBounds": {"sub2api": 0, "tencent": {"min": 0, "max": 5}, "kubernetes": {"min": 0, "max": 1}},
       "storageProof": "DescribeDisks_only_four_ownership_tags_complete_pagination_exact_facts_mutation_zero",
       "storageApprovalBinding": ["storageState", "storageProviderResourceId"],
@@ -434,7 +457,7 @@
       "successTransition": "same_launch_storage_fulfilling_with_original_storage_identity",
       "failureTransition": "manual_review_without_refund_or_replacement",
       "forbidden": ["second_debit", "refund", "second_cvm", "early_cbs", "replacement_compute"],
-      "currentImplementation": "control_plane_normal_launch_and_recovery_share_compute_provider_truth_collector_local_focused_verified_release_deploy_and_original_launch_execution_pending"
+      "currentImplementation": "normal_launch_confirmed_node_drift_v1_fabric_and_control_plane_local_focused_verified_release_deploy_and_original_launch_execution_pending"
     },
     "persistence": "control_plane_runtime_operations with action=workspace.launch.v2 and result.schemaVersion=2",
     "legacyNonTerminalPolicy": "manual_review_compute_fulfilling_is_read_only_candidate_normalized_only_after_debit_and_exact_compute_identity_ownership_proof_via_postgresql_cas",
