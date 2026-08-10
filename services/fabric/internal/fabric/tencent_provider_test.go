@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"opl-cloud/services/fabric/internal/protectedresource"
 )
@@ -99,6 +100,196 @@ func TestTKENodeSelectorPrefersClaimedNodeHostname(t *testing.T) {
 	withoutMachine := tkeNodeSelector(map[string]string{}, "10.0.0.8")
 	if withoutMachine["kubernetes.io/hostname"] != "10.0.0.8" {
 		t.Fatalf("selector without machineName = %#v", withoutMachine)
+	}
+}
+
+func TestComputeClaimNodeOwnershipUsesPackageTaintAndWorkspaceLabels(t *testing.T) {
+	allocation, _, ownership := computeClaimProviderFixture()
+	for _, tc := range []struct {
+		name      string
+		raw       string
+		packageID string
+		wantState string
+		wantOK    bool
+	}{
+		{
+			name:      "basic unallocated",
+			raw:       `{"metadata":{"name":"10.0.0.8","labels":{}},"spec":{"taints":[{"key":"oplcloud.cn/package-id","value":"basic","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`,
+			packageID: "basic", wantState: "unallocated", wantOK: true,
+		},
+		{
+			name:      "pro unallocated",
+			raw:       `{"metadata":{"name":"10.0.0.8","labels":{}},"spec":{"taints":[{"key":"oplcloud.cn/package-id","value":"pro","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`,
+			packageID: "pro", wantState: "unallocated", wantOK: true,
+		},
+		{
+			name:      "target owned labels preserve package taint",
+			raw:       `{"metadata":{"name":"10.0.0.8","labels":{"medopl.cn/workload":"workspace","oplcloud.cn/resource-id":"compute-alpha","oplcloud.cn/account-id":"acct-alpha","oplcloud.cn/workspace-id":"ws-alpha"}},"spec":{"taints":[{"key":"oplcloud.cn/package-id","value":"basic","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`,
+			packageID: "basic", wantState: "target_owned", wantOK: true,
+		},
+		{
+			name:      "partial labels conflict",
+			raw:       `{"metadata":{"name":"10.0.0.8","labels":{"medopl.cn/workload":"workspace"}},"spec":{"taints":[{"key":"oplcloud.cn/package-id","value":"basic","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`,
+			packageID: "basic", wantState: "node_ownership_conflict", wantOK: false,
+		},
+		{
+			name:      "other workspace label conflict",
+			raw:       `{"metadata":{"name":"10.0.0.8","labels":{"medopl.cn/workload":"workspace","oplcloud.cn/resource-id":"compute-alpha","oplcloud.cn/account-id":"acct-alpha","oplcloud.cn/workspace-id":"ws-other"}},"spec":{"taints":[{"key":"oplcloud.cn/package-id","value":"basic","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`,
+			packageID: "basic", wantState: "node_ownership_conflict", wantOK: false,
+		},
+		{
+			name:      "duplicate package taint conflict",
+			raw:       `{"metadata":{"name":"10.0.0.8","labels":{}},"spec":{"taints":[{"key":"oplcloud.cn/package-id","value":"basic","effect":"NoSchedule"},{"key":"oplcloud.cn/package-id","value":"basic","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`,
+			packageID: "basic", wantState: "node_ownership_conflict", wantOK: false,
+		},
+		{
+			name:      "legacy workspace taint conflict",
+			raw:       `{"metadata":{"name":"10.0.0.8","labels":{}},"spec":{"taints":[{"key":"oplcloud.cn/workspace-id","value":"unallocated","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`,
+			packageID: "basic", wantState: "node_ownership_conflict", wantOK: false,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			allocation.PackageID, ownership.PackageID = tc.packageID, tc.packageID
+			state, ok := computeClaimNodeOwnershipState([]byte(tc.raw), allocation, ownership)
+			if state != tc.wantState || ok != tc.wantOK {
+				t.Fatalf("state=%q ok=%v want state=%q ok=%v", state, ok, tc.wantState, tc.wantOK)
+			}
+		})
+	}
+}
+
+func TestComputeClaimNodePatchPreservesPackageTaint(t *testing.T) {
+	allocation, _, ownership := computeClaimProviderFixture()
+	raw := []byte(`{"metadata":{"name":"10.0.0.8","resourceVersion":"7","labels":{}},"spec":{"taints":[{"key":"oplcloud.cn/package-id","value":"basic","effect":"NoSchedule"}]}}`)
+	patch, err := computeClaimNodePatch(raw, allocation, ownership)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var operations []map[string]any
+	if err := json.Unmarshal(patch, &operations); err != nil {
+		t.Fatal(err)
+	}
+	want := []map[string]any{
+		{"op": "test", "path": "/metadata/resourceVersion", "value": "7"},
+		{"op": "add", "path": "/metadata/labels/medopl.cn~1workload", "value": "workspace"},
+		{"op": "add", "path": "/metadata/labels/oplcloud.cn~1resource-id", "value": "compute-alpha"},
+		{"op": "add", "path": "/metadata/labels/oplcloud.cn~1account-id", "value": "acct-alpha"},
+		{"op": "add", "path": "/metadata/labels/oplcloud.cn~1workspace-id", "value": "ws-alpha"},
+	}
+	if !reflect.DeepEqual(operations, want) {
+		t.Fatalf("claim patch=%#v want=%#v", operations, want)
+	}
+	for _, operation := range operations {
+		path, _ := operation["path"].(string)
+		if strings.HasPrefix(path, "/spec/taints") {
+			t.Fatalf("claim patch must not write the package taint, patch=%s", patch)
+		}
+	}
+}
+
+func TestRealFabricServiceWithTencentProviderClaimsNodeWithoutStorageMutation(t *testing.T) {
+	setProtectedResourceEnv(t)
+	allocation, plan, ownership := computeClaimProviderFixture()
+	allocation.ProviderData = map[string]string{
+		"instanceType": allocation.InstanceType,
+		"zone":         allocation.Zone,
+		"chargeType":   allocation.ChargeType,
+		"periodMonths": "1",
+		"renewFlag":    allocation.RenewFlag,
+		"deadline":     allocation.Deadline,
+		"machineName":  allocation.MachineName,
+	}
+	nodeOwned := false
+	patchCalls := 0
+	storageReadCalls := 0
+	storageMutationCalls := 0
+	provider := NewTencentProvider()
+	provider.convergenceWait = func(context.Context, int) error { return nil }
+	provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
+		switch request.Action {
+		case "compute_claim_truth":
+			return provisionerResponse{OK: true, Status: "proven", InstanceID: allocation.InstanceID, NodeName: allocation.NodeName, PrivateIP: allocation.PrivateIP, InstanceType: allocation.InstanceType, ProviderData: map[string]string{
+				"machineName": allocation.MachineName, "zone": allocation.Zone, "chargeType": "PREPAID", "periodMonths": "1", "renewFlag": "NOTIFY_AND_MANUAL_RENEW", "deadline": allocation.Deadline, "cvmOwnershipState": "target_owned",
+			}}, nil
+		case "claim_compute_machine":
+			return provisionerResponse{OK: false, ErrorCode: "forbidden_in_node_only_path", MutationCount: 0}, nil
+		case "discover_storage_volume":
+			storageReadCalls++
+			return provisionerResponse{OK: true, StorageState: "storage_not_started", ProviderRequestID: "req-storage-readback", MutationCount: 0}, nil
+		case "create_storage_volume":
+			storageMutationCalls++
+			return provisionerResponse{}, errors.New("storage mutation must remain untouched before node success")
+		default:
+			return provisionerResponse{}, fmt.Errorf("unexpected action %s", request.Action)
+		}
+	}
+	provider.kubectl = func(_ context.Context, args []string, stdin []byte) ([]byte, error) {
+		switch args[0] {
+		case "get":
+			labels := `"labels":{}`
+			if nodeOwned {
+				labels = `"labels":{"medopl.cn/workload":"workspace","oplcloud.cn/resource-id":"compute-alpha","oplcloud.cn/account-id":"acct-alpha","oplcloud.cn/workspace-id":"ws-alpha"}`
+			}
+			return []byte(`{"metadata":{"name":"10.0.0.8","resourceVersion":"7",` + labels + `},"spec":{"taints":[{"key":"oplcloud.cn/package-id","value":"basic","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`), nil
+		case "patch":
+			patchCalls++
+			var operations []map[string]any
+			if err := json.Unmarshal(stdin, &operations); err != nil || len(operations) != 5 {
+				return nil, fmt.Errorf("unexpected patch %s", stdin)
+			}
+			for _, operation := range operations {
+				if strings.HasPrefix(operation["path"].(string), "/spec/taints") {
+					return nil, errors.New("claim attempted package taint mutation")
+				}
+			}
+			nodeOwned = true
+			return nil, nil
+		default:
+			return nil, fmt.Errorf("unexpected kubectl action %s", args[0])
+		}
+	}
+	store := NewMemoryOperationStore()
+	operation := newOperation("create_compute_allocation", "compute_allocation", allocation.ID, allocation.AccountID, allocation.WorkspaceID, "launch-alpha:compute", strings.Repeat("a", 64), time.Now().UTC())
+	operation.Status = "claim_pending"
+	operation.RedactedProviderPayload = computeAllocationOperationPayload(allocation, plan)
+	operation.RedactedProviderPayload = withNormalLaunchStageBudget(operation.RedactedProviderPayload, "compute_create", confirmedNormalLaunchMutationBudget())
+	operation.RedactedProviderPayload = withNormalLaunchStageBudget(operation.RedactedProviderPayload, "compute_claim_cvm", confirmedNormalLaunchMutationBudget())
+	operation.RedactedProviderPayload = withComputeClaimRecoveryBinding(operation.RedactedProviderPayload, newComputeClaimRecoveryBinding(ComputeClaimRecoveryClaimInput{
+		ComputeClaimRecoveryInput: ComputeClaimRecoveryInput{LaunchOperationID: "launch-alpha", AccountID: allocation.AccountID, WorkspaceID: allocation.WorkspaceID, ComputeAllocationID: allocation.ID, StorageVolumeID: "storage-alpha", PackageID: allocation.PackageID, PoolID: allocation.PoolID, NodePoolID: allocation.NodePoolID},
+		MachineName:               allocation.MachineName, NodeName: allocation.NodeName, CVMInstanceID: allocation.InstanceID, PrivateIP: allocation.PrivateIP, InstanceType: allocation.InstanceType, Zone: allocation.Zone, IdempotencyKey: "launch-alpha:compute",
+	}))
+	if err := store.Append(context.Background(), operation); err != nil {
+		t.Fatal(err)
+	}
+	if _, created, err := store.ClaimMachine(context.Background(), ownership); err != nil || !created {
+		t.Fatalf("ownership seed created=%v err=%v", created, err)
+	}
+	service := NewServiceWithOperationStore(provider, store)
+	claim, err := service.ClaimComputeRecovery(context.Background(), ComputeClaimRecoveryClaimInput{
+		ComputeClaimRecoveryInput: ComputeClaimRecoveryInput{LaunchOperationID: "launch-alpha", AccountID: allocation.AccountID, WorkspaceID: allocation.WorkspaceID, ComputeAllocationID: allocation.ID, StorageVolumeID: "storage-alpha", PackageID: allocation.PackageID, PoolID: allocation.PoolID, NodePoolID: allocation.NodePoolID},
+		MachineName:               allocation.MachineName, NodeName: allocation.NodeName, CVMInstanceID: allocation.InstanceID, PrivateIP: allocation.PrivateIP, InstanceType: allocation.InstanceType, Zone: allocation.Zone, IdempotencyKey: "launch-alpha:compute",
+	})
+	if err != nil || !claim.Eligible || claim.TencentMutationCount != 0 || claim.KubernetesMutationCount != 1 || patchCalls != 1 || storageReadCalls != 1 || storageMutationCalls != 0 {
+		t.Fatalf("claim=%#v err=%v patchCalls=%d storageReadCalls=%d storageMutationCalls=%d", claim, err, patchCalls, storageReadCalls, storageMutationCalls)
+	}
+}
+
+func TestWorkspaceManifestUsesPackageToleration(t *testing.T) {
+	input := WorkspaceRuntimeInput{WorkspaceID: "ws-alpha", RuntimeOperationID: "workspace-launch-alpha:workspace:runtime", ImageID: "registry.example/one-person-lab-app@sha256:" + repeatHex("a", 64)}
+	compute := ComputeAllocation{ID: "compute-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", PackageID: "basic", NodeName: "10.0.0.8", NodeSelector: map[string]any{"kubernetes.io/hostname": "10.0.0.8"}}
+	volume := StorageVolume{ID: "storage-alpha"}
+	var manifest map[string]any
+	if err := json.Unmarshal(workspaceManifest(input, input.WorkspaceID, "seed", "rt-alpha", "opl-compute-alpha", compute, volume, map[string]string{}), &manifest); err != nil {
+		t.Fatal(err)
+	}
+	items := manifest["items"].([]any)
+	deployment := items[1].(map[string]any)
+	tolerations := nested(deployment, "spec", "template", "spec", "tolerations")
+	want := []any{
+		map[string]any{"key": "oplcloud.cn/package-id", "operator": "Equal", "value": "basic", "effect": "NoSchedule"},
+	}
+	if !reflect.DeepEqual(tolerations, want) {
+		t.Fatalf("runtime tolerations=%#v want=%#v", tolerations, want)
 	}
 }
 
@@ -926,7 +1117,7 @@ func TestTencentProviderComputeClaimRecoveryProofCombinesTencentAndNodeReadOnlyT
 		if !slices.Equal(args, []string{"get", "node/" + allocation.NodeName, "-o", "json"}) {
 			t.Fatalf("kubectl args=%#v", args)
 		}
-		return []byte(`{"metadata":{"name":"10.0.0.8","labels":{}},"spec":{"taints":[{"key":"oplcloud.cn/workspace-id","value":"unallocated","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`), nil
+		return []byte(`{"metadata":{"name":"10.0.0.8","labels":{}},"spec":{"taints":[{"key":"oplcloud.cn/package-id","value":"basic","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`), nil
 	}
 
 	proof, err := provider.ProveComputeClaimRecovery(context.Background(), allocation, plan, ownership)
@@ -945,9 +1136,9 @@ func TestTencentProviderComputeClaimRecoveryProofClassifiesNodeAndDependencyFail
 		kubectlErr error
 		wantReason string
 	}{
-		{name: "node target owned", wantReason: "", kubectlRaw: []byte(`{"metadata":{"name":"10.0.0.8","labels":{"medopl.cn/workload":"workspace","oplcloud.cn/resource-id":"compute-alpha","oplcloud.cn/account-id":"acct-alpha","oplcloud.cn/workspace-id":"ws-alpha"}},"spec":{"taints":[{"key":"oplcloud.cn/workspace-id","value":"ws-alpha","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`)},
-		{name: "target labels written before taint", wantReason: "", kubectlRaw: []byte(`{"metadata":{"name":"10.0.0.8","labels":{"medopl.cn/workload":"workspace","oplcloud.cn/resource-id":"compute-alpha","oplcloud.cn/account-id":"acct-alpha","oplcloud.cn/workspace-id":"ws-alpha"}},"spec":{"taints":[{"key":"oplcloud.cn/workspace-id","value":"unallocated","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`)},
-		{name: "node ownership conflict", wantReason: "node_ownership_conflict", kubectlRaw: []byte(`{"metadata":{"name":"10.0.0.8","labels":{"oplcloud.cn/workspace-id":"ws-other"}},"spec":{"taints":[{"key":"oplcloud.cn/workspace-id","value":"unallocated","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`)},
+		{name: "node target owned", wantReason: "", kubectlRaw: []byte(`{"metadata":{"name":"10.0.0.8","labels":{"medopl.cn/workload":"workspace","oplcloud.cn/resource-id":"compute-alpha","oplcloud.cn/account-id":"acct-alpha","oplcloud.cn/workspace-id":"ws-alpha"}},"spec":{"taints":[{"key":"oplcloud.cn/package-id","value":"basic","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`)},
+		{name: "controller resync preserves target ownership", wantReason: "", kubectlRaw: []byte(`{"metadata":{"name":"10.0.0.8","labels":{"medopl.cn/workload":"workspace","oplcloud.cn/resource-id":"compute-alpha","oplcloud.cn/account-id":"acct-alpha","oplcloud.cn/workspace-id":"ws-alpha"}},"spec":{"taints":[{"key":"oplcloud.cn/package-id","value":"basic","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`)},
+		{name: "node ownership conflict", wantReason: "node_ownership_conflict", kubectlRaw: []byte(`{"metadata":{"name":"10.0.0.8","labels":{"oplcloud.cn/workspace-id":"ws-other"}},"spec":{"taints":[{"key":"oplcloud.cn/package-id","value":"basic","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`)},
 		{name: "rbac", wantReason: "iam_rbac", kubectlErr: errors.New("Error from server (Forbidden): nodes is forbidden")},
 		{name: "malformed", wantReason: "identity_mismatch", kubectlRaw: []byte(`{"metadata":{"name":"10.0.0.8"}}`)},
 	} {
@@ -964,11 +1155,7 @@ func TestTencentProviderComputeClaimRecoveryProofClassifiesNodeAndDependencyFail
 			proof, err := provider.ProveComputeClaimRecovery(context.Background(), allocation, plan, ownership)
 
 			if tc.wantReason == "" {
-				wantState := "target_owned"
-				if tc.name == "target labels written before taint" {
-					wantState = "unallocated"
-				}
-				if err != nil || proof.NodeOwnershipState != wantState {
+				if err != nil || proof.NodeOwnershipState != "target_owned" {
 					t.Fatalf("proof=%#v err=%v", proof, err)
 				}
 			} else if err == nil || proof.Reason != tc.wantReason {
@@ -1053,16 +1240,16 @@ func TestTencentProviderClaimComputeRecoveryConvergesExactCVMAndNodeWithStrictRe
 		switch args[0] {
 		case "get":
 			if nodeOwned {
-				return []byte(`{"metadata":{"name":"10.0.0.8","resourceVersion":"8","labels":{"medopl.cn/workload":"workspace","oplcloud.cn/resource-id":"compute-alpha","oplcloud.cn/account-id":"acct-alpha","oplcloud.cn/workspace-id":"ws-alpha"}},"spec":{"taints":[{"key":"oplcloud.cn/workspace-id","value":"ws-alpha","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`), nil
+				return []byte(`{"metadata":{"name":"10.0.0.8","resourceVersion":"8","labels":{"medopl.cn/workload":"workspace","oplcloud.cn/resource-id":"compute-alpha","oplcloud.cn/account-id":"acct-alpha","oplcloud.cn/workspace-id":"ws-alpha"}},"spec":{"taints":[{"key":"oplcloud.cn/package-id","value":"basic","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`), nil
 			}
-			return []byte(`{"metadata":{"name":"10.0.0.8","resourceVersion":"7","labels":{}},"spec":{"taints":[{"key":"oplcloud.cn/workspace-id","value":"unallocated","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`), nil
+			return []byte(`{"metadata":{"name":"10.0.0.8","resourceVersion":"7","labels":{}},"spec":{"taints":[{"key":"oplcloud.cn/package-id","value":"basic","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`), nil
 		case "patch":
 			patchCalls++
 			if !slices.Equal(args, []string{"patch", "node/10.0.0.8", "--type=json", "--patch-file=/dev/stdin"}) {
 				t.Fatalf("patch args=%#v", args)
 			}
 			var patch []map[string]any
-			if json.Unmarshal(stdin, &patch) != nil || len(patch) < 7 || patch[0]["op"] != "test" || patch[0]["path"] != "/metadata/resourceVersion" || patch[0]["value"] != "7" {
+			if json.Unmarshal(stdin, &patch) != nil || len(patch) != 5 || patch[0]["op"] != "test" || patch[0]["path"] != "/metadata/resourceVersion" || patch[0]["value"] != "7" {
 				t.Fatalf("patch=%s", stdin)
 			}
 			nodeOwned = true
@@ -1111,9 +1298,9 @@ func TestTencentProviderClaimComputeRecoveryNodeOnlyPreservesRecoverableCVM(t *t
 		switch args[0] {
 		case "get":
 			if nodeOwned {
-				return []byte(`{"metadata":{"name":"10.0.0.8","resourceVersion":"8","labels":{"medopl.cn/workload":"workspace","oplcloud.cn/resource-id":"compute-alpha","oplcloud.cn/account-id":"acct-alpha","oplcloud.cn/workspace-id":"ws-alpha"}},"spec":{"taints":[{"key":"oplcloud.cn/workspace-id","value":"ws-alpha","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`), nil
+				return []byte(`{"metadata":{"name":"10.0.0.8","resourceVersion":"8","labels":{"medopl.cn/workload":"workspace","oplcloud.cn/resource-id":"compute-alpha","oplcloud.cn/account-id":"acct-alpha","oplcloud.cn/workspace-id":"ws-alpha"}},"spec":{"taints":[{"key":"oplcloud.cn/package-id","value":"basic","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`), nil
 			}
-			return []byte(`{"metadata":{"name":"10.0.0.8","resourceVersion":"7","labels":{}},"spec":{"taints":[{"key":"oplcloud.cn/workspace-id","value":"unallocated","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`), nil
+			return []byte(`{"metadata":{"name":"10.0.0.8","resourceVersion":"7","labels":{}},"spec":{"taints":[{"key":"oplcloud.cn/package-id","value":"basic","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`), nil
 		case "patch":
 			patchCalls++
 			if !slices.Equal(args, []string{"patch", "node/10.0.0.8", "--type=json", "--patch-file=/dev/stdin"}) || len(stdin) == 0 {
@@ -1158,7 +1345,7 @@ func TestTencentProviderNodePatchClientRejectionIsNotCountedAsAPIAcceptedMutatio
 	provider.kubectl = func(_ context.Context, args []string, _ []byte) ([]byte, error) {
 		switch args[0] {
 		case "get":
-			return []byte(`{"metadata":{"name":"10.0.0.8","resourceVersion":"7","labels":{}},"spec":{"taints":[{"key":"oplcloud.cn/workspace-id","value":"unallocated","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`), nil
+			return []byte(`{"metadata":{"name":"10.0.0.8","resourceVersion":"7","labels":{}},"spec":{"taints":[{"key":"oplcloud.cn/package-id","value":"basic","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`), nil
 		case "patch":
 			patchCalls++
 			return nil, errors.New("error: must specify --patch or --patch-file containing the contents of the patch")
@@ -1202,7 +1389,7 @@ func TestTencentProviderClaimComputeRecoveryNodeOnlyRejectsCVMOwnershipReadbackD
 		}, nil
 	}
 	provider.kubectl = func(context.Context, []string, []byte) ([]byte, error) {
-		return []byte(`{"metadata":{"name":"10.0.0.8","resourceVersion":"8","labels":{"medopl.cn/workload":"workspace","oplcloud.cn/resource-id":"compute-alpha","oplcloud.cn/account-id":"acct-alpha","oplcloud.cn/workspace-id":"ws-alpha"}},"spec":{"taints":[{"key":"oplcloud.cn/workspace-id","value":"ws-alpha","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`), nil
+		return []byte(`{"metadata":{"name":"10.0.0.8","resourceVersion":"8","labels":{"medopl.cn/workload":"workspace","oplcloud.cn/resource-id":"compute-alpha","oplcloud.cn/account-id":"acct-alpha","oplcloud.cn/workspace-id":"ws-alpha"}},"spec":{"taints":[{"key":"oplcloud.cn/package-id","value":"basic","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`), nil
 	}
 
 	claim, err := provider.ClaimComputeRecoveryNodeOnly(context.Background(), allocation, plan, ownership)
@@ -1225,7 +1412,7 @@ func TestTencentProviderClaimComputeRecoveryRejectsNodeConflictBeforeMutation(t 
 		}}, nil
 	}
 	provider.kubectl = func(context.Context, []string, []byte) ([]byte, error) {
-		return []byte(`{"metadata":{"name":"10.0.0.8","resourceVersion":"7","labels":{"oplcloud.cn/workspace-id":"ws-other"}},"spec":{"taints":[{"key":"oplcloud.cn/workspace-id","value":"unallocated","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`), nil
+		return []byte(`{"metadata":{"name":"10.0.0.8","resourceVersion":"7","labels":{"oplcloud.cn/workspace-id":"ws-other"}},"spec":{"taints":[{"key":"oplcloud.cn/package-id","value":"basic","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`), nil
 	}
 
 	claim, err := provider.ClaimComputeRecovery(context.Background(), allocation, plan, ownership)
@@ -1264,9 +1451,9 @@ func TestTencentProviderClaimComputeRecoveryRejectsNodeConflictAfterProofBeforeT
 		case "get":
 			getCalls++
 			if getCalls == 1 {
-				return []byte(`{"metadata":{"name":"10.0.0.8","resourceVersion":"7","labels":{}},"spec":{"taints":[{"key":"oplcloud.cn/workspace-id","value":"unallocated","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`), nil
+				return []byte(`{"metadata":{"name":"10.0.0.8","resourceVersion":"7","labels":{}},"spec":{"taints":[{"key":"oplcloud.cn/package-id","value":"basic","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`), nil
 			}
-			return []byte(`{"metadata":{"name":"10.0.0.8","resourceVersion":"8","labels":{"oplcloud.cn/workspace-id":"ws-other"}},"spec":{"taints":[{"key":"oplcloud.cn/workspace-id","value":"ws-other","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`), nil
+			return []byte(`{"metadata":{"name":"10.0.0.8","resourceVersion":"8","labels":{"oplcloud.cn/workspace-id":"ws-other"}},"spec":{"taints":[{"key":"oplcloud.cn/package-id","value":"pro","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`), nil
 		case "patch":
 			patchCalls++
 			return nil, nil
@@ -1317,7 +1504,7 @@ func TestTencentProviderClaimComputeRecoveryRejectsTencentMutationCountAboveBoun
 			patchCalls++
 			return nil, nil
 		}
-		return []byte(`{"metadata":{"name":"10.0.0.8","resourceVersion":"7","labels":{}},"spec":{"taints":[{"key":"oplcloud.cn/workspace-id","value":"unallocated","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`), nil
+		return []byte(`{"metadata":{"name":"10.0.0.8","resourceVersion":"7","labels":{}},"spec":{"taints":[{"key":"oplcloud.cn/package-id","value":"basic","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`), nil
 	}
 
 	claim, err := provider.ClaimComputeRecovery(context.Background(), allocation, plan, ownership)
@@ -1349,9 +1536,9 @@ func TestTencentProviderClaimComputeRecoveryReadsNodeAfterPatchTimeout(t *testin
 		switch args[0] {
 		case "get":
 			if nodeOwned {
-				return []byte(`{"metadata":{"name":"10.0.0.8","labels":{"medopl.cn/workload":"workspace","oplcloud.cn/resource-id":"compute-alpha","oplcloud.cn/account-id":"acct-alpha","oplcloud.cn/workspace-id":"ws-alpha"}},"spec":{"taints":[{"key":"oplcloud.cn/workspace-id","value":"ws-alpha","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`), nil
+				return []byte(`{"metadata":{"name":"10.0.0.8","labels":{"medopl.cn/workload":"workspace","oplcloud.cn/resource-id":"compute-alpha","oplcloud.cn/account-id":"acct-alpha","oplcloud.cn/workspace-id":"ws-alpha"}},"spec":{"taints":[{"key":"oplcloud.cn/package-id","value":"basic","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`), nil
 			}
-			return []byte(`{"metadata":{"name":"10.0.0.8","resourceVersion":"7","labels":{}},"spec":{"taints":[{"key":"oplcloud.cn/workspace-id","value":"unallocated","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`), nil
+			return []byte(`{"metadata":{"name":"10.0.0.8","resourceVersion":"7","labels":{}},"spec":{"taints":[{"key":"oplcloud.cn/package-id","value":"basic","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`), nil
 		case "patch":
 			patchCalls++
 			nodeOwned = true
@@ -1393,13 +1580,13 @@ func TestTencentProviderClaimComputeRecoveryUsesSixthNodeReadbackWithoutRepeatin
 		case "get":
 			getCalls++
 			if patchCalls == 0 {
-				return []byte(`{"metadata":{"name":"10.0.0.8","resourceVersion":"7","labels":{}},"spec":{"taints":[{"key":"oplcloud.cn/workspace-id","value":"unallocated","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`), nil
+				return []byte(`{"metadata":{"name":"10.0.0.8","resourceVersion":"7","labels":{}},"spec":{"taints":[{"key":"oplcloud.cn/package-id","value":"basic","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`), nil
 			}
 			postPatchGetCalls++
 			if postPatchGetCalls < 6 {
-				return []byte(`{"metadata":{"name":"10.0.0.8","resourceVersion":"7","labels":{}},"spec":{"taints":[{"key":"oplcloud.cn/workspace-id","value":"unallocated","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`), nil
+				return []byte(`{"metadata":{"name":"10.0.0.8","resourceVersion":"7","labels":{}},"spec":{"taints":[{"key":"oplcloud.cn/package-id","value":"basic","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`), nil
 			}
-			return []byte(`{"metadata":{"name":"10.0.0.8","resourceVersion":"8","labels":{"medopl.cn/workload":"workspace","oplcloud.cn/resource-id":"compute-alpha","oplcloud.cn/account-id":"acct-alpha","oplcloud.cn/workspace-id":"ws-alpha"}},"spec":{"taints":[{"key":"oplcloud.cn/workspace-id","value":"ws-alpha","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`), nil
+			return []byte(`{"metadata":{"name":"10.0.0.8","resourceVersion":"8","labels":{"medopl.cn/workload":"workspace","oplcloud.cn/resource-id":"compute-alpha","oplcloud.cn/account-id":"acct-alpha","oplcloud.cn/workspace-id":"ws-alpha"}},"spec":{"taints":[{"key":"oplcloud.cn/package-id","value":"basic","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`), nil
 		case "patch":
 			patchCalls++
 			return nil, context.DeadlineExceeded
@@ -1434,7 +1621,7 @@ func TestTencentProviderClaimComputeRecoveryFailsClosedAfterPersistentOldNodeRea
 		}}, nil
 	}
 	getCalls, patchCalls := 0, 0
-	old := []byte(`{"metadata":{"name":"10.0.0.8","resourceVersion":"7","labels":{}},"spec":{"taints":[{"key":"oplcloud.cn/workspace-id","value":"unallocated","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`)
+	old := []byte(`{"metadata":{"name":"10.0.0.8","resourceVersion":"7","labels":{}},"spec":{"taints":[{"key":"oplcloud.cn/package-id","value":"basic","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`)
 	provider.kubectl = func(_ context.Context, args []string, _ []byte) ([]byte, error) {
 		if args[0] == "get" {
 			getCalls++
@@ -1473,7 +1660,7 @@ func TestTencentProviderClaimComputeRecoveryFailsClosedAfterUnreadableNodeReadba
 		}}, nil
 	}
 	getCalls, patchCalls := 0, 0
-	old := []byte(`{"metadata":{"name":"10.0.0.8","resourceVersion":"7","labels":{}},"spec":{"taints":[{"key":"oplcloud.cn/workspace-id","value":"unallocated","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`)
+	old := []byte(`{"metadata":{"name":"10.0.0.8","resourceVersion":"7","labels":{}},"spec":{"taints":[{"key":"oplcloud.cn/package-id","value":"basic","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`)
 	provider.kubectl = func(_ context.Context, args []string, _ []byte) ([]byte, error) {
 		if args[0] == "get" {
 			getCalls++
@@ -1512,7 +1699,7 @@ func TestTencentProviderClaimComputeRecoveryDoesNotPatchNodeWhenCVMEvidenceIsUnc
 	patchCalls := 0
 	provider.kubectl = func(_ context.Context, args []string, _ []byte) ([]byte, error) {
 		if args[0] == "get" {
-			return []byte(`{"metadata":{"name":"10.0.0.8","labels":{}},"spec":{"taints":[{"key":"oplcloud.cn/workspace-id","value":"unallocated","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`), nil
+			return []byte(`{"metadata":{"name":"10.0.0.8","labels":{}},"spec":{"taints":[{"key":"oplcloud.cn/package-id","value":"basic","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`), nil
 		}
 		if args[0] == "patch" {
 			patchCalls++
@@ -1548,7 +1735,7 @@ func TestTencentProviderClaimComputeRecoveryUsesConsistentConservativeEvidenceWh
 		if args[0] == "patch" {
 			patchCalls++
 		}
-		return []byte(`{"metadata":{"name":"10.0.0.8","resourceVersion":"7","labels":{}},"spec":{"taints":[{"key":"oplcloud.cn/workspace-id","value":"unallocated","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`), nil
+		return []byte(`{"metadata":{"name":"10.0.0.8","resourceVersion":"7","labels":{}},"spec":{"taints":[{"key":"oplcloud.cn/package-id","value":"basic","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`), nil
 	}
 
 	claim, err := provider.ClaimComputeRecovery(context.Background(), allocation, plan, ownership)
@@ -1654,9 +1841,9 @@ func TestTencentTagComputeMachineConvergesProviderAndNodeWithStrictReadback(t *t
 		case "get":
 			events = append(events, "get")
 			if nodeOwned {
-				return []byte(`{"metadata":{"name":"node-alpha","resourceVersion":"8","labels":{"medopl.cn/workload":"workspace","oplcloud.cn/resource-id":"compute-alpha","oplcloud.cn/account-id":"acct-alpha","oplcloud.cn/workspace-id":"ws-alpha"}},"spec":{"taints":[{"key":"oplcloud.cn/workspace-id","value":"ws-alpha","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`), nil
+				return []byte(`{"metadata":{"name":"node-alpha","resourceVersion":"8","labels":{"medopl.cn/workload":"workspace","oplcloud.cn/resource-id":"compute-alpha","oplcloud.cn/account-id":"acct-alpha","oplcloud.cn/workspace-id":"ws-alpha"}},"spec":{"taints":[{"key":"oplcloud.cn/package-id","value":"basic","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`), nil
 			}
-			return []byte(`{"metadata":{"name":"node-alpha","resourceVersion":"7","labels":{}},"spec":{"taints":[{"key":"oplcloud.cn/workspace-id","value":"unallocated","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`), nil
+			return []byte(`{"metadata":{"name":"node-alpha","resourceVersion":"7","labels":{}},"spec":{"taints":[{"key":"oplcloud.cn/package-id","value":"basic","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`), nil
 		case "patch":
 			events = append(events, "patch")
 			if !slices.Equal(args, []string{"patch", "node/node-alpha", "--type=json", "--patch-file=/dev/stdin"}) {
@@ -1690,9 +1877,9 @@ func TestTencentTagComputeMachineReadsNodeAfterPatchTimeout(t *testing.T) {
 		switch args[0] {
 		case "get":
 			if nodeOwned {
-				return []byte(`{"metadata":{"name":"node-alpha","resourceVersion":"8","labels":{"medopl.cn/workload":"workspace","oplcloud.cn/resource-id":"compute-alpha","oplcloud.cn/account-id":"acct-alpha","oplcloud.cn/workspace-id":"ws-alpha"}},"spec":{"taints":[{"key":"oplcloud.cn/workspace-id","value":"ws-alpha","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`), nil
+				return []byte(`{"metadata":{"name":"node-alpha","resourceVersion":"8","labels":{"medopl.cn/workload":"workspace","oplcloud.cn/resource-id":"compute-alpha","oplcloud.cn/account-id":"acct-alpha","oplcloud.cn/workspace-id":"ws-alpha"}},"spec":{"taints":[{"key":"oplcloud.cn/package-id","value":"basic","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`), nil
 			}
-			return []byte(`{"metadata":{"name":"node-alpha","resourceVersion":"7","labels":{}},"spec":{"taints":[{"key":"oplcloud.cn/workspace-id","value":"unallocated","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`), nil
+			return []byte(`{"metadata":{"name":"node-alpha","resourceVersion":"7","labels":{}},"spec":{"taints":[{"key":"oplcloud.cn/package-id","value":"basic","effect":"NoSchedule"}]},"status":{"addresses":[{"type":"InternalIP","address":"10.0.0.8"}]}}`), nil
 		case "patch":
 			nodeOwned = true
 			return nil, context.DeadlineExceeded
@@ -1856,16 +2043,12 @@ func TestWorkspaceManifestIsolatesTenantRuntime(t *testing.T) {
 		t.Fatalf("workspace pod must use the RuntimeDefault seccomp profile: %#v", podSpec["securityContext"])
 	}
 	tolerations := podSpec["tolerations"].([]any)
-	if len(tolerations) != 2 {
-		t.Fatalf("workspace pod must carry only ENI and exact Workspace tolerations: %#v", tolerations)
+	if len(tolerations) != 1 {
+		t.Fatalf("workspace pod must carry only the exact package toleration: %#v", tolerations)
 	}
-	eniToleration := tolerations[0].(map[string]any)
-	if eniToleration["key"] != "tke.cloud.tencent.com/eni-ip-unavailable" || eniToleration["effect"] != "NoSchedule" {
-		t.Fatalf("workspace pod must tolerate TKE ENI readiness taint: %#v", eniToleration)
-	}
-	workspaceToleration := tolerations[1].(map[string]any)
-	if workspaceToleration["key"] != "oplcloud.cn/workspace-id" || workspaceToleration["operator"] != "Equal" || workspaceToleration["value"] != "ws-alpha" || workspaceToleration["effect"] != "NoSchedule" {
-		t.Fatalf("workspace pod must tolerate only its exact Workspace node taint: %#v", workspaceToleration)
+	workspaceToleration := tolerations[0].(map[string]any)
+	if workspaceToleration["key"] != "oplcloud.cn/package-id" || workspaceToleration["operator"] != "Equal" || workspaceToleration["value"] != "basic" || workspaceToleration["effect"] != "NoSchedule" {
+		t.Fatalf("workspace pod must tolerate only its exact package node taint: %#v", workspaceToleration)
 	}
 	container := podSpec["containers"].([]any)[0].(map[string]any)
 	containerSecurity, ok := container["securityContext"].(map[string]any)

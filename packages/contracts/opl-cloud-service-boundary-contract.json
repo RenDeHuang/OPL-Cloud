@@ -342,6 +342,14 @@
         "tencentcloud-sdk-go",
         "kubernetes-client-go"
       ],
+      "nodeOwnership": {
+        "nodePoolStableTaint": "oplcloud.cn/package-id=<basic|pro>:NoSchedule",
+        "fabricWorkspaceLabels": ["medopl.cn/workload=workspace", "oplcloud.cn/resource-id", "oplcloud.cn/account-id", "oplcloud.cn/workspace-id"],
+        "claimResourceVersionCAS": true,
+        "claimWritesPackageTaint": false,
+        "runtimeHostnameSelector": true,
+        "activationRequiresMachineOwnership": true
+      },
       "providerFactsBatchRead": {
         "endpoint": "POST /fabric/provider-facts/batch",
         "requestDto": {

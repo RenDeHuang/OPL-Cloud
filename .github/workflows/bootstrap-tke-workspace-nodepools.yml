@@ -15,8 +15,21 @@ on:
         options:
           - "false"
           - "true"
+      migrate_package_taints:
+        description: Migrate only the Basic and Pro legacy unallocated taint to the stable package taint after read-only inventory; no System pool or customer Node claim.
+        required: true
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
       mutation_confirmation:
         description: Enter CREATE_MISSING_WORKSPACE_NODEPOOLS to create only missing zero-replica pools after the read-only one-launch headroom gates pass.
+        required: false
+        default: ""
+        type: string
+      taint_migration_confirmation:
+        description: Enter MIGRATE_BASIC_PRO_NODEPOOL_PACKAGE_TAINTS only for the separately approved Basic and Pro NodePool template migration.
         required: false
         default: ""
         type: string
@@ -44,8 +57,8 @@ jobs:
       OPL_SYSTEM_COMPUTE_CVM_ID: ${{ vars.OPL_SYSTEM_COMPUTE_CVM_ID }}
       OPL_BASIC_COMPUTE_NODE_POOL_ID: ${{ vars.OPL_BASIC_COMPUTE_NODE_POOL_ID }}
       OPL_PRO_COMPUTE_NODE_POOL_ID: ${{ vars.OPL_PRO_COMPUTE_NODE_POOL_ID }}
-      OPL_BASIC_COMPUTE_INSTANCE_TYPE: ""
-      OPL_PRO_COMPUTE_INSTANCE_TYPE: ""
+      OPL_BASIC_COMPUTE_INSTANCE_TYPE: ${{ inputs.migrate_package_taints == 'true' && vars.OPL_BASIC_COMPUTE_INSTANCE_TYPE || '' }}
+      OPL_PRO_COMPUTE_INSTANCE_TYPE: ${{ inputs.migrate_package_taints == 'true' && vars.OPL_PRO_COMPUTE_INSTANCE_TYPE || '' }}
       OPL_BASIC_COMPUTE_NODE_POOL_MAX_REPLICAS: "50"
       OPL_PRO_COMPUTE_NODE_POOL_MAX_REPLICAS: "50"
       OPL_TENCENT_ZONE: ${{ vars.OPL_TENCENT_ZONE || 'na-siliconvalley-1' }}
@@ -60,9 +73,11 @@ jobs:
       TENCENT_CVM_SECURITY_GROUP_IDS: ${{ vars.TENCENT_CVM_SECURITY_GROUP_IDS }}
       TENCENT_CVM_SYSTEM_DISK_TYPE: ${{ vars.TENCENT_CVM_SYSTEM_DISK_TYPE || 'CLOUD_BSSD' }}
       TENCENT_CVM_SYSTEM_DISK_SIZE_GB: ${{ vars.TENCENT_CVM_SYSTEM_DISK_SIZE_GB || '50' }}
-      RUN_TENCENT_CREATE_RELEASE_EXECUTION: ${{ inputs.mutate_missing_pools == 'true' && inputs.mutation_confirmation == 'CREATE_MISSING_WORKSPACE_NODEPOOLS' && '1' || '0' }}
+      RUN_TENCENT_CREATE_RELEASE_EXECUTION: ${{ ((inputs.mutate_missing_pools == 'true' && inputs.mutation_confirmation == 'CREATE_MISSING_WORKSPACE_NODEPOOLS') || (inputs.migrate_package_taints == 'true' && inputs.taint_migration_confirmation == 'MIGRATE_BASIC_PRO_NODEPOOL_PACKAGE_TAINTS')) && '1' || '0' }}
       RUN_TENCENT_NODE_POOL_BOOTSTRAP: ${{ inputs.mutate_missing_pools == 'true' && inputs.mutation_confirmation == 'CREATE_MISSING_WORKSPACE_NODEPOOLS' && '1' || '0' }}
       RUN_TENCENT_NODE_POOL_BOOTSTRAP_CONFIRMATION: ${{ inputs.mutation_confirmation }}
+      RUN_TENCENT_NODE_POOL_TAINT_MIGRATION: ${{ inputs.migrate_package_taints == 'true' && inputs.taint_migration_confirmation == 'MIGRATE_BASIC_PRO_NODEPOOL_PACKAGE_TAINTS' && '1' || '0' }}
+      RUN_TENCENT_NODE_POOL_TAINT_MIGRATION_CONFIRMATION: ${{ inputs.taint_migration_confirmation }}
 
     steps:
       - name: Checkout exact source
@@ -93,6 +108,18 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: "1.22"
+
+      - name: Require one NodePool operation mode
+        shell: bash
+        env:
+          MUTATE_MISSING_POOLS: ${{ inputs.mutate_missing_pools }}
+          MIGRATE_PACKAGE_TAINTS: ${{ inputs.migrate_package_taints }}
+        run: |
+          set -euo pipefail
+          if [ "$MUTATE_MISSING_POOLS" = "true" ] && [ "$MIGRATE_PACKAGE_TAINTS" = "true" ]; then
+            echo "NodePool creation and taint migration are separate mutation modes." >&2
+            exit 1
+          fi
 
       - name: Prepare bootstrap workspace
         shell: bash
@@ -126,6 +153,7 @@ jobs:
           go build -o "$OPL_BOOTSTRAP_SECRET_DIR/opl-tencent-provisioner" ./cmd/opl-tencent-provisioner
 
       - name: Inventory and select Workspace SKUs
+        if: ${{ inputs.migrate_package_taints != 'true' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -187,6 +215,7 @@ jobs:
           NODE
 
       - name: Revalidate selected Workspace SKUs before mutation
+        if: ${{ inputs.migrate_package_taints != 'true' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -227,6 +256,7 @@ jobs:
 
       - name: Inventory and bootstrap package NodePools
         id: bootstrap_action
+        if: ${{ inputs.migrate_package_taints != 'true' }}
         continue-on-error: true
         shell: bash
         env:
@@ -245,8 +275,90 @@ jobs:
           NODE
           "$OPL_BOOTSTRAP_SECRET_DIR/opl-tencent-provisioner" < "$request" > "$OPL_BOOTSTRAP_ARTIFACT_DIR/bootstrap-nodepool-report.json"
 
+      - name: Inventory and migrate package NodePool taints
+        id: taint_migration_action
+        if: ${{ inputs.migrate_package_taints == 'true' }}
+        continue-on-error: true
+        shell: bash
+        env:
+          RUN_TAINT_MIGRATION: ${{ env.RUN_TENCENT_NODE_POOL_TAINT_MIGRATION }}
+        run: |
+          set -euo pipefail
+          request="$OPL_BOOTSTRAP_SECRET_DIR/taint-migration-request.json"
+          RUN_TAINT_MIGRATION="$RUN_TAINT_MIGRATION" REQUEST_PATH="$request" node <<'NODE'
+          const fs = require("node:fs");
+          fs.writeFileSync(process.env.REQUEST_PATH, JSON.stringify({
+            action: "migrate_workspace_node_pool_taints",
+            dryRun: process.env.RUN_TAINT_MIGRATION !== "1",
+            zone: process.env.OPL_TENCENT_ZONE,
+            requiredCapacity: 1
+          }));
+          NODE
+          "$OPL_BOOTSTRAP_SECRET_DIR/opl-tencent-provisioner" < "$request" > "$OPL_BOOTSTRAP_ARTIFACT_DIR/taint-migration-report.json"
+
+      - name: Validate taint migration report
+        if: always() && inputs.migrate_package_taints == 'true'
+        shell: bash
+        env:
+          TAINT_MIGRATION_ACTION_OUTCOME: ${{ steps.taint_migration_action.outcome }}
+          RUN_TAINT_MIGRATION: ${{ env.RUN_TENCENT_NODE_POOL_TAINT_MIGRATION }}
+        run: |
+          set -euo pipefail
+          report_path="$OPL_BOOTSTRAP_ARTIFACT_DIR/taint-migration-report.json"
+          if [ ! -f "$report_path" ]; then
+            echo "taint_migration_report_missing" >&2
+            exit 1
+          fi
+          REPORT_PATH="$report_path" TAINT_MIGRATION_ACTION_OUTCOME="$TAINT_MIGRATION_ACTION_OUTCOME" RUN_TAINT_MIGRATION="$RUN_TAINT_MIGRATION" node <<'NODE'
+          const fs = require("node:fs");
+          const report = JSON.parse(fs.readFileSync(process.env.REPORT_PATH, "utf8"));
+          const live = process.env.RUN_TAINT_MIGRATION === "1";
+          const expectedPoolIds = {
+            basic: (process.env.OPL_BASIC_COMPUTE_NODE_POOL_ID || "").trim(),
+            pro: (process.env.OPL_PRO_COMPUTE_NODE_POOL_ID || "").trim()
+          };
+          const exactTaint = (taints, key, value) => Array.isArray(taints) && taints.length === 1 &&
+            taints[0]?.key === key && taints[0]?.value === value && taints[0]?.effect === "NoSchedule";
+          if (process.env.TAINT_MIGRATION_ACTION_OUTCOME !== "success" || report.ok !== true ||
+              !Number.isInteger(report.mutationCount) || report.mutationCount < 0 || report.mutationCount > 2 ||
+              (!live && report.mutationCount !== 0) ||
+              !Array.isArray(report.nodePools) || report.nodePools.length !== 2 ||
+              new Set(report.nodePools.map((pool) => pool.packageId)).size !== 2 ||
+              report.nodePools.some((pool) => !["basic", "pro"].includes(pool.packageId)) ||
+              report.nodePools.some((pool) => !Number.isInteger(pool.estimatedNodeCount) || pool.estimatedNodeCount < 0) ||
+              Object.values(expectedPoolIds).some((id) => !/^np-[A-Za-z0-9-]+$/.test(id)) ||
+              expectedPoolIds.basic === expectedPoolIds.pro ||
+              report.nodePools.some((pool) => pool.nodePoolId !== expectedPoolIds[pool.packageId]) ||
+              report.nodePools.some((pool) => pool.nodePoolId === process.env.OPL_SYSTEM_COMPUTE_NODE_POOL_ID) ||
+              (report.protectedSystem || {}).nodePoolId !== process.env.OPL_SYSTEM_COMPUTE_NODE_POOL_ID ||
+              (report.protectedSystem || {}).poolCheckStatus !== "passed" || (report.protectedSystem || {}).machineCheckStatus !== "passed" ||
+              (report.protectedSystem || {}).nodeCheckStatus !== "passed") {
+            throw new Error(`taint_migration_failed:${report.errorCode || "unknown"}`);
+          }
+          let changedPools = 0;
+          for (const pool of report.nodePools) {
+            const legacyBefore = exactTaint(pool.taintsBefore, "oplcloud.cn/workspace-id", "unallocated");
+            const packageBefore = exactTaint(pool.taintsBefore, "oplcloud.cn/package-id", pool.packageId);
+            const packageAfter = exactTaint(pool.taintsAfter, "oplcloud.cn/package-id", pool.packageId);
+            const expectedPoolStatus = legacyBefore ? (live ? "migrated" : "migration_required") : "registered";
+            if ((!legacyBefore && !packageBefore) || !packageAfter || pool.status !== expectedPoolStatus) {
+              throw new Error(`taint_migration_pool_${pool.packageId}_invalid`);
+            }
+            if (legacyBefore) changedPools++;
+          }
+          const expectedStatus = changedPools === 0 ? "registered" : live ? "migrated" : "migration_required";
+          const expectedMutationCount = live ? changedPools : 0;
+          if (report.status !== expectedStatus || report.mutationCount !== expectedMutationCount) {
+            throw new Error("taint_migration_status_or_mutation_count_invalid");
+          }
+          const encoded = JSON.stringify(report).toLowerCase();
+          for (const forbidden of ["secret", "token", "requestid", "providerrequestid", "rawresponse", "workspace-id\":\"ws-"]) {
+            if (encoded.includes(forbidden)) throw new Error(`taint_migration_report_leaked_${forbidden}`);
+          }
+          NODE
+
       - name: Validate bootstrap report
-        if: always()
+        if: always() && inputs.migrate_package_taints != 'true'
         shell: bash
         env:
           BOOTSTRAP_ACTION_OUTCOME: ${{ steps.bootstrap_action.outcome }}
@@ -310,7 +422,7 @@ jobs:
           retention-days: 30
 
       - name: Require bootstrap action success
-        if: ${{ steps.bootstrap_action.outcome != 'success' }}
+        if: ${{ inputs.migrate_package_taints != 'true' && steps.bootstrap_action.outcome != 'success' }}
         shell: bash
         run: |
           echo "NodePool bootstrap did not complete; inspect the uploaded partial-state report." >&2
