@@ -1811,6 +1811,88 @@ func TestPostgresNormalLaunchTerminalReconciliationHasOneClaimWinnerAcrossServic
 	}
 }
 
+func TestPostgresConfirmedNodeDriftAttemptHasOnePatchAcrossServiceInstances(t *testing.T) {
+	databaseURL := fabricTestDatabaseURL(t)
+	firstStore, err := newTestPostgresOperationStore(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer firstStore.client.Close()
+	secondStore, err := newTestPostgresOperationStore(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer secondStore.client.Close()
+
+	_, memoryStore, fixtureProvider, input := seedComputeClaimRecovery(t, "basic")
+	claimInput := seedNormalLaunchTerminalRequestHashReconciliationCandidate(t, memoryStore, fixtureProvider, input)
+	initialService := NewServiceWithOperationStore(fixtureProvider, memoryStore)
+	if initial, initialErr := initialService.ClaimComputeRecovery(context.Background(), claimInput); initialErr != nil || !initial.Eligible {
+		t.Fatalf("initial=%#v err=%v", initial, initialErr)
+	}
+	operations, err := memoryStore.List(context.Background())
+	if err != nil || len(operations) != 1 || operations[0].Status != "succeeded" {
+		t.Fatalf("fixture operations=%#v err=%v", operations, err)
+	}
+	historicalJSON, err := json.Marshal(operations[0].RedactedProviderPayload[computeClaimRecoveryReconciliationPayloadKey])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := firstStore.Append(context.Background(), operations[0]); err != nil {
+		t.Fatal(err)
+	}
+	ownership, err := memoryStore.MachineOwnership(context.Background(), input.ComputeAllocationID)
+	if err != nil || ownership.Status != "active" {
+		t.Fatalf("ownership=%#v err=%v", ownership, err)
+	}
+	if stored, created, claimErr := firstStore.ClaimMachine(context.Background(), ownership); claimErr != nil || !created {
+		t.Fatalf("seed ownership=%#v created=%v err=%v", stored, created, claimErr)
+	}
+
+	provider := &postgresComputeClaimRecoveryProvider{fakeComputeClaimRecoveryProvider: *fixtureProvider}
+	provider.proof.NodeOwnershipState = "unallocated"
+	provider.claimHook = func() { provider.proof.NodeOwnershipState = "target_owned" }
+	driftInput := claimInput
+	driftInput.IdempotencyKey = input.LaunchOperationID + ":compute:confirmed-node-drift:" + strings.Repeat("a", 64)
+	type outcome struct {
+		proof ComputeClaimRecoveryProof
+		err   error
+	}
+	start := make(chan struct{})
+	results := make(chan outcome, 2)
+	for _, store := range []*PostgresOperationStore{firstStore, secondStore} {
+		store := store
+		go func() {
+			<-start
+			proof, claimErr := NewServiceWithOperationStore(provider, store).ClaimComputeRecovery(context.Background(), driftInput)
+			results <- outcome{proof: proof, err: claimErr}
+		}()
+	}
+	close(start)
+	kubernetesMutations := 0
+	for range 2 {
+		result := <-results
+		if result.err != nil || !result.proof.Eligible || result.proof.TencentMutationCount != 0 || result.proof.KubernetesMutationCount > 1 {
+			t.Fatalf("proof=%#v err=%v", result.proof, result.err)
+		}
+		kubernetesMutations += result.proof.KubernetesMutationCount
+	}
+
+	stored, err := firstStore.List(context.Background())
+	if err != nil || len(stored) != 1 {
+		t.Fatalf("stored=%#v err=%v", stored, err)
+	}
+	ledger, ledgerPresent, ledgerValid := decodeComputeClaimRecoveryMutation(stored[0])
+	afterHistoricalJSON, historicalErr := json.Marshal(stored[0].RedactedProviderPayload[computeClaimRecoveryReconciliationPayloadKey])
+	if kubernetesMutations != 1 || provider.claimCalls != 0 || provider.nodeOnlyClaimCalls != 2 || !ledgerPresent || !ledgerValid ||
+		ledger.Generation != confirmedNodeDriftGeneration || ledger.State != "observed" || ledger.Reason != "confirmed_node_drift" ||
+		ledger.TencentMutationCount != 0 || ledger.KubernetesMutationCount != 1 ||
+		!reflect.DeepEqual(ledger.Evidence.Node, ComputeClaimMutationEvidence{Attempted: 1, Confirmed: 1}) ||
+		historicalErr != nil || !reflect.DeepEqual(afterHistoricalJSON, historicalJSON) {
+		t.Fatalf("mutations=%d stored=%#v ledger=%#v provider=%#v historicalErr=%v", kubernetesMutations, stored, ledger, provider, historicalErr)
+	}
+}
+
 func TestPostgresLegacyKubectlClientRejectionRetryHasOneNodePatchWinner(t *testing.T) {
 	databaseURL := fabricTestDatabaseURL(t)
 	firstStore, err := newTestPostgresOperationStore(databaseURL)

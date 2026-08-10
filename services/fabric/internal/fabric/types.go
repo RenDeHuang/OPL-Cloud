@@ -332,6 +332,7 @@ type ComputeClaimRecoveryProof struct {
 	SchemaVersion             int                                  `json:"schemaVersion"`
 	Eligible                  bool                                 `json:"eligible"`
 	Reason                    string                               `json:"reason"`
+	RecoveryClassification    string                               `json:"recoveryClassification,omitempty"`
 	StorageState              string                               `json:"storageState"`
 	StorageProviderResourceID string                               `json:"storageProviderResourceId,omitempty"`
 	LaunchOperationID         string                               `json:"launchOperationId"`

@@ -1254,6 +1254,219 @@ func TestClaimComputeRecoveryReconcilesFailedNormalLaunchTerminalEvidenceAndPres
 	}
 }
 
+func TestComputeClaimRecoveryProofClassifiesConfirmedNodeDriftFromFreshReadback(t *testing.T) {
+	_, store, provider, input := seedComputeClaimRecovery(t, "basic")
+	claimInput := seedNormalLaunchTerminalRequestHashReconciliationCandidate(t, store, provider, input)
+	service := NewServiceWithOperationStore(provider, store)
+
+	initial, initialErr := service.ClaimComputeRecovery(context.Background(), claimInput)
+	operations, listErr := store.List(context.Background())
+	if initialErr != nil || !initial.Eligible || initial.KubernetesMutationCount != 1 || provider.nodeOnlyClaimCalls != 1 ||
+		listErr != nil || len(operations) != 1 {
+		t.Fatalf("initial=%#v err=%v operations=%#v listErr=%v provider=%#v", initial, initialErr, operations, listErr, provider)
+	}
+	historicalJSON, historicalErr := json.Marshal(operations[0].RedactedProviderPayload[computeClaimRecoveryReconciliationPayloadKey])
+	if historicalErr != nil {
+		t.Fatal(historicalErr)
+	}
+
+	provider.proof.NodeOwnershipState = "unallocated"
+	proof, proofErr := service.ComputeClaimRecoveryProof(context.Background(), claimInput.ComputeClaimRecoveryInput)
+	after, afterErr := store.List(context.Background())
+	afterJSON, afterJSONErr := json.Marshal(after[0].RedactedProviderPayload[computeClaimRecoveryReconciliationPayloadKey])
+	var projected map[string]any
+	encoded, encodedErr := json.Marshal(proof)
+	if encodedErr == nil {
+		encodedErr = json.Unmarshal(encoded, &projected)
+	}
+
+	if proofErr != nil || !proof.Eligible || proof.Reason != "none" || proof.NodeOwnershipState != "unallocated" ||
+		projected["recoveryClassification"] != "confirmed_node_drift" || proof.TencentMutationCount != 0 || proof.KubernetesMutationCount != 0 ||
+		provider.nodeOnlyClaimCalls != 1 || afterErr != nil || len(after) != 1 || afterJSONErr != nil || encodedErr != nil ||
+		!reflect.DeepEqual(afterJSON, historicalJSON) {
+		t.Fatalf("proof=%#v err=%v projection=%#v operations=%#v afterErr=%v provider=%#v historical=%s after=%s encodeErr=%v",
+			proof, proofErr, projected, after, afterErr, provider, historicalJSON, afterJSON, encodedErr)
+	}
+}
+
+func TestClaimComputeRecoveryRepairsApprovedConfirmedNodeDriftOnce(t *testing.T) {
+	_, store, provider, input := seedComputeClaimRecovery(t, "basic")
+	claimInput := seedNormalLaunchTerminalRequestHashReconciliationCandidate(t, store, provider, input)
+	service := NewServiceWithOperationStore(provider, store)
+
+	initial, initialErr := service.ClaimComputeRecovery(context.Background(), claimInput)
+	operations, listErr := store.List(context.Background())
+	if initialErr != nil || !initial.Eligible || initial.KubernetesMutationCount != 1 || provider.nodeOnlyClaimCalls != 1 ||
+		listErr != nil || len(operations) != 1 {
+		t.Fatalf("initial=%#v err=%v operations=%#v listErr=%v provider=%#v", initial, initialErr, operations, listErr, provider)
+	}
+	historicalJSON, historicalErr := json.Marshal(operations[0].RedactedProviderPayload[computeClaimRecoveryReconciliationPayloadKey])
+	if historicalErr != nil {
+		t.Fatal(historicalErr)
+	}
+
+	provider.proof.NodeOwnershipState = "unallocated"
+	attemptDigest := strings.Repeat("a", 64)
+	driftInput := claimInput
+	driftInput.IdempotencyKey = input.LaunchOperationID + ":compute:confirmed-node-drift:" + attemptDigest
+	repaired, repairErr := service.ClaimComputeRecovery(context.Background(), driftInput)
+	stored, storedErr := store.List(context.Background())
+	ledger, ledgerPresent, ledgerValid := decodeComputeClaimRecoveryMutation(stored[0])
+	storedHistoricalJSON, storedHistoricalErr := json.Marshal(stored[0].RedactedProviderPayload[computeClaimRecoveryReconciliationPayloadKey])
+	var ledgerProjection map[string]any
+	ledgerJSON, ledgerJSONErr := json.Marshal(stored[0].RedactedProviderPayload[computeClaimRecoveryMutationPayloadKey])
+	if ledgerJSONErr == nil {
+		ledgerJSONErr = json.Unmarshal(ledgerJSON, &ledgerProjection)
+	}
+
+	if repairErr != nil || !repaired.Eligible || repaired.TencentMutationCount != 0 || repaired.KubernetesMutationCount != 1 ||
+		provider.claimCalls != 0 || provider.nodeOnlyClaimCalls != 2 || storedErr != nil || len(stored) != 1 ||
+		!ledgerPresent || !ledgerValid || ledger.State != "observed" || ledger.Reason != "confirmed_node_drift" ||
+		ledger.TencentMutationCount != 0 || ledger.KubernetesMutationCount != 1 ||
+		!reflect.DeepEqual(ledger.Evidence.Node, ComputeClaimMutationEvidence{Attempted: 1, Confirmed: 1}) ||
+		ledgerProjection["generation"] != "normal_launch_confirmed_node_drift_v1" || ledgerProjection["attemptDigest"] != attemptDigest ||
+		storedHistoricalErr != nil || ledgerJSONErr != nil || !reflect.DeepEqual(storedHistoricalJSON, historicalJSON) {
+		t.Fatalf("repaired=%#v err=%v stored=%#v storedErr=%v ledger=%#v projection=%#v provider=%#v historical=%s after=%s ledgerErr=%v",
+			repaired, repairErr, stored, storedErr, ledger, ledgerProjection, provider, historicalJSON, storedHistoricalJSON, ledgerJSONErr)
+	}
+
+	replayed, replayErr := service.ClaimComputeRecovery(context.Background(), driftInput)
+	if replayErr != nil || !replayed.Eligible || replayed.TencentMutationCount != 0 || replayed.KubernetesMutationCount != 0 ||
+		provider.nodeOnlyClaimCalls != 2 {
+		t.Fatalf("replayed=%#v err=%v provider=%#v", replayed, replayErr, provider)
+	}
+}
+
+func TestClaimComputeRecoveryDoesNotProjectHistoricalSuccessOverFreshNodeDrift(t *testing.T) {
+	_, store, provider, input := seedComputeClaimRecovery(t, "basic")
+	claimInput := seedNormalLaunchTerminalRequestHashReconciliationCandidate(t, store, provider, input)
+	service := NewServiceWithOperationStore(provider, store)
+
+	initial, initialErr := service.ClaimComputeRecovery(context.Background(), claimInput)
+	if initialErr != nil || !initial.Eligible || provider.nodeOnlyClaimCalls != 1 {
+		t.Fatalf("initial=%#v err=%v provider=%#v", initial, initialErr, provider)
+	}
+	provider.proof.NodeOwnershipState = "unallocated"
+	provider.claimHook = nil
+	replayed, replayErr := service.ClaimComputeRecovery(context.Background(), claimInput)
+
+	if replayErr == nil || replayed.Eligible || replayed.NodeOwnershipState != "unallocated" ||
+		replayed.Reason != "identity_mismatch" || replayed.TencentMutationCount != 0 || replayed.KubernetesMutationCount != 0 ||
+		provider.nodeOnlyClaimCalls != 1 {
+		t.Fatalf("replayed=%#v err=%v provider=%#v", replayed, replayErr, provider)
+	}
+}
+
+func TestClaimComputeRecoveryConfirmedNodeDriftReservationResponseLossForbidsPatch(t *testing.T) {
+	_, store, provider, input := seedComputeClaimRecovery(t, "basic")
+	claimInput := seedNormalLaunchTerminalRequestHashReconciliationCandidate(t, store, provider, input)
+	service := NewServiceWithOperationStore(provider, store)
+	if initial, err := service.ClaimComputeRecovery(context.Background(), claimInput); err != nil || !initial.Eligible {
+		t.Fatalf("initial=%#v err=%v", initial, err)
+	}
+	provider.proof.NodeOwnershipState = "unallocated"
+	provider.claimHook = nil
+	attemptDigest := strings.Repeat("b", 64)
+	driftInput := claimInput
+	driftInput.IdempotencyKey = input.LaunchOperationID + ":compute:confirmed-node-drift:" + attemptDigest
+
+	interruptedService := NewServiceWithOperationStore(provider, &failAfterComputeClaimNodeReservationStore{OperationStore: store})
+	interrupted, interruptedErr := interruptedService.ClaimComputeRecovery(context.Background(), driftInput)
+	replayed, replayErr := service.ClaimComputeRecovery(context.Background(), driftInput)
+	operations, listErr := store.List(context.Background())
+	ledger, present, valid := decodeComputeClaimRecoveryMutation(operations[0])
+
+	if interruptedErr == nil || interrupted.Eligible || replayErr == nil || replayed.Eligible || provider.nodeOnlyClaimCalls != 1 ||
+		listErr != nil || len(operations) != 1 || !present || !valid || ledger.State != "node_reserved" ||
+		ledger.Generation != confirmedNodeDriftGeneration || ledger.AttemptDigest != attemptDigest {
+		t.Fatalf("interrupted=%#v interruptedErr=%v replayed=%#v replayErr=%v operations=%#v listErr=%v provider=%#v",
+			interrupted, interruptedErr, replayed, replayErr, operations, listErr, provider)
+	}
+}
+
+func TestClaimComputeRecoveryConfirmedNodeDriftAttemptCannotBeTakenOver(t *testing.T) {
+	_, store, provider, input := seedComputeClaimRecovery(t, "basic")
+	claimInput := seedNormalLaunchTerminalRequestHashReconciliationCandidate(t, store, provider, input)
+	service := NewServiceWithOperationStore(provider, store)
+	if initial, err := service.ClaimComputeRecovery(context.Background(), claimInput); err != nil || !initial.Eligible {
+		t.Fatalf("initial=%#v err=%v", initial, err)
+	}
+	provider.proof.NodeOwnershipState = "unallocated"
+	first := claimInput
+	first.IdempotencyKey = input.LaunchOperationID + ":compute:confirmed-node-drift:" + strings.Repeat("c", 64)
+	if repaired, err := service.ClaimComputeRecovery(context.Background(), first); err != nil || !repaired.Eligible {
+		t.Fatalf("repaired=%#v err=%v", repaired, err)
+	}
+
+	provider.proof.NodeOwnershipState = "unallocated"
+	second := claimInput
+	second.IdempotencyKey = input.LaunchOperationID + ":compute:confirmed-node-drift:" + strings.Repeat("d", 64)
+	takenOver, takeOverErr := service.ClaimComputeRecovery(context.Background(), second)
+	if takeOverErr == nil || takenOver.Eligible || takenOver.Reason != "identity_mismatch" || provider.nodeOnlyClaimCalls != 2 {
+		t.Fatalf("takenOver=%#v err=%v provider=%#v", takenOver, takeOverErr, provider)
+	}
+}
+
+func TestClaimComputeRecoveryConfirmedNodeDriftTimeoutIsGetOnlyOnReplay(t *testing.T) {
+	_, store, provider, input := seedComputeClaimRecovery(t, "basic")
+	claimInput := seedNormalLaunchTerminalRequestHashReconciliationCandidate(t, store, provider, input)
+	service := NewServiceWithOperationStore(provider, store)
+	if initial, err := service.ClaimComputeRecovery(context.Background(), claimInput); err != nil || !initial.Eligible {
+		t.Fatalf("initial=%#v err=%v", initial, err)
+	}
+	provider.proof.NodeOwnershipState = "unallocated"
+	provider.claimHook = nil
+	provider.claimErr = errors.New("node patch timeout")
+	provider.claim = ComputeClaimProviderClaim{
+		Proof: ComputeClaimProviderProof{
+			Status: "proven", Reason: "provider_describe", MachineName: provider.proof.MachineName, NodeName: provider.proof.NodeName,
+			CVMInstanceID: provider.proof.CVMInstanceID, PrivateIP: provider.proof.PrivateIP, InstanceType: provider.proof.InstanceType,
+			Zone: provider.proof.Zone, ChargeType: provider.proof.ChargeType, PeriodMonths: provider.proof.PeriodMonths,
+			RenewFlag: provider.proof.RenewFlag, Deadline: provider.proof.Deadline, CVMOwnershipState: "recoverable", NodeOwnershipState: "unallocated",
+		},
+		KubernetesMutationCount: 1, FailureStage: "node_patch_readback", ProviderErrorClass: "timeout",
+		Evidence: &ComputeClaimEvidence{Node: ComputeClaimMutationEvidence{Attempted: 1, Unknown: 1, Missing: []string{"node_ownership"}}},
+	}
+	driftInput := claimInput
+	driftInput.IdempotencyKey = input.LaunchOperationID + ":compute:confirmed-node-drift:" + strings.Repeat("e", 64)
+
+	first, firstErr := service.ClaimComputeRecovery(context.Background(), driftInput)
+	replayed, replayErr := service.ClaimComputeRecovery(context.Background(), driftInput)
+	operations, listErr := store.List(context.Background())
+	ledger, present, valid := decodeComputeClaimRecoveryMutation(operations[0])
+	if firstErr == nil || first.Eligible || replayErr == nil || replayed.Eligible || provider.nodeOnlyClaimCalls != 2 ||
+		listErr != nil || len(operations) != 1 || !present || !valid || ledger.State != "observed" ||
+		ledger.Reason != "provider_describe" || ledger.ProviderErrorClass != "timeout" ||
+		!reflect.DeepEqual(ledger.Evidence.Node, ComputeClaimMutationEvidence{Attempted: 1, Unknown: 1, Missing: []string{"node_ownership"}}) {
+		t.Fatalf("first=%#v firstErr=%v replayed=%#v replayErr=%v operations=%#v listErr=%v provider=%#v",
+			first, firstErr, replayed, replayErr, operations, listErr, provider)
+	}
+}
+
+func TestClaimComputeRecoveryConfirmedNodeDriftObservedSaveLossReconcilesByGet(t *testing.T) {
+	_, store, provider, input := seedComputeClaimRecovery(t, "basic")
+	claimInput := seedNormalLaunchTerminalRequestHashReconciliationCandidate(t, store, provider, input)
+	service := NewServiceWithOperationStore(provider, store)
+	if initial, err := service.ClaimComputeRecovery(context.Background(), claimInput); err != nil || !initial.Eligible {
+		t.Fatalf("initial=%#v err=%v", initial, err)
+	}
+	provider.proof.NodeOwnershipState = "unallocated"
+	driftInput := claimInput
+	driftInput.IdempotencyKey = input.LaunchOperationID + ":compute:confirmed-node-drift:" + strings.Repeat("f", 64)
+
+	interruptedService := NewServiceWithOperationStore(provider, &failBeforeComputeClaimObservedSaveStore{OperationStore: store})
+	interrupted, interruptedErr := interruptedService.ClaimComputeRecovery(context.Background(), driftInput)
+	replayed, replayErr := service.ClaimComputeRecovery(context.Background(), driftInput)
+	operations, listErr := store.List(context.Background())
+	ledger, present, valid := decodeComputeClaimRecoveryMutation(operations[0])
+	if interruptedErr == nil || interrupted.Eligible || replayErr != nil || !replayed.Eligible || provider.nodeOnlyClaimCalls != 2 ||
+		listErr != nil || len(operations) != 1 || !present || !valid || ledger.State != "observed" || ledger.Reason != "confirmed_node_drift" ||
+		!reflect.DeepEqual(ledger.Evidence.Node, ComputeClaimMutationEvidence{Attempted: 1, Confirmed: 1}) {
+		t.Fatalf("interrupted=%#v interruptedErr=%v replayed=%#v replayErr=%v operations=%#v listErr=%v provider=%#v",
+			interrupted, interruptedErr, replayed, replayErr, operations, listErr, provider)
+	}
+}
+
 func TestClaimComputeRecoveryRetriesExactLegacyKubectlClientRejectionOnce(t *testing.T) {
 	_, store, provider, input := seedComputeClaimRecovery(t, "basic")
 	claimInput := seedNormalLaunchTerminalRequestHashReconciliationCandidate(t, store, provider, input)

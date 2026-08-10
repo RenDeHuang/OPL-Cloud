@@ -2376,6 +2376,13 @@ func workspaceComputeClaimPersistedNodeOnlyContinuationBindingsMatch(operation w
 	return len(workspaceRecoveryPlanMismatches(*plan, current)) == 0
 }
 
+func workspaceConfirmedNodeDriftExecutionAuthorized(operation workspaceLaunchOperation, input workspaceComputeClaimRecoveryRequest, key string) bool {
+	return operation.CurrentDecision != nil &&
+		AuthorizeApprovedStageMutation(*operation.CurrentDecision, "confirmed_node_drift_recovery") &&
+		computeClaimApprovalDigestPattern.MatchString(input.ApprovalDigest) &&
+		workspaceComputeClaimPersistedNodeOnlyContinuationBindingsMatch(operation, input, key)
+}
+
 func workspaceComputeClaimApprovalStorageBoundaryRefreshAllowed(operation workspaceLaunchOperation, got, want workspaceComputeClaimApprovalBinding, persistedNodeOnlyContinuationAuthorized bool) bool {
 	requestBindingMatches := workspaceComputeClaimRequestBindingEmpty(operation) ||
 		workspaceComputeClaimRequestBindingMatchesApproval(operation, got, persistedNodeOnlyContinuationAuthorized)
@@ -2557,17 +2564,18 @@ func workspaceComputeClaimEvidenceMatches(proof clients.ComputeClaimRecoveryProo
 // GET-only projections. It performs no network access and never authorizes a
 // mutation by itself.
 type workspaceComputeClaimProofEvaluation struct {
-	Eligible            bool
-	BaseMatches         bool
-	FirstFalsePredicate string
-	Expected            string
-	Actual              string
-	Authority           string
-	Condition           string
-	NodeOwnershipState  string
-	CVMOwnershipState   string
-	StorageState        string
-	StorageProviderID   string
+	Eligible               bool
+	BaseMatches            bool
+	RecoveryClassification string
+	FirstFalsePredicate    string
+	Expected               string
+	Actual                 string
+	Authority              string
+	Condition              string
+	NodeOwnershipState     string
+	CVMOwnershipState      string
+	StorageState           string
+	StorageProviderID      string
 }
 
 func workspaceComputeClaimProofEvaluationFailure(predicate, expected, actual, authority, condition string) workspaceComputeClaimProofEvaluation {
@@ -2594,10 +2602,11 @@ func workspaceComputeClaimEvaluationDigest(value string) string {
 
 func workspaceComputeClaimProofEvaluationFacts(proof clients.ComputeClaimRecoveryProof) workspaceComputeClaimProofEvaluation {
 	return workspaceComputeClaimProofEvaluation{
-		NodeOwnershipState: proof.NodeOwnershipState,
-		CVMOwnershipState:  proof.CVMOwnershipState,
-		StorageState:       proof.StorageState,
-		StorageProviderID:  proof.StorageProviderResourceID,
+		RecoveryClassification: proof.RecoveryClassification,
+		NodeOwnershipState:     proof.NodeOwnershipState,
+		CVMOwnershipState:      proof.CVMOwnershipState,
+		StorageState:           proof.StorageState,
+		StorageProviderID:      proof.StorageProviderResourceID,
 	}
 }
 
@@ -2647,6 +2656,7 @@ func evaluateWorkspaceComputeClaimProofMode(operation workspaceLaunchOperation, 
 		{"provider.nodePoolId", operation.ComputeNodePoolID, proof.NodePoolID, "fabric.computeClaimProof", "nodePoolId", proof.NodePoolID == operation.ComputeNodePoolID},
 		{"provider.sub2apiMutationCount", "0", strconv.Itoa(proof.Sub2APIMutationCount), "fabric.computeClaimProof", "sub2apiMutationCount", proof.Sub2APIMutationCount == 0},
 		{"provider.proofReasonAllowlisted", "allowlisted", proof.Reason, "fabric.computeClaimProof", "safeReason", safeWorkspaceComputeClaimReason(proof.Reason)},
+		{"provider.recoveryClassification", "empty_or_confirmed_node_drift", proof.RecoveryClassification, "fabric.computeClaimProof", "recoveryClassification", proof.RecoveryClassification == "" || proof.RecoveryClassification == "confirmed_node_drift"},
 	}
 	for _, candidate := range checks {
 		if failure, ok := check(candidate.predicate, candidate.expected, candidate.actual, candidate.authority, candidate.condition, candidate.ok); !ok {
@@ -2893,8 +2903,10 @@ func (app *controlPlaneServer) claimWorkspaceCompute(ctx context.Context, servic
 	input = hydrateWorkspaceComputeClaimRecoveryRequestStage(operation, input)
 	requestHash := workspaceComputeClaimRequestHash(input, key)
 	if operation.ComputeClaimProof != nil {
-		nodeOnlyAuthorized := operation.CurrentDecision != nil && AuthorizeStageMutation(*operation.CurrentDecision, "node_only_continuation") &&
-			workspaceComputeClaimPersistedNodeOnlyContinuationBindingsMatch(operation, input, key)
+		nodeOnlyAuthorized := operation.CurrentDecision != nil &&
+			(AuthorizeStageMutation(*operation.CurrentDecision, "node_only_continuation") &&
+				workspaceComputeClaimPersistedNodeOnlyContinuationBindingsMatch(operation, input, key) ||
+				workspaceConfirmedNodeDriftExecutionAuthorized(operation, input, key))
 		persistedProofEligible := nodeOnlyAuthorized
 		if !nodeOnlyAuthorized {
 			persistedProofEligible = evaluateWorkspaceComputeClaimProof(operation, input, *operation.ComputeClaimProof, true).Eligible
@@ -3058,7 +3070,9 @@ func (app *controlPlaneServer) executeWorkspaceComputeClaimStage(
 	}
 
 	decision := currentDecisionForComputeClaimEvaluation(*operation, nil, evaluation)
-	if proof.NodeOwnershipState == "unallocated" && !AuthorizeStageMutation(decision, "node_only_continuation") {
+	driftRecoveryAuthorized := proof.RecoveryClassification == "confirmed_node_drift" && operation.RecoveryExecution != nil &&
+		workspaceConfirmedNodeDriftExecutionAuthorized(*operation, input, operation.RecoveryExecution.ExecutionID)
+	if proof.NodeOwnershipState == "unallocated" && !AuthorizeStageMutation(decision, "node_only_continuation") && !driftRecoveryAuthorized {
 		operation.Status, operation.Phase, operation.ErrorCode = "manual_review", "compute_claim_pending", "workspace_compute_claim_node_ownership_conflict"
 		releaseWorkspaceLaunchLease(operation)
 		if err := app.persistWorkspaceLaunchWithDecision(ctx, operation, decision); err != nil {
@@ -3086,7 +3100,9 @@ func (app *controlPlaneServer) executeWorkspaceComputeClaimStage(
 	}
 	persisted, found, err := app.workspaceLaunchOperation(ctx, operation.ID)
 	if err != nil || !found || !sameCurrentDecisionAuthority(persisted.CurrentDecision, decision) ||
-		proof.NodeOwnershipState == "unallocated" && !AuthorizeStageMutation(*persisted.CurrentDecision, "node_only_continuation") {
+		proof.NodeOwnershipState == "unallocated" && !AuthorizeStageMutation(*persisted.CurrentDecision, "node_only_continuation") &&
+			!(proof.RecoveryClassification == "confirmed_node_drift" && persisted.RecoveryExecution != nil &&
+				workspaceConfirmedNodeDriftExecutionAuthorized(persisted, input, persisted.RecoveryExecution.ExecutionID)) {
 		if err == nil {
 			err = errWorkspaceComputeClaimIdentity
 		}
@@ -3094,6 +3110,13 @@ func (app *controlPlaneServer) executeWorkspaceComputeClaimStage(
 	}
 	*operation = persisted
 	nodeOnlyContinuation := AuthorizeStageMutation(*persisted.CurrentDecision, "node_only_continuation")
+	driftRecoveryAuthorized = proof.RecoveryClassification == "confirmed_node_drift" && persisted.RecoveryExecution != nil &&
+		workspaceConfirmedNodeDriftExecutionAuthorized(persisted, input, persisted.RecoveryExecution.ExecutionID)
+	nodeOnlyContinuation = nodeOnlyContinuation || driftRecoveryAuthorized
+	fabricIdempotencyKey := operation.ID + ":compute"
+	if driftRecoveryAuthorized {
+		fabricIdempotencyKey = operation.ID + ":compute:confirmed-node-drift:" + input.ApprovalDigest
+	}
 
 	claimed, claimErr := service.ClaimComputeRecovery(ctx, clients.ComputeClaimRecoveryClaimInput{
 		ComputeClaimRecoveryInput: workspaceComputeClaimRecoveryInput(*operation, input),
@@ -3104,7 +3127,7 @@ func (app *controlPlaneServer) executeWorkspaceComputeClaimStage(
 		InstanceType:              operation.ComputeInstanceType,
 		Zone:                      operation.ComputeZone,
 		NodeOnlyContinuation:      nodeOnlyContinuation,
-	}, operation.ID+":compute")
+	}, fabricIdempotencyKey)
 	if claimed.TencentMutationCount != 0 {
 		claimed = workspaceComputeClaimFailureProof(*operation, "identity_mismatch")
 		claimErr = errWorkspaceComputeClaimProof

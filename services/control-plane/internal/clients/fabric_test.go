@@ -334,7 +334,8 @@ func TestFabricHTTPClientSeparatesComputeClaimProofAndMutation(t *testing.T) {
 			t.Fatalf("identity input=%#v", input)
 		}
 		response := ComputeClaimRecoveryProof{
-			SchemaVersion: 1, Eligible: true, Reason: "none", StorageState: "storage_existing_exact", StorageProviderResourceID: "disk-existing-fixture",
+			SchemaVersion: 1, Eligible: true, Reason: "none", RecoveryClassification: "confirmed_node_drift",
+			StorageState: "storage_existing_exact", StorageProviderResourceID: "disk-existing-fixture",
 			LaunchOperationID: input.LaunchOperationID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID,
 			ComputeAllocationID: input.ComputeAllocationID, StorageVolumeID: input.StorageVolumeID, PackageID: input.PackageID,
 			PoolID: input.PoolID, NodePoolID: input.NodePoolID, MachineName: "machine-fixture", NodeName: "10.0.0.18",
@@ -389,7 +390,8 @@ func TestFabricHTTPClientSeparatesComputeClaimProofAndMutation(t *testing.T) {
 		PoolID: "pool-pro-8c16g", NodePoolID: "np-workspace-pro",
 	}
 	proof, err := client.ComputeClaimRecoveryProof(context.Background(), input)
-	if err != nil || !proof.Eligible || proof.StorageState != "storage_existing_exact" || proof.StorageProviderResourceID != "disk-existing-fixture" || proof.TencentMutationCount != 0 || proof.KubernetesMutationCount != 0 {
+	if err != nil || !proof.Eligible || proof.RecoveryClassification != "confirmed_node_drift" || proof.StorageState != "storage_existing_exact" ||
+		proof.StorageProviderResourceID != "disk-existing-fixture" || proof.TencentMutationCount != 0 || proof.KubernetesMutationCount != 0 {
 		t.Fatalf("proof=%#v err=%v", proof, err)
 	}
 	identityClient, ok := NewFabricHTTPClient(upstream.URL, "internal-secret", upstream.Client()).(FabricComputeClaimRecoveryIdentityClient)
