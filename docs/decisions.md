@@ -1,5 +1,38 @@
 # Decisions
 
+## 2026-08-11: One Product Repository And Explicit Instances
+
+`one-person-lab-cloud` is the single product and implementation owner for the
+OPL Cloud architecture, whitepaper, roadmap, Console, Control Plane, Fabric,
+Ledger, Workspace delivery, contracts and reusable release mechanisms. The
+transferred implementation repository keeps its GitHub identity and history,
+then takes this canonical name. The former documentation repository becomes a
+read-only archive after its current product truth and Pages path are absorbed.
+
+`opl-cloud` remains the short package, image, binary, service, namespace,
+environment-variable and runner identifier. It is not a second repository.
+Earlier standalone Console, Fabric, Ledger and deployment repositories are
+prototypes or history, not parallel current writers.
+
+A concrete installation is an instance, not a deployment-code fork. The first
+commercial instance is `opl-instance-medopl`. It owns medopl domains, provider
+profile, enabled plans and prices, image pins, secret references, promotion
+policy, and deployment receipts while consuming immutable
+`one-person-lab-cloud` releases.
+
+An account may own zero or more independent Workspaces. There is no fixed
+product-level count limit; each creation remains subject to balance, provider
+capacity, quota, and policy. Each Workspace owns independent identity,
+resources, credentials, billing period, and receipts.
+
+Fabric's target contract is provider-neutral. Tencent TKE is the first adapter,
+not the product definition. Launch and recovery share one Control Plane state
+machine; provider-specific facts and mutations stay in the adapter.
+
+Gateway/Sub2API remains the only spendable wallet. Console owns the account-total
+billing projection, pricing, and settlement policy. Fabric has no balance, and
+Ledger records immutable billing and reconciliation evidence.
+
 ## 2026-07-14: Sub2API Is The Only Spendable Balance
 
 Sub2API owns USD balance, API keys, models, routing, and request usage. Control

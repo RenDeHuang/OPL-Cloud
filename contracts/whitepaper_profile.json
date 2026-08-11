@@ -1,0 +1,12 @@
+{
+  "sourceMarkdown": "docs/whitepapers/opl-cloud-whitepaper.md",
+  "outputName": "opl-cloud-whitepaper",
+  "status": "whitepaper_artifact_verified",
+  "owner": "One Person Lab",
+  "coverLine": "让复杂知识工作跨越本机、私有数据、远端资源与对外服务，仍然保持连续、受控、可复查",
+  "headerTitle": "OPL Cloud 白皮书",
+  "minPdfPages": 6,
+  "maxPdfPages": 10,
+  "publicHtmlUrl": "https://gaofeng21cn.github.io/one-person-lab-cloud/latest/whitepapers/opl-cloud-whitepaper.html",
+  "publicPdfUrl": "https://gaofeng21cn.github.io/one-person-lab-cloud/latest/whitepapers/opl-cloud-whitepaper.pdf"
+}

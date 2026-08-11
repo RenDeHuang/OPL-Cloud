@@ -26,9 +26,16 @@ test("root agent instructions require the launch invariants", async () => {
 test("launch freeze fixes the V2 products, owner lanes, settlement, and verification slot", async () => {
   const freeze = await json("packages/contracts/opl-cloud-launch-freeze-contract.json");
 
-  assert.equal(freeze.schemaVersion, 29);
+  assert.equal(freeze.schemaVersion, 30);
   assert.equal(freeze.architectureAuthority.repository, "https://github.com/gaofeng21cn/one-person-lab-cloud");
-  assert.equal(freeze.architectureAuthority.reviewedRevision, "c349a41d860e706ed43a4090b9e75abb0b130971");
+  assert.deepEqual(freeze.architectureAuthority, {
+    repository: "https://github.com/gaofeng21cn/one-person-lab-cloud",
+    branch: "main",
+    targetPath: "docs/architecture.md",
+    implementationPath: "docs/implementation-architecture.md",
+    binding: "same_repository_revision",
+    rule: "Target product boundaries and current implementation choices are versioned in the same repository revision; exact prices and delivery gaps remain machine and runtime facts."
+  });
   assert.deepEqual(Object.keys(freeze.productSurfaces), ["gateway", "workspace", "serve", "console", "fabric", "ledger"]);
   assert.deepEqual(freeze.productSurfaces.serve, { product: "OPL Serve", launchStatus: "planned_not_in_launch" });
   assert.match(freeze.machineBoundary, /Six product surfaces.*OPL Serve.*planned_not_in_launch/);
@@ -390,6 +397,13 @@ test("launch freeze fixes the V2 products, owner lanes, settlement, and verifica
       unknown: "get_only_no_retry",
       maxModifyNodePoolCalls: 2,
       updateExistedNode: true,
+      mutationPrecondition: "fresh_full_node_pool_package_name_ip_uid_workspace_labels_and_complete_taints_sha256_binding",
+      attemptAuthority: "existing_fabric_operations_postgresql_claim_runtime_single_winner",
+      replayAfterReservedTimeoutUnknownOrReadbackFailure: "get_only_reconcile_no_second_modify_node_pool",
+      runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
+      indirectNodeTaintEffect: "ModifyNodePool_UpdateExistedNode_true_controller_propagation_reported_separately",
+      readback: "bounded_condition_poll_node_pool_and_all_affected_nodes",
+      stability: "two_consecutive_same_node_uid_workspace_labels_and_unique_package_taint",
     },
     dryRunMutationCount: 0,
     idempotency: "running_or_exact_creating_pool_is_registered_or_pending_without_duplicate_create",
@@ -584,24 +598,30 @@ test("launch freeze fixes the V2 products, owner lanes, settlement, and verifica
   assert.equal("deliveryPhases" in freeze, false);
 });
 
-test("human launch contract pins the approved architecture authority revision", async () => {
+test("human launch contract binds target and implementation architecture to the same repository revision", async () => {
   const [freeze, invariants] = await Promise.all([
     json("packages/contracts/opl-cloud-launch-freeze-contract.json"),
     text("docs/invariants.md")
   ]);
 
-  assert.match(invariants, new RegExp(freeze.architectureAuthority.reviewedRevision));
+  assert.match(invariants, /docs\/architecture\.md/);
+  assert.match(invariants, /docs\/implementation-architecture\.md/);
+  assert.equal(freeze.architectureAuthority.binding, "same_repository_revision");
   for (const sha of [candidateAppSha, candidateShellSha, candidateFrameworkSha]) assert.match(invariants, new RegExp(sha));
   assert.doesNotMatch(invariants, /13ae5d1410e1a4349c14dc76e7c3446ff200cfdb/);
   assert.match(invariants, /metadata\/statfs API and Console presentation are paused/i);
 });
 
-test("public Workspace contract permits multiple independent Workspaces", async () => {
-  const readme = await text("README.md");
+test("Workspace contracts permit multiple independent Workspaces", async () => {
+  const [product, freeze] = await Promise.all([
+    json("packages/contracts/opl-cloud-product-contract.json"),
+    json("packages/contracts/opl-cloud-launch-freeze-contract.json")
+  ]);
 
-  assert.match(readme, /one Account\/Wallet may own\s+multiple independent Workspaces/i);
-  assert.match(readme, /new identity creates another Workspace/i);
-  assert.doesNotMatch(readme, /one account owns exactly one\s+primary Workspace|second Workspace.*409/i);
+  assert.equal(product.pilotBoundary.workspaceCardinality, "many_per_account");
+  assert.equal(freeze.workspaceRuntime.workspaceCardinality, "many_per_account");
+  assert.ok(product.pilotBoundary.independentPerWorkspaceFacts.includes("runtime"));
+  assert.ok(product.pilotBoundary.independentPerWorkspaceFacts.includes("purchaseReceiptId"));
 });
 
 test("every launch stage declares business, current state, deliverables, and evidence", async () => {
@@ -664,7 +684,7 @@ test("human invariants reject paid per-run resource verification", async () => {
 test("paused fixed-slot verification does not gate the Basic rollout", async () => {
   const deployment = await json("packages/contracts/opl-cloud-deployment-contract.json");
   const [architecture, decisions, project, readme, runbook, status] = await Promise.all([
-    text("docs/architecture.md"),
+    text("docs/implementation-architecture.md"),
     text("docs/decisions.md"),
     text("docs/project.md"),
     text("README.md"),
@@ -701,7 +721,7 @@ test("current rollout truth contains no legacy Workspace image evidence", async 
     ".github/workflows/release-opl-cloud-image.yml",
     ".env.example",
     "docs/invariants.md",
-    "docs/architecture.md",
+    "docs/implementation-architecture.md",
     "packages/contracts/opl-cloud-launch-freeze-contract.json",
     "packages/contracts/opl-cloud-deployment-contract.json"
   ];

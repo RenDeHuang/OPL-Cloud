@@ -127,7 +127,7 @@ test("Current contracts hard cut Workspace purchase, access, and Runtime facts",
     json("packages/contracts/opl-cloud-console-source-truth-contract.json")
   ]);
 
-  assert.equal(freeze.schemaVersion, 29);
+  assert.equal(freeze.schemaVersion, 30);
   assert.equal(billing.schemaVersion, 11);
   assert.equal(freeze.workspaceLaunch.customerDebitCardinality, 1);
   assert.equal(freeze.workspaceLaunch.persistence, "control_plane_runtime_operations with action=workspace.launch.v2 and result.schemaVersion=2");
@@ -361,6 +361,16 @@ test("Current Fabric contracts require dedicated package NodePools without weake
       unknown: "get_only_no_retry",
       maxModifyNodePoolCalls: 2,
       updateExistedNode: true,
+      nodeIdentitySource: "exact_basic_pro_node_pool_tke_instance_inventory",
+      mutationPrecondition: "fresh_full_node_pool_package_name_ip_uid_workspace_labels_and_complete_taints_sha256_binding",
+      attemptAuthority: "existing_fabric_operations_postgresql_claim_runtime_single_winner",
+      replayAfterReservedTimeoutUnknownOrReadbackFailure: "get_only_reconcile_no_second_modify_node_pool",
+      runnerDirectMutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 },
+      indirectNodeTaintEffect: "ModifyNodePool_UpdateExistedNode_true_controller_propagation_reported_separately",
+      readback: "bounded_condition_poll_node_pool_and_all_affected_nodes",
+      stability: "two_consecutive_same_node_uid_workspace_labels_and_unique_package_taint",
+      rawEvidence: "runner_temp_only",
+      artifact: "redacted_summary_only_with_null_mutation_count_when_action_receipt_unavailable",
     },
     dryRunMutationCount: 0,
     idempotency: "register_running_wait_exact_creating_create_missing_only",
@@ -780,7 +790,7 @@ test("Current contracts hard cut operator resources, wallet adjustments, and ann
     absentRequires: "both_local_identities_and_exact_provider_describe_absence",
     forbiddenSideEffects: ["sync", "tag", "kubectl_apply", "delete", "label", "purchase", "renew", "destroy"]
   });
-  assert.equal(boundary.schemaVersion, 34);
+  assert.equal(boundary.schemaVersion, 36);
   assert.deepEqual(boundary.services.controlPlane.workspaceLaunchRecoveryAcceptanceCanary, {
     defaultEnabled: false,
     allowlistEnv: "OPL_RECOVERY_ACCEPTANCE_CANARY_ACCOUNT_IDS",
@@ -1238,7 +1248,7 @@ test("Current Console binds delegated Gateway credentials to process-local Conso
 test("Current human truth preserves public entry points and evidence levels", async () => {
   const [invariants, architecture, status, consoleProduct, runbook, readme, devGuide, decisions, project] = await Promise.all([
     text("docs/invariants.md"),
-    text("docs/architecture.md"),
+    text("docs/implementation-architecture.md"),
     text("docs/status.md"),
     text("docs/product/console-workspace-v1.md"),
     text("docs/runtime/production-runbook.md"),

@@ -23,7 +23,7 @@ The current V2 boundary requires:
 - source envelopes whose availability and timestamps report real owner readback;
 - operator wallet adjustment, resource facts, audit evidence, and announcements.
 
-Remaining blockers:
+Current evidence snapshot:
 
 - Separately approved provider verification remains paused; Pro is open in the
   production catalog but its
@@ -45,6 +45,29 @@ not production evidence until the matching implementation and final gate pass.
 Workspace file bodies remain only on CBS. Platform PostgreSQL contains identity,
 operation, reference, and audit facts only; PostgreSQL recovery does not back up
 or restore Workspace files.
+
+## Target Alignment
+
+The product SSOT now defines zero-to-many independent Workspaces per account.
+This implementation is already aligned at the core contract and API level: it
+uses `many_per_account`, lists Workspaces, and keeps independent Workspace ids,
+resources, Keys, periods, and receipts. This is not evidence that every launch
+or renewal works in production.
+
+Open target-alignment work and its delivery order are owned only by
+[`docs/roadmap.md`](./roadmap.md). Provider portability and the current medopl
+co-location remain implementation facts in
+[`docs/implementation-architecture.md`](./implementation-architecture.md); this
+status snapshot does not maintain a second action list.
+
+Gateway/Sub2API remains the only spendable-balance owner. Console owns the
+account-total billing projection and settlement policy; Fabric owns zero
+balance; Ledger records append-only settlement and reconciliation evidence.
+No second wallet is part of this transition.
+
+The durable repository identity decision lives in
+[`docs/decisions.md`](./decisions.md), and the completed migration record lives
+under `docs/history/**`; neither is repeated as current delivery work here.
 
 ## Preliminary Local Checks
 

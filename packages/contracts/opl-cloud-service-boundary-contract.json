@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 34,
+  "schemaVersion": 36,
   "owner": "OPL Platform Architecture",
   "purpose": "Current ownership contract for Console UI, Control Plane, Ledger, Fabric, and external Sub2API.",
   "state": "current",
@@ -7,6 +7,24 @@
   "lifecycle": {
     "type": "long_term_contract",
     "removalCondition": "Replace only with a newer current service-boundary contract."
+  },
+  "physicalBoundaries": {
+    "crossServiceTransport": "typed_public_http_contracts_only",
+    "crossServiceSourceImports": "forbidden",
+    "crossServiceDatabaseAccess": "forbidden",
+    "consoleRuntimeImports": "forbidden_control_plane_product_api_only",
+    "sourceGate": "tests/contracts/module-physical-boundaries.test.ts",
+    "consoleNetworkOwner": "apps/console-ui/src/api",
+    "consoleAllowedNetworkPrefix": "/api/",
+    "cloudSdkOwner": "services/fabric",
+    "cloudSdkImportPrefixes": ["github.com/tencentcloud/", "k8s.io/"],
+    "ciEntry": "npm test",
+    "allowedSharedGoModules": ["opl-cloud/services/internal/postgresmigrate"],
+    "serviceGoModules": {
+      "controlPlane": "opl-cloud/services/control-plane",
+      "fabric": "opl-cloud/services/fabric",
+      "ledger": "opl-cloud/services/ledger"
+    }
   },
   "services": {
     "consoleUi": {

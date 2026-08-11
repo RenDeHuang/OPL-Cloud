@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 29,
+  "schemaVersion": 30,
   "owner": "OPL Platform Architecture",
   "purpose": "Freeze the approved Pilot products, delegated Gateway key lifecycle, one charge per Workspace period, prepaid Tencent fulfillment, Runtime facts, operator workflows, announcements, and evidence levels without claiming unfinished implementation or runtime evidence.",
   "state": "current",
@@ -28,8 +28,10 @@
   "architectureAuthority": {
     "repository": "https://github.com/gaofeng21cn/one-person-lab-cloud",
     "branch": "main",
-    "reviewedRevision": "c349a41d860e706ed43a4090b9e75abb0b130971",
-    "rule": "The upstream repository owns target product boundaries; this contract owns current implementation choices, exact prices, and delivery gaps."
+    "targetPath": "docs/architecture.md",
+    "implementationPath": "docs/implementation-architecture.md",
+    "binding": "same_repository_revision",
+    "rule": "Target product boundaries and current implementation choices are versioned in the same repository revision; exact prices and delivery gaps remain machine and runtime facts."
   },
   "productSurfaces": {
     "gateway": {
@@ -598,7 +600,7 @@
       "resolvedInstanceTypeRegistration": ["bootstrap_report", "node_pool_label", "tke_native_instance_types", "production_configuration"],
       "maxReplicas": {"basic": 50, "pro": 50, "source": "release_owner_approved_workflow_configuration_no_code_default_independent_pool_limits"},
       "mutationConfirmation": "CREATE_MISSING_WORKSPACE_NODEPOOLS",
-      "taintMigration": {"action": "migrate_workspace_node_pool_taints", "confirmation": "MIGRATE_BASIC_PRO_NODEPOOL_PACKAGE_TAINTS", "targetPools": ["basic", "pro"], "protectedSystemExcluded": true, "default": "dry_run", "unknown": "get_only_no_retry", "maxModifyNodePoolCalls": 2, "updateExistedNode": true},
+      "taintMigration": {"action": "migrate_workspace_node_pool_taints", "confirmation": "MIGRATE_BASIC_PRO_NODEPOOL_PACKAGE_TAINTS", "targetPools": ["basic", "pro"], "protectedSystemExcluded": true, "default": "dry_run", "unknown": "get_only_no_retry", "maxModifyNodePoolCalls": 2, "updateExistedNode": true, "mutationPrecondition": "fresh_full_node_pool_package_name_ip_uid_workspace_labels_and_complete_taints_sha256_binding", "attemptAuthority": "existing_fabric_operations_postgresql_claim_runtime_single_winner", "replayAfterReservedTimeoutUnknownOrReadbackFailure": "get_only_reconcile_no_second_modify_node_pool", "runnerDirectMutationCounts": {"sub2api": 0, "tencent": 0, "kubernetes": 0}, "indirectNodeTaintEffect": "ModifyNodePool_UpdateExistedNode_true_controller_propagation_reported_separately", "readback": "bounded_condition_poll_node_pool_and_all_affected_nodes", "stability": "two_consecutive_same_node_uid_workspace_labels_and_unique_package_taint"},
       "dryRunMutationCount": 0,
       "idempotency": "running_or_exact_creating_pool_is_registered_or_pending_without_duplicate_create",
       "partialState": "preserve_successful_pool_report_failure_retry_missing_only",
