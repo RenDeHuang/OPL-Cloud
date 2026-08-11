@@ -19,7 +19,7 @@ func main() {
 	addr := controlPlaneAddr()
 	ledgerURL := os.Getenv("LEDGER_URL")
 	fabricURL := os.Getenv("FABRIC_URL")
-	token, err := internalServiceToken(os.Getenv)
+	outboundTokens, err := internalServiceTokensFromEnv(os.Getenv)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -36,8 +36,8 @@ func main() {
 	}
 
 	service := controlplane.NewService(
-		clients.NewLedgerHTTPClient(ledgerURL, token, nil),
-		clients.NewFabricHTTPClient(fabricURL, token, nil),
+		clients.NewLedgerHTTPClient(ledgerURL, outboundTokens.Ledger, nil),
+		clients.NewFabricHTTPClient(fabricURL, outboundTokens.Fabric, nil),
 		sub2API,
 	)
 	store, err := controlserver.StateStoreFromEnv()
@@ -99,12 +99,39 @@ func sub2APIConfigFromEnv(getenv func(string) string) (clients.Sub2APIConfig, er
 	}, nil
 }
 
-func internalServiceToken(getenv func(string) string) (string, error) {
-	token := getenv("OPL_INTERNAL_SERVICE_TOKEN")
-	if getenv("NODE_ENV") == "production" && token == "" {
-		return "", errors.New("OPL_INTERNAL_SERVICE_TOKEN is required in production")
+type internalServiceTokens struct {
+	Fabric string
+	Ledger string
+}
+
+func internalServiceTokensFromEnv(getenv func(string) string) (internalServiceTokens, error) {
+	tokens := internalServiceTokens{
+		Fabric: strings.TrimSpace(getenv("OPL_FABRIC_SERVICE_TOKEN")),
+		Ledger: strings.TrimSpace(getenv("OPL_LEDGER_SERVICE_TOKEN")),
 	}
-	return token, nil
+	configured := 0
+	if tokens.Fabric != "" {
+		configured++
+	}
+	if tokens.Ledger != "" {
+		configured++
+	}
+	if getenv("NODE_ENV") == "production" || configured > 0 {
+		missing := make([]string, 0, 2)
+		if tokens.Fabric == "" {
+			missing = append(missing, "OPL_FABRIC_SERVICE_TOKEN")
+		}
+		if tokens.Ledger == "" {
+			missing = append(missing, "OPL_LEDGER_SERVICE_TOKEN")
+		}
+		if len(missing) > 0 {
+			return internalServiceTokens{}, fmt.Errorf("missing required outbound service token: %s", strings.Join(missing, ", "))
+		}
+	}
+	if tokens.Fabric != "" && tokens.Fabric == tokens.Ledger {
+		return internalServiceTokens{}, errors.New("Fabric and Ledger outbound service tokens must be distinct")
+	}
+	return tokens, nil
 }
 
 func controlPlaneAddr() string {

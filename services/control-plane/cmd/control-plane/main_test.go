@@ -34,15 +34,45 @@ func TestControlPlaneAddrMatchesProductionPortContract(t *testing.T) {
 	}
 }
 
-func TestInternalServiceTokenRequiredInProduction(t *testing.T) {
-	getenv := func(key string) string {
-		if key == "NODE_ENV" {
-			return "production"
-		}
-		return ""
+func TestOutboundServiceTokensAreRequiredAndIsolated(t *testing.T) {
+	values := map[string]string{
+		"NODE_ENV":                 "production",
+		"OPL_FABRIC_SERVICE_TOKEN": "fabric-token",
+		"OPL_LEDGER_SERVICE_TOKEN": "ledger-token",
 	}
-	if _, err := internalServiceToken(getenv); err == nil {
-		t.Fatal("production Control Plane must reject missing OPL_INTERNAL_SERVICE_TOKEN")
+	getenv := func(key string) string { return values[key] }
+
+	tokens, err := internalServiceTokensFromEnv(getenv)
+	if err != nil {
+		t.Fatalf("read isolated outbound tokens: %v", err)
+	}
+	if tokens.Fabric != "fabric-token" || tokens.Ledger != "ledger-token" {
+		t.Fatalf("outbound tokens = %#v", tokens)
+	}
+
+	for _, key := range []string{"OPL_FABRIC_SERVICE_TOKEN", "OPL_LEDGER_SERVICE_TOKEN"} {
+		t.Run("missing "+key, func(t *testing.T) {
+			if _, err := internalServiceTokensFromEnv(func(candidate string) string {
+				if candidate == key {
+					return ""
+				}
+				return values[candidate]
+			}); err == nil {
+				t.Fatalf("production Control Plane accepted missing %s", key)
+			}
+		})
+	}
+
+	values["OPL_LEDGER_SERVICE_TOKEN"] = values["OPL_FABRIC_SERVICE_TOKEN"]
+	if _, err := internalServiceTokensFromEnv(getenv); err == nil {
+		t.Fatal("Control Plane accepted one shared Fabric/Ledger identity token")
+	}
+}
+
+func TestOutboundServiceTokensRejectPartialDevelopmentConfiguration(t *testing.T) {
+	values := map[string]string{"OPL_FABRIC_SERVICE_TOKEN": "fabric-token"}
+	if _, err := internalServiceTokensFromEnv(func(key string) string { return values[key] }); err == nil {
+		t.Fatal("Control Plane accepted a partial outbound token configuration")
 	}
 }
 
