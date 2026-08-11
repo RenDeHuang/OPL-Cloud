@@ -94,7 +94,8 @@ test("Fabric uses explicit immutable launch-stage binding and typed routes", asy
   });
   assert.deepEqual(contract.preflight, {
     mode: "read_only_admission",
-    configuredProfileSelectionOwner: "opl-instance-medopl",
+    configuredProfileSelectionOwner: "instance_repository",
+    implementationScope: "opl-instance-medopl is one concrete Tencent profile instance, not the unique owner of the public Cloud contract.",
     admittedBindingReadbackOwner: "services/fabric",
     responseIdentityFields: ["schemaVersion", "launchOperationId", "requestHash", "providerProfileRef", "bindingRef"]
   });

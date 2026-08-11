@@ -65,7 +65,8 @@ test("Fabric launch binding freezes only the typed successor seam", async () => 
   });
   assert.deepEqual(contract.preflight, {
     mode: "read_only_admission",
-    configuredProfileSelectionOwner: "opl-instance-medopl",
+    configuredProfileSelectionOwner: "instance_repository",
+    implementationScope: "opl-instance-medopl is one concrete Tencent profile instance, not the unique owner of the public Cloud contract.",
     admittedBindingReadbackOwner: "services/fabric",
     responseIdentityFields: ["schemaVersion", "launchOperationId", "requestHash", "providerProfileRef", "bindingRef"]
   });
