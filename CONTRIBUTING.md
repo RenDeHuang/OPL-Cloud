@@ -17,6 +17,12 @@ implementation, instance, billing, or deployment truth.
 Issues, pull requests, discussions, and project boards are proposals or work
 surfaces. They do not replace these owners.
 
+When these surfaces disagree, first trace the conflict through Git history,
+the canonical topic owner, real callers, and runtime evidence. Classify each
+claim as target, current implementation, runtime/production evidence,
+historical, stale, derived, or unknown; then update the canonical owner and
+remove the duplicate current writer in the same pull request.
+
 ## Branch And Pull Request Flow
 
 1. Start one short-lived branch or worktree from fresh `origin/main` for one
@@ -24,15 +30,22 @@ surfaces. They do not replace these owners.
 2. Keep the write set narrow. Separate unrelated UI, contract, billing, auth,
    runtime, infrastructure, and documentation work.
 3. Open a pull request to `main` and complete the repository template.
-4. Update the branch to current `main`, resolve every review conversation, and
-   obtain one approval. A pull request from a non-owner contributor requires the
-   repository owner's approval.
+4. Update the branch to current `main` and resolve every review conversation.
+   Human review is risk-based and may be requested, but is not a universal merge
+   gate for either active developer.
 5. Merge only after the required `validate` check succeeds. Delete the branch
    after merge.
 
 Direct pushes and force pushes are not the normal path. An administrator may
-bypass review only for a time-critical repository or production recovery, and
+bypass the PR path only for a time-critical repository or production recovery, and
 must leave the reason and final readback in a pull request or incident record.
+
+Before editing, name one primary module: Console UI, Control Plane, Fabric,
+Ledger, contracts, or shared infrastructure. Cross-service behavior uses typed
+public HTTP contracts. Do not import sibling service source, access sibling
+tables, deep-import service code from Console UI, copy state machines/DTOs, or
+create a shared package for one caller. If a change truly crosses modules, name
+the owning contract and update both sides and their focused tests together.
 
 ## Validation
 
@@ -76,4 +89,4 @@ required context and avoids a second change-classification authority.
   configuration to a pull request.
 - Treat Dependabot pull requests as code changes. Major Action upgrades that
   touch production workflows require deliberate contract-test updates and
-  owner review; they are not auto-merged.
+  explicit production-risk review; they are not auto-merged.

@@ -34,6 +34,7 @@ external owners.
 | Implementation owner | `unified` | `one-person-lab-cloud` owns Console, Control Plane, Fabric, and Ledger implementation; `opl-cloud` is an internal artifact/service identifier |
 | Instance owner | `defined_pending_materialization` | `opl-instance-medopl` will own the first commercial instance profile and deployment evidence without copying runtime code |
 | Active documentation | `consolidated` | This file owns current gaps/next prompt; public product map stays in the root README and the technical split stays in architecture |
+| Development governance | `strict_ci_with_independent_developers` | Both active developers may merge PRs after current `validate` and resolved conversations; CODEOWNERS is advisory, module source boundaries are machine-checked, and production environments accept protected branches only |
 | Whitepaper | `source_and_build_profile_present` | Source/build evidence does not prove publication or Cloud service readiness |
 | Service delivery | `candidate_not_production_proven` | Current state is owned by `docs/status.md`, machine contracts, CI, deployment readback and owner evidence |
 
@@ -55,6 +56,7 @@ external owners.
 | Hosted clients | API, Embed, and Hosted UI consume one Serve contract | OPL Serve |
 | Connector boundary | Shared access stays generic while domain adapters keep domain semantics | OPL Connect + domain owner |
 | Evidence continuation | Runs and service calls return owner refs, review status, and continuation without centralizing source data | OPL Ledger + workbench/Serve owners |
+| Actions maintainability | Preserve one production authorization owner while splitting the oversized multi-operation customer workflow by operation family and pinning remaining third-party Action/toolchain refs to immutable commits | Repository CI + production contracts |
 
 These are product-family gaps. A gap closes only after its named owner surface
 exists and the target architecture can reference fresh machine, runtime or

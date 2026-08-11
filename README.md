@@ -131,8 +131,9 @@ distinct; do not establish another Cloud writer.
 ### Contributing
 
 Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request. `main` is
-protected by the `validate` aggregate check and owner review; production and
-deployment claims still require their separate evidence gates.
+protected by the strict `validate` aggregate check and resolved review
+conversations; production and deployment claims still require their separate
+authorization and evidence gates.
 
 ### Minimum Checks
 

@@ -790,7 +790,7 @@ test("Current contracts hard cut operator resources, wallet adjustments, and ann
     absentRequires: "both_local_identities_and_exact_provider_describe_absence",
     forbiddenSideEffects: ["sync", "tag", "kubectl_apply", "delete", "label", "purchase", "renew", "destroy"]
   });
-  assert.equal(boundary.schemaVersion, 34);
+  assert.equal(boundary.schemaVersion, 35);
   assert.deepEqual(boundary.services.controlPlane.workspaceLaunchRecoveryAcceptanceCanary, {
     defaultEnabled: false,
     allowlistEnv: "OPL_RECOVERY_ACCEPTANCE_CANARY_ACCOUNT_IDS",
