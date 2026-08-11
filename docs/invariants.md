@@ -1,8 +1,26 @@
 # Launch Invariants
 
-This file is the mandatory human-readable launch contract for this implementation repository. The target product boundaries come from `https://github.com/gaofeng21cn/one-person-lab-cloud`; the revision reviewed for this freeze is `c349a41d860e706ed43a4090b9e75abb0b130971`.
+This file is the mandatory human-readable launch contract for this implementation repository. The target product boundaries come from `https://github.com/gaofeng21cn/one-person-lab-cloud`; the revision reviewed for this freeze is `43830f7bd209be293a1ce6445202a429b6996cda`.
 
-The upstream repository owns product architecture. This repository owns its selected backend, exact prices, provider procurement, delivery state, and runtime evidence. A frozen target is not a readiness claim. Current gaps and required evidence are recorded here and in `packages/contracts/opl-cloud-launch-freeze-contract.json`.
+The upstream repository owns product architecture. The target `opl-cloud`
+repository owns the reusable Console, Control Plane, Fabric, and Ledger
+implementation. `opl-instance-medopl` owns the selected backend, exact prices,
+provider procurement, deployment state, and runtime evidence for the medopl
+instance. Those instance values remain temporarily co-located here until the
+instance repository is materialized; that migration state must not become a
+second product owner. A frozen target is not a readiness claim. Current gaps
+and required evidence are recorded here and in
+`packages/contracts/opl-cloud-launch-freeze-contract.json`.
+
+One Account may own N independent Workspaces, each keyed by `workspaceId` with
+its own resources, credentials, billing period, and receipts. There is no
+account-singleton Workspace invariant and no fixed product-level count limit.
+
+Fabric's product seam is provider-neutral, but only `TencentProvider` is wired
+in production today. Provider-interface presence, tests, or target docs do not
+prove another adapter. Control Plane must eventually consume neutral provider
+facts; until that cutover, current Tencent/CVM/CBS/NodePool contracts remain the
+authoritative medopl path.
 
 ## Node Field Ownership
 

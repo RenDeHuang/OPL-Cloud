@@ -28,7 +28,7 @@ test("launch freeze fixes the V2 products, owner lanes, settlement, and verifica
 
   assert.equal(freeze.schemaVersion, 29);
   assert.equal(freeze.architectureAuthority.repository, "https://github.com/gaofeng21cn/one-person-lab-cloud");
-  assert.equal(freeze.architectureAuthority.reviewedRevision, "c349a41d860e706ed43a4090b9e75abb0b130971");
+  assert.equal(freeze.architectureAuthority.reviewedRevision, "43830f7bd209be293a1ce6445202a429b6996cda");
   assert.deepEqual(Object.keys(freeze.productSurfaces), ["gateway", "workspace", "serve", "console", "fabric", "ledger"]);
   assert.deepEqual(freeze.productSurfaces.serve, { product: "OPL Serve", launchStatus: "planned_not_in_launch" });
   assert.match(freeze.machineBoundary, /Six product surfaces.*OPL Serve.*planned_not_in_launch/);

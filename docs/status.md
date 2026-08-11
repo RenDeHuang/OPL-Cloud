@@ -46,6 +46,34 @@ Workspace file bodies remain only on CBS. Platform PostgreSQL contains identity,
 operation, reference, and audit facts only; PostgreSQL recovery does not back up
 or restore Workspace files.
 
+## Target Alignment
+
+The product SSOT now defines zero-to-many independent Workspaces per account.
+This implementation is already aligned at the core contract and API level: it
+uses `many_per_account`, lists Workspaces, and keeps independent Workspace ids,
+resources, Keys, periods, and receipts. This is not evidence that every launch
+or renewal works in production.
+
+The remaining architecture changes are explicit:
+
+- transfer and rename the implementation repository to `opl-cloud`;
+- materialize `opl-instance-medopl` and move medopl domains, Tencent profile,
+  enabled plans/prices, image pins, secret refs, promotion, and deployment
+  evidence out of the reusable implementation boundary;
+- expand Console from the administrator-provisioned Pilot into tenant-safe user
+  onboarding, balance/usage, zero-to-many Workspace lifecycle, support, and
+  administrator governance;
+- replace Tencent names and assumptions in Control Plane contracts and recovery
+  facts with provider-neutral facts, while preserving the proven Tencent path
+  as the `tencent-tke` adapter;
+- prove a `local-docker` adapter before claiming that OPL Cloud can be installed
+  on a Mac or local Linux server.
+
+Gateway/Sub2API remains the only spendable-balance owner. Console owns the
+account-total billing projection and settlement policy; Fabric owns zero
+balance; Ledger records append-only settlement and reconciliation evidence.
+No second wallet is part of this transition.
+
 ## Preliminary Local Checks
 
 ```bash

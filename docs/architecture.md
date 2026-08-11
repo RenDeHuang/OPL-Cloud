@@ -15,6 +15,19 @@ and request-usage owner. The repository reads those records on demand and does
 not mirror them. Its code, image, database, configuration, and deployment remain
 outside this repository's mutation boundary.
 
+## Repository And Instance Boundary
+
+`one-person-lab-cloud` owns product architecture and the whitepaper.
+`opl-cloud` owns this reusable Console, Control Plane, Fabric, and Ledger
+implementation. These names are logical service boundaries inside one
+repository, not authorization for separate current implementation repos.
+
+`opl-instance-medopl` owns one concrete installation: domain names, provider
+profile, region and resource ids, enabled plans and prices, image pins, secret
+references, promotion policy, and deployment receipts. Instance repositories
+consume immutable `opl-cloud` releases and never copy runtime code, product
+contracts, or spendable-balance state.
+
 ## Console Source Truth
 
 | Console area | Authority | Control Plane projection |
@@ -57,10 +70,10 @@ provider status. Sub2API authenticates customer credentials. Organization and
 Membership rows remain internal one-to-one compatibility records only; they are
 not shared-account or customer-authorization surfaces.
 
-`services/fabric` owns compute pools, dedicated CVM allocations, CBS volumes,
-attachments, Workspace runtimes, provider operations, and all Tencent/Kubernetes
-SDK calls. Provider callbacks may update resource facts but cannot overwrite
-Control Plane entitlement state.
+`services/fabric` owns compute, storage, attachments, Workspace runtimes,
+provider operations, and provider readback. The current production adapter owns
+Tencent TKE/CVM/CBS and Kubernetes calls. Provider callbacks may update resource
+facts but cannot overwrite Control Plane entitlement state.
 
 `services/ledger` owns EvidenceReceipt, ReviewPolicy, ReconciliationReport,
 Artifact, Continuation, retention, audit, and idempotency records. It never
@@ -68,6 +81,22 @@ changes Sub2API balance.
 
 `packages/contracts` is machine-readable current truth, not a runtime service.
 Speculative route and object entries remain outside the active contracts.
+
+## Provider Port
+
+Fabric already exposes a Go `Provider` interface, but portability is not yet
+complete: process startup instantiates `TencentProvider`, Control Plane still
+emits `tencent-tke`, and current launch/recovery facts include Tencent, CVM, CBS,
+and NodePool terminology. Therefore the only production adapter is
+`tencent-tke`; an interface alone is not multi-provider evidence.
+
+The target port exposes provider-neutral compute, storage, attachment, runtime,
+preflight, readback, renewal, and recovery facts. The selected instance profile
+chooses an adapter. Provider-specific identities, diagnostics, retry rules, and
+mutation sequences remain inside that adapter. The first additional adapter is
+`local-docker`; generic `kubernetes` follows when the common contract is proven
+by both real paths. Control Plane keeps one launch/recovery reducer and persists
+the exact provider binding per Workspace.
 
 ## Persistence
 
@@ -103,7 +132,7 @@ customer renewal controls. At unpaid expiry, access is denied and auto-renew is
 disabled, but Control Plane performs no Fabric/Tencent stop, renew, destroy, or
 delete mutation; Tencent expiry policy owns eventual provider reclamation.
 
-## Workspace Access Path
+## Current Medopl Workspace Access Path
 
 The current Workspace data path is:
 
@@ -169,7 +198,7 @@ Control Plane availability coupling for the operator-provisioned Pilot. A dedica
 Workspace Router remains a later ownership and scaling decision; no router or
 security-model change is authorized by this document.
 
-## Production
+## Current Medopl Production
 
 Production runs Control Plane, Fabric, and Ledger as separate Kubernetes
 Deployments. Secrets are Kubernetes Secret references, configuration is a shared

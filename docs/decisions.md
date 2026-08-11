@@ -1,5 +1,30 @@
 # Decisions
 
+## 2026-08-11: One Implementation Repository And Explicit Instances
+
+`one-person-lab-cloud` owns product architecture and the whitepaper. The target
+lowercase `opl-cloud` repository is the single implementation owner for Console,
+Control Plane, Fabric, and Ledger. The earlier standalone Console, Fabric, and
+Ledger repositories are prototypes, not parallel current writers.
+
+A concrete installation is an instance, not a deployment-code fork. The first
+commercial instance is `opl-instance-medopl`. It owns medopl domains, provider
+profile, enabled plans and prices, image pins, secret references, promotion
+policy, and deployment receipts while consuming immutable `opl-cloud` releases.
+
+An account may own zero or more independent Workspaces. There is no fixed
+product-level count limit; each creation remains subject to balance, provider
+capacity, quota, and policy. Each Workspace owns independent identity,
+resources, credentials, billing period, and receipts.
+
+Fabric's target contract is provider-neutral. Tencent TKE is the first adapter,
+not the product definition. Launch and recovery share one Control Plane state
+machine; provider-specific facts and mutations stay in the adapter.
+
+Gateway/Sub2API remains the only spendable wallet. Console owns the account-total
+billing projection, pricing, and settlement policy. Fabric has no balance, and
+Ledger records immutable billing and reconciliation evidence.
+
 ## 2026-07-14: Sub2API Is The Only Spendable Balance
 
 Sub2API owns USD balance, API keys, models, routing, and request usage. Control

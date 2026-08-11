@@ -1,8 +1,8 @@
 {
-  "name": "one-person-lab-cloud-implementation",
+  "name": "opl-cloud",
   "version": "0.1.0",
   "private": true,
-  "description": "OPL Cloud implementation workspace for OPL Console and OPL Workspace control plane.",
+  "description": "Reusable OPL Cloud implementation for Console, Control Plane, Fabric, and Ledger.",
   "type": "module",
   "scripts": {
     "demo": "node tools/start-console-demo.ts",
