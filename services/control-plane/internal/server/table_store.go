@@ -265,11 +265,12 @@ type controlPlaneTableStore interface {
 	SaveWorkspace(ctx context.Context, row map[string]any) error
 	CompareAndSwapWorkspaceAPIKey(ctx context.Context, workspaceID string, expectedID, newID int64) error
 	ApplyWorkspaceRenewalIntent(ctx context.Context, update workspaceRenewalIntentCAS) error
-	ClaimWorkspaceLaunch(ctx context.Context, claim workspaceLaunchClaimCAS) error
-	PersistWorkspaceLaunch(ctx context.Context, update workspaceLaunchPersistCAS) error
+	ClaimWorkspaceLaunchReconcile(ctx context.Context, claim workspaceLaunchReconcileClaim) error
+	PersistWorkspaceLaunchReconcile(ctx context.Context, update workspaceLaunchReconcileCAS) error
 	ClaimWorkspaceRenewal(ctx context.Context, claim workspaceRenewalClaimCAS) error
 	PersistWorkspaceRenewal(ctx context.Context, update workspaceRenewalPersistCAS) error
 	ActivateWorkspace(ctx context.Context, row map[string]any) (map[string]any, error)
+	ActivateWorkspaceLaunchProjection(ctx context.Context, row map[string]any) (map[string]any, error)
 	ClaimWorkspaceCreate(ctx context.Context, workspace map[string]any, operation map[string]any) error
 	DeleteWorkspace(ctx context.Context, id string) error
 
@@ -316,6 +317,25 @@ func prepareWorkspaceActivation(row, owner, compute, storage, attachment, existi
 		return nil, errWorkspaceActivationConflict
 	}
 	return row, nil
+}
+
+func prepareWorkspaceLaunchProjection(row, owner, existing map[string]any) (map[string]any, error) {
+	row = cloneMap(row)
+	accountID, ownerID, workspaceID := stringValue(row["accountId"]), stringValue(row["ownerUserId"]), stringValue(row["id"])
+	if workspaceAcceptedBillingState(row) == nil || accountID == "" || ownerID == "" || workspaceID == "" ||
+		stringValue(row["ownerAccountId"]) != accountID || stringValue(owner["id"]) != ownerID ||
+		stringValue(owner["accountId"]) != accountID || stringValue(owner["status"]) != "active" || stringValue(owner["role"]) != "owner" {
+		return nil, errWorkspaceActivationConflict
+	}
+	prepared, err := mergeWorkspaceForSave(existing, row)
+	if err != nil || validateWorkspaceBillingState(prepared) != nil {
+		return nil, errWorkspaceActivationConflict
+	}
+	prepared["customerProduct"] = true
+	access := cloneMap(mapField(prepared, "access"))
+	delete(access, "password")
+	prepared["access"] = access
+	return prepared, nil
 }
 
 func workspaceResourceCoversEntitlement(resourceType string, resource, state map[string]any) bool {

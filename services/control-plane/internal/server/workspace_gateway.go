@@ -782,13 +782,7 @@ func (app *controlPlaneServer) proxyWorkspaceTo(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusConflict, "workspace_runtime_truth_unavailable")
 		return
 	}
-	input := workspaceActivationTruthInputFromLaunch(operation)
-	truth, truthErr := service.WorkspaceActivationTruth(r.Context(), input)
-	if truthErr != nil || !workspaceActivationTruthMatchesLaunch(truth, input) {
-		writeError(w, http.StatusConflict, workspaceRuntimeTruthErrorCode(truth))
-		return
-	}
-	serviceName := truth.Runtime.ServiceName
+	serviceName := operation.stringFact("runtimeServiceName")
 	if serviceName == "" {
 		http.NotFound(w, r)
 		return
@@ -818,29 +812,19 @@ func (app *controlPlaneServer) proxyWorkspaceTo(w http.ResponseWriter, r *http.R
 	proxy.ServeHTTP(w, r)
 }
 
-func (app *controlPlaneServer) succeededWorkspaceLaunchForAccess(ctx context.Context, workspace map[string]any) (workspaceLaunchOperation, error) {
+func (app *controlPlaneServer) succeededWorkspaceLaunchForAccess(ctx context.Context, workspace map[string]any) (workspaceLaunchReconcileOperation, error) {
 	workspaceID := stringValue(workspace["id"])
 	accountID := firstNonEmpty(stringValue(workspace["accountId"]), stringValue(workspace["ownerAccountId"]))
 	rows, err := queryRuntimeOperations(ctx, app.tables, runtimeOperationQuery{
 		AccountID: accountID, WorkspaceID: workspaceID, Action: workspaceLaunchAction, Statuses: []string{"succeeded"},
 	})
 	if err != nil || len(rows) != 1 {
-		return workspaceLaunchOperation{}, errors.New("workspace_runtime_truth_unavailable")
+		return workspaceLaunchReconcileOperation{}, errors.New("workspace_runtime_truth_unavailable")
 	}
-	operation, err := decodeWorkspaceLaunchOperation(rows[0])
-	if err != nil || operation.Status != "succeeded" || operation.Phase != "succeeded" || operation.ReceiptID == "" || !operation.RuntimeReady ||
-		!workspaceMatchesLaunch(workspace, operation) || stringValue(workspace["runtimeId"]) != operation.RuntimeID ||
-		stringValue(nested(workspace, "runtime", "serviceName")) != operation.RuntimeServiceName {
-		return workspaceLaunchOperation{}, errors.New("workspace_runtime_truth_unavailable")
+	operation, err := decodeWorkspaceLaunchReconcileOperation(rows[0])
+	if err != nil || operation.Status != "succeeded" || operation.Stage != "succeeded" || operation.stringFact("receiptId") == "" ||
+		!workspaceLaunchProjectionMatches(operation, workspace) {
+		return workspaceLaunchReconcileOperation{}, errors.New("workspace_runtime_truth_unavailable")
 	}
 	return operation, nil
-}
-
-func workspaceRuntimeTruthErrorCode(truth clients.WorkspaceActivationTruth) string {
-	switch truth.Reason {
-	case "identity_mismatch", "multiple_candidate", "absent", "provider_unavailable":
-		return "workspace_runtime_truth_" + truth.Reason
-	default:
-		return "workspace_runtime_truth_unavailable"
-	}
 }

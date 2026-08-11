@@ -1,0 +1,354 @@
+package server
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"opl-cloud/services/control-plane/internal/clients"
+	"opl-cloud/services/control-plane/internal/domain"
+)
+
+type workspaceLaunchUnitStore struct {
+	mu  sync.Mutex
+	row map[string]any
+}
+
+func (s *workspaceLaunchUnitStore) GetRuntimeOperation(_ context.Context, id string) (map[string]any, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.row == nil || stringValue(s.row["id"]) != id {
+		return nil, false, nil
+	}
+	return cloneMap(s.row), true, nil
+}
+
+func (s *workspaceLaunchUnitStore) ClaimWorkspaceLaunchReconcile(_ context.Context, claim workspaceLaunchReconcileClaim) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.row != nil {
+		return errWorkspaceLaunchCASConflict
+	}
+	s.row = cloneMap(claim.DesiredOperation)
+	return nil
+}
+
+func (s *workspaceLaunchUnitStore) PersistWorkspaceLaunchReconcile(_ context.Context, update workspaceLaunchReconcileCAS) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.row == nil || stringValue(s.row["result"]) != update.ExpectedOperationResult {
+		return errWorkspaceLaunchCASConflict
+	}
+	s.row = cloneMap(update.DesiredOperation)
+	return nil
+}
+
+type workspaceLaunchUnitAdapter struct {
+	mu        sync.Mutex
+	ready     bool
+	reads     int
+	mutations int
+	barrier   chan struct{}
+}
+
+func (a *workspaceLaunchUnitAdapter) ReadStage(_ context.Context, operation workspaceLaunchReconcileOperation) (workspaceLaunchStageObservation, error) {
+	a.mu.Lock()
+	a.reads++
+	if a.ready {
+		a.mu.Unlock()
+		return workspaceLaunchStageObservation{State: workspaceLaunchStageReady, Facts: workspaceLaunchReadyFacts(operation.Stage)}, nil
+	}
+	if a.barrier != nil && a.reads == 2 {
+		close(a.barrier)
+	}
+	barrier := a.barrier
+	a.mu.Unlock()
+	if barrier != nil {
+		<-barrier
+	}
+	return workspaceLaunchStageObservation{State: workspaceLaunchStageAbsent}, nil
+}
+
+func (a *workspaceLaunchUnitAdapter) MutateStage(_ context.Context, _ workspaceLaunchReconcileOperation, _ string) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.mutations++
+	a.ready = true
+	return nil
+}
+
+func workspaceLaunchReadyFacts(stage string) map[string]any {
+	switch stage {
+	case "key":
+		return map[string]any{"workspaceApiKeyId": int64(9), "workspaceKeyGroupId": int64(7), "workspaceKeyStatus": workspaceKeyCodexGroupBound, "workspaceKeyFingerprint": "sha256:" + strings.Repeat("a", 64)}
+	case "debit":
+		return map[string]any{"chargeAttempted": true, "chargeConfirmation": map[string]any{"status": "used"}, "preChargeBalanceUsdMicros": int64(100), "postChargeBalanceUsdMicros": int64(50), "postChargeBalanceKnown": true}
+	default:
+		return nil
+	}
+}
+
+func workspaceLaunchUnitCommand() workspaceLaunchReconcileCreate {
+	return workspaceLaunchReconcileCreate{
+		OperationID: "workspace-launch-unit", RequestHash: strings.Repeat("a", 64), AccountID: "acct-unit", OwnerUserID: "usr-unit",
+		Sub2APIUserID: 11, WorkspaceKeyGroupID: 7, WorkspaceID: "ws-unit", Name: "Unit", PackageID: "basic", StorageGB: 10,
+		PriceVersion: pricingCatalogVersion, TotalChargeUSDMicros: 52_580_000, ProviderProfileRef: "profile-unit", PreflightBindingRef: "binding-unit",
+		WorkspaceImageDigest: "repo.example/workspace@sha256:" + strings.Repeat("b", 64), PreChargeBalanceMicros: 100_000_000,
+		CreatedAt: time.Date(2026, 8, 12, 0, 0, 0, 0, time.UTC),
+	}
+}
+
+func workspaceLaunchManualReviewRow(t *testing.T) map[string]any {
+	t.Helper()
+	operation, err := newWorkspaceLaunchReconcileOperation(workspaceLaunchUnitCommand())
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation.Status = "manual_review"
+	row, err := workspaceLaunchReconcileOperationRow(operation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return row
+}
+
+func TestWorkspaceLaunchCreateAndResumeUseReconcile(t *testing.T) {
+	createStore, createAdapter := &workspaceLaunchUnitStore{}, &workspaceLaunchUnitAdapter{}
+	created, err := NewWorkspaceLaunchReconciler(createStore, createAdapter).Create(context.Background(), workspaceLaunchUnitCommand())
+	if err != nil || created.Stage != "debit" || createAdapter.mutations != 1 {
+		t.Fatalf("create operation=%s mutations=%d err=%v", workspaceLaunchReconcileResultSummary(created), createAdapter.mutations, err)
+	}
+
+	resumeStore, resumeAdapter := &workspaceLaunchUnitStore{row: workspaceLaunchManualReviewRow(t)}, &workspaceLaunchUnitAdapter{}
+	resumed, err := NewWorkspaceLaunchReconciler(resumeStore, resumeAdapter).Resume(context.Background(), workspaceLaunchUnitCommand().OperationID, workspaceLaunchResumeAuthorization{
+		AuthorizationID: "resume-unit", LaunchVersion: 1, AuthorizedStage: "key", AuthorizedBy: "usr-admin",
+		AuthorizedAt: "2026-08-12T00:01:00Z", Reason: "authoritative readback approved", MutationBudget: 1,
+	})
+	if err != nil || resumed.Stage != "debit" || resumeAdapter.mutations != 1 || resumed.ResumeAuthorizationConsumedAt == "" {
+		t.Fatalf("resume operation=%s mutations=%d err=%v", workspaceLaunchReconcileResultSummary(resumed), resumeAdapter.mutations, err)
+	}
+}
+
+func TestWorkspaceLaunchCASAllowsOneMutationReservation(t *testing.T) {
+	store := &workspaceLaunchUnitStore{row: workspaceLaunchManualReviewRow(t)}
+	operation, err := decodeWorkspaceLaunchReconcileOperation(store.row)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation.Status = "pending"
+	store.row, _ = workspaceLaunchReconcileOperationRow(operation)
+	adapter := &workspaceLaunchUnitAdapter{barrier: make(chan struct{})}
+	reconciler := NewWorkspaceLaunchReconciler(store, adapter)
+	start := make(chan struct{})
+	results := make(chan error, 2)
+	for range 2 {
+		go func() {
+			<-start
+			_, err := reconciler.Reconcile(context.Background(), operation.ID)
+			results <- err
+		}()
+	}
+	close(start)
+	var successes, conflicts int
+	for range 2 {
+		switch err := <-results; {
+		case err == nil:
+			successes++
+		case errors.Is(err, errWorkspaceLaunchCASConflict):
+			conflicts++
+		default:
+			t.Fatalf("unexpected reconcile error: %v", err)
+		}
+	}
+	if successes != 1 || conflicts != 1 || adapter.mutations != 1 {
+		t.Fatalf("successes=%d conflicts=%d mutations=%d", successes, conflicts, adapter.mutations)
+	}
+}
+
+func TestWorkspaceLaunchResumeAuthorizationIsImmutable(t *testing.T) {
+	store, adapter := &workspaceLaunchUnitStore{row: workspaceLaunchManualReviewRow(t)}, &workspaceLaunchUnitAdapter{}
+	reconciler := NewWorkspaceLaunchReconciler(store, adapter)
+	authorization := workspaceLaunchResumeAuthorization{
+		AuthorizationID: "resume-unit", LaunchVersion: 1, AuthorizedStage: "key", AuthorizedBy: "usr-admin",
+		AuthorizedAt: "2026-08-12T00:01:00Z", Reason: "bounded retry", MutationBudget: 1,
+	}
+	first, err := reconciler.Resume(context.Background(), workspaceLaunchUnitCommand().OperationID, authorization)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := reconciler.Resume(context.Background(), workspaceLaunchUnitCommand().OperationID, authorization)
+	if err != nil || second.ID != first.ID || second.stringFact("workspaceId") != first.stringFact("workspaceId") || second.Attempts["key"].Max != 1 {
+		t.Fatalf("idempotent resume changed launch: first=%s second=%s err=%v", workspaceLaunchReconcileResultSummary(first), workspaceLaunchReconcileResultSummary(second), err)
+	}
+	drifted := authorization
+	drifted.Reason = "different reason"
+	if _, err := reconciler.Resume(context.Background(), workspaceLaunchUnitCommand().OperationID, drifted); !errors.Is(err, errWorkspaceLaunchGrantConflict) {
+		t.Fatalf("drifted authorization error=%v", err)
+	}
+}
+
+func TestWorkspaceLaunchResumeWrapperReusesAuthorizedAtOnExactRetry(t *testing.T) {
+	row := workspaceLaunchManualReviewRow(t)
+	operation, err := decodeWorkspaceLaunchReconcileOperation(row)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authorization := workspaceLaunchResumeAuthorization{
+		AuthorizationID: "resume-route-unit", LaunchVersion: 1, AuthorizedStage: "key", AuthorizedBy: "usr-admin",
+		AuthorizedAt: "2026-08-12T00:01:00Z", Reason: "bounded retry", MutationBudget: 1,
+	}
+	operation.Version = 2
+	operation.ResumeAuthorization = &authorization
+	operation.ResumeAuthorizationConsumedAt = "2026-08-12T00:02:00Z"
+	row, err = workspaceLaunchReconcileOperationRow(operation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := newMemoryTableStore()
+	store.runtimeOps = []map[string]any{row}
+	app := &controlPlaneServer{tables: store}
+	retry := authorization
+	retry.AuthorizedAt = ""
+	got, err := app.resumeWorkspaceLaunch(context.Background(), nil, operation.ID, retry)
+	if err != nil || got.ResumeAuthorization == nil || *got.ResumeAuthorization != authorization || got.ResumeAuthorizationConsumedAt == "" {
+		t.Fatalf("exact retry changed authorization: operation=%s err=%v", workspaceLaunchReconcileResultSummary(got), err)
+	}
+}
+
+func TestWorkspaceLaunchLedgerEvidenceCannotAuthorizeContinuation(t *testing.T) {
+	row := workspaceLaunchManualReviewRow(t)
+	operation, err := decodeWorkspaceLaunchReconcileOperation(row)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation.raw["receiptId"] = json.RawMessage(`"receipt-evidence"`)
+	operation.raw["continuationRef"] = json.RawMessage(`"ledger-continuation"`)
+	row, err = workspaceLaunchReconcileOperationRow(operation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, adapter := &workspaceLaunchUnitStore{row: row}, &workspaceLaunchUnitAdapter{}
+	got, err := NewWorkspaceLaunchReconciler(store, adapter).Reconcile(context.Background(), operation.ID)
+	if err != nil || got.Status != "manual_review" || got.ResumeAuthorization != nil || adapter.reads != 0 || adapter.mutations != 0 {
+		t.Fatalf("ledger evidence continued launch: operation=%s reads=%d mutations=%d err=%v", workspaceLaunchReconcileResultSummary(got), adapter.reads, adapter.mutations, err)
+	}
+}
+
+func TestWorkspaceLaunchFabricBindingDriftBecomesUnknown(t *testing.T) {
+	operation, err := newWorkspaceLaunchReconcileOperation(workspaceLaunchUnitCommand())
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation.Stage = "storage"
+	input := clients.WorkspaceLaunchStageInput{Binding: clients.WorkspaceLaunchStageBinding{SchemaVersion: 1, LaunchOperationID: operation.ID, Stage: "storage"}}
+	result := clients.WorkspaceLaunchStageResult{SchemaVersion: 1, State: workspaceLaunchStageReady, Binding: input.Binding, Resources: clients.WorkspaceLaunchResources{StorageID: "storage-unit", StorageBindingRef: "binding-a"}}
+	result.Binding.RequestHash = "drifted"
+	observation, err := workspaceLaunchFabricObservation(operation, input, result)
+	if err != nil || observation.State != workspaceLaunchStageUnknown {
+		t.Fatalf("binding drift observation=%#v err=%v", observation, err)
+	}
+}
+
+func TestWorkspaceLaunchFabricReadyWithoutRequiredFactsBecomesUnknown(t *testing.T) {
+	operation, err := newWorkspaceLaunchReconcileOperation(workspaceLaunchUnitCommand())
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation.Stage = "storage"
+	input := clients.WorkspaceLaunchStageInput{Binding: clients.WorkspaceLaunchStageBinding{SchemaVersion: 1, LaunchOperationID: operation.ID, Stage: "storage"}}
+	result := clients.WorkspaceLaunchStageResult{
+		SchemaVersion: 1,
+		State:         workspaceLaunchStageReady,
+		Binding:       input.Binding,
+		Resources:     clients.WorkspaceLaunchResources{StorageID: "storage-unit"},
+	}
+	observation, err := workspaceLaunchFabricObservation(operation, input, result)
+	if err != nil || observation.State != workspaceLaunchStageUnknown {
+		t.Fatalf("incomplete ready observation=%#v err=%v", observation, err)
+	}
+}
+
+func TestWorkspaceLaunchActivationWritesProjectionWithoutFabricRows(t *testing.T) {
+	store := newMemoryTableStore()
+	store.users["usr-unit"] = map[string]any{"id": "usr-unit", "accountId": "acct-unit", "role": "owner", "status": "active"}
+	quote, err := workspacePricingPreview(defaultPricingCatalog(), map[string]any{"packageId": "basic", "sizeGb": 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	computePrice, _ := requiredPositiveInteger(mapField(quote, "compute"), "chargeUsdMicros")
+	storagePrice, _ := requiredPositiveInteger(mapField(quote, "storage"), "chargeUsdMicros")
+	totalPrice, _ := requiredPositiveInteger(quote, "totalChargeUsdMicros")
+	row := workspaceProjectionBillingRow(domain.WorkspaceProjection{
+		ID: "ws-unit", AccountID: "acct-unit", OwnerID: "usr-unit", Name: "Unit", PackageID: "basic", Provider: "fabric",
+		Status: "running", ComputeID: "compute-fabric", VolumeID: "storage-fabric", AttachmentID: "attachment-fabric",
+		RuntimeID: "runtime-fabric", RuntimeServiceName: "runtime-service", RuntimeReady: true, URL: "https://workspace.example",
+	}, map[string]any{
+		"autoRenew": false, "authorizedBy": "", "authorizedAt": "", "packageId": "basic", "storageGb": 10,
+		"priceVersion": pricingCatalogVersion, "currency": pricingCurrency, "billingUnit": pricingBillingUnit,
+		"computeUsdMicros": computePrice, "storageUsdMicros": storagePrice, "totalUsdMicros": totalPrice,
+		"periodStart": "2026-08-12T00:00:00Z", "paidThrough": "2026-09-12T00:00:00Z", "nextRenewalAt": "2026-09-11T00:00:00Z",
+		"billingAnchorDay": 12, "renewalStatus": "active", "computeAllocationId": "compute-fabric", "storageId": "storage-fabric",
+	})
+	row["activatedAt"] = "2026-08-12T00:01:00Z"
+	activated, err := store.ActivateWorkspaceLaunchProjection(context.Background(), row)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stringValue(activated["id"]) != "ws-unit" || activated["customerProduct"] != true || len(store.computes) != 0 || len(store.storages) != 0 || len(store.attachments) != 0 {
+		t.Fatalf("activation copied Fabric truth: workspace=%#v computes=%d storages=%d attachments=%d", activated, len(store.computes), len(store.storages), len(store.attachments))
+	}
+	drifted := cloneMap(row)
+	drifted["ownerAccountId"] = "acct-other"
+	if _, err := store.ActivateWorkspaceLaunchProjection(context.Background(), drifted); !errors.Is(err, errWorkspaceActivationConflict) {
+		t.Fatalf("owner drift error=%v", err)
+	}
+}
+
+func TestCurrentWorkspaceImageDigestRequiresRepository(t *testing.T) {
+	digest := "sha256:" + strings.Repeat("a", 64)
+	t.Setenv("OPL_WORKSPACE_IMAGE", "@"+digest)
+	if got := currentWorkspaceImageDigest(); got != "" {
+		t.Fatalf("empty repository image=%q", got)
+	}
+	t.Setenv("OPL_WORKSPACE_IMAGE", "registry.example/workspace@"+digest)
+	if got := currentWorkspaceImageDigest(); got != "registry.example/workspace@"+digest {
+		t.Fatalf("valid image=%q", got)
+	}
+}
+
+func TestWorkspaceLaunchResumeAuthorizationDigestBindsImmutableAuthorization(t *testing.T) {
+	authorization := workspaceLaunchResumeAuthorization{
+		AuthorizationID: "resume-unit", LaunchVersion: 1, AuthorizedStage: "runtime", AuthorizedBy: "usr-admin",
+		AuthorizedAt: "2026-08-12T00:01:00Z", Reason: "bounded retry", MutationBudget: 1,
+	}
+	first := workspaceLaunchResumeAuthorizationDigest(authorization)
+	if !strings.HasPrefix(first, "sha256:") || first != workspaceLaunchResumeAuthorizationDigest(authorization) {
+		t.Fatalf("unstable authorization digest=%q", first)
+	}
+	authorization.Reason = "different authorization"
+	if second := workspaceLaunchResumeAuthorizationDigest(authorization); second == first {
+		t.Fatalf("authorization drift retained digest=%q", second)
+	}
+}
+
+func TestWorkspaceLaunchActiveSourceHasNoProviderReducer(t *testing.T) {
+	files := []string{"workspace_launch.go", "workspace_launch_reconciler.go", "workspace_launch_service.go", "workspace_launch_fabric_stages.go", "workspace_launch_activation.go", "routes_workspace_launch.go"}
+	for _, name := range files {
+		source, err := os.ReadFile(filepath.Join(".", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		lower := strings.ToLower(string(source))
+		for _, forbidden := range []string{"tencent", "nodepool", "machine", "cvm", "providerdata", "costtags", "fabricoperations", "listoperations"} {
+			if strings.Contains(lower, forbidden) {
+				t.Fatalf("%s contains provider-owned token %q", name, forbidden)
+			}
+		}
+	}
+}

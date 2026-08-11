@@ -33,7 +33,6 @@ type billingReviewResolutionInput struct {
 	EvidenceRef        string
 	IdempotencyKey     string
 	Reviewer           string
-	ReadbackApproval   *workspaceLaunchReadbackRecoveryApproval
 }
 
 func monthlyPreflightConfirmed(input clients.MonthlyPreflightInput, result clients.MonthlyPreflight) bool {

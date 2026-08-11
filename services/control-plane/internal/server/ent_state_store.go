@@ -1842,9 +1842,9 @@ func (s *postgresEntStateStore) ApplyWorkspaceRenewalIntent(ctx context.Context,
 	return tx.Commit()
 }
 
-func (s *postgresEntStateStore) ClaimWorkspaceLaunch(ctx context.Context, claim workspaceLaunchClaimCAS) error {
-	desired, err := decodeWorkspaceLaunchOperation(claim.DesiredOperation)
-	if err != nil || desired.AccountID != claim.AccountID || claim.ExpectedOperationResult == "" && desired.AcceptanceBCapacitySlot != claim.AcceptanceBCapacitySlot {
+func (s *postgresEntStateStore) ClaimWorkspaceLaunchReconcile(ctx context.Context, claim workspaceLaunchReconcileClaim) error {
+	desired, err := decodeWorkspaceLaunchReconcileOperation(claim.DesiredOperation)
+	if err != nil || desired.stringFact("accountId") != claim.AccountID || desired.boolFact("acceptanceBCapacitySlot") != claim.AcceptanceBCapacitySlot {
 		return errWorkspaceLaunchCASConflict
 	}
 	tx, err := s.client.Tx(ctx)
@@ -1853,13 +1853,11 @@ func (s *postgresEntStateStore) ClaimWorkspaceLaunch(ctx context.Context, claim 
 	}
 	defer func() { _ = tx.Rollback() }()
 	client := tx.Client()
-	if claim.ExpectedOperationResult == "" {
-		if _, err := client.Account.Query().Where(lockRowForUpdate).Order(controlplaneent.Asc(account.FieldID)).First(ctx); err != nil {
-			if controlplaneent.IsNotFound(err) {
-				return errWorkspaceLaunchCASConflict
-			}
-			return err
+	if _, err := client.Account.Query().Where(lockRowForUpdate).Order(controlplaneent.Asc(account.FieldID)).First(ctx); err != nil {
+		if controlplaneent.IsNotFound(err) {
+			return errWorkspaceLaunchCASConflict
 		}
+		return err
 	}
 	if _, err := client.Account.Query().Where(account.IDEQ(claim.AccountID), lockRowForUpdate).Only(ctx); err != nil {
 		if controlplaneent.IsNotFound(err) {
@@ -1867,71 +1865,53 @@ func (s *postgresEntStateStore) ClaimWorkspaceLaunch(ctx context.Context, claim 
 		}
 		return err
 	}
-	entities, err := client.RuntimeOperation.Query().Where(runtimeoperation.AccountIDEQ(claim.AccountID), lockRowForUpdate).All(ctx)
+	accountOperations, err := client.RuntimeOperation.Query().Where(runtimeoperation.AccountIDEQ(claim.AccountID), lockRowForUpdate).All(ctx)
 	if err != nil {
 		return err
 	}
-	var existing map[string]any
-	for _, entity := range entities {
+	for _, entity := range accountOperations {
 		row := recordFromEnt(entity, runtimeOpEntFields)
 		if stringValue(row["id"]) == desired.ID {
-			existing = row
+			return errWorkspaceLaunchCASConflict
 		}
-		if claim.ExpectedOperationResult == "" && isWorkspaceLaunchAction(stringValue(row["action"])) && !terminalWorkspaceLaunchStatus(stringValue(row["status"])) {
+		if isWorkspaceLaunchAction(stringValue(row["action"])) && !terminalWorkspaceLaunchStatus(stringValue(row["status"])) {
 			return errWorkspaceLaunchInProgress
 		}
 	}
-	if claim.ExpectedOperationResult == "" {
-		if existing != nil {
-			return errWorkspaceLaunchCASConflict
+	launchEntities, err := client.RuntimeOperation.Query().Where(
+		runtimeoperation.ActionIn(workspaceLaunchAction, "workspace.launch"),
+	).All(ctx)
+	if err != nil {
+		return err
+	}
+	inFlight, acceptanceClaims := 0, 0
+	for _, entity := range launchEntities {
+		row := recordFromEnt(entity, runtimeOpEntFields)
+		if workspaceLaunchReconcileAcceptanceSlot(row) || workspaceLaunchHasAcceptanceBCapacitySlot(row) {
+			acceptanceClaims++
 		}
-		launchEntities, err := client.RuntimeOperation.Query().Where(
-			runtimeoperation.ActionIn(workspaceLaunchAction, "workspace.launch"),
-		).All(ctx)
-		if err != nil {
-			return err
+		if !terminalWorkspaceLaunchStatus(stringValue(row["status"])) {
+			inFlight++
 		}
-		inFlight, acceptanceClaims := 0, 0
-		for _, entity := range launchEntities {
-			row := recordFromEnt(entity, runtimeOpEntFields)
-			if workspaceLaunchHasAcceptanceBCapacitySlot(row) {
-				acceptanceClaims++
-			}
-			if !terminalWorkspaceLaunchStatus(stringValue(row["status"])) {
-				inFlight++
-			}
-		}
-		if claim.AcceptanceBCapacitySlot {
-			if acceptanceClaims >= 1 {
-				return errWorkspaceLaunchCapacityReached
-			}
-		} else if inFlight >= controlledBasicPilotGlobalInFlightLimit() {
+	}
+	if claim.AcceptanceBCapacitySlot {
+		if acceptanceClaims >= 1 {
 			return errWorkspaceLaunchCapacityReached
 		}
-		if err := saveRecord(ctx, desired.ID, controlPlaneRecord(claim.DesiredOperation), client.RuntimeOperation.Create(), runtimeOpEntFields); err != nil {
-			if controlplaneent.IsConstraintError(err) {
-				return errWorkspaceLaunchCASConflict
-			}
-			return err
-		}
-	} else {
-		if existing == nil || stringValue(existing["result"]) != claim.ExpectedOperationResult {
+	} else if inFlight >= controlledBasicPilotGlobalInFlightLimit() {
+		return errWorkspaceLaunchCapacityReached
+	}
+	if err := saveRecord(ctx, desired.ID, controlPlaneRecord(claim.DesiredOperation), client.RuntimeOperation.Create(), runtimeOpEntFields); err != nil {
+		if controlplaneent.IsConstraintError(err) {
 			return errWorkspaceLaunchCASConflict
 		}
-		if !workspaceLaunchClaimIdentityMatches(existing, claim.DesiredOperation) {
-			return errIdempotencyConflict
-		}
-		builder := client.RuntimeOperation.UpdateOneID(desired.ID)
-		setRecordFieldsWithEmptyText(builder, claim.DesiredOperation, runtimeOpEntFields, true)
-		if err := execCreate(ctx, builder); err != nil {
-			return err
-		}
+		return err
 	}
 	return tx.Commit()
 }
 
-func (s *postgresEntStateStore) PersistWorkspaceLaunch(ctx context.Context, update workspaceLaunchPersistCAS) error {
-	if _, err := decodeWorkspaceLaunchOperation(update.DesiredOperation); err != nil {
+func (s *postgresEntStateStore) PersistWorkspaceLaunchReconcile(ctx context.Context, update workspaceLaunchReconcileCAS) error {
+	if _, err := decodeWorkspaceLaunchReconcileOperation(update.DesiredOperation); err != nil {
 		return errWorkspaceLaunchCASConflict
 	}
 	tx, err := s.client.Tx(ctx)
@@ -1948,7 +1928,7 @@ func (s *postgresEntStateStore) PersistWorkspaceLaunch(ctx context.Context, upda
 		return err
 	}
 	current := recordFromEnt(entity, runtimeOpEntFields)
-	if stringValue(current["result"]) != update.ExpectedOperationResult || !workspaceLaunchClaimIdentityMatches(current, update.DesiredOperation) {
+	if stringValue(current["result"]) != update.ExpectedOperationResult || !workspaceLaunchReconcileIdentityMatches(current, update.DesiredOperation) {
 		return errWorkspaceLaunchCASConflict
 	}
 	builder := client.RuntimeOperation.UpdateOneID(update.OperationID)
@@ -2131,6 +2111,54 @@ func (s *postgresEntStateStore) ActivateWorkspace(ctx context.Context, row map[s
 		prepared["customerProduct"] = true
 	}
 	if err := saveWorkspaceRecord(ctx, client, prepared); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return prepared, nil
+}
+
+func (s *postgresEntStateStore) ActivateWorkspaceLaunchProjection(ctx context.Context, row map[string]any) (map[string]any, error) {
+	if err := validateWorkspaceBillingState(row); err != nil {
+		return nil, err
+	}
+	tx, err := s.client.Tx(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	client := tx.Client()
+	ownerEntity, ownerErr := client.User.Query().Where(user.IDEQ(stringValue(row["ownerUserId"])), lockRowForUpdate).Only(ctx)
+	if ownerErr != nil && !controlplaneent.IsNotFound(ownerErr) {
+		return nil, ownerErr
+	}
+	var owner map[string]any
+	if ownerErr == nil {
+		owner = recordFromEnt(ownerEntity, userEntFields)
+	}
+	existingEntity, existingErr := client.Workspace.Query().Where(workspace.IDEQ(stringValue(row["id"])), lockRowForUpdate).Only(ctx)
+	if existingErr != nil && !controlplaneent.IsNotFound(existingErr) {
+		return nil, existingErr
+	}
+	var existing map[string]any
+	if existingErr == nil {
+		existing = recordFromEnt(existingEntity, workspaceEntFields)
+	}
+	prepared, err := prepareWorkspaceLaunchProjection(row, owner, existing)
+	if err != nil {
+		return nil, err
+	}
+	if existing != nil {
+		builder := client.Workspace.UpdateOneID(stringValue(prepared["id"]))
+		setRecordFieldsWithEmptyText(builder, prepared, workspaceEntFields, true)
+		if err := execCreate(ctx, builder); err != nil {
+			return nil, err
+		}
+	} else if err := saveRecord(ctx, stringValue(prepared["id"]), prepared, client.Workspace.Create(), workspaceEntFields); err != nil {
+		if controlplaneent.IsConstraintError(err) {
+			return nil, errIdempotencyConflict
+		}
 		return nil, err
 	}
 	if err := tx.Commit(); err != nil {
