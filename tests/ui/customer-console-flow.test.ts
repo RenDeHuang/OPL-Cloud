@@ -22,7 +22,7 @@ test("public entry and Login preserve the OPL Cloud identity", async () => {
   assert.match(pages, /AI API/);
   assert.match(pages, /余额与账单/);
   assert.match(pages, /登录 OPL Cloud/);
-  assert.match(pages, /邀请制 Pilot/);
+  assert.match(pages, /账户由管理员开通/);
   assert.doesNotMatch(pages, /权威控制面|浏览器端业务推导|余额守卫|正式回执|medopl/i);
   assert.match(pages, /autoComplete="email"/);
   assert.match(pages, /autoComplete="current-password"/);

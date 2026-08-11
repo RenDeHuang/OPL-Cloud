@@ -22,11 +22,11 @@ export function PublicHome({ controller }: { controller: ConsoleController }) {
             </div>
           </div>
           <p className="access-tagline">让你的 One Person Lab 在云端继续工作</p>
-          <p className="access-lede">受邀用户登录后，可以管理多个在线 Workspace，查看 AI API 的用量与费用，并掌握账户余额和账单。</p>
+          <p className="access-lede">登录后，你可以管理多个在线 Workspace，查看 AI API 的用量与费用，并掌握账户余额和账单。</p>
           <div className="access-actions">
             <Button color="primary" onClick={() => controller.navigate("/login")}>登录 OPL Cloud<ArrowRight aria-hidden size={17} /></Button>
           </div>
-          <p className="access-pilot"><LockKeyhole aria-hidden size={16} /><span>当前为邀请制 Pilot，账户由管理员开通；暂不支持公开注册和在线充值。</span></p>
+          <p className="access-pilot"><LockKeyhole aria-hidden size={16} /><span>当前为 Pilot，账户由管理员开通；暂不支持公开注册和在线充值。</span></p>
         </section>
         <ul aria-label="产品能力" className="access-features">
           <li><Cloud aria-hidden size={22} /><div><strong>在线 Workspace</strong><span>打开和管理你的云端工作空间。</span></div></li>

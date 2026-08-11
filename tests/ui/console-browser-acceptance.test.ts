@@ -89,7 +89,7 @@ test("public entry states the product identity and current access boundary", asy
   assert.match(pages, /OPL Cloud/);
   assert.match(pages, /让你的 One Person Lab 在云端继续工作/);
   assert.match(pages, /登录 OPL Cloud/);
-  assert.match(pages, /邀请制 Pilot/);
+  assert.match(pages, /账户由管理员开通/);
   assert.match(pages, /alt="OPL Cloud" src="\/opl-app-icon\.png"/);
   assert.doesNotMatch(pages, /权威控制面|浏览器端业务推导|余额守卫|已冻结的 Console 展示合同/);
 });

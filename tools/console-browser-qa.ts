@@ -1324,7 +1324,7 @@ export async function runConsoleBrowserQa({
       state.sourceState = "available";
       await page.goto(`${server.origin}/`, { waitUntil: "networkidle" });
       await waitForText(page, "让你的 One Person Lab 在云端继续工作");
-      await waitForText(page, "当前为邀请制 Pilot");
+      await waitForText(page, "账户由管理员开通");
       const logoLoaded = await page.locator(".public-nav").getByAltText("OPL Cloud").evaluate((image) => image.complete && image.naturalWidth > 0);
       if (!logoLoaded) throw new Error("console_browser_logo_missing");
       await page.goto(`${server.origin}/login`, { waitUntil: "networkidle" });
