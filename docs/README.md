@@ -23,9 +23,9 @@ identifier, not another repository.
 - [architecture.md](./architecture.md): target product and authority boundaries.
 - [implementation-architecture.md](./implementation-architecture.md): current implemented request, persistence, provider and production boundaries.
 - [invariants.md](./invariants.md): rules that must stay true across refactors.
-- [status.md](./status.md): current launch boundary and known gaps.
+- [status.md](./status.md): current implementation and readiness evidence snapshot.
 - [decisions.md](./decisions.md): durable decisions.
-- [roadmap.md](./roadmap.md): the single current gap and next-step owner.
+- [roadmap.md](./roadmap.md): the single current gap and next-step owner; do not restate its open-work list elsewhere.
 - [whitepapers/opl-cloud-whitepaper.md](./whitepapers/opl-cloud-whitepaper.md): public product whitepaper source.
 - [product/console-workspace-v1.md](./product/console-workspace-v1.md): OPL Console commercial workspace product.
 - [runtime/production-runbook.md](./runtime/production-runbook.md): production operations.

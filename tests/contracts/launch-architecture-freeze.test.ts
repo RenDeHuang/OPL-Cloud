@@ -612,12 +612,16 @@ test("human launch contract binds target and implementation architecture to the 
   assert.match(invariants, /metadata\/statfs API and Console presentation are paused/i);
 });
 
-test("public Workspace contract permits multiple independent Workspaces", async () => {
-  const readme = await text("README.md");
+test("Workspace contracts permit multiple independent Workspaces", async () => {
+  const [product, freeze] = await Promise.all([
+    json("packages/contracts/opl-cloud-product-contract.json"),
+    json("packages/contracts/opl-cloud-launch-freeze-contract.json")
+  ]);
 
-  assert.match(readme, /one Account\/Wallet may own\s+multiple independent Workspaces/i);
-  assert.match(readme, /new identity creates another Workspace/i);
-  assert.doesNotMatch(readme, /one account owns exactly one\s+primary Workspace|second Workspace.*409/i);
+  assert.equal(product.pilotBoundary.workspaceCardinality, "many_per_account");
+  assert.equal(freeze.workspaceRuntime.workspaceCardinality, "many_per_account");
+  assert.ok(product.pilotBoundary.independentPerWorkspaceFacts.includes("runtime"));
+  assert.ok(product.pilotBoundary.independentPerWorkspaceFacts.includes("purchaseReceiptId"));
 });
 
 test("every launch stage declares business, current state, deliverables, and evidence", async () => {

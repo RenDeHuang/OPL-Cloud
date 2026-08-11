@@ -23,7 +23,7 @@ The current V2 boundary requires:
 - source envelopes whose availability and timestamps report real owner readback;
 - operator wallet adjustment, resource facts, audit evidence, and announcements.
 
-Remaining blockers:
+Current evidence snapshot:
 
 - Separately approved provider verification remains paused; Pro is open in the
   production catalog but its
@@ -54,31 +54,20 @@ uses `many_per_account`, lists Workspaces, and keeps independent Workspace ids,
 resources, Keys, periods, and receipts. This is not evidence that every launch
 or renewal works in production.
 
-The remaining architecture changes are explicit:
-
-- materialize `opl-instance-medopl` and move medopl domains, Tencent profile,
-  enabled plans/prices, image pins, secret refs, promotion, and deployment
-  evidence out of the reusable implementation boundary;
-- expand Console from the administrator-provisioned Pilot into tenant-safe user
-  onboarding, balance/usage, zero-to-many Workspace lifecycle, support, and
-  administrator governance;
-- replace Tencent names and assumptions in Control Plane contracts and recovery
-  facts with provider-neutral facts, while preserving the proven Tencent path
-  as the `tencent-tke` adapter;
-- prove a `local-docker` adapter before claiming that OPL Cloud can be installed
-  on a Mac or local Linux server.
+Open target-alignment work and its delivery order are owned only by
+[`docs/roadmap.md`](./roadmap.md). Provider portability and the current medopl
+co-location remain implementation facts in
+[`docs/implementation-architecture.md`](./implementation-architecture.md); this
+status snapshot does not maintain a second action list.
 
 Gateway/Sub2API remains the only spendable-balance owner. Console owns the
 account-total billing projection and settlement policy; Fabric owns zero
 balance; Ledger records append-only settlement and reconciliation evidence.
 No second wallet is part of this transition.
 
-Repository consolidation retains the transferred implementation repository's
-GitHub identity, pull requests, Actions, Environments and deployment history
-under the canonical `one-person-lab-cloud` name. The former documentation
-repository is provenance only after product docs, whitepaper sources, roadmap
-and Pages publication are read back from this repository. `opl-cloud` remains
-the internal artifact/service identifier.
+The durable repository identity decision lives in
+[`docs/decisions.md`](./decisions.md), and the completed migration record lives
+under `docs/history/**`; neither is repeated as current delivery work here.
 
 ## Preliminary Local Checks
 

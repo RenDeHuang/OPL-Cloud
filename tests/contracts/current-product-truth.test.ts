@@ -22,20 +22,35 @@ async function filesUnder(directory, include = () => true) {
   return files;
 }
 
-test("current docs describe only the operator-provisioned paid Pilot", async () => {
-  const [readme, architecture, packages, invariants, status, runbook, tke] = await Promise.all([
+test("public entry and current contracts preserve the operator-provisioned paid Pilot boundary", async () => {
+  const [readme, architecture, packages, invariants, status, runbook, tke, pricing] = await Promise.all([
     text("README.md"),
     text("docs/implementation-architecture.md"),
     text("packages/README.md"),
     text("docs/invariants.md"),
     text("docs/status.md"),
     text("docs/runtime/production-runbook.md"),
-    text("docs/runtime/tke-production-deployment.md")
+    text("docs/runtime/tke-production-deployment.md"),
+    json("packages/contracts/opl-cloud-pricing-contract.json")
   ]);
 
-  assert.match(readme, /React Console/);
-  assert.match(readme, /Basic[^\n]*USD 50\.00[^\n]*USD 2\.58[^\n]*USD 52\.58/i);
-  assert.match(readme, /Pro[^\n]*USD 214\.28[^\n]*USD 25\.80[^\n]*USD 240\.08/i);
+  assert.match(readme, /assets\/branding\/opl-cloud-logo\.png/);
+  assert.match(readme, /assets\/branding\/opl-cloud-overview-v2\.png/);
+  assert.match(readme, /Purpose: `public_cloud_entry`/);
+  assert.deepEqual(pricing.workspaceMonthly.basic, {
+    packageId: "basic",
+    sizeGb: 10,
+    computeUsdMicros: 50000000,
+    storageUsdMicros: 2580000,
+    totalUsdMicros: 52580000
+  });
+  assert.deepEqual(pricing.workspaceMonthly.pro, {
+    packageId: "pro",
+    sizeGb: 100,
+    computeUsdMicros: 214280000,
+    storageUsdMicros: 25800000,
+    totalUsdMicros: 240080000
+  });
   assert.match(invariants, /administrator-provisioned customer accounts/i);
   assert.match(invariants, /one Console User.*one OPL Account.*one Sub2API User\/Wallet/is);
   assert.match(invariants, /verification-slot-basic-01/);
