@@ -1954,7 +1954,7 @@ func TestAttachmentAndRuntimeRequireExactWorkspaceOwnership(t *testing.T) {
 				WorkspaceID: "ws-alpha", ComputeID: "compute-alpha", VolumeID: "storage-alpha", AttachmentID: "attachment-alpha",
 				AttachmentOperationID: "workspace-launch-alpha:attachment", RuntimeOperationID: "workspace-launch-alpha:workspace:runtime",
 				IdempotencyKey: "workspace-launch-alpha:workspace:runtime", GatewaySecretRef: gatewaySecretName("ws-alpha"),
-			}, compute, volume, attachment, false); err == nil || errorCode(err) != "resource_workspace_mismatch" {
+			}, compute, volume, attachment, false, testProvider{}.ValidateWorkspaceImageReference); err == nil || errorCode(err) != "resource_workspace_mismatch" {
 				t.Fatalf("runtime workspace isolation error=%v", err)
 			}
 		})
@@ -2745,6 +2745,18 @@ func TestComputeAsyncDestroyReturnsBeforeProviderCleanupAndReplays(t *testing.T)
 }
 
 type testProvider struct{}
+
+func (testProvider) Descriptor() ProviderDescriptor {
+	return NewTencentProvider().Descriptor()
+}
+
+func (testProvider) ValidateComputeAllocation(allocation ComputeAllocation, prepared ComputeAllocationPreparation) error {
+	return NewTencentProvider().ValidateComputeAllocation(allocation, prepared)
+}
+
+func (testProvider) ValidateWorkspaceImageReference(value string) bool {
+	return validWorkspaceRuntimeImageIdentity(value)
+}
 
 type liveRuntimeWithoutIDProvider struct {
 	testProvider

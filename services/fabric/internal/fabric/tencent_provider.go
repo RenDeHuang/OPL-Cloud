@@ -29,9 +29,10 @@ import (
 )
 
 const (
-	defaultNamespace = "opl-cloud"
-	gatewayService   = "opl-cloud-control-plane"
-	webuiUsername    = "opl"
+	defaultNamespace         = "opl-cloud"
+	gatewayService           = "opl-cloud-control-plane"
+	webuiUsername            = "opl"
+	workspaceImageRepository = "uswccr.ccs.tencentyun.com/oplcloud/one-person-lab-app"
 )
 
 type TencentProvider struct {
@@ -66,6 +67,42 @@ type monthlyPreflightEvaluation struct {
 
 func NewTencentProvider() *TencentProvider {
 	return &TencentProvider{provision: executeProvisioner, kubectl: executeKubectl, convergenceWait: boundedClaimReadbackWait}
+}
+
+func (*TencentProvider) Descriptor() ProviderDescriptor {
+	basic, pro := packagePlan("basic"), packagePlan("pro")
+	return ProviderDescriptor{
+		Name: "tencent-tke", RequiresMonthlyPricing: true,
+		Plans: map[string]ComputePlan{"basic": basic, "pro": pro},
+		Catalog: Catalog{
+			SchemaVersion: 1, Owner: "OPL Fabric",
+			WorkspacePackages: []WorkspacePackage{
+				{ID: "basic", Name: "Basic Workspace", ComputeProfileID: "cpu-basic", CPU: 2, MemoryGB: 4, DiskGB: 10, Provider: "tencent-tke", Available: true},
+				{ID: "pro", Name: "Pro Workspace", ComputeProfileID: "cpu-pro", CPU: 8, MemoryGB: 16, DiskGB: 100, Provider: "tencent-tke", Available: true},
+			},
+			StorageClasses: []StorageClass{{ID: "workspace-cbs", StorageClassName: "cbs", Provider: "tencent-tke", Available: true}},
+			IngressDomains: []IngressDomain{{ID: "workspace", Host: "workspace.medopl.cn", PathPattern: "/w/<workspaceId>/", Available: true}},
+		},
+	}
+}
+
+func (*TencentProvider) ValidateComputeAllocation(allocation ComputeAllocation, prepared ComputeAllocationPreparation) error {
+	if allocation.Provider != "tencent-tke" || prepared.NodePoolID == "" || allocation.NodePoolID != prepared.NodePoolID || allocation.PoolID != prepared.PoolID || allocation.PackageID != prepared.PackageID ||
+		allocation.InstanceType != prepared.InstanceType || allocation.MachineName == "" || !strings.HasPrefix(firstNonEmpty(allocation.InstanceID, allocation.CVMInstanceID), "ins-") ||
+		allocation.NodeName == "" || allocation.PrivateIP == "" || allocation.Zone == "" || allocation.ChargeType != "PREPAID" ||
+		allocation.RenewFlag != "NOTIFY_AND_MANUAL_RENEW" || allocation.Deadline == "" {
+		return fmt.Errorf("compute_provider_readback_mismatch")
+	}
+	for _, existing := range prepared.BeforeMachineNames {
+		if allocation.MachineName == existing {
+			return fmt.Errorf("compute_allocation_machine_not_new")
+		}
+	}
+	return nil
+}
+
+func (*TencentProvider) ValidateWorkspaceImageReference(value string) bool {
+	return validWorkspaceRuntimeImageIdentity(value)
 }
 
 func boundedClaimReadbackWait(ctx context.Context, attempt int) error {
@@ -686,15 +723,6 @@ type provisionerMachine struct {
 	RenewFlag    string `json:"renewFlag,omitempty"`
 	Deadline     string `json:"deadline,omitempty"`
 	Ready        bool   `json:"ready"`
-}
-
-type plan struct {
-	ID           string
-	Server       string
-	CPU          int
-	MemoryGB     int
-	DiskGB       int
-	InstanceType string
 }
 
 func (p *TencentProvider) PrepareComputeAllocation(ctx context.Context, input ComputeAllocationInput) (ComputeAllocationPreparation, error) {

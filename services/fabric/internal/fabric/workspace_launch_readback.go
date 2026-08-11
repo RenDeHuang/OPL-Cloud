@@ -278,7 +278,7 @@ func (s *Service) workspaceLaunchStageReadback(ctx context.Context, input Worksp
 			RuntimeOperationID: input.RuntimeOperationID, ImageID: input.ImageID, GatewaySecretRef: input.GatewaySecretRef,
 			IdempotencyKey: input.IdempotencyKey,
 		}
-		if err := validateRuntimeInput(runtimeInput, compute, volume, attachment, false); err != nil {
+		if err := validateRuntimeInput(runtimeInput, compute, volume, attachment, false, s.provider.ValidateWorkspaceImageReference); err != nil {
 			return FabricOperation{}, FabricOperation{}, WorkspaceLaunchStageReadbackProof{}, ErrWorkspaceLaunchStageReadbackInvalid
 		}
 		runtime, readErr := s.provider.WorkspaceRuntimeStatus(ctx, input.WorkspaceID)

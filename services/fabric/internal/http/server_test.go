@@ -1465,6 +1465,34 @@ func TestRunnerJobHTTPFailRetryAndConflict(t *testing.T) {
 
 type testProvider struct{}
 
+func (testProvider) Descriptor() fabric.ProviderDescriptor {
+	return fabric.ProviderDescriptor{
+		Name: "tencent-tke", RequiresMonthlyPricing: true,
+		Plans: map[string]fabric.ComputePlan{
+			"basic": {ID: "pool-basic-2c4g", Server: "2c4g", CPU: 2, MemoryGB: 4, DiskGB: 10, InstanceType: "SA5.MEDIUM4"},
+			"pro":   {ID: "pool-pro-8c16g", Server: "8c16g", CPU: 8, MemoryGB: 16, DiskGB: 100, InstanceType: "SA5.2XLARGE16"},
+		},
+		Catalog: fabric.Catalog{
+			SchemaVersion: 1, Owner: "OPL Fabric",
+			WorkspacePackages: []fabric.WorkspacePackage{{ID: "basic", Provider: "tencent-tke", Available: true}},
+		},
+	}
+}
+
+func (testProvider) ValidateComputeAllocation(allocation fabric.ComputeAllocation, prepared fabric.ComputeAllocationPreparation) error {
+	if allocation.Provider != "tencent-tke" || allocation.PoolID != prepared.PoolID || allocation.NodePoolID != prepared.NodePoolID ||
+		allocation.InstanceType != prepared.InstanceType || allocation.MachineName == "" || !strings.HasPrefix(allocation.InstanceID, "ins-") ||
+		allocation.NodeName == "" || allocation.PrivateIP == "" || allocation.Zone == "" {
+		return errors.New("compute_provider_readback_mismatch")
+	}
+	return nil
+}
+
+func (testProvider) ValidateWorkspaceImageReference(value string) bool {
+	const prefix = "uswccr.ccs.tencentyun.com/oplcloud/one-person-lab-app@sha256:"
+	return strings.HasPrefix(value, prefix) && len(value) == len(prefix)+64
+}
+
 func (testProvider) PublishWorkspaceContent(_ context.Context, _, _ string, _ []byte) error {
 	return nil
 }
