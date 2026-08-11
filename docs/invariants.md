@@ -27,19 +27,26 @@ schemas, workflows, and focused tests.
 - Console calls only Control Plane product APIs. It owns presentation and
   interaction, never persistence, provider mutation, billing authority, or
   downstream service truth.
-- Control Plane owns Sessions, account policy, Workspace orchestration,
-  entitlements, settlement coordination, and customer-safe DTOs.
-- Fabric is the only provider-resource and Kubernetes writer. Provider-specific
-  behavior stays behind the Fabric provider adapter.
+- Control Plane physically owns Sessions, account policy, Workspace entitlement,
+  the Launch business-stage cursor, attempt/lease/CAS state, account and
+  settlement coordination, and customer-safe projections. It owns no provider
+  operation store, resource reducer, provider mutation, or resource readback.
+- Fabric physically owns compute, storage, attachment, Secret binding, Runtime,
+  its operation store, provider/Kubernetes mutation, and authoritative resource
+  readback. Provider-specific behavior stays behind a Fabric provider adapter.
 - Ledger owns append-only receipts, evidence, review, reconciliation, and
-  continuation references. It never owns or changes spendable balance.
+  continuation references. It never owns or changes spendable balance, and a
+  Ledger reference cannot authorize or advance a Workspace Launch.
 - Sub2API is the only authority for customer identity credentials, spendable USD
   balance, API keys, model routing, and request usage. Cloud must not create a
   second wallet, Key store, Usage store, or Gateway service.
-- Control Plane, Fabric, and Ledger remain separate processes and PostgreSQL
-  schema owners. Cross-service integration uses typed public HTTP contracts;
-  no service imports another service's internal source or reads another
-  service's tables.
+- Control Plane, Fabric, and Ledger remain separate Go modules, processes, and
+  PostgreSQL schema owners. Cross-service integration uses typed public HTTP
+  contracts; no service imports another service's implementation or `internal`
+  package, reads another service's tables, or shares a domain package.
+- `packages/contracts` contains narrow, independently owned cross-module hard
+  boundaries only. It cannot become an aggregate product model, universal
+  launch contract, shared domain package, or second implementation/status owner.
 - Workspace file bodies live only on their owned storage volume. Platform
   PostgreSQL and Ledger may store identity, operation, reference, and evidence
   facts, but never Workspace file contents.
@@ -104,26 +111,42 @@ schemas, workflows, and focused tests.
 ## Launch And Recovery
 
 - Read-only identity, availability, capacity, price, and balance preflight
-  completes before the first debit or provider write. A failed preflight has
-  zero customer charge and zero provider mutation.
-- A Workspace launch is one durable, resumable Control Plane operation. Replay
-  continues the original identities and remaining attempt budgets; it never
-  creates a second launch, debit, Key, CVM, CBS, Runtime, or receipt.
+  is the admission gate and completes before the first external write. A failed
+  preflight has zero customer charge and zero provider mutation.
+- A Workspace Launch is one durable, resumable Control Plane operation and
+  business state machine. Create and Resume enter the same Reconciler. A single
+  Reconciler does not authorize a single file, module, process, schema, or shared
+  implementation owner.
+- The durable stage order is `key -> debit -> ensure compute allocation ->
+  storage -> attachment -> secret -> runtime -> activation -> receipt ->
+  succeeded`. A Workspace URL is Runtime-authoritative readback/projection, not
+  an independent mutation authority or stage.
+- Replay continues the original launch, account, Workspace, customer, billing,
+  Key, provider/resource, idempotency, and attempt-budget identities. It never
+  creates a second launch, debit, Key, resource, Runtime, or receipt.
 - External writes are reserved before execution. A reserved or unknown result
   is reconciled through authoritative readback and is never blindly reissued.
 - Each continuation stage has a bounded write budget. Exhausted or unknown
   outcomes enter manual review and cannot reset their budget after restart.
-- Recovery is an authorization path for the original launch, not a second
-  business state machine. Dedicated `workspace.launch.v2` review recovery uses
-  the Console flow `diagnose -> view persisted Recovery Plan -> validate ->
-  confirm continue`.
-- Recovery resource identity comes only from Control Plane, Fabric, provider,
-  Kubernetes, Sub2API, and Ledger readback. Console or workflow input cannot
-  supply CVM, Node, storage, Secret, image, or approval authority.
-- A failed recovery may create a successor only after server-authoritative
-  confirmed-zero evidence, or after Fabric evidence proves the original compute
-  mutation ledger is absent or observed with complete confirmed-zero evidence.
-  Missing, incomplete, positive, or unknown evidence cannot be treated as zero.
+- Recovery is an authorization path for the original Launch, not a second
+  business state machine. It may only save and consume an immutable Resume
+  authorization. The authorization binds the launch ID, current CAS version,
+  current stage, remaining mutation budget, reviewer, timestamp, and reason; it
+  is persisted by Control Plane CAS before the same Reconciler can continue.
+- Recovery owns no business stage, reducer, provider/resource identity, or
+  Fabric/provider mutation. Console, workflow, review, and Ledger input cannot
+  provide or rewrite a resource ID, reset a budget, create a successor Launch,
+  or authorize a downstream write.
+- Only a quiesced `manual_review` legacy Launch is migration-eligible.
+  Migration performs owner-authoritative GET-only fact collection,
+  deterministic mapping, exact-row/result CAS, and Control Plane post-write
+  readback. It preserves the original launch, account, Workspace, customer,
+  debit, Key, provider/resource IDs, billing period, all idempotency identities,
+  and consumed, unknown, and remaining attempt budgets.
+- A missing, conflicting, unknown, or non-preservable legacy fact leaves the row
+  in `manual_review` with zero provider and wallet mutation. A format or version
+  identifier alone is not target-state proof, and migrated rows still require
+  the immutable Resume authorization.
 - Fenced leases and compare-and-swap persistence ensure one winner. A stale
   worker cannot finalize after losing its lease.
 
@@ -138,6 +161,22 @@ schemas, workflows, and focused tests.
 - Provider and Kubernetes mutations use authoritative identity readback and
   exact mutation bounds. Ambiguous identity, ownership conflict, permission
   failure, or unknown result fails closed before another write.
+- Every Control Plane-to-Fabric stage call carries an explicit, immutable,
+  provider-neutral operation binding covering the Launch operation, account and
+  Workspace, stage/action, stable stage operation/idempotency identity, request
+  hash, and expected resource binding. Fabric persists it before the provider
+  write and returns it in authoritative readback.
+- The Fabric adapter maps that binding to provider identities. Control Plane has
+  no Machine, CVM, Node, CBS, provider SDK, Kubernetes, providerData, or cost-tag
+  implementation knowledge and cannot infer ownership from `:compute` suffixes,
+  unscoped operation listings, or provider tags.
+- Owner-authoritative readback proving that the original provider
+  mutation ledger is absent or observed with complete confirmed-zero evidence may
+  authorize Fabric to create a replacement or successor resource only inside
+  the original Launch stage, immutable
+  operation binding, idempotency identity, and remaining mutation budget. It
+  creates no new Launch, debit, or budget. Missing, incomplete, positive, or
+  unknown evidence is never zero and cannot authorize another resource write.
 - System resources designated by the deployed instance are protected from
   customer allocation, provider mutation, Kubernetes mutation, and cleanup.
   Their identifiers belong to deployment/instance authority, not this document.

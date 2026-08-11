@@ -12,6 +12,14 @@
   "priceBasis": "opl_monthly_resource_catalog",
   "providerCostBasis": "internal_evidence_only",
   "balanceOwner": "sub2api",
+  "coreOwnershipBoundary": {
+    "gatewayAuthority": ["spendable_balance", "request_usage", "balance_history", "debit", "refund"],
+    "controlPlaneAuthority": ["workspace_charge_orchestration", "entitlement", "customer_projection"],
+    "ledgerAuthority": ["receipts", "reconciliation_evidence"],
+    "secondWalletForbidden": true,
+    "currentCapabilityOwner": "docs/status.md",
+    "activeGapOwner": "docs/roadmap.md"
+  },
   "balanceReadApis": [
     "GET /api/v1/admin/users/:id"
   ],

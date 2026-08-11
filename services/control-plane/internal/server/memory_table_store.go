@@ -33,10 +33,11 @@ type memoryTableStore struct {
 }
 
 func newMemoryTableStore() *memoryTableStore {
+	const developmentOperatorEmail = "admin@opl.local"
 	return &memoryTableStore{
 		accounts:              controlPlaneRecordSet{"acct-admin": {"id": "acct-admin", "ownerUserId": "usr-admin", "sub2apiUserId": int64(1), "status": "active"}},
-		users:                 controlPlaneRecordSet{"usr-admin": {"id": "usr-admin", "email": "admin@medopl.cn", "accountId": "acct-admin", "role": "admin", "status": "active"}},
-		userIDByEmail:         map[string]string{"admin@medopl.cn": "usr-admin"},
+		users:                 controlPlaneRecordSet{"usr-admin": {"id": "usr-admin", "email": developmentOperatorEmail, "accountId": "acct-admin", "role": "admin", "status": "active"}},
+		userIDByEmail:         map[string]string{developmentOperatorEmail: "usr-admin"},
 		sessions:              controlPlaneRecordSet{},
 		sessionIDsByUser:      map[string]map[string]struct{}{},
 		organizations:         controlPlaneRecordSet{"org-admin": {"id": "org-admin", "name": "OPL Cloud", "billingAccountId": "acct-admin", "status": "active"}},
@@ -223,7 +224,7 @@ func (s *memoryTableStore) SaveUser(_ context.Context, row map[string]any) error
 		return err
 	}
 	account := s.accounts[accountID]
-	operator := userID == "usr-admin" && accountID == "acct-admin" && email == "admin@medopl.cn" && stringValue(row["role"]) == "admin"
+	operator := isReservedOperatorIdentity(row)
 	if stringValue(row["role"]) != "owner" && !operator {
 		return errInvalidRole
 	}

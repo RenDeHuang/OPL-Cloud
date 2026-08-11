@@ -15,6 +15,8 @@ const DEPLOY_VALUE_KEYS = [
   "OPL_WORKSPACE_WEBUI_PORT",
   "OPL_WORKSPACE_DATA_DIR",
   "OPL_WORKSPACE_PROJECTS_DIR",
+  "OPL_CLOUD_NODE_SELECTOR_KEY",
+  "OPL_CLOUD_NODE_SELECTOR_VALUE",
   "OPL_MONTHLY_BILLING_WORKER_ENABLED",
   "OPL_MONTHLY_BILLING_INTERVAL_MS",
   "OPL_WORKSPACE_LAUNCH_WORKER_ENABLED",
@@ -114,7 +116,7 @@ function setDeployment(item, values) {
   if (!podSpec) return;
 
 	podSpec.imagePullSecrets = [{ name: values.OPL_IMAGE_PULL_SECRET_NAME }];
-	podSpec.nodeSelector = { "medopl.cn/workload": "medopl" };
+	podSpec.nodeSelector = { [values.OPL_CLOUD_NODE_SELECTOR_KEY]: values.OPL_CLOUD_NODE_SELECTOR_VALUE };
 	for (const container of [...(podSpec.initContainers || []), ...(podSpec.containers || [])]) {
 		if (["control-plane", "ledger", "fabric", "ledger-schema-migration"].includes(container.name)) {
 			container.image = values.OPL_CLOUD_IMAGE;

@@ -73,10 +73,34 @@ initial implementation may select one primary adapter per instance while every
 Workspace persists its exact provider binding so later instances can expose
 more than one provider without changing Workspace identity.
 
-Launch and recovery share one provider-neutral operation state machine. Its
-collector asks the selected adapter for facts; provider-specific recovery does
-not create a second Control Plane state machine or leak Tencent resource names
-into the product contract.
+`local-docker` is the required Core adapter, but it is not implemented in the
+current source. Fabric startup still selects `TencentProvider`; Tencent/TKE is
+an extension chosen by `opl-instance-medopl`, not proof of portable Core. A
+healthy product Compose stack starts Fabric as a control service only and does
+not prove Workspace create/readback/delete. Current facts belong to
+[status](status.md), and the implementation gap belongs to the
+[roadmap](roadmap.md).
+
+Control Plane owns one durable Workspace Launch business state machine; Create
+and Resume enter its same Reconciler. Fabric does not own that cursor or a second
+Recovery state machine. It owns the resource-stage implementation, durable
+operation store, provider/Kubernetes mutation, and authoritative readback for
+compute, storage, attachment, Secret binding, and Runtime.
+
+Every stage request arrives through a typed public Fabric HTTP contract with an
+explicit, immutable, provider-neutral binding for the Launch operation, account
+and Workspace, stage/action, stable stage operation/idempotency identity, request
+hash, and expected resource binding. Fabric persists that binding before a
+provider write and returns it with readback. The selected adapter then maps it to
+Machine, CVM, Node, CBS, Runtime, or local-Docker identities. Control Plane must
+not derive resource ownership from `:compute` suffixes, unscoped operation
+listings, provider tags, or adapter fields.
+
+Recovery may cause Control Plane to re-enter the original Reconciler only after
+an immutable CAS-persisted Resume authorization. It does not provide a resource
+ID or call Fabric/provider mutation directly. Exact request and response shapes
+remain an implementation admission item until a real caller, both owner
+implementations, and focused tests establish the narrow public contract.
 
 For Serve, Fabric may prepare an isolated sandbox or worker, inject approved
 secret refs, apply network/egress policy, enforce resource limits and collect

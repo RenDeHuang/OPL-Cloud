@@ -53,6 +53,15 @@ account-total billing and settlement-policy surface. Ledger records immutable
 evidence about money movements and resource charges; it does not maintain a
 Fabric balance or a second mutable account balance.
 
+## MVP Boundary
+
+Core Ledger is limited to receipts and reconciliation evidence required by the
+local Workspace plus Gateway accounting path. Artifact, Review, ReviewPolicy,
+Continuation, broad retention, and cross-domain evidence experiences are
+extensions; their existing code does not make them MVP prerequisites. Current
+capability belongs to [status](status.md), while any keep, shrink, or later-work
+decision belongs to the [roadmap](roadmap.md).
+
 ## Evidence Record View
 
 Receipts should be useful to people, not only machines. A human-readable record

@@ -38,11 +38,11 @@ Domain agents        domain strategy, quality verdict and delivery authority
 one-person-lab-cloud
   product architecture, whitepaper, roadmap
   Console + Control Plane + Fabric + Ledger implementation
-  reusable contracts, images and release mechanisms
-        |
+  reusable contracts, portable images and GitHub Releases
+        | immutable product SHA + image digest
         v
 opl-instance-medopl
-  medopl instance profile, IaC, secret refs, promotion and deployment evidence
+  medopl customization, production environment, deployment, rollback and evidence
 ```
 
 `one-person-lab-cloud` is the single product and implementation repository.
@@ -128,6 +128,87 @@ flowchart TB
 | OPL Runway | Invocation/session lifecycle and execution-provider routing | Service identity, package lifecycle and domain verdicts |
 | Domain agent | Domain strategy, evidence judgment, quality verdict and delivery authority | Cloud infrastructure truth |
 
+## Core And Extension Boundary
+
+The MVP Core is one installable vertical product path:
+
+```text
+thin Console
+-> Control Plane
+-> Workspace launcher/provider
+-> local Docker OPL App/WebUI Workspace
+-> Gateway balance, usage, debit/refund authority in Sub2API
+-> minimal Ledger receipts and reconciliation evidence
+```
+
+Core completion requires a real Workspace create, readback, access, and delete
+path on a MacBook or single-server Docker host. Starting the Cloud control
+services with Compose is distribution plumbing and cannot satisfy this
+boundary. Console remains limited to the Workspace, balance, and usage controls
+needed by that path. Sub2API remains the only spendable wallet; Ledger does not
+become a second wallet or accounting engine.
+
+Extensions include Tencent/TKE and generic Kubernetes provider adapters,
+managed or institution-owned resources, OPL Serve, self-service signup,
+payment/top-up, detailed Console refinement, and Ledger evidence verticals not
+required by the Core path. An instance selects extensions without redefining
+the Core product. `opl-instance-medopl` selects the Tencent/TKE extension for
+medopl.cn; Tencent/TKE is not an MVP prerequisite for OPL Cloud itself.
+
+This section owns the stable Core/Extension technical boundary. Current
+capability belongs to [status](status.md), while gaps and priority belong only
+to the [roadmap](roadmap.md).
+
+## Launch Authority And Physical Ownership
+
+One Workspace Launch has one durable Control Plane operation and state machine.
+Create and Resume enter the same Reconciler, but the Reconciler coordinates
+separate physical owners rather than implementing their work:
+
+```text
+services/control-plane
+  business stage cursor + attempt/lease/CAS + settlement coordination
+        |-- typed public Fabric HTTP contract --> services/fabric
+        |                                        immutable launch/stage binding
+        |                                        operation store + resource stages
+        |                                        provider adapter mutation/readback
+        |                                              |
+        |                                              +-> local-docker, Tencent/TKE, or another adapter
+        |-- typed public Ledger HTTP contract --> services/ledger
+        |                                        append-only receipt/evidence/refs
+        +-- typed external client -------------> Sub2API
+                                                 identity/wallet/Key/Usage
+```
+
+The durable business chain is `preflight -> key -> debit -> ensure compute
+allocation -> storage -> attachment -> secret -> runtime -> activation ->
+receipt -> succeeded`. Preflight is the read-only admission gate before the
+first external write. Runtime supplies the authoritative Workspace URL as
+readback/projection; URL is not a separate mutation stage.
+
+Control Plane owns only the Launch cursor, attempt and lease state, CAS,
+account/settlement coordination, and customer projection. Fabric owns compute,
+storage, attachment, Secret binding, Runtime, its operation store, provider and
+Kubernetes mutation, and authoritative resource readback. Ledger retains
+append-only receipt, evidence, review, reconciliation, and continuation refs;
+those refs cannot authorize or advance Launch. Sub2API remains the external
+identity, wallet, Key, and Usage authority.
+
+Each Control Plane-to-Fabric stage call uses an explicit, immutable,
+provider-neutral binding for the Launch operation, account and Workspace,
+stage/action, stable stage operation/idempotency identity, request hash, and
+expected resource binding. Fabric persists it before a provider write, returns
+it with readback, and lets the selected adapter map it to provider identities.
+Control Plane cannot infer resource ownership from idempotency suffixes,
+unscoped operation listings, provider tags, or Machine/CVM/Node/CBS fields.
+
+Recovery only persists and consumes an immutable authorization for the original
+Launch version, stage, and remaining mutation budget. It cannot own a business
+stage, rewrite a resource identity, reset a budget, create a successor Launch,
+or call a provider. The exact public binding shape is admitted only with a real
+caller, source implementation in both owners, and focused tests; this
+architecture does not freeze a speculative universal JSON contract.
+
 ## Modularity And Simplification Boundary
 
 Each implementation module is paid for by a current product responsibility,
@@ -142,6 +223,8 @@ Modules stay cohesive around their owned capability and communicate through
 typed product or service contracts. Internal file splits may reduce change
 collisions, but must not create cross-module packages, mirror another owner's
 truth, or duplicate launch/recovery, wallet, provider, or receipt authority.
+One durable Reconciler never justifies moving Fabric resource reducers,
+operation derivation, mutations, or provider facts into Control Plane.
 Once real callers move to a successor, the old route, DTO, facade, schema, and
 test path retire as one bounded change rather than a permanent fallback.
 
@@ -211,12 +294,13 @@ or resource is Cloud-hosted or managed. Fabric performs the approved resource
 binding and execution. User-provided local, SSH or HPC resources can use the
 same pattern without becoming Console-billed resources by default.
 
-Fabric exposes a provider-neutral capability interface. An instance selects an
-approved provider profile, such as `tencent-tke`, `local-docker`, or generic
-`kubernetes`. Provider identifiers, diagnostics, retries, and recovery
-mutations stay inside the adapter. The Control Plane persists a provider
-binding per Workspace and uses one launch/recovery state machine; it does not
-hard-code Tencent resource names into product identity.
+Fabric exposes a provider-neutral capability interface. Core requires a real
+`local-docker` profile; an instance may additionally select an extension such
+as `tencent-tke` or generic `kubernetes`. Provider identifiers, diagnostics, retries, and recovery
+mutations stay inside the adapter. Control Plane persists the selected provider
+profile ref per Workspace and uses one Launch business state machine; Fabric
+persists each stage-operation binding and provider-resource mapping. Neither
+generic product identity nor Control Plane contains Tencent resource names.
 
 ## Balance And Billing Boundary
 

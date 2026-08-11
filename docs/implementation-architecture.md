@@ -15,6 +15,25 @@ and request-usage owner. The repository reads those records on demand and does
 not mirror them. Its code, image, database, configuration, and deployment remain
 outside this repository's mutation boundary.
 
+## MVP Current Breakpoint
+
+The required Core path is
+`Console -> Control Plane -> Workspace launcher/provider -> local Docker`.
+Current source does not complete it: Fabric startup still constructs
+`TencentProvider`, Workspace image defaults remain Tencent TCR-specific, and no
+`local-docker` provider exists. The portable Compose profile starts PostgreSQL,
+Control Plane, Fabric, and Ledger with Workspace launch workers disabled. It is
+therefore a control-service installation check, not Workspace create/readback/
+delete evidence.
+
+The reusable Gateway side is further ahead: Control Plane already projects
+Sub2API balance, usage, balance history, and Workspace Key operations, and its
+purchase paths use Sub2API charge/refund authority. Ledger already owns receipts
+and reconciliation evidence. Those facts do not close the P0 until the same
+minimal path reaches a real local Docker Workspace. Mutable current capability
+is owned only by [status](status.md); remaining work and priority are owned only
+by the [roadmap](roadmap.md).
+
 ## Physical Module And Dependency Map
 
 The current repository is a modular product repository with three Go service
@@ -39,9 +58,9 @@ packages/contracts -> CI and service-boundary verification only
 | Module | Physical boundary | Owns | Allowed dependencies | Forbidden coupling |
 | --- | --- | --- | --- | --- |
 | Console UI | `apps/console-ui`, TypeScript build | presentation and customer interaction | Control Plane product APIs under `/api/*` | direct Fabric, Ledger, Sub2API, Tencent, Kubernetes, persistence, or server implementation imports |
-| Control Plane | independent `go.mod`, binary, Deployment and schema | session/account mapping, Workspace entitlement, orchestration, billing policy and customer DTOs | typed HTTP clients for Fabric, Ledger and Sub2API; narrow PostgreSQL migration helper | Fabric/Ledger implementation imports, cloud SDKs, provider mutations, or downstream table writes |
-| Fabric | independent `go.mod`, binary, Deployment and schema | compute, storage, attachment, runtime, provider operations and readback | provider adapters, cloud SDKs and narrow PostgreSQL migration helper | wallet, customer billing policy, Console session state, or Ledger table writes |
-| Ledger | independent `go.mod`, binary, Deployment and schema | append-first receipts, reviews, continuations and reconciliation evidence | narrow PostgreSQL migration helper | spendable balance mutation, provider SDKs, Fabric execution, or Control Plane table writes |
+| Control Plane | independent `go.mod`, binary, Deployment and schema | session/account mapping, Workspace entitlement, Launch cursor/attempt/lease/CAS, account/settlement coordination and customer DTOs | typed HTTP clients for Fabric, Ledger and Sub2API; narrow PostgreSQL migration helper | resource-stage reducers, Fabric operation derivation, Fabric/Ledger implementation imports, provider fields/SDKs/Kubernetes, provider mutations, or downstream table writes |
+| Fabric | independent `go.mod`, binary, Deployment and schema | compute, storage, attachment, Secret binding, Runtime, provider-neutral operation bindings/store, provider mutations and authoritative readback | provider adapters, cloud SDKs and narrow PostgreSQL migration helper | wallet, customer billing policy, Console session state, or Ledger table writes |
+| Ledger | independent `go.mod`, binary, Deployment and schema | receipts, evidence, review, reconciliation and continuation refs; additional evidence verticals remain extensions | narrow PostgreSQL migration helper | Launch continuation authority, spendable balance mutation, provider SDKs, Fabric execution, or Control Plane table writes |
 | PostgreSQL migration helper | independent narrow Go module under `services/internal/postgresmigrate` | advisory lock, migration journal and TLS validation mechanics | PostgreSQL driver only | any Console, Control Plane, Fabric or Ledger domain type |
 | Machine contracts | JSON under `packages/contracts` | executable ownership and protocol boundaries | tests, build and validation | runtime state, service implementation or a second status owner |
 
@@ -52,17 +71,17 @@ adapter and resolve to `/api/*`. This gate runs through the existing `npm test`
 lane; it complements behavior and contract tests rather than replacing them.
 
 Physical deployment isolation is incomplete. The three services use separate
-processes, Deployments and tables, but the current TKE profile injects one
-`DATABASE_URL`, one internal service token and one shared ConfigMap. Consequently
+processes and tables, but the portable Compose profile and current external
+medopl TKE profile inject one `DATABASE_URL` and one internal service token. Consequently
 table ownership and caller identity are contract-enforced, not database-role or
 service-credential-enforced. The common image also makes them one release unit,
 which is intentional for the current product repository but not independent
 service release evidence.
 
 Deployment isolation is an independent implementation lane, not a predecessor
-to Console, Control Plane, Fabric, or Ledger development. Reusable manifests and
-service configuration stay in this repository while `opl-instance-medopl`
-applies concrete values and secret references in its own lane. The two owners
+to Console, Control Plane, Fabric, or Ledger development. Portable distribution
+assets and provider adapter code stay in this repository, while concrete
+manifests, values and secret references stay in `opl-instance-medopl`. The two owners
 join only when qualifying an exact deployment, rollback, and authoritative
 readback. The common release image may remain shared unless measured release
 blast radius creates a separate requirement.
@@ -152,20 +171,25 @@ Fabric, Ledger, Tencent, Kubernetes, or Sub2API directly.
 
 `services/control-plane` owns local sessions, one-to-one Account-to-Sub2API
 mappings, N Workspace entitlements per Account, Workspace-level monthly
-operations, provider references/current pointers, recovery state, and strict
-customer DTOs. It does not own live Compute, Storage, Attachment, or Runtime
-provider status. Sub2API authenticates customer credentials. Organization and
+operations, the Launch business cursor, attempts/leases/CAS, settlement
+coordination, selected provider-profile refs, and strict customer DTOs. It does
+not own a Fabric operation store, resource-stage reducer, live Compute, Storage,
+Attachment, Secret, or Runtime status, or provider mutation. Sub2API
+authenticates customer credentials. Organization and
 Membership rows remain internal one-to-one compatibility records only; they are
 not shared-account or customer-authorization surfaces.
 
-`services/fabric` owns compute, storage, attachments, Workspace runtimes,
-provider operations, and provider readback. The current production adapter owns
+`services/fabric` owns compute, storage, attachments, Secret binding, Workspace
+runtimes, provider-neutral stage-operation bindings, its operation store,
+provider mutations, and provider readback. The current production adapter owns
 Tencent TKE/CVM/CBS and Kubernetes calls. Provider callbacks may update resource
 facts but cannot overwrite Control Plane entitlement state.
 
-`services/ledger` owns EvidenceReceipt, ReviewPolicy, ReconciliationReport,
-Artifact, Continuation, retention, audit, and idempotency records. It never
-changes Sub2API balance.
+`services/ledger` owns receipt, evidence, review, reconciliation, and
+continuation references. ReviewPolicy, Artifact, Continuation, retention, and
+related stores beyond the Core receipts remain implemented extension surfaces,
+not MVP prerequisites. Ledger never changes Sub2API balance and its refs cannot
+authorize or advance a Workspace Launch.
 
 `packages/contracts` contains narrow machine-enforced cross-module, interface,
 security, integrity, permission, and irreversible-side-effect boundaries; it is
@@ -174,19 +198,30 @@ Speculative route and object entries remain outside the active contracts.
 
 ## Provider Port
 
-Fabric already exposes a Go `Provider` interface, but portability is not yet
+Fabric already exposes a Go `Provider` interface, but Core portability is not yet
 complete: process startup instantiates `TencentProvider`, Control Plane still
 emits `tencent-tke`, and current launch/recovery facts include Tencent, CVM, CBS,
-and NodePool terminology. Therefore the only production adapter is
-`tencent-tke`; an interface alone is not multi-provider evidence.
+and NodePool terminology. Therefore the only wired adapter is `tencent-tke`;
+an interface alone is not local-docker or multi-provider evidence.
 
-The target port exposes provider-neutral compute, storage, attachment, runtime,
+The Core port exposes provider-neutral compute, storage, attachment, runtime,
 preflight, readback, renewal, and recovery facts. The selected instance profile
 chooses an adapter. Provider-specific identities, diagnostics, retry rules, and
 mutation sequences remain inside that adapter. The first additional adapter is
 `local-docker`; generic `kubernetes` follows when the common contract is proven
-by both real paths. Control Plane keeps one launch/recovery reducer and persists
-the exact provider binding per Workspace.
+by both real paths. Control Plane keeps the one Launch business Reconciler and
+selected provider-profile ref; Fabric persists each stage-operation binding and
+the provider resource mapping.
+
+## Current Launch Boundary Gap
+
+Current `services/control-plane/internal/server/workspace_launch.go` does not yet
+meet the accepted physical boundary. It directly interprets Tencent, NodePool,
+Machine, CVM, `providerData`, and `costTags` facts and derives attachment and
+Secret ownership from Fabric operation listings. These are current source facts,
+not accepted target ownership. They must move behind a typed Fabric public
+contract and Fabric-owned implementation before the single Reconciler can be
+admitted, even when narrower behavior tests pass.
 
 ## Persistence
 
@@ -227,7 +262,7 @@ delete mutation; Tencent expiry policy owns eventual provider reclamation.
 
 ## Current Medopl Workspace Access Path
 
-The current Workspace data path is:
+The current medopl Tencent/TKE extension data path is:
 
 ```text
 Browser
@@ -256,13 +291,10 @@ rotation; ordinary reads never infer scope from Workspace count or Key name.
 Ordinary runtime status is non-secret. Dedicated owner-only POST commands reveal
 or rotate the password transiently; Control Plane never persists it, and Console
 retains it only in Workspace detail component memory. A Workspace image candidate
-combines exact `one-person-lab-app`, `opl-aion-shell`, and `one-person-lab` Framework
-commits; all must be full 40-character SHAs already merged into their respective `main`.
-The fixed candidates are App `6b334ef7f239eb01c40578159e6df9ed2e7f97dc`, shell
-`dbd9d68115604673df85033d7a0ab323d65a79a2`, and Framework
-`51d16f0e93aebf3fd5ccf96082490395fcbb8711`. The release workflow checks out all three detached, runs the existing
-`ensure:shell`, builds the active shell context into TCR, and reads back the immutable
-digest. Production manifests accept only the resulting target `repository@sha256`.
+combines exact `one-person-lab-app`, active-shell, and Framework revisions. The
+Workspace owner publishes that image independently; an instance pins its
+immutable `repository@sha256` alongside the OPL Cloud product release. The Cloud
+product release does not build, publish, or promote an instance Workspace image.
 The immutable Workspace image is pinned for deployment, but a customer
 Workspace Ready-Pod `imageID` readback remains pending. No configured digest,
 placeholder, or local timestamp substitutes for that Pod evidence.
@@ -291,23 +323,19 @@ Control Plane availability coupling for the operator-provisioned Pilot. A dedica
 Workspace Router remains a later ownership and scaling decision; no router or
 security-model change is authorized by this document.
 
-## Current Medopl Production
+## Product Release And Instance Qualification
 
-Production runs Control Plane, Fabric, and Ledger as separate Kubernetes
-Deployments. Secrets are Kubernetes Secret references, configuration is a shared
-ConfigMap, and the deploy workflow waits for all three rollouts. The production
-Fabric catalog exposes both Basic and Pro; availability means product access,
-while Tencent MonthlyPreflight remains the capacity authority before debit.
-Separately approved provider verification remains paused and does not gate
-ordinary deploy.
+Cloud publishes one multi-architecture GHCR image and GitHub Release containing
+Compose, an environment template, and a release manifest. Product release uses
+no production environment and performs no instance deployment. The image is
+identified by a version tag, exact product SHA, and immutable digest; mutable
+`latest` and `stable` tags are forbidden.
 
-The Cloud services have ordinary rollout and deployment readback evidence. That
-evidence does not complete the Basic canary, customer Workspace imageID, or model
-Usage checks, and it does not imply a real Pro purchase.
-
-Image publication accepts a full 40-character Cloud commit only. The release
-workflow reads back the exact checked-out HEAD and official Cloud `origin/main`,
-then requires the candidate to be contained in that main history before building.
+The private `opl-instance-medopl` repository owns the current medopl/TKE
+configuration, production environment, deployment workflow, rollback, canaries,
+and receipts. Historical rollout evidence predates this owner split and does
+not prove the migrated Instance path. Fresh production claims require Instance
+workflow readback for the exact Cloud release.
 
 Control Plane remains one Pod. Existing load evidence covers request concurrency
 and replay, but its historical per-resource renewal scan is not proof of the

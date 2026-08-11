@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import {
@@ -772,101 +771,4 @@ test("Acceptance B readback fails closed on non-fresh baseline, count, image, re
   for (const value of cases) {
     assert.throws(() => validateProductionBasicAcceptanceBReadback(value, approval), /production_basic_acceptance_b_readback_invalid/);
   }
-});
-
-test("deployment machine contract registers the local-only Acceptance B integration boundary", async () => {
-  const deployment = JSON.parse(await readFile(new URL("../../packages/contracts/opl-cloud-deployment-contract.json", import.meta.url), "utf8"));
-  assert.deepEqual(deployment.productionBasicAcceptanceB, {
-    tool: "tools/production-basic-acceptance-b.ts",
-    operationMode: "acceptance_b_fresh_order",
-    execution: "github_actions_production_environment_authoritative_readback_workflow",
-    productionNetwork: "github_actions_production_environment_authorized_runner_only",
-    workflowIntegration: {
-      file: ".github/workflows/production-basic-customer-operation.yml",
-      job: "acceptance-b-fresh-order",
-      ownership: "integrated_after_acceptance_a_identity_lane_on_main",
-      resourceClosureRunner: ["self-hosted", "tencent-cloud", "opl-cloud", "tke-vpc"],
-      modelRequest: "forbidden_not_part_of_acceptance_b"
-    },
-    operationContract: PRODUCTION_BASIC_ACCEPTANCE_B_OPERATION,
-    admission: {
-      pilotMayRemainDisabled: true,
-      customerAuthorization: "owner_session_and_csrf",
-      privateCapabilityHeader: "x-opl-acceptance-b-capability",
-      approvalIdHeader: "x-opl-acceptance-b-approval-id",
-      capabilitySource: "current_opl-cloud-internal-service_secret_runner_memory_only",
-      approvalSource: "dedicated_opl-cloud-acceptance-b_secret_control_plane_only",
-      prePostReadback: "get_exact_operation_before_single_post",
-      unknownPost: "get_exact_operation_only_without_second_post",
-      mismatch: "fail_closed_before_preflight_debit_or_provider_mutation"
-    },
-    approvalSchema: {
-      schemaVersion: 1,
-      exactTopLevelFields: ["schemaVersion", "operationMode", "approvalId", "expiresAt", "confirmation", "release", "customer", "launch", "expected", "allowedWrites", "forbiddenWrites"],
-      releaseFields: ["mergedMainSha", "cloudImageDigest", "workspaceImageDigest"],
-      customerFields: ["email", "accountId"],
-      launchFields: ["idempotencyKey", "operationId", "workspaceId", "name", "packageId", "sizeGb", "autoRenew"],
-      expectedFields: ["nodePoolId", "resolvedInstanceType"],
-      allowedWrites: PRODUCTION_BASIC_ACCEPTANCE_B_ALLOWED_WRITES,
-      forbiddenWrites: PRODUCTION_BASIC_ACCEPTANCE_B_FORBIDDEN_WRITES
-    },
-    writeAccounting: {
-      authority: "authoritative_service_readback_not_http_attempts",
-      exactCountFields: ["workspaceLaunchPosts", "sub2apiDebits", "tencentCvmCreates", "tencentCvmOwnershipClaims", "kubernetesNodeClaims", "tencentCbsCreates", "runtimeCreates", "receiptCreates"],
-      zeroCountFields: ["accountProvisionPosts", "walletAdjustmentPosts", "modelRequests", "refunds", "renewals", "deletes", "replacements"]
-    },
-    readback: {
-      baseline: "zero_workspace_launch_workspace_key_and_workspace_receipt_for_approved_account",
-      launchPostUnknown: "authoritative_get_before_one_post_then_authoritative_get_same_operation_id_without_retry",
-      timeoutContinuation: {
-        operationMode: "acceptance_b_fresh_readback",
-        baselineAuthority: "validated_prepared_acceptance_b_account_reconcile_artifact_from_resume_run_id",
-        releaseAuthority: "approval_release_sha_equals_current_production_configmap_release_sha",
-        launchMutation: "forbidden_get_exact_existing_operation_only",
-        blockedArtifactValidator: "same_validateProductionBasicAcceptanceBArtifact_union_as_success",
-        blockedArtifactLaunchReadback: {
-          responseReceived: "boolean",
-          fields: ["status", "phase", "errorCode"],
-          values: "lowercase_safe_tokens_only",
-          identityFields: "forbidden",
-          noResponseFallback: { responseReceived: false, status: "unknown", phase: "unknown", errorCode: "unknown" }
-        },
-        businessMutationCounts: {
-          accountProvision: 0,
-          walletAdjustment: 0,
-          workspaceLaunchPost: 0,
-          debit: 0,
-          cvmCreate: 0,
-          cvmOwnershipClaim: 0,
-          nodeClaim: 0,
-          cbsCreate: 0,
-          runtimeCreate: 0,
-          receiptCreate: 0
-        }
-      },
-      authorities: ["control_plane_launch", "sub2api_debit_history", "fabric_operations_and_provider_truth", "runtime_ready_pod", "ledger_purchase_receipt", "workspace_url_http"],
-      stageBudgetFields: ["compute_create", "compute_claim_cvm", "compute_claim_node", "cbs_create", "static_binding_apply", "attachment", "secret", "runtime", "activation", "receipt"],
-      stageBudgetRequiredValue: { attempted: 1, confirmed: 1, unknown: 0, max: 1 },
-      terminalEvidence: PRODUCTION_BASIC_ACCEPTANCE_B_OPERATION.terminalEvidence,
-      forbiddenFields: ["password", "token", "secret", "redeem_code", "provider_request_id", "model_prompt", "model_response"]
-    }
-  });
-});
-
-test("Acceptance B reads only its independent customer password secret", async () => {
-  const workflow = await readFile(new URL("../../.github/workflows/production-basic-acceptance.yml", import.meta.url), "utf8");
-  const acceptanceB = workflow.slice(workflow.indexOf("  acceptance-b-fresh-order:"), workflow.indexOf("  controlled-pilot-closed-validate:"));
-  assert.match(acceptanceB, /OPL_PRODUCTION_BASIC_ACCEPTANCE_B_CUSTOMER_PASSWORD:\s*\$\{\{ secrets\.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_CUSTOMER_PASSWORD \}\}/);
-  assert.doesNotMatch(acceptanceB, /OPL_BASIC_CANARY_CUSTOMER_PASSWORD/);
-});
-
-test("Acceptance B timeout continuation reuses a prepared baseline artifact and has no purchase confirmation", async () => {
-  const workflow = await readFile(new URL("../../.github/workflows/production-basic-acceptance.yml", import.meta.url), "utf8");
-  assert.match(workflow, /acceptance_b_fresh_readback/);
-  assert.match(workflow, /inputs\.operation_mode == 'acceptance_b_fresh_readback'/);
-  assert.match(workflow, /inputs\.resume_run_id != ''/);
-  assert.match(workflow, /name:\s*production-basic-acceptance-b-reconcile/);
-  assert.match(workflow, /node tools\/production-basic-acceptance-b\.ts --readback/);
-  assert.match(workflow, /validateProductionBasicAcceptanceBArtifact/);
-  assert.match(workflow, /OPL_PRODUCTION_BASIC_ACCEPTANCE_B_BASELINE_ARTIFACT_PATH/);
 });

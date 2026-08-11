@@ -10,11 +10,12 @@ It follows the development framework from `one-person-lab`. The short
 - Control Plane Sessions, account mapping, permissions, named product DTOs,
   Workspace state machines, purchase recovery, support, and product projections.
 - Fabric resource catalog, provider-neutral resource operations, attachments,
-  runtime operations, provider evidence, content transfer, and snapshot
-  boundary. Tencent TKE/CVM/CBS is the current production adapter.
-- Ledger receipts, reviews, artifacts, audit, retention, continuation, and
-  reconciliation evidence.
-- Reusable image, deployment interface, readiness, and verification mechanisms.
+  runtime operations, provider evidence, and provider adapters. Content
+  transfer and snapshots are implemented extension candidates, not MVP Core.
+- Ledger receipts and reconciliation evidence required by Core. Reviews,
+  artifacts, retention, and continuation are extension candidates.
+- Portable image, Compose installation assets, product release, readiness, and
+  reusable provider-verification mechanisms.
 
 ## Instance Boundary
 
@@ -23,9 +24,10 @@ profile, region and resource ids, enabled plans and prices, image pins, secret
 references, promotion policy, and deployment receipts. It does not copy this
 repository's runtime code or product contracts.
 
-Those medopl-specific values are still co-located here as migration state. New
-instance-specific product truth must target the instance repository rather than
-deepening that coupling.
+Medopl-specific manifests, production workflows, Secrets, runbooks, rollback,
+canaries, and receipts belong only in that instance repository. This repository
+retains provider adapter source and portable product-release mechanisms, but no
+automatic instance deployment writer.
 
 ## External
 

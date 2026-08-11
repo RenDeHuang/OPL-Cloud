@@ -53,8 +53,10 @@ test("public entry and current contracts preserve the operator-provisioned paid 
   });
   assert.match(status, /administrator-provisioned accounts/i);
   assert.match(invariants, /one Console User.*one OPL Account.*one Sub2API User\/Wallet/is);
-  assert.match(runbook, /normal Console\s+Basic canary.*separately once.*read-only.*never buy a second Workspace package/is);
-  assert.match(tke, /separate Control Plane, Fabric, and Ledger Kubernetes Deployments/is);
+  assert.match(runbook, /does not operate or automatically deploy a concrete instance/i);
+  assert.match(runbook, /opl-instance-medopl/);
+  assert.match(tke, /supported Fabric adapter, not the OPL Cloud product boundary/i);
+  assert.match(tke, /opl-instance-medopl/);
   assert.match(status, /code-complete/i);
   assert.match(status, /production-proven=false/i);
   assert.doesNotMatch(architecture, /starts from a fresh database/i);

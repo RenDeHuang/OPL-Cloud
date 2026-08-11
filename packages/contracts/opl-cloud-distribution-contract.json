@@ -1,0 +1,74 @@
+{
+  "schemaVersion": 1,
+  "owner": "OPL Cloud",
+  "purpose": "Portable product distribution and instance handoff boundary.",
+  "state": "current",
+  "machineBoundary": "Cloud publishes portable immutable product artifacts without deploying an instance; concrete provider selection and deployment belong to an instance owner.",
+  "lifecycle": {
+    "type": "long_term_contract",
+    "removalCondition": "Replace only with a newer current contract for the same distribution and instance-handoff boundary."
+  },
+  "productRepository": "gaofeng21cn/one-person-lab-cloud",
+  "distribution": {
+    "workflow": ".github/workflows/release-opl-cloud-image.yml",
+    "registry": "ghcr.io/gaofeng21cn/one-person-lab-cloud",
+    "releaseTagFormat": "v0.x.y",
+    "mutableTagsForbidden": [
+      "latest",
+      "stable"
+    ],
+    "platforms": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "releaseAssets": [
+      "compose.yaml",
+      "opl-cloud.env.example",
+      "opl-cloud-release.json"
+    ],
+    "immutableIdentity": [
+      "releaseTag",
+      "productSha",
+      "imageDigest"
+    ]
+  },
+  "portableInstallation": {
+    "entrypoint": "compose.yaml",
+    "documentation": "docs/installation.md",
+    "processes": [
+      "control-plane",
+      "fabric",
+      "ledger"
+    ],
+    "persistence": "postgresql",
+    "providerSelection": "instance_or_installer_owned",
+    "workspaceProviderRequired": true,
+    "composeScope": "cloud_control_services_only",
+    "composeDoesNotProve": [
+      "workspace_create",
+      "workspace_readback",
+      "workspace_access",
+      "workspace_delete"
+    ]
+  },
+  "instanceHandoff": {
+    "repository": "gaofeng21cn/opl-instance-medopl",
+    "inputs": [
+      "productSha",
+      "imageDigest"
+    ],
+    "cloudRepositoryMustNotOwn": [
+      "instance_domains",
+      "production_environment",
+      "production_secrets",
+      "deployment_dispatch",
+      "instance_canary",
+      "instance_rollback",
+      "production_receipts"
+    ]
+  },
+  "evidenceOwners": {
+    "currentCapability": "docs/status.md",
+    "activeGapsAndPriority": "docs/roadmap.md"
+  }
+}

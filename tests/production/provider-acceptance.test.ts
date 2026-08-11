@@ -3,7 +3,6 @@ import { access, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { parse } from "yaml";
 
 import {
   PROVIDER_ACCEPTANCE_CONFIRMATION,
@@ -256,73 +255,6 @@ test("Provider Acceptance CLI rejects unsupported manual-review reasons without 
   assert.match(stderr, /provider_acceptance_invalid_response/);
   await assert.rejects(access(manifestPath), { code: "ENOENT" });
   await rm(directory, { recursive: true, force: true });
-});
-
-test("Provider Acceptance workflow is independently approved, dual-slot fixed, and cannot mutate resources directly", async () => {
-  const workflow = parse(await readFile(".github/workflows/provider-acceptance.yml", "utf8"));
-  const contract = JSON.parse(await readFile("packages/contracts/opl-cloud-deployment-contract.json", "utf8"));
-  const backend = await readFile("services/control-plane/internal/server/routes_provider_acceptance.go", "utf8");
-  const spec = contract.providerAcceptanceWorkflow;
-  const deploySpec = contract.deployWorkflow;
-  const job = workflow.jobs.accept;
-  const runStep = job.steps.find((step) => step.name === "Run one-time Provider Acceptance");
-  const source = JSON.stringify(workflow);
-
-  assert.equal(spec.file, ".github/workflows/provider-acceptance.yml");
-  assert.equal(spec.job, "accept");
-  assert.equal(spec.mode, "operator_only_one_time_dual_fixed_slot");
-  assert.equal(spec.mutationAuthorityWiring, "dispatch_approval_id_protected_manifest_explicit_cli_allow_flags");
-  assert.equal(spec.endpoint, "/api/operator/provider-acceptance");
-  assert.equal(spec.lifetimePurchaseBudget, 2);
-  assert.deepEqual(spec.fixedSlots.map(({ id, accountId, idempotencyKey, packageId, instanceType, cbsGb }) => ({ id, accountId, idempotencyKey, packageId, instanceType, cbsGb })), [
-    { id: "verification-slot-basic-01", accountId: "acct-verification-slot-basic-01", idempotencyKey: "provider-acceptance:verification-slot-basic-01", packageId: "basic", instanceType: "SA5.MEDIUM4", cbsGb: 10 },
-    { id: "verification-slot-pro-01", accountId: "acct-verification-slot-pro-01", idempotencyKey: "provider-acceptance:verification-slot-pro-01", packageId: "pro", instanceType: "SA5.2XLARGE16", cbsGb: 100 }
-  ]);
-  assert.equal(spec.confirmation, PROVIDER_ACCEPTANCE_CONFIRMATION);
-  assert.equal(workflow.concurrency.group, "provider-acceptance-${{ inputs.slot_id }}");
-  assert.equal(workflow.concurrency["cancel-in-progress"], false);
-  assert.deepEqual(workflow.on.workflow_dispatch.inputs.slot_id.options, ["verification-slot-basic-01", "verification-slot-pro-01"]);
-  assert.equal(workflow.on.workflow_dispatch.inputs.account_id.required, true);
-  assert.equal(workflow.on.workflow_dispatch.inputs.confirmation.required, true);
-  assert.equal(workflow.on.workflow_dispatch.inputs.purchase_budget.required, true);
-  assert.equal(workflow.on.workflow_dispatch.inputs.max_approved_provider_cost.required, true);
-  assert.equal(workflow.on.workflow_dispatch.inputs.approval_id.required, true);
-  assert.equal(job.environment, "production-provider-acceptance");
-  assert.equal(job.env.OPL_PROVIDER_ACCEPTANCE_SLOT_ID, "${{ inputs.slot_id }}");
-  assert.equal(job.env.OPL_PROVIDER_ACCEPTANCE_ACCOUNT_ID, "${{ inputs.account_id }}");
-  assert.equal(job.env.OPL_PROVIDER_ACCEPTANCE_CONFIRMATION, "${{ inputs.confirmation }}");
-  assert.equal(job.env.OPL_PROVIDER_ACCEPTANCE_ENVIRONMENT_APPROVED, "true");
-  assert.equal(job.env.OPL_PROVIDER_ACCEPTANCE_PURCHASE_BUDGET, "${{ inputs.purchase_budget }}");
-  assert.equal(job.env.OPL_PROVIDER_ACCEPTANCE_MAX_APPROVED_PROVIDER_COST, "${{ inputs.max_approved_provider_cost }}");
-  assert.equal(job.env.OPL_PROVIDER_ACCEPTANCE_TOKEN, undefined);
-  assert.equal(runStep.env.OPL_PROVIDER_ACCEPTANCE_TOKEN, "${{ secrets.OPL_PROVIDER_ACCEPTANCE_TOKEN }}");
-  assert.equal(runStep.env.OPL_VERIFY_MUTATION_APPROVAL_JSON, "${{ secrets.OPL_VERIFY_MUTATION_APPROVAL_JSON }}");
-  assert.equal(runStep.env.OPL_VERIFY_MUTATION_APPROVAL_ID, "${{ inputs.approval_id }}");
-  assert.equal(runStep.env.OPL_PROVIDER_ACCEPTANCE_OPERATOR_TOKEN, undefined);
-  assert.equal(job.env.OPL_PROVIDER_ACCEPTANCE_AUTH_USERS_JSON, undefined);
-  assert.equal(spec.environment, "production-provider-acceptance");
-  assert.ok(spec.requiredEnv.includes("OPL_PROVIDER_ACCEPTANCE_TOKEN"));
-  assert.deepEqual(spec.secretEnv, ["OPL_PROVIDER_ACCEPTANCE_TOKEN", "OPL_VERIFY_MUTATION_APPROVAL_JSON"]);
-  assert.equal(deploySpec.requiredEnv.includes("OPL_PROVIDER_ACCEPTANCE_TOKEN"), false);
-  assert.equal(deploySpec.secretEnv.includes("OPL_PROVIDER_ACCEPTANCE_TOKEN"), false);
-  assert.doesNotMatch(JSON.stringify(deploySpec.requiredCommandsByStep["Install Kubernetes secrets"]), /OPL_PROVIDER_ACCEPTANCE_TOKEN/);
-  assert.match(runStep.run, /node tools\/provider-acceptance\.ts --allow-gateway-write --allow-provider-write --approval-id "\$OPL_VERIFY_MUTATION_APPROVAL_ID"/);
-  assert.doesNotMatch(source, /TENCENTCLOUD_SECRET|compute-allocations|storage-volumes|destroy|delete|renew/i);
-  assert.match(backend, /POST \/api\/operator\/provider-acceptance/);
-  assert.match(backend, /providerAcceptanceSlots/);
-});
-
-test("ordinary production verification requires both fixed slots and has no Acceptance mutation", async () => {
-  const workflow = parse(await readFile(".github/workflows/verify-production-chain.yml", "utf8"));
-  const source = await readFile(".github/workflows/verify-production-chain.yml", "utf8");
-  const inputs = workflow.on.workflow_dispatch.inputs;
-  assert.equal(inputs.basic_account_id, undefined);
-  assert.equal(inputs.pro_account_id, undefined);
-  assert.deepEqual(workflow.jobs.verify.strategy.matrix.include.map(({ slot_id, account_id }) => ({ slot_id, account_id })), [
-    { slot_id: "verification-slot-basic-01", account_id: "acct-verification-slot-basic-01" },
-    { slot_id: "verification-slot-pro-01", account_id: "acct-verification-slot-pro-01" }
-  ]);
-  assert.doesNotMatch(source, /provider-acceptance\.ts|\/api\/operator\/provider-acceptance|compute-allocations|storage-volumes|destroy|delete/i);
 });
 
 test("Provider Acceptance CLI requires the fixed confirmation before network access", async () => {

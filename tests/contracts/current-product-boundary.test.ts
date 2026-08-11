@@ -12,28 +12,17 @@ async function json(path: string) {
   return JSON.parse(await text(path));
 }
 
-test("Controlled Basic Pilot is closed by default, identifier-free, and continuation-safe", async () => {
-  const [freeze, boundary, deployment, observability, manifest, workflow, runbook] = await Promise.all([
+test("Controlled Basic Pilot migration guards remain closed by default and continuation-safe", async () => {
+  const [freeze, boundary, deployment, observability] = await Promise.all([
     json("packages/contracts/opl-cloud-launch-freeze-contract.json"),
     json("packages/contracts/opl-cloud-service-boundary-contract.json"),
     json("packages/contracts/opl-cloud-deployment-contract.json"),
-    json("packages/contracts/opl-cloud-observability-contract.json"),
-    json("deploy/tke/opl-cloud.k8s.json"),
-    text(".github/workflows/deploy-tke-production.yml"),
-    text("docs/runtime/production-runbook.md")
+    json("packages/contracts/opl-cloud-observability-contract.json")
   ]);
-  const config = manifest.items.find((item: { kind: string; metadata?: { name?: string } }) => item.kind === "ConfigMap" && item.metadata?.name === "opl-cloud-config").data;
+  assert.equal(deployment.lifecycle.type, "migration_guard");
+  assert.match(deployment.lifecycle.removalCondition, /move Tencent\/TKE instance detail to the medopl instance owner/i);
   assert.deepEqual(deployment.controlledBasicPilot.productionDefaults, { enabled: "0", accountAllowlist: "", maxInFlight: "1" });
   assert.deepEqual(deployment.recoveryAcceptanceCanaryRuntime.productionDefaults, { enabled: "0", accountAllowlist: "", approval: "empty" });
-  assert.equal(config.OPL_CONTROLLED_BASIC_PILOT_ENABLED, "0");
-  assert.equal(config.OPL_CONTROLLED_BASIC_PILOT_ACCOUNT_IDS, "");
-  assert.equal(config.OPL_CONTROLLED_BASIC_PILOT_MAX_IN_FLIGHT, "1");
-  assert.equal(config.OPL_RECOVERY_ACCEPTANCE_CANARY_ENABLED, "0");
-  assert.equal(config.OPL_RECOVERY_ACCEPTANCE_CANARY_ACCOUNT_IDS, "");
-  assert.match(workflow, /OPL_CONTROLLED_BASIC_PILOT_ENABLED:[^\n]*'0'/);
-  assert.match(workflow, /OPL_RECOVERY_ACCEPTANCE_CANARY_ENABLED:[^\n]*'0'/);
-  assert.match(workflow, /OPL_RECOVERY_ACCEPTANCE_CANARY_APPROVAL_JSON:[^\n]*secrets\.OPL_RECOVERY_ACCEPTANCE_CANARY_APPROVAL_JSON/);
-  assert.match(workflow, /OPL_PRODUCTION_BASIC_ACCEPTANCE_B_APPROVAL_JSON:[^\n]*secrets\.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_APPROVAL_JSON/);
   assert.deepEqual(freeze.workspaceLaunch.controlledBasicPilot.packageIds, ["basic"]);
   assert.equal(freeze.workspaceLaunch.controlledBasicPilot.disableBehavior, "block_new_purchase_only_reads_and_original_operation_continuations_remain_available");
   assert.equal(boundary.services.controlPlane.controlledBasicPilotAdmission.continuationPrecedence, "exact_idempotency_or_single_matching_active_operation_before_admission");
@@ -49,8 +38,6 @@ test("Controlled Basic Pilot is closed by default, identifier-free, and continua
   for (const field of ["accountId", "operationId", "workspaceId", "computeId", "storageId", "providerResourceId"]) {
     assert.ok(observability.controlledBasicPilot.forbiddenFields.includes(field));
   }
-  assert.match(runbook, /Diagnose -> Plan -> Validate -> Confirm/);
-  assert.match(runbook, /Never ask the customer to find or\s+paste an Account, Workspace, operation, compute, storage, or provider resource\s+ID/);
 });
 
 test("Current contracts hard cut Gateway keys and source envelopes", async () => {
@@ -1124,9 +1111,9 @@ test("Current human truth preserves public entry points and evidence levels", as
   assert.doesNotMatch(invariants, /stops at\s+`debited`[\s\S]{0,300}S8/i);
   assert.doesNotMatch(invariants, /durable `workspace\.launch` RuntimeOperation/);
   assert.doesNotMatch(invariants, /manual[- ]review[^.\n]{0,160}code-complete/i);
-  assert.match(runbook, /OPL_POSTGRES_TESTS=1/);
-  assert.match(runbook, /OPL_CAPACITY_TESTS=1/);
-  assert.match(runbook, /Action=skip/);
+  assert.match(runbook, /does not operate or automatically deploy a concrete instance/i);
+  assert.match(runbook, /opl-instance-medopl/);
+  assert.doesNotMatch(runbook, /deploy-tke-production\.yml|production-basic-customer-operation\.yml/);
 });
 
 test("Production funding failure evidence preserves only approval ID digests", async () => {

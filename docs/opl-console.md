@@ -15,6 +15,18 @@ or explicitly managed resources and Agent Services.
 Console is not the package manager, Serve service-state owner, resource
 executor, connector runtime, Ledger truth, or domain authority.
 
+## MVP Boundary
+
+Core Console is deliberately thin: it exposes only the Workspace collection and
+the balance and usage facts needed to create and manage one local Docker
+Workspace path through Control Plane. It consumes authoritative Sub2API and
+Ledger projections and owns no wallet, usage store, or receipt truth.
+
+Self-service signup, customer payment/top-up, detailed visual refinement,
+managed-resource policy, and Serve administration are later or extension
+surfaces. Current capability is owned by [status](status.md); gap and priority
+are owned by the [roadmap](roadmap.md).
+
 ## Governance Objects
 
 | Object | Purpose |
@@ -88,7 +100,7 @@ state, service runtime state, or domain readiness.
 
 ## Product Boundary
 
-Ordinary users use Console for account onboarding, balance and usage, Workspace
+Ordinary users ultimately use Console for account onboarding, balance and usage, Workspace
 creation and lifecycle, and support; they perform professional work in App or
 Workspace. Administrators use Console to decide who may use or publish which
 managed capability and under what budget or policy.

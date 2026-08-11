@@ -403,7 +403,7 @@ func stageProvisionedAccount(accounts, users, organizations, memberships control
 		return errInvalidEmail
 	}
 	role := stringValue(user["role"])
-	operator := userID == "usr-admin" && accountID == "acct-admin" && email == "admin@medopl.cn" && role == "admin"
+	operator := isReservedOperatorIdentity(user)
 	if (!operator && role != "owner") || stringValue(user["passwordHash"]) != "" {
 		return errInvalidRole
 	}

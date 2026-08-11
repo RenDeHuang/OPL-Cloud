@@ -298,16 +298,19 @@ func TestCloudAdminOwnsReservedCustomerAccount(t *testing.T) {
 	}
 }
 
-func TestOnlyCloudAdminEmailHasOperatorAuthority(t *testing.T) {
-	if !isOperatorUser(map[string]any{"id": "usr-admin", "email": "admin@medopl.cn", "accountId": "acct-admin", "role": "admin", "status": "active"}) {
-		t.Fatal("admin@medopl.cn was not treated as OPL Cloud administrator")
+func TestReservedCloudAdminAuthorityDoesNotDependOnInstanceEmail(t *testing.T) {
+	for _, email := range []string{"admin@opl.local", "operator@example.test"} {
+		if !isOperatorUser(map[string]any{"id": "usr-admin", "email": email, "accountId": "acct-admin", "role": "admin", "status": "active"}) {
+			t.Fatalf("reserved OPL Cloud administrator email %q was rejected", email)
+		}
 	}
 	for _, user := range []map[string]any{
 		{"id": "usr-tenant-admin", "email": "tenant-admin@example.com", "accountId": "acct-alpha", "role": "admin", "status": "active"},
 		{"id": "usr-operator", "email": "operator@opl.local", "accountId": "acct-operator", "role": "admin", "status": "active"},
-		{"id": "usr-other", "email": "admin@medopl.cn", "accountId": "acct-admin", "role": "admin", "status": "active"},
-		{"id": "usr-admin", "email": "admin@medopl.cn", "accountId": "acct-other", "role": "admin", "status": "active"},
-		{"id": "usr-admin", "email": "admin@medopl.cn", "accountId": "acct-admin", "role": "owner", "status": "active"},
+		{"id": "usr-other", "email": "operator@example.test", "accountId": "acct-admin", "role": "admin", "status": "active"},
+		{"id": "usr-admin", "email": "operator@example.test", "accountId": "acct-other", "role": "admin", "status": "active"},
+		{"id": "usr-admin", "email": "operator@example.test", "accountId": "acct-admin", "role": "owner", "status": "active"},
+		{"id": "usr-admin", "email": "not-an-email", "accountId": "acct-admin", "role": "admin", "status": "active"},
 	} {
 		if isOperatorUser(user) {
 			t.Fatalf("non-cloud-admin received operator authority: %#v", user)

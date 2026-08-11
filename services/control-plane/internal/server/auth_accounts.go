@@ -334,7 +334,12 @@ func (app *controlPlaneServer) invalidateSession(ctx context.Context, sessionKey
 }
 
 func isOperatorUser(user map[string]any) bool {
-	return stringValue(user["id"]) == "usr-admin" && stringValue(user["accountId"]) == "acct-admin" && stringValue(user["email"]) == "admin@medopl.cn" && stringValue(user["role"]) == "admin" && stringValue(user["status"]) == "active"
+	return isReservedOperatorIdentity(user) && stringValue(user["status"]) == "active"
+}
+
+func isReservedOperatorIdentity(user map[string]any) bool {
+	_, emailErr := canonicalEmail(stringValue(user["email"]))
+	return emailErr == nil && stringValue(user["id"]) == "usr-admin" && stringValue(user["accountId"]) == "acct-admin" && stringValue(user["role"]) == "admin"
 }
 
 func ownsAccount(account, user map[string]any) bool {

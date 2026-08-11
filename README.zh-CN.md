@@ -51,6 +51,17 @@ Framework 只聚合发现、carrier 委托、Package 状态与通用执行语义
 Invocation 与 Session 执行生命周期；领域 Agent 持有专业策略、质量结论、产物和交付
 权威。Cloud 各产品面只消费 owner 与 carrier 引用，不创建竞争真相。
 
+## MVP 聚焦
+
+第一期产品只做一条克制的纵向链路：极薄 Console 管理必要的 Workspace、余额与用量；
+通过 `Console -> Control Plane -> Workspace launcher/provider -> local Docker`
+真实创建和管理 OPL App/WebUI Workspace；通过 Sub2API 读取和结算 Gateway 权威账目，
+不建第二钱包。自助开户、充值/支付和精细 UI 均后置。
+
+仓内目前没有 `local-docker` Workspace provider。通用 Compose 资产只能启动 PostgreSQL
+和三个 Cloud control services，不能创建、读回或删除 OPL Workspace。当前实现事实以
+[状态](docs/status.md)为准，唯一 P0 gap 与优先级以[路线图](docs/roadmap.md)为准。
+
 ## 一条连续工作链
 
 ```text
@@ -66,9 +77,9 @@ Invocation 与 Session 执行生命周期；领域 Agent 持有专业策略、�
 
 ## 当前仓库边界
 
-`one-person-lab-cloud` 是 OPL Cloud 唯一产品与实现仓，持有公开愿景、目标架构、白皮书、路线图、Console、Control Plane、Fabric、Ledger、Workspace 交付、机器合同与可复用发布机制。`opl-cloud` 只作为 npm、镜像、二进制、服务、namespace、环境变量和 runner label 的短标识，不再代表第二个仓库。
+`one-person-lab-cloud` 是 OPL Cloud 唯一产品与实现仓，持有公开愿景、目标架构、白皮书、路线图、Console、Control Plane、Fabric、Ledger、Workspace 交付、机器合同、通用安装资产、GHCR 镜像、GitHub Release 与可复用 provider adapter。`opl-cloud` 只作为 npm、镜像、二进制、服务、namespace、环境变量和 runner label 的短标识，不再代表第二个仓库。
 
-`opl-instance-medopl` 持有 `medopl` 实例的域名、provider profile、启用套餐与价格、镜像 pin、secret 引用和部署回执，不复制产品或 runtime 代码。当前仍共置在本仓的 medopl/Tencent 值是待迁出的实例状态。设计存在、合同存在、生成物完成或测试通过，都不代表 Gateway、Workspace、Serve、Console、Fabric 或 Ledger 已经部署或 ready。
+`opl-instance-medopl` 是 `medopl` 实例的唯一 owner，持有域名、Tencent/TKE 选择、启用套餐与价格、production environment 与 Secrets、部署 workflow、镜像 pin、回滚和回执。它只消费不可变 Cloud 产品 SHA 与镜像 digest，不复制产品或 runtime 代码。设计存在、合同存在、生成物完成、测试通过或镜像发布，都不代表某个实例已经部署或 ready。
 
 某项能力当前是否可用、运行是否健康、安全与账单是否成立、能否发布以及 owner 是否验收，必须读取对应实现、机器合同、运行输出和负责人回执。[路线图](docs/roadmap.md) 是 Cloud 剩余差距的唯一当前规划 owner，不是 readiness dashboard。
 
@@ -77,6 +88,8 @@ Invocation 与 Session 执行生命周期；领域 Agent 持有专业策略、�
 - [在线阅读 OPL Cloud 白皮书](https://gaofeng21cn.github.io/one-person-lab-cloud/latest/whitepapers/opl-cloud-whitepaper.html)
 - [文档索引与 owner 映射](docs/README.md)
 - [架构与权威边界](docs/architecture.md)
+- [当前实现能力](docs/status.md)
+- [安装独立 OPL Cloud 应用](docs/installation.md)
 - [当前路线图、差距和下一轮 Agent Prompt](docs/roadmap.md)
 - [Workspace 身份与外部 SaaS 边界](docs/workspace-identity-and-external-saas-boundary.md)
 
@@ -90,12 +103,12 @@ one-person-lab-cloud/
   apps/                Console 用户界面
   assets/              公开品牌与用户旅程资产
   contracts/           白皮书 artifact Profile
-  deploy/              可复用部署接口和当前实例迁移状态
+  deploy/              通用安装资产和可复用 adapter 模板
   docs/                产品、实现架构、规划与 provenance 文档
   packages/contracts/  当前机器合同
   scripts/             白皮书构建与发布请求 wrapper
   services/            Control Plane、Fabric 与 Ledger
-  tools/               本地、发布和生产验证工具
+  tools/               本地、产品发布和可复用验证工具
 ```
 
 技术文档统一从 [docs/README.md](docs/README.md) 进入。产品目标、当前实现、实例配置和外部 owner truth 必须保持可区分，不得建立第二个 Cloud writer。
