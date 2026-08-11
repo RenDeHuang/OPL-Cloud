@@ -3,69 +3,11 @@
 package migrate
 
 import (
-	"entgo.io/ent/dialect/entsql"
 	"entgo.io/ent/dialect/sql/schema"
 	"entgo.io/ent/schema/field"
 )
 
 var (
-	// FabricContentTransfersColumns holds the columns for the "fabric_content_transfers" table.
-	FabricContentTransfersColumns = []*schema.Column{
-		{Name: "id", Type: field.TypeString, Unique: true},
-		{Name: "organization_id", Type: field.TypeString},
-		{Name: "workspace_id", Type: field.TypeString},
-		{Name: "project_id", Type: field.TypeString},
-		{Name: "path", Type: field.TypeString},
-		{Name: "digest", Type: field.TypeString},
-		{Name: "size", Type: field.TypeInt64},
-		{Name: "chunk_size", Type: field.TypeInt},
-		{Name: "chunk_count", Type: field.TypeInt},
-		{Name: "status", Type: field.TypeString},
-		{Name: "idempotency_key", Type: field.TypeString, Unique: true},
-		{Name: "request_hash", Type: field.TypeString},
-		{Name: "created_at", Type: field.TypeTime},
-		{Name: "completed_at", Type: field.TypeTime, Nullable: true},
-	}
-	// FabricContentTransfersTable holds the schema information for the "fabric_content_transfers" table.
-	FabricContentTransfersTable = &schema.Table{
-		Name:       "fabric_content_transfers",
-		Columns:    FabricContentTransfersColumns,
-		PrimaryKey: []*schema.Column{FabricContentTransfersColumns[0]},
-		Indexes: []*schema.Index{
-			{
-				Name:    "contenttransfer_digest",
-				Unique:  false,
-				Columns: []*schema.Column{FabricContentTransfersColumns[5]},
-			},
-			{
-				Name:    "contenttransfer_workspace_id_path",
-				Unique:  false,
-				Columns: []*schema.Column{FabricContentTransfersColumns[2], FabricContentTransfersColumns[4]},
-			},
-		},
-	}
-	// FabricContentTransferChunksColumns holds the columns for the "fabric_content_transfer_chunks" table.
-	FabricContentTransferChunksColumns = []*schema.Column{
-		{Name: "id", Type: field.TypeString, Unique: true},
-		{Name: "transfer_id", Type: field.TypeString},
-		{Name: "chunk_index", Type: field.TypeInt},
-		{Name: "digest", Type: field.TypeString},
-		{Name: "body", Type: field.TypeBytes},
-		{Name: "created_at", Type: field.TypeTime},
-	}
-	// FabricContentTransferChunksTable holds the schema information for the "fabric_content_transfer_chunks" table.
-	FabricContentTransferChunksTable = &schema.Table{
-		Name:       "fabric_content_transfer_chunks",
-		Columns:    FabricContentTransferChunksColumns,
-		PrimaryKey: []*schema.Column{FabricContentTransferChunksColumns[0]},
-		Indexes: []*schema.Index{
-			{
-				Name:    "contenttransferchunk_transfer_id_chunk_index",
-				Unique:  true,
-				Columns: []*schema.Column{FabricContentTransferChunksColumns[1], FabricContentTransferChunksColumns[2]},
-			},
-		},
-	}
 	// FabricOperationsColumns holds the columns for the "fabric_operations" table.
 	FabricOperationsColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeString, Unique: true},
@@ -121,18 +63,10 @@ var (
 	}
 	// Tables holds all the tables in the schema.
 	Tables = []*schema.Table{
-		FabricContentTransfersTable,
-		FabricContentTransferChunksTable,
 		FabricOperationsTable,
 		MachineOwnershipsTable,
 	}
 )
 
 func init() {
-	FabricContentTransfersTable.Annotation = &entsql.Annotation{
-		Table: "fabric_content_transfers",
-	}
-	FabricContentTransferChunksTable.Annotation = &entsql.Annotation{
-		Table: "fabric_content_transfer_chunks",
-	}
 }

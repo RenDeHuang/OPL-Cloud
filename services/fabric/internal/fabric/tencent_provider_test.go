@@ -3,7 +3,6 @@ package fabric
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -3192,130 +3191,6 @@ func TestExecuteKubectlNodePatchRBACUsesConfiguredKubeconfig(t *testing.T) {
 	}
 	if got, want := strings.Fields(string(raw)), []string{"--kubeconfig", "/run/secrets/tencent-kubeconfig", "--namespace", "opl-cloud", "auth", "can-i", "patch", "nodes"}; !slices.Equal(got, want) {
 		t.Fatalf("kubectl args=%#v want=%#v", got, want)
-	}
-}
-
-func TestTencentProviderPublishesWorkspaceContentAtomically(t *testing.T) {
-	provider := NewTencentProvider()
-	var calls [][]string
-	var uploaded []byte
-	var uploadSizes []int
-	stdinBytes := 0
-	provider.kubectl = func(_ context.Context, args []string, stdin []byte) ([]byte, error) {
-		calls = append(calls, append([]string(nil), args...))
-		if args[0] == "get" {
-			labels := map[string]any{"oplcloud.cn/workspace-id": "workspace-alpha"}
-			return mustJSON(map[string]any{"kind": "List", "items": []any{
-				map[string]any{
-					"kind": "Deployment", "metadata": map[string]any{"name": "opl-workspace-alpha", "labels": labels},
-					"spec": map[string]any{"template": map[string]any{"spec": map[string]any{"volumes": []any{map[string]any{"name": "workspace-data", "persistentVolumeClaim": map[string]any{"claimName": "pvc-alpha"}}}}}},
-				},
-				map[string]any{"kind": "Service", "metadata": map[string]any{"name": "opl-workspace-alpha", "labels": labels}},
-				map[string]any{"kind": "NetworkPolicy", "metadata": map[string]any{"name": "opl-workspace-alpha", "labels": labels}},
-			}}), nil
-		}
-		if stdin != nil {
-			stdinBytes += len(stdin)
-		}
-		if len(args) > 7 && args[3] == "sh" {
-			chunk, err := base64.StdEncoding.DecodeString(args[7])
-			if err != nil {
-				return nil, err
-			}
-			uploaded = append(uploaded, chunk...)
-			uploadSizes = append(uploadSizes, len(chunk))
-		}
-		if len(args) > 3 && args[3] == "sha256sum" {
-			return []byte(fmt.Sprintf("%x  %s\n", sha256.Sum256(uploaded), args[4])), nil
-		}
-		return nil, nil
-	}
-	body := bytes.Repeat([]byte("v"), (32<<10)+1)
-	if err := provider.PublishWorkspaceContent(context.Background(), "workspace-alpha", "inputs/paper.txt", body); err != nil {
-		t.Fatalf("publish: %v", err)
-	}
-	digest := fmt.Sprintf("%x", sha256.Sum256(body))
-	temporary := "/projects/inputs/paper.txt.opl-upload-" + digest[:12]
-	if !bytes.Equal(uploaded, body) || stdinBytes != 0 || !slices.Equal(uploadSizes, []int{32 << 10, 1}) || len(calls) != 7 || !slices.Equal(calls[1], []string{"exec", "deployment/opl-workspace-alpha", "--", "mkdir", "-p", "/projects/inputs"}) || !slices.Equal(calls[2], []string{"exec", "deployment/opl-workspace-alpha", "--", "rm", "-f", temporary}) || calls[3][0] != "exec" || calls[3][3] != "sh" || calls[3][8] != temporary || calls[4][0] != "exec" || calls[4][3] != "sh" || calls[4][8] != temporary || !slices.Equal(calls[5], []string{"exec", "deployment/opl-workspace-alpha", "--", "mv", temporary, "/projects/inputs/paper.txt"}) || !slices.Equal(calls[6], []string{"exec", "deployment/opl-workspace-alpha", "--", "sha256sum", "/projects/inputs/paper.txt"}) {
-		t.Fatalf("calls=%#v uploadSizes=%#v stdinBytes=%d", calls, uploadSizes, stdinBytes)
-	}
-}
-
-func TestTencentProviderReportsWorkspaceContentMismatchWithoutBody(t *testing.T) {
-	provider := NewTencentProvider()
-	actualDigest := fmt.Sprintf("%x", sha256.Sum256([]byte("different-secret-body")))
-	provider.kubectl = func(_ context.Context, args []string, _ []byte) ([]byte, error) {
-		if args[0] == "get" {
-			labels := map[string]any{"oplcloud.cn/workspace-id": "workspace-alpha"}
-			return mustJSON(map[string]any{"kind": "List", "items": []any{
-				map[string]any{
-					"kind": "Deployment", "metadata": map[string]any{"name": "opl-workspace-alpha", "labels": labels},
-					"spec": map[string]any{"template": map[string]any{"spec": map[string]any{"volumes": []any{map[string]any{"persistentVolumeClaim": map[string]any{"claimName": "pvc-alpha"}}}}}},
-				},
-				map[string]any{"kind": "Service", "metadata": map[string]any{"name": "opl-workspace-alpha", "labels": labels}},
-				map[string]any{"kind": "NetworkPolicy", "metadata": map[string]any{"name": "opl-workspace-alpha", "labels": labels}},
-			}}), nil
-		}
-		if len(args) > 3 && args[3] == "sha256sum" {
-			return []byte(actualDigest + "  /projects/inputs/paper.txt\n"), nil
-		}
-		return nil, nil
-	}
-	body := []byte("expected-secret-body")
-	err := provider.PublishWorkspaceContent(context.Background(), "workspace-alpha", "inputs/paper.txt", body)
-	expectedDigest := fmt.Sprintf("%x", sha256.Sum256(body))
-	if err == nil || !strings.Contains(err.Error(), expectedDigest) || !strings.Contains(err.Error(), actualDigest) || strings.Contains(err.Error(), string(body)) {
-		t.Fatalf("safe mismatch diagnostics = %v", err)
-	}
-}
-
-func TestTencentProviderReportsWorkspaceContentDigestCommandFailure(t *testing.T) {
-	provider := NewTencentProvider()
-	provider.kubectl = func(_ context.Context, args []string, _ []byte) ([]byte, error) {
-		if args[0] == "get" {
-			labels := map[string]any{"oplcloud.cn/workspace-id": "workspace-alpha"}
-			return mustJSON(map[string]any{"kind": "List", "items": []any{
-				map[string]any{
-					"kind": "Deployment", "metadata": map[string]any{"name": "opl-workspace-alpha", "labels": labels},
-					"spec": map[string]any{"template": map[string]any{"spec": map[string]any{"volumes": []any{map[string]any{"persistentVolumeClaim": map[string]any{"claimName": "pvc-alpha"}}}}}},
-				},
-				map[string]any{"kind": "Service", "metadata": map[string]any{"name": "opl-workspace-alpha", "labels": labels}},
-				map[string]any{"kind": "NetworkPolicy", "metadata": map[string]any{"name": "opl-workspace-alpha", "labels": labels}},
-			}}), nil
-		}
-		if len(args) > 3 && args[3] == "sha256sum" {
-			return nil, fmt.Errorf("exit status 1: forbidden")
-		}
-		return nil, nil
-	}
-	err := provider.PublishWorkspaceContent(context.Background(), "workspace-alpha", "inputs/paper.txt", []byte("expected"))
-	if err == nil || !strings.Contains(err.Error(), "workspace_content_digest_command_failed") || !strings.Contains(err.Error(), "forbidden") {
-		t.Fatalf("readback diagnostics = %v", err)
-	}
-}
-
-func TestTencentProviderRejectsInvalidWorkspaceContentDigestOutput(t *testing.T) {
-	provider := NewTencentProvider()
-	provider.kubectl = func(_ context.Context, args []string, _ []byte) ([]byte, error) {
-		if args[0] == "get" {
-			labels := map[string]any{"oplcloud.cn/workspace-id": "workspace-alpha"}
-			return mustJSON(map[string]any{"kind": "List", "items": []any{
-				map[string]any{
-					"kind": "Deployment", "metadata": map[string]any{"name": "opl-workspace-alpha", "labels": labels},
-					"spec": map[string]any{"template": map[string]any{"spec": map[string]any{"volumes": []any{map[string]any{"persistentVolumeClaim": map[string]any{"claimName": "pvc-alpha"}}}}}},
-				},
-				map[string]any{"kind": "Service", "metadata": map[string]any{"name": "opl-workspace-alpha", "labels": labels}},
-				map[string]any{"kind": "NetworkPolicy", "metadata": map[string]any{"name": "opl-workspace-alpha", "labels": labels}},
-			}}), nil
-		}
-		if len(args) > 3 && args[3] == "sha256sum" {
-			return []byte("not-a-digest\n"), nil
-		}
-		return nil, nil
-	}
-	err := provider.PublishWorkspaceContent(context.Background(), "workspace-alpha", "inputs/paper.txt", []byte("expected"))
-	if err == nil || err.Error() != "workspace_content_digest_invalid" {
-		t.Fatalf("invalid digest diagnostics = %v", err)
 	}
 }
 
