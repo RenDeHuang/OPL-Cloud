@@ -70,13 +70,14 @@ Tencent or Kubernetes SDKs, and Console network calls must remain inside its API
 adapter and resolve to `/api/*`. This gate runs through the existing `npm test`
 lane; it complements behavior and contract tests rather than replacing them.
 
-Physical deployment isolation is incomplete. The three services use separate
-processes and tables, but the portable Compose profile and current external
-medopl TKE profile inject one `DATABASE_URL` and one internal service token. Consequently
-table ownership and caller identity are contract-enforced, not database-role or
-service-credential-enforced. The common image also makes them one release unit,
-which is intentional for the current product repository but not independent
-service release evidence.
+The portable Compose source now gives each service its own PostgreSQL
+role/database and inbound service token; Control Plane receives separate Fabric
+and Ledger outbound tokens. Product-distribution tests enforce those mappings.
+The split has not yet been exercised as a real post-change Compose installation,
+and concrete medopl adoption belongs to the external instance owner, so installed
+and production isolation remain unproven. The common image still makes the
+services one intentional product release unit rather than independent service
+releases.
 
 Deployment isolation is an independent implementation lane, not a predecessor
 to Console, Control Plane, Fabric, or Ledger development. Portable distribution
@@ -86,13 +87,14 @@ join only when qualifying an exact deployment, rollback, and authoritative
 readback. The common release image may remain shared unless measured release
 blast radius creates a separate requirement.
 
-Internal cohesion is also uneven. Fabric resource, runtime and recovery behavior
-is concentrated in `internal/fabric/service.go`; Control Plane launch/recovery and
-persistence behavior is concentrated in a few multi-thousand-line files. These
-are change-collision and review risks inside the correct owner modules, not a
-reason to introduce cross-service packages. Their split must preserve packages,
-HTTP contracts, state machines and behavior while moving cohesive capabilities
-into focused files.
+Internal cohesion has improved but remains uneven. Control Plane Launch now uses
+one focused, provider-neutral Reconciler with separate account, Fabric,
+activation, service, and persistence files. Fabric moved local-Docker and Tencent
+Workspace Launch behavior behind adapter files and reduced
+`internal/fabric/service.go`, but that facade still mixes several capabilities
+and retains legacy provider-specific knowledge. These are change-collision and
+review risks inside the correct owner modules, not a reason to introduce
+cross-service packages.
 
 Cohesion work is also lane-scoped rather than a repository-wide freeze. Splits
 inside different owning modules may proceed concurrently. Work that touches the
@@ -107,8 +109,10 @@ These are current implementation facts, not deletion authorization:
 
 | Cluster | Current implementation fact |
 | --- | --- |
-| Control Plane persistence | Disabled archive/retention and superseded shared-execution models remain; Organization/Membership are one-to-one compatibility storage |
+| Control Plane persistence | Archive and `ExecutionRequest` application models are deleted while historical SQL/tables remain; Organization/Membership are one-to-one compatibility storage |
+| Control Plane instance extension | The normal Launch/Resume path is provider-neutral, but the separate provider-acceptance route and legacy client/projection fields still interpret Tencent/TKE resource facts |
 | Fabric optional verticals | ContentTransfer runtime/API/schema surfaces are retired while historical migrations and data remain; Snapshot/Restore still has provider/service/store/route/test surfaces but no current in-repo product caller and remains excluded from the Pilot |
+| Fabric launch residue | Removed recovery proof/claim routes still leave dead Service/provider/store code; legacy resource inputs retain unassigned `LaunchBinding` branches; Tencent ownership mutation/readback has two implementations; operator extensions still contain inference scans |
 | Ledger optional verticals | Artifact, Review, ReviewPolicy, and Continuation APIs exist while current Control Plane callers primarily consume receipts and reconciliation |
 | Indirection and tooling | A large Control Plane facade, repeated CLI parsers, repeated workflow setup/cleanup, and custom static-file behavior create maintenance cost |
 | Active-tree residue | Console styles retain multiple generations after the current UI work; dated execution plans and frozen QA assets were retired from active history |
@@ -210,11 +214,10 @@ interface or control-service health check as portability evidence.
 The Core port exposes provider-neutral compute, storage, attachment, runtime,
 preflight, readback, renewal, and recovery facts. The selected instance profile
 chooses an adapter. Provider-specific identities, diagnostics, retry rules, and
-mutation sequences remain inside that adapter. The first additional adapter is
-`local-docker`; generic `kubernetes` follows when the common contract is proven
-by both real paths. Control Plane keeps the one Launch business Reconciler and
-selected provider-profile ref; Fabric persists each stage-operation binding and
-the provider resource mapping.
+mutation sequences remain inside that adapter. Generic `kubernetes` follows only
+when the common contract is proven by real paths. Control Plane keeps the one
+Launch business Reconciler and selected provider-profile ref; Fabric persists
+each stage-operation binding and the provider resource mapping.
 
 ## Launch Boundary Integration
 
@@ -225,9 +228,9 @@ provider-neutral binding and resource refs used by the real Control Plane caller
 Fabric persists the parent binding and a deterministic child record before each
 actual provider write, then reads both by exact operation identity; typed
 readback never scans operation listings or reconstructs Launch ownership from
-suffixes or provider tags. The Control Plane caller and the Fabric source remain
-separately owned changes that must be absorbed serially before claiming the full
-launch boundary or advancing the roadmap P0.
+suffixes or provider tags. Both owners consume the same focused golden vectors,
+and the normal Launch/Resume caller is integrated. This closes the typed boundary
+slice but not the full Console-to-local-Workspace P0 vertical.
 
 ## Persistence
 

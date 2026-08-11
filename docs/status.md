@@ -33,15 +33,25 @@ Sub2API management origin and credentials are never exposed to the browser.
 - Console calls Control Plane product APIs only and projects live Sub2API,
   Fabric, Ledger, and Control Plane facts through customer-safe DTOs.
 - Control Plane, Fabric, and Ledger are separate Go processes and PostgreSQL
-  schema owners. The current production deployment still uses a shared database
-  credential and internal token, so service-specific database roles and service
-  identities remain open work.
-- Tencent TKE is the only production-wired Fabric provider, and that path is a
-  medopl instance implementation fact rather than reusable Cloud MVP acceptance.
-  A Provider interface exists, but `local-docker` has not yet completed launch,
-  readback, and recovery acceptance.
-- Workspace file bodies remain only on CBS. Platform PostgreSQL stores identity,
-  operation, reference, and evidence facts.
+  schema owners. Portable Compose source now creates separate service databases
+  and roles and maps three distinct service tokens, but no post-split real
+  installation or current production instance readback proves those controls are
+  effective.
+- Fabric defaults to a real `local-docker` adapter and keeps Tencent/TKE behind
+  explicit instance selection. CI exercises local compute, storage, attachment,
+  Secret binding, Runtime, and authoritative readback; this is Fabric evidence,
+  not a complete Console-to-Workspace installation.
+- Workspace file bodies stay in provider-owned storage: a local Docker volume for
+  the local adapter or CBS for the Tencent adapter. Platform PostgreSQL stores
+  identity, operation, reference, and evidence facts rather than file bodies.
+- Create and Resume now enter one durable Control Plane Reconciler. Its resource
+  stages call the typed Fabric HTTP contract and consume the same six-field
+  request-hash vectors as Fabric. A separate legacy provider-acceptance surface
+  still contains Tencent-specific client and projection knowledge.
+- ContentTransfer application runtime/API/Ent schema, Archive application models,
+  and `ExecutionRequest` application code are retired; historical migrations,
+  tables, and data were not dropped. Snapshot/Restore remains an extension
+  surface pending owner-authoritative resource disposition.
 - The Control Plane Session credential vault is process-local and single
   replica. Horizontal scaling is not supported until a secure shared vault and
   distributed wallet-mutation serialization boundary exist.
@@ -56,12 +66,14 @@ Current delivery levels remain:
 - `pilot-ready=false`;
 - `production-proven=false`.
 
-Focused local evidence exists for the non-review Workspace launch path,
-idempotent settlement, provider/resource recovery guards, server-authoritative
-Recovery Plan handling, source envelopes, and Console behavior. This does not
-prove a real `local-docker` Workspace path, live Gateway accounting, Runtime,
-browser, renewal, rollback, or production behavior. Existing Tencent/TKE
-evidence applies only to its medopl instance path.
+Focused local and CI evidence exists for the single Workspace Launch Reconciler,
+immutable Resume authorization, typed Fabric stage binding, idempotent settlement,
+real local-Docker Fabric stages, source envelopes, and Console behavior. The
+portable Compose profile still disables the Launch worker and provides no Docker
+authority or immutable Workspace image, so this does not prove the complete
+local Workspace, live Gateway accounting, browser, renewal, rollback, or
+production path. Existing Tencent/TKE evidence applies only to medopl instance
+provenance.
 
 The portable Compose asset, GHCR/GitHub Release workflow, and focused
 distribution checks exist at source level. No GitHub Release has yet been
@@ -88,10 +100,10 @@ owned by the current Console implementation under an evolvable experience
 guide. The machine Console UI contract and superseded package/shared-execution
 machine contracts are retired.
 
-The aggregate launch and deployment contracts are migration guards rather than
-long-term product specifications. Launch safety still needs to move into the
-owning billing, Control Plane, Fabric, and Ledger contracts. Deployment detail
-still needs workflow-family migration while preserving authorization, identity,
+The aggregate launch freeze is retired. Focused billing, Control Plane Launch,
+Fabric binding, and Ledger evidence contracts now own its retained hard facts and
+are exercised by real caller tests. The aggregate deployment contract remains a
+migration guard until workflow-family owners retain authorization, identity,
 Secret, immutable-image, mutation-bound, readback, and rollback gates. The open
 sequence and acceptance conditions live only in [the roadmap](./roadmap.md).
 

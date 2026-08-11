@@ -10,8 +10,10 @@ It follows the development framework from `one-person-lab`. The short
 - Control Plane Sessions, account mapping, permissions, named product DTOs,
   Workspace state machines, purchase recovery, support, and product projections.
 - Fabric resource catalog, provider-neutral resource operations, attachments,
-  runtime operations, provider evidence, and provider adapters. Content
-  transfer and snapshots are implemented extension candidates, not MVP Core.
+  runtime operations, provider evidence, and provider adapters, including the
+  default local-Docker and explicit Tencent/TKE paths. ContentTransfer
+  application runtime/API/schema is retired while historical migrations/data
+  remain; Snapshot/Restore remains an extension candidate, not MVP Core.
 - Ledger receipts and reconciliation evidence required by Core. Reviews,
   artifacts, retention, and continuation are extension candidates.
 - Portable image, Compose installation assets, product release, readiness, and

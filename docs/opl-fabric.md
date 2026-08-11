@@ -101,9 +101,10 @@ listings, provider tags, or adapter fields.
 Recovery may cause Control Plane to re-enter the original Reconciler only after
 an immutable CAS-persisted Resume authorization. It does not call a provider or
 provider-specific mutation directly. The current Fabric routes mirror the real
-typed caller DTO and accept only the five canonical stage/action pairs. Serial
-cross-module absorption and the end-to-end launch gate remain separate from this
-Fabric-owned implementation proof.
+typed caller DTO and accept only the five canonical stage/action pairs. The
+current Control Plane caller and Fabric implementation consume the same golden
+request-hash vectors. The end-to-end Console-to-local-Workspace gate remains
+separate from this Fabric-owned implementation proof.
 
 For Serve, Fabric may prepare an isolated sandbox or worker, inject approved
 secret refs, apply network/egress policy, enforce resource limits and collect
