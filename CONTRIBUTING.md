@@ -10,7 +10,7 @@ implementation, instance, billing, or deployment truth.
 | --- | --- |
 | Product target and authority boundaries | `docs/architecture.md` |
 | Current implementation boundary | `docs/implementation-architecture.md`, `docs/invariants.md`, machine contracts, source, tests, and runtime readback |
-| Open gaps and next steps | `docs/roadmap.md` |
+| Open gaps, simplification candidates, priority and concurrent lanes | `docs/roadmap.md` |
 | Durable decisions | `docs/decisions.md` |
 | Medopl instance profile and deployment evidence | initialized `opl-instance-medopl`; co-located values and stale repository identity remain migration work |
 
@@ -25,18 +25,21 @@ remove the duplicate current writer in the same pull request.
 
 ## Choosing Work
 
-1. Read the `Functional And Structural Gaps` table in `docs/roadmap.md`, then
-   check open pull requests for an existing owner. The roadmap owns intent and
-   acceptance; the pull request owns the live execution attempt.
+1. Read the ranked functional and simplification tables in `docs/roadmap.md`,
+   then check open pull requests for an existing owner. The roadmap owns intent,
+   priority and acceptance; the pull request owns the live execution attempt.
 2. Select one gap ID and keep its owner/write set explicit in the pull request.
-   Multiple `next` gaps may proceed concurrently; `next` is admission to start,
-   not a global queue position. Do not combine Console, provider, billing,
-   deployment and evidence changes unless one acceptance path requires them.
-3. Read the physical dependency map in `docs/implementation-architecture.md`.
+   Multiple rows may proceed concurrently; priority ranks urgency and benefit,
+   not a global dependency queue. Do not combine Console, provider, billing,
+   deployment and cleanup changes unless one acceptance path requires them.
+3. A simplification row in `candidate` state authorizes read-only caller,
+   target-contract, persisted-data and external-consumer admission only. Promote
+   it in the roadmap before deleting a public route, schema or stored model.
+4. Read the physical dependency map in `docs/implementation-architecture.md`.
    Cross-service behavior uses typed HTTP contracts. Runtime Go imports between
    Control Plane, Fabric and Ledger are forbidden; the narrow PostgreSQL
    migration helper is the only shared Go module.
-4. Rebase or update from fresh `main` before review. If another pull request has
+5. Rebase or update from fresh `main` before review. If another pull request has
    entered the same write set, coordinate ownership or split at a contract/API
    boundary before continuing.
 

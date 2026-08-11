@@ -80,6 +80,28 @@ inside different owning modules may proceed concurrently. Work that touches the
 same large file or changes one public contract uses a single short-lived owner
 until that shared change reaches fresh-main CI; other module lanes continue.
 
+## Current Simplification Pressure
+
+A read-only structural audit found several implemented surfaces whose current
+in-repo product demand is absent, superseded, paused, or narrower than their
+implementation. These are current code-shape facts, not deletion authorization:
+
+| Cluster | Current implementation fact |
+| --- | --- |
+| Control Plane persistence | The disabled archive/retention worker and operator routes carry six Archive schemas; four Shared Execution schemas remain after their machine contract became superseded; Organization/Membership remain one-to-one compatibility storage |
+| Fabric optional verticals | ContentTransfer and StorageSnapshot/Restore have provider/service/store/route/test surfaces but no current in-repo Control Plane or Console caller; the Pilot excludes transfer and backup/recovery |
+| Ledger optional verticals | Artifact, Review, ReviewPolicy and Continuation APIs and stores exist, while current Control Plane product callers use receipt and reconciliation paths; future user-visible continuation remains a separate target decision |
+| Indirection and tooling | `internal/controlplane.Service` exposes 79 methods, several tools own duplicate argument parsers, production workflows repeat checkout/setup/cleanup mechanics, and the Control Plane owns custom static-file gzip behavior |
+| Active-tree residue | Console retains multiple visual generations in one 6,010-line stylesheet; completed dated plans and ignored Browser QA outputs remain tracked |
+
+The authoritative keep, shrink or delete candidates, priority, risk, admission
+evidence and bounded write sets live only in the
+[Simplification Backlog](roadmap.md#simplification-backlog). Candidate admission
+must trace real callers, target obligations, persisted data and external
+consumers before any public route or schema is removed. Low-risk history and
+unreachable-tool cleanup may proceed independently of product, portability and
+deployment lanes.
+
 ## Repository And Instance Boundary
 
 `one-person-lab-cloud` owns both product architecture and this reusable Console,
