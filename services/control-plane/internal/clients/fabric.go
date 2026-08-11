@@ -58,40 +58,6 @@ type FabricMonthlyPreflightClient interface {
 	MonthlyPreflight(context.Context, MonthlyPreflightInput) (MonthlyPreflight, error)
 }
 
-type FabricComputePoolHeadClient interface {
-	ComputePoolHead(context.Context, string) (ComputePoolHeadReadback, error)
-}
-
-type FabricMonthlyProviderTruthClient interface {
-	MonthlyProviderTruth(context.Context, string, string) (MonthlyProviderTruth, error)
-}
-
-type FabricComputeProviderTruthClient interface {
-	ComputeProviderTruth(context.Context, ComputeClaimRecoveryInput) (ComputeProviderTruth, error)
-}
-
-type FabricMachineOwnershipClient interface {
-	MachineOwnership(context.Context, string) (MachineOwnership, error)
-}
-
-type FabricWorkspaceActivationTruthClient interface {
-	WorkspaceActivationTruth(context.Context, WorkspaceActivationTruthInput) (WorkspaceActivationTruth, error)
-}
-
-type FabricWorkspaceLaunchStageReadbackClient interface {
-	WorkspaceLaunchStageReadbackProof(context.Context, WorkspaceLaunchStageReadbackInput) (WorkspaceLaunchStageReadbackProof, error)
-	ConvergeWorkspaceLaunchStageReadback(context.Context, WorkspaceLaunchStageReadbackInput) (WorkspaceLaunchStageReadbackProof, error)
-}
-
-type FabricComputeClaimRecoveryClient interface {
-	ComputeClaimRecoveryProof(context.Context, ComputeClaimRecoveryInput) (ComputeClaimRecoveryProof, error)
-	ClaimComputeRecovery(context.Context, ComputeClaimRecoveryClaimInput, string) (ComputeClaimRecoveryProof, error)
-}
-
-type FabricComputeClaimRecoveryIdentityClient interface {
-	ComputeClaimRecoveryIdentityEvidence(context.Context, ComputeClaimRecoveryClaimInput) (*ComputeClaimIdentityEvidence, error)
-}
-
 type FabricHTTPError struct {
 	StatusCode int
 	Body       string
@@ -163,242 +129,32 @@ type MonthlyPreflight struct {
 	ProviderRequestIDs map[string]string `json:"providerRequestIds"`
 }
 
-type ComputePoolHeadReadback struct {
-	SchemaVersion     int    `json:"schemaVersion"`
-	Status            string `json:"status"`
-	ContinuationState string `json:"continuationState"`
-	FailureStage      string `json:"failureStage"`
-	ErrorCode         string `json:"errorCode"`
-}
-
-type MonthlyProviderTruth struct {
-	ComputeState      string            `json:"computeState"`
-	StorageState      string            `json:"storageState"`
-	Compute           ComputeAllocation `json:"compute"`
-	Storage           StorageVolume     `json:"storage"`
-	ProviderRequestID string            `json:"providerRequestId,omitempty"`
-	ErrorCode         string            `json:"errorCode,omitempty"`
-}
-
-type ComputeProviderTruth struct {
-	SchemaVersion      int                        `json:"schemaVersion"`
-	State              string                     `json:"state"`
-	Reason             string                     `json:"reason,omitempty"`
-	ComputeState       string                     `json:"computeState"`
-	StorageState       string                     `json:"storageState"`
-	Compute            ComputeAllocation          `json:"compute"`
-	NodeOwnershipState string                     `json:"nodeOwnershipState"`
-	CVMOwnershipState  string                     `json:"cvmOwnershipState"`
-	ProviderRequestID  string                     `json:"providerRequestId,omitempty"`
-	FailureStage       string                     `json:"failureStage,omitempty"`
-	ProviderErrorClass string                     `json:"providerErrorClass,omitempty"`
-	Proof              *ComputeClaimRecoveryProof `json:"proof,omitempty"`
-}
-
-type MachineOwnership struct {
-	ID                string `json:"id"`
-	ResourceID        string `json:"resourceId"`
-	AccountID         string `json:"accountId"`
-	WorkspaceID       string `json:"workspaceId,omitempty"`
-	PackageID         string `json:"packageId"`
-	NodePoolID        string `json:"nodePoolId"`
-	MachineID         string `json:"machineId"`
-	InstanceID        string `json:"instanceId,omitempty"`
-	NodeName          string `json:"nodeName,omitempty"`
-	Status            string `json:"status"`
-	ProviderRequestID string `json:"providerRequestId,omitempty"`
-}
-
-type ComputeClaimRecoveryInput struct {
-	LaunchOperationID   string `json:"launchOperationId"`
-	AccountID           string `json:"accountId"`
-	WorkspaceID         string `json:"workspaceId"`
-	ComputeAllocationID string `json:"computeAllocationId"`
-	StorageVolumeID     string `json:"storageVolumeId"`
-	PackageID           string `json:"packageId"`
-	PoolID              string `json:"poolId"`
-	NodePoolID          string `json:"nodePoolId"`
-	// AllowExistingStorageOperation is restricted to the server-owned
-	// compute-first readback shape. It never authorizes a storage write.
-	AllowExistingStorageOperation bool `json:"allowExistingStorageOperation,omitempty"`
-}
-
-type ComputeClaimRecoveryClaimInput struct {
-	ComputeClaimRecoveryInput
-	MachineName   string `json:"machineName"`
-	NodeName      string `json:"nodeName"`
-	CVMInstanceID string `json:"cvmInstanceId"`
-	PrivateIP     string `json:"privateIp"`
-	InstanceType  string `json:"instanceType"`
-	Zone          string `json:"zone"`
-	// NodeOnlyContinuation is set only after the Control Plane has persisted
-	// and read back a CurrentDecision authorizing the bounded Node-only stage.
-	// It never authorizes a Tencent write; Fabric enforces the zero-Tencent
-	// provider path and its own identity/readback contract.
-	NodeOnlyContinuation bool `json:"nodeOnlyContinuation,omitempty"`
-}
-
-type ComputeClaimMutationEvidence struct {
-	Attempted int      `json:"attempted"`
-	Confirmed int      `json:"confirmed"`
-	Unknown   int      `json:"unknown"`
-	Missing   []string `json:"missing,omitempty"`
-}
-
-type ComputeClaimEvidence struct {
-	CVM  ComputeClaimMutationEvidence `json:"cvm"`
-	Node ComputeClaimMutationEvidence `json:"node"`
-}
-
-type ComputeClaimTerminalEvidence struct {
-	SchemaVersion       int                                `json:"schemaVersion"`
-	Stage               string                             `json:"stage"`
-	Status              string                             `json:"status"`
-	ErrorCode           string                             `json:"errorCode"`
-	Reason              string                             `json:"reason,omitempty"`
-	ReadbackStatus      string                             `json:"readbackStatus"`
-	AttemptCount        int                                `json:"attemptCount"`
-	Attempted           int                                `json:"attempted"`
-	Confirmed           int                                `json:"confirmed"`
-	Unknown             int                                `json:"unknown"`
-	Max                 int                                `json:"max"`
-	StartedAt           string                             `json:"startedAt"`
-	FinishedAt          string                             `json:"finishedAt"`
-	FabricRecordID      string                             `json:"fabricRecordId"`
-	OperationID         string                             `json:"operationId"`
-	IdempotencyKey      string                             `json:"idempotencyKey"`
-	RequestHash         string                             `json:"requestHash"`
-	LaunchOperationID   string                             `json:"launchOperationId,omitempty"`
-	AccountID           string                             `json:"accountId"`
-	WorkspaceID         string                             `json:"workspaceId"`
-	ComputeAllocationID string                             `json:"computeAllocationId"`
-	StorageVolumeID     string                             `json:"storageVolumeId,omitempty"`
-	PackageID           string                             `json:"packageId"`
-	PoolID              string                             `json:"poolId,omitempty"`
-	NodePoolID          string                             `json:"nodePoolId"`
-	MachineName         string                             `json:"machineName,omitempty"`
-	NodeName            string                             `json:"nodeName,omitempty"`
-	CVMInstanceID       string                             `json:"cvmInstanceId,omitempty"`
-	CVMOwnershipState   string                             `json:"cvmOwnershipState,omitempty"`
-	NodeOwnershipState  string                             `json:"nodeOwnershipState,omitempty"`
-	BindingDigest       string                             `json:"bindingDigest,omitempty"`
-	Evidence            *ComputeClaimEvidence              `json:"evidence,omitempty"`
-	StageBudgets        map[string]ComputeClaimStageBudget `json:"stageBudgets,omitempty"`
-}
-
-type ComputeClaimStageBudget struct {
-	Attempted int `json:"attempted"`
-	Confirmed int `json:"confirmed"`
-	Unknown   int `json:"unknown"`
-	Max       int `json:"max"`
-}
-
-type ComputeClaimIdentityCheck struct {
-	Field          string `json:"field"`
-	Matches        bool   `json:"matches"`
-	Expected       string `json:"expected,omitempty"`
-	Actual         string `json:"actual,omitempty"`
-	ExpectedDigest string `json:"expectedDigest,omitempty"`
-	ActualDigest   string `json:"actualDigest,omitempty"`
-}
-
-type ComputeClaimIdentityEvidence struct {
-	Checks                []ComputeClaimIdentityCheck         `json:"checks"`
-	BindingClassification string                              `json:"bindingClassification"`
-	BindingDigest         string                              `json:"bindingDigest"`
-	MutationLedger        string                              `json:"mutationLedger"`
-	MutationLedgerOutcome string                              `json:"mutationLedgerOutcome"`
-	MutationLedgerDigest  string                              `json:"mutationLedgerDigest"`
-	MutationEvidence      *ComputeClaimEvidence               `json:"mutationEvidence,omitempty"`
-	FailureStage          string                              `json:"failureStage"`
-	ProviderErrorClass    string                              `json:"providerErrorClass"`
-	Reconciliation        *ComputeClaimReconciliationEvidence `json:"reconciliation,omitempty"`
-}
-
-type ComputeClaimReconciliationEvidence struct {
-	SchemaVersion              int                          `json:"schemaVersion"`
-	Consumer                   string                       `json:"consumer"`
-	Generation                 string                       `json:"generation"`
-	ProvenanceSource           string                       `json:"provenanceSource,omitempty"`
-	ProvenanceDigest           string                       `json:"provenanceDigest,omitempty"`
-	State                      string                       `json:"state"`
-	ExpectedRequestHashDigest  string                       `json:"expectedRequestHashDigest"`
-	PersistedRequestHashDigest string                       `json:"persistedRequestHashDigest"`
-	FailureStage               string                       `json:"failureStage,omitempty"`
-	ProviderErrorClass         string                       `json:"providerErrorClass,omitempty"`
-	Node                       ComputeClaimMutationEvidence `json:"node"`
-}
-
-type ComputeClaimProviderIdentityFailure struct {
-	Predicate      string `json:"predicate"`
-	ExpectedDigest string `json:"expectedDigest"`
-	ActualDigest   string `json:"actualDigest"`
-}
-
-type ComputeClaimRecoveryProof struct {
-	SchemaVersion             int                                  `json:"schemaVersion"`
-	Eligible                  bool                                 `json:"eligible"`
-	Reason                    string                               `json:"reason"`
-	RecoveryClassification    string                               `json:"recoveryClassification,omitempty"`
-	StorageState              string                               `json:"storageState"`
-	StorageProviderResourceID string                               `json:"storageProviderResourceId,omitempty"`
-	LaunchOperationID         string                               `json:"launchOperationId"`
-	AccountID                 string                               `json:"accountId"`
-	WorkspaceID               string                               `json:"workspaceId"`
-	ComputeAllocationID       string                               `json:"computeAllocationId"`
-	StorageVolumeID           string                               `json:"storageVolumeId"`
-	PackageID                 string                               `json:"packageId"`
-	PoolID                    string                               `json:"poolId"`
-	NodePoolID                string                               `json:"nodePoolId"`
-	MachineName               string                               `json:"machineName,omitempty"`
-	NodeName                  string                               `json:"nodeName,omitempty"`
-	CVMInstanceID             string                               `json:"cvmInstanceId,omitempty"`
-	PrivateIP                 string                               `json:"privateIp,omitempty"`
-	InstanceType              string                               `json:"instanceType,omitempty"`
-	Zone                      string                               `json:"zone,omitempty"`
-	ChargeType                string                               `json:"chargeType,omitempty"`
-	PeriodMonths              int                                  `json:"periodMonths,omitempty"`
-	RenewFlag                 string                               `json:"renewFlag,omitempty"`
-	Deadline                  string                               `json:"deadline,omitempty"`
-	NodeOwnershipState        string                               `json:"nodeOwnershipState,omitempty"`
-	CVMOwnershipState         string                               `json:"cvmOwnershipState,omitempty"`
-	Sub2APIMutationCount      int                                  `json:"sub2apiMutationCount"`
-	TencentMutationCount      int                                  `json:"tencentMutationCount"`
-	KubernetesMutationCount   int                                  `json:"kubernetesMutationCount"`
-	FailureStage              string                               `json:"failureStage,omitempty"`
-	ProviderErrorClass        string                               `json:"providerErrorClass,omitempty"`
-	ProviderIdentityFailure   *ComputeClaimProviderIdentityFailure `json:"providerIdentityFailure,omitempty"`
-	Evidence                  *ComputeClaimEvidence                `json:"evidence,omitempty"`
-	IdentityEvidence          *ComputeClaimIdentityEvidence        `json:"identityEvidence,omitempty"`
-}
-
 type ComputeAllocation struct {
-	ID                    string                        `json:"id"`
-	AccountID             string                        `json:"accountId"`
-	WorkspaceID           string                        `json:"workspaceId"`
-	PackageID             string                        `json:"packageId"`
-	Status                string                        `json:"status"`
-	Provider              string                        `json:"provider"`
-	ProviderResourceID    string                        `json:"providerResourceId"`
-	ProviderRequestID     string                        `json:"providerRequestId"`
-	OperationID           string                        `json:"operationId,omitempty"`
-	ServiceName           string                        `json:"serviceName"`
-	PoolID                string                        `json:"poolId,omitempty"`
-	NodePoolID            string                        `json:"nodePoolId,omitempty"`
-	InstanceID            string                        `json:"instanceId,omitempty"`
-	CVMInstanceID         string                        `json:"cvmInstanceId,omitempty"`
-	NodeName              string                        `json:"nodeName,omitempty"`
-	MachineName           string                        `json:"machineName,omitempty"`
-	PrivateIP             string                        `json:"privateIp,omitempty"`
-	PublicIP              string                        `json:"publicIp,omitempty"`
-	InstanceType          string                        `json:"instanceType,omitempty"`
-	Zone                  string                        `json:"zone,omitempty"`
-	ChargeType            string                        `json:"chargeType,omitempty"`
-	RenewFlag             string                        `json:"renewFlag,omitempty"`
-	Deadline              string                        `json:"deadline,omitempty"`
-	ProviderData          map[string]string             `json:"providerData,omitempty"`
-	CostTags              map[string]string             `json:"costTags,omitempty"`
-	ClaimTerminalEvidence *ComputeClaimTerminalEvidence `json:"claimTerminalEvidence,omitempty"`
+	ID                 string            `json:"id"`
+	AccountID          string            `json:"accountId"`
+	WorkspaceID        string            `json:"workspaceId"`
+	PackageID          string            `json:"packageId"`
+	Status             string            `json:"status"`
+	Provider           string            `json:"provider"`
+	ProviderResourceID string            `json:"providerResourceId"`
+	ProviderRequestID  string            `json:"providerRequestId"`
+	OperationID        string            `json:"operationId,omitempty"`
+	ServiceName        string            `json:"serviceName"`
+	PoolID             string            `json:"poolId,omitempty"`
+	NodePoolID         string            `json:"nodePoolId,omitempty"`
+	InstanceID         string            `json:"instanceId,omitempty"`
+	CVMInstanceID      string            `json:"cvmInstanceId,omitempty"`
+	NodeName           string            `json:"nodeName,omitempty"`
+	MachineName        string            `json:"machineName,omitempty"`
+	PrivateIP          string            `json:"privateIp,omitempty"`
+	PublicIP           string            `json:"publicIp,omitempty"`
+	InstanceType       string            `json:"instanceType,omitempty"`
+	Zone               string            `json:"zone,omitempty"`
+	ChargeType         string            `json:"chargeType,omitempty"`
+	RenewFlag          string            `json:"renewFlag,omitempty"`
+	Deadline           string            `json:"deadline,omitempty"`
+	ProviderData       map[string]string `json:"providerData,omitempty"`
+	CostTags           map[string]string `json:"costTags,omitempty"`
 }
 
 type StorageVolumeInput struct {
@@ -533,59 +289,6 @@ type RuntimeHealthSummary struct {
 	Unready int `json:"unready"`
 }
 
-type WorkspaceActivationTruthInput struct {
-	LaunchOperationID        string `json:"launchOperationId"`
-	AccountID                string `json:"accountId"`
-	WorkspaceID              string `json:"workspaceId"`
-	ComputeAllocationID      string `json:"computeAllocationId"`
-	ComputeOperationID       string `json:"computeOperationId"`
-	StorageVolumeID          string `json:"storageVolumeId"`
-	StorageOperationID       string `json:"storageOperationId"`
-	AttachmentID             string `json:"attachmentId"`
-	AttachmentOperationID    string `json:"attachmentOperationId"`
-	RuntimeID                string `json:"runtimeId"`
-	RuntimeOperationID       string `json:"runtimeOperationId"`
-	ServiceName              string `json:"serviceName"`
-	WorkspaceImageDigest     string `json:"workspaceImageDigest"`
-	GatewaySecretRef         string `json:"gatewaySecretRef"`
-	WorkspaceAPIKeyID        int64  `json:"workspaceApiKeyId"`
-	GatewaySecretFingerprint string `json:"gatewaySecretFingerprint"`
-}
-
-type WorkspaceActivationRuntimeTruth struct {
-	ID                   string   `json:"id"`
-	OperationID          string   `json:"operationId"`
-	ServiceName          string   `json:"serviceName"`
-	DeploymentName       string   `json:"deploymentName"`
-	RuntimeSecretRef     string   `json:"runtimeSecretRef"`
-	GatewaySecretRef     string   `json:"gatewaySecretRef"`
-	PVName               string   `json:"pvName"`
-	PVCName              string   `json:"pvcName"`
-	VolumeAttachmentName string   `json:"volumeAttachmentName"`
-	PodName              string   `json:"podName"`
-	PodIP                string   `json:"podIp"`
-	NodeName             string   `json:"nodeName"`
-	ImageID              string   `json:"imageId"`
-	EndpointIPs          []string `json:"endpointIps"`
-}
-
-type WorkspaceActivationTruth struct {
-	SchemaVersion           int                             `json:"schemaVersion"`
-	Ready                   bool                            `json:"ready"`
-	Reason                  string                          `json:"reason"`
-	ErrorClass              string                          `json:"errorClass,omitempty"`
-	ComputeState            string                          `json:"computeState"`
-	StorageState            string                          `json:"storageState"`
-	Compute                 ComputeAllocation               `json:"compute"`
-	Storage                 StorageVolume                   `json:"storage"`
-	Attachment              StorageAttachment               `json:"attachment"`
-	Runtime                 WorkspaceActivationRuntimeTruth `json:"runtime"`
-	Checks                  []any                           `json:"checks"`
-	Sub2APIMutationCount    int                             `json:"sub2apiMutationCount"`
-	TencentMutationCount    int                             `json:"tencentMutationCount"`
-	KubernetesMutationCount int                             `json:"kubernetesMutationCount"`
-}
-
 type WorkspaceRuntime struct {
 	ID                string                 `json:"id"`
 	OperationID       string                 `json:"operationId,omitempty"`
@@ -630,41 +333,6 @@ type FabricOperation struct {
 	CreatedAt               string         `json:"createdAt"`
 }
 
-type WorkspaceLaunchStageReadbackInput struct {
-	Stage                    string `json:"stage"`
-	FabricRecordID           string `json:"fabricRecordId"`
-	FabricOperationID        string `json:"fabricOperationId"`
-	AccountID                string `json:"accountId"`
-	WorkspaceID              string `json:"workspaceId"`
-	IdempotencyKey           string `json:"idempotencyKey"`
-	RequestHash              string `json:"requestHash"`
-	ComputeID                string `json:"computeId,omitempty"`
-	StorageID                string `json:"storageId,omitempty"`
-	AttachmentID             string `json:"attachmentId,omitempty"`
-	AttachmentOperationID    string `json:"attachmentOperationId,omitempty"`
-	RuntimeID                string `json:"runtimeId,omitempty"`
-	RuntimeOperationID       string `json:"runtimeOperationId,omitempty"`
-	ImageID                  string `json:"imageId,omitempty"`
-	GatewaySecretRef         string `json:"gatewaySecretRef,omitempty"`
-	GatewaySecretFingerprint string `json:"gatewaySecretFingerprint,omitempty"`
-	WorkspaceAPIKeyID        int64  `json:"workspaceApiKeyId,omitempty"`
-	ExpectedBindingDigest    string `json:"expectedBindingDigest,omitempty"`
-}
-
-type WorkspaceLaunchStageReadbackProof struct {
-	SchemaVersion                int             `json:"schemaVersion"`
-	Eligible                     bool            `json:"eligible"`
-	Reason                       string          `json:"reason"`
-	Stage                        string          `json:"stage"`
-	PriorStatus                  string          `json:"priorStatus"`
-	BindingDigest                string          `json:"bindingDigest"`
-	Operation                    FabricOperation `json:"operation"`
-	Sub2APIMutationCount         int             `json:"sub2apiMutationCount"`
-	TencentMutationCount         int             `json:"tencentMutationCount"`
-	KubernetesMutationCount      int             `json:"kubernetesMutationCount"`
-	FabricOperationMutationCount int             `json:"fabricOperationMutationCount"`
-}
-
 type fabricHTTPClient struct {
 	baseURL string
 	token   string
@@ -691,91 +359,6 @@ func (c *fabricHTTPClient) MonthlyPreflight(ctx context.Context, input MonthlyPr
 	var result MonthlyPreflight
 	err := c.post(ctx, "/fabric/monthly-preflight", input, "", &result)
 	return result, err
-}
-
-func (c *fabricHTTPClient) ComputePoolHead(ctx context.Context, nodePoolID string) (ComputePoolHeadReadback, error) {
-	params := url.Values{"nodePoolId": {nodePoolID}}
-	var result ComputePoolHeadReadback
-	err := c.get(ctx, "/fabric/compute-pool-head?"+params.Encode(), &result)
-	return result, err
-}
-
-func (c *fabricHTTPClient) MonthlyProviderTruth(ctx context.Context, computeID, storageID string) (MonthlyProviderTruth, error) {
-	params := url.Values{"computeAllocationId": {computeID}, "storageVolumeId": {storageID}}
-	var result MonthlyProviderTruth
-	err := c.get(ctx, "/fabric/monthly-provider-truth?"+params.Encode(), &result)
-	return result, err
-}
-
-func (c *fabricHTTPClient) ComputeProviderTruth(ctx context.Context, input ComputeClaimRecoveryInput) (ComputeProviderTruth, error) {
-	params := url.Values{
-		"launchOperationId":   {input.LaunchOperationID},
-		"accountId":           {input.AccountID},
-		"workspaceId":         {input.WorkspaceID},
-		"computeAllocationId": {input.ComputeAllocationID},
-		"storageVolumeId":     {input.StorageVolumeID},
-		"packageId":           {input.PackageID},
-		"poolId":              {input.PoolID},
-		"nodePoolId":          {input.NodePoolID},
-	}
-	var result ComputeProviderTruth
-	err := c.get(ctx, "/fabric/compute-provider-truth?"+params.Encode(), &result)
-	return result, err
-}
-
-func (c *fabricHTTPClient) MachineOwnership(ctx context.Context, resourceID string) (MachineOwnership, error) {
-	var result MachineOwnership
-	err := c.get(ctx, "/fabric/machine-ownerships/"+url.PathEscape(resourceID), &result)
-	return result, err
-}
-
-func (c *fabricHTTPClient) WorkspaceActivationTruth(ctx context.Context, input WorkspaceActivationTruthInput) (WorkspaceActivationTruth, error) {
-	var result WorkspaceActivationTruth
-	err := c.post(ctx, "/fabric/workspace-activation-truth", input, "", &result)
-	var httpErr *FabricHTTPError
-	if errors.As(err, &httpErr) {
-		_ = json.Unmarshal([]byte(httpErr.Body), &result)
-	}
-	return result, err
-}
-
-func (c *fabricHTTPClient) WorkspaceLaunchStageReadbackProof(ctx context.Context, input WorkspaceLaunchStageReadbackInput) (WorkspaceLaunchStageReadbackProof, error) {
-	var result WorkspaceLaunchStageReadbackProof
-	err := c.post(ctx, "/fabric/workspace-launch-stage-readback/proof", input, "", &result)
-	return result, err
-}
-
-func (c *fabricHTTPClient) ConvergeWorkspaceLaunchStageReadback(ctx context.Context, input WorkspaceLaunchStageReadbackInput) (WorkspaceLaunchStageReadbackProof, error) {
-	var result WorkspaceLaunchStageReadbackProof
-	err := c.post(ctx, "/fabric/workspace-launch-stage-readback/converge", input, "", &result)
-	return result, err
-}
-
-func (c *fabricHTTPClient) ComputeClaimRecoveryProof(ctx context.Context, input ComputeClaimRecoveryInput) (ComputeClaimRecoveryProof, error) {
-	var result ComputeClaimRecoveryProof
-	err := c.post(ctx, "/fabric/compute-claim-recovery/proof", input, "", &result)
-	decodeComputeClaimRecoveryError(err, &result)
-	return result, err
-}
-
-func (c *fabricHTTPClient) ComputeClaimRecoveryIdentityEvidence(ctx context.Context, input ComputeClaimRecoveryClaimInput) (*ComputeClaimIdentityEvidence, error) {
-	var result ComputeClaimIdentityEvidence
-	err := c.post(ctx, "/fabric/compute-claim-recovery/identity-evidence", input, "", &result)
-	return &result, err
-}
-
-func (c *fabricHTTPClient) ClaimComputeRecovery(ctx context.Context, input ComputeClaimRecoveryClaimInput, idempotencyKey string) (ComputeClaimRecoveryProof, error) {
-	var result ComputeClaimRecoveryProof
-	err := c.post(ctx, "/fabric/compute-claim-recovery/claim", input, idempotencyKey, &result)
-	decodeComputeClaimRecoveryError(err, &result)
-	return result, err
-}
-
-func decodeComputeClaimRecoveryError(err error, result *ComputeClaimRecoveryProof) {
-	var httpErr *FabricHTTPError
-	if errors.As(err, &httpErr) {
-		_ = json.Unmarshal([]byte(httpErr.Body), result)
-	}
 }
 
 func (c *fabricHTTPClient) CreateComputeAllocation(ctx context.Context, input ComputeAllocationInput, idempotencyKey string) (ComputeAllocation, error) {

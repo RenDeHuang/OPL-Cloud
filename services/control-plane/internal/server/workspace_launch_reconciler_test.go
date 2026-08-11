@@ -417,6 +417,20 @@ func TestWorkspaceLaunchFabricReadAndMutationShareExplicitOperationIdentity(t *t
 		input.Binding.RequestHash == "" || input.Binding.ExpectedResourceBinding != "binding-storage" {
 		t.Fatalf("incomplete explicit Fabric binding=%#v", input.Binding)
 	}
+	authorized := operation
+	authorized.ResumeAuthorization = &workspaceLaunchResumeAuthorization{
+		AuthorizationID: "resume-storage", LaunchVersion: operation.Version, AuthorizedStage: operation.Stage,
+		AuthorizedBy: "usr-admin", AuthorizedAt: "2026-08-12T00:01:00Z", Reason: "bounded retry", MutationBudget: 1,
+	}
+	authorizedInput, err := (&controlPlaneWorkspaceLaunchStageAdapter{}).workspaceLaunchFabricStageInput(context.Background(), authorized, false)
+	if err != nil || authorizedInput != input {
+		t.Fatalf("CP continuation authority changed Fabric request: input=%#v authorized=%#v err=%v", input, authorizedInput, err)
+	}
+	changed := input
+	changed.PreflightBindingRef += "-changed"
+	if workspaceLaunchFabricRequestHash(changed) == input.Binding.RequestHash {
+		t.Fatal("stage request hash did not bind provider-neutral preflight identity")
+	}
 }
 
 func TestWorkspaceLaunchFabricReadyWithoutRequiredFactsBecomesUnknown(t *testing.T) {

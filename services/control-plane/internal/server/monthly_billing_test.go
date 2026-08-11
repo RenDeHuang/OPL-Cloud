@@ -215,129 +215,41 @@ func (s *monthlySub2API) FinancialBalanceHistoryByCodes(context.Context, int64, 
 
 type monthlyFabric struct {
 	fakeFabricClient
-	events                  *[]string
-	createErr               error
-	cleanupErr              error
-	cleanupStatus           string
-	computeCleanupStatus    string
-	computeCleanupSync      clients.ComputeAllocation
-	computeCleanupSyncErr   error
-	computeCleanupStarted   bool
-	computeDestroyed        bool
-	syncErr                 error
-	computeReadResults      []clients.ComputeAllocation
-	computeReadErrors       []error
-	preflightResult         *clients.MonthlyPreflight
-	preflightResults        []clients.MonthlyPreflight
-	preflightErr            error
-	preflightInputs         []clients.MonthlyPreflightInput
-	providerTruth           *clients.MonthlyProviderTruth
-	providerTruthErr        error
-	computeProviderTruth    *clients.ComputeProviderTruth
-	computeProviderTruthErr error
-	computeProviderTruthFn  func(clients.ComputeClaimRecoveryInput) (clients.ComputeProviderTruth, error)
-	computeProviderInputs   []clients.ComputeClaimRecoveryInput
-	activationTruth         *clients.WorkspaceActivationTruth
-	activationTruthErr      error
-	activationTruthInputs   []clients.WorkspaceActivationTruthInput
-	computeClaimProof       clients.ComputeClaimRecoveryProof
-	computeClaimProofErr    error
-	computeClaimProofFn     func(clients.ComputeClaimRecoveryInput) (clients.ComputeClaimRecoveryProof, error)
-	computeClaimResult      *clients.ComputeClaimRecoveryProof
-	computeClaimErr         error
-	computeClaimInputs      []clients.ComputeClaimRecoveryInput
-	computeClaimCalls       []clients.ComputeClaimRecoveryClaimInput
-	computeClaimKeys        []string
-	beforeComputeClaimProof func()
-	beforeComputeClaim      func()
-	mutateCompute           func(*clients.ComputeAllocation)
-	mutateStorage           func(*clients.StorageVolume)
-	computeIDs              []string
-	computeInputs           []clients.ComputeAllocationInput
-	computeCreateKeys       []string
-	storageIDs              []string
-	storageCreateKeys       []string
-	storageInputs           []clients.StorageVolumeInput
-	storageCreateErr        error
-	computeSync             clients.ComputeAllocation
-	storageSync             clients.StorageVolume
-	storageSyncErr          error
-	computeRenew            clients.ComputeAllocation
-	storageRenew            clients.StorageVolume
-	computeRenewErr         error
-	storageRenewErr         error
-	computeRenewKeys        []string
-	storageRenewKeys        []string
-	afterRuntime            func()
-}
-
-func (f *monthlyFabric) ComputeClaimRecoveryProof(_ context.Context, input clients.ComputeClaimRecoveryInput) (clients.ComputeClaimRecoveryProof, error) {
-	if f.beforeComputeClaimProof != nil {
-		f.beforeComputeClaimProof()
-	}
-	*f.events = append(*f.events, "fabric.compute-claim.proof")
-	f.computeClaimInputs = append(f.computeClaimInputs, input)
-	if f.computeClaimProofFn != nil {
-		return f.computeClaimProofFn(input)
-	}
-	return f.computeClaimProof, f.computeClaimProofErr
-}
-
-func (f *monthlyFabric) ComputeProviderTruth(_ context.Context, input clients.ComputeClaimRecoveryInput) (clients.ComputeProviderTruth, error) {
-	*f.events = append(*f.events, "fabric.compute-provider-truth")
-	f.computeProviderInputs = append(f.computeProviderInputs, input)
-	if f.computeProviderTruthFn != nil {
-		return f.computeProviderTruthFn(input)
-	}
-	if f.computeProviderTruth != nil {
-		return *f.computeProviderTruth, f.computeProviderTruthErr
-	}
-	// Preserve the legacy fake's observation fields for existing assertions.
-	// The explicit ComputeProviderTruth fixtures above verify the production GET path.
-	*f.events = append(*f.events, "fabric.compute-claim.proof")
-	f.computeClaimInputs = append(f.computeClaimInputs, input)
-	if f.beforeComputeClaimProof != nil {
-		f.beforeComputeClaimProof()
-	}
-	proof, proofErr := f.computeClaimProof, f.computeClaimProofErr
-	if f.computeClaimProofFn != nil {
-		proof, proofErr = f.computeClaimProofFn(input)
-	}
-	state, computeState := "unknown", "unknown"
-	if proofErr == nil && proof.Eligible && proof.Reason == "none" {
-		state, computeState = "ready", "ready"
-	}
-	return clients.ComputeProviderTruth{
-		SchemaVersion: 1, State: state, ComputeState: computeState, StorageState: "unknown",
-		NodeOwnershipState: proof.NodeOwnershipState, CVMOwnershipState: proof.CVMOwnershipState, Proof: &proof,
-	}, proofErr
-}
-
-func (f *monthlyFabric) ComputeClaimRecoveryIdentityEvidence(_ context.Context, input clients.ComputeClaimRecoveryClaimInput) (*clients.ComputeClaimIdentityEvidence, error) {
-	return &clients.ComputeClaimIdentityEvidence{
-		BindingClassification: "current",
-		BindingDigest:         strings.Repeat("b", 64),
-		Checks: []clients.ComputeClaimIdentityCheck{
-			{Field: "binding.present", Matches: true, Expected: "present", Actual: "present"},
-			{Field: "binding.valid", Matches: true, Expected: "valid", Actual: "valid"},
-			{Field: "binding.launchOperationId", Matches: true, Expected: input.LaunchOperationID, Actual: input.LaunchOperationID},
-			{Field: "binding.idempotencyKey", Matches: true, Expected: input.LaunchOperationID + ":compute", Actual: input.LaunchOperationID + ":compute"},
-		},
-		MutationLedger: "absent",
-	}, nil
-}
-
-func (f *monthlyFabric) ClaimComputeRecovery(_ context.Context, input clients.ComputeClaimRecoveryClaimInput, key string) (clients.ComputeClaimRecoveryProof, error) {
-	if f.beforeComputeClaim != nil {
-		f.beforeComputeClaim()
-	}
-	*f.events = append(*f.events, "fabric.compute-claim.claim")
-	f.computeClaimCalls = append(f.computeClaimCalls, input)
-	f.computeClaimKeys = append(f.computeClaimKeys, key)
-	if f.computeClaimResult != nil {
-		return *f.computeClaimResult, f.computeClaimErr
-	}
-	return f.computeClaimProof, f.computeClaimProofErr
+	events                *[]string
+	createErr             error
+	cleanupErr            error
+	cleanupStatus         string
+	computeCleanupStatus  string
+	computeCleanupSync    clients.ComputeAllocation
+	computeCleanupSyncErr error
+	computeCleanupStarted bool
+	computeDestroyed      bool
+	syncErr               error
+	computeReadResults    []clients.ComputeAllocation
+	computeReadErrors     []error
+	preflightResult       *clients.MonthlyPreflight
+	preflightResults      []clients.MonthlyPreflight
+	preflightErr          error
+	preflightInputs       []clients.MonthlyPreflightInput
+	mutateCompute         func(*clients.ComputeAllocation)
+	mutateStorage         func(*clients.StorageVolume)
+	computeIDs            []string
+	computeInputs         []clients.ComputeAllocationInput
+	computeCreateKeys     []string
+	storageIDs            []string
+	storageCreateKeys     []string
+	storageInputs         []clients.StorageVolumeInput
+	storageCreateErr      error
+	computeSync           clients.ComputeAllocation
+	storageSync           clients.StorageVolume
+	storageSyncErr        error
+	computeRenew          clients.ComputeAllocation
+	storageRenew          clients.StorageVolume
+	computeRenewErr       error
+	storageRenewErr       error
+	computeRenewKeys      []string
+	storageRenewKeys      []string
+	afterRuntime          func()
 }
 
 func (f *monthlyFabric) CreateWorkspaceRuntime(ctx context.Context, input clients.WorkspaceRuntimeInput, key string) (clients.WorkspaceRuntime, error) {
@@ -395,30 +307,6 @@ func monthlyPreflightResult(input clients.MonthlyPreflightInput, nodePoolID stri
 	}
 	setMonthlyPreflightNodePoolID(&result, nodePoolID)
 	return result
-}
-
-func (f *monthlyFabric) MonthlyProviderTruth(_ context.Context, _, _ string) (clients.MonthlyProviderTruth, error) {
-	*f.events = append(*f.events, "fabric.monthly-provider-truth")
-	if f.providerTruth == nil {
-		return clients.MonthlyProviderTruth{}, f.providerTruthErr
-	}
-	return *f.providerTruth, f.providerTruthErr
-}
-
-func (f *monthlyFabric) WorkspaceActivationTruth(_ context.Context, input clients.WorkspaceActivationTruthInput) (clients.WorkspaceActivationTruth, error) {
-	*f.events = append(*f.events, "fabric.workspace-activation-truth")
-	f.activationTruthInputs = append(f.activationTruthInputs, input)
-	if f.activationTruth != nil {
-		return *f.activationTruth, f.activationTruthErr
-	}
-	return clients.WorkspaceActivationTruth{
-		SchemaVersion: 1, Ready: true, Reason: "none", ComputeState: "ready", StorageState: "ready",
-		Compute:    clients.ComputeAllocation{ID: input.ComputeAllocationID, OperationID: input.ComputeOperationID},
-		Storage:    clients.StorageVolume{ID: input.StorageVolumeID, OperationID: input.StorageOperationID},
-		Attachment: clients.StorageAttachment{ID: input.AttachmentID, OperationID: input.AttachmentOperationID},
-		Runtime:    clients.WorkspaceActivationRuntimeTruth{ID: input.RuntimeID, OperationID: input.RuntimeOperationID, ServiceName: input.ServiceName},
-		Checks:     []any{map[string]any{"name": "workspace_runtime_ready", "ok": true}},
-	}, f.activationTruthErr
 }
 
 func (f *monthlyFabric) CreateComputeAllocation(_ context.Context, input clients.ComputeAllocationInput, key string) (clients.ComputeAllocation, error) {

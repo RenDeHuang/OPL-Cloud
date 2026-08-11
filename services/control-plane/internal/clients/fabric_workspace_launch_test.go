@@ -24,6 +24,27 @@ func TestWorkspaceLaunchStageBindingAlwaysSerializesExpectedResourceBinding(t *t
 	}
 }
 
+func TestWorkspaceLaunchStageInputDoesNotProjectContinuationAuthority(t *testing.T) {
+	encoded, err := json.Marshal(WorkspaceLaunchStageInput{Binding: WorkspaceLaunchStageBinding{
+		SchemaVersion: 1, LaunchOperationID: "launch-1", AccountID: "acct-1", WorkspaceID: "ws-1",
+		Stage: "storage", Action: "ensure_storage", FabricOperationID: "fabric-op-1",
+		IdempotencyKey: "launch-1:storage", RequestHash: "stage-request",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(encoded, &body); err != nil {
+		t.Fatal(err)
+	}
+	if _, found := body["resumeAuthorizationDigest"]; found {
+		t.Fatalf("Fabric request contains CP authorization digest: %s", encoded)
+	}
+	if _, found := body["mutationBudget"]; found {
+		t.Fatalf("Fabric request contains CP mutation budget: %s", encoded)
+	}
+}
+
 func TestFabricWorkspaceLaunchHTTPClientUsesTypedRoutesAndIdentity(t *testing.T) {
 	var paths []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

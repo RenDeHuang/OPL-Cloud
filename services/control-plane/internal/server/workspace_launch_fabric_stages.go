@@ -63,19 +63,14 @@ func (a *controlPlaneWorkspaceLaunchStageAdapter) workspaceLaunchFabricStageInpu
 		Action:            action,
 		FabricOperationID: operation.ID + ":" + operation.Stage,
 		IdempotencyKey:    workspaceLaunchStageIdempotencyKey(operation, 1),
-		RequestHash:       workspaceLaunchFabricRequestHash(operation, action, resources),
 	}
 	binding.ExpectedResourceBinding = workspaceLaunchCurrentStageBinding(operation)
 	input := clients.WorkspaceLaunchStageInput{
 		Binding: binding, ProviderProfileRef: operation.stringFact("providerProfileRef"),
 		PreflightBindingRef: operation.stringFact("preflightBindingRef"), PackageID: operation.stringFact("packageId"),
 		SizeGB: operation.intFact("sizeGb"), WorkspaceImageDigest: operation.stringFact("workspaceImageDigest"), Resources: resources,
-		MutationBudget: 1,
 	}
-	if authorization := operation.ResumeAuthorization; authorization != nil && authorization.AuthorizedStage == operation.Stage {
-		input.ResumeAuthorizationDigest = workspaceLaunchResumeAuthorizationDigest(*authorization)
-		input.MutationBudget = authorization.MutationBudget
-	}
+	input.Binding.RequestHash = workspaceLaunchFabricRequestHash(input)
 	if includeCredential {
 		keyID := operation.int64Fact("workspaceApiKeyId")
 		keys, err := a.service.WorkspaceKeysForConvergence(ctx, operation.int64Fact("sub2apiUserId"), workspaceReservedKeyName(operation.stringFact("workspaceId")))
@@ -186,15 +181,10 @@ func workspaceLaunchCurrentStageBinding(operation workspaceLaunchReconcileOperat
 	}[operation.Stage]
 }
 
-func workspaceLaunchFabricRequestHash(operation workspaceLaunchReconcileOperation, action string, resources clients.WorkspaceLaunchResources) string {
-	payload, _ := json.Marshal(struct {
-		LaunchRequestHash string                           `json:"launchRequestHash"`
-		Action            string                           `json:"action"`
-		PackageID         string                           `json:"packageId"`
-		SizeGB            int                              `json:"sizeGb"`
-		ImageDigest       string                           `json:"imageDigest"`
-		Resources         clients.WorkspaceLaunchResources `json:"resources"`
-	}{operation.stringFact("requestHash"), action, operation.stringFact("packageId"), operation.intFact("sizeGb"), operation.stringFact("workspaceImageDigest"), resources})
+func workspaceLaunchFabricRequestHash(input clients.WorkspaceLaunchStageInput) string {
+	input.Binding.RequestHash = ""
+	input.GatewayCredential = nil
+	payload, _ := json.Marshal(input)
 	digest := sha256.Sum256(payload)
 	return hex.EncodeToString(digest[:])
 }

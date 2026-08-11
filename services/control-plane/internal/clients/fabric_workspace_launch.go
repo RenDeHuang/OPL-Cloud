@@ -74,16 +74,14 @@ type WorkspaceLaunchGatewayCredential struct {
 }
 
 type WorkspaceLaunchStageInput struct {
-	Binding                   WorkspaceLaunchStageBinding       `json:"binding"`
-	ProviderProfileRef        string                            `json:"providerProfileRef"`
-	PreflightBindingRef       string                            `json:"preflightBindingRef"`
-	PackageID                 string                            `json:"packageId"`
-	SizeGB                    int                               `json:"sizeGb"`
-	WorkspaceImageDigest      string                            `json:"workspaceImageDigest"`
-	Resources                 WorkspaceLaunchResources          `json:"resources"`
-	GatewayCredential         *WorkspaceLaunchGatewayCredential `json:"gatewayCredential,omitempty"`
-	ResumeAuthorizationDigest string                            `json:"resumeAuthorizationDigest,omitempty"`
-	MutationBudget            int                               `json:"mutationBudget"`
+	Binding              WorkspaceLaunchStageBinding       `json:"binding"`
+	ProviderProfileRef   string                            `json:"providerProfileRef"`
+	PreflightBindingRef  string                            `json:"preflightBindingRef"`
+	PackageID            string                            `json:"packageId"`
+	SizeGB               int                               `json:"sizeGb"`
+	WorkspaceImageDigest string                            `json:"workspaceImageDigest"`
+	Resources            WorkspaceLaunchResources          `json:"resources"`
+	GatewayCredential    *WorkspaceLaunchGatewayCredential `json:"gatewayCredential,omitempty"`
 }
 
 type WorkspaceLaunchStageResult struct {

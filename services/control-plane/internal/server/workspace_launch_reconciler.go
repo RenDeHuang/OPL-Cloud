@@ -420,7 +420,7 @@ func (r *WorkspaceLaunchReconciler) Resume(ctx context.Context, operationID stri
 		return workspaceLaunchReconcileOperation{}, err
 	}
 	if existing, consumed, found := operation.resumeAuthorizationByID(authorization.AuthorizationID); found {
-		if existing != authorization {
+		if existing != authorization || workspaceLaunchResumeAuthorizationDigest(existing) != workspaceLaunchResumeAuthorizationDigest(authorization) {
 			return workspaceLaunchReconcileOperation{}, errWorkspaceLaunchGrantConflict
 		}
 		if consumed {
