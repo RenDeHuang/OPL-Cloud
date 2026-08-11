@@ -255,6 +255,18 @@ func TestComputeClaimPendingPoolHeadMigrationMatchesEmbeddedCopy(t *testing.T) {
 	}
 }
 
+func TestHistoricalEntHardCutMigrationRetainsContentTransferTables(t *testing.T) {
+	migration, err := os.ReadFile("ent_migrations/202607090001_ent_hard_cut.sql")
+	if err != nil {
+		t.Fatalf("read historical embedded migration: %v", err)
+	}
+	for _, table := range []string{"fabric_content_transfers", "fabric_content_transfer_chunks"} {
+		if !strings.Contains(string(migration), "CREATE TABLE IF NOT EXISTS "+table) {
+			t.Fatalf("historical embedded migration missing content transfer table %q", table)
+		}
+	}
+}
+
 func TestPostgresOperationSchemaDropsRetiredWorkspaceRuntimeAccessTable(t *testing.T) {
 	schema := PostgresOperationSchemaSQL()
 	createAt := strings.Index(schema, "CREATE TABLE IF NOT EXISTS fabric_workspace_runtime_access")
