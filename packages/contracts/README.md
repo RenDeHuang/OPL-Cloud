@@ -14,6 +14,22 @@ Each contract should declare:
 - `machineBoundary`
 - `lifecycle`
 
+## Launch Owner Map
+
+Workspace launch facts are split by the authority that can write or verify
+them:
+
+| Boundary | Current owner contract |
+| --- | --- |
+| Customer settlement coordination and Sub2API balance authority | `opl-cloud-billing-ledger-contract.json` |
+| Launch business operation, stage decision, and recovery authorization | `opl-cloud-control-plane-launch-contract.json` |
+| Fabric stage operation, idempotency, request hash, and resource binding | `opl-cloud-fabric-launch-binding-contract.json` |
+| Receipt, evidence, reconciliation, and continuation refs | `opl-cloud-evidence-ledger-contract.json` |
+
+`opl-cloud-launch-freeze-contract.json` is a migration-only compatibility
+projection for remaining aggregate readers. It is not a current owner and must
+not receive new facts.
+
 ## Admission
 
 Add or retain a field only when it has one authority owner, a current caller or
