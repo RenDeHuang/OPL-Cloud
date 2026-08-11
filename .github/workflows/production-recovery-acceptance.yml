@@ -1,0 +1,594 @@
+name: Production Recovery Acceptance Operations
+
+on:
+  workflow_call:
+    inputs:
+      merged_sha:
+        required: true
+        type: string
+      approval_id:
+        required: true
+        type: string
+      operation_mode:
+        required: true
+        type: string
+      confirm_account_provision:
+        required: true
+        type: boolean
+      confirm_wallet_recharge:
+        required: true
+        type: boolean
+      confirm_workspace_purchase:
+        required: true
+        type: boolean
+      confirm_single_model_request:
+        required: true
+        type: boolean
+      confirm_recovery_plan_execute:
+        required: true
+        type: boolean
+      confirm_recovery_acceptance_canary:
+        required: true
+        type: boolean
+      confirm_recovery_acceptance_funding:
+        required: true
+        type: boolean
+      confirm_recovery_acceptance_extra_funding:
+        required: true
+        type: boolean
+      confirm_recovery_acceptance_original_launch:
+        required: true
+        type: boolean
+      resume_run_id:
+        required: true
+        type: string
+      customer_email:
+        required: true
+        type: string
+      workspace_identity_account_id:
+        required: true
+        type: string
+      workspace_identity_workspace_id:
+        required: true
+        type: string
+      recovery_plan_launch_operation_id:
+        required: true
+        type: string
+      recovery_plan_id:
+        required: true
+        type: string
+      recovery_plan_digest:
+        required: true
+        type: string
+      recovery_acceptance_account_id:
+        required: true
+        type: string
+      recovery_acceptance_launch_operation_id:
+        required: true
+        type: string
+      recovery_evidence_run_id:
+        required: true
+        type: string
+      recovery_evidence_artifact_id:
+        required: true
+        type: string
+      recovery_evidence_artifact_digest:
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  recovery-acceptance-funding-prepare:
+    name: Reconcile or recover the existing Acceptance B wallet operation
+    if: ${{ github.ref == 'refs/heads/main' && github.sha == inputs.merged_sha && inputs.operation_mode == 'recovery_acceptance_funding_prepare' && inputs.approval_id != '' && inputs.confirm_recovery_acceptance_funding && inputs.resume_run_id == '' && inputs.customer_email == '' && inputs.workspace_identity_account_id == '' && inputs.workspace_identity_workspace_id == '' && inputs.recovery_plan_launch_operation_id == '' && inputs.recovery_plan_id == '' && inputs.recovery_plan_digest == '' && !inputs.confirm_account_provision && !inputs.confirm_wallet_recharge && !inputs.confirm_workspace_purchase && !inputs.confirm_single_model_request && !inputs.confirm_recovery_plan_execute && !inputs.confirm_recovery_acceptance_canary && !inputs.confirm_recovery_acceptance_extra_funding && !inputs.confirm_recovery_acceptance_original_launch }}
+    runs-on: [self-hosted, tencent-cloud, opl-cloud, tke-vpc]
+    timeout-minutes: 20
+    environment: production
+    env:
+      OPL_MERGED_SHA: ${{ inputs.merged_sha }}
+      OPL_RECOVERY_ACCEPTANCE_FUNDING_APPROVAL_ID: ${{ inputs.approval_id }}
+      OPL_PRODUCTION_BASIC_RECOVERY_ACCEPTANCE_FUNDING_APPROVAL_JSON: ${{ secrets.OPL_PRODUCTION_BASIC_RECOVERY_ACCEPTANCE_FUNDING_APPROVAL_JSON }}
+      OPL_PRODUCTION_BASIC_ACCEPTANCE_B_CUSTOMER_EMAIL: ${{ secrets.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_CUSTOMER_EMAIL }}
+      OPL_PRODUCTION_BASIC_ACCEPTANCE_B_CUSTOMER_PASSWORD: ${{ secrets.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_CUSTOMER_PASSWORD }}
+      OPL_SUB2API_ADMIN_EMAIL: ${{ secrets.OPL_SUB2API_ADMIN_EMAIL }}
+      OPL_SUB2API_ADMIN_PASSWORD: ${{ secrets.OPL_SUB2API_ADMIN_PASSWORD }}
+      OPL_RECOVERY_ACCEPTANCE_FUNDING_CONFIRMATION: RECOVER_ONE_EXISTING_ACCEPTANCE_B_WALLET_ADJUSTMENT
+      OPL_CONSOLE_ORIGIN: ${{ vars.OPL_CONSOLE_ORIGIN || 'https://cloud.medopl.cn' }}
+      OPL_VERIFY_REQUEST_TIMEOUT_MS: ${{ vars.OPL_VERIFY_REQUEST_TIMEOUT_MS || '30000' }}
+    steps:
+      - name: Prepare isolated source checkout
+        id: prepare_source
+        shell: bash
+        env:
+          OPL_SOURCE_CHECKOUT: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          expected="$GITHUB_WORKSPACE/.opl-checkouts/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
+          [ "$OPL_SOURCE_CHECKOUT" = "$expected" ]
+          mkdir -p "$GITHUB_WORKSPACE/.opl-checkouts"
+          mkdir "$OPL_SOURCE_CHECKOUT"
+      - name: Checkout exact merged main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.merged_sha }}
+          fetch-depth: 0
+          path: .opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+      - name: Verify remote branch authority
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          mapfile -t remote_heads < <(git ls-remote --heads origin)
+          if [ "${#remote_heads[@]}" -ne 1 ]; then exit 1; fi
+          read -r remote_main_sha remote_main_ref <<< "${remote_heads[0]}"
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          head_sha="$(git rev-parse HEAD)"
+          if [ "$remote_main_ref" != "refs/heads/main" ] || [ "$GITHUB_REF" != "refs/heads/main" ] || [ "$GITHUB_SHA" != "$head_sha" ] || [ "$remote_main_sha" != "$head_sha" ] || [ "$OPL_MERGED_SHA" != "$head_sha" ] || [ "$(git rev-parse refs/remotes/origin/main)" != "$OPL_MERGED_SHA" ]; then exit 1; fi
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+      - name: Read and recover only the existing wallet operation
+        id: funding
+        continue-on-error: true
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        env:
+          OPL_RECOVERY_ACCEPTANCE_FUNDING_ARTIFACT_PATH: ${{ runner.temp }}/production-recovery-acceptance-funding/evidence.json
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/production-recovery-acceptance-funding"
+          chmod 700 "$RUNNER_TEMP/production-recovery-acceptance-funding"
+          node tools/recovery-original-launch-driver.ts --recovery-acceptance-funding-prepare --approval-id "$OPL_RECOVERY_ACCEPTANCE_FUNDING_APPROVAL_ID" > "$OPL_RECOVERY_ACCEPTANCE_FUNDING_ARTIFACT_PATH"
+      - name: Validate redacted funding evidence
+        if: always()
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        env:
+          OPL_RECOVERY_ACCEPTANCE_FUNDING_ARTIFACT_PATH: ${{ runner.temp }}/production-recovery-acceptance-funding/evidence.json
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { readFile } from "node:fs/promises";
+          import { validateRecoveryAcceptanceFundingArtifact } from "./tools/recovery-original-launch-driver.ts";
+          const evidence = JSON.parse(await readFile(process.env.OPL_RECOVERY_ACCEPTANCE_FUNDING_ARTIFACT_PATH, "utf8"));
+          validateRecoveryAcceptanceFundingArtifact(evidence, "recovery_acceptance_funding_prepare");
+          if (evidence.status !== "succeeded") process.exit(1);
+          NODE
+      - name: Upload redacted funding evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: production-recovery-acceptance-funding
+          path: ${{ runner.temp }}/production-recovery-acceptance-funding
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 30
+      - name: Require funding reconciliation success
+        if: ${{ steps.funding.outcome != 'success' }}
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: exit 1
+      - name: Remove isolated source checkout
+        if: always() && steps.prepare_source.outcome == 'success'
+        shell: bash
+        env:
+          OPL_SOURCE_CHECKOUT: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          source_dir="${OPL_SOURCE_CHECKOUT:-}"
+          expected="$GITHUB_WORKSPACE/.opl-checkouts/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
+          [ -n "$source_dir" ] && [ "$source_dir" = "$expected" ]
+          if [ -e "$source_dir" ]; then find "$source_dir" -mindepth 1 -delete; rmdir "$source_dir"; fi
+
+  recovery-acceptance-extra-funding-prepare:
+    name: Prepare one independently approved extra Recovery Acceptance funding operation
+    if: ${{ github.ref == 'refs/heads/main' && github.sha == inputs.merged_sha && inputs.operation_mode == 'recovery_acceptance_extra_funding_prepare' && inputs.approval_id != '' && inputs.confirm_recovery_acceptance_extra_funding && inputs.resume_run_id == '' && inputs.customer_email == '' && inputs.workspace_identity_account_id == '' && inputs.workspace_identity_workspace_id == '' && inputs.recovery_plan_launch_operation_id == '' && inputs.recovery_plan_id == '' && inputs.recovery_plan_digest == '' && !inputs.confirm_account_provision && !inputs.confirm_wallet_recharge && !inputs.confirm_workspace_purchase && !inputs.confirm_single_model_request && !inputs.confirm_recovery_plan_execute && !inputs.confirm_recovery_acceptance_canary && !inputs.confirm_recovery_acceptance_funding && !inputs.confirm_recovery_acceptance_original_launch }}
+    runs-on: [self-hosted, tencent-cloud, opl-cloud, tke-vpc]
+    timeout-minutes: 20
+    environment: production
+    env:
+      OPL_MERGED_SHA: ${{ inputs.merged_sha }}
+      OPL_PRODUCTION_BASIC_RECOVERY_ACCEPTANCE_EXTRA_FUNDING_APPROVAL_JSON: ${{ secrets.OPL_PRODUCTION_BASIC_RECOVERY_ACCEPTANCE_EXTRA_FUNDING_APPROVAL_JSON }}
+      OPL_PRODUCTION_BASIC_ACCEPTANCE_B_CUSTOMER_EMAIL: ${{ secrets.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_CUSTOMER_EMAIL }}
+      OPL_PRODUCTION_BASIC_ACCEPTANCE_B_CUSTOMER_PASSWORD: ${{ secrets.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_CUSTOMER_PASSWORD }}
+      OPL_SUB2API_ADMIN_EMAIL: ${{ secrets.OPL_SUB2API_ADMIN_EMAIL }}
+      OPL_SUB2API_ADMIN_PASSWORD: ${{ secrets.OPL_SUB2API_ADMIN_PASSWORD }}
+      OPL_RECOVERY_ACCEPTANCE_EXTRA_FUNDING_CONFIRMATION: PREPARE_ONE_RECOVERY_ACCEPTANCE_BASIC_EXTRA_FUNDING
+      OPL_CONSOLE_ORIGIN: ${{ vars.OPL_CONSOLE_ORIGIN || 'https://cloud.medopl.cn' }}
+      OPL_VERIFY_REQUEST_TIMEOUT_MS: ${{ vars.OPL_VERIFY_REQUEST_TIMEOUT_MS || '30000' }}
+    steps:
+      - name: Prepare isolated source checkout
+        id: prepare_source
+        shell: bash
+        env:
+          OPL_SOURCE_CHECKOUT: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          expected="$GITHUB_WORKSPACE/.opl-checkouts/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
+          [ "$OPL_SOURCE_CHECKOUT" = "$expected" ]
+          mkdir -p "$GITHUB_WORKSPACE/.opl-checkouts"
+          mkdir "$OPL_SOURCE_CHECKOUT"
+      - name: Checkout exact merged main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.merged_sha }}
+          fetch-depth: 0
+          path: .opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+      - name: Verify remote branch authority
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          mapfile -t remote_heads < <(git ls-remote --heads origin)
+          if [ "${#remote_heads[@]}" -ne 1 ]; then exit 1; fi
+          read -r remote_main_sha remote_main_ref <<< "${remote_heads[0]}"
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          head_sha="$(git rev-parse HEAD)"
+          if [ "$remote_main_ref" != "refs/heads/main" ] || [ "$GITHUB_REF" != "refs/heads/main" ] || [ "$GITHUB_SHA" != "$head_sha" ] || [ "$remote_main_sha" != "$head_sha" ] || [ "$OPL_MERGED_SHA" != "$head_sha" ] || [ "$(git rev-parse refs/remotes/origin/main)" != "$OPL_MERGED_SHA" ]; then exit 1; fi
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+      - name: Execute one independently approved extra wallet adjustment
+        id: extra_funding
+        continue-on-error: true
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        env:
+          OPL_RECOVERY_ACCEPTANCE_EXTRA_FUNDING_ARTIFACT_PATH: ${{ runner.temp }}/production-recovery-acceptance-extra-funding/evidence.json
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/production-recovery-acceptance-extra-funding"
+          chmod 700 "$RUNNER_TEMP/production-recovery-acceptance-extra-funding"
+          node tools/recovery-original-launch-driver.ts --recovery-acceptance-extra-funding-prepare --approval-id "${{ inputs.approval_id }}" > "$OPL_RECOVERY_ACCEPTANCE_EXTRA_FUNDING_ARTIFACT_PATH"
+      - name: Validate redacted extra funding evidence
+        if: always()
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        env:
+          OPL_RECOVERY_ACCEPTANCE_EXTRA_FUNDING_ARTIFACT_PATH: ${{ runner.temp }}/production-recovery-acceptance-extra-funding/evidence.json
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { readFile } from "node:fs/promises";
+          import { validateRecoveryAcceptanceFundingArtifact } from "./tools/recovery-original-launch-driver.ts";
+          const evidence = JSON.parse(await readFile(process.env.OPL_RECOVERY_ACCEPTANCE_EXTRA_FUNDING_ARTIFACT_PATH, "utf8"));
+          validateRecoveryAcceptanceFundingArtifact(evidence, "recovery_acceptance_extra_funding_prepare");
+          if (evidence.status !== "succeeded") process.exit(1);
+          NODE
+      - name: Upload redacted extra funding evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: production-recovery-acceptance-extra-funding
+          path: ${{ runner.temp }}/production-recovery-acceptance-extra-funding
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 30
+      - name: Require extra funding success
+        if: ${{ steps.extra_funding.outcome != 'success' }}
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: exit 1
+      - name: Remove isolated source checkout
+        if: always() && steps.prepare_source.outcome == 'success'
+        shell: bash
+        env:
+          OPL_SOURCE_CHECKOUT: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          source_dir="${OPL_SOURCE_CHECKOUT:-}"
+          expected="$GITHUB_WORKSPACE/.opl-checkouts/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
+          [ -n "$source_dir" ] && [ "$source_dir" = "$expected" ]
+          if [ -e "$source_dir" ]; then find "$source_dir" -mindepth 1 -delete; rmdir "$source_dir"; fi
+
+  recovery-acceptance-original-launch:
+    name: Submit one approved original Launch to compute-confirmed manual review
+    if: ${{ github.ref == 'refs/heads/main' && github.sha == inputs.merged_sha && inputs.operation_mode == 'recovery_acceptance_original_launch' && inputs.approval_id != '' && inputs.confirm_recovery_acceptance_original_launch && inputs.resume_run_id == '' && inputs.customer_email == '' && inputs.workspace_identity_account_id == '' && inputs.workspace_identity_workspace_id == '' && inputs.recovery_plan_launch_operation_id == '' && inputs.recovery_plan_id == '' && inputs.recovery_plan_digest == '' && !inputs.confirm_account_provision && !inputs.confirm_wallet_recharge && !inputs.confirm_workspace_purchase && !inputs.confirm_single_model_request && !inputs.confirm_recovery_plan_execute && !inputs.confirm_recovery_acceptance_canary && !inputs.confirm_recovery_acceptance_funding && !inputs.confirm_recovery_acceptance_extra_funding }}
+    runs-on: [self-hosted, tencent-cloud, opl-cloud, tke-vpc]
+    timeout-minutes: 40
+    environment: production
+    env:
+      OPL_MERGED_SHA: ${{ inputs.merged_sha }}
+      OPL_PRODUCTION_BASIC_RECOVERY_ACCEPTANCE_APPROVAL_JSON: ${{ secrets.OPL_PRODUCTION_BASIC_RECOVERY_ACCEPTANCE_APPROVAL_JSON }}
+      OPL_PRODUCTION_BASIC_ACCEPTANCE_B_CUSTOMER_EMAIL: ${{ secrets.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_CUSTOMER_EMAIL }}
+      OPL_PRODUCTION_BASIC_ACCEPTANCE_B_CUSTOMER_PASSWORD: ${{ secrets.OPL_PRODUCTION_BASIC_ACCEPTANCE_B_CUSTOMER_PASSWORD }}
+      OPL_SUB2API_ADMIN_EMAIL: ${{ secrets.OPL_SUB2API_ADMIN_EMAIL }}
+      OPL_SUB2API_ADMIN_PASSWORD: ${{ secrets.OPL_SUB2API_ADMIN_PASSWORD }}
+      OPL_K8S_NAMESPACE: ${{ vars.OPL_K8S_NAMESPACE || 'opl-cloud' }}
+      TENCENT_DEPLOY_KUBECONFIG_PATH: ${{ vars.TENCENT_DEPLOY_KUBECONFIG_PATH || '/home/actions/.secrets/medopl/v22/kubeconfig-package-d-deploy' }}
+      TENCENT_DEPLOY_KUBECONFIG_B64: ${{ secrets.TENCENT_DEPLOY_KUBECONFIG_B64 }}
+      TENCENT_DEPLOY_KUBECONFIG: ${{ secrets.TENCENT_DEPLOY_KUBECONFIG }}
+      OPL_CONSOLE_ORIGIN: ${{ vars.OPL_CONSOLE_ORIGIN || 'https://cloud.medopl.cn' }}
+      OPL_VERIFY_REQUEST_TIMEOUT_MS: ${{ vars.OPL_VERIFY_REQUEST_TIMEOUT_MS || '30000' }}
+      OPL_VERIFY_LAUNCH_POLL_ATTEMPTS: ${{ vars.OPL_VERIFY_LAUNCH_POLL_ATTEMPTS || '180' }}
+      OPL_VERIFY_LAUNCH_POLL_DELAY_MS: ${{ vars.OPL_VERIFY_LAUNCH_POLL_DELAY_MS || '10000' }}
+    steps:
+      - name: Prepare isolated source checkout
+        id: prepare_source
+        shell: bash
+        env:
+          OPL_SOURCE_CHECKOUT: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          expected="$GITHUB_WORKSPACE/.opl-checkouts/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
+          [ "$OPL_SOURCE_CHECKOUT" = "$expected" ]
+          mkdir -p "$GITHUB_WORKSPACE/.opl-checkouts"
+          mkdir "$OPL_SOURCE_CHECKOUT"
+      - name: Checkout exact merged main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.merged_sha }}
+          fetch-depth: 0
+          path: .opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+      - name: Verify remote branch authority
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          mapfile -t remote_heads < <(git ls-remote --heads origin)
+          if [ "${#remote_heads[@]}" -ne 1 ]; then exit 1; fi
+          read -r remote_main_sha remote_main_ref <<< "${remote_heads[0]}"
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          head_sha="$(git rev-parse HEAD)"
+          if [ "$remote_main_ref" != "refs/heads/main" ] || [ "$GITHUB_REF" != "refs/heads/main" ] || [ "$GITHUB_SHA" != "$head_sha" ] || [ "$remote_main_sha" != "$head_sha" ] || [ "$OPL_MERGED_SHA" != "$head_sha" ] || [ "$(git rev-parse refs/remotes/origin/main)" != "$OPL_MERGED_SHA" ]; then exit 1; fi
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+      - name: Read Fabric token and open localhost-only readback
+        id: fabric
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        env:
+          OPL_RECOVERY_ACCEPTANCE_ARTIFACT_DIR: ${{ runner.temp }}/production-recovery-acceptance-original-launch
+        run: |
+          set -euo pipefail
+          mkdir -p "$OPL_RECOVERY_ACCEPTANCE_ARTIFACT_DIR"
+          chmod 700 "$OPL_RECOVERY_ACCEPTANCE_ARTIFACT_DIR"
+          pods="$(kubectl --kubeconfig "$TENCENT_DEPLOY_KUBECONFIG_PATH" -n "$OPL_K8S_NAMESPACE" get pods -l app.kubernetes.io/name=opl-cloud,app.kubernetes.io/component=fabric -o json)"
+          fabric_pod="$(node --input-type=module -e 'const v=JSON.parse(process.argv[1]); const p=(v.items||[]).filter((x)=>!x.metadata?.deletionTimestamp&&x.status?.phase==="Running"); if(p.length!==1) process.exit(1); process.stdout.write(p[0].metadata.name)' "$pods")"
+          internal_token="$(kubectl --kubeconfig "$TENCENT_DEPLOY_KUBECONFIG_PATH" -n "$OPL_K8S_NAMESPACE" get secret opl-cloud-internal-service -o jsonpath='{.data.OPL_INTERNAL_SERVICE_TOKEN}' | base64 --decode)"
+          [ -n "$internal_token" ]
+          echo "::add-mask::$internal_token"
+          kubectl --kubeconfig "$TENCENT_DEPLOY_KUBECONFIG_PATH" -n "$OPL_K8S_NAMESPACE" port-forward "pod/$fabric_pod" 18082:8082 > "$RUNNER_TEMP/production-recovery-acceptance-fabric-port-forward.log" 2>&1 &
+          echo "$!" > "$RUNNER_TEMP/production-recovery-acceptance-fabric-port-forward.pid"
+          for attempt in $(seq 1 30); do curl --silent --fail --max-time 1 http://127.0.0.1:18082/healthz >/dev/null 2>&1 && break; sleep 1; done
+          printf '%s' "$internal_token" > "$RUNNER_TEMP/production-recovery-acceptance-fabric-token"
+          chmod 600 "$RUNNER_TEMP/production-recovery-acceptance-fabric-token"
+      - name: Submit one original Launch and verify compute-only manual review
+        id: original_launch
+        continue-on-error: true
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        env:
+          OPL_FABRIC_INTERNAL_ORIGIN: http://127.0.0.1:18082
+          OPL_INTERNAL_SERVICE_TOKEN: ${{ runner.temp }}/production-recovery-acceptance-fabric-token
+          OPL_RECOVERY_ACCEPTANCE_ARTIFACT_DIR: ${{ runner.temp }}/production-recovery-acceptance-original-launch
+        run: |
+          set -euo pipefail
+          token="$(< "$OPL_INTERNAL_SERVICE_TOKEN")"
+          OPL_INTERNAL_SERVICE_TOKEN="$token" node tools/recovery-original-launch-driver.ts --recovery-acceptance-original-launch --approval-id "${{ inputs.approval_id }}" > "$OPL_RECOVERY_ACCEPTANCE_ARTIFACT_DIR/evidence.json"
+      - name: Validate redacted original Launch evidence
+        if: always()
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        env:
+          OPL_RECOVERY_ACCEPTANCE_ARTIFACT_DIR: ${{ runner.temp }}/production-recovery-acceptance-original-launch
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { readFile } from "node:fs/promises";
+          const evidence = JSON.parse(await readFile(`${process.env.OPL_RECOVERY_ACCEPTANCE_ARTIFACT_DIR}/evidence.json`, "utf8"));
+          const c = evidence.writeCounts || {};
+          const p = evidence.providerEvidence || {};
+          if (evidence.status !== "succeeded" || evidence.operationMode !== "recovery_acceptance_original_launch" || c.workspaceLaunchPosts !== 1 || c.sub2apiDebits !== 1 || c.tencentCvmCreates !== 1 || c.kubernetesNodeClaims !== 1 || c.tencentCbsCreates !== 0 || c.runtimeCreates !== 0 || c.receiptCreates !== 0 || p.cvm?.confirmed !== 1 || p.node?.confirmed !== 1 || /password|secret|cookie|csrf|authorization|raw_.*id/i.test(JSON.stringify(evidence))) process.exit(1);
+          NODE
+      - name: Upload redacted original Launch evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: production-recovery-acceptance-original-launch
+          path: ${{ runner.temp }}/production-recovery-acceptance-original-launch
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 30
+      - name: Require original Launch acceptance success
+        if: ${{ steps.original_launch.outcome != 'success' }}
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: exit 1
+      - name: Remove Fabric token and port-forward
+        if: always()
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          [ ! -e "$RUNNER_TEMP/production-recovery-acceptance-fabric-token" ] || shred -u "$RUNNER_TEMP/production-recovery-acceptance-fabric-token"
+          if [ -s "$RUNNER_TEMP/production-recovery-acceptance-fabric-port-forward.pid" ]; then kill "$(< "$RUNNER_TEMP/production-recovery-acceptance-fabric-port-forward.pid")" >/dev/null 2>&1 || true; fi
+          rm -f "$RUNNER_TEMP/production-recovery-acceptance-fabric-port-forward.pid" "$RUNNER_TEMP/production-recovery-acceptance-fabric-port-forward.log"
+      - name: Remove isolated source checkout
+        if: always() && steps.prepare_source.outcome == 'success'
+        shell: bash
+        env:
+          OPL_SOURCE_CHECKOUT: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          source_dir="${OPL_SOURCE_CHECKOUT:-}"
+          expected="$GITHUB_WORKSPACE/.opl-checkouts/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
+          [ -n "$source_dir" ] && [ "$source_dir" = "$expected" ]
+          if [ -e "$source_dir" ]; then find "$source_dir" -mindepth 1 -delete; rmdir "$source_dir"; fi
+
+  recovery-acceptance-canary:
+    name: Converge one allowlisted original Launch to manual review
+    if: ${{ github.ref == 'refs/heads/main' && github.sha == inputs.merged_sha && inputs.operation_mode == 'recovery_acceptance_canary' && inputs.confirm_recovery_acceptance_canary && inputs.recovery_acceptance_account_id != '' && inputs.recovery_acceptance_launch_operation_id != '' && inputs.approval_id == '' && inputs.resume_run_id == '' && inputs.customer_email == '' && inputs.workspace_identity_account_id == '' && inputs.workspace_identity_workspace_id == '' && inputs.recovery_plan_launch_operation_id == '' && inputs.recovery_plan_id == '' && inputs.recovery_plan_digest == '' && inputs.recovery_evidence_run_id == '' && inputs.recovery_evidence_artifact_id == '' && inputs.recovery_evidence_artifact_digest == '' && !inputs.confirm_account_provision && !inputs.confirm_wallet_recharge && !inputs.confirm_workspace_purchase && !inputs.confirm_single_model_request && !inputs.confirm_recovery_plan_execute }}
+    runs-on: [self-hosted, tencent-cloud, opl-cloud, tke-vpc]
+    timeout-minutes: 20
+    environment: production
+    env:
+      OPL_MERGED_SHA: ${{ inputs.merged_sha }}
+      OPL_RECOVERY_ACCEPTANCE_CANARY_ACCOUNT_ID: ${{ inputs.recovery_acceptance_account_id }}
+      OPL_RECOVERY_ACCEPTANCE_CANARY_LAUNCH_OPERATION_ID: ${{ inputs.recovery_acceptance_launch_operation_id }}
+      OPL_RECOVERY_ACCEPTANCE_CANARY_APPROVAL_JSON: ${{ secrets.OPL_RECOVERY_ACCEPTANCE_CANARY_APPROVAL_JSON }}
+      OPL_RECOVERY_ACCEPTANCE_CANARY_ENABLED: ${{ vars.OPL_RECOVERY_ACCEPTANCE_CANARY_ENABLED || '0' }}
+      OPL_RECOVERY_ACCEPTANCE_CANARY_ACCOUNT_IDS: ${{ vars.OPL_RECOVERY_ACCEPTANCE_CANARY_ACCOUNT_IDS || '' }}
+      OPL_CONSOLE_ORIGIN: ${{ vars.OPL_CONSOLE_ORIGIN || 'https://cloud.medopl.cn' }}
+      OPL_SUB2API_ADMIN_EMAIL: ${{ secrets.OPL_SUB2API_ADMIN_EMAIL }}
+      OPL_SUB2API_ADMIN_PASSWORD: ${{ secrets.OPL_SUB2API_ADMIN_PASSWORD }}
+      OPL_VERIFY_REQUEST_TIMEOUT_MS: ${{ vars.OPL_VERIFY_REQUEST_TIMEOUT_MS || '30000' }}
+
+    steps:
+      - name: Prepare isolated source checkout
+        id: prepare_source
+        shell: bash
+        env:
+          OPL_SOURCE_CHECKOUT: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          expected="$GITHUB_WORKSPACE/.opl-checkouts/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
+          if [ "$OPL_SOURCE_CHECKOUT" != "$expected" ]; then
+            echo "Isolated source checkout path mismatch." >&2
+            exit 1
+          fi
+          mkdir -p "$GITHUB_WORKSPACE/.opl-checkouts"
+          mkdir "$OPL_SOURCE_CHECKOUT"
+
+      - name: Checkout exact merged main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.merged_sha }}
+          fetch-depth: 0
+          path: .opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+
+      - name: Verify remote branch authority
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          mapfile -t remote_heads < <(git ls-remote --heads origin)
+          if [ "${#remote_heads[@]}" -ne 1 ]; then
+            echo "Production source authority requires exactly one remote head." >&2
+            exit 1
+          fi
+          read -r remote_main_sha remote_main_ref <<< "${remote_heads[0]}"
+          head_sha="$(git rev-parse HEAD)"
+          if [ "$remote_main_ref" != "refs/heads/main" ] || [ "$GITHUB_REF" != "refs/heads/main" ] ||
+             [ "$GITHUB_SHA" != "$head_sha" ] || [ "$remote_main_sha" != "$head_sha" ] || [ "$OPL_MERGED_SHA" != "$head_sha" ]; then
+            echo "Recovery Acceptance canary source must be the exact current origin/main revision." >&2
+            exit 1
+          fi
+
+      - name: Verify Recovery Acceptance canary inputs
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$OPL_MERGED_SHA" =~ ^[0-9a-f]{40}$ ]] ||
+             ! [[ "$OPL_RECOVERY_ACCEPTANCE_CANARY_ACCOUNT_ID" =~ ^acct-[A-Za-z0-9][A-Za-z0-9-]{1,127}$ ]] ||
+             ! [[ "$OPL_RECOVERY_ACCEPTANCE_CANARY_LAUNCH_OPERATION_ID" =~ ^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$ ]]; then
+            echo "Recovery Acceptance canary identity inputs are invalid." >&2
+            exit 1
+          fi
+          if [ "$OPL_RECOVERY_ACCEPTANCE_CANARY_ENABLED" != "1" ] && [ "$OPL_RECOVERY_ACCEPTANCE_CANARY_ENABLED" != "true" ]; then
+            echo "Recovery Acceptance canary is default-off; enable the dedicated production variable explicitly." >&2
+            exit 1
+          fi
+          case ",${OPL_RECOVERY_ACCEPTANCE_CANARY_ACCOUNT_IDS}," in
+            *,"$OPL_RECOVERY_ACCEPTANCE_CANARY_ACCOUNT_ID",*) ;;
+            *) echo "Recovery Acceptance canary account is not allowlisted." >&2; exit 1 ;;
+          esac
+          if [ -z "$OPL_RECOVERY_ACCEPTANCE_CANARY_APPROVAL_JSON" ]; then
+            echo "Dedicated Recovery Acceptance approval Secret is unavailable." >&2
+            exit 1
+          fi
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+
+      - name: Prepare redacted Recovery Acceptance artifact
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          artifact_dir="$RUNNER_TEMP/production-recovery-acceptance-canary"
+          mkdir -p "$artifact_dir"
+          chmod 700 "$artifact_dir"
+          echo "OPL_RECOVERY_ACCEPTANCE_CANARY_ARTIFACT_DIR=$artifact_dir" >> "$GITHUB_ENV"
+
+      - name: Run one Recovery Acceptance canary
+        id: canary
+        continue-on-error: true
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          node tools/recovery-acceptance-canary.ts --recovery-acceptance-canary \
+            --account-id "$OPL_RECOVERY_ACCEPTANCE_CANARY_ACCOUNT_ID" \
+            --launch-operation-id "$OPL_RECOVERY_ACCEPTANCE_CANARY_LAUNCH_OPERATION_ID" \
+            > "$OPL_RECOVERY_ACCEPTANCE_CANARY_ARTIFACT_DIR/recovery-acceptance-canary.json"
+
+      - name: Validate redacted Recovery Acceptance evidence
+        if: always()
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const fs = require("node:fs");
+          const path = `${process.env.OPL_RECOVERY_ACCEPTANCE_CANARY_ARTIFACT_DIR}/recovery-acceptance-canary.json`;
+          const result = JSON.parse(fs.readFileSync(path, "utf8"));
+          const counts = result?.controlPlaneMutationCounts;
+          const runner = result?.runnerDirectMutationCounts;
+          const valid = result?.schemaVersion === 1 && result?.operationMode === "recovery_acceptance_canary" &&
+            result?.status === "proven" && result?.recoveryEligible === true && result?.errorCode === "none" &&
+            result?.manualReview?.status === "manual_review" && result?.manualReview?.phase === "storage_fulfilling" &&
+            counts && counts.database === 1 && counts.sub2api === 0 && counts.tencent === 0 && counts.kubernetes === 0 &&
+            runner && runner.sub2api === 0 && runner.tencent === 0 && runner.kubernetes === 0 &&
+            !/password|secret|cookie|nonce|csrf|authorization/i.test(JSON.stringify(result));
+          if (!valid) {
+            console.error("Recovery Acceptance canary artifact is invalid or not redacted.");
+            process.exit(1);
+          }
+          NODE
+
+      - name: Upload redacted Recovery Acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: production-recovery-acceptance-canary
+          path: ${{ runner.temp }}/production-recovery-acceptance-canary
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 30
+
+      - name: Require Recovery Acceptance canary success
+        if: ${{ steps.canary.outcome != 'success' }}
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          echo "Recovery Acceptance canary stopped; inspect the redacted artifact." >&2
+          exit 1
+
+      - name: Remove isolated source checkout
+        if: always() && steps.prepare_source.outcome == 'success'
+        shell: bash
+        env:
+          OPL_SOURCE_CHECKOUT: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          source_dir="${OPL_SOURCE_CHECKOUT:-}"
+          expected="$GITHUB_WORKSPACE/.opl-checkouts/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
+          if [ -z "$source_dir" ] || [ "$source_dir" != "$expected" ]; then
+            echo "Refusing to remove unexpected source checkout path." >&2
+            exit 1
+          fi
+          if [ -d "$source_dir" ]; then
+            find "$source_dir" -mindepth 1 -delete
+            rmdir "$source_dir"
+          fi

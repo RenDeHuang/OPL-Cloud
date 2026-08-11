@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 44,
+  "schemaVersion": 45,
   "owner": "OPL Fabric",
   "purpose": "Deployment workflow, immutable Cloud and Workspace images, TKE handoff, read-only diagnostics, and production-verification safety.",
   "state": "current",
@@ -131,6 +131,47 @@
     "tke-vpc"
   ],
   "environment": "production",
+  "productionCustomerOperationDispatcher": {
+    "file": ".github/workflows/production-basic-customer-operation.yml",
+    "trigger": "workflow_dispatch_only",
+    "inputOwner": "dispatcher_only_reusable_inputs_are_typed_projections",
+    "permissions": {"actions": "read", "contents": "read"},
+    "concurrency": {"group": "production-resource-verification", "cancelInProgress": false},
+    "secretForwarding": "inherit_to_selected_local_reusable_family_only",
+    "environmentOwner": "each_selected_reusable_job_uses_production",
+    "operationFamilies": [
+      {
+        "callerJob": "customer-canary",
+        "workflow": ".github/workflows/production-basic-customer-canary.yml",
+        "modes": ["customer_operation", "workspace_identity_diagnose"],
+        "jobs": ["prepare-basic-customer-operation", "complete-basic-customer-operation", "workspace-identity-diagnose"]
+      },
+      {
+        "callerJob": "acceptance-b",
+        "workflow": ".github/workflows/production-basic-acceptance.yml",
+        "modes": ["acceptance_b_account_reconcile", "acceptance_b_account_prepare", "acceptance_b_fresh_order", "acceptance_b_fresh_readback", "controlled_pilot_closed_validate"],
+        "jobs": ["acceptance-b-account-reconcile", "acceptance-b-account-prepare", "acceptance-b-fresh-order", "controlled-pilot-closed-validate"]
+      },
+      {
+        "callerJob": "fabric-operations",
+        "workflow": ".github/workflows/production-fabric-operations.yml",
+        "modes": ["compute_pool_head_terminalize", "fabric_ledger_readback"],
+        "jobs": ["compute-pool-head-terminalization", "fabric-ledger-readback"]
+      },
+      {
+        "callerJob": "recovery-acceptance",
+        "workflow": ".github/workflows/production-recovery-acceptance.yml",
+        "modes": ["recovery_acceptance_canary", "recovery_acceptance_funding_prepare", "recovery_acceptance_extra_funding_prepare", "recovery_acceptance_original_launch"],
+        "jobs": ["recovery-acceptance-funding-prepare", "recovery-acceptance-extra-funding-prepare", "recovery-acceptance-original-launch", "recovery-acceptance-canary"]
+      },
+      {
+        "callerJob": "recovery-operations",
+        "workflow": ".github/workflows/production-recovery-operations.yml",
+        "modes": ["recovery_plan_diagnose", "compute_claim_validate", "recovery_plan_execute", "compute_claim_readback", "recovered_workspace_e2e"],
+        "jobs": ["recovery-plan-operation", "compute-claim-readback", "recovered-workspace-e2e"]
+      }
+    ]
+  },
   "selfHostedSourceCheckoutIsolation": {
     "workflows": {
       ".github/workflows/deploy-tke-production.yml": [
@@ -140,19 +181,27 @@
         "capture-rollout-failure",
         "rollback-live-qa"
       ],
-      ".github/workflows/production-basic-customer-operation.yml": [
+      ".github/workflows/production-basic-customer-canary.yml": [
         "prepare-basic-customer-operation",
-        "workspace-identity-diagnose",
+        "workspace-identity-diagnose"
+      ],
+      ".github/workflows/production-basic-acceptance.yml": [
         "acceptance-b-account-reconcile",
         "acceptance-b-account-prepare",
         "acceptance-b-fresh-order",
-        "controlled-pilot-closed-validate",
+        "controlled-pilot-closed-validate"
+      ],
+      ".github/workflows/production-fabric-operations.yml": [
         "compute-pool-head-terminalization",
-        "fabric-ledger-readback",
+        "fabric-ledger-readback"
+      ],
+      ".github/workflows/production-recovery-acceptance.yml": [
         "recovery-acceptance-funding-prepare",
         "recovery-acceptance-extra-funding-prepare",
         "recovery-acceptance-original-launch",
-        "recovery-acceptance-canary",
+        "recovery-acceptance-canary"
+      ],
+      ".github/workflows/production-recovery-operations.yml": [
         "recovery-plan-operation",
         "compute-claim-readback"
       ],

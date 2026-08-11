@@ -57,8 +57,32 @@ async function readJson(path) {
   return JSON.parse(await readFile(path, "utf8"));
 }
 
-async function readWorkflow(path) {
+async function readRawWorkflow(path) {
   return parse(await readFile(repoFile(path), "utf8"));
+}
+
+async function readWorkflow(path) {
+  const workflow = await readRawWorkflow(path);
+  const reusableCalls = Object.values(workflow.jobs || {})
+    .filter((job) => typeof job.uses === "string" && job.uses.startsWith("./.github/workflows/"));
+  if (reusableCalls.length === 0) return workflow;
+
+  const jobs = {};
+  for (const call of reusableCalls) {
+    const child = await readRawWorkflow(call.uses.slice(2));
+    Object.assign(jobs, child.jobs || {});
+  }
+  return { ...workflow, jobs };
+}
+
+async function readWorkflowSource(path) {
+  const source = await readFile(repoFile(path), "utf8");
+  const workflow = parse(source);
+  const reusablePaths = Object.values(workflow.jobs || {})
+    .map((job) => job.uses)
+    .filter((uses) => typeof uses === "string" && uses.startsWith("./.github/workflows/"))
+    .map((uses) => uses.slice(2));
+  return [source, ...await Promise.all(reusablePaths.map((current) => readFile(repoFile(current), "utf8")))].join("\n");
 }
 
 function workflowJob(workflow, name) {
@@ -592,19 +616,27 @@ test("production self-hosted jobs use one run-and-job isolated source checkout",
       "capture-rollout-failure",
       "rollback-live-qa"
     ]],
-    [".github/workflows/production-basic-customer-operation.yml", [
+    [".github/workflows/production-basic-customer-canary.yml", [
       "prepare-basic-customer-operation",
-      "workspace-identity-diagnose",
+      "workspace-identity-diagnose"
+    ]],
+    [".github/workflows/production-basic-acceptance.yml", [
       "acceptance-b-account-reconcile",
       "acceptance-b-account-prepare",
       "acceptance-b-fresh-order",
-      "controlled-pilot-closed-validate",
+      "controlled-pilot-closed-validate"
+    ]],
+    [".github/workflows/production-fabric-operations.yml", [
       "compute-pool-head-terminalization",
-      "fabric-ledger-readback",
+      "fabric-ledger-readback"
+    ]],
+    [".github/workflows/production-recovery-acceptance.yml", [
       "recovery-acceptance-funding-prepare",
       "recovery-acceptance-extra-funding-prepare",
       "recovery-acceptance-original-launch",
-      "recovery-acceptance-canary",
+      "recovery-acceptance-canary"
+    ]],
+    [".github/workflows/production-recovery-operations.yml", [
       "recovery-plan-operation",
       "compute-claim-readback"
     ]],
@@ -693,6 +725,55 @@ test("production self-hosted jobs use one run-and-job isolated source checkout",
       remoteMutation: 0
     }
   });
+});
+
+test("production customer operations keep one dispatcher and five typed reusable families", async () => {
+  const contract = (await readJson(deploymentContractPath)).productionCustomerOperationDispatcher;
+  const dispatcher = await readRawWorkflow(contract.file);
+  const dispatchInputs = dispatcher.on.workflow_dispatch.inputs;
+  const coveredModes = [];
+  const coveredJobs = [];
+
+  assert.deepEqual(Object.keys(dispatcher.on), ["workflow_dispatch"]);
+  assert.deepEqual(dispatcher.permissions, contract.permissions);
+  assert.deepEqual(dispatcher.concurrency, {
+    group: contract.concurrency.group,
+    "cancel-in-progress": contract.concurrency.cancelInProgress
+  });
+  assert.deepEqual(Object.keys(dispatcher.jobs), contract.operationFamilies.map((family) => family.callerJob));
+  assert.ok((await readFile(repoFile(contract.file), "utf8")).split("\n").length < 350);
+
+  for (const family of contract.operationFamilies) {
+    const caller = workflowJob(dispatcher, family.callerJob);
+    const reusable = await readRawWorkflow(family.workflow);
+    const reusableInputs = reusable.on.workflow_call.inputs;
+    const callerInputs = Object.keys(caller.with || {});
+
+    assert.equal(caller.uses, `./${family.workflow}`);
+    assert.equal(caller.secrets, "inherit");
+    assert.equal(caller.environment, undefined);
+    assert.equal(caller.steps, undefined);
+    assert.ok(String(caller.if).includes(JSON.stringify(family.modes)));
+    assert.deepEqual(Object.keys(reusable.on), ["workflow_call"]);
+    assert.deepEqual(reusable.permissions, contract.permissions);
+    assert.equal(reusable.concurrency, undefined);
+    assert.deepEqual(Object.keys(reusable.jobs), family.jobs);
+    assert.deepEqual(callerInputs.sort(), Object.keys(reusableInputs).sort());
+    assert.ok((await readFile(repoFile(family.workflow), "utf8")).split("\n").length < 1000);
+
+    for (const name of callerInputs) {
+      assert.equal(caller.with[name], `\${{ inputs.${name} }}`);
+      assert.equal(reusableInputs[name].required, true);
+      assert.equal(reusableInputs[name].type, dispatchInputs[name].type === "choice" ? "string" : dispatchInputs[name].type);
+    }
+    for (const job of Object.values(reusable.jobs)) assert.equal(job.environment, "production");
+    coveredModes.push(...family.modes);
+    coveredJobs.push(...family.jobs);
+  }
+
+  assert.equal(new Set(coveredModes).size, coveredModes.length);
+  assert.deepEqual(coveredModes.toSorted(), dispatchInputs.operation_mode.options.toSorted());
+  assert.equal(new Set(coveredJobs).size, 16);
 });
 
 test("Workspace image promotion is an explicit main-only ConfigMap CAS with rollback", async () => {
@@ -1949,7 +2030,7 @@ test("operator terminalizes only one exact blocked compute pool head with one CA
 
 test("legacy target-based Recovery workflow surfaces are removed", async () => {
   const workflow = await readWorkflow(".github/workflows/production-basic-customer-operation.yml");
-  const source = await readFile(repoFile(".github/workflows/production-basic-customer-operation.yml"), "utf8");
+  const source = await readWorkflowSource(".github/workflows/production-basic-customer-operation.yml");
   for (const input of [
     "diagnose_target_json", "compute_claim_target_json", "compute_claim_cloud_digest",
     "workspace_launch_target_json", "workspace_launch_cloud_digest",
@@ -2022,7 +2103,7 @@ test("recovered Workspace E2E is a separate hosted mode with no resource mutatio
   assert.doesNotMatch(JSON.stringify(job), /KUBECONFIG|TENCENT_|OPL_INTERNAL_SERVICE_TOKEN|kubectl|port-forward/);
   assert.doesNotMatch(runs, /--basic-customer-canary|--compute-claim-recover|allow-workspace-purchase|allow-wallet-recharge|allow-account-provision|create_storage_volume|CreateComputeAllocation|scale|debit|refund/i);
 
-  const source = await readFile(repoFile(".github/workflows/production-basic-customer-operation.yml"), "utf8");
+  const source = await readWorkflowSource(".github/workflows/production-basic-customer-operation.yml");
   assert.doesNotMatch(source, /huangrende@fenggaolab\.org/i);
 });
 
