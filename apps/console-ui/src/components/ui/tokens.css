@@ -1,6 +1,6 @@
 :root,
 :where([data-theme]) {
-  /* Lab neutral ramp (paper → ink), aligned to fenggaolab.org. */
+  /* OPL Cloud neutral ramp (paper to ink). */
   --gray-0: #ffffff;
   --gray-25: #f7fafc;
   --gray-50: #eef4f8;
@@ -17,7 +17,7 @@
   --gray-900: #142536;
   --gray-1000: #0c2030;
 
-  /* Lab blue ramp (soft → deep navy). */
+  /* OPL Cloud blue ramp (soft to deep navy). */
   --blue-25: #eaf3f9;
   --blue-50: #dceaf2;
   --blue-100: #bcd9ec;
@@ -29,7 +29,7 @@
   --blue-700: #072a4a;
   --blue-800: #051e38;
 
-  /* Success → lab teal. */
+  /* Success uses teal so it stays distinct from primary actions. */
   --green-25: #e8f4ed;
   --green-50: #e8f4ed;
   --green-100: #c6e9e6;
@@ -40,7 +40,7 @@
   --green-600: #0c5c58;
   --green-700: #074543;
 
-  /* Warning → lab orange. */
+  /* Warning uses warm orange. */
   --orange-25: #fff3e0;
   --orange-50: #fff3e0;
   --orange-100: #fde0b0;
@@ -50,7 +50,7 @@
   --orange-500: #b15e2a;
   --orange-600: #8f4a20;
 
-  /* Danger red retained (semantic). */
+  /* Danger remains semantic red. */
   --red-25: #ffebe9;
   --red-50: #ffebe9;
   --red-100: #ffcecb;
@@ -117,7 +117,7 @@
   --control-size-sm: 2rem;
   --control-size-md: 2.375rem;
   --control-size-lg: 2.75rem;
-  /* Soft navy-blue shadow family (lab site elevation). */
+  /* Soft navy-blue elevation. */
   --elevation-100: 0 1px 2px #173a5514;
   --elevation-200: 0 4px 12px #173a551c;
   --elevation-300: 0 18px 45px #173a5517;
