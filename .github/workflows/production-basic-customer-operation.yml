@@ -201,7 +201,7 @@ jobs:
           mkdir "$OPL_SOURCE_CHECKOUT"
 
       - name: Checkout exact merged main
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.merged_sha }}
           fetch-depth: 0
@@ -265,7 +265,7 @@ jobs:
           esac
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: "22"
 
@@ -297,7 +297,7 @@ jobs:
 
       - name: Download prior redacted checkpoint
         if: ${{ inputs.funding_mode == 'operator_precharge' && inputs.resume_run_id != '' }}
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: production-basic-customer-operation
           path: ${{ runner.temp }}/production-basic-customer-operation
@@ -413,7 +413,7 @@ jobs:
 
       - name: Upload redacted Basic customer checkpoint
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: production-basic-customer-operation
           path: ${{ runner.temp }}/production-basic-customer-operation
@@ -483,7 +483,7 @@ jobs:
 
     steps:
       - name: Checkout exact merged main
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.merged_sha }}
           fetch-depth: 0
@@ -524,7 +524,7 @@ jobs:
           esac
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: "22"
           cache: npm
@@ -536,7 +536,7 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: Download prepared customer evidence
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: production-basic-customer-operation
           path: ${{ runner.temp }}/production-basic-customer-operation
@@ -574,7 +574,7 @@ jobs:
 
       - name: Upload redacted Basic customer evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: production-basic-customer-operation
           path: ${{ runner.temp }}/production-basic-customer-operation
@@ -623,7 +623,7 @@ jobs:
           mkdir "$OPL_SOURCE_CHECKOUT"
 
       - name: Checkout exact merged main
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.merged_sha }}
           fetch-depth: 0
@@ -676,7 +676,7 @@ jobs:
           fi
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: "22"
 
@@ -752,7 +752,7 @@ jobs:
 
       - name: Upload redacted Workspace identity diagnosis
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: production-workspace-identity-diagnosis
           path: ${{ runner.temp }}/production-workspace-identity-diagnosis
@@ -814,7 +814,7 @@ jobs:
           mkdir "$OPL_SOURCE_CHECKOUT"
 
       - name: Checkout exact merged main
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.merged_sha }}
           fetch-depth: 0
@@ -844,7 +844,7 @@ jobs:
           fi
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: "22"
 
@@ -884,7 +884,7 @@ jobs:
 
       - name: Upload redacted Acceptance B reconciliation evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: production-basic-acceptance-b-reconcile
           path: ${{ runner.temp }}/production-basic-acceptance-b-reconcile
@@ -946,7 +946,7 @@ jobs:
           mkdir "$OPL_SOURCE_CHECKOUT"
 
       - name: Checkout exact merged main
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.merged_sha }}
           fetch-depth: 0
@@ -976,7 +976,7 @@ jobs:
           fi
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: "22"
 
@@ -1016,7 +1016,7 @@ jobs:
 
       - name: Upload redacted account preparation evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: production-basic-acceptance-b-prepare
           path: ${{ runner.temp }}/production-basic-acceptance-b-prepare
@@ -1090,7 +1090,7 @@ jobs:
           mkdir "$OPL_SOURCE_CHECKOUT"
 
       - name: Checkout exact merged main
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.merged_sha }}
           fetch-depth: 0
@@ -1129,13 +1129,13 @@ jobs:
           fi
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: "22"
 
       - name: Download prepared Acceptance B baseline
         if: ${{ inputs.operation_mode == 'acceptance_b_fresh_readback' }}
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: production-basic-acceptance-b-reconcile
           path: ${{ runner.temp }}/production-basic-acceptance-b-baseline
@@ -1213,7 +1213,7 @@ jobs:
 
       - name: Upload redacted Acceptance B evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: production-basic-acceptance-b
           path: ${{ runner.temp }}/production-basic-acceptance-b
@@ -1276,7 +1276,7 @@ jobs:
           mkdir "$OPL_SOURCE_CHECKOUT"
 
       - name: Checkout exact merged main
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.merged_sha }}
           fetch-depth: 0
@@ -1301,7 +1301,7 @@ jobs:
           fi
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: "22"
 
@@ -1346,7 +1346,7 @@ jobs:
 
       - name: Upload redacted disabled Pilot evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: production-controlled-pilot-closed-validation
           path: ${{ runner.temp }}/controlled-pilot-closed-validation
@@ -1410,7 +1410,7 @@ jobs:
           mkdir "$OPL_SOURCE_CHECKOUT"
 
       - name: Checkout exact merged main
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.merged_sha }}
           fetch-depth: 0
@@ -1680,7 +1680,7 @@ jobs:
 
       - name: Upload redacted pool-head terminalization evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: production-compute-pool-head-terminalization
           path: ${{ runner.temp }}/production-compute-pool-head-terminalization
@@ -1769,7 +1769,7 @@ jobs:
           mkdir "$OPL_SOURCE_CHECKOUT"
 
       - name: Checkout exact merged main
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.merged_sha }}
           fetch-depth: 0
@@ -1810,7 +1810,7 @@ jobs:
           fi
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: "22"
 
@@ -1861,7 +1861,7 @@ jobs:
           NODE
 
       - name: Download exact historical compute-claim evidence
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           artifact-ids: ${{ inputs.recovery_evidence_artifact_id }}
           run-id: ${{ inputs.recovery_evidence_run_id }}
@@ -2196,7 +2196,7 @@ jobs:
 
       - name: Upload redacted Fabric ledger readback
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: production-fabric-ledger-readback
           path: ${{ runner.temp }}/production-fabric-ledger-readback-artifact
@@ -2259,7 +2259,7 @@ jobs:
           mkdir -p "$GITHUB_WORKSPACE/.opl-checkouts"
           mkdir "$OPL_SOURCE_CHECKOUT"
       - name: Checkout exact merged main
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.merged_sha }}
           fetch-depth: 0
@@ -2276,7 +2276,7 @@ jobs:
           head_sha="$(git rev-parse HEAD)"
           if [ "$remote_main_ref" != "refs/heads/main" ] || [ "$GITHUB_REF" != "refs/heads/main" ] || [ "$GITHUB_SHA" != "$head_sha" ] || [ "$remote_main_sha" != "$head_sha" ] || [ "$OPL_MERGED_SHA" != "$head_sha" ] || [ "$(git rev-parse refs/remotes/origin/main)" != "$OPL_MERGED_SHA" ]; then exit 1; fi
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: "22"
       - name: Read and recover only the existing wallet operation
@@ -2308,7 +2308,7 @@ jobs:
           NODE
       - name: Upload redacted funding evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: production-recovery-acceptance-funding
           path: ${{ runner.temp }}/production-recovery-acceptance-funding
@@ -2361,7 +2361,7 @@ jobs:
           mkdir -p "$GITHUB_WORKSPACE/.opl-checkouts"
           mkdir "$OPL_SOURCE_CHECKOUT"
       - name: Checkout exact merged main
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.merged_sha }}
           fetch-depth: 0
@@ -2378,7 +2378,7 @@ jobs:
           head_sha="$(git rev-parse HEAD)"
           if [ "$remote_main_ref" != "refs/heads/main" ] || [ "$GITHUB_REF" != "refs/heads/main" ] || [ "$GITHUB_SHA" != "$head_sha" ] || [ "$remote_main_sha" != "$head_sha" ] || [ "$OPL_MERGED_SHA" != "$head_sha" ] || [ "$(git rev-parse refs/remotes/origin/main)" != "$OPL_MERGED_SHA" ]; then exit 1; fi
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: "22"
       - name: Execute one independently approved extra wallet adjustment
@@ -2410,7 +2410,7 @@ jobs:
           NODE
       - name: Upload redacted extra funding evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: production-recovery-acceptance-extra-funding
           path: ${{ runner.temp }}/production-recovery-acceptance-extra-funding
@@ -2468,7 +2468,7 @@ jobs:
           mkdir -p "$GITHUB_WORKSPACE/.opl-checkouts"
           mkdir "$OPL_SOURCE_CHECKOUT"
       - name: Checkout exact merged main
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.merged_sha }}
           fetch-depth: 0
@@ -2485,7 +2485,7 @@ jobs:
           head_sha="$(git rev-parse HEAD)"
           if [ "$remote_main_ref" != "refs/heads/main" ] || [ "$GITHUB_REF" != "refs/heads/main" ] || [ "$GITHUB_SHA" != "$head_sha" ] || [ "$remote_main_sha" != "$head_sha" ] || [ "$OPL_MERGED_SHA" != "$head_sha" ] || [ "$(git rev-parse refs/remotes/origin/main)" != "$OPL_MERGED_SHA" ]; then exit 1; fi
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: "22"
       - name: Read Fabric token and open localhost-only readback
@@ -2538,7 +2538,7 @@ jobs:
           NODE
       - name: Upload redacted original Launch evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: production-recovery-acceptance-original-launch
           path: ${{ runner.temp }}/production-recovery-acceptance-original-launch
@@ -2606,7 +2606,7 @@ jobs:
           mkdir "$OPL_SOURCE_CHECKOUT"
 
       - name: Checkout exact merged main
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.merged_sha }}
           fetch-depth: 0
@@ -2655,7 +2655,7 @@ jobs:
           fi
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: "22"
 
@@ -2707,7 +2707,7 @@ jobs:
 
       - name: Upload redacted Recovery Acceptance evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: production-recovery-acceptance-canary
           path: ${{ runner.temp }}/production-recovery-acceptance-canary
@@ -2778,7 +2778,7 @@ jobs:
           mkdir "$OPL_SOURCE_CHECKOUT"
 
       - name: Checkout exact merged main
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.merged_sha }}
           fetch-depth: 0
@@ -2837,7 +2837,7 @@ jobs:
           esac
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: "22"
 
@@ -2913,7 +2913,7 @@ jobs:
 
       - name: Upload redacted Recovery Plan operation
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: production-recovery-plan-operation
           path: ${{ runner.temp }}/production-recovery-plan-operation
@@ -2979,7 +2979,7 @@ jobs:
           mkdir "$OPL_SOURCE_CHECKOUT"
 
       - name: Checkout exact merged main
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.merged_sha }}
           fetch-depth: 0
@@ -3004,7 +3004,7 @@ jobs:
           fi
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: "22"
 
@@ -3430,7 +3430,7 @@ jobs:
 
       - name: Upload GET-only compute claim readback
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: production-compute-claim-readback
           path: ${{ runner.temp }}/production-compute-claim-readback
@@ -3476,7 +3476,7 @@ jobs:
 
     steps:
       - name: Checkout exact merged main
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.merged_sha }}
           fetch-depth: 0
@@ -3496,7 +3496,7 @@ jobs:
           fi
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: "22"
 
@@ -3523,7 +3523,7 @@ jobs:
 
       - name: Upload redacted recovered Workspace E2E evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: production-recovered-workspace-e2e-evidence
           path: ${{ runner.temp }}/recovered-workspace-e2e-evidence

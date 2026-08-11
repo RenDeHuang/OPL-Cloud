@@ -61,7 +61,7 @@ jobs:
           mkdir "$OPL_SOURCE_CHECKOUT"
 
       - name: Checkout exact merged main
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.merged_sha }}
           fetch-depth: 0
@@ -89,7 +89,7 @@ jobs:
           fi
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: "22"
 
@@ -177,7 +177,7 @@ jobs:
 
       - name: Upload redacted Root Cause Packet only
         if: ${{ always() && steps.artifact_gate.outcome == 'success' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: production-node-drift-root-cause-packet
           path: ${{ runner.temp }}/production-node-drift-diagnostic/root-cause-packet.json

@@ -102,7 +102,7 @@ jobs:
 
       - name: Set up Node for targeted diagnostics
         if: ${{ inputs.fresh_compute_readback_operation_id != '' }}
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: "22"
 
@@ -279,7 +279,7 @@ jobs:
 
       - name: Upload redacted Fresh compute evidence
         if: ${{ always() && inputs.fresh_compute_readback_operation_id != '' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: production-fresh-compute-readback
           path: ${{ runner.temp }}/production-fresh-compute-readback
@@ -406,7 +406,7 @@ jobs:
           mkdir "$OPL_SOURCE_CHECKOUT"
 
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           path: .opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
 
@@ -430,7 +430,7 @@ jobs:
           fi
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: "22"
 
@@ -810,7 +810,7 @@ jobs:
 
       - name: Upload rollback image set
         id: rollback_snapshot
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: production-rollback-images-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ env.OPL_DEPLOY_SECRET_DIR }}/previous-images
@@ -924,7 +924,7 @@ jobs:
           mkdir "$OPL_SOURCE_CHECKOUT"
 
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
           path: .opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
@@ -1024,7 +1024,7 @@ jobs:
 
       - name: Upload Workspace image promotion rollback snapshot
         id: rollback_snapshot
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: workspace-image-promotion-rollback-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/workspace-image-promotion/opl-cloud-config.json
@@ -1114,7 +1114,7 @@ jobs:
           chmod 600 "$kubeconfig"
           echo "KUBECONFIG=$kubeconfig" >> "$GITHUB_ENV"
       - name: Download Workspace image promotion rollback snapshot
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: workspace-image-promotion-rollback-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/workspace-image-promotion-rollback
@@ -1161,7 +1161,7 @@ jobs:
 
     steps:
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: "22"
 
@@ -1221,7 +1221,7 @@ jobs:
           mkdir "$OPL_SOURCE_CHECKOUT"
 
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           path: .opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
 
@@ -1245,7 +1245,7 @@ jobs:
           fi
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: "22"
 
@@ -1410,10 +1410,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: "22"
 
@@ -1487,7 +1487,7 @@ jobs:
           mkdir "$OPL_SOURCE_CHECKOUT"
 
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           path: .opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
 
@@ -1511,7 +1511,7 @@ jobs:
           fi
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: "22"
 
@@ -1547,7 +1547,7 @@ jobs:
           capture_rollout_diagnostics "$diagnostics_dir"
 
       - name: Upload failed rollout diagnostics
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: production-rollout-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/production-rollout-diagnostics
@@ -1621,7 +1621,7 @@ jobs:
           mkdir "$OPL_SOURCE_CHECKOUT"
 
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           path: .opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
 
@@ -1645,7 +1645,7 @@ jobs:
           fi
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: "22"
 
@@ -1672,7 +1672,7 @@ jobs:
           echo "KUBECONFIG=$kubeconfig" >> "$GITHUB_ENV"
 
       - name: Download rollback image set
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: production-rollback-images-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/production-rollback-images
