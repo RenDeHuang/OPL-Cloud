@@ -46,7 +46,7 @@ test("dedicated Node drift workflow is launch-derived, single-purpose, and GET-o
   assert.match(workflowText, /github\.ref == 'refs\/heads\/main'/);
   assert.match(workflowText, /git ls-remote --heads origin/);
   assert.match(workflowText, /production-node-drift-diagnostic\.ts/);
-  assert.match(workflowText, /actions\/upload-artifact@v4/);
+  assert.ok(workflowText.includes(deployment.immutableGithubDependencies["actions/upload-artifact"].ref));
   assert.match(workflowText, /steps\.artifact_gate\.outcome == 'success'/);
   assert.match(workflowText, /runner\.temp/);
   assert.doesNotMatch(workflowText, /(?:kubectl|oc)\s+(?:patch|apply|delete|create|replace|edit|label|annotate|taint|scale|rollout|set)\b/i);

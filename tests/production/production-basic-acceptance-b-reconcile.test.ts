@@ -258,7 +258,7 @@ test("only prepared passes the CLI business gate while safe_to_retry_absent and 
 
 test("workflow validates through the exported reconcile validator and gates only prepared", async () => {
   const { readFile } = await import("node:fs/promises");
-  const workflow = await readFile(new URL("../../.github/workflows/production-basic-customer-operation.yml", import.meta.url), "utf8");
+  const workflow = await readFile(new URL("../../.github/workflows/production-basic-acceptance.yml", import.meta.url), "utf8");
   assert.match(workflow, /import \{ validateProductionBasicAcceptanceBReconcileReadback \} from \"\.\/tools\/production-basic-acceptance-b-reconcile\.ts\"/);
   assert.match(workflow, /validateProductionBasicAcceptanceBReconcileReadback\(evidence/);
   assert.match(workflow, /evidence\.status !== \"prepared\"/);

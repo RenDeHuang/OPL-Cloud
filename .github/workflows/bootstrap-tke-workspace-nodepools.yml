@@ -98,7 +98,7 @@ jobs:
           mkdir "$OPL_SOURCE_CHECKOUT"
 
       - name: Checkout exact source
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: .opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
           ref: ${{ inputs.merged_sha }}
@@ -129,7 +129,7 @@ jobs:
           fi
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: "1.22"
           cache-dependency-path: .opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}/services/fabric/go.sum
@@ -985,7 +985,7 @@ jobs:
 
       - name: Upload bootstrap report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: bootstrap-nodepool-report
           path: ${{ runner.temp }}/bootstrap-nodepool-report

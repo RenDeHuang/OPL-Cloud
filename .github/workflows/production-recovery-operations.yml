@@ -1,0 +1,841 @@
+name: Production Recovery Operations
+
+on:
+  workflow_call:
+    inputs:
+      merged_sha:
+        required: true
+        type: string
+      approval_id:
+        required: true
+        type: string
+      operation_mode:
+        required: true
+        type: string
+      confirm_account_provision:
+        required: true
+        type: boolean
+      confirm_wallet_recharge:
+        required: true
+        type: boolean
+      confirm_workspace_purchase:
+        required: true
+        type: boolean
+      confirm_single_model_request:
+        required: true
+        type: boolean
+      confirm_recovery_plan_execute:
+        required: true
+        type: boolean
+      resume_run_id:
+        required: true
+        type: string
+      customer_email:
+        required: true
+        type: string
+      workspace_identity_account_id:
+        required: true
+        type: string
+      recovery_plan_launch_operation_id:
+        required: true
+        type: string
+      recovery_plan_id:
+        required: true
+        type: string
+      recovery_plan_digest:
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  recovery-plan-operation:
+    name: Diagnose, validate, or execute one persisted server-owned Recovery Plan
+    if: ${{ github.ref == 'refs/heads/main' && github.sha == inputs.merged_sha && inputs.resume_run_id == '' && !inputs.confirm_account_provision && !inputs.confirm_wallet_recharge && !inputs.confirm_workspace_purchase && !inputs.confirm_single_model_request && ((inputs.operation_mode == 'recovery_plan_diagnose' && inputs.workspace_identity_account_id != '' && inputs.recovery_plan_launch_operation_id != '' && inputs.recovery_plan_id == '' && inputs.recovery_plan_digest == '' && !inputs.confirm_recovery_plan_execute) || (inputs.operation_mode == 'compute_claim_validate' && inputs.recovery_plan_launch_operation_id != '' && inputs.recovery_plan_id != '' && inputs.recovery_plan_digest != '' && !inputs.confirm_recovery_plan_execute) || (inputs.operation_mode == 'recovery_plan_execute' && inputs.recovery_plan_launch_operation_id != '' && inputs.recovery_plan_id != '' && inputs.recovery_plan_digest != '' && inputs.confirm_recovery_plan_execute)) }}
+    runs-on: [self-hosted, tencent-cloud, opl-cloud, tke-vpc]
+    timeout-minutes: 40
+    environment: production
+    env:
+      OPL_MERGED_SHA: ${{ inputs.merged_sha }}
+      OPL_RECOVERY_PLAN_OPERATION_MODE: ${{ inputs.operation_mode }}
+      OPL_RECOVERY_PLAN_ACCOUNT_ID: ${{ inputs.workspace_identity_account_id }}
+      OPL_RECOVERY_PLAN_LAUNCH_OPERATION_ID: ${{ inputs.recovery_plan_launch_operation_id }}
+      OPL_RECOVERY_PLAN_ID: ${{ inputs.recovery_plan_id }}
+      OPL_RECOVERY_PLAN_DIGEST: ${{ inputs.recovery_plan_digest }}
+      OPL_CONSOLE_ORIGIN: ${{ vars.OPL_CONSOLE_ORIGIN || 'https://cloud.medopl.cn' }}
+      OPL_SUB2API_ADMIN_EMAIL: ${{ secrets.OPL_SUB2API_ADMIN_EMAIL }}
+      OPL_SUB2API_ADMIN_PASSWORD: ${{ secrets.OPL_SUB2API_ADMIN_PASSWORD }}
+      OPL_VERIFY_REQUEST_TIMEOUT_MS: ${{ vars.OPL_VERIFY_REQUEST_TIMEOUT_MS || '30000' }}
+      OPL_RECOVERY_PLAN_POLL_ATTEMPTS: ${{ vars.OPL_RECOVERY_PLAN_POLL_ATTEMPTS || '180' }}
+      OPL_RECOVERY_PLAN_POLL_DELAY_MS: ${{ vars.OPL_RECOVERY_PLAN_POLL_DELAY_MS || '10000' }}
+
+    steps:
+      - name: Prepare isolated source checkout
+        id: prepare_source
+        shell: bash
+        env:
+          OPL_SOURCE_CHECKOUT: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          expected="$GITHUB_WORKSPACE/.opl-checkouts/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
+          if [ "$OPL_SOURCE_CHECKOUT" != "$expected" ]; then
+            echo "Isolated source checkout path mismatch." >&2
+            exit 1
+          fi
+          mkdir -p "$GITHUB_WORKSPACE/.opl-checkouts"
+          mkdir "$OPL_SOURCE_CHECKOUT"
+
+      - name: Checkout exact merged main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.merged_sha }}
+          fetch-depth: 0
+          path: .opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+
+      - name: Verify remote branch authority
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          mapfile -t remote_heads < <(git ls-remote --heads origin)
+          if [ "${#remote_heads[@]}" -ne 1 ]; then
+            printf 'Production source authority requires exactly one remote head; observed: %s\n' "${remote_heads[*]:-none}" >&2
+            exit 1
+          fi
+          read -r remote_main_sha remote_main_ref <<< "${remote_heads[0]}"
+          head_sha="$(git rev-parse HEAD)"
+          if [ "$remote_main_ref" != "refs/heads/main" ] || [ "$GITHUB_REF" != "refs/heads/main" ] ||
+             [ "$GITHUB_SHA" != "$head_sha" ] || [ "$remote_main_sha" != "$head_sha" ]; then
+            printf 'Production source must be current main: ref=%s github_sha=%s checkout=%s remote_main=%s\n' \
+              "$GITHUB_REF" "$GITHUB_SHA" "$head_sha" "$remote_main_sha" >&2
+            exit 1
+          fi
+
+      - name: Verify exact Recovery Plan source and inputs
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$OPL_MERGED_SHA" =~ ^[0-9a-f]{40}$ ]] ||
+             ! [[ "$OPL_RECOVERY_PLAN_LAUNCH_OPERATION_ID" =~ ^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$ ]]; then
+            echo "Recovery Plan operation requires the exact current main and original Launch identity." >&2
+            exit 1
+          fi
+          case "$OPL_RECOVERY_PLAN_OPERATION_MODE" in
+            recovery_plan_diagnose)
+              if ! [[ "$OPL_RECOVERY_PLAN_ACCOUNT_ID" =~ ^acct-[A-Za-z0-9-]+$ ]] || [ -n "$OPL_RECOVERY_PLAN_ID" ] || [ -n "$OPL_RECOVERY_PLAN_DIGEST" ]; then
+                echo "Recovery Plan diagnosis requires one account and no caller-supplied Plan identity." >&2
+                exit 1
+              fi
+              grep -Fq -- '--recovery-plan-diagnose' tools/production-live-qa.ts
+              ;;
+            compute_claim_validate|recovery_plan_execute)
+              if ! [[ "$OPL_RECOVERY_PLAN_ID" =~ ^recovery-plan-[a-f0-9]{20}$ ]] ||
+                 ! [[ "$OPL_RECOVERY_PLAN_DIGEST" =~ ^[a-f0-9]{64}$ ]]; then
+                echo "Recovery Plan validation and execution require the exact persisted Plan identity." >&2
+                exit 1
+              fi
+              grep -Fq -- '--recovery-plan-validate' tools/production-live-qa.ts
+              if [ "$OPL_RECOVERY_PLAN_OPERATION_MODE" = "recovery_plan_execute" ]; then
+                grep -Fq 'CONTINUE_RECOVERY_PLAN' tools/production-live-qa.ts
+                grep -Fq -- '--recovery-plan-execute' tools/production-live-qa.ts
+              fi
+              ;;
+            *) echo "Unsupported Recovery Plan operation mode." >&2; exit 1 ;;
+          esac
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+
+      - name: Prepare redacted Recovery Plan operation artifact
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          artifact_dir="$RUNNER_TEMP/production-recovery-plan-operation"
+          mkdir -p "$artifact_dir"
+          chmod 700 "$artifact_dir"
+          echo "OPL_RECOVERY_PLAN_ARTIFACT_DIR=$artifact_dir" >> "$GITHUB_ENV"
+
+      - name: Run exact server-owned Recovery Plan operation
+        id: operate
+        continue-on-error: true
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          case "$OPL_RECOVERY_PLAN_OPERATION_MODE" in
+            recovery_plan_diagnose)
+              node tools/production-live-qa.ts --recovery-plan-diagnose \
+                --account-id "$OPL_RECOVERY_PLAN_ACCOUNT_ID" \
+                --launch-operation-id "$OPL_RECOVERY_PLAN_LAUNCH_OPERATION_ID"
+              ;;
+            compute_claim_validate)
+              node tools/production-live-qa.ts --recovery-plan-validate \
+                --launch-operation-id "$OPL_RECOVERY_PLAN_LAUNCH_OPERATION_ID" \
+                --plan-id "$OPL_RECOVERY_PLAN_ID" \
+                --plan-digest "$OPL_RECOVERY_PLAN_DIGEST"
+              ;;
+            recovery_plan_execute)
+              node tools/production-live-qa.ts --recovery-plan-execute \
+                --launch-operation-id "$OPL_RECOVERY_PLAN_LAUNCH_OPERATION_ID" \
+                --plan-id "$OPL_RECOVERY_PLAN_ID" \
+                --plan-digest "$OPL_RECOVERY_PLAN_DIGEST"
+              ;;
+          esac > "$OPL_RECOVERY_PLAN_ARTIFACT_DIR/recovery-plan-operation.json"
+
+
+      - name: Require exact redacted Recovery Plan evidence
+        if: always()
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { readFileSync } from "node:fs";
+          import { validateProductionWorkspaceRecoveryPlanArtifact } from "./tools/production-live-qa.ts";
+
+          const result = JSON.parse(readFileSync(`${process.env.OPL_RECOVERY_PLAN_ARTIFACT_DIR}/recovery-plan-operation.json`, "utf8"));
+          const mode = process.env.OPL_RECOVERY_PLAN_OPERATION_MODE;
+          const artifactMode = mode === "compute_claim_validate" ? "recovery_plan_validate" : mode;
+          try {
+            validateProductionWorkspaceRecoveryPlanArtifact(result, artifactMode);
+          } catch {
+            console.error("Recovery Plan operation artifact failed its shared validator.");
+            process.exit(1);
+          }
+          const validRead = ["recovery_plan_diagnose", "compute_claim_validate"].includes(mode) && result.status === "proven" &&
+            result.recoveryEligible === true && result.failureStage === "none" && result.readbackError === "none" &&
+            result.errorCode === "none" && result.mismatches.length === 0;
+          const validBlockedDiagnose = mode === "recovery_plan_diagnose" && result.status === "blocked" && result.recoveryEligible === false;
+          const validExecute = mode === "recovery_plan_execute" && result.status === "completed" && result.failureStage === "none" &&
+            result.readbackError === "none" && result.errorCode === "none";
+          if (!validRead && !validExecute) {
+            if (validBlockedDiagnose) console.error(`Recovery Plan diagnosis blocked at ${result.failureStage}: ${result.errorCode}`);
+            else console.error(`Recovery Plan operation blocked: ${result.errorCode}`);
+            process.exit(1);
+          }
+          NODE
+
+      - name: Upload redacted Recovery Plan operation
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: production-recovery-plan-operation
+          path: ${{ runner.temp }}/production-recovery-plan-operation
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 30
+
+      - name: Require Recovery Plan operation success
+        if: ${{ steps.operate.outcome != 'success' }}
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          echo "Recovery Plan operation stopped; inspect the redacted operation artifact." >&2
+          exit 1
+
+      - name: Remove isolated source checkout
+        if: always() && steps.prepare_source.outcome == 'success'
+        shell: bash
+        env:
+          OPL_SOURCE_CHECKOUT: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          source_dir="${OPL_SOURCE_CHECKOUT:-}"
+          expected="$GITHUB_WORKSPACE/.opl-checkouts/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
+          if [ -z "$source_dir" ] || [ "$source_dir" != "$expected" ]; then
+            echo "Refusing to remove unexpected source checkout path." >&2
+            exit 1
+          fi
+          if [ -d "$source_dir" ]; then
+            find "$source_dir" -mindepth 1 -delete
+            rmdir "$source_dir"
+          fi
+
+  compute-claim-readback:
+    name: Read back one original Launch compute claim without mutation
+    if: ${{ github.ref == 'refs/heads/main' && github.sha == inputs.merged_sha && inputs.operation_mode == 'compute_claim_readback' && inputs.workspace_identity_account_id != '' && inputs.recovery_plan_launch_operation_id != '' && inputs.resume_run_id == '' && !inputs.confirm_account_provision && !inputs.confirm_wallet_recharge && !inputs.confirm_workspace_purchase && !inputs.confirm_single_model_request && !inputs.confirm_recovery_plan_execute }}
+    runs-on: [self-hosted, tencent-cloud, opl-cloud, tke-vpc]
+    timeout-minutes: 20
+    environment: production
+    env:
+      OPL_MERGED_SHA: ${{ inputs.merged_sha }}
+      OPL_RECOVERY_PLAN_ACCOUNT_ID: ${{ inputs.workspace_identity_account_id }}
+      OPL_RECOVERY_PLAN_LAUNCH_OPERATION_ID: ${{ inputs.recovery_plan_launch_operation_id }}
+      OPL_CONSOLE_ORIGIN: ${{ vars.OPL_CONSOLE_ORIGIN || 'https://cloud.medopl.cn' }}
+      OPL_SUB2API_ADMIN_EMAIL: ${{ secrets.OPL_SUB2API_ADMIN_EMAIL }}
+      OPL_SUB2API_ADMIN_PASSWORD: ${{ secrets.OPL_SUB2API_ADMIN_PASSWORD }}
+      OPL_K8S_NAMESPACE: ${{ vars.OPL_K8S_NAMESPACE || 'opl-cloud' }}
+      TENCENT_DEPLOY_KUBECONFIG_PATH: ${{ vars.TENCENT_DEPLOY_KUBECONFIG_PATH || '/home/actions/.secrets/medopl/v22/kubeconfig-package-d-deploy' }}
+      TENCENT_DEPLOY_KUBECONFIG_B64: ${{ secrets.TENCENT_DEPLOY_KUBECONFIG_B64 }}
+
+    steps:
+      - name: Prepare isolated source checkout
+        id: prepare_source
+        shell: bash
+        env:
+          OPL_SOURCE_CHECKOUT: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          expected="$GITHUB_WORKSPACE/.opl-checkouts/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
+          if [ "$OPL_SOURCE_CHECKOUT" != "$expected" ]; then echo "Isolated source checkout path mismatch." >&2; exit 1; fi
+          mkdir -p "$GITHUB_WORKSPACE/.opl-checkouts"
+          mkdir "$OPL_SOURCE_CHECKOUT"
+
+      - name: Checkout exact merged main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.merged_sha }}
+          fetch-depth: 0
+          path: .opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+
+      - name: Verify remote branch authority
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$OPL_MERGED_SHA" =~ ^[0-9a-f]{40}$ ]] || ! [[ "$OPL_RECOVERY_PLAN_ACCOUNT_ID" =~ ^acct-[A-Za-z0-9-]+$ ]] || ! [[ "$OPL_RECOVERY_PLAN_LAUNCH_OPERATION_ID" =~ ^workspace-launch-[A-Za-z0-9-]+$ ]]; then
+            echo "Compute claim readback requires the exact original Launch identity." >&2
+            exit 1
+          fi
+          mapfile -t remote_heads < <(git ls-remote --heads origin)
+          if [ "${#remote_heads[@]}" -ne 1 ]; then echo "Production source authority requires exactly one remote head." >&2; exit 1; fi
+          read -r remote_main_sha remote_main_ref <<< "${remote_heads[0]}"
+          head_sha="$(git rev-parse HEAD)"
+          if [ "$remote_main_ref" != "refs/heads/main" ] || [ "$GITHUB_REF" != "refs/heads/main" ] || [ "$GITHUB_SHA" != "$head_sha" ] || [ "$remote_main_sha" != "$head_sha" ] || [ "$head_sha" != "$OPL_MERGED_SHA" ]; then
+            echo "Readback source is not the exact current origin/main revision." >&2
+            exit 1
+          fi
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+
+      - name: Prepare read-only Fabric Pod transport
+        id: fabric_transport
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          readback_dir="$RUNNER_TEMP/production-compute-claim-readback"
+          raw_dir="$RUNNER_TEMP/production-compute-claim-readback-raw"
+          mkdir -p "$readback_dir" "$raw_dir"
+          chmod 700 "$readback_dir" "$raw_dir"
+          kubeconfig="$raw_dir/kubeconfig"
+          if [ -f "$TENCENT_DEPLOY_KUBECONFIG_PATH" ]; then cp "$TENCENT_DEPLOY_KUBECONFIG_PATH" "$kubeconfig"
+          elif [ -n "${TENCENT_DEPLOY_KUBECONFIG_B64:-}" ]; then printf '%s' "$TENCENT_DEPLOY_KUBECONFIG_B64" | base64 -d > "$kubeconfig"
+          else echo "Production kubeconfig is unavailable." >&2; exit 1; fi
+          chmod 600 "$kubeconfig"
+          fabric_pods="$(kubectl --kubeconfig "$kubeconfig" -n "$OPL_K8S_NAMESPACE" get pods -l app.kubernetes.io/name=opl-cloud,app.kubernetes.io/component=fabric -o json)"
+          fabric_pod="$(node --input-type=module -e 'const v=JSON.parse(process.argv[1]); const p=(v.items||[]).filter((x)=>!x.metadata?.deletionTimestamp && x.status?.phase === "Running" && x.status?.conditions?.some((c)=>c.type === "Ready" && c.status === "True")); if(p.length!==1) process.exit(1); process.stdout.write(p[0].metadata.name)' "$fabric_pods")"
+          internal_token="$(kubectl --kubeconfig "$kubeconfig" -n "$OPL_K8S_NAMESPACE" get secret opl-cloud-internal-service -o jsonpath='{.data.OPL_INTERNAL_SERVICE_TOKEN}' | base64 --decode)"
+          if [ -z "$internal_token" ]; then echo "Fabric internal token is unavailable." >&2; exit 1; fi
+          echo "::add-mask::$internal_token"
+          echo "OPL_READBACK_KUBECONFIG=$kubeconfig" >> "$GITHUB_ENV"
+          echo "OPL_FABRIC_POD=$fabric_pod" >> "$GITHUB_ENV"
+          echo "OPL_INTERNAL_SERVICE_TOKEN=$internal_token" >> "$GITHUB_ENV"
+          echo "OPL_READBACK_ARTIFACT_DIR=$readback_dir" >> "$GITHUB_ENV"
+          echo "OPL_READBACK_RAW_DIR=$raw_dir" >> "$GITHUB_ENV"
+
+      - name: Run one GET-only compute claim readback
+        id: readback
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          node tools/production-live-qa.ts --workspace-compute-claim-readback \
+            --account-id "$OPL_RECOVERY_PLAN_ACCOUNT_ID" \
+            --launch-operation-id "$OPL_RECOVERY_PLAN_LAUNCH_OPERATION_ID" \
+            --kubeconfig "$OPL_READBACK_KUBECONFIG" \
+            --fabric-pod "$OPL_FABRIC_POD" \
+            --fabric-namespace "$OPL_K8S_NAMESPACE" \
+            > "$OPL_READBACK_ARTIFACT_DIR/compute-claim-readback.json"
+
+      - name: Log current redacted Fabric ledger authority
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          kubectl --kubeconfig "$OPL_READBACK_KUBECONFIG" -n "$OPL_K8S_NAMESPACE" exec -i "$OPL_FABRIC_POD" -c fabric -- \
+            node - "$OPL_RECOVERY_PLAN_ACCOUNT_ID" "$OPL_RECOVERY_PLAN_LAUNCH_OPERATION_ID" <<'NODE'
+          const http = require("node:http");
+          const { createHash } = require("node:crypto");
+
+          const accountId = process.argv[2];
+          const launchOperationId = process.argv[3];
+          const token = process.env.OPL_INTERNAL_SERVICE_TOKEN;
+          const digestPattern = /^[a-f0-9]{64}$/;
+          if (!/^acct-[A-Za-z0-9-]+$/.test(accountId || "") ||
+            !/^workspace-launch-[A-Za-z0-9-]+$/.test(launchOperationId || "") || !token) {
+            throw new Error("fabric_ledger_current_authority_input_invalid");
+          }
+
+          function request(method, path, payload) {
+            if (!new Set(["GET", "POST"]).has(method) || !/^\/fabric\/[A-Za-z0-9_?=.&/%-]{1,1024}$/.test(path)) {
+              throw new Error("fabric_ledger_current_authority_path_invalid");
+            }
+            const body = payload === undefined ? "" : JSON.stringify(payload);
+            return new Promise((resolve, reject) => {
+              const req = http.request({
+                hostname: "127.0.0.1",
+                port: 8082,
+                method,
+                path,
+                headers: {
+                  Authorization: `Bearer ${token}`,
+                  ...(body ? { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) } : {})
+                }
+              }, (response) => {
+                let responseBody = "";
+                response.setEncoding("utf8");
+                response.on("data", (chunk) => {
+                  responseBody += chunk;
+                  if (Buffer.byteLength(responseBody) > 4 * 1024 * 1024) {
+                    req.destroy(new Error("fabric_ledger_current_authority_response_too_large"));
+                  }
+                });
+                response.on("end", () => {
+                  if (response.statusCode !== 200) {
+                    reject(new Error(`fabric_ledger_current_authority_http_${response.statusCode}`));
+                    return;
+                  }
+                  try {
+                    resolve(JSON.parse(responseBody));
+                  } catch {
+                    reject(new Error("fabric_ledger_current_authority_response_invalid"));
+                  }
+                });
+              });
+              req.setTimeout(30000, () => req.destroy(new Error("fabric_ledger_current_authority_timeout")));
+              req.on("error", reject);
+              if (body) req.write(body);
+              req.end();
+            });
+          }
+
+          function exactOne(values, code) {
+            if (!Array.isArray(values) || values.length !== 1) throw new Error(code);
+            return values[0];
+          }
+
+          function sha256(value) {
+            return `sha256:${createHash("sha256").update(String(value)).digest("hex")}`;
+          }
+
+          function mutationEvidence(value, maximum, allowedMissing) {
+            const missing = Array.isArray(value?.missing) ? value.missing : [];
+            if (!Number.isInteger(value?.attempted) || value.attempted < 0 || value.attempted > maximum ||
+              !Number.isInteger(value?.confirmed) || value.confirmed < 0 || value.confirmed > value.attempted ||
+              !Number.isInteger(value?.unknown) || value.unknown < 0 || value.unknown > value.attempted ||
+              value.confirmed + value.unknown > value.attempted || new Set(missing).size !== missing.length ||
+              missing.some((field) => !allowedMissing.has(field))) {
+              throw new Error("fabric_ledger_current_authority_mutation_evidence_invalid");
+            }
+            return { attempted: value.attempted, confirmed: value.confirmed, unknown: value.unknown, missing };
+          }
+
+          function safeReconciliation(value, failureStages, providerErrorClasses) {
+            if (value === undefined || value === null) return null;
+            const versionTwo = value?.schemaVersion === 2;
+            const generation = versionTwo ? "normal_launch_terminal_evidence_v1" : "isolated_request_hash_v1";
+            if (![1, 2].includes(value?.schemaVersion) || value?.consumer !== "claim_compute_recovery" ||
+              value?.generation !== generation || !new Set(["verified", "node_reserved", "observed", "succeeded"]).has(value?.state) ||
+              !digestPattern.test(String(value?.expectedRequestHashDigest || "")) ||
+              !digestPattern.test(String(value?.persistedRequestHashDigest || "")) ||
+              value.expectedRequestHashDigest === value.persistedRequestHashDigest ||
+              versionTwo && (value?.provenanceSource !== "normal_launch_terminal_evidence" ||
+                !digestPattern.test(String(value?.provenanceDigest || ""))) ||
+              value?.failureStage && !failureStages.has(value.failureStage) ||
+              value?.providerErrorClass && !providerErrorClasses.has(value.providerErrorClass)) {
+              throw new Error("fabric_ledger_current_authority_reconciliation_invalid");
+            }
+            return {
+              schemaVersion: value.schemaVersion,
+              consumer: value.consumer,
+              generation: value.generation,
+              state: value.state,
+              expectedRequestHashDigest: `sha256:${value.expectedRequestHashDigest}`,
+              persistedRequestHashDigest: `sha256:${value.persistedRequestHashDigest}`,
+              ...(versionTwo ? {
+                provenanceSource: value.provenanceSource,
+                provenanceDigest: `sha256:${value.provenanceDigest}`
+              } : {}),
+              ...(value.failureStage ? { failureStage: value.failureStage } : {}),
+              ...(value.providerErrorClass ? { providerErrorClass: value.providerErrorClass } : {}),
+              node: mutationEvidence(value.node, 1, new Set(["node_ownership"]))
+            };
+          }
+
+          (async () => {
+            const operations = await request("GET", "/fabric/operations");
+            const computeKey = `${launchOperationId}:compute`;
+            const computeOperation = exactOne((Array.isArray(operations) ? operations : []).filter((operation) =>
+              operation?.action === "create_compute_allocation" && operation?.accountId === accountId &&
+              (operation?.operationId === computeKey || operation?.idempotencyKey === computeKey)),
+            "fabric_ledger_current_compute_operation_not_unique");
+            const computeAllocationId = String(computeOperation?.resourceId || "");
+            const workspaceId = String(computeOperation?.workspaceId || "");
+            const storageKey = `${launchOperationId}:storage`;
+            const storageOperation = exactOne((Array.isArray(operations) ? operations : []).filter((operation) =>
+              operation?.accountId === accountId && operation?.workspaceId === workspaceId &&
+              (operation?.operationId === storageKey || operation?.idempotencyKey === storageKey)),
+            "fabric_ledger_current_storage_operation_not_unique");
+            const storageVolumeId = String(storageOperation?.resourceId || "");
+            const allocation = await request("GET", `/fabric/compute-allocations/${encodeURIComponent(computeAllocationId)}`);
+            const ownership = await request("GET", `/fabric/machine-ownerships/${encodeURIComponent(computeAllocationId)}`);
+            const packageId = String(allocation?.packageId || "");
+            const poolId = String(allocation?.poolId || "");
+            const nodePoolId = String(allocation?.nodePoolId || "");
+            const machineName = String(allocation?.machineName || "");
+            const nodeName = String(allocation?.nodeName || "");
+            const cvmInstanceId = String(allocation?.cvmInstanceId || allocation?.instanceId || "");
+            const privateIp = String(allocation?.privateIp || "");
+            const instanceType = String(allocation?.instanceType || "");
+            const zone = String(allocation?.zone || "");
+            const exactIdentity = /^ca_[A-Za-z0-9-]+$/.test(computeAllocationId) && /^vol_[A-Za-z0-9-]+$/.test(storageVolumeId) &&
+              /^ws-[A-Za-z0-9-]+$/.test(workspaceId) && ["basic", "pro"].includes(packageId) && poolId && nodePoolId &&
+              machineName && nodeName && /^ins-[A-Za-z0-9-]+$/.test(cvmInstanceId) && privateIp && instanceType && zone &&
+              allocation?.id === computeAllocationId && allocation?.accountId === accountId && allocation?.workspaceId === workspaceId &&
+              ownership?.resourceId === computeAllocationId && ownership?.accountId === accountId && ownership?.workspaceId === workspaceId &&
+              ownership?.nodePoolId === nodePoolId && ownership?.machineId === machineName && ownership?.nodeName === nodeName &&
+              ownership?.instanceId === cvmInstanceId && ownership?.status === "active";
+            if (!exactIdentity) throw new Error("fabric_ledger_current_identity_mismatch");
+
+            const raw = await request("POST", "/fabric/compute-claim-recovery/identity-evidence", {
+              launchOperationId, accountId, workspaceId, computeAllocationId, storageVolumeId, packageId, poolId,
+              nodePoolId, machineName, nodeName, cvmInstanceId, privateIp, instanceType, zone
+            });
+            const expectedFields = [
+              "fabric.operationId", "fabric.operationIdempotencyKey", "fabric.operationRequestHash",
+              "binding.present", "binding.valid", "binding.compatibility", "binding.launchOperationId",
+              "binding.idempotencyKey", "binding.targetHash", "binding.requestHash"
+            ];
+            const baseFields = expectedFields.slice(0, 5);
+            const digestFields = new Set(["fabric.operationRequestHash", "binding.targetHash", "binding.requestHash"]);
+            const safeValueFields = new Set(["binding.present", "binding.valid", "binding.compatibility"]);
+            const checks = Array.isArray(raw?.checks) ? raw.checks : [];
+            const checkFields = checks.length === baseFields.length ? baseFields : checks.length === expectedFields.length ? expectedFields : [];
+            function validateIdentityChecks() {
+              if (!Array.isArray(raw?.checks) || checkFields.length === 0) {
+                return { valid: false, predicate: "fabric.identityEvidence.checks.cardinality", expected: "five_or_ten", actual: Array.isArray(raw?.checks) ? checks.length : "not_array", safeActual: true };
+              }
+              for (const [index, field] of checkFields.entries()) {
+                const check = checks[index];
+                const predicate = `fabric.identityEvidence.checks.atIndex${index}`;
+                if (check?.field !== field) {
+                  const actual = String(check?.field ?? "");
+                  return { valid: false, predicate: `${predicate}.field`, expected: field, actual, safeActual: expectedFields.includes(actual) };
+                }
+                if (typeof check?.matches !== "boolean") {
+                  return { valid: false, predicate: `${predicate}.matchesType`, expected: "boolean", actual: typeof check?.matches, safeActual: true };
+                }
+                if (digestFields.has(field)) {
+                  if (check.expected !== undefined || check.actual !== undefined) {
+                    return { valid: false, predicate: `${predicate}.digestOnly`, expected: "digest_only", actual: "raw_value_present", safeActual: true };
+                  }
+                  if (!digestPattern.test(String(check?.expectedDigest || ""))) {
+                    return { valid: false, predicate: `${predicate}.expectedDigest`, expected: "lowercase_sha256", actual: check?.expectedDigest, safeActual: false };
+                  }
+                  if (!digestPattern.test(String(check?.actualDigest || ""))) {
+                    return { valid: false, predicate: `${predicate}.actualDigest`, expected: "lowercase_sha256", actual: check?.actualDigest, safeActual: false };
+                  }
+                  if (check.matches !== (check.expectedDigest === check.actualDigest)) {
+                    return { valid: false, predicate: `${predicate}.matchesDigestEquality`, expected: "digest_equality_relation", actual: "inconsistent", safeActual: true };
+                  }
+                  continue;
+                }
+                const expected = String(check?.expected ?? "");
+                const actual = String(check?.actual ?? "");
+                if (check.expectedDigest !== undefined || check.actualDigest !== undefined ||
+                  typeof check?.expected !== "string" || expected.length === 0 ||
+                  check.actual !== undefined && typeof check.actual !== "string") {
+                  return { valid: false, predicate: `${predicate}.valueShape`, expected: "nonempty_expected_and_string_or_omitted_actual", actual: "invalid", safeActual: true };
+                }
+                if (check.matches !== (expected === actual)) {
+                  return { valid: false, predicate: `${predicate}.matchesValueEquality`, expected: "value_equality_relation", actual: "inconsistent", safeActual: true };
+                }
+              }
+              return { valid: true, predicate: "", expected: "", actual: "", safeActual: true };
+            }
+            const checksValidation = validateIdentityChecks();
+            const checksValid = checksValidation.valid;
+            const bindingShapeComplete = checks.length === expectedFields.length;
+            const bindingPresentAndValid = checks[3]?.matches === true && checks[4]?.matches === true;
+            const classifications = new Set(["current", "compute-claim", "request-hash-reconciliation", "known-legacy", "other"]);
+            const safeValuesValid = checks.every((check) => !safeValueFields.has(check.field) ||
+              check.field === "binding.present" && check.expected === "present" && new Set(["present", "absent"]).has(check.actual) ||
+              check.field === "binding.valid" && check.expected === "valid" && new Set(["valid", "invalid"]).has(check.actual) ||
+              check.field === "binding.compatibility" && check.expected === "current_compute_claim_or_request_hash_reconciliation" && classifications.has(check.actual));
+            const ledgerRelationships = {
+              absent: new Set(["confirmed_zero"]),
+              observed: new Set(["confirmed_zero", "nonzero", "unknown"]),
+              reserved: new Set(["unknown"]),
+              node_reserved: new Set(["unknown"]),
+              invalid: new Set(["unknown"])
+            };
+            const failureStages = new Set(["", "cvm_pre_read", "cvm_conflict_check", "cvm_mutation_precondition", "cvm_rename_readback", "cvm_tag_readback", "cvm_final_readback", "cvm_provisioner_transport", "cvm_mutation_evidence", "node_pre_cvm_read", "node_pre_read", "node_conflict_check", "node_patch_build", "node_patch_readback", "node_final_readback", "claim_final_readback"]);
+            const providerErrorClasses = new Set(["", "client_unavailable", "malformed_readback", "ownership_conflict", "readback_mismatch", "timeout", "iam_rbac", "provider_error", "transport_error", "evidence_incomplete"]);
+            const ledgerState = String(raw?.mutationLedger || "");
+            const ledgerOutcome = String(raw?.mutationLedgerOutcome || "");
+            function currentFabricAuthoritySnapshot() {
+              const safeDigest = (value) => digestPattern.test(String(value || "")) ? `sha256:${value}` : sha256(value);
+              const safeEnum = (value, allowed) => allowed.has(String(value ?? "")) ? String(value ?? "") : sha256(value);
+              let mutationEvidenceProjection = null;
+              try {
+                if (raw?.mutationEvidence !== undefined && raw?.mutationEvidence !== null) {
+                  mutationEvidenceProjection = {
+                    cvm: mutationEvidence(raw.mutationEvidence.cvm, 5, new Set(["instance", "instance_name", "opl_account_id", "opl_workspace_id", "opl_resource_id", "opl_operation_id"])),
+                    node: mutationEvidence(raw.mutationEvidence.node, 1, new Set(["node_ownership"]))
+                  };
+                }
+              } catch {
+                mutationEvidenceProjection = "invalid";
+              }
+              let reconciliationProjection = null;
+              try {
+                reconciliationProjection = safeReconciliation(raw?.reconciliation, failureStages, providerErrorClasses);
+              } catch {
+                reconciliationProjection = "invalid";
+              }
+              return {
+                binding: { classification: safeEnum(raw?.bindingClassification, classifications), digest: safeDigest(raw?.bindingDigest) },
+                mutationLedger: {
+                  state: safeEnum(ledgerState, new Set(Object.keys(ledgerRelationships))),
+                  outcome: safeEnum(ledgerOutcome, new Set(["confirmed_zero", "nonzero", "unknown"])),
+                  digest: safeDigest(raw?.mutationLedgerDigest), evidence: mutationEvidenceProjection
+                },
+                failureStage: safeEnum(raw?.failureStage, failureStages),
+                providerErrorClass: safeEnum(raw?.providerErrorClass, providerErrorClasses),
+                reconciliation: reconciliationProjection
+              };
+            }
+            function requireCurrentFabricAuthority(predicate, matches, expected, actual, safeActual = true) {
+              if (matches) return;
+              const diagnostic = {
+                failureBoundary: "workflow.compute_claim_readback.fabric_authority_projection",
+                exactFunction: "requireCurrentFabricAuthority",
+                reasonCode: "fabric_ledger_current_authority_invalid",
+                firstFalsePredicate: predicate,
+                expected,
+                actual: safeActual ? String(actual) : sha256(actual),
+                authority: "fabric.operationStore.identityEvidence",
+                currentAuthority: currentFabricAuthoritySnapshot(),
+                mutationOutcome: { status: "confirmed_zero", attempted: 0, accepted: 0, confirmed: 0, unknown: 0 }
+              };
+              const encoded = JSON.stringify(diagnostic);
+              if (/acct-|workspace-launch-|ws-|ca_|vol_|ins-|privateIp|cvmInstanceId|nodeName|machineName|password|secret|token|cookie/i.test(encoded)) {
+                throw new Error("fabric_ledger_current_authority_diagnostic_redaction_invalid");
+              }
+              process.stderr.write(`FABRIC_LEDGER_AUTHORITY_ERROR=${encoded}\n`);
+              throw new Error("fabric_ledger_current_authority_invalid");
+            }
+            requireCurrentFabricAuthority(checksValidation.predicate, checksValid, checksValidation.expected, checksValidation.actual, checksValidation.safeActual);
+            requireCurrentFabricAuthority("fabric.identityEvidence.safeValues", safeValuesValid, "allowlisted", "invalid");
+            requireCurrentFabricAuthority("fabric.identityEvidence.bindingShape", bindingPresentAndValid === bindingShapeComplete,
+              "complete_iff_present_and_valid", bindingShapeComplete ? "unexpected_complete" : "incomplete");
+            requireCurrentFabricAuthority("fabric.identityEvidence.bindingClassification", classifications.has(raw?.bindingClassification),
+              "allowlisted", raw?.bindingClassification, false);
+            requireCurrentFabricAuthority("fabric.identityEvidence.bindingDigest", digestPattern.test(String(raw?.bindingDigest || "")),
+              "lowercase_sha256", raw?.bindingDigest, false);
+            requireCurrentFabricAuthority("fabric.identityEvidence.mutationLedgerState", Object.hasOwn(ledgerRelationships, ledgerState),
+              "allowlisted", ledgerState, false);
+            requireCurrentFabricAuthority("fabric.identityEvidence.mutationLedgerOutcome", ledgerRelationships[ledgerState]?.has(ledgerOutcome) === true,
+              "allowed_for_state", `${ledgerState}:${ledgerOutcome}`, false);
+            requireCurrentFabricAuthority("fabric.identityEvidence.mutationLedgerDigest", digestPattern.test(String(raw?.mutationLedgerDigest || "")),
+              "lowercase_sha256", raw?.mutationLedgerDigest, false);
+            requireCurrentFabricAuthority("fabric.identityEvidence.failureStage", failureStages.has(raw?.failureStage),
+              "allowlisted", raw?.failureStage, false);
+            requireCurrentFabricAuthority("fabric.identityEvidence.providerErrorClass", providerErrorClasses.has(raw?.providerErrorClass),
+              "allowlisted", raw?.providerErrorClass, false);
+            const cvmMissing = new Set(["instance", "instance_name", "opl_account_id", "opl_workspace_id", "opl_resource_id", "opl_operation_id"]);
+            const evidenceAbsent = raw?.mutationEvidence === undefined || raw?.mutationEvidence === null;
+            const cvm = evidenceAbsent ? null : mutationEvidence(raw.mutationEvidence.cvm, 5, cvmMissing);
+            const node = evidenceAbsent ? null : mutationEvidence(raw.mutationEvidence.node, 1, new Set(["node_ownership"]));
+            if ((new Set(["absent", "invalid"]).has(ledgerState)) !== evidenceAbsent) {
+              throw new Error("fabric_ledger_current_authority_evidence_presence_invalid");
+            }
+            const identityChecks = checks.map((check) => ({
+              field: check.field,
+              matches: check.matches,
+              ...(digestFields.has(check.field) ? {
+                expectedDigest: `sha256:${check.expectedDigest}`,
+                actualDigest: `sha256:${check.actualDigest}`
+              } : safeValueFields.has(check.field) ? {
+                expected: check.expected,
+                actual: check.actual
+              } : {
+                expectedDigest: sha256(check.expected ?? ""),
+                actualDigest: sha256(check.actual ?? "")
+              })
+            }));
+            const projection = {
+              operation: { cardinality: 1, status: String(computeOperation.status || "unknown") },
+              storageOperation: { cardinality: 1, status: String(storageOperation.status || "unknown") },
+              machineOwnership: { readback: "present", status: ownership.status },
+              authorityIdentityMatches: true,
+              binding: { classification: raw.bindingClassification, digest: `sha256:${raw.bindingDigest}` },
+              identityChecks,
+              firstFalseIdentityCheck: identityChecks.find((check) => !check.matches) || null,
+              mutationLedger: { state: ledgerState, outcome: ledgerOutcome, digest: `sha256:${raw.mutationLedgerDigest}` },
+              cvm,
+              node,
+              failureStage: raw.failureStage,
+              providerErrorClass: raw.providerErrorClass,
+              reconciliation: safeReconciliation(raw.reconciliation, failureStages, providerErrorClasses),
+              mutationCounts: { sub2api: 0, tencent: 0, kubernetes: 0 }
+            };
+            const encoded = JSON.stringify(projection);
+            if (/acct-|workspace-launch-|ws-|ca_|vol_|ins-|privateIp|cvmInstanceId|nodeName|machineName|password|secret|token|cookie/i.test(encoded)) {
+              throw new Error("fabric_ledger_current_authority_redaction_invalid");
+            }
+            process.stdout.write(`FABRIC_LEDGER_AUTHORITY=${encoded}\n`);
+          })().catch((error) => {
+            process.stderr.write(`${String(error?.message || "fabric_ledger_current_authority_failed")}\n`);
+            process.exit(1);
+          });
+          NODE
+
+      - name: Validate redacted GET-only readback
+        if: always()
+        shell: bash
+        working-directory: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { readFile } from "node:fs/promises";
+          const result = JSON.parse(await readFile(`${process.env.OPL_READBACK_ARTIFACT_DIR}/compute-claim-readback.json`, "utf8"));
+          const mutationOutcomeValid = result?.mutationOutcome?.status === "confirmed_zero" && result?.mutationOutcome?.attempted === 0 &&
+            result?.mutationOutcome?.apiAccepted === null && result?.mutationOutcome?.confirmed === true && result?.mutationOutcome?.unknown === false;
+          const firstFalsePredicateValid = /^(?:provider|controlPlane)\.[A-Za-z][A-Za-z0-9]*(?:\.[A-Za-z][A-Za-z0-9]*)*$/.test(String(result?.firstFalsePredicate || ""));
+          const commonValid = result?.schemaVersion === 1 && result?.operationMode === "compute_claim_readback" && mutationOutcomeValid &&
+            firstFalsePredicateValid && result?.mutationCounts?.sub2api === 0 && result?.mutationCounts?.tencent === 0 && result?.mutationCounts?.kubernetes === 0;
+          const evidenceOnly = result?.status === "evidence_only" && result?.producerExitCode === 0 && result?.failureStage === "none" && result?.errorCode === "none" &&
+            result?.node?.resourceVersion && result?.node?.taint && result?.node?.ownership && result?.storage?.stageBudget && result?.providerTruth &&
+            result?.controlPlaneTrace?.operationMode === "compute_claim_trace" && result?.controlPlaneTrace?.status === "evidence_only" &&
+            typeof result?.controlPlaneTrace?.candidate?.recoveryCandidate === 'boolean' &&
+            typeof result?.controlPlaneTrace?.storage?.allowExistingStorageOperation === 'boolean' &&
+            result?.controlPlaneTrace?.storage?.allowExistingStorageOperation === result?.controlPlaneTrace?.candidate?.recoveryCandidate &&
+            typeof result?.controlPlaneTrace?.controlPlane?.loadAttempted === 'boolean' && typeof result?.controlPlaneTrace?.controlPlane?.loaded === 'boolean' &&
+            typeof result?.controlPlaneTrace?.providerTruth?.collectorCalled === 'boolean' &&
+            typeof result?.controlPlaneTrace?.proofEligibility?.called === 'boolean' && typeof result?.controlPlaneTrace?.reducer?.called === 'boolean' &&
+            (result?.controlPlaneTrace?.candidate?.recoveryCandidate ||
+              (!result?.controlPlaneTrace?.controlPlane?.loadAttempted && !result?.controlPlaneTrace?.controlPlane?.loaded &&
+                !result?.controlPlaneTrace?.providerTruth?.collectorCalled && !result?.controlPlaneTrace?.proofEligibility?.called &&
+                !result?.controlPlaneTrace?.reducer?.called)) &&
+            result?.controlPlaneTrace?.mutationCounts?.sub2api === 0 &&
+            result?.controlPlaneTrace?.mutationCounts?.tencent === 0 && result?.controlPlaneTrace?.mutationCounts?.kubernetes === 0;
+          const blocked = result?.status === "blocked" && result?.producerExitCode === 1 && result?.failureStage === "compute_claim_readback" &&
+            /^[a-z0-9_]{1,96}$/.test(String(result?.errorCode || "")) && result?.errorCode !== "none";
+          const valid = commonValid && (evidenceOnly || blocked) && !/password|secret|cookie|csrf|authorization/i.test(JSON.stringify(result));
+          if (!valid) { console.error("Compute claim readback artifact is invalid or not redacted."); process.exit(1); }
+          if (blocked) { console.error(`Compute claim readback producer blocked: ${result.errorCode}`); process.exit(1); }
+          NODE
+
+      - name: Upload GET-only compute claim readback
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: production-compute-claim-readback
+          path: ${{ runner.temp }}/production-compute-claim-readback
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 30
+
+      - name: Remove isolated source checkout
+        if: always() && steps.prepare_source.outcome == 'success'
+        shell: bash
+        env:
+          OPL_SOURCE_CHECKOUT: ${{ github.workspace }}/.opl-checkouts/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        run: |
+          set -euo pipefail
+          if [ -n "${OPL_READBACK_RAW_DIR:-}" ] && [ -d "$OPL_READBACK_RAW_DIR" ]; then find "$OPL_READBACK_RAW_DIR" -mindepth 1 -delete; rmdir "$OPL_READBACK_RAW_DIR"; fi
+          source_dir="${OPL_SOURCE_CHECKOUT:-}"
+          expected="$GITHUB_WORKSPACE/.opl-checkouts/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
+          if [ -z "$source_dir" ] || [ "$source_dir" != "$expected" ]; then echo "Refusing to remove unexpected source checkout path." >&2; exit 1; fi
+          if [ -d "$source_dir" ]; then find "$source_dir" -mindepth 1 -delete; rmdir "$source_dir"; fi
+
+  recovered-workspace-e2e:
+    name: Verify one recovered Workspace request on a hosted runner
+    if: ${{ github.ref == 'refs/heads/main' && github.sha == inputs.merged_sha && inputs.operation_mode == 'recovered_workspace_e2e' && inputs.approval_id != '' && inputs.recovery_plan_launch_operation_id != '' && inputs.recovery_plan_id != '' && inputs.recovery_plan_digest != '' && inputs.customer_email != '' && inputs.resume_run_id == '' && !inputs.confirm_account_provision && !inputs.confirm_wallet_recharge && !inputs.confirm_workspace_purchase && inputs.confirm_single_model_request }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    env:
+      OPL_MERGED_SHA: ${{ inputs.merged_sha }}
+      OPL_RECOVERED_WORKSPACE_E2E_APPROVAL_ID: ${{ inputs.approval_id }}
+      OPL_RECOVERY_PLAN_LAUNCH_OPERATION_ID: ${{ inputs.recovery_plan_launch_operation_id }}
+      OPL_RECOVERY_PLAN_ID: ${{ inputs.recovery_plan_id }}
+      OPL_RECOVERY_PLAN_DIGEST: ${{ inputs.recovery_plan_digest }}
+      OPL_RECOVERED_WORKSPACE_CUSTOMER_EMAIL: ${{ inputs.customer_email }}
+      OPL_RECOVERED_WORKSPACE_CUSTOMER_PASSWORD: ${{ secrets.OPL_BASIC_CANARY_CUSTOMER_PASSWORD }}
+      OPL_RECOVERED_WORKSPACE_E2E_CONFIRMATION: CONFIRM_SINGLE_MODEL_REQUEST_FOR_RECOVERED_WORKSPACE
+      OPL_RECOVERED_WORKSPACE_EXPECTED_MODEL: ${{ vars.OPL_CODEX_MODEL || 'gpt-5.5' }}
+      OPL_CONSOLE_ORIGIN: ${{ vars.OPL_CONSOLE_ORIGIN || 'https://cloud.medopl.cn' }}
+      OPL_VERIFY_REQUEST_TIMEOUT_MS: ${{ vars.OPL_VERIFY_REQUEST_TIMEOUT_MS || '30000' }}
+      OPL_VERIFY_USAGE_ATTEMPTS: ${{ vars.OPL_VERIFY_USAGE_ATTEMPTS || '24' }}
+      OPL_VERIFY_USAGE_RETRY_DELAY_MS: ${{ vars.OPL_VERIFY_USAGE_RETRY_DELAY_MS || '5000' }}
+      OPL_VERIFY_BROWSER_TIMEOUT_MS: ${{ vars.OPL_VERIFY_BROWSER_TIMEOUT_MS || '45000' }}
+      OPL_VERIFY_MODEL_TIMEOUT_MS: ${{ vars.OPL_VERIFY_MODEL_TIMEOUT_MS || '180000' }}
+
+    steps:
+      - name: Checkout exact merged main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.merged_sha }}
+          fetch-depth: 0
+
+      - name: Verify exact origin main
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! [[ "$OPL_MERGED_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "A full merged main SHA is required." >&2
+            exit 1
+          fi
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          if [ "$(git rev-parse HEAD)" != "$OPL_MERGED_SHA" ] || [ "$(git rev-parse refs/remotes/origin/main)" != "$OPL_MERGED_SHA" ]; then
+            echo "Recovered Workspace E2E source is not the exact current origin/main revision." >&2
+            exit 1
+          fi
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+
+      - name: Install E2E dependencies
+        run: npm ci
+
+      - name: Install E2E browser and system dependencies
+        run: npx playwright install --with-deps chromium
+
+      - name: Run independently approved recovered Workspace E2E
+        shell: bash
+        run: |
+          set -euo pipefail
+          artifact_dir="$RUNNER_TEMP/recovered-workspace-e2e-evidence"
+          mkdir -p "$artifact_dir"
+          chmod 700 "$artifact_dir"
+          node tools/production-live-qa.ts --recovered-workspace-e2e \
+            --allow-model-write \
+            --approval-id "$OPL_RECOVERED_WORKSPACE_E2E_APPROVAL_ID" \
+            --launch-operation-id "$OPL_RECOVERY_PLAN_LAUNCH_OPERATION_ID" \
+            --recovery-plan-id "$OPL_RECOVERY_PLAN_ID" \
+            --recovery-plan-digest "$OPL_RECOVERY_PLAN_DIGEST" \
+            > "$artifact_dir/recovered-workspace-e2e.json"
+
+      - name: Upload redacted recovered Workspace E2E evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: production-recovered-workspace-e2e-evidence
+          path: ${{ runner.temp }}/recovered-workspace-e2e-evidence
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 30
