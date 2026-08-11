@@ -12,7 +12,7 @@ implementation, instance, billing, or deployment truth.
 | Current implementation boundary | `docs/implementation-architecture.md`, `docs/invariants.md`, machine contracts, source, tests, and runtime readback |
 | Open gaps and next steps | `docs/roadmap.md` |
 | Durable decisions | `docs/decisions.md` |
-| Medopl instance profile and deployment evidence | `opl-instance-medopl` after extraction; co-located values here are migration state |
+| Medopl instance profile and deployment evidence | initialized `opl-instance-medopl`; co-located values and stale repository identity remain migration work |
 
 Issues, pull requests, discussions, and project boards are proposals or work
 surfaces. They do not replace these owners.
@@ -22,6 +22,22 @@ the canonical topic owner, real callers, and runtime evidence. Classify each
 claim as target, current implementation, runtime/production evidence,
 historical, stale, derived, or unknown; then update the canonical owner and
 remove the duplicate current writer in the same pull request.
+
+## Choosing Work
+
+1. Read the `Functional And Structural Gaps` table in `docs/roadmap.md`, then
+   check open pull requests for an existing owner. The roadmap owns intent and
+   acceptance; the pull request owns the live execution attempt.
+2. Select one gap ID and keep its owner/write set explicit in the pull request.
+   Do not combine Console, provider, billing, deployment and evidence changes
+   unless the selected acceptance path requires each one.
+3. Read the physical dependency map in `docs/implementation-architecture.md`.
+   Cross-service behavior uses typed HTTP contracts. Runtime Go imports between
+   Control Plane, Fabric and Ledger are forbidden; the narrow PostgreSQL
+   migration helper is the only shared Go module.
+4. Rebase or update from fresh `main` before review. If another pull request has
+   entered the same write set, coordinate ownership or split at a contract/API
+   boundary before continuing.
 
 ## Branch And Pull Request Flow
 

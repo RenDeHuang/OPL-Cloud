@@ -1,4 +1,4 @@
-# Architecture
+# OPL Cloud Implementation Architecture
 
 ## Request Path
 
@@ -14,6 +14,58 @@ Sub2API is external and remains the only spendable-balance, API-key, routing,
 and request-usage owner. The repository reads those records on demand and does
 not mirror them. Its code, image, database, configuration, and deployment remain
 outside this repository's mutation boundary.
+
+## Physical Module And Dependency Map
+
+The current repository is a modular product repository with three Go service
+modules and one browser application. Repository co-location and one release image
+do not authorize implementation imports between service owners.
+
+```text
+apps/console-ui
+  -> same-origin /api/*
+services/control-plane
+  -> typed HTTP client -> services/fabric
+  -> typed HTTP client -> services/ledger
+  -> typed HTTP client -> external Sub2API
+
+services/control-plane ─┐
+services/fabric        ├─> services/internal/postgresmigrate
+services/ledger       ─┘
+
+packages/contracts -> CI and service-boundary verification only
+```
+
+| Module | Physical boundary | Owns | Allowed dependencies | Forbidden coupling |
+| --- | --- | --- | --- | --- |
+| Console UI | `apps/console-ui`, TypeScript build | presentation and customer interaction | Control Plane product APIs under `/api/*` | direct Fabric, Ledger, Sub2API, Tencent, Kubernetes, persistence, or server implementation imports |
+| Control Plane | independent `go.mod`, binary, Deployment and schema | session/account mapping, Workspace entitlement, orchestration, billing policy and customer DTOs | typed HTTP clients for Fabric, Ledger and Sub2API; narrow PostgreSQL migration helper | Fabric/Ledger implementation imports, cloud SDKs, provider mutations, or downstream table writes |
+| Fabric | independent `go.mod`, binary, Deployment and schema | compute, storage, attachment, runtime, provider operations and readback | provider adapters, cloud SDKs and narrow PostgreSQL migration helper | wallet, customer billing policy, Console session state, or Ledger table writes |
+| Ledger | independent `go.mod`, binary, Deployment and schema | append-first receipts, reviews, continuations and reconciliation evidence | narrow PostgreSQL migration helper | spendable balance mutation, provider SDKs, Fabric execution, or Control Plane table writes |
+| PostgreSQL migration helper | independent narrow Go module under `services/internal/postgresmigrate` | advisory lock, migration journal and TLS validation mechanics | PostgreSQL driver only | any Console, Control Plane, Fabric or Ledger domain type |
+| Machine contracts | JSON under `packages/contracts` | executable ownership and protocol boundaries | tests, build and validation | runtime state, service implementation or a second status owner |
+
+`tests/contracts/module-physical-boundaries.test.ts` enforces the source-level edges:
+no Go service may import another service implementation, only Fabric may import
+Tencent or Kubernetes SDKs, and Console network calls must remain inside its API
+adapter and resolve to `/api/*`. This gate runs through the existing `npm test`
+lane; it complements behavior and contract tests rather than replacing them.
+
+Physical deployment isolation is incomplete. The three services use separate
+processes, Deployments and tables, but the current TKE profile injects one
+`DATABASE_URL`, one internal service token and one shared ConfigMap. Consequently
+table ownership and caller identity are contract-enforced, not database-role or
+service-credential-enforced. The common image also makes them one release unit,
+which is intentional for the current product repository but not independent
+service release evidence.
+
+Internal cohesion is also uneven. Fabric resource, runtime and recovery behavior
+is concentrated in `internal/fabric/service.go`; Control Plane launch/recovery and
+persistence behavior is concentrated in a few multi-thousand-line files. These
+are change-collision and review risks inside the correct owner modules, not a
+reason to introduce cross-service packages. Their split must preserve packages,
+HTTP contracts, state machines and behavior while moving cohesive capabilities
+into focused files.
 
 ## Repository And Instance Boundary
 
@@ -102,9 +154,12 @@ the exact provider binding per Workspace.
 
 ## Persistence
 
-Control Plane, Fabric, and Ledger each own their PostgreSQL schema. Cross-service
-writes go through typed HTTP clients; no service writes another service's tables.
-Sub2API data remains in Sub2API.
+Control Plane, Fabric, and Ledger each own their PostgreSQL schema and table
+namespaces. Cross-service writes go through typed HTTP clients; no service writes
+another service's tables. Sub2API data remains in Sub2API. The current production
+credential can technically reach all three namespaces, so database least
+privilege remains an open deployment-isolation task rather than a completed
+physical boundary.
 
 All three services serialize startup migrations with one database-wide PostgreSQL
 advisory lock. A migration is journaled in `opl_schema_migrations` by service and

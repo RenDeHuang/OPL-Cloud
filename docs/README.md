@@ -10,8 +10,8 @@ This repository follows the `one-person-lab` documentation lifecycle.
   [invariants.md](./invariants.md), `packages/contracts`, source, tests, runtime
   readback and deployment manifests.
 - Development framework truth: `one-person-lab`.
-- First instance truth: `opl-instance-medopl` after extraction; current medopl
-  values co-located here are migration state.
+- First instance truth: initialized `opl-instance-medopl`; its profile identity,
+  deployment receipts and Cloud-co-located medopl values remain migration work.
 
 Human docs explain the system. They do not replace machine contracts, runtime
 readback or owner acceptance. `opl-cloud` is an internal artifact and service
