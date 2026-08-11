@@ -1,0 +1,125 @@
+{
+  "schemaVersion": 1,
+  "owner": "services/control-plane",
+  "purpose": "Own the Workspace launch business operation, persisted stage decision, and recovery authorization without owning provider resources, spendable balance, or evidence receipts.",
+  "state": "current",
+  "machineBoundary": "Control Plane Workspace launch and recovery identity that is consumed by the current launch worker and the typed Fabric client.",
+  "lifecycle": {
+    "type": "long_term_contract",
+    "removalCondition": "Remove only when Workspace launch and recovery no longer cross the Control Plane to Fabric boundary."
+  },
+  "launchOperation": {
+    "action": "workspace.launch.v2",
+    "resultSchemaVersion": 3,
+    "identityFields": [
+      "launchOperationId",
+      "accountId",
+      "ownerUserId",
+      "workspaceId",
+      "requestHash"
+    ],
+    "requestHashAuthority": "services/control-plane",
+    "workspaceIdentity": "stable_from_account_id_and_launch_operation_idempotency_identity",
+    "sameIdempotencyRequest": "resume_original_launch",
+    "idempotencyDrift": "conflict_before_new_launch_or_workspace"
+  },
+  "stageDecision": {
+    "owner": "services/control-plane",
+    "preflightAdmission": {
+      "timing": "before_first_external_write",
+      "mode": "read_only",
+      "durableStage": false
+    },
+    "orderedStages": [
+      "key",
+      "debit",
+      "ensure_compute_allocation",
+      "storage",
+      "attachment",
+      "secret",
+      "runtime",
+      "activation",
+      "receipt",
+      "succeeded"
+    ],
+    "persistence": {
+      "row": "control_plane_runtime_operation",
+      "statusField": "status",
+      "durableResultControlFields": [
+        "schemaVersion",
+        "version",
+        "stage",
+        "attempts",
+        "observations",
+        "consumedResumeAuthorizations",
+        "resumeAuthorization",
+        "resumeAuthorizationConsumedAt"
+      ],
+      "forbiddenResultFields": [
+        "phase",
+        "currentDecision"
+      ],
+      "cas": "exact_prior_result_and_launch_identity_single_winner"
+    },
+    "attemptPersistence": {
+      "reconcilerSource": "services/control-plane/internal/server/workspace_launch_reconciler.go",
+      "stageAdapterSources": [
+        "services/control-plane/internal/server/workspace_launch_account_stages.go",
+        "services/control-plane/internal/server/workspace_launch_fabric_stages.go",
+        "services/control-plane/internal/server/workspace_launch_activation.go"
+      ],
+      "goFields": [
+        "Attempted",
+        "Max",
+        "IdempotencyKey"
+      ],
+      "jsonFields": [
+        "attempted",
+        "max",
+        "idempotencyKey"
+      ],
+      "maxPerStage": 1,
+      "reservationOrder": [
+        "increment_attempted_and_set_idempotency_key",
+        "persist_exact_result_cas",
+        "invoke_stage_mutation"
+      ],
+      "forbiddenLegacyFields": [
+        "ChargeAttempted"
+      ]
+    },
+    "fabricOperationBinding": "opl-cloud-fabric-launch-binding-contract.json"
+  },
+  "recovery": {
+    "authority": "services/control-plane",
+    "operation": "resume_original_workspace_launch_stage",
+    "route": "POST /api/operator/workspace-launches/{operationId}/resume",
+    "requestFields": [
+      "launchVersion",
+      "authorizedStage",
+      "reason",
+      "mutationBudget"
+    ],
+    "authorizationFields": [
+      "authorizationId",
+      "launchVersion",
+      "authorizedStage",
+      "authorizedBy",
+      "authorizedAt",
+      "reason",
+      "mutationBudget"
+    ],
+    "authorizationId": "Idempotency-Key request header",
+    "authorizedBy": "control_plane_operator_session_user_id",
+    "authorizedAt": "control_plane_server_time_or_exact_authorization_replay",
+    "admission": "manual_review_with_exact_launch_version_current_stage_and_remaining_mutation_budget",
+    "immutability": "same_authorizationId_requires_exact_authorization",
+    "secondLaunch": "forbidden"
+  },
+  "notOwned": [
+    "spendable_balance",
+    "fabric_operation_store",
+    "provider_resource_facts",
+    "ledger_receipt_or_evidence_truth"
+  ]
+}

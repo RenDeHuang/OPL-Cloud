@@ -71,7 +71,7 @@
       "mutationCounts": {"sub2api": 0, "tencent": 0, "kubernetes": 0},
       "mismatch": "manual_review_without_activation"
     },
-    "manualReviewRecoveryContract": "opl-cloud-launch-freeze-contract.json#workspaceLaunch.manualReviewRecovery"
+    "manualReviewRecoveryContract": "opl-cloud-control-plane-launch-contract.json#recovery"
   },
   "walletAdjustmentEvidence": {
     "kinds": ["recharge", "debit", "business_refund"],
