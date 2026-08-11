@@ -34,17 +34,23 @@ external owners.
 | Implementation owner | `unified` | `one-person-lab-cloud` owns Console, Control Plane, Fabric, and Ledger implementation; `opl-cloud` is an internal artifact/service identifier |
 | Instance owner | `initialized_extraction_pending` | `opl-instance-medopl` exists as the first commercial instance owner; its stale implementation-repository identity, co-located Cloud values and missing owner receipts still require migration |
 | Active documentation | `consolidated` | This file owns current gaps/next prompt; public product map stays in the root README and the technical split stays in architecture |
-| Development governance | `strict_ci_with_independent_developers` | Both active developers may merge PRs after current `validate` and resolved conversations; reviews are requested deliberately rather than for every PR, module source boundaries are machine-checked, and production environments accept protected branches only |
+| Development governance | `parallel_work_serialized_integration` | Independent module lanes may develop and review concurrently; only an overlapping write set, one shared contract revision, canonical `main`, or a real production mutation is serialized |
 | Source module boundaries | `enforced_in_ci` | Console network ownership, Go cross-service imports and Fabric-only cloud SDK ownership are checked by `tests/contracts/module-physical-boundaries.test.ts` through `npm test` |
 | Whitepaper | `source_and_build_profile_present` | Source/build evidence does not prove publication or Cloud service readiness |
 | Service delivery | `candidate_not_production_proven` | Current state is owned by `docs/status.md`, machine contracts, CI, deployment readback and owner evidence |
 
 ## Functional And Structural Gaps
 
-States are `in_review`, `next`, `planned`, `later`, or `external_owner`. A
-developer selects one row, stays inside its owner/write set, and closes only the
-listed acceptance boundary. Open pull requests remain the live execution view;
-this table owns why the work exists and what completion means.
+States encode delivery admission and current priority, not dependency order:
+`in_review` has a live implementation PR, `next` is a highest-priority row ready
+to claim, `planned` is accepted but lower current priority, `later` is
+intentionally deferred, and `external_owner` proceeds in its owning repository.
+Any number of `next` rows may proceed concurrently when their owners and write
+sets do not overlap. A `planned` row may be promoted when capacity appears; it
+does not wait for every `next` row to close. Each execution lane selects one row,
+stays inside its owner/write set, and closes only the listed acceptance boundary.
+Open pull requests remain the live execution view; this table owns why the work
+exists and what completion means.
 
 As of 2026-08-11, the only human-authored feature change in review is
 [PR #218](https://github.com/gaofeng21cn/one-person-lab-cloud/pull/218), a
@@ -60,10 +66,10 @@ product capability in progress.
 | `CONSOLE-SELF-SERVICE-01` | `next` | Current Pilot is administrator-provisioned; public registration, payment/order and complete tenant self-service are absent | Console UI + Control Plane + management/product contracts | A tenant can onboard, see authoritative balance/usage, create 0..N Workspaces and complete one approved payment/order path without acquiring wallet or provider authority |
 | `MANAGED-POLICY-01` | `planned` | Controlled Pilot admission and a fixed offer exist, but reusable account approval, quota and managed-resource policy are not yet one portable surface | Control Plane policy + Console management/product contracts | Account policy authorizes or denies a resource plan without owning package state, provider mutation or Runtime state |
 | `BILLING-EVIDENCE-01` | `planned` | Gateway wallet projection and Workspace debit, refund, renewal and reconciliation paths are code-complete and locally tested; customer auto-renew and real monthly evidence remain absent | Control Plane billing policy + Gateway calls + Ledger receipts; no Fabric balance state | One immutable release proves an exact single Workspace-period debit, provider renewal/readback, Ledger receipt and failure recovery without a second wallet |
-| `DEPLOY-ISOLATION-01` | `planned` | Services are separate Deployments but share one database credential, internal token and ConfigMap | reusable deploy contract/manifests + service startup configuration | Service-specific DB roles/URLs and internal identities prevent cross-owner table writes and caller impersonation; instance secrets migrate with rollback and readback |
-| `MODULE-COHESION-01` | `planned` | Fabric `service.go` and Control Plane launch, recovery and state-store files concentrate unrelated capabilities and create review conflicts | one owning Go package per change, no public API or schema change | Resource/runtime/recovery/persistence capabilities move into focused files with unchanged package API, state machine and full tests |
+| `DEPLOY-ISOLATION-01` | `next` | Services are separate Deployments but share one database credential, internal token and ConfigMap | reusable deploy contract/manifests + service startup configuration; instance application stays in `opl-instance-medopl` | Service-specific DB roles/URLs and internal identities prevent cross-owner table writes and caller impersonation; reusable and instance changes converge only for deployment readback |
+| `MODULE-COHESION-01` | `next` | Fabric `service.go` and Control Plane launch, recovery and state-store files concentrate unrelated capabilities and create review conflicts | one focused slice inside one owning Go module per PR; no cross-module package or public API/schema change | Resource/runtime/recovery/persistence capabilities move into focused files with unchanged package API, state machine and full tests |
 | `ACTIONS-MAINT-01` | `planned` | The production customer workflow remains a 3,500-line multi-operation release surface | repository CI + production contracts; preserve one production authorization owner | Operation-family workflows share one explicit authorization/readback owner, and remaining third-party Action/toolchain refs are immutable |
-| `INSTANCE-MEDOPL-01` | `external_owner` | Instance repository is initialized, but its profile still names the pre-unification implementation repos and Cloud still co-locates medopl values | `opl-instance-medopl` first; Cloud deploy files only for extraction cleanup | Instance profile points to `gaofeng21cn/one-person-lab-cloud`, immutable release refs and secret-owner refs are current, reusable Cloud has no medopl-owned writer, and fresh receipts exist |
+| `INSTANCE-MEDOPL-01` | `external_owner` | Instance repository is initialized, but its profile still names the pre-unification implementation repos and Cloud still co-locates medopl values | `opl-instance-medopl` profile and receipt lane; it may run in parallel with reusable Cloud extraction | Instance profile points to `gaofeng21cn/one-person-lab-cloud`, immutable release refs and secret-owner refs are current, reusable Cloud has no medopl-owned writer, and fresh receipts exist |
 | `WORKSPACE-ROUTER-01` | `later` | Control Plane still proxies Workspace HTML/API/WebSocket traffic, coupling management-plane availability to the data plane | dedicated router boundary only after measured need | A separately owned router preserves Runtime authentication and routing readback without moving entitlement or provider truth |
 | `WORKSPACE-CONTINUITY-01` | `external_owner` | One project/task/artifact continuation model across App and online Workspace lacks owner evidence | App + Workspace implementation owners | Owner contracts and live readback prove continuation without Cloud copying project or artifact truth |
 | `RESOURCE-BINDING-01` | `planned` | Compute/storage launch is implemented for the Pilot; environments and connectors do not yet share one portable plan/approve/execute/collect surface | Fabric + the selected connector/environment owner contract | One end-to-end resource path returns provider-neutral facts and a Ledger receipt without a second policy or wallet owner |
@@ -91,36 +97,47 @@ Docs, planning contracts, generated projections, tests, or a rendered
 whitepaper can close only their own layers. They cannot substitute for these
 runtime, release, security, billing, domain, or owner-evidence lanes.
 
-## Target Delivery Order
+## Concurrent Delivery Lanes
 
-This is priority order, not a single-owner serialization rule. Rows with
-non-overlapping owners and write sets may proceed concurrently.
+The development model is `parallel_work_serialized_integration`: independent
+work proceeds concurrently, while the smallest shared mutation is serialized.
+No production qualification, instance receipt, or unrelated lane may be used as
+a prerequisite for starting local development, CI, or a non-production preview.
 
-1. Complete `CONSOLE-UI-01` without promoting it into a functional claim.
-2. Close `FABRIC-PORT-01` with one real `local-docker` path while preserving the
-   current Tencent adapter.
-3. Close `CONSOLE-SELF-SERVICE-01` from the current administrator-provisioned
-   Pilot boundary.
-4. Close `MANAGED-POLICY-01` without giving Console provider or package authority,
-   then prove `BILLING-EVIDENCE-01` against the external Gateway owner.
-5. Correct and extract `INSTANCE-MEDOPL-01`, then close
-   `DEPLOY-ISOLATION-01` through instance-bound migration and readback.
-6. Split one high-conflict owner file under `MODULE-COHESION-01` only after its
-   focused behavior suite is green.
-7. Split `ACTIONS-MAINT-01` only at operation-family boundaries while preserving
-   one production authorization and readback owner.
-8. Close `RESOURCE-BINDING-01` with explicit plan, approval, collection,
-   settlement, and receipt.
-9. Project exact owner Package identity/publication and fresh carrier
-   status/actions into Cloud surfaces without a registry or lock copy.
-10. Close one `CONNECTOR-01` and `EVIDENCE-CONTINUATION-01` path without moving
-    connector credentials or domain truth into Cloud.
-11. Close a portable `SERVE-01` Entrypoint Contract, immutable Agent Revision,
-    dedicated Agent Edge and API-only private-beta path.
-12. Close `RUNWAY-01` with one OPL-native provider adapter.
-13. Add Hosted UI and Embed clients only through the same public API.
-14. Add broader service plans only after live security, isolation, billing, and
-    soak evidence exists.
+The lanes ready now are:
+
+- `CONSOLE-UI-01`: complete the current visual PR without expanding its claim.
+- `FABRIC-PORT-01`: prove `local-docker` behind the provider contract while the
+  Tencent adapter remains green.
+- `CONSOLE-SELF-SERVICE-01`: build tenant onboarding, balance/usage, payment and
+  0..N Workspace lifecycle through Control Plane product APIs.
+- `DEPLOY-ISOLATION-01`: implement service-specific database and internal
+  identities in reusable deployment surfaces while the instance owner applies
+  concrete values independently.
+- `MODULE-COHESION-01`: split one cohesive capability at a time inside its owning
+  module. A Fabric slice and a Control Plane slice may run concurrently; two
+  changes to the same large file or public contract must coordinate ownership.
+
+Rows marked `planned` are not blocked by completion of the `next` lanes. When an
+owner and capacity are available, promote the row to `next` or `in_review` and
+proceed without inventing a dependency. Rows marked `external_owner` proceed in
+their owner repository without waiting for Cloud implementation, then integrate
+through exact refs and public contracts.
+
+## Integration And Production Gates
+
+These gates apply when lanes converge or when an exact revision is promoted;
+they do not govern whether independent development may begin.
+
+1. A changed cross-module boundary has one owner, one compatible contract
+   revision, and focused tests on both sides.
+2. Each branch is replayed on fresh `main`; the required `validate` context and
+   review-conversation gate pass before the canonical merge.
+3. A deployment-isolation release joins reusable Cloud artifacts with the exact
+   instance profile only at deployment qualification, rollback and readback.
+4. Runtime, billing, security, owner acceptance and production claims close only
+   from their authoritative evidence; failure leaves that evidence lane open and
+   does not roll unrelated development backward.
 
 ## Explicit Non-Goals
 
@@ -179,8 +196,9 @@ runtime claims.
 
 ### Required Actions
 
-1. Select exactly one open row from `Functional And Structural Gaps` and name
-   its owner surface.
+1. Each execution lane selects exactly one open row from `Functional And
+   Structural Gaps` and names its owner surface. Other lanes may own
+   non-overlapping rows concurrently.
 2. Verify the current implementation and contract state from fresh owner
    evidence; do not infer it from Cloud prose.
 3. Implement or update only the authorized owner surface and its focused tests.
