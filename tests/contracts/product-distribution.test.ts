@@ -30,7 +30,36 @@ test("portable distribution is product-owned and instance-neutral", async () => 
   assert.match(databaseURLs[1], /^postgresql:\/\/opl_fabric:.*@.*:5432\/opl_fabric\?sslmode=disable$/);
   assert.match(databaseURLs[2], /^postgresql:\/\/opl_ledger:.*@.*:5432\/opl_ledger\?sslmode=disable$/);
   assert.equal(compose["x-opl-cloud-common"].environment.DATABASE_URL, undefined);
-  assert.equal(compose["x-opl-cloud-common"].environment.OPL_INTERNAL_SERVICE_TOKEN, undefined);
+  for (const token of [
+    "OPL_INTERNAL_SERVICE_TOKEN",
+    "OPL_CONTROL_PLANE_SERVICE_TOKEN",
+    "OPL_FABRIC_SERVICE_TOKEN",
+    "OPL_LEDGER_SERVICE_TOKEN"
+  ]) assert.equal(compose["x-opl-cloud-common"].environment[token], undefined);
+  const controlPlaneEnvironment = compose.services["control-plane"].environment;
+  const serverTokens = [
+    controlPlaneEnvironment.OPL_INTERNAL_SERVICE_TOKEN,
+    compose.services.fabric.environment.OPL_INTERNAL_SERVICE_TOKEN,
+    compose.services.ledger.environment.OPL_INTERNAL_SERVICE_TOKEN
+  ];
+  assert.deepEqual(serverTokens, [
+    "${OPL_CONTROL_PLANE_SERVICE_TOKEN:?Set OPL_CONTROL_PLANE_SERVICE_TOKEN}",
+    "${OPL_FABRIC_SERVICE_TOKEN:?Set OPL_FABRIC_SERVICE_TOKEN}",
+    "${OPL_LEDGER_SERVICE_TOKEN:?Set OPL_LEDGER_SERVICE_TOKEN}"
+  ]);
+  assert.equal(new Set(serverTokens).size, 3);
+  assert.equal(controlPlaneEnvironment.OPL_FABRIC_SERVICE_TOKEN, serverTokens[1]);
+  assert.equal(controlPlaneEnvironment.OPL_LEDGER_SERVICE_TOKEN, serverTokens[2]);
+  const portableEnvironment = await readFile("deploy/portable/opl-cloud.env.example", "utf8");
+  assert.doesNotMatch(portableEnvironment, /^OPL_INTERNAL_SERVICE_TOKEN=/m);
+  const exampleTokens: string[] = [];
+  for (const token of ["CONTROL_PLANE", "FABRIC", "LEDGER"]) {
+    const match = portableEnvironment.match(new RegExp(`^OPL_${token}_SERVICE_TOKEN=(.+)$`, "m"));
+    assert.ok(match);
+    assert.match(match[1], new RegExp(`^<replace-with-independent-${token.toLowerCase().replace("_", "-")}-32-plus-random-chars>$`));
+    exampleTokens.push(match[1]);
+  }
+  assert.equal(new Set(exampleTokens).size, 3);
   const postgresInit = compose.configs["opl-postgres-init"].content as string;
   assert.match(postgresInit, /PostgreSQL passwords must contain at least 32 characters/);
   assert.match(postgresInit, /PostgreSQL administrator and service passwords must be distinct/);
