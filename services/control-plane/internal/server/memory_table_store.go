@@ -765,31 +765,6 @@ func (s *memoryTableStore) PersistWorkspaceRenewal(_ context.Context, update wor
 	return nil
 }
 
-func (s *memoryTableStore) ActivateWorkspace(_ context.Context, row map[string]any) (map[string]any, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	id := stringValue(row["id"])
-	prepared, err := prepareWorkspaceActivation(
-		row,
-		s.users[stringValue(row["ownerUserId"])],
-		s.computes[stringValue(row["currentComputeAllocationId"])],
-		s.storages[stringValue(row["storageId"])],
-		s.attachments[stringValue(row["currentAttachmentId"])],
-		s.workspaces[id],
-	)
-	if err != nil {
-		return nil, err
-	}
-	if _, ok := prepared["customerProduct"]; !ok {
-		prepared["customerProduct"] = true
-	}
-	access := cloneMap(mapField(prepared, "access"))
-	delete(access, "password")
-	prepared["access"] = access
-	s.workspaces[id] = cloneMap(prepared)
-	return cloneMap(prepared), nil
-}
-
 func (s *memoryTableStore) ActivateWorkspaceLaunchProjection(_ context.Context, row map[string]any) (map[string]any, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

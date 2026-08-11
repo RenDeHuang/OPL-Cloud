@@ -36,65 +36,14 @@ type billingReviewResolutionInput struct {
 }
 
 func monthlyPreflightConfirmed(input clients.MonthlyPreflightInput, result clients.MonthlyPreflight) bool {
-	if result.ResourceType != input.ResourceType || result.PackageID != input.PackageID || result.SizeGB != input.SizeGB ||
-		!result.Available || result.ChargeType != "PREPAID" || result.PeriodMonths != 1 ||
-		result.RenewFlag != "NOTIFY_AND_MANUAL_RENEW" || result.ProviderPriceCNY <= 0 ||
-		strings.TrimSpace(input.Zone) == "" || result.Zone != input.Zone ||
-		(input.ResourceType == "compute" && strings.TrimSpace(result.NodePoolID) == "") {
-		return false
-	}
-	requestIDs := []string{"nodePool", "subnets", "availability"}
-	if input.ResourceType == "storage" {
-		requestIDs = []string{"quota", "price"}
-	}
-	for _, key := range requestIDs {
-		if strings.TrimSpace(result.ProviderRequestIDs[key]) == "" {
-			return false
-		}
-	}
-	return true
+	return result.ResourceType == input.ResourceType && result.PackageID == input.PackageID && result.SizeGB == input.SizeGB &&
+		result.Zone == input.Zone && result.Available
 }
 
 func monthlyChargeConfirmationMatches(confirmation map[string]any, code string, userID, chargeUSDMicros int64) bool {
 	return len(confirmation) == 4 && code != "" && chargeUSDMicros > 0 && stringValue(confirmation["code"]) == code &&
 		numberField(confirmation, "userId", -1) == float64(userID) && numberField(confirmation, "chargeUsdMicros", -1) == float64(chargeUSDMicros) &&
 		stringValue(confirmation["status"]) == "used"
-}
-
-func monthlyReadbackIdentityMatches(row map[string]any, id, accountID, workspaceID string) bool {
-	return id == stringValue(row["id"]) && accountID == stringValue(row["accountId"]) && workspaceID == stringValue(row["workspaceId"])
-}
-
-func monthlyPurchaseReadbackConfirmed(resourceType string, row, facts map[string]any) bool {
-	if !monthlyResourcePrepared(resourceType, facts) || stringValue(facts["providerRequestId"]) == "" {
-		return false
-	}
-	deadline, err := monthlyProviderDeadline(facts)
-	periodStart, startErr := time.Parse(time.RFC3339, stringValue(row["periodStart"]))
-	paidThrough, paidErr := time.Parse(time.RFC3339, stringValue(row["paidThrough"]))
-	minimumDeadline := time.Date(paidThrough.Year(), paidThrough.Month(), paidThrough.Day(), 0, 0, 0, 0, time.UTC)
-	zone := firstNonEmpty(stringValue(facts["zone"]), providerDataValue(facts, "zone"))
-	chargeType := firstNonEmpty(stringValue(facts["chargeType"]), providerDataValue(facts, "chargeType"))
-	renewFlag := firstNonEmpty(stringValue(facts["renewFlag"]), providerDataValue(facts, "renewFlag"))
-	if err != nil || startErr != nil || paidErr != nil || !deadline.After(periodStart) || deadline.Before(minimumDeadline) || zone == "" || zone != stringValue(row["zone"]) || chargeType != "PREPAID" || renewFlag != "NOTIFY_AND_MANUAL_RENEW" {
-		return false
-	}
-	if resourceType == "compute" {
-		instanceType, providerInstanceType := stringValue(facts["instanceType"]), providerDataValue(facts, "instanceType")
-		expectedInstanceType := monthlyComputeInstanceType(stringValue(row["packageId"]))
-		return stringValue(facts["providerResourceId"]) != "" && stringValue(facts["packageId"]) == stringValue(row["packageId"]) &&
-			firstNonEmpty(stringValue(facts["instanceId"]), stringValue(facts["cvmInstanceId"])) != "" &&
-			expectedInstanceType != "" && instanceType == expectedInstanceType && providerInstanceType == expectedInstanceType
-	}
-	return strings.HasPrefix(stringValue(facts["providerResourceId"]), "disk-") && stringValue(facts["diskType"]) != "" &&
-		(stringValue(facts["cbsStatus"]) == "UNATTACHED" || stringValue(facts["cbsStatus"]) == "ATTACHED") &&
-		int(numberField(facts, "sizeGb", 0)) == int(numberField(row, "sizeGb", 0))
-}
-
-func monthlyProviderDeadline(row map[string]any) (time.Time, error) {
-	value := strings.TrimSpace(firstNonEmpty(stringValue(row["deadline"]), providerDataValue(row, "deadline")))
-	deadline, err := time.Parse(time.RFC3339, value)
-	return deadline.UTC(), err
 }
 
 func (app *controlPlaneServer) sub2APIUserID(ctx context.Context, accountID string) (int64, error) {
@@ -116,14 +65,6 @@ func (app *controlPlaneServer) sub2APIUserID(ctx context.Context, accountID stri
 	return 0, errMonthlyAccountUnmapped
 }
 
-func monthlyResourcePrepared(resourceType string, row map[string]any) bool {
-	status := stringValue(row["status"])
-	if resourceType == "storage" {
-		return (status == "available" || status == "ready") && stringValue(row["providerResourceId"]) != ""
-	}
-	return (status == "running" || status == "ready") && firstNonEmpty(stringValue(row["providerResourceId"]), stringValue(row["instanceId"]), stringValue(row["cvmInstanceId"])) != ""
-}
-
 func monthlyResourceInProgress(row map[string]any) bool {
 	switch stringValue(row["status"]) {
 	case "provisioning", "pending", "creating":
@@ -131,13 +72,6 @@ func monthlyResourceInProgress(row map[string]any) bool {
 	default:
 		return false
 	}
-}
-
-func monthlyResourceConfirmedAbsent(resourceType string, row map[string]any) bool {
-	if stringValue(row["status"]) != "external_deleted" {
-		return false
-	}
-	return resourceType == "compute" || stringValue(row["cbsStatus"]) == "NOT_FOUND"
 }
 
 func monthlyResourceType(row map[string]any) string {
@@ -208,18 +142,6 @@ func requiredPositiveInteger(input map[string]any, key string) (int64, bool) {
 
 func monthlyEnvironment() string { return os.Getenv("NODE_ENV") }
 
-func monthlyComputeLaunchZone() string { return strings.TrimSpace(os.Getenv("OPL_TENCENT_ZONE")) }
-
-func monthlyComputeInstanceType(packageID string) string {
-	if packageID == "pro" {
-		return strings.TrimSpace(os.Getenv("OPL_PRO_COMPUTE_INSTANCE_TYPE"))
-	}
-	if packageID == "basic" {
-		return strings.TrimSpace(os.Getenv("OPL_BASIC_COMPUTE_INSTANCE_TYPE"))
-	}
-	return ""
-}
-
 func nextBillingMonth(current time.Time, anchorDay int) time.Time {
 	current = current.UTC()
 	year, month := current.Year(), current.Month()+1
@@ -245,11 +167,4 @@ func monthlyRefundCode(environment, operationID string) string {
 		environment = "local"
 	}
 	return "opl:" + stableID("sub2api-monthly-refund-v1", environment, operationID)[:28]
-}
-
-func monthlyDesiredStatus(resourceType string) string {
-	if resourceType == "storage" {
-		return "available"
-	}
-	return "running"
 }

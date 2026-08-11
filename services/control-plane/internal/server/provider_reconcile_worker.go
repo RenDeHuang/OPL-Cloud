@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"opl-cloud/services/control-plane/internal/clients"
 	"opl-cloud/services/control-plane/internal/controlplane"
 )
 
@@ -70,12 +71,6 @@ func (app *controlPlaneServer) runProviderReconcileOnce(ctx context.Context, ser
 	if err := app.runWorkspaceLaunchesOnce(ctx, service); err != nil {
 		errs = append(errs, err)
 	}
-	operations, err := service.FabricOperations(ctx)
-	if err != nil {
-		errs = append(errs, err)
-	} else if err := app.rememberRuntimeOperations(operations); err != nil {
-		errs = append(errs, err)
-	}
 	for _, row := range app.listComputes("") {
 		if err := app.reconcileMonthlyCompute(ctx, service, row, now); err != nil {
 			errs = append(errs, err)
@@ -100,11 +95,19 @@ func (app *controlPlaneServer) reconcileMonthlyCompute(ctx context.Context, serv
 	if row, ok = app.getCompute(id); !ok || !providerSyncDue(row, now) {
 		return nil
 	}
-	result, err := service.SyncMonthlyCompute(ctx, id)
+	input := clients.ProviderFactInput{
+		AccountID: stringValue(row["accountId"]), WorkspaceID: stringValue(row["workspaceId"]),
+		ResourceType: "compute", ResourceID: id,
+	}
+	fact, err := readProviderFact(ctx, service, input)
 	if err != nil {
 		return app.saveComputeFact(providerSyncFacts(row, err))
 	}
-	readback := computeResponse(mergeMaps(row, structToMap(result)))
+	absent := providerFactConfirmedAbsent(input, fact)
+	if !fact.Available || fact.ErrorCode != "" || providerFactResultKey(fact) != providerFactKey(input) || (!absent && fact.Facts.ProviderID == "") {
+		return app.saveComputeFact(providerSyncFacts(row, errProviderFactsInvalid))
+	}
+	readback := projectProviderFact(row, fact)
 	preserveHistoricalBillingStatus(readback, row)
 	return app.saveComputeFact(providerSyncFacts(readback, nil))
 }
@@ -120,11 +123,19 @@ func (app *controlPlaneServer) reconcileMonthlyStorage(ctx context.Context, serv
 	if row, ok = app.getStorage(id); !ok || !providerSyncDue(row, now) {
 		return nil
 	}
-	result, err := service.SyncMonthlyStorage(ctx, id)
+	input := clients.ProviderFactInput{
+		AccountID: stringValue(row["accountId"]), WorkspaceID: stringValue(row["workspaceId"]),
+		ResourceType: "storage", ResourceID: id,
+	}
+	fact, err := readProviderFact(ctx, service, input)
 	if err != nil {
 		return app.saveStorageFact(providerSyncFacts(row, err))
 	}
-	readback := storageResponse(mergeMaps(row, structToMap(result)))
+	absent := providerFactConfirmedAbsent(input, fact)
+	if !fact.Available || fact.ErrorCode != "" || providerFactResultKey(fact) != providerFactKey(input) || (!absent && fact.Facts.ProviderID == "") {
+		return app.saveStorageFact(providerSyncFacts(row, errProviderFactsInvalid))
+	}
+	readback := projectProviderFact(row, fact)
 	preserveHistoricalBillingStatus(readback, row)
 	return app.saveStorageFact(providerSyncFacts(readback, nil))
 }

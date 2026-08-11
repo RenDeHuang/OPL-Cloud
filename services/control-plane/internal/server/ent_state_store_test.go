@@ -1589,125 +1589,6 @@ func TestPostgresSaveWorkspaceUpdatesWithoutDeleteInsert(t *testing.T) {
 	}
 }
 
-func seedPostgresWorkspaceActivation(t *testing.T, store *postgresEntStateStore, ownerStatus string, mutateAttachment func(map[string]any)) map[string]any {
-	t.Helper()
-	ctx := context.Background()
-	account, owner, organization, membership := provisionedAccountRowsFor("acct-renewal", "usr-renewal", "org-renewal", "renewal-owner@example.com", 41)
-	mustStore(t, store.CreateProvisionedAccount(ctx, account, owner, organization, membership))
-	if ownerStatus != "active" {
-		owner["status"] = ownerStatus
-		mustStore(t, store.ApplyUserLifecycle(ctx, owner))
-	}
-	mustStore(t, store.SaveWorkspace(ctx, map[string]any{
-		"id": "ws-renewal", "accountId": "acct-renewal", "ownerAccountId": "acct-renewal", "ownerUserId": "usr-renewal",
-		"state": "provisioning", "status": "provisioning",
-	}))
-	mustStore(t, store.SaveCompute(ctx, map[string]any{
-		"id": "compute-renewal", "accountId": "acct-renewal", "ownerUserId": "usr-renewal", "workspaceId": "ws-renewal",
-		"status": "running", "billingStatus": "active", "paidThrough": "2026-09-17T01:02:03Z",
-	}))
-	mustStore(t, store.SaveStorage(ctx, map[string]any{
-		"id": "storage-renewal", "accountId": "acct-renewal", "ownerUserId": "usr-renewal", "workspaceId": "ws-renewal",
-		"status": "available", "billingStatus": "active", "paidThrough": "2026-09-17T01:02:03Z",
-	}))
-	attachment := map[string]any{
-		"id": "attachment-renewal", "accountId": "acct-renewal", "workspaceId": "ws-renewal",
-		"computeAllocationId": "compute-renewal", "storageId": "storage-renewal", "status": "attached",
-	}
-	mutateAttachment(attachment)
-	mustStore(t, store.SaveAttachment(ctx, attachment))
-	workspace := canonicalWorkspaceRenewalRow(true)
-	workspace["state"], workspace["status"] = "running", "running"
-	workspace["attachmentId"], workspace["currentAttachmentId"] = "attachment-renewal", "attachment-renewal"
-	return workspace
-}
-
-func TestPostgresActivateWorkspaceRevalidatesOwnerAndAttachment(t *testing.T) {
-
-	t.Run("disabled owner disables renewal atomically", func(t *testing.T) {
-		store, _ := newPostgresWorkspaceRenewalStoreWithDB(t)
-		workspace := seedPostgresWorkspaceActivation(t, store, "disabled", func(map[string]any) {})
-		activated, err := store.ActivateWorkspace(context.Background(), workspace)
-		if err != nil {
-			t.Fatal(err)
-		}
-		rows, listErr := store.ListWorkspaces(context.Background(), "acct-renewal")
-		if listErr != nil || activated["autoRenew"] != false || len(rows) != 1 || rows[0]["state"] != "running" || rows[0]["autoRenew"] != false {
-			t.Fatalf("disabled-owner activation=%#v rows=%#v err=%v", activated, rows, listErr)
-		}
-	})
-
-	for _, test := range []struct {
-		name   string
-		mutate func(map[string]any)
-	}{
-		{name: "detached", mutate: func(row map[string]any) { row["status"] = "detached" }},
-		{name: "identity mismatch", mutate: func(row map[string]any) { row["storageId"] = "storage-other" }},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			store, _ := newPostgresWorkspaceRenewalStoreWithDB(t)
-			workspace := seedPostgresWorkspaceActivation(t, store, "active", test.mutate)
-			if _, err := store.ActivateWorkspace(context.Background(), workspace); !errors.Is(err, errWorkspaceActivationConflict) {
-				t.Fatalf("activation error = %v, want %v", err, errWorkspaceActivationConflict)
-			}
-			rows, err := store.ListWorkspaces(context.Background(), "acct-renewal")
-			if err != nil || len(rows) != 1 || rows[0]["state"] != "provisioning" || workspaceAcceptedBillingState(rows[0]) != nil {
-				t.Fatalf("rejected activation changed draft: rows=%#v err=%v", rows, err)
-			}
-		})
-	}
-}
-
-func TestPostgresActivateWorkspaceWaitsForLockedAttachment(t *testing.T) {
-	store, db := newPostgresWorkspaceRenewalStoreWithDB(t)
-	workspace := seedPostgresWorkspaceActivation(t, store, "active", func(map[string]any) {})
-	ctx := context.Background()
-	blocker, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = blocker.Rollback() }()
-	result, err := blocker.ExecContext(ctx, `UPDATE control_plane_storage_attachments SET status = 'detached' WHERE id = 'attachment-renewal'`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if affected, err := result.RowsAffected(); err != nil || affected != 1 {
-		t.Fatalf("lock Attachment rows=%d err=%v", affected, err)
-	}
-	type activationResult struct {
-		row map[string]any
-		err error
-	}
-	done := make(chan activationResult, 1)
-	started := make(chan struct{})
-	go func() {
-		close(started)
-		row, err := store.ActivateWorkspace(ctx, workspace)
-		done <- activationResult{row: row, err: err}
-	}()
-	<-started
-	select {
-	case early := <-done:
-		t.Fatalf("activation returned before locked detach committed: row=%#v err=%v", early.row, early.err)
-	case <-time.After(time.Second):
-	}
-	if err := blocker.Commit(); err != nil {
-		t.Fatal(err)
-	}
-	select {
-	case activated := <-done:
-		if !errors.Is(activated.err, errWorkspaceActivationConflict) || activated.row != nil {
-			t.Fatalf("activation after detach = row=%#v err=%v", activated.row, activated.err)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("activation remained blocked after detach commit")
-	}
-	rows, err := store.ListWorkspaces(ctx, "acct-renewal")
-	if err != nil || len(rows) != 1 || rows[0]["state"] != "provisioning" || workspaceAcceptedBillingState(rows[0]) != nil {
-		t.Fatalf("detached activation changed draft: rows=%#v err=%v", rows, err)
-	}
-}
-
 func TestPostgresSaveWorkspaceReReadsAfterLockedLifecycleChange(t *testing.T) {
 	store, db := newPostgresWorkspaceRenewalStoreWithDB(t)
 	ctx := context.Background()
@@ -2581,7 +2462,10 @@ func TestControlPlaneOperationalFactsSurviveServerRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	seedTenantMember(t, first.tables, "acct-alpha", "org-alpha", "usr-alpha", "alpha@example.com")
-	if err := first.rememberRuntimeOperations([]clients.FabricOperation{{ID: "fabric-op-alpha", OperationID: "operation-alpha", WorkspaceID: "ws-alpha", ResourceID: "compute-alpha", ResourceKind: "compute_allocation", Status: "failed", ErrorCode: "compute_machine_unavailable", RedactedProviderPayload: map[string]any{"costTags": map[string]any{"opl_operation_id": "operation-alpha"}}}}); err != nil {
+	if err := first.tables.SaveRuntimeOperation(context.Background(), map[string]any{
+		"id": "runtime-op-alpha", "operationId": "operation-alpha", "accountId": "acct-alpha", "workspaceId": "ws-alpha",
+		"resourceId": "compute-alpha", "resourceKind": "compute_allocation", "action": "workspace.renewal", "status": "failed", "result": "provider_readback_unavailable",
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if err := first.rememberReconciliation(clients.ReconciliationResult{ID: "reconcile-alpha", Status: "mismatch", BlockNewWorkspaces: true, Reason: "provider_cost_gap"}); err != nil {
@@ -2597,12 +2481,8 @@ func TestControlPlaneOperationalFactsSurviveServerRestart(t *testing.T) {
 		t.Fatalf("admin facts did not survive restart: %#v", state)
 	}
 	operation := state["runtimeOperations"].([]any)[0].(map[string]any)
-	payload := operation["redactedProviderPayload"].(map[string]any)
-	if payload["costTags"].(map[string]any)["opl_operation_id"] != "operation-alpha" {
-		t.Fatalf("runtime evidence did not survive restart: %#v", operation)
-	}
-	if operation["errorCode"] != "compute_machine_unavailable" {
-		t.Fatalf("runtime error code did not survive restart: %#v", operation)
+	if operation["operationId"] != "operation-alpha" || operation["result"] != "provider_readback_unavailable" {
+		t.Fatalf("runtime operation did not survive restart: %#v", operation)
 	}
 	reconciliation := state["billingReconciliation"].(map[string]any)
 	guard := reconciliation["guard"].(map[string]any)

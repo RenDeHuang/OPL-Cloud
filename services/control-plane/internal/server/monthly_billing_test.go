@@ -6,7 +6,6 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -215,41 +214,36 @@ func (s *monthlySub2API) FinancialBalanceHistoryByCodes(context.Context, int64, 
 
 type monthlyFabric struct {
 	fakeFabricClient
-	events                *[]string
-	createErr             error
-	cleanupErr            error
-	cleanupStatus         string
-	computeCleanupStatus  string
-	computeCleanupSync    clients.ComputeAllocation
-	computeCleanupSyncErr error
-	computeCleanupStarted bool
-	computeDestroyed      bool
-	syncErr               error
-	computeReadResults    []clients.ComputeAllocation
-	computeReadErrors     []error
-	preflightResult       *clients.MonthlyPreflight
-	preflightResults      []clients.MonthlyPreflight
-	preflightErr          error
-	preflightInputs       []clients.MonthlyPreflightInput
-	mutateCompute         func(*clients.ComputeAllocation)
-	mutateStorage         func(*clients.StorageVolume)
-	computeIDs            []string
-	computeInputs         []clients.ComputeAllocationInput
-	computeCreateKeys     []string
-	storageIDs            []string
-	storageCreateKeys     []string
-	storageInputs         []clients.StorageVolumeInput
-	storageCreateErr      error
-	computeSync           clients.ComputeAllocation
-	storageSync           clients.StorageVolume
-	storageSyncErr        error
-	computeRenew          clients.ComputeAllocation
-	storageRenew          clients.StorageVolume
-	computeRenewErr       error
-	storageRenewErr       error
-	computeRenewKeys      []string
-	storageRenewKeys      []string
-	afterRuntime          func()
+	events             *[]string
+	createErr          error
+	computeDestroyed   bool
+	syncErr            error
+	computeReadResults []clients.ComputeAllocation
+	computeReadErrors  []error
+	preflightResult    *clients.MonthlyPreflight
+	preflightResults   []clients.MonthlyPreflight
+	preflightErr       error
+	preflightInputs    []clients.MonthlyPreflightInput
+	mutateCompute      func(*clients.ComputeAllocation)
+	mutateStorage      func(*clients.StorageVolume)
+	computeIDs         []string
+	computeInputs      []clients.ComputeAllocationInput
+	computeCreateKeys  []string
+	storageIDs         []string
+	storageCreateKeys  []string
+	storageInputs      []clients.StorageVolumeInput
+	storageCreateErr   error
+	computeSync        clients.ComputeAllocation
+	storageSync        clients.StorageVolume
+	storageSyncErr     error
+	computeRenew       clients.ComputeAllocation
+	storageRenew       clients.StorageVolume
+	computeRenewErr    error
+	storageRenewErr    error
+	computeRenewKeys   []string
+	storageRenewKeys   []string
+	providerFactInputs []clients.ProviderFactsBatchInput
+	afterRuntime       func()
 }
 
 func (f *monthlyFabric) CreateWorkspaceRuntime(ctx context.Context, input clients.WorkspaceRuntimeInput, key string) (clients.WorkspaceRuntime, error) {
@@ -273,40 +267,19 @@ func (f *monthlyFabric) MonthlyPreflight(_ context.Context, input clients.Monthl
 	if f.preflightResult != nil {
 		return *f.preflightResult, f.preflightErr
 	}
-	requestIDs := map[string]string{"quota": "quota-request", "price": "price-request"}
-	if input.ResourceType == "compute" {
-		requestIDs = map[string]string{"nodePool": "node-pool-request", "subnets": "subnets-request", "availability": "availability-request"}
-	}
-	result := clients.MonthlyPreflight{
+	return clients.MonthlyPreflight{
 		ResourceType: input.ResourceType, PackageID: input.PackageID, SizeGB: input.SizeGB, Zone: input.Zone,
 		Available: true, ChargeType: "PREPAID", PeriodMonths: 1, RenewFlag: "NOTIFY_AND_MANUAL_RENEW",
-		ProviderPriceCNY: 12.34, ProviderRequestIDs: requestIDs,
-	}
-	if input.ResourceType == "compute" {
-		setMonthlyPreflightNodePoolID(&result, "np-"+input.PackageID)
-	}
-	return result, f.preflightErr
+		ProviderPriceCNY: 12.34,
+	}, f.preflightErr
 }
 
-func setMonthlyPreflightNodePoolID(result *clients.MonthlyPreflight, nodePoolID string) {
-	field := reflect.ValueOf(result).Elem().FieldByName("NodePoolID")
-	if field.IsValid() && field.CanSet() {
-		field.SetString(nodePoolID)
-	}
-}
-
-func monthlyPreflightResult(input clients.MonthlyPreflightInput, nodePoolID string) clients.MonthlyPreflight {
-	requestIDs := map[string]string{"quota": "quota-request", "price": "price-request"}
-	if input.ResourceType == "compute" {
-		requestIDs = map[string]string{"nodePool": "node-pool-request", "subnets": "subnets-request", "availability": "availability-request"}
-	}
-	result := clients.MonthlyPreflight{
+func monthlyPreflightResult(input clients.MonthlyPreflightInput, _ string) clients.MonthlyPreflight {
+	return clients.MonthlyPreflight{
 		ResourceType: input.ResourceType, PackageID: input.PackageID, SizeGB: input.SizeGB, Zone: input.Zone,
 		Available: true, ChargeType: "PREPAID", PeriodMonths: 1, RenewFlag: "NOTIFY_AND_MANUAL_RENEW",
-		ProviderPriceCNY: 12.34, ProviderRequestIDs: requestIDs,
+		ProviderPriceCNY: 12.34,
 	}
-	setMonthlyPreflightNodePoolID(&result, nodePoolID)
-	return result
 }
 
 func (f *monthlyFabric) CreateComputeAllocation(_ context.Context, input clients.ComputeAllocationInput, key string) (clients.ComputeAllocation, error) {
@@ -317,11 +290,7 @@ func (f *monthlyFabric) CreateComputeAllocation(_ context.Context, input clients
 	if f.createErr != nil {
 		return clients.ComputeAllocation{ID: input.ID}, f.createErr
 	}
-	instanceType := "S5.MEDIUM4"
-	if input.PackageID == "pro" {
-		instanceType = "SA5.2XLARGE16"
-	}
-	result := clients.ComputeAllocation{ID: input.ID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, PackageID: input.PackageID, Status: "running", Provider: "tencent-tke", ProviderResourceID: "ins-" + input.ID, ProviderRequestID: "req-" + input.ID, InstanceID: "ins-" + input.ID, InstanceType: instanceType, Zone: "ap-shanghai-2", ChargeType: "PREPAID", RenewFlag: "NOTIFY_AND_MANUAL_RENEW", Deadline: "2099-01-01T00:00:00Z", ProviderData: map[string]string{"zone": "ap-shanghai-2", "instanceType": instanceType}}
+	result := clients.ComputeAllocation{ID: input.ID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, PackageID: input.PackageID, Status: "running", Provider: "fabric", ProviderResourceID: "provider-" + input.ID, ProviderRequestID: "req-" + input.ID, Zone: "provider-zone", Deadline: "2099-01-01T00:00:00Z"}
 	if f.mutateCompute != nil {
 		f.mutateCompute(&result)
 	}
@@ -329,9 +298,6 @@ func (f *monthlyFabric) CreateComputeAllocation(_ context.Context, input clients
 }
 
 func (f *monthlyFabric) CreateStorageVolume(_ context.Context, input clients.StorageVolumeInput, key string) (clients.StorageVolume, error) {
-	if input.ExpectedRecoveryState == "storage_attempt_unknown" {
-		return clients.StorageVolume{ID: input.ID}, errors.New("storage_recovery_expectation_invalid")
-	}
 	*f.events = append(*f.events, "fabric.storage.prepare")
 	f.storageIDs = append(f.storageIDs, input.ID)
 	f.storageCreateKeys = append(f.storageCreateKeys, key)
@@ -342,7 +308,7 @@ func (f *monthlyFabric) CreateStorageVolume(_ context.Context, input clients.Sto
 	if f.createErr != nil {
 		return clients.StorageVolume{ID: input.ID}, f.createErr
 	}
-	result := clients.StorageVolume{ID: input.ID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, SizeGB: input.SizeGB, Status: "available", Provider: "tencent-tke", ProviderResourceID: "disk-" + input.ID, ProviderRequestID: "req-" + input.ID, CBSStatus: "UNATTACHED", DiskType: "CLOUD_PREMIUM", RenewFlag: "NOTIFY_AND_MANUAL_RENEW", Deadline: "2099-01-01T00:00:00Z", Zone: input.Zone, ProviderData: map[string]string{"chargeType": "PREPAID"}}
+	result := clients.StorageVolume{ID: input.ID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, SizeGB: input.SizeGB, Status: "available", Provider: "fabric", ProviderResourceID: "provider-" + input.ID, ProviderRequestID: "req-" + input.ID, Deadline: "2099-01-01T00:00:00Z", Zone: input.Zone}
 	if f.mutateStorage != nil {
 		f.mutateStorage(&result)
 	}
@@ -351,44 +317,12 @@ func (f *monthlyFabric) CreateStorageVolume(_ context.Context, input clients.Sto
 
 func (f *monthlyFabric) SyncComputeAllocation(_ context.Context, id string) (clients.ComputeAllocation, error) {
 	*f.events = append(*f.events, "fabric.compute.sync")
-	if f.computeCleanupStarted {
-		result := f.computeCleanupSync
-		if result.ID == "" {
-			result.ID = id
-		}
-		if result.Status == "" {
-			result.Status = "destroyed"
-		}
-		if isTerminalResourceStatus(result.Status) || result.Status == "stopped" {
-			f.computeCleanupStarted = false
-			f.computeDestroyed = true
-		}
-		return result, f.computeCleanupSyncErr
-	}
 	if f.computeDestroyed {
 		return clients.ComputeAllocation{ID: id, AccountID: "acct-monthly", WorkspaceID: "workspace-monthly", Status: "external_deleted"}, nil
 	}
 	result := f.computeSync
 	if result.ID == "" {
 		result.ID = id
-	}
-	return result, f.syncErr
-}
-
-func (f *monthlyFabric) GetComputeAllocation(_ context.Context, id string) (clients.ComputeAllocation, error) {
-	*f.events = append(*f.events, "fabric.compute.get")
-	result := f.computeSync
-	if len(f.computeReadResults) > 0 {
-		result = f.computeReadResults[0]
-		f.computeReadResults = f.computeReadResults[1:]
-	}
-	if result.ID == "" {
-		result.ID = id
-	}
-	if len(f.computeReadErrors) > 0 {
-		err := f.computeReadErrors[0]
-		f.computeReadErrors = f.computeReadErrors[1:]
-		return result, err
 	}
 	return result, f.syncErr
 }
@@ -405,68 +339,115 @@ func (f *monthlyFabric) SyncStorageVolume(_ context.Context, id string) (clients
 	return result, f.syncErr
 }
 
-func (f *monthlyFabric) GetStorageVolume(_ context.Context, id string) (clients.StorageVolume, error) {
-	*f.events = append(*f.events, "fabric.storage.get")
-	result := f.storageSync
-	if result.ID == "" {
-		result.ID = id
+func (f *monthlyFabric) ProviderFactsBatch(_ context.Context, input clients.ProviderFactsBatchInput) (clients.ProviderFactsBatch, error) {
+	*f.events = append(*f.events, "fabric.provider-facts")
+	f.providerFactInputs = append(f.providerFactInputs, input)
+	result := clients.ProviderFactsBatch{Items: make([]clients.ProviderFact, 0, len(input.Items))}
+	for _, item := range input.Items {
+		if item.ResourceType == "compute" {
+			row, err := f.computeProviderFactRow(len(input.Items) > 1)
+			if err != nil {
+				return clients.ProviderFactsBatch{}, err
+			}
+			result.Items = append(result.Items, providerFactFromComputeFixture(item, row))
+			continue
+		}
+		row := f.storageSync
+		if len(input.Items) > 1 || row.ID == "" {
+			row = f.storageRenew
+		}
+		if f.storageSyncErr != nil && len(input.Items) == 1 {
+			return clients.ProviderFactsBatch{}, f.storageSyncErr
+		}
+		if f.syncErr != nil && len(input.Items) == 1 {
+			return clients.ProviderFactsBatch{}, f.syncErr
+		}
+		result.Items = append(result.Items, providerFactFromStorageFixture(item, row))
 	}
-	if f.storageSyncErr != nil {
-		return result, f.storageSyncErr
-	}
-	return result, f.syncErr
+	return result, nil
 }
 
-func TestReadMonthlyStorageRequiresDedicatedReadCapability(t *testing.T) {
-	calls := []string{}
-	service := controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{calls: &calls}, &testSub2APIClient{})
-	_, err := service.ReadMonthlyStorage(context.Background(), "storage-alpha")
-	if err == nil || err.Error() != "fabric_storage_volume_read_unavailable" {
-		t.Fatalf("missing storage reader err=%v", err)
+func (f *monthlyFabric) computeProviderFactRow(initial bool) (clients.ComputeAllocation, error) {
+	if initial {
+		return f.computeRenew, nil
 	}
-	if len(calls) != 0 {
-		t.Fatalf("missing storage reader fell back to Fabric mutation-capable call: %#v", calls)
+	row := f.computeSync
+	if len(f.computeReadResults) > 0 {
+		row = f.computeReadResults[0]
+		f.computeReadResults = f.computeReadResults[1:]
 	}
+	if row.ID == "" {
+		row = f.computeRenew
+	}
+	if len(f.computeReadErrors) > 0 {
+		err := f.computeReadErrors[0]
+		f.computeReadErrors = f.computeReadErrors[1:]
+		return row, err
+	}
+	return row, f.syncErr
 }
 
-func (f *monthlyFabric) RenewComputeAllocation(_ context.Context, id, key string) (clients.ComputeAllocation, error) {
+func providerFactFromComputeFixture(input clients.ProviderFactInput, row clients.ComputeAllocation) clients.ProviderFact {
+	fact := clients.ProviderFact{
+		AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, ResourceType: input.ResourceType, ResourceID: input.ResourceID,
+	}
+	if row.ProviderResourceID == "" && row.Status != "external_deleted" {
+		fact.ErrorCode = "provider_resource_not_found"
+		return fact
+	}
+	fact.Available = true
+	fact.Facts = clients.ProviderResourceFacts{
+		PackageOrSpec: firstNonEmpty(row.InstanceType, row.PackageID, "compute"), ProviderID: row.ProviderResourceID,
+		Zone: firstNonEmpty(row.Zone, "provider-zone"), Status: firstNonEmpty(row.Status, "running"),
+		ExpiresAt: firstNonEmpty(row.Deadline, "2099-01-01T00:00:00Z"), LastReadAt: "2026-08-12T00:00:00Z",
+	}
+	return fact
+}
+
+func providerFactFromStorageFixture(input clients.ProviderFactInput, row clients.StorageVolume) clients.ProviderFact {
+	fact := clients.ProviderFact{
+		AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, ResourceType: input.ResourceType, ResourceID: input.ResourceID,
+	}
+	if row.ProviderResourceID == "" && row.Status != "external_deleted" {
+		fact.ErrorCode = "provider_resource_not_found"
+		return fact
+	}
+	fact.Available = true
+	fact.Facts = clients.ProviderResourceFacts{
+		PackageOrSpec: firstNonEmpty(row.DiskType, "storage"), ProviderID: row.ProviderResourceID,
+		Zone: firstNonEmpty(row.Zone, "provider-zone"), Status: firstNonEmpty(row.Status, "available"),
+		ExpiresAt: firstNonEmpty(row.Deadline, "2099-01-01T00:00:00Z"), LastReadAt: "2026-08-12T00:00:00Z",
+	}
+	return fact
+}
+
+func (f *monthlyFabric) RenewComputeAllocation(_ context.Context, id, key string) (clients.ProviderResourceMutation, error) {
 	*f.events = append(*f.events, "fabric.compute.renew")
 	f.computeRenewKeys = append(f.computeRenewKeys, key)
 	if f.computeDestroyed {
-		return clients.ComputeAllocation{ID: id, AccountID: "acct-monthly", WorkspaceID: "workspace-monthly", Status: "external_deleted"}, errors.New("compute already destroyed")
+		return clients.ProviderResourceMutation{ID: id, AccountID: "acct-monthly", WorkspaceID: "workspace-monthly", Status: "external_deleted"}, errors.New("compute already destroyed")
 	}
 	result := f.computeRenew
 	if result.ID == "" {
-		result = clients.ComputeAllocation{ID: id, AccountID: "acct-monthly", WorkspaceID: "workspace-monthly", PackageID: "basic", Status: "running", ProviderResourceID: "ins-" + id, ProviderRequestID: "renew-" + id, InstanceID: "ins-" + id, CVMInstanceID: "ins-" + id, InstanceType: "S5.MEDIUM4", Zone: "ap-shanghai-2", ChargeType: "PREPAID", RenewFlag: "NOTIFY_AND_MANUAL_RENEW", Deadline: "2026-09-30T09:30:00Z", ProviderData: map[string]string{"chargeType": "PREPAID", "renewalResult": "renewed", "zone": "ap-shanghai-2", "instanceType": "S5.MEDIUM4"}}
+		result = clients.ComputeAllocation{ID: id, AccountID: "acct-monthly", WorkspaceID: "workspace-monthly", PackageID: "basic", Status: "running", ProviderResourceID: "provider-" + id, ProviderRequestID: "renew-" + id, Zone: "provider-zone", Deadline: "2026-09-30T09:30:00Z"}
 	}
-	return result, f.computeRenewErr
+	return providerResourceMutationFixture(result.ID, result.OperationID, result.AccountID, result.WorkspaceID, result.Status, result.ProviderRequestID), f.computeRenewErr
 }
 
-func (f *monthlyFabric) RenewStorageVolume(_ context.Context, id, key string) (clients.StorageVolume, error) {
+func (f *monthlyFabric) RenewStorageVolume(_ context.Context, id, key string) (clients.ProviderResourceMutation, error) {
 	*f.events = append(*f.events, "fabric.storage.renew")
 	f.storageRenewKeys = append(f.storageRenewKeys, key)
 	result := f.storageRenew
 	if result.ID == "" {
-		result = clients.StorageVolume{ID: id, AccountID: "acct-monthly", WorkspaceID: "workspace-monthly", Status: "available", ProviderResourceID: "disk-" + id, ProviderRequestID: "renew-" + id, CBSStatus: "UNATTACHED", SizeGB: 10, Zone: "ap-shanghai-2", RenewFlag: "NOTIFY_AND_MANUAL_RENEW", Deadline: "2026-09-30T09:30:00Z", ProviderData: map[string]string{"chargeType": "PREPAID", "renewalResult": "renewed", "zone": "ap-shanghai-2"}}
+		result = clients.StorageVolume{ID: id, AccountID: "acct-monthly", WorkspaceID: "workspace-monthly", Status: "available", ProviderResourceID: "provider-" + id, ProviderRequestID: "renew-" + id, SizeGB: 10, Zone: "provider-zone", Deadline: "2026-09-30T09:30:00Z"}
 	}
-	return result, f.storageRenewErr
+	return providerResourceMutationFixture(result.ID, result.OperationID, result.AccountID, result.WorkspaceID, result.Status, result.ProviderRequestID), f.storageRenewErr
 }
 
-func (f *monthlyFabric) DestroyComputeAllocation(_ context.Context, id, _ string) (clients.ComputeAllocation, error) {
-	*f.events = append(*f.events, "fabric.compute.cleanup")
-	if f.cleanupErr != nil {
-		return clients.ComputeAllocation{ID: id}, f.cleanupErr
+func providerResourceMutationFixture(id, operationID, accountID, workspaceID, status, providerRequestID string) clients.ProviderResourceMutation {
+	return clients.ProviderResourceMutation{
+		ID: id, OperationID: operationID, AccountID: accountID, WorkspaceID: workspaceID, Status: status, ProviderRequestID: providerRequestID,
 	}
-	f.computeCleanupStarted = true
-	return clients.ComputeAllocation{ID: id, Status: firstNonEmpty(f.computeCleanupStatus, "destroyed")}, nil
-}
-
-func (f *monthlyFabric) DestroyStorageVolume(_ context.Context, id, _ string) (clients.StorageVolume, error) {
-	*f.events = append(*f.events, "fabric.storage.cleanup")
-	if f.cleanupErr != nil {
-		return clients.StorageVolume{ID: id}, f.cleanupErr
-	}
-	return clients.StorageVolume{ID: id, Status: firstNonEmpty(f.cleanupStatus, "destroyed")}, nil
 }
 
 type monthlyLedger struct {
@@ -502,9 +483,6 @@ func (l *monthlyLedger) RecordReceipt(_ context.Context, input clients.ReceiptIn
 
 func newMonthlyBillingTest(t *testing.T, balances []int64) (*controlPlaneServer, *controlplane.Service, *monthlySub2API, *monthlyFabric, *monthlyLedger, *[]string) {
 	t.Helper()
-	t.Setenv("OPL_TENCENT_ZONE", "ap-shanghai-2")
-	t.Setenv("OPL_BASIC_COMPUTE_INSTANCE_TYPE", "S5.MEDIUM4")
-	t.Setenv("OPL_PRO_COMPUTE_INSTANCE_TYPE", "SA5.2XLARGE16")
 	events := &[]string{}
 	sub2API := &monthlySub2API{events: events, balances: balances}
 	fabric := &monthlyFabric{events: events}
@@ -515,28 +493,23 @@ func newMonthlyBillingTest(t *testing.T, balances []int64) (*controlPlaneServer,
 }
 
 func monthlyActiveResource(resourceType, id string, paidThrough time.Time) map[string]any {
-	status, providerID := "running", "ins-"+id
+	status, providerID := "running", "provider-"+id
 	if resourceType == "storage" {
-		status, providerID = "available", "disk-"+id
+		status, providerID = "available", "provider-"+id
 	}
 	row := map[string]any{
 		"id": id, "accountId": "acct-monthly", "workspaceId": "workspace-monthly", "packageId": "basic", "status": status,
-		"provider": "tencent-tke", "providerResourceId": providerID, "providerRequestId": "req-" + id,
+		"provider": "fabric", "providerResourceId": providerID, "providerRequestId": "req-" + id,
 		"billingStatus": "active", "billingOperationId": "purchase-" + id, "billingOperationStartedAt": paidThrough.AddDate(0, -1, 0).Format(time.RFC3339),
 		"sub2apiRedeemCode": "opl:test:purchase-" + id + ":charge:v1", "pricingVersion": pricingCatalogVersion,
 		"monthlyPriceCnyCents": int64(35000), "chargeUsdMicros": int64(50_000_000),
 		"billingAnchorDay": int64(paidThrough.Day()), "periodStart": paidThrough.AddDate(0, -1, 0).Format(time.RFC3339),
 		"paidThrough": paidThrough.Format(time.RFC3339), "autoRenew": true, "lastReceiptId": "receipt-purchase-" + id,
 		"postChargeBalanceKnown": true, "postChargeBalanceUsdMicros": int64(100_000_000),
-		"chargeType": "PREPAID", "renewFlag": "NOTIFY_AND_MANUAL_RENEW", "deadline": paidThrough.Format(time.RFC3339), "zone": "ap-shanghai-2",
-		"providerData": map[string]any{"chargeType": "PREPAID", "renewFlag": "NOTIFY_AND_MANUAL_RENEW", "deadline": paidThrough.Format(time.RFC3339), "zone": "ap-shanghai-2"},
 	}
 	if resourceType == "storage" {
-		row["sizeGb"], row["diskType"], row["cbsStatus"] = 10, "CLOUD_PREMIUM", "UNATTACHED"
+		row["sizeGb"] = 10
 		row["monthlyPriceCnyCents"], row["chargeUsdMicros"] = int64(1800), int64(2_580_000)
-	} else {
-		row["instanceId"], row["cvmInstanceId"], row["instanceType"] = providerID, providerID, "S5.MEDIUM4"
-		row["providerData"].(map[string]any)["instanceType"] = "S5.MEDIUM4"
 	}
 	return row
 }

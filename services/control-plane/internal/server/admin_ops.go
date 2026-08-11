@@ -2,12 +2,9 @@ package server
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"sort"
 	"time"
-
-	"opl-cloud/services/control-plane/internal/clients"
 )
 
 type auditActorContextKey struct{}
@@ -125,91 +122,6 @@ func (app *controlPlaneServer) auditEvent(r *http.Request, action string, resour
 		"createdAt":       now,
 	}
 	return event
-}
-
-func (app *controlPlaneServer) rememberRuntimeOperations(operations []clients.FabricOperation) error {
-	for _, operation := range operations {
-		row := structToMap(operation)
-		result := cloneMap(operation.RedactedProviderPayload)
-		if operation.ErrorCode != "" {
-			result["_fabricErrorCode"] = operation.ErrorCode
-		}
-		payload, err := json.Marshal(result)
-		if err != nil {
-			return err
-		}
-		row["result"] = string(payload)
-		if err := app.tables.SaveRuntimeOperation(context.Background(), row); err != nil {
-			return err
-		}
-		if err := app.rememberRuntimeOperationResource(row); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (app *controlPlaneServer) rememberRuntimeOperationResource(operation map[string]any) error {
-	status := stringValue(operation["status"])
-	if status != "succeeded" && status != "failed" {
-		return nil
-	}
-	payload, _ := operation["redactedProviderPayload"].(map[string]any)
-	resource, _ := payload["resource"].(map[string]any)
-	if len(resource) == 0 {
-		return nil
-	}
-	switch stringValue(operation["resourceKind"]) {
-	case "compute_allocation":
-		row := cloneMap(resource)
-		row["id"] = firstNonEmpty(stringValue(row["id"]), stringValue(operation["resourceId"]))
-		row["ownerAccountId"] = firstNonEmpty(stringValue(row["ownerAccountId"]), stringValue(row["accountId"]), stringValue(operation["accountId"]))
-		row["accountId"] = firstNonEmpty(stringValue(row["accountId"]), stringValue(row["ownerAccountId"]))
-		row["workspaceId"] = firstNonEmpty(stringValue(row["workspaceId"]), stringValue(operation["workspaceId"]))
-		if id := stringValue(row["id"]); id != "" {
-			if existing, ok := app.getCompute(id); ok {
-				row = mergeMaps(existing, row)
-			}
-			row = computeResponse(row)
-			if stringValue(row["accountId"]) == "" {
-				return nil
-			}
-			return app.tables.SaveCompute(context.Background(), row)
-		}
-	case "storage_volume":
-		row := cloneMap(resource)
-		row["id"] = firstNonEmpty(stringValue(row["id"]), stringValue(operation["resourceId"]))
-		row["ownerAccountId"] = firstNonEmpty(stringValue(row["ownerAccountId"]), stringValue(row["accountId"]), stringValue(operation["accountId"]))
-		row["accountId"] = firstNonEmpty(stringValue(row["accountId"]), stringValue(row["ownerAccountId"]))
-		row["workspaceId"] = firstNonEmpty(stringValue(row["workspaceId"]), stringValue(operation["workspaceId"]))
-		if id := stringValue(row["id"]); id != "" {
-			if existing, ok := app.getStorage(id); ok {
-				row = mergeMaps(existing, row)
-			}
-			row = storageResponse(row)
-			if stringValue(row["accountId"]) == "" {
-				return nil
-			}
-			return app.tables.SaveStorage(context.Background(), row)
-		}
-	case "storage_attachment":
-		row := attachmentResponse(cloneMap(resource), nil)
-		row["id"] = firstNonEmpty(stringValue(row["id"]), stringValue(operation["resourceId"]))
-		row["ownerAccountId"] = firstNonEmpty(stringValue(row["ownerAccountId"]), stringValue(row["accountId"]), stringValue(operation["accountId"]))
-		row["accountId"] = firstNonEmpty(stringValue(row["accountId"]), stringValue(row["ownerAccountId"]))
-		row["workspaceId"] = firstNonEmpty(stringValue(row["workspaceId"]), stringValue(operation["workspaceId"]))
-		if id := stringValue(row["id"]); id != "" {
-			if existing, ok := app.getAttachment(id); ok {
-				row = attachmentResponse(mergeMaps(existing, row), nil)
-			}
-			row["accountId"] = firstNonEmpty(stringValue(row["accountId"]), app.attachmentAccountID(row))
-			if stringValue(row["accountId"]) == "" {
-				return nil
-			}
-			return app.tables.SaveAttachment(context.Background(), row)
-		}
-	}
-	return nil
 }
 
 func runtimeOperationSummary(operations []map[string]any) map[string]any {

@@ -77,7 +77,7 @@ func (f *providerAcceptanceFabric) MonthlyPreflight(_ context.Context, input cli
 	return clients.MonthlyPreflight{
 		ResourceType: input.ResourceType, PackageID: input.PackageID, SizeGB: input.SizeGB, Zone: input.Zone,
 		Available: true, ChargeType: "PREPAID", PeriodMonths: 1, RenewFlag: "NOTIFY_AND_MANUAL_RENEW",
-		ProviderPriceCNY: 8.8, ProviderRequestIDs: map[string]string{"nodePool": "req-pool", "subnets": "req-subnets", "availability": "req-availability", "quota": "req-quota", "price": "req-price"},
+		ProviderPriceCNY: 8.8,
 	}, nil
 }
 
@@ -102,7 +102,7 @@ func (f *providerAcceptanceFabric) SyncComputeAllocation(_ context.Context, id s
 	f.compute = clients.ComputeAllocation{
 		ID: id, AccountID: accountID, WorkspaceID: workspaceID, PackageID: packageID,
 		Status: "running", Provider: "tencent-tke", ProviderResourceID: "node/slot-01", ProviderRequestID: "req-compute-slot",
-		NodePoolID: "np-verification-slot-01", InstanceID: "ins-verification-slot-01", CVMInstanceID: "ins-verification-slot-01", NodeName: "node-verification-slot-01",
+		NodePoolID: "np-verification-slot-01", InstanceID: "ins-verification-slot-01", CVMInstanceID: "ins-verification-slot-01",
 		InstanceType: instanceType, Zone: "ap-shanghai-2", ChargeType: "PREPAID", RenewFlag: "NOTIFY_AND_MANUAL_RENEW", Deadline: "2099-01-01T00:00:00Z",
 		ProviderData: map[string]string{"instanceType": instanceType, "zone": "ap-shanghai-2"},
 		CostTags:     providerAcceptanceTestTags(accountID, workspaceID, id, "op-compute-slot"),
@@ -764,7 +764,7 @@ func TestProviderAcceptanceCreatesOneFixedSlotAndReusesIt(t *testing.T) {
 	workspaces, _ := store.ListWorkspaces(context.Background(), testProviderAcceptanceAccount)
 	computes, _ := store.ListComputes(context.Background(), testProviderAcceptanceAccount)
 	storages, _ := store.ListStorages(context.Background(), testProviderAcceptanceAccount)
-	if len(workspaces) != 1 || workspaces[0]["verificationSlotId"] != "verification-slot-basic-01" || workspaces[0]["customerProduct"] != false {
+	if len(workspaces) != 1 || workspaces[0]["verificationSlotId"] != "verification-slot-basic-01" || workspaces[0]["customerProduct"] != false || workspaces[0]["provider"] != "tencent-tke" {
 		t.Fatalf("stored verification Workspace = %#v", workspaces)
 	}
 	if len(computes) != 1 || computes[0]["instanceType"] != "SA5.MEDIUM4" || computes[0]["chargeType"] != "PREPAID" || numberField(computes[0], "periodMonths", 0) != 1 {

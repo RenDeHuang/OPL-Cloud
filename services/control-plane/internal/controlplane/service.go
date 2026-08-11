@@ -344,10 +344,6 @@ func (s *Service) RuntimeReadiness(ctx context.Context) (map[string]any, error) 
 	return s.fabric.Readiness(ctx)
 }
 
-func (s *Service) FabricOperations(ctx context.Context) ([]clients.FabricOperation, error) {
-	return s.fabric.ListOperations(ctx)
-}
-
 func (s *Service) ProviderFactsBatch(ctx context.Context, input clients.ProviderFactsBatchInput) (clients.ProviderFactsBatch, error) {
 	client, ok := s.fabric.(clients.FabricProviderFactsClient)
 	if !ok {
@@ -377,10 +373,6 @@ func (s *Service) FabricCatalog(ctx context.Context) (clients.FabricCatalog, err
 
 func (s *Service) CreateStorageAttachment(ctx context.Context, input StorageAttachmentInput, idempotencyKey string) (clients.StorageAttachment, error) {
 	return s.fabric.CreateStorageAttachment(ctx, clients.StorageAttachmentInput{WorkspaceID: input.WorkspaceID, ComputeID: input.ComputeID, VolumeID: input.VolumeID}, idempotencyKey)
-}
-
-func (s *Service) DetachStorageAttachment(ctx context.Context, id string, idempotencyKey string) (clients.StorageAttachment, error) {
-	return s.fabric.DetachStorageAttachment(ctx, id, idempotencyKey)
 }
 
 func (s *Service) PrepareWorkspace(ctx context.Context, input CreateWorkspaceInput, idempotencyKey string) (domain.WorkspaceProjection, error) {
@@ -434,7 +426,7 @@ func (s *Service) PrepareWorkspace(ctx context.Context, input CreateWorkspaceInp
 		OwnerID:             input.OwnerID,
 		Name:                input.Name,
 		PackageID:           input.PackageID,
-		Provider:            "tencent-tke",
+		Provider:            "fabric",
 		URL:                 runtime.URL,
 		Status:              status,
 		ComputeID:           input.ComputeID,

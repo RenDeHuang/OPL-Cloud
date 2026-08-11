@@ -92,7 +92,11 @@ func (app *controlPlaneServer) billingReconciliationReport(ctx context.Context, 
 	if len(resources) == 0 {
 		return reconciliationReport(reportID, 0, 0, nil), nil
 	}
-	operations, fabricErr := service.FabricOperations(ctx)
+	providerInputs := make([]clients.ProviderFactInput, 0, len(resources)*2)
+	for _, resource := range resources {
+		providerInputs = append(providerInputs, billingReconciliationProviderInputs(resource)...)
+	}
+	providerFacts, fabricErr := readProviderFacts(ctx, service, uniqueProviderFactInputs(providerInputs))
 	accountCodes := make(map[string][]string)
 	seenAccountCodes := make(map[string]map[string]struct{})
 	for _, resource := range resources {
@@ -147,8 +151,8 @@ func (app *controlPlaneServer) billingReconciliationReport(ctx context.Context, 
 			exceptions = append(exceptions, newBillingReconciliationException(resource, code))
 		}
 		if fabricErr != nil {
-			exceptions = append(exceptions, newBillingReconciliationException(resource, "fabric_operations_unavailable"))
-		} else if code := fabricReconciliationCode(resource.resourceType, row, operations); code != "" {
+			exceptions = append(exceptions, newBillingReconciliationException(resource, "fabric_provider_facts_unavailable"))
+		} else if code := fabricReconciliationCode(resource, providerFacts); code != "" {
 			exceptions = append(exceptions, newBillingReconciliationException(resource, code))
 		}
 		if facts.receiptError {
@@ -180,11 +184,7 @@ func workspaceRenewalBillingReconciliationRow(workspace map[string]any, operatio
 		"lastReceiptId": operation.ReceiptID, "priceVersion": operation.PriceVersion, "periodStart": operation.PaidThrough, "paidThrough": operation.RenewedThrough,
 		"computeAllocationId": operation.ComputeID, "storageId": operation.StorageID, "storageGb": operation.StorageGB,
 		"computeChargeUsdMicros": operation.ComputeUSDMicros, "storageChargeUsdMicros": operation.StorageUSDMicros,
-		"computeProvider": stringValue(operation.ComputeReadback["provider"]), "computeProviderRequestId": stringValue(operation.ComputeReadback["providerRequestId"]),
-		"computeProviderResourceId": stringValue(operation.ComputeReadback["providerResourceId"]),
-		"storageProvider":           stringValue(operation.StorageReadback["provider"]), "storageProviderRequestId": stringValue(operation.StorageReadback["providerRequestId"]),
-		"storageProviderResourceId": stringValue(operation.StorageReadback["providerResourceId"]),
-		"workspaceRenewalStatus":    operation.Status, "workspaceState": stringValue(workspace["state"]),
+		"workspaceRenewalStatus": operation.Status, "workspaceState": stringValue(workspace["state"]),
 	}
 }
 
@@ -218,13 +218,11 @@ func validLocalBillingReconciliationFact(resourceType string, row map[string]any
 		return stringValue(row["id"]) != "" && stringValue(row["accountId"]) != "" && stringValue(row["workspaceId"]) == stringValue(row["id"]) &&
 			stringValue(row["billingOperationId"]) != "" && stringValue(row["sub2apiRedeemCode"]) != "" && validCharge && validComputeCharge && validStorageCharge &&
 			validSub2APIUserID && validPostChargeBalance && sub2APIUserID > 0 && charge > 0 && computeCharge > 0 && storageCharge > 0 && charge == computeCharge+storageCharge && stringValue(row["priceVersion"]) != "" &&
-			stringValue(row["computeAllocationId"]) != "" && stringValue(row["storageId"]) != "" && numberField(row, "storageGb", 0) > 0 &&
-			stringValue(row["computeProvider"]) != "" && stringValue(row["computeProviderRequestId"]) != "" && stringValue(row["computeProviderResourceId"]) != "" &&
-			stringValue(row["storageProvider"]) != "" && stringValue(row["storageProviderRequestId"]) != "" && stringValue(row["storageProviderResourceId"]) != ""
+			stringValue(row["computeAllocationId"]) != "" && stringValue(row["storageId"]) != "" && numberField(row, "storageGb", 0) > 0
 	}
 	return (resourceType == "compute" || resourceType == "storage") && stringValue(row["id"]) != "" && stringValue(row["accountId"]) != "" &&
 		stringValue(row["workspaceId"]) != "" && stringValue(row["billingOperationId"]) != "" && stringValue(row["sub2apiRedeemCode"]) != "" &&
-		validCharge && charge > 0 && stringValue(row["provider"]) != "" && stringValue(row["providerRequestId"]) != "" && stringValue(row["providerResourceId"]) != "" &&
+		validCharge && charge > 0 && stringValue(row["providerResourceId"]) != "" &&
 		stringValue(row["lastReceiptId"]) != ""
 }
 
@@ -240,47 +238,40 @@ func sub2APIReconciliationCode(row map[string]any, userID int64, history map[str
 	return ""
 }
 
-func fabricReconciliationCode(resourceType string, row map[string]any, operations []clients.FabricOperation) string {
-	if resourceType == "workspace" {
-		for _, component := range []struct {
-			action, kind, resourceID, key, provider, requestID, providerResourceID string
-		}{
-			{"renew_compute_allocation", "compute_allocation", stringValue(row["computeAllocationId"]), stringValue(row["billingOperationId"]) + ":compute", stringValue(row["computeProvider"]), stringValue(row["computeProviderRequestId"]), stringValue(row["computeProviderResourceId"])},
-			{"renew_storage_volume", "storage_volume", stringValue(row["storageId"]), stringValue(row["billingOperationId"]) + ":storage", stringValue(row["storageProvider"]), stringValue(row["storageProviderRequestId"]), stringValue(row["storageProviderResourceId"])},
-		} {
-			if code := fabricComponentReconciliationCode(row, operations, component.action, component.kind, component.resourceID, component.key, component.provider, component.requestID, component.providerResourceID); code != "" {
-				return code
-			}
-		}
-		return ""
-	}
-	action, kind, keySuffix := "create_compute_allocation", "compute_allocation", ":prepare"
-	if resourceType == "storage" {
-		action, kind = "create_storage_volume", "storage_volume"
-	}
-	if strings.HasPrefix(stringValue(row["billingOperationId"]), "renewal-") {
-		action, keySuffix = "renew_compute_allocation", ":provider-renew"
-		if resourceType == "storage" {
-			action = "renew_storage_volume"
+func billingReconciliationProviderInputs(resource billingReconciliationResource) []clients.ProviderFactInput {
+	row := resource.row
+	accountID, workspaceID := stringValue(row["accountId"]), stringValue(row["workspaceId"])
+	if resource.resourceType == "workspace" {
+		return []clients.ProviderFactInput{
+			{AccountID: accountID, WorkspaceID: workspaceID, ResourceType: "compute", ResourceID: stringValue(row["computeAllocationId"])},
+			{AccountID: accountID, WorkspaceID: workspaceID, ResourceType: "storage", ResourceID: stringValue(row["storageId"])},
 		}
 	}
-	return fabricComponentReconciliationCode(row, operations, action, kind, stringValue(row["id"]), stringValue(row["billingOperationId"])+keySuffix, stringValue(row["provider"]), stringValue(row["providerRequestId"]), stringValue(row["providerResourceId"]))
+	return []clients.ProviderFactInput{{
+		AccountID: accountID, WorkspaceID: workspaceID, ResourceType: resource.resourceType, ResourceID: stringValue(row["id"]),
+	}}
 }
 
-func fabricComponentReconciliationCode(row map[string]any, operations []clients.FabricOperation, action, kind, resourceID, idempotencyKey, provider, providerRequestID, providerResourceID string) string {
-	matches := make([]clients.FabricOperation, 0, 1)
-	for _, operation := range operations {
-		if operation.Action == action && operation.ResourceKind == kind && operation.ResourceID == resourceID && operation.IdempotencyKey == idempotencyKey && operation.Status == "succeeded" {
-			matches = append(matches, operation)
+func fabricReconciliationCode(resource billingReconciliationResource, facts map[string]clients.ProviderFact) string {
+	paidThrough, err := time.Parse(time.RFC3339, stringValue(resource.row["paidThrough"]))
+	if err != nil {
+		return "fabric_provider_fact_mismatch"
+	}
+	for _, input := range billingReconciliationProviderInputs(resource) {
+		fact, ok := facts[providerFactKey(input)]
+		if !ok {
+			return "fabric_provider_fact_missing"
 		}
-	}
-	if len(matches) == 0 {
-		return "fabric_operation_missing"
-	}
-	operation := matches[0]
-	if len(matches) != 1 || operation.CallerService != "control-plane" || operation.AccountID != stringValue(row["accountId"]) || operation.WorkspaceID != stringValue(row["workspaceId"]) ||
-		operation.Provider != provider || operation.ProviderRequestID != providerRequestID || stringValue(operation.RedactedProviderPayload["providerResourceId"]) != providerResourceID {
-		return "fabric_operation_mismatch"
+		if providerFactConfirmedAbsent(input, fact) {
+			return "fabric_provider_fact_missing"
+		}
+		expectedProviderID := ""
+		if resource.resourceType != "workspace" {
+			expectedProviderID = stringValue(resource.row["providerResourceId"])
+		}
+		if !providerFactCovers(input, fact, expectedProviderID, paidThrough) {
+			return "fabric_provider_fact_mismatch"
+		}
 	}
 	return ""
 }
@@ -404,43 +395,17 @@ func (app *controlPlaneServer) resourceLedgerEvidenceLocked(accountIDs ...string
 		attachment, _ := app.getAttachment(attachmentID)
 		operation := app.operationEvidenceForResourceLocked(workspaceID, computeID, storageID, attachmentID)
 		ownerAccountID := firstNonEmpty(stringValue(workspace["ownerAccountId"]), stringValue(compute["ownerAccountId"]), stringValue(storage["ownerAccountId"]), stringValue(attachment["ownerAccountId"]))
-		costTags := firstNonNil(operation["costTags"], compute["costTags"], storage["costTags"], attachment["costTags"])
-		if !hasProviderCostTags(costTags) {
-			costTags = providerCostTags(ownerAccountID, workspaceID, firstNonEmpty(stringValue(operation["resourceId"]), workspaceID), stringValue(operation["operationId"]))
-		}
 		rows = append(rows, map[string]any{
 			"id": firstNonEmpty(workspaceID, computeID, storageID, attachmentID), "accountId": ownerAccountID,
 			"ownerAccountId": ownerAccountID, "ownerUserId": firstNonEmpty(stringValue(workspace["ownerUserId"]), stringValue(compute["ownerUserId"]), stringValue(storage["ownerUserId"])),
 			"workspaceId": workspaceID, "workspaceIds": uniqueStrings([]string{workspaceID}),
 			"computeAllocationId": computeID, "storageId": storageID, "attachmentId": attachmentID,
-			"cvmInstanceId":     firstNonEmpty(stringValue(compute["cvmInstanceId"]), stringValue(compute["providerResourceId"])),
-			"nodeName":          firstNonEmpty(stringValue(compute["nodeName"]), stringValue(compute["machineName"])),
 			"providerRequestId": firstNonEmpty(stringValue(compute["providerRequestId"]), stringValue(storage["providerRequestId"]), stringValue(attachment["providerRequestId"])),
 			"operationId":       firstNonEmpty(stringValue(operation["operationId"]), stringValue(compute["operationId"]), stringValue(storage["operationId"]), stringValue(attachment["operationId"])),
-			"costTags":          costTags,
 			"receiptIds":        uniqueStrings([]string{stringValue(compute["lastReceiptId"]), stringValue(storage["lastReceiptId"]), stringValue(workspace["purchaseReceiptId"])}),
 		})
 	}
 	return rows
-}
-
-func hasProviderCostTags(tags any) bool {
-	return costTagValue(tags, "opl_account_id") != "" && costTagValue(tags, "opl_workspace_id") != "" && costTagValue(tags, "opl_resource_id") != "" && costTagValue(tags, "opl_operation_id") != ""
-}
-
-func costTagValue(tags any, key string) string {
-	switch typed := tags.(type) {
-	case map[string]any:
-		return stringValue(typed[key])
-	case map[string]string:
-		return typed[key]
-	default:
-		return ""
-	}
-}
-
-func providerCostTags(accountID, workspaceID, resourceID, operationID string) map[string]any {
-	return map[string]any{"opl_account_id": accountID, "opl_workspace_id": workspaceID, "opl_resource_id": resourceID, "opl_operation_id": operationID}
 }
 
 func (app *controlPlaneServer) operationEvidenceForResourceLocked(ids ...string) map[string]any {
@@ -448,8 +413,7 @@ func (app *controlPlaneServer) operationEvidenceForResourceLocked(ids ...string)
 	for index := len(operations) - 1; index >= 0; index-- {
 		operation := operations[index]
 		if mapContainsAnyID(operation, ids...) {
-			payload, _ := operation["redactedProviderPayload"].(map[string]any)
-			return map[string]any{"operationId": operation["operationId"], "resourceId": operation["resourceId"], "costTags": firstNonNil(operation["costTags"], payload["costTags"])}
+			return map[string]any{"operationId": operation["operationId"], "resourceId": operation["resourceId"]}
 		}
 	}
 	return map[string]any{}

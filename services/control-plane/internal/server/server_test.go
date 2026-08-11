@@ -24,9 +24,6 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	_ = os.Setenv("OPL_TENCENT_ZONE", "ap-shanghai-2")
-	_ = os.Setenv("OPL_BASIC_COMPUTE_INSTANCE_TYPE", "S5.MEDIUM4")
-	_ = os.Setenv("OPL_PRO_COMPUTE_INSTANCE_TYPE", "SA5.2XLARGE16")
 	if os.Getenv("OPL_WORKSPACE_IMAGE") == "" {
 		_ = os.Setenv("OPL_WORKSPACE_IMAGE", "registry.example/opl/workspace@sha256:"+strings.Repeat("f", 64))
 	}
@@ -387,21 +384,6 @@ func TestProviderReconcileDoesNotCreateCanonicalChildBilling(t *testing.T) {
 		}
 	}
 
-	t.Run("operation memory", func(t *testing.T) {
-		app := newControlPlaneAppEmpty()
-		err := app.rememberRuntimeOperations([]clients.FabricOperation{
-			{ID: "operation-memory-compute", ResourceKind: "compute_allocation", ResourceID: "compute-canonical", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", Status: "succeeded", RedactedProviderPayload: map[string]any{"resource": map[string]any{"id": "compute-canonical", "status": "running"}}},
-			{ID: "operation-memory-storage", ResourceKind: "storage_volume", ResourceID: "storage-canonical", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", Status: "succeeded", RedactedProviderPayload: map[string]any{"resource": map[string]any{"id": "storage-canonical", "status": "available"}}},
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		compute, _ := app.getCompute("compute-canonical")
-		storage, _ := app.getStorage("storage-canonical")
-		assertAbsent(t, compute)
-		assertAbsent(t, storage)
-	})
-
 	for _, tc := range []struct {
 		name, computeStatus, storageStatus, desiredStatus string
 		syncErr                                           error
@@ -413,18 +395,21 @@ func TestProviderReconcileDoesNotCreateCanonicalChildBilling(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			app := newControlPlaneAppEmpty()
-			compute := map[string]any{"id": "compute-canonical", "accountId": "acct-alpha", "workspaceId": "ws-alpha", "status": "running"}
-			storage := map[string]any{"id": "storage-canonical", "accountId": "acct-alpha", "workspaceId": "ws-alpha", "status": "available"}
+			compute := map[string]any{"id": "compute-canonical", "accountId": "acct-alpha", "workspaceId": "ws-alpha", "status": "running", "providerResourceId": "provider-compute-canonical"}
+			storage := map[string]any{"id": "storage-canonical", "accountId": "acct-alpha", "workspaceId": "ws-alpha", "status": "available", "providerResourceId": "provider-storage-canonical"}
 			if tc.desiredStatus != "" {
 				compute["desiredStatus"], storage["desiredStatus"] = tc.desiredStatus, tc.desiredStatus
 			}
 			mustStore(t, app.tables.SaveCompute(context.Background(), compute))
 			mustStore(t, app.tables.SaveStorage(context.Background(), storage))
-			fabric := &providerReconcileFabricClient{
-				computeResult: clients.ComputeAllocation{ID: "compute-canonical", Status: tc.computeStatus, Provider: "tencent-tke"},
-				storageResult: clients.StorageVolume{ID: "storage-canonical", Status: tc.storageStatus, Provider: "tencent-tke"},
-				computeErr:    tc.syncErr, storageErr: tc.syncErr,
+			facts := []clients.ProviderFact{
+				reconcileProviderFact("compute", "compute-canonical", tc.computeStatus),
+				reconcileProviderFact("storage", "storage-canonical", tc.storageStatus),
 			}
+			if isExternallyDeletedStatus(tc.computeStatus) {
+				facts[0].Facts.ProviderID, facts[1].Facts.ProviderID = "", ""
+			}
+			fabric := &providerReconcileFabricClient{err: tc.syncErr, facts: providerFactsByKey(facts)}
 			service := newTestService(fakeLedgerClient{}, fabric)
 			if err := app.reconcileMonthlyCompute(context.Background(), service, compute, time.Now().UTC()); err != nil {
 				t.Fatal(err)
@@ -436,6 +421,19 @@ func TestProviderReconcileDoesNotCreateCanonicalChildBilling(t *testing.T) {
 			storage, _ = app.getStorage("storage-canonical")
 			assertAbsent(t, compute)
 			assertAbsent(t, storage)
+			if tc.syncErr == nil && tc.desiredStatus == "" {
+				wantComputeStatus, wantStorageStatus := tc.computeStatus, tc.storageStatus
+				if isExternallyDeletedStatus(tc.computeStatus) {
+					wantComputeStatus, wantStorageStatus = "missing", "missing"
+					if stringValue(compute["externalDeletedAt"]) == "" || stringValue(storage["externalDeletedAt"]) == "" {
+						t.Fatalf("authoritative provider absence was not projected: compute=%#v storage=%#v", compute, storage)
+					}
+				}
+				if compute["providerResourceId"] != "provider-compute-canonical" || storage["providerResourceId"] != "provider-storage-canonical" ||
+					compute["providerStatus"] != wantComputeStatus || storage["providerStatus"] != wantStorageStatus || len(fabric.inputs) != 2 {
+					t.Fatalf("provider facts were not projected exactly: compute=%#v storage=%#v inputs=%#v", compute, storage, fabric.inputs)
+				}
+			}
 		})
 	}
 }
@@ -450,10 +448,10 @@ func TestProviderReconcilePreservesHistoricalChildBilling(t *testing.T) {
 	storage := mergeMaps(map[string]any{"id": "storage-historical", "accountId": "acct-alpha", "workspaceId": "ws-alpha", "status": "available"}, historical)
 	mustStore(t, app.tables.SaveCompute(context.Background(), compute))
 	mustStore(t, app.tables.SaveStorage(context.Background(), storage))
-	fabric := &providerReconcileFabricClient{
-		computeResult: clients.ComputeAllocation{ID: "compute-historical", Status: "running", Provider: "tencent-tke", NodeName: "node-readback"},
-		storageResult: clients.StorageVolume{ID: "storage-historical", Status: "available", Provider: "tencent-tke", ProviderResourceID: "disk-readback"},
-	}
+	fabric := &providerReconcileFabricClient{facts: providerFactsByKey([]clients.ProviderFact{
+		reconcileProviderFact("compute", "compute-historical", "running"),
+		reconcileProviderFact("storage", "storage-historical", "available"),
+	})}
 	service := newTestService(fakeLedgerClient{}, fabric)
 	if err := app.reconcileMonthlyCompute(context.Background(), service, compute, time.Now().UTC()); err != nil {
 		t.Fatal(err)
@@ -489,8 +487,9 @@ func TestProviderReconcileNeverResumesHistoricalResourceBilling(t *testing.T) {
 				calls := []string{}
 				fabric := &providerReconcileFabricClient{
 					fakeFabricClient: fakeFabricClient{calls: &calls},
-					computeResult:    clients.ComputeAllocation{ID: stringValue(row["id"]), Status: "running", Provider: "tencent-tke"},
-					storageResult:    clients.StorageVolume{ID: stringValue(row["id"]), Status: "available", Provider: "tencent-tke"},
+					facts: providerFactsByKey([]clients.ProviderFact{
+						reconcileProviderFact(resourceType, stringValue(row["id"]), stringValue(row["status"])),
+					}),
 				}
 				service := newTestService(fakeLedgerClient{}, fabric)
 				var err error
@@ -981,7 +980,7 @@ type fakeBlockingReconciliationLedgerClient struct {
 }
 
 func (fakeBlockingReconciliationLedgerClient) RecordReconciliation(_ context.Context, input clients.ReconciliationInput, _ string) (clients.ReconciliationResult, error) {
-	return clients.ReconciliationResult{ID: stringField(input.Report, "id", "reconciliation-from-ledger"), Status: "mismatch", Report: input.Report, BlockNewWorkspaces: true, Reason: "tencent_bill_reconciliation_failed"}, nil
+	return clients.ReconciliationResult{ID: stringField(input.Report, "id", "reconciliation-from-ledger"), Status: "mismatch", Report: input.Report, BlockNewWorkspaces: true, Reason: "provider_bill_reconciliation_failed"}, nil
 }
 
 type flakyWorkspaceReceiptLedger struct {
@@ -1008,17 +1007,13 @@ func (failingFabricClient) Readiness(_ context.Context) (map[string]any, error) 
 	return nil, errors.New("provider secret leaked in raw error")
 }
 
-func (failingFabricClient) ListOperations(_ context.Context) ([]clients.FabricOperation, error) {
-	return nil, errors.New("provider operation secret leaked in raw error")
-}
-
 type internalReadinessFabricClient struct {
 	fakeFabricClient
 }
 
 func (internalReadinessFabricClient) Readiness(_ context.Context) (map[string]any, error) {
 	return map[string]any{
-		"provider": "tencent-tke", "ready": true, "cloudImagesReady": true, "workspaceImagesReady": true, "immutableImagesReady": true,
+		"provider": "fabric", "ready": true, "cloudImagesReady": true, "workspaceImagesReady": true, "immutableImagesReady": true,
 		"checks": []any{map[string]any{"detail": "internal secret"}}, "missingEnv": []string{"INTERNAL_SECRET"}, "internalCredential": "secret-value",
 	}, nil
 }
@@ -1062,25 +1057,41 @@ type fakeFabricClient struct {
 	gatewaySecret        clients.GatewaySecretWriteResult
 	gatewaySecretErr     error
 	attachmentErr        error
-	storageDestroyStatus string
 	gatewaySecretInputs  []clients.GatewaySecretWriteInput
 	runtimeInputs        []clients.WorkspaceRuntimeInput
 }
 
 type providerReconcileFabricClient struct {
 	fakeFabricClient
-	computeResult clients.ComputeAllocation
-	storageResult clients.StorageVolume
-	computeErr    error
-	storageErr    error
+	facts  map[string]clients.ProviderFact
+	err    error
+	inputs []clients.ProviderFactsBatchInput
 }
 
-func (f *providerReconcileFabricClient) SyncComputeAllocation(_ context.Context, _ string) (clients.ComputeAllocation, error) {
-	return f.computeResult, f.computeErr
+func (f *providerReconcileFabricClient) ProviderFactsBatch(_ context.Context, input clients.ProviderFactsBatchInput) (clients.ProviderFactsBatch, error) {
+	f.inputs = append(f.inputs, input)
+	if f.err != nil {
+		return clients.ProviderFactsBatch{}, f.err
+	}
+	result := clients.ProviderFactsBatch{Items: make([]clients.ProviderFact, 0, len(input.Items))}
+	for _, item := range input.Items {
+		fact, ok := f.facts[providerFactKey(item)]
+		if !ok {
+			fact = clients.ProviderFact{AccountID: item.AccountID, WorkspaceID: item.WorkspaceID, ResourceType: item.ResourceType, ResourceID: item.ResourceID, ErrorCode: "provider_fact_missing"}
+		}
+		result.Items = append(result.Items, fact)
+	}
+	return result, nil
 }
 
-func (f *providerReconcileFabricClient) SyncStorageVolume(_ context.Context, _ string) (clients.StorageVolume, error) {
-	return f.storageResult, f.storageErr
+func reconcileProviderFact(resourceType, resourceID, status string) clients.ProviderFact {
+	return clients.ProviderFact{
+		AccountID: "acct-alpha", WorkspaceID: "ws-alpha", ResourceType: resourceType, ResourceID: resourceID, Available: true,
+		Facts: clients.ProviderResourceFacts{
+			PackageOrSpec: "standard", ProviderID: "provider-" + resourceID, Zone: "provider-zone", Status: status,
+			ExpiresAt: "2099-01-01T00:00:00Z", LastReadAt: "2026-08-12T00:00:00Z",
+		},
+	}
 }
 
 type countingWorkspaceFabricClient struct {
@@ -1107,7 +1118,7 @@ func (f *countingWorkspaceFabricClient) CreateWorkspaceRuntime(ctx context.Conte
 func (f *countingWorkspaceFabricClient) CreateStorageAttachment(_ context.Context, input clients.StorageAttachmentInput, _ string) (clients.StorageAttachment, error) {
 	return clients.StorageAttachment{
 		ID: "attachment-" + stableID(input.ComputeID, input.VolumeID)[:12], WorkspaceID: input.WorkspaceID,
-		ComputeID: input.ComputeID, VolumeID: input.VolumeID, Status: "attached", Provider: "tencent-tke",
+		ComputeID: input.ComputeID, VolumeID: input.VolumeID, Status: "attached", Provider: "fabric",
 		ProviderAttachmentID: "deployment/runtime:pvc/storage:/data", ProviderRequestID: "attachment-request-from-fabric", MountPath: "/data",
 	}, nil
 }
@@ -1127,78 +1138,53 @@ func (f *fakeFabricClient) record(call string) {
 func (f *fakeFabricClient) Catalog(_ context.Context) (clients.FabricCatalog, error) {
 	f.record("fabric.catalog")
 	return clients.FabricCatalog{WorkspacePackages: []clients.FabricWorkspacePackage{
-		{ID: "basic", Name: "Basic Workspace", ComputeProfileID: "pool-basic", CPU: 2, MemoryGB: 4, DiskGB: 10, Provider: "tencent-tke", Available: true},
-		{ID: "pro", Name: "Pro Workspace", ComputeProfileID: "pool-pro", CPU: 8, MemoryGB: 16, DiskGB: 100, Provider: "tencent-tke", Available: true},
+		{ID: "basic", Name: "Basic Workspace", ComputeProfileID: "pool-basic", CPU: 2, MemoryGB: 4, DiskGB: 10, Provider: "fabric", Available: true},
+		{ID: "pro", Name: "Pro Workspace", ComputeProfileID: "pool-pro", CPU: 8, MemoryGB: 16, DiskGB: 100, Provider: "fabric", Available: true},
 	}}, nil
 }
 
 func (f *fakeFabricClient) MonthlyPreflight(_ context.Context, input clients.MonthlyPreflightInput) (clients.MonthlyPreflight, error) {
 	f.record("fabric.monthly.preflight")
-	requestIDs := map[string]string{"quota": "quota-request", "price": "price-request"}
-	nodePoolID := ""
-	if input.ResourceType == "compute" {
-		requestIDs = map[string]string{"nodePool": "node-pool-request", "subnets": "subnets-request", "availability": "availability-request"}
-		nodePoolID = "np-" + input.PackageID
-	}
 	return clients.MonthlyPreflight{
-		ResourceType: input.ResourceType, PackageID: input.PackageID, NodePoolID: nodePoolID, SizeGB: input.SizeGB, Zone: input.Zone,
+		ResourceType: input.ResourceType, PackageID: input.PackageID, SizeGB: input.SizeGB, Zone: input.Zone,
 		Available: true, ChargeType: "PREPAID", PeriodMonths: 1, RenewFlag: "NOTIFY_AND_MANUAL_RENEW",
-		ProviderPriceCNY: 12.34, ProviderRequestIDs: requestIDs,
+		ProviderPriceCNY: 12.34,
 	}, nil
 }
 
 func (f *fakeFabricClient) CreateComputeAllocation(_ context.Context, input clients.ComputeAllocationInput, _ string) (clients.ComputeAllocation, error) {
 	f.record("fabric.compute")
-	instanceType := "S5.MEDIUM4"
-	if input.PackageID == "pro" {
-		instanceType = "SA5.2XLARGE16"
-	}
-	return clients.ComputeAllocation{ID: input.ID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, PackageID: input.PackageID, Status: "running", Provider: "tencent-tke", ProviderResourceID: "node/node-from-fabric", ProviderRequestID: "compute-request-from-fabric", InstanceID: "ins-from-fabric", NodeName: "node-from-fabric", ServiceName: "opl-compute-from-fabric", InstanceType: instanceType, Zone: "ap-shanghai-2", ChargeType: "PREPAID", RenewFlag: "NOTIFY_AND_MANUAL_RENEW", Deadline: "2099-01-01T00:00:00Z", ProviderData: map[string]string{"zone": "ap-shanghai-2", "instanceType": instanceType}}, nil
+	return clients.ComputeAllocation{ID: input.ID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, PackageID: input.PackageID, Status: "running", Provider: "fabric", ProviderResourceID: "resource-from-fabric", ProviderRequestID: "compute-request-from-fabric", Zone: "provider-zone", Deadline: "2099-01-01T00:00:00Z"}, nil
 }
 
 func (f *provisioningComputeFabricClient) CreateComputeAllocation(_ context.Context, input clients.ComputeAllocationInput, _ string) (clients.ComputeAllocation, error) {
 	f.record("fabric.compute")
-	return clients.ComputeAllocation{ID: input.ID, AccountID: input.AccountID, PackageID: input.PackageID, Status: "provisioning", Provider: "tencent-tke"}, nil
+	return clients.ComputeAllocation{ID: input.ID, AccountID: input.AccountID, PackageID: input.PackageID, Status: "provisioning", Provider: "fabric"}, nil
 }
 
 func (f *provisioningComputeFabricClient) SyncComputeAllocation(_ context.Context, id string) (clients.ComputeAllocation, error) {
 	f.record("fabric.compute-sync")
-	return clients.ComputeAllocation{ID: id, Status: "running", Provider: "tencent-tke", MachineName: "machine-alpha", InstanceID: "ins-alpha", NodeName: "node-alpha"}, nil
+	return clients.ComputeAllocation{ID: id, Status: "running", Provider: "fabric", InstanceID: "resource-alpha"}, nil
 }
 
 func (f *pendingComputeFabricClient) SyncComputeAllocation(_ context.Context, id string) (clients.ComputeAllocation, error) {
 	f.record("fabric.compute-sync")
-	return clients.ComputeAllocation{ID: id, Status: "provisioning", Provider: "tencent-tke"}, nil
-}
-
-func (f *fakeFabricClient) GetComputeAllocation(_ context.Context, id string) (clients.ComputeAllocation, error) {
-	f.record("fabric.compute-get")
-	return clients.ComputeAllocation{ID: id, Status: "running", Provider: "tencent-tke", ProviderResourceID: "node/node-from-fabric", ProviderRequestID: "compute-request-from-fabric", InstanceID: "ins-from-fabric", NodeName: "node-from-fabric", ServiceName: "opl-compute-from-fabric"}, nil
+	return clients.ComputeAllocation{ID: id, Status: "provisioning", Provider: "fabric"}, nil
 }
 
 func (f *fakeFabricClient) SyncComputeAllocation(_ context.Context, id string) (clients.ComputeAllocation, error) {
 	f.record("fabric.compute-sync")
-	return clients.ComputeAllocation{ID: id, Status: "external_deleted", Provider: "tencent-tke", ProviderRequestID: "compute-sync-from-fabric"}, nil
-}
-
-func (f *fakeFabricClient) DestroyComputeAllocation(_ context.Context, id string, _ string) (clients.ComputeAllocation, error) {
-	f.record("fabric.compute-destroy")
-	return clients.ComputeAllocation{ID: id, Status: "destroyed", Provider: "tencent-tke", ProviderRequestID: "compute-destroy-from-fabric"}, nil
+	return clients.ComputeAllocation{ID: id, Status: "external_deleted", Provider: "fabric", ProviderRequestID: "compute-sync-from-fabric"}, nil
 }
 
 func (f *fakeFabricClient) CreateStorageVolume(_ context.Context, input clients.StorageVolumeInput, _ string) (clients.StorageVolume, error) {
 	f.record("fabric.storage")
-	return clients.StorageVolume{ID: input.ID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, Status: "available", Provider: "tencent-tke", ProviderResourceID: "disk-volume-from-fabric", ProviderRequestID: "storage-request-from-fabric", SizeGB: input.SizeGB, StorageClass: "cbs", CBSStatus: "UNATTACHED", DiskType: "CLOUD_PREMIUM", RenewFlag: "NOTIFY_AND_MANUAL_RENEW", Deadline: "2099-01-01T00:00:00Z", Zone: input.Zone, ProviderData: map[string]string{"chargeType": "PREPAID"}}, nil
+	return clients.StorageVolume{ID: input.ID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, Status: "available", Provider: "fabric", ProviderResourceID: "storage-volume-from-fabric", ProviderRequestID: "storage-request-from-fabric", SizeGB: input.SizeGB, Deadline: "2099-01-01T00:00:00Z", Zone: input.Zone}, nil
 }
 
 func (f *fakeFabricClient) SyncStorageVolume(_ context.Context, id string) (clients.StorageVolume, error) {
 	f.record("fabric.storage-sync")
-	return clients.StorageVolume{ID: id, Status: "external_deleted", Provider: "tencent-tke", ProviderRequestID: "storage-sync-from-fabric"}, nil
-}
-
-func (f *fakeFabricClient) DestroyStorageVolume(_ context.Context, id string, _ string) (clients.StorageVolume, error) {
-	f.record("fabric.storage-destroy")
-	return clients.StorageVolume{ID: id, Status: firstNonEmpty(f.storageDestroyStatus, "destroyed"), Provider: "tencent-tke", ProviderRequestID: "storage-destroy-from-fabric"}, nil
+	return clients.StorageVolume{ID: id, Status: "external_deleted", Provider: "fabric", ProviderRequestID: "storage-sync-from-fabric"}, nil
 }
 
 func (f *fakeFabricClient) CreateStorageAttachment(_ context.Context, input clients.StorageAttachmentInput, _ string) (clients.StorageAttachment, error) {
@@ -1209,12 +1195,7 @@ func (f *fakeFabricClient) CreateStorageAttachment(_ context.Context, input clie
 	if f.attachment.ID != "" {
 		return f.attachment, nil
 	}
-	return clients.StorageAttachment{ID: "attachment-from-fabric", WorkspaceID: input.WorkspaceID, ComputeID: input.ComputeID, VolumeID: input.VolumeID, Status: "attached", Provider: "tencent-tke", ProviderAttachmentID: "deployment/opl-compute-from-fabric:pvc/volume-from-fabric-data:/data", ProviderRequestID: "attachment-request-from-fabric", MountPath: "/data"}, nil
-}
-
-func (f *fakeFabricClient) DetachStorageAttachment(_ context.Context, id string, _ string) (clients.StorageAttachment, error) {
-	f.record("fabric.attachment-detach")
-	return clients.StorageAttachment{ID: id, Status: "detached", ProviderRequestID: "attachment-detach-from-fabric"}, nil
+	return clients.StorageAttachment{ID: "attachment-from-fabric", WorkspaceID: input.WorkspaceID, ComputeID: input.ComputeID, VolumeID: input.VolumeID, Status: "attached", Provider: "fabric", ProviderAttachmentID: "binding-from-fabric", ProviderRequestID: "attachment-request-from-fabric", MountPath: "/data"}, nil
 }
 
 func (f *fakeFabricClient) WriteGatewaySecret(_ context.Context, input clients.GatewaySecretWriteInput, _ string) (clients.GatewaySecretWriteResult, error) {
@@ -1244,11 +1225,6 @@ func (f *fakeFabricClient) CreateWorkspaceRuntime(_ context.Context, input clien
 		return f.runtime, nil
 	}
 	return clients.WorkspaceRuntime{ID: "runtime-from-fabric", OperationID: input.RuntimeOperationID, WorkspaceID: input.WorkspaceID, URL: "https://workspace.medopl.cn/w/ws-from-fabric/", Status: "running", ServiceName: "opl-compute-from-fabric", Access: clients.WorkspaceRuntimeAccess{Username: "admin", Password: "runtime-password-alpha", CredentialStatus: "configured", CredentialVersion: "v1", SecretRef: "opl-compute-from-fabric-env"}, Ready: true}, nil
-}
-
-func (f *fakeFabricClient) DestroyWorkspaceRuntime(_ context.Context, workspaceID, _ string) (clients.WorkspaceRuntime, error) {
-	f.record("fabric.runtime-destroy")
-	return clients.WorkspaceRuntime{WorkspaceID: workspaceID, Status: "destroyed"}, nil
 }
 
 func (f *fakeFabricClient) WorkspaceRuntimeStatus(_ context.Context, workspaceID string) (clients.WorkspaceRuntime, error) {
@@ -1296,135 +1272,7 @@ func (f *fakeFabricClient) WorkspaceRuntimeStatus(_ context.Context, workspaceID
 
 func (f *fakeFabricClient) Readiness(_ context.Context) (map[string]any, error) {
 	f.record("fabric.readiness")
-	return map[string]any{"provider": "tencent-tke", "ready": true, "cloudImagesReady": true, "workspaceImagesReady": true, "immutableImagesReady": true, "missingEnv": []string{}, "missingTools": []string{}}, nil
-}
-
-func (f *fakeFabricClient) ListOperations(_ context.Context) ([]clients.FabricOperation, error) {
-	f.record("fabric.operations")
-	return []clients.FabricOperation{{
-		ID:                "fop-alpha",
-		OperationID:       "op-create-compute-alpha",
-		CallerService:     "control-plane",
-		Action:            "create_compute_allocation",
-		ResourceKind:      "compute_allocation",
-		ResourceID:        "compute-alpha",
-		AccountID:         "acct-alpha",
-		WorkspaceID:       "ws-alpha",
-		Provider:          "tencent-tke",
-		ProviderRequestID: "compute-request-from-fabric",
-		RequestHash:       "request-hash-alpha",
-		Status:            "succeeded",
-		StartedAt:         "2026-07-07T00:00:00Z",
-		FinishedAt:        "2026-07-07T00:01:00Z",
-		CreatedAt:         "2026-07-07T00:01:00Z",
-	}}, nil
-}
-
-type fabricClientWithResourceOperations struct {
-	fakeFabricClient
-}
-
-func (f *fabricClientWithResourceOperations) ListOperations(_ context.Context) ([]clients.FabricOperation, error) {
-	f.record("fabric.operations")
-	return []clients.FabricOperation{
-		{
-			ID:                "fop-compute-alpha",
-			OperationID:       "op-create-compute-alpha",
-			CallerService:     "control-plane",
-			Action:            "create_compute_allocation",
-			ResourceKind:      "compute_allocation",
-			ResourceID:        "compute-alpha",
-			AccountID:         "acct-alpha",
-			WorkspaceID:       "ws-alpha",
-			Provider:          "tencent-tke",
-			ProviderRequestID: "compute-request-from-fabric",
-			RequestHash:       "request-hash-alpha",
-			RedactedProviderPayload: map[string]any{"resource": map[string]any{
-				"id":                 "compute-alpha",
-				"packageId":          "basic",
-				"status":             "running",
-				"provider":           "tencent-tke",
-				"providerResourceId": "node/node-from-fabric",
-				"providerRequestId":  "compute-request-from-fabric",
-				"nodeName":           "node-from-fabric",
-			}},
-			Status:     "succeeded",
-			StartedAt:  "2026-07-07T00:00:00Z",
-			FinishedAt: "2026-07-07T00:01:00Z",
-			CreatedAt:  "2026-07-07T00:01:00Z",
-		},
-		{
-			ID:                "fop-storage-alpha",
-			OperationID:       "op-create-storage-alpha",
-			CallerService:     "control-plane",
-			Action:            "create_storage_volume",
-			ResourceKind:      "storage_volume",
-			ResourceID:        "storage-alpha",
-			AccountID:         "acct-alpha",
-			WorkspaceID:       "ws-alpha",
-			Provider:          "tencent-tke",
-			ProviderRequestID: "storage-request-from-fabric",
-			RequestHash:       "request-hash-storage-alpha",
-			RedactedProviderPayload: map[string]any{"resource": map[string]any{
-				"id":                 "storage-alpha",
-				"status":             "ready",
-				"provider":           "tencent-tke",
-				"providerResourceId": "pvc/storage-alpha-data",
-				"providerRequestId":  "storage-request-from-fabric",
-				"sizeGb":             10,
-			}},
-			Status:     "succeeded",
-			StartedAt:  "2026-07-07T00:00:00Z",
-			FinishedAt: "2026-07-07T00:01:00Z",
-			CreatedAt:  "2026-07-07T00:01:01Z",
-		},
-		{
-			ID:                "fop-attachment-alpha",
-			OperationID:       "op-attach-alpha",
-			CallerService:     "control-plane",
-			Action:            "create_storage_attachment",
-			ResourceKind:      "storage_attachment",
-			ResourceID:        "attachment-alpha",
-			AccountID:         "acct-alpha",
-			WorkspaceID:       "ws-alpha",
-			Provider:          "tencent-tke",
-			ProviderRequestID: "attachment-request-from-fabric",
-			RequestHash:       "request-hash-attachment-alpha",
-			RedactedProviderPayload: map[string]any{"resource": map[string]any{
-				"id":                   "attachment-alpha",
-				"workspaceId":          "ws-alpha",
-				"computeId":            "compute-alpha",
-				"volumeId":             "storage-alpha",
-				"status":               "attached",
-				"provider":             "tencent-tke",
-				"providerAttachmentId": "deployment/compute-alpha:pvc/storage-alpha-data:/data",
-				"providerRequestId":    "attachment-request-from-fabric",
-			}},
-			Status:     "succeeded",
-			StartedAt:  "2026-07-07T00:00:00Z",
-			FinishedAt: "2026-07-07T00:01:00Z",
-			CreatedAt:  "2026-07-07T00:01:02Z",
-		},
-	}, nil
-}
-
-type fabricClientWithUnscopedHistoricOperation struct {
-	fakeFabricClient
-}
-
-func (f *fabricClientWithUnscopedHistoricOperation) ListOperations(_ context.Context) ([]clients.FabricOperation, error) {
-	return []clients.FabricOperation{{
-		ID:           "fop-historic-compute",
-		OperationID:  "op-historic-compute",
-		Action:       "create_compute_allocation",
-		ResourceKind: "compute_allocation",
-		ResourceID:   "compute-historic",
-		RedactedProviderPayload: map[string]any{"resource": map[string]any{
-			"id":     "compute-historic",
-			"status": "running",
-		}},
-		Status: "succeeded",
-	}}, nil
+	return map[string]any{"provider": "fabric", "ready": true, "cloudImagesReady": true, "workspaceImagesReady": true, "immutableImagesReady": true, "missingEnv": []string{}, "missingTools": []string{}}, nil
 }
 
 func createResource(t *testing.T, server http.Handler, method string, path string, body string) map[string]any {
@@ -1579,7 +1427,7 @@ func sessionUserIDForTest(t *testing.T, server http.Handler, loginRec *httptest.
 	return stringValue(mapField(payload, "data")["consoleUserId"])
 }
 
-func TestResourceLedgerEvidenceDerivesProviderCostTags(t *testing.T) {
+func TestResourceLedgerEvidencePreservesControlPlaneIdentity(t *testing.T) {
 	app := newControlPlaneApp()
 	mustStore(t, app.tables.SaveWorkspace(context.Background(), map[string]any{
 		"id":                         "ws-alpha",
@@ -1601,9 +1449,11 @@ func TestResourceLedgerEvidenceDerivesProviderCostTags(t *testing.T) {
 	}))
 
 	row := app.state("acct-alpha", nil)["resourceLedgerEvidence"].([]any)[0].(map[string]any)
-	tags, _ := row["costTags"].(map[string]any)
-	if tags["opl_account_id"] != "acct-alpha" || tags["opl_workspace_id"] != "ws-alpha" || tags["opl_resource_id"] != "ws-alpha" || tags["opl_operation_id"] != "op-runtime-alpha" {
-		t.Fatalf("row missing derived provider cost tags: %#v", row)
+	if row["accountId"] != "acct-alpha" || row["workspaceId"] != "ws-alpha" || row["computeAllocationId"] != "compute-alpha" || row["storageId"] != "storage-alpha" || row["attachmentId"] != "attach-alpha" || row["operationId"] != "op-runtime-alpha" {
+		t.Fatalf("row missing Control Plane resource identity: %#v", row)
+	}
+	if _, ok := row["costTags"]; ok {
+		t.Fatalf("Control Plane evidence must not derive provider cost tags: %#v", row)
 	}
 }
 
@@ -1731,126 +1581,6 @@ func TestOperatorSummaryIncludesWorkspaceResourceAnomalies(t *testing.T) {
 	}
 }
 
-func TestConsoleStateHydratesResourceListsFromFabricOperations(t *testing.T) {
-	server := NewServer(newTestService(fakeLedgerClient{}, &fabricClientWithResourceOperations{}))
-
-	req := httptest.NewRequest(http.MethodGet, "/api/state?accountId=acct-alpha", nil)
-	addSessionCookies(req, tenantAdminSessionForTest(t, server))
-	rec := httptest.NewRecorder()
-	server.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("state status = %d: %s", rec.Code, rec.Body.String())
-	}
-	var state map[string]any
-	if err := json.NewDecoder(rec.Body).Decode(&state); err != nil {
-		t.Fatalf("decode state: %v", err)
-	}
-	computes := state["computeAllocations"].([]any)
-	if !slices.ContainsFunc(computes, func(row any) bool {
-		compute := row.(map[string]any)
-		return compute["id"] == "compute-alpha" && compute["accountId"] == "acct-alpha" && compute["workspaceId"] == "ws-alpha" && compute["status"] == "running" && compute["nodeName"] == "node-from-fabric"
-	}) {
-		t.Fatalf("state did not hydrate compute resource from Fabric operation: %#v", computes)
-	}
-	storageVolumes := state["storageVolumes"].([]any)
-	if !slices.ContainsFunc(storageVolumes, func(row any) bool {
-		storage := row.(map[string]any)
-		return storage["id"] == "storage-alpha" && storage["accountId"] == "acct-alpha" && storage["workspaceId"] == "ws-alpha" && storage["status"] == "available" && storage["providerResourceId"] == "pvc/storage-alpha-data"
-	}) {
-		t.Fatalf("state did not hydrate storage resource from Fabric operation: %#v", storageVolumes)
-	}
-	attachments := state["storageAttachments"].([]any)
-	if !slices.ContainsFunc(attachments, func(row any) bool {
-		attachment := row.(map[string]any)
-		return attachment["id"] == "attachment-alpha" &&
-			attachment["ownerAccountId"] == "acct-alpha" &&
-			attachment["computeAllocationId"] == "compute-alpha" &&
-			attachment["storageId"] == "storage-alpha" &&
-			attachment["status"] == "attached"
-	}) {
-		t.Fatalf("state did not hydrate attachment resource from Fabric operation: %#v", attachments)
-	}
-}
-
-func TestRememberRuntimeOperationPreservesComputeBillingFacts(t *testing.T) {
-	app := newControlPlaneAppEmpty()
-	mustStore(t, app.tables.SaveCompute(context.Background(), map[string]any{
-		"id": "compute-alpha", "accountId": "acct-alpha", "ownerUserId": "user-alpha", "name": "Alpha compute", "status": "provisioning",
-		"billingStatus": "active", "pricingVersion": "pricing-v1", "chargeUsdMicros": int64(50_000_000),
-		"periodStart": "2026-07-14T00:00:00Z", "paidThrough": "2026-08-14T00:00:00Z", "lastReceiptId": "receipt-compute",
-	}))
-
-	err := app.rememberRuntimeOperations([]clients.FabricOperation{{
-		ID: "fabric-compute", OperationID: "operation-compute", ResourceKind: "compute_allocation", ResourceID: "compute-alpha",
-		AccountID: "acct-alpha", Status: "succeeded", RedactedProviderPayload: map[string]any{"resource": map[string]any{
-			"id": "compute-alpha", "accountId": "acct-alpha", "status": "running", "nodeName": "node-from-fabric",
-		}},
-	}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	compute, _ := app.getCompute("compute-alpha")
-	if compute["billingStatus"] != "active" || int64(numberField(compute, "chargeUsdMicros", 0)) != 50_000_000 || compute["paidThrough"] != "2026-08-14T00:00:00Z" || compute["lastReceiptId"] != "receipt-compute" || compute["pricingVersion"] != "pricing-v1" || compute["ownerUserId"] != "user-alpha" || compute["name"] != "Alpha compute" {
-		t.Fatalf("Fabric operation erased Control Plane facts: %#v", compute)
-	}
-	if compute["nodeName"] != "node-from-fabric" || compute["status"] != "running" {
-		t.Fatalf("Fabric provider facts were not applied: %#v", compute)
-	}
-}
-
-func TestRememberRuntimeOperationPreservesStorageBillingFacts(t *testing.T) {
-	app := newControlPlaneAppEmpty()
-	mustStore(t, app.tables.SaveStorage(context.Background(), map[string]any{
-		"id": "storage-alpha", "accountId": "acct-alpha", "ownerUserId": "user-alpha", "name": "Alpha storage", "status": "provisioning",
-		"billingStatus": "active", "pricingVersion": "pricing-v1", "chargeUsdMicros": int64(2_571_429),
-		"periodStart": "2026-07-14T00:00:00Z", "paidThrough": "2026-08-14T00:00:00Z", "lastReceiptId": "receipt-storage",
-	}))
-
-	err := app.rememberRuntimeOperations([]clients.FabricOperation{{
-		ID: "fabric-storage", OperationID: "operation-storage", ResourceKind: "storage_volume", ResourceID: "storage-alpha",
-		AccountID: "acct-alpha", Status: "succeeded", RedactedProviderPayload: map[string]any{"resource": map[string]any{
-			"id": "storage-alpha", "accountId": "acct-alpha", "status": "ready", "providerResourceId": "pvc/storage-alpha-data",
-		}},
-	}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	storage, _ := app.getStorage("storage-alpha")
-	if storage["billingStatus"] != "active" || int64(numberField(storage, "chargeUsdMicros", 0)) != 2_571_429 || storage["paidThrough"] != "2026-08-14T00:00:00Z" || storage["lastReceiptId"] != "receipt-storage" || storage["pricingVersion"] != "pricing-v1" || storage["ownerUserId"] != "user-alpha" || storage["name"] != "Alpha storage" {
-		t.Fatalf("Fabric operation erased Control Plane facts: %#v", storage)
-	}
-	if storage["providerResourceId"] != "pvc/storage-alpha-data" || storage["status"] != "available" {
-		t.Fatalf("Fabric provider facts were not applied: %#v", storage)
-	}
-}
-
-func TestConsoleStateSkipsUnscopedHistoricFabricResourceProjection(t *testing.T) {
-	service := newTestService(fakeLedgerClient{}, &fabricClientWithUnscopedHistoricOperation{})
-	server, err := NewPersistentServer(service, NewTestEntStateStore(t, t.TempDir()+"/historic-fabric.sqlite"))
-	if err != nil {
-		t.Fatalf("create persistent server: %v", err)
-	}
-	req := httptest.NewRequest(http.MethodGet, "/api/state?accountId=acct-alpha", nil)
-	session := tenantAdminSessionForTest(t, server)
-	addSessionCookies(req, session)
-	rec := httptest.NewRecorder()
-
-	server.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("state status = %d: %s", rec.Code, rec.Body.String())
-	}
-	var state map[string]any
-	if err := json.NewDecoder(rec.Body).Decode(&state); err != nil {
-		t.Fatalf("decode state: %v", err)
-	}
-	for _, row := range state["computeAllocations"].([]any) {
-		if row.(map[string]any)["id"] == "compute-historic" {
-			t.Fatalf("unscoped historic resource must not become a compute projection: %#v", state["computeAllocations"])
-		}
-	}
-}
-
 func TestReconciliationGuardBlocksNewResourceProvisioning(t *testing.T) {
 	var calls []string
 	server := NewServer(newTestService(fakeBlockingReconciliationLedgerClient{}, &fakeFabricClient{calls: &calls}))
@@ -1870,7 +1600,7 @@ func TestReconciliationGuardBlocksNewResourceProvisioning(t *testing.T) {
 		t.Fatalf("decode state: %v", err)
 	}
 	guard := state["billingReconciliation"].(map[string]any)["guard"].(map[string]any)
-	if guard["blockNewWorkspaces"] != true || guard["reason"] != "tencent_bill_reconciliation_failed" {
+	if guard["blockNewWorkspaces"] != true || guard["reason"] != "provider_bill_reconciliation_failed" {
 		t.Fatalf("state missing blocking reconciliation guard: %#v", guard)
 	}
 
@@ -1973,7 +1703,7 @@ func TestProductionReadinessReturnsOnlyCustomerSafeImmutableImageFacts(t *testin
 	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &body) != nil {
 		t.Fatalf("production readiness = %d %s", rec.Code, rec.Body.String())
 	}
-	want := map[string]any{"provider": "tencent-tke", "ready": true, "cloudImagesReady": true, "workspaceImagesReady": true, "immutableImagesReady": true, "checks": []any{}}
+	want := map[string]any{"provider": "fabric", "ready": true, "cloudImagesReady": true, "workspaceImagesReady": true, "immutableImagesReady": true, "checks": []any{}}
 	if !reflect.DeepEqual(body, want) {
 		t.Fatalf("production readiness leaked internal facts: got %#v want %#v", body, want)
 	}

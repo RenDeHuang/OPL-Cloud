@@ -778,8 +778,6 @@ var (
 		textField("EvidenceID", "SetEvidenceID", "evidenceId"),
 		textField("CvmInstanceID", "SetCvmInstanceID", "cvmInstanceId"),
 		textField("InstanceID", "SetInstanceID", "instanceId"),
-		textField("NodeName", "SetNodeName", "nodeName"),
-		textField("MachineName", "SetMachineName", "machineName"),
 		floatField("CPU", "SetCPU", "cpu"),
 		floatField("MemoryGB", "SetMemoryGB", "memoryGb"),
 		floatField("DiskGB", "SetDiskGB", "diskGb"),
@@ -862,10 +860,6 @@ var (
 		textField("StorageID", "SetStorageID", "storageId"),
 		textField("AttachmentID", "SetAttachmentID", "attachmentId"),
 		textField("RuntimeServiceName", "SetRuntimeServiceName", "runtimeServiceName"),
-		textField("CvmInstanceID", "SetCvmInstanceID", "cvmInstanceId"),
-		textField("InstanceID", "SetInstanceID", "instanceId"),
-		textField("NodeName", "SetNodeName", "nodeName"),
-		textField("MachineName", "SetMachineName", "machineName"),
 	}
 	auditEntFields = []entRecordField{
 		textField("ActorUserID", "SetActorUserID", "actorUserId"),
@@ -2042,66 +2036,6 @@ func (s *postgresEntStateStore) PersistWorkspaceRenewal(ctx context.Context, upd
 		return err
 	}
 	return tx.Commit()
-}
-
-func (s *postgresEntStateStore) ActivateWorkspace(ctx context.Context, row map[string]any) (map[string]any, error) {
-	if err := validateWorkspaceBillingState(row); err != nil {
-		return nil, err
-	}
-	tx, err := s.client.Tx(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = tx.Rollback() }()
-	client := tx.Client()
-	load := func(entity any, err error, fields []entRecordField) (map[string]any, error) {
-		if controlplaneent.IsNotFound(err) {
-			return nil, nil
-		}
-		if err != nil {
-			return nil, err
-		}
-		return recordFromEnt(entity, fields), nil
-	}
-	ownerEntity, ownerErr := client.User.Query().Where(user.IDEQ(stringValue(row["ownerUserId"])), lockRowForUpdate).Only(ctx)
-	owner, err := load(ownerEntity, ownerErr, userEntFields)
-	if err != nil {
-		return nil, err
-	}
-	computeEntity, computeErr := client.ComputeAllocation.Query().Where(computeallocation.IDEQ(stringValue(row["currentComputeAllocationId"])), lockRowForUpdate).Only(ctx)
-	compute, err := load(computeEntity, computeErr, computeEntFields)
-	if err != nil {
-		return nil, err
-	}
-	storageEntity, storageErr := client.StorageVolume.Query().Where(storagevolume.IDEQ(stringValue(row["storageId"])), lockRowForUpdate).Only(ctx)
-	storage, err := load(storageEntity, storageErr, storageEntFields)
-	if err != nil {
-		return nil, err
-	}
-	attachmentEntity, attachmentErr := client.StorageAttachment.Query().Where(storageattachment.IDEQ(stringValue(row["currentAttachmentId"])), lockRowForUpdate).Only(ctx)
-	attachment, err := load(attachmentEntity, attachmentErr, attachmentEntFields)
-	if err != nil {
-		return nil, err
-	}
-	existingEntity, existingErr := client.Workspace.Query().Where(workspace.IDEQ(stringValue(row["id"])), lockRowForUpdate).Only(ctx)
-	existing, err := load(existingEntity, existingErr, workspaceEntFields)
-	if err != nil {
-		return nil, err
-	}
-	prepared, err := prepareWorkspaceActivation(row, owner, compute, storage, attachment, existing)
-	if err != nil {
-		return nil, err
-	}
-	if _, ok := prepared["customerProduct"]; !ok {
-		prepared["customerProduct"] = true
-	}
-	if err := saveWorkspaceRecord(ctx, client, prepared); err != nil {
-		return nil, err
-	}
-	if err := tx.Commit(); err != nil {
-		return nil, err
-	}
-	return prepared, nil
 }
 
 func (s *postgresEntStateStore) ActivateWorkspaceLaunchProjection(ctx context.Context, row map[string]any) (map[string]any, error) {

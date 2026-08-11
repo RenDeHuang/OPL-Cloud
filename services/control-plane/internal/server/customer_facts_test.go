@@ -45,8 +45,9 @@ type customerFactsSub2API struct {
 
 type customerFactsFabric struct {
 	fakeFabricClient
-	operations    []clients.FabricOperation
-	operationsErr error
+	facts      map[string]clients.ProviderFact
+	factsErr   error
+	factInputs []clients.ProviderFactsBatchInput
 }
 
 func (c *customerFactsSub2API) Usage(_ context.Context, query clients.Sub2APIUsageQuery) (clients.Sub2APIUsagePage, error) {
@@ -129,9 +130,24 @@ func (l *customerFactsLedger) RecordReconciliation(_ context.Context, input clie
 	}, nil
 }
 
-func (f *customerFactsFabric) ListOperations(_ context.Context) ([]clients.FabricOperation, error) {
-	f.record("fabric.operations")
-	return append([]clients.FabricOperation(nil), f.operations...), f.operationsErr
+func (f *customerFactsFabric) ProviderFactsBatch(_ context.Context, input clients.ProviderFactsBatchInput) (clients.ProviderFactsBatch, error) {
+	f.record("fabric.provider-facts")
+	f.factInputs = append(f.factInputs, input)
+	if f.factsErr != nil {
+		return clients.ProviderFactsBatch{}, f.factsErr
+	}
+	result := clients.ProviderFactsBatch{Items: make([]clients.ProviderFact, 0, len(input.Items))}
+	for _, item := range input.Items {
+		fact, ok := f.facts[providerFactKey(item)]
+		if !ok {
+			fact = clients.ProviderFact{
+				AccountID: item.AccountID, WorkspaceID: item.WorkspaceID, ResourceType: item.ResourceType, ResourceID: item.ResourceID,
+				ErrorCode: "provider_resource_not_found",
+			}
+		}
+		result.Items = append(result.Items, fact)
+	}
+	return result, nil
 }
 
 func TestBillingReceiptListTenantProjection(t *testing.T) {
@@ -296,10 +312,14 @@ func TestBillingReconciliationTreatsWorkspaceRenewalAsOneCombinedOperation(t *te
 		history:           map[int64][]clients.Sub2APIBalanceHistoryEntry{41: history},
 	}
 	calls := &[]string{}
-	fabric := &customerFactsFabric{fakeFabricClient: fakeFabricClient{calls: calls}, operations: []clients.FabricOperation{
-		workspaceRenewalReconciliationFabricOperation(operation, "compute", compute),
-		workspaceRenewalReconciliationFabricOperation(operation, "storage", storage),
-	}}
+	fabricFacts := []clients.ProviderFact{
+		reconciliationProviderFact("compute", compute),
+		reconciliationProviderFact("storage", storage),
+	}
+	for index := range fabricFacts {
+		fabricFacts[index].Facts.ExpiresAt = operation.RenewedThrough
+	}
+	fabric := &customerFactsFabric{fakeFabricClient: fakeFabricClient{calls: calls}, facts: providerFactsByKey(fabricFacts)}
 	server, err := NewPersistentServer(controlplane.NewService(ledger, fabric, sub2API), renewal.app.tables)
 	if err != nil {
 		t.Fatal(err)
@@ -309,8 +329,8 @@ func TestBillingReconciliationTreatsWorkspaceRenewalAsOneCombinedOperation(t *te
 		t.Fatalf("reconciliation status=%d body=%s", response.Code, response.Body.String())
 	}
 	assertReconciliationReport(t, decodeReconciliationResponse(t, response), "ok", 1, 1, 0)
-	if len(sub2API.history[41]) != 1 || len(ledger.page.Receipts) != 1 || len(fabric.operations) != 2 {
-		t.Fatalf("combined facts history=%#v receipts=%#v operations=%#v", sub2API.history[41], ledger.page.Receipts, fabric.operations)
+	if len(sub2API.history[41]) != 1 || len(ledger.page.Receipts) != 1 || len(fabric.facts) != 2 {
+		t.Fatalf("combined facts history=%#v receipts=%#v providerFacts=%#v", sub2API.history[41], ledger.page.Receipts, fabric.facts)
 	}
 	originalCost := structToMap(ledger.page.Receipts[0].Cost)
 	for _, tc := range []struct {
@@ -363,19 +383,6 @@ func TestBillingReconciliationTreatsWorkspaceRenewalAsOneCombinedOperation(t *te
 	})
 }
 
-func workspaceRenewalReconciliationFabricOperation(operation workspaceRenewalOperation, resourceType string, row map[string]any) clients.FabricOperation {
-	action, kind := "renew_compute_allocation", "compute_allocation"
-	if resourceType == "storage" {
-		action, kind = "renew_storage_volume", "storage_volume"
-	}
-	return clients.FabricOperation{
-		ID: "fop-" + resourceType, OperationID: operation.ID + ":" + resourceType, CallerService: "control-plane", Action: action, ResourceKind: kind,
-		ResourceID: stringValue(row["id"]), AccountID: operation.AccountID, WorkspaceID: operation.WorkspaceID, Provider: stringValue(row["provider"]),
-		ProviderRequestID: stringValue(row["providerRequestId"]), IdempotencyKey: operation.ID + ":" + resourceType, Status: "succeeded",
-		RedactedProviderPayload: map[string]any{"providerResourceId": stringValue(row["providerResourceId"])},
-	}
-}
-
 func TestBillingReconciliationMismatchBlocksPurchasesWithoutMutation(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -388,11 +395,17 @@ func TestBillingReconciliationMismatchBlocksPurchasesWithoutMutation(t *testing.
 		{name: "Sub2API charge changed", code: "sub2api_charge_mismatch", mutate: func(f *billingReconciliationFixture) {
 			f.sub2API.history[41][0].ValueUSDMicros = -1
 		}},
-		{name: "Fabric operation missing", code: "fabric_operation_missing", mutate: func(f *billingReconciliationFixture) {
-			f.fabric.operations = f.fabric.operations[1:]
+		{name: "Fabric provider fact missing", code: "fabric_provider_fact_missing", mutate: func(f *billingReconciliationFixture) {
+			key := providerFactKey(clients.ProviderFactInput{AccountID: "acct-monthly", WorkspaceID: "workspace-monthly", ResourceType: "compute", ResourceID: "compute-reconcile"})
+			fact := f.fabric.facts[key]
+			fact.Facts.Status = "external_deleted"
+			f.fabric.facts[key] = fact
 		}},
-		{name: "Fabric provider fact changed", code: "fabric_operation_mismatch", mutate: func(f *billingReconciliationFixture) {
-			f.fabric.operations[0].RedactedProviderPayload["providerResourceId"] = "ins-other"
+		{name: "Fabric provider fact changed", code: "fabric_provider_fact_mismatch", mutate: func(f *billingReconciliationFixture) {
+			key := providerFactKey(clients.ProviderFactInput{AccountID: "acct-monthly", WorkspaceID: "workspace-monthly", ResourceType: "compute", ResourceID: "compute-reconcile"})
+			fact := f.fabric.facts[key]
+			fact.Facts.ProviderID = "ins-other"
+			f.fabric.facts[key] = fact
 		}},
 		{name: "Ledger receipt missing", code: "ledger_receipt_missing", mutate: func(f *billingReconciliationFixture) {
 			f.ledger.page.Receipts = f.ledger.page.Receipts[1:]
@@ -427,7 +440,7 @@ func TestBillingReconciliationUnavailableFactsMismatch(t *testing.T) {
 		mutate func(*billingReconciliationFixture)
 	}{
 		{name: "Sub2API", code: "sub2api_balance_history_unavailable", mutate: func(f *billingReconciliationFixture) { f.sub2API.historyErr = errors.New("Sub2API unavailable") }},
-		{name: "Fabric", code: "fabric_operations_unavailable", mutate: func(f *billingReconciliationFixture) { f.fabric.operationsErr = errors.New("Fabric unavailable") }},
+		{name: "Fabric", code: "fabric_provider_facts_unavailable", mutate: func(f *billingReconciliationFixture) { f.fabric.factsErr = errors.New("Fabric unavailable") }},
 		{name: "Ledger", code: "ledger_receipts_unavailable", mutate: func(f *billingReconciliationFixture) { f.ledger.listErr = errors.New("Ledger unavailable") }},
 	}
 	for _, tc := range tests {
@@ -503,14 +516,14 @@ func newBillingReconciliationFixture(t *testing.T) *billingReconciliationFixture
 		{Code: stringValue(storage["sub2apiRedeemCode"]), Type: "balance", ValueUSDMicros: -int64(numberField(storage, "chargeUsdMicros", 0)), Status: "used", UsedBy: &usedBy, UsedAt: &paidThrough, CreatedAt: paidThrough.Add(-time.Minute)},
 	}
 	receipts := []clients.Receipt{reconciliationReceipt(compute), reconciliationReceipt(storage)}
-	operations := []clients.FabricOperation{reconciliationFabricOperation(compute), reconciliationFabricOperation(storage)}
+	facts := []clients.ProviderFact{reconciliationProviderFact("compute", compute), reconciliationProviderFact("storage", storage)}
 	ledger := &customerFactsLedger{page: clients.ReceiptPage{Receipts: receipts}}
 	sub2API := &customerFactsSub2API{
 		testSub2APIClient: &testSub2APIClient{balance: 1_000_000_000, charges: map[string]int64{}},
 		history:           map[int64][]clients.Sub2APIBalanceHistoryEntry{41: history},
 	}
 	calls := &[]string{}
-	fabric := &customerFactsFabric{fakeFabricClient: fakeFabricClient{calls: calls}, operations: operations}
+	fabric := &customerFactsFabric{fakeFabricClient: fakeFabricClient{calls: calls}, facts: providerFactsByKey(facts)}
 	server, err := NewPersistentServer(controlplane.NewService(ledger, fabric, sub2API), store)
 	if err != nil {
 		t.Fatal(err)
@@ -529,17 +542,26 @@ func reconciliationReceipt(row map[string]any) clients.Receipt {
 	}
 }
 
-func reconciliationFabricOperation(row map[string]any) clients.FabricOperation {
-	resourceType := stringValue(row["resourceType"])
-	action, kind := "create_compute_allocation", "compute_allocation"
-	if resourceType == "storage" {
-		action, kind = "create_storage_volume", "storage_volume"
+func reconciliationProviderFact(resourceType string, row map[string]any) clients.ProviderFact {
+	return clients.ProviderFact{
+		AccountID: stringValue(row["accountId"]), WorkspaceID: stringValue(row["workspaceId"]), ResourceType: resourceType, ResourceID: stringValue(row["id"]), Available: true,
+		Facts: clients.ProviderResourceFacts{
+			PackageOrSpec: firstNonEmpty(stringValue(row["packageId"]), "standard"),
+			ProviderID:    stringValue(row["providerResourceId"]),
+			Zone:          "provider-zone",
+			Status:        "active",
+			ExpiresAt:     stringValue(row["paidThrough"]),
+			LastReadAt:    "2026-08-12T00:00:00Z",
+		},
 	}
-	return clients.FabricOperation{
-		ID: "fop-" + resourceType, OperationID: "op-" + resourceType, CallerService: "control-plane", Action: action, ResourceKind: kind,
-		ResourceID: stringValue(row["id"]), AccountID: stringValue(row["accountId"]), WorkspaceID: stringValue(row["workspaceId"]), Provider: "tencent-tke",
-		ProviderRequestID: stringValue(row["providerRequestId"]), IdempotencyKey: stringValue(row["billingOperationId"]) + ":prepare", Status: "succeeded", RedactedProviderPayload: map[string]any{"providerResourceId": stringValue(row["providerResourceId"])},
+}
+
+func providerFactsByKey(facts []clients.ProviderFact) map[string]clients.ProviderFact {
+	result := make(map[string]clients.ProviderFact, len(facts))
+	for _, fact := range facts {
+		result[providerFactResultKey(fact)] = fact
 	}
+	return result
 }
 
 func decodeReconciliationResponse(t *testing.T, response *httptest.ResponseRecorder) map[string]any {
@@ -583,7 +605,7 @@ func assertReconciliationException(t *testing.T, report map[string]any, resource
 func assertReconciliationReadOnly(t *testing.T, fixture *billingReconciliationFixture) {
 	t.Helper()
 	for _, call := range *fixture.calls {
-		if call != "fabric.operations" && call != "fabric.catalog" {
+		if call != "fabric.provider-facts" && call != "fabric.catalog" {
 			t.Fatalf("reconciliation mutated Fabric: %#v", *fixture.calls)
 		}
 	}

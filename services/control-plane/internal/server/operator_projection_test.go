@@ -246,10 +246,6 @@ type operatorProjectionLedger struct {
 
 type operatorProjectionNoOperationsFabric struct{ fakeFabricClient }
 
-func (*operatorProjectionNoOperationsFabric) ListOperations(context.Context) ([]clients.FabricOperation, error) {
-	return []clients.FabricOperation{}, nil
-}
-
 type operatorProjectionFactsFabric struct {
 	fakeFabricClient
 	facts  map[string]clients.ProviderFact

@@ -41,56 +41,32 @@ func (s *Service) PrepareMonthlyCompute(ctx context.Context, input clients.Compu
 	return s.fabric.CreateComputeAllocation(ctx, input, key)
 }
 
-func (s *Service) ReadMonthlyCompute(ctx context.Context, id string) (clients.ComputeAllocation, error) {
-	return s.fabric.GetComputeAllocation(ctx, id)
-}
-
 func (s *Service) SyncMonthlyCompute(ctx context.Context, id string) (clients.ComputeAllocation, error) {
 	return s.fabric.SyncComputeAllocation(ctx, id)
 }
 
-func (s *Service) RenewMonthlyCompute(ctx context.Context, id, key string) (clients.ComputeAllocation, error) {
+func (s *Service) RenewMonthlyCompute(ctx context.Context, id, key string) (clients.ProviderResourceMutation, error) {
 	client, ok := s.fabric.(clients.FabricRenewalClient)
 	if !ok {
-		return clients.ComputeAllocation{}, errors.New("fabric_renewal_unavailable")
+		return clients.ProviderResourceMutation{}, errors.New("fabric_renewal_unavailable")
 	}
 	return client.RenewComputeAllocation(ctx, id, key)
-}
-
-func (s *Service) CleanupMonthlyCompute(ctx context.Context, id, key string) (clients.ComputeAllocation, error) {
-	return s.fabric.DestroyComputeAllocation(ctx, id, key)
-}
-
-func (s *Service) CleanupWorkspaceRuntime(ctx context.Context, workspaceID, key string) (clients.WorkspaceRuntime, error) {
-	return s.fabric.DestroyWorkspaceRuntime(ctx, workspaceID, key)
 }
 
 func (s *Service) PrepareMonthlyStorage(ctx context.Context, input clients.StorageVolumeInput, key string) (clients.StorageVolume, error) {
 	return s.fabric.CreateStorageVolume(ctx, input, key)
 }
 
-func (s *Service) ReadMonthlyStorage(ctx context.Context, id string) (clients.StorageVolume, error) {
-	reader, ok := s.fabric.(clients.FabricStorageVolumeReader)
-	if !ok {
-		return clients.StorageVolume{}, errors.New("fabric_storage_volume_read_unavailable")
-	}
-	return reader.GetStorageVolume(ctx, id)
-}
-
 func (s *Service) SyncMonthlyStorage(ctx context.Context, id string) (clients.StorageVolume, error) {
 	return s.fabric.SyncStorageVolume(ctx, id)
 }
 
-func (s *Service) RenewMonthlyStorage(ctx context.Context, id, key string) (clients.StorageVolume, error) {
+func (s *Service) RenewMonthlyStorage(ctx context.Context, id, key string) (clients.ProviderResourceMutation, error) {
 	client, ok := s.fabric.(clients.FabricRenewalClient)
 	if !ok {
-		return clients.StorageVolume{}, errors.New("fabric_renewal_unavailable")
+		return clients.ProviderResourceMutation{}, errors.New("fabric_renewal_unavailable")
 	}
 	return client.RenewStorageVolume(ctx, id, key)
-}
-
-func (s *Service) CleanupMonthlyStorage(ctx context.Context, id, key string) (clients.StorageVolume, error) {
-	return s.fabric.DestroyStorageVolume(ctx, id, key)
 }
 
 func (s *Service) RecordMonthlyReceipt(ctx context.Context, input clients.ReceiptInput, key string) (clients.Receipt, error) {
