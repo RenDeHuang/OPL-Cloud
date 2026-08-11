@@ -58,9 +58,9 @@ packages/contracts -> CI and service-boundary verification only
 | Module | Physical boundary | Owns | Allowed dependencies | Forbidden coupling |
 | --- | --- | --- | --- | --- |
 | Console UI | `apps/console-ui`, TypeScript build | presentation and customer interaction | Control Plane product APIs under `/api/*` | direct Fabric, Ledger, Sub2API, Tencent, Kubernetes, persistence, or server implementation imports |
-| Control Plane | independent `go.mod`, binary, Deployment and schema | session/account mapping, Workspace entitlement, orchestration, billing policy and customer DTOs | typed HTTP clients for Fabric, Ledger and Sub2API; narrow PostgreSQL migration helper | Fabric/Ledger implementation imports, cloud SDKs, provider mutations, or downstream table writes |
-| Fabric | independent `go.mod`, binary, Deployment and schema | compute, storage, attachment, runtime, provider operations and readback | provider adapters, cloud SDKs and narrow PostgreSQL migration helper | wallet, customer billing policy, Console session state, or Ledger table writes |
-| Ledger | independent `go.mod`, binary, Deployment and schema | Core receipts and reconciliation evidence; additional evidence verticals remain extensions | narrow PostgreSQL migration helper | spendable balance mutation, provider SDKs, Fabric execution, or Control Plane table writes |
+| Control Plane | independent `go.mod`, binary, Deployment and schema | session/account mapping, Workspace entitlement, Launch cursor/attempt/lease/CAS, account/settlement coordination and customer DTOs | typed HTTP clients for Fabric, Ledger and Sub2API; narrow PostgreSQL migration helper | resource-stage reducers, Fabric operation derivation, Fabric/Ledger implementation imports, provider fields/SDKs/Kubernetes, provider mutations, or downstream table writes |
+| Fabric | independent `go.mod`, binary, Deployment and schema | compute, storage, attachment, Secret binding, Runtime, provider-neutral operation bindings/store, provider mutations and authoritative readback | provider adapters, cloud SDKs and narrow PostgreSQL migration helper | wallet, customer billing policy, Console session state, or Ledger table writes |
+| Ledger | independent `go.mod`, binary, Deployment and schema | receipts, evidence, review, reconciliation and continuation refs; additional evidence verticals remain extensions | narrow PostgreSQL migration helper | Launch continuation authority, spendable balance mutation, provider SDKs, Fabric execution, or Control Plane table writes |
 | PostgreSQL migration helper | independent narrow Go module under `services/internal/postgresmigrate` | advisory lock, migration journal and TLS validation mechanics | PostgreSQL driver only | any Console, Control Plane, Fabric or Ledger domain type |
 | Machine contracts | JSON under `packages/contracts` | executable ownership and protocol boundaries | tests, build and validation | runtime state, service implementation or a second status owner |
 
@@ -171,21 +171,25 @@ Fabric, Ledger, Tencent, Kubernetes, or Sub2API directly.
 
 `services/control-plane` owns local sessions, one-to-one Account-to-Sub2API
 mappings, N Workspace entitlements per Account, Workspace-level monthly
-operations, provider references/current pointers, recovery state, and strict
-customer DTOs. It does not own live Compute, Storage, Attachment, or Runtime
-provider status. Sub2API authenticates customer credentials. Organization and
+operations, the Launch business cursor, attempts/leases/CAS, settlement
+coordination, selected provider-profile refs, and strict customer DTOs. It does
+not own a Fabric operation store, resource-stage reducer, live Compute, Storage,
+Attachment, Secret, or Runtime status, or provider mutation. Sub2API
+authenticates customer credentials. Organization and
 Membership rows remain internal one-to-one compatibility records only; they are
 not shared-account or customer-authorization surfaces.
 
-`services/fabric` owns compute, storage, attachments, Workspace runtimes,
-provider operations, and provider readback. The current production adapter owns
+`services/fabric` owns compute, storage, attachments, Secret binding, Workspace
+runtimes, provider-neutral stage-operation bindings, its operation store,
+provider mutations, and provider readback. The current production adapter owns
 Tencent TKE/CVM/CBS and Kubernetes calls. Provider callbacks may update resource
 facts but cannot overwrite Control Plane entitlement state.
 
-`services/ledger` owns receipt and reconciliation evidence required by the Core
-path. ReviewPolicy, Artifact, Continuation, retention, and related stores are
-implemented extension surfaces, not MVP prerequisites. Ledger never changes
-Sub2API balance.
+`services/ledger` owns receipt, evidence, review, reconciliation, and
+continuation references. ReviewPolicy, Artifact, Continuation, retention, and
+related stores beyond the Core receipts remain implemented extension surfaces,
+not MVP prerequisites. Ledger never changes Sub2API balance and its refs cannot
+authorize or advance a Workspace Launch.
 
 `packages/contracts` contains narrow machine-enforced cross-module, interface,
 security, integrity, permission, and irreversible-side-effect boundaries; it is
@@ -205,8 +209,19 @@ preflight, readback, renewal, and recovery facts. The selected instance profile
 chooses an adapter. Provider-specific identities, diagnostics, retry rules, and
 mutation sequences remain inside that adapter. The first additional adapter is
 `local-docker`; generic `kubernetes` follows when the common contract is proven
-by both real paths. Control Plane keeps one launch/recovery reducer and persists
-the exact provider binding per Workspace.
+by both real paths. Control Plane keeps the one Launch business Reconciler and
+selected provider-profile ref; Fabric persists each stage-operation binding and
+the provider resource mapping.
+
+## Current Launch Boundary Gap
+
+Current `services/control-plane/internal/server/workspace_launch.go` does not yet
+meet the accepted physical boundary. It directly interprets Tencent, NodePool,
+Machine, CVM, `providerData`, and `costTags` facts and derives attachment and
+Secret ownership from Fabric operation listings. These are current source facts,
+not accepted target ownership. They must move behind a typed Fabric public
+contract and Fabric-owned implementation before the single Reconciler can be
+admitted, even when narrower behavior tests pass.
 
 ## Persistence
 

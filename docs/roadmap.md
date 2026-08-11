@@ -26,7 +26,8 @@ The current MVP critical path is a thin Console, one real `local-docker`
 Workspace path, and authoritative OPL Gateway accounting. Tencent/TKE belongs to
 the medopl instance extension. Self-service onboarding/payment, refined visual
 work, and broader managed-platform capabilities are intentionally later. This
-vertical is the only `P0` lane.
+vertical is the only `P0` lane. `LAUNCH-FABRIC-BINDING-01` below is a required
+physical-boundary slice of that same vertical, not a second product lane.
 
 ## Planning Semantics
 
@@ -50,9 +51,11 @@ real production mutation is serialized.
 
 | ID | State | Priority | Current gap | Owner boundary | Acceptance |
 | --- | --- | --- | --- | --- | --- |
-| `MVP-LOCAL-WORKSPACE-GATEWAY-01` | `next` | `P0` | Thin Console and Sub2API-backed balance, usage, Key, debit, and refund paths exist, but no real `local-docker` adapter closes Workspace create, readback, access, delete, and accounting as one path | Fabric provider port + required Control Plane launcher DTOs + Gateway/Sub2API authority + thin Console; Ledger records only required receipts and reconciliation | On a MacBook or single-server Docker host, Console creates, reads back, opens, and deletes one OPL App/WebUI Workspace through Control Plane and `local-docker`; balance, usage, debit, and refund remain Sub2API-authoritative with no second wallet; Tencent/TKE is neither exercised nor required |
+| `MVP-LOCAL-WORKSPACE-GATEWAY-01` | `next` | `P0` | Thin Console and Sub2API-backed balance, usage, Key, debit, and refund paths exist, but no real `local-docker` adapter closes Workspace create, readback, access, delete, and accounting as one path | Fabric provider port + Control Plane Launch coordination + Gateway/Sub2API authority + thin Console; Ledger records only required receipts and reconciliation | On a MacBook or single-server Docker host, Console creates, reads back, opens, and deletes one OPL App/WebUI Workspace through the single Control Plane Reconciler and `local-docker`; every resource stage uses the admitted Fabric binding; balance, usage, debit, and refund remain Sub2API-authoritative; Tencent/TKE is neither exercised nor required |
+| `LAUNCH-FABRIC-BINDING-01` | `next` | `P0` | Required slice of the same local Workspace + Gateway MVP vertical: no admitted public contract yet proves an explicit Fabric-owned launch/stage operation binding; the current Control Plane implementation carries provider facts and can infer resource identity from operation keys, listings, and tags | Control Plane business operation/cursor + typed Fabric HTTP contract + Fabric operation store/provider adapter; no cross-import or shared domain package | A real caller sends the minimal immutable provider-neutral binding; Fabric persists it before write and returns it with authoritative readback; focused tests cover request hash, expected binding, idempotency and conflict/unknown handling; CP contains no provider fields, SDK/Kubernetes knowledge, resource reducer, or Fabric operation derivation |
+| `LEGACY-LAUNCH-MIGRATION-01` | `next` | `P1` | No admitted migration proves that only quiesced `manual_review` schema-2 Launches can join the single Reconciler without changing identity, money, resources, or attempt budgets | Control Plane migration/source and owner-authoritative read-only clients; Fabric/Sub2API remain zero-mutation fact owners | GET-only facts -> deterministic mapping -> exact-row/result CAS -> CP post-write readback preserves launch/account/Workspace/customer, debit/Key/provider/resource IDs, billing period, all idempotency identities, and consumed/unknown/remaining budgets; any gap stays `manual_review`; migrated rows still require immutable Resume authorization |
 | `DEPLOY-ISOLATION-01` | `planned` | `P2` | Services share a database credential, internal token, and ConfigMap | Reusable deployment plus service startup configuration | Service-specific database roles/URLs and identities prevent cross-owner table writes and caller impersonation |
-| `MODULE-COHESION-01` | `planned` | `P2` | Large service files concentrate unrelated capabilities and create change collisions | One owning Go module per change | Focused capability files preserve package API, state behavior, and full tests without creating shared policy modules |
+| `MODULE-COHESION-01` | `planned` | `P2` | Large service files concentrate unrelated capabilities and create change collisions; a single-Reconciler change can worsen this by moving Fabric concerns into Control Plane | One owning Go module per change | Focused capability files preserve package API, state behavior, and full tests without shared policy modules; single-Reconciler candidates are rejected until provider facts/reducers/mutations and Fabric operation derivation live behind the typed Fabric public contract |
 | `INSTANCE-MEDOPL-01` | `external_owner` | `P2` | Tencent/TKE profile, provider-specific workflows, and receipts are not fully separated from reusable Cloud | `opl-instance-medopl` | Exact Cloud release refs, provider/Secret owners, values, and deployment receipts are current with no Tencent/TKE prerequisite left in reusable Cloud MVP acceptance |
 | `CONSOLE-SELF-SERVICE-01` | `later` | `P3` | Accounts are operator-provisioned; registration, payment/order, and complete self-service are absent | Console + Control Plane product API and policy | A tenant can onboard, read authoritative wallet/usage, create 0..N Workspaces, and complete one approved payment/order path without acquiring wallet or provider authority |
 | `BILLING-EVIDENCE-01` | `later` | `P3` | Full debit/refund/renewal/reconciliation production evidence is outside the accounting-first MVP | Control Plane settlement + Sub2API adapter + Ledger receipts | One immutable release proves exactly one Workspace-period debit, provider renewal/readback, Receipt, and failure recovery without a second wallet |
@@ -79,7 +82,7 @@ Open phases are:
 
 | ID | State | Priority | Phase and scope | Safety retained | Acceptance |
 | --- | --- | --- | --- | --- | --- |
-| `CONTRACT-OWNER-02` | `next` | `P1` | Phase 2: split `opl-cloud-launch-freeze-contract.json` by settlement, launch/recovery, provider, and Ledger owner | debit/refund cardinality, idempotency, recovery, PREPAID, resource protection | Every retained fact has one owning contract and real caller/test; aggregate launch contract and test are deleted |
+| `CONTRACT-OWNER-02` | `next` | `P1` | Phase 2: split `opl-cloud-launch-freeze-contract.json` by settlement, Control Plane launch/recovery, Fabric provider/resource binding, and Ledger receipt/evidence owner | debit/refund cardinality, idempotency and CAS, immutable Resume authorization, Fabric binding/readback, PREPAID resource protection, append-only evidence | Every retained fact has one owner and real caller/test; Control Plane settlement coordination references Sub2API authority, CP launch/recovery covers the single Reconciler and bounded legacy migration, Fabric owns the stage binding and provider/resource facts, Ledger owns receipt/evidence/continuation refs without continuation authority; the aggregate contract/test are then deleted |
 | `CONTRACT-DEDUP-02` | `planned` | `P1` | Phase 2: assign one owner to repeated facts across current machine contracts | public APIs, security, integrity, permissions, irreversible side effects | Other contracts reference the owner or schema; no duplicated mutable implementation/status truth remains |
 | `DEPLOY-CONTRACT-03` | `planned` | `P1` | Phase 3: migrate deployment contract one workflow family at a time | production authorization, runner/identity binding, Secrets, immutable images, mutation bounds, readback, diagnostics, rollback | Focused workflow tests own executable shape; the aggregate deployment migration contract is deleted only after all families cut over |
 
@@ -121,11 +124,14 @@ owner and exact immutable revision.
 
 1. A changed cross-module boundary has one owner, one compatible contract
    revision, and focused tests on both sides.
-2. Each implementation replays on fresh canonical `main`; overlapping branches
+2. A single-Reconciler candidate keeps resource stage implementation, Fabric
+   operation derivation, provider facts, and mutations inside Fabric; tests do
+   not admit cross-owner code into Control Plane.
+3. Each implementation replays on fresh canonical `main`; overlapping branches
    reconcile semantically rather than preserving duplicate current truths.
-3. Production and instance qualification bind one exact immutable release and
+4. Production and instance qualification bind one exact immutable release and
    preserve authorization, Secret, mutation, readback, and rollback boundaries.
-4. A failed runtime or production evidence lane stays open without rolling
+5. A failed runtime or production evidence lane stays open without rolling
    unrelated local development backward.
 
 ## Explicit Non-Goals

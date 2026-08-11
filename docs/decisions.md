@@ -14,6 +14,47 @@ are extensions or later work. Tencent/TKE is an extension adapter selected by
 `opl-instance-medopl`, not an OPL Cloud MVP prerequisite. Compose startup of the
 three control services does not count as a local Docker Workspace provider.
 
+## 2026-08-11: One Durable Launch, Separate Physical Owners
+
+One Workspace Launch has one durable Control Plane operation and business state
+machine. Create and Resume enter the same Reconciler. The durable chain is
+`preflight -> key -> debit -> ensure compute allocation -> storage -> attachment
+-> secret -> runtime -> activation -> receipt -> succeeded`; preflight is the
+read-only admission gate before the first external write, and a Workspace URL is
+Runtime-authoritative readback/projection rather than a mutation stage.
+
+Recovery is not a second state machine or resource writer. It may persist one
+immutable Resume authorization for the original launch, bound to the launch ID,
+current version, current stage, remaining mutation budget, reviewer, time, and
+reason. Control Plane must persist it with compare-and-swap before the original
+Reconciler can continue. Recovery cannot supply or rewrite resource IDs, reset a
+budget, create a successor launch, or perform a Fabric/provider mutation.
+
+The single Reconciler does not create a monolith. `services/control-plane` owns
+only the business cursor, attempt/lease/CAS state, account and settlement
+coordination, and customer projection. `services/fabric` owns compute, storage,
+attachment, Secret binding, Runtime, its operation store, provider/Kubernetes
+mutation, and authoritative resource readback. `services/ledger` owns append-only
+receipt, evidence, review, reconciliation, and continuation references, but none
+of those references can authorize or advance a Launch. Sub2API remains the
+identity, wallet, Key, and Usage authority.
+
+Control Plane calls Fabric through a typed public HTTP contract carrying an
+explicit, immutable, provider-neutral launch/stage operation binding. Fabric
+persists that binding before a provider write and returns it with readback;
+provider adapters map it to Machine, CVM, Node, CBS, Runtime, and other provider
+identities. Control Plane must not infer ownership from an idempotency-key suffix,
+an unscoped operation listing, provider tags, or provider-specific fields.
+
+Any legacy launch migration is a bounded Control Plane state migration, not a
+new launch. Only quiesced `manual_review` schema-2 rows are eligible. Migration
+uses owner-authoritative GET-only facts, deterministic mapping, exact-row/result
+CAS, and post-write Control Plane readback while preserving all original
+identity, money, resource, idempotency, billing-period, and attempt-budget facts.
+Anything missing, conflicting, unknown, or not exactly preservable remains in
+`manual_review` with zero provider or wallet mutation and still requires the
+immutable Resume authorization.
+
 ## 2026-08-11: Product Release And Instance Deployment Are Separate
 
 `one-person-lab-cloud` publishes the installable product: source, contracts,
