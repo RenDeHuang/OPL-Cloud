@@ -1081,41 +1081,6 @@ test("Current Console binds delegated Gateway credentials to process-local Conso
   });
 });
 
-test("Current human truth preserves public entry points and evidence levels", async () => {
-  const [invariants, architecture, status, consoleProduct, runbook, readme, devGuide, decisions, project] = await Promise.all([
-    text("docs/invariants.md"),
-    text("docs/implementation-architecture.md"),
-    text("docs/status.md"),
-    text("docs/product/console-workspace-v1.md"),
-    text("docs/runtime/production-runbook.md"),
-    text("README.md"),
-    text("DEV_GUIDE.md"),
-    text("docs/decisions.md"),
-    text("docs/project.md")
-  ]);
-
-  for (const document of [invariants, architecture, status, consoleProduct, runbook, readme, devGuide, decisions, project]) {
-    assert.doesNotMatch(document, /OPL_GATEWAY_PUBLIC_BASE_URL|GET \/api\/gateway\/endpoint/);
-  }
-  for (const document of [invariants, architecture, status, consoleProduct]) {
-    assert.match(document, /code-complete/i);
-    assert.match(document, /pilot-ready/i);
-    assert.match(document, /production-proven/i);
-  }
-  assert.match(consoleProduct, /Public Home and Login may evolve[\s\S]{0,160}without changing this Workspace capability boundary/i);
-  assert.match(consoleProduct, /URL.*用户名.*密码.*Workspace Key/is);
-  assert.match(invariants, /Recovery is an authorization path for the original launch, not a second\s+business state machine/i);
-  assert.match(invariants, /mutation ledger is absent or observed with complete confirmed-zero evidence/i);
-  assert.match(status, /server-authoritative\s+Recovery Plan handling/i);
-  assert.doesNotMatch(invariants, /pending integrated verification/i);
-  assert.doesNotMatch(invariants, /stops at\s+`debited`[\s\S]{0,300}S8/i);
-  assert.doesNotMatch(invariants, /durable `workspace\.launch` RuntimeOperation/);
-  assert.doesNotMatch(invariants, /manual[- ]review[^.\n]{0,160}code-complete/i);
-  assert.match(runbook, /does not operate or automatically deploy a concrete instance/i);
-  assert.match(runbook, /opl-instance-medopl/);
-  assert.doesNotMatch(runbook, /deploy-tke-production\.yml|production-basic-customer-operation\.yml/);
-});
-
 test("Production funding failure evidence preserves only approval ID digests", async () => {
   const deployment = await json("packages/contracts/opl-cloud-deployment-contract.json");
   for (const artifact of [

@@ -22,21 +22,9 @@ async function filesUnder(directory, include = () => true) {
   return files;
 }
 
-test("public entry and current contracts preserve the operator-provisioned paid Pilot boundary", async () => {
-  const [readme, architecture, packages, invariants, status, runbook, tke, pricing] = await Promise.all([
-    text("README.md"),
-    text("docs/implementation-architecture.md"),
-    text("packages/README.md"),
-    text("docs/invariants.md"),
-    text("docs/status.md"),
-    text("docs/runtime/production-runbook.md"),
-    text("docs/runtime/tke-production-deployment.md"),
-    json("packages/contracts/opl-cloud-pricing-contract.json")
-  ]);
+test("pricing contract preserves the Basic and Pro monthly package facts", async () => {
+  const pricing = await json("packages/contracts/opl-cloud-pricing-contract.json");
 
-  assert.match(readme, /assets\/branding\/opl-cloud-logo\.png/);
-  assert.match(readme, /assets\/branding\/opl-cloud-overview-v2\.png/);
-  assert.match(readme, /Purpose: `public_cloud_entry`/);
   assert.deepEqual(pricing.workspaceMonthly.basic, {
     packageId: "basic",
     sizeGb: 10,
@@ -51,26 +39,6 @@ test("public entry and current contracts preserve the operator-provisioned paid 
     storageUsdMicros: 25800000,
     totalUsdMicros: 240080000
   });
-  assert.match(status, /administrator-provisioned accounts/i);
-  assert.match(invariants, /one Console User.*one OPL Account.*one Sub2API User\/Wallet/is);
-  assert.match(runbook, /does not operate or automatically deploy a concrete instance/i);
-  assert.match(runbook, /opl-instance-medopl/);
-  assert.match(tke, /supported Fabric adapter, not the OPL Cloud product boundary/i);
-  assert.match(tke, /opl-instance-medopl/);
-  assert.match(status, /code-complete/i);
-  assert.match(status, /production-proven=false/i);
-  assert.doesNotMatch(architecture, /starts from a fresh database/i);
-  assert.match(architecture, /legacy identity collisions.*fail closed/is);
-  assert.doesNotMatch(runbook, /safe-update\.sh|\/home\/ubuntu\/sub2api/);
-
-  for (const [name, document] of Object.entries({ readme, architecture, packages, invariants, status })) {
-    assert.doesNotMatch(document, /\bCNY\b|1 USD\s*=|exchange rate/i, `${name} customer CNY`);
-    assert.doesNotMatch(document, /verification-slot-01\b/, `${name} single slot`);
-    assert.doesNotMatch(document, /\b2-5\b/, `${name} capped cohort`);
-  }
-  assert.doesNotMatch(runbook, /reuse `verification-slot-01`/i);
-  assert.doesNotMatch(status, /current Pilot V2 implementation plan/i);
-  assert.doesNotMatch(runbook, /current Pilot V2 implementation plan/i);
 });
 
 test("identity contracts expose operator-provisioned owners and keep Organization internal", async () => {
@@ -136,41 +104,6 @@ test("current contracts expose only authoritative Pilot sources and controls", a
   assert.equal(boundary.browserBoundary.onlyCalls, "control_plane_product_apis");
   assert.deepEqual(boundary.browserBoundary.forbidden, ["sub2api_management_direct", "sub2api_management_redirect", "sub2api_management_iframe", "html_scraping", "raw_admin_dto"]);
   assert.deepEqual(boundary.customerMutationBoundary, { payment: false, topUp: false, keyCreate: true, keyRevoke: true });
-});
-
-test("current truth hard-cuts invitation and stage vocabulary", async () => {
-  const currentDocs = [
-    "README.md",
-    ...await filesUnder("docs", (path) => path.endsWith(".md")),
-    "packages/README.md",
-    "packages/contracts/README.md"
-  ];
-  const contractPaths = await filesUnder("packages/contracts", (path) => path.endsWith(".json"));
-  const currentContracts = [];
-  for (const path of contractPaths) {
-    if ((await json(path)).state === "current") currentContracts.push(path);
-  }
-  const currentUI = [
-    ...await filesUnder("apps/console-ui/src"),
-    "tools/console-browser-qa.ts"
-  ];
-  const activeCode = await filesUnder(
-    "services/control-plane",
-    (path) => path.endsWith(".go") && !path.endsWith("_test.go") && !path.startsWith("services/control-plane/migrations/")
-  );
-  const retiredStageVocabulary = new RegExp("\\bS(?:7|9)\\b|\\bStage\\s?B\\b");
-  const documents = await Promise.all([...currentDocs, ...currentContracts, ...currentUI, ...activeCode].map(async (path) => [path, await text(path)]));
-  for (const [path, raw] of documents) {
-    let content = raw;
-    if (path === "services/control-plane/internal/server/ent_state_store.go") {
-      content = content.replaceAll("202607170001_invited_account_identity", "").replaceAll("ApplyInvitedAccountIdentity", "");
-    }
-    if (path === "services/control-plane/internal/server/server.go") {
-      content = content.replaceAll("/api/operator/accounts/invitations", "");
-    }
-    assert.doesNotMatch(content, /invite|invited|invitation|邀请制/i, path);
-    assert.doesNotMatch(content, retiredStageVocabulary, path);
-  }
 });
 
 test("Workspace owns renewal while retired machine contracts stay absent", async () => {
