@@ -1,10 +1,16 @@
 # OPL Cloud
 
-OPL Cloud is the hosted implementation of the product defined by
+OPL Cloud is the reusable implementation of the product defined by
 [`one-person-lab-cloud`](https://github.com/gaofeng21cn/one-person-lab-cloud).
 `one-person-lab` supplies the development framework; this repository owns the
-Console, Control Plane, Fabric, Ledger, Workspace delivery, and Tencent TKE
-deployment.
+Console, Control Plane, Fabric, Ledger, and reusable Workspace delivery
+mechanisms. The current medopl/Tencent TKE deployment remains temporarily
+co-located here as instance-migration state.
+
+The canonical target repository name is `opl-cloud`. It is the single reusable
+implementation repository; Console, Fabric, and Ledger are logical services,
+not separate current repositories. Concrete installations belong to instance
+repositories. The first commercial instance is `opl-instance-medopl`.
 
 ## Runtime Boundaries
 
@@ -13,8 +19,9 @@ deployment.
 - **Control Plane** owns local sessions, the account-to-Sub2API mapping,
   Workspace lifecycle, monthly operations, and customer-safe projections. It
   does not own customer passwords or a second identity system.
-- **Fabric** owns CVM/CBS, attachments, runtimes, Tencent/Kubernetes calls, and
-  provider facts. It does not own billing state.
+- **Fabric** owns provider resource operations, attachments, runtimes, and
+  provider facts. The current production adapter is Tencent TKE/CVM/CBS; the
+  product target is provider-neutral. Fabric does not own billing state.
 - **Ledger** owns append-only receipts, reviews, artifacts, audit evidence, and
   reconciliation reports. It is not a spendable-balance service.
 - **Sub2API** owns customer authentication, the only spendable USD wallet, API
@@ -176,8 +183,13 @@ preview, not a public test mode or production readiness claim.
 
 ## Production
 
-Production uses Tencent TKE and the three Go service binaries in one OPL Cloud
-image. Validate secret references before deployment:
+The current `medopl` production instance uses Tencent TKE and the three Go
+service binaries in one OPL Cloud image. Its domains, Tencent profile, enabled
+plans and prices, image pins, secret refs, and deployment evidence are still
+temporarily co-located here until `opl-instance-medopl` is materialized. That
+co-location is migration state, not the reusable repository boundary.
+
+Validate secret references before deployment:
 
 ```bash
 npm run validate:production-manifest -- \

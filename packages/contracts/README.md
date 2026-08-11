@@ -34,3 +34,6 @@ Each contract should declare:
    substitute.
 9. A target contract field does not prove delivery. `codeComplete`, `pilotReady`,
    and `productionProven` advance only with their matching code and evidence.
+10. `opl-cloud` is the single current implementation repository. Contracts may
+    name Console, Control Plane, Fabric, and Ledger as logical service owners,
+    but must not project them as separate current repositories.

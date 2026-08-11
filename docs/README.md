@@ -11,6 +11,11 @@ This repository follows the `one-person-lab` documentation lifecycle.
 
 Human docs explain the system. They do not replace contracts or tests.
 
+Repository names in current docs use the target topology: `opl-cloud` is the
+implementation owner and `opl-instance-medopl` is the medopl instance owner.
+Until transfer and instance extraction complete, current remote names and
+co-located deployment files are migration state rather than target authority.
+
 ## Active Docs
 
 - [project.md](./project.md): repository scope and ownership.

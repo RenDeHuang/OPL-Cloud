@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 5,
+  "schemaVersion": 6,
   "owner": "OPL Console",
   "purpose": "Machine-readable requirements for current commercial Console objects.",
   "state": "current",
@@ -13,10 +13,14 @@
   "currentSlice": "Administrator-provisioned owner login, live Sub2API Wallet/Key/Usage facts, multiple independent Workspace subscriptions, live Fabric resource details, Runtime readiness, and Ledger receipts.",
   "customerRenewalAuthority": "workspace",
   "repositoryBoundaries": [
-    "opl-console",
-    "opl-fabric",
-    "opl-ledger"
+    "opl-cloud"
   ],
+  "serviceBoundaries": {
+    "console": "apps/console-ui",
+    "controlPlane": "services/control-plane",
+    "fabric": "services/fabric",
+    "ledger": "services/ledger"
+  },
   "routeKinds": [
     "read_model",
     "business_object",
@@ -42,6 +46,7 @@
     "Backup, recovery, sync, transfer, payment orders, and raw provider diagnostics are forbidden Pilot customer surfaces; owned general Key mutation is projected through Control Plane with delegated user credentials."
   ],
   "repoBoundaryRules": [
+    "opl-cloud is the single current implementation repository; standalone Console, Fabric, and Ledger repositories are prototypes only.",
     "Console owns UI and product presentation through Control Plane APIs only; Sub2API authenticates customer credentials.",
     "Fabric owns compute, storage, attachment, Workspace runtime, and provider execution boundaries.",
     "Ledger owns evidence, audit, reconciliation, and review policy boundaries."
@@ -49,7 +54,8 @@
   "objectKinds": [
     {
       "kind": "Account",
-      "ownerRepo": "opl-console",
+      "ownerRepo": "opl-cloud",
+      "ownerService": "control-plane",
       "routeKinds": [
         "read_model",
         "business_object"
@@ -67,7 +73,8 @@
     },
     {
       "kind": "User",
-      "ownerRepo": "opl-console",
+      "ownerRepo": "opl-cloud",
+      "ownerService": "control-plane",
       "routeKind": "read_model",
       "lifecycle": "current",
       "requiredCapabilitiesForImplemented": [
@@ -83,7 +90,8 @@
     },
     {
       "kind": "Session",
-      "ownerRepo": "opl-console",
+      "ownerRepo": "opl-cloud",
+      "ownerService": "control-plane",
       "routeKind": "read_model",
       "lifecycle": "current",
       "requiredCapabilitiesForImplemented": [
@@ -97,7 +105,8 @@
     },
     {
       "kind": "ComputeAllocation",
-      "ownerRepo": "opl-console",
+      "ownerRepo": "opl-cloud",
+      "ownerService": "fabric",
       "routeKinds": [
         "business_object",
         "read_model"
@@ -139,7 +148,8 @@
     },
     {
       "kind": "StorageVolume",
-      "ownerRepo": "opl-console",
+      "ownerRepo": "opl-cloud",
+      "ownerService": "fabric",
       "routeKind": "business_object",
       "lifecycle": "current",
       "requiredCapabilitiesForImplemented": [
@@ -164,7 +174,8 @@
     },
     {
       "kind": "StorageAttachment",
-      "ownerRepo": "opl-console",
+      "ownerRepo": "opl-cloud",
+      "ownerService": "fabric",
       "routeKind": "business_object",
       "lifecycle": "current",
       "requiredCapabilitiesForImplemented": [
@@ -179,7 +190,8 @@
     },
     {
       "kind": "Workspace",
-      "ownerRepo": "opl-console",
+      "ownerRepo": "opl-cloud",
+      "ownerService": "control-plane",
       "routeKinds": [
         "business_object",
         "read_model",
@@ -222,7 +234,8 @@
     },
     {
       "kind": "Balance",
-      "ownerRepo": "opl-console",
+      "ownerRepo": "opl-cloud",
+      "ownerService": "control-plane",
       "routeKind": "read_model",
       "lifecycle": "current",
       "requiredCapabilitiesForImplemented": [
@@ -236,7 +249,8 @@
     },
     {
       "kind": "EvidenceReceipt",
-      "ownerRepo": "opl-ledger",
+      "ownerRepo": "opl-cloud",
+      "ownerService": "ledger",
       "routeKind": "read_model",
       "lifecycle": "current",
       "requiredCapabilitiesForImplemented": [
@@ -250,7 +264,8 @@
     },
     {
       "kind": "FabricOperation",
-      "ownerRepo": "opl-fabric",
+      "ownerRepo": "opl-cloud",
+      "ownerService": "fabric",
       "routeKind": "read_model",
       "lifecycle": "current",
       "requiredCapabilitiesForImplemented": [
@@ -265,7 +280,8 @@
     },
     {
       "kind": "AdminAuditEvent",
-      "ownerRepo": "opl-console",
+      "ownerRepo": "opl-cloud",
+      "ownerService": "control-plane",
       "routeKind": "read_model",
       "lifecycle": "current",
       "requiredCapabilitiesForImplemented": [
@@ -278,7 +294,8 @@
     },
     {
       "kind": "SupportTicketMapping",
-      "ownerRepo": "opl-console",
+      "ownerRepo": "opl-cloud",
+      "ownerService": "control-plane",
       "routeKind": "external_integration",
       "lifecycle": "current",
       "requiredCapabilitiesForImplemented": [
@@ -293,7 +310,8 @@
     },
     {
       "kind": "Announcement",
-      "ownerRepo": "opl-console",
+      "ownerRepo": "opl-cloud",
+      "ownerService": "control-plane",
       "routeKind": "business_object",
       "lifecycle": "current",
       "requiredCapabilitiesForImplemented": ["list", "detail", "read", "write", "action", "audit"],

@@ -28,7 +28,7 @@
   "architectureAuthority": {
     "repository": "https://github.com/gaofeng21cn/one-person-lab-cloud",
     "branch": "main",
-    "reviewedRevision": "c349a41d860e706ed43a4090b9e75abb0b130971",
+    "reviewedRevision": "43830f7bd209be293a1ce6445202a429b6996cda",
     "rule": "The upstream repository owns target product boundaries; this contract owns current implementation choices, exact prices, and delivery gaps."
   },
   "productSurfaces": {
