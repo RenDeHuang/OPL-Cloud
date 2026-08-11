@@ -37,140 +37,36 @@ func (s *Service) PreflightMonthlyResource(ctx context.Context, input clients.Mo
 	return client.MonthlyPreflight(ctx, input)
 }
 
-func (s *Service) ComputePoolHead(ctx context.Context, nodePoolID string) (clients.ComputePoolHeadReadback, error) {
-	client, ok := s.fabric.(clients.FabricComputePoolHeadClient)
-	if !ok {
-		return clients.ComputePoolHeadReadback{}, errors.New("fabric_compute_pool_head_unavailable")
-	}
-	return client.ComputePoolHead(ctx, nodePoolID)
-}
-
-func (s *Service) MonthlyProviderTruth(ctx context.Context, computeID, storageID string) (clients.MonthlyProviderTruth, error) {
-	client, ok := s.fabric.(clients.FabricMonthlyProviderTruthClient)
-	if !ok {
-		return clients.MonthlyProviderTruth{}, errors.New("fabric_monthly_provider_truth_unavailable")
-	}
-	return client.MonthlyProviderTruth(ctx, computeID, storageID)
-}
-
-func (s *Service) ComputeProviderTruth(ctx context.Context, input clients.ComputeClaimRecoveryInput) (clients.ComputeProviderTruth, error) {
-	client, ok := s.fabric.(clients.FabricComputeProviderTruthClient)
-	if !ok {
-		return clients.ComputeProviderTruth{State: "unknown", ComputeState: "unknown", StorageState: "unknown"}, errors.New("fabric_compute_provider_truth_unavailable")
-	}
-	return client.ComputeProviderTruth(ctx, input)
-}
-
-func (s *Service) MachineOwnership(ctx context.Context, resourceID string) (clients.MachineOwnership, error) {
-	client, ok := s.fabric.(clients.FabricMachineOwnershipClient)
-	if !ok {
-		return clients.MachineOwnership{}, errors.New("fabric_machine_ownership_unavailable")
-	}
-	return client.MachineOwnership(ctx, resourceID)
-}
-
-func (s *Service) WorkspaceActivationTruth(ctx context.Context, input clients.WorkspaceActivationTruthInput) (clients.WorkspaceActivationTruth, error) {
-	client, ok := s.fabric.(clients.FabricWorkspaceActivationTruthClient)
-	if !ok {
-		return clients.WorkspaceActivationTruth{Reason: "provider_unavailable", ErrorClass: "client_unavailable"}, errors.New("fabric_workspace_activation_truth_unavailable")
-	}
-	return client.WorkspaceActivationTruth(ctx, input)
-}
-
-func (s *Service) WorkspaceLaunchStageReadbackProof(ctx context.Context, input clients.WorkspaceLaunchStageReadbackInput) (clients.WorkspaceLaunchStageReadbackProof, error) {
-	client, ok := s.fabric.(clients.FabricWorkspaceLaunchStageReadbackClient)
-	if !ok {
-		return clients.WorkspaceLaunchStageReadbackProof{}, errors.New("fabric_workspace_launch_stage_readback_unavailable")
-	}
-	return client.WorkspaceLaunchStageReadbackProof(ctx, input)
-}
-
-func (s *Service) ConvergeWorkspaceLaunchStageReadback(ctx context.Context, input clients.WorkspaceLaunchStageReadbackInput) (clients.WorkspaceLaunchStageReadbackProof, error) {
-	client, ok := s.fabric.(clients.FabricWorkspaceLaunchStageReadbackClient)
-	if !ok {
-		return clients.WorkspaceLaunchStageReadbackProof{}, errors.New("fabric_workspace_launch_stage_readback_unavailable")
-	}
-	return client.ConvergeWorkspaceLaunchStageReadback(ctx, input)
-}
-
-func (s *Service) ComputeClaimRecoveryProof(ctx context.Context, input clients.ComputeClaimRecoveryInput) (clients.ComputeClaimRecoveryProof, error) {
-	client, ok := s.fabric.(clients.FabricComputeClaimRecoveryClient)
-	if !ok {
-		return clients.ComputeClaimRecoveryProof{Reason: "provider_describe"}, errors.New("fabric_compute_claim_recovery_unavailable")
-	}
-	return client.ComputeClaimRecoveryProof(ctx, input)
-}
-
-func (s *Service) ComputeClaimRecoveryIdentityEvidence(ctx context.Context, input clients.ComputeClaimRecoveryClaimInput) (*clients.ComputeClaimIdentityEvidence, error) {
-	client, ok := s.fabric.(clients.FabricComputeClaimRecoveryIdentityClient)
-	if !ok {
-		return nil, errors.New("fabric_compute_claim_recovery_unavailable")
-	}
-	return client.ComputeClaimRecoveryIdentityEvidence(ctx, input)
-}
-
-func (s *Service) ClaimComputeRecovery(ctx context.Context, input clients.ComputeClaimRecoveryClaimInput, key string) (clients.ComputeClaimRecoveryProof, error) {
-	client, ok := s.fabric.(clients.FabricComputeClaimRecoveryClient)
-	if !ok {
-		return clients.ComputeClaimRecoveryProof{Reason: "provider_describe"}, errors.New("fabric_compute_claim_recovery_unavailable")
-	}
-	return client.ClaimComputeRecovery(ctx, input, key)
-}
-
 func (s *Service) PrepareMonthlyCompute(ctx context.Context, input clients.ComputeAllocationInput, key string) (clients.ComputeAllocation, error) {
 	return s.fabric.CreateComputeAllocation(ctx, input, key)
-}
-
-func (s *Service) ReadMonthlyCompute(ctx context.Context, id string) (clients.ComputeAllocation, error) {
-	return s.fabric.GetComputeAllocation(ctx, id)
 }
 
 func (s *Service) SyncMonthlyCompute(ctx context.Context, id string) (clients.ComputeAllocation, error) {
 	return s.fabric.SyncComputeAllocation(ctx, id)
 }
 
-func (s *Service) RenewMonthlyCompute(ctx context.Context, id, key string) (clients.ComputeAllocation, error) {
+func (s *Service) RenewMonthlyCompute(ctx context.Context, id, key string) (clients.ProviderResourceMutation, error) {
 	client, ok := s.fabric.(clients.FabricRenewalClient)
 	if !ok {
-		return clients.ComputeAllocation{}, errors.New("fabric_renewal_unavailable")
+		return clients.ProviderResourceMutation{}, errors.New("fabric_renewal_unavailable")
 	}
 	return client.RenewComputeAllocation(ctx, id, key)
-}
-
-func (s *Service) CleanupMonthlyCompute(ctx context.Context, id, key string) (clients.ComputeAllocation, error) {
-	return s.fabric.DestroyComputeAllocation(ctx, id, key)
-}
-
-func (s *Service) CleanupWorkspaceRuntime(ctx context.Context, workspaceID, key string) (clients.WorkspaceRuntime, error) {
-	return s.fabric.DestroyWorkspaceRuntime(ctx, workspaceID, key)
 }
 
 func (s *Service) PrepareMonthlyStorage(ctx context.Context, input clients.StorageVolumeInput, key string) (clients.StorageVolume, error) {
 	return s.fabric.CreateStorageVolume(ctx, input, key)
 }
 
-func (s *Service) ReadMonthlyStorage(ctx context.Context, id string) (clients.StorageVolume, error) {
-	reader, ok := s.fabric.(clients.FabricStorageVolumeReader)
-	if !ok {
-		return clients.StorageVolume{}, errors.New("fabric_storage_volume_read_unavailable")
-	}
-	return reader.GetStorageVolume(ctx, id)
-}
-
 func (s *Service) SyncMonthlyStorage(ctx context.Context, id string) (clients.StorageVolume, error) {
 	return s.fabric.SyncStorageVolume(ctx, id)
 }
 
-func (s *Service) RenewMonthlyStorage(ctx context.Context, id, key string) (clients.StorageVolume, error) {
+func (s *Service) RenewMonthlyStorage(ctx context.Context, id, key string) (clients.ProviderResourceMutation, error) {
 	client, ok := s.fabric.(clients.FabricRenewalClient)
 	if !ok {
-		return clients.StorageVolume{}, errors.New("fabric_renewal_unavailable")
+		return clients.ProviderResourceMutation{}, errors.New("fabric_renewal_unavailable")
 	}
 	return client.RenewStorageVolume(ctx, id, key)
-}
-
-func (s *Service) CleanupMonthlyStorage(ctx context.Context, id, key string) (clients.StorageVolume, error) {
-	return s.fabric.DestroyStorageVolume(ctx, id, key)
 }
 
 func (s *Service) RecordMonthlyReceipt(ctx context.Context, input clients.ReceiptInput, key string) (clients.Receipt, error) {

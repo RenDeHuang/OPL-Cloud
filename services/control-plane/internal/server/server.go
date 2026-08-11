@@ -65,8 +65,8 @@ func NewPersistentServer(service *controlplane.Service, store StateStore) (http.
 	if providerReconcileWorkerEnabled() {
 		app.startProviderReconcileWorker(context.Background(), service, providerReconcileInterval())
 	}
-	if archiveRetentionWorkerEnabled() {
-		app.startArchiveRetentionWorker(context.Background(), archiveRetentionWorkerInterval())
+	if retentionWorkerEnabled() {
+		app.startRetentionWorker(context.Background(), retentionWorkerInterval())
 	}
 	mux := http.NewServeMux()
 	registerCoreRoutes(mux, app, service)
@@ -95,6 +95,7 @@ func retiredConsoleAPI(method, path string) bool {
 	}
 	if path == "/api/projects" || strings.HasPrefix(path, "/api/projects/") ||
 		path == "/api/execution-requests" || strings.HasPrefix(path, "/api/execution-requests/") ||
+		path == "/api/operator/archive-terminal-resources" ||
 		path == "/api/workspace-backups" || strings.HasPrefix(path, "/api/workspace-backups/") || strings.HasPrefix(path, "/api/payment") || strings.HasPrefix(path, "/api/orders") ||
 		strings.HasPrefix(path, "/api/api-keys") || strings.HasPrefix(path, "/api/keys") ||
 		strings.HasPrefix(path, "/api/users") || strings.HasPrefix(path, "/api/compute-allocations") ||
@@ -301,19 +302,6 @@ func (app *controlPlaneServer) protected(requiresAdmin bool, next http.HandlerFu
 	}
 }
 
-func (app *controlPlaneServer) syncRuntimeOperations(w http.ResponseWriter, r *http.Request, service *controlplane.Service) bool {
-	operations, err := service.FabricOperations(r.Context())
-	if err != nil {
-		writeUpstreamError(w)
-		return false
-	}
-	if err := app.rememberRuntimeOperations(operations); err != nil {
-		writeError(w, http.StatusInternalServerError, "state_persist_failed")
-		return false
-	}
-	return true
-}
-
 func fabricComputePools(w http.ResponseWriter, r *http.Request, service *controlplane.Service) ([]any, bool) {
 	catalog, err := service.FabricCatalog(r.Context())
 	if err != nil {
@@ -516,58 +504,6 @@ func structToMap(value any) map[string]any {
 		return map[string]any{}
 	}
 	return output
-}
-
-func computeResponse(row map[string]any) map[string]any {
-	if row == nil {
-		row = map[string]any{}
-	}
-	row["ownerAccountId"] = firstNonEmpty(stringValue(row["ownerAccountId"]), stringValue(row["accountId"]))
-	row["provider"] = firstNonEmpty(stringValue(row["provider"]), "tencent-tke")
-	row["status"] = firstNonEmpty(stringValue(row["status"]), "running")
-	if stringValue(row["billingStatus"]) != "" {
-		row["billingStatus"] = billingStatusFor(row)
-	} else {
-		delete(row, "billingStatus")
-	}
-	row["cvmInstanceId"] = firstNonEmpty(stringValue(row["cvmInstanceId"]), stringValue(row["instanceId"]))
-	if serviceName := stringValue(row["serviceName"]); serviceName != "" {
-		row["runtime"] = map[string]any{"serviceName": serviceName, "service": "service/" + serviceName}
-	}
-	return row
-}
-
-func storageResponse(row map[string]any) map[string]any {
-	if row == nil {
-		row = map[string]any{}
-	}
-	row["ownerAccountId"] = firstNonEmpty(stringValue(row["ownerAccountId"]), stringValue(row["accountId"]))
-	row["provider"] = firstNonEmpty(stringValue(row["provider"]), "tencent-tke")
-	if stringValue(row["status"]) == "ready" {
-		row["status"] = "available"
-	}
-	row["status"] = firstNonEmpty(stringValue(row["status"]), "available")
-	if stringValue(row["billingStatus"]) != "" {
-		row["billingStatus"] = billingStatusFor(row)
-	} else {
-		delete(row, "billingStatus")
-	}
-	if numberField(row, "sizeGb", 0) == 0 {
-		row["sizeGb"] = 10
-	}
-	return row
-}
-
-func attachmentResponse(row map[string]any, input map[string]any) map[string]any {
-	if row == nil {
-		row = map[string]any{}
-	}
-	row["computeAllocationId"] = firstNonEmpty(stringValue(row["computeAllocationId"]), stringValue(row["computeId"]), stringField(input, "computeAllocationId", ""))
-	row["storageId"] = firstNonEmpty(stringValue(row["storageId"]), stringValue(row["volumeId"]), stringField(input, "storageId", ""))
-	row["mountPath"] = firstNonEmpty(stringValue(row["mountPath"]), stringField(input, "mountPath", "/data"))
-	row["provider"] = firstNonEmpty(stringValue(row["provider"]), "tencent-tke")
-	row["status"] = firstNonEmpty(stringValue(row["status"]), "attached")
-	return row
 }
 
 func workspaceResponse(row map[string]any) map[string]any {

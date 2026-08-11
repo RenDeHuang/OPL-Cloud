@@ -13,9 +13,6 @@ func registerStateRoutes(mux *http.ServeMux, app *controlPlaneServer, service *c
 		if !ok {
 			return
 		}
-		if !app.syncRuntimeOperations(w, r, service) {
-			return
-		}
 		computePools, ok := fabricComputePools(w, r, service)
 		if !ok {
 			return
@@ -56,9 +53,6 @@ func registerStateRoutes(mux *http.ServeMux, app *controlPlaneServer, service *c
 		writeJSON(w, http.StatusOK, preview)
 	}))
 	mux.HandleFunc("GET /api/management/state", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
-		if !app.syncRuntimeOperations(w, r, service) {
-			return
-		}
 		computePools, ok := fabricComputePools(w, r, service)
 		if !ok {
 			return

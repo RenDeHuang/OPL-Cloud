@@ -2,12 +2,9 @@ package server
 
 import (
 	"context"
-	"crypto/sha256"
-	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"net/http"
-	"os"
 	"regexp"
 	"sort"
 	"strconv"
@@ -20,9 +17,6 @@ import (
 )
 
 var billingReviewEvidenceRefPattern = regexp.MustCompile(`^case-[0-9]{8}-[a-z0-9]{3,16}$`)
-var computeClaimMergedSHAPattern = regexp.MustCompile(`^[a-f0-9]{40}$`)
-var computeClaimCloudDigestPattern = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
-var computeClaimApprovalDigestPattern = regexp.MustCompile(`^[a-f0-9]{64}$`)
 
 const (
 	operatorPageReadTimeout      = 5 * time.Second
@@ -31,105 +25,42 @@ const (
 )
 
 func registerAdminRoutes(mux *http.ServeMux, app *controlPlaneServer, service *controlplane.Service) {
-	mux.HandleFunc("POST /api/operator/workspace-launches/{operationId}/recovery-plan/diagnose", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
-		input := decodeJSON(r)
-		accountID := stringValue(input["accountId"])
-		operationID := strings.TrimSpace(r.PathValue("operationId"))
-		if len(input) != 1 || accountID == "" || accountID != strings.TrimSpace(accountID) || operationID == "" {
-			writeError(w, http.StatusBadRequest, errInvalidBillingReview.Error())
-			return
-		}
-		plan, err := app.diagnoseWorkspaceRecoveryPlan(r.Context(), service, accountID, operationID)
-		if err != nil {
-			writeJSON(w, http.StatusConflict, workspaceRecoveryPlanFailureProjection(err))
-			return
-		}
-		writeJSON(w, http.StatusOK, workspaceRecoveryPlanHTTPProjection(plan))
-	}))
-	mux.HandleFunc("GET /api/operator/workspace-launches/{operationId}/recovery-plan", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Query().Get("trace") == "compute_claim" {
-			accountID := strings.TrimSpace(r.URL.Query().Get("accountId"))
-			operationID := strings.TrimSpace(r.PathValue("operationId"))
-			if accountID == "" || operationID == "" || r.URL.Query().Get("accountId") != accountID {
-				writeError(w, http.StatusBadRequest, errInvalidBillingReview.Error())
-				return
-			}
-			trace, err := app.traceWorkspaceComputeClaim(r.Context(), service, accountID, operationID)
-			if err != nil {
-				writeBillingReviewResolutionError(w, err)
-				return
-			}
-			writeJSON(w, http.StatusOK, trace)
-			return
-		}
-		operationID := strings.TrimSpace(r.PathValue("operationId"))
-		if operationID == "" {
-			writeError(w, http.StatusBadRequest, errInvalidBillingReview.Error())
-			return
-		}
-		plan, err := app.getWorkspaceRecoveryPlan(r.Context(), operationID)
-		if err != nil {
-			writeBillingReviewResolutionError(w, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, workspaceRecoveryPlanHTTPProjection(plan))
-	}))
-	mux.HandleFunc("POST /api/operator/workspace-launches/{operationId}/recovery-plan/validate", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
-		operationID := strings.TrimSpace(r.PathValue("operationId"))
-		input := decodeJSON(r)
-		planID, planDigest := stringValue(input["planId"]), stringValue(input["planDigest"])
-		if operationID == "" || !exactWorkspaceComputeClaimKeys(input, []string{"planId", "planDigest"}) ||
-			planID == "" || planID != strings.TrimSpace(planID) || !computeClaimApprovalDigestPattern.MatchString(planDigest) {
-			writeError(w, http.StatusBadRequest, errInvalidBillingReview.Error())
-			return
-		}
-		plan, err := app.validateWorkspaceRecoveryPlan(r.Context(), service, operationID, planID, planDigest)
-		if err != nil {
-			writeBillingReviewResolutionError(w, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, workspaceRecoveryPlanHTTPProjection(plan))
-	}))
-	mux.HandleFunc("POST /api/operator/workspace-launches/{operationId}/recovery-plan/execute", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /api/operator/workspace-launches/{operationId}/resume", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
 		key, ok := requiredMutationKey(w, r)
 		if !ok {
 			return
 		}
 		operationID := strings.TrimSpace(r.PathValue("operationId"))
 		input := decodeJSON(r)
-		planID, planDigest := stringValue(input["planId"]), stringValue(input["planDigest"])
-		decision, confirmation := stringValue(input["decision"]), stringValue(input["confirmation"])
-		if operationID == "" || !exactWorkspaceComputeClaimKeys(input, []string{"planId", "planDigest", "decision", "confirmation"}) ||
-			planID == "" || planID != strings.TrimSpace(planID) || !computeClaimApprovalDigestPattern.MatchString(planDigest) ||
-			decision != "continue" || confirmation != "CONTINUE_RECOVERY_PLAN" || key != "recovery-plan:"+planDigest {
+		launchVersion, validVersion := positiveIntegerField(input, "launchVersion")
+		authorizedStage, reason := stringValue(input["authorizedStage"]), stringValue(input["reason"])
+		mutationBudget, validBudget := input["mutationBudget"].(float64)
+		if operationID == "" || !exactWorkspaceComputeClaimKeys(input, []string{"launchVersion", "authorizedStage", "reason", "mutationBudget"}) ||
+			!validVersion || launchVersion > int64(^uint(0)>>1) || authorizedStage == "" || authorizedStage != strings.TrimSpace(authorizedStage) ||
+			reason == "" || reason != strings.TrimSpace(reason) || !validBudget || mutationBudget != 0 && mutationBudget != 1 {
 			writeError(w, http.StatusBadRequest, errInvalidBillingReview.Error())
 			return
 		}
-		plan, err := app.executeWorkspaceRecoveryPlan(r.Context(), service, operationID, planID, planDigest, decision, app.sessionUserID(r))
+		operation, err := app.resumeWorkspaceLaunch(r.Context(), service, operationID, workspaceLaunchResumeAuthorization{
+			AuthorizationID: key, LaunchVersion: int(launchVersion), AuthorizedStage: authorizedStage,
+			AuthorizedBy: app.sessionUserID(r), Reason: reason, MutationBudget: int(mutationBudget),
+		})
 		if err != nil {
-			writeBillingReviewResolutionError(w, err)
+			if errors.Is(err, errBillingReviewNotFound) {
+				writeError(w, http.StatusNotFound, "workspace_launch_not_found")
+			} else if errors.Is(err, errWorkspaceLaunchGrantConflict) || errors.Is(err, errWorkspaceLaunchCASConflict) || errors.Is(err, errInvalidWorkspaceLaunchOperation) {
+				writeError(w, http.StatusConflict, err.Error())
+			} else {
+				writeError(w, http.StatusInternalServerError, "state_persist_failed")
+			}
 			return
 		}
-		writeJSON(w, http.StatusOK, workspaceRecoveryPlanHTTPProjection(plan))
-	}))
-	mux.HandleFunc("POST /api/operator/workspace-launches/{operationId}/recovery-acceptance/manual-review", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
-		key, ok := requiredMutationKey(w, r)
-		if !ok {
-			return
-		}
-		operationID := strings.TrimSpace(r.PathValue("operationId"))
-		input := decodeJSON(r)
-		approval, err := parseRecoveryAcceptanceCanaryApproval(input, operationID)
-		if err != nil || key != "recovery-acceptance:"+approval.ApprovalDigest {
-			writeError(w, http.StatusBadRequest, errRecoveryAcceptanceCanaryApprovalInvalid.Error())
-			return
-		}
-		result, err := app.executeRecoveryAcceptanceCanary(r.Context(), operationID, approval)
+		body, err := workspaceLaunchReconcileResponse(operation, nil)
 		if err != nil {
-			writeError(w, http.StatusConflict, err.Error())
+			writeError(w, http.StatusInternalServerError, "state_read_failed")
 			return
 		}
-		writeJSON(w, http.StatusOK, result)
+		writeJSON(w, http.StatusOK, body)
 	}))
 	mux.HandleFunc("POST /api/operator/accounts/{accountId}/wallet-adjustments", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
 		app.createWalletAdjustment(w, r, service)
@@ -271,23 +202,6 @@ func registerAdminRoutes(mux *http.ServeMux, app *controlPlaneServer, service *c
 		}
 		writeJSON(w, http.StatusOK, result)
 	}))
-	mux.HandleFunc("POST /api/operator/archive-terminal-resources", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
-		input := decodeJSON(r)
-		if !confirmed(input, "confirm") {
-			writeError(w, http.StatusBadRequest, "confirmation_required")
-			return
-		}
-		result, err := app.archiveTerminalResources(r.Context(), input)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "state_persist_failed")
-			return
-		}
-		if err := app.appendAuditEvent(r, "operator.archive_terminal_resources", "archive_job", stringValue(result["id"]), "", nil, result, "succeeded"); err != nil {
-			writeError(w, http.StatusInternalServerError, "state_persist_failed")
-			return
-		}
-		writeJSON(w, http.StatusOK, result)
-	}))
 	mux.HandleFunc("POST /api/operator/billing-reviews/{resourceType}/{id}/resolve", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
 		input := decodeJSON(r)
 		if !billingReviewRequestShapeValid(input) {
@@ -330,79 +244,6 @@ func registerAdminRoutes(mux *http.ServeMux, app *controlPlaneServer, service *c
 	}))
 }
 
-func (app *controlPlaneServer) computeClaimCapabilityProtected(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if !app.computeClaimCapabilityValid(r) {
-			writeError(w, http.StatusForbidden, "workspace_compute_claim_capability_invalid")
-			return
-		}
-		next(w, r)
-	}
-}
-
-func (app *controlPlaneServer) computeClaimCapabilityValid(r *http.Request) bool {
-	expected := os.Getenv("OPL_INTERNAL_SERVICE_TOKEN")
-	want := sha256.Sum256([]byte(expected))
-	got := sha256.Sum256([]byte(r.Header.Get("x-opl-compute-claim-capability")))
-	return expected != "" && subtle.ConstantTimeCompare(got[:], want[:]) == 1
-}
-
-func workspaceComputeClaimRecoveryRequestFromMap(operationID string, input map[string]any, approved bool) (workspaceComputeClaimRecoveryRequest, bool) {
-	want := []string{"accountId", "workspaceId", "computeAllocationId", "storageId", "packageId", "poolId", "nodePoolId", "machineName", "nodeName", "cvmInstanceId", "privateIp", "instanceType", "zone"}
-	if approved {
-		want = append(want, "approvalId", "approvalDigest", "expiresAt", "mergedMainSha", "cloudImageDigest", "workspaceImageDigest", "customerEmail", "recoveryKey", "resources", "attemptLimits", "allowedWrites", "forbiddenWrites", "confirm")
-	}
-	if operationID == "" || !exactWorkspaceComputeClaimKeys(input, want) {
-		return workspaceComputeClaimRecoveryRequest{}, false
-	}
-	stringFields := append([]string(nil), want...)
-	if approved {
-		stringFields = append([]string(nil), want[:21]...)
-		stringFields = append(stringFields, "confirm")
-	}
-	values := make(map[string]string, len(stringFields))
-	for _, field := range stringFields {
-		value, ok := input[field].(string)
-		if !ok || value == "" || value != strings.TrimSpace(value) {
-			return workspaceComputeClaimRecoveryRequest{}, false
-		}
-		values[field] = value
-	}
-	request := workspaceComputeClaimRecoveryRequest{
-		LaunchOperationID: operationID, AccountID: values["accountId"], WorkspaceID: values["workspaceId"],
-		ComputeID: values["computeAllocationId"], StorageID: values["storageId"], PackageID: values["packageId"],
-		PoolID: values["poolId"], NodePoolID: values["nodePoolId"], MachineName: values["machineName"], NodeName: values["nodeName"],
-		CVMInstanceID: values["cvmInstanceId"], PrivateIP: values["privateIp"], InstanceType: values["instanceType"], Zone: values["zone"],
-		ApprovalID: values["approvalId"], ApprovalDigest: values["approvalDigest"], ExpiresAt: values["expiresAt"],
-		MergedMainSHA: values["mergedMainSha"], CloudImageDigest: values["cloudImageDigest"], WorkspaceImageDigest: values["workspaceImageDigest"],
-		CustomerEmail: values["customerEmail"], RecoveryKey: values["recoveryKey"], Confirmation: values["confirm"],
-	}
-	if request.PackageID != "basic" && request.PackageID != "pro" || !strings.HasPrefix(request.CVMInstanceID, "ins-") {
-		return workspaceComputeClaimRecoveryRequest{}, false
-	}
-	if approved {
-		_, expiresErr := time.Parse(time.RFC3339, request.ExpiresAt)
-		customerEmail, emailErr := canonicalEmail(request.CustomerEmail)
-		resources, resourcesOK := workspaceComputeClaimApprovalResourcesFromMap(input["resources"])
-		limits, limitsOK := workspaceComputeClaimAttemptLimitsFromMap(input["attemptLimits"])
-		allowedWrites, allowedOK := workspaceComputeClaimStringList(input["allowedWrites"])
-		forbiddenWrites, forbiddenOK := workspaceComputeClaimStringList(input["forbiddenWrites"])
-		if !validBillingReviewOpaqueID(request.ApprovalID) || !validBillingReviewOpaqueID(request.RecoveryKey) ||
-			!computeClaimApprovalDigestPattern.MatchString(request.ApprovalDigest) || !computeClaimMergedSHAPattern.MatchString(request.MergedMainSHA) ||
-			!computeClaimCloudDigestPattern.MatchString(request.CloudImageDigest) || !validWorkspaceImageIdentity(request.WorkspaceImageDigest) ||
-			expiresErr != nil || emailErr != nil || customerEmail != request.CustomerEmail ||
-			request.Confirmation != "RECOVER_PROVEN_COMPUTE_AND_CONTINUE_ORIGINAL_LAUNCH" || !resourcesOK || !limitsOK || !allowedOK || !forbiddenOK ||
-			!workspaceComputeClaimStorageBindingValid(resources.StorageState, resources.StorageProviderResourceID) ||
-			!workspaceComputeClaimAttemptLimitsExact(limits) || !equalWorkspaceComputeClaimStrings(allowedWrites, workspaceComputeClaimAllowedWritesForStorage(resources.StorageState)) ||
-			!equalWorkspaceComputeClaimStrings(forbiddenWrites, workspaceComputeClaimForbiddenWrites) {
-			return workspaceComputeClaimRecoveryRequest{}, false
-		}
-		request.Resources, request.AttemptLimits = resources, limits
-		request.AllowedWrites, request.ForbiddenWrites = allowedWrites, forbiddenWrites
-	}
-	return request, true
-}
-
 func exactWorkspaceComputeClaimKeys(input map[string]any, want []string) bool {
 	if len(input) != len(want) {
 		return false
@@ -413,203 +254,6 @@ func exactWorkspaceComputeClaimKeys(input map[string]any, want []string) bool {
 		}
 	}
 	return true
-}
-
-func workspaceComputeClaimApprovalResourcesFromMap(value any) (workspaceComputeClaimApprovalResources, bool) {
-	raw, ok := value.(map[string]any)
-	want := []string{"computeOperationId", "storageOperationId", "storageState", "storageProviderResourceId", "attachmentId", "attachmentOperationId", "workspaceApiKeyId", "gatewaySecretRef", "secretOperationId", "runtimeId", "runtimeOperationId", "receiptOperationId"}
-	if !ok || !exactWorkspaceComputeClaimKeys(raw, want) {
-		return workspaceComputeClaimApprovalResources{}, false
-	}
-	values := make(map[string]string, len(want))
-	for _, field := range want {
-		item, ok := raw[field].(string)
-		if !ok || field != "storageProviderResourceId" && item == "" || item != strings.TrimSpace(item) {
-			return workspaceComputeClaimApprovalResources{}, false
-		}
-		values[field] = item
-	}
-	workspaceAPIKeyID, err := strconv.ParseInt(values["workspaceApiKeyId"], 10, 64)
-	if err != nil || workspaceAPIKeyID <= 0 || strings.HasPrefix(values["workspaceApiKeyId"], "0") {
-		return workspaceComputeClaimApprovalResources{}, false
-	}
-	return workspaceComputeClaimApprovalResources{
-		ComputeOperationID: values["computeOperationId"], StorageOperationID: values["storageOperationId"],
-		StorageState: values["storageState"], StorageProviderResourceID: values["storageProviderResourceId"],
-		AttachmentID: values["attachmentId"], AttachmentOperationID: values["attachmentOperationId"], WorkspaceAPIKeyID: values["workspaceApiKeyId"],
-		GatewaySecretRef: values["gatewaySecretRef"], SecretOperationID: values["secretOperationId"], RuntimeID: values["runtimeId"],
-		RuntimeOperationID: values["runtimeOperationId"], ReceiptOperationID: values["receiptOperationId"],
-	}, true
-}
-
-func workspaceComputeClaimAttemptLimitsFromMap(value any) (workspaceComputeClaimAttemptLimits, bool) {
-	raw, ok := value.(map[string]any)
-	want := []string{"claim", "storage", "attachment", "secret", "runtime", "activation", "receipt"}
-	if !ok || !exactWorkspaceComputeClaimKeys(raw, want) {
-		return workspaceComputeClaimAttemptLimits{}, false
-	}
-	claim, ok := raw["claim"].(map[string]any)
-	if !ok || !exactWorkspaceComputeClaimKeys(claim, []string{"sub2api", "tencent", "kubernetes"}) {
-		return workspaceComputeClaimAttemptLimits{}, false
-	}
-	integer := func(source map[string]any, field string) (int, bool) {
-		value, ok := source[field].(float64)
-		if !ok || value < 0 || value != float64(int(value)) {
-			return 0, false
-		}
-		return int(value), true
-	}
-	sub2API, sub2APIOK := integer(claim, "sub2api")
-	tencent, tencentOK := integer(claim, "tencent")
-	kubernetes, kubernetesOK := integer(claim, "kubernetes")
-	storage, storageOK := integer(raw, "storage")
-	attachment, attachmentOK := integer(raw, "attachment")
-	secret, secretOK := integer(raw, "secret")
-	runtime, runtimeOK := integer(raw, "runtime")
-	activation, activationOK := integer(raw, "activation")
-	receipt, receiptOK := integer(raw, "receipt")
-	if !sub2APIOK || !tencentOK || !kubernetesOK || !storageOK || !attachmentOK || !secretOK || !runtimeOK || !activationOK || !receiptOK {
-		return workspaceComputeClaimAttemptLimits{}, false
-	}
-	return workspaceComputeClaimAttemptLimits{
-		Claim:   workspaceComputeClaimProviderAttemptLimits{Sub2API: sub2API, Tencent: tencent, Kubernetes: kubernetes},
-		Storage: storage, Attachment: attachment, Secret: secret, Runtime: runtime, Activation: activation, Receipt: receipt,
-	}, true
-}
-
-func workspaceComputeClaimStringList(value any) ([]string, bool) {
-	raw, ok := value.([]any)
-	if !ok {
-		return nil, false
-	}
-	items := make([]string, len(raw))
-	for index, value := range raw {
-		item, ok := value.(string)
-		if !ok || item == "" || item != strings.TrimSpace(item) {
-			return nil, false
-		}
-		items[index] = item
-	}
-	return items, true
-}
-
-func workspaceLaunchReadbackRecoveryApprovalFromMap(value any, key string) (workspaceLaunchReadbackRecoveryApproval, bool) {
-	raw, ok := value.(map[string]any)
-	want := []string{
-		"schemaVersion", "approvalId", "approvalDigest", "expiresAt", "mergedMainSha", "cloudImageDigest", "workspaceImageDigest",
-		"confirmation", "idempotencyKey", "recoveryKey", "stage", "customer", "target", "resources", "operationIds", "attemptBudget",
-		"allowedWrites", "forbiddenWrites",
-	}
-	if !ok || !exactWorkspaceComputeClaimKeys(raw, want) || numberField(raw, "schemaVersion", 0) != 1 {
-		return workspaceLaunchReadbackRecoveryApproval{}, false
-	}
-	for _, field := range []string{"approvalId", "approvalDigest", "expiresAt", "mergedMainSha", "cloudImageDigest", "workspaceImageDigest", "confirmation", "idempotencyKey", "recoveryKey", "stage"} {
-		item, ok := raw[field].(string)
-		if !ok || item == "" || item != strings.TrimSpace(item) {
-			return workspaceLaunchReadbackRecoveryApproval{}, false
-		}
-	}
-	nestedKeys := map[string][]string{
-		"customer": {"email", "accountId", "ownerUserId"},
-		"target": {
-			"launchOperationId", "accountId", "workspaceId", "computeAllocationId", "storageId", "packageId", "poolId", "nodePoolId",
-			"machineName", "nodeName", "cvmInstanceId", "privateIp", "instanceType", "zone", "chargeType", "periodMonths", "renewFlag",
-			"deadline", "storageGb", "computeState", "storageState", "autoRenew", "priceVersion", "totalChargeUsdMicros", "periodStart", "paidThrough", "billingAnchorDay",
-		},
-		"resources": {
-			"computeAllocationId", "computeProviderResourceId", "storageVolumeId", "storageProviderResourceId", "storageZone", "storageSizeGb",
-			"storageChargeType", "storageRenewFlag", "storageDeadline", "attachmentId", "attachmentProviderId", "gatewaySecretRef",
-			"gatewaySecretFingerprint", "workspaceApiKeyId", "runtimeId", "runtimeServiceName", "receiptId", "computeState", "storageState",
-		},
-		"operationIds": {
-			"launchOperationId", "launchRequestHash", "machineOwnershipId", "compute", "storage", "attachment", "secret", "runtime",
-			"activationOperationId", "receiptOperationId",
-		},
-		"attemptBudget": {"attempted", "confirmed", "unknown", "max"},
-	}
-	for field, keys := range nestedKeys {
-		item, ok := raw[field].(map[string]any)
-		if !ok || !exactWorkspaceComputeClaimKeys(item, keys) {
-			return workspaceLaunchReadbackRecoveryApproval{}, false
-		}
-	}
-	for _, field := range []string{"customer"} {
-		for _, value := range raw[field].(map[string]any) {
-			item, ok := value.(string)
-			if !ok || item == "" || item != strings.TrimSpace(item) {
-				return workspaceLaunchReadbackRecoveryApproval{}, false
-			}
-		}
-	}
-	operationFields := []string{"compute", "storage", "attachment", "secret", "runtime"}
-	operationIdentityKeys := []string{"idempotencyKey", "fabricRecordId", "fabricOperationId", "requestHash", "resourceOperationId", "providerOperationId", "readbackBindingDigest"}
-	for _, field := range operationFields {
-		item, ok := raw["operationIds"].(map[string]any)[field].(map[string]any)
-		if !ok || !exactWorkspaceComputeClaimKeys(item, operationIdentityKeys) {
-			return workspaceLaunchReadbackRecoveryApproval{}, false
-		}
-		for _, value := range item {
-			text, ok := value.(string)
-			if !ok || text != strings.TrimSpace(text) {
-				return workspaceLaunchReadbackRecoveryApproval{}, false
-			}
-		}
-	}
-	budget := raw["attemptBudget"].(map[string]any)
-	if numberField(budget, "attempted", -1) != 1 || numberField(budget, "confirmed", -1) != 0 || numberField(budget, "unknown", -1) != 1 || numberField(budget, "max", -1) != 1 {
-		return workspaceLaunchReadbackRecoveryApproval{}, false
-	}
-	allowedWrites, allowedOK := workspaceComputeClaimStringList(raw["allowedWrites"])
-	forbiddenWrites, forbiddenOK := workspaceComputeClaimStringList(raw["forbiddenWrites"])
-	var approval workspaceLaunchReadbackRecoveryApproval
-	if !allowedOK || !forbiddenOK || jsonRoundTrip(raw, &approval) != nil {
-		return workspaceLaunchReadbackRecoveryApproval{}, false
-	}
-	_, expiresErr := time.Parse(time.RFC3339, approval.ExpiresAt)
-	email, emailErr := canonicalEmail(approval.Customer.Email)
-	if approval.SchemaVersion != 1 || !validBillingReviewOpaqueID(approval.ApprovalID) || !validBillingReviewOpaqueID(approval.RecoveryKey) ||
-		!computeClaimApprovalDigestPattern.MatchString(approval.ApprovalDigest) || !computeClaimMergedSHAPattern.MatchString(approval.MergedMainSHA) ||
-		!computeClaimCloudDigestPattern.MatchString(approval.CloudImageDigest) || !validWorkspaceImageIdentity(approval.WorkspaceImageDigest) ||
-		expiresErr != nil || emailErr != nil || email != approval.Customer.Email || approval.IdempotencyKey != key ||
-		approval.Confirmation != workspaceLaunchReadbackRecoveryConfirmation || !workspaceLaunchReadbackRecoveryStageValid(approval.Stage) ||
-		approval.Target.LaunchOperationID == "" || approval.Target.AccountID == "" || approval.Target.WorkspaceID == "" || approval.Target.ComputeAllocationID == "" ||
-		approval.Target.StorageID == "" || approval.Target.PoolID == "" || approval.Target.NodePoolID == "" || approval.Target.MachineName == "" ||
-		approval.Target.NodeName == "" || approval.Target.CVMInstanceID == "" || approval.Target.PrivateIP == "" || approval.Target.InstanceType == "" ||
-		approval.Target.Zone == "" || approval.Target.ChargeType != "PREPAID" || approval.Target.PeriodMonths != 1 ||
-		approval.Target.RenewFlag != "NOTIFY_AND_MANUAL_RENEW" || approval.Target.StorageGB <= 0 || approval.Target.PriceVersion == "" ||
-		approval.Target.ComputeState != "ready" || approval.Target.StorageState != "ready" ||
-		approval.Target.TotalChargeUSDMicros <= 0 || approval.Target.BillingAnchorDay < 1 || approval.Target.BillingAnchorDay > 31 ||
-		!strings.HasPrefix(approval.Resources.ComputeProviderResourceID, "ins-") || !strings.HasPrefix(approval.Resources.StorageProviderResourceID, "disk-") ||
-		approval.Resources.ComputeState != approval.Target.ComputeState || approval.Resources.StorageState != approval.Target.StorageState ||
-		approval.Resources.StorageZone == "" || approval.Resources.StorageSizeGB <= 0 || approval.Resources.StorageChargeType != "PREPAID" ||
-		approval.Resources.StorageRenewFlag != "NOTIFY_AND_MANUAL_RENEW" || approval.Resources.WorkspaceAPIKeyID <= 0 ||
-		!equalWorkspaceComputeClaimStrings(allowedWrites, workspaceLaunchReadbackRecoveryAllowedWrites(approval.Stage)) ||
-		!equalWorkspaceComputeClaimStrings(forbiddenWrites, workspaceLaunchReadbackRecoveryForbiddenWrites) {
-		return workspaceLaunchReadbackRecoveryApproval{}, false
-	}
-	approval.AllowedWrites = allowedWrites
-	approval.ForbiddenWrites = forbiddenWrites
-	return approval, true
-}
-
-func workspaceComputeClaimSafeFailure(proof clients.ComputeClaimRecoveryProof) bool {
-	return proof.SchemaVersion == 1 && proof.Reason != "" && proof.Reason != "none" && safeWorkspaceComputeClaimReason(proof.Reason) &&
-		proof.Sub2APIMutationCount == 0 && workspaceComputeClaimEvidenceMatches(proof, false) &&
-		(proof.FailureStage == "" && proof.ProviderErrorClass == "" || proof.FailureStage != "" && proof.ProviderErrorClass != "")
-}
-
-func writeWorkspaceComputeClaimError(w http.ResponseWriter, err error) {
-	switch {
-	case errors.Is(err, errWorkspaceComputeClaimInvalid):
-		writeError(w, http.StatusBadRequest, err.Error())
-	case errors.Is(err, errBillingReviewNotFound):
-		writeError(w, http.StatusNotFound, "workspace_launch_not_found")
-	case errors.Is(err, errWorkspaceComputeClaimIdentity), errors.Is(err, errWorkspaceComputeClaimNotPending), errors.Is(err, errWorkspaceComputeClaimProof),
-		errors.Is(err, errWorkspaceLaunchCASConflict):
-		writeError(w, http.StatusConflict, err.Error())
-	default:
-		writeError(w, http.StatusBadGateway, "workspace_compute_claim_unavailable")
-	}
 }
 
 func operatorPagination(w http.ResponseWriter, r *http.Request) (int, int, bool) {
@@ -1269,8 +913,8 @@ func (app *controlPlaneServer) operatorReconciliationPage(ctx context.Context, p
 			return
 		}
 		progressionOwner := "operator_recovery"
-		if action == "diagnose_workspace_recovery_plan" {
-			progressionOwner = "control_plane_recovery_plan"
+		if action == "resume_workspace_launch" {
+			progressionOwner = "control_plane_launch_reconciler"
 		}
 		item := map[string]any{
 			"id": resourceID, "resourceType": resourceType, "status": "manual_review", "accountId": accountID,
@@ -1290,8 +934,8 @@ func (app *controlPlaneServer) operatorReconciliationPage(ctx context.Context, p
 		case workspaceLaunchAction:
 			appendReview(
 				"workspace", operationID, firstNonEmpty(stringValue(operation["accountId"]), stringValue(details["accountId"])), operationID,
-				firstNonEmpty(stringValue(details["phase"]), "manual_review"), firstNonEmpty(stringValue(details["errorCode"]), stringValue(details["lastBillingError"])),
-				"diagnose_workspace_recovery_plan", firstNonEmpty(stringValue(operation["receiptId"]), stringValue(details["receiptId"])),
+				firstNonEmpty(stringValue(details["stage"]), "manual_review"), "workspace_launch_manual_review",
+				"resume_workspace_launch", firstNonEmpty(stringValue(operation["receiptId"]), stringValue(details["receiptId"])),
 			)
 		case "workspace.renewal":
 			appendReview(

@@ -4,36 +4,7 @@ import (
 	"context"
 	"net/http"
 	"time"
-
-	"opl-cloud/services/control-plane/internal/clients"
-	"opl-cloud/services/control-plane/internal/controlplane"
 )
-
-func (app *controlPlaneServer) cleanupComputeResource(ctx context.Context, service *controlplane.Service, computeID, key string) (clients.ComputeAllocation, error) {
-	for _, workspace := range app.listWorkspaces("") {
-		if stringValue(workspace["currentComputeAllocationId"]) != computeID && stringValue(workspace["computeAllocationId"]) != computeID {
-			continue
-		}
-		workspaceID := stringValue(workspace["id"])
-		if _, err := service.CleanupWorkspaceRuntime(ctx, workspaceID, key+":runtime:"+workspaceID); err != nil {
-			return clients.ComputeAllocation{}, err
-		}
-		canonicalBilling := workspaceAcceptedBillingState(workspace) != nil
-		workspace["state"], workspace["status"] = "suspended", "suspended"
-		workspace["currentComputeAllocationId"] = ""
-		if canonicalBilling {
-			workspace["autoRenew"] = false
-		} else {
-			workspace["computeAllocationId"] = ""
-		}
-		workspace["runtimeId"], workspace["runtimeServiceName"], workspace["serviceName"] = "", "", ""
-		workspace["runtime"] = map[string]any{}
-		if err := app.tables.SaveWorkspace(ctx, workspace); err != nil {
-			return clients.ComputeAllocation{}, err
-		}
-	}
-	return service.CleanupMonthlyCompute(ctx, computeID, key)
-}
 
 func (app *controlPlaneServer) saveComputeFact(allocation any) error {
 	if row, ok := allocation.(map[string]any); ok {
@@ -119,14 +90,14 @@ func providerSyncFacts(row map[string]any, err error) map[string]any {
 		out["lastProviderSyncError"] = customerSafeProviderError(err)
 		return out
 	}
-	status := stringValue(out["status"])
+	status := firstNonEmpty(stringValue(out["providerStatus"]), stringValue(out["status"]))
 	out["lastProviderSyncError"] = ""
 	if isExternallyDeletedStatus(status) {
 		out["providerStatus"] = "missing"
 		out["externalDeletedAt"] = firstNonEmpty(stringValue(out["externalDeletedAt"]), now)
 		return out
 	}
-	out["providerStatus"] = firstNonEmpty(status, "running")
+	out["providerStatus"] = firstNonEmpty(status, "unknown")
 	return out
 }
 

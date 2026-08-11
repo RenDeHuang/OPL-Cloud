@@ -11,15 +11,9 @@ import (
 	"opl-cloud/services/control-plane/ent/announcement"
 	"opl-cloud/services/control-plane/ent/announcementread"
 	"opl-cloud/services/control-plane/ent/archivedadminauditevent"
-	"opl-cloud/services/control-plane/ent/archivedcomputeallocation"
-	"opl-cloud/services/control-plane/ent/archivedstorageattachment"
-	"opl-cloud/services/control-plane/ent/archivedstoragevolume"
-	"opl-cloud/services/control-plane/ent/archivedworkspace"
-	"opl-cloud/services/control-plane/ent/archivejob"
 	"opl-cloud/services/control-plane/ent/authattempt"
 	"opl-cloud/services/control-plane/ent/billingreconciliation"
 	"opl-cloud/services/control-plane/ent/computeallocation"
-	"opl-cloud/services/control-plane/ent/executionrequest"
 	"opl-cloud/services/control-plane/ent/membership"
 	"opl-cloud/services/control-plane/ent/organization"
 	"opl-cloud/services/control-plane/ent/productione2erecord"
@@ -99,33 +93,27 @@ var (
 func checkColumn(table, column string) error {
 	initCheck.Do(func() {
 		columnCheck = sql.NewColumnCheck(map[string]func(string) bool{
-			account.Table:                   account.ValidColumn,
-			adminauditevent.Table:           adminauditevent.ValidColumn,
-			announcement.Table:              announcement.ValidColumn,
-			announcementread.Table:          announcementread.ValidColumn,
-			archivejob.Table:                archivejob.ValidColumn,
-			archivedadminauditevent.Table:   archivedadminauditevent.ValidColumn,
-			archivedcomputeallocation.Table: archivedcomputeallocation.ValidColumn,
-			archivedstorageattachment.Table: archivedstorageattachment.ValidColumn,
-			archivedstoragevolume.Table:     archivedstoragevolume.ValidColumn,
-			archivedworkspace.Table:         archivedworkspace.ValidColumn,
-			authattempt.Table:               authattempt.ValidColumn,
-			billingreconciliation.Table:     billingreconciliation.ValidColumn,
-			computeallocation.Table:         computeallocation.ValidColumn,
-			executionrequest.Table:          executionrequest.ValidColumn,
-			membership.Table:                membership.ValidColumn,
-			organization.Table:              organization.ValidColumn,
-			productione2erecord.Table:       productione2erecord.ValidColumn,
-			projecttasksynchead.Table:       projecttasksynchead.ValidColumn,
-			runtimeoperation.Table:          runtimeoperation.ValidColumn,
-			session.Table:                   session.ValidColumn,
-			storageattachment.Table:         storageattachment.ValidColumn,
-			storagevolume.Table:             storagevolume.ValidColumn,
-			supportticketmapping.Table:      supportticketmapping.ValidColumn,
-			user.Table:                      user.ValidColumn,
-			workspace.Table:                 workspace.ValidColumn,
-			workspacebackup.Table:           workspacebackup.ValidColumn,
-			workspacesyncevent.Table:        workspacesyncevent.ValidColumn,
+			account.Table:                 account.ValidColumn,
+			adminauditevent.Table:         adminauditevent.ValidColumn,
+			announcement.Table:            announcement.ValidColumn,
+			announcementread.Table:        announcementread.ValidColumn,
+			archivedadminauditevent.Table: archivedadminauditevent.ValidColumn,
+			authattempt.Table:             authattempt.ValidColumn,
+			billingreconciliation.Table:   billingreconciliation.ValidColumn,
+			computeallocation.Table:       computeallocation.ValidColumn,
+			membership.Table:              membership.ValidColumn,
+			organization.Table:            organization.ValidColumn,
+			productione2erecord.Table:     productione2erecord.ValidColumn,
+			projecttasksynchead.Table:     projecttasksynchead.ValidColumn,
+			runtimeoperation.Table:        runtimeoperation.ValidColumn,
+			session.Table:                 session.ValidColumn,
+			storageattachment.Table:       storageattachment.ValidColumn,
+			storagevolume.Table:           storagevolume.ValidColumn,
+			supportticketmapping.Table:    supportticketmapping.ValidColumn,
+			user.Table:                    user.ValidColumn,
+			workspace.Table:               workspace.ValidColumn,
+			workspacebackup.Table:         workspacebackup.ValidColumn,
+			workspacesyncevent.Table:      workspacesyncevent.ValidColumn,
 		})
 	})
 	return columnCheck(table, column)

@@ -2,12 +2,9 @@ package server
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"sort"
 	"time"
-
-	"opl-cloud/services/control-plane/internal/clients"
 )
 
 type auditActorContextKey struct{}
@@ -127,91 +124,6 @@ func (app *controlPlaneServer) auditEvent(r *http.Request, action string, resour
 	return event
 }
 
-func (app *controlPlaneServer) rememberRuntimeOperations(operations []clients.FabricOperation) error {
-	for _, operation := range operations {
-		row := structToMap(operation)
-		result := cloneMap(operation.RedactedProviderPayload)
-		if operation.ErrorCode != "" {
-			result["_fabricErrorCode"] = operation.ErrorCode
-		}
-		payload, err := json.Marshal(result)
-		if err != nil {
-			return err
-		}
-		row["result"] = string(payload)
-		if err := app.tables.SaveRuntimeOperation(context.Background(), row); err != nil {
-			return err
-		}
-		if err := app.rememberRuntimeOperationResource(row); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (app *controlPlaneServer) rememberRuntimeOperationResource(operation map[string]any) error {
-	status := stringValue(operation["status"])
-	if status != "succeeded" && status != "failed" {
-		return nil
-	}
-	payload, _ := operation["redactedProviderPayload"].(map[string]any)
-	resource, _ := payload["resource"].(map[string]any)
-	if len(resource) == 0 {
-		return nil
-	}
-	switch stringValue(operation["resourceKind"]) {
-	case "compute_allocation":
-		row := cloneMap(resource)
-		row["id"] = firstNonEmpty(stringValue(row["id"]), stringValue(operation["resourceId"]))
-		row["ownerAccountId"] = firstNonEmpty(stringValue(row["ownerAccountId"]), stringValue(row["accountId"]), stringValue(operation["accountId"]))
-		row["accountId"] = firstNonEmpty(stringValue(row["accountId"]), stringValue(row["ownerAccountId"]))
-		row["workspaceId"] = firstNonEmpty(stringValue(row["workspaceId"]), stringValue(operation["workspaceId"]))
-		if id := stringValue(row["id"]); id != "" {
-			if existing, ok := app.getCompute(id); ok {
-				row = mergeMaps(existing, row)
-			}
-			row = computeResponse(row)
-			if stringValue(row["accountId"]) == "" {
-				return nil
-			}
-			return app.tables.SaveCompute(context.Background(), row)
-		}
-	case "storage_volume":
-		row := cloneMap(resource)
-		row["id"] = firstNonEmpty(stringValue(row["id"]), stringValue(operation["resourceId"]))
-		row["ownerAccountId"] = firstNonEmpty(stringValue(row["ownerAccountId"]), stringValue(row["accountId"]), stringValue(operation["accountId"]))
-		row["accountId"] = firstNonEmpty(stringValue(row["accountId"]), stringValue(row["ownerAccountId"]))
-		row["workspaceId"] = firstNonEmpty(stringValue(row["workspaceId"]), stringValue(operation["workspaceId"]))
-		if id := stringValue(row["id"]); id != "" {
-			if existing, ok := app.getStorage(id); ok {
-				row = mergeMaps(existing, row)
-			}
-			row = storageResponse(row)
-			if stringValue(row["accountId"]) == "" {
-				return nil
-			}
-			return app.tables.SaveStorage(context.Background(), row)
-		}
-	case "storage_attachment":
-		row := attachmentResponse(cloneMap(resource), nil)
-		row["id"] = firstNonEmpty(stringValue(row["id"]), stringValue(operation["resourceId"]))
-		row["ownerAccountId"] = firstNonEmpty(stringValue(row["ownerAccountId"]), stringValue(row["accountId"]), stringValue(operation["accountId"]))
-		row["accountId"] = firstNonEmpty(stringValue(row["accountId"]), stringValue(row["ownerAccountId"]))
-		row["workspaceId"] = firstNonEmpty(stringValue(row["workspaceId"]), stringValue(operation["workspaceId"]))
-		if id := stringValue(row["id"]); id != "" {
-			if existing, ok := app.getAttachment(id); ok {
-				row = attachmentResponse(mergeMaps(existing, row), nil)
-			}
-			row["accountId"] = firstNonEmpty(stringValue(row["accountId"]), app.attachmentAccountID(row))
-			if stringValue(row["accountId"]) == "" {
-				return nil
-			}
-			return app.tables.SaveAttachment(context.Background(), row)
-		}
-	}
-	return nil
-}
-
 func runtimeOperationSummary(operations []map[string]any) map[string]any {
 	failed := failedRuntimeOperations(operations)
 	return map[string]any{"total": len(operations), "failed": len(failed), "recentFailed": failed}
@@ -224,10 +136,6 @@ func (app *controlPlaneServer) accountsLocked(accountID string) []any {
 	}
 	sort.Slice(accounts, func(i, j int) bool { return stringValue(accounts[i]["id"]) < stringValue(accounts[j]["id"]) })
 	return rowsAsAnyFromMaps(accounts)
-}
-
-type terminalArchiveStore interface {
-	ArchiveTerminalResources(ctx context.Context, reason string) (map[string]any, error)
 }
 
 type archiveStateStore interface {
@@ -249,8 +157,6 @@ func (app *controlPlaneServer) archiveState(ctx context.Context) (map[string]any
 
 func (app *controlPlaneServer) archiveStateLocked() map[string]any {
 	return map[string]any{
-		"jobs":             []any{},
-		"resources":        []any{},
 		"adminAuditEvents": []any{},
 		"productionE2E":    productionE2ESummary(nil),
 		"retentionPolicy":  currentRetentionPolicy().dto(),
@@ -262,50 +168,6 @@ func (app *controlPlaneServer) applyRetention(ctx context.Context) (map[string]a
 		return store.ApplyRetention(ctx, currentRetentionPolicy())
 	}
 	return map[string]any{"retentionPolicy": currentRetentionPolicy().dto()}, nil
-}
-
-func (app *controlPlaneServer) archiveTerminalResources(ctx context.Context, input map[string]any) (map[string]any, error) {
-	reason := stringField(input, "reason", "operator_archive_terminal_resources")
-	result := map[string]any{"reason": reason}
-	if store, ok := app.store.(terminalArchiveStore); ok {
-		archived, err := store.ArchiveTerminalResources(ctx, reason)
-		if err != nil {
-			return nil, err
-		}
-		result = archived
-	}
-
-	result["currentStateRemoved"] = app.removeTerminalResourcesLocked()
-	return result, nil
-}
-
-func (app *controlPlaneServer) removeTerminalResourcesLocked() int {
-	removed := 0
-	for _, row := range app.listComputes("") {
-		if terminalComputeStatus(stringValue(row["status"])) {
-			_ = app.tables.DeleteCompute(context.Background(), stringValue(row["id"]))
-			removed++
-		}
-	}
-	for _, row := range app.listStorages("") {
-		if terminalStorageStatus(stringValue(row["status"])) {
-			_ = app.tables.DeleteStorage(context.Background(), stringValue(row["id"]))
-			removed++
-		}
-	}
-	for _, row := range app.listAttachments("") {
-		if terminalAttachmentStatus(stringValue(row["status"])) {
-			_ = app.tables.DeleteAttachment(context.Background(), stringValue(row["id"]))
-			removed++
-		}
-	}
-	for _, row := range app.listWorkspaces("") {
-		if terminalWorkspaceStatus(firstNonEmpty(stringValue(row["state"]), stringValue(row["status"]))) {
-			_ = app.tables.DeleteWorkspace(context.Background(), stringValue(row["id"]))
-			removed++
-		}
-	}
-	return removed
 }
 
 func (app *controlPlaneServer) workspaceResourceAnomaly(workspace map[string]any) string {

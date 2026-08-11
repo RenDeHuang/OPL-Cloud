@@ -640,66 +640,55 @@ func (s *memoryTableStore) ApplyWorkspaceRenewalIntent(_ context.Context, update
 	return nil
 }
 
-func (s *memoryTableStore) ClaimWorkspaceLaunch(_ context.Context, claim workspaceLaunchClaimCAS) error {
+func (s *memoryTableStore) ClaimWorkspaceLaunchReconcile(_ context.Context, claim workspaceLaunchReconcileClaim) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	desired, err := decodeWorkspaceLaunchOperation(claim.DesiredOperation)
-	if err != nil || desired.AccountID != claim.AccountID || claim.ExpectedOperationResult == "" && desired.AcceptanceBCapacitySlot != claim.AcceptanceBCapacitySlot || s.accounts[claim.AccountID] == nil {
+	desired, err := decodeWorkspaceLaunchReconcileOperation(claim.DesiredOperation)
+	if err != nil || desired.stringFact("accountId") != claim.AccountID || desired.boolFact("acceptanceBCapacitySlot") != claim.AcceptanceBCapacitySlot || s.accounts[claim.AccountID] == nil {
 		return errWorkspaceLaunchCASConflict
 	}
-	index := -1
-	for i, row := range s.runtimeOps {
+	for _, row := range s.runtimeOps {
 		if stringValue(row["id"]) == desired.ID {
-			index = i
-			break
-		}
-	}
-	if claim.ExpectedOperationResult == "" {
-		if index >= 0 {
 			return errWorkspaceLaunchCASConflict
 		}
-		for _, row := range s.runtimeOps {
-			if stringValue(row["accountId"]) == claim.AccountID && isWorkspaceLaunchAction(stringValue(row["action"])) && !terminalWorkspaceLaunchStatus(stringValue(row["status"])) {
-				return errWorkspaceLaunchInProgress
-			}
+		if stringValue(row["accountId"]) == claim.AccountID && isWorkspaceLaunchAction(stringValue(row["action"])) && !terminalWorkspaceLaunchStatus(stringValue(row["status"])) {
+			return errWorkspaceLaunchInProgress
 		}
-		inFlight, acceptanceClaims := 0, 0
-		for _, row := range s.runtimeOps {
-			if isWorkspaceLaunchAction(stringValue(row["action"])) && workspaceLaunchHasAcceptanceBCapacitySlot(row) {
-				acceptanceClaims++
-			}
-			if isWorkspaceLaunchAction(stringValue(row["action"])) && !terminalWorkspaceLaunchStatus(stringValue(row["status"])) {
-				inFlight++
-			}
+	}
+	inFlight, acceptanceClaims := 0, 0
+	for _, row := range s.runtimeOps {
+		if !isWorkspaceLaunchAction(stringValue(row["action"])) {
+			continue
 		}
-		if claim.AcceptanceBCapacitySlot {
-			if acceptanceClaims >= 1 {
-				return errWorkspaceLaunchCapacityReached
-			}
-		} else if inFlight >= controlledBasicPilotGlobalInFlightLimit() {
+		if workspaceLaunchReconcileAcceptanceSlot(row) || workspaceLaunchHasAcceptanceBCapacitySlot(row) {
+			acceptanceClaims++
+		}
+		if !terminalWorkspaceLaunchStatus(stringValue(row["status"])) {
+			inFlight++
+		}
+	}
+	if claim.AcceptanceBCapacitySlot {
+		if acceptanceClaims >= 1 {
 			return errWorkspaceLaunchCapacityReached
 		}
-		s.runtimeOps = append(s.runtimeOps, cloneMap(claim.DesiredOperation))
-		return nil
+	} else if inFlight >= controlledBasicPilotGlobalInFlightLimit() {
+		return errWorkspaceLaunchCapacityReached
 	}
-	if index < 0 || stringValue(s.runtimeOps[index]["result"]) != claim.ExpectedOperationResult {
-		return errWorkspaceLaunchCASConflict
-	}
-	if !workspaceLaunchClaimIdentityMatches(s.runtimeOps[index], claim.DesiredOperation) {
-		return errIdempotencyConflict
-	}
-	s.runtimeOps[index] = cloneMap(claim.DesiredOperation)
+	s.runtimeOps = append(s.runtimeOps, cloneMap(claim.DesiredOperation))
 	return nil
 }
 
-func (s *memoryTableStore) PersistWorkspaceLaunch(_ context.Context, update workspaceLaunchPersistCAS) error {
+func (s *memoryTableStore) PersistWorkspaceLaunchReconcile(_ context.Context, update workspaceLaunchReconcileCAS) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if _, err := decodeWorkspaceLaunchReconcileOperation(update.DesiredOperation); err != nil {
+		return errWorkspaceLaunchCASConflict
+	}
 	for i, row := range s.runtimeOps {
 		if stringValue(row["id"]) != update.OperationID {
 			continue
 		}
-		if stringValue(row["result"]) != update.ExpectedOperationResult || !workspaceLaunchClaimIdentityMatches(row, update.DesiredOperation) {
+		if stringValue(row["result"]) != update.ExpectedOperationResult || !workspaceLaunchReconcileIdentityMatches(row, update.DesiredOperation) {
 			return errWorkspaceLaunchCASConflict
 		}
 		s.runtimeOps[i] = cloneMap(update.DesiredOperation)
@@ -776,27 +765,14 @@ func (s *memoryTableStore) PersistWorkspaceRenewal(_ context.Context, update wor
 	return nil
 }
 
-func (s *memoryTableStore) ActivateWorkspace(_ context.Context, row map[string]any) (map[string]any, error) {
+func (s *memoryTableStore) ActivateWorkspaceLaunchProjection(_ context.Context, row map[string]any) (map[string]any, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	id := stringValue(row["id"])
-	prepared, err := prepareWorkspaceActivation(
-		row,
-		s.users[stringValue(row["ownerUserId"])],
-		s.computes[stringValue(row["currentComputeAllocationId"])],
-		s.storages[stringValue(row["storageId"])],
-		s.attachments[stringValue(row["currentAttachmentId"])],
-		s.workspaces[id],
-	)
+	prepared, err := prepareWorkspaceLaunchProjection(row, s.users[stringValue(row["ownerUserId"])], s.workspaces[id])
 	if err != nil {
 		return nil, err
 	}
-	if _, ok := prepared["customerProduct"]; !ok {
-		prepared["customerProduct"] = true
-	}
-	access := cloneMap(mapField(prepared, "access"))
-	delete(access, "password")
-	prepared["access"] = access
 	s.workspaces[id] = cloneMap(prepared)
 	return cloneMap(prepared), nil
 }

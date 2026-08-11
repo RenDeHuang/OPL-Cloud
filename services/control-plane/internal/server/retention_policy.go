@@ -7,24 +7,21 @@ import (
 )
 
 type retentionPolicy struct {
-	AdminAuditDays     int
-	SupportDays        int
-	ProductionE2EDays  int
-	TerminalArchiveRun bool
+	AdminAuditDays    int
+	SupportDays       int
+	ProductionE2EDays int
 }
 
 func currentRetentionPolicy() retentionPolicy {
 	return retentionPolicy{
-		AdminAuditDays:     envInt("OPL_RETENTION_ADMIN_AUDIT_DAYS", 180),
-		SupportDays:        envInt("OPL_RETENTION_SUPPORT_DAYS", 365),
-		ProductionE2EDays:  envInt("OPL_RETENTION_PRODUCTION_E2E_DAYS", 90),
-		TerminalArchiveRun: true,
+		AdminAuditDays:    envInt("OPL_RETENTION_ADMIN_AUDIT_DAYS", 180),
+		SupportDays:       envInt("OPL_RETENTION_SUPPORT_DAYS", 365),
+		ProductionE2EDays: envInt("OPL_RETENTION_PRODUCTION_E2E_DAYS", 90),
 	}
 }
 
 func (policy retentionPolicy) dto() map[string]any {
 	return map[string]any{
-		"terminalResources": map[string]any{"action": "archive", "currentStateOnly": true, "enabled": policy.TerminalArchiveRun},
 		"adminAuditDays":    policy.AdminAuditDays,
 		"supportDays":       policy.SupportDays,
 		"productionE2EDays": policy.ProductionE2EDays,

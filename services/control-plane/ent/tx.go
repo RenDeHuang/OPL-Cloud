@@ -20,26 +20,14 @@ type Tx struct {
 	Announcement *AnnouncementClient
 	// AnnouncementRead is the client for interacting with the AnnouncementRead builders.
 	AnnouncementRead *AnnouncementReadClient
-	// ArchiveJob is the client for interacting with the ArchiveJob builders.
-	ArchiveJob *ArchiveJobClient
 	// ArchivedAdminAuditEvent is the client for interacting with the ArchivedAdminAuditEvent builders.
 	ArchivedAdminAuditEvent *ArchivedAdminAuditEventClient
-	// ArchivedComputeAllocation is the client for interacting with the ArchivedComputeAllocation builders.
-	ArchivedComputeAllocation *ArchivedComputeAllocationClient
-	// ArchivedStorageAttachment is the client for interacting with the ArchivedStorageAttachment builders.
-	ArchivedStorageAttachment *ArchivedStorageAttachmentClient
-	// ArchivedStorageVolume is the client for interacting with the ArchivedStorageVolume builders.
-	ArchivedStorageVolume *ArchivedStorageVolumeClient
-	// ArchivedWorkspace is the client for interacting with the ArchivedWorkspace builders.
-	ArchivedWorkspace *ArchivedWorkspaceClient
 	// AuthAttempt is the client for interacting with the AuthAttempt builders.
 	AuthAttempt *AuthAttemptClient
 	// BillingReconciliation is the client for interacting with the BillingReconciliation builders.
 	BillingReconciliation *BillingReconciliationClient
 	// ComputeAllocation is the client for interacting with the ComputeAllocation builders.
 	ComputeAllocation *ComputeAllocationClient
-	// ExecutionRequest is the client for interacting with the ExecutionRequest builders.
-	ExecutionRequest *ExecutionRequestClient
 	// Membership is the client for interacting with the Membership builders.
 	Membership *MembershipClient
 	// Organization is the client for interacting with the Organization builders.
@@ -201,16 +189,10 @@ func (tx *Tx) init() {
 	tx.AdminAuditEvent = NewAdminAuditEventClient(tx.config)
 	tx.Announcement = NewAnnouncementClient(tx.config)
 	tx.AnnouncementRead = NewAnnouncementReadClient(tx.config)
-	tx.ArchiveJob = NewArchiveJobClient(tx.config)
 	tx.ArchivedAdminAuditEvent = NewArchivedAdminAuditEventClient(tx.config)
-	tx.ArchivedComputeAllocation = NewArchivedComputeAllocationClient(tx.config)
-	tx.ArchivedStorageAttachment = NewArchivedStorageAttachmentClient(tx.config)
-	tx.ArchivedStorageVolume = NewArchivedStorageVolumeClient(tx.config)
-	tx.ArchivedWorkspace = NewArchivedWorkspaceClient(tx.config)
 	tx.AuthAttempt = NewAuthAttemptClient(tx.config)
 	tx.BillingReconciliation = NewBillingReconciliationClient(tx.config)
 	tx.ComputeAllocation = NewComputeAllocationClient(tx.config)
-	tx.ExecutionRequest = NewExecutionRequestClient(tx.config)
 	tx.Membership = NewMembershipClient(tx.config)
 	tx.Organization = NewOrganizationClient(tx.config)
 	tx.ProductionE2ERecord = NewProductionE2ERecordClient(tx.config)

@@ -46,6 +46,121 @@ var providerAcceptanceSlots = map[string]providerAcceptanceSlot{
 	},
 }
 
+// The medopl Instance still calls this legacy operator route. Keep its provider
+// interpretation physically scoped here until INSTANCE-PROVIDER-ACCEPTANCE-MIGRATION
+// moves the workflow to the generic Workspace/Fabric contract.
+func providerDataValue(row map[string]any, key string) string {
+	switch data := row["providerData"].(type) {
+	case map[string]any:
+		return stringValue(data[key])
+	case map[string]string:
+		return data[key]
+	default:
+		return ""
+	}
+}
+
+func monthlyComputeLaunchZone() string { return strings.TrimSpace(os.Getenv("OPL_TENCENT_ZONE")) }
+
+func monthlyComputeInstanceType(packageID string) string {
+	if packageID == "pro" {
+		return strings.TrimSpace(os.Getenv("OPL_PRO_COMPUTE_INSTANCE_TYPE"))
+	}
+	if packageID == "basic" {
+		return strings.TrimSpace(os.Getenv("OPL_BASIC_COMPUTE_INSTANCE_TYPE"))
+	}
+	return ""
+}
+
+func monthlyProviderDeadline(row map[string]any) (time.Time, error) {
+	value := strings.TrimSpace(firstNonEmpty(stringValue(row["deadline"]), providerDataValue(row, "deadline")))
+	deadline, err := time.Parse(time.RFC3339, value)
+	return deadline.UTC(), err
+}
+
+func monthlyResourcePrepared(resourceType string, row map[string]any) bool {
+	status := stringValue(row["status"])
+	if resourceType == "storage" {
+		return (status == "available" || status == "ready") && stringValue(row["providerResourceId"]) != ""
+	}
+	return (status == "running" || status == "ready") && firstNonEmpty(stringValue(row["providerResourceId"]), stringValue(row["instanceId"]), stringValue(row["cvmInstanceId"])) != ""
+}
+
+func monthlyPurchaseReadbackConfirmed(resourceType string, row, facts map[string]any) bool {
+	if !monthlyResourcePrepared(resourceType, facts) || stringValue(facts["providerRequestId"]) == "" {
+		return false
+	}
+	deadline, err := monthlyProviderDeadline(facts)
+	periodStart, startErr := time.Parse(time.RFC3339, stringValue(row["periodStart"]))
+	paidThrough, paidErr := time.Parse(time.RFC3339, stringValue(row["paidThrough"]))
+	minimumDeadline := time.Date(paidThrough.Year(), paidThrough.Month(), paidThrough.Day(), 0, 0, 0, 0, time.UTC)
+	zone := firstNonEmpty(stringValue(facts["zone"]), providerDataValue(facts, "zone"))
+	chargeType := firstNonEmpty(stringValue(facts["chargeType"]), providerDataValue(facts, "chargeType"))
+	renewFlag := firstNonEmpty(stringValue(facts["renewFlag"]), providerDataValue(facts, "renewFlag"))
+	if err != nil || startErr != nil || paidErr != nil || !deadline.After(periodStart) || deadline.Before(minimumDeadline) || zone == "" || zone != stringValue(row["zone"]) || chargeType != "PREPAID" || renewFlag != "NOTIFY_AND_MANUAL_RENEW" {
+		return false
+	}
+	if resourceType == "compute" {
+		instanceType, providerInstanceType := stringValue(facts["instanceType"]), providerDataValue(facts, "instanceType")
+		expectedInstanceType := monthlyComputeInstanceType(stringValue(row["packageId"]))
+		return stringValue(facts["providerResourceId"]) != "" && stringValue(facts["packageId"]) == stringValue(row["packageId"]) &&
+			firstNonEmpty(stringValue(facts["instanceId"]), stringValue(facts["cvmInstanceId"])) != "" &&
+			expectedInstanceType != "" && instanceType == expectedInstanceType && providerInstanceType == expectedInstanceType
+	}
+	return strings.HasPrefix(stringValue(facts["providerResourceId"]), "disk-") && stringValue(facts["diskType"]) != "" &&
+		(stringValue(facts["cbsStatus"]) == "UNATTACHED" || stringValue(facts["cbsStatus"]) == "ATTACHED") &&
+		int(numberField(facts, "sizeGb", 0)) == int(numberField(row, "sizeGb", 0))
+}
+
+func computeResponse(row map[string]any) map[string]any {
+	if row == nil {
+		row = map[string]any{}
+	}
+	row["ownerAccountId"] = firstNonEmpty(stringValue(row["ownerAccountId"]), stringValue(row["accountId"]))
+	row["provider"] = firstNonEmpty(stringValue(row["provider"]), "tencent-tke")
+	row["status"] = firstNonEmpty(stringValue(row["status"]), "running")
+	if stringValue(row["billingStatus"]) != "" {
+		row["billingStatus"] = billingStatusFor(row)
+	} else {
+		delete(row, "billingStatus")
+	}
+	row["cvmInstanceId"] = firstNonEmpty(stringValue(row["cvmInstanceId"]), stringValue(row["instanceId"]))
+	return row
+}
+
+func storageResponse(row map[string]any) map[string]any {
+	if row == nil {
+		row = map[string]any{}
+	}
+	row["ownerAccountId"] = firstNonEmpty(stringValue(row["ownerAccountId"]), stringValue(row["accountId"]))
+	row["provider"] = firstNonEmpty(stringValue(row["provider"]), "tencent-tke")
+	if stringValue(row["status"]) == "ready" {
+		row["status"] = "available"
+	}
+	row["status"] = firstNonEmpty(stringValue(row["status"]), "available")
+	if stringValue(row["billingStatus"]) != "" {
+		row["billingStatus"] = billingStatusFor(row)
+	} else {
+		delete(row, "billingStatus")
+	}
+	if numberField(row, "sizeGb", 0) == 0 {
+		row["sizeGb"] = 10
+	}
+	return row
+}
+
+func attachmentResponse(row map[string]any, input map[string]any) map[string]any {
+	if row == nil {
+		row = map[string]any{}
+	}
+	row["computeAllocationId"] = firstNonEmpty(stringValue(row["computeAllocationId"]), stringValue(row["computeId"]), stringField(input, "computeAllocationId", ""))
+	row["storageId"] = firstNonEmpty(stringValue(row["storageId"]), stringValue(row["volumeId"]), stringField(input, "storageId", ""))
+	row["mountPath"] = firstNonEmpty(stringValue(row["mountPath"]), stringField(input, "mountPath", "/data"))
+	row["provider"] = firstNonEmpty(stringValue(row["provider"]), "tencent-tke")
+	row["status"] = firstNonEmpty(stringValue(row["status"]), "attached")
+	return row
+}
+
 func registerProviderAcceptanceRoutes(mux *http.ServeMux, app *controlPlaneServer, service *controlplane.Service) {
 	mux.HandleFunc("POST /api/operator/provider-acceptance", app.providerAcceptanceProtected(func(w http.ResponseWriter, r *http.Request) {
 		input := decodeJSON(r)
@@ -590,6 +705,7 @@ func (app *controlPlaneServer) advanceProviderAcceptance(ctx context.Context, se
 		}
 		projection = providerAcceptanceWorkspaceProjection(workspace, runtime, slot)
 	}
+	projection.Provider = "tencent-tke"
 	workspace = providerAcceptanceWorkspaceRow(projection, slot)
 	if err := app.tables.SaveWorkspace(ctx, workspace); err != nil {
 		return "", "", err

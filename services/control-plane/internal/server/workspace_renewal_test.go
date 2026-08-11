@@ -333,16 +333,13 @@ func newWorkspaceRenewalWorkerFixture(t *testing.T, balances []int64) workspaceR
 	mustStore(t, app.tables.SaveWorkspace(context.Background(), workspace))
 	fabric.computeRenew = clients.ComputeAllocation{
 		ID: computeID, AccountID: "acct-monthly", WorkspaceID: workspaceID, PackageID: "basic", Status: "running",
-		Provider: "tencent-tke", ProviderResourceID: stringValue(compute["providerResourceId"]), ProviderRequestID: "renew-compute-workspace",
-		InstanceID: stringValue(compute["providerResourceId"]), CVMInstanceID: stringValue(compute["providerResourceId"]), InstanceType: "S5.MEDIUM4",
-		Zone: "ap-shanghai-2", ChargeType: "PREPAID", RenewFlag: "NOTIFY_AND_MANUAL_RENEW", Deadline: renewedThrough.Format(time.RFC3339),
-		ProviderData: map[string]string{"chargeType": "PREPAID", "renewalResult": "renewed", "zone": "ap-shanghai-2", "instanceType": "S5.MEDIUM4", "deadline": renewedThrough.Format(time.RFC3339)},
+		Provider: "fabric", ProviderResourceID: stringValue(compute["providerResourceId"]), ProviderRequestID: "renew-compute-workspace",
+		Zone: "provider-zone", Deadline: renewedThrough.Format(time.RFC3339),
 	}
 	fabric.storageRenew = clients.StorageVolume{
-		ID: storageID, AccountID: "acct-monthly", WorkspaceID: workspaceID, Status: "available", Provider: "tencent-tke",
+		ID: storageID, AccountID: "acct-monthly", WorkspaceID: workspaceID, Status: "available", Provider: "fabric",
 		ProviderResourceID: stringValue(storage["providerResourceId"]), ProviderRequestID: "renew-storage-workspace", SizeGB: 10,
-		CBSStatus: "UNATTACHED", DiskType: "CLOUD_PREMIUM", RenewFlag: "NOTIFY_AND_MANUAL_RENEW", Deadline: renewedThrough.Format(time.RFC3339), Zone: "ap-shanghai-2",
-		ProviderData: map[string]string{"chargeType": "PREPAID", "renewalResult": "renewed", "zone": "ap-shanghai-2", "deadline": renewedThrough.Format(time.RFC3339)},
+		Deadline: renewedThrough.Format(time.RFC3339), Zone: "provider-zone",
 	}
 	fabric.computeSync, fabric.storageSync = fabric.computeRenew, fabric.storageRenew
 	return workspaceRenewalWorkerFixture{
@@ -421,7 +418,7 @@ func TestWorkspaceRenewalReviewResolutionRequiresBothProviderFactsAndResumes(t *
 	fixture.fabric.storageRenewErr = errors.New("provider response lost")
 	fixture.fabric.storageSync = clients.StorageVolume{
 		ID: stringValue(fixture.storage["id"]), AccountID: "acct-monthly", WorkspaceID: "workspace-monthly",
-		Status: "external_deleted", CBSStatus: "NOT_FOUND",
+		Status: "external_deleted",
 	}
 	if err := fixture.app.runMonthlyBillingOnce(context.Background(), fixture.service, fixture.paidThrough.Add(-monthlyRenewalLead)); err != nil {
 		t.Fatal(err)
@@ -443,7 +440,7 @@ func TestWorkspaceRenewalReviewResolutionRequiresBothProviderFactsAndResumes(t *
 	if partial.Status != "manual_review" || !strings.Contains(partial.PersistedResult, `"reviewResolutionPhase":"verify_storage"`) || len(fixture.sub2API.refunds) != 0 || len(fixture.ledger.receipts) != 0 {
 		t.Fatalf("partial operation=%#v refunds=%#v receipts=%#v", partial, fixture.sub2API.refunds, fixture.ledger.receipts)
 	}
-	computeSyncs := strings.Count(strings.Join(*fixture.events, ","), "fabric.compute.sync")
+	providerFactReads := strings.Count(strings.Join(*fixture.events, ","), "fabric.provider-facts")
 
 	fixture.fabric.storageSync = fixture.fabric.storageRenew
 	restarted, err := NewPersistentServer(fixture.service, fixture.app.tables)
@@ -460,8 +457,8 @@ func TestWorkspaceRenewalReviewResolutionRequiresBothProviderFactsAndResumes(t *
 		t.Fatal(err)
 	}
 	if resolved.Status != "active" || !strings.Contains(resolved.PersistedResult, `"reviewResolutionPhase":"completed"`) || workspace["paidThrough"] != fixture.renewedThrough.Format(time.RFC3339Nano) ||
-		strings.Count(strings.Join(*fixture.events, ","), "fabric.compute.sync") != computeSyncs+1 || len(fixture.sub2API.refunds) != 0 || len(fixture.ledger.receipts) != 1 {
-		t.Fatalf("resolved operation=%#v workspace=%#v events=%#v refunds=%#v receipts=%#v", resolved, workspace, *fixture.events, fixture.sub2API.refunds, fixture.ledger.receipts)
+		strings.Count(strings.Join(*fixture.events, ","), "fabric.provider-facts") != providerFactReads+3 || len(fixture.sub2API.refunds) != 0 || len(fixture.ledger.receipts) != 1 {
+		t.Fatalf("resolved operation=%#v workspace=%#v providerFactReads=%d->%d events=%#v refunds=%#v receipts=%#v", resolved, workspace, providerFactReads, strings.Count(strings.Join(*fixture.events, ","), "fabric.provider-facts"), *fixture.events, fixture.sub2API.refunds, fixture.ledger.receipts)
 	}
 	receipt := fixture.ledger.receipts[0]
 	if receipt.InputRefs["evidenceRef"] != "case-20260717-workspace" || receipt.ReviewerChecks["decision"] != billingReviewActivateCharged ||
@@ -538,8 +535,8 @@ func TestWorkspaceRenewalUsesOneDebitStableProviderIDsAndOneReceipt(t *testing.T
 	compute, _ := fixture.app.getCompute(stringValue(fixture.compute["id"]))
 	storage, _ := fixture.app.getStorage(stringValue(fixture.storage["id"]))
 	if compute["providerResourceId"] != fixture.compute["providerResourceId"] || storage["providerResourceId"] != fixture.storage["providerResourceId"] ||
-		compute["deadline"] != fixture.renewedThrough.Format(time.RFC3339) || storage["deadline"] != fixture.renewedThrough.Format(time.RFC3339) ||
-		strings.Count(strings.Join(*fixture.events, ","), "fabric.compute.sync") != 2 || strings.Count(strings.Join(*fixture.events, ","), "fabric.storage.sync") != 2 {
+		compute["providerStatus"] != "running" || storage["providerStatus"] != "available" ||
+		strings.Count(strings.Join(*fixture.events, ","), "fabric.provider-facts") != 6 {
 		t.Fatalf("provider readback compute=%#v storage=%#v events=%#v", compute, storage, *fixture.events)
 	}
 	if len(fixture.ledger.receipts) != 1 || fixture.ledger.receipts[0].Type != "billing.workspace_renewed.v1" || fixture.ledger.receipts[0].Cost["totalUsdMicros"] != int64(52_580_000) {
@@ -929,9 +926,8 @@ func TestWorkspaceRenewalInsufficientBalanceRetriesSamePeriodWithoutProviderCall
 
 func TestWorkspaceRenewalInvalidPreflightWithoutUpstreamErrorRemainsVisibleAndRetryable(t *testing.T) {
 	validCompute := clients.MonthlyPreflight{
-		ResourceType: "compute", PackageID: "basic", NodePoolID: "np-basic", Zone: "ap-shanghai-2", Available: true,
+		ResourceType: "compute", PackageID: "basic", Zone: "provider-zone", Available: true,
 		ChargeType: "PREPAID", PeriodMonths: 1, RenewFlag: "NOTIFY_AND_MANUAL_RENEW", ProviderPriceCNY: 12.34,
-		ProviderRequestIDs: map[string]string{"nodePool": "node-pool-request", "subnets": "subnets-request", "availability": "availability-request"},
 	}
 	for _, tc := range []struct {
 		name, phase, code string
@@ -1092,7 +1088,7 @@ func TestWorkspaceRenewalStorageAbsentAfterComputeRenewedNeedsManualReviewWithou
 	fixture.fabric.storageRenewErr = errors.New("provider response lost")
 	fixture.fabric.storageSync = clients.StorageVolume{
 		ID: stringValue(fixture.storage["id"]), AccountID: "acct-monthly", WorkspaceID: "workspace-monthly",
-		Status: "external_deleted", CBSStatus: "NOT_FOUND",
+		Status: "external_deleted",
 	}
 	if err := fixture.app.runMonthlyBillingOnce(context.Background(), fixture.service, fixture.paidThrough.Add(-monthlyRenewalLead)); err != nil {
 		t.Fatal(err)
@@ -1142,9 +1138,6 @@ func TestWorkspaceRenewalExpiryPreservesProviderFactsWithoutReadback(t *testing.
 	workspace["billingAnchorDay"] = int64(paidThrough.Day())
 	workspace["autoRenew"], workspace["authorizedBy"], workspace["authorizedAt"] = false, "", ""
 	mustStore(t, fixture.app.tables.SaveWorkspace(context.Background(), workspace))
-	fixture.fabric.computeCleanupStatus = "destroying"
-	fixture.fabric.computeCleanupSync = clients.ComputeAllocation{ID: stringValue(fixture.compute["id"]), AccountID: "acct-monthly", WorkspaceID: "workspace-monthly", Status: "destroyed"}
-
 	if err := fixture.app.runMonthlyBillingOnce(context.Background(), fixture.service, time.Now().UTC()); err != nil {
 		t.Fatal(err)
 	}

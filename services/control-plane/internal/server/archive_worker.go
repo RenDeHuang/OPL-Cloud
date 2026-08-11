@@ -9,32 +9,32 @@ import (
 	"time"
 )
 
-const defaultArchiveRetentionInterval = 24 * time.Hour
+const defaultRetentionInterval = 24 * time.Hour
 
-func archiveRetentionWorkerEnabled() bool {
+func retentionWorkerEnabled() bool {
 	value := strings.TrimSpace(os.Getenv("OPL_ARCHIVE_RETENTION_WORKER_ENABLED"))
 	return value == "1" || strings.EqualFold(value, "true") || strings.EqualFold(value, "yes")
 }
 
-func archiveRetentionWorkerInterval() time.Duration {
+func retentionWorkerInterval() time.Duration {
 	raw := strings.TrimSpace(os.Getenv("OPL_ARCHIVE_RETENTION_INTERVAL_MS"))
 	if raw == "" {
-		return defaultArchiveRetentionInterval
+		return defaultRetentionInterval
 	}
 	ms, err := strconv.Atoi(raw)
 	if err != nil || ms <= 0 {
-		return defaultArchiveRetentionInterval
+		return defaultRetentionInterval
 	}
 	return time.Duration(ms) * time.Millisecond
 }
 
-func (app *controlPlaneServer) startArchiveRetentionWorker(ctx context.Context, interval time.Duration) {
+func (app *controlPlaneServer) startRetentionWorker(ctx context.Context, interval time.Duration) {
 	if interval <= 0 {
-		interval = defaultArchiveRetentionInterval
+		interval = defaultRetentionInterval
 	}
 	go func() {
-		if err := app.runArchiveRetentionOnce(ctx); err != nil {
-			log.Printf("archive retention failed: %v", err)
+		if err := app.runRetentionOnce(ctx); err != nil {
+			log.Printf("retention failed: %v", err)
 		}
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
@@ -43,18 +43,15 @@ func (app *controlPlaneServer) startArchiveRetentionWorker(ctx context.Context, 
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				if err := app.runArchiveRetentionOnce(ctx); err != nil {
-					log.Printf("archive retention failed: %v", err)
+				if err := app.runRetentionOnce(ctx); err != nil {
+					log.Printf("retention failed: %v", err)
 				}
 			}
 		}
 	}()
 }
 
-func (app *controlPlaneServer) runArchiveRetentionOnce(ctx context.Context) error {
-	if _, err := app.archiveTerminalResources(ctx, map[string]any{"reason": "scheduled_terminal_retention"}); err != nil {
-		return err
-	}
+func (app *controlPlaneServer) runRetentionOnce(ctx context.Context) error {
 	_, err := app.applyRetention(ctx)
 	return err
 }

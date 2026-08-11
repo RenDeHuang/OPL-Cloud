@@ -613,11 +613,10 @@ func (app *controlPlaneServer) resolveWorkspaceRenewalReview(ctx context.Context
 	}
 
 	if operation.Status == "manual_review" && operation.ReviewResolutionPhase == "verify_compute" {
-		result, readErr := service.SyncMonthlyCompute(ctx, operation.ComputeID)
-		facts := structToMap(result)
-		operation.ComputeReadback = facts
-		row, absent, valid := app.workspaceRenewalProviderReadback("compute", &operation, facts, readErr)
-		if absent || !valid {
+		fact, readErr := readProviderFact(ctx, service, workspaceRenewalProviderFactInput(operation, "compute"))
+		row, valid := app.workspaceRenewalProviderReadback("compute", &operation, fact, readErr)
+		operation.ComputeReadback = providerFactEvidence(fact)
+		if !valid {
 			if err := app.persistWorkspaceRenewal(ctx, &operation, nil); err != nil {
 				return nil, err
 			}
@@ -632,11 +631,10 @@ func (app *controlPlaneServer) resolveWorkspaceRenewalReview(ctx context.Context
 		}
 	}
 	if operation.Status == "manual_review" && operation.ReviewResolutionPhase == "verify_storage" {
-		result, readErr := service.SyncMonthlyStorage(ctx, operation.StorageID)
-		facts := structToMap(result)
-		operation.StorageReadback = facts
-		row, absent, valid := app.workspaceRenewalProviderReadback("storage", &operation, facts, readErr)
-		if absent || !valid {
+		fact, readErr := readProviderFact(ctx, service, workspaceRenewalProviderFactInput(operation, "storage"))
+		row, valid := app.workspaceRenewalProviderReadback("storage", &operation, fact, readErr)
+		operation.StorageReadback = providerFactEvidence(fact)
+		if !valid {
 			if err := app.persistWorkspaceRenewal(ctx, &operation, nil); err != nil {
 				return nil, err
 			}
@@ -684,7 +682,18 @@ func (app *controlPlaneServer) resolveWorkspaceRenewalReview(ctx context.Context
 	return cloneMap(operation.ReviewResolutionResult), nil
 }
 
-func (app *controlPlaneServer) workspaceRenewalResources(operation workspaceRenewalOperation) (map[string]any, map[string]any, error) {
+func workspaceRenewalProviderFactInput(operation workspaceRenewalOperation, resourceType string) clients.ProviderFactInput {
+	resourceID := operation.ComputeID
+	if resourceType == "storage" {
+		resourceID = operation.StorageID
+	}
+	return clients.ProviderFactInput{
+		AccountID: operation.AccountID, WorkspaceID: operation.WorkspaceID,
+		ResourceType: resourceType, ResourceID: resourceID,
+	}
+}
+
+func (app *controlPlaneServer) workspaceRenewalResources(ctx context.Context, service *controlplane.Service, operation workspaceRenewalOperation) (map[string]any, map[string]any, clients.ProviderFact, clients.ProviderFact, error) {
 	compute, computeOK := app.getCompute(operation.ComputeID)
 	storage, storageOK := app.getStorage(operation.StorageID)
 	if !computeOK || !storageOK || stringValue(compute["accountId"]) != operation.AccountID || stringValue(storage["accountId"]) != operation.AccountID ||
@@ -692,19 +701,26 @@ func (app *controlPlaneServer) workspaceRenewalResources(operation workspaceRene
 		stringValue(compute["providerResourceId"]) == "" || stringValue(storage["providerResourceId"]) == "" ||
 		stringValue(compute["packageId"]) != operation.PackageID || int64(numberField(storage, "sizeGb", 0)) != operation.StorageGB ||
 		stringValue(storage["computeAllocationId"]) != operation.ComputeID {
-		return nil, nil, errors.New("workspace_renewal_resource_identity_mismatch")
+		return nil, nil, clients.ProviderFact{}, clients.ProviderFact{}, errors.New("workspace_renewal_resource_identity_mismatch")
 	}
-	computeTruth := cloneMap(compute)
-	computeTruth["periodStart"], computeTruth["paidThrough"] = operation.PeriodStart, operation.PaidThrough
-	if _, ok := monthlyRenewalProviderTruth("compute", computeTruth); !ok {
-		return nil, nil, errors.New("workspace_renewal_compute_provider_truth_invalid")
+	paidThrough, err := time.Parse(time.RFC3339, operation.PaidThrough)
+	if err != nil {
+		return nil, nil, clients.ProviderFact{}, clients.ProviderFact{}, errors.New("workspace_renewal_provider_truth_invalid")
 	}
-	storageTruth := cloneMap(storage)
-	storageTruth["periodStart"], storageTruth["paidThrough"] = operation.PeriodStart, operation.PaidThrough
-	if _, ok := monthlyRenewalProviderTruth("storage", storageTruth); !ok {
-		return nil, nil, errors.New("workspace_renewal_storage_provider_truth_invalid")
+	inputs := []clients.ProviderFactInput{
+		workspaceRenewalProviderFactInput(operation, "compute"),
+		workspaceRenewalProviderFactInput(operation, "storage"),
 	}
-	return compute, storage, nil
+	facts, err := readProviderFacts(ctx, service, inputs)
+	if err != nil {
+		return nil, nil, clients.ProviderFact{}, clients.ProviderFact{}, errors.New("workspace_renewal_provider_truth_invalid")
+	}
+	computeFact, storageFact := facts[providerFactKey(inputs[0])], facts[providerFactKey(inputs[1])]
+	if !providerFactCovers(inputs[0], computeFact, stringValue(compute["providerResourceId"]), paidThrough) ||
+		!providerFactCovers(inputs[1], storageFact, stringValue(storage["providerResourceId"]), paidThrough) {
+		return nil, nil, clients.ProviderFact{}, clients.ProviderFact{}, errors.New("workspace_renewal_provider_truth_invalid")
+	}
+	return compute, storage, computeFact, storageFact, nil
 }
 
 func (app *controlPlaneServer) runWorkspaceRenewal(ctx context.Context, service *controlplane.Service, operation workspaceRenewalOperation, now time.Time) error {
@@ -718,10 +734,12 @@ func (app *controlPlaneServer) runWorkspaceRenewal(ctx context.Context, service 
 				return err
 			}
 		case "claimed":
-			compute, storage, err := app.workspaceRenewalResources(operation)
+			_, _, computeFact, storageFact, err := app.workspaceRenewalResources(ctx, service, operation)
 			if err != nil {
 				return app.manualReviewWorkspaceRenewal(ctx, &operation, err.Error())
 			}
+			operation.ComputeReadback = providerFactEvidence(computeFact)
+			operation.StorageReadback = providerFactEvidence(storageFact)
 			if operation.ChargeAttempted || operation.ChargeConfirmation != nil {
 				operation.Status, operation.Phase = "debit_pending", "debit"
 				if err := app.persistWorkspaceRenewal(ctx, &operation, nil); err != nil {
@@ -731,7 +749,7 @@ func (app *controlPlaneServer) runWorkspaceRenewal(ctx context.Context, service 
 			}
 			switch operation.Phase {
 			case "preflight_compute":
-				input := clients.MonthlyPreflightInput{ResourceType: "compute", PackageID: operation.PackageID, Zone: stringValue(compute["zone"])}
+				input := clients.MonthlyPreflightInput{ResourceType: "compute", PackageID: operation.PackageID, Zone: computeFact.Facts.Zone}
 				preflight, err := service.PreflightMonthlyResource(ctx, input)
 				if err != nil || !monthlyPreflightConfirmed(input, preflight) {
 					return app.retryWorkspaceRenewal(ctx, &operation, "fabric_compute_preflight_failed", err)
@@ -741,7 +759,7 @@ func (app *controlPlaneServer) runWorkspaceRenewal(ctx context.Context, service 
 					return err
 				}
 			case "preflight_storage":
-				input := clients.MonthlyPreflightInput{ResourceType: "storage", PackageID: operation.PackageID, SizeGB: int(operation.StorageGB), Zone: stringValue(storage["zone"])}
+				input := clients.MonthlyPreflightInput{ResourceType: "storage", PackageID: operation.PackageID, SizeGB: int(operation.StorageGB), Zone: storageFact.Facts.Zone}
 				preflight, err := service.PreflightMonthlyResource(ctx, input)
 				if err != nil || !monthlyPreflightConfirmed(input, preflight) {
 					return app.retryWorkspaceRenewal(ctx, &operation, "fabric_storage_preflight_failed", err)
@@ -876,17 +894,17 @@ func (app *controlPlaneServer) renewWorkspaceProvider(ctx context.Context, servi
 	switch operation.Phase {
 	case "provider_compute":
 		result, err := service.RenewMonthlyCompute(ctx, operation.ComputeID, operation.ID+":compute")
-		operation.ComputeRenewal, operation.Phase = structToMap(result), "verify_compute"
+		operation.ComputeRenewal, operation.Phase = providerResourceMutationEvidence(result), "verify_compute"
 		if err != nil {
 			operation.ErrorCode = "fabric_compute_renewal_unconfirmed"
 		}
 		return app.persistWorkspaceRenewal(ctx, operation, nil)
 	case "verify_compute":
-		result, err := service.SyncMonthlyCompute(ctx, operation.ComputeID)
-		facts := structToMap(result)
-		operation.ComputeReadback = facts
-		row, absent, valid := app.workspaceRenewalProviderReadback("compute", operation, facts, err)
-		if absent {
+		input := workspaceRenewalProviderFactInput(*operation, "compute")
+		fact, err := readProviderFact(ctx, service, input)
+		row, valid := app.workspaceRenewalProviderReadback("compute", operation, fact, err)
+		operation.ComputeReadback = providerFactEvidence(fact)
+		if err == nil && providerFactConfirmedAbsent(input, fact) {
 			return app.refundWorkspaceRenewal(ctx, service, operation, "fabric_compute_confirmed_absent")
 		}
 		if !valid {
@@ -899,17 +917,17 @@ func (app *controlPlaneServer) renewWorkspaceProvider(ctx context.Context, servi
 		return app.persistWorkspaceRenewal(ctx, operation, nil)
 	case "provider_storage":
 		result, err := service.RenewMonthlyStorage(ctx, operation.StorageID, operation.ID+":storage")
-		operation.StorageRenewal, operation.Phase = structToMap(result), "verify_storage"
+		operation.StorageRenewal, operation.Phase = providerResourceMutationEvidence(result), "verify_storage"
 		if err != nil {
 			operation.ErrorCode = "fabric_storage_renewal_unconfirmed"
 		}
 		return app.persistWorkspaceRenewal(ctx, operation, nil)
 	case "verify_storage":
-		result, err := service.SyncMonthlyStorage(ctx, operation.StorageID)
-		facts := structToMap(result)
-		operation.StorageReadback = facts
-		row, absent, valid := app.workspaceRenewalProviderReadback("storage", operation, facts, err)
-		if absent {
+		input := workspaceRenewalProviderFactInput(*operation, "storage")
+		fact, err := readProviderFact(ctx, service, input)
+		row, valid := app.workspaceRenewalProviderReadback("storage", operation, fact, err)
+		operation.StorageReadback = providerFactEvidence(fact)
+		if err == nil && providerFactConfirmedAbsent(input, fact) {
 			return app.manualReviewWorkspaceRenewal(ctx, operation, "fabric_storage_confirmed_absent_after_compute_renewed")
 		}
 		if !valid {
@@ -925,7 +943,14 @@ func (app *controlPlaneServer) renewWorkspaceProvider(ctx context.Context, servi
 	}
 }
 
-func (app *controlPlaneServer) workspaceRenewalProviderReadback(resourceType string, operation *workspaceRenewalOperation, facts map[string]any, readErr error) (map[string]any, bool, bool) {
+func providerResourceMutationEvidence(result clients.ProviderResourceMutation) map[string]any {
+	return map[string]any{
+		"id": result.ID, "operationId": result.OperationID, "accountId": result.AccountID,
+		"workspaceId": result.WorkspaceID, "status": result.Status, "providerRequestId": result.ProviderRequestID,
+	}
+}
+
+func (app *controlPlaneServer) workspaceRenewalProviderReadback(resourceType string, operation *workspaceRenewalOperation, fact clients.ProviderFact, readErr error) (map[string]any, bool) {
 	var existing map[string]any
 	var ok bool
 	if resourceType == "storage" {
@@ -934,35 +959,39 @@ func (app *controlPlaneServer) workspaceRenewalProviderReadback(resourceType str
 		existing, ok = app.getCompute(operation.ComputeID)
 	}
 	if !ok {
-		return nil, false, false
+		return nil, false
 	}
-	candidate := mergeMaps(existing, facts)
-	if monthlyResourceConfirmedAbsent(resourceType, candidate) {
-		return candidate, true, true
+	input := workspaceRenewalProviderFactInput(*operation, resourceType)
+	renewedThrough, err := time.Parse(time.RFC3339, operation.RenewedThrough)
+	if readErr != nil || err != nil || !providerFactCovers(input, fact, stringValue(existing["providerResourceId"]), renewedThrough) {
+		return existing, false
 	}
-	oldDeadline, oldErr := time.Parse(time.RFC3339, operation.PaidThrough)
-	renewedThrough, renewedErr := time.Parse(time.RFC3339, operation.RenewedThrough)
-	if readErr != nil || oldErr != nil || renewedErr != nil || !monthlyRenewalReadbackConfirmed(resourceType, existing, candidate, facts, oldDeadline, renewedThrough) {
-		return candidate, false, false
+	priorEvidence := operation.ComputeReadback
+	if resourceType == "storage" {
+		priorEvidence = operation.StorageReadback
 	}
-	return candidate, false, true
+	if prior, present := providerFactFromEvidence(priorEvidence); present && prior.Available && providerFactStatusUsable(resourceType, prior.Facts.Status) &&
+		(prior.Facts.ProviderID != fact.Facts.ProviderID || prior.Facts.PackageOrSpec != fact.Facts.PackageOrSpec || prior.Facts.Zone != fact.Facts.Zone) {
+		return existing, false
+	}
+	return projectProviderFact(existing, fact), true
 }
 
 func (app *controlPlaneServer) verifyWorkspaceRenewalProviderReadback(ctx context.Context, service *controlplane.Service, operation *workspaceRenewalOperation) error {
-	compute, computeErr := service.SyncMonthlyCompute(ctx, operation.ComputeID)
-	operation.ComputeReadback = structToMap(compute)
-	computeRow, computeAbsent, computeValid := app.workspaceRenewalProviderReadback("compute", operation, operation.ComputeReadback, computeErr)
-	if computeAbsent || !computeValid {
+	computeFact, computeErr := readProviderFact(ctx, service, workspaceRenewalProviderFactInput(*operation, "compute"))
+	computeRow, computeValid := app.workspaceRenewalProviderReadback("compute", operation, computeFact, computeErr)
+	operation.ComputeReadback = providerFactEvidence(computeFact)
+	if !computeValid {
 		return errors.New("workspace_renewal_provider_truth_invalid")
 	}
 	if err := app.tables.SaveCompute(ctx, computeRow); err != nil {
 		return errors.New("workspace_renewal_provider_truth_invalid")
 	}
 
-	storage, storageErr := service.SyncMonthlyStorage(ctx, operation.StorageID)
-	operation.StorageReadback = structToMap(storage)
-	storageRow, storageAbsent, storageValid := app.workspaceRenewalProviderReadback("storage", operation, operation.StorageReadback, storageErr)
-	if storageAbsent || !storageValid {
+	storageFact, storageErr := readProviderFact(ctx, service, workspaceRenewalProviderFactInput(*operation, "storage"))
+	storageRow, storageValid := app.workspaceRenewalProviderReadback("storage", operation, storageFact, storageErr)
+	operation.StorageReadback = providerFactEvidence(storageFact)
+	if !storageValid {
 		return errors.New("workspace_renewal_provider_truth_invalid")
 	}
 	if err := app.tables.SaveStorage(ctx, storageRow); err != nil {

@@ -13,10 +13,6 @@ import (
 )
 
 func registerWorkspaceRoutes(mux *http.ServeMux, app *controlPlaneServer, service *controlplane.Service) {
-	mux.HandleFunc("POST /api/workspaces/{workspaceId}/recovered-e2e-attempt", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
-		app.reserveRecoveredWorkspaceE2EAttempt(service, w, r)
-	}))
-	mux.HandleFunc("POST /api/workspaces/{workspaceId}/recovered-e2e-attempt/complete", app.protected(false, app.completeRecoveredWorkspaceE2EAttempt))
 	mux.HandleFunc("GET /api/workspaces", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
 		page, pageSize, ok := operatorPagination(w, r)
 		if !ok {
@@ -165,9 +161,9 @@ func registerWorkspaceRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 		runtime, receipt, err := service.RotateWorkspaceCredential(r.Context(), controlplane.RotateWorkspaceCredentialInput{
 			WorkspaceID: workspaceID, AccountID: accountID, GatewaySecretRef: gatewaySecretRef,
 			OwnerID:   firstNonEmpty(stringValue(workspace["ownerUserId"]), stringValue(workspace["ownerId"])),
-			ComputeID: launch.ComputeID, VolumeID: launch.StorageID, AttachmentID: launch.AttachmentID,
-			AttachmentOperationID: launch.AttachmentOperationID, RuntimeID: launch.RuntimeID,
-			RuntimeOperationID: launch.WorkspaceOperationID + ":runtime",
+			ComputeID: launch.stringFact("computeAllocationId"), VolumeID: launch.stringFact("storageId"), AttachmentID: launch.stringFact("attachmentId"),
+			AttachmentOperationID: launch.ID + ":attachment", RuntimeID: launch.stringFact("runtimeId"),
+			RuntimeOperationID: launch.ID + ":runtime",
 		}, key)
 		if err != nil {
 			writeUpstreamError(w, err)
@@ -311,9 +307,9 @@ func (app *controlPlaneServer) currentWorkspaceGatewaySecretRef(ctx context.Cont
 		return "", err
 	}
 	for _, row := range rows {
-		operation, decodeErr := decodeWorkspaceLaunchOperation(row)
-		if decodeErr == nil && operation.Status == "succeeded" && operation.WorkspaceAPIKeyID == keyID && operation.GatewaySecretRef != "" {
-			return operation.GatewaySecretRef, nil
+		operation, decodeErr := decodeWorkspaceLaunchReconcileOperation(row)
+		if decodeErr == nil && operation.Status == "succeeded" && operation.int64Fact("workspaceApiKeyId") == keyID && operation.stringFact("gatewaySecretRef") != "" {
+			return operation.stringFact("gatewaySecretRef"), nil
 		}
 	}
 	return "", errors.New("workspace_gateway_secret_ref_unavailable")

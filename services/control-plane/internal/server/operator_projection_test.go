@@ -246,10 +246,6 @@ type operatorProjectionLedger struct {
 
 type operatorProjectionNoOperationsFabric struct{ fakeFabricClient }
 
-func (*operatorProjectionNoOperationsFabric) ListOperations(context.Context) ([]clients.FabricOperation, error) {
-	return []clients.FabricOperation{}, nil
-}
-
 type operatorProjectionFactsFabric struct {
 	fakeFabricClient
 	facts  map[string]clients.ProviderFact
@@ -925,30 +921,6 @@ func TestOperatorProjectionReadSurfaces(t *testing.T) {
 	invalid := requestWithSession(t, server, operator, http.MethodGet, "/api/operator/accounts?pageSize=51", "")
 	if invalid.Code != http.StatusBadRequest {
 		t.Fatalf("invalid operator pagination = %d: %s", invalid.Code, invalid.Body.String())
-	}
-}
-
-func TestOperatorReconciliationProjectsLaunchRecoveryIdentity(t *testing.T) {
-	store := newMemoryTableStore()
-	operation := newWorkspaceLaunchOperation("acct-alpha", "usr-alpha", "Alpha", "basic", 10, false, pilotPriceVersion, 52_580_000, "review-launch")
-	operation.WorkspaceAPIKeyID = 19
-	operation.Status, operation.Phase, operation.ErrorCode = "manual_review", "storage_fulfilling", "fabric_storage_confirmed_absent_after_compute_created"
-	mustStore(t, store.SaveRuntimeOperation(context.Background(), workspaceLaunchOperationRow(operation)))
-	server, err := NewPersistentServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}, newOperatorProjectionClient()), store)
-	if err != nil {
-		t.Fatal(err)
-	}
-	response := requestWithSession(t, server, reservedOperatorSessionForTest(t, server), http.MethodGet, "/api/operator/reconciliation", "")
-	if response.Code != http.StatusOK {
-		t.Fatalf("launch reconciliation status=%d body=%s", response.Code, response.Body.String())
-	}
-	items := mapField(decodeOperatorEnvelope(t, response), "data")["items"].([]any)
-	item := items[0].(map[string]any)
-	actions, ok := item["allowedActions"].([]any)
-	if item["id"] != operation.ID || item["accountId"] != operation.AccountID || item["billingOperationId"] != operation.ID ||
-		item["phase"] != operation.Phase || item["errorCode"] != operation.ErrorCode || item["progressionOwner"] != "control_plane_recovery_plan" ||
-		!ok || len(actions) != 1 || actions[0] != "diagnose_workspace_recovery_plan" {
-		t.Fatalf("launch reconciliation item=%#v", item)
 	}
 }
 

@@ -265,11 +265,11 @@ type controlPlaneTableStore interface {
 	SaveWorkspace(ctx context.Context, row map[string]any) error
 	CompareAndSwapWorkspaceAPIKey(ctx context.Context, workspaceID string, expectedID, newID int64) error
 	ApplyWorkspaceRenewalIntent(ctx context.Context, update workspaceRenewalIntentCAS) error
-	ClaimWorkspaceLaunch(ctx context.Context, claim workspaceLaunchClaimCAS) error
-	PersistWorkspaceLaunch(ctx context.Context, update workspaceLaunchPersistCAS) error
+	ClaimWorkspaceLaunchReconcile(ctx context.Context, claim workspaceLaunchReconcileClaim) error
+	PersistWorkspaceLaunchReconcile(ctx context.Context, update workspaceLaunchReconcileCAS) error
 	ClaimWorkspaceRenewal(ctx context.Context, claim workspaceRenewalClaimCAS) error
 	PersistWorkspaceRenewal(ctx context.Context, update workspaceRenewalPersistCAS) error
-	ActivateWorkspace(ctx context.Context, row map[string]any) (map[string]any, error)
+	ActivateWorkspaceLaunchProjection(ctx context.Context, row map[string]any) (map[string]any, error)
 	ClaimWorkspaceCreate(ctx context.Context, workspace map[string]any, operation map[string]any) error
 	DeleteWorkspace(ctx context.Context, id string) error
 
@@ -292,67 +292,23 @@ type controlPlaneTableStore interface {
 	SaveBillingReconciliation(ctx context.Context, row map[string]any) error
 }
 
-func prepareWorkspaceActivation(row, owner, compute, storage, attachment, existing map[string]any) (map[string]any, error) {
+func prepareWorkspaceLaunchProjection(row, owner, existing map[string]any) (map[string]any, error) {
 	row = cloneMap(row)
-	state := workspaceAcceptedBillingState(row)
-	accountID, ownerID, workspaceID := firstNonEmpty(stringValue(row["accountId"]), stringValue(row["ownerAccountId"])), stringValue(row["ownerUserId"]), stringValue(row["id"])
-	computeID, storageID, attachmentID := stringValue(row["currentComputeAllocationId"]), stringValue(row["storageId"]), stringValue(row["currentAttachmentId"])
-	if state == nil || accountID == "" || ownerID == "" || workspaceID == "" || computeID == "" || storageID == "" || attachmentID == "" ||
-		stringValue(compute["id"]) != computeID || stringValue(storage["id"]) != storageID || stringValue(attachment["id"]) != attachmentID ||
-		stringValue(compute["accountId"]) != accountID || stringValue(storage["accountId"]) != accountID || stringValue(attachment["accountId"]) != accountID ||
-		stringValue(compute["ownerUserId"]) != ownerID || stringValue(storage["ownerUserId"]) != ownerID ||
-		stringValue(compute["workspaceId"]) != workspaceID || stringValue(storage["workspaceId"]) != workspaceID || stringValue(attachment["workspaceId"]) != workspaceID ||
-		!workspaceActivationStatus(stringValue(compute["status"]), "compute") || !workspaceActivationStatus(stringValue(storage["status"]), "storage") || !workspaceActivationStatus(stringValue(attachment["status"]), "attachment") ||
-		firstNonEmpty(stringValue(attachment["computeAllocationId"]), stringValue(attachment["computeId"])) != computeID ||
-		firstNonEmpty(stringValue(attachment["storageId"]), stringValue(attachment["volumeId"])) != storageID ||
-		!workspaceResourceCoversEntitlement("compute", compute, state) || !workspaceResourceCoversEntitlement("storage", storage, state) {
+	accountID, ownerID, workspaceID := stringValue(row["accountId"]), stringValue(row["ownerUserId"]), stringValue(row["id"])
+	if workspaceAcceptedBillingState(row) == nil || accountID == "" || ownerID == "" || workspaceID == "" ||
+		stringValue(row["ownerAccountId"]) != accountID || stringValue(owner["id"]) != ownerID ||
+		stringValue(owner["accountId"]) != accountID || stringValue(owner["status"]) != "active" || stringValue(owner["role"]) != "owner" {
 		return nil, errWorkspaceActivationConflict
 	}
-	if stringValue(owner["id"]) != ownerID || stringValue(owner["accountId"]) != accountID || stringValue(owner["status"]) != "active" || stringValue(owner["role"]) != "owner" {
-		row["autoRenew"] = false
-	}
-	row, err := mergeWorkspaceForSave(existing, row)
-	if err != nil || validateWorkspaceBillingState(row) != nil {
+	prepared, err := mergeWorkspaceForSave(existing, row)
+	if err != nil || validateWorkspaceBillingState(prepared) != nil {
 		return nil, errWorkspaceActivationConflict
 	}
-	return row, nil
-}
-
-func workspaceResourceCoversEntitlement(resourceType string, resource, state map[string]any) bool {
-	paidThrough, paidErr := time.Parse(time.RFC3339, stringValue(state["paidThrough"]))
-	if paidErr != nil {
-		return false
-	}
-	if stringValue(resource["billingStatus"]) == "active" {
-		resourcePaidThrough, err := time.Parse(time.RFC3339, stringValue(resource["paidThrough"]))
-		return err == nil && !resourcePaidThrough.Before(paidThrough)
-	}
-	for _, key := range []string{"billingOperationId", "sub2apiRedeemCode", "chargeUsdMicros", "priceVersion", "periodStart", "paidThrough"} {
-		if _, exists := resource[key]; exists {
-			return false
-		}
-	}
-	expected := map[string]any{
-		"packageId": state["packageId"], "periodStart": state["periodStart"], "paidThrough": state["paidThrough"],
-		"zone": firstNonEmpty(stringValue(resource["zone"]), providerDataValue(resource, "zone")),
-	}
-	if resourceType == "storage" {
-		expected["sizeGb"] = state["storageGb"]
-	}
-	return monthlyPurchaseReadbackConfirmed(resourceType, expected, resource)
-}
-
-func workspaceActivationStatus(status, kind string) bool {
-	switch kind {
-	case "compute":
-		return status == "running" || status == "ready" || status == "available" || status == "active"
-	case "storage":
-		return status == "available" || status == "ready" || status == "bound" || status == "attached"
-	case "attachment":
-		return status == "attached" || status == "ready"
-	default:
-		return false
-	}
+	prepared["customerProduct"] = true
+	access := cloneMap(mapField(prepared, "access"))
+	delete(access, "password")
+	prepared["access"] = access
+	return prepared, nil
 }
 
 func validateSub2APIAccountMapping(accounts []map[string]any, row map[string]any) error {

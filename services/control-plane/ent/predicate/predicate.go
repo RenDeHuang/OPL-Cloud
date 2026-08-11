@@ -18,23 +18,8 @@ type Announcement func(*sql.Selector)
 // AnnouncementRead is the predicate function for announcementread builders.
 type AnnouncementRead func(*sql.Selector)
 
-// ArchiveJob is the predicate function for archivejob builders.
-type ArchiveJob func(*sql.Selector)
-
 // ArchivedAdminAuditEvent is the predicate function for archivedadminauditevent builders.
 type ArchivedAdminAuditEvent func(*sql.Selector)
-
-// ArchivedComputeAllocation is the predicate function for archivedcomputeallocation builders.
-type ArchivedComputeAllocation func(*sql.Selector)
-
-// ArchivedStorageAttachment is the predicate function for archivedstorageattachment builders.
-type ArchivedStorageAttachment func(*sql.Selector)
-
-// ArchivedStorageVolume is the predicate function for archivedstoragevolume builders.
-type ArchivedStorageVolume func(*sql.Selector)
-
-// ArchivedWorkspace is the predicate function for archivedworkspace builders.
-type ArchivedWorkspace func(*sql.Selector)
 
 // AuthAttempt is the predicate function for authattempt builders.
 type AuthAttempt func(*sql.Selector)
@@ -44,9 +29,6 @@ type BillingReconciliation func(*sql.Selector)
 
 // ComputeAllocation is the predicate function for computeallocation builders.
 type ComputeAllocation func(*sql.Selector)
-
-// ExecutionRequest is the predicate function for executionrequest builders.
-type ExecutionRequest func(*sql.Selector)
 
 // Membership is the predicate function for membership builders.
 type Membership func(*sql.Selector)

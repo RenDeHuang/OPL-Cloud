@@ -284,27 +284,6 @@ func workspaceSyncEventFields() []ent.Field {
 	)
 }
 
-func executionRequestFields() []ent.Field {
-	return append(baseFields(),
-		field.String("organization_id").NotEmpty(),
-		field.String("workspace_id").NotEmpty(),
-		field.String("project_id").NotEmpty(),
-		field.String("task_id").NotEmpty(),
-		field.String("actor_user_id").NotEmpty(),
-		field.String("approval_id").Default(""),
-		field.String("approval_status").Default("pending"),
-		field.String("approved_by").Default(""),
-		field.String("approved_at").Default(""),
-		field.String("status").Default("awaiting_approval"),
-		field.String("environment_ref").Default(""),
-		field.String("job_id").Default(""),
-		field.String("receipt_id").Default(""),
-		field.String("continuation_id").Default(""),
-		field.String("idempotency_key").NotEmpty().Unique(),
-		field.Int64("version").Default(1),
-	)
-}
-
 func adminAuditEventFields() []ent.Field {
 	return append(baseFields(),
 		field.String("actor_user_id").Default(""),
@@ -375,28 +354,6 @@ func productionE2ERecordFields() []ent.Field {
 	)
 }
 
-func archiveJobFields() []ent.Field {
-	return append(baseFields(),
-		field.String("resource_kind").Default(""),
-		field.String("status").Default(""),
-		field.String("reason").Default(""),
-		field.Int64("amount_cents").Default(0),
-	)
-}
-
-func archivedResourceFields() []ent.Field {
-	return append(baseFields(),
-		field.String("account_id").Default(""),
-		field.String("workspace_id").Default(""),
-		field.String("resource_id").Default(""),
-		field.String("resource_kind").Default(""),
-		field.String("name").Default(""),
-		field.String("status").Default(""),
-		field.String("reason").Default(""),
-		field.Time("archived_at").Optional().Nillable(),
-	)
-}
-
 func (Account) Annotations() []schema.Annotation      { return table("control_plane_accounts") }
 func (Organization) Annotations() []schema.Annotation { return table("control_plane_organizations") }
 func (User) Annotations() []schema.Annotation         { return table("control_plane_users") }
@@ -423,9 +380,6 @@ func (ProjectTaskSyncHead) Annotations() []schema.Annotation {
 func (WorkspaceSyncEvent) Annotations() []schema.Annotation {
 	return table("control_plane_workspace_sync_events")
 }
-func (ExecutionRequest) Annotations() []schema.Annotation {
-	return table("control_plane_execution_requests")
-}
 func (AdminAuditEvent) Annotations() []schema.Annotation {
 	return table("control_plane_admin_audit_events")
 }
@@ -440,19 +394,6 @@ func (SupportTicketMapping) Annotations() []schema.Annotation {
 }
 func (ProductionE2ERecord) Annotations() []schema.Annotation {
 	return table("control_plane_production_e2e_records")
-}
-func (ArchiveJob) Annotations() []schema.Annotation { return table("control_plane_archive_jobs") }
-func (ArchivedComputeAllocation) Annotations() []schema.Annotation {
-	return table("control_plane_archived_compute_allocations")
-}
-func (ArchivedStorageVolume) Annotations() []schema.Annotation {
-	return table("control_plane_archived_storage_volumes")
-}
-func (ArchivedStorageAttachment) Annotations() []schema.Annotation {
-	return table("control_plane_archived_storage_attachments")
-}
-func (ArchivedWorkspace) Annotations() []schema.Annotation {
-	return table("control_plane_archived_workspaces")
 }
 func (ArchivedAdminAuditEvent) Annotations() []schema.Annotation {
 	return table("control_plane_archived_admin_audit_events")
