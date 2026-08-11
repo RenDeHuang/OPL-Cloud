@@ -1,6 +1,6 @@
 export type JsonObject = Record<string, unknown>;
 
-export type ApiError = Error & { payload?: unknown };
+export type ApiError = Error & { payload?: unknown; status?: number };
 
 export function controlPlaneApiPath(path: string): string {
   const base = "https://opl-cloud.invalid";
@@ -28,9 +28,10 @@ async function responsePayload(response: Response): Promise<unknown> {
   return response.json().catch(() => null);
 }
 
-function throwApiError(payload: unknown): never {
+function throwApiError(payload: unknown, status: number): never {
   const error: ApiError = new Error(customerSafeMessage(payload));
   error.payload = payload;
+  error.status = status;
   throw error;
 }
 
@@ -47,7 +48,7 @@ async function writeJson<T>(method: "POST" | "PUT" | "PATCH" | "DELETE", path: s
     signal: requestSignal
   });
   const payload = await responsePayload(response);
-  if (!response.ok || asObject(payload).ok === false) throwApiError(payload);
+  if (!response.ok || asObject(payload).ok === false) throwApiError(payload, response.status);
   return payload as T;
 }
 
@@ -72,6 +73,6 @@ export async function getJson<T>(path: string, { signal }: { signal?: AbortSigna
   const requestSignal = signal ? AbortSignal.any([signal, timeout]) : timeout;
   const response = await fetch(controlPlaneApiPath(path), { signal: requestSignal });
   const payload = await responsePayload(response);
-  if (!response.ok || asObject(payload).ok === false) throwApiError(payload);
+  if (!response.ok || asObject(payload).ok === false) throwApiError(payload, response.status);
   return payload as T;
 }

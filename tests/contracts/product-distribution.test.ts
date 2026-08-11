@@ -22,6 +22,24 @@ test("portable distribution is product-owned and instance-neutral", async () => 
   assert.deepEqual(Object.keys(compose.services).sort(), ["control-plane", "fabric", "ledger", "postgres"]);
   assert.equal(compose.services.ledger.command[0], "/usr/local/bin/opl-ledger");
   assert.equal(compose.services.fabric.command[0], "/usr/local/bin/opl-fabric");
+  const databaseURLs = ["control-plane", "fabric", "ledger"].map(
+    (service) => compose.services[service].environment.DATABASE_URL as string
+  );
+  assert.equal(new Set(databaseURLs).size, 3);
+  assert.match(databaseURLs[0], /^postgresql:\/\/opl_control_plane:.*@.*:5432\/opl_control_plane\?sslmode=disable$/);
+  assert.match(databaseURLs[1], /^postgresql:\/\/opl_fabric:.*@.*:5432\/opl_fabric\?sslmode=disable$/);
+  assert.match(databaseURLs[2], /^postgresql:\/\/opl_ledger:.*@.*:5432\/opl_ledger\?sslmode=disable$/);
+  assert.equal(compose["x-opl-cloud-common"].environment.DATABASE_URL, undefined);
+  assert.equal(compose["x-opl-cloud-common"].environment.OPL_INTERNAL_SERVICE_TOKEN, undefined);
+  const postgresInit = compose.configs["opl-postgres-init"].content as string;
+  assert.match(postgresInit, /PostgreSQL passwords must contain at least 32 characters/);
+  assert.match(postgresInit, /PostgreSQL administrator and service passwords must be distinct/);
+  for (const owner of ["control_plane", "fabric", "ledger"]) {
+    assert.match(postgresInit, new RegExp(`CREATE ROLE opl_${owner} LOGIN NOSUPERUSER`));
+    assert.match(postgresInit, new RegExp(`CREATE DATABASE opl_${owner} OWNER opl_${owner}`));
+    assert.match(postgresInit, new RegExp(`REVOKE CONNECT, TEMPORARY ON DATABASE opl_${owner} FROM PUBLIC`));
+    assert.match(postgresInit, new RegExp(`GRANT CONNECT, TEMPORARY ON DATABASE opl_${owner} TO opl_${owner}`));
+  }
   assert.match(composeSource, /@\$\{OPL_POSTGRES_HOST:-172\.30\.0\.10\}:5432/);
   assert.match(composeSource, /subnet: \$\{OPL_DOCKER_SUBNET:-172\.30\.0\.0\/24\}/);
   assert.doesNotMatch(composeSource, /medopl\.cn|TENCENT_DEPLOY_|tencentyun\.com/);

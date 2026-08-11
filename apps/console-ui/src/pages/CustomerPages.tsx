@@ -11,6 +11,7 @@ import {
   Plus,
   RefreshCw,
   Server,
+  Trash2,
   WalletCards
 } from "lucide-react";
 import { RadioGroup } from "@openai/apps-sdk-ui/components/RadioGroup";
@@ -29,7 +30,7 @@ import type {
 } from "../api/dtos.ts";
 import { KeysPanel } from "../components/keys/KeysPanel.tsx";
 import { SourceState } from "../components/source/SourceState.tsx";
-import { Badge, Button, Checkbox, Field, SegmentedControl, Select } from "../components/ui/index.ts";
+import { Alert, Badge, Button, Checkbox, Field, SegmentedControl, Select } from "../components/ui/index.ts";
 import { apiMenu, apiPage, formatCount, formatDate, formatUsdMicros, workspacePage, workspaceStatusLabel } from "../console-model.ts";
 
 const launchPhaseLabels = [
@@ -335,7 +336,7 @@ function WorkspaceOrderSummary({
 
 function WorkspaceLaunchPage({ controller }: { controller: ConsoleController }) {
   const catalog = controller.sources.catalog.value;
-  if (controller.launchOperation && !["succeeded", "failed", "refunded"].includes(controller.launchOperation.status)) {
+  if (controller.launchOperation && !["failed", "refunded"].includes(controller.launchOperation.status)) {
     return <section className="workspace-launch-page" data-slide="C-WS-04"><Button className="workspace-launch-back" onClick={() => controller.navigate("/console/workspaces")} size="sm" variant="ghost"><ChevronLeft aria-hidden size={16} />返回 Workspace 列表</Button><LaunchOperation controller={controller} /></section>;
   }
 
@@ -414,7 +415,7 @@ function LaunchOperation({ compact, controller }: { compact?: boolean; controlle
       ) : null}
       {controller.launchPollIssue ? <p className="inline-error">结果待确认。请刷新同一 operation，禁止重复购买。</p> : null}
       <div className="launch-operation-actions">
-        {operation.status === "succeeded" && operation.workspaceId ? <Button color="primary" onClick={() => controller.navigate(`/console/workspaces/${encodeURIComponent(operation.workspaceId!)}`)}>查看 Workspace</Button> : null}
+        {operation.status === "succeeded" && operation.workspaceId ? <Button color="primary" onClick={() => void controller.openLaunchedWorkspace()}>读取 Workspace</Button> : null}
         <Button onClick={() => void controller.refreshCurrentPage()} variant="outline"><RefreshCw aria-hidden size={16} />刷新状态</Button>
         {["failed", "refunded"].includes(operation.status) ? <Button onClick={() => controller.navigate("/console/workspaces")} variant="outline">返回列表</Button> : null}
       </div>
@@ -445,7 +446,9 @@ function WorkspaceDetailPage({ controller }: { controller: ConsoleController }) 
       <Button onClick={() => controller.navigate("/console/workspaces")} size="sm" variant="ghost"><ChevronLeft aria-hidden size={16} />Workspace 列表</Button>
       <SourceState error={controller.sources.workspaceDetail.error} loading={controller.sources.workspaceDetail.loading} onRetry={() => void controller.refreshCurrentPage()} source={workspaceSource} unavailableTitle="Workspace 详情暂不可用">
         {(detail) => detail ? <>
-          <section className="panel workspace-identity-panel"><div className="workspace-heading"><div><h2>{detail.name || detail.id}</h2><span>{detail.id}</span></div><Button onClick={() => void controller.refreshCurrentPage()} variant="outline"><RefreshCw aria-hidden size={16} />刷新</Button></div><dl className="data-list"><div><dt>生命周期状态</dt><dd>{workspaceLifecycleLabel(detail.state)}</dd></div><div><dt>运行状态</dt><dd>{runtime ? workspaceStatusLabel(runtime) : "-"}</dd></div></dl></section>
+          <section className="panel workspace-identity-panel"><div className="workspace-heading"><div><h2>{detail.name || detail.id}</h2><span>{detail.id}</span></div><div className="workspace-actions"><Button onClick={() => void controller.refreshCurrentPage()} variant="outline"><RefreshCw aria-hidden size={16} />刷新</Button><Button busy={controller.commandBusy} color="danger" onClick={() => void controller.deleteCurrentWorkspace()} variant="outline"><Trash2 aria-hidden size={16} />删除 Workspace</Button></div></div><dl className="data-list"><div><dt>生命周期状态</dt><dd>{workspaceLifecycleLabel(detail.state)}</dd></div><div><dt>运行状态</dt><dd>{runtime ? workspaceStatusLabel(runtime) : "-"}</dd></div></dl></section>
+          {controller.workspaceDeleteIssue === "unavailable" ? <Alert color="warning" indicator={<AlertCircle size={18} />} title="Workspace 删除暂不可用" description="原因代码：workspace_delete_unavailable" /> : null}
+          {controller.workspaceDeleteIssue === "unconfirmed" ? <Alert color="warning" indicator={<AlertCircle size={18} />} title="删除结果待确认" description="Workspace 权威列表尚未确认该 Workspace 已删除。" /> : null}
           <section className="panel workspace-access-panel"><div className="panel-title"><h2>访问与凭据</h2><span>Secret 60 秒后自动隐藏</span></div>
             <SourceState error={controller.sources.runtime.error} loading={controller.sources.runtime.loading} onRetry={() => void controller.refreshCurrentPage()} source={controller.sources.runtime.value} unavailableTitle="Runtime 状态暂不可用">
               {(runtimeData) => {
@@ -455,7 +458,7 @@ function WorkspaceDetailPage({ controller }: { controller: ConsoleController }) 
                 return <dl className="data-list"><div><dt>Runtime ready</dt><dd>{runtimeData.ready ? "是" : "否"}</dd></div><div><dt>挂载检查</dt><dd>{mount ? (mount.ok ? "通过" : "未通过") : "-"}</dd></div><div><dt>服务健康</dt><dd>{service ? (service.ok ? "通过" : "未通过") : runtimeData.ready ? "通过" : "-"}</dd></div><div><dt>Workspace URL</dt><dd>{runtimeData.url ? <a href={runtimeData.url} rel="noreferrer" target="_blank">{runtimeData.url}<ExternalLink aria-hidden size={14} /></a> : "-"}</dd></div><div><dt>用户名</dt><dd>{runtimeData.access?.username || controller.secrets.workspace?.username || "-"}</dd></div>
                   <SecretRow busy={controller.workspaceSecretBusy} label="密码" onCopy={() => void controller.copyText(controller.secrets.workspace?.password, "Workspace 密码已复制")} onHide={controller.clearSecrets} onReveal={() => void controller.revealWorkspacePassword()} revealed={Boolean(controller.secrets.workspace)} value={controller.secrets.workspace?.password} />
                   <SecretRow busy={controller.gatewaySecretBusy} label="Workspace Key" onCopy={() => void controller.copyText(controller.secrets.apiKey?.value, "Workspace Key 已复制")} onHide={controller.clearSecrets} onReveal={() => void controller.revealWorkspaceKey()} revealed={Boolean(controller.secrets.apiKey)} value={controller.secrets.apiKey?.value} />
-                  <div><dt>操作</dt><dd className="workspace-actions"><Button busy={controller.workspaceSecretBusy} onClick={() => void controller.rotateWorkspacePassword()} variant="outline">轮换密码</Button><Button color="primary" disabled={!canOpen} onClick={() => runtimeData.url && window.open(runtimeData.url, "_blank", "noopener,noreferrer")}>打开 Workspace<ExternalLink aria-hidden size={16} /></Button></dd></div>
+                  <div><dt>操作</dt><dd className="workspace-actions"><Button busy={controller.workspaceSecretBusy} onClick={() => void controller.rotateWorkspacePassword()} variant="outline">轮换密码</Button><Button color="primary" disabled={!canOpen} onClick={() => runtimeData.url && window.open(runtimeData.url, "_blank", "noopener,noreferrer")}>打开 WebUI<ExternalLink aria-hidden size={16} /></Button></dd></div>
                 </dl>;
               }}
             </SourceState>

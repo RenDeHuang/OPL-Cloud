@@ -6,13 +6,15 @@ import type {
   WorkspaceLaunchRequest,
   WorkspaceLaunchListResponse,
   WorkspaceLaunchResponse,
+  WorkspaceDeleteCommandResult,
+  WorkspaceDeleteResponse,
   WorkspaceListData,
   WorkspaceDTO,
   WorkspaceRenewalRequest,
   WorkspaceRenewalResponse,
   WorkspaceRuntimeDTO
 } from "./dtos.ts";
-import { postJson, getJson, type ApiError } from "./console-api.ts";
+import { deleteJson, postJson, getJson, type ApiError } from "./console-api.ts";
 
 const terminalLaunchStatuses = new Set(["succeeded", "failed", "refunded"]);
 
@@ -40,6 +42,10 @@ export function workspaceLaunchIdempotencyKey(): string {
   return `workspace-launch:${crypto.randomUUID()}`;
 }
 
+export function workspaceDeleteIdempotencyKey(workspaceId: string): string {
+  return `workspace-delete:${workspaceId}:${crypto.randomUUID()}`;
+}
+
 export async function launchWorkspace(
   input: WorkspaceLaunchRequest,
   csrfToken: string,
@@ -65,6 +71,45 @@ export function getWorkspaceLaunches(): Promise<WorkspaceLaunchListResponse> {
     if (!Array.isArray(value)) throw new Error("invalid_workspace_launch_list");
     return value.map(decodeDto<WorkspaceLaunchResponse>);
   });
+}
+
+function workspaceDeleteUnavailable(error: ApiError): boolean {
+  if (error.status === 405 || error.status === 501) return true;
+  if (error.status !== 404) return false;
+  const payload = error.payload && typeof error.payload === "object"
+    ? error.payload as Record<string, unknown>
+    : null;
+  return payload?.error !== "workspace_not_found";
+}
+
+export async function deleteWorkspace(
+  workspaceId: string,
+  csrfToken: string,
+  idempotencyKey: string
+): Promise<WorkspaceDeleteCommandResult> {
+  try {
+    const dto = decodeDto<Record<string, unknown>>(await deleteJson<unknown>(
+      `/api/workspaces/${encodeURIComponent(workspaceId)}`,
+      csrfToken,
+      idempotencyKey
+    ));
+    if (dto.workspaceId !== workspaceId || typeof dto.status !== "string" || !dto.status.trim()) {
+      throw new Error("invalid_workspace_delete_response");
+    }
+    return {
+      available: true,
+      data: {
+        workspaceId,
+        status: dto.status,
+        ...(typeof dto.operationId === "string" && dto.operationId ? { operationId: dto.operationId } : {})
+      } satisfies WorkspaceDeleteResponse
+    };
+  } catch (error) {
+    if (workspaceDeleteUnavailable(error as ApiError)) {
+      return { available: false, reasonCode: "workspace_delete_unavailable" };
+    }
+    throw error;
+  }
 }
 
 export function getWorkspaces(page = 1, pageSize = 20): Promise<SourceEnvelope<WorkspaceListData>> {
