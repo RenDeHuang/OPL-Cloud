@@ -84,12 +84,14 @@ test("Console browser covers customer and operator truth states at desktop and m
   ))));
 });
 
-test("Home Login Logo unchanged browser contract stays pinned", async () => {
+test("public entry states the product identity and current access boundary", async () => {
   const pages = await readFile("apps/console-ui/src/pages/PublicPages.tsx", "utf8");
   assert.match(pages, /OPL Cloud/);
-  assert.match(pages, /工作区、API 服务与账单/);
-  assert.match(pages, /Console 登录/);
+  assert.match(pages, /让你的 One Person Lab 在云端继续工作/);
+  assert.match(pages, /登录 OPL Cloud/);
+  assert.match(pages, /账户由管理员开通/);
   assert.match(pages, /alt="OPL Cloud" src="\/opl-app-icon\.png"/);
+  assert.doesNotMatch(pages, /权威控制面|浏览器端业务推导|余额守卫|已冻结的 Console 展示合同/);
 });
 
 test("operator provisioning delegates every non-empty password to Sub2API", async () => {

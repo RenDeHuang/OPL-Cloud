@@ -11,7 +11,7 @@ import { chromium } from "playwright";
 const execFileAsync = promisify(execFile);
 const root = resolve(import.meta.dirname, "../..");
 const dist = resolve(root, "dist");
-const reactHomeHeading = "工作区、API 服务与账单，在一个权威控制面里。";
+const reactHomeHeading = "OPL Cloud";
 const productionContentSecurityPolicy = "default-src 'self'; base-uri 'none'; frame-ancestors 'none'; object-src 'none'; form-action 'self'";
 const viewports = [
   { name: "desktop", width: 1440, height: 900 },
@@ -125,9 +125,12 @@ test("production dist boots the React Console under the production CSP at deskto
       const heading = page.getByRole("heading", { name: reactHomeHeading, exact: true });
       const reactPageVisible = await heading.waitFor({ state: "visible", timeout: 5_000 }).then(() => true, () => false);
       const visibleText = (await page.locator("body").innerText()).trim();
+      const horizontalOverflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
       evidence.push({
         viewport: viewport.name,
         reactPageVisible,
+        documentTitle: await page.title(),
+        horizontalOverflow,
         visibleTextLength: visibleText.length,
         pageErrors,
         consoleErrors,
@@ -144,6 +147,8 @@ test("production dist boots the React Console under the production CSP at deskto
   for (const item of evidence) {
     const message = JSON.stringify(evidence, null, 2);
     assert.equal(item.reactPageVisible, true, message);
+    assert.equal(item.documentTitle, "OPL Cloud", message);
+    assert.equal(item.horizontalOverflow, false, message);
     assert.ok(item.visibleTextLength > 0, message);
     assert.deepEqual(item.pageErrors, [], message);
     assert.deepEqual(item.consoleErrors, [], message);
