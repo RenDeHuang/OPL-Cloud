@@ -110,7 +110,6 @@ type Service struct {
 	destroying                       map[string]bool
 	reconciling                      map[string]bool
 	operations                       OperationStore
-	transfers                        TransferStore
 	now                              func() time.Time
 	computeAllocationPollInterval    time.Duration
 	computeAllocationPollWindow      time.Duration
@@ -190,13 +189,9 @@ func NewServiceWithOperationStore(provider Provider, operations OperationStore) 
 		operations = NewMemoryOperationStore()
 	}
 	computes, volumes, snapshots, attachments, _ := replayResourceState(context.Background(), operations)
-	transferStore, _ := operations.(TransferStore)
-	if transferStore == nil {
-		transferStore = newMemoryTransferStore()
-	}
 	return &Service{
 		provider: provider, computes: computes, volumes: volumes, snapshots: snapshots, attachments: attachments,
-		destroying: map[string]bool{}, reconciling: map[string]bool{}, operations: operations, transfers: transferStore,
+		destroying: map[string]bool{}, reconciling: map[string]bool{}, operations: operations,
 		now:                           func() time.Time { return time.Now().UTC() },
 		computeAllocationPollInterval: computeAllocationPollInterval, computeAllocationPollWindow: computeAllocationPollWindow,
 		computeAllocationAttemptTimeout: computeAllocationAttemptTimeout, computeAllocationFinalizeTimeout: computeAllocationFinalizeTimeout,
@@ -1979,6 +1974,11 @@ func validComputeClaimRecoveryDigest(value string) bool {
 		}
 	}
 	return true
+}
+
+func validDigest(value string) bool {
+	decoded, err := hex.DecodeString(value)
+	return err == nil && len(decoded) == sha256.Size
 }
 
 func isolatedRequestHashReconciliationLedger(ledger computeClaimRecoveryMutationLedger) bool {

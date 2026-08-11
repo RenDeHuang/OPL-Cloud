@@ -15,7 +15,6 @@ import (
 	"math"
 	"os"
 	"os/exec"
-	"path"
 	"reflect"
 	"sort"
 	"strconv"
@@ -2681,48 +2680,6 @@ func workspaceRuntimeStatusError(class string) error {
 		class = "provider_error"
 	}
 	return fmt.Errorf("workspace_runtime_status_%s", class)
-}
-
-func (p *TencentProvider) PublishWorkspaceContent(ctx context.Context, workspaceID, targetPath string, body []byte) error {
-	serviceName, _ := p.workspaceRuntimeResources(ctx, workspaceID)
-	if serviceName == "" {
-		return fmt.Errorf("workspace_runtime_not_found")
-	}
-	target := path.Join("/projects", targetPath)
-	digest := fmt.Sprintf("%x", sha256.Sum256(body))
-	temporary := target + ".opl-upload-" + digest[:12]
-	deployment := "deployment/" + serviceName
-	if _, err := p.callKubectl(ctx, []string{"exec", deployment, "--", "mkdir", "-p", path.Dir(target)}, nil, protectedresource.Target{}); err != nil {
-		return err
-	}
-	if _, err := p.callKubectl(ctx, []string{"exec", deployment, "--", "rm", "-f", temporary}, nil, protectedresource.Target{}); err != nil {
-		return err
-	}
-	// ponytail: TKE exec stdin corrupts large writes; use bounded command arguments until measured throughput justifies object storage.
-	const execChunkSize = 32 << 10
-	for offset := 0; offset < len(body); offset += execChunkSize {
-		end := min(offset+execChunkSize, len(body))
-		encoded := base64.StdEncoding.EncodeToString(body[offset:end])
-		args := []string{"exec", deployment, "--", "sh", "-c", `printf %s "$1" | base64 -d >> "$2"`, "--", encoded, temporary}
-		if _, err := p.callKubectl(ctx, args, nil, protectedresource.Target{}); err != nil {
-			return err
-		}
-	}
-	if _, err := p.callKubectl(ctx, []string{"exec", deployment, "--", "mv", temporary, target}, nil, protectedresource.Target{}); err != nil {
-		return err
-	}
-	digestOutput, err := p.callKubectl(ctx, []string{"exec", deployment, "--", "sha256sum", target}, nil, protectedresource.Target{})
-	if err != nil {
-		return fmt.Errorf("workspace_content_digest_command_failed: %w", err)
-	}
-	fields := strings.Fields(string(digestOutput))
-	if len(fields) == 0 || !validDigest(fields[0]) {
-		return fmt.Errorf("workspace_content_digest_invalid")
-	}
-	if fields[0] != digest {
-		return fmt.Errorf("workspace_content_digest_mismatch expected_sha256=%s actual_sha256=%s", digest, fields[0])
-	}
-	return nil
 }
 
 func packagePlan(packageID string) plan {

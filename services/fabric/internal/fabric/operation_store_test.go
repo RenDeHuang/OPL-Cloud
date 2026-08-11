@@ -8,9 +8,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"opl-cloud/services/fabric/ent/contenttransfer"
-	"opl-cloud/services/fabric/ent/contenttransferchunk"
 )
 
 func TestProductionPostgresOperationStoreRejectsUnsafeTLSBeforeConnecting(t *testing.T) {
@@ -255,15 +252,6 @@ func TestComputeClaimPendingPoolHeadMigrationMatchesEmbeddedCopy(t *testing.T) {
 	}
 	if !bytes.Equal(formal, embedded) {
 		t.Fatal("formal and embedded compute claim pending pool head migrations differ")
-	}
-}
-
-func TestPostgresOperationSchemaDefinesContentTransferTables(t *testing.T) {
-	schema := PostgresOperationSchemaSQL()
-	for _, table := range []string{contenttransfer.Table, contenttransferchunk.Table} {
-		if !strings.Contains(schema, "CREATE TABLE IF NOT EXISTS "+table) {
-			t.Fatalf("schema missing content transfer table %q", table)
-		}
 	}
 }
 
