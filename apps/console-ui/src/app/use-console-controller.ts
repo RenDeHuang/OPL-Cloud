@@ -979,7 +979,7 @@ export function useConsoleController() {
       setWorkspaceDeleteIssue("unconfirmed");
       flash(friendlyError(error), "danger");
     } finally {
-      if (requestStillCurrent()) setCommandBusy(false);
+      if (mutationStillCurrent()) setCommandBusy(false);
     }
   };
 
